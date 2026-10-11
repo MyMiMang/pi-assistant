@@ -2,7 +2,7 @@ import { AlertTriangle, Hand, Loader2, Pause, Play, Plus, ShieldCheck, Trash2 } 
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, Input } from "./ui";
+import { Badge, Button, cx, Input, avatarText } from "./ui";
 
 interface HostApp {
 	name: string;
@@ -202,7 +202,7 @@ export function HostControlSettings() {
 					<div className="flex flex-wrap gap-3 pl-6">
 						{agents.map((a) => (
 							<label key={a.id} className="flex items-center gap-1.5">
-								<input type="checkbox" checked={scope.includes(a.id)} onChange={(e) => setScope(e.target.checked ? [...scope, a.id] : scope.filter((x) => x !== a.id))} /> {a.avatar} {a.name}
+								<input type="checkbox" checked={scope.includes(a.id)} onChange={(e) => setScope(e.target.checked ? [...scope, a.id] : scope.filter((x) => x !== a.id))} /> {avatarText(a.avatar)} {a.name}
 							</label>
 						))}
 					</div>

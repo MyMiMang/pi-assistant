@@ -119,3 +119,6 @@ export function fmtTime(t: number) {
 		? d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
 		: d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
 }
+
+/** 纯文本场景（下拉选项、标签）里的头像：图片头像不显示，只留 emoji/字母 */
+export const avatarText = (avatar: string) => (avatar.startsWith("img:") ? "" : avatar);

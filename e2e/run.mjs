@@ -668,6 +668,109 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 	}
 });
 
+// ================================================================ Phase 3
+const openPane = async (tab) => {
+	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
+	await page.locator("aside").last().getByRole("tab", { name: tab, exact: true }).click();
+};
+const SHOP = `data:text/html;charset=utf-8,${encodeURIComponent(`<title>测试商店</title><body style="font-family:sans-serif;padding:40px"><h1>测试商店 · 结算</h1><p>无线耳机 × 1　¥199</p><form onsubmit="document.body.innerHTML='<h1>下单成功</h1>';return false"><label>收货人 <input name="n" value="邓邓"></label><br><br><button type="submit">提交订单</button></form></body>`)}`;
+await step("Phase 3 浏览器：助理打开网页（有 Docker 时在「电脑」实时画面里）→ 点「提交订单」需审批 → 拒绝不提交 → 本任务内都允许", async () => {
+	if (process.env.E2E_DESKTOP) {
+		const r = await fetch(`${BASE}/api/agents/${AGENT}/desktop/start`, { method: "POST" });
+		if (!r.ok) throw new Error(`助理电脑启动失败：${await r.text()}`);
+	}
+	await page.goto(BASE);
+	await send(`用浏览器打开 ${SHOP} 然后提交订单`);
+	const card = page.locator("[data-testid=approval-card]").last();
+	await card.getByText(/提交订单/).first().waitFor({ timeout: 60_000 });
+	if (process.env.E2E_DESKTOP) {
+		await openPane("电脑");
+		await page.locator("[data-testid=desktop-view] canvas").first().waitFor({ timeout: 30_000 });
+		await page.waitForTimeout(4000);
+	}
+	await page.screenshot({ path: join(SHOTS, "40-browser-submit-approval.png") });
+	await card.getByRole("button", { name: "拒绝" }).click();
+	await page.locator("main").getByText("好的，没有提交。").last().waitFor({ timeout: 20_000 });
+	await send(`用浏览器打开 ${SHOP} 然后提交订单`);
+	const card2 = page.locator("[data-testid=approval-card]").last();
+	await card2.getByRole("button", { name: "本任务内都允许" }).click({ timeout: 60_000 });
+	await page.locator("main").getByText(/已提交 ✅/).last().waitFor({ timeout: 30_000 });
+	if (process.env.E2E_DESKTOP) {
+		await page.waitForTimeout(2500);
+		await page.screenshot({ path: join(SHOTS, "41-browser-live-view.png") });
+	}
+});
+
+await step("Phase 3 操作这台电脑：设置页（默认关闭、风险提示、允许的应用、能力清单）", async () => {
+	await page.getByRole("button", { name: "设置" }).first().click();
+	await page.getByRole("button", { name: "操作这台电脑" }).click();
+	await page.getByText(/默认关闭|风险/).first().waitFor();
+	await page.waitForTimeout(400);
+	await page.screenshot({ path: join(SHOTS, "42-settings-host-control.png") });
+	await page.keyboard.press("Escape");
+});
+
+await step("Phase 3 渠道：飞书 / 钉钉 / 企业微信 添加表单 + 分步指引；个人微信需确认风险后开启", async () => {
+	await page.getByRole("button", { name: "设置" }).first().click();
+	await page.getByRole("button", { name: "渠道" }).click();
+	await page.locator("[data-testid=add-channel-feishu]").click();
+	await page.waitForTimeout(400);
+	await page.screenshot({ path: join(SHOTS, "43-settings-channels-feishu.png") });
+	await page.getByRole("button", { name: "取消" }).first().click().catch(() => {});
+	const wx = page.locator("[data-testid=wechat-section]");
+	await wx.locator("[data-testid=wechat-warning]").waitFor();
+	if (!(await wx.locator("[data-testid=wechat-enable]").isDisabled())) throw new Error("未确认风险时不应能开启");
+	await wx.locator("[data-testid=wechat-ack]").check();
+	await wx.locator("[data-testid=wechat-enable]").click();
+	await wx.getByText("哪些助理有自己的微信").waitFor();
+	await wx.locator("button.pa-chip").first().click();
+	await wx.getByRole("button", { name: "打开微信" }).first().waitFor();
+	await wx.scrollIntoViewIfNeeded();
+	await page.waitForTimeout(400);
+	await page.screenshot({ path: join(SHOTS, "44-settings-wechat-optin.png") });
+	await fetch(`${BASE}/api/wechat`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false, agentIds: [] }) });
+	await page.keyboard.press("Escape");
+});
+
+await step("Phase 3 邮箱：添加邮箱（模拟 IMAP/SMTP）→ 助理写草稿 → 发送审批卡片（完整内容）→ 批准后发出", async () => {
+	const { createRequire } = await import("node:module");
+	const req = createRequire(join(ROOT, "packages/server/package.json"));
+	const hoodiecrow = req("hoodiecrow-imap");
+	const { SMTPServer } = req("smtp-server");
+	const imap = hoodiecrow({ plugins: ["ID", "SPECIAL-USE", "UIDPLUS"], storage: { INBOX: { messages: [{ raw: "From: wang@school.cn\r\nTo: me@qq.com\r\nSubject: =?UTF-8?B?" + Buffer.from("家长会通知").toString("base64") + "?=\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n周五下午三点开家长会。" }] }, "": { separator: "/", folders: { "Sent Messages": { "special-use": "\\Sent" } } } } });
+	await new Promise((r) => imap.listen(0, "127.0.0.1", r));
+	const sent = [];
+	const smtp = new SMTPServer({ allowInsecureAuth: true, disabledCommands: ["STARTTLS"], logger: false, onAuth: (a, _s, cb) => cb(null, { user: a.username }), onData: (st, s, cb) => { st.resume(); st.on("end", () => (sent.push(s.envelope.rcptTo.map((x) => x.address)), cb())); } });
+	await new Promise((r) => smtp.listen(0, "127.0.0.1", r));
+	try {
+		const r = await fetch(`${BASE}/api/email`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ preset: "custom", address: "dengdeng@qq.com", user: "testuser", password: "testpass", name: "邓邓", imap: { host: "127.0.0.1", port: imap.server.address().port, secure: false }, smtp: { host: "127.0.0.1", port: smtp.server.address().port, secure: false }, insecure: true }) });
+		if (!r.ok) throw new Error(await r.text());
+		const acc = await r.json();
+		const t = await (await fetch(`${BASE}/api/email/${acc.id}/test`, { method: "POST" })).json();
+		if (!t.ok) throw new Error(`测试失败：${t.message}`);
+		await page.getByRole("button", { name: "设置" }).first().click();
+		await page.getByRole("button", { name: "邮箱" }).click();
+		await page.locator("[data-testid=email-account]").getByText("dengdeng@qq.com").waitFor();
+		await page.locator("[data-testid=add-email]").click();
+		await page.waitForTimeout(300);
+		await page.screenshot({ path: join(SHOTS, "45-settings-email.png") });
+		await page.keyboard.press("Escape");
+		await page.goto(BASE);
+		await send("帮我写邮件给王老师，说周五家长会我会参加");
+		const card = page.locator("[data-testid=approval-card]").last();
+		await card.getByText(/发送邮件给 wang@school.cn/).first().waitFor({ timeout: 30_000 });
+		if (sent.length) throw new Error("批准前不应发出");
+		await page.waitForTimeout(400);
+		await page.screenshot({ path: join(SHOTS, "46-email-send-approval.png") });
+		await card.getByRole("button", { name: "批准", exact: true }).click();
+		await page.locator("main").getByText(/邮件发出去了/).last().waitFor({ timeout: 30_000 });
+		if (sent.length !== 1 || sent[0][0] !== "wang@school.cn") throw new Error(`SMTP 收到 ${JSON.stringify(sent)}`);
+	} finally {
+		imap.close?.();
+		smtp.close();
+	}
+});
+
 await browser.close();
 await stopServer();
 console.log("\n===== 结果 =====");

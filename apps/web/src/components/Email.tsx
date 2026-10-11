@@ -2,7 +2,7 @@ import { Loader2, Mail, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Button, cx, Input } from "./ui";
+import { Button, cx, Input, avatarText } from "./ui";
 
 interface Server {
 	host: string;
@@ -117,7 +117,7 @@ export function EmailSettings() {
 								<option value="">所有助理</option>
 								{agents.map((a) => (
 									<option key={a.id} value={a.id}>
-										仅 {a.avatar} {a.name}
+										仅 {avatarText(a.avatar)} {a.name}
 									</option>
 								))}
 							</select>

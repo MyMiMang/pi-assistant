@@ -15,6 +15,8 @@ import type { BrowserContext, Frame, Locator, Page } from "playwright-core";
 import { RISK_FN, SNAPSHOT_FN, type RiskInfo, type SnapshotResult } from "./snapshot.ts";
 
 export const BROWSER_TOOLS = ["browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_select", "browser_scroll", "browser_press", "browser_tabs", "browser_download", "browser_upload", "browser_handoff"] as const;
+/** 审批卡片里显示的地址（data: 等超长地址截短） */
+const shortUrl = (u: string) => (u.length > 160 ? `${u.slice(0, 160)}…` : u);
 export const isBrowserTool = (name: string) => (BROWSER_TOOLS as readonly string[]).includes(name);
 
 export interface BrowserHost {
@@ -166,7 +168,7 @@ export function browserExtension(host: BrowserHost) {
 				const p = await page();
 				const loc = locate(p, String(ref));
 				const r = await riskOf(loc);
-				if (r.risky) await gate(r.label, `在网页「${(await p.title().catch(() => "")) || p.url()}」点击「${r.text || ref}」（${r.label}）`, { url: p.url(), 按钮: r.text, ...(r.form ? { 表单: r.form } : {}) });
+				if (r.risky) await gate(r.label, `在网页「${(await p.title().catch(() => "")) || p.url()}」点击「${r.text || ref}」（${r.label}）`, { url: shortUrl(p.url()), 按钮: r.text, ...(r.form ? { 表单: r.form } : {}) });
 				if (double) await loc.dblclick({ timeout: 10_000 });
 				else await loc.click({ timeout: 10_000 });
 				await p.waitForTimeout(300);
@@ -183,7 +185,7 @@ export function browserExtension(host: BrowserHost) {
 				const loc = locate(p, String(ref));
 				if (submit) {
 					const inForm = await loc.evaluate((el) => !!el.closest("form")).catch(() => false);
-					if (inForm) await gate("提交表单", `在网页「${(await p.title().catch(() => "")) || p.url()}」输入后回车提交`, { url: p.url(), 内容: String(t).slice(0, 200) });
+					if (inForm) await gate("提交表单", `在网页「${(await p.title().catch(() => "")) || p.url()}」输入后回车提交`, { url: shortUrl(p.url()), 内容: String(t).slice(0, 200) });
 				}
 				await loc.fill(String(t), { timeout: 10_000 });
 				if (submit) await loc.press("Enter");
@@ -299,7 +301,7 @@ export function browserExtension(host: BrowserHost) {
 			async run({ ref, paths }) {
 				const p = await page();
 				const files = (paths as string[]).map((x) => insideWorkspace(host.workspace, x));
-				await gate("上传文件", `把 ${files.map((f) => relative(host.workspace, f)).join("、")} 上传到「${(await p.title().catch(() => "")) || p.url()}」`, { url: p.url(), 文件: files.map((f) => relative(host.workspace, f)) }, "medium");
+				await gate("上传文件", `把 ${files.map((f) => relative(host.workspace, f)).join("、")} 上传到「${(await p.title().catch(() => "")) || p.url()}」`, { url: shortUrl(p.url()), 文件: files.map((f) => relative(host.workspace, f)) }, "medium");
 				const loc = locate(p, String(ref));
 				const isFile = await loc.evaluate((el) => el.tagName === "INPUT" && (el as HTMLInputElement).type === "file").catch(() => false);
 				if (isFile) await loc.setInputFiles(files, { timeout: 10_000 });

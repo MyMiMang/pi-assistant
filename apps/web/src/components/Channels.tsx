@@ -2,7 +2,7 @@ import { CheckCircle2, ChevronDown, Copy, Loader2, MessageSquare, Plus, RefreshC
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, Input } from "./ui";
+import { Badge, Button, cx, Input, avatarText } from "./ui";
 
 type Kind = "wecom" | "feishu" | "dingtalk";
 interface Channel {
@@ -163,7 +163,7 @@ function WechatSection({ agents }: { agents: { id: string; name: string; avatar:
 							return (
 								<span key={a.id} className="flex items-center gap-1">
 									<button className={cx("pa-chip", on && "!bg-accent-soft !text-accent")} onClick={() => put({ agentIds: on ? s.agentIds.filter((x) => x !== a.id) : [...s.agentIds, a.id] })}>
-										{a.avatar} {a.name}
+										{avatarText(a.avatar)} {a.name}
 									</button>
 									{on && s.enabled && (
 										<Button size="sm" variant="ghost" disabled={busy === a.id} onClick={() => open(a.id)}>
@@ -241,7 +241,7 @@ function ChannelForm({ kind, agents, publicUrl, existing, onDone }: { kind: Kind
 					<select className="mt-1 h-10 w-full rounded-xl bg-zinc-100 px-3 outline-none dark:bg-zinc-800/80" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
 						{agents.map((a) => (
 							<option key={a.id} value={a.id}>
-								{a.avatar} {a.name}
+								{avatarText(a.avatar)} {a.name}
 							</option>
 						))}
 					</select>

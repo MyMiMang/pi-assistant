@@ -96,6 +96,30 @@ function respond(messages: Msg[], systemPrompt = "") {
 		if (last.role === "toolResult") return fauxAssistantMessage(/blocked|拒绝|denied|批准/i.test(textOf(last)) ? "没有获得批准，便签没有发送。" : `便签发好了：${textOf(last)}`);
 		return fauxAssistantMessage([fauxToolCall("mcp__demo__send_note", { to: "小王", text: "明天十点开会" })]);
 	}
+	// Phase 3：浏览器（打开网页 → 看大纲 → 点提交按钮触发审批）
+	const openUrl = u.match(/用浏览器打开\s*(\S+)/);
+	if (openUrl) {
+		if (last.role !== "toolResult") return fauxAssistantMessage([fauxText("好，我在我的电脑上打开这个网页。"), fauxToolCall("browser_navigate", { url: openUrl[1] })]);
+		const out = textOf(last);
+		if (last.toolName === "browser_navigate" && /下单|提交/.test(u)) {
+			const ref = out.split("\n").find((l) => l.includes("(提交表单)"))?.match(/\[ref=([^\]]+)\]/)?.[1];
+			if (ref) return fauxAssistantMessage([fauxText("页面打开了，我来点提交按钮。"), fauxToolCall("browser_click", { ref })]);
+		}
+		if (last.toolName === "browser_click") return fauxAssistantMessage(/没有批准|拒绝/.test(out) ? "好的，没有提交。" : `已提交 ✅\n\n${out.slice(0, 300)}`);
+		return fauxAssistantMessage(`网页打开了：\n\n${out.slice(0, 600)}`);
+	}
+	// Phase 3：邮件（写草稿 → 请求批准发送）
+	if (/写邮件/.test(u)) {
+		if (last.role !== "toolResult")
+			return fauxAssistantMessage([fauxText("好，我先写一份草稿。"), fauxToolCall("email_draft", { to: ["wang@school.cn"], subject: "周五家长会", body: "王老师您好：\n\n周五下午三点的家长会我会准时参加。\n\n谢谢！" })]);
+		const out = textOf(last);
+		if (last.toolName === "email_draft") {
+			const id = out.match(/draftId=(\S+)/)?.[1];
+			if (id) return fauxAssistantMessage([fauxText(`草稿写好了：\n\n${out.split("\n\n把草稿")[0]}\n\n我请你确认后发送。`), fauxToolCall("email_send", { draftId: id })]);
+			return fauxAssistantMessage(`草稿没写成：${out}`);
+		}
+		return fauxAssistantMessage(/没有批准/.test(out) ? "好的，先不发，草稿留着。" : `邮件发出去了 📮 ${out}`);
+	}
 	if (last.role === "toolResult") {
 		const out = textOf(last);
 		switch (last.toolName) {
