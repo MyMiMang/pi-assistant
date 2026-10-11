@@ -5,7 +5,6 @@
 process.env.PIA_MOCK = "1";
 await import("./setup.ts");
 import assert from "node:assert/strict";
-import { createServer, type Server } from "node:http";
 import { test } from "node:test";
 const { db, setSetting } = await import("../src/db.ts");
 const modelsMod = await import("../src/models.ts");
@@ -16,48 +15,8 @@ const settings = await import("../src/memory/hindsight/settings.ts");
 const { memory } = await import("../src/memory/index.ts");
 const { config } = await import("../src/config.ts");
 
-/** 假 Hindsight：按 documentId 存文档，recall 做子串匹配 */
-function fakeHindsight(key: string) {
-	const banks = new Map<string, Map<string, string>>();
-	const calls: string[] = [];
-	const srv: Server = createServer(async (req, res) => {
-		let body = "";
-		for await (const c of req) body += c;
-		const url = req.url ?? "";
-		const json = (s: number, o: unknown) => (res.writeHead(s, { "content-type": "application/json" }), res.end(JSON.stringify(o)));
-		if (url === "/health") return json(200, { status: "healthy" });
-		if (req.headers.authorization !== `Bearer ${key}`) return json(401, { detail: "Invalid API key" });
-		calls.push(`${req.method} ${url.split("?")[0]}`);
-		const m = url.match(/^\/v1\/default\/banks(?:\/([^/?]+))?(\/[^?]*)?/);
-		if (!m) return json(404, {});
-		const [, bank, rest = ""] = m;
-		if (!bank) return json(200, { banks: [...banks.keys()].map((b) => ({ bank_id: b })) });
-		if (!rest && req.method === "DELETE") return (banks.delete(bank), json(200, { success: true }));
-		if (!rest) return (banks.set(bank, banks.get(bank) ?? new Map()), json(200, { bank_id: bank }));
-		const docs = banks.get(bank) ?? new Map();
-		banks.set(bank, docs);
-		if (rest === "/memories" && req.method === "POST") {
-			const b = JSON.parse(body);
-			for (const it of b.items) docs.set(it.document_id, it.content);
-			return json(200, { success: true, bank_id: bank, items_count: b.items.length, async: !!b.async });
-		}
-		if (rest === "/memories/recall") {
-			const q = JSON.parse(body).query as string;
-			const results = [...docs].filter(([, t]) => [...q].some((ch) => /\p{Script=Han}/u.test(ch) && t.includes(ch))).map(([id, t], i) => ({ id: `u${i}`, text: `【抽取】${t}`, type: "world", document_id: id }));
-			return json(200, { results });
-		}
-		if (rest.startsWith("/documents/") && req.method === "DELETE") return (docs.delete(decodeURIComponent(rest.slice(11))), json(200, { success: true }));
-		if (rest === "/mental-models" && req.method === "POST") return json(200, { id: "x" });
-		if (rest === "/mental-models") return json(200, { items: [{ id: "user-preferences", name: "用户偏好与习惯", content: "用户偏好简洁" }] });
-		return json(404, {});
-	});
-	return {
-		banks,
-		calls,
-		start: () => new Promise<number>((ok) => srv.listen(0, "127.0.0.1", () => ok((srv.address() as { port: number }).port))),
-		stop: () => new Promise<void>((ok) => (srv.closeAllConnections(), srv.close(() => ok()))),
-	};
-}
+// @ts-expect-error 测试夹具是 .mjs
+const { fakeHindsight } = await import("../../../e2e/fixtures/fake-hindsight.mjs");
 
 const agentId = "hs1";
 db.prepare("INSERT OR IGNORE INTO agents(id, name, avatar, color, persona, created_at, memory_provider) VALUES(?,?,?,?,?,?,?)").run(agentId, "测试", "🧪", "#888", "", Date.now(), "hindsight");
@@ -102,10 +61,10 @@ test("Hindsight 后端：同步队列、回退、恢复补写、编辑/遗忘、
 	const exp = await memory.exportAgent(agentId);
 	assert.deepEqual(exp.agent.items.map((i) => i.text), ["我养了一只猫叫咪咪"]);
 	// 换向量模型 → 删库重建，用账本原文重新写入
-	const before = fake.calls.filter((c) => c === `DELETE /v1/default/banks/agent_${agentId}`).length;
+	const before = fake.calls.filter((c: string) => c === `DELETE /v1/default/banks/agent_${agentId}`).length;
 	settings.saveHindsightSettings({ embedding: { kind: "local", model: "BAAI/bge-m3" } });
 	await resyncAll();
-	assert.equal(fake.calls.filter((c) => c === `DELETE /v1/default/banks/agent_${agentId}`).length, before + 1);
+	assert.equal(fake.calls.filter((c: string) => c === `DELETE /v1/default/banks/agent_${agentId}`).length, before + 1);
 	assert.ok([...fake.banks.get(`agent_${agentId}`)!.values()].includes("我养了一只猫叫咪咪"));
 	// 崩溃：健康检查连续失败 → down，读走 basic，写入排队；恢复后补写
 	await fake.stop();
@@ -116,6 +75,27 @@ test("Hindsight 后端：同步队列、回退、恢复补写、编辑/遗忘、
 	assert.ok(pendingCount() >= 1);
 	assert.ok((await memory.recall(agentId, null, "下午三点开会", 5)).length >= 1, "down 时检索走 basic");
 	await sidecar.stop();
+});
+
+test("先用 basic 记、后切到 Hindsight（切换时它还没就绪）：就绪后自动补写旧记忆", async () => {
+	const id2 = "hs2";
+	db.prepare("INSERT OR IGNORE INTO agents(id, name, avatar, color, persona, created_at, memory_provider) VALUES(?,?,?,?,?,?,?)").run(id2, "测试2", "🧪", "#888", "", Date.now(), "basic");
+	const old = await memory.remember(id2, null, { content: "我每天早上跑步", kind: "fact", scope: "agent" });
+	db.prepare("UPDATE agents SET memory_provider = 'hindsight' WHERE id = ?").run(id2);
+	assert.notEqual(sidecar.status.state, "ready");
+	await memory.list(id2); // 打开记忆页：此时 Hindsight 未就绪
+	const fake = fakeHindsight("rk");
+	const port = await fake.start();
+	settings.saveHindsightSettings({ mode: "remote", remoteUrl: `http://127.0.0.1:${port}`, remoteKey: "rk" });
+	try {
+		await sidecar.restart();
+		assert.equal(sidecar.status.state, "ready", sidecar.status.detail);
+		for (let i = 0; i < 40 && !fake.banks.get(`agent_${id2}`)?.has(old.id); i++) await new Promise((r) => setTimeout(r, 50));
+		assert.equal(fake.banks.get(`agent_${id2}`)?.get(old.id), "我每天早上跑步");
+	} finally {
+		await sidecar.stop();
+		await fake.stop();
+	}
 });
 
 test("自动挑选记忆用模型：同渠道里便宜快速的优先", () => {

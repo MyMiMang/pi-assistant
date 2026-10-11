@@ -115,9 +115,16 @@ export async function resyncAll() {
 	await flush();
 }
 
+/** 就绪时：之前在未就绪期间打开过的库（ensureBank 时 Hindsight 还没起来）现在建库并补写，再处理队列 */
+async function onReady() {
+	for (const bank of profiles.keys())
+		if (!db.prepare("SELECT 1 FROM hindsight_banks WHERE bank = ?").get(bank)) await ensureRemoteBank(bank).catch(() => {});
+	await flush();
+}
+
 // 恢复后自动补写；另外每分钟兜底一次
 bus.on((e) => {
-	if (e.type === "memory.hindsight" && (e.status as { state: string }).state === "ready") void flush();
+	if (e.type === "memory.hindsight" && (e.status as { state: string }).state === "ready") void onReady();
 });
 setInterval(() => void flush(), 60_000).unref();
 

@@ -190,8 +190,15 @@ export const memory = {
 	async reflect(agentId: string, query: string) {
 		const p = providerFor(agentId);
 		if (!p.reflect) return null;
-		await ready(p, agentBank(agentId), agentId);
-		return p.reflect(agentBank(agentId), query);
+		// 反思按库进行：助理自己的库 + 所有助理共享的「关于你」库都问一遍，
+		// 取依据更多的那个回答，依据合并（共享事实通常记在 user 库里）
+		const banks = [agentBank(agentId), USER_BANK];
+		for (const b of banks) await ready(p, b, agentId);
+		const rs = await Promise.all(banks.map((b) => p.reflect!(b, query).catch((e: unknown) => ({ error: e }))));
+		const ok = rs.filter((r): r is Exclude<(typeof rs)[number], { error: unknown }> => !("error" in r));
+		if (!ok.length) throw (rs[0] as { error: unknown }).error;
+		const best = ok.reduce((a, b) => ((b.citations?.length ?? 0) > (a.citations?.length ?? 0) ? b : a));
+		return { answer: best.answer, citations: ok.flatMap((r) => r.citations ?? []) };
 	},
 
 	capabilities: (agentId: string) => providerFor(agentId).capabilities,
