@@ -261,23 +261,30 @@ interface SandboxDriver {
 - 任务完成：`agent_settled` → 任务结果作为 `custom_message` 注入主会话（`pi.sendMessage({ customType: "task_result", … }, { deliverAs: "nextTurn" })`）+ 推送通知。
 - 任务可在 UI 查看实时日志、取消（`session.abort()`）、追加指令（`session.steer()`）。
 
-### 5.8 定时与事件触发（P2）
+### 5.8 定时与事件触发（P2，已实现）
 
-- `routines` 表：`trigger`（`cron` / `interval` / `webhook` / `poll:gmail` / `poll:github`）、`instructions`（保存时的原话，作为执行依据）、`agent_id`、`enabled`、`last_run_at`。
-- 到点 → 创建任务（同 5.7）。电脑睡眠错过的执行：唤醒后按“错过策略”（跳过 / 补跑一次）处理。
-- Webhook：`POST /hooks/<routineId>/<secret>`（需要远程访问时经隧道暴露）。
+- `routines` 表：`trigger`（`cron` / `webhook`）、`cron`（用户时区，默认 Asia/Shanghai）、`prompt`（保存时的完整指令，执行时看不到当时的对话）、`quiet`（免打扰，默认 23:00–07:00，落在时段内顺延）、`status`（active/paused）、`next_run_at`；`routine_runs` 记运行历史（schedule / catchup / webhook / manual，done / failed / skipped）。
+- 最小间隔 5 分钟（校验 cron 相邻两次触发）。调度器每 30 秒 tick：到点 → 用 TaskManager 起后台任务（同 5.7，不需要任何客户端在线）→ 结果写入助理当前对话 + Web Push。上一次还在跑则记“跳过”。电脑睡眠错过：唤醒后补跑一次（catchup），不会连补多次。
+- Webhook：`POST /hooks/<routineId>/<secret>`（免登录、常量时间比较 secret、每个 routine 2 次/分钟 + 每 IP 10 次/分钟限流），请求体作为附加上下文。
+- 助理工具（`packages/ext-routines`）：`routine_create` / `routine_update`（**需要审批卡片**，卡片里写清楚时间与指令）、`routine_list`、`routine_control`（暂停/恢复免审批，删除需审批）。UI：助理信息面板 › 定时任务（新建/编辑、预设、cron 预览“下次运行”、运行历史、立即运行、暂停/恢复、删除、复制 Webhook 地址）。
 - 定时任务里的发送类动作：保存 routine 时用户明确授权的（如“每天把摘要发到我自己的邮箱”）记为 routine 级授权，其余仍需审批（异步：Web Push 推到手机等你点）。
 
-### 5.9 记忆（P2）
+### 5.9 记忆（P2，已实现 basic 后端）
 
-- `memory_facts`（key/value + 来源 + 更新时间，如“名字：deng”“时区：Asia/Shanghai”），`memory_log`（按日日志）。
-- `before_agent_start`：注入 profile 全部事实 + 最近 3 天日志摘要 + 与当前输入 FTS 匹配的 top-k 条目（总预算 ~2k tokens）。
-- 工具：`memory_write`、`memory_search`、`memory_forget`；UI 可查看/编辑/删除。
+- **可插拔**：`packages/server/src/memory/types.ts` 定义与后端无关的 `MemoryProvider`（`init/health/ensureBank/remember/recall/reflect?/list/forget/bootContext?/export?/import?/shutdown` + capabilities 标志），每个助理一个 bank（`agent_<id>`），另有共享 bank `user`。扩展（`ext-memory`）与 UI 只依赖这一层，不知道 SQLite。可全局选择后端，也可按助理覆盖。
+- **basic 后端**（默认）：SQLite + FTS5 trigram（中文可检索，短词回退 LIKE）。三层：事实（fact，`before_agent_start` 每轮注入）、日志（experience，带日期）、便签（note，默认 7 天过期）。三种作用域：共享·关于你（所有助理可见）/ 仅此助理 / 仅当前对话。写入前过密钥扫描，疑似密钥直接拒绝。
+- 工具：`memory_remember`、`memory_recall`、`memory_forget`（后端支持时还有 `memory_reflect`）；UI：助理信息面板 › 记忆（搜索、筛选、添加、编辑、删除、导出 JSON），设置 › 记忆（选择后端、能力对照）。
+- **高级后端：只做 Hindsight**（MemOS 已放弃）。三个模型分别可选：记忆用 LLM（从任何已配置的 Pi / 自定义模型服务里选，默认便宜快速的那个，与聊天模型分开）、向量模型（默认本地多语言 ONNX，如 multilingual-e5-small / bge-m3，或在线 OpenAI 兼容接口）、重排序（本地 / 在线如硅基流动、百炼 / 关闭）。Hindsight 不可用时自动回退 basic。运行方式见 §5.19。
 
-### 5.10 技能（P2）
+### 5.10 技能（P2，已实现）
 
-- 目录：`data/skills/<name>/SKILL.md`（用户/助理写的）+ 内置技能（随 App 打包，只读）。通过 `DefaultResourceLoader` 的技能路径加载，直接用 Pi 原生发现与按需加载机制。
-- 助理完成一个多步流程后可以提议“存成技能”（写文件属于工作区内操作，免审批；UI 显示新技能）。
+- 目录：`data/skills/<name>/SKILL.md`（用户/助理写的）+ 内置技能（`packages/server/skills/`，随 App 打包，只读：web-research、weekly-report、csv-chart）。通过 `DefaultResourceLoader` 的 `additionalSkillPaths` 加载，直接用 Pi 原生发现与按需加载机制（模型只看到名称 + 描述）。沙箱对技能目录只开放只读。
+- 助理工具（`ext-skills`）：`skill_save`（新建/更新，免审批，UI 实时出现）、`skill_delete`（需审批）。技能变化会让下一轮会话重新加载。UI：设置 › 技能库（我的 / 内置、查看、编辑、复制内置为我的、删除）。
+
+### 5.10.1 对话与上下文整理（P2，已实现）
+
+- 每个助理有多个对话（`conversations` 表，每个对话一个 Pi 会话文件），聊天头部的对话菜单可新建、切换、重命名、删除；第一条消息自动成为标题。
+- 上下文快满时 Pi 自动 compaction；也可以手动“整理上下文”。整理结果在聊天里显示为一条可展开的系统消息（摘要内容）。
 
 ### 5.11 审批闸门（P1，最重要的安全组件）
 
@@ -536,6 +543,23 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
   - **反应**：最后一条用户消息处理中显示 👀；小任务（≤3 步且无错误）完成后在该消息上打 ✓。
   - **悬浮圆角输入框**：拖拽文件到对话区、直接粘贴图片即可附带；工作中发送键变为停止键。
 
+### 5.19 隔离：永远只用我们自己打包的 Pi 和 Hindsight
+
+用户电脑上可能已经装了 Pi（`~/.pi/agent`）或 Hindsight。我们**从不使用、读取或修改**它们：
+
+- **Pi**：作为 npm 依赖打进安装包，代码只从我们自己的 `node_modules` 加载，不找 PATH 上的 `pi`。
+  - 启动时（`config.ts`）强制设置 `PI_CODING_AGENT_DIR=<数据目录>/pi-agent`、`PI_CODING_AGENT_SESSION_DIR=<数据目录>/pi-agent/sessions`（覆盖外部环境里的同名变量），所以 Pi 任何“默认路径”（auth.json、models.json、models-store、settings、keybindings、崩溃日志）都落在我们的目录。
+  - 我们显式传入：凭据存储（自己的加密存储）、`modelsPath=<数据目录>/models.json`、每个助理的 `agentDir=<数据目录>/agents/<id>`、会话目录、内存版 SettingsManager。
+  - `DefaultResourceLoader`：`noExtensions: true`（只加载我们内联注册的扩展，不自动发现 `~/.pi/agent/extensions` 和项目 `.pi/extensions`）；`noContextFiles / noPromptTemplates / noThemes`；`skillsOverride` 只保留**我们自己目录**（内置技能、`data/skills`、助理 agentDir）里的技能——Pi 默认还会扫描 `~/.agents/skills` 和工作区祖先目录的 `.agents/skills`，这些一律丢弃。
+  - 测试：`packages/server/test/isolation.test.ts` 伪造一个装过 Pi 的 HOME（含扩展、技能、auth、models、settings，以及 `~/.agents/skills`，并把外部 `PI_CODING_AGENT_DIR` 指向它），创建会话并对话一轮，断言没有加载其中任何东西、HOME 下没有任何文件被创建或修改（文件树 + 大小 + mtime 快照对比）。去掉上述过滤后该测试会失败（已验证，能抓到 `~/.agents/skills` 泄漏）。
+- **Hindsight**（实现时遵守）：
+  - 自己的 uv：`<数据目录>/bin/uv`（固定版本 + SHA256，见 `third-party.json`），`UV_CACHE_DIR`、`UV_PYTHON_INSTALL_DIR`、`UV_TOOL_DIR` 都指向 `<数据目录>/hindsight/`；Python 也由 uv 装进这个目录，不用系统 Python、不碰用户自己的 `~/.cache/uv`、pip、venv。国内镜像（PyPI / HuggingFace）可在设置里切换。
+  - 自己的数据：`HINDSIGHT_*` 数据目录与内嵌 PostgreSQL（pg0）放在 `<数据目录>/hindsight/data`；模型缓存（ONNX 向量/重排序）放 `<数据目录>/hindsight/models`（`HF_HOME` 指过去）。
+  - 自己的端口：每次启动动态选一个空闲的 127.0.0.1 端口（不用默认 8888），只监听本机；启动后用我们生成的随机 API key 握手，确认连上的是**自己拉起的那个进程**（检查 PID + key），否则拒绝使用。
+  - **从不自动连接**已存在的 Hindsight（哪怕默认端口上正好有一个）；只有用户在设置里明确填了“远程 Hindsight 地址 + key”才会连外部实例。
+  - 生命周期由我们的服务管理：随服务启动/停止，崩溃自动重启（退避），失败回退 basic 后端。
+  - 测试同样要覆盖：伪造 HOME 下已有 Hindsight 配置与正在监听 8888 的假服务，断言我们不读、不连、不写 HOME。
+
 ## 6. 数据模型（SQLite，`data/data.db`）
 
 使用 Node 22 内置 `node:sqlite`（免原生编译，打包最省事；若遇到功能限制退回 `better-sqlite3`）+ Drizzle ORM 管迁移。
@@ -651,9 +675,12 @@ pi-assistant/
 - 验收：手机关掉 Wi‑Fi 用流量 → 扫电脑上的二维码 → 添加到主屏幕 → 发“写个脚本统计 workspace 里的 CSV 并画图” → 电脑执行 → 手机收到推送和图片；重启电脑后手机主屏幕图标仍能直接连上；中途杀掉服务能续跑。
 
 ### Phase 2 · 记忆、技能、定时、稳定地址（目标 3–4 周）
-- [ ] 记忆（事实 + 日志 + FTS 检索 + UI 管理）
-- [ ] 技能库（内置 + 用户 + 助理自建）
-- [ ] 定时与触发（cron、间隔、Webhook、错过策略、routine 级授权）
+- [x] 记忆（可插拔 MemoryProvider；basic：事实 + 日志 + 便签、三种作用域、FTS 中文检索、UI 管理）
+- [ ] 高级记忆后端 Hindsight（隔离运行，见 §5.19）
+- [x] 技能库（内置 + 用户 + 助理自建，Pi 原生技能机制）
+- [x] 定时与触发（cron、Webhook、免打扰、补跑、运行历史、助理创建需审批）；routine 级授权待做
+- [x] 多对话 + 上下文整理（Pi compaction）
+- [x] 隔离：只用自己打包的 Pi，不读写用户的 ~/.pi、~/.agents
 - [ ] 可选稳定地址：一键配置 cloudflared 命名隧道（用户自己的域名）或 Tailscale Serve/Funnel；此时 PWA 可直接由本地服务托管
 - [ ] L1 macOS `sandbox-exec`
 
