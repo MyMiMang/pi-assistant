@@ -1,0 +1,82 @@
+/**
+ * 等待用户回应的请求：审批（approval）与提问（question）。
+ * 先写数据库与聊天卡片，再广播 + Web Push；任一设备回应后 resolve 对应的 Promise。
+ */
+import { bus } from "./bus.ts";
+import { db, now, uid } from "./db.ts";
+import { insertMessage, updateMessage } from "./messages.ts";
+import { notify } from "./push.ts";
+
+type Resolver = (r: { approved?: boolean; answer?: string; note?: string }) => void;
+const pending = new Map<string, { resolve: Resolver; messageId: string }>();
+
+export interface RequestRow {
+	id: string;
+	agent_id: string;
+	task_id: string | null;
+	kind: "approval" | "question";
+	tool_name: string | null;
+	payload: string;
+	status: string;
+	answer: string | null;
+	created_at: number;
+	resolved_at: number | null;
+}
+
+function create(kind: "approval" | "question", agentId: string, taskId: string | null, toolName: string | null, payload: Record<string, unknown>, title: string) {
+	const id = uid(kind === "approval" ? "ap" : "q");
+	db.prepare("INSERT INTO requests(id, agent_id, task_id, kind, tool_name, payload, status, created_at) VALUES(?,?,?,?,?,?,?,?)").run(
+		id,
+		agentId,
+		taskId,
+		kind,
+		toolName,
+		JSON.stringify(payload),
+		"pending",
+		now(),
+	);
+	// 卡片显示在主聊天里（即使来自后台任务），这样手机上也能直接处理
+	const msg = insertMessage({ agentId, role: "card", meta: { kind, requestId: id, taskId, toolName, ...payload, status: "pending" } });
+	notify({ title, body: String(payload.summary ?? payload.question ?? ""), tag: id, url: `/?agent=${agentId}` });
+	return new Promise<{ approved?: boolean; answer?: string; note?: string }>((resolve) => pending.set(id, { resolve, messageId: msg.id }));
+}
+
+export const requests = {
+	approval(agentId: string, taskId: string | null, toolName: string, input: Record<string, unknown>, summary: string, risk: string) {
+		return create("approval", agentId, taskId, toolName, { input, summary, risk }, "需要你批准一个操作");
+	},
+	question(agentId: string, taskId: string | null, question: string, options: string[], allowFreeText: boolean) {
+		return create("question", agentId, taskId, null, { question, options, allowFreeText }, "助理有个问题想问你");
+	},
+	resolve(id: string, r: { approved?: boolean; answer?: string; note?: string }, by: string) {
+		const row = db.prepare("SELECT * FROM requests WHERE id = ?").get(id) as RequestRow | undefined;
+		if (!row) return { ok: false, error: "not_found" };
+		if (row.status !== "pending") return { ok: false, error: "already_resolved" };
+		const status = row.kind === "approval" ? (r.approved ? "approved" : "rejected") : "answered";
+		const answer = row.kind === "approval" ? (r.note ?? null) : (r.answer ?? "");
+		db.prepare("UPDATE requests SET status = ?, answer = ?, resolved_by = ?, resolved_at = ? WHERE id = ?").run(status, answer, by, now(), id);
+		const p = pending.get(id);
+		const msgRow = db.prepare("SELECT id FROM messages WHERE role = 'card' AND json_extract(meta, '$.requestId') = ?").get(id) as { id: string } | undefined;
+		if (msgRow) updateMessage(msgRow.id, { meta: { status, answer } });
+		bus.emit({ type: "request.resolved", id, status });
+		if (p) {
+			pending.delete(id);
+			p.resolve(r);
+		}
+		return { ok: true, status };
+	},
+	/** 启动时：上次进程里未完成的请求已失去等待者，标记为过期（续跑时 agent 会重新发起）。 */
+	expireStale() {
+		const rows = db.prepare("SELECT id FROM requests WHERE status = 'pending'").all() as { id: string }[];
+		for (const r of rows) {
+			db.prepare("UPDATE requests SET status = 'expired', resolved_at = ? WHERE id = ?").run(now(), r.id);
+			const m = db.prepare("SELECT id FROM messages WHERE role = 'card' AND json_extract(meta, '$.requestId') = ?").get(r.id) as { id: string } | undefined;
+			if (m) updateMessage(m.id, { meta: { status: "expired" } }, false);
+		}
+		return rows.length;
+	},
+	cancelForTask(taskId: string) {
+		const rows = db.prepare("SELECT id FROM requests WHERE status = 'pending' AND task_id = ?").all(taskId) as { id: string }[];
+		for (const r of rows) requests.resolve(r.id, { approved: false, answer: "（任务已取消）", note: "任务已取消" }, "system");
+	},
+};

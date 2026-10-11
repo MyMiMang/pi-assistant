@@ -3,11 +3,21 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "engines": { "node": ">=22.19" },
-  "workspaces": ["apps/*", "packages/*"],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "echo \"TODO: 并行启动 apps/daemon 与 apps/web\"",
-    "build": "echo \"TODO\"",
-    "check": "echo \"TODO: biome + tsc\""
+    "dev": "npm run build -w @huhao/web && HUHAO_MOCK=1 npm run dev -w @huhao/server",
+    "dev:web": "npm run dev -w @huhao/web",
+    "build": "npm run build -w @huhao/web",
+    "start": "npm run start -w @huhao/server",
+    "test": "npm test -w @huhao/server",
+    "typecheck": "npm run typecheck -w @huhao/server && tsc --noEmit -p apps/web",
+    "e2e": "npm run build && node e2e/run.mjs",
+    "check:pi": "node scripts/check-pi.mjs"
   }
 }
