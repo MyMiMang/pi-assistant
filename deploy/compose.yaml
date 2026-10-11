@@ -1,7 +1,7 @@
-# 开发/高级用户用：daemon + L2 Docker 沙箱。普通用户使用桌面安装包，不需要 Docker。
+# 开发/高级用户用：server + L2 Docker 沙箱。普通用户使用桌面安装包，不需要 Docker。
 services:
-  daemon:
-    build: { context: .., dockerfile: deploy/Dockerfile.daemon }
+  server:
+    build: { context: .., dockerfile: deploy/Dockerfile.server }
     ports: ["127.0.0.1:8787:8787"]
     env_file: ../.env
     environment:

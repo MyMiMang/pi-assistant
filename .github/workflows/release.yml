@@ -1,0 +1,24 @@
+# 骨架：打 v* tag 时构建 Mac/Windows 安装包并发布到 GitHub Releases（P1 实现）
+name: release
+on: { push: { tags: ["v*"] } }
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, target: aarch64-apple-darwin }
+          - { os: macos-13, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm install --ignore-scripts
+      - run: echo "TODO: npm run build（web + server.mjs + 下载校验 Node/cloudflared sidecar）"
+      # - uses: tauri-apps/tauri-action@v0
+      #   with: { projectPath: apps/tray, tagName: ${{ github.ref_name }}, releaseName: "胡好好 ${{ github.ref_name }}" }
+      #   env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }  # 签名证书就绪后加入 APPLE_* / WINDOWS_* secrets
