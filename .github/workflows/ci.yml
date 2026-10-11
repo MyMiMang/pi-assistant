@@ -1,11 +1,27 @@
 name: ci
-on: { push: { branches: [main] }, pull_request: {} }
+on:
+  push: { branches: [main] }
+  pull_request: {}
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install --ignore-scripts
-      - run: npm run check
+        with: { node-version: 22, cache: npm }
+      - run: npm ci --ignore-scripts
+      - name: Pi 版本兼容检查
+        run: npm run check:pi
+      - run: npm run typecheck
+      - name: 单元 + Pi 兼容性测试
+        run: npm test
+      - name: Rendezvous Worker 测试
+        run: npm test -w @huhao/rendezvous
+      - run: npm run build
+      - name: 端到端测试（Mock 模型 + 无头 Chrome）
+        run: |
+          npx playwright-core install chromium
+          CHROME=$(node -e "console.log(require('playwright-core').chromium.executablePath())") node e2e/run.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: e2e-screenshots, path: docs/screenshots }

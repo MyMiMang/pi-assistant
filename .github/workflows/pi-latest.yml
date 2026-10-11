@@ -1,0 +1,49 @@
+# 每周把 Pi 升级到 npm 最新版，跑全部测试；通过就自动开 PR（附测试结果），失败就开 issue 提醒。
+# 这保证我们始终能跟上 Pi 的更新：Pi 的 API 变化只会影响 packages/server/src/pi-adapter。
+name: pi-latest
+on:
+  schedule: [{ cron: "0 2 * * 1" }]   # 每周一 10:00（北京时间）
+  workflow_dispatch: {}
+permissions: { contents: write, pull-requests: write, issues: write }
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci --ignore-scripts
+      - id: bump
+        name: 升级 Pi 到最新版
+        run: |
+          BEFORE=$(node -p "require('./node_modules/@earendil-works/pi-coding-agent/package.json').version")
+          npm install --ignore-scripts -w @huhao/server @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest
+          AFTER=$(node -p "require('./node_modules/@earendil-works/pi-coding-agent/package.json').version")
+          echo "before=$BEFORE" >> "$GITHUB_OUTPUT"; echo "after=$AFTER" >> "$GITHUB_OUTPUT"
+      - name: 测试
+        if: steps.bump.outputs.before != steps.bump.outputs.after
+        id: test
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee /tmp/test.log
+          npm test 2>&1 | tee -a /tmp/test.log
+          npm run build
+          npx playwright-core install chromium
+          CHROME=$(node -e "console.log(require('playwright-core').chromium.executablePath())") node e2e/run.mjs 2>&1 | tee -a /tmp/test.log
+      - name: 测试通过 → 更新兼容基线并开 PR
+        if: steps.bump.outputs.before != steps.bump.outputs.after && steps.test.outcome == 'success'
+        run: node -e "require('fs').writeFileSync('packages/server/src/pi-adapter/compat.json', JSON.stringify({testedWith: '${{ steps.bump.outputs.after }}'}, null, 2) + '\n')"
+      - uses: peter-evans/create-pull-request@v7
+        if: steps.bump.outputs.before != steps.bump.outputs.after && steps.test.outcome == 'success'
+        with:
+          branch: deps/pi-${{ steps.bump.outputs.after }}
+          title: "deps: 升级 Pi ${{ steps.bump.outputs.before }} → ${{ steps.bump.outputs.after }}"
+          body: "自动升级。typecheck、单元测试、Pi 兼容性测试与 E2E 全部通过。合并后打 tag 即可通过托盘自动更新推送给用户。"
+          commit-message: "deps: 升级 Pi 到 ${{ steps.bump.outputs.after }}"
+      - name: 测试失败 → 开 issue
+        if: steps.bump.outputs.before != steps.bump.outputs.after && steps.test.outcome != 'success'
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh issue create --title "Pi ${{ steps.bump.outputs.after }} 兼容性测试失败" \
+            --body "$(printf '升级 Pi %s → %s 后测试失败，需要调整 packages/server/src/pi-adapter。\n\n```\n%s\n```' '${{ steps.bump.outputs.before }}' '${{ steps.bump.outputs.after }}' "$(tail -n 80 /tmp/test.log)")"
