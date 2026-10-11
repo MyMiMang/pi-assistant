@@ -5,22 +5,27 @@ import type { Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
 import { Plus } from "lucide-react";
+import { AgentEditor } from "./AgentEditor";
 import { Button, cx } from "./ui";
 import { BRAND } from "@pi-assistant/shared";
 
-/** 首次运行向导：欢迎 → 选模型服务 → 登录 → 默认模型 + 测试 → 完成。 */
+/** 首次运行向导：欢迎 → 选模型服务 → 登录 → 默认模型 → 创建第一个助理。已配置过模型（例如删光了助理）时直接进入最后一步。 */
 export default function Onboarding() {
-	const [step, setStep] = useState(0);
+	const hasModel = useStore((s) => !!s.system?.modelSetupDone);
+	const [step, setStep] = useState(hasModel ? 4 : 0);
 	const [provider, setProvider] = useState<Provider | null>(null);
 	const { providers, reload } = useProviders();
 	const custom = useCustomProviders();
 	const [customMode, setCustomMode] = useState(false);
-	const finish = async () => {
+	const finish = async (agentId: string) => {
 		await api("/api/settings", { method: "PUT", json: { onboarded: true } });
-		await useStore.getState().loadSystem();
+		const st = useStore.getState();
+		await st.loadAgents();
+		await st.selectAgent(agentId);
+		await st.loadSystem();
 	};
 	const current = provider ? (providers.find((p) => p.id === provider.id) ?? provider) : null;
-	const steps = ["欢迎", "选择模型服务", "登录", "默认模型"];
+	const steps = ["欢迎", "选择模型服务", "登录", "默认模型", "创建助理"];
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-100/90 p-0 backdrop-blur sm:p-6 dark:bg-zinc-950/90">
 			<div className="flex h-full w-full max-w-2xl flex-col overflow-hidden bg-white shadow-2xl sm:h-auto sm:max-h-[90dvh] sm:rounded-2xl dark:bg-zinc-900">
@@ -35,7 +40,7 @@ export default function Onboarding() {
 							<img src="/icon-512.png" className="mx-auto h-20 w-20 rounded-3xl shadow-lg" alt="" />
 							<h1 className="text-2xl font-bold">欢迎使用 {BRAND.name}</h1>
 							<p className="mx-auto max-w-md text-sm leading-relaxed text-zinc-500">
-								一个运行在你自己电脑上的私人助理：有自己的工作区，能写代码、处理文件、后台干活；手机扫码就能随时随地使用。
+								{BRAND.tagline}手机扫码就能随时随地使用。
 								<br />
 								开始前，需要连接一个 AI 模型服务。你的凭据只加密保存在这台电脑上。
 							</p>
@@ -72,14 +77,27 @@ export default function Onboarding() {
 						<div className="space-y-3">
 							<h2 className="text-lg font-semibold">选择默认模型</h2>
 							<p className="text-sm text-zinc-500">之后可以在「设置 → 模型」里随时更换，也可以给每个助理单独指定模型。</p>
-							<DefaultModelPicker providerId={current?.id} onSaved={finish} />
+							<DefaultModelPicker providerId={current?.id} onSaved={() => void api("/api/settings", { method: "PUT", json: { onboarded: true } }).then(() => setStep(4))} />
+						</div>
+					)}
+					{step === 4 && (
+						<div className="space-y-4">
+							<div>
+								<h2 className="text-lg font-semibold">创建你的第一个助理</h2>
+								<p className="text-sm text-zinc-500">给它起个名字、挑个头像。之后可以随时再创建更多助理，每个都有自己的人设、模型、记忆和电脑。</p>
+							</div>
+							<AgentEditor showModel={false} submitLabel="创建并开始" onDone={(a) => void finish(a.id)} />
 						</div>
 					)}
 				</div>
-				<div className="flex items-center justify-between border-t border-zinc-200 px-6 py-4 dark:border-zinc-800">
-					<Button variant="ghost" onClick={() => (step === 0 ? finish() : setStep(step - 1))}>
-						{step === 0 ? "稍后再说" : "上一步"}
-					</Button>
+				<div className={cx("flex items-center justify-between border-t border-zinc-200 px-6 py-4 dark:border-zinc-800", step === 4 && "hidden")}>
+					{step > 0 ? (
+						<Button variant="ghost" onClick={() => setStep(step - 1)}>
+							上一步
+						</Button>
+					) : (
+						<span />
+					)}
 					{step === 0 && (
 						<Button variant="primary" onClick={() => setStep(1)}>
 							开始设置

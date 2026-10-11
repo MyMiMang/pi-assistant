@@ -40,6 +40,7 @@ async function waitFor(fn, ms = 15_000) {
 	throw new Error("timeout");
 }
 const results = [];
+let AGENT = "";
 async function step(name, fn) {
 	try {
 		await fn();
@@ -64,9 +65,9 @@ const send = async (text) => {
 	await page.locator("main textarea").press("Enter");
 };
 
-await step("首次运行向导（选择 provider → 登录 → 默认模型）", async () => {
+await step("首次运行向导（选择 provider → 登录 → 默认模型 → 创建第一个助理）", async () => {
 	await page.goto(BASE);
-	await page.getByText("欢迎使用胡好好").waitFor();
+	await page.getByText("欢迎使用 Pi Assistant").waitFor();
 	await page.screenshot({ path: join(SHOTS, "01-onboarding-welcome.png") });
 	await page.getByRole("button", { name: "开始设置" }).click();
 	await page.getByText("选择模型服务").first().waitFor();
@@ -89,7 +90,18 @@ await step("首次运行向导（选择 provider → 登录 → 默认模型）"
 	await page.getByText(/连接成功/).waitFor();
 	await page.screenshot({ path: join(SHOTS, "03-onboarding-default-model.png") });
 	await page.getByRole("button", { name: "设为默认模型" }).click();
-	await page.getByText("欢迎使用胡好好").waitFor({ state: "detached" });
+	// 不再有预置助理：引导用户创建并命名第一个助理
+	await page.getByText("创建你的第一个助理").waitFor();
+	await page.getByRole("button", { name: "Nova", exact: true }).click();
+	await page.getByRole("button", { name: "🦊" }).click();
+	await page.waitForTimeout(200);
+	await page.screenshot({ path: join(SHOTS, "03b-onboarding-create-agent.png") });
+	await page.getByRole("button", { name: "创建并开始" }).click();
+	await page.getByText("欢迎使用 Pi Assistant").waitFor({ state: "detached" });
+	await page.locator("main").getByText("你好，我是Nova").waitFor();
+	const agents = await (await fetch(`${BASE}/api/agents`)).json();
+	if (agents.length !== 1 || agents[0].name !== "Nova") throw new Error(`助理列表异常: ${JSON.stringify(agents.map((a) => a.name))}`);
+	AGENT = agents[0].id;
 });
 
 await step("发送消息并看到流式回复", async () => {
@@ -236,18 +248,47 @@ await step("深色模式截图", async () => {
 	await d.close();
 });
 
+await step("多个助理：新建第二个助理 → 侧边栏列出 → 上传头像 / 改名", async () => {
+	await page.getByRole("button", { name: "新建助理" }).first().click();
+	const dlg = page.locator("div.fixed.inset-0");
+	await dlg.getByPlaceholder("给助理起个名字").fill("研究员小R");
+	await dlg.getByRole("button", { name: "研究员" }).click();
+	await dlg.getByRole("button", { name: "🦉" }).click();
+	await page.screenshot({ path: join(SHOTS, "16-new-agent.png") });
+	await dlg.getByRole("button", { name: "创建", exact: true }).click();
+	await page.locator("main").getByText("你好，我是研究员小R").waitFor();
+	const list = await (await fetch(`${BASE}/api/agents`)).json();
+	if (list.length !== 2) throw new Error(`应有 2 个助理，实际 ${list.length}`);
+	// 第三个助理（纯 API），让侧边栏更像真实使用
+	await fetch(`${BASE}/api/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "写作助手", avatar: "✍️", color: "#ec4899", description: "写文章、润色、翻译" }) });
+	// 编辑第二个助理：上传图片头像 + 改名
+	await page.locator("aside").last().getByRole("button", { name: "设置", exact: true }).click();
+	await page.locator("[data-testid=avatar-file]").setInputFiles(join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"));
+	await page.getByPlaceholder("给助理起个名字").fill("研究员 R");
+	await page.getByRole("button", { name: "保存", exact: true }).click();
+	await page.getByRole("button", { name: "已保存" }).waitFor();
+	const r = (await (await fetch(`${BASE}/api/agents`)).json()).find((a) => a.name === "研究员 R");
+	if (!r?.avatar.startsWith("img:")) throw new Error("头像未保存为图片");
+	if ((await fetch(`${BASE}/api/agents/${r.id}/avatar`)).status !== 200) throw new Error("头像图片取不到");
+	await page.waitForTimeout(500);
+	await page.screenshot({ path: join(SHOTS, "17-multi-agents-edit-avatar.png") });
+	// 切回第一个助理
+	await page.locator("aside").first().getByText("Nova").first().click();
+	await page.locator("main").getByText("你好，我是Nova").waitFor();
+});
+
 let before = 0;
 await step("重启服务后历史仍在 + 未完成工作自动续跑", async () => {
-	before = (await (await fetch(`${BASE}/api/agents/huhao/messages`)).json()).length;
+	before = (await (await fetch(`${BASE}/api/agents/${AGENT}/messages`)).json()).length;
 	// 发起一个耗时命令，执行中途杀掉服务
-	await fetch(`${BASE}/api/agents/huhao/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "统计工作区文件" }) });
+	await fetch(`${BASE}/api/agents/${AGENT}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "统计工作区文件" }) });
 	await new Promise((r) => setTimeout(r, 900));
 	await stopServer();
 	await startServer();
 	await page.reload();
 	await page.locator("main").getByText("服务已重启，正在继续上次未完成的工作").last().waitFor({ timeout: 15_000 });
 	await page.locator("main").getByText("报告已经生成并发给你了").last().waitFor();
-	const after = (await (await fetch(`${BASE}/api/agents/huhao/messages`)).json()).length;
+	const after = (await (await fetch(`${BASE}/api/agents/${AGENT}/messages`)).json()).length;
 	if (after <= before) throw new Error(`消息数 ${before} → ${after}`);
 	await page.waitForTimeout(3000);
 	await page.screenshot({ path: join(SHOTS, "15-after-restart.png") });

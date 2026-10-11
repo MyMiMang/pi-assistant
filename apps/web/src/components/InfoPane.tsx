@@ -6,6 +6,7 @@ import { t } from "../i18n";
 import { useStore } from "../store";
 import type { Attachment, ModelInfo } from "../types";
 import { AuthImage } from "./Attachments";
+import { AgentEditor } from "./AgentEditor";
 import { Avatar, Badge, Button, cx, fmtSize, fmtTime, Input } from "./ui";
 
 const TABS = [
@@ -24,7 +25,7 @@ export default function InfoPane({ agentId }: { agentId: string }) {
 	return (
 		<div className="safe-top flex h-full flex-col">
 			<div className="flex items-center gap-3 px-4 pt-4 pb-3">
-				<Avatar text={agent.avatar} color={agent.color} size={40} running={agent.status === "running"} />
+				<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={40} running={agent.status === "running"} />
 				<div className="min-w-0 flex-1">
 					<div className="truncate font-semibold">{agent.name}</div>
 					<div className="text-xs text-zinc-500">{agent.status === "running" ? t("正在工作") : t("空闲")}</div>
@@ -183,48 +184,7 @@ function Computer({ agentId }: { agentId: string }) {
 }
 
 function AgentSettings({ agentId }: { agentId: string }) {
-	const agent = useStore((s) => s.agents.find((a) => a.id === agentId))!;
-	const [name, setName] = useState(agent.name);
-	const [persona, setPersona] = useState(agent.persona);
-	const [model, setModel] = useState(agent.model_provider && agent.model_id ? `${agent.model_provider}/${agent.model_id}` : "");
-	const [models, setModels] = useState<ModelInfo[]>([]);
-	const [saved, setSaved] = useState(false);
-	useEffect(() => {
-		Promise.all([api("/api/models/providers"), api<ModelInfo[]>("/api/models")]).then(([ps, ms]) => {
-			const ok = new Set((ps as { id: string; configured: boolean }[]).filter((p) => p.configured).map((p) => p.id));
-			setModels(ms.filter((m) => ok.has(m.provider)));
-		});
-	}, []);
-	const save = async () => {
-		const [provider, ...rest] = model.split("/");
-		await api(`/api/agents/${agentId}`, { method: "PATCH", json: { name, persona, avatar: name.slice(0, 1), model: model ? { provider, id: rest.join("/") } : null } });
-		setSaved(true);
-		setTimeout(() => setSaved(false), 1500);
-	};
-	return (
-		<div className="space-y-4 text-sm">
-			<label className="block space-y-1">
-				<span className="text-xs text-zinc-500">名字</span>
-				<Input value={name} onChange={(e) => setName(e.target.value)} />
-			</label>
-			<label className="block space-y-1">
-				<span className="text-xs text-zinc-500">模型</span>
-				<select value={model} onChange={(e) => setModel(e.target.value)} className="h-9 w-full rounded-lg border border-zinc-300 bg-white px-2 dark:border-zinc-700 dark:bg-zinc-900">
-					<option value="">跟随默认模型</option>
-					{models.map((m) => (
-						<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
-							{m.provider} / {m.name}
-						</option>
-					))}
-				</select>
-			</label>
-			<label className="block space-y-1">
-				<span className="text-xs text-zinc-500">人设与偏好</span>
-				<textarea value={persona} onChange={(e) => setPersona(e.target.value)} className="h-32 w-full rounded-lg border border-zinc-300 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900" placeholder="例如：回答要简洁；称呼我 deng" />
-			</label>
-			<Button variant="primary" onClick={save}>
-				{saved ? "已保存" : t("保存")}
-			</Button>
-		</div>
-	);
+	const agent = useStore((s) => s.agents.find((a) => a.id === agentId));
+	if (!agent) return null;
+	return <AgentEditor agent={agent} />;
 }

@@ -4,7 +4,7 @@ export interface Message {
 	content: string; meta: Record<string, any> & { attachments?: Attachment[] }; status: string; created_at: number; updated_at: number;
 }
 export interface Agent {
-	id: string; name: string; avatar: string; color: string; persona: string; status: string; unread: number;
+	id: string; name: string; avatar: string; color: string; persona: string; description: string; status: string; unread: number;
 	model: { provider: string; id: string } | null; model_provider: string | null; model_id: string | null; workspace: string;
 	last?: { content: string; role: string; created_at: number } | null;
 }
@@ -14,7 +14,7 @@ export interface ModelInfo { provider: string; id: string; name: string; reasoni
 export interface TunnelStatus { enabled: boolean; state: string; url: string | null; error?: string; rendezvous: { state: string; at?: number; error?: string }; binary: string | null }
 export interface SystemInfo {
 	serverId: string; publicKey: string; pi: { version: string; testedWith: string; compatible: boolean; message: string }; mock: boolean; local: boolean;
-	deviceId: string | null; onboarded: boolean; defaultModel: { provider: string; id: string } | null; credentialBackend: string;
+	deviceId: string | null; onboarded: boolean; modelSetupDone?: boolean; defaultModel: { provider: string; id: string } | null; credentialBackend: string;
 	sandbox: { mode: string; preference: string; dockerAvailable: boolean }; entryDomain: string | null; tunnel: TunnelStatus;
 	workspaceRoot: string; push: { publicKey: string }; seq: number;
 }

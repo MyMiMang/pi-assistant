@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
-import { type ButtonHTMLAttributes, type ReactNode, useEffect } from "react";
+import { type ButtonHTMLAttributes, type ReactNode, useEffect, useState } from "react";
+import { fetchBlob } from "../api";
 
 export function cx(...c: (string | false | null | undefined)[]) {
 	return c.filter(Boolean).join(" ");
@@ -25,12 +26,31 @@ export function Button({ variant = "default", size = "md", className, ...p }: Bu
 	);
 }
 
-export function Avatar({ text, color, size = 36, running }: { text: string; color: string; size?: number; running?: boolean }) {
+const avatarCache = new Map<string, Promise<string>>();
+/** 头像：emoji / 文字（彩色圆底）或上传的图片（avatar = "img:<版本>"，需带 agentId）。 */
+export function Avatar({ text, color, size = 36, running, agentId, src }: { text: string; color: string; size?: number; running?: boolean; agentId?: string; src?: string }) {
+	const isImg = text.startsWith("img:") && !!agentId;
+	const [url, setUrl] = useState<string | null>(src ?? null);
+	useEffect(() => {
+		if (src) return setUrl(src);
+		if (!isImg) return setUrl(null);
+		const key = `${agentId}:${text}`;
+		let p = avatarCache.get(key);
+		if (!p) avatarCache.set(key, (p = fetchBlob(`/api/agents/${agentId}/avatar?v=${text.slice(4)}`).then((b) => URL.createObjectURL(b))));
+		let live = true;
+		p.then((u) => live && setUrl(u)).catch(() => {});
+		return () => void (live = false);
+	}, [isImg, agentId, text, src]);
+	const emojiOnly = /\p{Extended_Pictographic}/u.test(text);
 	return (
 		<div className="relative shrink-0" style={{ width: size, height: size }}>
-			<div className="flex h-full w-full items-center justify-center rounded-full font-semibold text-white" style={{ background: color, fontSize: size * 0.42 }}>
-				{text}
-			</div>
+			{url ? (
+				<img src={url} alt="" className="h-full w-full rounded-full object-cover" />
+			) : (
+				<div className="flex h-full w-full items-center justify-center rounded-full font-semibold text-white select-none" style={{ background: color, fontSize: size * (emojiOnly ? 0.52 : 0.42) }}>
+					{isImg ? "" : text}
+				</div>
+			)}
 			{running && <span className="absolute -right-0.5 -bottom-0.5 h-3 w-3 animate-pulse rounded-full border-2 border-white bg-emerald-500 dark:border-zinc-900" />}
 		</div>
 	);

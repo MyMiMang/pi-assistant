@@ -39,6 +39,7 @@ export interface AgentRow {
 	avatar: string;
 	color: string;
 	persona: string;
+	description: string;
 	model_provider: string | null;
 	model_id: string | null;
 	status: string;
@@ -80,7 +81,7 @@ function setTask(id: string, patch: Partial<TaskRow>) {
 }
 
 const SYSTEM_RULES = (name: string, workspace: string, persona: string) => [
-	`你是「${name}」，用户的私人助理，运行在用户自己的电脑上。默认使用简体中文回复，语气简洁友好。用户时区 Asia/Shanghai。`,
+	`你是「${name}」，一个通用 AI 助理，运行在用户自己的电脑上，有自己的电脑（工作区，以及开启后的完整桌面）。你能写代码、运行命令、处理文件、操作网页和桌面应用，目标是替用户把事情真正做完。默认使用简体中文回复，语气简洁友好。用户时区 Asia/Shanghai。`,
 	`你有自己的工作区目录（${workspace}），可以在里面写代码、运行命令、生成文件。只在工作区内工作。`,
 	"收到需要动手的任务时，先用一句话确认你要做什么，再开始执行；做完后简要汇报结果。",
 	"生成了用户需要的文件（报告、图片、表格等）后，必须调用 deliver_file 把文件发给用户。",
@@ -280,6 +281,14 @@ class AgentRuntime {
 }
 
 const runtimes = new Map<string, AgentRuntime>();
+/** 删除助理时释放它的会话 */
+export async function disposeRuntime(agentId: string) {
+	const r = runtimes.get(agentId);
+	if (!r) return;
+	await r.abort().catch(() => {});
+	if (r.session) disposeSession(r.session);
+	runtimes.delete(agentId);
+}
 export function runtime(agentId: string) {
 	let r = runtimes.get(agentId);
 	if (!r) runtimes.set(agentId, (r = new AgentRuntime(agentId)));
@@ -375,10 +384,7 @@ export const tasks = {
 // ---------------------------------------------------------------- 启动恢复
 
 export async function bootstrap() {
-	if (listAgents().length === 0) {
-		db.prepare("INSERT INTO agents(id, name, avatar, color, persona, sort, created_at) VALUES(?,?,?,?,?,?,?)").run("huhao", "胡好好", "好", "#6366f1", "", 0, now());
-		insertMessage({ agentId: "huhao", role: "assistant", content: "嗨！我是胡好好，你的私人助理 👋\n\n我有自己的工作区，可以帮你写代码、处理文件、在后台干活。有什么想交给我的？" });
-	}
+	// 不再预置任何助理：首次运行向导里由用户创建并命名第一个助理
 	const expired = requests.expireStale();
 	db.prepare("UPDATE messages SET status = 'interrupted' WHERE status IN ('streaming', 'running')").run();
 	// 主会话：上次运行中被中断 → 自动续跑

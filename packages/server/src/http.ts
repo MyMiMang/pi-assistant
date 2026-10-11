@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -22,7 +22,7 @@ import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-pro
 import { checkPiCompat } from "./pi-adapter/index.ts";
 import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
-import { getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
+import { disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
 import { desktopPause, desktopStatus, issueTicket, screenshotDesktop, startDesktop, stopDesktop, useTicket } from "./desktop.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
@@ -82,7 +82,8 @@ app.get("/api/system", async (c) =>
 		mock: config.mock,
 		local: c.get("caller").local,
 		deviceId: c.get("caller").deviceId,
-		onboarded: getSetting("onboarded", false) && !!defaultModel(),
+		onboarded: getSetting("onboarded", false) && !!defaultModel() && listAgents().length > 0,
+		modelSetupDone: getSetting("onboarded", false) && !!defaultModel(),
 		defaultModel: defaultModel(),
 		credentialBackend,
 		sandbox: { mode: await sandboxMode(), preference: getSetting("sandbox", config.sandbox), dockerAvailable: await dockerAvailable() },
@@ -187,26 +188,71 @@ const agentJson = (a: NonNullable<ReturnType<typeof getAgent>>) => {
 	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), workspace: join(config.workspaceRoot, a.id), last };
 };
 app.get("/api/agents", (c) => c.json(listAgents().map(agentJson)));
+type AgentInput = { name?: string; avatar?: string; color?: string; persona?: string; description?: string; model?: { provider: string; id: string } | null };
+const cleanAvatar = (v: string | undefined, name: string) => {
+	const t = (v ?? "").trim();
+	if (t.startsWith("img:")) return t; // 上传的图片（img:<版本>）
+	return [...(t || name.trim() || "A")].slice(0, 2).join(""); // emoji 或 1–2 个字
+};
 app.post("/api/agents", async (c) => {
-	const b = await c.req.json<{ name: string; avatar?: string; color?: string; persona?: string }>();
-	const id = `a${Date.now().toString(36)}`;
-	db.prepare("INSERT INTO agents(id, name, avatar, color, persona, sort, created_at) VALUES(?,?,?,?,?,?,?)").run(
-		id, b.name.slice(0, 40) || "新助理", (b.avatar || b.name.slice(0, 1) || "新").slice(0, 2), b.color || "#0ea5e9", b.persona ?? "", listAgents().length, now(),
+	const b = await c.req.json<AgentInput>();
+	const name = (b.name ?? "").trim().slice(0, 40);
+	if (!name) return c.json({ error: "请给助理起个名字" }, 400);
+	const id = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+	const model = b.model && models.getModel(b.model.provider, b.model.id) ? b.model : null;
+	db.prepare("INSERT INTO agents(id, name, avatar, color, persona, description, model_provider, model_id, sort, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(
+		id, name, cleanAvatar(b.avatar, name), b.color || "#6366f1", (b.persona ?? "").slice(0, 8000), (b.description ?? "").slice(0, 200), model?.provider ?? null, model?.id ?? null, listAgents().length, now(),
 	);
-	insertMessage({ agentId: id, role: "assistant", content: `你好，我是${b.name}。有什么可以帮你？` });
+	insertMessage({ agentId: id, role: "assistant", content: `你好，我是${name} 👋\n\n我有自己的电脑，可以写代码、处理文件、上网查资料、操作网页和桌面应用，也能把耗时的活放到后台去做。想让我做点什么？` });
 	bus.emit({ type: "agents.changed" });
 	return c.json(agentJson(getAgent(id)!));
 });
 app.patch("/api/agents/:id", async (c) => {
 	const a = getAgent(c.req.param("id"));
 	if (!a) return c.json({ error: "not_found" }, 404);
-	const b = await c.req.json<{ name?: string; avatar?: string; color?: string; persona?: string; model?: { provider: string; id: string } | null }>();
-	db.prepare("UPDATE agents SET name = ?, avatar = ?, color = ?, persona = ?, model_provider = ?, model_id = ? WHERE id = ?").run(
-		b.name ?? a.name, b.avatar ?? a.avatar, b.color ?? a.color, b.persona ?? a.persona,
+	const b = await c.req.json<AgentInput>();
+	const name = b.name !== undefined ? b.name.trim().slice(0, 40) || a.name : a.name;
+	db.prepare("UPDATE agents SET name = ?, avatar = ?, color = ?, persona = ?, description = ?, model_provider = ?, model_id = ? WHERE id = ?").run(
+		name, b.avatar !== undefined ? cleanAvatar(b.avatar, name) : a.avatar, b.color ?? a.color, b.persona ?? a.persona, b.description ?? a.description,
 		b.model === undefined ? a.model_provider : (b.model?.provider ?? null), b.model === undefined ? a.model_id : (b.model?.id ?? null), a.id,
 	);
 	bus.emit({ type: "agents.changed" });
 	return c.json(agentJson(getAgent(a.id)!));
+});
+app.delete("/api/agents/:id", async (c) => {
+	const a = getAgent(c.req.param("id"));
+	if (!a) return c.json({ error: "not_found" }, 404);
+	await disposeRuntime(a.id);
+	for (const t of ["messages", "tasks", "requests", "files"]) db.prepare(`DELETE FROM ${t} WHERE agent_id = ?`).run(a.id);
+	db.prepare("DELETE FROM agents WHERE id = ?").run(a.id);
+	// 工作区与会话移到回收站（不直接删除，误删可找回）
+	const trash = join(config.dataDir, "trash", `${a.id}-${Date.now()}`);
+	mkdirSync(trash, { recursive: true });
+	for (const [src, dst] of [[join(config.workspaceRoot, a.id), "workspace"], [join(config.agentsDir, a.id), "agent"]] as const) if (existsSync(src)) renameSync(src, join(trash, dst));
+	rmSync(join(config.dataDir, "avatars", a.id), { force: true, recursive: true });
+	bus.emit({ type: "agents.changed" });
+	return c.json({ ok: true });
+});
+app.post("/api/agents/:id/avatar", async (c) => {
+	const a = getAgent(c.req.param("id"));
+	if (!a) return c.json({ error: "not_found" }, 404);
+	const f = (await c.req.parseBody()).file;
+	if (!(f instanceof File)) return c.json({ error: "no_file" }, 400);
+	if (!/^image\/(png|jpeg|webp|gif)$/.test(f.type)) return c.json({ error: "只支持 PNG / JPG / WebP / GIF" }, 400);
+	if (f.size > 2 * 1024 * 1024) return c.json({ error: "头像图片不能超过 2MB" }, 413);
+	const dir = join(config.dataDir, "avatars", a.id);
+	rmSync(dir, { force: true, recursive: true });
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, `avatar.${f.type.split("/")[1]}`), Buffer.from(await f.arrayBuffer()));
+	db.prepare("UPDATE agents SET avatar = ? WHERE id = ?").run(`img:${Date.now().toString(36)}`, a.id);
+	bus.emit({ type: "agents.changed" });
+	return c.json(agentJson(getAgent(a.id)!));
+});
+app.get("/api/agents/:id/avatar", (c) => {
+	const dir = join(config.dataDir, "avatars", c.req.param("id").replace(/[^a-zA-Z0-9_-]/g, ""));
+	const f = existsSync(dir) ? readdirSync(dir)[0] : undefined;
+	if (!f) return c.json({ error: "not_found" }, 404);
+	return c.body(readFileSync(join(dir, f)), 200, { "content-type": `image/${f.split(".").pop() === "jpeg" ? "jpeg" : f.split(".").pop()}`, "cache-control": "private, max-age=31536000, immutable" });
 });
 app.get("/api/agents/:id/messages", (c) => {
 	const before = c.req.query("before");

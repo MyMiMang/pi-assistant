@@ -3,10 +3,10 @@ import { useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
+import { AgentEditor } from "./AgentEditor";
 import { Avatar, Button, cx, fmtTime, Input, Modal } from "./ui";
 import { BRAND } from "@pi-assistant/shared";
 
-const COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#8b5cf6", "#14b8a6"];
 
 export default function Sidebar() {
 	const { agents, current, set, system, conn, tasks } = useStore();
@@ -37,7 +37,7 @@ export default function Sidebar() {
 						onClick={() => set({ current: a.id, drawer: false })}
 						className={cx("flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition", a.id === current ? "bg-white shadow-sm dark:bg-zinc-800" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60")}
 					>
-						<Avatar text={a.avatar} color={a.color} running={a.status === "running"} />
+						<Avatar agentId={a.id} text={a.avatar} color={a.color} running={a.status === "running"} />
 						<div className="min-w-0 flex-1">
 							<div className="flex items-center gap-2">
 								<span className="truncate text-sm font-medium">{a.name}</span>
@@ -76,43 +76,18 @@ export default function Sidebar() {
 }
 
 function NewAgent({ open, onClose }: { open: boolean; onClose: () => void }) {
-	const [name, setName] = useState("");
-	const [persona, setPersona] = useState("");
-	const [color, setColor] = useState(COLORS[1]);
-	const create = async () => {
-		const a = await api("/api/agents", { method: "POST", json: { name: name || "新助理", persona, color, avatar: (name || "新").slice(0, 1) } });
-		useStore.getState().set({ current: a.id });
-		await useStore.getState().loadAgents();
-		setName("");
-		setPersona("");
-		onClose();
-	};
 	return (
 		<Modal open={open} onClose={onClose} title={t("新建助理")}>
-			<div className="space-y-4 p-5">
-				<div className="flex items-center gap-3">
-					<Avatar text={(name || "新").slice(0, 1)} color={color} size={48} />
-					<Input placeholder="名字，例如：写作助理" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-				</div>
-				<div className="flex gap-2">
-					{COLORS.map((c) => (
-						<button key={c} onClick={() => setColor(c)} className={cx("h-7 w-7 rounded-full ring-offset-2 dark:ring-offset-zinc-900", c === color && "ring-2 ring-zinc-400")} style={{ background: c }} />
-					))}
-				</div>
-				<textarea
-					className="h-24 w-full rounded-lg border border-zinc-300 bg-white p-3 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-900"
-					placeholder="人设与偏好（可选）：例如“你擅长中文写作，回答简洁”"
-					value={persona}
-					onChange={(e) => setPersona(e.target.value)}
-				/>
-				<div className="flex justify-end gap-2">
-					<Button variant="ghost" onClick={onClose}>
-						{t("取消")}
-					</Button>
-					<Button variant="primary" onClick={create}>
-						创建
-					</Button>
-				</div>
+			<div className="p-5">
+				{open && (
+					<AgentEditor
+						onCancel={onClose}
+						onDone={(a) => {
+							void useStore.getState().selectAgent(a.id);
+							onClose();
+						}}
+					/>
+				)}
 			</div>
 		</Modal>
 	);

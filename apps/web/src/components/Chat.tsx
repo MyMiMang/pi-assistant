@@ -37,7 +37,7 @@ function ToolStep({ m }: { m: Message }) {
 	);
 }
 
-function MessageItem({ m, agent }: { m: Message; agent: { avatar: string; color: string } }) {
+function MessageItem({ m, agent }: { m: Message; agent: { id: string; avatar: string; color: string } }) {
 	if (m.role === "system")
 		return (
 			<div className="flex justify-center py-1">
@@ -78,7 +78,7 @@ function MessageItem({ m, agent }: { m: Message; agent: { avatar: string; color:
 		);
 	return (
 		<div className="flex gap-2.5">
-			<div className="w-8 shrink-0">{m.role === "assistant" && <Avatar text={agent.avatar} color={agent.color} size={32} />}</div>
+			<div className="w-8 shrink-0">{m.role === "assistant" && <Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={32} />}</div>
 			<div className="min-w-0 flex-1">{body}</div>
 		</div>
 	);
@@ -106,7 +106,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 				<Button variant="ghost" size="icon" className="lg:hidden" onClick={() => set({ drawer: true })} aria-label="打开助理列表">
 					<Menu size={20} />
 				</Button>
-				<Avatar text={agent.avatar} color={agent.color} size={34} running={running} />
+				<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={34} running={running} />
 				<div className="min-w-0 flex-1">
 					<div className="truncate font-semibold">{agent.name}</div>
 					<div className="truncate text-xs text-zinc-500">{running ? <span className="text-emerald-600">{t("正在工作")}…</span> : agent.model ? `${agent.model.provider} / ${agent.model.id}` : "未配置模型"}</div>
