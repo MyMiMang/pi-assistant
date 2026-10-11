@@ -1,0 +1,18 @@
+# 开发/高级用户用：daemon + L2 Docker 沙箱。普通用户使用桌面安装包，不需要 Docker。
+services:
+  daemon:
+    build: { context: .., dockerfile: deploy/Dockerfile.daemon }
+    ports: ["127.0.0.1:8787:8787"]
+    env_file: ../.env
+    environment:
+      HUHAO_SANDBOX: docker
+      HUHAO_SANDBOX_HOST: sandbox:7070
+      HUHAO_DATA_DIR: /data
+    volumes: [huhao-data:/data]
+  sandbox:
+    build: { context: ../sandbox }
+    volumes: [huhao-workspace:/workspace]
+    # 注意：不向沙箱注入任何凭据
+volumes:
+  huhao-data: {}
+  huhao-workspace: {}

@@ -1,0 +1,13 @@
+{
+  "name": "pi-assistant",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": { "node": ">=22.19" },
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "echo \"TODO: 并行启动 apps/daemon 与 apps/web\"",
+    "build": "echo \"TODO\"",
+    "check": "echo \"TODO: biome + tsc\""
+  }
+}
