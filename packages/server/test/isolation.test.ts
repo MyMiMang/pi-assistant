@@ -3,6 +3,8 @@
  * 伪造一个“用户自己装过 Pi”的 HOME（~/.pi/agent 里有扩展/技能/auth/models，~/.agents/skills 里有技能），
  * 断言：会话不加载其中任何东西；HOME 里没有任何文件被创建或修改；Pi 的默认目录指向我们的数据目录。
  */
+import assert from "node:assert/strict";
+import { test } from "node:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -35,8 +37,6 @@ function snapshot(dir: string) {
 const before = snapshot(fakeHome);
 
 await import("./setup.ts");
-const assert = (await import("node:assert/strict")).default;
-const { test } = await import("node:test");
 const { config } = await import("../src/config.ts");
 const modelsMod = await import("../src/models.ts");
 const { createPiSession, disposeSession, loadedResources } = await import("../src/pi-adapter/index.ts");
