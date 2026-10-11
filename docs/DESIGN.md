@@ -279,7 +279,16 @@ interface SandboxDriver {
 ### 5.10 技能（P2，已实现）
 
 - 目录：`data/skills/<name>/SKILL.md`（用户/助理写的）+ 内置技能（`packages/server/skills/`，随 App 打包，只读：web-research、weekly-report、csv-chart）。通过 `DefaultResourceLoader` 的 `additionalSkillPaths` 加载，直接用 Pi 原生发现与按需加载机制（模型只看到名称 + 描述）。沙箱对技能目录只开放只读。
-- 助理工具（`ext-skills`）：`skill_save`（新建/更新，免审批，UI 实时出现）、`skill_delete`（需审批）。技能变化会让下一轮会话重新加载。UI：设置 › 技能库（我的 / 内置、查看、编辑、复制内置为我的、删除）。
+- 助理工具（`ext-skills`）：`skill_search`（查相似技能）、`skill_save`（新建/更新）、`skill_delete`（需审批）。技能变化会让下一轮会话重新加载。UI：设置 › 技能库（我的 / 内置、查看、编辑、复制内置为我的、删除、版本历史与回滚、“主动建议做成技能”开关）。
+- **只在用户同意后创建**：用户这轮明确提到“技能”，或刚在建议卡片上点了“做成技能”（同一对话 30 分钟内）→ 直接创建；否则弹审批卡片。
+- **查重**：新建前按名称 + 描述 + 正文做相似度检索（中文字二元组，Dice 与重叠系数各半；去掉“帮我/一下/的”等虚词）；相似度 ≥ 0.4 时工具返回“请更新已有技能「X」”，助理确认确实不同才能带 `confirmNew` 新建。以后配置了向量模型（Hindsight 的 embedding）时在 `skill-intel.ts` 里叠加向量相似度。
+- **更新走 diff 审批**：助理修改已有技能时，审批卡片显示修改前后的统一 diff（增删行着色），批准后才写入。
+- **版本历史**：`skill_versions` 表，每次保存记一个版本（你修改 / 助理修改 / 回滚 / 初始版本）；界面里展开任一版本看相对上一版的 diff，一键回滚（回滚本身也是新版本，历史不丢）。
+- **智能建议**（`skill-intel.ts`，服务端逻辑，与 Pi 无关）：`ext-skills` 在每轮 `agent_end` 把本轮用户原话、工具序列、读取过的 SKILL.md 交给宿主，记为任务指纹（`task_patterns`）。
+  - 刚完成 ≥5 步的多步流程，或其他对话里出现过相似任务（话题相似度 ≥0.35 且工具重合 ≥50%，≥3 步）→ 发选项卡片“要不要把做法存成技能？”（做成技能 / 这次不用 / 别再提醒）；同意后用一条隐藏指令让助理先 `skill_search` 再创建或更新。
+  - 已有相似技能 → 直接让助理起草“合并进该技能”的修改，用户在 diff 卡片上决定（一张卡片，不重复打扰）。
+  - **偏离技能**：本轮读取了某个“我的技能”，用户又纠正了做法（“不对/改成/以后都/下次…”）→ 让助理按新做法起草更新 → diff 审批。
+  - **节流**：同一对话 24 小时最多 1 次、同一助理 2 小时最多 1 次、有未处理的建议时不再提；拒绝过的同类话题 / 同一技能不再提；连续拒绝 3 次后一周最多一次；“别再提醒”整体关闭（设置里可重新打开）。后台任务和定时任务不参与。
 
 ### 5.10.1 对话与上下文整理（P2，已实现）
 
@@ -551,6 +560,7 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
   - 启动时（`config.ts`）强制设置 `PI_CODING_AGENT_DIR=<数据目录>/pi-agent`、`PI_CODING_AGENT_SESSION_DIR=<数据目录>/pi-agent/sessions`（覆盖外部环境里的同名变量），所以 Pi 任何“默认路径”（auth.json、models.json、models-store、settings、keybindings、崩溃日志）都落在我们的目录。
   - 我们显式传入：凭据存储（自己的加密存储）、`modelsPath=<数据目录>/models.json`、每个助理的 `agentDir=<数据目录>/agents/<id>`、会话目录、内存版 SettingsManager。
   - `DefaultResourceLoader`：`noExtensions: true`（只加载我们内联注册的扩展，不自动发现 `~/.pi/agent/extensions` 和项目 `.pi/extensions`）；`noContextFiles / noPromptTemplates / noThemes`；`skillsOverride` 只保留**我们自己目录**（内置技能、`data/skills`、助理 agentDir）里的技能——Pi 默认还会扫描 `~/.agents/skills` 和工作区祖先目录的 `.agents/skills`，这些一律丢弃。
+  - MCP 与扩展包同样隔离：MCP 配置只来自我们自己的数据库（`loadConfig`），不读 `~/.pi/agent/mcp.json` 和项目 `.pi/mcp.json`；扩展包装在 `数据目录/pi-packages`（见 §5.20）。
   - 测试：`packages/server/test/isolation.test.ts` 伪造一个装过 Pi 的 HOME（含扩展、技能、auth、models、settings，以及 `~/.agents/skills`，并把外部 `PI_CODING_AGENT_DIR` 指向它），创建会话并对话一轮，断言没有加载其中任何东西、HOME 下没有任何文件被创建或修改（文件树 + 大小 + mtime 快照对比）。去掉上述过滤后该测试会失败（已验证，能抓到 `~/.agents/skills` 泄漏）。
 - **Hindsight**（实现时遵守）：
   - 自己的 uv：`<数据目录>/bin/uv`（固定版本 + SHA256，见 `third-party.json`），`UV_CACHE_DIR`、`UV_PYTHON_INSTALL_DIR`、`UV_TOOL_DIR` 都指向 `<数据目录>/hindsight/`；Python 也由 uv 装进这个目录，不用系统 Python、不碰用户自己的 `~/.cache/uv`、pip、venv。国内镜像（PyPI / HuggingFace）可在设置里切换。
@@ -559,6 +569,20 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
   - **从不自动连接**已存在的 Hindsight（哪怕默认端口上正好有一个）；只有用户在设置里明确填了“远程 Hindsight 地址 + key”才会连外部实例。
   - 生命周期由我们的服务管理：随服务启动/停止，崩溃自动重启（退避），失败回退 basic 后端。
   - 测试同样要覆盖：伪造 HOME 下已有 Hindsight 配置与正在监听 8888 的假服务，断言我们不读、不连、不写 HOME。
+
+### 5.20 MCP 服务器与 Pi 扩展包（P2，已实现）
+
+- **MCP**：设置 › 扩展（MCP）。本机命令（stdio：命令 + 参数 + 环境变量，可写 `${NAME}` 引用电脑上的环境变量）或远程 Streamable HTTP（地址 + 请求头，或 OAuth：自动注册 / 预注册 Client ID）。工具给模型的方式：直接（默认）/ 按需搜索（tool_search）/ 只在脚本里（codemode）。启用/停用、按助理启用（全部或指定助理；助理设置里也能逐个开关），测试连接显示状态与工具列表（只读工具标“免审批”）。
+  - 存储：`mcp_servers` 表，整份配置用本机主密钥加密（env / headers 里常有 token），界面上敏感值打码，编辑时保留原值。
+  - 接入：会话创建时把该助理启用的服务交给 **Pi 内置 MCP 扩展**（`createMcpExtension({ loadConfig, updateConfig: noop, logPath, openUrl })`），同时加载 Pi 的 codemode 与 tool_search 扩展；Pi 负责连接、重连、OAuth（凭据存在我们的 `pi-agent/mcp-auth.json`）、工具注册（`mcp__<服务>__<工具>`）。OAuth 授权页在电脑上打开（回调是本机回环地址），同时把链接发到聊天里。
+  - 测试连接用 Pi 的 `@earendil-works/pi-mcp` 客户端直接连一次（initialize + tools/list）。
+  - 审批：MCP 工具照常经过审批闸门；`readOnlyHint` 的直接执行，其余每次调用前审批（`destructiveHint` 标高风险）；卡片写明“调用 MCP 服务「X」的工具 Y”。codemode / tool_search 本身免审批，脚本里的每次工具调用仍单独过闸门。
+  - 会话结束时发 `session_shutdown`，MCP 子进程随之关闭。
+- **Pi 扩展包**（npm / git / 本机目录，可含扩展、技能、提示模板）：同一页面安装、启用/停用、按助理启用、卸载、失败重试；显示包名、版本、包含的资源。
+  - 用 Pi 自己的 `DefaultPackageManager` 安装，但 `agentDir = 数据目录/pi-packages`，设置用内存版 SettingsManager；安装期间 `npm_config_cache / userconfig / globalconfig` 指向我们自己的目录（可设国内 npm 镜像），不读写用户的 `~/.npmrc`、`~/.npm`、`~/.pi/agent/settings.json`。安装包里打包的 npm 通过 `PIA_NPM` 指定。
+  - 加载：已启用包的安装目录作为 `additionalExtensionPaths` 交给会话（Pi 按包的发现规则加载其中的扩展和技能；技能过滤白名单也包含这些目录）。
+  - 安全：扩展代码以本应用权限运行 → 界面醒目提示；添加/修改 MCP 与扩展包的接口只允许在本机调用（手机上只能查看）。
+- 测试：`test/mcp.test.ts`（校验、加密/打码、测试连接、按助理启用、会话里经 Pi 调用模拟 MCP 服务的工具）、`test/pi-packages.test.ts`（本机包 → 会话里出现包内工具与技能）、`test/isolation.test.ts`（伪造 HOME 里的 `mcp.json` 与 settings 包都不会被加载）；e2e 用 `e2e/fixtures/mock-mcp.mjs` 与 `e2e/fixtures/demo-pi-package`。
 
 ## 6. 数据模型（SQLite，`data/data.db`）
 
@@ -677,7 +701,8 @@ pi-assistant/
 ### Phase 2 · 记忆、技能、定时、稳定地址（目标 3–4 周）
 - [x] 记忆（可插拔 MemoryProvider；basic：事实 + 日志 + 便签、三种作用域、FTS 中文检索、UI 管理）
 - [ ] 高级记忆后端 Hindsight（隔离运行，见 §5.19）
-- [x] 技能库（内置 + 用户 + 助理自建，Pi 原生技能机制）
+- [x] 技能库（内置 + 用户 + 助理自建，Pi 原生技能机制）；智能建议（重复/长流程检测、节流、尊重拒绝）、查重、diff 审批更新、版本历史与回滚
+- [x] MCP 服务器与 Pi 扩展包（设置页、按助理启用、状态与工具列表、隔离）
 - [x] 定时与触发（cron、Webhook、免打扰、补跑、运行历史、助理创建需审批）；routine 级授权待做
 - [x] 多对话 + 上下文整理（Pi compaction）
 - [x] 隔离：只用自己打包的 Pi，不读写用户的 ~/.pi、~/.agents

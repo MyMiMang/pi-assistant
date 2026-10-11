@@ -49,7 +49,7 @@ function manager() {
 	const registry = getSetting<string | null>("npmRegistry", null);
 	writeFileSync(npmrc, registry ? `registry=${registry}\n` : "");
 	return {
-		pm: new DefaultPackageManager({ cwd: home, agentDir: home, settingsManager: SettingsManager.inMemory({}) }),
+		pm: new DefaultPackageManager({ cwd: home, agentDir: home, settingsManager: SettingsManager.inMemory(process.env.PIA_NPM ? { npmCommand: process.env.PIA_NPM.split(" ") } : {}) }),
 		// 只在安装期间生效：npm 缓存与配置都指向我们自己的目录
 		env: { npm_config_cache: join(home, "npm-cache"), npm_config_userconfig: npmrc, npm_config_globalconfig: npmrc, npm_config_update_notifier: "false", npm_config_fund: "false", npm_config_audit: "false" },
 	};
