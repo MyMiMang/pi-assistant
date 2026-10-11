@@ -7,6 +7,7 @@ import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { ImapFlow, type ImapFlowOptions } from "imapflow";
 import { simpleParser } from "mailparser";
+import { freshAccessToken, type OAuthSecret } from "./email-oauth.ts";
 import nodemailer, { type Transporter } from "nodemailer";
 import { bus } from "./bus.ts";
 import { db, now, uid } from "./db.ts";
@@ -68,7 +69,7 @@ export const getAccount = (id: string) => db.prepare("SELECT * FROM email_accoun
 export const accountsFor = (agentId: string) => listAccounts().filter((a) => !a.agent_id || a.agent_id === agentId);
 export const accountJson = (a: AccountRow) => {
 	const c = JSON.parse(a.config) as AccountConfig;
-	return { id: a.id, agentId: a.agent_id, name: a.name, address: a.address, preset: a.preset, imap: c.imap, smtp: c.smtp, user: c.user };
+	return { id: a.id, agentId: a.agent_id, name: a.name, address: a.address, preset: a.preset, imap: c.imap, smtp: c.smtp, user: c.user, oauth: !!openJson<{ oauth?: unknown }>(a.secret).oauth };
 };
 
 export function saveAccount(input: { id?: string; agentId?: string | null; name?: string; address: string; preset: string; password?: string; user?: string; imap?: Partial<MailServer>; smtp?: Partial<MailServer>; insecure?: boolean }) {
@@ -85,7 +86,14 @@ export function saveAccount(input: { id?: string; agentId?: string | null; name?
 		...(input.insecure ? { insecure: true } : {}),
 	};
 	if (!cfg.imap.host || !cfg.smtp.host) throw new Error("请填写 IMAP / SMTP 服务器");
-	const password = input.password || (cur ? openJson<{ password: string }>(cur.secret).password : "");
+	const curSec = cur ? openJson<{ password?: string; oauth?: OAuthSecret }>(cur.secret) : null;
+	if (curSec?.oauth && !input.password) {
+		// OAuth 账号：只改名字 / 归属助理
+		db.prepare("UPDATE email_accounts SET agent_id = ?, name = ? WHERE id = ?").run(input.agentId ?? null, (input.name || cur!.name).slice(0, 60), cur!.id);
+		changed();
+		return getAccount(cur!.id)!;
+	}
+	const password = input.password || curSec?.password || "";
 	if (!password) throw new Error("请填写授权码 / 应用专用密码");
 	const id = cur?.id ?? uid("mail");
 	const name = (input.name || cur?.name || address).slice(0, 60);
@@ -100,16 +108,45 @@ export function deleteAccount(id: string) {
 	changed();
 }
 
-function creds(a: AccountRow) {
-	return { cfg: JSON.parse(a.config) as AccountConfig, password: openJson<{ password: string }>(a.secret).password };
+const refreshing = new Map<string, ReturnType<typeof freshAccessToken>>();
+/** 凭据：授权码 / 应用专用密码，或 OAuth（Gmail XOAUTH2，按需刷新 access token 并写回） */
+async function auth(a: AccountRow): Promise<{ cfg: AccountConfig; imap: { user: string; pass?: string; accessToken?: string }; smtp: Record<string, string> }> {
+	const cfg = JSON.parse(a.config) as AccountConfig;
+	// 读最新的凭据（刷新过的 token 写回了库，调用方手里的行可能是旧的）
+	const sec = openJson<{ password?: string; oauth?: OAuthSecret }>((getAccount(a.id) ?? a).secret);
+	if (sec.oauth) {
+		// 同一账号并发刷新只刷一次
+		let p = refreshing.get(a.id);
+		if (!p) {
+			p = freshAccessToken(sec.oauth).finally(() => refreshing.delete(a.id));
+			refreshing.set(a.id, p);
+		}
+		const { token, secret, refreshed } = await p;
+		if (refreshed) db.prepare("UPDATE email_accounts SET secret = ? WHERE id = ?").run(sealJson({ oauth: secret }), a.id);
+		return { cfg, imap: { user: cfg.user, accessToken: token }, smtp: { type: "OAuth2", user: cfg.user, accessToken: token } };
+	}
+	return { cfg, imap: { user: cfg.user, pass: sec.password ?? "" }, smtp: { user: cfg.user, pass: sec.password ?? "" } };
+}
+
+/** OAuth 登录完成后创建 / 更新 Gmail 账号 */
+export function saveOAuthAccount(input: { address: string; secret: OAuthSecret; agentId?: string | null; name?: string }) {
+	const p = PRESETS.gmail;
+	const cur = listAccounts().find((x) => x.address.toLowerCase() === input.address.toLowerCase());
+	const cfg: AccountConfig = { imap: p.imap as MailServer, smtp: p.smtp as MailServer, user: input.address };
+	const id = cur?.id ?? uid("mail");
+	const name = (input.name || cur?.name || input.address).slice(0, 60);
+	if (cur) db.prepare("UPDATE email_accounts SET name = ?, preset = 'gmail', config = ?, secret = ? WHERE id = ?").run(name, JSON.stringify(cfg), sealJson({ oauth: input.secret }), id);
+	else db.prepare("INSERT INTO email_accounts(id, agent_id, name, address, preset, config, secret, created_at) VALUES(?,?,?,?,?,?,?,?)").run(id, input.agentId ?? null, name, input.address, "gmail", JSON.stringify(cfg), sealJson({ oauth: input.secret }), now());
+	changed();
+	return getAccount(id)!;
 }
 async function withImap<T>(a: AccountRow, fn: (c: ImapFlow) => Promise<T>): Promise<T> {
-	const { cfg, password } = creds(a);
+	const { cfg, imap } = await auth(a);
 	const opts: ImapFlowOptions = {
 		host: cfg.imap.host,
 		port: cfg.imap.port,
 		secure: cfg.imap.secure,
-		auth: { user: cfg.user, pass: password },
+		auth: imap,
 		logger: false,
 		// 163/126 要求客户端先发 IMAP ID，否则报 “Unsafe Login”
 		clientInfo: { name: "Pi Assistant", version: "1.0", vendor: "pi-assistant" },
@@ -127,10 +164,10 @@ async function withImap<T>(a: AccountRow, fn: (c: ImapFlow) => Promise<T>): Prom
 /** 测试用：替换 SMTP 发送器 */
 let transportOverride: ((a: AccountRow) => Transporter) | null = null;
 export const setTransportOverride = (f: typeof transportOverride) => (transportOverride = f);
-function transport(a: AccountRow): Transporter {
+async function transport(a: AccountRow): Promise<Transporter> {
 	if (transportOverride) return transportOverride(a);
-	const { cfg, password } = creds(a);
-	return nodemailer.createTransport({ host: cfg.smtp.host, port: cfg.smtp.port, secure: cfg.smtp.secure, auth: { user: cfg.user, pass: password }, ...(cfg.insecure ? { tls: { rejectUnauthorized: false } } : {}) });
+	const { cfg, smtp } = await auth(a);
+	return nodemailer.createTransport({ host: cfg.smtp.host, port: cfg.smtp.port, secure: cfg.smtp.secure, auth: smtp as never, ...(cfg.insecure ? { tls: { rejectUnauthorized: false } } : {}) });
 }
 
 /** 找特殊文件夹（已发送 / 草稿），各家名字不同 */
@@ -144,7 +181,7 @@ export async function testAccount(id: string) {
 	const a = getAccount(id);
 	if (!a) throw new Error("邮箱不存在");
 	const n = await withImap(a, async (c) => (await c.status("INBOX", { messages: true, unseen: true })) as { messages?: number; unseen?: number });
-	await transport(a).verify();
+	await (await transport(a)).verify();
 	return `收信、发信都正常：收件箱 ${n.messages ?? 0} 封（未读 ${n.unseen ?? 0}）`;
 }
 
@@ -250,7 +287,7 @@ export async function sendDraft(id: string, agentId: string, readFile: (p: strin
 	if (!a) throw new Error("邮箱账号已删除");
 	const raw = await buildRaw(a, dr.payload, readFile);
 	try {
-		await transport(a).sendMail({ envelope: { from: a.address, to: [...dr.payload.to, ...(dr.payload.cc ?? [])] }, raw });
+		await (await transport(a)).sendMail({ envelope: { from: a.address, to: [...dr.payload.to, ...(dr.payload.cc ?? [])] }, raw });
 	} catch (e) {
 		db.prepare("UPDATE email_drafts SET status = 'failed', error = ? WHERE id = ?").run(e instanceof Error ? e.message : String(e), id);
 		throw e;

@@ -43,7 +43,8 @@ import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRout
 import { BRAND } from "@pi-assistant/shared";
 import { actionShot, clearActions, listActions } from "./action-log.ts";
 import { openWechat, saveWechatSettings, wechatSettings, wechatStatus } from "./wechat.ts";
-import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAccount, testAccount } from "./email.ts";
+import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAccount, saveOAuthAccount, testAccount } from "./email.ts";
+import { finishGoogle, googleClient, saveGoogleClient, startGoogle } from "./email-oauth.ts";
 import { channelJson, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { hostAgentsChanged, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 
@@ -724,6 +725,41 @@ app.get("/hooks/channels/wecom/:id", wecomHook);
 app.post("/hooks/channels/wecom/:id", wecomHook);
 
 // ---------------------------------------------------------------- 邮箱（IMAP / SMTP）
+// Gmail OAuth：用用户自己的 Google OAuth 客户端（桌面应用类型），回调到本机回环地址
+app.get("/api/email/oauth/google", (c) => {
+	const g = googleClient();
+	return c.json({ configured: !!g, clientId: g?.clientId ?? null, redirectUri: `http://127.0.0.1:${config.port}/api/email/oauth/google/callback` });
+});
+app.put("/api/email/oauth/google", localOnly, async (c) => {
+	const b = await c.req.json<{ clientId?: string; clientSecret?: string; clear?: boolean }>();
+	try {
+		saveGoogleClient(b.clear ? null : { clientId: b.clientId ?? "", clientSecret: b.clientSecret ?? "" });
+		return c.json({ ok: true });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.post("/api/email/oauth/google/start", localOnly, async (c) => {
+	const b = await c.req.json<{ agentId?: string | null; name?: string }>().catch(() => ({}) as { agentId?: string; name?: string });
+	try {
+		return c.json(startGoogle({ redirectUri: `http://127.0.0.1:${config.port}/api/email/oauth/google/callback`, agentId: b.agentId ?? null, name: b.name }));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.get("/api/email/oauth/google/callback", localOnly, async (c) => {
+	const page = (title: string, msg: string) => c.html(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title><body style="font-family:system-ui;padding:48px;max-width:560px;margin:auto"><h2>${title}</h2><p>${msg}</p><p style="color:#888">可以关闭这个页面，回到 ${BRAND.name}。</p><script>try{window.opener&&window.opener.postMessage({type:"pia-oauth",ok:${title.startsWith("✅")}},"*")}catch(e){}</script></body>`);
+	const esc = (x: string) => x.replace(/[<>&"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
+	const err = c.req.query("error");
+	if (err) return page("❌ 没有完成授权", esc(err));
+	try {
+		const r = await finishGoogle(c.req.query("code") ?? "", c.req.query("state") ?? "");
+		const a = saveOAuthAccount(r);
+		return page("✅ 已连接 Gmail", `${esc(a.address)} 已添加，助理可以读邮件、写草稿；发送前仍会先问你。`);
+	} catch (e) {
+		return page("❌ 连接失败", esc(e instanceof Error ? e.message : String(e)));
+	}
+});
 app.get("/api/email", (c) => c.json({ items: listAccounts().map(accountJson), presets: Object.entries(PRESETS).map(([id, p]) => ({ id, label: p.label, help: p.help, imap: p.imap, smtp: p.smtp })) }));
 app.post("/api/email", localOnly, async (c) => {
 	try {

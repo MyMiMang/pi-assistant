@@ -837,6 +837,21 @@ await step("Phase 3 邮箱：添加邮箱（模拟 IMAP/SMTP）→ 助理写草�
 		await page.locator("[data-testid=add-email]").click();
 		await page.waitForTimeout(300);
 		await page.screenshot({ path: join(SHOTS, "45-settings-email.png") });
+		// Gmail：用 Google 登录（OAuth 客户端设置 → 出现登录按钮；真正授权要真实 Google 账号）
+		await page.locator("[data-testid=email-form]").getByRole("button", { name: "Gmail", exact: true }).click();
+		const go = page.locator("[data-testid=gmail-oauth]");
+		await go.getByText("桌面应用").waitFor();
+		await go.locator("[data-testid=gmail-client-id]").fill("123-e2e.apps.googleusercontent.com");
+		await go.locator("[data-testid=gmail-client-secret]").fill("GOCSPX-e2e");
+		await go.locator("[data-testid=gmail-client-save]").click();
+		await go.locator("[data-testid=gmail-oauth-start]").waitFor();
+		const st = await (await fetch(`${BASE}/api/email/oauth/google/start`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
+		if (!/accounts\.google\.com.*code_challenge=/.test(st.url ?? "")) throw new Error(`授权地址不对：${JSON.stringify(st)}`);
+		const cb = await (await fetch(`${BASE}/api/email/oauth/google/callback?code=x&state=forged`)).text();
+		if (!cb.includes("连接失败")) throw new Error("伪造 state 应失败");
+		await page.waitForTimeout(200);
+		await page.screenshot({ path: join(SHOTS, "48-settings-gmail-oauth.png") });
+		await fetch(`${BASE}/api/email/oauth/google`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ clear: true }) });
 		await page.keyboard.press("Escape");
 		await page.goto(BASE);
 		await send("帮我写邮件给王老师，说周五家长会我会参加");
