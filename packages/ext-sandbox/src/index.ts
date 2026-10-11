@@ -13,7 +13,13 @@ export interface SandboxHost {
 	/** 由 pi-adapter 提供：创建 Pi 内置 bash 工具 */
 	makeBashTool(cwd: string, opts: { operations?: BashOperations; spawnHook?: (c: SpawnCtx) => SpawnCtx }): unknown;
 	dockerOperations?: BashOperations;
+	/** 工作区之外允许“只读”访问的目录（例如技能库，Pi 需要读取 SKILL.md） */
+	readOnlyRoots?: string[];
 }
+const inside = (root: string, abs: string) => {
+	const rel = relative(root, abs);
+	return !(rel.startsWith("..") || isAbsolute(rel));
+};
 
 const SENSITIVE = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE|AUTH)/i;
 export function sanitizeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -34,8 +40,10 @@ export function sandboxExtension(host: SandboxHost) {
 			const p = (event.input as { path?: string }).path;
 			if (!p) return;
 			const abs = isAbsolute(p) ? p : resolve(host.workspace, p);
-			const rel = relative(host.workspace, abs);
-			if (rel.startsWith("..") || isAbsolute(rel)) return { block: true, reason: `沙箱限制：只能访问工作区（${host.workspace}）内的文件` };
+			if (inside(host.workspace, abs)) return;
+			const readOnly = ["read", "ls", "find", "grep"].includes(event.toolName);
+			if (readOnly && (host.readOnlyRoots ?? []).some((r) => inside(r, abs))) return;
+			return { block: true, reason: `沙箱限制：只能访问工作区（${host.workspace}）内的文件${host.readOnlyRoots?.length ? "（技能库只读）" : ""}` };
 		});
 	};
 }
