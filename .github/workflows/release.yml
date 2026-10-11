@@ -46,8 +46,35 @@ jobs:
         if: env.HAS_UPDATER_KEY != 'true'
         shell: bash
         run: echo '{"bundle":{"createUpdaterArtifacts":false}}' > apps/tray/src-tauri/tauri.nosign.json
+      - name: macOS：避免 hdiutil 卡住（Intel runner 上 XProtect/Spotlight 扫描大 .app 会让 bundle_dmg.sh 挂起）
+        if: runner.os == 'macOS'
+        run: |
+          sudo mdutil -a -i off || true
+          (for i in $(seq 1 600); do sudo pkill -9 XProtect >/dev/null 2>&1 || true; sleep 3; done) &
       - uses: tauri-apps/tauri-action@v0
         id: tauri
+        continue-on-error: ${{ runner.os == 'macOS' }}
+        timeout-minutes: 45
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/tray
+          tauriScript: npx tauri
+          args: --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: "Pi Assistant ${{ github.ref_name }}"
+          releaseBody: "安装说明见 docs/INSTALL.md（未签名构建：macOS 首次打开需右键 → 打开；Windows SmartScreen 选“仍要运行”）。"
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          includeUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
+      - name: macOS 打包失败时重试一次（打 dmg 偶发卡住）
+        if: steps.tauri.outcome == 'failure'
+        run: rm -rf apps/tray/src-tauri/target/${{ matrix.target }}/release/bundle/dmg
+      - uses: tauri-apps/tauri-action@v0
+        id: tauri_retry
+        if: steps.tauri.outcome == 'failure'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
