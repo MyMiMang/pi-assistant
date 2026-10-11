@@ -1,6 +1,6 @@
-# 胡好好 · 基于 Pi 的本地私人助理 —— 设计文档 v0.2
+# 胡好好 · 基于 Pi 的本地私人助理 —— 设计文档 v0.3
 
-> 状态：设计稿 v0.2（2026-10-11：客户端改为单一 PWA；内置隧道远程访问提前到 Phase 1）。代码仓库目前只有骨架，没有产品代码。
+> 状态：v0.3（2026-10-11）。Phase 1 的服务端 + Web UI 已实现并通过端到端测试（实现状态见 §13）。新增：§5.14 模型与凭据（不内置任何 Key，全部 Pi provider 动态支持），§5.15 模块边界与 Pi 升级维护流程。默认入口域名 `app.dengdengyun.shop`。
 > 参考：Pi 仓库 `earendil-works/pi`（本文基于 `@earendil-works/pi-coding-agent@1.1.0` 的源码和文档阅读结果，API 名称均来自实际代码）。
 
 ---
@@ -366,6 +366,65 @@ sequenceDiagram
 - 安全头：严格 CSP、`frame-ancestors 'none'`、`Referrer-Policy: no-referrer`；Cookie 不用于认证（避免 CSRF）。
 - 用户可随时在托盘菜单“关闭远程访问”，cloudflared 立刻停止。
 
+### 5.14 模型与凭据：不内置任何 Key，Pi 支持的都能用
+
+**原则**：安装包里**永远没有任何 API Key**。每个用户在 App 里配置自己的模型账号；凭据只加密保存在用户自己的电脑上，**绝不发送给 Rendezvous 或任何第三方**（只发给对应的模型服务商）。
+
+**完全由 Pi 驱动，不写死 provider 列表**：
+- provider 目录：`ModelRuntime.getProviders()`（当前 Pi 1.1.0 有 43 个：OpenAI、Anthropic、Google、DeepSeek、Kimi、Qwen、智谱、MiniMax、OpenRouter、Bedrock、Azure、GitHub Copilot……）。每个 provider 自带 `auth.apiKey` / `auth.oauth`（含 `isSubscription`、`loginLabel`）描述，UI 据此渲染“API Key”“订阅登录”按钮。Pi 以后新增 provider 或登录方式，**我们不改代码就会自动出现**。
+- 登录：统一调用 `ModelRuntime.login(providerId, "api_key" | "oauth", interaction)`。Pi 通过 `AuthInteraction` 发出 `prompt`（text / secret / select / manual_code）与 `notify`（info / auth_url / device_code / progress）事件；服务端 `login-flows.ts` 把它们桥接成 WebSocket 事件，Web UI 的 `LoginFlow` 组件通用渲染（输入框、选项、打开授权页、显示设备码）。因此 API Key、ChatGPT/Claude/Copilot/Kimi/xAI 等订阅 OAuth、AWS 多种认证方式都走同一条通道。
+- 测试连接：`completeSimple()` 发一条 16 token 的请求；错误信息原样展示（例如 401 无效 Key）。
+- 模型列表：`getModels(providerId)`；默认模型存 `settings.defaultModel`，每个助理可单独覆盖。
+
+**凭据加密存储**（`secrets.ts`）：实现 Pi 的 `CredentialStore` 接口并传给 `ModelRuntime.create({ credentials })`，所以 Pi 内部刷新 OAuth token 时写回的也是加密存储。
+- 文件 `credentials.enc`：AES‑256‑GCM，原子写入，权限 0600。
+- 主密钥：macOS 钥匙串（`security` 命令）｜Windows DPAPI（当前用户作用域）｜其他平台退回 0600 密钥文件（设置 → 关于 中显示当前后端）。
+- 沙箱里的 bash 子进程会清理名字含 KEY/TOKEN/SECRET/PASSWORD 等的环境变量，访问 `auth.json`、`.ssh`、`.aws` 等路径的工具调用直接拒绝。
+
+**首次运行向导**（Web UI）：欢迎 → 选择模型服务（搜索 43 个）→ 登录（API Key / 订阅）→ 选默认模型 + 测试连接 → 完成。之后在「设置 → 模型」管理：登录/退出、默认模型、测试。开发模式（`HUHAO_MOCK=1`）额外出现“Mock 模型（本地测试）”。
+
+### 5.15 模块边界与 Pi 升级 / 维护流程
+
+目标：**Pi 发新版时我们能在一天内跟上**，并通过托盘自动更新推给所有用户。
+
+**1）只把 Pi 当普通 npm 依赖**：`@earendil-works/pi-coding-agent`、`@earendil-works/pi-ai` 写在 `packages/server/package.json`（`^1.1.0`）。不 fork、不打补丁（无 patch-package）、不 vendoring 源码。
+
+**2）唯一适配层 `packages/server/src/pi-adapter/`**——服务端其余代码禁止直接 import Pi：
+
+| 适配层导出 | 封装的 Pi API |
+|---|---|
+| `PiModels`（`listProviders / listModels / login / logout / test / registerProvider`） | `ModelRuntime`、provider `auth`、`completeSimple` |
+| `createPiSession()` | `createAgentSession`、`DefaultResourceLoader`（`extensionFactories`、`appendSystemPrompt`、技能路径）、`SessionManager`、`SettingsManager` |
+| `subscribeSession()` → 归一化事件 `assistant_start / text_delta / assistant_end / tool_start / tool_end / settled` | `AgentSessionEvent` |
+| `promptSession / abortSession / injectContext / lastAssistantText` | `prompt(streamingBehavior)`、`abort`、`sendCustomMessage` |
+| `makeBashTool()` | `createBashTool`（供沙箱扩展覆盖内置 bash） |
+| `checkPiCompat()` + `compat.json` | 读取已安装 Pi 版本，对比测试基线 |
+| `mock-provider.ts` | `registerFauxProvider`（仅开发/测试） |
+
+Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依赖适配层自己的类型。
+
+**3）我们的功能 = Pi 扩展包**（`packages/ext-*`，`keywords: ["pi-package"]`，对 Pi 只有 `peerDependency` 和**类型**依赖，运行时能力由宿主注入，便于单测与复用）：
+
+| 包 | 用到的 Pi 扩展点 | 内容 |
+|---|---|---|
+| `@huhao/ext-approval` | `pi.on("tool_call")` → `{ block, reason }`、工具 `annotations` | 风险评估（删除/sudo/git push/对外 POST…→审批；凭据路径→拒绝；只读→放行）、拒绝后 30 分钟内同一调用自动拒绝 |
+| `@huhao/ext-sandbox` | `pi.registerTool()` 覆盖 `bash`、`tool_call` 路径守卫 | L0 工作区（清理敏感环境变量、文件工具不得越出工作区）；L2 Docker（`BashOperations` 在容器内执行） |
+| `@huhao/ext-delivery` | `pi.registerTool()` | `deliver_file`、`ask_user`（选项卡片）、`spawn_task`（后台任务） |
+| `ext-memory / ext-browser / ext-connectors` | （P2/P3） | 占位 |
+
+**4）兼容性测试**（`packages/server/test/pi-compat.test.ts`，只经适配层调用 Pi，用 Mock 模型、无需网络和 Key）：版本检查；provider 目录 ≥20 且含 API Key 与订阅登录；通用登录交互能把 Key 写进加密存储；完整会话流程（流式事件、扩展工具、`deliver_file`、审批拦截 `rm`）。另有 Playwright E2E（`e2e/run.mjs`，13 项）。
+
+**5）CI 自动跟进 Pi**：
+- `ci.yml`：每次 push/PR 跑 `check:pi`、typecheck、单元+兼容测试、Worker 测试、构建、E2E（上传截图）。
+- `pi-latest.yml`：**每周一自动**把 Pi 升到 npm 最新版 → 跑全部测试 → 通过则更新 `compat.json` 并**自动开 PR**；失败则**自动开 issue** 附日志，提示需要改 `pi-adapter`。
+- `renovate.json`：Pi 包单独分组、发布 1 天后即提 PR（与上面互为备份）。
+
+**6）发布与用户侧更新**：合并升级 PR → 打 tag `vX.Y.Z` → `release.yml` 构建 Mac/Windows 安装包（sidecar 内含新版 Pi）→ 托盘程序的 Tauri updater（签名校验）静默下载安装。用户数据（SQLite、Pi 会话 JSONL、加密凭据）与程序分离，升级不丢。
+
+**维护者升级清单**：`npm run check:pi` → `npm i -w @huhao/server @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest` → `npm test && npm run e2e` → 失败时只改 `pi-adapter/`（必要时 `ext-*` 的类型）→ 更新 `compat.json` → PR。
+
+---
+
 ## 6. 数据模型（SQLite，`data/huhao.db`）
 
 使用 Node 22 内置 `node:sqlite`（免原生编译，打包最省事；若遇到功能限制退回 `better-sqlite3`）+ Drizzle ORM 管迁移。
@@ -426,19 +485,19 @@ pi-assistant/
 | 层 | 选择 | 理由 |
 |---|---|---|
 | 语言 | TypeScript（strict），Node 22.19+ | 与 Pi 一致，SDK 直接用 |
-| Agent | `@earendil-works/pi-coding-agent`（SDK）、`pi-ai`、`pi-agent-core`、`pi-mcp` | 地基；版本钉死（当前 1.1.0），升级走 CI 回归 |
+| Agent | `@earendil-works/pi-coding-agent`（SDK）、`pi-ai` | 地基；普通 npm 依赖（当前 1.1.0），只经 `pi-adapter` 使用；每周 CI 自动尝试升级（§5.15） |
 | HTTP/WS | Hono + `@hono/node-server` + `ws` | 轻、类型好 |
-| DB | `node:sqlite` + Drizzle | 免原生模块，便于打包 |
+| DB | `node:sqlite`（WAL） | 免原生模块，便于打包 |
 | 调度 | `croner` | 时区感知 cron |
 | 浏览器 | `playwright-core` | 不内置浏览器，按需下载 |
-| Web UI | React + Vite + Tailwind + shadcn/ui + Zustand + TanStack Query + `vite-plugin-pwa` | 一套响应式 PWA，电脑手机通用 |
+| Web UI | React 19 + Vite + Tailwind 4 + Zustand + react-markdown/highlight.js + 手写 Service Worker | 一套响应式 PWA，电脑手机通用 |
 | 托盘/安装包 | Tauri 2（tray / autostart / notification / updater / shell-sidecar 插件），NSIS + dmg | 包小、跨平台、无需窗口 |
 | 推送 | Web Push（`web-push`，VAPID） | 不需要原生 App 和推送服务器 |
 | 隧道 | 内置 `cloudflared`（快速隧道默认，命名隧道可选），Tailscale 可选 | 零配置远程访问 |
 | 稳定入口 | Cloudflare Workers + KV | 免费、极小 |
 | CI/发布 | GitHub Actions + `tauri-apps/tauri-action` → GitHub Releases | 自动出 Mac/Windows 安装包 |
 | 打包服务 | esbuild 打成单个 `server.mjs` + **内置固定版本 Node 22 运行时**作为 Tauri sidecar；P2 评估 Node SEA 单文件 | 一步安装，用户不用装 Node/Pi |
-| 测试 | Vitest；Pi 的 `faux` / 内存 provider 做无模型测试；Playwright 做 UI E2E | |
+| 测试 | `node:test` + tsx；Pi 的 `faux` provider 做无模型测试；`playwright-core` 做 UI E2E | |
 | 代码质量 | Biome（与 Pi 一致） | |
 
 **关于“用户不用装 Pi”**：Pi 只作为 npm 依赖被 esbuild 打进 `server.mjs`；我们自己的扩展以 `extensionFactories` 内联注入，不依赖运行时 `jiti` 编译。用户可选地在 `data/extensions/` 放自定义扩展（此时才用到 Pi 的 jiti 加载器）。
@@ -462,15 +521,15 @@ pi-assistant/
 ## 10. 里程碑
 
 ### Phase 1 · 核心可用（目标 5–7 周）
-- [ ] 一键安装包（macOS `.dmg` / Windows `.exe`），内置 Node 运行时、Pi、cloudflared；开机自启；菜单栏/托盘图标一点打开 Web UI
-- [ ] GitHub Actions 自动构建 Mac/Windows 安装包并发布到 GitHub Releases；自动更新
-- [ ] 沙箱工作区：L0（工作区 + 路径守卫）必做；检测到 Docker 时可切 L2
-- [ ] 单一响应式 PWA（电脑/手机共用），可添加到主屏幕；所有设备实时同步（事件 `seq` 补齐）
-- [ ] **内置隧道远程访问**：cloudflared 快速隧道 + Rendezvous 稳定入口；二维码/链接配对；每设备 token、吊销、限流、仅 HTTPS
-- [ ] 基于 Pi 的聊天：流式回复、跑代码、读写文件、`deliver_file` 回传文件/图片；模型与 API key 设置
-- [ ] 后台任务：`spawn_task`、任务列表、取消/追加指令、完成通知（系统通知 + Web Push）
-- [ ] 审批闸门：卡片审批，电脑/手机任一端处理；重启后待审批不丢
-- [ ] 崩溃/重启恢复：运行中任务自动续跑
+- [ ] 一键安装包（macOS `.dmg` / Windows `.exe`），内置 Node 运行时、Pi、cloudflared；开机自启；菜单栏/托盘图标一点打开 Web UI —— *Tauri 托盘代码已写好（脚手架），sidecar 打包与签名未完成*
+- [ ] GitHub Actions 自动构建 Mac/Windows 安装包并发布到 GitHub Releases；自动更新 —— *release.yml 骨架；CI 与 pi-latest 工作流已就绪*
+- [x] 沙箱工作区：L0（工作区 + 路径守卫 + 环境变量清理）；检测到 Docker 时可在设置中切 L2
+- [x] 单一响应式 PWA（电脑/手机共用），可添加到主屏幕；所有设备实时同步（WebSocket，重连后重新拉取快照）
+- [~] **内置隧道远程访问**：cloudflared 快速隧道管理 + Rendezvous 签名上报 + 二维码配对 + 电脑端确认 + 每设备 token + 吊销 + 限流 —— *代码完成；本开发机出站 7844 被封，未能实测公网连通；Worker 未部署*
+- [x] 基于 Pi 的聊天：流式回复、跑代码、读写文件、`deliver_file` 回传文件/图片；**全部 Pi provider 的登录（API Key/订阅 OAuth）与默认模型设置、首次运行向导**
+- [x] 后台任务：`spawn_task`、任务卡片/列表、取消、完成通知（Web Push）、结果注入主会话
+- [x] 审批闸门：卡片审批，电脑/手机任一端处理；拒绝是最终结果
+- [x] 崩溃/重启恢复：消息先落盘；主会话与后台任务在重启后自动续跑（待审批请求标记过期，续跑时重新请求）
 - 验收：手机关掉 Wi‑Fi 用流量 → 扫电脑上的二维码 → 添加到主屏幕 → 发“写个脚本统计 workspace 里的 CSV 并画图” → 电脑执行 → 手机收到推送和图片；重启电脑后手机主屏幕图标仍能直接连上；中途杀掉服务能续跑。
 
 ### Phase 2 · 记忆、技能、定时、稳定地址（目标 3–4 周）
@@ -497,10 +556,12 @@ pi-assistant/
 ```bash
 # 需要 Node 22.19+
 npm install --ignore-scripts
-cp .env.example .env            # 填 ANTHROPIC_API_KEY / OPENAI_API_KEY 等
-npm run dev                     # 并行启动 server（:8787）与 web（:5173）
-npm run dev -- --tunnel         # 同时启动快速隧道，终端打印配对二维码
+npm run dev                     # 构建 Web 并以 Mock 模型启动服务：http://127.0.0.1:8787
+npm run start                   # 正式模式（无 Mock），首次打开会进入模型配置向导
+npm run dev:web                 # 可选：Vite 热更新（:5173，代理到 :8787）
+npm test && npm run e2e         # 单元/兼容测试 + 端到端测试（截图输出到 docs/screenshots/）
 ```
+环境变量：`HUHAO_DATA_DIR`（数据目录）、`HUHAO_PORT`、`HUHAO_MOCK=1`、`HUHAO_CLOUDFLARED`（cloudflared 路径）、`HUHAO_ENTRY_DOMAIN`、`HUHAO_SANDBOX=workspace|docker`。**不需要也不读取任何模型 API Key 环境变量**——在 App 里登录。
 
 ### 方式 B：docker compose（server + L2 沙箱）
 ```bash
@@ -532,8 +593,18 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 
 ## 12. 待定问题
 
-1. PWA 外壳与 Rendezvous 用哪个域名（先用 `pages.dev` / `workers.dev` 免费子域）。
+1. ~~入口域名~~：已定为 `app.dengdengyun.shop`（可在设置中修改，Rendezvous 可自建）。
 2. 快速隧道若被 Cloudflare 限制或不稳定，是否需要自建中继作为默认的长期替代。
 3. Windows 的 L1 沙箱方案（AppContainer vs. WSL2）——先 L0/L2。
 4. 是否 P1 就引入 `pi-durable`（更强的崩溃续跑）——它标注实验性，暂不。
-5. 模型账号：只支持 API key，还是也支持 Pi 已有的订阅登录（OAuth）流程。
+5. ~~模型账号~~：已定——支持 Pi 的全部登录方式（API Key + 订阅 OAuth + 设备码），见 §5.14。
+
+---
+
+## 13. Phase 1 实现状态（2026-10-11）
+
+**已实现并经 E2E 验证**（`npm run e2e`，13/13 通过，截图在 `docs/screenshots/`）：首次运行向导（43 个 Pi provider、API Key 登录表单、Mock 测试连接）；流式回复；文件生成与下载；审批卡片（批准/拒绝，手机视口也可操作）；选项提问卡片；上传文件给助理；后台任务与完成卡片；信息面板（概览/文件/电脑）；设置（模型、远程与设备、入口域名、外观、关于）；手机扫码配对 → 电脑确认 → 设备 token（远程请求无 token 返回 401）；深色模式；杀掉服务重启后历史仍在且未完成工作自动续跑。
+
+**已实现、未能在开发机上端到端验证**：cloudflared 快速隧道（能拿到 `*.trycloudflare.com` 地址，但开发机出站 7844/QUIC 被封，边缘连接失败——状态会显示“连不上 Cloudflare 网络”）；Rendezvous Worker（单元测试通过，尚未部署）；Web Push（订阅/发送代码完成，需 HTTPS 真机验证）；Docker L2 沙箱（代码完成，未实测）。
+
+**脚手架/待做**：Tauri 托盘程序与安装包（`apps/tray`）、sidecar 打包（Node SEA）与签名、release 工作流；定时任务、记忆、技能（Phase 2）；浏览器与连接器（Phase 3）。
