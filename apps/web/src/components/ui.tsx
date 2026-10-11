@@ -10,7 +10,7 @@ export function Button({ variant = "default", size = "md", className, ...p }: Bu
 		<button
 			{...p}
 			className={cx(
-				"inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
+				"inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
 				size === "sm" && "h-8 px-3 text-sm",
 				size === "md" && "h-9 px-4 text-sm",
 				size === "icon" && "h-9 w-9",
