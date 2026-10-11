@@ -25,3 +25,17 @@ test("只有不经隧道的回环请求算本机", () => {
 	assert.ok(!isLocalRequest("127.0.0.1", new Headers({ host: "127.0.0.1:8787", "cf-connecting-ip": "1.1.1.1" })));
 	assert.ok(!isLocalRequest("10.0.0.5", new Headers({ host: "127.0.0.1:8787" })));
 });
+
+test("预先批准的配对码：认领即通过，无需电脑确认；仍然一次性", () => {
+	const { code, preApproved } = createPairCode({ preApproved: true });
+	assert.ok(preApproved);
+	const r = claimPairCode(code, "iPhone", "ios");
+	assert.ok(r.ok && r.preApproved);
+	const s = pairStatus((r as { deviceId: string }).deviceId);
+	assert.equal(s.status, "active");
+	assert.ok(s.token?.startsWith("hh_"));
+	assert.equal(claimPairCode(code, "x", "x").ok, false);
+	// 默认仍需确认
+	const r2 = claimPairCode(createPairCode().code, "Android", "android");
+	assert.equal(pairStatus((r2 as { deviceId: string }).deviceId).status, "pending");
+});

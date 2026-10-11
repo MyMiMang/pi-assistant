@@ -53,7 +53,7 @@ export const now = () => Date.now();
 export const uid = (p: string) => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 // ---------------------------------------------------------------- 轻量迁移：给旧库补列
-for (const [table, col, ddl] of [["agents", "description", "TEXT NOT NULL DEFAULT ''"]] as const) {
+for (const [table, col, ddl] of [["agents", "description", "TEXT NOT NULL DEFAULT ''"], ["pair_codes", "pre_approved", "INTEGER NOT NULL DEFAULT 0"]] as const) {
 	const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
 	if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
 }

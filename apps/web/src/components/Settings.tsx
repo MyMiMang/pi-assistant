@@ -104,7 +104,8 @@ function ModelsTab() {
 
 function RemoteTab() {
 	const system = useStore((s) => s.system)!;
-	const [pair, setPair] = useState<{ url: string; directUrl: string; qr: string; expiresAt: number; viaEntry: boolean; remote: boolean } | null>(null);
+	const [pair, setPair] = useState<{ url: string; directUrl: string; qr: string; expiresAt: number; viaEntry: boolean; remote: boolean; preApproved?: boolean } | null>(null);
+	const [preApproved, setPreApproved] = useState(false);
 	const [devices, setDevices] = useState<Device[]>([]);
 	const [left, setLeft] = useState(0);
 	const [pushState, setPushState] = useState<string>(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
@@ -163,13 +164,14 @@ function RemoteTab() {
 			</section>
 			{system.local && (
 				<section>
-					<H desc="用手机相机扫码，在手机上确认后即可使用。二维码 5 分钟内有效、只能用一次。">配对新设备</H>
+					<H desc="用手机相机扫码，在电脑上点“允许”后即可使用（也可以勾选免确认）。二维码 5 分钟内有效、只能用一次。">配对新设备</H>
 					{pair && left > 0 ? (
 						<div className="flex flex-col items-center gap-3 rounded-xl border border-zinc-200 p-4 sm:flex-row sm:items-start dark:border-zinc-800">
 							<img src={pair.qr} alt="配对二维码" className="h-48 w-48 rounded-lg bg-white p-2" />
 							<div className="min-w-0 flex-1 space-y-2 text-sm">
 								<div>
 									{left} 秒后失效 · {pair.viaEntry ? "通过入口域名" : pair.remote ? "隧道直连" : "仅本机网络（未开启远程访问）"}
+									{pair.preApproved && <span className="ml-1 text-amber-600">· 扫码即通过，无需确认</span>}
 								</div>
 								<div className="flex gap-2">
 									<Input readOnly value={pair.url} />
@@ -181,9 +183,18 @@ function RemoteTab() {
 							</div>
 						</div>
 					) : (
-						<Button variant="primary" onClick={async () => setPair(await api("/api/pair/start", { method: "POST" }))}>
-							<QrCode size={16} /> 生成配对二维码
-						</Button>
+						<div className="space-y-3">
+							<label className="flex items-start gap-2 text-sm">
+								<input type="checkbox" className="mt-0.5 accent-[var(--acc)]" checked={preApproved} onChange={(e) => setPreApproved(e.target.checked)} data-testid="pre-approved" />
+								<span>
+									扫码后无需在电脑上确认
+									<span className="block text-xs text-mut2">适合人不在电脑旁时（比如把二维码截图发给自己的手机）。这个二维码相当于一次性钥匙：5 分钟内有效、只能用一次，请勿发给别人。</span>
+								</span>
+							</label>
+							<Button variant="primary" onClick={async () => setPair(await api("/api/pair/start", { method: "POST", json: { preApproved } }))}>
+								<QrCode size={16} /> 生成配对二维码
+							</Button>
+						</div>
 					)}
 				</section>
 			)}
