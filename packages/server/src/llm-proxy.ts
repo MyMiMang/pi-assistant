@@ -101,7 +101,12 @@ export function toChatRequest(body: OARequest): ChatRequest {
 	let tools = body.tools?.filter((t) => t.type === "function").map((t) => ({ name: t.function.name, description: t.function.description, parameters: t.function.parameters }));
 	if (tc === "none") tools = undefined;
 	else if (tc === "required") sys.push("你必须调用一个工具。");
-	else if (typeof tc === "object" && tc?.function?.name) sys.push(`你必须调用工具 ${tc.function.name}。`);
+	else if (typeof tc === "object" && tc?.function?.name) {
+		// 强制调用指定工具：只把这个工具给模型，并在提示词里要求（Pi 的 toolChoice 只有 auto/none）
+		const forced = tc.function.name;
+		tools = tools?.filter((t) => t.name === forced);
+		sys.push(`你必须调用工具 ${forced}。`);
+	}
 	return {
 		systemPrompt: sys.filter(Boolean).join("\n\n") || undefined,
 		messages,
@@ -186,6 +191,7 @@ export class LlmProxy {
 		} catch {
 			return this.fail(res, 400, "invalid json");
 		}
+		if (process.env.PIA_PROXY_LOG) (await import("node:fs")).appendFileSync(process.env.PIA_PROXY_LOG, `${JSON.stringify(body)}\n`);
 		const target = this.resolve(body.model ?? "");
 		if (!target) return this.fail(res, 400, `未配置模型：${body.model}（请在设置里选择记忆用模型）`);
 		const ac = new AbortController();

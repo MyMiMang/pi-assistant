@@ -15,8 +15,28 @@ const textOf = (m: Msg) =>
 const getSkillDesc = (_u: string) => "按月汇总表格数据（先按周分组）。用户说“月度汇总/按月统计”时使用。";
 
 /** 模拟 Hindsight 需要的几类模型调用；不是 Hindsight 的请求返回 null */
-export function hindsightReply(messages: Msg[], systemPrompt: string): string | null {
+type MockTool = { name: string; parameters?: { properties?: Record<string, { type?: string }>; required?: string[] } };
+/** 按 JSON Schema 填一份最小参数 */
+function fillArgs(t: MockTool, text: string) {
+	const out: Record<string, unknown> = {};
+	const props = t.parameters?.properties ?? {};
+	for (const k of t.parameters?.required ?? []) {
+		const ty = props[k]?.type;
+		out[k] = ty === "array" ? [] : ty === "integer" || ty === "number" ? 0 : ty === "boolean" ? false : ty === "object" ? {} : text;
+	}
+	return out;
+}
+export function hindsightReply(messages: Msg[], systemPrompt: string, tools: MockTool[] = []): string | { tool: string; args: Record<string, unknown> } | null {
 	const last = messages[messages.length - 1];
+	// 反思（reflect）是带工具的多轮：先按要求调检索工具，拿到结果后调 done 给出回答
+	if (/You MUST ONLY use information from retrieved tool results/.test(systemPrompt) && tools.length) {
+		const q = textOf([...messages].reverse().find((m) => m.role === "user") ?? { role: "user", content: "" }).slice(0, 200);
+		const done = tools.find((t) => t.name === "done");
+		const searched = messages.filter((m) => m.role === "toolResult").length;
+		if (done && searched >= 1) return { tool: "done", args: { ...fillArgs(done, "根据记忆：用户喜欢简洁的回答。"), answer: "根据记忆：用户喜欢简洁的回答。" } };
+		const pick = tools.find((t) => t.name !== "done") ?? tools[0];
+		return { tool: pick.name, args: { ...fillArgs(pick, q), query: q } };
+	}
 	const u = last ? textOf(last) : "";
 	if (/^Say 'ok'/.test(u)) return "ok";
 	// 事实抽取：把 Content 段按句子拆成事实
@@ -40,9 +60,6 @@ function respond(messages: Msg[], systemPrompt = "") {
 	// Pi 的上下文整理（compaction）请求：返回一段结构化摘要
 	if (/context summarization assistant/i.test(systemPrompt) || textOf(last).startsWith("<conversation>"))
 		return fauxAssistantMessage("## Goal\n用户在测试 Pi Assistant 的各项功能。\n\n## Progress\n- 已演示流式回复、文件、审批、后台任务等。\n\n## Next Steps\n- 继续按用户要求操作。");
-	// 记忆后端（Hindsight，经本机网关）的内部请求：给出格式正确的最小回复，让离线测试能跑通 retain/recall/reflect
-	const hs = hindsightReply(messages, systemPrompt);
-	if (hs !== null) return fauxAssistantMessage(hs);
 	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !/^(后台|定时)任务「/.test(textOf(m)));
 	const u = lastUser ? textOf(lastUser) : "";
 	// 多步流程（用于“要不要做成技能？”建议）：月度汇总 = 5 步工具调用
@@ -143,9 +160,16 @@ function respond(messages: Msg[], systemPrompt = "") {
 
 export async function registerMockProvider(models: PiModels) {
 	const faux = registerFauxProvider({ provider: MOCK_PROVIDER, models: [{ id: MOCK_MODEL, name: "Mock 模型（本地测试）" }], tokensPerSecond: 60 });
-	const step = (ctx: { messages: Msg[]; systemPrompt?: string }) => {
+	const step = (ctx: { messages: (Msg & { toolsAdded?: MockTool[] })[]; systemPrompt?: string }) => {
 		faux.appendResponses([step as never]);
-		return respond(ctx.messages, ctx.systemPrompt ?? "");
+		// Pi 把系统提示词和工具声明放在 transcript 的 system 消息里
+		const sys = ctx.messages.filter((m) => m.role === "system");
+		const systemPrompt = [ctx.systemPrompt ?? "", ...sys.map(textOf)].filter(Boolean).join("\n");
+		const tools = sys.flatMap((m) => m.toolsAdded ?? []);
+		const msgs = ctx.messages.filter((m) => m.role !== "system");
+		const hs = hindsightReply(msgs, systemPrompt, tools);
+		if (hs !== null) return typeof hs === "string" ? fauxAssistantMessage(hs) : fauxAssistantMessage([fauxToolCall(hs.tool, hs.args as never)]);
+		return respond(msgs, systemPrompt);
 	};
 	faux.setResponses([step as never]);
 	const m = faux.getModel();

@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS memory_items (
 CREATE INDEX IF NOT EXISTS memory_items_bank ON memory_items(bank, created_at);
 CREATE TABLE IF NOT EXISTS memory_banks (bank TEXT PRIMARY KEY, profile_json TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(text, id UNINDEXED, bank UNINDEXED, tokenize = 'trigram');
+CREATE TABLE IF NOT EXISTS memory_sync (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, bank TEXT NOT NULL, item_id TEXT, op TEXT NOT NULL,
+  created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT);
+CREATE TABLE IF NOT EXISTS hindsight_banks (bank TEXT PRIMARY KEY, signature TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS routines (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, name TEXT NOT NULL, prompt TEXT NOT NULL,
   trigger TEXT NOT NULL, cron TEXT, tz TEXT NOT NULL DEFAULT 'Asia/Shanghai', quiet TEXT, webhook_secret TEXT,

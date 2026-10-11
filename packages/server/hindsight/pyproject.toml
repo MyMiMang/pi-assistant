@@ -1,0 +1,16 @@
+# 高级记忆（Hindsight）的 Python 运行环境。由服务在 数据目录/hindsight/project 里用我们自己的 uv 安装，
+# 不使用系统 Python / 用户的 pip、venv、uv 缓存。版本与 third-party.json 保持一致；升级走每周自动升级 PR。
+[project]
+name = "pia-hindsight"
+version = "0.0.0"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "hindsight-embed==0.10.3",
+  "hindsight-api-slim[local-onnx,embedded-db]==0.10.3",
+  "flashrank==0.2.10",
+]
+
+[tool.uv]
+package = false
+# 解析结果只取这个时间点之前发布的版本：换镜像（清华 / 阿里）也能得到同一套依赖
+exclude-newer = "2026-10-11T00:00:00Z"

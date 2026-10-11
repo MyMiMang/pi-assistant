@@ -11,7 +11,8 @@
 import { config } from "../config.ts";
 import { db, getSetting } from "../db.ts";
 import { basicMemory } from "./basic.ts";
-import type { MemoryItem, MemoryProvider } from "./types.ts";
+import { hindsightMemory } from "./hindsight/provider.ts";
+import type { MemoryExport, MemoryItem, MemoryProvider } from "./types.ts";
 
 export type { MemoryItem, MemoryProvider } from "./types.ts";
 export type Scope = "user" | "agent" | "conversation";
@@ -20,7 +21,10 @@ export const USER_BANK = "user";
 export const agentBank = (agentId: string) => `agent_${agentId}`;
 const DAY = 86_400_000;
 
-const providers = new Map<string, MemoryProvider>([[basicMemory.id, basicMemory]]);
+const providers = new Map<string, MemoryProvider>([
+	[basicMemory.id, basicMemory],
+	[hindsightMemory.id, hindsightMemory],
+]);
 const inited = new Set<string>();
 const banks = new Set<string>();
 
@@ -32,6 +36,11 @@ export const globalMemoryProviderId = () => {
 	const id = getSetting<string>("memoryProvider", "basic");
 	return providers.has(id) ? id : "basic";
 };
+/** 是否有助理（或全局默认）在用 Hindsight */
+export function hindsightInUse() {
+	if (globalMemoryProviderId() === "hindsight") return true;
+	return !!db.prepare("SELECT 1 FROM agents WHERE memory_provider = 'hindsight' LIMIT 1").get();
+}
 export function providerFor(agentId: string): MemoryProvider {
 	const row = db.prepare("SELECT memory_provider FROM agents WHERE id = ?").get(agentId) as { memory_provider: string | null } | undefined;
 	return providers.get(row?.memory_provider ?? "") ?? providers.get(globalMemoryProviderId())!;
@@ -119,23 +128,21 @@ export const memory = {
 		const p = providerFor(agentId);
 		const all = await memory.list(agentId, conversationId);
 		const vis = all.filter((i) => visible(i, conversationId));
-		// 有心智模型的后端（如 Hindsight）用 bootContext；basic 直接按作用域筛选事实，避免别的对话的对话级事实混进来
-		const useBoot = !!(p.capabilities.mentalModels && p.bootContext);
-		const boot: string[] = [];
-		if (useBoot) for (const bank of [USER_BANK, agentBank(agentId)]) {
-			const b = (await p.bootContext!(bank)).trim();
-			if (b) boot.push(b);
-		}
-		const facts = useBoot ? [] : vis.filter((i) => i.kind === "fact");
-		const bootIds = new Set(boot.join("\n").match(/\[(mem_[^\]]+)\]/g)?.map((x) => x.slice(1, -1)) ?? []);
+		// 明确记下的事实按作用域筛选（别的对话的对话级事实不会混进来）；有心智模型的后端（Hindsight）再补上自动整理出的认识
+		const facts = vis.filter((i) => i.kind === "fact");
+		const insights: string[] = [];
+		if (p.capabilities.mentalModels && p.bootContext)
+			for (const bank of [USER_BANK, agentBank(agentId)]) {
+				await ready(p, bank, agentId);
+				const b = (await p.bootContext(bank).catch(() => "")).trim();
+				if (b) insights.push(...b.split("\n"));
+			}
 		const notes = vis.filter((i) => i.kind === "note");
 		const logs = vis.filter((i) => i.kind === "experience" && Date.now() - Date.parse(i.createdAt) < 3 * DAY).slice(0, 15);
-		const seen = new Set([...bootIds, ...facts, ...notes, ...logs].map((x) => (typeof x === "string" ? x : x.id)));
+		const seen = new Set([...facts, ...notes, ...logs].map((x) => x.id));
 		const related = prompt.trim() ? (await memory.recall(agentId, conversationId, prompt.slice(0, 200), 5)).filter((i) => !seen.has(i.id)) : [];
 		const day = (t: string | number) => new Date(t).toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
 		const line = (i: ScopedItem) => `- [${i.id}] (${i.scope}) ${i.text}`;
-		// 对话级事实不在 bootContext 里（按库注入），单独补上
-		const convFacts = useBoot ? vis.filter((i) => i.kind === "fact" && i.scope === "conversation" && !bootIds.has(i.id)) : [];
 		const parts: string[] = [];
 		let used = 0;
 		const add = (title: string, lines: string[]) => {
@@ -147,7 +154,8 @@ export const memory = {
 			}
 			if (keep.length) parts.push(`## ${title}\n${keep.join("\n")}`);
 		};
-		add("关于用户与长期事实", [...boot.flatMap((b) => b.split("\n")), ...facts.map(line), ...convFacts.map(line)]);
+		add("关于用户与长期事实", facts.map(line));
+		add("自动整理出的认识", insights);
 		add("短期便签", notes.map((i) => `${line(i)}${i.expiresAt ? `（${day(i.expiresAt)} 到期）` : ""}`));
 		add("最近几天的日志", logs.map((i) => `- [${i.id}] ${day(i.createdAt)} ${i.text}`));
 		add("可能相关的较早记忆", related.map(line));
@@ -192,6 +200,22 @@ export const memory = {
 		const p = providerFor(agentId);
 		if (!p.export) throw new Error("当前记忆后端不支持导出");
 		return { agent: await p.export(agentBank(agentId)), user: await p.export(USER_BANK) };
+	},
+
+	/** 导入（统一格式）：写进当前后端；agent / user 两个库分别导入 */
+	async importAgent(agentId: string, data: { agent?: MemoryExport; user?: MemoryExport } | MemoryExport) {
+		const p = providerFor(agentId);
+		if (!p.import) throw new Error("当前记忆后端不支持导入");
+		const parts = "format" in data ? { agent: data } : data;
+		let n = 0;
+		for (const [bank, part] of [[agentBank(agentId), parts.agent], [USER_BANK, parts.user]] as const) {
+			if (!part) continue;
+			if (part.format !== "pi-assistant-memory/1" || !Array.isArray(part.items)) throw new Error("文件格式不对（需要 Pi Assistant 导出的记忆 JSON）");
+			await ready(p, bank, agentId);
+			await p.import(bank, { ...part, bank });
+			n += part.items.length;
+		}
+		return n;
 	},
 
 	/** 删除助理：清空它自己的记忆库（共享 user 库保留） */

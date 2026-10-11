@@ -87,6 +87,75 @@
       "license": "MPL-2.0",
       "adapter": "packages/sandbox-desktop",
       "smoke": "packages/sandbox-desktop/smoke.mjs"
+    },
+    {
+      "name": "uv",
+      "kind": "github-release",
+      "repo": "astral-sh/uv",
+      "version": "0.13.0",
+      "license": "MIT OR Apache-2.0",
+      "$comment": "高级记忆（Hindsight）用的 Python 包管理器。首次开启时下载到 数据目录/bin 并校验 SHA256；GitHub 不通时改从 PyPI（或国内镜像）下载同版本 wheel，同样校验固定的 SHA256。",
+      "assets": {
+        "darwin-arm64": {
+          "file": "uv-aarch64-apple-darwin.tar.gz",
+          "sha256": "a9c1b29002cf3c83f07fa9cd8a887a3be0107d90e23189721221e7257db8e3d6",
+          "wheel": "uv-0.13.0-py3-none-macosx_11_0_arm64.whl",
+          "wheelSha256": "a5f93ae362b751737cecef0bbc0294624be68a843ff9b32d86e6862a26101630"
+        },
+        "darwin-x64": {
+          "file": "uv-x86_64-apple-darwin.tar.gz",
+          "sha256": "5f44dcbde809b632f47c36fadb241cb4d6f9af71d0c8f172b5d2026d3dde742c",
+          "wheel": "uv-0.13.0-py3-none-macosx_10_12_x86_64.whl",
+          "wheelSha256": "93265932cb2efd1486d4d182211281b3f0b31637e2fc160c4c8d7b15294188d1"
+        },
+        "linux-x64": {
+          "file": "uv-x86_64-unknown-linux-gnu.tar.gz",
+          "sha256": "1468ebd5a5541121837c5a2817b9972ba6090fa6caa3d142620850a47fb75154",
+          "wheel": "uv-0.13.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "wheelSha256": "52c7da0fd9056d9551124777ec77de53f0df7017daf8f98a19e947b7837416ed"
+        },
+        "linux-arm64": {
+          "file": "uv-aarch64-unknown-linux-gnu.tar.gz",
+          "sha256": "3ccfb6af6e242433eb552f7d9676abd5412c6595c497e990d9c8cb7b5bd4d2c3",
+          "wheel": "uv-0.13.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl",
+          "wheelSha256": "5163a516b9a488bccb4001f727720b775719dfb6dcb144a9bc0ef23e5cfdd269"
+        },
+        "win32-x64": {
+          "file": "uv-x86_64-pc-windows-msvc.zip",
+          "sha256": "088962f9e7b7bd9ea740c04c650b2a21c8928c345bd99ac24350dc924dba656c",
+          "wheel": "uv-0.13.0-py3-none-win_amd64.whl",
+          "wheelSha256": "0367b4e0ae4dcef32da4aa2ad2f3853b6ad81d50c187abe50d343d892b8fea21"
+        }
+      },
+      "adapter": "packages/server/src/memory/hindsight/uv-bin.ts"
+    },
+    {
+      "name": "hindsight",
+      "kind": "pypi",
+      "packages": {
+        "hindsight-embed": "0.10.3",
+        "hindsight-api-slim[local-onnx,embedded-db]": "0.10.3",
+        "flashrank": "0.2.10"
+      },
+      "excludeNewer": "2026-10-11T00:00:00Z",
+      "license": "MIT",
+      "project": "packages/server/hindsight/pyproject.toml",
+      "adapter": "packages/server/src/memory/hindsight",
+      "smoke": "packages/server/test/hindsight.smoke.ts"
+    },
+    {
+      "name": "@vectorize-io/hindsight-all",
+      "kind": "npm",
+      "version": "0.10.3",
+      "license": "MIT",
+      "adapter": "packages/server/src/memory/hindsight/sidecar.ts"
+    },
+    {
+      "name": "@vectorize-io/hindsight-client",
+      "kind": "npm",
+      "version": "0.10.3",
+      "license": "MIT",
+      "adapter": "packages/server/src/memory/hindsight/provider.ts"
     }
   ],
   "licenseAllow": [
