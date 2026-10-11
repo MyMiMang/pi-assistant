@@ -6,6 +6,7 @@ import { initModels } from "./models.ts";
 import { checkPiCompat } from "./pi-adapter/index.ts";
 import { bootstrap } from "./runtime.ts";
 import { startTunnel } from "./tunnel.ts";
+import { startScheduler } from "./routines.ts";
 
 const compat = checkPiCompat();
 console.log(`[pi-assistant] ${compat.message}`);
@@ -13,6 +14,7 @@ await initModels();
 startHttp();
 console.log(`[pi-assistant] 服务已启动：http://${config.host}:${config.port}  数据目录：${config.dataDir}  serverId=${identity().serverId}${config.mock ? "  [Mock 模型已启用]" : ""}`);
 await bootstrap();
+startScheduler();
 if (getSetting("remoteEnabled", false)) startTunnel();
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => process.exit(0));

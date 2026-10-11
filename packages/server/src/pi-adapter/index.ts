@@ -278,7 +278,9 @@ export type AgentEvent =
 	  }
 	| { type: "tool_start"; id: string; name: string; args: Record<string, unknown> }
 	| { type: "tool_end"; id: string; name: string; isError: boolean; resultText: string }
-	| { type: "settled"; aborted: boolean };
+	| { type: "settled"; aborted: boolean }
+	| { type: "compaction_start"; reason: string }
+	| { type: "compaction_end"; reason: string; ok: boolean; aborted: boolean; error?: string; tokensBefore?: number; summary?: string };
 
 export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => void): () => void {
 	return session.subscribe((e: AgentSessionEvent) => {
@@ -316,6 +318,12 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 			case "agent_settled":
 				fn({ type: "settled", aborted: !!ev.aborted });
 				break;
+			case "compaction_start":
+				fn({ type: "compaction_start", reason: ev.reason });
+				break;
+			case "compaction_end":
+				fn({ type: "compaction_end", reason: ev.reason, ok: !!ev.result && !ev.aborted, aborted: !!ev.aborted, error: ev.errorMessage, tokensBefore: ev.result?.tokensBefore, summary: ev.result?.summary });
+				break;
 		}
 	});
 }
@@ -325,6 +333,16 @@ export function promptSession(session: AgentSession, text: string): Promise<void
 	return session.isStreaming ? session.prompt(text, { streamingBehavior: "followUp" }) : session.prompt(text);
 }
 export const isSessionBusy = (s: AgentSession) => s.isStreaming;
+/** 手动“整理上下文”：让 Pi 把较早的对话压缩成摘要（Pi 原生 compaction）。 */
+export async function compactSession(s: AgentSession, instructions?: string) {
+	const r = await s.compact(instructions);
+	return { tokensBefore: (r as { tokensBefore?: number }).tokensBefore, summary: (r as { summary?: string }).summary };
+}
+/** 当前上下文用量（用于界面提示“对话较长”） */
+export function contextUsage(s: AgentSession): { tokens: number | null; contextWindow: number | null } {
+	const u = (s as unknown as { getContextUsage?: () => { tokens?: number | null; contextWindow?: number } | undefined }).getContextUsage?.();
+	return { tokens: u?.tokens ?? null, contextWindow: u?.contextWindow ?? s.model?.contextWindow ?? null };
+}
 export const abortSession = (s: AgentSession) => s.abort();
 export const disposeSession = (s: AgentSession) => s.dispose();
 /** 往上下文注入一条不显示给用户的信息（例如后台任务结果），在下一轮对话时生效。 */

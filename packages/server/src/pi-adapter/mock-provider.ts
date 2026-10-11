@@ -12,8 +12,11 @@ type Msg = { role: string; content: unknown; toolName?: string };
 const textOf = (m: Msg) =>
 	typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((b: { text?: string }) => b.text ?? "").join("") : "";
 
-function respond(messages: Msg[]) {
+function respond(messages: Msg[], systemPrompt = "") {
 	const last = messages[messages.length - 1];
+	// Pi 的上下文整理（compaction）请求：返回一段结构化摘要
+	if (/context summarization assistant/i.test(systemPrompt) || textOf(last).startsWith("<conversation>"))
+		return fauxAssistantMessage("## Goal\n用户在测试 Pi Assistant 的各项功能。\n\n## Progress\n- 已演示流式回复、文件、审批、后台任务等。\n\n## Next Steps\n- 继续按用户要求操作。");
 	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !textOf(m).startsWith("后台任务「"));
 	const u = lastUser ? textOf(lastUser) : "";
 	if (last.role === "toolResult") {
@@ -27,6 +30,14 @@ function respond(messages: Msg[]) {
 				return fauxAssistantMessage(`好的，${out.replace("用户回答：", "你选了「")}」，我记下了。`);
 			case "spawn_task":
 				return fauxAssistantMessage("好的，这个任务已经放到后台执行了，你可以继续跟我聊别的，完成后我会通知你。");
+			case "memory_remember":
+				return fauxAssistantMessage(/没有记住/.test(out) ? `没能记住：${out}` : "好的，我记住了 ✅");
+			case "memory_recall":
+				return fauxAssistantMessage(`我在记忆里找到了这些：\n\n${out}`);
+			case "routine_create":
+				return fauxAssistantMessage(/没有批准|有误/.test(out) ? `好的，没有创建定时任务。（${out}）` : `定时任务设好了 ⏰\n\n${out}`);
+			case "skill_save":
+				return fauxAssistantMessage(`已经存成技能了 🧩 ${out}`);
 			case "read":
 				return fauxAssistantMessage(`我读完了这个文件，前 200 个字是：\n\n\`\`\`\n${out.slice(0, 200)}\n\`\`\``);
 			default:
@@ -34,6 +45,17 @@ function respond(messages: Msg[]) {
 				return fauxAssistantMessage(`命令执行完成，输出如下：\n\n\`\`\`\n${out.slice(0, 1200)}\n\`\`\``);
 		}
 	}
+	const remember = u.match(/^记住[:：，,\s]*(.+)$/s);
+	if (remember) return fauxAssistantMessage([fauxToolCall("memory_remember", { content: remember[1].trim(), kind: "fact", scope: "user" })]);
+	if (/我叫什么|还记得我/.test(u)) {
+		const mem = systemPrompt.match(/<memory>([\s\S]*?)<\/memory>/);
+		return fauxAssistantMessage(mem ? `我记得这些关于你的事：\n${mem[1].split("\n").filter((l) => l.startsWith("- ")).join("\n")}` : "我的记忆里还没有关于你的信息。");
+	}
+	if (/搜.*记忆|回忆/.test(u)) return fauxAssistantMessage([fauxToolCall("memory_recall", { query: u.replace(/.*(搜|回忆)[^：:]*[：:]?/, "").trim() || "用户" })]);
+	if (/每天|定时/.test(u))
+		return fauxAssistantMessage([fauxText("好，我来设一个定时任务。"), fauxToolCall("routine_create", { name: "每日简报", prompt: "整理今天的待办和日程，给我一份三条以内的简短简报。", trigger: "cron", cron: "0 8 * * *" })]);
+	if (/存成技能/.test(u))
+		return fauxAssistantMessage([fauxToolCall("skill_save", { name: "daily-brief", description: "生成每日简报：汇总待办、日程和要闻。用户要“简报/今日概览”时使用。", body: "# 每日简报\n\n1. 列出今天的待办（最多 5 条）。\n2. 汇总日程。\n3. 用三句话总结。" })]);
 	if (/服务刚刚重启/.test(u)) return fauxAssistantMessage("我检查了一下进度：服务重启时上一轮命令被中断了。工作区里的文件都还在，需要的话再说一声我就重新执行。");
 	if (/后台/.test(u) && !/统计工作区/.test(u))
 		return fauxAssistantMessage([fauxToolCall("spawn_task", { title: "统计工作区文件", instructions: "统计工作区文件：列出工作区所有文件并统计数量，给出简短总结。" })]);
@@ -60,9 +82,9 @@ function respond(messages: Msg[]) {
 
 export async function registerMockProvider(models: PiModels) {
 	const faux = registerFauxProvider({ provider: MOCK_PROVIDER, models: [{ id: MOCK_MODEL, name: "Mock 模型（本地测试）" }], tokensPerSecond: 60 });
-	const step = (ctx: { messages: Msg[] }) => {
+	const step = (ctx: { messages: Msg[]; systemPrompt?: string }) => {
 		faux.appendResponses([step as never]);
-		return respond(ctx.messages);
+		return respond(ctx.messages, ctx.systemPrompt ?? "");
 	};
 	faux.setResponses([step as never]);
 	const m = faux.getModel();

@@ -22,13 +22,17 @@ import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-pro
 import { checkPiCompat } from "./pi-adapter/index.ts";
 import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
-import { disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
+import { describeRoutine, disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
 import { desktopPause, desktopStatus, issueTicket, screenshotDesktop, startDesktop, stopDesktop, useTicket } from "./desktop.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
 import { entryDomain, restartTunnel, retryTunnel, startTunnel, stopTunnel, tunnelStatus } from "./tunnel.ts";
 import { checkNamedPerms, namedConfig, removeNamedTunnel, setupNamedTunnel } from "./named-tunnel.ts";
 import { sealJson } from "./secrets.ts";
+import { createConversation, currentConversation, deleteConversation, getConversation, listConversations, renameConversation, setCurrentConversation } from "./conversations.ts";
+import { globalMemoryProviderId, listMemoryProviders, memory } from "./memory/index.ts";
+import { deleteSkill, getSkill, listSkills, saveSkill } from "./skills.ts";
+import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRoutines, listRuns, type RoutineInput, type RoutineRow, runRoutine, setRoutineStatus, updateRoutine, verifyWebhook, webhookPath } from "./routines.ts";
 import { BRAND } from "@pi-assistant/shared";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
@@ -65,7 +69,7 @@ app.use("/api/*", async (c, next) => {
 	const deviceId = local ? null : deviceForToken(auth);
 	if (!local && !rateLimit(`ip:${ip}:${deviceId ? "auth" : "anon"}`, deviceId ? 600 : 30)) return c.json({ error: "rate_limited" }, 429);
 	c.set("caller", { local, deviceId, ip });
-	const pub = ["/api/pair/claim", "/api/pair/status/", "/api/system/public"].some((p) => c.req.path.startsWith(p));
+	const pub = ["/api/pair/claim", "/api/pair/status/", "/api/system/public", "/hooks/"].some((p) => c.req.path.startsWith(p));
 	if (!local && !deviceId && !pub) return c.json({ error: "unauthorized" }, 401);
 	if (deviceId) touchDevice(deviceId, ip);
 	return next();
@@ -187,7 +191,7 @@ app.put("/api/models/default", async (c) => {
 // ---------------------------------------------------------------- 助理与聊天
 const agentJson = (a: NonNullable<ReturnType<typeof getAgent>>) => {
 	const last = db.prepare("SELECT content, role, created_at FROM messages WHERE agent_id = ? AND task_id IS NULL AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1").get(a.id);
-	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), workspace: join(config.workspaceRoot, a.id), last };
+	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
 };
 app.get("/api/agents", (c) => c.json(listAgents().map(agentJson)));
 type AgentInput = { name?: string; avatar?: string; color?: string; persona?: string; description?: string; model?: { provider: string; id: string } | null };
@@ -225,7 +229,9 @@ app.delete("/api/agents/:id", async (c) => {
 	const a = getAgent(c.req.param("id"));
 	if (!a) return c.json({ error: "not_found" }, 404);
 	await disposeRuntime(a.id);
-	for (const t of ["messages", "tasks", "requests", "files"]) db.prepare(`DELETE FROM ${t} WHERE agent_id = ?`).run(a.id);
+	deleteAgentRoutines(a.id);
+	await memory.purgeAgent(a.id);
+	for (const t of ["messages", "tasks", "requests", "files", "conversations"]) db.prepare(`DELETE FROM ${t} WHERE agent_id = ?`).run(a.id);
 	db.prepare("DELETE FROM agents WHERE id = ?").run(a.id);
 	// 工作区与会话移到回收站（不直接删除，误删可找回）
 	const trash = join(config.dataDir, "trash", `${a.id}-${Date.now()}`);
@@ -258,21 +264,180 @@ app.get("/api/agents/:id/avatar", (c) => {
 });
 app.get("/api/agents/:id/messages", (c) => {
 	const before = c.req.query("before");
-	return c.json(listMessages(c.req.param("id"), { before: before ? Number(before) : undefined, limit: Number(c.req.query("limit") ?? 200) }));
+	return c.json(listMessages(c.req.param("id"), { conversationId: c.req.query("conversation") || undefined, before: before ? Number(before) : undefined, limit: Number(c.req.query("limit") ?? 200) }));
 });
 app.post("/api/agents/:id/messages", async (c) => {
 	const id = c.req.param("id");
 	if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
-	const b = await c.req.json<{ text: string; attachments?: string[] }>();
+	const b = await c.req.json<{ text: string; attachments?: string[]; conversationId?: string }>();
+	const conv = b.conversationId && getConversation(b.conversationId)?.agent_id === id ? b.conversationId : currentConversation(id);
 	const files = (b.attachments ?? []).map(getFile).filter((f) => f && f.agent_id === id) as NonNullable<ReturnType<typeof getFile>>[];
 	const text = (b.text ?? "").slice(0, 100_000);
 	if (!text.trim() && !files.length) return c.json({ error: "empty" }, 400);
-	const msg = insertMessage({ agentId: id, role: "user", content: text, meta: { attachments: files.map(fileInfo), from: by(c) } });
+	const msg = insertMessage({ agentId: id, conversationId: conv, role: "user", content: text, meta: { attachments: files.map(fileInfo), from: by(c) } });
 	const prompt = [text, ...files.map((f) => `[附件: ${f.workspace_path}]`)].join("\n").trim();
-	void runtime(id).send(prompt);
+	void runtime(id, conv).send(prompt);
 	return c.json(msg);
 });
-app.post("/api/agents/:id/abort", async (c) => (await runtime(c.req.param("id")).abort(), c.json({ ok: true })));
+app.post("/api/agents/:id/abort", async (c) => {
+	const conv = c.req.query("conversation");
+	await runtime(c.req.param("id"), conv || undefined).abort();
+	return c.json({ ok: true });
+});
+
+// ---------------------------------------------------------------- 对话
+app.get("/api/agents/:id/conversations", (c) => {
+	const id = c.req.param("id");
+	if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
+	return c.json({ current: currentConversation(id), items: listConversations(id).map((x) => ({ ...x, session_file: undefined })) });
+});
+app.post("/api/agents/:id/conversations", async (c) => {
+	const id = c.req.param("id");
+	if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
+	const b = await c.req.json<{ title?: string }>().catch(() => ({}) as { title?: string });
+	return c.json(createConversation(id, (b.title ?? "").slice(0, 60)));
+});
+app.post("/api/agents/:id/conversations/:cid/select", (c) => c.json({ ok: setCurrentConversation(c.req.param("id"), c.req.param("cid")) }));
+app.patch("/api/conversations/:cid", async (c) => {
+	const b = await c.req.json<{ title: string }>();
+	renameConversation(c.req.param("cid"), String(b.title ?? ""));
+	return c.json({ ok: true });
+});
+app.delete("/api/conversations/:cid", async (c) => {
+	await disposeConversationRuntime(c.req.param("cid"));
+	return c.json({ ok: !!deleteConversation(c.req.param("cid")) });
+});
+/** 手动整理上下文（Pi compaction） */
+app.post("/api/conversations/:cid/compact", async (c) => {
+	const conv = getConversation(c.req.param("cid"));
+	if (!conv) return c.json({ error: "not_found" }, 404);
+	try {
+		return c.json({ ok: true, ...(await runtime(conv.agent_id, conv.id).compact()) });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+
+// ---------------------------------------------------------------- 记忆（与后端无关）
+app.get("/api/memory/providers", (c) => c.json({ global: globalMemoryProviderId(), providers: listMemoryProviders() }));
+app.put("/api/memory/provider", async (c) => {
+	const { id } = await c.req.json<{ id: string }>();
+	if (!listMemoryProviders().some((p) => p.id === id)) return c.json({ error: "unknown_provider" }, 400);
+	setSetting("memoryProvider", id);
+	return c.json({ ok: true });
+});
+app.get("/api/agents/:id/memory", async (c) => {
+	const id = c.req.param("id");
+	const a = getAgent(id);
+	if (!a) return c.json({ error: "not_found" }, 404);
+	const items = await memory.list(id, undefined, c.req.query("q") || undefined);
+	const p = listMemoryProviders().find((x) => x.id === (a.memory_provider ?? globalMemoryProviderId()))!;
+	return c.json({ provider: p, agentProvider: a.memory_provider ?? null, items: items.map((i) => ({ id: i.id, text: i.text, kind: i.kind, scope: i.scope, createdAt: i.createdAt, expiresAt: i.expiresAt ?? null, conversationId: i.conversationId ?? null, source: i.meta?.source ?? null })) });
+});
+app.post("/api/agents/:id/memory", async (c) => {
+	const b = await c.req.json<{ text: string; kind?: "fact" | "experience" | "note"; scope?: "user" | "agent" | "conversation"; conversationId?: string; ttlDays?: number }>();
+	try {
+		const r = await memory.remember(c.req.param("id"), b.conversationId ?? null, { content: String(b.text ?? ""), kind: b.kind, scope: b.scope, ttlDays: b.ttlDays, source: "user" });
+		bus.emit({ type: "memory.changed", agentId: c.req.param("id") });
+		return c.json(r);
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.patch("/api/agents/:id/memory/:mid", async (c) => {
+	const b = await c.req.json<{ text?: string; kind?: "fact" | "experience" | "note"; scope?: "user" | "agent" | "conversation" }>();
+	const id = await memory.update(c.req.param("id"), c.req.param("mid"), b);
+	bus.emit({ type: "memory.changed", agentId: c.req.param("id") });
+	return id ? c.json({ ok: true, id }) : c.json({ error: "not_found" }, 404);
+});
+app.delete("/api/agents/:id/memory/:mid", async (c) => {
+	const ok = await memory.forget(c.req.param("id"), c.req.param("mid"));
+	bus.emit({ type: "memory.changed", agentId: c.req.param("id") });
+	return c.json({ ok });
+});
+app.get("/api/agents/:id/memory/export", async (c) => {
+	try {
+		const data = await memory.exportAgent(c.req.param("id"));
+		return c.body(JSON.stringify(data, null, 2), 200, { "content-type": "application/json", "content-disposition": `attachment; filename="memory-${c.req.param("id")}.json"` });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.put("/api/agents/:id/memory-provider", async (c) => {
+	const { id } = await c.req.json<{ id: string | null }>();
+	if (id && !listMemoryProviders().some((p) => p.id === id)) return c.json({ error: "unknown_provider" }, 400);
+	db.prepare("UPDATE agents SET memory_provider = ? WHERE id = ?").run(id, c.req.param("id"));
+	return c.json({ ok: true });
+});
+
+// ---------------------------------------------------------------- 技能库（Pi 原生 Agent Skills）
+app.get("/api/skills", (c) => c.json(listSkills().map(({ body, ...s }) => ({ ...s, path: undefined, size: body.length }))));
+app.get("/api/skills/:name", (c) => {
+	const s = getSkill(c.req.param("name"));
+	return s ? c.json({ ...s, path: undefined }) : c.json({ error: "not_found" }, 404);
+});
+app.post("/api/skills", async (c) => {
+	const b = await c.req.json<{ name: string; description: string; body: string; previousName?: string }>();
+	if (getSkill(b.name)?.builtin) return c.json({ error: "内置技能不能覆盖，请换一个名字" }, 400);
+	try {
+		return c.json({ ...saveSkill(b), path: undefined });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.delete("/api/skills/:name", (c) => c.json({ ok: deleteSkill(c.req.param("name")) }));
+
+// ---------------------------------------------------------------- 定时与触发
+const routineJson = (r: RoutineRow) => {
+	const last = listRuns(r.id, 1)[0] ?? null;
+	return { ...r, webhook_secret: undefined, quiet: r.quiet ? JSON.parse(r.quiet) : null, webhookPath: webhookPath(r), lastRun: last };
+};
+app.get("/api/agents/:id/routines", (c) => c.json(listRoutines(c.req.param("id")).map(routineJson)));
+app.post("/api/routines/preview", async (c) => {
+	const b = await c.req.json<{ trigger: string; cron?: string; quietHours?: boolean }>();
+	try {
+		return c.json({ ok: true, text: describeRoutine(b) });
+	} catch (e) {
+		return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+	}
+});
+app.post("/api/agents/:id/routines", async (c) => {
+	const id = c.req.param("id");
+	if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
+	try {
+		const b = await c.req.json<RoutineInput>();
+		return c.json(routineJson(createRoutine(id, { ...b, conversationId: b.conversationId ?? currentConversation(id) }, by(c))));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.patch("/api/routines/:rid", async (c) => {
+	try {
+		return c.json(routineJson(updateRoutine(c.req.param("rid"), await c.req.json<Partial<RoutineInput>>())));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.post("/api/routines/:rid/:action{pause|resume|run}", (c) => {
+	const rid = c.req.param("rid");
+	if (!getRoutine(rid)) return c.json({ error: "not_found" }, 404);
+	const action = c.req.param("action");
+	if (action === "run") return c.json(runRoutine(rid, "manual"));
+	return c.json(routineJson(setRoutineStatus(rid, action === "pause" ? "paused" : "active")!));
+});
+app.delete("/api/routines/:rid", (c) => c.json({ ok: deleteRoutine(c.req.param("rid")) }));
+app.get("/api/routines/:rid/runs", (c) => c.json(listRuns(c.req.param("rid"), 50)));
+/** Webhook 触发（公开地址，凭 URL 里的密钥；请求体作为外部数据附在指令后） */
+app.post("/hooks/:rid/:secret", async (c) => {
+	const ip = c.get("caller").ip;
+	if (!rateLimit(`hook:${c.req.param("rid")}`, 2, 5) || !rateLimit(`hookip:${ip}`, 10, 10)) return c.json({ error: "rate_limited" }, 429);
+	const r = verifyWebhook(c.req.param("rid"), c.req.param("secret"));
+	if (!r) return c.json({ error: "not_found" }, 404);
+	if (r.status !== "active") return c.json({ error: "paused" }, 409);
+	const body = (await c.req.text()).slice(0, 16_000);
+	const run = runRoutine(r.id, "webhook", body || undefined);
+	return c.json({ ok: true, runId: run.id, status: run.status }, 202);
+});
 app.post("/api/agents/:id/read", (c) => {
 	db.prepare("UPDATE agents SET unread = 0 WHERE id = ?").run(c.req.param("id"));
 	bus.emit({ type: "agent.read", agentId: c.req.param("id") });

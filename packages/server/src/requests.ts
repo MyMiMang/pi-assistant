@@ -23,7 +23,7 @@ export interface RequestRow {
 	resolved_at: number | null;
 }
 
-function create(kind: "approval" | "question", agentId: string, taskId: string | null, toolName: string | null, payload: Record<string, unknown>, title: string) {
+function create(kind: "approval" | "question", agentId: string, taskId: string | null, toolName: string | null, payload: Record<string, unknown>, title: string, conversationId?: string | null) {
 	const id = uid(kind === "approval" ? "ap" : "q");
 	db.prepare("INSERT INTO requests(id, agent_id, task_id, kind, tool_name, payload, status, created_at) VALUES(?,?,?,?,?,?,?,?)").run(
 		id,
@@ -36,17 +36,17 @@ function create(kind: "approval" | "question", agentId: string, taskId: string |
 		now(),
 	);
 	// 卡片显示在主聊天里（即使来自后台任务），这样手机上也能直接处理
-	const msg = insertMessage({ agentId, role: "card", meta: { kind, requestId: id, taskId, toolName, ...payload, status: "pending" } });
+	const msg = insertMessage({ agentId, conversationId, role: "card", meta: { kind, requestId: id, taskId, toolName, ...payload, status: "pending" } });
 	notify({ title, body: String(payload.summary ?? payload.question ?? ""), tag: id, url: `/?agent=${agentId}` });
 	return new Promise<{ approved?: boolean; answer?: string; note?: string }>((resolve) => pending.set(id, { resolve, messageId: msg.id }));
 }
 
 export const requests = {
-	approval(agentId: string, taskId: string | null, toolName: string, input: Record<string, unknown>, summary: string, risk: string) {
-		return create("approval", agentId, taskId, toolName, { input, summary, risk }, "需要你批准一个操作");
+	approval(agentId: string, taskId: string | null, toolName: string, input: Record<string, unknown>, summary: string, risk: string, conversationId?: string | null) {
+		return create("approval", agentId, taskId, toolName, { input, summary, risk }, "需要你批准一个操作", conversationId);
 	},
-	question(agentId: string, taskId: string | null, question: string, options: string[], allowFreeText: boolean) {
-		return create("question", agentId, taskId, null, { question, options, allowFreeText }, "助理有个问题想问你");
+	question(agentId: string, taskId: string | null, question: string, options: string[], allowFreeText: boolean, conversationId?: string | null) {
+		return create("question", agentId, taskId, null, { question, options, allowFreeText }, "助理有个问题想问你", conversationId);
 	},
 	resolve(id: string, r: { approved?: boolean; answer?: string; note?: string }, by: string) {
 		const row = db.prepare("SELECT * FROM requests WHERE id = ?").get(id) as RequestRow | undefined;
