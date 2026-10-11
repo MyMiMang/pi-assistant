@@ -1,8 +1,10 @@
-import { Bell, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { getLang, setLang, t } from "../i18n";
-import { applyTheme, useStore } from "../store";
+import { setAppearance, useStore } from "../store";
+import { getTheme, type Mode, THEMES } from "../themes/registry";
+import { ThemePreview } from "./ThemePreview";
 import type { Device, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
@@ -322,20 +324,40 @@ function EntryTab() {
 	);
 }
 
-const ACCENTS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#8b5cf6", "#18181b"];
 function AppearanceTab() {
-	const { theme, accent, set } = useStore();
-	const upd = (th = theme, ac = accent) => {
-		localStorage.setItem("pia.theme", th);
-		localStorage.setItem("pia.accent", ac);
-		set({ theme: th, accent: ac });
-		applyTheme(th, ac);
-	};
+	const { theme, accent, skin } = useStore();
+	const def = getTheme(skin);
+	const sysDark = matchMedia("(prefers-color-scheme: dark)").matches;
+	const mode: Mode = theme === "system" ? (sysDark ? "dark" : "light") : theme;
 	return (
 		<div className="space-y-6">
 			<section>
 				<H>主题</H>
-				<div className="flex gap-2">
+				<div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="主题">
+					{THEMES.map((th) => (
+						<button
+							key={th.id}
+							role="radio"
+							aria-checked={th.id === skin}
+							aria-label={th.name}
+							data-theme-id={th.id}
+							onClick={() => setAppearance({ skin: th.id })}
+							className={cx("group rounded-2xl border p-2 text-left transition", th.id === skin ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-zinc-400")}
+						>
+							<ThemePreview theme={th} mode={mode} accent={th.id === skin ? accent || undefined : undefined} />
+							<div className="flex items-center gap-2 px-1.5 pt-2">
+								<span className="font-medium">{th.name}</span>
+								<span className="text-xs text-mut2">{th.id}</span>
+								{th.id === skin && <Check size={15} className="ml-auto text-accent" />}
+							</div>
+							<div className="px-1.5 pb-1 text-xs text-mut">{th.tagline}</div>
+						</button>
+					))}
+				</div>
+			</section>
+			<section>
+				<H>明暗</H>
+				<div className="flex flex-wrap gap-2">
 					{(
 						[
 							["light", "浅色", Sun],
@@ -343,7 +365,7 @@ function AppearanceTab() {
 							["system", "跟随系统", Monitor],
 						] as const
 					).map(([k, label, Icon]) => (
-						<Button key={k} variant={theme === k ? "primary" : "outline"} onClick={() => upd(k)}>
+						<Button key={k} variant={theme === k ? "primary" : "outline"} onClick={() => setAppearance({ theme: k })}>
 							<Icon size={15} /> {label}
 						</Button>
 					))}
@@ -351,11 +373,16 @@ function AppearanceTab() {
 			</section>
 			<section>
 				<H>强调色</H>
-				<div className="flex gap-2">
-					{ACCENTS.map((c) => (
-						<button key={c} onClick={() => upd(theme, c)} className={cx("h-8 w-8 rounded-full border border-black/10 ring-offset-2 dark:border-white/25 dark:ring-offset-zinc-900", c === accent && "ring-2 ring-zinc-400")} style={{ background: c }} aria-label={c} />
+				<div className="flex flex-wrap items-center gap-2">
+					<button onClick={() => setAppearance({ accent: "" })} className={cx("h-8 rounded-full border px-3 text-xs transition", !accent ? "border-accent text-accent" : "border-line text-mut hover:border-zinc-400")} aria-label="主题默认">
+						<span className="mr-1.5 inline-block h-3 w-3 rounded-full align-[-2px]" style={{ background: def.accent[mode] }} />
+						主题默认
+					</button>
+					{def.accents.map((c) => (
+						<button key={c} onClick={() => setAppearance({ accent: c })} className={cx("h-8 w-8 rounded-full border border-black/10 ring-offset-2 ring-offset-[var(--card)] dark:border-white/25", c === accent && "ring-2 ring-zinc-400")} style={{ background: c }} aria-label={c} />
 					))}
 				</div>
+				<p className="mt-2 text-xs text-mut2">主题、明暗与强调色只保存在这台设备上（每台手机/电脑可以不同）。</p>
 			</section>
 			<section>
 				<H>语言 / Language</H>

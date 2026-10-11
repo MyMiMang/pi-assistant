@@ -1,95 +1,214 @@
-import { ArrowUp, ChevronRight, Loader2, Menu, PanelRight, Paperclip, Square, Terminal, Wrench, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowUp, Check, ChevronRight, Globe, Hand, Loader2, Menu, Monitor, PanelRight, Paperclip, Square, Terminal, X, FileText, FolderSearch, PenLine, Send, Sparkles, Eye } from "lucide-react";
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, upload } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
-import type { Attachment, Message } from "../types";
+import type { Agent, Attachment, Message } from "../types";
 import Attachments from "./Attachments";
 import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
 import Markdown from "./Markdown";
-import { Avatar, Button, cx, fmtSize } from "./ui";
+import { Avatar, cx, fmtSize } from "./ui";
 
+// ------------------------------------------------------------------ 工具 → 文案
 const TOOL_LABEL: Record<string, string> = {
 	bash: "运行命令", read: "读取文件", write: "写入文件", edit: "修改文件", ls: "查看目录", find: "查找文件", grep: "搜索内容",
-	deliver_file: "发送文件", ask_user: "询问你", spawn_task: "创建后台任务",
+	deliver_file: "发送文件", ask_user: "询问你", spawn_task: "创建后台任务", computer_screenshot: "查看屏幕", request_handoff: "请你接手",
+	web_fetch: "打开网页", web_search: "搜索网页", browser: "操作浏览器",
 };
+/** 进行中的活动文案（来自 Pi tool_execution 事件 → 工具步骤消息） */
+export function activityOf(name: string | undefined, args: Record<string, any> = {}): { text: string; icon: ReactNode; detail?: string } {
+	const n = name ?? "";
+	const url = args.url ?? args.href;
+	if (url || /web|browser|fetch|navigate|open_url/i.test(n)) return { text: "正在打开网页…", icon: <Globe className="pa-ic" />, detail: url ? String(url).replace(/^https?:\/\//, "").slice(0, 48) : undefined };
+	if (n === "read") return { text: "正在读取文件…", icon: <FileText className="pa-ic" />, detail: args.path };
+	if (n === "write" || n === "edit") return { text: n === "write" ? "正在写入文件…" : "正在修改文件…", icon: <PenLine className="pa-ic" />, detail: args.path };
+	if (n === "ls" || n === "find" || n === "grep") return { text: "正在查找文件…", icon: <FolderSearch className="pa-ic" />, detail: args.pattern ?? args.path };
+	if (n === "bash") return { text: "正在运行命令…", icon: <Terminal className="pa-ic" />, detail: String(args.command ?? "").slice(0, 48) };
+	if (n === "deliver_file") return { text: "正在整理文件发给你…", icon: <Send className="pa-ic" />, detail: args.path };
+	if (n === "spawn_task") return { text: "正在安排后台任务…", icon: <Sparkles className="pa-ic" />, detail: args.title };
+	if (n === "ask_user") return { text: "等你回复…", icon: <Hand className="pa-ic" /> };
+	if (n === "computer_screenshot") return { text: "正在查看屏幕…", icon: <Eye className="pa-ic" /> };
+	if (n === "request_handoff") return { text: "等你接手…", icon: <Hand className="pa-ic" /> };
+	if (n.startsWith("mcp") || n.includes("cua")) return { text: "正在操作电脑…", icon: <Monitor className="pa-ic" /> };
+	if (!n) return { text: "正在思考…", icon: <Sparkles className="pa-ic" /> };
+	return { text: `正在${TOOL_LABEL[n] ?? "处理"}…`, icon: <Sparkles className="pa-ic" /> };
+}
+const brief = (args: Record<string, any> = {}) => String(args.command ?? args.path ?? args.url ?? args.title ?? args.question ?? args.pattern ?? "").slice(0, 80);
+const secs = (ms: number) => (ms < 1000 ? "<1 秒" : ms < 60_000 ? `${(ms / 1000).toFixed(1)} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`);
 
-function ToolStep({ m }: { m: Message }) {
-	const [open, setOpen] = useState(false);
-	const name = m.meta.toolName as string;
-	const args = m.meta.args ?? {};
-	const brief = args.command ?? args.path ?? args.title ?? args.question ?? "";
+// ------------------------------------------------------------------ 消息分组
+type Part = { kind: "msg"; m: Message } | { kind: "steps"; items: Message[] };
+type Row = { kind: "user"; m: Message } | { kind: "system"; m: Message } | { kind: "bot"; id: string; parts: Part[] } | { kind: "day"; label: string; id: string };
+
+function dayLabel(ts: number) {
+	const d = new Date(ts);
+	const today = new Date();
+	const y = new Date(today);
+	y.setDate(today.getDate() - 1);
+	const hm = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+	if (d.toDateString() === today.toDateString()) return `今天 ${hm}`;
+	if (d.toDateString() === y.toDateString()) return `昨天 ${hm}`;
+	return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+}
+
+function group(list: Message[]): Row[] {
+	const rows: Row[] = [];
+	let lastTs = 0;
+	for (const m of list) {
+		if (m.created_at - lastTs > 30 * 60_000) rows.push({ kind: "day", label: dayLabel(m.created_at), id: `d${m.id}` });
+		lastTs = m.created_at;
+		if (m.role === "user" || m.role === "system") {
+			rows.push({ kind: m.role, m } as Row);
+			continue;
+		}
+		let bot = rows[rows.length - 1];
+		if (bot?.kind !== "bot") rows.push((bot = { kind: "bot", id: m.id, parts: [] }));
+		const parts = bot.parts;
+		if (m.role === "tool") {
+			const last = parts[parts.length - 1];
+			if (last?.kind === "steps") last.items.push(m);
+			else parts.push({ kind: "steps", items: [m] });
+		} else parts.push({ kind: "msg", m });
+	}
+	return rows;
+}
+
+// ------------------------------------------------------------------ 步骤列表：进行中展开，完成后自动收起
+function Steps({ items, live }: { items: Message[]; live: boolean }) {
+	const [open, setOpen] = useState(live);
+	const [detail, setDetail] = useState<string | null>(null);
+	const wasLive = useRef(live);
+	useEffect(() => {
+		if (live) setOpen(true);
+		else if (wasLive.current) setOpen(false); // 完成后自动收起
+		wasLive.current = live;
+	}, [live]);
+	const errors = items.filter((m) => m.status === "error").length;
+	const took = Math.max(0, (items[items.length - 1].updated_at ?? 0) - items[0].created_at);
 	return (
-		<div className="max-w-full text-xs">
-			<button onClick={() => setOpen(!open)} className="flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">
-				{m.status === "running" ? <Loader2 size={13} className="animate-spin text-accent" /> : name === "bash" ? <Terminal size={13} /> : <Wrench size={13} />}
-				<span className={cx("shrink-0 font-medium whitespace-nowrap", m.status === "error" && "text-red-500")}>{TOOL_LABEL[name] ?? name}</span>
-				<code className="truncate text-zinc-400">{String(brief).slice(0, 80)}</code>
-				<ChevronRight size={13} className={cx("shrink-0 transition", open && "rotate-90")} />
+		<div className={cx("pa-steps", open && "open")} data-testid="steps">
+			<button className="pa-steps-head" onClick={() => setOpen(!open)}>
+				{live ? <span className="pa-spinner" /> : errors ? <X className="pa-ic text-red-500" /> : <Check className="pa-ic ok" />}
+				<span>{live ? `正在进行 · 第 ${items.length} 步` : `已完成 ${items.length} 个步骤`}</span>
+				{!live && <small>用时 {secs(took)}</small>}
+				<ChevronRight className="pa-ic pa-chev" />
 			</button>
-			{open && (
-				<pre className="mt-1 max-h-64 overflow-auto rounded-lg bg-zinc-900 p-3 text-[11px] whitespace-pre-wrap text-zinc-200">
-					{JSON.stringify(args, null, 2)}
-					{m.meta.result ? `\n\n—— 结果 ——\n${m.meta.result}` : ""}
-				</pre>
-			)}
+			<ol className="pa-steps-list">
+				{items.map((m) => {
+					const name = m.meta.toolName as string;
+					const running = m.status === "running";
+					return (
+						<li key={m.id} className="flex-wrap" onClick={() => setDetail(detail === m.id ? null : m.id)} style={{ cursor: "pointer" }}>
+							<i className={cx("pa-st-dot", m.status === "error" && "err")}>{running ? <Loader2 className="pa-ic animate-spin" /> : m.status === "error" ? <X className="pa-ic" /> : <Check className="pa-ic" />}</i>
+							<span className="pa-step-txt">{TOOL_LABEL[name] ?? name}</span>
+							<code>{brief(m.meta.args)}</code>
+							<small>{running ? "…" : secs(Math.max(0, m.updated_at - m.created_at))}</small>
+							{detail === m.id && (
+								<pre className="pa-pre w-full" onClick={(e) => e.stopPropagation()}>
+									{JSON.stringify(m.meta.args ?? {}, null, 2)}
+									{m.meta.result ? `\n\n—— 结果 ——\n${m.meta.result}` : ""}
+								</pre>
+							)}
+						</li>
+					);
+				})}
+			</ol>
 		</div>
 	);
 }
 
-function MessageItem({ m, agent }: { m: Message; agent: { id: string; avatar: string; color: string } }) {
-	if (m.role === "system")
-		return (
-			<div className="flex justify-center py-1">
-				<div className={cx("max-w-md rounded-full px-3 py-1 text-center text-xs", m.status === "error" ? "bg-red-50 text-red-600 dark:bg-red-950/40" : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800")}>
-					{m.content}
-					{m.meta.action === "open-models" && (
-						<button className="ml-2 font-medium text-accent" onClick={() => useStore.getState().set({ settings: "models" })}>
-							去配置
-						</button>
-					)}
-				</div>
-			</div>
-		);
-	if (m.role === "user")
-		return (
-			<div className="flex flex-col items-end">
-				{m.content && <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-[15px] whitespace-pre-wrap text-white sm:max-w-[70%]">{m.content}</div>}
-				{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} mine /> : null}
-			</div>
-		);
-	const body =
-		m.role === "tool" ? (
-			<ToolStep m={m} />
-		) : m.role === "card" ? (
-			m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : <TaskCard m={m} />
-		) : (
-			<div className="min-w-0 max-w-full">
-				{(m.content || m.status === "streaming") && (
-					<div className={cx("inline-block max-w-full rounded-2xl rounded-tl-md bg-zinc-100 px-4 py-2.5 text-[15px] dark:bg-zinc-800/80", m.status === "error" && "border border-red-300 dark:border-red-800")}>
-						{m.content ? <Markdown text={m.content} /> : null}
-						{m.status === "streaming" && <span className="caret text-sm" />}
-						{m.status === "error" && <div className="mt-1 text-xs text-red-500">{String(m.meta.error ?? "出错了")}</div>}
-						{m.status === "interrupted" && <div className="mt-1 text-xs text-zinc-400">（已中断）</div>}
-					</div>
-				)}
-				{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} /> : null}
-			</div>
-		);
+function Activity({ tool }: { tool?: Message }) {
+	const a = activityOf(tool?.meta.toolName, tool?.meta.args);
 	return (
-		<div className="flex gap-2.5">
-			<div className="w-8 shrink-0">{m.role === "assistant" && <Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={32} />}</div>
-			<div className="min-w-0 flex-1">{body}</div>
+		<div className="pa-activity" data-testid="activity">
+			<span className="pa-spinner" />
+			{a.icon}
+			<span className="pa-act-txt">
+				<span className="pa-shimmer">{a.text}</span>
+			</span>
+			{a.detail && <span className="pa-act-url truncate">{a.detail}</span>}
 		</div>
 	);
 }
 
+function BotPart({ p, live }: { p: Part; live: boolean }) {
+	if (p.kind === "steps") return <Steps items={p.items} live={live} />;
+	const m = p.m;
+	if (m.role === "card") return m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : <TaskCard m={m} />;
+	return (
+		<>
+			{(m.content || m.status === "streaming") && (
+				<div className={cx("pa-bubble prose-wrap", m.status === "error" && "error")}>
+					{m.content ? <Markdown text={m.content} /> : null}
+					{m.status === "streaming" && <span className="caret text-sm" />}
+					{m.status === "error" && <div className="mt-1 text-xs text-red-500">{String(m.meta.error ?? "出错了")}</div>}
+					{m.status === "interrupted" && <div className="mt-1 text-xs text-mut2">（已中断）</div>}
+				</div>
+			)}
+			{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} /> : null}
+		</>
+	);
+}
+
+function BotTurn({ row, agent, live }: { row: Extract<Row, { kind: "bot" }> | null; agent: Agent; live: boolean }) {
+	const parts = row?.parts ?? [];
+	const last = parts[parts.length - 1];
+	const runningTool = parts.flatMap((p) => (p.kind === "steps" ? p.items : [])).find((m) => m.status === "running");
+	const streaming = last?.kind === "msg" && last.m.status === "streaming";
+	const waitingCard = last?.kind === "msg" && last.m.role === "card" && last.m.meta.status === "pending";
+	return (
+		<div className="pa-msg bot">
+			<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={26} />
+			<div className="pa-bot-body">
+				{parts.map((p, i) => (
+					<BotPart key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} />
+				))}
+				{live && !streaming && !waitingCard && <Activity tool={runningTool} />}
+			</div>
+		</div>
+	);
+}
+
+function UserMsg({ m, reaction }: { m: Message; reaction?: "eyes" | "done" }) {
+	return (
+		<div className="pa-msg user">
+			{m.content && (
+				<div className="pa-bubble relative">
+					{m.content}
+					{reaction && <span className={cx("pa-reaction", reaction === "done" && "done")} title={reaction === "done" ? "已完成" : "收到，正在处理"}>{reaction === "done" ? "✓" : "👀"}</span>}
+				</div>
+			)}
+			{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} mine /> : null}
+		</div>
+	);
+}
+
+function SystemMsg({ m }: { m: Message }) {
+	return (
+		<div className="flex justify-center py-1">
+			<div className={cx("max-w-md rounded-full px-3 py-1 text-center text-xs", m.status === "error" ? "bg-red-500/10 text-red-600" : "bg-hover text-mut")}>
+				{m.content}
+				{m.meta.action === "open-models" && (
+					<button className="ml-2 font-medium text-accent" onClick={() => useStore.getState().set({ settings: "models" })}>
+						去配置
+					</button>
+				)}
+			</div>
+		</div>
+	);
+}
+
+// ------------------------------------------------------------------ 主体
 export default function Chat({ agentId }: { agentId: string }) {
 	const { agents, messages, set, info } = useStore();
 	const agent = agents.find((a) => a.id === agentId);
 	const list = messages[agentId] ?? [];
+	const mainList = list;
+	const rows = useMemo(() => group(mainList), [mainList]);
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
+	const [drag, setDrag] = useState(false);
+	const composer = useRef<{ addFiles: (f: FileList | File[]) => void }>(null);
 	useLayoutEffect(() => {
 		const el = scroller.current;
 		if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -99,42 +218,89 @@ export default function Chat({ agentId }: { agentId: string }) {
 	}, [agentId]);
 	if (!agent) return null;
 	const running = agent.status === "running";
-	// 隐藏紧挨在审批卡片前、仍在等待中的工具步骤，减少重复
+	// 反应：最后一条用户消息在处理中 👀；小任务（≤3 步且无错误）完成后 ✓
+	const reactions = new Map<string, "eyes" | "done">();
+	rows.forEach((r, i) => {
+		if (r.kind !== "user") return;
+		const next = rows.slice(i + 1).find((x) => x.kind === "user");
+		const isLastUser = !next;
+		if (isLastUser && running) return void reactions.set(r.m.id, "eyes");
+		const bot = rows.slice(i + 1, next ? rows.indexOf(next) : undefined).find((x) => x.kind === "bot") as Extract<Row, { kind: "bot" }> | undefined;
+		if (!bot) return;
+		const steps = bot.parts.flatMap((p) => (p.kind === "steps" ? p.items : []));
+		const failed = bot.parts.some((p) => p.kind === "msg" && p.m.status === "error") || steps.some((s) => s.status === "error");
+		if (!failed && steps.length > 0 && steps.length <= 3) reactions.set(r.m.id, "done");
+	});
+	const lastRow = rows[rows.length - 1];
+	const pendingTurn = running && lastRow?.kind !== "bot"; // 刚发出、还没有任何输出：先显示“正在思考…”
 	return (
-		<div className="flex h-full flex-col">
-			<header className="safe-top flex items-center gap-3 border-b border-zinc-200 bg-white/80 px-3 py-2.5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80">
-				<Button variant="ghost" size="icon" className="lg:hidden" onClick={() => set({ drawer: true })} aria-label="打开助理列表">
-					<Menu size={20} />
-				</Button>
-				<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={34} running={running} />
-				<div className="min-w-0 flex-1">
-					<div className="truncate font-semibold">{agent.name}</div>
-					<div className="truncate text-xs text-zinc-500">{running ? <span className="text-emerald-600">{t("正在工作")}…</span> : agent.model ? `${agent.model.provider} / ${agent.model.id}` : "未配置模型"}</div>
+		<div
+			className="relative flex h-full min-h-0 flex-col"
+			onDragOver={(e) => {
+				if (e.dataTransfer.types.includes("Files")) (e.preventDefault(), setDrag(true));
+			}}
+			onDragLeave={(e) => e.currentTarget === e.target && setDrag(false)}
+			onDrop={(e) => {
+				e.preventDefault();
+				setDrag(false);
+				if (e.dataTransfer.files.length) composer.current?.addFiles(e.dataTransfer.files);
+			}}
+		>
+			<header className="pa-chat-head safe-top">
+				<button className="pa-icon-btn ghost lg:hidden" onClick={() => set({ drawer: true })} aria-label="打开助理列表">
+					<Menu className="pa-ic" />
+				</button>
+				<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={30} running={running} />
+				<div className="pa-head-txt min-w-0">
+					<b className="truncate">{agent.name}</b>
+					<small className="truncate">
+						{running && <i className="pa-pulse" />}
+						{running ? `${t("正在工作")} · ` : ""}
+						{agent.model ? agent.model.id : "未配置模型"}
+					</small>
 				</div>
-				<Button variant={info ? "default" : "ghost"} size="icon" onClick={() => set({ info: !info })} aria-label="信息面板">
-					<PanelRight size={18} />
-				</Button>
+				<div className="pa-head-actions">
+					<button className="pa-chip max-sm:!hidden" onClick={() => set({ info: true, infoTab: "computer" })}>
+						<Monitor className="pa-ic" />
+						<span>电脑</span>
+					</button>
+					<button className={cx("pa-icon-btn ghost", info && "!bg-hover")} onClick={() => set({ info: !info })} aria-label="信息面板">
+						<PanelRight className="pa-ic" />
+					</button>
+				</div>
 			</header>
 			<div
 				ref={scroller}
-				className="scrollbar-thin min-h-0 flex-1 overflow-y-auto"
+				className="pa-scroll scrollbar-thin"
 				onScroll={(e) => {
 					const el = e.currentTarget;
-					stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+					stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
 				}}
 			>
-				<div className="mx-auto flex max-w-3xl flex-col gap-3 px-3 py-5 sm:px-6">
-					{list.map((m) => (
-						<MessageItem key={m.id} m={m} agent={agent} />
-					))}
+				<div className="pa-thread-body">
+					{rows.map((r) =>
+						r.kind === "day" ? (
+							<div key={r.id} className="pa-day">
+								{r.label}
+							</div>
+						) : r.kind === "user" ? (
+							<UserMsg key={r.m.id} m={r.m} reaction={reactions.get(r.m.id)} />
+						) : r.kind === "system" ? (
+							<SystemMsg key={r.m.id} m={r.m} />
+						) : (
+							<BotTurn key={r.id} row={r} agent={agent} live={running && r === lastRow} />
+						),
+					)}
+					{pendingTurn && <BotTurn row={null} agent={agent} live />}
 				</div>
 			</div>
-			<Composer agentId={agentId} name={agent.name} running={running} />
+			<Composer ref={composer} agentId={agentId} name={agent.name} model={agent.model?.id} running={running} drag={drag} />
 		</div>
 	);
 }
 
-function Composer({ agentId, name, running }: { agentId: string; name: string; running: boolean }) {
+// ------------------------------------------------------------------ 悬浮输入框：拖拽文件 / 粘贴图片
+function Composer({ agentId, name, model, running, drag, ref }: { agentId: string; name: string; model?: string; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }> }) {
 	const [text, setText] = useState("");
 	const [files, setFiles] = useState<Attachment[]>([]);
 	const [uploading, setUploading] = useState(0);
@@ -154,8 +320,7 @@ function Composer({ agentId, name, running }: { agentId: string; name: string; r
 		setFiles([]);
 		await api(`/api/agents/${agentId}/messages`, { method: "POST", json: body });
 	};
-	const onFiles = async (list: FileList | null) => {
-		if (!list) return;
+	const addFiles = async (list: FileList | File[]) => {
 		for (const f of Array.from(list)) {
 			setUploading((n) => n + 1);
 			try {
@@ -166,25 +331,23 @@ function Composer({ agentId, name, running }: { agentId: string; name: string; r
 			}
 		}
 	};
+	if (ref && typeof ref === "object") (ref as React.RefObject<{ addFiles: typeof addFiles } | null>).current = { addFiles };
 	return (
-		<div className="safe-bottom border-t border-zinc-200 bg-white px-3 pt-2 dark:border-zinc-800 dark:bg-zinc-950">
-			<div
-				className="mx-auto max-w-3xl rounded-2xl border border-zinc-300 bg-white shadow-sm focus-within:border-accent dark:border-zinc-700 dark:bg-zinc-900"
-				onDragOver={(e) => e.preventDefault()}
-				onDrop={(e) => (e.preventDefault(), onFiles(e.dataTransfer.files))}
-			>
+		<div className="pa-composer-wrap">
+			<div className={cx("pa-composer", drag && "drag")}>
+				{drag && <div className="pointer-events-none pb-2 text-center text-sm text-accent">松开即可把文件发给 {name}</div>}
 				{(files.length > 0 || uploading > 0) && (
-					<div className="flex flex-wrap gap-2 px-3 pt-3">
+					<div className="flex flex-wrap gap-2 pb-2">
 						{files.map((f) => (
-							<span key={f.fileId} className="flex items-center gap-1.5 rounded-lg bg-zinc-100 px-2 py-1 text-xs dark:bg-zinc-800">
-								<Paperclip size={12} /> {f.name} <span className="text-zinc-400">{fmtSize(f.size)}</span>
+							<span key={f.fileId} className="pa-chip sm !h-7">
+								<Paperclip size={12} /> <span className="max-w-[160px] truncate">{f.name}</span> <span className="text-mut2">{fmtSize(f.size)}</span>
 								<button onClick={() => setFiles((x) => x.filter((y) => y.fileId !== f.fileId))} aria-label="移除">
 									<X size={12} />
 								</button>
 							</span>
 						))}
 						{uploading > 0 && (
-							<span className="flex items-center gap-1 text-xs text-zinc-500">
+							<span className="flex items-center gap-1 text-xs text-mut">
 								<Loader2 size={12} className="animate-spin" /> 上传中…
 							</span>
 						)}
@@ -195,6 +358,13 @@ function Composer({ agentId, name, running }: { agentId: string; name: string; r
 					rows={1}
 					value={text}
 					onChange={(e) => setText(e.target.value)}
+					onPaste={(e) => {
+						const imgs = Array.from(e.clipboardData.files);
+						if (imgs.length) {
+							e.preventDefault();
+							void addFiles(imgs.map((f, i) => (f.name && f.name !== "image.png" ? f : new File([f], `粘贴的图片-${Date.now()}${i ? `-${i}` : ""}.${f.type.split("/")[1] || "png"}`, { type: f.type }))));
+						}
+					}}
 					onKeyDown={(e) => {
 						if (e.key === "Enter" && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) {
 							e.preventDefault();
@@ -202,25 +372,30 @@ function Composer({ agentId, name, running }: { agentId: string; name: string; r
 						}
 					}}
 					placeholder={t("给 {name} 发消息…", { name })}
-					className="block w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[15px] outline-none placeholder:text-zinc-400"
 				/>
-				<div className="flex items-center gap-1 px-2 pb-2">
-					<input ref={fileInput} type="file" multiple hidden onChange={(e) => (onFiles(e.target.files), (e.target.value = ""))} />
-					<Button variant="ghost" size="icon" onClick={() => fileInput.current?.click()} aria-label={t("上传")}>
-						<Paperclip size={18} />
-					</Button>
-					<div className="flex-1" />
-					{running && (
-						<Button variant="outline" size="sm" onClick={() => api(`/api/agents/${agentId}/abort`, { method: "POST" })}>
-							<Square size={13} /> {t("停止")}
-						</Button>
+				<div className="pa-composer-bar">
+					<input ref={fileInput} type="file" multiple hidden onChange={(e) => (e.target.files && addFiles(e.target.files), (e.target.value = ""))} />
+					<button className="pa-icon-btn ghost" onClick={() => fileInput.current?.click()} aria-label={t("上传")} title="添加文件（也可以拖进来或直接粘贴图片）">
+						<Paperclip className="pa-ic" />
+					</button>
+					<button className="pa-chip sm" onClick={() => useStore.getState().set({ info: true, infoTab: "computer" })}>
+						<Monitor className="pa-ic" />
+						<span>助理电脑</span>
+					</button>
+					<span className="flex-1" />
+					{model && <span className="pa-model max-sm:hidden">{model}</span>}
+					{running && !text.trim() && !files.length ? (
+						<button className="pa-send" onClick={() => api(`/api/agents/${agentId}/abort`, { method: "POST" })} aria-label={t("停止")} title={t("停止")}>
+							<Square size={13} fill="currentColor" />
+						</button>
+					) : (
+						<button className="pa-send" disabled={!text.trim() && !files.length} onClick={send} aria-label={t("发送")}>
+							<ArrowUp className="pa-ic" />
+						</button>
 					)}
-					<Button variant="primary" size="icon" className="rounded-full" disabled={!text.trim() && !files.length} onClick={send} aria-label={t("发送")}>
-						<ArrowUp size={18} />
-					</Button>
 				</div>
 			</div>
-			<div className="py-1.5 text-center text-[11px] text-zinc-400">有后果的操作都会先征求你的同意</div>
+			<div className="pa-foot-note">发送、删除、付款等操作都会先请你批准</div>
 		</div>
 	);
 }

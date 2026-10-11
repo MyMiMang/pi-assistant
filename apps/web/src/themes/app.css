@@ -1,0 +1,93 @@
+/* App 胶水层：把主题 token 接到布局、Tailwind 灰阶与通用控件上。 */
+.pa-bg-layer { display: none; }
+
+/* Tailwind zinc 灰阶的两端锚点：zinc-50…950 = 在两者之间按比例混合，让旧组件自动带上主题的冷暖与明暗。 */
+[data-skin=linear][data-mode=light] { --z-light: #ffffff; --z-dark: #0a0a0a; }
+[data-skin=linear][data-mode=dark]  { --z-light: #ededed; --z-dark: #0a0a0a; }
+[data-skin=glass][data-mode=light]  { --z-light: #f7f8fc; --z-dark: #1d1d1f; }
+[data-skin=glass][data-mode=dark]   { --z-light: #f5f5f7; --z-dark: #0b0d1a; }
+[data-skin=warm][data-mode=light]   { --z-light: #fffcf6; --z-dark: #2a251f; }
+[data-skin=warm][data-mode=dark]    { --z-light: #ede5d6; --z-dark: #1c1915; }
+[data-skin=noir][data-mode=light]   { --z-light: #ffffff; --z-dark: #0c0c10; }
+[data-skin=noir][data-mode=dark]    { --z-light: #f4f4f5; --z-dark: #09090b; }
+
+/* 用户自选强调色（覆盖主题默认）：由 applyTheme 写到 <html> 的 --user-acc 上 */
+html[data-user-accent] { --acc: var(--user-acc); --acc-soft: color-mix(in srgb, var(--user-acc) 12%, transparent); }
+
+html, body, #root { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; }
+
+/* 三栏布局 */
+.pa-app { position: relative; display: flex; height: 100%; }
+.pa-app > .pa-drawer, .pa-app > .pa-chat, .pa-app > .pa-pane-wrap { position: relative; z-index: 1; }
+.pa-sidebar { width: var(--side-w, 264px); overflow: hidden; }
+.pa-pane { width: var(--pane-w, 312px); }
+.pa-chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+@media (max-width: 1023px) {
+  .pa-app > .pa-drawer { position: fixed; z-index: 50; inset: 0 auto 0 0; width: min(300px, 85vw); }
+  [data-skin=glass] .pa-app > .pa-drawer { inset: 8px auto 8px 8px; }
+}
+@media (max-width: 1279px) {
+  .pa-app > .pa-pane-wrap { position: fixed; z-index: 50; inset: 0 0 0 auto; width: min(var(--pane-w, 340px), 90vw); }
+}
+.pa-pane-wrap > .pa-pane, .pa-drawer > .pa-sidebar { width: 100%; height: 100%; }
+
+/* 聊天区：消息流 + 悬浮输入框 */
+.pa-scroll { flex: 1; overflow: auto; padding: 24px 24px 170px; }
+.pa-thread-body { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.pa-msg { position: relative; }
+.pa-msg.user { flex-direction: column; align-items: flex-end; }
+.pa-msg.user .pa-bubble { white-space: pre-wrap; word-break: break-word; }
+.pa-bubble.error { color: #ef4444; }
+.pa-composer textarea { display: block; width: 100%; resize: none; background: transparent; border: 0; outline: none; color: var(--fg); font: inherit; padding: 2px 0 10px; min-height: 24px; }
+.pa-composer textarea::placeholder { color: var(--mut2); }
+.pa-composer.drag { border-color: var(--acc); box-shadow: var(--comp-shadow, var(--shadow)), 0 0 0 4px var(--acc-soft); }
+.pa-send:disabled { opacity: .35; cursor: not-allowed; transform: none; animation: none; }
+.pa-reaction { position: absolute; bottom: -10px; right: 6px; display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 999px; font-size: 12px; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); animation: pa-pop .35s cubic-bezier(.2,.9,.3,1.4) both; }
+.pa-reaction.done { color: var(--ok, #22c55e); font-weight: 700; }
+@keyframes pa-pop { from { transform: scale(.4); opacity: 0 } to { transform: none; opacity: 1 } }
+.pa-steps-list li .pa-st-dot.err { color: #ef4444; }
+.pa-steps-list li code { font-family: var(--mono); font-size: 11.5px; color: var(--mut2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%; }
+.pa-steps-list li .pa-step-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pa-steps.open .pa-steps-list { max-height: 420px; overflow: auto; }
+.pa-link-card { display: flex; align-items: center; gap: 12px; padding: 10px 14px; max-width: 440px; text-decoration: none !important; color: inherit !important; }
+.pa-link-card:hover { border-color: var(--line-strong, var(--mut2)); }
+.pa-link-card .pa-file-ic { width: 36px; height: 36px; }
+.pa-pre { margin-top: 8px; max-height: 220px; overflow: auto; border-radius: var(--r-sm); background: var(--hover); padding: 10px 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.pa-day { align-self: center; font-size: 12px; color: var(--mut2); }
+
+/* 通用控件 */
+.pa-input { height: 38px; width: 100%; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--card); color: var(--fg); padding: 0 12px; font-size: 14px; outline: none; transition: border-color .15s, box-shadow .15s; }
+.pa-input:focus { border-color: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); }
+.pa-modal { background: var(--card); color: var(--fg); border-radius: calc(var(--r) + 6px); box-shadow: var(--comp-shadow, 0 20px 60px rgba(0,0,0,.25)); }
+[data-skin=glass] .pa-modal { backdrop-filter: blur(40px) saturate(170%); -webkit-backdrop-filter: blur(40px) saturate(170%); background: color-mix(in srgb, var(--bg) 70%, transparent); border: 1px solid var(--line); }
+
+.caret::after { content: "▍"; animation: pa-blink 1s steps(1) infinite; margin-left: 1px; color: var(--acc); }
+@media (max-width: 820px) {
+  .pa-scroll { padding: 16px 12px 160px; }
+  .pa-composer-wrap { padding: 0 10px calc(10px + env(safe-area-inset-bottom)); }
+  .pa-msg.bot > .pa-av { display: none; }
+}
+
+/* Button / Avatar 跟随主题 */
+.pa-ui-btn { border-radius: var(--r-btn, 999px); }
+.pa-ui-btn.h-9.w-9, .pa-ui-btn.h-8.w-8 { border-radius: var(--r-sm); }
+.pa-ui-primary { background: var(--acc); color: var(--acc-fg); box-shadow: var(--btn-shadow, none); }
+.pa-ui-primary:hover:not(:disabled) { filter: brightness(1.08); }
+[data-skin=linear] .pa-ui-primary, [data-skin=warm] .pa-ui-primary { background: var(--fg); color: var(--bg); }
+[data-skin=linear] .pa-ui-primary:hover:not(:disabled) { background: var(--acc); color: #fff; filter: none; }
+[data-skin=warm] .pa-ui-primary:hover:not(:disabled) { background: var(--acc); color: var(--acc-fg); filter: none; }
+[data-skin=noir] .pa-ui-primary { background: linear-gradient(135deg, var(--acc), color-mix(in srgb, var(--acc) 60%, var(--acc2))); color: #fff; }
+[data-skin=glass] .pa-ui-primary { background: linear-gradient(160deg, color-mix(in srgb, var(--acc) 80%, #fff), var(--acc)); }
+html[data-user-accent] .pa-ui-primary { background: var(--acc); color: #fff; }
+.pa-avatar { border-radius: var(--r-av, 50%); }
+.pa-av-dot { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: 50%; background: var(--ok, #22c55e); box-shadow: 0 0 0 2px var(--side); animation: pa-pulse 2s infinite; }
+.pa-stats div { align-items: center; text-align: center; }
+
+/* 设置页主题预览（缩小 50% 的真实界面） */
+.pa-preview { position: relative; height: 150px; overflow: hidden; border-radius: 12px; isolation: isolate; contain: paint; }
+.pa-preview-inner { width: 200%; height: 300px; transform: scale(.5); transform-origin: 0 0; pointer-events: none; }
+.pa-preview .pa-bg-layer { position: absolute; }
+.pa-preview .pa-chat { position: relative; }
+.pa-preview .pa-app { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; }
+[data-skin=glass] .pa-preview-inner, .pa-preview[data-skin=glass] .pa-preview-inner { padding: 10px; gap: 10px; }

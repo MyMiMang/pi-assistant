@@ -37,7 +37,7 @@ export function ProviderList({ providers, onPick, selected }: { providers: Provi
 					<button
 						key={p.id}
 						onClick={() => onPick(p)}
-						className={cx("rounded-xl border p-3 text-left transition hover:border-accent", selected === p.id ? "border-accent bg-accent-soft" : "border-zinc-200 dark:border-zinc-800")}
+						className={cx("rounded-xl border p-3 text-left transition hover:border-accent", selected === p.id ? "border-accent bg-accent-soft" : "border-line")}
 					>
 						<div className="flex items-center gap-2">
 							<span className="truncate text-sm font-medium">{p.id === "mock" ? "Mock 模型（本地测试）" : p.name}</span>

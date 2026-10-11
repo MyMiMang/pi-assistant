@@ -1,25 +1,48 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 @import "highlight.js/styles/github-dark.css";
+@import "./themes/index.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-@theme {
-  --color-accent: var(--accent);
-  --color-accent-soft: color-mix(in oklab, var(--accent) 14%, transparent);
-  --font-sans: ui-sans-serif, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+/* Tailwind 接主题 token：语义色 + zinc 灰阶按主题锚点混合 + 圆角/字体跟随主题 */
+@theme inline {
+  --color-accent: var(--acc);
+  --color-accent-soft: var(--acc-soft);
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
+  --color-card: var(--card);
+  --color-side: var(--side);
+  --color-panel: var(--panel);
+  --color-line: var(--line);
+  --color-hover: var(--hover);
+  --color-mut: var(--mut);
+  --color-mut2: var(--mut2);
+  --color-zinc-50: color-mix(in oklab, var(--z-dark) 2%, var(--z-light));
+  --color-zinc-100: color-mix(in oklab, var(--z-dark) 4%, var(--z-light));
+  --color-zinc-200: color-mix(in oklab, var(--z-dark) 8%, var(--z-light));
+  --color-zinc-300: color-mix(in oklab, var(--z-dark) 15%, var(--z-light));
+  --color-zinc-400: color-mix(in oklab, var(--z-dark) 34%, var(--z-light));
+  --color-zinc-500: color-mix(in oklab, var(--z-dark) 50%, var(--z-light));
+  --color-zinc-600: color-mix(in oklab, var(--z-dark) 63%, var(--z-light));
+  --color-zinc-700: color-mix(in oklab, var(--z-dark) 72%, var(--z-light));
+  --color-zinc-800: color-mix(in oklab, var(--z-dark) 84%, var(--z-light));
+  --color-zinc-900: color-mix(in oklab, var(--z-dark) 92%, var(--z-light));
+  --color-zinc-950: color-mix(in oklab, var(--z-dark) 98%, var(--z-light));
+  --radius-lg: var(--r-sm);
+  --radius-xl: var(--r);
+  --radius-2xl: calc(var(--r) + 4px);
+  --font-sans: var(--font);
+  --font-mono: var(--mono, ui-monospace, Menlo, monospace);
 }
 
-:root { --accent: #6366f1; color-scheme: light; }
 .dark { color-scheme: dark; }
-html, body, #root { height: 100%; }
-body { @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100; -webkit-tap-highlight-color: transparent; }
+:root { color-scheme: light; }
+.prose { --tw-prose-body: var(--fg); --tw-prose-headings: var(--fg); --tw-prose-bold: var(--fg); --tw-prose-links: var(--acc); --tw-prose-code: var(--fg); --tw-prose-quotes: var(--mut); --tw-prose-bullets: var(--mut2); --tw-prose-counters: var(--mut2); --tw-prose-hr: var(--line); --tw-prose-th-borders: var(--line); --tw-prose-td-borders: var(--line); font-size: inherit; line-height: inherit; }
 .prose pre { @apply rounded-lg text-[13px] leading-relaxed; background: #0d1117 !important; }
-.prose code:not(pre code) { @apply rounded bg-zinc-200/70 px-1 py-0.5 text-[0.85em] dark:bg-zinc-700/70; }
+.prose code:not(pre code) { border-radius: 5px; background: var(--hover); padding: 1px 5px; font-size: .86em; }
 .prose code::before, .prose code::after { content: none; }
 .prose :where(table) { @apply text-sm; }
 .scrollbar-thin { scrollbar-width: thin; }
 .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 0.5rem); }
 .safe-top { padding-top: env(safe-area-inset-top); }
-@keyframes blink { 50% { opacity: 0 } }
-.caret::after { content: "▍"; animation: blink 1s steps(1) infinite; margin-left: 1px; color: var(--accent); }

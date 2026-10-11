@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { getTheme } from "./themes/registry";
 import { api } from "./api";
 import type { Agent, Device, Message, SystemInfo, Task } from "./types";
 
@@ -16,8 +17,14 @@ interface State {
 	loginEvents: Record<string, any[]>;
 	drawer: boolean;
 	info: boolean;
+	/** 右侧信息面板当前页 */
+	infoTab: string;
 	settings: string | null;
+	/** 明暗：浅色 / 深色 / 跟随系统 */
 	theme: Theme;
+	/** 主题（见 themes/registry.ts） */
+	skin: string;
+	/** 强调色；空 = 主题默认 */
 	accent: string;
 	fileVersion: number;
 	set: (p: Partial<State>) => void;
@@ -44,9 +51,11 @@ export const useStore = create<State>((set, get) => ({
 	desktopVersion: 0,
 	drawer: false,
 	info: window.innerWidth >= 1280,
+	infoTab: "overview",
 	settings: new URLSearchParams(location.search).get("settings"),
-	theme: (localStorage.getItem("pia.theme") as Theme) || "system",
-	accent: localStorage.getItem("pia.accent") || "#6366f1",
+	theme: (localStorage.getItem("pia.theme") as Theme) || (getTheme(localStorage.getItem("pia.skin")).defaultMode ?? "system"),
+	skin: getTheme(localStorage.getItem("pia.skin")).id,
+	accent: localStorage.getItem("pia.accent") ?? "",
 	fileVersion: 0,
 	set: (p) => set(p),
 	async loadSystem() {
@@ -149,9 +158,30 @@ export const useStore = create<State>((set, get) => ({
 	},
 }));
 
-export function applyTheme(theme: Theme, accent: string) {
+/** 应用主题到 <html>：data-skin（主题）、data-mode（明暗）、.dark（Tailwind dark: 变体）、可选的自选强调色。 */
+export function applyTheme(theme: Theme, accent: string, skin = useStore.getState().skin) {
+	const def = getTheme(skin);
 	const dark = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-	document.documentElement.classList.toggle("dark", dark);
-	document.documentElement.style.setProperty("--accent", accent);
-	document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#09090b" : "#ffffff");
+	const el = document.documentElement;
+	el.dataset.skin = def.id;
+	el.dataset.mode = dark ? "dark" : "light";
+	el.classList.toggle("dark", dark);
+	if (accent) {
+		el.dataset.userAccent = "";
+		el.style.setProperty("--user-acc", accent);
+	} else {
+		delete el.dataset.userAccent;
+		el.style.removeProperty("--user-acc");
+	}
+	document.querySelector('meta[name="theme-color"]')?.setAttribute("content", def.chrome[dark ? "dark" : "light"]);
+}
+/** 保存并应用（按设备持久化在 localStorage） */
+export function setAppearance(p: { theme?: Theme; skin?: string; accent?: string }) {
+	const s = useStore.getState();
+	const next = { theme: p.theme ?? s.theme, skin: p.skin ?? s.skin, accent: p.accent ?? (p.skin && p.skin !== s.skin ? "" : s.accent) };
+	localStorage.setItem("pia.theme", next.theme);
+	localStorage.setItem("pia.skin", next.skin);
+	localStorage.setItem("pia.accent", next.accent);
+	s.set(next);
+	applyTheme(next.theme, next.accent, next.skin);
 }

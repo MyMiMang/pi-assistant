@@ -85,7 +85,7 @@ export function DesktopView({ agentId }: { agentId: string }) {
 				</Button>
 			) : (
 				<>
-					<div className={cx("relative aspect-[16/10] w-full overflow-hidden rounded-lg border bg-zinc-900", control ? "border-amber-400 ring-2 ring-amber-300" : "border-zinc-200 dark:border-zinc-800")}>
+					<div className={cx("relative aspect-[16/10] w-full overflow-hidden rounded-lg border bg-zinc-900", control ? "border-amber-400 ring-2 ring-amber-300" : "border-line")}>
 						<div ref={box} className="absolute inset-0" />
 						{conn !== "connected" && (
 							<div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-400">{conn === "error" ? "画面连接断开" : <Loader2 size={18} className="animate-spin" />}</div>

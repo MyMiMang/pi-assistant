@@ -1,14 +1,12 @@
-import { CheckCircle2, Clock, Loader2, ShieldAlert, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Loader2, ShieldAlert, Sparkles, XCircle } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
 import type { Message } from "../types";
 import Markdown from "./Markdown";
-import { Badge, Button, cx, Input } from "./ui";
+import { cx } from "./ui";
 
-const statusBadge = (s: string) =>
-	s === "approved" ? <Badge tone="green">{t("已批准")}</Badge> : s === "rejected" ? <Badge tone="red">{t("已拒绝")}</Badge> : s === "expired" ? <Badge>{t("已过期")}</Badge> : s === "answered" ? <Badge tone="green">已回答</Badge> : <Badge tone="amber">等待你处理</Badge>;
-
+/** 结果卡片：审批 / 选项提问 / 后台任务（样式来自主题的 .pa-card 系列） */
 export function ApprovalCard({ m }: { m: Message }) {
 	const meta = m.meta;
 	const [busy, setBusy] = useState(false);
@@ -21,26 +19,34 @@ export function ApprovalCard({ m }: { m: Message }) {
 			setBusy(false);
 		}
 	};
-	const cmd = meta.input?.command ?? JSON.stringify(meta.input, null, 2);
+	const input = (meta.input ?? {}) as Record<string, unknown>;
+	const cmd = (input.command as string) ?? JSON.stringify(input, null, 2);
+	const action = String(meta.summary ?? "").split("：")[0] || "执行操作";
 	return (
-		<div className={cx("w-full max-w-lg rounded-2xl border p-4", pending ? "border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/30" : "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900")}>
-			<div className="flex items-center gap-2">
-				<ShieldAlert size={18} className={pending ? "text-amber-600" : "text-zinc-400"} />
-				<div className="font-medium">{t("需要你的批准")}</div>
-				{meta.risk === "high" && pending && <Badge tone="red">高风险</Badge>}
-				<div className="ml-auto">{statusBadge(meta.status)}</div>
+		<div className={cx("pa-card pa-approval w-full max-w-[560px]", meta.status === "approved" && "approved", meta.status === "rejected" && "rejected")} data-testid="approval-card">
+			<div className="pa-card-top">
+				<ShieldAlert className="pa-ic warn" />
+				<b>{t("需要你的批准")}</b>
+				<span className="pa-tag">{meta.risk === "high" ? "高风险 · " : ""}{meta.toolName ?? action}</span>
 			</div>
-			<div className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">{String(meta.summary ?? "").split("：")[0]}</div>
-			<pre className="mt-2 overflow-x-auto rounded-lg bg-zinc-900 p-3 text-xs text-zinc-100">{cmd}</pre>
-			{meta.taskId && <div className="mt-1 text-xs text-zinc-500">来自后台任务</div>}
-			{pending && (
-				<div className="mt-3 flex gap-2">
-					<Button variant="primary" disabled={busy} onClick={() => decide(true)}>
-						{t("批准")}
-					</Button>
-					<Button variant="outline" disabled={busy} onClick={() => decide(false)}>
+			<div className="pa-kv">
+				<span>操作</span>
+				<b>{action}</b>
+			</div>
+			<pre className="pa-pre">{cmd}</pre>
+			{meta.taskId && <div className="mt-2 text-xs text-mut2">来自后台任务</div>}
+			{pending ? (
+				<div className="pa-actions">
+					<button className="pa-btn ghost" disabled={busy} onClick={() => decide(false)}>
 						{t("拒绝")}
-					</Button>
+					</button>
+					<button className="pa-btn primary" disabled={busy} onClick={() => decide(true)}>
+						{t("批准")}
+					</button>
+				</div>
+			) : (
+				<div className="mt-3">
+					{meta.status === "approved" ? <span className="pa-res ok">✓ {t("已批准")}</span> : meta.status === "rejected" ? <span className="pa-res no">{t("已拒绝")}</span> : <span className="pa-res no">{t("已过期")}</span>}
 				</div>
 			)}
 		</div>
@@ -52,36 +58,31 @@ export function QuestionCard({ m }: { m: Message }) {
 	const [text, setText] = useState("");
 	const pending = meta.status === "pending";
 	const answer = (a: string) => api(`/api/requests/${meta.requestId}`, { method: "POST", json: { answer: a } });
+	const options = (meta.options as string[]) ?? [];
 	return (
-		<div className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-			<div className="flex items-start gap-2">
-				<div className="flex-1 text-sm font-medium">{meta.question}</div>
-				{!pending && statusBadge(meta.status)}
+		<div className="pa-card pa-question w-full max-w-[560px]">
+			<div className="pa-card-top">
+				<Sparkles className="pa-ic accent" />
+				<b>{meta.question}</b>
+				{!pending && <span className="pa-tag">已回答</span>}
 			</div>
-			<div className="mt-3 flex flex-wrap gap-2">
-				{(meta.options as string[]).map((o) => (
-					<button
-						key={o}
-						disabled={!pending}
-						onClick={() => answer(o)}
-						className={cx(
-							"rounded-full border px-3.5 py-1.5 text-sm transition",
-							meta.answer === o ? "border-accent bg-accent text-white" : "border-zinc-300 hover:border-accent hover:text-accent disabled:opacity-50 dark:border-zinc-700",
-						)}
-					>
+			<div className="pa-opts">
+				{options.map((o, i) => (
+					<button key={o} disabled={!pending && meta.answer !== o} onClick={() => pending && answer(o)} className={cx("pa-opt", meta.answer === o && "picked", !pending && meta.answer !== o && "opacity-50")}>
 						{o}
+						{pending && i === 0 && meta.recommended === o && <small>推荐</small>}
 					</button>
 				))}
 			</div>
 			{pending && meta.allowFreeText && (
 				<form className="mt-3 flex gap-2" onSubmit={(e) => (e.preventDefault(), text.trim() && answer(text.trim()))}>
-					<Input placeholder="或者直接输入回答…" value={text} onChange={(e) => setText(e.target.value)} />
-					<Button variant="primary" type="submit">
+					<input className="pa-input" placeholder="或者直接输入回答…" value={text} onChange={(e) => setText(e.target.value)} />
+					<button className="pa-btn primary" type="submit">
 						{t("发送")}
-					</Button>
+					</button>
 				</form>
 			)}
-			{!pending && meta.answer && !(meta.options as string[]).includes(meta.answer) && <div className="mt-2 text-sm text-zinc-500">你的回答：{meta.answer}</div>}
+			{!pending && meta.answer && !options.includes(meta.answer) && <div className="mt-2 text-sm text-mut">你的回答：{meta.answer}</div>}
 		</div>
 	);
 }
@@ -90,21 +91,19 @@ export function TaskCard({ m }: { m: Message }) {
 	const meta = m.meta;
 	const [open, setOpen] = useState(false);
 	const icon =
-		meta.status === "done" ? <CheckCircle2 size={18} className="text-emerald-500" /> : meta.status === "failed" ? <XCircle size={18} className="text-red-500" /> : meta.status === "cancelled" ? <XCircle size={18} className="text-zinc-400" /> : meta.status === "queued" ? <Clock size={18} className="text-zinc-400" /> : <Loader2 size={18} className="animate-spin text-accent" />;
+		meta.status === "done" ? <CheckCircle2 className="pa-ic ok" /> : meta.status === "failed" ? <XCircle className="pa-ic text-red-500" /> : meta.status === "cancelled" ? <XCircle className="pa-ic text-mut2" /> : meta.status === "queued" ? <Clock className="pa-ic text-mut2" /> : <Loader2 className="pa-ic animate-spin text-accent" />;
 	const label = { queued: "排队中", running: "进行中", done: "已完成", failed: "失败", cancelled: "已取消" }[meta.status as string] ?? meta.status;
 	return (
-		<div className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-			<div className="flex items-center gap-2">
+		<div className="pa-card pa-question w-full max-w-[560px]">
+			<div className="pa-card-top !mb-0">
 				{icon}
-				<div className="text-sm font-medium">后台任务：{meta.title}</div>
-				<div className="ml-auto flex items-center gap-1">
-					<Badge tone={meta.status === "done" ? "green" : meta.status === "failed" ? "red" : "accent"}>{label}</Badge>
-					{(meta.status === "running" || meta.status === "queued") && (
-						<Button size="sm" variant="ghost" onClick={() => api(`/api/tasks/${meta.taskId}/cancel`, { method: "POST" })}>
-							{t("取消")}
-						</Button>
-					)}
-				</div>
+				<b className="truncate">后台任务：{meta.title}</b>
+				<span className="pa-tag">{label}</span>
+				{(meta.status === "running" || meta.status === "queued") && (
+					<button className="pa-btn sm ghost" onClick={() => api(`/api/tasks/${meta.taskId}/cancel`, { method: "POST" })}>
+						{t("取消")}
+					</button>
+				)}
 			</div>
 			{meta.result && (
 				<div className="mt-2">
@@ -112,7 +111,7 @@ export function TaskCard({ m }: { m: Message }) {
 						{open ? "收起结果" : "查看结果"}
 					</button>
 					{open && (
-						<div className="mt-2 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/60">
+						<div className="pa-pre !font-[inherit] !text-[13px]">
 							<Markdown text={meta.result} />
 						</div>
 					)}

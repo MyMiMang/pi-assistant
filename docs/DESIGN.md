@@ -493,6 +493,32 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 5. **许可证闸门**：CI 检查清单里每个组件的许可证在白名单（MIT / Apache-2.0 / BSD / ISC / MPL-2.0），并扫描安装包与沙箱镜像，出现 AGPL / FSL / 非商用许可证即失败（例如 `cua-perception`、OmniParser、Cua Spaces 明确禁止打包）。
 6. **发给用户**：合并 PR → 打 tag → 安装包（含新 sidecar、cua-driver、cloudflared）与沙箱镜像版本一起发布 → 托盘自动更新；沙箱镜像在下次启动助理电脑时拉取新版（用户数据卷不受影响）。
 
+### 5.17 品牌与多助理
+
+- **产品名**：中性占位名 “Pi Assistant”，唯一定义在 `packages/shared/src/index.ts` 的 `BRAND`（显示名、机器 id、数据目录名、环境变量前缀 `PIA_`、macOS 标识 `com.piassistant.app` / LaunchAgent `com.piassistant.server`）。静态文件（index.html、manifest、sw.js）里的 `%BRAND_NAME%` 由 Vite 插件在构建时替换；安装包元数据在 `apps/tray/src-tauri/tauri.conf.json`。
+- **旧名迁移**（自动、一次性）：旧数据目录（`HuHao` / `~/.local/share/huhao`）→ 新目录整体改名；`huhao.db(-wal/-shm)` → `data.db`；macOS 钥匙串旧服务名 `HuHao` 的主密钥复制到 `Pi Assistant`；`HUHAO_*` 环境变量仍可读（打印改名提示）；浏览器 `huhao.*` 存储键 → `pia.*`；models.json 里旧的 `${HUHAO_H_…}` 插值改写为 `${PIA_H_…}`。源码运行的 LaunchAgent 用 `deploy/macos/install-launchagent.sh` 重装（会卸载旧的 `com.huhao.server`）。
+- **多助理是核心**：不预置任何助理。首次运行：欢迎 → 选模型服务 → 登录 → 默认模型 → **创建第一个助理**（名字建议、emoji/首字/上传图片头像、颜色、“擅长什么”预设、可选人设）。之后侧边栏“新建助理”随时创建；右侧“设置”页可改名、换头像、改模型、删除（工作区与会话移到 `trash/`，可找回）。每个助理有独立的人设、模型、会话/记忆、工作区和电脑。
+- API：`POST/PATCH/DELETE /api/agents[/:id]`，`POST/GET /api/agents/:id/avatar`（PNG/JPG/WebP/GIF ≤ 2MB，`avatar = "img:<版本>"`）。
+
+### 5.18 主题系统与对话界面
+
+- **4 套可切换主题**（设置 → 外观，按设备保存在 localStorage）：`linear` 极简专业（默认）、`glass` 毛玻璃、`warm` 暖色人文、`noir` 暗夜。每套都有浅色/深色，另可“跟随系统”，并可选强调色（“主题默认”或该主题推荐的几种）。设置页的主题卡片是**用真实主题 CSS 渲染的缩小版界面**（实时预览）。
+- **实现**：`apps/web/src/themes/`
+  - `registry.ts`：主题注册表（id、名称、简介、默认强调色、可选强调色、地址栏颜色、默认明暗）；`registerTheme()` 预留运行时扩展。
+  - `base.css`：组件样式（侧边栏、消息、活动行、步骤列表、卡片、输入框……，类名 `pa-*`），全部只读 CSS 变量。
+  - `<id>.css`：主题 token（颜色、圆角、阴影、字体、动效）与少量组件微调，全部限定在 `[data-skin=<id>]` / `[data-skin=<id>][data-mode=light|dark]` 下。
+  - `app.css`：布局胶水、Tailwind 接 token（语义色 `bg-card`/`text-mut`/`border-line`…；`zinc-50…950` 按主题的 `--z-light`/`--z-dark` 锚点混合，旧组件自动跟随主题；`rounded-lg/xl/2xl` 跟随 `--r-sm/--r`）。
+  - `<html data-skin data-mode class="dark">` 由 `applyTheme()` 设置；自选强调色写 `--user-acc`。
+  - 设计稿源文件在 `docs/design/mockups/`；`apps/web/scripts/port-mockup-css.py` 把设计稿 CSS 移植成主题 CSS（类名加 `pa-` 前缀、作用域化）。
+  - **新增主题**：加一个 `<id>.css` + 在 `themes/index.css` 里 `@import` + 在 `THEMES` 里加一条元数据，组件代码不用改。
+- **对话界面**（与主题无关的行为）：
+  - 先确认再动手：系统提示要求助理收到任务先用一句短话确认；用户刚发出、还没有输出时显示“正在思考…”。
+  - **活动提示行**：工作中在助理消息下方显示“正在读取文件… / 正在打开网页… / 正在运行命令… / 正在操作电脑…”（微光文字动效 + 细节如路径/网址），由 Pi `tool_execution_*` 事件生成的工具步骤推导。
+  - **步骤列表**：连续的工具调用折叠成“正在进行 · 第 N 步 / 已完成 N 个步骤 · 用时 X 秒”，进行中展开、完成后自动收起；点任一步可看参数与结果。
+  - **结果卡片**：文件（类型角标 + 大小 + 下载）、图片（点开大图）、单独成段的链接（链接卡片）、审批卡片、选项提问卡片、后台任务卡片。
+  - **反应**：最后一条用户消息处理中显示 👀；小任务（≤3 步且无错误）完成后在该消息上打 ✓。
+  - **悬浮圆角输入框**：拖拽文件到对话区、直接粘贴图片即可附带；工作中发送键变为停止键。
+
 ## 6. 数据模型（SQLite，`data/data.db`）
 
 使用 Node 22 内置 `node:sqlite`（免原生编译，打包最省事；若遇到功能限制退回 `better-sqlite3`）+ Drizzle ORM 管迁移。

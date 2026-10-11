@@ -165,7 +165,7 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 						</div>
 						<div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
 							{fetched.map((id) => (
-								<button key={id} onClick={() => addModel(id)} className={cx("rounded-full border px-2.5 py-1 text-xs", models.some((m) => m.id === id) ? "border-accent text-accent" : "border-zinc-300 dark:border-zinc-700")}>
+								<button key={id} onClick={() => addModel(id)} className={cx("rounded-full border px-2.5 py-1 text-xs", models.some((m) => m.id === id) ? "border-accent text-accent" : "border-line")}>
 									{id}
 								</button>
 							))}

@@ -27,7 +27,7 @@ export default function Onboarding() {
 	const current = provider ? (providers.find((p) => p.id === provider.id) ?? provider) : null;
 	const steps = ["欢迎", "选择模型服务", "登录", "默认模型", "创建助理"];
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-100/90 p-0 backdrop-blur sm:p-6 dark:bg-zinc-950/90">
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/90 p-0 backdrop-blur sm:p-6 ">
 			<div className="flex h-full w-full max-w-2xl flex-col overflow-hidden bg-white shadow-2xl sm:h-auto sm:max-h-[90dvh] sm:rounded-2xl dark:bg-zinc-900">
 				<div className="flex gap-1.5 px-6 pt-6">
 					{steps.map((s, i) => (

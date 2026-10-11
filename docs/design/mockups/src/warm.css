@@ -1,0 +1,59 @@
+:root{--font:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif;--display:"Iowan Old Style","Songti SC","STSong","Noto Serif CJK SC","Source Han Serif SC",Georgia,serif;--num:var(--display);
+--r:14px;--r-sm:10px;--r-bubble:16px;--r-tail:16px;--r-comp:18px;--r-btn:10px;--r-chip:10px;--r-logo:50%;--side-w:272px;--pane-w:328px;--h-weight:500;--h-size:26px;--h-ls:0;--label-ls:.12em;--brand-ls:0}
+[data-theme=light]{--bg:#f7f3ea;--side:#f1ebdf;--panel:#f1ebdf;--card:#fffcf6;--fg:#2a251f;--mut:#5f564b;--mut2:#9a8f80;--line:#e4dccd;--line-strong:#cfc4b1;--hover:#ebe4d6;--active:#e6dccb;--user-bg:#ece4d4;--acc:#b5532c;--acc-fg:#fff8f0;--acc-soft:rgba(181,83,44,.08);--ok:#5f8a5a;--warn:#c08a2c;--shadow:0 1px 0 rgba(80,60,30,.04),0 8px 24px rgba(80,60,30,.05);--comp-shadow:0 12px 36px rgba(80,60,30,.09);--desk:linear-gradient(135deg,#d9c8a9,#8a7458)}
+[data-theme=dark]{--bg:#1c1915;--side:#211d18;--panel:#211d18;--card:#27231d;--fg:#ede5d6;--mut:#bfb3a1;--mut2:#857a6b;--line:#363027;--line-strong:#4a4236;--hover:#2d2821;--active:#332d25;--user-bg:#332c23;--acc:#e0895b;--acc-fg:#1c1915;--acc-soft:rgba(224,137,91,.12);--ok:#8fb987;--warn:#d9a54a;--shadow:0 10px 30px rgba(0,0,0,.25);--comp-shadow:0 14px 40px rgba(0,0,0,.4);--desk:linear-gradient(135deg,#5a4a36,#2a231b)}
+body{font-size:14.5px;line-height:1.7}
+.brand{padding:6px 8px 18px}
+.brand-name{font-family:var(--display);font-size:19px;font-weight:500;font-style:italic}
+.logo{background:var(--acc);color:var(--acc-fg);font-style:italic;font-weight:500;font-size:17px}
+.sec-label{text-transform:uppercase;font-size:10.5px;padding:18px 10px 6px}
+.new-btn{background:transparent;border-style:dashed}
+.agent{padding:10px}
+.agent-txt b{font-family:var(--display);font-size:15.5px;font-weight:500}
+.av{font-family:var(--display);font-weight:500;font-size:15px}
+.av1{background:#b5532c}.av2{background:#4f6b5a}.av3{background:#3f4a68}
+.badge{background:transparent;color:var(--acc);border:1px solid var(--acc)}
+.thread{font-size:13.5px}
+.chat-head{padding:18px 32px;border-bottom:1px solid var(--line)}
+.head-txt b{font-size:18px;font-weight:500}
+.scroll{padding:30px 32px 150px}
+.thread-body{max-width:680px;gap:20px}
+.day{display:flex;align-items:center;gap:14px;width:100%;font-family:var(--display);font-style:italic;font-size:13px}
+.day::before,.day::after{content:"";flex:1;border-top:1px solid var(--line)}
+.msg.user .bubble{font-size:14.5px;padding:12px 18px}
+.msg.bot{gap:16px}
+.bot-body{gap:16px}
+.bot-body>.bubble{font-size:15px}
+.bot-body>.bubble:first-child{font-family:var(--display);font-size:19px;font-weight:500}
+.activity{background:transparent;border:0;padding:0;font-style:italic;font-family:var(--display);font-size:14.5px}
+.activity .spinner{border-top-color:var(--acc)}
+.act-url{font-style:normal}
+.steps{background:transparent;border:0;border-left:2px solid var(--line);border-radius:0}
+.steps-head{padding:4px 16px;font-family:var(--display);font-size:15px}
+.steps-head:hover{background:transparent;color:var(--acc)}
+.steps.open .steps-list{padding:4px 16px 4px}
+.st-dot{background:transparent;border:1px solid var(--ok)}
+.card{border-radius:var(--r)}
+.file-card{padding:16px 18px}
+.file-ic{background:var(--hover);color:var(--acc);border-radius:8px}
+.file-txt b{font-family:var(--display);font-size:15px;font-weight:500}
+.approval,.question{padding:16px 20px}
+.card-top b{font-family:var(--display);font-size:17px;font-weight:500}
+.tag{background:transparent;border:1px solid var(--line);font-size:11px}
+.kv{border-top:1px solid var(--line);padding:6px 0}
+.btn{height:36px;padding:0 18px}
+.btn.primary{background:var(--fg);color:var(--bg)}
+.btn.primary:hover{background:var(--acc);color:var(--acc-fg);filter:none}
+.opt{background:transparent;padding:11px 14px}
+.composer{padding:16px 14px 12px 20px}
+.send{border-radius:10px;background:var(--acc)}
+.pane{padding:32px 24px;gap:30px}
+.av.lg{width:84px;height:84px;font-size:34px}
+.ov p{font-family:var(--display);font-style:italic;font-size:14.5px;color:var(--mut)}
+.stats{border:0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0}
+.stats b{font-size:24px;font-weight:500}
+.pane-label{text-transform:uppercase;font-size:10.5px}
+.live{color:var(--acc)}
+.screen{border-radius:10px;padding:0}
+.info .row{padding:11px 2px}
+.side-foot{padding-top:14px}

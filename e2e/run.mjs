@@ -156,11 +156,11 @@ await step("后台任务", async () => {
 });
 
 await step("右侧信息面板：文件 / 电脑", async () => {
-	await page.locator("aside").getByRole("button", { name: "文件" }).click();
+	await page.locator("aside").last().getByRole("tab", { name: "文件" }).click();
 	await page.waitForTimeout(400);
 	await page.screenshot({ path: join(SHOTS, "07-info-files.png") });
-	await page.locator("aside").getByRole("button", { name: "电脑" }).click();
-	await page.locator("aside").getByText("report.md").waitFor();
+	await page.locator("aside").last().getByRole("tab", { name: "电脑" }).click();
+	await page.locator("aside").last().getByText("report.md").waitFor();
 });
 
 let pairUrl = "";
@@ -217,24 +217,30 @@ await step("手机视口截图（单栏 + 抽屉）", async () => {
 	await m.close();
 });
 
-await step("外观：浅色/深色/跟随系统 + 强调色，按设备持久化", async () => {
+await step("外观：4 套主题 + 浅色/深色/跟随系统 + 强调色，按设备持久化", async () => {
 	const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
 	const p = await c.newPage();
 	await p.goto(`${BASE}/?settings=appearance`);
 	await p.getByRole("button", { name: "跟随系统" }).waitFor();
-	await p.getByRole("button", { name: "深色", exact: true }).click();
-	await p.getByLabel("#10b981").click();
-	await p.waitForTimeout(300);
+	const radios = p.getByRole("radio");
+	if ((await radios.count()) < 4) throw new Error("应至少有 4 套主题");
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== "linear") throw new Error("默认主题应为 linear");
+	await p.waitForTimeout(400);
 	await p.screenshot({ path: join(SHOTS, "16-settings-appearance.png") });
+	await p.getByRole("radio", { name: "暖色人文" }).click();
+	await p.getByRole("button", { name: "深色", exact: true }).click();
+	await p.getByLabel("#4f6b5a").click();
+	await p.waitForTimeout(300);
+	await p.screenshot({ path: join(SHOTS, "16b-settings-appearance-warm-dark.png") });
 	await p.goto(BASE);
 	await p.locator("main textarea").waitFor();
-	const st = await p.evaluate(() => ({ dark: document.documentElement.classList.contains("dark"), accent: document.documentElement.style.getPropertyValue("--accent") }));
-	if (!st.dark || st.accent !== "#10b981") throw new Error(`未持久化：${JSON.stringify(st)}`);
+	const st = await p.evaluate(() => ({ skin: document.documentElement.dataset.skin, mode: document.documentElement.dataset.mode, dark: document.documentElement.classList.contains("dark"), accent: document.documentElement.style.getPropertyValue("--user-acc") }));
+	if (st.skin !== "warm" || st.mode !== "dark" || !st.dark || st.accent !== "#4f6b5a") throw new Error(`未持久化：${JSON.stringify(st)}`);
 	// 跟随系统：系统为浅色时应为浅色
 	await p.evaluate(() => localStorage.setItem("pia.theme", "system"));
 	await p.reload();
 	await p.locator("main textarea").waitFor();
-	if (await p.evaluate(() => document.documentElement.classList.contains("dark"))) throw new Error("跟随系统未生效");
+	if (await p.evaluate(() => document.documentElement.dataset.mode !== "light")) throw new Error("跟随系统未生效");
 	await c.close();
 });
 
@@ -254,7 +260,7 @@ await step("多个助理：新建第二个助理 → 侧边栏列出 → 上传�
 	await dlg.getByPlaceholder("给助理起个名字").fill("研究员小R");
 	await dlg.getByRole("button", { name: "研究员" }).click();
 	await dlg.getByRole("button", { name: "🦉" }).click();
-	await page.screenshot({ path: join(SHOTS, "16-new-agent.png") });
+	await page.screenshot({ path: join(SHOTS, "21-new-agent.png") });
 	await dlg.getByRole("button", { name: "创建", exact: true }).click();
 	await page.locator("main").getByText("你好，我是研究员小R").waitFor();
 	const list = await (await fetch(`${BASE}/api/agents`)).json();
@@ -262,7 +268,7 @@ await step("多个助理：新建第二个助理 → 侧边栏列出 → 上传�
 	// 第三个助理（纯 API），让侧边栏更像真实使用
 	await fetch(`${BASE}/api/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "写作助手", avatar: "✍️", color: "#ec4899", description: "写文章、润色、翻译" }) });
 	// 编辑第二个助理：上传图片头像 + 改名
-	await page.locator("aside").last().getByRole("button", { name: "设置", exact: true }).click();
+	await page.locator("aside").last().getByRole("tab", { name: "设置", exact: true }).click();
 	await page.locator("[data-testid=avatar-file]").setInputFiles(join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"));
 	await page.getByPlaceholder("给助理起个名字").fill("研究员 R");
 	await page.getByRole("button", { name: "保存", exact: true }).click();
@@ -271,7 +277,7 @@ await step("多个助理：新建第二个助理 → 侧边栏列出 → 上传�
 	if (!r?.avatar.startsWith("img:")) throw new Error("头像未保存为图片");
 	if ((await fetch(`${BASE}/api/agents/${r.id}/avatar`)).status !== 200) throw new Error("头像图片取不到");
 	await page.waitForTimeout(500);
-	await page.screenshot({ path: join(SHOTS, "17-multi-agents-edit-avatar.png") });
+	await page.screenshot({ path: join(SHOTS, "22-multi-agents-edit-avatar.png") });
 	// 切回第一个助理
 	await page.locator("aside").first().getByText("Nova").first().click();
 	await page.locator("main").getByText("你好，我是Nova").waitFor();
@@ -292,6 +298,44 @@ await step("重启服务后历史仍在 + 未完成工作自动续跑", async ()
 	if (after <= before) throw new Error(`消息数 ${before} → ${after}`);
 	await page.waitForTimeout(3000);
 	await page.screenshot({ path: join(SHOTS, "15-after-restart.png") });
+});
+
+await step("活动提示行 + 步骤列表（进行中展开、完成后自动收起）+ 小任务完成打勾", async () => {
+	await page.locator("aside").first().getByText("Nova").first().click();
+	await send("统计工作区文件");
+	await page.locator("[data-testid=activity]").last().waitFor({ timeout: 10_000 });
+	await page.locator(".pa-steps.open").last().waitFor();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "23-activity-line.png") });
+	await page.locator("main").getByText("命令执行完成").last().waitFor({ timeout: 20_000 });
+	await page.locator("[data-testid=activity]").waitFor({ state: "detached" });
+	await page.waitForTimeout(400);
+	if ((await page.locator(".pa-steps").last().getAttribute("class")).includes("open")) throw new Error("完成后步骤列表应自动收起");
+	await page.locator(".pa-reaction.done").last().waitFor();
+	await page.screenshot({ path: join(SHOTS, "24-steps-collapsed-check.png") });
+});
+
+await step("四套主题截图（桌面浅色/深色 + 手机）", async () => {
+	mkdirSync(join(SHOTS, "themes"), { recursive: true });
+	for (const skin of ["linear", "glass", "warm", "noir"]) {
+		for (const [mode, vp] of [["light", { width: 1440, height: 900 }], ["dark", { width: 1440, height: 900 }], ["mobile", { width: 390, height: 844 }]]) {
+			const m = mode === "mobile" ? (skin === "noir" ? "dark" : "light") : mode;
+			const c = await browser.newContext({ viewport: vp, deviceScaleFactor: mode === "mobile" ? 2 : 1, colorScheme: m, locale: "zh-CN", isMobile: mode === "mobile", hasTouch: mode === "mobile" });
+			await c.addInitScript(([s, t]) => {
+				localStorage.setItem("pia.skin", s);
+				localStorage.setItem("pia.theme", t);
+				localStorage.removeItem("pia.accent");
+			}, [skin, m]);
+			const p = await c.newPage();
+			await p.goto(`${BASE}/?agent=${AGENT}`);
+			await p.locator("main textarea").waitFor();
+			await p.locator("main").getByText("命令执行完成").last().waitFor();
+			if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== skin) throw new Error(`主题未生效：${skin}`);
+			await p.waitForTimeout(700);
+			await p.screenshot({ path: join(SHOTS, "themes", `${skin}-${mode === "mobile" ? "mobile" : `desktop-${mode}`}.png`) });
+			await c.close();
+		}
+	}
 });
 
 await step("自定义模型服务（中转站）：自动获取模型 → 保存 → 测试连接 → 用它聊天 → 编辑 → 删除", async () => {

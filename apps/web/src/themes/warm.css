@@ -1,0 +1,62 @@
+/* 由 apps/web/scripts/port-mockup-css.py 从 docs/design/mockups/src 生成；可手工微调。 */
+[data-skin=warm]{--font:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif;--display:"Iowan Old Style","Songti SC","STSong","Noto Serif CJK SC","Source Han Serif SC",Georgia,serif;--num:var(--display);
+--r:14px;--r-sm:10px;--r-bubble:16px;--r-tail:16px;--r-comp:18px;--r-btn:10px;--r-chip:10px;--r-logo:50%;--side-w:272px;--pane-w:328px;--h-weight:500;--h-size:26px;--h-ls:0;--label-ls:.12em;--brand-ls:0}
+[data-skin=warm][data-mode=light]{--bg:#f7f3ea;--side:#f1ebdf;--panel:#f1ebdf;--card:#fffcf6;--fg:#2a251f;--mut:#5f564b;--mut2:#9a8f80;--line:#e4dccd;--line-strong:#cfc4b1;--hover:#ebe4d6;--active:#e6dccb;--user-bg:#ece4d4;--acc:#b5532c;--acc-fg:#fff8f0;--acc-soft:rgba(181,83,44,.08);--ok:#5f8a5a;--warn:#c08a2c;--shadow:0 1px 0 rgba(80,60,30,.04),0 8px 24px rgba(80,60,30,.05);--comp-shadow:0 12px 36px rgba(80,60,30,.09);--desk:linear-gradient(135deg,#d9c8a9,#8a7458)}
+[data-skin=warm][data-mode=dark]{--bg:#1c1915;--side:#211d18;--panel:#211d18;--card:#27231d;--fg:#ede5d6;--mut:#bfb3a1;--mut2:#857a6b;--line:#363027;--line-strong:#4a4236;--hover:#2d2821;--active:#332d25;--user-bg:#332c23;--acc:#e0895b;--acc-fg:#1c1915;--acc-soft:rgba(224,137,91,.12);--ok:#8fb987;--warn:#d9a54a;--shadow:0 10px 30px rgba(0,0,0,.25);--comp-shadow:0 14px 40px rgba(0,0,0,.4);--desk:linear-gradient(135deg,#5a4a36,#2a231b)}
+[data-skin=warm] .pa-app{font-size:14.5px;line-height:1.7}
+[data-skin=warm] .pa-brand{padding:6px 8px 18px}
+[data-skin=warm] .pa-brand-name{font-family:var(--display);font-size:19px;font-weight:500;font-style:italic}
+[data-skin=warm] .pa-logo{background:var(--acc);color:var(--acc-fg);font-style:italic;font-weight:500;font-size:17px}
+[data-skin=warm] .pa-sec-label{text-transform:uppercase;font-size:10.5px;padding:18px 10px 6px}
+[data-skin=warm] .pa-new-btn{background:transparent;border-style:dashed}
+[data-skin=warm] .pa-agent{padding:10px}
+[data-skin=warm] .pa-agent-txt b{font-family:var(--display);font-size:15.5px;font-weight:500}
+[data-skin=warm] .pa-av{font-family:var(--display);font-weight:500;font-size:15px}
+[data-skin=warm] .pa-av1{background:#b5532c}
+[data-skin=warm] .pa-av2{background:#4f6b5a}
+[data-skin=warm] .pa-av3{background:#3f4a68}
+[data-skin=warm] .pa-badge{background:transparent;color:var(--acc);border:1px solid var(--acc)}
+[data-skin=warm] .pa-thread{font-size:13.5px}
+[data-skin=warm] .pa-chat-head{padding:18px 32px;border-bottom:1px solid var(--line)}
+[data-skin=warm] .pa-head-txt b{font-size:18px;font-weight:500}
+[data-skin=warm] .pa-scroll{padding:30px 32px 150px}
+[data-skin=warm] .pa-thread-body{max-width:680px;gap:20px}
+[data-skin=warm] .pa-day{display:flex;align-items:center;gap:14px;width:100%;font-family:var(--display);font-style:italic;font-size:13px}
+[data-skin=warm] .pa-day::before,[data-skin=warm] .pa-day::after{content:"";flex:1;border-top:1px solid var(--line)}
+[data-skin=warm] .pa-msg.user .pa-bubble{font-size:14.5px;padding:12px 18px}
+[data-skin=warm] .pa-msg.bot{gap:16px}
+[data-skin=warm] .pa-bot-body{gap:16px}
+[data-skin=warm] .pa-bot-body>.pa-bubble{font-size:15px}
+[data-skin=warm] .pa-bot-body>.pa-bubble:first-child{font-family:var(--display);font-size:19px;font-weight:500}
+[data-skin=warm] .pa-activity{background:transparent;border:0;padding:0;font-style:italic;font-family:var(--display);font-size:14.5px}
+[data-skin=warm] .pa-activity .pa-spinner{border-top-color:var(--acc)}
+[data-skin=warm] .pa-act-url{font-style:normal}
+[data-skin=warm] .pa-steps{background:transparent;border:0;border-left:2px solid var(--line);border-radius:0}
+[data-skin=warm] .pa-steps-head{padding:4px 16px;font-family:var(--display);font-size:15px}
+[data-skin=warm] .pa-steps-head:hover{background:transparent;color:var(--acc)}
+[data-skin=warm] .pa-steps.open .pa-steps-list{padding:4px 16px 4px}
+[data-skin=warm] .pa-st-dot{background:transparent;border:1px solid var(--ok)}
+[data-skin=warm] .pa-card{border-radius:var(--r)}
+[data-skin=warm] .pa-file-card{padding:16px 18px}
+[data-skin=warm] .pa-file-ic{background:var(--hover);color:var(--acc);border-radius:8px}
+[data-skin=warm] .pa-file-txt b{font-family:var(--display);font-size:15px;font-weight:500}
+[data-skin=warm] .pa-approval,[data-skin=warm] .pa-question{padding:16px 20px}
+[data-skin=warm] .pa-card-top b{font-family:var(--display);font-size:17px;font-weight:500}
+[data-skin=warm] .pa-tag{background:transparent;border:1px solid var(--line);font-size:11px}
+[data-skin=warm] .pa-kv{border-top:1px solid var(--line);padding:6px 0}
+[data-skin=warm] .pa-btn{height:36px;padding:0 18px}
+[data-skin=warm] .pa-btn.primary{background:var(--fg);color:var(--bg)}
+[data-skin=warm] .pa-btn.primary:hover{background:var(--acc);color:var(--acc-fg);filter:none}
+[data-skin=warm] .pa-opt{background:transparent;padding:11px 14px}
+[data-skin=warm] .pa-composer{padding:16px 14px 12px 20px}
+[data-skin=warm] .pa-send{border-radius:10px;background:var(--acc)}
+[data-skin=warm] .pa-pane{padding:32px 24px;gap:30px}
+[data-skin=warm] .pa-av.lg{width:84px;height:84px;font-size:34px}
+[data-skin=warm] .pa-ov p{font-family:var(--display);font-style:italic;font-size:14.5px;color:var(--mut)}
+[data-skin=warm] .pa-stats{border:0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0}
+[data-skin=warm] .pa-stats b{font-size:24px;font-weight:500}
+[data-skin=warm] .pa-pane-label{text-transform:uppercase;font-size:10.5px}
+[data-skin=warm] .pa-live{color:var(--acc)}
+[data-skin=warm] .pa-screen{border-radius:10px;padding:0}
+[data-skin=warm] .pa-info .pa-row{padding:11px 2px}
+[data-skin=warm] .pa-side-foot{padding-top:14px}

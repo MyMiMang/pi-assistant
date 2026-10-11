@@ -6,9 +6,12 @@ import PairPage from "./components/PairPage";
 import "./styles.css";
 import { applyTheme, useStore } from "./store";
 
-const { theme, accent } = useStore.getState();
-applyTheme(theme, accent);
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(useStore.getState().theme, useStore.getState().accent));
+const { theme, accent, skin } = useStore.getState();
+applyTheme(theme, accent, skin);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+	const s = useStore.getState();
+	applyTheme(s.theme, s.accent, s.skin);
+});
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "127.0.0.1" || location.hostname === "localhost"))
 	navigator.serviceWorker.register("/sw.js").catch(() => {});
 

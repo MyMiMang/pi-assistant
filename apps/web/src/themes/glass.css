@@ -1,0 +1,59 @@
+/* 由 apps/web/scripts/port-mockup-css.py 从 docs/design/mockups/src 生成；可手工微调。 */
+[data-skin=glass]{--font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif;--display:-apple-system,"SF Pro Display","PingFang SC","Noto Sans CJK SC",sans-serif;
+--r:22px;--r-sm:14px;--r-bubble:22px;--r-tail:22px;--r-comp:28px;--r-logo:10px;--side-w:270px;--pane-w:320px;--ok:#30d158}
+[data-skin=glass][data-mode=light]{--bg:#eef1f8;--side:rgba(255,255,255,.52);--panel:rgba(255,255,255,.52);--card:rgba(255,255,255,.62);--fg:#1d1d1f;--mut:#4b4b55;--mut2:#8a8a96;--line:rgba(255,255,255,.75);--line-strong:rgba(0,0,0,.08);--hover:rgba(255,255,255,.6);--active:rgba(255,255,255,.85);--user-bg:linear-gradient(135deg,#0a84ff,#5e5ce6);--user-fg:#fff;--acc:#0a84ff;--acc-fg:#fff;--acc-soft:rgba(10,132,255,.12);--shadow:0 10px 30px rgba(31,38,135,.08),inset 0 1px 0 rgba(255,255,255,.9);--comp-shadow:0 20px 50px rgba(31,38,135,.15),inset 0 1px 0 rgba(255,255,255,.9);--btn-shadow:0 6px 18px rgba(10,132,255,.35);--desk:linear-gradient(135deg,#a1c4fd,#c2e9fb 50%,#fbc2eb)}
+[data-skin=glass][data-mode=dark]{--bg:#0b0d1a;--side:rgba(40,42,60,.42);--panel:rgba(40,42,60,.42);--card:rgba(60,62,84,.42);--fg:#f5f5f7;--mut:#c7c7d1;--mut2:#8b8ba0;--line:rgba(255,255,255,.1);--line-strong:rgba(255,255,255,.22);--hover:rgba(255,255,255,.08);--active:rgba(255,255,255,.13);--user-bg:linear-gradient(135deg,#0a84ff,#5e5ce6);--user-fg:#fff;--acc:#409cff;--acc-fg:#fff;--acc-soft:rgba(64,156,255,.18);--shadow:0 10px 30px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.08);--comp-shadow:0 20px 50px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.1);--btn-shadow:0 6px 20px rgba(64,156,255,.45);--desk:linear-gradient(135deg,#30307a,#5b2a86 55%,#c2417a)}
+[data-skin=glass] .pa-bg-layer{display:block;position:fixed;inset:0;overflow:hidden;z-index:0;background:var(--bg)}
+[data-skin=glass] .pa-bg-layer i{position:absolute;border-radius:50%;filter:blur(80px);opacity:.75;animation:pa-drift 22s ease-in-out infinite alternate}
+[data-skin=glass] .pa-b1{width:620px;height:620px;left:-120px;top:-160px;background:#a5c8ff}
+[data-skin=glass] .pa-b2{width:560px;height:560px;right:-100px;top:120px;background:#f4c6ff;animation-delay:-8s!important}
+[data-skin=glass] .pa-b3{width:520px;height:520px;left:35%;bottom:-220px;background:#bdf5e6;animation-delay:-14s!important}
+[data-skin=glass][data-mode=dark] .pa-b1{background:#2a3bff;opacity:.45}
+[data-skin=glass][data-mode=dark] .pa-b2{background:#b026ff;opacity:.35}
+[data-skin=glass][data-mode=dark] .pa-b3{background:#00b3a4;opacity:.3}
+@keyframes pa-drift{to{transform:translate(60px,40px) scale(1.1)}}
+[data-skin=glass] .pa-app{gap:14px;padding:14px;background:transparent}
+[data-skin=glass] .pa-glassy,[data-skin=glass] .pa-sidebar,[data-skin=glass] .pa-pane,[data-skin=glass] .pa-chat{backdrop-filter:blur(34px) saturate(170%);-webkit-backdrop-filter:blur(34px) saturate(170%)}
+[data-skin=glass] .pa-sidebar,[data-skin=glass] .pa-pane{border:1px solid var(--line);border-radius:28px;box-shadow:var(--shadow);padding:18px 14px}
+[data-skin=glass] .pa-chat{border-radius:28px;background:rgba(255,255,255,.28);border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden}
+[data-skin=glass][data-mode=dark] .pa-chat{background:rgba(30,32,48,.28)}
+[data-skin=glass] .pa-card,[data-skin=glass] .pa-steps,[data-skin=glass] .pa-composer,[data-skin=glass] .pa-new-btn,[data-skin=glass] .pa-icon-btn:not(.pa-ghost),[data-skin=glass] .pa-chip,[data-skin=glass] .pa-btn.ghost{backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%)}
+[data-skin=glass] .pa-chat-head{border-bottom:0;padding:16px 22px}
+[data-skin=glass] .pa-av{box-shadow:0 4px 12px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.4)}
+[data-skin=glass] .pa-av1{background:linear-gradient(160deg,#64d2ff,#0a84ff 60%,#5e5ce6)}
+[data-skin=glass] .pa-av2{background:linear-gradient(160deg,#ffd60a,#ff9f0a 60%,#ff375f)}
+[data-skin=glass] .pa-av3{background:linear-gradient(160deg,#a8f0c6,#30d158 55%,#00a3a3)}
+[data-skin=glass] .pa-av .pa-dot{box-shadow:0 0 0 2px rgba(255,255,255,.9)}
+[data-skin=glass] .pa-logo{background:linear-gradient(160deg,#64d2ff,#5e5ce6);color:#fff;box-shadow:0 6px 16px rgba(94,92,230,.35)}
+[data-skin=glass] .pa-new-btn{border-radius:16px;box-shadow:var(--shadow);padding:11px 12px}
+[data-skin=glass] .pa-agent{padding:9px 10px;border-radius:16px}
+[data-skin=glass] .pa-agent.active{box-shadow:var(--shadow)}
+[data-skin=glass] .pa-search{background:var(--hover);border-radius:14px}
+[data-skin=glass] .pa-badge{background:#ff375f;color:#fff}
+[data-skin=glass] .pa-msg.user .pa-bubble{box-shadow:0 10px 24px rgba(10,132,255,.25);padding:11px 17px}
+[data-skin=glass] .pa-activity{background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);padding:7px 14px 7px 12px}
+[data-skin=glass] .pa-steps-head{padding:12px 16px}
+[data-skin=glass] .pa-st-dot{background:rgba(48,209,88,.15)}
+[data-skin=glass] .pa-file-card{padding:14px 16px}
+[data-skin=glass] .pa-file-ic{border-radius:14px;background:linear-gradient(160deg,#34c759,#248a3d);color:#fff;box-shadow:0 6px 16px rgba(52,199,89,.3)}
+[data-skin=glass] .pa-file-ic em{background:#fff;color:#248a3d}
+[data-skin=glass] .pa-icon-btn:not(.pa-ghost){border-radius:50%}
+[data-skin=glass] .pa-approval,[data-skin=glass] .pa-question{padding:16px 18px}
+[data-skin=glass] .pa-kv{border-top:1px solid var(--line)}
+[data-skin=glass] .pa-btn{height:36px;padding:0 16px}
+[data-skin=glass] .pa-opt{border-radius:14px;background:var(--hover);border-color:transparent;padding:10px 14px}
+[data-skin=glass] .pa-composer{padding:14px 14px 12px 20px}
+[data-skin=glass] .pa-send{width:38px;height:38px;background:linear-gradient(160deg,#409cff,#5e5ce6)}
+[data-skin=glass] .pa-composer-wrap{background:linear-gradient(transparent,rgba(238,241,248,.0) 0%,rgba(238,241,248,.55) 45%)}
+[data-skin=glass][data-mode=dark] .pa-composer-wrap{background:linear-gradient(transparent,rgba(11,13,26,.6) 45%)}
+[data-skin=glass] .pa-foot-note{color:var(--mut)}
+[data-skin=glass] .pa-stats{border:0;gap:8px;overflow:visible}
+[data-skin=glass] .pa-stats div{border:1px solid var(--line)!important;border-radius:16px;background:var(--card)}
+[data-skin=glass] .pa-ov h2{font-size:20px;font-weight:600}
+[data-skin=glass] .pa-av.lg{width:76px;height:76px;font-size:28px;box-shadow:0 14px 34px rgba(10,132,255,.35),inset 0 1px 0 rgba(255,255,255,.5)}
+[data-skin=glass] .pa-screen{border-radius:20px;border:1px solid var(--line)}
+[data-skin=glass] .pa-win{border-radius:9px}
+[data-skin=glass] .pa-info .pa-row{border-top:1px solid var(--line)}
+[data-skin=glass] .pa-side-foot{border-top:1px solid var(--line)}
+@media (max-width:820px){[data-skin=glass] .pa-app{padding:8px}
+[data-skin=glass] .pa-chat{border-radius:24px}}

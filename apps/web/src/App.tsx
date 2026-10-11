@@ -81,21 +81,24 @@ export default function App() {
 	if (!system) return <div className="flex h-full items-center justify-center text-sm text-zinc-500">正在连接…</div>;
 
 	return (
-		<div className="flex h-full overflow-hidden">
+		<div className="pa-app">
+			<div className="pa-bg-layer" aria-hidden="true">
+				<i className="pa-b1" />
+				<i className="pa-b2" />
+				<i className="pa-b3" />
+			</div>
 			{/* 左侧：助理列表（手机上为抽屉） */}
 			<div className={`fixed inset-0 z-40 bg-black/40 transition-opacity lg:hidden ${drawer ? "opacity-100" : "pointer-events-none opacity-0"}`} onClick={() => set({ drawer: false })} />
-			<aside
-				className={`fixed inset-y-0 left-0 z-50 w-[300px] max-w-[85vw] transform transition-transform lg:static lg:z-auto lg:w-72 lg:translate-x-0 ${drawer ? "translate-x-0" : "-translate-x-full"}`}
-			>
+			<div className={`pa-drawer transition-transform ${drawer ? "max-lg:translate-x-0" : "max-lg:-translate-x-[110%]"}`}>
 				<Sidebar />
-			</aside>
-			<main className="flex min-w-0 flex-1 flex-col">{current ? <Chat agentId={current} /> : null}</main>
+			</div>
+			<main className="pa-chat">{current ? <Chat agentId={current} /> : null}</main>
 			{info && current && (
 				<>
 					<div className="fixed inset-0 z-40 bg-black/40 xl:hidden" onClick={() => set({ info: false })} />
-					<aside className="fixed inset-y-0 right-0 z-50 w-[340px] max-w-[90vw] border-l border-zinc-200 bg-white xl:static xl:z-auto dark:border-zinc-800 dark:bg-zinc-950">
+					<div className="pa-pane-wrap">
 						<InfoPane agentId={current} />
-					</aside>
+					</div>
 				</>
 			)}
 			<Settings />
