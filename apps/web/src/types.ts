@@ -1,12 +1,22 @@
 export interface Attachment { fileId: string; name: string; mime: string; size: number; direction?: string; workspacePath?: string | null }
 export interface Message {
-	id: string; agent_id: string; task_id: string | null; role: "user" | "assistant" | "tool" | "system" | "card";
+	id: string; agent_id: string; conversation_id?: string | null; task_id: string | null; role: "user" | "assistant" | "tool" | "system" | "card";
 	content: string; meta: Record<string, any> & { attachments?: Attachment[] }; status: string; created_at: number; updated_at: number;
 }
 export interface Agent {
 	id: string; name: string; avatar: string; color: string; persona: string; description: string; status: string; unread: number;
 	model: { provider: string; id: string } | null; model_provider: string | null; model_id: string | null; workspace: string;
 	last?: { content: string; role: string; created_at: number } | null;
+	conversation_id?: string; memory_provider?: string | null;
+}
+export interface Conversation { id: string; agent_id: string; title: string; created_at: number; updated_at: number; message_count: number; last: string | null }
+export interface MemoryEntry { id: string; text: string; kind: "fact" | "experience" | "note"; scope: "user" | "agent" | "conversation"; createdAt: string; expiresAt: number | null; conversationId: string | null; source: string | null }
+export interface MemoryProviderInfo { id: string; name: string; capabilities: { reflect: boolean; mentalModels: boolean; temporal: boolean; graph: boolean; exportImport: boolean; mcpEndpoint: boolean } }
+export interface SkillMeta { name: string; description: string; builtin: boolean; updatedAt: number; size: number }
+export interface RoutineRun { id: string; routine_id: string; trigger: string; status: string; task_id: string | null; result: string | null; error: string | null; started_at: number; finished_at: number | null }
+export interface Routine {
+	id: string; agent_id: string; name: string; prompt: string; trigger: "cron" | "webhook"; cron: string | null; tz: string; quiet: { start: string; end: string } | null;
+	status: "active" | "paused"; next_run_at: number | null; last_run_at: number | null; created_by: string | null; created_at: number; webhookPath: string | null; lastRun: RoutineRun | null;
 }
 export interface Task { id: string; agent_id: string; title: string; instructions: string; status: string; result: string | null; error: string | null; created_at: number; finished_at: number | null }
 export interface Provider { id: string; name: string; apiKey?: { name: string }; oauth?: { name: string; isSubscription: boolean; loginLabel?: string }; modelCount: number; configured: boolean; source?: string; custom?: boolean }

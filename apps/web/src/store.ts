@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { getTheme } from "./themes/registry";
 import { api } from "./api";
-import type { Agent, Device, Message, SystemInfo, Task } from "./types";
+import type { Agent, Conversation, Device, Message, SystemInfo, Task } from "./types";
 
 type Theme = "light" | "dark" | "system";
 interface State {
@@ -12,7 +12,13 @@ interface State {
 	cloudflareSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
 	tunnelSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
 	current: string | null;
+	/** 当前对话的消息（按助理） */
 	messages: Record<string, Message[]>;
+	/** 每个助理的对话列表与当前对话 */
+	convs: Record<string, { current: string; items: Conversation[] }>;
+	memoryVersion: number;
+	routinesVersion: number;
+	skillsVersion: number;
 	tasks: Record<string, Task[]>;
 	pendingDevices: Device[];
 	loginEvents: Record<string, any[]>;
@@ -33,6 +39,9 @@ interface State {
 	loadAgents: () => Promise<void>;
 	selectAgent: (id: string) => Promise<void>;
 	loadTasks: (id: string) => Promise<void>;
+	loadConversations: (id: string) => Promise<{ current: string; items: Conversation[] }>;
+	switchConversation: (agentId: string, convId: string) => Promise<void>;
+	newConversation: (agentId: string) => Promise<void>;
 	handle: (e: any) => void;
 }
 
@@ -45,6 +54,10 @@ export const useStore = create<State>((set, get) => ({
 	agents: [],
 	current: null,
 	messages: {},
+	convs: {},
+	memoryVersion: 0,
+	routinesVersion: 0,
+	skillsVersion: 0,
 	tasks: {},
 	pendingDevices: [],
 	loginEvents: {},
@@ -70,10 +83,27 @@ export const useStore = create<State>((set, get) => ({
 	},
 	async selectAgent(id) {
 		set({ current: id, drawer: false });
-		const msgs = await api<Message[]>(`/api/agents/${id}/messages?limit=300`);
+		const c = await get().loadConversations(id);
+		const msgs = await api<Message[]>(`/api/agents/${id}/messages?limit=300&conversation=${c.current}`);
 		set((s) => ({ messages: { ...s.messages, [id]: msgs } }));
 		void get().loadTasks(id);
 		void api(`/api/agents/${id}/read`, { method: "POST" }).catch(() => {});
+	},
+	async loadConversations(id) {
+		const c = await api<{ current: string; items: Conversation[] }>(`/api/agents/${id}/conversations`);
+		set((s) => ({ convs: { ...s.convs, [id]: c } }));
+		return c;
+	},
+	async switchConversation(agentId, convId) {
+		set((s) => ({ convs: { ...s.convs, [agentId]: { ...(s.convs[agentId] ?? { items: [] }), current: convId } }, messages: { ...s.messages, [agentId]: [] } }));
+		await api(`/api/agents/${agentId}/conversations/${convId}/select`, { method: "POST" });
+		const msgs = await api<Message[]>(`/api/agents/${agentId}/messages?limit=300&conversation=${convId}`);
+		set((s) => ({ messages: { ...s.messages, [agentId]: msgs } }));
+	},
+	async newConversation(agentId) {
+		const c = await api<Conversation>(`/api/agents/${agentId}/conversations`, { method: "POST", json: {} });
+		await get().switchConversation(agentId, c.id);
+		void get().loadConversations(agentId);
 	},
 	async loadTasks(id) {
 		const tasks = await api<Task[]>(`/api/agents/${id}/tasks`);
@@ -89,7 +119,8 @@ export const useStore = create<State>((set, get) => ({
 			case "message.created": {
 				const m = e.message as Message;
 				if (m.task_id) break;
-				patchMsgs(m.agent_id, (l) => (l.some((x) => x.id === m.id) ? l : [...l, m]));
+				const cur = get().convs[m.agent_id]?.current;
+				if (!cur || !m.conversation_id || m.conversation_id === cur) patchMsgs(m.agent_id, (l) => (l.some((x) => x.id === m.id) ? l : [...l, m]));
 				set({
 					agents: get().agents.map((a) =>
 						a.id === m.agent_id
@@ -160,6 +191,26 @@ export const useStore = create<State>((set, get) => ({
 			}
 			case "settings.changed":
 				void get().loadSystem();
+				break;
+			case "conversations.changed": {
+				const prev = get().convs[e.agentId]?.current;
+				if (!get().convs[e.agentId] && e.agentId !== get().current) break;
+				void get()
+					.loadConversations(e.agentId)
+					.then((c) => {
+						// 其他设备切换/新建了对话：跟着切过去
+						if (c.current !== prev && e.agentId === get().current) void get().switchConversation(e.agentId, c.current);
+					});
+				break;
+			}
+			case "memory.changed":
+				set({ memoryVersion: get().memoryVersion + 1 });
+				break;
+			case "routines.changed":
+				set({ routinesVersion: get().routinesVersion + 1 });
+				break;
+			case "skills.changed":
+				set({ skillsVersion: get().skillsVersion + 1 });
 				break;
 		}
 	},

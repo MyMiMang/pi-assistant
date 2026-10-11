@@ -1,10 +1,11 @@
-import { Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { Brain, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { getLang, setLang, t } from "../i18n";
 import { setAppearance, useStore } from "../store";
 import { getTheme, type Mode, THEMES } from "../themes/registry";
 import { ThemePreview } from "./ThemePreview";
+import { MemorySettings, SkillsTab } from "./SkillsTab";
 import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
@@ -12,6 +13,8 @@ import { Badge, Button, cx, fmtTime, Input, Modal } from "./ui";
 
 const TABS = [
 	["models", "模型", Monitor],
+	["skills", "技能库", Puzzle],
+	["memory", "记忆", Brain],
 	["remote", "远程访问与设备", Wifi],
 	["entry", "固定地址 / 入口", Globe],
 	["appearance", "外观", Palette],
@@ -32,6 +35,8 @@ export default function Settings() {
 				</nav>
 				<div className="min-w-0 flex-1 p-5">
 					{settings === "models" && <ModelsTab />}
+					{settings === "skills" && <SkillsTab />}
+					{settings === "memory" && <MemorySettings />}
 					{settings === "remote" && <RemoteTab />}
 					{settings === "entry" && <EntryTab />}
 					{settings === "appearance" && <AppearanceTab />}

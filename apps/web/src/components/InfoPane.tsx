@@ -1,5 +1,5 @@
 import { DesktopView } from "./DesktopView";
-import { CalendarClock, ChevronLeft, Download, File, Folder, HardDrive, X } from "lucide-react";
+import { ChevronLeft, Download, File, Folder, HardDrive, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, download } from "../api";
 import { t } from "../i18n";
@@ -7,10 +7,13 @@ import { useStore } from "../store";
 import type { Attachment, ModelInfo } from "../types";
 import { AuthImage } from "./Attachments";
 import { AgentEditor } from "./AgentEditor";
+import { MemoryTab } from "./MemoryTab";
+import { RoutinesTab } from "./RoutinesTab";
 import { Avatar, Badge, Button, cx, fmtSize, fmtTime, Input } from "./ui";
 
 const TABS = [
 	["overview", "概览"],
+	["memory", "记忆"],
 	["routines", "定时任务"],
 	["files", "文件"],
 	["computer", "电脑"],
@@ -44,13 +47,8 @@ export default function InfoPane({ agentId }: { agentId: string }) {
 			</div>
 			<div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-6">
 				{tab === "overview" && <Overview agentId={agentId} />}
-				{tab === "routines" && (
-					<div className="flex flex-col items-center gap-2 py-10 text-center text-sm text-zinc-500">
-						<CalendarClock size={28} className="text-zinc-400" />
-						定时任务将在 Phase 2 推出
-						<span className="text-xs">例如“每天早上 8 点给我一份摘要”</span>
-					</div>
-				)}
+				{tab === "memory" && <MemoryTab agentId={agentId} />}
+				{tab === "routines" && <RoutinesTab agentId={agentId} />}
 				{tab === "files" && <Files agentId={agentId} />}
 				{tab === "computer" && <Computer agentId={agentId} />}
 				{tab === "settings" && <AgentSettings agentId={agentId} />}

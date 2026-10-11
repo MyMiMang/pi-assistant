@@ -1,4 +1,4 @@
-import { ArrowUp, Check, ChevronRight, Globe, Hand, Loader2, Menu, Monitor, PanelRight, Paperclip, Square, Terminal, X, FileText, FolderSearch, PenLine, Send, Sparkles, Eye } from "lucide-react";
+import { AlarmClock, Brain, Puzzle, ArrowUp, Check, ChevronRight, Globe, Hand, Loader2, Menu, Monitor, PanelRight, Paperclip, Square, Terminal, X, FileText, FolderSearch, PenLine, Send, Sparkles, Eye } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, upload } from "../api";
 import { t } from "../i18n";
@@ -8,6 +8,7 @@ import Attachments from "./Attachments";
 import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
 import Markdown from "./Markdown";
 import { Avatar, cx, fmtSize } from "./ui";
+import { ConversationMenu } from "./Conversations";
 
 // ------------------------------------------------------------------ 工具 → 文案
 const TOOL_LABEL: Record<string, string> = {
@@ -27,6 +28,11 @@ export function activityOf(name: string | undefined, args: Record<string, any> =
 	if (n === "deliver_file") return { text: "正在整理文件发给你…", icon: <Send className="pa-ic" />, detail: args.path };
 	if (n === "spawn_task") return { text: "正在安排后台任务…", icon: <Sparkles className="pa-ic" />, detail: args.title };
 	if (n === "ask_user") return { text: "等你回复…", icon: <Hand className="pa-ic" /> };
+	if (n === "memory_remember") return { text: "正在记下来…", icon: <Brain className="pa-ic" />, detail: String(args.content ?? "").slice(0, 48) };
+	if (n === "memory_recall" || n === "memory_reflect") return { text: "正在回忆…", icon: <Brain className="pa-ic" />, detail: args.query };
+	if (n === "memory_forget") return { text: "正在忘掉一条记忆…", icon: <Brain className="pa-ic" /> };
+	if (n.startsWith("routine_")) return { text: "正在设置定时任务…", icon: <AlarmClock className="pa-ic" />, detail: args.name };
+	if (n.startsWith("skill_")) return { text: "正在整理技能…", icon: <Puzzle className="pa-ic" />, detail: args.name };
 	if (n === "computer_screenshot") return { text: "正在查看屏幕…", icon: <Eye className="pa-ic" /> };
 	if (n === "request_handoff") return { text: "等你接手…", icon: <Hand className="pa-ic" /> };
 	if (n.startsWith("mcp") || n.includes("cua")) return { text: "正在操作电脑…", icon: <Monitor className="pa-ic" /> };
@@ -186,8 +192,14 @@ function UserMsg({ m, reaction }: { m: Message; reaction?: "eyes" | "done" }) {
 function SystemMsg({ m }: { m: Message }) {
 	return (
 		<div className="flex justify-center py-1">
-			<div className={cx("max-w-md rounded-full px-3 py-1 text-center text-xs", m.status === "error" ? "bg-red-500/10 text-red-600" : "bg-hover text-mut")}>
+			<div className={cx("max-w-md px-3 py-1 text-center text-xs", m.meta.kind === "compaction" ? "rounded-xl" : "rounded-full", m.status === "error" ? "bg-red-500/10 text-red-600" : "bg-hover text-mut")}>
 				{m.content}
+				{m.meta.kind === "compaction" && m.meta.summary && (
+					<details className="mt-1 text-left">
+						<summary className="cursor-pointer text-accent">查看摘要</summary>
+						<div className="mt-1 whitespace-pre-wrap rounded-lg bg-card p-2 text-[11px] leading-relaxed">{m.meta.summary}</div>
+					</details>
+				)}
 				{m.meta.action === "open-models" && (
 					<button className="ml-2 font-medium text-accent" onClick={() => useStore.getState().set({ settings: "models" })}>
 						去配置
@@ -260,6 +272,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 					</small>
 				</div>
 				<div className="pa-head-actions">
+					<ConversationMenu agentId={agent.id} />
 					<button className="pa-chip max-sm:!hidden" onClick={() => set({ info: true, infoTab: "computer" })}>
 						<Monitor className="pa-ic" />
 						<span>电脑</span>
@@ -315,7 +328,7 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 	}, [text]);
 	const send = async () => {
 		if (!text.trim() && !files.length) return;
-		const body = { text, attachments: files.map((f) => f.fileId) };
+		const body = { text, attachments: files.map((f) => f.fileId), conversationId: useStore.getState().convs[agentId]?.current };
 		setText("");
 		setFiles([]);
 		await api(`/api/agents/${agentId}/messages`, { method: "POST", json: body });
@@ -385,7 +398,7 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 					<span className="flex-1" />
 					{model && <span className="pa-model max-sm:hidden">{model}</span>}
 					{running && !text.trim() && !files.length ? (
-						<button className="pa-send" onClick={() => api(`/api/agents/${agentId}/abort`, { method: "POST" })} aria-label={t("停止")} title={t("停止")}>
+						<button className="pa-send" onClick={() => api(`/api/agents/${agentId}/abort?conversation=${useStore.getState().convs[agentId]?.current ?? ""}`, { method: "POST" })} aria-label={t("停止")} title={t("停止")}>
 							<Square size={13} fill="currentColor" />
 						</button>
 					) : (
