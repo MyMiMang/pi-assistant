@@ -17,7 +17,7 @@ export interface TunnelStatus {
 	state: "off" | "starting" | "online" | "error" | "missing";
 	url: string | null;
 	error?: string;
-	rendezvous: { state: "idle" | "ok" | "error"; at?: number; error?: string };
+	rendezvous: { state: "idle" | "off" | "ok" | "error"; at?: number; error?: string };
 	binary: string | null;
 }
 
@@ -30,7 +30,7 @@ function emit() {
 	bus.emit({ type: "tunnel.status", status: { ...status } });
 }
 export const tunnelStatus = () => ({ ...status });
-export const entryDomain = () => getSetting<string>("entryDomain", config.defaultEntryDomain);
+export const entryDomain = (): string | null => getSetting<string | null>("entryDomain", null) || config.entryDomainEnv;
 
 export function findCloudflared(): string | null {
 	const exe = process.platform === "win32" ? "cloudflared.exe" : "cloudflared";
@@ -40,12 +40,17 @@ export function findCloudflared(): string | null {
 	return null;
 }
 
-async function register(url: string) {
+export async function register(url: string) {
 	const { serverId, publicKey } = identity();
 	const ts = Date.now();
+	const domain = entryDomain();
+	if (!domain) {
+		status.rendezvous = { state: "off", at: ts };
+		return emit();
+	}
 	const sig = signText(registrationMessage(serverId, url, ts));
 	try {
-		const res = await fetch(`https://${entryDomain()}/api/servers/${serverId}`, {
+		const res = await fetch(`https://${domain}/api/servers/${serverId}`, {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ url, ts, sig, publicKey }),

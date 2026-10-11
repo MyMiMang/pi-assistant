@@ -24,6 +24,7 @@ import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
 import { getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
+import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
 import { entryDomain, startTunnel, stopTunnel, tunnelStatus } from "./tunnel.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
@@ -46,7 +47,7 @@ app.use("*", async (c, next) => {
 
 app.use("/api/*", async (c, next) => {
 	const origin = c.req.header("origin");
-	const allowed = origin && (origin === `https://${entryDomain()}` || origin === new URL(c.req.url).origin);
+	const allowed = origin && ((!!entryDomain() && origin === `https://${entryDomain()}`) || origin === new URL(c.req.url).origin);
 	if (allowed) {
 		c.header("Access-Control-Allow-Origin", origin!);
 		c.header("Vary", "Origin");
@@ -84,7 +85,6 @@ app.get("/api/system", async (c) =>
 		credentialBackend,
 		sandbox: { mode: await sandboxMode(), preference: getSetting("sandbox", config.sandbox), dockerAvailable: await dockerAvailable() },
 		entryDomain: entryDomain(),
-		defaultEntryDomain: config.defaultEntryDomain,
 		tunnel: tunnelStatus(),
 		workspaceRoot: config.workspaceRoot,
 		push: { publicKey: vapidPublicKey(), recent: pushLog.slice(-5) },
@@ -94,8 +94,9 @@ app.get("/api/system", async (c) =>
 
 app.get("/api/settings", (c) => c.json({ entryDomain: entryDomain(), remoteEnabled: getSetting("remoteEnabled", false), sandbox: getSetting("sandbox", config.sandbox), onboarded: getSetting("onboarded", false) }));
 app.put("/api/settings", async (c) => {
-	const b = await c.req.json<{ entryDomain?: string; remoteEnabled?: boolean; sandbox?: string; onboarded?: boolean }>();
-	if (b.entryDomain !== undefined) {
+	const b = await c.req.json<{ entryDomain?: string | null; remoteEnabled?: boolean; sandbox?: string; onboarded?: boolean }>();
+	if (b.entryDomain === "" || b.entryDomain === null) setSetting("entryDomain", null);
+	else if (b.entryDomain !== undefined) {
 		const d = b.entryDomain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
 		if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)) return c.json({ error: "入口域名格式不正确" }, 400);
 		setSetting("entryDomain", d);
@@ -278,6 +279,21 @@ app.post("/api/requests/:id", async (c) => {
 	return c.json(requests.resolve(c.req.param("id"), b, by(c)));
 });
 
+// ---------------------------------------------------------------- 远程稳定入口：部署到用户自己的 Cloudflare（仅本机可操作）
+app.get("/api/remote/cloudflare", localOnly, (c) => c.json(cfStatus()));
+app.post("/api/remote/cloudflare/deploy", localOnly, async (c) => {
+	const b = await c.req.json<{ zone: string; subdomain: string; token?: string }>();
+	try {
+		return c.json({ ok: true, config: await deployRendezvous(b) });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.delete("/api/remote/cloudflare", localOnly, async (c) => {
+	await removeRendezvous();
+	return c.json({ ok: true });
+});
+
 // ---------------------------------------------------------------- 配对与设备
 app.post("/api/pair/start", localOnly, async (c) => {
 	const { code, expiresAt } = createPairCode();
@@ -287,7 +303,7 @@ app.post("/api/pair/start", localOnly, async (c) => {
 	const direct = t.url ?? reqOrigin;
 	const params = new URLSearchParams({ sid: id.serverId, u: direct, pk: id.publicKey, c: code }).toString();
 	// 入口域名可用（已成功注册 Rendezvous）时，二维码指向固定入口；否则直连隧道/本机地址
-	const viaEntry = t.url && t.rendezvous.state === "ok";
+	const viaEntry = !!(t.url && entryDomain() && t.rendezvous.state === "ok");
 	const url = viaEntry ? `https://${entryDomain()}/pair#${params}` : `${direct}/pair#${params}`;
 	return c.json({ url, directUrl: `${direct}/pair#${params}`, viaEntry, expiresAt, qr: await QRCode.toDataURL(url, { margin: 1, width: 320 }), remote: !!t.url });
 });

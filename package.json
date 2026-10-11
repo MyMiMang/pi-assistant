@@ -13,7 +13,7 @@
   "scripts": {
     "dev": "npm run build -w @huhao/web && HUHAO_MOCK=1 npm run dev -w @huhao/server",
     "dev:web": "npm run dev -w @huhao/web",
-    "build": "npm run build -w @huhao/web",
+    "build": "npm run build -w @huhao/web && npm run build -w @huhao/rendezvous",
     "start": "npm run start -w @huhao/server",
     "test": "npm test -w @huhao/server",
     "typecheck": "npm run typecheck -w @huhao/server && tsc --noEmit -p apps/web",

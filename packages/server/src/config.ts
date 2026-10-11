@@ -23,7 +23,9 @@ export const config = (() => {
 		/** 仅用于本地开发测试：启用 Mock 模型 */
 		mock: process.env.HUHAO_MOCK === "1",
 		/** 默认入口域名（PWA 外壳 + Rendezvous），可在设置中修改 */
-		defaultEntryDomain: process.env.HUHAO_ENTRY_DOMAIN ?? "app.dengdengyun.shop",
+		/** 不内置任何默认入口域名：远程稳定入口由用户用自己的域名 + Cloudflare 账号一键部署 */
+		entryDomainEnv: process.env.HUHAO_ENTRY_DOMAIN || null,
+		rendezvousWorker: resolve(process.env.HUHAO_RENDEZVOUS_WORKER ?? join(import.meta.dirname, "..", "..", "..", "apps", "rendezvous", "dist", "worker.js")),
 		cloudflared: process.env.HUHAO_CLOUDFLARED,
 		sandbox: (process.env.HUHAO_SANDBOX ?? "auto") as "auto" | "workspace" | "docker",
 		/** docker 命令（开发机可设 HUHAO_DOCKER="sudo docker"） */

@@ -59,6 +59,7 @@ export function validUrl(url: string): boolean {
 
 async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
 	if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+	if (url.pathname === "/api/health") return json({ ok: true, service: "huhao-rendezvous", version: 1 });
 	const m = url.pathname.match(/^\/api\/servers\/([^/]+)$/);
 	if (!m) return json({ error: "unauthorized" }, 401); // 外壳模式下未配对的设备会看到“需要配对”
 	const id = m[1].toLowerCase();

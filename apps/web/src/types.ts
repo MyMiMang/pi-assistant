@@ -15,7 +15,7 @@ export interface TunnelStatus { enabled: boolean; state: string; url: string | n
 export interface SystemInfo {
 	serverId: string; publicKey: string; pi: { version: string; testedWith: string; compatible: boolean; message: string }; mock: boolean; local: boolean;
 	deviceId: string | null; onboarded: boolean; defaultModel: { provider: string; id: string } | null; credentialBackend: string;
-	sandbox: { mode: string; preference: string; dockerAvailable: boolean }; entryDomain: string; defaultEntryDomain: string; tunnel: TunnelStatus;
+	sandbox: { mode: string; preference: string; dockerAvailable: boolean }; entryDomain: string | null; tunnel: TunnelStatus;
 	workspaceRoot: string; push: { publicKey: string }; seq: number;
 }
 export interface Device { id: string; name: string; platform: string; status: string; created_at: number; last_seen_at: number | null; last_ip: string | null }

@@ -1,4 +1,4 @@
-import { Bell, Copy, Globe, Info, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi } from "lucide-react";
+import { Bell, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { getLang, setLang, t } from "../i18n";
@@ -11,7 +11,7 @@ import { Badge, Button, cx, fmtTime, Input, Modal } from "./ui";
 const TABS = [
 	["models", "模型", Monitor],
 	["remote", "远程访问与设备", Wifi],
-	["entry", "入口域名", Globe],
+	["entry", "远程入口", Globe],
 	["appearance", "外观", Palette],
 	["about", "关于", Info],
 ] as const;
@@ -216,37 +216,107 @@ function RemoteTab() {
 	);
 }
 
+type CfStep = { step: string; state: "running" | "ok" | "error"; detail?: string };
 function EntryTab() {
 	const system = useStore((s) => s.system)!;
-	const [v, setV] = useState(system.entryDomain);
-	const [msg, setMsg] = useState("");
-	const save = async (d: string) => {
+	const steps = useStore((s) => s.cloudflareSteps);
+	const [st, setSt] = useState<{ configured: boolean; hasToken: boolean; config: { hostname: string; zone: string; subdomain: string; deployedAt: number } | null } | null>(null);
+	const [zone, setZone] = useState("");
+	const [sub, setSub] = useState("huhao");
+	const [token, setToken] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	const load = () =>
+		api("/api/remote/cloudflare")
+			.then((r) => {
+				setSt(r);
+				if (r.config) (setZone(r.config.zone), setSub(r.config.subdomain));
+			})
+			.catch(() => setSt(null));
+	useEffect(() => {
+		void load();
+	}, []);
+	const deploy = async () => {
+		setBusy(true);
+		setErr("");
+		useStore.setState({ cloudflareSteps: [] });
 		try {
-			await api("/api/settings", { method: "PUT", json: { entryDomain: d } });
-			setV(d);
-			setMsg("已保存");
+			await api("/api/remote/cloudflare/deploy", { method: "POST", json: { zone, subdomain: sub, token: token || undefined } });
+			setToken("");
+			await load();
 			await useStore.getState().loadSystem();
 		} catch (e) {
-			setMsg(e instanceof Error ? e.message : String(e));
+			setErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(false);
 		}
 	};
+	const remove = async () => {
+		if (!confirm("删除远程入口？会解绑域名并删除 Worker，本机保存的 Token 也会清除。")) return;
+		await api("/api/remote/cloudflare", { method: "DELETE" });
+		await load();
+		await useStore.getState().loadSystem();
+	};
+	if (!system.local) return <p className="text-sm text-zinc-500">远程入口只能在电脑上设置。</p>;
 	return (
-		<div className="space-y-4">
-			<H desc="手机扫码打开的固定网址，同时负责告诉手机“你的电脑现在在哪个地址”（只交换地址，不经手任何聊天内容）。可以改成你自己部署的入口，无需重新安装。">入口域名</H>
-			<div className="flex gap-2">
-				<Input value={v} onChange={(e) => setV(e.target.value)} placeholder={system.defaultEntryDomain} />
-				<Button variant="primary" onClick={() => save(v)}>
-					{t("保存")}
-				</Button>
+		<div className="space-y-5">
+			<H desc="可选。用你自己的域名做一个固定网址：手机扫一次码，以后在任何网络下都能打开，电脑的隧道地址变了也会自动找到。部署在你自己的 Cloudflare 账号里，只交换“电脑现在在哪个地址”，不经手任何聊天内容。">远程入口（你自己的域名）</H>
+			{st?.config && (
+				<div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm dark:border-emerald-900 dark:bg-emerald-950/30">
+					<CheckCircle2 size={16} className="text-emerald-600" /> 已部署：
+					<a className="font-medium text-accent" href={`https://${st.config.hostname}`} target="_blank" rel="noreferrer">
+						https://{st.config.hostname}
+					</a>
+					<span className="text-xs text-zinc-500">{new Date(st.config.deployedAt).toLocaleString()}</span>
+					<Button size="sm" variant="ghost" className="ml-auto text-red-600" onClick={remove}>
+						<Trash2 size={14} /> 删除
+					</Button>
+				</div>
+			)}
+			<div className="grid gap-3 sm:grid-cols-2">
+				<label className="space-y-1">
+					<span className="text-xs font-medium text-zinc-500">你的域名（已托管在 Cloudflare）</span>
+					<Input placeholder="example.com" value={zone} onChange={(e) => setZone(e.target.value)} />
+				</label>
+				<label className="space-y-1">
+					<span className="text-xs font-medium text-zinc-500">子域名</span>
+					<div className="flex items-center gap-1.5">
+						<Input value={sub} onChange={(e) => setSub(e.target.value)} />
+						<span className="shrink-0 text-xs text-zinc-400">.{zone || "example.com"}</span>
+					</div>
+				</label>
 			</div>
-			<div className="flex items-center gap-2 text-xs text-zinc-500">
-				默认：{system.defaultEntryDomain}
-				{v !== system.defaultEntryDomain && (
-					<button className="text-accent" onClick={() => save(system.defaultEntryDomain)}>
-						恢复默认
-					</button>
-				)}
-				{msg && <span className="ml-2">{msg}</span>}
+			<label className="block space-y-1">
+				<span className="text-xs font-medium text-zinc-500">Cloudflare API Token</span>
+				<Input type="password" autoComplete="off" placeholder={st?.hasToken ? "已加密保存在本机，留空则沿用" : "在 Cloudflare 控制台 → 我的个人资料 → API 令牌 创建"} value={token} onChange={(e) => setToken(e.target.value)} />
+				<span className="block text-xs leading-relaxed text-zinc-500">
+					创建令牌时选择模板「编辑 Cloudflare Workers」，区域资源选你的域名即可。Token 只加密保存在这台电脑，只发给 api.cloudflare.com。
+				</span>
+			</label>
+			<div className="flex items-center gap-2">
+				<Button variant="primary" disabled={busy || !zone || !sub || (!token && !st?.hasToken)} onClick={deploy}>
+					{busy && <Loader2 size={14} className="animate-spin" />} {st?.config ? "重新部署 / 更新" : "一键部署"}
+				</Button>
+				{err && <span className="text-sm text-red-600">{err}</span>}
+			</div>
+			{steps.length > 0 && (
+				<ul className="space-y-1 rounded-xl border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+					{steps.map((x) => (
+						<li key={x.step} className="flex items-start gap-2">
+							{x.state === "running" ? <Loader2 size={15} className="mt-0.5 animate-spin text-accent" /> : x.state === "ok" ? <CheckCircle2 size={15} className="mt-0.5 text-emerald-500" /> : <XCircle size={15} className="mt-0.5 text-red-500" />}
+							<span>
+								{x.step}
+								{x.detail && <span className="ml-1.5 break-all text-xs text-zinc-500">{x.detail}</span>}
+							</span>
+						</li>
+					))}
+				</ul>
+			)}
+			<div className="rounded-xl bg-zinc-50 p-3 text-xs leading-relaxed text-zinc-500 dark:bg-zinc-800/50">
+				<div className="mb-1 font-medium text-zinc-600 dark:text-zinc-300">Cloudflare 免费套餐额度（个人使用远远够用）</div>
+				Workers：每天 10 万次请求、每次 10ms CPU；KV：每天 10 万次读取、1000 次写入、1 GB 存储；静态资源（PWA 外壳）请求免费且不限量；自定义域名与 HTTPS 证书免费。胡好好平时每次打开只读 1 次 KV，地址变化时才写 1 次。
+				<div className="mt-2 font-medium text-zinc-600 dark:text-zinc-300">没有域名？</div>
+				也能用：「远程访问与设备」里打开远程访问会得到一个临时链接（*.trycloudflare.com），每次电脑重启地址会变，需要重新扫码；或者只在同一 Wi‑Fi 下使用。
 			</div>
 		</div>
 	);
