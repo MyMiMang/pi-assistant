@@ -1,6 +1,6 @@
-# 胡好好 · 基于 Pi 的本地私人助理 —— 设计文档 v0.4
+# 胡好好 · 基于 Pi 的本地私人助理 —— 设计文档 v0.5
 
-> 状态：v0.4（2026-10-11）。新增：§5.14.1 自定义模型服务（中转站/第三方/本地，已实现），§5.16 第三方集成通用规则，§14 Phase 3 国内优先方案（它自己的电脑、自己的账号、微信/企业微信/飞书/钉钉、Cua）。v0.3：Phase 1 的服务端 + Web UI 已实现并通过端到端测试（实现状态见 §13）。新增：§5.14 模型与凭据（不内置任何 Key，全部 Pi provider 动态支持），§5.15 模块边界与 Pi 升级维护流程。默认入口域名 `app.dengdengyun.shop`。
+> 状态：v0.5（2026-10-11）。**远程入口改为按用户自选**：不再内置任何默认域名，用户用自己的域名 + 自己的 Cloudflare Token 在 App 内一键部署（§5.13.2，已实现并实测）；新增密钥扫描（§9.1）；助理电脑与 ext-computer 已开始实现（§14.10）。v0.4：新增：§5.14.1 自定义模型服务（中转站/第三方/本地，已实现），§5.16 第三方集成通用规则，§14 Phase 3 国内优先方案（它自己的电脑、自己的账号、微信/企业微信/飞书/钉钉、Cua）。v0.3：Phase 1 的服务端 + Web UI 已实现并通过端到端测试（实现状态见 §13）。新增：§5.14 模型与凭据（不内置任何 Key，全部 Pi provider 动态支持），§5.15 模块边界与 Pi 升级维护流程。默认入口域名 `app.dengdengyun.shop`。
 > 参考：Pi 仓库 `earendil-works/pi`（本文基于 `@earendil-works/pi-coding-agent@1.1.0` 的源码和文档阅读结果，API 名称均来自实际代码）。
 
 ---
@@ -324,15 +324,40 @@ export default (pi: ExtensionAPI) => {
 
 快速隧道的已知限制（Cloudflare 官方文档）：仅用于测试/开发、无 SLA、每隧道最多 200 个并发请求（超出返回 429）、不支持 SSE、地址每次新建都会变。对个人助理（一个人、几台设备、只用 WebSocket）足够；设置页明确提示，并提供一键切换到命名隧道 / Tailscale。
 
-#### 5.13.2 解决“地址会变”：稳定入口（Rendezvous）
+#### 5.13.2 解决“地址会变”：用户自己的稳定入口（Rendezvous，可选）
 
-快速隧道地址在电脑重启、cloudflared 重连后会变，而 PWA 和 Web Push 订阅都绑定在“源（origin）”上，所以：
+**原则：App 和仓库里不内置任何默认域名，也没有我们运营的公共服务。** 远程访问分三档，由用户自己选：
 
-1. **PWA 外壳放在固定源**：`https://app.<我们的域名>`（Cloudflare Pages / GitHub Pages 托管的纯静态文件，与本地服务同版本发布）。用户手机上安装的是这个固定源的 PWA，Web Push 订阅也绑定它，地址变化不受影响。
-2. **Rendezvous Worker**（Cloudflare Workers + KV，免费额度足够）：只存 `serverId → { 当前隧道地址, 更新时间, Ed25519 签名 }`。本地服务每次拿到新隧道地址就用自己的私钥签名上报；PWA 启动时按 `serverId` 查询、**校验签名**（公钥在配对时已保存在手机上）后连接。Worker 不经手任何聊天内容，伪造地址也会因签名校验失败被拒。
-3. PWA 外壳通过 HTTPS/WSS 跨源连到隧道地址；本地服务 CORS 只允许外壳源与 `127.0.0.1`。
-4. 兜底：地址变化时本地服务也会给已配对设备发一条 Web Push（加密载荷内含新地址）；都失败时在电脑上重新扫码即可。
-5. 不想依赖我们的外壳与 Worker 的用户：启用命名隧道或 Tailscale 后，PWA 直接由本地服务在固定地址上托管，完全自给自足。
+| 档位 | 需要 | 体验 |
+|---|---|---|
+| 仅局域网 | 什么都不要 | 同一 Wi‑Fi 下扫码使用 |
+| 临时链接（默认的远程方式） | 什么都不要 | 打开「远程访问」即得 `https://xxx.trycloudflare.com`；电脑重启/隧道重连后地址会变，需要重新扫码（已配对设备会收到推送提示） |
+| **自己的稳定入口**（推荐） | 一个托管在 Cloudflare 的域名（免费套餐即可）+ 一个 Cloudflare API Token | 固定网址 `https://<子域名>.<你的域名>`，扫一次码永久可用，隧道地址变化自动跟随 |
+
+**一键部署（「设置 → 远程入口」，仅本机可操作）**：用户填域名、子域名（默认 `huhao`）、API Token（模板「编辑 Cloudflare Workers」）。服务端 `cloudflare.ts` **只用 Cloudflare 公开 REST API、运行时不需要 wrangler**：
+
+1. `GET /user/tokens/verify` 验证 Token；
+2. `GET /zones?name=<域名>` 找到 zone，**自动得到 account id**；
+3. 创建/复用 KV 命名空间 `huhao-rendezvous-servers`；
+4. 上传 PWA 外壳：`POST …/workers/scripts/huhao-rendezvous/assets-upload-session`（清单 = 路径 → 内容哈希）→ 只上传缺失的文件 → 拿到完成 JWT；
+5. `PUT …/workers/scripts/huhao-rendezvous`（multipart：`dist/worker.js` ES 模块 + 元数据：KV 绑定 `SERVERS`、静态资源绑定 `ASSETS`、SPA 回退、`/api/*` 先走 Worker）；
+6. `PUT …/workers/domains` 绑定 **Workers Custom Domain**（Cloudflare 自动创建 DNS 记录和证书，无需用户手动加记录）；
+7. 轮询 `https://<主机名>/api/health`，生效后把它设为入口并立刻登记当前隧道地址。
+
+每一步通过 WebSocket 实时显示进度；失败原样显示 Cloudflare 的错误码。可“重新部署/更新”（App 升级后外壳随之更新）或“删除”（解绑域名、删除 Worker、清除本地 Token）。也提供命令行版 `scripts/deploy-rendezvous.mjs`，调用的是本机服务的同一个 API。
+
+**Token 安全**：只用主密钥加密保存在本机 SQLite（§5.14 同一套加密），只发给 `api.cloudflare.com`；不进日志、不进仓库、不发给 Rendezvous；远程设备无法读取或修改（接口 `localOnly`）。
+
+**免费套餐额度**（设置页内展示）：Workers 每天 10 万次请求；KV 每天 10 万次读、1000 次写、1 GB；静态资源请求不计费；自定义域名与证书免费。胡好好每次打开读 1 次 KV，隧道地址变化时写 1 次，个人使用远低于额度。
+
+**工作方式**（不变）：
+1. **PWA 外壳放在用户自己的固定源**，手机安装的是这个源的 PWA，Web Push 订阅也绑定它。
+2. **Rendezvous Worker** 只存 `serverId → { 当前隧道地址, 时间, Ed25519 签名, 公钥(TOFU) }`；本地服务每次拿到新隧道地址就签名上报；PWA 按 `serverId` 查询并**用配对时保存的公钥验签**后连接。Worker 不经手任何聊天内容。一个用户的 Worker 也可以服务他的多台电脑。
+3. 本地服务 CORS 只允许入口源与本机源。
+4. 兜底：地址变化时本地服务给已配对设备发 Web Push；都失败时重新扫码。
+5. 也可以用 cloudflared 命名隧道 / Tailscale 获得固定地址，此时 PWA 直接由本地服务托管（P2）。
+
+**实测**（2026-10-11）：用开发者自己的域名走同一流程部署到 `https://app.dengdengyun.shop`（这只是开发者的测试实例，不是默认值），7 步约 14 秒完成；`/` 返回 PWA、`/api/health` 正常、签名登记与查询往返成功。
 
 #### 5.13.3 配对流程
 
@@ -343,7 +368,7 @@ sequenceDiagram
   participant P as 手机浏览器
   D->>S: 请求配对
   S->>S: 生成一次性配对码（32 字节随机，5 分钟有效，单次使用）
-  S-->>D: 二维码：https://app.<域名>/pair#sid=<serverId>&u=<隧道地址>&pk=<服务公钥>&c=<配对码>
+  S-->>D: 二维码：https://<你的入口>/pair#（未部署入口时为隧道地址）sid=<serverId>&u=<隧道地址>&pk=<服务公钥>&c=<配对码>
   P->>P: 扫码打开（参数在 # 片段里，不会进入任何服务器日志）
   P->>S: POST /api/pair {code, deviceName, devicePubKey}（经隧道 HTTPS）
   S->>S: 校验配对码 → 立即作废 → 电脑端弹确认“允许 iPhone 连接？”
@@ -561,6 +586,13 @@ pi-assistant/
 
 ---
 
+### 9.1 密钥不进仓库
+
+- `.gitignore` 覆盖 `.env`、`.env.*`、`.dev.vars`、`cloudflare.env`；`.env.example` 不含任何 Key。
+- **预提交钩子** `.githooks/pre-commit`（`npm install` 时自动 `git config core.hooksPath .githooks`）：`gitleaks git --pre-commit --staged` 扫描暂存区，并拒绝提交环境变量文件。
+- **CI** `.github/workflows/secrets.yml`：每次 push/PR 用 gitleaks 扫描**完整 git 历史**；`npm run scan:secrets` 本地同样可跑。
+- 2026-10-11 全历史扫描：无泄露；另外用实际 Token 值逐字比对 git 历史与工作区：0 处命中。
+
 ## 10. 里程碑
 
 ### Phase 1 · 核心可用（目标 5–7 周）
@@ -641,7 +673,7 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 
 ## 12. 待定问题
 
-1. ~~入口域名~~：已定为 `app.dengdengyun.shop`（可在设置中修改，Rendezvous 可自建）。
+1. ~~入口域名~~：不内置默认值；每个用户在 App 内用自己的域名 + Cloudflare 账号一键部署（§5.13.2）。
 2. 快速隧道若被 Cloudflare 限制或不稳定，是否需要自建中继作为默认的长期替代。
 3. Windows 的 L1 沙箱方案（AppContainer vs. WSL2）——先 L0/L2。
 4. 是否 P1 就引入 `pi-durable`（更强的崩溃续跑）——它标注实验性，暂不。
@@ -739,3 +771,11 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 5. 邮箱 MCP（IMAP/SMTP）→ 飞书 / 钉钉 / 企业微信渠道
 6. 个人微信（可选，风险提示）
 7. host 目标（bounded + manifest + 悬浮条）
+
+### 14.10 实现进度（2026-10-11）
+
+- ✅ `packages/sandbox-desktop`：Docker 镜像（Debian + Xvfb + xfce4 + x11vnc + noVNC/websockify + Chromium + 中文字体 + `cua-driver` 0.34.1 Linux 静态二进制）；可选 `--build-arg WECHAT=1` 安装 Linux 微信。家目录持久化卷；VNC 只在容器内回环，noVNC 只绑定宿主 127.0.0.1。启动后关闭 cua-driver 遥测。已在本机 Docker 构建并运行：noVNC 页面 200，`cua-driver list-tools` 在 X11 下列出 60+ 工具。
+- ✅ `scripts/fetch-cua-driver.mjs`：按 `third-party.json` 固定版本从官方 GitHub Release 下载并校验 SHA256。
+- ✅ `packages/server/src/desktop.ts`：每个助理一个容器（启动/停止/状态/整屏截图/MCP 命令 `docker exec -i … cua-driver mcp`）、实时画面一次性票据、一键暂停状态。
+- ✅ `packages/ext-computer`：`pi.registerMcpServer("computer", …)` 接入 cua-driver；隐藏 `install_extension`（会装 AGPL 的 cua-perception）、`parse_visual_regions`、自更新/改配置/重放等工具；`computer_screenshot`、`request_handoff`（截图 + 推送 + 等待“已完成”）；`tool_call` 钩子实现一键暂停与 host 目标逐项审批。pi-adapter 加载 Pi 自带的 MCP 扩展并调用 `bindExtensions()`；助理电脑启动/停止时会重建会话以挂上/卸下电脑工具。
+- ⏳ 下一步：「电脑」标签内嵌 noVNC 实时画面 + 接管（WebSocket 反向代理 + 票据）、启动/停止/暂停按钮；冒烟测试 `packages/sandbox-desktop/smoke.mjs`（MCP 列工具 + 截图）进 CI；`ext-browser`。
