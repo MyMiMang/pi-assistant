@@ -45,12 +45,14 @@ async function waitFor(fn, ms = 15_000) {
 const results = [];
 let AGENT = "";
 async function step(name, fn) {
+	// E2E_ONLY=正则：只跑首次运行向导 + 名字匹配的步骤（调试用）
+	if (process.env.E2E_ONLY && results.length && !new RegExp(process.env.E2E_ONLY).test(name)) return;
 	try {
 		await fn();
 		results.push(["✅", name]);
 		log("✅", name);
 	} catch (e) {
-		results.push(["❌", name, String(e).slice(0, 300)]);
+		results.push(["❌", name, String(e).slice(0, 5000)]);
 		log("❌", name, e);
 		await page?.screenshot({ path: `/tmp/e2e-fail-${results.length}.png` }).catch(() => {});
 		if (process.env.FAIL_FAST) process.exit(1);
@@ -61,6 +63,7 @@ await startServer();
 const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN", acceptDownloads: true, colorScheme: "light" });
 page = await ctx.newPage();
+page.on("pageerror", (e) => log("页面错误", String(e).slice(0, 500)));
 page.setDefaultTimeout(15_000);
 const bubbleCount = () => page.locator("main .prose").count();
 // 发送前等输入框可用；发送后确认输入框已清空（真的发出去了）。
@@ -846,15 +849,46 @@ await step("微信 ClawBot（模拟 iLink）：扫码连接 → 二维码 → �
 	qr = "scaned";
 	await sec.getByText("已扫码，请在微信里确认").waitFor();
 	await sec.scrollIntoViewIfNeeded();
-	await page.screenshot({ path: join(SHOTS, "45-settings-clawbot-qr.png") });
+	await page.screenshot({ path: join(SHOTS, "50-settings-clawbot-qr.png") });
 	qr = "confirmed";
 	await sec.getByText("已连接你的微信").waitFor({ timeout: 15_000 });
 	await page.waitForTimeout(300);
-	await page.screenshot({ path: join(SHOTS, "46-settings-clawbot-connected.png") });
+	await page.screenshot({ path: join(SHOTS, "51-settings-clawbot-connected.png") });
 	inbox.push({ message_id: "1", from_user_id: "me@im.wechat", message_type: 1, context_token: "CTX", item_list: [{ type: 1, text_item: { text: "你好，从微信发来" } }] });
 	await waitFor(() => sent.some((m) => m.msg?.context_token === "CTX" && JSON.stringify(m).includes("你好，从微信发来")), 20_000);
 	await fetch(`${BASE}/api/channels/${c.id}`, { method: "DELETE" });
 	ilink.close();
+	await page.keyboard.press("Escape");
+});
+
+await step("主动性：输入框「主动」按钮切换等级 → 聊天里约好跟进 → 助理面板「主动」页 → 现在看看 → 提醒收件箱 → 标记有用", async () => {
+	await page.locator("[data-testid=proactive-picker]").click();
+	await page.locator("[data-testid=proactive-menu]").waitFor();
+	await page.screenshot({ path: join(SHOTS, "52-composer-proactive.png") });
+	await page.locator("[data-testid=proactive-normal]").click();
+	await page.locator("[data-testid=proactive-picker]").getByText("中").waitFor();
+	// e2e 可能在深夜跑：关掉免打扰，避免提醒被顺延
+	// 前面的步骤可能切到了别的助理：所有助理都关掉
+	for (const a of await (await fetch(`${BASE}/api/agents`)).json()) await fetch(`${BASE}/api/agents/${a.id}/proactive`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ cfg: { quiet: null } }) });
+	await send("这个方案晚点再看看");
+	await page.getByText("到时我再看看").first().waitFor({ timeout: 20_000 });
+	await page.locator("[data-testid=proactive-picker]").click();
+	await page.getByRole("button", { name: "更多设置" }).click();
+	await page.locator("[data-testid=proactive-tab] [data-testid=followup]").first().waitFor();
+	await page.locator("[data-testid=proactive-run]").click();
+	await waitFor(async () => (await (await fetch(`${BASE}/api/proactive/inbox`)).json()).items.some((i) => i.status === "delivered"), 30_000).catch(async (e) => {
+		const agents = await (await fetch(`${BASE}/api/agents`)).json();
+		const st = await Promise.all(agents.map(async (a) => [a.name, await (await fetch(`${BASE}/api/agents/${a.id}/proactive`)).json()]));
+		throw new Error(`${e} inbox=${JSON.stringify(await (await fetch(`${BASE}/api/proactive/inbox?all=1`)).json()).slice(0, 1500)} state=${JSON.stringify(st).slice(0, 3000)}`);
+	});
+	await page.waitForTimeout(500);
+	await page.screenshot({ path: join(SHOTS, "53-proactive-tab.png") });
+	await page.locator("[data-testid=inbox-button]").click();
+	await page.locator("[data-testid=inbox] [data-testid=inbox-item]").first().waitFor();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "54-proactive-inbox.png") });
+	await page.locator("[data-testid=inbox] [data-testid=inbox-done]").first().click();
+	await waitFor(async () => (await (await fetch(`${BASE}/api/proactive/inbox`)).json()).items.every((i) => i.status !== "delivered" || i.id), 5_000);
 	await page.keyboard.press("Escape");
 });
 

@@ -1,5 +1,6 @@
 import { HostControlBar, HostTierPill } from "./HostControl";
 import { ModelPicker, ThinkingPicker } from "./ModelPicker";
+import { ProactivityPicker } from "./Proactive";
 import { AlarmClock, Brain, Puzzle, ArrowUp, Check, ChevronRight, Globe, Hand, Loader2, Menu, Monitor, PanelRight, Paperclip, Square, Terminal, X, FileText, FolderSearch, PenLine, Send, Sparkles, Eye } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, upload } from "../api";
@@ -390,6 +391,7 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 				/>
 				<div className="pa-composer-bar">
 					<input ref={fileInput} type="file" multiple hidden onChange={(e) => (e.target.files && addFiles(e.target.files), (e.target.value = ""))} />
+					<div className="pa-composer-tools">
 					<button className="pa-icon-btn ghost" onClick={() => fileInput.current?.click()} aria-label={t("上传")} title="添加文件（也可以拖进来或直接粘贴图片）">
 						<Paperclip className="pa-ic" />
 					</button>
@@ -398,9 +400,11 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 						<span className="max-sm:hidden">助理电脑</span>
 					</button>
 					<HostTierPill agentId={agentId} />
+					<ProactivityPicker agentId={agentId} />
 					<span className="flex-1" />
 					<ThinkingPicker agentId={agentId} />
 					<ModelPicker agentId={agentId} />
+					</div>
 					{running && !text.trim() && !files.length ? (
 						<button className="pa-send" onClick={() => api(`/api/agents/${agentId}/abort?conversation=${useStore.getState().convs[agentId]?.current ?? ""}`, { method: "POST" })} aria-label={t("停止")} title={t("停止")}>
 							<Square size={13} fill="currentColor" />

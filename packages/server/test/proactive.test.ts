@@ -171,6 +171,18 @@ test("主动 ≠ 自主：巡检任务里的审批一律拒绝、不弹卡片；
 	assert.equal(P.isHeartbeatTask("hb1"), true);
 });
 
+test("收件箱列表：按助理 / 全部；忽略和已处理的不在默认列表里", () => {
+	reset();
+	P.saveProactive("pa", { level: "high" });
+	const a = P.surface("pa", { kind: "other", title: "甲", body: "b", importance: 3 });
+	P.surface("pa", { kind: "other", title: "乙", body: "b", importance: 1 });
+	P.actOnItem(a.id!, "done");
+	assert.deepEqual(P.listItems({ agentId: "pa" }).map((i) => i.title), ["乙"]);
+	assert.equal(P.listItems().length, 1);
+	assert.equal(P.listItems({ agentId: "pa", all: true }).length, 2);
+	assert.equal(P.unseenCount(), 1);
+});
+
 test("隐藏的巡检对话不出现在对话列表里", async () => {
 	const { listConversations } = await import("../src/conversations.ts");
 	const id = P.hiddenConversation("pa");

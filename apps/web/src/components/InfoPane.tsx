@@ -11,12 +11,14 @@ import { MemoryTab } from "./MemoryTab";
 import { AgentExtensions } from "./AgentExtensions";
 import { AgentHostTier } from "./HostControl";
 import { RoutinesTab } from "./RoutinesTab";
+import { ProactiveTab } from "./Proactive";
 import { Avatar, Badge, Button, cx, fmtSize, fmtTime, Input } from "./ui";
 
 const TABS = [
 	["overview", "概览"],
 	["memory", "记忆"],
 	["routines", "定时任务"],
+	["proactive", "主动"],
 	["files", "文件"],
 	["computer", "电脑"],
 	["settings", "设置"],
@@ -51,6 +53,7 @@ export default function InfoPane({ agentId }: { agentId: string }) {
 				{tab === "overview" && <Overview agentId={agentId} />}
 				{tab === "memory" && <MemoryTab agentId={agentId} />}
 				{tab === "routines" && <RoutinesTab agentId={agentId} />}
+				{tab === "proactive" && <ProactiveTab agentId={agentId} />}
 				{tab === "files" && <Files agentId={agentId} />}
 				{tab === "computer" && <Computer agentId={agentId} />}
 				{tab === "settings" && <AgentSettings agentId={agentId} />}

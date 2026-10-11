@@ -1,3 +1,4 @@
+import { InboxButton } from "./Proactive";
 import { Laptop, Moon, PanelLeftClose, Plus, Search, Settings as Cog, Smartphone, Sun, WifiOff } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api";
@@ -64,6 +65,7 @@ export default function Sidebar() {
 					{conn === "open" ? <i /> : <WifiOff size={12} className="text-amber-500" />}
 					{conn === "open" ? "已连接" : "连接中…"}
 				</span>
+				<InboxButton />
 				<button className="pa-icon-btn ghost" title={t("设置")} aria-label={t("设置")} onClick={() => set({ settings: "models" })}>
 					<Cog className="pa-ic" />
 				</button>

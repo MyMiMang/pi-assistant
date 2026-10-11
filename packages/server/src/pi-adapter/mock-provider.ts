@@ -63,6 +63,15 @@ function respond(messages: Msg[], systemPrompt = "") {
 		return fauxAssistantMessage("## Goal\n用户在测试 Pi Assistant 的各项功能。\n\n## Progress\n- 已演示流式回复、文件、审批、后台任务等。\n\n## Next Steps\n- 继续按用户要求操作。");
 	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !/^(后台|定时)任务「/.test(textOf(m)));
 	const u = lastUser ? textOf(lastUser) : "";
+	// 主动性：巡检时看“用户最近说过的话”，有就提醒一件；用户说“晚点再看”就约跟进
+	if (/这是(一次主动巡检|你约好的跟进|每日简报)/.test(u)) {
+		if (last.role === "toolResult") return fauxAssistantMessage(`巡检完成：${textOf(last)}`);
+		const said = u.split("## 用户最近 3 天说过的话")[1]?.split("\n").find((l) => l.startsWith("- "));
+		const brief = /这是每日简报/.test(u);
+		if (!said && !brief) return fauxAssistantMessage("无");
+		const what = brief ? "今天没有紧急事项。" : said!.replace(/^- [^：]+：/, "");
+		return fauxAssistantMessage([fauxToolCall("proactive_surface", { kind: brief ? "brief" : "reminder", title: brief ? "今日简报" : `别忘了：${what.slice(0, 20)}`, body: brief ? what : `你之前提到“${what}”，需要我帮忙准备吗？`, importance: brief ? 2 : 3, ...(brief ? {} : { dedupeKey: `remind:${what.slice(0, 30)}` }) })]);
+	}
 	// 多步流程（用于“要不要做成技能？”建议）：月度汇总 = 5 步工具调用
 	if (/月度汇总/.test(u) && !/^（技能建议/.test(u)) {
 		const since = messages.slice(messages.lastIndexOf(lastUser!) + 1).filter((m) => m.role === "toolResult").length;
@@ -108,15 +117,6 @@ function respond(messages: Msg[], systemPrompt = "") {
 		}
 		if (last.toolName === "browser_click") return fauxAssistantMessage(/没有批准|拒绝/.test(out) ? "好的，没有提交。" : `已提交 ✅\n\n${out.slice(0, 300)}`);
 		return fauxAssistantMessage(`网页打开了：\n\n${out.slice(0, 600)}`);
-	}
-	// 主动性：巡检时看“用户最近说过的话”，有就提醒一件；用户说“晚点再看”就约跟进
-	if (/这是(一次主动巡检|你约好的跟进|每日简报)/.test(u)) {
-		if (last.role === "toolResult") return fauxAssistantMessage(`巡检完成：${textOf(last)}`);
-		const said = u.split("## 用户最近 3 天说过的话")[1]?.split("\n").find((l) => l.startsWith("- "));
-		const brief = /这是每日简报/.test(u);
-		if (!said && !brief) return fauxAssistantMessage("无");
-		const what = brief ? "今天没有紧急事项。" : said!.replace(/^- [^：]+：/, "");
-		return fauxAssistantMessage([fauxToolCall("proactive_surface", { kind: brief ? "brief" : "reminder", title: brief ? "今日简报" : `别忘了：${what.slice(0, 20)}`, body: brief ? what : `你之前提到“${what}”，需要我帮忙准备吗？`, importance: brief ? 2 : 3, dedupeKey: brief ? undefined : `remind:${what.slice(0, 30)}` })]);
 	}
 	if (/晚点再看|再帮我看看/.test(u)) {
 		if (last.role !== "toolResult") return fauxAssistantMessage([fauxToolCall("followup_schedule", { when: "+2h", note: `跟进：${u.slice(0, 80)}` })]);

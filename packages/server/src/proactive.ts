@@ -265,7 +265,7 @@ export function deliver(id: string, t = now()) {
 	const a = agentOf(it.agent_id)!;
 	const cfg = cfgOf(a);
 	const route = routeFor(it.agent_id, cfg, t);
-	const content = `${it.title}\n\n${it.body}`.trim();
+	const content = `💡 **${it.title}**\n\n${it.body}`.trim();
 	const meta = { proactive: { id: it.id, kind: it.kind } };
 	let via = "app";
 	if (route) {
@@ -281,8 +281,11 @@ export function deliver(id: string, t = now()) {
 }
 
 export function listItems(opts: { agentId?: string; all?: boolean } = {}) {
-	const where = [opts.agentId ? "agent_id = @a" : "1=1", opts.all ? "1=1" : "status IN ('new','held','delivered') AND created_at >= @since"];
-	return db.prepare(`SELECT * FROM proactive_items WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT 200`).all({ a: opts.agentId ?? null, since: now() - 7 * 86400_000 } as never) as unknown as ItemRow[];
+	const where: string[] = [];
+	const args: (string | number)[] = [];
+	if (opts.agentId) where.push("agent_id = ?"), args.push(opts.agentId);
+	if (!opts.all) where.push("status IN ('new','held','delivered') AND created_at >= ?"), args.push(now() - 7 * 86400_000);
+	return db.prepare(`SELECT * FROM proactive_items ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC LIMIT 200`).all(...args) as unknown as ItemRow[];
 }
 export const unseenCount = () => (db.prepare("SELECT COUNT(*) AS n FROM proactive_items WHERE status IN ('new','held','delivered') AND created_at >= ?").get(now() - 7 * 86400_000) as { n: number }).n;
 

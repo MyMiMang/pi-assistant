@@ -181,7 +181,8 @@ html,.pa-app{height:100%}
 .pa-hostbar .pa-btn{background:var(--card)}
 
 .pa-composer-bar{min-width:0}
-.pa-composer-bar .pa-send{flex-shrink:0}
+.pa-composer-bar .pa-send{flex-shrink:0;align-self:flex-end}
+.pa-composer-tools{display:flex;align-items:center;gap:6px;flex:1;min-width:0;flex-wrap:wrap;row-gap:6px}
 
 /* 托盘悬浮条（/hostbar，置顶小窗） */
 html.pa-floatbar-root, html.pa-floatbar-root body { background: transparent; overflow: hidden; }

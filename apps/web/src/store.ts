@@ -23,6 +23,8 @@ interface State {
 	hostVersion: number;
 	actionsVersion: number;
 	channelsVersion: number;
+	proactiveVersion: number;
+	inbox: boolean;
 	routinesVersion: number;
 	skillsVersion: number;
 	extVersion: number;
@@ -69,6 +71,8 @@ export const useStore = create<State>((set, get) => ({
 	hostVersion: 0,
 	actionsVersion: 0,
 	channelsVersion: 0,
+	proactiveVersion: 0,
+	inbox: false,
 	routinesVersion: 0,
 	skillsVersion: 0,
 	extVersion: 0,
@@ -233,6 +237,9 @@ export const useStore = create<State>((set, get) => ({
 			}
 			case "memory.changed":
 				set({ memoryVersion: get().memoryVersion + 1 });
+				break;
+			case "proactive.changed":
+				set({ proactiveVersion: get().proactiveVersion + 1 });
 				break;
 			case "channels.changed":
 			case "email.changed":
