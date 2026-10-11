@@ -4,6 +4,7 @@
  */
 import { CheckCircle2, Copy, ExternalLink, KeyRound, Loader2, LogOut, Search, Sparkles, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { THINKING_DESC, THINKING_LABEL } from "./ModelPicker";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { ModelInfo, Provider } from "../types";
@@ -235,6 +236,7 @@ export function DefaultModelPicker({ providerId, onSaved }: { providerId?: strin
 					设为默认模型
 				</Button>
 			</div>
+			<DefaultThinking />
 			{test && test !== "running" && (
 				<div className={cx("flex items-start gap-2 rounded-lg p-2 text-sm", test.ok ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40" : "bg-red-50 text-red-700 dark:bg-red-950/40")}>
 					{test.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <XCircle size={16} className="mt-0.5 shrink-0" />}
@@ -242,5 +244,25 @@ export function DefaultModelPicker({ providerId, onSaved }: { providerId?: strin
 				</div>
 			)}
 		</div>
+	);
+}
+
+/** 新助理的默认思考强度 */
+function DefaultThinking() {
+	const [v, setV] = useState<string | null>(null);
+	useEffect(() => void api("/api/models/defaults").then((d) => setV(d.thinking)), []);
+	if (v === null) return null;
+	return (
+		<label className="flex flex-wrap items-center gap-2 text-sm" data-testid="default-thinking">
+			<span className="text-mut">新助理的默认思考强度</span>
+			<select value={v} onChange={async (e) => (setV(e.target.value), await api("/api/models/default", { method: "PUT", json: { thinking: e.target.value } }))} className="h-9 rounded-lg border border-line bg-card px-2 text-sm">
+				{Object.keys(THINKING_LABEL).map((l) => (
+					<option key={l} value={l}>
+						{THINKING_LABEL[l]}（{THINKING_DESC[l]}）
+					</option>
+				))}
+			</select>
+			<span className="text-xs text-mut">模型不支持的档位会自动就近调整；每个助理可在输入框下方单独切换。</span>
+		</label>
 	);
 }

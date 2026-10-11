@@ -49,7 +49,7 @@ html,.pa-app{height:100%}
 .pa-pulse{width:6px;height:6px;border-radius:50%;background:var(--ok,#22c55e);animation:pa-pulse 2s infinite}
 @keyframes pa-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok,#22c55e) 60%,transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
 .pa-head-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
-.pa-chip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--r-chip,999px);border:1px solid var(--line);background:var(--card);color:var(--mut);font-size:13px;transition:.15s}
+.pa-chip{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex-shrink:0;height:32px;padding:0 12px;border-radius:var(--r-chip,999px);border:1px solid var(--line);background:var(--card);color:var(--mut);font-size:13px;transition:.15s}
 .pa-chip:hover{color:var(--fg);border-color:var(--line-strong,var(--mut2))}
 .pa-chip.sm{height:28px;padding:0 10px;font-size:12.5px}
 .pa-scroll{flex:1;overflow:auto;padding:28px 24px 200px}
@@ -179,3 +179,6 @@ html,.pa-app{height:100%}
 .pa-hostbar .pa-ic{width:15px;height:15px;flex:none}
 .pa-hostbar.paused{background:var(--hover);color:var(--mut)}
 .pa-hostbar .pa-btn{background:var(--card)}
+
+.pa-composer-bar{min-width:0}
+.pa-composer-bar .pa-send{flex-shrink:0}

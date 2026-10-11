@@ -7,6 +7,7 @@ import type { PiModels } from "./index.ts";
 
 export const MOCK_PROVIDER = "mock";
 export const MOCK_MODEL = "echo";
+export const MOCK_REASONING_MODEL = "echo-think";
 
 type Msg = { role: string; content: unknown; toolName?: string };
 const textOf = (m: Msg) =>
@@ -183,7 +184,7 @@ function respond(messages: Msg[], systemPrompt = "") {
 }
 
 export async function registerMockProvider(models: PiModels) {
-	const faux = registerFauxProvider({ provider: MOCK_PROVIDER, models: [{ id: MOCK_MODEL, name: "Mock 模型（本地测试）" }], tokensPerSecond: 60 });
+	const faux = registerFauxProvider({ provider: MOCK_PROVIDER, models: [{ id: MOCK_MODEL, name: "Mock 模型（本地测试）" }, { id: MOCK_REASONING_MODEL, name: "Mock 推理模型（本地测试）", reasoning: true } as never], tokensPerSecond: 60 });
 	const step = (ctx: { messages: (Msg & { toolsAdded?: MockTool[] })[]; systemPrompt?: string }) => {
 		faux.appendResponses([step as never]);
 		// Pi 把系统提示词和工具声明放在 transcript 的 system 消息里
@@ -200,7 +201,11 @@ export async function registerMockProvider(models: PiModels) {
 	models.registerProvider(MOCK_PROVIDER, {
 		baseUrl: m.baseUrl,
 		api: m.api,
-		models: [{ id: m.id, name: m.name, api: m.api, reasoning: false, input: ["text"], cost: m.cost, contextWindow: m.contextWindow, maxTokens: m.maxTokens, baseUrl: m.baseUrl }],
+		models: [
+			{ id: m.id, name: m.name, api: m.api, reasoning: false, input: ["text"], cost: m.cost, contextWindow: m.contextWindow, maxTokens: m.maxTokens, baseUrl: m.baseUrl },
+			// 带推理档位的模型：用来测试“思考强度”选择器
+			{ id: MOCK_REASONING_MODEL, name: "Mock 推理模型（本地测试）", api: m.api, reasoning: true, input: ["text"], cost: m.cost, contextWindow: m.contextWindow, maxTokens: m.maxTokens, baseUrl: m.baseUrl },
+		],
 	});
 	await models.setRuntimeApiKey(MOCK_PROVIDER, "mock");
 }

@@ -213,13 +213,30 @@ export function boundedManifest(s = hostSettings()) {
 /** 给用户审阅的完整权限计划：各助理档位 + bounded 清单。开启 = 用户确认了这份计划（哈希） */
 export function hostPlan(s = hostSettings()) {
 	const ids = allowedAgents(s);
-	const lines = ["# 各助理的权限档位（任何档位：硬性保护清单里的动作都要你明确批准；一键暂停有效；操作全部记录）"];
+	const lines = ["# 各助理的权限档位（任何档位：硬性保护清单里的动作都要你明确批准；一键暂停有效；操作全部记录）", `# 新助理默认：${TIER_LABEL[s.defaultTier]}`];
 	for (const id of ids) lines.push(`# - ${id}: ${TIER_LABEL[tierOf(id, s)]}`);
 	if (!ids.length) lines.push("# （没有允许的助理）");
 	if (ids.some((a) => tierOf(a, s) !== "bounded")) lines.push("# 只看 / 信任 / 完全权限 的助理连接 Cua unrestricted 守护进程（所有应用），由 Pi Assistant 这一层把关审批。");
 	if (ids.some((a) => tierOf(a, s) === "bounded")) lines.push("", boundedManifest(s));
 	return `${lines.join("\n")}\n`;
 }
+/**
+ * 助理增删后：新助理继承默认档位（写成显式设置，之后改默认不影响它），删掉的助理清理设置；
+ * 已开启时按新计划自动更新确认哈希并重启守护进程（用户已经确认过“新助理默认档位”）。
+ */
+export async function hostAgentsChanged() {
+	const s = hostSettings();
+	const ids = env.agentIds();
+	const tiers: Record<string, HostTier> = {};
+	for (const id of ids) tiers[id] = s.tiers[id] ?? s.defaultTier;
+	const fullAck = Object.fromEntries(Object.entries(s.fullAck).filter(([id]) => ids.includes(id)));
+	for (const id of ids) if (tiers[id] === "full" && !fullAck[id]) fullAck[id] = Date.now();
+	saveHostSettings({ tiers, fullAck });
+	if (!s.enabled) return;
+	saveHostSettings({ approvedHash: manifestHash(hostPlan()) });
+	await startDaemon().catch(() => {});
+}
+
 /** 兼容旧调用：返回审阅用的计划 */
 export function currentManifest(workspaceOf: (agentId: string) => string, agentIds: string[]) {
 	setHostEnv({ workspaceOf, agentIds: () => agentIds });
@@ -240,6 +257,8 @@ export async function startDaemon(plan = hostPlan()) {
 	if (!s.enabled || s.approvedHash !== manifestHash(plan)) throw new Error("权限设置已变化，需要在设置里重新确认后才能开启");
 	setState("starting", "正在启动 Cua Driver…");
 	await stopDaemon(true);
+	// 端到端测试用：不下载、不启动 Cua，只走设置与审批流程
+	if (process.env.PIA_HOST_CONTROL_DRY_RUN === "1") return setState(paused ? "paused" : "running", "运行中（演练模式，未启动 Cua）");
 	try {
 		const exe = await ensureCua((m) => setState("starting", m));
 		mkdirSync(hcDir(), { recursive: true });

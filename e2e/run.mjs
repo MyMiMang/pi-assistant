@@ -23,7 +23,7 @@ let page;
 process.on("exit", () => server?.kill("SIGKILL"));
 const log = (...a) => console.log("[e2e]", ...a);
 function startServer() {
-	server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] });
+	server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_HOST_CONTROL_DRY_RUN: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] });
 	server.stdout.on("data", (d) => process.stdout.write(`[server] ${d}`));
 	server.stderr.on("data", (d) => !String(d).includes("ExperimentalWarning") && process.stdout.write(`[server!] ${d}`));
 	return waitFor(async () => (await fetch(`${BASE}/api/system`)).ok, 30_000);
@@ -640,12 +640,13 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 		await p.locator("button:has-text('我的中转站')").filter({ hasText: "自定义" }).first().waitFor();
 		// 设为默认模型并用它聊天（流式经过中转站）
 		const cid = (await (await fetch(`${BASE}/api/models/custom`)).json()).providers[0].id;
-		const r = await fetch(`${BASE}/api/models/default`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: cid, model: "relay-chat" }) });
-		if (!r.ok) throw new Error(`设默认模型失败 ${r.status}`);
+		// 模型是按助理保存的（输入框工具栏的模型选择器做的就是这个 PATCH）
+		const r = await fetch(`${BASE}/api/agents/${AGENT}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: { provider: cid, id: "relay-chat" } }) });
+		if (!r.ok) throw new Error(`切换助理模型失败 ${r.status}`);
 		await c.close();
 		await page.goto(BASE);
-		// 等页面拿到新的默认模型（输入框旁的模型标签）再发，免得发出时还按旧模型
-		await page.locator("main").getByText("relay-chat").first().waitFor({ timeout: 15_000 }).catch(() => {});
+		// 等输入框工具栏的模型选择器显示新模型再发
+		await page.locator("[data-testid=model-picker]").getByText("relay-chat").waitFor({ timeout: 15_000 }).catch(() => {});
 		await send("你好，中转站");
 		await page.locator("main").getByText("中转站回复（relay-chat）：收到「你好，中转站」").last().waitFor({ timeout: 30_000 });
 		await page.locator("header").getByText("正在工作").waitFor({ state: "detached" }).catch(() => {});
@@ -664,7 +665,7 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 		if (after.some((x) => x.id === id)) throw new Error("删除后仍在列表里");
 	} finally {
 		relay.close();
-		await fetch(`${BASE}/api/models/default`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "mock", model: "echo" }) }).catch(() => {});
+		await fetch(`${BASE}/api/agents/${AGENT}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: { provider: "mock", id: "echo" } }) }).catch(() => {});
 	}
 });
 
@@ -707,16 +708,89 @@ await step("Phase 3 操作这台电脑：设置页（默认关闭、风险提示
 	await page.getByText(/默认关闭|风险/).first().waitFor();
 	await page.waitForTimeout(400);
 	await page.screenshot({ path: join(SHOTS, "42-settings-host-control.png") });
-	// 档位：按助理设置；选“完全权限”出现强警告
-	const row = page.locator("[data-testid=host-tier-row]").first();
-	await row.locator("[data-testid=tier-full]").click();
+	// 设置页只有“新助理的默认权限”；选“完全权限”出现强警告
+	await page.locator("[data-testid=default-tier-full]").click();
 	await page.locator("[data-testid=host-full-warning]").waitFor();
 	await page.locator("[data-testid=host-tiers]").scrollIntoViewIfNeeded();
 	await page.mouse.move(5, 5);
 	await page.waitForTimeout(400);
-	await page.screenshot({ path: join(SHOTS, "43-host-tiers.png") });
-	await row.locator("[data-testid=tier-bounded]").click();
+	await page.screenshot({ path: join(SHOTS, "43-host-default-tier.png") });
+	await page.locator("[data-testid=default-tier-bounded]").click();
 	await page.keyboard.press("Escape");
+});
+
+await step("权限档位：输入框工具栏「助理电脑」旁的权限按钮切换本助理档位（调高要确认，完全权限要输入确认语）", async () => {
+	// 用 API 开启（演练模式，不启动 Cua）
+	const r = await page.evaluate(async () => {
+		const j = (u, m, b) => fetch(u, { method: m, headers: { "content-type": "application/json" }, body: b ? JSON.stringify(b) : undefined }).then((x) => x.json());
+		await j("/api/host-control", "PUT", { enabled: false, agents: "all", apps: [{ name: "Text Editor", id: "/usr/bin/gedit" }], defaultTier: "bounded" });
+		const g = await j("/api/host-control", "GET");
+		return j("/api/host-control", "PUT", { enabled: true, acknowledged: true, manifestHash: g.manifestHash });
+	});
+	if (!r.ok) throw new Error(JSON.stringify(r));
+	const pill = page.locator("[data-testid=host-tier-pill]");
+	await pill.waitFor({ timeout: 10_000 });
+	await pill.getByText("限定").waitFor();
+	await pill.click();
+	const menu = page.locator("[data-testid=host-tier-menu]");
+	await menu.locator("[data-testid=tier-trusted]").click();
+	await menu.locator("[data-testid=tier-confirm]").waitFor();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "44-chat-tier-menu.png") });
+	await menu.locator("[data-testid=tier-ack]").check();
+	await menu.locator("[data-testid=tier-confirm]").getByRole("button", { name: "确认" }).click();
+	await pill.getByText("信任").waitFor({ timeout: 10_000 });
+	// 完全权限：要输入确认语
+	await pill.click();
+	await menu.locator("[data-testid=tier-full]").click();
+	await menu.locator("[data-testid=tier-ack]").check();
+	if (await menu.locator("[data-testid=tier-confirm]").getByRole("button", { name: "确认" }).isEnabled()) throw new Error("没输入确认语也能确认");
+	await menu.locator("[data-testid=tier-confirm-text]").fill("我了解风险，允许完全控制这台电脑");
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "45-chat-tier-full-confirm.png") });
+	await menu.locator("[data-testid=tier-confirm]").getByRole("button", { name: "确认" }).click();
+	await pill.getByText("完全权限").waitFor({ timeout: 10_000 });
+	// 调低直接生效
+	await pill.click();
+	await menu.locator("[data-testid=tier-bounded]").click();
+	await pill.getByText("限定").waitFor({ timeout: 10_000 });
+	await page.evaluate(() => fetch("/api/host-control", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false }) }));
+	await page.waitForTimeout(300);
+});
+
+await step("输入框工具栏：模型选择（可搜索）+ 思考强度（只在支持推理的模型上出现）", async () => {
+	const mp = page.locator("[data-testid=model-picker]");
+	await mp.waitFor();
+	if (await page.locator("[data-testid=thinking-picker]").count()) throw new Error("不支持推理的模型不应显示思考强度");
+	await mp.click();
+	await page.locator("[data-testid=model-search]").fill("推理");
+	const opt = page.locator("[data-testid=model-option]");
+	await opt.first().waitFor();
+	if ((await opt.count()) !== 1) throw new Error("搜索应只剩 1 个模型");
+	await page.waitForTimeout(200);
+	await page.screenshot({ path: join(SHOTS, "46-composer-model-picker.png") });
+	await opt.first().click();
+	await mp.getByText("Mock 推理模型").waitFor();
+	const tp = page.locator("[data-testid=thinking-picker]");
+	await tp.waitFor();
+	await tp.click();
+	await page.locator("[data-testid=thinking-high]").click();
+	await tp.getByText("高").waitFor();
+	await tp.click();
+	await page.locator("[data-testid=thinking-menu]").waitFor();
+	await page.waitForTimeout(200);
+	await page.screenshot({ path: join(SHOTS, "47-composer-thinking.png") });
+	await page.keyboard.press("Escape");
+	// 换模型后照常聊天（服务端原地切换 Pi 会话的模型 / 思考强度）
+	await send("你好");
+	await page.locator("main").getByText(/你好/).last().waitFor();
+	const before = await bubbleCount();
+	await page.waitForFunction((n) => document.querySelectorAll("main .prose").length > n, before - 1, { timeout: 20_000 });
+	// 换回不支持推理的模型：思考强度隐藏
+	await mp.click();
+	await page.locator("[data-testid=model-search]").fill("Mock 模型");
+	await page.locator("[data-testid=model-option]").first().click();
+	await tp.waitFor({ state: "detached", timeout: 10_000 });
 });
 
 await step("Phase 3 渠道：飞书 / 钉钉 / 企业微信 添加表单 + 分步指引；个人微信需确认风险后开启", async () => {

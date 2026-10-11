@@ -107,6 +107,25 @@ test("权限档位：按助理设置；默认限定；只看/信任/完全权限
 	assert.throws(() => hc.saveSandboxComputerSettings({ approvals: "x" as never }));
 });
 
+test("新助理继承默认档位；改默认不影响已有助理（固定成显式设置）；删除的助理清理", async () => {
+	let ids = ["a1", "a2"];
+	hc.setHostEnv({ workspaceOf: (id) => `/ws/${id}`, agentIds: () => ids });
+	hc.saveHostSettings({ enabled: false, tiers: { a1: "trusted" }, defaultTier: "observe", fullAck: {} });
+	await hc.hostAgentsChanged();
+	assert.deepEqual(hc.hostSettings().tiers, { a1: "trusted", a2: "observe" });
+	hc.saveHostSettings({ defaultTier: "full" });
+	ids = ["a1", "a2", "a3"];
+	await hc.hostAgentsChanged();
+	assert.equal(hc.tierOf("a2"), "observe", "已有助理不变");
+	assert.equal(hc.tierOf("a3"), "full", "新助理继承默认");
+	assert.ok(hc.hostSettings().fullAck.a3);
+	ids = ["a1", "a3"];
+	await hc.hostAgentsChanged();
+	assert.deepEqual(Object.keys(hc.hostSettings().tiers).sort(), ["a1", "a3"]);
+	assert.match(hc.hostPlan(), /新助理默认：完全权限/);
+	hc.saveHostSettings({ tiers: {}, defaultTier: "bounded", fullAck: {} });
+});
+
 test("只看档位：输入工具被隐藏并拦下；硬性保护在完全权限下也要批准且不能本任务内允许", async () => {
 	const { computerExtension, HOST_MCP_PREFIX, INPUT_TOOLS } = await import("@pi-assistant/ext-computer");
 	let policy: "observe" | "none" = "observe";

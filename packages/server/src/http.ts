@@ -17,7 +17,7 @@ import { fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, s
 import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
 import { insertMessage, listMessages } from "./messages.ts";
-import { credentialBackend, customProviders, defaultModel, models } from "./models.ts";
+import { credentialBackend, customProviders, defaultModel, defaultThinking, models } from "./models.ts";
 import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-providers.ts";
 import { checkPiCompat } from "./pi-adapter/index.ts";
 import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
@@ -45,7 +45,7 @@ import { actionShot, clearActions, listActions } from "./action-log.ts";
 import { openWechat, saveWechatSettings, wechatSettings, wechatStatus } from "./wechat.ts";
 import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAccount, testAccount } from "./email.ts";
 import { channelJson, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
-import { FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
+import { hostAgentsChanged, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
@@ -192,10 +192,17 @@ app.post("/api/models/test", async (c) => {
 	const b = await c.req.json<{ provider: string; model: string }>();
 	return c.json(await models.test(b.provider, b.model));
 });
+app.get("/api/models/defaults", (c) => c.json({ model: defaultModel(), thinking: defaultThinking() }));
 app.put("/api/models/default", async (c) => {
-	const b = await c.req.json<{ provider: string; model: string }>();
-	if (!models.getModel(b.provider, b.model)) return c.json({ error: "模型不存在" }, 400);
-	setSetting("defaultModel", { provider: b.provider, id: b.model });
+	const b = await c.req.json<{ provider?: string; model?: string; thinking?: string }>();
+	if (b.thinking !== undefined) {
+		if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
+		setSetting("defaultThinking", b.thinking);
+	}
+	if (b.provider && b.model) {
+		if (!models.getModel(b.provider, b.model)) return c.json({ error: "模型不存在" }, 400);
+		setSetting("defaultModel", { provider: b.provider, id: b.model });
+	}
 	bus.emit({ type: "settings.changed" });
 	return c.json({ ok: true });
 });
@@ -203,10 +210,11 @@ app.put("/api/models/default", async (c) => {
 // ---------------------------------------------------------------- 助理与聊天
 const agentJson = (a: NonNullable<ReturnType<typeof getAgent>>) => {
 	const last = db.prepare("SELECT content, role, created_at FROM messages WHERE agent_id = ? AND task_id IS NULL AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1").get(a.id);
-	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
+	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), thinking: runtime(a.id).thinkingFor(a), thinkingSetting: a.thinking, workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
 };
 app.get("/api/agents", (c) => c.json(listAgents().map(agentJson)));
-type AgentInput = { name?: string; avatar?: string; color?: string; persona?: string; description?: string; model?: { provider: string; id: string } | null };
+type AgentInput = { name?: string; avatar?: string; color?: string; persona?: string; description?: string; model?: { provider: string; id: string } | null; thinking?: string | null };
+const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const cleanAvatar = (v: string | undefined, name: string) => {
 	const t = (v ?? "").trim();
 	if (t.startsWith("img:")) return t; // 上传的图片（img:<版本>）
@@ -217,10 +225,12 @@ app.post("/api/agents", async (c) => {
 	const name = (b.name ?? "").trim().slice(0, 40);
 	if (!name) return c.json({ error: "请给助理起个名字" }, 400);
 	const id = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
-	const model = b.model && models.getModel(b.model.provider, b.model.id) ? b.model : null;
+	const model = b.model && models.getModel(b.model.provider, b.model.id) ? b.model : defaultModel();
 	db.prepare("INSERT INTO agents(id, name, avatar, color, persona, description, model_provider, model_id, sort, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(
 		id, name, cleanAvatar(b.avatar, name), b.color || "#6366f1", (b.persona ?? "").slice(0, 8000), (b.description ?? "").slice(0, 200), model?.provider ?? null, model?.id ?? null, listAgents().length, now(),
 	);
+	void hostAgentsChanged();
+	db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(b.thinking && THINKING.includes(b.thinking) ? b.thinking : defaultThinking(), id);
 	insertMessage({ agentId: id, role: "assistant", content: `你好，我是${name} 👋\n\n我有自己的电脑，可以写代码、处理文件、上网查资料、操作网页和桌面应用，也能把耗时的活放到后台去做。想让我做点什么？` });
 	bus.emit({ type: "agents.changed" });
 	return c.json(agentJson(getAgent(id)!));
@@ -229,11 +239,16 @@ app.patch("/api/agents/:id", async (c) => {
 	const a = getAgent(c.req.param("id"));
 	if (!a) return c.json({ error: "not_found" }, 404);
 	const b = await c.req.json<AgentInput>();
+	if (b.model !== undefined && b.model && !models.getModel(b.model.provider, b.model.id)) return c.json({ error: "模型不存在" }, 400);
 	const name = b.name !== undefined ? b.name.trim().slice(0, 40) || a.name : a.name;
 	db.prepare("UPDATE agents SET name = ?, avatar = ?, color = ?, persona = ?, description = ?, model_provider = ?, model_id = ? WHERE id = ?").run(
 		name, b.avatar !== undefined ? cleanAvatar(b.avatar, name) : a.avatar, b.color ?? a.color, b.persona ?? a.persona, b.description ?? a.description,
 		b.model === undefined ? a.model_provider : (b.model?.provider ?? null), b.model === undefined ? a.model_id : (b.model?.id ?? null), a.id,
 	);
+	if (b.thinking !== undefined) {
+		if (b.thinking !== null && !THINKING.includes(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
+		db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(b.thinking, a.id);
+	}
 	bus.emit({ type: "agents.changed" });
 	return c.json(agentJson(getAgent(a.id)!));
 });
@@ -245,6 +260,7 @@ app.delete("/api/agents/:id", async (c) => {
 	await memory.purgeAgent(a.id);
 	for (const t of ["messages", "tasks", "requests", "files", "conversations"]) db.prepare(`DELETE FROM ${t} WHERE agent_id = ?`).run(a.id);
 	db.prepare("DELETE FROM agents WHERE id = ?").run(a.id);
+	void hostAgentsChanged();
 	// 工作区与会话移到回收站（不直接删除，误删可找回）
 	const trash = join(config.dataDir, "trash", `${a.id}-${Date.now()}`);
 	mkdirSync(trash, { recursive: true });
@@ -772,6 +788,8 @@ app.put("/api/host-control", localOnly, async (c) => {
 		.map((a) => ({ name: String(a.name || a.id).slice(0, 60), id: a.id.trim().slice(0, 300) }));
 	if (process.platform !== "darwin" && apps.some((a) => !/^([a-zA-Z]:\\|\/)/.test(a.id))) return c.json({ error: "Windows / Linux 上应用要填可执行文件的完整路径" }, 400);
 	const tiers = { ...cur.tiers, ...(b.tiers ?? {}) };
+	// 改默认档位只影响之后新建的助理：现有助理先固定成它们当前（按旧默认）的档位
+	if (b.defaultTier && b.defaultTier !== cur.defaultTier) for (const a of listAgents()) tiers[a.id] ??= cur.defaultTier;
 	if (Object.values(tiers).some((t) => !TIERS.includes(t)) || (b.defaultTier && !TIERS.includes(b.defaultTier))) return c.json({ error: "权限档位不对" }, 400);
 	const defaultTier = b.defaultTier ?? cur.defaultTier;
 	const next = { ...cur, agents: b.agents ?? cur.agents, apps, workspaceFiles: b.workspaceFiles ?? cur.workspaceFiles, tiers, defaultTier };
@@ -782,7 +800,8 @@ app.put("/api/host-control", localOnly, async (c) => {
 		if (b.manifestHash !== manifestHash(yaml)) return c.json({ error: "权限设置已变化，请重新查看后再确认", manifestHash: manifestHash(yaml) }, 409);
 		const ids = (next.agents === "all" ? listAgents().map((a) => a.id) : next.agents) as string[];
 		const fullNow = ids.filter((a) => tierOf(a, next) === "full");
-		if (fullNow.some((a) => !cur.fullAck[a] || tierOf(a, cur) !== "full" || !cur.enabled) && (b.confirmText ?? "").trim() !== FULL_CONFIRM) return c.json({ error: `有助理设为“完全权限”，需要输入：${FULL_CONFIRM}` }, 400);
+		const needFull = fullNow.some((a) => !cur.fullAck[a] || tierOf(a, cur) !== "full" || !cur.enabled) || (defaultTier === "full" && (cur.defaultTier !== "full" || !cur.enabled));
+		if (needFull && (b.confirmText ?? "").trim() !== FULL_CONFIRM) return c.json({ error: `涉及“完全权限”，需要输入：${FULL_CONFIRM}` }, 400);
 		if (ids.some((a) => tierOf(a, next) === "bounded") && !apps.length) return c.json({ error: "“限定”档位至少要选择一个允许操作的应用" }, 400);
 		const fullAck = Object.fromEntries(fullNow.map((a) => [a, cur.fullAck[a] && tierOf(a, cur) === "full" ? cur.fullAck[a] : Date.now()]));
 		saveHostSettings({ enabled: true, approvedHash: manifestHash(yaml), enabledAt: Date.now(), fullAck });

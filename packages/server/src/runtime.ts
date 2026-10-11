@@ -31,12 +31,13 @@ import { config } from "./config.ts";
 import { db, now, uid } from "./db.ts";
 import { deliverFromWorkspace, fileInfo, insideWorkspace, workspaceOf } from "./files.ts";
 import { deleteMessage, insertMessage, updateMessage } from "./messages.ts";
-import { defaultModel, models } from "./models.ts";
+import { defaultModel, defaultThinking, models } from "./models.ts";
 import {
 	abortSession,
 	type AgentSession,
 	compactSession,
 	triggerHidden,
+	applyModelSettings,
 	createPiSession,
 	disposeSession,
 	injectContext,
@@ -63,6 +64,7 @@ export interface AgentRow {
 	description: string;
 	model_provider: string | null;
 	model_id: string | null;
+	thinking: string | null;
 	status: string;
 	session_file: string | null;
 	unread: number;
@@ -413,6 +415,12 @@ class AgentRuntime {
 		readonly conversationId: string,
 	) {}
 
+	/** 这个助理的思考强度（已按当前模型收敛到支持的档位） */
+	thinkingFor(a: AgentRow) {
+		const m = this.modelFor(a);
+		return m ? models.clampThinking(m.provider, m.id, a.thinking ?? defaultThinking()) : "off";
+	}
+
 	modelFor(a: AgentRow) {
 		if (a.model_provider && a.model_id && models.getModel(a.model_provider, a.model_id)) return { provider: a.model_provider, id: a.model_id };
 		return defaultModel();
@@ -424,8 +432,13 @@ class AgentRuntime {
 		const model = this.modelFor(a);
 		if (!model) return null;
 		const desk = (await desktopStatus(this.id).catch(() => null))?.state === "running";
-		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}`;
-		if (this.session && this.modelKey === key) return this.session;
+		const thinking = this.thinkingFor(a);
+		// 模型 / 思考强度不在 key 里：用 session.setModel / setThinkingLevel 原地切换，不重建会话
+		const key = `${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}`;
+		if (this.session && this.modelKey === key) {
+			if (!isSessionBusy(this.session)) await applyModelSettings(this.session, models, model, thinking).catch((e) => console.warn(`[model] ${e instanceof Error ? e.message : e}`));
+			return this.session;
+		}
 		if (this.session && isSessionBusy(this.session)) return this.session; // 运行中先不切换
 		this.creating = (async () => {
 			this.unsub?.();
@@ -438,6 +451,7 @@ class AgentRuntime {
 				sessionDir: join(config.agentsDir, this.id, "sessions"),
 				sessionFile: getConversation(this.conversationId)?.session_file ?? undefined,
 				model,
+				thinking,
 				systemPromptAppend: SYSTEM_RULES(a.name, workspace, a.persona),
 				extensions: await extensionsFor(this.id, this.conversationId, null, { allowSpawn: true }),
 				skillPaths: skillPaths(),

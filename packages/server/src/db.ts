@@ -121,6 +121,7 @@ for (const [table, col, ddl] of [
 	["tasks", "conversation_id", "TEXT"],
 	["tasks", "routine_run_id", "TEXT"],
 	["requests", "conversation_id", "TEXT"],
+	["agents", "thinking", "TEXT"],
 ] as const) {
 	const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
 	if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);

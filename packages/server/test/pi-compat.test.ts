@@ -70,3 +70,29 @@ test("会话：流式事件、扩展工具、审批拦截、文件交付", async
 	assert.match(lastAssistantText(session), /没有获得批准/);
 	session.dispose();
 });
+
+test("模型与思考强度：Pi 元数据给出支持的档位；会话内原地切换（setModel / setThinkingLevel）", async () => {
+	const { applyModelSettings } = await import("../src/pi-adapter/index.ts");
+	const { MOCK_REASONING_MODEL } = await import("../src/pi-adapter/mock-provider.ts");
+	const list = models.listModels(MOCK_PROVIDER);
+	assert.deepEqual(list.find((m) => m.id === MOCK_MODEL)?.thinking, ["off"], "不支持推理只有 off");
+	const levels = list.find((m) => m.id === MOCK_REASONING_MODEL)!.thinking;
+	assert.ok(levels.includes("high") && levels.includes("off"));
+	assert.equal(models.clampThinking(MOCK_PROVIDER, MOCK_MODEL, "high"), "off");
+	assert.equal(models.clampThinking(MOCK_PROVIDER, MOCK_REASONING_MODEL, "high"), "high");
+	// 真实模型的档位也来自 Pi 目录
+	const real = models.listModels().find((m) => m.reasoning);
+	assert.ok(real && real.thinking.length > 1);
+	const ws = join(config.workspaceRoot, "think");
+	mkdirSync(ws, { recursive: true });
+	const session = await createPiSession({ models, cwd: ws, agentDir: join(config.agentsDir, "think"), sessionDir: join(config.agentsDir, "think", "sessions"), model: { provider: MOCK_PROVIDER, id: MOCK_MODEL }, systemPromptAppend: [], extensions: [] });
+	assert.equal(session.thinkingLevel, "off");
+	assert.equal(await applyModelSettings(session, models, { provider: MOCK_PROVIDER, id: MOCK_REASONING_MODEL }, "high"), true);
+	assert.equal((session.model as { id: string }).id, MOCK_REASONING_MODEL);
+	assert.equal(session.thinkingLevel, "high");
+	assert.equal(await applyModelSettings(session, models, { provider: MOCK_PROVIDER, id: MOCK_REASONING_MODEL }, "high"), false, "没变化不重复设置");
+	await promptSession(session, "你好");
+	assert.ok(lastAssistantText(session));
+	await applyModelSettings(session, models, { provider: MOCK_PROVIDER, id: MOCK_MODEL }, "high");
+	assert.equal(session.thinkingLevel, "off", "换到不支持推理的模型自动收敛");
+});

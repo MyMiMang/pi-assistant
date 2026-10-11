@@ -1,4 +1,5 @@
-import { HostControlBar } from "./HostControl";
+import { HostControlBar, HostTierPill } from "./HostControl";
+import { ModelPicker, ThinkingPicker } from "./ModelPicker";
 import { AlarmClock, Brain, Puzzle, ArrowUp, Check, ChevronRight, Globe, Hand, Loader2, Menu, Monitor, PanelRight, Paperclip, Square, Terminal, X, FileText, FolderSearch, PenLine, Send, Sparkles, Eye } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, upload } from "../api";
@@ -394,10 +395,12 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 					</button>
 					<button className="pa-chip sm" onClick={() => useStore.getState().set({ info: true, infoTab: "computer" })}>
 						<Monitor className="pa-ic" />
-						<span>助理电脑</span>
+						<span className="max-sm:hidden">助理电脑</span>
 					</button>
+					<HostTierPill agentId={agentId} />
 					<span className="flex-1" />
-					{model && <span className="pa-model max-sm:hidden">{model}</span>}
+					<ThinkingPicker agentId={agentId} />
+					<ModelPicker agentId={agentId} />
 					{running && !text.trim() && !files.length ? (
 						<button className="pa-send" onClick={() => api(`/api/agents/${agentId}/abort?conversation=${useStore.getState().convs[agentId]?.current ?? ""}`, { method: "POST" })} aria-label={t("停止")} title={t("停止")}>
 							<Square size={13} fill="currentColor" />

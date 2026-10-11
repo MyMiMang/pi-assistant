@@ -39,3 +39,6 @@ export function defaultModel(): { provider: string; id: string } | null {
 	if (m && models.getModel(m.provider, m.id)) return m;
 	return null;
 }
+
+/** 新助理的默认思考强度（每个模型实际用的会按它支持的档位收敛） */
+export const defaultThinking = (): string => getSetting<string>("defaultThinking", "medium");

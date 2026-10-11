@@ -1,5 +1,5 @@
-import { AlertTriangle, Hand, Loader2, Pause, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AlertTriangle, ChevronDown, Hand, Loader2, Pause, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, cx, Input, avatarText } from "./ui";
@@ -82,11 +82,11 @@ export function HostControlSettings() {
 	const [suggest, setSuggest] = useState<HostApp[] | null>(null);
 	const [custom, setCustom] = useState({ name: "", id: "" });
 	const [preview, setPreview] = useState<{ yaml: string; hash: string } | null>(null);
-	const [tiers, setTiers] = useState<Record<string, Tier>>({});
+	const [defaultTier, setDefaultTier] = useState<Tier>("bounded");
 	const [confirmText, setConfirmText] = useState("");
 	useEffect(() => {
 		if (d && apps === null) {
-			setTiers(d.tiers ?? {});
+			setDefaultTier(d.settings.defaultTier ?? "bounded");
 			setApps(d.settings.apps);
 			setScope(d.settings.agents);
 			setFiles(d.settings.workspaceFiles);
@@ -97,14 +97,14 @@ export function HostControlSettings() {
 	const win = d.status.platform === "win32";
 	const on = d.status.enabled;
 	const allowedIds = scope === "all" ? agents.map((a) => a.id) : scope;
-	const tierOf = (id: string): Tier => tiers[id] ?? d.settings.defaultTier ?? "bounded";
-	const anyBounded = allowedIds.some((id) => tierOf(id) === "bounded");
-	const anyFull = allowedIds.some((id) => tierOf(id) === "full");
+	const tierOf = (id: string): Tier => d.tiers?.[id] ?? d.settings.defaultTier ?? "bounded";
+	const anyBounded = defaultTier === "bounded" || allowedIds.some((id) => tierOf(id) === "bounded");
+	const anyFull = defaultTier === "full" || allowedIds.some((id) => tierOf(id) === "full");
 	const save = async (enabled: boolean, hash?: string) => {
 		setBusy(true);
 		setMsg(null);
 		try {
-			const r = await api("/api/host-control", { method: "PUT", json: { enabled, agents: scope, apps, workspaceFiles: files, acknowledged: ack, manifestHash: hash, tiers, confirmText } });
+			const r = await api("/api/host-control", { method: "PUT", json: { enabled, agents: scope, apps, workspaceFiles: files, acknowledged: ack, manifestHash: hash, defaultTier, confirmText } });
 			if (r.ok === false) setMsg({ ok: false, text: r.error });
 			else setMsg({ ok: true, text: enabled ? "已开启：按各助理的档位操作你的电脑，受保护的操作一律先问你，随时可以一键暂停" : "已关闭" });
 			setConfirmText("");
@@ -120,7 +120,7 @@ export function HostControlSettings() {
 	const review = async () => {
 		setBusy(true);
 		try {
-			const r = await api("/api/host-control", { method: "PUT", json: { enabled: false, agents: scope, apps, workspaceFiles: files, tiers } });
+			const r = await api("/api/host-control", { method: "PUT", json: { enabled: false, agents: scope, apps, workspaceFiles: files, defaultTier } });
 			const j = (await api("/api/host-control")) as HostInfo;
 			setPreview({ yaml: j.manifest, hash: r.manifestHash ?? j.manifestHash });
 			void load();
@@ -164,40 +164,20 @@ export function HostControlSettings() {
 			</section>
 
 			<section className="space-y-2" data-testid="host-tiers">
-				<div className="font-semibold">各助理的权限档位</div>
-				<div className="grid gap-1.5 text-xs text-mut sm:grid-cols-2">
+				<div className="font-semibold">新助理的默认权限</div>
+				<div className="grid gap-1.5 sm:grid-cols-2">
 					{TIER_ORDER.map((t) => (
-						<div key={t} className={cx("rounded-lg border p-2", t === "full" ? "border-red-500/40" : "border-line")}>
-							<b className={cx(t === "full" && "text-red-600", t === "trusted" && "text-amber-600")}>{TIER_INFO[t].label}</b>：{TIER_INFO[t].desc}
-						</div>
+						<button key={t} className={cx("rounded-xl border p-2.5 text-left text-xs text-mut transition", defaultTier === t ? (t === "full" ? "border-red-500/60 bg-red-500/10" : "border-accent bg-accent-soft") : "border-line hover:bg-hover")} onClick={() => (setDefaultTier(t), setPreview(null))} data-testid={`default-tier-${t}`}>
+							<b className={cx("text-sm", t === "full" ? "text-red-600" : t === "trusted" ? "text-amber-600" : "text-fg")}>{TIER_INFO[t].label}</b>
+							<div>{TIER_INFO[t].desc}</div>
+						</button>
 					))}
 				</div>
-				<table className="w-full text-sm">
-					<tbody>
-						{agents
-							.filter((a) => allowedIds.includes(a.id))
-							.map((a) => (
-								<tr key={a.id} className="border-t border-line" data-testid="host-tier-row">
-									<td className="py-2">
-										{avatarText(a.avatar)} {a.name}
-									</td>
-									<td className="py-2 text-right">
-										<span className="inline-flex gap-1">
-											{TIER_ORDER.map((t) => (
-												<button key={t} className={cx("pa-chip", tierOf(a.id) === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => (setTiers({ ...tiers, [a.id]: t }), setPreview(null))} data-testid={`tier-${t}`}>
-													{TIER_INFO[t].label}
-												</button>
-											))}
-										</span>
-									</td>
-								</tr>
-							))}
-					</tbody>
-				</table>
+				<p className="text-xs text-mut">每个助理的权限在输入框下方「助理电脑」旁边的 <ShieldCheck size={11} className="inline" /> 按钮里单独切换（调高需要确认）。改这里只影响之后新建的助理。</p>
 				{anyFull && (
 					<div className="space-y-1 rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm leading-relaxed text-red-800 dark:text-red-300" data-testid="host-full-warning">
 						<div className="flex items-center gap-2 font-semibold">
-							<AlertTriangle size={16} /> 完全权限 = 助理可以做你在这台电脑上能做的几乎任何事
+							<AlertTriangle size={16} /> {defaultTier === "full" ? "新助理默认完全权限" : "有助理是完全权限"}：助理可以做你在这台电脑上能做的几乎任何事
 						</div>
 						<ul className="list-disc pl-5">
 							<li>能打开任何应用、读写文件、使用你已登录的账号（聊天、邮箱、网银、云盘……），Cua Driver 以 unrestricted 模式运行，没有应用清单，日常动作不再问你。</li>
@@ -356,54 +336,56 @@ function SandboxComputerSettings() {
 	);
 }
 
-/** 助理设置页：这个助理操作你电脑的档位（调高要确认，完全权限要输入确认语） */
-export function AgentHostTier({ agentId }: { agentId: string }) {
-	const { d, load } = useHostControl();
+/** 切换某个助理的档位：调低直接生效；调高要勾选风险，完全权限还要输入确认语 */
+function TierPicker({ agentId, d, load, onDone, compact }: { agentId: string; d: HostInfo; load: () => void; onDone?: () => void; compact?: boolean }) {
 	const [want, setWant] = useState<Tier | null>(null);
 	const [ack, setAck] = useState(false);
 	const [text, setText] = useState("");
 	const [err, setErr] = useState("");
-	if (!d) return null;
-	const allowed = d.settings.agents === "all" || d.settings.agents.includes(agentId);
 	const cur: Tier = d.tiers?.[agentId] ?? d.settings.defaultTier ?? "bounded";
 	const rank = (t: Tier) => TIER_ORDER.indexOf(t);
 	const apply = async (t: Tier) => {
 		setErr("");
 		try {
 			const r = await api(`/api/host-control/tier/${agentId}`, { method: "PUT", json: { tier: t, acknowledged: ack, confirmText: text } });
-			if (r.ok === false) setErr(r.error);
+			if (r.ok === false) return setErr(r.error);
 			setWant(null);
 			setAck(false);
 			setText("");
-			void load();
+			load();
+			onDone?.();
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
 		}
 	};
 	return (
-		<section className="space-y-2" data-testid="agent-host-tier">
-			<div className="flex items-center gap-2 text-sm font-semibold">
-				<Hand size={14} /> 操作你的电脑
-				{!d.status.enabled && <span className="text-xs font-normal text-mut">（未开启，在 设置 › 操作这台电脑 开启）</span>}
-				{d.status.enabled && !allowed && <span className="text-xs font-normal text-mut">（这个助理不在允许名单里）</span>}
+		<div className={cx("space-y-2", compact && "w-72")} data-testid="tier-picker">
+			<div className={cx(compact ? "flex flex-col" : "flex flex-wrap gap-1")}>
+				{TIER_ORDER.map((t) =>
+					compact ? (
+						<button key={t} className={cx("rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", (want ?? cur) === t && "bg-hover")} onClick={() => (t === cur ? onDone?.() : rank(t) < rank(cur) ? apply(t) : (setWant(t), setAck(false)))} data-testid={`tier-${t}`}>
+							<div className={cx("text-sm font-medium", t === "full" && "text-red-600", t === "trusted" && "text-amber-600")}>
+								{TIER_INFO[t].label} {t === cur && <span className="text-xs text-mut">（当前）</span>}
+							</div>
+							<div className="text-xs text-mut">{TIER_INFO[t].desc}</div>
+						</button>
+					) : (
+						<button key={t} title={TIER_INFO[t].desc} className={cx("pa-chip", cur === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => (t === cur ? null : rank(t) < rank(cur) ? apply(t) : setWant(t))} data-testid={`tier-${t}`}>
+							{TIER_INFO[t].label}
+						</button>
+					),
+				)}
 			</div>
-			<div className="flex flex-wrap gap-1">
-				{TIER_ORDER.map((t) => (
-					<button key={t} title={TIER_INFO[t].desc} className={cx("pa-chip", cur === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => (t === cur ? null : rank(t) < rank(cur) ? apply(t) : setWant(t))}>
-						{TIER_INFO[t].label}
-					</button>
-				))}
-			</div>
-			<div className="text-xs text-mut">{TIER_INFO[cur].desc}</div>
+			{!compact && <div className="text-xs text-mut">{TIER_INFO[cur].desc}</div>}
 			{want && (
-				<div className={cx("space-y-2 rounded-xl border p-3 text-sm", want === "full" ? "border-red-500/50 bg-red-500/10" : "border-amber-400/50 bg-amber-500/10")}>
+				<div className={cx("space-y-2 rounded-xl border p-3 text-sm", want === "full" ? "border-red-500/50 bg-red-500/10" : "border-amber-400/50 bg-amber-500/10")} data-testid="tier-confirm">
 					<div>
-						调到「{TIER_INFO[want].label}」：{TIER_INFO[want].desc}。受保护的操作仍会每次问你。
+						调到「{TIER_INFO[want].label}」：{TIER_INFO[want].desc}。{want === "full" ? "助理能使用你已登录的所有账号和文件，网页/消息里的恶意内容可能诱导它做出无法撤回的操作。" : ""}受保护的操作仍会每次问你。
 					</div>
 					<label className="flex items-center gap-2">
-						<input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> 我了解风险
+						<input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} data-testid="tier-ack" /> 我了解风险
 					</label>
-					{want === "full" && <Input value={text} onChange={(e) => setText(e.target.value)} placeholder={`输入：${FULL_CONFIRM}`} />}
+					{want === "full" && <Input value={text} onChange={(e) => setText(e.target.value)} placeholder={`输入：${FULL_CONFIRM}`} data-testid="tier-confirm-text" />}
 					<div className="flex gap-2">
 						<Button size="sm" variant={want === "full" ? "danger" : "primary"} disabled={!ack || (want === "full" && text.trim() !== FULL_CONFIRM)} onClick={() => apply(want)}>
 							确认
@@ -415,6 +397,55 @@ export function AgentHostTier({ agentId }: { agentId: string }) {
 				</div>
 			)}
 			{err && <div className="text-xs text-red-600">{err}</div>}
+		</div>
+	);
+}
+
+/** 输入框工具栏（「助理电脑」右边）：这个助理操作你电脑的档位（按钮 + 向上弹出的菜单） */
+export function HostTierPill({ agentId }: { agentId: string }) {
+	const { d, load } = useHostControl();
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		if (!open) return;
+		const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+		document.addEventListener("mousedown", h);
+		return () => document.removeEventListener("mousedown", h);
+	}, [open]);
+	if (!d) return null;
+	if (d.settings.agents !== "all" && !d.settings.agents.includes(agentId)) return null;
+	const cur: Tier = d.tiers?.[agentId] ?? d.settings.defaultTier ?? "bounded";
+	return (
+		<div className="relative" ref={ref}>
+			<button className={cx("pa-chip sm", !d.status.enabled && "opacity-70", cur === "full" && "!border-red-500/50 !text-red-600", cur === "trusted" && "!text-amber-600")} onClick={() => setOpen(!open)} title={`操作你的电脑：${TIER_INFO[cur].desc}`} data-testid="host-tier-pill">
+				<ShieldCheck className="pa-ic" />
+				<span>{TIER_INFO[cur].label}</span>
+				<ChevronDown size={12} />
+			</button>
+			{open && (
+				<div className="absolute bottom-full left-0 z-30 mb-2 rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid="host-tier-menu">
+					<div className="px-2.5 pb-1 pt-0.5 text-xs text-mut">{d.status.enabled ? "这个助理操作你电脑的权限" : "这个助理操作你电脑的权限（“操作这台电脑”还没开启，在 设置 里开启后生效）"}</div>
+					<TierPicker agentId={agentId} d={d} load={load} onDone={() => setOpen(false)} compact />
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** 助理设置页（次要入口）：同样的档位切换 */
+export function AgentHostTier({ agentId }: { agentId: string }) {
+	const { d, load } = useHostControl();
+	if (!d) return null;
+	const allowed = d.settings.agents === "all" || d.settings.agents.includes(agentId);
+	return (
+		<section className="space-y-2" data-testid="agent-host-tier">
+			<div className="flex items-center gap-2 text-sm font-semibold">
+				<Hand size={14} /> 操作你的电脑
+				{!d.status.enabled && <span className="text-xs font-normal text-mut">（未开启，在 设置 › 操作这台电脑 开启）</span>}
+				{d.status.enabled && !allowed && <span className="text-xs font-normal text-mut">（这个助理不在允许名单里）</span>}
+			</div>
+			<TierPicker agentId={agentId} d={d} load={load} />
+			<div className="text-xs text-mut">也可以在输入框下方「助理电脑」旁边的权限按钮里切换。</div>
 		</section>
 	);
 }

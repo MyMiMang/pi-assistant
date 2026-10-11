@@ -27,6 +27,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { CredentialStore } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 import compat from "./compat.json" with { type: "json" };
 import { BRAND } from "@pi-assistant/shared";
 
@@ -76,6 +77,8 @@ export interface ModelInfo {
 	id: string;
 	name: string;
 	reasoning: boolean;
+	/** 这个模型支持的思考强度（Pi 的模型元数据；不支持推理时只有 "off"） */
+	thinking: string[];
 	input: string[];
 	contextWindow?: number;
 }
@@ -131,9 +134,16 @@ export class PiModels {
 			id: m.id,
 			name: m.name,
 			reasoning: !!m.reasoning,
+			thinking: getSupportedThinkingLevels(m as never),
 			input: [...(m.input ?? [])],
 			contextWindow: m.contextWindow,
 		}));
+	}
+
+	/** 把想要的思考强度收敛到模型支持的档位（Pi 的 clampThinkingLevel） */
+	clampThinking(providerId: string, modelId: string, level: string): string {
+		const m = this.runtime.getModel(providerId, modelId);
+		return m ? clampThinkingLevel(m as never, level as never) : "off";
 	}
 
 	getModel(providerId: string, modelId: string) {
@@ -259,6 +269,8 @@ export interface CreateSessionOptions {
 	sessionFile?: string;
 	continueRecent?: boolean;
 	model: { provider: string; id: string };
+	/** 思考强度（已按模型收敛） */
+	thinking?: string;
 	systemPromptAppend: string[];
 	extensions: { name: string; factory: ExtensionFactory }[];
 	skillPaths?: string[];
@@ -322,7 +334,7 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		agentDir: o.agentDir,
 		modelRuntime: o.models.runtime,
 		model,
-		thinkingLevel: "off",
+		thinkingLevel: (o.thinking ?? "off") as never,
 		resourceLoader,
 		sessionManager,
 		settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 2 } } as never),
@@ -465,4 +477,22 @@ export function triggerHidden(session: AgentSession, customType: string, text: s
 
 export function injectContext(session: AgentSession, customType: string, text: string) {
 	return session.sendCustomMessage({ customType, content: text, display: false }, { deliverAs: "nextTurn" });
+}
+
+/** 在已有会话上切换模型 / 思考强度（不重建会话，历史保留）。返回是否有变化 */
+export async function applyModelSettings(session: AgentSession, models: PiModels, model: { provider: string; id: string }, thinking: string): Promise<boolean> {
+	let changed = false;
+	const cur = session.model as { provider?: string; id?: string } | undefined;
+	if (cur?.provider !== model.provider || cur?.id !== model.id) {
+		const m = models.getModel(model.provider, model.id);
+		if (!m) throw new Error(`模型不存在：${model.provider}/${model.id}`);
+		await session.setModel(m as never);
+		changed = true;
+	}
+	const level = models.clampThinking(model.provider, model.id, thinking);
+	if (session.thinkingLevel !== level) {
+		session.setThinkingLevel(level as never);
+		changed = true;
+	}
+	return changed;
 }
