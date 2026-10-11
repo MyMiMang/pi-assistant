@@ -26,7 +26,9 @@ import { disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from ".
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
 import { desktopPause, desktopStatus, issueTicket, screenshotDesktop, startDesktop, stopDesktop, useTicket } from "./desktop.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
-import { entryDomain, startTunnel, stopTunnel, tunnelStatus } from "./tunnel.ts";
+import { entryDomain, restartTunnel, retryTunnel, startTunnel, stopTunnel, tunnelStatus } from "./tunnel.ts";
+import { checkNamedPerms, namedConfig, removeNamedTunnel, setupNamedTunnel } from "./named-tunnel.ts";
+import { sealJson } from "./secrets.ts";
 import { BRAND } from "@pi-assistant/shared";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
@@ -373,6 +375,47 @@ app.post("/api/remote/cloudflare/deploy", localOnly, async (c) => {
 app.delete("/api/remote/cloudflare", localOnly, async (c) => {
 	await removeRendezvous();
 	return c.json({ ok: true });
+});
+
+// ---------------------------------------------------------------- 固定地址（命名隧道）与隧道控制（仅本机可操作）
+const namedJson = () => {
+	const n = namedConfig();
+	return { config: n && { zone: n.zone, subdomain: n.subdomain, hostname: n.hostname, tunnelId: n.tunnelId, tunnelName: n.tunnelName, createdAt: n.createdAt }, mode: getSetting("tunnelMode", "auto"), zone: getSetting<string | null>("namedZone", null) ?? cfStatus().config?.zone ?? null, subdomain: getSetting("namedSubdomain", "pi"), hasToken: cfStatus().hasToken };
+};
+const cleanZone = (z: string) => String(z ?? "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+app.get("/api/remote/named", localOnly, (c) => c.json(namedJson()));
+app.post("/api/remote/named/check", localOnly, async (c) => {
+	const b = await c.req.json<{ zone: string; token?: string }>();
+	try {
+		return c.json(await checkNamedPerms(cleanZone(b.zone), b.token?.trim() || undefined, { probeEdit: true }));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.post("/api/remote/named", localOnly, async (c) => {
+	const b = await c.req.json<{ zone: string; subdomain: string; token?: string }>();
+	const zone = cleanZone(b.zone);
+	if (b.token?.trim()) setSetting("cloudflareToken", sealJson(b.token.trim()));
+	setSetting("namedZone", zone);
+	setSetting("namedSubdomain", String(b.subdomain ?? "").trim().toLowerCase());
+	try {
+		const cfg = await setupNamedTunnel({ zone, subdomain: b.subdomain });
+		restartTunnel();
+		return c.json({ ok: true, hostname: cfg.hostname });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e), missing: (e as { missing?: string[] }).missing }, 400);
+	}
+});
+app.delete("/api/remote/named", localOnly, async (c) => {
+	await removeNamedTunnel();
+	restartTunnel();
+	return c.json({ ok: true });
+});
+app.post("/api/remote/tunnel/retry", localOnly, (c) => (retryTunnel(), c.json(tunnelStatus())));
+app.post("/api/remote/tunnel/mode", localOnly, async (c) => {
+	const { mode } = await c.req.json<{ mode: "auto" | "quick" }>();
+	setSetting("tunnelMode", mode === "quick" ? "quick" : "auto");
+	return c.json(namedJson());
 });
 
 // ---------------------------------------------------------------- 配对与设备

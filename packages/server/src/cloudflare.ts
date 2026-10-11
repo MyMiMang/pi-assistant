@@ -29,7 +29,7 @@ export interface CfConfig {
 }
 export type DeployStep = { step: string; state: "running" | "ok" | "error"; detail?: string };
 
-async function cf<T = any>(token: string, path: string, init: RequestInit = {}): Promise<T> {
+export async function cf<T = any>(token: string, path: string, init: RequestInit = {}): Promise<T> {
 	const res = await fetch(API + path, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.body && typeof init.body === "string" ? { "content-type": "application/json" } : {}), ...(init.headers ?? {}) }, signal: AbortSignal.timeout(60_000) });
 	let j: { success?: boolean; result?: T; errors?: { code: number; message: string }[] };
 	try {
@@ -39,7 +39,7 @@ async function cf<T = any>(token: string, path: string, init: RequestInit = {}):
 	}
 	if (!res.ok || j.success === false) {
 		const msg = (j.errors ?? []).map((e) => `${e.code} ${e.message}`).join("; ") || `HTTP ${res.status}`;
-		throw Object.assign(new Error(msg), { status: res.status });
+		throw Object.assign(new Error(msg), { status: res.status, codes: (j.errors ?? []).map((e) => e.code) });
 	}
 	return j.result as T;
 }

@@ -359,6 +359,22 @@ export default (pi: ExtensionAPI) => {
 
 **实测**（2026-10-11）：用开发者自己的域名走同一流程部署到 `https://app.dengdengyun.shop`（这只是开发者的测试实例，不是默认值），7 步约 14 秒完成；`/` 返回 PWA、`/api/health` 正常、签名登记与查询往返成功。
 
+#### 5.13.2b 固定地址（命名隧道，推荐）+ 隧道组件与重试策略（2026-10-11 真机反馈后）
+
+**cloudflared 获取**：安装包内置；源码运行时首次开启远程访问由 `cloudflared-bin.ts` 按 `third-party.json`（固定版本 + 各平台 GitHub 发布资产 SHA256：darwin-arm64/x64 `.tgz`、linux-x64/arm64、win32-x64 `.exe`）下载到 `数据目录/bin`，校验不符即丢弃。升级只改清单。
+
+**固定地址（命名隧道）**——有 Token 权限时自动优先，否则回退临时链接：
+1. `GET /zones?name=` → zone id + account id；
+2. `POST /accounts/{acc}/cfd_tunnel {name: pi-assistant-<serverId 前 8 位>, config_src: "cloudflare"}`（已存在则复用）；
+3. `PUT …/cfd_tunnel/{id}/configurations`：ingress `<sub>.<zone>` → `http://127.0.0.1:<port>`，其余 `http_status:404`；
+4. `POST /zones/{zone}/dns_records`：代理的 CNAME `<sub>.<zone>` → `<id>.cfargotunnel.com`（已有其他记录则报错让用户换子域名，绝不覆盖）；
+5. `GET …/cfd_tunnel/{id}/token` → 加密保存；本机运行 `cloudflared tunnel run`，凭据经 `TUNNEL_TOKEN` 环境变量传入（不出现在进程参数）。
+任一步失败回滚本次新建的隧道。二维码直接指向 `https://<sub>.<zone>`，不需要 Rendezvous；删除时清掉 DNS 记录、断开连接并删除隧道。
+
+**权限检测**：只读探测 Zone Read / Tunnel Read / DNS Read，并在用户点“检查权限”时临时创建并立即删除一个探测隧道以确认 **Tunnel Edit**（只有 Read 时也能列出隧道，只读请求无法区分）。界面逐项显示缺什么：`账户 › Cloudflare Tunnel › 编辑`、`区域 › DNS › 编辑`、`区域 › 区域 › 读取`。实测：「编辑 Cloudflare Workers」模板的 Token 能列出隧道，但创建隧道和读取 DNS 都返回 `10000 Authentication error`——前两项都需要另加。
+
+**重试策略（绝不快速重试）**：普通失败 30s → 1m → 2m → 5m → 10m → 15m（±20% 抖动），连续 8 次后停止自动重试，界面提供“重新连接”。cloudflared 输出出现 `429 / Too Many Requests` 时进入 **10–30 分钟随机冷却**（多次 429 逐步加长，上限 60 分钟），界面显示中文原因与下次重试时间，并建议改用固定地址；冷却期内手动重试会二次确认。
+
 #### 5.13.3 配对流程
 
 ```mermaid
@@ -378,6 +394,7 @@ sequenceDiagram
 ```
 
 - 也支持“复制链接”方式（同样的 URL，发到自己手机上点开）。
+- **人不在电脑旁**：本机生成二维码时可勾选“扫码后无需在电脑上确认”，配对码带 `pre_approved` 标记，认领即自动批准（码仍是 5 分钟、单次有效；它等同一次性钥匙，界面提示勿外传）。默认仍需电脑确认；只有本机（`localOnly`）能生成这种码。
 - 电脑本机访问 `127.0.0.1` 免配对（仅限回环地址，且校验 `Host` 头防 DNS 重绑定）。
 
 #### 5.13.4 安全措施
