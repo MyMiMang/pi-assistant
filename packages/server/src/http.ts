@@ -41,6 +41,7 @@ import { addPackage, install as installPackage, listPackages, type PiPackageRow,
 import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
 import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRoutines, listRuns, type RoutineInput, type RoutineRow, runRoutine, setRoutineStatus, updateRoutine, verifyWebhook, webhookPath } from "./routines.ts";
 import { BRAND } from "@pi-assistant/shared";
+import { openWechat, saveWechatSettings, wechatSettings, wechatStatus } from "./wechat.ts";
 import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAccount, testAccount } from "./email.ts";
 import { channelJson, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
@@ -730,6 +731,25 @@ app.post("/api/email/:id/test", localOnly, async (c) => {
 		return c.json({ ok: true, message: await testAccount(c.req.param("id")!) });
 	} catch (e) {
 		return c.json({ ok: false, message: e instanceof Error ? e.message : String(e) });
+	}
+});
+
+// ---------------------------------------------------------------- 个人微信（可选，实验）
+app.get("/api/wechat", (c) => c.json(wechatSettings()));
+app.put("/api/wechat", localOnly, async (c) => {
+	const b = (await c.req.json()) as { enabled?: boolean; acknowledge?: boolean; agentIds?: string[] };
+	try {
+		return c.json(saveWechatSettings({ ...(b.enabled !== undefined ? { enabled: b.enabled } : {}), ...(b.agentIds ? { agentIds: b.agentIds } : {}), ...(b.acknowledge ? { acknowledgedAt: Date.now() } : {}) }));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.get("/api/wechat/:agentId/status", async (c) => c.json(await wechatStatus(c.req.param("agentId")!)));
+app.post("/api/wechat/:agentId/open", localOnly, async (c) => {
+	try {
+		return c.json(await openWechat(c.req.param("agentId")!));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 	}
 });
 

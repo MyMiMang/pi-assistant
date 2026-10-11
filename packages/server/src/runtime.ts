@@ -8,7 +8,8 @@ import { approvalExtension } from "@pi-assistant/ext-approval";
 import { computerExtension, isHostTool, trustedComputerTool } from "@pi-assistant/ext-computer";
 import { describeHostAction, hostAllowedFor, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
 import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
-import { emailExtension, isEmailTool } from "@pi-assistant/ext-connectors";
+import { emailExtension, isEmailTool, wechatExtension } from "@pi-assistant/ext-connectors";
+import { openWechat, WECHAT_PROMPT, wechatAllowed } from "./wechat.ts";
 import { accountsFor, getAccount, getDraft, listMail, readMail, saveDraft, sendDraft, fileReader } from "./email.ts";
 import { browserFor, setHeaded } from "./browser.ts";
 import { deliveryExtension } from "@pi-assistant/ext-delivery";
@@ -194,7 +195,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			factory: approvalExtension({
 				workspace,
 				// 电脑工具（sandbox 目标）和浏览器工具由各自的扩展把关（提交/付款/发送/上传才审批）
-				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n) || isHostTool(n) || isEmailTool(n),
+				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n) || isHostTool(n) || isEmailTool(n) || n === "wechat_open",
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId);
 					return { approved: !!res.approved, note: res.note };
@@ -321,6 +322,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			}),
 		});
 	}
+	if (wechatAllowed(agentId)) exts.push({ name: "pia-wechat", factory: wechatExtension({ open: (p) => openWechat(agentId, p), prompt: WECHAT_PROMPT }) });
 	exts.push({
 		name: "pia-browser",
 		factory: browserExtension({
@@ -413,7 +415,7 @@ class AgentRuntime {
 		const model = this.modelFor(a);
 		if (!model) return null;
 		const desk = (await desktopStatus(this.id).catch(() => null))?.state === "running";
-		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}`;
+		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}`;
 		if (this.session && this.modelKey === key) return this.session;
 		if (this.session && isSessionBusy(this.session)) return this.session; // 运行中先不切换
 		this.creating = (async () => {

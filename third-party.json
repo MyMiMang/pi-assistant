@@ -211,6 +211,25 @@
       "version": "3.9.38",
       "license": "MIT",
       "adapter": "packages/server/src/email.ts"
+    },
+    {
+      "name": "wechat-linux",
+      "kind": "binary",
+      "version": "4.1.13.23",
+      "license": "Proprietary (Tencent)",
+      "optional": true,
+      "adapter": "packages/server/src/wechat.ts",
+      "$comment": "可选：个人微信（Linux 官方版），只在用户主动开启后下载到数据目录，装进助理电脑的家目录卷；腾讯会原地替换安装包，SHA 不一致时拒绝安装，等每周升级流程更新这里",
+      "assets": {
+        "x86_64": {
+          "url": "https://dldir1.qq.com/weixin/Universal/Linux/WeChatLinux_x86_64.deb",
+          "sha256": "b7d0f8d53e9f648bc2c77a6096a04100d008f2d9f0d3988a2a4859b5992aca0a"
+        },
+        "aarch64": {
+          "url": "https://dldir1.qq.com/weixin/Universal/Linux/WeChatLinux_arm64.deb",
+          "sha256": "51784a262c725ef1595dd833f456190e913583dd81c24dd8fe587532bc91c0dc"
+        }
+      }
     }
   ],
   "licenseAllow": [

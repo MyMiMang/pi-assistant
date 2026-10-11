@@ -106,6 +106,83 @@ export function ChannelsSettings() {
 					))}
 				</div>
 			)}
+			<WechatSection agents={agents} />
+		</div>
+	);
+}
+
+/** 个人微信（可选，实验）：助理自己的微信号，跑在助理电脑里 */
+function WechatSection({ agents }: { agents: { id: string; name: string; avatar: string }[] }) {
+	const v = useStore((s) => s.channelsVersion);
+	const [s, setS] = useState<{ enabled: boolean; acknowledgedAt: number | null; agentIds: string[] } | null>(null);
+	const [ack, setAck] = useState(false);
+	const [busy, setBusy] = useState<string | null>(null);
+	const [msg, setMsg] = useState("");
+	const load = () => api("/api/wechat").then(setS);
+	useEffect(() => void load(), [v]);
+	if (!s) return null;
+	const put = (json: Record<string, unknown>) => api("/api/wechat", { method: "PUT", json }).then(setS, (e) => setMsg(String(e.message ?? e)));
+	const open = async (id: string) => {
+		setBusy(id);
+		setMsg("正在打开（第一次要下载安装微信，约几分钟）…");
+		try {
+			const r = await api(`/api/wechat/${id}/open`, { method: "POST" });
+			setMsg(r.running ? "微信已在助理电脑里打开：到助理的「电脑」页扫码登录（用这个助理专用的微信号）。" : "微信没有启动起来");
+		} catch (e) {
+			setMsg(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(null);
+		}
+	};
+	return (
+		<div className="space-y-3 rounded-2xl border border-line p-4" data-testid="wechat-section">
+			<div className="flex items-center gap-2">
+				<b>个人微信</b>
+				<Badge>实验</Badge>
+				<span className="ml-auto text-sm text-mut">{s.enabled ? "已开启" : "未开启"}</span>
+			</div>
+			<p className="text-sm text-mut">让助理在它自己的电脑里登录<b>它自己的</b>微信号（官方 Linux 版微信，由助理操作界面），可以帮你收发消息、看群、传文件。</p>
+			<div className="rounded-xl bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300" data-testid="wechat-warning">
+				⚠️ 风险提示：用程序操作个人微信不符合微信的服务条款，<b>账号可能被限制或封禁</b>。请准备一个<b>专门给助理用的微信小号</b>，不要用你的主号；不要让它批量加好友、群发消息。微信的聊天记录保存在这台电脑的助理电脑里。
+			</div>
+			{!s.acknowledgedAt ? (
+				<div className="flex flex-wrap items-center gap-3">
+					<label className="flex items-center gap-2 text-sm">
+						<input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} data-testid="wechat-ack" /> 我已了解风险，会使用专门的小号
+					</label>
+					<Button size="sm" variant="primary" disabled={!ack} onClick={() => put({ acknowledge: true, enabled: true })} data-testid="wechat-enable">
+						开启个人微信
+					</Button>
+				</div>
+			) : (
+				<>
+					<div className="text-sm">哪些助理有自己的微信：</div>
+					<div className="flex flex-wrap gap-2">
+						{agents.map((a) => {
+							const on = s.agentIds.includes(a.id);
+							return (
+								<span key={a.id} className="flex items-center gap-1">
+									<button className={cx("pa-chip", on && "!bg-accent-soft !text-accent")} onClick={() => put({ agentIds: on ? s.agentIds.filter((x) => x !== a.id) : [...s.agentIds, a.id] })}>
+										{a.avatar} {a.name}
+									</button>
+									{on && s.enabled && (
+										<Button size="sm" variant="ghost" disabled={busy === a.id} onClick={() => open(a.id)}>
+											{busy === a.id ? <Loader2 size={14} className="animate-spin" /> : null} 打开微信
+										</Button>
+									)}
+								</span>
+							);
+						})}
+					</div>
+					<div className="flex gap-2">
+						<Button size="sm" variant="ghost" onClick={() => put({ enabled: !s.enabled })}>
+							{s.enabled ? "关闭个人微信" : "重新开启"}
+						</Button>
+					</div>
+					<p className="text-xs text-mut">登录：打开后在助理的「电脑」页（或手机上收到的接管通知）用这个小号扫码。助理只按你的要求发消息；给新的人发消息、发文件、转账/红包一律先问你。需要助理电脑（Docker）。</p>
+				</>
+			)}
+			{msg && <div className="text-sm text-mut">{msg}</div>}
 		</div>
 	);
 }

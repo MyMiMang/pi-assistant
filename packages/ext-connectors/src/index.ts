@@ -139,3 +139,30 @@ export function emailExtension(host: EmailHost) {
 		});
 	};
 }
+
+// ---------------------------------------------------------------- 个人微信（助理自己的号，跑在助理电脑里）
+export interface WechatHost {
+	open(onProgress: (m: string) => void): Promise<{ installed: boolean; running: boolean; version?: string }>;
+	prompt: string;
+}
+export function wechatExtension(host: WechatHost) {
+	return (pi: ExtensionAPI) => {
+		pi.on("before_agent_start", async (e: { systemPrompt: string }) => ({ systemPrompt: `${e.systemPrompt}\n\n## 你的微信\n${host.prompt}` }));
+		pi.registerTool({
+			name: "wechat_open",
+			label: "打开微信",
+			description: "在你的电脑（助理电脑）里打开你自己的微信（第一次会自动安装，约几分钟）。打开后用 computer_screenshot 看画面，用电脑工具操作；出现登录二维码就 request_handoff 请用户扫码。",
+			promptSnippet: "wechat_open: 打开你自己的微信",
+			parameters: Type.Object({}),
+			annotations: { readOnlyHint: true },
+			execute: async (_id: string, _p: unknown, _s: unknown, onUpdate?: (u: unknown) => void) => {
+				try {
+					const st = await host.open((m) => onUpdate?.({ content: [{ type: "text", text: m }], details: undefined }));
+					return text(st.running ? `微信 ${st.version ?? ""} 已打开。现在截屏看看：如果是登录二维码，调用 request_handoff 请用户扫码。` : "微信没有启动起来，请截屏看看出了什么问题");
+				} catch (e) {
+					return text(`打开微信失败：${e instanceof Error ? e.message : String(e)}`);
+				}
+			},
+		} as never);
+	};
+}
