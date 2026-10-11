@@ -53,6 +53,19 @@ CREATE TABLE IF NOT EXISTS memory_sync (
   seq INTEGER PRIMARY KEY AUTOINCREMENT, bank TEXT NOT NULL, item_id TEXT, op TEXT NOT NULL,
   created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT);
 CREATE TABLE IF NOT EXISTS hindsight_banks (bank TEXT PRIMARY KEY, signature TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS channels (
+  id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, agent_id TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+  config TEXT NOT NULL DEFAULT '{}', secret TEXT, bind_code TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS channel_peers (
+  channel_id TEXT NOT NULL, peer_id TEXT NOT NULL, display TEXT, allowed INTEGER NOT NULL DEFAULT 0,
+  conversation_id TEXT, ctx TEXT, last_at INTEGER, PRIMARY KEY (channel_id, peer_id));
+CREATE INDEX IF NOT EXISTS channel_peers_conv ON channel_peers(conversation_id);
+CREATE TABLE IF NOT EXISTS email_accounts (
+  id TEXT PRIMARY KEY, agent_id TEXT, name TEXT NOT NULL, address TEXT NOT NULL, preset TEXT NOT NULL,
+  config TEXT NOT NULL, secret TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS email_drafts (
+  id TEXT PRIMARY KEY, account_id TEXT NOT NULL, agent_id TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL,
+  created_at INTEGER NOT NULL, sent_at INTEGER, error TEXT);
 CREATE TABLE IF NOT EXISTS routines (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, name TEXT NOT NULL, prompt TEXT NOT NULL,
   trigger TEXT NOT NULL, cron TEXT, tz TEXT NOT NULL DEFAULT 'Asia/Shanghai', quiet TEXT, webhook_secret TEXT,

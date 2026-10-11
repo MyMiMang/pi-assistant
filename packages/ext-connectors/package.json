@@ -1,0 +1,11 @@
+{
+  "name": "@pi-assistant/ext-connectors",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "连接器（Pi 扩展）：邮箱（IMAP/SMTP，先草稿后批准发送）等",
+  "exports": { ".": "./src/index.ts" },
+  "keywords": ["pi-package"],
+  "peerDependencies": { "@earendil-works/pi-coding-agent": ">=1.1.0" },
+  "dependencies": { "typebox": "1.3.27" }
+}

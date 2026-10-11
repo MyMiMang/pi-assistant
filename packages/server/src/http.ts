@@ -41,6 +41,8 @@ import { addPackage, install as installPackage, listPackages, type PiPackageRow,
 import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
 import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRoutines, listRuns, type RoutineInput, type RoutineRow, runRoutine, setRoutineStatus, updateRoutine, verifyWebhook, webhookPath } from "./routines.ts";
 import { BRAND } from "@pi-assistant/shared";
+import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAccount, testAccount } from "./email.ts";
+import { channelJson, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
@@ -653,6 +655,82 @@ app.get("/api/files/:id", (c) => {
 app.post("/api/requests/:id", async (c) => {
 	const b = await c.req.json<{ approved?: boolean; answer?: string; note?: string; scope?: string }>();
 	return c.json(requests.resolve(c.req.param("id"), { approved: b.approved, answer: b.answer, note: b.note, scope: b.scope === "task" ? "task" : undefined }, by(c)));
+});
+
+// ---------------------------------------------------------------- 聊天渠道（企业微信 / 飞书 / 钉钉）
+app.get("/api/channels", (c) => {
+	const t = tunnelStatus();
+	return c.json({ items: listChannels().map(channelJson), publicUrl: t.state === "online" ? t.url : null, tunnelMode: t.mode });
+});
+app.post("/api/channels", localOnly, async (c) => {
+	try {
+		const b = await c.req.json<{ kind: ChannelKind; name?: string; agentId: string; config?: Record<string, unknown>; secret?: Record<string, unknown> }>();
+		return c.json(channelJson(saveChannel(b)));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.put("/api/channels/:id", localOnly, async (c) => {
+	const cur = getChannel(c.req.param("id")!);
+	if (!cur) return c.json({ error: "not_found" }, 404);
+	try {
+		const b = await c.req.json<{ name?: string; agentId?: string; enabled?: boolean; config?: Record<string, unknown>; secret?: Record<string, unknown> }>();
+		return c.json(channelJson(saveChannel({ ...b, id: cur.id, kind: cur.kind, agentId: b.agentId ?? cur.agent_id })));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.delete("/api/channels/:id", localOnly, async (c) => {
+	await deleteChannel(c.req.param("id")!);
+	return c.json({ ok: true });
+});
+app.post("/api/channels/:id/test", localOnly, async (c) => {
+	try {
+		return c.json({ ok: true, message: await testChannel(c.req.param("id")!) });
+	} catch (e) {
+		return c.json({ ok: false, message: e instanceof Error ? e.message : String(e) });
+	}
+});
+app.post("/api/channels/:id/bind-code", localOnly, (c) => c.json({ bindCode: rotateBindCode(c.req.param("id")!) }));
+app.put("/api/channels/:id/users/:peer", localOnly, async (c) => {
+	const { allowed } = await c.req.json<{ allowed: boolean }>();
+	setPeerAllowed(c.req.param("id")!, c.req.param("peer")!, !!allowed);
+	return c.json({ ok: true });
+});
+/** 企业微信回调（公网经隧道访问；用 Token + EncodingAESKey 验签解密，不走设备登录） */
+const wecomHook = async (c: Context<Env>) => {
+	const r = wecomCallback(c.req.param("id") ?? "", c.req.method, c.req.query(), c.req.method === "POST" ? await c.req.text() : "");
+	return c.text(r.body, r.status as 200);
+};
+app.get("/hooks/channels/wecom/:id", wecomHook);
+app.post("/hooks/channels/wecom/:id", wecomHook);
+
+// ---------------------------------------------------------------- 邮箱（IMAP / SMTP）
+app.get("/api/email", (c) => c.json({ items: listAccounts().map(accountJson), presets: Object.entries(PRESETS).map(([id, p]) => ({ id, label: p.label, help: p.help, imap: p.imap, smtp: p.smtp })) }));
+app.post("/api/email", localOnly, async (c) => {
+	try {
+		const a = saveAccount(await c.req.json());
+		return c.json(accountJson(a));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.put("/api/email/:id", localOnly, async (c) => {
+	const cur = getAccount(c.req.param("id")!);
+	if (!cur) return c.json({ error: "not_found" }, 404);
+	try {
+		return c.json(accountJson(saveAccount({ ...(await c.req.json()), id: cur.id })));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.delete("/api/email/:id", localOnly, (c) => (deleteAccount(c.req.param("id")!), c.json({ ok: true })));
+app.post("/api/email/:id/test", localOnly, async (c) => {
+	try {
+		return c.json({ ok: true, message: await testAccount(c.req.param("id")!) });
+	} catch (e) {
+		return c.json({ ok: false, message: e instanceof Error ? e.message : String(e) });
+	}
 });
 
 // ---------------------------------------------------------------- 操作这台电脑（Cua bounded）

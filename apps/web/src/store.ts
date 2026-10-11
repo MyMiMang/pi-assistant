@@ -21,6 +21,7 @@ interface State {
 	/** Hindsight 状态 / 同步队列变化 */
 	hindsightVersion: number;
 	hostVersion: number;
+	channelsVersion: number;
 	routinesVersion: number;
 	skillsVersion: number;
 	extVersion: number;
@@ -65,6 +66,7 @@ export const useStore = create<State>((set, get) => ({
 	memoryVersion: 0,
 	hindsightVersion: 0,
 	hostVersion: 0,
+	channelsVersion: 0,
 	routinesVersion: 0,
 	skillsVersion: 0,
 	extVersion: 0,
@@ -229,6 +231,10 @@ export const useStore = create<State>((set, get) => ({
 			}
 			case "memory.changed":
 				set({ memoryVersion: get().memoryVersion + 1 });
+				break;
+			case "channels.changed":
+			case "email.changed":
+				set({ channelsVersion: get().channelsVersion + 1 });
 				break;
 			case "host.changed":
 				set({ hostVersion: get().hostVersion + 1 });

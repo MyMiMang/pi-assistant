@@ -8,6 +8,8 @@ import { approvalExtension } from "@pi-assistant/ext-approval";
 import { computerExtension, isHostTool, trustedComputerTool } from "@pi-assistant/ext-computer";
 import { describeHostAction, hostAllowedFor, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
 import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
+import { emailExtension, isEmailTool } from "@pi-assistant/ext-connectors";
+import { accountsFor, getAccount, getDraft, listMail, readMail, saveDraft, sendDraft, fileReader } from "./email.ts";
 import { browserFor, setHeaded } from "./browser.ts";
 import { deliveryExtension } from "@pi-assistant/ext-delivery";
 import { memoryExtension } from "@pi-assistant/ext-memory";
@@ -24,7 +26,7 @@ import { mcpServersFor, mcpVersion } from "./mcp.ts";
 import { packagePathsFor, packagesVersion } from "./pi-packages.ts";
 import { config } from "./config.ts";
 import { db, now, uid } from "./db.ts";
-import { deliverFromWorkspace, fileInfo, workspaceOf } from "./files.ts";
+import { deliverFromWorkspace, fileInfo, insideWorkspace, workspaceOf } from "./files.ts";
 import { deleteMessage, insertMessage, updateMessage } from "./messages.ts";
 import { defaultModel, models } from "./models.ts";
 import {
@@ -192,7 +194,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			factory: approvalExtension({
 				workspace,
 				// 电脑工具（sandbox 目标）和浏览器工具由各自的扩展把关（提交/付款/发送/上传才审批）
-				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n) || isHostTool(n),
+				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n) || isHostTool(n) || isEmailTool(n),
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId);
 					return { approved: !!res.approved, note: res.note };
@@ -277,6 +279,48 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 		const r = await requests.question(agentId, taskId, `${reason}——完成后点“已完成”`, ["已完成", "做不了"], true, conversationId);
 		return r.answer ?? "无回应";
 	};
+	// 邮箱：有账号时挂上（先草稿、批准后发送）
+	if (accountsFor(agentId).length) {
+		const acct = (id: string) => {
+			const a = getAccount(id);
+			if (!a || (a.agent_id && a.agent_id !== agentId)) throw new Error("没有权限使用这个邮箱");
+			return a;
+		};
+		const readFile = fileReader((p) => {
+			const abs = insideWorkspace(agentId, p);
+			if (!abs) throw new Error(`只能附加工作区里的文件：${p}`);
+			return abs;
+		});
+		exts.push({
+			name: "pia-email",
+			factory: emailExtension({
+				accounts: () => accountsFor(agentId).map((a) => ({ id: a.id, name: a.name, address: a.address })),
+				list: (id, o) => listMail(acct(id), o),
+				read: async (id, uid, folder, save) => {
+					const m = await readMail(acct(id), uid, folder);
+					const attachments = m.attachments.map((x) => {
+						if (!save) return { filename: x.filename, size: x.size };
+						const rel = join("mail", `${uid}-${x.filename.replace(/[\\/:*?"<>|]/g, "_")}`);
+						mkdirSync(join(workspace, "mail"), { recursive: true });
+						writeFileSync(join(workspace, rel), x.content);
+						return { filename: x.filename, size: x.size, savedTo: rel };
+					});
+					return { ...m, attachments };
+				},
+				saveDraft: async (id, d, draftId) => {
+					acct(id);
+					for (const p of d.attachments ?? []) readFile(p);
+					return saveDraft(id, agentId, d, draftId);
+				},
+				getDraft: (id) => getDraft(id, agentId),
+				approve: async (summary, input) => {
+					const res = await requests.approval(agentId, taskId, "email_send", input, summary, "high", conversationId);
+					return { approved: !!res.approved, note: res.note };
+				},
+				send: (id) => sendDraft(id, agentId, readFile),
+			}),
+		});
+	}
 	exts.push({
 		name: "pia-browser",
 		factory: browserExtension({
@@ -369,7 +413,7 @@ class AgentRuntime {
 		const model = this.modelFor(a);
 		if (!model) return null;
 		const desk = (await desktopStatus(this.id).catch(() => null))?.state === "running";
-		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}`;
+		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}`;
 		if (this.session && this.modelKey === key) return this.session;
 		if (this.session && isSessionBusy(this.session)) return this.session; // 运行中先不切换
 		this.creating = (async () => {
