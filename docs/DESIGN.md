@@ -1,6 +1,6 @@
-# 胡好好 · 基于 Pi 的本地私人助理 —— 设计文档 v0.3
+# 胡好好 · 基于 Pi 的本地私人助理 —— 设计文档 v0.4
 
-> 状态：v0.3（2026-10-11）。Phase 1 的服务端 + Web UI 已实现并通过端到端测试（实现状态见 §13）。新增：§5.14 模型与凭据（不内置任何 Key，全部 Pi provider 动态支持），§5.15 模块边界与 Pi 升级维护流程。默认入口域名 `app.dengdengyun.shop`。
+> 状态：v0.4（2026-10-11）。新增：§5.14.1 自定义模型服务（中转站/第三方/本地，已实现），§5.16 第三方集成通用规则，§14 Phase 3 国内优先方案（它自己的电脑、自己的账号、微信/企业微信/飞书/钉钉、Cua）。v0.3：Phase 1 的服务端 + Web UI 已实现并通过端到端测试（实现状态见 §13）。新增：§5.14 模型与凭据（不内置任何 Key，全部 Pi provider 动态支持），§5.15 模块边界与 Pi 升级维护流程。默认入口域名 `app.dengdengyun.shop`。
 > 参考：Pi 仓库 `earendil-works/pi`（本文基于 `@earendil-works/pi-coding-agent@1.1.0` 的源码和文档阅读结果，API 名称均来自实际代码）。
 
 ---
@@ -383,6 +383,30 @@ sequenceDiagram
 
 **首次运行向导**（Web UI）：欢迎 → 选择模型服务（搜索 43 个）→ 登录（API Key / 订阅）→ 选默认模型 + 测试连接 → 完成。之后在「设置 → 模型」管理：登录/退出、默认模型、测试。开发模式（`HUHAO_MOCK=1`）额外出现“Mock 模型（本地测试）”。
 
+#### 5.14.1 自定义模型服务（中转站 / 第三方 / 本地推理）——已实现
+
+Pi 目录里没有的服务（各种 OpenAI 兼容“中转站”、公司内网网关、Ollama / vLLM / LM Studio、新出的国产模型 API）都可以在「设置 → 模型 → 添加自定义服务」或首次向导里添加。**完全走 Pi 自己的 `models.json` 机制**，不自己实现任何协议：
+
+| 字段 | 说明 |
+|---|---|
+| 名称 | 显示名；内部 id 自动生成 `custom-<slug>` |
+| API 类型 | 来自 pi-ai 的 API 注册表 `getApiProviders()`：OpenAI 兼容（Chat Completions）、OpenAI Responses、Anthropic 兼容（Messages）、Gemini、Mistral、Azure、Bedrock、Vertex……（Pi 新增协议后自动出现） |
+| Base URL | 如 `https://relay.example.com/v1`、`http://127.0.0.1:11434/v1` |
+| API Key | 可选“无需 Key（本地服务）” |
+| 自定义请求头 | 任意多个（某些中转站需要 `X-Team`、`User-Agent` 等） |
+| 模型列表 | 手动输入，或“自动获取”（服务端请求 `/models`：OpenAI 风格 Bearer、Anthropic 风格 `x-api-key` + `anthropic-version`、Gemini 风格 `x-goog-api-key`），点选添加 |
+
+实现（`pi-adapter/custom-providers.ts`）：
+- 结构写入数据目录下 Pi 的 `models.json`（`providers.<id> = { name, baseUrl, api, headers, models }`），保留用户手写的其它条目；保存后 `ModelRuntime.refresh({ allowNetwork:false })` 重新加载，Pi 负责校验与请求。
+- **API Key 不写进 models.json**：通过 Pi 的通用 `login(id, "api_key")` 写入加密凭据库（Pi 的凭据优先级：stored > models.json apiKey > 环境变量）。
+- **请求头的值也不明文落盘**：用主密钥加密存在 SQLite；`models.json` 里只写 `${HUHAO_H_<hash>_<n>}`（Pi 原生的环境变量插值），启动时注入到服务进程环境；沙箱子进程会清掉所有 `HUHAO_*` 变量。
+- 编辑时 Key / 请求头值留空 = 保持原值；删除会同时清理 models.json、凭据与加密请求头，并在默认模型被删时清空默认。
+- 测试连接沿用 `completeSimple()`，错误原样显示（401、403 缺少请求头等）。
+- API：`GET/POST /api/models/custom`、`PUT/DELETE /api/models/custom/:id`、`POST /api/models/custom/fetch-models`。
+- 测试：`test/custom-providers.test.ts`（自动获取 → 保存 → models.json 无明文 → 测试连接 → 编辑 → 删除 → 错误 Key 报错）；E2E 第 15 项用 `e2e/mock-openai.mjs`（模拟中转站，校验 Bearer 与自定义请求头）走完整 UI 流程，并把它设为默认模型真实聊天（截图 `17-settings-custom-provider.png`、`18-chat-via-custom-provider.png`）。
+
+国产模型：DeepSeek、Kimi（moonshotai / moonshotai-cn / kimi-coding）、通义千问（qwen-token-plan*）、智谱（zai / zai-coding-cn）、MiniMax、小米等 **已在 Pi 目录里**，直接 API Key 登录；百炼 DashScope、火山方舟（豆包）、硅基流动、腾讯混元、百度千帆、阶跃等提供 OpenAI 兼容接口的，用自定义服务添加即可（以后可以做成“预设模板”，只预填 Base URL，不内置 Key）。
+
 ### 5.15 模块边界与 Pi 升级 / 维护流程
 
 目标：**Pi 发新版时我们能在一天内跟上**，并通过托盘自动更新推给所有用户。
@@ -424,6 +448,25 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 **维护者升级清单**：`npm run check:pi` → `npm i -w @huhao/server @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest` → `npm test && npm run e2e` → 失败时只改 `pi-adapter/`（必要时 `ext-*` 的类型）→ 更新 `compat.json` → PR。
 
 ---
+
+### 5.16 第三方集成的通用规则（Pi、Cua Driver、cloudflared、Playwright、MCP 服务器……）
+
+把 5.15 对 Pi 的做法推广到**所有**第三方组件，保证每个都能“一天内跟上上游新版”：
+
+1. **只通过公开接口集成**：npm 依赖、MCP（stdio/HTTP）、CLI / 可执行文件。**不 fork、不打补丁、不拷贝源码**；需要上游改动时提 issue/PR 给上游。
+2. **版本集中固定**：仓库根目录 `third-party.json`（第三方清单）登记每个组件：名称、来源（npm / GitHub Release / Docker 镜像）、固定版本、许可证、校验和、用在哪个适配层、对应的冒烟测试。安装包构建脚本和沙箱镜像只从清单取版本。npm 依赖同时写在 `package.json`，清单与之由 CI 校验一致。
+   ```json
+   { "components": [
+     { "name": "pi-coding-agent", "kind": "npm", "version": "1.1.0", "license": "MIT", "adapter": "packages/server/src/pi-adapter", "smoke": "test/pi-compat.test.ts" },
+     { "name": "cua-driver", "kind": "github-release", "repo": "trycua/cua", "version": "0.32.0", "license": "MIT", "adapter": "packages/ext-computer", "smoke": "e2e/computer-smoke.mjs", "forbid": ["cua-perception", "cua-spaces"] },
+     { "name": "cloudflared", "kind": "github-release", "repo": "cloudflare/cloudflared", "version": "2026.x", "license": "Apache-2.0", "adapter": "packages/server/src/tunnel.ts", "smoke": "test/tunnel-parse.test.ts" },
+     { "name": "playwright-core", "kind": "npm", "version": "1.x", "license": "Apache-2.0", "adapter": "packages/ext-browser", "smoke": "e2e/run.mjs" }
+   ] }
+   ```
+3. **每个集成都在自己的适配层/扩展后面**：Pi → `pi-adapter/`；Cua → `packages/ext-computer`；cloudflared → `tunnel.ts`；Playwright → `ext-browser`；每个 MCP 连接器 → `ext-connectors` 下的一个配置/适配文件。其余代码只依赖适配层自己的类型。
+4. **自动升级工作流**：把 `pi-latest.yml` 扩展成 `deps-latest.yml`，每周一按清单逐个组件（矩阵 job）检查上游最新版 → 升级 → 跑 typecheck + 单元 + 该组件的**集成冒烟测试**（例如 cua-driver：在 Docker 桌面里 `cua-driver mcp` 列出工具并截一张屏；cloudflared：解析日志格式；Playwright：E2E）→ 通过则更新清单并**开 PR**，失败则**开 issue** 附日志。Renovate 同时监控 npm 与 GitHub Release（`customManagers` 读 `third-party.json`），作为备份。
+5. **许可证闸门**：CI 检查清单里每个组件的许可证在白名单（MIT / Apache-2.0 / BSD / ISC / MPL-2.0），并扫描安装包与沙箱镜像，出现 AGPL / FSL / 非商用许可证即失败（例如 `cua-perception`、OmniParser、Cua Spaces 明确禁止打包）。
+6. **发给用户**：合并 PR → 打 tag → 安装包（含新 sidecar、cua-driver、cloudflared）与沙箱镜像版本一起发布 → 托盘自动更新；沙箱镜像在下次启动助理电脑时拉取新版（用户数据卷不受影响）。
 
 ## 6. 数据模型（SQLite，`data/huhao.db`）
 
@@ -539,8 +582,13 @@ pi-assistant/
 - [ ] 可选稳定地址：一键配置 cloudflared 命名隧道（用户自己的域名）或 Tailscale Serve/Funnel；此时 PWA 可直接由本地服务托管
 - [ ] L1 macOS `sandbox-exec`
 
-### Phase 3 · 浏览器、连接器、多助理（目标 4–6 周）
-- [ ] 浏览器自动化 + 实时画面接管（电脑/手机浏览器都能接管）
+### Phase 3 · 它自己的电脑、自己的账号、国内渠道（目标 6–8 周，详见 §14）
+- [ ] 助理电脑：Docker Linux 桌面（Xvfb + xfce + 浏览器 + Linux 微信，持久化卷）+「电脑」标签实时画面（noVNC）+ 接管（扫码/验证码推送到手机）
+- [ ] `ext-computer`：`cua-driver mcp`（MIT）驱动桌面应用；目标 = 助理电脑（默认）或本机（默认关闭，bounded 模式 + 清单 + 审批 + 一键暂停）
+- [ ] 浏览器自动化（Playwright，跑在助理电脑里）+ 实时画面接管
+- [ ] 助理自己的账号：专用个人微信（可选，需同意风险提示）、邮箱（QQ / 163 / Gmail，IMAP/SMTP）
+- [ ] 官方聊天渠道：企业微信、飞书、钉钉机器人（在手机 IM 里直接和助理聊天、审批）
+- [x] 自定义模型服务（中转站 / 第三方 / 本地，已提前在 Phase 1 完成）
 - [ ] Gmail / Google Calendar / GitHub 连接器（草稿优先，发送需审批）+ 任意 MCP 服务器
 - [ ] 多助理/人设（各自模型、工具、技能、工作区）
 - [ ] 用量统计、完整设置页
@@ -603,8 +651,91 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 
 ## 13. Phase 1 实现状态（2026-10-11）
 
-**已实现并经 E2E 验证**（`npm run e2e`，13/13 通过，截图在 `docs/screenshots/`）：首次运行向导（43 个 Pi provider、API Key 登录表单、Mock 测试连接）；流式回复；文件生成与下载；审批卡片（批准/拒绝，手机视口也可操作）；选项提问卡片；上传文件给助理；后台任务与完成卡片；信息面板（概览/文件/电脑）；设置（模型、远程与设备、入口域名、外观、关于）；手机扫码配对 → 电脑确认 → 设备 token（远程请求无 token 返回 401）；深色模式；杀掉服务重启后历史仍在且未完成工作自动续跑。
+**已实现并经 E2E 验证**（`npm run e2e`，15/15 通过，含自定义模型服务（模拟中转站）与外观设置，截图在 `docs/screenshots/`）：首次运行向导（43 个 Pi provider、API Key 登录表单、Mock 测试连接）；流式回复；文件生成与下载；审批卡片（批准/拒绝，手机视口也可操作）；选项提问卡片；上传文件给助理；后台任务与完成卡片；信息面板（概览/文件/电脑）；设置（模型、远程与设备、入口域名、外观、关于）；手机扫码配对 → 电脑确认 → 设备 token（远程请求无 token 返回 401）；深色模式；杀掉服务重启后历史仍在且未完成工作自动续跑。
 
 **已实现、未能在开发机上端到端验证**：cloudflared 快速隧道（能拿到 `*.trycloudflare.com` 地址，但开发机出站 7844/QUIC 被封，边缘连接失败——状态会显示“连不上 Cloudflare 网络”）；Rendezvous Worker（单元测试通过，尚未部署）；Web Push（订阅/发送代码完成，需 HTTPS 真机验证）；Docker L2 沙箱（代码完成，未实测）。
 
 **脚手架/待做**：Tauri 托盘程序与安装包（`apps/tray`）、sidecar 打包（Node SEA）与签名、release 工作流；定时任务、记忆、技能（Phase 2）；浏览器与连接器（Phase 3）。
+
+---
+
+## 14. Phase 3 方案（国内优先）：把助理当成一个“有自己电脑、自己账号的人”
+
+### 14.1 核心理念
+
+助理不是一个只会调 API 的机器人，而是**一个有自己整台电脑的同事**：
+- 它有**自己的桌面电脑**（沙箱里的完整 Linux 图形桌面），装着浏览器、微信等应用，登录状态**一直保留**；
+- 它有**自己的账号**（专用微信、自己的邮箱、各网站账号），按你的吩咐去用——像你给助理配了一部工作手机和一台工作电脑；
+- 需要扫码登录、输验证码时，**把那一屏推到你手机上**，你扫一下/点一下，它继续干；
+- 你随时能在「电脑」标签里**看它的屏幕、接管鼠标键盘、一键暂停**。
+
+默认它**只动自己的电脑**；“操作你这台电脑”是单独的可选模块，默认关闭（§14.6）。
+
+### 14.2 助理电脑（sandbox desktop）
+
+| 项 | 方案 |
+|---|---|
+| 形态 | Docker 镜像 `huhao/desktop`（Debian + Xvfb + xfce4 + x11vnc + noVNC/websockify + Chromium + 中文字体/输入法 + Linux 版微信 + `cua-driver`）；每个助理一个容器（或共用一个，多桌面） |
+| 持久化 | 命名卷挂 `/home/agent`：浏览器配置、微信数据、各应用登录态都保留；容器可随时重建 |
+| 资源 | 默认 2 核 / 3 GB，空闲 N 分钟自动停（下次任务秒级唤醒，登录态在卷里） |
+| 网络 | 出网放行；入站只暴露给 huhao-server（VNC 5900 / noVNC 6080 / cua-driver 只在容器内） |
+| 无 Docker 时 | macOS 退回“助理专用浏览器（Playwright 持久化 profile）”，不提供完整桌面；Windows 引导开启 WSL2 + Docker（或后续用 Windows Sandbox） |
+
+**实时画面**：Web UI 右侧「电脑」标签内嵌 noVNC（经 huhao-server 反向代理 `/api/agents/:id/desktop/ws`，复用设备 token 鉴权，所以手机远程也能看）。默认只看；点“接管”后键鼠输入转给桌面，助理自动暂停，点“交还”后继续。
+
+**扫码/验证码推送**：助理（或 `ext-computer` 检测到二维码登录页）调用 `request_handoff({ reason, region? })` → 截图 + 推送通知“需要你扫码登录微信” → 手机打开即看到二维码大图（或 noVNC 实时画面）→ 用你**为助理准备的手机/账号**扫码 → 助理轮询屏幕状态确认登录成功后继续。
+
+### 14.3 `packages/ext-computer`（Cua Driver 集成）
+
+- **只用 Cua Driver 的 MIT 部分**：`cua-driver` 可执行文件（npm `@trycua/cua-driver`，MIT），通过 **MCP stdio** 集成：`pi.registerMcpServer("computer", { command: "cua-driver", args: ["mcp"], env })`。不引入任何 TS SDK 包装、不 fork。
+- **明确不用**：`cua-perception` / OmniParser（AGPL-3.0 / 模型 CC-BY）、Cua Spaces / 云沙箱（FSL）、`cua-agent[omni]`（ultralytics AGPL）。CI 许可证闸门禁止它们进入安装包和镜像（§5.16）。视觉理解交给用户自己的多模态模型（截图 → 模型）。
+- **两种目标**：
+  - `sandbox`（默认）：在助理电脑容器里运行 `cua-driver mcp`（server 用 `docker exec -i` 作为 MCP 的 stdio 命令），操作 Linux 桌面上的微信、浏览器、任意应用。
+  - `host`（可选，默认关闭）：在用户本机运行安装包内置的 `cua-driver mcp`；以 Cua 的 **`bounded` 权限模式 + 能力清单（manifest）** 启动，清单只列出用户勾选的应用/窗口；macOS 首次需要授予“辅助功能 + 屏幕录制”权限（托盘引导）。
+- **审批**：`ext-approval` 的 `tool_call` 钩子识别 `computer.*` 工具：截图/读取窗口 → 放行；在 sandbox 里点击/输入 → 放行（它自己的电脑），但涉及**发送消息、付款、删除、提交表单**的语义动作要求助理先 `ask_user`；host 目标上的**任何输入动作**都需审批（可按应用“本次会话内允许”）。
+- **一键暂停**：聊天顶部 / 托盘 / 手机通知上都有“暂停操作电脑”；按下后 `ext-computer` 立即拒绝所有 `computer.*` 调用并中止当前回合（`abort`），host 模式下同时结束 `cua-driver` 进程。
+- **分工**：网页任务优先 **Playwright**（`ext-browser`，在助理电脑的 Chromium 里，CDP 连接，稳定可断言）；桌面应用（微信、WPS、各种客户端）和本机操作用 **Cua**。
+
+### 14.4 助理自己的账号
+
+| 账号 | 方式 | 说明 |
+|---|---|---|
+| 个人微信（专用号） | 助理电脑里的 Linux 微信 + Cua Driver 操作界面 | **可选，需用户主动开启**并确认风险提示：“自动化操作个人微信可能违反《微信软件许可及服务协议》，账号有被限制/封禁风险；请使用专门给助理准备的微信号，不要用你的主号。”默认只读（看消息、整理、提醒），发消息走审批或白名单联系人；限速、模拟正常节奏；不做群发/营销。 |
+| 邮箱 | IMAP/SMTP MCP 连接器（QQ / 163 / 126 / 阿里 / Gmail / Outlook），授权码登录 | 授权码加密保存；**草稿优先**，发送需审批（与 Phase 3 Gmail 一致）。Gmail 也可用 OAuth。 |
+| 其它网站/应用 | 助理电脑浏览器里正常登录，登录态持久化 | 需要扫码/验证码时走 §14.2 的推送接管 |
+
+### 14.5 官方聊天渠道（在手机 IM 里和助理聊）
+
+除 PWA 外，提供三个**官方、合规**的渠道（`packages/ext-channels`，每个渠道一个适配器，统一成“入站消息 → 助理 → 出站消息/卡片”）：
+
+| 渠道 | 接入方式 | 是否需要公网回调 |
+|---|---|---|
+| 企业微信 | 自建应用 / 智能机器人；消息回调走我们已有的隧道地址（或企业微信长连接模式） | 回调需要 HTTPS，可复用 cloudflared 隧道 |
+| 飞书 | 自建应用机器人，**长连接（WebSocket）事件订阅** | 不需要 |
+| 钉钉 | 企业内部机器人，**Stream 模式** | 不需要 |
+
+审批卡片、选项提问映射成各平台的交互卡片（飞书消息卡片、钉钉互动卡片、企业微信模板卡片），点按钮即回传到同一个 `requests` 表——和在 PWA 里批准完全等价。凭据（AppID/Secret）在「设置 → 渠道」里填，加密保存。
+
+### 14.6 可选模块：“操作这台电脑”（host）
+
+- 默认关闭；在「设置 → 电脑 → 允许操作这台电脑」开启，必须在本机（不能远程开启）。
+- 开启时选择允许的应用（生成 Cua bounded manifest），显示醒目的“正在操作你的电脑”悬浮条（托盘程序绘制）+ 全局快捷键一键暂停。
+- 全部输入动作走审批；所有操作记录（截图 + 动作）写入审计日志，可在「电脑 → 记录」回看。
+
+### 14.7 连接器统一走 MCP
+
+所有连接器（邮箱、日历、GitHub、Notion、飞书文档、钉钉日程、本地文件夹……）都是 MCP 服务器，经 Pi 的 MCP 支持（`pi.registerMcpServer` / `mcp.json`）挂到会话上；用户也能在「设置 → 连接器」里粘贴任意 MCP 服务器配置。我们自己写的连接器同样以独立 MCP 服务器发布，可被其它 Agent 复用。所有 MCP 服务器都登记在 `third-party.json`，享受同样的自动升级与冒烟测试。
+
+### 14.8 国产模型
+
+已在 Pi 目录：DeepSeek、Kimi、通义千问（Token Plan）、智谱 GLM、MiniMax、小米 MiMo 等，API Key 直接登录。其余（百炼 DashScope、火山方舟豆包、硅基流动、混元、千帆、阶跃、零一……）用 §5.14.1 自定义服务添加（OpenAI 兼容）。截图理解需要多模态模型（Qwen-VL、GLM-4V、Kimi-VL、豆包视觉等），在设置里可单独指定“看屏幕用的模型”。
+
+### 14.9 实施顺序
+
+1. 助理电脑镜像 + 容器生命周期 + 「电脑」标签 noVNC 实时画面 / 接管
+2. `ext-computer`（sandbox 目标）+ 截图工具 + 一键暂停 + 审批规则
+3. 扫码/验证码推送接管（`request_handoff`）
+4. `ext-browser`（Playwright 连接助理电脑里的 Chromium）
+5. 邮箱 MCP（IMAP/SMTP）→ 飞书 / 钉钉 / 企业微信渠道
+6. 个人微信（可选，风险提示）
+7. host 目标（bounded + manifest + 悬浮条）
