@@ -878,6 +878,14 @@ app.put("/api/host-control/tier/:agentId", localOnly, async (c) => {
 	bus.emit({ type: "host.changed", status: hostStatus() } as never);
 	return c.json({ ok: true, tier: b.tier, status: hostStatus() });
 });
+/** 托盘悬浮条用：是否开着、是否暂停、最近一次操作（90 秒内算“正在操作”） */
+app.get("/api/host-control/bar", localOnly, (c) => {
+	const st = hostStatus();
+	const last = listActions({ target: "host", limit: 1 })[0];
+	const agent = last ? getAgent(last.agent_id) : null;
+	const active = !!last && (last.outcome === "running" || Date.now() - (last.finished_at ?? last.started_at) < 90_000);
+	return c.json({ enabled: st.enabled, paused: st.paused, active, last: last ? { agent: agent?.name ?? last.agent_id, avatar: agent?.avatar ?? "", tool: last.tool, summary: last.summary, outcome: last.outcome, at: last.started_at } : null });
+});
 /** 一键暂停 / 继续：任何已配对的设备（包括手机）都能点 */
 app.post("/api/host-control/pause", async (c) => {
 	const { paused } = await c.req.json<{ paused: boolean }>();

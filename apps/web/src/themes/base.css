@@ -182,3 +182,17 @@ html,.pa-app{height:100%}
 
 .pa-composer-bar{min-width:0}
 .pa-composer-bar .pa-send{flex-shrink:0}
+
+/* 托盘悬浮条（/hostbar，置顶小窗） */
+html.pa-floatbar-root, html.pa-floatbar-root body { background: transparent; overflow: hidden; }
+.pa-floatbar { margin: 6px; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; border-radius: 999px; font-size: 13px;
+  background: var(--card, #fff); color: var(--fg, #111); box-shadow: 0 6px 24px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06); -webkit-app-region: drag; user-select: none; }
+.pa-floatbar-dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
+.pa-floatbar.live .pa-floatbar-dot { background: #ef4444; animation: pa-pulse 1.2s ease-in-out infinite; }
+.pa-floatbar.paused .pa-floatbar-dot { background: #f59e0b; }
+.pa-floatbar-av { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 8px; background: var(--hover, #f3f4f6); font-size: 13px; flex-shrink: 0; }
+.pa-floatbar-btn { -webkit-app-region: no-drag; display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 12px; border-radius: 999px; font-weight: 600; flex-shrink: 0;
+  background: #ef4444; color: #fff; }
+.pa-floatbar.paused .pa-floatbar-btn:not(.ghost) { background: var(--acc, #2563eb); }
+.pa-floatbar-btn.ghost { background: transparent; color: inherit; padding: 0 8px; }
+@keyframes pa-pulse { 50% { opacity: .35; } }
