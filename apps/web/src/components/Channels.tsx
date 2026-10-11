@@ -5,9 +5,10 @@ import { useStore } from "../store";
 import { Badge, Button, cx, Input, avatarText } from "./ui";
 
 type Kind = "wecom_bot" | "wecom" | "feishu" | "dingtalk";
+type AnyKind = Kind | "wechat_clawbot";
 interface Channel {
 	id: string;
-	kind: Kind;
+	kind: AnyKind;
 	name: string;
 	agentId: string;
 	enabled: boolean;
@@ -17,6 +18,14 @@ interface Channel {
 	status: { state: string; detail: string };
 	users: { id: string; display: string | null; allowed: boolean; lastAt: number | null }[];
 	callbackPath?: string;
+	login?: Login;
+	queued?: number;
+}
+interface Login {
+	state: "idle" | "wait" | "scaned" | "need_verifycode" | "confirmed" | "expired" | "error";
+	qrUrl?: string;
+	qrImg?: string;
+	message: string;
 }
 
 const KINDS: Record<Kind, { label: string; mode: string; fields: { key: string; label: string; secret?: boolean; placeholder?: string }[]; steps: string[] }> = {
@@ -108,8 +117,9 @@ export function ChannelsSettings() {
 	if (!d) return null;
 	return (
 		<div className="space-y-5" data-testid="channels">
+			<ClawbotSection items={d.items.filter((c) => c.kind === "wechat_clawbot")} agents={agents} onChange={load} />
 			<p className="text-sm text-mut">在企业微信、飞书、钉钉里直接和助理聊天：消息会进到助理的对话里，回复、需要你批准的操作、提问会以带按钮的卡片发回来（点按钮，或回复「批准」/「拒绝」/选项序号）。只有发送过绑定码的人才能使用。</p>
-			{d.items.map((c) => (
+			{d.items.filter((c) => c.kind !== "wechat_clawbot").map((c) => (
 				<ChannelCard key={c.id} c={c} publicUrl={d.publicUrl} agents={agents} onChange={load} />
 			))}
 			{adding ? (
@@ -124,6 +134,137 @@ export function ChannelsSettings() {
 				</div>
 			)}
 			<WechatSection agents={agents} />
+		</div>
+	);
+}
+
+/** 微信 ClawBot（推荐）：腾讯官方插件通道，用微信扫码连接，不需要任何密钥 */
+function ClawbotSection({ items, agents, onChange }: { items: Channel[]; agents: { id: string; name: string; avatar: string }[]; onChange: () => void }) {
+	const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
+	const [busy, setBusy] = useState(false);
+	const add = async () => {
+		setBusy(true);
+		try {
+			const c = (await api("/api/channels", { method: "POST", json: { kind: "wechat_clawbot", agentId, name: "微信 ClawBot" } })) as Channel;
+			await api(`/api/channels/${c.id}/clawbot/login`, { method: "POST" });
+			onChange();
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<div className="space-y-3 rounded-xl border border-line p-4" data-testid="clawbot-section">
+			<div className="flex items-center gap-2">
+				<MessageSquare size={16} className="text-green-600" />
+				<b>微信 ClawBot</b>
+				<Badge tone="green">推荐</Badge>
+			</div>
+			<p className="text-sm text-mut">
+				腾讯官方的“微信 › 我 › 设置 › 插件 › ClawBot”通道：用你自己的微信扫码连接，就能在微信里和助理单聊，发文字、图片、文件都行。不操作你的微信、不读取其它聊天记录、不需要密钥，比“个人微信（GUI）”安全得多。
+			</p>
+			<ul className="list-disc space-y-0.5 pl-5 text-xs text-mut">
+				<li>需要较新版本的微信，且 ClawBot 插件仍在灰度中：如果在 设置 › 插件 里看不到，暂时用不了。</li>
+				<li>只支持单聊。微信规定：你超过 24 小时没给它发消息后，助理就不能主动发给你；每轮可发条数也有限。发不出去的消息会排队，等你下次发消息时补发，同时用 App 推送提醒你。</li>
+			</ul>
+			{items.map((c) => (
+				<ClawbotCard key={c.id} c={c} agents={agents} onChange={onChange} />
+			))}
+			{!items.length && (
+				<div className="flex flex-wrap items-center gap-2">
+					<span className="text-sm">连接到</span>
+					<select className="pa-input !w-auto" value={agentId} onChange={(e) => setAgentId(e.target.value)} data-testid="clawbot-agent">
+						{agents.map((a) => (
+							<option key={a.id} value={a.id}>
+								{avatarText(a.avatar)} {a.name}
+							</option>
+						))}
+					</select>
+					<Button size="sm" variant="primary" disabled={!agentId || busy} onClick={add} data-testid="clawbot-add">
+						{busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} 扫码连接微信
+					</Button>
+				</div>
+			)}
+		</div>
+	);
+}
+
+function ClawbotCard({ c, agents, onChange }: { c: Channel; agents: { id: string; name: string; avatar: string }[]; onChange: () => void }) {
+	const [login, setLogin] = useState<Login | undefined>(c.login);
+	const [code, setCode] = useState("");
+	const st = STATE[c.status.state] ?? STATE.off;
+	const agent = agents.find((a) => a.id === c.agentId);
+	const active = login && ["wait", "scaned", "need_verifycode"].includes(login.state);
+	useEffect(() => setLogin(c.login), [c.login?.state, c.login?.qrUrl]);
+	useEffect(() => {
+		if (!active) return;
+		const t = setInterval(() => void api(`/api/channels/${c.id}/clawbot/login`).then((l: Login) => (setLogin(l), l.state === "confirmed" && onChange())), 1500);
+		return () => clearInterval(t);
+	}, [active, c.id]);
+	const start = async () => setLogin(await api(`/api/channels/${c.id}/clawbot/login`, { method: "POST" }));
+	const connected = !!c.config.accountId;
+	return (
+		<div className="space-y-3 rounded-lg bg-hover/60 p-3" data-testid="channel-wechat_clawbot">
+			<div className="flex flex-wrap items-center gap-2">
+				<Badge tone={st.tone}>{c.status.state === "waiting" ? "未连接" : st.label}</Badge>
+				<span className="min-w-0 truncate text-xs text-mut">{c.status.detail}</span>
+				<span className="ml-auto text-xs text-mut">→ {agent ? `${avatarText(agent.avatar)} ${agent.name}` : "助理已删除"}</span>
+			</div>
+			{active && login && (
+				<div className="flex flex-wrap items-start gap-4" data-testid="clawbot-qr">
+					{login.qrImg && <img src={login.qrImg} alt="用微信扫码" className="h-44 w-44 rounded-lg bg-white p-1.5" />}
+					<div className="min-w-0 flex-1 space-y-2 text-sm">
+						<div className="font-medium">{login.message}</div>
+						<ol className="list-decimal space-y-0.5 pl-5 text-xs text-mut">
+							<li>电脑上：打开手机微信 › 扫一扫，扫左边的二维码</li>
+							<li>手机上：长按二维码图片 › 识别图中二维码</li>
+							<li>在微信里确认连接{login.state === "need_verifycode" ? "，并输入下面要求的数字" : ""}</li>
+						</ol>
+						{login.state === "need_verifycode" && (
+							<div className="flex items-center gap-2">
+								<Input className="!w-36" inputMode="numeric" placeholder="微信里显示的数字" value={code} onChange={(e) => setCode(e.target.value)} data-testid="clawbot-code" />
+								<Button size="sm" variant="primary" onClick={() => api(`/api/channels/${c.id}/clawbot/verify`, { method: "POST", json: { code } }).then(() => setCode(""))}>
+									提交
+								</Button>
+							</div>
+						)}
+						<button className="text-xs text-mut underline" onClick={() => api(`/api/channels/${c.id}/clawbot/login`, { method: "DELETE" }).then(() => setLogin(undefined))}>
+							取消
+						</button>
+					</div>
+				</div>
+			)}
+			{login && ["expired", "error"].includes(login.state) && <div className="text-sm text-red-600">{login.message}</div>}
+			{connected && !active && (
+				<div className="space-y-1 text-sm">
+					{c.users.filter((u) => u.allowed).map((u) => (
+						<div key={u.id} className="flex items-center gap-2">
+							<CheckCircle2 size={14} className="text-green-600" /> 已连接你的微信 <span className="truncate text-xs text-mut">{u.id}</span>
+						</div>
+					))}
+					<div className="text-xs text-mut">在微信里找到「微信ClawBot」对话（可以置顶），直接发消息即可。发送「新对话」开始新话题，「停止」中断当前任务。</div>
+					{!!c.queued && <div className="text-xs text-amber-600" data-testid="clawbot-queued">有 {c.queued} 条消息等你下次在微信里发消息时补发（微信不允许现在主动发）</div>}
+				</div>
+			)}
+			<div className="flex flex-wrap items-center gap-2">
+				{!active && (
+					<Button size="sm" variant={connected ? "ghost" : "primary"} onClick={start} data-testid="clawbot-login">
+						{connected ? "重新扫码" : "扫码连接"}
+					</Button>
+				)}
+				<select className="pa-input !w-auto text-sm" value={c.agentId} onChange={(e) => api(`/api/channels/${c.id}`, { method: "PUT", json: { kind: c.kind, agentId: e.target.value } }).then(onChange)} aria-label="连接到哪个助理">
+					{agents.map((a) => (
+						<option key={a.id} value={a.id}>
+							{avatarText(a.avatar)} {a.name}
+						</option>
+					))}
+				</select>
+				<Button size="sm" variant="ghost" onClick={() => api(`/api/channels/${c.id}`, { method: "PUT", json: { kind: c.kind, enabled: !c.enabled } }).then(onChange)}>
+					{c.enabled ? "停用" : "启用"}
+				</Button>
+				<Button size="sm" variant="danger" onClick={() => confirm("断开并删除微信 ClawBot？") && api(`/api/channels/${c.id}`, { method: "DELETE" }).then(onChange)}>
+					<Trash2 size={14} />
+				</Button>
+			</div>
 		</div>
 	);
 }
@@ -154,7 +295,7 @@ function WechatSection({ agents }: { agents: { id: string; name: string; avatar:
 	return (
 		<div className="space-y-3 rounded-2xl border border-line p-4" data-testid="wechat-section">
 			<div className="flex items-center gap-2">
-				<b>个人微信</b>
+				<b>个人微信（GUI 操作，实验）</b>
 				<Badge>实验</Badge>
 				<span className="ml-auto text-sm text-mut">{s.enabled ? "已开启" : "未开启"}</span>
 			</div>
@@ -289,7 +430,7 @@ function ChannelCard({ c, publicUrl, agents, onChange }: { c: Channel; publicUrl
 	const st = STATE[c.status.state] ?? STATE.off;
 	const agent = agents.find((a) => a.id === c.agentId);
 	const cb = c.callbackPath ? `${publicUrl ?? "<公网地址>"}${c.callbackPath}` : null;
-	if (edit) return <ChannelForm kind={c.kind} agents={agents} publicUrl={publicUrl} existing={c} onDone={() => (setEdit(false), onChange())} />;
+	if (edit) return <ChannelForm kind={c.kind as Kind} agents={agents} publicUrl={publicUrl} existing={c} onDone={() => (setEdit(false), onChange())} />;
 	return (
 		<div className="space-y-3 rounded-xl border border-line p-4" data-testid={`channel-${c.kind}`}>
 			<div className="flex items-center gap-2">
@@ -314,7 +455,7 @@ function ChannelCard({ c, publicUrl, agents, onChange }: { c: Channel; publicUrl
 				<button className="pa-icon-btn ghost" title="换一个" aria-label="换一个绑定码" onClick={() => api(`/api/channels/${c.id}/bind-code`, { method: "POST" }).then(onChange)}>
 					<RefreshCw size={14} />
 				</button>
-				<span className="text-xs text-mut">在{KINDS[c.kind].label}里发送「绑定 {c.bindCode}」（用一次就换）</span>
+				<span className="text-xs text-mut">在{KINDS[c.kind as Kind].label}里发送「绑定 {c.bindCode}」（用一次就换）</span>
 			</div>
 			{c.users.length > 0 && (
 				<ul className="space-y-1 text-sm">
@@ -332,7 +473,7 @@ function ChannelCard({ c, publicUrl, agents, onChange }: { c: Channel; publicUrl
 					))}
 				</ul>
 			)}
-			<Steps kind={c.kind} />
+			<Steps kind={c.kind as Kind} />
 			<div className="flex flex-wrap items-center gap-2">
 				<Button size="sm" onClick={() => api(`/api/channels/${c.id}/test`, { method: "POST" }).then(setTest)}>
 					测试凭据

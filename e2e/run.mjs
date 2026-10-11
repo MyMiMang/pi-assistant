@@ -815,6 +815,49 @@ await step("Phase 3 渠道：飞书 / 钉钉 / 企业微信 添加表单 + 分�
 	await page.keyboard.press("Escape");
 });
 
+await step("微信 ClawBot（模拟 iLink）：扫码连接 → 二维码 → 确认后已连接 → 微信里发消息 → 助理回复发回微信", async () => {
+	const { createServer: http } = await import("node:http");
+	let qr = "wait";
+	const inbox = [];
+	const sent = [];
+	const ilink = http(async (req, res) => {
+		let b = "";
+		for await (const c of req) b += c;
+		const j = (o) => (res.setHeader("content-type", "application/json"), res.end(JSON.stringify(o)));
+		const u = req.url ?? "";
+		if (u.startsWith("/ilink/bot/get_bot_qrcode")) return j({ qrcode: "Q", qrcode_img_content: "https://liteapp.weixin.qq.com/q/e2e-demo" });
+		if (u.startsWith("/ilink/bot/get_qrcode_status")) return (await new Promise((r) => setTimeout(r, 300)), j(qr === "confirmed" ? { status: "confirmed", bot_token: "T", ilink_bot_id: "bot@im.bot", ilink_user_id: "me@im.wechat" } : { status: qr }));
+		if (u === "/ilink/bot/getupdates") {
+			for (let i = 0; i < 10 && !inbox.length; i++) await new Promise((r) => setTimeout(r, 50));
+			return j({ ret: 0, msgs: inbox.splice(0), get_updates_buf: "b" });
+		}
+		if (u === "/ilink/bot/sendmessage") sent.push(JSON.parse(b));
+		if (u === "/ilink/bot/getconfig") return j({ ret: 0, typing_ticket: "TT" });
+		j({ ret: 0 });
+	});
+	await new Promise((r) => ilink.listen(0, "127.0.0.1", r));
+	const IL = `http://127.0.0.1:${ilink.address().port}`;
+	const c = await (await fetch(`${BASE}/api/channels`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "wechat_clawbot", agentId: AGENT, name: "微信 ClawBot", config: { apiBase: IL, cdnBase: IL } }) })).json();
+	await page.getByRole("button", { name: "设置" }).first().click();
+	await page.getByRole("button", { name: "渠道" }).click();
+	const sec = page.locator("[data-testid=clawbot-section]");
+	await sec.locator("[data-testid=clawbot-login]").click();
+	await sec.locator("[data-testid=clawbot-qr] img").waitFor();
+	qr = "scaned";
+	await sec.getByText("已扫码，请在微信里确认").waitFor();
+	await sec.scrollIntoViewIfNeeded();
+	await page.screenshot({ path: join(SHOTS, "45-settings-clawbot-qr.png") });
+	qr = "confirmed";
+	await sec.getByText("已连接你的微信").waitFor({ timeout: 15_000 });
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "46-settings-clawbot-connected.png") });
+	inbox.push({ message_id: "1", from_user_id: "me@im.wechat", message_type: 1, context_token: "CTX", item_list: [{ type: 1, text_item: { text: "你好，从微信发来" } }] });
+	await waitFor(() => sent.some((m) => m.msg?.context_token === "CTX" && JSON.stringify(m).includes("你好，从微信发来")), 20_000);
+	await fetch(`${BASE}/api/channels/${c.id}`, { method: "DELETE" });
+	ilink.close();
+	await page.keyboard.press("Escape");
+});
+
 await step("Phase 3 邮箱：添加邮箱（模拟 IMAP/SMTP）→ 助理写草稿 → 发送审批卡片（完整内容）→ 批准后发出", async () => {
 	const { createRequire } = await import("node:module");
 	const req = createRequire(join(ROOT, "packages/server/package.json"));

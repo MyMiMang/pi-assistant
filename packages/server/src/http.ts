@@ -45,6 +45,7 @@ import { actionShot, clearActions, listActions } from "./action-log.ts";
 import { openWechat, saveWechatSettings, wechatSettings, wechatStatus } from "./wechat.ts";
 import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAccount, saveOAuthAccount, testAccount } from "./email.ts";
 import { finishGoogle, googleClient, saveGoogleClient, startGoogle } from "./email-oauth.ts";
+import { actOnItem, cancelFollowup, defaultLevel, type ItemRow, type Level, listItems, proactiveJson, runHeartbeat, saveProactive, setDefaultLevel, unseenCount } from "./proactive.ts";
 import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { hostAgentsChanged, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 
@@ -703,15 +704,65 @@ app.delete("/api/channels/:id", localOnly, async (c) => {
 	await deleteChannel(c.req.param("id")!);
 	return c.json({ ok: true });
 });
-// 微信 ClawBot 扫码连接：已配对的手机也能看二维码（在手机上长按识别），所以不限本机
-app.post("/api/channels/:id/clawbot/login", async (c) => {
+// ---------------------------------------------------------------- 主动提醒
+app.get("/api/proactive/inbox", (c) => {
+	const agentId = c.req.query("agentId") || undefined;
+	return c.json({ items: listItems({ agentId, all: c.req.query("all") === "1" }).map(itemJson), count: unseenCount(), defaultLevel: defaultLevel() });
+});
+const itemJson = (i: ItemRow) => ({ id: i.id, agentId: i.agent_id, kind: i.kind, title: i.title, body: i.body, importance: i.importance, status: i.status, reason: i.reason, via: i.delivered_via, deliveredAt: i.delivered_at, deliverAfter: i.deliver_after, createdAt: i.created_at });
+app.post("/api/proactive/items/:id", async (c) => {
 	try {
-		return c.json(await clawbotLogin(c.req.param("id")!));
+		const b = await c.req.json<{ action: "dismiss" | "done" | "snooze"; mute?: boolean; until?: number }>();
+		if (!["dismiss", "done", "snooze"].includes(b.action)) return c.json({ error: "bad_action" }, 400);
+		actOnItem(c.req.param("id")!, b.action, { mute: !!b.mute, until: b.until });
+		return c.json({ ok: true });
 	} catch (e) {
 		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 	}
 });
-app.get("/api/channels/:id/clawbot/login", (c) => c.json(clawbotStatus(c.req.param("id")!)));
+app.get("/api/agents/:id/proactive", (c) => {
+	try {
+		return c.json(proactiveJson(c.req.param("id")!));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 404);
+	}
+});
+app.put("/api/agents/:id/proactive", async (c) => {
+	try {
+		return c.json(saveProactive(c.req.param("id")!, await c.req.json()));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.post("/api/agents/:id/proactive/run", (c) => {
+	try {
+		return c.json({ runId: runHeartbeat(c.req.param("id")!, "manual") });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.delete("/api/agents/:id/proactive/followups/:fid", (c) => c.json({ ok: cancelFollowup(c.req.param("id")!, c.req.param("fid")!) }));
+app.put("/api/proactive/defaults", async (c) => {
+	try {
+		setDefaultLevel((await c.req.json<{ level: Level }>()).level);
+		return c.json({ ok: true, defaultLevel: defaultLevel() });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+
+// 微信 ClawBot 扫码连接：已配对的手机也能看二维码（在手机上长按识别），所以不限本机
+app.post("/api/channels/:id/clawbot/login", async (c) => {
+	try {
+		return c.json(await withQr(await clawbotLogin(c.req.param("id")!)));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.get("/api/channels/:id/clawbot/login", async (c) => c.json(await withQr(clawbotStatus(c.req.param("id")!))));
+async function withQr<T extends { qrUrl?: string }>(s: T) {
+	return { ...s, qrImg: s.qrUrl ? await QRCode.toDataURL(s.qrUrl, { margin: 1, width: 320 }) : undefined };
+}
 app.post("/api/channels/:id/clawbot/verify", async (c) => {
 	try {
 		clawbotVerify(c.req.param("id")!, String((await c.req.json<{ code: string }>()).code ?? ""));
