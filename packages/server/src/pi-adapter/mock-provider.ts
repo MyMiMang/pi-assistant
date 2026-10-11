@@ -17,7 +17,7 @@ function respond(messages: Msg[], systemPrompt = "") {
 	// Pi 的上下文整理（compaction）请求：返回一段结构化摘要
 	if (/context summarization assistant/i.test(systemPrompt) || textOf(last).startsWith("<conversation>"))
 		return fauxAssistantMessage("## Goal\n用户在测试 Pi Assistant 的各项功能。\n\n## Progress\n- 已演示流式回复、文件、审批、后台任务等。\n\n## Next Steps\n- 继续按用户要求操作。");
-	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !textOf(m).startsWith("后台任务「"));
+	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !/^(后台|定时)任务「/.test(textOf(m)));
 	const u = lastUser ? textOf(lastUser) : "";
 	if (last.role === "toolResult") {
 		const out = textOf(last);
@@ -45,6 +45,7 @@ function respond(messages: Msg[], systemPrompt = "") {
 				return fauxAssistantMessage(`命令执行完成，输出如下：\n\n\`\`\`\n${out.slice(0, 1200)}\n\`\`\``);
 		}
 	}
+	if (/^这是定时任务「/.test(u)) return fauxAssistantMessage("简报：1. 今天有 2 个待办；2. 下午 3 点有个会；3. 没有紧急事项。");
 	const remember = u.match(/^记住[:：，,\s]*(.+)$/s);
 	if (remember) return fauxAssistantMessage([fauxToolCall("memory_remember", { content: remember[1].trim(), kind: "fact", scope: "user" })]);
 	if (/我叫什么|还记得我/.test(u)) {
@@ -52,10 +53,10 @@ function respond(messages: Msg[], systemPrompt = "") {
 		return fauxAssistantMessage(mem ? `我记得这些关于你的事：\n${mem[1].split("\n").filter((l) => l.startsWith("- ")).join("\n")}` : "我的记忆里还没有关于你的信息。");
 	}
 	if (/搜.*记忆|回忆/.test(u)) return fauxAssistantMessage([fauxToolCall("memory_recall", { query: u.replace(/.*(搜|回忆)[^：:]*[：:]?/, "").trim() || "用户" })]);
-	if (/每天|定时/.test(u))
-		return fauxAssistantMessage([fauxText("好，我来设一个定时任务。"), fauxToolCall("routine_create", { name: "每日简报", prompt: "整理今天的待办和日程，给我一份三条以内的简短简报。", trigger: "cron", cron: "0 8 * * *" })]);
 	if (/存成技能/.test(u))
 		return fauxAssistantMessage([fauxToolCall("skill_save", { name: "daily-brief", description: "生成每日简报：汇总待办、日程和要闻。用户要“简报/今日概览”时使用。", body: "# 每日简报\n\n1. 列出今天的待办（最多 5 条）。\n2. 汇总日程。\n3. 用三句话总结。" })]);
+	if (/每天|定时/.test(u))
+		return fauxAssistantMessage([fauxText("好，我来设一个定时任务。"), fauxToolCall("routine_create", { name: "每日简报", prompt: "整理今天的待办和日程，给我一份三条以内的简短简报。", trigger: "cron", cron: "0 8 * * *" })]);
 	if (/服务刚刚重启/.test(u)) return fauxAssistantMessage("我检查了一下进度：服务重启时上一轮命令被中断了。工作区里的文件都还在，需要的话再说一声我就重新执行。");
 	if (/后台/.test(u) && !/统计工作区/.test(u))
 		return fauxAssistantMessage([fauxToolCall("spawn_task", { title: "统计工作区文件", instructions: "统计工作区文件：列出工作区所有文件并统计数量，给出简短总结。" })]);

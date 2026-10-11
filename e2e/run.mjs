@@ -338,6 +338,70 @@ await step("活动提示行 + 步骤列表（进行中展开、完成后自动�
 	await page.screenshot({ path: join(SHOTS, "24-steps-collapsed-check.png") });
 });
 
+await step("Phase 2：记忆（聊天里记住 → 记忆页可见/编辑）", async () => {
+	await send("记住：我喜欢简洁的回答");
+	await page.locator("main").getByText("好的，我记住了").last().waitFor({ timeout: 15_000 });
+	const pane = page.locator("aside").last();
+	await pane.getByRole("tab", { name: "记忆" }).click();
+	await pane.getByText("我喜欢简洁的回答").waitFor();
+	await pane.getByRole("button", { name: "添加记忆" }).click();
+	await pane.locator("textarea").fill("我在上海，时区 Asia/Shanghai");
+	await pane.getByRole("button", { name: "保存", exact: true }).click();
+	await pane.getByText("我在上海，时区 Asia/Shanghai").waitFor();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "25-memory-tab.png") });
+});
+
+await step("Phase 2：定时任务（助理创建需审批 → 定时任务页 → 立即运行 → 运行历史）", async () => {
+	await send("每天早上 8 点给我一份简报");
+	await page.locator("main").getByText("需要你的批准").last().waitFor({ timeout: 15_000 });
+	await page.getByRole("button", { name: "批准", exact: true }).last().click();
+	await page.locator("main").getByText("定时任务设好了").last().waitFor({ timeout: 15_000 });
+	const pane = page.locator("aside").last();
+	await pane.getByRole("tab", { name: "定时任务" }).click();
+	const item = pane.locator("[data-testid=routine-item]").first();
+	await item.getByText("每日简报").waitFor();
+	await item.getByText("0 8 * * *").waitFor();
+	await item.getByRole("button", { name: "运行" }).click();
+	await item.getByText(/上次：/).waitFor({ timeout: 15_000 });
+	await item.getByText("完成").first().waitFor({ timeout: 30_000 });
+	await item.getByText("运行历史").click();
+	await page.waitForTimeout(400);
+	await page.screenshot({ path: join(SHOTS, "26-routines-tab.png") });
+	await pane.getByRole("button", { name: "新建" }).click();
+	await pane.locator("[data-testid=routine-form]").getByText(/下次/).waitFor();
+	await page.screenshot({ path: join(SHOTS, "26b-routine-form.png") });
+	await pane.getByRole("button", { name: "取消" }).click();
+});
+
+await step("Phase 2：技能（聊天里存成技能 → 设置 › 技能库）", async () => {
+	await send("把刚才的流程存成技能");
+	await page.locator("main").getByText("已经存成技能了").last().waitFor({ timeout: 15_000 });
+	await page.getByRole("button", { name: "设置" }).first().click();
+	await page.getByRole("button", { name: "技能库" }).click();
+	await page.locator("[data-testid=skills-tab]").getByText("daily-brief").waitFor();
+	await page.locator("[data-testid=skills-tab]").getByText("web-research").waitFor();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "27-skills.png") });
+	await page.locator("[data-testid=skills-tab]").getByText("daily-brief").click();
+	await page.getByText("每日简报").first().waitFor();
+	await page.screenshot({ path: join(SHOTS, "27b-skill-detail.png") });
+	await page.keyboard.press("Escape");
+});
+
+await step("Phase 2：多对话（新对话 → 切回旧对话历史仍在）", async () => {
+	await page.locator("[data-testid=conv-menu]").click();
+	await page.getByRole("button", { name: /新对话/ }).first().click();
+	await page.locator("main").getByText("我喜欢简洁的回答").waitFor({ state: "detached" });
+	await send("你好");
+	await page.locator("main").getByText("可以试试这些关键词").last().waitFor({ timeout: 15_000 });
+	await page.locator("[data-testid=conv-menu]").click();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "28-conversations.png") });
+	await page.getByRole("menu").getByText(/你好，介绍一下你自己/).first().click();
+	await page.locator("main").getByText("我喜欢简洁的回答").first().waitFor();
+});
+
 await step("四套主题截图（桌面浅色/深色 + 手机）", async () => {
 	mkdirSync(join(SHOTS, "themes"), { recursive: true });
 	for (const skin of ["linear", "glass", "warm", "noir"]) {
