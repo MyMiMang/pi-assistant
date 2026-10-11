@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { approvalExtension } from "@pi-assistant/ext-approval";
 import { computerExtension, trustedComputerTool } from "@pi-assistant/ext-computer";
+import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
+import { browserFor, setHeaded } from "./browser.ts";
 import { deliveryExtension } from "@pi-assistant/ext-delivery";
 import { memoryExtension } from "@pi-assistant/ext-memory";
 import { routinesExtension } from "@pi-assistant/ext-routines";
@@ -188,7 +190,8 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			name: "pia-approval",
 			factory: approvalExtension({
 				workspace,
-				trusted: trustedComputerTool("sandbox"),
+				// 电脑工具（sandbox 目标）和浏览器工具由各自的扩展把关（提交/付款/发送/上传才审批）
+				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n),
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId);
 					return { approved: !!res.approved, note: res.note };
@@ -261,6 +264,43 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			}),
 		},
 	];
+	/** 请用户接管：截图进聊天 + 推送到手机，等用户点“已完成” */
+	const handoff = async (reason: string, png: Buffer, where: string) => {
+		const dir = join(workspace, ".screens");
+		mkdirSync(dir, { recursive: true });
+		const rel = `.screens/handoff-${Date.now()}.png`;
+		writeFileSync(join(workspace, rel), png);
+		const f = deliverFromWorkspace(agentId, rel);
+		insertMessage({ agentId, conversationId, role: "assistant", content: `需要你接管：${reason}\n\n${where}`, meta: { attachments: [fileInfo(f)], fromTask: taskId, handoff: true } });
+		notify({ title: `${BRAND.name}：需要你接管`, body: reason, data: { type: "handoff", agentId } });
+		const r = await requests.question(agentId, taskId, `${reason}——完成后点“已完成”`, ["已完成", "做不了"], true, conversationId);
+		return r.answer ?? "无回应";
+	};
+	exts.push({
+		name: "pia-browser",
+		factory: browserExtension({
+			workspace,
+			context: async () => (await browserFor(agentId)).ctx,
+			mode: () => (computerOn ? "sandbox" : "host"),
+			isPaused: () => desktopPause.isPaused(agentId),
+			request: async (r) => {
+				const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
+				return { approved: !!res.approved, note: res.note, scope: res.scope };
+			},
+			handoff: async (reason, png, url) => {
+				const s = await browserFor(agentId);
+				if (s.mode === "sandbox") return handoff(reason, png, "可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。");
+				// 本机无头浏览器：临时打开有界面的窗口让你在这台电脑上操作；不在电脑旁时可直接扫截图里的二维码
+				await setHeaded(agentId, true, url);
+				try {
+					return await handoff(reason, png, "已在这台电脑上打开浏览器窗口，请在窗口里完成；不在电脑旁时，可以直接用手机扫描下面截图里的二维码。");
+				} finally {
+					const page = (await browserFor(agentId)).ctx.pages()[0];
+					await setHeaded(agentId, false, page?.url());
+				}
+			},
+		}),
+	});
 	// 助理电脑运行中 → 挂上 cua-driver（MCP）与看屏幕/接管工具
 	if (computerOn)
 		exts.push({
@@ -270,17 +310,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				mcp: cuaMcpCommand(agentId),
 				isPaused: () => desktopPause.isPaused(agentId),
 				screenshot: () => screenshotDesktop(agentId),
-				handoff: async (reason, png) => {
-					const dir = join(workspace, ".screens");
-					mkdirSync(dir, { recursive: true });
-					const rel = `.screens/handoff-${Date.now()}.png`;
-					writeFileSync(join(workspace, rel), png);
-					const f = deliverFromWorkspace(agentId, rel);
-					insertMessage({ agentId, conversationId, role: "assistant", content: `需要你接管：${reason}\n\n可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。`, meta: { attachments: [fileInfo(f)], fromTask: taskId } });
-					notify({ title: `${BRAND.name}：需要你接管`, body: reason, data: { type: "handoff", agentId } });
-					const r = await requests.question(agentId, taskId, `${reason}——完成后点“已完成”`, ["已完成", "做不了"], true, conversationId);
-					return r.answer ?? "无回应";
-				},
+				handoff: (reason, png) => handoff(reason, png, "可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。"),
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId);
 					return { approved: !!res.approved, note: res.note };

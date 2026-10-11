@@ -15,6 +15,7 @@
     "@earendil-works/pi-mcp": "^1.1.0",
     "@hono/node-server": "^2.1.4",
     "@pi-assistant/ext-approval": "*",
+    "@pi-assistant/ext-browser": "*",
     "@pi-assistant/ext-computer": "*",
     "@pi-assistant/ext-delivery": "*",
     "@pi-assistant/ext-memory": "*",

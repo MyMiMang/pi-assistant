@@ -11,10 +11,10 @@ export function ApprovalCard({ m }: { m: Message }) {
 	const meta = m.meta;
 	const [busy, setBusy] = useState(false);
 	const pending = meta.status === "pending";
-	const decide = async (approved: boolean) => {
+	const decide = async (approved: boolean, scope?: "task") => {
 		setBusy(true);
 		try {
-			await api(`/api/requests/${meta.requestId}`, { method: "POST", json: { approved } });
+			await api(`/api/requests/${meta.requestId}`, { method: "POST", json: { approved, scope } });
 		} finally {
 			setBusy(false);
 		}
@@ -40,13 +40,18 @@ export function ApprovalCard({ m }: { m: Message }) {
 					<button className="pa-btn ghost" disabled={busy} onClick={() => decide(false)}>
 						{t("拒绝")}
 					</button>
+					{!!meta.allowTask && (
+						<button className="pa-btn ghost" disabled={busy} onClick={() => decide(true, "task")} title="这次任务里同类操作不再逐个询问">
+							{t("本任务内都允许")}
+						</button>
+					)}
 					<button className="pa-btn primary" disabled={busy} onClick={() => decide(true)}>
 						{t("批准")}
 					</button>
 				</div>
 			) : (
 				<div className="mt-3">
-					{meta.status === "approved" ? <span className="pa-res ok">✓ {t("已批准")}</span> : meta.status === "rejected" ? <span className="pa-res no">{t("已拒绝")}</span> : <span className="pa-res no">{t("已过期")}</span>}
+					{meta.status === "approved" ? <span className="pa-res ok">✓ {meta.scope === "task" ? t("已批准（本任务内都允许）") : t("已批准")}</span> : meta.status === "rejected" ? <span className="pa-res no">{t("已拒绝")}</span> : <span className="pa-res no">{t("已过期")}</span>}
 				</div>
 			)}
 		</div>

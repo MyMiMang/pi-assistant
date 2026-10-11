@@ -1,0 +1,11 @@
+{
+  "name": "@pi-assistant/ext-browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "助理的浏览器：Playwright（只用公开 API）驱动助理电脑里的 Chromium，或本机无头 Chromium 兜底",
+  "exports": { ".": "./src/index.ts" },
+  "keywords": ["pi-package"],
+  "peerDependencies": { "@earendil-works/pi-coding-agent": ">=1.1.0", "playwright-core": ">=1.50.0" },
+  "dependencies": { "typebox": "1.3.27" }
+}

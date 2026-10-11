@@ -1,3 +1,4 @@
+import { closeAllBrowsers } from "./browser.ts";
 import { config } from "./config.ts";
 import { getSetting } from "./db.ts";
 import { startHttp } from "./http.ts";
@@ -26,5 +27,5 @@ if (hindsightInUse()) void sidecar.ensure();
 for (const sig of ["SIGINT", "SIGTERM"] as const)
 	process.on(sig, () => {
 		// Hindsight 守护进程是独立进程：退出前停掉它（最多等 6 秒）
-		void Promise.race([sidecar.stop(), new Promise((r) => setTimeout(r, 6000))]).finally(() => process.exit(0));
+		void Promise.race([Promise.all([sidecar.stop(), closeAllBrowsers()]), new Promise((r) => setTimeout(r, 6000))]).finally(() => process.exit(0));
 	});

@@ -650,8 +650,8 @@ app.get("/api/files/:id", (c) => {
 
 // ---------------------------------------------------------------- 审批 / 提问
 app.post("/api/requests/:id", async (c) => {
-	const b = await c.req.json<{ approved?: boolean; answer?: string; note?: string }>();
-	return c.json(requests.resolve(c.req.param("id"), b, by(c)));
+	const b = await c.req.json<{ approved?: boolean; answer?: string; note?: string; scope?: string }>();
+	return c.json(requests.resolve(c.req.param("id"), { approved: b.approved, answer: b.answer, note: b.note, scope: b.scope === "task" ? "task" : undefined }, by(c)));
 });
 
 // ---------------------------------------------------------------- 助理电脑（sandbox desktop）

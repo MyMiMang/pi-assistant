@@ -7,7 +7,7 @@ import { db, now, uid } from "./db.ts";
 import { insertMessage, updateMessage } from "./messages.ts";
 import { notify } from "./push.ts";
 
-type Resolver = (r: { approved?: boolean; answer?: string; note?: string }) => void;
+type Resolver = (r: { approved?: boolean; answer?: string; note?: string; scope?: "task" }) => void;
 const pending = new Map<string, { resolve: Resolver; messageId: string }>();
 
 export interface RequestRow {
@@ -38,17 +38,18 @@ function create(kind: "approval" | "question", agentId: string, taskId: string |
 	// 卡片显示在主聊天里（即使来自后台任务），这样手机上也能直接处理
 	const msg = insertMessage({ agentId, conversationId, role: "card", meta: { kind, requestId: id, taskId, toolName, ...payload, status: "pending" } });
 	notify({ title, body: String(payload.summary ?? payload.question ?? ""), tag: id, url: `/?agent=${agentId}` });
-	return new Promise<{ approved?: boolean; answer?: string; note?: string }>((resolve) => pending.set(id, { resolve, messageId: msg.id }));
+	return new Promise<{ approved?: boolean; answer?: string; note?: string; scope?: "task" }>((resolve) => pending.set(id, { resolve, messageId: msg.id }));
 }
 
 export const requests = {
-	approval(agentId: string, taskId: string | null, toolName: string, input: Record<string, unknown>, summary: string, risk: string, conversationId?: string | null) {
-		return create("approval", agentId, taskId, toolName, { input, summary, risk }, "需要你批准一个操作", conversationId);
+	/** allowTask：卡片上多一个“本任务内都允许”（同一任务里同类动作不再逐个询问） */
+	approval(agentId: string, taskId: string | null, toolName: string, input: Record<string, unknown>, summary: string, risk: string, conversationId?: string | null, opts: { allowTask?: boolean } = {}) {
+		return create("approval", agentId, taskId, toolName, { input, summary, risk, ...(opts.allowTask ? { allowTask: true } : {}) }, "需要你批准一个操作", conversationId);
 	},
 	question(agentId: string, taskId: string | null, question: string, options: string[], allowFreeText: boolean, conversationId?: string | null) {
 		return create("question", agentId, taskId, null, { question, options, allowFreeText }, "助理有个问题想问你", conversationId);
 	},
-	resolve(id: string, r: { approved?: boolean; answer?: string; note?: string }, by: string) {
+	resolve(id: string, r: { approved?: boolean; answer?: string; note?: string; scope?: "task" }, by: string) {
 		const row = db.prepare("SELECT * FROM requests WHERE id = ?").get(id) as RequestRow | undefined;
 		if (!row) return { ok: false, error: "not_found" };
 		if (row.status !== "pending") return { ok: false, error: "already_resolved" };
@@ -57,7 +58,7 @@ export const requests = {
 		db.prepare("UPDATE requests SET status = ?, answer = ?, resolved_by = ?, resolved_at = ? WHERE id = ?").run(status, answer, by, now(), id);
 		const p = pending.get(id);
 		const msgRow = db.prepare("SELECT id FROM messages WHERE role = 'card' AND json_extract(meta, '$.requestId') = ?").get(id) as { id: string } | undefined;
-		if (msgRow) updateMessage(msgRow.id, { meta: { status, answer } });
+		if (msgRow) updateMessage(msgRow.id, { meta: { status, answer, ...(r.approved && r.scope === "task" ? { scope: "task" } : {}) } });
 		bus.emit({ type: "request.resolved", id, status });
 		if (p) {
 			pending.delete(id);
