@@ -9,6 +9,7 @@ import { AuthImage } from "./Attachments";
 import { AgentEditor } from "./AgentEditor";
 import { MemoryTab } from "./MemoryTab";
 import { AgentExtensions } from "./AgentExtensions";
+import { AgentHostTier } from "./HostControl";
 import { RoutinesTab } from "./RoutinesTab";
 import { Avatar, Badge, Button, cx, fmtSize, fmtTime, Input } from "./ui";
 
@@ -208,6 +209,7 @@ function AgentSettings({ agentId }: { agentId: string }) {
 		<div className="space-y-6">
 			<AgentEditor agent={agent} />
 			<AgentExtensions agentId={agentId} />
+			<AgentHostTier agentId={agentId} />
 		</div>
 	);
 }

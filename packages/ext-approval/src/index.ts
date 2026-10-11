@@ -5,6 +5,7 @@
  */
 import { isAbsolute, relative, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { guardPath, guardShell, type GuardContext, type GuardHit } from "@pi-assistant/shared";
 
 export type Decision =
 	| { kind: "allow" }
@@ -22,6 +23,18 @@ export interface ApprovalHost {
 	request(req: ApprovalRequest): Promise<{ approved: boolean; note?: string }>;
 	/** 由其它扩展自行把关的工具（例如 sandbox 目标下的电脑工具） */
 	trusted?: (toolName: string) => boolean;
+	/** 硬性保护清单的上下文（受保护路径等）；命中的 shell / 文件操作必须明确批准，任何设置都不能跳过 */
+	guard?: GuardContext;
+}
+
+/** 硬性保护：shell 命令、文件写入 */
+export function hardGuard(toolName: string, input: Record<string, unknown>, workspace: string, ctx: GuardContext): GuardHit | null {
+	if (toolName === "bash" || toolName === "powershell") return guardShell(String(input.command ?? ""), ctx);
+	if (toolName === "write" || toolName === "edit") {
+		const p = typeof input.path === "string" ? input.path : "";
+		return p ? guardPath(isAbsolute(p) ? p : resolve(workspace, p), ctx) : null;
+	}
+	return null;
 }
 
 // codemode / tool_search 本身无副作用：脚本里调用的每个工具仍会单独经过这道闸门（parentToolCallId）
@@ -76,12 +89,21 @@ export function approvalExtension(host: ApprovalHost) {
 	return (pi: ExtensionAPI) => {
 		const rejected = new Map<string, number>();
 		pi.on("tool_call", async (event) => {
-			if (host.trusted?.(event.toolName)) return;
 			const input = (event.input ?? {}) as Record<string, unknown>;
+			// 硬性保护在一切规则之前：不看 trusted、不记“本任务内都允许”，每次都问
+			const g = hardGuard(event.toolName, input, host.workspace, host.guard ?? { target: "host" });
+			let guarded = false;
+			if (g) {
+				const res = await host.request({ toolName: event.toolName, input, summary: `⚠️ 受保护的操作（${g.label}）：${String(input.command ?? input.path ?? "")}`.slice(0, 400), risk: "high" });
+				if (!res.approved) return { block: true, reason: `这是受保护的操作（${g.label}），用户没有批准${res.note ? `：${res.note}` : ""}。不要换方式重试。` };
+				guarded = true;
+			}
+			if (host.trusted?.(event.toolName)) return;
 			const annotations = pi.getAllTools().find((t) => t.name === event.toolName)?.annotations;
 			const d = evaluate(event.toolName, input, annotations, host.workspace);
 			if (d.kind === "allow") return;
 			if (d.kind === "deny") return { block: true, reason: d.reason };
+			if (guarded) return; // 已经明确批准过
 			// 拒绝是最终结果：相同调用 30 分钟内直接拒绝，避免换个说法重试
 			const fp = `${event.toolName}:${JSON.stringify(input)}`;
 			const at = rejected.get(fp);

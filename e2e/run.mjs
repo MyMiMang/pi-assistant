@@ -707,6 +707,15 @@ await step("Phase 3 操作这台电脑：设置页（默认关闭、风险提示
 	await page.getByText(/默认关闭|风险/).first().waitFor();
 	await page.waitForTimeout(400);
 	await page.screenshot({ path: join(SHOTS, "42-settings-host-control.png") });
+	// 档位：按助理设置；选“完全权限”出现强警告
+	const row = page.locator("[data-testid=host-tier-row]").first();
+	await row.locator("[data-testid=tier-full]").click();
+	await page.locator("[data-testid=host-full-warning]").waitFor();
+	await page.locator("[data-testid=host-tiers]").scrollIntoViewIfNeeded();
+	await page.mouse.move(5, 5);
+	await page.waitForTimeout(400);
+	await page.screenshot({ path: join(SHOTS, "43-host-tiers.png") });
+	await row.locator("[data-testid=tier-bounded]").click();
 	await page.keyboard.press("Escape");
 });
 

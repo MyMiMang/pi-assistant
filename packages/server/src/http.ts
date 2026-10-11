@@ -41,10 +41,11 @@ import { addPackage, install as installPackage, listPackages, type PiPackageRow,
 import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
 import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRoutines, listRuns, type RoutineInput, type RoutineRow, runRoutine, setRoutineStatus, updateRoutine, verifyWebhook, webhookPath } from "./routines.ts";
 import { BRAND } from "@pi-assistant/shared";
+import { actionShot, clearActions, listActions } from "./action-log.ts";
 import { openWechat, saveWechatSettings, wechatSettings, wechatStatus } from "./wechat.ts";
 import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAccount, testAccount } from "./email.ts";
 import { channelJson, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
-import { currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
+import { FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
@@ -754,27 +755,37 @@ app.post("/api/wechat/:agentId/open", localOnly, async (c) => {
 });
 
 // ---------------------------------------------------------------- 操作这台电脑（Cua bounded）
-const hostManifest = () => currentManifest(workspaceOf, listAgents().map((a) => a.id));
+const hostManifest = () => (setHostEnv({ workspaceOf, agentIds: () => listAgents().map((a) => a.id) }), hostPlan());
 app.get("/api/host-control", async (c) => {
 	const yaml = hostManifest();
-	return c.json({ settings: hostSettings(), status: hostStatus(), manifest: yaml, manifestHash: manifestHash(yaml), permissions: c.get("caller").local ? await macPermissions() : null });
+	const s = hostSettings();
+	return c.json({ settings: s, status: hostStatus(), manifest: yaml, manifestHash: manifestHash(yaml), tiers: Object.fromEntries(listAgents().map((a) => [a.id, tierOf(a.id, s)])), fullConfirm: FULL_CONFIRM, permissions: c.get("caller").local ? await macPermissions() : null });
 });
 app.get("/api/host-control/apps", localOnly, async (c) => c.json(await suggestApps()));
-/** 保存设置。开启需要带上用户在页面上看到的清单哈希（= 用户审阅过这份清单），清单变了就要重新确认 */
+const RANK: Record<HostTier, number> = { observe: 0, bounded: 1, trusted: 2, full: 3 };
+/** 保存设置。开启需要带上用户在页面上看到的权限计划哈希（= 用户审阅过），计划变了就要重新确认 */
 app.put("/api/host-control", localOnly, async (c) => {
-	const b = await c.req.json<{ enabled?: boolean; agents?: "all" | string[]; apps?: HostApp[]; workspaceFiles?: boolean; acknowledged?: boolean; manifestHash?: string }>();
-	const apps = (b.apps ?? hostSettings().apps)
+	const b = await c.req.json<{ enabled?: boolean; agents?: "all" | string[]; apps?: HostApp[]; workspaceFiles?: boolean; acknowledged?: boolean; manifestHash?: string; tiers?: Record<string, HostTier>; defaultTier?: HostTier; confirmText?: string }>();
+	const cur = hostSettings();
+	const apps = (b.apps ?? cur.apps)
 		.filter((a) => a && typeof a.id === "string" && a.id.trim())
 		.map((a) => ({ name: String(a.name || a.id).slice(0, 60), id: a.id.trim().slice(0, 300) }));
 	if (process.platform !== "darwin" && apps.some((a) => !/^([a-zA-Z]:\\|\/)/.test(a.id))) return c.json({ error: "Windows / Linux 上应用要填可执行文件的完整路径" }, 400);
-	const patch = { agents: b.agents ?? hostSettings().agents, apps, workspaceFiles: b.workspaceFiles ?? hostSettings().workspaceFiles };
-	saveHostSettings({ ...patch, enabled: false, approvedHash: undefined });
+	const tiers = { ...cur.tiers, ...(b.tiers ?? {}) };
+	if (Object.values(tiers).some((t) => !TIERS.includes(t)) || (b.defaultTier && !TIERS.includes(b.defaultTier))) return c.json({ error: "权限档位不对" }, 400);
+	const defaultTier = b.defaultTier ?? cur.defaultTier;
+	const next = { ...cur, agents: b.agents ?? cur.agents, apps, workspaceFiles: b.workspaceFiles ?? cur.workspaceFiles, tiers, defaultTier };
+	saveHostSettings({ ...next, enabled: false, approvedHash: undefined });
 	const yaml = hostManifest();
 	if (b.enabled) {
 		if (!b.acknowledged) return c.json({ error: "请先阅读并确认风险提示" }, 400);
-		if (b.manifestHash !== manifestHash(yaml)) return c.json({ error: "清单已变化，请重新查看后再确认", manifestHash: manifestHash(yaml) }, 409);
-		if (!apps.length) return c.json({ error: "至少选择一个允许操作的应用" }, 400);
-		saveHostSettings({ enabled: true, approvedHash: manifestHash(yaml), enabledAt: Date.now() });
+		if (b.manifestHash !== manifestHash(yaml)) return c.json({ error: "权限设置已变化，请重新查看后再确认", manifestHash: manifestHash(yaml) }, 409);
+		const ids = (next.agents === "all" ? listAgents().map((a) => a.id) : next.agents) as string[];
+		const fullNow = ids.filter((a) => tierOf(a, next) === "full");
+		if (fullNow.some((a) => !cur.fullAck[a] || tierOf(a, cur) !== "full" || !cur.enabled) && (b.confirmText ?? "").trim() !== FULL_CONFIRM) return c.json({ error: `有助理设为“完全权限”，需要输入：${FULL_CONFIRM}` }, 400);
+		if (ids.some((a) => tierOf(a, next) === "bounded") && !apps.length) return c.json({ error: "“限定”档位至少要选择一个允许操作的应用" }, 400);
+		const fullAck = Object.fromEntries(fullNow.map((a) => [a, cur.fullAck[a] && tierOf(a, cur) === "full" ? cur.fullAck[a] : Date.now()]));
+		saveHostSettings({ enabled: true, approvedHash: manifestHash(yaml), enabledAt: Date.now(), fullAck });
 		try {
 			await startDaemon(yaml);
 		} catch (e) {
@@ -783,16 +794,66 @@ app.put("/api/host-control", localOnly, async (c) => {
 	} else await stopDaemon();
 	return c.json({ ok: true, status: hostStatus(), manifestHash: manifestHash(yaml) });
 });
+/**
+ * 单个助理的档位（助理设置页 / 设置页都用）。调低立即生效；调高需要确认风险，调到“完全权限”还要输入确认语。
+ * 已开启时会按新的权限计划重启 Cua 守护进程。
+ */
+app.put("/api/host-control/tier/:agentId", localOnly, async (c) => {
+	const agentId = c.req.param("agentId")!;
+	const b = await c.req.json<{ tier: HostTier; acknowledged?: boolean; confirmText?: string }>();
+	if (!TIERS.includes(b.tier)) return c.json({ error: "权限档位不对" }, 400);
+	const cur = hostSettings();
+	const from = tierOf(agentId, cur);
+	if (RANK[b.tier] > RANK[from] && !b.acknowledged) return c.json({ error: "调高权限需要先确认风险提示" }, 400);
+	if (b.tier === "full" && from !== "full" && (b.confirmText ?? "").trim() !== FULL_CONFIRM) return c.json({ error: `设为“完全权限”需要输入：${FULL_CONFIRM}` }, 400);
+	if (b.tier === "bounded" && !cur.apps.length && cur.enabled) return c.json({ error: "“限定”档位需要先在 设置 › 操作这台电脑 里选择允许的应用" }, 400);
+	const fullAck = { ...cur.fullAck };
+	if (b.tier === "full") fullAck[agentId] = from === "full" ? (fullAck[agentId] ?? Date.now()) : Date.now();
+	else delete fullAck[agentId];
+	saveHostSettings({ tiers: { ...cur.tiers, [agentId]: b.tier }, fullAck });
+	const yaml = hostManifest();
+	if (cur.enabled) {
+		saveHostSettings({ approvedHash: manifestHash(yaml) });
+		try {
+			await startDaemon(yaml);
+		} catch (e) {
+			return c.json({ ok: false, error: e instanceof Error ? e.message : String(e), status: hostStatus() });
+		}
+	}
+	bus.emit({ type: "host.changed", status: hostStatus() } as never);
+	return c.json({ ok: true, tier: b.tier, status: hostStatus() });
+});
 /** 一键暂停 / 继续：任何已配对的设备（包括手机）都能点 */
 app.post("/api/host-control/pause", async (c) => {
 	const { paused } = await c.req.json<{ paused: boolean }>();
-	await setHostPaused(!!paused, hostManifest);
+	hostManifest();
+	await setHostPaused(!!paused);
 	return c.json(hostStatus());
 });
 app.post("/api/host-control/permissions", localOnly, async (c) => {
 	await macGrantPermissions();
 	return c.json({ ok: true });
 });
+/** 助理自己的电脑：审批策略（默认不审批） */
+app.get("/api/sandbox-computer", (c) => c.json(sandboxComputerSettings()));
+app.put("/api/sandbox-computer", localOnly, async (c) => {
+	try {
+		const r = saveSandboxComputerSettings(await c.req.json());
+		bus.emit({ type: "host.changed", status: hostStatus() } as never);
+		return c.json(r);
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+/** 电脑操作记录 */
+app.get("/api/actions", (c) =>
+	c.json({ items: listActions({ agentId: c.req.query("agentId") || undefined, target: c.req.query("target") || undefined, before: Number(c.req.query("before")) || undefined, limit: Number(c.req.query("limit")) || 100 }) }),
+);
+app.get("/api/actions/:id/shot", (c) => {
+	const png = actionShot(c.req.param("id")!);
+	return png ? new Response(new Uint8Array(png), { headers: { "content-type": "image/png", "cache-control": "private, max-age=86400" } }) : c.json({ error: "not_found" }, 404);
+});
+app.delete("/api/actions", localOnly, (c) => (clearActions(c.req.query("agentId") || undefined), c.json({ ok: true })));
 
 // ---------------------------------------------------------------- 助理电脑（sandbox desktop）
 const deskJson = async (id: string) => ({ ...(await desktopStatus(id)), paused: desktopPause.isPaused(id) });

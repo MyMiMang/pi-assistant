@@ -3,14 +3,27 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, cx, Input, avatarText } from "./ui";
+import { ActionLog } from "./ActionLog";
+
+/** 与服务端 host-control.ts 的 FULL_CONFIRM 一致 */
+export const FULL_CONFIRM = "我了解风险，允许完全控制这台电脑";
+export type Tier = "observe" | "bounded" | "trusted" | "full";
+export const TIER_INFO: Record<Tier, { label: string; desc: string; tone: string }> = {
+	observe: { label: "只看", desc: "截图、读取窗口内容，不能点击或输入", tone: "zinc" },
+	bounded: { label: "限定", desc: "只能操作勾选的应用，每个动作都问你（默认）", tone: "green" },
+	trusted: { label: "信任", desc: "所有应用；日常动作不问，发送 / 付款 / 删除 / 提交仍要问", tone: "amber" },
+	full: { label: "完全权限", desc: "几乎不问（受保护的操作仍要问）；需要输入确认语", tone: "red" },
+};
+const TIER_ORDER: Tier[] = ["observe", "bounded", "trusted", "full"];
 
 interface HostApp {
 	name: string;
 	id: string;
 }
 interface HostInfo {
-	settings: { enabled: boolean; agents: "all" | string[]; apps: HostApp[]; workspaceFiles: boolean; approvedHash?: string };
-	status: { enabled: boolean; paused: boolean; daemon: { state: string; detail: string }; platform: string; installed: boolean; version: string };
+	settings: { enabled: boolean; agents: "all" | string[]; apps: HostApp[]; workspaceFiles: boolean; approvedHash?: string; tiers: Record<string, Tier>; defaultTier: Tier };
+	tiers: Record<string, Tier>;
+	status: { enabled: boolean; tiers: Record<string, Tier>; paused: boolean; daemon: { state: string; detail: string }; platform: string; installed: boolean; version: string };
 	manifest: string;
 	manifestHash: string;
 	permissions: { accessibility: string; screenRecording: string } | null;
@@ -36,13 +49,22 @@ export function HostControlBar() {
 	return (
 		<div className={cx("pa-hostbar", paused && "paused")} data-testid="host-bar">
 			<Hand className="pa-ic" />
-			<span className="min-w-0 flex-1 truncate">{paused ? "已暂停操作你的电脑" : `助理可以操作你的电脑（${d.settings.apps.map((a) => a.name).join("、") || "未选应用"}），每个动作都会先问你`}</span>
+			<span className="min-w-0 flex-1 truncate">
+				{paused ? "已暂停操作你的电脑" : `助理可以操作你的电脑：${barText(d)}`}
+			</span>
 			<button className="pa-btn sm" onClick={toggle} data-testid="host-pause">
 				{paused ? <Play className="pa-ic" /> : <Pause className="pa-ic" />}
 				{paused ? "继续" : "暂停"}
 			</button>
 		</div>
 	);
+}
+
+function barText(d: HostInfo) {
+	const agents = useStore.getState().agents;
+	const by = new Map<Tier, string[]>();
+	for (const [id, t] of Object.entries(d.status.tiers ?? {})) by.set(t, [...(by.get(t) ?? []), agents.find((a) => a.id === id)?.name ?? id]);
+	return TIER_ORDER.filter((t) => by.has(t)).map((t) => `${TIER_INFO[t].label}（${by.get(t)!.join("、")}）`).join("；") || "没有允许的助理";
 }
 
 const PERM: Record<string, string> = { granted: "已授权", denied: "未授权", unknown: "未知" };
@@ -60,8 +82,11 @@ export function HostControlSettings() {
 	const [suggest, setSuggest] = useState<HostApp[] | null>(null);
 	const [custom, setCustom] = useState({ name: "", id: "" });
 	const [preview, setPreview] = useState<{ yaml: string; hash: string } | null>(null);
+	const [tiers, setTiers] = useState<Record<string, Tier>>({});
+	const [confirmText, setConfirmText] = useState("");
 	useEffect(() => {
 		if (d && apps === null) {
+			setTiers(d.tiers ?? {});
 			setApps(d.settings.apps);
 			setScope(d.settings.agents);
 			setFiles(d.settings.workspaceFiles);
@@ -71,13 +96,18 @@ export function HostControlSettings() {
 	const mac = d.status.platform === "darwin";
 	const win = d.status.platform === "win32";
 	const on = d.status.enabled;
+	const allowedIds = scope === "all" ? agents.map((a) => a.id) : scope;
+	const tierOf = (id: string): Tier => tiers[id] ?? d.settings.defaultTier ?? "bounded";
+	const anyBounded = allowedIds.some((id) => tierOf(id) === "bounded");
+	const anyFull = allowedIds.some((id) => tierOf(id) === "full");
 	const save = async (enabled: boolean, hash?: string) => {
 		setBusy(true);
 		setMsg(null);
 		try {
-			const r = await api("/api/host-control", { method: "PUT", json: { enabled, agents: scope, apps, workspaceFiles: files, acknowledged: ack, manifestHash: hash } });
+			const r = await api("/api/host-control", { method: "PUT", json: { enabled, agents: scope, apps, workspaceFiles: files, acknowledged: ack, manifestHash: hash, tiers, confirmText } });
 			if (r.ok === false) setMsg({ ok: false, text: r.error });
-			else setMsg({ ok: true, text: enabled ? "已开启：助理现在可以在你允许的应用里操作，每个动作都会先问你" : "已关闭" });
+			else setMsg({ ok: true, text: enabled ? "已开启：按各助理的档位操作你的电脑，受保护的操作一律先问你，随时可以一键暂停" : "已关闭" });
+			setConfirmText("");
 			setPreview(null);
 			await load();
 		} catch (e) {
@@ -90,7 +120,7 @@ export function HostControlSettings() {
 	const review = async () => {
 		setBusy(true);
 		try {
-			const r = await api("/api/host-control", { method: "PUT", json: { enabled: false, agents: scope, apps, workspaceFiles: files } });
+			const r = await api("/api/host-control", { method: "PUT", json: { enabled: false, agents: scope, apps, workspaceFiles: files, tiers } });
 			const j = (await api("/api/host-control")) as HostInfo;
 			setPreview({ yaml: j.manifest, hash: r.manifestHash ?? j.manifestHash });
 			void load();
@@ -133,6 +163,53 @@ export function HostControlSettings() {
 				)}
 			</section>
 
+			<section className="space-y-2" data-testid="host-tiers">
+				<div className="font-semibold">各助理的权限档位</div>
+				<div className="grid gap-1.5 text-xs text-mut sm:grid-cols-2">
+					{TIER_ORDER.map((t) => (
+						<div key={t} className={cx("rounded-lg border p-2", t === "full" ? "border-red-500/40" : "border-line")}>
+							<b className={cx(t === "full" && "text-red-600", t === "trusted" && "text-amber-600")}>{TIER_INFO[t].label}</b>：{TIER_INFO[t].desc}
+						</div>
+					))}
+				</div>
+				<table className="w-full text-sm">
+					<tbody>
+						{agents
+							.filter((a) => allowedIds.includes(a.id))
+							.map((a) => (
+								<tr key={a.id} className="border-t border-line" data-testid="host-tier-row">
+									<td className="py-2">
+										{avatarText(a.avatar)} {a.name}
+									</td>
+									<td className="py-2 text-right">
+										<span className="inline-flex gap-1">
+											{TIER_ORDER.map((t) => (
+												<button key={t} className={cx("pa-chip", tierOf(a.id) === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => (setTiers({ ...tiers, [a.id]: t }), setPreview(null))} data-testid={`tier-${t}`}>
+													{TIER_INFO[t].label}
+												</button>
+											))}
+										</span>
+									</td>
+								</tr>
+							))}
+					</tbody>
+				</table>
+				{anyFull && (
+					<div className="space-y-1 rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm leading-relaxed text-red-800 dark:text-red-300" data-testid="host-full-warning">
+						<div className="flex items-center gap-2 font-semibold">
+							<AlertTriangle size={16} /> 完全权限 = 助理可以做你在这台电脑上能做的几乎任何事
+						</div>
+						<ul className="list-disc pl-5">
+							<li>能打开任何应用、读写文件、使用你已登录的账号（聊天、邮箱、网银、云盘……），Cua Driver 以 unrestricted 模式运行，没有应用清单，日常动作不再问你。</li>
+							<li>网页、文档、聊天消息里的恶意内容可能诱导助理做出你不想要的操作（提示注入），后果可能无法撤回。</li>
+							<li>受保护的操作（结束/卸载 Pi Assistant、关机重启、格式化、改系统设置/防火墙/账户、大范围删除、改开机启动项等）仍然每次都会问你。</li>
+							<li>建议只在你在电脑旁边时使用；电脑和手机上都能一键暂停；所有动作都会记录。</li>
+						</ul>
+					</div>
+				)}
+				<p className="text-xs text-mut">无论哪个档位：受保护的操作都必须你明确批准，一键暂停始终有效，所有动作都会记录。</p>
+			</section>
+
 			{mac && (
 				<section className="rounded-xl bg-hover p-3 text-sm" data-testid="host-mac-perms">
 					<div className="font-semibold">macOS 权限</div>
@@ -151,8 +228,8 @@ export function HostControlSettings() {
 			)}
 			{win && <div className="rounded-xl bg-hover p-3 text-sm text-mut">Windows：无需额外授权。若要操作“以管理员身份运行”的程序，本应用也需要以管理员身份运行（不推荐）。</div>}
 
-			<section>
-				<div className="mb-2 font-semibold">允许操作的应用</div>
+			{anyBounded && <section>
+				<div className="mb-2 font-semibold">允许操作的应用（“限定”档位）</div>
 				<ul className="space-y-1" data-testid="host-apps">
 					{apps.map((a) => (
 						<li key={a.id} className="flex items-center gap-2 rounded-lg bg-hover px-3 py-2 text-sm">
@@ -188,7 +265,7 @@ export function HostControlSettings() {
 						添加
 					</Button>
 				</div>
-			</section>
+			</section>}
 
 			<section className="space-y-2 text-sm">
 				<div className="font-semibold">哪些助理可以操作</div>
@@ -207,25 +284,33 @@ export function HostControlSettings() {
 						))}
 					</div>
 				)}
-				<label className="flex items-center gap-2">
-					<input type="checkbox" checked={files} onChange={(e) => setFiles(e.target.checked)} /> 允许在这些应用里打开 / 保存助理工作区里的文件
-				</label>
+				{anyBounded && (
+					<label className="flex items-center gap-2">
+						<input type="checkbox" checked={files} onChange={(e) => setFiles(e.target.checked)} /> 允许在这些应用里打开 / 保存助理工作区里的文件
+					</label>
+				)}
 			</section>
 
 			{!preview ? (
-				<Button variant="primary" disabled={busy || !apps.length} onClick={review} data-testid="host-review">
+				<Button variant="primary" disabled={busy || (anyBounded && !apps.length)} onClick={review} data-testid="host-review">
 					{busy && <Loader2 size={14} className="animate-spin" />} 查看权限清单并{on ? "更新" : "开启"}…
 				</Button>
 			) : (
 				<section className="space-y-2" data-testid="host-manifest">
-					<div className="text-sm font-semibold">Cua 能力清单（bounded 模式只允许这里列出的内容）</div>
+					<div className="text-sm font-semibold">权限计划（各助理档位 + “限定”档位的 Cua 能力清单）</div>
 					<pre className="pa-pre max-h-64 overflow-auto text-xs">{preview.yaml}</pre>
+					{anyFull && (
+						<label className="block text-sm">
+							请一字不差地输入「<b>{FULL_CONFIRM}</b>」以确认：
+							<Input className="mt-1" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={FULL_CONFIRM} data-testid="host-confirm-text" />
+						</label>
+					)}
 					<label className="flex items-start gap-2 text-sm">
 						<input type="checkbox" className="mt-1" checked={ack} onChange={(e) => setAck(e.target.checked)} data-testid="host-ack" />
-						<span>我已阅读上面的提示和清单，允许助理在这些应用里操作我的电脑（每个动作仍会先问我）。</span>
+						<span>我已阅读上面的提示和权限计划，允许助理按这些档位操作我的电脑。</span>
 					</label>
 					<div className="flex gap-2">
-						<Button variant="primary" disabled={busy || !ack} onClick={() => save(true, preview.hash)} data-testid="host-enable">
+						<Button variant={anyFull ? "danger" : "primary"} disabled={busy || !ack || (anyFull && confirmText.trim() !== FULL_CONFIRM)} onClick={() => save(true, preview.hash)} data-testid="host-enable">
 							{busy && <Loader2 size={14} className="animate-spin" />} {on ? "确认更新" : "确认开启"}
 						</Button>
 						<Button variant="ghost" onClick={() => setPreview(null)}>
@@ -235,6 +320,101 @@ export function HostControlSettings() {
 				</section>
 			)}
 			{msg && <div className={cx("text-sm", msg.ok ? "text-green-600" : "text-red-600")} data-testid="host-msg">{msg.text}</div>}
+
+			<SandboxComputerSettings />
+
+			<section className="space-y-2">
+				<div className="font-semibold">本机操作记录</div>
+				<p className="text-xs text-mut">助理在这台电脑上的每个动作（包括被拒绝、被暂停拦下的）都会记录在这里，任何模式下都记录。</p>
+				<ActionLog target="host" />
+			</section>
 		</div>
+	);
+}
+
+/** 助理自己的电脑（Docker 桌面）：默认完全权限，不逐项审批 */
+function SandboxComputerSettings() {
+	const v = useStore((s) => s.hostVersion);
+	const [a, setA] = useState<"all" | "sensitive" | "none" | null>(null);
+	useEffect(() => void api("/api/sandbox-computer").then((r) => setA(r.approvals)), [v]);
+	if (!a) return null;
+	const set = (approvals: "all" | "sensitive" | "none") => api("/api/sandbox-computer", { method: "PUT", json: { approvals } }).then((r) => setA(r.approvals));
+	return (
+		<section className="space-y-2 rounded-xl bg-hover p-4 text-sm" data-testid="sandbox-approvals">
+			<div className="font-semibold">助理自己的电脑</div>
+			<p className="text-mut">助理电脑是一台只属于助理的虚拟电脑（与你的电脑隔离），默认拥有完全权限。如果它登录了你在意的账号（比如它的微信、邮箱），可以要求它在关键动作前先问你。暂停和操作记录始终有效（在助理的「电脑」页）。</p>
+			<label className="flex items-center gap-2">
+				<input type="radio" checked={a === "none"} onChange={() => set("none")} /> 完全权限，不用问我（默认）
+			</label>
+			<label className="flex items-center gap-2">
+				<input type="radio" checked={a === "sensitive"} onChange={() => set("sensitive")} /> 发送 / 付款 / 删除类动作先问我
+			</label>
+			<label className="flex items-center gap-2">
+				<input type="radio" checked={a === "all"} onChange={() => set("all")} /> 每个动作都先问我
+			</label>
+		</section>
+	);
+}
+
+/** 助理设置页：这个助理操作你电脑的档位（调高要确认，完全权限要输入确认语） */
+export function AgentHostTier({ agentId }: { agentId: string }) {
+	const { d, load } = useHostControl();
+	const [want, setWant] = useState<Tier | null>(null);
+	const [ack, setAck] = useState(false);
+	const [text, setText] = useState("");
+	const [err, setErr] = useState("");
+	if (!d) return null;
+	const allowed = d.settings.agents === "all" || d.settings.agents.includes(agentId);
+	const cur: Tier = d.tiers?.[agentId] ?? d.settings.defaultTier ?? "bounded";
+	const rank = (t: Tier) => TIER_ORDER.indexOf(t);
+	const apply = async (t: Tier) => {
+		setErr("");
+		try {
+			const r = await api(`/api/host-control/tier/${agentId}`, { method: "PUT", json: { tier: t, acknowledged: ack, confirmText: text } });
+			if (r.ok === false) setErr(r.error);
+			setWant(null);
+			setAck(false);
+			setText("");
+			void load();
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : String(e));
+		}
+	};
+	return (
+		<section className="space-y-2" data-testid="agent-host-tier">
+			<div className="flex items-center gap-2 text-sm font-semibold">
+				<Hand size={14} /> 操作你的电脑
+				{!d.status.enabled && <span className="text-xs font-normal text-mut">（未开启，在 设置 › 操作这台电脑 开启）</span>}
+				{d.status.enabled && !allowed && <span className="text-xs font-normal text-mut">（这个助理不在允许名单里）</span>}
+			</div>
+			<div className="flex flex-wrap gap-1">
+				{TIER_ORDER.map((t) => (
+					<button key={t} title={TIER_INFO[t].desc} className={cx("pa-chip", cur === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => (t === cur ? null : rank(t) < rank(cur) ? apply(t) : setWant(t))}>
+						{TIER_INFO[t].label}
+					</button>
+				))}
+			</div>
+			<div className="text-xs text-mut">{TIER_INFO[cur].desc}</div>
+			{want && (
+				<div className={cx("space-y-2 rounded-xl border p-3 text-sm", want === "full" ? "border-red-500/50 bg-red-500/10" : "border-amber-400/50 bg-amber-500/10")}>
+					<div>
+						调到「{TIER_INFO[want].label}」：{TIER_INFO[want].desc}。受保护的操作仍会每次问你。
+					</div>
+					<label className="flex items-center gap-2">
+						<input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> 我了解风险
+					</label>
+					{want === "full" && <Input value={text} onChange={(e) => setText(e.target.value)} placeholder={`输入：${FULL_CONFIRM}`} />}
+					<div className="flex gap-2">
+						<Button size="sm" variant={want === "full" ? "danger" : "primary"} disabled={!ack || (want === "full" && text.trim() !== FULL_CONFIRM)} onClick={() => apply(want)}>
+							确认
+						</Button>
+						<Button size="sm" variant="ghost" onClick={() => setWant(null)}>
+							取消
+						</Button>
+					</div>
+				</div>
+			)}
+			{err && <div className="text-xs text-red-600">{err}</div>}
+		</section>
 	);
 }

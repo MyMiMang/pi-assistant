@@ -4,8 +4,17 @@
   "private": true,
   "type": "module",
   "description": "助理电脑 / 本机操作：通过 MCP 集成 cua-driver（MIT），不含 cua-perception（AGPL）与 Cua Spaces（FSL）",
-  "exports": { ".": "./src/index.ts" },
-  "keywords": ["pi-package"],
-  "peerDependencies": { "@earendil-works/pi-coding-agent": ">=1.1.0" },
-  "dependencies": { "typebox": "1.3.27" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "keywords": [
+    "pi-package"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=1.1.0"
+  },
+  "dependencies": {
+    "typebox": "1.3.27",
+    "@pi-assistant/shared": "*"
+  }
 }

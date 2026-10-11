@@ -32,7 +32,7 @@ test("开启：默认关闭；清单哈希与用户确认的不一致就拒绝�
 	assert.equal(hc.hostAllowedFor("a1"), false);
 	const yaml = hc.buildManifest({ apps: [{ name: "x", id: "/usr/bin/x" }], workspaceFiles: true }, ["/w"]);
 	hc.saveHostSettings({ enabled: true, approvedHash: "different", agents: ["a1"] });
-	await assert.rejects(hc.startDaemon(yaml), /清单已变化/);
+	await assert.rejects(hc.startDaemon(yaml), /权限设置已变化/);
 	assert.equal(hc.hostAllowedFor("a1"), true);
 	assert.equal(hc.hostAllowedFor("a2"), false, "只允许选中的助理");
 	hc.saveHostSettings({ enabled: false, approvedHash: undefined, agents: "all" });
@@ -49,7 +49,7 @@ test("ext-computer 本机目标：MCP 服务名独立、逐项审批、本任务
 	computerExtension({ target: "host", mcp: { command: "/bin/cua-driver", args: ["mcp", "--socket", "/s"] }, isPaused: () => paused, request: async (r) => (asks.push(r), answer), describe: hc.describeHostAction })({
 		registerMcpServer: (name: string, cfg: never) => servers.push({ name, cfg }),
 		registerTool: (t: { name: string }) => tools.push(t.name),
-		on: (_: string, h: typeof handler) => (handler = h),
+		on: (n: string, h: typeof handler) => n === "tool_call" && (handler = h),
 	} as never);
 	assert.equal(servers[0].name, HOST_MCP_SERVER);
 	assert.deepEqual(servers[0].cfg.args, ["mcp", "--socket", "/s"]);
@@ -71,4 +71,135 @@ test("ext-computer 本机目标：MCP 服务名独立、逐项审批、本任务
 	paused = true;
 	assert.match((await call("list_windows"))?.reason ?? "", /暂停/);
 	assert.ok(isHostTool(`${HOST_MCP_PREFIX}click`));
+});
+
+test("权限档位：按助理设置；默认限定；只看/信任/完全权限连 unrestricted 守护进程；计划里列出各助理档位", () => {
+	hc.setHostEnv({ workspaceOf: (id) => `/ws/${id}`, agentIds: () => ["a1", "a2", "a3"] });
+	hc.saveHostSettings({ agents: "all", apps: [{ name: "TextEdit", id: "/usr/bin/textedit" }], tiers: {}, defaultTier: "bounded" });
+	assert.equal(hc.tierOf("a1"), "bounded");
+	assert.equal(hc.hostApprovals("a1"), "all");
+	assert.deepEqual(hc.neededDaemons(), ["bounded"]);
+	hc.saveHostSettings({ tiers: { a2: "trusted", a3: "observe" } });
+	assert.equal(hc.hostApprovals("a2"), "sensitive");
+	assert.equal(hc.hostApprovals("a3"), "observe");
+	assert.deepEqual(hc.neededDaemons(), ["bounded", "open"]);
+	hc.saveHostSettings({ tiers: { a1: "full", a2: "trusted", a3: "observe" } });
+	assert.equal(hc.hostApprovals("a1"), "none");
+	assert.deepEqual(hc.neededDaemons(), ["open"]);
+	const plan = hc.hostPlan();
+	assert.match(plan, /a1: 完全权限/);
+	assert.match(plan, /a2: 信任/);
+	assert.match(plan, /a3: 只看/);
+	assert.doesNotMatch(plan, /version: 3/, "没有限定档位的助理时不需要清单");
+	hc.saveHostSettings({ tiers: { a1: "bounded", a2: "trusted", a3: "observe" } });
+	assert.match(hc.hostPlan(), /version: 3/);
+	assert.match(hc.boundedManifest(), /\/ws\/a1/);
+	assert.doesNotMatch(hc.boundedManifest(), /\/ws\/a2/, "清单只包含限定档位助理的工作区");
+	const open = hc.serveArgs("open");
+	assert.deepEqual(open.slice(open.indexOf("--permission-mode"), open.indexOf("--permission-mode") + 3), ["--permission-mode", "unrestricted", "--dangerously-bypass-approvals"]);
+	assert.ok(hc.serveArgs("bounded").includes("--capability-manifest"));
+	assert.notEqual(hc.socketPath("open"), hc.socketPath("bounded"));
+	hc.saveHostSettings({ tiers: { a1: "trusted" } });
+	assert.match(hc.hostMcpCommand("a1").args.join(" "), /cua-open/);
+	hc.saveHostSettings({ tiers: {} });
+	assert.match(hc.hostMcpCommand("a1").args.join(" "), /cua-bounded/);
+	assert.equal(hc.sandboxComputerSettings().approvals, "none", "助理自己的电脑默认完全权限");
+	assert.throws(() => hc.saveSandboxComputerSettings({ approvals: "x" as never }));
+});
+
+test("只看档位：输入工具被隐藏并拦下；硬性保护在完全权限下也要批准且不能本任务内允许", async () => {
+	const { computerExtension, HOST_MCP_PREFIX, INPUT_TOOLS } = await import("@pi-assistant/ext-computer");
+	let policy: "observe" | "none" = "observe";
+	const asks: { summary: string; allowTask?: boolean }[] = [];
+	let answer = { approved: true, scope: "task" as const };
+	const h: Record<string, (e: unknown) => Promise<{ block?: boolean; reason?: string } | undefined>> = {};
+	let cfg: { toolExposure: Record<string, string> } | null = null;
+	computerExtension({ target: "host", mcp: { command: "x", args: [] }, isPaused: () => false, approvals: () => policy, request: async (r) => (asks.push(r), answer), guard: { target: "host" } })({
+		registerMcpServer: (_n: string, c: never) => (cfg = c),
+		registerTool: () => {},
+		on: (n: string, fn: (e: unknown) => Promise<{ block?: boolean } | undefined>) => (h[n] = fn),
+	} as never);
+	for (const t of INPUT_TOOLS.slice(0, 5)) assert.equal(cfg!.toolExposure[t], "hidden");
+	const call = (tool: string, input: Record<string, unknown> = {}) => h.tool_call({ toolName: `${HOST_MCP_PREFIX}${tool}`, input, toolCallId: tool });
+	assert.equal(await call("get_window_state", { pid: 1 }), undefined);
+	assert.match((await call("click", { x: 1 }))?.reason ?? "", /只看/);
+	assert.equal(asks.length, 0);
+	policy = "none";
+	assert.equal(await call("click", { x: 1 }), undefined, "完全权限：普通动作不问");
+	assert.equal(await call("kill_app", { name: "Pi Assistant" }), undefined, "批准了就放行");
+	assert.match(asks[0].summary, /受保护的操作/);
+	assert.equal(asks[0].allowTask, false, "受保护的操作不提供本任务内都允许");
+	assert.equal(await call("kill_app", { name: "Pi Assistant" }), undefined);
+	assert.equal(asks.length, 2, "即使批准过、用户选了本任务内允许，下次仍要问");
+	answer = { approved: false } as never;
+	assert.equal((await call("hotkey", { keys: ["cmd", "shift", "q"] }))?.block, true);
+});
+
+test("ext-approval：硬性保护命中的 shell/文件操作必须批准，即使工具被标为 trusted", async () => {
+	const { approvalExtension, hardGuard } = await import("@pi-assistant/ext-approval");
+	assert.equal(hardGuard("bash", { command: "sudo shutdown -h now" }, "/ws", { target: "host" })?.rule, "power");
+	assert.equal(hardGuard("write", { path: "../../.zshrc" }, "/Users/d/ws", { target: "host" })?.rule, "rc");
+	const asks: string[] = [];
+	let approved = false;
+	let fn: ((e: unknown) => Promise<{ block?: boolean } | undefined>) | null = null;
+	approvalExtension({ workspace: "/ws", trusted: () => true, guard: { target: "host" }, request: async (r) => (asks.push(r.summary), { approved }) })({ on: (_n: string, f: never) => (fn = f), getAllTools: () => [] } as never);
+	assert.equal((await fn!({ toolName: "bash", input: { command: "killall Finder" } }))?.block, true);
+	assert.match(asks[0], /受保护的操作（结束系统进程）/);
+	assert.equal(await fn!({ toolName: "bash", input: { command: "ls" } }), undefined, "trusted 的普通命令不问");
+	approved = true;
+	assert.equal(await fn!({ toolName: "bash", input: { command: "killall Finder" } }), undefined);
+	assert.equal(asks.length, 2);
+});
+
+test("敏感动作判断：结束应用、回车/删除键、带换行的输入、点到“发送/支付/删除”", async () => {
+	const { isSensitiveAction } = await import("@pi-assistant/ext-computer");
+	assert.equal(isSensitiveAction("kill_app", {}), true);
+	assert.equal(isSensitiveAction("press_key", { key: "Return" }), true);
+	assert.equal(isSensitiveAction("press_key", { key: "a" }), false);
+	assert.equal(isSensitiveAction("hotkey", { keys: ["cmd", "Delete"] }), true);
+	assert.equal(isSensitiveAction("hotkey", { keys: ["cmd", "c"] }), false);
+	assert.equal(isSensitiveAction("type_text", { text: "你好" }), false);
+	assert.equal(isSensitiveAction("type_text", { text: "你好\n" }), true);
+	const tree = ['[e12] AXButton "发送(S)"', '[e13] AXTextArea "输入"', '[e14] AXButton "立即支付"'].join("\n");
+	assert.equal(isSensitiveAction("click", { element_token: "e12" }, [tree]), true);
+	assert.equal(isSensitiveAction("click", { element_token: "e13" }, [tree]), false);
+	assert.equal(isSensitiveAction("click", { element_token: "e14" }, [tree]), true);
+	assert.equal(isSensitiveAction("click", { x: 10, y: 10 }, [tree]), false);
+	assert.equal(isSensitiveAction("invoke_menu", { path: ["文件", "删除"] }), true);
+	assert.equal(isSensitiveAction("scroll", {}), false);
+});
+
+test("审批策略 + 操作记录：sensitive 只问敏感动作、none 不问、暂停仍拦、全部记录（含被拒）", async () => {
+	const { computerExtension, HOST_MCP_PREFIX } = await import("@pi-assistant/ext-computer");
+	const { recordAction, listActions } = await import("../src/action-log.ts");
+	let policy: "all" | "sensitive" | "none" = "sensitive";
+	let paused = false;
+	const asks: string[] = [];
+	const h: Record<string, (e: unknown) => Promise<{ block?: boolean } | undefined>> = {};
+	computerExtension({ target: "host", mcp: { command: "x", args: [] }, isPaused: () => paused, approvals: () => policy, request: async (r) => (asks.push(r.summary), { approved: false }), describe: hc.describeHostAction, log: (e) => recordAction("logagent", "t1", e) })({
+		registerMcpServer: () => {},
+		registerTool: () => {},
+		on: (n: string, fn: (e: unknown) => Promise<{ block?: boolean } | undefined>) => (h[n] = fn),
+	} as never);
+	let n = 0;
+	const call = async (tool: string, input: Record<string, unknown> = {}, result = "ok") => {
+		const id = `c${++n}`;
+		const r = await h.tool_call({ toolName: `${HOST_MCP_PREFIX}${tool}`, input, toolCallId: id });
+		if (!r?.block) await h.tool_result({ toolName: `${HOST_MCP_PREFIX}${tool}`, toolCallId: id, input, content: [{ type: "text", text: result }], isError: false });
+		return r;
+	};
+	await call("get_window_state", { pid: 1 }, '[e7] AXButton "发送"\n[e8] AXButton "表情"');
+	assert.equal(await call("click", { element_token: "e8" }), undefined, "非敏感点击不问");
+	assert.equal((await call("click", { element_token: "e7" }))?.block, true, "点“发送”要问");
+	assert.equal(asks.length, 1);
+	policy = "none";
+	assert.equal(await call("click", { element_token: "e7" }), undefined, "none 不问");
+	assert.equal(asks.length, 1);
+	paused = true;
+	assert.equal((await call("click", { x: 1 }))?.block, true, "暂停在任何模式下都拦");
+	const log = listActions({ agentId: "logagent" });
+	assert.deepEqual(log.map((r) => [r.tool, r.outcome]).reverse(), [["get_window_state", "done"], ["click", "done"], ["click", "blocked"], ["click", "done"], ["click", "blocked"]]);
+	assert.match(log[0].detail ?? "", /暂停/);
+	assert.match(log[2].detail ?? "", /拒绝/);
+	assert.equal(log[1].approval, "auto");
 });

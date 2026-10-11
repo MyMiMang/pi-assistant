@@ -8,6 +8,9 @@
  *    文件只能读写这个助理的工作区，整屏画面观察关闭（desktop.display: false）。清单之外 Cua 自己拒绝。
  *  - 我们这一层再逐个动作审批（可选“本任务内都允许”），一键暂停（电脑和手机都能点）会立即拒绝所有动作并
  *    让 Cua 撤销全部会话（`revoke --all`），恢复时重启 Cua。
+ *  - 完全权限模式（可选）：用户在设置里看完强警告并手动输入确认语后，Cua 以 `unrestricted` 模式运行
+ *    （`--permission-mode unrestricted --dangerously-bypass-approvals`），所有应用、不用清单；审批策略可选
+ *    “只审批发送/付款/删除类动作”（默认）或“完全不审批”。一键暂停与操作记录在任何模式下都有效。
  *  - Cua 二进制按 third-party.json 固定版本下载到 数据目录/bin，校验固定的 SHA256。
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -35,11 +38,54 @@ export interface HostControlSettings {
 	apps: HostApp[];
 	/** 允许读写这个助理的工作区（上传/下载、保存文件） */
 	workspaceFiles: boolean;
+	/** 每个助理的权限档位（没设置的用 defaultTier） */
+	tiers: Record<string, HostTier>;
+	defaultTier: HostTier;
+	/** 设为“完全权限”时用户输入确认语的时间（按助理） */
+	fullAck: Record<string, number>;
 	/** 开启时用户确认过的清单哈希（开启 = 用户已审阅这份清单） */
 	approvedHash?: string;
 	enabledAt?: number;
 }
-const DEFAULTS: HostControlSettings = { enabled: false, agents: "all", apps: [], workspaceFiles: true };
+/**
+ * 权限档位（按助理设置）：
+ *  - observe 只看：截图、读取窗口内容，不能输入（Cua unrestricted 守护进程 + 我们这层拦下所有输入工具）
+ *  - bounded 限定（默认）：只能操作勾选的应用（Cua bounded 清单强制），每个动作都问
+ *  - trusted 信任：所有应用；日常动作不问，发送 / 付款 / 删除 / 提交类动作仍要问
+ *  - full 完全权限：几乎不问；需要输入确认语才能设置
+ * 任何档位：硬性保护清单命中的动作一律要明确批准；一键暂停有效；操作全部记录。
+ */
+export type HostTier = "observe" | "bounded" | "trusted" | "full";
+export const TIERS: HostTier[] = ["observe", "bounded", "trusted", "full"];
+export const TIER_LABEL: Record<HostTier, string> = { observe: "只看", bounded: "限定", trusted: "信任", full: "完全权限" };
+const DEFAULTS: HostControlSettings = { enabled: false, agents: "all", apps: [], workspaceFiles: true, tiers: {}, defaultTier: "bounded", fullAck: {} };
+/** 把某个助理设为“完全权限”时必须一字不差输入的确认语 */
+export const FULL_CONFIRM = "我了解风险，允许完全控制这台电脑";
+export const tierOf = (agentId: string, s = hostSettings()): HostTier => s.tiers[agentId] ?? s.defaultTier;
+/** 本机操作的审批策略（按助理） */
+export const hostApprovals = (agentId: string): "observe" | "all" | "sensitive" | "none" => ({ observe: "observe", bounded: "all", trusted: "sensitive", full: "none" } as const)[tierOf(agentId)];
+/** 档位用哪个 Cua 守护进程：bounded 用清单限定的那个，其余用 unrestricted 的那个（由我们这层把关） */
+export const daemonKindOf = (tier: HostTier): DaemonKind => (tier === "bounded" ? "bounded" : "open");
+export type DaemonKind = "bounded" | "open";
+
+/** 服务端注入：工作区路径、所有助理 */
+let env: { workspaceOf: (id: string) => string; agentIds: () => string[] } = { workspaceOf: (id) => id, agentIds: () => [] };
+export const setHostEnv = (e: typeof env) => (env = e);
+const allowedAgents = (s = hostSettings()) => (s.agents === "all" ? env.agentIds() : s.agents.filter((a) => env.agentIds().includes(a)));
+/** 当前设置需要哪些守护进程 */
+export const neededDaemons = (s = hostSettings()): DaemonKind[] => [...new Set(allowedAgents(s).map((a) => daemonKindOf(tierOf(a, s))))].sort();
+
+/** 助理自己的电脑（Docker 桌面）的审批策略：默认 none（它自己的电脑，完全权限） */
+export interface SandboxComputerSettings {
+	approvals: "all" | "sensitive" | "none";
+}
+export const sandboxComputerSettings = (): SandboxComputerSettings => ({ approvals: "none", ...(getSetting("sandboxComputer", {}) as Partial<SandboxComputerSettings>) });
+export const saveSandboxComputerSettings = (p: Partial<SandboxComputerSettings>) => {
+	const next = { ...sandboxComputerSettings(), ...p };
+	if (!["all", "sensitive", "none"].includes(next.approvals)) throw new Error("approvals 取值不对");
+	setSetting("sandboxComputer", next);
+	return next;
+};
 export const hostSettings = (): HostControlSettings => ({ ...DEFAULTS, ...(getSetting("hostControl", DEFAULTS) as Partial<HostControlSettings>) });
 
 export const isMac = () => process.platform === "darwin";
@@ -135,11 +181,12 @@ export function ensureCua(onProgress?: (m: string) => void): Promise<string> {
 
 // ---------------------------------------------------------------- 守护进程（bounded）
 const hcDir = () => join(config.dataDir, "host-control");
-export const socketPath = () => (process.platform === "win32" ? `\\\\.\\pipe\\pia-cua-${createHash("sha1").update(config.dataDir).digest("hex").slice(0, 8)}` : join(hcDir(), "cua.sock"));
+export const socketPath = (kind: DaemonKind = "bounded") =>
+	process.platform === "win32" ? `\\\\.\\pipe\\pia-cua-${kind}-${createHash("sha1").update(config.dataDir).digest("hex").slice(0, 8)}` : join(hcDir(), `cua-${kind}.sock`);
 const manifestPath = () => join(hcDir(), "manifest.yaml");
 
 export type DaemonState = "off" | "starting" | "running" | "paused" | "error";
-let daemon: ChildProcess | null = null;
+const daemons = new Map<DaemonKind, ChildProcess>();
 let state: { state: DaemonState; detail: string } = { state: "off", detail: "未开启" };
 let paused = false;
 const setState = (s: DaemonState, detail: string) => {
@@ -149,7 +196,7 @@ const setState = (s: DaemonState, detail: string) => {
 
 export function hostStatus() {
 	const s = hostSettings();
-	return { enabled: s.enabled, paused, daemon: state, platform: process.platform, installed: cuaInstalled(), version: cuaManifest().version };
+	return { enabled: s.enabled, tiers: Object.fromEntries(allowedAgents(s).map((a) => [a, tierOf(a, s)])), paused, daemon: state, platform: process.platform, installed: cuaInstalled(), version: cuaManifest().version };
 }
 export const hostPaused = () => paused;
 
@@ -158,80 +205,105 @@ export function hostAllowedFor(agentId: string) {
 	return s.enabled && !!s.approvedHash && (s.agents === "all" || s.agents.includes(agentId));
 }
 
-/** 当前设置对应的清单（所有允许的助理的工作区都可读写） */
+/** bounded 守护进程用的清单（只包含“限定”档位助理的工作区） */
+export function boundedManifest(s = hostSettings()) {
+	const ids = allowedAgents(s).filter((a) => tierOf(a, s) === "bounded");
+	return buildManifest(s, ids.map(env.workspaceOf));
+}
+/** 给用户审阅的完整权限计划：各助理档位 + bounded 清单。开启 = 用户确认了这份计划（哈希） */
+export function hostPlan(s = hostSettings()) {
+	const ids = allowedAgents(s);
+	const lines = ["# 各助理的权限档位（任何档位：硬性保护清单里的动作都要你明确批准；一键暂停有效；操作全部记录）"];
+	for (const id of ids) lines.push(`# - ${id}: ${TIER_LABEL[tierOf(id, s)]}`);
+	if (!ids.length) lines.push("# （没有允许的助理）");
+	if (ids.some((a) => tierOf(a, s) !== "bounded")) lines.push("# 只看 / 信任 / 完全权限 的助理连接 Cua unrestricted 守护进程（所有应用），由 Pi Assistant 这一层把关审批。");
+	if (ids.some((a) => tierOf(a, s) === "bounded")) lines.push("", boundedManifest(s));
+	return `${lines.join("\n")}\n`;
+}
+/** 兼容旧调用：返回审阅用的计划 */
 export function currentManifest(workspaceOf: (agentId: string) => string, agentIds: string[]) {
-	const s = hostSettings();
-	const ids = s.agents === "all" ? agentIds : s.agents;
-	return buildManifest(s, ids.map(workspaceOf));
+	setHostEnv({ workspaceOf, agentIds: () => agentIds });
+	return hostPlan();
 }
 
-const serveArgs = () => ["serve", "--socket", socketPath(), "--permission-mode", "bounded", "--capability-manifest", manifestPath(), "--approve-capability-manifest", "--no-permissions-gate"];
+export const serveArgs = (kind: DaemonKind) =>
+	kind === "open"
+		? ["serve", "--socket", socketPath("open"), "--permission-mode", "unrestricted", "--dangerously-bypass-approvals", "--no-permissions-gate"]
+		: ["serve", "--socket", socketPath("bounded"), "--permission-mode", "bounded", "--capability-manifest", manifestPath(), "--approve-capability-manifest", "--no-permissions-gate"];
 
-/** 启动（或重启）bounded 守护进程。yaml = 用户审阅并批准过的清单 */
-export async function startDaemon(yaml: string) {
+/**
+ * 启动（或重启）需要的 Cua 守护进程。plan = 用户审阅并批准过的权限计划（hostPlan）。
+ * bounded 守护进程用清单限定；open 守护进程以 unrestricted 运行，给“只看/信任/完全权限”档位的助理用。
+ */
+export async function startDaemon(plan = hostPlan()) {
 	const s = hostSettings();
-	if (!s.enabled || s.approvedHash !== manifestHash(yaml)) throw new Error("清单已变化，需要在设置里重新确认后才能开启");
+	if (!s.enabled || s.approvedHash !== manifestHash(plan)) throw new Error("权限设置已变化，需要在设置里重新确认后才能开启");
 	setState("starting", "正在启动 Cua Driver…");
 	await stopDaemon(true);
 	try {
 		const exe = await ensureCua((m) => setState("starting", m));
 		mkdirSync(hcDir(), { recursive: true });
-		writeFileSync(manifestPath(), yaml, { mode: 0o600 });
-		if (process.platform !== "win32") rmSync(socketPath(), { force: true });
-		const env = { ...process.env, CUA_DRIVER_TELEMETRY: "0" };
-		if (isMac()) {
-			// macOS：经 LaunchServices 启动 CuaDriver.app，辅助功能/屏幕录制授权归属于它（而不是终端或我们的服务）
-			await run("open", ["-n", "-g", "-a", cuaPaths().app!, "--args", ...serveArgs()], { env });
-		} else {
-			daemon = spawn(exe, serveArgs(), { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-			let err = "";
-			daemon.stderr?.on("data", (d) => (err = (err + d).slice(-2000)));
-			daemon.on("exit", (code) => {
-				daemon = null;
-				if (state.state === "running" || state.state === "starting") setState("error", `Cua Driver 退出了（${code}）：${err.split("\n").filter(Boolean).at(-1) ?? ""}`);
-			});
-		}
-		for (let i = 0; i < 40; i++) {
-			if (await ping(exe)) {
-				setState(paused ? "paused" : "running", paused ? "已暂停" : "运行中（bounded）");
-				return;
-			}
-			await new Promise((r) => setTimeout(r, 250));
-		}
-		throw new Error("Cua Driver 没有在 10 秒内就绪");
+		const kinds = neededDaemons(s);
+		if (kinds.includes("bounded")) writeFileSync(manifestPath(), boundedManifest(s), { mode: 0o600 });
+		else rmSync(manifestPath(), { force: true });
+		for (const kind of kinds) await spawnDaemon(kind, exe);
+		const label = kinds.length ? kinds.map((k) => (k === "bounded" ? "限定" : "开放")).join(" + ") : "没有允许的助理";
+		setState(paused ? "paused" : "running", paused ? "已暂停" : `运行中（${label}）`);
 	} catch (e) {
 		setState("error", e instanceof Error ? e.message : String(e));
 		throw e;
 	}
 }
-async function ping(exe: string) {
+async function spawnDaemon(kind: DaemonKind, exe: string) {
+	if (process.platform !== "win32") rmSync(socketPath(kind), { force: true });
+	const penv = { ...process.env, CUA_DRIVER_TELEMETRY: "0" };
+	if (isMac()) {
+		// macOS：经 LaunchServices 启动 CuaDriver.app，辅助功能/屏幕录制授权归属于它（而不是终端或我们的服务）
+		await run("open", ["-n", "-g", "-a", cuaPaths().app!, "--args", ...serveArgs(kind)], { env: penv });
+	} else {
+		const child = spawn(exe, serveArgs(kind), { env: penv, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+		daemons.set(kind, child);
+		let err = "";
+		child.stderr?.on("data", (d) => (err = (err + d).slice(-2000)));
+		child.on("exit", (code) => {
+			if (daemons.get(kind) === child) daemons.delete(kind);
+			if (state.state === "running" || state.state === "starting") setState("error", `Cua Driver（${kind}）退出了（${code}）：${err.split("\n").filter(Boolean).at(-1) ?? ""}`);
+		});
+	}
+	for (let i = 0; i < 40; i++) {
+		if (await ping(exe, kind)) return;
+		await new Promise((r) => setTimeout(r, 250));
+	}
+	throw new Error(`Cua Driver（${kind}）没有在 10 秒内就绪`);
+}
+async function ping(exe: string, kind: DaemonKind) {
 	try {
-		await run(exe, ["status", "--socket", socketPath()], { timeout: 3000 });
+		await run(exe, ["status", "--socket", socketPath(kind)], { timeout: 3000 });
 		return true;
 	} catch {
 		return false;
 	}
 }
 export async function stopDaemon(quiet = false) {
-	if (cuaInstalled()) await run(cuaPaths().exe, ["stop", "--socket", socketPath()], { timeout: 5000 }).catch(() => {});
-	daemon?.kill();
-	daemon = null;
+	if (cuaInstalled()) for (const k of ["bounded", "open"] as DaemonKind[]) await run(cuaPaths().exe, ["stop", "--socket", socketPath(k)], { timeout: 5000 }).catch(() => {});
+	for (const c of daemons.values()) c.kill();
+	daemons.clear();
 	if (!quiet) setState("off", "未开启");
 }
 
-/** 一键暂停：立即拒绝所有动作，并让 Cua 撤销全部会话；恢复时重启守护进程 */
-export async function setHostPaused(v: boolean, yaml: () => string) {
+/** 一键暂停：立即拒绝所有动作（我们这层），并让 Cua 撤销全部会话；恢复时重启守护进程 */
+export async function setHostPaused(v: boolean) {
 	paused = v;
 	if (v) {
-		if (cuaInstalled()) await run(cuaPaths().exe, ["revoke", "--all", "--socket", socketPath()], { timeout: 5000 }).catch(() => {});
+		if (cuaInstalled()) for (const k of ["bounded", "open"] as DaemonKind[]) await run(cuaPaths().exe, ["revoke", "--all", "--socket", socketPath(k)], { timeout: 5000 }).catch(() => {});
 		setState(state.state === "off" ? "off" : "paused", "已暂停");
-	} else if (hostSettings().enabled) await startDaemon(yaml()).catch(() => {});
+	} else if (hostSettings().enabled) await startDaemon().catch(() => {});
 	else setState("off", "未开启");
 }
 
-/** MCP 命令：连到 bounded 守护进程 */
-export function hostMcpCommand() {
-	return { command: cuaPaths().exe, args: ["mcp", "--socket", socketPath()] };
+/** MCP 命令：按助理档位连到对应的守护进程 */
+export function hostMcpCommand(agentId: string) {
+	return { command: cuaPaths().exe, args: ["mcp", "--socket", socketPath(daemonKindOf(tierOf(agentId)))] };
 }
 
 export function saveHostSettings(patch: Partial<HostControlSettings>) {

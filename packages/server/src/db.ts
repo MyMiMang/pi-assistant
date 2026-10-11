@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS email_accounts (
 CREATE TABLE IF NOT EXISTS email_drafts (
   id TEXT PRIMARY KEY, account_id TEXT NOT NULL, agent_id TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL,
   created_at INTEGER NOT NULL, sent_at INTEGER, error TEXT);
+CREATE TABLE IF NOT EXISTS action_log (
+  id TEXT PRIMARY KEY, call_id TEXT NOT NULL, agent_id TEXT NOT NULL, task_id TEXT, target TEXT NOT NULL, tool TEXT NOT NULL,
+  input TEXT NOT NULL, summary TEXT NOT NULL, outcome TEXT NOT NULL, approval TEXT, detail TEXT, shot TEXT,
+  started_at INTEGER NOT NULL, finished_at INTEGER);
+CREATE INDEX IF NOT EXISTS action_log_a ON action_log(agent_id, started_at);
+CREATE INDEX IF NOT EXISTS action_log_c ON action_log(call_id);
 CREATE TABLE IF NOT EXISTS routines (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, name TEXT NOT NULL, prompt TEXT NOT NULL,
   trigger TEXT NOT NULL, cron TEXT, tz TEXT NOT NULL DEFAULT 'Asia/Shanghai', quiet TEXT, webhook_secret TEXT,

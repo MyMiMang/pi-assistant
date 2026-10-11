@@ -22,3 +22,4 @@ export const BRAND = {
 
 /** 旧名字（迁移用）：数据目录、钥匙串服务名、环境变量前缀、浏览器存储键 */
 export const LEGACY = { dataDirName: "HuHao", linuxDir: "huhao", keychainService: "HuHao", envPrefix: "HUHAO_", storagePrefix: "huhao.", dbFile: "huhao.db" } as const;
+export * from "./hard-guard.ts";

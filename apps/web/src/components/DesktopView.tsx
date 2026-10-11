@@ -3,6 +3,7 @@
  */
 import { Hand, Loader2, Maximize2, MonitorPlay, Pause, Play, Power } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { ActionLog } from "./ActionLog";
 import { api, base } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, cx } from "./ui";
@@ -108,6 +109,12 @@ export function DesktopView({ agentId }: { agentId: string }) {
 				</>
 			)}
 			{err && <div className="text-xs text-red-600">{err}</div>}
+			<details className="pt-1" data-testid="desktop-action-log">
+				<summary className="cursor-pointer text-xs font-semibold text-mut">操作记录（可逐步回放）</summary>
+				<div className="pt-1">
+					<ActionLog agentId={agentId} limit={50} />
+				</div>
+			</details>
 		</div>
 	);
 }

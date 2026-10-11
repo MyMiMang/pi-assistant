@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { approvalExtension } from "@pi-assistant/ext-approval";
 import { computerExtension, isHostTool, trustedComputerTool } from "@pi-assistant/ext-computer";
-import { describeHostAction, hostAllowedFor, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
+import { recordAction } from "./action-log.ts";
+import { guardContext } from "./guard.ts";
+import { describeHostAction, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
 import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
 import { emailExtension, isEmailTool, wechatExtension } from "@pi-assistant/ext-connectors";
 import { openWechat, WECHAT_PROMPT, wechatAllowed } from "./wechat.ts";
@@ -194,6 +196,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			name: "pia-approval",
 			factory: approvalExtension({
 				workspace,
+				guard: guardContext("host"),
 				// 电脑工具（sandbox 目标）和浏览器工具由各自的扩展把关（提交/付款/发送/上传才审批）
 				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n) || isHostTool(n) || isEmailTool(n) || n === "wechat_open",
 				request: async (r) => {
@@ -357,10 +360,13 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				mcp: cuaMcpCommand(agentId),
 				isPaused: () => desktopPause.isPaused(agentId),
 				screenshot: () => screenshotDesktop(agentId),
+				approvals: () => sandboxComputerSettings().approvals,
+				guard: guardContext("sandbox"),
+				log: (e) => recordAction(agentId, taskId, e, () => screenshotDesktop(agentId)),
 				handoff: (reason, png) => handoff(reason, png, "可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。"),
 				request: async (r) => {
-					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId);
-					return { approved: !!res.approved, note: res.note };
+					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
+					return { approved: !!res.approved, note: res.note, scope: res.scope };
 				},
 			}),
 		});
@@ -370,9 +376,12 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			name: "pia-hostpc",
 			factory: computerExtension({
 				target: "host",
-				mcp: hostMcpCommand(),
+				mcp: hostMcpCommand(agentId),
 				isPaused: () => hostPaused(),
 				describe: describeHostAction,
+				approvals: () => hostApprovals(agentId),
+				guard: guardContext("host"),
+				log: (e) => recordAction(agentId, taskId, e),
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
 					return { approved: !!res.approved, note: res.note, scope: res.scope };
@@ -382,7 +391,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 	return exts;
 }
 /** 会话缓存键里的“本机操作”部分：开关、清单、守护进程状态变化都会重建会话 */
-const hostKey = (agentId: string) => (hostAllowedFor(agentId) ? `${hostSettings().approvedHash}:${hostStatus().daemon.state === "off" || hostStatus().daemon.state === "error" ? "down" : "up"}` : "off");
+const hostKey = (agentId: string) => (hostAllowedFor(agentId) ? `${hostSettings().approvedHash}:${tierOf(agentId)}:${hostStatus().daemon.state === "off" || hostStatus().daemon.state === "error" ? "down" : "up"}` : "off");
 
 /** 定时任务的人类可读说明（同时校验 cron） */
 export function describeRoutine(spec: { trigger: string; cron?: string | null; quietHours?: boolean }) {

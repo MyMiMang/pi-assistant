@@ -21,6 +21,7 @@ interface State {
 	/** Hindsight 状态 / 同步队列变化 */
 	hindsightVersion: number;
 	hostVersion: number;
+	actionsVersion: number;
 	channelsVersion: number;
 	routinesVersion: number;
 	skillsVersion: number;
@@ -66,6 +67,7 @@ export const useStore = create<State>((set, get) => ({
 	memoryVersion: 0,
 	hindsightVersion: 0,
 	hostVersion: 0,
+	actionsVersion: 0,
 	channelsVersion: 0,
 	routinesVersion: 0,
 	skillsVersion: 0,
@@ -238,6 +240,9 @@ export const useStore = create<State>((set, get) => ({
 				break;
 			case "host.changed":
 				set({ hostVersion: get().hostVersion + 1 });
+				break;
+			case "action.logged":
+				set({ actionsVersion: get().actionsVersion + 1 });
 				break;
 			case "memory.hindsight":
 			case "memory.sync":
