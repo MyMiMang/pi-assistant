@@ -25,7 +25,7 @@ if (got !== asset.sha256) throw new Error(`Node 校验失败：期望 ${asset.sh
 const work = join(tmpdir(), `pia-node-${Date.now()}`);
 mkdirSync(work, { recursive: true });
 writeFileSync(join(work, file), buf);
-execFileSync("tar", ["-xf", file], { cwd: work, stdio: "inherit" }); // Windows 10+ 自带的 bsdtar 也能解 zip
+execFileSync(win && process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar", ["-xf", file], { cwd: work, stdio: "inherit" }); // Windows 10+ 自带的 bsdtar 也能解 zip
 const dirName = file.replace(/\.(tar\.gz|tar\.xz|zip)$/, "");
 const src = win ? join(work, dirName, "node.exe") : join(work, dirName, "bin", "node");
 const binDir = join(root, "apps", "tray", "src-tauri", "binaries");
