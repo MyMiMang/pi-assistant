@@ -5,7 +5,7 @@
  * Pi 升级出现 API 变化时，只需要改这个目录（以及 packages/ext-* 里的扩展，它们只依赖 Pi 的 ExtensionAPI 类型）。
  */
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	createAgentSession,
@@ -205,9 +205,18 @@ export interface CreateSessionOptions {
 export async function createPiSession(o: CreateSessionOptions): Promise<AgentSession> {
 	const model = o.models.getModel(o.model.provider, o.model.id);
 	if (!model) throw new Error(`模型不存在：${o.model.provider}/${o.model.id}`);
+	// 隔离：只加载我们自己的扩展（内联 factory）和我们自己目录里的技能，
+	// 绝不读取用户自己装的 Pi（~/.pi/agent、~/.agents/skills、项目 .pi/.agents 等）
+	const allowedSkillRoots = [...(o.skillPaths ?? []), o.agentDir].map((p) => resolve(p));
+	const inside = (p: string) => allowedSkillRoots.some((r) => {
+		const rel = relative(r, resolve(p));
+		return !rel.startsWith("..") && !isAbsolute(rel);
+	});
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: o.cwd,
 		agentDir: o.agentDir,
+		noExtensions: true,
+		skillsOverride: (base) => ({ skills: base.skills.filter((s) => inside((s as { filePath: string }).filePath)), diagnostics: base.diagnostics }),
 		noPromptTemplates: true,
 		noThemes: true,
 		noContextFiles: true,
@@ -245,6 +254,15 @@ export function makeBashTool(
 	opts: { operations?: BashOperations; spawnHook?: (c: { command: string; cwd: string; env: NodeJS.ProcessEnv }) => { command: string; cwd: string; env: NodeJS.ProcessEnv } },
 ) {
 	return createBashTool(cwd, { operations: opts.operations, spawnHook: opts.spawnHook as never, exposeSessionEnvironment: false });
+}
+
+/** 会话实际加载的技能与扩展（用于隔离测试与诊断） */
+export function loadedResources(session: AgentSession) {
+	const rl = session.resourceLoader;
+	return {
+		skills: rl.getSkills().skills.map((s) => ({ name: s.name, path: (s as { filePath: string }).filePath })),
+		extensions: rl.getExtensions().extensions.map((e) => (e as { path?: string }).path ?? ""),
+	};
 }
 
 export function sessionFileOf(session: AgentSession): string | undefined {

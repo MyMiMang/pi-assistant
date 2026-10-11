@@ -68,5 +68,10 @@ export const config = (() => {
 	};
 	for (const d of [c.dataDir, c.workspaceRoot, c.filesDir, c.agentsDir]) mkdirSync(d, { recursive: true });
 	c.dbPath = migrateDb(c.dataDir);
+	// 隔离：Pi 所有默认路径（auth.json、models.json、settings、会话、崩溃日志、keybindings…）都指向我们自己的数据目录，
+	// 永远不读写用户自己安装的 Pi（~/.pi/agent）。强制覆盖，不沿用外部环境里的同名变量。
+	process.env.PI_CODING_AGENT_DIR = join(dataDir, "pi-agent");
+	process.env.PI_CODING_AGENT_SESSION_DIR = join(dataDir, "pi-agent", "sessions");
+	mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });
 	return c;
 })();
