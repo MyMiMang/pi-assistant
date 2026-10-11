@@ -11,7 +11,12 @@ export interface Agent {
 export interface Task { id: string; agent_id: string; title: string; instructions: string; status: string; result: string | null; error: string | null; created_at: number; finished_at: number | null }
 export interface Provider { id: string; name: string; apiKey?: { name: string }; oauth?: { name: string; isSubscription: boolean; loginLabel?: string }; modelCount: number; configured: boolean; source?: string; custom?: boolean }
 export interface ModelInfo { provider: string; id: string; name: string; reasoning: boolean; input: string[]; contextWindow?: number }
-export interface TunnelStatus { enabled: boolean; state: string; url: string | null; error?: string; rendezvous: { state: string; at?: number; error?: string }; binary: string | null }
+export interface PermCheck { ok: boolean; zoneRead: boolean; tunnelRead: boolean; dnsRead: boolean; tunnelEdit: boolean | null; missing: string[]; hint?: string }
+export interface TunnelStatus {
+	enabled: boolean; state: "off" | "downloading" | "starting" | "online" | "error" | "cooldown" | "missing"; mode: "quick" | "named"; url: string | null; error?: string;
+	nextRetryAt?: number; failures: number; rendezvous: { state: string; at?: number; error?: string }; binary: string | null;
+	named: { hostname?: string; check?: PermCheck; error?: string };
+}
 export interface SystemInfo {
 	serverId: string; publicKey: string; pi: { version: string; testedWith: string; compatible: boolean; message: string }; mock: boolean; local: boolean;
 	deviceId: string | null; onboarded: boolean; modelSetupDone?: boolean; defaultModel: { provider: string; id: string } | null; credentialBackend: string;

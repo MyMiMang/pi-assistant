@@ -196,6 +196,29 @@ await step("手机配对：认领 → 电脑确认 → 获得设备 token", asyn
 	await page.getByText("远程访问与设备").first().waitFor({ state: "detached" });
 });
 
+await step("免确认配对 + 固定地址设置页", async () => {
+	await page.getByRole("button", { name: "设置" }).first().click();
+	await page.getByRole("button", { name: "远程访问与设备" }).click();
+	await page.getByTestId("pre-approved").check();
+	await page.getByRole("button", { name: "生成配对二维码" }).click();
+	await page.getByText("扫码即通过，无需确认").waitFor();
+	const url = await page.locator("input[readonly]").inputValue();
+	await page.screenshot({ path: join(SHOTS, "09b-pairing-preapproved.png") });
+	const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, locale: "zh-CN" });
+	const pp = await phone.newPage();
+	await pp.goto(url);
+	await pp.getByRole("button", { name: "连接" }).click();
+	// 不在电脑上点“允许”，手机也应直接拿到 token
+	await pp.waitForFunction(() => JSON.parse(localStorage.getItem("pia.conn") ?? "null")?.token, null, { timeout: 10_000 });
+	await phone.close();
+	await page.getByRole("button", { name: "固定地址 / 入口" }).click();
+	await page.getByTestId("named-tunnel").getByText("Account › Cloudflare Tunnel › Edit").first().waitFor();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "09c-named-tunnel.png") });
+	await page.keyboard.press("Escape");
+	await page.getByText("远程访问与设备").first().waitFor({ state: "detached" });
+});
+
 await step("手机视口截图（单栏 + 抽屉）", async () => {
 	const m = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN" });
 	const mp = await m.newPage();

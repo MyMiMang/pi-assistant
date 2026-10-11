@@ -10,6 +10,7 @@ interface State {
 	agents: Agent[];
 	desktopVersion: number;
 	cloudflareSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
+	tunnelSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
 	current: string | null;
 	messages: Record<string, Message[]>;
 	tasks: Record<string, Task[]>;
@@ -48,6 +49,7 @@ export const useStore = create<State>((set, get) => ({
 	pendingDevices: [],
 	loginEvents: {},
 	cloudflareSteps: [],
+	tunnelSteps: [],
 	desktopVersion: 0,
 	drawer: false,
 	info: window.innerWidth >= 1280,
@@ -149,6 +151,11 @@ export const useStore = create<State>((set, get) => ({
 			case "cloudflare.progress": {
 				const cur = get().cloudflareSteps.filter((x) => x.step !== e.step);
 				set({ cloudflareSteps: [...cur, { step: e.step, state: e.state, detail: e.detail }] });
+				break;
+			}
+			case "tunnel.setup": {
+				const cur = get().tunnelSteps.filter((x) => x.step !== e.step);
+				set({ tunnelSteps: [...cur, { step: e.step, state: e.state, detail: e.detail }] });
 				break;
 			}
 			case "settings.changed":

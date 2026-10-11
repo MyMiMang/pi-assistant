@@ -5,7 +5,7 @@ import { getLang, setLang, t } from "../i18n";
 import { setAppearance, useStore } from "../store";
 import { getTheme, type Mode, THEMES } from "../themes/registry";
 import { ThemePreview } from "./ThemePreview";
-import type { Device, Provider } from "../types";
+import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
 import { Badge, Button, cx, fmtTime, Input, Modal } from "./ui";
@@ -13,7 +13,7 @@ import { Badge, Button, cx, fmtTime, Input, Modal } from "./ui";
 const TABS = [
 	["models", "模型", Monitor],
 	["remote", "远程访问与设备", Wifi],
-	["entry", "远程入口", Globe],
+	["entry", "固定地址 / 入口", Globe],
 	["appearance", "外观", Palette],
 	["about", "关于", Info],
 ] as const;
@@ -146,15 +146,33 @@ function RemoteTab() {
 					<div className="min-w-0 flex-1 text-sm">
 						<div className="flex items-center gap-2">
 							状态：
-							<Badge tone={tun.state === "online" ? "green" : tun.state === "off" ? "zinc" : tun.state === "starting" ? "accent" : "red"}>
-								{{ off: "已关闭", starting: "正在建立隧道…", online: "在线", error: "异常", missing: "缺少隧道组件" }[tun.state] ?? tun.state}
+							<Badge tone={tun.state === "online" ? "green" : tun.state === "off" ? "zinc" : tun.state === "starting" || tun.state === "downloading" ? "accent" : tun.state === "cooldown" ? "amber" : "red"}>
+								{{ off: "已关闭", downloading: "正在准备隧道组件…", starting: "正在建立隧道…", online: "在线", error: "异常", cooldown: "限流冷却中", missing: "缺少隧道组件" }[tun.state] ?? tun.state}
 							</Badge>
-							{tun.state === "online" && <Badge tone={tun.rendezvous.state === "ok" ? "green" : "amber"}>{tun.rendezvous.state === "ok" ? "入口已同步" : "入口未同步"}</Badge>}
+							{tun.enabled && <Badge tone={tun.mode === "named" ? "green" : "zinc"}>{tun.mode === "named" ? "固定地址" : "临时地址"}</Badge>}
+							{tun.state === "online" && tun.mode === "quick" && <Badge tone={tun.rendezvous.state === "ok" ? "green" : "amber"}>{tun.rendezvous.state === "ok" ? "入口已同步" : "入口未同步"}</Badge>}
 						</div>
 						{tun.url && <div className="mt-1 truncate text-xs text-zinc-500">{tun.url}</div>}
-						{tun.error && <div className="mt-1 text-xs text-red-500">{tun.error}</div>}
+						{tun.error && <div className={cx("mt-1 text-xs", tun.state === "cooldown" || tun.state === "downloading" ? "text-amber-600" : "text-red-500")}>{tun.error}</div>}
+						{tun.enabled && tun.mode === "quick" && tun.named.check && !tun.named.check.ok && (
+							<div className="mt-1 text-xs text-zinc-500">
+								当前用的是临时地址（会变）。想要固定地址：{tun.named.check.hint}{" "}
+								<button className="text-accent underline" onClick={() => useStore.getState().set({ settings: "entry" })}>去设置</button>
+							</div>
+						)}
 						{tun.rendezvous.state === "error" && <div className="mt-1 text-xs text-amber-600">入口域名同步失败（{tun.rendezvous.error}），二维码将使用直连地址。</div>}
 					</div>
+					{system.local && tun.enabled && (tun.state === "error" || tun.state === "cooldown" || tun.state === "missing") && (
+						<Button
+							variant="outline"
+							onClick={() => {
+								if (tun.state === "cooldown" && !confirm("现在正处于 Cloudflare 限流冷却期，立即重试很可能再次被限流、冷却时间会更长。仍然重试？")) return;
+								void api("/api/remote/tunnel/retry", { method: "POST" });
+							}}
+						>
+							重新连接
+						</Button>
+					)}
 					{system.local && (
 						<Button variant={tun.enabled ? "outline" : "primary"} onClick={() => toggle(!tun.enabled)}>
 							{tun.enabled ? "关闭" : "开启"}
@@ -273,7 +291,9 @@ function EntryTab() {
 	if (!system.local) return <p className="text-sm text-zinc-500">远程入口只能在电脑上设置。</p>;
 	return (
 		<div className="space-y-5">
-			<H desc="可选。用你自己的域名做一个固定网址：手机扫一次码，以后在任何网络下都能打开，电脑的隧道地址变了也会自动找到。部署在你自己的 Cloudflare 账号里，只交换“电脑现在在哪个地址”，不经手任何聊天内容。">远程入口（你自己的域名）</H>
+			<NamedTunnelSection defaultZone={zone} hasToken={!!st?.hasToken} />
+			<div className="border-t border-line" />
+			<H desc="备选（没有给 Token 隧道/DNS 权限时用）。用你自己的域名做一个固定网址：手机扫一次码，以后在任何网络下都能打开，电脑的隧道地址变了也会自动找到。部署在你自己的 Cloudflare 账号里，只交换“电脑现在在哪个地址”，不经手任何聊天内容。">入口页（Rendezvous）</H>
 			{st?.config && (
 				<div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm dark:border-emerald-900 dark:bg-emerald-950/30">
 					<CheckCircle2 size={16} className="text-emerald-600" /> 已部署：
@@ -332,6 +352,130 @@ function EntryTab() {
 				也能用：「远程访问与设备」里打开远程访问会得到一个临时链接（*.trycloudflare.com），每次电脑重启地址会变，需要重新扫码；或者只在同一 Wi‑Fi 下使用。
 			</div>
 		</div>
+	);
+}
+
+type NamedInfo = { config: { zone: string; subdomain: string; hostname: string; tunnelId: string; tunnelName: string; createdAt: number } | null; mode: string; zone: string | null; subdomain: string; hasToken: boolean };
+/** 固定地址（命名隧道）：推荐方式。地址永远不变，二维码直接指向它，不需要 Rendezvous，也不受临时隧道 429 限流影响。 */
+function NamedTunnelSection({ defaultZone, hasToken }: { defaultZone: string; hasToken: boolean }) {
+	const steps = useStore((s) => s.tunnelSteps);
+	const [info, setInfo] = useState<NamedInfo | null>(null);
+	const [zone, setZone] = useState("");
+	const [sub, setSub] = useState("pi");
+	const [token, setToken] = useState("");
+	const [check, setCheck] = useState<PermCheck | null>(null);
+	const [busy, setBusy] = useState<"" | "check" | "setup" | "remove">("");
+	const [err, setErr] = useState("");
+	const load = () =>
+		api<NamedInfo>("/api/remote/named").then((r) => {
+			setInfo(r);
+			setZone((z) => z || r.config?.zone || r.zone || defaultZone || "");
+			setSub(r.config?.subdomain || r.subdomain || "pi");
+		});
+	useEffect(() => {
+		void load();
+	}, [defaultZone]);
+	const run = async (kind: "check" | "setup" | "remove", fn: () => Promise<unknown>) => {
+		setBusy(kind);
+		setErr("");
+		try {
+			await fn();
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy("");
+		}
+	};
+	const doCheck = () => run("check", async () => setCheck(await api<PermCheck>("/api/remote/named/check", { method: "POST", json: { zone, token: token || undefined } })));
+	const doSetup = () =>
+		run("setup", async () => {
+			useStore.setState({ tunnelSteps: [] });
+			await api("/api/remote/named", { method: "POST", json: { zone, subdomain: sub, token: token || undefined } });
+			setToken("");
+			setCheck(null);
+			await load();
+		});
+	const doRemove = () => {
+		if (!confirm("删除固定地址？会删除 Cloudflare 里的隧道和这条 DNS 记录，之后改用临时地址。已配对的手机需要重新扫码。")) return;
+		void run("remove", async () => (await api("/api/remote/named", { method: "DELETE" }), await load()));
+	};
+	const tokenKnown = hasToken || info?.hasToken;
+	const perm = (ok: boolean | null, label: string) => (
+		<li className="flex items-center gap-2">
+			{ok === true ? <CheckCircle2 size={14} className="text-emerald-500" /> : ok === false ? <XCircle size={14} className="text-red-500" /> : <Info size={14} className="text-zinc-400" />}
+			{label}
+		</li>
+	);
+	return (
+		<section className="space-y-4" data-testid="named-tunnel">
+			<H desc="推荐。在你自己的 Cloudflare 账号里建一条专属隧道，手机访问地址永远不变（例如 https://pi.example.com），扫一次码长期可用；不需要上面的临时链接，也不会遇到临时隧道的 429 限流。只要你开启了远程访问并且 Token 权限足够，会自动优先使用。">
+				固定地址（推荐）
+			</H>
+			{info?.config ? (
+				<div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm dark:border-emerald-900 dark:bg-emerald-950/30">
+					<CheckCircle2 size={16} className="text-emerald-600" /> 已设置：
+					<a className="font-medium text-accent" href={`https://${info.config.hostname}`} target="_blank" rel="noreferrer">
+						https://{info.config.hostname}
+					</a>
+					<span className="text-xs text-zinc-500">隧道 {info.config.tunnelName}</span>
+					<Button size="sm" variant="ghost" className="ml-auto text-red-600" disabled={!!busy} onClick={doRemove}>
+						{busy === "remove" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} 删除
+					</Button>
+				</div>
+			) : (
+				<>
+					<div className="grid gap-3 sm:grid-cols-2">
+						<label className="space-y-1">
+							<span className="text-xs font-medium text-zinc-500">你的域名（已托管在 Cloudflare）</span>
+							<Input placeholder="example.com" value={zone} onChange={(e) => setZone(e.target.value)} />
+						</label>
+						<label className="space-y-1">
+							<span className="text-xs font-medium text-zinc-500">子域名</span>
+							<div className="flex items-center gap-1.5">
+								<Input value={sub} onChange={(e) => setSub(e.target.value)} />
+								<span className="shrink-0 text-xs text-zinc-400">.{zone || "example.com"}</span>
+							</div>
+						</label>
+					</div>
+					<label className="block space-y-1">
+						<span className="text-xs font-medium text-zinc-500">Cloudflare API Token</span>
+						<Input type="password" autoComplete="off" placeholder={tokenKnown ? "已加密保存在本机（与远程入口共用），留空则沿用" : "在 Cloudflare 控制台 → 我的个人资料 → API 令牌 创建"} value={token} onChange={(e) => setToken(e.target.value)} />
+					</label>
+					<div className="rounded-xl bg-zinc-50 p-3 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-300">
+						<div className="mb-1 font-medium">Token 需要这些权限（可以在已有 Token 上「编辑」添加，Token 字符串不变）：</div>
+						<ul className="space-y-0.5">
+							{perm(check ? check.tunnelEdit ?? (check.tunnelRead ? null : false) : null, "账户 › Cloudflare Tunnel › 编辑（Account › Cloudflare Tunnel › Edit）")}
+							{perm(check ? check.dnsRead : null, "区域 › DNS › 编辑（Zone › DNS › Edit）—— 区域资源选你的域名")}
+							{perm(check ? check.zoneRead : null, "区域 › 区域 › 读取（Zone › Zone › Read）——「编辑 Cloudflare Workers」模板已包含")}
+						</ul>
+						<div className="mt-1.5 text-zinc-500">注意：「编辑 Cloudflare Workers」模板默认不含前两项。检查权限时会临时创建并立即删除一个测试隧道。</div>
+					</div>
+					{check && <div className={cx("text-sm", check.ok ? "text-emerald-600" : "text-amber-600")}>{check.ok ? "权限齐全，可以创建固定地址。" : check.hint}</div>}
+					<div className="flex flex-wrap items-center gap-2">
+						<Button variant="outline" disabled={!!busy || !zone || (!token && !tokenKnown)} onClick={doCheck}>
+							{busy === "check" && <Loader2 size={14} className="animate-spin" />} 检查权限
+						</Button>
+						<Button variant="primary" disabled={!!busy || !zone || !sub || (!token && !tokenKnown)} onClick={doSetup}>
+							{busy === "setup" && <Loader2 size={14} className="animate-spin" />} 创建固定地址
+						</Button>
+					</div>
+				</>
+			)}
+			{err && <div className="text-sm text-red-600">{err}</div>}
+			{steps.length > 0 && !info?.config && (
+				<ul className="space-y-1 rounded-xl border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+					{steps.map((x) => (
+						<li key={x.step} className="flex items-start gap-2">
+							{x.state === "running" ? <Loader2 size={15} className="mt-0.5 animate-spin text-accent" /> : x.state === "ok" ? <CheckCircle2 size={15} className="mt-0.5 text-emerald-500" /> : <XCircle size={15} className="mt-0.5 text-red-500" />}
+							<span>
+								{x.step}
+								{x.detail && <span className="ml-1.5 break-all text-xs text-zinc-500">{x.detail}</span>}
+							</span>
+						</li>
+					))}
+				</ul>
+			)}
+		</section>
 	);
 }
 
