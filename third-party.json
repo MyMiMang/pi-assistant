@@ -1,0 +1,18 @@
+{
+  "$comment": "第三方组件清单：所有集成只通过公开接口（npm / MCP / CLI），版本在此集中固定。见 docs/DESIGN.md §5.16。",
+  "components": [
+    { "name": "@earendil-works/pi-coding-agent", "kind": "npm", "version": "1.1.0", "license": "MIT", "adapter": "packages/server/src/pi-adapter", "smoke": "packages/server/test/pi-compat.test.ts" },
+    { "name": "@earendil-works/pi-ai", "kind": "npm", "version": "1.1.0", "license": "MIT", "adapter": "packages/server/src/pi-adapter", "smoke": "packages/server/test/pi-compat.test.ts" },
+    {
+      "name": "cua-driver", "kind": "github-release", "repo": "trycua/cua", "tagPrefix": "cua-driver-rs-v", "version": "0.34.1", "license": "MIT",
+      "assets": { "linux-x64": "cua-driver-rs-{v}-linux-x86_64-binary.tar.gz", "linux-arm64": "cua-driver-rs-{v}-linux-arm64-binary.tar.gz", "darwin": "cua-driver-rs-{v}-darwin-universal-binary.tar.gz", "win-x64": "cua-driver-rs-{v}-windows-x86_64-binary.zip" },
+      "checksums": "SHA256SUMS",
+      "adapter": "packages/ext-computer", "smoke": "packages/sandbox-desktop/smoke.mjs",
+      "forbid": ["cua-perception", "omniparser", "cua-spaces", "cua-agent[omni]"]
+    },
+    { "name": "cloudflared", "kind": "github-release", "repo": "cloudflare/cloudflared", "version": "latest-pinned-at-build", "license": "Apache-2.0", "adapter": "packages/server/src/tunnel.ts", "smoke": "e2e/run.mjs" },
+    { "name": "playwright-core", "kind": "npm", "version": "^1", "license": "Apache-2.0", "adapter": "e2e / packages/ext-browser", "smoke": "e2e/run.mjs" },
+    { "name": "noVNC", "kind": "debian", "package": "novnc", "license": "MPL-2.0", "adapter": "packages/sandbox-desktop", "smoke": "packages/sandbox-desktop/smoke.mjs" }
+  ],
+  "licenseAllow": ["MIT", "MIT AND MPL-2.0", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MPL-2.0"]
+}

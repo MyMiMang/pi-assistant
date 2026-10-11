@@ -20,6 +20,8 @@ export interface ApprovalRequest {
 export interface ApprovalHost {
 	workspace: string;
 	request(req: ApprovalRequest): Promise<{ approved: boolean; note?: string }>;
+	/** 由其它扩展自行把关的工具（例如 sandbox 目标下的电脑工具） */
+	trusted?: (toolName: string) => boolean;
 }
 
 const SAFE_TOOLS = new Set(["read", "ls", "find", "grep", "deliver_file", "ask_user", "spawn_task"]);
@@ -73,6 +75,7 @@ export function approvalExtension(host: ApprovalHost) {
 	return (pi: ExtensionAPI) => {
 		const rejected = new Map<string, number>();
 		pi.on("tool_call", async (event) => {
+			if (host.trusted?.(event.toolName)) return;
 			const input = (event.input ?? {}) as Record<string, unknown>;
 			const annotations = pi.getAllTools().find((t) => t.name === event.toolName)?.annotations;
 			const d = evaluate(event.toolName, input, annotations, host.workspace);

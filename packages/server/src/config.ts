@@ -26,6 +26,9 @@ export const config = (() => {
 		defaultEntryDomain: process.env.HUHAO_ENTRY_DOMAIN ?? "app.dengdengyun.shop",
 		cloudflared: process.env.HUHAO_CLOUDFLARED,
 		sandbox: (process.env.HUHAO_SANDBOX ?? "auto") as "auto" | "workspace" | "docker",
+		/** docker 命令（开发机可设 HUHAO_DOCKER="sudo docker"） */
+		docker: (process.env.HUHAO_DOCKER ?? "docker").split(" ").filter(Boolean),
+		desktopImage: process.env.HUHAO_DESKTOP_IMAGE ?? "huhao/desktop:dev",
 		allowModelNetwork: process.env.HUHAO_OFFLINE !== "1",
 	};
 	for (const d of [c.dataDir, c.workspaceRoot, c.filesDir, c.agentsDir]) mkdirSync(d, { recursive: true });

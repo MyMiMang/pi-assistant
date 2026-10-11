@@ -5,3 +5,11 @@ data/
 *.log
 .DS_Store
 apps/desktop/src-tauri/target/
+
+# secrets
+.env
+.env.*
+!.env.example
+.dev.vars
+*.env
+cloudflare.env

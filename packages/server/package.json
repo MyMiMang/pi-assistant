@@ -19,6 +19,7 @@
     "web-push": "^3.6.7",
     "ws": "^8.22.0",
     "@huhao/ext-approval": "*",
+    "@huhao/ext-computer": "*",
     "@huhao/ext-delivery": "*",
     "@huhao/ext-sandbox": "*",
     "tsx": "^4.23.15"

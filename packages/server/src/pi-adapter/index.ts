@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
 	createAgentSession,
 	createBashTool,
+	createMcpExtension,
 	DefaultResourceLoader,
 	defineTool,
 	ModelRuntime,
@@ -212,7 +213,8 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		noSkills: !o.skillPaths?.length,
 		additionalSkillPaths: o.skillPaths,
 		appendSystemPrompt: [o.systemPromptAppend.join("\n\n")],
-		extensionFactories: o.extensions.map((e) => ({ name: e.name, factory: e.factory })),
+		// Pi 自带的 MCP 扩展（SDK 会话默认不加载）：ext-computer 等通过 pi.registerMcpServer 注册服务器
+		extensionFactories: [{ name: "pi-mcp", factory: createMcpExtension({ startupWaitMs: 8000 }) }, ...o.extensions.map((e) => ({ name: e.name, factory: e.factory }))],
 	});
 	await resourceLoader.reload();
 	const sessionManager = o.sessionFile
@@ -231,6 +233,8 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 2 } } as never),
 		tools: ["+grep", "+find", "+ls"],
 	});
+	// 触发 session_start：MCP 扩展在此时连接服务器（如 cua-driver）
+	await session.bindExtensions({ onError: (e) => console.warn("[ext]", (e as { error?: unknown }).error ?? e) });
 	return session;
 }
 

@@ -4,6 +4,7 @@
  */
 import { join } from "node:path";
 import { approvalExtension } from "@huhao/ext-approval";
+import { computerExtension, trustedComputerTool } from "@huhao/ext-computer";
 import { deliveryExtension } from "@huhao/ext-delivery";
 import { sandboxExtension } from "@huhao/ext-sandbox";
 import { bus } from "./bus.ts";
@@ -28,6 +29,8 @@ import {
 import { notify } from "./push.ts";
 import { requests } from "./requests.ts";
 import { dockerOperations, sandboxMode } from "./sandbox.ts";
+import { cuaMcpCommand, desktopPause, desktopStatus, screenshotDesktop } from "./desktop.ts";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 export interface AgentRow {
 	id: string;
@@ -142,12 +145,15 @@ function bindSession(session: AgentSession, agentId: string, taskId: string | nu
 async function extensionsFor(agentId: string, taskId: string | null, opts: { allowSpawn: boolean }) {
 	const workspace = workspaceOf(agentId);
 	const mode = await sandboxMode();
-	return [
+	const desk = await desktopStatus(agentId).catch(() => null);
+	const computerOn = desk?.state === "running";
+	const exts = [
 		{ name: "huhao-sandbox", factory: sandboxExtension({ workspace, mode, makeBashTool: makeBashTool as never, dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined }) },
 		{
 			name: "huhao-approval",
 			factory: approvalExtension({
 				workspace,
+				trusted: trustedComputerTool("sandbox"),
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk);
 					return { approved: !!res.approved, note: res.note };
@@ -167,6 +173,33 @@ async function extensionsFor(agentId: string, taskId: string | null, opts: { all
 			}),
 		},
 	];
+	// 助理电脑运行中 → 挂上 cua-driver（MCP）与看屏幕/接管工具
+	if (computerOn)
+		exts.push({
+			name: "huhao-computer",
+			factory: computerExtension({
+				target: "sandbox",
+				mcp: cuaMcpCommand(agentId),
+				isPaused: () => desktopPause.isPaused(agentId),
+				screenshot: () => screenshotDesktop(agentId),
+				handoff: async (reason, png) => {
+					const dir = join(workspace, ".screens");
+					mkdirSync(dir, { recursive: true });
+					const rel = `.screens/handoff-${Date.now()}.png`;
+					writeFileSync(join(workspace, rel), png);
+					const f = deliverFromWorkspace(agentId, rel);
+					insertMessage({ agentId, role: "assistant", content: `需要你接管：${reason}\n\n可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。`, meta: { attachments: [fileInfo(f)], fromTask: taskId } });
+					notify({ title: "胡好好需要你接管", body: reason, data: { type: "handoff", agentId } });
+					const r = await requests.question(agentId, taskId, `${reason}——完成后点“已完成”`, ["已完成", "做不了"], true);
+					return r.answer ?? "无回应";
+				},
+				request: async (r) => {
+					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk);
+					return { approved: !!res.approved, note: res.note };
+				},
+			}),
+		});
+	return exts;
 }
 
 class AgentRuntime {
@@ -186,7 +219,8 @@ class AgentRuntime {
 		const a = getAgent(this.id)!;
 		const model = this.modelFor(a);
 		if (!model) return null;
-		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}`;
+		const desk = (await desktopStatus(this.id).catch(() => null))?.state === "running";
+		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}|desk:${desk}`;
 		if (this.session && this.modelKey === key) return this.session;
 		if (this.session && isSessionBusy(this.session)) return this.session; // 运行中先不切换
 		this.creating = (async () => {
