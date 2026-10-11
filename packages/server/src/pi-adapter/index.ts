@@ -144,6 +144,11 @@ export class PiModels {
 		return this.runtime.logout(providerId);
 	}
 
+	/** 重新读取 Pi 的 models.json（自定义服务变更后调用），不访问网络。 */
+	async reloadConfig() {
+		await this.runtime.refresh({ allowNetwork: false });
+	}
+
 	async refresh() {
 		try {
 			await this.runtime.refresh();

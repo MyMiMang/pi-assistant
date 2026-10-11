@@ -17,7 +17,8 @@ import { fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, s
 import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
 import { insertMessage, listMessages } from "./messages.ts";
-import { credentialBackend, defaultModel, models } from "./models.ts";
+import { credentialBackend, customProviders, defaultModel, models } from "./models.ts";
+import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-providers.ts";
 import { checkPiCompat } from "./pi-adapter/index.ts";
 import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
@@ -112,7 +113,42 @@ app.put("/api/settings", async (c) => {
 });
 
 // ---------------------------------------------------------------- 模型（完全由 Pi 的 provider 目录驱动）
-app.get("/api/models/providers", (c) => c.json(models.listProviders()));
+app.get("/api/models/providers", (c) => {
+	const custom = new Map(customProviders.list().map((m) => [m.id, m]));
+	return c.json(models.listProviders().map((p) => ({ ...p, custom: custom.has(p.id), configured: p.configured || !!custom.get(p.id)?.configured })));
+});
+// 自定义模型服务（中转站 / 第三方 / 本地），写入 Pi 的 models.json
+app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list(), apis: supportedApis() }));
+const customErr = (c: Context<Env>, e: unknown) => c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+app.post("/api/models/custom", async (c) => {
+	try {
+		return c.json(await customProviders.save(null, await c.req.json<CustomProviderInput>()));
+	} catch (e) {
+		return customErr(c, e);
+	}
+});
+app.put("/api/models/custom/:id", async (c) => {
+	try {
+		return c.json(await customProviders.save(c.req.param("id"), await c.req.json<CustomProviderInput>()));
+	} catch (e) {
+		return customErr(c, e);
+	}
+});
+app.delete("/api/models/custom/:id", async (c) => {
+	const id = c.req.param("id");
+	const ok = await customProviders.remove(id);
+	const d = defaultModel();
+	if (!d || d.provider === id) setSetting("defaultModel", null);
+	bus.emit({ type: "settings.changed" });
+	return c.json({ ok });
+});
+app.post("/api/models/custom/fetch-models", async (c) => {
+	try {
+		return c.json({ models: await customProviders.fetchModels(await c.req.json()) });
+	} catch (e) {
+		return customErr(c, e);
+	}
+});
 app.get("/api/models", (c) => c.json(models.listModels(c.req.query("provider") || undefined)));
 app.post("/api/models/refresh", async (c) => (await models.refresh(), c.json({ ok: true })));
 app.post("/api/models/login", async (c) => {

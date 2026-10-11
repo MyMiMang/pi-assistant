@@ -53,7 +53,7 @@ test("会话：流式事件、扩展工具、审批拦截、文件交付", async
 		agentDir: join(config.agentsDir, "compat"),
 		sessionDir: join(config.agentsDir, "compat", "sessions"),
 		model: { provider: MOCK_PROVIDER, id: MOCK_MODEL },
-		systemPromptAppend: ["test"],
+		systemPromptAppend: ["你是测试助理。"],
 		extensions: [
 			{ name: "sandbox", factory: sandboxExtension({ workspace: ws, mode: "workspace", makeBashTool: makeBashTool as never }) },
 			{ name: "approval", factory: approvalExtension({ workspace: ws, request: async (r) => (approvals.push(r.toolName), { approved: false }) }) },
