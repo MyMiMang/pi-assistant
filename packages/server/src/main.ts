@@ -1,4 +1,5 @@
 import { closeAllBrowsers } from "./browser.ts";
+import { startChannels, stopChannels } from "./channels/index.ts";
 import { currentManifest, hostSettings, startDaemon, stopDaemon } from "./host-control.ts";
 import { config } from "./config.ts";
 import { getSetting } from "./db.ts";
@@ -25,11 +26,13 @@ if (getSetting("remoteEnabled", false)) startTunnel();
 setChatDefault(defaultModel);
 // 有助理在用高级记忆时随服务启动 Hindsight（在后台，准备好之前读记忆走基础检索、写入排队）
 if (hindsightInUse()) void sidecar.ensure();
+// 聊天渠道：飞书 / 钉钉建立长连接，企业微信等回调
+void startChannels();
 // 用户开启过“操作这台电脑”：随服务启动 bounded 守护进程（清单与开启时确认的一致才会启动）
 if (hostSettings().enabled) void startDaemon(currentManifest(workspaceOf, listAgents().map((a) => a.id))).catch((e) => console.warn(`[host-control] ${e instanceof Error ? e.message : e}`));
 
 for (const sig of ["SIGINT", "SIGTERM"] as const)
 	process.on(sig, () => {
 		// Hindsight 守护进程是独立进程：退出前停掉它（最多等 6 秒）
-		void Promise.race([Promise.all([sidecar.stop(), closeAllBrowsers(), stopDaemon(true)]), new Promise((r) => setTimeout(r, 6000))]).finally(() => process.exit(0));
+		void Promise.race([Promise.all([sidecar.stop(), closeAllBrowsers(), stopDaemon(true), stopChannels()]), new Promise((r) => setTimeout(r, 6000))]).finally(() => process.exit(0));
 	});

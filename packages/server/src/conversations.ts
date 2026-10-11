@@ -26,12 +26,13 @@ export function listConversations(agentId: string) {
 		.all(agentId) as unknown as (ConversationRow & { message_count: number; last: string | null })[];
 }
 
-export function createConversation(agentId: string, title = ""): ConversationRow {
+/** makeCurrent=false：后台新建（例如聊天渠道里的对话），不切换 App 里正在看的对话 */
+export function createConversation(agentId: string, title = "", opts: { makeCurrent?: boolean } = {}): ConversationRow {
 	const id = uid("c");
 	const t = now();
 	db.prepare("INSERT INTO conversations(id, agent_id, title, created_at, updated_at) VALUES(?,?,?,?,?)").run(id, agentId, title, t, t);
-	db.prepare("UPDATE agents SET conversation_id = ? WHERE id = ?").run(id, agentId);
-	bus.emit({ type: "conversations.changed", agentId, current: id });
+	if (opts.makeCurrent !== false) db.prepare("UPDATE agents SET conversation_id = ? WHERE id = ?").run(id, agentId);
+	bus.emit({ type: "conversations.changed", agentId, current: opts.makeCurrent === false ? currentConversation(agentId) : id });
 	return getConversation(id)!;
 }
 
