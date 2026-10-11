@@ -68,7 +68,7 @@ export function evaluate(
 	// 其他工具（MCP、连接器等）按 annotations 判断，缺省视为可能有副作用
 	if (annotations?.readOnlyHint) return { kind: "allow" };
 	if (annotations?.destructiveHint === true || annotations?.openWorldHint !== false)
-		return { kind: "ask", summary: `调用工具 ${toolName}`, risk: annotations?.destructiveHint ? "high" : "medium" };
+		return { kind: "ask", summary: toolName.startsWith("mcp__") ? `调用 MCP 服务「${toolName.split("__")[1]}」的工具 ${toolName.split("__").slice(2).join("__")}` : `调用工具 ${toolName}`, risk: annotations?.destructiveHint ? "high" : "medium" };
 	return { kind: "allow" };
 }
 

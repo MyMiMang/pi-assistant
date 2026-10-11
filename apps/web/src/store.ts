@@ -19,6 +19,7 @@ interface State {
 	memoryVersion: number;
 	routinesVersion: number;
 	skillsVersion: number;
+	extVersion: number;
 	tasks: Record<string, Task[]>;
 	pendingDevices: Device[];
 	loginEvents: Record<string, any[]>;
@@ -58,6 +59,7 @@ export const useStore = create<State>((set, get) => ({
 	memoryVersion: 0,
 	routinesVersion: 0,
 	skillsVersion: 0,
+	extVersion: 0,
 	tasks: {},
 	pendingDevices: [],
 	loginEvents: {},
@@ -211,6 +213,10 @@ export const useStore = create<State>((set, get) => ({
 				break;
 			case "skills.changed":
 				set({ skillsVersion: get().skillsVersion + 1 });
+				break;
+			case "mcp.changed":
+			case "packages.changed":
+				set({ extVersion: get().extVersion + 1 });
 				break;
 		}
 	},

@@ -8,6 +8,7 @@ import type { Attachment, ModelInfo } from "../types";
 import { AuthImage } from "./Attachments";
 import { AgentEditor } from "./AgentEditor";
 import { MemoryTab } from "./MemoryTab";
+import { AgentExtensions } from "./AgentExtensions";
 import { RoutinesTab } from "./RoutinesTab";
 import { Avatar, Badge, Button, cx, fmtSize, fmtTime, Input } from "./ui";
 
@@ -203,5 +204,10 @@ function Computer({ agentId }: { agentId: string }) {
 function AgentSettings({ agentId }: { agentId: string }) {
 	const agent = useStore((s) => s.agents.find((a) => a.id === agentId));
 	if (!agent) return null;
-	return <AgentEditor agent={agent} />;
+	return (
+		<div className="space-y-6">
+			<AgentEditor agent={agent} />
+			<AgentExtensions agentId={agentId} />
+		</div>
+	);
 }

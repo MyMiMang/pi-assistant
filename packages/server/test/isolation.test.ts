@@ -19,7 +19,8 @@ put(join(fakeHome, ".agents/skills/evil-agents/SKILL.md"), "---\nname: evil-agen
 put(join(fakeHome, ".pi/agent/extensions/evil.ts"), "export default () => { throw new Error('user extension loaded'); };");
 put(join(fakeHome, ".pi/agent/auth.json"), '{"openai":{"type":"api_key","key":"sk-user"}}');
 put(join(fakeHome, ".pi/agent/models.json"), '{"providers":{}}');
-put(join(fakeHome, ".pi/agent/settings.json"), '{"defaultProvider":"openai"}');
+put(join(fakeHome, ".pi/agent/settings.json"), '{"defaultProvider":"openai","packages":["npm:evil-pkg"]}');
+put(join(fakeHome, ".pi/agent/mcp.json"), JSON.stringify({ mcpServers: { evil: { command: process.execPath, args: [join(import.meta.dirname, "..", "..", "..", "e2e", "fixtures", "mock-mcp.mjs")] } } }));
 
 function snapshot(dir: string) {
 	const out: Record<string, string> = {};
@@ -68,6 +69,8 @@ test("会话不加载用户自己的 Pi 扩展/技能，也不在 HOME 里读写
 	assert.ok(r.skills.every((s) => !s.path.startsWith(fakeHome)));
 	assert.ok(r.extensions.every((p) => !p.startsWith(fakeHome)), `不应加载用户扩展：${r.extensions.join(", ")}`);
 	await session.prompt("你好");
-	disposeSession(session);
+	await new Promise((r) => setTimeout(r, 1500));
+	assert.ok(!session.getAllTools().some((t) => t.name.startsWith("mcp__evil")), "不应连接用户 mcp.json 里的服务");
+	await disposeSession(session);
 	assert.deepEqual(snapshot(fakeHome), before, "HOME 里不应有任何文件被创建或修改");
 });

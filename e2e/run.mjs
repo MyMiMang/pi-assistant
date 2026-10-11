@@ -427,6 +427,50 @@ await step("技能更新：diff 审批卡片 → 批准 → 版本历史 → 回
 	await page.keyboard.press("Escape");
 });
 
+await step("扩展：添加 MCP 服务（本机命令）→ 测试连接/工具列表 → 助理调用只读工具 → 有副作用的工具需审批", async () => {
+	await page.getByRole("button", { name: "设置" }).first().click();
+	await page.getByRole("button", { name: "扩展（MCP）" }).click();
+	const tab = page.locator("[data-testid=extensions-tab]");
+	await tab.getByRole("button", { name: "添加" }).click();
+	const form = tab.locator("[data-testid=mcp-form]");
+	await form.getByPlaceholder("github", { exact: true }).fill("demo");
+	await form.getByPlaceholder("npx", { exact: true }).fill(process.execPath);
+	await form.getByPlaceholder("-y @modelcontextprotocol/server-github", { exact: true }).fill(join(ROOT, "e2e/fixtures/mock-mcp.mjs"));
+	await form.getByPlaceholder("查询和管理 GitHub 仓库、Issue、PR").fill("测试用天气与便签服务");
+	await form.getByRole("button", { name: "保存并测试连接" }).click();
+	const item = tab.locator("[data-testid=mcp-item]").first();
+	await item.getByText("已连接 · 2 个工具").waitFor({ timeout: 20_000 });
+	await item.getByText("工具列表").click();
+	await item.locator("[data-testid=mcp-tools]").getByText("get_weather").waitFor();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "32-settings-mcp.png") });
+
+	const pk = page.locator("[data-testid=packages-section]");
+	await pk.getByPlaceholder(/npm:@scope/).fill(join(ROOT, "e2e/fixtures/demo-pi-package"));
+	await pk.getByRole("button", { name: "安装" }).click();
+	await pk.locator("[data-testid=package-item]").getByText("已安装").waitFor({ timeout: 20_000 });
+	await pk.getByText(/扩展 1/).waitFor();
+	await pk.scrollIntoViewIfNeeded();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "33-settings-pi-packages.png") });
+	await page.keyboard.press("Escape");
+
+	await send("查一下上海天气");
+	await page.locator("main").getByText(/晴，22°C（mock-mcp）/).last().waitFor({ timeout: 30_000 });
+	await send("给小王发一条便签");
+	const card = page.locator("[data-testid=approval-card]").last();
+	await card.getByText("mcp__demo__send_note").first().waitFor({ timeout: 20_000 });
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "34-mcp-approval.png") });
+	await card.getByRole("button", { name: "拒绝" }).click();
+	await page.locator("main").getByText("没有获得批准，便签没有发送").last().waitFor({ timeout: 15_000 });
+
+	// 助理设置里按助理启用
+	const pane = page.locator("aside").last();
+	await pane.getByRole("tab", { name: "设置" }).click();
+	await pane.locator("[data-testid=agent-extensions]").getByText("demo", { exact: true }).waitFor();
+});
+
 await step("Phase 2：多对话（新对话 → 切回旧对话历史仍在）", async () => {
 	await page.locator("[data-testid=conv-menu]").click();
 	await page.getByRole("button", { name: /新对话/ }).first().click();
