@@ -1,0 +1,22 @@
+# 胡好好 Rendezvous / PWA 外壳。部署：npm run deploy -w @huhao/rendezvous（见 README）
+name = "huhao-rendezvous"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = false
+
+# 默认入口域名（可在 App 设置「入口域名」中改成自己部署的地址）
+routes = [{ pattern = "app.dengdengyun.shop", custom_domain = true }]
+
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/ws"]
+
+[[kv_namespaces]]
+binding = "SERVERS"
+# deploy.sh 会自动创建并回填这个 id
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[observability]
+enabled = true

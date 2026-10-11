@@ -1,0 +1,141 @@
+/**
+ * 连接管理：
+ *  - 本机或经隧道直接打开（PWA 由本地服务托管）：base = ""（同源）
+ *  - 从入口域名打开（PWA 外壳）：base = 当前隧道地址，通过 Rendezvous 查询并用配对时保存的服务公钥校验签名
+ */
+import * as ed from "@noble/ed25519";
+
+export interface Conn {
+	serverId: string;
+	base: string;
+	token?: string;
+	publicKey?: string;
+}
+const KEY = "huhao.conn";
+export function loadConn(): Conn | null {
+	try {
+		return JSON.parse(localStorage.getItem(KEY) ?? "null");
+	} catch {
+		return null;
+	}
+}
+export function saveConn(c: Conn | null) {
+	if (c) localStorage.setItem(KEY, JSON.stringify(c));
+	else localStorage.removeItem(KEY);
+	conn = c;
+}
+let conn: Conn | null = loadConn();
+export const getConn = () => conn;
+const base = () => (conn && conn.base && conn.base !== location.origin ? conn.base : "");
+
+export class ApiError extends Error {
+	constructor(readonly status: number, message: string) {
+		super(message);
+	}
+}
+
+export async function api<T = any>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+	const headers = new Headers(init.headers);
+	if (conn?.token) headers.set("authorization", `Bearer ${conn.token}`);
+	let body = init.body;
+	if (init.json !== undefined) {
+		headers.set("content-type", "application/json");
+		body = JSON.stringify(init.json);
+	}
+	const res = await fetch(base() + path, { ...init, headers, body });
+	if (!res.ok) {
+		let msg = res.statusText;
+		try {
+			msg = (await res.json()).error ?? msg;
+		} catch {
+			/* ignore */
+		}
+		throw new ApiError(res.status, msg);
+	}
+	const ct = res.headers.get("content-type") ?? "";
+	return (ct.includes("json") ? res.json() : res.text()) as Promise<T>;
+}
+
+export async function fetchBlob(path: string): Promise<Blob> {
+	const headers = new Headers();
+	if (conn?.token) headers.set("authorization", `Bearer ${conn.token}`);
+	const res = await fetch(base() + path, { headers });
+	if (!res.ok) throw new ApiError(res.status, res.statusText);
+	return res.blob();
+}
+
+export async function download(path: string, name: string) {
+	const blob = await fetchBlob(path);
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = name;
+	a.click();
+	setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+export async function upload(agentId: string, file: File) {
+	const fd = new FormData();
+	fd.append("file", file);
+	return api(`/api/agents/${agentId}/upload`, { method: "POST", body: fd });
+}
+
+/** 从入口域名的 Rendezvous 查询服务当前地址，并校验签名。 */
+export async function refreshFromRendezvous(): Promise<boolean> {
+	if (!conn?.publicKey || !conn.serverId) return false;
+	try {
+		const r = await fetch(`/api/servers/${conn.serverId}`);
+		if (!r.ok) return false;
+		const rec = (await r.json()) as { url: string; ts: number; sig: string };
+		const msg = new TextEncoder().encode(`huhao-rendezvous-v1\n${conn.serverId}\n${rec.url}\n${rec.ts}`);
+		const ok = await ed.verifyAsync(b64urlDecode(rec.sig), msg, b64urlDecode(conn.publicKey));
+		if (!ok || !/^https:\/\//.test(rec.url)) return false;
+		saveConn({ ...conn, base: rec.url });
+		return true;
+	} catch {
+		return false;
+	}
+}
+function b64urlDecode(s: string) {
+	const b = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
+	return Uint8Array.from(b, (c) => c.charCodeAt(0));
+}
+
+// ---------------------------------------------------------------- WebSocket（自动重连）
+type Handler = (e: any) => void;
+export function connectWs(onEvent: Handler, onState: (s: "connecting" | "open" | "closed" | "unauthorized") => void) {
+	let ws: WebSocket | null = null;
+	let retry = 500;
+	let stopped = false;
+	const open = () => {
+		if (stopped) return;
+		onState("connecting");
+		const b = base() || location.origin;
+		ws = new WebSocket(`${b.replace(/^http/, "ws")}/ws`);
+		ws.onopen = () => {
+			retry = 500;
+			if (conn?.token) ws!.send(JSON.stringify({ type: "auth", token: conn.token }));
+		};
+		ws.onmessage = (m) => {
+			const e = JSON.parse(m.data);
+			if (e.type === "hello") onState("open");
+			onEvent(e);
+		};
+		ws.onclose = (ev) => {
+			if (ev.code === 4401) {
+				onState("unauthorized");
+				return;
+			}
+			onState("closed");
+			setTimeout(open, retry);
+			retry = Math.min(retry * 2, 15_000);
+		};
+	};
+	open();
+	const ping = setInterval(() => ws?.readyState === 1 && ws.send(JSON.stringify({ type: "ping" })), 20_000);
+	return () => {
+		stopped = true;
+		clearInterval(ping);
+		ws?.close();
+	};
+}

@@ -20,7 +20,8 @@
     "ws": "^8.22.0",
     "@huhao/ext-approval": "*",
     "@huhao/ext-delivery": "*",
-    "@huhao/ext-sandbox": "*"
+    "@huhao/ext-sandbox": "*",
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
@@ -28,7 +29,6 @@
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.2",
     "playwright-core": "^1.64.0",
-    "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }
 }

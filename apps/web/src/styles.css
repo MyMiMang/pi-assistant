@@ -1,0 +1,25 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@import "highlight.js/styles/github-dark.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-accent: var(--accent);
+  --color-accent-soft: color-mix(in oklab, var(--accent) 14%, transparent);
+  --font-sans: ui-sans-serif, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+}
+
+:root { --accent: #6366f1; color-scheme: light; }
+.dark { color-scheme: dark; }
+html, body, #root { height: 100%; }
+body { @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100; -webkit-tap-highlight-color: transparent; }
+.prose pre { @apply rounded-lg text-[13px] leading-relaxed; background: #0d1117 !important; }
+.prose code:not(pre code) { @apply rounded bg-zinc-200/70 px-1 py-0.5 text-[0.85em] dark:bg-zinc-700/70; }
+.prose code::before, .prose code::after { content: none; }
+.prose :where(table) { @apply text-sm; }
+.scrollbar-thin { scrollbar-width: thin; }
+.safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 0.5rem); }
+.safe-top { padding-top: env(safe-area-inset-top); }
+@keyframes blink { 50% { opacity: 0 } }
+.caret::after { content: "▍"; animation: blink 1s steps(1) infinite; margin-left: 1px; color: var(--accent); }
