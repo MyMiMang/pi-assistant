@@ -46,3 +46,10 @@
 .scrollbar-thin { scrollbar-width: thin; }
 .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 0.5rem); }
 .safe-top { padding-top: env(safe-area-inset-top); }
+
+/* diff 视图 */
+.pa-diff { white-space: pre-wrap; }
+.pa-diff > div { padding: 0 6px; margin: 0 -6px; border-radius: 4px; }
+.pa-diff .add { background: color-mix(in srgb, #22c55e 16%, transparent); color: color-mix(in srgb, #15803d 80%, var(--pa-fg, currentColor)); }
+.pa-diff .del { background: color-mix(in srgb, #ef4444 14%, transparent); color: color-mix(in srgb, #b91c1c 80%, var(--pa-fg, currentColor)); }
+.pa-diff .hunk { opacity: 0.55; }

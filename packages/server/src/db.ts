@@ -58,6 +58,17 @@ CREATE TABLE IF NOT EXISTS routine_runs (
   id TEXT PRIMARY KEY, routine_id TEXT NOT NULL, trigger TEXT NOT NULL, status TEXT NOT NULL, task_id TEXT,
   payload TEXT, result TEXT, error TEXT, started_at INTEGER NOT NULL, finished_at INTEGER);
 CREATE INDEX IF NOT EXISTS routine_runs_r ON routine_runs(routine_id, started_at);
+CREATE TABLE IF NOT EXISTS skill_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, version INTEGER NOT NULL,
+  description TEXT NOT NULL, body TEXT NOT NULL, source TEXT NOT NULL, note TEXT, created_at INTEGER NOT NULL,
+  UNIQUE(name, version));
+CREATE TABLE IF NOT EXISTS task_patterns (
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, user_text TEXT NOT NULL,
+  tools TEXT NOT NULL, steps INTEGER NOT NULL, used_skill TEXT, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS task_patterns_a ON task_patterns(agent_id, created_at);
+CREATE TABLE IF NOT EXISTS skill_suggestions (
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, kind TEXT NOT NULL, skill TEXT,
+  topic TEXT NOT NULL, status TEXT NOT NULL, request_id TEXT, created_at INTEGER NOT NULL, resolved_at INTEGER);
 `);
 
 export function getSetting<T>(key: string, fallback: T): T {

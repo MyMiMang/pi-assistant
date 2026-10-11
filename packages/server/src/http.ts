@@ -31,7 +31,8 @@ import { checkNamedPerms, namedConfig, removeNamedTunnel, setupNamedTunnel } fro
 import { sealJson } from "./secrets.ts";
 import { createConversation, currentConversation, deleteConversation, getConversation, listConversations, renameConversation, setCurrentConversation } from "./conversations.ts";
 import { globalMemoryProviderId, listMemoryProviders, memory } from "./memory/index.ts";
-import { deleteSkill, getSkill, listSkills, saveSkill } from "./skills.ts";
+import { deleteSkill, getSkill, listSkills } from "./skills.ts";
+import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
 import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRoutines, listRuns, type RoutineInput, type RoutineRow, runRoutine, setRoutineStatus, updateRoutine, verifyWebhook, webhookPath } from "./routines.ts";
 import { BRAND } from "@pi-assistant/shared";
 
@@ -380,12 +381,28 @@ app.post("/api/skills", async (c) => {
 	const b = await c.req.json<{ name: string; description: string; body: string; previousName?: string }>();
 	if (getSkill(b.name)?.builtin) return c.json({ error: "内置技能不能覆盖，请换一个名字" }, 400);
 	try {
-		return c.json({ ...saveSkill(b), path: undefined });
+		return c.json({ ...saveSkillVersioned(b, "user"), path: undefined });
 	} catch (e) {
 		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 	}
 });
 app.delete("/api/skills/:name", (c) => c.json({ ok: deleteSkill(c.req.param("name")) }));
+app.get("/api/skills-search", (c) => c.json(searchSkills(c.req.query("q") ?? "")));
+app.get("/api/skills/:name/versions", (c) => {
+	const vs = listVersions(c.req.param("name"));
+	// 每个版本附上相对上一版本的 diff
+	return c.json(vs.map((v, i) => ({ ...v, diff: skillDiff(v.name, vs[i + 1] ?? null, v) })));
+});
+app.post("/api/skills/:name/rollback", async (c) => {
+	const { version } = await c.req.json<{ version: number }>();
+	try {
+		return c.json({ ...rollbackSkill(c.req.param("name"), version), path: undefined });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.get("/api/skill-suggest", (c) => c.json(suggestSettings()));
+app.put("/api/skill-suggest", async (c) => (setSuggestSettings(await c.req.json()), c.json(suggestSettings())));
 
 // ---------------------------------------------------------------- 定时与触发
 const routineJson = (r: RoutineRow) => {

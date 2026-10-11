@@ -364,6 +364,11 @@ export function contextUsage(s: AgentSession): { tokens: number | null; contextW
 export const abortSession = (s: AgentSession) => s.abort();
 export const disposeSession = (s: AgentSession) => s.dispose();
 /** 往上下文注入一条不显示给用户的信息（例如后台任务结果），在下一轮对话时生效。 */
+/** 发一条模型可见、聊天里不显示的消息并立刻开始一轮（忙时排在当前轮之后） */
+export function triggerHidden(session: AgentSession, customType: string, text: string) {
+	return session.sendCustomMessage({ customType, content: text, display: false }, { triggerTurn: true, deliverAs: session.isStreaming ? "followUp" : undefined });
+}
+
 export function injectContext(session: AgentSession, customType: string, text: string) {
 	return session.sendCustomMessage({ customType, content: text, display: false }, { deliverAs: "nextTurn" });
 }

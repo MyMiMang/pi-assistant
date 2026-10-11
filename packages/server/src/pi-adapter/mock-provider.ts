@@ -12,6 +12,8 @@ type Msg = { role: string; content: unknown; toolName?: string };
 const textOf = (m: Msg) =>
 	typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((b: { text?: string }) => b.text ?? "").join("") : "";
 
+const getSkillDesc = (_u: string) => "按月汇总表格数据（先按周分组）。用户说“月度汇总/按月统计”时使用。";
+
 function respond(messages: Msg[], systemPrompt = "") {
 	const last = messages[messages.length - 1];
 	// Pi 的上下文整理（compaction）请求：返回一段结构化摘要
@@ -19,6 +21,32 @@ function respond(messages: Msg[], systemPrompt = "") {
 		return fauxAssistantMessage("## Goal\n用户在测试 Pi Assistant 的各项功能。\n\n## Progress\n- 已演示流式回复、文件、审批、后台任务等。\n\n## Next Steps\n- 继续按用户要求操作。");
 	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !/^(后台|定时)任务「/.test(textOf(m)));
 	const u = lastUser ? textOf(lastUser) : "";
+	// 多步流程（用于“要不要做成技能？”建议）：月度汇总 = 5 步工具调用
+	if (/月度汇总/.test(u) && !/^（技能建议/.test(u)) {
+		const since = messages.slice(messages.lastIndexOf(lastUser!) + 1).filter((m) => m.role === "toolResult").length;
+		const steps = [
+			fauxToolCall("ls", { path: "." }),
+			fauxToolCall("bash", { command: "echo '一月,120\n二月,98\n三月,143' > sales.csv" }),
+			fauxToolCall("bash", { command: "awk -F, '{s+=$2} END {print s}' sales.csv" }),
+			fauxToolCall("bash", { command: "sort -t, -k2 -n -r sales.csv | head -1" }),
+			fauxToolCall("bash", { command: "wc -l sales.csv" }),
+		];
+		if (since < steps.length) return fauxAssistantMessage(since === 0 ? [fauxText("好，我按月汇总一下数据。"), steps[0]] : [steps[since]]);
+		return fauxAssistantMessage("月度汇总做好了：三个月合计 361，三月最高（143）。");
+	}
+	if (/^（技能建议/.test(u)) {
+		const update = u.match(/技能「([a-z0-9-]+)」/);
+		if (last.role === "toolResult" && last.toolName === "skill_save") return fauxAssistantMessage(/没有|不要/.test(textOf(last)) ? "好的，这次就不存了。" : `存好了 🧩 ${textOf(last)}`);
+		if (last.role === "toolResult" && last.toolName === "skill_search" && !update)
+			return fauxAssistantMessage([fauxToolCall("skill_save", { name: "monthly-summary", description: "按月汇总表格数据：合计、最高月份、行数。用户说“月度汇总/按月统计”时使用。", body: "# 月度汇总\n\n1. 列出工作区文件，找到数据表。\n2. 用 awk 求合计。\n3. 排序找出最高的月份。\n4. 统计行数。\n5. 用一句话汇报。" })]);
+		if (update) return fauxAssistantMessage([fauxToolCall("skill_save", { name: update[1], description: getSkillDesc(u), body: "# 更新后的流程\n\n1. 先按周分组。\n2. 再按月汇总。\n3. 用一句话汇报。" })]);
+		return fauxAssistantMessage([fauxToolCall("skill_search", { query: "月度汇总 按月统计" })]);
+	}
+	const edit = u.match(/把技能\s*([a-z0-9-]+)\s*改成(.+)/);
+	if (edit) {
+		if (last.role === "toolResult" && last.toolName === "skill_save") return fauxAssistantMessage(/没有批准/.test(textOf(last)) ? "好的，技能保持不变。" : `技能更新好了 ✏️ ${textOf(last)}`);
+		return fauxAssistantMessage([fauxToolCall("skill_save", { name: edit[1], description: "生成每日简报：汇总待办、日程和要闻。用户要“简报/今日概览”时使用。", body: `# 每日简报\n\n1. 列出今天的待办（最多 5 条）。\n2. 汇总日程。\n3. ${edit[2].trim()}。` })]);
+	}
 	if (last.role === "toolResult") {
 		const out = textOf(last);
 		switch (last.toolName) {

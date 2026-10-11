@@ -33,7 +33,7 @@ export function ApprovalCard({ m }: { m: Message }) {
 				<span>操作</span>
 				<b>{action}</b>
 			</div>
-			<pre className="pa-pre">{cmd}</pre>
+			{typeof input.diff === "string" ? <DiffView diff={input.diff} /> : <pre className="pa-pre">{cmd}</pre>}
 			{meta.taskId && <div className="mt-2 text-xs text-mut2">来自后台任务</div>}
 			{pending ? (
 				<div className="pa-actions">
@@ -119,5 +119,18 @@ export function TaskCard({ m }: { m: Message }) {
 			)}
 			{meta.error && <div className="mt-2 text-xs text-red-600">{meta.error}</div>}
 		</div>
+	);
+}
+
+/** 统一 diff（技能修改审批等）：增删行着色 */
+export function DiffView({ diff }: { diff: string }) {
+	return (
+		<pre className="pa-pre pa-diff" data-testid="diff">
+			{diff.split("\n").map((l, i) => (
+				<div key={i} className={l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : l.startsWith("@@") ? "hunk" : undefined}>
+					{l || " "}
+				</div>
+			))}
+		</pre>
 	);
 }

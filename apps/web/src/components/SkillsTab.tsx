@@ -1,10 +1,14 @@
-import { ChevronLeft, Lock, Plus, Puzzle, Trash2 } from "lucide-react";
+import { ChevronLeft, History, Lock, Plus, Puzzle, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { SkillMeta } from "../types";
 import { Badge, Button, Input } from "./ui";
 import Markdown from "./Markdown";
+import { DiffView } from "./Cards";
+
+type Version = { version: number; source: string; note: string | null; created_at: number; diff: string };
+const SRC: Record<string, string> = { user: "你修改", agent: "助理修改", rollback: "回滚", initial: "初始版本" };
 
 type Full = SkillMeta & { body: string };
 
@@ -15,11 +19,24 @@ export function SkillsTab() {
 	const [open, setOpen] = useState<Full | null>(null);
 	const [edit, setEdit] = useState<{ previousName?: string; name: string; description: string; body: string } | null>(null);
 	const [err, setErr] = useState("");
+	const [versions, setVersions] = useState<Version[] | null>(null);
+	const [openV, setOpenV] = useState<number | null>(null);
+	const [suggest, setSuggest] = useState<{ enabled: boolean } | null>(null);
 	const load = () => api<SkillMeta[]>("/api/skills").then(setList);
+	useEffect(() => {
+		void api("/api/skill-suggest").then(setSuggest);
+	}, []);
 	useEffect(() => {
 		void load();
 	}, [version]);
-	const view = async (name: string) => setOpen(await api<Full>(`/api/skills/${name}`));
+	const view = async (name: string) => {
+		setOpen(await api<Full>(`/api/skills/${name}`));
+		setVersions(await api<Version[]>(`/api/skills/${name}/versions`));
+		setOpenV(null);
+	};
+	useEffect(() => {
+		if (open) void view(open.name);
+	}, [version]);
 	const save = async () => {
 		if (!edit) return;
 		setErr("");
@@ -101,6 +118,40 @@ export function SkillsTab() {
 				<div className="rounded-xl border border-line p-3 text-sm">
 					<Markdown text={open.body} />
 				</div>
+				{!open.builtin && versions && versions.length > 0 && (
+					<section data-testid="skill-versions">
+						<div className="pa-sec-label mb-1.5 flex items-center gap-1">
+							<History size={13} /> 版本历史
+						</div>
+						<ul className="space-y-1">
+							{versions.map((v, i) => (
+								<li key={v.version} className="rounded-lg bg-hover/60 px-3 py-1.5 text-xs">
+									<div className="flex items-center gap-2">
+										<button className="flex flex-1 items-center gap-2 text-left" onClick={() => setOpenV(openV === v.version ? null : v.version)}>
+											<b className="font-mono">v{v.version}</b>
+											{i === 0 && <Badge tone="green">当前</Badge>}
+											<span className="text-mut">{SRC[v.source] ?? v.source}{v.note ? ` · ${v.note}` : ""} · {new Date(v.created_at).toLocaleString("zh-CN", { hour12: false })}</span>
+										</button>
+										{i > 0 && (
+											<Button
+												size="sm"
+												variant="ghost"
+												onClick={async () => {
+													if (!confirm(`把「${open.name}」回滚到 v${v.version}？（会生成一个新版本，历史都保留）`)) return;
+													await api(`/api/skills/${open.name}/rollback`, { method: "POST", json: { version: v.version } });
+													await view(open.name);
+												}}
+											>
+												<RotateCcw size={12} /> 回滚到此版本
+											</Button>
+										)}
+									</div>
+									{openV === v.version && <div className="mt-1.5"><DiffView diff={v.diff} /></div>}
+								</li>
+							))}
+						</ul>
+					</section>
+				)}
 			</div>
 		);
 	return (
@@ -113,6 +164,15 @@ export function SkillsTab() {
 					<Plus size={14} /> 新建技能
 				</Button>
 			</div>
+			{suggest && (
+				<label className="pa-card flex cursor-pointer items-start gap-3 !p-3 text-sm">
+					<input type="checkbox" className="mt-1" checked={suggest.enabled} onChange={async (e) => setSuggest(await api("/api/skill-suggest", { method: "PUT", json: { enabled: e.target.checked } }))} />
+					<span>
+						<b>主动建议做成技能</b>
+						<span className="block text-xs text-mut">发现你重复做同类任务、或刚完成一个多步流程时，问一句“要不要做成技能？”；你的做法和已有技能不一样时，提议更新并给你看改动。不会频繁打扰：同一对话一天最多一次，拒绝过的不再提。</span>
+					</span>
+				</label>
+			)}
 			{(["我的技能", "内置技能"] as const).map((title) => {
 				const items = list.filter((s) => s.builtin === (title === "内置技能"));
 				return (

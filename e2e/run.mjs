@@ -389,6 +389,44 @@ await step("Phase 2：技能（聊天里存成技能 → 设置 › 技能库）
 	await page.keyboard.press("Escape");
 });
 
+await step("技能建议：多步任务完成后问“要不要做成技能？” → 同意 → 助理查重后创建", async () => {
+	await send("帮我做一下月度汇总");
+	await page.locator("main").getByText("月度汇总做好了").last().waitFor({ timeout: 20_000 });
+	await page.getByRole("button", { name: "做成技能" }).last().waitFor({ timeout: 10_000 });
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "29-skill-suggestion.png") });
+	await page.getByRole("button", { name: "做成技能" }).last().click();
+	await page.locator("main").getByText(/存好了.*monthly-summary/).last().waitFor({ timeout: 20_000 });
+	const s = await (await fetch(`${BASE}/api/skills/monthly-summary`)).json();
+	if (!s.body?.includes("月度汇总")) throw new Error("技能没有创建");
+});
+
+await step("技能更新：diff 审批卡片 → 批准 → 版本历史 → 回滚", async () => {
+	await send("把技能 daily-brief 改成五条以内的要点");
+	const card = page.locator("[data-testid=approval-card]").last();
+	await card.locator("[data-testid=diff]").waitFor({ timeout: 15_000 });
+	await card.locator("[data-testid=diff] .add").first().waitFor();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "30-skill-diff-approval.png") });
+	await card.getByRole("button", { name: "批准", exact: true }).click();
+	await page.locator("main").getByText("技能更新好了").last().waitFor({ timeout: 15_000 });
+	await page.getByRole("button", { name: "设置" }).first().click();
+	await page.getByRole("button", { name: "技能库" }).click();
+	await page.locator("[data-testid=skills-tab]").getByText("daily-brief").click();
+	const hist = page.locator("[data-testid=skill-versions]");
+	await hist.getByText("v2").waitFor();
+	await hist.getByText("v2").click();
+	await hist.locator("[data-testid=diff] .add").first().waitFor();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "31-skill-versions.png") });
+	page.once("dialog", (d) => d.accept());
+	await hist.getByRole("button", { name: /回滚到此版本/ }).first().click();
+	await hist.getByText("v3").waitFor();
+	const sk = await (await fetch(`${BASE}/api/skills/daily-brief`)).json();
+	if (sk.body.includes("五条以内")) throw new Error("回滚没生效");
+	await page.keyboard.press("Escape");
+});
+
 await step("Phase 2：多对话（新对话 → 切回旧对话历史仍在）", async () => {
 	await page.locator("[data-testid=conv-menu]").click();
 	await page.getByRole("button", { name: /新对话/ }).first().click();
