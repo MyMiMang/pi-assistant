@@ -18,6 +18,8 @@ interface State {
 	/** 每个助理的对话列表与当前对话 */
 	convs: Record<string, { current: string; items: Conversation[] }>;
 	memoryVersion: number;
+	/** Hindsight 状态 / 同步队列变化 */
+	hindsightVersion: number;
 	routinesVersion: number;
 	skillsVersion: number;
 	extVersion: number;
@@ -60,6 +62,7 @@ export const useStore = create<State>((set, get) => ({
 	messages: {},
 	convs: {},
 	memoryVersion: 0,
+	hindsightVersion: 0,
 	routinesVersion: 0,
 	skillsVersion: 0,
 	extVersion: 0,
@@ -224,6 +227,10 @@ export const useStore = create<State>((set, get) => ({
 			}
 			case "memory.changed":
 				set({ memoryVersion: get().memoryVersion + 1 });
+				break;
+			case "memory.hindsight":
+			case "memory.sync":
+				set({ hindsightVersion: get().hindsightVersion + 1 });
 				break;
 			case "routines.changed":
 				set({ routinesVersion: get().routinesVersion + 1 });

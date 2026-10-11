@@ -1,3 +1,4 @@
+import { HindsightSettings } from "./HindsightSettings";
 import { ChevronLeft, History, Lock, Plus, Puzzle, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
@@ -230,11 +231,9 @@ export function MemorySettings() {
 						</label>
 					</li>
 				))}
-				<li className="pa-card !p-3 text-sm opacity-60">
-					<b>高级记忆（Hindsight）</b> · 即将推出
-					<div className="mt-1 text-xs text-mut">本机独立运行（自带运行环境与数据目录），自动整理事实、反思与长期学习；可分别选择记忆用模型、向量模型（默认本地多语言 ONNX）和重排序（本地 / 在线 / 关闭）。</div>
-				</li>
+
 			</ul>
+			{data?.providers.some((p) => p.id === "hindsight") && <HindsightSettings />}
 		</div>
 	);
 }
