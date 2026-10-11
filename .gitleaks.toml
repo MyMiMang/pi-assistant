@@ -1,0 +1,7 @@
+title = "huhao gitleaks config"
+[extend]
+useDefault = true
+[allowlist]
+description = "测试用假 Key"
+regexes = ['''sk-(relay-test|unit|wrong)''']
+paths = ['''package-lock\.json''']

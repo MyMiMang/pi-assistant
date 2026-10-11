@@ -18,6 +18,8 @@
     "test": "npm test -w @huhao/server",
     "typecheck": "npm run typecheck -w @huhao/server && tsc --noEmit -p apps/web",
     "e2e": "npm run build && node e2e/run.mjs",
-    "check:pi": "node scripts/check-pi.mjs"
+    "check:pi": "node scripts/check-pi.mjs",
+    "prepare": "git config core.hooksPath .githooks || true",
+    "scan:secrets": "gitleaks git --redact --no-banner . && gitleaks dir --redact --no-banner --max-target-megabytes 5 apps packages scripts docs e2e"
   }
 }
