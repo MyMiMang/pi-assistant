@@ -6,7 +6,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type Context, type Next } from "hono";
 import QRCode from "qrcode";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import {
 	approveDevice, type Caller, claimPairCode, clientIp, createPairCode, deviceForToken, isLocalRequest, listDevices, pairStatus, rateLimit, rejectDevice, revokeDevice, touchDevice,
 } from "./auth.ts";
@@ -24,6 +24,7 @@ import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
 import { getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
+import { desktopPause, desktopStatus, issueTicket, screenshotDesktop, startDesktop, stopDesktop, useTicket } from "./desktop.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
 import { entryDomain, startTunnel, stopTunnel, tunnelStatus } from "./tunnel.ts";
 
@@ -279,6 +280,39 @@ app.post("/api/requests/:id", async (c) => {
 	return c.json(requests.resolve(c.req.param("id"), b, by(c)));
 });
 
+// ---------------------------------------------------------------- 助理电脑（sandbox desktop）
+const deskJson = async (id: string) => ({ ...(await desktopStatus(id)), paused: desktopPause.isPaused(id) });
+app.get("/api/agents/:id/desktop", async (c) => c.json(await deskJson(c.req.param("id"))));
+app.post("/api/agents/:id/desktop/start", async (c) => {
+	try {
+		await startDesktop(c.req.param("id"));
+		bus.emit({ type: "desktop.changed", agentId: c.req.param("id") } as never);
+		return c.json(await deskJson(c.req.param("id")));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.post("/api/agents/:id/desktop/stop", async (c) => {
+	await stopDesktop(c.req.param("id"));
+	bus.emit({ type: "desktop.changed", agentId: c.req.param("id") } as never);
+	return c.json(await deskJson(c.req.param("id")));
+});
+app.post("/api/agents/:id/desktop/pause", async (c) => {
+	const { paused } = await c.req.json<{ paused: boolean }>();
+	desktopPause.set(c.req.param("id"), paused);
+	if (paused) await runtime(c.req.param("id")).abort();
+	bus.emit({ type: "desktop.changed", agentId: c.req.param("id") } as never);
+	return c.json(await deskJson(c.req.param("id")));
+});
+app.post("/api/agents/:id/desktop/ticket", (c) => c.json({ ticket: issueTicket(c.req.param("id")) }));
+app.get("/api/agents/:id/desktop/screenshot", async (c) => {
+	try {
+		return c.body(new Uint8Array(await screenshotDesktop(c.req.param("id"))), 200, { "content-type": "image/png", "cache-control": "no-store" });
+	} catch {
+		return c.json({ error: "not_running" }, 409);
+	}
+});
+
 // ---------------------------------------------------------------- 远程稳定入口：部署到用户自己的 Cloudflare（仅本机可操作）
 app.get("/api/remote/cloudflare", localOnly, (c) => c.json(cfStatus()));
 app.post("/api/remote/cloudflare/deploy", localOnly, async (c) => {
@@ -342,6 +376,26 @@ if (existsSync(config.webDist)) {
 	app.get("/", (c) => c.text("Web UI 尚未构建：npm run build -w apps/web"));
 }
 
+// ---------------------------------------------------------------- 助理电脑实时画面：WebSocket 反向代理到容器的 noVNC（websockify）
+const deskWss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024, handleProtocols: (p) => (p.has("binary") ? "binary" : false) });
+async function proxyDesktop(req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer, url: URL) {
+	const agentId = useTicket(url.searchParams.get("ticket")); // 一次性票据：只能由已认证的设备/本机通过 API 申请
+	if (!agentId) return socket.destroy();
+	const st = await desktopStatus(agentId);
+	if (st.state !== "running" || !st.port) return socket.destroy();
+	deskWss.handleUpgrade(req, socket, head, (client) => {
+		const upstream = new WebSocket(`ws://127.0.0.1:${st.port}/websockify`, ["binary"]);
+		const pending: (Buffer | ArrayBuffer | Buffer[])[] = [];
+		upstream.on("open", () => pending.splice(0).forEach((d) => upstream.send(d)));
+		upstream.on("message", (d, isBinary) => client.readyState === 1 && client.send(d, { binary: isBinary }));
+		client.on("message", (d, isBinary) => (upstream.readyState === 1 ? upstream.send(d, { binary: isBinary }) : pending.push(d)));
+		const close = () => (client.close(), upstream.close());
+		upstream.on("close", close);
+		upstream.on("error", close);
+		client.on("close", close);
+	});
+}
+
 // ---------------------------------------------------------------- 启动 HTTP + WebSocket
 export function startHttp() {
 	const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host });
@@ -349,6 +403,7 @@ export function startHttp() {
 	const clients = new Map<WebSocket, { deviceId: string | null; authed: boolean }>();
 	server.on("upgrade", (req, socket, head) => {
 		const url = new URL(req.url ?? "/", "http://x");
+		if (url.pathname === "/desktop/ws") return void proxyDesktop(req, socket, head, url);
 		if (url.pathname !== "/ws") return socket.destroy();
 		const headers = new Headers(Object.entries(req.headers).flatMap(([k, v]) => (v === undefined ? [] : [[k, Array.isArray(v) ? v.join(",") : v] as [string, string]])));
 		const local = isLocalRequest(req.socket.remoteAddress, headers);

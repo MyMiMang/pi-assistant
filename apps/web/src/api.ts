@@ -26,7 +26,7 @@ export function saveConn(c: Conn | null) {
 }
 let conn: Conn | null = loadConn();
 export const getConn = () => conn;
-const base = () => (conn && conn.base && conn.base !== location.origin ? conn.base : "");
+export const base = () => (conn && conn.base && conn.base !== location.origin ? conn.base : "");
 
 export class ApiError extends Error {
 	constructor(readonly status: number, message: string) {

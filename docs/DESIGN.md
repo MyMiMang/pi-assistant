@@ -778,4 +778,6 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - ✅ `scripts/fetch-cua-driver.mjs`：按 `third-party.json` 固定版本从官方 GitHub Release 下载并校验 SHA256。
 - ✅ `packages/server/src/desktop.ts`：每个助理一个容器（启动/停止/状态/整屏截图/MCP 命令 `docker exec -i … cua-driver mcp`）、实时画面一次性票据、一键暂停状态。
 - ✅ `packages/ext-computer`：`pi.registerMcpServer("computer", …)` 接入 cua-driver；隐藏 `install_extension`（会装 AGPL 的 cua-perception）、`parse_visual_regions`、自更新/改配置/重放等工具；`computer_screenshot`、`request_handoff`（截图 + 推送 + 等待“已完成”）；`tool_call` 钩子实现一键暂停与 host 目标逐项审批。pi-adapter 加载 Pi 自带的 MCP 扩展并调用 `bindExtensions()`；助理电脑启动/停止时会重建会话以挂上/卸下电脑工具。
-- ⏳ 下一步：「电脑」标签内嵌 noVNC 实时画面 + 接管（WebSocket 反向代理 + 票据）、启动/停止/暂停按钮；冒烟测试 `packages/sandbox-desktop/smoke.mjs`（MCP 列工具 + 截图）进 CI；`ext-browser`。
+- ✅ 「电脑」标签：noVNC 实时画面（`@novnc/novnc`，经 `/desktop/ws?ticket=` 一次性票据鉴权代理到容器的 websockify，手机远程同样可用）、接管（解除只读并自动暂停助理）/交还、暂停/继续、全屏、启动/停止（截图 `20-computer-live-view.png`）。
+- ✅ 冒烟测试 `packages/server/test/computer.smoke.ts`（需 Docker）：启动容器 → 截图 → Pi 会话经 MCP 连上 cua-driver，拿到 53 个工具，隐藏工具全部不可见。
+- ⏳ 下一步：冒烟测试进 CI（GitHub Actions 自带 Docker）；`ext-browser`（Playwright 连容器内 Chromium）；扫码推送页的大图模式；host 目标（bounded + manifest）。

@@ -7,6 +7,7 @@ interface State {
 	conn: "connecting" | "open" | "closed" | "unauthorized";
 	system: SystemInfo | null;
 	agents: Agent[];
+	desktopVersion: number;
 	cloudflareSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
 	current: string | null;
 	messages: Record<string, Message[]>;
@@ -40,6 +41,7 @@ export const useStore = create<State>((set, get) => ({
 	pendingDevices: [],
 	loginEvents: {},
 	cloudflareSteps: [],
+	desktopVersion: 0,
 	drawer: false,
 	info: window.innerWidth >= 1280,
 	settings: new URLSearchParams(location.search).get("settings"),
@@ -131,6 +133,9 @@ export const useStore = create<State>((set, get) => ({
 				break;
 			case "tunnel.status":
 				if (get().system) set({ system: { ...get().system!, tunnel: e.status } });
+				break;
+			case "desktop.changed":
+				set({ desktopVersion: get().desktopVersion + 1 });
 				break;
 			case "cloudflare.progress": {
 				const cur = get().cloudflareSteps.filter((x) => x.step !== e.step);

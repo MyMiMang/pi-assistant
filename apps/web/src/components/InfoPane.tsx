@@ -1,3 +1,4 @@
+import { DesktopView } from "./DesktopView";
 import { CalendarClock, ChevronLeft, Download, File, Folder, HardDrive, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, download } from "../api";
@@ -138,9 +139,10 @@ function Computer({ agentId }: { agentId: string }) {
 	}, [agentId, path, fileVersion]);
 	return (
 		<div className="space-y-3 text-sm">
+			<DesktopView agentId={agentId} />
 			<div className="rounded-xl bg-zinc-50 p-3 dark:bg-zinc-900">
 				<div className="flex items-center gap-2 font-medium">
-					<HardDrive size={16} /> 助理的电脑
+					<HardDrive size={16} /> 工作区
 				</div>
 				<div className="mt-1 text-xs text-zinc-500">
 					{system?.sandbox.mode === "docker" ? "Docker 容器（增强隔离）" : "工作区目录（基础模式，靠审批兜底）"}
