@@ -11,6 +11,7 @@ import { bootstrap, listAgents } from "./runtime.ts";
 import { workspaceOf } from "./files.ts";
 import { startTunnel } from "./tunnel.ts";
 import { startScheduler } from "./routines.ts";
+import { startProactive } from "./proactive.ts";
 import { hindsightInUse } from "./memory/index.ts";
 import { setChatDefault, sidecar } from "./memory/hindsight/sidecar.ts";
 import { defaultModel } from "./models.ts";
@@ -22,6 +23,7 @@ startHttp();
 console.log(`[pi-assistant] 服务已启动：http://${config.host}:${config.port}  数据目录：${config.dataDir}  serverId=${identity().serverId}${config.mock ? "  [Mock 模型已启用]" : ""}`);
 await bootstrap();
 startScheduler();
+startProactive();
 if (getSetting("remoteEnabled", false)) startTunnel();
 setChatDefault(defaultModel);
 // 有助理在用高级记忆时随服务启动 Hindsight（在后台，准备好之前读记忆走基础检索、写入排队）

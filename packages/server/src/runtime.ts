@@ -17,6 +17,8 @@ import { browserFor, setHeaded } from "./browser.ts";
 import { deliveryExtension } from "@pi-assistant/ext-delivery";
 import { memoryExtension } from "@pi-assistant/ext-memory";
 import { routinesExtension } from "@pi-assistant/ext-routines";
+import { proactiveExtension } from "@pi-assistant/ext-proactive";
+import { cancelFollowup, fmt as fmtTime, hiddenConversation, isHeartbeatTask, listFollowups, parseWhen, runOfTask, scheduleFollowup, setProactiveSpawner, surface as proactiveSurface } from "./proactive.ts";
 import { sandboxExtension } from "@pi-assistant/ext-sandbox";
 import { NUDGE_TYPE, skillsExtension } from "@pi-assistant/ext-skills";
 import { currentConversation, getConversation, setConversationSession } from "./conversations.ts";
@@ -190,6 +192,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 	const mode = await sandboxMode();
 	const desk = await desktopStatus(agentId).catch(() => null);
 	const computerOn = desk?.state === "running";
+	const heartbeat = isHeartbeatTask(taskId);
 	const approve = async (toolName: string, input: Record<string, unknown>, summary: string, risk = "medium") =>
 		!!(await requests.approval(agentId, taskId, toolName, input, summary, risk, conversationId)).approved;
 	const exts = [
@@ -252,6 +255,18 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 					return ok;
 				},
 				observe: taskId ? undefined : (turn) => void maybeSuggest(agentId, conversationId, turn).catch(() => {}),
+			}),
+		},
+		{
+			name: "pia-proactive",
+			factory: proactiveExtension({
+				// 巡检任务里才能“告诉用户”；普通聊天里助理直接说就行
+				surface: heartbeat ? (i) => proactiveSurface(agentId, { ...i, sourceRun: taskId ? runOfTask(taskId) : null }) : undefined,
+				schedule: (i) => scheduleFollowup(agentId, conversationId && conversationId !== hiddenConversation(agentId) ? conversationId : null, i.dueAt, i.note),
+				list: () => listFollowups(agentId),
+				cancel: (id) => cancelFollowup(agentId, id),
+				parseWhen: (w) => parseWhen(w),
+				fmt: fmtTime,
 			}),
 		},
 		{
@@ -610,11 +625,12 @@ const MAX_CONCURRENT = 3;
 const live = new Map<string, AgentSession>();
 
 export const tasks = {
-	spawn(agentId: string, title: string, instructions: string, opts: { conversationId?: string | null; routineRunId?: string } = {}): TaskRow {
+	spawn(agentId: string, title: string, instructions: string, opts: { conversationId?: string | null; routineRunId?: string; kind?: "heartbeat" } = {}): TaskRow {
 		const id = uid("t");
 		const conv = opts.conversationId ?? currentConversation(agentId);
-		db.prepare("INSERT INTO tasks(id, agent_id, conversation_id, routine_run_id, title, instructions, status, created_at) VALUES(?,?,?,?,?,?,?,?)").run(id, agentId, conv, opts.routineRunId ?? null, title, instructions, "queued", now());
-		insertMessage({ agentId, conversationId: conv, role: "card", meta: { kind: "task", taskId: id, title, status: "queued", routineRunId: opts.routineRunId } });
+		db.prepare("INSERT INTO tasks(id, agent_id, conversation_id, routine_run_id, title, instructions, status, kind, created_at) VALUES(?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, opts.routineRunId ?? null, title, instructions, "queued", opts.kind ?? null, now());
+		// 主动巡检在隐藏对话里静默进行，不在聊天里放任务卡片
+		if (opts.kind !== "heartbeat") insertMessage({ agentId, conversationId: conv, role: "card", meta: { kind: "task", taskId: id, title, status: "queued", routineRunId: opts.routineRunId } });
 		bus.emit({ type: "task.updated", task: getTask(id) });
 		queueMicrotask(() => tasks.pump());
 		return getTask(id)!;
@@ -668,6 +684,8 @@ export const tasks = {
 				setTask(t.id, { status: "cancelled", finished_at: now() });
 			} else {
 				setTask(t.id, { status: "done", result, finished_at: now() });
+				// 主动巡检：结果只记录；要告诉用户的已经通过 proactive_surface 走了防打扰规则
+				if ((t as TaskRow & { kind?: string | null }).kind === "heartbeat") return;
 				// 定时任务的结果由 routines.ts 发聊天消息与推送（遵守免打扰）
 				if (!t.routine_run_id) notify({ title: `后台任务完成：${t.title}`, body: result, tag: t.id, url: `/?agent=${a.id}` });
 				await runtime(a.id, t.conversation_id).inject(`${t.routine_run_id ? "定时" : "后台"}任务「${t.title}」已完成。结果：\n${result}`);
@@ -675,7 +693,7 @@ export const tasks = {
 		} catch (e) {
 			live.delete(t.id);
 			setTask(t.id, { status: "failed", error: e instanceof Error ? e.message : String(e), finished_at: now() });
-			if (!t.routine_run_id) notify({ title: `后台任务失败：${t.title}`, body: String(e), tag: t.id });
+			if (!t.routine_run_id && (t as TaskRow & { kind?: string | null }).kind !== "heartbeat") notify({ title: `后台任务失败：${t.title}`, body: String(e), tag: t.id });
 		} finally {
 			tasks.pump();
 		}
@@ -697,6 +715,7 @@ export const tasks = {
 // ---------------------------------------------------------------- 启动恢复
 
 setRoutineSpawner((agentId, title, instructions, opts) => tasks.spawn(agentId, title, instructions, opts));
+setProactiveSpawner((agentId, title, instructions, opts) => tasks.spawn(agentId, title, instructions, opts));
 
 export async function bootstrap() {
 	// 不再预置任何助理：首次运行向导里由用户创建并命名第一个助理

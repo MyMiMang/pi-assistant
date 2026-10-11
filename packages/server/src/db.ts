@@ -56,6 +56,16 @@ CREATE TABLE IF NOT EXISTS hindsight_banks (bank TEXT PRIMARY KEY, signature TEX
 CREATE TABLE IF NOT EXISTS channels (
   id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, agent_id TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
   config TEXT NOT NULL DEFAULT '{}', secret TEXT, bind_code TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS proactive_items (
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, importance INTEGER NOT NULL,
+  dedupe_key TEXT NOT NULL, status TEXT NOT NULL, reason TEXT, conversation_id TEXT, delivered_via TEXT, delivered_at INTEGER,
+  deliver_after INTEGER, source_run TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS proactive_items_agent ON proactive_items(agent_id, created_at);
+CREATE TABLE IF NOT EXISTS proactive_followups (
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, due_at INTEGER NOT NULL, note TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS proactive_runs (
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, reason TEXT NOT NULL, task_id TEXT, status TEXT NOT NULL, surfaced INTEGER NOT NULL DEFAULT 0,
+  started_at INTEGER NOT NULL, finished_at INTEGER);
 CREATE TABLE IF NOT EXISTS channel_outbox (
   id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, peer_id TEXT NOT NULL, text TEXT NOT NULL, files TEXT, reason TEXT, created_at INTEGER NOT NULL
 );
@@ -125,6 +135,10 @@ for (const [table, col, ddl] of [
 	["tasks", "routine_run_id", "TEXT"],
 	["requests", "conversation_id", "TEXT"],
 	["agents", "thinking", "TEXT"],
+	["agents", "proactivity", "TEXT"],
+	["agents", "proactive_cfg", "TEXT"],
+	["tasks", "kind", "TEXT"],
+	["conversations", "hidden", "INTEGER NOT NULL DEFAULT 0"],
 ] as const) {
 	const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
 	if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);

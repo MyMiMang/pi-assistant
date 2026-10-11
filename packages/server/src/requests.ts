@@ -24,6 +24,9 @@ export interface RequestRow {
 }
 
 function create(kind: "approval" | "question", agentId: string, taskId: string | null, toolName: string | null, payload: Record<string, unknown>, title: string, conversationId?: string | null) {
+	// 主动巡检（后台、没人在聊）：主动 ≠ 自主执行。需要批准的操作一律拒绝、不弹卡片，也不打扰用户提问
+	if (taskId && (db.prepare("SELECT kind FROM tasks WHERE id = ?").get(taskId) as { kind: string | null } | undefined)?.kind === "heartbeat")
+		return Promise.resolve<{ approved?: boolean; answer?: string; note?: string; scope?: "task" }>(kind === "approval" ? { approved: false, note: "主动巡检中不能执行需要批准的操作。如果值得做，用 proactive_surface 向用户提议。" } : { answer: "（主动巡检中不能向用户提问；需要用户决定的事请用 proactive_surface 提出）" });
 	const id = uid(kind === "approval" ? "ap" : "q");
 	db.prepare("INSERT INTO requests(id, agent_id, task_id, kind, tool_name, payload, status, created_at) VALUES(?,?,?,?,?,?,?,?)").run(
 		id,

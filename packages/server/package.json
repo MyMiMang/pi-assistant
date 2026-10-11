@@ -21,6 +21,7 @@
     "@pi-assistant/ext-connectors": "*",
     "@pi-assistant/ext-delivery": "*",
     "@pi-assistant/ext-memory": "*",
+    "@pi-assistant/ext-proactive": "*",
     "@pi-assistant/ext-routines": "*",
     "@pi-assistant/ext-sandbox": "*",
     "@pi-assistant/ext-skills": "*",

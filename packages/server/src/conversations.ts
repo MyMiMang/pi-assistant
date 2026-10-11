@@ -21,7 +21,7 @@ export function listConversations(agentId: string) {
 		.prepare(
 			`SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.task_id IS NULL AND m.role IN ('user','assistant')) AS message_count,
 			 (SELECT content FROM messages m WHERE m.conversation_id = c.id AND m.task_id IS NULL AND m.role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1) AS last
-			 FROM conversations c WHERE c.agent_id = ? ORDER BY c.updated_at DESC`,
+			 FROM conversations c WHERE c.agent_id = ? AND COALESCE(c.hidden, 0) = 0 ORDER BY c.updated_at DESC`,
 		)
 		.all(agentId) as unknown as (ConversationRow & { message_count: number; last: string | null })[];
 }
@@ -40,7 +40,7 @@ export function createConversation(agentId: string, title = "", opts: { makeCurr
 export function currentConversation(agentId: string): string {
 	const row = db.prepare("SELECT a.conversation_id AS id FROM agents a JOIN conversations c ON c.id = a.conversation_id WHERE a.id = ?").get(agentId) as { id: string } | undefined;
 	if (row) return row.id;
-	const latest = db.prepare("SELECT id FROM conversations WHERE agent_id = ? ORDER BY updated_at DESC LIMIT 1").get(agentId) as { id: string } | undefined;
+	const latest = db.prepare("SELECT id FROM conversations WHERE agent_id = ? AND COALESCE(hidden, 0) = 0 ORDER BY updated_at DESC LIMIT 1").get(agentId) as { id: string } | undefined;
 	if (latest) {
 		db.prepare("UPDATE agents SET conversation_id = ? WHERE id = ?").run(latest.id, agentId);
 		return latest.id;

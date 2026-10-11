@@ -109,6 +109,19 @@ function respond(messages: Msg[], systemPrompt = "") {
 		if (last.toolName === "browser_click") return fauxAssistantMessage(/没有批准|拒绝/.test(out) ? "好的，没有提交。" : `已提交 ✅\n\n${out.slice(0, 300)}`);
 		return fauxAssistantMessage(`网页打开了：\n\n${out.slice(0, 600)}`);
 	}
+	// 主动性：巡检时看“用户最近说过的话”，有就提醒一件；用户说“晚点再看”就约跟进
+	if (/这是(一次主动巡检|你约好的跟进|每日简报)/.test(u)) {
+		if (last.role === "toolResult") return fauxAssistantMessage(`巡检完成：${textOf(last)}`);
+		const said = u.split("## 用户最近 3 天说过的话")[1]?.split("\n").find((l) => l.startsWith("- "));
+		const brief = /这是每日简报/.test(u);
+		if (!said && !brief) return fauxAssistantMessage("无");
+		const what = brief ? "今天没有紧急事项。" : said!.replace(/^- [^：]+：/, "");
+		return fauxAssistantMessage([fauxToolCall("proactive_surface", { kind: brief ? "brief" : "reminder", title: brief ? "今日简报" : `别忘了：${what.slice(0, 20)}`, body: brief ? what : `你之前提到“${what}”，需要我帮忙准备吗？`, importance: brief ? 2 : 3, dedupeKey: brief ? undefined : `remind:${what.slice(0, 30)}` })]);
+	}
+	if (/晚点再看|再帮我看看/.test(u)) {
+		if (last.role !== "toolResult") return fauxAssistantMessage([fauxToolCall("followup_schedule", { when: "+2h", note: `跟进：${u.slice(0, 80)}` })]);
+		return fauxAssistantMessage(`好的，${textOf(last)}到时我再看看。`);
+	}
 	// Phase 3：邮件（写草稿 → 请求批准发送）
 	if (/写邮件/.test(u)) {
 		if (last.role !== "toolResult")
