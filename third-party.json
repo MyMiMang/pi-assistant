@@ -1,18 +1,101 @@
 {
   "$comment": "第三方组件清单：所有集成只通过公开接口（npm / MCP / CLI），版本在此集中固定。见 docs/DESIGN.md §5.16。",
   "components": [
-    { "name": "@earendil-works/pi-coding-agent", "kind": "npm", "version": "1.1.0", "license": "MIT", "adapter": "packages/server/src/pi-adapter", "smoke": "packages/server/test/pi-compat.test.ts" },
-    { "name": "@earendil-works/pi-ai", "kind": "npm", "version": "1.1.0", "license": "MIT", "adapter": "packages/server/src/pi-adapter", "smoke": "packages/server/test/pi-compat.test.ts" },
     {
-      "name": "cua-driver", "kind": "github-release", "repo": "trycua/cua", "tagPrefix": "cua-driver-rs-v", "version": "0.34.1", "license": "MIT",
-      "assets": { "linux-x64": "cua-driver-rs-{v}-linux-x86_64-binary.tar.gz", "linux-arm64": "cua-driver-rs-{v}-linux-arm64-binary.tar.gz", "darwin": "cua-driver-rs-{v}-darwin-universal-binary.tar.gz", "win-x64": "cua-driver-rs-{v}-windows-x86_64-binary.zip" },
-      "checksums": "SHA256SUMS",
-      "adapter": "packages/ext-computer", "smoke": "packages/sandbox-desktop/smoke.mjs",
-      "forbid": ["cua-perception", "omniparser", "cua-spaces", "cua-agent[omni]"]
+      "name": "@earendil-works/pi-coding-agent",
+      "kind": "npm",
+      "version": "1.1.0",
+      "license": "MIT",
+      "adapter": "packages/server/src/pi-adapter",
+      "smoke": "packages/server/test/pi-compat.test.ts"
     },
-    { "name": "cloudflared", "kind": "github-release", "repo": "cloudflare/cloudflared", "version": "latest-pinned-at-build", "license": "Apache-2.0", "adapter": "packages/server/src/tunnel.ts", "smoke": "e2e/run.mjs" },
-    { "name": "playwright-core", "kind": "npm", "version": "^1", "license": "Apache-2.0", "adapter": "e2e / packages/ext-browser", "smoke": "e2e/run.mjs" },
-    { "name": "noVNC", "kind": "debian", "package": "novnc", "license": "MPL-2.0", "adapter": "packages/sandbox-desktop", "smoke": "packages/sandbox-desktop/smoke.mjs" }
+    {
+      "name": "@earendil-works/pi-ai",
+      "kind": "npm",
+      "version": "1.1.0",
+      "license": "MIT",
+      "adapter": "packages/server/src/pi-adapter",
+      "smoke": "packages/server/test/pi-compat.test.ts"
+    },
+    {
+      "name": "cua-driver",
+      "kind": "github-release",
+      "repo": "trycua/cua",
+      "tagPrefix": "cua-driver-rs-v",
+      "version": "0.34.1",
+      "license": "MIT",
+      "assets": {
+        "linux-x64": "cua-driver-rs-{v}-linux-x86_64-binary.tar.gz",
+        "linux-arm64": "cua-driver-rs-{v}-linux-arm64-binary.tar.gz",
+        "darwin": "cua-driver-rs-{v}-darwin-universal-binary.tar.gz",
+        "win-x64": "cua-driver-rs-{v}-windows-x86_64-binary.zip"
+      },
+      "checksums": "SHA256SUMS",
+      "adapter": "packages/ext-computer",
+      "smoke": "packages/sandbox-desktop/smoke.mjs",
+      "forbid": [
+        "cua-perception",
+        "omniparser",
+        "cua-spaces",
+        "cua-agent[omni]"
+      ]
+    },
+    {
+      "name": "cloudflared",
+      "kind": "github-release",
+      "repo": "cloudflare/cloudflared",
+      "version": "2026.10.0",
+      "license": "Apache-2.0",
+      "$comment": "首次开启远程访问时由服务按此清单下载到 数据目录/bin 并校验 SHA256（GitHub 发布资产摘要）。升级：改 version 与各 sha256。",
+      "assets": {
+        "darwin-arm64": {
+          "file": "cloudflared-darwin-arm64.tgz",
+          "sha256": "a2f79ff7b9420aa537d74af239f376da170bbabeb529aec416002adac6a72e70"
+        },
+        "darwin-x64": {
+          "file": "cloudflared-darwin-amd64.tgz",
+          "sha256": "903845b81828c8cb3c5d13d816a2de71c06a3da5785469df8eb0e1b736d92f9f"
+        },
+        "linux-x64": {
+          "file": "cloudflared-linux-amd64",
+          "sha256": "d33ff2d14475178d2012c2c56beba87389ac5ded27649519f198a7d3134a99db"
+        },
+        "linux-arm64": {
+          "file": "cloudflared-linux-arm64",
+          "sha256": "e6422b9d4f72d3194bc5a38676f13667c06666523217b842a877d72a80b5ac08"
+        },
+        "win32-x64": {
+          "file": "cloudflared-windows-amd64.exe",
+          "sha256": "86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c"
+        }
+      },
+      "adapter": "packages/server/src/cloudflared-bin.ts + tunnel.ts",
+      "smoke": "packages/server/test/cloudflared-bin.test.ts"
+    },
+    {
+      "name": "playwright-core",
+      "kind": "npm",
+      "version": "^1",
+      "license": "Apache-2.0",
+      "adapter": "e2e / packages/ext-browser",
+      "smoke": "e2e/run.mjs"
+    },
+    {
+      "name": "noVNC",
+      "kind": "debian",
+      "package": "novnc",
+      "license": "MPL-2.0",
+      "adapter": "packages/sandbox-desktop",
+      "smoke": "packages/sandbox-desktop/smoke.mjs"
+    }
   ],
-  "licenseAllow": ["MIT", "MIT AND MPL-2.0", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MPL-2.0"]
+  "licenseAllow": [
+    "MIT",
+    "MIT AND MPL-2.0",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0"
+  ]
 }
