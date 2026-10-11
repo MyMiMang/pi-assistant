@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, renameSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { BRAND, LEGACY } from "@pi-assistant/shared";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -42,6 +42,25 @@ function migrateDb(dataDir: string) {
 	return newDb;
 }
 
+/**
+ * 安装包自带的第三方二进制（app/bin-seed：cloudflared / uv / cua-driver，打包时已按 third-party.json 校验 SHA256）
+ * 首次启动复制进数据目录的 bin/，之后和自动下载的走同一套查找逻辑；已有的不覆盖。
+ */
+function seedBins(dataDir: string) {
+	const seed = join(import.meta.dirname, "..", "..", "..", "bin-seed");
+	if (!existsSync(seed)) return;
+	const bin = join(dataDir, "bin");
+	mkdirSync(bin, { recursive: true });
+	for (const name of readdirSync(seed)) {
+		if (existsSync(join(bin, name))) continue;
+		try {
+			cpSync(join(seed, name), join(bin, name), { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
+		} catch (e) {
+			console.warn(`[bin-seed] ${name}: ${e instanceof Error ? e.message : e}`);
+		}
+	}
+}
+
 export const config = (() => {
 	const dataDir = resolve(env("DATA_DIR") ?? defaultDataDir());
 	const workspaceRoot = resolve(env("WORKSPACE") ?? join(dataDir, "workspace"));
@@ -68,6 +87,7 @@ export const config = (() => {
 	};
 	for (const d of [c.dataDir, c.workspaceRoot, c.filesDir, c.agentsDir]) mkdirSync(d, { recursive: true });
 	c.dbPath = migrateDb(c.dataDir);
+	seedBins(c.dataDir);
 	// 隔离：Pi 所有默认路径（auth.json、models.json、settings、会话、崩溃日志、keybindings…）都指向我们自己的数据目录，
 	// 永远不读写用户自己安装的 Pi（~/.pi/agent）。强制覆盖，不沿用外部环境里的同名变量。
 	process.env.PI_CODING_AGENT_DIR = join(dataDir, "pi-agent");

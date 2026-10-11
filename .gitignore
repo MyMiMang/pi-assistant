@@ -13,3 +13,10 @@ apps/desktop/src-tauri/target/
 .dev.vars
 *.env
 cloudflare.env
+apps/tray/src-tauri/target/
+apps/tray/src-tauri/binaries/
+apps/tray/src-tauri/gen/
+dist-app/
+dist-app.*
+*.key
+*.key.password

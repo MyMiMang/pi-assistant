@@ -3,26 +3,60 @@
   "productName": "Pi Assistant",
   "identifier": "com.piassistant.app",
   "version": "0.1.0",
-  "build": { "frontendDist": "../../web/dist" },
+  "build": {
+    "frontendDist": "../ui"
+  },
   "app": {
     "windows": [],
-    "trayIcon": { "iconPath": "icons/tray.png", "iconAsTemplate": false },
+    "trayIcon": {
+      "iconPath": "icons/tray.png",
+      "iconAsTemplate": false
+    },
     "macOSPrivateApi": false
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "app", "nsis"],
-    "icon": ["icons/icon.png"],
-    "externalBin": ["binaries/pi-assistant-server", "binaries/cloudflared"],
-    "resources": { "../../web/dist": "web" },
+    "targets": [
+      "app",
+      "dmg",
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/node"
+    ],
+    "resources": {
+      "../../../dist-app/": "app/"
+    },
     "createUpdaterArtifacts": true,
-    "macOS": { "minimumSystemVersion": "12.0" },
-    "windows": { "nsis": { "installMode": "currentUser", "languages": ["SimpChinese", "English"] } }
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "displayLanguageSelector": false
+      }
+    },
+    "publisher": "Pi Assistant",
+    "shortDescription": "能操作电脑、什么都能做的本地助理"
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://github.com/MyMiMang/pi-assistant/releases/latest/download/latest.json"],
-      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY"
+      "endpoints": [
+        "https://github.com/MyMiMang/pi-assistant/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQyMEI1RURCMzg0OEQ5QTcKUldTbjJVZzQyMTRMMGpVeXBvaU4wOGpGVWJTaEhJYWFxc2dqVzVJNTFPK0hBYUZIeUhtZk5lSjYK"
     }
   }
 }

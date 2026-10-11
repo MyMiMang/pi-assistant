@@ -1,13 +1,20 @@
 # @pi-assistant/tray —— 菜单栏/托盘程序 + 安装包（Tauri 2）
 
-无窗口的托盘程序：安装后开机自启，启动并守护 `pi-assistant-server` sidecar（Node SEA 单文件：Node 运行时 + Pi + 我们的服务），
-菜单提供「打开Pi Assistant / 配对手机 / 开机自启 / 检查更新 / 退出」，界面直接用浏览器打开本地 PWA。
+无主窗口的托盘程序：安装后开机自启，启动并守护服务端（内置 Node 运行时 sidecar + 安装包里的 `app/` 目录），
+第一次运行 / 手动打开时在浏览器里打开 http://127.0.0.1:8787 。如果 8787 上已经有 Pi Assistant（例如源码安装）在跑，直接复用。
 
-状态：**脚手架**（`src-tauri/src/main.rs`、`tauri.conf.json` 已写好），sidecar 打包脚本与签名待 release 流水线实现。
-自动更新：Tauri updater 读取 GitHub Releases 的 `latest.json`，新版本（包括升级后的 Pi）静默下载安装。
+菜单：打开 Pi Assistant / 配对手机 / 暂停（继续）操作这台电脑 / 操作电脑时显示悬浮条 / 操作记录 / 开机自动启动 / 检查更新 / 退出。
+助理在操作这台电脑时，屏幕顶部弹出置顶悬浮条（加载本机的 `/hostbar` 页面），一键暂停。
+
+## 构建
 
 ```bash
-npm run build -w @pi-assistant/web
-npm run build:sidecar -w @pi-assistant/tray   # 生成 binaries/pi-assistant-server-<triple>、cloudflared-<triple>
-npx tauri build                        # 需要 Rust 工具链；macOS 产出 .dmg，Windows 产出 NSIS .exe
+npm ci && npm run build                          # 网页 + rendezvous
+node apps/tray/scripts/build-sidecar.mjs         # binaries/node-<triple> + dist-app（服务端 + 生产依赖 + 网页 + cloudflared/uv/cua-driver）
+node scripts/smoke-app.mjs apps/tray/src-tauri/binaries/node-<triple> dist-app   # 用安装包里的 Node 冒烟
+cd apps/tray && npx tauri build                  # macOS .dmg / Windows NSIS .exe；需要 Rust
 ```
+
+正式发布走 `.github/workflows/release.yml`（打 `v*` tag）。自动更新签名：私钥只放在维护者电脑 `~/.config/pi-assistant/tauri-updater.key`，
+CI 里设置 secrets `TAURI_SIGNING_PRIVATE_KEY`（私钥文件内容）和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`；公钥在 `tauri.conf.json`。
+本地没有私钥时加 `--config src-tauri/tauri.nosign.json`（内容 `{"bundle":{"createUpdaterArtifacts":false}}`）。

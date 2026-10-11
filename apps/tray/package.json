@@ -7,5 +7,7 @@
     "build:sidecar": "node scripts/build-sidecar.mjs",
     "build": "npm run build:sidecar && tauri build"
   },
-  "devDependencies": { "@tauri-apps/cli": "^2" }
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
 }
