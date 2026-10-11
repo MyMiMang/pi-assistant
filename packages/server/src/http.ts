@@ -13,7 +13,7 @@ import {
 import { bus } from "./bus.ts";
 import { config } from "./config.ts";
 import { db, getSetting, now, setSetting } from "./db.ts";
-import { fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, saveUpload } from "./files.ts";
+import { fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, saveUpload, workspaceOf } from "./files.ts";
 import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
 import { insertMessage, listMessages } from "./messages.ts";
@@ -41,6 +41,7 @@ import { addPackage, install as installPackage, listPackages, type PiPackageRow,
 import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
 import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRoutines, listRuns, type RoutineInput, type RoutineRow, runRoutine, setRoutineStatus, updateRoutine, verifyWebhook, webhookPath } from "./routines.ts";
 import { BRAND } from "@pi-assistant/shared";
+import { currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
@@ -652,6 +653,47 @@ app.get("/api/files/:id", (c) => {
 app.post("/api/requests/:id", async (c) => {
 	const b = await c.req.json<{ approved?: boolean; answer?: string; note?: string; scope?: string }>();
 	return c.json(requests.resolve(c.req.param("id"), { approved: b.approved, answer: b.answer, note: b.note, scope: b.scope === "task" ? "task" : undefined }, by(c)));
+});
+
+// ---------------------------------------------------------------- 操作这台电脑（Cua bounded）
+const hostManifest = () => currentManifest(workspaceOf, listAgents().map((a) => a.id));
+app.get("/api/host-control", async (c) => {
+	const yaml = hostManifest();
+	return c.json({ settings: hostSettings(), status: hostStatus(), manifest: yaml, manifestHash: manifestHash(yaml), permissions: c.get("caller").local ? await macPermissions() : null });
+});
+app.get("/api/host-control/apps", localOnly, async (c) => c.json(await suggestApps()));
+/** 保存设置。开启需要带上用户在页面上看到的清单哈希（= 用户审阅过这份清单），清单变了就要重新确认 */
+app.put("/api/host-control", localOnly, async (c) => {
+	const b = await c.req.json<{ enabled?: boolean; agents?: "all" | string[]; apps?: HostApp[]; workspaceFiles?: boolean; acknowledged?: boolean; manifestHash?: string }>();
+	const apps = (b.apps ?? hostSettings().apps)
+		.filter((a) => a && typeof a.id === "string" && a.id.trim())
+		.map((a) => ({ name: String(a.name || a.id).slice(0, 60), id: a.id.trim().slice(0, 300) }));
+	if (process.platform !== "darwin" && apps.some((a) => !/^([a-zA-Z]:\\|\/)/.test(a.id))) return c.json({ error: "Windows / Linux 上应用要填可执行文件的完整路径" }, 400);
+	const patch = { agents: b.agents ?? hostSettings().agents, apps, workspaceFiles: b.workspaceFiles ?? hostSettings().workspaceFiles };
+	saveHostSettings({ ...patch, enabled: false, approvedHash: undefined });
+	const yaml = hostManifest();
+	if (b.enabled) {
+		if (!b.acknowledged) return c.json({ error: "请先阅读并确认风险提示" }, 400);
+		if (b.manifestHash !== manifestHash(yaml)) return c.json({ error: "清单已变化，请重新查看后再确认", manifestHash: manifestHash(yaml) }, 409);
+		if (!apps.length) return c.json({ error: "至少选择一个允许操作的应用" }, 400);
+		saveHostSettings({ enabled: true, approvedHash: manifestHash(yaml), enabledAt: Date.now() });
+		try {
+			await startDaemon(yaml);
+		} catch (e) {
+			return c.json({ ok: false, error: e instanceof Error ? e.message : String(e), status: hostStatus() });
+		}
+	} else await stopDaemon();
+	return c.json({ ok: true, status: hostStatus(), manifestHash: manifestHash(yaml) });
+});
+/** 一键暂停 / 继续：任何已配对的设备（包括手机）都能点 */
+app.post("/api/host-control/pause", async (c) => {
+	const { paused } = await c.req.json<{ paused: boolean }>();
+	await setHostPaused(!!paused, hostManifest);
+	return c.json(hostStatus());
+});
+app.post("/api/host-control/permissions", localOnly, async (c) => {
+	await macGrantPermissions();
+	return c.json({ ok: true });
 });
 
 // ---------------------------------------------------------------- 助理电脑（sandbox desktop）

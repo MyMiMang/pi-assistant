@@ -25,20 +25,38 @@
       "version": "0.34.1",
       "license": "MIT",
       "assets": {
-        "linux-x64": "cua-driver-rs-{v}-linux-x86_64-binary.tar.gz",
-        "linux-arm64": "cua-driver-rs-{v}-linux-arm64-binary.tar.gz",
-        "darwin": "cua-driver-rs-{v}-darwin-universal-binary.tar.gz",
-        "win-x64": "cua-driver-rs-{v}-windows-x86_64-binary.zip"
+        "linux-x64": {
+          "file": "cua-driver-rs-{v}-linux-x86_64-binary.tar.gz",
+          "sha256": "a41fe2bdcbeea4501dc594c074f16b0975728e0cc7b08b90acea8564d48fafee"
+        },
+        "linux-arm64": {
+          "file": "cua-driver-rs-{v}-linux-arm64-binary.tar.gz",
+          "sha256": "1c839d35401bbdea20f3e1cf50ace926ef17be6f32cea7e821b02b263c4933dc"
+        },
+        "darwin": {
+          "file": "cua-driver-rs-{v}-darwin-universal.tar.gz",
+          "sha256": "4c7edf1ebbad7e4bc9fac90a4dc4f50d544592e00b35f15b681ccf8b41cb4ff1",
+          "$comment": "含已签名的 CuaDriver.app（macOS 的辅助功能/屏幕录制授权归属于它）"
+        },
+        "win-x64": {
+          "file": "cua-driver-rs-{v}-windows-x86_64-binary.zip",
+          "sha256": "021bc2e5330c80a6c5e2c347c305fafbd4defe195d6282e0d20436f2f13c19bb"
+        },
+        "win-arm64": {
+          "file": "cua-driver-rs-{v}-windows-arm64-binary.zip",
+          "sha256": "21820a2ae20cb4bb998a340ff87c11007b9eb5cec8d1b8338c7b0d6dc88b01a6"
+        }
       },
       "checksums": "SHA256SUMS",
-      "adapter": "packages/ext-computer",
+      "adapter": "packages/ext-computer + packages/server/src/host-control.ts",
       "smoke": "packages/sandbox-desktop/smoke.mjs",
       "forbid": [
         "cua-perception",
         "omniparser",
         "cua-spaces",
         "cua-agent[omni]"
-      ]
+      ],
+      "$comment": "助理电脑镜像里内置 linux-x64；“操作这台电脑”在用户开启时下载到 数据目录/bin 并按这里固定的 SHA256 校验（同时与官方 SHA256SUMS 对照）。升级时由每周自动升级工作流更新版本与哈希。"
     },
     {
       "name": "cloudflared",

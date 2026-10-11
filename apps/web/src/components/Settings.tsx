@@ -1,4 +1,4 @@
-import { Brain, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { Brain, Hand, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { getLang, setLang, t } from "../i18n";
@@ -7,6 +7,7 @@ import { getTheme, type Mode, THEMES } from "../themes/registry";
 import { ThemePreview } from "./ThemePreview";
 import { MemorySettings, SkillsTab } from "./SkillsTab";
 import { ExtensionsTab } from "./ExtensionsTab";
+import { HostControlSettings } from "./HostControl";
 import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
@@ -17,6 +18,7 @@ const TABS = [
 	["skills", "技能库", Puzzle],
 	["extensions", "扩展（MCP）", Plug],
 	["memory", "记忆", Brain],
+	["host", "操作这台电脑", Hand],
 	["remote", "远程访问与设备", Wifi],
 	["entry", "固定地址 / 入口", Globe],
 	["appearance", "外观", Palette],
@@ -40,6 +42,7 @@ export default function Settings() {
 					{settings === "skills" && <SkillsTab />}
 					{settings === "extensions" && <ExtensionsTab />}
 					{settings === "memory" && <MemorySettings />}
+					{settings === "host" && <HostControlSettings />}
 					{settings === "remote" && <RemoteTab />}
 					{settings === "entry" && <EntryTab />}
 					{settings === "appearance" && <AppearanceTab />}

@@ -5,7 +5,8 @@
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { approvalExtension } from "@pi-assistant/ext-approval";
-import { computerExtension, trustedComputerTool } from "@pi-assistant/ext-computer";
+import { computerExtension, isHostTool, trustedComputerTool } from "@pi-assistant/ext-computer";
+import { describeHostAction, hostAllowedFor, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
 import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
 import { browserFor, setHeaded } from "./browser.ts";
 import { deliveryExtension } from "@pi-assistant/ext-delivery";
@@ -191,7 +192,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			factory: approvalExtension({
 				workspace,
 				// 电脑工具（sandbox 目标）和浏览器工具由各自的扩展把关（提交/付款/发送/上传才审批）
-				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n),
+				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n) || isHostTool(n),
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId);
 					return { approved: !!res.approved, note: res.note };
@@ -317,8 +318,25 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				},
 			}),
 		});
+	// 用户开启了“操作这台电脑”且允许这个助理 → 挂上本机 Cua（bounded），每个动作逐项审批
+	if (hostAllowedFor(agentId) && ["running", "paused"].includes(hostStatus().daemon.state))
+		exts.push({
+			name: "pia-hostpc",
+			factory: computerExtension({
+				target: "host",
+				mcp: hostMcpCommand(),
+				isPaused: () => hostPaused(),
+				describe: describeHostAction,
+				request: async (r) => {
+					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
+					return { approved: !!res.approved, note: res.note, scope: res.scope };
+				},
+			}),
+		});
 	return exts;
 }
+/** 会话缓存键里的“本机操作”部分：开关、清单、守护进程状态变化都会重建会话 */
+const hostKey = (agentId: string) => (hostAllowedFor(agentId) ? `${hostSettings().approvedHash}:${hostStatus().daemon.state === "off" || hostStatus().daemon.state === "error" ? "down" : "up"}` : "off");
 
 /** 定时任务的人类可读说明（同时校验 cron） */
 export function describeRoutine(spec: { trigger: string; cron?: string | null; quietHours?: boolean }) {
@@ -351,7 +369,7 @@ class AgentRuntime {
 		const model = this.modelFor(a);
 		if (!model) return null;
 		const desk = (await desktopStatus(this.id).catch(() => null))?.state === "running";
-		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}`;
+		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}`;
 		if (this.session && this.modelKey === key) return this.session;
 		if (this.session && isSessionBusy(this.session)) return this.session; // 运行中先不切换
 		this.creating = (async () => {

@@ -1,3 +1,4 @@
+import { HostControlBar } from "./HostControl";
 import { AlarmClock, Brain, Puzzle, ArrowUp, Check, ChevronRight, Globe, Hand, Loader2, Menu, Monitor, PanelRight, Paperclip, Square, Terminal, X, FileText, FolderSearch, PenLine, Send, Sparkles, Eye } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, upload } from "../api";
@@ -281,6 +282,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 					</button>
 				</div>
 			</header>
+			<HostControlBar />
 			<div
 				ref={scroller}
 				className="pa-scroll scrollbar-thin"

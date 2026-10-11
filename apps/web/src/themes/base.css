@@ -174,3 +174,8 @@ html,.pa-app{height:100%}
 .pa-opts{flex-direction:row;flex-wrap:wrap}
 .pa-opt{flex:none}
 .pa-scroll{padding-bottom:150px}
+/* 允许操作这台电脑时的提示条（聊天顶部，带一键暂停） */
+.pa-hostbar{display:flex;align-items:center;gap:8px;margin:8px 20px 0;padding:6px 8px 6px 12px;border-radius:var(--r-card,12px);font-size:12.5px;background:color-mix(in oklab,var(--warn,#f59e0b) 14%,transparent);color:color-mix(in oklab,var(--warn,#f59e0b) 55%,var(--fg))}
+.pa-hostbar .pa-ic{width:15px;height:15px;flex:none}
+.pa-hostbar.paused{background:var(--hover);color:var(--mut)}
+.pa-hostbar .pa-btn{background:var(--card)}

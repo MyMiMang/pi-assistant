@@ -20,6 +20,7 @@ interface State {
 	memoryVersion: number;
 	/** Hindsight 状态 / 同步队列变化 */
 	hindsightVersion: number;
+	hostVersion: number;
 	routinesVersion: number;
 	skillsVersion: number;
 	extVersion: number;
@@ -63,6 +64,7 @@ export const useStore = create<State>((set, get) => ({
 	convs: {},
 	memoryVersion: 0,
 	hindsightVersion: 0,
+	hostVersion: 0,
 	routinesVersion: 0,
 	skillsVersion: 0,
 	extVersion: 0,
@@ -227,6 +229,9 @@ export const useStore = create<State>((set, get) => ({
 			}
 			case "memory.changed":
 				set({ memoryVersion: get().memoryVersion + 1 });
+				break;
+			case "host.changed":
+				set({ hostVersion: get().hostVersion + 1 });
 				break;
 			case "memory.hindsight":
 			case "memory.sync":

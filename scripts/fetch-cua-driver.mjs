@@ -7,7 +7,9 @@ import { join } from "node:path";
 
 const [target = "linux-x64", out = "packages/sandbox-desktop/vendor"] = process.argv.slice(2);
 const c = JSON.parse(readFileSync(new URL("../third-party.json", import.meta.url))).components.find((x) => x.name === "cua-driver");
-const asset = c.assets[target].replaceAll("{v}", c.version);
+const a = c.assets[target];
+const asset = (typeof a === "string" ? a : a.file).replaceAll("{v}", c.version);
+const pinned = typeof a === "string" ? null : a.sha256;
 const base = `https://github.com/${c.repo}/releases/download/${c.tagPrefix}${c.version}`;
 const get = async (u) => {
 	const r = await fetch(u);
@@ -20,6 +22,7 @@ const want = sums.split("\n").find((l) => l.trim().endsWith(asset))?.split(/\s+/
 const buf = await get(`${base}/${asset}`);
 const got = createHash("sha256").update(buf).digest("hex");
 if (!want || want !== got) throw new Error(`SHA256 不匹配：${asset} 期望 ${want} 实际 ${got}`);
+if (pinned && pinned !== got) throw new Error(`与 third-party.json 固定的 SHA256 不一致：${asset}`);
 const file = join(out, asset);
 writeFileSync(file, buf);
 if (asset.endsWith(".tar.gz")) execFileSync("tar", ["xzf", file, "-C", out, "cua-driver"]);
