@@ -563,13 +563,22 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
   - `DefaultResourceLoader`：`noExtensions: true`（只加载我们内联注册的扩展，不自动发现 `~/.pi/agent/extensions` 和项目 `.pi/extensions`）；`noContextFiles / noPromptTemplates / noThemes`；`skillsOverride` 只保留**我们自己目录**（内置技能、`data/skills`、助理 agentDir）里的技能——Pi 默认还会扫描 `~/.agents/skills` 和工作区祖先目录的 `.agents/skills`，这些一律丢弃。
   - MCP 与扩展包同样隔离：MCP 配置只来自我们自己的数据库（`loadConfig`），不读 `~/.pi/agent/mcp.json` 和项目 `.pi/mcp.json`；扩展包装在 `数据目录/pi-packages`（见 §5.20）。
   - 测试：`packages/server/test/isolation.test.ts` 伪造一个装过 Pi 的 HOME（含扩展、技能、auth、models、settings，以及 `~/.agents/skills`，并把外部 `PI_CODING_AGENT_DIR` 指向它），创建会话并对话一轮，断言没有加载其中任何东西、HOME 下没有任何文件被创建或修改（文件树 + 大小 + mtime 快照对比）。去掉上述过滤后该测试会失败（已验证，能抓到 `~/.agents/skills` 泄漏）。
-- **Hindsight**（实现时遵守）：
+- **Hindsight**（已实现，`packages/server/src/memory/hindsight/`）：
   - 自己的 uv：`<数据目录>/bin/uv`（固定版本 + SHA256，见 `third-party.json`），`UV_CACHE_DIR`、`UV_PYTHON_INSTALL_DIR`、`UV_TOOL_DIR` 都指向 `<数据目录>/hindsight/`；Python 也由 uv 装进这个目录，不用系统 Python、不碰用户自己的 `~/.cache/uv`、pip、venv。国内镜像（PyPI / HuggingFace）可在设置里切换。
-  - 自己的数据：`HINDSIGHT_*` 数据目录与内嵌 PostgreSQL（pg0）放在 `<数据目录>/hindsight/data`；模型缓存（ONNX 向量/重排序）放 `<数据目录>/hindsight/models`（`HF_HOME` 指过去）。
+  - 自己的数据：附属进程的 `HOME` 指向 `<数据目录>/hindsight/home`，Hindsight 配置档与内嵌 PostgreSQL（pg0）都落在那里；模型缓存（ONNX 向量/重排序）放 `<数据目录>/hindsight/models`（`HF_HOME` 指过去）。
   - 自己的端口：每次启动动态选一个空闲的 127.0.0.1 端口（不用默认 8888），只监听本机；启动后用我们生成的随机 API key 握手，确认连上的是**自己拉起的那个进程**（检查 PID + key），否则拒绝使用。
   - **从不自动连接**已存在的 Hindsight（哪怕默认端口上正好有一个）；只有用户在设置里明确填了“远程 Hindsight 地址 + key”才会连外部实例。
   - 生命周期由我们的服务管理：随服务启动/停止，崩溃自动重启（退避），失败回退 basic 后端。
   - 测试同样要覆盖：伪造 HOME 下已有 Hindsight 配置与正在监听 8888 的假服务，断言我们不读、不连、不写 HOME。
+
+#### 5.19.1 Hindsight 后端实现要点（2026-10-11）
+
+- **本机模型网关**（`llm-proxy.ts`）：127.0.0.1 随机端口 + 每次启动随机令牌的 OpenAI 兼容接口，背后走 Pi 的凭据与模型（含自定义中转站）；支持流式、tools、JSON 模式。Hindsight 只拿到网关地址和令牌，**看不到任何真实 API Key**。模型名用别名 `memory`（每次请求时解析设置，换模型不用重启）。
+- **附属进程**（`sidecar.ts`）：自带 uv（GitHub 不通改走 PyPI/国内镜像 wheel，均校验 SHA256）→ `uv sync` 装固定版本的 `hindsight-embed` + `hindsight-api-slim[local-onnx,embedded-db]` + flashrank（`exclude-newer` 锁定解析结果）；PyPI 与 HuggingFace 镜像自动测速选择（官方 / 清华 / 阿里 / hf-mirror）；健康检查、崩溃后退避重启、退出时停止；没有助理用高级记忆时自动停掉省内存。
+- **账本 + 同步队列**（`provider.ts`）：SQLite `memory_items` 永远是原文账本（导出、列表、编辑都以它为准），Hindsight 是其上的智能层。写入先落账本再进 `memory_sync` 队列；Hindsight 未就绪/崩溃时读取回退 basic 全文检索、写入排队，就绪后自动补写（包括切换后端前用 basic 记下的旧记忆）。换向量模型 / 远程地址 → 删库按账本原文重建。
+- **三个模型独立可选**（设置 › 记忆 › 高级记忆）：① 记忆用 LLM（任一已配置的 Pi / 自定义服务，默认自动挑同渠道里便宜快速的，与聊天模型分开，可“测试”未保存的选择，显示用量）；② 向量模型（本地 multilingual-e5-small 默认 / bge-m3，或在线 OpenAI 兼容接口）；③ 重排序（本地 / 硅基流动 / 阿里云百炼 / 关闭）。运行方式：本机（推荐）或明确填写的远程 Hindsight。
+- **按助理选择**：记忆页可让单个助理用高级记忆或跟随全局；显示运行状态、待同步条数；“问问记忆”（reflect，同时查助理库与共享“关于你”库，附依据）；导入/导出统一格式 `pi-assistant-memory/1`，可在两种后端、两台电脑之间迁移。
+- **测试**：`test/hindsight.test.ts`（假 Hindsight 服务：队列、回退、补写、编辑/遗忘、导入导出、重建、未就绪时切换后的补写、环境隔离）；`test/hindsight.smoke.ts`（真装真跑：安装 → 握手 → 写入/抽取 → 检索 → 反思 → 编辑/遗忘/导出/导入 → 重启后仍在）；e2e 覆盖设置页三模型 + 按助理切换 + 补写 + 问问记忆 + 导入。
 
 ### 5.20 MCP 服务器与 Pi 扩展包（P2，已实现）
 
@@ -701,7 +710,7 @@ pi-assistant/
 
 ### Phase 2 · 记忆、技能、定时、稳定地址（目标 3–4 周）
 - [x] 记忆（可插拔 MemoryProvider；basic：事实 + 日志 + 便签、三种作用域、FTS 中文检索、UI 管理）
-- [ ] 高级记忆后端 Hindsight（隔离运行，见 §5.19）
+- [x] 高级记忆后端 Hindsight（隔离运行、本机模型网关、三模型设置、按助理选择、回退与补写、导入导出；见 §5.19 / §5.19.1，已在开发机真装验证）
 - [x] 技能库（内置 + 用户 + 助理自建，Pi 原生技能机制）；智能建议（重复/长流程检测、节流、尊重拒绝）、查重、diff 审批更新、版本历史与回滚
 - [x] MCP 服务器与 Pi 扩展包（设置页、按助理启用、状态与工具列表、隔离）
 - [x] 定时与触发（cron、Webhook、免打扰、补跑、运行历史、助理创建需审批）；routine 级授权待做
