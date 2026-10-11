@@ -1,6 +1,8 @@
 // 端到端验证：启动服务（Mock 模型）→ Playwright 无头浏览器走完主要流程 → 截图 → 重启服务验证持久化。
 // 用法：node e2e/run.mjs   （需要先 npm run build -w apps/web）
 import { spawn } from "node:child_process";
+import { createServer as createNetServer } from "node:net";
+import { fakeHindsight } from "./fixtures/fake-hindsight.mjs";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
@@ -9,7 +11,8 @@ import { startMockOpenAI } from "./mock-openai.mjs";
 const ROOT = new URL("..", import.meta.url).pathname;
 const DATA = process.env.E2E_DATA ?? "/tmp/pia-e2e";
 const SHOTS = join(ROOT, "docs/screenshots");
-const PORT = 8787;
+// 每次用一个空闲端口：上次没退干净的服务占着 8787 时，不会误连到旧进程（以前偶发整轮失败的原因）
+const PORT = Number(process.env.E2E_PORT) || (await new Promise((r) => { const sv = createNetServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => r(p)); }); }));
 const BASE = `http://127.0.0.1:${PORT}`;
 const CHROME = process.env.CHROME ?? "/usr/bin/google-chrome";
 mkdirSync(SHOTS, { recursive: true });
@@ -60,9 +63,18 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, l
 page = await ctx.newPage();
 page.setDefaultTimeout(15_000);
 const bubbleCount = () => page.locator("main .prose").count();
+// 发送前等输入框可用；发送后确认输入框已清空（真的发出去了）。
+// 页面刚加载时对话历史还在异步载入，那时填进去的字可能被重渲染冲掉——这是以前偶发失败的原因之一。
 const send = async (text) => {
-	await page.locator("main textarea").fill(text);
-	await page.locator("main textarea").press("Enter");
+	const box = page.locator("main textarea");
+	await box.waitFor();
+	await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
+	for (let i = 0; i < 3; i++) {
+		await box.fill(text);
+		if ((await box.inputValue()) === text) break;
+	}
+	await box.press("Enter");
+	await page.waitForFunction(() => document.querySelector("main textarea")?.value === "", null, { timeout: 10_000 });
 };
 
 await step("首次运行向导（选择 provider → 登录 → 默认模型 → 创建第一个助理）", async () => {
@@ -392,6 +404,54 @@ await step("Phase 2：记忆（聊天里记住 → 记忆页可见/编辑）", a
 	await page.screenshot({ path: join(SHOTS, "25-memory-tab.png") });
 });
 
+await step("高级记忆（Hindsight）：设置三个模型 → 连接（假的远程 Hindsight）→ 助理单独切换后端 → 旧记忆补写 → 问问记忆 → 导入", async () => {
+	const hs = fakeHindsight("hs-e2e-key");
+	const port = await hs.start();
+	const pane = page.locator("aside").last();
+	try {
+		const c = await browser.newContext({ viewport: { width: 1440, height: 1100 }, colorScheme: "light", locale: "zh-CN" });
+		const p = await c.newPage();
+		await p.goto(`${BASE}/?settings=memory`);
+		const panel = p.getByTestId("hindsight-settings");
+		await panel.waitFor();
+		await panel.getByText("连接远程 Hindsight").click();
+		await panel.getByPlaceholder("https://hindsight.example.com").fill(`http://127.0.0.1:${port}`);
+		await panel.getByPlaceholder("API Key").first().fill("hs-e2e-key");
+		await panel.getByTestId("hs-rr-off").click();
+		await panel.getByLabel("记忆用模型").selectOption("mock/echo");
+		await panel.getByRole("button", { name: "测试", exact: true }).click();
+		await panel.getByText(/mock\/echo 可用/).waitFor();
+		await panel.getByRole("button", { name: "保存", exact: true }).click();
+		await panel.getByTestId("hs-msg").getByText(/已保存/).waitFor();
+		await panel.scrollIntoViewIfNeeded();
+		await p.waitForTimeout(300);
+		await p.screenshot({ path: join(SHOTS, "38-settings-hindsight.png"), fullPage: true });
+		await c.close();
+		// 这个助理单独改用高级记忆：之前在 basic 里记下的内容自动补写进 Hindsight
+		await pane.getByRole("tab", { name: "记忆" }).click();
+		await pane.getByLabel("此助理的记忆后端").selectOption("hindsight");
+		await pane.getByTestId("hindsight-status").getByText("高级记忆运行中").waitFor({ timeout: 20_000 });
+		for (let i = 0; i < 40 && ![...hs.banks.values()].some((d) => [...d.values()].includes("我喜欢简洁的回答")); i++) await page.waitForTimeout(250);
+		if (![...hs.banks.values()].some((d) => [...d.values()].includes("我喜欢简洁的回答"))) throw new Error("旧记忆没有补写进 Hindsight");
+		await pane.getByPlaceholder(/问问记忆/).fill("我喜欢什么样的回答");
+		await pane.getByPlaceholder(/问问记忆/).press("Enter");
+		await pane.getByTestId("reflect-answer").getByText(/根据记忆：.*简洁/).waitFor();
+		// 导入（统一格式，可来自另一个后端或另一台电脑）
+		const data = { format: "pi-assistant-memory/1", bank: "x", items: [{ id: "x1", text: "我每周五下午健身", createdAt: new Date().toISOString(), meta: { kind: "fact" } }] };
+		await pane.getByTestId("memory-import").setInputFiles({ name: "memory.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(data)) });
+		await pane.getByText("已导入 1 条").waitFor();
+		await pane.getByText("我每周五下午健身").waitFor();
+		for (let i = 0; i < 40 && ![...hs.banks.values()].some((d) => [...d.values()].includes("我每周五下午健身")); i++) await page.waitForTimeout(250);
+		if (![...hs.banks.values()].some((d) => [...d.values()].includes("我每周五下午健身"))) throw new Error("导入的记忆没有写进 Hindsight");
+		await page.waitForTimeout(300);
+		await page.screenshot({ path: join(SHOTS, "39-memory-hindsight.png") });
+	} finally {
+		// 后面的步骤继续用基础记忆
+		await pane.getByLabel("此助理的记忆后端").selectOption("").catch(() => {});
+		await hs.stop();
+	}
+});
+
 await step("Phase 2：定时任务（助理创建需审批 → 定时任务页 → 立即运行 → 运行历史）", async () => {
 	await send("每天早上 8 点给我一份简报");
 	await page.locator("main").getByText("需要你的批准").last().waitFor({ timeout: 15_000 });
@@ -548,7 +608,7 @@ await step("四套主题截图（桌面浅色/深色 + 手机）", async () => {
 });
 
 await step("自定义模型服务（中转站）：自动获取模型 → 保存 → 测试连接 → 用它聊天 → 编辑 → 删除", async () => {
-	const relay = await startMockOpenAI({ port: 18080, key: "sk-relay-test", requiredHeader: ["x-relay-team", "e2e"] });
+	const relay = await startMockOpenAI({ key: "sk-relay-test", requiredHeader: ["x-relay-team", "e2e"] });
 	try {
 		const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
 		const p = await c.newPage();
@@ -584,8 +644,10 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 		if (!r.ok) throw new Error(`设默认模型失败 ${r.status}`);
 		await c.close();
 		await page.goto(BASE);
+		// 等页面拿到新的默认模型（输入框旁的模型标签）再发，免得发出时还按旧模型
+		await page.locator("main").getByText("relay-chat").first().waitFor({ timeout: 15_000 }).catch(() => {});
 		await send("你好，中转站");
-		await page.locator("main").getByText("中转站回复（relay-chat）：收到「你好，中转站」").last().waitFor();
+		await page.locator("main").getByText("中转站回复（relay-chat）：收到「你好，中转站」").last().waitFor({ timeout: 30_000 });
 		await page.locator("header").getByText("正在工作").waitFor({ state: "detached" }).catch(() => {});
 		await page.waitForTimeout(500);
 		if (!relay.seen.some((x) => x.url === "/v1/chat/completions" && x.headers["x-relay-team"] === "e2e")) throw new Error("请求没有带上自定义请求头");

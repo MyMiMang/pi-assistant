@@ -3,7 +3,7 @@
 //   POST /v1/chat/completions  → 流式 / 非流式回复
 import { createServer } from "node:http";
 
-export function startMockOpenAI({ port = 18080, key = "sk-relay-test", requiredHeader = null } = {}) {
+export function startMockOpenAI({ port = 0, key = "sk-relay-test", requiredHeader = null } = {}) {
 	const seen = [];
 	const server = createServer(async (req, res) => {
 		let body = "";
@@ -39,7 +39,14 @@ export function startMockOpenAI({ port = 18080, key = "sk-relay-test", requiredH
 		}
 		deny(404, "not found");
 	});
-	return new Promise((resolve) => server.listen(port, "127.0.0.1", () => resolve({ server, seen, url: `http://127.0.0.1:${port}/v1`, close: () => server.close() })));
+	// 默认随机端口（固定端口被上次没退干净的进程占着时，listen 失败会让测试一直挂住）
+	return new Promise((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(port, "127.0.0.1", () => {
+			const p = server.address().port;
+			resolve({ server, seen, url: `http://127.0.0.1:${p}/v1`, close: () => (server.closeAllConnections?.(), server.close()) });
+		});
+	});
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) startMockOpenAI().then((m) => console.log("mock openai at", m.url));
