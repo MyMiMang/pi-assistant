@@ -19,15 +19,21 @@ import type { AdapterStatus, CardAction, ChannelAdapter, ChannelKind, Inbound, O
 import { decodeAction, encodeAction } from "./types.ts";
 import { type WecomAdapter, wecomAdapter } from "./wecom.ts";
 import { wecomBotAdapter } from "./wecom-bot.ts";
+import { type ClawbotConfig, cancelLogin, loginStatus, startLogin, submitVerifyCode, wechatClawbotAdapter } from "./wechat-clawbot.ts";
+import { DeferredSend } from "./types.ts";
+import { getFile, saveUpload } from "../files.ts";
+import { notify } from "../push.ts";
 
 export type { ChannelKind } from "./types.ts";
-export const KIND_LABEL: Record<ChannelKind, string> = { wecom: "企业微信", wecom_bot: "企业微信", feishu: "飞书", dingtalk: "钉钉" };
+export const KIND_LABEL: Record<ChannelKind, string> = { wecom: "企业微信", wecom_bot: "企业微信", feishu: "飞书", dingtalk: "钉钉", wechat_clawbot: "微信" };
 /** 每种渠道需要的字段：config 明文保存，secret 加密保存 */
 export const FIELDS: Record<ChannelKind, { config: string[]; secret: string[] }> = {
 	feishu: { config: ["appId", "domain"], secret: ["appSecret"] },
 	dingtalk: { config: ["clientId", "apiBase"], secret: ["clientSecret"] },
 	wecom: { config: ["corpId", "agentId", "apiBase"], secret: ["secret", "token", "aesKey"] },
 	wecom_bot: { config: ["botId", "wsUrl"], secret: ["botSecret"] },
+	// 凭据来自扫码登录，不由用户填写；apiBase/cdnBase 只给测试用
+	wechat_clawbot: { config: ["apiBase", "cdnBase"], secret: [] },
 };
 
 export interface ChannelRow {
@@ -81,6 +87,8 @@ export function channelJson(c: ChannelRow) {
 			.filter((p) => !p.peer_id.startsWith("chat:"))
 			.map((p) => ({ id: p.peer_id, display: p.display, allowed: !!p.allowed, lastAt: p.last_at })),
 		callbackPath: c.kind === "wecom" ? `/hooks/channels/wecom/${c.id}` : undefined,
+		login: c.kind === "wechat_clawbot" ? loginStatus(c.id) : undefined,
+		queued: (db.prepare("SELECT COUNT(*) AS n FROM channel_outbox WHERE channel_id = ?").get(c.id) as { n: number }).n,
 	};
 }
 
@@ -98,7 +106,7 @@ export function saveChannel(input: { id?: string; kind: ChannelKind; name?: stri
 	const config = { ...(cur ? JSON.parse(cur.config) : {}), ...pick(input.config, f.config) };
 	// 密钥：留空 = 不修改
 	const secret = { ...(cur?.secret ? openJson<Record<string, string>>(cur.secret) : {}), ...pick(input.secret, f.secret) };
-	const required = { feishu: ["appId"], dingtalk: ["clientId"], wecom: ["corpId", "agentId"], wecom_bot: ["botId"] }[input.kind];
+	const required = { feishu: ["appId"], dingtalk: ["clientId"], wecom: ["corpId", "agentId"], wecom_bot: ["botId"], wechat_clawbot: [] as string[] }[input.kind];
 	for (const k of required) if (!config[k]) throw new Error(`缺少 ${k}`);
 	for (const k of f.secret) if (!secret[k]) throw new Error(`缺少 ${k}`);
 	if (input.kind === "wecom" && String(secret.aesKey).length !== 43) throw new Error("EncodingAESKey 应为 43 位");
@@ -143,6 +151,7 @@ function makeAdapter(c: ChannelRow): ChannelAdapter {
 	if (c.kind === "feishu") return feishuAdapter(deps as never);
 	if (c.kind === "dingtalk") return dingtalkAdapter(deps as never);
 	if (c.kind === "wecom_bot") return wecomBotAdapter(deps as never);
+	if (c.kind === "wechat_clawbot") return wechatClawbotAdapter(deps as never);
 	return wecomAdapter(deps as never);
 }
 
@@ -179,6 +188,34 @@ export async function testChannel(id: string) {
 	if (!c) throw new Error("渠道不存在");
 	return (adapters.get(id) ?? makeAdapter(c)).test();
 }
+// ---------------------------------------------------------------- 微信 ClawBot 扫码连接
+export async function clawbotLogin(id: string) {
+	const c = getChannel(id);
+	if (!c || c.kind !== "wechat_clawbot") throw new Error("不是微信 ClawBot 渠道");
+	const cfg = JSON.parse(c.config) as ClawbotConfig;
+	const sec = c.secret ? openJson<{ botToken?: string }>(c.secret) : {};
+	const st = await startLogin(id, cfg, sec.botToken, (r) => {
+		const cur = getChannel(id);
+		if (!cur) return;
+		const next: ClawbotConfig = { ...JSON.parse(cur.config), accountId: r.accountId, ...(r.baseUrl ? { apiBase: r.baseUrl } : {}), ...(r.userId ? { ownerUserId: r.userId } : {}) };
+		db.prepare("UPDATE channels SET config = ?, secret = ?, enabled = 1 WHERE id = ?").run(JSON.stringify(next), sealJson({ botToken: r.botToken }), id);
+		// 扫码的人就是主人：直接授权（ClawBot 不能被别人添加）
+		if (r.userId) db.prepare("INSERT INTO channel_peers(channel_id, peer_id, display, allowed, last_at) VALUES(?,?,?,1,?) ON CONFLICT(channel_id, peer_id) DO UPDATE SET allowed = 1").run(id, r.userId, "我", now());
+		void restartChannel(id);
+		notify({ title: "微信 ClawBot 已连接", body: `现在可以在微信里和「${getAgent(cur.agent_id)?.name ?? "助理"}」聊天了`, url: "/?settings=channels" });
+		changed();
+	});
+	// 二维码也推到手机：在手机上打开设置页即可长按识别
+	notify({ title: "用微信扫码连接 ClawBot", body: "打开设置 › 渠道，用微信扫码；在手机上可长按二维码识别", url: "/?settings=channels", tag: `clawbot-${id}` });
+	changed();
+	return st;
+}
+export { cancelLogin as clawbotCancel, loginStatus as clawbotStatus };
+export function clawbotVerify(id: string, code: string) {
+	submitVerifyCode(id, code);
+	changed();
+}
+
 /** 企业微信回调入口 */
 export function wecomCallback(id: string, method: string, q: Record<string, string>, body: string) {
 	const a = adapters.get(id) as WecomAdapter | undefined;
@@ -192,13 +229,56 @@ export function wecomCallback(id: string, method: string, q: Record<string, stri
 
 // ---------------------------------------------------------------- 入站
 const nagged = new Map<string, number>();
-async function reply(channelId: string, ctx: Record<string, unknown>, text: string, card?: OutCard) {
+export interface OutFile {
+	id: string;
+	name: string;
+}
+/** 发回渠道。平台暂时不让发（DeferredSend）→ 进待发队列，用户下次发消息时补发，同时用 App 推送提醒 */
+async function reply(channelId: string, ctx: Record<string, unknown>, text: string, card?: OutCard, files: OutFile[] = [], peerId?: string) {
 	const a = adapters.get(channelId);
 	if (!a) return;
-	await (card && a.sendCard ? a.sendCard(ctx, card) : a.send(ctx, text)).catch((e) => {
+	try {
+		if (text) await (card && a.sendCard ? a.sendCard(ctx, card) : a.send(ctx, text));
+		for (const f of files) {
+			const row = getFile(f.id);
+			if (row && a.sendFile) await a.sendFile(ctx, row.stored_path, f.name);
+		}
+	} catch (e) {
+		if (e instanceof DeferredSend && peerId) return defer(channelId, peerId, text, files, e.message);
 		statuses.set(channelId, { state: "error", detail: e instanceof Error ? e.message : String(e) });
 		changed();
-	});
+	}
+}
+function defer(channelId: string, peerId: string, text: string, files: OutFile[], reason: string) {
+	db.prepare("INSERT INTO channel_outbox(id, channel_id, peer_id, text, files, reason, created_at) VALUES(?,?,?,?,?,?,?)").run(uid("ob"), channelId, peerId, text, JSON.stringify(files), reason, now());
+	const c = getChannel(channelId);
+	notify({ title: `${getAgent(c?.agent_id ?? "")?.name ?? "助理"}（${KIND_LABEL[c?.kind ?? "wechat_clawbot"]}暂时发不出去）`, body: `${text.slice(0, 120)}\n\n${reason}；你下次在${KIND_LABEL[c?.kind ?? "wechat_clawbot"]}里发消息时会补发。`, url: "/", tag: `outbox-${channelId}` });
+	changed();
+}
+/** 用户发来消息（窗口重新打开）→ 先补发排队的消息 */
+async function flushOutbox(channelId: string, peerId: string, ctx: Record<string, unknown>) {
+	const rows = db.prepare("SELECT * FROM channel_outbox WHERE channel_id = ? AND peer_id = ? ORDER BY created_at").all(channelId, peerId) as { id: string; text: string; files: string | null }[];
+	if (!rows.length) return;
+	db.prepare("DELETE FROM channel_outbox WHERE channel_id = ? AND peer_id = ?").run(channelId, peerId);
+	const head = `（你不在时有 ${rows.length} 条消息）`;
+	for (const [i, r] of rows.entries()) await reply(channelId, ctx, i === 0 ? `${head}\n\n${r.text}` : r.text, undefined, r.files ? JSON.parse(r.files) : [], peerId);
+	changed();
+}
+/** 能不能现在主动发到这个渠道会话（主动提醒选渠道用） */
+export function channelCanPush(channelId: string, peerId: string) {
+	const a = adapters.get(channelId);
+	const p = peer(channelId, peerId);
+	if (!a || !p?.ctx) return { ok: false, reason: "渠道未连接" };
+	return a.canPush?.(JSON.parse(p.ctx)) ?? { ok: true };
+}
+/** 主动发到渠道（不能发就排队）；返回是否已立刻发出 */
+export async function channelPush(channelId: string, peerId: string, text: string): Promise<boolean> {
+	const p = peer(channelId, peerId);
+	if (!p?.ctx) return false;
+	const ok = channelCanPush(channelId, peerId).ok;
+	if (!ok) return (defer(channelId, peerId, text, [], channelCanPush(channelId, peerId).reason ?? "暂时发不出去"), false);
+	await reply(channelId, JSON.parse(p.ctx), text, undefined, [], peerId);
+	return true;
 }
 
 const APPROVE = /^(批准|同意|允许|好|好的|可以|是|确认|ok|yes|y|1)$/i;
@@ -231,6 +311,7 @@ export async function handleInbound(channelId: string, m: Inbound) {
 	// 会话（群聊按群）
 	db.prepare("INSERT INTO channel_peers(channel_id, peer_id, display, allowed, ctx, last_at) VALUES(?,?,?,1,?,?) ON CONFLICT(channel_id, peer_id) DO UPDATE SET ctx = excluded.ctx, last_at = excluded.last_at").run(channelId, m.peerId, m.display ?? null, JSON.stringify(m.ctx), t);
 	let p = peer(channelId, m.peerId)!;
+	await flushOutbox(channelId, m.peerId, m.ctx);
 	const label = `${KIND_LABEL[c.kind]} · ${m.group ? "群聊" : (m.display ?? user.display ?? "单聊")}`;
 	const newConv = () => {
 		const conv = createConversation(c.agent_id, label, { makeCurrent: false });
@@ -264,8 +345,11 @@ export async function handleInbound(channelId: string, m: Inbound) {
 		}
 	}
 	p = peer(channelId, m.peerId)!;
-	insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { from: `${c.kind}:${m.display ?? m.userId}`, channel: { id: channelId, kind: c.kind } } });
-	await runtime(c.agent_id, conv).send(m.group && m.display ? `（${m.display} 在${KIND_LABEL[c.kind]}群里说）${text}` : text);
+	// 发来的图片 / 文件存进助理工作区 uploads/，告诉助理路径
+	const saved = (m.files ?? []).map((f) => saveUpload(c.agent_id, f.name, f.data));
+	const note = saved.length ? `\n\n（附件已保存到工作区：${saved.map((f) => f.workspace_path).join("、")}）` : "";
+	insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { from: `${c.kind}:${m.display ?? m.userId}`, channel: { id: channelId, kind: c.kind }, ...(saved.length ? { attachments: saved.map((f) => ({ id: f.id, name: f.name, mime: f.mime, size: f.size })) } : {}) } });
+	await runtime(c.agent_id, conv).send((m.group && m.display ? `（${m.display} 在${KIND_LABEL[c.kind]}群里说）${text}` : text) + note);
 }
 
 /**
@@ -319,7 +403,7 @@ export function cardFor(meta: Record<string, unknown>): OutCard | null {
 
 // ---------------------------------------------------------------- 出站：把这个对话里助理的回复发回渠道
 const forwarded = new Set<string>();
-function format(msg: MessageRow): string | null {
+function format(msg: MessageRow, canFiles = false): string | null {
 	const meta = (typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as Record<string, unknown>;
 	if (msg.role === "card") {
 		if (meta.status !== "pending") return null;
@@ -329,8 +413,8 @@ function format(msg: MessageRow): string | null {
 	}
 	if (msg.role === "assistant" && msg.status === "done") {
 		const files = ((meta.attachments as { name: string }[] | undefined) ?? []).map((f) => `📎 ${f.name}`);
-		const body = [msg.content?.trim(), files.length ? `${files.join("\n")}\n（文件请在 App 里查看）` : ""].filter(Boolean).join("\n\n");
-		return body || null;
+		const body = [msg.content?.trim(), files.length && !canFiles ? `${files.join("\n")}\n（文件请在 App 里查看）` : ""].filter(Boolean).join("\n\n");
+		return body || (files.length ? "" : null);
 	}
 	if (msg.role === "system" && msg.status === "error") return `⚠️ ${msg.content}`;
 	return null;
@@ -342,10 +426,13 @@ bus.on((e) => {
 	if (forwarded.has(msg.id)) return;
 	const p = db.prepare("SELECT * FROM channel_peers WHERE conversation_id = ? LIMIT 1").get(msg.conversation_id) as unknown as PeerRow | undefined;
 	if (!p) return;
-	const text = format(msg);
-	if (!text) return;
+	const canFiles = !!adapters.get(p.channel_id)?.sendFile;
+	const text = format(msg, canFiles);
+	if (text === null) return;
 	forwarded.add(msg.id);
 	if (forwarded.size > 5000) forwarded.clear();
 	const meta = msg.role === "card" ? ((typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as Record<string, unknown>) : null;
-	void reply(p.channel_id, p.ctx ? JSON.parse(p.ctx) : {}, text, (meta && cardFor(meta)) || undefined);
+	const mm = (typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as { attachments?: OutFile[] };
+	const files = canFiles && msg.role === "assistant" ? (mm.attachments ?? []) : [];
+	void reply(p.channel_id, p.ctx ? JSON.parse(p.ctx) : {}, text, (meta && cardFor(meta)) || undefined, files, p.peer_id);
 });

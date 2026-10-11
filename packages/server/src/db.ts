@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS hindsight_banks (bank TEXT PRIMARY KEY, signature TEX
 CREATE TABLE IF NOT EXISTS channels (
   id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, agent_id TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
   config TEXT NOT NULL DEFAULT '{}', secret TEXT, bind_code TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS channel_outbox (
+  id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, peer_id TEXT NOT NULL, text TEXT NOT NULL, files TEXT, reason TEXT, created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS channel_peers (
   channel_id TEXT NOT NULL, peer_id TEXT NOT NULL, display TEXT, allowed INTEGER NOT NULL DEFAULT 0,
   conversation_id TEXT, ctx TEXT, last_at INTEGER, PRIMARY KEY (channel_id, peer_id));

@@ -45,7 +45,7 @@ import { actionShot, clearActions, listActions } from "./action-log.ts";
 import { openWechat, saveWechatSettings, wechatSettings, wechatStatus } from "./wechat.ts";
 import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAccount, saveOAuthAccount, testAccount } from "./email.ts";
 import { finishGoogle, googleClient, saveGoogleClient, startGoogle } from "./email-oauth.ts";
-import { channelJson, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
+import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { hostAgentsChanged, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
@@ -703,6 +703,24 @@ app.delete("/api/channels/:id", localOnly, async (c) => {
 	await deleteChannel(c.req.param("id")!);
 	return c.json({ ok: true });
 });
+// 微信 ClawBot 扫码连接：已配对的手机也能看二维码（在手机上长按识别），所以不限本机
+app.post("/api/channels/:id/clawbot/login", async (c) => {
+	try {
+		return c.json(await clawbotLogin(c.req.param("id")!));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.get("/api/channels/:id/clawbot/login", (c) => c.json(clawbotStatus(c.req.param("id")!)));
+app.post("/api/channels/:id/clawbot/verify", async (c) => {
+	try {
+		clawbotVerify(c.req.param("id")!, String((await c.req.json<{ code: string }>()).code ?? ""));
+		return c.json({ ok: true });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.delete("/api/channels/:id/clawbot/login", (c) => (clawbotCancel(c.req.param("id")!), c.json({ ok: true })));
 app.post("/api/channels/:id/test", localOnly, async (c) => {
 	try {
 		return c.json({ ok: true, message: await testChannel(c.req.param("id")!) });

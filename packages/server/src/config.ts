@@ -93,5 +93,7 @@ export const config = (() => {
 	process.env.PI_CODING_AGENT_DIR = join(dataDir, "pi-agent");
 	process.env.PI_CODING_AGENT_SESSION_DIR = join(dataDir, "pi-agent", "sessions");
 	mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });
+	// 微信 ClawBot 官方插件的状态目录（context token、引用缓存、日志）：同样强制在数据目录里，不碰用户的 ~/.openclaw
+	process.env.OPENCLAW_STATE_DIR = join(dataDir, "openclaw-state");
 	return c;
 })();

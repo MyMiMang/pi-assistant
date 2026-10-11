@@ -1,0 +1,10 @@
+{
+  "name": "openclaw",
+  "version": "2026.8.1",
+  "private": true,
+  "description": "Pi Assistant 的最小 OpenClaw 插件 SDK 垫片：只实现腾讯官方微信插件 @tencent-weixin/openclaw-weixin 的协议层（api / cdn / media / send）在加载时用到的几个函数，让我们直接复用官方实现而不安装 OpenClaw。不是 OpenClaw。",
+  "type": "module",
+  "exports": {
+    "./plugin-sdk/*": "./plugin-sdk/*.js"
+  }
+}

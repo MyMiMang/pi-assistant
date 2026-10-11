@@ -274,6 +274,16 @@
           "sha256": "51784a262c725ef1595dd833f456190e913583dd81c24dd8fe587532bc91c0dc"
         }
       }
+    },
+    {
+      "name": "@tencent-weixin/openclaw-weixin",
+      "kind": "npm",
+      "version": "2.4.10",
+      "license": "MIT",
+      "adapter": "packages/server/src/channels/wechat-clawbot.ts",
+      "shim": "packages/openclaw-shim",
+      "smoke": "packages/server/test/clawbot.test.ts",
+      "note": "腾讯官方微信 ClawBot 插件：只复用协议层（api/cdn/media/send），OpenClaw SDK 由最小垫片提供"
     }
   ],
   "licenseAllow": [
