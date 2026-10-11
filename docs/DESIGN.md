@@ -879,10 +879,23 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 
 ### 14.10 实现进度（2026-10-11）
 
-- ✅ `packages/sandbox-desktop`：Docker 镜像（Debian + Xvfb + xfce4 + x11vnc + noVNC/websockify + Chromium + 中文字体 + `cua-driver` 0.34.1 Linux 静态二进制）；可选 `--build-arg WECHAT=1` 安装 Linux 微信。家目录持久化卷；VNC 只在容器内回环，noVNC 只绑定宿主 127.0.0.1。启动后关闭 cua-driver 遥测。已在本机 Docker 构建并运行：noVNC 页面 200，`cua-driver list-tools` 在 X11 下列出 60+ 工具。
+- ✅ `packages/sandbox-desktop`：Docker 镜像（Debian + Xvfb + xfce4 + x11vnc + noVNC/websockify + Chromium + 中文字体 + `cua-driver` 0.34.1 Linux 静态二进制）；另装 `socat`（浏览器调试端口转发）、`libatomic1`/`libegl1`（微信运行库）。微信不再打进镜像，见 14.11。家目录持久化卷；VNC 只在容器内回环，noVNC 只绑定宿主 127.0.0.1。启动后关闭 cua-driver 遥测。已在本机 Docker 构建并运行：noVNC 页面 200，`cua-driver list-tools` 在 X11 下列出 60+ 工具。
 - ✅ `scripts/fetch-cua-driver.mjs`：按 `third-party.json` 固定版本从官方 GitHub Release 下载并校验 SHA256。
 - ✅ `packages/server/src/desktop.ts`：每个助理一个容器（启动/停止/状态/整屏截图/MCP 命令 `docker exec -i … cua-driver mcp`）、实时画面一次性票据、一键暂停状态。
 - ✅ `packages/ext-computer`：`pi.registerMcpServer("computer", …)` 接入 cua-driver；隐藏 `install_extension`（会装 AGPL 的 cua-perception）、`parse_visual_regions`、自更新/改配置/重放等工具；`computer_screenshot`、`request_handoff`（截图 + 推送 + 等待“已完成”）；`tool_call` 钩子实现一键暂停与 host 目标逐项审批。pi-adapter 加载 Pi 自带的 MCP 扩展并调用 `bindExtensions()`；助理电脑启动/停止时会重建会话以挂上/卸下电脑工具。
 - ✅ 「电脑」标签：noVNC 实时画面（`@novnc/novnc`，经 `/desktop/ws?ticket=` 一次性票据鉴权代理到容器的 websockify，手机远程同样可用）、接管（解除只读并自动暂停助理）/交还、暂停/继续、全屏、启动/停止（截图 `20-computer-live-view.png`）。
 - ✅ 冒烟测试 `packages/server/test/computer.smoke.ts`（需 Docker）：启动容器 → 截图 → Pi 会话经 MCP 连上 cua-driver，拿到 53 个工具，隐藏工具全部不可见。
-- ⏳ 下一步：冒烟测试进 CI（GitHub Actions 自带 Docker）；`ext-browser`（Playwright 连容器内 Chromium）；扫码推送页的大图模式；host 目标（bounded + manifest）。
+- ✅ 后续已完成：`ext-browser`、host 目标、渠道、邮箱、个人微信，见 14.11。
+
+### 14.11 Phase 3 实现状态（2026-10-11）
+
+| 项 | 状态 | 实现 | 验证 |
+|---|---|---|---|
+| 浏览器 `ext-browser` | ✅ | `packages/ext-browser`（Playwright 公开 API）：navigate / snapshot（带 ref 的可访问性大纲 + 截图）/ click / type / select / scroll / press / tabs / download / upload（工作区内）/ handoff。有助理电脑时经 CDP 连容器里的 Chromium（`socat` 转发 9222→9223，只绑 127.0.0.1），画面就在「电脑」实时画面里；没有 Docker 时退到本机无头 Chrome/Edge，接管时切成有界面。每个助理一个持久化用户目录。提交表单、付款/下单/发送类按钮、上传文件走审批（可“本任务内都允许”）。 | 单测（本机 Chrome，模拟商店）+ Docker 冒烟（容器内 Chromium、登录态持久）+ e2e（截图 40/41） |
+| 操作这台电脑（host） | ✅ | `src/host-control.ts` + `ext-computer` host 目标：默认关闭；设置页风险提示 → 勾选允许的应用 → 审阅 Cua 能力清单（bounded，清单 v3：只列允许的工具/应用、工作区读写、整屏观察关闭）后开启；每个动作逐项审批（可本任务内都允许）；聊天顶部提示条 + 电脑/手机一键暂停（`revoke --all`）；macOS 经 CuaDriver.app 启动并引导辅助功能/屏幕录制授权；Windows/Linux 直接运行。Cua 二进制按 `third-party.json` 固定版本 + 每平台 SHA256 下载。 | 单测 + Docker 里真跑 bounded 模式（允许的应用能操作、清单外工具被拒、暂停后全部拒绝）；e2e 截图 42。**macOS/Windows 真机未验证** |
+| 渠道：飞书 / 钉钉 / 企业微信 | ✅ | `src/channels/*`：飞书长连接（官方 SDK WSClient）、钉钉 Stream（官方 SDK），都不需要公网地址；企业微信自建应用走回调（`/api/channels/wecom/:id/callback`，自实现签名校验 + AES 解密），需要固定地址/隧道。陌生人先发绑定码才能用；回复「批准」/「拒绝」/选项序号即回答审批和提问；「新对话」「停止」命令；凭据加密保存。设置 › 渠道 带分步指引。 | 单测用模拟平台 API（签名/加解密/绑定/路由/审批/回消息）；e2e 截图 43。**真实平台未验证** |
+| 邮箱（IMAP/SMTP） | ✅ | `src/email.ts`（imapflow / nodemailer / mailparser）+ `ext-connectors` 的 email_accounts / list / read / draft / send。预设 QQ、163、126、Gmail、Outlook、腾讯企业邮、自定义。先草稿、`email_send` 每次审批（卡片里是完整收件人/主题/正文/附件），拒绝不重试；附件只能来自工作区；邮件内容标注为外部数据；QQ/163 这类会追加到“已发送”。账号可限定给某个助理。 | 单测 + e2e 用本机模拟 IMAP（hoodiecrow）+ SMTP（smtp-server）服务器；截图 45/46。**真实邮箱未验证** |
+| 个人微信（可选） | ✅ 实验 | `src/wechat.ts` + `wechat_open`：设置 › 渠道 › 个人微信，确认风险（违反服务条款、可能封号、请用小号）后开启并选择助理；官方 Linux 微信按 `third-party.json` 固定 SHA256 下载（腾讯原地替换安装包时拒绝安装，等每周升级流程更新）、解到助理电脑家目录卷；登录二维码由助理 `request_handoff` 推到手机扫码；系统提示约束：只按用户要求发消息，给新的人/发文件/转账先问，不批量。界面操作用助理电脑里的 Cua 工具。 | 单测 + Docker 冒烟（安装→启动→看到“扫码登录”窗口，截图 `phase3-wechat-sandbox-qr.png`）；e2e 截图 44。**登录与收发消息需要真实微信小号** |
+
+还没做：渠道里的交互卡片按钮（目前审批靠回复文字）、企业微信长连接（智能机器人）模式、host 目标的托盘悬浮条/全局快捷键与操作审计回看、Gmail OAuth、日历/GitHub 连接器。
+
