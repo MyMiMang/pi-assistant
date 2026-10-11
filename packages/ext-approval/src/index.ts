@@ -24,7 +24,8 @@ export interface ApprovalHost {
 	trusted?: (toolName: string) => boolean;
 }
 
-const SAFE_TOOLS = new Set(["read", "ls", "find", "grep", "deliver_file", "ask_user", "spawn_task"]);
+// codemode / tool_search 本身无副作用：脚本里调用的每个工具仍会单独经过这道闸门（parentToolCallId）
+const SAFE_TOOLS = new Set(["read", "ls", "find", "grep", "deliver_file", "ask_user", "spawn_task", "codemode", "tool_search", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]);
 const RISKY_BASH: [RegExp, string, "medium" | "high"][] = [
 	[/\brm\s+(-[a-zA-Z]*\s+)*/, "删除文件", "high"],
 	[/\bsudo\b/, "以管理员权限运行", "high"],

@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS task_patterns (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, user_text TEXT NOT NULL,
   tools TEXT NOT NULL, steps INTEGER NOT NULL, used_skill TEXT, created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS task_patterns_a ON task_patterns(agent_id, created_at);
+CREATE TABLE IF NOT EXISTS mcp_servers (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, config TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+  agents TEXT, status TEXT, tools TEXT, error TEXT, checked_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS pi_packages (
+  id TEXT PRIMARY KEY, source TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1, agents TEXT,
+  status TEXT NOT NULL, installed_path TEXT, resources TEXT, error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS skill_suggestions (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, kind TEXT NOT NULL, skill TEXT,
   topic TEXT NOT NULL, status TEXT NOT NULL, request_id TEXT, created_at INTEGER NOT NULL, resolved_at INTEGER);

@@ -10,7 +10,9 @@ import { fileURLToPath } from "node:url";
 import {
 	createAgentSession,
 	createBashTool,
+	createCodemodeExtension,
 	createMcpExtension,
+	createToolSearchExtension,
 	DefaultResourceLoader,
 	defineTool,
 	ModelRuntime,
@@ -200,6 +202,13 @@ export interface CreateSessionOptions {
 	systemPromptAppend: string[];
 	extensions: { name: string; factory: ExtensionFactory }[];
 	skillPaths?: string[];
+	/** 我们自己配置的 MCP 服务器（不读 mcp.json） */
+	mcpServers?: { name: string; config: Record<string, unknown> }[];
+	mcpLogPath?: string;
+	/** MCP 服务需要 OAuth 登录时：打开授权页 */
+	onMcpAuthUrl?: (url: string) => void;
+	/** 已安装的 Pi 扩展包目录（按 Pi 的包发现规则加载其中的扩展/技能） */
+	packagePaths?: string[];
 }
 
 export async function createPiSession(o: CreateSessionOptions): Promise<AgentSession> {
@@ -207,7 +216,7 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 	if (!model) throw new Error(`模型不存在：${o.model.provider}/${o.model.id}`);
 	// 隔离：只加载我们自己的扩展（内联 factory）和我们自己目录里的技能，
 	// 绝不读取用户自己装的 Pi（~/.pi/agent、~/.agents/skills、项目 .pi/.agents 等）
-	const allowedSkillRoots = [...(o.skillPaths ?? []), o.agentDir].map((p) => resolve(p));
+	const allowedSkillRoots = [...(o.skillPaths ?? []), ...(o.packagePaths ?? []), o.agentDir].map((p) => resolve(p));
 	const inside = (p: string) => allowedSkillRoots.some((r) => {
 		const rel = relative(r, resolve(p));
 		return !rel.startsWith("..") && !isAbsolute(rel);
@@ -220,11 +229,27 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		noPromptTemplates: true,
 		noThemes: true,
 		noContextFiles: true,
-		noSkills: !o.skillPaths?.length,
+		noSkills: !o.skillPaths?.length && !o.packagePaths?.length,
 		additionalSkillPaths: o.skillPaths,
+		additionalExtensionPaths: o.packagePaths,
 		appendSystemPrompt: [o.systemPromptAppend.join("\n\n")],
 		// Pi 自带的 MCP 扩展（SDK 会话默认不加载）：ext-computer 等通过 pi.registerMcpServer 注册服务器
-		extensionFactories: [{ name: "pi-mcp", factory: createMcpExtension({ startupWaitMs: 8000 }) }, ...o.extensions.map((e) => ({ name: e.name, factory: e.factory }))],
+		// 配置来源只有我们自己（loadConfig），不读 ~/.pi/agent/mcp.json 或项目 .pi/mcp.json；/mcp 的修改不落盘。
+		extensionFactories: [
+			{
+				name: "pi-mcp",
+				factory: createMcpExtension({
+					startupWaitMs: 8000,
+					loadConfig: () => ({ servers: (o.mcpServers ?? []).map((s) => ({ name: s.name, config: s.config as never, source: "pi-assistant", scope: "global" as const })), errors: [], autoEnableCodemode: true }),
+					updateConfig: () => {},
+					logPath: o.mcpLogPath,
+					openUrl: o.onMcpAuthUrl,
+				}),
+			},
+			{ name: "pi-codemode", factory: createCodemodeExtension({ models: false }) },
+			{ name: "pi-tool-search", factory: createToolSearchExtension() },
+			...o.extensions.map((e) => ({ name: e.name, factory: e.factory })),
+		],
 	});
 	await resourceLoader.reload();
 	const sessionManager = o.sessionFile
@@ -362,7 +387,16 @@ export function contextUsage(s: AgentSession): { tokens: number | null; contextW
 	return { tokens: u?.tokens ?? null, contextWindow: u?.contextWindow ?? s.model?.contextWindow ?? null };
 }
 export const abortSession = (s: AgentSession) => s.abort();
-export const disposeSession = (s: AgentSession) => s.dispose();
+/** 结束会话：先发 session_shutdown（让 MCP 等扩展关闭子进程/连接），再释放 */
+export async function disposeSession(s: AgentSession) {
+	try {
+		const runner = s.extensionRunner;
+		if (runner?.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" } as never);
+	} catch {
+		/* 关闭时的扩展错误不影响释放 */
+	}
+	s.dispose();
+}
 /** 往上下文注入一条不显示给用户的信息（例如后台任务结果），在下一轮对话时生效。 */
 /** 发一条模型可见、聊天里不显示的消息并立刻开始一轮（忙时排在当前轮之后） */
 export function triggerHidden(session: AgentSession, customType: string, text: string) {

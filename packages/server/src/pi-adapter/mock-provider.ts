@@ -47,6 +47,14 @@ function respond(messages: Msg[], systemPrompt = "") {
 		if (last.role === "toolResult" && last.toolName === "skill_save") return fauxAssistantMessage(/没有批准/.test(textOf(last)) ? "好的，技能保持不变。" : `技能更新好了 ✏️ ${textOf(last)}`);
 		return fauxAssistantMessage([fauxToolCall("skill_save", { name: edit[1], description: "生成每日简报：汇总待办、日程和要闻。用户要“简报/今日概览”时使用。", body: `# 每日简报\n\n1. 列出今天的待办（最多 5 条）。\n2. 汇总日程。\n3. ${edit[2].trim()}。` })]);
 	}
+	if (/查一下.*天气/.test(u)) {
+		if (last.role === "toolResult") return fauxAssistantMessage(`MCP 工具返回：${textOf(last)}`);
+		return fauxAssistantMessage([fauxToolCall("mcp__demo__get_weather", { city: "上海" })]);
+	}
+	if (/发一条便签/.test(u)) {
+		if (last.role === "toolResult") return fauxAssistantMessage(/blocked|拒绝|denied|批准/i.test(textOf(last)) ? "没有获得批准，便签没有发送。" : `便签发好了：${textOf(last)}`);
+		return fauxAssistantMessage([fauxToolCall("mcp__demo__send_note", { to: "小王", text: "明天十点开会" })]);
+	}
 	if (last.role === "toolResult") {
 		const out = textOf(last);
 		switch (last.toolName) {

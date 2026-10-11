@@ -3,6 +3,7 @@
  * 所有 Pi 调用都经过 pi-adapter；这里负责把 Pi 事件落盘为消息并广播。
  */
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { approvalExtension } from "@pi-assistant/ext-approval";
 import { computerExtension, trustedComputerTool } from "@pi-assistant/ext-computer";
 import { deliveryExtension } from "@pi-assistant/ext-delivery";
@@ -16,6 +17,8 @@ import { computeNext, createRoutine, deleteRoutine, getRoutine, listRoutines, se
 import { DUP_THRESHOLD, hasCreateGrant, observeTurn, recordSuggestion, resolveSuggestion, saveSkillVersioned, searchSkills, skillDiff, type Suggestion, suggestionPrompt } from "./skill-intel.ts";
 import { deleteSkill, getSkill, listSkills, skillPaths, skillsVersion } from "./skills.ts";
 import { bus } from "./bus.ts";
+import { mcpServersFor, mcpVersion } from "./mcp.ts";
+import { packagePathsFor, packagesVersion } from "./pi-packages.ts";
 import { config } from "./config.ts";
 import { db, now, uid } from "./db.ts";
 import { deliverFromWorkspace, fileInfo, workspaceOf } from "./files.ts";
@@ -318,7 +321,7 @@ class AgentRuntime {
 		const model = this.modelFor(a);
 		if (!model) return null;
 		const desk = (await desktopStatus(this.id).catch(() => null))?.state === "running";
-		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}`;
+		const key = `${model.provider}/${model.id}|${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}`;
 		if (this.session && this.modelKey === key) return this.session;
 		if (this.session && isSessionBusy(this.session)) return this.session; // 运行中先不切换
 		this.creating = (async () => {
@@ -335,6 +338,7 @@ class AgentRuntime {
 				systemPromptAppend: SYSTEM_RULES(a.name, workspace, a.persona),
 				extensions: await extensionsFor(this.id, this.conversationId, null, { allowSpawn: true }),
 				skillPaths: skillPaths(),
+				...integrationsFor(this.id, this.conversationId),
 			});
 			const file = sessionFileOf(session);
 			if (file && file !== getConversation(this.conversationId)?.session_file) setConversationSession(this.conversationId, file);
@@ -393,6 +397,29 @@ class AgentRuntime {
 	async inject(text: string) {
 		const s = await this.ensure();
 		if (s) await injectContext(s, "pia_task_result", text).catch(() => {});
+	}
+}
+
+// ---------------------------------------------------------------- MCP 与 Pi 扩展包
+
+function integrationsFor(agentId: string, conversationId: string | null) {
+	return {
+		mcpServers: mcpServersFor(agentId),
+		mcpLogPath: join(config.dataDir, "logs", "mcp.log"),
+		packagePaths: packagePathsFor(agentId),
+		onMcpAuthUrl: (url: string) => {
+			// OAuth 回调是本机回环地址，必须在这台电脑的浏览器里完成；同时把链接发到聊天里
+			openOnHost(url);
+			insertMessage({ agentId, conversationId: conversationId ?? undefined, role: "system", content: `有个 MCP 服务需要登录授权。已在电脑上打开授权页；如果没弹出来，请**在这台电脑上**打开：\n\n${url}` });
+		},
+	};
+}
+function openOnHost(url: string) {
+	const cmd = process.platform === "darwin" ? ["open", url] : process.platform === "win32" ? ["cmd", "/c", "start", "", url] : ["xdg-open", url];
+	try {
+		spawn(cmd[0], cmd.slice(1), { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+	} catch {
+		/* 没有图形界面就只发聊天消息 */
 	}
 }
 
@@ -502,6 +529,7 @@ export const tasks = {
 				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona), "你正在执行一个后台任务。完成后用几句话总结结果作为最终回复。"],
 				extensions: await extensionsFor(a.id, t.conversation_id, t.id, { allowSpawn: false }),
 				skillPaths: skillPaths(),
+				...integrationsFor(a.id, t.conversation_id),
 			});
 			live.set(t.id, session);
 			const file = sessionFileOf(session);
