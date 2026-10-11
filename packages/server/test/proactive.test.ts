@@ -101,18 +101,19 @@ test("忽略：被忽略的事永不再提；忽略并静音这一类 → 14 天
 	assert.equal(j.effectiveLevel, "normal");
 });
 
-test("按渠道投递：最近 24 小时在微信里聊过 → 发到那个渠道的对话；只用 App 时不走渠道", () => {
+test("投递：先写进 App 对话（最近在微信里聊得更近 → 那个渠道对话）再镜像；只用 App 时只记在 App", () => {
 	reset();
 	P.saveProactive("pa", { level: "high" });
 	db.prepare("INSERT INTO conversations(id, agent_id, title, created_at, updated_at) VALUES('cwx','pa','微信',?,?)").run(now(), now());
 	db.prepare("INSERT INTO channels(id, kind, name, agent_id, enabled, config, created_at) VALUES('chx','wechat_clawbot','微信','pa',1,'{}',?)").run(now());
 	db.prepare("INSERT INTO channel_peers(channel_id, peer_id, allowed, conversation_id, ctx, last_at) VALUES('chx','u@im.wechat',1,'cwx','{}',?)").run(MON10 - 3600_000);
 	const r = P.surface("pa", { kind: "reminder", title: "该出发了", body: "b", importance: 3 }, MON10);
-	assert.equal(items().find((i) => i.id === r.id)!.delivered_via, "channel:chx");
+	assert.equal(items().find((i) => i.id === r.id)!.delivered_via, "app,channel:chx");
 	assert.ok(db.prepare("SELECT 1 FROM messages WHERE conversation_id = 'cwx' AND json_extract(meta, '$.proactive.id') = ?").get(r.id!));
 	P.saveProactive("pa", { cfg: { deliver: "app" } });
 	const r2 = P.surface("pa", { kind: "reminder", title: "另一件事", body: "b", importance: 3 }, MON10);
 	assert.equal(items().find((i) => i.id === r2.id)!.delivered_via, "app");
+	assert.ok(db.prepare("SELECT 1 FROM messages WHERE json_extract(meta, '$.proactive.id') = ? AND json_extract(meta, '$.noMirror') = 1").get(r2.id!));
 	db.prepare("DELETE FROM channel_peers WHERE channel_id = 'chx'").run();
 	db.prepare("DELETE FROM channels WHERE id = 'chx'").run();
 });

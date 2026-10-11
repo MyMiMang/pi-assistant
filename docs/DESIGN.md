@@ -918,7 +918,7 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - **每日简报**（可选）：每天固定时间一条（用户自己选的时间，不受免打扰限制、不占额度）。
 - **防打扰（系统强制，不靠模型自觉）**：等级 关 / 低（默认：每 4 小时，每天 ≤2 条，只推重要度 3）/ 中（2 小时，≤4 条，重要度 ≥2）/ 高（1 小时，≤8 条，全部）；不够重要或超额度 → 只进收件箱；免打扰时段（默认 22:00–08:00）→ 先放着，结束后推；默认只在工作日巡检；去重（同一 dedupeKey 或同标题 3 天内不重复；被忽略过的永不再提）；“不再提这类”= 14 天静音；最近 7 天被忽略 ≥3 次且没有一次“有用” → 自动降一级。巡检间隔、每日上限可按助理覆盖。
 - **主动 ≠ 自主对外发送**：巡检任务里所有需要批准的操作（发邮件、提交、删除、购买……）在 `requests` 层一律自动拒绝、不弹卡片，也不能向用户提问；`proactive_surface` 只联系用户本人。
-- **投递**：总是进“提醒”收件箱，并作为助理消息出现在对话里。选渠道：用户最近 24 小时在某个 IM 渠道和它聊过（且比 App 更近）→ 发到那个渠道的对话（渠道层发回微信/飞书/钉钉/企业微信；微信窗口外排队补发并 App 推送）；否则当前对话 + Web Push。也可设为“只用 App”。
+- **投递（App 优先 + 扇出）**：总是进“提醒”收件箱，并**先**作为助理消息写进 Pi Assistant 对话（提醒自带的对话 → 用户最近 24 小时在某渠道比在 App 聊得更近则用那个渠道对话 → 当前对话）并 Web Push；**然后**按“同步到渠道”偏好把副本镜像到这个助理所有已连接渠道的单聊（不发群；也可指定某个渠道或“只在 App”）。微信窗口外：App 里照常立刻有，只有微信那份进 `channel_outbox` 排队补发。见 §14.13。
 - **界面**：输入框工具栏「主动·低」按钮（等级、今日用量、下次巡检、更多设置）；助理面板「主动」页（等级、免打扰、只在工作日、每日简报、巡检间隔、每日上限、发到哪里、暂不提醒的类别、约好的跟进、最近的提醒、“现在看看”）；侧边栏底部铃铛 = 所有助理的提醒收件箱（有用 / 3 小时后 / 忽略 / 不再提这类 / 去聊聊；新助理默认等级）。
 - 数据：`proactive_items`、`proactive_followups`、`proactive_runs`；`agents.proactivity` / `agents.proactive_cfg`；`tasks.kind = 'heartbeat'`；`conversations.hidden`。
 - 接口：`GET /api/proactive/inbox`、`POST /api/proactive/items/:id`、`GET|PUT /api/agents/:id/proactive`、`POST /api/agents/:id/proactive/run`、`DELETE /api/agents/:id/proactive/followups/:fid`、`PUT /api/proactive/defaults`。
@@ -926,3 +926,21 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 
 还没做：日历 / GitHub 连接器、Apple 公证与 Windows 代码签名、全局快捷键暂停、安装包体积优化（目前约 150–200 MB，主要是 cua-driver / cloudflared / uv 与依赖）。
 
+
+
+### 14.13 Pi Assistant 是唯一事实来源（消息先进 App，再镜像到渠道）
+
+原则：**每一条**消息（主动提醒、定时任务结果、渠道里的对话、审批 / 提问）都先写进助理在 Pi Assistant 里的对话并在 App 中显示（需要时 Web Push），**然后**才把副本镜像到已配置的外部渠道（飞书 / 钉钉 / 企业微信 / 微信 ClawBot）。渠道里的回复落进同一个 Pi Assistant 对话，带来源渠道标记（`meta.channel`）。
+
+| 路径 | 做法（代码） |
+|---|---|
+| 出站镜像 | `channels/index.ts` 的总线监听：`message.created` 在写库之后才发出 → 把助理回复 / 审批卡片 / 错误镜像到**所有**绑定了该对话的渠道会话（不再只取一个）。消息带 `meta.noMirror`（用户选“只在 App”或免打扰时段）时不镜像。 |
+| 主动提醒 | `proactive.ts deliver()`：选目标对话 → `bindMirrors()`（`src/mirror.ts`，按偏好把这个助理所有已连接渠道的**单聊**会话绑定到该对话；`channel_peers.is_group` 标记群聊，群不参与）→ `insertMessage` → `notify`（Web Push 总是发）。`delivered_via` 记为 `app,channel:<id>…`。偏好 = 助理主动设置里的“同步到渠道”：`auto`（App + 所有渠道）/ `app`（只在 App）/ 指定渠道。 |
+| 定时任务结果 | `routines.ts`：同样先 `bindMirrors` + `insertMessage` + Web Push；免打扰时段只记在 App（不推送、不镜像）。复用同一偏好（`mirrorPref`）。 |
+| 渠道收消息 | 普通消息、`新对话` / `停止` 指令、绑定成功、文字回答审批 / 提问，全部先写进对话（`meta.channel`，指令 `meta.command`、回答 `meta.answer`），系统回复也作为助理消息写库，再由出站镜像发回。卡片按钮回调更新卡片状态（记录操作人）。唯一例外：**未绑定的陌生人**收到的绑定提示不写进任何助理对话（不暴露内容、也没有对话可写）。 |
+| 微信发不出去 | `DeferredSend` 只让**微信那份副本**进 `channel_outbox`，用户下次在微信发消息时补发；App 里的消息早已写入，另发一条 App 推送说明。 |
+| 回复落点 | 扇出时把渠道单聊绑定到消息所在对话，所以用户在飞书 / 微信里直接回复，会进入同一个 Pi Assistant 对话继续聊；发送“新对话”可在渠道里另起。 |
+
+不发 Web Push 的情形：用户正在渠道里一问一答（渠道对话里的普通回复），App 里照样有记录，但不重复弹通知；主动提醒、定时任务结果、审批 / 提问总是推送。
+
+测试：`test/mirror.test.ts`（镜像发出那一刻 App 里已有该消息；扇出到飞书 + 钉钉、不发群；微信窗口外只排队微信副本；渠道里的审批回答与“新对话”指令记进同一对话；“只在 App”不镜像；定时任务结果先 App 后渠道）、`test/channels.test.ts`（绑定成功先写库）、`test/proactive.test.ts`。

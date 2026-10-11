@@ -85,9 +85,12 @@ test("企业微信：回调验签 → 未绑定提示 → 绑定码 → 消息�
 	// 重推去重
 	post("zhangsan", "今天有什么安排", "m4");
 	post("zhangsan", "今天有什么安排", "m4");
-	await wait(() => (db.prepare("SELECT COUNT(*) n FROM messages WHERE agent_id = 'ca' AND role = 'user'").get()!.n as number) >= 1);
+	// 绑定指令本身也记进了 App（Pi Assistant 是唯一事实来源），这里只看普通消息
+	const plain = "agent_id = 'ca' AND role = 'user' AND json_extract(meta, '$.command') IS NULL";
+	await wait(() => (db.prepare(`SELECT COUNT(*) n FROM messages WHERE ${plain}`).get()!.n as number) >= 1);
 	await new Promise((r) => setTimeout(r, 200));
-	const userMsgs = db.prepare("SELECT conversation_id, content, meta FROM messages WHERE agent_id = 'ca' AND role = 'user'").all() as { conversation_id: string; content: string; meta: string }[];
+	assert.ok(db.prepare("SELECT 1 FROM messages WHERE agent_id = 'ca' AND role = 'assistant' AND content LIKE '%绑定成功%'").get(), "绑定成功先写进 App 再发回渠道");
+	const userMsgs = db.prepare(`SELECT conversation_id, content, meta FROM messages WHERE ${plain}`).all() as { conversation_id: string; content: string; meta: string }[];
 	assert.equal(userMsgs.length, 1, "同一 MsgId 只处理一次");
 	assert.equal(userMsgs[0].content, "今天有什么安排");
 	assert.match(userMsgs[0].meta, /wecom/);

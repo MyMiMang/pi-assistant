@@ -155,6 +155,12 @@ function makeAdapter(c: ChannelRow): ChannelAdapter {
 	return wecomAdapter(deps as never);
 }
 
+/** 仅测试用：注入模拟适配器 */
+export function _setAdapterForTest(id: string, a: ChannelAdapter | null) {
+	if (a) adapters.set(id, a);
+	else adapters.delete(id);
+}
+
 export async function stopChannel(id: string) {
 	const a = adapters.get(id);
 	adapters.delete(id);
@@ -298,6 +304,15 @@ export async function handleInbound(channelId: string, m: Inbound) {
 			setPeerAllowed(channelId, m.userId, true);
 			rotateBindCode(channelId);
 			const agent = getAgent(c.agent_id);
+			// 先写进 Pi Assistant（单聊绑定后就有对话），再由出站镜像发回渠道
+			if (m.peerId === m.userId) {
+				db.prepare("INSERT INTO channel_peers(channel_id, peer_id, display, allowed, ctx, last_at, is_group) VALUES(?,?,?,1,?,?,0) ON CONFLICT(channel_id, peer_id) DO UPDATE SET ctx = excluded.ctx").run(channelId, m.peerId, m.display ?? null, JSON.stringify(m.ctx), t);
+				const conv = createConversation(c.agent_id, `${KIND_LABEL[c.kind]} · ${m.display ?? "单聊"}`, { makeCurrent: false });
+				db.prepare("UPDATE channel_peers SET conversation_id = ? WHERE channel_id = ? AND peer_id = ?").run(conv.id, channelId, m.peerId);
+				insertMessage({ agentId: c.agent_id, conversationId: conv.id, role: "user", content: m.text.trim(), meta: { from: `${c.kind}:${m.display ?? m.userId}`, channel: { id: channelId, kind: c.kind }, command: true } });
+				insertMessage({ agentId: c.agent_id, conversationId: conv.id, role: "assistant", content: `✅ 绑定成功。现在可以直接和「${agent?.name ?? "助理"}」聊天了。\n\n发送「新对话」开始新话题，「停止」中断当前任务。`, status: "done", meta: { system: "channel" } });
+				return;
+			}
 			return reply(channelId, m.ctx, `✅ 绑定成功。现在可以直接和「${agent?.name ?? "助理"}」聊天了。\n\n发送「新对话」开始新话题，「停止」中断当前任务。`);
 		}
 		// 未绑定的人：每 10 分钟最多提示一次，不暴露任何内容
@@ -309,7 +324,7 @@ export async function handleInbound(channelId: string, m: Inbound) {
 		return;
 	}
 	// 会话（群聊按群）
-	db.prepare("INSERT INTO channel_peers(channel_id, peer_id, display, allowed, ctx, last_at) VALUES(?,?,?,1,?,?) ON CONFLICT(channel_id, peer_id) DO UPDATE SET ctx = excluded.ctx, last_at = excluded.last_at").run(channelId, m.peerId, m.display ?? null, JSON.stringify(m.ctx), t);
+	db.prepare("INSERT INTO channel_peers(channel_id, peer_id, display, allowed, ctx, last_at, is_group) VALUES(?,?,?,1,?,?,?) ON CONFLICT(channel_id, peer_id) DO UPDATE SET ctx = excluded.ctx, last_at = excluded.last_at, is_group = excluded.is_group").run(channelId, m.peerId, m.display ?? null, JSON.stringify(m.ctx), t, m.group ? 1 : 0);
 	let p = peer(channelId, m.peerId)!;
 	await flushOutbox(channelId, m.peerId, m.ctx);
 	const label = `${KIND_LABEL[c.kind]} · ${m.group ? "群聊" : (m.display ?? user.display ?? "单聊")}`;
@@ -320,28 +335,37 @@ export async function handleInbound(channelId: string, m: Inbound) {
 	};
 	let conv = p.conversation_id && getConversation(p.conversation_id)?.agent_id === c.agent_id ? p.conversation_id : newConv();
 	const text = m.text.trim();
+	const fromMeta = { from: `${c.kind}:${m.display ?? m.userId}`, channel: { id: channelId, kind: c.kind } };
+	// 指令也先记进 Pi Assistant 对话，回复由出站镜像发回渠道（Pi Assistant 是唯一事实来源）
+	const sys = (cv: string, content: string) => insertMessage({ agentId: c.agent_id, conversationId: cv, role: "assistant", content, status: "done", meta: { system: "channel" } });
 	if (/^(新对话|\/new)$/i.test(text)) {
+		insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { ...fromMeta, command: true } });
 		conv = newConv();
-		return reply(channelId, m.ctx, "好的，开始新的对话。");
+		sys(conv, "好的，开始新的对话。");
+		return;
 	}
 	if (/^(停止|\/stop)$/i.test(text)) {
+		insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { ...fromMeta, command: true } });
 		await runtime(c.agent_id, conv).abort();
-		return reply(channelId, m.ctx, "已停止当前任务。");
+		sys(conv, "已停止当前任务。");
+		return;
 	}
 	// 有待处理的审批 / 提问 → 这条回复就是答案
 	const card = db.prepare("SELECT meta FROM messages WHERE conversation_id = ? AND role = 'card' AND json_extract(meta, '$.status') = 'pending' ORDER BY created_at DESC LIMIT 1").get(conv) as { meta: string } | undefined;
 	if (card) {
 		const meta = JSON.parse(card.meta) as { kind: string; requestId: string; options?: string[]; allowFreeText?: boolean; allowTask?: boolean };
 		const by = `${c.kind}:${m.userId}`;
+		// 渠道里的回答也先记进 Pi Assistant 对话
+		const rec = () => insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { ...fromMeta, answer: meta.requestId } });
 		if (meta.kind === "approval") {
-			if (APPROVE_TASK.test(text) && meta.allowTask) return void requests.resolve(meta.requestId, { approved: true, scope: "task" }, by);
-			if (APPROVE.test(text)) return void requests.resolve(meta.requestId, { approved: true }, by);
-			if (REJECT.test(text)) return void requests.resolve(meta.requestId, { approved: false }, by);
+			if (APPROVE_TASK.test(text) && meta.allowTask) return void (rec(), requests.resolve(meta.requestId, { approved: true, scope: "task" }, by));
+			if (APPROVE.test(text)) return void (rec(), requests.resolve(meta.requestId, { approved: true }, by));
+			if (REJECT.test(text)) return void (rec(), requests.resolve(meta.requestId, { approved: false }, by));
 		} else {
 			const opts = meta.options ?? [];
 			const n = Number(text);
 			const ans = Number.isInteger(n) && n >= 1 && n <= opts.length ? opts[n - 1] : opts.find((o) => o === text) ?? (meta.allowFreeText !== false ? text : undefined);
-			if (ans !== undefined) return void requests.resolve(meta.requestId, { answer: ans }, by);
+			if (ans !== undefined) return void (rec(), requests.resolve(meta.requestId, { answer: ans }, by));
 		}
 	}
 	p = peer(channelId, m.peerId)!;
@@ -424,15 +448,23 @@ bus.on((e) => {
 	if ((ev.type !== "message.created" && ev.type !== "message.updated") || !ev.message?.conversation_id || ev.message.task_id) return;
 	const msg = ev.message;
 	if (forwarded.has(msg.id)) return;
-	const p = db.prepare("SELECT * FROM channel_peers WHERE conversation_id = ? LIMIT 1").get(msg.conversation_id) as unknown as PeerRow | undefined;
-	if (!p) return;
-	const canFiles = !!adapters.get(p.channel_id)?.sendFile;
-	const text = format(msg, canFiles);
-	if (text === null) return;
+	if (/"noMirror":true/.test(typeof msg.meta === "string" ? msg.meta : JSON.stringify(msg.meta ?? {}))) return; // 用户选了“只在 App”
+	// 消息已经写进 Pi Assistant（message.created 在写库之后才发出）→ 把副本镜像到绑定了这个对话的每个渠道会话
+	const peers = db.prepare("SELECT * FROM channel_peers WHERE conversation_id = ?").all(msg.conversation_id) as unknown as PeerRow[];
+	if (!peers.length) return;
+	let sent = false;
+	for (const p of peers) {
+		const canFiles = !!adapters.get(p.channel_id)?.sendFile;
+		const text = format(msg, canFiles);
+		if (text === null) continue;
+		sent = true;
+		const meta = msg.role === "card" ? ((typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as Record<string, unknown>) : null;
+		const mm = (typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as { attachments?: OutFile[] };
+		const files = canFiles && msg.role === "assistant" ? (mm.attachments ?? []) : [];
+		void reply(p.channel_id, p.ctx ? JSON.parse(p.ctx) : {}, text, (meta && cardFor(meta)) || undefined, files, p.peer_id);
+	}
+	if (!sent) return;
 	forwarded.add(msg.id);
 	if (forwarded.size > 5000) forwarded.clear();
-	const meta = msg.role === "card" ? ((typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as Record<string, unknown>) : null;
-	const mm = (typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as { attachments?: OutFile[] };
-	const files = canFiles && msg.role === "assistant" ? (mm.attachments ?? []) : [];
-	void reply(p.channel_id, p.ctx ? JSON.parse(p.ctx) : {}, text, (meta && cardFor(meta)) || undefined, files, p.peer_id);
 });
+

@@ -190,10 +190,10 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 						</select>
 					</label>
 					<label className="flex items-center gap-2">
-						<span className="w-24 shrink-0 text-mut">发到哪里</span>
-						<select className="pa-input !w-auto max-w-full" title="自动：你最近 24 小时在微信 / 飞书 / 钉钉 / 企业微信里和它聊过就发到那里，否则 App 推送" value={c.deliver === "app" ? "app" : "auto"} onChange={(e) => void save({ cfg: { deliver: e.target.value } })}>
-							<option value="auto">自动（就近渠道）</option>
-							<option value="app">只用 App 推送</option>
+						<span className="w-24 shrink-0 text-mut">同步到渠道</span>
+						<select className="pa-input !w-auto max-w-full" title="消息总是先进 Pi Assistant（App 里的对话 + 推送）；选“同步到渠道”会再把副本发到已连接的微信 / 飞书 / 钉钉 / 企业微信单聊，定时任务结果也一样" value={c.deliver === "app" ? "app" : "auto"} onChange={(e) => void save({ cfg: { deliver: e.target.value } })}>
+							<option value="auto">App + 同步到渠道</option>
+							<option value="app">只在 App</option>
 						</select>
 					</label>
 					{Object.entries(c.muted).filter(([, u]) => u > Date.now()).length > 0 && (
@@ -240,7 +240,7 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 function ItemCard({ i, compact }: { i: Item; compact?: boolean }) {
 	const agent = useStore((s) => s.agents.find((a) => a.id === i.agentId));
 	const act = (action: "dismiss" | "done" | "snooze", extra: Record<string, unknown> = {}) => api(`/api/proactive/items/${i.id}`, { method: "POST", json: { action, ...extra } });
-	const st = i.status === "delivered" ? `已${i.via?.startsWith("channel:") ? "发到聊天渠道" : "推送"}` : i.status === "held" ? (i.reason ?? "等待推送") : (i.reason ?? "在收件箱");
+	const st = i.status === "delivered" ? `已推送${i.via?.includes("channel:") ? "，并同步到聊天渠道" : ""}` : i.status === "held" ? (i.reason ?? "等待推送") : (i.reason ?? "在收件箱");
 	return (
 		<div className="space-y-1.5 rounded-xl border border-line p-3" data-testid="inbox-item">
 			<div className="flex items-center gap-2">

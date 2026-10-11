@@ -10,7 +10,10 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Cron } from "croner";
 import { bus } from "./bus.ts";
 import { db, now, uid } from "./db.ts";
+import { currentConversation } from "./conversations.ts";
 import { insertMessage } from "./messages.ts";
+import { bindMirrors } from "./mirror.ts";
+import { mirrorPref } from "./proactive.ts";
 import { notify } from "./push.ts";
 import { openJson, sealJson } from "./secrets.ts";
 
@@ -249,14 +252,19 @@ bus.on((e) => {
 	const r = getRoutine(run.routine_id);
 	if (!r) return;
 	const ok = t.status === "done";
+	// 先写进 Pi Assistant 对话（+ Web Push），再按助理的镜像偏好把副本发到已连接的渠道
+	const conv = t.conversation_id ?? r.conversation_id ?? currentConversation(r.agent_id);
+	const quiet = inQuiet(now(), quietOf(r), r.tz);
+	const pref = quiet ? "app" : mirrorPref(r.agent_id); // 免打扰时段：只记在 App 里，不推送、不镜像
+	bindMirrors(r.agent_id, conv, pref);
 	insertMessage({
 		agentId: r.agent_id,
-		conversationId: t.conversation_id ?? r.conversation_id ?? undefined,
+		conversationId: conv,
 		role: "assistant",
 		content: ok ? `⏰ **定时任务「${r.name}」完成**\n\n${t.result ?? ""}` : `⏰ 定时任务「${r.name}」${t.status === "cancelled" ? "已取消" : `失败：${t.error ?? ""}`}`,
-		meta: { routineId: r.id, routineRunId: run.id },
+		meta: { routineId: r.id, routineRunId: run.id, ...(pref === "app" ? { noMirror: true } : {}) },
 	});
-	if (!inQuiet(now(), quietOf(r), r.tz)) notify({ title: `${ok ? "定时任务完成" : "定时任务失败"}：${r.name}`, body: (ok ? t.result : t.error) ?? "", tag: run.id, url: `/?agent=${r.agent_id}` });
+	if (!quiet) notify({ title: `${ok ? "定时任务完成" : "定时任务失败"}：${r.name}`, body: (ok ? t.result : t.error) ?? "", tag: run.id, url: `/?agent=${r.agent_id}` });
 	changed(r.agent_id);
 });
 

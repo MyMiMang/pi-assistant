@@ -20,6 +20,7 @@ import { bus } from "./bus.ts";
 import { currentConversation } from "./conversations.ts";
 import { db, getSetting, now, setSetting, uid } from "./db.ts";
 import { insertMessage } from "./messages.ts";
+import { bindMirrors } from "./mirror.ts";
 import { notify } from "./push.ts";
 
 export type Level = "off" | "low" | "normal" | "high";
@@ -243,40 +244,39 @@ export function surface(agentId: string, i: SurfaceInput, t = now()): { status: 
 	return { status: status === "held" ? "held" : "inbox", reason: reason ?? undefined, id };
 }
 
-interface PeerLite {
-	channel_id: string;
-	peer_id: string;
-	conversation_id: string;
-}
-/** 选渠道：用户最近 24 小时在哪个渠道和这个助理聊过 */
-function routeFor(agentId: string, cfg: ProactiveCfg, t = now()): PeerLite | null {
-	if (cfg.deliver === "app") return null;
-	const peers = db.prepare("SELECT p.channel_id, p.peer_id, p.conversation_id, p.last_at FROM channel_peers p JOIN channels c ON c.id = p.channel_id WHERE c.agent_id = ? AND c.enabled = 1 AND p.allowed = 1 AND p.conversation_id IS NOT NULL ORDER BY p.last_at DESC").all(agentId) as unknown as (PeerLite & { last_at: number | null })[];
-	if (cfg.deliver !== "auto") return peers.find((p) => p.channel_id === cfg.deliver) ?? null;
+/** 助理先开口的消息写到哪个对话：提醒自带的对话 → 用户最近 24 小时在渠道里比在 App 里聊得更近 → 那个渠道对话 → 当前对话 */
+function targetConversation(agentId: string, it: { conversation_id: string | null }, t = now()): string {
+	if (it.conversation_id && db.prepare("SELECT 1 FROM conversations WHERE id = ? AND COALESCE(hidden,0) = 0").get(it.conversation_id)) return it.conversation_id;
+	const p = db
+		.prepare("SELECT p.conversation_id, p.last_at FROM channel_peers p JOIN channels c ON c.id = p.channel_id JOIN conversations v ON v.id = p.conversation_id WHERE c.agent_id = ? AND c.enabled = 1 AND p.allowed = 1 AND p.is_group = 0 ORDER BY p.last_at DESC LIMIT 1")
+		.get(agentId) as { conversation_id: string; last_at: number | null } | undefined;
 	const lastApp = (db.prepare("SELECT MAX(m.created_at) AS t FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.agent_id = ? AND m.role = 'user' AND json_extract(m.meta, '$.channel') IS NULL AND COALESCE(c.hidden,0) = 0").get(agentId) as { t: number | null }).t ?? 0;
-	const p = peers[0];
-	if (p && (p.last_at ?? 0) > t - 24 * 3600_000 && (p.last_at ?? 0) > lastApp) return p;
-	return null;
+	if (p && (p.last_at ?? 0) > t - 24 * 3600_000 && (p.last_at ?? 0) > lastApp) return p.conversation_id;
+	return currentConversation(agentId);
 }
 
+/** 这个助理“先开口”的消息镜像到哪些渠道（主动提醒、定时任务结果共用）：auto = 所有已连接渠道的单聊 / app = 只在 App / 渠道 id */
+export function mirrorPref(agentId: string) {
+	const a = agentOf(agentId);
+	return a ? cfgOf(a).deliver || "auto" : "app";
+}
+
+/**
+ * 推送一条提醒。原则：Pi Assistant 是唯一事实来源 ——
+ * ① 先写进助理的 Pi Assistant 对话（并 Web Push）；② 再按偏好把副本镜像到飞书 / 钉钉 / 企业微信 / 微信（bindMirrors + 出站镜像）。
+ * 微信窗口外发不出去时只有微信那份排队补发，App 里的消息已经在了。
+ */
 export function deliver(id: string, t = now()) {
 	const it = db.prepare("SELECT * FROM proactive_items WHERE id = ?").get(id) as ItemRow | undefined;
 	if (!it) return;
 	const a = agentOf(it.agent_id)!;
-	const cfg = cfgOf(a);
-	const route = routeFor(it.agent_id, cfg, t);
+	const conv = targetConversation(it.agent_id, it, t);
 	const content = `💡 **${it.title}**\n\n${it.body}`.trim();
-	const meta = { proactive: { id: it.id, kind: it.kind } };
-	let via = "app";
-	if (route) {
-		// 进渠道对应的对话：渠道层会把它发回微信 / 飞书…（发不出去时排队 + App 推送）
-		insertMessage({ agentId: it.agent_id, conversationId: route.conversation_id, role: "assistant", content, status: "done", meta });
-		via = `channel:${route.channel_id}`;
-	} else {
-		const conv = it.conversation_id && db.prepare("SELECT 1 FROM conversations WHERE id = ? AND COALESCE(hidden,0) = 0").get(it.conversation_id) ? it.conversation_id : currentConversation(it.agent_id);
-		insertMessage({ agentId: it.agent_id, conversationId: conv, role: "assistant", content, status: "done", meta });
-		notify({ title: `${a.name}：${it.title}`, body: it.body, tag: `pro-${it.id}`, url: `/?agent=${it.agent_id}` });
-	}
+	const pref = mirrorPref(it.agent_id);
+	const mirrors = bindMirrors(it.agent_id, conv, pref);
+	insertMessage({ agentId: it.agent_id, conversationId: conv, role: "assistant", content, status: "done", meta: { proactive: { id: it.id, kind: it.kind }, ...(pref === "app" ? { noMirror: true } : {}) } });
+	notify({ title: `${a.name}：${it.title}`, body: it.body, tag: `pro-${it.id}`, url: `/?agent=${it.agent_id}` });
+	const via = ["app", ...new Set(mirrors.map((m) => `channel:${m.channel_id}`))].join(",");
 	db.prepare("UPDATE proactive_items SET status = 'delivered', delivered_via = ?, delivered_at = ?, deliver_after = NULL, updated_at = ? WHERE id = ?").run(via, t, t, id);
 }
 
