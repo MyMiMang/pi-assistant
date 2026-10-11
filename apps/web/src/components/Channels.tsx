@@ -4,7 +4,7 @@ import { api } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, cx, Input, avatarText } from "./ui";
 
-type Kind = "wecom" | "feishu" | "dingtalk";
+type Kind = "wecom_bot" | "wecom" | "feishu" | "dingtalk";
 interface Channel {
 	id: string;
 	kind: Kind;
@@ -32,6 +32,7 @@ const KINDS: Record<Kind, { label: string; mode: string; fields: { key: string; 
 			"应用能力 › 添加「机器人」。",
 			"权限管理 › 开通：获取与发送单聊、群组消息（im:message）、以应用身份发消息（im:message:send_as_bot）。",
 			"事件与回调 › 事件配置 › 订阅方式选「使用长连接接收事件」，添加事件「接收消息 v2.0」（im.message.receive_v1）。（先在这里保存凭据，长连接建立后飞书才允许保存这个选项。）",
+			"事件与回调 › 回调配置 › 同样选「使用长连接接收回调」，添加回调「卡片回传交互」（card.action.trigger）——审批 / 选项卡片上的按钮才能点。",
 			"凭证与基础信息 › 复制 App ID 和 App Secret 填到下面。",
 			"版本管理与发布 › 创建版本并发布（企业管理员审核通过后生效）。",
 			"在飞书里搜索这个机器人，发送「绑定 + 下面的 6 位绑定码」。",
@@ -53,8 +54,23 @@ const KINDS: Record<Kind, { label: string; mode: string; fields: { key: string; 
 			"在钉钉里搜索机器人（或在群里 @ 它），发送「绑定 + 下面的 6 位绑定码」。",
 		],
 	},
+	wecom_bot: {
+		label: "企业微信机器人",
+		mode: "智能机器人长连接 · 不需要公网地址（推荐）",
+		fields: [
+			{ key: "botId", label: "Bot ID" },
+			{ key: "botSecret", label: "Secret", secret: true },
+		],
+		steps: [
+			"打开 企业微信（管理员）› 工作台 › 智能机器人 › 创建机器人 › 选「API 模式」。",
+			"连接方式选「长连接」，复制 Bot ID 和 Secret 填到下面并保存（同一个机器人同时只能有一个连接，别在其他地方同时使用）。",
+			"设置机器人的可见范围（包含你自己），保存。",
+			"在企业微信里找到这个机器人（单聊，或在群里 @ 它），发送「绑定 + 下面的 6 位绑定码」。",
+			"审批 / 选项会以带按钮的卡片发来，点按即可。",
+		],
+	},
 	wecom: {
-		label: "企业微信",
+		label: "企业微信自建应用",
 		mode: "回调模式 · 需要公网地址（远程访问 / 固定地址）",
 		fields: [
 			{ key: "corpId", label: "企业 ID（CorpID）", placeholder: "ww..." },
@@ -70,6 +86,7 @@ const KINDS: Record<Kind, { label: string; mode: string; fields: { key: string; 
 			"应用详情 › 接收消息 › 设置 API 接收：URL 填回调地址，Token 和 EncodingAESKey 点「随机获取」后同样填到下面并保存，再回企业微信点保存（会校验一次）。",
 			"应用详情 › 企业可信 IP：填这台电脑的公网出口 IP（不填的话助理回复会失败，错误码 60020）。",
 			"在企业微信工作台打开这个应用，发送「绑定 + 下面的 6 位绑定码」。",
+			"（没有公网地址时，推荐改用上面的「企业微信机器人」长连接模式。）",
 		],
 	},
 };
@@ -91,7 +108,7 @@ export function ChannelsSettings() {
 	if (!d) return null;
 	return (
 		<div className="space-y-5" data-testid="channels">
-			<p className="text-sm text-mut">在企业微信、飞书、钉钉里直接和助理聊天：消息会进到助理的对话里，回复、需要你批准的操作、提问都会发回来（回复「批准」/「拒绝」或选项序号即可）。只有发送过绑定码的人才能使用。</p>
+			<p className="text-sm text-mut">在企业微信、飞书、钉钉里直接和助理聊天：消息会进到助理的对话里，回复、需要你批准的操作、提问会以带按钮的卡片发回来（点按钮，或回复「批准」/「拒绝」/选项序号）。只有发送过绑定码的人才能使用。</p>
 			{d.items.map((c) => (
 				<ChannelCard key={c.id} c={c} publicUrl={d.publicUrl} agents={agents} onChange={load} />
 			))}

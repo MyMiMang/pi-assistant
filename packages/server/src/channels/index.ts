@@ -15,16 +15,19 @@ import { getAgent, runtime } from "../runtime.ts";
 import { openJson, sealJson } from "../secrets.ts";
 import { dingtalkAdapter } from "./dingtalk.ts";
 import { feishuAdapter } from "./feishu.ts";
-import type { AdapterStatus, ChannelAdapter, ChannelKind, Inbound } from "./types.ts";
+import type { AdapterStatus, CardAction, ChannelAdapter, ChannelKind, Inbound, OutCard } from "./types.ts";
+import { decodeAction, encodeAction } from "./types.ts";
 import { type WecomAdapter, wecomAdapter } from "./wecom.ts";
+import { wecomBotAdapter } from "./wecom-bot.ts";
 
 export type { ChannelKind } from "./types.ts";
-export const KIND_LABEL: Record<ChannelKind, string> = { wecom: "企业微信", feishu: "飞书", dingtalk: "钉钉" };
+export const KIND_LABEL: Record<ChannelKind, string> = { wecom: "企业微信", wecom_bot: "企业微信", feishu: "飞书", dingtalk: "钉钉" };
 /** 每种渠道需要的字段：config 明文保存，secret 加密保存 */
 export const FIELDS: Record<ChannelKind, { config: string[]; secret: string[] }> = {
 	feishu: { config: ["appId", "domain"], secret: ["appSecret"] },
 	dingtalk: { config: ["clientId", "apiBase"], secret: ["clientSecret"] },
 	wecom: { config: ["corpId", "agentId", "apiBase"], secret: ["secret", "token", "aesKey"] },
+	wecom_bot: { config: ["botId", "wsUrl"], secret: ["botSecret"] },
 };
 
 export interface ChannelRow {
@@ -95,7 +98,7 @@ export function saveChannel(input: { id?: string; kind: ChannelKind; name?: stri
 	const config = { ...(cur ? JSON.parse(cur.config) : {}), ...pick(input.config, f.config) };
 	// 密钥：留空 = 不修改
 	const secret = { ...(cur?.secret ? openJson<Record<string, string>>(cur.secret) : {}), ...pick(input.secret, f.secret) };
-	const required = { feishu: ["appId"], dingtalk: ["clientId"], wecom: ["corpId", "agentId"] }[input.kind];
+	const required = { feishu: ["appId"], dingtalk: ["clientId"], wecom: ["corpId", "agentId"], wecom_bot: ["botId"] }[input.kind];
 	for (const k of required) if (!config[k]) throw new Error(`缺少 ${k}`);
 	for (const k of f.secret) if (!secret[k]) throw new Error(`缺少 ${k}`);
 	if (input.kind === "wecom" && String(secret.aesKey).length !== 43) throw new Error("EncodingAESKey 应为 43 位");
@@ -131,6 +134,7 @@ function makeAdapter(c: ChannelRow): ChannelAdapter {
 		config: JSON.parse(c.config),
 		secret: c.secret ? openJson(c.secret) : {},
 		onMessage: (m: Inbound) => void handleInbound(c.id, m).catch((e) => console.warn(`[channel ${c.kind}] ${e instanceof Error ? e.message : e}`)),
+		onAction: (a: CardAction) => handleAction(c.id, a),
 		setStatus: (s: AdapterStatus) => {
 			statuses.set(c.id, s);
 			changed();
@@ -138,6 +142,7 @@ function makeAdapter(c: ChannelRow): ChannelAdapter {
 	};
 	if (c.kind === "feishu") return feishuAdapter(deps as never);
 	if (c.kind === "dingtalk") return dingtalkAdapter(deps as never);
+	if (c.kind === "wecom_bot") return wecomBotAdapter(deps as never);
 	return wecomAdapter(deps as never);
 }
 
@@ -187,10 +192,10 @@ export function wecomCallback(id: string, method: string, q: Record<string, stri
 
 // ---------------------------------------------------------------- 入站
 const nagged = new Map<string, number>();
-async function reply(channelId: string, ctx: Record<string, unknown>, text: string) {
+async function reply(channelId: string, ctx: Record<string, unknown>, text: string, card?: OutCard) {
 	const a = adapters.get(channelId);
 	if (!a) return;
-	await a.send(ctx, text).catch((e) => {
+	await (card && a.sendCard ? a.sendCard(ctx, card) : a.send(ctx, text)).catch((e) => {
 		statuses.set(channelId, { state: "error", detail: e instanceof Error ? e.message : String(e) });
 		changed();
 	});
@@ -263,6 +268,55 @@ export async function handleInbound(channelId: string, m: Inbound) {
 	await runtime(c.agent_id, conv).send(m.group && m.display ? `（${m.display} 在${KIND_LABEL[c.kind]}群里说）${text}` : text);
 }
 
+/**
+ * 卡片按钮回调。校验：点按的人已绑定；卡片所在对话确实属于这个渠道；卡片还没处理。返回结果文字（用于更新卡片 / toast）。
+ */
+export async function handleAction(channelId: string, a: CardAction): Promise<string> {
+	const c = getChannel(channelId);
+	const act = decodeAction(a.action);
+	if (!c || !c.enabled || !act) return "这个按钮已失效";
+	if (!peer(channelId, a.userId)?.allowed) return "无权操作：请先绑定";
+	const row = db.prepare("SELECT conversation_id, meta FROM messages WHERE role = 'card' AND json_extract(meta, '$.requestId') = ? LIMIT 1").get(act.requestId) as { conversation_id: string; meta: string } | undefined;
+	if (!row) return "这个请求已失效";
+	const bound = db.prepare("SELECT 1 FROM channel_peers WHERE channel_id = ? AND conversation_id = ? LIMIT 1").get(channelId, row.conversation_id);
+	if (!bound) return "无权操作这个请求";
+	const meta = JSON.parse(row.meta) as { kind: string; status?: string; options?: string[]; allowTask?: boolean };
+	if (meta.status !== "pending") return "已经处理过了";
+	const by = `${c.kind}:${a.display ?? a.userId}`;
+	if (meta.kind === "approval") {
+		if (act.kind === "approve") return (requests.resolve(act.requestId, { approved: true }, by), "已批准 ✅");
+		if (act.kind === "task" && meta.allowTask) return (requests.resolve(act.requestId, { approved: true, scope: "task" }, by), "本任务内都允许 ✅");
+		if (act.kind === "reject") return (requests.resolve(act.requestId, { approved: false }, by), "已拒绝");
+		return "这个按钮已失效";
+	}
+	const opt = act.kind === "opt" && act.i !== undefined ? meta.options?.[act.i] : undefined;
+	if (opt === undefined) return "这个按钮已失效";
+	requests.resolve(act.requestId, { answer: opt }, by);
+	return `已选择：${opt}`.slice(0, 40);
+}
+
+/** 待处理的审批 / 提问 → 卡片（按钮 + 文字回复的后备说明） */
+export function cardFor(meta: Record<string, unknown>): OutCard | null {
+	const rid = String(meta.requestId ?? "");
+	if (!rid) return null;
+	if (meta.kind === "approval") {
+		const buttons: OutCard["buttons"] = [
+			{ label: "批准", text: "批准", action: encodeAction(rid, "approve"), style: "primary" },
+			...(meta.allowTask ? [{ label: "本任务内都允许", text: "都允许", action: encodeAction(rid, "task") }] : []),
+			{ label: "拒绝", text: "拒绝", action: encodeAction(rid, "reject"), style: "danger" as const },
+		];
+		return { title: String(meta.risk) === "high" ? "⚠️ 需要你批准" : "需要你批准", body: String(meta.summary ?? meta.toolName ?? ""), buttons, fallback: `也可以直接回复「批准」或「拒绝」${meta.allowTask ? "，或「都允许」" : ""}` };
+	}
+	const opts = (meta.options as string[] | undefined) ?? [];
+	if (!opts.length) return null;
+	return {
+		title: "请选择",
+		body: String(meta.question ?? ""),
+		buttons: opts.slice(0, 6).map((o, i) => ({ label: o.slice(0, 20), text: String(i + 1), action: encodeAction(rid, "opt", i) })),
+		fallback: `也可以回复序号${meta.allowFreeText !== false ? "或直接回答" : ""}`,
+	};
+}
+
 // ---------------------------------------------------------------- 出站：把这个对话里助理的回复发回渠道
 const forwarded = new Set<string>();
 function format(msg: MessageRow): string | null {
@@ -292,5 +346,6 @@ bus.on((e) => {
 	if (!text) return;
 	forwarded.add(msg.id);
 	if (forwarded.size > 5000) forwarded.clear();
-	void reply(p.channel_id, p.ctx ? JSON.parse(p.ctx) : {}, text);
+	const meta = msg.role === "card" ? ((typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as Record<string, unknown>) : null;
+	void reply(p.channel_id, p.ctx ? JSON.parse(p.ctx) : {}, text, (meta && cardFor(meta)) || undefined);
 });

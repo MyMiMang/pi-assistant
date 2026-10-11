@@ -5,7 +5,7 @@
  * 主动发消息需要权限“企业内机器人发送消息”（qyapi_robot_sendmsg）。
  */
 import { DWClient, TOPIC_ROBOT, type DWClientDownStream } from "dingtalk-stream";
-import type { AdapterDeps, ChannelAdapter, Inbound } from "./types.ts";
+import type { AdapterDeps, ChannelAdapter, Inbound, OutCard } from "./types.ts";
 import { clip } from "./types.ts";
 
 export interface DingtalkConfig {
@@ -24,6 +24,17 @@ export function dingtalkInbound(raw: string): Inbound | null {
 	const user = m.senderStaffId || m.senderId;
 	const group = m.conversationType === "2";
 	return { userId: user, peerId: group ? `chat:${m.conversationId}` : user, display: m.senderNick, text, group, msgId: m.msgId, ctx: { sessionWebhook: m.sessionWebhook, expires: m.sessionWebhookExpiredTime, staffId: m.senderStaffId, robotCode: m.robotCode, conversationId: m.conversationId, group } };
+}
+
+/**
+ * 钉钉的按钮：ActionCard 的按钮链接用 dtmd://dingtalkclient/sendMessage?content=…，
+ * 点按后钉钉替用户把这段文字发给机器人（单聊有效），走普通的文字回复流程（「批准」/「拒绝」/序号）。
+ * 这样不需要在卡片平台建模板，也不需要额外的回调权限。
+ */
+export const dtmd = (text: string) => `dtmd://dingtalkclient/sendMessage?content=${encodeURIComponent(text)}`;
+export function dingtalkCardText(card: OutCard): { title: string; text: string; btns: { title: string; actionURL: string }[] } {
+	const btns = card.buttons.map((b) => ({ title: b.label, actionURL: dtmd(b.text) }));
+	return { title: card.title.slice(0, 30), text: `### ${card.title}\n\n${clip(card.body, 3000)}\n\n${card.fallback}`, btns };
 }
 
 export function dingtalkAdapter(d: AdapterDeps<DingtalkConfig, DingtalkSecret>): ChannelAdapter {
@@ -74,6 +85,28 @@ export function dingtalkAdapter(d: AdapterDeps<DingtalkConfig, DingtalkSecret>):
 				method: "POST",
 				headers: { "content-type": "application/json", "x-acs-dingtalk-access-token": await accessToken() },
 				body: JSON.stringify({ robotCode: ctx.robotCode ?? d.config.clientId, userIds: [ctx.staffId], msgKey: "sampleMarkdown", msgParam: JSON.stringify({ title, text }) }),
+			});
+			if (!r.ok) throw new Error(`钉钉发送失败：HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+		},
+		async sendCard(ctx, card) {
+			const c = dingtalkCardText(card);
+			// 群聊里 dtmd 链接发出的文字不会 @机器人，机器人收不到：群聊退回文字
+			if (ctx.group || c.btns.length > 5 || !c.btns.length) return this.send(ctx, `**${card.title}**\n\n${card.body}\n\n${card.fallback}`);
+			if (ctx.sessionWebhook && Number(ctx.expires ?? 0) > Date.now() + 5000) {
+				const r = await fetch(String(ctx.sessionWebhook), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ msgtype: "actionCard", actionCard: { title: c.title, text: c.text, btnOrientation: c.btns.length <= 2 ? "1" : "0", btns: c.btns } }) });
+				const j = (await r.json().catch(() => ({}))) as { errcode?: number; errmsg?: string };
+				if (!r.ok || j.errcode) throw new Error(`钉钉发送失败：${j.errmsg ?? r.status}`);
+				return;
+			}
+			if (!ctx.staffId) throw new Error("会话已过期：请在钉钉里再发一条消息给机器人");
+			// 主动发送：sampleActionCard2…5（竖向 2~5 个按钮）
+			const n = Math.max(2, c.btns.length);
+			const param: Record<string, string> = { title: c.title, text: c.text };
+			c.btns.forEach((b, i) => ((param[`actionTitle${i + 1}`] = b.title), (param[`actionURL${i + 1}`] = b.actionURL)));
+			const r = await fetch(`${api}/v1.0/robot/oToMessages/batchSend`, {
+				method: "POST",
+				headers: { "content-type": "application/json", "x-acs-dingtalk-access-token": await accessToken() },
+				body: JSON.stringify({ robotCode: ctx.robotCode ?? d.config.clientId, userIds: [ctx.staffId], msgKey: `sampleActionCard${n}`, msgParam: JSON.stringify(param) }),
 			});
 			if (!r.ok) throw new Error(`钉钉发送失败：HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
 		},

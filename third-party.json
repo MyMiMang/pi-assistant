@@ -192,6 +192,14 @@
       "$comment": "钉钉官方 Stream SDK（选最新的非 beta 版本）"
     },
     {
+      "name": "@wecom/aibot-node-sdk",
+      "kind": "npm",
+      "version": "1.0.7",
+      "license": "MIT",
+      "adapter": "packages/server/src/channels/wecom-bot.ts",
+      "$comment": "企业微信官方智能机器人 SDK（WebSocket 长连接，不需要公网地址）"
+    },
+    {
       "name": "imapflow",
       "kind": "npm",
       "version": "2.4.0",

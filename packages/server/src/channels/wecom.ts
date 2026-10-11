@@ -4,8 +4,8 @@
  * 需要：企业 ID（CorpID）、应用 AgentId、应用 Secret、接收消息的 Token 与 EncodingAESKey；
  * 新建的应用还要在“企业可信 IP”里加入这台电脑的出口 IP，否则发消息会报 60020。
  */
-import type { AdapterDeps, ChannelAdapter, Inbound } from "./types.ts";
-import { clip } from "./types.ts";
+import type { AdapterDeps, ChannelAdapter, Inbound, OutCard } from "./types.ts";
+import { clip, taskId } from "./types.ts";
 import { wecomDecrypt, wecomSignature, xmlValue } from "./wecom-crypto.ts";
 
 export interface WecomConfig {
@@ -24,6 +24,17 @@ export interface WecomAdapter extends ChannelAdapter {
 	callback(method: string, q: Record<string, string>, body: string): { status: number; body: string };
 }
 
+/** 按钮交互型模板卡片（自建应用 message/send 与智能机器人共用这个结构） */
+export function wecomCard(card: OutCard) {
+	return {
+		card_type: "button_interaction",
+		main_title: { title: card.title.slice(0, 26), desc: "" },
+		sub_title_text: clip(card.body, 1000),
+		task_id: taskId(card.buttons[0]?.action ?? "pia"),
+		button_list: card.buttons.slice(0, 6).map((b) => ({ text: b.label.slice(0, 10), style: b.style === "danger" ? 3 : b.style === "primary" ? 1 : 2, key: b.action })),
+	};
+}
+
 export function wecomAdapter(d: AdapterDeps<WecomConfig, WecomSecret>): WecomAdapter {
 	const api = d.config.apiBase ?? "https://qyapi.weixin.qq.com";
 	let token: { v: string; exp: number } | null = null;
@@ -35,6 +46,14 @@ export function wecomAdapter(d: AdapterDeps<WecomConfig, WecomSecret>): WecomAda
 		if (j.errcode || !j.access_token) throw new Error(`获取企业微信 access token 失败：${j.errcode} ${j.errmsg ?? ""}`);
 		token = { v: j.access_token, exp: Date.now() + (j.expires_in ?? 7200) * 1000 };
 		return token.v;
+	};
+	/** 点按后把按钮换成结果文字（response_code 72 小时内有效，只能用一次） */
+	const updateCard = async (user: string, code: string, result: string) => {
+		await fetch(`${api}/cgi-bin/message/update_template_card?access_token=${await accessToken()}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ userids: [user], agentid: Number(d.config.agentId), response_code: code, button: { replace_name: result.slice(0, 10) } }),
+		});
 	};
 	const verify = (q: Record<string, string>, enc: string) => wecomSignature(d.secret.token, q.timestamp ?? "", q.nonce ?? "", enc) === q.msg_signature;
 	return {
@@ -64,11 +83,26 @@ export function wecomAdapter(d: AdapterDeps<WecomConfig, WecomSecret>): WecomAda
 			seen.set(id, Date.now());
 			for (const [k, t] of seen) if (Date.now() - t > 600_000) seen.delete(k);
 			const user = xmlValue(xml, "FromUserName") ?? "";
+			if (type === "event" && xmlValue(xml, "Event") === "template_card_event" && user && d.onAction) {
+				const key = xmlValue(xml, "EventKey") ?? "";
+				const code = xmlValue(xml, "ResponseCode");
+				void d.onAction({ userId: user, action: key, ctx: { userId: user } }).then((result) => (code ? updateCard(user, code, result) : undefined)).catch(() => {});
+				return { status: 200, body: "success" };
+			}
 			if (type === "text" && user) {
 				const m: Inbound = { userId: user, peerId: user, text: (xmlValue(xml, "Content") ?? "").trim(), msgId: id, ctx: { userId: user } };
 				if (m.text) setImmediate(() => d.onMessage(m));
 			} else if (type && type !== "event" && user) setImmediate(() => d.onMessage({ userId: user, peerId: user, text: `[${type} 消息，暂不支持]`, ctx: { userId: user } }));
 			return { status: 200, body: "success" };
+		},
+		async sendCard(ctx, card) {
+			const r = await fetch(`${api}/cgi-bin/message/send?access_token=${await accessToken()}`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ touser: ctx.userId, msgtype: "template_card", agentid: Number(d.config.agentId), template_card: wecomCard(card) }),
+			});
+			const j = (await r.json()) as { errcode?: number; errmsg?: string };
+			if (j.errcode) throw new Error(`企业微信发送失败：${j.errcode} ${j.errmsg ?? ""}`);
 		},
 		async send(ctx, markdown) {
 			const r = await fetch(`${api}/cgi-bin/message/send?access_token=${await accessToken()}`, {

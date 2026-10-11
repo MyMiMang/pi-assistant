@@ -4,7 +4,7 @@
  * 权限：im:message（获取与发送单聊、群组消息）、im:message:send_as_bot。
  */
 import * as lark from "@larksuiteoapi/node-sdk";
-import type { AdapterDeps, ChannelAdapter, Inbound } from "./types.ts";
+import type { AdapterDeps, ChannelAdapter, Inbound, OutCard } from "./types.ts";
 import { clip } from "./types.ts";
 
 export interface FeishuConfig {
@@ -34,6 +34,28 @@ export function feishuInbound(data: { sender?: { sender_id?: { open_id?: string;
 	return { userId: user, peerId: group ? `chat:${m.chat_id}` : user, text, group, msgId: m.message_id, ctx: { chatId: m.chat_id } };
 }
 
+/** 卡片（JSON 1.0）：Markdown 正文 + 按钮行 */
+export function feishuCard(card: OutCard, done?: string) {
+	return {
+		config: { wide_screen_mode: true, update_multi: true },
+		header: { template: done ? "grey" : "blue", title: { tag: "plain_text", content: card.title } },
+		elements: [
+			{ tag: "markdown", content: clip(card.body, 2500) },
+			done
+				? { tag: "note", elements: [{ tag: "plain_text", content: done }] }
+				: { tag: "action", actions: card.buttons.map((b) => ({ tag: "button", text: { tag: "plain_text", content: b.label }, type: b.style ?? "default", value: { pia: b.action } })) },
+		],
+	};
+}
+/** 按钮回调 → onAction；返回 toast（并把按钮换成结果） */
+export async function feishuCardAction(data: { operator?: { open_id?: string; user_id?: string; name?: string }; action?: { value?: { pia?: string } }; context?: { open_chat_id?: string }; open_chat_id?: string }, onAction?: AdapterDeps<unknown, unknown>["onAction"]) {
+	const action = data.action?.value?.pia;
+	const user = data.operator?.open_id ?? data.operator?.user_id;
+	if (!action || !user || !onAction) return { toast: { type: "warning", content: "这个按钮已失效" } };
+	const result = await onAction({ userId: user, action, display: data.operator?.name, ctx: { chatId: data.context?.open_chat_id ?? data.open_chat_id } });
+	return { toast: { type: /失败|无权|失效|没有/.test(result) ? "warning" : "success", content: result } };
+}
+
 export function feishuAdapter(d: AdapterDeps<FeishuConfig, FeishuSecret>): ChannelAdapter {
 	const domain = d.config.domain === "lark" ? lark.Domain.Lark : d.config.domain && d.config.domain !== "feishu" ? d.config.domain : lark.Domain.Feishu;
 	const client = new lark.Client({ appId: d.config.appId, appSecret: d.secret.appSecret, domain, loggerLevel: lark.LoggerLevel.warn });
@@ -46,6 +68,9 @@ export function feishuAdapter(d: AdapterDeps<FeishuConfig, FeishuSecret>): Chann
 					const m = feishuInbound(data as never);
 					if (m) d.onMessage(m);
 				},
+			} as never).register({
+				// 卡片按钮回调（长连接同样能收到，需要在“事件与回调 › 回调配置”里订阅 card.action.trigger）
+				"card.action.trigger": async (data: unknown) => feishuCardAction(data as never, d.onAction),
 			});
 			ws = new lark.WSClient({
 				appId: d.config.appId,
@@ -64,6 +89,13 @@ export function feishuAdapter(d: AdapterDeps<FeishuConfig, FeishuSecret>): Chann
 			(ws as unknown as { close?: (p?: unknown) => void } | null)?.close?.({ force: true });
 			ws = null;
 			d.setStatus({ state: "off", detail: "已停止" });
+		},
+		async sendCard(ctx, card) {
+			const r = (await client.im.v1.message.create({
+				params: { receive_id_type: "chat_id" },
+				data: { receive_id: String(ctx.chatId), msg_type: "interactive", content: JSON.stringify(feishuCard(card)) },
+			})) as { code?: number; msg?: string };
+			if (r.code) throw new Error(`飞书发送失败：${r.code} ${r.msg ?? ""}`);
 		},
 		async send(ctx, markdown) {
 			const r = (await client.im.v1.message.create({
