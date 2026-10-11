@@ -211,9 +211,21 @@ class Sidecar {
 	};
 	private handle: { stop: () => Promise<void> } | null = null;
 
+	private lastEmit = 0;
+	private emitTimer: NodeJS.Timeout | null = null;
 	private set(state: SidecarState, detail: string, extra: Partial<SidecarStatus> = {}) {
-		this.status = { ...this.status, ...extra, state, detail, since: state === this.status.state ? this.status.since : Date.now() };
-		bus.emit({ type: "memory.hindsight", status: this.status });
+		const changed = state !== this.status.state;
+		this.status = { ...this.status, ...extra, state, detail, since: changed ? Date.now() : this.status.since };
+		// 状态变化立即推送；同一状态下的进度文字最多每秒推一次
+		const emit = () => {
+			this.lastEmit = Date.now();
+			this.emitTimer = null;
+			bus.emit({ type: "memory.hindsight", status: this.status });
+		};
+		if (changed || Date.now() - this.lastEmit > 1000) {
+			if (this.emitTimer) clearTimeout(this.emitTimer);
+			emit();
+		} else this.emitTimer ??= setTimeout(emit, 1000);
 	}
 	get ready() {
 		return this.status.state === "ready";
