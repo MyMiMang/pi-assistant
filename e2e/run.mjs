@@ -204,6 +204,27 @@ await step("手机视口截图（单栏 + 抽屉）", async () => {
 	await m.close();
 });
 
+await step("外观：浅色/深色/跟随系统 + 强调色，按设备持久化", async () => {
+	const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
+	const p = await c.newPage();
+	await p.goto(`${BASE}/?settings=appearance`);
+	await p.getByRole("button", { name: "跟随系统" }).waitFor();
+	await p.getByRole("button", { name: "深色", exact: true }).click();
+	await p.getByLabel("#10b981").click();
+	await p.waitForTimeout(300);
+	await p.screenshot({ path: join(SHOTS, "16-settings-appearance.png") });
+	await p.goto(BASE);
+	await p.locator("main textarea").waitFor();
+	const st = await p.evaluate(() => ({ dark: document.documentElement.classList.contains("dark"), accent: document.documentElement.style.getPropertyValue("--accent") }));
+	if (!st.dark || st.accent !== "#10b981") throw new Error(`未持久化：${JSON.stringify(st)}`);
+	// 跟随系统：系统为浅色时应为浅色
+	await p.evaluate(() => localStorage.setItem("huhao.theme", "system"));
+	await p.reload();
+	await p.locator("main textarea").waitFor();
+	if (await p.evaluate(() => document.documentElement.classList.contains("dark"))) throw new Error("跟随系统未生效");
+	await c.close();
+});
+
 await step("深色模式截图", async () => {
 	const d = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark", locale: "zh-CN" });
 	const dp = await d.newPage();

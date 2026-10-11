@@ -258,7 +258,7 @@ function AppearanceTab() {
 				<H>强调色</H>
 				<div className="flex gap-2">
 					{ACCENTS.map((c) => (
-						<button key={c} onClick={() => upd(theme, c)} className={cx("h-8 w-8 rounded-full ring-offset-2 dark:ring-offset-zinc-900", c === accent && "ring-2 ring-zinc-400")} style={{ background: c }} aria-label={c} />
+						<button key={c} onClick={() => upd(theme, c)} className={cx("h-8 w-8 rounded-full border border-black/10 ring-offset-2 dark:border-white/25 dark:ring-offset-zinc-900", c === accent && "ring-2 ring-zinc-400")} style={{ background: c }} aria-label={c} />
 					))}
 				</div>
 			</section>
