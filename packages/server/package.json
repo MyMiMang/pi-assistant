@@ -22,6 +22,8 @@
     "@pi-assistant/ext-sandbox": "*",
     "@pi-assistant/ext-skills": "*",
     "@pi-assistant/shared": "*",
+    "@vectorize-io/hindsight-all": "0.10.3",
+    "@vectorize-io/hindsight-client": "0.10.3",
     "croner": "10.0.1",
     "diff": "8.0.4",
     "hono": "^4.13.13",

@@ -14,11 +14,35 @@ const textOf = (m: Msg) =>
 
 const getSkillDesc = (_u: string) => "按月汇总表格数据（先按周分组）。用户说“月度汇总/按月统计”时使用。";
 
+/** 模拟 Hindsight 需要的几类模型调用；不是 Hindsight 的请求返回 null */
+export function hindsightReply(messages: Msg[], systemPrompt: string): string | null {
+	const last = messages[messages.length - 1];
+	const u = last ? textOf(last) : "";
+	if (/^Say 'ok'/.test(u)) return "ok";
+	// 事实抽取：把 Content 段按句子拆成事实
+	if (/Extract SIGNIFICANT facts|Extract facts from the following chunk/.test(systemPrompt + u)) {
+		const content = (u.split(/\nContent:\n/)[1] ?? u).trim();
+		const facts = content
+			.split(/[。！？!?\n]+/)
+			.map((x) => x.trim())
+			.filter((x) => x.length >= 2)
+			.slice(0, 5)
+			.map((what) => ({ what, when: "N/A", where: "N/A", who: "N/A", why: "N/A", fact_kind: "conversation", fact_type: "world", entities: [] }));
+		return JSON.stringify({ facts });
+	}
+	// 网关在要求 JSON 输出时会加这句提示（见 llm-proxy.ts）
+	if (/只输出一个(合法的|符合下面) JSON/.test(systemPrompt)) return "{}";
+	return null;
+}
+
 function respond(messages: Msg[], systemPrompt = "") {
 	const last = messages[messages.length - 1];
 	// Pi 的上下文整理（compaction）请求：返回一段结构化摘要
 	if (/context summarization assistant/i.test(systemPrompt) || textOf(last).startsWith("<conversation>"))
 		return fauxAssistantMessage("## Goal\n用户在测试 Pi Assistant 的各项功能。\n\n## Progress\n- 已演示流式回复、文件、审批、后台任务等。\n\n## Next Steps\n- 继续按用户要求操作。");
+	// 记忆后端（Hindsight，经本机网关）的内部请求：给出格式正确的最小回复，让离线测试能跑通 retain/recall/reflect
+	const hs = hindsightReply(messages, systemPrompt);
+	if (hs !== null) return fauxAssistantMessage(hs);
 	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !/^(后台|定时)任务「/.test(textOf(m)));
 	const u = lastUser ? textOf(lastUser) : "";
 	// 多步流程（用于“要不要做成技能？”建议）：月度汇总 = 5 步工具调用

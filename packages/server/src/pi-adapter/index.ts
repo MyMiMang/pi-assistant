@@ -179,6 +179,46 @@ export class PiModels {
 		}
 	}
 
+	/**
+	 * 单次补全（不走 Agent 会话）：给本机 OpenAI 兼容网关等内部用途。
+	 * 入参/出参是与 Pi 无关的中性结构，Pi 的消息格式只在这里出现。
+	 */
+	async complete(providerId: string, modelId: string, req: ChatRequest): Promise<ChatResult> {
+		const model = this.runtime.getModel(providerId, modelId);
+		if (!model) return { text: "", toolCalls: [], stopReason: "error", error: `找不到模型 ${providerId}/${modelId}`, usage: { input: 0, output: 0 } };
+		const ts = Date.now();
+		const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+		const messages = req.messages.map((m) => {
+			if (m.role === "user") return { role: "user", content: m.text, timestamp: ts };
+			if (m.role === "assistant")
+				return {
+					role: "assistant",
+					content: [...(m.text ? [{ type: "text", text: m.text }] : []), ...(m.toolCalls ?? []).map((c) => ({ type: "toolCall", id: c.id, name: c.name, arguments: c.arguments }))],
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+					usage: zero,
+					stopReason: m.toolCalls?.length ? "toolUse" : "stop",
+					timestamp: ts,
+				};
+			return { role: "toolResult", toolCallId: m.toolCallId, toolName: m.name, content: [{ type: "text", text: m.text }], isError: !!m.isError, timestamp: ts };
+		});
+		const maxTokens = Math.min(req.maxTokens ?? 4096, (model as { maxTokens?: number }).maxTokens ?? 32_000);
+		try {
+			const res = await this.runtime.completeSimple(
+				model,
+				{ systemPrompt: req.systemPrompt, messages, tools: req.tools?.map((t) => ({ name: t.name, description: t.description ?? "", parameters: t.parameters ?? { type: "object", properties: {} } })) } as never,
+				{ maxTokens, temperature: req.temperature, signal: req.signal } as never,
+			);
+			const text = res.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+			const toolCalls = res.content.filter((c) => c.type === "toolCall").map((c) => ({ id: (c as { id: string }).id, name: (c as { name: string }).name, arguments: (c as { arguments: Record<string, unknown> }).arguments ?? {} }));
+			const stop = res.stopReason === "toolUse" ? "toolUse" : res.stopReason === "length" ? "length" : res.stopReason === "error" || res.stopReason === "aborted" ? "error" : "stop";
+			return { text, toolCalls, stopReason: stop, error: stop === "error" ? (res.errorMessage ?? "请求失败") : undefined, usage: { input: res.usage?.input ?? 0, output: res.usage?.output ?? 0 } };
+		} catch (e) {
+			return { text: "", toolCalls: [], stopReason: "error", error: e instanceof Error ? e.message : String(e), usage: { input: 0, output: 0 } };
+		}
+	}
+
 	/** 注册一个本地 provider（mock 模型用）。 */
 	registerProvider(id: string, config: unknown) {
 		this.runtime.registerProvider(id, config as never);
@@ -186,6 +226,26 @@ export class PiModels {
 	setRuntimeApiKey(id: string, key: string) {
 		return this.runtime.setRuntimeApiKey(id, key);
 	}
+}
+
+export type ChatMessage =
+	| { role: "user"; text: string }
+	| { role: "assistant"; text: string; toolCalls?: { id: string; name: string; arguments: Record<string, unknown> }[] }
+	| { role: "tool"; toolCallId: string; name: string; text: string; isError?: boolean };
+export interface ChatRequest {
+	systemPrompt?: string;
+	messages: ChatMessage[];
+	tools?: { name: string; description?: string; parameters?: Record<string, unknown> }[];
+	maxTokens?: number;
+	temperature?: number;
+	signal?: AbortSignal;
+}
+export interface ChatResult {
+	text: string;
+	toolCalls: { id: string; name: string; arguments: Record<string, unknown> }[];
+	stopReason: "stop" | "length" | "toolUse" | "error";
+	error?: string;
+	usage: { input: number; output: number };
 }
 
 // ---------------------------------------------------------------- 会话
