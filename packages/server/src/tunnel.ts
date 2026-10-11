@@ -11,6 +11,7 @@ import { config } from "./config.ts";
 import { getSetting } from "./db.ts";
 import { identity, registrationMessage, signText } from "./identity.ts";
 import { notify } from "./push.ts";
+import { BRAND } from "@pi-assistant/shared";
 
 export interface TunnelStatus {
 	enabled: boolean;
@@ -98,7 +99,7 @@ export function startTunnel() {
 		clearTimeout(watchdog);
 		emit();
 		void register(url);
-		if (prev && prev !== url) notify({ title: "胡好好的访问地址已更新", body: "点开即可重新连接", data: { type: "server-url", serverId: identity().serverId, url } });
+		if (prev && prev !== url) notify({ title: `${BRAND.name} 的访问地址已更新`, body: "点开即可重新连接", data: { type: "server-url", serverId: identity().serverId, url } });
 	};
 	const onData = (d: Buffer) => {
 		const text = d.toString();

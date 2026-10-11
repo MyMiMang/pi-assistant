@@ -1,13 +1,13 @@
 /**
- * 助理电脑冒烟测试（需要 Docker 与 huhao/desktop 镜像，不在默认 npm test 里）：
- *   HUHAO_DOCKER="sudo docker" node --import tsx test/computer.smoke.ts
+ * 助理电脑冒烟测试（需要 Docker 与 pi-assistant/desktop 镜像，不在默认 npm test 里）：
+ *   PIA_DOCKER="sudo docker" node --import tsx test/computer.smoke.ts
  * 验证：容器启动 → 整屏截图 → Pi 会话通过 MCP 连上 cua-driver，工具出现且非 MIT 相关工具被隐藏。
  */
 import "./setup.ts";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { computerExtension, HIDDEN_TOOLS, MCP_PREFIX } from "@huhao/ext-computer";
+import { computerExtension, HIDDEN_TOOLS, MCP_PREFIX } from "@pi-assistant/ext-computer";
 import { config } from "../src/config.ts";
 import { cuaMcpCommand, screenshotDesktop, startDesktop, stopDesktop } from "../src/desktop.ts";
 import { createPiSession, PiModels } from "../src/pi-adapter/index.ts";

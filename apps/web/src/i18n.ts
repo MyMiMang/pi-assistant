@@ -7,11 +7,11 @@ const en: Record<string, string> = {
 	后台任务: "Background tasks", 需要你的批准: "Needs your approval", 已批准: "Approved", 已拒绝: "Rejected", 已过期: "Expired",
 	下载: "Download", 上传: "Upload", 保存: "Save", 取消: "Cancel", 下一步: "Next", 完成: "Done", 测试连接: "Test connection",
 };
-let lang: "zh" | "en" = (localStorage.getItem("huhao.lang") as "zh" | "en") || "zh";
+let lang: "zh" | "en" = (localStorage.getItem("pia.lang") as "zh" | "en") || "zh";
 export const getLang = () => lang;
 export function setLang(l: "zh" | "en") {
 	lang = l;
-	localStorage.setItem("huhao.lang", l);
+	localStorage.setItem("pia.lang", l);
 	location.reload();
 }
 export function t(s: string, vars?: Record<string, string | number>) {

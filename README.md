@@ -1,4 +1,4 @@
-# 胡好好（pi-assistant）
+# Pi Assistant
 
 基于 [Pi](https://github.com/earendil-works/pi) 的**本地私人助理**：跑在你自己的 Mac / Windows 电脑上，有自己的工作区“电脑”，能写代码跑代码、处理文件、操作浏览器、连接 Gmail / 日历 / GitHub，后台和定时干活。所有界面是同一个网页应用（PWA），手机扫码即可远程使用，不需要原生 App。
 

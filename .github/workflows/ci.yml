@@ -16,7 +16,7 @@ jobs:
       - name: 单元 + Pi 兼容性测试
         run: npm test
       - name: Rendezvous Worker 测试
-        run: npm test -w @huhao/rendezvous
+        run: npm test -w @pi-assistant/rendezvous
       - run: npm run build
       - name: 端到端测试（Mock 模型 + 无头 Chrome）
         run: |

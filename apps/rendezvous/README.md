@@ -1,9 +1,9 @@
-# @huhao/rendezvous —— 远程入口（Cloudflare Worker + KV + PWA 外壳）
+# @pi-assistant/rendezvous —— 远程入口（Cloudflare Worker + KV + PWA 外壳）
 
 **不内置任何默认域名。** 每个用户在 App「设置 → 远程入口」里填写**自己的**域名（已托管在 Cloudflare）、子域名和**自己的** Cloudflare API Token，
 服务端（`packages/server/src/cloudflare.ts`）通过 Cloudflare REST API 把本 Worker 部署到用户自己的账号：
 
-1. 验证 Token → 2. 按域名查 zone（自动得到 account id）→ 3. 创建/复用 KV `huhao-rendezvous-servers` →
+1. 验证 Token → 2. 按域名查 zone（自动得到 account id）→ 3. 创建/复用 KV `pi-assistant-rendezvous-servers` →
 4. 上传 PWA 静态资源（assets-upload-session）→ 5. 上传 Worker 模块（`dist/worker.js`，绑定 `SERVERS` KV 与 `ASSETS`）→
 6. 绑定 Workers Custom Domain（Cloudflare 自动建 DNS 记录与证书）→ 7. 轮询 `https://<子域名>.<域名>/api/health`。
 
@@ -23,8 +23,8 @@ Workers 每天 10 万次请求；KV 每天 10 万次读、1000 次写、1 GB；�
 
 ## 开发
 ```bash
-npm run build -w @huhao/rendezvous     # esbuild → dist/worker.js
-npm test -w @huhao/rendezvous
-# 命令行部署（与设置页同一流程，需本机胡好好服务在运行）：
-CLOUDFLARE_API_TOKEN=... node scripts/deploy-rendezvous.mjs --zone example.com --sub huhao
+npm run build -w @pi-assistant/rendezvous     # esbuild → dist/worker.js
+npm test -w @pi-assistant/rendezvous
+# 命令行部署（与设置页同一流程，需本机Pi Assistant 服务在运行）：
+CLOUDFLARE_API_TOKEN=... node scripts/deploy-rendezvous.mjs --zone example.com --sub assistant
 ```

@@ -1,6 +1,6 @@
-//! 胡好好托盘程序（无窗口）：
-//! - 启动并守护 huhao-server sidecar（内含 Node 运行时 + Pi + 我们的服务，Node SEA 单文件）
-//! - 菜单栏/托盘菜单：打开胡好好、配对手机、开机自启、检查更新、退出
+//! Pi Assistant托盘程序（无窗口）：
+//! - 启动并守护 pi-assistant-server sidecar（内含 Node 运行时 + Pi + 我们的服务，Node SEA 单文件）
+//! - 菜单栏/托盘菜单：打开Pi Assistant、配对手机、开机自启、检查更新、退出
 //! - 自动更新：新版本（含新版 Pi）通过 Tauri updater 静默下载安装
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -22,14 +22,14 @@ fn start_server(app: &AppHandle) {
     let cloudflared = app.path().resource_dir().unwrap().join(if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" });
     let (mut rx, child) = app
         .shell()
-        .sidecar("huhao-server")
+        .sidecar("pi-assistant-server")
         .expect("sidecar")
-        .env("HUHAO_DATA_DIR", data_dir.to_string_lossy().to_string())
-        .env("HUHAO_WEB_DIST", web_dir.to_string_lossy().to_string())
-        .env("HUHAO_CLOUDFLARED", cloudflared.to_string_lossy().to_string())
-        .env("HUHAO_PORT", PORT.to_string())
+        .env("PIA_DATA_DIR", data_dir.to_string_lossy().to_string())
+        .env("PIA_WEB_DIST", web_dir.to_string_lossy().to_string())
+        .env("PIA_CLOUDFLARED", cloudflared.to_string_lossy().to_string())
+        .env("PIA_PORT", PORT.to_string())
         .spawn()
-        .expect("failed to start huhao-server");
+        .expect("failed to start pi-assistant-server");
     *app.state::<Server>().0.lock().unwrap() = Some(child);
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -64,7 +64,7 @@ fn main() {
             let _ = app.autolaunch().enable();
             start_server(app.handle());
 
-            let open = MenuItem::with_id(app, "open", "打开胡好好", true, None::<&str>)?;
+            let open = MenuItem::with_id(app, "open", "打开Pi Assistant", true, None::<&str>)?;
             let pair = MenuItem::with_id(app, "pair", "配对手机…", true, None::<&str>)?;
             let auto = CheckMenuItem::with_id(app, "autostart", "开机自动启动", true, app.autolaunch().is_enabled().unwrap_or(true), None::<&str>)?;
             let update = MenuItem::with_id(app, "update", "检查更新", true, None::<&str>)?;
@@ -72,7 +72,7 @@ fn main() {
             let menu = Menu::with_items(app, &[&open, &pair, &PredefinedMenuItem::separator(app)?, &auto, &update, &PredefinedMenuItem::separator(app)?, &quit])?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("胡好好")
+                .tooltip("Pi Assistant")
                 .menu(&menu)
                 .on_menu_event(move |app, ev| match ev.id().as_ref() {
                     "open" => open_ui(app, "/"),

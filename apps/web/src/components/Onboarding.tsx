@@ -6,6 +6,7 @@ import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
 import { Plus } from "lucide-react";
 import { Button, cx } from "./ui";
+import { BRAND } from "@pi-assistant/shared";
 
 /** 首次运行向导：欢迎 → 选模型服务 → 登录 → 默认模型 + 测试 → 完成。 */
 export default function Onboarding() {
@@ -32,7 +33,7 @@ export default function Onboarding() {
 					{step === 0 && (
 						<div className="space-y-4 py-6 text-center">
 							<img src="/icon-512.png" className="mx-auto h-20 w-20 rounded-3xl shadow-lg" alt="" />
-							<h1 className="text-2xl font-bold">欢迎使用胡好好</h1>
+							<h1 className="text-2xl font-bold">欢迎使用 {BRAND.name}</h1>
 							<p className="mx-auto max-w-md text-sm leading-relaxed text-zinc-500">
 								一个运行在你自己电脑上的私人助理：有自己的工作区，能写代码、处理文件、后台干活；手机扫码就能随时随地使用。
 								<br />

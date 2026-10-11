@@ -1,6 +1,6 @@
 {
-  "name": "胡好好",
-  "short_name": "胡好好",
+  "name": "%BRAND_NAME%",
+  "short_name": "%BRAND_NAME%",
   "description": "运行在你自己电脑上的私人助理",
   "start_url": "/",
   "scope": "/",

@@ -9,11 +9,13 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CredentialStore } from "./pi-adapter/index.ts";
+import { BRAND, LEGACY } from "@pi-assistant/shared";
 import { config } from "./config.ts";
 
 type Cred = Awaited<ReturnType<CredentialStore["read"]>>;
 
-const SERVICE = "HuHao";
+const SERVICE = BRAND.name;
+const LEGACY_SERVICE = LEGACY.keychainService;
 const ACCOUNT = "credential-master-key";
 
 function loadMasterKey(): { key: Buffer; backend: string } {
@@ -23,6 +25,16 @@ function loadMasterKey(): { key: Buffer; backend: string } {
 			if (hex) return { key: Buffer.from(hex, "hex"), backend: "macos-keychain" };
 		} catch {
 			/* not found */
+		}
+		// 迁移：旧版本把主密钥存在旧服务名下 → 复制到新服务名（旧条目保留，确认无误后可手动删除）
+		try {
+			const hex = execFileSync("security", ["find-generic-password", "-s", LEGACY_SERVICE, "-a", ACCOUNT, "-w"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+			if (hex) {
+				execFileSync("security", ["add-generic-password", "-s", SERVICE, "-a", ACCOUNT, "-w", hex, "-U"], { stdio: "ignore" });
+				return { key: Buffer.from(hex, "hex"), backend: "macos-keychain" };
+			}
+		} catch {
+			/* none */
 		}
 		try {
 			const key = randomBytes(32);

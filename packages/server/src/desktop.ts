@@ -1,6 +1,6 @@
 /**
  * 助理电脑（sandbox desktop）：每个助理一个 Docker 容器（Xvfb + xfce + noVNC + cua-driver），
- * 家目录是持久化卷，登录态长期保留。noVNC 端口只绑定到 127.0.0.1，由 huhao-server 鉴权后反向代理。
+ * 家目录是持久化卷，登录态长期保留。noVNC 端口只绑定到 127.0.0.1，由 pi-assistant-server 鉴权后反向代理。
  */
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -12,7 +12,7 @@ const docker = (args: string[], opts: { timeout?: number; encoding?: "buffer" } 
 	run(config.docker[0], [...config.docker.slice(1), ...args], { timeout: opts.timeout ?? 20_000, maxBuffer: 64 * 1024 * 1024, encoding: opts.encoding as never });
 
 const safe = (id: string) => id.replace(/[^a-zA-Z0-9_.-]/g, "");
-export const containerOf = (agentId: string) => `huhao-desk-${safe(agentId)}`;
+export const containerOf = (agentId: string) => `pia-desk-${safe(agentId)}`;
 
 export interface DesktopStatus {
 	available: boolean;
@@ -58,7 +58,7 @@ export async function startDesktop(agentId: string): Promise<DesktopStatus> {
 	if (st.state === "none")
 		await docker(
 			["run", "-d", "--name", name, "--restart", "unless-stopped", "--shm-size", "1g", "--cpus", "2", "--memory", "3g",
-				"-p", "127.0.0.1::6080", "-v", `huhao-home-${safe(agentId)}:/home/agent`, "--label", "huhao.agent=" + agentId, config.desktopImage],
+				"-p", "127.0.0.1::6080", "-v", `pia-home-${safe(agentId)}:/home/agent`, "--label", "pia.agent=" + agentId, config.desktopImage],
 			{ timeout: 120_000 },
 		);
 	for (let i = 0; i < 60; i++) {
@@ -66,7 +66,7 @@ export async function startDesktop(agentId: string): Promise<DesktopStatus> {
 		if (s.state === "running" && s.port) {
 			try {
 				const { stdout } = await docker(["logs", name]);
-				if (String(stdout).includes("huhao-desktop ready")) return s;
+				if (String(stdout).includes("pia-desktop ready")) return s;
 			} catch {}
 		}
 		await new Promise((r) => setTimeout(r, 500));

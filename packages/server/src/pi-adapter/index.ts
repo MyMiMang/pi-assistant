@@ -26,6 +26,7 @@ import {
 import { Type } from "typebox";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import compat from "./compat.json" with { type: "json" };
+import { BRAND } from "@pi-assistant/shared";
 
 export { defineTool, Type };
 export type { AgentSession, AgentSessionEvent, BashOperations, ExtensionAPI, ExtensionFactory, ToolDefinition, CredentialStore };
@@ -138,7 +139,7 @@ export class PiModels {
 	}
 
 	login(providerId: string, type: "api_key" | "oauth", interaction: LoginInteraction) {
-		return this.runtime.login(providerId, type, interaction as never, { agentName: "胡好好" });
+		return this.runtime.login(providerId, type, interaction as never, { agentName: BRAND.name });
 	}
 
 	logout(providerId: string) {

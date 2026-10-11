@@ -8,6 +8,7 @@ import Settings from "./components/Settings";
 import Sidebar from "./components/Sidebar";
 import { Button } from "./components/ui";
 import { useStore } from "./store";
+import { BRAND } from "@pi-assistant/shared";
 
 export default function App() {
 	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle } = useStore();
@@ -62,8 +63,8 @@ export default function App() {
 				<div className="text-lg font-semibold">{fatal === "unpaired" ? "这台设备还没有配对" : "连不上你的电脑"}</div>
 				<p className="max-w-sm text-sm text-zinc-500">
 					{fatal === "unpaired"
-						? "请在电脑上打开胡好好 →「设置 → 远程访问与设备」，用手机扫描配对二维码。"
-						: "请确认电脑已开机、胡好好正在运行，并且开启了远程访问。"}
+						? `请在电脑上打开 ${BRAND.name} →「设置 → 远程访问与设备」，用手机扫描配对二维码。`
+						: `请确认电脑已开机、${BRAND.name} 正在运行，并且开启了远程访问。`}
 				</p>
 				<div className="flex gap-2">
 					<Button variant="primary" onClick={() => location.reload()}>

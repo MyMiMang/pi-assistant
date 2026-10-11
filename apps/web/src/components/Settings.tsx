@@ -222,7 +222,7 @@ function EntryTab() {
 	const steps = useStore((s) => s.cloudflareSteps);
 	const [st, setSt] = useState<{ configured: boolean; hasToken: boolean; config: { hostname: string; zone: string; subdomain: string; deployedAt: number } | null } | null>(null);
 	const [zone, setZone] = useState("");
-	const [sub, setSub] = useState("huhao");
+	const [sub, setSub] = useState("assistant");
 	const [token, setToken] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
@@ -314,7 +314,7 @@ function EntryTab() {
 			)}
 			<div className="rounded-xl bg-zinc-50 p-3 text-xs leading-relaxed text-zinc-500 dark:bg-zinc-800/50">
 				<div className="mb-1 font-medium text-zinc-600 dark:text-zinc-300">Cloudflare 免费套餐额度（个人使用远远够用）</div>
-				Workers：每天 10 万次请求、每次 10ms CPU；KV：每天 10 万次读取、1000 次写入、1 GB 存储；静态资源（PWA 外壳）请求免费且不限量；自定义域名与 HTTPS 证书免费。胡好好平时每次打开只读 1 次 KV，地址变化时才写 1 次。
+				Workers：每天 10 万次请求、每次 10ms CPU；KV：每天 10 万次读取、1000 次写入、1 GB 存储；静态资源（PWA 外壳）请求免费且不限量；自定义域名与 HTTPS 证书免费。平时每次打开只读 1 次 KV，地址变化时才写 1 次。
 				<div className="mt-2 font-medium text-zinc-600 dark:text-zinc-300">没有域名？</div>
 				也能用：「远程访问与设备」里打开远程访问会得到一个临时链接（*.trycloudflare.com），每次电脑重启地址会变，需要重新扫码；或者只在同一 Wi‑Fi 下使用。
 			</div>
@@ -326,8 +326,8 @@ const ACCENTS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899
 function AppearanceTab() {
 	const { theme, accent, set } = useStore();
 	const upd = (th = theme, ac = accent) => {
-		localStorage.setItem("huhao.theme", th);
-		localStorage.setItem("huhao.accent", ac);
+		localStorage.setItem("pia.theme", th);
+		localStorage.setItem("pia.accent", ac);
 		set({ theme: th, accent: ac });
 		applyTheme(th, ac);
 	};

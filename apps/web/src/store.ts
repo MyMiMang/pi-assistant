@@ -45,8 +45,8 @@ export const useStore = create<State>((set, get) => ({
 	drawer: false,
 	info: window.innerWidth >= 1280,
 	settings: new URLSearchParams(location.search).get("settings"),
-	theme: (localStorage.getItem("huhao.theme") as Theme) || "system",
-	accent: localStorage.getItem("huhao.accent") || "#6366f1",
+	theme: (localStorage.getItem("pia.theme") as Theme) || "system",
+	accent: localStorage.getItem("pia.accent") || "#6366f1",
 	fileVersion: 0,
 	set: (p) => set(p),
 	async loadSystem() {

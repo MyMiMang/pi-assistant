@@ -11,7 +11,7 @@ export interface Conn {
 	token?: string;
 	publicKey?: string;
 }
-const KEY = "huhao.conn";
+const KEY = "pia.conn";
 export function loadConn(): Conn | null {
 	try {
 		return JSON.parse(localStorage.getItem(KEY) ?? "null");
@@ -87,7 +87,7 @@ export async function refreshFromRendezvous(): Promise<boolean> {
 		const r = await fetch(`/api/servers/${conn.serverId}`);
 		if (!r.ok) return false;
 		const rec = (await r.json()) as { url: string; ts: number; sig: string };
-		const msg = new TextEncoder().encode(`huhao-rendezvous-v1\n${conn.serverId}\n${rec.url}\n${rec.ts}`);
+		const msg = new TextEncoder().encode(`pia-rendezvous-v1\n${conn.serverId}\n${rec.url}\n${rec.ts}`);
 		const ok = await ed.verifyAsync(b64urlDecode(rec.sig), msg, b64urlDecode(conn.publicKey));
 		if (!ok || !/^https:\/\//.test(rec.url)) return false;
 		saveConn({ ...conn, base: rec.url });

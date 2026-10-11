@@ -27,6 +27,7 @@ import { dockerAvailable, sandboxMode } from "./sandbox.ts";
 import { desktopPause, desktopStatus, issueTicket, screenshotDesktop, startDesktop, stopDesktop, useTicket } from "./desktop.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
 import { entryDomain, startTunnel, stopTunnel, tunnelStatus } from "./tunnel.ts";
+import { BRAND } from "@pi-assistant/shared";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
@@ -72,7 +73,7 @@ const localOnly = async (c: Context<Env>, next: Next) => (c.get("caller").local 
 const by = (c: Context<Env>) => c.get("caller").deviceId ?? "local";
 
 // ---------------------------------------------------------------- 系统
-app.get("/api/system/public", (c) => c.json({ serverId: identity().serverId, publicKey: identity().publicKey, name: "胡好好" }));
+app.get("/api/system/public", (c) => c.json({ serverId: identity().serverId, publicKey: identity().publicKey, name: BRAND.name }));
 app.get("/api/system", async (c) =>
 	c.json({
 		serverId: identity().serverId,

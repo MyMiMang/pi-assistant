@@ -10,7 +10,7 @@ function init() {
 		keys = webpush.generateVAPIDKeys();
 		setSetting("vapid", keys);
 	}
-	webpush.setVapidDetails("mailto:noreply@huhao.local", keys.publicKey, keys.privateKey);
+	webpush.setVapidDetails("mailto:noreply@pi-assistant.local", keys.publicKey, keys.privateKey);
 	ready = true;
 }
 export function vapidPublicKey() {

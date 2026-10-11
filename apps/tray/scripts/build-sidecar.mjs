@@ -1,5 +1,5 @@
-// 构建 huhao-server sidecar：esbuild 打包服务端 → Node SEA 单文件可执行；并下载对应平台的 cloudflared。
-// 产物放到 src-tauri/binaries/{huhao-server,cloudflared}-<target-triple>[.exe]（Tauri externalBin 约定）。
+// 构建 pi-assistant-server sidecar：esbuild 打包服务端 → Node SEA 单文件可执行；并下载对应平台的 cloudflared。
+// 产物放到 src-tauri/binaries/{pi-assistant-server,cloudflared}-<target-triple>[.exe]（Tauri externalBin 约定）。
 // TODO(P1 收尾)：在 release 工作流的 mac/windows runner 上执行；签名/公证由 tauri-action 处理。
 import { execSync } from "node:child_process";
 const triple = execSync("rustc -vV").toString().match(/host: (\S+)/)[1];

@@ -1,6 +1,6 @@
-# 胡好好 · 助理电脑（sandbox desktop）
+# Pi Assistant · 助理电脑（sandbox desktop）
 # Debian + Xvfb + xfce4 + x11vnc + noVNC + Chromium + 中文字体 + cua-driver（MIT，仅 driver 本体，不含 cua-perception）
-# 构建：node scripts/fetch-cua-driver.mjs linux-x64 packages/sandbox-desktop/vendor && docker build -t huhao/desktop packages/sandbox-desktop
+# 构建：node scripts/fetch-cua-driver.mjs linux-x64 packages/sandbox-desktop/vendor && docker build -t pi-assistant/desktop packages/sandbox-desktop
 # 可选：--build-arg WECHAT=1 安装 Linux 版微信（官方 deb；使用前请阅读风险提示，见 DESIGN.md §14.4）
 FROM debian:bookworm-slim
 ARG WECHAT=0
@@ -17,12 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 1000 -s /bin/bash agent
 COPY vendor/cua-driver /usr/local/bin/cua-driver
-COPY start.sh /usr/local/bin/huhao-desktop
-RUN chmod +x /usr/local/bin/huhao-desktop /usr/local/bin/cua-driver \
+COPY start.sh /usr/local/bin/pia-desktop
+RUN chmod +x /usr/local/bin/pia-desktop /usr/local/bin/cua-driver \
     && ln -sf /usr/share/novnc/vnc_lite.html /usr/share/novnc/index.html
 USER agent
 WORKDIR /home/agent
 VOLUME /home/agent
-# 6080 = noVNC（只给 huhao-server 反向代理用，不对外发布）
+# 6080 = noVNC（只给 pi-assistant-server 反向代理用，不对外发布）
 EXPOSE 6080
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/huhao-desktop"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/pia-desktop"]

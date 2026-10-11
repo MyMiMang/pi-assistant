@@ -15,8 +15,8 @@ import { openJson, sealJson } from "./secrets.ts";
 import { register, tunnelStatus } from "./tunnel.ts";
 
 const API = "https://api.cloudflare.com/client/v4";
-export const SCRIPT_NAME = "huhao-rendezvous";
-const KV_TITLE = "huhao-rendezvous-servers";
+export const SCRIPT_NAME = "pi-assistant-rendezvous";
+const KV_TITLE = "pi-assistant-rendezvous-servers";
 
 export interface CfConfig {
 	zone: string;

@@ -1,5 +1,5 @@
 {
-  "name": "@huhao/ext-sandbox",
+  "name": "@pi-assistant/ext-sandbox",
   "version": "0.1.0",
   "private": true,
   "type": "module",

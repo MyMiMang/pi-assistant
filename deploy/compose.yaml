@@ -5,14 +5,14 @@ services:
     ports: ["127.0.0.1:8787:8787"]
     env_file: ../.env
     environment:
-      HUHAO_SANDBOX: docker
-      HUHAO_SANDBOX_HOST: sandbox:7070
-      HUHAO_DATA_DIR: /data
-    volumes: [huhao-data:/data]
+      PIA_SANDBOX: docker
+      PIA_SANDBOX_HOST: sandbox:7070
+      PIA_DATA_DIR: /data
+    volumes: [pi-assistant-data:/data]
   sandbox:
     build: { context: ../sandbox }
-    volumes: [huhao-workspace:/workspace]
+    volumes: [pi-assistant-workspace:/workspace]
     # 注意：不向沙箱注入任何凭据
 volumes:
-  huhao-data: {}
-  huhao-workspace: {}
+  pi-assistant-data: {}
+  pi-assistant-workspace: {}

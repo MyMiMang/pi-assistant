@@ -1,5 +1,5 @@
 /**
- * @huhao/ext-delivery —— 交付与协作工具（Pi 扩展）：
+ * @pi-assistant/ext-delivery —— 交付与协作工具（Pi 扩展）：
  *  deliver_file：把工作区文件作为附件发回聊天
  *  ask_user：在聊天里弹出带选项按钮的问题卡片，等待用户回答
  *  spawn_task：把耗时工作放到后台任务里执行

@@ -7,7 +7,7 @@ import { chromium } from "playwright-core";
 import { startMockOpenAI } from "./mock-openai.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
-const DATA = process.env.E2E_DATA ?? "/tmp/huhao-e2e";
+const DATA = process.env.E2E_DATA ?? "/tmp/pia-e2e";
 const SHOTS = join(ROOT, "docs/screenshots");
 const PORT = 8787;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -20,7 +20,7 @@ let page;
 process.on("exit", () => server?.kill("SIGKILL"));
 const log = (...a) => console.log("[e2e]", ...a);
 function startServer() {
-	server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, HUHAO_DATA_DIR: DATA, HUHAO_MOCK: "1", HUHAO_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] });
+	server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] });
 	server.stdout.on("data", (d) => process.stdout.write(`[server] ${d}`));
 	server.stderr.on("data", (d) => !String(d).includes("ExperimentalWarning") && process.stdout.write(`[server!] ${d}`));
 	return waitFor(async () => (await fetch(`${BASE}/api/system`)).ok, 30_000);
@@ -172,8 +172,8 @@ await step("手机配对：认领 → 电脑确认 → 获得设备 token", asyn
 	await page.getByText("新设备请求连接").waitFor();
 	await page.screenshot({ path: join(SHOTS, "10-device-approval.png") });
 	await page.getByRole("button", { name: "允许连接" }).click();
-	await pp.waitForFunction(() => JSON.parse(localStorage.getItem("huhao.conn") ?? "null")?.token, null, { timeout: 10_000 });
-	const conn = await pp.evaluate(() => JSON.parse(localStorage.getItem("huhao.conn")));
+	await pp.waitForFunction(() => JSON.parse(localStorage.getItem("pia.conn") ?? "null")?.token, null, { timeout: 10_000 });
+	const conn = await pp.evaluate(() => JSON.parse(localStorage.getItem("pia.conn")));
 	if (!conn?.token?.startsWith("hh_")) throw new Error("没有拿到 token");
 	// 用 token 访问 API（模拟经隧道的远程请求：带转发头时必须鉴权）
 	const r1 = await fetch(`${BASE}/api/agents`, { headers: { "cf-connecting-ip": "1.2.3.4" } });
@@ -219,7 +219,7 @@ await step("外观：浅色/深色/跟随系统 + 强调色，按设备持久化
 	const st = await p.evaluate(() => ({ dark: document.documentElement.classList.contains("dark"), accent: document.documentElement.style.getPropertyValue("--accent") }));
 	if (!st.dark || st.accent !== "#10b981") throw new Error(`未持久化：${JSON.stringify(st)}`);
 	// 跟随系统：系统为浅色时应为浅色
-	await p.evaluate(() => localStorage.setItem("huhao.theme", "system"));
+	await p.evaluate(() => localStorage.setItem("pia.theme", "system"));
 	await p.reload();
 	await p.locator("main textarea").waitFor();
 	if (await p.evaluate(() => document.documentElement.classList.contains("dark"))) throw new Error("跟随系统未生效");

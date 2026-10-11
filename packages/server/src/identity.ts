@@ -20,4 +20,4 @@ export function signText(text: string): string {
 }
 export const publicKeyObject = () => createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: identity().publicKey }, format: "jwk" });
 /** Rendezvous 记录的签名内容（Worker 与 PWA 用同样的格式校验）。 */
-export const registrationMessage = (serverId: string, url: string, ts: number) => `huhao-rendezvous-v1\n${serverId}\n${url}\n${ts}`;
+export const registrationMessage = (serverId: string, url: string, ts: number) => `pia-rendezvous-v1\n${serverId}\n${url}\n${ts}`;

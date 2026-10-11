@@ -2,5 +2,5 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-process.env.HUHAO_DATA_DIR ??= mkdtempSync(join(tmpdir(), "huhao-test-"));
-process.env.HUHAO_OFFLINE = "1";
+process.env.PIA_DATA_DIR ??= mkdtempSync(join(tmpdir(), "pia-test-"));
+process.env.PIA_OFFLINE = "1";

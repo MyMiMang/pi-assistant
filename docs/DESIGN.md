@@ -1,4 +1,4 @@
-# 胡好好 · 基于 Pi 的本地私人助理 —— 设计文档 v0.5
+# Pi Assistant · 基于 Pi 的本地私人助理 —— 设计文档 v0.5
 
 > 状态：v0.5（2026-10-11）。**远程入口改为按用户自选**：不再内置任何默认域名，用户用自己的域名 + 自己的 Cloudflare Token 在 App 内一键部署（§5.13.2，已实现并实测）；新增密钥扫描（§9.1）；助理电脑与 ext-computer 已开始实现（§14.10）。v0.4：新增：§5.14.1 自定义模型服务（中转站/第三方/本地，已实现），§5.16 第三方集成通用规则，§14 Phase 3 国内优先方案（它自己的电脑、自己的账号、微信/企业微信/飞书/钉钉、Cua）。v0.3：Phase 1 的服务端 + Web UI 已实现并通过端到端测试（实现状态见 §13）。新增：§5.14 模型与凭据（不内置任何 Key，全部 Pi provider 动态支持），§5.15 模块边界与 Pi 升级维护流程。默认入口域名 `app.dengdengyun.shop`。
 > 参考：Pi 仓库 `earendil-works/pi`（本文基于 `@earendil-works/pi-coding-agent@1.1.0` 的源码和文档阅读结果，API 名称均来自实际代码）。
@@ -56,14 +56,14 @@
 flowchart LR
   subgraph PC["用户的 Mac / Windows 电脑（所有计算都在这里）"]
     direction TB
-    Tray["huhao-tray<br/>菜单栏/托盘图标（Tauri 2，无窗口）"]
-    subgraph Server["huhao-server（内置 Node 22，开机自启）"]
+    Tray["pi-assistant-tray<br/>菜单栏/托盘图标（Tauri 2，无窗口）"]
+    subgraph Server["pi-assistant-server（内置 Node 22，开机自启）"]
       GW["Gateway<br/>HTTP + WebSocket（Hono）<br/>同时托管 PWA"]
       RT["Agent Runtime<br/>Pi SDK: createAgentSession"]
       SCH["Scheduler / Triggers"]
       CON["Connectors<br/>Gmail / Calendar / GitHub / MCP"]
       TUN["Tunnel Manager"]
-      DB[("SQLite<br/>huhao.db")]
+      DB[("SQLite<br/>data.db")]
       FS[("sessions · files · skills")]
     end
     CF["cloudflared（内置子进程）"]
@@ -90,7 +90,7 @@ flowchart LR
 ```
 
 要点：
-- **只有一个本地服务进程**（`huhao-server`），它托管 Web UI、跑 Pi、管任务；托盘程序只负责启动、守护、打开浏览器和显示状态。
+- **只有一个本地服务进程**（`pi-assistant-server`），它托管 Web UI、跑 Pi、管任务；托盘程序只负责启动、守护、打开浏览器和显示状态。
 - **所有界面都是同一个 PWA**：电脑上开 `http://127.0.0.1:8787`，手机经隧道开 `https://…`。
 - **远程访问走出站隧道**：电脑不开任何入站端口，路由器无需设置。
 
@@ -167,7 +167,7 @@ sequenceDiagram
 
 ## 5. 组件设计
 
-### 5.1 huhao-server（本地服务，核心，代码在 `packages/server`）
+### 5.1 pi-assistant-server（本地服务，核心，代码在 `packages/server`）
 
 单个 Node 22 进程（安装包内置 Node 运行时），内部模块：
 
@@ -194,7 +194,7 @@ sequenceDiagram
 
 ### 5.2 安装包与托盘程序（`apps/tray`）
 
-- **托盘程序**：Tauri 2，**不开窗口**，只有菜单栏/托盘图标。菜单：打开胡好好（用默认浏览器打开 `http://127.0.0.1:8787`）、显示手机配对二维码、服务状态（运行中/隧道在线/当前任务数）、暂停所有任务、开机自启开关、检查更新、退出。
+- **托盘程序**：Tauri 2，**不开窗口**，只有菜单栏/托盘图标。菜单：打开Pi Assistant（用默认浏览器打开 `http://127.0.0.1:8787`）、显示手机配对二维码、服务状态（运行中/隧道在线/当前任务数）、暂停所有任务、开机自启开关、检查更新、退出。
 - **服务作为 sidecar**：安装包内带 `node`（固定版本 Node 22 运行时）+ `server.mjs`（esbuild 打包，Pi SDK 已打进去）+ `cloudflared` 二进制 + PWA 静态文件。托盘程序启动并守护服务进程，崩溃自动拉起（指数退避）。
 - **开机自启**：`tauri-plugin-autostart`（macOS LaunchAgent / Windows 注册表 Run 键）。高级选项“无托盘服务模式”：直接注册 LaunchAgent / Windows 计划任务启动服务。
 - **安装包**：Tauri bundler 产出 macOS `.dmg`（Apple Silicon + Intel，或 universal）和 Windows NSIS `.exe`。体积目标 < 80MB（Node ~40MB + cloudflared ~35MB + 其余）。
@@ -216,9 +216,9 @@ sequenceDiagram
 
 | 档位 | 条件 | 隔离方式 | 说明 |
 |---|---|---|---|
-| L0 工作区 | 永远可用（兜底） | 进程以当前用户运行，`cwd` 固定为 `~/HuHao/workspace`；路径守卫扩展（参考 `protected-paths.ts`）禁止写工作区外；所有 bash 走审批策略 | 安全性最弱，靠审批兜底；UI 上明确标“基础模式” |
+| L0 工作区 | 永远可用（兜底） | 进程以当前用户运行，`cwd` 固定为 `<数据目录>/workspace`；路径守卫扩展（参考 `protected-paths.ts`）禁止写工作区外；所有 bash 走审批策略 | 安全性最弱，靠审批兜底；UI 上明确标“基础模式” |
 | L1 OS 沙箱 | macOS 自带 / Windows 需额外组件 | macOS：`sandbox-exec` 配置文件（只允许写工作区、可选禁网）；Windows：受限令牌 + Job Object 低完整性进程（P2 研究，先做 L0/L2） | 无需安装任何东西 |
-| L2 Docker | 检测到 Docker Desktop / OrbStack / Podman | 守护进程**外置**，只把工具执行放进容器：`huhao-sandbox` 镜像（Debian + Python + Node + git + Chromium + Xvfb + noVNC），挂持久卷 `huhao-workspace:/workspace` | 推荐；凭据永远不进容器 |
+| L2 Docker | 检测到 Docker Desktop / OrbStack / Podman | 守护进程**外置**，只把工具执行放进容器：`pi-assistant-sandbox` 镜像（Debian + Python + Node + git + Chromium + Xvfb + noVNC），挂持久卷 `pi-assistant-workspace:/workspace` | 推荐；凭据永远不进容器 |
 
 实现方式统一：参考 Pi 官方 Gondolin 示例，用 `createBashTool(cwd, { operations })` 和对应的 read/write/edit 等工具工厂，**覆盖 Pi 内置工具**，把实际执行交给 `SandboxDriver`：
 
@@ -281,7 +281,7 @@ interface SandboxDriver {
 
 ### 5.11 审批闸门（P1，最重要的安全组件）
 
-扩展 `@huhao/ext-approval`：
+扩展 `@pi-assistant/ext-approval`：
 
 ```ts
 export default (pi: ExtensionAPI) => {
@@ -318,7 +318,7 @@ export default (pi: ExtensionAPI) => {
 | 方案 | 需要账号 | 地址 | 结论 |
 |---|---|---|---|
 | **cloudflared 快速隧道**（`cloudflared tunnel --url http://127.0.0.1:8787`） | 不需要 | 随机 `https://xxx.trycloudflare.com`，**每次重启变化** | ✅ **默认**。零配置、自带受信任 HTTPS 证书（满足 PWA/Service Worker/Web Push 的安全上下文要求）、出站连接无需开端口、WebSocket 可用 |
-| cloudflared 命名隧道 | Cloudflare 账号 + 自己的域名 | 固定，如 `https://huhao.example.com` | 可选“稳定地址”模式；无 200 并发限制，可加 Cloudflare Access |
+| cloudflared 命名隧道 | Cloudflare 账号 + 自己的域名 | 固定，如 `https://assistant.example.com` | 可选“稳定地址”模式；无 200 并发限制，可加 Cloudflare Access |
 | Tailscale Serve / Funnel | Tailscale 账号 | 固定 `https://<机器>.<tailnet>.ts.net` | 可选；Serve 仅 tailnet 内设备可访问，最私密 |
 | 自建中继 | 我们运维服务器 | 固定 | 暂不做；快速隧道不可用时的长期备选 |
 
@@ -334,13 +334,13 @@ export default (pi: ExtensionAPI) => {
 | 临时链接（默认的远程方式） | 什么都不要 | 打开「远程访问」即得 `https://xxx.trycloudflare.com`；电脑重启/隧道重连后地址会变，需要重新扫码（已配对设备会收到推送提示） |
 | **自己的稳定入口**（推荐） | 一个托管在 Cloudflare 的域名（免费套餐即可）+ 一个 Cloudflare API Token | 固定网址 `https://<子域名>.<你的域名>`，扫一次码永久可用，隧道地址变化自动跟随 |
 
-**一键部署（「设置 → 远程入口」，仅本机可操作）**：用户填域名、子域名（默认 `huhao`）、API Token（模板「编辑 Cloudflare Workers」）。服务端 `cloudflare.ts` **只用 Cloudflare 公开 REST API、运行时不需要 wrangler**：
+**一键部署（「设置 → 远程入口」，仅本机可操作）**：用户填域名、子域名（默认 `assistant`）、API Token（模板「编辑 Cloudflare Workers」）。服务端 `cloudflare.ts` **只用 Cloudflare 公开 REST API、运行时不需要 wrangler**：
 
 1. `GET /user/tokens/verify` 验证 Token；
 2. `GET /zones?name=<域名>` 找到 zone，**自动得到 account id**；
-3. 创建/复用 KV 命名空间 `huhao-rendezvous-servers`；
-4. 上传 PWA 外壳：`POST …/workers/scripts/huhao-rendezvous/assets-upload-session`（清单 = 路径 → 内容哈希）→ 只上传缺失的文件 → 拿到完成 JWT；
-5. `PUT …/workers/scripts/huhao-rendezvous`（multipart：`dist/worker.js` ES 模块 + 元数据：KV 绑定 `SERVERS`、静态资源绑定 `ASSETS`、SPA 回退、`/api/*` 先走 Worker）；
+3. 创建/复用 KV 命名空间 `pi-assistant-rendezvous-servers`；
+4. 上传 PWA 外壳：`POST …/workers/scripts/pi-assistant-rendezvous/assets-upload-session`（清单 = 路径 → 内容哈希）→ 只上传缺失的文件 → 拿到完成 JWT；
+5. `PUT …/workers/scripts/pi-assistant-rendezvous`（multipart：`dist/worker.js` ES 模块 + 元数据：KV 绑定 `SERVERS`、静态资源绑定 `ASSETS`、SPA 回退、`/api/*` 先走 Worker）；
 6. `PUT …/workers/domains` 绑定 **Workers Custom Domain**（Cloudflare 自动创建 DNS 记录和证书，无需用户手动加记录）；
 7. 轮询 `https://<主机名>/api/health`，生效后把它设为入口并立刻登记当前隧道地址。
 
@@ -348,7 +348,7 @@ export default (pi: ExtensionAPI) => {
 
 **Token 安全**：只用主密钥加密保存在本机 SQLite（§5.14 同一套加密），只发给 `api.cloudflare.com`；不进日志、不进仓库、不发给 Rendezvous；远程设备无法读取或修改（接口 `localOnly`）。
 
-**免费套餐额度**（设置页内展示）：Workers 每天 10 万次请求；KV 每天 10 万次读、1000 次写、1 GB；静态资源请求不计费；自定义域名与证书免费。胡好好每次打开读 1 次 KV，隧道地址变化时写 1 次，个人使用远低于额度。
+**免费套餐额度**（设置页内展示）：Workers 每天 10 万次请求；KV 每天 10 万次读、1000 次写、1 GB；静态资源请求不计费；自定义域名与证书免费。Pi Assistant每次打开读 1 次 KV，隧道地址变化时写 1 次，个人使用远低于额度。
 
 **工作方式**（不变）：
 1. **PWA 外壳放在用户自己的固定源**，手机安装的是这个源的 PWA，Web Push 订阅也绑定它。
@@ -364,7 +364,7 @@ export default (pi: ExtensionAPI) => {
 ```mermaid
 sequenceDiagram
   participant D as 电脑上的 Web UI / 托盘
-  participant S as huhao-server
+  participant S as pi-assistant-server
   participant P as 手机浏览器
   D->>S: 请求配对
   S->>S: 生成一次性配对码（32 字节随机，5 分钟有效，单次使用）
@@ -406,7 +406,7 @@ sequenceDiagram
 - 主密钥：macOS 钥匙串（`security` 命令）｜Windows DPAPI（当前用户作用域）｜其他平台退回 0600 密钥文件（设置 → 关于 中显示当前后端）。
 - 沙箱里的 bash 子进程会清理名字含 KEY/TOKEN/SECRET/PASSWORD 等的环境变量，访问 `auth.json`、`.ssh`、`.aws` 等路径的工具调用直接拒绝。
 
-**首次运行向导**（Web UI）：欢迎 → 选择模型服务（搜索 43 个）→ 登录（API Key / 订阅）→ 选默认模型 + 测试连接 → 完成。之后在「设置 → 模型」管理：登录/退出、默认模型、测试。开发模式（`HUHAO_MOCK=1`）额外出现“Mock 模型（本地测试）”。
+**首次运行向导**（Web UI）：欢迎 → 选择模型服务（搜索 43 个）→ 登录（API Key / 订阅）→ 选默认模型 + 测试连接 → 完成。之后在「设置 → 模型」管理：登录/退出、默认模型、测试。开发模式（`PIA_MOCK=1`）额外出现“Mock 模型（本地测试）”。
 
 #### 5.14.1 自定义模型服务（中转站 / 第三方 / 本地推理）——已实现
 
@@ -424,7 +424,7 @@ Pi 目录里没有的服务（各种 OpenAI 兼容“中转站”、公司内网
 实现（`pi-adapter/custom-providers.ts`）：
 - 结构写入数据目录下 Pi 的 `models.json`（`providers.<id> = { name, baseUrl, api, headers, models }`），保留用户手写的其它条目；保存后 `ModelRuntime.refresh({ allowNetwork:false })` 重新加载，Pi 负责校验与请求。
 - **API Key 不写进 models.json**：通过 Pi 的通用 `login(id, "api_key")` 写入加密凭据库（Pi 的凭据优先级：stored > models.json apiKey > 环境变量）。
-- **请求头的值也不明文落盘**：用主密钥加密存在 SQLite；`models.json` 里只写 `${HUHAO_H_<hash>_<n>}`（Pi 原生的环境变量插值），启动时注入到服务进程环境；沙箱子进程会清掉所有 `HUHAO_*` 变量。
+- **请求头的值也不明文落盘**：用主密钥加密存在 SQLite；`models.json` 里只写 `${PIA_H_<hash>_<n>}`（Pi 原生的环境变量插值），启动时注入到服务进程环境；沙箱子进程会清掉所有 `PIA_*` 变量。
 - 编辑时 Key / 请求头值留空 = 保持原值；删除会同时清理 models.json、凭据与加密请求头，并在默认模型被删时清空默认。
 - 测试连接沿用 `completeSimple()`，错误原样显示（401、403 缺少请求头等）。
 - API：`GET/POST /api/models/custom`、`PUT/DELETE /api/models/custom/:id`、`POST /api/models/custom/fetch-models`。
@@ -456,9 +456,9 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 
 | 包 | 用到的 Pi 扩展点 | 内容 |
 |---|---|---|
-| `@huhao/ext-approval` | `pi.on("tool_call")` → `{ block, reason }`、工具 `annotations` | 风险评估（删除/sudo/git push/对外 POST…→审批；凭据路径→拒绝；只读→放行）、拒绝后 30 分钟内同一调用自动拒绝 |
-| `@huhao/ext-sandbox` | `pi.registerTool()` 覆盖 `bash`、`tool_call` 路径守卫 | L0 工作区（清理敏感环境变量、文件工具不得越出工作区）；L2 Docker（`BashOperations` 在容器内执行） |
-| `@huhao/ext-delivery` | `pi.registerTool()` | `deliver_file`、`ask_user`（选项卡片）、`spawn_task`（后台任务） |
+| `@pi-assistant/ext-approval` | `pi.on("tool_call")` → `{ block, reason }`、工具 `annotations` | 风险评估（删除/sudo/git push/对外 POST…→审批；凭据路径→拒绝；只读→放行）、拒绝后 30 分钟内同一调用自动拒绝 |
+| `@pi-assistant/ext-sandbox` | `pi.registerTool()` 覆盖 `bash`、`tool_call` 路径守卫 | L0 工作区（清理敏感环境变量、文件工具不得越出工作区）；L2 Docker（`BashOperations` 在容器内执行） |
+| `@pi-assistant/ext-delivery` | `pi.registerTool()` | `deliver_file`、`ask_user`（选项卡片）、`spawn_task`（后台任务） |
 | `ext-memory / ext-browser / ext-connectors` | （P2/P3） | 占位 |
 
 **4）兼容性测试**（`packages/server/test/pi-compat.test.ts`，只经适配层调用 Pi，用 Mock 模型、无需网络和 Key）：版本检查；provider 目录 ≥20 且含 API Key 与订阅登录；通用登录交互能把 Key 写进加密存储；完整会话流程（流式事件、扩展工具、`deliver_file`、审批拦截 `rm`）。另有 Playwright E2E（`e2e/run.mjs`，13 项）。
@@ -470,7 +470,7 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 
 **6）发布与用户侧更新**：合并升级 PR → 打 tag `vX.Y.Z` → `release.yml` 构建 Mac/Windows 安装包（sidecar 内含新版 Pi）→ 托盘程序的 Tauri updater（签名校验）静默下载安装。用户数据（SQLite、Pi 会话 JSONL、加密凭据）与程序分离，升级不丢。
 
-**维护者升级清单**：`npm run check:pi` → `npm i -w @huhao/server @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest` → `npm test && npm run e2e` → 失败时只改 `pi-adapter/`（必要时 `ext-*` 的类型）→ 更新 `compat.json` → PR。
+**维护者升级清单**：`npm run check:pi` → `npm i -w @pi-assistant/server @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest` → `npm test && npm run e2e` → 失败时只改 `pi-adapter/`（必要时 `ext-*` 的类型）→ 更新 `compat.json` → PR。
 
 ---
 
@@ -493,7 +493,7 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 5. **许可证闸门**：CI 检查清单里每个组件的许可证在白名单（MIT / Apache-2.0 / BSD / ISC / MPL-2.0），并扫描安装包与沙箱镜像，出现 AGPL / FSL / 非商用许可证即失败（例如 `cua-perception`、OmniParser、Cua Spaces 明确禁止打包）。
 6. **发给用户**：合并 PR → 打 tag → 安装包（含新 sidecar、cua-driver、cloudflared）与沙箱镜像版本一起发布 → 托盘自动更新；沙箱镜像在下次启动助理电脑时拉取新版（用户数据卷不受影响）。
 
-## 6. 数据模型（SQLite，`data/huhao.db`）
+## 6. 数据模型（SQLite，`data/data.db`）
 
 使用 Node 22 内置 `node:sqlite`（免原生编译，打包最省事；若遇到功能限制退回 `better-sqlite3`）+ Drizzle ORM 管迁移。
 
@@ -530,7 +530,7 @@ pi-assistant/
 │   ├── tray/              # Tauri 2 托盘程序 + 安装包配置（dmg / exe），sidecar 管理
 │   └── rendezvous/        # Cloudflare Worker：稳定入口（serverId → 当前隧道地址，签名校验）
 ├── packages/
-│   ├── server/            # huhao-server：Gateway + Pi Runtime + 任务 + 调度 + 隧道 + 配对 + 通知
+│   ├── server/            # pi-assistant-server：Gateway + Pi Runtime + 任务 + 调度 + 隧道 + 配对 + 通知
 │   ├── shared/            # 协议类型（WS 事件、REST DTO）、zod schema
 │   ├── ext-approval/      # Pi 扩展：审批闸门
 │   ├── ext-sandbox/       # Pi 扩展：内置工具重定向到 SandboxDriver（L0/L1/L2）
@@ -546,7 +546,7 @@ pi-assistant/
 └── docs/                  # 设计文档
 ```
 
-运行时数据目录（用户机器）：macOS `~/Library/Application Support/HuHao/`，Windows `%APPDATA%\HuHao\`；工作区默认 `~/HuHao/workspace`（用户可见，方便直接打开文件）。
+运行时数据目录（用户机器）：macOS `~/Library/Application Support/Pi Assistant/`，Windows `%APPDATA%\Pi Assistant\`；工作区默认 `<数据目录>/workspace`（用户可见，方便直接打开文件）。
 
 ## 8. 技术栈
 
@@ -641,7 +641,7 @@ npm run start                   # 正式模式（无 Mock），首次打开会�
 npm run dev:web                 # 可选：Vite 热更新（:5173，代理到 :8787）
 npm test && npm run e2e         # 单元/兼容测试 + 端到端测试（截图输出到 docs/screenshots/）
 ```
-环境变量：`HUHAO_DATA_DIR`（数据目录）、`HUHAO_PORT`、`HUHAO_MOCK=1`、`HUHAO_CLOUDFLARED`（cloudflared 路径）、`HUHAO_ENTRY_DOMAIN`、`HUHAO_SANDBOX=workspace|docker`。**不需要也不读取任何模型 API Key 环境变量**——在 App 里登录。
+环境变量：`PIA_DATA_DIR`（数据目录）、`PIA_PORT`、`PIA_MOCK=1`、`PIA_CLOUDFLARED`（cloudflared 路径）、`PIA_ENTRY_DOMAIN`、`PIA_SANDBOX=workspace|docker`。**不需要也不读取任何模型 API Key 环境变量**——在 App 里登录。
 
 ### 方式 B：docker compose（server + L2 沙箱）
 ```bash
@@ -655,13 +655,13 @@ services:
     build: { context: .., dockerfile: deploy/Dockerfile.server }
     ports: ["127.0.0.1:8787:8787"]
     env_file: ../.env
-    environment: { HUHAO_SANDBOX: docker, HUHAO_SANDBOX_HOST: sandbox:7070 }
-    volumes: [huhao-data:/data]
+    environment: { PIA_SANDBOX: docker, PIA_SANDBOX_HOST: sandbox:7070 }
+    volumes: [pi-assistant-data:/data]
   sandbox:
     build: { context: ../sandbox }
-    volumes: [huhao-workspace:/workspace]
+    volumes: [pi-assistant-workspace:/workspace]
     # 不注入任何凭据
-volumes: { huhao-data: {}, huhao-workspace: {} }
+volumes: { pi-assistant-data: {}, pi-assistant-workspace: {} }
 ```
 
 ### 方式 C：安装包（P1 完成后）
@@ -707,13 +707,13 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 
 | 项 | 方案 |
 |---|---|
-| 形态 | Docker 镜像 `huhao/desktop`（Debian + Xvfb + xfce4 + x11vnc + noVNC/websockify + Chromium + 中文字体/输入法 + Linux 版微信 + `cua-driver`）；每个助理一个容器（或共用一个，多桌面） |
+| 形态 | Docker 镜像 `pi-assistant/desktop`（Debian + Xvfb + xfce4 + x11vnc + noVNC/websockify + Chromium + 中文字体/输入法 + Linux 版微信 + `cua-driver`）；每个助理一个容器（或共用一个，多桌面） |
 | 持久化 | 命名卷挂 `/home/agent`：浏览器配置、微信数据、各应用登录态都保留；容器可随时重建 |
 | 资源 | 默认 2 核 / 3 GB，空闲 N 分钟自动停（下次任务秒级唤醒，登录态在卷里） |
-| 网络 | 出网放行；入站只暴露给 huhao-server（VNC 5900 / noVNC 6080 / cua-driver 只在容器内） |
+| 网络 | 出网放行；入站只暴露给 pi-assistant-server（VNC 5900 / noVNC 6080 / cua-driver 只在容器内） |
 | 无 Docker 时 | macOS 退回“助理专用浏览器（Playwright 持久化 profile）”，不提供完整桌面；Windows 引导开启 WSL2 + Docker（或后续用 Windows Sandbox） |
 
-**实时画面**：Web UI 右侧「电脑」标签内嵌 noVNC（经 huhao-server 反向代理 `/api/agents/:id/desktop/ws`，复用设备 token 鉴权，所以手机远程也能看）。默认只看；点“接管”后键鼠输入转给桌面，助理自动暂停，点“交还”后继续。
+**实时画面**：Web UI 右侧「电脑」标签内嵌 noVNC（经 pi-assistant-server 反向代理 `/api/agents/:id/desktop/ws`，复用设备 token 鉴权，所以手机远程也能看）。默认只看；点“接管”后键鼠输入转给桌面，助理自动暂停，点“交还”后继续。
 
 **扫码/验证码推送**：助理（或 `ext-computer` 检测到二维码登录页）调用 `request_handoff({ reason, region? })` → 截图 + 推送通知“需要你扫码登录微信” → 手机打开即看到二维码大图（或 noVNC 实时画面）→ 用你**为助理准备的手机/账号**扫码 → 助理轮询屏幕状态确认登录成功后继续。
 

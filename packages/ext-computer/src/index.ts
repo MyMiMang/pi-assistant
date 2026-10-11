@@ -1,5 +1,5 @@
 /**
- * @huhao/ext-computer —— 让助理操作“它自己的电脑”（或经用户允许操作本机）。
+ * @pi-assistant/ext-computer —— 让助理操作“它自己的电脑”（或经用户允许操作本机）。
  *
  * 集成方式只用公开接口：`pi.registerMcpServer("computer", { command: <cua-driver mcp> })`。
  * cua-driver 本体是 MIT；会拉取非 MIT 组件的工具（install_extension → cua-perception/AGPL、

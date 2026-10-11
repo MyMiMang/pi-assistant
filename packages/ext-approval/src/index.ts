@@ -1,5 +1,5 @@
 /**
- * @huhao/ext-approval —— 审批闸门（Pi 扩展）。
+ * @pi-assistant/ext-approval —— 审批闸门（Pi 扩展）。
  * 通过 pi.on("tool_call") 拦截有后果的工具调用：allow / ask（等待用户在任一设备批准）/ deny。
  * 只依赖 Pi 的 ExtensionAPI 类型，运行时能力由宿主注入。
  */

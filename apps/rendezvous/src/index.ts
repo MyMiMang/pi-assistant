@@ -1,5 +1,5 @@
 /**
- * 胡好好 Rendezvous（入口域名）—— Cloudflare Worker + KV
+ * Pi Assistant Rendezvous（入口域名）—— Cloudflare Worker + KV
  *
  * 1. 托管 PWA 外壳静态文件（apps/web/dist），手机扫码打开的固定网址；
  * 2. 保存 serverId → 当前隧道地址 的“地址簿”记录。记录由各用户电脑上的服务用 Ed25519 私钥签名上报，
@@ -32,7 +32,7 @@ const cors = {
 };
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store", ...cors } });
 
-export const registrationMessage = (serverId: string, url: string, ts: number) => `huhao-rendezvous-v1\n${serverId}\n${url}\n${ts}`;
+export const registrationMessage = (serverId: string, url: string, ts: number) => `pia-rendezvous-v1\n${serverId}\n${url}\n${ts}`;
 
 function b64urlDecode(s: string): Uint8Array<ArrayBuffer> {
 	const b = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
@@ -59,7 +59,7 @@ export function validUrl(url: string): boolean {
 
 async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
 	if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-	if (url.pathname === "/api/health") return json({ ok: true, service: "huhao-rendezvous", version: 1 });
+	if (url.pathname === "/api/health") return json({ ok: true, service: "pi-assistant-rendezvous", version: 1 });
 	const m = url.pathname.match(/^\/api\/servers\/([^/]+)$/);
 	if (!m) return json({ error: "unauthorized" }, 401); // 外壳模式下未配对的设备会看到“需要配对”
 	const id = m[1].toLowerCase();

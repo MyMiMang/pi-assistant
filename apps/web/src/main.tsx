@@ -1,3 +1,4 @@
+import "./migrate"; // 必须最先执行：store/api 在模块加载时读取 localStorage
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";

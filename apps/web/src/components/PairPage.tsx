@@ -2,6 +2,7 @@ import { CheckCircle2, Loader2, Smartphone } from "lucide-react";
 import { useEffect, useState } from "react";
 import { saveConn } from "../api";
 import { Button, Input } from "./ui";
+import { BRAND } from "@pi-assistant/shared";
 
 /** 手机扫码打开：#sid=&u=&pk=&c= → 认领配对码 → 等电脑确认 → 保存设备 token。 */
 export default function PairPage() {
@@ -51,7 +52,7 @@ export default function PairPage() {
 	return (
 		<div className="flex min-h-full flex-col items-center justify-center gap-5 p-8 text-center">
 			<img src="/icon-192.png" className="h-16 w-16 rounded-2xl shadow" alt="" />
-			<h1 className="text-xl font-bold">连接到你的胡好好</h1>
+			<h1 className="text-xl font-bold">连接到你的 {BRAND.name}</h1>
 			{state === "idle" && (
 				<div className="w-full max-w-xs space-y-3">
 					<label className="block text-left text-xs text-zinc-500">给这台设备起个名字</label>

@@ -1,5 +1,5 @@
-// 胡好好 Service Worker：应用外壳缓存 + Web Push 通知
-const CACHE = "huhao-shell-v1";
+// Service Worker：应用外壳缓存 + Web Push 通知
+const CACHE = "pia-shell-v1";
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/", "/manifest.webmanifest", "/icon-192.png"])).then(() => self.skipWaiting()));
 });
@@ -24,13 +24,13 @@ self.addEventListener("fetch", (e) => {
 });
 self.addEventListener("push", (e) => {
   let d = {};
-  try { d = e.data ? e.data.json() : {}; } catch { d = { title: "胡好好", body: e.data && e.data.text() }; }
+  try { d = e.data ? e.data.json() : {}; } catch { d = { title: "%BRAND_NAME%", body: e.data && e.data.text() }; }
   e.waitUntil((async () => {
     if (d.data && d.data.type === "server-url") {
       const cs = await self.clients.matchAll({ includeUncontrolled: true });
       cs.forEach((c) => c.postMessage({ type: "server-url", ...d.data }));
     }
-    await self.registration.showNotification(d.title || "胡好好", { body: d.body || "", tag: d.tag, icon: "/icon-192.png", badge: "/icon-192.png", data: { url: d.url || "/", ...(d.data || {}) } });
+    await self.registration.showNotification(d.title || "%BRAND_NAME%", { body: d.body || "", tag: d.tag, icon: "/icon-192.png", badge: "/icon-192.png", data: { url: d.url || "/", ...(d.data || {}) } });
   })());
 });
 self.addEventListener("notificationclick", (e) => {

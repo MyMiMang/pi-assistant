@@ -8,10 +8,10 @@ import { bootstrap } from "./runtime.ts";
 import { startTunnel } from "./tunnel.ts";
 
 const compat = checkPiCompat();
-console.log(`[huhao] ${compat.message}`);
+console.log(`[pi-assistant] ${compat.message}`);
 await initModels();
 startHttp();
-console.log(`[huhao] 服务已启动：http://${config.host}:${config.port}  数据目录：${config.dataDir}  serverId=${identity().serverId}${config.mock ? "  [Mock 模型已启用]" : ""}`);
+console.log(`[pi-assistant] 服务已启动：http://${config.host}:${config.port}  数据目录：${config.dataDir}  serverId=${identity().serverId}${config.mock ? "  [Mock 模型已启用]" : ""}`);
 await bootstrap();
 if (getSetting("remoteEnabled", false)) startTunnel();
 

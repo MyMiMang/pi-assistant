@@ -1,5 +1,5 @@
 {
-  "name": "@huhao/ext-computer",
+  "name": "@pi-assistant/ext-computer",
   "version": "0.1.0",
   "private": true,
   "type": "module",

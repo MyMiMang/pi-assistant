@@ -1,5 +1,5 @@
 /**
- * @huhao/ext-sandbox —— 让 Pi 的内置工具在“助理自己的电脑”里运行（Pi 扩展）。
+ * @pi-assistant/ext-sandbox —— 让 Pi 的内置工具在“助理自己的电脑”里运行（Pi 扩展）。
  * L0 工作区：bash 在工作区目录中运行，清理敏感环境变量；文件工具禁止越出工作区。
  * L2 Docker：bash 通过注入的 operations 在容器内执行（工作区以 bind mount 共享）。
  */
@@ -18,7 +18,7 @@ export interface SandboxHost {
 const SENSITIVE = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE|AUTH)/i;
 export function sanitizeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const out: NodeJS.ProcessEnv = {};
-	for (const [k, v] of Object.entries(env)) if (!SENSITIVE.test(k) && !k.startsWith("HUHAO_")) out[k] = v;
+	for (const [k, v] of Object.entries(env)) if (!SENSITIVE.test(k) && !k.startsWith("PIA_") && !k.startsWith("HUHAO_")) out[k] = v;
 	return out;
 }
 

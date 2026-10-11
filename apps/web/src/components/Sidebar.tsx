@@ -4,6 +4,7 @@ import { api } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
 import { Avatar, Button, cx, fmtTime, Input, Modal } from "./ui";
+import { BRAND } from "@pi-assistant/shared";
 
 const COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#8b5cf6", "#14b8a6"];
 
@@ -17,7 +18,7 @@ export default function Sidebar() {
 		<div className="safe-top flex h-full flex-col border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
 			<div className="flex items-center gap-2 px-4 pt-4 pb-3">
 				<img src="/icon-192.png" className="h-8 w-8 rounded-lg" alt="" />
-				<div className="flex-1 text-[15px] font-semibold">胡好好</div>
+				<div className="flex-1 text-[15px] font-semibold">{BRAND.name}</div>
 				<Button variant="ghost" size="icon" title={t("新建助理")} onClick={() => setCreating(true)}>
 					<Plus size={18} />
 				</Button>

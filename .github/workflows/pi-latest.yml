@@ -17,7 +17,7 @@ jobs:
         name: 升级 Pi 到最新版
         run: |
           BEFORE=$(node -p "require('./node_modules/@earendil-works/pi-coding-agent/package.json').version")
-          npm install --ignore-scripts -w @huhao/server @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest
+          npm install --ignore-scripts -w @pi-assistant/server @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest
           AFTER=$(node -p "require('./node_modules/@earendil-works/pi-coding-agent/package.json').version")
           echo "before=$BEFORE" >> "$GITHUB_OUTPUT"; echo "after=$AFTER" >> "$GITHUB_OUTPUT"
       - name: 测试

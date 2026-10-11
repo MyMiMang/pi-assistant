@@ -1,5 +1,5 @@
 {
-  "name": "@huhao/web",
+  "name": "@pi-assistant/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -28,6 +28,7 @@
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.15",
+    "@pi-assistant/shared": "*"
   }
 }

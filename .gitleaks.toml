@@ -1,4 +1,4 @@
-title = "huhao gitleaks config"
+title = "pi-assistant gitleaks config"
 [extend]
 useDefault = true
 [allowlist]

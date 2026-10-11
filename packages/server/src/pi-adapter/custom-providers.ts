@@ -2,8 +2,8 @@
  * 自定义模型服务（中转站 / 第三方 / 本地推理服务），完全走 Pi 自己的 models.json 机制：
  *  - 结构（name / api / baseUrl / headers / models）写入 Pi 的 models.json，由 Pi 解析与校验；
  *  - API Key 不写进 models.json，而是通过 Pi 的通用登录写进加密凭据存储（Pi 的凭据优先级高于 models.json 的 apiKey）；
- *  - 自定义请求头的值同样加密保存，models.json 里只写 `${HUHAO_H_xxx}`（Pi 原生的环境变量插值），
- *    启动时在本进程内注入；沙箱子进程会清掉所有 HUHAO_* 变量。
+ *  - 自定义请求头的值同样加密保存，models.json 里只写 `${PIA_H_xxx}`（Pi 原生的环境变量插值），
+ *    启动时在本进程内注入；沙箱子进程会清掉所有 PIA_* 变量。
  * 支持的 API 类型来自 pi-ai 的 API 注册表，Pi 新增协议后自动可选。
  */
 import { createHash } from "node:crypto";
@@ -69,7 +69,7 @@ export function supportedApis(): { id: string; label: string }[] {
 		.map((id) => ({ id, label: API_LABELS[id] ?? id }));
 }
 
-const envName = (id: string, i: number) => `HUHAO_H_${createHash("sha256").update(id).digest("hex").slice(0, 10).toUpperCase()}_${i}`;
+const envName = (id: string, i: number) => `PIA_H_${createHash("sha256").update(id).digest("hex").slice(0, 10).toUpperCase()}_${i}`;
 export function slugId(name: string, taken: Set<string>): string {
 	const base = `custom-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "provider"}`;
 	let id = base;
@@ -94,6 +94,11 @@ export class CustomProviders {
 
 	/** 启动时把加密保存的请求头值注入本进程环境变量，供 models.json 插值。 */
 	applyEnv() {
+		// 迁移：旧版本写入的 ${HUHAO_H_…} 插值改为 ${PIA_H_…}
+		if (existsSync(this.modelsPath)) {
+			const raw = readFileSync(this.modelsPath, "utf8");
+			if (raw.includes("${HUHAO_H_")) writeFileSync(this.modelsPath, raw.replaceAll("${HUHAO_H_", "${PIA_H_"), { mode: 0o600 });
+		}
 		for (const m of this.store.loadMeta()) {
 			const h = this.store.loadHeaders(m.id);
 			m.headerNames.forEach((name, i) => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluate } from "@huhao/ext-approval";
+import { evaluate } from "@pi-assistant/ext-approval";
 
 const ws = "/home/u/ws";
 test("只读工具直接放行", () => {

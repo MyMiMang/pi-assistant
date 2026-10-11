@@ -1,6 +1,6 @@
 # 仅用于本地开发（wrangler dev）。正式部署由 App 内「设置 → 远程访问 → 用你自己的域名」通过 Cloudflare API 完成，
 # 不需要 wrangler，也不内置任何默认域名。
-name = "huhao-rendezvous"
+name = "pi-assistant-rendezvous"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 

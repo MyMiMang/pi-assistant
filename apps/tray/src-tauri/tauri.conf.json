@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "胡好好",
-  "identifier": "com.huhao.assistant",
+  "productName": "Pi Assistant",
+  "identifier": "com.piassistant.app",
   "version": "0.1.0",
   "build": { "frontendDist": "../../web/dist" },
   "app": {
@@ -13,7 +13,7 @@
     "active": true,
     "targets": ["dmg", "app", "nsis"],
     "icon": ["icons/icon.png"],
-    "externalBin": ["binaries/huhao-server", "binaries/cloudflared"],
+    "externalBin": ["binaries/pi-assistant-server", "binaries/cloudflared"],
     "resources": { "../../web/dist": "web" },
     "createUpdaterArtifacts": true,
     "macOS": { "minimumSystemVersion": "12.0" },

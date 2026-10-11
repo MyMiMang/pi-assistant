@@ -1,5 +1,5 @@
 /**
- * 本地测试用 Mock 模型（仅在 HUHAO_MOCK=1 时注册，绝不在正式版默认启用）。
+ * 本地测试用 Mock 模型（仅在 PIA_MOCK=1 时注册，绝不在正式版默认启用）。
  * 根据用户消息里的关键词，脚本化地演示：流式回复、调用工具、审批、文件交付、选项提问、后台任务。
  */
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";

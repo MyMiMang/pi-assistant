@@ -7,7 +7,7 @@ import { config } from "./config.ts";
 import { getSetting } from "./db.ts";
 
 const run = promisify(execFile);
-const IMAGE = process.env.HUHAO_SANDBOX_IMAGE ?? "huhao-sandbox:latest";
+const IMAGE = process.env.PIA_SANDBOX_IMAGE ?? "pi-assistant-sandbox:latest";
 const FALLBACK_IMAGE = "debian:bookworm-slim";
 let dockerOk: boolean | null = null;
 
@@ -33,7 +33,7 @@ export async function sandboxMode(): Promise<"workspace" | "docker"> {
 }
 
 async function ensureContainer(agentId: string, workspace: string): Promise<string> {
-	const name = `huhao-sbx-${agentId.replace(/[^a-zA-Z0-9_.-]/g, "")}`;
+	const name = `pia-sbx-${agentId.replace(/[^a-zA-Z0-9_.-]/g, "")}`;
 	try {
 		const { stdout } = await run("docker", ["inspect", "-f", "{{.State.Running}}", name]);
 		if (stdout.trim() === "true") return name;

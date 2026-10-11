@@ -3,10 +3,10 @@
  * 所有 Pi 调用都经过 pi-adapter；这里负责把 Pi 事件落盘为消息并广播。
  */
 import { join } from "node:path";
-import { approvalExtension } from "@huhao/ext-approval";
-import { computerExtension, trustedComputerTool } from "@huhao/ext-computer";
-import { deliveryExtension } from "@huhao/ext-delivery";
-import { sandboxExtension } from "@huhao/ext-sandbox";
+import { approvalExtension } from "@pi-assistant/ext-approval";
+import { computerExtension, trustedComputerTool } from "@pi-assistant/ext-computer";
+import { deliveryExtension } from "@pi-assistant/ext-delivery";
+import { sandboxExtension } from "@pi-assistant/ext-sandbox";
 import { bus } from "./bus.ts";
 import { config } from "./config.ts";
 import { db, now, uid } from "./db.ts";
@@ -31,6 +31,7 @@ import { requests } from "./requests.ts";
 import { dockerOperations, sandboxMode } from "./sandbox.ts";
 import { cuaMcpCommand, desktopPause, desktopStatus, screenshotDesktop } from "./desktop.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { BRAND } from "@pi-assistant/shared";
 
 export interface AgentRow {
 	id: string;
@@ -148,9 +149,9 @@ async function extensionsFor(agentId: string, taskId: string | null, opts: { all
 	const desk = await desktopStatus(agentId).catch(() => null);
 	const computerOn = desk?.state === "running";
 	const exts = [
-		{ name: "huhao-sandbox", factory: sandboxExtension({ workspace, mode, makeBashTool: makeBashTool as never, dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined }) },
+		{ name: "pia-sandbox", factory: sandboxExtension({ workspace, mode, makeBashTool: makeBashTool as never, dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined }) },
 		{
-			name: "huhao-approval",
+			name: "pia-approval",
 			factory: approvalExtension({
 				workspace,
 				trusted: trustedComputerTool("sandbox"),
@@ -161,7 +162,7 @@ async function extensionsFor(agentId: string, taskId: string | null, opts: { all
 			}),
 		},
 		{
-			name: "huhao-delivery",
+			name: "pia-delivery",
 			factory: deliveryExtension({
 				deliverFile: async (path, caption) => {
 					const f = deliverFromWorkspace(agentId, path);
@@ -176,7 +177,7 @@ async function extensionsFor(agentId: string, taskId: string | null, opts: { all
 	// 助理电脑运行中 → 挂上 cua-driver（MCP）与看屏幕/接管工具
 	if (computerOn)
 		exts.push({
-			name: "huhao-computer",
+			name: "pia-computer",
 			factory: computerExtension({
 				target: "sandbox",
 				mcp: cuaMcpCommand(agentId),
@@ -189,7 +190,7 @@ async function extensionsFor(agentId: string, taskId: string | null, opts: { all
 					writeFileSync(join(workspace, rel), png);
 					const f = deliverFromWorkspace(agentId, rel);
 					insertMessage({ agentId, role: "assistant", content: `需要你接管：${reason}\n\n可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。`, meta: { attachments: [fileInfo(f)], fromTask: taskId } });
-					notify({ title: "胡好好需要你接管", body: reason, data: { type: "handoff", agentId } });
+					notify({ title: `${BRAND.name}：需要你接管`, body: reason, data: { type: "handoff", agentId } });
 					const r = await requests.question(agentId, taskId, `${reason}——完成后点“已完成”`, ["已完成", "做不了"], true);
 					return r.answer ?? "无回应";
 				},
@@ -274,7 +275,7 @@ class AgentRuntime {
 
 	async inject(text: string) {
 		const s = await this.ensure();
-		if (s) await injectContext(s, "huhao_task_result", text).catch(() => {});
+		if (s) await injectContext(s, "pia_task_result", text).catch(() => {});
 	}
 }
 

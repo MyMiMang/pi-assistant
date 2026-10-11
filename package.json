@@ -11,12 +11,12 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run build -w @huhao/web && HUHAO_MOCK=1 npm run dev -w @huhao/server",
-    "dev:web": "npm run dev -w @huhao/web",
-    "build": "npm run build -w @huhao/web && npm run build -w @huhao/rendezvous",
-    "start": "npm run start -w @huhao/server",
-    "test": "npm test -w @huhao/server",
-    "typecheck": "npm run typecheck -w @huhao/server && tsc --noEmit -p apps/web",
+    "dev": "npm run build -w @pi-assistant/web && PIA_MOCK=1 npm run dev -w @pi-assistant/server",
+    "dev:web": "npm run dev -w @pi-assistant/web",
+    "build": "npm run build -w @pi-assistant/web && npm run build -w @pi-assistant/rendezvous",
+    "start": "npm run start -w @pi-assistant/server",
+    "test": "npm test -w @pi-assistant/server",
+    "typecheck": "npm run typecheck -w @pi-assistant/server && tsc --noEmit -p apps/web",
     "e2e": "npm run build && node e2e/run.mjs",
     "check:pi": "node scripts/check-pi.mjs",
     "prepare": "git config core.hooksPath .githooks || true",
