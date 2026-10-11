@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState }
 import { api, upload } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
+import { resolveLayout, useWindowWidth } from "../layout";
 import type { Agent, Attachment, Message } from "../types";
 import Attachments from "./Attachments";
 import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
@@ -259,9 +260,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 			}}
 		>
 			<header className="pa-chat-head safe-top">
-				<button className="pa-icon-btn ghost lg:hidden" onClick={() => set({ drawer: true })} aria-label="打开助理列表">
-					<Menu className="pa-ic" />
-				</button>
+				<SideToggle />
 				<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={30} running={running} />
 				<div className="pa-head-txt min-w-0">
 					<b className="truncate">{agent.name}</b>
@@ -277,7 +276,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 						<Monitor className="pa-ic" />
 						<span>电脑</span>
 					</button>
-					<button className={cx("pa-icon-btn ghost", info && "!bg-hover")} onClick={() => set({ info: !info })} aria-label="信息面板">
+					<button className={cx("pa-icon-btn ghost", info && "!bg-hover")} onClick={() => set({ info: !info })} aria-label="信息面板" title={info ? "收起信息面板" : "打开信息面板"}>
 						<PanelRight className="pa-ic" />
 					</button>
 				</div>
@@ -410,5 +409,23 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 			</div>
 			<div className="pa-foot-note">发送、删除、付款等操作都会先请你批准</div>
 		</div>
+	);
+}
+
+/** 左栏开关：窄屏打开抽屉；宽屏下左栏收起时显示，点击展开 */
+function SideToggle() {
+	const width = useWindowWidth();
+	const layout = useStore((s) => s.layout);
+	const { sideDocked, sideDrawer } = resolveLayout(width, layout);
+	if (sideDocked) return null;
+	return (
+		<button
+			className="pa-icon-btn ghost"
+			onClick={() => (sideDrawer ? useStore.getState().set({ drawer: true }) : useStore.getState().setLayout({ sideCollapsed: false }))}
+			aria-label={sideDrawer ? "打开助理列表" : "展开助理列表"}
+			title={sideDrawer ? "打开助理列表" : "展开助理列表"}
+		>
+			<Menu className="pa-ic" />
+		</button>
 	);
 }

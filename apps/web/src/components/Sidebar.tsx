@@ -1,4 +1,4 @@
-import { Laptop, Moon, Plus, Search, Settings as Cog, Smartphone, Sun, WifiOff } from "lucide-react";
+import { Laptop, Moon, PanelLeftClose, Plus, Search, Settings as Cog, Smartphone, Sun, WifiOff } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
@@ -22,6 +22,9 @@ export default function Sidebar() {
 				<span className="pa-brand-name">{BRAND.name}</span>
 				<button className="pa-icon-btn ghost pa-theme-toggle" title="切换浅色 / 深色" onClick={() => setAppearance({ theme: dark ? "light" : "dark" })} data-mode-now={theme}>
 					{dark ? <Moon className="pa-ic" /> : <Sun className="pa-ic" />}
+				</button>
+				<button className="pa-icon-btn ghost pa-side-collapse" title="收起助理列表" aria-label="收起助理列表" onClick={() => useStore.getState().setLayout({ sideCollapsed: true })}>
+					<PanelLeftClose className="pa-ic" />
 				</button>
 			</div>
 			<button className="pa-new-btn" title={t("新建助理")} onClick={() => setCreating(true)}>

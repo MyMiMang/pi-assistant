@@ -206,6 +206,7 @@ sequenceDiagram
 
 - React 18 + Vite + TypeScript + Tailwind + shadcn/ui；状态 Zustand；数据 TanStack Query；路由 TanStack Router；`vite-plugin-pwa`（manifest + Service Worker）。
 - **响应式**：同一套组件，桌面宽屏三栏（会话列表 / 聊天 / 任务与文件侧栏），手机单栏 + 底部导航（聊天、任务、审批、设置）。
+- **布局（已实现）**：右侧信息面板默认收起（聊天头部按钮开关）；左右两栏拖边缘调宽（左 200–420px、右 280–560px，双击恢复默认，拖到很窄即收起），左栏可收起，宽度与开关按设备存 localStorage（`pia.layout`）。聊天区最小 520px、正文最大行宽约 760px；窗口 < 1200px 或放不下时右栏变覆盖式抽屉，< 1024px 左栏变抽屉。
 - **可安装**：手机浏览器“添加到主屏幕”后全屏运行，像 App 一样；iOS 16.4+ 的主屏幕 PWA 支持 Web Push，Android Chrome 直接支持。
 - **推送**：Web Push（VAPID 密钥由本地服务首次启动时生成，存在本地）。服务端用 `web-push` 直接发往浏览器厂商的推送服务；推送内容端到端加密，只含“任务完成 / 需要审批”和 ID，点开后通过隧道拉详情。
 - 页面：聊天（流式文本、工具步骤折叠、文件卡片、截图、审批卡片）、任务列表、定时任务、记忆、技能、连接器、设备与配对、设置、用量。

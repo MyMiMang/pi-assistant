@@ -8,10 +8,14 @@ import Settings from "./components/Settings";
 import Sidebar from "./components/Sidebar";
 import { Button } from "./components/ui";
 import { useStore } from "./store";
+import { clampPane, clampSide, PANE, resolveLayout, SIDE, useWindowWidth } from "./layout";
+import { Resizer } from "./components/Resizer";
 import { BRAND } from "@pi-assistant/shared";
 
 export default function App() {
-	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle } = useStore();
+	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout } = useStore();
+	const width = useWindowWidth();
+	const L = resolveLayout(width, layout);
 	const [fatal, setFatal] = useState<null | "unpaired" | "offline">(null);
 
 	useEffect(() => {
@@ -81,22 +85,29 @@ export default function App() {
 	if (!system) return <div className="flex h-full items-center justify-center text-sm text-zinc-500">正在连接…</div>;
 
 	return (
-		<div className="pa-app">
+		<div
+			className={`pa-app ${L.sideDocked ? "side-docked" : "side-hidden"} ${L.sideDrawer ? "side-drawer" : ""} ${L.paneDocked ? "pane-docked" : "pane-overlay"}`}
+			style={{ ["--side-w" as string]: `${layout.sideW}px`, ["--pane-w" as string]: `${layout.paneW}px` }}
+		>
 			<div className="pa-bg-layer" aria-hidden="true">
 				<i className="pa-b1" />
 				<i className="pa-b2" />
 				<i className="pa-b3" />
 			</div>
 			{/* 左侧：助理列表（手机上为抽屉） */}
-			<div className={`fixed inset-0 z-40 bg-black/40 transition-opacity lg:hidden ${drawer ? "opacity-100" : "pointer-events-none opacity-0"}`} onClick={() => set({ drawer: false })} />
-			<div className={`pa-drawer transition-transform ${drawer ? "max-lg:translate-x-0" : "max-lg:-translate-x-[110%]"}`}>
-				<Sidebar />
-			</div>
+			{L.sideDrawer && <div className={`fixed inset-0 z-40 bg-black/40 transition-opacity ${drawer ? "opacity-100" : "pointer-events-none opacity-0"}`} onClick={() => set({ drawer: false })} />}
+			{(L.sideDocked || L.sideDrawer) && (
+				<div className={`pa-drawer transition-transform ${L.sideDrawer ? (drawer ? "translate-x-0" : "-translate-x-[110%]") : ""}`}>
+					<Sidebar />
+					{L.sideDocked && <Resizer side="right" value={layout.sideW} onChange={(v) => setLayout({ sideW: clampSide(v) })} onReset={() => setLayout({ sideW: SIDE.def })} onCollapse={() => setLayout({ sideCollapsed: true })} label="调整助理列表宽度" />}
+				</div>
+			)}
 			<main className="pa-chat">{current ? <Chat agentId={current} /> : null}</main>
 			{info && current && (
 				<>
-					<div className="fixed inset-0 z-40 bg-black/40 xl:hidden" onClick={() => set({ info: false })} />
+					{!L.paneDocked && <div className="fixed inset-0 z-40 bg-black/40" onClick={() => set({ info: false })} />}
 					<div className="pa-pane-wrap">
+						<Resizer side="left" value={layout.paneW} onChange={(v) => setLayout({ paneW: clampPane(v) })} onReset={() => setLayout({ paneW: PANE.def })} onCollapse={() => set({ info: false })} label="调整信息面板宽度" />
 						<InfoPane agentId={current} />
 					</div>
 				</>

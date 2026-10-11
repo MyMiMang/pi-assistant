@@ -17,24 +17,31 @@ html[data-user-accent] { --acc: var(--user-acc); --acc-soft: color-mix(in srgb, 
 html, body, #root { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; }
 
-/* 三栏布局 */
+/* 三栏布局：左栏/右栏宽度来自 --side-w / --pane-w（可拖动，按设备保存）；窄屏时变抽屉（由 App 按窗口宽度加类名） */
 .pa-app { position: relative; display: flex; height: 100%; }
 .pa-app > .pa-drawer, .pa-app > .pa-chat, .pa-app > .pa-pane-wrap { position: relative; z-index: 1; }
-.pa-sidebar { width: var(--side-w, 264px); overflow: hidden; }
-.pa-pane { width: var(--pane-w, 312px); }
+.pa-app > .pa-drawer { width: var(--side-w, 264px); flex-shrink: 0; }
+.pa-app > .pa-pane-wrap { width: var(--pane-w, 340px); flex-shrink: 0; }
+.pa-sidebar { overflow: hidden; }
 .pa-chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-@media (max-width: 1023px) {
-  .pa-app > .pa-drawer { position: fixed; z-index: 50; inset: 0 auto 0 0; width: min(300px, 85vw); }
-  [data-skin=glass] .pa-app > .pa-drawer { inset: 8px auto 8px 8px; }
-}
-@media (max-width: 1279px) {
-  .pa-app > .pa-pane-wrap { position: fixed; z-index: 50; inset: 0 0 0 auto; width: min(var(--pane-w, 340px), 90vw); }
-}
+.pa-app.side-drawer > .pa-drawer { position: fixed; z-index: 50; inset: 0 auto 0 0; width: min(300px, 85vw); }
+[data-skin=glass] .pa-app.side-drawer > .pa-drawer { inset: 8px auto 8px 8px; }
+.pa-app.pane-overlay > .pa-pane-wrap { position: fixed; z-index: 50; inset: 0 0 0 auto; width: min(var(--pane-w, 340px), 92vw); box-shadow: -12px 0 40px rgba(0,0,0,.18); animation: pa-slide-in .18s ease-out; }
+@keyframes pa-slide-in { from { transform: translateX(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+/* 拖动手柄：贴在栏的边缘，悬停时显示一条强调色细线 */
+.pa-resizer { position: absolute; top: 0; bottom: 0; width: 8px; z-index: 5; cursor: col-resize; touch-action: none; }
+.pa-resizer.right { right: -4px; }
+.pa-resizer.left { left: -4px; }
+.pa-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; border-radius: 2px; background: transparent; transition: background .15s; }
+.pa-resizer:hover::after, .pa-resizer:focus-visible::after, body.pa-resizing .pa-resizer::after { background: var(--acc); }
+.pa-app.side-drawer .pa-resizer.right { display: none; }
+body.pa-resizing { cursor: col-resize; user-select: none; }
+body.pa-resizing .pa-chat, body.pa-resizing .pa-pane { pointer-events: none; }
 .pa-pane-wrap > .pa-pane, .pa-drawer > .pa-sidebar { width: 100%; height: 100%; }
 
 /* 聊天区：消息流 + 悬浮输入框 */
 .pa-scroll { flex: 1; overflow: auto; padding: 24px 24px 170px; }
-.pa-thread-body { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.pa-thread-body { max-width: min(760px, 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
 .pa-msg { position: relative; }
 .pa-msg.user { flex-direction: column; align-items: flex-end; }
 .pa-msg.user .pa-bubble { white-space: pre-wrap; word-break: break-word; }
@@ -91,3 +98,8 @@ html[data-user-accent] .pa-ui-primary { background: var(--acc); color: #fff; }
 .pa-preview .pa-chat { position: relative; }
 .pa-preview .pa-app { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; }
 [data-skin=glass] .pa-preview-inner, .pa-preview[data-skin=glass] .pa-preview-inner { padding: 10px; gap: 10px; }
+.pa-side-collapse { margin-left: 2px; }
+.pa-app.side-drawer .pa-side-collapse { display: none; }
+.pa-brand .pa-theme-toggle { margin-left: auto; }
+/* 左栏的拖动手柄伸进聊天区 4px，需要压在聊天区之上 */
+.pa-app.side-docked > .pa-drawer { z-index: 2; }

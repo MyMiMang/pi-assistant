@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { getTheme } from "./themes/registry";
 import { api } from "./api";
+import { loadLayout, type LayoutPrefs, saveLayout } from "./layout";
 import type { Agent, Conversation, Device, Message, SystemInfo, Task } from "./types";
 
 type Theme = "light" | "dark" | "system";
@@ -25,6 +26,8 @@ interface State {
 	loginEvents: Record<string, any[]>;
 	drawer: boolean;
 	info: boolean;
+	layout: LayoutPrefs;
+	setLayout: (p: Partial<LayoutPrefs>) => void;
 	/** 右侧信息面板当前页 */
 	infoTab: string;
 	settings: string | null;
@@ -67,14 +70,28 @@ export const useStore = create<State>((set, get) => ({
 	tunnelSteps: [],
 	desktopVersion: 0,
 	drawer: false,
-	info: window.innerWidth >= 1280,
+	info: loadLayout().info,
+	layout: loadLayout(),
 	infoTab: "overview",
 	settings: new URLSearchParams(location.search).get("settings"),
 	theme: (localStorage.getItem("pia.theme") as Theme) || (getTheme(localStorage.getItem("pia.skin")).defaultMode ?? "system"),
 	skin: getTheme(localStorage.getItem("pia.skin")).id,
 	accent: localStorage.getItem("pia.accent") ?? "",
 	fileVersion: 0,
-	set: (p) => set(p),
+	set: (p) => {
+		set(p);
+		// 右侧面板开关按设备记住（只在宽屏常驻时有意义；窄屏打开的抽屉不记）
+		if (p.info !== undefined && window.innerWidth >= 1200) {
+			const layout = { ...get().layout, info: p.info };
+			set({ layout });
+			saveLayout(layout);
+		}
+	},
+	setLayout: (p) => {
+		const layout = { ...get().layout, ...p };
+		set({ layout });
+		saveLayout(layout);
+	},
 	async loadSystem() {
 		set({ system: await api<SystemInfo>("/api/system") });
 	},

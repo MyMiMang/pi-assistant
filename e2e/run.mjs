@@ -104,6 +104,46 @@ await step("首次运行向导（选择 provider → 登录 → 默认模型 →
 	AGENT = agents[0].id;
 });
 
+await step("布局：右栏默认收起 → 打开 → 拖动调整两侧宽度 → 刷新后保持 → 窄屏变覆盖抽屉 → 收起左栏", async () => {
+	if (await page.locator(".pa-pane-wrap").count()) throw new Error("右侧信息面板默认应收起");
+	await page.waitForTimeout(200);
+	await page.screenshot({ path: join(SHOTS, "35-layout-default.png") });
+	await page.getByRole("button", { name: "信息面板" }).click();
+	await page.locator(".pa-pane-wrap").waitFor();
+	const drag = async (sel, dx) => {
+		const b = await page.locator(sel).boundingBox();
+		await page.mouse.move(b.x + b.width / 2, b.y + 200);
+		await page.mouse.down();
+		await page.mouse.move(b.x + b.width / 2 + dx, b.y + 200, { steps: 8 });
+		await page.mouse.up();
+	};
+	await drag(".pa-resizer.right", 60);
+	await drag(".pa-resizer.left", -80);
+	const lay = await page.evaluate(() => JSON.parse(localStorage.getItem("pia.layout")));
+	if (Math.abs(lay.sideW - 324) > 4 || Math.abs(lay.paneW - 420) > 4 || !lay.info) throw new Error(`布局未保存：${JSON.stringify(lay)}`);
+	await page.reload();
+	await page.locator(".pa-pane-wrap").waitFor();
+	const w = await page.locator(".pa-app > .pa-drawer").evaluate((el) => el.getBoundingClientRect().width);
+	if (Math.abs(w - 324) > 4) throw new Error(`刷新后左栏宽度应保持：${w}`);
+	await page.screenshot({ path: join(SHOTS, "36-layout-resized.png") });
+	// 1100px：右栏变覆盖抽屉，不挤压聊天区
+	await page.setViewportSize({ width: 1100, height: 800 });
+	await page.waitForTimeout(200);
+	const pos = await page.locator(".pa-pane-wrap").evaluate((el) => getComputedStyle(el).position);
+	if (pos !== "fixed") throw new Error("窄屏时右栏应为覆盖式抽屉");
+	const chatW = await page.locator("main.pa-chat").evaluate((el) => el.getBoundingClientRect().width);
+	if (chatW < 700) throw new Error(`聊天区被挤压：${chatW}`);
+	await page.screenshot({ path: join(SHOTS, "37-layout-overlay.png") });
+	await page.setViewportSize({ width: 1440, height: 900 });
+	// 收起左栏 → 头部出现展开按钮
+	await page.getByRole("button", { name: "收起助理列表" }).click();
+	await page.getByRole("button", { name: "展开助理列表" }).click();
+	await page.locator(".pa-app.side-docked").waitFor();
+	// 恢复默认宽度，后面的截图保持一致
+	await page.locator(".pa-resizer.right").dblclick();
+	await page.locator(".pa-resizer.left").dblclick();
+});
+
 await step("发送消息并看到流式回复", async () => {
 	await send("你好，介绍一下你自己");
 	await page.locator(".caret").first().waitFor({ timeout: 10_000 });
