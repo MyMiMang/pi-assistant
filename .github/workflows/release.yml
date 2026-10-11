@@ -18,7 +18,9 @@ jobs:
         with: { node-version: 22 }
       - uses: dtolnay/rust-toolchain@stable
       - run: npm install --ignore-scripts
-      - run: echo "TODO: npm run build（web + server.mjs + 下载校验 Node/cloudflared sidecar）"
+      - name: 构建（TODO）
+        run: |
+          echo "TODO: npm run build（web + sidecar：Node SEA + cloudflared 校验）"
       # - uses: tauri-apps/tauri-action@v0
       #   with: { projectPath: apps/tray, tagName: ${{ github.ref_name }}, releaseName: "胡好好 ${{ github.ref_name }}" }
       #   env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }  # 签名证书就绪后加入 APPLE_* / WINDOWS_* secrets

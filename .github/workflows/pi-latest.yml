@@ -33,7 +33,9 @@ jobs:
           CHROME=$(node -e "console.log(require('playwright-core').chromium.executablePath())") node e2e/run.mjs 2>&1 | tee -a /tmp/test.log
       - name: 测试通过 → 更新兼容基线并开 PR
         if: steps.bump.outputs.before != steps.bump.outputs.after && steps.test.outcome == 'success'
-        run: node -e "require('fs').writeFileSync('packages/server/src/pi-adapter/compat.json', JSON.stringify({testedWith: '${{ steps.bump.outputs.after }}'}, null, 2) + '\n')"
+        env: { PI_VERSION: "${{ steps.bump.outputs.after }}" }
+        run: |
+          printf '{\n  "testedWith": "%s"\n}\n' "$PI_VERSION" > packages/server/src/pi-adapter/compat.json
       - uses: peter-evans/create-pull-request@v7
         if: steps.bump.outputs.before != steps.bump.outputs.after && steps.test.outcome == 'success'
         with:
