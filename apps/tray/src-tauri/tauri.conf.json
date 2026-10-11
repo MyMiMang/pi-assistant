@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "胡好好",
+  "identifier": "shop.dengdengyun.huhao",
+  "version": "0.1.0",
+  "build": { "frontendDist": "../../web/dist" },
+  "app": {
+    "windows": [],
+    "trayIcon": { "iconPath": "icons/tray.png", "iconAsTemplate": false },
+    "macOSPrivateApi": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app", "nsis"],
+    "icon": ["icons/icon.png"],
+    "externalBin": ["binaries/huhao-server", "binaries/cloudflared"],
+    "resources": { "../../web/dist": "web" },
+    "createUpdaterArtifacts": true,
+    "macOS": { "minimumSystemVersion": "12.0" },
+    "windows": { "nsis": { "installMode": "currentUser", "languages": ["SimpChinese", "English"] } }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/MyMiMang/pi-assistant/releases/latest/download/latest.json"],
+      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY"
+    }
+  }
+}

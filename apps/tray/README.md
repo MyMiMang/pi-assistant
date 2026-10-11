@@ -1,3 +1,13 @@
-# tray
+# @huhao/tray —— 菜单栏/托盘程序 + 安装包（Tauri 2）
 
-Tauri 2 菜单栏/托盘程序（无窗口）+ 安装包配置（macOS .dmg / Windows NSIS .exe）。负责启动并守护 huhao-server sidecar、开机自启、显示配对二维码、自动更新。详见 docs/DESIGN.md §5.2。
+无窗口的托盘程序：安装后开机自启，启动并守护 `huhao-server` sidecar（Node SEA 单文件：Node 运行时 + Pi + 我们的服务），
+菜单提供「打开胡好好 / 配对手机 / 开机自启 / 检查更新 / 退出」，界面直接用浏览器打开本地 PWA。
+
+状态：**脚手架**（`src-tauri/src/main.rs`、`tauri.conf.json` 已写好），sidecar 打包脚本与签名待 release 流水线实现。
+自动更新：Tauri updater 读取 GitHub Releases 的 `latest.json`，新版本（包括升级后的 Pi）静默下载安装。
+
+```bash
+npm run build -w @huhao/web
+npm run build:sidecar -w @huhao/tray   # 生成 binaries/huhao-server-<triple>、cloudflared-<triple>
+npx tauri build                        # 需要 Rust 工具链；macOS 产出 .dmg，Windows 产出 NSIS .exe
+```

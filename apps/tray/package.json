@@ -1,0 +1,11 @@
+{
+  "name": "@huhao/tray",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
+    "build": "npm run build:sidecar && tauri build"
+  },
+  "devDependencies": { "@tauri-apps/cli": "^2" }
+}
