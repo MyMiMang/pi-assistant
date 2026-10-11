@@ -9,7 +9,7 @@ NPM="$(command -v npm)"
 NODE_DIR="$(dirname "$(command -v node)")"
 LOG_DIR="$HOME/Library/Logs/Pi Assistant"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-mkdir -p "$LOG_DIR" "$HOME/Library/LaunchAgents"
+mkdir -p "${LOG_DIR}" "$HOME/Library/LaunchAgents"
 
 # 卸载旧的 LaunchAgent
 OLD="$HOME/Library/LaunchAgents/com.huhao.server.plist"
@@ -40,4 +40,4 @@ cat > "$PLIST" <<PL
 </plist>
 PL
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "已安装并启动 $LABEL；日志：$LOG_DIR"
+echo "已安装并启动 ${LABEL}；日志：${LOG_DIR}"
