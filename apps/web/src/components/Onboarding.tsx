@@ -2,7 +2,9 @@ import { useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Provider } from "../types";
+import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
+import { Plus } from "lucide-react";
 import { Button, cx } from "./ui";
 
 /** 首次运行向导：欢迎 → 选模型服务 → 登录 → 默认模型 + 测试 → 完成。 */
@@ -10,6 +12,8 @@ export default function Onboarding() {
 	const [step, setStep] = useState(0);
 	const [provider, setProvider] = useState<Provider | null>(null);
 	const { providers, reload } = useProviders();
+	const custom = useCustomProviders();
+	const [customMode, setCustomMode] = useState(false);
 	const finish = async () => {
 		await api("/api/settings", { method: "PUT", json: { onboarded: true } });
 		await useStore.getState().loadSystem();
@@ -40,10 +44,24 @@ export default function Onboarding() {
 						<div className="space-y-3">
 							<h2 className="text-lg font-semibold">选择模型服务</h2>
 							<p className="text-sm text-zinc-500">支持 API Key，也支持用已有的订阅账号登录（如 ChatGPT、Claude、GitHub Copilot 等）。</p>
-							<ProviderList providers={providers} selected={provider?.id} onPick={(p) => (setProvider(p), setStep(2))} />
+							<Button variant="outline" onClick={() => (setProvider(null), setCustomMode(true), setStep(2))}>
+								<Plus size={15} /> 自定义服务（中转站 / 第三方 / 本地模型）
+							</Button>
+							<ProviderList providers={providers} selected={provider?.id} onPick={(p) => (setProvider(p), setCustomMode(!!p.custom), setStep(2))} />
 						</div>
 					)}
-					{step === 2 && current && (
+					{step === 2 && customMode && (
+						<div className="space-y-3">
+							<h2 className="text-lg font-semibold">{current ? "编辑" : "添加"}自定义模型服务</h2>
+							<p className="text-sm text-zinc-500">适用于中转站、第三方模型和本地推理服务：填写接口地址和 Key，模型列表可以自动获取或手动输入。</p>
+							<CustomProviderForm
+								apis={custom.apis}
+								initial={current ? custom.providers.find((m) => m.id === current.id) : undefined}
+								onSaved={(m) => (setProvider({ id: m.id, name: m.name } as Provider), void reload(), void custom.reload())}
+							/>
+						</div>
+					)}
+					{step === 2 && !customMode && current && (
 						<div className="space-y-3">
 							<h2 className="text-lg font-semibold">登录 {current.id === "mock" ? "Mock 模型" : current.name}</h2>
 							<ProviderSetup provider={current} onConfigured={() => void reload()} />

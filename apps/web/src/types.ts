@@ -9,7 +9,7 @@ export interface Agent {
 	last?: { content: string; role: string; created_at: number } | null;
 }
 export interface Task { id: string; agent_id: string; title: string; instructions: string; status: string; result: string | null; error: string | null; created_at: number; finished_at: number | null }
-export interface Provider { id: string; name: string; apiKey?: { name: string }; oauth?: { name: string; isSubscription: boolean; loginLabel?: string }; modelCount: number; configured: boolean; source?: string }
+export interface Provider { id: string; name: string; apiKey?: { name: string }; oauth?: { name: string; isSubscription: boolean; loginLabel?: string }; modelCount: number; configured: boolean; source?: string; custom?: boolean }
 export interface ModelInfo { provider: string; id: string; name: string; reasoning: boolean; input: string[]; contextWindow?: number }
 export interface TunnelStatus { enabled: boolean; state: string; url: string | null; error?: string; rendezvous: { state: string; at?: number; error?: string }; binary: string | null }
 export interface SystemInfo {
@@ -19,3 +19,5 @@ export interface SystemInfo {
 	workspaceRoot: string; push: { publicKey: string }; seq: number;
 }
 export interface Device { id: string; name: string; platform: string; status: string; created_at: number; last_seen_at: number | null; last_ip: string | null }
+export interface CustomModel { id: string; name?: string; reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number }
+export interface CustomProviderMeta { id: string; name: string; api: string; baseUrl: string; headerNames: string[]; noKey: boolean; models: CustomModel[]; configured: boolean }

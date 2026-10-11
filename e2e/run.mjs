@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { startMockOpenAI } from "./mock-openai.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const DATA = process.env.E2E_DATA ?? "/tmp/huhao-e2e";
@@ -250,6 +251,65 @@ await step("重启服务后历史仍在 + 未完成工作自动续跑", async ()
 	if (after <= before) throw new Error(`消息数 ${before} → ${after}`);
 	await page.waitForTimeout(3000);
 	await page.screenshot({ path: join(SHOTS, "15-after-restart.png") });
+});
+
+await step("自定义模型服务（中转站）：自动获取模型 → 保存 → 测试连接 → 用它聊天 → 编辑 → 删除", async () => {
+	const relay = await startMockOpenAI({ port: 18080, key: "sk-relay-test", requiredHeader: ["x-relay-team", "e2e"] });
+	try {
+		const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
+		const p = await c.newPage();
+		await p.goto(`${BASE}/?settings=models`);
+		await p.getByRole("button", { name: /添加自定义服务/ }).click();
+		const f = p.getByTestId("custom-provider-form");
+		await f.getByPlaceholder("例如：我的中转站").fill("我的中转站");
+		await f.getByLabel("API 类型").selectOption("openai-completions");
+		await f.getByPlaceholder("https://api.example.com/v1").fill(relay.url);
+		await f.getByPlaceholder("sk-…").fill("sk-relay-test");
+		await f.getByRole("button", { name: "添加", exact: true }).first().click();
+		await f.getByPlaceholder("Header 名称").fill("x-relay-team");
+		await f.getByPlaceholder("值").fill("e2e");
+		await f.getByRole("button", { name: "自动获取" }).click();
+		await f.getByText("获取到 2 个模型").waitFor();
+		await f.getByRole("button", { name: "relay-chat", exact: true }).click();
+		await f.getByPlaceholder("手动输入模型 ID，回车添加").fill("relay-manual");
+		await f.getByPlaceholder("手动输入模型 ID，回车添加").press("Enter");
+		await f.getByRole("button", { name: "保存", exact: true }).click();
+		await f.getByText("已保存：我的中转站").waitFor();
+		await f.getByRole("button", { name: "测试连接" }).click();
+		await f.getByText(/连接成功：中转站回复/).waitFor();
+		await p.waitForTimeout(300);
+		await p.screenshot({ path: join(SHOTS, "17-settings-custom-provider.png") });
+		const cfg = readFileSync(join(DATA, "models.json"), "utf8");
+		if (!cfg.includes("custom-") || cfg.includes("sk-relay-test") || cfg.includes('"e2e"')) throw new Error("models.json 内容不对（Key/请求头值不应明文出现）");
+		// 返回列表，自定义服务带“自定义”标记
+		await p.getByRole("button", { name: "← 返回列表" }).click();
+		await p.locator("button:has-text('我的中转站')").filter({ hasText: "自定义" }).first().waitFor();
+		// 设为默认模型并用它聊天（流式经过中转站）
+		const cid = (await (await fetch(`${BASE}/api/models/custom`)).json()).providers[0].id;
+		const r = await fetch(`${BASE}/api/models/default`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: cid, model: "relay-chat" }) });
+		if (!r.ok) throw new Error(`设默认模型失败 ${r.status}`);
+		await c.close();
+		await page.goto(BASE);
+		await send("你好，中转站");
+		await page.locator("main").getByText("中转站回复（relay-chat）：收到「你好，中转站」").last().waitFor();
+		await page.locator("header").getByText("正在工作").waitFor({ state: "detached" }).catch(() => {});
+		await page.waitForTimeout(500);
+		if (!relay.seen.some((x) => x.url === "/v1/chat/completions" && x.headers["x-relay-team"] === "e2e")) throw new Error("请求没有带上自定义请求头");
+		await page.screenshot({ path: join(SHOTS, "18-chat-via-custom-provider.png") });
+		// 编辑后删除
+		const list = await (await fetch(`${BASE}/api/models/custom`)).json();
+		const id = list.providers[0].id;
+		const put = await fetch(`${BASE}/api/models/custom/${id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "中转站 B", api: "openai-completions", baseUrl: relay.url, headers: [{ name: "x-relay-team" }], models: [{ id: "relay-pro" }] }) });
+		if (!put.ok) throw new Error(`编辑失败 ${await put.text()}`);
+		const t = await (await fetch(`${BASE}/api/models/test`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: id, model: "relay-pro" }) })).json();
+		if (!t.ok) throw new Error(`编辑后测试失败：${t.message}`);
+		await fetch(`${BASE}/api/models/custom/${id}`, { method: "DELETE" });
+		const after = await (await fetch(`${BASE}/api/models/providers`)).json();
+		if (after.some((x) => x.id === id)) throw new Error("删除后仍在列表里");
+	} finally {
+		relay.close();
+		await fetch(`${BASE}/api/models/default`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "mock", model: "echo" }) }).catch(() => {});
+	}
 });
 
 await browser.close();

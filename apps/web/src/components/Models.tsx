@@ -24,7 +24,7 @@ export function ProviderList({ providers, onPick, selected }: { providers: Provi
 	const [q, setQ] = useState("");
 	const list = useMemo(() => {
 		const f = providers.filter((p) => !q || `${p.name} ${p.id}`.toLowerCase().includes(q.toLowerCase()));
-		return f.sort((a, b) => Number(b.id === "mock") - Number(a.id === "mock") || Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name));
+		return f.sort((a, b) => Number(b.id === "mock") - Number(a.id === "mock") || Number(!!b.custom) - Number(!!a.custom) || Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name));
 	}, [providers, q]);
 	return (
 		<div className="space-y-3">
@@ -45,7 +45,8 @@ export function ProviderList({ providers, onPick, selected }: { providers: Provi
 						</div>
 						<div className="mt-1.5 flex flex-wrap gap-1">
 							{p.id === "mock" ? <Badge tone="amber">无需 Key</Badge> : null}
-							{p.apiKey && p.id !== "mock" && <Badge>API Key</Badge>}
+							{p.custom && <Badge tone="amber">自定义</Badge>}
+							{p.apiKey && p.id !== "mock" && !p.custom && <Badge>API Key</Badge>}
 							{p.oauth && <Badge tone="accent">{p.oauth.isSubscription ? "订阅登录" : "OAuth 登录"}</Badge>}
 							<span className="text-[11px] text-zinc-400">{p.modelCount} 个模型</span>
 						</div>

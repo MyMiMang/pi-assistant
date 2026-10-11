@@ -1,9 +1,10 @@
-import { Bell, Copy, Globe, Info, Monitor, Moon, Palette, QrCode, Smartphone, Sun, Trash2, Wifi } from "lucide-react";
+import { Bell, Copy, Globe, Info, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { getLang, setLang, t } from "../i18n";
 import { applyTheme, useStore } from "../store";
 import type { Device, Provider } from "../types";
+import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
 import { Badge, Button, cx, fmtTime, Input, Modal } from "./ui";
 
@@ -20,7 +21,7 @@ export default function Settings() {
 	return (
 		<Modal open={!!settings} onClose={() => set({ settings: null })} title={t("设置")} wide>
 			<div className="flex min-h-[70dvh] flex-col sm:flex-row">
-				<nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-200 p-2 sm:w-52 sm:flex-col sm:border-r sm:border-b-0 dark:border-zinc-800">
+				<nav className="sticky top-0 z-10 flex shrink-0 gap-1 overflow-x-auto border-b bg-white sm:self-start dark:bg-zinc-900 border-zinc-200 p-2 sm:w-52 sm:flex-col sm:min-h-[70dvh] sm:border-r sm:border-b-0 dark:border-zinc-800">
 					{TABS.map(([k, label, Icon]) => (
 						<button key={k} onClick={() => set({ settings: k })} className={cx("flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-sm", settings === k ? "bg-accent-soft font-medium text-accent" : "hover:bg-zinc-100 dark:hover:bg-zinc-800")}>
 							<Icon size={16} /> {t(label)}
@@ -48,27 +49,51 @@ const H = ({ children, desc }: { children: React.ReactNode; desc?: string }) => 
 
 function ModelsTab() {
 	const { providers, reload } = useProviders();
+	const custom = useCustomProviders();
 	const [sel, setSel] = useState<Provider | null>(null);
+	const [customEdit, setCustomEdit] = useState<{ id?: string; k: number } | null>(null);
 	const system = useStore((s) => s.system);
 	const current = sel ? (providers.find((p) => p.id === sel.id) ?? sel) : null;
+	const reloadAll = () => (void reload(), void custom.reload(), void useStore.getState().loadSystem());
+	const back = () => (setSel(null), setCustomEdit(null));
 	return (
 		<div className="space-y-6">
 			<section>
 				<H desc={system?.defaultModel ? `当前：${system.defaultModel.provider} / ${system.defaultModel.id}` : "还没有设置默认模型"}>默认模型</H>
-				<DefaultModelPicker key={providers.filter((p) => p.configured).length} />
+				<DefaultModelPicker key={providers.filter((p) => p.configured).length + providers.length * 100} />
 			</section>
 			<section>
-				<H desc="列表来自 Pi 的模型服务目录，升级 Pi 后新的服务会自动出现。凭据加密保存在本机。">模型服务</H>
-				{current ? (
+				<H desc="列表来自 Pi 的模型服务目录，升级 Pi 后新的服务会自动出现。也可以添加任意中转站、第三方或本地模型服务。凭据加密保存在本机。">模型服务</H>
+				{customEdit ? (
 					<div className="space-y-3">
-						<Button size="sm" variant="ghost" onClick={() => setSel(null)}>
+						<Button size="sm" variant="ghost" onClick={back}>
+							← 返回列表
+						</Button>
+						<div className="font-medium">{customEdit.id ? "编辑自定义服务" : "添加自定义服务"}</div>
+						<CustomProviderForm
+							key={customEdit.k}
+							apis={custom.apis}
+							initial={custom.providers.find((m) => m.id === customEdit.id)}
+							onSaved={(m) => (reloadAll(), setCustomEdit((x) => ({ id: m.id, k: x?.k ?? 0 })))}
+							onCancel={back}
+							onDeleted={() => (reloadAll(), back())}
+						/>
+					</div>
+				) : current ? (
+					<div className="space-y-3">
+						<Button size="sm" variant="ghost" onClick={back}>
 							← 返回列表
 						</Button>
 						<div className="font-medium">{current.name}</div>
 						<ProviderSetup provider={current} onConfigured={() => void reload()} />
 					</div>
 				) : (
-					<ProviderList providers={providers} onPick={setSel} />
+					<div className="space-y-3">
+						<Button variant="outline" onClick={() => setCustomEdit({ k: Date.now() })}>
+							<Plus size={15} /> 添加自定义服务（中转站 / 第三方 / 本地模型）
+						</Button>
+						<ProviderList providers={providers} onPick={(p) => (p.custom ? setCustomEdit({ id: p.id, k: Date.now() }) : setSel(p))} />
+					</div>
 				)}
 			</section>
 		</div>
