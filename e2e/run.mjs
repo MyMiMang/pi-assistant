@@ -73,16 +73,20 @@ await step("首次运行向导（选择 provider → 登录 → 默认模型）"
 	await page.screenshot({ path: join(SHOTS, "02-onboarding-providers.png") });
 	const n = await page.locator("button:has-text('个模型')").count();
 	if (n < 20) throw new Error(`provider 太少: ${n}`);
-	// 打开一个真实 provider 看登录方式（不提交）
-	await page.getByRole("button", { name: /^OpenAI\b/ }).first().click();
-	await page.getByRole("button", { name: /OpenAI API key/ }).click();
-	await page.getByText(/Enter OpenAI API key|API key/i).first().waitFor();
+	// 通用地选一个同时支持 API Key 与订阅登录的 provider（不针对任何特定厂商），只看登录方式、不提交
+	await page.locator("button:has-text('订阅登录')").first().click();
+	const methods = page.locator("h2:has-text('登录') + div button");
+	if ((await methods.count()) < 2) throw new Error("应同时显示 API Key 与订阅登录两种方式");
+	await page.screenshot({ path: join(SHOTS, "03-onboarding-auth-methods.png") });
+	await methods.first().click(); // API Key：Pi 通过通用交互发来 secret 提示
+	await page.locator("input[type=password]").waitFor();
 	await page.screenshot({ path: join(SHOTS, "03-onboarding-login.png") });
 	await page.getByRole("button", { name: "上一步" }).click();
 	await page.getByRole("button", { name: /Mock 模型/ }).click();
 	await page.getByRole("button", { name: "下一步" }).click();
 	await page.getByRole("button", { name: "测试连接" }).click();
 	await page.getByText(/连接成功/).waitFor();
+	await page.screenshot({ path: join(SHOTS, "03-onboarding-default-model.png") });
 	await page.getByRole("button", { name: "设为默认模型" }).click();
 	await page.getByText("欢迎使用胡好好").waitFor({ state: "detached" });
 });
