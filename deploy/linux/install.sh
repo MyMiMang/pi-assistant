@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/MyMiMang/pi-assistant/main/deploy/linux/install.sh | sh -s -- --user    # 当前用户的 systemd --user 服务
 # 选项：
 #   --system / --user       安装方式（默认：root 运行 = 系统服务，否则 = 用户服务）
-#   --version X             指定版本（默认最新正式版）
+#   --version X             指定版本（默认最新的带 Linux 包的版本）
 #   --file 包.tar.gz        用本地发布包安装（同目录有 .sha256 时校验；离线 / 私有仓库可用）
 #   --port N                端口（默认 8787）       --host 地址   监听地址（默认 0.0.0.0）
 #   --docker                把服务账号加入 docker 组（“助理电脑”功能要用 Docker；等同 root 权限，按需开启）
@@ -115,18 +115,24 @@ if [ -n "$FILE" ]; then
 		say "SHA256 校验通过"
 	else say "提示：没有 $FILE.sha256，跳过校验"; fi
 else
-	if [ -n "$VERSION" ]; then API="https://api.github.com/repos/$REPO/releases/tags/v${VERSION#v}"; else API="https://api.github.com/repos/$REPO/releases/latest"; fi
+	if [ -n "$VERSION" ]; then API="https://api.github.com/repos/$REPO/releases/tags/v${VERSION#v}"; else API="https://api.github.com/repos/$REPO/releases?per_page=30"; fi
 	fetch "$API" "$TMP/release.json" "Accept: application/vnd.github+json" >/dev/null 2>&1 || {
 		[ -n "${PIA_GITHUB_TOKEN:-}" ] && die "查不到发布版本（$API）：确认版本号和 PIA_GITHUB_TOKEN 的权限"
-		die "查不到发布版本（$API）。仓库私有时需要 PIA_GITHUB_TOKEN=<有读取权限的令牌>，或下载发布包后用 --file 安装"
+		die "查不到发布版本（$API）：检查网络，或下载发布包后用 --file 安装"
 	}
 	# 发布资产：按 GitHub API 的格式逐行取 "url"（资产 API 地址）和 "name"
 	pick() { # pick 资产名 → 资产 API 地址
 		awk -v want="$1" '/"url": *"https:\/\/api\.github\.com\/repos\/.*\/releases\/assets\/[0-9]+"/ { match($0, /https:[^"]+/); u = substr($0, RSTART, RLENGTH) }
 			/"name": *"/ { n = $0; sub(/.*"name": *"/, "", n); sub(/".*/, "", n); if (n == want && u != "") { print u; exit } }' "$TMP/release.json"
 	}
-	TAG=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$TMP/release.json" | head -n1)
-	V=${TAG#v}
+	if [ -n "$VERSION" ]; then
+		V=${VERSION#v}
+	else
+		# 版本列表按发布时间倒序：取第一个带本架构 Linux 包的版本（测试版也算）
+		V=$(sed -n "s/.*\"name\": *\"pi-assistant-\([^\"]*\)-linux-$ARCH\.tar\.gz\".*/\1/p" "$TMP/release.json" | head -n1)
+		[ -n "$V" ] || die "还没有发布过 Linux $ARCH 版本（$REPO 的 Releases 里没有 pi-assistant-*-linux-$ARCH.tar.gz）"
+	fi
+	TAG=v$V
 	NAME="pi-assistant-$V-linux-$ARCH.tar.gz"
 	AU=$(pick "$NAME"); SU=$(pick "$NAME.sha256")
 	[ -n "$AU" ] && [ -n "$SU" ] || die "发布 $TAG 里没有 $NAME（这个版本可能还没有 Linux 包）"

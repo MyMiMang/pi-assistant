@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/MyMiMang/pi-assistant/main/deploy/l
 curl -fsSL https://raw.githubusercontent.com/MyMiMang/pi-assistant/main/deploy/linux/install.sh | sh -s -- --user
 ```
 常用选项：`--port 8787`、`--host 127.0.0.1`（只给反向代理访问）、`--version 0.2.0`、`--docker`（允许使用宿主机 Docker 运行“助理电脑”；这等于给服务 root 权限）。
-**仓库私有时**匿名下载不到发布包：加环境变量 `PIA_GITHUB_TOKEN=<有读取权限的令牌>`（`curl … | sudo PIA_GITHUB_TOKEN=… sh`），或在别处下载 `.tar.gz` 和 `.sha256` 后 `sh install.sh --file pi-assistant-<版本>-linux-x64.tar.gz`。国内网络可设 `PIA_DOWNLOAD_MIRROR=https://ghfast.top/`。
+离线或内网服务器：在别处下载 `.tar.gz` 和 `.sha256` 后 `sh install.sh --file pi-assistant-<版本>-linux-x64.tar.gz`。国内网络可设 `PIA_DOWNLOAD_MIRROR=https://ghfast.top/`。（Linux 包从下一个发布版本开始提供。）
 
 **首次设置**：安装完成时会显示网页地址和一次性**设置码**（也会打印在日志里：`pi-assistant logs`，或随时 `sudo pi-assistant setup-code`）。用浏览器打开网页、输入设置码，这台设备就成为**主人设备**：可以在网页上生成配对码、批准其他设备、修改全部设置。设置码 24 小时有效、只能用一次，过期会自动换新。主人设备丢了：`sudo pi-assistant reset-owner`，然后用新的设置码重新设置。
 
