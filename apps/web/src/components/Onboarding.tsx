@@ -7,6 +7,7 @@ import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from ".
 import { Plus } from "lucide-react";
 import { AgentEditor } from "./AgentEditor";
 import { Button, cx } from "./ui";
+import { DesktopCost } from "./DesktopSettings";
 import { BRAND } from "@pi-assistant/shared";
 
 /** 首次运行向导：欢迎 → 选模型服务 → 登录 → 默认模型 → 创建第一个助理。已配置过模型（例如删光了助理）时直接进入最后一步。 */
@@ -17,6 +18,8 @@ export default function Onboarding() {
 	const { providers, reload } = useProviders();
 	const custom = useCustomProviders();
 	const [customMode, setCustomMode] = useState(false);
+	/** 「给助理安装电脑」：默认推荐开启，由用户选；点“开始设置”时才保存（开启才开始下载） */
+	const [desk, setDesk] = useState(true);
 	const finish = async (agentId: string) => {
 		await api("/api/settings", { method: "PUT", json: { onboarded: true } });
 		const st = useStore.getState();
@@ -44,6 +47,14 @@ export default function Onboarding() {
 								<br />
 								开始前，需要连接一个 AI 模型服务。你的凭据只加密保存在这台电脑上。
 							</p>
+							<label className="mx-auto flex max-w-md items-start gap-3 rounded-xl border border-zinc-200 p-3 text-left dark:border-zinc-800">
+								<input type="checkbox" className="mt-1 accent-[var(--acc)]" checked={desk} onChange={(e) => setDesk(e.target.checked)} data-testid="onboarding-desktop" />
+								<span className="space-y-1">
+									<span className="block text-sm font-medium">给助理安装电脑（推荐）</span>
+									<span className="block text-xs text-zinc-500">助理会有一台自己的桌面电脑（浏览器、微信等应用），在后台下载，之后也可以在 设置 › 助理电脑 里开关。</span>
+									<DesktopCost />
+								</span>
+							</label>
 						</div>
 					)}
 					{step === 1 && (
@@ -99,7 +110,7 @@ export default function Onboarding() {
 						<span />
 					)}
 					{step === 0 && (
-						<Button variant="primary" onClick={() => setStep(1)}>
+						<Button variant="primary" onClick={() => (desk && void api("/api/desktop", { method: "PUT", json: { enabled: true } }).catch(() => {}), setStep(1))}>
 							开始设置
 						</Button>
 					)}

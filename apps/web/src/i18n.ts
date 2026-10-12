@@ -5,6 +5,11 @@ const en: Record<string, string> = {
 	批准: "Approve", 拒绝: "Reject", 正在工作: "Working", 空闲: "Idle", 本机: "This computer", 远程: "Remote",
 	模型: "Models", 远程访问与设备: "Remote & devices", 入口域名: "Entry domain", 外观: "Appearance", 关于: "About",
 	后台任务: "Background tasks", 需要你的批准: "Needs your approval", 已批准: "Approved", 已拒绝: "Rejected", 已过期: "Expired",
+	给助理安装电脑: "Install a computer for assistants", 助理电脑: "Assistant computer", 运行方式: "Runtime", 空闲自动关机: "Auto shutdown when idle", 镜像下载地址: "Image download source",
+	已安装: "Installed", 未安装: "Not installed", 未下载: "Not downloaded", 下载中: "Downloading", 关机: "Shut down", 从不: "Never", 重试: "Retry", "{m} 分钟": "{m} min",
+	"自带运行时（推荐）": "Built-in runtime (recommended)", "使用已安装的 Docker": "Use installed Docker", 启动中: "Starting", 运行中: "Running", 已关机: "Off",
+	"删除虚拟机和镜像（登录状态会清掉）": "Delete VM and images (logins cleared)", "未安装，去设置安装": "Not installed — set up in Settings",
+	"预计下载 ≈{d}，磁盘占用 ≈{disk}，运行时内存 3–4 GB。开启前什么都不会下载。": "Download ≈{d}, disk ≈{disk}, RAM 3–4 GB while running. Nothing is downloaded until enabled.",
 	下载: "Download", 上传: "Upload", 保存: "Save", 取消: "Cancel", 下一步: "Next", 完成: "Done", 测试连接: "Test connection",
 };
 let lang: "zh" | "en" = (localStorage.getItem("pia.lang") as "zh" | "en") || "zh";

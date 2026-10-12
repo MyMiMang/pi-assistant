@@ -84,6 +84,11 @@ await step("首次运行向导（选择 provider → 登录 → 默认模型 →
 	await page.goto(BASE);
 	await page.getByText("欢迎使用 Pi Assistant").waitFor();
 	await page.screenshot({ path: join(SHOTS, "01-onboarding-welcome.png") });
+	// 「给助理安装电脑」默认推荐开启；e2e 关掉（不下载镜像），设置页里再单独验证
+	const desk = page.getByTestId("onboarding-desktop");
+	if (!(await desk.isChecked())) throw new Error("向导里「给助理安装电脑」应默认勾选");
+	await page.getByText(/预计下载 ≈1\.5 GB，磁盘占用 ≈5 GB/).first().waitFor();
+	await desk.uncheck();
 	await page.getByRole("button", { name: "开始设置" }).click();
 	await page.getByText("选择模型服务").first().waitFor();
 	await page.waitForTimeout(300);
@@ -773,6 +778,37 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 });
 
 // ================================================================ Phase 3
+await step("助理电脑开箱即用：向导没开启时什么都不下载；「电脑」标签显示未安装 → 去设置；设置里开关说明、运行方式、空闲关机、镜像加速", async () => {
+	const g0 = await (await fetch(`${BASE}/api/desktop`)).json();
+	if (g0.settings.enabled || g0.install.phase !== "idle") throw new Error(`向导没勾选却开启/下载了：${JSON.stringify(g0)}`);
+	await page.goto(BASE);
+	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
+	await page.locator("aside").last().getByRole("tab", { name: "电脑", exact: true }).click();
+	const ni = page.getByTestId("desktop-not-installed");
+	await ni.getByText("未安装，去设置安装").waitFor();
+	await page.screenshot({ path: join(SHOTS, "58-desktop-not-installed.png") });
+	await ni.getByRole("button", { name: "去设置" }).click();
+	const ds = page.getByTestId("desktop-settings");
+	await ds.waitFor();
+	if (!(await page.getByTestId("settings-nav").locator("button[data-tab=computer]").getAttribute("aria-current"))) throw new Error("没有跳到「助理电脑」标签");
+	await ds.getByTestId("desktop-cost").getByText(/≈1\.5 GB.*≈5 GB.*3–4 GB/).waitFor();
+	if (await ds.getByTestId("desktop-enabled").isChecked()) throw new Error("开关应为关闭");
+	await ds.getByTestId("desktop-idle").selectOption("30");
+	await page.waitForFunction(async (b) => (await (await fetch(`${b}/api/desktop`)).json()).settings.idleMinutes === 30, BASE);
+	await ds.getByTestId("desktop-mirror").fill("https://ghcr.nju.edu.cn/");
+	await ds.getByRole("button", { name: "保存" }).click();
+	await ds.getByText("ghcr.nju.edu.cn/mymimang/pi-assistant-desktop", { exact: false }).waitFor();
+	await ds.getByTestId("desktop-backend-docker").click();
+	await page.waitForFunction(async (b) => (await (await fetch(`${b}/api/desktop`)).json()).settings.backend === "docker", BASE);
+	await page.screenshot({ path: join(SHOTS, "59-settings-desktop.png") });
+	const bad = await fetch(`${BASE}/api/desktop`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ idleMinutes: 7 }) });
+	if (bad.status !== 400) throw new Error("非法空闲时间应被拒绝");
+	const g1 = await (await fetch(`${BASE}/api/desktop`)).json();
+	if (g1.settings.enabled || g1.install.phase !== "idle") throw new Error("改设置不应触发下载");
+	// 恢复默认，避免影响后面的步骤
+	await fetch(`${BASE}/api/desktop`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ backend: "auto", idleMinutes: 10, mirror: "" }) });
+	await page.keyboard.press("Escape");
+});
 const openPane = async (tab) => {
 	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
 	await page.locator("aside").last().getByRole("tab", { name: tab, exact: true }).click();
@@ -780,6 +816,7 @@ const openPane = async (tab) => {
 const SHOP = `data:text/html;charset=utf-8,${encodeURIComponent(`<title>测试商店</title><body style="font-family:sans-serif;padding:40px"><h1>测试商店 · 结算</h1><p>无线耳机 × 1　¥199</p><form onsubmit="document.body.innerHTML='<h1>下单成功</h1>';return false"><label>收货人 <input name="n" value="邓邓"></label><br><br><button type="submit">提交订单</button></form></body>`)}`;
 await step("Phase 3 浏览器：助理打开网页（有 Docker 时在「电脑」实时画面里）→ 点「提交订单」需审批 → 拒绝不提交 → 本任务内都允许", async () => {
 	if (process.env.E2E_DESKTOP) {
+		await fetch(`${BASE}/api/desktop`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: true, backend: "docker" }) });
 		const r = await fetch(`${BASE}/api/agents/${AGENT}/desktop/start`, { method: "POST" });
 		if (!r.ok) throw new Error(`助理电脑启动失败：${await r.text()}`);
 	}

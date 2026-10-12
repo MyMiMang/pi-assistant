@@ -1,4 +1,4 @@
-import { Brain, Hand, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { Brain, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { getLang, setLang, t } from "../i18n";
@@ -10,6 +10,7 @@ import { ExtensionsTab } from "./ExtensionsTab";
 import { HostControlSettings } from "./HostControl";
 import { ChannelsSettings } from "./Channels";
 import { EmailSettings } from "./Email";
+import { DesktopSettings } from "./DesktopSettings";
 import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
@@ -22,6 +23,7 @@ const TABS = [
 	["memory", "记忆", Brain],
 	["channels", "渠道", MessagesSquare],
 	["email", "邮箱", Mail],
+	["computer", "助理电脑", MonitorPlay],
 	["host", "操作这台电脑", Hand],
 	["remote", "远程访问与设备", Wifi],
 	["entry", "固定地址 / 入口", Globe],
@@ -52,6 +54,7 @@ export default function Settings() {
 					{settings === "skills" && <SkillsTab />}
 					{settings === "extensions" && <ExtensionsTab />}
 					{settings === "memory" && <MemorySettings />}
+					{settings === "computer" && <DesktopSettings />}
 					{settings === "host" && <HostControlSettings />}
 					{settings === "channels" && <ChannelsSettings />}
 					{settings === "email" && <EmailSettings />}

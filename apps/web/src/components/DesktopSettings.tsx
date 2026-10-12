@@ -1,0 +1,175 @@
+/**
+ * 设置 › 助理电脑（DESIGN §15.2）：「给助理安装电脑」开关、运行方式（自带运行时 / 已装的 Docker）、
+ * 空闲自动关机、镜像加速、下载进度；关掉后可关机或删除虚拟机和镜像释放空间。
+ */
+import { Loader2, Power, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { api } from "../api";
+import { t } from "../i18n";
+import { useStore } from "../store";
+import { Badge, Button, Input } from "./ui";
+
+export type DesktopGlobal = {
+	settings: { enabled: boolean; backend: "auto" | "docker"; idleMinutes: number; mirror: string };
+	backend: { id: string; label: string; ok: boolean | null; reason?: string };
+	builtin: { id: string; label: string; ready: boolean };
+	dockerAvailable: boolean;
+	image: { ref: string; version: string; digest: string | null; downloadBytes: number; diskBytes: number; custom: boolean };
+	installed: boolean;
+	install: { phase: "idle" | "downloading" | "done" | "error"; progress: number; layersDone: number; layersTotal: number; error?: string };
+};
+const GB = (n: number) => `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1).replace(/\.0$/, "")} GB`;
+
+export function useDesktopGlobal() {
+	const [g, setG] = useState<DesktopGlobal | null>(null);
+	const ver = useStore((s) => s.desktopVersion);
+	const load = () => api<DesktopGlobal>("/api/desktop").then(setG).catch(() => {});
+	useEffect(() => {
+		void load();
+	}, [ver]);
+	// 下载中每秒刷新进度
+	useEffect(() => {
+		if (g?.install.phase !== "downloading") return;
+		const i = setInterval(() => void load(), 1000);
+		return () => clearInterval(i);
+	}, [g?.install.phase]);
+	return { g, setG, load };
+}
+
+/** 开关旁的说明：预计下载量 / 磁盘 / 内存（向导和设置共用） */
+export function DesktopCost({ image }: { image?: DesktopGlobal["image"] }) {
+	return (
+		<div className="text-xs text-zinc-500" data-testid="desktop-cost">
+			{t("预计下载 ≈{d}，磁盘占用 ≈{disk}，运行时内存 3–4 GB。开启前什么都不会下载。", { d: GB(image?.downloadBytes ?? 1.5e9), disk: GB(image?.diskBytes ?? 5e9) })}
+		</div>
+	);
+}
+
+export function DesktopSettings() {
+	const { g, setG } = useDesktopGlobal();
+	const [err, setErr] = useState("");
+	const [busy, setBusy] = useState("");
+	const [mirror, setMirror] = useState<string | null>(null);
+	const [offered, setOffered] = useState(false);
+	if (!g) return null;
+	const s = g.settings;
+	const put = async (b: Partial<DesktopGlobal["settings"]>) => {
+		setErr("");
+		try {
+			const r = await api<DesktopGlobal>("/api/desktop", { method: "PUT", json: b });
+			setG(r);
+			return r;
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : String(e));
+		}
+	};
+	const post = async (path: string, label: string) => {
+		setBusy(label);
+		setErr("");
+		try {
+			setG(await api<DesktopGlobal>(`/api/desktop/${path}`, { method: "POST" }));
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy("");
+		}
+	};
+	const toggle = async (on: boolean) => {
+		const r = await put({ enabled: on });
+		if (r && !on) setOffered(true);
+	};
+	const ins = g.install;
+	return (
+		<div className="space-y-6" data-testid="desktop-settings">
+			<section className="space-y-2">
+				<div className="mb-3">
+					<div className="font-semibold">{t("给助理安装电脑")}</div>
+					<div className="mt-0.5 text-sm text-zinc-500">{t("每个助理一台自己的 Linux 桌面电脑（浏览器、微信等应用），登录状态长期保留，你可以在「电脑」标签里随时看它的屏幕、接管操作。不开启时助理照常聊天，浏览器自动化在本机独立的浏览器里进行。")}</div>
+				</div>
+				<label className="flex items-start gap-3 rounded-xl border border-line p-3">
+					<input type="checkbox" className="mt-1 accent-[var(--acc)]" checked={s.enabled} onChange={(e) => void toggle(e.target.checked)} data-testid="desktop-enabled" />
+					<span className="space-y-1">
+						<span className="flex items-center gap-2 font-medium">
+							{t("给助理安装电脑")}
+							{s.enabled ? g.installed ? <Badge tone="green">{t("已安装")}</Badge> : ins.phase === "downloading" ? <Badge tone="accent">{t("下载中")}</Badge> : <Badge tone="amber">{t("未下载")}</Badge> : <Badge>{t("未安装")}</Badge>}
+						</span>
+						<DesktopCost image={g.image} />
+					</span>
+				</label>
+				{s.enabled && ins.phase === "downloading" && (
+					<div className="space-y-1" data-testid="desktop-download">
+						<div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+							<div className="h-full bg-accent transition-all" style={{ width: `${Math.round(ins.progress * 100)}%` }} />
+						</div>
+						<div className="text-xs text-zinc-500">
+							{t("正在下载助理电脑")} {Math.round(ins.progress * 100)}%{ins.layersTotal ? ` · ${ins.layersDone}/${ins.layersTotal}` : ""}　{t("断了会自动续传，已下载的部分不会重下。")}
+						</div>
+					</div>
+				)}
+				{s.enabled && g.backend.ok === false && <div className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200">{g.backend.reason}</div>}
+				{s.enabled && ins.phase === "error" && (
+					<div className="flex items-center gap-2 rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
+						<span className="min-w-0 flex-1 break-words">{t("下载失败：")}{ins.error}</span>
+						<Button size="sm" variant="outline" onClick={() => void post("install", "install")}>{t("重试")}</Button>
+					</div>
+				)}
+				{!s.enabled && offered && (
+					<div className="space-y-2 rounded-xl border border-line p-3" data-testid="desktop-off-actions">
+						<div className="text-sm">{t("助理电脑已关闭。还要做什么？")}</div>
+						<div className="flex flex-wrap gap-2">
+							<Button size="sm" variant="outline" disabled={!!busy} onClick={() => void post("shutdown", "shutdown")}>
+								{busy === "shutdown" ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />} {t("关机")}
+							</Button>
+							<Button size="sm" variant="danger" disabled={!!busy} onClick={() => confirm(t("删除后助理电脑里的登录状态（微信、各网站账号）都会清掉，下次开启要重新下载。确定删除？")) && void post("purge", "purge").then(() => setOffered(false))}>
+								{busy === "purge" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} {t("删除虚拟机和镜像（登录状态会清掉）")}
+							</Button>
+						</div>
+					</div>
+				)}
+			</section>
+
+			<section className="space-y-2">
+				<div className="font-semibold">{t("运行方式")}</div>
+				<div className="space-y-1.5 text-sm">
+					<label className="flex items-start gap-2">
+						<input type="radio" name="desk-backend" className="mt-1" checked={s.backend === "auto"} onChange={() => void put({ backend: "auto" })} />
+						<span>
+							{t("自带运行时（推荐）")}
+							<span className="block text-xs text-zinc-500">
+								{g.builtin.ready ? g.builtin.label : t("{label}正在开发中，暂时使用本机已装的 Docker", { label: g.builtin.label })}
+							</span>
+						</span>
+					</label>
+					<label className="flex items-start gap-2">
+						<input type="radio" name="desk-backend" className="mt-1" checked={s.backend === "docker"} onChange={() => void put({ backend: "docker" })} data-testid="desktop-backend-docker" />
+						<span>
+							{t("使用已安装的 Docker")}
+							<span className="block text-xs text-zinc-500">{g.dockerAvailable ? t("检测到本机 Docker / Podman") : t("没有检测到 Docker / Podman")}</span>
+						</span>
+					</label>
+				</div>
+			</section>
+
+			<section className="space-y-2">
+				<div className="font-semibold">{t("空闲自动关机")}</div>
+				<div className="text-sm text-zinc-500">{t("没有工具调用、没人在看画面、没有任务占用超过这个时间，就自动关机释放内存；登录状态不会丢，下次用到时自动开机。")}</div>
+				<select value={s.idleMinutes} onChange={(e) => void put({ idleMinutes: Number(e.target.value) })} className="h-9 rounded-lg border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900" aria-label={t("空闲自动关机")} data-testid="desktop-idle">
+					{[5, 10, 30, 0].map((m) => (
+						<option key={m} value={m}>{m ? t("{m} 分钟", { m }) : t("从不")}</option>
+					))}
+				</select>
+			</section>
+
+			<section className="space-y-2">
+				<div className="font-semibold">{t("镜像下载地址")}</div>
+				<div className="text-sm text-zinc-500">{t("国内下载慢时可以填加速地址（替换 ghcr.io），例如 ghcr.nju.edu.cn。下载内容按固定版本校验，换地址不影响安全。")}</div>
+				<div className="flex gap-2">
+					<Input value={mirror ?? s.mirror} placeholder="ghcr.io" onChange={(e) => setMirror(e.target.value)} data-testid="desktop-mirror" />
+					<Button variant="outline" disabled={mirror === null || mirror === s.mirror} onClick={() => void put({ mirror: mirror ?? "" }).then((r) => r && setMirror(null))}>{t("保存")}</Button>
+				</div>
+				<div className="break-all text-xs text-zinc-400">{g.image.ref}{g.image.custom ? `（${t("自定义镜像")}）` : ""}</div>
+			</section>
+			{err && <div className="text-xs text-red-600">{err}</div>}
+		</div>
+	);
+}
