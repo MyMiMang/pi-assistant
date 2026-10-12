@@ -1,0 +1,12 @@
+**/node_modules
+.git
+dist-app
+dist-linux
+**/dist
+apps/tray/src-tauri/target
+apps/tray/src-tauri/binaries
+docs/screenshots
+packages/wsl-rootfs/vendor
+**/.venv
+.e2e-*
+*.log

@@ -1,18 +1,18 @@
-# 开发/高级用户用：server + L2 Docker 沙箱。普通用户使用桌面安装包，不需要 Docker。
+# Pi Assistant 服务器版（Docker 部署）。
+#   docker compose -f deploy/compose.yaml up -d --build
+#   docker compose -f deploy/compose.yaml logs server | grep 设置码      # 或：… exec server pi-assistant setup-code
+# 浏览器打开 http://<服务器>:8787，输入设置码，这台设备成为“主人设备”。
+# 要用“助理电脑”（容器里的桌面 + 浏览器），再叠加 compose.desktop.yaml。
+# 端口默认对外开放；放在反向代理后面时改成 "127.0.0.1:8787:8787"。
 services:
   server:
     build: { context: .., dockerfile: deploy/Dockerfile.server }
-    ports: ["127.0.0.1:8787:8787"]
-    env_file: ../.env
+    image: pi-assistant/server:local
+    restart: unless-stopped
+    ports: ["${PIA_PUBLISH:-8787}:8787"]
     environment:
-      PIA_SANDBOX: docker
-      PIA_SANDBOX_HOST: sandbox:7070
-      PIA_DATA_DIR: /data
+      PIA_HOST: 0.0.0.0
+      PIA_HEADLESS: "1"
     volumes: [pi-assistant-data:/data]
-  sandbox:
-    build: { context: ../sandbox }
-    volumes: [pi-assistant-workspace:/workspace]
-    # 注意：不向沙箱注入任何凭据
 volumes:
   pi-assistant-data: {}
-  pi-assistant-workspace: {}

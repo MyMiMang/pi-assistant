@@ -130,7 +130,7 @@ export async function openWechat(agentId: string, onProgress?: (m: string) => vo
 		st = await wechatStatus(agentId);
 	}
 	if (!st.running) {
-		await docker(["exec", "-d", "-e", "DISPLAY=:1", "-e", "XDG_RUNTIME_DIR=/tmp/xdg-agent", name, "bash", "-c", `mkdir -p -m 700 /tmp/xdg-agent; exec ${WECHAT_BIN} >/tmp/wechat.log 2>&1`]);
+		await docker(["exec", "-d", "-e", "XDG_RUNTIME_DIR=/tmp/xdg-agent", name, "bash", "-c", `mkdir -p -m 700 /tmp/xdg-agent; exec ${WECHAT_BIN} >/tmp/wechat.log 2>&1`]);
 		for (let i = 0; i < 30 && !(st = await wechatStatus(agentId)).running; i++) await new Promise((r) => setTimeout(r, 500));
 	}
 	return st;

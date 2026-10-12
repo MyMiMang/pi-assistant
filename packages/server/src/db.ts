@@ -129,6 +129,8 @@ for (const [table, col, ddl] of [
 	["agents", "description", "TEXT NOT NULL DEFAULT ''"],
 	["pair_codes", "pre_approved", "INTEGER NOT NULL DEFAULT 0"],
 	["pair_codes", "short_hash", "TEXT"],
+	["pair_codes", "owner", "INTEGER NOT NULL DEFAULT 0"],
+	["devices", "owner", "INTEGER NOT NULL DEFAULT 0"],
 	["agents", "conversation_id", "TEXT"],
 	["agents", "memory_provider", "TEXT"],
 	["messages", "conversation_id", "TEXT"],

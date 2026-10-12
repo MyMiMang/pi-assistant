@@ -170,6 +170,30 @@
       "adapter": "packages/server/src/desktop/lima.ts"
     },
     {
+      "name": "pia-wsl-rootfs",
+      "kind": "github-release",
+      "repo": "MyMiMang/pi-assistant",
+      "tagPrefix": "wsl-rootfs-v",
+      "version": "0.1.0",
+      "license": "MIT (Debian / containerd / nerdctl / runc 各自许可证见 rootfs 内 /usr/share/doc 与上游)",
+      "$comment": "Windows 助理电脑运行时：我们自己构建的 WSL2 发行版根文件系统（Debian 12 slim + nerdctl-full 里的 containerd / nerdctl / runc），packages/wsl-rootfs，CI .github/workflows/wsl-rootfs.yml 发布到 Release wsl-rootfs-v<版本>；同时作为 OCI 制品推到公开的 GHCR 包（标签 wsl-rootfs-<版本>-<架构>，blob 摘要 = 压缩包 SHA256），App 优先从 GHCR 下载（仓库私有时 Release 资产不能匿名下载）",
+      "assets": {
+        "win-x64": {
+          "file": "pia-wsl-rootfs-{v}-amd64.tar.gz",
+          "sha256": "698a73ddf1f110f338e656164df2a008d823870e3aeb287b433805fe7035fb25",
+          "size": 93906825
+        },
+        "win-arm64": {
+          "file": "pia-wsl-rootfs-{v}-arm64.tar.gz",
+          "sha256": "4c3c094d82b3539a8aafd3b22774ee0f46603c3f4ad221e4dfc05de01a9fc3ab",
+          "size": 87722494
+        }
+      },
+      "adapter": "packages/server/src/desktop/wsl.ts",
+      "smoke": "packages/server/test/desktop-wsl-fake.test.ts",
+      "ghcr": "ghcr.io/mymimang/pi-assistant-desktop"
+    },
+    {
       "name": "debian-12-genericcloud",
       "kind": "url",
       "version": "20260923-2610",

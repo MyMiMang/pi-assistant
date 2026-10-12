@@ -1,5 +1,39 @@
-# TODO(P1): 构建 packages/server 与 apps/web
-FROM node:22-bookworm-slim
-WORKDIR /app
+# Pi Assistant 服务器版镜像（网页 + 服务端，单容器）。见 docs/INSTALL.md “Linux 服务器版 → Docker 部署”。
+#   docker compose -f deploy/compose.yaml up -d --build
+#   docker compose -f deploy/compose.yaml exec server pi-assistant setup-code
+# 构建参数：WITH_DOCKER_CLI=1 时装上 docker 命令行（配合 compose.desktop.yaml 挂载宿主机 docker.sock 使用“助理电脑”）
+# syntax=docker/dockerfile:1
+
+FROM node:22-bookworm AS build
+WORKDIR /src
+COPY package.json package-lock.json .npmrc* ./
+COPY apps/web/package.json apps/web/
+COPY apps/rendezvous/package.json apps/rendezvous/
+COPY apps/tray/package.json apps/tray/
+COPY packages/ packages/
+RUN npm ci --no-audit --no-fund --ignore-scripts
 COPY . .
-CMD ["node", "-e", "console.log('server skeleton')"]
+RUN npm run build && node scripts/stage-app.mjs /out && rm -rf /out/bin-seed/cua-driver*
+
+FROM node:22-bookworm-slim
+ARG WITH_DOCKER_CLI=1
+RUN set -eux; apt-get update; \
+	DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl git ripgrep procps tini; \
+	if [ "$WITH_DOCKER_CLI" = 1 ]; then \
+		install -m 0755 -d /etc/apt/keyrings; \
+		curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc; \
+		echo "deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list; \
+		apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker-ce-cli; \
+	fi; \
+	rm -rf /var/lib/apt/lists/*
+COPY --from=build /out /app
+RUN printf '%s\n' '#!/bin/sh' 'cd /app && exec node --disable-warning=ExperimentalWarning --import tsx packages/server/src/cli.ts "$@"' > /usr/local/bin/pi-assistant \
+	&& chmod 755 /usr/local/bin/pi-assistant && mkdir -p /data && chown node:node /data
+ENV PIA_CLI_HINT="docker compose exec server pi-assistant setup-code" PIA_HOST=0.0.0.0 PIA_PORT=8787 PIA_DATA_DIR=/data PIA_HEADLESS=1 PIA_APP_DIR=/app HOME=/data NODE_ENV=production
+WORKDIR /app
+USER node
+VOLUME /data
+EXPOSE 8787
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD node -e "fetch('http://127.0.0.1:'+(process.env.PIA_PORT||8787)+'/api/system/public').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+ENTRYPOINT ["tini", "--"]
+CMD ["node", "--disable-warning=ExperimentalWarning", "--import", "tsx", "packages/server/src/main.ts"]

@@ -985,7 +985,7 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - 保留现有“自己填域名 + Named Tunnel”方式作为可选项。
 - 工作量：只做聊天 + 通知 5–7 天；助理电脑远程桌面（noVNC 流量）也走中转 9–14 天。免费额度够自用 + 少数朋友；人多或常看远程桌面需要 Workers 付费版（$5/月）。
 
-### 15.2 助理电脑开箱即用：自带虚拟机运行时（进行中，分支 `wip/assistant-computer-vm`）
+### 15.2 助理电脑开箱即用：自带虚拟机运行时（第 1–4 步已完成，等 Mac / Windows 真机验证）
 
 目标：装好 Pi Assistant 就能用助理电脑，不要求用户安装 Docker Desktop（大公司还有授权限制），也不要求本地编译镜像。
 
@@ -1003,7 +1003,7 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 **实现进度（2026-10-12，分支 `wip/assistant-computer-vm`）**
 
 - [x] **第 1 步 通用部分**（所有平台共用）
-  - 运行时抽象 `packages/server/src/desktop/backend.ts`：`DesktopBackend`（detect / ensureEngine / stopEngine / destroyEngine / cli），一个共用引擎 + 每个助理一个桌面容器（`pia-desk-<id>`，标签 `pia.agent`，家目录卷 `pia-home-<id>`）。已实现 `docker`（本机 Docker，自动探测 Podman）；`lima`、`wsl` 是占位，`auto` 在这两个平台暂时回落到 Docker。
+  - 运行时抽象 `packages/server/src/desktop/backend.ts`：`DesktopBackend`（detect / ensureEngine / stopEngine / destroyEngine / cli），一个共用引擎 + 每个助理一个桌面容器（`pia-desk-<id>`，标签 `pia.agent`，家目录卷 `pia-home-<id>`）。已实现 `docker`（本机 Docker，自动探测 Podman）；`lima`（第 2 步）、`wsl`（第 3 步）；`auto`：macOS = Lima、Windows = WSL、Linux = Docker / Podman。
   - 硬性保护 `desktop/names.ts`：所有引擎命令都经过 `assertOwnTarget`，修改/删除类命令只允许指向我们自己的容器/卷/镜像，`prune`、`compose` 等一律拒绝；单测 `test/desktop-runtime.test.ts`。
   - 「给助理安装电脑」开关（向导默认勾选 + 设置 › 助理电脑），显示下载 ≈1.5 GB / 磁盘 ≈5 GB / 内存 3–4 GB；没开启时什么都不下载，「电脑」标签显示“未安装，去设置安装”；关掉后提供“关机”和“删除虚拟机和镜像（登录状态会清掉，仅本机可操作）”。
   - 镜像：`.github/workflows/desktop-image.yml`（打 `desktop-v<版本>` tag 或手动）多架构构建推到 `ghcr.io/mymimang/pi-assistant-desktop:<版本>`；`packages/server/desktop-image.json` 固定版本 + digest（**首次发布后填 digest**，没填时按版本 tag 拉）；设置里可填加速地址（只替换注册表主机）。引擎分层拉取，断了自动重试且已下载的层不重下，按 digest 内容寻址校验；界面显示进度。`PIA_DESKTOP_IMAGE` 指定本地/自定义镜像时不下载。
@@ -1023,8 +1023,34 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
   - **删除**：关闭开关后“删除虚拟机和镜像”：删容器 / 卷 / 镜像 → `limactl delete --force pia-desktop` → 删 `数据目录/vm` 和我们自己的 `LIMA_HOME`（只在确认是 `~/.pia-vm` 或数据目录下时）。
   - **硬性保护**：只执行我们下载的 limactl（绝对路径）；`assertLimaArgs` 只放行 list/create/start/stop/delete/shell/validate 且目标必须是 `pia-desktop`、create 只能用我们生成的配置文件；`prune`/`factory-reset`/`edit` 等一律拒绝。单测 `test/desktop-lima.test.ts`。
   - **测试**：单测（清单、配置、检测、保护、续传 / 换源 / 校验）；`test/desktop-lima-fake.test.ts` 用假 limactl（`test/fixtures/fake-limactl.sh`）+ 真 Docker 跑完整生命周期（第一次建实例、端口转发可连、所有桌面停了关虚拟机、端口被占换端口且家目录保留、引擎没响应自动重启、开机失败中文报错、删除）；`test/lima-qemu.smoke.ts` 在有可用 KVM 的 Linux 上用真实 Lima（vmType qemu）跑真实虚拟机（开发机的 KVM 开不了虚拟机，这个冒烟脚本还没跑通过）；CI `lima-macos`（macos-14 arm64 / macos-13 Intel）真实下载 limactl 并 `limactl validate`。托管 macOS 运行器没有嵌套虚拟化，**vz 开机只能在真 Mac 上验证**。
-- [ ] 第 3 步 Windows（WSL2 自有发行版）
-- [ ] 第 4 步 Linux 服务器版（一键安装、常驻、一次性设置码 + 主人设备）
+- [x] **第 3 步 Windows 自带 WSL2 发行版**（2026-10-13 合入 main；**需要 Windows 真机验证**，见 HANDOFF）
+  - 代码：`packages/server/src/desktop/wsl.ts`（环境检查、安装 WSL、下载 rootfs、导入、开关机、删除、硬性保护），`backend.ts` 的 `wslBackend`（`auto` 在 Windows 上就是它）。
+  - **发行版**：自己的 `PiAssistant-Desktop`，`wsl --import` 到 `%LOCALAPPDATA%\Pi Assistant\wsl`。rootfs 由 `packages/wsl-rootfs`（Debian 12 slim + 从 nerdctl-full 里只取 containerd / nerdctl / runc / CNI 插件，nerdctl-full 包按 third-party.json 的 SHA256 校验）在 CI 里构建：`.github/workflows/wsl-rootfs.yml` 手动触发，产出 amd64 / arm64 两个 tar.gz，发布成 **pre-release** `wsl-rootfs-v<版本>`（`--latest=false`，不影响 Tauri 自动更新的 releases/latest），同时用 oras 推到公开 GHCR 包 `ghcr.io/mymimang/pi-assistant-desktop:wsl-rootfs-<版本>-<arch>`（OCI 制品，blob 摘要 = 压缩包 SHA256）。third-party.json 的 `pia-wsl-rootfs` 固定版本 + SHA256 + 大小（v0.1.0：amd64 ≈ 94 MB，arm64 ≈ 88 MB）。
+  - 发行版里的 `/etc/wsl.conf`：不自动挂载 Windows 盘（`automount.enabled=false`）、关闭 interop（发行版里不能运行 Windows 程序，也不继承 Windows PATH）、不启用 systemd、默认用户 root。`/usr/local/bin/pia-engine` 启动 containerd 并前台等待，作为“守护进程”：我们用 `wsl.exe -d PiAssistant-Desktop -u root --cd / --exec /usr/local/bin/pia-engine` 常驻一个进程让发行版保持运行，关机时 `wsl --terminate PiAssistant-Desktop`。
+  - **下载**：登记到统一下载管理器（`desktop-wsl`，「下载与组件」页可见），`.part` + Range 断点续传、重试、换源、下完校验 SHA256。源顺序：设置里的 GHCR 加速地址 → `ghcr.io`（匿名拉 blob：401 时按 `WWW-Authenticate` 换匿名令牌，blob 支持 Range）→ GitHub 加速前缀 → Release 资产（仓库私有时匿名 404，所以 GHCR 是主源）。
+  - **缺 WSL 时**：检测 `wsl --status` / `wsl --list`（输出是 UTF-16，设 `WSL_UTF8=1` 并兼容解码）。没装 → 设置里显示「安装 WSL」按钮：一次 UAC（PowerShell `Start-Process -Verb RunAs wsl.exe --install --no-distribution`），用户取消 UAC（1223）给中文提示；返回 3010 / 检测到挂起的重启 → 明确提示“需要重启电脑后才能使用”。Windows 10 2004（build 19041）以下提示升级系统。Windows 家庭版可用（WSL2 不需要 Hyper-V 管理器）；BIOS 虚拟化没开时给中文原因。
+  - **网络**：WSL 发行版里所有容器共用一个网络，桌面容器用 `--network host`，每个助理分配独立的 noVNC / CDP 转发 / VNC / Chromium 调试端口和 X 显示器编号（从 :10 起），经环境变量交给 `start.sh`（`DISPLAY_NUM`、`NOVNC_PORT`、`CDP_PROXY_PORT`、`VNC_PORT`、`CDP_PORT`、`BIND_ADDR`），全部只监听 127.0.0.1（WSL2 自动转发到 Windows 的 127.0.0.1）；端口记在容器标签 `pia.ports` / `pia.display`。host 网络下多个 xfce4-session 的 ICE 抽象套接字会互相冲突，`start.sh` 在 `BIND_ADDR≠0.0.0.0` 时直接启动 xfwm4 / xfdesktop / 面板 / xfsettingsd。桌面镜像 0.1.1 起支持（`desktop-image.json` 已更新 digest）。
+  - **按需开关机**：同第 1 步；所有桌面停了 → 结束守护进程并 `wsl --terminate`；App 退出时独立进程关闭。状态查询不为查询而开机。
+  - **硬性保护**：`assertWslArgs` 只放行固定的几种 `wsl.exe` 调用（`--status`、`--version`、`--list --verbose`、`--import PiAssistant-Desktop <我们的目录> <我们下载并校验过的文件> --version 2`、`-d PiAssistant-Desktop -u root [--cd /] --exec …`、`--terminate PiAssistant-*`、`--unregister PiAssistant-*`、`--install --no-distribution`），发行版名必须是 `PiAssistant-` 开头，`--shutdown`（会关掉用户所有发行版和 Docker Desktop）、`--set-default`、`--export` 等一律拒绝；删除目录前确认是我们自己的 wsl 目录。单测 `test/desktop-wsl.test.ts`。
+  - **测试**：单测（参数保护、输出解码、版本检查、状态分类、UAC 返回码、GHCR 令牌解析、下载换源）；`test/desktop-wsl-fake.test.ts` 用假 `wsl.exe`（`test/fixtures/fake-wsl.sh`，在 Linux 上用 chroot 模拟发行版）跑完整生命周期，设 `PIA_WSL_REAL_ROOTFS` 时用真实 rootfs 压缩包导入、在里面起 containerd + host 网络桌面容器；CI `wsl-windows`（windows-latest）跑真实 `wsl.exe` 的检测 / 保护，并真实下载 rootfs 校验 SHA256、尝试 import（托管 Windows 运行器没有嵌套虚拟化，**WSL2 开机只能在真机上验证**）。
+  - 附带修复：nerdctl 不支持 `version --format {{.Server.Version}}`，Lima 后端的引擎健康检查一直失败 → 改为 `{{json .Server}}` 且包含 containerd。
+- [x] **第 4 步 Linux 服务器版**（见 §15.3）
+
+### 15.3 Linux 服务器版（2026-10-13）
+
+目标：在自己的 Linux 服务器上一条命令装好，常驻运行，在任何设备的浏览器里使用；服务器上没有显示器也能完成首次设置。
+
+- **安装**：`curl -fsSL https://raw.githubusercontent.com/MyMiMang/pi-assistant/main/deploy/linux/install.sh | sudo sh`（系统服务）或 `… | sh -s -- --user`（当前用户的 `systemd --user` 服务，自动 `loginctl enable-linger`）。脚本按架构（x64 / arm64，glibc）从 GitHub Release 取 `pi-assistant-<版本>-linux-<arch>.tar.gz`，**强制校验 `.sha256`**；仓库私有时用 `PIA_GITHUB_TOKEN` 走 API 下载，或 `--file` 用本地包；`PIA_DOWNLOAD_MIRROR` 加速前缀。选项：`--version`、`--port`、`--host`、`--docker`（把服务账号加入 docker 组，等同 root，显式开启）、`--no-start`、`--upgrade`、`--uninstall [--purge]`。
+- **发布包**（`scripts/package-linux.mjs`，`release.yml` 的 `linux` 任务在 ubuntu-24.04 / ubuntu-24.04-arm 上构建）：内置官方 Node（third-party.json 固定版本 + SHA256）+ `app/`（stage-app：源码 + 生产依赖 + 网页 + cloudflared / uv / cua-driver）+ `pi-assistant` 命令行 + `install.sh`。
+- **目录**：系统服务 `/opt/pi-assistant/releases/<版本>`（`current` 软链接，原子切换，保留最近 2 个版本）、配置 `/etc/pi-assistant/env`（0640）、数据 `/var/lib/pi-assistant`（0750，属于系统账号 `pi-assistant`）；用户服务在 `~/.local/share/pi-assistant`、`~/.config/pi-assistant/env`。升级不覆盖配置和数据。
+- **systemd 单元加固**：`User=pi-assistant`、`NoNewPrivileges`、`ProtectSystem=strict` + 只有数据目录可写、`ProtectHome`、`PrivateTmp`、`PrivateDevices`、`ProtectKernel*`、`RestrictSUIDSGID`；`Restart=on-failure`。
+- **命令行** `pi-assistant`：`status | start | stop | restart | logs | setup-code | reset-owner | devices | upgrade | uninstall | run | version`。系统模式下 `setup-code` 等以服务账号身份运行（`runuser`），避免 root 写出服务读不了的文件。
+- **服务器模式**（`config.ts`）：`PIA_HOST`（监听地址，默认 127.0.0.1；安装脚本写 0.0.0.0）；`PIA_HEADLESS` 在监听地址不是回环时默认开启；服务器模式下 `PIA_TRUST_LOOPBACK` 默认关——**本机回环请求也要登录**（防止没带转发头的反向代理把所有外部请求变成“本机”）。
+- **一次性设置码 + 主人设备**：还没有主人设备时，服务启动生成 8 位设置码（`XXXX-XXXX`，24 小时有效，只能用一次，错误次数过多锁定后自动换新），打印到控制台 / journal，并写入 `数据目录/setup-code.txt`（0600）；每分钟检查一次，过期 / 被用掉 / `reset-owner` 后自动生成新的。网页首屏显示“欢迎使用，先完成首次设置”，输入设置码 → 这台设备直接批准并成为**主人设备**（`devices.owner=1`，设置码是 `pair_codes.owner=1` 的预批准配对码）。
+- **主人设备权限**：等同桌面版的“本机”：生成配对码、在网页上批准新设备、修改全部设置（原来 `localOnly` 的接口现在是“本机或主人”）。设置 › 远程访问与设备里显示「主人」标记，主人可以「设为主人 / 取消主人」，不能取消最后一个主人；普通设备只能删除自己。主人设备丢了：服务器上 `pi-assistant reset-owner`（吊销所有主人设备，生成新设置码）。
+- **Docker 部署**：`deploy/Dockerfile.server`（多阶段构建，运行镜像 node:22-bookworm-slim + git / ripgrep / tini + 可选 docker CLI，非 root，`/data` 卷，HEALTHCHECK）+ `deploy/compose.yaml`；`deploy/compose.desktop.yaml` 叠加文件挂载宿主机 docker.sock 并改用宿主机网络，让“助理电脑”在宿主 Docker 里运行（桌面容器端口只绑在宿主 127.0.0.1）。
+- **助理电脑**：Linux 上直接用本机 Docker / Podman（`auto` = docker 后端，自动探测 podman）。
+- **测试**：`test/server-setup.test.ts`（真实服务进程：设置码打印、首台设备成为主人、设置码作废、主人可管理、普通设备不可、回环不免登录、reset-owner 生成新码）；e2e「Linux 服务器版」步骤（浏览器里输入设置码 → 主人 → 生成配对码 → 手机认领 → 主人在网页上批准 → 普通设备调用管理接口 403），截图 70 / 71；安装脚本在干净的 systemd 容器（Debian 12）里实测：系统服务安装 → 设置码 → 认领主人 → 重启 → reset-owner 生成新码 → 升级 → 卸载 / --purge；用户服务安装 → 状态 / 日志 → 卸载；Docker：compose 构建运行、设置码、健康检查、叠加文件下容器内 docker 后端可用。
 
 ## 16. 界面打磨（2026-10-12，分支 `ui-polish`）
 

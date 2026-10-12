@@ -1224,6 +1224,68 @@ await step("界面打磨：输入框旁上下文圆环（悬停简要、点开�
 	await bar.close();
 });
 
+await step("Linux 服务器版：控制台设置码 → 网页首次设置成为主人设备 → 主人生成配对码 → 新设备认领 → 主人在网页上批准", async () => {
+	// 另起一个服务器模式的服务（PIA_HEADLESS=1：回环请求也要登录，设置码打印到控制台）
+	const SP = PORT + 1;
+	const SB = `http://127.0.0.1:${SP}`;
+	const SDATA = `${DATA}-server`;
+	rmSync(SDATA, { recursive: true, force: true });
+	let out = "";
+	const srv = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: SDATA, PIA_MOCK: "1", PIA_PORT: String(SP), PIA_HEADLESS: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+	srv.stdout.on("data", (d) => (out += d));
+	try {
+		await waitFor(() => /设置码：[A-Z0-9]{4}-[A-Z0-9]{4}/.test(out), 30_000);
+		const code = /设置码：([A-Z0-9]{4}-[A-Z0-9]{4})/.exec(out)[1];
+		const octx = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: "zh-CN", colorScheme: "light" });
+		const op = await octx.newPage();
+		await op.goto(SB);
+		await op.locator("[data-testid=server-setup]").waitFor();
+		await op.getByText("欢迎使用，先完成首次设置").waitFor();
+		await op.locator("[data-testid=pair-code-input]").fill(code.toLowerCase().replace("-", " "));
+		await op.screenshot({ path: join(SHOTS, "70-server-setup-code.png") });
+		await op.locator("[data-testid=pair-code-submit]").click();
+		await op.locator("[data-testid=pair-done]").waitFor();
+		await op.goto(`${SB}/?settings=remote`);
+		await op.locator("[data-testid=settings-dialog]").waitFor();
+		const sys = await op.evaluate(async () => {
+			const c = JSON.parse(localStorage.getItem(Object.keys(localStorage).find((k) => localStorage.getItem(k)?.includes("hh_"))));
+			return (await fetch("/api/system", { headers: { authorization: `Bearer ${c.token}` } })).json();
+		});
+		if (!sys.owner || !sys.local) throw new Error(`首次设置的设备应是主人设备：${JSON.stringify({ owner: sys.owner, local: sys.local })}`);
+		// 设置码已作废
+		const again = await fetch(`${SB}/api/pair/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code, name: "x" }) });
+		if (again.status !== 400) throw new Error("设置码应只能用一次");
+		// 主人在网页上生成配对码（原来只能在本机操作）
+		await op.getByRole("button", { name: /生成配对二维码/ }).click();
+		const pcode = (await op.locator("[data-testid=pair-short-code]").textContent()).trim();
+		// 新设备（手机）认领 → 等待主人批准
+		const pctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: "zh-CN", isMobile: true, hasTouch: true });
+		const pp = await pctx.newPage();
+		await pp.goto(SB);
+		await pp.locator("[data-testid=pair-code-input]").fill(pcode);
+		await pp.locator("[data-testid=pair-code-submit]").click();
+		// 主人网页上弹出批准框
+		await op.getByRole("button", { name: "允许连接" }).click();
+		await pp.locator("[data-testid=pair-done]").waitFor();
+		await op.keyboard.press("Escape");
+		await op.goto(`${SB}/?settings=remote`);
+		await op.locator("[data-testid=settings-dialog]").waitFor();
+		await op.getByText("手机", { exact: false }).first().waitFor().catch(() => {});
+		await op.locator("[data-testid=settings-content]").getByText("主人", { exact: true }).first().waitFor();
+		await op.screenshot({ path: join(SHOTS, "71-server-owner-devices.png") });
+		// 手机不是主人：管理接口 403
+		const pr = await pp.evaluate(async () => {
+			const c = JSON.parse(localStorage.getItem(Object.keys(localStorage).find((k) => localStorage.getItem(k)?.includes("hh_"))));
+			return (await fetch("/api/pair/start", { method: "POST", headers: { authorization: `Bearer ${c.token}`, "content-type": "application/json" }, body: "{}" })).status;
+		});
+		if (pr !== 403) throw new Error(`普通设备不应能生成配对码：${pr}`);
+		await octx.close();
+		await pctx.close();
+	} finally {
+		srv.kill("SIGTERM");
+	}
+});
+
 await browser.close();
 await stopServer();
 console.log("\n===== 结果 =====");

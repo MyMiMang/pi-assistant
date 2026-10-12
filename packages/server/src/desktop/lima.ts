@@ -330,8 +330,9 @@ function cleanupOldVersions(files: FileSpec[]) {
 async function engineHealthy(timeout = 30_000) {
 	const cli = nerdctlCli();
 	try {
-		await run(cli[0], [...cli.slice(1), "version", "--format", "{{.Server.Version}}"], { timeout });
-		return true;
+		// nerdctl 没有 .Server.Version（只有 .Server.Components），用 {{json .Server}} 判断 containerd 是否在响应
+		const { stdout } = await run(cli[0], [...cli.slice(1), "version", "--format", "{{json .Server}}"], { timeout });
+		return /containerd/i.test(String(stdout));
 	} catch {
 		return false;
 	}

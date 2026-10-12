@@ -7,7 +7,6 @@ import { createConnection, createServer } from "node:net";
 import { backend, engine, engineCommand } from "./desktop/backend.ts";
 import { IdleTracker } from "./desktop/idle.ts";
 import { imagePresent, installState, startInstall } from "./desktop/image.ts";
-import { vmPhase } from "./desktop/lima.ts";
 import { containerName, LABEL, labelValues, volumeName } from "./desktop/names.ts";
 import { desktopSettings, localImage } from "./desktop/settings.ts";
 
@@ -30,7 +29,7 @@ export interface DesktopStatus {
 	backend: string;
 	install: ReturnType<typeof installState>;
 	idleMinutes: number;
-	/** 虚拟机后端（macOS）：虚拟机本身的状态与阶段说明，例如“正在启动虚拟机” */
+	/** 虚拟机 / 发行版后端（macOS Lima、Windows WSL）：运行时本身的状态与阶段说明，例如“正在启动虚拟机” */
 	vm?: { running: boolean; phase: string; detail?: string };
 }
 
@@ -57,7 +56,7 @@ export async function desktopStatus(agentId: string): Promise<DesktopStatus> {
 	if (!a.ok) return { ...base, state: "none" };
 	if (backend().fixedPorts) {
 		// 虚拟机关机时不为了查状态而开机：桌面一定是关着的
-		const ph = vmPhase();
+		const ph = backend().phase?.() ?? { phase: "idle" };
 		const running = await backend().engineRunning();
 		const vm = { running, phase: ph.phase, detail: ph.detail };
 		if (!running) return { ...base, vm, state: starting.has(agentId) ? "starting" : "stopped" };
@@ -115,7 +114,8 @@ async function doStart(agentId: string): Promise<DesktopStatus> {
 	const name = containerOf(agentId);
 	// 旧版容器没有发布浏览器调试端口 / 镜像版本变了 / （虚拟机后端）上次的宿主端口现在被 Mac 上别的程序占了：
 	// 删掉容器重建（家目录在独立卷里，登录态不受影响）
-	if (st.state !== "none" && (!(fixed ? (await labelPorts(name)).length === 2 : await hasPort(name, "9223/tcp")) || (await containerImage(name)) !== localImage() || (fixed && !(await boundPortsFree(name))))) {
+	const hostNet = !!backend().hostNetwork;
+	if (st.state !== "none" && (!(fixed ? (await labelPorts(name)).length === (hostNet ? 4 : 2) : await hasPort(name, "9223/tcp")) || (await containerImage(name)) !== localImage() || (fixed && !(await boundPortsFree(name))))) {
 		await docker(["rm", "-f", name]).catch(() => {});
 		st.state = "none";
 	}
@@ -123,17 +123,8 @@ async function doStart(agentId: string): Promise<DesktopStatus> {
 	const since = new Date(Date.now() - 1000).toISOString();
 	if (st.state === "stopped") await docker(["start", name]);
 	if (st.state === "none") {
-		// 虚拟机后端：宿主端口由我们挑 Mac 上空闲的，虚拟机里发布同号端口，Lima 转发到 Mac 的 127.0.0.1（虚拟机网络只有本机能到）
-		const [vnc, cdp] = fixed ? [await freePort(), await freePort()] : [0, 0];
-		const ports = fixed ? [`0.0.0.0:${vnc}:6080`, `0.0.0.0:${cdp}:9223`] : ["127.0.0.1::6080", "127.0.0.1::9223"];
 		// 不设 --restart：空闲关机后不会被引擎自动拉起，下次按需再启动
-		await docker(
-			["run", "-d", "--name", name, "--shm-size", "1g", "--cpus", "2", "--memory", "3g",
-				"-p", ports[0], "-p", ports[1], "-v", `${volumeName(agentId)}:/home/agent`, "--label", `${LABEL}=${agentId}`,
-				// 虚拟机后端：把宿主端口也记在标签里（关机的容器也能读到，不依赖各引擎 inspect 格式的差异）
-				...(fixed ? ["--label", `${PORTS_LABEL}=6080:${vnc},9223:${cdp}`] : []), localImage()],
-			{ timeout: 120_000 },
-		);
+		await docker(["run", "-d", "--name", name, "--shm-size", "1g", "--cpus", "2", "--memory", "3g", ...(await runNetArgs(agentId)), "-v", `${volumeName(agentId)}:/home/agent`, "--label", `${LABEL}=${agentId}`, localImage()], { timeout: 120_000 });
 	}
 	starting.delete(agentId);
 	for (let i = 0; i < 60; i++) {
@@ -157,6 +148,76 @@ async function doStart(agentId: string): Promise<DesktopStatus> {
 	throw new Error("助理电脑启动超时");
 }
 
+/**
+ * 桌面容器的网络参数：
+ * - docker：随机宿主端口，只绑定 127.0.0.1
+ * - 虚拟机（Lima）：宿主端口由我们挑 Mac 上空闲的，虚拟机里发布同号端口，Lima 转发到 Mac 的 127.0.0.1（虚拟机网络只有本机能到）
+ * - host 网络（WSL）：发行版里的所有桌面共用一个网络，noVNC / 浏览器调试转发 / VNC / Chromium 调试端口和 X 显示器编号
+ *   都由我们分配并经环境变量交给 start.sh；全部只监听 127.0.0.1，WSL 自动转发到 Windows 的 127.0.0.1
+ * 端口都记在标签里（关机的容器也能读到，不依赖各引擎 inspect 格式的差异）
+ */
+async function runNetArgs(agentId: string): Promise<string[]> {
+	const b = backend();
+	if (b.hostNetwork) {
+		const [novnc, cdpProxy, vnc, cdp] = await freePorts(4);
+		const display = pickDisplay(await usedDisplays(containerOf(agentId)));
+		return hostNetArgs({ novnc, cdpProxy, vnc, cdp, display });
+	}
+	if (b.fixedPorts) {
+		const [vnc, cdp] = await freePorts(2);
+		return ["-p", `0.0.0.0:${vnc}:6080`, "-p", `0.0.0.0:${cdp}:9223`, "--label", `${PORTS_LABEL}=6080:${vnc},9223:${cdp}`];
+	}
+	return ["-p", "127.0.0.1::6080", "-p", "127.0.0.1::9223"];
+}
+/** host 网络的 run 参数（纯函数，单测） */
+export function hostNetArgs(p: { novnc: number; cdpProxy: number; vnc: number; cdp: number; display: number }) {
+	const env = { DISPLAY_NUM: p.display, DISPLAY: `:${p.display}`, NOVNC_PORT: p.novnc, CDP_PROXY_PORT: p.cdpProxy, VNC_PORT: p.vnc, CDP_PORT: p.cdp, BIND_ADDR: "127.0.0.1" };
+	return [
+		"--network", "host",
+		...Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
+		"--label", `${PORTS_LABEL}=6080:${p.novnc},9223:${p.cdpProxy},5900:${p.vnc},9222:${p.cdp}`,
+		"--label", `${DISPLAY_LABEL}=${p.display}`,
+	];
+}
+/** 选一个其他桌面没用的 X 显示器编号（host 网络下 X 的抽象套接字按编号区分，必须错开），从 10 开始 */
+export function pickDisplay(used: Set<number>) {
+	for (let d = 10; d < 1000; d++) if (!used.has(d)) return d;
+	throw new Error("没有可用的显示器编号");
+}
+async function usedDisplays(except: string): Promise<Set<number>> {
+	const out = new Set<number>();
+	try {
+		const { stdout } = await docker(["ps", "-a", "--filter", `label=${LABEL}`, "--format", "{{.Names}}"]);
+		for (const n of String(stdout).split("\n").map((x) => x.trim()).filter((x) => x && x !== except)) {
+			const v = Number((await containerLabels(n))[DISPLAY_LABEL]);
+			if (v > 0) out.add(v);
+		}
+	} catch {}
+	return out;
+}
+/** 一次挑多个互不相同的空闲端口 */
+async function freePorts(n: number) {
+	const out: number[] = [];
+	while (out.length < n) {
+		const p = await freePort();
+		if (!out.includes(p)) out.push(p);
+	}
+	return out;
+}
+const DISPLAY_LABEL = "pia.display";
+async function containerLabels(name: string): Promise<Record<string, string>> {
+	try {
+		const { stdout } = await docker(["inspect", "-f", "{{json .Config.Labels}}", name]);
+		return (JSON.parse(String(stdout)) ?? {}) as Record<string, string>;
+	} catch {
+		return {};
+	}
+}
+/** 容器里 Chromium 调试端口（host 网络的桌面各不相同，其余是 9222） */
+async function innerCdpPort(name: string) {
+	return new Map(await labelPorts(name)).get(9222) ?? 9222;
+}
+
 class DesktopNotReady extends Error {}
 /**
  * 桌面就绪检查（一次 docker exec）：X 服务器能连上、窗口管理器（xfwm4）和桌面（xfdesktop）在跑、
@@ -164,12 +225,12 @@ class DesktopNotReady extends Error {}
  * 输出 “ok <标准差>” 或 “wait <原因>”。
  */
 export const READY_PROBE = [
-	"export DISPLAY=:1",
+	'export DISPLAY=":${DISPLAY_NUM:-1}"',
 	"xdpyinfo >/dev/null 2>&1 || { echo 'wait X'; exit 0; }",
 	"pgrep -x xfwm4 >/dev/null || { echo 'wait 窗口管理器'; exit 0; }",
 	"pgrep -x xfdesktop >/dev/null || { echo 'wait 桌面'; exit 0; }",
-	"(exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null || { echo 'wait VNC'; exit 0; }",
-	"(exec 3<>/dev/tcp/127.0.0.1/6080) 2>/dev/null || { echo 'wait noVNC'; exit 0; }",
+	"(exec 3<>/dev/tcp/127.0.0.1/${VNC_PORT:-5900}) 2>/dev/null || { echo 'wait VNC'; exit 0; }",
+	"(exec 3<>/dev/tcp/127.0.0.1/${NOVNC_PORT:-6080}) 2>/dev/null || { echo 'wait noVNC'; exit 0; }",
 	"pgrep -f 'cua-driver serve' >/dev/null || { echo 'wait cua-driver'; exit 0; }",
 	"sd=$(import -window root -colorspace gray -format '%[fx:standard_deviation]' info: 2>/dev/null)",
 	"awk -v s=\"${sd:-0}\" 'BEGIN{ if (s+0 > 0.01) print \"ok \" s; else print \"wait 屏幕还是空白\" }'",
@@ -229,13 +290,8 @@ export function reachable(port: number, timeout = 1500): Promise<boolean> {
 const PORTS_LABEL = "pia.ports";
 /** 容器标签里记的端口映射：[[容器端口, 宿主端口]] */
 async function labelPorts(name: string): Promise<[number, number][]> {
-	try {
-		const { stdout } = await docker(["inspect", "-f", "{{json .Config.Labels}}", name]);
-		const v = ((JSON.parse(String(stdout)) ?? {}) as Record<string, string>)[PORTS_LABEL] ?? "";
-		return v.split(",").map((x) => x.split(":").map(Number) as [number, number]).filter(([a, b]) => a > 0 && b > 0);
-	} catch {
-		return [];
-	}
+	const v = (await containerLabels(name))[PORTS_LABEL] ?? "";
+	return v.split(",").map((x) => x.split(":").map(Number) as [number, number]).filter(([a, b]) => a > 0 && b > 0);
 }
 async function boundPortsFree(name: string) {
 	{
@@ -272,15 +328,18 @@ export async function ensureDesktopBrowser(agentId: string): Promise<string> {
 	const st = await desktopStatus(agentId);
 	if (st.state !== "running" || !st.cdpPort) throw new Error("助理电脑没有运行");
 	const name = containerOf(agentId);
-	const up = () => docker(["exec", name, "curl", "-sf", "http://127.0.0.1:9222/json/version"], { timeout: 5000 }).then(() => true, () => false);
+	const port = await innerCdpPort(name);
+	const up = () => docker(["exec", name, "curl", "-sf", `http://127.0.0.1:${port}/json/version`], { timeout: 5000 }).then(() => true, () => false);
 	if (!(await up())) {
-		await docker(["exec", "-d", "-e", "DISPLAY=:1", name, "chromium", ...DESKTOP_CHROMIUM_ARGS]);
+		// DISPLAY 继承容器环境（镜像默认 :1；host 网络的桌面在 run 时设了各自的编号）
+		await docker(["exec", "-d", name, "chromium", ...desktopChromiumArgs(port)]);
 		for (let i = 0; i < 40 && !(await up()); i++) await new Promise((r) => setTimeout(r, 250));
 		if (!(await up())) throw new Error("助理电脑里的浏览器没有启动起来");
 	}
 	return `http://127.0.0.1:${st.cdpPort}`;
 }
 /** 容器即沙箱边界，Chromium 自带的沙箱在非特权容器里无法启用 */
+export const desktopChromiumArgs = (port = 9222) => DESKTOP_CHROMIUM_ARGS.map((a) => (a === "--remote-debugging-port=9222" ? `--remote-debugging-port=${port}` : a));
 export const DESKTOP_CHROMIUM_ARGS = ["--user-data-dir=/home/agent/.config/pia-browser", "--remote-debugging-port=9222", "--remote-debugging-address=127.0.0.1", "--no-first-run", "--no-default-browser-check", "--no-sandbox", "--disable-dev-shm-usage", "--start-maximized", "--lang=zh-CN", "about:blank"];
 
 export async function stopDesktop(agentId: string) {
@@ -377,7 +436,7 @@ export async function screenshotDesktop(agentId: string): Promise<Buffer> {
 		await waitDesktopReady(agentId, 30_000).catch(() => {});
 		readyOnce.add(agentId);
 	}
-	const { stdout } = await docker(["exec", "-e", "DISPLAY=:1", containerOf(agentId), "import", "-window", "root", "png:-"], { encoding: "buffer", timeout: 15_000 });
+	const { stdout } = await docker(["exec", containerOf(agentId), "import", "-window", "root", "png:-"], { encoding: "buffer", timeout: 15_000 });
 	idle.touch(agentId);
 	return stdout as unknown as Buffer;
 }
@@ -387,7 +446,7 @@ export const forgetReady = (agentId: string) => readyOnce.delete(agentId);
 
 /** cua-driver 的 MCP stdio 命令：在助理电脑容器里运行。 */
 export function cuaMcpCommand(agentId: string): { command: string; args: string[] } {
-	return engineCommand(["exec", "-i", "-e", "DISPLAY=:1", containerOf(agentId), "cua-driver", "mcp"]);
+	return engineCommand(["exec", "-i", containerOf(agentId), "cua-driver", "mcp"]);
 }
 
 // ---------------------------------------------------------------- 实时画面一次性票据（用于 WebSocket 代理）

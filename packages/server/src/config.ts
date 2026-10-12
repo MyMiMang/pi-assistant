@@ -66,7 +66,15 @@ export const config = (() => {
 	const workspaceRoot = resolve(env("WORKSPACE") ?? join(dataDir, "workspace"));
 	const c = {
 		port: Number(env("PORT") ?? 8787),
-		host: "127.0.0.1",
+		/** 监听地址：桌面版只监听本机；Linux 服务器版（PIA_HOST=0.0.0.0）对外提供网页 */
+		host: env("HOST") ?? "127.0.0.1",
+		/**
+		 * 无屏幕的服务器模式（DESIGN §15.3）：第一次设置用控制台 / 日志里的一次性设置码，第一台用它登录的设备成为“主人设备”；
+		 * 默认在 PIA_HOST 不是本机回环时开启，也可用 PIA_HEADLESS=1 / 0 强制。服务器模式下不再信任本机回环免登录
+		 * （反向代理没带转发头时，所有外部请求看起来都来自 127.0.0.1），需要时 PIA_TRUST_LOOPBACK=1。
+		 */
+		headless: false,
+		trustLoopback: true,
 		dataDir,
 		workspaceRoot,
 		filesDir: join(dataDir, "files"),
@@ -85,6 +93,8 @@ export const config = (() => {
 		desktopImage: env("DESKTOP_IMAGE") ?? `${BRAND.id}/desktop:dev`,
 		allowModelNetwork: env("OFFLINE") !== "1",
 	};
+	c.headless = env("HEADLESS") !== undefined ? env("HEADLESS") === "1" : !/^(127\.0\.0\.1|localhost|::1)$/.test(c.host);
+	c.trustLoopback = env("TRUST_LOOPBACK") !== undefined ? env("TRUST_LOOPBACK") === "1" : !c.headless;
 	for (const d of [c.dataDir, c.workspaceRoot, c.filesDir, c.agentsDir]) mkdirSync(d, { recursive: true });
 	c.dbPath = migrateDb(c.dataDir);
 	seedBins(c.dataDir);

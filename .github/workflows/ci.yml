@@ -41,3 +41,17 @@ jobs:
         working-directory: packages/server
         env: { PIA_LIMA_REAL: "1" }
         run: node --import tsx --test test/desktop-lima.test.ts test/desktop-runtime.test.ts
+  # Windows 助理电脑（WSL2）：托管 Windows 运行器一般没有嵌套虚拟化，WSL2 起不来；
+  # 这里验证 WSL 单测（保护 / 解析 / 提权命令 / host 网络参数）、真实 wsl.exe 探测与中文归类、真实下载并校验发布的 rootfs，
+  # 运行器的 WSL2 恰好可用时再真实导入 / 启动容器引擎 / 注销
+  wsl-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci --ignore-scripts
+      - name: WSL 单测 + Windows 实测
+        working-directory: packages/server
+        env: { PIA_WSL_REAL_DOWNLOAD: "1", PIA_WSL_TRY_IMPORT: "1" }
+        run: node --import tsx --test --test-concurrency=1 test/desktop-wsl.test.ts test/desktop-runtime.test.ts test/desktop-wsl-windows.test.ts

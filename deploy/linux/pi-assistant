@@ -1,0 +1,67 @@
+#!/bin/sh
+# Pi Assistant Linux 服务器版命令行（安装后在 /usr/local/bin/pi-assistant 或 ~/.local/bin/pi-assistant）。
+# 也可以直接在解压出来的发布包目录里运行：./pi-assistant run
+set -eu
+
+self=$(readlink -f "$0")
+REL=$(dirname "$self")            # 当前版本目录：node、app/ 都在这里
+PREFIX=$(dirname "$(dirname "$REL")") # 安装根目录（…/releases/<版本> 的上两级）
+CONF="$PREFIX/install.conf"
+MODE=none; ENV_FILE=; SERVICE_USER=; SERVICE=pi-assistant
+[ -f "$CONF" ] && . "$CONF"
+# sudo -iu / ssh 以外的方式进来时，systemctl --user 需要这两个变量
+if [ "$(id -u)" != 0 ]; then
+	: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"; export XDG_RUNTIME_DIR
+	[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] || [ ! -S "$XDG_RUNTIME_DIR/bus" ] || export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+fi
+
+load_env() {
+	[ -n "$ENV_FILE" ] && [ -r "$ENV_FILE" ] || return 0
+	set -a; . "$ENV_FILE"; set +a
+}
+sctl() { if [ "$MODE" = user ]; then systemctl --user "$@"; else systemctl "$@"; fi; }
+need_service() { [ "$MODE" = system ] || [ "$MODE" = user ] || { echo "没有以服务方式安装（直接运行：$self run）" >&2; exit 1; }; }
+as_service_user() {
+	# 系统服务模式：以服务账号身份读写数据目录，避免 root 写出服务读不了的文件
+	if [ "$MODE" = system ] && [ "$(id -u)" = 0 ] && [ -n "$SERVICE_USER" ]; then
+		if command -v runuser >/dev/null 2>&1; then exec runuser -u "$SERVICE_USER" -- "$@"; fi
+		exec su -s /bin/sh "$SERVICE_USER" -c "$(printf '%s ' "$@")"
+	fi
+	if [ "$MODE" = system ] && [ "$(id -un)" != "$SERVICE_USER" ]; then echo "请用 sudo 运行：sudo pi-assistant $cmd" >&2; exit 1; fi
+	exec "$@"
+}
+node_run() { cd "$REL/app"; PIA_APP_DIR="$REL/app" as_service_user env PIA_APP_DIR="$REL/app" "$REL/node" --disable-warning=ExperimentalWarning --import tsx "$@"; }
+
+cmd=${1:-help}; [ $# -gt 0 ] && shift
+case "$cmd" in
+run)
+	load_env
+	: "${PIA_DATA_DIR:=${XDG_DATA_HOME:-$HOME/.local/share}/pi-assistant/data}"
+	: "${PIA_HOST:=0.0.0.0}"
+	export PIA_DATA_DIR PIA_HOST PIA_APP_DIR="$REL/app"
+	cd "$REL/app"
+	exec "$REL/node" --disable-warning=ExperimentalWarning --import tsx packages/server/src/main.ts ;;
+start|stop|restart|status) need_service; sctl "$cmd" "$SERVICE" "$@" ;;
+logs)
+	need_service
+	if [ "$MODE" = user ]; then exec journalctl --user -u "$SERVICE" -e "$@"; else exec journalctl -u "$SERVICE" -e "$@"; fi ;;
+setup-code|reset-owner|devices) load_env; export PIA_DATA_DIR; node_run packages/server/src/cli.ts "$cmd" ;;
+version) cat "$REL/app/app-version.json" 2>/dev/null || echo unknown ;;
+upgrade) exec "$REL/install.sh" --"$MODE" --upgrade "$@" ;;
+uninstall) exec "$REL/install.sh" --"$MODE" --uninstall "$@" ;;
+help|-h|--help)
+	cat <<USAGE
+用法：pi-assistant <命令>
+  status | start | stop | restart   服务状态 / 启停
+  logs [-f]                         查看日志（设置码也会打印在日志里）
+  setup-code                        显示一次性设置码（首次在网页上登录用，登录的设备成为“主人设备”）
+  reset-owner                       主人设备丢了：取消所有主人设备，服务生成新的设置码
+  devices                           列出已配对设备
+  upgrade [--version X | --file 包] 升级到新版本（数据保留）
+  uninstall [--purge]               卸载（加 --purge 同时删除数据）
+  run                               前台运行（systemd 用；没装服务时也可直接用）
+  version                           版本信息
+USAGE
+	;;
+*) echo "未知命令：$cmd（pi-assistant help）" >&2; exit 1 ;;
+esac

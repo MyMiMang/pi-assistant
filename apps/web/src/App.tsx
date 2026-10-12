@@ -18,6 +18,15 @@ export default function App() {
 	const width = useWindowWidth();
 	const L = resolveLayout(width, layout);
 	const [fatal, setFatal] = useState<null | "unpaired" | "offline">(null);
+	/** Linux 服务器版：setup = 还没有主人设备（输设置码）；server = 已设置过（找主人设备要配对码） */
+	const [setupMode, setSetupMode] = useState<null | "setup" | "server">(null);
+	useEffect(() => {
+		if (fatal !== "unpaired") return;
+		void fetch("/api/system/public")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((p: { server?: boolean; setup?: boolean } | null) => setSetupMode(p?.setup ? "setup" : p?.server ? "server" : null))
+			.catch(() => {});
+	}, [fatal]);
 
 	useEffect(() => {
 		let stop: (() => void) | undefined;
@@ -65,9 +74,13 @@ export default function App() {
 		return (
 			<div className="flex min-h-full flex-col items-center justify-center gap-4 overflow-y-auto p-8 text-center" data-testid={fatal === "unpaired" ? "unpaired" : "offline"}>
 				<img src="/icon-192.png" className="h-16 w-16 rounded-2xl" alt="" />
-				<div className="text-lg font-semibold">{fatal === "unpaired" ? "这台设备还没有配对" : "连不上你的电脑"}</div>
-				<p className="max-w-sm text-sm text-zinc-500">
-					{fatal === "unpaired"
+				<div className="text-lg font-semibold">{fatal === "unpaired" ? (setupMode === "setup" ? "欢迎使用，先完成首次设置" : "这台设备还没有配对") : "连不上你的电脑"}</div>
+				<p className="max-w-sm text-sm text-zinc-500" data-testid={setupMode ? "server-setup" : undefined}>
+					{fatal === "unpaired" && setupMode === "setup"
+						? "首次设置：输入服务器控制台（或 sudo pi-assistant setup-code）显示的 8 位设置码。第一台登录的设备会成为主人设备，之后可以在网页上批准新设备、修改所有设置。"
+						: fatal === "unpaired" && setupMode === "server"
+						? "让主人设备在「设置 → 远程访问与设备」生成配对码，把配对码输入下面。"
+						: fatal === "unpaired"
 						? isStandalone()
 							? `主屏 App 和浏览器的登录是分开的，需要在这里再配对一次：在电脑上打开 ${BRAND.name} →「设置 → 远程访问与设备」→ 生成配对二维码，把旁边的配对码输入下面。`
 							: `在电脑上打开 ${BRAND.name} →「设置 → 远程访问与设备」，用手机扫描配对二维码，或把配对码输入下面。`

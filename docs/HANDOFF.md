@@ -15,11 +15,12 @@ Pi Assistant：基于 [Pi](https://github.com/earendil-works/pi) 的本地私人
 | Phase 3：助理电脑（Docker 桌面 + 实时画面）、浏览器自动化、操作这台电脑（权限档位）、飞书 / 钉钉 / 企业微信 / 邮箱 / Gmail、微信 ClawBot、主动性引擎 | ✅ 大部分完成 | §14 |
 | 安装包 | ✅ v0.1.0-beta.4 已发布（mac arm64 / x64、Windows），**未签名** | §5.2 |
 | 界面打磨（原生窗口、自定义勾选框、「?」帮助、上下文圆环、统一下载状态、完全权限确认框、悬浮条） | ✅ 2026-10-12 合入 main | §16、§5.19.2 |
-| 助理电脑自带虚拟机（Lima / WSL2，不要求装 Docker） | 🚧 第 1 步通用部分 ✅；**第 2 步 macOS（Lima + vz + containerd）✅ 已合入 main，等真 Mac 验证**；Windows（WSL2）/ Linux 服务器版未开始 | §15.2 |
+| 助理电脑自带虚拟机（Lima / WSL2，不要求装 Docker） | ✅ 第 1 步通用 + 第 2 步 macOS（Lima）+ 第 3 步 Windows（WSL2 自有发行版）已合入 main；**Mac / Windows 等真机验证** | §15.2 |
 | 共用中转远程访问（Paseo 式） | ⏸ 用户决定暂缓 | §15.1 |
-| Linux 服务器版（一条命令安装、一次性设置码、主人设备） | 📝 已确认方案，排在助理电脑之后 | §15.2 讨论 |
+| Linux 服务器版（一条命令安装、一次性设置码、主人设备、Docker 部署） | ✅ 2026-10-13 合入 main；安装脚本在 systemd 容器里实测；Linux 发布包要等下一次打 tag 才会出现在 Release | §15.3、INSTALL.md |
 
 ### 已实现但没在真机上验证过
+- **Windows 助理电脑（WSL2）**：托管 Windows CI 没有嵌套虚拟化，WSL2 开机只能真机测。已验证：参数保护 / 解码 / 状态分类单测；假 wsl.exe + 真实 rootfs 压缩包在 Linux 上的完整生命周期（导入、containerd、host 网络两个桌面同时运行）；rootfs 的 SHA256（CI 构建 + 本机核对）。真机步骤见下面「Windows 助理电脑真机测试」。
 - **macOS 助理电脑虚拟机（Lima vz）**：真实开机只能在真 Mac 上测（托管 macOS CI 没有嵌套虚拟化；这台开发机的 KVM 也开不了 qemu 虚拟机）。已验证：固定的 4 个下载文件摘要（真实下载核对）、生成的配置通过真实 `limactl validate`（Linux 版 limactl）、假 limactl + 真 Docker 的完整生命周期测试。真 Mac 验证步骤见下面「macOS 助理电脑真机测试」。
 - Cloudflare 命名隧道公网连通、Rendezvous Worker 部署、Web Push 真机推送、微信真实扫码。
 - 原生主窗口 / 透明悬浮条：Linux 上 `cargo check` 通过，**macOS / Windows 真机没测**（悬浮条透明在 macOS 依赖 `macOSPrivateApi`，Windows WebView2 透明需要实际看效果）。
@@ -56,6 +57,27 @@ npm run check:pi         # Pi 升级兼容检查
 9. 关闭开关 → “删除虚拟机和镜像” → `~/.pia-vm` 和 数据目录/vm 都被删掉；用户自己的 `~/.lima`、Docker Desktop 完全没被碰。
 有问题时请带上：`~/.pia-vm/pia-desktop/ha.stderr.log`、`serial*.log`，以及 设置 › 助理电脑 里显示的错误。
 
+### Windows 助理电脑真机测试（第 3 步）
+需要：Windows 10 2004+ 或 Windows 11（**家庭版、专业版各测一次**），x64；最好一台**还没装过 WSL** 的电脑和一台已经装了 WSL + Docker Desktop + 自己的 Ubuntu 发行版的电脑。
+1. 装 main 打出来的安装包（或源码 `npm run dev`）。
+2. 设置 › 助理电脑：打开「给助理安装电脑」，运行方式“自带运行时（推荐）”→ 应显示 Windows 的 WSL2。
+3. 没装 WSL 的电脑：应显示「安装 WSL」按钮 → 点击 → 弹一次 UAC → 同意 → 等完成 → 显示“需要重启电脑”。再测一次点「否」：应提示“已取消管理员授权”。重启后回到设置，状态应变成可用。
+4. 下载 rootfs（≈94 MB）：「下载与组件」页能看到进度；中途断网 / 退出 App 再开，应接着下。（仓库私有时走 GHCR；**GHCR 的 rootfs 推送因为 Actions 账单问题还没跑成**，见第 6 节）
+5. 打开某个助理的「电脑」标签 → 自动 `wsl --import` + 开机 → 看到桌面；`wsl -l -v` 里出现 `PiAssistant-Desktop`（VERSION 2），**用户自己的发行版状态不变**。
+6. 再开第二个助理：两个桌面同时可用（host 网络，各自端口）。让助理用浏览器访问网站。
+7. 两个都关机 → `wsl -l -v` 里 PiAssistant-Desktop 变成 Stopped（Docker Desktop、自己的 Ubuntu 不受影响，没有被 `--shutdown`）；`vmmem` 内存回收（所有发行版都停了时）。
+8. 再开机：之前的登录状态还在。退出 App：约半分钟内发行版停掉。
+9. 发行版里看不到 Windows 文件：`wsl -d PiAssistant-Desktop -u root --exec ls /mnt` 为空。
+10. 关闭开关 → 「删除虚拟机和镜像」→ `wsl -l` 里没有 PiAssistant-Desktop，`%LOCALAPPDATA%\Pi Assistant\wsl` 被删除。
+11. BIOS 关闭虚拟化的电脑（如果有）：应显示中文原因“没有开启硬件虚拟化”。
+有问题时请带上：设置 › 助理电脑 显示的错误、`wsl --status`、`wsl -l -v` 的输出、`%APPDATA%\Pi Assistant` 下的日志。
+
+### Linux 服务器版
+- 打包：`npm run build && node scripts/package-linux.mjs` → `dist-linux/pi-assistant-<版本>-linux-<arch>.tar.gz`（+ .sha256）。
+- 本地测安装脚本（干净 systemd 容器）：`docker run -d --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v $PWD/dist-linux:/pkg:ro <装了 systemd 和 libpam-systemd 的 debian:12 镜像> /sbin/init`，然后 `sh deploy/linux/install.sh --file /pkg/….tar.gz`。
+- Docker：`docker compose -f deploy/compose.yaml up -d --build`。
+- 服务器模式开关：`PIA_HOST`、`PIA_HEADLESS`、`PIA_TRUST_LOOPBACK`、`PIA_SETUP_CHECK_MS`（设置码检查间隔）、`PIA_CLI_HINT`（日志里提示的命令）。命令行实现 `packages/server/src/cli.ts`，设置码 `setup-code.ts`，主人设备 `auth.ts`（`isOwnerDevice` / `setOwner` / `resetOwners`）。
+
 ## 4. 分支
 
 | 分支 | 用途 | 状态 |
@@ -78,6 +100,8 @@ npm run check:pi         # Pi 升级兼容检查
 
 ## 6. 未解决 / 已知问题
 
+- **GitHub Actions 账单问题（2026-10-13）**：账号付款失败 / 达到支出上限，新的工作流都没开始就失败（“recent account payments have failed or your spending limit needs to be increased”）。受影响：`wsl-rootfs` 把 rootfs 推到 GHCR 的那次运行没跑成（Release `wsl-rootfs-v0.1.0` 资产已有，但仓库私有时匿名下载不到，所以 Windows 端现在下不到 rootfs，除非仓库公开或 GHCR 推送补跑），以及 ci / secrets。修好账单后：Actions › wsl-rootfs › Run workflow，版本填 `0.1.0`（已有 Release 时只下载资产并推 GHCR，不会重建）。
+- **仓库私有**：Linux `curl | sh` 匿名下载发布包会 404，需要 `PIA_GITHUB_TOKEN` 或 `--file`（INSTALL.md）。仓库是否公开由用户决定。
 - 安装包没有签名：macOS 首次要右键打开，Windows 有 SmartScreen 提示（§5.2）。
 - macOS 沙箱（系统沙箱档）没做；稳定地址只做了命名隧道。
 - 远程 Hindsight 换不同维度的向量模型需要对方实例自己迁移（本机模式已自动处理，见 §5.19.1）。
@@ -86,9 +110,9 @@ npm run check:pi         # Pi 升级兼容检查
 
 ## 7. 下一步（按用户确认的顺序）
 
-1. 助理电脑自带虚拟机：通用部分 ✅ → Mac（Lima）✅ 待真机验证 → Windows（WSL2）→ Linux 服务器版（§15.2）。
+1. 助理电脑自带虚拟机：通用部分 ✅ → Mac（Lima）✅ 待真机验证 → Windows（WSL2）✅ 待真机验证 → Linux 服务器版 ✅（§15.2、§15.3）。
 2. 每完成一步发一个 beta 版本，告诉用户能测什么。
-3. Linux 服务器版：一次性设置码 + 主人设备，`deploy/` 里的服务器部署文件补全。
+3. 修好 Actions 账单后补跑 wsl-rootfs（推 GHCR），打下一个 beta tag 让 Linux 发布包出现在 Release 里（release.yml 的 `linux` 任务）。
 
 - 2026-10-13：助理电脑「开机后同一轮可用」和「首张截图空白」已修好（见 DESIGN §16.1）。调试时设 `PIA_DEBUG_COMPUTER=1` 可看到 computer_open 各阶段日志。真实 Docker 的 e2e：`E2E_DESKTOP=1 PIA_DESKTOP_IMAGE=pi-assistant/desktop:dev npm run e2e`（42 步全过）。
 - 2026-10-13：助理电脑镜像、MCP（npx/uvx）包已接入统一下载管理（DESIGN §16.2），全应用长说明改为「?」帮助。未做：Linux 服务器版（一次性设置码 + 主设备）——下一阶段。镜像进度在 docker 后端按层估算；若要真实字节可改用 Docker Engine API 的 progressDetail。

@@ -8,7 +8,7 @@ import { Hono, type Context, type Next } from "hono";
 import QRCode from "qrcode";
 import { WebSocket, WebSocketServer } from "ws";
 import {
-	approveDevice, type Caller, claimPairCode, clientIp, createPairCode, deviceForToken, isLocalRequest, listDevices, pairStatus, rateLimit, rejectDevice, revokeDevice, touchDevice,
+	approveDevice, hasOwner, isOwnerDevice, setOwner, type Caller, claimPairCode, clientIp, createPairCode, deviceForToken, isLocalRequest, listDevices, pairStatus, rateLimit, rejectDevice, revokeDevice, touchDevice,
 } from "./auth.ts";
 import { bus } from "./bus.ts";
 import { config } from "./config.ts";
@@ -27,7 +27,7 @@ import { dockerAvailable, sandboxMode } from "./sandbox.ts";
 import { desktopPause, desktopStatus, idle as desktopIdle, issueTicket, purgeAll, resetAvailability, screenshotDesktop, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket } from "./desktop.ts";
 import { backend as desktopBackend, builtinFor, dockerBackend } from "./desktop/backend.ts";
 import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop/image.ts";
-import { vmPhase } from "./desktop/lima.ts";
+import { installWsl, wslInstalling } from "./desktop/wsl.ts";
 import { desktopSettings, updateDesktopSettings } from "./desktop/settings.ts";
 import "./desktop/image-download.ts";
 import { ensureMcpPackage, syncMcpDownloads } from "./mcp-install.ts";
@@ -90,25 +90,30 @@ app.use("/api/*", async (c, next) => {
 	const auth = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
 	const deviceId = local ? null : deviceForToken(auth);
 	if (!local && !rateLimit(`ip:${ip}:${deviceId ? "auth" : "anon"}`, deviceId ? 600 : 30)) return c.json({ error: "rate_limited" }, 429);
-	c.set("caller", { local, deviceId, ip });
+	c.set("caller", { local, deviceId, ip, owner: isOwnerDevice(deviceId) });
 	const pub = ["/api/pair/claim", "/api/pair/status/", "/api/system/public", "/hooks/"].some((p) => c.req.path.startsWith(p));
 	if (!local && !deviceId && !pub) return c.json({ error: "unauthorized" }, 401);
 	if (deviceId) touchDevice(deviceId, ip);
 	return next();
 });
 
-const localOnly = async (c: Context<Env>, next: Next) => (c.get("caller").local ? next() : c.json({ error: "local_only" }, 403));
+/** 管理类接口：本机，或主人设备（Linux 服务器版用设置码登录的第一台设备，DESIGN §15.3） */
+const isAdmin = (c: Context<Env>) => c.get("caller").local || !!c.get("caller").owner;
+const localOnly = async (c: Context<Env>, next: Next) => (isAdmin(c) ? next() : c.json({ error: "local_only" }, 403));
 const by = (c: Context<Env>) => c.get("caller").deviceId ?? "local";
 
 // ---------------------------------------------------------------- 系统
-app.get("/api/system/public", (c) => c.json({ serverId: identity().serverId, publicKey: identity().publicKey, name: BRAND.name }));
+app.get("/api/system/public", (c) => c.json({ serverId: identity().serverId, publicKey: identity().publicKey, name: BRAND.name, server: config.headless, setup: config.headless && !hasOwner() }));
 app.get("/api/system", async (c) =>
 	c.json({
 		serverId: identity().serverId,
 		publicKey: identity().publicKey,
 		pi: checkPiCompat(),
 		mock: config.mock,
-		local: c.get("caller").local,
+		// local：能不能改所有设置（本机，或服务器版的主人设备）；界面按它显示管理功能
+		local: isAdmin(c),
+		owner: !!c.get("caller").owner,
+		server: config.headless,
 		deviceId: c.get("caller").deviceId,
 		onboarded: getSetting("onboarded", false) && !!defaultModel() && listAgents().length > 0,
 		modelSetupDone: getSetting("onboarded", false) && !!defaultModel(),
@@ -135,7 +140,7 @@ app.put("/api/settings", async (c) => {
 	if (b.sandbox && ["auto", "workspace", "docker"].includes(b.sandbox)) setSetting("sandbox", b.sandbox);
 	if (b.onboarded !== undefined) setSetting("onboarded", !!b.onboarded);
 	if (b.remoteEnabled !== undefined) {
-		if (!c.get("caller").local && !b.remoteEnabled) return c.json({ error: "只能在电脑上关闭远程访问" }, 403);
+		if (!isAdmin(c) && !b.remoteEnabled) return c.json({ error: "只能在电脑上关闭远程访问" }, 403);
 		setSetting("remoteEnabled", !!b.remoteEnabled);
 		if (b.remoteEnabled) startTunnel();
 		else stopTunnel();
@@ -1045,16 +1050,26 @@ const deskGlobal = async () => {
 	const [det, docker] = await Promise.all([s.enabled ? b.detect() : Promise.resolve(null), dockerBackend.detect()]);
 	return {
 		settings: s,
-		backend: { id: b.id, label: b.label, ok: det?.ok ?? null, reason: det?.reason },
+		backend: { id: b.id, label: b.label, ok: det?.ok ?? null, reason: det?.reason, fix: det?.fix },
 		builtin: { id: builtin.id, label: builtin.label, ready: builtin.id === "docker" || b.id === builtin.id },
 		dockerAvailable: docker.ok,
-		// macOS 自带虚拟机：下载量再加上虚拟机组件（Lima + Debian 系统盘 + containerd）
-		image: b.id === "lima" ? { ...pinnedInfo(), downloadBytes: pinnedInfo().downloadBytes + (downloadInfo("desktop-vm")?.size ?? 0), diskBytes: pinnedInfo().diskBytes + 2e9 } : pinnedInfo(),
+		// 自带虚拟机 / 发行版：下载量再加上运行时组件（macOS：Lima + Debian 系统盘 + containerd；Windows：WSL 发行版）
+		image: b.downloadId ? { ...pinnedInfo(), downloadBytes: pinnedInfo().downloadBytes + (downloadInfo(b.downloadId)?.size ?? 0), diskBytes: pinnedInfo().diskBytes + 2e9 } : pinnedInfo(),
 		installed: s.enabled && det?.ok ? await imagePresent() : false,
 		install: installState(),
-		vm: b.id === "lima" ? { ...vmPhase(), running: s.enabled ? await b.engineRunning() : false } : null,
+		vm: b.phase ? { ...b.phase(), running: s.enabled && det?.ok ? await b.engineRunning() : false } : null,
+		wslInstalling: wslInstalling(),
 	};
 };
+/** Windows：没有 WSL 时一键安装（一次 UAC 管理员确认；需要重启时返回 reboot: true）。只能在这台电脑上操作 */
+app.post("/api/desktop/wsl/install", localOnly, async (c) => {
+	if (process.platform !== "win32" && process.env.PIA_TEST_WSL !== "1") return c.json({ error: "只有 Windows 需要安装 WSL" }, 400);
+	const r = await installWsl();
+	resetAvailability();
+	deskChanged();
+	if (r.ok && !r.reboot && desktopSettings().enabled) void startInstall().then(() => (resetAvailability(), deskChanged()));
+	return c.json({ ...r, desktop: await deskGlobal() });
+});
 app.get("/api/desktop", async (c) => c.json(await deskGlobal()));
 app.put("/api/desktop", async (c) => {
 	const b = await c.req.json<Partial<ReturnType<typeof desktopSettings>>>();
@@ -1203,7 +1218,21 @@ app.get("/api/pair/status/:id", (c) => {
 app.get("/api/devices", (c) => c.json(listDevices()));
 app.post("/api/devices/:id/approve", localOnly, (c) => c.json({ ok: approveDevice(c.req.param("id")!) }));
 app.post("/api/devices/:id/reject", localOnly, (c) => (rejectDevice(c.req.param("id")!), c.json({ ok: true })));
-app.delete("/api/devices/:id", (c) => (revokeDevice(c.req.param("id")), c.json({ ok: true })));
+// 吊销：本机 / 主人可以吊销任何设备；其他设备只能退出自己
+app.delete("/api/devices/:id", (c) => {
+	const id = c.req.param("id");
+	if (!isAdmin(c) && c.get("caller").deviceId !== id) return c.json({ error: "local_only" }, 403);
+	revokeDevice(id);
+	return c.json({ ok: true });
+});
+app.post("/api/devices/:id/owner", localOnly, async (c) => {
+	const { owner } = await c.req.json<{ owner: boolean }>();
+	try {
+		return c.json({ ok: setOwner(c.req.param("id")!, owner === true) });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
 
 // ---------------------------------------------------------------- 推送
 app.get("/api/push/key", (c) => c.json({ publicKey: vapidPublicKey() }));
@@ -1262,7 +1291,7 @@ export function startHttp() {
 			const st = { deviceId: null as string | null, authed: local };
 			clients.set(ws, st);
 			const timer = setTimeout(() => !st.authed && ws.close(4401, "unauthorized"), 5000);
-			const hello = () => ws.send(JSON.stringify({ type: "hello", seq: bus.seq, serverId: identity().serverId, local }));
+			const hello = () => ws.send(JSON.stringify({ type: "hello", seq: bus.seq, serverId: identity().serverId, local: local || isOwnerDevice(st.deviceId) }));
 			if (local) hello();
 			ws.on("message", (raw) => {
 				let m: { type?: string; token?: string };

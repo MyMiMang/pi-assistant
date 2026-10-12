@@ -5,7 +5,6 @@
 import { spawn } from "node:child_process";
 import { downloadInfo } from "../downloads.ts";
 import { backend, engine } from "./backend.ts";
-import { cancelVmDownload, imageMarked, markImage, vmPhase } from "./lima.ts";
 import { customImage, localImage, pinned, pullRef } from "./settings.ts";
 
 export interface InstallState {
@@ -23,25 +22,27 @@ let state: InstallState = { phase: "idle", progress: 0, layersDone: 0, layersTot
 let current: Promise<void> | null = null;
 let child: import("node:child_process").ChildProcess | null = null;
 let pulling = false;
-/** macOS 虚拟机后端：前 40% 是虚拟机组件下载，40–50% 是第一次开机，后 50% 是桌面镜像 */
+/** 虚拟机 / 发行版后端（macOS Lima、Windows WSL）：前 40% 是运行时组件下载，40–50% 是第一次开机，后 50% 是桌面镜像 */
 export const installState = (): InstallState => {
-	if (state.phase !== "downloading" || backend().id !== "lima") return state;
+	const b = backend();
+	if (state.phase !== "downloading" || !b.downloadId) return state;
 	if (pulling) return { ...state, progress: 0.5 + state.progress * 0.5, detail: "正在下载桌面镜像" };
-	const d = downloadInfo("desktop-vm");
-	if (d?.state === "downloading") return { ...state, progress: ((d.percent ?? 0) / 100) * 0.4, detail: d.detail ?? "正在下载虚拟机组件" };
-	const ph = vmPhase();
-	return { ...state, progress: 0.4 + (ph.phase === "running" ? 0.1 : 0.05), detail: ph.detail ?? "正在准备虚拟机" };
+	const d = downloadInfo(b.downloadId);
+	if (d?.state === "downloading") return { ...state, progress: ((d.percent ?? 0) / 100) * 0.4, detail: d.detail ?? "正在下载运行时组件" };
+	const ph = b.phase?.() ?? { phase: "idle" };
+	return { ...state, progress: 0.4 + (ph.phase === "running" ? 0.1 : 0.05), detail: ph.detail ?? "正在准备运行时" };
 };
 
 export async function imagePresent() {
 	// 虚拟机后端：关机时不为了查镜像而开机，看下载完成时写下的标记
-	if (backend().id === "lima" && !(await backend().engineRunning())) return imageMarked(localImage());
+	const b = backend();
+	if (b.imageMarked && !(await b.engineRunning())) return b.imageMarked(localImage());
 	try {
 		await engine(["image", "inspect", localImage()], { timeout: 8000 });
-		if (backend().id === "lima") markImage(localImage());
+		b.markImage?.(localImage());
 		return true;
 	} catch {
-		if (backend().id === "lima") markImage(null);
+		b.markImage?.(null);
 		return false;
 	}
 }
@@ -103,7 +104,7 @@ export function startInstall(): Promise<void> {
 			}
 		}
 		if (ref !== localImage()) await engine(["tag", ref, localImage()]);
-		if (backend().id === "lima") markImage(localImage());
+		backend().markImage?.(localImage());
 	})()
 		.then(() => {
 			state = { ...state, phase: "done", progress: 1 };
@@ -121,6 +122,6 @@ export function startInstall(): Promise<void> {
 export function cancelInstall() {
 	state = { ...state, phase: "idle" };
 	child?.kill();
-	cancelVmDownload();
+	backend().cancelDownload?.();
 }
 export const pinnedInfo = () => ({ ref: pullRef(), local: localImage(), version: pinned.version, digest: pinned.digest, downloadBytes: pinned.downloadBytes, diskBytes: pinned.diskBytes, custom: !!customImage() });

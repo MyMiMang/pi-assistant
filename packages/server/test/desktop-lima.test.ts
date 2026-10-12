@@ -156,7 +156,7 @@ test("limactl list 解析、nerdctl 拉取进度、ps 标签解析", () => {
 test("后端选择：macOS 自动用 Lima，用户选 Docker 时用 Docker", () => {
 	assert.equal(pickBackend("auto", "darwin").id, "lima");
 	assert.equal(pickBackend("docker", "darwin").id, "docker");
-	assert.equal(pickBackend("auto", "win32").id, "docker"); // 第 3 步之前回落
+	assert.equal(pickBackend("auto", "win32").id, "wsl"); // Windows 自带 WSL2 运行时
 });
 
 test("limaErr：常见错误转成中文", () => {

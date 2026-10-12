@@ -296,13 +296,32 @@ function RemoteTab() {
 							<Smartphone size={16} className="text-zinc-400" />
 							<div className="min-w-0 flex-1">
 								<div className="truncate font-medium">
-									{d.name} {d.id === system.deviceId && <Badge tone="accent">本设备</Badge>} {d.status === "pending" && <Badge tone="amber">待确认</Badge>}
+									{d.name} {d.id === system.deviceId && <Badge tone="accent">本设备</Badge>} {!!d.owner && <Badge tone="accent">主人</Badge>} {d.status === "pending" && <Badge tone="amber">待确认</Badge>}
 								</div>
 								<div className="text-xs text-zinc-500">{d.last_seen_at ? `最近使用 ${fmtTime(d.last_seen_at)}` : `添加于 ${fmtTime(d.created_at)}`}</div>
 							</div>
-							<Button variant="ghost" size="icon" onClick={async () => (await api(`/api/devices/${d.id}`, { method: "DELETE" }), loadDevices())} aria-label="移除设备">
-								<Trash2 size={15} />
-							</Button>
+							{system.local && d.status === "pending" && (
+								<Button size="sm" variant="outline" onClick={async () => (await api(`/api/devices/${d.id}/approve`, { method: "POST" }), loadDevices())} data-testid="device-approve">
+									批准
+								</Button>
+							)}
+							{system.local && system.server && d.status === "active" && (
+								<Button size="sm" variant="ghost" title="主人设备可以改所有设置、批准新设备" onClick={async () => {
+									try {
+										await api(`/api/devices/${d.id}/owner`, { method: "POST", json: { owner: !d.owner } });
+									} catch (e) {
+										alert(e instanceof Error ? e.message : String(e));
+									}
+									void loadDevices();
+								}} data-testid="device-owner">
+									{d.owner ? "取消主人" : "设为主人"}
+								</Button>
+							)}
+							{(system.local || d.id === system.deviceId) && (
+								<Button variant="ghost" size="icon" onClick={async () => (await api(`/api/devices/${d.id}`, { method: "DELETE" }), loadDevices())} aria-label="移除设备">
+									<Trash2 size={15} />
+								</Button>
+							)}
 						</div>
 					))}
 				</div>

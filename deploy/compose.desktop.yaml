@@ -1,0 +1,13 @@
+# 叠加文件：让容器里的服务通过宿主机 Docker 创建“助理电脑”容器。
+#   docker compose -f deploy/compose.yaml -f deploy/compose.desktop.yaml up -d --build
+# 注意：挂载 docker.sock 等同把宿主机 root 权限交给这个容器，只在自己的服务器上用。
+# 服务改用宿主机网络（桌面容器的端口只绑在宿主机 127.0.0.1，服务要能连上），网页端口由 PIA_PORT 决定。
+services:
+  server:
+    network_mode: host
+    ports: !reset []
+    environment:
+      PIA_PORT: "${PIA_PORT:-8787}"
+    group_add: ["${DOCKER_GID:-999}"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

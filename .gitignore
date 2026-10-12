@@ -20,3 +20,4 @@ dist-app/
 dist-app.*
 *.key
 *.key.password
+dist-linux/

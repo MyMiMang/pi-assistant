@@ -1,6 +1,7 @@
 # 打 v* tag 时构建安装包并发布到 GitHub Releases：
 #   macOS arm64 / x64 → .dmg（+ .app.tar.gz 更新包），Windows x64 → NSIS .exe（+ 更新包）
 # 安装包内容：Tauri 托盘程序 + 内置 Node 运行时（sidecar）+ app 目录（服务端 + Pi + 生产依赖 + 网页 + cloudflared/uv/cua-driver），
+# Linux 服务器版 x64 / arm64 → pi-assistant-<版本>-linux-<arch>.tar.gz（+ .sha256），deploy/linux/install.sh 安装。
 # 版本与 SHA256 全部以 third-party.json 为准。tag 里带 “-”（如 v0.2.0-beta.1）发布为 pre-release。
 # 自动更新签名：仓库 secrets 设置 TAURI_SIGNING_PRIVATE_KEY（+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD）后生成 latest.json 与 .sig；
 # 没设置时照常出安装包，只是不带自动更新文件。暂不做 Apple 公证 / Windows 代码签名（见 docs/INSTALL.md）。
@@ -98,3 +99,44 @@ jobs:
             apps/tray/src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.tar.gz*
             apps/tray/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.sig
           if-no-files-found: warn
+
+  linux:
+    # Linux 服务器版发布包：内置 Node + app 目录 + 命令行包装 + 安装脚本（见 scripts/package-linux.mjs）
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, arch: x64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - name: 版本号取自 tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          node -e "const f='apps/tray/src-tauri/tauri.conf.json';const j=require('./'+f);j.version=process.argv[1];require('fs').writeFileSync(f,JSON.stringify(j,null,2))" "$V"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: node scripts/package-linux.mjs
+      - name: 冒烟测试（解压发布包，用 install.sh 装成当前用户、不注册服务，前台启动）
+        run: |
+          set -eux
+          F=$(ls dist-linux/*.tar.gz)
+          HOME=$(mktemp -d) sh -c "sh deploy/linux/install.sh --user --file $F --no-start && ls \$HOME/.local/share/pi-assistant/current/"
+          tar -xzf "$F" -C "$RUNNER_TEMP"
+          D=$(ls -d "$RUNNER_TEMP"/pi-assistant-*-linux-${{ matrix.arch }})
+          node scripts/smoke-app.mjs "$D/node" "$D/app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-assistant-Linux-${{ matrix.arch }}
+          path: dist-linux/*.tar.gz*
+      - name: 上传到 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          for i in $(seq 1 30); do gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break; sleep 20; done
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Pi Assistant $GITHUB_REF_NAME" --notes "安装说明见 docs/INSTALL.md" $([ "${GITHUB_REF_NAME#*-}" != "$GITHUB_REF_NAME" ] && echo --prerelease)
+          gh release upload "$GITHUB_REF_NAME" dist-linux/*.tar.gz dist-linux/*.tar.gz.sha256 --clobber

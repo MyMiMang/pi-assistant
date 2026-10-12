@@ -66,11 +66,12 @@ test("引擎命令：只放行指向我们自己东西的修改类命令", () =>
 	no(["compose", "down"]);
 });
 
-test("后端选择：auto 用自带运行时（macOS = Lima；未实现的平台回落到 Docker），docker 用已装的 Docker", () => {
+test("后端选择：auto 用自带运行时（macOS = Lima；Windows = WSL2；Linux = 原生 Docker），docker 用已装的 Docker", () => {
 	assert.equal(pickBackend("auto", "linux").id, "docker");
 	assert.equal(pickBackend("docker", "darwin").id, "docker");
 	assert.equal(pickBackend("auto", "darwin").id, "lima"); // 第 2 步：Lima 已实现
-	assert.equal(pickBackend("auto", "win32").id, "docker"); // 第 3 步实现 WSL 前
+	assert.equal(pickBackend("auto", "win32").id, "wsl"); // Windows = 自带 WSL2 发行版
+	assert.equal(pickBackend("auto", "linux").id, "docker"); // Linux 直接用原生 Docker/Podman
 	assert.equal(pickBackend("auto", "darwin", new Set(["lima"])).id, "lima");
 	assert.equal(pickBackend("auto", "win32", new Set(["wsl"])).id, "wsl");
 	assert.equal(pickBackend("docker", "win32", new Set(["wsl"])).id, "docker");

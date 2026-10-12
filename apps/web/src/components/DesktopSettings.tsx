@@ -11,14 +11,16 @@ import { Badge, Button, Help, Input } from "./ui";
 
 export type DesktopGlobal = {
 	settings: { enabled: boolean; backend: "auto" | "docker"; idleMinutes: number; mirror: string; fileMirror: string };
-	backend: { id: string; label: string; ok: boolean | null; reason?: string };
+	backend: { id: string; label: string; ok: boolean | null; reason?: string; fix?: "install-wsl" | "reboot" };
 	builtin: { id: string; label: string; ready: boolean };
 	dockerAvailable: boolean;
 	image: { ref: string; version: string; digest: string | null; downloadBytes: number; diskBytes: number; custom: boolean };
 	installed: boolean;
 	install: { phase: "idle" | "downloading" | "done" | "error"; progress: number; layersDone: number; layersTotal: number; error?: string; detail?: string };
-	/** macOS 自带虚拟机（Lima）状态；其他平台为 null */
+	/** 自带虚拟机 / 发行版（macOS Lima、Windows WSL）状态；其他情况为 null */
 	vm: { phase: string; detail?: string; running: boolean } | null;
+	/** Windows：正在安装 WSL（等 UAC / 安装中） */
+	wslInstalling?: boolean;
 };
 const GB = (n: number) => `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1).replace(/\.0$/, "")} GB`;
 
@@ -54,7 +56,22 @@ export function DesktopSettings() {
 	const [mirror, setMirror] = useState<string | null>(null);
 	const [fileMirror, setFileMirror] = useState<string | null>(null);
 	const [offered, setOffered] = useState(false);
+	const [wslMsg, setWslMsg] = useState("");
 	if (!g) return null;
+	/** Windows：一键安装 WSL（服务端用 UAC 提权执行 wsl --install --no-distribution） */
+	const installWsl = async () => {
+		setBusy("wsl");
+		setWslMsg(t("请在弹出的“用户账户控制”窗口里点“是”…"));
+		try {
+			const r = await api<{ ok: boolean; reboot: boolean; message: string; desktop: DesktopGlobal }>("/api/desktop/wsl/install", { method: "POST" });
+			setWslMsg(t(r.message));
+			setG(r.desktop);
+		} catch (e) {
+			setWslMsg(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy("");
+		}
+	};
 	const s = g.settings;
 	const put = async (b: Partial<DesktopGlobal["settings"]>) => {
 		setErr("");
@@ -109,7 +126,21 @@ export function DesktopSettings() {
 						</div>
 					</div>
 				)}
-				{s.enabled && g.backend.ok === false && <div className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200">{g.backend.reason}</div>}
+				{s.enabled && g.backend.ok === false && (
+					<div className="space-y-2 rounded-lg bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200" data-testid="desktop-backend-problem">
+						<div>{g.backend.reason}</div>
+						{g.backend.fix === "install-wsl" && (
+							<div className="flex flex-wrap items-center gap-2">
+								<Button size="sm" disabled={!!busy || g.wslInstalling} onClick={() => void installWsl()} data-testid="desktop-install-wsl">
+									{busy === "wsl" || g.wslInstalling ? <Loader2 size={14} className="animate-spin" /> : null} {t("安装 WSL")}
+								</Button>
+								<span>{t("会弹出一次管理员确认；装完可能需要重启电脑。")}</span>
+							</div>
+						)}
+						{g.backend.fix === "reboot" && <div className="font-medium">{t("请保存好手头的工作后重启电脑，重启后回到这里继续。")}</div>}
+					</div>
+				)}
+				{wslMsg && <div className="rounded-lg bg-zinc-100 p-2 text-xs dark:bg-zinc-800" data-testid="desktop-wsl-msg">{wslMsg}</div>}
 				{s.enabled && ins.phase === "error" && (
 					<div className="flex items-center gap-2 rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
 						<span className="min-w-0 flex-1 break-words">{t("下载失败：")}{ins.error}</span>
@@ -179,10 +210,10 @@ export function DesktopSettings() {
 				</div>
 				<div className="break-all text-xs text-zinc-400">{g.image.ref}{g.image.custom ? `（${t("自定义镜像")}）` : ""}</div>
 			</section>
-			{g.builtin.id === "lima" && (
+			{(g.builtin.id === "lima" || g.builtin.id === "wsl") && (
 				<section className="space-y-2">
 					<div className="font-semibold">{t("虚拟机组件下载加速")}</div>
-					<div className="text-sm text-zinc-500">{t("从 GitHub 下载 Lima、containerd 慢时填加速前缀，例如 https://ghfast.top/ 。文件按固定摘要校验，加速失败会自动回到官方地址。")}</div>
+					<div className="text-sm text-zinc-500">{t("从 GitHub 下载运行时组件慢时填加速前缀，例如 https://ghfast.top/ 。文件按固定摘要校验，加速失败会自动回到官方地址。")}</div>
 					<div className="flex gap-2">
 						<Input value={fileMirror ?? s.fileMirror} placeholder={t("留空 = 直连 GitHub")} onChange={(e) => setFileMirror(e.target.value)} data-testid="desktop-file-mirror" />
 						<Button variant="outline" disabled={fileMirror === null || fileMirror === s.fileMirror} onClick={() => void put({ fileMirror: fileMirror ?? "" }).then((r) => r && setFileMirror(null))}>{t("保存")}</Button>
