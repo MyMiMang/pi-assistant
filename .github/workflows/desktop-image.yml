@@ -1,0 +1,58 @@
+# 助理电脑镜像（packages/sandbox-desktop）多架构构建（linux/amd64 + linux/arm64）并公开推到 GHCR：
+#   ghcr.io/mymimang/pi-assistant-desktop:<版本>（DESIGN §15.2）
+# 触发：打 desktop-v<版本> tag（例如 desktop-v0.1.0），或手动运行并填版本号。
+# cua-driver 两个架构都按 third-party.json 的 SHA256 校验后打进镜像。
+# 推完后把输出的 digest 填进 packages/server/desktop-image.json（服务端按版本 + digest 固定拉取）。
+# 第一次推送后需要在 GitHub 包设置里把 pi-assistant-desktop 设为 Public，用户才能免登录下载。
+name: desktop-image
+on:
+  push: { tags: ["desktop-v*"] }
+  workflow_dispatch:
+    inputs:
+      version: { description: "镜像版本号（例如 0.1.0）", required: true }
+permissions: { contents: read, packages: write }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: 版本号
+        id: v
+        run: |
+          V="${{ github.event.inputs.version }}"
+          [ -z "$V" ] && V="${GITHUB_REF_NAME#desktop-v}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - name: 下载 cua-driver（amd64 + arm64，校验 SHA256）
+        run: |
+          node scripts/fetch-cua-driver.mjs linux-x64 packages/sandbox-desktop/vendor/amd64
+          node scripts/fetch-cua-driver.mjs linux-arm64 packages/sandbox-desktop/vendor/arm64
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - name: 构建并推送
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: packages/sandbox-desktop
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: ghcr.io/mymimang/pi-assistant-desktop:${{ steps.v.outputs.version }}
+      - name: 冒烟测试（amd64：启动后 noVNC 和 cua-driver 就绪）
+        run: |
+          docker run -d --name pia-desk-ci -p 127.0.0.1:6080:6080 ghcr.io/mymimang/pi-assistant-desktop@${{ steps.push.outputs.digest }}
+          for i in $(seq 1 60); do docker logs pia-desk-ci 2>&1 | grep -q "pia-desktop ready" && break; sleep 1; done
+          docker logs pia-desk-ci | grep -q "pia-desktop ready"
+          sleep 3 && curl -sf http://127.0.0.1:6080/ >/dev/null
+          docker exec pia-desk-ci cua-driver --version
+      - name: 输出 digest
+        run: |
+          echo "### 助理电脑镜像 ${{ steps.v.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "把下面两行填进 packages/server/desktop-image.json：" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo '"version": "${{ steps.v.outputs.version }}",' >> "$GITHUB_STEP_SUMMARY"
+          echo '"digest": "${{ steps.push.outputs.digest }}"' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
