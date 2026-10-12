@@ -1,29 +1,44 @@
-# Windows 助理电脑运行时：构建 WSL2 发行版根文件系统（packages/wsl-rootfs，amd64 + arm64）并发布为 GitHub Release 资产
-#   Release：wsl-rootfs-v<版本>（预发布、不标记为 latest，不影响 App 的自动更新）
-#   资产：pia-wsl-rootfs-<版本>-amd64.tar.gz / -arm64.tar.gz + SHA256SUMS
-# nerdctl-full 按 third-party.json 的 SHA256 校验。发布后把两个 SHA256 和大小填进 third-party.json 的 pia-wsl-rootfs（DESIGN §15.2）。
+# Windows 助理电脑运行时：构建 WSL2 发行版根文件系统（packages/wsl-rootfs，amd64 + arm64）并发布（DESIGN §15.2 第 3 步）
+#   1) GitHub Release：wsl-rootfs-v<版本>（预发布、不标记为 latest，不影响 App 的自动更新），资产 pia-wsl-rootfs-<版本>-<架构>.tar.gz + SHA256SUMS
+#   2) GHCR（公开包 pi-assistant-desktop 里的 OCI 制品，标签 wsl-rootfs-<版本>-<架构>）：仓库是私有的时候 Release 资产不能匿名下载，
+#      App 从这里按 blob 摘要下载（摘要 = 压缩包的 SHA256，内容寻址），支持断点续传和 ghcr 加速地址
+# 同一版本再次运行：不重新构建（构建结果不是逐字节可复现的，摘要会变），直接取已发布的 Release 资产推到 GHCR。
+# nerdctl-full 按 third-party.json 的 SHA256 校验。发布后把两个 SHA256 和大小填进 third-party.json 的 pia-wsl-rootfs。
 name: wsl-rootfs
 on:
   workflow_dispatch:
     inputs:
       version: { description: "rootfs 版本号（例如 0.1.0）", required: true }
-permissions: { contents: write }
+permissions: { contents: write, packages: write }
 jobs:
   build:
     runs-on: ubuntu-latest
+    env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
+      - name: 已发布过这个版本？
+        id: exists
+        run: |
+          if gh release view "wsl-rootfs-v${{ github.event.inputs.version }}" >/dev/null 2>&1; then echo "yes=1" >> "$GITHUB_OUTPUT"; fi
       - uses: docker/setup-qemu-action@v3
+        if: steps.exists.outputs.yes != '1'
       - uses: docker/setup-buildx-action@v3
+        if: steps.exists.outputs.yes != '1'
       - name: 构建（amd64 + arm64）
+        if: steps.exists.outputs.yes != '1'
         run: |
           V="${{ github.event.inputs.version }}"
           mkdir -p out
           packages/wsl-rootfs/build.sh amd64 "out/pia-wsl-rootfs-$V-amd64.tar.gz"
           packages/wsl-rootfs/build.sh arm64 "out/pia-wsl-rootfs-$V-arm64.tar.gz"
           (cd out && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS && ls -l)
+      - name: 取已发布的资产
+        if: steps.exists.outputs.yes == '1'
+        run: |
+          mkdir -p out && gh release download "wsl-rootfs-v${{ github.event.inputs.version }}" -D out
+          (cd out && sha256sum -c SHA256SUMS)
       - name: 冒烟测试（amd64：导入后 pia-engine 能拉起 containerd，nerdctl 能连上）
         run: |
           V="${{ github.event.inputs.version }}"
@@ -33,14 +48,32 @@ jobs:
           docker exec smoke nerdctl version --format '{{json .Server}}' | grep containerd
           docker exec smoke cat /etc/wsl.conf | grep -q "enabled = false"
       - name: 发布 Release
-        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        if: steps.exists.outputs.yes != '1'
         run: |
           V="${{ github.event.inputs.version }}"
-          TAG="wsl-rootfs-v$V"
-          gh release view "$TAG" >/dev/null 2>&1 && { echo "Release $TAG 已存在：资产固定后不能覆盖，请换一个版本号"; exit 1; }
-          gh release create "$TAG" out/*.tar.gz out/SHA256SUMS --target "$GITHUB_SHA" --prerelease --latest=false \
+          gh release create "wsl-rootfs-v$V" out/*.tar.gz out/SHA256SUMS --target "$GITHUB_SHA" --prerelease --latest=false \
             --title "助理电脑 Windows 运行时 $V（WSL rootfs）" \
             --notes "Pi Assistant 在 Windows 上自动下载并 \`wsl --import\` 的发行版根文件系统（Debian 12 + containerd/nerdctl）。普通用户不需要手动下载。"
+      - name: 推到 GHCR（公开包 pi-assistant-desktop，OCI 制品）
+        run: |
+          V="${{ github.event.inputs.version }}"
+          curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.3/oras_1.2.3_linux_amd64.tar.gz | tar -xz -C /usr/local/bin oras
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+          cd out
+          for A in amd64 arm64; do
+            F="pia-wsl-rootfs-$V-$A.tar.gz"
+            oras push "ghcr.io/mymimang/pi-assistant-desktop:wsl-rootfs-$V-$A" --artifact-type application/vnd.pi-assistant.wsl-rootfs \
+              "$F:application/vnd.pi-assistant.wsl-rootfs.tar+gzip"
+          done
+      - name: 匿名下载校验（GHCR blob 摘要 = 压缩包 SHA256）
+        run: |
+          V="${{ github.event.inputs.version }}"
+          for A in amd64 arm64; do
+            SHA=$(cd out && sha256sum "pia-wsl-rootfs-$V-$A.tar.gz" | cut -d' ' -f1)
+            T=$(curl -fsSL "https://ghcr.io/token?scope=repository:mymimang/pi-assistant-desktop:pull" | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
+            curl -fsSL -H "Authorization: Bearer $T" -o "/tmp/$A.tgz" "https://ghcr.io/v2/mymimang/pi-assistant-desktop/blobs/sha256:$SHA"
+            echo "$SHA  /tmp/$A.tgz" | sha256sum -c
+          done
       - name: 输出摘要
         run: |
           echo "### WSL rootfs ${{ github.event.inputs.version }}" >> "$GITHUB_STEP_SUMMARY"
