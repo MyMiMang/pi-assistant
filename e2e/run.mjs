@@ -782,6 +782,8 @@ await step("助理电脑开箱即用：向导没开启时什么都不下载；�
 	const g0 = await (await fetch(`${BASE}/api/desktop`)).json();
 	if (g0.settings.enabled || g0.install.phase !== "idle") throw new Error(`向导没勾选却开启/下载了：${JSON.stringify(g0)}`);
 	await page.goto(BASE);
+	await page.locator("main textarea").waitFor();
+	await page.waitForTimeout(500); // 等信息面板按记住的布局渲染完再判断开没开
 	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
 	await page.locator("aside").last().getByRole("tab", { name: "电脑", exact: true }).click();
 	const ni = page.getByTestId("desktop-not-installed");
