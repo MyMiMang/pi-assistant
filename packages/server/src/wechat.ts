@@ -6,20 +6,18 @@
  *  - 解到助理电脑家目录卷（~/.local/wechat），容器重建后登录态和程序都在。
  *  - 登录二维码出现在「电脑」画面里，助理用 request_handoff 推到你手机上扫。
  */
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { promisify } from "node:util";
 import { config } from "./config.ts";
 import { getSetting, setSetting } from "./db.ts";
 import { bus } from "./bus.ts";
 import { containerOf, desktopStatus, startDesktop } from "./desktop.ts";
+import { engine } from "./desktop/backend.ts";
 
-const run = promisify(execFile);
-const docker = (args: string[], timeout = 60_000) => run(config.docker[0], [...config.docker.slice(1), ...args], { timeout, maxBuffer: 16 * 1024 * 1024 });
+const docker = (args: string[], timeout = 60_000) => engine(args, { timeout });
 
 export interface WechatSettings {
 	enabled: boolean;
@@ -97,7 +95,7 @@ export async function wechatStatus(agentId: string): Promise<WechatStatus> {
 	const st = await desktopStatus(agentId);
 	const base = { allowed: wechatAllowed(agentId), installed: false, running: false };
 	if (!st.available) return { ...base, desktop: "unavailable", reason: st.reason };
-	if (st.state !== "running") return { ...base, desktop: st.state };
+	if (st.state !== "running") return { ...base, desktop: st.state === "starting" ? "stopped" : st.state };
 	const name = containerOf(agentId);
 	const ver = await docker(["exec", name, "cat", `${HOME_DIR}/.pia-version`], 10_000).then((r) => String(r.stdout).trim(), () => "");
 	const running = await docker(["exec", name, "pgrep", "-f", WECHAT_BIN], 10_000).then(() => true, () => false);
