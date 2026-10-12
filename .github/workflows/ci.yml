@@ -30,7 +30,7 @@ jobs:
   lima-macos:
     strategy:
       fail-fast: false
-      matrix: { os: [macos-14, macos-13] }
+      matrix: { os: [macos-14, macos-15-intel] }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
