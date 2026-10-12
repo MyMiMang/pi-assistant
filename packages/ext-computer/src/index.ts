@@ -229,3 +229,23 @@ export function computerExtension(host: ComputerHost) {
 		});
 	};
 }
+
+/**
+ * 助理电脑已安装但没开机时挂上的“开电脑”工具（按需启动，DESIGN §15.2）。
+ * 开机后会话会在下一轮重建，届时 cua-driver 的电脑工具、看屏幕、请你接管才会出现。
+ */
+export function computerLauncherExtension(host: { start(): Promise<void> }) {
+	return (pi: ExtensionAPI) => {
+		pi.registerTool({
+			name: "computer_open",
+			label: "打开助理电脑",
+			description: "助理电脑（你自己的 Linux 桌面：浏览器、微信等应用）现在是关机状态。需要用电脑时先调用它开机（约 10–20 秒），开机后电脑操作工具会在下一轮出现。",
+			promptSnippet: "computer_open: 打开（开机）助理电脑",
+			parameters: Type.Object({}),
+			async execute() {
+				await host.start();
+				return { content: [{ type: "text" as const, text: "助理电脑已经开机。电脑操作工具（点击、输入、看屏幕等）会在下一轮出现：先简短告诉用户电脑已打开、你接下来要做什么，然后结束这一轮；用户回复后即可继续操作。浏览器工具现在就会在助理电脑里打开页面。" }], details: undefined };
+			},
+		});
+	};
+}

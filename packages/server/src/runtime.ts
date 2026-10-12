@@ -5,7 +5,7 @@
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { approvalExtension } from "@pi-assistant/ext-approval";
-import { computerExtension, isHostTool, trustedComputerTool } from "@pi-assistant/ext-computer";
+import { computerExtension, computerLauncherExtension, isHostTool, trustedComputerTool } from "@pi-assistant/ext-computer";
 import { recordAction } from "./action-log.ts";
 import { guardContext } from "./guard.ts";
 import { describeHostAction, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
@@ -53,7 +53,7 @@ import {
 import { notify } from "./push.ts";
 import { requests } from "./requests.ts";
 import { dockerOperations, sandboxMode } from "./sandbox.ts";
-import { cuaMcpCommand, desktopPause, desktopStatus, screenshotDesktop } from "./desktop.ts";
+import { cuaMcpCommand, desktopPause, desktopStatus, idle as desktopIdle, screenshotDesktop, startDesktop } from "./desktop.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { BRAND } from "@pi-assistant/shared";
 
@@ -379,7 +379,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				screenshot: () => screenshotDesktop(agentId),
 				approvals: () => sandboxComputerSettings().approvals,
 				guard: guardContext("sandbox"),
-				log: (e) => recordAction(agentId, taskId, e, () => screenshotDesktop(agentId)),
+				log: (e) => (desktopIdle.touch(agentId), recordAction(agentId, taskId, e, () => screenshotDesktop(agentId))),
 				handoff: (reason, png) => handoff(reason, png, "可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。"),
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
@@ -387,6 +387,9 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				},
 			}),
 		});
+	// 助理电脑已安装但关着机 → 只挂一个“开电脑”工具，用到时才按需启动
+	else if (desk?.available && desk.state !== "running")
+		exts.push({ name: "pia-computer-launcher", factory: computerLauncherExtension({ start: async () => void (await startDesktop(agentId), bus.emit({ type: "desktop.changed", agentId } as never)) }) });
 	// 用户开启了“操作这台电脑”且允许这个助理 → 挂上本机 Cua（bounded），每个动作逐项审批
 	if (hostAllowedFor(agentId) && ["running", "paused"].includes(hostStatus().daemon.state))
 		exts.push({
@@ -446,7 +449,8 @@ class AgentRuntime {
 		const a = getAgent(this.id)!;
 		const model = this.modelFor(a);
 		if (!model) return null;
-		const desk = (await desktopStatus(this.id).catch(() => null))?.state === "running";
+		const ds = await desktopStatus(this.id).catch(() => null);
+		const desk = ds?.state === "running" ? "on" : ds?.available ? "off" : "none";
 		const thinking = this.thinkingFor(a);
 		// 模型 / 思考强度不在 key 里：用 session.setModel / setThinkingLevel 原地切换，不重建会话
 		const key = `${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}`;
@@ -623,6 +627,12 @@ export function runtime(agentId: string, conversationId?: string | null) {
 
 const MAX_CONCURRENT = 3;
 const live = new Map<string, AgentSession>();
+/** 后台任务（含定时任务）taskId → agentId：空闲关机判定用 */
+const liveAgent = new Map<string, string>();
+/** 助理正在干活（任一对话回合、后台任务或定时任务在跑）：助理电脑不会被空闲关机 */
+export function agentBusy(agentId: string) {
+	return [...runtimes.values()].some((r) => r.id === agentId && r.busy) || [...liveAgent.values()].includes(agentId);
+}
 
 export const tasks = {
 	spawn(agentId: string, title: string, instructions: string, opts: { conversationId?: string | null; routineRunId?: string; kind?: "heartbeat" } = {}): TaskRow {
@@ -665,6 +675,7 @@ export const tasks = {
 				...integrationsFor(a.id, t.conversation_id),
 			});
 			live.set(t.id, session);
+			liveAgent.set(t.id, a.id);
 			const file = sessionFileOf(session);
 			if (file) setTask(t.id, { session_file: file });
 			const done = new Promise<boolean>((resolve) => {
@@ -679,6 +690,7 @@ export const tasks = {
 			const result = lastAssistantText(session);
 			disposeSession(session);
 			live.delete(t.id);
+			liveAgent.delete(t.id);
 			if (getTask(t.id)?.status === "cancelled") return;
 			if (aborted) {
 				setTask(t.id, { status: "cancelled", finished_at: now() });
@@ -692,6 +704,7 @@ export const tasks = {
 			}
 		} catch (e) {
 			live.delete(t.id);
+			liveAgent.delete(t.id);
 			setTask(t.id, { status: "failed", error: e instanceof Error ? e.message : String(e), finished_at: now() });
 			if (!t.routine_run_id && (t as TaskRow & { kind?: string | null }).kind !== "heartbeat") notify({ title: `后台任务失败：${t.title}`, body: String(e), tag: t.id });
 		} finally {

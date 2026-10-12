@@ -24,7 +24,11 @@ import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
 import { describeRoutine, disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
-import { desktopPause, desktopStatus, issueTicket, screenshotDesktop, startDesktop, stopDesktop, useTicket } from "./desktop.ts";
+import { desktopPause, desktopStatus, idle as desktopIdle, issueTicket, purgeAll, resetAvailability, screenshotDesktop, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket } from "./desktop.ts";
+import { backend as desktopBackend, builtinFor, dockerBackend } from "./desktop/backend.ts";
+import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop/image.ts";
+import { desktopSettings, updateDesktopSettings } from "./desktop/settings.ts";
+import { agentBusy } from "./runtime.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
 import { entryDomain, restartTunnel, retryTunnel, startTunnel, stopTunnel, tunnelStatus } from "./tunnel.ts";
 import { checkNamedPerms, namedConfig, removeNamedTunnel, setupNamedTunnel } from "./named-tunnel.ts";
@@ -989,11 +993,61 @@ app.delete("/api/actions", localOnly, (c) => (clearActions(c.req.query("agentId"
 
 // ---------------------------------------------------------------- 助理电脑（sandbox desktop）
 const deskJson = async (id: string) => ({ ...(await desktopStatus(id)), paused: desktopPause.isPaused(id) });
+const deskChanged = (agentId?: string) => bus.emit({ type: "desktop.changed", agentId } as never);
+startIdleWatcher({ busy: agentBusy, changed: deskChanged });
+/** 全局：安装开关、运行方式、空闲关机、镜像加速、下载进度 */
+const deskGlobal = async () => {
+	const s = desktopSettings();
+	const b = desktopBackend();
+	const builtin = builtinFor();
+	const [det, docker] = await Promise.all([s.enabled ? b.detect() : Promise.resolve(null), dockerBackend.detect()]);
+	return {
+		settings: s,
+		backend: { id: b.id, label: b.label, ok: det?.ok ?? null, reason: det?.reason },
+		builtin: { id: builtin.id, label: builtin.label, ready: builtin.id === "docker" || b.id === builtin.id },
+		dockerAvailable: docker.ok,
+		image: pinnedInfo(),
+		installed: s.enabled && det?.ok ? await imagePresent() : false,
+		install: installState(),
+	};
+};
+app.get("/api/desktop", async (c) => c.json(await deskGlobal()));
+app.put("/api/desktop", async (c) => {
+	const b = await c.req.json<Partial<ReturnType<typeof desktopSettings>>>();
+	const before = desktopSettings();
+	try {
+		const s = updateDesktopSettings(b);
+		if (before.enabled && !s.enabled) cancelInstall();
+		if (before.backend !== s.backend || before.mirror !== s.mirror) resetAvailability();
+		// 开启 = 开始下载（之前什么都不下载）
+		if (s.enabled && (!before.enabled || before.backend !== s.backend || b.enabled)) void startInstall().then(() => (resetAvailability(), deskChanged()));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+	resetAvailability();
+	deskChanged();
+	return c.json(await deskGlobal());
+});
+app.post("/api/desktop/install", async (c) => {
+	if (!desktopSettings().enabled) return c.json({ error: "请先开启“给助理安装电脑”" }, 400);
+	void startInstall().then(() => (resetAvailability(), deskChanged()));
+	return c.json(await deskGlobal());
+});
+/** 关掉开关后：shutdown = 关机（登录状态保留）；purge = 删除虚拟机和镜像（登录状态清掉，仅本机可操作） */
+app.post("/api/desktop/shutdown", async (c) => (await shutdownAll(), deskChanged(), c.json(await deskGlobal())));
+app.post("/api/desktop/purge", localOnly, async (c) => {
+	if (desktopSettings().enabled) return c.json({ error: "请先关闭“给助理安装电脑”" }, 400);
+	await purgeAll();
+	deskChanged();
+	return c.json(await deskGlobal());
+});
 app.get("/api/agents/:id/desktop", async (c) => c.json(await deskJson(c.req.param("id"))));
 app.post("/api/agents/:id/desktop/start", async (c) => {
 	try {
-		await startDesktop(c.req.param("id"));
-		bus.emit({ type: "desktop.changed", agentId: c.req.param("id") } as never);
+		const p = startDesktop(c.req.param("id"));
+		deskChanged(c.req.param("id")); // 界面先显示“启动中”
+		await p;
+		deskChanged(c.req.param("id"));
 		return c.json(await deskJson(c.req.param("id")));
 	} catch (e) {
 		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
@@ -1133,6 +1187,8 @@ async function proxyDesktop(req: IncomingMessage, socket: import("node:stream").
 	const st = await desktopStatus(agentId);
 	if (st.state !== "running" || !st.port) return socket.destroy();
 	deskWss.handleUpgrade(req, socket, head, (client) => {
+		desktopIdle.viewerOpen(agentId); // 有人在看画面：不会空闲关机
+		client.once("close", () => desktopIdle.viewerClose(agentId));
 		const upstream = new WebSocket(`ws://127.0.0.1:${st.port}/websockify`, ["binary"]);
 		const pending: (Buffer | ArrayBuffer | Buffer[])[] = [];
 		upstream.on("open", () => pending.splice(0).forEach((d) => upstream.send(d)));
