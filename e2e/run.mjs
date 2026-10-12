@@ -889,7 +889,7 @@ await step("权限档位：输入框工具栏「助理电脑」旁的权限按�
 	await dlg.locator("[data-testid=confirm-cancel]").click();
 	await dlg.waitFor({ state: "detached" });
 	await pill.getByText("信任").waitFor();
-	await pill.click();
+	// 取消后菜单仍开着，直接再选
 	await menu.locator("[data-testid=tier-full]").click();
 	await dlg.getByText("启用完全权限？").waitFor();
 	await page.waitForTimeout(300);
