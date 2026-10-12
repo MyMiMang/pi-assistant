@@ -944,3 +944,33 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 不发 Web Push 的情形：用户正在渠道里一问一答（渠道对话里的普通回复），App 里照样有记录，但不重复弹通知；主动提醒、定时任务结果、审批 / 提问总是推送。
 
 测试：`test/mirror.test.ts`（镜像发出那一刻 App 里已有该消息；扇出到飞书 + 钉钉、不发群；微信窗口外只排队微信副本；渠道里的审批回答与“新对话”指令记进同一对话；“只在 App”不镜像；定时任务结果先 App 后渠道）、`test/channels.test.ts`（绑定成功先写库）、`test/proactive.test.ts`。
+
+## 15. 后期计划（已确认方向，暂缓实施）
+
+### 15.1 共用中转地址的远程访问（参考 Paseo，用户决定暂缓）
+
+现状：`pi.<域名>` 这类固定地址是 Cloudflare Named Tunnel 直连某一台电脑，一个地址只能对应一台电脑；朋友要用就得各建子域名、拿到有整域权限的令牌，不适合分享。
+
+参考 [Paseo](https://github.com/getpaseo/paseo)（Apache-2.0，研究副本在 `/workspace/research/paseo`）的做法：
+
+- **一个共用域名**：`relay.<域名>`，部署为 Cloudflare Worker + Durable Objects（每台电脑一个 DO 实例，长连接 WebSocket 中转）。所有用户共用这一个地址，靠电脑编号区分，互不串线。
+- **电脑编号由公钥派生**：每个 daemon 本地生成 x25519 密钥对，编号 = 公钥哈希。配对链接形如 `https://relay.<域名>/#id=…&pk=…`，`#` 后面的片段浏览器不会发给任何服务器，中转方拿不到公钥。
+- **端到端加密**：x25519 密钥交换 + XSalsa20-Poly1305（NaCl box）；每个方向带单调递增计数器防重放。中转只转发密文，看不到聊天内容。
+- **补 Paseo 的两个漏洞**：①电脑上线（server join）要用私钥签名挑战，防止别人抢占同一编号冒充你的电脑；②新手机/新浏览器首次连接必须在电脑上批准（沿用现有设备批准流程）。
+- **PWA 多主机**：同一个网页 App 里可以保存多台电脑（自己的、家里的），切换连接；同时解决 iOS 主屏 App 与 Safari 存储隔离要重复配对的问题。
+- 保留现有“自己填域名 + Named Tunnel”方式作为可选项。
+- 工作量：只做聊天 + 通知 5–7 天；助理电脑远程桌面（noVNC 流量）也走中转 9–14 天。免费额度够自用 + 少数朋友；人多或常看远程桌面需要 Workers 付费版（$5/月）。
+
+### 15.2 助理电脑开箱即用：自带虚拟机运行时（进行中，分支 `wip/assistant-computer-vm`）
+
+目标：装好 Pi Assistant 就能用助理电脑，不要求用户安装 Docker Desktop（大公司还有授权限制），也不要求本地编译镜像。
+
+- **可选**：首次向导和 设置 里有「给助理安装电脑」开关（显示预计下载量 ≈1.5 GB、磁盘占用 ≈5 GB、内存 3–4 GB）。向导里默认推荐开启但由用户选；没开启前什么都不下载。关闭时：助理照常聊天，浏览器自动化走本机 Playwright（独立用户目录），“操作这台电脑”按权限档位；「助理电脑」按钮显示“未安装，去设置安装”。之后关掉会提供“关机”与“删除虚拟机和镜像释放空间（助理电脑里的登录状态也会清掉）”。
+- **镜像**：`packages/sandbox-desktop` 由 GitHub Actions 多架构构建（linux/amd64 + linux/arm64；cua-driver 0.34.1 两个架构都有官方 Linux 包，按 third-party.json 的 SHA256 校验）推到 GHCR `ghcr.io/mymimang/pi-assistant-desktop:<版本>`，配置里按版本 + digest 固定；设置里可换镜像地址 / 国内镜像加速（如 ghcr.nju.edu.cn）。
+- **运行时评估**：
+  - macOS：选 **Lima**（Apache-2.0，v2.2.1，`vmType: vz` 用 Apple Virtualization.framework，Apple Silicon / Intel 都支持，macOS 13+）。用户开启时下载 `limactl`（arm64 ≈38 MB / x64 ≈25 MB，SHA256 固定在 third-party.json），`LIMA_HOME` 指向我们自己的数据目录，实例名固定 `pia-desktop`，`mounts: []`（不挂载用户家目录），Debian 12 genericcloud 镜像与 nerdctl-full（containerd，Apache-2.0）都由我们自己下载（断点续传 + SHA256 + 可配国内镜像）后以本地路径交给 Lima，不走 Lima 的 `~/Library/Caches`。客户机里用 rootless nerdctl 跑桌面容器，端口经 Lima 自动转发到宿主 127.0.0.1。Colima 只是 Lima 的包装且依赖 Docker CLI，不选；自写 VZ helper 维护成本高，不选。
+  - Windows：WSL2 + 我们自己的发行版 `PiAssistant-Desktop`（从 Release 资产里的 rootfs 压缩包 `wsl --import` 到数据目录；内含 containerd/nerdctl）。缺 WSL 时用一次 UAC 执行 `wsl --install --no-distribution`，需要重启时明确告知。容器用 host 网络 + 每个助理分配独立端口（start.sh 端口改为环境变量）。尽力而为，需要真机验证。
+  - Linux：直接用本机 rootless Podman（或 Docker）。
+  - 已装 Docker 的用户可在 设置 里选 “Docker” 作为后端；默认用自带运行时。
+  - **硬性保护**：永远只操作自己命名的实例（Lima `pia-desktop`、WSL `PiAssistant-*`、带 `pia.agent` 标签的容器），不调用 PATH 里用户自己的 limactl，不动用户已有的 Docker 容器 / WSL 发行版；有单测覆盖名字校验。
+- **按需启停（所有后端通用）**：助理要用电脑类工具或用户打开「助理电脑」时自动启动（虚拟机 + 桌面容器）；空闲（没有工具调用、没有人在看画面、没有任务/定时任务占用）超过设定时间自动关机，默认 10 分钟，设置里可选 5 / 10 / 30 分钟 / 从不。家目录是持久卷，关机不丢登录状态。所有桌面都停了就关掉虚拟机释放内存。界面显示 关机 / 启动中 / 运行中。空闲判定逻辑有单测。
