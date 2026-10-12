@@ -15,7 +15,7 @@ Pi Assistant：基于 [Pi](https://github.com/earendil-works/pi) 的本地私人
 | Phase 3：助理电脑（Docker 桌面 + 实时画面）、浏览器自动化、操作这台电脑（权限档位）、飞书 / 钉钉 / 企业微信 / 邮箱 / Gmail、微信 ClawBot、主动性引擎 | ✅ 大部分完成 | §14 |
 | 安装包 | ✅ v0.1.0-beta.4 已发布（mac arm64 / x64、Windows），**未签名** | §5.2 |
 | 界面打磨（原生窗口、自定义勾选框、「?」帮助、上下文圆环、统一下载状态、完全权限确认框、悬浮条） | ✅ 2026-10-12 合入 main | §16、§5.19.2 |
-| 助理电脑自带虚拟机（Lima / WSL2，不要求装 Docker） | 🚧 进行中，分支 `wip/assistant-computer-vm` | §15.2 |
+| 助理电脑自带虚拟机（Lima / WSL2，不要求装 Docker） | 🚧 第 1 步通用部分已合入 main（运行时抽象、开关、镜像下载、按需启停）；Mac / Windows / Linux 服务器在分支 `wip/assistant-computer-vm` 继续 | §15.2 |
 | 共用中转远程访问（Paseo 式） | ⏸ 用户决定暂缓 | §15.1 |
 | Linux 服务器版（一条命令安装、一次性设置码、主人设备） | 📝 已确认方案，排在助理电脑之后 | §15.2 讨论 |
 
@@ -48,7 +48,7 @@ npm run check:pi         # Pi 升级兼容检查
 | 分支 | 用途 | 状态 |
 |---|---|---|
 | `main` | 发布分支 | beta.4 + 侧栏菜单修复 + 界面打磨 |
-| `wip/assistant-computer-vm` | 助理电脑自带虚拟机运行时 | 另一位开发者在做（`packages/server/src/desktop.ts`、`packages/sandbox-desktop`、设置里的电脑开关）。镜像 / limactl / rootfs 下载请接入统一下载管理器：`registerDownload({ id: "desktop-image", group: "助理电脑", … })` + `trackDownload`，设置页放 `<Downloads group="助理电脑" />`（DESIGN §5.19.2） |
+| `wip/assistant-computer-vm` | 助理电脑自带虚拟机运行时 | 另一位开发者在做（`packages/server/src/desktop.ts`、`desktop/*`、`packages/sandbox-desktop`、设置 › 助理电脑）。镜像下载目前用自己的进度（`desktop/image.ts`，按镜像层计数，显示在 设置 › 助理电脑）。**待办**：把镜像 / limactl / rootfs 下载也登记到统一下载管理器——`registerDownload({ id: "desktop-image", group: "助理电脑", installed, start })`，下载过程包 `trackDownload`（层进度用 `p.bytes(done, total)` 或 `p.detail("第 3/12 层")`），这样「下载与组件」页也能看到（DESIGN §5.19.2） |
 | `ui-polish` | 2026-10-12 界面打磨 | 已合入 main |
 
 ## 5. 代码地图（最常改的地方）

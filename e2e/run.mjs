@@ -1144,7 +1144,7 @@ await step("界面打磨：输入框旁上下文圆环（悬停简要、点开�
 	await ring.click();
 	await page.locator("[data-testid=context-pop]").getByText("上下文").first().waitFor();
 	await page.waitForTimeout(300);
-	await page.screenshot({ path: join(SHOTS, "58-context-ring.png") });
+	await page.screenshot({ path: join(SHOTS, "60-context-ring.png") });
 	await ring.click();
 	// 设置 › 下载与组件
 	await page.evaluate(() => (location.search = "?settings=downloads"));
@@ -1154,19 +1154,19 @@ await step("界面打磨：输入框旁上下文圆环（悬停简要、点开�
 	await help.hover();
 	await page.locator("[data-testid=help-pop]").waitFor();
 	await page.waitForTimeout(200);
-	await page.screenshot({ path: join(SHOTS, "59-settings-downloads.png") });
+	await page.screenshot({ path: join(SHOTS, "61-settings-downloads.png") });
 	// 记忆设置：自定义单选框不是浏览器默认外观
 	await page.locator("[data-tab=memory]").click();
 	await page.waitForTimeout(400);
 	const ap = await page.locator("[data-testid=settings-content] input[type=radio], [data-testid=settings-content] input[type=checkbox]").first().evaluate((el) => getComputedStyle(el).appearance);
 	if (ap !== "none") throw new Error(`勾选框仍是浏览器默认样式：${ap}`);
-	await page.screenshot({ path: join(SHOTS, "60-settings-memory-polish.png") });
+	await page.screenshot({ path: join(SHOTS, "62-settings-memory-polish.png") });
 	// 窄窗口：设置内容不横向溢出
 	await page.setViewportSize({ width: 760, height: 800 });
 	await page.waitForTimeout(300);
 	const over = await page.locator("[data-testid=settings-content]").evaluate((el) => el.scrollWidth - el.clientWidth);
 	if (over > 2) throw new Error(`窄窗口下设置内容横向溢出 ${over}px`);
-	await page.screenshot({ path: join(SHOTS, "61-settings-narrow.png") });
+	await page.screenshot({ path: join(SHOTS, "63-settings-narrow.png") });
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.keyboard.press("Escape");
 	// 悬浮条：透明背景 + 关闭按钮（关闭后服务端记住，状态变化前不再弹）
@@ -1177,7 +1177,7 @@ await step("界面打磨：输入框旁上下文圆环（悬停简要、点开�
 	await bar.locator("[data-testid=float-bar]").waitFor();
 	const bg = await bar.evaluate(() => getComputedStyle(document.body).backgroundColor);
 	if (!/rgba\(0, 0, 0, 0\)|transparent/.test(bg)) throw new Error(`悬浮条页面背景不透明：${bg}`);
-	await bar.screenshot({ path: join(SHOTS, "62-hostbar-close.png"), omitBackground: true });
+	await bar.screenshot({ path: join(SHOTS, "64-hostbar-close.png"), omitBackground: true });
 	await bar.locator("[data-testid=float-close]").click();
 	const st = await bar.evaluate(() => fetch("/api/host-control/bar").then((r) => r.json()));
 	if (!st.dismissed) throw new Error("关闭后 dismissed 应为 true");

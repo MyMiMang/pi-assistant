@@ -601,7 +601,7 @@ App 自己下载的东西都登记到同一个下载管理器，界面统一显�
 - 接口：`GET /api/downloads`（列表）、`POST /api/downloads/:id/start`（下载 / 重试，仅本机）；进度经 WS 事件 `downloads.changed`（每条最多 500ms 一次）。
 - 接入方式：`registerDownload({ id, name, group, size, installed, start?, hidden? })` + `trackDownload(id, async (p) => …)`；字节进度用 `fetchWithProgress(url, p)` / `countBytes(stream, total, p)`，别的进程在下载时用 `watchDir([dir], p, 估计总量, fn)`。
 - 界面：`apps/web/src/components/Downloads.tsx`（`<Downloads />` 全部，`<Downloads group="…" />` 某一组）。
-- **助理电脑镜像 / 虚拟机**（分支 `wip/assistant-computer-vm`）接入时：在它自己的模块里 `registerDownload({ id: "desktop-image", group: "助理电脑", … })`，下载 limactl / rootfs / 镜像时包 `trackDownload`，设置页放 `<Downloads group="助理电脑" />` 即可。
+- **助理电脑镜像 / 虚拟机**（`desktop/image.ts` 目前有自己的分层进度，显示在 设置 › 助理电脑；分支 `wip/assistant-computer-vm`）接入时：在它自己的模块里 `registerDownload({ id: "desktop-image", group: "助理电脑", … })`，下载 limactl / rootfs / 镜像时包 `trackDownload`，设置页放 `<Downloads group="助理电脑" />` 即可。
 - MCP 服务器（`npx` 首次运行时由 npm 自己下载）和 Playwright（只用系统 Chrome / Edge，不下载浏览器）不在列表里。
 
 ### 5.20 MCP 服务器与 Pi 扩展包（P2，已实现）
