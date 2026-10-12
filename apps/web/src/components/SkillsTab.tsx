@@ -158,8 +158,8 @@ export function SkillsTab() {
 	return (
 		<div className="space-y-4" data-testid="skills-tab">
 			<div className="flex items-start gap-3">
-				<p className="flex-1 text-xs leading-relaxed text-mut">
-					技能是可复用的做事方法（Agent Skills 标准的 SKILL.md）。所有助理共用这个技能库：模型只看到名称和描述，遇到相关任务时才读取完整内容。助理也可以自己把学到的流程存成技能。
+				<p className="flex-1 text-xs text-mut">
+					所有助理共用的做事方法。 <Help>技能是可复用的做事方法（Agent Skills 标准的 SKILL.md）。模型只看到名称和描述，遇到相关任务时才读取完整内容。助理也可以自己把学到的流程存成技能。</Help>
 				</p>
 				<Button variant="outline" size="sm" onClick={() => setEdit({ name: "", description: "", body: "# 步骤\n\n1. \n" })}>
 					<Plus size={14} /> 新建技能
@@ -182,7 +182,7 @@ export function SkillsTab() {
 				return (
 					<section key={title}>
 						<div className="pa-sec-label mb-1.5">{title}</div>
-						{items.length === 0 && <div className="text-sm text-mut">还没有。可以新建，或在聊天里让助理“把刚才的流程存成技能”。</div>}
+						{items.length === 0 && <div className="text-sm text-mut">还没有技能。 <Help>可以新建，或在聊天里让助理“把刚才的流程存成技能”。</Help></div>}
 						<ul className="grid gap-2 sm:grid-cols-2">
 							{items.map((s) => (
 								<li key={s.name}>
@@ -213,8 +213,8 @@ export function MemorySettings() {
 	const CAP: Record<string, string> = { reflect: "反思", mentalModels: "心智模型", temporal: "时间推理", graph: "实体图谱", exportImport: "导出/导入", mcpEndpoint: "MCP 端点" };
 	return (
 		<div className="space-y-4">
-			<p className="text-xs leading-relaxed text-mut">
-				记忆后端决定助理怎样保存和检索长期记忆。每个助理默认跟随这里的设置，也可以在助理的「记忆」页单独选择。记忆里有三种作用域：共享（关于你，所有助理可见）、仅此助理、仅当前对话。
+			<p className="text-xs text-mut">
+				助理怎样保存和检索长期记忆。 <Help>每个助理默认跟随这里的设置，也可以在助理的「记忆」页单独选择。记忆里有三种作用域：共享（关于你，所有助理可见）、仅此助理、仅当前对话。</Help>
 			</p>
 			<ul className="space-y-2">
 				{data?.providers.map((p) => (

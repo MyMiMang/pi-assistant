@@ -29,6 +29,8 @@ import { backend as desktopBackend, builtinFor, dockerBackend } from "./desktop/
 import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop/image.ts";
 import { vmPhase } from "./desktop/lima.ts";
 import { desktopSettings, updateDesktopSettings } from "./desktop/settings.ts";
+import "./desktop/image-download.ts";
+import { ensureMcpPackage, syncMcpDownloads } from "./mcp-install.ts";
 import { agentBusy } from "./runtime.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
 import { entryDomain, restartTunnel, retryTunnel, startTunnel, stopTunnel, tunnelStatus } from "./tunnel.ts";
@@ -538,7 +540,7 @@ app.get("/api/mcp", (c) => c.json(listMcp().map(mcpJson)));
 app.post("/api/mcp", localOnly, async (c) => {
 	try {
 		const r = saveMcp(await c.req.json());
-		void testMcp(r.id).then(() => bus.emit({ type: "mcp.changed" } as never));
+		void ensureMcpPackage(r.id).then(() => testMcp(r.id)).then(() => bus.emit({ type: "mcp.changed" } as never));
 		return c.json(mcpJson(r));
 	} catch (e) {
 		return errJson(c, e);
@@ -547,7 +549,7 @@ app.post("/api/mcp", localOnly, async (c) => {
 app.put("/api/mcp/:id", localOnly, async (c) => {
 	try {
 		const r = saveMcp({ ...(await c.req.json()), id: (c.req.param("id") as string) });
-		void testMcp(r.id).then(() => bus.emit({ type: "mcp.changed" } as never));
+		void ensureMcpPackage(r.id).then(() => testMcp(r.id)).then(() => bus.emit({ type: "mcp.changed" } as never));
 		return c.json(mcpJson(r));
 	} catch (e) {
 		return errJson(c, e);
@@ -567,7 +569,12 @@ app.post("/api/mcp/:id/test", localOnly, async (c) => {
 		return errJson(c, e);
 	}
 });
-app.delete("/api/mcp/:id", localOnly, (c) => c.json({ ok: deleteMcp((c.req.param("id") as string)) }));
+app.delete("/api/mcp/:id", localOnly, (c) => {
+	const ok = deleteMcp(c.req.param("id") as string);
+	syncMcpDownloads();
+	return c.json({ ok });
+});
+syncMcpDownloads();
 
 const pkgJson = (p: PiPackageRow) => ({ ...p, enabled: !!p.enabled, agents: p.agents ? JSON.parse(p.agents) : null, resources: p.resources ? JSON.parse(p.resources) : null });
 app.get("/api/pi-packages", (c) => c.json(listPackages().map(pkgJson)));

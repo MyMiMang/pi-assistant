@@ -138,7 +138,7 @@ function Files({ agentId }: { agentId: string }) {
 				</div>
 			)}
 			<div className="space-y-1">
-				{files.length === 0 && <div className="text-sm text-zinc-500">还没有文件。助理发给你的文件和你上传的文件都会出现在这里。</div>}
+				{files.length === 0 && <div className="text-sm text-zinc-500">还没有文件。</div>}
 				{files.map((f) => (
 					<button key={f.fileId} onClick={() => download(`/api/files/${f.fileId}`, f.name)} className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
 						<File size={16} className="shrink-0 text-zinc-400" />

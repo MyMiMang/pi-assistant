@@ -661,6 +661,17 @@ await step("扩展：添加 MCP 服务（本机命令）→ 测试连接/工具�
 	await pk.scrollIntoViewIfNeeded();
 	await page.waitForTimeout(300);
 	await page.screenshot({ path: join(SHOTS, "33-settings-pi-packages.png") });
+
+	// npx 型 MCP：保存后预先下载到本机，统一下载组件里能看到进度并变成“已下载”，之后用装好的可执行文件连接
+	const mem = await fetch(`${BASE}/api/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "memory", config: { type: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-memory"] } }) }).then((r) => r.json());
+	const row = page.locator(`[data-testid=download-row][data-id="mcp:${mem.id}"]`);
+	await row.waitFor({ timeout: 20_000 });
+	await page.locator(`[data-testid=download-row][data-id="mcp:${mem.id}"][data-state=ready]`).waitFor({ timeout: 180_000 });
+	await tab.locator("[data-testid=mcp-item]").filter({ hasText: "memory" }).getByText(/已连接 · \d+ 个工具/).waitFor({ timeout: 60_000 });
+	await row.scrollIntoViewIfNeeded();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "66-mcp-download.png") });
+	await fetch(`${BASE}/api/mcp/${mem.id}`, { method: "DELETE" });
 	await page.keyboard.press("Escape");
 
 	await send("查一下上海天气");

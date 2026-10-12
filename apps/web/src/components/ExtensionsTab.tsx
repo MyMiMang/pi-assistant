@@ -309,12 +309,12 @@ function PackagesSection() {
 				<Package size={16} />
 				<h3 className="font-semibold">Pi 扩展包</h3>
 			</div>
-			<p className="text-xs leading-relaxed text-mut">
-				Pi 生态的扩展包（npm / git / 本机目录），可以包含扩展（新工具、新能力）、技能和提示模板。装在本应用自己的目录里，不影响你电脑上自己安装的 Pi。
+			<p className="text-xs text-mut">
+				给助理加新工具、技能和模板。 <Help>Pi 生态的扩展包（npm / git / 本机目录），可以包含扩展（新工具、新能力）、技能和提示模板。装在本应用自己的目录里，不影响你电脑上自己安装的 Pi。</Help>
 			</p>
 			<div className="flex items-start gap-2 rounded-xl bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
 				<AlertTriangle size={14} className="mt-0.5 shrink-0" />
-				扩展包里的代码会以本应用的权限在这台电脑上运行。只安装你信任的来源，安装前最好看一下源码。
+				只安装你信任的来源。 <Help>扩展包里的代码会以本应用的权限在这台电脑上运行，安装前最好看一下源码。</Help>
 			</div>
 			<div className="pa-card space-y-2 !p-3">
 				<div className="flex gap-2">
@@ -385,20 +385,20 @@ export function ExtensionsTab() {
 	}, [version]);
 	return (
 		<div className="space-y-8" data-testid="extensions-tab">
-			{!isLocal && <div className="rounded-xl bg-hover p-3 text-sm">为了安全，添加和修改扩展只能在这台电脑上进行（它们会在电脑上运行命令或代码）。手机上可以查看状态。</div>}
+			{!isLocal && <div className="rounded-xl bg-hover p-3 text-sm">添加和修改扩展只能在电脑上进行，手机上只能查看。</div>}
 			<section className="space-y-3">
 				<div className="flex items-center gap-2">
 					<Plug size={16} />
-					<h3 className="flex-1 font-semibold">MCP 服务</h3>
+					<h3 className="font-semibold">MCP 服务</h3>
+					<Help>通过 MCP（Model Context Protocol）给助理接入外部工具：GitHub、数据库、地图、公司内部系统……本机命令型服务在这台电脑上运行，npx / uvx 的包会预先下载到本机（下方可看进度）；远程服务支持请求头或 OAuth 登录。只读工具直接用，其他工具每次调用前都会先请你批准。</Help>
+					<span className="flex-1" />
 					{!adding && (
 						<Button size="sm" variant="outline" onClick={() => setAdding(true)}>
 							<Plus size={14} /> 添加
 						</Button>
 					)}
 				</div>
-				<p className="text-xs leading-relaxed text-mut">
-					通过 MCP（Model Context Protocol）给助理接入外部工具：GitHub、数据库、地图、公司内部系统……本机命令型服务在这台电脑上运行；远程服务支持请求头或 OAuth 登录。只读工具直接用，其他工具每次调用前都会先请你批准。
-				</p>
+				<p className="text-xs text-mut">给助理接入外部工具。</p>
 				{adding && <McpForm onDone={() => (setAdding(false), load())} />}
 				{list.length === 0 && !adding && <div className="py-4 text-center text-sm text-mut">还没有 MCP 服务</div>}
 				<ul className="space-y-2">

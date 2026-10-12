@@ -178,7 +178,7 @@ export function HostControlSettings() {
 						</button>
 					))}
 				</div>
-				<p className="text-xs text-mut">每个助理的权限在输入框下方「助理电脑」旁边的 <ShieldCheck size={11} className="inline" /> 按钮里单独切换（调高需要确认）。改这里只影响之后新建的助理。</p>
+				<p className="text-xs text-mut">只影响之后新建的助理。 <Help>每个助理的权限在输入框下方「助理电脑」旁边的 <ShieldCheck size={11} className="inline" /> 按钮里单独切换（调高需要确认）。</Help></p>
 				{anyFull && (
 					<div className="space-y-1 rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm leading-relaxed text-red-800 dark:text-red-300" data-testid="host-full-warning">
 						<div className="flex items-center gap-2 font-semibold">
@@ -211,7 +211,7 @@ export function HostControlSettings() {
 					</div>
 				</section>
 			)}
-			{win && <div className="rounded-xl bg-hover p-3 text-sm text-mut">Windows：无需额外授权。若要操作“以管理员身份运行”的程序，本应用也需要以管理员身份运行（不推荐）。</div>}
+			{win && <div className="rounded-xl bg-hover p-3 text-sm text-mut">Windows：无需额外授权。 <Help>若要操作“以管理员身份运行”的程序，本应用也需要以管理员身份运行（不推荐）。</Help></div>}
 
 			{anyBounded && <section>
 				<div className="mb-2 font-semibold">允许操作的应用（“限定”档位）</div>
@@ -304,7 +304,7 @@ export function HostControlSettings() {
 
 			<section className="space-y-2">
 				<div className="font-semibold">本机操作记录</div>
-				<p className="text-xs text-mut">助理在这台电脑上的每个动作（包括被拒绝、被暂停拦下的）都会记录在这里，任何模式下都记录。</p>
+				<p className="text-xs text-mut">助理在这台电脑上的每个动作。 <Help>包括被拒绝、被暂停拦下的，任何模式下都记录。</Help></p>
 				<ActionLog target="host" />
 			</section>
 		</div>
@@ -321,7 +321,7 @@ function SandboxComputerSettings() {
 	return (
 		<section className="space-y-2 rounded-xl bg-hover p-4 text-sm" data-testid="sandbox-approvals">
 			<div className="font-semibold">助理自己的电脑</div>
-			<p className="text-mut">助理电脑是一台只属于助理的虚拟电脑（与你的电脑隔离），默认拥有完全权限。如果它登录了你在意的账号（比如它的微信、邮箱），可以要求它在关键动作前先问你。暂停和操作记录始终有效（在助理的「电脑」页）。</p>
+			<p className="text-mut">助理自己的隔离电脑，默认完全权限。 <Help>如果它登录了你在意的账号（比如它的微信、邮箱），可以要求它在关键动作前先问你。暂停和操作记录始终有效（在助理的「电脑」页）。</Help></p>
 			<label className="flex items-center gap-2">
 				<input type="radio" checked={a === "none"} onChange={() => set("none")} /> 完全权限，不用问我（默认）
 			</label>
@@ -407,7 +407,7 @@ export function HostTierPill({ agentId }: { agentId: string }) {
 			</button>
 			{open && (
 				<div className="absolute bottom-full left-0 z-30 mb-2 rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid="host-tier-menu">
-					<div className="px-2.5 pb-1 pt-0.5 text-xs text-mut">{d.status.enabled ? "这个助理操作你电脑的权限" : "这个助理操作你电脑的权限（“操作这台电脑”还没开启，在 设置 里开启后生效）"}</div>
+					<div className="px-2.5 pb-1 pt-0.5 text-xs text-mut">{d.status.enabled ? "这个助理操作你电脑的权限" : "这个助理操作你电脑的权限（未开启）"}</div>
 					<TierPicker agentId={agentId} d={d} load={load} onDone={() => setOpen(false)} compact />
 				</div>
 			)}

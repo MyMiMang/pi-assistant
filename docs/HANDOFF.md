@@ -91,3 +91,4 @@ npm run check:pi         # Pi 升级兼容检查
 3. Linux 服务器版：一次性设置码 + 主人设备，`deploy/` 里的服务器部署文件补全。
 
 - 2026-10-13：助理电脑「开机后同一轮可用」和「首张截图空白」已修好（见 DESIGN §16.1）。调试时设 `PIA_DEBUG_COMPUTER=1` 可看到 computer_open 各阶段日志。真实 Docker 的 e2e：`E2E_DESKTOP=1 PIA_DESKTOP_IMAGE=pi-assistant/desktop:dev npm run e2e`（42 步全过）。
+- 2026-10-13：助理电脑镜像、MCP（npx/uvx）包已接入统一下载管理（DESIGN §16.2），全应用长说明改为「?」帮助。未做：Linux 服务器版（一次性设置码 + 主设备）——下一阶段。镜像进度在 docker 后端按层估算；若要真实字节可改用 Docker Engine API 的 progressDetail。

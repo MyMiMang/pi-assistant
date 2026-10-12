@@ -6,7 +6,7 @@ import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
 import { Plus } from "lucide-react";
 import { AgentEditor } from "./AgentEditor";
-import { Button, cx } from "./ui";
+import { Button, cx, Help } from "./ui";
 import { DesktopCost } from "./DesktopSettings";
 import { BRAND } from "@pi-assistant/shared";
 
@@ -51,7 +51,7 @@ export default function Onboarding() {
 								<input type="checkbox" className="mt-1 accent-[var(--acc)]" checked={desk} onChange={(e) => setDesk(e.target.checked)} data-testid="onboarding-desktop" />
 								<span className="space-y-1">
 									<span className="block text-sm font-medium">给助理安装电脑（推荐）</span>
-									<span className="block text-xs text-zinc-500">助理会有一台自己的桌面电脑（浏览器、微信等应用），在后台下载，之后也可以在 设置 › 助理电脑 里开关。</span>
+									<span className="block text-xs text-zinc-500">后台下载，之后可在设置里开关。 <Help>助理会有一台自己的桌面电脑（浏览器、微信等应用），在后台下载，之后也可以在 设置 › 助理电脑 里开关。</Help></span>
 									<DesktopCost />
 								</span>
 							</label>
@@ -70,7 +70,7 @@ export default function Onboarding() {
 					{step === 2 && customMode && (
 						<div className="space-y-3">
 							<h2 className="text-lg font-semibold">{current ? "编辑" : "添加"}自定义模型服务</h2>
-							<p className="text-sm text-zinc-500">适用于中转站、第三方模型和本地推理服务：填写接口地址和 Key，模型列表可以自动获取或手动输入。</p>
+							<p className="text-sm text-zinc-500">中转站、第三方或本地模型。 <Help>填写接口地址和 Key，模型列表可以自动获取或手动输入。</Help></p>
 							<CustomProviderForm
 								apis={custom.apis}
 								initial={current ? custom.providers.find((m) => m.id === current.id) : undefined}
@@ -95,7 +95,7 @@ export default function Onboarding() {
 						<div className="space-y-4">
 							<div>
 								<h2 className="text-lg font-semibold">创建你的第一个助理</h2>
-								<p className="text-sm text-zinc-500">给它起个名字、挑个头像。之后可以随时再创建更多助理，每个都有自己的人设、模型、记忆和电脑。</p>
+								<p className="text-sm text-zinc-500">给它起个名字、挑个头像。 <Help>之后可以随时再创建更多助理，每个都有自己的人设、模型、记忆和电脑。</Help></p>
 							</div>
 							<AgentEditor showModel={false} submitLabel="创建并开始" onDone={(a) => void finish(a.id)} />
 						</div>

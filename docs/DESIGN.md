@@ -1041,3 +1041,9 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - **同一轮可用**：助理电脑关机时，助理只有 `computer_open`。调用后（开自己的电脑不需要批准）会先开机，在当前会话里热注册完整电脑扩展（cua-driver MCP、`computer_screenshot`、`request_handoff`，以及审批 / 暂停 / 记录钩子），等 `mcp__computer__*` 工具真正出现才返回，模型同一轮就能接着用。MCP 60 秒没连上会如实告诉模型，不会假装能用；开机失败直接报错。
 - **桌面就绪**：容器打出 “pia-desktop ready” 后，再在容器里执行 `READY_PROBE`：X 正常、xfwm4/xfdesktop 在跑、VNC 5900 和 noVNC 6080 在监听、cua-driver 在跑、整屏截图不是纯色。全部通过才报告 running。每次服务运行后的第一张截图前也会检查一次（关机时清除）。
 - 验证：`test/computer-open.test.ts`；e2e 用真实 Docker 跑「助理电脑关机时：助理自己开机…」这一步（`E2E_DESKTOP=1 PIA_DESKTOP_IMAGE=pi-assistant/desktop:dev`）。
+
+### 16.2 下载管理补全：助理电脑镜像、MCP 包；全应用文字精简
+
+- **助理电脑镜像**（`desktop/image-download.ts`）：登记为下载条目 `desktop-image`（组“助理电脑”，未开启或用 `PIA_DESKTOP_IMAGE` 自定义镜像时隐藏）。不改 `image.ts` 的拉取流程，只观察 `installState()`：下载中按“已完成层 / 总层数 × 镜像压缩大小”估算字节，并显示“第 x/y 层”（docker 非终端输出不给字节数；macOS 虚拟机后端的 detail 会直接显示）。出错显示原因，点“重试”重新拉取（已下载的层保留）。用真实 Docker 验证过：正常下载、错误加速地址报错、改回后重试成功。
+- **MCP 服务包**（`mcp-install.ts`）：`npx [-y] pkg …`、`npx -p pkg cmd …`、`uvx pkg …`、`uvx --from spec cmd …`、`uv tool run …` 保存后预先装到 `<数据目录>/mcp-packages/`（npm `--prefix`；uv 用 App 自带的 uv `tool install`，UV_TOOL_DIR 指向我们的目录），条目 `mcp:<id>`（组“MCP 服务”）显示字节进度 / 出错重试。装好后会话和“测试连接”直接运行装好的可执行文件（离线可用、启动快）；没装好或装失败时照常用原命令，不影响可用性。其他命令（node 脚本、docker、http）不需要下载，不登记。
+- **文字精简**：设置各页、渠道、扩展、技能、记忆、定时任务、主动性、上手向导、助理电脑、操作这台电脑、信息面板等处的长说明改成一句话 + 「?」帮助图标（悬停 / 点击看详细）。安全相关的风险清单和接入步骤保留原样。

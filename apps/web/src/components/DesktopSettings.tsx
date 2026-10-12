@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
-import { Badge, Button, Input } from "./ui";
+import { Badge, Button, Help, Input } from "./ui";
 
 export type DesktopGlobal = {
 	settings: { enabled: boolean; backend: "auto" | "docker"; idleMinutes: number; mirror: string; fileMirror: string };
@@ -87,7 +87,7 @@ export function DesktopSettings() {
 			<section className="space-y-2">
 				<div className="mb-3">
 					<div className="font-semibold">{t("给助理安装电脑")}</div>
-					<div className="mt-0.5 text-sm text-zinc-500">{t("每个助理一台自己的 Linux 桌面电脑（浏览器、微信等应用），登录状态长期保留，你可以在「电脑」标签里随时看它的屏幕、接管操作。不开启时助理照常聊天，浏览器自动化在本机独立的浏览器里进行。")}</div>
+					<div className="mt-0.5 text-sm text-zinc-500">{t("每个助理一台自己的桌面电脑。")} <Help>{t("每个助理一台自己的 Linux 桌面电脑（浏览器、微信等应用），登录状态长期保留，你可以在「电脑」标签里随时看它的屏幕、接管操作。不开启时助理照常聊天，浏览器自动化在本机独立的浏览器里进行。")}</Help></div>
 				</div>
 				<label className="flex items-start gap-3 rounded-xl border border-line p-3">
 					<input type="checkbox" className="mt-1 accent-[var(--acc)]" checked={s.enabled} onChange={(e) => void toggle(e.target.checked)} data-testid="desktop-enabled" />
@@ -162,7 +162,7 @@ export function DesktopSettings() {
 
 			<section className="space-y-2">
 				<div className="font-semibold">{t("空闲自动关机")}</div>
-				<div className="text-sm text-zinc-500">{t("没有工具调用、没人在看画面、没有任务占用超过这个时间，就自动关机释放内存；登录状态不会丢，下次用到时自动开机。")}</div>
+				<div className="text-sm text-zinc-500">{t("闲置多久后关机，登录状态不丢。")} <Help>{t("没有工具调用、没人在看画面、没有任务占用超过这个时间，就自动关机释放内存；登录状态不会丢，下次用到时自动开机。")}</Help></div>
 				<select value={s.idleMinutes} onChange={(e) => void put({ idleMinutes: Number(e.target.value) })} className="h-9 rounded-lg border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900" aria-label={t("空闲自动关机")} data-testid="desktop-idle">
 					{[5, 10, 30, 0].map((m) => (
 						<option key={m} value={m}>{m ? t("{m} 分钟", { m }) : t("从不")}</option>

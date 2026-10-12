@@ -114,7 +114,7 @@ export function DesktopView({ agentId }: { agentId: string }) {
 			</div>
 			{!st.enabled ? (
 				<div className="flex items-center gap-2 rounded-lg bg-zinc-50 p-2 text-xs text-zinc-500 dark:bg-zinc-900" data-testid="desktop-not-installed">
-					<span className="flex-1">{t("未安装，去设置安装")}。{t("安装后助理有一台自己的桌面电脑（浏览器、微信等应用）。")}</span>
+					<span className="flex-1">{t("未安装，去设置安装")}</span>
 					<Button size="sm" variant="outline" onClick={() => useStore.getState().set({ settings: "computer" })}>
 						<Settings2 size={14} /> {t("去设置")}
 					</Button>

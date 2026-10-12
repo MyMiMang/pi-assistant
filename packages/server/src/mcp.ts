@@ -8,6 +8,7 @@
 import { McpClient, StdioTransport, StreamableHttpTransport, type Tool } from "@earendil-works/pi-mcp";
 import { bus } from "./bus.ts";
 import { db, getSetting, now, setSetting, uid } from "./db.ts";
+import { resolveMcpCommand } from "./mcp-install.ts";
 import { openJson, sealJson } from "./secrets.ts";
 
 export type McpExposure = "direct" | "deferred" | "codemode" | "hidden";
@@ -109,7 +110,7 @@ export function mcpServersFor(agentId: string) {
 			const base = { description: c.description || undefined, exposure: c.exposure ?? "direct", timeout: c.timeout };
 			const config =
 				c.type === "stdio"
-					? { ...base, type: "stdio" as const, command: c.command!, args: c.args ?? [], env: c.env, cwd: c.cwd || undefined }
+					? { ...base, type: "stdio" as const, ...resolveMcpCommand(c), env: c.env, cwd: c.cwd || undefined }
 					: { ...base, type: "http" as const, url: c.url!, headers: c.headers && Object.keys(c.headers).length ? c.headers : undefined, oauth: c.oauth };
 			return { name: r.name, config };
 		});
@@ -127,7 +128,7 @@ export async function testMcp(id: string, opts: { timeoutMs?: number } = {}) {
 	let stderr = "";
 	const transport =
 		c.type === "stdio"
-			? new StdioTransport({ command: c.command!, args: c.args ?? [], env: Object.fromEntries(Object.entries(c.env ?? {}).map(([k, v]) => [k, expand(v)])), cwd: c.cwd || undefined, stderr: "pipe", onStderr: (s) => (stderr = (stderr + s).slice(-2000)) })
+			? new StdioTransport({ ...resolveMcpCommand(c), env: Object.fromEntries(Object.entries(c.env ?? {}).map(([k, v]) => [k, expand(v)])), cwd: c.cwd || undefined, stderr: "pipe", onStderr: (s) => (stderr = (stderr + s).slice(-2000)) })
 			: new StreamableHttpTransport({ url: c.url!, headers: Object.fromEntries(Object.entries(c.headers ?? {}).map(([k, v]) => [k, expand(v)])), openGetStream: false });
 	const timer = setTimeout(() => void client.close().catch(() => {}), (opts.timeoutMs ?? 20_000) + 2000);
 	try {

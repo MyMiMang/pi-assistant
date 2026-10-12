@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Routine, RoutineRun } from "../types";
-import { Badge, Button, cx, fmtTime, Input } from "./ui";
+import { Badge, Button, cx, fmtTime, Help, Input } from "./ui";
 
 const PRESETS: [string, string][] = [
 	["每天 08:00", "0 8 * * *"],
@@ -58,7 +58,7 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 	return (
 		<div className="space-y-3" data-testid="routines-tab">
 			<div className="flex items-center gap-2">
-				<p className="flex-1 text-xs leading-relaxed text-mut">到点或收到 Webhook 时，用保存的指令唤醒助理在后台执行（电脑开着就行，不需要打开页面），结果发到聊天并推送。</p>
+				<p className="flex-1 text-xs text-mut">到点自动让助理做事。 <Help>到点或收到 Webhook 时，用保存的指令唤醒助理在后台执行（电脑开着就行，不需要打开页面），结果发到聊天并推送。</Help></p>
 				<Button size="sm" variant="outline" onClick={() => setDraft({ name: "", prompt: "", trigger: "cron", cron: "0 8 * * *", quiet: true })}>
 					<Plus size={14} /> 新建
 				</Button>

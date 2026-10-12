@@ -163,12 +163,13 @@ function ClawbotSection({ items, agents, onChange }: { items: Channel[]; agents:
 				<Badge tone="green">推荐</Badge>
 			</div>
 			<p className="text-sm text-mut">
-				腾讯官方的“微信 › 我 › 设置 › 插件 › ClawBot”通道：用你自己的微信扫码连接，就能在微信里和助理单聊，发文字、图片、文件都行。不操作你的微信、不读取其它聊天记录、不需要密钥，比“个人微信（GUI）”安全得多。
+				用自己的微信扫码，在微信里和助理单聊。{" "}
+				<Help>
+					腾讯官方的“微信 › 我 › 设置 › 插件 › ClawBot”通道：发文字、图片、文件都行。不操作你的微信、不读取其它聊天记录、不需要密钥，比“个人微信（GUI）”安全得多。
+					<br />· 需要较新版本的微信，且 ClawBot 插件仍在灰度中：如果在 设置 › 插件 里看不到，暂时用不了。
+					<br />· 只支持单聊。你超过 24 小时没给它发消息后，助理就不能主动发给你；每轮可发条数也有限。发不出去的消息会排队，等你下次发消息时补发，同时用 App 推送提醒你。
+				</Help>
 			</p>
-			<ul className="list-disc space-y-0.5 pl-5 text-xs text-mut">
-				<li>需要较新版本的微信，且 ClawBot 插件仍在灰度中：如果在 设置 › 插件 里看不到，暂时用不了。</li>
-				<li>只支持单聊。微信规定：你超过 24 小时没给它发消息后，助理就不能主动发给你；每轮可发条数也有限。发不出去的消息会排队，等你下次发消息时补发，同时用 App 推送提醒你。</li>
-			</ul>
 			{items.map((c) => (
 				<ClawbotCard key={c.id} c={c} agents={agents} onChange={onChange} />
 			))}
@@ -244,7 +245,7 @@ function ClawbotCard({ c, agents, onChange }: { c: Channel; agents: { id: string
 							<CheckCircle2 size={14} className="text-green-600" /> 已连接你的微信 <span className="truncate text-xs text-mut">{u.id}</span>
 						</div>
 					))}
-					<div className="text-xs text-mut">在微信里找到「微信ClawBot」对话（可以置顶），直接发消息即可。发送「新对话」开始新话题，「停止」中断当前任务。</div>
+					<div className="text-xs text-mut">在微信「微信ClawBot」对话里直接发消息。 <Help>可以把对话置顶。发送「新对话」开始新话题，「停止」中断当前任务。</Help></div>
 					{!!c.queued && <div className="text-xs text-amber-600" data-testid="clawbot-queued">有 {c.queued} 条消息等你下次在微信里发消息时补发（微信不允许现在主动发）</div>}
 				</div>
 			)}
@@ -302,9 +303,9 @@ function WechatSection({ agents }: { agents: { id: string; name: string; avatar:
 				<Badge>实验</Badge>
 				<span className="ml-auto text-sm text-mut">{s.enabled ? "已开启" : "未开启"}</span>
 			</div>
-			<p className="text-sm text-mut">让助理在它自己的电脑里登录<b>它自己的</b>微信号（官方 Linux 版微信，由助理操作界面），可以帮你收发消息、看群、传文件。</p>
+			<p className="text-sm text-mut">助理在它的电脑里登录<b>它自己的</b>微信号。 <Help>官方 Linux 版微信，由助理操作界面，可以帮你收发消息、看群、传文件。聊天记录保存在这台电脑的助理电脑里。</Help></p>
 			<div className="rounded-xl bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300" data-testid="wechat-warning">
-				⚠️ 风险提示：用程序操作个人微信不符合微信的服务条款，<b>账号可能被限制或封禁</b>。请准备一个<b>专门给助理用的微信小号</b>，不要用你的主号；不要让它批量加好友、群发消息。微信的聊天记录保存在这台电脑的助理电脑里。
+				⚠️ <b>账号可能被限制或封禁</b>，请用<b>专门的微信小号</b>。 <Help>用程序操作个人微信不符合微信的服务条款。不要用你的主号；不要让它批量加好友、群发消息。</Help>
 			</div>
 			{!s.acknowledgedAt ? (
 				<div className="flex flex-wrap items-center gap-3">

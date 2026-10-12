@@ -57,11 +57,16 @@ export default function Settings() {
 					{settings === "extensions" && (
 						<>
 							<ExtensionsTab />
-							<div className="mt-6"><Downloads group="Pi 扩展包" /></div>
+							<div className="mt-6 space-y-3"><Downloads group="MCP 服务" /><Downloads group="Pi 扩展包" /></div>
 						</>
 					)}
 					{settings === "memory" && <MemorySettings />}
-					{settings === "computer" && <DesktopSettings />}
+					{settings === "computer" && (
+						<>
+							<DesktopSettings />
+							<div className="mt-6"><Downloads group="助理电脑" /></div>
+						</>
+					)}
 					{settings === "host" && (
 						<>
 							<HostControlSettings />
@@ -272,7 +277,7 @@ function RemoteTab() {
 								<input type="checkbox" className="mt-0.5 accent-[var(--acc)]" checked={preApproved} onChange={(e) => setPreApproved(e.target.checked)} data-testid="pre-approved" />
 								<span>
 									扫码后无需在电脑上确认
-									<span className="block text-xs text-mut2">适合人不在电脑旁时（比如把二维码截图发给自己的手机）。这个二维码相当于一次性钥匙：5 分钟内有效、只能用一次，请勿发给别人。</span>
+									<span className="block text-xs text-mut2">二维码是一次性钥匙，请勿发给别人。 <Help>适合人不在电脑旁时（比如把二维码截图发给自己的手机）。5 分钟内有效、只能用一次。</Help></span>
 								</span>
 							</label>
 							<Button variant="primary" onClick={async () => setPair(await api("/api/pair/start", { method: "POST", json: { preApproved } }))}>

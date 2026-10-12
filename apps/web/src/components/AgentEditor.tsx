@@ -214,7 +214,7 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 					{saved ? "已保存" : (submitLabel ?? (agent ? "保存" : "创建"))}
 				</Button>
 			</div>
-			{confirmDel && <p className="text-xs text-zinc-500">删除后聊天记录会清除，工作区文件会移到数据目录的 trash/ 里，可手动找回。</p>}
+			{confirmDel && <p className="text-xs text-zinc-500">聊天记录会清除，文件移进回收站。</p>}
 		</div>
 	);
 }

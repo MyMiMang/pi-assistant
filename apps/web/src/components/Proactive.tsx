@@ -6,7 +6,7 @@ import { Bell, BellOff, Check, ChevronDown, Clock, Sparkles, X } from "lucide-re
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, fmtTime, Input, Modal, avatarText } from "./ui";
+import { Badge, Button, cx, fmtTime, Help, Input, Modal, avatarText } from "./ui";
 
 type Level = "off" | "low" | "normal" | "high";
 export const LEVEL_LABEL: Record<Level, string> = { off: "关", low: "低", normal: "中", high: "高" };
@@ -86,7 +86,7 @@ export function ProactivityPicker({ agentId }: { agentId: string }) {
 			</button>
 			{open && (
 				<div className="absolute bottom-full left-0 z-30 mb-2 w-72 rounded-xl border border-line bg-card p-1.5 shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:bottom-24 max-sm:w-auto" data-testid="proactive-menu">
-					<div className="px-2.5 pb-1 pt-0.5 text-xs text-mut">主动性：像同事一样偶尔主动来找你（跟进没做完的事、提醒你说过的事、重要邮件）。不会替你对外发消息。</div>
+					<div className="px-2.5 pb-1 pt-0.5 text-xs text-mut">主动性 <Help>像同事一样偶尔主动来找你（跟进没做完的事、提醒你说过的事、重要邮件）。不会替你对外发消息。</Help></div>
 					{(["off", "low", "normal", "high"] as Level[]).map((l) => (
 						<button key={l} className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", l === d.level && "bg-hover")} onClick={() => (setOpen(false), void save({ level: l }))} data-testid={`proactive-${l}`}>
 							<span className="flex-1">
@@ -212,7 +212,7 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 			)}
 			<div className="space-y-1.5">
 				<div className="font-medium">约好的跟进</div>
-				{!d.followups.length && <p className="text-xs text-mut">助理在聊天里说“我晚点再看看”时会约在这里，到点自动回来跟进。</p>}
+				{!d.followups.length && <p className="text-xs text-mut">还没有约好的跟进。 <Help>助理在聊天里说“我晚点再看看”时会约在这里，到点自动回来跟进。</Help></p>}
 				{d.followups.map((f) => (
 					<div key={f.id} className="flex items-center gap-2 rounded-lg bg-hover/60 px-2.5 py-1.5" data-testid="followup">
 						<Clock size={13} className="shrink-0 text-mut" />
@@ -291,7 +291,7 @@ export function InboxButton() {
 			</button>
 			<Modal open={open} onClose={close} title="提醒" wide>
 				<div className="space-y-3 p-5" data-testid="inbox">
-					<p className="text-sm text-mut">助理们主动提出的事（最近 7 天）。“忽略”的事不会再提；经常被忽略的助理会自动变得更克制。</p>
+					<p className="text-sm text-mut">助理们最近 7 天主动提出的事。 <Help>“忽略”的事不会再提；经常被忽略的助理会自动变得更克制。</Help></p>
 					{d && !d.items.length && <div className="py-8 text-center text-sm text-mut">暂时没有提醒 🌿</div>}
 					{d?.items.map((i) => <ItemCard key={i.id} i={i} />)}
 					{d && (
