@@ -18,7 +18,9 @@ type DeskStatus = {
 	paused: boolean;
 	image: string;
 	idleMinutes: number;
-	install: { phase: "idle" | "downloading" | "done" | "error"; progress: number; error?: string };
+	install: { phase: "idle" | "downloading" | "done" | "error"; progress: number; error?: string; detail?: string };
+	/** macOS 自带虚拟机的阶段（正在创建 / 启动虚拟机…） */
+	vm?: { running: boolean; phase: string; detail?: string };
 };
 
 export function DesktopView({ agentId }: { agentId: string }) {
@@ -34,12 +36,12 @@ export function DesktopView({ agentId }: { agentId: string }) {
 	useEffect(() => {
 		void load();
 	}, [agentId, ver]);
-	// 下载中轮询进度
+	// 下载中 / 开机中轮询进度（开机时显示虚拟机阶段）
 	useEffect(() => {
-		if (st?.install?.phase !== "downloading") return;
+		if (st?.install?.phase !== "downloading" && !busy && st?.state !== "starting") return;
 		const i = setInterval(() => void load(), 1500);
 		return () => clearInterval(i);
-	}, [st?.install?.phase, agentId]);
+	}, [st?.install?.phase, st?.state, busy, agentId]);
 	// 按需启动：打开「电脑」标签时，已安装但关着机就自动开机（每个助理每次打开只自动一次）
 	const autoStarted = useRef<string | null>(null);
 	useEffect(() => {
@@ -122,7 +124,7 @@ export function DesktopView({ agentId }: { agentId: string }) {
 					<div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
 						<div className="h-full bg-accent transition-all" style={{ width: `${Math.round(st.install.progress * 100)}%` }} />
 					</div>
-					{t("正在下载助理电脑")} {Math.round(st.install.progress * 100)}%
+					{st.install.detail ? t(st.install.detail) : t("正在下载助理电脑")} {Math.round(st.install.progress * 100)}%
 				</div>
 			) : !st.available ? (
 				<div className="flex items-center gap-2 rounded-lg bg-zinc-50 p-2 text-xs text-zinc-500 dark:bg-zinc-900">
@@ -134,7 +136,7 @@ export function DesktopView({ agentId }: { agentId: string }) {
 			) : st.state !== "running" ? (
 				<div className="space-y-1">
 					<Button variant="primary" size="sm" disabled={busy || st.state === "starting"} onClick={() => act("start")}>
-						{busy || st.state === "starting" ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />} {busy || st.state === "starting" ? t("正在开机（第一次约 10–20 秒）") : t("开机")}
+						{busy || st.state === "starting" ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />} {busy || st.state === "starting" ? (st.vm && st.vm.detail && (st.vm.phase === "creating" || st.vm.phase === "booting") ? t(st.vm.detail) : t("正在开机（第一次约 10–20 秒）")) : t("开机")}
 					</Button>
 					<div className="text-xs text-zinc-500">{t("助理要用电脑时也会自动开机；登录状态都保留。")}</div>
 				</div>

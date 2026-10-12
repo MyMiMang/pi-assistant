@@ -200,3 +200,87 @@ export async function watchDir<T>(dirs: string[], p: Progress, estimate: number 
 		clearInterval(t);
 	}
 }
+
+/**
+ * 大文件下载到磁盘：断点续传（`<dest>.part` + Range）、按顺序换下载源、下载完校验摘要（sha256 / sha512）再原子改名。
+ * 已存在且校验通过的 dest 直接返回（重复调用很便宜：用 `<dest>.ok` 记录已校验过的摘要，不重复算哈希）。
+ * 摘要不对：删掉 .part 从头再下一次；仍不对就报错（可能是下载源被篡改）。
+ */
+export interface FileSpec {
+	urls: string[];
+	dest: string;
+	algo: "sha256" | "sha512";
+	digest: string;
+	size?: number;
+}
+export async function downloadFile(spec: FileSpec, p?: Progress, opts: { fetchImpl?: typeof fetch; signal?: AbortSignal } = {}): Promise<string> {
+	const { createHash } = await import("node:crypto");
+	const { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } = await import("node:fs");
+	const { dirname } = await import("node:path");
+	const f = opts.fetchImpl ?? fetch;
+	const okFile = `${spec.dest}.ok`;
+	if (existsSync(spec.dest) && existsSync(okFile) && readFileSync(okFile, "utf8").trim() === spec.digest) return spec.dest;
+	mkdirSync(dirname(spec.dest), { recursive: true });
+	const part = `${spec.dest}.part`;
+	const hashOf = (file: string) =>
+		new Promise<string>((res, rej) => {
+			const h = createHash(spec.algo);
+			createReadStream(file).on("data", (c) => h.update(c)).on("error", rej).on("end", () => res(h.digest("hex")));
+		});
+	// 之前下完但没记录 .ok（例如进程被杀）：校验一遍
+	if (existsSync(spec.dest)) {
+		if ((await hashOf(spec.dest)) === spec.digest) return (writeFileSync(okFile, spec.digest), spec.dest);
+		rmSync(spec.dest, { force: true });
+	}
+	let lastErr: unknown = null;
+	for (let round = 0; round < 2; round++) {
+		for (const url of spec.urls) {
+			for (let attempt = 0; attempt < 3; attempt++) {
+				if (opts.signal?.aborted) throw new Error("已取消");
+				try {
+					let have = existsSync(part) ? statSync(part).size : 0;
+					if (spec.size && have > spec.size) (rmSync(part, { force: true }), (have = 0));
+					if (!spec.size || have < spec.size) {
+						const res = await f(url, { redirect: "follow", headers: have ? { Range: `bytes=${have}-` } : {}, signal: opts.signal ?? AbortSignal.timeout(60 * 60_000) });
+						if (res.status === 416 && have) {
+							/* 服务器说已经全有了：直接校验 */
+						} else {
+							if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+							if (have && res.status !== 206) have = 0; // 不支持续传：从头写
+							const len = Number(res.headers.get("content-length")) || null;
+							const total = spec.size ?? (len ? have + len : null);
+							const out = createWriteStream(part, { flags: have ? "a" : "w" });
+							try {
+								let got = have;
+								p?.bytes(got, total);
+								for await (const c of res.body as unknown as AsyncIterable<Uint8Array>) {
+									if (!out.write(c)) await new Promise((r) => out.once("drain", r));
+									got += c.byteLength;
+									p?.bytes(got, total);
+								}
+							} finally {
+								await new Promise<void>((r) => out.end(r));
+							}
+						}
+					}
+					p?.detail("正在校验…");
+					const got = await hashOf(part);
+					if (got !== spec.digest) {
+						rmSync(part, { force: true });
+						throw new Error("文件校验失败（摘要不匹配），已丢弃");
+					}
+					renameSync(part, spec.dest);
+					writeFileSync(okFile, spec.digest);
+					return spec.dest;
+				} catch (e) {
+					lastErr = e;
+					if (opts.signal?.aborted) throw new Error("已取消");
+					if (/ENOSPC/.test(String((e as Error)?.message ?? e))) throw new Error("磁盘空间不足，下载中断（已下载的部分保留，腾出空间后重试会接着下）");
+					if (/校验失败/.test(String(e))) break; // 换下一个源
+					await new Promise((r) => setTimeout(r, process.env.PIA_TEST_FAST ? 10 : 2000 * (attempt + 1)));
+				}
+			}
+		}
+	}
+	throw new Error(`下载失败：${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+}

@@ -3,7 +3,9 @@
  * 我们解析输出给出进度。加速地址拉下来后再打上固定的本地名字，容器统一用本地名字。
  */
 import { spawn } from "node:child_process";
+import { downloadInfo } from "../downloads.ts";
 import { backend, engine } from "./backend.ts";
+import { cancelVmDownload, imageMarked, markImage, vmPhase } from "./lima.ts";
 import { customImage, localImage, pinned, pullRef } from "./settings.ts";
 
 export interface InstallState {
@@ -14,17 +16,32 @@ export interface InstallState {
 	layersTotal: number;
 	error?: string;
 	startedAt?: number;
+	/** 当前在做什么（macOS：下载虚拟机组件 / 开机 / 下载桌面镜像） */
+	detail?: string;
 }
 let state: InstallState = { phase: "idle", progress: 0, layersDone: 0, layersTotal: 0 };
 let current: Promise<void> | null = null;
 let child: import("node:child_process").ChildProcess | null = null;
-export const installState = () => state;
+let pulling = false;
+/** macOS 虚拟机后端：前 40% 是虚拟机组件下载，40–50% 是第一次开机，后 50% 是桌面镜像 */
+export const installState = (): InstallState => {
+	if (state.phase !== "downloading" || backend().id !== "lima") return state;
+	if (pulling) return { ...state, progress: 0.5 + state.progress * 0.5, detail: "正在下载桌面镜像" };
+	const d = downloadInfo("desktop-vm");
+	if (d?.state === "downloading") return { ...state, progress: ((d.percent ?? 0) / 100) * 0.4, detail: d.detail ?? "正在下载虚拟机组件" };
+	const ph = vmPhase();
+	return { ...state, progress: 0.4 + (ph.phase === "running" ? 0.1 : 0.05), detail: ph.detail ?? "正在准备虚拟机" };
+};
 
 export async function imagePresent() {
+	// 虚拟机后端：关机时不为了查镜像而开机，看下载完成时写下的标记
+	if (backend().id === "lima" && !(await backend().engineRunning())) return imageMarked(localImage());
 	try {
 		await engine(["image", "inspect", localImage()], { timeout: 8000 });
+		if (backend().id === "lima") markImage(localImage());
 		return true;
 	} catch {
+		if (backend().id === "lima") markImage(null);
 		return false;
 	}
 }
@@ -39,7 +56,10 @@ export function parsePullLine(line: string, layers: Map<string, boolean>) {
 		return;
 	}
 	const p = /^Copying blob (?:sha256:)?([a-f0-9]{12})/.exec(line.trim()); // podman
-	if (p) layers.set(p[1], /done|skipped|already exists/i.test(line));
+	if (p) return void layers.set(p[1], /done|skipped|already exists/i.test(line));
+	// nerdctl：layer-sha256:<64位>:  downloading |+++| 1.2 MiB/30.0 MiB
+	const n = /^layer-sha256:([a-f0-9]{12})[a-f0-9]*:\s+(\w+)/.exec(line.trim());
+	if (n) layers.set(n[1], /^(done|exists)$/i.test(n[2]) || layers.get(n[1]) === true);
 }
 
 export function startInstall(): Promise<void> {
@@ -54,6 +74,7 @@ export function startInstall(): Promise<void> {
 		if (!d.ok) throw new Error(d.reason);
 		await backend().ensureEngine();
 		if (await imagePresent()) return;
+		pulling = true;
 		const ref = pullRef();
 		const layers = new Map<string, boolean>();
 		const cli = backend().cli();
@@ -82,6 +103,7 @@ export function startInstall(): Promise<void> {
 			}
 		}
 		if (ref !== localImage()) await engine(["tag", ref, localImage()]);
+		if (backend().id === "lima") markImage(localImage());
 	})()
 		.then(() => {
 			state = { ...state, phase: "done", progress: 1 };
@@ -92,11 +114,13 @@ export function startInstall(): Promise<void> {
 		.finally(() => {
 			current = null;
 			child = null;
+			pulling = false;
 		});
 	return current;
 }
 export function cancelInstall() {
 	state = { ...state, phase: "idle" };
 	child?.kill();
+	cancelVmDownload();
 }
 export const pinnedInfo = () => ({ ref: pullRef(), local: localImage(), version: pinned.version, digest: pinned.digest, downloadBytes: pinned.downloadBytes, diskBytes: pinned.diskBytes, custom: !!customImage() });

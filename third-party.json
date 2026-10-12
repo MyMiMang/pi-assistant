@@ -127,6 +127,70 @@
       "smoke": "packages/server/test/cloudflared-bin.test.ts"
     },
     {
+      "name": "lima",
+      "kind": "github-release",
+      "repo": "lima-vm/lima",
+      "version": "2.2.1",
+      "license": "Apache-2.0",
+      "$comment": "macOS 助理电脑虚拟机（vmType vz）。开启助理电脑时下载到 数据目录/vm/dist 并校验 SHA256；只用这里的 limactl，从不调用 PATH 里的。升级：改 version + sha256，并跑 macOS CI 的 limactl validate。",
+      "assets": {
+        "darwin-arm64": {
+          "file": "lima-{v}-Darwin-arm64.tar.gz",
+          "sha256": "9e9eacce88f37e185c346bad73aa6136f738d8cdf8c3bb23cd42b071824bc66e",
+          "size": 38328082
+        },
+        "darwin-x64": {
+          "file": "lima-{v}-Darwin-x86_64.tar.gz",
+          "sha256": "6b776e4bc41f358e6ee01fefcc78e2eb26f11635a0fcff632234af77a566c6c4",
+          "size": 24958659
+        }
+      },
+      "adapter": "packages/server/src/desktop/lima.ts",
+      "smoke": "packages/server/test/desktop-lima.test.ts + .github/workflows/ci.yml (macos)"
+    },
+    {
+      "name": "nerdctl-full",
+      "kind": "github-release",
+      "repo": "containerd/nerdctl",
+      "version": "2.4.1",
+      "license": "Apache-2.0",
+      "$comment": "Lima 虚拟机里的容器引擎（containerd + nerdctl + CNI + BuildKit，rootful）。与 Lima 2.2.1 内置默认版本一致（Lima 2.x 要求 ≥2.1.6 端口转发才正常）。由我们下载校验后以本地路径交给 Lima。",
+      "assets": {
+        "linux-arm64": {
+          "file": "nerdctl-full-{v}-linux-arm64.tar.gz",
+          "sha256": "2deffe14625f93866f90a8f265d0f59d6fa476c7dc54b98adb327b1b4613efd4",
+          "size": 266787249
+        },
+        "linux-x64": {
+          "file": "nerdctl-full-{v}-linux-amd64.tar.gz",
+          "sha256": "ff018f11ac2f1354bf7b3aaaca6e0b52d81139c746a89134744d0b7be3a0e62f",
+          "size": 293278396
+        }
+      },
+      "adapter": "packages/server/src/desktop/lima.ts"
+    },
+    {
+      "name": "debian-12-genericcloud",
+      "kind": "url",
+      "version": "20260923-2610",
+      "license": "DFSG（Debian 自由软件）",
+      "$comment": "Lima 虚拟机的系统盘。与 Lima 2.2.1 templates/_images/debian-12.yaml 同一版本，按 SHA512 固定。",
+      "base": "https://cloud.debian.org/images/cloud/bookworm/{v}/",
+      "assets": {
+        "linux-arm64": {
+          "file": "debian-12-genericcloud-arm64-{v}.qcow2",
+          "sha512": "89a752d5c7d8e88bee39a57d88d496cca574f7d1e8df5df7a169825435f99feb11ed13ab27ec7bee96fe1584be4ff9479358fbca6cc859efa109f4aba18724c8",
+          "size": 340590592
+        },
+        "linux-x64": {
+          "file": "debian-12-genericcloud-amd64-{v}.qcow2",
+          "sha512": "3d94c9dd66d8a283fde060b8810373b7ae04038b956ee00d553d1ae564f6fbdeaa2fd6e7404e87e53348b5a9509170f3ea7c0731ba737590c5c4cb8d559a47f8",
+          "size": 349372416
+        }
+      },
+      "adapter": "packages/server/src/desktop/lima.ts"
+    },
+    {
       "name": "playwright-core",
       "kind": "npm",
       "version": "^1",

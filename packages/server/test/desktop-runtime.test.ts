@@ -66,10 +66,11 @@ test("引擎命令：只放行指向我们自己东西的修改类命令", () =>
 	no(["compose", "down"]);
 });
 
-test("后端选择：auto 用自带运行时（未实现的平台回落到 Docker），docker 用已装的 Docker", () => {
+test("后端选择：auto 用自带运行时（macOS = Lima；未实现的平台回落到 Docker），docker 用已装的 Docker", () => {
 	assert.equal(pickBackend("auto", "linux").id, "docker");
 	assert.equal(pickBackend("docker", "darwin").id, "docker");
-	assert.equal(pickBackend("auto", "darwin").id, "docker"); // 第 2 步实现 Lima 前
+	assert.equal(pickBackend("auto", "darwin").id, "lima"); // 第 2 步：Lima 已实现
+	assert.equal(pickBackend("auto", "win32").id, "docker"); // 第 3 步实现 WSL 前
 	assert.equal(pickBackend("auto", "darwin", new Set(["lima"])).id, "lima");
 	assert.equal(pickBackend("auto", "win32", new Set(["wsl"])).id, "wsl");
 	assert.equal(pickBackend("docker", "win32", new Set(["wsl"])).id, "docker");
@@ -88,7 +89,7 @@ test("镜像地址：按 digest 固定，加速地址只换注册表主机", () 
 });
 
 test("设置：默认关闭（不下载），空闲时间只能 5/10/30/从不", () => {
-	assert.deepEqual(desktopSettings(), { enabled: false, backend: "auto", idleMinutes: 10, mirror: "" });
+	assert.deepEqual(desktopSettings(), { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "" });
 	assert.equal(updateDesktopSettings({ idleMinutes: 30 }).idleMinutes, 30);
 	assert.equal(updateDesktopSettings({ idleMinutes: 0 }).idleMinutes, 0);
 	assert.throws(() => updateDesktopSettings({ idleMinutes: 7 }));

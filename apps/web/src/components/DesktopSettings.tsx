@@ -10,13 +10,15 @@ import { useStore } from "../store";
 import { Badge, Button, Input } from "./ui";
 
 export type DesktopGlobal = {
-	settings: { enabled: boolean; backend: "auto" | "docker"; idleMinutes: number; mirror: string };
+	settings: { enabled: boolean; backend: "auto" | "docker"; idleMinutes: number; mirror: string; fileMirror: string };
 	backend: { id: string; label: string; ok: boolean | null; reason?: string };
 	builtin: { id: string; label: string; ready: boolean };
 	dockerAvailable: boolean;
 	image: { ref: string; version: string; digest: string | null; downloadBytes: number; diskBytes: number; custom: boolean };
 	installed: boolean;
-	install: { phase: "idle" | "downloading" | "done" | "error"; progress: number; layersDone: number; layersTotal: number; error?: string };
+	install: { phase: "idle" | "downloading" | "done" | "error"; progress: number; layersDone: number; layersTotal: number; error?: string; detail?: string };
+	/** macOS 自带虚拟机（Lima）状态；其他平台为 null */
+	vm: { phase: string; detail?: string; running: boolean } | null;
 };
 const GB = (n: number) => `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1).replace(/\.0$/, "")} GB`;
 
@@ -50,6 +52,7 @@ export function DesktopSettings() {
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState("");
 	const [mirror, setMirror] = useState<string | null>(null);
+	const [fileMirror, setFileMirror] = useState<string | null>(null);
 	const [offered, setOffered] = useState(false);
 	if (!g) return null;
 	const s = g.settings;
@@ -102,7 +105,7 @@ export function DesktopSettings() {
 							<div className="h-full bg-accent transition-all" style={{ width: `${Math.round(ins.progress * 100)}%` }} />
 						</div>
 						<div className="text-xs text-zinc-500">
-							{t("正在下载助理电脑")} {Math.round(ins.progress * 100)}%{ins.layersTotal ? ` · ${ins.layersDone}/${ins.layersTotal}` : ""}　{t("断了会自动续传，已下载的部分不会重下。")}
+							{ins.detail ? t(ins.detail) : t("正在下载助理电脑")} {Math.round(ins.progress * 100)}%{!ins.detail?.includes("虚拟机") && ins.layersTotal ? ` · ${ins.layersDone}/${ins.layersTotal}` : ""}　{t("断了会自动续传，已下载的部分不会重下。")}
 						</div>
 					</div>
 				)}
@@ -140,6 +143,13 @@ export function DesktopSettings() {
 							</span>
 						</span>
 					</label>
+					{g.vm && s.backend === "auto" && s.enabled && (
+						<div className="ml-6 text-xs text-zinc-500" data-testid="desktop-vm-state">
+							{t("虚拟机：")}
+							{g.vm.phase === "creating" || g.vm.phase === "booting" ? t(g.vm.detail ?? "正在启动") : g.vm.phase === "stopping" ? t("正在关机") : g.vm.running ? t("运行中") : t("已关机")}
+							{g.vm.phase === "error" && g.vm.detail ? ` · ${g.vm.detail}` : ""}
+						</div>
+					)}
 					<label className="flex items-start gap-2">
 						<input type="radio" name="desk-backend" className="mt-1" checked={s.backend === "docker"} onChange={() => void put({ backend: "docker" })} data-testid="desktop-backend-docker" />
 						<span>
@@ -169,6 +179,16 @@ export function DesktopSettings() {
 				</div>
 				<div className="break-all text-xs text-zinc-400">{g.image.ref}{g.image.custom ? `（${t("自定义镜像")}）` : ""}</div>
 			</section>
+			{g.builtin.id === "lima" && (
+				<section className="space-y-2">
+					<div className="font-semibold">{t("虚拟机组件下载加速")}</div>
+					<div className="text-sm text-zinc-500">{t("从 GitHub 下载 Lima、containerd 慢时填加速前缀，例如 https://ghfast.top/ 。文件按固定摘要校验，加速失败会自动回到官方地址。")}</div>
+					<div className="flex gap-2">
+						<Input value={fileMirror ?? s.fileMirror} placeholder={t("留空 = 直连 GitHub")} onChange={(e) => setFileMirror(e.target.value)} data-testid="desktop-file-mirror" />
+						<Button variant="outline" disabled={fileMirror === null || fileMirror === s.fileMirror} onClick={() => void put({ fileMirror: fileMirror ?? "" }).then((r) => r && setFileMirror(null))}>{t("保存")}</Button>
+					</div>
+				</section>
+			)}
 			{err && <div className="text-xs text-red-600">{err}</div>}
 		</div>
 	);

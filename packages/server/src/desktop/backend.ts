@@ -1,13 +1,14 @@
 /**
  * 助理电脑运行时抽象（DESIGN §15.2）：一个共用的容器引擎 + 每个助理一个桌面容器（带 pia.agent 标签）。
  * - docker：本机已有的 Docker / Podman（Linux 服务器、已装 Docker Desktop 的电脑）
- * - lima：macOS 自带虚拟机（Lima + vz + nerdctl）——第 2 步实现，这里只占位
+ * - lima：macOS 自带虚拟机（Lima + vz + containerd/nerdctl，见 lima.ts）
  * - wsl：Windows 自有发行版 PiAssistant-Desktop（WSL2 + nerdctl）——第 3 步实现，这里只占位
  * 所有后端都暴露同一个“docker 兼容”的命令行（docker / podman / nerdctl 参数一致），desktop.ts 只跟它打交道。
  */
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { config } from "../config.ts";
+import { detectLima, ensureVm, nerdctlCli, stopVm, destroyVm, vmState } from "./lima.ts";
 import { assertOwnTarget } from "./names.ts";
 import { desktopSettings, imageRepos } from "./settings.ts";
 
@@ -32,6 +33,8 @@ export interface DesktopBackend {
 	destroyEngine(): Promise<void>;
 	/** 引擎是否在跑（docker：总是 true；虚拟机：开没开机） */
 	engineRunning(): Promise<boolean>;
+	/** 容器端口要由我们指定宿主端口（虚拟机后端：Lima 把虚拟机里的同号端口转发到 Mac，必须先确认 Mac 上没被占用） */
+	fixedPorts?: boolean;
 	/** docker 兼容命令前缀，例如 ["docker"] / ["podman"] / ["limactl","shell","pia-desktop","nerdctl"] */
 	cli(): string[];
 }
@@ -89,14 +92,26 @@ const notYet = (id: BackendId, label: string, step: string): DesktopBackend => (
 		throw new Error(`${label}还没有实现`);
 	},
 });
-export const limaBackend = notYet("lima", "macOS 自带虚拟机（Lima）", "第 2 步");
+export const limaBackend: DesktopBackend = {
+	id: "lima",
+	label: "macOS 自带虚拟机（Lima）",
+	detect: detectLima,
+	ensureEngine: ensureVm,
+	stopEngine: stopVm,
+	destroyEngine: destroyVm,
+	async engineRunning() {
+		return (await vmState()) === "running";
+	},
+	fixedPorts: true,
+	cli: nerdctlCli,
+};
 export const wslBackend = notYet("wsl", "Windows 自带 WSL2 运行时", "第 3 步");
 /** 已实现的自带运行时（实现一个就把它加进来；auto 优先用它们） */
-const BUILTIN_READY = new Set<BackendId>([]);
+const BUILTIN_READY = new Set<BackendId>(["lima"]);
 
 /** 这台机器上“自带运行时”对应的后端；Linux 直接用本机容器引擎 */
 export function builtinFor(platform = process.platform): DesktopBackend {
-	if (platform === "darwin") return limaBackend;
+	if (platform === "darwin" || process.env.PIA_TEST_LIMA === "1") return limaBackend; // PIA_TEST_LIMA：Linux 上用假 limactl 跑集成测试
 	if (platform === "win32") return wslBackend;
 	return dockerBackend;
 }

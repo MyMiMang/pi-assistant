@@ -1,3 +1,5 @@
+import { backend as desktopBackend } from "./desktop/backend.ts";
+import { stopVmDetached } from "./desktop/lima.ts";
 import { closeAllBrowsers } from "./browser.ts";
 import { startChannels, stopChannels } from "./channels/index.ts";
 import { hostSettings, setHostEnv, startDaemon, stopDaemon } from "./host-control.ts";
@@ -36,6 +38,8 @@ if (hostSettings().enabled) void startDaemon().catch((e) => console.warn(`[host-
 
 for (const sig of ["SIGINT", "SIGTERM"] as const)
 	process.on(sig, () => {
+		// 助理电脑虚拟机（macOS）：交给独立进程关机，不拖慢退出；登录状态在磁盘里不受影响
+		if (desktopBackend().id === "lima") stopVmDetached();
 		// Hindsight 守护进程是独立进程：退出前停掉它（最多等 6 秒）
 		void Promise.race([Promise.all([sidecar.stop(), closeAllBrowsers(), stopDaemon(true), stopChannels()]), new Promise((r) => setTimeout(r, 6000))]).finally(() => process.exit(0));
 	});

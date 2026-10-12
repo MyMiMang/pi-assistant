@@ -27,6 +27,7 @@ import { dockerAvailable, sandboxMode } from "./sandbox.ts";
 import { desktopPause, desktopStatus, idle as desktopIdle, issueTicket, purgeAll, resetAvailability, screenshotDesktop, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket } from "./desktop.ts";
 import { backend as desktopBackend, builtinFor, dockerBackend } from "./desktop/backend.ts";
 import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop/image.ts";
+import { vmPhase } from "./desktop/lima.ts";
 import { desktopSettings, updateDesktopSettings } from "./desktop/settings.ts";
 import { agentBusy } from "./runtime.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
@@ -52,7 +53,7 @@ import { finishGoogle, googleClient, saveGoogleClient, startGoogle } from "./ema
 import { actOnItem, cancelFollowup, defaultLevel, type ItemRow, type Level, listItems, proactiveJson, runHeartbeat, saveProactive, setDefaultLevel, unseenCount } from "./proactive.ts";
 import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { hostAgentsChanged, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
-import { listDownloads, startDownload } from "./downloads.ts";
+import { downloadInfo, listDownloads, startDownload } from "./downloads.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
@@ -1040,9 +1041,11 @@ const deskGlobal = async () => {
 		backend: { id: b.id, label: b.label, ok: det?.ok ?? null, reason: det?.reason },
 		builtin: { id: builtin.id, label: builtin.label, ready: builtin.id === "docker" || b.id === builtin.id },
 		dockerAvailable: docker.ok,
-		image: pinnedInfo(),
+		// macOS 自带虚拟机：下载量再加上虚拟机组件（Lima + Debian 系统盘 + containerd）
+		image: b.id === "lima" ? { ...pinnedInfo(), downloadBytes: pinnedInfo().downloadBytes + (downloadInfo("desktop-vm")?.size ?? 0), diskBytes: pinnedInfo().diskBytes + 2e9 } : pinnedInfo(),
 		installed: s.enabled && det?.ok ? await imagePresent() : false,
 		install: installState(),
+		vm: b.id === "lima" ? { ...vmPhase(), running: s.enabled ? await b.engineRunning() : false } : null,
 	};
 };
 app.get("/api/desktop", async (c) => c.json(await deskGlobal()));

@@ -14,8 +14,10 @@ export interface DesktopSettings {
 	idleMinutes: number;
 	/** 镜像加速地址（替换 ghcr.io），例如 ghcr.nju.edu.cn；空 = 官方 */
 	mirror: string;
+	/** GitHub 下载加速前缀（macOS 虚拟机组件 limactl / nerdctl 用），例如 https://ghfast.top/ ；空 = 直连。下载内容按固定摘要校验 */
+	fileMirror: string;
 }
-const DEFAULTS: DesktopSettings = { enabled: false, backend: "auto", idleMinutes: 10, mirror: "" };
+const DEFAULTS: DesktopSettings = { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "" };
 export const desktopSettings = (): DesktopSettings => ({ ...DEFAULTS, ...getSetting<Partial<DesktopSettings>>("desktop", {}) });
 
 export function updateDesktopSettings(b: Partial<DesktopSettings>) {
@@ -30,6 +32,7 @@ export function updateDesktopSettings(b: Partial<DesktopSettings>) {
 		cur.idleMinutes = Number(b.idleMinutes);
 	}
 	if (b.mirror !== undefined) cur.mirror = normalizeMirror(b.mirror);
+	if (b.fileMirror !== undefined) cur.fileMirror = normalizeFileMirror(b.fileMirror);
 	setSetting("desktop", cur);
 	return cur;
 }
@@ -37,6 +40,15 @@ export function normalizeMirror(s: string) {
 	const m = s.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "");
 	if (m && !/^(localhost|[a-z0-9.-]+\.[a-z]{2,})(:\d+)?(\/[a-z0-9._-]+)*$/.test(m)) throw new Error("镜像加速地址格式不正确，例如 ghcr.nju.edu.cn");
 	return m;
+}
+
+/** GitHub 加速前缀：https://host[/path]/，原始地址直接拼在后面 */
+export function normalizeFileMirror(s: string) {
+	let m = s.trim();
+	if (!m) return "";
+	if (!/^https?:\/\//.test(m)) m = `https://${m}`;
+	if (!/^https?:\/\/[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:\d+)?(\/[A-Za-z0-9._~-]+)*\/?$/.test(m)) throw new Error("下载加速地址格式不正确，例如 https://ghfast.top/");
+	return m.endsWith("/") ? m : `${m}/`;
 }
 
 export interface PinnedImage {

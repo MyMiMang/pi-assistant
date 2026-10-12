@@ -68,3 +68,15 @@ export function assertOwnTarget(args: string[], repos: string[]) {
 }
 const READ_ONLY = new Set(["version", "info", "ps", "inspect", "logs", "images", "pull", "image", "volume"]);
 const FLAG_WITH_VALUE = new Set(["-t", "--time", "-e", "--env", "-u", "--user", "-w", "--workdir", "--signal", "-s"]);
+
+/** 解析 `ps --format {{.Labels}}` 的输出（每行 k=v,k2=v2；docker 也可能输出 map[k:v]），取出某个标签的值 */
+export function labelValues(stdout: string, key: string): string[] {
+	const out: string[] = [];
+	for (const line of stdout.split("\n")) {
+		const t = line.trim();
+		if (!t) continue;
+		const m = t.startsWith("map[") ? new RegExp(`(?:^map\\[|\\s)${key.replace(/\./g, "\\.")}:([^\\s\\]]+)`).exec(t) : new RegExp(`(?:^|,)${key.replace(/\./g, "\\.")}=([^,]*)`).exec(t);
+		if (m?.[1]) out.push(m[1]);
+	}
+	return out;
+}

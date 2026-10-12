@@ -996,6 +996,7 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
   - Windows：WSL2 + 我们自己的发行版 `PiAssistant-Desktop`（从 Release 资产里的 rootfs 压缩包 `wsl --import` 到数据目录；内含 containerd/nerdctl）。缺 WSL 时用一次 UAC 执行 `wsl --install --no-distribution`，需要重启时明确告知。容器用 host 网络 + 每个助理分配独立端口（start.sh 端口改为环境变量）。尽力而为，需要真机验证。
   - Linux：直接用本机 rootless Podman（或 Docker）。
   - 已装 Docker 的用户可在 设置 里选 “Docker” 作为后端；默认用自带运行时。
+  - （第 2 步实现时的调整：macOS 虚拟机里用 rootful containerd，而不是上面写的 rootless，因为 Lima 2.x 的 rootful 端口转发由 Lima 官方维护、`limactl shell … sudo nerdctl` 最稳；虚拟机本身就是隔离边界。）
   - **硬性保护**：永远只操作自己命名的实例（Lima `pia-desktop`、WSL `PiAssistant-*`、带 `pia.agent` 标签的容器），不调用 PATH 里用户自己的 limactl，不动用户已有的 Docker 容器 / WSL 发行版；有单测覆盖名字校验。
 - **按需启停（所有后端通用）**：助理要用电脑类工具或用户打开「助理电脑」时自动启动（虚拟机 + 桌面容器）；空闲（没有工具调用、没有人在看画面、没有任务/定时任务占用）超过设定时间自动关机，默认 10 分钟，设置里可选 5 / 10 / 30 分钟 / 从不。家目录是持久卷，关机不丢登录状态。所有桌面都停了就关掉虚拟机释放内存。界面显示 关机 / 启动中 / 运行中。空闲判定逻辑有单测。
 
@@ -1008,7 +1009,20 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
   - 镜像：`.github/workflows/desktop-image.yml`（打 `desktop-v<版本>` tag 或手动）多架构构建推到 `ghcr.io/mymimang/pi-assistant-desktop:<版本>`；`packages/server/desktop-image.json` 固定版本 + digest（**首次发布后填 digest**，没填时按版本 tag 拉）；设置里可填加速地址（只替换注册表主机）。引擎分层拉取，断了自动重试且已下载的层不重下，按 digest 内容寻址校验；界面显示进度。`PIA_DESKTOP_IMAGE` 指定本地/自定义镜像时不下载。
   - 按需启停：打开「电脑」标签自动开机；助理在电脑关机时有 `computer_open` 工具按需开机（电脑操作工具在下一轮出现）；空闲（没有工具调用、没人看画面、没有对话/后台任务/定时任务在跑）超过 5 / 10 / 30 分钟或从不，自动关机；所有桌面都停了再调用后端 `stopEngine()`（虚拟机后端关机）。容器不再设 `--restart`，关机后不会被引擎拉起。判定逻辑 `desktop/idle.ts` 有单测。界面显示 关机 / 启动中 / 运行中。
   - 实测（Linux + Docker 26）：本地 registry 当加速地址按 digest 拉取 → 打本地名 → 开机约 7 秒 → noVNC/截图正常 → 5 分钟空闲自动关机 → 再开机家目录文件还在 → 关机 + 删除只清掉我们的容器/卷/镜像，用户自己的容器和卷不受影响。
-- [ ] 第 2 步 macOS（Lima + vz + nerdctl）
+- [x] **第 2 步 macOS 自带虚拟机**（分支 `wip/lima-backend`，2026-10-13 合入 main；**需要真 Mac 验证**，见 HANDOFF）
+  - 代码：`packages/server/src/desktop/lima.ts`（下载、配置生成、开关机、删除、硬性保护），`backend.ts` 的 `limaBackend`（`auto` 在 macOS 上就是它），`downloads.ts` 的 `downloadFile`（断点续传 + 换源 + 摘要校验）。
+  - **组件**（third-party.json 固定版本 + 摘要）：Lima 2.2.1 Darwin arm64 / x86_64 tarball（SHA256）；nerdctl-full 2.4.1（containerd + nerdctl + CNI，SHA256，与 Lima 2.2.1 内置默认一致，Lima 2.x 要求 ≥ 2.1.6 端口转发才正常）；Debian 12 genericcloud `20260923-2610`（SHA512，与 Lima 2.2.1 的 debian-12 模板同一版本）。合计 arm64 ≈ 646 MB / x64 ≈ 668 MB，加上桌面镜像。
+  - **引擎选型**：虚拟机里用 rootful containerd + nerdctl，而不是 Docker Engine：nerdctl-full 是一个可校验的离线包，由我们下载后作为本地文件交给 Lima，虚拟机里不需要联网 apt 安装（国内网络不稳时 Docker 官方源经常失败）；Lima 官方支持并维护它的端口转发；命令行与 docker 兼容，第 1 步的 `engine()`、硬性保护、桌面启动逻辑原样复用。
+  - **下载**：打开开关时登记到统一下载管理器（`desktop-vm`，「下载与组件」页可见），三个文件依次下载到 `数据目录/vm/files`：`.part` 文件 + HTTP Range 断点续传，每个文件最多 3 次重试、可换源，下完校验摘要再改名，`.ok` 记录已校验过的摘要；磁盘满时明确提示且保留已下部分。设置里可填 GitHub 加速前缀（如 `https://ghfast.top/`），先走加速、失败回官方；Debian 盘可用 `PIA_DEBIAN_MIRROR`。Lima tarball 解压到 `数据目录/vm/dist/lima-<版本>`，去掉隔离属性。升级固定版本后旧文件 / 旧 dist 自动清理。
+  - **目录**：`LIMA_HOME` 是我们自己的目录：数据目录路径没有空格且足够短时用 `数据目录/vm/lima`，否则（macOS 的 “Application Support” 有空格，且 Lima 的 ssh 控制套接字受 104 字节限制）用 `~/.pia-vm`。从不使用用户的 `~/.lima`，调用 limactl 时去掉环境里所有 `LIMA_*` 变量。
+  - **虚拟机配置**（`limaConfig()` 纯函数）：`vmType: vz`、`mounts: []`、本地系统盘 + 本地 nerdctl-full 包（带摘要）、`containerd: {system: true, user: false}`、不加载 `~/.ssh` 公钥、不转发 ssh agent、端口只转发到 `127.0.0.1`；内存 = Mac 内存一半（4–8 GiB），CPU = 核数 − 2（2–4），磁盘 40 GiB（稀疏）。每次开机前按当前固定版本重写（只在关机时改实例配置）。macOS CI 上用真实 limactl 跑 `limactl validate`。
+  - **共用虚拟机 + 每助理一个容器**：所有助理共用 `pia-desktop`；容器通过 `limactl shell --workdir / pia-desktop sudo nerdctl …` 管理。端口：宿主端口由我们在 Mac 上挑空闲的，容器在虚拟机里发布同号端口，Lima 转发到 Mac 的 127.0.0.1（虚拟机网络只有本机可达）；开机就绪要求日志 “ready” 且 Mac 上能连通端口。容器上次的端口被 Mac 上别的程序占了：删容器换端口重建（家目录卷保留）。
+  - **按需开关机**：用到时自动开机（第一次建实例 + 安装容器引擎约 1–3 分钟，之后十几秒）；状态查询从不为了查询而开机（虚拟机关着 = 桌面关着；“镜像已下载”用 `vm/image.ok` 标记判断）；所有桌面停了立刻关虚拟机；虚拟机开着但没有桌面（App 重启前留下的、刚下载完镜像）也在空闲时间后关掉；App 退出时用独立进程关虚拟机（不拖慢退出）。界面在“启动中”显示虚拟机阶段（正在创建虚拟机 / 第一次开机正在安装容器引擎 / 正在启动虚拟机 / 正在重启）。
+  - **异常恢复**：虚拟机显示运行但引擎没响应（睡眠唤醒、containerd 卡住）→ 强制关机再开；实例 Broken（Mac 崩溃 / 强退留下的残留）→ `stop --force` 后再开，仍坏就提示“删除虚拟机和镜像”后重开；开机前检查磁盘空间（新建需 ≥ 8 GB 余量）。错误都转成中文（虚拟化不可用、磁盘不足、超时）。
+  - **环境检查**：macOS 13+（Darwin ≥ 22）、`kern.hv_support = 1`（Mac 本身在虚拟机里时没有）、arm64 / x64；不满足时给中文原因并建议改用已安装的 Docker。
+  - **删除**：关闭开关后“删除虚拟机和镜像”：删容器 / 卷 / 镜像 → `limactl delete --force pia-desktop` → 删 `数据目录/vm` 和我们自己的 `LIMA_HOME`（只在确认是 `~/.pia-vm` 或数据目录下时）。
+  - **硬性保护**：只执行我们下载的 limactl（绝对路径）；`assertLimaArgs` 只放行 list/create/start/stop/delete/shell/validate 且目标必须是 `pia-desktop`、create 只能用我们生成的配置文件；`prune`/`factory-reset`/`edit` 等一律拒绝。单测 `test/desktop-lima.test.ts`。
+  - **测试**：单测（清单、配置、检测、保护、续传 / 换源 / 校验）；`test/desktop-lima-fake.test.ts` 用假 limactl（`test/fixtures/fake-limactl.sh`）+ 真 Docker 跑完整生命周期（第一次建实例、端口转发可连、所有桌面停了关虚拟机、端口被占换端口且家目录保留、引擎没响应自动重启、开机失败中文报错、删除）；`test/lima-qemu.smoke.ts` 在有可用 KVM 的 Linux 上用真实 Lima（vmType qemu）跑真实虚拟机（开发机的 KVM 开不了虚拟机，这个冒烟脚本还没跑通过）；CI `lima-macos`（macos-14 arm64 / macos-13 Intel）真实下载 limactl 并 `limactl validate`。托管 macOS 运行器没有嵌套虚拟化，**vz 开机只能在真 Mac 上验证**。
 - [ ] 第 3 步 Windows（WSL2 自有发行版）
 - [ ] 第 4 步 Linux 服务器版（一键安装、常驻、一次性设置码 + 主人设备）
 
