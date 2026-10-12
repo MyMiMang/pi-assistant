@@ -20,9 +20,12 @@ export async function refreshImagePresent() {
 function report(p: Progress) {
 	const s = installState();
 	const total = pinned.downloadBytes || null;
-	p.bytes(total ? Math.round(s.progress * total) : 0, total);
 	const det = (s as { detail?: string }).detail;
-	p.detail(det ?? (s.layersTotal ? `第 ${s.layersDone}/${s.layersTotal} 层` : "正在准备…"));
+	// macOS 虚拟机后端：installState 把“虚拟机组件 / 开机 / 镜像”合成一个进度；镜像段（后 50%）换算回镜像本身，其余阶段只显示说明（虚拟机组件有自己的条目）
+	let frac: number | null = s.progress;
+	if (det) frac = /桌面镜像/.test(det) ? Math.max(0, (s.progress - 0.5) * 2) : null;
+	p.bytes(total && frac !== null ? Math.round(frac * total) : 0, frac === null ? null : total);
+	p.detail(det ? (frac !== null && s.layersTotal ? `${det} · 第 ${s.layersDone}/${s.layersTotal} 层` : det) : s.layersTotal ? `第 ${s.layersDone}/${s.layersTotal} 层` : "正在准备…");
 }
 
 /** 下载进行中：一直汇报到结束；出错时抛出（下载管理显示“出错 · 重试”） */
