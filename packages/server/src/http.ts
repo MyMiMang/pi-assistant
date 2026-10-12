@@ -1079,7 +1079,7 @@ app.post("/api/remote/tunnel/mode", localOnly, async (c) => {
 // ---------------------------------------------------------------- 配对与设备
 app.post("/api/pair/start", localOnly, async (c) => {
 	const b = await c.req.json<{ preApproved?: boolean }>().catch(() => ({}) as { preApproved?: boolean });
-	const { code, expiresAt, preApproved } = createPairCode({ preApproved: b.preApproved === true });
+	const { code, shortCode, expiresAt, preApproved } = createPairCode({ preApproved: b.preApproved === true });
 	const id = identity();
 	const t = tunnelStatus();
 	const reqOrigin = new URL(c.req.url).origin;
@@ -1088,14 +1088,14 @@ app.post("/api/pair/start", localOnly, async (c) => {
 	// 入口域名可用（已成功注册 Rendezvous）时，二维码指向固定入口；否则直连隧道/本机地址
 	const viaEntry = !!(t.url && entryDomain() && t.rendezvous.state === "ok");
 	const url = viaEntry ? `https://${entryDomain()}/pair#${params}` : `${direct}/pair#${params}`;
-	return c.json({ url, directUrl: `${direct}/pair#${params}`, viaEntry, expiresAt, preApproved, qr: await QRCode.toDataURL(url, { margin: 1, width: 320 }), remote: !!t.url });
+	return c.json({ url, directUrl: `${direct}/pair#${params}`, shortCode, viaEntry, expiresAt, preApproved, qr: await QRCode.toDataURL(url, { margin: 1, width: 320 }), remote: !!t.url });
 });
 app.post("/api/pair/claim", async (c) => {
 	const ip = c.get("caller").ip;
 	if (!rateLimit(`pair:${ip}`, 0.5, 5)) return c.json({ error: "rate_limited" }, 429);
 	const b = await c.req.json<{ code: string; name: string; platform?: string }>();
 	const r = claimPairCode(String(b.code ?? ""), String(b.name ?? ""), String(b.platform ?? ""));
-	return r.ok ? c.json({ deviceId: r.deviceId, serverId: identity().serverId, preApproved: !!r.preApproved }) : c.json({ error: r.error }, 400);
+	return r.ok ? c.json({ deviceId: r.deviceId, serverId: identity().serverId, publicKey: identity().publicKey, preApproved: !!r.preApproved }) : c.json({ error: r.error }, r.error === "too_many_attempts" ? 429 : 400);
 });
 app.get("/api/pair/status/:id", (c) => {
 	const ip = c.get("caller").ip;

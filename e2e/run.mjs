@@ -265,11 +265,62 @@ await step("免确认配对 + 固定地址设置页", async () => {
 	await pp.getByRole("button", { name: "连接" }).click();
 	// 不在电脑上点“允许”，手机也应直接拿到 token
 	await pp.waitForFunction(() => JSON.parse(localStorage.getItem("pia.conn") ?? "null")?.token, null, { timeout: 10_000 });
+	// 在浏览器（非主屏 App）里配对成功：提示“添加到主屏幕后要在 App 里输入一次配对码”
+	await pp.getByTestId("pair-a2hs-hint").waitFor();
+	await pp.screenshot({ path: join(SHOTS, "09d-pair-done-a2hs-hint.png") });
 	await phone.close();
 	await page.getByRole("button", { name: "固定地址 / 入口" }).click();
 	await page.getByTestId("named-tunnel").getByText("Account › Cloudflare Tunnel › Edit").first().waitFor();
 	await page.waitForTimeout(300);
 	await page.screenshot({ path: join(SHOTS, "09c-named-tunnel.png") });
+	await page.keyboard.press("Escape");
+	await page.getByText("远程访问与设备").first().waitFor({ state: "detached" });
+});
+
+await step("主屏 App（与浏览器存储隔离）：未配对页输入配对码 → 电脑确认 → 进入助理", async () => {
+	await page.getByRole("button", { name: "设置" }).first().click();
+	await page.getByRole("button", { name: "远程访问与设备" }).click();
+	await page.getByRole("button", { name: "生成配对二维码" }).click();
+	const short = (await page.getByTestId("pair-short-code").textContent()).trim();
+	if (!/^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/.test(short)) throw new Error(`配对码格式不对：${short}`);
+	await page.waitForTimeout(200);
+	await page.screenshot({ path: join(SHOTS, "09e-pairing-short-code.png") });
+	// 模拟 iPhone 主屏 App：经隧道的远程请求（带 cf-connecting-ip）、全新存储、display-mode: standalone
+	const app = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN", extraHTTPHeaders: { "cf-connecting-ip": "203.0.113.7" }, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148" });
+	await app.addInitScript(() => {
+		const mm = window.matchMedia.bind(window);
+		window.matchMedia = (q) => (q.includes("display-mode: standalone") ? { matches: true, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false } : mm(q));
+		Object.defineProperty(navigator, "standalone", { get: () => true });
+	});
+	try {
+		const ap = await app.newPage();
+		await ap.goto(BASE);
+		await ap.getByTestId("unpaired").waitFor();
+		await ap.getByText("主屏 App 和浏览器的登录是分开的").waitFor();
+		const input = ap.getByTestId("pair-code-input");
+		// 错误的码：提示失效，不会配上
+		await input.fill(short.startsWith("A") ? "BBBB-CCCC" : "AAAA-CCCC");
+		await ap.getByTestId("pair-code-submit").click();
+		await ap.getByText("配对码不对或已失效").waitFor();
+		// 小写、不带横线也能认
+		await input.fill(short.toLowerCase().replace("-", ""));
+		await ap.screenshot({ path: join(SHOTS, "09f-pwa-unpaired-enter-code.png") });
+		await ap.getByTestId("pair-code-submit").click();
+		await ap.getByText("请在电脑上点击「允许连接」").waitFor();
+		await page.getByText("新设备请求连接").waitFor();
+		await page.getByRole("button", { name: "允许连接" }).click();
+		await ap.getByTestId("pair-done").waitFor();
+		await ap.locator("main textarea").waitFor({ timeout: 15_000 });
+		const conn = await ap.evaluate(() => JSON.parse(localStorage.getItem("pia.conn")));
+		if (!conn?.token?.startsWith("hh_") || !conn.serverId || !conn.publicKey) throw new Error(`连接信息不完整：${JSON.stringify(conn)}`);
+		await ap.waitForTimeout(400);
+		await ap.screenshot({ path: join(SHOTS, "09g-pwa-paired.png") });
+		// 同一个码不能再用
+		const again = await fetch(`${BASE}/api/pair/claim`, { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.8" }, body: JSON.stringify({ code: short, name: "x" }) });
+		if (again.ok) throw new Error("配对码应只能用一次");
+	} finally {
+		await app.close();
+	}
 	await page.keyboard.press("Escape");
 	await page.getByText("远程访问与设备").first().waitFor({ state: "detached" });
 });

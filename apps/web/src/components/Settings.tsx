@@ -127,7 +127,7 @@ function ModelsTab() {
 
 function RemoteTab() {
 	const system = useStore((s) => s.system)!;
-	const [pair, setPair] = useState<{ url: string; directUrl: string; qr: string; expiresAt: number; viaEntry: boolean; remote: boolean; preApproved?: boolean } | null>(null);
+	const [pair, setPair] = useState<{ url: string; directUrl: string; shortCode: string; qr: string; expiresAt: number; viaEntry: boolean; remote: boolean; preApproved?: boolean } | null>(null);
 	const [preApproved, setPreApproved] = useState(false);
 	const [devices, setDevices] = useState<Device[]>([]);
 	const [left, setLeft] = useState(0);
@@ -213,6 +213,16 @@ function RemoteTab() {
 								<div>
 									{left} 秒后失效 · {pair.viaEntry ? "通过入口域名" : pair.remote ? "隧道直连" : "仅本机网络（未开启远程访问）"}
 									{pair.preApproved && <span className="ml-1 text-amber-600">· 扫码即通过，无需确认</span>}
+								</div>
+								<div className="rounded-xl bg-zinc-50 p-3 dark:bg-zinc-800/50" data-testid="pair-short-code-box">
+									<div className="text-xs text-zinc-500">配对码（手机主屏 App 里输入，和二维码同时有效、只能用一次）</div>
+									<div className="mt-1 flex items-center gap-2">
+										<span className="select-all font-mono text-2xl font-semibold tracking-[0.2em]" data-testid="pair-short-code">{pair.shortCode}</span>
+										<Button variant="ghost" size="icon" onClick={() => navigator.clipboard.writeText(pair.shortCode)} aria-label="复制配对码">
+											<Copy size={15} />
+										</Button>
+									</div>
+									<div className="mt-1 text-xs text-zinc-500">iPhone「添加到主屏幕」后，主屏 App 和 Safari 不共享登录，打开 App 时输入这个码即可。</div>
 								</div>
 								<div className="flex gap-2">
 									<Input readOnly value={pair.url} />

@@ -4,6 +4,7 @@ import Chat from "./components/Chat";
 import DeviceApproval from "./components/DeviceApproval";
 import InfoPane from "./components/InfoPane";
 import Onboarding from "./components/Onboarding";
+import { isStandalone, PairCodeForm } from "./components/PairPage";
 import Settings from "./components/Settings";
 import Sidebar from "./components/Sidebar";
 import { Button } from "./components/ui";
@@ -62,20 +63,23 @@ export default function App() {
 
 	if (fatal)
 		return (
-			<div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
+			<div className="flex min-h-full flex-col items-center justify-center gap-4 overflow-y-auto p-8 text-center" data-testid={fatal === "unpaired" ? "unpaired" : "offline"}>
 				<img src="/icon-192.png" className="h-16 w-16 rounded-2xl" alt="" />
 				<div className="text-lg font-semibold">{fatal === "unpaired" ? "这台设备还没有配对" : "连不上你的电脑"}</div>
 				<p className="max-w-sm text-sm text-zinc-500">
 					{fatal === "unpaired"
-						? `请在电脑上打开 ${BRAND.name} →「设置 → 远程访问与设备」，用手机扫描配对二维码。`
+						? isStandalone()
+							? `主屏 App 和浏览器的登录是分开的，需要在这里再配对一次：在电脑上打开 ${BRAND.name} →「设置 → 远程访问与设备」→ 生成配对二维码，把旁边的配对码输入下面。`
+							: `在电脑上打开 ${BRAND.name} →「设置 → 远程访问与设备」，用手机扫描配对二维码，或把配对码输入下面。`
 						: `请确认电脑已开机、${BRAND.name} 正在运行，并且开启了远程访问。`}
 				</p>
+				{fatal === "unpaired" && <PairCodeForm />}
 				<div className="flex gap-2">
-					<Button variant="primary" onClick={() => location.reload()}>
+					<Button variant={fatal === "unpaired" ? "ghost" : "primary"} onClick={() => location.reload()}>
 						重试
 					</Button>
 					{fatal === "unpaired" && getConn() && (
-						<Button variant="outline" onClick={() => (saveConn(null), location.reload())}>
+						<Button variant="ghost" onClick={() => (saveConn(null), location.reload())}>
 							清除配对信息
 						</Button>
 					)}

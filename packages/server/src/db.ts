@@ -128,6 +128,7 @@ export const uid = (p: string) => `${p}_${Date.now().toString(36)}${Math.random(
 for (const [table, col, ddl] of [
 	["agents", "description", "TEXT NOT NULL DEFAULT ''"],
 	["pair_codes", "pre_approved", "INTEGER NOT NULL DEFAULT 0"],
+	["pair_codes", "short_hash", "TEXT"],
 	["agents", "conversation_id", "TEXT"],
 	["agents", "memory_provider", "TEXT"],
 	["messages", "conversation_id", "TEXT"],
