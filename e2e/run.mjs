@@ -1074,6 +1074,7 @@ await step("左侧助理列表：右键 → 编辑 / 删除助理（确认框）
 	await mp.getByLabel("打开助理列表").click();
 	const it = mp.locator("[data-testid=sidebar-agent]", { hasText: "临时助理乙" });
 	await it.waitFor();
+	await mp.waitForTimeout(600); // 等抽屉滑入动画结束，坐标才准
 	const box = await it.boundingBox();
 	const o = { pointerType: "touch", isPrimary: true, bubbles: true, clientX: box.x + 40, clientY: box.y + 10 };
 	await it.dispatchEvent("pointerdown", o);

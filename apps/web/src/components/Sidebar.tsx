@@ -26,7 +26,7 @@ export default function Sidebar() {
 		window.addEventListener("keydown", key);
 		return () => (window.removeEventListener("pointerdown", close), window.removeEventListener("resize", close), window.removeEventListener("keydown", key));
 	}, [menu]);
-	const openMenu = (id: string, x: number, y: number) => setMenu({ id, x: Math.min(x, window.innerWidth - 180), y: Math.min(y, window.innerHeight - 100) });
+	const openMenu = (id: string, x: number, y: number) => setMenu({ id, x: Math.max(8, Math.min(x, window.innerWidth - 180)), y: Math.max(8, Math.min(y, window.innerHeight - 100)) });
 	const running = Object.values(tasks).flat().filter((x) => x.status === "running" || x.status === "queued").length;
 	const list = agents.filter((a) => !q || a.name.includes(q) || a.description?.includes(q));
 	const dark = document.documentElement.dataset.mode === "dark";
