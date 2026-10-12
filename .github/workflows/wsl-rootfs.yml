@@ -1,0 +1,47 @@
+# Windows 助理电脑运行时：构建 WSL2 发行版根文件系统（packages/wsl-rootfs，amd64 + arm64）并发布为 GitHub Release 资产
+#   Release：wsl-rootfs-v<版本>（预发布、不标记为 latest，不影响 App 的自动更新）
+#   资产：pia-wsl-rootfs-<版本>-amd64.tar.gz / -arm64.tar.gz + SHA256SUMS
+# nerdctl-full 按 third-party.json 的 SHA256 校验。发布后把两个 SHA256 和大小填进 third-party.json 的 pia-wsl-rootfs（DESIGN §15.2）。
+name: wsl-rootfs
+on:
+  workflow_dispatch:
+    inputs:
+      version: { description: "rootfs 版本号（例如 0.1.0）", required: true }
+permissions: { contents: write }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: 构建（amd64 + arm64）
+        run: |
+          V="${{ github.event.inputs.version }}"
+          mkdir -p out
+          packages/wsl-rootfs/build.sh amd64 "out/pia-wsl-rootfs-$V-amd64.tar.gz"
+          packages/wsl-rootfs/build.sh arm64 "out/pia-wsl-rootfs-$V-arm64.tar.gz"
+          (cd out && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS && ls -l)
+      - name: 冒烟测试（amd64：导入后 pia-engine 能拉起 containerd，nerdctl 能连上）
+        run: |
+          V="${{ github.event.inputs.version }}"
+          docker import "out/pia-wsl-rootfs-$V-amd64.tar.gz" pia-wsl:smoke
+          docker run -d --name smoke --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup --tmpfs /var/lib/containerd pia-wsl:smoke /usr/local/bin/pia-engine
+          for i in $(seq 1 30); do docker exec smoke nerdctl version --format '{{json .Server}}' 2>/dev/null | grep -q containerd && break; sleep 1; done
+          docker exec smoke nerdctl version --format '{{json .Server}}' | grep containerd
+          docker exec smoke cat /etc/wsl.conf | grep -q "enabled = false"
+      - name: 发布 Release
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          V="${{ github.event.inputs.version }}"
+          TAG="wsl-rootfs-v$V"
+          gh release view "$TAG" >/dev/null 2>&1 && { echo "Release $TAG 已存在：资产固定后不能覆盖，请换一个版本号"; exit 1; }
+          gh release create "$TAG" out/*.tar.gz out/SHA256SUMS --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "助理电脑 Windows 运行时 $V（WSL rootfs）" \
+            --notes "Pi Assistant 在 Windows 上自动下载并 \`wsl --import\` 的发行版根文件系统（Debian 12 + containerd/nerdctl）。普通用户不需要手动下载。"
+      - name: 输出摘要
+        run: |
+          echo "### WSL rootfs ${{ github.event.inputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"; (cd out && for f in *.tar.gz; do echo "$f $(sha256sum "$f" | cut -d' ' -f1) $(stat -c %s "$f")"; done) >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"

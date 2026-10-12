@@ -1,0 +1,2 @@
+# 桌面容器都用 host 网络（每个助理分配独立端口），不需要 CNI 网桥
+namespace = "default"

@@ -1,0 +1,15 @@
+#!/bin/sh
+# 容器引擎守护进程：由 Pi Assistant（Windows）通过 `wsl.exe -d PiAssistant-Desktop -u root --exec /usr/local/bin/pia-engine` 拉起。
+# 只要这个进程在跑，WSL 就不会自动关掉发行版；Pi Assistant 关机时直接 `wsl --terminate PiAssistant-Desktop`。
+set -u
+mountpoint -q /sys/fs/cgroup 2>/dev/null || { mkdir -p /sys/fs/cgroup && mount -t cgroup2 cgroup2 /sys/fs/cgroup; } || true
+mkdir -p /run/containerd /var/lib/containerd /var/log /tmp
+chmod 1777 /tmp
+if ctr version >/dev/null 2>&1; then
+  # 上一个守护进程（例如 App 重启前）还在：只负责保持发行版不被关掉
+  echo "pia-engine: containerd 已在运行"
+  while ctr version >/dev/null 2>&1; do sleep 5; done
+  exit 1
+fi
+echo "pia-engine: 启动 containerd"
+exec containerd >>/var/log/containerd.log 2>&1
