@@ -100,8 +100,7 @@ npm run check:pi         # Pi 升级兼容检查
 
 ## 6. 未解决 / 已知问题
 
-- **GitHub Actions 账单问题（2026-10-13）**：账号付款失败 / 达到支出上限，新的工作流都没开始就失败（“recent account payments have failed or your spending limit needs to be increased”）。受影响：`wsl-rootfs` 把 rootfs 推到 GHCR 的那次运行没跑成（Release `wsl-rootfs-v0.1.0` 资产已有，但仓库私有时匿名下载不到，所以 Windows 端现在下不到 rootfs，除非仓库公开或 GHCR 推送补跑），以及 ci / secrets。修好账单后：Actions › wsl-rootfs › Run workflow，版本填 `0.1.0`（已有 Release 时只下载资产并推 GHCR，不会重建）。
-- **仓库私有**：Linux `curl | sh` 匿名下载发布包会 404，需要 `PIA_GITHUB_TOKEN` 或 `--file`（INSTALL.md）。仓库是否公开由用户决定。
+- 仓库已公开（2026-10-13）：Release 资产、raw 上的 install.sh 都能匿名下载，是主下载源。GHCR 公开包 `ghcr.io/mymimang/pi-assistant-desktop` 作为备用源（国内可配加速地址）：WSL rootfs 由 wsl-rootfs 工作流推送；其他文件可用 `scripts/ghcr.mjs push <tag> <文件>` 手动推（需要令牌带 write:packages），`resolve` / `pull` 可匿名验证。
 - 安装包没有签名：macOS 首次要右键打开，Windows 有 SmartScreen 提示（§5.2）。
 - macOS 沙箱（系统沙箱档）没做；稳定地址只做了命名隧道。
 - 远程 Hindsight 换不同维度的向量模型需要对方实例自己迁移（本机模式已自动处理，见 §5.19.1）。
