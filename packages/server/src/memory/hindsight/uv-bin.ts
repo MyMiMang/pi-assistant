@@ -9,6 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import { join } from "node:path";
 import { config } from "../../config.ts";
 import { readZip } from "./zip.ts";
+import { fetchWithProgress, registerDownload, trackDownload, type Progress } from "../../downloads.ts";
 
 type Asset = { file: string; sha256: string; wheel: string; wheelSha256: string };
 type Manifest = { version: string; repo: string; assets: Record<string, Asset> };
@@ -41,19 +42,18 @@ export function findUv(): string | null {
 }
 
 let pending: Promise<string> | null = null;
+registerDownload({ id: "uv", name: "uv（Python 环境管理）", group: "高级记忆", size: 18e6, installed: () => !!findUv() });
 export function ensureUv(opts: { pypiIndex?: string; onProgress?: (m: string) => void } = {}): Promise<string> {
 	const f = findUv();
 	if (f) return Promise.resolve(f);
-	pending ??= download(opts).finally(() => (pending = null));
+	pending ??= trackDownload("uv", (p) => download({ ...opts, progress: p })).finally(() => (pending = null));
 	return pending;
 }
 
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
-async function get(url: string, timeoutMs = 120_000) {
-	const r = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
-	if (!r.ok) throw new Error(`HTTP ${r.status}`);
-	return Buffer.from(await r.arrayBuffer());
+async function get(url: string, timeoutMs = 120_000, p?: Progress) {
+	return fetchWithProgress(url, p, { timeoutMs });
 }
 
 /** 从 PEP 503 简单索引页找 wheel 的下载地址（镜像也遵循同一格式） */
@@ -65,7 +65,7 @@ async function wheelUrl(index: string, file: string) {
 	return new URL(m[1].replace(/&amp;/g, "&"), `${base}/uv/`).toString();
 }
 
-async function download(opts: { pypiIndex?: string; onProgress?: (m: string) => void }): Promise<string> {
+async function download(opts: { pypiIndex?: string; onProgress?: (m: string) => void; progress?: Progress }): Promise<string> {
 	const m = uvManifest();
 	const key = `${process.platform}-${process.arch}`;
 	const a = m.assets[key];
@@ -77,7 +77,7 @@ async function download(opts: { pypiIndex?: string; onProgress?: (m: string) => 
 	// 1) GitHub 发布
 	try {
 		opts.onProgress?.(`正在下载 uv ${m.version}（GitHub）…`);
-		const buf = await get(`https://github.com/${m.repo}/releases/download/${m.version}/${a.file}`);
+		const buf = await get(`https://github.com/${m.repo}/releases/download/${m.version}/${a.file}`, 300_000, opts.progress);
 		if (sha(buf) !== a.sha256) throw new Error("SHA256 不匹配");
 		if (a.file.endsWith(".zip")) {
 			const e = readZip(buf).find((x) => x.name.endsWith(exe()));
@@ -102,7 +102,7 @@ async function download(opts: { pypiIndex?: string; onProgress?: (m: string) => 
 		for (const idx of indexes) {
 			try {
 				opts.onProgress?.(`正在下载 uv ${m.version}（${new URL(idx).host}）…`);
-				const buf = await get(await wheelUrl(idx, a.wheel));
+				const buf = await get(await wheelUrl(idx, a.wheel), 300_000, opts.progress);
 				if (sha(buf) !== a.wheelSha256) throw new Error("SHA256 不匹配");
 				const e2 = readZip(buf).find((x) => /\.data\/scripts\/uv(\.exe)?$/.test(x.name));
 				if (!e2) throw new Error("wheel 里没有 uv");

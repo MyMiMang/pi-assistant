@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "./config.ts";
+import { fetchWithProgress, registerDownload, trackDownload, type Progress } from "./downloads.ts";
 
 type Asset = { file: string; sha256: string };
 type Manifest = { version: string; repo: string; assets: Record<string, Asset> };
@@ -31,24 +32,23 @@ export function findCloudflared(): string | null {
 }
 
 let downloading: Promise<string> | null = null;
+registerDownload({ id: "cloudflared", name: "cloudflared（远程访问隧道）", group: "远程访问", size: 38e6, installed: () => !!findCloudflared(), start: () => ensureCloudflared() });
 /** 返回可用的 cloudflared 路径；没有就下载（并发调用共用一次下载）。 */
 export function ensureCloudflared(onProgress?: (msg: string) => void): Promise<string> {
 	const found = findCloudflared();
 	if (found) return Promise.resolve(found);
-	downloading ??= download(onProgress).finally(() => (downloading = null));
+	downloading ??= trackDownload("cloudflared", (p) => download(onProgress, p)).finally(() => (downloading = null));
 	return downloading;
 }
 
-async function download(onProgress?: (msg: string) => void): Promise<string> {
+async function download(onProgress?: (msg: string) => void, p?: Progress): Promise<string> {
 	const m = cloudflaredManifest();
 	const key = platformKey();
 	const asset = m.assets[key];
 	if (!asset) throw new Error(`没有适用于 ${key} 的 cloudflared，请手动安装后放到 PATH`);
 	const url = `https://github.com/${m.repo}/releases/download/${m.version}/${asset.file}`;
 	onProgress?.(`正在下载 cloudflared ${m.version}…`);
-	const res = await fetch(url, { signal: AbortSignal.timeout(180_000), redirect: "follow" });
-	if (!res.ok) throw new Error(`下载 cloudflared 失败：HTTP ${res.status}`);
-	const buf = Buffer.from(await res.arrayBuffer());
+	const buf = await fetchWithProgress(url, p, { timeoutMs: 10 * 60_000 }).catch((e) => Promise.reject(new Error(`下载 cloudflared 失败：${e instanceof Error ? e.message : e}`)));
 	const got = createHash("sha256").update(buf).digest("hex");
 	if (got !== asset.sha256) throw new Error(`cloudflared 校验失败（SHA256 不匹配），已丢弃`);
 	const dir = join(config.dataDir, "bin");

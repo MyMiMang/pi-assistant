@@ -19,7 +19,7 @@ import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts
 import { insertMessage, listMessages } from "./messages.ts";
 import { credentialBackend, customProviders, defaultModel, defaultThinking, models } from "./models.ts";
 import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-providers.ts";
-import { checkPiCompat } from "./pi-adapter/index.ts";
+import { checkPiCompat, sessionStats } from "./pi-adapter/index.ts";
 import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
 import { describeRoutine, disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
@@ -36,7 +36,7 @@ import { sealJson } from "./secrets.ts";
 import { createConversation, currentConversation, deleteConversation, getConversation, listConversations, renameConversation, setCurrentConversation } from "./conversations.ts";
 import { globalMemoryProviderId, hindsightInUse, listMemoryProviders, memory } from "./memory/index.ts";
 import { flush, hindsightMemory, resyncAll } from "./memory/hindsight/provider.ts";
-import { configuredModels, resolveMemoryModel, sidecar } from "./memory/hindsight/sidecar.ts";
+import { configuredModels, resetEmbeddingStore, resolveMemoryModel, sidecar } from "./memory/hindsight/sidecar.ts";
 import { embeddingSignature, LOCAL_EMBEDDINGS, LOCAL_RERANKERS, pickMemoryModel, publicSettings, saveHindsightSettings } from "./memory/hindsight/settings.ts";
 import { llmProxy } from "./llm-proxy.ts";
 import { deleteSkill, getSkill, listSkills } from "./skills.ts";
@@ -52,6 +52,7 @@ import { finishGoogle, googleClient, saveGoogleClient, startGoogle } from "./ema
 import { actOnItem, cancelFollowup, defaultLevel, type ItemRow, type Level, listItems, proactiveJson, runHeartbeat, saveProactive, setDefaultLevel, unseenCount } from "./proactive.ts";
 import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { hostAgentsChanged, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
+import { listDownloads, startDownload } from "./downloads.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
@@ -341,6 +342,14 @@ app.delete("/api/conversations/:cid", async (c) => {
 	await disposeConversationRuntime(c.req.param("cid"));
 	return c.json({ ok: !!deleteConversation(c.req.param("cid")) });
 });
+/** 上下文用量（输入框旁的圆环）：会话还没在内存里时只返回模型的上下文窗口 */
+app.get("/api/conversations/:cid/context", async (c) => {
+	const conv = getConversation(c.req.param("cid"));
+	if (!conv) return c.json({ error: "not_found" }, 404);
+	const s = runtime(conv.agent_id, conv.id).session;
+	if (s) return c.json(sessionStats(s));
+	return c.json({ tokens: null, contextWindow: null, percent: null, model: null, session: null });
+});
 /** 手动整理上下文（Pi compaction） */
 app.post("/api/conversations/:cid/compact", async (c) => {
 	const conv = getConversation(c.req.param("cid"));
@@ -388,8 +397,11 @@ app.put("/api/memory/hindsight", localOnly, async (c) => {
 		const { before, after } = saveHindsightSettings(await c.req.json());
 		const sigChanged = embeddingSignature(before.embedding) !== embeddingSignature(after.embedding) || before.mode !== after.mode || before.remoteUrl !== after.remoteUrl;
 		const needRestart = sigChanged || JSON.stringify(before.reranker) !== JSON.stringify(after.reranker) || before.mirror !== after.mirror;
+		const embChanged = embeddingSignature(before.embedding) !== embeddingSignature(after.embedding);
 		if (needRestart && sidecar.status.state !== "off")
-			void sidecar.restart().then(() => (sigChanged ? resyncAll() : flush()));
+			void sidecar.restart({ resetStore: embChanged }).then(() => (sigChanged ? resyncAll() : flush()));
+		// 没在运行：现在就清掉旧维度的内嵌库，否则下次启动 Hindsight 会因向量维度不一致直接报错
+		else if (embChanged) resetEmbeddingStore();
 		const running = sidecar.status.state !== "off";
 		// 只有已在运行时才会重启 / 重建；没在用时保存只是改设置
 		return c.json({ ok: true, restarting: needRestart && running, rebuild: sigChanged && running });
@@ -890,7 +902,7 @@ app.get("/api/host-control/apps", localOnly, async (c) => c.json(await suggestAp
 const RANK: Record<HostTier, number> = { observe: 0, bounded: 1, trusted: 2, full: 3 };
 /** 保存设置。开启需要带上用户在页面上看到的权限计划哈希（= 用户审阅过），计划变了就要重新确认 */
 app.put("/api/host-control", localOnly, async (c) => {
-	const b = await c.req.json<{ enabled?: boolean; agents?: "all" | string[]; apps?: HostApp[]; workspaceFiles?: boolean; acknowledged?: boolean; manifestHash?: string; tiers?: Record<string, HostTier>; defaultTier?: HostTier; confirmText?: string }>();
+	const b = await c.req.json<{ enabled?: boolean; agents?: "all" | string[]; apps?: HostApp[]; workspaceFiles?: boolean; acknowledged?: boolean; manifestHash?: string; tiers?: Record<string, HostTier>; defaultTier?: HostTier; confirmText?: string; confirmFull?: boolean }>();
 	const cur = hostSettings();
 	const apps = (b.apps ?? cur.apps)
 		.filter((a) => a && typeof a.id === "string" && a.id.trim())
@@ -910,7 +922,7 @@ app.put("/api/host-control", localOnly, async (c) => {
 		const ids = (next.agents === "all" ? listAgents().map((a) => a.id) : next.agents) as string[];
 		const fullNow = ids.filter((a) => tierOf(a, next) === "full");
 		const needFull = fullNow.some((a) => !cur.fullAck[a] || tierOf(a, cur) !== "full" || !cur.enabled) || (defaultTier === "full" && (cur.defaultTier !== "full" || !cur.enabled));
-		if (needFull && (b.confirmText ?? "").trim() !== FULL_CONFIRM) return c.json({ error: `涉及“完全权限”，需要输入：${FULL_CONFIRM}` }, 400);
+		if (needFull && !fullConfirmed(b)) return c.json({ error: "涉及“完全权限”，需要先确认启用" }, 400);
 		if (ids.some((a) => tierOf(a, next) === "bounded") && !apps.length) return c.json({ error: "“限定”档位至少要选择一个允许操作的应用" }, 400);
 		const fullAck = Object.fromEntries(fullNow.map((a) => [a, cur.fullAck[a] && tierOf(a, cur) === "full" ? cur.fullAck[a] : Date.now()]));
 		saveHostSettings({ enabled: true, approvedHash: manifestHash(yaml), enabledAt: Date.now(), fullAck });
@@ -928,12 +940,12 @@ app.put("/api/host-control", localOnly, async (c) => {
  */
 app.put("/api/host-control/tier/:agentId", localOnly, async (c) => {
 	const agentId = c.req.param("agentId")!;
-	const b = await c.req.json<{ tier: HostTier; acknowledged?: boolean; confirmText?: string }>();
+	const b = await c.req.json<{ tier: HostTier; acknowledged?: boolean; confirmText?: string; confirmFull?: boolean }>();
 	if (!TIERS.includes(b.tier)) return c.json({ error: "权限档位不对" }, 400);
 	const cur = hostSettings();
 	const from = tierOf(agentId, cur);
 	if (RANK[b.tier] > RANK[from] && !b.acknowledged) return c.json({ error: "调高权限需要先确认风险提示" }, 400);
-	if (b.tier === "full" && from !== "full" && (b.confirmText ?? "").trim() !== FULL_CONFIRM) return c.json({ error: `设为“完全权限”需要输入：${FULL_CONFIRM}` }, 400);
+	if (b.tier === "full" && from !== "full" && !fullConfirmed(b)) return c.json({ error: "设为“完全权限”需要先确认启用" }, 400);
 	if (b.tier === "bounded" && !cur.apps.length && cur.enabled) return c.json({ error: "“限定”档位需要先在 设置 › 操作这台电脑 里选择允许的应用" }, 400);
 	const fullAck = { ...cur.fullAck };
 	if (b.tier === "full") fullAck[agentId] = from === "full" ? (fullAck[agentId] ?? Date.now()) : Date.now();
@@ -951,13 +963,35 @@ app.put("/api/host-control/tier/:agentId", localOnly, async (c) => {
 	bus.emit({ type: "host.changed", status: hostStatus() } as never);
 	return c.json({ ok: true, tier: b.tier, status: hostStatus() });
 });
+/** 完全权限：用户在确认框里点了“确定启用”（confirmFull）；旧客户端输入确认语也认 */
+const fullConfirmed = (b: { confirmFull?: boolean; confirmText?: string }) => b.confirmFull === true || (b.confirmText ?? "").trim() === FULL_CONFIRM;
+/** 悬浮条被用户关掉时记下当时的状态；状态变了（新操作 / 暂停或继续）再弹出 */
+let barDismissed: string | null = null;
+const barKey = (paused: boolean, active: boolean, lastId: unknown) => `${paused ? 1 : 0}:${active ? 1 : 0}:${lastId ?? ""}`;
+app.post("/api/host-control/bar/dismiss", localOnly, (c) => {
+	const st = hostStatus();
+	const last = listActions({ target: "host", limit: 1 })[0];
+	const active = !!last && (last.outcome === "running" || Date.now() - (last.finished_at ?? last.started_at) < 90_000);
+	barDismissed = barKey(st.paused, active, last?.id);
+	return c.json({ ok: true });
+});
+/** 统一下载状态（所有组件 / 模型 / 安装包）：设置页「下载」与各功能页里的下载条都用它 */
+app.get("/api/downloads", (c) => c.json({ items: listDownloads() }));
+app.post("/api/downloads/:id/start", localOnly, async (c) => {
+	try {
+		return c.json({ ok: true, item: await startDownload(decodeURIComponent(c.req.param("id")!)) });
+	} catch (e) {
+		return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
 /** 托盘悬浮条用：是否开着、是否暂停、最近一次操作（90 秒内算“正在操作”） */
 app.get("/api/host-control/bar", localOnly, (c) => {
 	const st = hostStatus();
 	const last = listActions({ target: "host", limit: 1 })[0];
 	const agent = last ? getAgent(last.agent_id) : null;
 	const active = !!last && (last.outcome === "running" || Date.now() - (last.finished_at ?? last.started_at) < 90_000);
-	return c.json({ enabled: st.enabled, paused: st.paused, active, last: last ? { agent: agent?.name ?? last.agent_id, avatar: agent?.avatar ?? "", tool: last.tool, summary: last.summary, outcome: last.outcome, at: last.started_at } : null });
+	const key = barKey(st.paused, active, last?.id);
+	return c.json({ enabled: st.enabled, paused: st.paused, active, dismissed: barDismissed === key, last: last ? { agent: agent?.name ?? last.agent_id, avatar: agent?.avatar ?? "", tool: last.tool, summary: last.summary, outcome: last.outcome, at: last.started_at } : null });
 });
 /** 一键暂停 / 继续：任何已配对的设备（包括手机）都能点 */
 app.post("/api/host-control/pause", async (c) => {

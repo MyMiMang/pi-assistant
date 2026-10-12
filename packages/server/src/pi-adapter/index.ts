@@ -458,6 +458,17 @@ export function contextUsage(s: AgentSession): { tokens: number | null; contextW
 	const u = (s as unknown as { getContextUsage?: () => { tokens?: number | null; contextWindow?: number } | undefined }).getContextUsage?.();
 	return { tokens: u?.tokens ?? null, contextWindow: u?.contextWindow ?? s.model?.contextWindow ?? null };
 }
+/** 输入框旁的上下文圆环：当前上下文占用 + 本会话累计 token / 费用（Pi getSessionStats） */
+export function sessionStats(s: AgentSession) {
+	const ctx = contextUsage(s);
+	const st = (s as unknown as { getSessionStats?: () => { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; cost: number; userMessages: number; assistantMessages: number; toolCalls: number } }).getSessionStats?.();
+	return {
+		...ctx,
+		percent: ctx.tokens != null && ctx.contextWindow ? Math.min(100, Math.round((ctx.tokens / ctx.contextWindow) * 1000) / 10) : null,
+		model: s.model ? { provider: s.model.provider, id: s.model.id, name: s.model.name } : null,
+		session: st ? { tokens: st.tokens, cost: st.cost, userMessages: st.userMessages, assistantMessages: st.assistantMessages, toolCalls: st.toolCalls } : null,
+	};
+}
 export const abortSession = (s: AgentSession) => s.abort();
 /** 结束会话：先发 session_shutdown（让 MCP 等扩展关闭子进程/连接），再释放 */
 export async function disposeSession(s: AgentSession) {

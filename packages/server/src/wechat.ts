@@ -16,6 +16,7 @@ import { getSetting, setSetting } from "./db.ts";
 import { bus } from "./bus.ts";
 import { containerOf, desktopStatus, startDesktop } from "./desktop.ts";
 import { engine } from "./desktop/backend.ts";
+import { countBytes, registerDownload, trackDownload } from "./downloads.ts";
 
 const docker = (args: string[], timeout = 60_000) => engine(args, { timeout });
 
@@ -50,6 +51,15 @@ function manifest(): { version: string; assets: Record<string, Asset> } {
 const HOME_DIR = "/home/agent/.local/wechat";
 export const WECHAT_BIN = `${HOME_DIR}/opt/wechat/wechat`;
 
+const wechatArch = () => (process.arch === "arm64" ? "aarch64" : "x86_64");
+registerDownload({
+	id: "wechat",
+	name: "个人微信（Linux 版安装包）",
+	group: "渠道",
+	size: 220e6,
+	installed: () => existsSync(join(config.dataDir, "cache", `wechat-${manifest().version}-${wechatArch()}.deb`)),
+	hidden: () => !wechatSettings().enabled,
+});
 /** 下载并校验安装包（同一版本只下一次） */
 const downloading = new Map<string, Promise<string>>();
 export function ensurePackage(arch: string, onProgress?: (m: string) => void): Promise<string> {
@@ -62,14 +72,14 @@ export function ensurePackage(arch: string, onProgress?: (m: string) => void): P
 	if (!downloading.has(key))
 		downloading.set(
 			key,
-			(async () => {
+			trackDownload("wechat", async (prog) => {
 				mkdirSync(join(config.dataDir, "cache"), { recursive: true });
 				onProgress?.(`正在下载微信 ${m.version}（约 220 MB）…`);
 				const res = await fetch(a.url, { signal: AbortSignal.timeout(30 * 60_000) });
 				if (!res.ok || !res.body) throw new Error(`下载微信失败：HTTP ${res.status}`);
 				const tmp = `${file}.part`;
 				const hash = createHash("sha256");
-				const body = Readable.fromWeb(res.body as never);
+				const body = Readable.from(countBytes(res.body as never, Number(res.headers.get("content-length")) || null, prog));
 				body.on("data", (c: Buffer) => hash.update(c));
 				await pipeline(body, createWriteStream(tmp));
 				if (hash.digest("hex") !== a.sha256) {
@@ -78,7 +88,7 @@ export function ensurePackage(arch: string, onProgress?: (m: string) => void): P
 				}
 				renameSync(tmp, file);
 				return file;
-			})().finally(() => downloading.delete(key)),
+			}).finally(() => downloading.delete(key)),
 		);
 	return downloading.get(key)!;
 }

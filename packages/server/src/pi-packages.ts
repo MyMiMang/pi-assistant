@@ -10,6 +10,7 @@ import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-codin
 import { bus } from "./bus.ts";
 import { config } from "./config.ts";
 import { db, getSetting, now, setSetting, uid } from "./db.ts";
+import { registerDownload, trackDownload, unregisterDownload, watchDir } from "./downloads.ts";
 
 export interface PiPackageRow {
 	id: string;
@@ -95,6 +96,17 @@ export async function addPackage(source: string, agents: string[] | null = null)
 	return getPackage(id)!;
 }
 
+/** 统一下载状态：每个 npm / git 扩展包一条 */
+function regPkg(row: PiPackageRow) {
+	if (isAbsolute(row.source)) return;
+	registerDownload({ id: `pi-package:${row.id}`, name: `扩展包 ${row.source.replace(/^(npm|git):/, "")}`, group: "Pi 扩展包", installed: () => getPackage(row.id)?.status === "installed", start: () => install(row.id) });
+}
+try {
+	for (const r of listPackages()) regPkg(r);
+} catch {
+	/* 首次启动表还没建 */
+}
+
 export async function install(id: string) {
 	const row = getPackage(id);
 	if (!row) return;
@@ -106,7 +118,8 @@ export async function install(id: string) {
 			path = row.source;
 		} else {
 			const { pm, env } = manager();
-			await withEnv(env, () => pm.install(row.source));
+			regPkg(row);
+			await trackDownload(`pi-package:${id}`, (prog) => watchDir([packagesHome()], prog, null, () => withEnv(env, () => pm.install(row.source))));
 			path = pm.getInstalledPath(row.source, "user");
 		}
 		if (!path || !existsSync(path)) throw new Error("安装完成但找不到安装目录");
@@ -125,6 +138,7 @@ export async function removePackage(id: string) {
 		await withEnv(env, () => pm.remove(row.source)).catch(() => {});
 	}
 	db.prepare("DELETE FROM pi_packages WHERE id = ?").run(id);
+	unregisterDownload(`pi-package:${id}`);
 	changed();
 	return true;
 }

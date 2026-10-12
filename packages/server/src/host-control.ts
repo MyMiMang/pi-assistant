@@ -22,6 +22,7 @@ import { bus } from "./bus.ts";
 import { config } from "./config.ts";
 import { getSetting, setSetting } from "./db.ts";
 import { readZip } from "./memory/hindsight/zip.ts";
+import { fetchWithProgress, registerDownload, trackDownload } from "./downloads.ts";
 
 const run = promisify(execFile);
 
@@ -147,17 +148,16 @@ export function cuaPaths() {
 export const cuaInstalled = () => existsSync(cuaPaths().exe);
 
 let installing: Promise<string> | null = null;
+registerDownload({ id: "cua-driver", name: "Cua Driver（操作这台电脑）", group: "操作这台电脑", size: 30e6, installed: () => cuaInstalled(), start: () => ensureCua() });
 export function ensureCua(onProgress?: (m: string) => void): Promise<string> {
 	if (cuaInstalled()) return Promise.resolve(cuaPaths().exe);
-	installing ??= (async () => {
+	installing ??= trackDownload("cua-driver", async (prog) => {
 		const m = cuaManifest();
 		const a = m.assets[cuaAssetKey()];
 		if (!a) throw new Error(`Cua Driver 不支持这个平台：${cuaAssetKey()}`);
 		const file = a.file.replaceAll("{v}", m.version);
 		onProgress?.(`正在下载 Cua Driver ${m.version}…`);
-		const res = await fetch(`https://github.com/${m.repo}/releases/download/${m.tagPrefix}${m.version}/${file}`, { signal: AbortSignal.timeout(300_000), redirect: "follow" });
-		if (!res.ok) throw new Error(`下载 Cua Driver 失败：HTTP ${res.status}`);
-		const buf = Buffer.from(await res.arrayBuffer());
+		const buf = await fetchWithProgress(`https://github.com/${m.repo}/releases/download/${m.tagPrefix}${m.version}/${file}`, prog, { timeoutMs: 10 * 60_000 }).catch((e) => Promise.reject(new Error(`下载 Cua Driver 失败：${e instanceof Error ? e.message : e}`)));
 		if (createHash("sha256").update(buf).digest("hex") !== a.sha256) throw new Error("Cua Driver 校验失败（SHA256 与 third-party.json 不一致），已丢弃");
 		const dir = cuaDir();
 		rmSync(dir, { recursive: true, force: true });
@@ -175,7 +175,7 @@ export function ensureCua(onProgress?: (m: string) => void): Promise<string> {
 		if (process.platform !== "win32") chmodSync(exe, 0o755);
 		onProgress?.(`Cua Driver ${m.version} 已就绪`);
 		return exe;
-	})().finally(() => (installing = null));
+	}).finally(() => (installing = null));
 	return installing;
 }
 

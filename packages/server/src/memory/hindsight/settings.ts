@@ -39,12 +39,12 @@ export const DEFAULTS: HindsightSettings = {
 	mirror: "auto",
 };
 export const LOCAL_EMBEDDINGS = [
-	{ id: "intfloat/multilingual-e5-small", name: "multilingual-e5-small（默认，约 470 MB，384 维）", dims: 384 },
-	{ id: "BAAI/bge-m3", name: "bge-m3（效果更好，约 2.3 GB，1024 维）", dims: 1024 },
+	{ id: "intfloat/multilingual-e5-small", name: "multilingual-e5-small（默认，约 470 MB，384 维）", dims: 384, bytes: 470e6 },
+	{ id: "BAAI/bge-m3", name: "bge-m3（效果更好，约 2.3 GB，1024 维）", dims: 1024, bytes: 2.3e9 },
 ];
 export const LOCAL_RERANKERS = [
-	{ id: "ms-marco-MultiBERT-L-12", name: "MultiBERT-L-12（多语言，默认，约 150 MB）" },
-	{ id: "ms-marco-MiniLM-L-12-v2", name: "MiniLM-L-12（英文为主，约 35 MB）" },
+	{ id: "ms-marco-MultiBERT-L-12", name: "MultiBERT-L-12（多语言，默认，约 150 MB）", bytes: 150e6 },
+	{ id: "ms-marco-MiniLM-L-12-v2", name: "MiniLM-L-12（英文为主，约 35 MB）", bytes: 35e6 },
 ];
 
 export function hindsightSettings(): HindsightSettings {

@@ -12,16 +12,18 @@
  */
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { fetchWithProgress, registerDownload, trackDownload, watchDir } from "../../downloads.ts";
 import { createServer } from "node:net";
 import { delimiter, dirname, join } from "node:path";
 import { HindsightServer } from "@vectorize-io/hindsight-all";
 import { bus } from "../../bus.ts";
 import { config } from "../../config.ts";
+import { db } from "../../db.ts";
 import { llmProxy } from "../../llm-proxy.ts";
 import { ensureUv } from "./uv-bin.ts";
 import { readZip } from "./zip.ts";
-import { hindsightSecrets, hindsightSettings, pickMemoryModel, type HindsightSecrets, type HindsightSettings, type Mirror } from "./settings.ts";
+import { hindsightSecrets, hindsightSettings, LOCAL_EMBEDDINGS, LOCAL_RERANKERS, pickMemoryModel, type HindsightSecrets, type HindsightSettings, type Mirror } from "./settings.ts";
 
 export const PROFILE = "pia";
 export const MEMORY_MODEL_ALIAS = "memory";
@@ -270,7 +272,10 @@ class Sidecar {
 			const port = await freePort();
 			const firstRun = !existsSync(join(p.hf, "hub"));
 			this.set("starting", firstRun ? "正在启动 Hindsight（首次要下载向量模型，可能需要几分钟）…" : "正在启动 Hindsight…", { port, baseUrl: `http://127.0.0.1:${port}` });
-			this.handle = await this.launcher({ port, env, project: p.project, onLog: (l) => this.status.state === "starting" && this.set("starting", l.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 160)) });
+			const launch = () => this.launcher({ port, env, project: p.project, onLog: (l) => this.status.state === "starting" && this.set("starting", l.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 160)) });
+			// 本地向量模型由 Hindsight 进程自己从 HuggingFace（或镜像）拉：量模型缓存目录的大小当进度
+			const emb = s.embedding.kind === "local" ? LOCAL_EMBEDDINGS.find((e) => e.id === (s.embedding as { model: string }).model) : undefined;
+			this.handle = emb && !embeddingInstalled(emb.id) ? await trackDownload(`embedding:${emb.id}`, (prog) => watchDir([join(p.hf, "hub", hfDir(emb.id))], prog, emb.bytes, launch)) : await launch();
 			// 握手：必须用我们的密钥才能访问，否则不是我们拉起的进程
 			if (!(await this.check(this.status.baseUrl!, sec.tenantKey, true))) throw new Error("Hindsight 握手失败（端口上的不是我们启动的进程）");
 			this.fails = 0;
@@ -297,6 +302,11 @@ class Sidecar {
 		const attempt = (m: "official" | "china", index?: string) =>
 			run(uv, ["sync", "--directory", p.project, "--no-progress"], { ...env, UV_FROZEN: undefined, UV_DEFAULT_INDEX: index ?? MIRRORS[m].pypi, UV_PYTHON_INSTALL_MIRROR: MIRRORS[m].python, HF_ENDPOINT: MIRRORS[m].hf }, (l) => this.set("installing", `安装 Hindsight：${l.slice(0, 140)}`));
 		this.set("installing", `正在安装 Hindsight（${mirror === "china" ? "国内镜像" : "官方源"}，约 300–600 MB，只需一次）…`);
+		await trackDownload("hindsight-env", (prog) => watchDir([p.uvCache, p.python, join(p.project, ".venv")], prog, 500e6, () => this.installAttempts(attempt, mirror)));
+		writeFileSync(marker, want);
+	}
+
+	private async installAttempts(attempt: (m: "official" | "china", index?: string) => Promise<void>, mirror: "official" | "china") {
 		try {
 			await attempt(mirror);
 		} catch (e1) {
@@ -309,7 +319,6 @@ class Sidecar {
 				else throw e1;
 			}
 		}
-		writeFileSync(marker, want);
 	}
 
 	/** flashrank 只会从 huggingface.co 下载：我们按镜像先把模型包下好放进它的缓存目录 */
@@ -317,9 +326,9 @@ class Sidecar {
 		const dir = join(paths().flashrank, model);
 		if (existsSync(dir)) return;
 		this.set("installing", `正在下载重排序模型 ${model}…`);
-		const r = await fetch(`${hf}/prithivida/flashrank/resolve/main/${model}.zip`, { redirect: "follow", signal: AbortSignal.timeout(10 * 60_000) });
-		if (!r.ok) throw new Error(`下载重排序模型失败：HTTP ${r.status}`);
-		const buf = Buffer.from(await r.arrayBuffer());
+		const buf = await trackDownload(`reranker:${model}`, (prog) => fetchWithProgress(`${hf}/prithivida/flashrank/resolve/main/${model}.zip`, prog, { timeoutMs: 10 * 60_000 })).catch((e) =>
+			Promise.reject(new Error(`下载重排序模型失败：${e instanceof Error ? e.message : e}`)),
+		);
 		const tmp = `${dir}.part`;
 		rmSync(tmp, { recursive: true, force: true });
 		for (const e of readZip(buf)) {
@@ -382,9 +391,14 @@ class Sidecar {
 		}, ms).unref();
 	}
 
-	/** 配置变了：重启 */
-	async restart() {
+	/**
+	 * 配置变了：重启。resetStore：换了向量模型——Hindsight 的向量列维度是整库共享的（e5-small 384 维 / bge-m3 1024 维），
+	 * 库里有数据时它启动会直接报错“Cannot change embedding dimension”，同维度换模型则旧向量和新向量不在同一空间。
+	 * 所以本机模式下先停进程、清掉内嵌数据库，再按账本原文重建（resyncAll）。
+	 */
+	async restart(o: { resetStore?: boolean } = {}) {
 		await this.stop(true);
+		if (o.resetStore) resetEmbeddingStore();
 		return this.ensure();
 	}
 
@@ -408,3 +422,45 @@ class Sidecar {
 }
 
 export const sidecar = new Sidecar();
+
+/** HuggingFace 缓存里的目录名 */
+const hfDir = (id: string) => `models--${id.replace(/\//g, "--")}`;
+/** 向量模型是否已下载完（缓存里有 .onnx 权重文件） */
+export function embeddingInstalled(id: string) {
+	const snap = join(paths().hf, "hub", hfDir(id), "snapshots");
+	if (!existsSync(snap)) return false;
+	const has = (d: string): boolean => readdirSync(d, { withFileTypes: true }).some((e) => (e.isDirectory() ? has(join(d, e.name)) : e.name.endsWith(".onnx") && !e.name.endsWith(".incomplete")));
+	try {
+		return has(snap);
+	} catch {
+		return false;
+	}
+}
+// 统一下载状态：高级记忆用到的运行环境与模型（选中的或已下载的才显示）
+registerDownload({ id: "hindsight-env", name: "Hindsight 运行环境（Python + 依赖）", group: "高级记忆", size: 500e6, installed: () => existsSync(join(paths().project, ".pia-installed")) && existsSync(join(paths().project, ".venv")), start: () => sidecar.restart() });
+for (const e of LOCAL_EMBEDDINGS)
+	registerDownload({
+		id: `embedding:${e.id}`,
+		name: `向量模型 ${e.id.split("/")[1]}`,
+		group: "高级记忆",
+		size: e.bytes,
+		installed: () => embeddingInstalled(e.id),
+		hidden: () => { const s = hindsightSettings(); return !(s.mode === "local" && s.embedding.kind === "local" && s.embedding.model === e.id) && !embeddingInstalled(e.id); },
+		start: () => sidecar.restart(),
+	});
+for (const r of LOCAL_RERANKERS)
+	registerDownload({
+		id: `reranker:${r.id}`,
+		name: `重排序模型 ${r.id}`,
+		group: "高级记忆",
+		size: r.bytes,
+		installed: () => existsSync(join(paths().flashrank, r.id)),
+		hidden: () => { const s = hindsightSettings(); return !(s.mode === "local" && s.reranker.kind === "local" && s.reranker.model === r.id) && !existsSync(join(paths().flashrank, r.id)); },
+		start: () => sidecar.restart(),
+	});
+
+/** 清掉本机 Hindsight 的内嵌数据库（pg0 数据在附属进程的 HOME 下），并把所有库标记为“需要重建”。原文都在账本里，不丢数据 */
+export function resetEmbeddingStore() {
+	if (hindsightSettings().mode === "local") rmSync(join(paths().home, ".pg0"), { recursive: true, force: true });
+	db.prepare("UPDATE hindsight_banks SET signature = ''").run();
+}
