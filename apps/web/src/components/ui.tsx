@@ -57,7 +57,8 @@ export function Avatar({ text, color, size = 36, running, agentId, src }: { text
 	);
 }
 
-export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; wide?: boolean }) {
+/** fixed：固定尺寸（不随内容变高/变宽、位置不跳），内部自己负责滚动——设置窗口用，切换标签时左侧/顶部标签栏不动。 */
+export function Modal({ open, onClose, title, children, wide, fixed, testId }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; wide?: boolean; fixed?: boolean; testId?: string }) {
 	useEffect(() => {
 		if (!open) return;
 		const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -68,7 +69,12 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
 	return createPortal(
 		<div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
 			<div
-				className={cx("pa-modal flex max-h-[92dvh] w-full flex-col overflow-hidden max-sm:rounded-b-none", wide ? "sm:max-w-4xl" : "sm:max-w-md")}
+				className={cx(
+					"pa-modal flex w-full flex-col overflow-hidden max-sm:rounded-b-none",
+					fixed ? "h-[92dvh] shrink-0 sm:h-[min(720px,90dvh)]" : "max-h-[92dvh]",
+					wide ? (fixed ? "sm:w-[min(56rem,100%)]" : "sm:max-w-4xl") : "sm:max-w-md",
+				)}
+				data-testid={testId}
 				onClick={(e) => e.stopPropagation()}
 			>
 				{title !== undefined && (
@@ -79,7 +85,7 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
 						</Button>
 					</div>
 				)}
-				<div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+				<div className={cx("min-h-0 flex-1", fixed ? "overflow-hidden" : "overflow-y-auto")}>{children}</div>
 			</div>
 		</div>,
 		document.body,

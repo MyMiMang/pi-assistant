@@ -32,16 +32,22 @@ const TABS = [
 export default function Settings() {
 	const { settings, set } = useStore();
 	return (
-		<Modal open={!!settings} onClose={() => set({ settings: null })} title={t("设置")} wide>
-			<div className="flex min-h-[70dvh] flex-col sm:flex-row">
-				<nav className="sticky top-0 z-10 flex shrink-0 gap-1 overflow-x-auto border-b bg-white sm:self-start dark:bg-zinc-900 border-zinc-200 p-2 sm:w-52 sm:flex-col sm:min-h-[70dvh] sm:border-r sm:border-b-0 dark:border-zinc-800">
+		<Modal open={!!settings} onClose={() => set({ settings: null })} title={t("设置")} wide fixed testId="settings-dialog">
+			{/* 窗口固定尺寸；标签栏钉住不动，只有右侧（手机上是下方）内容区自己滚动，切换标签时不会跳位置 */}
+			<div className="flex h-full min-h-0 flex-col sm:flex-row">
+				<nav data-testid="settings-nav" className="flex shrink-0 gap-1 overflow-x-auto border-b border-line p-2 [scrollbar-width:none] sm:w-52 sm:flex-col sm:overflow-x-visible sm:overflow-y-auto sm:border-r sm:border-b-0">
 					{TABS.map(([k, label, Icon]) => (
-						<button key={k} onClick={() => set({ settings: k })} className={cx("flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-sm", settings === k ? "bg-accent-soft font-medium text-accent" : "hover:bg-zinc-100 dark:hover:bg-zinc-800")}>
-							<Icon size={16} /> {t(label)}
+						<button key={k} aria-current={settings === k ? "page" : undefined} data-tab={k} onClick={() => set({ settings: k })} className={cx("flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-sm whitespace-nowrap", settings === k ? "bg-accent-soft font-medium text-accent" : "hover:bg-zinc-100 dark:hover:bg-zinc-800")}>
+							<Icon size={16} className="shrink-0" />
+							{/* 预留加粗后的宽度：选中时字变粗也不会把后面的标签挤动（手机上横排时） */}
+							<span className="grid">
+								<span aria-hidden className="invisible col-start-1 row-start-1 font-medium">{t(label)}</span>
+								<span className="col-start-1 row-start-1">{t(label)}</span>
+							</span>
 						</button>
 					))}
 				</nav>
-				<div className="min-w-0 flex-1 p-5">
+				<div key={settings} data-testid="settings-content" className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-5 [scrollbar-gutter:stable]">
 					{settings === "models" && <ModelsTab />}
 					{settings === "skills" && <SkillsTab />}
 					{settings === "extensions" && <ExtensionsTab />}

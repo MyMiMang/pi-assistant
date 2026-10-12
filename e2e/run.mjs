@@ -295,6 +295,55 @@ await step("手机视口截图（单栏 + 抽屉）", async () => {
 	await m.close();
 });
 
+await step("设置窗口固定尺寸：切换所有标签，窗口/标签栏/每个标签按钮的位置和大小都不变（电脑 + 手机）", async () => {
+	const layouts = [
+		["desktop", { viewport: { width: 1440, height: 900 } }],
+		["laptop", { viewport: { width: 1280, height: 640 } }],
+		["mobile", { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true }],
+	];
+	for (const [name, opt] of layouts) {
+		const c = await browser.newContext({ ...opt, colorScheme: "light", locale: "zh-CN" });
+		const p = await c.newPage();
+		try {
+			await p.goto(`${BASE}/?settings=models`);
+			const nav = p.getByTestId("settings-nav");
+			await nav.waitFor();
+			const keys = await nav.locator("button[data-tab]").evaluateAll((bs) => bs.map((b) => b.dataset.tab));
+			if (keys.length < 10) throw new Error(`标签太少：${keys}`);
+			// 按钮用 offsetLeft/offsetTop（相对标签栏，不受手机上横向滚动影响）；窗口、标签栏、内容区用屏幕坐标
+			const measure = () =>
+				p.evaluate(() => {
+					const r = (el) => { const b = el.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map((v) => Math.round(v * 10) / 10).join(","); };
+					const dlg = document.querySelector("[data-testid=settings-dialog]");
+					const nav = document.querySelector("[data-testid=settings-nav]");
+					const content = document.querySelector("[data-testid=settings-content]");
+					return { dialog: r(dlg), nav: r(nav), content: r(content), contentClientWidth: content.clientWidth, tabs: [...nav.querySelectorAll("button[data-tab]")].map((b) => `${b.dataset.tab}:${b.offsetLeft},${b.offsetTop},${b.offsetWidth},${b.offsetHeight}`).join(" ") };
+				});
+			let base = null;
+			for (const k of [...keys, ...keys.slice().reverse()]) {
+				await nav.locator(`button[data-tab=${k}]`).click();
+				await p.waitForFunction((k) => document.querySelector(`[data-testid=settings-nav] button[data-tab=${k}]`)?.getAttribute("aria-current") === "page", k);
+				await p.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
+				await p.waitForTimeout(350);
+				const m = await measure();
+				if (!base) base = m;
+				for (const f of Object.keys(base)) if (m[f] !== base[f]) throw new Error(`[${name}] 切到「${k}」后 ${f} 变了：${base[f]} → ${m[f]}`);
+				if (k === "skills" || k === "about") {
+					const shot = join(SHOTS, `55-settings-fixed-${name}-${k}.png`);
+					await p.screenshot({ path: shot });
+					if (name !== "laptop") await p.screenshot({ path: `/workspace/settings-fixed-${name}-${k}.png` }).catch(() => {});
+				}
+			}
+			// 内容区内部滚动，窗口本身不滚
+			const sc = await p.evaluate(() => { const c = document.querySelector("[data-testid=settings-content]"); return getComputedStyle(c).overflowY; });
+			if (sc !== "auto") throw new Error(`[${name}] 内容区应 overflow-y:auto，实际 ${sc}`);
+			log(`[${name}] 设置窗口`, base.dialog, "标签栏", base.nav);
+		} finally {
+			await c.close();
+		}
+	}
+});
+
 await step("外观：4 套主题 + 浅色/深色/跟随系统 + 强调色，按设备持久化", async () => {
 	const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
 	const p = await c.newPage();
