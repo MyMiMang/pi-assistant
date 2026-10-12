@@ -1,4 +1,4 @@
-import { Brain, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { Brain, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { getLang, setLang, t } from "../i18n";
@@ -14,7 +14,8 @@ import { DesktopSettings } from "./DesktopSettings";
 import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
-import { Badge, Button, cx, fmtTime, Input, Modal } from "./ui";
+import { Badge, Button, cx, fmtTime, Help, Input, Modal } from "./ui";
+import { Downloads } from "./Downloads";
 
 const TABS = [
 	["models", "模型", Monitor],
@@ -28,6 +29,7 @@ const TABS = [
 	["remote", "远程访问与设备", Wifi],
 	["entry", "固定地址 / 入口", Globe],
 	["appearance", "外观", Palette],
+	["downloads", "下载与组件", Download],
 	["about", "关于", Info],
 ] as const;
 
@@ -52,15 +54,41 @@ export default function Settings() {
 				<div key={settings} data-testid="settings-content" className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-5 [scrollbar-gutter:stable]">
 					{settings === "models" && <ModelsTab />}
 					{settings === "skills" && <SkillsTab />}
-					{settings === "extensions" && <ExtensionsTab />}
+					{settings === "extensions" && (
+						<>
+							<ExtensionsTab />
+							<div className="mt-6"><Downloads group="Pi 扩展包" /></div>
+						</>
+					)}
 					{settings === "memory" && <MemorySettings />}
 					{settings === "computer" && <DesktopSettings />}
-					{settings === "host" && <HostControlSettings />}
-					{settings === "channels" && <ChannelsSettings />}
+					{settings === "host" && (
+						<>
+							<HostControlSettings />
+							<div className="mt-6"><Downloads group="操作这台电脑" /></div>
+						</>
+					)}
+					{settings === "channels" && (
+						<>
+							<ChannelsSettings />
+							<div className="mt-6"><Downloads group="渠道" /></div>
+						</>
+					)}
 					{settings === "email" && <EmailSettings />}
-					{settings === "remote" && <RemoteTab />}
+					{settings === "remote" && (
+						<>
+							<RemoteTab />
+							<div className="mt-6"><Downloads group="远程访问" /></div>
+						</>
+					)}
 					{settings === "entry" && <EntryTab />}
 					{settings === "appearance" && <AppearanceTab />}
+					{settings === "downloads" && (
+						<>
+							<H desc="App 用到的组件、模型和安装包。大多数在用到时自动下载，校验后保存在本机数据目录。">下载与组件</H>
+							<Downloads empty="暂无需要下载的组件" />
+						</>
+					)}
 					{settings === "about" && <AboutTab />}
 				</div>
 			</div>
@@ -68,10 +96,11 @@ export default function Settings() {
 	);
 }
 
-const H = ({ children, desc }: { children: React.ReactNode; desc?: string }) => (
-	<div className="mb-3">
-		<div className="font-semibold">{children}</div>
-		{desc && <div className="mt-0.5 text-sm text-zinc-500">{desc}</div>}
+/** 小节标题：详细说明收进「?」里（悬停 / 点按查看），正文保持简洁 */
+const H = ({ children, desc }: { children: React.ReactNode; desc?: React.ReactNode }) => (
+	<div className="mb-3 flex min-w-0 items-center gap-1.5 font-semibold">
+		<span className="min-w-0 truncate">{children}</span>
+		{desc && <Help>{desc}</Help>}
 	</div>
 );
 
@@ -87,7 +116,8 @@ function ModelsTab() {
 	return (
 		<div className="space-y-6">
 			<section>
-				<H desc={system?.defaultModel ? `当前：${system.defaultModel.provider} / ${system.defaultModel.id}` : "还没有设置默认模型"}>默认模型</H>
+				<H>默认模型</H>
+				<div className="-mt-2 mb-3 truncate text-sm text-mut">{system?.defaultModel ? `当前：${system.defaultModel.provider} / ${system.defaultModel.id}` : "还没有设置默认模型"}</div>
 				<DefaultModelPicker key={providers.filter((p) => p.configured).length + providers.length * 100} />
 			</section>
 			<section>

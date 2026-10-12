@@ -1,5 +1,5 @@
-import { X } from "lucide-react";
-import { type ButtonHTMLAttributes, type ReactNode, useEffect, useState } from "react";
+import { CircleHelp, X } from "lucide-react";
+import { type ButtonHTMLAttributes, type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchBlob } from "../api";
 
@@ -128,3 +128,60 @@ export function fmtTime(t: number) {
 
 /** 纯文本场景（下拉选项、标签）里的头像：图片头像不显示，只留 emoji/字母 */
 export const avatarText = (avatar: string) => (avatar.startsWith("img:") ? "" : avatar);
+
+/** 「?」帮助图标：电脑上鼠标悬停显示，手机上点一下显示（再点或点别处收起）。详细说明放这里，正文只留简短标签 */
+export function Help({ children, className }: { children: ReactNode; className?: string }) {
+	const [open, setOpen] = useState(false);
+	const [pos, setPos] = useState<{ x: number; y: number; up: boolean }>({ x: 0, y: 0, up: false });
+	const ref = useRef<HTMLButtonElement>(null);
+	const show = () => {
+		const r = ref.current?.getBoundingClientRect();
+		if (r) setPos({ x: Math.max(12, Math.min(r.left - 8, innerWidth - 312)), y: r.bottom + 6 > innerHeight - 160 ? r.top - 6 : r.bottom + 6, up: r.bottom + 6 > innerHeight - 160 });
+		setOpen(true);
+	};
+	useEffect(() => {
+		if (!open) return;
+		const h = (e: Event) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+		document.addEventListener("pointerdown", h);
+		addEventListener("scroll", h, true);
+		return () => (document.removeEventListener("pointerdown", h), removeEventListener("scroll", h, true));
+	}, [open]);
+	return (
+		<span className={cx("pa-help", className)}>
+			<button type="button" ref={ref} aria-label="说明" aria-expanded={open} data-testid="help" onMouseEnter={show} onMouseLeave={() => setOpen(false)} onClick={(e) => (e.preventDefault(), e.stopPropagation(), open ? setOpen(false) : show())}>
+				<CircleHelp size={14} />
+			</button>
+			{open &&
+				createPortal(
+					<div className="pa-help-pop" role="tooltip" data-testid="help-pop" style={{ left: pos.x, ...(pos.up ? { bottom: innerHeight - pos.y } : { top: pos.y }) }}>
+						{children}
+					</div>,
+					document.body,
+				)}
+		</span>
+	);
+}
+
+/** 确认框：const [dlg, ask] = useConfirm(); if (await ask({ title, body })) … ；渲染 {dlg} */
+export function useConfirm(): [ReactNode, (o: { title: string; body?: ReactNode; ok?: string; danger?: boolean }) => Promise<boolean>] {
+	const [st, setSt] = useState<{ title: string; body?: ReactNode; ok?: string; danger?: boolean; done: (v: boolean) => void } | null>(null);
+	const ask = (o: { title: string; body?: ReactNode; ok?: string; danger?: boolean }) => new Promise<boolean>((done) => setSt({ ...o, done }));
+	const close = (v: boolean) => (st?.done(v), setSt(null));
+	const el = (
+		<Modal open={!!st} onClose={() => close(false)} testId="confirm-dialog">
+			<div className="space-y-3 p-5">
+				<div className="text-base font-semibold">{st?.title}</div>
+				{st?.body && <div className="text-sm text-mut">{st.body}</div>}
+				<div className="flex justify-end gap-2 pt-1">
+					<Button variant="ghost" onClick={() => close(false)} data-testid="confirm-cancel">
+						取消
+					</Button>
+					<Button variant={st?.danger ? "danger" : "primary"} onClick={() => close(true)} data-testid="confirm-ok">
+						{st?.ok ?? "确定"}
+					</Button>
+				</div>
+			</div>
+		</Modal>
+	);
+	return [el, ask];
+}

@@ -20,6 +20,8 @@ interface State {
 	memoryVersion: number;
 	/** Hindsight 状态 / 同步队列变化 */
 	hindsightVersion: number;
+	/** 统一下载状态的实时更新（id → 最新状态，来自 downloads.changed 事件） */
+	downloads: Record<string, import("./components/Downloads").DownloadInfo>;
 	hostVersion: number;
 	actionsVersion: number;
 	channelsVersion: number;
@@ -68,6 +70,7 @@ export const useStore = create<State>((set, get) => ({
 	convs: {},
 	memoryVersion: 0,
 	hindsightVersion: 0,
+	downloads: {},
 	hostVersion: 0,
 	actionsVersion: 0,
 	channelsVersion: 0,
@@ -251,6 +254,11 @@ export const useStore = create<State>((set, get) => ({
 			case "action.logged":
 				set({ actionsVersion: get().actionsVersion + 1 });
 				break;
+			case "downloads.changed": {
+				const it = (e as unknown as { item: { id: string } | null }).item;
+				if (it) set({ downloads: { ...get().downloads, [it.id]: it as never } });
+				break;
+			}
 			case "memory.hindsight":
 			case "memory.sync":
 				set({ hindsightVersion: get().hindsightVersion + 1 });

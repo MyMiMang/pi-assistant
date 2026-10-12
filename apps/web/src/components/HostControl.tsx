@@ -2,17 +2,19 @@ import { AlertTriangle, ChevronDown, Hand, Loader2, Pause, Play, Plus, ShieldChe
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, Input, avatarText } from "./ui";
+import { Badge, Button, cx, Input, avatarText, Help, useConfirm } from "./ui";
 import { ActionLog } from "./ActionLog";
 
-/** 与服务端 host-control.ts 的 FULL_CONFIRM 一致 */
+/** 启用“完全权限”前的确认框（不再要求输入确认语） */
+const FULL_ASK = { title: "启用完全权限？", body: "助理几乎能做你在这台电脑上能做的任何事，包括使用已登录的账号和文件。受保护的操作仍会先问你，随时可以暂停。", ok: "确定启用", danger: true };
+/** 与服务端 host-control.ts 的 FULL_CONFIRM 一致（旧版确认语，服务端仍兼容） */
 export const FULL_CONFIRM = "我了解风险，允许完全控制这台电脑";
 export type Tier = "observe" | "bounded" | "trusted" | "full";
 export const TIER_INFO: Record<Tier, { label: string; desc: string; tone: string }> = {
 	observe: { label: "只看", desc: "截图、读取窗口内容，不能点击或输入", tone: "zinc" },
 	bounded: { label: "限定", desc: "只能操作勾选的应用，每个动作都问你（默认）", tone: "green" },
 	trusted: { label: "信任", desc: "所有应用；日常动作不问，发送 / 付款 / 删除 / 提交仍要问", tone: "amber" },
-	full: { label: "完全权限", desc: "几乎不问（受保护的操作仍要问）；需要输入确认语", tone: "red" },
+	full: { label: "完全权限", desc: "几乎不问，受保护的操作仍要问", tone: "red" },
 };
 const TIER_ORDER: Tier[] = ["observe", "bounded", "trusted", "full"];
 
@@ -83,7 +85,7 @@ export function HostControlSettings() {
 	const [custom, setCustom] = useState({ name: "", id: "" });
 	const [preview, setPreview] = useState<{ yaml: string; hash: string } | null>(null);
 	const [defaultTier, setDefaultTier] = useState<Tier>("bounded");
-	const [confirmText, setConfirmText] = useState("");
+	const [dlg, ask] = useConfirm();
 	useEffect(() => {
 		if (d && apps === null) {
 			setDefaultTier(d.settings.defaultTier ?? "bounded");
@@ -100,14 +102,13 @@ export function HostControlSettings() {
 	const tierOf = (id: string): Tier => d.tiers?.[id] ?? d.settings.defaultTier ?? "bounded";
 	const anyBounded = defaultTier === "bounded" || allowedIds.some((id) => tierOf(id) === "bounded");
 	const anyFull = defaultTier === "full" || allowedIds.some((id) => tierOf(id) === "full");
-	const save = async (enabled: boolean, hash?: string) => {
+	const save = async (enabled: boolean, hash?: string, confirmFull = false) => {
 		setBusy(true);
 		setMsg(null);
 		try {
-			const r = await api("/api/host-control", { method: "PUT", json: { enabled, agents: scope, apps, workspaceFiles: files, acknowledged: ack, manifestHash: hash, defaultTier, confirmText } });
+			const r = await api("/api/host-control", { method: "PUT", json: { enabled, agents: scope, apps, workspaceFiles: files, acknowledged: ack, manifestHash: hash, defaultTier, confirmFull } });
 			if (r.ok === false) setMsg({ ok: false, text: r.error });
 			else setMsg({ ok: true, text: enabled ? "已开启：按各助理的档位操作你的电脑，受保护的操作一律先问你，随时可以一键暂停" : "已关闭" });
-			setConfirmText("");
 			setPreview(null);
 			await load();
 		} catch (e) {
@@ -131,17 +132,20 @@ export function HostControlSettings() {
 	const add = (a: HostApp) => !apps.some((x) => x.id === a.id) && setApps([...apps, a]);
 	return (
 		<div className="space-y-5" data-testid="host-settings">
+			{dlg}
 			<div className="rounded-xl border border-amber-300/60 bg-amber-50 p-4 text-sm leading-relaxed text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
 				<div className="mb-1 flex items-center gap-2 font-semibold">
 					<AlertTriangle size={16} /> 让助理操作你自己的电脑
 				</div>
-				助理会像人一样在<b>你的电脑</b>上点击、输入、打开应用。默认关闭。开启后：
-				<ul className="mt-1 list-disc pl-5">
-					<li>只能操作下面<b>你勾选的应用</b>（由 Cua Driver 的 bounded 模式强制，清单之外直接拒绝）；看不到整个屏幕，也碰不到其他窗口。</li>
-					<li><b>每个动作都会先问你</b>（可选“本任务内都允许”）；电脑和手机上都能随时一键暂停。</li>
-					<li>操作期间请不要同时使用鼠标键盘；网页上的事情更推荐让助理用它自己的浏览器 / 电脑完成。</li>
-					<li>助理可能被网页或文档里的恶意内容误导，请只允许你信任的应用，不要允许网银、密码管理器等。</li>
-				</ul>
+				助理像人一样在你的电脑上点击、输入。默认关闭，每步先问你，随时可暂停。
+				<Help className="ml-1">
+					<ul className="list-disc space-y-1 pl-4">
+						<li>“限定”档位只能操作你勾选的应用（Cua Driver bounded 模式强制），看不到整个屏幕。</li>
+						<li>每个动作都会先问你（可选“本任务内都允许”）；电脑和手机都能一键暂停。</li>
+						<li>操作期间请不要同时用鼠标键盘；网页上的事更推荐用助理自己的电脑完成。</li>
+						<li>助理可能被网页或文档里的恶意内容误导，不要允许网银、密码管理器等应用。</li>
+					</ul>
+				</Help>
 			</div>
 
 			<section>
@@ -149,7 +153,8 @@ export function HostControlSettings() {
 					状态 <Badge tone={on ? (d.status.paused ? "amber" : "green") : "zinc"}>{on ? (d.status.paused ? "已暂停" : d.status.daemon.state === "running" ? "运行中" : d.status.daemon.detail) : "未开启"}</Badge>
 				</div>
 				<div className="text-xs text-mut">
-					Cua Driver {d.status.version}（MIT，按固定版本下载并校验 SHA256）{d.status.installed ? "· 已安装" : "· 开启时自动下载"} · {d.status.daemon.detail}
+					Cua Driver {d.status.version} {d.status.installed ? "· 已安装" : "· 开启时自动下载"} · {d.status.daemon.detail}
+					<Help className="ml-1">MIT 开源，按固定版本下载并校验 SHA256。</Help>
 				</div>
 				{on && (
 					<div className="mt-2 flex gap-2">
@@ -279,18 +284,12 @@ export function HostControlSettings() {
 				<section className="space-y-2" data-testid="host-manifest">
 					<div className="text-sm font-semibold">权限计划（各助理档位 + “限定”档位的 Cua 能力清单）</div>
 					<pre className="pa-pre max-h-64 overflow-auto text-xs">{preview.yaml}</pre>
-					{anyFull && (
-						<label className="block text-sm">
-							请一字不差地输入「<b>{FULL_CONFIRM}</b>」以确认：
-							<Input className="mt-1" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={FULL_CONFIRM} data-testid="host-confirm-text" />
-						</label>
-					)}
 					<label className="flex items-start gap-2 text-sm">
 						<input type="checkbox" className="mt-1" checked={ack} onChange={(e) => setAck(e.target.checked)} data-testid="host-ack" />
 						<span>我已阅读上面的提示和权限计划，允许助理按这些档位操作我的电脑。</span>
 					</label>
 					<div className="flex gap-2">
-						<Button variant={anyFull ? "danger" : "primary"} disabled={busy || !ack || (anyFull && confirmText.trim() !== FULL_CONFIRM)} onClick={() => save(true, preview.hash)} data-testid="host-enable">
+						<Button variant={anyFull ? "danger" : "primary"} disabled={busy || !ack} onClick={async () => (!anyFull || (await ask(FULL_ASK))) && save(true, preview.hash, anyFull)} data-testid="host-enable">
 							{busy && <Loader2 size={14} className="animate-spin" />} {on ? "确认更新" : "确认开启"}
 						</Button>
 						<Button variant="ghost" onClick={() => setPreview(null)}>
@@ -336,67 +335,50 @@ function SandboxComputerSettings() {
 	);
 }
 
-/** 切换某个助理的档位：调低直接生效；调高要勾选风险，完全权限还要输入确认语 */
+/** 切换某个助理的档位：调低直接生效；调高弹确认框（完全权限是红色的“确定启用”） */
 function TierPicker({ agentId, d, load, onDone, compact }: { agentId: string; d: HostInfo; load: () => void; onDone?: () => void; compact?: boolean }) {
-	const [want, setWant] = useState<Tier | null>(null);
-	const [ack, setAck] = useState(false);
-	const [text, setText] = useState("");
 	const [err, setErr] = useState("");
+	const [dlg, ask] = useConfirm();
 	const cur: Tier = d.tiers?.[agentId] ?? d.settings.defaultTier ?? "bounded";
 	const rank = (t: Tier) => TIER_ORDER.indexOf(t);
-	const apply = async (t: Tier) => {
+	const apply = async (t: Tier, raise: boolean) => {
 		setErr("");
 		try {
-			const r = await api(`/api/host-control/tier/${agentId}`, { method: "PUT", json: { tier: t, acknowledged: ack, confirmText: text } });
+			const r = await api(`/api/host-control/tier/${agentId}`, { method: "PUT", json: { tier: t, acknowledged: raise, confirmFull: t === "full" } });
 			if (r.ok === false) return setErr(r.error);
-			setWant(null);
-			setAck(false);
-			setText("");
 			load();
 			onDone?.();
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
 		}
 	};
+	const pick = async (t: Tier) => {
+		if (t === cur) return onDone?.();
+		if (rank(t) < rank(cur)) return apply(t, false);
+		const ok = await ask(t === "full" ? FULL_ASK : { title: `调到「${TIER_INFO[t].label}」？`, body: `${TIER_INFO[t].desc}。受保护的操作仍会先问你。`, ok: "确定" });
+		if (ok) await apply(t, true);
+	};
 	return (
-		<div className={cx("space-y-2", compact && "w-72")} data-testid="tier-picker">
+		<div className={cx("space-y-2", compact && "w-72 max-w-[calc(100vw-32px)]")} data-testid="tier-picker">
 			<div className={cx(compact ? "flex flex-col" : "flex flex-wrap gap-1")}>
 				{TIER_ORDER.map((t) =>
 					compact ? (
-						<button key={t} className={cx("rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", (want ?? cur) === t && "bg-hover")} onClick={() => (t === cur ? onDone?.() : rank(t) < rank(cur) ? apply(t) : (setWant(t), setAck(false)))} data-testid={`tier-${t}`}>
+						<button key={t} className={cx("whitespace-normal rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", cur === t && "bg-hover")} onClick={() => pick(t)} data-testid={`tier-${t}`}>
 							<div className={cx("text-sm font-medium", t === "full" && "text-red-600", t === "trusted" && "text-amber-600")}>
 								{TIER_INFO[t].label} {t === cur && <span className="text-xs text-mut">（当前）</span>}
 							</div>
 							<div className="text-xs text-mut">{TIER_INFO[t].desc}</div>
 						</button>
 					) : (
-						<button key={t} title={TIER_INFO[t].desc} className={cx("pa-chip", cur === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => (t === cur ? null : rank(t) < rank(cur) ? apply(t) : setWant(t))} data-testid={`tier-${t}`}>
+						<button key={t} title={TIER_INFO[t].desc} className={cx("pa-chip", cur === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => pick(t)} data-testid={`tier-${t}`}>
 							{TIER_INFO[t].label}
 						</button>
 					),
 				)}
 			</div>
 			{!compact && <div className="text-xs text-mut">{TIER_INFO[cur].desc}</div>}
-			{want && (
-				<div className={cx("space-y-2 rounded-xl border p-3 text-sm", want === "full" ? "border-red-500/50 bg-red-500/10" : "border-amber-400/50 bg-amber-500/10")} data-testid="tier-confirm">
-					<div>
-						调到「{TIER_INFO[want].label}」：{TIER_INFO[want].desc}。{want === "full" ? "助理能使用你已登录的所有账号和文件，网页/消息里的恶意内容可能诱导它做出无法撤回的操作。" : ""}受保护的操作仍会每次问你。
-					</div>
-					<label className="flex items-center gap-2">
-						<input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} data-testid="tier-ack" /> 我了解风险
-					</label>
-					{want === "full" && <Input value={text} onChange={(e) => setText(e.target.value)} placeholder={`输入：${FULL_CONFIRM}`} data-testid="tier-confirm-text" />}
-					<div className="flex gap-2">
-						<Button size="sm" variant={want === "full" ? "danger" : "primary"} disabled={!ack || (want === "full" && text.trim() !== FULL_CONFIRM)} onClick={() => apply(want)}>
-							确认
-						</Button>
-						<Button size="sm" variant="ghost" onClick={() => setWant(null)}>
-							取消
-						</Button>
-					</div>
-				</div>
-			)}
 			{err && <div className="text-xs text-red-600">{err}</div>}
+			{dlg}
 		</div>
 	);
 }
@@ -408,7 +390,8 @@ export function HostTierPill({ agentId }: { agentId: string }) {
 	const ref = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		if (!open) return;
-		const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+		// 确认框是 portal 到 body 的：点它不算“点到菜单外面”
+		const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && !(e.target as Element).closest?.(".pa-modal") && setOpen(false);
 		document.addEventListener("mousedown", h);
 		return () => document.removeEventListener("mousedown", h);
 	}, [open]);

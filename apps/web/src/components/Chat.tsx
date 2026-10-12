@@ -1,5 +1,6 @@
 import { HostControlBar, HostTierPill } from "./HostControl";
 import { ModelPicker, ThinkingPicker } from "./ModelPicker";
+import { ContextRing } from "./ContextRing";
 import { ProactivityPicker } from "./Proactive";
 import { AlarmClock, Brain, Puzzle, ArrowUp, Check, ChevronRight, Globe, Hand, Loader2, Menu, Monitor, PanelRight, Paperclip, Square, Terminal, X, FileText, FolderSearch, PenLine, Send, Sparkles, Eye } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -403,6 +404,7 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 					<ProactivityPicker agentId={agentId} />
 					<span className="flex-1" />
 					<ThinkingPicker agentId={agentId} />
+					<ContextRing agentId={agentId} running={!!running} />
 					<ModelPicker agentId={agentId} />
 					</div>
 					{running && !text.trim() && !files.length ? (

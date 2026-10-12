@@ -1,7 +1,8 @@
-//! Pi Assistant 托盘程序（无主窗口）：
+//! Pi Assistant 桌面程序（原生主窗口 + 托盘）：
 //! - 启动并守护服务端：内置 Node 运行时（sidecar `node`）+ 安装包里的 app 目录（服务端源码 + 生产依赖 + 网页 + 第三方二进制）
 //!   如果 8787 端口上已经有 Pi Assistant 在跑（比如源码安装的 LaunchAgent），直接用它，不重复启动
-//! - 首次运行 / 手动打开时自动在浏览器打开界面；开机自启（--background 不弹界面）
+//! - 首次运行 / 手动打开时弹出原生主窗口（系统 WebView 加载本机 8787 界面，不再开浏览器）；
+//!   关窗口只是隐藏，托盘常驻；开机自启（--background 不弹窗口）。外部链接用默认浏览器打开
 //! - 菜单：打开、配对手机、暂停/继续操作电脑、悬浮条开关、开机自启、检查更新、退出
 //! - 操作这台电脑时弹出置顶悬浮条（/hostbar），一键暂停
 //! - 自动更新：Tauri updater 读 GitHub Releases 的 latest.json（签名校验），新版本含新版 Pi
@@ -101,8 +102,48 @@ fn start_server(app: &AppHandle) {
     });
 }
 
+/// 打开原生主窗口（没有就建；已有就导航到 path 并前置）。建窗口失败时退回默认浏览器
 fn open_ui(app: &AppHandle, path: &str) {
-    let _ = app.opener().open_url(format!("{}{path}", base()), None::<&str>);
+    let full = format!("{}{path}", base());
+    let Ok(url) = full.parse::<tauri::Url>() else { return };
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    if let Some(w) = app.get_webview_window("main") {
+        if path != "/" {
+            let _ = w.navigate(url);
+        }
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let opener = app.clone();
+    let built = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+        .title("Pi Assistant")
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(380.0, 560.0)
+        .center()
+        .focused(true)
+        // 页面里 target=_blank / window.open 的外部链接交给系统浏览器，不在应用里开新窗口
+        .on_new_window(move |u, _| {
+            let _ = opener.opener().open_url(u.as_str(), None::<&str>);
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .on_navigation(|u| {
+            // 主窗口只允许停留在本机服务页面；其他地址交给浏览器
+            let local = u.host_str() == Some("127.0.0.1") && u.port() == Some(PORT);
+            local || u.scheme() == "about" || u.scheme() == "blob" || u.scheme() == "data"
+        })
+        .build();
+    match built {
+        Ok(w) => {
+            let _ = w.set_focus();
+        }
+        Err(e) => {
+            eprintln!("[tray] 建主窗口失败，改用浏览器：{e}");
+            let _ = app.opener().open_url(full, None::<&str>);
+        }
+    }
 }
 
 /// 悬浮条窗口：服务就绪后再建（它加载的是本机服务的 /hostbar 页面）
@@ -116,10 +157,23 @@ fn ensure_bar(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         .inner_size(BAR_W, BAR_H)
         .resizable(false)
         .decorations(false)
+        // 透明无边框：页面背景透明，只露出圆角胶囊（macOS 需 macOSPrivateApi）
+        .transparent(true)
+        .shadow(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .visible(false)
         .focused(false)
+        // 悬浮条里的“打开设置”在主窗口里打开
+        .on_new_window({
+            let h = app.clone();
+            move |u, _| {
+                let path = format!("{}{}", u.path(), u.query().map(|q| format!("?{q}")).unwrap_or_default());
+                let h2 = h.clone();
+                let _ = h.run_on_main_thread(move || open_ui(&h2, &path));
+                tauri::webview::NewWindowResponse::Deny
+            }
+        })
         .build()
         .ok()?;
     if let Ok(Some(m)) = w.primary_monitor() {
@@ -140,13 +194,14 @@ async fn bar_loop(app: AppHandle) {
         let enabled = j["enabled"].as_bool().unwrap_or(false);
         let paused = j["paused"].as_bool().unwrap_or(false);
         let active = j["active"].as_bool().unwrap_or(false);
+        let dismissed = j["dismissed"].as_bool().unwrap_or(false);
         let st = app.state::<State>();
         st.paused.store(paused, Ordering::SeqCst);
         if let Some(item) = st.pause_item.lock().unwrap().as_ref() {
             let _ = item.set_enabled(enabled);
             let _ = item.set_text(if paused { "继续操作这台电脑" } else { "暂停操作这台电脑" });
         }
-        let show = st.bar_enabled.load(Ordering::SeqCst) && enabled && (active || paused);
+        let show = st.bar_enabled.load(Ordering::SeqCst) && enabled && (active || paused) && !dismissed;
         let h = app.clone();
         let _ = app.run_on_main_thread(move || {
             if show {
@@ -307,6 +362,17 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, ev| {
+            // 关主窗口 = 隐藏到托盘（服务继续跑）；macOS 回到纯菜单栏模式
+            if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &ev {
+                if label == "main" {
+                    api.prevent_close();
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.hide();
+                    }
+                    #[cfg(target_os = "macos")]
+                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                }
+            }
             if let tauri::RunEvent::ExitRequested { api, code, .. } = &ev {
                 // 关掉悬浮条窗口不退出托盘程序
                 if code.is_none() {

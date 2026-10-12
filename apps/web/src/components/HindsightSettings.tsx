@@ -2,7 +2,8 @@ import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, Input } from "./ui";
+import { Badge, Button, cx, Help, Input } from "./ui";
+import { Downloads } from "./Downloads";
 
 type Emb = { kind: "local"; model: string } | { kind: "openai"; baseUrl: string; model: string; dimensions?: number };
 type Rr = { kind: "local"; model: string } | { kind: "siliconflow"; model: string; baseUrl?: string } | { kind: "alibaba"; model: string } | { kind: "off" };
@@ -96,9 +97,16 @@ export function HindsightSettings() {
 					</button>
 				)}
 			</div>
-			<p className="text-xs leading-relaxed text-mut">
-				在本机单独运行（自带 Python 环境、数据库和数据目录，不碰你电脑上已有的 Python / Hindsight），自动整理事实、实体和时间线，支持“问问记忆”（反思）。首次启用会下载约 300–600 MB 运行环境和约 500 MB 模型，常驻内存约 1–1.5 GB。不可用时自动退回基础记忆，新记忆先排队，恢复后补写。
+			<p className="text-xs text-mut">
+				自动整理事实和时间线，支持“问问记忆”。
+				<Help className="ml-1">在本机单独运行（自带 Python 环境、数据库和数据目录，不碰你电脑上已有的 Python / Hindsight）。首次启用会下载约 300–600 MB 运行环境和约 500 MB 模型，常驻内存约 1–1.5 GB。不可用时自动退回基础记忆，新记忆先排队，恢复后补写。</Help>
 			</p>
+			{s.mode === "local" && (
+				<section className="space-y-1" data-testid="hs-downloads">
+					<div className="text-xs font-medium text-mut">需要下载的内容</div>
+					<Downloads group="高级记忆" />
+				</section>
+			)}
 			<div className={cx("text-xs", d.status.state === "error" || d.status.state === "down" ? "text-red-500" : "text-mut")} data-testid="hindsight-detail">
 				{d.inUse ? d.status.detail : "还没有助理在用高级记忆：在上面选“高级记忆”或在助理的「记忆」页单独选择后自动安装并启动。"}
 				{d.status.pending > 0 && ` · 待同步 ${d.status.pending} 条`}
@@ -120,7 +128,9 @@ export function HindsightSettings() {
 			</section>
 
 			<section className="space-y-2">
-				<div className="text-xs font-medium text-mut">① 记忆用模型（整理、反思时调用；建议选便宜快速的，与聊天模型分开）</div>
+				<div className="flex items-center gap-1 text-xs font-medium text-mut">
+					① 记忆用模型 <Help>整理、反思记忆时调用。建议选便宜快速的，与聊天模型分开。</Help>
+				</div>
 				<div className="flex gap-2">
 					<select className="pa-input" aria-label="记忆用模型" value={key(s.llm)} onChange={(e) => setS({ ...s, llm: e.target.value ? d.models.find((m) => key(m) === e.target.value) ?? null : null })}>
 						<option value="">自动（当前：{key(d.autoModel) || "无可用模型"}）</option>
@@ -134,11 +144,16 @@ export function HindsightSettings() {
 						{testing ? "测试中…" : "测试"}
 					</Button>
 				</div>
-				<p className="text-xs text-mut">经本机网关调用你在「模型」里配置的渠道，密钥不会交给 Hindsight。已用 {d.usage.requests} 次，约 {d.usage.input + d.usage.output} tokens。</p>
+				<p className="text-xs text-mut">
+					已用 {d.usage.requests} 次，约 {d.usage.input + d.usage.output} tokens
+					<Help className="ml-1">经本机网关调用你在「模型」里配置的渠道，密钥不会交给 Hindsight。</Help>
+				</p>
 			</section>
 
 			<section className="space-y-2" data-testid="hs-embedding">
-				<div className="text-xs font-medium text-mut">② 向量模型（决定“按意思找记忆”的效果）</div>
+				<div className="flex items-center gap-1 text-xs font-medium text-mut">
+					② 向量模型 <Help>决定“按意思找记忆”的效果。更换后会在后台用记忆原文重新生成全部向量，记忆不会丢。</Help>
+				</div>
 				{d.localEmbeddings.map((e) => radio("hs-emb", s.embedding.kind === "local" && s.embedding.model === e.id, () => setS({ ...s, embedding: { kind: "local", model: e.id } }), <>本地 · {e.name}</>))}
 				{radio("hs-emb", s.embedding.kind === "openai", () => setS({ ...s, embedding: { kind: "openai", baseUrl: EMB_PRESETS[0].baseUrl, model: EMB_PRESETS[0].model } }), "在线（OpenAI 兼容接口）")}
 				{s.embedding.kind === "openai" && (
@@ -158,11 +173,13 @@ export function HindsightSettings() {
 						</div>
 					</div>
 				)}
-				{embChanged && <p className="text-xs text-amber-600">更换向量模型后，会在后台用记忆原文重新生成全部向量（记忆不会丢）。</p>}
+				{embChanged && <p className="text-xs text-amber-600">保存后会用新模型重建向量，记忆不会丢。</p>}
 			</section>
 
 			<section className="space-y-2" data-testid="hs-reranker">
-				<div className="text-xs font-medium text-mut">③ 重排序（对找到的记忆再精排；关闭则只做多路融合）</div>
+				<div className="flex items-center gap-1 text-xs font-medium text-mut">
+					③ 重排序 <Help>对找到的记忆再精排；关闭则只做多路融合。</Help>
+				</div>
 				<div className="flex flex-wrap gap-4">
 					{radio("hs-rr", s.reranker.kind === "local", () => setS({ ...s, reranker: { kind: "local", model: d.localRerankers[0].id } }), "本地")}
 					{radio("hs-rr", s.reranker.kind === "siliconflow", () => setS({ ...s, reranker: { kind: "siliconflow", model: "BAAI/bge-reranker-v2-m3" } }), "硅基流动")}

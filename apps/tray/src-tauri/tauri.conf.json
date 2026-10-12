@@ -12,7 +12,7 @@
       "iconPath": "icons/tray.png",
       "iconAsTemplate": false
     },
-    "macOSPrivateApi": false
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

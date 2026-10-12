@@ -2,7 +2,7 @@ import { CheckCircle2, ChevronDown, Copy, Loader2, MessageSquare, Plus, RefreshC
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, Input, avatarText } from "./ui";
+import { Badge, Button, cx, Help, Input, avatarText } from "./ui";
 
 type Kind = "wecom_bot" | "wecom" | "feishu" | "dingtalk";
 type AnyKind = Kind | "wechat_clawbot";
@@ -118,7 +118,10 @@ export function ChannelsSettings() {
 	return (
 		<div className="space-y-5" data-testid="channels">
 			<ClawbotSection items={d.items.filter((c) => c.kind === "wechat_clawbot")} agents={agents} onChange={load} />
-			<p className="text-sm text-mut">在企业微信、飞书、钉钉里直接和助理聊天：消息会进到助理的对话里，回复、需要你批准的操作、提问会以带按钮的卡片发回来（点按钮，或回复「批准」/「拒绝」/选项序号）。只有发送过绑定码的人才能使用。</p>
+			<p className="text-sm text-mut">
+				在企业微信、飞书、钉钉里和助理聊天。
+				<Help className="ml-1">消息会进到助理的对话里；回复、需要你批准的操作、提问会以带按钮的卡片发回来（点按钮，或回复「批准」/「拒绝」/选项序号）。只有发送过绑定码的人才能使用。</Help>
+			</p>
 			{d.items.filter((c) => c.kind !== "wechat_clawbot").map((c) => (
 				<ChannelCard key={c.id} c={c} publicUrl={d.publicUrl} agents={agents} onChange={load} />
 			))}
@@ -337,7 +340,10 @@ function WechatSection({ agents }: { agents: { id: string; name: string; avatar:
 							{s.enabled ? "关闭个人微信" : "重新开启"}
 						</Button>
 					</div>
-					<p className="text-xs text-mut">登录：打开后在助理的「电脑」页（或手机上收到的接管通知）用这个小号扫码。助理只按你的要求发消息；给新的人发消息、发文件、转账/红包一律先问你。需要助理电脑（Docker）。</p>
+					<p className="text-xs text-mut">
+						在助理的「电脑」页扫码登录小号。
+						<Help className="ml-1">打开后在助理的「电脑」页（或手机上收到的接管通知）用这个小号扫码。助理只按你的要求发消息；给新的人发消息、发文件、转账/红包一律先问你。需要助理电脑。</Help>
+					</p>
 				</>
 			)}
 			{msg && <div className="text-sm text-mut">{msg}</div>}

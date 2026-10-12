@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { SkillMeta } from "../types";
-import { Badge, Button, Input } from "./ui";
+import { Badge, Button, Help, Input } from "./ui";
 import Markdown from "./Markdown";
 import { DiffView } from "./Cards";
 
@@ -170,7 +170,10 @@ export function SkillsTab() {
 					<input type="checkbox" className="mt-1" checked={suggest.enabled} onChange={async (e) => setSuggest(await api("/api/skill-suggest", { method: "PUT", json: { enabled: e.target.checked } }))} />
 					<span>
 						<b>主动建议做成技能</b>
-						<span className="block text-xs text-mut">发现你重复做同类任务、或刚完成一个多步流程时，问一句“要不要做成技能？”；你的做法和已有技能不一样时，提议更新并给你看改动。不会频繁打扰：同一对话一天最多一次，拒绝过的不再提。</span>
+						<span className="block text-xs text-mut">
+							重复的做法，提议存成技能。
+							<Help className="ml-1">发现你重复做同类任务、或刚完成一个多步流程时，问一句“要不要做成技能？”；你的做法和已有技能不一样时，提议更新并给你看改动。同一对话一天最多一次，拒绝过的不再提。</Help>
+						</span>
 					</span>
 				</label>
 			)}

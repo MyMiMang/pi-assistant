@@ -103,3 +103,38 @@ html[data-user-accent] .pa-ui-primary { background: var(--acc); color: #fff; }
 .pa-brand .pa-theme-toggle { margin-left: auto; }
 /* 左栏的拖动手柄伸进聊天区 4px，需要压在聊天区之上 */
 .pa-app.side-docked > .pa-drawer { z-index: 2; }
+
+/* ---- 自定义勾选框 / 单选 / 开关（替代浏览器默认样式，跟随主题色） ---- */
+input[type="checkbox"], input[type="radio"] { appearance: none; -webkit-appearance: none; flex-shrink: 0; width: 16px; height: 16px; margin: 0; border: 1.5px solid var(--line-strong, var(--mut2)); background: var(--card); border-radius: 5px; display: inline-grid; place-items: center; cursor: pointer; vertical-align: -3px; transition: background .15s, border-color .15s, box-shadow .15s; }
+input[type="radio"] { border-radius: 50%; }
+input[type="checkbox"]::after { content: ""; width: 9px; height: 5px; border: 2px solid var(--acc-fg, #fff); border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px) scale(0); transition: transform .12s; }
+input[type="radio"]::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--acc-fg, #fff); transform: scale(0); transition: transform .12s; }
+input[type="checkbox"]:checked, input[type="radio"]:checked { background: var(--acc); border-color: var(--acc); }
+input[type="checkbox"]:checked::after { transform: rotate(-45deg) translate(1px, -1px) scale(1); }
+input[type="radio"]:checked::after { transform: scale(1); }
+input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { box-shadow: 0 0 0 3px var(--acc-soft); outline: none; }
+input[type="checkbox"]:disabled, input[type="radio"]:disabled { opacity: .45; cursor: not-allowed; }
+input[type="checkbox"].pa-switch { width: 34px; height: 20px; border-radius: 999px; border: 0; background: var(--line-strong, var(--mut2)); place-items: center start; padding: 2px; }
+input[type="checkbox"].pa-switch::after { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transform: none; transition: transform .15s; }
+input[type="checkbox"].pa-switch:checked { background: var(--acc); }
+input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
+
+/* ---- 「?」帮助气泡 ---- */
+.pa-help { position: relative; display: inline-flex; vertical-align: middle; }
+.pa-help > button { width: 16px; height: 16px; display: grid; place-items: center; border-radius: 50%; color: var(--mut2); }
+.pa-help > button:hover, .pa-help > button[aria-expanded="true"] { color: var(--acc); }
+.pa-help-pop { position: fixed; z-index: 80; max-width: min(300px, calc(100vw - 24px)); padding: 8px 10px; border-radius: var(--r-sm); background: var(--card); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0,0,0,.18); font-size: 12.5px; font-weight: 400; line-height: 1.55; white-space: normal; text-align: left; }
+
+/* ---- 下载状态 ---- */
+.pa-dl-bar { height: 4px; border-radius: 2px; background: var(--hover); overflow: hidden; }
+.pa-dl-bar > i { display: block; height: 100%; background: var(--acc); transition: width .3s; }
+.pa-dl-bar.indet > i { width: 30% !important; animation: pa-indet 1.2s ease-in-out infinite; }
+@keyframes pa-indet { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+
+/* ---- 上下文用量圆环 ---- */
+.pa-ctx-ring { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; color: var(--mut); flex-shrink: 0; }
+.pa-ctx-ring:hover { background: var(--hover); }
+
+/* ---- 窗口变窄时文字不挤压 ---- */
+.pa-modal label, .pa-modal .pa-row-text { min-width: 0; overflow-wrap: anywhere; }
+button, .pa-chip { white-space: nowrap; }

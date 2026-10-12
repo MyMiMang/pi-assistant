@@ -2,7 +2,7 @@ import { Loader2, Mail, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Button, cx, Input, avatarText } from "./ui";
+import { Button, cx, Help, Input, avatarText } from "./ui";
 
 interface Server {
 	host: string;
@@ -70,7 +70,10 @@ export function EmailSettings() {
 	};
 	return (
 		<div className="space-y-4" data-testid="email-settings">
-			<p className="text-sm text-mut">给助理接上邮箱：它可以查看、搜索、阅读邮件，帮你写草稿。<b>发送前一定会先给你看完整的草稿并请你批准</b>。用邮箱的「授权码 / 应用专用密码」登录（不是登录密码），加密保存在这台电脑上。</p>
+			<p className="text-sm text-mut">
+				助理可以读邮件、写草稿，<b>发送前一定先请你批准</b>。
+				<Help className="ml-1">用邮箱的「授权码 / 应用专用密码」登录（不是登录密码），加密保存在这台电脑上。助理可以查看、搜索、阅读邮件，帮你写草稿；发送前会给你看完整草稿。</Help>
+			</p>
 			{d.items.map((a) => (
 				<div key={a.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-line p-3 text-sm" data-testid="email-account">
 					<Mail size={16} />

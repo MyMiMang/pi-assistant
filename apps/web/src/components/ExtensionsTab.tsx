@@ -2,7 +2,7 @@ import { AlertTriangle, ChevronDown, ChevronRight, Package, Plug, Plus, RefreshC
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, Input } from "./ui";
+import { Badge, Button, cx, Help, Input } from "./ui";
 
 type Exposure = "direct" | "deferred" | "codemode" | "hidden";
 interface McpConfig {
@@ -182,7 +182,9 @@ function McpForm({ initial, onDone }: { initial?: McpServer; onDone: () => void 
 						<input type="checkbox" className="mt-1" checked={oauth} onChange={(e) => setOauth(e.target.checked)} />
 						<span>
 							使用 OAuth 登录
-							<span className="block text-xs text-mut">不填请求头时，服务要求登录会自动在这台电脑上打开授权页（需要在电脑上完成）。服务不支持自动注册时，填写预先注册的 Client ID。</span>
+							<span className="block text-xs text-mut">
+								可选。<Help>不填请求头时，服务要求登录会自动在这台电脑上打开授权页（需要在电脑上完成）。服务不支持自动注册时，填写预先注册的 Client ID。</Help>
+							</span>
 						</span>
 					</label>
 					{oauth && (

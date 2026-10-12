@@ -185,7 +185,7 @@ html,.pa-app{height:100%}
 .pa-composer-tools{display:flex;align-items:center;gap:6px;flex:1;min-width:0;flex-wrap:wrap;row-gap:6px}
 
 /* 托盘悬浮条（/hostbar，置顶小窗） */
-html.pa-floatbar-root, html.pa-floatbar-root body { background: transparent; overflow: hidden; }
+html.pa-floatbar-root, html.pa-floatbar-root body, html.pa-floatbar-root #root { background: transparent !important; overflow: hidden; }
 .pa-floatbar { margin: 6px; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; border-radius: 999px; font-size: 13px;
   background: var(--card, #fff); color: var(--fg, #111); box-shadow: 0 6px 24px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06); -webkit-app-region: drag; user-select: none; }
 .pa-floatbar-dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }

@@ -861,7 +861,7 @@ await step("Phase 3 操作这台电脑：设置页（默认关闭、风险提示
 	await page.keyboard.press("Escape");
 });
 
-await step("权限档位：输入框工具栏「助理电脑」旁的权限按钮切换本助理档位（调高要确认，完全权限要输入确认语）", async () => {
+await step("权限档位：输入框工具栏「助理电脑」旁的权限按钮切换本助理档位（调高弹确认框，完全权限只需确认启用）", async () => {
 	// 用 API 开启（演练模式，不启动 Cua）
 	const r = await page.evaluate(async () => {
 		const j = (u, m, b) => fetch(u, { method: m, headers: { "content-type": "application/json" }, body: b ? JSON.stringify(b) : undefined }).then((x) => x.json());
@@ -876,21 +876,25 @@ await step("权限档位：输入框工具栏「助理电脑」旁的权限按�
 	await pill.click();
 	const menu = page.locator("[data-testid=host-tier-menu]");
 	await menu.locator("[data-testid=tier-trusted]").click();
-	await menu.locator("[data-testid=tier-confirm]").waitFor();
+	const dlg = page.locator("[data-testid=confirm-dialog]");
+	await dlg.waitFor();
 	await page.waitForTimeout(300);
 	await page.screenshot({ path: join(SHOTS, "44-chat-tier-menu.png") });
-	await menu.locator("[data-testid=tier-ack]").check();
-	await menu.locator("[data-testid=tier-confirm]").getByRole("button", { name: "确认" }).click();
+	await dlg.locator("[data-testid=confirm-ok]").click();
 	await pill.getByText("信任").waitFor({ timeout: 10_000 });
-	// 完全权限：要输入确认语
+	// 完全权限：只弹确认框（不用再输入确认语）；取消不生效
 	await pill.click();
 	await menu.locator("[data-testid=tier-full]").click();
-	await menu.locator("[data-testid=tier-ack]").check();
-	if (await menu.locator("[data-testid=tier-confirm]").getByRole("button", { name: "确认" }).isEnabled()) throw new Error("没输入确认语也能确认");
-	await menu.locator("[data-testid=tier-confirm-text]").fill("我了解风险，允许完全控制这台电脑");
+	await dlg.getByText("启用完全权限？").waitFor();
+	await dlg.locator("[data-testid=confirm-cancel]").click();
+	await dlg.waitFor({ state: "detached" });
+	await pill.getByText("信任").waitFor();
+	await pill.click();
+	await menu.locator("[data-testid=tier-full]").click();
+	await dlg.getByText("启用完全权限？").waitFor();
 	await page.waitForTimeout(300);
 	await page.screenshot({ path: join(SHOTS, "45-chat-tier-full-confirm.png") });
-	await menu.locator("[data-testid=tier-confirm]").getByRole("button", { name: "确认" }).click();
+	await dlg.getByRole("button", { name: "确定启用" }).click();
 	await pill.getByText("完全权限").waitFor({ timeout: 10_000 });
 	// 调低直接生效
 	await pill.click();
@@ -1127,6 +1131,60 @@ await step("左侧助理列表：右键 → 编辑 / 删除助理（确认框）
 	await it.waitFor({ state: "detached" });
 	await m.close();
 	void b;
+});
+
+await step("界面打磨：输入框旁上下文圆环（悬停简要、点开详情）；自定义勾选框；「?」帮助气泡；设置 › 下载与组件；悬浮条关闭按钮", async () => {
+	await page.goto(BASE);
+	await send("你好，测一下上下文用量");
+	await page.waitForTimeout(1500);
+	const ring = page.locator("[data-testid=context-ring]");
+	await ring.waitFor();
+	const title = await ring.getAttribute("title");
+	if (!/上下文/.test(title ?? "")) throw new Error(`圆环提示不对：${title}`);
+	await ring.click();
+	await page.locator("[data-testid=context-pop]").getByText("上下文").first().waitFor();
+	await page.waitForTimeout(300);
+	await page.screenshot({ path: join(SHOTS, "58-context-ring.png") });
+	await ring.click();
+	// 设置 › 下载与组件
+	await page.evaluate(() => (location.search = "?settings=downloads"));
+	await page.locator("[data-testid=settings-dialog]").waitFor();
+	await page.locator("[data-tab=downloads]").click();
+	const help = page.locator("[data-testid=settings-content] [data-testid=help]").first();
+	await help.hover();
+	await page.locator("[data-testid=help-pop]").waitFor();
+	await page.waitForTimeout(200);
+	await page.screenshot({ path: join(SHOTS, "59-settings-downloads.png") });
+	// 记忆设置：自定义单选框不是浏览器默认外观
+	await page.locator("[data-tab=memory]").click();
+	await page.waitForTimeout(400);
+	const ap = await page.locator("[data-testid=settings-content] input[type=radio], [data-testid=settings-content] input[type=checkbox]").first().evaluate((el) => getComputedStyle(el).appearance);
+	if (ap !== "none") throw new Error(`勾选框仍是浏览器默认样式：${ap}`);
+	await page.screenshot({ path: join(SHOTS, "60-settings-memory-polish.png") });
+	// 窄窗口：设置内容不横向溢出
+	await page.setViewportSize({ width: 760, height: 800 });
+	await page.waitForTimeout(300);
+	const over = await page.locator("[data-testid=settings-content]").evaluate((el) => el.scrollWidth - el.clientWidth);
+	if (over > 2) throw new Error(`窄窗口下设置内容横向溢出 ${over}px`);
+	await page.screenshot({ path: join(SHOTS, "61-settings-narrow.png") });
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.keyboard.press("Escape");
+	// 悬浮条：透明背景 + 关闭按钮（关闭后服务端记住，状态变化前不再弹）
+	await page.evaluate(() => fetch("/api/host-control/pause", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paused: true }) }));
+	const bar = await ctx.newPage();
+	await bar.setViewportSize({ width: 440, height: 56 });
+	await bar.goto(`${BASE}/hostbar`);
+	await bar.locator("[data-testid=float-bar]").waitFor();
+	const bg = await bar.evaluate(() => getComputedStyle(document.body).backgroundColor);
+	if (!/rgba\(0, 0, 0, 0\)|transparent/.test(bg)) throw new Error(`悬浮条页面背景不透明：${bg}`);
+	await bar.screenshot({ path: join(SHOTS, "62-hostbar-close.png"), omitBackground: true });
+	await bar.locator("[data-testid=float-close]").click();
+	const st = await bar.evaluate(() => fetch("/api/host-control/bar").then((r) => r.json()));
+	if (!st.dismissed) throw new Error("关闭后 dismissed 应为 true");
+	await bar.evaluate(() => fetch("/api/host-control/pause", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paused: false }) }));
+	const st2 = await bar.evaluate(() => fetch("/api/host-control/bar").then((r) => r.json()));
+	if (st2.dismissed) throw new Error("状态变化后悬浮条应能再次出现");
+	await bar.close();
 });
 
 await browser.close();
