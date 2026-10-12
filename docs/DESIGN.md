@@ -974,3 +974,16 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
   - 已装 Docker 的用户可在 设置 里选 “Docker” 作为后端；默认用自带运行时。
   - **硬性保护**：永远只操作自己命名的实例（Lima `pia-desktop`、WSL `PiAssistant-*`、带 `pia.agent` 标签的容器），不调用 PATH 里用户自己的 limactl，不动用户已有的 Docker 容器 / WSL 发行版；有单测覆盖名字校验。
 - **按需启停（所有后端通用）**：助理要用电脑类工具或用户打开「助理电脑」时自动启动（虚拟机 + 桌面容器）；空闲（没有工具调用、没有人在看画面、没有任务/定时任务占用）超过设定时间自动关机，默认 10 分钟，设置里可选 5 / 10 / 30 分钟 / 从不。家目录是持久卷，关机不丢登录状态。所有桌面都停了就关掉虚拟机释放内存。界面显示 关机 / 启动中 / 运行中。空闲判定逻辑有单测。
+
+**实现进度（2026-10-12，分支 `wip/assistant-computer-vm`）**
+
+- [x] **第 1 步 通用部分**（所有平台共用）
+  - 运行时抽象 `packages/server/src/desktop/backend.ts`：`DesktopBackend`（detect / ensureEngine / stopEngine / destroyEngine / cli），一个共用引擎 + 每个助理一个桌面容器（`pia-desk-<id>`，标签 `pia.agent`，家目录卷 `pia-home-<id>`）。已实现 `docker`（本机 Docker，自动探测 Podman）；`lima`、`wsl` 是占位，`auto` 在这两个平台暂时回落到 Docker。
+  - 硬性保护 `desktop/names.ts`：所有引擎命令都经过 `assertOwnTarget`，修改/删除类命令只允许指向我们自己的容器/卷/镜像，`prune`、`compose` 等一律拒绝；单测 `test/desktop-runtime.test.ts`。
+  - 「给助理安装电脑」开关（向导默认勾选 + 设置 › 助理电脑），显示下载 ≈1.5 GB / 磁盘 ≈5 GB / 内存 3–4 GB；没开启时什么都不下载，「电脑」标签显示“未安装，去设置安装”；关掉后提供“关机”和“删除虚拟机和镜像（登录状态会清掉，仅本机可操作）”。
+  - 镜像：`.github/workflows/desktop-image.yml`（打 `desktop-v<版本>` tag 或手动）多架构构建推到 `ghcr.io/mymimang/pi-assistant-desktop:<版本>`；`packages/server/desktop-image.json` 固定版本 + digest（**首次发布后填 digest**，没填时按版本 tag 拉）；设置里可填加速地址（只替换注册表主机）。引擎分层拉取，断了自动重试且已下载的层不重下，按 digest 内容寻址校验；界面显示进度。`PIA_DESKTOP_IMAGE` 指定本地/自定义镜像时不下载。
+  - 按需启停：打开「电脑」标签自动开机；助理在电脑关机时有 `computer_open` 工具按需开机（电脑操作工具在下一轮出现）；空闲（没有工具调用、没人看画面、没有对话/后台任务/定时任务在跑）超过 5 / 10 / 30 分钟或从不，自动关机；所有桌面都停了再调用后端 `stopEngine()`（虚拟机后端关机）。容器不再设 `--restart`，关机后不会被引擎拉起。判定逻辑 `desktop/idle.ts` 有单测。界面显示 关机 / 启动中 / 运行中。
+  - 实测（Linux + Docker 26）：本地 registry 当加速地址按 digest 拉取 → 打本地名 → 开机约 7 秒 → noVNC/截图正常 → 5 分钟空闲自动关机 → 再开机家目录文件还在 → 关机 + 删除只清掉我们的容器/卷/镜像，用户自己的容器和卷不受影响。
+- [ ] 第 2 步 macOS（Lima + vz + nerdctl）
+- [ ] 第 3 步 Windows（WSL2 自有发行版）
+- [ ] 第 4 步 Linux 服务器版（一键安装、常驻、一次性设置码 + 主人设备）
