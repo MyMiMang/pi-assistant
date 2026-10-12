@@ -2,7 +2,7 @@
 #   macOS arm64 / x64 → .dmg（+ .app.tar.gz 更新包），Windows x64 → NSIS .exe（+ 更新包）
 # 安装包内容：Tauri 托盘程序 + 内置 Node 运行时（sidecar）+ app 目录（服务端 + Pi + 生产依赖 + 网页 + cloudflared/uv/cua-driver），
 # Linux 服务器版 x64 / arm64 → pi-assistant-<版本>-linux-<arch>.tar.gz（+ .sha256），deploy/linux/install.sh 安装。
-# 版本与 SHA256 全部以 third-party.json 为准。tag 里带 “-”（如 v0.2.0-beta.1）发布为 pre-release。
+# 版本与 SHA256 全部以 third-party.json 为准。所有 v* tag（包括 v0.2.0-beta.1 这类测试版）都发布为正式的 latest 版本：Tauri 自动更新读 releases/latest/download/latest.json，pre-release 不算 latest，会导致更新失效。
 # 自动更新签名：仓库 secrets 设置 TAURI_SIGNING_PRIVATE_KEY（+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD）后生成 latest.json 与 .sig；
 # 没设置时照常出安装包，只是不带自动更新文件。暂不做 Apple 公证 / Windows 代码签名（见 docs/INSTALL.md）。
 name: release
@@ -68,7 +68,7 @@ jobs:
           releaseName: "Pi Assistant ${{ github.ref_name }}"
           releaseBody: "安装说明见 docs/INSTALL.md（未签名构建：macOS 首次打开需右键 → 打开；Windows SmartScreen 选“仍要运行”）。"
           releaseDraft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: false
           includeUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
       - name: macOS 打包失败时重试一次（打 dmg 偶发卡住）
         if: steps.tauri.outcome == 'failure'
@@ -88,7 +88,7 @@ jobs:
           releaseName: "Pi Assistant ${{ github.ref_name }}"
           releaseBody: "安装说明见 docs/INSTALL.md（未签名构建：macOS 首次打开需右键 → 打开；Windows SmartScreen 选“仍要运行”）。"
           releaseDraft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: false
           includeUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
       - uses: actions/upload-artifact@v4
         with:
@@ -138,5 +138,6 @@ jobs:
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
           for i in $(seq 1 30); do gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break; sleep 20; done
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Pi Assistant $GITHUB_REF_NAME" --notes "安装说明见 docs/INSTALL.md" $([ "${GITHUB_REF_NAME#*-}" != "$GITHUB_REF_NAME" ] && echo --prerelease)
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Pi Assistant $GITHUB_REF_NAME" --notes "安装说明见 docs/INSTALL.md" --latest
           gh release upload "$GITHUB_REF_NAME" dist-linux/*.tar.gz dist-linux/*.tar.gz.sha256 --clobber
+          gh release edit "$GITHUB_REF_NAME" --prerelease=false --latest  # 保证是 latest（自动更新依赖）
