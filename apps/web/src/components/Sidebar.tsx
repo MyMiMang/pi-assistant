@@ -19,7 +19,7 @@ export default function Sidebar() {
 	return (
 		<aside className="pa-sidebar safe-top h-full">
 			<div className="pa-brand">
-				<span className="pa-logo">π</span>
+				<img className="pa-logo" src="/icon.svg" alt="" />
 				<span className="pa-brand-name">{BRAND.name}</span>
 				<button className="pa-icon-btn ghost pa-theme-toggle" title="切换浅色 / 深色" onClick={() => setAppearance({ theme: dark ? "light" : "dark" })} data-mode-now={theme}>
 					{dark ? <Moon className="pa-ic" /> : <Sun className="pa-ic" />}

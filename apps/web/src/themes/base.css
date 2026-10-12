@@ -5,7 +5,7 @@ html,.pa-app{height:100%}
 /* sidebar */
 .pa-sidebar{display:flex;flex-direction:column;gap:6px;padding:14px 12px;background:var(--side);border-right:1px solid var(--line);min-height:0}
 .pa-brand{display:flex;align-items:center;gap:10px;padding:4px 6px 10px}
-.pa-logo{width:28px;height:28px;display:grid;place-items:center;border-radius:var(--r-logo,8px);background:var(--fg);color:var(--bg);font-weight:700;font-size:16px;font-family:var(--display)}
+.pa-logo{width:28px;height:28px;display:block;flex-shrink:0;object-fit:contain}
 .pa-brand-name{font-weight:600;font-family:var(--display);letter-spacing:var(--brand-ls,-.01em);font-size:15px}
 .pa-brand .pa-theme-toggle{margin-left:auto}
 .pa-icon-btn{width:32px;height:32px;display:grid;place-items:center;border-radius:var(--r-sm);color:var(--mut);transition:background .15s,color .15s,transform .15s;border:1px solid var(--line);background:var(--card)}

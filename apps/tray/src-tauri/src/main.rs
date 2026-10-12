@@ -243,8 +243,14 @@ fn main() {
             let menu = Menu::with_items(app, &[&open, &pair, &sep()?, &pause, &bar, &log, &sep()?, &auto, &update, &sep()?, &quit])?;
             *app.state::<State>().pause_item.lock().unwrap() = Some(pause.clone());
             *app.state::<State>().update_item.lock().unwrap() = Some(update.clone());
+            // macOS 菜单栏用单色模板图（系统按深浅色自动着色）；Windows/Linux 用彩色托盘图标
+            #[cfg(target_os = "macos")]
+            let (tray_icon, tray_template) = (tauri::include_image!("icons/tray-template@2x.png"), true);
+            #[cfg(not(target_os = "macos"))]
+            let (tray_icon, tray_template) = (tauri::include_image!("icons/tray.png"), false);
             TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tray_icon)
+                .icon_as_template(tray_template)
                 .tooltip("Pi Assistant")
                 .menu(&menu)
                 .on_menu_event(move |app, ev| match ev.id().as_ref() {

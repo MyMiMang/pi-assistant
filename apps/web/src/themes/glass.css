@@ -24,7 +24,7 @@
 [data-skin=glass] .pa-av2{background:linear-gradient(160deg,#ffd60a,#ff9f0a 60%,#ff375f)}
 [data-skin=glass] .pa-av3{background:linear-gradient(160deg,#a8f0c6,#30d158 55%,#00a3a3)}
 [data-skin=glass] .pa-av .pa-dot{box-shadow:0 0 0 2px rgba(255,255,255,.9)}
-[data-skin=glass] .pa-logo{background:linear-gradient(160deg,#64d2ff,#5e5ce6);color:#fff;box-shadow:0 6px 16px rgba(94,92,230,.35)}
+[data-skin=glass] .pa-logo{filter:drop-shadow(0 4px 10px rgba(94,92,230,.22))}
 [data-skin=glass] .pa-new-btn{border-radius:16px;box-shadow:var(--shadow);padding:11px 12px}
 [data-skin=glass] .pa-agent{padding:9px 10px;border-radius:16px}
 [data-skin=glass] .pa-agent.active{box-shadow:var(--shadow)}

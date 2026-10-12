@@ -8,7 +8,6 @@
 [data-skin=linear] .pa-av2{background:#171717}
 [data-skin=linear] .pa-av3{background:linear-gradient(135deg,#737373,#262626)}
 [data-skin=linear][data-mode=dark] .pa-av2{background:#e5e5e5;color:#0a0a0a}
-[data-skin=linear] .pa-logo{font-size:15px}
 [data-skin=linear] .pa-brand-name{font-size:14px;font-weight:600}
 [data-skin=linear] .pa-sec-label{font-size:11px;color:var(--mut2);font-weight:500}
 [data-skin=linear] .pa-agent{padding:6px 8px}

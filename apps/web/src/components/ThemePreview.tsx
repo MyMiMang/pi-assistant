@@ -15,7 +15,7 @@ export function ThemePreview({ theme, mode, accent }: { theme: ThemeDef; mode: M
 				</div>
 				<aside className="pa-sidebar" style={{ width: 150 }}>
 					<div className="pa-brand">
-						<span className="pa-logo">π</span>
+						<img className="pa-logo" src="/icon.svg" alt="" />
 						<span className="pa-brand-name">Pi</span>
 					</div>
 					<div className="pa-sec-label">我的助理</div>

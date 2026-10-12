@@ -6,7 +6,6 @@
 [data-skin=warm] .pa-app{font-size:14.5px;line-height:1.7}
 [data-skin=warm] .pa-brand{padding:6px 8px 18px}
 [data-skin=warm] .pa-brand-name{font-family:var(--display);font-size:19px;font-weight:500;font-style:italic}
-[data-skin=warm] .pa-logo{background:var(--acc);color:var(--acc-fg);font-style:italic;font-weight:500;font-size:17px}
 [data-skin=warm] .pa-sec-label{text-transform:uppercase;font-size:10.5px;padding:18px 10px 6px}
 [data-skin=warm] .pa-new-btn{background:transparent;border-style:dashed}
 [data-skin=warm] .pa-agent{padding:10px}

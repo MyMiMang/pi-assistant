@@ -1,5 +1,5 @@
 // Service Worker：应用外壳缓存 + Web Push 通知
-const CACHE = "pia-shell-v1";
+const CACHE = "pia-shell-v2";
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/", "/manifest.webmanifest", "/icon-192.png"])).then(() => self.skipWaiting()));
 });
@@ -30,7 +30,7 @@ self.addEventListener("push", (e) => {
       const cs = await self.clients.matchAll({ includeUncontrolled: true });
       cs.forEach((c) => c.postMessage({ type: "server-url", ...d.data }));
     }
-    await self.registration.showNotification(d.title || "%BRAND_NAME%", { body: d.body || "", tag: d.tag, icon: "/icon-192.png", badge: "/icon-192.png", data: { url: d.url || "/", ...(d.data || {}) } });
+    await self.registration.showNotification(d.title || "%BRAND_NAME%", { body: d.body || "", tag: d.tag, icon: "/icon-192.png", badge: "/badge-96.png", data: { url: d.url || "/", ...(d.data || {}) } });
   })());
 });
 self.addEventListener("notificationclick", (e) => {
