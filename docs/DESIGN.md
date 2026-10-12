@@ -194,13 +194,15 @@ sequenceDiagram
 
 ### 5.2 安装包与托盘程序（`apps/tray`）
 
-- **托盘程序**：Tauri 2，**不开窗口**，只有菜单栏/托盘图标。菜单：打开Pi Assistant（用默认浏览器打开 `http://127.0.0.1:8787`）、显示手机配对二维码、服务状态（运行中/隧道在线/当前任务数）、暂停所有任务、开机自启开关、检查更新、退出。
+- **桌面程序**（2026-10-12 起）：Tauri 2，**原生主窗口 + 托盘**。主窗口（label `main`，1280×820，最小 380×560）用系统 WebView（macOS WKWebView / Windows WebView2）加载本机 `http://127.0.0.1:8787`，不再打开浏览器；关窗口 = 隐藏到托盘（服务继续跑，macOS 切回纯菜单栏模式），托盘「打开 Pi Assistant」/再次启动程序（single-instance）把窗口拉回前台；页面里 `target=_blank` / 非本机地址交给系统默认浏览器（`on_new_window` / `on_navigation`）；建窗口失败才退回浏览器。菜单：打开 Pi Assistant、显示手机配对二维码、服务状态（运行中/隧道在线/当前任务数）、暂停所有任务、开机自启开关、检查更新、退出。
 - **服务作为 sidecar**：安装包内带 `node`（固定版本 Node 22 运行时）+ `server.mjs`（esbuild 打包，Pi SDK 已打进去）+ `cloudflared` 二进制 + PWA 静态文件。托盘程序启动并守护服务进程，崩溃自动拉起（指数退避）。
 - **开机自启**：`tauri-plugin-autostart`（macOS LaunchAgent / Windows 注册表 Run 键）。高级选项“无托盘服务模式”：直接注册 LaunchAgent / Windows 计划任务启动服务。
 - **安装包**：Tauri bundler 产出 macOS `.dmg`（Apple Silicon + Intel，或 universal）和 Windows NSIS `.exe`。体积目标 < 80MB（Node ~40MB + cloudflared ~35MB + 其余）。
 - **自动更新**：`tauri-plugin-updater`，签名校验，更新源为 GitHub Releases 的 `latest.json`。
 - **代码签名说明**：不签名也能装，但 macOS 首次需右键“打开”（Gatekeeper），Windows 会出现 SmartScreen 提示。正式分发建议：macOS Developer ID 证书 + 公证（需 Apple Developer 账号，仅用于桌面安装包，**与手机无关**）；Windows 代码签名证书（或 Azure Trusted Signing）。CI 里预留签名步骤，有证书时自动启用。
 - **CI 构建**：GitHub Actions（`.github/workflows/release.yml`），打 `v*` tag 触发，矩阵 `macos-14`(arm64) / `macos-13`(x64) / `windows-latest`，用 `tauri-apps/tauri-action` 构建并上传到 GitHub Release；每个平台先下载对应的 Node 与 cloudflared 二进制并校验 SHA256。
+
+- **悬浮条**（`/hostbar`）：透明、无边框、无阴影窗口（`transparent(true)`，macOS 需 `macOSPrivateApi: true` + Cargo feature `macos-private-api`），只露出圆角胶囊；右侧 × 关闭（`POST /api/host-control/bar/dismiss`，服务端记住当时状态，状态变化——新操作 / 暂停或继续——再弹出）；“打开设置”在主窗口里打开。
 
 ### 5.3 Web UI（`apps/web`，唯一的界面，PWA）
 
@@ -578,7 +580,29 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 - **账本 + 同步队列**（`provider.ts`）：SQLite `memory_items` 永远是原文账本（导出、列表、编辑都以它为准），Hindsight 是其上的智能层。写入先落账本再进 `memory_sync` 队列；Hindsight 未就绪/崩溃时读取回退 basic 全文检索、写入排队，就绪后自动补写（包括切换后端前用 basic 记下的旧记忆）。换向量模型 / 远程地址 → 删库按账本原文重建。
 - **三个模型独立可选**（设置 › 记忆 › 高级记忆）：① 记忆用 LLM（任一已配置的 Pi / 自定义服务，默认自动挑同渠道里便宜快速的，与聊天模型分开，可“测试”未保存的选择，显示用量）；② 向量模型（本地 multilingual-e5-small 默认 / bge-m3，或在线 OpenAI 兼容接口）；③ 重排序（本地 / 硅基流动 / 阿里云百炼 / 关闭）。运行方式：本机（推荐）或明确填写的远程 Hindsight。
 - **按助理选择**：记忆页可让单个助理用高级记忆或跟随全局；显示运行状态、待同步条数；“问问记忆”（reflect，同时查助理库与共享“关于你”库，附依据）；导入/导出统一格式 `pi-assistant-memory/1`，可在两种后端、两台电脑之间迁移。
+- **换向量模型（2026-10-12 修复）**：Hindsight 的向量列维度整库共享（e5-small 384 维 / bge-m3 1024 维 / 在线模型各不相同），库里有数据时换维度它启动直接报错 “Cannot change embedding dimension”，之前只删单个库无济于事，表现为“切换模型后向量模型坏掉、一直启动失败”。现在换向量模型时（本机模式）`resetEmbeddingStore()` 先停进程、删掉内嵌数据库 `<数据目录>/hindsight/home/.pg0`、把所有库标为待重建，Hindsight 以新维度起来后按账本原文全部重写（`resyncAll`）；没在运行时保存设置也立即清理。远程 Hindsight 换维度需要对方实例自己迁移。回归测试 `test/hindsight-switch.test.ts`。
 - **测试**：`test/hindsight.test.ts`（假 Hindsight 服务：队列、回退、补写、编辑/遗忘、导入导出、重建、未就绪时切换后的补写、环境隔离）；`test/hindsight.smoke.ts`（真装真跑：安装 → 握手 → 写入/抽取 → 检索 → 反思 → 编辑/遗忘/导出/导入 → 重启后仍在）；e2e 覆盖设置页三模型 + 按助理切换 + 补写 + 问问记忆 + 导入。
+
+### 5.19.2 统一下载状态（`packages/server/src/downloads.ts`，2026-10-12）
+
+App 自己下载的东西都登记到同一个下载管理器，界面统一显示 **未下载 / 下载中（已下 / 总共 / 百分比）/ 已下载 / 出错可重试**：
+
+| id | 内容 | 进度来源 | 显示位置 |
+|---|---|---|---|
+| `cloudflared` | 隧道程序 | 字节（content-length） | 设置 › 远程访问、下载与组件 |
+| `uv` | Python 环境管理 | 字节 | 记忆 › 高级记忆 |
+| `hindsight-env` | Hindsight 运行环境（uv sync） | 目录大小 / 估计 500 MB | 同上 |
+| `embedding:<模型>` | 本地向量模型（Hindsight 进程从 HF/镜像拉） | HF 缓存目录大小 / 模型大小 | 同上（只显示选中的或已下载的） |
+| `reranker:<模型>` | flashrank 重排序模型 | 字节 | 同上 |
+| `cua-driver` | 操作这台电脑 | 字节 | 设置 › 操作这台电脑 |
+| `wechat` | 个人微信 Linux 安装包 | 字节（流式写盘） | 设置 › 渠道（开启个人微信后） |
+| `pi-package:<id>` | npm / git 扩展包 | 目录大小（无总量） | 设置 › 扩展 |
+
+- 接口：`GET /api/downloads`（列表）、`POST /api/downloads/:id/start`（下载 / 重试，仅本机）；进度经 WS 事件 `downloads.changed`（每条最多 500ms 一次）。
+- 接入方式：`registerDownload({ id, name, group, size, installed, start?, hidden? })` + `trackDownload(id, async (p) => …)`；字节进度用 `fetchWithProgress(url, p)` / `countBytes(stream, total, p)`，别的进程在下载时用 `watchDir([dir], p, 估计总量, fn)`。
+- 界面：`apps/web/src/components/Downloads.tsx`（`<Downloads />` 全部，`<Downloads group="…" />` 某一组）。
+- **助理电脑镜像 / 虚拟机**（分支 `wip/assistant-computer-vm`）接入时：在它自己的模块里 `registerDownload({ id: "desktop-image", group: "助理电脑", … })`，下载 limactl / rootfs / 镜像时包 `trackDownload`，设置页放 `<Downloads group="助理电脑" />` 即可。
+- MCP 服务器（`npx` 首次运行时由 npm 自己下载）和 Playwright（只用系统 Chrome / Edge，不下载浏览器）不在列表里。
 
 ### 5.20 MCP 服务器与 Pi 扩展包（P2，已实现）
 
@@ -987,3 +1011,13 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - [ ] 第 2 步 macOS（Lima + vz + nerdctl）
 - [ ] 第 3 步 Windows（WSL2 自有发行版）
 - [ ] 第 4 步 Linux 服务器版（一键安装、常驻、一次性设置码 + 主人设备）
+
+## 16. 界面打磨（2026-10-12，分支 `ui-polish`）
+
+- 原生桌面窗口（§5.2）；悬浮条透明 + 关闭按钮（§5.2）。
+- 勾选框 / 单选框统一自定义样式（`themes/app.css`，跟随主题色），开关用 `input.pa-switch`。
+- 「?」帮助气泡 `Help`（`components/ui.tsx`）：悬停显示，触屏点按显示；设置页小节标题 `H` 的 `desc` 一律收进「?」里，正文只留一句话。
+- 确认框 `useConfirm()`（`components/ui.tsx`）：替代浏览器 `confirm`。
+- “完全权限”不再要求输入确认语：弹确认框「启用完全权限？」→「确定启用」；接口用 `confirmFull: true`（旧的 `confirmText` 仍兼容）。调高到“信任”也只是确认框。
+- 输入框旁上下文圆环 `ContextRing`：`GET /api/conversations/:cid/context`（Pi `getContextUsage` + `getSessionStats`）；悬停看“已用 / 总量 / 百分比”，点开看本次对话累计输入 / 输出 / 缓存 token、费用、消息与工具调用数，可“整理上下文”。60% 变黄、85% 变红。
+- 统一下载状态（§5.19.2）；设置新增「下载与组件」页。

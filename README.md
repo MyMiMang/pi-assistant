@@ -2,11 +2,12 @@
 
 基于 [Pi](https://github.com/earendil-works/pi) 的**本地私人助理**：跑在你自己的 Mac / Windows 电脑上，有自己的工作区“电脑”，能写代码跑代码、处理文件、操作浏览器、连接 Gmail / 日历 / GitHub，后台和定时干活。所有界面是同一个网页应用（PWA），手机扫码即可远程使用，不需要原生 App。
 
-> 当前状态：**Phase 1 开发中**——本地服务 + PWA 已可用并通过端到端测试（截图见 [docs/screenshots](docs/screenshots)）；安装包与托盘为脚手架。完整设计与实现状态见 [docs/DESIGN.md](docs/DESIGN.md)（§5.14 模型与凭据、§5.15 Pi 升级维护、§13 实现状态）。
+> 当前状态（2026-10-12）：**v0.1.0-beta.4 已发布**（Mac M 芯片 / Intel、Windows 安装包）。Phase 1、2 完成，Phase 3 大部分完成；桌面程序是原生窗口 + 托盘。正在做：助理电脑自带虚拟机（分支 `wip/assistant-computer-vm`，DESIGN §15.2）。
+> **接手请先读 [docs/HANDOFF.md](docs/HANDOFF.md)**（现状、构建/测试/发版、分支、未解决问题、下一步），完整设计见 [docs/DESIGN.md](docs/DESIGN.md)，截图见 [docs/screenshots](docs/screenshots)。
 
 ## 特点
 
-- 一步安装：轻量安装包（Mac .dmg / Windows .exe），内置 Pi、Node 运行时与 cloudflared，开机自启，菜单栏/托盘一点打开
+- 一步安装：轻量安装包（Mac .dmg / Windows .exe），内置 Pi、Node 运行时与 cloudflared，开机自启，原生窗口（关掉窗口留在菜单栏/托盘）
 - 出门在外也能用：内置隧道，手机用流量扫码/点链接即可连回电脑，零网络配置
 - 沙箱三档自动选择：工作区目录 / 系统沙箱 / Docker（可选）
 - 一个响应式 PWA 电脑手机通用，可添加到主屏幕，Web Push 推送，实时同步
@@ -19,7 +20,7 @@
 
 ```
 apps/web         唯一界面：React 响应式 PWA（电脑与手机共用）
-apps/tray        Tauri 2 托盘程序 + 安装包（dmg / exe）
+apps/tray        Tauri 2 桌面程序（原生窗口 + 托盘 + 悬浮条）+ 安装包（dmg / exe）
 apps/rendezvous  稳定入口 Worker（serverId → 当前隧道地址）
 packages/server  本地服务：Gateway + Pi Runtime + 任务 + 调度 + 隧道 + 配对
 packages/*       共享类型与 Pi 扩展（审批、沙箱、交付、记忆、浏览器、连接器）
