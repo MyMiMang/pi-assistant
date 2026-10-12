@@ -1046,6 +1046,49 @@ await step("Phase 3 邮箱：添加邮箱（模拟 IMAP/SMTP）→ 助理写草�
 	}
 });
 
+await step("左侧助理列表：右键 → 编辑 / 删除助理（确认框）；手机长按出菜单", async () => {
+	const mk = async (name) => (await (await fetch(`${BASE}/api/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) })).json());
+	const a = await mk("临时助理甲");
+	const b = await mk("临时助理乙");
+	await page.goto(BASE);
+	const item = (n) => page.locator("[data-testid=sidebar-agent]", { hasText: n });
+	await item("临时助理甲").click({ button: "right" });
+	await page.locator("[data-testid=agent-menu]").getByText("编辑").click();
+	await page.getByText("删除助理").last().waitFor();
+	await item("临时助理甲").click({ button: "right" });
+	await page.waitForTimeout(200);
+	await page.screenshot({ path: join(SHOTS, "56-sidebar-context-menu.png") });
+	await page.locator("[data-testid=agent-menu]").getByText("删除助理").click();
+	const dlg = page.locator("[data-testid=delete-agent-dialog]");
+	await dlg.getByText(/对话、定时任务和记忆会一起清掉/).waitFor();
+	await dlg.getByText(/回收站/).waitFor();
+	await page.screenshot({ path: join(SHOTS, "57-sidebar-delete-confirm.png") });
+	await page.locator("[data-testid=confirm-delete-agent]").click();
+	await item("临时助理甲").waitFor({ state: "detached" });
+	const list = await (await fetch(`${BASE}/api/agents`)).json();
+	if ((list.agents ?? list).some((x) => x.id === (a.agent ?? a).id)) throw new Error("助理没有被删除");
+	// 手机：长按 ~500ms
+	const m = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "zh-CN" });
+	const mp = await m.newPage();
+	await mp.goto(BASE);
+	await mp.getByLabel("打开助理列表").click();
+	const it = mp.locator("[data-testid=sidebar-agent]", { hasText: "临时助理乙" });
+	await it.waitFor();
+	const box = await it.boundingBox();
+	const o = { pointerType: "touch", isPrimary: true, bubbles: true, clientX: box.x + 40, clientY: box.y + 10 };
+	await it.dispatchEvent("pointerdown", o);
+	await mp.waitForTimeout(250);
+	if (await mp.locator("[data-testid=agent-menu]").count()) throw new Error("短按不应出菜单");
+	await mp.waitForTimeout(400);
+	await mp.locator("[data-testid=agent-menu]").waitFor();
+	await it.dispatchEvent("pointerup", o);
+	await mp.locator("[data-testid=agent-menu]").getByText("删除助理").click();
+	await mp.locator("[data-testid=confirm-delete-agent]").click();
+	await it.waitFor({ state: "detached" });
+	await m.close();
+	void b;
+});
+
 await browser.close();
 await stopServer();
 console.log("\n===== 结果 =====");
