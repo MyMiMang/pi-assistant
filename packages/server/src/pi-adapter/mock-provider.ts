@@ -106,6 +106,14 @@ function respond(messages: Msg[], systemPrompt = "") {
 		if (last.role === "toolResult") return fauxAssistantMessage(/blocked|拒绝|denied|批准/i.test(textOf(last)) ? "没有获得批准，便签没有发送。" : `便签发好了：${textOf(last)}`);
 		return fauxAssistantMessage([fauxToolCall("mcp__demo__send_note", { to: "小王", text: "明天十点开会" })]);
 	}
+	// 助理电脑：关机时先开机（computer_open），同一轮里直接用电脑工具（不需要用户再说话）
+	if (/打开你的电脑看看屏幕/.test(u)) {
+		if (last.role !== "toolResult") return fauxAssistantMessage([fauxText("我先把我的电脑打开。"), fauxToolCall("computer_open", {})]);
+		if (last.toolName === "computer_open") return fauxAssistantMessage([fauxToolCall("mcp__computer__get_screen_size", {})]);
+		if (last.toolName === "mcp__computer__get_screen_size") return fauxAssistantMessage([fauxToolCall("computer_screenshot", {})]);
+		const size = [...messages].reverse().find((m) => m.role === "toolResult" && m.toolName === "mcp__computer__get_screen_size");
+		return fauxAssistantMessage(`电脑开好了，屏幕信息：${size ? textOf(size).slice(0, 120) : "未知"}。截图已看过。`);
+	}
 	// Phase 3：浏览器（打开网页 → 看大纲 → 点提交按钮触发审批）
 	const openUrl = u.match(/用浏览器打开\s*(\S+)/);
 	if (openUrl) {

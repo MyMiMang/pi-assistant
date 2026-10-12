@@ -105,12 +105,61 @@ async function doStart(agentId: string): Promise<DesktopStatus> {
 		if (s.state === "running" && s.port) {
 			try {
 				const { stdout } = await docker(["logs", "--since", since, name]);
-				if (String(stdout).includes("pia-desktop ready")) return (idle.touch(agentId), s);
-			} catch {}
+				if (String(stdout).includes("pia-desktop ready")) {
+					// 容器脚本的 “ready” 只代表进程都拉起了；再等桌面真正画出来（否则第一张截图是空白的）
+					await waitDesktopReady(agentId);
+					readyOnce.add(agentId);
+					return (idle.touch(agentId), await desktopStatus(agentId));
+				}
+			} catch (e) {
+				if (e instanceof DesktopNotReady) throw e;
+			}
 		}
 		await new Promise((r) => setTimeout(r, 500));
 	}
 	throw new Error("助理电脑启动超时");
+}
+
+class DesktopNotReady extends Error {}
+/**
+ * 桌面就绪检查（一次 docker exec）：X 服务器能连上、窗口管理器（xfwm4）和桌面（xfdesktop）在跑、
+ * VNC（5900）和 noVNC（6080）在监听、cua-driver 守护进程在跑，且整屏截图不是纯色（标准差 > 0.01）。
+ * 输出 “ok <标准差>” 或 “wait <原因>”。
+ */
+export const READY_PROBE = [
+	"export DISPLAY=:1",
+	"xdpyinfo >/dev/null 2>&1 || { echo 'wait X'; exit 0; }",
+	"pgrep -x xfwm4 >/dev/null || { echo 'wait 窗口管理器'; exit 0; }",
+	"pgrep -x xfdesktop >/dev/null || { echo 'wait 桌面'; exit 0; }",
+	"(exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null || { echo 'wait VNC'; exit 0; }",
+	"(exec 3<>/dev/tcp/127.0.0.1/6080) 2>/dev/null || { echo 'wait noVNC'; exit 0; }",
+	"pgrep -f 'cua-driver serve' >/dev/null || { echo 'wait cua-driver'; exit 0; }",
+	"sd=$(import -window root -colorspace gray -format '%[fx:standard_deviation]' info: 2>/dev/null)",
+	"awk -v s=\"${sd:-0}\" 'BEGIN{ if (s+0 > 0.01) print \"ok \" s; else print \"wait 屏幕还是空白\" }'",
+].join("; ");
+export function parseReadyProbe(out: string): { ready: boolean; reason: string } {
+	const line = out.trim().split("\n").pop() ?? "";
+	return line.startsWith("ok") ? { ready: true, reason: line } : { ready: false, reason: line.replace(/^wait\s*/, "") || "未知" };
+}
+export async function probeDesktop(agentId: string) {
+	try {
+		const { stdout } = await docker(["exec", containerOf(agentId), "bash", "-c", READY_PROBE], { timeout: 15_000 });
+		return parseReadyProbe(String(stdout));
+	} catch (e) {
+		return { ready: false, reason: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+	}
+}
+/** 等到桌面真正可用（默认最多 60 秒） */
+export async function waitDesktopReady(agentId: string, timeoutMs = 60_000) {
+	const end = Date.now() + timeoutMs;
+	let last = "";
+	while (Date.now() < end) {
+		const r = await probeDesktop(agentId);
+		if (r.ready) return;
+		last = r.reason;
+		await new Promise((res) => setTimeout(res, 500));
+	}
+	throw new DesktopNotReady(`助理电脑桌面没有准备好（${last}）`);
 }
 
 async function containerImage(name: string) {
@@ -152,6 +201,7 @@ export const DESKTOP_CHROMIUM_ARGS = ["--user-data-dir=/home/agent/.config/pia-b
 
 export async function stopDesktop(agentId: string) {
 	await docker(["stop", "-t", "3", containerOf(agentId)]).catch(() => {});
+	readyOnce.delete(agentId);
 	idle.forget(agentId);
 	await stopEngineIfIdle();
 	return desktopStatus(agentId);
@@ -221,10 +271,18 @@ export { startInstall };
 
 /** 整屏截图（PNG），给模型“看屏幕”或给手机推送扫码画面。 */
 export async function screenshotDesktop(agentId: string): Promise<Buffer> {
+	// 刚开机（或别处启动）时先确认桌面已画出来，避免返回几百字节的纯色图
+	if (!readyOnce.has(agentId)) {
+		await waitDesktopReady(agentId, 30_000).catch(() => {});
+		readyOnce.add(agentId);
+	}
 	const { stdout } = await docker(["exec", "-e", "DISPLAY=:1", containerOf(agentId), "import", "-window", "root", "png:-"], { encoding: "buffer", timeout: 15_000 });
 	idle.touch(agentId);
 	return stdout as unknown as Buffer;
 }
+/** 本次服务运行期间确认过就绪的助理电脑（关机时清掉） */
+const readyOnce = new Set<string>();
+export const forgetReady = (agentId: string) => readyOnce.delete(agentId);
 
 /** cua-driver 的 MCP stdio 命令：在助理电脑容器里运行。 */
 export function cuaMcpCommand(agentId: string): { command: string; args: string[] } {

@@ -5,6 +5,7 @@ import { evaluate } from "@pi-assistant/ext-approval";
 const ws = "/home/u/ws";
 test("只读工具直接放行", () => {
 	assert.equal(evaluate("read", { path: "a.txt" }, undefined, ws).kind, "allow");
+	assert.equal(evaluate("computer_open", {}, undefined, ws).kind, "allow", "开自己的助理电脑不用批准（同一轮直接用）");
 	assert.equal(evaluate("bash", { command: "ls -la && cat a.txt" }, undefined, ws).kind, "allow");
 });
 test("删除 / git push / sudo 需要审批", () => {

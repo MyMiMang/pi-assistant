@@ -74,3 +74,5 @@ npm run check:pi         # Pi 升级兼容检查
 1. 助理电脑自带虚拟机：通用部分（开关、下载、自动开关机、兼容已有 Docker）→ Mac（Lima）→ Windows（WSL2）→ Linux 服务器版（§15.2）。
 2. 每完成一步发一个 beta 版本，告诉用户能测什么。
 3. Linux 服务器版：一次性设置码 + 主人设备，`deploy/` 里的服务器部署文件补全。
+
+- 2026-10-13：助理电脑「开机后同一轮可用」和「首张截图空白」已修好（见 DESIGN §16.1）。调试时设 `PIA_DEBUG_COMPUTER=1` 可看到 computer_open 各阶段日志。真实 Docker 的 e2e：`E2E_DESKTOP=1 PIA_DESKTOP_IMAGE=pi-assistant/desktop:dev npm run e2e`（42 步全过）。

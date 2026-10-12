@@ -232,20 +232,54 @@ export function computerExtension(host: ComputerHost) {
 
 /**
  * 助理电脑已安装但没开机时挂上的“开电脑”工具（按需启动，DESIGN §15.2）。
- * 开机后会话会在下一轮重建，届时 cua-driver 的电脑工具、看屏幕、请你接管才会出现。
+ * 调用时：开机并等桌面就绪 → 在同一个会话里热注册电脑扩展（cua-driver MCP 服务 + 看屏幕 + 请你接管 + 审批/记录钩子）
+ * → 等 MCP 工具连上并出现在工具列表里 → 返回。工具在同一轮里就能用，不需要用户再说一句话。
  */
-export function computerLauncherExtension(host: { start(): Promise<void> }) {
+export function computerLauncherExtension(host: { start(): Promise<void>; computer?: ComputerHost; waitMs?: number }) {
 	return (pi: ExtensionAPI) => {
+		let attached = false;
 		pi.registerTool({
 			name: "computer_open",
 			label: "打开助理电脑",
-			description: "助理电脑（你自己的 Linux 桌面：浏览器、微信等应用）现在是关机状态。需要用电脑时先调用它开机（约 10–20 秒），开机后电脑操作工具会在下一轮出现。",
+			description: "助理电脑（你自己的 Linux 桌面：浏览器、微信等应用）现在是关机状态。需要用电脑时先调用它开机（约 10–20 秒）；返回后电脑操作工具（mcp__computer__*、computer_screenshot 等）立即可用，直接继续操作。",
 			promptSnippet: "computer_open: 打开（开机）助理电脑",
 			parameters: Type.Object({}),
 			async execute() {
+				const dbg = (m: string) => process.env.PIA_DEBUG_COMPUTER && console.error(`[computer_open] ${m}`);
+				dbg("start");
 				await host.start();
-				return { content: [{ type: "text" as const, text: "助理电脑已经开机。电脑操作工具（点击、输入、看屏幕等）会在下一轮出现：先简短告诉用户电脑已打开、你接下来要做什么，然后结束这一轮；用户回复后即可继续操作。浏览器工具现在就会在助理电脑里打开页面。" }], details: undefined };
+				dbg("started");
+				if (!host.computer) return { content: [{ type: "text" as const, text: "助理电脑已经开机。" }], details: undefined };
+				if (!attached) {
+					attached = true;
+					computerExtension(host.computer)(pi);
+				}
+				dbg("attached");
+				const ok = await waitForTools(pi, MCP_PREFIX, host.waitMs ?? 60_000);
+				dbg(`tools ok=${ok}`);
+				const names = pi.getAllTools().map((t) => t.name).filter((n) => n.startsWith(MCP_PREFIX) || n === "computer_screenshot");
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: ok
+								? `助理电脑已经开机，桌面已就绪。电脑工具现在就能用（${names.slice(0, 12).join("、")}${names.length > 12 ? " 等" : ""}），直接继续完成用户的任务，不用等用户回复。`
+								: "助理电脑已经开机，但电脑操作工具还没连上：先用 computer_screenshot 看屏幕；如果还不行，告诉用户稍后再试。",
+						},
+					],
+					details: undefined,
+				};
 			},
 		});
 	};
+}
+
+/** 等某个前缀的工具出现在会话工具列表里（MCP 服务在后台连接） */
+export async function waitForTools(pi: Pick<ExtensionAPI, "getAllTools">, prefix: string, timeoutMs: number) {
+	const end = Date.now() + timeoutMs;
+	while (Date.now() < end) {
+		if (pi.getAllTools().some((t) => t.name.startsWith(prefix))) return true;
+		await new Promise((r) => setTimeout(r, 250));
+	}
+	return false;
 }

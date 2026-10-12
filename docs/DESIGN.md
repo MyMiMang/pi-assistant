@@ -1021,3 +1021,9 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - “完全权限”不再要求输入确认语：弹确认框「启用完全权限？」→「确定启用」；接口用 `confirmFull: true`（旧的 `confirmText` 仍兼容）。调高到“信任”也只是确认框。
 - 输入框旁上下文圆环 `ContextRing`：`GET /api/conversations/:cid/context`（Pi `getContextUsage` + `getSessionStats`）；悬停看“已用 / 总量 / 百分比”，点开看本次对话累计输入 / 输出 / 缓存 token、费用、消息与工具调用数，可“整理上下文”。60% 变黄、85% 变红。
 - 统一下载状态（§5.19.2）；设置新增「下载与组件」页。
+
+### 16.1 助理电脑：开机后同一轮可用、首张截图不空白
+
+- **同一轮可用**：助理电脑关机时，助理只有 `computer_open`。调用后（开自己的电脑不需要批准）会先开机，在当前会话里热注册完整电脑扩展（cua-driver MCP、`computer_screenshot`、`request_handoff`，以及审批 / 暂停 / 记录钩子），等 `mcp__computer__*` 工具真正出现才返回，模型同一轮就能接着用。MCP 60 秒没连上会如实告诉模型，不会假装能用；开机失败直接报错。
+- **桌面就绪**：容器打出 “pia-desktop ready” 后，再在容器里执行 `READY_PROBE`：X 正常、xfwm4/xfdesktop 在跑、VNC 5900 和 noVNC 6080 在监听、cua-driver 在跑、整屏截图不是纯色。全部通过才报告 running。每次服务运行后的第一张截图前也会检查一次（关机时清除）。
+- 验证：`test/computer-open.test.ts`；e2e 用真实 Docker 跑「助理电脑关机时：助理自己开机…」这一步（`E2E_DESKTOP=1 PIA_DESKTOP_IMAGE=pi-assistant/desktop:dev`）。

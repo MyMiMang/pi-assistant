@@ -844,6 +844,32 @@ await step("Phase 3 浏览器：助理打开网页（有 Docker 时在「电脑�
 	}
 });
 
+await step("助理电脑关机时：助理自己开机（computer_open）并在同一轮里用电脑工具（cua-driver MCP + 看屏幕），截图不是空白", async () => {
+	if (!process.env.E2E_DESKTOP) return log("跳过（需要 E2E_DESKTOP=1 和 Docker）");
+	await fetch(`${BASE}/api/desktop`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: true, backend: "docker" }) });
+	// 已安装（镜像在本机）但关着机：先开一次确保装好，再关机
+	const r0 = await fetch(`${BASE}/api/agents/${AGENT}/desktop/start`, { method: "POST" });
+	if (!r0.ok) throw new Error(`助理电脑启动失败：${await r0.text()}`);
+	await fetch(`${BASE}/api/agents/${AGENT}/desktop/stop`, { method: "POST" });
+	const st0 = await fetch(`${BASE}/api/agents/${AGENT}/desktop`).then((r) => r.json()).catch(() => ({}));
+	if (st0.state === "running") throw new Error("测试前助理电脑应该是关机状态");
+	await page.goto(BASE);
+	await send("打开你的电脑看看屏幕");
+	await page.locator("main").getByText(/电脑开好了，屏幕信息：/).last().waitFor({ timeout: 60_000 }).catch(async (e) => {
+		await page.screenshot({ path: join(SHOTS, "65-computer-open-same-turn-fail.png") });
+		throw e;
+	});
+	const txt = await page.locator("main").getByText(/电脑开好了，屏幕信息：/).last().innerText();
+	log("同一轮结果：", txt);
+	if (/未知|error|错误|not found|找不到|unknown/i.test(txt) || !/\d{3,4}/.test(txt)) throw new Error(`电脑工具没有在同一轮可用：${txt}`);
+	const png = await fetch(`${BASE}/api/agents/${AGENT}/desktop/screenshot`).then((r) => r.arrayBuffer());
+	if (png.byteLength < 5000) throw new Error(`截图像是空白的（${png.byteLength} 字节）`);
+	// 操作记录里有这次的 MCP 调用
+	const acts = await fetch(`${BASE}/api/actions?target=sandbox&limit=20`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+	if (acts && JSON.stringify(acts).length && !JSON.stringify(acts).includes("get_screen_size")) throw new Error("操作记录里没有 get_screen_size");
+	await page.screenshot({ path: join(SHOTS, "65-computer-open-same-turn.png") });
+});
+
 await step("Phase 3 操作这台电脑：设置页（默认关闭、风险提示、允许的应用、能力清单）", async () => {
 	await page.getByRole("button", { name: "设置" }).first().click();
 	await page.getByRole("button", { name: "操作这台电脑" }).click();

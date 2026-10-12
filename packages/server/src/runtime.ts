@@ -5,7 +5,7 @@
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { approvalExtension } from "@pi-assistant/ext-approval";
-import { computerExtension, computerLauncherExtension, isHostTool, trustedComputerTool } from "@pi-assistant/ext-computer";
+import { computerExtension, computerLauncherExtension, isHostTool, trustedComputerTool, type ComputerHost } from "@pi-assistant/ext-computer";
 import { recordAction } from "./action-log.ts";
 import { guardContext } from "./guard.ts";
 import { describeHostAction, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
@@ -369,27 +369,24 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 		}),
 	});
 	// 助理电脑运行中 → 挂上 cua-driver（MCP）与看屏幕/接管工具
-	if (computerOn)
-		exts.push({
-			name: "pia-computer",
-			factory: computerExtension({
-				target: "sandbox",
-				mcp: cuaMcpCommand(agentId),
-				isPaused: () => desktopPause.isPaused(agentId),
-				screenshot: () => screenshotDesktop(agentId),
-				approvals: () => sandboxComputerSettings().approvals,
-				guard: guardContext("sandbox"),
-				log: (e) => (desktopIdle.touch(agentId), recordAction(agentId, taskId, e, () => screenshotDesktop(agentId))),
-				handoff: (reason, png) => handoff(reason, png, "可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。"),
-				request: async (r) => {
-					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
-					return { approved: !!res.approved, note: res.note, scope: res.scope };
-				},
-			}),
-		});
-	// 助理电脑已安装但关着机 → 只挂一个“开电脑”工具，用到时才按需启动
+	const sandboxComputer = (): ComputerHost => ({
+		target: "sandbox",
+		mcp: cuaMcpCommand(agentId),
+		isPaused: () => desktopPause.isPaused(agentId),
+		screenshot: () => screenshotDesktop(agentId),
+		approvals: () => sandboxComputerSettings().approvals,
+		guard: guardContext("sandbox"),
+		log: (e) => (desktopIdle.touch(agentId), recordAction(agentId, taskId, e, () => screenshotDesktop(agentId))),
+		handoff: (reason, png) => handoff(reason, png, "可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。"),
+		request: async (r) => {
+			const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
+			return { approved: !!res.approved, note: res.note, scope: res.scope };
+		},
+	});
+	if (computerOn) exts.push({ name: "pia-computer", factory: computerExtension(sandboxComputer()) });
+	// 助理电脑已安装但关着机 → 先挂“开电脑”工具；调用后在同一轮里热注册电脑工具（不用等下一轮）
 	else if (desk?.available && desk.state !== "running")
-		exts.push({ name: "pia-computer-launcher", factory: computerLauncherExtension({ start: async () => void (await startDesktop(agentId), bus.emit({ type: "desktop.changed", agentId } as never)) }) });
+		exts.push({ name: "pia-computer-launcher", factory: computerLauncherExtension({ computer: sandboxComputer(), start: async () => void (await startDesktop(agentId), bus.emit({ type: "desktop.changed", agentId } as never)) }) });
 	// 用户开启了“操作这台电脑”且允许这个助理 → 挂上本机 Cua（bounded），每个动作逐项审批
 	if (hostAllowedFor(agentId) && ["running", "paused"].includes(hostStatus().daemon.state))
 		exts.push({
