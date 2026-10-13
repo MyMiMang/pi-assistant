@@ -199,11 +199,30 @@ async function waitStarted(cid: string, name: string, fixed: boolean): Promise<D
 			}
 			progress(r.ready ? "等端口转发到本机" : r.reason);
 		} else if (s.state === "stopped" || s.state === "none") {
-			throw new Error(`助理电脑开机后又退出了\n${await logTail(name)}`);
+			throw new Error(await exitedMessage(name));
 		}
 		await new Promise((r) => setTimeout(r, 700));
 	}
 	throw new Error(`助理电脑启动超时（卡在：${step}），可以再点一次开机\n已等 ${Math.round((Date.now() - t0) / 1000)} 秒，卡在：${step}\n${await logTail(name)}`);
+}
+/** 容器退出码的含义（给错误详情用；126/127 多半是镜像和本机架构不匹配或程序缺失） */
+export function exitCodeMeaning(code: number): string {
+	if (code === 126) return "程序无法执行（权限不足或二进制与本机 CPU 架构不匹配，如 Exec format error）";
+	if (code === 127) return "找不到要运行的程序";
+	if (code === 137) return "被强制结束（SIGKILL，常见于内存不足）";
+	if (code === 139) return "程序崩溃（段错误）";
+	if (code === 143) return "被正常结束（SIGTERM）";
+	if (code > 128) return `被信号 ${code - 128} 结束`;
+	if (code === 0) return "正常退出";
+	return "程序出错退出";
+}
+async function exitedMessage(name: string): Promise<string> {
+	const code = await docker(["inspect", "--format", "{{.State.ExitCode}}", name], { timeout: 15_000 }).then(
+		(r) => Number.parseInt(String(r.stdout).trim(), 10),
+		() => Number.NaN,
+	);
+	const head = Number.isFinite(code) ? `助理电脑开机后又退出了（退出码 ${code}：${exitCodeMeaning(code)}）` : "助理电脑开机后又退出了";
+	return `${head}\n${await logTail(name)}`;
 }
 const logTail = (name: string) =>
 	docker(["logs", "--tail", "40", name], { timeout: 15_000 }).then(

@@ -25,6 +25,17 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: e2e-screenshots, path: docs/screenshots }
+  # 固定在 desktop-image.json 里的助理电脑镜像：在 nerdctl + rootful containerd（同 Lima 虚拟机）下两种架构真实开机
+  desktop-nerdctl:
+    strategy:
+      fail-fast: false
+      matrix: { os: [ubuntu-latest, ubuntu-24.04-arm] }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: sudo env PATH="$PATH" scripts/smoke-desktop-nerdctl.sh "$(node -p 'const j=require("./packages/server/desktop-image.json");j.repository+"@"+j.digest')"
   # macOS 助理电脑（Lima）：托管的 macOS 运行器没有嵌套虚拟化，开不了 vz 虚拟机；
   # 这里验证真实下载 + SHA256 校验 limactl、生成的配置通过 `limactl validate`、Lima 相关单测（两种 CPU 架构）
   lima-macos:

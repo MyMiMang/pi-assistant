@@ -14,6 +14,7 @@ permissions: { contents: read, packages: write }
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs: { digest: "${{ steps.push.outputs.digest }}" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -62,3 +63,15 @@ jobs:
           echo '"version": "${{ steps.v.outputs.version }}",' >> "$GITHUB_STEP_SUMMARY"
           echo '"digest": "${{ steps.push.outputs.digest }}"' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+  # 与 Mac（Lima）/ Linux 一致的 rootful containerd + nerdctl 下真实开机，两种架构都在原生运行器上跑（arm64 不走 qemu，才能抓到架构错配）
+  nerdctl-smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix: { os: [ubuntu-latest, ubuntu-24.04-arm] }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: sudo env PATH="$PATH" scripts/smoke-desktop-nerdctl.sh ghcr.io/mymimang/pi-assistant-desktop@${{ needs.build.outputs.digest }}

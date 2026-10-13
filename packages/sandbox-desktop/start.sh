@@ -8,6 +8,8 @@ set -e
 DISPLAY_NUM="${DISPLAY_NUM:-1}"; VNC_PORT="${VNC_PORT:-5900}"; NOVNC_PORT="${NOVNC_PORT:-6080}"
 CDP_PORT="${CDP_PORT:-9222}"; CDP_PROXY_PORT="${CDP_PROXY_PORT:-9223}"; BIND_ADDR="${BIND_ADDR:-0.0.0.0}"
 export DISPLAY=":${DISPLAY_NUM}"
+# 先确认关键程序在本平台能执行（镜像架构错了会是 Exec format error，容器 126 退出）——报一句看得懂的再退出
+if ! cua-driver --version >/dev/null 2>&1; then echo "pia-desktop: cua-driver 无法在 $(uname -m) 上执行（镜像架构不匹配？）：$(cua-driver --version 2>&1 | tail -1)" >&2; exit 126; fi
 rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}"
 Xvfb "$DISPLAY" -screen 0 "${SCREEN}" -nolisten tcp &
 for i in $(seq 1 50); do xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 && break; sleep 0.1; done
