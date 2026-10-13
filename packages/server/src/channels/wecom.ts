@@ -4,6 +4,7 @@
  * 需要：企业 ID（CorpID）、应用 AgentId、应用 Secret、接收消息的 Token 与 EncodingAESKey；
  * 新建的应用还要在“企业可信 IP”里加入这台电脑的出口 IP，否则发消息会报 60020。
  */
+import { readFileSync } from "node:fs";
 import type { AdapterDeps, ChannelAdapter, Inbound, OutCard } from "./types.ts";
 import { clip, taskId } from "./types.ts";
 import { wecomDecrypt, wecomSignature, xmlValue } from "./wecom-crypto.ts";
@@ -112,6 +113,22 @@ export function wecomAdapter(d: AdapterDeps<WecomConfig, WecomSecret>): WecomAda
 			});
 			const j = (await r.json()) as { errcode?: number; errmsg?: string };
 			if (j.errcode) throw new Error(`企业微信发送失败：${j.errcode} ${j.errmsg ?? ""}${j.errcode === 60020 ? "（请把这台电脑的出口 IP 加到应用的“企业可信 IP”）" : ""}`);
+		},
+		async sendFile(ctx, path, name, o) {
+			if (o?.caption) await this.send(ctx, o.caption);
+			const type = o?.kind === "image" ? "image" : "file";
+			// 上传临时素材（multipart，3 天有效）→ message/send
+			const form = new FormData();
+			form.append("media", new Blob([readFileSync(path)]), name);
+			const up = (await (await fetch(`${api}/cgi-bin/media/upload?access_token=${await accessToken()}&type=${type}`, { method: "POST", body: form })).json()) as { errcode?: number; errmsg?: string; media_id?: string };
+			if (up.errcode || !up.media_id) throw new Error(`企业微信上传${type === "image" ? "图片" : "文件"}失败：${up.errcode} ${up.errmsg ?? ""}`);
+			const r = await fetch(`${api}/cgi-bin/message/send?access_token=${await accessToken()}`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ touser: ctx.userId, msgtype: type, agentid: Number(d.config.agentId), [type]: { media_id: up.media_id } }),
+			});
+			const j = (await r.json()) as { errcode?: number; errmsg?: string };
+			if (j.errcode) throw new Error(`企业微信发送失败：${j.errcode} ${j.errmsg ?? ""}`);
 		},
 		async test() {
 			await accessToken();

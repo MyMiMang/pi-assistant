@@ -325,16 +325,23 @@ export function wechatClawbotAdapter(d: AdapterDeps<ClawbotConfig, ClawbotSecret
 				if (i < chunks.length - 1) await new Promise((r) => setTimeout(r, 600));
 			}
 		},
-		async sendFile(ctx, path, name) {
+		async sendFile(ctx, path, name, o) {
 			check(ctx);
-			const { media } = await official();
+			await stopTyping(String(ctx.to));
+			const { media, send } = await official();
+			// 说明文字和图片同一次发（官方实现里是同一条消息的两个条目），省一条窗口额度
+			let caption = "";
+			if (o?.caption) {
+				const f = new send.StreamingMarkdownFilter();
+				caption = (f.feed(o.caption) + f.flush()).trim().slice(0, 1800);
+			}
 			// 官方实现用文件名作为微信里显示的名字：复制一份到临时目录，保留原名
 			mkdirSync(join(process.env.OPENCLAW_STATE_DIR!, "tmp"), { recursive: true });
 			const dir = mkdtempSync(join(process.env.OPENCLAW_STATE_DIR!, "tmp", "out-"));
 			const named = join(dir, basename(name).replace(/[\\/:*?"<>|]/g, "_") || "file");
 			try {
 				copyFileSync(path, named);
-				await media.sendWeixinMediaFile({ filePath: named, to: String(ctx.to), text: "", opts: opts(ctx) as never, cdnBaseUrl: cdn() });
+				await media.sendWeixinMediaFile({ filePath: named, to: String(ctx.to), text: caption, opts: opts(ctx) as never, cdnBaseUrl: cdn() });
 			} catch (e) {
 				if (rateLimited(e)) throw new DeferredSend("微信限流，等用户回复后补发");
 				throw new Error(`发送文件 ${name} 失败：${e instanceof Error ? e.message : e}`);

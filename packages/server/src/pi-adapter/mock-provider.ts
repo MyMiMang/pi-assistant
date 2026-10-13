@@ -62,7 +62,8 @@ function respond(messages: Msg[], systemPrompt = "") {
 	if (/context summarization assistant/i.test(systemPrompt) || textOf(last).startsWith("<conversation>"))
 		return fauxAssistantMessage("## Goal\n用户在测试 Pi Assistant 的各项功能。\n\n## Progress\n- 已演示流式回复、文件、审批、后台任务等。\n\n## Next Steps\n- 继续按用户要求操作。");
 	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !/^(后台|定时)任务「/.test(textOf(m)));
-	const u = lastUser ? textOf(lastUser) : "";
+	// 渠道消息前面的［渠道：…］说明不算用户说的话（否则里面的“文件 / 图片”会触发关键词）
+	const u = lastUser ? textOf(lastUser).replace(/^［渠道：[^］]*］\n?/, "") : "";
 	// 群聊（rooms）：按群消息里的提示脚本化地扮演管理者 / 成员
 	if (u.startsWith("（群聊「")) return roomReply(u, systemPrompt, last, messages);
 	// 提议建群：用户说“组个团队/建个群…”

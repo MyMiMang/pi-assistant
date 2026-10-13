@@ -4,6 +4,7 @@
  * 需要：钉钉开放平台企业内部应用的 Client ID（AppKey）/ Client Secret；添加“机器人”能力，消息接收模式选 Stream 模式；
  * 主动发消息需要权限“企业内机器人发送消息”（qyapi_robot_sendmsg）。
  */
+import { readFileSync } from "node:fs";
 import { DWClient, TOPIC_ROBOT, type DWClientDownStream } from "dingtalk-stream";
 import type { AdapterDeps, ChannelAdapter, Inbound, OutCard } from "./types.ts";
 import { clip } from "./types.ts";
@@ -39,6 +40,7 @@ export function dingtalkCardText(card: OutCard): { title: string; text: string; 
 
 export function dingtalkAdapter(d: AdapterDeps<DingtalkConfig, DingtalkSecret>): ChannelAdapter {
 	const api = d.config.apiBase ?? "https://api.dingtalk.com";
+	const oapi = d.config.apiBase ?? "https://oapi.dingtalk.com";
 	let client: DWClient | null = null;
 	let token: { v: string; exp: number } | null = null;
 	const accessToken = async () => {
@@ -108,6 +110,25 @@ export function dingtalkAdapter(d: AdapterDeps<DingtalkConfig, DingtalkSecret>):
 				headers: { "content-type": "application/json", "x-acs-dingtalk-access-token": await accessToken() },
 				body: JSON.stringify({ robotCode: ctx.robotCode ?? d.config.clientId, userIds: [ctx.staffId], msgKey: `sampleActionCard${n}`, msgParam: JSON.stringify(param) }),
 			});
+			if (!r.ok) throw new Error(`钉钉发送失败：HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+		},
+		async sendFile(ctx, path, name, o) {
+			if (o?.caption) await this.send(ctx, o.caption);
+			const type = o?.kind === "image" ? "image" : "file";
+			// 上传媒体文件拿 media_id（企业内部应用的 access token 两套接口通用）
+			const form = new FormData();
+			form.append("media", new Blob([readFileSync(path)]), name);
+			const up = (await (await fetch(`${oapi}/media/upload?access_token=${await accessToken()}&type=${type}`, { method: "POST", body: form })).json()) as { errcode?: number; errmsg?: string; media_id?: string };
+			if (up.errcode || !up.media_id) throw new Error(`钉钉上传${type === "image" ? "图片" : "文件"}失败：${up.errcode} ${up.errmsg ?? ""}`);
+			const ext = name.split(".").pop()?.toLowerCase() || "file";
+			const msgKey = type === "image" ? "sampleImageMsg" : "sampleFile";
+			const msgParam = JSON.stringify(type === "image" ? { photoURL: up.media_id } : { mediaId: up.media_id, fileName: name, fileType: ext });
+			const robotCode = ctx.robotCode ?? d.config.clientId;
+			const [url, body] = ctx.group
+				? [`${api}/v1.0/robot/groupMessages/send`, { robotCode, openConversationId: ctx.conversationId, msgKey, msgParam }]
+				: [`${api}/v1.0/robot/oToMessages/batchSend`, { robotCode, userIds: [ctx.staffId], msgKey, msgParam }];
+			if (!ctx.group && !ctx.staffId) throw new Error("拿不到钉钉用户 ID，无法发文件");
+			const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-acs-dingtalk-access-token": await accessToken() }, body: JSON.stringify(body) });
 			if (!r.ok) throw new Error(`钉钉发送失败：HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
 		},
 		async test() {

@@ -4,6 +4,7 @@
  * 权限：im:message（获取与发送单聊、群组消息）、im:message:send_as_bot。
  */
 import * as lark from "@larksuiteoapi/node-sdk";
+import { createReadStream } from "node:fs";
 import type { AdapterDeps, ChannelAdapter, Inbound, OutCard } from "./types.ts";
 import { clip } from "./types.ts";
 
@@ -103,6 +104,25 @@ export function feishuAdapter(d: AdapterDeps<FeishuConfig, FeishuSecret>): Chann
 				data: { receive_id: String(ctx.chatId), msg_type: "interactive", content: JSON.stringify({ config: { wide_screen_mode: true }, elements: [{ tag: "markdown", content: clip(markdown) }] }) },
 			})) as { code?: number; msg?: string };
 			if (r.code) throw new Error(`飞书发送失败：${r.code} ${r.msg ?? ""}`);
+		},
+		async sendFile(ctx, path, name, o) {
+			if (o?.caption) await this.send(ctx, o.caption);
+			const chat = { params: { receive_id_type: "chat_id" as const } };
+			if (o?.kind === "image") {
+				const up = (await client.im.v1.image.create({ data: { image_type: "message", image: createReadStream(path) as never } })) as { image_key?: string; data?: { image_key?: string }; code?: number; msg?: string } | null;
+				const key = up?.image_key ?? up?.data?.image_key;
+				if (!key) throw new Error(`飞书上传图片失败：${up?.code ?? ""} ${up?.msg ?? ""}`);
+				const r = (await client.im.v1.message.create({ ...chat, data: { receive_id: String(ctx.chatId), msg_type: "image", content: JSON.stringify({ image_key: key }) } })) as { code?: number; msg?: string };
+				if (r.code) throw new Error(`飞书发送图片失败：${r.code} ${r.msg ?? ""}`);
+				return;
+			}
+			const e = name.split(".").pop()?.toLowerCase() ?? "";
+			const fileType = ["pdf", "doc", "xls", "ppt", "mp4", "opus"].includes(e) ? e : e === "docx" ? "doc" : e === "xlsx" ? "xls" : e === "pptx" ? "ppt" : "stream";
+			const up = (await client.im.v1.file.create({ data: { file_type: fileType as never, file_name: name, file: createReadStream(path) as never } })) as { file_key?: string; data?: { file_key?: string }; code?: number; msg?: string } | null;
+			const key = up?.file_key ?? up?.data?.file_key;
+			if (!key) throw new Error(`飞书上传文件失败：${up?.code ?? ""} ${up?.msg ?? ""}`);
+			const r = (await client.im.v1.message.create({ ...chat, data: { receive_id: String(ctx.chatId), msg_type: "file", content: JSON.stringify({ file_key: key }) } })) as { code?: number; msg?: string };
+			if (r.code) throw new Error(`飞书发送文件失败：${r.code} ${r.msg ?? ""}`);
 		},
 		async test() {
 			const r = (await client.auth.v3.tenantAccessToken.internal({ data: { app_id: d.config.appId, app_secret: d.secret.appSecret } })) as { code?: number; msg?: string };

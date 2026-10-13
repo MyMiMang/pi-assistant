@@ -136,6 +136,26 @@ test("发文件：走官方 getuploadurl + CDN 加密上传 + 文件消息", asy
 	assert.equal(fileMsg.item_list[0].file_item?.file_name, "报告.txt");
 });
 
+test("用户报的 bug：deliver_file 交付的图片（meta 里是 fileId）发成微信原生图片消息；说明文字和图片一起发；思考内容不外发", async () => {
+	const conv = (db.prepare("SELECT conversation_id FROM channel_peers WHERE channel_id = ? AND peer_id = ?").get(chId, "owner@im.wechat") as { conversation_id: string }).conversation_id;
+	const { saveUpload, fileInfo } = await import("../src/files.ts");
+	const f = saveUpload("wa", "cf_03.png", PNG);
+	let before = sends().length;
+	insertMessage({ agentId: "wa", conversationId: conv, role: "assistant", content: "穿越火线老版本画面 1（1440×1170）", status: "done", meta: { attachments: [fileInfo(f)] } });
+	await wait(() => sends().slice(before).some((c) => (c.body.msg as { item_list: { type: number }[] }).item_list.some((i) => i.type === 2)));
+	const mine = sends().slice(before);
+	const img = mine.find((c) => (c.body.msg as { item_list: { type: number }[] }).item_list.some((i) => i.type === 2))!;
+	assert.ok(img, "发出了图片条目（type 2）");
+	assert.ok(mine.some((c) => textOf(c).includes("穿越火线老版本画面 1")), "说明文字发出");
+	assert.ok(!mine.some((c) => textOf(c).includes("App 里查看")), "不再退回“请在 App 里查看”");
+	before = sends().length;
+	insertMessage({ agentId: "wa", conversationId: conv, role: "assistant", content: "当前模型不支持图片。我先 sips 看尺寸。</thinking>\n**8 张图**都发你了", status: "done" });
+	await wait(() => sends().length > before);
+	const t = textOf(sends().at(-1)!);
+	assert.match(t, /8 张图都发你了/);
+	assert.doesNotMatch(t, /thinking|sips|\*\*/);
+});
+
 test("平台限制（适配器）：没 token 不发；超过 23 小时不发；本轮预算用完不发；被限流 → DeferredSend", async () => {
 	const a = wechatClawbotAdapter({ config: { apiBase: BASE, cdnBase: BASE }, secret: { botToken: "T" }, onMessage() {}, setStatus() {} });
 	await assert.rejects(a.send({ to: "u" }, "hi"), DeferredSend);

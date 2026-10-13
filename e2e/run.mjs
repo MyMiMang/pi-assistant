@@ -1240,6 +1240,8 @@ await step("微信 ClawBot（模拟 iLink）：扫码连接 → 二维码 → �
 		}
 		if (u === "/ilink/bot/sendmessage") sent.push(JSON.parse(b));
 		if (u === "/ilink/bot/getconfig") return j({ ret: 0, typing_ticket: "TT" });
+		if (u === "/ilink/bot/getuploadurl") return j({ upload_full_url: `${IL}/cdn/upload` });
+		if (u === "/cdn/upload") return (res.setHeader("x-encrypted-param", "DL"), res.end());
 		j({ ret: 0 });
 	});
 	await new Promise((r) => ilink.listen(0, "127.0.0.1", r));
@@ -1260,6 +1262,10 @@ await step("微信 ClawBot（模拟 iLink）：扫码连接 → 二维码 → �
 	await page.screenshot({ path: join(SHOTS, "51-settings-clawbot-connected.png") });
 	inbox.push({ message_id: "1", from_user_id: "me@im.wechat", message_type: 1, context_token: "CTX", item_list: [{ type: 1, text_item: { text: "你好，从微信发来" } }] });
 	await waitFor(() => sent.some((m) => m.msg?.context_token === "CTX" && JSON.stringify(m).includes("你好，从微信发来")), 20_000);
+	// 助理交付的文件发成微信原生文件消息（不是“请在 App 里查看”），说明文字一起发；渠道说明不回显给用户
+	inbox.push({ message_id: "2", from_user_id: "me@im.wechat", message_type: 1, context_token: "CTX2", item_list: [{ type: 1, text_item: { text: "给我一份报告" } }] });
+	await waitFor(() => sent.some((m) => m.msg?.context_token === "CTX2" && m.msg.item_list?.some((i) => i.type === 4 && i.file_item?.file_name === "report.md")), 20_000);
+	if (sent.some((m) => /App 里查看|［渠道/.test(JSON.stringify(m)))) throw new Error("微信里出现了“请在 App 里查看”或渠道说明");
 	await fetch(`${BASE}/api/channels/${c.id}`, { method: "DELETE" });
 	ilink.close();
 	await page.keyboard.press("Escape");

@@ -53,6 +53,10 @@ export interface AdapterDeps<C, S> {
 	onAction?(a: CardAction): Promise<string>;
 	setStatus(s: AdapterStatus): void;
 }
+export interface SendFileOpts {
+	kind?: "image" | "file";
+	caption?: string;
+}
 export interface ChannelAdapter {
 	start(): Promise<void>;
 	stop(): Promise<void>;
@@ -60,8 +64,11 @@ export interface ChannelAdapter {
 	send(ctx: Record<string, unknown>, markdown: string): Promise<void>;
 	/** 发一张带按钮的卡片（不支持的平台不实现，退回文字） */
 	sendCard?(ctx: Record<string, unknown>, card: OutCard): Promise<void>;
-	/** 发文件 / 图片（不支持的平台不实现，退回“请在 App 里查看”） */
-	sendFile?(ctx: Record<string, unknown>, path: string, name: string): Promise<void>;
+	/**
+	 * 发文件 / 图片（不支持的平台不实现，退回下载链接或“请在 App 里查看”）。
+	 * kind 由渠道层按能力（caps.ts）决定，格式 / 大小已处理好；caption 是附带的说明文字（平台能合并就合并，否则先发文字）。
+	 */
+	sendFile?(ctx: Record<string, unknown>, path: string, name: string, opts?: SendFileOpts): Promise<void>;
 	/** 现在能不能主动给这个会话发消息（主动提醒选渠道用）；不实现 = 能 */
 	canPush?(ctx: Record<string, unknown>): { ok: boolean; reason?: string };
 	/** 测试凭据（拿一次 access token 等） */

@@ -83,6 +83,15 @@ export function wecomBotAdapter(d: AdapterDeps<WecomBotConfig, WecomBotSecret>):
 			const f = (await client().sendMessage(String(ctx.chatId), { msgtype: "markdown", markdown: { content: clip(markdown, 4000) } })) as { errcode?: number; errmsg?: string };
 			if (f?.errcode) throw new Error(`企业微信发送失败：${f.errcode} ${f.errmsg ?? ""}`);
 		},
+		async sendFile(ctx, path, name, o) {
+			if (o?.caption) await this.send(ctx, o.caption);
+			const type = o?.kind === "image" ? "image" : "file";
+			const { readFileSync } = await import("node:fs");
+			const up = await client().uploadMedia(readFileSync(path), { type, filename: name });
+			if (!up?.media_id) throw new Error("企业微信上传素材失败");
+			const f = (await client().sendMediaMessage(String(ctx.chatId), type, up.media_id)) as { errcode?: number; errmsg?: string };
+			if (f?.errcode) throw new Error(`企业微信发送失败：${f.errcode} ${f.errmsg ?? ""}`);
+		},
 		async sendCard(ctx, card) {
 			const f = (await client().sendMessage(String(ctx.chatId), { msgtype: "template_card", template_card: wecomCard(card) as never })) as { errcode?: number; errmsg?: string };
 			if (f?.errcode) throw new Error(`企业微信发送失败：${f.errcode} ${f.errmsg ?? ""}`);

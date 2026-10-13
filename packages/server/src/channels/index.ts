@@ -23,6 +23,11 @@ import { type ClawbotConfig, cancelLogin, loginStatus, startLogin, submitVerifyC
 import { DeferredSend } from "./types.ts";
 import { getFile, saveUpload } from "../files.ts";
 import { notify } from "../push.ts";
+import { existsSync } from "node:fs";
+import { stripThinking } from "../thinking.ts";
+import { tunnelStatus } from "../tunnel.ts";
+import { CAPS, channelContext, markdownToPlain } from "./caps.ts";
+import { prepareMedia, signedPath } from "./media.ts";
 
 export type { ChannelKind } from "./types.ts";
 export const KIND_LABEL: Record<ChannelKind, string> = { wecom: "企业微信", wecom_bot: "企业微信", feishu: "飞书", dingtalk: "钉钉", wechat_clawbot: "微信" };
@@ -236,21 +241,73 @@ export function wecomCallback(id: string, method: string, q: Record<string, stri
 // ---------------------------------------------------------------- 入站
 const nagged = new Map<string, number>();
 export interface OutFile {
-	id: string;
+	/** 消息 meta.attachments 里是 fileId；旧的待发队列里是 id */
+	fileId?: string;
+	id?: string;
 	name: string;
 }
-/** 发回渠道。平台暂时不让发（DeferredSend）→ 进待发队列，用户下次发消息时补发，同时用 App 推送提醒 */
-async function reply(channelId: string, ctx: Record<string, unknown>, text: string, card?: OutCard, files: OutFile[] = [], peerId?: string) {
+/** 图片说明文字不超过这个长度时，和图片合成一条发（微信 ClawBot 省额度） */
+const CAPTION_MAX = 300;
+/** 下载链接（只用固定地址：临时地址会变，链接过后就失效） */
+function downloadLink(fileId: string): string | null {
+	const t = tunnelStatus();
+	if (t.state !== "online" || !t.url || t.mode !== "named") return null;
+	return `${t.url.replace(/\/$/, "")}${signedPath(fileId)}`;
+}
+/** 渠道里发出去的文字：去掉思考内容，按渠道转格式 */
+export function channelText(kind: ChannelKind, text: string): string {
+	const clean = stripThinking(text);
+	return CAPS[kind]?.format === "plain" ? markdownToPlain(clean) : clean.trim();
+}
+/** 发回渠道。平台暂时不让发（DeferredSend）→ 没发出去的部分进待发队列，用户下次发消息时补发，同时用 App 推送提醒 */
+async function reply(channelId: string, ctx: Record<string, unknown>, rawText: string, card?: OutCard, files: OutFile[] = [], peerId?: string) {
 	const a = adapters.get(channelId);
-	if (!a) return;
+	const c = getChannel(channelId);
+	if (!a || !c) return;
+	const caps = CAPS[c.kind];
+	let text = channelText(c.kind, rawText);
+	let left = [...files];
+	const notes: string[] = [];
 	try {
-		if (text) await (card && a.sendCard ? a.sendCard(ctx, card) : a.send(ctx, text));
-		for (const f of files) {
-			const row = getFile(f.id);
-			if (row && a.sendFile) await a.sendFile(ctx, row.stored_path, f.name);
+		const captionMode = !card && left.length === 1 && !!a.sendFile && text.length > 0 && text.length <= CAPTION_MAX;
+		if (text && !captionMode) {
+			await (card && a.sendCard ? a.sendCard(ctx, card) : a.send(ctx, text));
+			text = "";
 		}
+		while (left.length) {
+			const f = left[0];
+			const row = getFile(f.fileId ?? f.id ?? "");
+			const caption = captionMode && text ? text : undefined;
+			const fallback = (why: string) => {
+				const link = row && downloadLink(row.id);
+				notes.push(link ? `📎 ${f.name}：${link}（7 天内有效）` : `📎 ${f.name}（${why}，请在 App 里查看）`);
+			};
+			if (!row || !existsSync(row.stored_path)) fallback("文件已不存在");
+			else if (!a.sendFile) fallback(`${caps.label}暂不支持发文件`);
+			else {
+				const prep = await prepareMedia(row.stored_path, f.name, caps);
+				try {
+					if (prep.as === "none") fallback(`${caps.label}不支持这类文件或文件太大`);
+					else {
+						await a.sendFile(ctx, prep.path, prep.name, { kind: prep.as, caption: [caption, prep.note].filter(Boolean).join(" ") || undefined });
+						if (caption) text = "";
+					}
+				} catch (e) {
+					if (e instanceof DeferredSend) throw e;
+					console.warn(`[channels] 发送文件失败：${e instanceof Error ? e.message : e}`);
+					if (caption) await a.send(ctx, caption).then(() => (text = ""));
+					fallback("发送失败");
+				} finally {
+					prep.cleanup();
+				}
+			}
+			left = left.slice(1);
+		}
+		if (text) await a.send(ctx, text), (text = "");
+		if (notes.length) await a.send(ctx, notes.join("\n"));
 	} catch (e) {
-		if (e instanceof DeferredSend && peerId) return defer(channelId, peerId, text, files, e.message);
+		const rest = [text, ...notes].filter(Boolean).join("\n\n");
+		if (e instanceof DeferredSend && peerId) return defer(channelId, peerId, rest, left, e.message);
 		statuses.set(channelId, { state: "error", detail: e instanceof Error ? e.message : String(e) });
 		changed();
 	}
@@ -373,7 +430,7 @@ export async function handleInbound(channelId: string, m: Inbound) {
 	const saved = (m.files ?? []).map((f) => saveUpload(c.agent_id, f.name, f.data));
 	const note = saved.length ? `\n\n（附件已保存到工作区：${saved.map((f) => f.workspace_path).join("、")}）` : "";
 	insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { from: `${c.kind}:${m.display ?? m.userId}`, channel: { id: channelId, kind: c.kind }, ...(saved.length ? { attachments: saved.map((f) => ({ id: f.id, name: f.name, mime: f.mime, size: f.size })) } : {}) } });
-	await runtime(c.agent_id, conv).send((m.group && m.display ? `（${m.display} 在${KIND_LABEL[c.kind]}群里说）${text}` : text) + note);
+	await runtime(c.agent_id, conv).send(`${channelContext(c.kind, { group: m.group })}\n${m.group && m.display ? `（${m.display} 在${KIND_LABEL[c.kind]}群里说）${text}` : text}${note}`);
 }
 
 /**
@@ -427,7 +484,7 @@ export function cardFor(meta: Record<string, unknown>): OutCard | null {
 
 // ---------------------------------------------------------------- 出站：把这个对话里助理的回复发回渠道
 const forwarded = new Set<string>();
-function format(msg: MessageRow, canFiles = false): string | null {
+function format(msg: MessageRow): string | null {
 	const meta = (typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as Record<string, unknown>;
 	if (msg.role === "card") {
 		if (meta.status !== "pending") return null;
@@ -436,8 +493,9 @@ function format(msg: MessageRow, canFiles = false): string | null {
 		return `**${String(meta.question ?? "")}**\n${opts.map((o, i) => `${i + 1}. ${o}`).join("\n")}\n\n${opts.length ? "回复序号" : "直接回复"}${opts.length && meta.allowFreeText !== false ? "或直接回答" : ""}`;
 	}
 	if (msg.role === "assistant" && msg.status === "done") {
-		const files = ((meta.attachments as { name: string }[] | undefined) ?? []).map((f) => `📎 ${f.name}`);
-		const body = [msg.content?.trim(), files.length && !canFiles ? `${files.join("\n")}\n（文件请在 App 里查看）` : ""].filter(Boolean).join("\n\n");
+		// 附件由 reply() 按渠道能力发送（原生图片 / 文件 / 下载链接 / 提示），这里只给正文；思考内容不外发
+		const files = (meta.attachments as unknown[] | undefined) ?? [];
+		const body = stripThinking(msg.content ?? "").trim();
 		return body || (files.length ? "" : null);
 	}
 	if (msg.role === "system" && msg.status === "error") return `⚠️ ${msg.content}`;
@@ -454,13 +512,12 @@ bus.on((e) => {
 	if (!peers.length) return;
 	let sent = false;
 	for (const p of peers) {
-		const canFiles = !!adapters.get(p.channel_id)?.sendFile;
-		const text = format(msg, canFiles);
+		const text = format(msg);
 		if (text === null) continue;
 		sent = true;
 		const meta = msg.role === "card" ? ((typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as Record<string, unknown>) : null;
 		const mm = (typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as { attachments?: OutFile[] };
-		const files = canFiles && msg.role === "assistant" ? (mm.attachments ?? []) : [];
+		const files = msg.role === "assistant" ? (mm.attachments ?? []) : [];
 		void reply(p.channel_id, p.ctx ? JSON.parse(p.ctx) : {}, text, (meta && cardFor(meta)) || undefined, files, p.peer_id);
 	}
 	if (!sent) return;

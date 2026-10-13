@@ -49,6 +49,7 @@ import { addPackage, install as installPackage, listPackages, type PiPackageRow,
 import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
 import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRoutines, listRuns, type RoutineInput, type RoutineRow, runRoutine, setRoutineStatus, updateRoutine, verifyWebhook, webhookPath } from "./routines.ts";
 import { BRAND } from "@pi-assistant/shared";
+import { verifySigned } from "./channels/media.ts";
 import { startHousekeeping } from "./housekeeping.ts";
 import { actionShot, clearActions, listActions } from "./action-log.ts";
 import { openWechat, saveWechatSettings, wechatSettings, wechatStatus } from "./wechat.ts";
@@ -868,6 +869,14 @@ function sendFile(c: Context<Env>, path: string, name: string, mime: string) {
 	c.header("Cache-Control", "private, max-age=3600");
 	return c.body(Readable.toWeb(createReadStream(path)) as ReadableStream);
 }
+// 渠道里发不了的文件：签名的公开下载链接（只在配置了固定地址时生成，7 天有效）
+app.get("/hooks/dl/:id/:exp/:sig", (c) => {
+	const id = c.req.param("id");
+	if (!verifySigned(id, c.req.param("exp"), c.req.param("sig"))) return c.json({ error: "link_expired" }, 403);
+	const f = getFile(id);
+	if (!f || !existsSync(f.stored_path)) return c.json({ error: "not_found" }, 404);
+	return sendFile(c, f.stored_path, f.name, f.mime);
+});
 app.get("/api/files/:id", (c) => {
 	const f = getFile(c.req.param("id"));
 	if (!f || !existsSync(f.stored_path)) return c.json({ error: "not_found" }, 404);
