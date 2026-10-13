@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 最后更新：2026-10-13。给接手的开发者 / bot：先读这一页，再按需查 [DESIGN.md](DESIGN.md)（完整设计，章节号下面会引用）。
+> 最后更新：2026-10-13（共用助理电脑）。给接手的开发者 / bot：先读这一页，再按需查 [DESIGN.md](DESIGN.md)（完整设计，章节号下面会引用）。
 
 ## 1. 这是什么
 
@@ -17,6 +17,7 @@ Pi Assistant：基于 [Pi](https://github.com/earendil-works/pi) 的本地私人
 | 界面打磨（原生窗口、自定义勾选框、「?」帮助、上下文圆环、统一下载状态、完全权限确认框、悬浮条） | ✅ 2026-10-12 合入 main | §16、§5.19.2 |
 | 助理电脑自带虚拟机（Lima / WSL2，不要求装 Docker） | ✅ 第 1 步通用 + 第 2 步 macOS（Lima）+ 第 3 步 Windows（WSL2 自有发行版）已合入 main；**Mac / Windows 等真机验证** | §15.2 |
 | 共用中转远程访问（Paseo 式） | ⏸ 用户决定暂缓 | §15.1 |
+| 共用助理电脑（默认所有助理共用一台：同样的文件 / 登录状态 / 应用；每个助理自己的屏幕；单独的电脑 + 合并） | ✅ 2026-10-13 合入 main（镜像 0.1.2）；Mac / Windows 真机待测 | §15.4 |
 | Linux 服务器版（一条命令安装、一次性设置码、主人设备、Docker 部署） | ✅ 2026-10-13 合入 main；安装脚本在 systemd 容器里实测；Linux 发布包要等下一次打 tag 才会出现在 Release | §15.3、INSTALL.md |
 
 ### 已实现但没在真机上验证过
@@ -72,6 +73,16 @@ npm run check:pi         # Pi 升级兼容检查
 11. BIOS 关闭虚拟化的电脑（如果有）：应显示中文原因“没有开启硬件虚拟化”。
 有问题时请带上：设置 › 助理电脑 显示的错误、`wsl --status`、`wsl -l -v` 的输出、`%APPDATA%\Pi Assistant` 下的日志。
 
+### 共用助理电脑真机测试（§15.4，任何平台）
+1. 从旧版升级：之前每个助理各有电脑、登录过网站的，升级后这些助理应自动是“单独的电脑”，登录状态还在；设置 › 助理电脑 的「共用电脑」列表里能看到它们，可以「合并进共用电脑」。
+2. 新建两个助理：「电脑」标签都显示“共用电脑（N 个助理）”，同一个画面。
+3. 在助理甲里登录一个网站（例如让它打开网页并接管扫码登录），再让助理乙打开同一个网站：应该已经是登录状态。
+4. 同时让两个助理做需要操作桌面的事：第二个应自动换到自己的屏幕并告诉你；「电脑」标签上方的屏幕按钮可以切换去看另一块屏幕。
+5. 给某个助理打开「使用单独的电脑」（助理设置里）：下一条消息起它用自己的电脑，看不到共用的登录状态；关掉后数据保留，可以合并。
+6. 合并：单独电脑里的文件出现在共用电脑里；共用电脑原来的登录状态不变，单独电脑的浏览器数据放在 `~/旧电脑-<助理名>/`。
+7. 都不用时共用电脑按“空闲自动关机”关掉；再开机登录状态还在。
+8. Windows（WSL host 网络）和 Mac（Lima）上重复 2–4，确认第二块屏幕能看到画面。
+
 ### Linux 服务器版
 - 打包：`npm run build && node scripts/package-linux.mjs` → `dist-linux/pi-assistant-<版本>-linux-<arch>.tar.gz`（+ .sha256）。
 - 本地测安装脚本（干净 systemd 容器）：`docker run -d --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v $PWD/dist-linux:/pkg:ro <装了 systemd 和 libpam-systemd 的 debian:12 镜像> /sbin/init`，然后 `sh deploy/linux/install.sh --file /pkg/….tar.gz`。
@@ -92,7 +103,7 @@ npm run check:pi         # Pi 升级兼容检查
 - 服务端入口 `packages/server/src/main.ts`，HTTP 路由全部在 `http.ts`（`localOnly` = 只允许本机）。
 - Pi 只通过 `packages/server/src/pi-adapter/` 使用（升级 Pi 时只看这里）。
 - 统一下载：`packages/server/src/downloads.ts` + `apps/web/src/components/Downloads.tsx`。
-- 助理电脑：`desktop.ts`（开关机、端口、截图）、`desktop/backend.ts`（后端选择）、`desktop/lima.ts`（macOS 虚拟机：下载 / 配置 / 开关机 / 保护）、`desktop/names.ts`（容器名硬性保护）、`downloads.ts` 的 `downloadFile`（大文件断点续传 + 摘要校验）。
+- 助理电脑：`desktop.ts`（开关机、端口、截图、共用电脑 / 屏幕 / 合并）、`desktop/computers.ts`（哪个助理用哪台电脑、主屏幕争用，纯逻辑）、`packages/sandbox-desktop/pia-screen`（容器里的屏幕管理）、`pia-cua-mcp`（cua 中继）、`desktop/backend.ts`（后端选择）、`desktop/lima.ts`（macOS 虚拟机：下载 / 配置 / 开关机 / 保护）、`desktop/names.ts`（容器名硬性保护）、`downloads.ts` 的 `downloadFile`（大文件断点续传 + 摘要校验）。
 - Hindsight：`packages/server/src/memory/hindsight/`（sidecar 安装/启动、provider 账本+同步队列、settings 三模型）。
 - 操作这台电脑：`host-control.ts`（服务端）、`HostControl.tsx`（设置 + 输入框旁档位按钮）、`HostFloatBar.tsx`（悬浮条页面）、`apps/tray/src-tauri/src/main.rs`（悬浮条窗口）。
 - 通用 UI 组件：`apps/web/src/components/ui.tsx`（Button / Modal / Badge / Input / **Help**「?」气泡 / **useConfirm** 确认框）；主题 `apps/web/src/themes/*.css`（勾选框、开关 `.pa-switch`、帮助气泡、下载条样式在 `app.css` 末尾）。
@@ -113,5 +124,6 @@ npm run check:pi         # Pi 升级兼容检查
 2. 每完成一步发一个 beta 版本，告诉用户能测什么。
 3. 修好 Actions 账单后补跑 wsl-rootfs（推 GHCR），打下一个 beta tag 让 Linux 发布包出现在 Release 里（release.yml 的 `linux` 任务）。
 
+- 2026-10-13：共用助理电脑（DESIGN §15.4）合入 main，镜像 0.1.2（`desktop-image.json` 已固定 digest）。真实 Docker 测试：`node --import tsx --test packages/server/test/shared-computer.test.ts`（需要本地 `pi-assistant/desktop:dev`）。
 - 2026-10-13：助理电脑「开机后同一轮可用」和「首张截图空白」已修好（见 DESIGN §16.1）。调试时设 `PIA_DEBUG_COMPUTER=1` 可看到 computer_open 各阶段日志。真实 Docker 的 e2e：`E2E_DESKTOP=1 PIA_DESKTOP_IMAGE=pi-assistant/desktop:dev npm run e2e`（42 步全过）。
 - 2026-10-13：助理电脑镜像、MCP（npx/uvx）包已接入统一下载管理（DESIGN §16.2），全应用长说明改为「?」帮助。未做：Linux 服务器版（一次性设置码 + 主设备）——下一阶段。镜像进度在 docker 后端按层估算；若要真实字节可改用 Docker Engine API 的 progressDetail。

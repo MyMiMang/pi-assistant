@@ -1052,6 +1052,24 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - **助理电脑**：Linux 上直接用本机 Docker / Podman（`auto` = docker 后端，自动探测 podman）。
 - **测试**：`test/server-setup.test.ts`（真实服务进程：设置码打印、首台设备成为主人、设置码作废、主人可管理、普通设备不可、回环不免登录、reset-owner 生成新码）；e2e「Linux 服务器版」步骤（浏览器里输入设置码 → 主人 → 生成配对码 → 手机认领 → 主人在网页上批准 → 普通设备调用管理接口 403），截图 70 / 71；安装脚本在干净的 systemd 容器（Debian 12）里实测：系统服务安装 → 设置码 → 认领主人 → 重启 → reset-owner 生成新码 → 升级 → 卸载 / --purge；用户服务安装 → 状态 / 日志 → 卸载；Docker：compose 构建运行、设置码、健康检查、叠加文件下容器内 docker 后端可用。
 
+### 15.4 共用助理电脑（2026-10-13）
+
+目标：所有助理默认共用**一台**助理电脑（同一个家目录 = 同样的文件、浏览器登录状态、已装的应用如微信），在一个助理里登录过的网站，其他助理直接能用；同时干活互不抢鼠标键盘。需要长期分开账号的助理可以用**单独的电脑**。
+
+- **电脑 id**（`desktop/computers.ts`，纯逻辑）：共用电脑 `shared` → 容器 `pia-desk-shared`、家目录卷 `pia-home-shared`；单独的电脑用助理 id（`pia-desk-<助理id>` / `pia-home-<助理id>`，和旧版每个助理一台的命名一致）。`desktop` 设置里的 `separate: string[]` = 用单独电脑的助理。标签 `pia.agent=<电脑 id>`（合并用的一次性辅助容器 `pia.agent=merge`，不算在运行中的电脑里）。测试可用 `PIA_SHARED_COMPUTER` 换共用电脑的 id。
+- **旧版迁移**（`migrateLegacy`，第一次在引擎可用时做一次，`legacyMigrated` 记住）：已经有 `pia-home-<助理id>` 卷的现有助理**自动设为单独的电脑**，登录状态和文件不丢。用户之后可以在 设置 › 助理电脑 或助理设置里**合并进共用电脑**（`mergeIntoShared`）：两台电脑先关机，一次性辅助容器（`-u 0`，只挂两个家目录卷）里跑 `MERGE_SCRIPT`：浏览器用户目录（`.config/pia-browser`、`.config/chromium`）和微信（`.local/wechat`、`.xwechat`、`Documents/xwechat_files`）这类“整个目录才有意义”的数据，共用电脑里还没有就整个搬过去，已经有了就放进 `~/旧电脑-<助理名>/`（不会把两份 Cookie 库混在一起弄坏）；其他文件 `tar --skip-old-files`（不覆盖已有的）。成功后删掉单独电脑的容器和卷。也可以只关掉“单独的电脑”（数据保留，以后再开回来还在）。
+- **屏幕**（`packages/sandbox-desktop/pia-screen`）：同一台电脑里每个助理可以有自己的屏幕——独立 Xvfb（显示器编号从 100 起逐个试，host 网络下多个容器的 X 抽象套接字在同一个网络里也不会撞号）+ xfwm4 / xfdesktop / 面板 + x11vnc + 自己的 cua-driver 守护进程（`/tmp/cua-<屏幕>.sock`；主屏幕是 `/tmp/cua-main.sock`）。`pia-screen add|rm|ls|assign`，`flock` 串行化。noVNC（websockify）用 `TokenFile` 插件，一个端口服务所有屏幕：`/websockify?token=<屏幕>`。
+- **cua 中继**（`pia-cua-mcp <助理>`）：Pi 连的不是 cua-driver 本身，而是这个中继；它按 `/tmp/pia-screens/agent-<助理>` 找到助理当前的屏幕、连对应的守护进程，换屏幕时重新握手（对 Pi 透明）。
+- **自动换屏**（`beforeComputerAction`，ext-computer 的 `before` 钩子，只对会改变屏幕的动作）：主屏幕 90 秒内被另一个**还在工作**的助理用过 → 给这个助理开自己的屏幕，这次动作拦下并说明（坐标 / 窗口在新屏幕上不成立，先截图再继续），并让它告诉用户。单独的电脑不需要。助理空闲超过“空闲自动关机”的时间，它自己的屏幕自动收回。
+- **共用浏览器**：每台电脑一个 Chromium（在主屏幕上），每个助理一条自己的 CDP 连接；ext-browser 的 `shared` 模式下每个助理只看得到、只操作自己打开的标签页（自己新开的 + 从自己页面弹出来的），cookie / 登录状态共用。`browser_context isolated`：同一个浏览器里新开一个独立上下文（不带共用的登录状态，切回就清空），用于临时用另一个账号或可疑网站。
+- **助理自己选**（系统提示 `SHARED_COMPUTER_PROMPT` + `computer_screen` 工具）：不需要屏幕就用 shell / 文件工具；网页任务用浏览器工具；主屏幕忙或要长时间操作桌面应用就 `computer_screen own`，用完 `main`；临时另一个账号用 `browser_context isolated`；必须长期分开时 `computer_screen separate_on`（要写原因并告诉用户，下一条消息开始生效）。用户也可以在助理设置里打开「使用单独的电脑」。
+- **空闲关机**按电脑计时：共用电脑上任何一个助理在工作、或有人在看画面，就不关。关机前经 CDP `Browser.close` 让 Chromium 正常退出（直接 `docker stop` / SIGTERM 会丢掉最近写入的 cookie）。
+- **实时画面**：「电脑」标签默认看这个助理自己用的屏幕，可以点选看同一台电脑上的其他屏幕（票据带 `screen`，服务端只允许这台电脑上存在的屏幕）；可以给它开 / 关自己的屏幕；关共用电脑前提醒“这些助理都在用”。截图接口 `?screen=`。
+- **接口**：`GET/PUT /api/agents/:id/computer`（`{separate}`，助理在工作时 409）、`POST /api/agents/:id/computer/merge`、`POST /api/agents/:id/desktop/screen {own}`、`POST /api/agents/:id/desktop/ticket {screen?}`。会话缓存键带上电脑 id，开 / 关单独的电脑从下一轮生效；浏览器连接发现电脑换了会重连。
+- **资源**：共用电脑 4 CPU / 6 GB 内存 / 2 GB shm；单独的电脑 2 CPU / 3 GB。
+- **后端**：Docker / Podman、Lima（固定端口转发：额外屏幕走同一个 noVNC 端口，不需要新端口）、WSL（host 网络：额外屏幕的 VNC 端口由服务端挑空闲的，显示器编号见上）。镜像 0.1.2 起包含 `pia-screen` / `pia-cua-mcp` 和新的 websockify 参数。
+- **测试**：`test/shared-computer.test.ts`——纯逻辑（分配、旧版保留、主屏幕争用、合并脚本真跑一遍、硬性保护）；扩展（`computer_screen`、系统提示、动作前钩子；真 Chromium 两条 CDP 连接各自只看到自己的标签页、cookie 共用、isolated 不带 cookie）；真 Docker：两个助理同一台电脑，第二个自动开自己的屏幕，两个 cua 中继同时点击、各屏幕鼠标位置互不影响，截图 / 票据 / noVNC，甲写的 cookie 乙看得到，单独电脑的助理看不到共用的文件和 cookie，改回共用数据保留，合并后文件到了共用电脑、共用电脑原有的登录状态没丢。e2e「共用电脑」步骤（`E2E_DESKTOP=1`）：界面显示共用、开自己的屏幕并切换查看、关机提醒、单独的电脑开关、设置里的列表、合并。host 网络下两个容器各开两块屏幕不撞号（手工验证）。
+
 ## 16. 界面打磨（2026-10-12，分支 `ui-polish`）
 
 - 原生桌面窗口（§5.2）；悬浮条透明 + 关闭按钮（§5.2）。
