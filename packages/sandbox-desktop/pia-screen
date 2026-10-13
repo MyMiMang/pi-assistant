@@ -15,10 +15,22 @@ alive() { [ -f "$DIR/$1" ] && read -r d _ < "$DIR/$1" && xdpyinfo -display ":$d"
 case "${1:-}" in
 run)
 	key=$2; port=$3
-	f=$(mktemp); exec 5>"$f"
-	Xvfb -displayfd 5 -screen 0 "${SCREEN:-1440x900x24}" -nolisten tcp >"/tmp/xvfb-$key.log" 2>&1 &
-	for i in $(seq 1 100); do d=$(head -n1 "$f" 2>/dev/null | tr -dc 0-9); [ -n "$d" ] && break; sleep 0.1; done
-	exec 5>&-; rm -f "$f"
+	# 显示器编号从 100 往上找空闲的（主屏幕在 1 / host 网络时 10 起；host 网络下各容器的 X 抽象套接字在同一个网络里，
+	# 被别的容器占了的编号 Xvfb 会起不来，接着试下一个）
+	d=""
+	for n in $(seq "${PIA_SCREEN_BASE:-100}" 999); do
+		[ -e "/tmp/.X$n-lock" ] && continue
+		Xvfb ":$n" -screen 0 "${SCREEN:-1440x900x24}" -nolisten tcp >"/tmp/xvfb-$key.log" 2>&1 &
+		xp=$!
+		for i in $(seq 1 50); do
+			kill -0 $xp 2>/dev/null || break
+			# 连得上还要确认是我们自己的 Xvfb（host 网络下可能连到别的容器的同号显示器，那时我们的 Xvfb 会退出）
+			if xdpyinfo -display ":$n" >/dev/null 2>&1; then sleep 0.5; kill -0 $xp 2>/dev/null && d=$n; break; fi
+			sleep 0.1
+		done
+		[ -n "$d" ] && break
+		kill $xp 2>/dev/null || true; wait $xp 2>/dev/null || true
+	done
 	[ -n "$d" ] || { echo "Xvfb 没有启动" >&2; exit 1; }
 	export DISPLAY=":$d"
 	for i in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
