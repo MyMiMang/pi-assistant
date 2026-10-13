@@ -63,6 +63,23 @@ function respond(messages: Msg[], systemPrompt = "") {
 		return fauxAssistantMessage("## Goal\n用户在测试 Pi Assistant 的各项功能。\n\n## Progress\n- 已演示流式回复、文件、审批、后台任务等。\n\n## Next Steps\n- 继续按用户要求操作。");
 	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !/^(后台|定时)任务「/.test(textOf(m)));
 	const u = lastUser ? textOf(lastUser) : "";
+	// 群聊（rooms）：按群消息里的提示脚本化地扮演管理者 / 成员
+	if (u.startsWith("（群聊「")) return roomReply(u, systemPrompt, last);
+	// 提议建群：用户说“组个团队/建个群…”
+	if (/组个团队|建个群/.test(u)) {
+		if (last.role === "toolResult") return fauxAssistantMessage("我按你的目标设计了一个小团队，看看卡片，改好了点“确认创建”。");
+		return fauxAssistantMessage([
+			fauxToolCall("propose_room", {
+				name: "新品发布小组",
+				purpose: "目标：完成新品发布的文案和海报。管理者拆分任务，成员各自交付。",
+				manager: 0,
+				members: [
+					{ name: "统筹", role: "拆分任务、汇总", persona: "你负责统筹。", model: "mock/echo-think", modelReason: "需要推理" },
+					{ name: "文案", role: "写发布文案", persona: "你负责写文案。", model: "mock/echo", modelReason: "简单任务用便宜的" },
+				],
+			}),
+		]);
+	}
 	// 主动性：巡检时看“用户最近说过的话”，有就提醒一件；用户说“晚点再看”就约跟进
 	if (/这是(一次主动巡检|你约好的跟进|每日简报)/.test(u)) {
 		if (last.role === "toolResult") return fauxAssistantMessage(`巡检完成：${textOf(last)}`);
@@ -233,4 +250,35 @@ export async function registerMockProvider(models: PiModels) {
 		],
 	});
 	await models.setRuntimeApiKey(MOCK_PROVIDER, "mock");
+}
+
+/** 群聊里的 Mock 行为（e2e 用）：管理者“派给X”就分配，“循环”时每次总结都再派一次；成员完成后回报 */
+function roomReply(u: string, systemPrompt: string, last: Msg) {
+	const me = systemPrompt.match(/- ([^\n（]+)(?:（管理者）)?（你）/)?.[1] ?? "我";
+	const users = [...u.matchAll(/【用户】([^\n]*)/g)].map((m) => m[1]);
+	const said = users[users.length - 1] ?? "";
+	const target = said.match(/派给([^\s，,。]+)/)?.[1];
+	if (last.role === "toolResult") {
+		const out = textOf(last);
+		if (last.toolName === "room_assign") return fauxAssistantMessage(`${me}：已安排 ${target ?? ""}。`);
+		if (last.toolName === "room_propose_member") return fauxAssistantMessage(`${me}：我提议加一个成员，请确认。`);
+		return fauxAssistantMessage(/blocked|拒绝|denied|批准|停止/i.test(out) ? `${me}：没有获得批准，不执行。` : `${me}：已处理（${out.slice(0, 40)}）`);
+	}
+	if (/给你分配了任务/.test(u)) {
+		const task = u.match(/给你分配了任务：([^\n]*)/)?.[1] ?? "";
+		if (/慢慢/.test(task + said)) return fauxAssistantMessage([fauxText(`${me}：开始做，比较慢。`), fauxToolCall("bash", { command: "sleep 20; echo done" })]);
+		return fauxAssistantMessage(`${me} 完成了：${task.slice(0, 40)}${/提醒C|@C/.test(said) ? "。建议 @C 也看看" : ""}`);
+	}
+	if (/成员都已回复/.test(u)) {
+		if (/循环/.test(said) && target) return fauxAssistantMessage([fauxToolCall("room_assign", { assignments: [{ agent: target, task: "再做一遍" }] })]);
+		return fauxAssistantMessage(`${me} 总结：大家都完成了。`);
+	}
+	if (/由你（管理者）负责/.test(u)) {
+		if (/加个成员/.test(said)) return fauxAssistantMessage([fauxToolCall("room_propose_member", { member: { name: "设计", role: "做海报", persona: "你负责设计。" }, reason: "缺设计" })]);
+		if (target) return fauxAssistantMessage([fauxText(`${me}：这件事交给 ${target}。`), fauxToolCall("room_assign", { assignments: [{ agent: target, task: said.slice(0, 60) }] })]);
+		return fauxAssistantMessage(`${me}（管理者）收到：${said.slice(0, 40)}`);
+	}
+	if (/审批/.test(said)) return fauxAssistantMessage([fauxToolCall("bash", { command: "rm -f old-notes.txt && echo 已删除 old-notes.txt" })]);
+	if (/慢慢/.test(said)) return fauxAssistantMessage([fauxText(`${me}：开始做，比较慢。`), fauxToolCall("bash", { command: "sleep 20; echo done" })]);
+	return fauxAssistantMessage(`${me} 回复：${said.slice(0, 40)}`);
 }

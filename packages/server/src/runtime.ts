@@ -48,6 +48,7 @@ import {
 	makeBashTool,
 	promptSession,
 	sessionFileOf,
+	sessionStats,
 	subscribeSession,
 } from "./pi-adapter/index.ts";
 import { notify } from "./push.ts";
@@ -121,6 +122,20 @@ const SYSTEM_RULES = (name: string, workspace: string, persona: string) => [
 	"用户要求“每天/每周/定时/到点”做某事时，用 routine_create 创建定时任务（会请用户批准）。技能：只有用户要求或同意后才用 skill_save 新建（系统会在合适的时候替你问用户，不要自己反复提议）；新建前先 skill_search 查重，相似就更新那个技能。用户纠正了你照着某个技能的做法时，按新做法更新该技能（用户会看到改动并审批）。",
 	...(persona.trim() ? [`人设与偏好：\n${persona.trim()}`] : []),
 ];
+
+/** 群聊挂钩（rooms.ts 注册，避免循环依赖）：对话是不是某个群里的成员对话、群的规则与工具 */
+export interface RoomHooks {
+	/** 成员的群内对话 → 系统提示里的群规则 + 会话缓存键；不是群对话返回 null */
+	info(agentId: string, conversationId: string): { key: string; rules: string[] } | null;
+	/** 群相关工具：群里（管理者派活/提议加人），普通对话里（propose_room） */
+	extensions(agentId: string, conversationId: string | null, taskId: string | null): { name: string; factory: never }[];
+	/** 这个助理是否有群聊回合在进行（启动恢复时不在主对话里续跑） */
+	busyInRoom(agentId: string): boolean;
+}
+let roomHooks: RoomHooks | null = null;
+export function setRoomHooks(h: RoomHooks) {
+	roomHooks = h;
+}
 
 /** 把一个 Pi 会话的事件落盘并广播。 */
 function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void) {
@@ -288,6 +303,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			}),
 		},
 	];
+	if (roomHooks) exts.push(...(roomHooks.extensions(agentId, conversationId, taskId) as never[]));
 	/** 请用户接管：截图进聊天 + 推送到手机，等用户点“已完成” */
 	const handoff = async (reason: string, png: Buffer, where: string) => {
 		const dir = join(workspace, ".screens");
@@ -459,7 +475,8 @@ class AgentRuntime {
 		const desk = ds?.state === "running" ? "on" : ds?.available ? "off" : "none";
 		const thinking = this.thinkingFor(a);
 		// 模型 / 思考强度不在 key 里：用 session.setModel / setThinkingLevel 原地切换，不重建会话
-		const key = `${a.name}|${a.persona}|desk:${desk}|pc:${computerFor(this.id)}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}`;
+		const room = roomHooks?.info(this.id, this.conversationId) ?? null;
+		const key = `${a.name}|${a.persona}|room:${room?.key ?? "-"}|desk:${desk}|pc:${computerFor(this.id)}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}`;
 		if (this.session && this.modelKey === key) {
 			if (!isSessionBusy(this.session)) await applyModelSettings(this.session, models, model, thinking).catch((e) => console.warn(`[model] ${e instanceof Error ? e.message : e}`));
 			return this.session;
@@ -477,15 +494,17 @@ class AgentRuntime {
 				sessionFile: getConversation(this.conversationId)?.session_file ?? undefined,
 				model,
 				thinking,
-				systemPromptAppend: SYSTEM_RULES(a.name, workspace, a.persona),
+				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona), ...(room?.rules ?? [])],
 				extensions: await extensionsFor(this.id, this.conversationId, null, { allowSpawn: true }),
 				skillPaths: skillPaths(),
 				...integrationsFor(this.id, this.conversationId),
 			});
 			const file = sessionFileOf(session);
 			if (file && file !== getConversation(this.conversationId)?.session_file) setConversationSession(this.conversationId, file);
-			this.unsub = bindSession(session, this.id, this.conversationId, null, () => {
-				if (!isSessionBusy(session)) settleAgent(this.id);
+			this.unsub = bindSession(session, this.id, this.conversationId, null, (aborted) => {
+				if (isSessionBusy(session)) return;
+				settleAgent(this.id);
+				for (const w of [...this.waiters]) w(aborted);
 			});
 			this.session = session;
 			this.modelKey = key;
@@ -509,6 +528,41 @@ class AgentRuntime {
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `出错了：${e instanceof Error ? e.message : String(e)}`, status: "error" });
 			if (!isSessionBusy(s)) settleAgent(this.id);
 		});
+	}
+
+	private waiters = new Set<(aborted: boolean) => void>();
+	/**
+	 * 群聊回合：发一条（模型可见的）消息，等这一轮彻底结束。
+	 * 返回是否被中止、出错信息、本轮最后的回复文字、用掉的 token。
+	 */
+	async turn(text: string): Promise<{ ok: boolean; aborted: boolean; error?: string; text: string; tokens: number }> {
+		const s = await this.ensure();
+		if (!s) {
+			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: "还没有可用的模型。请先在「设置 → 模型」里登录一个模型服务并选择默认模型。", meta: { action: "open-models" } });
+			return { ok: false, aborted: false, error: "没有可用的模型", text: "", tokens: 0 };
+		}
+		const before = sessionStats(s).session?.tokens.total ?? 0;
+		const startedAt = Date.now();
+		setAgentStatus(this.id, "running");
+		let abortedFlag = false;
+		const w = (a: boolean) => void (abortedFlag = abortedFlag || a);
+		this.waiters.add(w);
+		const done = new Promise<void>((resolve) => {
+			const v = () => (this.waiters.delete(v), resolve());
+			this.waiters.add(v);
+		});
+		let thrown: string | undefined;
+		await promptSession(s, text).catch((e: unknown) => {
+			thrown = e instanceof Error ? e.message : String(e);
+		});
+		// prompt 正常返回时这一轮已结束；仍在跑（排在后面）就等 settled
+		if (isSessionBusy(s)) await done;
+		this.waiters.clear();
+		const aborted = abortedFlag;
+		if (!isSessionBusy(s)) settleAgent(this.id);
+		const err = db.prepare("SELECT meta FROM messages WHERE conversation_id = ? AND role = 'assistant' AND status = 'error' AND created_at >= ? ORDER BY rowid DESC LIMIT 1").get(this.conversationId, startedAt) as { meta: string } | undefined;
+		const error = thrown ?? (err ? String(JSON.parse(err.meta).error ?? "模型请求失败") : undefined);
+		return { ok: !error && !aborted, aborted, error, text: lastAssistantText(s), tokens: Math.max(0, (sessionStats(s).session?.tokens.total ?? 0) - before) };
 	}
 
 	async abort() {
@@ -742,7 +796,7 @@ export async function bootstrap() {
 	db.prepare("UPDATE messages SET status = 'interrupted' WHERE status IN ('streaming', 'running')").run();
 	// 主会话：上次运行中被中断 → 自动续跑
 	for (const a of listAgents()) {
-		if (a.status === "running") {
+		if (a.status === "running" && !roomHooks?.busyInRoom(a.id)) {
 			insertMessage({ agentId: a.id, conversationId: currentConversation(a.id), role: "system", content: `服务已重启，正在继续上次未完成的工作…${expired ? `（${expired} 个待处理请求已过期，必要时会重新询问）` : ""}` });
 			await runtime(a.id).send("（系统通知）服务刚刚重启，上一轮工作可能被中断。请检查进度并继续完成我最后的请求；如果已经完成，简短告诉我即可。");
 		}

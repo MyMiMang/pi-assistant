@@ -111,6 +111,16 @@ CREATE TABLE IF NOT EXISTS pi_packages (
 CREATE TABLE IF NOT EXISTS skill_suggestions (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, kind TEXT NOT NULL, skill TEXT,
   topic TEXT NOT NULL, status TEXT NOT NULL, request_id TEXT, created_at INTEGER NOT NULL, resolved_at INTEGER);
+CREATE TABLE IF NOT EXISTS rooms (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT '', manager_id TEXT, caps TEXT NOT NULL DEFAULT '{}',
+  unread INTEGER NOT NULL DEFAULT 0, paused TEXT, sort INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS room_members (
+  room_id TEXT NOT NULL, agent_id TEXT NOT NULL, conversation_id TEXT, cursor INTEGER, name TEXT NOT NULL, avatar TEXT NOT NULL, color TEXT NOT NULL,
+  sort INTEGER NOT NULL DEFAULT 0, joined_at INTEGER NOT NULL, left_at INTEGER, deleted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (room_id, agent_id));
+CREATE TABLE IF NOT EXISTS room_turns (
+  id TEXT PRIMARY KEY, room_id TEXT NOT NULL, round_id TEXT NOT NULL, agent_id TEXT NOT NULL, reason TEXT NOT NULL, task TEXT, depth INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL, error TEXT, tokens INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER);
+CREATE INDEX IF NOT EXISTS room_turns_r ON room_turns(room_id, created_at);
 `);
 
 export function getSetting<T>(key: string, fallback: T): T {
@@ -143,11 +153,16 @@ for (const [table, col, ddl] of [
 	["tasks", "kind", "TEXT"],
 	["conversations", "hidden", "INTEGER NOT NULL DEFAULT 0"],
 	["channel_peers", "is_group", "INTEGER NOT NULL DEFAULT 0"],
+	["messages", "room_id", "TEXT"],
+	["requests", "room_id", "TEXT"],
+	["agents", "scope", "TEXT NOT NULL DEFAULT 'user'"],
+	["agents", "room_id", "TEXT"],
 ] as const) {
 	const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
 	if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
 }
 db.exec("CREATE INDEX IF NOT EXISTS messages_conv ON messages(conversation_id, created_at)");
+db.exec("CREATE INDEX IF NOT EXISTS messages_room ON messages(room_id)");
 
 // 旧库：每个助理把已有消息归到一个“默认对话”（沿用原来的 Pi 会话文件）
 for (const a of db.prepare("SELECT id, session_file, created_at FROM agents WHERE conversation_id IS NULL").all() as { id: string; session_file: string | null; created_at: number }[]) {

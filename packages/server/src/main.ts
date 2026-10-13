@@ -24,6 +24,8 @@ await initModels();
 startHttp();
 startSetupWatcher(Number(process.env.PIA_SETUP_CHECK_MS) || 60_000);
 console.log(`[pi-assistant] 服务已启动：http://${config.host}:${config.port}${config.headless ? "  [服务器模式]" : ""}  数据目录：${config.dataDir}  serverId=${identity().serverId}${config.mock ? "  [Mock 模型已启用]" : ""}`);
+const { bootstrapRooms } = await import("./rooms/index.ts");
+bootstrapRooms();
 await bootstrap();
 startScheduler();
 startProactive();

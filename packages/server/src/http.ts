@@ -58,6 +58,9 @@ import { actOnItem, cancelFollowup, defaultLevel, type ItemRow, type Level, list
 import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { hostAgentsChanged, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 import { downloadInfo, listDownloads, startDownload } from "./downloads.ts";
+import { availableModels, confirmMemberProposal, confirmProposal, continueRoom, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, onAgentChanged, onAgentDeleted, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "./rooms/index.ts";
+import { copyAgentToUser } from "./rooms/copy.ts";
+import { getMessage, updateMessage as patchMessage } from "./messages.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
@@ -250,7 +253,7 @@ app.put("/api/models/default", async (c) => {
 
 // ---------------------------------------------------------------- 助理与聊天
 const agentJson = (a: NonNullable<ReturnType<typeof getAgent>>) => {
-	const last = db.prepare("SELECT content, role, created_at FROM messages WHERE agent_id = ? AND task_id IS NULL AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1").get(a.id);
+	const last = db.prepare("SELECT content, role, created_at FROM messages WHERE agent_id = ? AND task_id IS NULL AND room_id IS NULL AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1").get(a.id);
 	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), thinking: runtime(a.id).thinkingFor(a), thinkingSetting: a.thinking, workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
 };
 app.get("/api/agents", (c) => c.json(listAgents().map(agentJson)));
@@ -290,17 +293,21 @@ app.patch("/api/agents/:id", async (c) => {
 		if (b.thinking !== null && !THINKING.includes(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
 		db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(b.thinking, a.id);
 	}
+	onAgentChanged(a.id);
 	bus.emit({ type: "agents.changed" });
 	return c.json(agentJson(getAgent(a.id)!));
 });
-app.delete("/api/agents/:id", async (c) => {
-	const a = getAgent(c.req.param("id"));
-	if (!a) return c.json({ error: "not_found" }, 404);
+async function deleteAgentFully(id: string) {
+	const a = getAgent(id);
+	if (!a) return false;
 	await disposeRuntime(a.id);
 	await forgetAgentComputer(a.id).catch(() => {});
 	deleteAgentRoutines(a.id);
 	await memory.purgeAgent(a.id);
-	for (const t of ["messages", "tasks", "requests", "files", "conversations"]) db.prepare(`DELETE FROM ${t} WHERE agent_id = ?`).run(a.id);
+	onAgentDeleted(a.id);
+	// 群里的消息保留（标“已删除”），其余一并删除
+	db.prepare("DELETE FROM messages WHERE agent_id = ? AND room_id IS NULL").run(a.id);
+	for (const t of ["tasks", "requests", "files", "conversations"]) db.prepare(`DELETE FROM ${t} WHERE agent_id = ?`).run(a.id);
 	db.prepare("DELETE FROM agents WHERE id = ?").run(a.id);
 	void hostAgentsChanged();
 	// 工作区与会话移到回收站（不直接删除，误删可找回）
@@ -309,8 +316,9 @@ app.delete("/api/agents/:id", async (c) => {
 	for (const [src, dst] of [[join(config.workspaceRoot, a.id), "workspace"], [join(config.agentsDir, a.id), "agent"]] as const) if (existsSync(src)) renameSync(src, join(trash, dst));
 	rmSync(join(config.dataDir, "avatars", a.id), { force: true, recursive: true });
 	bus.emit({ type: "agents.changed" });
-	return c.json({ ok: true });
-});
+	return true;
+}
+app.delete("/api/agents/:id", async (c) => ((await deleteAgentFully(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not_found" }, 404)));
 app.post("/api/agents/:id/avatar", async (c) => {
 	const a = getAgent(c.req.param("id"));
 	if (!a) return c.json({ error: "not_found" }, 404);
@@ -353,6 +361,118 @@ app.post("/api/agents/:id/abort", async (c) => {
 	const conv = c.req.query("conversation");
 	await runtime(c.req.param("id"), conv || undefined).abort();
 	return c.json({ ok: true });
+});
+
+// ---------------------------------------------------------------- 群聊
+const roomErr = (c: Context, e: unknown) => c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+app.get("/api/rooms", (c) => c.json(listRooms()));
+app.post("/api/rooms", async (c) => {
+	const b = await c.req.json<{ name?: string; purpose?: string; memberIds?: string[]; managerId?: string }>();
+	try {
+		return c.json(roomJson(createRoom({ name: b.name, purpose: b.purpose, memberIds: b.memberIds ?? [], managerId: b.managerId })));
+	} catch (e) {
+		return roomErr(c, e);
+	}
+});
+app.get("/api/rooms/:rid", (c) => {
+	const r = getRoom(c.req.param("rid"));
+	return r ? c.json(roomJson(r)) : c.json({ error: "not_found" }, 404);
+});
+app.patch("/api/rooms/:rid", async (c) => {
+	try {
+		return c.json(roomJson(updateRoom(c.req.param("rid"), await c.req.json())));
+	} catch (e) {
+		return roomErr(c, e);
+	}
+});
+app.delete("/api/rooms/:rid", async (c) => {
+	const b = await c.req.json<{ keepAgents?: string[] }>().catch(() => ({}) as { keepAgents?: string[] });
+	const r = await deleteRoom(c.req.param("rid"), { keepAgents: b.keepAgents });
+	if (!r) return c.json({ error: "not_found" }, 404);
+	// 没有保留的群专属助理：和普通删除助理一样清理
+	for (const id of r.deletedAgents) await deleteAgentFully(id).catch(() => {});
+	return c.json({ ok: true, deletedAgents: r.deletedAgents });
+});
+app.get("/api/rooms/:rid/messages", (c) => {
+	const before = c.req.query("before");
+	return c.json(listRoomMessages(c.req.param("rid"), { before: before ? Number(before) : undefined, limit: Number(c.req.query("limit") ?? 200) }));
+});
+app.post("/api/rooms/:rid/messages", async (c) => {
+	const b = await c.req.json<{ text: string; mentions?: string[] }>();
+	try {
+		return c.json(postUserMessage(c.req.param("rid"), String(b.text ?? ""), { mentions: Array.isArray(b.mentions) ? b.mentions.map(String) : [], from: by(c) }));
+	} catch (e) {
+		return roomErr(c, e);
+	}
+});
+app.post("/api/rooms/:rid/stop", async (c) => c.json({ ok: await stopRoom(c.req.param("rid")) }));
+app.post("/api/rooms/:rid/continue", (c) => {
+	try {
+		return c.json({ ok: continueRoom(c.req.param("rid")) });
+	} catch (e) {
+		return roomErr(c, e);
+	}
+});
+app.post("/api/rooms/:rid/read", (c) => (markRoomRead(c.req.param("rid")), c.json({ ok: true })));
+/** 一键创建内置管理者（群里没有合适的助理当管理者时） */
+app.post("/api/rooms/builtin-manager", async (c) => {
+	const b = await c.req.json<{ roomId?: string }>().catch(() => ({}) as { roomId?: string });
+	const id = createRoomAgent(b.roomId ?? null, {
+		name: "管家",
+		avatar: "🧭",
+		color: "#0f766e",
+		role: "群管理者：理解需求、分配任务、汇总结果",
+		persona: "你是群聊的管理者。先弄清用户真正想要什么，再把工作拆给最合适的成员，自己只做协调和简单的事。分配时写清楚每个人要交付什么。成员做完后，给用户一个简短、可执行的总结。",
+		model: null,
+	});
+	if (!b.roomId) db.prepare("UPDATE agents SET scope = 'user' WHERE id = ?").run(id);
+	const { safeTier } = await import("./rooms/permissions.ts");
+	safeTier(id);
+	if (b.roomId && getRoom(b.roomId)) updateRoom(b.roomId, { memberIds: [...membersOf(b.roomId).map((m) => m.agent_id), id], managerId: id });
+	bus.emit({ type: "agents.changed" });
+	return c.json(agentJson(getAgent(id)!));
+});
+/** 提议卡片（propose_room / room_propose_member）：用户在卡片上改完点确认才创建 */
+app.post("/api/proposals/:mid/confirm", async (c) => {
+	const m = getMessage(c.req.param("mid"));
+	if (!m || m.role !== "card" || !["room-proposal", "member-proposal"].includes(String(m.meta.kind))) return c.json({ error: "not_found" }, 404);
+	if (m.meta.status !== "pending") return c.json({ error: "这张卡片已经处理过了" }, 409);
+	const b = await c.req.json<{ proposal?: unknown; member?: unknown }>().catch(() => ({}) as { proposal?: unknown; member?: unknown });
+	try {
+		if (m.meta.kind === "room-proposal") {
+			const p = normalizeProposal((b.proposal ?? m.meta.proposal) as never);
+			const room = await confirmProposal(p);
+			patchMessage(m.id, { meta: { status: "confirmed", proposal: p, roomId: room.id } });
+			return c.json({ ok: true, room: roomJson(getRoom(room.id)!) });
+		}
+		const roomId = String(m.meta.roomId);
+		const [mem] = normalizeProposal({ members: [(b.member ?? m.meta.member) as never] }).members;
+		const id = await confirmMemberProposal(roomId, mem);
+		patchMessage(m.id, { meta: { status: "confirmed", member: mem, agentId: id } });
+		return c.json({ ok: true, agentId: id });
+	} catch (e) {
+		return roomErr(c, e);
+	}
+});
+app.post("/api/proposals/:mid/dismiss", (c) => {
+	const m = getMessage(c.req.param("mid"));
+	if (!m || m.role !== "card") return c.json({ error: "not_found" }, 404);
+	if (m.meta.status === "pending") patchMessage(m.id, { meta: { status: "dismissed" } });
+	return c.json({ ok: true });
+});
+app.get("/api/proposals/models", (c) => {
+	const names = providerNames();
+	return c.json(availableModels().map((m) => withProviderName(m, names)));
+});
+/** 群专属助理 →「复制到我的助理」 */
+app.post("/api/agents/:id/copy", async (c) => {
+	const b = await c.req.json<{ name?: string; memory?: boolean }>().catch(() => ({}) as { name?: string; memory?: boolean });
+	try {
+		const r = await copyAgentToUser(c.req.param("id"), b);
+		return c.json({ ...agentJson(getAgent(r.id)!), copiedMemories: r.memories });
+	} catch (e) {
+		return roomErr(c, e);
+	}
 });
 
 // ---------------------------------------------------------------- 对话
