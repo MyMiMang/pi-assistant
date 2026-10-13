@@ -12,9 +12,9 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { BrowserContext, Frame, Locator, Page } from "playwright-core";
-import { RISK_FN, SNAPSHOT_FN, type RiskInfo, type SnapshotResult } from "./snapshot.ts";
+import { IMAGE_INFO_FN, RISK_FN, SNAPSHOT_FN, type RiskInfo, type SnapshotResult } from "./snapshot.ts";
 
-export const BROWSER_TOOLS = ["browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_select", "browser_scroll", "browser_press", "browser_tabs", "browser_download", "browser_upload", "browser_handoff", "browser_context"] as const;
+export const BROWSER_TOOLS = ["browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_select", "browser_scroll", "browser_press", "browser_tabs", "browser_download", "browser_save_image", "browser_upload", "browser_handoff", "browser_context"] as const;
 /** 审批卡片里显示的地址（data: 等超长地址截短） */
 const shortUrl = (u: string) => (u.length > 160 ? `${u.slice(0, 160)}…` : u);
 export const isBrowserTool = (name: string) => (BROWSER_TOOLS as readonly string[]).includes(name);
@@ -114,6 +114,39 @@ export async function snapshot(page: Page, opts: { maxItems?: number; withScreen
 	return { text: `${head}\n${body || "（页面上没有可识别的内容）"}`, png };
 }
 
+/**
+ * 点击：先正常点（Playwright 的可操作性检查）；超时/被遮挡时依次退到
+ * 滚动到可见处再点 → 强制点击（跳过遮挡检查）→ 按坐标点击 → 直接触发元素的 click()。
+ * 返回实际用的方式（正常点击返回空串）。
+ */
+export async function robustClick(p: Page, loc: Locator, double = false): Promise<string> {
+	const first = async (o: { timeout: number; force?: boolean }) => (double ? loc.dblclick(o) : loc.click(o));
+	let why = "";
+	try {
+		await first({ timeout: 5000 });
+		return "";
+	} catch (e) {
+		why = e instanceof Error ? (e.message.match(/intercepts pointer events|not visible|not stable|outside of the viewport|detached|Timeout \d+ms exceeded/)?.[0] ?? e.message.split("\n")[0]) : String(e);
+		if (/detached/.test(why) || !(await loc.count().catch(() => 0))) throw new Error(`元素已不在页面上（${why}），请重新 browser_snapshot`);
+	}
+	await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+	try {
+		await first({ timeout: 3000, force: true });
+		return `正常点击失败（${why}），已滚动到可见处并强制点击`;
+	} catch {
+		/* 下一种 */
+	}
+	const box = await loc.boundingBox({ timeout: 2000 }).catch(() => null);
+	if (box && box.width > 0 && box.height > 0) {
+		await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { clickCount: double ? 2 : 1 });
+		return `正常点击失败（${why}），已按坐标点击元素中心`;
+	}
+	await loc.evaluate((el) => (el as HTMLElement).click(), undefined, { timeout: 3000 });
+	return `正常点击失败（${why}），已直接触发元素的点击事件`;
+}
+
+const EXT: Record<string, string> = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "image/bmp": ".bmp", "image/avif": ".avif" };
+
 function insideWorkspace(ws: string, p: string) {
 	const abs = isAbsolute(p) ? p : resolve(ws, p);
 	const rel = relative(ws, abs);
@@ -172,7 +205,7 @@ export function browserExtension(host: BrowserHost) {
 		tool({
 			name: "browser_navigate",
 			label: "打开网页",
-			description: "在助理的浏览器里打开网址（或 back / forward / reload）。返回页面大纲（带编号）。登录状态长期保留。",
+			description: "在助理自己的浏览器里打开网址（或 back / forward / reload）。返回页面大纲（带编号）。登录状态长期保留。注意：这是助理的浏览器，不是用户电脑上的浏览器——用户说“用我电脑的浏览器”时要用 mcp__hostpc__ 用户电脑工具。",
 			parameters: Type.Object({ url: Type.String({ description: "完整网址，或 back / forward / reload" }) }),
 			async run({ url }) {
 				const p = await page();
@@ -206,10 +239,9 @@ export function browserExtension(host: BrowserHost) {
 				const loc = locate(p, String(ref));
 				const r = await riskOf(loc);
 				if (r.risky) await gate(r.label, `在网页「${(await p.title().catch(() => "")) || p.url()}」点击「${r.text || ref}」（${r.label}）`, { url: shortUrl(p.url()), 按钮: r.text, ...(r.form ? { 表单: r.form } : {}) });
-				if (double) await loc.dblclick({ timeout: 10_000 });
-				else await loc.click({ timeout: 10_000 });
+				const how = await robustClick(p, loc, !!double);
 				await p.waitForTimeout(300);
-				return withSnap(await page(), `已点击 ${ref}。`);
+				return withSnap(await page(), `已点击 ${ref}。${how ? `（${how}）` : ""}`);
 			},
 		});
 		tool({
@@ -326,6 +358,61 @@ export function browserExtension(host: BrowserHost) {
 				const fail = await d.failure();
 				if (fail) throw new Error(`下载失败：${fail}`);
 				return text(`已下载到工作区：${relative(host.workspace, target)}`);
+			},
+		});
+		tool({
+			name: "browser_save_image",
+			label: "保存图片",
+			description:
+				"把当前网页上的图片保存到工作区 images/ 目录（用浏览器自己的登录状态和来源页下载，不会被防盗链挡住）。ref 是 browser_snapshot 里的 img（或包着图片的链接）编号；也可以直接给图片 url。full=true（默认）时尽量取原图（如必应图片结果里的原图地址），取不到就存缩略图，再不行就截取该元素。保存后用 look_at_image 确认内容，再 deliver_file 发给用户。",
+			parameters: Type.Object({ ref: Type.Optional(Type.String()), url: Type.Optional(Type.String()), full: Type.Optional(Type.Boolean()), name: Type.Optional(Type.String({ description: "文件名（不含扩展名）" })) }),
+			async run({ ref, url, full, name }) {
+				const p = await page();
+				const dir = join(host.workspace, "images");
+				mkdirSync(dir, { recursive: true });
+				const loc = ref ? locate(p, String(ref)) : null;
+				const info = loc ? await loc.evaluate(IMAGE_INFO_FN).catch(() => null) : null;
+				const cands = [...new Set([url ? String(url) : "", full !== false ? (info?.full ?? "") : "", info?.src ?? ""].filter((u) => u && !u.startsWith("blob:")))];
+				const fs = await import("node:fs");
+				const base = (String(name ?? "") || `image-${Date.now().toString(36)}`).replace(/[\\/:*?"<>|.]/g, "_").slice(0, 80);
+				const unique = (ext: string) => {
+					let t = join(dir, `${base}${ext}`);
+					for (let i = 1; fs.existsSync(t); i++) t = join(dir, `${base}-${i}${ext}`);
+					return t;
+				};
+				const errs: string[] = [];
+				for (const u of cands) {
+					try {
+						let buf: Buffer;
+						let type: string;
+						if (u.startsWith("data:")) {
+							const m = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(u);
+							if (!m) throw new Error("data 地址格式不对");
+							type = m[1];
+							buf = m[2] ? Buffer.from(m[3], "base64") : Buffer.from(decodeURIComponent(m[3]));
+						} else {
+							const r = await p.context().request.get(new URL(u, p.url()).href, { headers: { Referer: p.url() }, timeout: 30_000, maxRedirects: 5 });
+							if (!r.ok()) throw new Error(`HTTP ${r.status()}`);
+							type = (r.headers()["content-type"] ?? "").split(";")[0].trim();
+							buf = await r.body();
+						}
+						if (!type.startsWith("image/")) throw new Error(`不是图片（${type || "未知类型"}）`);
+						if (buf.length < 200) throw new Error("文件太小，可能是占位图");
+						const target = unique(EXT[type] ?? ".img");
+						fs.writeFileSync(target, buf);
+						const kind = u === info?.full && u !== info?.src ? "原图" : u === info?.src ? "页面上的图片（可能是缩略图）" : "图片";
+						return text(`已保存${kind}到工作区：${relative(host.workspace, target)}（${Math.round(buf.length / 1024)} KB${info?.alt ? `，alt="${info.alt.slice(0, 80)}"` : ""}）\n来源：${shortUrl(u)}\n发给用户前先用 look_at_image 确认内容。`);
+					} catch (e) {
+						errs.push(`${shortUrl(u)}：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+					}
+				}
+				if (loc) {
+					const target = unique(".png");
+					await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+					await loc.screenshot({ path: target, timeout: 10_000 });
+					return text(`下载图片失败${errs.length ? `（${errs.join("；")}）` : ""}，已截取该元素保存到工作区：${relative(host.workspace, target)}\n发给用户前先用 look_at_image 确认内容。`);
+				}
+				throw new Error(errs.length ? `保存失败：${errs.join("；")}` : "需要 ref 或 url");
 			},
 		});
 		tool({

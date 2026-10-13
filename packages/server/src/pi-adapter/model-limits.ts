@@ -90,14 +90,26 @@ const baseId = (n: string) => n.replace(/(-(\d{4}(-\d{2}){0,2}|\d{6,8}|latest|pr
 /** 模型厂商自己的服务优先（同一模型在不同托管商的上限不一样，以官方为准） */
 const OFFICIAL = ["deepseek", "zai", "zhipu", "moonshotai", "moonshot", "kimi-coding", "alibaba", "qwen", "minimax", "openai", "anthropic", "google", "xai", "mistral"];
 
-type Builtin = { id: string; provider?: string; contextWindow?: number; maxTokens?: number };
+type Builtin = { id: string; provider?: string; contextWindow?: number; maxTokens?: number; vision?: boolean };
 /** 模型参数库条目（同 Builtin，maxTokens 为 0 表示未知） */
 export type DbEntry = Builtin;
 /** models.dev 精简数据 → 条目列表 */
-export function indexModelDb(providers: Record<string, Record<string, [number, number]>>): DbEntry[] {
+export function indexModelDb(providers: Record<string, Record<string, number[]>>): DbEntry[] {
 	const out: DbEntry[] = [];
-	for (const [provider, ms] of Object.entries(providers)) for (const [id, [c, o]] of Object.entries(ms)) out.push({ provider, id, contextWindow: c, maxTokens: o || undefined });
+	for (const [provider, ms] of Object.entries(providers)) for (const [id, [c, o, v]] of Object.entries(ms)) out.push({ provider, id, contextWindow: c, maxTokens: o || undefined, ...(v ? { vision: true } : {}) });
 	return out;
+}
+
+/** 按模型名查是否支持识图（models.dev 的 modalities.input）：同一模型任一托管商标了图片就算；查不到返回 undefined */
+export function knownVision(id: string, db: DbEntry[]): boolean | undefined {
+	const n = normId(id);
+	let hits = db.filter((m) => normId(m.id) === n);
+	if (!hits.length) hits = db.filter((m) => baseId(normId(m.id)) === baseId(n));
+	if (!hits.length) return undefined;
+	// 官方服务的标记优先；没有官方数据时按多数托管商（个别托管商标错不算）
+	const off = hits.filter((m) => m.provider && OFFICIAL.includes(m.provider));
+	const base = off.length ? off : hits;
+	return base.filter((m) => m.vision).length * 2 > base.length;
 }
 /** 从 Base URL 猜服务商（api.deepseek.com → deepseek，open.bigmodel.cn → zhipuai…），用于“同服务商优先” */
 export function providerHint(baseUrl?: string): string[] {

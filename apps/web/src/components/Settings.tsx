@@ -19,6 +19,7 @@ import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from ".
 import { Badge, Button, cx, fmtTime, Help, Input, Modal } from "./ui";
 import { Downloads } from "./Downloads";
 import { AppUpdate } from "./AppUpdate";
+import { VisionModelPicker } from "./VisionModel";
 
 const TABS = [
 	["models", "模型", Monitor],
@@ -127,6 +128,10 @@ function ModelsTab() {
 				<H>默认模型</H>
 				<div className="-mt-2 mb-3 truncate text-sm text-mut">{system?.defaultModel ? `当前：${modelLabel(system.defaultModel)}` : "还没有设置默认模型"}</div>
 				<DefaultModelPicker key={providers.filter((p) => p.configured).length + providers.length * 100} />
+			</section>
+			<section>
+				<H desc="助理的模型不能看图时（例如 DeepSeek），由识图模型替它看图：读图片、确认搜到的图是不是你要的。">识图模型</H>
+				<VisionModelPicker key={providers.filter((p) => p.configured).length} />
 			</section>
 			<section>
 				<H desc="列表来自 Pi 的模型服务目录，升级 Pi 后新的服务会自动出现。也可以添加任意中转站、第三方或本地模型服务。凭据加密保存在本机。">模型服务</H>

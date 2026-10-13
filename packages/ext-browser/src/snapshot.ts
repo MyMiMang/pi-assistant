@@ -19,3 +19,4 @@ const SRC = readFileSync(new URL("./page-scripts.js", import.meta.url), "utf8");
 /** frame.evaluate 用的函数（Playwright 按函数源码注入页面；字符串形式不会被调用，所以用 new Function 构造） */
 export const SNAPSHOT_FN = new Function("arg", `${SRC}; return pageSnapshot(arg);`) as (arg: { prefix: string; maxItems: number }) => SnapshotResult;
 export const RISK_FN = new Function("el", `${SRC}; return elementRisk(el);`) as (el: Element) => RiskInfo;
+export const IMAGE_INFO_FN = new Function("el", `${SRC}; return imageInfo(el);`) as (el: Element) => { src: string; full: string; w: number; h: number; alt: string };

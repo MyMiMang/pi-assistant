@@ -239,6 +239,24 @@ app.post("/api/models/test", async (c) => {
 	const b = await c.req.json<{ provider: string; model: string }>();
 	return c.json(await models.test(b.provider, b.model));
 });
+// 识图模型：当前模型不能看图时替它看图（null = 自动）
+app.get("/api/models/vision", async (c) => {
+	const { pickVisionModel, supportsVision } = await import("./vision.ts");
+	const names = providerNames();
+	const configured = new Set(models.listProviders().filter((p) => p.configured).map((p) => p.id));
+	const candidates = models.listModels().filter((m) => configured.has(m.provider) && supportsVision(m)).map((m) => ({ provider: m.provider, id: m.id, name: m.name, providerName: names.get(m.provider) ?? m.provider }));
+	const setting = getSetting<{ provider: string; id: string } | null>("visionModel", null);
+	const pick = pickVisionModel();
+	return c.json({ setting, current: pick.model ? withProviderName(pick.model, names) : null, source: pick.source, candidates });
+});
+app.put("/api/models/vision", async (c) => {
+	const b = await c.req.json<{ provider?: string; id?: string } | null>();
+	if (b?.provider && b.id) {
+		if (!models.getModel(b.provider, b.id)) return c.json({ error: "模型不存在" }, 400);
+		setSetting("visionModel", { provider: b.provider, id: b.id });
+	} else setSetting("visionModel", null);
+	return c.json({ ok: true });
+});
 app.get("/api/models/defaults", (c) => c.json({ model: defaultModel(), thinking: defaultThinking() }));
 app.put("/api/models/default", async (c) => {
 	const b = await c.req.json<{ provider?: string; model?: string; thinking?: string }>();

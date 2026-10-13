@@ -202,7 +202,7 @@ export class PiModels {
 		const ts = Date.now();
 		const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 		const messages = req.messages.map((m) => {
-			if (m.role === "user") return { role: "user", content: m.text, timestamp: ts };
+			if (m.role === "user") return { role: "user", content: m.images?.length ? [{ type: "text", text: m.text }, ...m.images.map((i) => ({ type: "image", data: i.data, mimeType: i.mimeType }))] : m.text, timestamp: ts };
 			if (m.role === "assistant")
 				return {
 					role: "assistant",
@@ -242,7 +242,7 @@ export class PiModels {
 }
 
 export type ChatMessage =
-	| { role: "user"; text: string }
+	| { role: "user"; text: string; images?: { data: string; mimeType: string }[] }
 	| { role: "assistant"; text: string; toolCalls?: { id: string; name: string; arguments: Record<string, unknown> }[] }
 	| { role: "tool"; toolCallId: string; name: string; text: string; isError?: boolean };
 export interface ChatRequest {

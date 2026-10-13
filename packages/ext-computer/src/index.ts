@@ -219,11 +219,11 @@ export function computerExtension(host: ComputerHost) {
 			toolExposure: Object.fromEntries([...HIDDEN_TOOLS, ...(host_ && browserOn ? [] : CUA_BROWSER_TOOLS), ...(policy() === "observe" ? INPUT_TOOLS : [])].map((t) => [t, "hidden" as const])),
 			description: host_
 				? policy() === "observe"
-					? "用户自己的电脑（只看：可以截图、读取窗口内容，不能点击或输入）"
+					? "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；只看：可以截图、读取窗口内容，不能点击或输入）"
 					: policy() === "all"
-					? "用户自己的电脑（只能操作用户允许的应用，每个动作都要用户批准）"
-					: "用户自己的电脑（用户授予了完全权限；发送/付款/删除类动作可能需要用户批准）"
-				: "助理自己的 Linux 桌面电脑（浏览器、微信等应用）",
+					? "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；只能操作用户允许的应用，每个动作都要用户批准）"
+					: "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；用户授予了完全权限；发送/付款/删除类动作可能需要用户批准）"
+				: "助理自己的 Linux 桌面电脑（浏览器、微信等应用）——不是用户的电脑",
 			timeout: 60_000,
 		});
 		if (host.history) {

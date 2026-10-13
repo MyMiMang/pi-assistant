@@ -33,7 +33,7 @@ function pageSnapshot(arg) {
 		}
 		if ((el).isContentEditable) return "textbox";
 		if (/^h[1-6]$/.test(tag)) return "heading";
-		if (tag === "img" && el.getAttribute("alt")) return "img";
+		if (tag === "img" && (el.getAttribute("alt") || ((el).width >= 60 && (el).height >= 60))) return "img";
 		if (tag === "canvas" && (el).width >= 100) return "canvas";
 		return null;
 	};
@@ -58,7 +58,7 @@ function pageSnapshot(arg) {
 		}
 		if (tag === "textarea") return clean((el).placeholder || el.getAttribute("title") || el.getAttribute("name"));
 		if (tag === "img") return clean(el.getAttribute("alt"));
-		return clean(h.innerText || el.textContent || el.getAttribute("title") || "");
+		return clean(h.innerText || el.textContent || el.getAttribute("title") || el.querySelector?.("img[alt]")?.getAttribute("alt") || "");
 	};
 	const walk = (root, depth) => {
 		for (const el of Array.from(root.children)) {
@@ -79,7 +79,7 @@ function pageSnapshot(arg) {
 				}
 				const name = nameOf(el);
 				let line = `${"  ".repeat(Math.min(depth, 6))}- ${role}${name ? ` "${name}"` : ""}`;
-				if (interactive.has(role) || role === "canvas") {
+				if (interactive.has(role) || role === "canvas" || role === "img") {
 					const ref = `${prefix}e${++n}`;
 					el.setAttribute("data-pia-ref", ref);
 					line += ` [ref=${ref}]`;
@@ -105,7 +105,19 @@ function pageSnapshot(arg) {
 				d = depth + 1;
 				// 链接、按钮内部的文本已经在名字里了
 				if (role !== "heading" && role !== "textbox" && tag !== "select") {
-					if (["link", "button", "option", "tab", "menuitem"].includes(role)) continue;
+					if (["link", "button", "option", "tab", "menuitem"].includes(role)) {
+						// 图片搜索结果这类“链接里包着图片”：把里面的图片也列出来（带编号，可用 browser_save_image 保存）
+						if (role === "link" || role === "button") {
+							for (const im of Array.from(el.querySelectorAll("img")).slice(0, 3)) {
+								if (roleOf(im) !== "img" || !visible(im) || n >= maxItems) continue;
+								const r2 = `${prefix}e${++n}`;
+								im.setAttribute("data-pia-ref", r2);
+								const alt = clean(im.getAttribute("alt"));
+								lines.push(`${"  ".repeat(Math.min(depth + 1, 6))}- img${alt ? ` "${alt}"` : ""} [ref=${r2}]`);
+							}
+						}
+						continue;
+					}
 				}
 				if (role === "heading" || tag === "select" || tag === "textarea") continue;
 			} else {
@@ -139,4 +151,42 @@ function elementRisk(el) {
 	if (isSubmit) return { risky: true, label: "提交表单", text, form: form?.getAttribute("action") ?? undefined };
 	if (SEND.test(text) && ["button", "a", "input", "div", "span"].includes(tag)) return { risky: true, label: "发送 / 提交", text };
 	return { risky: false, label: "", text };
+}
+
+// 图片地址（缩略图 + 尽量找到的原图），供 browser_save_image 使用
+function imageInfo(el) {
+	const img = (el.tagName === "IMG" ? el : el.querySelector("img"));
+	const src = img ? img.currentSrc || img.src || img.getAttribute("data-src") || "" : "";
+	let full = "";
+	// 必应图片：<a class="iusc" m='{"murl":...}'>；谷歌/百度等常见的 data-* 原图字段
+	for (let n = el; n && !full; n = n.parentElement) {
+		const m = n.getAttribute("m");
+		if (m) {
+			try {
+				full = JSON.parse(m).murl ?? "";
+			} catch {
+				/* 不是 JSON */
+			}
+		}
+		full ||= n.getAttribute("data-objurl") || n.getAttribute("data-original") || n.getAttribute("data-full") || n.getAttribute("data-large") || "";
+		if (!full && n.tagName === "A") {
+			const href = n.href;
+			const u = (() => {
+				try {
+					return new URL(href);
+				} catch {
+					return null;
+				}
+			})();
+			const q = u?.searchParams.get("imgurl") || u?.searchParams.get("mediaurl") || u?.searchParams.get("objurl");
+			if (q) full = q;
+			else if (/\.(jpe?g|png|webp|gif)(\?|$)/i.test(href)) full = href;
+		}
+		if (n.tagName === "BODY") break;
+	}
+	if (!full && img?.srcset) {
+		const best = img.srcset.split(",").map((s) => s.trim().split(/\s+/)).sort((a, b) => parseFloat(b[1] ?? "0") - parseFloat(a[1] ?? "0"))[0];
+		if (best?.[0]) full = new URL(best[0], location.href).href;
+	}
+	return { src, full, w: img?.naturalWidth ?? 0, h: img?.naturalHeight ?? 0, alt: img?.alt ?? "" };
 }

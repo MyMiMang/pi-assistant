@@ -12,19 +12,23 @@ import { type DbEntry, indexModelDb } from "./pi-adapter/model-limits.ts";
 const URL_ = "https://models.dev/api.json";
 const WEEK = 7 * 24 * 3600_000;
 const SNAPSHOT = join(import.meta.dirname, "..", "model-db.json");
-const cacheFile = () => join(config.dataDir, "model-db.json");
+const cacheFile = () => join(config.dataDir, "model-db.v2.json") // v2：多了识图标记;
 
-type Trimmed = { generatedAt?: string; providers: Record<string, Record<string, [number, number]>> };
+/** [上下文, 最大输出, 识图(1)?] */
+type Trimmed = { generatedAt?: string; providers: Record<string, Record<string, [number, number] | [number, number, number]>> };
 
 /** models.dev 原始数据 → 精简格式（与 scripts/gen-model-db.mjs 相同） */
-export function trimModelsDev(j: Record<string, { models?: Record<string, { id?: string; limit?: { context?: number; output?: number } }> }>): Trimmed {
+export function trimModelsDev(j: Record<string, { models?: Record<string, { id?: string; limit?: { context?: number; output?: number }; modalities?: { input?: string[] } }> }>): Trimmed {
 	const providers: Trimmed["providers"] = {};
 	for (const [pid, p] of Object.entries(j)) {
-		const ms: Record<string, [number, number]> = {};
+		const ms: Record<string, [number, number] | [number, number, number]> = {};
 		for (const [mid, m] of Object.entries(p?.models ?? {})) {
 			const c = m?.limit?.context;
 			const o = m?.limit?.output;
-			if (typeof c === "number" && c > 0) ms[m.id ?? mid] = [c, typeof o === "number" && o > 0 ? o : 0];
+			if (typeof c === "number" && c > 0) {
+				const out = typeof o === "number" && o > 0 ? o : 0;
+				ms[m.id ?? mid] = m?.modalities?.input?.includes("image") ? [c, out, 1] : [c, out];
+			}
 		}
 		if (Object.keys(ms).length) providers[pid] = ms;
 	}

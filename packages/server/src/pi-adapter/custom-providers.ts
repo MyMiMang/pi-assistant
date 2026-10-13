@@ -11,7 +11,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getApiProviders } from "@earendil-works/pi-ai/compat";
 import type { PiModels } from "./index.ts";
 import { modelDb } from "../model-db.ts";
-import { detectLimits, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
+import { detectLimits, knownVision, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
 
 export interface CustomModel {
 	id: string;
@@ -22,6 +22,8 @@ export interface CustomModel {
 	maxTokens?: number;
 	/** 上下文 / 输出长度从哪来：自动识别 / 已知模型 / 默认 / 用户填写（只存在我们的元数据里，不写进 Pi 的 models.json） */
 	limitsSource?: LimitsSource;
+	/** input 是按 models.dev 自动判断的（是否识图）；用户没填过 input 时每次按最新数据重算（只存在元数据里） */
+	inputAuto?: boolean;
 }
 export interface FetchedModel {
 	id: string;
@@ -225,7 +227,14 @@ export class CustomProviders {
 		// Pi 内置目录 + models.dev 模型参数库；排除自定义服务自己（否则会拿自己存过的旧值当“已知模型”）
 		const own = new Set(this.store.loadMeta().map((x) => x.id));
 		const l = resolveLimits(m, detected, [...this.models.listModels().filter((x) => !own.has(x.provider)), ...modelDb()], providerHint(baseUrl));
-		return { ...m, contextWindow: l.contextWindow, maxTokens: l.maxTokens, limitsSource: l.source };
+		const out: CustomModel = { ...m, contextWindow: l.contextWindow, maxTokens: l.maxTokens, limitsSource: l.source };
+		// 是否识图：用户没指定 input 时按 models.dev 判断（支持图片的模型 Pi 才会把图片发过去）
+		if (!m.input || m.inputAuto) {
+			const v = knownVision(m.id, modelDb());
+			if (v) Object.assign(out, { input: ["text", "image"], inputAuto: true });
+			else (delete out.input, delete out.inputAuto);
+		}
+		return out;
 	}
 
 	/** 请求被拒后学到的真实上限（自动学习）：写回并重载，之后的请求按它发；手动填过的不动 */
@@ -250,9 +259,9 @@ export class CustomProviders {
 		let n = 0;
 		const next = metas.map((meta) => {
 			const models = meta.models.map((x) => {
-				if (x.contextWindow && x.maxTokens && (x.limitsSource === "user" || x.limitsSource === "detected" || x.limitsSource === "learned")) return x;
-				const y = this.withLimits(x, undefined, meta.baseUrl);
-				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource) n++;
+				const keep = x.contextWindow && x.maxTokens && (x.limitsSource === "user" || x.limitsSource === "detected" || x.limitsSource === "learned");
+				const y = keep ? { ...this.withLimits(x, undefined, meta.baseUrl), contextWindow: x.contextWindow, maxTokens: x.maxTokens, limitsSource: x.limitsSource } : this.withLimits(x, undefined, meta.baseUrl);
+				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource || String(y.input) !== String(x.input)) n++;
 				return y;
 			});
 			return { ...meta, models };
@@ -310,6 +319,6 @@ export class CustomProviders {
 
 /** 写进 Pi models.json 的模型条目：去掉我们自己的字段和空值 */
 function piModel(m: CustomModel) {
-	const { limitsSource: _s, ...rest } = m;
+	const { limitsSource: _s, inputAuto: _a, ...rest } = m;
 	return Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== ""));
 }
