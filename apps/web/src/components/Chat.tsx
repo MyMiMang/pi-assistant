@@ -171,7 +171,9 @@ function BotTurn({ row, agent, live }: { row: Extract<Row, { kind: "bot" }> | nu
 	const waitingCard = last?.kind === "msg" && last.m.role === "card" && last.m.meta.status === "pending";
 	return (
 		<div className="pa-msg bot">
-			<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={26} />
+			<div className="pa-av-col">
+				<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={26} />
+			</div>
 			<div className="pa-bot-body">
 				{parts.map((p, i) => (
 					<BotPart key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} />

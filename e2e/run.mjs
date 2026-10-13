@@ -1733,6 +1733,48 @@ await step("群聊：手机宽度 @ 底部面板、整页不横向滚动；4 套
 		await c.close();
 	}
 });
+await step("手机：单聊与群聊消息列左右边距对称（375/390/430），不横向漂移", async () => {
+	// 测“左边距 vs 右边距”：机器人正文、步骤/审批卡片、用户气泡都在 .pa-scroll 内容区里左右对称
+	const measure = (pp) => pp.evaluate(() => {
+		const sc = document.querySelector(".pa-scroll").getBoundingClientRect();
+		const body = document.querySelector(".pa-thread-body").getBoundingClientRect();
+		const bots = [...document.querySelectorAll(".pa-bot-body")].map((e) => e.getBoundingClientRect()).filter((r) => r.width);
+		const left = Math.min(...bots.map((r) => r.left)) - sc.left, right = sc.right - Math.max(...bots.map((r) => r.right));
+		const s = document.querySelector(".pa-scroll");
+		return { left: Math.round(left), right: Math.round(right), bodyL: Math.round(body.left - sc.left), bodyR: Math.round(sc.right - body.right), drift: s.scrollWidth - s.clientWidth, doc: document.documentElement.scrollWidth - innerWidth };
+	});
+	const out = {};
+	for (const w of [375, 390, 430]) {
+		const c = await browser.newContext({ viewport: { width: w, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN" });
+		const pp = await c.newPage();
+		await pp.goto(BASE);
+		await pp.locator(".pa-bot-body").first().waitFor();
+		await pp.waitForTimeout(500);
+		const a = await measure(pp);
+		await pp.screenshot({ path: join(SHOTS, `82-mobile-chat-gutter-${w}.png`) });
+		await pp.goto(`${BASE}/?room=${ROOM}`);
+		await pp.getByTestId("room-chat").waitFor();
+		await pp.locator(".pa-bot-body").first().waitFor();
+		await pp.waitForTimeout(500);
+		const r = await measure(pp);
+		if (!(await pp.locator(".pa-room-inline-av").first().isVisible())) throw new Error("手机群聊名字前应显示小头像");
+		await pp.screenshot({ path: join(SHOTS, `83-mobile-room-gutter-${w}.png`) });
+		await c.close();
+		out[w] = { chat: a, room: r };
+		for (const [k, m] of [["单聊", a], ["群聊", r]]) {
+			if (Math.abs(m.left - m.right) > 2) throw new Error(`${w}px ${k}左右边距不对称：${JSON.stringify(m)}`);
+			if (m.drift > 1 || m.doc > 0) throw new Error(`${w}px ${k}横向溢出：${JSON.stringify(m)}`);
+		}
+	}
+	log("手机边距", JSON.stringify(out));
+	// 桌面不变：仍显示头像列
+	const d = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN" });
+	const dp = await d.newPage();
+	await dp.goto(BASE);
+	await dp.locator(".pa-bot-body").first().waitFor();
+	if (!(await dp.locator(".pa-msg.bot > .pa-av-col").first().isVisible())) throw new Error("桌面应保留头像列");
+	await d.close();
+});
 await step("提议建群：聊天里说目标 → 可编辑的提议卡片（改名/改模型/加删成员/换管理者）→ 确认创建 → 群专属助理不在侧边栏 → 管理者提议加人 → 复制到我的助理 → 删群（保留选项）", async () => {
 	await page.goto(`${BASE}/?agent=${AGENT}`);
 	await page.locator("main textarea").waitFor();

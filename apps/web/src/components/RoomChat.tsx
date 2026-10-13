@@ -195,11 +195,15 @@ function RoomBotTurn({ row, room, agents, live, onAvatar }: { row: Extract<RRow,
 	const waitingCard = last?.kind === "msg" && last.m.role === "card" && last.m.meta.status === "pending";
 	return (
 		<div className="pa-msg bot" data-testid="room-bot" data-agent={who.name}>
-			<button className="shrink-0 self-start" onClick={() => onAvatar(row.agentId)} aria-label={who.name}>
+			<button className="pa-av-col shrink-0 self-start" onClick={() => onAvatar(row.agentId)} aria-label={who.name}>
 				<Avatar agentId={who.deleted ? undefined : who.id} text={who.avatar} color={who.color} size={26} />
 			</button>
 			<div className="pa-bot-body">
 				<div className="pa-room-name" style={{ color: who.color }}>
+					{/* 手机上左侧头像列收起，头像放到名字前面（点开同样看成员详情） */}
+					<button className="pa-room-inline-av" onClick={() => onAvatar(row.agentId)} aria-label={who.name}>
+						<Avatar agentId={who.deleted ? undefined : who.id} text={who.avatar} color={who.color} size={18} />
+					</button>
 					{who.name}
 					{row.agentId === room.managerId && <span className="pa-room-badge">管理者</span>}
 					{who.deleted && <span className="pa-room-badge muted">已删除</span>}

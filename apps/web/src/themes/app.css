@@ -73,7 +73,8 @@ body.pa-resizing .pa-chat, body.pa-resizing .pa-pane { pointer-events: none; }
 @media (max-width: 820px) {
   .pa-scroll { padding: 16px 12px 160px; }
   .pa-composer-wrap { padding: 0 10px calc(10px + env(safe-area-inset-bottom)); }
-  .pa-msg.bot > .pa-av { display: none; }
+  /* 手机：机器人消息不留左侧头像列，左右边距对称（以前规则写的是 .pa-av，但头像组件外层不是这个类，规则没生效，整列右移约 38px） */
+  .pa-msg.bot > .pa-av, .pa-msg.bot > .pa-av-col { display: none; }
 }
 
 /* Button / Avatar 跟随主题 */
@@ -152,3 +153,6 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 .pa-scroll { overflow-x: hidden; overflow-y: auto; overscroll-behavior-x: none; }
 .pa-thread-body, .pa-thread-body > *, .pa-msg { min-width: 0; max-width: 100%; }
 .pa-bubble { min-width: 0; }
+
+.pa-room-inline-av { display: none; }
+@media (max-width: 820px) { .pa-room-inline-av { display: inline-flex; } }
