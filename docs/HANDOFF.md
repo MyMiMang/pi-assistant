@@ -25,6 +25,9 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 | beta.11 | **修 Windows 打开就是「127.0.0.1 拒绝连接」**：托盘程序拿到的安装目录是 `\\?\C:\...` 原样路径，Node 解析入口时报 `EISDIR: lstat 'C:'` 立刻退出（beta.8 起所有 Windows 版本都有，CI 里用真实安装包复现），`main.rs` 的 `plain_path()` 转回普通路径；服务日志落盘（`startup.rs`）；就绪前主窗口显示自带启动页 `apps/tray/ui/startup.html`，失败时显示原因、日志尾部、重试 / 复制诊断信息 / 打开日志文件夹；8787 被占用自动换 8788…8796（记在配置目录 `port.txt`）；新增 `windows-smoke.yml`（静默装到中文 + 空格目录、启动托盘、查 `/api/system/public`），发版改成先草稿、Windows/mac 冒烟通过才公开（见 DESIGN「CI 构建」）；发版演练（release-dryrun 分支，run 38415435058）：5 个构建、mac-smoke、Windows 安装到中文路径后启动托盘都通过，草稿已自动删除；修 Windows 上 cua-driver 种子复制失败（Node `cpSync` 复制目录在 Windows 上报 `EIO, Access is denied`，用户电脑上实测复现，改为逐文件复制到临时目录再改名 + 重试，`config.ts` `copySeed`） |
 | beta.12 | 工作途中插话（Pi steer，下一个工具边界送达，消息显示送达状态）；整条说「停」立即全部停下（含等待中的审批），单聊 / 群聊 / 渠道通用（DESIGN §20）；Mock 模型修正：插话只在打断多步任务时特殊回应，群聊只按最新【用户】发言匹配（修 e2e 里后续群聊步骤被误判成“慢慢数”） |
 
+| 分支 `wip/model-assign-usage`（未合 main） | **组队选模型 + 用量系统**（DESIGN §22）：建群时服务端按角色需求从已配置模型里打分挑选并写理由，卡片下拉按适合程度排序、带价格档；设置 › 模型 › 模型擅长 可改标签；每次模型调用记一行用量（含读写缓存、推理），按当时价格算费用并存价格快照，自定义单价 / 官方价打折，未知价「—」，人民币显示（汇率可改）；设置 › 用量（今天 / 7 天 / 30 天、按模型 / 助理 / 群、每日柱状图、缓存命中率与省下）；每条回复用量、群聊近 30 天费用；明细 90 天后按天汇总。models.dev 快照加推理 / 工具调用 / 价格（约 490 KB） |
+| ↳ 进度 | 代码已写完：单测全过（`npm test` 230 通过，含新 `test/usage.test.ts`），两边 typecheck 通过；e2e 新步骤「组队选模型 + 用量」单独跑（`E2E_ONLY="组队选模型"`）通过，截图 `docs/screenshots/90–94-*.png`。**剩下**：完整 `npm run e2e` 里这一步在「设置 › 用量 填自定义价后费用变 ¥」处超时（前面步骤留下的数据导致，单独跑不复现），修好、整套 e2e 通过后再合 main。改动文件：`packages/server/src/{model-db.ts,model-profile.ts,usage/*,rooms/model-pick.ts,rooms/index.ts,runtime.ts,housekeeping.ts,http.ts,pi-adapter/{index.ts,model-limits.ts,mock-provider.ts}}`、`packages/server/model-db.json`、`scripts/gen-model-db.mjs`、`apps/web/src/components/{Usage.tsx,ModelStrengths.tsx,usage-fmt.ts,RoomCards.tsx,Chat.tsx,RoomChat.tsx,InfoPane.tsx,Settings.tsx}`、`styles.css`、`e2e/run.mjs` |
+| 下一项 | DESIGN §21 后台子代理：只有设计文档，还没写代码 |
 | main（未打包） | **工作途中插话**：助理干活时随时能发消息，在下一个工具边界用 Pi steer 送达（之前是排到整轮做完），消息下显示「已送达正在进行的任务」；整条说「停 / 别做了 / stop」立刻全部停下（含命令、电脑操作、等待中的审批）；1:1、群聊、渠道都适用（DESIGN §20） |
 
 所有功能都有单测和 e2e（Mock 模型）。beta.10 发布前在 main 上全部通过：`npm test`、`npm run e2e`（114 步）、`node e2e/pet.mjs`。
@@ -41,6 +44,8 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 - **桌宠**：Mac 和 Windows 上要确认窗口透明（没有白底或黑底，也没有阴影框）、点击穿透、拖动、记住位置、全屏和切换桌面时还在、孵化效果（§19）。
 - **HEIC 图片**：只有 macOS 能用 `sips` 转换；Windows 和 Linux 上助理只会收到一句说明，需要真机确认 iPhone 照片的体验。
 - **应用更新**：Mac 和 Windows 上从 beta.8 / 9 更新到 beta.10，看进度显示和失败提示。从 beta.7 或更早升级时，旧的更新逻辑可能看起来没反应。
+- **用量与费用**：真实服务返回的读 / 写缓存和推理 token 是否齐全（DeepSeek、百炼、火山、中转站经 Pi 返回的字段各不相同），算出来的费用和各家账单是否对得上；国内模型在 models.dev 里的价格是否齐全。
+- **组队选模型**：真实模型会不会按要求填 `needs`，挑出来的模型是否合理（Mock 只按脚本）。
 - **工作途中插话**：真实模型下的回应是否简短、换方向 / 停下判断是否准（Mock 模型只按脚本回复）；cua 电脑操作被中止时是否立即停（Mock 下只验证了 bash）。
 - **其他**：Cloudflare 命名隧道公网连通、Web Push 真机推送、悬浮条透明（`macOSPrivateApi` / WebView2）。
 
@@ -97,6 +102,7 @@ npm run check:pi         # Pi 升级兼容检查
 - 附件：`files.ts`（上传、群附件 `saveRoomUpload` / `materializeFor`）、`attachments.ts`（图片 / 文档 → 模型输入）、`vision.ts` + `vision-ext.ts`（识图模型兜底、`look_at_image`）；界面 `Attachments.tsx`（`useAttachUploader` / `AttachTray` / `AttachButton`，单聊和群聊共用）。
 - 渠道：`channels/index.ts`（入站、镜像、审批卡片、群聊卡片转发 `forwardRoomCard`）、`channels/media.ts` / `caps.ts`（各渠道能力与原生图片 / 文件）、`thinking.ts`（拆出思考内容）。
 - 图片生成：`image-gen/`（providers / routes / extension），界面 `ImageModels.tsx`。
+- 用量与组队选模型：`usage/`（`prices.ts` 价格解析与费用计算、`index.ts` 记录 / 汇总 / 90 天滚动、`routes.ts` 接口）、`model-profile.ts`（擅长标签与打分，纯函数）、`rooms/model-pick.ts`；界面 `Usage.tsx`、`ModelStrengths.tsx`、`usage-fmt.ts`。改价格格式要同时改 `model-db.ts` 和 `scripts/gen-model-db.mjs`。
 
 ## 8. 真机测试步骤
 
