@@ -131,3 +131,9 @@ npm run check:pi         # Pi 升级兼容检查
 - 2026-10-13：beta.7 反馈修复（DESIGN §16.4）：应用更新重做（进度、错误摘要、Windows 先停服务再装、设置 › 关于与更新、自动检查开关）；操作记录从界面去掉、改为助理工具 `computer_action_history` / `hostpc_action_history`，并给记录、日志、截图、.part、任务会话、容器日志加上限；助理电脑开机不再依赖容器日志时间（Lima 时钟偏差导致的“启动超时”）；窄面板文字收成图标；手机宽表格不再让整页横向晃。未打 tag。
   - 真机待验证：① Mac 上从 beta.7 → 下一个 beta 的托盘 / 设置页更新（注意：beta.7 本身还是旧更新逻辑，**从 beta.7 升级时仍可能“没反应”**，要么等几分钟下载完，要么手动下载 dmg 装一次，之后的版本才是新逻辑）；② Windows 更新（NSIS，服务先停）；③ Mac Lima 首次开机不再误报超时；④ iPhone 竖滑不再横向晃。
   - 本地只能 `cargo check`（Linux），Tauri 远程 IPC 权限（remote-ui.json）是否放行需要在真机主窗口里打开「设置 › 关于与更新」确认能显示“当前版本 vX”。如果显示“读取更新状态失败 … not allowed by ACL”就是 remote-ui.json 没放行；只显示版本 + 升级提示则是 IPC 没注入。
+
+### 助理电脑镜像 0.1.3（修 Apple 芯片 Mac 开机即退出）
+- 现象：Mac（Apple 芯片）点开机报「助理电脑开机后又退出了」，容器 pia-desk-shared 约 150ms 后以 126 退出（日志里的 `_XSERVTransmkdir … euid != 0` 只是无害警告）。
+- 根因：Dockerfile 写了 `ARG TARGETARCH=amd64`，默认值盖掉了 buildx 注入的平台值，0.1.2 的 arm64 镜像里装的是 x86-64 的 cua-driver → `Exec format error`；start.sh 的 `wait -n` 把 126 带成容器退出码。Docker e2e 只跑 amd64 所以没发现。
+- 修复：`ARG TARGETARCH` 不写默认值；构建时执行 `cua-driver --version` 校验；start.sh 开机前自检并给出中文原因；开机退出的错误带退出码含义。
+- 防回归：`scripts/smoke-desktop-nerdctl.sh`（nerdctl-full + 独立 rootful containerd，同 Lima）在 ci.yml（固定 digest）和 desktop-image.yml（新构建）里于 ubuntu-latest + ubuntu-24.04-arm 原生运行器上真实开机。
