@@ -431,7 +431,7 @@ export type AgentEvent =
 			error?: string;
 			provider?: string;
 			model?: string;
-			usage?: { input: number; output: number; cost: number };
+			usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number; cost: number };
 	  }
 	| { type: "tool_start"; id: string; name: string; args: Record<string, unknown> }
 	| { type: "tool_end"; id: string; name: string; isError: boolean; resultText: string }
@@ -463,7 +463,7 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 						error: m.stopReason === "error" ? (m.errorMessage ?? "模型请求失败") : undefined,
 						provider: m.provider,
 						model: m.model,
-						usage: m.usage ? { input: m.usage.input ?? 0, output: m.usage.output ?? 0, cost: m.usage.cost?.total ?? 0 } : undefined,
+						usage: m.usage ? { input: m.usage.input ?? 0, output: m.usage.output ?? 0, cacheRead: m.usage.cacheRead ?? 0, cacheWrite: m.usage.cacheWrite ?? 0, reasoning: m.usage.reasoning ?? 0, cost: m.usage.cost?.total ?? 0 } : undefined,
 					});
 				}
 				break;

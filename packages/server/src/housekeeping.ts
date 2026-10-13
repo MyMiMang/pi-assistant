@@ -4,6 +4,7 @@
  *    超过 20 MB 时把最后 5 MB 存成 `<名字>.old`，原文件就地截断为 0（写日志的进程用追加模式，不需要重开文件）；
  *  - 断点续传留下的 `*.part`：7 天没动过就删；
  *  - 后台任务的会话记录（agents/<id>/tasks/*.jsonl）：60 天没动过就删（任务结果本身在数据库里）；
+ *  - 用量明细：90 天后按天汇总（usage/index.ts rollupUsage）；
  *  - 电脑操作记录：见 action-log.ts（2000 条 / 30 天；截图 50 张 / 7 天 / 100 MB）。
  * 用户的工作区、文件、对话会话不在清理范围。
  */
@@ -12,6 +13,7 @@ import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pruneActions } from "./action-log.ts";
+import { rollupUsage } from "./usage/index.ts";
 import { config } from "./config.ts";
 
 export const LOG_MAX = 20 * 1024 * 1024;
@@ -75,6 +77,9 @@ export function housekeeping(o: { dataDir?: string; extraLogDirs?: string[]; now
 	for (const d of extra) walk(d, 3, (f) => /\.log$/.test(f) && capLog(f) && out.capped.push(f));
 	try {
 		pruneActions();
+	} catch {}
+	try {
+		rollupUsage(); // 用量明细 90 天后并进按天汇总
 	} catch {}
 	if (out.capped.length || out.removed.length) console.log(`[housekeeping] 截断日志 ${out.capped.length} 个，删除过期文件 ${out.removed.length} 个`);
 	return out;

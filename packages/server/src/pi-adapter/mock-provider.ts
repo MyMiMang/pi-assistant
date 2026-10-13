@@ -91,8 +91,8 @@ function respond(messages: Msg[], systemPrompt = "") {
 				purpose: "目标：完成新品发布的文案和海报。管理者拆分任务，成员各自交付。",
 				manager: 0,
 				members: [
-					{ name: "统筹", role: "拆分任务、汇总", persona: "你负责统筹。", model: "mock/echo-think", modelReason: "需要推理" },
-					{ name: "文案", role: "写发布文案", persona: "你负责写文案。", model: "mock/echo", modelReason: "简单任务用便宜的" },
+					{ name: "统筹", role: "拆分任务、汇总", persona: "你负责统筹。", needs: ["reasoning"] },
+					{ name: "文案", role: "写发布文案", persona: "你负责写文案。", needs: ["writing_zh", "cheap"] },
 				],
 			}),
 		]);

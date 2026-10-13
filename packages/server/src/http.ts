@@ -65,6 +65,7 @@ import { copyAgentToUser } from "./rooms/copy.ts";
 import { getMessage, updateMessage as patchMessage } from "./messages.ts";
 import { mountImageRoutes } from "./image-gen/routes.ts";
 import { mountPetRoutes } from "./pet/routes.ts";
+import { mountUsageRoutes } from "./usage/routes.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
@@ -219,6 +220,7 @@ app.post("/api/models/custom/fetch-models", async (c) => {
 // 图片生成模型（image-gen/routes.ts）
 mountImageRoutes(app, localOnly);
 mountPetRoutes(app, localOnly);
+mountUsageRoutes(app);
 app.get("/api/models", (c) => {
 	const names = providerNames();
 	return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => withProviderName(m, names)));
@@ -494,10 +496,6 @@ app.post("/api/proposals/:mid/dismiss", (c) => {
 	if (!m || m.role !== "card") return c.json({ error: "not_found" }, 404);
 	if (m.meta.status === "pending") patchMessage(m.id, { meta: { status: "dismissed" } });
 	return c.json({ ok: true });
-});
-app.get("/api/proposals/models", (c) => {
-	const names = providerNames();
-	return c.json(availableModels().map((m) => withProviderName(m, names)));
 });
 /** 群专属助理 →「复制到我的助理」 */
 app.post("/api/agents/:id/copy", async (c) => {

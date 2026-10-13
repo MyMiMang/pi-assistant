@@ -23,6 +23,8 @@ import { models, defaultModel, defaultThinking } from "../models.ts";
 import { requests } from "../requests.ts";
 import { getAgent, listAgents, runtime, setRoomHooks } from "../runtime.ts";
 import { listSkills } from "../skills.ts";
+import { STRENGTHS, STRENGTH_LABEL, type Strength } from "../model-profile.ts";
+import { cleanNeeds, configuredModels, modelProfiles, pickFor, roleNeeds } from "./model-pick.ts";
 import { buildTranscript, capCheck, normalizeCaps, parseMentions, planAfter, planForUser, type PlannedTurn, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
 
 export interface RoomRow {
@@ -544,9 +546,7 @@ const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], de
 
 /** 可用的模型（只来自用户已配置的服务） */
 export function availableModels() {
-	if (!models) return [];
-	const ok = new Set(models.listProviders().filter((p) => p.configured).map((p) => p.id));
-	return models.listModels().filter((m) => ok.has(m.provider));
+	return configuredModels();
 }
 
 export interface ProposalMember {
@@ -558,6 +558,8 @@ export interface ProposalMember {
 	skills?: string[];
 	model?: { provider: string; id: string } | null;
 	modelReason?: string;
+	/** 这个角色需要的能力（建群时管理者填，服务端据此挑模型） */
+	needs?: Strength[];
 	avatar?: string;
 	color?: string;
 }
@@ -571,21 +573,36 @@ export interface RoomProposal {
 const COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
 
 /** 校验并补全提议（模型只能选已配置的；不认识的换成默认模型并说明） */
-export function normalizeProposal(p: Partial<RoomProposal>): RoomProposal {
+/**
+ * 规范化提议。auto = 助理发起的提议：模型由服务端按角色需求打分挑（忽略助理自己点名的模型）；
+ * 否则（用户在卡片上改过再确认）保留用户选的模型，没配置的退回默认模型。
+ */
+export function normalizeProposal(p: Partial<RoomProposal>, o: { auto?: boolean } = {}): RoomProposal {
 	const avail = availableModels();
 	const skills = new Set(listSkills().map((s) => s.name));
+	const managerIdx = Number.isInteger(p.manager) ? p.manager! : 0;
+	const profiles = o.auto ? modelProfiles() : [];
 	const members = (Array.isArray(p.members) ? p.members : []).slice(0, 12).map((m, i): ProposalMember => {
 		if (m.agentId && getAgent(m.agentId)) return { agentId: m.agentId };
 		const want = m.model && typeof m.model === "object" ? m.model : typeof m.model === "string" ? { provider: String(m.model).split("/")[0], id: String(m.model).split("/").slice(1).join("/") } : null;
 		const okModel = want && avail.some((x) => x.provider === want.provider && x.id === want.id) ? want : null;
 		const def = models ? defaultModel() : null;
+		const needs = cleanNeeds(m.needs);
+		let model = okModel ?? def;
+		let modelReason = okModel ? String(m.modelReason ?? "").slice(0, 200) : want ? `建议的模型 ${want.provider}/${want.id} 没有配置，先用默认模型` : String(m.modelReason ?? "默认模型").slice(0, 200);
+		if (o.auto) {
+			const pick = pickFor(roleNeeds({ needs, role: m.role, persona: m.persona }, i === managerIdx), profiles);
+			model = pick.model;
+			modelReason = pick.reason;
+		}
 		return {
 			name: String(m.name ?? `成员${i + 1}`).trim().slice(0, 40) || `成员${i + 1}`,
 			role: String(m.role ?? "").slice(0, 200),
 			persona: String(m.persona ?? "").slice(0, 8000),
 			skills: (m.skills ?? []).filter((s) => skills.has(s)),
-			model: okModel ?? def,
-			modelReason: okModel ? String(m.modelReason ?? "").slice(0, 200) : want ? `建议的模型 ${want.provider}/${want.id} 没有配置，先用默认模型` : String(m.modelReason ?? "默认模型").slice(0, 200),
+			model,
+			modelReason,
+			...(needs.length ? { needs } : {}),
 			avatar: String(m.avatar ?? "").slice(0, 8) || undefined,
 			color: m.color && /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : COLORS[i % COLORS.length],
 		};
@@ -634,15 +651,13 @@ const memberSchema = Type.Object({
 	name: Type.String({ description: "成员名字（简短，群里用 @名字 叫它）" }),
 	role: Type.String({ description: "在群里负责什么（一句话）" }),
 	persona: Type.String({ description: "这个成员的人设与工作方式（系统提示，几句话）" }),
-	model: Type.Optional(Type.String({ description: "推荐模型 provider/id，只能从可用模型列表里选" })),
-	modelReason: Type.Optional(Type.String({ description: "为什么选这个模型（推理难的用强模型，简单的用便宜的）" })),
+	needs: Type.Optional(Type.Array(Type.Union(STRENGTHS.map((s) => Type.Literal(s))), { description: `这个角色最需要的能力（1~3 个）：${STRENGTHS.map((s) => `${s}=${STRENGTH_LABEL[s]}`).join("，")}。系统会据此从用户配置的模型里挑合适的` })),
 	skills: Type.Optional(Type.Array(Type.String(), { description: "适合用的技能名（只能是技能库里已有的）" })),
 	avatar: Type.Optional(Type.String({ description: "一个 emoji" })),
 });
 
 function modelsHint() {
-	const list = availableModels().slice(0, 40).map((m) => `${m.provider}/${m.id}${m.reasoning ? "（推理）" : ""}`);
-	return list.length ? `可用模型（只能从这里选）：${list.join("，")}` : "没有可用模型时不要填 model。";
+	return availableModels().length ? "每个新成员用 needs 写清这个角色最需要的能力，系统会从用户已配置的模型里按能力和价格挑（不用你点名模型），用户还能在卡片上改。" : "用户还没有配置模型，不用填 needs 以外的模型信息。";
 }
 
 function proposeRoomExt(agentId: string, conversationId: string | null) {
@@ -660,7 +675,7 @@ function proposeRoomExt(agentId: string, conversationId: string | null) {
 			}),
 			async execute(_id: string, p: { name: string; purpose: string; manager: number; members: ProposalMember[]; existingAgents?: string[] }) {
 				const existing = (p.existingAgents ?? []).map((n) => listAgents().find((a) => a.name === n && (a as { scope?: string }).scope !== "room")).filter(Boolean).map((a) => ({ agentId: a!.id }));
-				const proposal = normalizeProposal({ name: p.name, purpose: p.purpose, manager: p.manager, members: [...(p.members ?? []), ...existing] });
+				const proposal = normalizeProposal({ name: p.name, purpose: p.purpose, manager: p.manager, members: [...(p.members ?? []), ...existing] }, { auto: true });
 				if (!proposal.members.length) return text("提议里至少要有一个成员。");
 				insertMessage({ agentId, conversationId: conversationId ?? undefined, role: "card", meta: { kind: "room-proposal", proposal, status: "pending" } });
 				return text("提议卡片已经发给用户。用户可以修改后点“确认创建”，确认前什么都不会创建。告诉用户你的思路，等他确认。");
@@ -715,7 +730,7 @@ function roomTools(roomId: string, agentId: string) {
 				if (!r || r.manager_id !== agentId) return text("只有管理者能提议加成员。");
 				const ex = p.existingAgent ? listAgents().find((a) => a.name === p.existingAgent) : undefined;
 				if (!ex && !p.member) return text("请提供 member 或 existingAgent。");
-				const [m] = normalizeProposal({ members: [ex ? { agentId: ex.id } : p.member!] }).members;
+				const [m] = normalizeProposal({ members: [ex ? { agentId: ex.id } : p.member!], manager: -1 }, { auto: true }).members;
 				const conv = memberRow(roomId, agentId)?.conversation_id;
 				insertMessage({ agentId, conversationId: conv ?? undefined, role: "card", meta: { kind: "member-proposal", roomId, member: m, reason: String(p.reason ?? "").slice(0, 300), status: "pending" } });
 				return text("提议已发给用户，确认后新成员会加入群聊，到时你可以再给它分配任务。");

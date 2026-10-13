@@ -2,6 +2,7 @@
  * Agent 运行时：每个助理一个主会话（Pi AgentSession），后台任务各自一个会话。
  * 所有 Pi 调用都经过 pi-adapter；这里负责把 Pi 事件落盘为消息并广播。
  */
+import { recordUsage } from "./usage/index.ts";
 import { imageExtensions } from "./image-gen/extension.ts";
 import { imageKey } from "./image-gen/index.ts";
 import { join } from "node:path";
@@ -182,11 +183,14 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 				break;
 			case "assistant_end": {
 				if (!cur) break;
+				// 用量：每次调用记一行（按当时价格算费用），摘要放进消息 meta 供悬停查看
+				let usage: ReturnType<typeof recordUsage> | null = null;
 				if (e.usage && e.provider && e.model) {
-					const day = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
-					db.prepare(
-						"INSERT INTO usage(agent_id, day, provider, model, input, output, cost) VALUES(?,?,?,?,?,?,?) ON CONFLICT(agent_id, day, provider, model) DO UPDATE SET input = input + excluded.input, output = output + excluded.output, cost = cost + excluded.cost",
-					).run(agentId, day, e.provider, e.model, e.usage.input, e.usage.output, e.usage.cost);
+					try {
+						usage = recordUsage({ agentId, provider: e.provider, model: e.model, conversationId, messageId: cur.id, ...e.usage });
+					} catch (err) {
+						console.error("[usage] 记录用量失败", err);
+					}
 				}
 				if (e.error) updateMessage(cur.id, { content: e.text, status: "error", meta: { error: e.error } });
 				else {
@@ -195,7 +199,7 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 					const { text, thinking: inline } = splitThinking(e.text);
 					const thinking = [cur.thinking.trim(), inline].filter(Boolean).join("\n\n");
 					if (!text.trim()) deleteMessage(cur.id);
-					else updateMessage(cur.id, { content: text, status: "done", meta: { model: `${e.provider}/${e.model}`, ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}) } });
+					else updateMessage(cur.id, { content: text, status: "done", meta: { model: `${e.provider}/${e.model}`, ...(usage ? { usage } : {}), ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}) } });
 				}
 				cur = null;
 				break;

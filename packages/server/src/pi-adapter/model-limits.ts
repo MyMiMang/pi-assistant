@@ -85,18 +85,22 @@ export const normId = (id: string) =>
 		.replace(/[_\s]+/g, "-")
 		.replace(/-(free|online|beta)$/, "");
 /** 再去掉日期 / 快照后缀（-0731、-2025-01-01、-latest），只用于同一个模型不同快照之间匹配 */
-const baseId = (n: string) => n.replace(/(-(\d{4}(-\d{2}){0,2}|\d{6,8}|latest|preview|v\d+(:\d+)?))+$/, "");
+export const baseId = (n: string) => n.replace(/(-(\d{4}(-\d{2}){0,2}|\d{6,8}|latest|preview|v\d+(:\d+)?))+$/, "");
 
 /** 模型厂商自己的服务优先（同一模型在不同托管商的上限不一样，以官方为准） */
 const OFFICIAL = ["deepseek", "zai", "zhipu", "moonshotai", "moonshot", "kimi-coding", "alibaba", "qwen", "minimax", "openai", "anthropic", "google", "xai", "mistral"];
 
-type Builtin = { id: string; provider?: string; contextWindow?: number; maxTokens?: number; vision?: boolean };
+type Builtin = { id: string; provider?: string; contextWindow?: number; maxTokens?: number; vision?: boolean; reasoning?: boolean; toolCall?: boolean; cost?: (number | null)[] };
 /** 模型参数库条目（同 Builtin，maxTokens 为 0 表示未知） */
 export type DbEntry = Builtin;
 /** models.dev 精简数据 → 条目列表 */
-export function indexModelDb(providers: Record<string, Record<string, number[]>>): DbEntry[] {
+export function indexModelDb(providers: Record<string, Record<string, (number | (number | null)[])[]>>): DbEntry[] {
 	const out: DbEntry[] = [];
-	for (const [provider, ms] of Object.entries(providers)) for (const [id, [c, o, v]] of Object.entries(ms)) out.push({ provider, id, contextWindow: c, maxTokens: o || undefined, ...(v ? { vision: true } : {}) });
+	for (const [provider, ms] of Object.entries(providers))
+		for (const [id, [c, o, f, cost]] of Object.entries(ms)) {
+			const v = typeof f === "number" ? f : 0;
+			out.push({ provider, id, contextWindow: c as number, maxTokens: (o as number) || undefined, ...(v & 1 ? { vision: true } : {}), ...(v & 2 ? { reasoning: true } : {}), ...(v & 4 ? { toolCall: true } : {}), ...(Array.isArray(cost) ? { cost } : {}) });
+		}
 	return out;
 }
 
