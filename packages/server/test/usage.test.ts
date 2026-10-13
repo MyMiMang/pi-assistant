@@ -96,6 +96,32 @@ test("记录用量 → 汇总（今天 / 按模型 / 群）→ 未知价补上�
 	assert.equal(u.rollupUsage(now), 0);
 });
 
+test("补价只重算同服务的未知调用，保留其他服务历史和已有价格快照", async () => {
+	const { db: sql, setSetting } = await import("../src/db.ts");
+	const u = await import("../src/usage/index.ts");
+	sql.exec("SAVEPOINT price_regression");
+	try {
+		setSetting("usagePrices", {});
+		const input = { agentId: "price-test", input: 1000, output: 100, cacheRead: 500, cacheWrite: 0 };
+		u.recordUsage({ ...input, provider: "mock", model: "echo", messageId: "unpriced" });
+		u.recordUsage({ ...input, provider: "deleted-relay", model: "mystery-history", messageId: "deleted-provider" });
+		setSetting("usagePrices", { "mock/*": { mode: "price", currency: "USD", input: 1, output: 2 } });
+		u.recordUsage({ ...input, provider: "mock", model: "echo-think", messageId: "priced" });
+		const snapshot = sql.prepare("SELECT cost, price FROM usage_calls WHERE message_id = 'priced'").get();
+		setSetting("usagePrices", { "mock/*": { mode: "price", currency: "USD", input: 10, output: 20 } });
+		assert.equal(u.recomputeUnknown(), 1);
+		assert.equal(u.recomputeUnknown(), 0);
+		assert.deepEqual(sql.prepare("SELECT cost, price FROM usage_calls WHERE message_id = 'priced'").get(), snapshot);
+		assert.equal((sql.prepare("SELECT cost FROM usage_calls WHERE message_id = 'deleted-provider'").get() as { cost: null }).cost, null);
+		const s = u.usageSummary({ range: "today", agentId: "price-test" });
+		assert.equal(s.totals.calls, 3);
+		assert.equal(s.totals.unknownCalls, 1);
+		assert.ok(s.totals.cost > 0);
+	} finally {
+		sql.exec("ROLLBACK TO price_regression; RELEASE price_regression");
+	}
+});
+
 test("组队选模型：按需求打分、硬条件排除、价格扣分、全不合格退回默认", () => {
 	const mk = (provider: string, id: string, f: object) => buildProfile({ provider, id, ...f });
 	const ps = [

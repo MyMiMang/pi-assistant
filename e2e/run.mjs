@@ -1972,7 +1972,11 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 	await page.getByTestId("usage-cost").waitFor();
 	const before = (await page.getByTestId("usage-cost").textContent()) ?? "";
 	if (!/—/.test(before)) throw new Error(`mock 没有价格应显示 —：${before}`);
-	const row = page.getByTestId("price-row").first();
+	const initial = await (await fetch(`${BASE}/api/usage/summary?range=30d`)).json();
+	const mockUnknown = initial.byModel.filter((r) => r.provider === "mock").reduce((n, r) => n + r.unknownCalls, 0);
+	if (!mockUnknown) throw new Error("应有 Mock 的未知价格调用待补价");
+	// 不依赖配置列表顺序；前序测试可能留下其他服务和已删除服务的历史用量。
+	const row = page.locator('[data-testid=price-row][data-model="mock/echo"]');
 	await row.getByTestId("price-edit").click();
 	await row.getByText("填单价").click();
 	await row.getByTestId("price-input").fill("10");
@@ -1983,7 +1987,12 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 		throw new Error(`填价后费用没更新：${await page.getByTestId("usage-cost").textContent().catch(() => "?")} ${JSON.stringify(await (await fetch(`${BASE}/api/usage/settings`)).json()).slice(0, 400)} ${e}`);
 	});
 	const sum = await (await fetch(`${BASE}/api/usage/summary?range=30d`)).json();
-	if (!(sum.totals.calls > 0) || sum.totals.unknownCalls !== 0 || !(sum.totals.cost > 0)) throw new Error(`汇总：${JSON.stringify(sum.totals)}`);
+	if (sum.totals.calls !== initial.totals.calls || sum.totals.unknownCalls !== initial.totals.unknownCalls - mockUnknown || !(sum.totals.cost > 0)) throw new Error(`汇总：${JSON.stringify(sum.totals)}`);
+	if (sum.byModel.some((r) => r.provider === "mock" && r.unknownCalls !== 0)) throw new Error("Mock 的未知价格应全部重算");
+	for (const r of initial.byModel.filter((r) => r.provider !== "mock")) {
+		const next = sum.byModel.find((m) => m.provider === r.provider && m.model === r.model);
+		if (!next || next.cost !== r.cost || next.unknownCalls !== r.unknownCalls) throw new Error(`给 Mock 补价不应修改其他服务的历史用量：${r.provider}/${r.model}`);
+	}
 	if (!sum.byModel.length || !sum.byAgent.length) throw new Error("分组");
 	await page.getByTestId("usage-by-agent").click();
 	await page.getByTestId("usage-by-model").click();

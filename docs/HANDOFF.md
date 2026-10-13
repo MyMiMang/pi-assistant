@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 最后更新：2026-10-13，当前版本 **v0.1.0-beta.10**（main = 已发布内容）。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
+> 最后更新：2026-10-14，当前版本 **v0.1.0-beta.10**（main = 已发布内容）。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
 ## 1. 这是什么
 
@@ -25,8 +25,8 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 | beta.11 | **修 Windows 打开就是「127.0.0.1 拒绝连接」**：托盘程序拿到的安装目录是 `\\?\C:\...` 原样路径，Node 解析入口时报 `EISDIR: lstat 'C:'` 立刻退出（beta.8 起所有 Windows 版本都有，CI 里用真实安装包复现），`main.rs` 的 `plain_path()` 转回普通路径；服务日志落盘（`startup.rs`）；就绪前主窗口显示自带启动页 `apps/tray/ui/startup.html`，失败时显示原因、日志尾部、重试 / 复制诊断信息 / 打开日志文件夹；8787 被占用自动换 8788…8796（记在配置目录 `port.txt`）；新增 `windows-smoke.yml`（静默装到中文 + 空格目录、启动托盘、查 `/api/system/public`），发版改成先草稿、Windows/mac 冒烟通过才公开（见 DESIGN「CI 构建」）；发版演练（release-dryrun 分支，run 38415435058）：5 个构建、mac-smoke、Windows 安装到中文路径后启动托盘都通过，草稿已自动删除；修 Windows 上 cua-driver 种子复制失败（Node `cpSync` 复制目录在 Windows 上报 `EIO, Access is denied`，用户电脑上实测复现，改为逐文件复制到临时目录再改名 + 重试，`config.ts` `copySeed`） |
 | beta.12 | 工作途中插话（Pi steer，下一个工具边界送达，消息显示送达状态）；整条说「停」立即全部停下（含等待中的审批），单聊 / 群聊 / 渠道通用（DESIGN §20）；Mock 模型修正：插话只在打断多步任务时特殊回应，群聊只按最新【用户】发言匹配（修 e2e 里后续群聊步骤被误判成“慢慢数”） |
 
-| 分支 `wip/model-assign-usage`（未合 main） | **组队选模型 + 用量系统**（DESIGN §22）：建群时服务端按角色需求从已配置模型里打分挑选并写理由，卡片下拉按适合程度排序、带价格档；设置 › 模型 › 模型擅长 可改标签；每次模型调用记一行用量（含读写缓存、推理），按当时价格算费用并存价格快照，自定义单价 / 官方价打折，未知价「—」，人民币显示（汇率可改）；设置 › 用量（今天 / 7 天 / 30 天、按模型 / 助理 / 群、每日柱状图、缓存命中率与省下）；每条回复用量、群聊近 30 天费用；明细 90 天后按天汇总。models.dev 快照加推理 / 工具调用 / 价格（约 490 KB） |
-| ↳ 进度 | 代码已写完：单测全过（`npm test` 230 通过，含新 `test/usage.test.ts`），两边 typecheck 通过；e2e 新步骤「组队选模型 + 用量」单独跑（`E2E_ONLY="组队选模型"`）通过，截图 `docs/screenshots/90–94-*.png`。**剩下**：完整 `npm run e2e` 里这一步在「设置 › 用量 填自定义价后费用变 ¥」处超时（前面步骤留下的数据导致，单独跑不复现），修好、整套 e2e 通过后再合 main。改动文件：`packages/server/src/{model-db.ts,model-profile.ts,usage/*,rooms/model-pick.ts,rooms/index.ts,runtime.ts,housekeeping.ts,http.ts,pi-adapter/{index.ts,model-limits.ts,mock-provider.ts}}`、`packages/server/model-db.json`、`scripts/gen-model-db.mjs`、`apps/web/src/components/{Usage.tsx,ModelStrengths.tsx,usage-fmt.ts,RoomCards.tsx,Chat.tsx,RoomChat.tsx,InfoPane.tsx,Settings.tsx}`、`styles.css`、`e2e/run.mjs` |
+| main（组队选模型 + 用量，未打包） | **组队选模型 + 用量系统**（DESIGN §22）：建群时服务端按角色需求从已配置模型里打分挑选并写理由，卡片下拉按适合程度排序、带价格档；设置 › 模型 › 模型擅长 可改标签；每次模型调用记一行用量（含读写缓存、推理），按当时价格算费用并存价格快照，自定义单价 / 官方价打折，未知价「—」，人民币显示（汇率可改）；设置 › 用量（今天 / 7 天 / 30 天、按模型 / 助理 / 群、每日柱状图、缓存命中率与省下）；每条回复用量、群聊近 30 天费用；明细 90 天后按天汇总。models.dev 快照加推理 / 工具调用 / 价格（约 490 KB） |
+| ↳ 进度 | 2026-10-14 修复 e2e 对历史用量的错误假设：价格行按 `mock/echo` 定位；给 Mock 补价只重算其未知价格，其他服务（包括已删除服务）的历史调用保留。针对性回归「自定义模型服务 + 组队选模型」通过，用量单测 7/7、两边 typecheck 通过。按用户最新要求停止完整 e2e，不再重复全量。已启动的服务端单测最终 225 通过、10 跳过、1 失败：macOS BSD tar 不支持共用电脑合并测试的 `--skip-old-files`（与本次改动无关，未改）。桌宠 17/17、Rendezvous 2/2 通过。真实 Key 验证和 §22.5 缺口仍保留。 |
 | 下一项 | DESIGN §21 后台子代理：只有设计文档，还没写代码 |
 | main（未打包） | **工作途中插话**：助理干活时随时能发消息，在下一个工具边界用 Pi steer 送达（之前是排到整轮做完），消息下显示「已送达正在进行的任务」；整条说「停 / 别做了 / stop」立刻全部停下（含命令、电脑操作、等待中的审批）；1:1、群聊、渠道都适用（DESIGN §20） |
 

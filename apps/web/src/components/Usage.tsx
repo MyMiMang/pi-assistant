@@ -236,7 +236,7 @@ function PriceSettings({ onChanged }: { onChanged: () => void }) {
 					const key = `${m.provider}/${m.id}`;
 					const ov = d.prices[key] ?? d.prices[`${m.provider}/*`];
 					return (
-						<div key={key} className="rounded-lg border border-line p-2" data-testid="price-row">
+						<div key={key} className="rounded-lg border border-line p-2" data-testid="price-row" data-model={key}>
 							<div className="flex min-w-0 items-center gap-2 text-sm">
 								<div className="min-w-0 flex-1">
 									<div className="truncate">{m.name || m.id}</div>
