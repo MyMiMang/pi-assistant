@@ -28,6 +28,7 @@ interface HostInfo {
 	manifest: string;
 	manifestHash: string;
 	permissions: { accessibility: string; screenRecording: string } | null;
+	activity?: { active: boolean; agent: string | null; summary: string | null };
 }
 
 export function useHostControl() {
@@ -38,34 +39,42 @@ export function useHostControl() {
 	return { d, load };
 }
 
-/** 聊天顶部：允许操作这台电脑时的醒目提示 + 一键暂停（电脑和手机都能点） */
+/**
+ * 聊天顶部：只在助理“真的正在操作你的电脑”时出现（开启了操作这台电脑 + 最近几秒有 host 动作）。
+ * 只是思考、只用助理自己的电脑、或没开启时都不显示。小胶囊样式，带一键暂停（电脑和手机都能点）。
+ */
 export function HostControlBar() {
 	const { d, load } = useHostControl();
-	if (!d?.status.enabled) return null;
+	const acts = useStore((s) => s.actionsVersion);
+	const [tick, setTick] = useState(0);
+	useEffect(() => void load(), [acts]);
+	const live = !!d?.status.enabled && !!d.activity?.active;
+	// 正在显示时每 3 秒复查一次，动作结束几秒后自动收起
+	useEffect(() => {
+		if (!live) return;
+		const t = setTimeout(() => (load(), setTick(tick + 1)), 3000);
+		return () => clearTimeout(t);
+	}, [live, tick]);
+	if (!d || !live) return null;
 	const paused = d.status.paused;
 	const toggle = async () => {
 		await api("/api/host-control/pause", { method: "POST", json: { paused: !paused } });
 		void load();
 	};
+	const who = d.activity?.agent ?? "助理";
+	const text = paused ? "已暂停操作你的电脑" : `${who} 正在操作你的电脑${d.activity?.summary ? `：${d.activity.summary}` : ""}`;
 	return (
-		<div className={cx("pa-hostbar", paused && "paused")} data-testid="host-bar">
-			<Hand className="pa-ic" />
-			<span className="min-w-0 flex-1 truncate">
-				{paused ? "已暂停操作你的电脑" : `助理可以操作你的电脑：${barText(d)}`}
-			</span>
-			<button className="pa-btn sm" onClick={toggle} data-testid="host-pause">
-				{paused ? <Play className="pa-ic" /> : <Pause className="pa-ic" />}
-				{paused ? "继续" : "暂停"}
-			</button>
+		<div className="pa-hostbar-wrap">
+			<div className={cx("pa-hostbar", paused && "paused")} data-testid="host-bar" title={text}>
+				<span className="pa-hostbar-dot" />
+				<span className="min-w-0 truncate">{text}</span>
+				<button className="pa-hostbar-btn" onClick={toggle} data-testid="host-pause" aria-label={paused ? "继续" : "暂停"}>
+					{paused ? <Play className="pa-ic" /> : <Pause className="pa-ic" />}
+					{paused ? "继续" : "暂停"}
+				</button>
+			</div>
 		</div>
 	);
-}
-
-function barText(d: HostInfo) {
-	const agents = useStore.getState().agents;
-	const by = new Map<Tier, string[]>();
-	for (const [id, t] of Object.entries(d.status.tiers ?? {})) by.set(t, [...(by.get(t) ?? []), agents.find((a) => a.id === id)?.name ?? id]);
-	return TIER_ORDER.filter((t) => by.has(t)).map((t) => `${TIER_INFO[t].label}（${by.get(t)!.join("、")}）`).join("；") || "没有允许的助理";
 }
 
 const PERM: Record<string, string> = { granted: "已授权", denied: "未授权", unknown: "未知" };

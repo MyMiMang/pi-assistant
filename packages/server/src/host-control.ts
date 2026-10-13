@@ -199,6 +199,13 @@ export function hostStatus() {
 	return { enabled: s.enabled, tiers: Object.fromEntries(allowedAgents(s).map((a) => [a, tierOf(a, s)])), paused, daemon: state, platform: process.platform, installed: cuaInstalled(), version: cuaManifest().version };
 }
 export const hostPaused = () => paused;
+/** “正在操作你的电脑”：最近一次 host 动作还在进行，或结束不到 HOST_ACTIVE_MS。聊天顶部提示、托盘悬浮条共用这个判断 */
+export const HOST_ACTIVE_MS = 8_000;
+export function hostActive(last: { outcome: string; started_at: number; finished_at?: number | null } | null | undefined, now = Date.now()): boolean {
+	if (!last) return false;
+	if (last.outcome === "running") return now - last.started_at < 10 * 60_000; // 卡住的 running 记录不至于永远显示
+	return now - (last.finished_at ?? last.started_at) < HOST_ACTIVE_MS;
+}
 
 export function hostAllowedFor(agentId: string) {
 	const s = hostSettings();

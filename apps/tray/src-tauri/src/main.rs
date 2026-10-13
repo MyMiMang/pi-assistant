@@ -187,7 +187,7 @@ fn ensure_bar(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     Some(w)
 }
 
-/// 每 2 秒看一次：开着“操作这台电脑”且（正在操作 / 已暂停）时显示悬浮条
+/// 每 2 秒看一次：开着“操作这台电脑”且助理正在操作（最近几秒有动作）时才显示悬浮条
 async fn bar_loop(app: AppHandle) {
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -203,7 +203,7 @@ async fn bar_loop(app: AppHandle) {
             let _ = item.set_enabled(enabled);
             let _ = item.set_text(if paused { "继续操作这台电脑" } else { "暂停操作这台电脑" });
         }
-        let show = st.bar_enabled.load(Ordering::SeqCst) && enabled && (active || paused) && !dismissed;
+        let show = st.bar_enabled.load(Ordering::SeqCst) && enabled && active && !dismissed;
         let h = app.clone();
         let _ = app.run_on_main_thread(move || {
             if show {

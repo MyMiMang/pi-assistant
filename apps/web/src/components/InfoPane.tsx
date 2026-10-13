@@ -9,7 +9,7 @@ import { AuthImage } from "./Attachments";
 import { AgentEditor } from "./AgentEditor";
 import { MemoryTab } from "./MemoryTab";
 import { AgentExtensions } from "./AgentExtensions";
-import { AgentHostTier } from "./HostControl";
+import { AgentHostTier, useHostControl } from "./HostControl";
 import { RoutinesTab } from "./RoutinesTab";
 import { ProactiveTab } from "./Proactive";
 import { Avatar, Badge, Button, cx, fmtSize, fmtTime, Input } from "./ui";
@@ -99,7 +99,7 @@ function Overview({ agentId }: { agentId: string }) {
 				</div>
 				<div className="pa-row">
 					<span>控制本机</span>
-					<b className="off">已关闭</b>
+					<HostRowValue />
 				</div>
 			</section>
 			<section>
@@ -215,4 +215,12 @@ function AgentSettings({ agentId }: { agentId: string }) {
 			<AgentHostTier agentId={agentId} />
 		</div>
 	);
+}
+
+/** 「控制本机」：读真实状态（以前写死成“已关闭”，和实际开关对不上） */
+function HostRowValue() {
+	const { d } = useHostControl();
+	if (!d) return <b className="off">—</b>;
+	if (!d.status.enabled) return <b className="off">已关闭</b>;
+	return <b>{d.status.paused ? "已暂停" : d.activity?.active ? "正在操作" : "已开启"}</b>;
 }

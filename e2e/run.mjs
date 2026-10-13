@@ -750,11 +750,48 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 		await f.getByText("已保存：我的中转站").waitFor();
 		// 每个模型显示上下文 / 最大输出和来源：relay-chat 由模型列表接口识别（64K），手动加的 relay-manual 用默认（128K / 8K）
 		await f.locator("[data-testid=custom-model-row][data-model=relay-chat] [data-testid=limits-source]").getByText("自动识别").waitFor();
-		if ((await f.getByLabel("relay-chat 上下文（K）").inputValue()) !== "65.5") throw new Error("relay-chat 上下文没识别出来");
+		const lt = async (id) => (await f.locator(`[data-testid=custom-model-row][data-model="${id}"] [data-testid=limits-text]`).textContent())?.trim();
+		if ((await lt("relay-chat")) !== "64K 上下文 · 8K 输出") throw new Error(`relay-chat 上下文没识别出来：${await lt("relay-chat")}`);
 		await f.locator("[data-testid=custom-model-row][data-model=relay-manual] [data-testid=limits-source]").getByText("自动（默认）").waitFor();
-		if ((await f.getByLabel("relay-manual 上下文（K）").inputValue()) !== "128") throw new Error("默认上下文不是 128K");
+		if (!(await lt("relay-manual"))?.startsWith("128K 上下文")) throw new Error(`默认上下文不是 128K：${await lt("relay-manual")}`);
+		// 点数值展开编辑：预设 + 带单位输入（1m），来源变“手动”；恢复自动后回到默认
+		await f.getByRole("button", { name: "编辑 relay-manual 的上下文和输出长度" }).click();
+		const ed = f.locator("[data-testid=custom-model-row][data-model=relay-manual] [data-testid=custom-model-editor]");
+		await ed.getByTestId("ctx-input").fill("1m");
+		await ed.getByTestId("ctx-input").press("Enter");
+		await ed.getByRole("button", { name: "16K", exact: true }).click();
+		if ((await lt("relay-manual")) !== "1M 上下文 · 16K 输出") throw new Error(`编辑没生效：${await lt("relay-manual")}`);
+		await f.locator("[data-testid=custom-model-row][data-model=relay-manual] [data-testid=limits-source]").getByText("手动").waitFor();
+		await ed.getByText("恢复自动").click();
 		await f.getByRole("button", { name: "测试连接" }).click();
 		await f.getByText(/连接成功：中转站回复/).waitFor();
+		// 很长的模型 ID 在各种宽度下：模型名一定看得见（截断而不是被挤没），整行不溢出
+		const longIds = ["deepseek-ai/DeepSeek-V4.1-Flash-Vision-Experimental-2026-10-01-extra-long-suffix", "accounts/fireworks/models/qwen3p8-2p4t-a95b-instruct-preview"];
+		for (const id of longIds) {
+			await f.getByPlaceholder("手动输入模型 ID，回车添加").fill(id);
+			await f.getByPlaceholder("手动输入模型 ID，回车添加").press("Enter");
+		}
+		for (const w of [1440, 1024, 760, 390]) {
+			await p.setViewportSize({ width: w, height: 900 });
+			await p.waitForTimeout(250);
+			const bad = await f.locator("[data-testid=custom-models]").evaluate((list) => {
+				const lr = list.getBoundingClientRect();
+				const out = [];
+				if (list.scrollWidth > list.clientWidth + 1) out.push("列表横向溢出");
+				for (const row of list.querySelectorAll("[data-testid=custom-model-row]")) {
+					const n = row.querySelector("[data-testid=custom-model-name]").getBoundingClientRect();
+					const l = row.querySelector("[data-testid=custom-model-limits]").getBoundingClientRect();
+					if (n.width < 80 || n.height < 10) out.push(`${row.dataset.model} 名字宽 ${n.width}`);
+					if (n.right > lr.right + 1 || l.right > lr.right + 1) out.push(`${row.dataset.model} 超出`);
+				}
+				return out;
+			});
+			if (bad.length) throw new Error(`宽度 ${w}：${bad.join("；")}`);
+			if (w === 1024) await p.screenshot({ path: join(SHOTS, "17b-custom-models-1024.png") });
+			if (w === 390) await p.screenshot({ path: join(SHOTS, "17c-custom-models-390.png") });
+		}
+		await p.setViewportSize({ width: 1440, height: 900 });
+		for (const id of longIds) await f.getByRole("button", { name: `移除 ${id}` }).click();
 		await p.waitForTimeout(300);
 		await p.screenshot({ path: join(SHOTS, "17-settings-custom-provider.png") });
 		const cfg = readFileSync(join(DATA, "models.json"), "utf8");
@@ -1411,6 +1448,10 @@ await step("界面打磨：输入框旁上下文圆环（悬停简要、点开�
 	await page.screenshot({ path: join(SHOTS, "63-settings-narrow.png") });
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.keyboard.press("Escape");
+	// 聊天顶部“正在操作你的电脑”：没有真实 host 动作时绝不显示（以前只要开启就常驻）
+	const hc = await page.evaluate(() => fetch("/api/host-control").then((r) => r.json()));
+	if (hc.activity?.active) throw new Error("没有 host 动作时 activity.active 应为 false");
+	if (await page.locator("[data-testid=host-bar]").count()) throw new Error("没在操作电脑时聊天顶部不应出现操作提示");
 	// 悬浮条：透明背景 + 关闭按钮（关闭后服务端记住，状态变化前不再弹）
 	await page.evaluate(() => fetch("/api/host-control/pause", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paused: true }) }));
 	const bar = await ctx.newPage();

@@ -221,22 +221,31 @@ export class CustomProviders {
 
 	/** 补上上下文 / 输出长度（缺哪项补哪项；用户填过的不动） */
 	withLimits(m: CustomModel, detected?: { contextWindow?: number; maxTokens?: number }): CustomModel {
-		const l = resolveLimits(m, detected, this.models.listModels());
+		// 只拿 Pi 内置目录比对，排除自定义服务自己（否则会拿自己存过的旧值当“已知模型”）
+		const own = new Set(this.store.loadMeta().map((x) => x.id));
+		const l = resolveLimits(m, detected, this.models.listModels().filter((x) => !own.has(x.provider)));
 		return { ...m, contextWindow: l.contextWindow, maxTokens: l.maxTokens, limitsSource: l.source };
 	}
 
-	/** 旧版本保存的自定义模型没有上下文长度：启动时补齐并写回 models.json（Pi 的上下文用量和自动压缩靠它） */
+	/** 启动时补齐缺失的上下文 / 输出长度，并按最新规则重算“已知 / 默认”的值，有变化才写回 models.json（Pi 的上下文用量和自动压缩靠它） */
 	async backfillLimits() {
 		const metas = this.store.loadMeta();
-		if (!metas.some((m) => m.models.some((x) => !x.contextWindow || !x.maxTokens || !x.limitsSource))) return 0;
-		const cfg = this.readFile();
 		let n = 0;
 		const next = metas.map((meta) => {
-			const models = meta.models.map((x) => (x.contextWindow && x.maxTokens && x.limitsSource ? x : (n++, this.withLimits(x))));
-			const p = cfg.providers?.[meta.id];
-			if (p) (p as { models?: unknown }).models = models.map(piModel);
+			const models = meta.models.map((x) => {
+				if (x.contextWindow && x.maxTokens && (x.limitsSource === "user" || x.limitsSource === "detected")) return x;
+				const y = this.withLimits(x);
+				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource) n++;
+				return y;
+			});
 			return { ...meta, models };
 		});
+		if (!n) return 0;
+		const cfg = this.readFile();
+		for (const meta of next) {
+			const p = cfg.providers?.[meta.id];
+			if (p) (p as { models?: unknown }).models = meta.models.map(piModel);
+		}
 		this.store.saveMeta(next);
 		this.writeFile(cfg);
 		await this.models.reloadConfig();

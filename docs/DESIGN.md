@@ -1123,3 +1123,8 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 **窄处文字**：通用规则——空间不够时文字收起只留图标（悬停 title 看文字），不允许挤成竖排。`Badge` 统一 `whitespace-nowrap shrink-0`（Button 早就是）；助理「电脑」标题行用容器查询：< 200px 状态变圆点、< 260px 隐藏「桌面」字样、< 340px「共用电脑（N 个助理）」只剩图标 + 数字。e2e 在 240/320/420px 下检查标题行不溢出、不竖排，手机页全局检查没有被挤成竖排的文字。
 
 **手机横向晃动**：Markdown 里的表格包在 `.pa-scroll-x`（自己横向滚动），代码块 `pre` 同样；图片 `max-width:100%`，长链接 `overflow-wrap:anywhere`；聊天区 `overflow-x:hidden`，`html/body` 禁止横向溢出，触屏 `touch-action: pan-y pinch-zoom`。e2e 在 390px 下发一条带宽表格 + 长代码 + 长链接的消息，检查整页 scrollWidth = 屏幕宽度、表格容器自己能横滑。
+
+### 16.x 「正在操作你的电脑」提示只在真正操作时出现
+- 以前聊天顶部横幅只看 `status.enabled`：只要开启过“操作这台电脑”就常驻，和助理在不在动电脑无关；信息面板「控制本机」又写死“已关闭”，两边对不上。
+- 现在统一用 `hostActive()`（host-control.ts）：开启 + 最近一次 host 动作进行中或结束不到 `HOST_ACTIVE_MS`（8 秒）。`GET /api/host-control` 返回 `activity`，聊天顶部胶囊、托盘悬浮条（`/api/host-control/bar` 的 `active`，托盘只在 active 时弹出，不再因“已暂停”常驻）、信息面板都用它。
+- 样式：居中悬浮小胶囊（不占布局高度），闪烁点 + 一行文字 + 暂停/继续。

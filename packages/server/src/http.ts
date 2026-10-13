@@ -56,7 +56,7 @@ import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAcco
 import { finishGoogle, googleClient, saveGoogleClient, startGoogle } from "./email-oauth.ts";
 import { actOnItem, cancelFollowup, defaultLevel, type ItemRow, type Level, listItems, proactiveJson, runHeartbeat, saveProactive, setDefaultLevel, unseenCount } from "./proactive.ts";
 import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
-import { hostAgentsChanged, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
+import { hostAgentsChanged, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 import { downloadInfo, listDownloads, startDownload } from "./downloads.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
@@ -942,7 +942,11 @@ const hostManifest = () => (setHostEnv({ workspaceOf, agentIds: () => listAgents
 app.get("/api/host-control", async (c) => {
 	const yaml = hostManifest();
 	const s = hostSettings();
-	return c.json({ settings: s, status: hostStatus(), manifest: yaml, manifestHash: manifestHash(yaml), tiers: Object.fromEntries(listAgents().map((a) => [a.id, tierOf(a.id, s)])), fullConfirm: FULL_CONFIRM, permissions: c.get("caller").local ? await macPermissions() : null });
+	const st = hostStatus();
+	const last = listActions({ target: "host", limit: 1 })[0];
+	const agent = last ? getAgent(last.agent_id) : null;
+	const activity = { active: st.enabled && hostActive(last), agent: agent?.name ?? last?.agent_id ?? null, summary: last ? last.summary || last.tool : null };
+	return c.json({ settings: s, status: st, activity, manifest: yaml, manifestHash: manifestHash(yaml), tiers: Object.fromEntries(listAgents().map((a) => [a.id, tierOf(a.id, s)])), fullConfirm: FULL_CONFIRM, permissions: c.get("caller").local ? await macPermissions() : null });
 });
 app.get("/api/host-control/apps", localOnly, async (c) => c.json(await suggestApps()));
 const RANK: Record<HostTier, number> = { observe: 0, bounded: 1, trusted: 2, full: 3 };
@@ -1017,7 +1021,7 @@ const barKey = (paused: boolean, active: boolean, lastId: unknown) => `${paused 
 app.post("/api/host-control/bar/dismiss", localOnly, (c) => {
 	const st = hostStatus();
 	const last = listActions({ target: "host", limit: 1 })[0];
-	const active = !!last && (last.outcome === "running" || Date.now() - (last.finished_at ?? last.started_at) < 90_000);
+	const active = st.enabled && hostActive(last);
 	barDismissed = barKey(st.paused, active, last?.id);
 	return c.json({ ok: true });
 });
@@ -1035,7 +1039,7 @@ app.get("/api/host-control/bar", localOnly, (c) => {
 	const st = hostStatus();
 	const last = listActions({ target: "host", limit: 1 })[0];
 	const agent = last ? getAgent(last.agent_id) : null;
-	const active = !!last && (last.outcome === "running" || Date.now() - (last.finished_at ?? last.started_at) < 90_000);
+	const active = st.enabled && hostActive(last);
 	const key = barKey(st.paused, active, last?.id);
 	return c.json({ enabled: st.enabled, paused: st.paused, active, dismissed: barDismissed === key, last: last ? { agent: agent?.name ?? last.agent_id, avatar: agent?.avatar ?? "", tool: last.tool, summary: last.summary, outcome: last.outcome, at: last.started_at } : null });
 });

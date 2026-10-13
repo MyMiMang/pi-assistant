@@ -222,3 +222,13 @@ test("审批策略 + 操作记录：sensitive 只问敏感动作、none 不问�
 	assert.match(log[2].detail ?? "", /拒绝/);
 	assert.equal(log[1].approval, "auto");
 });
+
+test("正在操作判断：只看最近的 host 动作（进行中 / 刚结束几秒内），思考或很久前的动作不算", () => {
+	const now = 1_000_000_000;
+	assert.equal(hc.hostActive(undefined, now), false);
+	assert.equal(hc.hostActive({ outcome: "running", started_at: now - 5_000 }, now), true);
+	assert.equal(hc.hostActive({ outcome: "running", started_at: now - 11 * 60_000 }, now), false);
+	assert.equal(hc.hostActive({ outcome: "ok", started_at: now - 3_000, finished_at: now - 2_000 }, now), true);
+	assert.equal(hc.hostActive({ outcome: "ok", started_at: now - 30_000, finished_at: now - 20_000 }, now), false);
+	assert.equal(hc.hostActive({ outcome: "ok", started_at: now - 60_000, finished_at: now - hc.HOST_ACTIVE_MS - 1 }, now), false);
+});
