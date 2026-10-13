@@ -33,7 +33,8 @@ export const dayOf = (ts: number) => new Date(ts).toLocaleDateString("sv-SE", { 
 
 export function resolvePrice(provider: string, id: string) {
 	const m = models?.getModel(provider, id) as { cost?: never } | undefined;
-	return resolvePriceFrom({ provider, id, piCost: m?.cost, overrides: getOverrides(), fx: getFx() });
+	// 本地测试用的 mock 服务不去 models.dev 按名字找（“echo”会撞上别家的同名模型）
+	return resolvePriceFrom({ provider, id, piCost: m?.cost, overrides: getOverrides(), fx: getFx(), ...(provider === "mock" ? { db: [] } : {}) });
 }
 
 export interface RecordInput extends TokenUsage {

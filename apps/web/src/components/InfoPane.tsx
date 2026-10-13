@@ -1,4 +1,5 @@
 import { DesktopView } from "./DesktopView";
+import { fmtMoney, useFx } from "./usage-fmt";
 import { ChevronLeft, Download, File, Folder, HardDrive, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, download } from "../api";
@@ -64,11 +65,11 @@ function Overview({ agentId }: { agentId: string }) {
 	const { agents, tasks, system } = useStore();
 	const agent = agents.find((a) => a.id === agentId)!;
 	const list = tasks[agentId] ?? [];
-	const [usage, setUsage] = useState<{ agent_id: string; input: number; output: number; cost: number }[]>([]);
+	const fx = useFx();
+	const [u, setU] = useState<{ calls: number; input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; unknownCalls: number }>({ calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, unknownCalls: 0 });
 	useEffect(() => {
-		api("/api/usage").then(setUsage).catch(() => {});
+		api<{ totals: typeof u }>(`/api/usage/summary?range=all&agent=${encodeURIComponent(agentId)}`).then((r) => setU(r.totals)).catch(() => {});
 	}, [agentId]);
-	const u = usage.filter((x) => x.agent_id === agentId).reduce((a, b) => ({ input: a.input + b.input, output: a.output + b.output, cost: a.cost + b.cost }), { input: 0, output: 0, cost: 0 });
 	return (
 		<div className="space-y-5 text-sm">
 			<div className="pa-stats !mt-0">
@@ -77,11 +78,11 @@ function Overview({ agentId }: { agentId: string }) {
 					<small>完成任务</small>
 				</div>
 				<div>
-					<b>{fmtK(u.input + u.output)}</b>
+					<b>{fmtK(u.input + u.cacheRead + u.cacheWrite + u.output)}</b>
 					<small>tokens</small>
 				</div>
 				<div>
-					<b>{u.cost ? `$${u.cost.toFixed(2)}` : "—"}</b>
+					<b>{u.calls && u.unknownCalls < u.calls ? fmtMoney(u.cost, fx) : "—"}</b>
 					<small>花费</small>
 				</div>
 			</div>

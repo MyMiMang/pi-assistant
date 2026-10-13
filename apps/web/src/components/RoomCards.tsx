@@ -14,6 +14,7 @@ export interface PMember {
 	skills?: string[];
 	model?: { provider: string; id: string } | null;
 	modelReason?: string;
+	needs?: string[];
 	avatar?: string;
 	color?: string;
 }
@@ -26,6 +27,33 @@ export interface Proposal {
 
 let modelsCache: Promise<(LabeledModel & { reasoning?: boolean })[]> | null = null;
 /** 只列用户已配置的服务里的模型（提议里推荐的模型只能从这里选） */
+interface RankedModel extends LabeledModel {
+	score: number;
+	tier: string;
+	tierLabel: string;
+	reason: string;
+	excluded?: string;
+}
+const rankCache = new Map<string, Promise<RankedModel[]>>();
+/** 按角色需求排好序的可选模型（服务端打分：能力命中、价格、默认模型） */
+function useRankedModels(needs: string[] = [], manager = false) {
+	const key = `${[...needs].sort().join(",")}|${manager ? 1 : 0}`;
+	const [list, setList] = useState<RankedModel[]>([]);
+	useEffect(() => {
+		let p = rankCache.get(key);
+		if (!p) {
+			p = api<RankedModel[]>(`/api/proposals/models?needs=${encodeURIComponent(needs.join(","))}&manager=${manager ? 1 : 0}`).catch(() => (rankCache.delete(key), []));
+			rankCache.set(key, p);
+		}
+		let off = false;
+		void p.then((r) => !off && setList(r));
+		return () => void (off = true);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [key]);
+	return list;
+}
+const NEED_LABEL: Record<string, string> = { coding: "写代码", reasoning: "推理", writing_zh: "中文写作", writing: "写作", vision: "看图", long_context: "长文档", tool_use: "用工具", cheap: "便宜", fast: "快" };
+
 export function useAvailableModels() {
 	const [list, setList] = useState<(LabeledModel & { reasoning?: boolean })[]>([]);
 	useEffect(() => {
@@ -39,7 +67,8 @@ function MemberEditor({ m, models, onChange, onRemove, manager, onManager, locke
 	const agents = useStore((s) => s.agents);
 	const existing = m.agentId ? agents.find((a) => a.id === m.agentId) : null;
 	const [open, setOpen] = useState(false);
-	const cur = m.model ? models.find((x) => x.provider === m.model!.provider && x.id === m.model!.id) : null;
+	const ranked = useRankedModels(m.needs, !!manager);
+	const cur = m.model ? (ranked.find((x) => x.provider === m.model!.provider && x.id === m.model!.id) ?? models.find((x) => x.provider === m.model!.provider && x.id === m.model!.id)) : null;
 	return (
 		<div className="pa-pm" data-testid="proposal-member">
 			<div className="flex min-w-0 items-center gap-2">
@@ -66,13 +95,23 @@ function MemberEditor({ m, models, onChange, onRemove, manager, onManager, locke
 					<div className="mt-1.5 flex min-w-0 items-center gap-1.5">
 						<select className="pa-input !h-8 min-w-0 flex-1 !px-2 text-xs" disabled={locked} value={m.model ? modelKey(m.model) : ""} data-testid="pm-model" onChange={(e) => {
 							const [provider, ...rest] = e.target.value.split("/");
-							onChange({ ...m, model: e.target.value ? { provider, id: rest.join("/") } : null, modelReason: "你选的" });
+							const r = ranked.find((x) => modelKey(x) === e.target.value);
+							onChange({ ...m, model: e.target.value ? { provider, id: rest.join("/") } : null, modelReason: r ? `你选的：${r.reason}` : "你选的" });
 						}}>
 							<option value="">默认模型</option>
-							<ModelOptions models={models} />
+							{ranked.length ? (
+								ranked.map((x, i) => (
+									<option key={modelKey(x)} value={modelKey(x)}>
+										{i === 0 && !x.excluded ? "★ " : ""}{modelLabel(x)} · {x.tierLabel}{x.excluded ? `（${x.excluded}）` : ""}
+									</option>
+								))
+							) : (
+								<ModelOptions models={models} />
+							)}
 						</select>
-						{m.modelReason && <Help>{cur ? `${modelLabel(cur)}：` : ""}{m.modelReason}</Help>}
+						{m.modelReason && <Help>{cur ? `${modelLabel(cur)}：` : ""}{m.modelReason}{m.needs?.length ? `。这个角色需要：${m.needs.map((n) => NEED_LABEL[n] ?? n).join("、")}` : ""}。下拉框按适合程度排序，★ 是推荐。</Help>}
 					</div>
+					{m.modelReason && <div className="mt-1 truncate text-[11px] text-mut2" data-testid="pm-reason" title={m.modelReason}>{m.modelReason}</div>}
 					<button className="mt-1 flex items-center gap-1 text-[11px] text-mut2 hover:text-fg" onClick={() => setOpen(!open)}>
 						<ChevronDown size={12} className={cx("transition-transform", open && "rotate-180")} /> 人设
 					</button>
@@ -160,7 +199,7 @@ export function ProposalCard({ m }: { m: Message }) {
 			{err && <p className="mt-2 text-xs text-red-600">{err}</p>}
 			{pending ? (
 				<div className="pa-actions">
-					<button className="pa-btn ghost" disabled={busy} onClick={dismiss}>不用了</button>
+					<button className="pa-btn ghost" disabled={busy} onClick={dismiss} data-testid="proposal-dismiss">不用了</button>
 					<button className="pa-btn primary" disabled={busy || (isRoom && !p.members.length)} onClick={confirm} data-testid="proposal-confirm">
 						{busy && <Loader2 className="pa-ic animate-spin" />} {isRoom ? "确认创建" : "确认加入"}
 					</button>

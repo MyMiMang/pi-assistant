@@ -312,7 +312,7 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 		return fauxAssistantMessage(`${me} 总结：大家都完成了。`);
 	}
 	if (/由你（管理者）负责/.test(u)) {
-		if (/加个成员/.test(said)) return fauxAssistantMessage([fauxToolCall("room_propose_member", { member: { name: "设计", role: "做海报", persona: "你负责设计。" }, reason: "缺设计" })]);
+		if (/加个成员/.test(said)) return fauxAssistantMessage([fauxToolCall("room_propose_member", { member: { name: "设计", role: "做海报", persona: "你负责设计。", needs: ["vision"] }, reason: "缺设计" })]);
 		const names = [...textOf(lastUserMsg ?? last).matchAll(/([^\s：、（]+) → room-files\//g)].map((x) => x[1]);
 		if (target) return fauxAssistantMessage([fauxText(`${me}：这件事交给 ${target}。`), fauxToolCall("room_assign", { assignments: [{ agent: target, task: said.slice(0, 60), ...(names.length ? { files: names } : {}) }] })]);
 		return fauxAssistantMessage(`${me}（管理者）收到：${said.slice(0, 40)}`);

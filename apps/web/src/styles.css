@@ -53,3 +53,8 @@
 .pa-diff .add { background: color-mix(in srgb, #22c55e 16%, transparent); color: color-mix(in srgb, #15803d 80%, var(--pa-fg, currentColor)); }
 .pa-diff .del { background: color-mix(in srgb, #ef4444 14%, transparent); color: color-mix(in srgb, #b91c1c 80%, var(--pa-fg, currentColor)); }
 .pa-diff .hunk { opacity: 0.55; }
+
+/* 每条回复的用量：悬停显示；触屏常驻（淡） */
+.pa-usage { margin-top: 2px; font-size: 11px; color: var(--color-mut2, #9ca3af); opacity: 0; transition: opacity .15s; font-variant-numeric: tabular-nums; cursor: default; }
+.pa-bot-body:hover .pa-usage, .pa-usage:focus { opacity: 1; }
+@media (hover: none) { .pa-usage { opacity: .7; } }

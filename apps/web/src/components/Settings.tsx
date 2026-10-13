@@ -1,4 +1,4 @@
-import { Brain, Cat, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { BarChart3, Brain, Cat, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { modelLabel } from "./ModelOptions";
 import { useEffect, useState } from "react";
 import { api } from "../api";
@@ -21,9 +21,12 @@ import { Downloads } from "./Downloads";
 import { AppUpdate } from "./AppUpdate";
 import { VisionModelPicker } from "./VisionModel";
 import { PetSettings } from "./PetSettings";
+import { UsageTab } from "./Usage";
+import { ModelStrengths } from "./ModelStrengths";
 
 const TABS = [
 	["models", "模型", Monitor],
+	["usage", "用量", BarChart3],
 	["skills", "技能库", Puzzle],
 	["extensions", "扩展（MCP）", Plug],
 	["memory", "记忆", Brain],
@@ -59,6 +62,7 @@ export default function Settings() {
 				</nav>
 				<div key={settings} data-testid="settings-content" className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-5 [scrollbar-gutter:stable]">
 					{settings === "models" && <ModelsTab />}
+					{settings === "usage" && <UsageTab />}
 					{settings === "skills" && <SkillsTab />}
 					{settings === "extensions" && (
 						<>
@@ -136,6 +140,7 @@ function ModelsTab() {
 				<H desc="助理的模型不能看图时（例如 DeepSeek），由识图模型替它看图：读图片、确认搜到的图是不是你要的。">识图模型</H>
 				<VisionModelPicker key={providers.filter((p) => p.configured).length} />
 			</section>
+			<ModelStrengths key={`s${providers.filter((p) => p.configured).length}`} />
 			<section>
 				<H desc="列表来自 Pi 的模型服务目录，升级 Pi 后新的服务会自动出现。也可以添加任意中转站、第三方或本地模型服务。凭据加密保存在本机。">模型服务</H>
 				{customEdit ? (

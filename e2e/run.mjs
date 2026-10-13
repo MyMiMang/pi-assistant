@@ -70,7 +70,7 @@ const bubbleCount = () => page.locator("main .prose").count();
 // 发送前等输入框可用；发送后确认输入框已清空（真的发出去了）。
 // 页面刚加载时对话历史还在异步载入，那时填进去的字可能被重渲染冲掉——这是以前偶发失败的原因之一。
 const send = async (text) => {
-	const box = page.locator("main textarea");
+	const box = page.locator("main textarea:not(.pa-card textarea)");
 	await box.waitFor();
 	await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
 	for (let i = 0; i < 3; i++) {
@@ -1937,6 +1937,82 @@ await step("提议建群：聊天里说目标 → 可编辑的提议卡片（改
 	if (!agents.some((a) => a.name === "设计" && a.scope === "user")) throw new Error("保留的应转成我的助理");
 	if (!agents.some((a) => /^写手/.test(a.name) && a.scope === "user")) throw new Error("复制出来的助理不受影响");
 	if ((await (await fetch(`${BASE}/api/rooms`)).json()).some((x) => x.name === "发布小组")) throw new Error("群应被删除");
+});
+
+await step("组队选模型 + 用量：提议卡片按角色挑模型并给理由、下拉按适合程度排序 → 每条回复的用量 → 设置 › 用量（价格未知显示 —，填自定义价后重算）→ 模型擅长可改 → 手机宽度", async () => {
+	await page.setViewportSize({ width: 1280, height: 860 });
+	await page.goto(`${BASE}/?agent=${AGENT}`);
+	await page.locator("main textarea:not(.pa-card textarea)").waitFor();
+	await send("帮我组个团队做个活动");
+	const card = page.getByTestId("room-proposal").last();
+	await card.waitFor({ timeout: 30_000 });
+	// 管理者「统筹」需要推理 → 挑 mock 推理模型；理由显示在卡片上
+	const sel0 = await card.getByTestId("pm-model").nth(0).inputValue();
+	if (sel0 !== "mock/echo-think") throw new Error(`统筹应挑推理模型：${sel0}`);
+	const reasons = await card.getByTestId("pm-reason").allTextContents();
+	if (reasons.length !== 2 || !/推理/.test(reasons[0])) throw new Error(`理由：${reasons}`);
+	const opts = await card.getByTestId("pm-model").nth(0).locator("option").allTextContents();
+	if (!opts[1].startsWith("★") || !/价格未知|免费|¥/.test(opts[1])) throw new Error(`下拉应按分数排、带价格档：${opts}`);
+	const ranked = await (await fetch(`${BASE}/api/proposals/models?needs=vision`)).json();
+	if (ranked[0].id !== "echo" || !/看图/.test(ranked[0].reason)) throw new Error(`要看图应排 echo 第一：${JSON.stringify(ranked[0])}`);
+	await card.scrollIntoViewIfNeeded();
+	await card.screenshot({ path: join(SHOTS, "90-proposal-model-pick.png") });
+	await card.getByTestId("proposal-dismiss").click();
+	// 每条回复的用量（悬停显示）
+	const u = page.getByTestId("msg-usage").last();
+	await u.waitFor({ state: "attached", timeout: 10_000 });
+	await u.hover();
+	if (!/token/.test(await u.textContent())) throw new Error("用量行");
+	await page.locator(".pa-bot-body").last().screenshot({ path: join(SHOTS, "91-message-usage.png") });
+	// 设置 › 用量：mock 没有价格 → 「—」；填自定义价 → 有费用
+	await page.goto(`${BASE}/?agent=${AGENT}&settings=usage`);
+	const tab = page.getByTestId("usage-tab");
+	await tab.waitFor();
+	await page.getByTestId("usage-range-30d").click();
+	await page.getByTestId("usage-cost").waitFor();
+	const before = (await page.getByTestId("usage-cost").textContent()) ?? "";
+	if (!/—/.test(before)) throw new Error(`mock 没有价格应显示 —：${before}`);
+	const row = page.getByTestId("price-row").first();
+	await row.getByTestId("price-edit").click();
+	await row.getByText("填单价").click();
+	await row.getByTestId("price-input").fill("10");
+	await row.getByTestId("price-output").fill("20");
+	await row.locator("select[aria-label='适用范围']").selectOption("provider");
+	await row.getByTestId("price-save").click();
+	await page.waitForFunction(() => /¥\d/.test(document.querySelector("[data-testid=usage-cost]")?.textContent ?? ""), null, { timeout: 10_000 }).catch(async (e) => {
+		throw new Error(`填价后费用没更新：${await page.getByTestId("usage-cost").textContent().catch(() => "?")} ${JSON.stringify(await (await fetch(`${BASE}/api/usage/settings`)).json()).slice(0, 400)} ${e}`);
+	});
+	const sum = await (await fetch(`${BASE}/api/usage/summary?range=30d`)).json();
+	if (!(sum.totals.calls > 0) || sum.totals.unknownCalls !== 0 || !(sum.totals.cost > 0)) throw new Error(`汇总：${JSON.stringify(sum.totals)}`);
+	if (!sum.byModel.length || !sum.byAgent.length) throw new Error("分组");
+	await page.getByTestId("usage-by-agent").click();
+	await page.getByTestId("usage-by-model").click();
+	await page.getByTestId("settings-dialog").screenshot({ path: join(SHOTS, "92-settings-usage.png") });
+	// 美元显示
+	await page.getByTestId("usage-currency").selectOption("USD");
+	await page.waitForFunction(() => /\$/.test(document.querySelector("[data-testid=usage-cost]")?.textContent ?? ""), null, { timeout: 10_000 });
+	await page.getByTestId("usage-currency").selectOption("CNY");
+	// 模型擅长：点标签开关，恢复默认
+	await page.goto(`${BASE}/?agent=${AGENT}&settings=models`);
+	const ms = page.getByTestId("model-strengths");
+	await ms.waitFor();
+	const r0 = ms.getByTestId("strength-row").first();
+	const t = r0.getByTestId("tag-coding");
+	const was = await t.getAttribute("aria-pressed");
+	await t.click();
+	await page.waitForFunction((w) => document.querySelector("[data-testid=model-strengths] [data-testid=strength-row] [data-testid=tag-coding]")?.getAttribute("aria-pressed") !== w, was);
+	await ms.scrollIntoViewIfNeeded();
+	await ms.screenshot({ path: join(SHOTS, "93-model-strengths.png") });
+	await r0.getByText("恢复默认").click();
+	// 手机宽度：用量页不横向溢出
+	const m = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN" });
+	const p2 = await m.newPage();
+	await p2.goto(`${BASE}/?agent=${AGENT}&settings=usage`);
+	await p2.getByTestId("usage-cost").waitFor();
+	const over = await p2.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+	if (over > 1) throw new Error(`手机横向溢出 ${over}px`);
+	await p2.screenshot({ path: join(SHOTS, "94-mobile-usage.png") });
+	await m.close();
 });
 
 await step("图片生成：设置里添加图片服务（自动获取识别图片模型 → 试生成 → 默认模型）→ 单聊让助理画图，图片直接显示可下载 → 安全策略拦截有中文提示 → 群里 @ 成员画图 → 助理可关闭画图", async () => {

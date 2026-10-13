@@ -19,14 +19,15 @@ export function modelProfiles(): ModelProfile[] {
 	const overrides = getStrengthOverrides();
 	return configuredModels().map((m) => {
 		const mm = m as unknown as { provider: string; id: string; name?: string; input?: string[]; reasoning?: boolean; contextWindow?: number };
-		const hit = db.find((x) => x.provider === mm.provider && x.id === mm.id) ?? db.find((x) => normId(x.id) === normId(mm.id));
+		// mock（本地测试）不按名字去 models.dev 找，避免撞上别家同名模型
+		const hit = mm.provider === "mock" ? undefined : db.find((x) => x.provider === mm.provider && x.id === mm.id) ?? db.find((x) => normId(x.id) === normId(mm.id));
 		const p = resolvePrice(mm.provider, mm.id).price;
 		return buildProfile(
 			{
 				provider: mm.provider,
 				id: mm.id,
 				name: mm.name,
-				vision: !!mm.input?.includes("image") || knownVision(mm.id, db) === true,
+				vision: !!mm.input?.includes("image") || (mm.provider !== "mock" && knownVision(mm.id, db) === true),
 				reasoning: !!mm.reasoning || !!hit?.reasoning,
 				toolCall: hit ? !!hit.toolCall : undefined,
 				contextWindow: mm.contextWindow || hit?.contextWindow,

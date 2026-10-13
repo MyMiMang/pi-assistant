@@ -13,6 +13,7 @@ import Attachments, { AttachButton, AttachTray, pasteFiles, useAttachUploader } 
 import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
 import Markdown from "./Markdown";
 import { splitThinking } from "../thinking";
+import { fmtMoney, fmtTok, type MsgUsage, useFx } from "./usage-fmt";
 import { Avatar, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
 import { ProposalCard } from "./RoomCards";
@@ -178,7 +179,20 @@ export function BotPart({ p, live }: { p: Part; live: boolean }) {
 				</div>
 			)}
 			{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} /> : null}
+			{m.meta.usage && m.status === "done" ? <UsageLine u={m.meta.usage as MsgUsage} model={String(m.meta.model ?? "")} /> : null}
 		</>
+	);
+}
+
+/** 每条回复的用量：桌面上悬停显示，手机上常驻（很淡） */
+function UsageLine({ u, model }: { u: MsgUsage; model: string }) {
+	const fx = useFx();
+	const inTok = u.input + u.cacheRead + u.cacheWrite;
+	const detail = `${model}\n输入 ${fmtTok(u.input)} · 读缓存 ${fmtTok(u.cacheRead)} · 写缓存 ${fmtTok(u.cacheWrite)}\n输出 ${fmtTok(u.output)}${u.reasoning ? `（推理 ${fmtTok(u.reasoning)}）` : ""}\n费用 ${fmtMoney(u.cost, fx)}${u.saved ? ` · 缓存省下 ${fmtMoney(u.saved, fx)}` : ""}`;
+	return (
+		<div className="pa-usage" title={detail} data-testid="msg-usage">
+			{fmtTok(inTok)} → {fmtTok(u.output)} token{inTok ? ` · 命中 ${Math.round((u.cacheRead / inTok) * 100)}%` : ""} · {fmtMoney(u.cost, fx)}
+		</div>
 	);
 }
 

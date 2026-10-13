@@ -870,7 +870,10 @@ app.get("/api/tasks/:id/messages", (c) => {
 	return t ? c.json(listMessages(t.agent_id, { taskId: t.id })) : c.json({ error: "not_found" }, 404);
 });
 app.post("/api/tasks/:id/cancel", async (c) => c.json({ ok: await tasks.cancel(c.req.param("id")) }));
-app.get("/api/usage", (c) => c.json(db.prepare("SELECT * FROM usage ORDER BY day DESC LIMIT 200").all()));
+/** 旧接口（按天 × 助理 × 模型）：现在从新的用量表算；新界面用 /api/usage/summary */
+app.get("/api/usage", (c) =>
+	c.json(db.prepare("SELECT agent_id, day, provider, model, SUM(input + cache_read + cache_write) input, SUM(output) output, COALESCE(SUM(cost), 0) cost FROM usage_calls GROUP BY agent_id, day, provider, model ORDER BY day DESC LIMIT 200").all()),
+);
 
 function sendFile(c: Context<Env>, path: string, name: string, mime: string) {
 	const inline = c.req.query("inline") === "1" && /^(image\/(png|jpeg|gif|webp)|text\/plain)$/.test(mime);

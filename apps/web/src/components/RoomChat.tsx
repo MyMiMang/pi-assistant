@@ -1,4 +1,5 @@
 import { ArrowUp, AtSign, Crown, Loader2, PanelRight, Plus, Settings2, Square, Trash2, Users } from "lucide-react";
+import { RoomCost } from "./Usage";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, uploadRoom } from "../api";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
@@ -129,6 +130,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					<small className="truncate">
 						{st.running && <i className="pa-pulse" />}
 						{active.length} 位成员{manager ? ` · 管理者 ${manager.name}` : ""}
+						<RoomCost roomId={room.id} />
 					</small>
 				</div>
 				<div className="pa-head-actions">
