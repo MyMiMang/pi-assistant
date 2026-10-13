@@ -279,3 +279,38 @@ test("CDP 浏览器工具：限定档位不提供且清单不放行；连接浏�
 	for (const x of CUA_BROWSER_TOOLS) assert.equal(s.cfg.toolExposure[x], "hidden", `${x} 助理电脑隐藏（用 Playwright）`);
 	assert.equal((await s.call("browser_click", {}))?.block, true);
 });
+
+test("本机桌面：只看隐藏全部输入工具（含剪贴板/鼠标按住拖动/窗口大小）；完全权限任意应用不问；信任只问敏感动作；提示按官方流程", async () => {
+	const { computerExtension, HOST_MCP_PREFIX, INPUT_TOOLS } = await import("@pi-assistant/ext-computer");
+	for (const t of ["drag", "scroll", "hotkey", "launch_app", "clipboard_write", "mouse_drag", "mouse_button_down", "set_window_frame"]) assert.ok(INPUT_TOOLS.includes(t), t);
+	const mk = (p: string) => {
+		const asks: unknown[] = [];
+		const h: Record<string, (e: unknown) => Promise<{ block?: boolean; reason?: string; systemPrompt?: string } | undefined>> = {};
+		let cfg: { toolExposure: Record<string, string>; description: string } | null = null;
+		computerExtension({ target: "host", mcp: { command: "x", args: [] }, isPaused: () => false, approvals: () => p, request: async (r: unknown) => (asks.push(r), { approved: true }), guard: { target: "host" } } as never)({
+			registerMcpServer: (_n: string, c: never) => (cfg = c), registerTool: () => {}, on: (n: string, fn: never) => (h[n] = fn),
+		} as never);
+		return { asks, h, cfg: cfg!, call: (tool: string, input: Record<string, unknown> = {}) => h.tool_call({ toolName: `${HOST_MCP_PREFIX}${tool}`, input, toolCallId: tool }) };
+	};
+	const o = mk("observe");
+	for (const t of ["clipboard_write", "mouse_drag", "set_window_frame", "drag"]) assert.equal(o.cfg.toolExposure[t], "hidden");
+	assert.equal(o.cfg.toolExposure.get_desktop_state, undefined, "只看也能看全屏");
+	const f = mk("none");
+	for (const t of ["get_desktop_state", "drag", "scroll", "hotkey", "launch_app", "clipboard_write", "mouse_drag"]) assert.equal(f.cfg.toolExposure[t], undefined, `${t} 完全权限可见`);
+	for (const [t, i] of [["launch_app", { bundle_id: "com.tencent.xinWeChat" }], ["click", { pid: 1, window_id: 2, element_token: "s1:3" }], ["type_text", { text: "hi\n" }], ["press_key", { key: "return" }], ["hotkey", { keys: ["cmd", "tab"] }], ["drag", { from_x: 1, from_y: 1, to_x: 9, to_y: 9 }], ["scroll", {}], ["kill_app", { name: "TextEdit" }]] as const)
+		assert.equal(await f.call(t, i), undefined, `${t} 完全权限直接执行`);
+	assert.equal(f.asks.length, 0, "完全权限：普通动作（含回车/发送/结束应用）都不问");
+	assert.match(f.cfg.description, /完全权限：所有应用/);
+	const fp = (await f.h.before_agent_start({ systemPrompt: "" }))?.systemPrompt ?? "";
+	for (const k of ["get_window_state", "element_token", "background_unavailable", "delivery_mode:\"foreground\"", "get_desktop_state", "verify_state"]) assert.ok(fp.includes(k), k);
+	const t = mk("sensitive");
+	await t.call("drag", {});
+	await t.call("launch_app", { bundle_id: "com.tencent.xinWeChat" });
+	assert.equal(t.asks.length, 0);
+	await t.call("press_key", { key: "return" });
+	assert.equal(t.asks.length, 1, "信任：回车（可能是发送）要问");
+	const b = mk("all");
+	const bp = (await b.h.before_agent_start({ systemPrompt: "" }))?.systemPrompt ?? "";
+	assert.match(bp, /限定/);
+	assert.ok(!bp.includes("get_desktop_state"), "限定档位没有整屏观察");
+});

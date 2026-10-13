@@ -883,6 +883,27 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - 开启时选择允许的应用（生成 Cua bounded manifest），显示醒目的“正在操作你的电脑”悬浮条（托盘程序绘制）+ 全局快捷键一键暂停。
 - 全部输入动作走审批；所有操作记录（截图 + 动作）写入审计日志，可在「电脑 → 记录」回看。
 
+#### 14.6.0 各档位在用户电脑上能做什么（cua 0.34.1）
+
+| 档位 | Cua 守护进程 | 应用范围 | 工具 | 审批 |
+| --- | --- | --- | --- | --- |
+| 只看 | unrestricted | 所有应用 | 只有观察类工具：list_apps、list_windows、get_window_state、get_desktop_state、zoom 等；输入类工具（INPUT_TOOLS）隐藏并拦下 | — |
+| 限定 | bounded（清单） | 只有勾选的应用 | ALLOWED_TOOLS：没有 drag、剪贴板、整屏观察、浏览器工具 | 每个动作都问 |
+| 信任 | unrestricted | 所有应用 | 全部桌面工具（含 get_desktop_state、drag、scroll、hotkey、launch_app、invoke_menu、set_window_frame、mouse_*、剪贴板）和 CDP 浏览器工具 | 只问发送 / 付款 / 删除 / 提交类动作 |
+| 完全权限 | unrestricted | 所有应用 | 同信任 | 不问；只有受保护的操作（关机、强制退出、系统设置 / 钥匙串、危险命令）要明确批准 |
+
+所有档位都一直隐藏的工具：install_extension、install_ffmpeg、parse_visual_regions、check_for_update、set_config、replay_trajectory、escalate_session、get_session_state、page。系统权限弹窗（TCC 等）由用户自己处理。系统提示里会注入 `hostDesktopPrompt`，内容是官方流程：list_windows 找到精确的窗口 → get_window_state 拿 element_token（每次重新拿）→ 动作 → 默认后台送达，遇到 background_unavailable 才对这一个动作用 foreground → 用 verify_state 或新快照核对结果；整屏操作（get_desktop_state + target desktop）只在信任和完全权限下提供。
+
+#### 14.6.1 用户电脑上的网页：cua 的 CDP 浏览器工具
+
+cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepare/navigate/click/type/pointer/download/set_input_files/dialog）。在用户自己的 Chrome / Edge 上，网页任务用它们代替截图 + 快捷键 + type_text。
+- **顺序（按官方 BROWSER.md）**：list_windows → get_browser_state{pid, window_id} 绑定 → 只有返回 browser_requires_setup / browser_consent_required 才调用 browser_prepare{strategy: existing_profile} → 重新绑定，必须 binding_quality=exact 且 mutation_allowed=true → get_browser_state{target_id, tab_id, semantic_v2} 拿 ref → browser_* → 重新读状态（旧 ref 不复用），用 include_screenshot:true 看图核对后再交付。整个任务用同一个 session 标签，不用地址栏快捷键。macOS / Linux 上 trusted 点击会被拒绝（browser_input_trust_unavailable），改用 input_route:"dom_event"。
+- **连接用户的浏览器**：existing_profile 不重启浏览器，登录状态保留。cua 可能打开浏览器的远程调试设置页，勾上开关后关掉；会话结束时再关回去。browser_prepare 和其他动作一样按档位审批（信任 / 完全权限都不问）。macOS 上 Chrome 自己可能弹出“允许远程调试”，窗口也可能来到前台；这是 Chrome 的提示，我们跳不过去。
+- **档位**：“限定”（cua bounded）不提供这些工具。原因是 bounded 模式下网页导航必须在清单里列出确切的 origin，开放式网页任务做不了。界面和提示里会告诉用户：要用你的 Chrome 做网页任务，需要“信任”或以上档位。
+- **文件**：browser_download 的 destination_root、browser_set_input_files 的 files 必须在这个助理的工作区里，否则直接拦下。browser_download 在“信任”档位算敏感动作。
+- **助理电脑**：网页仍然用 ext-browser（Playwright），mcp__computer__ 下的 cua 浏览器工具隐藏并拦下。
+- **实测（助理电脑容器）**：走 CDP（绑定 → prepare → 重新绑定 → 导航 → 快照 → 输入 → dom_event 点击 → 验证），工具耗时约 1.0 秒；同一个页面走 AX/像素，约 3.9 秒，还不含导航。脚本在 scripts/cua-browser-smoke.py。
+
 ### 14.7 连接器统一走 MCP
 
 所有连接器（邮箱、日历、GitHub、Notion、飞书文档、钉钉日程、本地文件夹……）都是 MCP 服务器，经 Pi 的 MCP 支持（`pi.registerMcpServer` / `mcp.json`）挂到会话上；用户也能在「设置 → 连接器」里粘贴任意 MCP 服务器配置。我们自己写的连接器同样以独立 MCP 服务器发布，可被其它 Agent 复用。所有 MCP 服务器都登记在 `third-party.json`，享受同样的自动升级与冒烟测试。

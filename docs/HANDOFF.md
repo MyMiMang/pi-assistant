@@ -121,6 +121,19 @@ npm run check:pi         # Pi 升级兼容检查
 
 - 群聊：群里的审批卡片不转发到飞书等 IM 渠道（只有网页 / 手机推送）；群里发消息暂不支持附件（文件要发给某个助理时在私聊里发）；复制群专属助理不复制工作区文件。真实模型下管理者派活的质量取决于模型，已用 Mock 跑通全部规则。
 
+### 用户电脑：完全接管与 CDP 浏览器（DESIGN §14.6.0 / §14.6.1）：需要真机验证
+- **Mac（Chrome，信任 / 完全权限）**：
+  - 用户的 Chrome 开着、已经登录 → 让助理搜一张图。
+  - 我们这层不弹卡片，但可能出现 Chrome 自己的“允许远程调试”提示。
+  - 之后 browser_navigate / semantic_v2 / browser_type / dom_event 点击都能用，登录状态还在，Chrome 没有重启。
+  - 任务结束后，chrome://inspect/#remote-debugging 的开关应该已经关回去。
+  - 同时检查 Chrome 144 以上的自动连接（auto-connect）路径。
+- **Mac 完全权限的桌面操作**：微信 / 访达 / 备忘录等任意应用都能 launch_app → get_window_state → click / type_text / hotkey / drag，全程没有卡片；背景送达失败时只对那一个动作切到 foreground；get_desktop_state 能看全屏。
+- **Windows（Chrome / Edge）**：trusted 点击应该能在后台送达；守护进程要在交互式桌面里（不是 Session 0）。
+- **限定档位**：看不到 browser_* 工具，提示里会让用户调到“信任”。限定档位的清单里本来就没有 drag 和剪贴板，这次没改。
+- 测试机的 Docker 不支持 user namespace，所以 isolated_new（cua 自己另开 Chromium）跑不起来；不影响用户电脑上的用法。
+- cua-driver 已经出了 0.35.x，这次没升级，还固定在 0.34.1。以后升级时要重新核对 BROWSER.md、WORKFLOW.md 和工具的参数格式。
+
 ## 7. 下一步（按用户确认的顺序）
 
 1. 助理电脑自带虚拟机：通用部分 ✅ → Mac（Lima）✅ 待真机验证 → Windows（WSL2）✅ 待真机验证 → Linux 服务器版 ✅（§15.2、§15.3）。

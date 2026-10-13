@@ -51,13 +51,25 @@ export const HOST_BROWSER_PROMPT = `<user-computer-browser>
 8. 整个任务用同一个 session 标签（如 "web"）。不要用 cmd+t / cmd+l / ctrl+l 等地址栏快捷键当浏览器接口；只有标签栏、权限弹窗、原生文件选择框，或 CDP 工具不可用（Safari / Firefox、用户拒绝）时，才退回 get_window_state + click / hotkey。
 9. 上传用 browser_set_input_files、下载用 browser_download，路径只能在你的工作区里。
 </user-computer-browser>`;
+/** 本机桌面应用的操作方式（按 cua 0.34.1 官方 SKILL / WORKFLOW），注入系统提示 */
+export const hostDesktopPrompt = (p: Approvals) => `<user-computer-desktop>
+你可以像人一样操作用户的电脑${p === "all" ? "（“限定”档位：只能操作用户勾选的应用，每个动作都要用户批准）" : p === "none" ? "（用户给了完全权限：所有应用都能操作，日常动作不需要批准；只有关机、强制退出、系统设置这类受保护的操作会问用户）" : "（“信任”档位：所有应用都能操作；发送、付款、删除、提交类动作会先问用户）"}。按官方流程：
+1. 找目标：list_apps / list_windows 找到应用的 pid 和 window_id（不要用记住的旧 pid，也不要随手拿第一个窗口）；没开就 launch_app，之后有限次地 list_windows 等窗口出现，不要反复启动。
+2. 先看再动：get_window_state {pid, window_id}，用 structuredContent.elements 里的 element_token（每次快照都会换新，不要自己编、不要复用旧的）。
+3. 动作：click / double_click / right_click / type_text / set_value / press_key / hotkey / scroll / drag，带上精确的 {pid, window_id} 和最新的 element_token；控件够不到时才用同一次截图上的 x,y 像素坐标。菜单用 invoke_menu，调整窗口大小位置用 set_window_frame。
+4. 默认后台送达（不抢用户的前台、不动用户的鼠标）。只有返回 background_unavailable 或动作明显没生效时，才对这一个动作用 delivery_mode:"foreground"（会把窗口提到前台，用户能看见）。
+${p === "all" ? "" : '5. 窗口截图拿不到、或必须操作整个桌面时，用 get_desktop_state 看全屏，再用 target:{kind:"desktop",display_id:"primary"} 操作，操作后再 get_desktop_state 核对。\n'}6. 每个动作后都要重新观察并核对结果（verify_state 或新的 get_window_state / 截图）。"成功"返回不等于任务完成；effect 为 unverifiable / suspected_noop 时先看清楚再决定，不要盲目重复。
+7. 系统权限弹窗（辅助功能、屏幕录制、钥匙串等）由用户自己点，不要替用户点，也不要改安全设置。
+8. 整个任务用同一个 session 标签；结束后 end_session。网页内容优先用 CDP 浏览器工具（见 user-computer-browser）。
+</user-computer-desktop>`;
+
 /** “限定”档位：没有 CDP 浏览器工具时的说明 */
 export const HOST_BROWSER_BOUNDED_NOTE = `<user-computer-browser>
 你对用户电脑的权限是“限定”：不能直接连接用户的 Chrome 做网页任务（只能按应用清单逐个动作操作）。网页任务优先用你自己的浏览器（助理电脑）；如果必须用用户的 Chrome（要他的登录状态），告诉用户需要在 设置 › 操作这台电脑 里把你的档位调到“信任”或以上。
 </user-computer-browser>`;
 const READ_ONLY = /^(get_|list_|zoom$|check_permissions$|health_report$|verify_state$|screenshot$)/;
 /** 会改变电脑状态的 Cua 工具（“只看”档位隐藏） */
-export const INPUT_TOOLS = ["click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag", "move_cursor", "invoke_menu", "launch_app", "kill_app", "bring_to_front", "browser_prepare", "browser_click", "browser_type", "browser_navigate", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog", "set_clipboard", "write_clipboard"];
+export const INPUT_TOOLS = ["click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag", "move_cursor", "invoke_menu", "launch_app", "kill_app", "bring_to_front", "browser_prepare", "browser_click", "browser_type", "browser_navigate", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog", "clipboard_write", "mouse_button_down", "mouse_button_up", "mouse_drag", "parallel_mouse_drag", "set_window_frame", "start_recording", "stop_recording"];
 
 export interface ComputerHost {
 	target: "sandbox" | "host";
@@ -222,7 +234,9 @@ export function computerExtension(host: ComputerHost) {
 					? "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；只看：可以截图、读取窗口内容，不能点击或输入）"
 					: policy() === "all"
 					? "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；只能操作用户允许的应用，每个动作都要用户批准）"
-					: "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；用户授予了完全权限；发送/付款/删除类动作可能需要用户批准）"
+					: policy() === "sensitive"
+					? "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；信任：所有应用都能看、能操作，发送/付款/删除类动作需要用户批准）"
+					: "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；完全权限：所有应用都能看、能操作，像人一样使用，只有受保护的操作需要用户批准）"
 				: "助理自己的 Linux 桌面电脑（浏览器、微信等应用）——不是用户的电脑",
 			timeout: 60_000,
 		});
@@ -274,7 +288,7 @@ export function computerExtension(host: ComputerHost) {
 			},
 		});
 		}
-		if (host_ && policy() !== "observe") pi.on("before_agent_start", async (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${browserOn ? HOST_BROWSER_PROMPT : HOST_BROWSER_BOUNDED_NOTE}` }));
+		if (host_ && policy() !== "observe") pi.on("before_agent_start", async (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${hostDesktopPrompt(policy())}\n\n${browserOn ? HOST_BROWSER_PROMPT : HOST_BROWSER_BOUNDED_NOTE}` }));
 		if (!host_ && host.screens) {
 			const sc = host.screens;
 			pi.on("before_agent_start", async (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${SHARED_COMPUTER_PROMPT}` }));
