@@ -487,8 +487,9 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 }
 
 /** 发送用户输入；会话正在运行时排在当前工作之后（followUp）。 */
-export function promptSession(session: AgentSession, text: string): Promise<void> {
-	return session.isStreaming ? session.prompt(text, { streamingBehavior: "followUp" }) : session.prompt(text);
+export function promptSession(session: AgentSession, text: string, images?: { type: "image"; data: string; mimeType: string }[]): Promise<void> {
+	const img = images?.length ? { images } : {};
+	return session.isStreaming ? session.prompt(text, { streamingBehavior: "followUp", ...img }) : session.prompt(text, img);
 }
 export const isSessionBusy = (s: AgentSession) => s.isStreaming;
 /** 手动“整理上下文”：让 Pi 把较早的对话压缩成摘要（Pi 原生 compaction）。 */

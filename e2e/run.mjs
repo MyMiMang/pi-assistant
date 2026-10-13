@@ -215,6 +215,14 @@ await step("上传文件给助理", async () => {
 	await page.getByText("notes.txt").first().waitFor();
 	await send("请看看这个附件");
 	await page.locator("main").getByText("我读完了这个文件").last().waitFor({ timeout: 15_000 });
+	// 图片：看图模型直接收到图片；文档：附上文字摘录
+	await page.locator("main [data-testid=attach-input]").setInputFiles([join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"), f]);
+	await page.getByTestId("attach-chip").nth(1).waitFor();
+	const tip = await page.getByTestId("attach-btn").first().getAttribute("title");
+	if (!/100MB/.test(tip) || !/看图/.test(tip)) throw new Error(`附件按钮说明不完整：${tip}`);
+	await send("请看看这个附件");
+	await page.locator("main").getByText(/看到 1 张图片，已看到文档文字/).last().waitFor({ timeout: 15_000 });
+	await page.locator("main img[alt='icon-192.png']").last().waitFor();
 });
 
 await step("后台任务", async () => {
@@ -1728,6 +1736,33 @@ await step("群聊：审批卡片显示在群里（带助理名）→ 批准；�
 	await page.waitForTimeout(1500);
 	if (await botsOf("A").filter({ hasText: "慢慢做" }).count()) throw new Error("停止后排队的 A 不应该再说话");
 });
+await step("群聊附件：发图片+文件 → @A 看到路径和图片 → 管理者把附件派给 B（B 拿到路径）→ C 生成的文件出现在群里 → B 能拿到", async () => {
+	await page.goto(`${BASE}/?room=${ROOM}`);
+	const plan = join(DATA, "plan.txt");
+	writeFileSync(plan, "群聊附件测试：下周发布计划。");
+	const input = page.locator("[data-testid=room-chat] [data-testid=attach-input]");
+	await input.setInputFiles([join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"), plan]);
+	await page.locator("[data-testid=room-chat] [data-testid=attach-chip]").nth(1).waitFor();
+	await roomSay("@A 看看附件");
+	await botsOf("A").getByText(/看到附件：room-files\/\S+icon-192\.png、room-files\/\S+plan\.txt；图片 1 张/).last().waitFor({ timeout: 30_000 });
+	await page.locator("main img[alt='icon-192.png']").last().waitFor();
+	await page.locator("main").getByText("plan.txt").first().waitFor();
+	await roomIdle();
+	const plan2 = join(DATA, "brief.txt");
+	writeFileSync(plan2, "第二份附件");
+	await input.setInputFiles(plan2);
+	await page.locator("[data-testid=room-chat] [data-testid=attach-chip]").first().waitFor();
+	await roomSay("派给B 处理附件");
+	await botsOf("B").getByText(/B 完成了.*看到附件：room-files\/\S+brief\.txt/).last().waitFor({ timeout: 40_000 });
+	await roomIdle();
+	await roomSay("@C 做个图表");
+	await botsOf("C").getByText("chart.svg").last().waitFor({ timeout: 30_000 });
+	await roomIdle();
+	await roomSay("@B 看看C的图表");
+	await botsOf("B").getByText(/看到附件：room-files\/\S+chart\.svg/).last().waitFor({ timeout: 30_000 });
+	await roomIdle();
+	await page.screenshot({ path: join(SHOTS, "83-room-attachments.png") });
+});
 await step("群聊：手机宽度 @ 底部面板、整页不横向滚动；4 套主题下群聊界面不溢出", async () => {
 	const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN" });
 	const pp = await phone.newPage();
@@ -1737,6 +1772,10 @@ await step("群聊：手机宽度 @ 底部面板、整页不横向滚动；4 套
 	await pp.getByTestId("mention-sheet").waitFor();
 	await pp.getByTestId("mention-sheet").getByTestId("mention-opt").filter({ hasText: /^C/ }).click();
 	if (!(await pp.getByTestId("room-input").inputValue()).includes("@C")) throw new Error("底部面板选择后应插入 @C");
+	// 手机上也能选附件（系统相册 / 文件），附件条不撑宽
+	if (!(await pp.getByTestId("attach-btn").isVisible())) throw new Error("手机上应有附件按钮");
+	await pp.getByTestId("attach-input").setInputFiles({ name: "一个名字特别特别特别特别特别长的手机照片文件.png", mimeType: "image/png", buffer: readFileSync(join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png")) });
+	await pp.getByTestId("attach-chip").waitFor();
 	const m = await pp.evaluate(() => ({ doc: document.documentElement.scrollWidth, vw: innerWidth, sc: (() => { const s = document.querySelector(".pa-scroll"); return s ? s.scrollWidth - s.clientWidth : 0; })() }));
 	if (m.doc > m.vw || m.sc > 1) throw new Error(`手机上群聊被撑宽：${JSON.stringify(m)}`);
 	await pp.screenshot({ path: join(SHOTS, "81-room-phone.png") });

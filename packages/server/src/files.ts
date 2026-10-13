@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { bus } from "./bus.ts";
 import { config } from "./config.ts";
@@ -8,12 +8,12 @@ const MIME: Record<string, string> = {
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
 	".pdf": "application/pdf", ".md": "text/markdown", ".txt": "text/plain", ".csv": "text/csv", ".json": "application/json",
 	".html": "text/html", ".py": "text/x-python", ".ts": "text/plain", ".js": "text/javascript", ".zip": "application/zip",
-	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".heic": "image/heic", ".heif": "image/heif", ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation", ".tsv": "text/tab-separated-values", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
 export const mimeOf = (name: string) => MIME[extname(name).toLowerCase()] ?? "application/octet-stream";
 
-export interface FileRow { id: string; agent_id: string; name: string; mime: string; size: number; stored_path: string; workspace_path: string | null; direction: string; created_at: number }
-export const fileInfo = (f: FileRow) => ({ fileId: f.id, name: f.name, mime: f.mime, size: f.size, direction: f.direction, workspacePath: f.workspace_path, createdAt: f.created_at });
+export interface FileRow { id: string; agent_id: string; room_id?: string | null; name: string; mime: string; size: number; stored_path: string; workspace_path: string | null; direction: string; created_at: number }
+export const fileInfo = (f: FileRow) => ({ fileId: f.id, roomId: f.room_id ?? undefined, name: f.name, mime: f.mime, size: f.size, direction: f.direction, workspacePath: f.workspace_path, createdAt: f.created_at });
 
 export function workspaceOf(agentId: string) {
 	const ws = join(config.workspaceRoot, agentId);
@@ -83,4 +83,47 @@ export function listWorkspace(agentId: string, p: string) {
 			return { name: d.name, dir: d.isDirectory(), size: st?.size ?? 0, mtime: st?.mtimeMs ?? 0 };
 		})
 		.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name));
+}
+
+// ---------------------------------------------------------------- 群聊附件
+/** 群里用户上传的附件：每个群存一份（files 表 agent_id='' + room_id），轮到哪个助理就复制到它的工作区 */
+export function saveRoomUpload(roomId: string, name: string, data: Buffer): FileRow {
+	const safe = basename(name).replace(/[\\/:*?"<>|]/g, "_") || "upload.bin";
+	const id = uid("f");
+	const dir = roomFilesDir(roomId);
+	mkdirSync(dir, { recursive: true });
+	const stored = join(dir, `${id}${extname(safe)}`);
+	writeFileSync(stored, data);
+	const row: FileRow = { id, agent_id: "", room_id: roomId, name: safe, mime: mimeOf(safe), size: data.length, stored_path: stored, workspace_path: null, direction: "in", created_at: now() };
+	db.prepare("INSERT INTO files(id, agent_id, name, mime, size, stored_path, workspace_path, direction, created_at, room_id) VALUES(?,?,?,?,?,?,?,?,?,?)").run(
+		row.id, row.agent_id, row.name, row.mime, row.size, row.stored_path, null, row.direction, row.created_at, roomId,
+	);
+	return row;
+}
+export const roomFilesDir = (roomId: string) => join(config.filesDir, "rooms", roomId.replace(/[^a-zA-Z0-9_-]/g, ""));
+/** 删除群的全部附件（用户上传的；助理发的文件属于助理，跟助理一起清理） */
+export function deleteRoomFiles(roomId: string) {
+	db.prepare("DELETE FROM files WHERE room_id = ? AND agent_id = ''").run(roomId);
+	rmSync(roomFilesDir(roomId), { recursive: true, force: true });
+}
+
+/**
+ * 让某个助理能用到这个附件：
+ *  - 就是它自己的文件（自己上传/自己工作区里的）→ 直接用原路径
+ *  - 别人的文件（群里用户上传、其他成员发的）→ 复制到它工作区 room-files/<群>/ 下（只复制一次）
+ * 返回工作区相对路径。
+ */
+export function materializeFor(agentId: string, f: FileRow, roomId?: string | null): string {
+	if (f.agent_id === agentId && f.workspace_path && existsSync(join(workspaceOf(agentId), f.workspace_path))) return f.workspace_path;
+	const sub = join("room-files", (roomId ?? f.room_id ?? "shared").replace(/[^a-zA-Z0-9_-]/g, ""));
+	const dir = join(workspaceOf(agentId), sub);
+	mkdirSync(dir, { recursive: true });
+	const target = join(dir, `${f.id.slice(-6)}-${f.name}`);
+	if (!existsSync(target) && existsSync(f.stored_path)) copyFileSync(f.stored_path, target);
+	return relative(workspaceOf(agentId), target);
+}
+/** 附件 → prepareAttachments 的输入（顺便放进该助理工作区） */
+export function attachmentInputFor(agentId: string, f: FileRow, roomId?: string | null) {
+	const rel = materializeFor(agentId, f, roomId);
+	return { name: f.name, mime: f.mime, absPath: join(workspaceOf(agentId), rel), displayPath: rel };
 }

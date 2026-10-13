@@ -21,7 +21,7 @@ import { type WecomAdapter, wecomAdapter } from "./wecom.ts";
 import { wecomBotAdapter } from "./wecom-bot.ts";
 import { type ClawbotConfig, cancelLogin, loginStatus, startLogin, submitVerifyCode, wechatClawbotAdapter } from "./wechat-clawbot.ts";
 import { DeferredSend } from "./types.ts";
-import { getFile, saveUpload } from "../files.ts";
+import { attachmentInputFor, fileInfo, getFile, saveUpload } from "../files.ts";
 import { notify } from "../push.ts";
 import { existsSync } from "node:fs";
 import { stripThinking } from "../thinking.ts";
@@ -428,9 +428,8 @@ export async function handleInbound(channelId: string, m: Inbound) {
 	p = peer(channelId, m.peerId)!;
 	// 发来的图片 / 文件存进助理工作区 uploads/，告诉助理路径
 	const saved = (m.files ?? []).map((f) => saveUpload(c.agent_id, f.name, f.data));
-	const note = saved.length ? `\n\n（附件已保存到工作区：${saved.map((f) => f.workspace_path).join("、")}）` : "";
-	insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { from: `${c.kind}:${m.display ?? m.userId}`, channel: { id: channelId, kind: c.kind }, ...(saved.length ? { attachments: saved.map((f) => ({ id: f.id, name: f.name, mime: f.mime, size: f.size })) } : {}) } });
-	await runtime(c.agent_id, conv).send(`${channelContext(c.kind, { group: m.group })}\n${m.group && m.display ? `（${m.display} 在${KIND_LABEL[c.kind]}群里说）${text}` : text}${note}`);
+	insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { from: `${c.kind}:${m.display ?? m.userId}`, channel: { id: channelId, kind: c.kind }, ...(saved.length ? { attachments: saved.map(fileInfo) } : {}) } });
+	await runtime(c.agent_id, conv).send(`${channelContext(c.kind, { group: m.group })}\n${m.group && m.display ? `（${m.display} 在${KIND_LABEL[c.kind]}群里说）${text}` : text}`, saved.map((f) => attachmentInputFor(c.agent_id, f)));
 }
 
 /**

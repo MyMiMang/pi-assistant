@@ -9,7 +9,7 @@ import { t } from "../i18n";
 import { useStore } from "../store";
 import { resolveLayout, useWindowWidth } from "../layout";
 import type { Agent, Attachment, Message } from "../types";
-import Attachments from "./Attachments";
+import Attachments, { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
 import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
 import Markdown from "./Markdown";
 import { splitThinking } from "../thinking";
@@ -358,10 +358,8 @@ export default function Chat({ agentId }: { agentId: string }) {
 // ------------------------------------------------------------------ 悬浮输入框：拖拽文件 / 粘贴图片
 function Composer({ agentId, name, model, running, drag, ref }: { agentId: string; name: string; model?: string; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }> }) {
 	const [text, setText] = useState("");
-	const [files, setFiles] = useState<Attachment[]>([]);
-	const [uploading, setUploading] = useState(0);
+	const { files, setFiles, uploading, error: upErr, addFiles, clear } = useAttachUploader((f) => upload(agentId, f));
 	const ta = useRef<HTMLTextAreaElement>(null);
-	const fileInput = useRef<HTMLInputElement>(null);
 	const isTouch = matchMedia("(pointer: coarse)").matches;
 	useLayoutEffect(() => {
 		const el = ta.current;
@@ -373,54 +371,21 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 		if (!text.trim() && !files.length) return;
 		const body = { text, attachments: files.map((f) => f.fileId), conversationId: useStore.getState().convs[agentId]?.current };
 		setText("");
-		setFiles([]);
+		clear();
 		await api(`/api/agents/${agentId}/messages`, { method: "POST", json: body });
-	};
-	const addFiles = async (list: FileList | File[]) => {
-		for (const f of Array.from(list)) {
-			setUploading((n) => n + 1);
-			try {
-				const info = await upload(agentId, f);
-				setFiles((x) => [...x, info]);
-			} finally {
-				setUploading((n) => n - 1);
-			}
-		}
 	};
 	if (ref && typeof ref === "object") (ref as React.RefObject<{ addFiles: typeof addFiles } | null>).current = { addFiles };
 	return (
 		<div className="pa-composer-wrap">
 			<div className={cx("pa-composer", drag && "drag")}>
 				{drag && <div className="pointer-events-none pb-2 text-center text-sm text-accent">松开即可把文件发给 {name}</div>}
-				{(files.length > 0 || uploading > 0) && (
-					<div className="flex flex-wrap gap-2 pb-2">
-						{files.map((f) => (
-							<span key={f.fileId} className="pa-chip sm !h-7">
-								<Paperclip size={12} /> <span className="max-w-[160px] truncate">{f.name}</span> <span className="text-mut2">{fmtSize(f.size)}</span>
-								<button onClick={() => setFiles((x) => x.filter((y) => y.fileId !== f.fileId))} aria-label="移除">
-									<X size={12} />
-								</button>
-							</span>
-						))}
-						{uploading > 0 && (
-							<span className="flex items-center gap-1 text-xs text-mut">
-								<Loader2 size={12} className="animate-spin" /> 上传中…
-							</span>
-						)}
-					</div>
-				)}
+				<AttachTray files={files} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} />
 				<textarea
 					ref={ta}
 					rows={1}
 					value={text}
 					onChange={(e) => setText(e.target.value)}
-					onPaste={(e) => {
-						const imgs = Array.from(e.clipboardData.files);
-						if (imgs.length) {
-							e.preventDefault();
-							void addFiles(imgs.map((f, i) => (f.name && f.name !== "image.png" ? f : new File([f], `粘贴的图片-${Date.now()}${i ? `-${i}` : ""}.${f.type.split("/")[1] || "png"}`, { type: f.type }))));
-						}
-					}}
+					onPaste={(e) => pasteFiles(e, (fs) => void addFiles(fs))}
 					onKeyDown={(e) => {
 						if (e.key === "Enter" && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) {
 							e.preventDefault();
@@ -430,11 +395,8 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 					placeholder={t("给 {name} 发消息…", { name })}
 				/>
 				<div className="pa-composer-bar">
-					<input ref={fileInput} type="file" multiple hidden onChange={(e) => (e.target.files && addFiles(e.target.files), (e.target.value = ""))} />
 					<div className="pa-composer-tools">
-					<button className="pa-icon-btn ghost" onClick={() => fileInput.current?.click()} aria-label={t("上传")} title="添加文件（也可以拖进来或直接粘贴图片）">
-						<Paperclip className="pa-ic" />
-					</button>
+					<AttachButton label={t("上传")} onFiles={(f) => void addFiles(f)} />
 					<button className="pa-chip sm" onClick={() => useStore.getState().set({ info: true, infoTab: "computer" })}>
 						<Monitor className="pa-ic" />
 						<span className="max-sm:hidden">助理电脑</span>

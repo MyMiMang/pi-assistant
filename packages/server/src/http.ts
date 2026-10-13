@@ -14,7 +14,7 @@ import {
 import { bus } from "./bus.ts";
 import { config } from "./config.ts";
 import { db, getSetting, now, setSetting } from "./db.ts";
-import { fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, saveUpload, workspaceOf } from "./files.ts";
+import { attachmentInputFor, fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, saveRoomUpload, saveUpload, workspaceOf } from "./files.ts";
 import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
 import { insertMessage, listMessages } from "./messages.ts";
@@ -377,8 +377,7 @@ app.post("/api/agents/:id/messages", async (c) => {
 	const text = (b.text ?? "").slice(0, 100_000);
 	if (!text.trim() && !files.length) return c.json({ error: "empty" }, 400);
 	const msg = insertMessage({ agentId: id, conversationId: conv, role: "user", content: text, meta: { attachments: files.map(fileInfo), from: by(c) } });
-	const prompt = [text, ...files.map((f) => `[附件: ${f.workspace_path}]`)].join("\n").trim();
-	void runtime(id, conv).send(prompt);
+	void runtime(id, conv).send(text, files.map((f) => attachmentInputFor(id, f)));
 	return c.json(msg);
 });
 app.post("/api/agents/:id/abort", async (c) => {
@@ -421,10 +420,18 @@ app.get("/api/rooms/:rid/messages", (c) => {
 	const before = c.req.query("before");
 	return c.json(listRoomMessages(c.req.param("rid"), { before: before ? Number(before) : undefined, limit: Number(c.req.query("limit") ?? 200) }));
 });
+app.post("/api/rooms/:rid/upload", async (c) => {
+	const rid = c.req.param("rid");
+	if (!getRoom(rid)) return c.json({ error: "not_found" }, 404);
+	const f = (await c.req.parseBody()).file;
+	if (!(f instanceof File)) return c.json({ error: "no_file" }, 400);
+	if (f.size > 100 * 1024 * 1024) return c.json({ error: "文件超过 100MB" }, 413);
+	return c.json(fileInfo(saveRoomUpload(rid, f.name, Buffer.from(await f.arrayBuffer()))));
+});
 app.post("/api/rooms/:rid/messages", async (c) => {
-	const b = await c.req.json<{ text: string; mentions?: string[] }>();
+	const b = await c.req.json<{ text: string; mentions?: string[]; attachments?: string[] }>();
 	try {
-		return c.json(postUserMessage(c.req.param("rid"), String(b.text ?? ""), { mentions: Array.isArray(b.mentions) ? b.mentions.map(String) : [], from: by(c) }));
+		return c.json(postUserMessage(c.req.param("rid"), String(b.text ?? ""), { mentions: Array.isArray(b.mentions) ? b.mentions.map(String) : [], from: by(c), attachments: Array.isArray(b.attachments) ? b.attachments.map(String) : [] }));
 	} catch (e) {
 		return roomErr(c, e);
 	}

@@ -1,6 +1,7 @@
 import { ArrowUp, AtSign, Crown, Loader2, PanelRight, Plus, Settings2, Square, Trash2, Users } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api } from "../api";
+import { api, uploadRoom } from "../api";
+import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
 import { useStore } from "../store";
 import type { Agent, Message, Room, RoomMember } from "../types";
 import { Activity, BotPart, type Part, SideToggle, SystemMsg, UserMsg } from "./Chat";
@@ -69,6 +70,8 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const stick = useRef(true);
 	const [settings, setSettings] = useState(false);
 	const [older, setOlder] = useState<"idle" | "loading" | "end">("idle");
+	const [drag, setDrag] = useState(false);
+	const composer = useRef<{ addFiles: (f: FileList | File[]) => void }>(null);
 	useLayoutEffect(() => {
 		const el = scroller.current;
 		if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -105,7 +108,19 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 		set({ paneAgent: agentId, info: true, infoTab: "overview" });
 	};
 	return (
-		<div className="relative flex h-full min-h-0 flex-col" data-testid="room-chat">
+		<div
+			className="relative flex h-full min-h-0 flex-col"
+			data-testid="room-chat"
+			onDragOver={(e) => {
+				if (e.dataTransfer.types.includes("Files")) (e.preventDefault(), setDrag(true));
+			}}
+			onDragLeave={(e) => e.currentTarget === e.target && setDrag(false)}
+			onDrop={(e) => {
+				e.preventDefault();
+				setDrag(false);
+				if (e.dataTransfer.files.length) composer.current?.addFiles(e.dataTransfer.files);
+			}}
+		>
 			<header className="pa-chat-head safe-top">
 				<SideToggle />
 				<StackedAvatars room={room} size={26} />
@@ -180,7 +195,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					))}
 				</div>
 			)}
-			<RoomComposer room={room} running={st.running} />
+			<RoomComposer room={room} running={st.running} drag={drag} ref={composer} />
 			<RoomSettings room={room} open={settings} onClose={() => setSettings(false)} />
 		</div>
 	);
@@ -219,8 +234,10 @@ function RoomBotTurn({ row, room, agents, live, onAvatar }: { row: Extract<RRow,
 
 // ------------------------------------------------------------------ 输入框：@ 选择（桌面弹出层，手机底部面板）
 const ALL = { agentId: "__all", name: "所有人" } as const;
-function RoomComposer({ room, running }: { room: Room; running: boolean }) {
+function RoomComposer({ room, running, drag, ref }: { room: Room; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }> }) {
 	const [text, setText] = useState("");
+	const { files, setFiles, uploading, error: upErr, addFiles, clear } = useAttachUploader((f) => uploadRoom(room.id, f));
+	if (ref && typeof ref === "object") (ref as React.RefObject<{ addFiles: typeof addFiles } | null>).current = { addFiles };
 	const [picked, setPicked] = useState<string[]>([]);
 	const [q, setQ] = useState<{ at: number; query: string } | null>(null);
 	const [hi, setHi] = useState(0);
@@ -270,17 +287,20 @@ function RoomComposer({ room, running }: { room: Room; running: boolean }) {
 		});
 	};
 	const send = async () => {
-		if (!text.trim()) return;
+		if (!text.trim() && !files.length) return;
 		const body = text;
+		const sentFiles = files;
 		// 只保留文字里还在的 @（删掉的不算）
 		const mentions = picked.filter((id) => body.includes(`@${members.find((m) => m.agentId === id)?.name ?? "\u0000"}`));
 		setText("");
 		setPicked([]);
 		setErr("");
+		clear();
 		try {
-			await api(`/api/rooms/${room.id}/messages`, { method: "POST", json: { text: body, mentions } });
+			await api(`/api/rooms/${room.id}/messages`, { method: "POST", json: { text: body, mentions, attachments: sentFiles.map((f) => f.fileId) } });
 		} catch (e) {
 			setText(body);
+			setFiles(sentFiles);
 			setErr((e as Error).message);
 		}
 	};
@@ -308,8 +328,10 @@ function RoomComposer({ room, running }: { room: Room; running: boolean }) {
 	);
 	return (
 		<div className="pa-composer-wrap">
-			<div className="pa-composer relative">
+			<div className={cx("pa-composer relative", drag && "drag")}>
 				{q && !sheet && <div className="pa-mention-pop">{list}</div>}
+				{drag && <div className="pointer-events-none pb-2 text-center text-sm text-accent">松开即可把文件发到群里</div>}
+				<AttachTray files={files} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} />
 				{err && <div className="pb-2 text-xs text-red-600">{err}</div>}
 				<textarea
 					ref={ta}
@@ -329,11 +351,13 @@ function RoomComposer({ room, running }: { room: Room; running: boolean }) {
 							void send();
 						}
 					}}
+					onPaste={(e) => pasteFiles(e, (fs) => void addFiles(fs))}
 					onBlur={() => !sheet && setTimeout(() => setQ(null), 120)}
 					placeholder={`发到群里… 输入 @ 指定助理`}
 				/>
 				<div className="pa-composer-bar">
 					<div className="pa-composer-tools">
+						<AttachButton onFiles={(f) => void addFiles(f)} />
 						<button className="pa-icon-btn ghost" title="@ 某个助理" aria-label="@ 某个助理" data-testid="mention-btn" onClick={() => {
 							const el = ta.current;
 							const at = el?.selectionStart ?? text.length;
@@ -349,12 +373,12 @@ function RoomComposer({ room, running }: { room: Room; running: boolean }) {
 						<span className="pa-room-hint truncate">不 @ 人时由管理者回答</span>
 						<Help>不 @ 人：只有管理者回答，需要时它会分配给其他成员。@ 某个助理：只有它回答。@所有人：每个成员依次回答。</Help>
 					</div>
-					{running && !text.trim() ? (
+					{running && !text.trim() && !files.length ? (
 						<button className="pa-send" onClick={() => api(`/api/rooms/${room.id}/stop`, { method: "POST" })} aria-label="停止" title="停止所有助理" data-testid="room-stop">
 							<Square size={13} fill="currentColor" />
 						</button>
 					) : (
-						<button className="pa-send" disabled={!text.trim()} onClick={send} aria-label="发送" data-testid="room-send">
+						<button className="pa-send" disabled={(!text.trim() && !files.length) || uploading > 0} onClick={send} aria-label="发送" data-testid="room-send">
 							<ArrowUp className="pa-ic" />
 						</button>
 					)}

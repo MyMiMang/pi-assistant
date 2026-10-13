@@ -157,6 +157,7 @@ for (const [table, col, ddl] of [
 	["requests", "room_id", "TEXT"],
 	["agents", "scope", "TEXT NOT NULL DEFAULT 'user'"],
 	["agents", "room_id", "TEXT"],
+	["files", "room_id", "TEXT"],
 ] as const) {
 	const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
 	if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);

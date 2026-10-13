@@ -34,6 +34,9 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 | [dingtalk-stream](https://www.npmjs.com/package/dingtalk-stream)（钉钉） | 2.1.5 | MIT |
 | [@wecom/aibot-node-sdk](https://www.npmjs.com/package/@wecom/aibot-node-sdk)（企业微信） | 1.0.7 | MIT |
 | [@tencent-weixin/openclaw-weixin](https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin)（微信 ClawBot，只复用协议层） | 2.4.10 | MIT |
+| [unpdf](https://github.com/unjs/unpdf)（附件：PDF 提取文字，内含 [PDF.js](https://github.com/mozilla/pdf.js)，Apache-2.0） | 1.8.1 | MIT |
+| [fflate](https://github.com/101arrowz/fflate)（附件：解压 DOCX / XLSX / PPTX 提取文字） | 0.8.3 | MIT |
+| [@silvia-odwyer/photon-node](https://github.com/silvia-odwyer/photon)（附件：图片缩放，经 Pi 的 resizeImage 使用） | 0.3.4 | Apache-2.0 |
 
 ## 记忆
 

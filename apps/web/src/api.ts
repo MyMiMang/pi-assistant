@@ -74,6 +74,12 @@ export async function download(path: string, name: string) {
 	setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
+export async function uploadRoom(roomId: string, file: File) {
+	const fd = new FormData();
+	fd.append("file", file);
+	return api(`/api/rooms/${roomId}/upload`, { method: "POST", body: fd });
+}
+
 export async function upload(agentId: string, file: File) {
 	const fd = new FormData();
 	fd.append("file", file);

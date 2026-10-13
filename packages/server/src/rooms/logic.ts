@@ -154,8 +154,26 @@ const cardLine = (who: string, m: Record<string, unknown>) => {
  * 把这个成员还没看过的群消息整理成文字（只有最终文字和卡片摘要，不含别人的工具输出）。
  * 自己说过的不再重复（已经在自己的会话里）。超过预算时保留最近的，并提示省略了多少。
  */
-export function buildTranscript(items: TranscriptItem[], selfId: string, nameOf: (agentId: string) => string, budgetChars = 16_000): { text: string; lastSeq: number; omitted: number } {
+export interface TranscriptFile {
+	fileId: string;
+	name: string;
+}
+export function buildTranscript(
+	items: TranscriptItem[],
+	selfId: string,
+	nameOf: (agentId: string) => string,
+	budgetChars = 16_000,
+	/** 附件在当前助理工作区里的路径（没有就只写文件名） */
+	pathOf?: (f: TranscriptFile) => string | undefined,
+): { text: string; lastSeq: number; omitted: number; files: TranscriptFile[] } {
 	const lines: string[] = [];
+	const files: TranscriptFile[] = [];
+	const fileNote = (it: TranscriptItem, verb: string) => {
+		const fs = ((it.meta.attachments as TranscriptFile[] | undefined) ?? []).filter((f) => f?.fileId && f.name);
+		if (!fs.length) return "";
+		files.push(...fs);
+		return `\n（${verb}：${fs.map((f) => { const p = pathOf?.(f); return p ? `${f.name} → ${p}` : f.name; }).join("、")}）`;
+	};
 	let lastSeq = 0;
 	for (const it of items) {
 		lastSeq = Math.max(lastSeq, it.seq);
@@ -165,10 +183,9 @@ export function buildTranscript(items: TranscriptItem[], selfId: string, nameOf:
 			if (!(it.meta.attachments as unknown[] | undefined)?.length) continue;
 		}
 		const who = it.role === "user" ? "用户" : nameOf(it.agentId);
-		if (it.role === "user") lines.push(`【用户】${it.content}`);
+		if (it.role === "user") lines.push(`【用户】${it.content}${fileNote(it, "附件")}`);
 		else if (it.role === "assistant") {
-			const files = ((it.meta.attachments as { name?: string }[] | undefined) ?? []).map((f) => f.name).filter(Boolean);
-			lines.push(`【${who}】${it.content}${files.length ? `\n（发送了文件：${files.join("、")}）` : ""}${it.status === "error" ? "（出错）" : ""}`);
+			lines.push(`【${who}】${it.content}${fileNote(it, "发送了文件")}${it.status === "error" ? "（出错）" : ""}`);
 		} else if (it.role === "card") lines.push(cardLine(who, it.meta));
 		else lines.push(`【系统】${it.content}`);
 	}
@@ -179,5 +196,5 @@ export function buildTranscript(items: TranscriptItem[], selfId: string, nameOf:
 		omitted++;
 	}
 	if (lines.length === 1 && lines[0].length > budgetChars) lines[0] = `${lines[0].slice(0, budgetChars)}…（已截断）`;
-	return { text: (omitted ? `（更早的 ${omitted} 条群消息已省略）\n` : "") + lines.join("\n"), lastSeq, omitted };
+	return { text: (omitted ? `（更早的 ${omitted} 条群消息已省略）\n` : "") + lines.join("\n"), lastSeq, omitted, files };
 }

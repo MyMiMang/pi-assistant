@@ -222,7 +222,11 @@ function respond(messages: Msg[], systemPrompt = "") {
 	if (/问我|选择|选项/.test(u))
 		return fauxAssistantMessage([fauxToolCall("ask_user", { question: "你今天想先处理哪件事？", options: ["整理邮件", "写周报", "看看代码"], allowFreeText: true })]);
 	const att = u.match(/\[附件: ([^\]]+)\]/);
-	if (att) return fauxAssistantMessage([fauxText("收到文件，我先读一下。"), fauxToolCall("read", { path: att[1] })]);
+	if (att) {
+		const imgs = imageCount(lastUser);
+		const excerpt = /<<<文件内容/.test(u) ? "，已看到文档文字" : "";
+		return fauxAssistantMessage([fauxText(`收到文件${imgs ? `，看到 ${imgs} 张图片` : ""}${excerpt}，我先读一下。`), fauxToolCall("read", { path: att[1] })]);
+	}
 	if (/命令|代码|python/i.test(u))
 		return fauxAssistantMessage([fauxText("好，我在工作区里跑一下。"), fauxToolCall("bash", { command: "python3 -c \"print(sum(range(101)))\" 2>/dev/null || node -e \"console.log(5050)\"; uname -s; pwd" })]);
 	return fauxAssistantMessage(
@@ -231,7 +235,7 @@ function respond(messages: Msg[], systemPrompt = "") {
 }
 
 export async function registerMockProvider(models: PiModels) {
-	const faux = registerFauxProvider({ provider: MOCK_PROVIDER, models: [{ id: MOCK_MODEL, name: "Mock 模型（本地测试）" }, { id: MOCK_REASONING_MODEL, name: "Mock 推理模型（本地测试）", reasoning: true } as never], tokensPerSecond: 60 });
+	const faux = registerFauxProvider({ provider: MOCK_PROVIDER, models: [{ id: MOCK_MODEL, name: "Mock 模型（本地测试）", input: ["text", "image"] } as never, { id: MOCK_REASONING_MODEL, name: "Mock 推理模型（本地测试）", reasoning: true } as never], tokensPerSecond: 60 });
 	const step = (ctx: { messages: (Msg & { toolsAdded?: MockTool[] })[]; systemPrompt?: string }) => {
 		faux.appendResponses([step as never]);
 		// Pi 把系统提示词和工具声明放在 transcript 的 system 消息里
@@ -249,7 +253,7 @@ export async function registerMockProvider(models: PiModels) {
 		baseUrl: m.baseUrl,
 		api: m.api,
 		models: [
-			{ id: m.id, name: m.name, api: m.api, reasoning: false, input: ["text"], cost: m.cost, contextWindow: m.contextWindow, maxTokens: m.maxTokens, baseUrl: m.baseUrl },
+			{ id: m.id, name: m.name, api: m.api, reasoning: false, input: ["text", "image"], cost: m.cost, contextWindow: m.contextWindow, maxTokens: m.maxTokens, baseUrl: m.baseUrl },
 			// 带推理档位的模型：用来测试“思考强度”选择器
 			{ id: MOCK_REASONING_MODEL, name: "Mock 推理模型（本地测试）", api: m.api, reasoning: true, input: ["text"], cost: m.cost, contextWindow: m.contextWindow, maxTokens: m.maxTokens, baseUrl: m.baseUrl },
 		],
@@ -258,8 +262,15 @@ export async function registerMockProvider(models: PiModels) {
 }
 
 /** 群聊里的 Mock 行为（e2e 用）：管理者“派给X”就分配，“循环”时每次总结都再派一次；成员完成后回报 */
+function imageCount(m: Msg | undefined) {
+	return m && Array.isArray(m.content) ? (m.content as { type?: string }[]).filter((b) => b.type === "image").length : 0;
+}
 function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) {
 	void systemPrompt;
+	const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+	const paths = [...textOf(lastUserMsg ?? last).matchAll(/ → (room-files\/\S+?)[、）\n]/g)].map((x) => x[1]);
+	const imgs = imageCount(lastUserMsg);
+	const seen = paths.length || imgs ? `（看到附件：${paths.join("、") || "无路径"}；图片 ${imgs} 张）` : "";
 	const me = u.match(/· 你是 ([^（）\n]+)/)?.[1]?.trim() ?? "我";
 	// 用户最近说的话：从整段会话里找（管理者总结时这一轮注入里可能没有用户的话）
 	const users = messages.filter((m) => m.role === "user").flatMap((m) => [...textOf(m).matchAll(/【用户】([^\n]*)/g)].map((x) => x[1]));
@@ -268,6 +279,8 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 	if (last.role === "toolResult") {
 		const out = textOf(last);
 		if (last.toolName === "room_assign") return fauxAssistantMessage(`${me}：已安排 ${target ?? ""}。`);
+		if (last.toolName === "write") return fauxAssistantMessage([fauxToolCall("deliver_file", { path: "chart.svg", caption: `${me}：图表做好了` })]);
+		if (last.toolName === "deliver_file") return fauxAssistantMessage(`${me}：文件已发到群里。`);
 		if (last.toolName === "room_propose_member") return fauxAssistantMessage(`${me}：我提议加一个成员，请确认。`);
 		return fauxAssistantMessage(/blocked|拒绝|denied|批准|停止/i.test(out) ? `${me}：没有获得批准，不执行。` : `${me}：已处理（${out.slice(0, 40)}）`);
 	}
@@ -275,7 +288,8 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 	if (/给你分配了任务/.test(u)) {
 		const task = u.match(/给你分配了任务：([^\n]*)/)?.[1] ?? "";
 		if (/慢慢/.test(task + said)) return fauxAssistantMessage([fauxText(`${me}：开始做，比较慢。`), fauxToolCall("bash", { command: "sleep 20; echo done" })]);
-		return fauxAssistantMessage(`${me} 完成了：${task.slice(0, 40)}${/提醒C|@C/.test(said) ? "。建议 @C 也看看" : ""}`);
+		if (/做个图表/.test(task + said)) return fauxAssistantMessage([fauxToolCall("write", { path: "chart.svg", content: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#4a8"/></svg>' })]);
+		return fauxAssistantMessage(`${me} 完成了：${task.slice(0, 40)}${seen}${/提醒C|@C/.test(said) ? "。建议 @C 也看看" : ""}`);
 	}
 	if (/成员都已回复/.test(u)) {
 		if (/循环/.test(said) && target) return fauxAssistantMessage([fauxToolCall("room_assign", { assignments: [{ agent: target, task: "再做一遍" }] })]);
@@ -283,10 +297,12 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 	}
 	if (/由你（管理者）负责/.test(u)) {
 		if (/加个成员/.test(said)) return fauxAssistantMessage([fauxToolCall("room_propose_member", { member: { name: "设计", role: "做海报", persona: "你负责设计。" }, reason: "缺设计" })]);
-		if (target) return fauxAssistantMessage([fauxText(`${me}：这件事交给 ${target}。`), fauxToolCall("room_assign", { assignments: [{ agent: target, task: said.slice(0, 60) }] })]);
+		const names = [...textOf(lastUserMsg ?? last).matchAll(/([^\s：、（]+) → room-files\//g)].map((x) => x[1]);
+		if (target) return fauxAssistantMessage([fauxText(`${me}：这件事交给 ${target}。`), fauxToolCall("room_assign", { assignments: [{ agent: target, task: said.slice(0, 60), ...(names.length ? { files: names } : {}) }] })]);
 		return fauxAssistantMessage(`${me}（管理者）收到：${said.slice(0, 40)}`);
 	}
 	if (/审批/.test(said)) return fauxAssistantMessage([fauxToolCall("bash", { command: "rm -f old-notes.txt && echo 已删除 old-notes.txt" })]);
 	if (/慢慢/.test(said)) return fauxAssistantMessage([fauxText(`${me}：开始做，比较慢。`), fauxToolCall("bash", { command: "sleep 20; echo done" })]);
-	return fauxAssistantMessage(`${me} 回复：${said.slice(0, 40)}`);
+	if (/做个图表/.test(said)) return fauxAssistantMessage([fauxToolCall("write", { path: "chart.svg", content: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#4a8"/></svg>' })]);
+	return fauxAssistantMessage(`${me} 回复：${said.slice(0, 40)}${seen}`);
 }

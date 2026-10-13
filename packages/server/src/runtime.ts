@@ -35,6 +35,8 @@ import { packagePathsFor, packagesVersion } from "./pi-packages.ts";
 import { config } from "./config.ts";
 import { db, now, uid } from "./db.ts";
 import { splitThinking } from "./thinking.ts";
+import { type AttachmentInput, prepareAttachments } from "./attachments.ts";
+import { describeImages, supportsVision } from "./vision.ts";
 import { deliverFromWorkspace, fileInfo, insideWorkspace, workspaceOf } from "./files.ts";
 import { deleteMessage, insertMessage, updateMessage } from "./messages.ts";
 import { defaultModel, defaultThinking, models } from "./models.ts";
@@ -554,14 +556,23 @@ class AgentRuntime {
 		}
 	}
 
-	async send(text: string) {
+	/** 把附件整理成模型输入（看图模型收到图片本身；文档附上文字摘录） */
+	private async withAttachments(s: NonNullable<Awaited<ReturnType<typeof this.ensure>>>, text: string, files?: AttachmentInput[]) {
+		if (!files?.length) return { text, images: undefined };
+		const vision = supportsVision(this.modelFor(getAgent(this.id)!));
+		const p = await prepareAttachments(files, { vision, describe: vision ? undefined : (imgs) => describeImages(imgs) });
+		return { text: [text, p.text].filter((x) => x.trim()).join("\n\n"), images: p.images };
+	}
+
+	async send(text: string, files?: AttachmentInput[]) {
 		const s = await this.ensure();
 		if (!s) {
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: "还没有可用的模型。请先在「设置 → 模型」里登录一个模型服务并选择默认模型。", meta: { action: "open-models" } });
 			return;
 		}
 		setAgentStatus(this.id, "running");
-		promptSession(s, text).catch((e: unknown) => {
+		const input = await this.withAttachments(s, text, files).catch(() => ({ text, images: undefined }));
+		promptSession(s, input.text, input.images).catch((e: unknown) => {
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `出错了：${e instanceof Error ? e.message : String(e)}`, status: "error" });
 			if (!isSessionBusy(s)) settleAgent(this.id);
 		});
@@ -572,7 +583,7 @@ class AgentRuntime {
 	 * 群聊回合：发一条（模型可见的）消息，等这一轮彻底结束。
 	 * 返回是否被中止、出错信息、本轮最后的回复文字、用掉的 token。
 	 */
-	async turn(text: string): Promise<{ ok: boolean; aborted: boolean; error?: string; text: string; tokens: number }> {
+	async turn(text: string, files?: AttachmentInput[]): Promise<{ ok: boolean; aborted: boolean; error?: string; text: string; tokens: number }> {
 		const s = await this.ensure();
 		if (!s) {
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: "还没有可用的模型。请先在「设置 → 模型」里登录一个模型服务并选择默认模型。", meta: { action: "open-models" } });
@@ -589,7 +600,8 @@ class AgentRuntime {
 			this.waiters.add(v);
 		});
 		let thrown: string | undefined;
-		await promptSession(s, text).catch((e: unknown) => {
+		const input = await this.withAttachments(s, text, files).catch(() => ({ text, images: undefined }));
+		await promptSession(s, input.text, input.images).catch((e: unknown) => {
 			thrown = e instanceof Error ? e.message : String(e);
 		});
 		// prompt 正常返回时这一轮已结束；仍在跑（排在后面）就等 settled
