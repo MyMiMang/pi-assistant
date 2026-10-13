@@ -1327,7 +1327,7 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - **渠道一致**：1:1、群聊、微信等渠道都只和主会话交互；渠道里不展示子代理细节，只发主会话的回复（思考内容照旧只在外部渠道剥掉）。群聊里每个成员各自可派子代理。
 
 ### 21.3 数据模型（SQLite）
-- 新表 `subagents`：`id, agent_id, conversation_id, parent_message_id, task, model_provider, model_id, model_reason, status(running|done|failed|stopped), result_summary, created_at, finished_at`。
+- 新表 `subagents`：`id, agent_id, conversation_id, parent_message_id, task, model_provider, model_id, model_reason, status(running|stalled|done|failed|stopped|timeout|lost), last_activity_at, error_reason, notified_at, result_summary, created_at, finished_at`。
 - 子代理的步骤复用现有消息/事件存储，用 `subagent_id` 字段区分；用量行（用量系统）也带 `subagent_id`，算在所属助理名下。
 - 并发上限：每个助理最多 3 个运行中的子代理（**已定**）。
 
@@ -1349,3 +1349,29 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - **已定**：只一层，子代理不能再派子代理（`spawn_subagent` 不提供给子代理）。
 - **已定**：每个助理最多 3 个并发子代理；详情面板只读 + 停止。
 - **建议默认（待用户最终确认）**：限定档位下子代理需要审批时，审批卡片经主会话转给用户（1:1 / 群聊 / 渠道一致），用户答复后回传子代理。
+
+### 21.7 绝不默默卡住（用户 2026-10-14 要求）
+子代理不管成功、出错、没进展、崩溃还是程序重启，主会话**一定**会知道，并告诉用户。
+
+**现状（已核对代码）**
+- `runtime.ts` `bindSession` 收 Pi 事件：`tool_start/tool_end` 更新工具消息，`settled(aborted)` 触发 `onSettled`；`promptSession(...).catch` 写一条「出错了：…」系统消息并 `settleAgent`。
+- Pi 自带模型重试：`pi-adapter/index.ts` `retry: { enabled: true, maxRetries: 5 }`。
+- 重启恢复先例：`rooms/index.ts` 启动时把 `running/queued` 的 `room_turns` 标成 `interrupted`、群里发「服务重启，群聊被中断了」并可「继续」；`routines.ts` 的 `routine_runs` 有 status/error/finished_at。
+- 缺口：单聊里没有心跳 / 看门狗 / 最长运行时间；出错只写一条消息，没有「通知另一个会话」的机制。
+
+**机制**
+1. **只有一个终态**：`done / failed / stopped / timeout / lost`（`stalled` 是可恢复的中间态）。子代理运行包在 `try/finally` 里：`finally` 中如果还没进终态，按情况写 `failed`（带原因）。`settled`、`promptSession` 的 catch、abort 都走同一个 `finishSubagent(id, state, reason)`，幂等（`UPDATE … WHERE status IN ('running','stalled')`），保证正好一次。
+2. **完成事件落库**：`finishSubagent` 在同一个事务里写 `subagent_events(id, subagent_id, kind, reason, created_at, delivered_at)`。不存内存，主会话忙也不丢。
+3. **唤醒主会话**：主会话忙 → 用 `steer` 在下一个工具边界送达（复用 §20 的通道），送达后填 `delivered_at`；主会话空闲 → 直接开一轮新的主会话回合去汇报。投递失败的下次再投，直到 `delivered_at` 有值。
+4. **心跳**：每个 Pi 事件（文字增量 / 工具开始结束 / 回合结束）更新 `last_activity_at`（写库节流到 ≤1 次/5 秒）。
+5. **看门狗**（每 30 秒一次）：`last_activity_at` 超过 3 分钟没变 → `stalled`，发事件给主会话。正在跑、并且自己有更长超时的工具（命令、下载、助理电脑操作）不算，按该工具的超时 + 余量算。主会话可以：给子代理发消息、停掉重派、或者告诉用户在等什么。重新有活动就回到 `running`，再发一条「恢复了」。
+6. **最长运行时间**：默认 30 分钟（设置可改），到了就 abort → `timeout`。
+7. **模型 / API 出错**：先用 Pi 的重试（退避）；用完还失败 → `failed`，原因写清楚（如「模型接口 429 限流，重试 5 次仍失败」）。
+8. **程序重启**：启动时把所有 `running/stalled` 的子代理标为 `lost`（照搬群聊 `interrupted` 的做法），对每个写事件，主会话启动后汇报，并提供「重新派」。
+9. **主会话汇报**：每个终态和 `stalled` 都要对用户说一句：结果或原因 + 下一步（重试 / 换模型 / 需要用户做什么）。渠道（微信等）也发。
+10. **界面**：卡片显示实时状态 + 「最后活动 x 秒前」；`stalled` 黄色，`failed/timeout/lost` 红色带原因和「重新派」按钮。转圈只在 `running` 且有心跳时出现，永远不会一直转。
+
+**测试计划**
+- 单测：`finishSubagent` 幂等（重复调用只出一个事件）；抛异常 → finally 写 `failed`；看门狗用假时钟触发 `stalled`、恢复、长工具豁免；最长时间 → `timeout`；启动恢复 → `lost` + 事件。
+- 单测：事件投递——主会话忙走 steer、空闲开新回合、投递失败重投。
+- e2e（Mock 模型）：子代理成功 / 模型报错 / 挂起不动 / 用户「停」/ 运行中重启服务，每种都在主会话看到汇报，卡片状态正确不转圈。
