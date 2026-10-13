@@ -80,6 +80,14 @@ const send = async (text) => {
 	await page.waitForFunction(() => document.querySelector("main textarea")?.value === "", null, { timeout: 10_000 });
 };
 
+// 信息面板标签：可见就直接点，否则从「更多」菜单里选
+async function infoTab(name) {
+	const bar = page.getByTestId("info-tabs");
+	const tab = bar.getByRole("tab", { name, exact: true });
+	if (await tab.count()) return tab.click();
+	await page.getByTestId("info-tabs-more").click();
+	await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name, exact: true }).click();
+}
 await step("首次运行向导（选择 provider → 登录 → 默认模型 → 创建第一个助理）", async () => {
 	await page.goto(BASE);
 	await page.getByText("欢迎使用 Pi Assistant").waitFor();
@@ -216,11 +224,49 @@ await step("后台任务", async () => {
 });
 
 await step("右侧信息面板：文件 / 电脑", async () => {
-	await page.locator("aside").last().getByRole("tab", { name: "文件" }).click();
+	await infoTab("文件");
 	await page.waitForTimeout(400);
 	await page.screenshot({ path: join(SHOTS, "07-info-files.png") });
-	await page.locator("aside").last().getByRole("tab", { name: "电脑" }).click();
+	await infoTab("电脑");
 	await page.locator("aside").last().getByText("report.md").waitFor();
+});
+
+await step("右侧信息面板标签栏自适应：240/320/420/600 宽下每个标签都可达（可见或在「更多」里），不被裁切", async () => {
+	const aside = page.locator(".pa-pane-wrap");
+	const want = ["overview", "memory", "routines", "proactive", "files", "computer", "settings"];
+	for (const w of [240, 320, 420, 600]) {
+		await page.evaluate((w) => { const el = document.querySelector(".pa-pane-wrap"); el.style.width = `${w}px`; el.style.flex = `0 0 ${w}px`; }, w);
+		await page.waitForTimeout(250);
+		const r = await page.evaluate(() => {
+			const bar = document.querySelector("[data-testid=info-tabs]");
+			const br = bar.getBoundingClientRect();
+			const vis = [...bar.querySelectorAll("[role=tab]")];
+			const clipped = [...vis, ...bar.querySelectorAll("[data-more]")].filter((b) => { const r = b.getBoundingClientRect(); return r.left < br.left - 0.5 || r.right > br.right + 0.5; }).map((b) => b.textContent);
+			return { vis: vis.map((b) => b.dataset.itab), more: !!bar.querySelector("[data-more]"), clipped };
+		});
+		if (r.clipped.length) throw new Error(`[${w}] 标签被裁切：${r.clipped}`);
+		let inMenu = [];
+		if (r.more) {
+			await page.getByTestId("info-tabs-more").click();
+			inMenu = await page.getByTestId("info-tabs-menu").locator("[role=menuitem]").evaluateAll((bs) => bs.map((b) => b.dataset.itab));
+			await page.keyboard.press("Escape");
+		}
+		const all = [...r.vis, ...inMenu];
+		for (const k of want) if (!all.includes(k)) throw new Error(`[${w}] 标签 ${k} 不可达：可见 ${r.vis} 菜单 ${inMenu}`);
+		if (w === 240 && !r.more) throw new Error("240 宽应出现「更多」");
+		// 选中溢出的标签 → 它变为可见
+		if (inMenu.length) {
+			const k = inMenu[inMenu.length - 1];
+			await page.getByTestId("info-tabs-more").click();
+			await page.getByTestId("info-tabs-menu").locator(`[data-itab=${k}]`).click();
+			await page.locator(`[data-testid=info-tabs] [role=tab][data-itab=${k}][aria-selected=true]`).waitFor({ timeout: 2000 });
+			await page.screenshot({ path: join(SHOTS, `60-info-tabs-${w}.png`) });
+			await page.locator("[data-testid=info-tabs] [role=tab]").first().click();
+		}
+		log(`[${w}] 可见`, r.vis.join(","), "更多", inMenu.join(","));
+	}
+	await page.evaluate(() => { const el = document.querySelector(".pa-pane-wrap"); el.style.width = ""; el.style.flex = ""; });
+	void aside;
 });
 
 let pairUrl = "";
@@ -451,7 +497,7 @@ await step("多个助理：新建第二个助理 → 侧边栏列出 → 上传�
 	// 第三个助理（纯 API），让侧边栏更像真实使用
 	await fetch(`${BASE}/api/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "写作助手", avatar: "✍️", color: "#ec4899", description: "写文章、润色、翻译" }) });
 	// 编辑第二个助理：上传图片头像 + 改名
-	await page.locator("aside").last().getByRole("tab", { name: "设置", exact: true }).click();
+	await infoTab("设置");
 	await page.locator("[data-testid=avatar-file]").setInputFiles(join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"));
 	await page.getByPlaceholder("给助理起个名字").fill("研究员 R");
 	await page.getByRole("button", { name: "保存", exact: true }).click();
@@ -502,7 +548,7 @@ await step("Phase 2：记忆（聊天里记住 → 记忆页可见/编辑）", a
 	await send("记住：我喜欢简洁的回答");
 	await page.locator("main").getByText("好的，我记住了").last().waitFor({ timeout: 15_000 });
 	const pane = page.locator("aside").last();
-	await pane.getByRole("tab", { name: "记忆" }).click();
+	await infoTab("记忆");
 	await pane.getByText("我喜欢简洁的回答").waitFor();
 	await pane.getByRole("button", { name: "添加记忆" }).click();
 	await pane.locator("textarea").fill("我在上海，时区 Asia/Shanghai");
@@ -536,7 +582,7 @@ await step("高级记忆（Hindsight）：设置三个模型 → 连接（假的
 		await p.screenshot({ path: join(SHOTS, "38-settings-hindsight.png"), fullPage: true });
 		await c.close();
 		// 这个助理单独改用高级记忆：之前在 basic 里记下的内容自动补写进 Hindsight
-		await pane.getByRole("tab", { name: "记忆" }).click();
+		await infoTab("记忆");
 		await pane.getByLabel("此助理的记忆后端").selectOption("hindsight");
 		await pane.getByTestId("hindsight-status").getByText("高级记忆运行中").waitFor({ timeout: 20_000 });
 		for (let i = 0; i < 40 && ![...hs.banks.values()].some((d) => [...d.values()].includes("我喜欢简洁的回答")); i++) await page.waitForTimeout(250);
@@ -566,7 +612,7 @@ await step("Phase 2：定时任务（助理创建需审批 → 定时任务页 �
 	await page.getByRole("button", { name: "批准", exact: true }).last().click();
 	await page.locator("main").getByText("定时任务设好了").last().waitFor({ timeout: 15_000 });
 	const pane = page.locator("aside").last();
-	await pane.getByRole("tab", { name: "定时任务" }).click();
+	await infoTab("定时任务");
 	const item = pane.locator("[data-testid=routine-item]").first();
 	await item.getByText("每日简报").waitFor();
 	await item.getByText("0 8 * * *").waitFor();
@@ -686,7 +732,7 @@ await step("扩展：添加 MCP 服务（本机命令）→ 测试连接/工具�
 
 	// 助理设置里按助理启用
 	const pane = page.locator("aside").last();
-	await pane.getByRole("tab", { name: "设置" }).click();
+	await infoTab("设置");
 	await pane.locator("[data-testid=agent-extensions]").getByText("demo", { exact: true }).waitFor();
 });
 
@@ -887,7 +933,7 @@ await step("助理电脑开箱即用：向导没开启时什么都不下载；�
 	await page.locator("main textarea").waitFor();
 	await page.waitForTimeout(500); // 等信息面板按记住的布局渲染完再判断开没开
 	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
-	await page.locator("aside").last().getByRole("tab", { name: "电脑", exact: true }).click();
+	await infoTab("电脑");
 	const ni = page.getByTestId("desktop-not-installed");
 	await ni.getByText("未安装，去设置安装").waitFor();
 	await page.screenshot({ path: join(SHOTS, "58-desktop-not-installed.png") });
@@ -915,7 +961,7 @@ await step("助理电脑开箱即用：向导没开启时什么都不下载；�
 });
 const openPane = async (tab) => {
 	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
-	await page.locator("aside").last().getByRole("tab", { name: tab, exact: true }).click();
+	await infoTab(tab);
 };
 const SHOP = `data:text/html;charset=utf-8,${encodeURIComponent(`<title>测试商店</title><body style="font-family:sans-serif;padding:40px"><h1>测试商店 · 结算</h1><p>无线耳机 × 1　¥199</p><form onsubmit="document.body.innerHTML='<h1>下单成功</h1>';return false"><label>收货人 <input name="n" value="邓邓"></label><br><br><button type="submit">提交订单</button></form></body>`)}`;
 await step("Phase 3 浏览器：助理打开网页（有 Docker 时在「电脑」实时画面里）→ 点「提交订单」需审批 → 拒绝不提交 → 本任务内都允许", async () => {

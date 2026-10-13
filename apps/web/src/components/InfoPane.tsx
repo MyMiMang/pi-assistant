@@ -10,6 +10,7 @@ import { AgentEditor } from "./AgentEditor";
 import { MemoryTab } from "./MemoryTab";
 import { AgentExtensions } from "./AgentExtensions";
 import { AgentHostTier, useHostControl } from "./HostControl";
+import { ResponsiveTabs } from "./ResponsiveTabs";
 import { RoutinesTab } from "./RoutinesTab";
 import { ProactiveTab } from "./Proactive";
 import { Avatar, Badge, Button, cx, fmtSize, fmtTime, Input } from "./ui";
@@ -42,13 +43,7 @@ export default function InfoPane({ agentId }: { agentId: string }) {
 				<h2>{agent.name}</h2>
 				<p>{agent.description || (agent.status === "running" ? t("正在工作") : t("空闲"))}</p>
 			</section>
-			<div className="flex gap-1 overflow-x-auto px-3" role="tablist">
-				{TABS.map(([k, label]) => (
-					<button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={cx("pa-chip sm shrink-0 !border-transparent", tab === k ? "!bg-hover !text-fg font-medium" : "!bg-transparent")}>
-						{t(label)}
-					</button>
-				))}
-			</div>
+			<ResponsiveTabs tabs={TABS} value={tab} onChange={setTab} className="px-3" testId="info-tabs" />
 			<div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-6">
 				{tab === "overview" && <Overview agentId={agentId} />}
 				{tab === "memory" && <MemoryTab agentId={agentId} />}
