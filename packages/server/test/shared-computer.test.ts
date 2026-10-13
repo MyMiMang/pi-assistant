@@ -298,6 +298,7 @@ test("真 Docker：两个助理同时用共用电脑、各自的屏幕、共用�
 		assert.match(res, /merged/);
 		assert.equal(D.containerOf(S), `pia-desk-${SH}`);
 		assert.equal(await D.hasSeparateData(S), false);
+		await assert.rejects(D.mergeIntoShared(S, () => false), /没有可合并的单独电脑数据/);
 		await D.startDesktop(S);
 		assert.equal(ex(SH, "cat", "/home/agent/s-only.txt"), "mine");
 		assert.equal(ex(SH, "cat", "/home/agent/shared.txt"), "from-A", "合并不覆盖共用电脑已有的文件");
