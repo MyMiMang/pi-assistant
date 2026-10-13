@@ -1,0 +1,105 @@
+# 第三方组件与许可证
+
+Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`、`apps/tray/src-tauri/Cargo.lock`、Dockerfile 和 [third-party.json](third-party.json)（运行时下载的组件在那里固定版本与 SHA256）。各组件的版权归原作者所有，按各自的许可证使用；完整许可证文本见各项目仓库，或安装后 `node_modules/<包>/LICENSE`、镜像内 `/usr/share/doc/<包>/copyright`。
+
+这里列的是直接依赖和随产品分发 / 下载的组件；npm 与 Cargo 的传递依赖以 lockfile 为准。
+
+## 助理核心
+
+| 组件 | 版本 | 许可证 | 用途 |
+|---|---|---|---|
+| [@earendil-works/pi-coding-agent](https://github.com/earendil-works/pi) | 1.1.0 | MIT | 智能体运行时（只经 `packages/server/src/pi-adapter` 使用） |
+| [@earendil-works/pi-ai](https://github.com/earendil-works/pi) | 1.1.0 | MIT | 模型服务接入 |
+| [@earendil-works/pi-mcp](https://github.com/earendil-works/pi) | 1.1.0 | MIT | MCP 工具接入 |
+| [Node.js](https://nodejs.org/) | 22.23.3 | MIT | 安装包内置运行时 |
+| [typebox](https://github.com/sinclairzx81/typebox) | 1.3.x | MIT | 工具参数模式 |
+
+## 本地服务（packages/server）
+
+| 组件 | 版本 | 许可证 |
+|---|---|---|
+| [hono](https://github.com/honojs/hono) / [@hono/node-server](https://github.com/honojs/node-server) | 4.13.13 / 2.1.4 | MIT |
+| [ws](https://github.com/websockets/ws) | 8.22.0 | MIT |
+| [croner](https://github.com/Hexagon/croner) | 10.0.1 | MIT |
+| [diff](https://github.com/kpdecker/jsdiff) | 8.0.4 | BSD-3-Clause |
+| [qrcode](https://github.com/soldair/node-qrcode) | 1.5.4 | MIT |
+| [web-push](https://github.com/web-push-libs/web-push) | 3.6.7 | MPL-2.0 |
+| [tsx](https://github.com/privatenumber/tsx) | 4.23.15 | MIT |
+| [playwright-core](https://github.com/microsoft/playwright) | 1.64.0 | Apache-2.0 |
+| [imapflow](https://github.com/postalsys/imapflow) | 2.4.0 | MIT |
+| [nodemailer](https://github.com/nodemailer/nodemailer) | 10.1.0 | MIT-0 |
+| [mailparser](https://github.com/nodemailer/mailparser) | 3.9.38 | MIT |
+| [@larksuiteoapi/node-sdk](https://github.com/larksuite/node-sdk)（飞书） | 1.74.0 | MIT |
+| [dingtalk-stream](https://www.npmjs.com/package/dingtalk-stream)（钉钉） | 2.1.5 | MIT |
+| [@wecom/aibot-node-sdk](https://www.npmjs.com/package/@wecom/aibot-node-sdk)（企业微信） | 1.0.7 | MIT |
+| [@tencent-weixin/openclaw-weixin](https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin)（微信 ClawBot，只复用协议层） | 2.4.10 | MIT |
+
+## 记忆
+
+| 组件 | 版本 | 许可证 |
+|---|---|---|
+| [Hindsight](https://github.com/vectorize-io/hindsight)（hindsight-embed、hindsight-api-slim，PyPI） | 0.10.3 | MIT |
+| [@vectorize-io/hindsight-all](https://www.npmjs.com/package/@vectorize-io/hindsight-all) / [hindsight-client](https://www.npmjs.com/package/@vectorize-io/hindsight-client) | 0.10.3 | MIT |
+| [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank) | 0.2.10 | Apache-2.0 |
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime)（Hindsight 的依赖） | 1.x | MIT |
+| [uv](https://github.com/astral-sh/uv) | 0.13.0 | MIT OR Apache-2.0 |
+| [intfloat/multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small)（默认向量模型，按需下载） | — | MIT |
+| [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3)（可选向量模型，按需下载） | — | MIT |
+
+## 网页界面（apps/web）
+
+| 组件 | 版本 | 许可证 |
+|---|---|---|
+| [React](https://github.com/facebook/react) / react-dom | 19.3.0 | MIT |
+| [Vite](https://github.com/vitejs/vite) / [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react) | 8.3.4 / 6.1.2 | MIT |
+| [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss) / @tailwindcss/typography | 4.3.3 / 0.5.20 | MIT |
+| [zustand](https://github.com/pmndrs/zustand) | 5.0.15 | MIT |
+| [react-markdown](https://github.com/remarkjs/react-markdown) / [remark-gfm](https://github.com/remarkjs/remark-gfm) / [rehype-highlight](https://github.com/rehypejs/rehype-highlight) | 10.1.0 / 4.0.1 / 7.0.2 | MIT |
+| [highlight.js](https://github.com/highlightjs/highlight.js) | 11.x | BSD-3-Clause |
+| [lucide-react](https://github.com/lucide-icons/lucide) | 1.55.0 | ISC |
+| [@noble/ed25519](https://github.com/paulmillr/noble-ed25519) | 3.2.0 | MIT |
+| [@novnc/novnc](https://github.com/novnc/noVNC) | 1.7.0 | MPL-2.0 |
+| [TypeScript](https://github.com/microsoft/TypeScript)（构建） | 5.9 / 7.0 | Apache-2.0 |
+
+## 桌面程序（apps/tray）
+
+| 组件 | 版本 | 许可证 |
+|---|---|---|
+| [Tauri](https://github.com/tauri-apps/tauri) 及插件 shell、autostart、updater、notification、single-instance、opener | 2.12 | Apache-2.0 OR MIT |
+| [@tauri-apps/cli](https://github.com/tauri-apps/tauri) | 2.12.2 | Apache-2.0 OR MIT |
+| [reqwest](https://github.com/seanmonstar/reqwest) | 0.12 | MIT OR Apache-2.0 |
+| [tokio](https://github.com/tokio-rs/tokio) | 1 | MIT |
+| [serde](https://github.com/serde-rs/serde) / serde_json | 1 | MIT OR Apache-2.0 |
+
+## 运行时下载的组件（版本与 SHA256 固定在 third-party.json）
+
+| 组件 | 版本 | 许可证 | 用途 |
+|---|---|---|---|
+| [cloudflared](https://github.com/cloudflare/cloudflared) | 2026.10.0 | Apache-2.0 | 远程访问隧道 |
+| [Cua Driver](https://github.com/trycua/cua) | 0.34.1 | MIT | 截图与键鼠操作 |
+| [Lima](https://github.com/lima-vm/lima) | 2.2.1 | Apache-2.0 | macOS 助理电脑虚拟机 |
+| [nerdctl-full](https://github.com/containerd/nerdctl)（containerd、nerdctl、runc、CNI、BuildKit） | 2.4.1 | Apache-2.0 | 虚拟机内容器引擎 |
+| [Debian 12 genericcloud](https://cloud.debian.org/images/cloud/) | 20260923-2610 | DFSG 自由软件（各包许可证不同） | Lima 虚拟机系统盘 |
+| pia-wsl-rootfs（本项目构建：Debian 12 slim + containerd / nerdctl / runc） | 0.1.0 | 各组件许可证 | Windows WSL2 发行版 |
+| 微信 Linux 版（可选，用户主动开启才下载） | 4.1.13.23 | 腾讯专有软件 | 个人微信渠道 |
+
+## 助理电脑镜像（packages/sandbox-desktop，基于 debian:bookworm-slim）
+
+通过 Debian 软件源安装，许可证见镜像内 `/usr/share/doc/*/copyright`：
+
+| 组件 | 许可证 |
+|---|---|
+| [Chromium](https://www.chromium.org/) | BSD-3-Clause 等 |
+| [Xvfb](https://www.x.org/)（X.Org）、xdotool、x11-utils | MIT/X11 等 |
+| [x11vnc](https://github.com/LibVNC/x11vnc) | GPL-2.0 |
+| [noVNC](https://github.com/novnc/noVNC) / [websockify](https://github.com/novnc/websockify) | MPL-2.0 / LGPL-3.0 |
+| [Xfce](https://www.xfce.org/)（xfce4-session、xfwm4、xfdesktop4、panel、terminal、Thunar） | GPL-2.0 等 |
+| [Noto CJK / Noto Color Emoji](https://github.com/notofonts) 字体 | SIL OFL 1.1 |
+| [tini](https://github.com/krallin/tini) | MIT |
+| ImageMagick、socat、at-spi2-core、curl 等 | 各自许可证 |
+
+## 其他
+
+- [Docker](https://www.docker.com/) / [Podman](https://podman.io/)：Linux 上助理电脑使用用户自己安装的容器运行时，不随产品分发。
+- [WSL](https://github.com/microsoft/WSL)：Windows 系统组件，由用户按需安装。
+- 测试用：hoodiecrow-imap、smtp-server（MIT），不随产品分发。
