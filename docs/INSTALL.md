@@ -4,9 +4,9 @@
 
 | 系统 | 文件 |
 |---|---|
-| macOS（Apple 芯片 M1/M2/M3/M4） | `Pi Assistant_<版本>_aarch64.dmg` |
-| macOS（Intel） | `Pi Assistant_<版本>_x64.dmg` |
-| Windows 10/11（64 位） | `Pi Assistant_<版本>_x64-setup.exe` |
+| macOS（Apple 芯片 M1/M2/M3/M4） | `Pi.Assistant_<版本>_aarch64.dmg` |
+| macOS（Intel） | `Pi.Assistant_<版本>_x64.dmg` |
+| Windows 10/11（64 位） | `Pi.Assistant_<版本>_x64-setup.exe` |
 | Linux 服务器（x64 / arm64） | `pi-assistant-<版本>-linux-<x64\|arm64>.tar.gz`，用下面的安装脚本装 |
 
 安装后它常驻在菜单栏（macOS）/ 系统托盘（Windows），开机自动启动；第一次运行会自动在浏览器里打开 http://127.0.0.1:8787 。
@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/MyMiMang/pi-assistant/main/deploy/l
 curl -fsSL https://raw.githubusercontent.com/MyMiMang/pi-assistant/main/deploy/linux/install.sh | sh -s -- --user
 ```
 常用选项：`--port 8787`、`--host 127.0.0.1`（只给反向代理访问）、`--version 0.2.0`、`--docker`（允许使用宿主机 Docker 运行“助理电脑”；这等于给服务 root 权限）。
-离线或内网服务器：在别处下载 `.tar.gz` 和 `.sha256` 后 `sh install.sh --file pi-assistant-<版本>-linux-x64.tar.gz`。国内网络可设 `PIA_DOWNLOAD_MIRROR=https://ghfast.top/`。（Linux 包从下一个发布版本开始提供。）
+离线或内网服务器：在别处下载 `.tar.gz` 和 `.sha256` 后 `sh install.sh --file pi-assistant-<版本>-linux-x64.tar.gz`。国内网络可设 `PIA_DOWNLOAD_MIRROR=https://ghfast.top/`。（Linux 包从 v0.1.0-beta.10 开始提供。）
 
 **首次设置**：安装完成时会显示网页地址和一次性**设置码**（也会打印在日志里：`pi-assistant logs`，或随时 `sudo pi-assistant setup-code`）。用浏览器打开网页、输入设置码，这台设备就成为**主人设备**：可以在网页上生成配对码、批准其他设备、修改全部设置。设置码 24 小时有效、只能用一次，过期会自动换新。主人设备丢了：`sudo pi-assistant reset-owner`，然后用新的设置码重新设置。
 

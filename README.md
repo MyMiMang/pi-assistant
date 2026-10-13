@@ -29,6 +29,7 @@
 - **后台和定时**：长任务在后台跑，完成后推送通知；定时任务、主动巡检。
 - **记忆与技能**：基于 Hindsight 的本地长期记忆（本地向量模型，可选 bge-m3）、技能（SKILL.md）、MCP 工具。
 - **连接你的应用**：邮件（IMAP/SMTP、Gmail）、日历、GitHub，以及飞书、钉钉、企业微信、微信 ClawBot 等聊天渠道。
+- **发图片和文件**：聊天里可以直接发图片和 PDF / Word / Excel 等文件。支持识图的模型直接看图，不支持的会先把图转成文字描述；文档会提取正文。群聊里管理者可以把文件分给成员。
 - **多助理**：每个助理有自己的名字、模型、工作区和记忆。
 - **助理群聊**：把几个助理拉进一个群，设一个管理者：不 @ 人时由它理解需求、分配给合适的成员，@ 谁就只有谁回答，省 token。也可以直接跟助理说目标，让它提议建一个团队（成员、分工、推荐模型），你改好确认后才创建。
 
@@ -130,15 +131,15 @@ npm test             # 单元测试 + Pi 兼容性测试
 npm run e2e          # Playwright 端到端测试（需要 Chrome，CHROME=/path/to/chrome）
 ```
 
-安装包由 GitHub Actions（[`release.yml`](.github/workflows/release.yml)）在推送 `v*` 标签时构建。构建、测试、发版的完整说明见 [docs/HANDOFF.md](docs/HANDOFF.md)。
+安装包由 GitHub Actions（[`release.yml`](.github/workflows/release.yml)）在推送 `v*` 标签时构建。构建、测试、发版的完整说明见 [AGENTS.md](AGENTS.md) 和 [docs/HANDOFF.md](docs/HANDOFF.md)。
 
 ## 项目结构
 
 ```
 apps/web            唯一的界面：React 响应式 PWA（电脑与手机共用）
-apps/tray           Tauri 2 桌面程序（原生窗口、托盘、悬浮条、自动更新）
+apps/tray           Tauri 2 桌面程序（原生窗口、托盘、悬浮条、自动更新、桌宠）
 apps/rendezvous     稳定入口 Cloudflare Worker（serverId → 当前隧道地址）
-packages/server     本地服务：网关、Pi 运行时、任务、调度、隧道、配对、助理电脑、记忆
+packages/server     本地服务：网关、Pi 运行时、群聊、渠道、附件 / 识图、图片生成、任务、调度、隧道、配对、助理电脑、记忆
 packages/ext-*      Pi 扩展：审批、沙箱、交付、记忆、浏览器、电脑、连接器、技能、定时、主动
 packages/shared     共享类型
 packages/sandbox-desktop  助理电脑桌面镜像
@@ -148,14 +149,17 @@ sandbox/            可选的 Docker 代码沙箱镜像
 skills/             内置技能（SKILL.md）
 deploy/             Linux 安装脚本、Docker Compose
 scripts/  e2e/      构建脚本、端到端测试
-docs/               设计、交接、安装文档
+docs/               架构、设计、交接、安装文档、更新说明
 ```
 
 ## 文档
 
-- [docs/INSTALL.md](docs/INSTALL.md)：安装、未签名提示、Linux 服务器、Docker 部署
+- [AGENTS.md](AGENTS.md)：给接手的 AI / 开发者的入口：仓库地图、构建测试、发布规则、约定
+- [docs/HANDOFF.md](docs/HANDOFF.md)：进度（按版本）、已验证 / 待真机验证、已知问题、下一步
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架构概览（组件图、数据流、存储）
 - [docs/DESIGN.md](docs/DESIGN.md)：完整设计
-- [docs/HANDOFF.md](docs/HANDOFF.md)：开发交接：现状、构建、测试、发版、待办
+- [docs/INSTALL.md](docs/INSTALL.md)：安装、未签名提示、Linux 服务器、Docker 部署
+- [docs/release-notes](docs/release-notes)：各版本更新说明
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)：第三方组件与许可证
 - [third-party.json](third-party.json)：下载组件的固定版本和 SHA256
 
