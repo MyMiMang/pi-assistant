@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS channel_peers (
   channel_id TEXT NOT NULL, peer_id TEXT NOT NULL, display TEXT, allowed INTEGER NOT NULL DEFAULT 0,
   conversation_id TEXT, ctx TEXT, last_at INTEGER, PRIMARY KEY (channel_id, peer_id));
 CREATE INDEX IF NOT EXISTS channel_peers_conv ON channel_peers(conversation_id);
+CREATE TABLE IF NOT EXISTS channel_room_cards (
+  channel_id TEXT NOT NULL, peer_id TEXT NOT NULL, request_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (channel_id, peer_id, request_id));
 CREATE TABLE IF NOT EXISTS email_accounts (
   id TEXT PRIMARY KEY, agent_id TEXT, name TEXT NOT NULL, address TEXT NOT NULL, preset TEXT NOT NULL,
   config TEXT NOT NULL, secret TEXT NOT NULL, created_at INTEGER NOT NULL);

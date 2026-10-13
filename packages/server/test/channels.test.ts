@@ -144,6 +144,23 @@ test("企业微信：回调验签 → 未绑定提示 → 绑定码 → 消息�
 	assert.match(await ch.handleAction("other-channel", { userId: "zhangsan", action: k2, ctx: {} }), /失效/, "别的渠道不能处理");
 	assert.equal(await ch.handleAction(c.id, { userId: "zhangsan", action: k2, ctx: {} }), "已选择：9 点");
 	assert.equal((await q2).answer, "9 点");
+	// 群聊里的审批 / 提问卡片：转发到绑定的渠道单聊，带群名和助理名；回复「拒绝」/ 序号 / 按钮都能处理
+	db.prepare("INSERT INTO rooms(id, name, purpose, caps, created_at, updated_at) VALUES('rm1','发布群','','{}',?,?)").run(now(), now());
+	db.prepare("INSERT INTO conversations(id, agent_id, title, created_at, updated_at, hidden) VALUES('rc1','ca','群聊',?,?,1)").run(now(), now());
+	db.prepare("INSERT INTO room_members(room_id, agent_id, conversation_id, name, avatar, color, joined_at) VALUES('rm1','ca','rc1','小助','A','#000',?)").run(now());
+	const ra = requests.approval("ca", null, "bash", {}, "删除 old.txt", "high", "rc1");
+	await wait(() => cards().length === 5);
+	const rtc = cards()[4].body.template_card as { main_title?: { title: string }; sub_title_text: string; button_list: { key: string }[] };
+	assert.match(JSON.stringify(rtc), /发布群/);
+	assert.match(rtc.sub_title_text, /小助：删除 old\.txt/);
+	post("zhangsan", "拒绝", "m6r");
+	assert.deepEqual(await ra, { approved: false });
+	const rq = requests.question("ca", null, "用哪个方案？", ["A", "B"], false, "rc1");
+	await wait(() => cards().length === 6);
+	const rk = (cards()[5].body.template_card as { button_list: { key: string }[] }).button_list[1].key;
+	assert.equal(await ch.handleAction(c.id, { userId: "zhangsan", action: rk, ctx: {} }), "已选择：B");
+	assert.equal((await rq).answer, "B");
+	assert.equal(db.prepare("SELECT COUNT(*) n FROM channel_room_cards WHERE channel_id = ?").get(c.id)!.n, 2);
 	// 新对话
 	post("zhangsan", "新对话", "m7");
 	await wait(() => ch.channelJson(ch.getChannel(c.id)!).users.length === 1);

@@ -407,8 +407,13 @@ export async function handleInbound(channelId: string, m: Inbound) {
 		sys(conv, "已停止当前任务。");
 		return;
 	}
-	// 有待处理的审批 / 提问 → 这条回复就是答案
-	const card = db.prepare("SELECT meta FROM messages WHERE conversation_id = ? AND role = 'card' AND json_extract(meta, '$.status') = 'pending' ORDER BY created_at DESC LIMIT 1").get(conv) as { meta: string } | undefined;
+	// 有待处理的审批 / 提问 → 这条回复就是答案（本对话的，或转发到这里的群聊卡片）
+	const card = (db.prepare("SELECT meta FROM messages WHERE conversation_id = ? AND role = 'card' AND json_extract(meta, '$.status') = 'pending' ORDER BY created_at DESC LIMIT 1").get(conv) ??
+		db
+			.prepare(
+				"SELECT m.meta FROM channel_room_cards r JOIN messages m ON m.role = 'card' AND json_extract(m.meta, '$.requestId') = r.request_id WHERE r.channel_id = ? AND r.peer_id = ? AND json_extract(m.meta, '$.status') = 'pending' ORDER BY r.created_at DESC LIMIT 1",
+			)
+			.get(channelId, m.peerId)) as { meta: string } | undefined;
 	if (card) {
 		const meta = JSON.parse(card.meta) as { kind: string; requestId: string; options?: string[]; allowFreeText?: boolean; allowTask?: boolean };
 		const by = `${c.kind}:${m.userId}`;
@@ -442,7 +447,9 @@ export async function handleAction(channelId: string, a: CardAction): Promise<st
 	if (!peer(channelId, a.userId)?.allowed) return "无权操作：请先绑定";
 	const row = db.prepare("SELECT conversation_id, meta FROM messages WHERE role = 'card' AND json_extract(meta, '$.requestId') = ? LIMIT 1").get(act.requestId) as { conversation_id: string; meta: string } | undefined;
 	if (!row) return "这个请求已失效";
-	const bound = db.prepare("SELECT 1 FROM channel_peers WHERE channel_id = ? AND conversation_id = ? LIMIT 1").get(channelId, row.conversation_id);
+	const bound =
+		db.prepare("SELECT 1 FROM channel_peers WHERE channel_id = ? AND conversation_id = ? LIMIT 1").get(channelId, row.conversation_id) ??
+		db.prepare("SELECT 1 FROM channel_room_cards WHERE channel_id = ? AND peer_id = ? AND request_id = ? LIMIT 1").get(channelId, a.userId, act.requestId);
 	if (!bound) return "无权操作这个请求";
 	const meta = JSON.parse(row.meta) as { kind: string; status?: string; options?: string[]; allowTask?: boolean };
 	if (meta.status !== "pending") return "已经处理过了";
@@ -506,6 +513,7 @@ bus.on((e) => {
 	const msg = ev.message;
 	if (forwarded.has(msg.id)) return;
 	if (/"noMirror":true/.test(typeof msg.meta === "string" ? msg.meta : JSON.stringify(msg.meta ?? {}))) return; // 用户选了“只在 App”
+	if ((msg as MessageRow & { room_id?: string | null }).room_id && msg.role === "card") return void forwardRoomCard(msg);
 	// 消息已经写进 Pi Assistant（message.created 在写库之后才发出）→ 把副本镜像到绑定了这个对话的每个渠道会话
 	const peers = db.prepare("SELECT * FROM channel_peers WHERE conversation_id = ?").all(msg.conversation_id) as unknown as PeerRow[];
 	if (!peers.length) return;
@@ -524,3 +532,28 @@ bus.on((e) => {
 	if (forwarded.size > 5000) forwarded.clear();
 });
 
+
+/**
+ * 群聊里的审批 / 提问卡片 → 转发到用户绑定的渠道单聊（和单聊审批一样能在渠道里批准 / 拒绝 / 回答）。
+ * 发给每个已绑定、启用的渠道的单聊会话（不发到渠道群里）；记录在 channel_room_cards，回复时据此找到卡片。
+ */
+function forwardRoomCard(msg: MessageRow) {
+	const meta = (typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as Record<string, unknown>;
+	if (meta.status !== "pending" || !meta.requestId || (meta.kind !== "approval" && meta.kind !== "question")) return;
+	const card = cardFor(meta);
+	const text = format(msg);
+	if (!card || text === null) return;
+	const roomId = (msg as MessageRow & { room_id?: string | null }).room_id!;
+	const room = db.prepare("SELECT name FROM rooms WHERE id = ?").get(roomId) as { name: string } | undefined;
+	const who = getAgent(msg.agent_id)?.name ?? "助理";
+	const where = `［群聊「${room?.name ?? "群聊"}」· ${who}］`;
+	const peers = db
+		.prepare("SELECT p.* FROM channel_peers p JOIN channels c ON c.id = p.channel_id WHERE c.enabled = 1 AND p.allowed = 1 AND p.is_group = 0 AND p.conversation_id IS NOT NULL")
+		.all() as unknown as PeerRow[];
+	if (!peers.length) return;
+	forwarded.add(msg.id);
+	for (const p of peers) {
+		db.prepare("INSERT OR IGNORE INTO channel_room_cards(channel_id, peer_id, request_id, created_at) VALUES(?,?,?,?)").run(p.channel_id, p.peer_id, String(meta.requestId), now());
+		void reply(p.channel_id, p.ctx ? JSON.parse(p.ctx) : {}, `${where}\n${text}`, { ...card, title: `${card.title} · ${room?.name ?? "群聊"}`, body: `${who}：${card.body}` }, [], p.peer_id);
+	}
+}
