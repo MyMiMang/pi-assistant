@@ -893,6 +893,8 @@ await step("共用电脑：两个助理同一台电脑（界面显示共用）�
 		const s2 = await post(`/api/agents/${two.id}/desktop/start`);
 		if (!s1.computer?.shared || s1.computer.id !== s2.computer?.id || s1.port !== s2.port) throw new Error(`两个助理应该在同一台共用电脑上：${JSON.stringify([s1.computer, s2.computer])}`);
 		await page.goto(BASE);
+		await page.locator("main textarea").waitFor();
+		await page.waitForTimeout(800); // 等信息面板按记住的布局渲染完
 		await openPane("电脑");
 		const dv = page.getByTestId("desktop-view");
 		await dv.getByTestId("desktop-computer").getByText(/共用电脑（\d+ 个助理）/).waitFor({ timeout: 30_000 });
