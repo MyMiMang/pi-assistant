@@ -10,6 +10,8 @@ const en: Record<string, string> = {
 	"自带运行时（推荐）": "Built-in runtime (recommended)", "使用已安装的 Docker": "Use installed Docker", 启动中: "Starting", 运行中: "Running", 已关机: "Off",
 	"删除虚拟机和镜像（登录状态会清掉）": "Delete VM and images (logins cleared)", "未安装，去设置安装": "Not installed — set up in Settings",
 	"预计下载 ≈{d}，磁盘占用 ≈{disk}，运行时内存 3–4 GB。开启前什么都不会下载。": "Download ≈{d}, disk ≈{disk}, RAM 3–4 GB while running. Nothing is downloaded until enabled.",
+	共用电脑: "Shared computer", "共用电脑（{n} 个助理）": "Shared computer ({n} assistants)", 单独的电脑: "Separate computer", 屏幕: "Screen", 主屏幕: "Main screen", 它在用: "in use",
+	回主屏幕: "Back to main screen", 给它开自己的屏幕: "Give it its own screen", 使用单独的电脑: "Use a separate computer", 合并进共用电脑: "Merge into shared computer", "关掉共用电脑？": "Shut down the shared computer?",
 	下载: "Download", 上传: "Upload", 保存: "Save", 取消: "Cancel", 下一步: "Next", 完成: "Done", 测试连接: "Test connection",
 };
 let lang: "zh" | "en" = (localStorage.getItem("pia.lang") as "zh" | "en") || "zh";
