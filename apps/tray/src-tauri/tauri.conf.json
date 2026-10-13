@@ -8,10 +8,6 @@
   },
   "app": {
     "windows": [],
-    "trayIcon": {
-      "iconPath": "icons/tray.png",
-      "iconAsTemplate": false
-    },
     "macOSPrivateApi": true
   },
   "bundle": {
