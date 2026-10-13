@@ -14,7 +14,7 @@ import { pipeline } from "node:stream/promises";
 import { config } from "./config.ts";
 import { getSetting, setSetting } from "./db.ts";
 import { bus } from "./bus.ts";
-import { containerOf, desktopStatus, startDesktop } from "./desktop.ts";
+import { containerOf, desktopStatus, displayOf, startDesktop } from "./desktop.ts";
 import { engine } from "./desktop/backend.ts";
 import { countBytes, registerDownload, trackDownload } from "./downloads.ts";
 
@@ -130,7 +130,9 @@ export async function openWechat(agentId: string, onProgress?: (m: string) => vo
 		st = await wechatStatus(agentId);
 	}
 	if (!st.running) {
-		await docker(["exec", "-d", "-e", "XDG_RUNTIME_DIR=/tmp/xdg-agent", name, "bash", "-c", `mkdir -p -m 700 /tmp/xdg-agent; exec ${WECHAT_BIN} >/tmp/wechat.log 2>&1`]);
+		// 开在这个助理正在用的屏幕上（共用电脑上可能是它自己的屏幕）
+		const display = await displayOf(agentId).catch(() => 1);
+		await docker(["exec", "-d", "-e", "XDG_RUNTIME_DIR=/tmp/xdg-agent", "-e", `DISPLAY=:${display}`, name, "bash", "-c", `mkdir -p -m 700 /tmp/xdg-agent; exec ${WECHAT_BIN} >/tmp/wechat.log 2>&1`]);
 		for (let i = 0; i < 30 && !(st = await wechatStatus(agentId)).running; i++) await new Promise((r) => setTimeout(r, 500));
 	}
 	return st;

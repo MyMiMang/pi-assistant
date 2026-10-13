@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd -m -u 1000 -s /bin/bash agent
 COPY vendor/${TARGETARCH}/cua-driver /usr/local/bin/cua-driver
 COPY start.sh /usr/local/bin/pia-desktop
-RUN chmod +x /usr/local/bin/pia-desktop /usr/local/bin/cua-driver \
+COPY pia-screen pia-cua-mcp /usr/local/bin/
+RUN chmod +x /usr/local/bin/pia-desktop /usr/local/bin/cua-driver /usr/local/bin/pia-screen /usr/local/bin/pia-cua-mcp \
     && ln -sf /usr/share/novnc/vnc_lite.html /usr/share/novnc/index.html
 USER agent
 WORKDIR /home/agent

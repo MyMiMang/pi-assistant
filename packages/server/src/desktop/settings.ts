@@ -16,8 +16,15 @@ export interface DesktopSettings {
 	mirror: string;
 	/** GitHub 下载加速前缀（macOS 虚拟机组件 limactl / nerdctl 用），例如 https://ghfast.top/ ；空 = 直连。下载内容按固定摘要校验 */
 	fileMirror: string;
+	/**
+	 * 用“单独的电脑”的助理（DESIGN §15.4）：默认所有助理共用一台电脑（同一个家目录、浏览器登录状态、已装的应用），
+	 * 列在这里的助理有自己的电脑（自己的家目录），和其他助理完全分开。
+	 */
+	separate: string[];
+	/** 旧版（每个助理一台电脑）的数据已经处理过：已有自己电脑数据的助理默认保留为单独的电脑，登录状态不丢 */
+	legacyMigrated: boolean;
 }
-const DEFAULTS: DesktopSettings = { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "" };
+const DEFAULTS: DesktopSettings = { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "", separate: [], legacyMigrated: false };
 export const desktopSettings = (): DesktopSettings => ({ ...DEFAULTS, ...getSetting<Partial<DesktopSettings>>("desktop", {}) });
 
 export function updateDesktopSettings(b: Partial<DesktopSettings>) {
@@ -33,6 +40,23 @@ export function updateDesktopSettings(b: Partial<DesktopSettings>) {
 	}
 	if (b.mirror !== undefined) cur.mirror = normalizeMirror(b.mirror);
 	if (b.fileMirror !== undefined) cur.fileMirror = normalizeFileMirror(b.fileMirror);
+	setSetting("desktop", cur);
+	return cur;
+}
+/** 开 / 关某个助理的“单独的电脑” */
+export function setSeparate(agentId: string, on: boolean) {
+	const cur = desktopSettings();
+	const set = new Set(cur.separate);
+	if (on) set.add(agentId);
+	else set.delete(agentId);
+	cur.separate = [...set];
+	setSetting("desktop", cur);
+	return cur;
+}
+export function markLegacyMigrated(separate: string[]) {
+	const cur = desktopSettings();
+	cur.separate = [...new Set([...cur.separate, ...separate])];
+	cur.legacyMigrated = true;
 	setSetting("desktop", cur);
 	return cur;
 }

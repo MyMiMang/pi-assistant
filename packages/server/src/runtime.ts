@@ -13,7 +13,7 @@ import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
 import { emailExtension, isEmailTool, wechatExtension } from "@pi-assistant/ext-connectors";
 import { openWechat, WECHAT_PROMPT, wechatAllowed } from "./wechat.ts";
 import { accountsFor, getAccount, getDraft, listMail, readMail, saveDraft, sendDraft, fileReader } from "./email.ts";
-import { browserFor, setHeaded } from "./browser.ts";
+import { browserFor, browserShared, isolatedContext, setHeaded } from "./browser.ts";
 import { deliveryExtension } from "@pi-assistant/ext-delivery";
 import { memoryExtension } from "@pi-assistant/ext-memory";
 import { routinesExtension } from "@pi-assistant/ext-routines";
@@ -53,7 +53,7 @@ import {
 import { notify } from "./push.ts";
 import { requests } from "./requests.ts";
 import { dockerOperations, sandboxMode } from "./sandbox.ts";
-import { cuaMcpCommand, desktopPause, desktopStatus, idle as desktopIdle, screenshotDesktop, startDesktop } from "./desktop.ts";
+import { beforeComputerAction, computerFor, cuaMcpCommand, desktopPause, desktopStatus, screenTools, screenshotDesktop, startDesktop, touchAgent } from "./desktop.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { BRAND } from "@pi-assistant/shared";
 
@@ -348,6 +348,10 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 		factory: browserExtension({
 			workspace,
 			context: async () => (await browserFor(agentId)).ctx,
+			get shared() {
+				return browserShared(agentId);
+			},
+			isolated: () => isolatedContext(agentId),
 			mode: () => (computerOn ? "sandbox" : "host"),
 			isPaused: () => desktopPause.isPaused(agentId),
 			request: async (r) => {
@@ -376,7 +380,10 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 		screenshot: () => screenshotDesktop(agentId),
 		approvals: () => sandboxComputerSettings().approvals,
 		guard: guardContext("sandbox"),
-		log: (e) => (desktopIdle.touch(agentId), recordAction(agentId, taskId, e, () => screenshotDesktop(agentId))),
+		log: (e) => (touchAgent(agentId), recordAction(agentId, taskId, e, () => screenshotDesktop(agentId))),
+		// 共用电脑：主屏幕正被别的助理操作时自动给这个助理开自己的屏幕（不抢鼠标键盘）
+		before: () => beforeComputerAction(agentId, agentBusy),
+		screens: screenTools(agentId),
 		handoff: (reason, png) => handoff(reason, png, "可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。"),
 		request: async (r) => {
 			const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
@@ -450,7 +457,7 @@ class AgentRuntime {
 		const desk = ds?.state === "running" ? "on" : ds?.available ? "off" : "none";
 		const thinking = this.thinkingFor(a);
 		// 模型 / 思考强度不在 key 里：用 session.setModel / setThinkingLevel 原地切换，不重建会话
-		const key = `${a.name}|${a.persona}|desk:${desk}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}`;
+		const key = `${a.name}|${a.persona}|desk:${desk}|pc:${computerFor(this.id)}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}`;
 		if (this.session && this.modelKey === key) {
 			if (!isSessionBusy(this.session)) await applyModelSettings(this.session, models, model, thinking).catch((e) => console.warn(`[model] ${e instanceof Error ? e.message : e}`));
 			return this.session;

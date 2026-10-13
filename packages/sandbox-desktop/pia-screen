@@ -1,0 +1,62 @@
+#!/bin/bash
+# 助理电脑的“屏幕”管理（DESIGN §15.4）：同一台电脑（同一个家目录）里，每个助理可以有自己的屏幕——
+# 独立的 X 显示器 + 窗口管理器 + VNC + cua-driver 守护进程，互不抢鼠标键盘。主屏幕（main）由 pia-desktop 启动。
+#   pia-screen add <key> <vnc端口>   新建（已存在则复用），输出显示器编号
+#   pia-screen rm <key>              关掉这块屏幕（窗口里的程序一起结束）
+#   pia-screen ls                    每行：<key> <显示器编号> <vnc端口>
+#   pia-screen assign <助理id> <key> 指定这个助理用哪块屏幕（cua 连接 / 截图都按它走）
+#   pia-screen run …                 （内部）在独立进程组里跑一块屏幕
+set -e
+DIR=/tmp/pia-screens; TOK=/tmp/pia-vnc-tokens
+mkdir -p "$DIR" "$TOK"
+ok_key() { [[ "$1" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || { echo "屏幕名不合法：$1" >&2; exit 2; }; }
+ok_port() { [[ "$1" =~ ^[0-9]{2,5}$ ]] || { echo "端口不合法：$1" >&2; exit 2; }; }
+alive() { [ -f "$DIR/$1" ] && read -r d _ < "$DIR/$1" && xdpyinfo -display ":$d" >/dev/null 2>&1; }
+case "${1:-}" in
+run)
+	key=$2; port=$3
+	f=$(mktemp); exec 5>"$f"
+	Xvfb -displayfd 5 -screen 0 "${SCREEN:-1440x900x24}" -nolisten tcp >"/tmp/xvfb-$key.log" 2>&1 &
+	for i in $(seq 1 100); do d=$(head -n1 "$f" 2>/dev/null | tr -dc 0-9); [ -n "$d" ] && break; sleep 0.1; done
+	exec 5>&-; rm -f "$f"
+	[ -n "$d" ] || { echo "Xvfb 没有启动" >&2; exit 1; }
+	export DISPLAY=":$d"
+	for i in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
+	export $(dbus-launch)
+	# 不用会话管理器（同一容器里多个 xfce4-session 会互相干扰），直接拉起桌面组件，挂了自动重启
+	( xfsettingsd >>"/tmp/xfce-$key.log" 2>&1 & while :; do xfwm4 --sm-client-disable >>"/tmp/xfce-$key.log" 2>&1; sleep 1; done ) &
+	( while :; do xfdesktop --disable-wm-check >>"/tmp/xfce-$key.log" 2>&1; sleep 1; done ) &
+	( while :; do xfce4-panel --disable-wm-check >>"/tmp/xfce-$key.log" 2>&1; sleep 1; done ) &
+	x11vnc -display "$DISPLAY" -forever -shared -nopw -localhost -rfbport "$port" -quiet >"/tmp/x11vnc-$key.log" 2>&1 &
+	cua-driver serve --socket "/tmp/cua-$key.sock" --permission-mode unrestricted --dangerously-bypass-approvals --no-permissions-gate >"/tmp/cua-serve-$key.log" 2>&1 &
+	echo "$key: 127.0.0.1:$port" > "$TOK/$key"
+	echo "$d $port $$" > "$DIR/$key"
+	wait -n ;;
+add)
+	ok_key "$2"; ok_port "$3"
+	[ "$2" != main ] || { echo "main 由 pia-desktop 管理" >&2; exit 2; }
+	exec 9>"$DIR/.lock"; flock 9
+	if alive "$2"; then read -r d _ < "$DIR/$2"; echo "$d"; exit 0; fi
+	"$0" rm "$2" >/dev/null 2>&1 || true
+	setsid "$0" run "$2" "$3" >/dev/null 2>&1 < /dev/null 9>&- &
+	for i in $(seq 1 150); do
+		if alive "$2" && [ -S "/tmp/cua-$2.sock" ] && (exec 3<>"/dev/tcp/127.0.0.1/$3") 2>/dev/null; then read -r d _ < "$DIR/$2"; echo "$d"; exit 0; fi
+		sleep 0.1
+	done
+	echo "屏幕 $2 没有启动起来" >&2; exit 1 ;;
+rm)
+	ok_key "$2"; [ "$2" != main ] || exit 2
+	if [ -f "$DIR/$2" ]; then read -r _ _ pg < "$DIR/$2"; [ -n "$pg" ] && [ "$pg" != 0 ] && kill -- -"$pg" 2>/dev/null || true; fi
+	rm -f "$DIR/$2" "$TOK/$2" "/tmp/cua-$2.sock"
+	grep -lx "$2" "$DIR"/agent-* 2>/dev/null | xargs -r rm -f ;;
+ls)
+	for f in "$DIR"/*; do b=$(basename "$f"); case "$b" in agent-*|'*') continue ;; esac; alive "$b" && { read -r d p _ < "$f"; echo "$b $d $p"; }; done; true ;;
+assign)
+	ok_key "$2"; ok_key "$3"
+	{ [ "$3" = main ] || alive "$3"; } || { echo "没有这块屏幕：$3" >&2; exit 1; }
+	echo "$3" > "$DIR/agent-$2.tmp" && mv "$DIR/agent-$2.tmp" "$DIR/agent-$2" ;;
+display)
+	# 这个助理的屏幕的显示器编号（没指定 = 主屏幕）
+	ok_key "$2"; k=$(cat "$DIR/agent-$2" 2>/dev/null || echo main); alive "$k" || k=main; read -r d _ < "$DIR/$k"; echo "$d" ;;
+*) echo "用法：pia-screen add|rm|ls|assign|display" >&2; exit 2 ;;
+esac

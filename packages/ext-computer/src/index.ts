@@ -57,6 +57,25 @@ export interface ComputerHost {
 	log?(e: ActionLogEntry): void;
 	/** 硬性保护上下文 */
 	guard?: GuardContext;
+	/**
+	 * sandbox 目标：每个会改变屏幕的动作执行前调用（例如主屏幕正被别的助理使用时，给这个助理开一块自己的屏幕）。
+	 * 返回字符串 = 拦下这次动作并把说明告诉模型；null = 照常执行。
+	 */
+	before?(tool: string, input: Record<string, unknown>): Promise<string | null>;
+	/** sandbox 目标：屏幕 / 电脑管理（computer_screen 工具） */
+	screens?: ScreenHost;
+}
+
+/** 同一台助理电脑里的多块屏幕（DESIGN §15.4） */
+export interface ScreenHost {
+	/** 列出这台电脑的屏幕、谁在用、你在哪块 */
+	list(): Promise<string>;
+	/** 给自己开一块屏幕（同一台电脑、同一个家目录和登录状态），之后的电脑操作都在这块屏幕上 */
+	own(): Promise<string>;
+	/** 回到主屏幕（关掉自己的屏幕，上面的窗口会关掉） */
+	main(): Promise<string>;
+	/** 开 / 关“单独的电脑”（自己的家目录和登录状态，和其他助理完全分开）；从下一条消息开始生效 */
+	separate?(on: boolean, reason: string): Promise<string>;
 }
 export type Approvals = "observe" | "all" | "sensitive" | "none";
 export interface ActionLogEntry {
@@ -103,7 +122,17 @@ export function isSensitiveAction(tool: string, input: Record<string, unknown>, 
 	return false;
 }
 
-export const isComputerTool = (name: string) => name.startsWith(MCP_PREFIX) || name.startsWith(HOST_MCP_PREFIX) || name === "computer_screenshot" || name === "request_handoff";
+/** 共用电脑的工作方式（注入系统提示）：让助理自己按需选屏幕 / 隔离 / 不用屏幕 */
+export const SHARED_COMPUTER_PROMPT = `<assistant-computer>
+所有助理默认共用一台助理电脑：同样的文件、同一个浏览器的登录状态（cookie）、同样已装的应用（如微信）。按需选择，不用每次问用户：
+- 不需要看屏幕的事（读写文件、跑命令、下载、处理数据）直接用 shell / 文件工具，不要开屏幕。
+- 网页任务用浏览器工具：你只看得到、只操作自己打开的标签页；其他助理的标签页不要动。登录状态是共用的，别随便退出登录。
+- 主屏幕有别的助理在操作时，你的桌面操作会自动换到你自己的屏幕（computer_screen own 也可以主动开）；要长时间操作桌面应用时先开自己的屏幕。用完 computer_screen main 关掉。
+- 需要用另一个账号登录、或不想带上共用的登录状态时，用 browser_context isolated 开一个单独的浏览器环境，并告诉用户。
+- 只有必须长期和其他助理分开账号 / 数据时才用 computer_screen separate_on 开单独的电脑，并告诉用户原因。
+</assistant-computer>`;
+
+export const isComputerTool = (name: string) => name.startsWith(MCP_PREFIX) || name.startsWith(HOST_MCP_PREFIX) || name === "computer_screenshot" || name === "request_handoff" || name === "computer_screen";
 
 /** 供审批扩展使用：sandbox 目标下的电脑工具由本扩展自己把关。 */
 export function trustedComputerTool(target: "sandbox" | "host") {
@@ -171,6 +200,37 @@ export function computerExtension(host: ComputerHost) {
 			},
 		});
 		}
+		if (!host_ && host.screens) {
+			const sc = host.screens;
+			pi.on("before_agent_start", async (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${SHARED_COMPUTER_PROMPT}` }));
+			pi.registerTool({
+				name: "computer_screen",
+				label: "屏幕",
+				description:
+					"管理你在助理电脑上用的屏幕。所有助理默认共用一台电脑（同样的文件、浏览器登录状态、已装的应用）和它的主屏幕。" +
+					"list：看有哪些屏幕、谁在用。own：给自己开一块屏幕（同一台电脑、同样的文件和登录状态，但有自己的鼠标键盘，不和别的助理抢），主屏幕有别的助理在操作、或者你要长时间操作桌面应用时用。" +
+					"main：回到主屏幕（关掉自己的屏幕）。" +
+					(sc.separate ? "separate_on / separate_off：开 / 关“单独的电脑”（自己的家目录和登录状态，和其他助理完全分开，从下一条消息开始生效；必须说明原因并告诉用户）——只在必须长期分开账号时用，临时用另一个账号登录网站请用 browser_context isolated。" : ""),
+				promptSnippet: "computer_screen: 自己的屏幕 / 回主屏幕 / 单独的电脑",
+				parameters: Type.Object({
+					action: Type.Union([Type.Literal("list"), Type.Literal("own"), Type.Literal("main"), ...(sc.separate ? [Type.Literal("separate_on"), Type.Literal("separate_off")] : [])]),
+					reason: Type.Optional(Type.String({ description: "separate_on / separate_off 时必填：为什么" })),
+				}),
+				async execute(_id, p) {
+					const a = String((p as { action: string }).action);
+					const reason = String((p as { reason?: string }).reason ?? "").trim();
+					let t: string;
+					if (a === "list") t = await sc.list();
+					else if (a === "own") t = await sc.own();
+					else if (a === "main") t = await sc.main();
+					else if (sc.separate && (a === "separate_on" || a === "separate_off")) {
+						if (!reason) throw new Error("请在 reason 里说明为什么要开 / 关单独的电脑");
+						t = await sc.separate(a === "separate_on", reason);
+					} else throw new Error(`不支持的操作：${a}`);
+					return { content: [{ type: "text" as const, text: t }], details: undefined };
+				},
+			});
+		}
 		pi.on("tool_call", async (event) => {
 			if (!isComputerTool(event.toolName)) return;
 			const own = event.toolName.startsWith(prefix);
@@ -185,6 +245,13 @@ export function computerExtension(host: ComputerHost) {
 			if (!own) return;
 			let approval: ActionLogEntry["approval"] = "auto";
 			const observe = READ_ONLY.test(tool) || tool === "start_session" || tool === "end_session";
+			if (!observe && host.before) {
+				const why = await host.before(tool, input).catch(() => null);
+				if (why) {
+					log({ callId, tool, input, summary, phase: "blocked", detail: why });
+					return { block: true, reason: why };
+				}
+			}
 			const p = policy();
 			if (p === "observe" && !observe) {
 				log({ callId, tool, input, summary, phase: "blocked", detail: "“只看”档位不允许操作" });

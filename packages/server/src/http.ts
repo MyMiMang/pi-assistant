@@ -24,7 +24,7 @@ import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
 import { describeRoutine, disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
-import { desktopPause, desktopStatus, idle as desktopIdle, issueTicket, purgeAll, resetAvailability, screenshotDesktop, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket } from "./desktop.ts";
+import { desktopPause, desktopStatus, ensureOwnScreen, hasSeparateData, issueTicket, mergeIntoShared, purgeAll, releaseScreen, resetAvailability, screenshotDesktop, setSeparateComputer, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket, viewerClose, viewerOpen, viewToken } from "./desktop.ts";
 import { backend as desktopBackend, builtinFor, dockerBackend } from "./desktop/backend.ts";
 import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop/image.ts";
 import { installWsl, wslInstalling } from "./desktop/wsl.ts";
@@ -1124,10 +1124,50 @@ app.post("/api/agents/:id/desktop/pause", async (c) => {
 	bus.emit({ type: "desktop.changed", agentId: c.req.param("id") } as never);
 	return c.json(await deskJson(c.req.param("id")));
 });
-app.post("/api/agents/:id/desktop/ticket", (c) => c.json({ ticket: issueTicket(c.req.param("id")) }));
+/** 单独的电脑：开 / 关（关掉时数据保留）；hasData = 这个助理有单独电脑留下的数据（null = 虚拟机关着，不知道） */
+app.get("/api/agents/:id/computer", async (c) => {
+	const id = c.req.param("id");
+	return c.json({ separate: desktopSettings().separate.includes(id), hasData: await hasSeparateData(id).catch(() => null), desktop: await deskJson(id) });
+});
+app.put("/api/agents/:id/computer", async (c) => {
+	const id = c.req.param("id");
+	const b = await c.req.json<{ separate: boolean }>();
+	if (agentBusy(id)) return c.json({ error: "这个助理正在工作，等它做完再切换电脑" }, 409);
+	await setSeparateComputer(id, !!b.separate);
+	deskChanged(id);
+	return c.json({ separate: desktopSettings().separate.includes(id), hasData: await hasSeparateData(id).catch(() => null), desktop: await deskJson(id) });
+});
+/** 把单独电脑的数据合并进共用电脑（两台电脑都会先关机），之后这个助理用共用电脑 */
+app.post("/api/agents/:id/computer/merge", async (c) => {
+	const id = c.req.param("id");
+	try {
+		const r = await mergeIntoShared(id, agentBusy);
+		deskChanged(id);
+		return c.json({ ok: true, result: r, desktop: await deskJson(id) });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+/** 用户在「电脑」标签里给这个助理开 / 关自己的屏幕 */
+app.post("/api/agents/:id/desktop/screen", async (c) => {
+	const id = c.req.param("id");
+	const b = await c.req.json<{ own: boolean }>();
+	try {
+		if (b.own) await ensureOwnScreen(id);
+		else await releaseScreen(id);
+		deskChanged(id);
+		return c.json(await deskJson(id));
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.post("/api/agents/:id/desktop/ticket", async (c) => {
+	const b = await c.req.json<{ screen?: string }>().catch(() => ({}) as { screen?: string });
+	return c.json({ ticket: issueTicket(c.req.param("id"), b.screen) });
+});
 app.get("/api/agents/:id/desktop/screenshot", async (c) => {
 	try {
-		return c.body(new Uint8Array(await screenshotDesktop(c.req.param("id"))), 200, { "content-type": "image/png", "cache-control": "no-store" });
+		return c.body(new Uint8Array(await screenshotDesktop(c.req.param("id"), c.req.query("screen") || undefined)), 200, { "content-type": "image/png", "cache-control": "no-store" });
 	} catch {
 		return c.json({ error: "not_running" }, 409);
 	}
@@ -1255,14 +1295,17 @@ if (existsSync(config.webDist)) {
 // ---------------------------------------------------------------- 助理电脑实时画面：WebSocket 反向代理到容器的 noVNC（websockify）
 const deskWss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024, handleProtocols: (p) => (p.has("binary") ? "binary" : false) });
 async function proxyDesktop(req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer, url: URL) {
-	const agentId = useTicket(url.searchParams.get("ticket")); // 一次性票据：只能由已认证的设备/本机通过 API 申请
-	if (!agentId) return socket.destroy();
+	const t = useTicket(url.searchParams.get("ticket")); // 一次性票据：只能由已认证的设备/本机通过 API 申请
+	if (!t) return socket.destroy();
+	const { agentId } = t;
 	const st = await desktopStatus(agentId);
 	if (st.state !== "running" || !st.port) return socket.destroy();
+	// 看哪块屏幕：票据里指定的（同一台电脑上的其他屏幕），默认这个助理自己用的屏幕；noVNC 按 token 转到那块屏幕
+	const token = await viewToken(agentId, t.screen);
 	deskWss.handleUpgrade(req, socket, head, (client) => {
-		desktopIdle.viewerOpen(agentId); // 有人在看画面：不会空闲关机
-		client.once("close", () => desktopIdle.viewerClose(agentId));
-		const upstream = new WebSocket(`ws://127.0.0.1:${st.port}/websockify`, ["binary"]);
+		viewerOpen(agentId); // 有人在看画面：不会空闲关机
+		client.once("close", () => viewerClose(agentId));
+		const upstream = new WebSocket(`ws://127.0.0.1:${st.port}/websockify?token=${encodeURIComponent(token)}`, ["binary"]);
 		const pending: (Buffer | ArrayBuffer | Buffer[])[] = [];
 		upstream.on("open", () => pending.splice(0).forEach((d) => upstream.send(d)));
 		upstream.on("message", (d, isBinary) => client.readyState === 1 && client.send(d, { binary: isBinary }));

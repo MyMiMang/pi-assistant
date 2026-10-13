@@ -1,0 +1,94 @@
+#!/usr/bin/python3
+"""cua-driver 的 MCP 中继（DESIGN §15.4）：Pi 只连这一个稳定的 stdio 进程；助理换屏幕（/tmp/pia-screens/agent-<id> 变化）时，
+在下一次请求前换到那块屏幕的 cua-driver 守护进程（重新握手），对 Pi 透明。cua-driver mcp 在守护进程重启时会退出，这里也会自动重连。"""
+import json, os, subprocess, sys, threading
+
+agent = sys.argv[1] if len(sys.argv) > 1 else ""
+DIR = "/tmp/pia-screens"
+out_lock = threading.Lock()
+init_req = None  # Pi 发来的 initialize（换屏幕时原样重放）
+INTERNAL = "pia-relay-init"
+
+def screen():
+    try:
+        with open(f"{DIR}/agent-{agent}") as f:
+            k = f.read().strip()
+    except OSError:
+        k = "main"
+    return k if k and os.path.exists(f"/tmp/cua-{k}.sock") else "main"
+
+def emit(line):
+    with out_lock:
+        sys.stdout.write(line if line.endswith("\n") else line + "\n")
+        sys.stdout.flush()
+
+class Inner:
+    def __init__(self, key):
+        self.key = key
+        self.ready = threading.Event()
+        self.p = subprocess.Popen(["cua-driver", "mcp", "--socket", f"/tmp/cua-{key}.sock"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+        threading.Thread(target=self.pump, daemon=True).start()
+    def pump(self):
+        for line in self.p.stdout:
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            if m.get("id") == INTERNAL:
+                self.ready.set()
+                continue
+            emit(line)
+    def send(self, obj):
+        self.p.stdin.write(json.dumps(obj) + "\n")
+        self.p.stdin.flush()
+    def alive(self):
+        return self.p.poll() is None
+    def close(self):
+        try:
+            self.p.terminate()
+        except Exception:
+            pass
+
+inner = None
+def ensure():
+    global inner
+    k = screen()
+    if inner and inner.alive() and inner.key == k:
+        return inner
+    if inner:
+        inner.close()
+    inner = Inner(k)
+    if init_req is not None:
+        inner.send({**init_req, "id": INTERNAL})
+        inner.ready.wait(30)
+        inner.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    return inner
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    if msg.get("method") == "initialize":
+        init_req = msg
+        if inner:
+            inner.close()
+        inner = Inner(screen())
+        inner.send(msg)  # 第一次握手的响应直接给 Pi
+        continue
+    if msg.get("method") == "notifications/initialized" and inner and inner.alive():
+        inner.send(msg)
+        continue
+    try:
+        ensure().send(msg)
+    except (BrokenPipeError, OSError):
+        try:
+            ensure().send(msg)
+        except Exception as e:
+            if "id" in msg:
+                emit(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32000, "message": f"助理电脑的操作服务暂时不可用：{e}"}}))
+if inner:
+    inner.close()

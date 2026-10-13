@@ -14,7 +14,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { BrowserContext, Frame, Locator, Page } from "playwright-core";
 import { RISK_FN, SNAPSHOT_FN, type RiskInfo, type SnapshotResult } from "./snapshot.ts";
 
-export const BROWSER_TOOLS = ["browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_select", "browser_scroll", "browser_press", "browser_tabs", "browser_download", "browser_upload", "browser_handoff"] as const;
+export const BROWSER_TOOLS = ["browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_select", "browser_scroll", "browser_press", "browser_tabs", "browser_download", "browser_upload", "browser_handoff", "browser_context"] as const;
 /** 审批卡片里显示的地址（data: 等超长地址截短） */
 const shortUrl = (u: string) => (u.length > 160 ? `${u.slice(0, 160)}…` : u);
 export const isBrowserTool = (name: string) => (BROWSER_TOOLS as readonly string[]).includes(name);
@@ -30,6 +30,13 @@ export interface BrowserHost {
 	request(req: { toolName: string; input: Record<string, unknown>; summary: string; risk: "medium" | "high"; allowTask?: boolean }): Promise<{ approved: boolean; note?: string; scope?: "task" }>;
 	/** 请用户接管（扫码 / 验证码 / 登录），推送截图到手机，返回用户的说明 */
 	handoff(reason: string, screenshot: Buffer, url: string): Promise<string>;
+	/**
+	 * 共用浏览器（多个助理连同一个 Chromium、共用登录状态）：每个助理只看得到、只操作自己打开的标签页
+	 * （自己新开的 + 从自己的页面弹出来的），不会去动别的助理正在用的页面。
+	 */
+	shared?: boolean;
+	/** 单独的浏览器环境（同一个浏览器里的独立上下文：不带共用的登录状态 / cookie，关掉就清空）。不提供 = 不支持 */
+	isolated?(): Promise<BrowserContext>;
 }
 
 type ToolResult = { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[]; details: undefined };
@@ -37,17 +44,40 @@ const text = (t: string): ToolResult => ({ content: [{ type: "text", text: t }],
 
 /** 当前页：宿主每个上下文里记一个“当前标签页” */
 const current = new WeakMap<BrowserContext, Page>();
-async function activePage(ctx: BrowserContext): Promise<Page> {
-	let p = current.get(ctx);
-	if (!p || p.isClosed()) p = ctx.pages().filter((x) => !x.isClosed()).at(-1) ?? (await ctx.newPage());
+/** 共用浏览器：这个连接（= 这个助理）拥有的标签页 */
+const owned = new WeakMap<BrowserContext, Set<Page>>();
+const sharedCtx = new WeakSet<BrowserContext>();
+const ownSet = (ctx: BrowserContext) => owned.get(ctx) ?? (owned.set(ctx, new Set()), owned.get(ctx)!);
+/** 这个助理能用的标签页（共用浏览器里只算自己的） */
+export function myPages(ctx: BrowserContext): Page[] {
+	const all = ctx.pages().filter((x) => !x.isClosed());
+	if (!sharedCtx.has(ctx)) return all;
+	const mine = ownSet(ctx);
+	return all.filter((p) => mine.has(p));
+}
+export async function newOwnedPage(ctx: BrowserContext): Promise<Page> {
+	const p = await ctx.newPage();
+	if (sharedCtx.has(ctx)) ownSet(ctx).add(p);
 	current.set(ctx, p);
 	return p;
 }
-function watchPages(ctx: BrowserContext) {
+async function activePage(ctx: BrowserContext): Promise<Page> {
+	let p = current.get(ctx);
+	if (!p || p.isClosed()) p = myPages(ctx).at(-1) ?? (await newOwnedPage(ctx));
+	current.set(ctx, p);
+	return p;
+}
+function watchPages(ctx: BrowserContext, shared = false) {
+	if (shared) sharedCtx.add(ctx);
 	if ((ctx as unknown as { __piaWatch?: boolean }).__piaWatch) return;
 	(ctx as unknown as { __piaWatch?: boolean }).__piaWatch = true;
-	// 点链接弹出的新标签页自动成为当前页
-	ctx.on("page", (p) => current.set(ctx, p));
+	// 点链接弹出的新标签页自动成为当前页（共用浏览器：只认从自己的页面弹出来的）
+	ctx.on("page", (p) => {
+		if (!sharedCtx.has(ctx)) return void current.set(ctx, p);
+		void p.opener().then((op) => {
+			if (op && ownSet(ctx).has(op)) (ownSet(ctx).add(p), current.set(ctx, p));
+		}, () => {});
+	});
 }
 
 /** 编号 → 定位器。编号形如 e12（主页面）或 f2e5（第 2 个子框架） */
@@ -95,11 +125,18 @@ export function browserExtension(host: BrowserHost) {
 	return (pi: ExtensionAPI) => {
 		/** 本任务内已批准的同类动作（选了“本任务内都允许”） */
 		const granted = new Set<string>();
-		const page = async () => {
+		/** browser_context 选了“单独的浏览器环境”时用它，否则用宿主的（共用）浏览器 */
+		let isolated: BrowserContext | null = null;
+		const ctxNow = async () => {
+			if (isolated) {
+				watchPages(isolated);
+				return isolated;
+			}
 			const ctx = await host.context();
-			watchPages(ctx);
-			return activePage(ctx);
+			watchPages(ctx, !!host.shared);
+			return ctx;
 		};
+		const page = async () => activePage(await ctxNow());
 		const withSnap = async (p: Page, msg: string): Promise<ToolResult> => {
 			await p.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
 			const s = await snapshot(p, { withScreenshot: false });
@@ -239,13 +276,11 @@ export function browserExtension(host: BrowserHost) {
 			description: "管理标签页：list 列出；new 新开（可带 url）；switch 切换到 index；close 关闭 index（默认当前）。",
 			parameters: Type.Object({ action: Type.Union([Type.Literal("list"), Type.Literal("new"), Type.Literal("switch"), Type.Literal("close")]), index: Type.Optional(Type.Number()), url: Type.Optional(Type.String()) }),
 			async run({ action, index, url }) {
-				const ctx = await host.context();
-				watchPages(ctx);
+				const ctx = await ctxNow();
 				const cur = await activePage(ctx);
-				const pages = () => ctx.pages().filter((x) => !x.isClosed());
+				const pages = () => myPages(ctx);
 				if (action === "new") {
-					const p = await ctx.newPage();
-					current.set(ctx, p);
+					const p = await newOwnedPage(ctx);
 					if (url) await p.goto(String(url), { waitUntil: "domcontentloaded", timeout: 45_000 });
 				} else if (action === "switch") {
 					const p = pages()[Number(index)];
@@ -313,6 +348,28 @@ export function browserExtension(host: BrowserHost) {
 				return withSnap(p, `已选择 ${files.length} 个文件。`);
 			},
 		});
+		if (host.isolated)
+			tool({
+				name: "browser_context",
+				label: "浏览器环境",
+				description:
+					"切换浏览器环境。shared（默认）：和其他助理共用的浏览器，带着已经登录的账号和 cookie。isolated：单独的浏览器环境，不带任何登录状态，关掉（切回 shared）就清空——" +
+					"需要在同一个网站登录另一个账号、或者不想动到已登录账号（试用、测试、可疑网站）时用；切换时告诉用户。要长期分开保存另一套登录状态，请用户给你开“单独的电脑”。",
+				parameters: Type.Object({ mode: Type.Union([Type.Literal("shared"), Type.Literal("isolated")]) }),
+				readOnly: true,
+				async run({ mode }) {
+					if (mode === "isolated") {
+						if (!isolated) isolated = await host.isolated!();
+						return text("已切换到单独的浏览器环境（不带共用的登录状态）。后面的 browser_* 操作都在这里进行；用完用 browser_context shared 切回，这个环境会被清空。");
+					}
+					if (isolated) {
+						const c = isolated;
+						isolated = null;
+						await c.close().catch(() => {});
+					}
+					return text("已切回共用的浏览器（带着已登录的账号）。");
+				},
+			});
 		tool({
 			name: "browser_handoff",
 			label: "请你接管",
