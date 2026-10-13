@@ -17,9 +17,14 @@ jobs:
   smoke:
     runs-on: windows-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # 改本文件时顺带对比上一个已知能用的版本；其他触发只测指定 tag
+        tag: ${{ fromJSON(github.event_name == 'push' && '["", "v0.1.0-beta.8"]' || '["-"]') }}
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ inputs.tag }}
+      TAG: ${{ matrix.tag == '-' && inputs.tag || matrix.tag }}
     steps:
       - name: Download setup.exe
         shell: bash
@@ -69,9 +74,14 @@ jobs:
           $logs = Join-Path $env:LOCALAPPDATA 'com.piassistant.app\logs'
           $log = ''
           if (Test-Path "$logs\server.log") { $log = Get-Content "$logs\server.log" -Raw; Write-Output $log }
-          Get-Process | Where-Object { $_.Name -match 'node|pi-assistant' } | Format-Table Name, Id, Path
+          $procs = (Get-Process | Where-Object { $_.Name -match 'node|pi-assistant' } | ForEach-Object { "$($_.Name) $($_.Id)" }) -join ', '
+          Write-Output "processes: $procs"
+          $crash = (Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 2; StartTime = (Get-Date).AddMinutes(-10) } -ErrorAction SilentlyContinue |
+            Select-Object -First 3 | ForEach-Object { $_.Message.Substring(0, [Math]::Min(600, $_.Message.Length)) }) -join ' || '
+          Write-Output "app errors: $crash"
           if (-not $ok) {
-            $t = if ($log) { $log.Substring([Math]::Max(0, $log.Length - 3000)) -replace "`r?`n", '%0A' } else { 'no server.log' }
+            $t = "[$env:TAG] processes: $procs`napp errors: $crash`n" + $(if ($log) { $log.Substring([Math]::Max(0, $log.Length - 2500)) } else { 'no server.log' })
+            $t = $t -replace "`r?`n", '%0A'
             Write-Output "::error title=tray launch: server not healthy::$t"
             exit 1
           }
@@ -79,7 +89,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-smoke-logs
+          name: windows-smoke-logs-${{ strategy.job-index }}
           path: |
             direct.out
             direct.err
