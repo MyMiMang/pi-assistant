@@ -4,6 +4,7 @@
  * 规则：server 其余代码只能通过这里导出的函数/类型使用 Pi。
  * Pi 升级出现 API 变化时，只需要改这个目录（以及 packages/ext-* 里的扩展，它们只依赖 Pi 的 ExtensionAPI 类型）。
  */
+import { learnFromError } from "./model-limits.ts";
 import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -285,6 +286,42 @@ export interface CreateSessionOptions {
 	packagePaths?: string[];
 }
 
+/** 服务端拒绝 max_tokens / 上下文后学到的上限：由 models.ts 接到自定义服务存储（只对自定义服务生效） */
+let limitsLearner: ((provider: string, model: string, l: { contextWindow?: number; maxTokens?: number }) => Promise<boolean>) | null = null;
+export function setLimitsLearner(fn: typeof limitsLearner) {
+	limitsLearner = fn;
+}
+
+/**
+ * 输出上限太大被拒（很多中转会对超过真实上限的 max_tokens 直接报 400）：
+ * 从报错学到上限 → 改掉会话里的模型对象并写回存储 → 让 Pi 的自动重试再发一次。
+ * 上下文超长且报错给了真实长度：只记下来（Pi 自己会整理上下文后重试）。
+ */
+export function installLimitLearning(session: AgentSession) {
+	const s = session as unknown as { _isRetryableError: (m: { stopReason?: string; errorMessage?: string; provider?: string; model?: string }) => boolean; model?: { provider: string; id: string; contextWindow?: number; maxTokens?: number } };
+	const orig = s._isRetryableError?.bind(session);
+	if (!orig) return;
+	// Pi 对同一条失败消息会问不止一次（agent_end 时和收尾时），结果按消息缓存，避免连降两级
+	const seen = new WeakMap<object, boolean>();
+	s._isRetryableError = (msg) => {
+		if (msg && seen.has(msg)) return seen.get(msg)!;
+		let r: boolean | undefined;
+		if (msg?.stopReason === "error" && limitsLearner) {
+			const model = s.model;
+			const l = model && msg.provider === model.provider && msg.model === model.id ? learnFromError(msg.errorMessage, model) : null;
+			if (model && l) {
+				if (l.maxTokens) model.maxTokens = l.maxTokens;
+				if (l.contextWindow) model.contextWindow = l.contextWindow;
+				void limitsLearner(model.provider, model.id, { contextWindow: l.contextWindow, maxTokens: l.maxTokens }).catch(() => {});
+				if (l.retry) r = true;
+			}
+		}
+		r ??= orig(msg);
+		if (msg) seen.set(msg, r);
+		return r;
+	};
+}
+
 export async function createPiSession(o: CreateSessionOptions): Promise<AgentSession> {
 	const model = o.models.getModel(o.model.provider, o.model.id);
 	if (!model) throw new Error(`模型不存在：${o.model.provider}/${o.model.id}`);
@@ -339,9 +376,10 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		thinkingLevel: (o.thinking ?? "off") as never,
 		resourceLoader,
 		sessionManager,
-		settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 2 } } as never),
+		settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 5 } } as never),
 		tools: ["+grep", "+find", "+ls"],
 	});
+	installLimitLearning(session);
 	// 触发 session_start：MCP 扩展在此时连接服务器（如 cua-driver）
 	await session.bindExtensions({ onError: (e) => console.warn("[ext]", (e as { error?: unknown }).error ?? e) });
 	return session;

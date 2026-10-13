@@ -751,9 +751,9 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 		// 每个模型显示上下文 / 最大输出和来源：relay-chat 由模型列表接口识别（64K），手动加的 relay-manual 用默认（128K / 8K）
 		await f.locator("[data-testid=custom-model-row][data-model=relay-chat] [data-testid=limits-source]").getByText("自动识别").waitFor();
 		const lt = async (id) => (await f.locator(`[data-testid=custom-model-row][data-model="${id}"] [data-testid=limits-text]`).textContent())?.trim();
-		if ((await lt("relay-chat")) !== "64K 上下文 · 8K 输出") throw new Error(`relay-chat 上下文没识别出来：${await lt("relay-chat")}`);
+		if ((await lt("relay-chat")) !== "64K 上下文 · 4K 输出") throw new Error(`relay-chat 上下文没识别出来：${await lt("relay-chat")}`);
 		await f.locator("[data-testid=custom-model-row][data-model=relay-manual] [data-testid=limits-source]").getByText("自动（默认）").waitFor();
-		if (!(await lt("relay-manual"))?.startsWith("128K 上下文")) throw new Error(`默认上下文不是 128K：${await lt("relay-manual")}`);
+		if (!(await lt("relay-manual"))?.startsWith("256K 上下文 · 128K 输出")) throw new Error(`默认不是 256K / 128K：${await lt("relay-manual")}`);
 		// 点数值展开编辑：预设 + 带单位输入（1m），来源变“手动”；恢复自动后回到默认
 		await f.getByRole("button", { name: "编辑 relay-manual 的上下文和输出长度" }).click();
 		const ed = f.locator("[data-testid=custom-model-row][data-model=relay-manual] [data-testid=custom-model-editor]");

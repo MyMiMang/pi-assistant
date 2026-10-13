@@ -10,7 +10,8 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getApiProviders } from "@earendil-works/pi-ai/compat";
 import type { PiModels } from "./index.ts";
-import { detectLimits, type LimitsSource, resolveLimits } from "./model-limits.ts";
+import { modelDb } from "../model-db.ts";
+import { detectLimits, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
 
 export interface CustomModel {
 	id: string;
@@ -176,7 +177,7 @@ export class CustomProviders {
 			baseUrl: input.baseUrl.trim().replace(/\/+$/, ""),
 			headerNames,
 			noKey: !!input.noKey,
-			models: input.models.map((m) => this.withLimits({ ...m, id: m.id.trim() })),
+			models: input.models.map((m) => this.withLimits({ ...m, id: m.id.trim() }, undefined, input.baseUrl)),
 			createdAt: existing?.createdAt ?? Date.now(),
 		};
 		// 写入 Pi 的 models.json（保留用户手写的其它 provider）
@@ -220,11 +221,27 @@ export class CustomProviders {
 	}
 
 	/** 补上上下文 / 输出长度（缺哪项补哪项；用户填过的不动） */
-	withLimits(m: CustomModel, detected?: { contextWindow?: number; maxTokens?: number }): CustomModel {
-		// 只拿 Pi 内置目录比对，排除自定义服务自己（否则会拿自己存过的旧值当“已知模型”）
+	withLimits(m: CustomModel, detected?: { contextWindow?: number; maxTokens?: number }, baseUrl?: string): CustomModel {
+		// Pi 内置目录 + models.dev 模型参数库；排除自定义服务自己（否则会拿自己存过的旧值当“已知模型”）
 		const own = new Set(this.store.loadMeta().map((x) => x.id));
-		const l = resolveLimits(m, detected, this.models.listModels().filter((x) => !own.has(x.provider)));
+		const l = resolveLimits(m, detected, [...this.models.listModels().filter((x) => !own.has(x.provider)), ...modelDb()], providerHint(baseUrl));
 		return { ...m, contextWindow: l.contextWindow, maxTokens: l.maxTokens, limitsSource: l.source };
+	}
+
+	/** 请求被拒后学到的真实上限（自动学习）：写回并重载，之后的请求按它发；手动填过的不动 */
+	async learnLimits(providerId: string, modelId: string, l: { contextWindow?: number; maxTokens?: number }) {
+		const metas = this.store.loadMeta();
+		const meta = metas.find((x) => x.id === providerId);
+		const m = meta?.models.find((x) => x.id === modelId);
+		if (!meta || !m || m.limitsSource === "user") return false;
+		Object.assign(m, { contextWindow: l.contextWindow ?? m.contextWindow, maxTokens: l.maxTokens ?? m.maxTokens, limitsSource: "learned" as const });
+		const cfg = this.readFile();
+		const p = cfg.providers?.[meta.id];
+		if (p) (p as { models?: unknown }).models = meta.models.map(piModel);
+		this.store.saveMeta(metas);
+		this.writeFile(cfg);
+		await this.models.reloadConfig();
+		return true;
 	}
 
 	/** 启动时补齐缺失的上下文 / 输出长度，并按最新规则重算“已知 / 默认”的值，有变化才写回 models.json（Pi 的上下文用量和自动压缩靠它） */
@@ -233,8 +250,8 @@ export class CustomProviders {
 		let n = 0;
 		const next = metas.map((meta) => {
 			const models = meta.models.map((x) => {
-				if (x.contextWindow && x.maxTokens && (x.limitsSource === "user" || x.limitsSource === "detected")) return x;
-				const y = this.withLimits(x);
+				if (x.contextWindow && x.maxTokens && (x.limitsSource === "user" || x.limitsSource === "detected" || x.limitsSource === "learned")) return x;
+				const y = this.withLimits(x, undefined, meta.baseUrl);
 				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource) n++;
 				return y;
 			});
@@ -283,7 +300,7 @@ export class CustomProviders {
 		for (const raw of j.data ?? j.models ?? []) {
 			const id = String(raw.id ?? raw.name ?? "").replace(/^models\//, "");
 			if (!id || seen.has(id)) continue;
-			const m = this.withLimits({ id }, detectLimits(raw));
+			const m = this.withLimits({ id }, detectLimits(raw), base);
 			seen.set(id, { id, contextWindow: m.contextWindow!, maxTokens: m.maxTokens!, limitsSource: m.limitsSource! });
 		}
 		if (!seen.size) throw new Error("没有获取到模型，请手动填写");

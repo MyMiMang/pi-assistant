@@ -1101,6 +1101,8 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - **bge-m3 加载失败**：HF 缓存里的 model.onnx / model.onnx_data 是指向 blobs/ 下不同文件的符号链接，onnxruntime 1.31 校验外部权重路径时判为“越界”。现在向量模型下载到 `hindsight/models/onnx/<模型>/onnx/` 的真实文件（huggingface_hub `local_dir`），用 `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH` 指过去；旧缓存启动时复制成真实文件并删除缓存里的大文件（不重新下载）。在本机用 Hindsight 0.10.3 + onnxruntime 1.31 真实复现并验证：迁移和全新下载两种情况 Hindsight 都能启动，bge-m3 ↔ e5-small 切换正常。
 - **错误显示**：高级记忆的启动错误显示一句中文摘要（如“向量模型加载失败”），“详情”展开清理过框线字符的日志（容器内滚动、自动换行），可一键复制。
 
+- **（更新）模型参数库与自动学习**：已知模型的数据源 = Pi 内置目录 + models.dev（MIT）。安装包带精简快照 `packages/server/model-db.json`（`node scripts/gen-model-db.mjs` 重新生成，约 340 KB，只有每个服务商每个模型的 [上下文, 输出]），运行时 `model-db.ts` 每周经下载管理刷新到数据目录（id `model-db`），离线用快照；刷新后重算“已知 / 默认”的值。匹配只认同一个模型：统一小写、去 vendor/ 前缀、去 :free/@版本、fireworks 的 v4p1→v4.1，再允许只差日期 / latest / preview 后缀；**不做前缀模糊匹配**（以前 glm-5.3-flash 会套到 glm-5.3、多家托管商里随便取第一条，是 384K 之类怪值的来源）。多家都有时：按 Base URL 猜的同服务商 → 官方厂商 → 多数上下文 + 输出中位数；输出 ≥ 上下文的条目视为无效。查不到：名字里写了 32k/128k 就按名字，否则常见模型表，最后默认 256K / 128K。请求被拒（max_tokens 太大）时 `learnFromError` 从报错读允许值（valid range [1,N] / at most N / N, which is the maximum / vLLM 的上下文−输入），读不到就 128K→64K→32K→16K→8K 逐级下调；`installLimitLearning` 改会话里的模型并让 Pi 自动重试，同时写回存储，来源标“自动学习”。上下文超长且报错给出真实长度时只记下来，由 Pi 自动整理。界面：每个模型一行，模型名独占一行（截断 + 悬停全名），下面“1M 上下文 · 384K 输出 · 来源”，点开编辑（预设 + 支持 128k / 1m 输入、恢复自动）。
+
 ### 16.4 应用更新、「关于与更新」页、操作记录与磁盘上限、窄处文字、手机横向晃动（beta.7 反馈）
 
 **更新点了没反应（根因）**：托盘里的旧实现 `check_update` 把 ~200 MB 的更新包放在后台下载，**没有任何进度显示**，失败（网络、权限、签名）时只 `eprintln!`（打包后的应用没有控制台，等于吞掉），菜单文字也不变——用户看到的就是“点了没反应”。另外 Windows 上 `download_and_install` 会在内置 Node 服务还在运行时直接交给 NSIS 安装器，`node.exe` 被占用会导致覆盖失败。latest.json、签名、公钥核对过是匹配的（公钥 key id D20B5EDB3848D9A7 与 .sig 一致），capability 里 `updater:default` 也在——不是签名或权限配置的问题。

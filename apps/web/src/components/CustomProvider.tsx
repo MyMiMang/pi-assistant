@@ -24,7 +24,7 @@ export function useCustomProviders() {
 	return { ...data, reload };
 }
 
-const SOURCE: Record<string, string> = { detected: "自动识别", known: "已知模型", default: "自动（默认）", user: "手动" };
+const SOURCE: Record<string, string> = { detected: "自动识别", known: "已知模型", default: "自动（默认）", user: "手动", learned: "自动学习" };
 
 /** token 数 → 简短好读：1048576 → 1M，131072 → 128K，384000 → 384K，235929 → 236K */
 export function fmtTokens(n?: number): string {
@@ -98,9 +98,9 @@ function ModelRow({ m, onChange, onRemove }: { m: CustomModel; onChange: (p: Par
 				<span className="truncate" data-testid="limits-text">
 					{m.contextWindow || m.maxTokens ? `${fmtTokens(m.contextWindow)} 上下文 · ${fmtTokens(m.maxTokens)} 输出` : "上下文 / 输出：保存时自动识别"}
 				</span>
-				<span className={cx("shrink-0 rounded-full px-1.5 py-px", m.limitsSource === "user" ? "bg-accent-soft text-accent" : "bg-hover")} data-testid="limits-source">
+				{(m.contextWindow || m.maxTokens) && <span className={cx("shrink-0 rounded-full px-1.5 py-px", m.limitsSource === "user" ? "bg-accent-soft text-accent" : "bg-hover")} data-testid="limits-source">
 					{src}
-				</span>
+				</span>}
 				<Pencil size={11} className="shrink-0 opacity-60 group-hover:opacity-100" />
 			</button>
 			{edit && (
@@ -237,7 +237,7 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 				<div className="flex items-center justify-between">
 					<span className="flex items-center gap-1">
 						{label(`模型（${models.length}）`)}
-						<Help>上下文长度决定输入框旁圆环的用量和自动整理的时机。来源：自动识别＝服务的模型列表接口给出；已知模型＝按模型名查到的官方数据；默认＝128K / 8K 保守值。点数值可以改。</Help>
+						<Help>上下文长度决定输入框旁圆环的用量和自动整理的时机。来源：自动识别＝服务的模型列表接口给出；已知模型＝按模型名查 models.dev 等公开数据；默认＝256K / 128K；自动学习＝服务端报错说太大后自动调小并记住。点数值可以改。</Help>
 					</span>
 					<Button size="sm" variant="outline" disabled={!baseUrl || busy === "fetch"} onClick={fetchModels}>
 						{busy === "fetch" ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} 自动获取

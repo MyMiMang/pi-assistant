@@ -2,7 +2,8 @@ import { join } from "node:path";
 import { config } from "./config.ts";
 import { getSetting, setSetting } from "./db.ts";
 import { CustomProviders, type CustomProviderMeta } from "./pi-adapter/custom-providers.ts";
-import { PiModels } from "./pi-adapter/index.ts";
+import { PiModels, setLimitsLearner } from "./pi-adapter/index.ts";
+import { refreshModelDb } from "./model-db.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, registerMockProvider } from "./pi-adapter/mock-provider.ts";
 import { EncryptedCredentialStore, openJson, sealJson } from "./secrets.ts";
 
@@ -29,6 +30,9 @@ export async function initModels() {
 		},
 	});
 	customProviders.applyEnv();
+	setLimitsLearner((p, m, l) => customProviders.learnLimits(p, m, l));
+	// 每周刷新一次 models.dev 模型参数库（离线就用安装包里的快照）；刷新后按新数据重算“已知 / 默认”
+	if (config.allowModelNetwork && !config.mock) void refreshModelDb().then(() => customProviders.backfillLimits()).catch(() => {});
 	await models.reloadConfig();
 	await customProviders.backfillLimits().catch((e) => console.error("[models] 补齐自定义模型上下文长度失败", e));
 	if (config.mock) await registerMockProvider(models);

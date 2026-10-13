@@ -21,7 +21,7 @@ test("自定义服务：自动获取模型 → 保存到 Pi models.json → 测�
 	const fetched = await customProviders.fetchModels({ api: "openai-completions", baseUrl: relay.url, apiKey: "sk-unit", headers: [{ name: "x-team", value: "t1" }] });
 	assert.deepEqual(fetched.map((m) => m.id), ["relay-chat", "relay-pro"]);
 	assert.deepEqual(fetched[0], { id: "relay-chat", contextWindow: 65536, maxTokens: 4096, limitsSource: "detected" });
-	assert.deepEqual(fetched[1], { id: "relay-pro", contextWindow: 128_000, maxTokens: 8192, limitsSource: "default" });
+	assert.deepEqual(fetched[1], { id: "relay-pro", contextWindow: 262_144, maxTokens: 131_072, limitsSource: "default" });
 	const meta = await customProviders.save(null, {
 		name: "Relay",
 		api: "openai-completions",
@@ -80,7 +80,7 @@ test("上下文长度：保存时补齐（已知模型 / 默认）、用户填�
 	const by = Object.fromEntries(m.models.map((x) => [x.id, x]));
 	assert.equal(by["deepseek-v4.1-flash"].limitsSource, "known");
 	assert.ok(by["deepseek-v4.1-flash"].contextWindow! >= 128_000, "用 Pi 内置目录里的真实长度");
-	assert.deepEqual([by["my-private-model"].contextWindow, by["my-private-model"].maxTokens, by["my-private-model"].limitsSource], [128_000, 8192, "default"]);
+	assert.deepEqual([by["my-private-model"].contextWindow, by["my-private-model"].maxTokens, by["my-private-model"].limitsSource], [262_144, 131_072, "default"]);
 	assert.deepEqual([by["relay-chat"].contextWindow, by["relay-chat"].maxTokens, by["relay-chat"].limitsSource], [32000, 2000, "user"]);
 	assert.equal(by["Qwen/Qwen3-235B-A22B"].limitsSource, "known");
 	const cfg = JSON.parse(readFileSync(join(config.dataDir, "models.json"), "utf8"));
