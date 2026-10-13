@@ -1,3 +1,4 @@
+import { SubagentCard, SubagentTasks } from "./Subagents";
 import { HostControlBar, HostTierPill } from "./HostControl";
 import { ModelPicker, ThinkingPicker } from "./ModelPicker";
 import { ContextRing } from "./ContextRing";
@@ -21,7 +22,7 @@ import { ProposalCard } from "./RoomCards";
 // ------------------------------------------------------------------ 工具 → 文案
 const TOOL_LABEL: Record<string, string> = {
 	bash: "运行命令", read: "读取文件", write: "写入文件", edit: "修改文件", ls: "查看目录", find: "查找文件", grep: "搜索内容",
-	deliver_file: "发送文件", ask_user: "询问你", spawn_task: "创建后台任务", computer_screenshot: "查看屏幕", request_handoff: "请你接手",
+	deliver_file: "发送文件", ask_user: "询问你", spawn_task: "创建后台任务", spawn_subagent: "派子代理", subagent_message: "补充子代理要求", subagent_stop: "停止子代理", computer_screenshot: "查看屏幕", request_handoff: "请你接手",
 	web_fetch: "打开网页", web_search: "搜索网页", browser: "操作浏览器",
 };
 /** 进行中的活动文案（来自 Pi tool_execution 事件 → 工具步骤消息） */
@@ -162,7 +163,7 @@ export function BotPart({ p, live }: { p: Part; live: boolean }) {
 	if (p.kind === "steps") return <Steps items={p.items} live={live} />;
 	const m = p.m;
 	if (m.role === "card")
-		return m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
+		return m.meta.kind === "subagent" ? <SubagentCard m={m} /> : m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
 	// 思考：原生 reasoning（meta.thinking）+ 正文里的 <think>…</think>（旧消息 / 流式中），折叠显示，不当正文
 	const split = splitThinking(m.content);
 	const thinking = [String(m.meta.thinking ?? "").trim(), split.thinking].filter(Boolean).join("\n\n");
@@ -347,6 +348,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 							<span className="max-sm:hidden">回到群聊</span>
 						</button>
 					)}
+					<SubagentTasks agentId={agent.id} conversation={useStore.getState().convs[agent.id]?.current} />
 					<ConversationMenu agentId={agent.id} />
 					<button className="pa-chip max-sm:!hidden" onClick={() => set({ info: true, infoTab: "computer" })}>
 						<Monitor className="pa-ic" />

@@ -11,12 +11,29 @@ export interface DeliveryHost {
 	deliverFile(path: string, caption?: string): Promise<{ fileId: string; name: string }>;
 	ask(question: string, options: string[], allowFreeText: boolean): Promise<string>;
 	spawnTask?(title: string, instructions: string): Promise<{ taskId: string }>;
+	subagents?: {
+		spawn(input: { task: string; context?: string; needs?: string[]; model?: { provider: string; id: string } }): Promise<{ id: string }>;
+		list(): unknown[];
+		message(id: string, text: string): Promise<void>;
+		stop(id: string): Promise<boolean>;
+	};
 }
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
 
 export function deliveryExtension(host: DeliveryHost) {
 	return (pi: ExtensionAPI) => {
+		if (host.subagents) {
+			const h = host.subagents;
+			pi.registerTool({
+				name: "spawn_subagent", label: "派子代理", description: "把多步骤或耗时任务交给独立子代理，立即返回。主会话继续聊天，系统会送来结果供你核验汇报。", annotations: { readOnlyHint: true },
+				parameters: Type.Object({ task: Type.String(), context: Type.Optional(Type.String()), needs: Type.Optional(Type.Array(Type.String())), model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String() })) }),
+				async execute(_id, p) { const r = await h.spawn(p); return text(`子代理已开始：${r.id}。现在继续回复用户，不要等待。`); },
+			});
+			pi.registerTool({ name: "subagent_list", label: "查看子代理", description: "查看当前会话的子代理和状态。", annotations: { readOnlyHint: true }, parameters: Type.Object({}), async execute() { return text(JSON.stringify(h.list())); } });
+			pi.registerTool({ name: "subagent_message", label: "补充子代理要求", description: "把用户的补充或改方向要求送给子代理，在下一个工具边界生效。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String(), text: Type.String() }), async execute(_id, p) { await h.message(p.id, p.text); return text("已转交子代理。"); } });
+			pi.registerTool({ name: "subagent_stop", label: "停止子代理", description: "停止指定子代理。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String() }), async execute(_id, p) { return text(await h.stop(p.id) ? "已停止。" : "已结束。"); } });
+		}
 		pi.registerTool({
 			name: "deliver_file",
 			label: "发送文件",

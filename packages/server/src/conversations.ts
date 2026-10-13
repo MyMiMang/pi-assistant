@@ -19,8 +19,8 @@ export const getConversation = (id: string) => db.prepare("SELECT * FROM convers
 export function listConversations(agentId: string) {
 	return db
 		.prepare(
-			`SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.task_id IS NULL AND m.role IN ('user','assistant')) AS message_count,
-			 (SELECT content FROM messages m WHERE m.conversation_id = c.id AND m.task_id IS NULL AND m.role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1) AS last
+			`SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.task_id IS NULL AND m.subagent_id IS NULL AND m.role IN ('user','assistant')) AS message_count,
+			 (SELECT content FROM messages m WHERE m.conversation_id = c.id AND m.task_id IS NULL AND m.subagent_id IS NULL AND m.role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1) AS last
 			 FROM conversations c WHERE c.agent_id = ? AND COALESCE(c.hidden, 0) = 0 ORDER BY c.updated_at DESC`,
 		)
 		.all(agentId) as unknown as (ConversationRow & { message_count: number; last: string | null })[];

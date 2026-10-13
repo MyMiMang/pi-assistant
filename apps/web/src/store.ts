@@ -188,6 +188,7 @@ export const useStore = create<State>((set, get) => ({
 		switch (e.type) {
 			case "message.created": {
 				const m = e.message as Message;
+				if (m.subagent_id) break;
 				if (m.room_id) {
 					const rid = m.room_id;
 					if (get().roomMsgs[rid]) patchRooms((l) => (l.some((x) => x.id === m.id) ? l : [...l, m]), rid);
@@ -216,7 +217,7 @@ export const useStore = create<State>((set, get) => ({
 				break;
 			}
 			case "message.delta":
-				if (e.taskId) break;
+				if (e.taskId || e.subagentId) break;
 				{
 					// 原生思考增量进 meta.thinking（折叠显示），正文增量进 content
 					const add = (m: Message) => (e.thinking ? { ...m, meta: { ...m.meta, thinking: String(m.meta?.thinking ?? "") + e.delta } } : { ...m, content: m.content + e.delta });
@@ -226,6 +227,7 @@ export const useStore = create<State>((set, get) => ({
 				break;
 			case "message.updated": {
 				const m = e.message as Message;
+				if (m.subagent_id) break;
 				if (m.room_id) {
 					patchRooms((l) => (l.some((x) => x.id === m.id) ? l.map((x) => (x.id === m.id ? { ...m, seq: x.seq } : x)) : l), m.room_id);
 					break;

@@ -1,3 +1,4 @@
+import { SubagentModels } from "./Subagents";
 import { DesktopView } from "./DesktopView";
 import { fmtMoney, useFx } from "./usage-fmt";
 import { ChevronLeft, Download, File, Folder, HardDrive, X } from "lucide-react";
@@ -211,6 +212,7 @@ function AgentSettings({ agentId }: { agentId: string }) {
 		<div className="space-y-6">
 			<AgentEditor agent={agent} />
 			<AgentImageModel agentId={agentId} />
+			<SubagentModels agentId={agentId} />
 			<AgentExtensions agentId={agentId} />
 			<AgentHostTier agentId={agentId} />
 		</div>

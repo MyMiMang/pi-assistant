@@ -27,7 +27,7 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 | main（组队选模型 + 用量，未打包） | **组队选模型 + 用量系统**（DESIGN §22）：建群时服务端按角色需求从已配置模型里打分挑选并写理由，卡片下拉按适合程度排序、带价格档；设置 › 模型 › 模型擅长 可改标签；每次模型调用记一行用量（含读写缓存、推理），按当时价格算费用并存价格快照，自定义单价 / 官方价打折，未知价「—」，人民币显示（汇率可改）；设置 › 用量（今天 / 7 天 / 30 天、按模型 / 助理 / 群、每日柱状图、缓存命中率与省下）；每条回复用量、群聊近 30 天费用；明细 90 天后按天汇总。models.dev 快照加推理 / 工具调用 / 价格（约 490 KB） |
 | ↳ 进度 | 2026-10-14 修复 e2e 对历史用量的错误假设：价格行按 `mock/echo` 定位；给 Mock 补价只重算其未知价格，其他服务（包括已删除服务）的历史调用保留。针对性回归「自定义模型服务 + 组队选模型」通过，用量单测 7/7、两边 typecheck 通过。按用户最新要求停止完整 e2e，不再重复全量。已启动的服务端单测最终 225 通过、10 跳过、1 失败：macOS BSD tar 不支持共用电脑合并测试的 `--skip-old-files`（与本次改动无关，未改）。桌宠 17/17、Rendezvous 2/2 通过。真实 Key 验证和 §22.5 缺口仍保留。 |
-| 下一项 | DESIGN §21 后台子代理：只有设计文档，还没写代码 |
+| main（后台子代理，未打包） | DESIGN §21 第一版：主会话用 `spawn_subagent` 派独立 Pi 会话，立即继续聊天；`subagent_message` 转发补充、`subagent_stop` 停止；每助理并发 3、只一层；设置中跟随 / 自动清单 / 固定模型及助理覆盖。聊天卡片和只读过程面板，主会话统一处理审批；终态与通知事件落库、3 分钟停滞 / 恢复、60 分钟最长运行（可改）、重启标 lost / 重新派；用量带 subagent_id 归属原助理。相关单测 32/32、渠道单测 5/5（确认子代理步骤不外发），两边 typecheck 通过；专项 `node e2e/subagents.mjs` 通过（继续聊、详情、补充转发、审批、停止、模型错误、重启、模型设置、手机布局、群聊），截图 97–98。真实模型的派活 / 核验 / 路由质量和外部渠道真账号仍待实测。 |
 | main（未打包） | **工作途中插话**：助理干活时随时能发消息，在下一个工具边界用 Pi steer 送达（之前是排到整轮做完），消息下显示「已送达正在进行的任务」；整条说「停 / 别做了 / stop」立刻全部停下（含命令、电脑操作、等待中的审批）；1:1、群聊、渠道都适用（DESIGN §20） |
 
 所有功能都有单测和 e2e（Mock 模型）。beta.10 发布前在 main 上全部通过：`npm test`、`npm run e2e`（114 步）、`node e2e/pet.mjs`。
@@ -62,7 +62,7 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 5. 待用户决定 / 下一步
 需求、计划和待决定事项的完整清单见 [ROADMAP.md](ROADMAP.md)。
-- **新需求（设计中，未写代码）**：后台子代理——主会话聊天、子代理后台干活、可点进去看过程、按能力选模型。设计见 DESIGN §21。
+- **后台子代理第一版已实现（main，未打包）**：主会话聊天、子代理后台干活、可查看过程、复用能力画像选模型。设计与实现见 DESIGN §21；真实模型与渠道真账号待验证。
 - **许可证**：建议用 MIT，等用户确认（现在 README 写的是「保留所有权利」，仓库里没有 LICENSE 文件）。
 - **代码签名**：Apple Developer ID 公证、Windows 代码签名证书，都要用户提供账号或证书。
 - 下一步：等用户实测 beta.10 的反馈 → 修一批 → 用户说「打包」再出下一个 beta。候选：cua-driver 升级到 0.35.x；群里复制助理时带上工作区文件；在 Windows 上转换 HEIC；扫描 PDF 的 OCR。
@@ -102,6 +102,7 @@ npm run check:pi         # Pi 升级兼容检查
 - 附件：`files.ts`（上传、群附件 `saveRoomUpload` / `materializeFor`）、`attachments.ts`（图片 / 文档 → 模型输入）、`vision.ts` + `vision-ext.ts`（识图模型兜底、`look_at_image`）；界面 `Attachments.tsx`（`useAttachUploader` / `AttachTray` / `AttachButton`，单聊和群聊共用）。
 - 渠道：`channels/index.ts`（入站、镜像、审批卡片、群聊卡片转发 `forwardRoomCard`）、`channels/media.ts` / `caps.ts`（各渠道能力与原生图片 / 文件）、`thinking.ts`（拆出思考内容）。
 - 图片生成：`image-gen/`（providers / routes / extension），界面 `ImageModels.tsx`。
+- 后台子代理：`subagents.ts`（状态、模型选择、事件、看门狗）、`subagent-routes.ts`（接口）、`runtime.ts`（独立 Pi 会话与主会话通知）、`ext-delivery`（派活 / 补充 / 停止工具）；界面 `Subagents.tsx`；专项测试 `e2e/subagents.mjs`。
 - 用量与组队选模型：`usage/`（`prices.ts` 价格解析与费用计算、`index.ts` 记录 / 汇总 / 90 天滚动、`routes.ts` 接口）、`model-profile.ts`（擅长标签与打分，纯函数）、`rooms/model-pick.ts`；界面 `Usage.tsx`、`ModelStrengths.tsx`、`usage-fmt.ts`。改价格格式要同时改 `model-db.ts` 和 `scripts/gen-model-db.mjs`。
 
 ## 8. 真机测试步骤

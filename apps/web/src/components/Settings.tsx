@@ -1,3 +1,4 @@
+import { SubagentModels } from "./Subagents";
 import { BarChart3, Brain, Cat, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { modelLabel } from "./ModelOptions";
 import { useEffect, useState } from "react";
@@ -141,6 +142,7 @@ function ModelsTab() {
 				<VisionModelPicker key={providers.filter((p) => p.configured).length} />
 			</section>
 			<ModelStrengths key={`s${providers.filter((p) => p.configured).length}`} />
+			<SubagentModels />
 			<section>
 				<H desc="列表来自 Pi 的模型服务目录，升级 Pi 后新的服务会自动出现。也可以添加任意中转站、第三方或本地模型服务。凭据加密保存在本机。">模型服务</H>
 				{customEdit ? (

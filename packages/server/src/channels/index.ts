@@ -511,7 +511,7 @@ function format(msg: MessageRow): string | null {
 }
 bus.on((e) => {
 	const ev = e as unknown as { type: string; message?: MessageRow };
-	if ((ev.type !== "message.created" && ev.type !== "message.updated") || !ev.message?.conversation_id || ev.message.task_id) return;
+	if ((ev.type !== "message.created" && ev.type !== "message.updated") || !ev.message?.conversation_id || ev.message.task_id || ev.message.subagent_id) return;
 	const msg = ev.message;
 	if (forwarded.has(msg.id)) return;
 	if (/"noMirror":true/.test(typeof msg.meta === "string" ? msg.meta : JSON.stringify(msg.meta ?? {}))) return; // 用户选了“只在 App”

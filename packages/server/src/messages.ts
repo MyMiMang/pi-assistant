@@ -7,6 +7,7 @@ export interface MessageRow {
 	agent_id: string;
 	conversation_id: string | null;
 	task_id: string | null;
+	subagent_id?: string | null;
 	role: "user" | "assistant" | "tool" | "system" | "card";
 	content: string;
 	room_id?: string | null;
@@ -34,6 +35,7 @@ export function insertMessage(m: {
 	/** 默认进入助理的当前对话 */
 	conversationId?: string | null;
 	taskId?: string | null;
+	subagentId?: string | null;
 	role: MessageRow["role"];
 	content?: string;
 	meta?: Record<string, unknown>;
@@ -47,6 +49,7 @@ export function insertMessage(m: {
 		agent_id: m.agentId,
 		conversation_id: m.conversationId !== undefined || m.roomId ? (m.conversationId ?? null) : currentConversation(m.agentId),
 		task_id: m.taskId ?? null,
+		subagent_id: m.subagentId ?? null,
 		role: m.role,
 		content: m.content ?? "",
 		meta: JSON.stringify(m.meta ?? {}),
@@ -56,17 +59,18 @@ export function insertMessage(m: {
 	};
 	// 后台任务里产生的卡片也显示在群里（任务的 conversation_id 就是成员的群内对话）
 	row.room_id = m.roomId !== undefined ? m.roomId : roomOfConversation(row.conversation_id);
+	if (row.subagent_id) row.room_id = null;
 	if (row.room_id && row.task_id && row.role !== "card") row.room_id = null;
 	db.prepare(
-		"INSERT INTO messages(id, agent_id, conversation_id, task_id, role, content, meta, status, created_at, updated_at, room_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-	).run(row.id, row.agent_id, row.conversation_id, row.task_id, row.role, row.content, row.meta, row.status, row.created_at, row.updated_at, row.room_id ?? null);
-	if (!row.task_id && row.conversation_id && row.role !== "tool") touchConversation(row.conversation_id, row.role === "user" ? row.content : undefined);
+		"INSERT INTO messages(id, agent_id, conversation_id, task_id, role, content, meta, status, created_at, updated_at, room_id, subagent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+	).run(row.id, row.agent_id, row.conversation_id, row.task_id, row.role, row.content, row.meta, row.status, row.created_at, row.updated_at, row.room_id ?? null, row.subagent_id ?? null);
+	if (!row.task_id && !row.subagent_id && row.conversation_id && row.role !== "tool") touchConversation(row.conversation_id, row.role === "user" ? row.content : undefined);
 	const msg = toMessage(row);
 	bus.emit({ type: "message.created", message: msg });
 	if (row.room_id) {
 		if (row.role === "assistant" || row.role === "card") db.prepare("UPDATE rooms SET unread = unread + 1, updated_at = ? WHERE id = ?").run(t, row.room_id);
 		else db.prepare("UPDATE rooms SET updated_at = ? WHERE id = ?").run(t, row.room_id);
-	} else if (!row.task_id && (row.role === "assistant" || row.role === "card")) db.prepare("UPDATE agents SET unread = unread + 1 WHERE id = ?").run(row.agent_id);
+	} else if (!row.task_id && !row.subagent_id && (row.role === "assistant" || row.role === "card")) db.prepare("UPDATE agents SET unread = unread + 1 WHERE id = ?").run(row.agent_id);
 	return msg;
 }
 
@@ -111,7 +115,7 @@ export function listMessages(agentId: string, opts: { taskId?: string | null; co
 	const rows = (opts.taskId
 		? db.prepare("SELECT * FROM messages WHERE task_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?").all(opts.taskId, opts.before ?? Number.MAX_SAFE_INTEGER, limit)
 		: db
-				.prepare("SELECT * FROM messages WHERE agent_id = ? AND conversation_id = ? AND task_id IS NULL AND created_at < ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
+				.prepare("SELECT * FROM messages WHERE agent_id = ? AND conversation_id = ? AND task_id IS NULL AND subagent_id IS NULL AND created_at < ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
 				.all(agentId, conv, opts.before ?? Number.MAX_SAFE_INTEGER, limit)) as unknown as MessageRow[];
 	return rows.reverse().map(toMessage);
 }

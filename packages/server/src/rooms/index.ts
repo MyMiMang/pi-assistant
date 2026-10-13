@@ -1,3 +1,4 @@
+import { stopAgentSubagents } from "../subagents.ts";
 /**
  * 助理群聊：一个群 = 几个助理 + 用户。每个成员在群里有一个隐藏的 Pi 对话（runtime(agentId, conversationId)），
  * 所以人设、记忆、工具、权限、电脑都还是它自己的；群消息存在 messages（room_id），成员对话产生的消息自动归进群。
@@ -460,6 +461,7 @@ async function runTurn(roomId: string, s: RoomState, t: PlannedTurn & { turnId: 
 /** 停止：中止正在说话的，取消排队的，拒绝群里等待处理的请求 */
 export async function stop(roomId: string, note = true) {
 	const s = states.get(roomId);
+	for (const m of membersOf(roomId)) await stopAgentSubagents(m.agent_id);
 	requests.cancelForRoom(roomId);
 	if (!s) return false;
 	s.stopped = true;

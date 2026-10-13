@@ -1,6 +1,7 @@
 export interface Attachment { fileId: string; name: string; mime: string; size: number; direction?: string; workspacePath?: string | null }
 export interface Message {
-	id: string; agent_id: string; conversation_id?: string | null; task_id: string | null; role: "user" | "assistant" | "tool" | "system" | "card";
+	id: string; agent_id: string; conversation_id?: string | null; task_id: string | null;
+	subagent_id?: string | null; role: "user" | "assistant" | "tool" | "system" | "card";
 	content: string; meta: Record<string, any> & { attachments?: Attachment[] }; status: string; created_at: number; updated_at: number;
 	room_id?: string | null; seq?: number;
 }

@@ -72,6 +72,30 @@ function respond(messages: Msg[], systemPrompt = "") {
 		if (prev && /慢慢数/.test(textOf(prev))) return fauxAssistantMessage(/停|别做/.test(said) ? "收到，我停下了。" : `收到插话：${said.slice(0, 40)}。按新要求调整。`);
 		u = u.replace(/^（你工作时用户发来的新消息）\n?/, "");
 	}
+
+	// 子代理测试：事件由主会话汇报，执行步骤只留在子会话。
+	if (u.includes("（子代理事件 ")) return fauxAssistantMessage(`子代理回报：${u.replace(/^.*?）/, "").slice(0, 300)}`);
+	if (u.startsWith("（后台子代理任务）")) {
+		if (/报错/.test(u)) throw new Error("模拟子代理模型报错");
+		if (last.role === "toolResult") return fauxAssistantMessage(`子代理结果：${textOf(last)}`);
+		if (/审批/.test(u)) return fauxAssistantMessage([fauxToolCall("bash", { command: "rm -f subagent-old.txt; echo 子代理审批完成" })]);
+		return fauxAssistantMessage([fauxToolCall("bash", { command: "sleep 8; echo 子代理工作完成" })]);
+	}
+	if (messages.some((m) => m.role === "user" && textOf(m).startsWith("（后台子代理任务）")) && textOf(last).startsWith("（你工作时用户发来的新消息）")) return fauxAssistantMessage("子代理已按补充要求调整。");
+	const subSaid = u.startsWith("（群聊「") ? ([...u.matchAll(/【用户】([^\n]*)/g)].pop()?.[1] ?? "") : u;
+	if (/聊个无关问题/.test(subSaid)) return fauxAssistantMessage("我在，后台任务继续跑。");
+	if (/派个子代理/.test(subSaid)) {
+		if (last.role === "toolResult") return fauxAssistantMessage("子代理已在后台工作，我们可以继续聊。");
+		return fauxAssistantMessage([fauxToolCall("spawn_subagent", { task: subSaid, context: "执行一次测试任务" })]);
+	}
+	if (/补充给子代理/.test(subSaid)) {
+		if (last.role === "toolResult" && last.toolName === "subagent_message") return fauxAssistantMessage("补充已转交子代理。");
+		if (last.role === "toolResult" && last.toolName === "subagent_list") {
+			const rows = JSON.parse(textOf(last));
+			return fauxAssistantMessage([fauxToolCall("subagent_message", { id: rows.find((r: { status: string }) => r.status === "running" || r.status === "stalled").id, text: subSaid })]);
+		}
+		return fauxAssistantMessage([fauxToolCall("subagent_list", {})]);
+	}
 	// 慢慢数：多步、每步都慢（测试工作途中插话 / 停止）
 	// 群聊注入里带着整段群聊记录：只看这一轮用户最新说的话（【用户】…），免得之前的“慢慢数”让后面每一轮都去数数
 	const roomSaid = u.startsWith("（群聊「") ? ([...u.matchAll(/【用户】([^\n]*)/g)].pop()?.[1] ?? "") : u;

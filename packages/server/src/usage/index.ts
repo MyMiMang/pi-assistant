@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS usage_daily (
   PRIMARY KEY (day, agent_id, room_id, provider, model));
 `);
 
+if (!(db.prepare("PRAGMA table_info(usage_calls)").all() as { name: string }[]).some((c) => c.name === "subagent_id")) db.exec("ALTER TABLE usage_calls ADD COLUMN subagent_id TEXT");
+
 export const DETAIL_DAYS = 90;
 const DAY = 86_400_000;
 export const dayOf = (ts: number) => new Date(ts).toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
@@ -43,6 +45,7 @@ export interface RecordInput extends TokenUsage {
 	model: string;
 	conversationId?: string | null;
 	messageId?: string | null;
+	subagentId?: string | null;
 	roomId?: string | null;
 	ts?: number;
 }
@@ -65,8 +68,8 @@ export function recordUsage(r: RecordInput): UsageSummaryRow {
 	const rp = resolvePrice(r.provider, r.model);
 	const c = rp.price ? computeCost(u, rp.price) : null;
 	db.prepare(
-		"INSERT INTO usage_calls(id, ts, day, agent_id, room_id, conversation_id, message_id, provider, model, input, output, cache_read, cache_write, reasoning, cost, saved, price, price_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-	).run(uid("u"), ts, dayOf(ts), r.agentId, roomId ?? null, r.conversationId ?? null, r.messageId ?? null, r.provider, r.model, u.input, u.output, u.cacheRead, u.cacheWrite, u.reasoning ?? 0, c ? c.total : null, c ? c.saved : null, rp.price ? JSON.stringify(rp.price) : null, rp.source);
+		"INSERT INTO usage_calls(id, ts, day, agent_id, room_id, conversation_id, message_id, provider, model, input, output, cache_read, cache_write, reasoning, cost, saved, price, price_source, subagent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+	).run(uid("u"), ts, dayOf(ts), r.agentId, roomId ?? null, r.conversationId ?? null, r.messageId ?? null, r.provider, r.model, u.input, u.output, u.cacheRead, u.cacheWrite, u.reasoning ?? 0, c ? c.total : null, c ? c.saved : null, rp.price ? JSON.stringify(rp.price) : null, rp.source, r.subagentId ?? null);
 	return { ...u, reasoning: u.reasoning ?? 0, cost: c ? c.total : null, saved: c ? c.saved : null, priceSource: rp.source };
 }
 

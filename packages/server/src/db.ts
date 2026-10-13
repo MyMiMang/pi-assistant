@@ -146,6 +146,7 @@ for (const [table, col, ddl] of [
 	["agents", "conversation_id", "TEXT"],
 	["agents", "memory_provider", "TEXT"],
 	["messages", "conversation_id", "TEXT"],
+	["messages", "subagent_id", "TEXT"],
 	["tasks", "conversation_id", "TEXT"],
 	["tasks", "routine_run_id", "TEXT"],
 	["requests", "conversation_id", "TEXT"],

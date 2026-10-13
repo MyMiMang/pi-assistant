@@ -101,6 +101,11 @@ test("企业微信：回调验签 → 未绑定提示 → 绑定码 → 消息�
 	insertMessage({ agentId: "ca", conversationId: conv, role: "assistant", content: "今天下午 3 点有个会。" });
 	await wait(() => sends().length === before + 1);
 	assert.match(String((sends().at(-1)!.body.markdown as { content: string }).content), /下午 3 点/);
+	// 子代理步骤只留在详情；渠道只收主会话的回复。
+	const mainSends = sends().length;
+	insertMessage({ agentId: "ca", conversationId: conv, subagentId: "sa-hidden", role: "assistant", content: "这是后台步骤，不应发到渠道" });
+	await new Promise((r) => setTimeout(r, 100));
+	assert.equal(sends().length, mainSends);
 	// 审批卡片 → 企业微信按钮卡片（button_interaction）；点「本任务内都允许」= 批准且本任务内都允许，按钮换成结果
 	const cards = () => sends().filter((s) => s.body.msgtype === "template_card");
 	const p = requests.approval("ca", null, "browser:提交表单", { url: "x" }, "在网页「报名」点击「提交」", "high", conv, { allowTask: true });
