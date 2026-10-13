@@ -95,12 +95,17 @@ jobs:
             exit 1
           }
           Write-Output "tray launch OK"
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force smoke-logs | Out-Null
+          Copy-Item direct.out, direct.err smoke-logs -ErrorAction SilentlyContinue
+          Copy-Item (Join-Path $env:LOCALAPPDATA 'com.piassistant.app\logs\*') smoke-logs -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: windows-smoke-logs-${{ strategy.job-index }}
-          path: |
-            direct.out
-            direct.err
-            ~/AppData/Local/com.piassistant.app/logs/
+          path: smoke-logs/
           if-no-files-found: ignore
