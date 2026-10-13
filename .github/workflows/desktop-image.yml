@@ -48,6 +48,12 @@ jobs:
           docker logs pia-desk-ci | grep -q "pia-desktop ready"
           sleep 3 && curl -sf http://127.0.0.1:6080/ >/dev/null
           docker exec pia-desk-ci cua-driver --version
+          # 共用电脑（§15.4）：能再开一块屏幕，noVNC 按 token 连到它
+          d=$(docker exec pia-desk-ci pia-screen add s-ci 5910 | tail -1) && [ "$d" -ge 100 ]
+          docker exec pia-desk-ci pia-screen ls | grep -q "^s-ci $d 5910"
+          docker exec -e DISPLAY=:$d pia-desk-ci xdpyinfo >/dev/null
+          docker exec pia-desk-ci test -S /tmp/cua-s-ci.sock
+          docker exec pia-desk-ci test -f /tmp/pia-vnc-tokens/s-ci
       - name: 输出 digest
         run: |
           echo "### 助理电脑镜像 ${{ steps.v.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
