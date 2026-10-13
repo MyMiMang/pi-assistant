@@ -951,7 +951,24 @@ await step("共用电脑：两个助理同一台电脑（界面显示共用）�
 		await page.waitForTimeout(800); // 等信息面板按记住的布局渲染完
 		await openPane("电脑");
 		const dv = page.getByTestId("desktop-view");
-		await dv.getByTestId("desktop-computer").getByText(/共用电脑（\d+ 个助理）/).waitFor({ timeout: 30_000 });
+		await dv.locator('[data-testid=desktop-computer][title*="共用电脑"]').waitFor({ timeout: 30_000 });
+		// 窄面板（240 / 320px）：标题行的文字收起成图标，不能挤成竖排
+		for (const w of [240, 320, 420]) {
+			const bad = await dv.evaluate((el, w) => {
+				el.style.width = `${w}px`;
+				const out = [];
+				const hdr = el.querySelector("[data-testid=desktop-header]");
+				if (hdr.scrollWidth > hdr.clientWidth + 1) out.push(`标题行溢出 ${hdr.scrollWidth}/${hdr.clientWidth}`);
+				for (const c of hdr.querySelectorAll("span")) {
+					const r = c.getBoundingClientRect();
+					const fs = parseFloat(getComputedStyle(c).fontSize) || 14;
+					if (r.width && (c.textContent || "").trim().length >= 2 && r.height > fs * 2.2) out.push((c.textContent || "").trim());
+				}
+				el.style.width = "";
+				return out;
+			}, w);
+			if (bad.length) throw new Error(`${w}px 下文字挤成竖排：${bad.join("、")}`);
+		}
 		await dv.locator("canvas").first().waitFor({ timeout: 30_000 });
 		// 给它开自己的屏幕 → 画面切到它的屏幕；再切去看主屏幕；回主屏幕
 		await dv.getByTestId("screen-own").click();
@@ -1410,6 +1427,46 @@ await step("界面打磨：输入框旁上下文圆环（悬停简要、点开�
 	const st2 = await bar.evaluate(() => fetch("/api/host-control/bar").then((r) => r.json()));
 	if (st2.dismissed) throw new Error("状态变化后悬浮条应能再次出现");
 	await bar.close();
+});
+
+await step("手机不横向晃动 + 窄处文字不竖排：宽表格 / 长代码 / 长链接只在自己的块里横滑，390px 下整页宽度 = 屏幕宽度", async () => {
+	const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148" });
+	const pp = await phone.newPage();
+	await pp.goto(BASE);
+	const box = pp.locator("main textarea");
+	await box.waitFor();
+	await pp.waitForTimeout(800);
+	await box.fill("给我一个很宽的表格");
+	await pp.getByRole("button", { name: "发送" }).click(); // 触屏上回车是换行
+	const wrap = pp.getByTestId("md-table-wrap").last();
+	await wrap.waitFor({ timeout: 30_000 });
+	await pp.waitForTimeout(500);
+	const m = await pp.evaluate(() => {
+		const w = document.querySelector("[data-testid=md-table-wrap]:last-of-type") ?? document.querySelectorAll("[data-testid=md-table-wrap]")[0];
+		const sc = document.querySelector(".pa-scroll");
+		return { doc: document.documentElement.scrollWidth, body: document.body.scrollWidth, vw: innerWidth, sc: sc ? sc.scrollWidth - sc.clientWidth : 0, wrapScroll: w.scrollWidth > w.clientWidth + 10 };
+	});
+	if (m.doc > m.vw || m.body > m.vw || m.sc > 1) throw new Error(`页面被撑宽：${JSON.stringify(m)}`);
+	if (!m.wrapScroll) throw new Error("宽表格应该在自己的容器里横向滚动");
+	// 横向拖一下聊天区：整页不能跟着动
+	await pp.evaluate(() => window.scrollTo(200, 0));
+	if ((await pp.evaluate(() => window.scrollX)) !== 0) throw new Error("整页可以被横向拖动");
+	// 文字不能被挤成竖排（每行一两个字）
+	const stacked = await pp.evaluate(() => {
+		const bad = [];
+		for (const el of document.querySelectorAll("button, [role=tab], span, a, label, h1, h2, h3")) {
+			const t = (el.textContent || "").trim();
+			if (t.length < 2 || el.children.length > 2) continue;
+			const r = el.getBoundingClientRect();
+			if (!r.width || !r.height) continue;
+			const fs = parseFloat(getComputedStyle(el).fontSize) || 14;
+			if (r.width < fs * 2.2 && r.height > fs * 2.6) bad.push(t.slice(0, 12));
+		}
+		return bad.slice(0, 8);
+	});
+	if (stacked.length) throw new Error(`文字被挤成竖排：${stacked.join("、")}`);
+	await pp.screenshot({ path: join(SHOTS, "70-phone-wide-table.png") });
+	await phone.close();
 });
 
 await step("Linux 服务器版：控制台设置码 → 网页首次设置成为主人设备 → 主人生成配对码 → 新设备认领 → 主人在网页上批准", async () => {

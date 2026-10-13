@@ -31,12 +31,20 @@ function LinkCard({ href }: { href: string }) {
 
 export default memo(function Markdown({ text }: { text: string }) {
 	return (
-		<div className="prose prose-sm max-w-none break-words prose-p:my-1.5 prose-pre:my-2 prose-ul:my-1.5 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1.5">
+		<div className="pa-md prose prose-sm min-w-0 max-w-full break-words [overflow-wrap:anywhere] prose-p:my-1.5 prose-pre:my-2 prose-ul:my-1.5 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1.5">
 			<ReactMarkdown
 				remarkPlugins={[remarkGfm]}
 				rehypePlugins={[[rehypeHighlight, { ignoreMissing: true, detect: true }]]}
 				components={{
 					a: (p) => <a {...p} target="_blank" rel="noreferrer noopener" />,
+					// 宽表格 / 代码块自己横向滚动，不把整个聊天撑宽（手机上竖滑时整页左右晃）
+					table: ({ node: _n, ...p }) => (
+						<div className="pa-scroll-x" data-testid="md-table-wrap">
+							<table {...p} />
+						</div>
+					),
+					pre: ({ node: _n, ...p }) => <pre {...p} className={`${p.className ?? ""} pa-pre-x`} />,
+					img: ({ node: _n, ...p }) => <img {...p} className="max-w-full h-auto" />,
 					p: ({ children, node: _n, ...rest }) => {
 						const kids = Children.toArray(children as ReactNode).filter((c) => !(typeof c === "string" && !c.trim()));
 						const only = kids.length === 1 && isValidElement(kids[0]) ? (kids[0] as ReactElement<{ href?: string; children?: ReactNode }>) : null;

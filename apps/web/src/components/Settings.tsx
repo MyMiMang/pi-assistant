@@ -17,6 +17,7 @@ import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
 import { Badge, Button, cx, fmtTime, Help, Input, Modal } from "./ui";
 import { Downloads } from "./Downloads";
+import { AppUpdate } from "./AppUpdate";
 
 const TABS = [
 	["models", "模型", Monitor],
@@ -31,7 +32,7 @@ const TABS = [
 	["entry", "固定地址 / 入口", Globe],
 	["appearance", "外观", Palette],
 	["downloads", "下载与组件", Download],
-	["about", "关于", Info],
+	["about", "关于与更新", Info],
 ] as const;
 
 export default function Settings() {
@@ -656,6 +657,7 @@ function AboutTab() {
 	);
 	return (
 		<div className="space-y-6">
+			<AppUpdate />
 			<section>
 				<H>系统</H>
 				<Row k="Pi 版本" v={<span className={system.pi.compatible ? "" : "text-amber-600"}>{system.pi.message}</span>} />

@@ -128,3 +128,6 @@ npm run check:pi         # Pi 升级兼容检查
 - 2026-10-13：助理电脑「开机后同一轮可用」和「首张截图空白」已修好（见 DESIGN §16.1）。调试时设 `PIA_DEBUG_COMPUTER=1` 可看到 computer_open 各阶段日志。真实 Docker 的 e2e：`E2E_DESKTOP=1 PIA_DESKTOP_IMAGE=pi-assistant/desktop:dev npm run e2e`（42 步全过）。
 - 2026-10-13：助理电脑镜像、MCP（npx/uvx）包已接入统一下载管理（DESIGN §16.2），全应用长说明改为「?」帮助。未做：Linux 服务器版（一次性设置码 + 主设备）——下一阶段。镜像进度在 docker 后端按层估算；若要真实字节可改用 Docker Engine API 的 progressDetail。
 - 2026-10-13：弹出菜单溢出、模型显示名 / 自定义服务 id 冲突、自定义模型上下文长度、bge-m3 加载失败（ONNX 外部权重 + HF 符号链接）、记忆错误显示已修（DESIGN §16.3）。未打 tag（等用户测完一起打包）。
+- 2026-10-13：beta.7 反馈修复（DESIGN §16.4）：应用更新重做（进度、错误摘要、Windows 先停服务再装、设置 › 关于与更新、自动检查开关）；操作记录从界面去掉、改为助理工具 `computer_action_history` / `hostpc_action_history`，并给记录、日志、截图、.part、任务会话、容器日志加上限；助理电脑开机不再依赖容器日志时间（Lima 时钟偏差导致的“启动超时”）；窄面板文字收成图标；手机宽表格不再让整页横向晃。未打 tag。
+  - 真机待验证：① Mac 上从 beta.7 → 下一个 beta 的托盘 / 设置页更新（注意：beta.7 本身还是旧更新逻辑，**从 beta.7 升级时仍可能“没反应”**，要么等几分钟下载完，要么手动下载 dmg 装一次，之后的版本才是新逻辑）；② Windows 更新（NSIS，服务先停）；③ Mac Lima 首次开机不再误报超时；④ iPhone 竖滑不再横向晃。
+  - 本地只能 `cargo check`（Linux），Tauri 远程 IPC 权限（remote-ui.json）是否放行需要在真机主窗口里打开「设置 › 关于与更新」确认能显示“当前版本 vX”。如果显示“读取更新状态失败 … not allowed by ACL”就是 remote-ui.json 没放行；只显示版本 + 升级提示则是 IPC 没注入。

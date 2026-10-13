@@ -55,6 +55,8 @@ export interface ComputerHost {
 	approvals?(): Approvals;
 	/** 操作记录（始终记录） */
 	log?(e: ActionLogEntry): void;
+	/** 读自己的操作记录（复盘用，文字版，最新在前）；all = 包括同一台电脑上其他助理的 */
+	history?(o: { limit?: number; all?: boolean }): string;
 	/** 硬性保护上下文 */
 	guard?: GuardContext;
 	/**
@@ -172,6 +174,26 @@ export function computerExtension(host: ComputerHost) {
 				: "助理自己的 Linux 桌面电脑（浏览器、微信等应用）",
 			timeout: 60_000,
 		});
+		if (host.history) {
+			const hist = host.history;
+			pi.registerTool({
+				name: host_ ? "hostpc_action_history" : "computer_action_history",
+				label: "查看操作记录",
+				description: host_
+					? "查看你之前在用户电脑上做过的操作（时间、工具、参数、结果、是否被拒绝/拦下），最新在前。用于复盘：出错后回看哪一步失败、避免重复做过的操作。"
+					: "查看你之前在助理电脑上做过的操作（时间、工具、参数、结果），最新在前。all=true 时包括同一台共用电脑上其他助理的操作。用于复盘出错原因、接着上次的进度做。",
+				promptSnippet: host_ ? "hostpc_action_history: 回看在用户电脑上的操作记录" : "computer_action_history: 回看在助理电脑上的操作记录",
+				parameters: Type.Object({
+					limit: Type.Optional(Type.Number({ description: "最多几条（默认 30，最多 200）" })),
+					...(host_ ? {} : { all: Type.Optional(Type.Boolean({ description: "包括其他助理的操作" })) }),
+				}),
+				annotations: { readOnlyHint: true },
+				async execute(_id, p) {
+					const q = p as { limit?: number; all?: boolean };
+					return { content: [{ type: "text" as const, text: hist({ limit: q.limit, all: q.all }) }], details: undefined };
+				},
+			});
+		}
 		if (!host_ && host.screenshot && host.handoff) {
 		const shot = host.screenshot;
 		const hand = host.handoff;

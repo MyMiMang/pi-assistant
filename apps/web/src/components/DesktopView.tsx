@@ -5,10 +5,9 @@
 import { Hand, Loader2, Maximize2, MonitorPlay, Pause, Play, Power, Settings2, Users } from "lucide-react";
 import { t } from "../i18n";
 import { useEffect, useRef, useState } from "react";
-import { ActionLog } from "./ActionLog";
 import { api, base } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, useConfirm } from "./ui";
+import { Badge, Button, cx, ErrorBox, useConfirm } from "./ui";
 
 type DeskStatus = {
 	available: boolean;
@@ -136,25 +135,38 @@ export function DesktopView({ agentId }: { agentId: string }) {
 	return (
 		<div className="space-y-2" data-testid="desktop-view">
 			{dialog}
-			<div className="flex items-center gap-2">
-				<MonitorPlay size={16} />
-				<span className="font-medium">桌面</span>
-				{!st.enabled ? (
-					<Badge>{t("未安装")}</Badge>
-				) : st.state === "running" ? (
-					<Badge tone="accent">{t("运行中")}</Badge>
-				) : st.state === "starting" || (busy && st.available) ? (
-					<Badge tone="amber">{t("启动中")}</Badge>
-				) : (
-					<Badge>{t("已关机")}</Badge>
-				)}
-				{st.paused && <Badge tone="amber">已暂停操作</Badge>}
-				{control && <Badge tone="amber">你在操作</Badge>}
-				{st.computer && (
-					<span className="ml-auto flex items-center gap-1 text-xs text-zinc-500" data-testid="desktop-computer" title={st.computer.agents.map((a) => a.name).join("、")}>
-						<Users size={12} /> {st.computer.shared ? t("共用电脑（{n} 个助理）", { n: st.computer.agents.length }) : t("单独的电脑")}
-					</span>
-				)}
+			{/* 窄面板：文字收起只留图标（悬停看文字），绝不把文字挤成竖排 */}
+			<div className="@container">
+				<div className="flex min-w-0 items-center gap-2" data-testid="desktop-header">
+					<MonitorPlay size={16} className="shrink-0" aria-label={t("桌面")} />
+					<span className="hidden shrink-0 font-medium whitespace-nowrap @[260px]:inline">{t("桌面")}</span>
+					{(() => {
+						const [label, tone, dot] = !st.enabled
+							? [t("未安装"), "zinc", "bg-zinc-400"]
+							: st.state === "running"
+								? [t("运行中"), "accent", "bg-accent"]
+								: st.state === "starting" || (busy && st.available)
+									? [t("启动中"), "amber", "bg-amber-500"]
+									: [t("已关机"), "zinc", "bg-zinc-400"];
+						return (
+							<span title={label} className="flex shrink-0 items-center" data-testid="desktop-state">
+								<span className={cx("inline-block h-2 w-2 rounded-full @[200px]:hidden", dot)} aria-label={label} />
+								<span className="hidden @[200px]:inline-flex">
+									<Badge tone={tone as "zinc"}>{label}</Badge>
+								</span>
+							</span>
+						);
+					})()}
+					{st.paused && <span className="hidden @[320px]:inline-flex"><Badge tone="amber">{t("已暂停操作")}</Badge></span>}
+					{control && <span className="hidden @[320px]:inline-flex"><Badge tone="amber">{t("你在操作")}</Badge></span>}
+					{st.computer && (
+						<span className="ml-auto flex shrink-0 items-center gap-1 text-xs whitespace-nowrap text-zinc-500" data-testid="desktop-computer" title={`${st.computer.shared ? t("共用电脑（{n} 个助理）", { n: st.computer.agents.length }) : t("单独的电脑")}：${st.computer.agents.map((a) => a.name).join("、")}`}>
+							<Users size={12} />
+							<span className="hidden @[340px]:inline">{st.computer.shared ? t("共用电脑（{n} 个助理）", { n: st.computer.agents.length }) : t("单独的电脑")}</span>
+							<span className="@[340px]:hidden">{st.computer.shared ? st.computer.agents.length : ""}</span>
+						</span>
+					)}
+				</div>
 			</div>
 			{!st.enabled ? (
 				<div className="flex items-center gap-2 rounded-lg bg-zinc-50 p-2 text-xs text-zinc-500 dark:bg-zinc-900" data-testid="desktop-not-installed">
@@ -235,13 +247,7 @@ export function DesktopView({ agentId }: { agentId: string }) {
 					</div>
 				</>
 			)}
-			{err && <div className="text-xs text-red-600">{err}</div>}
-			<details className="pt-1" data-testid="desktop-action-log">
-				<summary className="cursor-pointer text-xs font-semibold text-mut">操作记录（可逐步回放）</summary>
-				<div className="pt-1">
-					<ActionLog agentId={agentId} limit={50} />
-				</div>
-			</details>
+			{err && <ErrorBox text={err} />}
 		</div>
 	);
 }

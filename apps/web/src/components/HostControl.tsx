@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, cx, Input, avatarText, Help, useConfirm } from "./ui";
-import { ActionLog } from "./ActionLog";
 
 /** 启用“完全权限”前的确认框（不再要求输入确认语） */
 const FULL_ASK = { title: "启用完全权限？", body: "助理几乎能做你在这台电脑上能做的任何事，包括使用已登录的账号和文件。受保护的操作仍会先问你，随时可以暂停。", ok: "确定启用", danger: true };
@@ -302,11 +301,6 @@ export function HostControlSettings() {
 
 			<SandboxComputerSettings />
 
-			<section className="space-y-2">
-				<div className="font-semibold">本机操作记录</div>
-				<p className="text-xs text-mut">助理在这台电脑上的每个动作。 <Help>包括被拒绝、被暂停拦下的，任何模式下都记录。</Help></p>
-				<ActionLog target="host" />
-			</section>
 		</div>
 	);
 }
@@ -321,7 +315,7 @@ function SandboxComputerSettings() {
 	return (
 		<section className="space-y-2 rounded-xl bg-hover p-4 text-sm" data-testid="sandbox-approvals">
 			<div className="font-semibold">助理自己的电脑</div>
-			<p className="text-mut">助理自己的隔离电脑，默认完全权限。 <Help>如果它登录了你在意的账号（比如它的微信、邮箱），可以要求它在关键动作前先问你。暂停和操作记录始终有效（在助理的「电脑」页）。</Help></p>
+			<p className="text-mut">助理自己的隔离电脑，默认完全权限。 <Help>如果它登录了你在意的账号（比如它的微信、邮箱），可以要求它在关键动作前先问你。一键暂停始终有效（在助理的「电脑」页）。</Help></p>
 			<label className="flex items-center gap-2">
 				<input type="radio" checked={a === "none"} onChange={() => set("none")} /> 完全权限，不用问我（默认）
 			</label>

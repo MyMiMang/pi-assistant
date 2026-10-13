@@ -3,7 +3,7 @@
 //!   如果 8787 端口上已经有 Pi Assistant 在跑（比如源码安装的 LaunchAgent），直接用它，不重复启动
 //! - 首次运行 / 手动打开时弹出原生主窗口（系统 WebView 加载本机 8787 界面，不再开浏览器）；
 //!   关窗口只是隐藏，托盘常驻；开机自启（--background 不弹窗口）。外部链接用默认浏览器打开
-//! - 菜单：打开、配对手机、暂停/继续操作电脑、悬浮条开关、开机自启、检查更新、退出
+//! - 菜单：打开、配对手机、暂停/继续操作电脑、悬浮条开关、开机自启、检查更新（进度 / 失败原因同步显示）、退出
 //! - 操作这台电脑时弹出置顶悬浮条（/hostbar），一键暂停
 //! - 自动更新：Tauri updater 读 GitHub Releases 的 latest.json（签名校验），新版本含新版 Pi
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -19,6 +19,8 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+
+mod updater;
 
 const PORT: u16 = 8787;
 const BAR_W: f64 = 440.0;
@@ -221,33 +223,40 @@ async fn set_paused(paused: bool) {
     let _ = http().post(format!("{}/api/host-control/pause", base())).json(&serde_json::json!({ "paused": paused })).send().await;
 }
 
-async fn check_update(app: &AppHandle, install: bool) {
-    use tauri_plugin_updater::UpdaterExt;
-    let Ok(up) = app.updater() else { return };
-    match up.check().await {
-        Ok(Some(u)) => {
-            if let Some(item) = app.state::<State>().update_item.lock().unwrap().as_ref() {
-                let _ = item.set_text(format!("安装更新 v{}", u.version));
-            }
-            if install {
-                if u.download_and_install(|_, _| {}, || {}).await.is_ok() {
-                    stop_server(app);
-                    app.restart();
-                }
-            }
-        }
-        Ok(None) => {
-            if install {
-                if let Some(item) = app.state::<State>().update_item.lock().unwrap().as_ref() {
-                    let _ = item.set_text("已是最新版本");
-                }
-            }
-        }
-        Err(e) => eprintln!("[tray] 检查更新失败：{e}"),
+/// 托盘菜单里“检查更新”这一项的文字跟着更新状态走
+pub fn update_menu(app: &AppHandle, s: &updater::UpdState) {
+    let text = match s.phase.as_str() {
+        "checking" => "正在检查更新…".to_string(),
+        "available" => format!("安装更新 v{}", s.version.clone().unwrap_or_default()),
+        "downloading" => match s.total {
+            Some(t) if t > 0 => format!("正在下载更新 {}%", s.downloaded * 100 / t),
+            _ => format!("正在下载更新 {} MB", s.downloaded / 1_048_576),
+        },
+        "installing" => "正在安装更新…".to_string(),
+        "latest" => "已是最新版本".to_string(),
+        "error" => "更新失败，点这里查看".to_string(),
+        _ => "检查更新".to_string(),
+    };
+    let busy = matches!(s.phase.as_str(), "checking" | "downloading" | "installing");
+    if let Some(item) = app.state::<State>().update_item.lock().unwrap().as_ref() {
+        let _ = item.set_text(text);
+        let _ = item.set_enabled(!busy);
     }
 }
 
-fn stop_server(app: &AppHandle) {
+/// 更新安装失败后把内置服务重新拉起来
+pub fn restart_server(app: &AppHandle) {
+    let st = app.state::<State>();
+    st.quitting.store(false, Ordering::SeqCst);
+    let h = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if !healthy().await {
+            start_server(&h);
+        }
+    });
+}
+
+pub fn stop_server(app: &AppHandle) {
     let st = app.state::<State>();
     st.quitting.store(true, Ordering::SeqCst);
     let child = st.child.lock().unwrap().take();
@@ -274,7 +283,10 @@ fn main() {
             pause_item: Mutex::new(None),
             update_item: Mutex::new(None),
         })
+        .invoke_handler(tauri::generate_handler![updater::app_update_status, updater::app_update_check, updater::app_update_install, updater::app_update_set_auto])
         .setup(move |app| {
+            let u = updater::Updates::new(app.handle());
+            app.manage(u);
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
@@ -290,12 +302,11 @@ fn main() {
             let pair = MenuItem::with_id(app, "pair", "配对手机…", true, None::<&str>)?;
             let pause = MenuItem::with_id(app, "pause", "暂停操作这台电脑", false, None::<&str>)?;
             let bar = CheckMenuItem::with_id(app, "bar", "操作电脑时显示悬浮条", true, true, None::<&str>)?;
-            let log = MenuItem::with_id(app, "log", "操作记录…", true, None::<&str>)?;
             let auto = CheckMenuItem::with_id(app, "autostart", "开机自动启动", true, app.autolaunch().is_enabled().unwrap_or(true), None::<&str>)?;
             let update = MenuItem::with_id(app, "update", "检查更新", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let sep = || PredefinedMenuItem::separator(app);
-            let menu = Menu::with_items(app, &[&open, &pair, &sep()?, &pause, &bar, &log, &sep()?, &auto, &update, &sep()?, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &pair, &sep()?, &pause, &bar, &sep()?, &auto, &update, &sep()?, &quit])?;
             *app.state::<State>().pause_item.lock().unwrap() = Some(pause.clone());
             *app.state::<State>().update_item.lock().unwrap() = Some(update.clone());
             // macOS 菜单栏用单色模板图（系统按深浅色自动着色）；Windows/Linux 用彩色托盘图标
@@ -311,7 +322,6 @@ fn main() {
                 .on_menu_event(move |app, ev| match ev.id().as_ref() {
                     "open" => open_ui(app, "/"),
                     "pair" => open_ui(app, "/?settings=remote"),
-                    "log" => open_ui(app, "/?settings=host"),
                     "pause" => {
                         let p = !app.state::<State>().paused.load(Ordering::SeqCst);
                         tauri::async_runtime::spawn(set_paused(p));
@@ -326,8 +336,17 @@ fn main() {
                         let _ = if al.is_enabled().unwrap_or(false) { al.disable() } else { al.enable() };
                     }
                     "update" => {
+                        // 有新版本 → 直接开始安装；否则检查一次。都打开「设置 › 关于」看进度和详情
+                        let phase = app.state::<updater::Updates>().st.lock().unwrap().phase.clone();
+                        open_ui(app, "/?settings=about");
                         let app = app.clone();
-                        tauri::async_runtime::spawn(async move { check_update(&app, true).await });
+                        if phase == "available" {
+                            tauri::async_runtime::spawn(updater::install(app));
+                        } else {
+                            tauri::async_runtime::spawn(async move {
+                                updater::check(&app, true).await;
+                            });
+                        }
                     }
                     "quit" => {
                         stop_server(app);
@@ -353,8 +372,7 @@ fn main() {
                     open_ui(&h, "/");
                     let _ = std::fs::write(cfg.join("first-run-done"), "1");
                 }
-                let h2 = h.clone();
-                tauri::async_runtime::spawn(async move { check_update(&h2, false).await });
+                tauri::async_runtime::spawn(updater::auto_loop(h.clone()));
                 bar_loop(h).await;
             });
             Ok(())

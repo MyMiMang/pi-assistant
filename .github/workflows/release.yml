@@ -24,6 +24,11 @@ jobs:
       HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: 更新说明（Release 正文 + latest.json notes）
+        shell: bash
+        run: |
+          { echo 'RELEASE_NOTES<<PIA_EOF'; bash scripts/release-notes.sh "$GITHUB_REF_NAME"; echo 'PIA_EOF'; } >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - uses: dtolnay/rust-toolchain@stable
@@ -66,7 +71,7 @@ jobs:
           args: --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: "Pi Assistant ${{ github.ref_name }}"
-          releaseBody: "安装说明见 docs/INSTALL.md（未签名构建：macOS 首次打开需右键 → 打开；Windows SmartScreen 选“仍要运行”）。"
+          releaseBody: ${{ env.RELEASE_NOTES }}
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
@@ -86,7 +91,7 @@ jobs:
           args: --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: "Pi Assistant ${{ github.ref_name }}"
-          releaseBody: "安装说明见 docs/INSTALL.md（未签名构建：macOS 首次打开需右键 → 打开；Windows SmartScreen 选“仍要运行”）。"
+          releaseBody: ${{ env.RELEASE_NOTES }}
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}

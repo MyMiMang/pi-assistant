@@ -165,36 +165,51 @@ async function doStart(cid: string): Promise<DesktopStatus> {
 		await docker(["rm", "-f", name]).catch(() => {});
 		st.state = "none";
 	}
-	// 只看这次开机之后的日志（容器日志会保留上次开机时的 “ready”）
-	const since = new Date(Date.now() - 1000).toISOString();
 	forgetScreens(cid); // 开机后只有主屏幕
 	if (st.state === "stopped") await docker(["start", name]);
 	if (st.state === "none") {
 		// 不设 --restart：空闲关机后不会被引擎自动拉起，下次按需再启动。共用电脑多给一些资源（几个助理同时用）
 		const res = isSharedComputer(cid) ? ["--cpus", "4", "--memory", "6g"] : ["--cpus", "2", "--memory", "3g"];
-		await docker(["run", "-d", "--name", name, "--shm-size", "2g", ...res, ...(await runNetArgs(cid)), "-v", `${volumeName(cid)}:/home/agent`, "--label", `${LABEL}=${cid}`, localImage()], { timeout: 120_000 });
+		await docker(["run", "-d", "--name", name, "--shm-size", "2g", "--log-opt", "max-size=10m", "--log-opt", "max-file=2", ...res, ...(await runNetArgs(cid)), "-v", `${volumeName(cid)}:/home/agent`, "--label", `${LABEL}=${cid}`, localImage()], { timeout: 120_000 });
 	}
 	starting.delete(cid);
-	for (let i = 0; i < 60; i++) {
+	return await waitStarted(cid, name, fixed);
+}
+
+/**
+ * 等新开机的电脑真正可用。不靠 `logs --since`（虚拟机里的时钟可能和 Mac 差几秒到几分钟，会一直等不到 “ready”），
+ * 直接探测桌面（VNC / noVNC / cua-driver / 屏幕非空白）。超时按进度算：每有新进展就再给 90 秒，总共最多 10 分钟；
+ * 只有长时间卡在同一步才算超时，错误第一行是中文摘要，后面附卡住的步骤和容器日志末尾。
+ */
+async function waitStarted(cid: string, name: string, fixed: boolean): Promise<DesktopStatus> {
+	const t0 = Date.now();
+	const HARD = 10 * 60_000;
+	let deadline = t0 + 120_000;
+	let step = "等容器运行";
+	const progress = (s: string) => {
+		if (s !== step) (step = s), (deadline = Math.min(t0 + HARD, Math.max(deadline, Date.now() + 90_000)));
+	};
+	while (Date.now() < deadline) {
 		const s = await computerStatus(cid);
 		if (s.state === "running" && s.port) {
-			try {
-				const { stdout } = await docker(["logs", "--since", since, name]);
-				// 虚拟机后端还要等 Lima 把端口转发到 Mac 上（通常 1–2 秒）
-				if (String(stdout).includes("pia-desktop ready") && (!fixed || (await reachable(s.port)))) {
-					// 容器脚本的 “ready” 只代表进程都拉起了；再等桌面真正画出来（否则第一张截图是空白的）
-					await waitComputerReady(cid);
-					readyOnce.add(cid);
-					return (idle.touch(cid), await computerStatus(cid));
-				}
-			} catch (e) {
-				if (e instanceof DesktopNotReady) throw e;
+			const r = await probeComputer(cid);
+			if (r.ready && (!fixed || (await reachable(s.port)))) {
+				readyOnce.add(cid);
+				return (idle.touch(cid), await computerStatus(cid));
 			}
+			progress(r.ready ? "等端口转发到本机" : r.reason);
+		} else if (s.state === "stopped" || s.state === "none") {
+			throw new Error(`助理电脑开机后又退出了\n${await logTail(name)}`);
 		}
-		await new Promise((r) => setTimeout(r, 500));
+		await new Promise((r) => setTimeout(r, 700));
 	}
-	throw new Error("助理电脑启动超时");
+	throw new Error(`助理电脑启动超时（卡在：${step}），可以再点一次开机\n已等 ${Math.round((Date.now() - t0) / 1000)} 秒，卡在：${step}\n${await logTail(name)}`);
 }
+const logTail = (name: string) =>
+	docker(["logs", "--tail", "40", name], { timeout: 15_000 }).then(
+		(r) => `容器日志（末尾）：\n${String(r.stdout)}${String(r.stderr ?? "")}`.slice(-4000),
+		(e) => `读取容器日志失败：${e instanceof Error ? e.message : e}`,
+	);
 
 // ---------------------------------------------------------------- 旧版（每个助理一台电脑）数据迁移
 /**

@@ -96,7 +96,7 @@ export function Badge({ children, tone = "zinc" }: { children: ReactNode; tone?:
 	return (
 		<span
 			className={cx(
-				"inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+				"inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap",
 				tone === "zinc" && "bg-hover text-mut",
 				tone === "green" && "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
 				tone === "amber" && "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
@@ -198,6 +198,8 @@ export function cleanLog(t: string) {
 		.join("\n");
 }
 export function errorSummary(t: string) {
+	// 服务端已经给了中文摘要（第一行），后面是详情
+	if (/^[\u4e00-\u9fa5]/.test(t) && t.includes("\n")) return t.split("\n")[0]!;
 	if (/External data path|ONNXRuntimeError|onnxruntime/i.test(t)) return "向量模型加载失败";
 	if (/ENOSPC|No space left/i.test(t)) return "磁盘空间不足";
 	if (/daemon\.start failed|Failed to start daemon|startup failed/i.test(t)) return "Hindsight 启动失败";

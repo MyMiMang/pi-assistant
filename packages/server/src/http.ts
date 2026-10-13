@@ -1,6 +1,7 @@
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -48,6 +49,7 @@ import { addPackage, install as installPackage, listPackages, type PiPackageRow,
 import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
 import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRoutines, listRuns, type RoutineInput, type RoutineRow, runRoutine, setRoutineStatus, updateRoutine, verifyWebhook, webhookPath } from "./routines.ts";
 import { BRAND } from "@pi-assistant/shared";
+import { startHousekeeping } from "./housekeeping.ts";
 import { actionShot, clearActions, listActions } from "./action-log.ts";
 import { openWechat, saveWechatSettings, wechatSettings, wechatStatus } from "./wechat.ts";
 import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAccount, saveOAuthAccount, testAccount } from "./email.ts";
@@ -104,11 +106,29 @@ const by = (c: Context<Env>) => c.get("caller").deviceId ?? "local";
 
 // ---------------------------------------------------------------- 系统
 app.get("/api/system/public", (c) => c.json({ serverId: identity().serverId, publicKey: identity().publicKey, name: BRAND.name, server: config.headless, setup: config.headless && !hasOwner() }));
+/** 安装包里的 app-version.json（scripts/stage-app.mjs 写入）；源码运行时用 tauri.conf.json 的版本 */
+let appVer: { version: string; builtAt?: string; launcher: string } | null = null;
+function appVersion() {
+	if (appVer) return appVer;
+	const here = fileURLToPath(new URL("../../..", import.meta.url));
+	let v: { version?: string; builtAt?: string } = {};
+	for (const f of [process.env.PIA_APP_DIR && join(process.env.PIA_APP_DIR, "app-version.json"), join(here, "app-version.json")])
+		try {
+			if (f) (v = JSON.parse(readFileSync(f, "utf8"))), (v.version ??= undefined);
+			if (v.version) break;
+		} catch {}
+	if (!v.version)
+		try {
+			v = { version: `${JSON.parse(readFileSync(join(here, "apps/tray/src-tauri/tauri.conf.json"), "utf8")).version}（源码）` };
+		} catch {}
+	return (appVer = { version: v.version ?? "未知", builtAt: v.builtAt, launcher: process.env.PIA_LAUNCHER ?? (config.headless ? "server" : "source") });
+}
 app.get("/api/system", async (c) =>
 	c.json({
 		serverId: identity().serverId,
 		publicKey: identity().publicKey,
 		pi: checkPiCompat(),
+		app: appVersion(),
 		mock: config.mock,
 		// local：能不能改所有设置（本机，或服务器版的主人设备）；界面按它显示管理功能
 		local: isAdmin(c),
@@ -1055,6 +1075,7 @@ app.delete("/api/actions", localOnly, (c) => (clearActions(c.req.query("agentId"
 const deskJson = async (id: string) => ({ ...(await desktopStatus(id)), paused: desktopPause.isPaused(id) });
 const deskChanged = (agentId?: string) => bus.emit({ type: "desktop.changed", agentId } as never);
 startIdleWatcher({ busy: agentBusy, changed: deskChanged });
+startHousekeeping();
 /** 全局：安装开关、运行方式、空闲关机、镜像加速、下载进度 */
 const deskGlobal = async () => {
 	const s = desktopSettings();

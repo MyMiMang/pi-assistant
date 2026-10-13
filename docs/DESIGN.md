@@ -1100,3 +1100,26 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - **自定义模型上下文 / 输出长度**（`pi-adapter/model-limits.ts`）：自动识别（模型列表接口的 context_length / max_model_len / inputTokenLimit / max_input_tokens / top_provider…）→ 已知模型（先按 id 匹配 Pi 内置模型目录，再查常见模型表）→ 默认 128K / 8K。每个模型在表单里显示并可修改，来源标注“自动识别 / 已知模型 / 自动（默认）/ 手动”。写进 Pi 的 models.json，所以 Pi 的上下文用量（输入框圆环）和自动压缩用的是同一个值；旧数据启动时自动补齐。
 - **bge-m3 加载失败**：HF 缓存里的 model.onnx / model.onnx_data 是指向 blobs/ 下不同文件的符号链接，onnxruntime 1.31 校验外部权重路径时判为“越界”。现在向量模型下载到 `hindsight/models/onnx/<模型>/onnx/` 的真实文件（huggingface_hub `local_dir`），用 `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH` 指过去；旧缓存启动时复制成真实文件并删除缓存里的大文件（不重新下载）。在本机用 Hindsight 0.10.3 + onnxruntime 1.31 真实复现并验证：迁移和全新下载两种情况 Hindsight 都能启动，bge-m3 ↔ e5-small 切换正常。
 - **错误显示**：高级记忆的启动错误显示一句中文摘要（如“向量模型加载失败”），“详情”展开清理过框线字符的日志（容器内滚动、自动换行），可一键复制。
+
+### 16.4 应用更新、「关于与更新」页、操作记录与磁盘上限、窄处文字、手机横向晃动（beta.7 反馈）
+
+**更新点了没反应（根因）**：托盘里的旧实现 `check_update` 把 ~200 MB 的更新包放在后台下载，**没有任何进度显示**，失败（网络、权限、签名）时只 `eprintln!`（打包后的应用没有控制台，等于吞掉），菜单文字也不变——用户看到的就是“点了没反应”。另外 Windows 上 `download_and_install` 会在内置 Node 服务还在运行时直接交给 NSIS 安装器，`node.exe` 被占用会导致覆盖失败。latest.json、签名、公钥核对过是匹配的（公钥 key id D20B5EDB3848D9A7 与 .sig 一致），capability 里 `updater:default` 也在——不是签名或权限配置的问题。
+
+**现在的实现**（`apps/tray/src-tauri/src/updater.rs`）：一个状态机（idle / checking / latest / available / downloading / installing / error），托盘菜单和设置页共用：
+- 托盘「检查更新」→ 打开「设置 › 关于与更新」并检查；有新版本时菜单变成「安装更新 vX」，点了开始下载，菜单实时显示百分比；
+- 下载完 **先停内置服务** 再 `install`，成功后 `restart`；安装失败会把服务拉起来，状态记成 error；
+- 错误：一句中文摘要（签名、权限 / 没拖进「应用程序」、只读磁盘映像、超时、连不上 GitHub、无对应平台包）+ 原始错误；手动操作失败弹系统通知；
+- 自动检查：默认开，启动时和每 12 小时；有新版本弹一次通知，由用户决定什么时候装；开关和上次检查时间存在 `app_config_dir/update.json`；
+- 设置页是远程来源（`http://127.0.0.1:8787`），所以在 `build.rs` 定义了应用 ACL 清单，`capabilities/remote-ui.json` 只放行 `app_update_status / check / install / set_auto` 四个命令给 `main` 窗口。网页通过 `window.__TAURI_INTERNALS__.invoke` 调用；
+- 网页 / 手机 / Linux 服务器（没有 Tauri）：只显示版本（`/api/system` 的 `app.version`，来自 `app-version.json`），服务器提示 `pi-assistant upgrade`。
+- 更新说明：`scripts/release-notes.sh` 生成 Release 正文（也就是 latest.json 的 notes）：优先 `docs/release-notes/<tag>.md`，没有就用上一个 tag 以来的提交标题。
+
+**操作记录**：设置 › 操作这台电脑 里的「本机操作记录」、助理「电脑」页的「操作记录（可逐步回放）」、托盘「操作记录…」都已去掉（用户看不懂原始工具名）。记录照常写，给助理复盘：`computer_action_history`（助理电脑，`all` 可看共用电脑上其他助理的）/ `hostpc_action_history`（本机）。上限：2000 条且 30 天内；截图 50 张、7 天内、合计 ≤ 100 MB；孤儿截图清掉。
+
+**磁盘占用兜底**（`housekeeping.ts`，启动 30 秒后和每 6 小时）：数据目录里的 `*.log`、`~/Library/Logs/Pi Assistant`、`~/.pia-vm`（Lima 日志）超过 20 MB 时尾部 5 MB 存 `.old`、原文件截断；`*.part` 7 天没动删；后台任务会话 `agents/*/tasks/*.jsonl` 60 天没动删；助理电脑容器日志 `--log-opt max-size=10m max-file=2`（新建容器生效）。不动：工作区、用户文件、对话会话（对话 JSONL 里含工具输出 / 截图，可能变大，后续可考虑压缩或给助理“清理旧对话”）、下载好的组件缓存（在「下载与组件」里由用户管理）。
+
+**助理电脑「启动超时」**：旧逻辑等容器日志里出现 “pia-desktop ready”，用的是 `logs --since <Mac 当前时间>`；虚拟机（Lima vz）里的时钟可能和 Mac 差几秒到几分钟（睡眠唤醒后尤其明显），新日志的时间戳早于 since 就永远等不到，30–60 秒后报超时；而且是固定次数循环，第一次开机慢也会误判。现在改为直接探测桌面（VNC / noVNC / cua-driver / 屏幕非空白），按进度计时：每有新进展再给 90 秒，最多 10 分钟；容器中途退出立刻报错。错误第一行是中文摘要，后面附卡住的步骤和容器日志末尾（界面用 ErrorBox 显示「详情 / 复制」）。
+
+**窄处文字**：通用规则——空间不够时文字收起只留图标（悬停 title 看文字），不允许挤成竖排。`Badge` 统一 `whitespace-nowrap shrink-0`（Button 早就是）；助理「电脑」标题行用容器查询：< 200px 状态变圆点、< 260px 隐藏「桌面」字样、< 340px「共用电脑（N 个助理）」只剩图标 + 数字。e2e 在 240/320/420px 下检查标题行不溢出、不竖排，手机页全局检查没有被挤成竖排的文字。
+
+**手机横向晃动**：Markdown 里的表格包在 `.pa-scroll-x`（自己横向滚动），代码块 `pre` 同样；图片 `max-width:100%`，长链接 `overflow-wrap:anywhere`；聊天区 `overflow-x:hidden`，`html/body` 禁止横向溢出，触屏 `touch-action: pan-y pinch-zoom`。e2e 在 390px 下发一条带宽表格 + 长代码 + 长链接的消息，检查整页 scrollWidth = 屏幕宽度、表格容器自己能横滑。

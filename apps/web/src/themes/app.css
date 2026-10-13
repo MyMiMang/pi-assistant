@@ -147,3 +147,8 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 @media (max-width: 640px) {
   .pa-pop { position: fixed !important; left: 8px !important; right: 8px !important; bottom: 6rem !important; top: auto !important; width: auto; max-width: none; }
 }
+
+/* 聊天区只竖向滚动：消息里的宽内容不能把它撑宽 */
+.pa-scroll { overflow-x: hidden; overflow-y: auto; overscroll-behavior-x: none; }
+.pa-thread-body, .pa-thread-body > *, .pa-msg { min-width: 0; max-width: 100%; }
+.pa-bubble { min-width: 0; }

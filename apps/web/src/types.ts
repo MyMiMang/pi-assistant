@@ -32,6 +32,7 @@ export interface SystemInfo {
 	deviceId: string | null; onboarded: boolean; modelSetupDone?: boolean; defaultModel: { provider: string; providerName?: string; id: string; name?: string } | null; credentialBackend: string;
 	sandbox: { mode: string; preference: string; dockerAvailable: boolean }; entryDomain: string | null; tunnel: TunnelStatus;
 	workspaceRoot: string; push: { publicKey: string }; seq: number;
+	app?: { version: string; builtAt?: string; launcher: string };
 }
 export interface Device { id: string; name: string; platform: string; status: string; created_at: number; last_seen_at: number | null; last_ip: string | null; owner?: number }
 export interface CustomModel { id: string; name?: string; reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number; limitsSource?: "detected" | "known" | "default" | "user" }

@@ -197,3 +197,18 @@ html.pa-floatbar-root, html.pa-floatbar-root body, html.pa-floatbar-root #root {
 .pa-floatbar.paused .pa-floatbar-btn:not(.ghost) { background: var(--acc, #2563eb); }
 .pa-floatbar-btn.ghost { background: transparent; color: inherit; padding: 0 8px; }
 @keyframes pa-pulse { 50% { opacity: .35; } }
+
+/* 手机端防横向晃动（DESIGN §16.x）：页面只允许竖向拖动；宽内容只在自己的块里横向滚动 */
+html, body { overflow-x: hidden; max-width: 100%; overscroll-behavior-x: none; }
+@media (pointer: coarse) { body { touch-action: pan-y pinch-zoom; } }
+.pa-scroll-x, .pa-pre-x { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
+.pa-scroll-x { margin: .5rem 0; }
+.pa-scroll-x > table { margin: 0; width: max-content; min-width: 100%; }
+.pa-md pre code { white-space: pre; overflow-wrap: normal; word-break: normal; }
+.pa-md img, .pa-md video { max-width: 100%; height: auto; }
+.pa-md a { overflow-wrap: anywhere; }
+
+/* 聊天区只竖向滚动：消息里的宽内容不能把它撑宽 */
+.pa-scroll { overflow-x: hidden; overflow-y: auto; overscroll-behavior-x: none; }
+.pa-thread-body, .pa-thread-body > *, .pa-msg { min-width: 0; max-width: 100%; }
+.pa-bubble { min-width: 0; }

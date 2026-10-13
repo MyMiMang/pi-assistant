@@ -180,6 +180,10 @@ function respond(messages: Msg[], systemPrompt = "") {
 		return fauxAssistantMessage([fauxToolCall("skill_save", { name: "daily-brief", description: "生成每日简报：汇总待办、日程和要闻。用户要“简报/今日概览”时使用。", body: "# 每日简报\n\n1. 列出今天的待办（最多 5 条）。\n2. 汇总日程。\n3. 用三句话总结。" })]);
 	if (/每天|定时/.test(u))
 		return fauxAssistantMessage([fauxText("好，我来设一个定时任务。"), fauxToolCall("routine_create", { name: "每日简报", prompt: "整理今天的待办和日程，给我一份三条以内的简短简报。", trigger: "cron", cron: "0 8 * * *" })]);
+	if (/很宽的表格/.test(u))
+		return fauxAssistantMessage(
+			`给你：\n\n| ${Array.from({ length: 12 }, (_, i) => `第${i + 1}列标题`).join(" | ")} |\n|${" --- |".repeat(12)}\n| ${Array.from({ length: 12 }, (_, i) => `数据${i + 1}-内容比较长`).join(" | ")} |\n\n\`\`\`\n${"const veryLongLine = ".padEnd(300, "x")}\n\`\`\`\n\n长链接：https://example.com/${"a".repeat(200)}`,
+		);
 	if (/服务刚刚重启/.test(u)) return fauxAssistantMessage("我检查了一下进度：服务重启时上一轮命令被中断了。工作区里的文件都还在，需要的话再说一声我就重新执行。");
 	if (/后台/.test(u) && !/统计工作区/.test(u))
 		return fauxAssistantMessage([fauxToolCall("spawn_task", { title: "统计工作区文件", instructions: "统计工作区文件：列出工作区所有文件并统计数量，给出简短总结。" })]);

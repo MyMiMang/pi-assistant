@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { approvalExtension } from "@pi-assistant/ext-approval";
 import { computerExtension, computerLauncherExtension, isHostTool, trustedComputerTool, type ComputerHost } from "@pi-assistant/ext-computer";
-import { recordAction } from "./action-log.ts";
+import { actionHistoryText, recordAction } from "./action-log.ts";
 import { guardContext } from "./guard.ts";
 import { describeHostAction, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
 import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
@@ -381,6 +381,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 		approvals: () => sandboxComputerSettings().approvals,
 		guard: guardContext("sandbox"),
 		log: (e) => (touchAgent(agentId), recordAction(agentId, taskId, e, () => screenshotDesktop(agentId))),
+		history: (o) => actionHistoryText(agentId, { target: "sandbox", ...o }),
 		// 共用电脑：主屏幕正被别的助理操作时自动给这个助理开自己的屏幕（不抢鼠标键盘）
 		before: () => beforeComputerAction(agentId, agentBusy),
 		screens: screenTools(agentId),
@@ -406,6 +407,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				approvals: () => hostApprovals(agentId),
 				guard: guardContext("host"),
 				log: (e) => recordAction(agentId, taskId, e),
+				history: (o) => actionHistoryText(agentId, { target: "host", limit: o.limit }),
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
 					return { approved: !!res.approved, note: res.note, scope: res.scope };
