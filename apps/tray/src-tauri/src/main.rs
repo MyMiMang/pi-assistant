@@ -5,6 +5,7 @@
 //!   关窗口只是隐藏，托盘常驻；开机自启（--background 不弹窗口）。外部链接用默认浏览器打开
 //! - 菜单：打开、配对手机、暂停/继续操作电脑、悬浮条开关、开机自启、检查更新（进度 / 失败原因同步显示）、退出
 //! - 操作这台电脑时弹出置顶悬浮条（/hostbar），一键暂停
+//! - 桌宠（/pet）：透明置顶小窗，跟着助理状态动，只有宠物和气泡能点（见 pet.rs）
 //! - 自动更新：Tauri updater 读 GitHub Releases 的 latest.json（签名校验），新版本含新版 Pi
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -20,6 +21,7 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+mod pet;
 mod updater;
 
 const PORT: u16 = 8787;
@@ -105,7 +107,7 @@ fn start_server(app: &AppHandle) {
 }
 
 /// 打开原生主窗口（没有就建；已有就导航到 path 并前置）。建窗口失败时退回默认浏览器
-fn open_ui(app: &AppHandle, path: &str) {
+pub fn open_ui(app: &AppHandle, path: &str) {
     let full = format!("{}{path}", base());
     let Ok(url) = full.parse::<tauri::Url>() else { return };
     #[cfg(target_os = "macos")]
@@ -283,7 +285,8 @@ fn main() {
             pause_item: Mutex::new(None),
             update_item: Mutex::new(None),
         })
-        .invoke_handler(tauri::generate_handler![updater::app_update_status, updater::app_update_check, updater::app_update_install, updater::app_update_set_auto])
+        .manage(pet::PetState::default())
+        .invoke_handler(tauri::generate_handler![updater::app_update_status, updater::app_update_check, updater::app_update_install, updater::app_update_set_auto, pet::pet_hitbox, pet::pet_drag, pet::pet_open_main])
         .setup(move |app| {
             let u = updater::Updates::new(app.handle());
             app.manage(u);
@@ -373,6 +376,7 @@ fn main() {
                     let _ = std::fs::write(cfg.join("first-run-done"), "1");
                 }
                 tauri::async_runtime::spawn(updater::auto_loop(h.clone()));
+                tauri::async_runtime::spawn(pet::run(h.clone(), base()));
                 bar_loop(h).await;
             });
             Ok(())

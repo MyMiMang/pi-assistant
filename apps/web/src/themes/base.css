@@ -256,3 +256,38 @@ html, body { overflow-x: hidden; max-width: 100%; overscroll-behavior-x: none; }
 .pa-thinking[open] > summary::after { transform: rotate(90deg); }
 .pa-thinking .pa-ic { width: 14px; height: 14px; }
 .pa-thinking-body { margin: 4px 0 0 6px; padding: 2px 0 2px 10px; border-left: 2px solid var(--line, rgba(127, 127, 127, 0.25)); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow-y: auto; line-height: 1.55; }
+
+/* ---------------------------------------------------------------- 桌宠窗口（/pet）：透明背景，只露出宠物和气泡 */
+html.pa-pet-root, html.pa-pet-root body, html.pa-pet-root #root { background: transparent !important; overflow: hidden; height: 100%; }
+.pa-pet { position: fixed; inset: 0; display: flex; align-items: flex-end; justify-content: center; user-select: none; -webkit-user-select: none; font-size: 13px; color: var(--fg, #111); }
+.pa-pet-stack { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-bottom: 4px; max-width: 100%; }
+.pa-pet-body { display: flex; align-items: flex-end; justify-content: center; cursor: grab; touch-action: none; }
+.pa-pet-body:active { cursor: grabbing; }
+.pa-pet-body canvas { display: block; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(0,0,0,.18)); }
+.pa-pet-bubble { position: relative; max-width: 260px; padding: 8px 12px; border-radius: 14px; background: var(--card, #fff); box-shadow: 0 6px 22px rgba(0,0,0,.16), 0 0 0 1px rgba(0,0,0,.06); line-height: 1.45; cursor: default; animation: pa-pet-pop .18s ease-out; }
+.pa-pet-bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 12px; height: 12px; margin-left: -6px; transform: rotate(45deg); background: inherit; box-shadow: 2px 2px 3px rgba(0,0,0,.05); }
+.pa-pet-bubble.wide { width: 260px; }
+.pa-pet-bubble.err { background: color-mix(in srgb, #ef4444 10%, var(--card, #fff)); }
+.pa-pet-who { font-size: 12px; font-weight: 600; color: var(--mut, #6b7280); display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.pa-pet-who.inline { display: inline; margin-right: 6px; }
+.pa-pet-text { word-break: break-word; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.pa-pet-queue { display: block; font-size: 11px; color: var(--mut2, #9ca3af); margin-top: 2px; font-weight: 400; }
+.pa-pet-who .pa-pet-queue { display: inline; margin: 0 0 0 auto; }
+.pa-pet-risk { font-size: 11px; padding: 0 6px; border-radius: 999px; background: #fef3c7; color: #92400e; font-weight: 600; }
+.pa-pet-risk.high { background: #fee2e2; color: #b91c1c; }
+.pa-pet-actions { display: flex; gap: 6px; margin-top: 8px; }
+.pa-pet-actions.wrap { flex-wrap: wrap; }
+.pa-pet-btn { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; border-radius: 999px; font-weight: 600; font-size: 12.5px; background: var(--hover, #f3f4f6); color: var(--fg, #111); }
+.pa-pet-btn.ok { background: var(--accent, #6366f1); color: #fff; }
+.pa-pet-btn.ghost { background: transparent; color: var(--mut, #6b7280); margin-left: auto; }
+.pa-pet-btn:disabled { opacity: .5; }
+.pa-pet-input { display: flex; gap: 6px; margin-top: 4px; }
+.pa-pet-input input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--line, #e5e7eb); background: var(--bg, #fff); outline: none; font-size: 13px; }
+.pa-pet-input input:focus { border-color: var(--accent, #6366f1); }
+.pa-pet-send { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; background: var(--accent, #6366f1); color: #fff; }
+.pa-pet-send:disabled { opacity: .45; }
+.pa-pet-menu { display: flex; flex-direction: column; padding: 4px; border-radius: 12px; background: var(--card, #fff); box-shadow: 0 6px 22px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06); min-width: 170px; }
+.pa-pet-menu button { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; text-align: left; }
+.pa-pet-menu button:hover { background: var(--hover, #f3f4f6); }
+.pa-pet-preview-tip { position: fixed; top: 6px; left: 6px; font-size: 11px; color: #9ca3af; }
+@keyframes pa-pet-pop { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }

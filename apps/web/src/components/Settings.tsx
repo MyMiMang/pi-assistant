@@ -1,4 +1,4 @@
-import { Brain, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { Brain, Cat, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { modelLabel } from "./ModelOptions";
 import { useEffect, useState } from "react";
 import { api } from "../api";
@@ -20,6 +20,7 @@ import { Badge, Button, cx, fmtTime, Help, Input, Modal } from "./ui";
 import { Downloads } from "./Downloads";
 import { AppUpdate } from "./AppUpdate";
 import { VisionModelPicker } from "./VisionModel";
+import { PetSettings } from "./PetSettings";
 
 const TABS = [
 	["models", "模型", Monitor],
@@ -33,6 +34,7 @@ const TABS = [
 	["remote", "远程访问与设备", Wifi],
 	["entry", "固定地址 / 入口", Globe],
 	["appearance", "外观", Palette],
+	["pet", "桌宠", Cat],
 	["downloads", "下载与组件", Download],
 	["about", "关于与更新", Info],
 ] as const;
@@ -92,6 +94,7 @@ export default function Settings() {
 					)}
 					{settings === "entry" && <EntryTab />}
 					{settings === "appearance" && <AppearanceTab />}
+					{settings === "pet" && <PetSettings />}
 					{settings === "downloads" && (
 						<>
 							<H desc="App 用到的组件、模型和安装包。大多数在用到时自动下载，校验后保存在本机数据目录。">下载与组件</H>

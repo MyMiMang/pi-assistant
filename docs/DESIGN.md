@@ -1227,3 +1227,54 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - 单测 `test/image-gen.test.ts`：用 `e2e/mock-images.mjs`（一个端口模拟 OpenAI 兼容、方舟、百炼异步任务、Gemini / Imagen）测各家请求格式、尺寸换算、改图、多张、url 下载、参数被拒重试、各类错误分类、模型识别、加密保存、助理选择 / 关闭、生成后存工作区并发消息。
 - E2E「图片生成」：设置里添加服务 → 自动获取识别图片模型 → 试生成 → 默认模型；单聊“画一张…”→ 图片显示、可下载；安全策略拦截的中文提示；助理设置里关闭 / 恢复；群里 @ 成员画图（截图 `90-image-provider.png`、`91-chat-generated-image.png`、`92-room-generated-image.png`）。
 - 真实服务尚未用真 Key 验证（只用模拟服务按各家公开文档的格式测过）。
+
+## 19. 桌宠（2026-10-13）
+
+桌面上一只 Q 版小宠物，跟着助理的状态动，可以直接在它身上批准操作、和助理说话。对标 Codex 宠物、CoPet、AgentPet、UniPet、OpenPets（调研见 HANDOFF / 对话记录），区别是我们的状态直接来自服务端，不需要外部钩子。
+
+### 19.1 组成
+
+| 部分 | 位置 | 说明 |
+|---|---|---|
+| 状态与宠物包 | `packages/server/src/pet/index.ts` | `petStatus()`：跟随谁、什么状态、气泡文字、待处理请求；宠物列表 / 导入 / 删除；尺寸检查 |
+| 接口 | `pet/routes.ts`（全部 `localOnly`） | `GET /api/pet/state`、`GET/PUT /api/pet/settings`、`GET/POST /api/pets`、`DELETE /api/pets/:id`、`GET /api/pets/:id/sheet`、`GET/PUT /api/agents/:id/pet`、`GET /api/pets/hatch`、`POST /api/pets/hatch/pose` |
+| 桌宠页面 | `apps/web/src/pet/PetWindow.tsx`（路由 `/pet`） | 每秒取一次状态；画布播放精灵图；气泡、批准 / 拒绝、快速对话、右键菜单 |
+| 渲染 | `pet/PetSprite.tsx`、`pet/atlas.ts` | Codex 精灵图：8 列 x 9 行，每格 192x208，行与帧时长沿用 openai/skills hatch-pet；v2（11 行）能导入，只用前 9 行 |
+| 设置 | `components/PetSettings.tsx`（设置 › 桌宠） | 开关、跟随、大小、安静模式、选默认宠物、状态预览、导入、孵化、每个助理一只 |
+| 托盘窗口 | `apps/tray/src-tauri/src/pet.rs` | 300x340 透明无边框置顶、不进任务栏、所有桌面可见；点击穿透；拖动；记住位置 |
+| 内置宠物 | `apps/web/public/pets/<id>/`，生成脚本 `scripts/pets/gen-presets.py` | 喵喵（猫）、团子、小铁（机器人）、啾啾（小鸡）；程序画的原创矢量图，许可干净 |
+
+### 19.2 状态
+
+跟随：设置为「自动」时，优先级是等你处理的请求 > 正在忙（最近有动静）> 最近聊过；也可以固定一个助理（这时只显示这个助理的请求）。
+
+| 助理状态 | 判断 | 动画行 | 气泡 |
+|---|---|---|---|
+| 等你批准 / 回答 | `requests.status = pending` | waiting | 摘要 + 批准 / 拒绝（提问显示选项） |
+| 操作电脑 | 正在运行的工具名像 hostpc / computer / click… | running | 正在操作你的电脑 / 用助理电脑 |
+| 干活 | 其他正在运行的工具 | running | 正在运行命令 / 处理文件 / 查资料… |
+| 思考 | `agents.status = running`，没有运行中的工具 | review | 正在想… / 正在回复… |
+| 做完 | 从忙变闲后 6 秒内（总线 `agent.status`） | jumping | 最新回复的前 60 个字（去掉 Markdown 符号） |
+| 出错 | 最新的回复 60 秒内出错 | failed | 出错了，点我看看 |
+| 空闲 | 其他情况 | idle（偶尔挥手） | — |
+
+安静模式：不显示做完 / 出错的气泡，审批照常显示。拖动时播放向左走 / 向右走。
+
+### 19.3 交互与点击穿透
+
+- 单击：快速对话（`POST /api/agents/:id/messages`，进当前对话）；双击：在主窗口打开这个助理；按住拖动：`pet_drag` → 系统原生拖窗，位置存到 `app_config_dir/pet-position.json`，下次放回原处（屏幕被拔掉就回到主屏右下角）。右键：打开 / 换宠物 / 隐藏（Esc 或 8 秒自动收起）。
+- 点击穿透：Tauri 只能整个窗口忽略鼠标（`set_ignore_cursor_events`），不会按透明像素穿透。做法是页面把所有 `[data-hit]` 元素的矩形报给托盘（`pet_hitbox`）；托盘每 40ms 用 `app.cursor_position()` 看鼠标在不在这些矩形里，不在就忽略鼠标，让点击落到下面的程序。思路来自 [tauri-clickthrough-demo](https://github.com/Xinyu-Li-123/tauri-clickthrough-demo)，改用 Tauri 自带的全局鼠标位置，不额外引入 rdev。
+- 托盘每 2 秒读一次 `/api/pet/settings` 决定显示或隐藏；能调的命令只有 `pet_hitbox`、`pet_drag`、`pet_open_main`（`capabilities/pet.json`，只放行本机 8787 的页面）。
+
+### 19.4 宠物包与孵化
+
+- 导入：zip（里面有 pet.json + spritesheet）、或者同时选 pet.json 和图、或者只选图。zip 在浏览器里解（`pet/zip.ts`，用 DecompressionStream，不加依赖）。服务端检查 PNG / WebP 头里的尺寸（1536x1872 或 1536x2288），最大 20MB；存在 `数据目录/pets/<id>/`，id 重复时自动加后缀，不能顶替内置宠物。删除宠物后，用它的助理换回默认宠物。
+- 孵化（`pet/hatch.ts`）：用默认图片模型画 6 个姿势：定妆、开心、难过、干活、思考、举手。从第 2 张开始，如果模型支持改图，就把定妆图当参考图传进去，保持是同一个角色。提示词按 hatch-pet 的风格要求：Q 版、粗描边、平涂、纯白背景、不要脱离身体的特效。在浏览器里处理：从四条边往里漫水去背景、给边缘做半透明、裁剪、脚底对齐。然后程序加挤压、弹跳、倾斜、镜像，做成 9 行动画，拼图后再校验一遍：尺寸对、用到的格子有内容、没用的格子全透明。
+  - 和 hatch-pet 不同的地方：hatch-pet 让模型一次画出一整行动作，但图片模型画不稳逐帧一致的条图，所以这里每个姿势只画 1 张，共 6 次调用。
+  - 失败处理：定妆图失败或去不掉背景，直接报错；其他姿势失败就用定妆图代替，界面上标 ⚠。Key 无效、额度不足、被安全策略拦截时不重试。
+- 没有图片模型时，孵化区只显示一个按钮，跳到 设置 › 模型 › 图片生成。
+
+### 19.5 没做 / 以后
+
+- v2 的「看向」两行（跟着鼠标看）、多只宠物同时出现在桌面、宠物自己在屏幕上走来走去、语音、Live2D。
+- 桌宠只在托盘版里出现；源码运行和服务器版可以打开 `http://127.0.0.1:8787/pet` 预览。

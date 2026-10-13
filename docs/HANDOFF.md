@@ -25,6 +25,7 @@ Pi Assistant：基于 [Pi](https://github.com/earendil-works/pi) 的本地私人
 - **macOS 助理电脑虚拟机（Lima vz）**：真实开机只能在真 Mac 上测（托管 macOS CI 没有嵌套虚拟化；这台开发机的 KVM 也开不了 qemu 虚拟机）。已验证：固定的 4 个下载文件摘要（真实下载核对）、生成的配置通过真实 `limactl validate`（Linux 版 limactl）、假 limactl + 真 Docker 的完整生命周期测试。真 Mac 验证步骤见下面「macOS 助理电脑真机测试」。
 - Cloudflare 命名隧道公网连通、Rendezvous Worker 部署、Web Push 真机推送、微信真实扫码。
 - 原生主窗口 / 透明悬浮条：Linux 上 `cargo check` 通过，**macOS / Windows 真机没测**（悬浮条透明在 macOS 依赖 `macOSPrivateApi`，Windows WebView2 透明需要实际看效果）。
+- **桌宠（DESIGN §19）**：Linux 上能 `cargo check`，e2e（`node e2e/pet.mjs`，17 项）用浏览器模拟桌宠窗口。真机还要验证：① Mac / Windows 上窗口真的透明，没有白底或黑底，也没有阴影框；② 鼠标在宠物外面时能点到下面的程序，在宠物和气泡上时能点；③ 按住拖动顺滑，重启后回到原来的位置；④ Mac 全屏应用和切换桌面时宠物还在；⑤ 双击打开主窗口，右键菜单能用；⑥ 用真实图片模型（gpt-image-1 / Seedream 4 / Gemini）孵化一只，看去背景的效果和角色是否一致（模拟测试用的是内置宠物的图）。
 - 统一下载状态里的 Hindsight 运行环境 / 向量模型进度是“量目录大小 ÷ 估计值”，真实下载时百分比可能不准（字节类下载 cloudflared / uv / Cua / 微信 / 重排序模型是准确的）。
 
 ## 3. 构建 / 测试 / 发版
@@ -108,6 +109,7 @@ npm run check:pi         # Pi 升级兼容检查
 - 操作这台电脑：`host-control.ts`（服务端）、`HostControl.tsx`（设置 + 输入框旁档位按钮）、`HostFloatBar.tsx`（悬浮条页面）、`apps/tray/src-tauri/src/main.rs`（悬浮条窗口）。
 - 通用 UI 组件：`apps/web/src/components/ui.tsx`（Button / Modal / Badge / Input / **Help**「?」气泡 / **useConfirm** 确认框）；主题 `apps/web/src/themes/*.css`（勾选框、开关 `.pa-switch`、帮助气泡、下载条样式在 `app.css` 末尾）。
 - 助理群聊：`packages/server/src/rooms/logic.ts`（@ 解析、发言规则、上限、增量注入，纯逻辑）、`rooms/index.ts`（建群/成员/调度/停止/继续/重启恢复、群规则与 `room_assign` / `room_propose_member` / `propose_room` 工具）、`rooms/copy.ts`（复制到我的助理）；界面 `RoomChat.tsx`（群聊页、@ 补全、新建群、群设置、删群）、`RoomCards.tsx`（提议卡片、群专属助理操作）。Mock 模型里 `roomReply` 是 e2e 用的脚本（“派给X”“循环”“慢慢”“加个成员”“组个团队”）。设计见 DESIGN §17。
+- 桌宠：`packages/server/src/pet/`（状态、宠物包、孵化接口）、`apps/web/src/pet/`（`PetWindow.tsx` 是 /pet 页面，`hatch.ts` 负责去背景和拼图，`zip.ts`）、`components/PetSettings.tsx`、`apps/tray/src-tauri/src/pet.rs`（透明窗口、点击穿透、拖动、记住位置）。内置宠物改动后跑 `python3 scripts/pets/gen-presets.py --preview /tmp/pet-previews` 重新生成，自带格子校验。设计见 DESIGN §19。
 - 输入框工具栏：`Chat.tsx`（`ContextRing` 上下文圆环、`ModelPicker`、`ThinkingPicker`、`HostTierPill`）。
 
 ## 6. 未解决 / 已知问题
@@ -135,6 +137,8 @@ npm run check:pi         # Pi 升级兼容检查
 - cua-driver 已经出了 0.35.x，这次没升级，还固定在 0.34.1。以后升级时要重新核对 BROWSER.md、WORKFLOW.md 和工具的参数格式。
 
 ## 7. 下一步（按用户确认的顺序）
+
+- 2026-10-13：桌宠合入 main（DESIGN §19），还没打 tag。真机要验证的项目见上面「已实现但没在真机上验证过 › 桌宠」。
 
 1. 助理电脑自带虚拟机：通用部分 ✅ → Mac（Lima）✅ 待真机验证 → Windows（WSL2）✅ 待真机验证 → Linux 服务器版 ✅（§15.2、§15.3）。
 2. 每完成一步发一个 beta 版本，告诉用户能测什么。

@@ -5,6 +5,9 @@ fn main() {
         "app_update_check",
         "app_update_install",
         "app_update_set_auto",
+        "pet_hitbox",
+        "pet_drag",
+        "pet_open_main",
     ])))
     .expect("tauri build");
 }

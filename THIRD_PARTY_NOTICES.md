@@ -99,6 +99,13 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 | [tini](https://github.com/krallin/tini) | MIT |
 | ImageMagick、socat、at-spi2-core、curl 等 | 各自许可证 |
 
+## 桌宠
+
+- 精灵图格式与动画行（8x9 格、每格 192x208、各行帧数与时长）、孵化流程的做法（先定角色再出各个动作、去底后检查透明、按固定格子校验）、风格提示词要求：参考 [openai/skills `hatch-pet`](https://github.com/openai/skills/tree/main/skills/.curated/hatch-pet)，Apache-2.0。我们没有复制它的脚本，`apps/web/src/pet/hatch.ts`、`scripts/pets/gen-presets.py` 是按它的规格自己写的。
+- 点击穿透的思路（报告可点区域，按全局鼠标位置切换 `set_ignore_cursor_events`）：参考 [tauri-clickthrough-demo](https://github.com/Xinyu-Li-123/tauri-clickthrough-demo)，没有复制代码。
+- 产品形态参考了 [CoPet](https://github.com/ChanceYu/CoPet)、[AgentPet](https://github.com/ntd4996/agentpet)、[UniPet](https://github.com/ydyangdan/UniPet)、[OpenPets](https://github.com/sergiobaiao/openpets)（均为 MIT），没有使用它们的代码和美术素材。
+- 内置宠物喵喵、团子、小铁、啾啾是本项目用程序原创绘制的，和项目使用同样的许可。用户导入的第三方宠物包，许可由用户自己负责。社区里很多 Codex 宠物的美术素材是 CC BY-NC，不能商用。
+
 ## 其他
 
 - [Docker](https://www.docker.com/) / [Podman](https://podman.io/)：Linux 上助理电脑使用用户自己安装的容器运行时，不随产品分发。
