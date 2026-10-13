@@ -16,7 +16,7 @@ if [ ! -x "$T/bin/nerdctl" ]; then
   echo "$SHA  /tmp/nerdctl-full.tgz" | sha256sum -c -
   mkdir -p "$T" && tar xzf /tmp/nerdctl-full.tgz -C "$T"
 fi
-export PATH="$T/bin:$PATH" CNI_PATH="$T/libexec/cni"
+export PATH="$T/bin:$PATH:/usr/sbin:/sbin" CNI_PATH="$T/libexec/cni"
 S=/run/pia-ctd; mkdir -p "$S"
 # 独立的 containerd（不碰运行器自带 Docker 的那个）
 if ! [ -S "$S/containerd.sock" ]; then
