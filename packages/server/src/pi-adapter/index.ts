@@ -81,6 +81,7 @@ export interface ModelInfo {
 	thinking: string[];
 	input: string[];
 	contextWindow?: number;
+	maxTokens?: number;
 }
 
 export type LoginPrompt =
@@ -137,6 +138,7 @@ export class PiModels {
 			thinking: getSupportedThinkingLevels(m as never),
 			input: [...(m.input ?? [])],
 			contextWindow: m.contextWindow,
+			maxTokens: m.maxTokens,
 		}));
 	}
 

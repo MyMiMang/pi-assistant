@@ -6,7 +6,7 @@ import { CheckCircle2, Download, Loader2, Plus, Trash2, X, XCircle } from "lucid
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { CustomModel, CustomProviderMeta } from "../types";
-import { Badge, Button, cx, Input } from "./ui";
+import { Badge, Button, cx, Input, Help } from "./ui";
 
 const PLACEHOLDER: Record<string, string> = {
 	"openai-completions": "https://api.example.com/v1",
@@ -24,6 +24,8 @@ export function useCustomProviders() {
 	return { ...data, reload };
 }
 
+const SOURCE: Record<string, string> = { detected: "自动识别", known: "已知模型", default: "自动（默认）", user: "手动" };
+
 export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted }: { initial?: CustomProviderMeta; apis: { id: string; label: string }[]; onSaved: (m: CustomProviderMeta) => void; onCancel?: () => void; onDeleted?: () => void }) {
 	const [name, setName] = useState(initial?.name ?? "");
 	const [apiType, setApiType] = useState(initial?.api ?? apis[0]?.id ?? "openai-completions");
@@ -33,7 +35,7 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 	const [headers, setHeaders] = useState<{ name: string; value?: string; saved?: boolean }[]>(initial?.headerNames.map((n) => ({ name: n, saved: true })) ?? []);
 	const [models, setModels] = useState<CustomModel[]>(initial?.models ?? []);
 	const [newModel, setNewModel] = useState("");
-	const [fetched, setFetched] = useState<string[] | null>(null);
+	const [fetched, setFetched] = useState<CustomModel[] | null>(null);
 	const [busy, setBusy] = useState<"" | "fetch" | "save" | "test">("");
 	const [err, setErr] = useState("");
 	const [saved, setSaved] = useState<CustomProviderMeta | null>(initial ?? null);
@@ -44,9 +46,13 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 	}, [apis]);
 
 	const hdrPayload = () => headers.filter((h) => h.name.trim()).map((h) => ({ name: h.name.trim(), value: h.saved && !h.value ? undefined : (h.value ?? "") }));
-	const addModel = (id: string) => {
-		const v = id.trim();
-		if (v && !models.some((m) => m.id === v)) setModels((l) => [...l, { id: v }]);
+	const addModel = (m: string | CustomModel) => {
+		const x = typeof m === "string" ? { id: m.trim() } : { ...m, id: m.id.trim() };
+		if (x.id && !models.some((y) => y.id === x.id)) setModels((l) => [...l, x]);
+	};
+	const setLimit = (id: string, k: "contextWindow" | "maxTokens", kTokens: string) => {
+		const v = Math.round(Number(kTokens) * 1000);
+		setModels((l) => l.map((m) => (m.id === id ? { ...m, [k]: v > 0 ? v : undefined, limitsSource: "user" } : m)));
 	};
 	const fetchModels = async () => {
 		setBusy("fetch");
@@ -68,6 +74,7 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 			const editId = saved?.id ?? initial?.id;
 			const m: CustomProviderMeta = await api(editId ? `/api/models/custom/${editId}` : "/api/models/custom", { method: editId ? "PUT" : "POST", json: body });
 			setSaved(m);
+			setModels(m.models);
 			setApiKey("");
 			setHeaders(m.headerNames.map((n) => ({ name: n, saved: true })));
 			if (!m.models.some((x) => x.id === testModel)) setTestModel(m.models[0]?.id ?? "");
@@ -139,16 +146,28 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 						{busy === "fetch" ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} 自动获取
 					</Button>
 				</div>
-				<div className="flex flex-wrap gap-1.5">
-					{models.map((m) => (
-						<span key={m.id} className="flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-xs text-accent">
-							{m.id}
-							<button onClick={() => setModels((l) => l.filter((x) => x.id !== m.id))} aria-label={`移除 ${m.id}`}>
-								<X size={12} />
-							</button>
-						</span>
-					))}
-				</div>
+				{models.length > 0 && (
+					<div className="divide-y divide-line rounded-lg border border-line" data-testid="custom-models">
+						<div className="flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-mut">
+							<span className="min-w-0 flex-1">模型</span>
+							<span className="w-20 text-right">上下文（K）</span>
+							<span className="w-20 text-right">最大输出（K）</span>
+							<span className="w-16" />
+							<Help>上下文长度决定输入框旁圆环的用量和自动整理上下文的时机。来源：自动识别（服务的模型列表接口给出）/ 已知模型（按模型名匹配）/ 默认（128K / 8K，保守值）。不对可以直接改。</Help>
+						</div>
+						{models.map((m) => (
+							<div key={m.id} className="flex items-center gap-2 px-2.5 py-1.5 text-xs" data-testid="custom-model-row" data-model={m.id}>
+								<span className="min-w-0 flex-1 truncate font-mono" title={m.id}>{m.id}</span>
+								<input className="pa-input h-7 w-20 px-1.5 text-right text-xs" inputMode="numeric" aria-label={`${m.id} 上下文（K）`} placeholder="自动" value={m.contextWindow ? String(Math.round(m.contextWindow / 100) / 10) : ""} onChange={(e) => setLimit(m.id, "contextWindow", e.target.value)} />
+								<input className="pa-input h-7 w-20 px-1.5 text-right text-xs" inputMode="numeric" aria-label={`${m.id} 最大输出（K）`} placeholder="自动" value={m.maxTokens ? String(Math.round(m.maxTokens / 100) / 10) : ""} onChange={(e) => setLimit(m.id, "maxTokens", e.target.value)} />
+								<span className="w-16 shrink-0 text-right text-[11px] text-mut" data-testid="limits-source">{SOURCE[m.limitsSource ?? ""] ?? "保存时自动"}</span>
+								<button className="shrink-0 text-mut hover:text-fg" onClick={() => setModels((l) => l.filter((x) => x.id !== m.id))} aria-label={`移除 ${m.id}`}>
+									<X size={12} />
+								</button>
+							</div>
+						))}
+					</div>
+				)}
 				<form className="flex gap-2" onSubmit={(e) => (e.preventDefault(), addModel(newModel), setNewModel(""))}>
 					<Input placeholder="手动输入模型 ID，回车添加" value={newModel} onChange={(e) => setNewModel(e.target.value)} />
 					<Button type="submit" variant="outline">
@@ -164,9 +183,9 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 							</button>
 						</div>
 						<div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
-							{fetched.map((id) => (
-								<button key={id} onClick={() => addModel(id)} className={cx("rounded-full border px-2.5 py-1 text-xs", models.some((m) => m.id === id) ? "border-accent text-accent" : "border-line")}>
-									{id}
+							{fetched.map((f) => (
+								<button key={f.id} onClick={() => addModel(f)} title={f.contextWindow ? `上下文 ${Math.round(f.contextWindow / 1000)}K · ${SOURCE[f.limitsSource ?? ""] ?? ""}` : undefined} className={cx("rounded-full border px-2.5 py-1 text-xs", models.some((m) => m.id === f.id) ? "border-accent text-accent" : "border-line")}>
+									{f.id}
 								</button>
 							))}
 						</div>

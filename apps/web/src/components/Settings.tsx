@@ -1,4 +1,5 @@
 import { Brain, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { modelLabel } from "./ModelOptions";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { getLang, setLang, t } from "../i18n";
@@ -122,7 +123,7 @@ function ModelsTab() {
 		<div className="space-y-6">
 			<section>
 				<H>默认模型</H>
-				<div className="-mt-2 mb-3 truncate text-sm text-mut">{system?.defaultModel ? `当前：${system.defaultModel.provider} / ${system.defaultModel.id}` : "还没有设置默认模型"}</div>
+				<div className="-mt-2 mb-3 truncate text-sm text-mut">{system?.defaultModel ? `当前：${modelLabel(system.defaultModel)}` : "还没有设置默认模型"}</div>
 				<DefaultModelPicker key={providers.filter((p) => p.configured).length + providers.length * 100} />
 			</section>
 			<section>

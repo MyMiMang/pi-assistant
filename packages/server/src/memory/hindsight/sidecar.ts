@@ -12,7 +12,7 @@
  */
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { fetchWithProgress, registerDownload, trackDownload, watchDir } from "../../downloads.ts";
 import { createServer } from "node:net";
 import { delimiter, dirname, join } from "node:path";
@@ -39,6 +39,7 @@ export const paths = () => {
 		python: join(root, "python"),
 		uvTools: join(root, "uv-tools"),
 		hf: join(root, "models", "hf"),
+		onnx: join(root, "models", "onnx"),
 		flashrank: join(root, "models", "flashrank"),
 		xdg: join(root, "xdg"),
 		log: join(root, "home", ".hindsight", "profiles", `${PROFILE}.log`),
@@ -114,6 +115,10 @@ export function sidecarEnv(o: { s: HindsightSettings; sec: HindsightSecrets; mir
 	if (emb.kind === "local") {
 		e.HINDSIGHT_API_EMBEDDINGS_PROVIDER = "onnx";
 		e.HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID = emb.model;
+		// 用我们自己下载好的平铺文件（真实文件，不是 HF 缓存里指向 blobs/ 的符号链接）：
+		// onnxruntime ≥1.20 会校验外部权重文件（bge-m3 的 model.onnx_data）必须和 model.onnx 在同一目录，HF 缓存的符号链接会被判为“越界”
+		e.HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH = onnxModelFile(emb.model);
+		e.HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH = emb.model;
 		if (emb.model === "BAAI/bge-m3") Object.assign(e, { HINDSIGHT_API_EMBEDDINGS_ONNX_POOLING: "cls", HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX: "", HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX: "", HINDSIGHT_API_EMBEDDINGS_ONNX_MAX_TOKENS: "1024" });
 	} else {
 		Object.assign(e, { HINDSIGHT_API_EMBEDDINGS_PROVIDER: "openai", HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL: emb.baseUrl, HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: emb.model, HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: o.sec.embeddingKey ?? "none" });
@@ -258,7 +263,7 @@ class Sidecar {
 				return;
 			}
 			const p = paths();
-			for (const d of [p.root, p.project, p.home, p.hf, p.flashrank, p.xdg]) mkdirSync(d, { recursive: true });
+			for (const d of [p.root, p.project, p.home, p.hf, p.onnx, p.flashrank, p.xdg]) mkdirSync(d, { recursive: true });
 			const mirror = await resolveMirror(s.mirror);
 			this.set("installing", "正在准备运行环境…", { mirror, log: p.log });
 			const uv = await ensureUv({ pypiIndex: MIRRORS[mirror].pypi, onProgress: (m) => this.set("installing", m) });
@@ -275,7 +280,11 @@ class Sidecar {
 			const launch = () => this.launcher({ port, env, project: p.project, onLog: (l) => this.status.state === "starting" && this.set("starting", l.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 160)) });
 			// 本地向量模型由 Hindsight 进程自己从 HuggingFace（或镜像）拉：量模型缓存目录的大小当进度
 			const emb = s.embedding.kind === "local" ? LOCAL_EMBEDDINGS.find((e) => e.id === (s.embedding as { model: string }).model) : undefined;
-			this.handle = emb && !embeddingInstalled(emb.id) ? await trackDownload(`embedding:${emb.id}`, (prog) => watchDir([join(p.hf, "hub", hfDir(emb.id))], prog, emb.bytes, launch)) : await launch();
+			if (emb && !onnxReady(emb.id)) {
+				this.set("starting", `正在准备向量模型 ${emb.id.split("/")[1]}…`);
+				await trackDownload(`embedding:${emb.id}`, (prog) => watchDir([onnxDir(emb.id)], prog, emb.bytes, () => ensureOnnxModel(emb.id, uv, env)));
+			}
+			this.handle = await launch();
 			// 握手：必须用我们的密钥才能访问，否则不是我们拉起的进程
 			if (!(await this.check(this.status.baseUrl!, sec.tenantKey, true))) throw new Error("Hindsight 握手失败（端口上的不是我们启动的进程）");
 			this.fails = 0;
@@ -425,8 +434,75 @@ export const sidecar = new Sidecar();
 
 /** HuggingFace 缓存里的目录名 */
 const hfDir = (id: string) => `models--${id.replace(/\//g, "--")}`;
-/** 向量模型是否已下载完（缓存里有 .onnx 权重文件） */
+/** 我们自己的平铺模型目录（真实文件） */
+export const onnxDir = (id: string) => join(paths().onnx, id.replace(/\//g, "--"));
+export const onnxModelFile = (id: string) => join(onnxDir(id), "onnx", "model.onnx");
+const onnxMarker = (id: string) => join(onnxDir(id), ".pia-complete");
+export const onnxReady = (id: string) => existsSync(onnxMarker(id)) && existsSync(onnxModelFile(id));
+
+/** 旧版本下载到 HF 缓存里的 onnx 文件（snapshots/<rev>/onnx/，符号链接指向 blobs/），没有返回 null */
+export function cachedOnnx(id: string): string | null {
+	const snap = join(paths().hf, "hub", hfDir(id), "snapshots");
+	try {
+		for (const rev of readdirSync(snap)) {
+			const d = join(snap, rev, "onnx");
+			if (!existsSync(join(d, "model.onnx"))) continue;
+			// 图很小（<20 MB）说明权重在外部文件里：外部文件也得在，否则当作没下完
+			if (statSync(join(d, "model.onnx")).size < 20e6 && !existsSync(join(d, "model.onnx_data"))) continue;
+			return d;
+		}
+	} catch {
+		/* 没有缓存 */
+	}
+	return null;
+}
+
+/**
+ * 准备好平铺的 onnx 模型：
+ *  1) 已经有 → 直接用；
+ *  2) 旧版本留在 HF 缓存里 → 复制成真实文件（跟随符号链接），然后删掉缓存里的大文件（迁移，不重新下载）；
+ *  3) 都没有 → 用 Hindsight 环境里的 huggingface_hub 以 local_dir 方式下载（真实文件，不建符号链接）。
+ * 外部权重文件 model.onnx_data 存在就一起处理；最后写完成标记。
+ */
+export async function ensureOnnxModel(id: string, uv: string | null, env: Record<string, string | undefined>) {
+	if (onnxReady(id)) return onnxModelFile(id);
+	const dir = join(onnxDir(id), "onnx");
+	mkdirSync(dir, { recursive: true });
+	const cached = cachedOnnx(id);
+	if (cached) {
+		const { realpathSync } = await import("node:fs");
+		const files = ["model.onnx", "model.onnx_data"].filter((f) => existsSync(join(cached, f)));
+		for (const f of files) copyFileSync(join(cached, f), join(dir, f));
+		writeFileSync(onnxMarker(id), JSON.stringify({ from: "hf-cache", at: Date.now() }));
+		// 释放缓存里那份（bge-m3 约 2.2 GB）：删 blob 实体和指向它的链接
+		for (const f of files) {
+			try {
+				rmSync(realpathSync(join(cached, f)), { force: true });
+			} catch {
+				/* 已经没了 */
+			}
+			rmSync(join(cached, f), { force: true });
+		}
+		return onnxModelFile(id);
+	}
+	if (!uv) throw new Error("运行环境还没装好");
+	const py = [
+		"import sys",
+		"from huggingface_hub import snapshot_download",
+		"snapshot_download(repo_id=sys.argv[1], allow_patterns=['onnx/model.onnx', 'onnx/model.onnx_data'], local_dir=sys.argv[2])",
+	].join("; ");
+	await run(uv, ["run", "--directory", paths().project, "python", "-c", py, id, onnxDir(id)], env, () => {}, 2 * 60 * 60_000).catch((e) =>
+		Promise.reject(new Error(`下载向量模型失败：${e instanceof Error ? e.message : e}`)),
+	);
+	if (!existsSync(onnxModelFile(id))) throw new Error("向量模型下载不完整（缺少 model.onnx）");
+	rmSync(join(onnxDir(id), ".cache"), { recursive: true, force: true });
+	writeFileSync(onnxMarker(id), JSON.stringify({ from: "download", at: Date.now() }));
+	return onnxModelFile(id);
+}
+
+/** 向量模型是否已下载（平铺目录就绪，或旧缓存里有、启动时会自动迁移） */
 export function embeddingInstalled(id: string) {
+	if (onnxReady(id)) return true;
 	const snap = join(paths().hf, "hub", hfDir(id), "snapshots");
 	if (!existsSync(snap)) return false;
 	const has = (d: string): boolean => readdirSync(d, { withFileTypes: true }).some((e) => (e.isDirectory() ? has(join(d, e.name)) : e.name.endsWith(".onnx") && !e.name.endsWith(".incomplete")));

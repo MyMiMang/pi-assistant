@@ -14,7 +14,7 @@ export function startMockOpenAI({ port = 0, key = "sk-relay-test", requiredHeade
 		if (requiredHeader && req.headers[requiredHeader[0]] !== requiredHeader[1]) return deny(403, `missing header ${requiredHeader[0]}`);
 		if (req.method === "GET" && req.url === "/v1/models") {
 			res.writeHead(200, { "content-type": "application/json" });
-			return res.end(JSON.stringify({ object: "list", data: [{ id: "relay-chat", object: "model" }, { id: "relay-pro", object: "model" }] }));
+			return res.end(JSON.stringify({ object: "list", data: [{ id: "relay-chat", object: "model", context_length: 65536, top_provider: { max_completion_tokens: 4096 } }, { id: "relay-pro", object: "model" }] }));
 		}
 		if (req.method === "POST" && req.url === "/v1/chat/completions") {
 			const j = JSON.parse(body || "{}");

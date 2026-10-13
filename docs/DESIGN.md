@@ -1091,3 +1091,12 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - **助理电脑镜像**（`desktop/image-download.ts`）：登记为下载条目 `desktop-image`（组“助理电脑”，未开启或用 `PIA_DESKTOP_IMAGE` 自定义镜像时隐藏）。不改 `image.ts` 的拉取流程，只观察 `installState()`：下载中按“已完成层 / 总层数 × 镜像压缩大小”估算字节，并显示“第 x/y 层”（docker 非终端输出不给字节数；macOS 虚拟机后端的 detail 会直接显示）。出错显示原因，点“重试”重新拉取（已下载的层保留）。用真实 Docker 验证过：正常下载、错误加速地址报错、改回后重试成功。
 - **MCP 服务包**（`mcp-install.ts`）：`npx [-y] pkg …`、`npx -p pkg cmd …`、`uvx pkg …`、`uvx --from spec cmd …`、`uv tool run …` 保存后预先装到 `<数据目录>/mcp-packages/`（npm `--prefix`；uv 用 App 自带的 uv `tool install`，UV_TOOL_DIR 指向我们的目录），条目 `mcp:<id>`（组“MCP 服务”）显示字节进度 / 出错重试。装好后会话和“测试连接”直接运行装好的可执行文件（离线可用、启动快）；没装好或装失败时照常用原命令，不影响可用性。其他命令（node 脚本、docker、http）不需要下载，不登记。
 - **文字精简**：设置各页、渠道、扩展、技能、记忆、定时任务、主动性、上手向导、助理电脑、操作这台电脑、信息面板等处的长说明改成一句话 + 「?」帮助图标（悬停 / 点击看详细）。安全相关的风险清单和接入步骤保留原样。
+
+### 16.3 弹出菜单、模型显示名、自定义模型上下文长度、bge-m3 加载修复
+
+- **弹出菜单**：根因是全局 `button { white-space: nowrap }` 没分层，压过了组件上的 `whitespace-normal`，菜单说明无法换行而溢出。现在放进 `@layer base`；所有输入框弹出菜单（权限 / 主动性 / 模型 / 思考 / 上下文）统一用 `.pa-pop`：按内容宽度、最多 `min(--pop-w, 100vw-16px)`，文字可换行；手机宽度下固定在输入框上方、左右各留 8px。侧栏右键菜单限制在屏幕内。e2e 在 4 套主题 × 1280 / 760 / 390 宽度下检查 48 个菜单：内容不超出菜单，菜单不超出屏幕。
+- **模型显示名**：所有显示模型的地方（默认模型、“当前”、输入框模型菜单、助理设置、记忆用模型、上下文圆环）都显示“服务名 / 模型名”，自定义服务用用户起的名字；下拉按服务分组（optgroup）。接口 `/api/models`、`/api/system.defaultModel`、高级记忆模型列表、上下文接口都带 `providerName`。
+- **自定义服务 id**：以前只和内置服务比重名，中文名都会变成 `custom-provider`，第二个会覆盖第一个。现在和已有自定义服务一起去重，非拉丁名字用名字哈希（`custom-xxxxxxxx`）。
+- **自定义模型上下文 / 输出长度**（`pi-adapter/model-limits.ts`）：自动识别（模型列表接口的 context_length / max_model_len / inputTokenLimit / max_input_tokens / top_provider…）→ 已知模型（先按 id 匹配 Pi 内置模型目录，再查常见模型表）→ 默认 128K / 8K。每个模型在表单里显示并可修改，来源标注“自动识别 / 已知模型 / 自动（默认）/ 手动”。写进 Pi 的 models.json，所以 Pi 的上下文用量（输入框圆环）和自动压缩用的是同一个值；旧数据启动时自动补齐。
+- **bge-m3 加载失败**：HF 缓存里的 model.onnx / model.onnx_data 是指向 blobs/ 下不同文件的符号链接，onnxruntime 1.31 校验外部权重路径时判为“越界”。现在向量模型下载到 `hindsight/models/onnx/<模型>/onnx/` 的真实文件（huggingface_hub `local_dir`），用 `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH` 指过去；旧缓存启动时复制成真实文件并删除缓存里的大文件（不重新下载）。在本机用 Hindsight 0.10.3 + onnxruntime 1.31 真实复现并验证：迁移和全新下载两种情况 Hindsight 都能启动，bge-m3 ↔ e5-small 切换正常。
+- **错误显示**：高级记忆的启动错误显示一句中文摘要（如“向量模型加载失败”），“详情”展开清理过框线字符的日志（容器内滚动、自动换行），可一键复制。

@@ -1,8 +1,9 @@
 import { RefreshCw } from "lucide-react";
+import { ModelOptions, modelLabel } from "./ModelOptions";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, Help, Input } from "./ui";
+import { Badge, Button, cx, Help, Input, ErrorBox } from "./ui";
 import { Downloads } from "./Downloads";
 
 type Emb = { kind: "local"; model: string } | { kind: "openai"; baseUrl: string; model: string; dimensions?: number };
@@ -107,10 +108,14 @@ export function HindsightSettings() {
 					<Downloads group="高级记忆" />
 				</section>
 			)}
-			<div className={cx("text-xs", d.status.state === "error" || d.status.state === "down" ? "text-red-500" : "text-mut")} data-testid="hindsight-detail">
-				{d.inUse ? d.status.detail : "还没有助理在用高级记忆：在上面选“高级记忆”或在助理的「记忆」页单独选择后自动安装并启动。"}
-				{d.status.pending > 0 && ` · 待同步 ${d.status.pending} 条`}
-				{d.status.lastError && d.status.pending > 0 && <div className="mt-1 opacity-80">最近错误：{d.status.lastError.slice(0, 200)}</div>}
+			<div className="min-w-0 space-y-1" data-testid="hindsight-detail">
+				{d.inUse && (d.status.state === "error" || d.status.state === "down") ? (
+					<ErrorBox text={d.status.detail ?? "出错了"} />
+				) : (
+					<div className="text-xs text-mut [overflow-wrap:anywhere]">{d.inUse ? d.status.detail : "还没有助理在用高级记忆：在上面选“高级记忆”或在助理的「记忆」页单独选择后自动安装并启动。"}</div>
+				)}
+				{d.status.pending > 0 && <div className="text-xs text-mut">待同步 {d.status.pending} 条</div>}
+				{d.status.lastError && d.status.pending > 0 && <ErrorBox text={`最近错误：${d.status.lastError}`} />}
 			</div>
 
 			<section className="space-y-2">
@@ -133,12 +138,8 @@ export function HindsightSettings() {
 				</div>
 				<div className="flex gap-2">
 					<select className="pa-input" aria-label="记忆用模型" value={key(s.llm)} onChange={(e) => setS({ ...s, llm: e.target.value ? d.models.find((m) => key(m) === e.target.value) ?? null : null })}>
-						<option value="">自动（当前：{key(d.autoModel) || "无可用模型"}）</option>
-						{d.models.map((m) => (
-							<option key={key(m)} value={key(m)}>
-								{m.provider} / {m.name || m.id}
-							</option>
-						))}
+						<option value="">自动（当前：{d.autoModel ? modelLabel(d.autoModel) : "无可用模型"}）</option>
+						<ModelOptions models={d.models} />
 					</select>
 					<Button variant="outline" disabled={testing} onClick={() => void test()}>
 						{testing ? "测试中…" : "测试"}

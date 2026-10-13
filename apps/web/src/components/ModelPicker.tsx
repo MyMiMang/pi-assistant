@@ -65,7 +65,7 @@ export function ModelPicker({ agentId }: { agentId: string }) {
 		const list = d.models.filter((m) => !k || `${m.name} ${m.id} ${m.provider}`.toLowerCase().includes(k));
 		const by = new Map<string, ModelEntry[]>();
 		for (const m of list) by.set(m.provider, [...(by.get(m.provider) ?? []), m]);
-		return [...by.entries()].map(([p, ms]) => ({ provider: p, name: d.providers.find((x) => x.id === p)?.name ?? p, models: ms }));
+		return [...by.entries()].map(([p, ms]) => ({ provider: p, name: (ms[0] as { providerName?: string }).providerName ?? d.providers.find((x) => x.id === p)?.name ?? p, models: ms }));
 	}, [d, q]);
 	if (!agent) return null;
 	return (
@@ -76,7 +76,7 @@ export function ModelPicker({ agentId }: { agentId: string }) {
 				<ChevronDown size={12} />
 			</button>
 			{open && (
-				<div className="absolute bottom-full right-0 z-30 mb-2 flex max-h-[60vh] w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:bottom-24 max-sm:w-auto" data-testid="model-menu">
+				<div className="pa-pop absolute bottom-full right-0 z-30 mb-2 flex max-h-[60vh] w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid="model-menu">
 					<label className="mb-1 flex items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5">
 						<Search size={14} className="text-mut" />
 						<input autoFocus className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索模型或服务…" value={q} onChange={(e) => setQ(e.target.value)} data-testid="model-search" />
@@ -127,7 +127,7 @@ export function ThinkingPicker({ agentId }: { agentId: string }) {
 				<ChevronDown size={12} />
 			</button>
 			{open && (
-				<div className="absolute bottom-full right-0 z-30 mb-2 w-56 rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid="thinking-menu">
+				<div className="pa-pop absolute bottom-full right-0 z-30 mb-2 rounded-xl border border-line bg-card p-1.5 shadow-lg [--pop-w:16rem]" data-testid="thinking-menu">
 					<div className="px-2.5 pb-1 pt-0.5 text-xs text-mut">思考强度（{entry.name} 支持的档位）</div>
 					{levels.map((l) => (
 						<button key={l} className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", l === cur && "bg-hover")} onClick={() => (setOpen(false), void patchAgent(agentId, { thinking: l }))} data-testid={`thinking-${l}`}>

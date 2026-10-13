@@ -29,10 +29,10 @@ export interface TunnelStatus {
 }
 export interface SystemInfo {
 	serverId: string; publicKey: string; pi: { version: string; testedWith: string; compatible: boolean; message: string }; mock: boolean; local: boolean; owner?: boolean; server?: boolean;
-	deviceId: string | null; onboarded: boolean; modelSetupDone?: boolean; defaultModel: { provider: string; id: string } | null; credentialBackend: string;
+	deviceId: string | null; onboarded: boolean; modelSetupDone?: boolean; defaultModel: { provider: string; providerName?: string; id: string; name?: string } | null; credentialBackend: string;
 	sandbox: { mode: string; preference: string; dockerAvailable: boolean }; entryDomain: string | null; tunnel: TunnelStatus;
 	workspaceRoot: string; push: { publicKey: string }; seq: number;
 }
 export interface Device { id: string; name: string; platform: string; status: string; created_at: number; last_seen_at: number | null; last_ip: string | null; owner?: number }
-export interface CustomModel { id: string; name?: string; reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number }
+export interface CustomModel { id: string; name?: string; reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number; limitsSource?: "detected" | "known" | "default" | "user" }
 export interface CustomProviderMeta { id: string; name: string; api: string; baseUrl: string; headerNames: string[]; noKey: boolean; models: CustomModel[]; configured: boolean }

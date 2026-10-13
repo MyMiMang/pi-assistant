@@ -127,3 +127,4 @@ npm run check:pi         # Pi 升级兼容检查
 - 2026-10-13：共用助理电脑（DESIGN §15.4）合入 main，镜像 0.1.2（`desktop-image.json` 已固定 digest）。真实 Docker 测试：`node --import tsx --test packages/server/test/shared-computer.test.ts`（需要本地 `pi-assistant/desktop:dev`）。
 - 2026-10-13：助理电脑「开机后同一轮可用」和「首张截图空白」已修好（见 DESIGN §16.1）。调试时设 `PIA_DEBUG_COMPUTER=1` 可看到 computer_open 各阶段日志。真实 Docker 的 e2e：`E2E_DESKTOP=1 PIA_DESKTOP_IMAGE=pi-assistant/desktop:dev npm run e2e`（42 步全过）。
 - 2026-10-13：助理电脑镜像、MCP（npx/uvx）包已接入统一下载管理（DESIGN §16.2），全应用长说明改为「?」帮助。未做：Linux 服务器版（一次性设置码 + 主设备）——下一阶段。镜像进度在 docker 后端按层估算；若要真实字节可改用 Docker Engine API 的 progressDetail。
+- 2026-10-13：弹出菜单溢出、模型显示名 / 自定义服务 id 冲突、自定义模型上下文长度、bge-m3 加载失败（ONNX 外部权重 + HF 符号链接）、记忆错误显示已修（DESIGN §16.3）。未打 tag（等用户测完一起打包）。

@@ -13,7 +13,7 @@ export type Tier = "observe" | "bounded" | "trusted" | "full";
 export const TIER_INFO: Record<Tier, { label: string; desc: string; tone: string }> = {
 	observe: { label: "只看", desc: "截图、读取窗口内容，不能点击或输入", tone: "zinc" },
 	bounded: { label: "限定", desc: "只能操作勾选的应用，每个动作都问你（默认）", tone: "green" },
-	trusted: { label: "信任", desc: "所有应用；日常动作不问，发送 / 付款 / 删除 / 提交仍要问", tone: "amber" },
+	trusted: { label: "信任", desc: "日常操作不问，发送、付款、删除前会问", tone: "amber" },
 	full: { label: "完全权限", desc: "几乎不问，受保护的操作仍要问", tone: "red" },
 };
 const TIER_ORDER: Tier[] = ["observe", "bounded", "trusted", "full"];
@@ -359,7 +359,7 @@ function TierPicker({ agentId, d, load, onDone, compact }: { agentId: string; d:
 		if (ok) await apply(t, true);
 	};
 	return (
-		<div className={cx("space-y-2", compact && "w-72 max-w-[calc(100vw-32px)]")} data-testid="tier-picker">
+		<div className={cx("space-y-2", compact && "w-full")} data-testid="tier-picker">
 			<div className={cx(compact ? "flex flex-col" : "flex flex-wrap gap-1")}>
 				{TIER_ORDER.map((t) =>
 					compact ? (
@@ -406,7 +406,7 @@ export function HostTierPill({ agentId }: { agentId: string }) {
 				<ChevronDown size={12} />
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-0 z-30 mb-2 rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid="host-tier-menu">
+				<div className="pa-pop absolute bottom-full left-0 z-30 mb-2 rounded-xl border border-line bg-card p-1.5 shadow-lg [--pop-w:22rem]" data-testid="host-tier-menu">
 					<div className="px-2.5 pb-1 pt-0.5 text-xs text-mut">{d.status.enabled ? "这个助理操作你电脑的权限" : "这个助理操作你电脑的权限（未开启）"}</div>
 					<TierPicker agentId={agentId} d={d} load={load} onDone={() => setOpen(false)} compact />
 				</div>

@@ -118,7 +118,7 @@ export default function Sidebar() {
 					role="menu"
 					data-testid="agent-menu"
 					className="fixed z-50 min-w-40 rounded-lg border border-line bg-panel p-1 text-sm shadow-lg"
-					style={{ left: menu.x, top: menu.y }}
+					style={{ left: Math.max(8, Math.min(menu.x, innerWidth - 220)), top: Math.max(8, Math.min(menu.y, innerHeight - 160)), maxWidth: "calc(100vw - 16px)" }}
 					onPointerDown={(e) => e.stopPropagation()}
 				>
 					<button role="menuitem" className="flex w-full items-center gap-2 rounded px-3 py-2 text-left hover:bg-hover" onClick={() => {

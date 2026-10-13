@@ -748,6 +748,11 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 		await f.getByPlaceholder("手动输入模型 ID，回车添加").press("Enter");
 		await f.getByRole("button", { name: "保存", exact: true }).click();
 		await f.getByText("已保存：我的中转站").waitFor();
+		// 每个模型显示上下文 / 最大输出和来源：relay-chat 由模型列表接口识别（64K），手动加的 relay-manual 用默认（128K / 8K）
+		await f.locator("[data-testid=custom-model-row][data-model=relay-chat] [data-testid=limits-source]").getByText("自动识别").waitFor();
+		if ((await f.getByLabel("relay-chat 上下文（K）").inputValue()) !== "65.5") throw new Error("relay-chat 上下文没识别出来");
+		await f.locator("[data-testid=custom-model-row][data-model=relay-manual] [data-testid=limits-source]").getByText("自动（默认）").waitFor();
+		if ((await f.getByLabel("relay-manual 上下文（K）").inputValue()) !== "128") throw new Error("默认上下文不是 128K");
 		await f.getByRole("button", { name: "测试连接" }).click();
 		await f.getByText(/连接成功：中转站回复/).waitFor();
 		await p.waitForTimeout(300);
@@ -772,6 +777,10 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 		await page.waitForTimeout(500);
 		if (!relay.seen.some((x) => x.url === "/v1/chat/completions" && x.headers["x-relay-team"] === "e2e")) throw new Error("请求没有带上自定义请求头");
 		await page.screenshot({ path: join(SHOTS, "18-chat-via-custom-provider.png") });
+		// 输入框旁的上下文圆环用的就是这个模型的上下文长度（自动压缩也按它）
+		await page.locator("[data-testid=context-ring]").click();
+		await page.locator("[data-testid=context-pop]").getByText(/\/ 65\.5k/).waitFor({ timeout: 10_000 });
+		await page.locator("[data-testid=context-ring]").click();
 		// 编辑后删除
 		const list = await (await fetch(`${BASE}/api/models/custom`)).json();
 		const id = list.providers[0].id;
@@ -785,6 +794,51 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 	} finally {
 		relay.close();
 		await fetch(`${BASE}/api/agents/${AGENT}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: { provider: "mock", id: "echo" } }) }).catch(() => {});
+	}
+});
+
+await step("多个自定义服务（中文名）：各自独立 id；默认模型、“当前”、输入框模型菜单都显示用户起的服务名并按服务分组", async () => {
+	const relay = await startMockOpenAI({ key: "sk-two" });
+	const before = (await (await fetch(`${BASE}/api/system`)).json()).defaultModel;
+	const ids = [];
+	try {
+		for (const name of ["灯灯国产", "另一家中转"]) {
+			const r = await fetch(`${BASE}/api/models/custom`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, api: "openai-completions", baseUrl: relay.url, apiKey: "sk-two", models: [{ id: "relay-chat" }] }) });
+			if (!r.ok) throw new Error(`添加 ${name} 失败：${await r.text()}`);
+			ids.push((await r.json()).id);
+		}
+		if (ids[0] === ids[1] || ids.includes("custom-provider")) throw new Error(`自定义服务 id 冲突：${ids}`);
+		const list = (await (await fetch(`${BASE}/api/models/custom`)).json()).providers;
+		if (!ids.every((id) => list.some((x) => x.id === id))) throw new Error("有一个自定义服务被覆盖了");
+		const ms = await (await fetch(`${BASE}/api/models`)).json();
+		if (ms.find((m) => m.provider === ids[0])?.providerName !== "灯灯国产") throw new Error("模型列表没带服务名");
+
+		const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
+		const p = await c.newPage();
+		await p.goto(`${BASE}/?settings=models`);
+		const sel = p.getByTestId("default-model-select");
+		await sel.locator('optgroup[label="另一家中转"]').waitFor({ state: "attached", timeout: 15_000 });
+		const groups = await sel.locator("optgroup").evaluateAll((g) => g.map((x) => x.label));
+		if (!groups.includes("灯灯国产") || !groups.includes("另一家中转")) throw new Error(`默认模型下拉没按服务分组：${groups}`);
+		const texts = await sel.locator("option").allTextContents();
+		if (texts.some((t) => /custom-/.test(t))) throw new Error(`下拉里出现了内部 id：${texts.filter((t) => /custom-/.test(t))}`);
+		await sel.selectOption(`${ids[1]}/relay-chat`);
+		await p.getByRole("button", { name: "设为默认模型" }).click();
+		await p.getByText("当前：另一家中转 / relay-chat").waitFor({ timeout: 10_000 });
+		await p.screenshot({ path: join(SHOTS, "70-custom-providers-names.png") });
+		await c.close();
+
+		await page.goto(BASE);
+		await page.locator("[data-testid=model-picker]").click();
+		const menu = page.locator("[data-testid=model-menu]");
+		await menu.getByText("灯灯国产", { exact: true }).waitFor();
+		await menu.getByText("另一家中转", { exact: true }).waitFor();
+		if ((await menu.innerText()).includes("custom-")) throw new Error("模型菜单里出现了内部 id");
+		await page.locator("[data-testid=model-picker]").click();
+	} finally {
+		await fetch(`${BASE}/api/models/default`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: before?.provider ?? "mock", model: before?.id ?? "echo" }) }).catch(() => {});
+		for (const id of ids) await fetch(`${BASE}/api/models/custom/${id}`, { method: "DELETE" });
+		relay.close();
 	}
 });
 
@@ -866,11 +920,11 @@ await step("助理电脑关机时：助理自己开机（computer_open）并在�
 	if (st0.state === "running") throw new Error("测试前助理电脑应该是关机状态");
 	await page.goto(BASE);
 	await send("打开你的电脑看看屏幕");
-	await page.locator("main").getByText(/电脑开好了，屏幕信息：/).last().waitFor({ timeout: 60_000 }).catch(async (e) => {
+	await page.locator("main").getByText(/电脑开好了，屏幕信息：.*\d{3,4}x\d{3,4}/).last().waitFor({ timeout: 60_000 }).catch(async (e) => {
 		await page.screenshot({ path: join(SHOTS, "65-computer-open-same-turn-fail.png") });
 		throw e;
 	});
-	const txt = await page.locator("main").getByText(/电脑开好了，屏幕信息：/).last().innerText();
+	const txt = await page.locator("main").getByText(/电脑开好了，屏幕信息：.*\d{3,4}x\d{3,4}/).last().innerText();
 	log("同一轮结果：", txt);
 	if (/未知|error|错误|not found|找不到|unknown/i.test(txt) || !/\d{3,4}/.test(txt)) throw new Error(`电脑工具没有在同一轮可用：${txt}`);
 	const png = await fetch(`${BASE}/api/agents/${AGENT}/desktop/screenshot`).then((r) => r.arrayBuffer());
@@ -1237,6 +1291,71 @@ await step("左侧助理列表：右键 → 编辑 / 删除助理（确认框）
 	await it.waitFor({ state: "detached" });
 	await m.close();
 	void b;
+});
+
+await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上下文菜单在 4 套主题、桌面和手机宽度下内容都在菜单内、菜单在屏幕内", async () => {
+	const vp0 = page.viewportSize();
+	const check = (el) => {
+		const r = el.getBoundingClientRect();
+		const bad = [];
+		if (r.left < -0.5 || r.right > innerWidth + 0.5 || r.top < -0.5) bad.push(`菜单超出屏幕 ${Math.round(r.left)}–${Math.round(r.right)} / ${innerWidth}`);
+		for (const c of el.querySelectorAll("*")) {
+			const cr = c.getBoundingClientRect();
+			if (!cr.width) continue;
+			const clip = c.closest("[class*=overflow-],.truncate");
+			if ((cr.right > r.right + 1 || cr.left < r.left - 1) && !(clip && clip !== c && el.contains(clip))) bad.push(`超出菜单：「${(c.textContent || "").trim().slice(0, 24)}」`);
+			const cs = getComputedStyle(c);
+			if (cs.overflowX === "visible" && c.clientWidth && c.scrollWidth > c.clientWidth + 1 && cs.display !== "inline") bad.push(`内容溢出：「${(c.textContent || "").trim().slice(0, 24)}」`);
+		}
+		return [...new Set(bad)].slice(0, 5);
+	};
+	const menus = [
+		["host-tier-pill", "host-tier-menu"],
+		["proactive-picker", "proactive-menu"],
+		["model-picker", "model-menu"],
+		["thinking-picker", "thinking-menu"],
+		["context-ring", "context-pop"],
+	];
+	const problems = [];
+	let checked = 0;
+	for (const vp of [{ width: 1280, height: 800 }, { width: 760, height: 800 }, { width: 390, height: 844 }]) {
+		await page.setViewportSize(vp);
+		await page.goto(BASE);
+		await page.locator("main textarea").waitFor();
+		await page.waitForTimeout(400);
+		// 窄屏下侧栏 / 信息面板是抽屉：先关掉遮罩
+		for (let i = 0; i < 3; i++) {
+			const ov = page.locator("div.fixed.inset-0.z-40:not(.pointer-events-none)").first();
+			if (!(await ov.isVisible().catch(() => false))) break;
+			await ov.dispatchEvent("click").catch(() => {});
+			await page.waitForTimeout(300);
+		}
+		for (const skin of ["linear", "glass", "warm", "noir"]) {
+			await page.evaluate((s) => (document.documentElement.dataset.skin = s), skin);
+			for (const [btn, menu] of menus) {
+				const b = page.locator(`main [data-testid=${btn}]`).first();
+				if (!(await b.isVisible().catch(() => false))) continue;
+				await b.click();
+				const m = page.locator(`[data-testid=${menu}]`).first();
+				await m.waitFor({ timeout: 5000 });
+				const bad = await m.evaluate(check);
+				if (bad.length) problems.push(`${vp.width}px ${skin} ${menu}: ${bad.join("；")}`);
+				checked++;
+				if (skin === "warm" && menu === "host-tier-menu") await page.screenshot({ path: join(SHOTS, `69-popover-${vp.width}.png`) });
+				// 关菜单：点菜单外面（手机上菜单固定在输入框上方，可能盖住按钮）
+				await page.evaluate(() => {
+					for (const t of ["pointerdown", "mousedown", "click"]) document.querySelector("main")?.dispatchEvent(new MouseEvent(t, { bubbles: true }));
+				});
+				if (!(await m.waitFor({ state: "detached", timeout: 2000 }).then(() => true).catch(() => false))) await b.click({ force: true });
+				await m.waitFor({ state: "detached", timeout: 5000 });
+			}
+		}
+	}
+	await page.evaluate(() => (document.documentElement.dataset.skin = localStorage.getItem("pia.skin") || "linear"));
+	if (vp0) await page.setViewportSize(vp0);
+	if (checked < 30) throw new Error(`检查到的菜单太少（${checked}）`);
+	if (problems.length) throw new Error(problems.join("\n"));
+	log(`检查了 ${checked} 个菜单`);
 });
 
 await step("界面打磨：输入框旁上下文圆环（悬停简要、点开详情）；自定义勾选框；「?」帮助气泡；设置 › 下载与组件；悬浮条关闭按钮", async () => {

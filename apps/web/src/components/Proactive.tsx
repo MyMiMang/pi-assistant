@@ -85,7 +85,7 @@ export function ProactivityPicker({ agentId }: { agentId: string }) {
 				<ChevronDown size={12} />
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-0 z-30 mb-2 w-72 rounded-xl border border-line bg-card p-1.5 shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:bottom-24 max-sm:w-auto" data-testid="proactive-menu">
+				<div className="pa-pop absolute bottom-full left-0 z-30 mb-2 rounded-xl border border-line bg-card p-1.5 shadow-lg [--pop-w:20rem]" data-testid="proactive-menu">
 					<div className="px-2.5 pb-1 pt-0.5 text-xs text-mut">主动性 <Help>像同事一样偶尔主动来找你（跟进没做完的事、提醒你说过的事、重要邮件）。不会替你对外发消息。</Help></div>
 					{(["off", "low", "normal", "high"] as Level[]).map((l) => (
 						<button key={l} className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", l === d.level && "bg-hover")} onClick={() => (setOpen(false), void save({ level: l }))} data-testid={`proactive-${l}`}>

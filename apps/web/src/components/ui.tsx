@@ -185,3 +185,50 @@ export function useConfirm(): [ReactNode, (o: { title: string; body?: ReactNode;
 	);
 	return [el, ask];
 }
+
+/** 长错误（含日志、ASCII 框线）：一句中文摘要 + 可展开、可复制的详情，始终在容器宽度内 */
+const BOX_CHARS = /[│┃─━╭╮╰╯┌┐└┘├┤┬┴┼═║╔╗╚╝⏳✗✓×]+/g;
+export function cleanLog(t: string) {
+	return t
+		.replace(/\x1b\[[0-9;]*m/g, "")
+		.replace(BOX_CHARS, " ")
+		.split("\n")
+		.map((l) => l.replace(/[ \t]{2,}/g, " ").trim())
+		.filter(Boolean)
+		.join("\n");
+}
+export function errorSummary(t: string) {
+	if (/External data path|ONNXRuntimeError|onnxruntime/i.test(t)) return "向量模型加载失败";
+	if (/ENOSPC|No space left/i.test(t)) return "磁盘空间不足";
+	if (/daemon\.start failed|Failed to start daemon|startup failed/i.test(t)) return "Hindsight 启动失败";
+	if (/ETIMEDOUT|timed out|timeout/i.test(t)) return "连接超时";
+	if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|fetch failed|network/i.test(t)) return "网络连接失败";
+	const first = cleanLog(t).split("\n")[0] ?? "";
+	return first.length > 80 ? `${first.slice(0, 80)}…` : first;
+}
+export function ErrorBox({ text, className }: { text: string; className?: string }) {
+	const [open, setOpen] = useState(false);
+	const [copied, setCopied] = useState(false);
+	const full = cleanLog(text);
+	const sum = errorSummary(text);
+	return (
+		<div className={cx("min-w-0 max-w-full space-y-1 text-xs", className)} data-testid="error-box">
+			<div className="flex min-w-0 items-center gap-2 text-red-500">
+				<span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{sum}</span>
+				{full !== sum && (
+					<button type="button" className="shrink-0 text-mut underline-offset-2 hover:underline" onClick={() => setOpen(!open)} data-testid="error-details-toggle">
+						{open ? "收起" : "详情"}
+					</button>
+				)}
+				<button
+					type="button"
+					className="shrink-0 text-mut underline-offset-2 hover:underline"
+					onClick={() => void navigator.clipboard?.writeText(full).then(() => (setCopied(true), setTimeout(() => setCopied(false), 1500)))}
+				>
+					{copied ? "已复制" : "复制"}
+				</button>
+			</div>
+			{open && <pre className="max-h-60 max-w-full overflow-auto whitespace-pre-wrap rounded-lg bg-hover p-2 font-mono text-[11px] leading-relaxed text-mut [overflow-wrap:anywhere]" data-testid="error-details">{full}</pre>}
+		</div>
+	);
+}

@@ -2,6 +2,7 @@
  * 输入框工具栏里、模型选择左边的上下文圆环：圆环 = 当前上下文占模型上下文窗口的比例。
  * 鼠标悬停显示简要（已用 / 总量 / 百分比）；点击弹出详情：上下文、本会话累计 token（输入/输出/缓存）和费用、整理上下文。
  */
+import { modelLabel } from "./ModelOptions";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
@@ -11,7 +12,7 @@ interface Ctx {
 	tokens: number | null;
 	contextWindow: number | null;
 	percent: number | null;
-	model: { provider: string; id: string; name?: string } | null;
+	model: { provider: string; providerName?: string; id: string; name?: string } | null;
 	session: { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; cost: number; userMessages: number; assistantMessages: number; toolCalls: number } | null;
 }
 
@@ -55,11 +56,11 @@ export function ContextRing({ agentId, running }: { agentId: string; running: bo
 				</svg>
 			</button>
 			{open && (
-				<div className="absolute bottom-full right-0 z-30 mb-2 w-72 max-w-[calc(100vw-24px)] space-y-3 rounded-xl border border-line bg-card p-3 text-sm shadow-lg" data-testid="context-pop">
+				<div className="pa-pop absolute bottom-full right-0 z-30 mb-2 w-72 space-y-3 rounded-xl border border-line bg-card p-3 text-sm shadow-lg" data-testid="context-pop">
 					<div>
 						<div className="flex items-baseline justify-between">
 							<b>上下文</b>
-							<span className="text-xs text-mut">{c?.model?.name ?? c?.model?.id ?? ""}</span>
+							<span className="text-xs text-mut">{c?.model ? modelLabel(c.model) : ""}</span>
 						</div>
 						<div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-hover">
 							<div className="h-full rounded-full" style={{ width: `${pct}%`, background: tone }} />

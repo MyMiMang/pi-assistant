@@ -17,7 +17,7 @@ import { fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, s
 import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
 import { insertMessage, listMessages } from "./messages.ts";
-import { credentialBackend, customProviders, defaultModel, defaultThinking, models } from "./models.ts";
+import { credentialBackend, customProviders, defaultModel, defaultThinking, models, providerNames, withProviderName } from "./models.ts";
 import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-providers.ts";
 import { checkPiCompat, sessionStats } from "./pi-adapter/index.ts";
 import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
@@ -117,7 +117,10 @@ app.get("/api/system", async (c) =>
 		deviceId: c.get("caller").deviceId,
 		onboarded: getSetting("onboarded", false) && !!defaultModel() && listAgents().length > 0,
 		modelSetupDone: getSetting("onboarded", false) && !!defaultModel(),
-		defaultModel: defaultModel(),
+		defaultModel: (() => {
+			const d = defaultModel();
+			return d ? withProviderName(d) : d;
+		})(),
 		credentialBackend,
 		sandbox: { mode: await sandboxMode(), preference: getSetting("sandbox", config.sandbox), dockerAvailable: await dockerAvailable() },
 		entryDomain: entryDomain(),
@@ -186,7 +189,10 @@ app.post("/api/models/custom/fetch-models", async (c) => {
 		return customErr(c, e);
 	}
 });
-app.get("/api/models", (c) => c.json(models.listModels(c.req.query("provider") || undefined)));
+app.get("/api/models", (c) => {
+	const names = providerNames();
+	return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => withProviderName(m, names)));
+});
 app.post("/api/models/refresh", async (c) => (await models.refresh(), c.json({ ok: true })));
 app.post("/api/models/login", async (c) => {
 	const b = await c.req.json<{ provider: string; type: "api_key" | "oauth" }>();
@@ -356,7 +362,10 @@ app.get("/api/conversations/:cid/context", async (c) => {
 	const conv = getConversation(c.req.param("cid"));
 	if (!conv) return c.json({ error: "not_found" }, 404);
 	const s = runtime(conv.agent_id, conv.id).session;
-	if (s) return c.json(sessionStats(s));
+	if (s) {
+		const st = sessionStats(s);
+		return c.json({ ...st, model: st.model ? withProviderName(st.model) : st.model });
+	}
 	return c.json({ tokens: null, contextWindow: null, percent: null, model: null, session: null });
 });
 /** 手动整理上下文（Pi compaction） */
@@ -393,8 +402,11 @@ app.get("/api/memory/hindsight", async (c) => {
 		settings: publicSettings(),
 		status: hindsightMemory.status(),
 		inUse: hindsightInUse(),
-		models: ms.map((m) => ({ provider: m.provider, id: m.id, name: m.name })),
-		autoModel: pickMemoryModel(ms, defaultModel()),
+		models: ms.map((m) => withProviderName({ provider: m.provider, id: m.id, name: m.name })),
+		autoModel: (() => {
+			const a = pickMemoryModel(ms, defaultModel());
+			return a ? withProviderName(a) : a;
+		})(),
 		effectiveModel: resolveMemoryModel(),
 		localEmbeddings: LOCAL_EMBEDDINGS,
 		localRerankers: LOCAL_RERANKERS,

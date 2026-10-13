@@ -2,6 +2,7 @@
  * 模型配置组件：provider 列表、登录流程、默认模型选择与连接测试。
  * 全部数据来自服务端的 Pi provider 目录，Pi 新增 provider/登录方式时这里自动支持。
  */
+import { ModelOptions } from "./ModelOptions";
 import { CheckCircle2, Copy, ExternalLink, KeyRound, Loader2, LogOut, Search, Sparkles, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { THINKING_DESC, THINKING_LABEL } from "./ModelPicker";
@@ -220,13 +221,9 @@ export function DefaultModelPicker({ providerId, onSaved }: { providerId?: strin
 	};
 	return (
 		<div className="space-y-3">
-			<select value={sel} onChange={(e) => (setSel(e.target.value), setTest(null))} className="h-10 w-full rounded-lg border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900">
+			<select data-testid="default-model-select" value={sel} onChange={(e) => (setSel(e.target.value), setTest(null))} className="h-10 w-full rounded-lg border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900">
 				{models.length === 0 && <option value="">（先登录一个模型服务）</option>}
-				{models.map((m) => (
-					<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
-						{m.provider} / {m.name}
-					</option>
-				))}
+				<ModelOptions models={models} />
 			</select>
 			<div className="flex flex-wrap items-center gap-2">
 				<Button variant="outline" disabled={!sel || test === "running"} onClick={async () => (setTest("running"), setTest(await api("/api/models/test", { method: "POST", json: split() })))}>

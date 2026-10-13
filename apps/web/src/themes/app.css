@@ -137,4 +137,13 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 
 /* ---- 窗口变窄时文字不挤压 ---- */
 .pa-modal label, .pa-modal .pa-row-text { min-width: 0; overflow-wrap: anywhere; }
-button, .pa-chip { white-space: nowrap; }
+/* 按钮默认不换行；放在 base 层，组件上的 whitespace-normal 等工具类才能覆盖（之前未分层，菜单里的说明文字无法换行而溢出） */
+@layer base { button { white-space: nowrap; } }
+
+/* ---- 弹出菜单（权限 / 主动性 / 模型 / 思考 / 上下文…）：按内容宽度，最多不超过视口；文字正常换行 ---- */
+.pa-pop { width: max-content; min-width: 12rem; max-width: min(var(--pop-w, 20rem), calc(100vw - 16px)); overflow-wrap: anywhere; }
+.pa-pop button { white-space: normal; }
+.pa-pop .truncate { white-space: nowrap; }
+@media (max-width: 640px) {
+  .pa-pop { position: fixed !important; left: 8px !important; right: 8px !important; bottom: 6rem !important; top: auto !important; width: auto; max-width: none; }
+}

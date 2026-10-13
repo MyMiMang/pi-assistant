@@ -30,6 +30,7 @@ export async function initModels() {
 	});
 	customProviders.applyEnv();
 	await models.reloadConfig();
+	await customProviders.backfillLimits().catch((e) => console.error("[models] 补齐自定义模型上下文长度失败", e));
 	if (config.mock) await registerMockProvider(models);
 	if (config.mock && !getSetting("defaultModel", null)) setSetting("defaultModel", { provider: MOCK_PROVIDER, id: MOCK_MODEL });
 }
@@ -42,3 +43,11 @@ export function defaultModel(): { provider: string; id: string } | null {
 
 /** 新助理的默认思考强度（每个模型实际用的会按它支持的档位收敛） */
 export const defaultThinking = (): string => getSetting<string>("defaultThinking", "medium");
+
+/** 界面显示的服务名：自定义服务用用户起的名字（内部 id 如 custom-xxxx 不给用户看） */
+export function providerNames() {
+	const m = new Map(models.listProviders().map((p) => [p.id, p.name || p.id]));
+	for (const cp of customProviders.list()) m.set(cp.id, cp.name || cp.id);
+	return m;
+}
+export const withProviderName = <T extends { provider: string }>(x: T, names = providerNames()) => ({ ...x, providerName: names.get(x.provider) ?? x.provider });

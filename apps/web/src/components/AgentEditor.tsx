@@ -1,4 +1,5 @@
 import { ImagePlus, Trash2 } from "lucide-react";
+import { ModelOptions } from "./ModelOptions";
 import { AgentComputer } from "./AgentComputer";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
@@ -180,11 +181,7 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 					<span className="text-xs font-medium text-zinc-500">模型</span>
 					<select value={d.model} onChange={(e) => set({ model: e.target.value })} className="h-10 w-full rounded-xl bg-zinc-100 px-3 outline-none dark:bg-zinc-800/80">
 						<option value="">跟随默认模型</option>
-						{models.map((m) => (
-							<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
-								{m.provider} / {m.name}
-							</option>
-						))}
+						<ModelOptions models={models} />
 					</select>
 				</label>
 			)}

@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getApiProviders } from "@earendil-works/pi-ai/compat";
 import type { PiModels } from "./index.ts";
+import { detectLimits, type LimitsSource, resolveLimits } from "./model-limits.ts";
 
 export interface CustomModel {
 	id: string;
@@ -18,6 +19,14 @@ export interface CustomModel {
 	input?: ("text" | "image")[];
 	contextWindow?: number;
 	maxTokens?: number;
+	/** 上下文 / 输出长度从哪来：自动识别 / 已知模型 / 默认 / 用户填写（只存在我们的元数据里，不写进 Pi 的 models.json） */
+	limitsSource?: LimitsSource;
+}
+export interface FetchedModel {
+	id: string;
+	contextWindow: number;
+	maxTokens: number;
+	limitsSource: LimitsSource;
 }
 export interface CustomProviderMeta {
 	id: string;
@@ -71,7 +80,9 @@ export function supportedApis(): { id: string; label: string }[] {
 
 const envName = (id: string, i: number) => `PIA_H_${createHash("sha256").update(id).digest("hex").slice(0, 10).toUpperCase()}_${i}`;
 export function slugId(name: string, taken: Set<string>): string {
-	const base = `custom-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "provider"}`;
+	// 中文等非拉丁名字转不出 slug：用名字的哈希，保证不同名字的自定义服务 id 不同（以前都会变成 custom-provider 互相覆盖）
+	const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+	const base = `custom-${slug || createHash("sha256").update(name.trim()).digest("hex").slice(0, 8)}`;
 	let id = base;
 	for (let i = 2; taken.has(id); i++) id = `${base}-${i}`;
 	return id;
@@ -145,7 +156,7 @@ export class CustomProviders {
 		const builtin = new Set(this.models.listProviders().map((p) => p.id));
 		const existing = id ? metas.find((m) => m.id === id) : undefined;
 		if (id && !existing) throw new Error("自定义服务不存在");
-		const pid = existing?.id ?? slugId(input.name, builtin);
+		const pid = existing?.id ?? slugId(input.name, new Set([...builtin, ...metas.map((m) => m.id)]));
 
 		// 请求头：新值覆盖，undefined 保留旧值
 		const oldHeaders = existing ? this.store.loadHeaders(pid) : {};
@@ -165,7 +176,7 @@ export class CustomProviders {
 			baseUrl: input.baseUrl.trim().replace(/\/+$/, ""),
 			headerNames,
 			noKey: !!input.noKey,
-			models: input.models.map((m) => ({ ...m, id: m.id.trim() })),
+			models: input.models.map((m) => this.withLimits({ ...m, id: m.id.trim() })),
 			createdAt: existing?.createdAt ?? Date.now(),
 		};
 		// 写入 Pi 的 models.json（保留用户手写的其它 provider）
@@ -177,7 +188,7 @@ export class CustomProviders {
 			api: meta.api,
 			...(meta.noKey ? { apiKey: "not-needed" } : {}),
 			...(headerNames.length ? { headers: Object.fromEntries(headerNames.map((n, i) => [n, `\${${envName(pid, i)}}`])) } : {}),
-			models: meta.models.map((m) => Object.fromEntries(Object.entries(m).filter(([, v]) => v !== undefined && v !== ""))),
+			models: meta.models.map(piModel),
 		};
 		this.writeFile(cfg);
 		this.store.saveMeta([...metas.filter((m) => m.id !== pid), meta]);
@@ -208,8 +219,32 @@ export class CustomProviders {
 		return true;
 	}
 
-	/** 通过服务的模型列表接口自动获取模型 ID（OpenAI / Anthropic / Gemini 风格）。 */
-	async fetchModels(o: { id?: string; api: string; baseUrl: string; apiKey?: string; headers?: { name: string; value?: string }[] }): Promise<string[]> {
+	/** 补上上下文 / 输出长度（缺哪项补哪项；用户填过的不动） */
+	withLimits(m: CustomModel, detected?: { contextWindow?: number; maxTokens?: number }): CustomModel {
+		const l = resolveLimits(m, detected, this.models.listModels());
+		return { ...m, contextWindow: l.contextWindow, maxTokens: l.maxTokens, limitsSource: l.source };
+	}
+
+	/** 旧版本保存的自定义模型没有上下文长度：启动时补齐并写回 models.json（Pi 的上下文用量和自动压缩靠它） */
+	async backfillLimits() {
+		const metas = this.store.loadMeta();
+		if (!metas.some((m) => m.models.some((x) => !x.contextWindow || !x.maxTokens || !x.limitsSource))) return 0;
+		const cfg = this.readFile();
+		let n = 0;
+		const next = metas.map((meta) => {
+			const models = meta.models.map((x) => (x.contextWindow && x.maxTokens && x.limitsSource ? x : (n++, this.withLimits(x))));
+			const p = cfg.providers?.[meta.id];
+			if (p) (p as { models?: unknown }).models = models.map(piModel);
+			return { ...meta, models };
+		});
+		this.store.saveMeta(next);
+		this.writeFile(cfg);
+		await this.models.reloadConfig();
+		return n;
+	}
+
+	/** 通过服务的模型列表接口自动获取模型（OpenAI / Anthropic / Gemini 风格），顺带识别上下文 / 输出长度。 */
+	async fetchModels(o: { id?: string; api: string; baseUrl: string; apiKey?: string; headers?: { name: string; value?: string }[] }): Promise<FetchedModel[]> {
 		const base = o.baseUrl.trim().replace(/\/+$/, "");
 		const key = o.apiKey?.trim() || (o.id ? await this.store.readKey(o.id) : undefined) || "";
 		const old = o.id ? this.store.loadHeaders(o.id) : {};
@@ -229,14 +264,26 @@ export class CustomProviders {
 		const res = await fetch(url, { headers: h, signal: AbortSignal.timeout(15_000) });
 		const text = await res.text();
 		if (!res.ok) throw new Error(`HTTP ${res.status}：${text.slice(0, 200)}`);
-		let j: { data?: { id?: string; name?: string }[]; models?: { id?: string; name?: string }[] };
+		let j: { data?: Record<string, unknown>[]; models?: Record<string, unknown>[] };
 		try {
 			j = JSON.parse(text);
 		} catch {
 			throw new Error("返回的不是 JSON，可能不支持模型列表接口，请手动填写");
 		}
-		const list = (j.data ?? j.models ?? []).map((m) => String(m.id ?? m.name ?? "").replace(/^models\//, "")).filter(Boolean);
-		if (!list.length) throw new Error("没有获取到模型，请手动填写");
-		return [...new Set(list)].sort();
+		const seen = new Map<string, FetchedModel>();
+		for (const raw of j.data ?? j.models ?? []) {
+			const id = String(raw.id ?? raw.name ?? "").replace(/^models\//, "");
+			if (!id || seen.has(id)) continue;
+			const m = this.withLimits({ id }, detectLimits(raw));
+			seen.set(id, { id, contextWindow: m.contextWindow!, maxTokens: m.maxTokens!, limitsSource: m.limitsSource! });
+		}
+		if (!seen.size) throw new Error("没有获取到模型，请手动填写");
+		return [...seen.values()].sort((a, b) => a.id.localeCompare(b.id));
 	}
+}
+
+/** 写进 Pi models.json 的模型条目：去掉我们自己的字段和空值 */
+function piModel(m: CustomModel) {
+	const { limitsSource: _s, ...rest } = m;
+	return Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== ""));
 }
