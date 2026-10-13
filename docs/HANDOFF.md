@@ -57,6 +57,7 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 5. 待用户决定 / 下一步
 需求、计划和待决定事项的完整清单见 [ROADMAP.md](ROADMAP.md)。
+- **新需求（设计中，未写代码）**：后台子代理——主会话聊天、子代理后台干活、可点进去看过程、按能力选模型。设计见 DESIGN §21。
 - **许可证**：建议用 MIT，等用户确认（现在 README 写的是「保留所有权利」，仓库里没有 LICENSE 文件）。
 - **代码签名**：Apple Developer ID 公证、Windows 代码签名证书，都要用户提供账号或证书。
 - 下一步：等用户实测 beta.10 的反馈 → 修一批 → 用户说「打包」再出下一个 beta。候选：cua-driver 升级到 0.35.x；群里复制助理时带上工作区文件；在 Windows 上转换 HEIC；扫描 PDF 的 OCR。
