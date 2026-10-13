@@ -13,7 +13,7 @@ import { backend, engine, engineCommand } from "./desktop/backend.ts";
 import { IdleTracker } from "./desktop/idle.ts";
 import { imagePresent, installState, startInstall } from "./desktop/image.ts";
 import { computerFor, describeScreens, isSharedComputer, legacySeparate, MAIN, mainScreenDecision, ownScreenKey, SHARED, type Lease } from "./desktop/computers.ts";
-import { containerName, LABEL, labelValues, volumeName } from "./desktop/names.ts";
+import { containerName, LABEL, labelValues, safeId, volumeName } from "./desktop/names.ts";
 import { desktopSettings, localImage, markLegacyMigrated, setSeparate } from "./desktop/settings.ts";
 import { db } from "./db.ts";
 
@@ -238,22 +238,23 @@ export async function setSeparateComputer(agentId: string, on: boolean) {
  * 其他文件按“不覆盖已有文件”合并。成功后删掉单独电脑的容器和卷，这个助理改用共用电脑。
  */
 export async function mergeIntoShared(agentId: string, busy: (agentId: string) => boolean) {
-	const cid = computerFor(agentId);
-	if (isSharedComputer(cid)) throw new Error("这个助理已经在用共用电脑");
+	// 数据源永远是这个助理的单独电脑卷（pia-home-<id>）。助理可能已经改回共用电脑，但卷还在（设置里「合并进共用电脑」就是这种情形）。
+	const separateId = safeId(agentId);
+	if (!(await volumeExists(volumeName(separateId)))) throw new Error("没有可合并的单独电脑数据");
 	if (busy(agentId)) throw new Error("这个助理正在工作，等它做完再合并");
 	const others = agentsOn(SHARED).filter(busy);
 	if (others.length) throw new Error(`共用电脑正在被使用（${others.map(agentName).join("、")}），稍后再合并`);
 	await backend().ensureEngine();
-	await stopComputer(cid);
+	await stopComputer(separateId);
 	await stopComputer(SHARED);
 	const label = agentName(agentId).replace(/[^\p{L}\p{N}_-]/gu, "").slice(0, 32) || safeLabel(agentId);
-	const helper = containerName(`merge-${cid}`.slice(0, 64));
+	const helper = containerName(`merge-${separateId}`.slice(0, 64));
 	await docker(["rm", "-f", helper]).catch(() => {});
 	await docker(["volume", "create", volumeName(SHARED)]);
-	const { stdout } = await docker(["run", "--rm", "--name", helper, "--label", `${LABEL}=merge`, "-u", "0", "--entrypoint", "bash", "-v", `${volumeName(cid)}:/from:ro`, "-v", `${volumeName(SHARED)}:/to`, localImage(), "-c", MERGE_SCRIPT, "merge", label], { timeout: 30 * 60_000 });
+	const { stdout } = await docker(["run", "--rm", "--name", helper, "--label", `${LABEL}=merge`, "-u", "0", "--entrypoint", "bash", "-v", `${volumeName(separateId)}:/from:ro`, "-v", `${volumeName(SHARED)}:/to`, localImage(), "-c", MERGE_SCRIPT, "merge", label], { timeout: 30 * 60_000 });
 	setSeparate(agentId, false);
-	await docker(["rm", "-f", containerName(cid)]).catch(() => {});
-	await docker(["volume", "rm", volumeName(cid)]).catch(() => {});
+	await docker(["rm", "-f", containerName(separateId)]).catch(() => {});
+	await docker(["volume", "rm", volumeName(separateId)]).catch(() => {});
 	notify(SHARED);
 	onChange?.(agentId);
 	return String(stdout).trim().split("\n").pop() ?? "";

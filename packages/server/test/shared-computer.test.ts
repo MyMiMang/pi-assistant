@@ -292,7 +292,7 @@ test("真 Docker：两个助理同时用共用电脑、各自的屏幕、共用�
 		await D.setSeparateComputer(S, false);
 		assert.equal(D.containerOf(S), `pia-desk-${SH}`);
 		assert.equal(await D.hasSeparateData(S), true, "关掉单独的电脑数据还在");
-		await D.setSeparateComputer(S, true);
+		// 已改回共用电脑时也能合并（设置页「合并进共用电脑」就是这种情形；卷还在）
 		await assert.rejects(D.mergeIntoShared(S, (id) => id === A), /共用电脑正在被使用/);
 		const res = await D.mergeIntoShared(S, () => false);
 		assert.match(res, /merged/);
