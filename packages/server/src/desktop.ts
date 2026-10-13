@@ -655,6 +655,17 @@ export async function ensureOwnScreen(agentId: string): Promise<Screen> {
 }
 /** 容器里 pia-screen / pia-cua-mcp 用的助理名（只留安全字符） */
 const safeKey = (agentId: string) => agentId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) || "agent";
+/** 删除助理：关掉它在共用电脑上的屏幕；单独的电脑关机并从列表里去掉（家目录卷和以前一样保留） */
+export async function forgetAgentComputer(agentId: string) {
+	const cid = computerFor(agentId);
+	await releaseScreen(agentId, cid).catch(() => {});
+	if (mainLease.get(cid)?.agentId === agentId) mainLease.delete(cid);
+	agentLastUse.delete(agentId);
+	if (!isSharedComputer(cid)) {
+		await stopComputer(cid).catch(() => {});
+		setSeparate(agentId, false);
+	}
+}
 /** 回到主屏幕：关掉这个助理自己的屏幕（上面的窗口会关掉） */
 export async function releaseScreen(agentId: string, cid = computerFor(agentId)) {
 	const key = agentScreen.get(agentId);

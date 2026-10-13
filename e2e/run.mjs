@@ -881,6 +881,73 @@ await step("助理电脑关机时：助理自己开机（computer_open）并在�
 	await page.screenshot({ path: join(SHOTS, "65-computer-open-same-turn.png") });
 });
 
+await step("共用电脑：两个助理同一台电脑（界面显示共用）、给助理开自己的屏幕并切换查看、关机前提醒、单独的电脑开关、设置里的列表", async () => {
+	if (!process.env.E2E_DESKTOP) return log("跳过（需要 E2E_DESKTOP=1 和 Docker）");
+	const j = (u, init) => fetch(`${BASE}${u}`, init).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error(`${u} → ${r.status} ${await r.text()}`))));
+	const put = (u, b) => j(u, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
+	const post = (u, b) => j(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) });
+	const two = await post("/api/agents", { name: "共用测试乙" });
+	try {
+		await post(`/api/agents/${AGENT}/desktop/start`);
+		const s1 = await j(`/api/agents/${AGENT}/desktop`);
+		const s2 = await post(`/api/agents/${two.id}/desktop/start`);
+		if (!s1.computer?.shared || s1.computer.id !== s2.computer?.id || s1.port !== s2.port) throw new Error(`两个助理应该在同一台共用电脑上：${JSON.stringify([s1.computer, s2.computer])}`);
+		await page.goto(BASE);
+		await openPane("电脑");
+		const dv = page.getByTestId("desktop-view");
+		await dv.getByTestId("desktop-computer").getByText(/共用电脑（\d+ 个助理）/).waitFor({ timeout: 30_000 });
+		await dv.locator("canvas").first().waitFor({ timeout: 30_000 });
+		// 给它开自己的屏幕 → 画面切到它的屏幕；再切去看主屏幕；回主屏幕
+		await dv.getByTestId("screen-own").click();
+		await dv.getByTestId("screen-release").waitFor({ timeout: 30_000 });
+		const s3 = await j(`/api/agents/${AGENT}/desktop`);
+		if (!s3.screen || s3.screen === "main") throw new Error(`应该有自己的屏幕：${JSON.stringify(s3)}`);
+		await dv.locator(`[data-testid="screen-${s3.screen}"]`).getByText(/它在用/).waitFor();
+		await dv.locator("canvas").first().waitFor({ timeout: 30_000 });
+		await page.waitForTimeout(2500);
+		await page.screenshot({ path: join(SHOTS, "66-shared-own-screen.png") });
+		const own = await fetch(`${BASE}/api/agents/${AGENT}/desktop/screenshot`).then((r) => r.arrayBuffer());
+		const main = await fetch(`${BASE}/api/agents/${AGENT}/desktop/screenshot?screen=main`).then((r) => r.arrayBuffer());
+		if (own.byteLength < 5000 || main.byteLength < 5000) throw new Error("屏幕截图像是空白的");
+		await dv.getByTestId("screen-main").click();
+		await page.waitForTimeout(1500);
+		await dv.locator("canvas").first().waitFor({ timeout: 30_000 });
+		await dv.getByTestId("screen-release").click();
+		await dv.getByTestId("screen-own").waitFor({ timeout: 30_000 });
+		// 关机前提醒（取消 = 不关）
+		await dv.getByTestId("desktop-stop").click();
+		const dlg = page.getByTestId("confirm-dialog");
+		await dlg.getByText("关掉共用电脑？").waitFor();
+		await page.screenshot({ path: join(SHOTS, "67-shared-stop-confirm.png") });
+		await dlg.getByTestId("confirm-cancel").click();
+		if ((await j(`/api/agents/${AGENT}/desktop`)).state !== "running") throw new Error("取消后不应关机");
+		// 单独的电脑：开 → 用自己的电脑；关 → 回共用，数据保留可合并
+		const on = await put(`/api/agents/${two.id}/computer`, { separate: true });
+		if (!on.separate || on.desktop.computer.shared) throw new Error(`应该是单独的电脑：${JSON.stringify(on)}`);
+		const st = await post(`/api/agents/${two.id}/desktop/start`);
+		if (st.port === s1.port) throw new Error("单独的电脑不应和共用电脑同一个端口");
+		const off = await put(`/api/agents/${two.id}/computer`, { separate: false });
+		if (off.separate || !off.desktop.computer.shared || off.hasData !== true) throw new Error(`改回共用后数据应保留：${JSON.stringify(off)}`);
+		// 设置 › 助理电脑：共用说明 + 每个助理一行，乙那行有“合并进共用电脑”
+		await page.goto(BASE);
+		await page.locator("main textarea").waitFor();
+		await page.getByRole("button", { name: "设置" }).first().click();
+		await page.getByTestId("settings-nav").locator("button[data-tab=computer]").click();
+		const sec = page.getByTestId("desktop-shared");
+		await sec.getByText("共用电脑", { exact: true }).waitFor();
+		await sec.getByTestId(`desktop-agent-${two.id}`).getByTestId("agent-merge").waitFor();
+		await page.screenshot({ path: join(SHOTS, "68-settings-shared.png") });
+		await page.keyboard.press("Escape");
+		// 合并
+		const m = await post(`/api/agents/${two.id}/computer/merge`);
+		if (!m.ok) throw new Error("合并失败");
+		const after = await j(`/api/agents/${two.id}/computer`);
+		if (after.hasData !== false) throw new Error("合并后单独电脑的数据应该删掉了");
+	} finally {
+		await fetch(`${BASE}/api/agents/${two.id}`, { method: "DELETE" });
+	}
+});
+
 await step("Phase 3 操作这台电脑：设置页（默认关闭、风险提示、允许的应用、能力清单）", async () => {
 	await page.getByRole("button", { name: "设置" }).first().click();
 	await page.getByRole("button", { name: "操作这台电脑" }).click();

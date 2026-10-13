@@ -1,16 +1,18 @@
 /**
  * 设置 › 助理电脑（DESIGN §15.2）：「给助理安装电脑」开关、运行方式（自带运行时 / 已装的 Docker）、
  * 空闲自动关机、镜像加速、下载进度；关掉后可关机或删除虚拟机和镜像释放空间。
+ * 共用电脑（§15.4）：默认所有助理共用一台；列出每个助理用哪台电脑，可以单独开 / 关、把单独电脑合并进共用电脑。
  */
 import { Loader2, Power, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
-import { Badge, Button, Help, Input } from "./ui";
+import { AgentComputer } from "./AgentComputer";
+import { Avatar, avatarText, Badge, Button, Help, Input } from "./ui";
 
 export type DesktopGlobal = {
-	settings: { enabled: boolean; backend: "auto" | "docker"; idleMinutes: number; mirror: string; fileMirror: string };
+	settings: { enabled: boolean; backend: "auto" | "docker"; idleMinutes: number; mirror: string; fileMirror: string; separate?: string[] };
 	backend: { id: string; label: string; ok: boolean | null; reason?: string; fix?: "install-wsl" | "reboot" };
 	builtin: { id: string; label: string; ready: boolean };
 	dockerAvailable: boolean;
@@ -191,6 +193,8 @@ export function DesktopSettings() {
 				</div>
 			</section>
 
+			{s.enabled && <SharedComputerSection />}
+
 			<section className="space-y-2">
 				<div className="font-semibold">{t("空闲自动关机")}</div>
 				<div className="text-sm text-zinc-500">{t("闲置多久后关机，登录状态不丢。")} <Help>{t("没有工具调用、没人在看画面、没有任务占用超过这个时间，就自动关机释放内存；登录状态不会丢，下次用到时自动开机。")}</Help></div>
@@ -222,5 +226,30 @@ export function DesktopSettings() {
 			)}
 			{err && <div className="text-xs text-red-600">{err}</div>}
 		</div>
+	);
+}
+
+/** 共用电脑：说明 + 每个助理用哪台电脑 */
+function SharedComputerSection() {
+	const agents = useStore((st) => st.agents);
+	return (
+		<section className="space-y-2" data-testid="desktop-shared">
+			<div className="font-semibold">{t("共用电脑")}</div>
+			<div className="text-sm text-zinc-500">
+				{t("所有助理默认共用一台电脑：同样的文件、浏览器登录状态（在一个助理里登录过，其他助理也能用）和已装的应用。")}{" "}
+				<Help>{t("每个助理有自己的屏幕和浏览器标签页，同时干活不互相抢鼠标键盘；需要时助理会自己开一块屏幕，或者开一个不带登录状态的浏览器环境。需要长期分开账号的助理，可以给它开“单独的电脑”。")}</Help>
+			</div>
+			<div className="divide-y divide-line rounded-xl border border-line">
+				{agents.map((a) => (
+					<div key={a.id} className="flex items-start gap-3 p-3" data-testid={`desktop-agent-${a.id}`}>
+						<Avatar agentId={a.id} text={avatarText(a.avatar)} color={a.color} size={28} />
+						<div className="min-w-0 flex-1">
+							<div className="text-sm font-medium">{a.name}</div>
+							<AgentComputer agentId={a.id} compact />
+						</div>
+					</div>
+				))}
+			</div>
+		</section>
 	);
 }

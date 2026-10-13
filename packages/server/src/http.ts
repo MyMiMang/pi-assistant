@@ -24,7 +24,7 @@ import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
 import { describeRoutine, disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
-import { desktopPause, desktopStatus, ensureOwnScreen, hasSeparateData, issueTicket, mergeIntoShared, purgeAll, releaseScreen, resetAvailability, screenshotDesktop, setSeparateComputer, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket, viewerClose, viewerOpen, viewToken } from "./desktop.ts";
+import { desktopPause, desktopStatus, ensureOwnScreen, forgetAgentComputer, hasSeparateData, issueTicket, mergeIntoShared, purgeAll, releaseScreen, resetAvailability, screenshotDesktop, setSeparateComputer, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket, viewerClose, viewerOpen, viewToken } from "./desktop.ts";
 import { backend as desktopBackend, builtinFor, dockerBackend } from "./desktop/backend.ts";
 import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop/image.ts";
 import { installWsl, wslInstalling } from "./desktop/wsl.ts";
@@ -271,6 +271,7 @@ app.delete("/api/agents/:id", async (c) => {
 	const a = getAgent(c.req.param("id"));
 	if (!a) return c.json({ error: "not_found" }, 404);
 	await disposeRuntime(a.id);
+	await forgetAgentComputer(a.id).catch(() => {});
 	deleteAgentRoutines(a.id);
 	await memory.purgeAgent(a.id);
 	for (const t of ["messages", "tasks", "requests", "files", "conversations"]) db.prepare(`DELETE FROM ${t} WHERE agent_id = ?`).run(a.id);

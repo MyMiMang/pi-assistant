@@ -1,4 +1,5 @@
 import { ImagePlus, Trash2 } from "lucide-react";
+import { AgentComputer } from "./AgentComputer";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
@@ -187,6 +188,7 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 					</select>
 				</label>
 			)}
+			{agent && <AgentComputer agentId={agent.id} />}
 			{error && <div className="rounded-xl bg-red-50 px-3 py-2 text-red-600 dark:bg-red-950/40 dark:text-red-400">{error}</div>}
 			<div className="flex items-center gap-2">
 				{agent &&
