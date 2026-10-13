@@ -3,15 +3,35 @@
 # 安装包内容：Tauri 托盘程序 + 内置 Node 运行时（sidecar）+ app 目录（服务端 + Pi + 生产依赖 + 网页 + cloudflared/uv/cua-driver），
 # Linux 服务器版 x64 / arm64 → pi-assistant-<版本>-linux-<arch>.tar.gz（+ .sha256），deploy/linux/install.sh 安装。
 # 版本与 SHA256 全部以 third-party.json 为准。所有 v* tag（包括 v0.2.0-beta.1 这类测试版）都发布为正式的 latest 版本：Tauri 自动更新读 releases/latest/download/latest.json，pre-release 不算 latest，会导致更新失效。
+# 先发草稿、验证通过才公开：prepare 建草稿 → build / linux 把安装包和 latest.json 传进草稿 → windows-smoke（静默安装刚构建的 setup.exe 到中文路径，启动托盘查 /api）
+# 和 mac-smoke（挂载 dmg 启动 .app 查 /api）→ 都通过才 publish（取消草稿、标 Latest）。草稿里的 latest.json 对自动更新不可见，任一步失败 Release 留在草稿，用户收不到。
+# 演练：推送到 release-dryrun 分支（或手动运行）会用 v0.0.0-dryrun.<run> 走完整流程，但不公开，最后自动删掉草稿。
 # 自动更新签名：仓库 secrets 设置 TAURI_SIGNING_PRIVATE_KEY（+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD）后生成 latest.json 与 .sig；
 # 没设置时照常出安装包，只是不带自动更新文件。暂不做 Apple 公证 / Windows 代码签名（见 docs/INSTALL.md）。
 name: release
 on:
-  push: { tags: ["v*"] }
+  push: { tags: ["v*"], branches: [release-dryrun] }
   workflow_dispatch:
 permissions: { contents: write }
+env:
+  REL_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v0.0.0-dryrun.{0}', github.run_number) }}
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: 建草稿 Release（已有草稿就复用；已经公开的版本不再重发）
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          if [ "$(gh release view "$REL_TAG" --json isDraft -q .isDraft 2>/dev/null)" = false ]; then echo "::error::$REL_TAG 已经公开发布过"; exit 1; fi
+          if ! gh release view "$REL_TAG" >/dev/null 2>&1; then
+            bash scripts/release-notes.sh "$REL_TAG" > notes.md
+            gh release create "$REL_TAG" --draft --target "$GITHUB_SHA" --title "Pi Assistant $REL_TAG" --notes-file notes.md
+          fi
+
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -28,7 +48,7 @@ jobs:
       - name: 更新说明（Release 正文 + latest.json notes）
         shell: bash
         run: |
-          { echo 'RELEASE_NOTES<<PIA_EOF'; bash scripts/release-notes.sh "$GITHUB_REF_NAME"; echo 'PIA_EOF'; } >> "$GITHUB_ENV"
+          { echo 'RELEASE_NOTES<<PIA_EOF'; bash scripts/release-notes.sh "$REL_TAG"; echo 'PIA_EOF'; } >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - uses: dtolnay/rust-toolchain@stable
@@ -36,10 +56,9 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with: { workspaces: "apps/tray/src-tauri -> target" }
       - name: 版本号取自 tag
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
-          V="${GITHUB_REF_NAME#v}"
+          V="${REL_TAG#v}"
           node -e "const f='apps/tray/src-tauri/tauri.conf.json';const j=require('./'+f);j.version=process.argv[1];require('fs').writeFileSync(f,JSON.stringify(j,null,2))" "$V"
       - run: npm ci --no-audit --no-fund
       - run: npm run build
@@ -69,10 +88,11 @@ jobs:
           projectPath: apps/tray
           tauriScript: npx tauri
           args: --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
-          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseName: "Pi Assistant ${{ github.ref_name }}"
+          tagName: ${{ env.REL_TAG }}
+          releaseName: "Pi Assistant ${{ env.REL_TAG }}"
           releaseBody: ${{ env.RELEASE_NOTES }}
-          releaseDraft: false
+          releaseCommitish: ${{ github.sha }}
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
       - name: macOS 打包失败时重试一次（打 dmg 偶发卡住）
@@ -89,10 +109,11 @@ jobs:
           projectPath: apps/tray
           tauriScript: npx tauri
           args: --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
-          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseName: "Pi Assistant ${{ github.ref_name }}"
+          tagName: ${{ env.REL_TAG }}
+          releaseName: "Pi Assistant ${{ env.REL_TAG }}"
           releaseBody: ${{ env.RELEASE_NOTES }}
-          releaseDraft: false
+          releaseCommitish: ${{ github.sha }}
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
       - uses: actions/upload-artifact@v4
@@ -106,6 +127,7 @@ jobs:
           if-no-files-found: warn
 
   linux:
+    needs: prepare
     # Linux 服务器版发布包：内置 Node + app 目录 + 命令行包装 + 安装脚本（见 scripts/package-linux.mjs）
     strategy:
       fail-fast: false
@@ -119,9 +141,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - name: 版本号取自 tag
-        if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          V="${GITHUB_REF_NAME#v}"
+          V="${REL_TAG#v}"
           node -e "const f='apps/tray/src-tauri/tauri.conf.json';const j=require('./'+f);j.version=process.argv[1];require('fs').writeFileSync(f,JSON.stringify(j,null,2))" "$V"
       - run: npm ci --no-audit --no-fund
       - run: npm run build
@@ -138,18 +159,63 @@ jobs:
         with:
           name: pi-assistant-Linux-${{ matrix.arch }}
           path: dist-linux/*.tar.gz*
-      - name: 上传到 Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: 上传到草稿 Release
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-        run: |
-          for i in $(seq 1 30); do gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break; sleep 20; done
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Pi Assistant $GITHUB_REF_NAME" --notes "安装说明见 docs/INSTALL.md" --latest
-          gh release upload "$GITHUB_REF_NAME" dist-linux/*.tar.gz dist-linux/*.tar.gz.sha256 --clobber
-          gh release edit "$GITHUB_REF_NAME" --prerelease=false --latest  # 保证是 latest（自动更新依赖）
+        run: gh release upload "$REL_TAG" dist-linux/*.tar.gz dist-linux/*.tar.gz.sha256 --clobber
 
-  # 发布后：在干净的 Windows 上静默安装刚发布的 setup.exe，像用户一样启动托盘程序，确认服务能在 8787 上线（失败会在 Actions 里标红）
+  # 用刚构建、还在草稿里的安装包做真机冒烟；通过前不公开
   windows-smoke:
-    needs: [build, linux]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
     uses: ./.github/workflows/windows-smoke.yml
-    with: { tag: "${{ github.ref_name }}" }
+    with: { artifact: pi-assistant-Windows-x64 }
+
+  mac-smoke:
+    needs: build
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: pi-assistant-macOS-arm64, path: art }
+      - name: 挂载 dmg，启动 .app，查服务
+        run: |
+          set -x
+          DMG=$(find art -name '*.dmg' | head -1)
+          hdiutil attach -nobrowse -mountpoint /tmp/pia "$DMG"
+          mkdir -p "$HOME/Applications" && cp -R /tmp/pia/*.app "$HOME/Applications/"
+          APP=$(ls -d "$HOME"/Applications/*.app | head -1)
+          xattr -dr com.apple.quarantine "$APP" || true
+          "$APP/Contents/MacOS/pi-assistant-tray" > tray.log 2>&1 &
+          for i in $(seq 1 150); do curl -fsS http://127.0.0.1:8787/api/system/public >/dev/null 2>&1 && { echo "mac launch OK"; exit 0; }; sleep 1; done
+          LOG="$HOME/Library/Logs/com.piassistant.app/server.log"
+          cat tray.log; [ -f "$LOG" ] && tail -60 "$LOG"
+          echo "::error title=mac launch: server not healthy::$( (tail -30 "$LOG" 2>/dev/null || tail -30 tray.log) | tr '\n' '|')"
+          exit 1
+
+  publish:
+    needs: [build, linux, windows-smoke, mac-smoke]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 全部通过 → 公开并标为 Latest（latest.json 这时才对自动更新可见）
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", GH_REPO: "${{ github.repository }}" }
+        run: |
+          gh release view "$REL_TAG" --json assets -q '.assets[].name' | tee assets.txt
+          for p in 'x64-setup\.exe$' 'aarch64\.dmg$' 'x64\.dmg$' 'linux-x64\.tar\.gz$' 'linux-arm64\.tar\.gz$' '^latest\.json$'; do grep -Eq "$p" assets.txt || { echo "::error::草稿里缺少 $p，保持草稿"; exit 1; }; done
+          # 草稿资产的下载地址是 untagged-…，公开后会失效：先把 latest.json 里的地址改成按 tag 的正式地址再公开
+          gh release download "$REL_TAG" -p latest.json -O latest.json
+          sed -E -i "s#/releases/download/[^/\"]+/#/releases/download/$REL_TAG/#g" latest.json
+          grep -o '"url": *"[^"]*"' latest.json
+          gh release upload "$REL_TAG" latest.json --clobber
+          gh release edit "$REL_TAG" --draft=false --prerelease=false --latest
+
+  cleanup-dry-run:
+    needs: [build, linux, windows-smoke, mac-smoke]
+    if: always() && !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 演练结束，删除草稿（从未公开，tag 也不会留下）
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", GH_REPO: "${{ github.repository }}" }
+        run: |
+          echo "build=${{ needs.build.result }} linux=${{ needs.linux.result }} windows-smoke=${{ needs.windows-smoke.result }} mac-smoke=${{ needs.mac-smoke.result }}"
+          gh release view "$REL_TAG" --json assets -q '.assets[].name' || true
+          gh release delete "$REL_TAG" --yes --cleanup-tag || true

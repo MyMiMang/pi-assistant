@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { BRAND, LEGACY } from "@pi-assistant/shared";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -52,12 +52,51 @@ function seedBins(dataDir: string) {
 	const bin = join(dataDir, "bin");
 	mkdirSync(bin, { recursive: true });
 	for (const name of readdirSync(seed)) {
-		if (existsSync(join(bin, name))) continue;
-		try {
-			cpSync(join(seed, name), join(bin, name), { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
-		} catch (e) {
-			console.warn(`[bin-seed] ${name}: ${e instanceof Error ? e.message : e}`);
+		const dst = join(bin, name);
+		if (existsSync(dst)) continue;
+		let last: unknown;
+		for (let i = 0; i < 3; i++) {
+			try {
+				copySeed(join(seed, name), dst);
+				last = undefined;
+				break;
+			} catch (e) {
+				last = e;
+				sleepSync(300 * (i + 1));
+			}
 		}
+		if (last) console.warn(`[bin-seed] ${name}: ${last instanceof Error ? last.message : last}（之后会按需重新下载）`);
+	}
+}
+
+const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * 复制一个种子（文件或目录）：先逐个文件复制到同目录的临时名，完整后再改名到位，中途失败不会留下半截目录
+ * （有半截目录时下次启动会以为已复制而跳过）。不用 cpSync：Windows 上它对目录偶发 `EIO, Access is denied`，
+ * 杀毒软件扫描刚写入的 .exe 时也可能短暂占用，所以外层还会重试。
+ */
+export function copySeed(src: string, dst: string) {
+	const tmp = `${dst}.seed-${process.pid}`;
+	rmSync(tmp, { recursive: true, force: true });
+	const walk = (s: string, d: string) => {
+		const st = lstatSync(s);
+		if (st.isDirectory()) {
+			mkdirSync(d, { recursive: true });
+			for (const n of readdirSync(s)) walk(join(s, n), join(d, n));
+		} else if (st.isSymbolicLink()) {
+			symlinkSync(readlinkSync(s), d);
+		} else {
+			copyFileSync(s, d);
+			chmodSync(d, st.mode);
+		}
+	};
+	try {
+		walk(src, tmp);
+		renameSync(tmp, dst);
+	} catch (e) {
+		rmSync(tmp, { recursive: true, force: true });
+		throw e;
 	}
 }
 

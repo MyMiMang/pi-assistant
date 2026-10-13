@@ -1,6 +1,6 @@
 # Windows 安装包冒烟：静默安装真实的 setup.exe，像用户一样启动托盘程序，确认内置服务能在 127.0.0.1:8787 上线。
 # 另外用安装目录里的 node.exe 以托盘相同的参数直接跑一次服务，把输出打到日志和注解里，便于排查。
-# 触发：发版后 release.yml 调用；也可手动选 tag 运行；改本文件时对最新 Release 跑一次。
+# 触发：release.yml 在公开前用刚构建的安装包调用（artifact）；也可手动选 tag 运行；改本文件时对最新 Release 和 beta.8 各跑一次。
 name: windows-smoke
 on:
   workflow_dispatch:
@@ -9,6 +9,7 @@ on:
   workflow_call:
     inputs:
       tag: { type: string, required: false }
+      artifact: { type: string, required: false, description: "同一次运行里刚构建的安装包 artifact 名（发版流程用，安装包还在草稿里）" }
   push:
     branches: [main]
     paths: [".github/workflows/windows-smoke.yml"]
@@ -21,14 +22,18 @@ jobs:
       fail-fast: false
       matrix:
         # 改本文件时顺带对比上一个已知能用的版本；其他触发只测指定 tag
-        tag: ${{ fromJSON(github.event_name == 'push' && '["", "v0.1.0-beta.8"]' || '["-"]') }}
+        tag: ${{ fromJSON(github.event_name == 'push' && !inputs.artifact && github.workflow == 'windows-smoke' && '["", "v0.1.0-beta.8"]' || '["-"]') }}
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ matrix.tag == '-' && inputs.tag || matrix.tag }}
     steps:
+      - uses: actions/download-artifact@v4
+        if: inputs.artifact
+        with: { name: "${{ inputs.artifact }}", path: art }
       - name: Download setup.exe
         shell: bash
         run: |
+          if [ -n "${{ inputs.artifact }}" ]; then cp "$(find art -name '*-setup.exe' | head -1)" setup.exe; echo "TAG=artifact" >> "$GITHUB_ENV"; exit 0; fi
           if [ -z "$TAG" ]; then TAG=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName); fi
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*x64-setup.exe' -O setup.exe
