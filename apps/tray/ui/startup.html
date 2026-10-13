@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pi Assistant</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1f2328; --mute:#6b7280; --bg:#f7f7f8; --card:#fff; --line:#e5e7eb; --acc:#4f46e5; --err:#dc2626 }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e5e7eb; --mute:#9ca3af; --bg:#141416; --card:#1d1d20; --line:#2c2c31; --acc:#818cf8; --err:#f87171 } }
+  * { box-sizing: border-box }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); color:var(--fg);
+         font:14px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; padding:24px }
+  .card { width:100%; max-width:560px; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:28px }
+  h1 { font-size:18px; margin:0 0 6px; display:flex; align-items:center; gap:10px }
+  p { margin:6px 0; color:var(--mute) }
+  .spin { width:18px; height:18px; border:2px solid var(--line); border-top-color:var(--acc); border-radius:50%; animation:s 0.9s linear infinite; flex:none }
+  @keyframes s { to { transform:rotate(360deg) } }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--err); flex:none }
+  .path { display:flex; gap:8px; margin:14px 0 8px }
+  code { flex:1; min-width:0; overflow-wrap:anywhere; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:12px/1.5 ui-monospace,Consolas,monospace }
+  pre { max-height:180px; overflow:auto; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; font:11px/1.5 ui-monospace,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0 }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:16px }
+  button { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:7px 14px; font:inherit; cursor:pointer }
+  button.pri { background:var(--acc); border-color:var(--acc); color:#fff }
+  [hidden] { display:none !important }
+</style>
+</head>
+<body>
+<div class="card">
+  <div id="wait">
+    <h1><span class="spin"></span>正在启动…</h1>
+    <p id="waitMsg">第一次启动或刚更新后可能要等几十秒。</p>
+  </div>
+  <div id="fail" hidden>
+    <h1><span class="dot"></span>后台服务没有启动起来</h1>
+    <p id="failMsg">可以先点「重试」。还不行的话，把下面这个日志文件发给开发者。</p>
+    <div class="path"><code id="log">—</code><button id="copy" title="复制路径">复制</button></div>
+    <pre id="tail" hidden></pre>
+    <div class="row">
+      <button class="pri" id="retry">重试</button>
+      <button id="diag" title="复制版本、原因和日志末尾，直接粘贴发给开发者">复制诊断信息</button>
+      <button id="open">打开日志文件夹</button>
+    </div>
+  </div>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const invoke = (cmd) => window.__TAURI_INTERNALS__?.invoke(cmd).catch(() => {});
+  // 托盘程序通过 eval 调这个函数更新状态：{ state: "wait" | "fail", secs, log, tail }
+  window.piaStartup = (s) => {
+    const fail = s.state === "fail";
+    $("wait").hidden = fail;
+    $("fail").hidden = !fail;
+    if (s.log) $("log").textContent = s.log;
+    if (!fail && s.secs > 20) $("waitMsg").textContent = `已经等了 ${s.secs} 秒，第一次启动可能会久一点…`;
+    if (fail) {
+      if (s.reason) $("failMsg").textContent = s.reason + " 可以先点「重试」，还不行就把下面的日志文件发给开发者。";
+      $("tail").hidden = !s.tail;
+      $("tail").textContent = s.tail || "";
+      if (s.diag) diag = s.diag;
+    }
+  };
+  let diag = "";
+  const copy = async (btn, text, label) => {
+    try { await navigator.clipboard.writeText(text); }
+    catch { const t = document.createElement("textarea"); t.value = text; document.body.append(t); t.select(); document.execCommand("copy"); t.remove(); }
+    btn.textContent = "已复制"; setTimeout(() => (btn.textContent = label), 1500);
+  };
+  $("copy").onclick = () => copy($("copy"), $("log").textContent, "复制");
+  $("diag").onclick = () => copy($("diag"), diag || $("tail").textContent, "复制诊断信息");
+  $("retry").onclick = () => { window.piaStartup({ state: "wait", secs: 0 }); invoke("startup_retry"); };
+  $("open").onclick = () => invoke("startup_open_logs");
+</script>
+</body>
+</html>

@@ -22,6 +22,8 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 | beta.9 | 助理电脑镜像 0.1.3（修 Apple 芯片开机即退出）；模型列表重做并接入 models.dev；「操作你的电脑」提示只在真正操作时出现；README 重写，加第三方组件清单 |
 | beta.10 | 助理群聊（管理者派活、一句话建群、群专属助理）；群附件和附件真正交给模型（看图 / 识图模型兜底 / 文档文字提取）；渠道原生图片和文件；群聊审批转发到渠道；思考内容可折叠；图片生成；cua 浏览器和桌面控制；桌宠；聊天居中等手机修复 |
 
+| main（beta.10 之后，未发版） | **修 Windows 打开就是「127.0.0.1 拒绝连接」**：托盘程序拿到的安装目录是 `\\?\C:\...` 原样路径，Node 解析入口时报 `EISDIR: lstat 'C:'` 立刻退出（beta.8 起所有 Windows 版本都有，CI 里用真实安装包复现），`main.rs` 的 `plain_path()` 转回普通路径；服务日志落盘（`startup.rs`）；就绪前主窗口显示自带启动页 `apps/tray/ui/startup.html`，失败时显示原因、日志尾部、重试 / 复制诊断信息 / 打开日志文件夹；8787 被占用自动换 8788…8796（记在配置目录 `port.txt`）；新增 `windows-smoke.yml`（静默装到中文 + 空格目录、启动托盘、查 `/api/system/public`），发版后 `release.yml` 自动调用 |
+
 所有功能都有单测和 e2e（Mock 模型）。beta.10 发布前在 main 上全部通过：`npm test`、`npm run e2e`（114 步）、`node e2e/pet.mjs`。
 
 ## 3. 已验证 vs 需要真机验证
@@ -39,6 +41,9 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 - **其他**：Cloudflare 命名隧道公网连通、Web Push 真机推送、悬浮条透明（`macOSPrivateApi` / WebView2）。
 
 ## 4. 已知问题 / 限制
+- **Windows 日志位置**：托盘和服务日志在 `%LOCALAPPDATA%\com.piassistant.app\logs\server.log`（超过 5MB 轮转为 `server.old.log`）；数据目录 `%APPDATA%\Pi Assistant`。macOS：`~/Library/Logs/com.piassistant.app/server.log`。
+- Windows 上种子二进制复制时见过 `[bin-seed] cua-driver-0.34.1: EIO, Access is denied`（目录被占用 / 杀毒软件），不影响服务启动，待查。
+- `windows-smoke` 是发布**后**跑的（tauri-action 构建即上传），失败会标红但不会撤回 Release。
 - 安装包**没有签名**：macOS 第一次打开要右键选「打开」，Windows 会有 SmartScreen 提示（§5.2）。
 - 群聊：复制群专属助理时不会复制它工作区里的文件。管理者派活做得好不好，取决于用的是什么模型。
 - 附件：单个文件上限 100MB；文档摘录最多约 2 万 token；扫描版 PDF 不做 OCR。

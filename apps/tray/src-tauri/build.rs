@@ -8,6 +8,8 @@ fn main() {
         "pet_hitbox",
         "pet_drag",
         "pet_open_main",
+        "startup_retry",
+        "startup_open_logs",
     ])))
     .expect("tauri build");
 }

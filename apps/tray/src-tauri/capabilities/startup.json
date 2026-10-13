@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "startup",
+  "description": "主窗口在服务就绪前显示程序自带的启动页（本地页面）：只允许重试启动服务、打开日志文件夹",
+  "windows": ["main"],
+  "permissions": ["allow-startup-retry", "allow-startup-open-logs"]
+}

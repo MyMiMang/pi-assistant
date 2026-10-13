@@ -146,3 +146,10 @@ jobs:
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Pi Assistant $GITHUB_REF_NAME" --notes "安装说明见 docs/INSTALL.md" --latest
           gh release upload "$GITHUB_REF_NAME" dist-linux/*.tar.gz dist-linux/*.tar.gz.sha256 --clobber
           gh release edit "$GITHUB_REF_NAME" --prerelease=false --latest  # 保证是 latest（自动更新依赖）
+
+  # 发布后：在干净的 Windows 上静默安装刚发布的 setup.exe，像用户一样启动托盘程序，确认服务能在 8787 上线（失败会在 Actions 里标红）
+  windows-smoke:
+    needs: [build, linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/windows-smoke.yml
+    with: { tag: "${{ github.ref_name }}" }

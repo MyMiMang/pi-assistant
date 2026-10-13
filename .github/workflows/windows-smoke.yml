@@ -35,14 +35,17 @@ jobs:
       - name: Silent install
         shell: pwsh
         run: |
-          Start-Process -Wait -FilePath .\setup.exe -ArgumentList '/S'
-          $dir = Join-Path $env:LOCALAPPDATA 'Pi Assistant'
+          # 装到带中文和空格的目录，数据目录也放到中文路径下（模拟中文用户名）
+          $dir = 'C:\测试 用户\Pi Assistant'
+          Start-Process -Wait -FilePath .\setup.exe -ArgumentList '/S', "/D=$dir"
+          if (-not (Test-Path "$dir\pi-assistant-tray.exe")) { $dir = Join-Path $env:LOCALAPPDATA 'Pi Assistant' }
           Get-ChildItem $dir | Format-Table Name, Length
           "INSTALL=$dir" | Out-File -Append $env:GITHUB_ENV
       - name: Direct server run (same args as tray)
         shell: pwsh
         run: |
           $app = Join-Path $env:INSTALL 'app'
+          $env:APPDATA = 'C:\测试 用户\Roaming'
           $env:PIA_APP_DIR = $app; $env:PIA_PORT = '18787'; $env:PIA_LAUNCHER = 'tray'
           $p = Start-Process -PassThru -NoNewWindow -WorkingDirectory $app -FilePath (Join-Path $env:INSTALL 'node.exe') `
             -ArgumentList '--disable-warning=ExperimentalWarning','--import','tsx',"`"$app\packages\server\src\main.ts`"" `
@@ -65,6 +68,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          $env:APPDATA = 'C:\测试 用户\Roaming'; New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
           Start-Process -FilePath (Join-Path $env:INSTALL 'pi-assistant-tray.exe')
           $ok = $false
           for ($i = 0; $i -lt 150 -and -not $ok; $i++) {

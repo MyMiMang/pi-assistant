@@ -22,31 +22,68 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 mod pet;
+mod startup;
 mod updater;
 
-const PORT: u16 = 8787;
+/// 默认端口；被别的程序占用时依次换 8788…8796（capabilities 里放行了这一段），选中的端口记在配置目录 port.txt 里保持稳定
+pub const PORT: u16 = 8787;
+const PORT_SPAN: u16 = 10;
+static ACTIVE_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(PORT);
+pub fn port() -> u16 {
+    ACTIVE_PORT.load(Ordering::SeqCst)
+}
+
+fn port_free(p: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", p)).is_ok()
+}
+
+/// 选端口：上次用的优先；已有 Pi Assistant 在跑就用它；否则找第一个空闲的
+pub async fn pick_port(app: &AppHandle) {
+    let file = app.path().app_config_dir().ok().map(|d| d.join("port.txt"));
+    let saved = file.as_ref().and_then(|f| std::fs::read_to_string(f).ok()).and_then(|s| s.trim().parse::<u16>().ok()).filter(|p| (PORT..PORT + PORT_SPAN).contains(p));
+    let mut order: Vec<u16> = saved.into_iter().collect();
+    order.extend((PORT..PORT + PORT_SPAN).filter(|p| Some(*p) != saved));
+    for p in order.iter().copied() {
+        ACTIVE_PORT.store(p, Ordering::SeqCst);
+        if healthy().await || port_free(p) {
+            if p != PORT {
+                startup::log(&format!("[tray] 端口 {PORT} 被占用，改用 {p}\n"));
+            }
+            if let Some(f) = &file {
+                let _ = std::fs::write(f, p.to_string());
+            }
+            return;
+        }
+        startup::log(&format!("[tray] 端口 {p} 被其他程序占用\n"));
+    }
+    ACTIVE_PORT.store(saved.unwrap_or(PORT), Ordering::SeqCst);
+}
 const BAR_W: f64 = 440.0;
 const BAR_H: f64 = 56.0;
 
-struct State {
+pub struct State {
+    /// 服务已就绪（健康检查通过过；服务退出后清掉）
+    pub ready: AtomicBool,
+    /// 最近一次启动失败 / 退出的原因（显示在启动失败页）
+    pub last_error: Mutex<Option<String>>,
     child: Mutex<Option<CommandChild>>,
-    quitting: AtomicBool,
-    restarts: AtomicU32,
+    pub quitting: AtomicBool,
+    pub restarts: AtomicU32,
     bar_enabled: AtomicBool,
     paused: AtomicBool,
     pause_item: Mutex<Option<MenuItem<Wry>>>,
     update_item: Mutex<Option<MenuItem<Wry>>>,
 }
 
-fn base() -> String {
-    format!("http://127.0.0.1:{PORT}")
+pub fn base() -> String {
+    format!("http://127.0.0.1:{}", port())
 }
 
 fn http() -> reqwest::Client {
     reqwest::Client::builder().timeout(Duration::from_secs(3)).build().unwrap()
 }
 
-async fn healthy() -> bool {
+pub async fn healthy() -> bool {
     match http().get(format!("{}/api/system/public", base())).send().await {
         Ok(r) => r.status().is_success(),
         Err(_) => false,
@@ -54,30 +91,46 @@ async fn healthy() -> bool {
 }
 
 fn app_dir(app: &AppHandle) -> PathBuf {
-    app.path().resource_dir().expect("resource dir").join("app")
+    plain_path(app.path().resource_dir().expect("resource dir").join("app"))
 }
 
-fn start_server(app: &AppHandle) {
+/// Windows 上 resource_dir 可能是 `\\?\C:\...` 这种「原样路径」：Node 解析入口文件时会对它报
+/// `EISDIR: illegal operation on a directory, lstat 'C:'` 并立刻退出（beta.10 Windows 打不开的原因），这里转回普通路径
+fn plain_path(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        p
+    }
+}
+
+pub fn start_server(app: &AppHandle) {
     let dir = app_dir(app);
     let main = dir.join("packages").join("server").join("src").join("main.ts");
     let cmd = match app.shell().sidecar("node") {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[tray] sidecar node 不可用：{e}");
+            startup::log(&format!("[tray] sidecar node 不可用：{e}\n"));
+            *app.state::<State>().last_error.lock().unwrap() = Some(format!("找不到内置的 Node 运行时（{e}）。"));
             return;
         }
     };
+    startup::log(&format!("[tray] 启动服务：{} （目录 {}）\n", main.display(), dir.display()));
     let spawned = cmd
         .args(["--disable-warning=ExperimentalWarning", "--import", "tsx", &main.to_string_lossy()])
         .current_dir(&dir)
         .env("PIA_APP_DIR", dir.to_string_lossy().to_string())
-        .env("PIA_PORT", PORT.to_string())
+        .env("PIA_PORT", port().to_string())
         .env("PIA_LAUNCHER", "tray")
         .spawn();
     let (mut rx, child) = match spawned {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("[tray] 启动服务失败：{e}");
+            startup::log(&format!("[tray] 启动服务失败：{e}\n"));
+            *app.state::<State>().last_error.lock().unwrap() = Some(format!("启动后台服务失败（{e}），可能被杀毒软件拦截。"));
             return;
         }
     };
@@ -86,9 +139,21 @@ fn start_server(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         while let Some(ev) = rx.recv().await {
             match ev {
-                CommandEvent::Stdout(l) | CommandEvent::Stderr(l) => eprint!("[server] {}", String::from_utf8_lossy(&l)),
-                CommandEvent::Terminated(_) => {
+                CommandEvent::Stdout(l) | CommandEvent::Stderr(l) => {
+                    let t = String::from_utf8_lossy(&l);
+                    startup::log(&if t.ends_with('\n') { t.to_string() } else { format!("{t}\n") });
+                }
+                CommandEvent::Error(e) => startup::log(&format!("[tray] 服务进程错误：{e}\n")),
+                CommandEvent::Terminated(p) => {
                     let st = handle.state::<State>();
+                    st.ready.store(false, Ordering::SeqCst);
+                    startup::log(&format!("[tray] 服务进程退出：code={:?} signal={:?}\n", p.code, p.signal));
+                    if !st.quitting.load(Ordering::SeqCst) {
+                        *st.last_error.lock().unwrap() = Some(match p.code {
+                            Some(c) => format!("后台服务启动后退出了（代码 {c}）。"),
+                            None => "后台服务被系统结束了。".to_string(),
+                        });
+                    }
                     if st.quitting.load(Ordering::SeqCst) {
                         break;
                     }
@@ -112,8 +177,10 @@ pub fn open_ui(app: &AppHandle, path: &str) {
     let Ok(url) = full.parse::<tauri::Url>() else { return };
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    let ready = app.state::<State>().ready.load(Ordering::SeqCst);
     if let Some(w) = app.get_webview_window("main") {
-        if path != "/" {
+        let on_startup = w.url().map(|u| is_startup_url(&u)).unwrap_or(false);
+        if ready && (path != "/" || on_startup) {
             let _ = w.navigate(url);
         }
         let _ = w.unminimize();
@@ -122,7 +189,9 @@ pub fn open_ui(app: &AppHandle, path: &str) {
         return;
     }
     let opener = app.clone();
-    let built = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+    // 服务还没就绪：先显示打包进程序的启动页（不要让 WebView 显示「拒绝连接」），就绪后自动切过去
+    let target = if ready { WebviewUrl::External(url) } else { WebviewUrl::App("startup.html".into()) };
+    let built = WebviewWindowBuilder::new(app, "main", target)
         .title("Pi Assistant")
         .inner_size(1280.0, 820.0)
         .min_inner_size(380.0, 560.0)
@@ -135,19 +204,27 @@ pub fn open_ui(app: &AppHandle, path: &str) {
         })
         .on_navigation(|u| {
             // 主窗口只允许停留在本机服务页面；其他地址交给浏览器
-            let local = u.host_str() == Some("127.0.0.1") && u.port() == Some(PORT);
-            local || u.scheme() == "about" || u.scheme() == "blob" || u.scheme() == "data"
+            let local = u.host_str() == Some("127.0.0.1") && u.port() == Some(port());
+            local || is_startup_url(u) || u.scheme() == "about" || u.scheme() == "blob" || u.scheme() == "data"
         })
         .build();
     match built {
         Ok(w) => {
             let _ = w.set_focus();
+            if !ready {
+                tauri::async_runtime::spawn(startup::wait_then_show(app.clone()));
+            }
         }
         Err(e) => {
             eprintln!("[tray] 建主窗口失败，改用浏览器：{e}");
             let _ = app.opener().open_url(full, None::<&str>);
         }
     }
+}
+
+/// 程序自带页面（启动页）的地址：macOS/Linux 是 tauri://localhost，Windows 是 http://tauri.localhost
+pub fn is_startup_url(u: &tauri::Url) -> bool {
+    u.scheme() == "tauri" || u.host_str() == Some("tauri.localhost")
 }
 
 /// 悬浮条窗口：服务就绪后再建（它加载的是本机服务的 /hostbar 页面）
@@ -195,6 +272,7 @@ async fn bar_loop(app: AppHandle) {
         tokio::time::sleep(Duration::from_secs(2)).await;
         let Ok(r) = http().get(format!("{}/api/host-control/bar", base())).send().await else { continue };
         let Ok(j) = r.json::<serde_json::Value>().await else { continue };
+        app.state::<State>().ready.store(true, Ordering::SeqCst);
         let enabled = j["enabled"].as_bool().unwrap_or(false);
         let paused = j["paused"].as_bool().unwrap_or(false);
         let active = j["active"].as_bool().unwrap_or(false);
@@ -277,6 +355,8 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--background"])))
         .manage(State {
+            ready: AtomicBool::new(false),
+            last_error: Mutex::new(None),
             child: Mutex::new(None),
             quitting: AtomicBool::new(false),
             restarts: AtomicU32::new(0),
@@ -286,8 +366,9 @@ fn main() {
             update_item: Mutex::new(None),
         })
         .manage(pet::PetState::default())
-        .invoke_handler(tauri::generate_handler![updater::app_update_status, updater::app_update_check, updater::app_update_install, updater::app_update_set_auto, pet::pet_hitbox, pet::pet_drag, pet::pet_open_main])
+        .invoke_handler(tauri::generate_handler![updater::app_update_status, updater::app_update_check, updater::app_update_install, updater::app_update_set_auto, pet::pet_hitbox, pet::pet_drag, pet::pet_open_main, startup::startup_retry, startup::startup_open_logs])
         .setup(move |app| {
+            startup::init_log(app.handle());
             let u = updater::Updates::new(app.handle());
             app.manage(u);
             #[cfg(target_os = "macos")]
@@ -362,18 +443,22 @@ fn main() {
             let h = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // 已有服务在跑（例如源码安装）就直接用；否则启动内置服务
-                if !healthy().await {
+                pick_port(&h).await;
+                if healthy().await {
+                    h.state::<State>().ready.store(true, Ordering::SeqCst);
+                    startup::log(&format!("[tray] 已有服务在 {} 上运行，直接使用\n", port()));
+                } else {
                     start_server(&h);
                 }
-                for _ in 0..240 {
-                    if healthy().await {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-                if first_run || !background {
-                    open_ui(&h, "/");
+                let show = first_run || !background;
+                if show {
+                    // 立即打开窗口：没就绪时是启动页（open_ui 里会等待就绪再切过去 / 失败时显示原因和日志路径）
+                    let h2 = h.clone();
+                    let _ = h.run_on_main_thread(move || open_ui(&h2, "/"));
                     let _ = std::fs::write(cfg.join("first-run-done"), "1");
+                }
+                if !show && !h.state::<State>().ready.load(Ordering::SeqCst) && !startup::wait_ready(&h, 120).await {
+                    startup::fail(&h).await;
                 }
                 tauri::async_runtime::spawn(updater::auto_loop(h.clone()));
                 tauri::async_runtime::spawn(pet::run(h.clone(), base()));
@@ -405,4 +490,16 @@ fn main() {
                 stop_server(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plain_path;
+    use std::path::PathBuf;
+    #[test]
+    fn strips_verbatim_prefix() {
+        assert_eq!(plain_path(PathBuf::from(r"\\?\C:\Users\灯灯\AppData\Local\Pi Assistant\app")), PathBuf::from(r"C:\Users\灯灯\AppData\Local\Pi Assistant\app"));
+        assert_eq!(plain_path(PathBuf::from(r"\\?\UNC\srv\share\app")), PathBuf::from(r"\\srv\share\app"));
+        assert_eq!(plain_path(PathBuf::from("/Applications/Pi Assistant.app/Contents/Resources/app")), PathBuf::from("/Applications/Pi Assistant.app/Contents/Resources/app"));
+    }
 }
