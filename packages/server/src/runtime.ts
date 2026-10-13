@@ -2,6 +2,8 @@
  * Agent 运行时：每个助理一个主会话（Pi AgentSession），后台任务各自一个会话。
  * 所有 Pi 调用都经过 pi-adapter；这里负责把 Pi 事件落盘为消息并广播。
  */
+import { imageExtensions } from "./image-gen/extension.ts";
+import { imageKey } from "./image-gen/index.ts";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { approvalExtension } from "@pi-assistant/ext-approval";
@@ -430,6 +432,8 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				},
 			}),
 		});
+	// 配置了图片模型 → 挂 generate_image（image-gen/extension.ts）
+	exts.push(...imageExtensions(agentId, conversationId, taskId));
 	return exts;
 }
 /** 会话缓存键里的“本机操作”部分：开关、清单、守护进程状态变化都会重建会话 */
@@ -476,7 +480,7 @@ class AgentRuntime {
 		const thinking = this.thinkingFor(a);
 		// 模型 / 思考强度不在 key 里：用 session.setModel / setThinkingLevel 原地切换，不重建会话
 		const room = roomHooks?.info(this.id, this.conversationId) ?? null;
-		const key = `${a.name}|${a.persona}|room:${room?.key ?? "-"}|desk:${desk}|pc:${computerFor(this.id)}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}`;
+		const key = `${a.name}|${a.persona}|room:${room?.key ?? "-"}|desk:${desk}|pc:${computerFor(this.id)}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}|img:${imageKey(this.id)}`;
 		if (this.session && this.modelKey === key) {
 			if (!isSessionBusy(this.session)) await applyModelSettings(this.session, models, model, thinking).catch((e) => console.warn(`[model] ${e instanceof Error ? e.message : e}`));
 			return this.session;

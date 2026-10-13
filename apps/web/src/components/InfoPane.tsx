@@ -7,6 +7,7 @@ import { useStore } from "../store";
 import type { Attachment, ModelInfo } from "../types";
 import { AuthImage } from "./Attachments";
 import { AgentEditor } from "./AgentEditor";
+import { AgentImageModel } from "./ImageModels";
 import { MemoryTab } from "./MemoryTab";
 import { AgentExtensions } from "./AgentExtensions";
 import { AgentHostTier, useHostControl } from "./HostControl";
@@ -208,6 +209,7 @@ function AgentSettings({ agentId }: { agentId: string }) {
 	return (
 		<div className="space-y-6">
 			<AgentEditor agent={agent} />
+			<AgentImageModel agentId={agentId} />
 			<AgentExtensions agentId={agentId} />
 			<AgentHostTier agentId={agentId} />
 		</div>

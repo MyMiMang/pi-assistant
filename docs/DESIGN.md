@@ -1169,3 +1169,40 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 
 - 侧边栏「群聊」分区：叠放头像、最后一条、未读，「+」新建群聊（选助理、点「设为管理者」，默认第一个选中的；没有合适的可一键添加内置管理者「管家」）。
 - 群聊页：顶部成员条（管理者有皇冠），每条消息带头像、名字、颜色和「管理者」标记；输入 `@` 弹出成员列表（桌面在输入框上方，可上下键选择；手机是底部面板），含「所有人」；状态行“A 思考中 / 等待审批 · B 排队中”；停止按钮；群设置（名字、群说明、成员、管理者、发言上限，删除群聊）。
+
+## 18. 图片生成（2026-10-13）
+
+用户在「设置 › 模型 › 图片生成」配置图片模型；想要图片时（画图、海报、头像、改图、换背景…）助理调用 `generate_image`，图片存进工作区 `images/` 并作为图片附件直接出现在聊天里（单聊和群聊一样，群里由 `insertMessage` 自动带上 `room_id`），可点开放大、下载。
+
+### 18.1 支持的服务（`packages/server/src/image-gen/providers.ts`，纯 HTTP、不加依赖，fetch 可注入）
+
+| 类型 | 接口 | 文生图 | 改图 / 参考图 | 备注 |
+|---|---|---|---|---|
+| OpenAI 兼容 | `POST {base}/images/generations`、`/images/edits`（multipart，gpt-image 用 `image[]`） | ✅ | gpt-image、dall-e-2、中转站其它模型 | b64_json 或 url 都接；dall-e-3 一次一张自动循环；中转站不认 `size/quality` 时去掉参数重试一次 |
+| 阿里云百炼 | 文生图 `text2image/image-synthesis`（`X-DashScope-Async: enable`）+ 轮询 `/api/v1/tasks/:id`；改图 `multimodal-generation/generation` | ✅ 通义万相、Qwen-Image | qwen-image-edit、wan2.5-i2i 等 | Base URL 填 `…/compatible-mode/v1` 也行（自动去掉） |
+| 火山方舟 | `POST {base}/images/generations`（`response_format: b64_json`、`watermark: false`） | ✅ Seedream 3/4 | Seedream 4、SeedEdit（`image` 传 data URL / 数组） | 模型名可填推理接入点 `ep-…` |
+| Google Gemini | `models/{m}:generateContent`（`responseModalities: [TEXT, IMAGE]`、`imageConfig.aspectRatio`）；Imagen `:predict` | ✅ | Gemini 图片模型（inline_data） | Key 用 `x-goog-api-key` |
+| xAI | OpenAI 风格 `/images/generations` | ✅ | ❌ | 不支持尺寸参数 |
+
+- 尺寸：工具参数用 `aspect_ratio`（1:1 / 16:9 / 9:16 / 4:3 / 3:4 / 3:2 / 2:3），各家换算成自己支持的尺寸（gpt-image 1536x1024、dall-e-3 1792x1024、Qwen-Image 1664*928、Seedream 4 2560x1440…）；也可以直接给 `size`。
+- 错误统一成 `ImageGenError(code, detail)`，一句中文摘要 + 原始详情：Key 无效、安全策略拦截（moderation_blocked / DataInspectionFailed / InputTextSensitiveContentDetected / IMAGE_SAFETY…）、额度 / 限流、模型不存在、参数被拒、超时（单次 180 秒，异步任务最多轮询 5 分钟）、连不上、没返回图片。工具出错时把摘要和详情交给助理，安全拦截提示“换描述再试、不要原样重试”，Key / 模型错误提示用户去设置。
+- 参考价（`costNote`）：常见模型每张的大概价格，显示在设置页和工具说明里，标注“以服务商为准”。
+
+### 18.2 配置与选择（`image-gen/index.ts`）
+
+- `settings.imageProviders`：`{ id, name, kind, baseUrl, models[], keyFrom? }`；Key 用 `sealJson` 加密存 `imageKey:<id>`，不落明文。OpenAI 兼容服务可以**复用已添加的自定义模型服务**（`keyFrom` = 自定义服务 id，Key 从加密凭据库读，不重复保存）。
+- 自动获取：OpenAI 兼容 / xAI / 方舟 `GET {base}/models`，百炼 `compatible-mode/v1/models`，Gemini `GET models`；用 `isImageModel` 挑出图片模型（gpt-image、dall-e、imagen、seedream、wanx、qwen-image、flux、sd、kolors、cogview…）并默认勾上；拉不到时用每类服务的常用模型预设。
+- 「试生成」真实生成一张小图并显示预览（界面写明会计费）。
+- 默认图片模型 `defaultImageModel`（第一个配置的自动成为默认）；每个助理 `agentImage:<agentId>` = 跟随默认 / 指定模型 / 不画图（助理设置页「图片模型」）。没有可用模型时**不挂 `generate_image`**；图片模型变化会进会话缓存键（`img:`），下一轮自动重建会话。
+- 界面统一显示“服务名 / 模型”。
+
+### 18.3 工具 `generate_image`（`image-gen/extension.ts`）
+
+参数：`prompt`、`aspect_ratio`、`size`、`count`（1–4）、`quality`、`input_images`（工作区路径，只在模型支持改图时出现，最多 20MB、必须是图片且在工作区内）、`filename`。说明里写明**只在用户想要图片时使用**、图片会自动显示不用再 `deliver_file`、参考价。权限：算普通操作（只写自己工作区、`openWorldHint: false`），不弹审批；费用由用户自己的 Key 承担。文件名 `images/<北京时间 yyyymmdd-hhmmss>-<描述>.png`，消息 `meta.imageGen` 记模型、描述、是否改图、耗时、参考价。
+
+### 18.4 接口与测试
+
+- `GET /api/image-models`、`POST/PUT/DELETE /api/image-models/providers[/:id]`、`POST /api/image-models/fetch-models`、`PUT /api/image-models/default`、`POST /api/image-models/test`、`GET/PUT /api/agents/:id/image-model`（写配置的接口仅本机 / 主人设备）。
+- 单测 `test/image-gen.test.ts`：用 `e2e/mock-images.mjs`（一个端口模拟 OpenAI 兼容、方舟、百炼异步任务、Gemini / Imagen）测各家请求格式、尺寸换算、改图、多张、url 下载、参数被拒重试、各类错误分类、模型识别、加密保存、助理选择 / 关闭、生成后存工作区并发消息。
+- E2E「图片生成」：设置里添加服务 → 自动获取识别图片模型 → 试生成 → 默认模型；单聊“画一张…”→ 图片显示、可下载；安全策略拦截的中文提示；助理设置里关闭 / 恢复；群里 @ 成员画图（截图 `90-image-provider.png`、`91-chat-generated-image.png`、`92-room-generated-image.png`）。
+- 真实服务尚未用真 Key 验证（只用模拟服务按各家公开文档的格式测过）。

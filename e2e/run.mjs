@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { startMockOpenAI } from "./mock-openai.mjs";
+import { startMockImages } from "./mock-images.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const DATA = process.env.E2E_DATA ?? "/tmp/pia-e2e";
@@ -1775,6 +1776,75 @@ await step("提议建群：聊天里说目标 → 可编辑的提议卡片（改
 	if (!agents.some((a) => a.name === "设计" && a.scope === "user")) throw new Error("保留的应转成我的助理");
 	if (!agents.some((a) => /^写手/.test(a.name) && a.scope === "user")) throw new Error("复制出来的助理不受影响");
 	if ((await (await fetch(`${BASE}/api/rooms`)).json()).some((x) => x.name === "发布小组")) throw new Error("群应被删除");
+});
+
+await step("图片生成：设置里添加图片服务（自动获取识别图片模型 → 试生成 → 默认模型）→ 单聊让助理画图，图片直接显示可下载 → 安全策略拦截有中文提示 → 群里 @ 成员画图 → 助理可关闭画图", async () => {
+	const img = await startMockImages({ key: "sk-img-e2e" });
+	try {
+		const c = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: "light", locale: "zh-CN" });
+		const p = await c.newPage();
+		await p.goto(`${BASE}/?settings=models`);
+		const sec = p.getByTestId("image-models");
+		await sec.scrollIntoViewIfNeeded();
+		await sec.getByTestId("add-image-provider").click();
+		const f = p.getByTestId("image-provider-form");
+		await f.locator("[data-kind=openai]").click();
+		await f.getByTestId("image-name").fill("画图中转");
+		await f.getByTestId("image-base-url").fill(img.url);
+		await f.getByTestId("image-key").fill("sk-img-e2e");
+		await f.getByTestId("image-fetch").click();
+		// 自动识别出图片模型并默认勾上（聊天模型 / 向量模型不算）
+		await f.locator("[data-model=gpt-image-1]").filter({ hasText: "✓" }).waitFor();
+		if (await f.locator("[data-model=relay-chat]").count()) throw new Error("聊天模型不应出现在图片模型里");
+		await f.getByTestId("image-test").filter({ hasText: "gpt-image-1" }).click();
+		await f.getByTestId("image-test-ok").waitFor({ timeout: 20_000 });
+		await p.screenshot({ path: join(SHOTS, "90-image-provider.png") });
+		await f.getByTestId("image-save").click();
+		await sec.getByTestId("image-provider").filter({ hasText: "画图中转" }).waitFor();
+		const opt = await sec.getByTestId("default-image-model").locator("option:checked").textContent();
+		if (!/画图中转 \/ /.test(opt ?? "")) throw new Error(`默认图片模型显示不对：${opt}`);
+		await sec.getByTestId("default-image-model").selectOption({ label: "画图中转 / gpt-image-1" });
+		await c.close();
+		// 单聊：画图 → 图片附件（预览 + 下载）
+		// 用一个新助理（前面步骤的聊天里可能有带输入框的卡片）
+		const painter = (await jpost("/api/agents", { name: "画师" })).id;
+		await page.goto(`${BASE}/?agent=${painter}`);
+		const before = await page.locator("main [data-testid=image-attachment]").count();
+		await send("画一张 海边的橘猫，水彩风格");
+		await page.locator("main").getByText("画好了").last().waitFor({ timeout: 30_000 });
+		await waitFor(async () => (await page.locator("main [data-testid=image-attachment]").count()) > before);
+		await page.locator("main [data-testid=image-attachment] img").last().waitFor();
+		const call = img.seen.filter((x) => x.path === "/v1/images/generations").pop();
+		if (!/海边的橘猫/.test(call?.json?.prompt ?? "")) throw new Error(`prompt 没传到图片服务：${call?.json?.prompt}`);
+		const dl = page.waitForEvent("download");
+		await page.locator("main [data-testid=image-attachment]").last().getByRole("button", { name: "下载" }).click();
+		if (!/\.png$/.test((await dl).suggestedFilename())) throw new Error("下载的文件名应是 png");
+		const ws = await (await fetch(`${BASE}/api/agents/${painter}/workspace?path=images`)).json().catch(() => null);
+		if (ws && Array.isArray(ws) && !ws.some((e) => /海边的橘猫/.test(e.name))) throw new Error("图片应存进工作区 images/");
+		await page.screenshot({ path: join(SHOTS, "91-chat-generated-image.png") });
+		// 安全策略拦截
+		await send("画一张 违规内容");
+		await page.locator("main").getByText(/没画成.*安全策略/).last().waitFor({ timeout: 30_000 });
+		// 助理设置：图片模型选择（跟随默认 / 指定 / 不画图）
+		if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
+		await infoTab("设置");
+		await page.getByTestId("agent-image-select").selectOption("off");
+		await waitFor(async () => (await (await fetch(`${BASE}/api/agents/${painter}/image-model`)).json()).choice.mode === "off");
+		await page.getByTestId("agent-image-select").selectOption("default");
+		await waitFor(async () => (await (await fetch(`${BASE}/api/agents/${painter}/image-model`)).json()).choice.mode === "default");
+		// 群聊：@B 画图，图片显示在 B 的发言里
+		const rooms = await (await fetch(`${BASE}/api/rooms`)).json();
+		const room = rooms.find((r) => r.name === "三人组") ?? rooms[0];
+		if (room) {
+			await page.goto(`${BASE}/?room=${room.id}`);
+			await roomSay("@B 画一张 群聊海报");
+			await botsOf("B").locator("[data-testid=image-attachment] img").last().waitFor({ timeout: 40_000 });
+			await roomIdle();
+			await page.screenshot({ path: join(SHOTS, "92-room-generated-image.png") });
+		}
+	} finally {
+		img.close();
+	}
 });
 
 await browser.close();

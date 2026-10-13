@@ -1,0 +1,338 @@
+/**
+ * 图片生成模型：设置 › 模型 里的「图片生成」小节（添加服务、自动获取 / 识别图片模型、试生成、默认模型），
+ * 以及助理设置里的「图片模型」选择（跟随默认 / 指定 / 关闭）。
+ */
+import { Download, ImageIcon, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { api } from "../api";
+import { Badge, Button, cx, ErrorBox, Help, Input, useConfirm } from "./ui";
+
+type Kind = "openai" | "dashscope" | "ark" | "gemini" | "xai";
+interface KindInfo { kind: Kind; label: string; baseUrl: string; models: string[]; keyUrl?: string; note?: string }
+interface ImgProvider { id: string; name: string; kind: Kind; kindLabel: string; baseUrl: string; models: string[]; keyFrom?: string | null; hasKey: boolean }
+interface ImgModel { provider: string; providerName: string; id: string; edit: boolean; cost: string | null }
+interface Data { kinds: KindInfo[]; providers: ImgProvider[]; models: ImgModel[]; default: { provider: string; model: string; label: string } | null; reusable: { id: string; name: string; baseUrl: string; api: string }[] }
+
+export function useImageModels() {
+	const [data, setData] = useState<Data | null>(null);
+	const reload = () => api<Data>("/api/image-models").then(setData);
+	useEffect(() => {
+		void reload();
+	}, []);
+	return { data, reload };
+}
+const key = (m: { provider: string; model?: string; id?: string }) => `${m.provider}::${m.model ?? m.id}`;
+
+/** 按服务分组的图片模型选项（显示“服务名 / 模型”） */
+function Options({ models }: { models: ImgModel[] }) {
+	const groups = new Map<string, ImgModel[]>();
+	for (const m of models) groups.set(m.provider, [...(groups.get(m.provider) ?? []), m]);
+	return (
+		<>
+			{[...groups.values()].map((ms) => (
+				<optgroup key={ms[0].provider} label={ms[0].providerName}>
+					{ms.map((m) => (
+						<option key={key(m)} value={key(m)}>
+							{ms[0].providerName} / {m.id}
+						</option>
+					))}
+				</optgroup>
+			))}
+		</>
+	);
+}
+
+const selectCls = "h-9 w-full min-w-0 rounded-lg border border-line bg-transparent px-2 text-sm";
+
+export function ImageModelsSection() {
+	const { data, reload } = useImageModels();
+	const [edit, setEdit] = useState<{ id?: string; k: number } | null>(null);
+	if (!data) return null;
+	const cur = data.models.find((m) => data.default && key(m) === key(data.default));
+	return (
+		<section data-testid="image-models">
+			<div className="mb-3 flex min-w-0 items-center gap-1.5 font-semibold">
+				<span className="min-w-0 truncate">图片生成</span>
+				<Help>配置后，你想要图片时助理会调用图片模型画图或改图，生成的图直接出现在聊天里（单聊和群聊都行）。支持 OpenAI 兼容接口（OpenAI、各种中转站、硅基流动等）、阿里云百炼、火山方舟、Google Gemini、xAI。Key 加密保存在本机。</Help>
+			</div>
+			{edit ? (
+				<ImageProviderForm key={edit.k} data={data} initial={data.providers.find((p) => p.id === edit.id)} onDone={() => (void reload(), setEdit(null))} onCancel={() => setEdit(null)} />
+			) : (
+				<div className="space-y-3">
+					{data.models.length > 0 && (
+						<div className="space-y-1.5">
+							<div className="text-xs text-mut">默认图片模型</div>
+							<select
+								data-testid="default-image-model"
+								className={selectCls}
+								value={data.default ? key(data.default) : ""}
+								onChange={(e) => {
+									const m = data.models.find((x) => key(x) === e.target.value);
+									if (m) void api("/api/image-models/default", { method: "PUT", json: { provider: m.provider, model: m.id } }).then(reload);
+								}}
+							>
+								<Options models={data.models} />
+							</select>
+							{cur?.cost && <div className="text-[11px] text-mut">参考价 {cur.cost}（以服务商为准）{cur.edit ? " · 支持改图" : " · 只能文生图"}</div>}
+						</div>
+					)}
+					{data.providers.map((p) => (
+						<div key={p.id} className="flex min-w-0 items-center gap-2 rounded-xl border border-line p-3" data-testid="image-provider">
+							<ImageIcon size={16} className="shrink-0 text-mut" />
+							<div className="min-w-0 flex-1">
+								<div className="truncate text-sm font-medium">{p.name}</div>
+								<div className="truncate text-[11px] text-mut">
+									{p.kindLabel} · {p.models.join("、")}
+								</div>
+							</div>
+							{!p.hasKey && <Badge tone="amber">没有 Key</Badge>}
+							<Button size="sm" variant="ghost" title="编辑" onClick={() => setEdit({ id: p.id, k: Date.now() })}>
+								<Pencil size={14} />
+							</Button>
+						</div>
+					))}
+					<Button variant="outline" onClick={() => setEdit({ k: Date.now() })} data-testid="add-image-provider">
+						<Plus size={15} /> 添加图片生成服务
+					</Button>
+				</div>
+			)}
+		</section>
+	);
+}
+
+function ImageProviderForm({ data, initial, onDone, onCancel }: { data: Data; initial?: ImgProvider; onDone: () => void; onCancel: () => void }) {
+	const [kind, setKind] = useState<Kind>(initial?.kind ?? "openai");
+	const info = data.kinds.find((k) => k.kind === kind)!;
+	const [name, setName] = useState(initial?.name ?? "");
+	const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? info.baseUrl);
+	const [apiKey, setApiKey] = useState("");
+	const [keyFrom, setKeyFrom] = useState(initial?.keyFrom ?? "");
+	const [models, setModels] = useState<string[]>(initial?.models ?? []);
+	const [manual, setManual] = useState("");
+	const [fetched, setFetched] = useState<{ image: string[]; all: string[] } | null>(null);
+	const [showAll, setShowAll] = useState(false);
+	const [busy, setBusy] = useState("");
+	const [err, setErr] = useState("");
+	const [test, setTest] = useState<{ model: string; ok: boolean; preview?: string; ms?: number; error?: string } | null>(null);
+	const [confirmUi, confirm] = useConfirm();
+	// 试生成会先保存；之后再点保存就是更新同一个（不重复创建）
+	const [savedId, setSavedId] = useState(initial?.id);
+	const pickKind = (k: Kind) => {
+		const ni = data.kinds.find((x) => x.kind === k)!;
+		setKind(k);
+		setBaseUrl(ni.baseUrl);
+		setFetched(null);
+		if (k !== "openai") setKeyFrom("");
+	};
+	const reuse = (id: string) => {
+		setKeyFrom(id);
+		const r = data.reusable.find((x) => x.id === id);
+		if (r) (setKind("openai"), setBaseUrl(r.baseUrl), !name && setName(r.name));
+	};
+	const toggle = (m: string) => setModels((l) => (l.includes(m) ? l.filter((x) => x !== m) : [...l, m]));
+	const fetchModels = async () => {
+		setBusy("fetch");
+		setErr("");
+		try {
+			const r = await api("/api/image-models/fetch-models", { method: "POST", json: { id: savedId, kind, baseUrl, apiKey: apiKey || undefined, keyFrom: keyFrom || undefined } });
+			if (!r.ok) setErr(`${r.error}（可以直接从下面的常用模型里选）\n${r.detail ?? ""}`);
+			else {
+				setFetched(r);
+				// 自动勾上识别出的图片模型（一个都没选时）
+				if (!models.length && r.image.length) setModels(r.image.slice(0, 3));
+				if (!r.image.length) setErr("没有识别出图片模型，可以点“显示全部”手动挑，或直接输入模型名");
+			}
+		} finally {
+			setBusy("");
+		}
+	};
+	const save = async () => {
+		setBusy("save");
+		setErr("");
+		try {
+			const body = { kind, name, baseUrl, apiKey: apiKey || undefined, keyFrom: keyFrom || null, models };
+			const p = await api(savedId ? `/api/image-models/providers/${savedId}` : "/api/image-models/providers", { method: savedId ? "PUT" : "POST", json: body });
+			setSavedId(p.id);
+			return p;
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : String(e));
+			return null;
+		} finally {
+			setBusy("");
+		}
+	};
+	const runTest = async (model: string) => {
+		const p = await save();
+		if (!p) return;
+		setBusy(`test:${model}`);
+		setTest(null);
+		try {
+			const r = await api("/api/image-models/test", { method: "POST", json: { provider: p.id, model } });
+			setTest({ model, ...r, error: r.ok ? undefined : `${r.error}\n${r.detail ?? ""}` });
+		} finally {
+			setBusy("");
+		}
+	};
+	const remove = async () => {
+		if (!initial || !(await confirm({ title: `删除「${initial.name}」？`, body: "助理将不能再用这个服务画图。", ok: "删除", danger: true }))) return;
+		await api(`/api/image-models/providers/${initial.id}`, { method: "DELETE" });
+		onDone();
+	};
+	const list = fetched ? (showAll ? fetched.all : fetched.image) : [];
+	const presets = info.models.filter((m) => !list.includes(m));
+	return (
+		<div className="space-y-4" data-testid="image-provider-form">
+			{confirmUi}
+			<div className="flex items-center gap-2">
+				<Button size="sm" variant="ghost" onClick={onCancel}>
+					← 返回
+				</Button>
+				<div className="font-medium">{initial ? "编辑图片生成服务" : "添加图片生成服务"}</div>
+			</div>
+			<div className="space-y-1.5">
+				<div className="text-xs text-mut">服务类型</div>
+				<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+					{data.kinds.map((k) => (
+						<button key={k.kind} type="button" data-kind={k.kind} onClick={() => pickKind(k.kind)} className={cx("min-w-0 rounded-xl border p-2.5 text-left text-sm whitespace-normal", kind === k.kind ? "border-accent bg-accent-soft" : "border-line hover:border-accent")}>
+							<div className="truncate font-medium">{k.label}</div>
+							{k.note && <div className="mt-0.5 text-[11px] text-mut [overflow-wrap:anywhere]">{k.note}</div>}
+						</button>
+					))}
+				</div>
+			</div>
+			{kind === "openai" && data.reusable.length > 0 && (
+				<label className="block space-y-1.5">
+					<span className="text-xs text-mut">复用已添加的自定义服务（同一个中转站，不用再填 Key）</span>
+					<select className={selectCls} value={keyFrom} onChange={(e) => (e.target.value ? reuse(e.target.value) : setKeyFrom(""))} data-testid="image-reuse">
+						<option value="">不复用，单独填写</option>
+						{data.reusable.map((r) => (
+							<option key={r.id} value={r.id}>
+								{r.name}（{r.baseUrl}）
+							</option>
+						))}
+					</select>
+				</label>
+			)}
+			<label className="block space-y-1.5">
+				<span className="text-xs text-mut">名称</span>
+				<Input value={name} placeholder={info.label.replace(/（.*$/, "")} onChange={(e) => setName(e.target.value)} data-testid="image-name" />
+			</label>
+			<label className="block space-y-1.5">
+				<span className="text-xs text-mut">Base URL</span>
+				<Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} data-testid="image-base-url" />
+			</label>
+			{!keyFrom && (
+				<label className="block space-y-1.5">
+					<span className="flex items-center gap-2 text-xs text-mut">
+						API Key
+						{info.keyUrl && (
+							<a className="text-accent underline" href={info.keyUrl} target="_blank" rel="noreferrer">
+								去获取
+							</a>
+						)}
+					</span>
+					<Input type="password" autoComplete="off" value={apiKey} placeholder={initial?.hasKey ? "留空 = 保持原来的 Key" : "粘贴到这里"} onChange={(e) => setApiKey(e.target.value)} data-testid="image-key" />
+				</label>
+			)}
+			<div className="space-y-2">
+				<div className="flex flex-wrap items-center gap-2">
+					<span className="text-xs text-mut">图片模型</span>
+					<Button size="sm" variant="outline" onClick={fetchModels} disabled={!!busy} data-testid="image-fetch">
+						{busy === "fetch" ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} 自动获取
+					</Button>
+					{fetched && (
+						<button type="button" className="text-xs text-accent" onClick={() => setShowAll(!showAll)}>
+							{showAll ? `只看图片模型（${fetched.image.length}）` : `显示全部（${fetched.all.length}）`}
+						</button>
+					)}
+				</div>
+				<div className="flex flex-wrap gap-1.5">
+					{[...new Set([...models, ...list, ...presets])].map((m) => (
+						<button key={m} type="button" onClick={() => toggle(m)} data-model={m} className={cx("max-w-full truncate rounded-full border px-2.5 py-1 text-xs", models.includes(m) ? "border-accent bg-accent-soft text-accent" : "border-line text-mut hover:border-accent")}>
+							{models.includes(m) ? "✓ " : "+ "}
+							{m}
+						</button>
+					))}
+				</div>
+				<form className="flex gap-2" onSubmit={(e) => (e.preventDefault(), manual.trim() && (toggle(manual.trim()), setManual("")))}>
+					<Input value={manual} placeholder="手动输入模型名，回车添加" onChange={(e) => setManual(e.target.value)} data-testid="image-manual" />
+				</form>
+			</div>
+			{models.length > 0 && (
+				<div className="space-y-1.5">
+					<div className="text-xs text-mut">试生成一张（会真实调用一次，按服务商价格计费）</div>
+					<div className="flex flex-wrap gap-1.5">
+						{models.map((m) => (
+							<Button key={m} size="sm" variant="outline" disabled={!!busy} onClick={() => void runTest(m)} data-testid="image-test">
+								{busy === `test:${m}` ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />} {m}
+							</Button>
+						))}
+					</div>
+					{busy.startsWith("test:") && <div className="text-xs text-mut">正在生成，可能要几十秒…</div>}
+					{test?.ok && (
+						<div className="flex items-center gap-3 text-xs text-emerald-600" data-testid="image-test-ok">
+							<img src={test.preview} alt="测试图片" className="h-20 w-20 rounded-lg border border-line object-cover" />
+							<span>
+								{test.model} 可以用（{Math.round((test.ms ?? 0) / 100) / 10} 秒）
+							</span>
+						</div>
+					)}
+					{test && !test.ok && <ErrorBox text={test.error ?? "失败"} />}
+				</div>
+			)}
+			{err && <ErrorBox text={err} />}
+			<div className="flex flex-wrap gap-2">
+				<Button
+					disabled={!!busy || !models.length}
+					onClick={async () => {
+						if (await save()) onDone();
+					}}
+					data-testid="image-save"
+				>
+					{busy === "save" && <Loader2 size={14} className="animate-spin" />} 保存
+				</Button>
+				<Button variant="ghost" onClick={onCancel}>
+					<X size={14} /> 取消
+				</Button>
+				{initial && (
+					<Button variant="ghost" className="ml-auto text-red-500" onClick={remove} data-testid="image-delete">
+						<Trash2 size={14} /> 删除
+					</Button>
+				)}
+			</div>
+		</div>
+	);
+}
+
+/** 助理设置：这个助理用哪个图片模型 */
+export function AgentImageModel({ agentId }: { agentId: string }) {
+	const { data } = useImageModels();
+	const [choice, setChoice] = useState<{ mode: string; provider?: string; model?: string } | null>(null);
+	useEffect(() => {
+		void api(`/api/agents/${agentId}/image-model`).then((r) => setChoice(r.choice));
+	}, [agentId]);
+	if (!data || !choice) return null;
+	const value = choice.mode === "model" ? key({ provider: choice.provider!, model: choice.model }) : choice.mode;
+	const set = (v: string) => {
+		const m = data.models.find((x) => key(x) === v);
+		const c = m ? { mode: "model", provider: m.provider, model: m.id } : { mode: v };
+		setChoice(c);
+		void api(`/api/agents/${agentId}/image-model`, { method: "PUT", json: c });
+	};
+	return (
+		<section className="space-y-1.5" data-testid="agent-image-model">
+			<div className="flex items-center gap-1.5 text-sm font-semibold">
+				图片模型<Help>你让它画图、改图时用这个模型。选「不画图」后这个助理就没有画图工具。</Help>
+			</div>
+			{data.models.length ? (
+				<select className={selectCls} value={value} onChange={(e) => set(e.target.value)} data-testid="agent-image-select">
+					<option value="default">跟随默认{data.default ? `（${data.default.label}）` : ""}</option>
+					<Options models={data.models} />
+					<option value="off">不画图</option>
+				</select>
+			) : (
+				<div className="text-xs text-mut">还没有配置图片模型，去 设置 › 模型 › 图片生成 添加。</div>
+			)}
+		</section>
+	);
+}

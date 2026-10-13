@@ -61,6 +61,7 @@ import { downloadInfo, listDownloads, startDownload } from "./downloads.ts";
 import { availableModels, confirmMemberProposal, confirmProposal, continueRoom, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, onAgentChanged, onAgentDeleted, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "./rooms/index.ts";
 import { copyAgentToUser } from "./rooms/copy.ts";
 import { getMessage, updateMessage as patchMessage } from "./messages.ts";
+import { mountImageRoutes } from "./image-gen/routes.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
@@ -212,6 +213,8 @@ app.post("/api/models/custom/fetch-models", async (c) => {
 		return customErr(c, e);
 	}
 });
+// 图片生成模型（image-gen/routes.ts）
+mountImageRoutes(app, localOnly);
 app.get("/api/models", (c) => {
 	const names = providerNames();
 	return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => withProviderName(m, names)));

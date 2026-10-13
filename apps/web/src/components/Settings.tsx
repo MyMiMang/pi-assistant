@@ -14,6 +14,7 @@ import { EmailSettings } from "./Email";
 import { DesktopSettings } from "./DesktopSettings";
 import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
+import { ImageModelsSection } from "./ImageModels";
 import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
 import { Badge, Button, cx, fmtTime, Help, Input, Modal } from "./ui";
 import { Downloads } from "./Downloads";
@@ -161,6 +162,7 @@ function ModelsTab() {
 					</div>
 				)}
 			</section>
+			<ImageModelsSection key={custom.providers.length} />
 		</div>
 	);
 }

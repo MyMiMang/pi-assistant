@@ -164,6 +164,8 @@ function respond(messages: Msg[], systemPrompt = "") {
 		switch (last.toolName) {
 			case "write":
 				return fauxAssistantMessage([fauxToolCall("deliver_file", { path: "report.md", caption: "这是你要的报告" })]);
+			case "generate_image":
+				return fauxAssistantMessage(/失败/.test(out) ? `没画成：${out.slice(0, 300)}` : "画好了 🎨，就在上面。想换风格或比例跟我说。");
 			case "deliver_file":
 				return fauxAssistantMessage("报告已经生成并发给你了 📄，点上面的附件就能下载。");
 			case "ask_user":
@@ -197,6 +199,7 @@ function respond(messages: Msg[], systemPrompt = "") {
 		return fauxAssistantMessage([fauxToolCall("skill_save", { name: "daily-brief", description: "生成每日简报：汇总待办、日程和要闻。用户要“简报/今日概览”时使用。", body: "# 每日简报\n\n1. 列出今天的待办（最多 5 条）。\n2. 汇总日程。\n3. 用三句话总结。" })]);
 	if (/每天|定时/.test(u))
 		return fauxAssistantMessage([fauxText("好，我来设一个定时任务。"), fauxToolCall("routine_create", { name: "每日简报", prompt: "整理今天的待办和日程，给我一份三条以内的简短简报。", trigger: "cron", cron: "0 8 * * *" })]);
+	if (/画一张/.test(u)) return fauxAssistantMessage([fauxText("好，我来画。"), fauxToolCall("generate_image", { prompt: u.replace(/^.*?画一张/, "").trim() || u, aspect_ratio: "1:1" })]);
 	if (/很宽的表格/.test(u))
 		return fauxAssistantMessage(
 			`给你：\n\n| ${Array.from({ length: 12 }, (_, i) => `第${i + 1}列标题`).join(" | ")} |\n|${" --- |".repeat(12)}\n| ${Array.from({ length: 12 }, (_, i) => `数据${i + 1}-内容比较长`).join(" | ")} |\n\n\`\`\`\n${"const veryLongLine = ".padEnd(300, "x")}\n\`\`\`\n\n长链接：https://example.com/${"a".repeat(200)}`,
@@ -266,6 +269,7 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 		if (last.toolName === "room_propose_member") return fauxAssistantMessage(`${me}：我提议加一个成员，请确认。`);
 		return fauxAssistantMessage(/blocked|拒绝|denied|批准|停止/i.test(out) ? `${me}：没有获得批准，不执行。` : `${me}：已处理（${out.slice(0, 40)}）`);
 	}
+	if (/画一张/.test(said) && !/成员都已回复/.test(u)) return fauxAssistantMessage([fauxToolCall("generate_image", { prompt: said.replace(/^.*?画一张/, "").trim() || said })]);
 	if (/给你分配了任务/.test(u)) {
 		const task = u.match(/给你分配了任务：([^\n]*)/)?.[1] ?? "";
 		if (/慢慢/.test(task + said)) return fauxAssistantMessage([fauxText(`${me}：开始做，比较慢。`), fauxToolCall("bash", { command: "sleep 20; echo done" })]);
