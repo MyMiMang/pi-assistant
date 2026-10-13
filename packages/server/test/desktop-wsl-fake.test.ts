@@ -40,7 +40,7 @@ try {
 
 const W = await import("../src/desktop/wsl.ts");
 const D = await import("../src/desktop.ts");
-const { updateDesktopSettings, localImage } = await import("../src/desktop/settings.ts");
+const { updateDesktopSettings, setSeparate, localImage } = await import("../src/desktop/settings.ts");
 const { backend } = await import("../src/desktop/backend.ts");
 
 const A1 = `wslit${process.pid}a`;
@@ -78,6 +78,9 @@ test("WSL 后端：完整生命周期（假 wsl.exe + 真容器引擎）", { ski
 	writeFileSync(f.dest, REAL ? readFileSync(REAL) : "x");
 	writeFileSync(`${f.dest}.ok`, f.digest);
 	updateDesktopSettings({ enabled: true, idleMinutes: 5 });
+	// 这里测的是“每个助理一台电脑”的后端生命周期：两个助理都选“单独的电脑”（共用电脑见 shared-computer.test.ts）
+	setSeparate(A1, true);
+	setSeparate(A2, true);
 	assert.equal(backend().id, "wsl");
 	assert.equal(await W.distroState(), "missing");
 	if (REAL) {

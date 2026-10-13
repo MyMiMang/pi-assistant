@@ -90,7 +90,7 @@ test("镜像地址：按 digest 固定，加速地址只换注册表主机", () 
 });
 
 test("设置：默认关闭（不下载），空闲时间只能 5/10/30/从不", () => {
-	assert.deepEqual(desktopSettings(), { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "" });
+	assert.deepEqual(desktopSettings(), { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "", separate: [], legacyMigrated: false });
 	assert.equal(updateDesktopSettings({ idleMinutes: 30 }).idleMinutes, 30);
 	assert.equal(updateDesktopSettings({ idleMinutes: 0 }).idleMinutes, 0);
 	assert.throws(() => updateDesktopSettings({ idleMinutes: 7 }));

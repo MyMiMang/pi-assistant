@@ -7,7 +7,8 @@
 import { safeId } from "./names.ts";
 import { desktopSettings, type DesktopSettings } from "./settings.ts";
 
-export const SHARED = "shared";
+/** 共用电脑的 id（测试用 PIA_SHARED_COMPUTER 换一个，避免碰到这台机器上真在用的共用电脑） */
+export const SHARED = /^[A-Za-z0-9_-]{1,40}$/.test(process.env.PIA_SHARED_COMPUTER ?? "") ? process.env.PIA_SHARED_COMPUTER! : "shared";
 export const MAIN = "main";
 /** 主屏幕“正在被谁用”的有效期：别的助理最近这么久内在主屏幕上操作过，就算主屏幕忙 */
 export const MAIN_LEASE_MS = 90_000;

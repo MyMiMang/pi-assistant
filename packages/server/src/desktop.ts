@@ -7,6 +7,7 @@
  * 家目录是持久化卷，登录态长期保留。noVNC 端口只绑定到 127.0.0.1，由 pi-assistant-server 鉴权后反向代理（按 token 选屏幕）。
  */
 import { randomBytes } from "node:crypto";
+import { WebSocket } from "ws";
 import { createConnection, createServer } from "node:net";
 import { backend, engine, engineCommand } from "./desktop/backend.ts";
 import { IdleTracker } from "./desktop/idle.ts";
@@ -488,13 +489,40 @@ export async function stopDesktop(agentId: string) {
 	return desktopStatus(agentId);
 }
 async function stopComputer(cid: string) {
-	await docker(["stop", "-t", "3", containerName(cid)]).catch(() => {});
+	// 先让浏览器正常退出（把 cookie / 登录状态写到磁盘），再关容器：直接 docker stop（或 SIGTERM）会丢掉最近的登录
+	await closeBrowserGracefully(cid).catch(() => {});
+	await docker(["stop", "-t", "5", containerName(cid)]).catch(() => {});
 	readyOnce.delete(cid);
 	idle.forget(cid);
 	forgetScreens(cid);
 	mainLease.delete(cid);
 	await stopEngineIfIdle();
 	notify(cid);
+}
+
+/** 经 CDP 让电脑里的 Chromium 正常关闭（Browser.close 会把 cookie 写盘），最多等 8 秒 */
+async function closeBrowserGracefully(cid: string) {
+	const st = await computerStatus(cid);
+	if (st.state !== "running" || !st.cdpPort) return;
+	const v = (await (await fetch(`http://127.0.0.1:${st.cdpPort}/json/version`, { signal: AbortSignal.timeout(2000) })).json()) as { webSocketDebuggerUrl?: string };
+	if (!v.webSocketDebuggerUrl) return;
+	// 调试转发把地址里的主机写成容器内的，换成我们连得到的端口
+	const u = new URL(v.webSocketDebuggerUrl);
+	u.hostname = "127.0.0.1";
+	u.port = String(st.cdpPort);
+	await new Promise<void>((resolve) => {
+		const ws = new WebSocket(u.toString());
+		const done = () => (clearTimeout(t), resolve());
+		const t = setTimeout(() => (ws.terminate(), resolve()), 3000);
+		ws.on("open", () => ws.send(JSON.stringify({ id: 1, method: "Browser.close" })));
+		ws.on("close", done);
+		ws.on("error", done);
+	});
+	for (let i = 0; i < 25; i++) {
+		const alive = await docker(["exec", containerName(cid), "pgrep", "-x", "chromium"], { timeout: 5000 }).then(() => true, () => false);
+		if (!alive) return;
+		await new Promise((r) => setTimeout(r, 200));
+	}
 }
 
 /** 正在运行的我们自己的电脑（按 pia.agent 标签过滤） → 电脑 id 列表（shared 或助理 id） */
