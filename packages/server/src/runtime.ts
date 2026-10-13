@@ -146,14 +146,14 @@ export function setRoomHooks(h: RoomHooks) {
 
 /** 把一个 Pi 会话的事件落盘并广播。 */
 function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void) {
-	let cur: { id: string; text: string; flushAt: number } | null = null;
+	let cur: { id: string; text: string; thinking: string; flushAt: number } | null = null;
 	const tools = new Map<string, string>();
 	return subscribeSession(session, (e) => {
 		switch (e.type) {
 			case "assistant_start": {
 				// 先写库再显示：先插入空的“流式中”消息
 				const m = insertMessage({ agentId, conversationId, taskId, role: "assistant", content: "", status: "streaming" });
-				cur = { id: m.id, text: "", flushAt: Date.now() };
+				cur = { id: m.id, text: "", thinking: "", flushAt: Date.now() };
 				break;
 			}
 			case "text_delta":
@@ -162,6 +162,16 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 				bus.emit({ type: "message.delta", id: cur.id, agentId, taskId, delta: e.delta });
 				if (Date.now() - cur.flushAt > 800) {
 					updateMessage(cur.id, { content: cur.text }, false);
+					cur.flushAt = Date.now();
+				}
+				break;
+			case "thinking_delta":
+				// 原生思考：App 里实时显示在可折叠的「思考」里（不进正文、不发到外部渠道）
+				if (!cur) break;
+				cur.thinking += e.delta;
+				bus.emit({ type: "message.delta", id: cur.id, agentId, taskId, delta: e.delta, thinking: true } as never);
+				if (Date.now() - cur.flushAt > 800) {
+					updateMessage(cur.id, { meta: { thinking: cur.thinking } }, false);
 					cur.flushAt = Date.now();
 				}
 				break;
@@ -175,8 +185,10 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 				}
 				if (e.error) updateMessage(cur.id, { content: e.text, status: "error", meta: { error: e.error } });
 				else {
-					// 有些模型把思考写进正文（<think>…</think> / 只剩半截 “…</thinking>”）：正文只留回答，思考放进 meta
-					const { text, thinking } = splitThinking(e.text);
+					// 有些模型把思考写进正文（<think>…</think> / 只剩半截 “…</thinking>”）：正文只留回答，思考放进 meta.thinking（App 里折叠显示）
+					// App 里折叠显示；渠道出站另行剥离
+					const { text, thinking: inline } = splitThinking(e.text);
+					const thinking = [cur.thinking.trim(), inline].filter(Boolean).join("\n\n");
 					if (!text.trim()) deleteMessage(cur.id);
 					else updateMessage(cur.id, { content: text, status: "done", meta: { model: `${e.provider}/${e.model}`, ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}) } });
 				}

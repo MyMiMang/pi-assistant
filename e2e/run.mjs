@@ -1222,6 +1222,34 @@ await step("Phase 3 渠道：飞书 / 钉钉 / 企业微信 添加表单 + 分�
 	await page.keyboard.press("Escape");
 });
 
+await step("思考过程：App 里折叠显示「思考」（默认收起，点开可看），正文不出现 <think> 标签；桌面 + 手机宽度", async () => {
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await send("演示思考");
+	const box = page.locator("[data-testid=thinking]").last();
+	await box.waitFor({ timeout: 15_000 });
+	await page.getByText("这是回答：思考过程收在上面的「思考」里。").last().waitFor();
+	if (await box.evaluate((el) => el.open)) throw new Error("思考应默认收起");
+	if (await page.locator("main").getByText("<think>").count()) throw new Error("正文里出现了 <think> 标签");
+	await box.locator("summary").click();
+	await box.getByText("第二步：给出简短回答").waitFor();
+	await page.getByText("这是回答：思考过程收在上面的「思考」里。").last().scrollIntoViewIfNeeded();
+	await page.screenshot({ path: join(SHOTS, "93-thinking-desktop.png") });
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.waitForTimeout(300);
+	const sw = await page.evaluate(() => document.documentElement.scrollWidth);
+	if (sw > 392) throw new Error(`手机宽度横向溢出：${sw}`);
+	// 手机宽度下右侧面板是浮层：先关掉再看聊天
+	for (let i = 0; i < 3 && (await page.locator("aside").last().getByText("后台任务").isVisible().catch(() => false)); i++) {
+		await page.keyboard.press("Escape");
+		await page.waitForTimeout(200);
+		if (await page.locator("aside").last().getByText("后台任务").isVisible().catch(() => false)) await page.locator("aside").last().locator("button").first().click().catch(() => {});
+		await page.waitForTimeout(300);
+	}
+	await page.getByText("这是回答：思考过程收在上面的「思考」里。").last().scrollIntoViewIfNeeded();
+	await page.screenshot({ path: join(SHOTS, "93-thinking-mobile.png") });
+	await page.setViewportSize({ width: 1280, height: 800 });
+});
+
 await step("微信 ClawBot（模拟 iLink）：扫码连接 → 二维码 → 确认后已连接 → 微信里发消息 → 助理回复发回微信", async () => {
 	const { createServer: http } = await import("node:http");
 	let qr = "wait";

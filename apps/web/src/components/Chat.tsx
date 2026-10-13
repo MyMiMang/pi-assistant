@@ -12,6 +12,7 @@ import type { Agent, Attachment, Message } from "../types";
 import Attachments from "./Attachments";
 import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
 import Markdown from "./Markdown";
+import { splitThinking } from "../thinking";
 import { Avatar, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
 import { ProposalCard } from "./RoomCards";
@@ -143,16 +144,34 @@ export function Activity({ tool }: { tool?: Message }) {
 	);
 }
 
+/** 可折叠的「思考」：默认收起；思考中显示动态提示 */
+export function Thinking({ text, live }: { text: string; live: boolean }) {
+	return (
+		<details className="pa-thinking" data-testid="thinking">
+			<summary>
+				<Brain className="pa-ic" />
+				<span className={live ? "pa-shimmer" : undefined}>{live ? "思考中…" : "思考"}</span>
+			</summary>
+			<div className="pa-thinking-body">{text}</div>
+		</details>
+	);
+}
+
 export function BotPart({ p, live }: { p: Part; live: boolean }) {
 	if (p.kind === "steps") return <Steps items={p.items} live={live} />;
 	const m = p.m;
 	if (m.role === "card")
 		return m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
+	// 思考：原生 reasoning（meta.thinking）+ 正文里的 <think>…</think>（旧消息 / 流式中），折叠显示，不当正文
+	const split = splitThinking(m.content);
+	const thinking = [String(m.meta.thinking ?? "").trim(), split.thinking].filter(Boolean).join("\n\n");
+	const body = split.text;
 	return (
 		<>
-			{(m.content || m.status === "streaming") && (
+			{thinking && <Thinking text={thinking} live={m.status === "streaming" && !body} />}
+			{(body || (m.status === "streaming" && !thinking)) && (
 				<div className={cx("pa-bubble prose-wrap", m.status === "error" && "error")}>
-					{m.content ? <Markdown text={m.content} /> : null}
+					{body ? <Markdown text={body} /> : null}
 					{m.status === "streaming" && <span className="caret text-sm" />}
 					{m.status === "error" && <div className="mt-1 text-xs text-red-500">{String(m.meta.error ?? "出错了")}</div>}
 					{m.status === "interrupted" && <div className="mt-1 text-xs text-mut2">（已中断）</div>}

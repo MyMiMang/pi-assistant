@@ -3,7 +3,6 @@ import { Children, isValidElement, memo, type ReactElement, type ReactNode } fro
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { stripThinking } from "../thinking";
 
 /** 单独成段的链接渲染成链接卡片（结果以卡片呈现） */
 function LinkCard({ href }: { href: string }) {
@@ -30,9 +29,7 @@ function LinkCard({ href }: { href: string }) {
 	);
 }
 
-export default memo(function Markdown({ text: raw }: { text: string }) {
-	// 模型把思考写进正文（<think>…</think>、半截 “…</thinking>”、流式中未闭合）时不当正文显示
-	const text = stripThinking(raw);
+export default memo(function Markdown({ text }: { text: string }) {
 	return (
 		<div className="pa-md prose prose-sm min-w-0 max-w-full break-words [overflow-wrap:anywhere] prose-p:my-1.5 prose-pre:my-2 prose-ul:my-1.5 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1.5">
 			<ReactMarkdown

@@ -423,6 +423,8 @@ export function messageText(message: unknown): string {
 export type AgentEvent =
 	| { type: "assistant_start" }
 	| { type: "text_delta"; delta: string }
+	/** 模型原生的思考 / 推理内容（reasoning） */
+	| { type: "thinking_delta"; delta: string }
 	| {
 			type: "assistant_end";
 			text: string;
@@ -447,6 +449,7 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 				break;
 			case "message_update":
 				if (ev.assistantMessageEvent?.type === "text_delta") fn({ type: "text_delta", delta: ev.assistantMessageEvent.delta });
+				else if (ev.assistantMessageEvent?.type === "thinking_delta") fn({ type: "thinking_delta", delta: ev.assistantMessageEvent.delta });
 				break;
 			case "message_end":
 				if (ev.message?.role === "assistant") {

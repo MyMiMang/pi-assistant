@@ -205,6 +205,7 @@ function respond(messages: Msg[], systemPrompt = "") {
 		return fauxAssistantMessage(
 			`给你：\n\n| ${Array.from({ length: 12 }, (_, i) => `第${i + 1}列标题`).join(" | ")} |\n|${" --- |".repeat(12)}\n| ${Array.from({ length: 12 }, (_, i) => `数据${i + 1}-内容比较长`).join(" | ")} |\n\n\`\`\`\n${"const veryLongLine = ".padEnd(300, "x")}\n\`\`\`\n\n长链接：https://example.com/${"a".repeat(200)}`,
 		);
+	if (/演示思考/.test(u)) return fauxAssistantMessage("<think>先想一想：用户想看思考过程怎么显示。\n第二步：给出简短回答。</think>这是回答：思考过程收在上面的「思考」里。");
 	if (/服务刚刚重启/.test(u)) return fauxAssistantMessage("我检查了一下进度：服务重启时上一轮命令被中断了。工作区里的文件都还在，需要的话再说一声我就重新执行。");
 	if (/后台/.test(u) && !/统计工作区/.test(u))
 		return fauxAssistantMessage([fauxToolCall("spawn_task", { title: "统计工作区文件", instructions: "统计工作区文件：列出工作区所有文件并统计数量，给出简短总结。" })]);

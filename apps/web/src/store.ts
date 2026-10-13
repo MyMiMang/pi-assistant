@@ -217,8 +217,12 @@ export const useStore = create<State>((set, get) => ({
 			}
 			case "message.delta":
 				if (e.taskId) break;
-				patchRooms((l) => (l.some((m) => m.id === e.id) ? l.map((m) => (m.id === e.id ? { ...m, content: m.content + e.delta } : m)) : l));
-				patchMsgs(e.agentId, (l) => l.map((m) => (m.id === e.id ? { ...m, content: m.content + e.delta } : m)));
+				{
+					// 原生思考增量进 meta.thinking（折叠显示），正文增量进 content
+					const add = (m: Message) => (e.thinking ? { ...m, meta: { ...m.meta, thinking: String(m.meta?.thinking ?? "") + e.delta } } : { ...m, content: m.content + e.delta });
+					patchRooms((l) => (l.some((m) => m.id === e.id) ? l.map((m) => (m.id === e.id ? add(m) : m)) : l));
+					patchMsgs(e.agentId, (l) => l.map((m) => (m.id === e.id ? add(m) : m)));
+				}
 				break;
 			case "message.updated": {
 				const m = e.message as Message;
