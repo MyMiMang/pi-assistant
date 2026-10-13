@@ -107,6 +107,7 @@ npm run check:pi         # Pi 升级兼容检查
 - Hindsight：`packages/server/src/memory/hindsight/`（sidecar 安装/启动、provider 账本+同步队列、settings 三模型）。
 - 操作这台电脑：`host-control.ts`（服务端）、`HostControl.tsx`（设置 + 输入框旁档位按钮）、`HostFloatBar.tsx`（悬浮条页面）、`apps/tray/src-tauri/src/main.rs`（悬浮条窗口）。
 - 通用 UI 组件：`apps/web/src/components/ui.tsx`（Button / Modal / Badge / Input / **Help**「?」气泡 / **useConfirm** 确认框）；主题 `apps/web/src/themes/*.css`（勾选框、开关 `.pa-switch`、帮助气泡、下载条样式在 `app.css` 末尾）。
+- 助理群聊：`packages/server/src/rooms/logic.ts`（@ 解析、发言规则、上限、增量注入，纯逻辑）、`rooms/index.ts`（建群/成员/调度/停止/继续/重启恢复、群规则与 `room_assign` / `room_propose_member` / `propose_room` 工具）、`rooms/copy.ts`（复制到我的助理）；界面 `RoomChat.tsx`（群聊页、@ 补全、新建群、群设置、删群）、`RoomCards.tsx`（提议卡片、群专属助理操作）。Mock 模型里 `roomReply` 是 e2e 用的脚本（“派给X”“循环”“慢慢”“加个成员”“组个团队”）。设计见 DESIGN §17。
 - 输入框工具栏：`Chat.tsx`（`ContextRing` 上下文圆环、`ModelPicker`、`ThinkingPicker`、`HostTierPill`）。
 
 ## 6. 未解决 / 已知问题
@@ -117,6 +118,8 @@ npm run check:pi         # Pi 升级兼容检查
 - 远程 Hindsight 换不同维度的向量模型需要对方实例自己迁移（本机模式已自动处理，见 §5.19.1）。
 - MCP 服务器经 `npx` 首次下载、没有进度显示（npm 自己下载，拿不到字节进度）。
 - 界面文字精简是逐页做的：设置页小节说明都已收进「?」，其他页面如果还觉得字多，按同样方式用 `<Help>` 处理。
+
+- 群聊：群里的审批卡片不转发到飞书等 IM 渠道（只有网页 / 手机推送）；群里发消息暂不支持附件（文件要发给某个助理时在私聊里发）；复制群专属助理不复制工作区文件。真实模型下管理者派活的质量取决于模型，已用 Mock 跑通全部规则。
 
 ## 7. 下一步（按用户确认的顺序）
 
