@@ -63,14 +63,19 @@ function respond(messages: Msg[], systemPrompt = "") {
 		return fauxAssistantMessage("## Goal\n用户在测试 Pi Assistant 的各项功能。\n\n## Progress\n- 已演示流式回复、文件、审批、后台任务等。\n\n## Next Steps\n- 继续按用户要求操作。");
 	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !/^(后台|定时)任务「/.test(textOf(m)));
 	// 渠道消息前面的［渠道：…］说明不算用户说的话（否则里面的“文件 / 图片”会触发关键词）
-	const u = lastUser ? textOf(lastUser).replace(/^［渠道：[^］]*］\n?/, "") : "";
-	// 工作途中插话（Pi steer 送达）：先简短回应，按内容决定换方向 / 停下
+	let u = lastUser ? textOf(lastUser).replace(/^［渠道：[^］]*］\n?/, "") : "";
+	// 工作途中插话（Pi steer 送达）：打断的是多步任务（慢慢数）时先简短回应、按内容换方向 / 停下；
+	// 否则（上一轮其实已经收尾，只是还在流式结束）当成普通的新请求处理，去掉前缀照常匹配
 	if (u.startsWith("（你工作时用户发来的新消息）") && last.role === "user") {
 		const said = u.replace(/^（你工作时用户发来的新消息）\n?/, "").replace(/^（用户在群里说）/, "");
-		return fauxAssistantMessage(/停|别做/.test(said) ? "收到，我停下了。" : `收到插话：${said.slice(0, 40)}。按新要求调整。`);
+		const prev = [...messages.slice(0, messages.lastIndexOf(lastUser!))].reverse().find((m) => m.role === "user");
+		if (prev && /慢慢数/.test(textOf(prev))) return fauxAssistantMessage(/停|别做/.test(said) ? "收到，我停下了。" : `收到插话：${said.slice(0, 40)}。按新要求调整。`);
+		u = u.replace(/^（你工作时用户发来的新消息）\n?/, "");
 	}
 	// 慢慢数：多步、每步都慢（测试工作途中插话 / 停止）
-	if (/慢慢数/.test(u)) {
+	// 群聊注入里带着整段群聊记录：只看这一轮用户最新说的话（【用户】…），免得之前的“慢慢数”让后面每一轮都去数数
+	const roomSaid = u.startsWith("（群聊「") ? ([...u.matchAll(/【用户】([^\n]*)/g)].pop()?.[1] ?? "") : u;
+	if (/慢慢数/.test(roomSaid)) {
 		const since = messages.slice(messages.lastIndexOf(lastUser!) + 1).filter((m) => m.role === "toolResult").length;
 		if (since < 3) return fauxAssistantMessage([...(since ? [] : [fauxText("好，我慢慢数。")]), fauxToolCall("bash", { command: `sleep 2; echo 第${since + 1}步` })]);
 		return fauxAssistantMessage("数完了：1、2、3。");
