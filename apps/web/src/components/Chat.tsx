@@ -2,7 +2,7 @@ import { HostControlBar, HostTierPill } from "./HostControl";
 import { ModelPicker, ThinkingPicker } from "./ModelPicker";
 import { ContextRing } from "./ContextRing";
 import { ProactivityPicker } from "./Proactive";
-import { AlarmClock, Brain, Puzzle, ArrowUp, Check, ChevronRight, Globe, Hand, Loader2, Menu, Monitor, PanelRight, Paperclip, Square, Terminal, X, FileText, FolderSearch, PenLine, Send, Sparkles, Eye } from "lucide-react";
+import { AlarmClock, Brain, Puzzle, ArrowUp, Check, ChevronRight, Globe, Hand, Loader2, Menu, Monitor, PanelRight, Paperclip, Square, Terminal, X, FileText, FolderSearch, PenLine, Send, Sparkles, Eye, Users } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, upload } from "../api";
 import { t } from "../i18n";
@@ -14,6 +14,7 @@ import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
 import Markdown from "./Markdown";
 import { Avatar, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
+import { ProposalCard } from "./RoomCards";
 
 // ------------------------------------------------------------------ 工具 → 文案
 const TOOL_LABEL: Record<string, string> = {
@@ -48,8 +49,8 @@ const brief = (args: Record<string, any> = {}) => String(args.command ?? args.pa
 const secs = (ms: number) => (ms < 1000 ? "<1 秒" : ms < 60_000 ? `${(ms / 1000).toFixed(1)} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`);
 
 // ------------------------------------------------------------------ 消息分组
-type Part = { kind: "msg"; m: Message } | { kind: "steps"; items: Message[] };
-type Row = { kind: "user"; m: Message } | { kind: "system"; m: Message } | { kind: "bot"; id: string; parts: Part[] } | { kind: "day"; label: string; id: string };
+export type Part = { kind: "msg"; m: Message } | { kind: "steps"; items: Message[] };
+export type Row = { kind: "user"; m: Message } | { kind: "system"; m: Message } | { kind: "bot"; id: string; parts: Part[] } | { kind: "day"; label: string; id: string };
 
 function dayLabel(ts: number) {
 	const d = new Date(ts);
@@ -62,7 +63,7 @@ function dayLabel(ts: number) {
 	return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
 }
 
-function group(list: Message[]): Row[] {
+export function group(list: Message[]): Row[] {
 	const rows: Row[] = [];
 	let lastTs = 0;
 	for (const m of list) {
@@ -128,7 +129,7 @@ function Steps({ items, live }: { items: Message[]; live: boolean }) {
 	);
 }
 
-function Activity({ tool }: { tool?: Message }) {
+export function Activity({ tool }: { tool?: Message }) {
 	const a = activityOf(tool?.meta.toolName, tool?.meta.args);
 	return (
 		<div className="pa-activity" data-testid="activity">
@@ -142,10 +143,11 @@ function Activity({ tool }: { tool?: Message }) {
 	);
 }
 
-function BotPart({ p, live }: { p: Part; live: boolean }) {
+export function BotPart({ p, live }: { p: Part; live: boolean }) {
 	if (p.kind === "steps") return <Steps items={p.items} live={live} />;
 	const m = p.m;
-	if (m.role === "card") return m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : <TaskCard m={m} />;
+	if (m.role === "card")
+		return m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
 	return (
 		<>
 			{(m.content || m.status === "streaming") && (
@@ -180,7 +182,7 @@ function BotTurn({ row, agent, live }: { row: Extract<Row, { kind: "bot" }> | nu
 	);
 }
 
-function UserMsg({ m, reaction }: { m: Message; reaction?: "eyes" | "done" }) {
+export function UserMsg({ m, reaction }: { m: Message; reaction?: "eyes" | "done" }) {
 	return (
 		<div className="pa-msg user">
 			{m.content && (
@@ -194,7 +196,7 @@ function UserMsg({ m, reaction }: { m: Message; reaction?: "eyes" | "done" }) {
 	);
 }
 
-function SystemMsg({ m }: { m: Message }) {
+export function SystemMsg({ m, canContinue = true }: { m: Message; canContinue?: boolean }) {
 	return (
 		<div className="flex justify-center py-1">
 			<div className={cx("max-w-md px-3 py-1 text-center text-xs", m.meta.kind === "compaction" ? "rounded-xl" : "rounded-full", m.status === "error" ? "bg-red-500/10 text-red-600" : "bg-hover text-mut")}>
@@ -204,6 +206,16 @@ function SystemMsg({ m }: { m: Message }) {
 						<summary className="cursor-pointer text-accent">查看摘要</summary>
 						<div className="mt-1 whitespace-pre-wrap rounded-lg bg-card p-2 text-[11px] leading-relaxed">{m.meta.summary}</div>
 					</details>
+				)}
+				{m.meta.action === "room-continue" && m.room_id && canContinue && (
+					<button className="ml-2 font-medium text-accent" data-testid="room-continue" onClick={() => api(`/api/rooms/${m.room_id}/continue`, { method: "POST" })}>
+						继续
+					</button>
+				)}
+				{m.meta.action === "room-settings" && m.room_id && (
+					<button className="ml-2 font-medium text-accent" onClick={() => window.dispatchEvent(new CustomEvent("pia:room-settings", { detail: m.room_id }))}>
+						群设置
+					</button>
 				)}
 				{m.meta.action === "open-models" && (
 					<button className="ml-2 font-medium text-accent" onClick={() => useStore.getState().set({ settings: "models" })}>
@@ -275,6 +287,12 @@ export default function Chat({ agentId }: { agentId: string }) {
 					</small>
 				</div>
 				<div className="pa-head-actions">
+					{agent.scope === "room" && agent.room_id && (
+						<button className="pa-chip" data-testid="back-to-room" onClick={() => void useStore.getState().selectRoom(agent.room_id!)} title="这是群专属助理，返回它所在的群">
+							<Users className="pa-ic" />
+							<span className="max-sm:hidden">回到群聊</span>
+						</button>
+					)}
 					<ConversationMenu agentId={agent.id} />
 					<button className="pa-chip max-sm:!hidden" onClick={() => set({ info: true, infoTab: "computer" })}>
 						<Monitor className="pa-ic" />
@@ -424,7 +442,7 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 }
 
 /** 左栏开关：窄屏打开抽屉；宽屏下左栏收起时显示，点击展开 */
-function SideToggle() {
+export function SideToggle() {
 	const width = useWindowWidth();
 	const layout = useStore((s) => s.layout);
 	const { sideDocked, sideDrawer } = resolveLayout(width, layout);

@@ -64,7 +64,7 @@ function respond(messages: Msg[], systemPrompt = "") {
 	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !/^(后台|定时)任务「/.test(textOf(m)));
 	const u = lastUser ? textOf(lastUser) : "";
 	// 群聊（rooms）：按群消息里的提示脚本化地扮演管理者 / 成员
-	if (u.startsWith("（群聊「")) return roomReply(u, systemPrompt, last);
+	if (u.startsWith("（群聊「")) return roomReply(u, systemPrompt, last, messages);
 	// 提议建群：用户说“组个团队/建个群…”
 	if (/组个团队|建个群/.test(u)) {
 		if (last.role === "toolResult") return fauxAssistantMessage("我按你的目标设计了一个小团队，看看卡片，改好了点“确认创建”。");
@@ -253,9 +253,11 @@ export async function registerMockProvider(models: PiModels) {
 }
 
 /** 群聊里的 Mock 行为（e2e 用）：管理者“派给X”就分配，“循环”时每次总结都再派一次；成员完成后回报 */
-function roomReply(u: string, systemPrompt: string, last: Msg) {
-	const me = systemPrompt.match(/- ([^\n（]+)(?:（管理者）)?（你）/)?.[1] ?? "我";
-	const users = [...u.matchAll(/【用户】([^\n]*)/g)].map((m) => m[1]);
+function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) {
+	void systemPrompt;
+	const me = u.match(/· 你是 ([^（）\n]+)/)?.[1]?.trim() ?? "我";
+	// 用户最近说的话：从整段会话里找（管理者总结时这一轮注入里可能没有用户的话）
+	const users = messages.filter((m) => m.role === "user").flatMap((m) => [...textOf(m).matchAll(/【用户】([^\n]*)/g)].map((x) => x[1]));
 	const said = users[users.length - 1] ?? "";
 	const target = said.match(/派给([^\s，,。]+)/)?.[1];
 	if (last.role === "toolResult") {

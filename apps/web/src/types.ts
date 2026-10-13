@@ -2,12 +2,22 @@ export interface Attachment { fileId: string; name: string; mime: string; size: 
 export interface Message {
 	id: string; agent_id: string; conversation_id?: string | null; task_id: string | null; role: "user" | "assistant" | "tool" | "system" | "card";
 	content: string; meta: Record<string, any> & { attachments?: Attachment[] }; status: string; created_at: number; updated_at: number;
+	room_id?: string | null; seq?: number;
 }
 export interface Agent {
 	id: string; name: string; avatar: string; color: string; persona: string; description: string; status: string; unread: number;
 	model: { provider: string; id: string } | null; model_provider: string | null; model_id: string | null; workspace: string;
 	last?: { content: string; role: string; created_at: number } | null;
 	conversation_id?: string; memory_provider?: string | null; thinking?: string; thinkingSetting?: string | null;
+	/** user = 我的助理；room = 群专属助理（不在侧边栏） */
+	scope?: "user" | "room"; room_id?: string | null;
+}
+export interface RoomMember { agentId: string; name: string; avatar: string; color: string; left: boolean; deleted: boolean; scope: string; status: string }
+export interface RoomCaps { maxTurns: number; maxDepth: number; perAgent: number; tokenBudget: number; followup: boolean }
+export interface RoomState { running: boolean; current: { agentId: string; reason: string } | null; queue: string[] }
+export interface Room {
+	id: string; name: string; purpose: string; managerId: string | null; caps: RoomCaps; unread: number; paused: { reason: string } | null;
+	members: RoomMember[]; last?: { content: string; role: string; agent_id: string; created_at: number } | null; created_at: number; updated_at: number; state: RoomState;
 }
 export interface Conversation { id: string; agent_id: string; title: string; created_at: number; updated_at: number; message_count: number; last: string | null }
 export interface MemoryEntry { id: string; text: string; kind: "fact" | "experience" | "note"; scope: "user" | "agent" | "conversation"; createdAt: string; expiresAt: number | null; conversationId: string | null; source: string | null }

@@ -6,12 +6,16 @@ import { api } from "../api";
 import { t } from "../i18n";
 import { setAppearance, useStore } from "../store";
 import { AgentEditor } from "./AgentEditor";
+import { NewRoom, StackedAvatars } from "./RoomChat";
 import { Avatar, Button, cx, fmtTime, Modal } from "./ui";
 import { BRAND } from "@pi-assistant/shared";
 
 
 export default function Sidebar() {
-	const { agents, current, set, system, conn, tasks, theme } = useStore();
+	const { agents: allAgents, current, set, system, conn, tasks, theme, rooms, room } = useStore();
+	// 群专属助理不在侧边栏（在群成员里）
+	const agents = allAgents.filter((a) => a.scope !== "room");
+	const [newRoom, setNewRoom] = useState(false);
 	const [q, setQ] = useState("");
 	const [creating, setCreating] = useState(false);
 	const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -56,9 +60,10 @@ export default function Sidebar() {
 					<button
 						key={a.id}
 						data-testid="sidebar-agent"
+						data-name={a.name}
 						onClick={() => {
 							if (press.current?.fired) return void (press.current = null);
-							set({ current: a.id, drawer: false });
+							void useStore.getState().selectAgent(a.id);
 						}}
 						onContextMenu={(e) => {
 							e.preventDefault();
@@ -80,16 +85,40 @@ export default function Sidebar() {
 						onPointerUp={() => press.current && !press.current.fired && (clearTimeout(press.current.t), (press.current = null))}
 						onPointerCancel={() => press.current && (clearTimeout(press.current.t), (press.current = null))}
 						style={{ WebkitTouchCallout: "none", userSelect: "none" }}
-						className={cx("pa-agent", a.id === current && "active")}
+						className={cx("pa-agent", a.id === current && !room && "active")}
 					>
 						<Avatar agentId={a.id} text={a.avatar} color={a.color} size={32} running={a.status === "running"} />
 						<span className="pa-agent-txt">
 							<b className="truncate">{a.name}</b>
 							<small>{a.status === "running" ? "正在工作…" : a.description || (a.last?.content.replace(/[#*`>\n]/g, " ").slice(0, 40) ?? "")}</small>
 						</span>
-						{a.unread > 0 && a.id !== current ? <span className="pa-badge">{a.unread > 99 ? "99+" : a.unread}</span> : <span className="shrink-0 text-[11px] text-mut2">{a.last ? fmtTime(a.last.created_at) : ""}</span>}
+						{a.unread > 0 && (a.id !== current || room) ? <span className="pa-badge">{a.unread > 99 ? "99+" : a.unread}</span> : <span className="shrink-0 text-[11px] text-mut2">{a.last ? fmtTime(a.last.created_at) : ""}</span>}
 					</button>
 				))}
+				<div className="pa-sec-label flex items-center">
+					<span className="flex-1">群聊</span>
+					<button className="pa-icon-btn ghost !h-6 !w-6" title="新建群聊" aria-label="新建群聊" onClick={() => setNewRoom(true)} data-testid="new-room-btn">
+						<Plus size={14} />
+					</button>
+				</div>
+				{rooms.filter((r) => !q || r.name.includes(q)).map((r) => {
+					const who = r.last?.role === "user" ? "我" : r.members.find((m) => m.agentId === r.last?.agent_id)?.name;
+					return (
+						<button key={r.id} data-testid="sidebar-room" className={cx("pa-agent", r.id === room && "active")} onClick={() => void useStore.getState().selectRoom(r.id)}>
+							<StackedAvatars room={r} size={20} max={3} />
+							<span className="pa-agent-txt">
+								<b className="truncate">{r.name}</b>
+								<small>{r.state?.running ? "正在讨论…" : r.last ? `${who ? `${who}：` : ""}${r.last.content.replace(/[#*`>\n]/g, " ").slice(0, 40)}` : `${r.members.filter((m) => !m.left).length} 位成员`}</small>
+							</span>
+							{r.unread > 0 && r.id !== room ? <span className="pa-badge" data-testid="room-unread">{r.unread > 99 ? "99+" : r.unread}</span> : <span className="shrink-0 text-[11px] text-mut2">{r.last ? fmtTime(r.last.created_at) : ""}</span>}
+						</button>
+					);
+				})}
+				{!rooms.length && !q && (
+					<button className="mx-2.5 mb-1 text-left text-xs text-mut2 hover:text-fg" onClick={() => setNewRoom(true)}>
+						把几个助理拉进一个群，一起干活
+					</button>
+				)}
 				{running > 0 && (
 					<>
 						<div className="pa-sec-label">{t("后台任务")}</div>
@@ -113,6 +142,7 @@ export default function Sidebar() {
 				</button>
 			</div>
 			<NewAgent open={creating} onClose={() => setCreating(false)} />
+			<NewRoom open={newRoom} onClose={() => setNewRoom(false)} />
 			{menu && createPortal(
 				<div
 					role="menu"

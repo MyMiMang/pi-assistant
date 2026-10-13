@@ -251,6 +251,12 @@ export function postUserMessage(roomId: string, text: string, opts: { mentions?:
 	if (!body.trim()) throw new Error("empty");
 	const parsed = parseMentions(body, memberRefs(roomId), opts.mentions ?? []);
 	const msg = insertMessage({ agentId: "", roomId, conversationId: null, role: "user", content: body, meta: { from: opts.from, mentions: parsed.ids, all: parsed.all } });
+	// 暂停后回复“继续”：接着跑没说完的
+	if (r.paused && !states.get(roomId)?.current && !parsed.ids.length && /^\s*(继续|接着来|continue)\s*[。.!！]?\s*$/i.test(body)) {
+		continueRoom(roomId);
+		changed(roomId);
+		return msg;
+	}
 	if (r.paused) db.prepare("UPDATE rooms SET paused = NULL WHERE id = ?").run(roomId);
 	const s = states.get(roomId);
 	if (s?.current) {
@@ -347,7 +353,8 @@ async function runTurn(roomId: string, s: RoomState, t: PlannedTurn & { turnId: 
 	snapshot(roomId, t.agentId);
 	const tr = transcriptFor(roomId, t.agentId);
 	const managerName = getAgent(r.manager_id ?? "")?.name ?? "管理者";
-	const prompt = [`（群聊「${r.name}」里的新消息）`, tr.text || "（没有新消息）", "——", REASON_LINE(t, managerName, caps.maxDepth - t.depth - 1)].join("\n");
+	const selfName = getAgent(t.agentId)?.name ?? "";
+	const prompt = [`（群聊「${r.name}」里的新消息 · 你是 ${selfName}${t.agentId === r.manager_id ? "（管理者）" : ""}）`, tr.text || "（没有新消息）", "——", REASON_LINE(t, managerName, caps.maxDepth - t.depth - 1)].join("\n");
 	db.prepare("UPDATE room_members SET cursor = ? WHERE room_id = ? AND agent_id = ?").run(tr.lastSeq || memberRow(roomId, t.agentId)?.cursor || 0, roomId, t.agentId);
 	s.current = { agentId: t.agentId, turnId: t.turnId, conversationId: conv, reason: t.reason };
 	s.assignments = [];
@@ -410,7 +417,7 @@ export async function stop(roomId: string, note = true) {
 export function continueRoom(roomId: string) {
 	const r = getRoom(roomId);
 	if (!r) throw new Error("群不存在");
-	if (states.get(roomId)?.current) return false;
+	if (states.get(roomId)?.current || !r.paused) return false;
 	const p = r.paused ? (JSON.parse(r.paused) as { pending: PlannedTurn[] }) : null;
 	db.prepare("UPDATE rooms SET paused = NULL WHERE id = ?").run(roomId);
 	const s = fresh();

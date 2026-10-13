@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, connectWs, getConn, refreshFromRendezvous, saveConn } from "./api";
 import Chat from "./components/Chat";
+import RoomChat from "./components/RoomChat";
 import DeviceApproval from "./components/DeviceApproval";
 import InfoPane from "./components/InfoPane";
 import Onboarding from "./components/Onboarding";
@@ -14,7 +15,7 @@ import { Resizer } from "./components/Resizer";
 import { BRAND } from "@pi-assistant/shared";
 
 export default function App() {
-	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout } = useStore();
+	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout, room, paneAgent, loadRooms, selectRoom } = useStore();
 	const width = useWindowWidth();
 	const L = resolveLayout(width, layout);
 	const [fatal, setFatal] = useState<null | "unpaired" | "offline">(null);
@@ -36,6 +37,7 @@ export default function App() {
 			try {
 				await loadSystem();
 				await loadAgents();
+				await loadRooms().catch(() => {});
 			} catch (e) {
 				setFatal(e instanceof ApiError && e.status === 401 ? "unpaired" : "offline");
 				return;
@@ -46,9 +48,11 @@ export default function App() {
 					// 重连后重新拉取快照，保证所有设备一致
 					void loadSystem();
 					void loadAgents().then(() => {
-						const id = useStore.getState().current;
-						if (id) void selectAgent(id);
+						const st = useStore.getState();
+						if (st.room) void selectRoom(st.room);
+						else if (st.current) void selectAgent(st.current);
 					});
+					void loadRooms().catch(() => {});
 				}
 				if (s === "unauthorized") setFatal("unpaired");
 			});
@@ -67,8 +71,12 @@ export default function App() {
 	}, []);
 
 	useEffect(() => {
-		if (current) void selectAgent(current);
+		if (current && !useStore.getState().room) void selectAgent(current);
 	}, [current]);
+	useEffect(() => {
+		if (room) void selectRoom(room);
+	}, [room]);
+	const paneId = room ? paneAgent : current;
 
 	if (fatal)
 		return (
@@ -119,13 +127,13 @@ export default function App() {
 					{L.sideDocked && <Resizer side="right" value={layout.sideW} onChange={(v) => setLayout({ sideW: clampSide(v) })} onReset={() => setLayout({ sideW: SIDE.def })} onCollapse={() => setLayout({ sideCollapsed: true })} label="调整助理列表宽度" />}
 				</div>
 			)}
-			<main className="pa-chat">{current ? <Chat agentId={current} /> : null}</main>
-			{info && current && (
+			<main className="pa-chat">{room ? <RoomChat roomId={room} /> : current ? <Chat agentId={current} /> : null}</main>
+			{info && paneId && (
 				<>
 					{!L.paneDocked && <div className="fixed inset-0 z-40 bg-black/40" onClick={() => set({ info: false })} />}
 					<div className="pa-pane-wrap">
 						<Resizer side="left" value={layout.paneW} onChange={(v) => setLayout({ paneW: clampPane(v) })} onReset={() => setLayout({ paneW: PANE.def })} onCollapse={() => set({ info: false })} label="调整信息面板宽度" />
-						<InfoPane agentId={current} />
+						<InfoPane agentId={paneId} />
 					</div>
 				</>
 			)}

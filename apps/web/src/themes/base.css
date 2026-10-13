@@ -217,3 +217,32 @@ html, body { overflow-x: hidden; max-width: 100%; overscroll-behavior-x: none; }
 .pa-scroll { overflow-x: hidden; overflow-y: auto; overscroll-behavior-x: none; }
 .pa-thread-body, .pa-thread-body > *, .pa-msg { min-width: 0; max-width: 100%; }
 .pa-bubble { min-width: 0; }
+
+/* ---------------------------------------------------------------- 助理群聊 */
+.pa-stack{display:inline-flex;align-items:center;flex-shrink:0}
+.pa-stack-i{display:inline-flex;border-radius:999px;box-shadow:0 0 0 2px var(--panel,var(--bg))}
+.pa-stack-i+.pa-stack-i,.pa-stack-i+.pa-stack-more{margin-left:calc(var(--s) * -0.38)}
+.pa-stack-more{display:inline-grid;place-items:center;border-radius:999px;background:var(--hover);color:var(--mut);font-size:10px;box-shadow:0 0 0 2px var(--panel,var(--bg))}
+.pa-room-members{display:flex;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;padding:6px 16px;border-bottom:1px solid var(--line);flex-shrink:0;max-width:100%}
+.pa-room-member{display:inline-flex;align-items:center;gap:5px;max-width:160px;flex-shrink:0;height:30px;padding:0 10px 0 4px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--fg);background:var(--card)}
+.pa-room-member:hover{background:var(--hover)}
+.pa-room-name{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;margin-bottom:2px;min-width:0}
+.pa-room-badge{font-size:10px;font-weight:500;padding:1px 6px;border-radius:999px;background:rgba(245,158,11,.14);color:#b45309}
+.pa-room-badge.muted{background:var(--hover);color:var(--mut)}
+.pa-room-status{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 0;max-width:100%;overflow:hidden}
+.pa-room-st{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 10px;border-radius:999px;background:var(--acc-soft);color:var(--fg);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pa-room-st.muted{background:var(--hover);color:var(--mut)}
+.pa-room-hint{font-size:12px;color:var(--mut2);min-width:0}
+.pa-mention-pop{position:absolute;left:8px;right:8px;bottom:calc(100% + 6px);max-width:320px;z-index:30;border:1px solid var(--line);background:var(--panel,var(--card));border-radius:var(--r-sm,10px);box-shadow:var(--shadow);overflow:hidden}
+.pa-mention-list{max-height:260px;overflow-y:auto;padding:4px}
+.pa-mention-opt{display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border-radius:8px;text-align:left;font-size:14px;color:var(--fg);min-width:0}
+.pa-mention-opt.hi{background:var(--hover)}
+.pa-mention-all{display:grid;place-items:center;width:24px;height:24px;border-radius:999px;background:var(--acc-soft);color:var(--acc);flex-shrink:0}
+.pa-mention-sheet{position:fixed;left:0;right:0;bottom:0;z-index:50;background:var(--panel,var(--card));border-radius:16px 16px 0 0;box-shadow:var(--shadow);padding-top:8px;max-height:60vh;display:flex;flex-direction:column}
+.pa-mention-sheet .pa-mention-list{max-height:none;flex:1;padding:4px 8px 12px}
+.pa-mention-sheet .pa-mention-opt{padding:11px 12px;font-size:15px}
+.pa-sheet-grip{width:36px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 8px}
+.pa-room-pick{max-height:min(320px,45vh);overflow-y:auto;border:1px solid var(--line);border-radius:var(--r-sm,10px);padding:4px}
+.pa-room-pick-row{display:flex;align-items:center;gap:8px;min-width:0;padding:6px 8px;border-radius:8px}
+.pa-room-pick-row.on{background:var(--hover)}
+.pa-pm{border:1px solid var(--line);border-radius:var(--r-sm,10px);padding:8px;min-width:0;background:var(--card)}

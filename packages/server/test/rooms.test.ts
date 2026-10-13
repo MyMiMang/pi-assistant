@@ -148,3 +148,13 @@ test("提议：模型只能是已配置的；确认后创建群专属助理；�
 	await rooms.deleteRoom(room2.id, { keepAgents: [b] });
 	assert.equal((db.prepare("SELECT scope FROM agents WHERE id = ?").get(b) as { scope: string }).scope, "user");
 });
+test("服务重启：运行中的群聊回合标记中断，群里出现“继续”", () => {
+	const r = rooms.createRoom({ name: "重启群", memberIds: ["rb", "rc"] });
+	db.prepare("INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, depth, status, created_at) VALUES('t1', ?, 'rd', 'rb', 'manager', 0, 'running', ?)").run(r.id, now());
+	db.prepare("INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, task, depth, status, created_at) VALUES('t2', ?, 'rd', 'rc', 'assign', '写报告', 1, 'queued', ?)").run(r.id, now());
+	rooms.bootstrapRooms();
+	const paused = JSON.parse(rooms.getRoom(r.id)!.paused!);
+	assert.deepEqual(paused.pending.map((p: { agentId: string; reason: string }) => [p.agentId, p.reason]), [["rb", "resume"], ["rc", "assign"]]);
+	assert.ok(listRoomMessages(r.id).some((m) => m.meta.action === "room-continue"));
+	assert.equal((db.prepare("SELECT COUNT(*) AS n FROM room_turns WHERE room_id = ? AND status = 'interrupted'").get(r.id) as { n: number }).n, 2);
+});

@@ -14,6 +14,7 @@ import { ResponsiveTabs } from "./ResponsiveTabs";
 import { RoutinesTab } from "./RoutinesTab";
 import { ProactiveTab } from "./Proactive";
 import { Avatar, Badge, Button, cx, fmtSize, fmtTime, Input } from "./ui";
+import { RoomAgentActions } from "./RoomCards";
 
 const TABS = [
 	["overview", "概览"],
@@ -43,6 +44,7 @@ export default function InfoPane({ agentId }: { agentId: string }) {
 				<h2>{agent.name}</h2>
 				<p>{agent.description || (agent.status === "running" ? t("正在工作") : t("空闲"))}</p>
 			</section>
+			<RoomAgentActions agentId={agent.id} />
 			<ResponsiveTabs tabs={TABS} value={tab} onChange={setTab} className="px-3" testId="info-tabs" />
 			<div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-6">
 				{tab === "overview" && <Overview agentId={agentId} />}

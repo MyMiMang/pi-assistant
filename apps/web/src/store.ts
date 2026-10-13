@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { getTheme } from "./themes/registry";
 import { api } from "./api";
 import { loadLayout, type LayoutPrefs, saveLayout } from "./layout";
-import type { Agent, Conversation, Device, Message, SystemInfo, Task } from "./types";
+import type { Agent, Conversation, Device, Message, Room, SystemInfo, Task } from "./types";
 
 type Theme = "light" | "dark" | "system";
 interface State {
@@ -13,6 +13,16 @@ interface State {
 	cloudflareSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
 	tunnelSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
 	current: string | null;
+	/** 群聊 */
+	rooms: Room[];
+	/** 正在看的群（不为空时主区域显示群聊） */
+	room: string | null;
+	/** 群消息（按群） */
+	roomMsgs: Record<string, Message[]>;
+	/** 群里点了成员头像：右侧面板显示这个助理 */
+	paneAgent: string | null;
+	loadRooms: () => Promise<void>;
+	selectRoom: (id: string) => Promise<void>;
 	/** 当前对话的消息（按助理） */
 	messages: Record<string, Message[]>;
 	/** 每个助理的对话列表与当前对话 */
@@ -66,6 +76,10 @@ export const useStore = create<State>((set, get) => ({
 	system: null,
 	agents: [],
 	current: null,
+	rooms: [],
+	room: new URLSearchParams(location.search).get("room"),
+	roomMsgs: {},
+	paneAgent: null,
 	messages: {},
 	convs: {},
 	memoryVersion: 0,
@@ -114,10 +128,20 @@ export const useStore = create<State>((set, get) => ({
 	async loadAgents() {
 		const agents = await api<Agent[]>("/api/agents");
 		const cur = get().current;
-		set({ agents, current: cur && agents.some((a) => a.id === cur) ? cur : (new URLSearchParams(location.search).get("agent") ?? agents[0]?.id ?? null) });
+		set({ agents, current: cur && agents.some((a) => a.id === cur) ? cur : (new URLSearchParams(location.search).get("agent") ?? agents.find((a) => a.scope !== "room")?.id ?? agents[0]?.id ?? null) });
+	},
+	async loadRooms() {
+		const rooms = await api<Room[]>("/api/rooms");
+		set({ rooms, room: get().room && !rooms.some((r) => r.id === get().room) ? null : get().room });
+	},
+	async selectRoom(id) {
+		set({ room: id, drawer: false, paneAgent: null });
+		const msgs = await api<Message[]>(`/api/rooms/${id}/messages?limit=200`);
+		set((s) => ({ roomMsgs: { ...s.roomMsgs, [id]: msgs }, rooms: s.rooms.map((r) => (r.id === id ? { ...r, unread: 0 } : r)) }));
+		void api(`/api/rooms/${id}/read`, { method: "POST" }).catch(() => {});
 	},
 	async selectAgent(id) {
-		set({ current: id, drawer: false });
+		set({ current: id, drawer: false, room: null });
 		const c = await get().loadConversations(id);
 		const msgs = await api<Message[]>(`/api/agents/${id}/messages?limit=300&conversation=${c.current}`);
 		set((s) => ({ messages: { ...s.messages, [id]: msgs } }));
@@ -150,9 +174,31 @@ export const useStore = create<State>((set, get) => ({
 			const list = s.messages[agentId];
 			if (list) set({ messages: { ...get().messages, [agentId]: fn(get().messages[agentId] ?? list) } });
 		};
+		const patchRooms = (fn: (l: Message[]) => Message[], only?: string | null) => {
+			const all = get().roomMsgs;
+			const next: Record<string, Message[]> = {};
+			let hit = false;
+			for (const [k, l] of Object.entries(all)) {
+				if (only && k !== only) continue;
+				const n = fn(l);
+				if (n !== l) (next[k] = n), (hit = true);
+			}
+			if (hit) set({ roomMsgs: { ...all, ...next } });
+		};
 		switch (e.type) {
 			case "message.created": {
 				const m = e.message as Message;
+				if (m.room_id) {
+					const rid = m.room_id;
+					if (get().roomMsgs[rid]) patchRooms((l) => (l.some((x) => x.id === m.id) ? l : [...l, m]), rid);
+					const viewing = get().room === rid && isVisible();
+					set({ rooms: get().rooms.map((r) => (r.id === rid ? { ...r, unread: viewing ? 0 : r.unread + (m.role === "assistant" || m.role === "card" ? 1 : 0), last: (m.role === "user" || m.role === "assistant") && m.content ? { content: m.content, role: m.role, agent_id: m.agent_id, created_at: m.created_at } : r.last, updated_at: m.created_at } : r)) });
+					if (viewing) {
+						clearTimeout(readTimer);
+						readTimer = window.setTimeout(() => api(`/api/rooms/${rid}/read`, { method: "POST" }).catch(() => {}), 400);
+					}
+					break;
+				}
 				if (m.task_id) break;
 				const cur = get().convs[m.agent_id]?.current;
 				if (!cur || !m.conversation_id || m.conversation_id === cur) patchMsgs(m.agent_id, (l) => (l.some((x) => x.id === m.id) ? l : [...l, m]));
@@ -171,10 +217,15 @@ export const useStore = create<State>((set, get) => ({
 			}
 			case "message.delta":
 				if (e.taskId) break;
+				patchRooms((l) => (l.some((m) => m.id === e.id) ? l.map((m) => (m.id === e.id ? { ...m, content: m.content + e.delta } : m)) : l));
 				patchMsgs(e.agentId, (l) => l.map((m) => (m.id === e.id ? { ...m, content: m.content + e.delta } : m)));
 				break;
 			case "message.updated": {
 				const m = e.message as Message;
+				if (m.room_id) {
+					patchRooms((l) => (l.some((x) => x.id === m.id) ? l.map((x) => (x.id === m.id ? { ...m, seq: x.seq } : x)) : l), m.room_id);
+					break;
+				}
 				if (m.task_id) break;
 				patchMsgs(m.agent_id, (l) => l.map((x) => (x.id === m.id ? m : x)));
 				if (m.role === "assistant" && m.status === "done")
@@ -182,7 +233,17 @@ export const useStore = create<State>((set, get) => ({
 				break;
 			}
 			case "message.deleted":
+				patchRooms((l) => (l.some((m) => m.id === e.id) ? l.filter((m) => m.id !== e.id) : l));
 				if (!e.taskId) patchMsgs(e.agentId, (l) => l.filter((m) => m.id !== e.id));
+				break;
+			case "rooms.changed":
+				void get().loadRooms();
+				break;
+			case "room.state":
+				set({ rooms: get().rooms.map((r) => (r.id === e.roomId ? { ...r, state: e.state } : r)) });
+				break;
+			case "room.read":
+				set({ rooms: get().rooms.map((r) => (r.id === e.roomId ? { ...r, unread: 0 } : r)) });
 				break;
 			case "agent.status":
 				set({ agents: get().agents.map((a) => (a.id === e.agentId ? { ...a, status: e.status } : a)) });

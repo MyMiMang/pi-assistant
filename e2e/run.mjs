@@ -1618,6 +1618,165 @@ await step("Linux 服务器版：控制台设置码 → 网页首次设置成为
 	}
 });
 
+// ---------------------------------------------------------------- 助理群聊
+const jpost = async (path, body, method = "POST") => (await fetch(`${BASE}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) })).json();
+let ROOM = "";
+const roomSay = async (text) => {
+	const box = page.getByTestId("room-input");
+	await box.waitFor();
+	await box.fill(text);
+	await box.press("Enter");
+	await page.waitForFunction(() => document.querySelector("[data-testid=room-input]")?.value === "", null, { timeout: 10_000 });
+};
+const roomIdle = () => page.waitForFunction(() => !document.querySelector("[data-testid=room-status]"), null, { timeout: 60_000 });
+const botsOf = (name) => page.locator(`[data-testid=room-bot][data-agent="${name}"]`);
+await step("群聊：新建群（A/B/C，管理者 A）→ @A 只有 A 回答 → 不 @ 只有管理者，它派活触发 B → B @C 不会叫醒 C → @ 自动补全", async () => {
+	for (const n of ["A", "B", "C"]) await jpost("/api/agents", { name: n });
+	await page.goto(BASE);
+	await page.getByTestId("new-room-btn").click();
+	const dlg = page.getByTestId("new-room");
+	await dlg.getByTestId("room-name").fill("三人组");
+	for (const n of ["A", "B", "C"]) await dlg.locator(`[data-name="${n}"]`).getByTestId("room-pick-agent").check();
+	if (!(await dlg.getByTestId("room-pick-manager").first().textContent()).includes("管理者")) throw new Error("默认第一个选中的是管理者");
+	await dlg.getByTestId("room-create").click();
+	await page.getByTestId("room-title").filter({ hasText: "三人组" }).waitFor();
+	ROOM = (await (await fetch(`${BASE}/api/rooms`)).json()).find((r) => r.name === "三人组").id;
+	if ((await page.getByTestId("sidebar-room").count()) < 1) throw new Error("侧边栏没有群聊");
+	await roomSay("@A 你好");
+	await botsOf("A").getByText("A 回复").waitFor({ timeout: 30_000 });
+	await roomIdle();
+	if ((await botsOf("B").count()) || (await botsOf("C").count())) throw new Error("@A 时只有 A 应该回答");
+	await roomSay("这件事派给B 提醒C");
+	await botsOf("B").getByText("B 完成了").waitFor({ timeout: 40_000 });
+	await page.locator("main").getByText("A 总结：大家都完成了").last().waitFor({ timeout: 40_000 });
+	await roomIdle();
+	if (await botsOf("C").count()) throw new Error("B @C 不应该叫醒 C");
+	if (!(await page.locator("[data-testid=room-bot][data-agent=A]").first().getByText("管理者").count())) throw new Error("管理者标记");
+	// @ 自动补全（桌面弹出层）
+	const box = page.getByTestId("room-input");
+	await box.fill("");
+	await box.pressSequentially("@");
+	await page.getByTestId("mention-list").waitFor();
+	if (!(await page.getByTestId("mention-opt").filter({ hasText: "所有人" }).count())) throw new Error("@ 列表里应有所有人");
+	await page.getByTestId("mention-opt").filter({ hasText: /^B/ }).click();
+	if ((await box.inputValue()) !== "@B ") throw new Error(`补全结果不对：${await box.inputValue()}`);
+	await box.fill("");
+	await page.screenshot({ path: join(SHOTS, "80-room-manager.png") });
+});
+await step("群聊：上限暂停（本轮已暂停，回复继续）→ 点继续接着跑", async () => {
+	await roomSay("循环 派给B");
+	await page.locator("main").getByText(/本轮已暂停/).last().waitFor({ timeout: 60_000 });
+	await roomIdle();
+	const before = await page.locator("[data-testid=room-bot]").count();
+	// 回复“继续”：接着跑暂停时没说完的（点“继续”按钮效果相同）
+	if (!(await page.getByTestId("room-continue").count())) throw new Error("暂停提示上应有继续按钮");
+	await roomSay("继续");
+	await page.waitForFunction((n) => document.querySelectorAll("[data-testid=room-bot]").length > n || document.querySelectorAll("[data-testid=room-continue]").length > 1, before, { timeout: 40_000 });
+	await roomIdle();
+	const msgs = await (await fetch(`${BASE}/api/rooms/${ROOM}/messages`)).json();
+	const turns = msgs.filter((m) => m.role === "assistant" && m.content).length;
+	if (turns < 6) throw new Error(`发言太少：${turns}`);
+});
+await step("群聊：审批卡片显示在群里（带助理名）→ 批准；停止按钮中止所有人", async () => {
+	await roomSay("@B 审批一下删除");
+	const card = botsOf("B").getByTestId("approval-card").last();
+	await card.waitFor({ timeout: 30_000 });
+	await page.getByTestId("room-status").getByText("等待审批").waitFor();
+	await card.getByRole("button", { name: "批准" }).click();
+	await botsOf("B").getByText("B：已处理").waitFor({ timeout: 30_000 });
+	await roomIdle();
+	await roomSay("@C 慢慢做，@A 等一下");
+	await page.getByTestId("room-status").getByText("排队中").waitFor({ timeout: 20_000 });
+	await page.getByTestId("room-stop").click();
+	await page.locator("main").getByText("已停止").last().waitFor({ timeout: 20_000 });
+	await roomIdle();
+	await page.waitForTimeout(1500);
+	if (await botsOf("A").filter({ hasText: "慢慢做" }).count()) throw new Error("停止后排队的 A 不应该再说话");
+});
+await step("群聊：手机宽度 @ 底部面板、整页不横向滚动；4 套主题下群聊界面不溢出", async () => {
+	const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN" });
+	const pp = await phone.newPage();
+	await pp.goto(`${BASE}/?room=${ROOM}`);
+	await pp.getByTestId("room-chat").waitFor();
+	await pp.getByTestId("mention-btn").click();
+	await pp.getByTestId("mention-sheet").waitFor();
+	await pp.getByTestId("mention-sheet").getByTestId("mention-opt").filter({ hasText: /^C/ }).click();
+	if (!(await pp.getByTestId("room-input").inputValue()).includes("@C")) throw new Error("底部面板选择后应插入 @C");
+	const m = await pp.evaluate(() => ({ doc: document.documentElement.scrollWidth, vw: innerWidth, sc: (() => { const s = document.querySelector(".pa-scroll"); return s ? s.scrollWidth - s.clientWidth : 0; })() }));
+	if (m.doc > m.vw || m.sc > 1) throw new Error(`手机上群聊被撑宽：${JSON.stringify(m)}`);
+	await pp.screenshot({ path: join(SHOTS, "81-room-phone.png") });
+	await phone.close();
+	for (const skin of ["linear", "glass", "warm", "noir"]) {
+		const c = await browser.newContext({ viewport: { width: 1100, height: 800 }, locale: "zh-CN", colorScheme: skin === "noir" ? "dark" : "light" });
+		await c.addInitScript((s) => localStorage.setItem("pia.skin", s), skin);
+		const p = await c.newPage();
+		await p.goto(`${BASE}/?room=${ROOM}`);
+		await p.getByTestId("room-chat").waitFor();
+		await p.waitForTimeout(500);
+		const bad = await p.evaluate(() => {
+			const out = [];
+			for (const sel of [".pa-chat-head", ".pa-room-status", ".pa-composer-bar"]) {
+				const el = document.querySelector(sel);
+				if (el && el.scrollWidth > el.clientWidth + 1) out.push(sel);
+			}
+			return out;
+		});
+		if (bad.length) throw new Error(`${skin} 主题溢出：${bad.join(",")}`);
+		await p.screenshot({ path: join(SHOTS, "themes", `${skin}-room.png`) });
+		await c.close();
+	}
+});
+await step("提议建群：聊天里说目标 → 可编辑的提议卡片（改名/改模型/加删成员/换管理者）→ 确认创建 → 群专属助理不在侧边栏 → 管理者提议加人 → 复制到我的助理 → 删群（保留选项）", async () => {
+	await page.goto(`${BASE}/?agent=${AGENT}`);
+	await page.locator("main textarea").waitFor();
+	await send("帮我组个团队做新品发布");
+	const card = page.getByTestId("room-proposal").last();
+	await card.waitFor({ timeout: 30_000 });
+	await card.getByTestId("proposal-name").fill("发布小组");
+	await card.getByTestId("proposal-add").click();
+	if ((await card.getByTestId("proposal-member").count()) !== 3) throw new Error("加成员");
+	await card.getByTestId("pm-remove").last().click();
+	await card.getByTestId("pm-name").nth(1).fill("写手");
+	await card.getByTestId("pm-model").nth(1).selectOption({ index: 1 });
+	await card.getByTestId("pm-manager").nth(1).click();
+	await card.getByTestId("proposal-confirm").click();
+	await page.getByTestId("room-title").filter({ hasText: "发布小组" }).waitFor();
+	const rooms = await (await fetch(`${BASE}/api/rooms`)).json();
+	const r = rooms.find((x) => x.name === "发布小组");
+	if (r.managerId !== r.members.find((m) => m.name === "写手").agentId) throw new Error("管理者应是写手");
+	const side = await page.getByTestId("sidebar-agent").allTextContents();
+	if (side.some((t) => /写手|统筹/.test(t))) throw new Error("群专属助理不应出现在侧边栏");
+	// 管理者提议加人（用户确认后才加入）
+	await roomSay("帮我加个成员");
+	const mp = page.getByTestId("member-proposal").last();
+	await mp.waitFor({ timeout: 30_000 });
+	await mp.getByTestId("proposal-confirm").click();
+	await page.getByTestId("room-members").locator("button[title^='设计']").waitFor({ timeout: 10_000 });
+	// 复制到我的助理
+	await page.getByTestId("room-members").locator("button[title^='写手']").click();
+	await page.getByTestId("room-agent-actions").waitFor();
+	await page.getByTestId("copy-to-mine").click();
+	await page.getByTestId("copy-memory").check();
+	await page.getByTestId("copy-confirm").click();
+	await page.getByTestId("copy-done").waitFor();
+	await page.getByTestId("sidebar-agent").filter({ hasText: "写手" }).first().waitFor();
+	// 删群：列出要删的群专属助理，可以保留
+	await page.getByTestId("room-settings-btn").click();
+	await page.getByTestId("room-delete").click();
+	const dd = page.getByTestId("delete-room-dialog");
+	await dd.waitFor();
+	if ((await dd.getByTestId("keep-agent").count()) !== 3) throw new Error(`应列出 3 个群专属助理：${await dd.getByTestId("keep-agent").count()}`);
+	await dd.locator("label").filter({ hasText: "设计" }).getByTestId("keep-agent").check();
+	await page.screenshot({ path: join(SHOTS, "82-room-delete.png") });
+	await dd.getByTestId("confirm-delete-room").click();
+	await page.waitForFunction(() => !document.querySelector("[data-testid=delete-room-dialog]"));
+	const agents = await (await fetch(`${BASE}/api/agents`)).json();
+	if (agents.some((a) => a.name === "统筹")) throw new Error("没保留的群专属助理应被删除");
+	if (!agents.some((a) => a.name === "设计" && a.scope === "user")) throw new Error("保留的应转成我的助理");
+	if (!agents.some((a) => /^写手/.test(a.name) && a.scope === "user")) throw new Error("复制出来的助理不受影响");
+	if ((await (await fetch(`${BASE}/api/rooms`)).json()).some((x) => x.name === "发布小组")) throw new Error("群应被删除");
+});
+
 await browser.close();
 await stopServer();
 console.log("\n===== 结果 =====");
