@@ -22,7 +22,7 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 | beta.9 | 助理电脑镜像 0.1.3（修 Apple 芯片开机即退出）；模型列表重做并接入 models.dev；「操作你的电脑」提示只在真正操作时出现；README 重写，加第三方组件清单 |
 | beta.10 | 助理群聊（管理者派活、一句话建群、群专属助理）；群附件和附件真正交给模型（看图 / 识图模型兜底 / 文档文字提取）；渠道原生图片和文件；群聊审批转发到渠道；思考内容可折叠；图片生成；cua 浏览器和桌面控制；桌宠；聊天居中等手机修复 |
 
-| main（beta.10 之后，未发版） | **修 Windows 打开就是「127.0.0.1 拒绝连接」**：托盘程序拿到的安装目录是 `\\?\C:\...` 原样路径，Node 解析入口时报 `EISDIR: lstat 'C:'` 立刻退出（beta.8 起所有 Windows 版本都有，CI 里用真实安装包复现），`main.rs` 的 `plain_path()` 转回普通路径；服务日志落盘（`startup.rs`）；就绪前主窗口显示自带启动页 `apps/tray/ui/startup.html`，失败时显示原因、日志尾部、重试 / 复制诊断信息 / 打开日志文件夹；8787 被占用自动换 8788…8796（记在配置目录 `port.txt`）；新增 `windows-smoke.yml`（静默装到中文 + 空格目录、启动托盘、查 `/api/system/public`），发版改成先草稿、Windows/mac 冒烟通过才公开（见 DESIGN「CI 构建」）；修 Windows 上 cua-driver 种子复制失败（Node `cpSync` 复制目录在 Windows 上报 `EIO, Access is denied`，用户电脑上实测复现，改为逐文件复制到临时目录再改名 + 重试，`config.ts` `copySeed`） |
+| beta.11 | **修 Windows 打开就是「127.0.0.1 拒绝连接」**：托盘程序拿到的安装目录是 `\\?\C:\...` 原样路径，Node 解析入口时报 `EISDIR: lstat 'C:'` 立刻退出（beta.8 起所有 Windows 版本都有，CI 里用真实安装包复现），`main.rs` 的 `plain_path()` 转回普通路径；服务日志落盘（`startup.rs`）；就绪前主窗口显示自带启动页 `apps/tray/ui/startup.html`，失败时显示原因、日志尾部、重试 / 复制诊断信息 / 打开日志文件夹；8787 被占用自动换 8788…8796（记在配置目录 `port.txt`）；新增 `windows-smoke.yml`（静默装到中文 + 空格目录、启动托盘、查 `/api/system/public`），发版改成先草稿、Windows/mac 冒烟通过才公开（见 DESIGN「CI 构建」）；发版演练（release-dryrun 分支，run 38415435058）：5 个构建、mac-smoke、Windows 安装到中文路径后启动托盘都通过，草稿已自动删除；修 Windows 上 cua-driver 种子复制失败（Node `cpSync` 复制目录在 Windows 上报 `EIO, Access is denied`，用户电脑上实测复现，改为逐文件复制到临时目录再改名 + 重试，`config.ts` `copySeed`） |
 
 所有功能都有单测和 e2e（Mock 模型）。beta.10 发布前在 main 上全部通过：`npm test`、`npm run e2e`（114 步）、`node e2e/pet.mjs`。
 
