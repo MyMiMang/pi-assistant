@@ -11,12 +11,14 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getApiProviders } from "@earendil-works/pi-ai/compat";
 import type { PiModels } from "./index.ts";
 import { modelDb } from "../model-db.ts";
-import { detectLimits, knownVision, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
+import { detectLimits, knownVision, knownReasoning, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
 
 export interface CustomModel {
 	id: string;
 	name?: string;
 	reasoning?: boolean;
+	/** 自动识别的推理能力，刷新参数库时可以重算。 */
+	reasoningAuto?: boolean;
 	input?: ("text" | "image")[];
 	contextWindow?: number;
 	maxTokens?: number;
@@ -27,6 +29,7 @@ export interface CustomModel {
 }
 export interface FetchedModel {
 	id: string;
+	reasoning?: boolean;
 	contextWindow: number;
 	maxTokens: number;
 	limitsSource: LimitsSource;
@@ -234,6 +237,10 @@ export class CustomProviders {
 			if (v) Object.assign(out, { input: ["text", "image"], inputAuto: true });
 			else (delete out.input, delete out.inputAuto);
 		}
+		if (m.reasoning === undefined || m.reasoningAuto) {
+			const reasoning = knownReasoning(m.id, modelDb()) ?? knownReasoning(m.id, this.models.listModels().filter((x) => !own.has(x.provider)));
+			if (reasoning !== undefined) Object.assign(out, { reasoning, reasoningAuto: true });
+		}
 		return out;
 	}
 
@@ -261,7 +268,7 @@ export class CustomProviders {
 			const models = meta.models.map((x) => {
 				const keep = x.contextWindow && x.maxTokens && (x.limitsSource === "user" || x.limitsSource === "detected" || x.limitsSource === "learned");
 				const y = keep ? { ...this.withLimits(x, undefined, meta.baseUrl), contextWindow: x.contextWindow, maxTokens: x.maxTokens, limitsSource: x.limitsSource } : this.withLimits(x, undefined, meta.baseUrl);
-				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource || String(y.input) !== String(x.input)) n++;
+				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource || String(y.input) !== String(x.input) || y.reasoning !== x.reasoning) n++;
 				return y;
 			});
 			return { ...meta, models };
@@ -309,8 +316,8 @@ export class CustomProviders {
 		for (const raw of j.data ?? j.models ?? []) {
 			const id = String(raw.id ?? raw.name ?? "").replace(/^models\//, "");
 			if (!id || seen.has(id)) continue;
-			const m = this.withLimits({ id }, detectLimits(raw), base);
-			seen.set(id, { id, contextWindow: m.contextWindow!, maxTokens: m.maxTokens!, limitsSource: m.limitsSource! });
+			const m = this.withLimits({ id, ...(typeof raw.reasoning === "boolean" ? { reasoning: raw.reasoning } : {}) }, detectLimits(raw), base);
+			seen.set(id, { id, ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}), contextWindow: m.contextWindow!, maxTokens: m.maxTokens!, limitsSource: m.limitsSource! });
 		}
 		if (!seen.size) throw new Error("没有获取到模型，请手动填写");
 		return [...seen.values()].sort((a, b) => a.id.localeCompare(b.id));
@@ -319,6 +326,6 @@ export class CustomProviders {
 
 /** 写进 Pi models.json 的模型条目：去掉我们自己的字段和空值 */
 function piModel(m: CustomModel) {
-	const { limitsSource: _s, inputAuto: _a, ...rest } = m;
+	const { limitsSource: _s, inputAuto: _a, reasoningAuto: _r, ...rest } = m;
 	return Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== ""));
 }

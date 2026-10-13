@@ -7,6 +7,9 @@
  *  xai       xAI Grok 图片（OpenAI 风格，只支持文生图）
  */
 
+import { modelDb } from "../model-db.ts";
+import { knownImageOutput, type DbEntry } from "../pi-adapter/model-limits.ts";
+
 export type ImageKind = "openai" | "dashscope" | "ark" | "gemini" | "xai";
 export type Fetch = typeof fetch;
 
@@ -84,9 +87,22 @@ export const KINDS: KindInfo[] = [
 ];
 export const kindInfo = (k: ImageKind) => KINDS.find((x) => x.kind === k)!;
 
-/** 模型列表里哪些像图片生成模型 */
-export const IMAGE_MODEL_RE = /(gpt-image|dall-?e|imagen|image-?gen|-image\b|image-preview|\bimage\b|seedream|seededit|wanx|wan2\.\d-(t2i|i2i)|qwen-image|flux|stable-diffusion|\bsdxl?\b|sd3|kolors|cogview|hunyuan-?image|recraft|ideogram|midjourney|playground-v|janus|hidream|nano-banana)/i;
-export const isImageModel = (id: string) => IMAGE_MODEL_RE.test(id) && !/embedding|vision-preview|image-?to-?text|caption|ocr/i.test(id);
+/** 识图是图片输入；这里识别的是图片输出。接口元数据优先，其次参数库，最后已知生成模型系列。 */
+export const IMAGE_MODEL_RE = /(gpt-image|dall-?e|imagen|image-?gen|gemini.*-(image|image-preview)\b|seedream|seededit|wanx|wan2\.\d-(t2i|i2i)|qwen-image|flux|stable-?diffusion|\bsdxl?\b|sd3|kolors|cogview|hunyuan-?image|recraft|ideogram|midjourney|playground-v|janus|hidream|nano-banana|grok.*-image\b)/i;
+interface ListedModel {
+	id?: string; name?: string;
+	modalities?: { output?: string[] };
+	output_modalities?: string[];
+	architecture?: { output_modalities?: string[]; modality?: string };
+}
+export function isImageModel(id: string, meta?: ListedModel, db: DbEntry[] = modelDb()) {
+	const output = meta?.modalities?.output ?? meta?.output_modalities ?? meta?.architecture?.output_modalities;
+	if (output) return output.includes("image");
+	if (meta?.architecture?.modality?.includes("->")) return meta.architecture.modality.split("->")[1].split("+").includes("image");
+	const known = knownImageOutput(id, db);
+	if (known !== undefined) return known;
+	return IMAGE_MODEL_RE.test(id) && !/embedding|vision|image-?to-?text|caption|ocr/i.test(id);
+}
 
 /** 这个模型能不能改图 / 参考图 */
 export function supportsEdit(kind: ImageKind, model: string) {
@@ -434,15 +450,22 @@ export async function generate(ep: ImageEndpoint, r: GenRequest, ctx: Ctx = defa
 /** 拉取模型列表：返回全部 id 与其中的图片模型。服务不提供列表时抛错（界面退回预设）。 */
 export async function listModels(ep: ImageEndpoint, ctx: Ctx = defaultCtx()): Promise<{ all: string[]; image: string[] }> {
 	const base = trimBase(ep.baseUrl);
-	let ids: string[] = [];
+	let rows: ListedModel[] = [];
 	if (ep.kind === "gemini") {
 		const j = await json(ctx, `${base}/models?pageSize=1000`, { headers: ep.apiKey ? { "x-goog-api-key": ep.apiKey } : {} }, 20_000);
-		ids = (j.models ?? []).map((m: { name: string }) => m.name.replace(/^models\//, ""));
+		rows = j.models ?? [];
 	} else {
 		const url = ep.kind === "dashscope" ? `${dsBase(ep.baseUrl)}/compatible-mode/v1/models` : `${base}/models`;
 		const j = await json(ctx, url, { headers: bearer(ep) }, 20_000);
-		ids = (Array.isArray(j) ? j : (j.data ?? j.models ?? [])).map((m: { id?: string; name?: string }) => m.id ?? m.name).filter(Boolean);
+		rows = Array.isArray(j) ? j : (j.data ?? j.models ?? []);
 	}
-	ids = [...new Set(ids)].sort();
-	return { all: ids, image: ids.filter(isImageModel) };
+	const all = new Set<string>(), image = new Set<string>();
+	const db = modelDb();
+	for (const m of rows) {
+		const id = (m.id ?? m.name ?? "").replace(/^models\//, "");
+		if (!id) continue;
+		all.add(id);
+		if (isImageModel(id, m, db)) image.add(id);
+	}
+	return { all: [...all].sort(), image: [...image].sort() };
 }

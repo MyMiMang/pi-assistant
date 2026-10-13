@@ -1214,7 +1214,7 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 ### 18.2 配置与选择（`image-gen/index.ts`）
 
 - `settings.imageProviders`：`{ id, name, kind, baseUrl, models[], keyFrom? }`；Key 用 `sealJson` 加密存 `imageKey:<id>`，不落明文。OpenAI 兼容服务可以**复用已添加的自定义模型服务**（`keyFrom` = 自定义服务 id，Key 从加密凭据库读，不重复保存）。
-- 自动获取：OpenAI 兼容 / xAI / 方舟 `GET {base}/models`，百炼 `compatible-mode/v1/models`，Gemini `GET models`；用 `isImageModel` 挑出图片模型（gpt-image、dall-e、imagen、seedream、wanx、qwen-image、flux、sd、kolors、cogview…）并默认勾上；拉不到时用每类服务的常用模型预设。
+- 自动获取：OpenAI 兼容 / xAI / 方舟 `GET {base}/models`，百炼 `compatible-mode/v1/models`，Gemini `GET models`；用 `isImageModel` 挑出图片生成模型并默认勾上：优先读接口的输出模态，其次 models.dev 的图片输出标记，最后按已知生成模型系列识别。图片输入（识图）不等于图片输出；不再提供“显示全部语言模型”入口，未知别名仍可手动输入。拉不到时用每类服务的常用模型预设。
 - 「试生成」真实生成一张小图并显示预览（界面写明会计费）。
 - 默认图片模型 `defaultImageModel`（第一个配置的自动成为默认）；每个助理 `agentImage:<agentId>` = 跟随默认 / 指定模型 / 不画图（助理设置页「图片模型」）。没有可用模型时**不挂 `generate_image`**；图片模型变化会进会话缓存键（`img:`），下一轮自动重建会话。
 - 界面统一显示“服务名 / 模型”。
@@ -1383,8 +1383,8 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 用户批准的方案：建群时按角色挑用户已配置的模型（可改）；每次模型调用记用量，按当时价格算费用。
 
 ### 22.1 模型参数库扩展（`model-db.ts`、`scripts/gen-model-db.mjs`、`pi-adapter/model-limits.ts`）
-- 精简条目改为 `[上下文, 最大输出, 标记?, 价格?]`：标记位 1 识图、2 推理、4 工具调用（旧快照第三位 1 = 识图，兼容）；价格是 models.dev 的 美元 / 百万 token `[输入, 输出, 读缓存, 写缓存, 推理, 超 200K 输入, 超 200K 输出, 超 200K 读缓存]`，缺的为 null，末尾省略。
-- 快照 350 KB → 约 490 KB（gzip 约 90 KB）。缓存文件名改成 `model-db.v3.json`，旧缓存自动作废。
+- 精简条目改为 `[上下文, 最大输出, 标记?, 价格?]`：标记位 1 识图、2 推理、4 工具调用、8 图片输出（旧快照第三位 1 = 识图，兼容）；价格是 models.dev 的 美元 / 百万 token `[输入, 输出, 读缓存, 写缓存, 推理, 超 200K 输入, 超 200K 输出, 超 200K 读缓存]`，缺的为 null，末尾省略。
+- 快照 350 KB → 约 490 KB（gzip 约 90 KB）。缓存文件名改成 `model-db.v4.json`，旧缓存自动作废。
 
 ### 22.2 模型能力档案与打分（`model-profile.ts` 纯函数，`rooms/model-pick.ts` 取数据）
 - 擅长标签：写代码 / 推理 / 中文写作 / 写作 / 看图 / 长文档 / 用工具 / 便宜 / 快。默认值 = 按模型系列的手工表（依据各家官方文档、LMArena、Artificial Analysis 公开排名，季度复查）+ 硬数据（识图、推理标记、≥500K 上下文、价格档、名字含 flash/mini 等）。用户在 设置 › 模型 › 模型擅长 按模型开关，存 `settings.modelStrengths`，「恢复默认」删除覆盖。
@@ -1410,3 +1410,5 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - 只记了助理主回复；后台任务也走同一个 `bindSession`，会记；标题生成、识图模型、图片生成、记忆抽取这类旁路调用还没记。
 - 群聊页里的成员消息还不显示每条用量（单聊里显示）。
 - 擅长标签表要定期复查；汇率不会自动更新。
+
+2026-10-14 模型菜单修复：自定义模型从参数库 / Pi 目录补推理能力，旧配置启动时回填；接口显式 reasoning 和用户显式值保留。聊天模型列表随设置变化刷新，思考强度继续只显示当前模型支持的档位。

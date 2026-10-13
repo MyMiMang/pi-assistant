@@ -21,7 +21,7 @@ export const THINKING_DESC: Record<string, string> = { off: "不思考，回答�
 
 /** 已配置的服务的全部模型（含自定义） */
 export function useConfiguredModels() {
-	const v = useStore((s) => s.agents.length);
+	const v = useStore((s) => s.system);
 	const [d, setD] = useState<{ providers: Provider[]; models: ModelEntry[] } | null>(null);
 	useEffect(() => {
 		void Promise.all([api("/api/models/providers"), api("/api/models")]).then(([p, m]) => {

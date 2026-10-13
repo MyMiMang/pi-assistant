@@ -14,18 +14,18 @@ function trimCost(c) {
 	while (arr.length && arr[arr.length - 1] === null) arr.pop();
 	return arr.length && (arr[0] !== null || arr[1] !== null) ? arr : null;
 }
-/** 见 packages/server/src/model-db.ts：[上下文, 最大输出, 标记(1 识图 2 推理 4 工具)?, 价格?] */
+/** 见 packages/server/src/model-db.ts：[上下文, 最大输出, 标记(1 识图 2 推理 4 工具 8 图片输出)?, 价格?] */
 export function trimModelsDev(j) {
 	const providers = {};
 	for (const [pid, p] of Object.entries(j)) {
 		const ms = {};
 		for (const [mid, m] of Object.entries(p?.models ?? {})) {
 			const c = m?.limit?.context, o = m?.limit?.output;
-			if (typeof c === "number" && c > 0) {
+			if ((typeof c === "number" && c > 0) || m?.modalities?.output?.includes("image")) {
 				const out = typeof o === "number" && o > 0 ? o : 0;
-				const flags = (m?.modalities?.input?.includes("image") ? 1 : 0) | (m?.reasoning ? 2 : 0) | (m?.tool_call ? 4 : 0);
+				const flags = (m?.modalities?.input?.includes("image") ? 1 : 0) | (m?.reasoning ? 2 : 0) | (m?.tool_call ? 4 : 0) | (m?.modalities?.output?.includes("image") ? 8 : 0);
 				const cost = trimCost(m?.cost);
-				const e = [c, out];
+				const e = [c ?? 0, out];
 				if (flags || cost) e.push(flags);
 				if (cost) e.push(cost);
 				ms[m.id ?? mid] = e;

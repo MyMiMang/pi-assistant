@@ -110,7 +110,6 @@ function ImageProviderForm({ data, initial, onDone, onCancel }: { data: Data; in
 	const [models, setModels] = useState<string[]>(initial?.models ?? []);
 	const [manual, setManual] = useState("");
 	const [fetched, setFetched] = useState<{ image: string[]; all: string[] } | null>(null);
-	const [showAll, setShowAll] = useState(false);
 	const [busy, setBusy] = useState("");
 	const [err, setErr] = useState("");
 	const [test, setTest] = useState<{ model: string; ok: boolean; preview?: string; ms?: number; error?: string } | null>(null);
@@ -140,7 +139,7 @@ function ImageProviderForm({ data, initial, onDone, onCancel }: { data: Data; in
 				setFetched(r);
 				// 自动勾上识别出的图片模型（一个都没选时）
 				if (!models.length && r.image.length) setModels(r.image.slice(0, 3));
-				if (!r.image.length) setErr("没有识别出图片模型，可以点“显示全部”手动挑，或直接输入模型名");
+				if (!r.image.length) setErr("没有识别出图片生成模型，可手动输入模型名");
 			}
 		} finally {
 			setBusy("");
@@ -178,7 +177,7 @@ function ImageProviderForm({ data, initial, onDone, onCancel }: { data: Data; in
 		await api(`/api/image-models/providers/${initial.id}`, { method: "DELETE" });
 		onDone();
 	};
-	const list = fetched ? (showAll ? fetched.all : fetched.image) : [];
+	const list = fetched?.image ?? [];
 	const presets = info.models.filter((m) => !list.includes(m));
 	return (
 		<div className="space-y-4" data-testid="image-provider-form">
@@ -240,11 +239,6 @@ function ImageProviderForm({ data, initial, onDone, onCancel }: { data: Data; in
 					<Button size="sm" variant="outline" onClick={fetchModels} disabled={!!busy} data-testid="image-fetch">
 						{busy === "fetch" ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} 自动获取
 					</Button>
-					{fetched && (
-						<button type="button" className="text-xs text-accent" onClick={() => setShowAll(!showAll)}>
-							{showAll ? `只看图片模型（${fetched.image.length}）` : `显示全部（${fetched.all.length}）`}
-						</button>
-					)}
 				</div>
 				<div className="flex flex-wrap gap-1.5">
 					{[...new Set([...models, ...list, ...presets])].map((m) => (

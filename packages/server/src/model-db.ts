@@ -12,17 +12,17 @@ import { type DbEntry, indexModelDb } from "./pi-adapter/model-limits.ts";
 const URL_ = "https://models.dev/api.json";
 const WEEK = 7 * 24 * 3600_000;
 const SNAPSHOT = join(import.meta.dirname, "..", "model-db.json");
-const cacheFile = () => join(config.dataDir, "model-db.v3.json"); // v3：多了推理 / 工具调用标记和价格
+const cacheFile = () => join(config.dataDir, "model-db.v4.json"); // v4：增加图片输出能力，旧缓存需刷新
 
 /**
  * 精简条目：[上下文, 最大输出, 标记?, 价格?]
- *  标记（位）：1 识图、2 推理、4 工具调用（旧快照里第三位是 1 = 识图，兼容）
+ *  标记（位）：1 识图、2 推理、4 工具调用、8 图片输出（旧快照里第三位是 1 = 识图，兼容）
  *  价格：美元 / 百万 token [输入, 输出, 读缓存, 写缓存, 推理输出, 超 200K 输入, 超 200K 输出, 超 200K 读缓存]，缺的项为 null，末尾的 null 省略
  */
 export type TrimmedEntry = (number | (number | null)[])[];
 type Trimmed = { generatedAt?: string; providers: Record<string, Record<string, TrimmedEntry>> };
 type RawCost = { input?: number; output?: number; cache_read?: number; cache_write?: number; reasoning?: number; context_over_200k?: { input?: number; output?: number; cache_read?: number } };
-type RawModel = { id?: string; limit?: { context?: number; output?: number }; modalities?: { input?: string[] }; reasoning?: boolean; tool_call?: boolean; cost?: RawCost };
+type RawModel = { id?: string; limit?: { context?: number; output?: number }; modalities?: { input?: string[]; output?: string[] }; reasoning?: boolean; tool_call?: boolean; cost?: RawCost };
 
 const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v * 1e4) / 1e4 : null);
 export function trimCost(c: RawCost | undefined): (number | null)[] | null {
@@ -41,11 +41,11 @@ export function trimModelsDev(j: Record<string, { models?: Record<string, RawMod
 		for (const [mid, m] of Object.entries(p?.models ?? {})) {
 			const c = m?.limit?.context;
 			const o = m?.limit?.output;
-			if (typeof c === "number" && c > 0) {
+			if ((typeof c === "number" && c > 0) || m?.modalities?.output?.includes("image")) {
 				const out = typeof o === "number" && o > 0 ? o : 0;
-				const flags = (m?.modalities?.input?.includes("image") ? 1 : 0) | (m?.reasoning ? 2 : 0) | (m?.tool_call ? 4 : 0);
+				const flags = (m?.modalities?.input?.includes("image") ? 1 : 0) | (m?.reasoning ? 2 : 0) | (m?.tool_call ? 4 : 0) | (m?.modalities?.output?.includes("image") ? 8 : 0);
 				const cost = trimCost(m?.cost);
-				const e: TrimmedEntry = [c, out];
+				const e: TrimmedEntry = [c ?? 0, out];
 				if (flags || cost) e.push(flags);
 				if (cost) e.push(cost);
 				ms[m.id ?? mid] = e;

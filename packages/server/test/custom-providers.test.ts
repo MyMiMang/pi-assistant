@@ -52,6 +52,22 @@ test("错误的 Key 会在测试连接时如实报错", async () => {
 	await customProviders.remove("custom-bad");
 });
 
+test("中转模型自动补推理能力，旧配置补齐后聊天可选思考强度；显式关闭保留", async () => {
+	const p = await customProviders.save(null, { name: "推理能力", api: "openai-completions", baseUrl: relay.url, noKey: true, models: [{ id: "deepseek-r1" }] });
+	assert.equal(p.models[0].reasoning, true);
+	assert.ok(models.listModels(p.id)[0].thinking.length > 1);
+	const { getSetting, setSetting } = await import("../src/db.ts");
+	const metas = getSetting<{ id: string; models: Record<string, unknown>[] }[]>("customProviders", []);
+	const old = metas.find((m) => m.id === p.id)!.models[0];
+	delete old.reasoning;
+	delete old.reasoningAuto;
+	setSetting("customProviders", metas);
+	assert.ok(await customProviders.backfillLimits() > 0);
+	assert.ok(models.listModels(p.id)[0].thinking.length > 1);
+	assert.equal(customProviders.withLimits({ id: "deepseek-r1", reasoning: false }).reasoning, false);
+	await customProviders.remove(p.id);
+});
+
 test("多个自定义服务（含中文名、同名）各有独立 id，不会互相覆盖；模型列表带用户起的服务名", async () => {
 	const base = { api: "openai-completions", baseUrl: relay.url, apiKey: "sk-unit", headers: [{ name: "x-team", value: "t1" }] };
 	const a = await customProviders.save(null, { ...base, name: "灯灯国产", models: [{ id: "relay-chat" }] });

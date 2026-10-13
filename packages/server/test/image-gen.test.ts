@@ -24,6 +24,21 @@ test("识别图片模型", () => {
 	for (const id of ["gpt-4o", "text-embedding-3-small", "qwen-max", "gemini-2.5-flash", "deepseek-chat"]) assert.ok(!isImageModel(id), id);
 });
 
+test("图片输出能力优先，识图模型和名字带 image 的聊天模型不混入", async () => {
+	const { trimModelsDev } = await import("../src/model-db.ts");
+	const { indexModelDb } = await import("../src/pi-adapter/model-limits.ts");
+	const data = trimModelsDev({ provider: { models: {
+		"paint-alias": { modalities: { input: ["text"], output: ["image"] } },
+		"image-chat": { limit: { context: 1000 }, modalities: { input: ["text", "image"], output: ["text"] } },
+	} } });
+	const db = indexModelDb(data.providers);
+	assert.ok(isImageModel("paint-alias", undefined, db), "没有上下文长度的生成模型也保留能力");
+	assert.equal(isImageModel("image-chat", undefined, db), false);
+	assert.equal(isImageModel("gpt-image-1", { modalities: { output: ["text"] } }, db), false, "接口明确只输出文字时不按名字猜");
+	assert.ok(isImageModel("relay-painter", { architecture: { output_modalities: ["image"] } }, db));
+	assert.equal(isImageModel("my-image-chat", undefined, []), false);
+});
+
 test("尺寸换算", () => {
 	assert.equal(openaiSize("gpt-image-1", "16:9"), "1536x1024");
 	assert.equal(openaiSize("dall-e-3", "9:16"), "1024x1792");
