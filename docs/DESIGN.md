@@ -202,7 +202,7 @@ sequenceDiagram
 - **安装包**：Tauri bundler 产出 macOS `.dmg`（Apple Silicon + Intel，或 universal）和 Windows NSIS `.exe`。体积目标 < 80MB（Node ~40MB + cloudflared ~35MB + 其余）。
 - **自动更新**：`tauri-plugin-updater`，签名校验，更新源为 GitHub Releases 的 `latest.json`。
 - **代码签名说明**：不签名也能装，但 macOS 首次需右键“打开”（Gatekeeper），Windows 会出现 SmartScreen 提示。正式分发建议：macOS Developer ID 证书 + 公证（需 Apple Developer 账号，仅用于桌面安装包，**与手机无关**）；Windows 代码签名证书（或 Azure Trusted Signing）。CI 里预留签名步骤，有证书时自动启用。
-- **CI 构建**：GitHub Actions（`.github/workflows/release.yml`），打 `v*` tag 触发，矩阵 `macos-14`(arm64) / `macos-13`(x64) / `windows-latest`，用 `tauri-apps/tauri-action` 构建并上传到 GitHub Release；每个平台先下载对应的 Node 与 cloudflared 二进制并校验 SHA256。
+- **CI 构建**：GitHub Actions（`.github/workflows/release.yml`），打 `v*` tag 触发，共 5 个 job：macOS arm64 / macOS x64 / Windows x64 桌面包（`tauri-apps/tauri-action`）、Linux 服务器包（x64 / arm64 `.tar.gz`），以及汇总 `latest.json`（自动更新用）并把 Release 标为 Latest；每个平台先下载对应的 Node 与 cloudflared 二进制并校验 SHA256。
 
 - **悬浮条**（`/hostbar`）：透明、无边框、无阴影窗口（`transparent(true)`，macOS 需 `macOSPrivateApi: true` + Cargo feature `macos-private-api`），只露出圆角胶囊；右侧 × 关闭（`POST /api/host-control/bar/dismiss`，服务端记住当时状态，状态变化——新操作 / 暂停或继续——再弹出）；“打开设置”在主窗口里打开。
 
