@@ -92,7 +92,11 @@ export const hostSettings = (): HostControlSettings => ({ ...DEFAULTS, ...(getSe
 export const isMac = () => process.platform === "darwin";
 export const appKey = () => (isMac() ? "bundle_id" : "executable");
 
-/** 允许的工具：输入、读取窗口内容、启动/结束允许的应用。不含整屏观察、剪贴板、录屏、浏览器附着、改配置、扩展安装等 */
+/**
+ * 允许的工具：输入、读取窗口内容、启动/结束允许的应用。不含整屏观察、剪贴板、录屏、浏览器附着（CDP 浏览器工具）、改配置、扩展安装等。
+ * CDP 浏览器工具不放进 bounded：cua bounded 模式的网页导航必须在清单里列出确切的 origin，开放式网页任务做不了；
+ * 要让助理用用户的 Chrome 做网页任务需要“信任”或以上档位（走 unrestricted 守护进程 + 我们这层审批，DESIGN §14.8）。
+ */
 export const ALLOWED_TOOLS = [
 	"start_session", "end_session", "list_apps", "list_windows", "launch_app", "bring_to_front", "get_window_state", "get_accessibility_tree", "zoom",
 	"click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "invoke_menu", "kill_app", "get_screen_size", "get_cursor_position",
@@ -406,6 +410,8 @@ export function describeHostAction(tool: string, input: Record<string, unknown>)
 		return s.apps.find((a) => a.id === v || a.name === v)?.name ?? v;
 	})();
 	const label: Record<string, string> = {
+		browser_prepare: "连接你的浏览器（Chrome/Edge）", get_browser_state: "读取网页", browser_navigate: `打开网址 ${String(input.url ?? "").slice(0, 120)}`, browser_click: `点击网页元素 ${String(input.ref ?? "")}`,
+		browser_type: `在网页里输入「${String(input.text ?? "").slice(0, 60)}」`, browser_pointer: `网页${String(input.action ?? "操作")}`, browser_download: "从网页下载文件到工作区", browser_set_input_files: "把工作区里的文件上传到网页", browser_dialog: `处理网页弹窗（${String(input.action ?? "")}）`,
 		launch_app: `打开应用「${app}」`, kill_app: `关闭应用「${app}」`, click: "点击", double_click: "双击", right_click: "右键点击", type_text: `输入文字「${String(input.text ?? "").slice(0, 60)}」`,
 		set_value: `填写「${String(input.value ?? "").slice(0, 60)}」`, press_key: `按键 ${String(input.key ?? "")}`, hotkey: `快捷键 ${JSON.stringify(input.keys ?? input.key ?? "")}`, scroll: "滚动", invoke_menu: `点菜单 ${JSON.stringify(input.path ?? input.menu ?? "")}`, bring_to_front: "切换到窗口",
 	};

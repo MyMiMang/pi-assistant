@@ -422,6 +422,8 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				mcp: hostMcpCommand(agentId),
 				isPaused: () => hostPaused(),
 				describe: describeHostAction,
+				workspace,
+				browserTools: tierOf(agentId) !== "bounded",
 				approvals: () => hostApprovals(agentId),
 				guard: guardContext("host"),
 				log: (e) => recordAction(agentId, taskId, e),

@@ -13,6 +13,7 @@
  * 一键暂停：host.isPaused() 为真时，所有电脑工具立即被拒绝（任何模式都生效）。
  * 操作记录：每个电脑动作（含被拒绝/暂停拦下的）都交给 host.log() 记录，供回看。
  */
+import { isAbsolute, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { guardComputer, type GuardContext } from "@pi-assistant/shared";
@@ -35,9 +36,28 @@ export const HIDDEN_TOOLS = [
 	"get_session_state",
 	"page",
 ];
+/** cua 的 CDP 浏览器工具（DESIGN §14.8）。助理电脑上浏览器走 ext-browser（Playwright），这些隐藏，避免两套同名能力 */
+export const CUA_BROWSER_TOOLS = ["get_browser_state", "browser_prepare", "browser_navigate", "browser_click", "browser_type", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog"];
+/** 本机（hostpc）浏览器操作指引：注入系统提示 */
+export const HOST_BROWSER_PROMPT = `<user-computer-browser>
+在用户自己的电脑上操作网页（Chrome / Edge）时，按这个顺序用 hostpc 的 CDP 浏览器工具，不要用截图 + 快捷键 + type_text：
+1. list_windows 找到浏览器的 pid 和 window_id。
+2. get_browser_state {pid, window_id, session} 绑定窗口。
+3. 只有返回 browser_requires_setup 或 browser_consent_required 时，才调用 browser_prepare {pid, window_id, session, strategy:{kind:"existing_profile"}}（保留登录状态、不重启浏览器；macOS 上 Chrome 可能自己弹“允许远程调试”并来到前台）。之后重新 list_windows + get_browser_state 绑定。
+4. 绑定结果必须是 binding_quality=exact 且 mutation_allowed=true 才能操作；否则只读，不要换个窗口硬来。
+5. get_browser_state {target_id, tab_id, session, snapshot_format:"semantic_v2"} 读页面，拿 refs（p<快照>:<序号>）。
+6. browser_navigate 打开网址；browser_click {ref}（macOS / Linux 返回 browser_input_trust_unavailable 时改用 input_route:"dom_event"）；browser_type {ref, text, replace}；browser_pointer 滚动 / 悬停。
+7. 每次操作后重新 get_browser_state 读状态，绝不复用旧 ref（导航、新快照都会让旧 ref 失效）。要看结果画面时加 include_screenshot:true，用眼睛核对结果后再交付给用户。
+8. 整个任务用同一个 session 标签（如 "web"）。不要用 cmd+t / cmd+l / ctrl+l 等地址栏快捷键当浏览器接口；只有标签栏、权限弹窗、原生文件选择框，或 CDP 工具不可用（Safari / Firefox、用户拒绝）时，才退回 get_window_state + click / hotkey。
+9. 上传用 browser_set_input_files、下载用 browser_download，路径只能在你的工作区里。
+</user-computer-browser>`;
+/** “限定”档位：没有 CDP 浏览器工具时的说明 */
+export const HOST_BROWSER_BOUNDED_NOTE = `<user-computer-browser>
+你对用户电脑的权限是“限定”：不能直接连接用户的 Chrome 做网页任务（只能按应用清单逐个动作操作）。网页任务优先用你自己的浏览器（助理电脑）；如果必须用用户的 Chrome（要他的登录状态），告诉用户需要在 设置 › 操作这台电脑 里把你的档位调到“信任”或以上。
+</user-computer-browser>`;
 const READ_ONLY = /^(get_|list_|zoom$|check_permissions$|health_report$|verify_state$|screenshot$)/;
 /** 会改变电脑状态的 Cua 工具（“只看”档位隐藏） */
-export const INPUT_TOOLS = ["click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag", "move_cursor", "invoke_menu", "launch_app", "kill_app", "bring_to_front", "browser_click", "browser_type", "browser_navigate", "browser_set_input_files", "browser_dialog", "set_clipboard", "write_clipboard"];
+export const INPUT_TOOLS = ["click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag", "move_cursor", "invoke_menu", "launch_app", "kill_app", "bring_to_front", "browser_prepare", "browser_click", "browser_type", "browser_navigate", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog", "set_clipboard", "write_clipboard"];
 
 export interface ComputerHost {
 	target: "sandbox" | "host";
@@ -64,6 +84,10 @@ export interface ComputerHost {
 	 * 返回字符串 = 拦下这次动作并把说明告诉模型；null = 照常执行。
 	 */
 	before?(tool: string, input: Record<string, unknown>): Promise<string | null>;
+	/** host 目标：是否提供 cua 的 CDP 浏览器工具（“限定”档位不提供，见 HOST_BROWSER_BOUNDED_NOTE） */
+	browserTools?: boolean;
+	/** 允许浏览器上传/下载的目录（这个助理的工作区）；不设则 browser_download / browser_set_input_files 一律拒绝 */
+	workspace?: string;
 	/** sandbox 目标：屏幕 / 电脑管理（computer_screen 工具） */
 	screens?: ScreenHost;
 }
@@ -100,7 +124,17 @@ const SENSITIVE_KEYS = /^(enter|return|kp_enter|delete|del|backspace)$/i;
  * recent = 最近几次观察工具（读取窗口/可访问性树）的输出，用于按元素编号找到元素名字。启发式，宁严勿松。
  */
 export function isSensitiveAction(tool: string, input: Record<string, unknown>, recent: string[] = []): boolean {
-	if (tool === "kill_app") return true;
+	if (tool === "kill_app" || tool === "browser_download") return true;
+	if (tool === "browser_dialog") return String(input.action ?? "") === "accept";
+	if (tool === "browser_click" || tool === "browser_pointer") {
+		const ref = String(input.ref ?? "");
+		if (!ref) return true; // 坐标点击看不出点的是什么，宁严勿松
+		for (const txt of recent) {
+			const i = txt.indexOf(`"${ref}"`);
+			if (i >= 0) return SENSITIVE_WORDS.test(txt.slice(Math.max(0, i - 300), i + 300));
+		}
+		return false;
+	}
 	if (tool === "press_key") return SENSITIVE_KEYS.test(String(input.key ?? input.keys ?? ""));
 	if (tool === "hotkey") {
 		const keys = (Array.isArray(input.keys) ? input.keys : [input.key ?? input.keys]).map(String);
@@ -122,6 +156,23 @@ export function isSensitiveAction(tool: string, input: Record<string, unknown>, 
 		return false;
 	}
 	return false;
+}
+
+/** 连接用户浏览器的审批卡片说明 */
+export const BROWSER_PREPARE_SUMMARY = (input: Record<string, unknown>) =>
+	(input.allow_launch
+		? "在你的电脑上另开一个独立的 Chrome/Edge 窗口（全新的空白资料，不带你的登录状态），助理通过调试接口快速操作网页。"
+		: "连接你正在用的 Chrome/Edge（调试接口，只在本机），助理可以直接读取和操作网页，比截图点鼠标快得多也准得多。会保留你的登录状态，不会重启浏览器。Chrome 可能会临时打开设置页开启“远程调试”再关掉，macOS 上 Chrome 还可能自己弹出“允许远程调试”请你点允许，浏览器窗口可能会来到前台。连接期间助理能看到这个浏览器里的网页内容，任务结束后自动断开。") +
+	"之后打开网址、点击、输入仍按你的权限档位审批。";
+
+/** browser_download / browser_set_input_files 的路径必须在工作区里；返回拒绝原因或 null */
+export function browserFileViolation(tool: string, input: Record<string, unknown>, workspace?: string): string | null {
+	if (tool !== "browser_download" && tool !== "browser_set_input_files") return null;
+	if (!workspace) return "这台电脑上没有允许读写的工作区，不能上传或下载文件。";
+	const root = resolve(workspace);
+	const inside = (p: unknown) => typeof p === "string" && isAbsolute(p) && !p.includes("\0") && (resolve(p) === root || resolve(p).startsWith(root + sep));
+	const paths = tool === "browser_download" ? [input.destination_root] : Array.isArray(input.files) ? input.files : [undefined];
+	return paths.every(inside) ? null : `文件路径必须是你工作区（${root}）里的绝对路径。先把文件放进工作区再上传；下载的 destination_root 用工作区里的目录。`;
 }
 
 /** 共用电脑的工作方式（注入系统提示）：让助理自己按需选屏幕 / 隔离 / 不用屏幕 */
@@ -153,6 +204,7 @@ export function computerExtension(host: ComputerHost) {
 		const recent: string[] = [];
 		const pending = new Map<string, { tool: string; input: Record<string, unknown>; summary: string; approval?: ActionLogEntry["approval"] }>();
 		const policy = (): Approvals => host.approvals?.() ?? (host_ ? "all" : "none");
+		const browserOn = host_ && host.browserTools !== false && policy() !== "observe";
 		const log = (e: Omit<ActionLogEntry, "target">) => {
 			try {
 				host.log?.({ ...e, target: host.target });
@@ -164,7 +216,7 @@ export function computerExtension(host: ComputerHost) {
 			env: { CUA_DRIVER_TELEMETRY: "0", ...(host.mcp.env ?? {}) },
 			exposure: "direct",
 			// “只看”档位：输入类工具直接不给模型（调用时也会被拦下）
-			toolExposure: Object.fromEntries([...HIDDEN_TOOLS, ...(policy() === "observe" ? INPUT_TOOLS : [])].map((t) => [t, "hidden" as const])),
+			toolExposure: Object.fromEntries([...HIDDEN_TOOLS, ...(host_ && browserOn ? [] : CUA_BROWSER_TOOLS), ...(policy() === "observe" ? INPUT_TOOLS : [])].map((t) => [t, "hidden" as const])),
 			description: host_
 				? policy() === "observe"
 					? "用户自己的电脑（只看：可以截图、读取窗口内容，不能点击或输入）"
@@ -222,6 +274,7 @@ export function computerExtension(host: ComputerHost) {
 			},
 		});
 		}
+		if (host_ && policy() !== "observe") pi.on("before_agent_start", async (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${browserOn ? HOST_BROWSER_PROMPT : HOST_BROWSER_BOUNDED_NOTE}` }));
 		if (!host_ && host.screens) {
 			const sc = host.screens;
 			pi.on("before_agent_start", async (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${SHARED_COMPUTER_PROMPT}` }));
@@ -266,6 +319,16 @@ export function computerExtension(host: ComputerHost) {
 			}
 			if (!own) return;
 			let approval: ActionLogEntry["approval"] = "auto";
+			if (CUA_BROWSER_TOOLS.includes(tool) && !browserOn) {
+				const why = host_ ? "“限定”档位不能连接用户的浏览器；需要用户把档位调到“信任”或以上。" : "助理电脑上的网页请用浏览器工具（browser_*，Playwright），不用 cua 的浏览器工具。";
+				log({ callId, tool, input, summary, phase: "blocked", detail: why });
+				return { block: true, reason: why };
+			}
+			const fileWhy = browserFileViolation(tool, input, host.workspace);
+			if (fileWhy) {
+				log({ callId, tool, input, summary, phase: "blocked", detail: fileWhy });
+				return { block: true, reason: fileWhy };
+			}
 			const observe = READ_ONLY.test(tool) || tool === "start_session" || tool === "end_session";
 			if (!observe && host.before) {
 				const why = await host.before(tool, input).catch(() => null);
@@ -289,9 +352,10 @@ export function computerExtension(host: ComputerHost) {
 				}
 				approval = "guarded";
 			} else {
+				// browser_prepare 和其他动作一样按档位审批（完全权限 / 信任不问）；需要问时卡片上说明连接浏览器意味着什么
 				const needs = !observe && p !== "none" && (p === "all" || isSensitiveAction(tool, input, recent)) && !granted.has(tool);
 				if (needs) {
-					const res = await host.request({ toolName: event.toolName, input, summary, risk: "high", allowTask: p === "all" });
+					const res = await host.request({ toolName: event.toolName, input, summary: tool === "browser_prepare" && host_ ? BROWSER_PREPARE_SUMMARY(input) : summary, risk: "high", allowTask: p === "all" });
 					if (!res.approved) {
 						log({ callId, tool, input, summary, phase: "blocked", detail: `用户拒绝${res.note ? `：${res.note}` : ""}` });
 						return { block: true, reason: `用户拒绝了这个电脑操作${res.note ? `：${res.note}` : ""}。不要换方式重试。` };

@@ -232,3 +232,50 @@ test("正在操作判断：只看最近的 host 动作（进行中 / 刚结束�
 	assert.equal(hc.hostActive({ outcome: "ok", started_at: now - 30_000, finished_at: now - 20_000 }, now), false);
 	assert.equal(hc.hostActive({ outcome: "ok", started_at: now - 60_000, finished_at: now - hc.HOST_ACTIVE_MS - 1 }, now), false);
 });
+
+test("CDP 浏览器工具：限定档位不提供且清单不放行；连接浏览器按档位审批；上传下载限工作区；助理电脑隐藏", async () => {
+	const mac = hc.buildManifest({ apps: [{ name: "Chrome", id: "com.google.Chrome" }], workspaceFiles: true }, ["/Users/a/ws"], "darwin");
+	for (const t of ["browser_prepare", "get_browser_state", "browser_navigate", "browser_click"]) assert.doesNotMatch(mac, new RegExp(`- ${t}$`, "m"));
+	assert.doesNotMatch(mac, /existing_profile/);
+
+	const { computerExtension, HOST_MCP_PREFIX, MCP_PREFIX, CUA_BROWSER_TOOLS, HIDDEN_TOOLS } = await import("@pi-assistant/ext-computer");
+	const mk = (o: Record<string, unknown>) => {
+		const asks: { summary: string; allowTask?: boolean }[] = [];
+		const h: Record<string, (e: unknown) => Promise<{ block?: boolean; reason?: string; systemPrompt?: string } | undefined>> = {};
+		let cfg: { toolExposure: Record<string, string> } | null = null;
+		computerExtension({ target: "host", workspace: "/Users/a/ws", mcp: { command: "x", args: [] }, isPaused: () => false, request: async (r: { summary: string; allowTask?: boolean }) => (asks.push(r), { approved: true, scope: "task" as const }), guard: { target: "host" }, ...o } as never)({
+			registerMcpServer: (_n: string, c: never) => (cfg = c), registerTool: () => {}, on: (n: string, fn: never) => (h[n] = fn),
+		} as never);
+		const call = (tool: string, input: Record<string, unknown> = {}) => h.tool_call({ toolName: `${(o.target === "sandbox" ? MCP_PREFIX : HOST_MCP_PREFIX)}${tool}`, input, toolCallId: tool });
+		return { asks, h, cfg: cfg!, call };
+	};
+	// 限定档位（bounded → approvals all）
+	const b = mk({ approvals: () => "all", browserTools: false });
+	for (const t of CUA_BROWSER_TOOLS) assert.equal(b.cfg.toolExposure[t], "hidden");
+	assert.match((await b.h.before_agent_start({ systemPrompt: "" }))?.systemPrompt ?? "", /信任/);
+	assert.match((await b.call("browser_prepare", { pid: 1 }))?.reason ?? "", /信任/);
+	// 完全权限
+	const f = mk({ approvals: () => "none" });
+	for (const t of CUA_BROWSER_TOOLS) assert.equal(f.cfg.toolExposure[t], undefined, `${t} 可见`);
+	for (const t of ["page", "install_extension", "set_config", "parse_visual_regions"]) assert.ok(HIDDEN_TOOLS.includes(t) && f.cfg.toolExposure[t] === "hidden");
+	const prompt = (await f.h.before_agent_start({ systemPrompt: "" }))?.systemPrompt ?? "";
+	assert.ok(prompt.indexOf("get_browser_state {pid") < prompt.indexOf("browser_prepare {pid"), "先绑定，需要时才 prepare");
+	assert.match(prompt, /include_screenshot:true/);
+	assert.match(prompt, /dom_event/);
+	assert.equal(await f.call("browser_prepare", { pid: 1, window_id: 2, strategy: { kind: "existing_profile" } }), undefined);
+	assert.equal(f.asks.length, 0, "完全权限：连接浏览器也不问");
+	assert.equal(await f.call("browser_navigate", { url: "https://x.com" }), undefined);
+	assert.match((await f.call("browser_set_input_files", { files: ["/etc/passwd"] }))?.reason ?? "", /工作区/);
+	assert.equal(await f.call("browser_set_input_files", { files: ["/Users/a/ws/a.png"] }), undefined);
+	assert.match((await f.call("browser_download", { destination_root: "/Users/a/ws/../.ssh" }))?.reason ?? "", /工作区/);
+	// 信任档位：下载算敏感动作
+	const t = mk({ approvals: () => "sensitive" });
+	await t.call("browser_prepare", { pid: 1, window_id: 2, strategy: { kind: "existing_profile" } });
+	assert.equal(t.asks.length, 0, "信任：连接浏览器按普通动作，不问");
+	await t.call("browser_download", { destination_root: "/Users/a/ws" });
+	assert.equal(t.asks.length, 1);
+	// 助理电脑
+	const s = mk({ target: "sandbox" });
+	for (const x of CUA_BROWSER_TOOLS) assert.equal(s.cfg.toolExposure[x], "hidden", `${x} 助理电脑隐藏（用 Playwright）`);
+	assert.equal((await s.call("browser_click", {}))?.block, true);
+});

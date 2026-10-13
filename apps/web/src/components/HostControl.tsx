@@ -11,8 +11,8 @@ export const FULL_CONFIRM = "我了解风险，允许完全控制这台电脑";
 export type Tier = "observe" | "bounded" | "trusted" | "full";
 export const TIER_INFO: Record<Tier, { label: string; desc: string; tone: string }> = {
 	observe: { label: "只看", desc: "截图、读取窗口内容，不能点击或输入", tone: "zinc" },
-	bounded: { label: "限定", desc: "只能操作勾选的应用，每个动作都问你（默认）", tone: "green" },
-	trusted: { label: "信任", desc: "日常操作不问，发送、付款、删除前会问", tone: "amber" },
+	bounded: { label: "限定", desc: "只能操作勾选的应用，每个动作都问你（默认）；不能用你的 Chrome 做网页任务，需要“信任”或以上", tone: "green" },
+	trusted: { label: "信任", desc: "日常操作不问，发送、付款、删除前会问；可以连接你的 Chrome 快速操作网页（Mac 上 Chrome 可能自己问一次“允许远程调试”）", tone: "amber" },
 	full: { label: "完全权限", desc: "几乎不问，受保护的操作仍要问", tone: "red" },
 };
 const TIER_ORDER: Tier[] = ["observe", "bounded", "trusted", "full"];
