@@ -156,6 +156,7 @@ docs/               架构、设计、交接、安装文档、更新说明
 
 - [AGENTS.md](AGENTS.md)：给接手的 AI / 开发者的入口：仓库地图、构建测试、发布规则、约定
 - [docs/HANDOFF.md](docs/HANDOFF.md)：进度（按版本）、已验证 / 待真机验证、已知问题、下一步
+- [docs/ROADMAP.md](docs/ROADMAP.md)：需求与计划、待用户决定的事、工作规则
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架构概览（组件图、数据流、存储）
 - [docs/DESIGN.md](docs/DESIGN.md)：完整设计
 - [docs/INSTALL.md](docs/INSTALL.md)：安装、未签名提示、Linux 服务器、Docker 部署

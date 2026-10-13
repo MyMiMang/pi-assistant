@@ -1,6 +1,6 @@
 # AGENTS.md：给接手的 AI / 开发者
 
-先读这一页，再看 [docs/HANDOFF.md](docs/HANDOFF.md)（现状、进度、待验证、下一步）和 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)（组件与数据流）。完整设计在 [docs/DESIGN.md](docs/DESIGN.md)。
+先读这一页，再看 [docs/HANDOFF.md](docs/HANDOFF.md)（现状、进度、待验证、下一步）、[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)（组件与数据流）和 [docs/ROADMAP.md](docs/ROADMAP.md)（需求、计划、待用户决定的事）。完整设计在 [docs/DESIGN.md](docs/DESIGN.md)。
 
 ## 这是什么
 Pi Assistant：基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地私人助理。功能包括多个助理和助理群聊，每个助理有自己的“助理电脑”（虚拟机里的桌面），也可以按权限档位操作用户自己的电脑。还接入了微信、飞书、钉钉、企业微信、邮箱，支持记忆、技能、定时任务、MCP、图片生成、识图和桌宠。
@@ -37,10 +37,11 @@ Mock 模型（`packages/server/src/pi-adapter/mock-provider.ts`）按关键词�
 - 用户**只通过装好的 App 自动更新**来测试，不跑源码。
 - 改动直接推到 `main`（先 `git pull --rebase`），**永远不要 force-push**。
 - **只有用户说「打包」时才打 tag**：`v0.1.0-beta.N`，同时写 `docs/release-notes/v0.1.0-beta.N.md`（中文，写给用户看）。
-- tag 推上去后 `.github/workflows/release.yml` 会构建 5 个任务：mac arm64、mac x64、Windows、Linux x64、Linux arm64，并把这个版本设为 Latest（自动更新读 `latest.json`）。Intel Mac 任务偶尔失败，重跑一次即可。
+- tag 推上去后 `.github/workflows/release.yml` 会构建 5 个任务：mac arm64、mac x64、Windows、Linux x64、Linux arm64，先传进草稿 Release，Windows / Mac 安装冒烟通过后才公开成 Latest（自动更新读 `latest.json`）。用户中途说停：tag 没推就不推；推了要有 GitHub 登录才能取消（box 上 gh 未登录，见 ROADMAP「工作规则」）。Intel Mac 任务偶尔失败，重跑一次即可。
 - 版本号取自 tag，不需要手动改。
 
 ## 约定
+- **用户一提出新需求或计划，马上记进 [docs/ROADMAP.md](docs/ROADMAP.md)**（写清原话大意和状态），做完再更新状态；进度同步写进 HANDOFF。
 - 界面文字是中文，越短越好；需要解释的放进「?」帮助气泡（`apps/web/src/components/ui.tsx` 的 `<Help>`）或悬停提示里。
 - 用到开源项目要写进 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，写明版本和许可证。下载的组件还要在 `third-party.json` 里固定版本和摘要。
 - 提交信息用中文，一行写清楚做了什么、为什么；截图更新单独提交。
