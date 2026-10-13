@@ -1,0 +1,87 @@
+# Windows 安装包冒烟：静默安装真实的 setup.exe，像用户一样启动托盘程序，确认内置服务能在 127.0.0.1:8787 上线。
+# 另外用安装目录里的 node.exe 以托盘相同的参数直接跑一次服务，把输出打到日志和注解里，便于排查。
+# 触发：发版后 release.yml 调用；也可手动选 tag 运行；改本文件时对最新 Release 跑一次。
+name: windows-smoke
+on:
+  workflow_dispatch:
+    inputs:
+      tag: { description: "Release tag（留空 = latest）", required: false }
+  workflow_call:
+    inputs:
+      tag: { type: string, required: false }
+  push:
+    branches: [main]
+    paths: [".github/workflows/windows-smoke.yml"]
+permissions: { contents: read }
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Download setup.exe
+        shell: bash
+        run: |
+          if [ -z "$TAG" ]; then TAG=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName); fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*x64-setup.exe' -O setup.exe
+      - name: Silent install
+        shell: pwsh
+        run: |
+          Start-Process -Wait -FilePath .\setup.exe -ArgumentList '/S'
+          $dir = Join-Path $env:LOCALAPPDATA 'Pi Assistant'
+          Get-ChildItem $dir | Format-Table Name, Length
+          "INSTALL=$dir" | Out-File -Append $env:GITHUB_ENV
+      - name: Direct server run (same args as tray)
+        shell: pwsh
+        run: |
+          $app = Join-Path $env:INSTALL 'app'
+          $env:PIA_APP_DIR = $app; $env:PIA_PORT = '18787'; $env:PIA_LAUNCHER = 'tray'
+          $p = Start-Process -PassThru -NoNewWindow -WorkingDirectory $app -FilePath (Join-Path $env:INSTALL 'node.exe') `
+            -ArgumentList '--disable-warning=ExperimentalWarning','--import','tsx',"`"$app\packages\server\src\main.ts`"" `
+            -RedirectStandardOutput direct.out -RedirectStandardError direct.err
+          $ok = $false
+          for ($i = 0; $i -lt 120 -and -not $ok; $i++) {
+            Start-Sleep 1
+            if ($p.HasExited) { break }
+            try { $ok = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18787/api/system/public -TimeoutSec 3).StatusCode -eq 200 } catch {}
+          }
+          $log = (Get-Content direct.out, direct.err -Raw -ErrorAction SilentlyContinue) -join "`n"
+          Write-Output $log
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          if (-not $ok) {
+            $t = $log.Substring([Math]::Max(0, $log.Length - 3000)) -replace "`r?`n", '%0A'
+            Write-Output "::error title=direct server failed (exit $($p.ExitCode))::$t"
+            exit 1
+          }
+      - name: Launch tray like a user
+        if: always()
+        shell: pwsh
+        run: |
+          Start-Process -FilePath (Join-Path $env:INSTALL 'pi-assistant-tray.exe')
+          $ok = $false
+          for ($i = 0; $i -lt 150 -and -not $ok; $i++) {
+            Start-Sleep 1
+            try { $ok = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8787/api/system/public -TimeoutSec 3).StatusCode -eq 200 } catch {}
+          }
+          $logs = Join-Path $env:LOCALAPPDATA 'com.piassistant.app\logs'
+          $log = ''
+          if (Test-Path "$logs\server.log") { $log = Get-Content "$logs\server.log" -Raw; Write-Output $log }
+          Get-Process | Where-Object { $_.Name -match 'node|pi-assistant' } | Format-Table Name, Id, Path
+          if (-not $ok) {
+            $t = if ($log) { $log.Substring([Math]::Max(0, $log.Length - 3000)) -replace "`r?`n", '%0A' } else { 'no server.log' }
+            Write-Output "::error title=tray launch: server not healthy::$t"
+            exit 1
+          }
+          Write-Output "tray launch OK"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-smoke-logs
+          path: |
+            direct.out
+            direct.err
+            ~/AppData/Local/com.piassistant.app/logs/
+          if-no-files-found: ignore
