@@ -1,3 +1,4 @@
+import { isStopCommand } from "./interject.ts";
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
@@ -377,8 +378,11 @@ app.post("/api/agents/:id/messages", async (c) => {
 	const text = (b.text ?? "").slice(0, 100_000);
 	if (!text.trim() && !files.length) return c.json({ error: "empty" }, 400);
 	const msg = insertMessage({ agentId: id, conversationId: conv, role: "user", content: text, meta: { attachments: files.map(fileInfo), from: by(c) } });
-	void runtime(id, conv).send(text, files.map((f) => attachmentInputFor(id, f)));
-	return c.json(msg);
+	// 正在工作时：停止词立即停；其他消息插进正在进行的任务（delivery: queued → delivered）
+	const r = runtime(id, conv);
+	const busy = r.busy;
+	void r.send(text, files.map((f) => attachmentInputFor(id, f)), { messageId: msg.id });
+	return c.json(busy ? { ...msg, meta: { ...msg.meta, delivery: isStopCommand(text) && !files.length ? "stop" : "queued" } } : msg);
 });
 app.post("/api/agents/:id/abort", async (c) => {
 	const conv = c.req.query("conversation");

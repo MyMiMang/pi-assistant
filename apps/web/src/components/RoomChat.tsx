@@ -353,7 +353,7 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 					}}
 					onPaste={(e) => pasteFiles(e, (fs) => void addFiles(fs))}
 					onBlur={() => !sheet && setTimeout(() => setQ(null), 120)}
-					placeholder={`发到群里… 输入 @ 指定助理`}
+					placeholder={running ? "可以随时插话，说「停」全群停下" : `发到群里… 输入 @ 指定助理`}
 				/>
 				<div className="pa-composer-bar">
 					<div className="pa-composer-tools">

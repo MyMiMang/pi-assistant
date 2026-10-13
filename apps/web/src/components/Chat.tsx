@@ -213,6 +213,25 @@ export function UserMsg({ m, reaction }: { m: Message; reaction?: "eyes" | "done
 				</div>
 			)}
 			{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} mine /> : null}
+			<Delivery state={m.meta.delivery} />
+		</div>
+	);
+}
+
+/** 工作途中发的消息：显示它有没有送进正在进行的任务 */
+const DELIVERY: Record<string, [string, string]> = {
+	queued: ["等当前这一步做完送达…", "助理正在工作，这条会在它当前这一步做完后立刻送到，不用等整个任务结束"],
+	delivered: ["已送达正在进行的任务", "助理已经读到这条，会决定是补充进去、换方向还是停下"],
+	stop: ["已停止", "这条是停止指令：正在进行的任务、命令和电脑操作都已停下"],
+	stopped: ["任务已停止，未送达", "送达前任务就停了，助理没看到这条；需要的话再发一次"],
+};
+function Delivery({ state }: { state?: string }) {
+	const d = state ? DELIVERY[state] : undefined;
+	if (!d) return null;
+	return (
+		<div className="pa-delivery" title={t(d[1])} data-testid="delivery" data-state={state}>
+			{state === "queued" ? <Loader2 className="pa-ic animate-spin" /> : <Check className="pa-ic" />}
+			{t(d[0])}
 		</div>
 	);
 }
@@ -392,7 +411,7 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 							void send();
 						}
 					}}
-					placeholder={t("给 {name} 发消息…", { name })}
+					placeholder={running ? t("可以随时补充或改要求，说「停」就停下") : t("给 {name} 发消息…", { name })}
 				/>
 				<div className="pa-composer-bar">
 					<div className="pa-composer-tools">

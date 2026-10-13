@@ -436,6 +436,8 @@ export type AgentEvent =
 	| { type: "tool_start"; id: string; name: string; args: Record<string, unknown> }
 	| { type: "tool_end"; id: string; name: string; isError: boolean; resultText: string }
 	| { type: "settled"; aborted: boolean }
+	/** 一条用户消息真正进入了模型上下文（插话在下一个工具边界送达时触发） */
+	| { type: "user_start"; text: string }
 	| { type: "compaction_start"; reason: string }
 	| { type: "compaction_end"; reason: string; ok: boolean; aborted: boolean; error?: string; tokensBefore?: number; summary?: string };
 
@@ -446,6 +448,7 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 		switch (ev.type) {
 			case "message_start":
 				if (ev.message?.role === "assistant") fn({ type: "assistant_start" });
+				else if (ev.message?.role === "user") fn({ type: "user_start", text: messageText(ev.message) });
 				break;
 			case "message_update":
 				if (ev.assistantMessageEvent?.type === "text_delta") fn({ type: "text_delta", delta: ev.assistantMessageEvent.delta });
@@ -486,10 +489,25 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 	});
 }
 
-/** 发送用户输入；会话正在运行时排在当前工作之后（followUp）。 */
+/** 插话前缀：让模型知道这是它工作途中用户新发来的消息 */
+export const INTERJECTION_PREFIX = "（你工作时用户发来的新消息）";
+/**
+ * 发送用户输入。会话空闲：开始新一轮。
+ * 会话正在运行：用 Pi 的 steer 插话——在当前这批工具调用结束、下一次请求模型之前送达，
+ * 模型能马上读到（而不是等整轮做完才看到，followUp 的旧行为）。
+ */
 export function promptSession(session: AgentSession, text: string, images?: { type: "image"; data: string; mimeType: string }[]): Promise<void> {
 	const img = images?.length ? { images } : {};
-	return session.isStreaming ? session.prompt(text, { streamingBehavior: "followUp", ...img }) : session.prompt(text, img);
+	if (session.isStreaming) return session.prompt(`${INTERJECTION_PREFIX}\n${text}`, { streamingBehavior: "steer", ...img });
+	return session.prompt(text, img);
+}
+/** 停止时清掉还没送达的插话 / 排队消息，免得停下后又被它们重新启动 */
+export function clearQueued(s: AgentSession) {
+	try {
+		(s as unknown as { clearQueue?: () => unknown }).clearQueue?.();
+	} catch {
+		/* 旧版 SDK 没有 */
+	}
 }
 export const isSessionBusy = (s: AgentSession) => s.isStreaming;
 /** 手动“整理上下文”：让 Pi 把较早的对话压缩成摘要（Pi 原生 compaction）。 */
@@ -513,7 +531,7 @@ export function sessionStats(s: AgentSession) {
 		session: st ? { tokens: st.tokens, cost: st.cost, userMessages: st.userMessages, assistantMessages: st.assistantMessages, toolCalls: st.toolCalls } : null,
 	};
 }
-export const abortSession = (s: AgentSession) => s.abort();
+export const abortSession = (s: AgentSession) => (clearQueued(s), s.abort());
 /** 结束会话：先发 session_shutdown（让 MCP 等扩展关闭子进程/连接），再释放 */
 export async function disposeSession(s: AgentSession) {
 	try {

@@ -38,6 +38,7 @@ import { splitThinking } from "./thinking.ts";
 import { type AttachmentInput, prepareAttachments } from "./attachments.ts";
 import { describeImages, supportsVision } from "./vision.ts";
 import { deliverFromWorkspace, fileInfo, insideWorkspace, workspaceOf } from "./files.ts";
+import { INTERJECTION_RULE, isStopCommand } from "./interject.ts";
 import { deleteMessage, insertMessage, updateMessage } from "./messages.ts";
 import { defaultModel, defaultThinking, models } from "./models.ts";
 import {
@@ -56,6 +57,7 @@ import {
 	sessionFileOf,
 	sessionStats,
 	subscribeSession,
+	INTERJECTION_PREFIX,
 } from "./pi-adapter/index.ts";
 import { notify } from "./push.ts";
 import { requests } from "./requests.ts";
@@ -117,6 +119,7 @@ function setTask(id: string, patch: Partial<TaskRow>) {
 }
 
 const SYSTEM_RULES = (name: string, workspace: string, persona: string) => [
+	INTERJECTION_RULE,
 	`你是「${name}」，一个通用 AI 助理，运行在用户自己的电脑上，有自己的电脑（工作区，以及开启后的完整桌面）。你能写代码、运行命令、处理文件、操作网页和桌面应用，目标是替用户把事情真正做完。默认使用简体中文回复，语气简洁友好。用户时区 Asia/Shanghai。`,
 	`你有自己的工作区目录（${workspace}），可以在里面写代码、运行命令、生成文件。只在工作区内工作。`,
 	"收到需要动手的任务时，先立刻用一句很短的话确认（例如“好，我先看一下。”），再开始调用工具；做完后简要汇报结果。",
@@ -540,11 +543,18 @@ class AgentRuntime {
 			});
 			const file = sessionFileOf(session);
 			if (file && file !== getConversation(this.conversationId)?.session_file) setConversationSession(this.conversationId, file);
-			this.unsub = bindSession(session, this.id, this.conversationId, null, (aborted) => {
+			const unUser = subscribeSession(session, (e) => {
+				if (e.type !== "user_start" || !e.text.startsWith(INTERJECTION_PREFIX)) return;
+				const mid = this.steering.shift();
+				if (mid) updateMessage(mid, { meta: { delivery: "delivered", deliveredAt: Date.now() } });
+			});
+			const unBind = bindSession(session, this.id, this.conversationId, null, (aborted) => {
 				if (isSessionBusy(session)) return;
+				this.dropSteering(aborted ? "stopped" : "delivered");
 				settleAgent(this.id);
 				for (const w of [...this.waiters]) w(aborted);
 			});
+			this.unsub = () => (unUser(), unBind());
 			this.session = session;
 			this.modelKey = key;
 			return session;
@@ -564,18 +574,57 @@ class AgentRuntime {
 		return { text: [text, p.text].filter((x) => x.trim()).join("\n\n"), images: p.images };
 	}
 
-	async send(text: string, files?: AttachmentInput[]) {
+	/** 已经发出、还没送进模型上下文的插话（用户消息 id，按顺序） */
+	private steering: string[] = [];
+	private dropSteering(state: "stopped" | "delivered") {
+		for (const mid of this.steering.splice(0)) updateMessage(mid, { meta: { delivery: state } });
+	}
+
+	/**
+	 * 发一条用户消息。助理空闲：开始新一轮。
+	 * 正在工作：整条是停止词 → 立刻全部停下；否则作为插话在下一个工具边界送达（Pi steer），
+	 * 消息上标 delivery = queued → delivered，界面显示“已送达正在进行的任务”。
+	 */
+	async send(text: string, files?: AttachmentInput[], opts: { messageId?: string } = {}): Promise<"started" | "steered" | "stopped" | "none"> {
+		if (this.busy && !files?.length && isStopCommand(text)) {
+			if (opts.messageId) updateMessage(opts.messageId, { meta: { delivery: "stop" } });
+			await this.abort();
+			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "assistant", content: "好的，已经停下了。", status: "done", meta: { system: "stopped" } });
+			return "stopped";
+		}
+		if (!this.busy && isStopCommand(text) && !files?.length && this.hasPendingCards()) {
+			// 正在等审批 / 回答时说“停”：同样视为停止
+			this.cancelPending("用户让你停下");
+			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "assistant", content: "好的，已经停下了。", status: "done", meta: { system: "stopped" } });
+			return "stopped";
+		}
 		const s = await this.ensure();
 		if (!s) {
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: "还没有可用的模型。请先在「设置 → 模型」里登录一个模型服务并选择默认模型。", meta: { action: "open-models" } });
-			return;
+			return "none";
 		}
+		const steer = isSessionBusy(s);
 		setAgentStatus(this.id, "running");
 		const input = await this.withAttachments(s, text, files).catch(() => ({ text, images: undefined }));
+		if (steer && opts.messageId) {
+			this.steering.push(opts.messageId);
+			updateMessage(opts.messageId, { meta: { delivery: "queued" } });
+		}
 		promptSession(s, input.text, input.images).catch((e: unknown) => {
+			if (opts.messageId) this.steering = this.steering.filter((x) => x !== opts.messageId);
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `出错了：${e instanceof Error ? e.message : String(e)}`, status: "error" });
 			if (!isSessionBusy(s)) settleAgent(this.id);
 		});
+		return steer ? "steered" : "started";
+	}
+
+	private hasPendingCards() {
+		return !!db.prepare("SELECT 1 FROM requests WHERE status = 'pending' AND conversation_id = ? LIMIT 1").get(this.conversationId);
+	}
+	/** 停止时：这个对话里还在等用户处理的审批 / 提问按拒绝处理，让卡住的工具调用立刻返回 */
+	private cancelPending(note: string) {
+		const rows = db.prepare("SELECT id FROM requests WHERE status = 'pending' AND conversation_id = ?").all(this.conversationId) as { id: string }[];
+		for (const r of rows) requests.resolve(r.id, { approved: false, answer: "（用户已停止）", note }, "system");
 	}
 
 	private waiters = new Set<(aborted: boolean) => void>();
@@ -614,8 +663,11 @@ class AgentRuntime {
 		return { ok: !error && !aborted, aborted, error, text: lastAssistantText(s), tokens: Math.max(0, (sessionStats(s).session?.tokens.total ?? 0) - before) };
 	}
 
+	/** 停止：清掉没送达的插话，拒绝等待中的审批，中止模型请求和正在跑的工具（命令子进程、电脑操作随 abort 信号结束） */
 	async abort() {
+		this.cancelPending("用户停止了任务");
 		if (this.session) await abortSession(this.session);
+		this.dropSteering("stopped");
 		settleAgent(this.id);
 	}
 

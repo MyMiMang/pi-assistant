@@ -17,6 +17,7 @@ import { bus } from "../bus.ts";
 import { createConversation } from "../conversations.ts";
 import { db, now, uid } from "../db.ts";
 import { attachmentInputFor, deleteRoomFiles, type FileRow, fileInfo, getFile, materializeFor } from "../files.ts";
+import { isStopCommand } from "../interject.ts";
 import { insertMessage, listRoomMessages, updateMessage } from "../messages.ts";
 import { models, defaultModel, defaultThinking } from "../models.ts";
 import { requests } from "../requests.ts";
@@ -266,11 +267,25 @@ export function postUserMessage(roomId: string, text: string, opts: { mentions?:
 	}
 	if (r.paused) db.prepare("UPDATE rooms SET paused = NULL WHERE id = ?").run(roomId);
 	const s = states.get(roomId);
+	if (s?.current && !files.length && isStopCommand(body)) {
+		// 整条就是“停 / 停止 / 别做了”：整个群立刻停下（含正在跑的工具、等待中的审批）
+		updateMessage(msg.id, { meta: { delivery: "stop" } });
+		void stop(roomId);
+		changed(roomId);
+		return msg;
+	}
 	if (s?.current) {
-		// 不打断正在说话的；取消排队的，等它说完按新消息重新安排
+		const cur = s.current;
+		// 正在说话的成员是这条消息的对象（被 @，或没 @ 人时它就是管理者 / 正在干活的成员）：插进它当前这一轮，下一个工具边界就能读到
+		const forCurrent = parsed.ids.length ? parsed.ids.includes(cur.agentId) : true;
+		const rt = runtime(cur.agentId, cur.conversationId);
+		if (forCurrent && rt.busy) void rt.send(`（用户在群里说）${body}${files.length ? `\n（附带 ${files.length} 个附件，见群聊记录）` : ""}`, undefined, { messageId: msg.id });
+		// 取消排队的，等它说完按新消息重新安排；只剩它自己要处理（被 @ 的就是它 / 它是管理者）时不再重复安排
 		cancelQueue(roomId, s);
 		s.batch.clear();
-		s.replan = { mentions: parsed.ids };
+		const others = parsed.ids.filter((x) => x !== cur.agentId);
+		const handled = forCurrent && rt.busy && (parsed.ids.length ? !others.length : cur.agentId === r.manager_id);
+		s.replan = handled ? null : { mentions: parsed.ids.length ? others : [] };
 		emitState(roomId);
 	} else startRound(roomId, parsed.ids);
 	changed(roomId);

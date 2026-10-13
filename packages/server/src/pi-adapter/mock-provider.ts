@@ -64,6 +64,17 @@ function respond(messages: Msg[], systemPrompt = "") {
 	const lastUser = [...messages].reverse().find((m) => m.role === "user" && !/^(后台|定时)任务「/.test(textOf(m)));
 	// 渠道消息前面的［渠道：…］说明不算用户说的话（否则里面的“文件 / 图片”会触发关键词）
 	const u = lastUser ? textOf(lastUser).replace(/^［渠道：[^］]*］\n?/, "") : "";
+	// 工作途中插话（Pi steer 送达）：先简短回应，按内容决定换方向 / 停下
+	if (u.startsWith("（你工作时用户发来的新消息）") && last.role === "user") {
+		const said = u.replace(/^（你工作时用户发来的新消息）\n?/, "").replace(/^（用户在群里说）/, "");
+		return fauxAssistantMessage(/停|别做/.test(said) ? "收到，我停下了。" : `收到插话：${said.slice(0, 40)}。按新要求调整。`);
+	}
+	// 慢慢数：多步、每步都慢（测试工作途中插话 / 停止）
+	if (/慢慢数/.test(u)) {
+		const since = messages.slice(messages.lastIndexOf(lastUser!) + 1).filter((m) => m.role === "toolResult").length;
+		if (since < 3) return fauxAssistantMessage([...(since ? [] : [fauxText("好，我慢慢数。")]), fauxToolCall("bash", { command: `sleep 2; echo 第${since + 1}步` })]);
+		return fauxAssistantMessage("数完了：1、2、3。");
+	}
 	// 群聊（rooms）：按群消息里的提示脚本化地扮演管理者 / 成员
 	if (u.startsWith("（群聊「")) return roomReply(u, systemPrompt, last, messages);
 	// 提议建群：用户说“组个团队/建个群…”

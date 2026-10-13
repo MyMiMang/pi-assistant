@@ -553,6 +553,39 @@ await step("活动提示行 + 步骤列表（进行中展开、完成后自动�
 	await page.screenshot({ path: join(SHOTS, "24-steps-collapsed-check.png") });
 });
 
+await step("工作途中插话：消息立即显示、在下一个工具边界送达 → 助理回应并调整；说「停」全部停下", async () => {
+	await page.locator("aside").first().getByText("Nova").first().click();
+	await send("慢慢数");
+	await page.locator("[data-testid=activity]").last().waitFor({ timeout: 10_000 });
+	// 正在工作：输入框仍可用，发出的消息马上出现，标“等当前这一步做完送达…”
+	await send("改成数到5");
+	await page.locator("main").getByText("改成数到5").last().waitFor({ timeout: 3000 });
+	await page.locator("[data-testid=delivery][data-state=delivered]").last().waitFor({ timeout: 15_000 });
+	await page.locator("main").getByText("收到插话：改成数到5").last().waitFor({ timeout: 15_000 });
+	await page.locator("[data-testid=activity]").waitFor({ state: "detached", timeout: 15_000 });
+	await page.waitForTimeout(500);
+	const msgs = await (await fetch(`${BASE}/api/agents/${AGENT}/messages`)).json();
+	const idx = msgs.findLastIndex((m) => m.role === "user" && m.content === "改成数到5");
+	if (msgs.slice(idx).some((m) => /数完了/.test(m.content))) throw new Error("插话改了方向后不应再按原计划做完");
+	// 插话发出时正在进行的那一步可以做完（工具边界才送达），之后不应再开新的步骤
+	if (msgs.slice(idx).filter((m) => m.role === "tool").length > 1) throw new Error("插话送达后不应再跑原来的步骤");
+	await page.screenshot({ path: join(SHOTS, "95-interject-delivered.png") });
+	// 停止：说「停」→ 正在跑的命令被中止，不再继续
+	await send("慢慢数");
+	await page.locator("[data-testid=activity]").last().waitFor({ timeout: 10_000 });
+	const t0 = Date.now();
+	await send("停");
+	await page.locator("main").getByText("好的，已经停下了。").last().waitFor({ timeout: 5000 });
+	await waitFor(async () => (await (await fetch(`${BASE}/api/agents`)).json()).find((a) => a.id === AGENT)?.status !== "running", 5000);
+	if (Date.now() - t0 > 4000) throw new Error("停止太慢");
+	await page.waitForTimeout(4500);
+	const after = await (await fetch(`${BASE}/api/agents/${AGENT}/messages`)).json();
+	const si = after.findLastIndex((m) => m.role === "user" && m.content === "停");
+	if (after.slice(si).some((m) => /第[23]步|数完了/.test(m.content + JSON.stringify(m.meta?.result ?? "")))) throw new Error("停下后不应继续执行");
+	if (after[si].meta?.delivery !== "stop") throw new Error("停止消息应标为 stop");
+	await page.screenshot({ path: join(SHOTS, "96-interject-stop.png") });
+});
+
 await step("Phase 2：记忆（聊天里记住 → 记忆页可见/编辑）", async () => {
 	await send("记住：我喜欢简洁的回答");
 	await page.locator("main").getByText("好的，我记住了").last().waitFor({ timeout: 15_000 });
@@ -1735,6 +1768,19 @@ await step("群聊：审批卡片显示在群里（带助理名）→ 批准；�
 	await roomIdle();
 	await page.waitForTimeout(1500);
 	if (await botsOf("A").filter({ hasText: "慢慢做" }).count()) throw new Error("停止后排队的 A 不应该再说话");
+});
+await step("群聊：成员干活时插话送达给它 → 它回应调整；说「停」全群停下", async () => {
+	await roomSay("@C 慢慢数");
+	await botsOf("C").getByText("好，我慢慢数。").last().waitFor({ timeout: 20_000 });
+	await roomSay("@C 换个方向");
+	await page.locator("[data-testid=delivery][data-state=delivered]").last().waitFor({ timeout: 15_000 });
+	await botsOf("C").getByText(/收到插话：.*换个方向/).last().waitFor({ timeout: 15_000 });
+	await roomIdle();
+	await roomSay("@C 慢慢数");
+	await botsOf("C").getByText("好，我慢慢数。").last().waitFor({ timeout: 20_000 });
+	await roomSay("停");
+	await page.locator("main").getByText("已停止").last().waitFor({ timeout: 10_000 });
+	await roomIdle();
 });
 await step("群聊附件：发图片+文件 → @A 看到路径和图片 → 管理者把附件派给 B（B 拿到路径）→ C 生成的文件出现在群里 → B 能拿到", async () => {
 	await page.goto(`${BASE}/?room=${ROOM}`);

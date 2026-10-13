@@ -5,6 +5,7 @@
  *  - 助理的回复、审批卡片、提问都会发回渠道；在渠道里回复「批准」/「拒绝」/「都允许」或选项序号即可处理。
  *  - 凭据加密保存在本机（sealJson），只发给对应平台的官方接口。
  */
+import { isStopCommand } from "../interject.ts";
 import { randomInt } from "node:crypto";
 import { bus } from "../bus.ts";
 import { createConversation, getConversation } from "../conversations.ts";
@@ -401,7 +402,7 @@ export async function handleInbound(channelId: string, m: Inbound) {
 		sys(conv, "好的，开始新的对话。");
 		return;
 	}
-	if (/^(停止|\/stop)$/i.test(text)) {
+	if (isStopCommand(text)) {
 		insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { ...fromMeta, command: true } });
 		await runtime(c.agent_id, conv).abort();
 		sys(conv, "已停止当前任务。");
@@ -433,8 +434,9 @@ export async function handleInbound(channelId: string, m: Inbound) {
 	p = peer(channelId, m.peerId)!;
 	// 发来的图片 / 文件存进助理工作区 uploads/，告诉助理路径
 	const saved = (m.files ?? []).map((f) => saveUpload(c.agent_id, f.name, f.data));
-	insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { from: `${c.kind}:${m.display ?? m.userId}`, channel: { id: channelId, kind: c.kind }, ...(saved.length ? { attachments: saved.map(fileInfo) } : {}) } });
-	await runtime(c.agent_id, conv).send(`${channelContext(c.kind, { group: m.group })}\n${m.group && m.display ? `（${m.display} 在${KIND_LABEL[c.kind]}群里说）${text}` : text}`, saved.map((f) => attachmentInputFor(c.agent_id, f)));
+	const um = insertMessage({ agentId: c.agent_id, conversationId: conv, role: "user", content: text, meta: { from: `${c.kind}:${m.display ?? m.userId}`, channel: { id: channelId, kind: c.kind }, ...(saved.length ? { attachments: saved.map(fileInfo) } : {}) } });
+	// 助理正在工作时，这条会在下一个工具边界插进当前任务（不必等它做完）
+	await runtime(c.agent_id, conv).send(`${channelContext(c.kind, { group: m.group })}\n${m.group && m.display ? `（${m.display} 在${KIND_LABEL[c.kind]}群里说）${text}` : text}`, saved.map((f) => attachmentInputFor(c.agent_id, f)), { messageId: um.id });
 }
 
 /**

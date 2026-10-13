@@ -156,3 +156,7 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 
 .pa-room-inline-av { display: none; }
 @media (max-width: 820px) { .pa-room-inline-av { display: inline-flex; } }
+
+/* 工作途中插话的送达状态 */
+.pa-delivery { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 3px; font-size: 11px; opacity: .6; }
+.pa-delivery .pa-ic { width: 12px; height: 12px; }

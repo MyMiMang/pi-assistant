@@ -24,6 +24,8 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 | beta.11 | **修 Windows 打开就是「127.0.0.1 拒绝连接」**：托盘程序拿到的安装目录是 `\\?\C:\...` 原样路径，Node 解析入口时报 `EISDIR: lstat 'C:'` 立刻退出（beta.8 起所有 Windows 版本都有，CI 里用真实安装包复现），`main.rs` 的 `plain_path()` 转回普通路径；服务日志落盘（`startup.rs`）；就绪前主窗口显示自带启动页 `apps/tray/ui/startup.html`，失败时显示原因、日志尾部、重试 / 复制诊断信息 / 打开日志文件夹；8787 被占用自动换 8788…8796（记在配置目录 `port.txt`）；新增 `windows-smoke.yml`（静默装到中文 + 空格目录、启动托盘、查 `/api/system/public`），发版改成先草稿、Windows/mac 冒烟通过才公开（见 DESIGN「CI 构建」）；发版演练（release-dryrun 分支，run 38415435058）：5 个构建、mac-smoke、Windows 安装到中文路径后启动托盘都通过，草稿已自动删除；修 Windows 上 cua-driver 种子复制失败（Node `cpSync` 复制目录在 Windows 上报 `EIO, Access is denied`，用户电脑上实测复现，改为逐文件复制到临时目录再改名 + 重试，`config.ts` `copySeed`） |
 
+| main（未打包） | **工作途中插话**：助理干活时随时能发消息，在下一个工具边界用 Pi steer 送达（之前是排到整轮做完），消息下显示「已送达正在进行的任务」；整条说「停 / 别做了 / stop」立刻全部停下（含命令、电脑操作、等待中的审批）；1:1、群聊、渠道都适用（DESIGN §20） |
+
 所有功能都有单测和 e2e（Mock 模型）。beta.10 发布前在 main 上全部通过：`npm test`、`npm run e2e`（114 步）、`node e2e/pet.mjs`。
 
 ## 3. 已验证 vs 需要真机验证
@@ -38,6 +40,7 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 - **桌宠**：Mac 和 Windows 上要确认窗口透明（没有白底或黑底，也没有阴影框）、点击穿透、拖动、记住位置、全屏和切换桌面时还在、孵化效果（§19）。
 - **HEIC 图片**：只有 macOS 能用 `sips` 转换；Windows 和 Linux 上助理只会收到一句说明，需要真机确认 iPhone 照片的体验。
 - **应用更新**：Mac 和 Windows 上从 beta.8 / 9 更新到 beta.10，看进度显示和失败提示。从 beta.7 或更早升级时，旧的更新逻辑可能看起来没反应。
+- **工作途中插话**：真实模型下的回应是否简短、换方向 / 停下判断是否准（Mock 模型只按脚本回复）；cua 电脑操作被中止时是否立即停（Mock 下只验证了 bash）。
 - **其他**：Cloudflare 命名隧道公网连通、Web Push 真机推送、悬浮条透明（`macOSPrivateApi` / WebView2）。
 
 ## 4. 已知问题 / 限制

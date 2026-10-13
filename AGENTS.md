@@ -45,4 +45,5 @@ Mock 模型（`packages/server/src/pi-adapter/mock-provider.ts`）按关键词�
 - 用到开源项目要写进 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，写明版本和许可证。下载的组件还要在 `third-party.json` 里固定版本和摘要。
 - 提交信息用中文，一行写清楚做了什么、为什么；截图更新单独提交。
 - 有后果的操作（发送、删除、付款、提交）一律走审批（ext-approval / requests.ts）。
+- 用户消息在助理忙时走 Pi `steer`（插话），不要改回 `followUp`；停止词判断统一用 `packages/server/src/interject.ts`（DESIGN §20）。
 - 新功能要加单测和 e2e，交付前跑 typecheck、单测和相关 e2e。
