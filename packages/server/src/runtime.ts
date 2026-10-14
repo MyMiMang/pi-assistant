@@ -1,4 +1,5 @@
 import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, type Subagent, type SubagentEvent } from "./subagents.ts";
+import { cancelWaitsForConversation, listWaits, parseDue, refreshWait, registerWait, cancelWait, setWaitWaker, startWaitScheduler, WAIT_DEFAULT_INTERVAL_MS } from "./task-waits.ts";
 /**
  * Agent 运行时：每个助理一个主会话（Pi AgentSession），后台任务各自一个会话。
  * 所有 Pi 调用都经过 pi-adapter；这里负责把 Pi 事件落盘为消息并广播。
@@ -294,6 +295,26 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 						return stopSubagent(id);
 					},
 				} : undefined,
+				// 任务等待：登记一次持久等待，结束当前回合，由 scheduler 在有结果时做一次结构化增量唤醒
+				waits: opts.allowSpawn
+					? {
+						register: (i) => {
+							const checkIntervalMs = i.checkMinutes !== undefined ? Math.max(1, i.checkMinutes) * 60_000 : WAIT_DEFAULT_INTERVAL_MS;
+							const w = registerWait(agentId, conversationId, { taskId: i.taskId, subagentId: i.subagentId, githubRun: i.githubRun, dueAt: i.due ? parseDue(i.due) : undefined, checkIntervalMs, reason: i.reason });
+							return { id: w.id, kind: w.target_kind, dueAt: w.due_at, intervalMs: w.check_interval_ms };
+						},
+						list: () =>
+							listWaits(agentId).map((w) => ({ id: w.id, kind: w.target_kind, ref: w.target_ref, status: w.status, reason: w.reason, dueAt: w.due_at, lastCheckedAt: w.last_checked_at, checkCount: w.check_count, firedReason: w.fired_reason, outcome: w.outcome })),
+						refresh: async (id) => {
+							const owned = listWaits(agentId).find((w) => w.id === id);
+							if (!owned) throw new Error("等待记录不存在");
+							const r = await refreshWait(id);
+							const o = r.outcome;
+							return { status: r.wait.status, detail: o ? `${o.state}${o.conclusion ? `/${o.conclusion}` : ""}${o.detail ? `：${o.detail}` : ""}` : "还没有结果", fired: r.fired };
+						},
+						cancel: (id) => (listWaits(agentId).some((w) => w.id === id) ? cancelWait(id) : false),
+					}
+					: undefined,
 			}),
 		},
 		{
@@ -699,6 +720,8 @@ class AgentRuntime {
 
 	/** 停止：清掉没送达的插话，拒绝等待中的审批，中止模型请求和正在跑的工具（命令子进程、电脑操作随 abort 信号结束） */
 	async abort() {
+		// 用户说停：这个对话登记中的任务等待一并取消，避免停下后又被唤醒
+		cancelWaitsForConversation(this.conversationId, "用户停止了任务");
 		await stopAgentSubagents(this.id);
 		this.cancelPending("用户停止了任务");
 		if (this.session) await abortSession(this.session);
@@ -956,10 +979,15 @@ export const tasks = {
 
 setRoutineSpawner((agentId, title, instructions, opts) => tasks.spawn(agentId, title, instructions, opts));
 setProactiveSpawner((agentId, title, instructions, opts) => tasks.spawn(agentId, title, instructions, opts));
+// 任务等待：有结果时用一次隐藏触发（nudge）唤醒对应会话；等待本身不耗模型 token
+setWaitWaker(async ({ wait, prompt }) => {
+	await runtime(wait.agent_id, wait.conversation_id ?? undefined).nudge(prompt);
+});
 
 export async function bootstrap() {
 	recoverSubagents();
 	startSubagentWatcher();
+	startWaitScheduler();
 	// 不再预置任何助理：首次运行向导里由用户创建并命名第一个助理
 	const expired = requests.expireStale();
 	db.prepare("UPDATE messages SET status = 'interrupted' WHERE status IN ('streaming', 'running')").run();

@@ -1520,3 +1520,39 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 
 主窗口 Rust 动态创建时设置 overlay 与透明标题栏；`macosWindow.ts` 与 `macos-titlebar.css` 仅在原生 Mac 主窗口预留交通灯与拖动区，启动页同步留白，全屏切换更新样式。浏览器与其他平台保持各自布局。cargo check 与六组布局验收通过；原生交通灯位置、拖动、双击缩放与全屏进出待安装包真机验证，不能用浏览器模拟代替。
 
+
+## 28. 任务等待调度（task_wait，2026-10-21 实现，未打包）
+
+需求（ROADMAP「节省 token 是硬验收点」）：任务等待期间**不调用模型**，完成靠事件或定时一次检查，禁止 `sleep` + 循环问模型。本轮把这条落到一个**最小、可复用**的等待能力上，不新造大调度框架。
+
+### 28.1 模型侧：登记等待，然后结束回合（busy 如何释放、为什么不会无限 hang）
+- 新增 Pi 工具 `task_wait`（`ext-delivery`，只在主会话 `allowSpawn` 时提供；子代理/后台任务不提供，避免把「结束回合」误当任务完成）：`task_wait({ reason, task_id? | subagent_id? | repo/run_id/branch? , due?, check_minutes? })`，另有 `task_wait_list` / `task_wait_check` / `task_wait_cancel`。
+- 工具调用只是往 `task_waits` 写一条记录并立即返回；返回文案要求模型**结束这一轮**（不要再轮询）。Pi 的 `promptSession` 工具循环随之结束、`settle` → 会话释放为空闲。**没有阻塞等待、没有常驻循环，因此不存在无限 hang**。
+- 有结果时用 `runtime(agent, conversation).nudge(prompt)` 唤醒（和 followup / routine 同一套隐藏触发）。会话忙时 `triggerHidden` 采用 `deliverAs:"followUp"` 排在当前轮之后，不会丢、不会抢占；空闲时直接开一轮。
+
+### 28.2 等待状态（`packages/server/src/task-waits.ts`，表 `task_waits`）
+- 字段：`id, agent_id, conversation_id, target_kind(task|subagent|github_run|due), target_ref, reason, status(waiting|fired|cancelled), check_interval_ms, next_check_at, due_at, last_checked_at, check_count, last_state, last_error, fired_reason, outcome, created_at, updated_at`。
+- **不新表结构之外的东西**：内部任务/子代理状态直接读现有 `tasks` / `subagents`；外部只读固定 GitHub 端点；唤醒复用现有会话运行时。
+
+### 28.3 调度（due / event 两条路 + 兜底）
+- **事件快速通道**：`bus` 的 `task.updated`（终态 done/failed/cancelled）与 `subagent.updated`（done/failed/stopped/timeout/lost）立即匹配 waiting 记录并唤醒。
+- **定时检查**：`tickWaits`（20 秒一次，`startWaitScheduler`）——到 `due_at` 无条件唤醒（兜底，事件永久丢失也不会无限等）；`next_check_at` 到点重查任务/子代理状态或调 provider；provider 每个 tick 最多查 5 个，避免打爆外部接口。
+- **去重**：`fireWait` 用 `UPDATE … WHERE status='waiting'` 原子置 `fired`，重复事件 / 并发 tick 只有一个成功唤醒；同一会话 + 同一目标重复登记复用一条 waiting。
+- **重启恢复**：记录持久化；`startWaitScheduler` 先 `resumeWaits()` 把 waiting 的 `next_check_at` 重置为现在，第一次 tick 就会处理「重启期间任务已结束 / 已到点」的等待，不重跑任务、不重复副作用。
+- **取消 / 停止**：`task_wait_cancel` / `cancelWait`；用户说停时 `AgentRuntime.abort()` 调 `cancelWaitsForConversation` 取消该会话所有等待，停下后不再被唤醒。
+
+### 28.4 外部 provider 的安全边界（不允许任意 shell / eval 回调）
+- 只内置一种外部检查：GitHub Actions run。请求**固定端点** `https://api.github.com/repos/<owner>/<repo>/actions/runs[/<id>]`，`owner/repo`、`run_id`、`branch` 先按正则校验；`GET` + 15s 超时，公开仓库免登录，私有仓库用环境变量 `GITHUB_TOKEN`/`GH_TOKEN`（只读）。
+- 不保存、不执行任何用户提供的命令或回调；provider 出错只记录 `last_error` 并继续等，到 `due_at` 兜底唤醒并说明拿不到结果。
+
+### 28.5 唤醒词：结构化增量，不重载历史
+`wakePrompt` 只带：等的是什么、状态、结果（截断）、链接（GitHub）、当初登记的目的，并提示「只根据增量继续、信息不明先核实」。不注入完整会话历史，避免每次唤醒重读全量上下文。
+
+### 28.6 用量
+等待期间零模型调用；唤醒是一次正常的对话回合，由 `bindSession` 记入现有 `usage_calls`（含缓存/推理），**不按运行时长度估算 token / 费用**。累计用量沿用现有用量系统。
+
+### 28.7 查询与手动刷新
+`GET /api/agents/:id/task-waits`、`POST /api/task-waits/:id/refresh`、`POST /api/task-waits/:id/cancel`；工具 `task_wait_list` / `task_wait_check`。用户问「现在怎么样了」时，模型可立即刷新一次并返回最新状态与最后检查时间（等待不是停止，状态里区分 waiting / fired / cancelled）。
+
+### 28.8 验证（本次实际跑过）
+`packages/server/test/task-waits.test.ts` 12 项通过：登记校验、任务/子代理事件唤醒且重复事件去重、等待未变化不唤醒（provider pending）、状态变化唤醒一次、事件丢失兜底、到期兜底、纯时间等待、重启恢复、取消与会话停止、手动刷新幂等、重复登记复用、provider 出错不误唤醒。回归：`proactive.test.ts` + `subagents.test.ts` 26 项通过；服务端 `tsc --noEmit` 通过。**未跑**：完整 e2e 与安装包真机；GitHub provider 在真实公开仓库端到端（当前出口 IP 被匿名限流 403，需配 `GITHUB_TOKEN`），待用户在打包后跟进 GitHub run 时实测。

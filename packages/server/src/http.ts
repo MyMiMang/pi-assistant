@@ -59,6 +59,7 @@ import { openWechat, saveWechatSettings, wechatSettings, wechatStatus } from "./
 import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAccount, saveOAuthAccount, testAccount } from "./email.ts";
 import { finishGoogle, googleClient, saveGoogleClient, startGoogle } from "./email-oauth.ts";
 import { actOnItem, cancelFollowup, defaultLevel, type ItemRow, type Level, listItems, proactiveJson, runHeartbeat, saveProactive, setDefaultLevel, unseenCount } from "./proactive.ts";
+import { cancelWait, listWaits, refreshWait } from "./task-waits.ts";
 import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { hostAgentsChanged, draftHostSettings, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 import { downloadInfo, listDownloads, startDownload } from "./downloads.ts";
@@ -883,6 +884,17 @@ app.get("/api/tasks/:id/messages", (c) => {
 	return t ? c.json(listMessages(t.agent_id, { taskId: t.id })) : c.json({ error: "not_found" }, 404);
 });
 app.post("/api/tasks/:id/cancel", async (c) => c.json({ ok: await tasks.cancel(c.req.param("id")) }));
+/** 任务等待：状态 + 最后检查时间可查询；手动刷新让用户问“现在怎么样了”立刻有结果 */
+app.get("/api/agents/:id/task-waits", (c) => c.json(listWaits(c.req.param("id"))));
+app.post("/api/task-waits/:id/refresh", async (c) => {
+	try {
+		const r = await refreshWait(c.req.param("id"));
+		return c.json({ wait: r.wait, outcome: r.outcome, fired: r.fired });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 404);
+	}
+});
+app.post("/api/task-waits/:id/cancel", (c) => c.json({ ok: cancelWait(c.req.param("id")) }));
 /** 旧接口（按天 × 助理 × 模型）：现在从新的用量表算；新界面用 /api/usage/summary */
 app.get("/api/usage", (c) =>
 	c.json(db.prepare("SELECT agent_id, day, provider, model, SUM(input + cache_read + cache_write) input, SUM(output) output, COALESCE(SUM(cost), 0) cost FROM usage_calls GROUP BY agent_id, day, provider, model ORDER BY day DESC LIMIT 200").all()),
