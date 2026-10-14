@@ -78,7 +78,8 @@ const send = async (text) => {
 		if ((await box.inputValue()) === text) break;
 	}
 	await box.press("Enter");
-	await page.waitForFunction(() => document.querySelector("main textarea")?.value === "", null, { timeout: 10_000 });
+	// 聊天里可能还有提议卡片里的 textarea，只等主输入框清空
+	await page.waitForFunction(() => document.querySelector("main textarea:not(.pa-card textarea)")?.value === "", null, { timeout: 10_000 });
 };
 
 // 信息面板标签：可见就直接点，否则从「更多」菜单里选
@@ -1943,6 +1944,8 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 	await page.setViewportSize({ width: 1280, height: 860 });
 	await page.goto(`${BASE}/?agent=${AGENT}`);
 	await page.locator("main textarea:not(.pa-card textarea)").waitFor();
+	// 上一大步「提议建群」会在历史里留下提议卡，先关掉避免挡住发送
+	for (const btn of await page.getByTestId("proposal-dismiss").all()) await btn.click().catch(() => {});
 	await send("帮我组个团队做个活动");
 	const card = page.getByTestId("room-proposal").last();
 	await card.waitFor({ timeout: 30_000 });
