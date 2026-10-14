@@ -18,6 +18,8 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 2026-10-14 Intel Mac 打包改法：beta.14（[run 38503909614](https://github.com/MyMiMang/pi-assistant/actions/runs/38503909614)）上面的兼容处理无效，Intel Mac 两次 `tauri build` 各约 20 分钟后失败，其余平台全部成功，草稿未公开。beta.9 起公开版就缺 x64.dmg / x64 更新包。现改为：macOS 只用 `--bundles app` 让 Tauri 出 .app + .app.tar.gz/.sig（Tauri CLI 2.12.2 源码确认：构建 app 目标即生成更新包，latest.json 的 darwin 项不受影响），dmg 由单独步骤用 `hdiutil create`（失败重试 3 次 + verify）打成 Tauri 同名 `Pi.Assistant_<版本>_<x64|aarch64>.dmg` 传进草稿；删掉 continue-on-error/重试/XProtect/`TAURI_BUNDLER_DMG_IGNORE_CI` 等旧补丁；mac-smoke 额外挂载检查 Intel dmg（含 x86_64 二进制和更新包）。先推 release-dryrun 演练验证，不打 tag。
 
+2026-10-14 发 beta.15（用户说「打包」）：基于 94b78a6 + 本说明提交，内容同 beta.13/14（子代理、用量、组队选模型等）+ Intel Mac 打包修复。演练 [run 38508018735](https://github.com/MyMiMang/pi-assistant/actions/runs/38508018735) 全部通过。beta.13/14 的草稿不公开、tag 不动。
+
 
 | 版本 | 主要内容 |
 |---|---|
