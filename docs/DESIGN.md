@@ -1556,3 +1556,18 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 
 ### 28.8 验证（本次实际跑过）
 `packages/server/test/task-waits.test.ts` 12 项通过：登记校验、任务/子代理事件唤醒且重复事件去重、等待未变化不唤醒（provider pending）、状态变化唤醒一次、事件丢失兜底、到期兜底、纯时间等待、重启恢复、取消与会话停止、手动刷新幂等、重复登记复用、provider 出错不误唤醒。回归：`proactive.test.ts` + `subagents.test.ts` 26 项通过；服务端 `tsc --noEmit` 通过。**未跑**：完整 e2e 与安装包真机；GitHub provider 在真实公开仓库端到端（当前出口 IP 被匿名限流 403，需配 `GITHUB_TOKEN`），待用户在打包后跟进 GitHub run 时实测。
+
+### 28.9 真实用例（GitHub run，用户本轮发布后跟进）
+发布 `v0.1.0-beta.N` 推 tag 后，主会话不需要反复问「CI 跑完了吗」，只需登记一次等待：
+
+```
+task_wait({
+  repo: "MyMiMang/pi-assistant",
+  reason: "等这次发布的 GitHub Actions run 结束；成功后核对 release 资产与 latest.json，失败就报告失败步骤并建议重跑或修复。",
+  due: "+30m"          // 兜底：30 分钟内一定唤醒一次（好过无限等）
+})
+```
+
+模型随即结束这一轮、告诉用户「已登记，等 CI 结束会汇报」。之后：`tickWaits` 每 2 分钟查一次固定端点 `api.github.com/repos/MyMiMang/pi-assistant/actions/runs?...`，`status=completed` 时 `fireWait` 唤醒一次，模型读到 `conclusion / url` 后去核对资产。期间**不产生任何模型调用**。用户中途问「现在怎么样了」，模型调 `task_wait_check`（或界面 `POST /api/task-waits/:id/refresh`）立即拿最新状态。
+
+当前环境出口 IP 被 GitHub 匿名限流（403），公开仓库也需要配 `GITHUB_TOKEN`/`GH_TOKEN` 才能稳定轮询；错误会被记录在等待记录的 `last_error` 并在到期唤醒时说明，不会静默。
