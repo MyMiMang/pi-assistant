@@ -1500,6 +1500,11 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - **统一入口**：单聊 / 群聊 / 子代理的模型入口复用同一组件（保留现有 `data-testid` 与排序语义）。
 - **验收**：`e2e/model-ui.mjs` 六组通过，覆盖分组搜索、常用五项持久化、模型与思考统一、390px、默认/识图/群聊/子代理入口；模型选择统计四项单测通过，两端 typecheck 与前端 build 通过。
 
+**自定义服务推理档位（未打包，beta.21 候选）**：自定义服务模型只写 `reasoning`、不写 Pi 的 `thinkingLevelMap` 时，`getSupportedThinkingLevels` 只给 `off/minimal/low/medium/high`，`clampThinkingLevel` 还会把 `xhigh/max` 静默收敛回 `high`。现在按模型名从 **Pi 内置目录（SDK 元数据）** 照搬同一个模型的 `thinkingLevelMap`（含 `xhigh/max`），写进自定义模型元数据与 Pi 的 `models.json`，让界面档位、切换与 `reasoning_effort` 三者一致。
+
+- 匹配规则：同名优先、其次忽略日期快照；多个托管商映射不一致时按 同协议→官方服务 收敛，**仍有歧义（候选映射不一致）就不补**，保持 Pi 默认，不按目录顺序假装事实。来源记录为 `provider:id@api`（自定义模型元数据的 `thinkingLevelSource`，不写进 `models.json`）。
+- **边界（如实说明）**：这只证明「和 Pi 内置目录对该模型的元数据一致」，**不能证明用户的中转站真的透传 `xhigh/max`**；中转行为随实现而异。本轮只用本地 mock 断言「我们确实发出 `reasoning_effort=xhigh`」，未经真实中转验证，也不新增模型费用。
+
 ## 25. 统一任务展示（beta.20 已发布）
 
 目标：把**子代理 / 后台长任务 / 定时跟进**归为同一个「任务」概念，**统一入口和状态展示**（一个任务列表、一套状态），但**内部保留三种差别**：即时执行（马上跑）、等待时间（排队 / 定时 / 跟进到点）、事件回调（完成后通知主会话）。**只做入口与展示的统一，不先动底层调度、不做大重构**；本轮共用 `Tasks.tsx` 的短标题、状态与列表行，`subagents` / `tasks` / `proactive_followups` 底层仍分别运行，尚未合并成一个调度器或总列表。
@@ -1539,7 +1544,7 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - **定时检查**：`tickWaits`（20 秒一次，`startWaitScheduler`）——到 `due_at` 无条件唤醒（兜底，事件永久丢失也不会无限等）；`next_check_at` 到点重查任务/子代理状态或调 provider；provider 每个 tick 最多查 5 个，避免打爆外部接口。
 - **去重**：`fireWait` 用 `UPDATE … WHERE status='waiting'` 原子置 `fired`，重复事件 / 并发 tick 只有一个成功唤醒；同一会话 + 同一目标重复登记复用一条 waiting。
 - **重启恢复**：记录持久化；`startWaitScheduler` 先 `resumeWaits()` 把 waiting 的 `next_check_at` 重置为现在，第一次 tick 就会处理「重启期间任务已结束 / 已到点」的等待，不重跑任务、不重复副作用。
-- **取消 / 停止**：`task_wait_cancel` / `cancelWait`；用户说停时 `AgentRuntime.abort()` 调 `cancelWaitsForConversation` 取消该会话所有等待，停下后不再被唤醒。
+- **取消 / 停止**：`task_wait_cancel` / `cancelWait`；用户说停时 `AgentRuntime.abort()` 调 `cancelWaitsForConversation` 取消该会话所有等待，停下后不再被唤醒。任务被取消（`tasks.cancel` / 失败中止）时，`task.updated(status=cancelled)` 事件会连带取消等它的等待（`cancelWaitsForTask`），**不唤醒**模型。
 
 ### 28.4 外部 provider 的安全边界（不允许任意 shell / eval 回调）
 - 只内置一种外部检查：GitHub Actions run。请求**固定端点** `https://api.github.com/repos/<owner>/<repo>/actions/runs[/<id>]`，`owner/repo`、`run_id`、`branch` 先按正则校验；`GET` + 15s 超时，公开仓库免登录，私有仓库用环境变量 `GITHUB_TOKEN`/`GH_TOKEN`（只读）。
@@ -1568,6 +1573,6 @@ task_wait({
 })
 ```
 
-模型随即结束这一轮、告诉用户「已登记，等 CI 结束会汇报」。之后：`tickWaits` 每 2 分钟查一次固定端点 `api.github.com/repos/MyMiMang/pi-assistant/actions/runs?...`，`status=completed` 时 `fireWait` 唤醒一次，模型读到 `conclusion / url` 后去核对资产。期间**不产生任何模型调用**。用户中途问「现在怎么样了」，模型调 `task_wait_check`（或界面 `POST /api/task-waits/:id/refresh`）立即拿最新状态。
+模型随即结束这一轮、告诉用户「已登记，等 CI 结束会汇报」。之后：`tickWaits`（每 20s 一轮兜底，GitHub 按 `check_minutes`，默认 5 分钟）查固定端点 `api.github.com/repos/MyMiMang/pi-assistant/actions/runs?...`，`status=completed` 时 `fireWait` 唤醒一次，模型读到 `conclusion / url` 后去核对资产。期间**不产生任何模型调用**。用户中途问「现在怎么样了」，模型调 `task_wait_check`（或界面 `POST /api/task-waits/:id/refresh`）立即拿最新状态。
 
-当前环境出口 IP 被 GitHub 匿名限流（403），公开仓库也需要配 `GITHUB_TOKEN`/`GH_TOKEN` 才能稳定轮询；错误会被记录在等待记录的 `last_error` 并在到期唤醒时说明，不会静默。
+当前环境出口 IP 被 GitHub 匿名限流（403）；公开仓库免登录但匿名每 IP 每小时只有 60 次，配 `GITHUB_TOKEN`/`GH_TOKEN`（进程已有环境变量，只读）可提高限额。限流 / 认证失败会给出明确提示并记录在等待记录的 `last_error`，到 `due_at` 兑底唤醒时说明，不会静默。

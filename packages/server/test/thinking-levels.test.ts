@@ -12,6 +12,7 @@ import { startMockOpenAI } from "../../../e2e/mock-openai.mjs";
 import { config } from "../src/config.ts";
 import { customProviders, initModels, models } from "../src/models.ts";
 import { createPiSession, lastAssistantText, promptSession } from "../src/pi-adapter/index.ts";
+import { knownThinkingLevelMap } from "../src/pi-adapter/model-limits.ts";
 
 const relay = await startMockOpenAI({ port: 0, key: "sk-unit" });
 after(() => relay.close());
@@ -60,6 +61,23 @@ test("旧配置启动补齐：没有档位映射的自定义模型，backfill �
 	} finally {
 		await customProviders.remove(p.id);
 	}
+});
+
+test("多托管商映射不一致：候选有歧义就不补；一致时记录 Pi 目录来源", () => {
+	const ambiguous: Parameters<typeof knownThinkingLevelMap>[1] = [
+		{ id: "m", provider: "openrouter", thinkingLevelMap: { low: "low", high: "high" } },
+		{ id: "m", provider: "together", thinkingLevelMap: { low: "low", high: "high", max: "max" } },
+	];
+	assert.equal(knownThinkingLevelMap("m", ambiguous, "openai-completions"), undefined, "同协议候选映射不一致 → 保守不补，不按目录顺序假装事实");
+
+	const consistent: Parameters<typeof knownThinkingLevelMap>[1] = [
+		{ id: "m", provider: "openai", api: "openai-completions", thinkingLevelMap: { low: "low", high: "high", xhigh: "xhigh" } },
+		{ id: "m", provider: "azure", api: "openai-responses", thinkingLevelMap: { low: "low", high: "high", xhigh: "xhigh" } },
+	];
+	const r = knownThinkingLevelMap("m", consistent, "openai-completions");
+	assert.equal(r?.source, "openai:m@openai-completions", "记录 SDK 元数据来源（provider:id@api）");
+	assert.equal(r?.map.xhigh, "xhigh");
+	assert.equal(knownThinkingLevelMap("unheard-of", consistent, "openai-completions"), undefined, "目录里没有的模型不补");
 });
 
 test("请求参数：选 xhigh 时真的发 reasoning_effort=xhigh，不被 clamp 回 high", async () => {

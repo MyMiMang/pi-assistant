@@ -174,6 +174,32 @@ test("同一会话同一目标重复登记复用一条等待（避免重复唤�
 	assert.equal(W.getWait(a.id)!.reason, "第二次");
 });
 
+test("任务被取消：连带取消等它的等待，不唤醒模型", async () => {
+	reset();
+	makeTask("t7", "running");
+	const w = W.registerWait("tw-a", conv, { taskId: "t7", reason: "等这个后台任务，完成后汇总" });
+	makeTask("t7", "cancelled");
+	bus.emit({ type: "task.updated", task: { id: "t7", status: "cancelled" } });
+	assert.equal(wakes.length, 0, "任务被取消不唤醒（连带取消等待）");
+	assert.equal(W.getWait(w.id)!.status, "cancelled");
+	// 取消后更晚的 tick 也不再唤醒
+	await W.tickWaits(now() + 10 * 60_000);
+	assert.equal(wakes.length, 0);
+});
+
+test("GitHub 限流 / 认证失败：给明确提示，不输出 token", async () => {
+	reset();
+	const orig = globalThis.fetch;
+	try {
+		globalThis.fetch = (async () => new Response(JSON.stringify({ message: "API rate limit exceeded" }), { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1700000000" } })) as unknown as typeof fetch;
+		await assert.rejects(() => W.runGithubRun({ repo: "a/b" }), (e: Error) => /限流/.test(e.message) && !/Bearer|token=/i.test(e.message));
+		globalThis.fetch = (async () => new Response("", { status: 401 })) as unknown as typeof fetch;
+		await assert.rejects(() => W.runGithubRun({ repo: "a/b" }), /认证失败/);
+	} finally {
+		globalThis.fetch = orig;
+	}
+});
+
 test("provider 检查出错：记录错误并继续等，不误唤醒", async () => {
 	reset();
 	W.setWaitProviderRunner(async () => { throw new Error("gh 未登录"); });

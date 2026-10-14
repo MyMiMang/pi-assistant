@@ -108,9 +108,29 @@ function ghHeaders(): Record<string, string> {
 interface GhRun { status?: string; conclusion?: string | null; display_title?: string; html_url?: string; head_branch?: string }
 const mapRun = (r: GhRun): ProviderState => ({ state: r.status === "completed" ? "completed" : "pending", conclusion: r.conclusion ?? null, title: r.display_title, url: r.html_url, detail: r.head_branch ? `分支 ${r.head_branch}` : undefined });
 
+const bodyMessage = (s: string): string => {
+	try {
+		const m = (JSON.parse(s) as { message?: string }).message;
+		if (m) return m.slice(0, 200);
+	} catch {
+		// 不是 JSON 就当纯文本
+	}
+	return s ? s.slice(0, 200) : "";
+};
+/** 把 GitHub 的限流 / 认证失败翻译成用户能看懂的提示；绝不回显 token。 */
+function githubError(status: number, remaining: string | null, reset: string | null, body: string): Error {
+	const hint = bodyMessage(body);
+	const resetAt = reset && /^\d+$/.test(reset) ? new Date(Number(reset) * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : null;
+	if (status === 401) return new Error(`GitHub 认证失败（token 无效或已过期）${hint ? `：${hint}` : ""}。请检查 GITHUB_TOKEN/GH_TOKEN。`);
+	if (status === 429 || (status === 403 && remaining === "0")) return new Error(`GitHub 接口限流（${remaining === "0" ? "配额已用完" : "请求过多"}${resetAt ? `，约 ${resetAt} 重置` : ""}）；匿名访问公开仓库只有每小时 60 次，配 GITHUB_TOKEN/GH_TOKEN 可提高限额。`);
+	if (status === 403) return new Error(`GitHub 拒绝访问（403）${hint ? `：${hint}` : ""}；私有仓库需要有效 token，或该 token 没有 actions:read 权限。`);
+	return new Error(`GitHub API ${status}${hint ? `：${hint}` : ""}`);
+}
+
 /**
  * 内置的 GitHub Actions run 检查：只请求**固定**的 api.github.com 端点，owner/repo、run id、分支先校验；
- * 不执行任何用户提供的命令 / eval 回调。公开仓库无需登录；私有仓库可用环境变量 GITHUB_TOKEN / GH_TOKEN（只读）。
+ * 不执行任何用户提供的命令 / eval 回调。公开仓库免登录；私有仓库用**进程已有的** GITHUB_TOKEN / GH_TOKEN（只读）。
+ * 不读取凭据文件、不打印 token；限流 / 认证失败会给出明确提示，交由等待的 `last_error` 记录，不会静默。
  */
 export async function runGithubRun(ref: GithubRunRef): Promise<ProviderState> {
 	if (!isSafeRepo(ref.repo)) throw new Error("仓库格式应为 owner/repo");
@@ -120,10 +140,7 @@ export async function runGithubRun(ref: GithubRunRef): Promise<ProviderState> {
 		? `https://api.github.com/repos/${ref.repo}/actions/runs/${ref.runId}`
 		: `https://api.github.com/repos/${ref.repo}/actions/runs?per_page=1${ref.branch ? `&branch=${encodeURIComponent(ref.branch)}` : ""}`;
 	const res = await fetch(url, { headers: ghHeaders(), signal: AbortSignal.timeout(15_000) });
-	if (!res.ok) {
-		const body = await res.text().catch(() => "");
-		throw new Error(`GitHub API ${res.status}${body ? `：${body.slice(0, 200)}` : ""}`);
-	}
+	if (!res.ok) throw githubError(res.status, res.headers.get("x-ratelimit-remaining"), res.headers.get("x-ratelimit-reset"), await res.text().catch(() => ""));
 	const data = (await res.json()) as GhRun & { workflow_runs?: GhRun[] };
 	const r = ref.runId !== undefined ? data : data.workflow_runs?.[0];
 	if (!r) return { state: "unknown", detail: "没有找到对应的 workflow run" };
@@ -345,7 +362,12 @@ export async function tickWaits(at = now()): Promise<string[]> {
 // ---------------------------------------------------------------- 事件快速通道
 bus.on((e) => {
 	const ev = e as unknown as { type: string; task?: { id: string; status: string; result?: string | null; error?: string | null }; subagent?: { id: string; status: string; result_summary?: string | null; error_reason?: string | null } };
-	if (ev.type === "task.updated" && ev.task && TASK_TERMINAL.has(ev.task.status)) {
+		if (ev.type === "task.updated" && ev.task && TASK_TERMINAL.has(ev.task.status)) {
+		// 任务被用户取消：连带取消等它的等待，不再唤醒（其它终态才唤醒）
+		if (ev.task.status === "cancelled") {
+			cancelWaitsForTask(ev.task.id, "任务已取消");
+			return;
+		}
 		for (const w of listWaits(undefined, { status: "waiting" })) {
 			if (w.target_kind !== "task" || w.target_ref !== ev.task.id) continue;
 			const o = taskOutcome(ev.task.id);

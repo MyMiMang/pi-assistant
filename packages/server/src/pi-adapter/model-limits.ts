@@ -125,20 +125,33 @@ function knownCapability(id: string, db: DbEntry[], key: "vision" | "reasoning" 
 }
 /**
  * 思考档位映射（Pi 的 thinkingLevelMap）：自定义服务里的模型名若和 Pi 内置目录里的同一个模型一致，
- * 就照搬 Pi 自己的元数据，让「支持的档位」和真实 API 一致（含 xhigh / max）。
- * 匹配规则和 knownCapability 一致：同名优先、其次忽略日期快照；多个托管商给的不一样时，
- * 优先同协议（自定义服务用的 api），其次官方服务——都认不出来就返回 undefined，绝不凭空补档位。
+ * 就照搬 **Pi 内置目录（SDK 元数据）** 里该模型的档位映射，补回被漏掉的 xhigh / max。
+ *
+ * 注意这只是「照搬 Pi 目录对该模型的元数据」，**不能证明用户的中转站真的透传这些档位**；
+ * 匹配规则和 knownCapability 一致：同名优先、其次忽略日期快照。多个托管商给的不一样时按
+ * 同协议 → 官方服务收敛；仍有歧义（候选映射不一致）就返回 undefined，绝不按目录顺序假装事实。
+ * 返回值带上来源（provider:id@api），便于如实记录这段元数据的出处。
  */
-export function knownThinkingLevelMap(id: string, builtin: Builtin[], api?: string): Record<string, string | null> | undefined {
+export interface KnownThinkingLevelMap {
+	map: Record<string, string | null>;
+	/** 映射来源：`provider:id@api`（Pi 内置目录条目，不是对中转站真实支持的断言） */
+	source: string;
+}
+export function knownThinkingLevelMap(id: string, builtin: Builtin[], api?: string): KnownThinkingLevelMap | undefined {
 	const withMap = builtin.filter((m) => m.thinkingLevelMap && Object.keys(m.thinkingLevelMap).length);
 	const n = normId(id);
 	let hits = withMap.filter((m) => normId(m.id) === n);
 	if (!hits.length) hits = withMap.filter((m) => baseId(normId(m.id)) === baseId(n));
 	if (!hits.length) return undefined;
 	const official = (list: Builtin[]) => list.filter((m) => m.provider && OFFICIAL.includes(m.provider));
+	// 候选池按可信度收敛：同协议里的官方 → 同协议 → 官方 → 全部
 	const sameApi = api ? hits.filter((m) => m.api === api) : [];
-	const pick = official(sameApi)[0] ?? sameApi[0] ?? official(hits)[0] ?? hits[0];
-	return pick ? { ...pick.thinkingLevelMap } : undefined;
+	const sameApiOfficial = official(sameApi);
+	const pool = sameApiOfficial.length ? sameApiOfficial : sameApi.length ? sameApi : official(hits).length ? official(hits) : hits;
+	// 歧义保守：候选池内的映射必须完全一致，只要有一个不一样就不补（不给用户假档位）
+	if (new Set(pool.map((m) => JSON.stringify(m.thinkingLevelMap))).size !== 1) return undefined;
+	const pick = pool[0];
+	return { map: { ...pick.thinkingLevelMap }, source: `${pick.provider ?? "unknown"}:${pick.id}${pick.api ? `@${pick.api}` : ""}` };
 }
 /** 从 Base URL 猜服务商（api.deepseek.com → deepseek，open.bigmodel.cn → zhipuai…），用于“同服务商优先” */
 export function providerHint(baseUrl?: string): string[] {

@@ -21,6 +21,8 @@ export interface CustomModel {
 	reasoningAuto?: boolean;
 	/** 思考档位映射：按模型名照搬 Pi 内置目录里同一个模型的元数据（含 xhigh / max），认不出来就不写 */
 	thinkingLevelMap?: Record<string, string | null>;
+	/** 上面映射的来源（`provider:id@api`，Pi 内置目录条目）；只作记录，不写进 Pi 的 models.json */
+	thinkingLevelSource?: string;
 	input?: ("text" | "image")[];
 	contextWindow?: number;
 	maxTokens?: number;
@@ -245,10 +247,11 @@ export class CustomProviders {
 			if (reasoning !== undefined) Object.assign(out, { reasoning, reasoningAuto: true });
 		}
 		// 思考档位：照搬 Pi 内置目录里同一个模型的 thinkingLevelMap（含 xhigh / max），让界面、切换与请求参数一致；
-		// 认不出来（模型名不标准 / 目录里没有）就不写，保持 Pi 的默认档位，不凭空补
-		const map = out.reasoning ? knownThinkingLevelMap(m.id, builtin, api) : undefined;
-		if (map) out.thinkingLevelMap = map;
-		else delete out.thinkingLevelMap;
+		// 认不出来（模型名不标准 / 目录里没有）或候选映射有歧义就不写，保持 Pi 的默认档位，不凭空补；
+		// 同时记录来源，如实标明这是 Pi 目录元数据、不是对中转站真实支持的断言。
+		const known = out.reasoning ? knownThinkingLevelMap(m.id, builtin, api) : undefined;
+		if (known) Object.assign(out, { thinkingLevelMap: known.map, thinkingLevelSource: known.source });
+		else (delete out.thinkingLevelMap, delete out.thinkingLevelSource);
 		return out;
 	}
 
@@ -276,7 +279,7 @@ export class CustomProviders {
 			const models = meta.models.map((x) => {
 				const keep = x.contextWindow && x.maxTokens && (x.limitsSource === "user" || x.limitsSource === "detected" || x.limitsSource === "learned");
 				const y = keep ? { ...this.withLimits(x, undefined, meta.baseUrl, meta.api), contextWindow: x.contextWindow, maxTokens: x.maxTokens, limitsSource: x.limitsSource } : this.withLimits(x, undefined, meta.baseUrl, meta.api);
-				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource || String(y.input) !== String(x.input) || y.reasoning !== x.reasoning || JSON.stringify(y.thinkingLevelMap ?? null) !== JSON.stringify(x.thinkingLevelMap ?? null)) n++;
+				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource || String(y.input) !== String(x.input) || y.reasoning !== x.reasoning || JSON.stringify(y.thinkingLevelMap ?? null) !== JSON.stringify(x.thinkingLevelMap ?? null) || (y.thinkingLevelSource ?? null) !== (x.thinkingLevelSource ?? null)) n++;
 				return y;
 			});
 			return { ...meta, models };
@@ -334,6 +337,6 @@ export class CustomProviders {
 
 /** 写进 Pi models.json 的模型条目：去掉我们自己的字段和空值 */
 function piModel(m: CustomModel) {
-	const { limitsSource: _s, inputAuto: _a, reasoningAuto: _r, ...rest } = m;
+	const { limitsSource: _s, inputAuto: _a, reasoningAuto: _r, thinkingLevelSource: _t, ...rest } = m;
 	return Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== ""));
 }
