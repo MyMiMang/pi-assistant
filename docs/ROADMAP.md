@@ -5,7 +5,7 @@
 
 ## 功能需求
 
-当前公开版为 v0.1.0-beta.20（仅 Apple Silicon Mac，Actions 38612956619 构建/安装冒烟/publish 成功；四项公开资产和 arm64 更新清单独立核验，beta.18 完全权限行为保留）。用户授权剩余功能验收后直接提交、推送、打包；本轮仅 macOS arm64，跳过 Intel、Windows、Linux。发布范围由 `.github/release-scope.json` 的 `mac-arm64` 固定，手动 `scope=all` 可恢复多平台，安装冒烟与平台清单校验成功后才公开。
+当前公开版为 v0.1.0-beta.21（仅 Apple Silicon Mac，Actions 38621370349 构建/安装冒烟/publish 成功；四项公开资产和 arm64 更新清单独立核验，beta.18 完全权限行为保留）。上一版 v0.1.0-beta.20。用户授权剩余功能验收后直接提交、推送、打包；本轮仅 macOS arm64，跳过 Intel、Windows、Linux。发布范围由 `.github/release-scope.json` 的 `mac-arm64` 固定，手动 `scope=all` 可恢复多平台，安装冒烟与平台清单校验成功后才公开。
 
 | 本轮剩余需求 | 当前状态 | 验收与限制 |
 |---|---|---|
@@ -49,7 +49,7 @@
 | 子代理绝不默默结束或卡住：做完、出错、没进展、崩溃、程序重启，主会话都一定知道并告诉用户（原因 + 下一步）；卡片不会一直转圈 | 已完成（beta.19） | DESIGN §21.7：唯一终态 + 事件落库 + 心跳看门狗（3 分钟）+ 最长 60 分钟（已定，可改） + 有 session 重启续跑，无 session 标 lost |
 | 子代理也要像主会话一样的独立会话分页，能看回复、思考和工具操作，也能直接发消息；平时在主会话聊，想看时点进任一子代理 | 已完成（beta.19） | DESIGN §21.4；子代理图标 → 选择任务 → 打开分页，默认不自动开页；切换保留草稿，关闭分页不停止任务；运行时插话，结束后续聊 |
 | 子代理用哪个模型：设置里勾选允许子代理用的模型；没配置→用主会话助理自己的模型；配了允许清单→主会话按任务和能力在清单内自动挑（复用组队能力画像）；指定了→用指定的 | 已完成（beta.19） | DESIGN §21.5；依赖组队自动选模型的能力画像 |
-| 子代理模型改成「每个助理的候选池」（多选）：全局设置移除子代理模型指定/挑选（只保留并发 + 最长运行）；助理设置里可搜索、按服务分组、checkbox 多选候选池，默认跟随主会话；主会话派活时在池内按任务挑；模型不可用（限流 / 服务不可用 / 模型不存在 / 鉴权不通等可恢复故障）只在池内有限 fallback，1 个选项失败 / 池内用尽就明确停，不用池外模型、不无限重试；切换原因 / 使用模型对用户可见，用量归同一任务不重复卡片 | 已完成（beta.21 候选） | 2026-10-15 用户要求。DESIGN §21.5：`subagents.ts`（候选池 + `planFallback` + 迁移 `migrateSubagentModelSettings`）、`model-errors.ts`（故障分类）、`runtime.ts`（会话内换模型续跑）、`Subagents.tsx`/`ModelPicker.tsx`（池多选菜单）；单测（选择 / 迁移 / fallback 决策 / 切换记录，含初始化失败候选不绕回）+ 真实 Mock 进程 fallback 冒烟 `test/subagent-fallback.smoke.ts` + e2e `subagents.mjs` / `model-ui.mjs` 通过；旧单模型 → 单项池、旧全局允许清单迁给无显式配置的助理 |
+| 子代理模型改成「每个助理的候选池」（多选）：全局设置移除子代理模型指定/挑选（只保留并发 + 最长运行）；助理设置里可搜索、按服务分组、checkbox 多选候选池，默认跟随主会话；主会话派活时在池内按任务挑；模型不可用（限流 / 服务不可用 / 模型不存在 / 鉴权不通等可恢复故障）只在池内有限 fallback，1 个选项失败 / 池内用尽就明确停，不用池外模型、不无限重试；切换原因 / 使用模型对用户可见，用量归同一任务不重复卡片 | 已发布（beta.21） | 2026-10-15 用户要求。DESIGN §21.5：`subagents.ts`（候选池 + `planFallback` + 迁移 `migrateSubagentModelSettings`）、`model-errors.ts`（故障分类）、`runtime.ts`（会话内换模型续跑）、`Subagents.tsx`/`ModelPicker.tsx`（池多选菜单）；单测（选择 / 迁移 / fallback 决策 / 切换记录，含初始化失败候选不绕回）+ 真实 Mock 进程 fallback 冒烟 `test/subagent-fallback.smoke.ts` + e2e `subagents.mjs` / `model-ui.mjs` 通过；旧单模型 → 单项池、旧全局允许清单迁给无显式配置的助理 |
 | 工作中随时发消息、说停就停 | 已完成（beta.12） | DESIGN §20 |
 | Windows 装上就能用（中文用户名、端口被占、杀毒软件等），出错时有友好页面 | 已完成（beta.11） | 启动页 + 日志 + 发版前 Windows/Mac 安装冒烟 |
 | 桌宠：多款预设 + 用户一句话自己做 | 已完成（beta.10，第一版） | 第二版：每个助理一只、新消息冒泡 |
@@ -70,14 +70,17 @@
 | 定时任务直接调时分、工作日、每周、间隔、高级 cron | 已完成（beta.20） | 特殊旧 cron、自定义免打扰保留；间隔至少 5 分钟且均匀；解析与专项 UI 通过。DESIGN §26 |
 | macOS 透明标题栏与交通灯留白 | 已发布（beta.20，真机交互待测） | cargo check、六组布局通过；原生交通灯、拖动、双击与全屏待安装包真机验证 |
 
-## beta.21 候选（整合树 `integration-beta21`，测试已过、待打包）
+## beta.21 已发布需求
+
+2026-10-21 整合树 `integration-beta21`，cherry-pick `agent-model-pool 6656d0f` 合入 task_wait、推理档位；提交/tag `9215c83`，Actions 38621370349 成功并公开 Latest（仅 macOS arm64）。
 
 | 需求（用户原话大意） | 状态 | 说明 |
 |---|---|---|
-| 任务等待 `task_wait`：等内部任务 / 子代理 / GitHub Actions run / 到点时由**程序等待**，不 sleep 轮询 | 已完成（beta.21 候选） | 持久 `task_waits` + 事件快速通道 + 兜底 tick；去重唤醒、重启恢复、取消（含任务取消连带）、手动刷新、最后检查时间可查询；provider 只走固定 GitHub REST 端点，用进程已有 token、不读凭据文件。唤醒投递与 `fired` 分离持久化、失败有限重试、重启补投（不承诺 exactly-once，带等待 id 幂等线索）。19 项单测 + 1 项 mock 集成（合作式结束、等待期零模型调用）通过。DESIGN §28 |
-| 自定义服务的推理档位：认得出的模型补回 xhigh / max，认不出的保持 Pi 默认，不凭空造 | 已完成（beta.21 候选） | 按 Pi 内置目录同一模型的 `thinkingLevelMap` 补；多托管商映射不一致且无同协议/唯一官方来源时保守不补（启发式，不当中转支持的事实）；请求参数 mock 断言发出 xhigh。DESIGN §24 |
+| 任务等待 `task_wait`：等内部任务 / 子代理 / GitHub Actions run / 到点时由**程序等待**，不 sleep 轮询 | 已发布（beta.21） | 持久 `task_waits` + 事件快速通道 + 兜底 tick；去重唤醒、重启恢复、取消（含任务取消连带）、手动刷新、最后检查时间可查询；provider 只走固定 GitHub REST 端点，用进程已有 token、不读凭据文件。唤醒投递与 `fired` 分离持久化、失败有限重试、重启补投（不承诺 exactly-once，带等待 id 幂等线索）。19 项单测 + 1 项 mock 集成（合作式结束、等待期零模型调用）通过。DESIGN §28 |
+| 自定义服务的推理档位：认得出的模型补回 xhigh / max，认不出的保持 Pi 默认，不凭空造 | 已发布（beta.21） | 按 Pi 内置目录同一模型的 `thinkingLevelMap` 补；多托管商映射不一致且无同协议/唯一官方来源时保守不补（启发式，不当中转支持的事实）；请求参数 mock 断言发出 xhigh。DESIGN §24 |
+| 子代理模型改为每个助理的候选池（多选）+ 池内有限 fallback | 已发布（beta.21） | 见上方 beta.21 条 |
 
-**beta.21 整合**（`integration-beta21`，`cherry-pick agent-model-pool 6656d0f`）：子代理模型改为每个助理的候选池、池内有限 fallback（见下表）；与 task_wait、推理档位同树整合。定向 typecheck、单测 62/62、web/rendezvous 构建、Mock fallback 冒烟、`e2e/model-ui.mjs` 六组、`e2e/subagents.mjs` 全过。仅 macOS arm64。
+**beta.21 整合验证**：定向 typecheck、单测 62/62、web/rendezvous 构建、Mock fallback 冒烟、`e2e/model-ui.mjs` 六组、`e2e/subagents.mjs` 全过。仅 macOS arm64。
 
 **统一任务展示**：本轮共用展示组件，短标题由前端截取、不调用模型；完整指令保留。子代理、后台长任务、定时跟进的底层机制保持独立，统一总列表与服务端可选标题接口仍属后续。
 

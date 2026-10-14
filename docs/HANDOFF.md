@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 当前公开版本 **v0.1.0-beta.20**；本轮仅 macOS arm64，已构建、Mac 安装冒烟与更新资产校验通过并公开 Latest。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
+> 当前公开版本 **v0.1.0-beta.21**（已公开 Latest）；上一版 v0.1.0-beta.20。本轮仅 macOS arm64，已构建、Mac 安装冒烟与更新资产校验通过并公开 Latest。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
 ## 1. 这是什么
 
@@ -13,6 +13,10 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 手机通过内置的 Cloudflare 隧道远程使用。界面文字是中文。用户只通过安装包的自动更新来测试。
 
 ## 2. 进度（按版本）
+
+2026-10-21 beta.21 已公开 Latest：https://github.com/MyMiMang/pi-assistant/releases/tag/v0.1.0-beta.21 。Actions https://github.com/MyMiMang/pi-assistant/actions/runs/38621370349 成功：prepare、唯一 macOS-arm64 build（5m50s）、mac-smoke、publish；linux / windows-smoke skipped，Intel 未入矩阵。tag 与提交固定 `9215c83`（先 fetch 确认远端 main 仍在 `a48e27f`，快进 push，未 force、未移动 tag）。公开四项资产：latest.json、`Pi.Assistant_0.1.0-beta.21_aarch64.dmg`、`Pi.Assistant_aarch64.app.tar.gz`、`....sig`；独立核验 `latest.json` version=0.1.0-beta.21、notes 非空、仅 darwin-aarch64 / darwin-aarch64-app、签名非空、URL 正式下载地址。未安装/替换用户 App。
+
+beta.21 内容：子代理模型改为每个助理的候选池（全局只留并发/最长运行，助理设置可搜索/按服务分组/多选；派活在池内按能力挑，可恢复模型故障只在池内有限 fallback 并从已保存会话续跑，每候选最多一次，用尽即停；工具失败/权限拒绝/未知错误/用户停止都不换、不用池外模型；旧设置幂等迁移）；任务等待 `task_wait`（程序等待、去重唤醒、取消连带、投递失败有限重试与重启补投，不承诺 exactly-once）；自定义服务推理档位认得出的补回 xhigh/max。保留 beta.18 完全权限应用层免审批。整合树 `integration-beta21`；唯一代码冲突在 `runtime.ts` 顶部 import（取两边），并修复复核发现的初始化失败候选未并入 `tried`（新增单测守护），跨重启 `tried` 不落库边界写准 DESIGN §21.5。验证：两端 typecheck、定向单测 62/62、web+rendezvous 构建、真实 Mock fallback 冒烟、e2e model-ui 六组与 subagents 全过。
 
 - beta.21 候选（未发布）主会话复核：投递索引移至旧等待表补列后创建，避免升级启动失败；使用旧表结构启动的回归用例与等待/真实 Pi mock 会话测试共 21/21 通过。等待为合作式结束，mock 已验证 settle 后等待期不增加模型步骤，不承诺任意模型强制停止。
 
