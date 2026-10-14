@@ -1,4 +1,6 @@
 # 打 v* tag 时构建安装包并发布到 GitHub Releases：
+# tag / release-dryrun 的范围取 .github/release-scope.json（本轮 mac-arm64），手动 scope=all 可恢复多平台。
+# mac-arm64 强制跳过 Windows、Linux、Intel；publish 校验 latest.json 仅含实际构建的 arm64 更新项。
 #   macOS arm64 / x64 → .dmg（hdiutil 打包，非 Tauri bundle_dmg.sh）（+ .app.tar.gz 更新包），Windows x64 → NSIS .exe（+ 更新包）
 # 安装包内容：Tauri 托盘程序 + 内置 Node 运行时（sidecar）+ app 目录（服务端 + Pi + 生产依赖 + 网页 + cloudflared/uv/cua-driver），
 # Linux 服务器版 x64 / arm64 → pi-assistant-<版本>-linux-<arch>.tar.gz（+ .sha256），deploy/linux/install.sh 安装。
@@ -16,6 +18,11 @@ on:
   push: { tags: ["v*"], branches: [release-dryrun] }
   workflow_dispatch:
     inputs:
+      scope:
+        description: 发布平台范围（tag 使用 .github/release-scope.json）
+        type: choice
+        options: [mac-arm64, all]
+        default: mac-arm64
       build_intel:
         description: 同时构建 Intel Mac（x86_64，默认关闭）
         type: boolean
@@ -30,16 +37,17 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build_matrix: ${{ steps.matrix.outputs.build_matrix }}
+      scope: ${{ steps.matrix.outputs.scope }}
+      build_linux: ${{ steps.matrix.outputs.build_linux }}
+      build_windows: ${{ steps.matrix.outputs.build_windows }}
+      build_intel: ${{ steps.matrix.outputs.build_intel }}
     steps:
-      - id: matrix
-        name: 组装桌面构建矩阵（默认不含 Intel Mac）
-        run: |
-          ARM='{"os":"macos-14","target":"aarch64-apple-darwin","label":"macOS-arm64"}'
-          INTEL='{"os":"macos-15-intel","target":"x86_64-apple-darwin","label":"macOS-x64"}'
-          WIN='{"os":"windows-latest","target":"x86_64-pc-windows-msvc","label":"Windows-x64"}'
-          if [ "$BUILD_INTEL" = "true" ]; then echo "build_matrix=[$ARM,$INTEL,$WIN]" >> "$GITHUB_OUTPUT"; else echo "build_matrix=[$ARM,$WIN]" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
+      - id: matrix
+        name: 按发布范围组装矩阵
+        env: { RELEASE_SCOPE: "${{ inputs.scope }}" }
+        run: node scripts/release-scope.mjs >> "$GITHUB_OUTPUT"
       - name: 建草稿 Release（已有草稿就复用；已经公开的版本不再重发）
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
@@ -143,6 +151,7 @@ jobs:
 
   linux:
     needs: prepare
+    if: needs.prepare.outputs.build_linux == 'true'
     # Linux 服务器版发布包：内置 Node + app 目录 + 命令行包装 + 安装脚本（见 scripts/package-linux.mjs）
     strategy:
       fail-fast: false
@@ -180,12 +189,15 @@ jobs:
 
   # 用刚构建、还在草稿里的安装包做真机冒烟；通过前不公开
   windows-smoke:
-    needs: build
+    needs: [prepare, build]
+    if: needs.prepare.outputs.build_windows == 'true'
     uses: ./.github/workflows/windows-smoke.yml
     with: { artifact: pi-assistant-Windows-x64 }
 
   mac-smoke:
-    needs: build
+    needs: [prepare, build]
+    env:
+      BUILD_INTEL: ${{ needs.prepare.outputs.build_intel }}
     runs-on: macos-14
     timeout-minutes: 15
     steps:
@@ -210,6 +222,7 @@ jobs:
           hdiutil attach -nobrowse -mountpoint /tmp/pia "$DMG"
           mkdir -p "$HOME/Applications" && cp -R /tmp/pia/*.app "$HOME/Applications/"
           APP=$(ls -d "$HOME"/Applications/*.app | head -1)
+          file "$APP/Contents/MacOS/pi-assistant-tray" | grep arm64
           xattr -dr com.apple.quarantine "$APP" || true
           "$APP/Contents/MacOS/pi-assistant-tray" > tray.log 2>&1 &
           for i in $(seq 1 150); do curl -fsS http://127.0.0.1:8787/api/system/public >/dev/null 2>&1 && { echo "mac launch OK"; exit 0; }; sleep 1; done
@@ -219,28 +232,31 @@ jobs:
           exit 1
 
   publish:
-    needs: [build, linux, windows-smoke, mac-smoke]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [prepare, build, linux, windows-smoke, mac-smoke]
+    if: >-
+      always() && startsWith(github.ref, 'refs/tags/v') &&
+      needs.prepare.result == 'success' && needs.build.result == 'success' && needs.mac-smoke.result == 'success' &&
+      (needs.linux.result == 'success' || (needs.prepare.outputs.build_linux == 'false' && needs.linux.result == 'skipped')) &&
+      (needs.windows-smoke.result == 'success' || (needs.prepare.outputs.build_windows == 'false' && needs.windows-smoke.result == 'skipped'))
     runs-on: ubuntu-latest
+    env:
+      RELEASE_SCOPE: ${{ needs.prepare.outputs.scope }}
+      BUILD_INTEL: ${{ needs.prepare.outputs.build_intel }}
     steps:
+      - uses: actions/checkout@v4
       - name: 全部通过 → 公开并标为 Latest（latest.json 这时才对自动更新可见）
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", GH_REPO: "${{ github.repository }}" }
         run: |
           gh release view "$REL_TAG" --json assets -q '.assets[].name' | tee assets.txt
-          PATTERNS=('x64-setup\.exe$' 'aarch64\.dmg$' 'linux-x64\.tar\.gz$' 'linux-arm64\.tar\.gz$' '^latest\.json$')
-          if [ "$BUILD_INTEL" = true ]; then PATTERNS+=('x64\.dmg$'); fi
-          for p in "${PATTERNS[@]}"; do grep -Eq "$p" assets.txt || { echo "::error::草稿里缺少 $p，保持草稿"; exit 1; }; done
-          # 草稿资产的下载地址是 untagged-…，公开后会失效：先把 latest.json 里的地址改成按 tag 的正式地址再公开
           gh release download "$REL_TAG" -p latest.json -O latest.json
-          # 未构建 Intel 时 latest.json 绝不能带 darwin-x86_64 项，否则 Intel 用户会被错误引到 arm 包
-          if [ "$BUILD_INTEL" != true ] && grep -q 'darwin-x86_64' latest.json; then echo "::error::未构建 Intel 版但 latest.json 仍含 darwin-x86_64"; exit 1; fi
-          sed -E -i "s#/releases/download/[^/\"]+/#/releases/download/$REL_TAG/#g" latest.json
+          # 校验构建范围、资产和平台更新项，重写草稿临时地址；失败保持草稿。
+          node scripts/release-scope.mjs validate
           grep -o '"url": *"[^"]*"' latest.json
           gh release upload "$REL_TAG" latest.json --clobber
           gh release edit "$REL_TAG" --draft=false --prerelease=false --latest
 
   cleanup-dry-run:
-    needs: [build, linux, windows-smoke, mac-smoke]
+    needs: [prepare, build, linux, windows-smoke, mac-smoke]
     if: always() && !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
