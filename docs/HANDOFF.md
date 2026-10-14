@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 最后更新：2026-10-14，当前公开版本 **v0.1.0-beta.11**；**v0.1.0-beta.14 打包中**，用户已确认发布。beta.12 / beta.13 仍是草稿（Intel Mac 的 DMG 失败；beta.13 的重试已取消），本次包含其全部功能。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
+> 最后更新：2026-10-14，当前公开版本 **v0.1.0-beta.16**；**v0.1.0-beta.17 权限误报热修待发布**，用户已明确授权「修完直接提交打包」。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
 ## 1. 这是什么
 
@@ -13,6 +13,9 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 手机通过内置的 Cloudflare 隧道远程使用。界面文字是中文。用户只通过安装包的自动更新来测试。
 
 ## 2. 进度（按版本）
+
+2026-10-14 beta.17 权限误报热修：基于公开 beta.16（4bfd0f9）的独立发布树，只选择性带入 hard-guard、shell-lex 和 hard-guard 测试，其他 UI / 模型 WIP 留待后续。命令按引号、命令位置和实际写入目标判定；修复 grep 危险词、gh --repo 输出日志、git log 格式串、sed 工作区输出、export PATH、复制受保护源到 /tmp、字面 heredoc 正文的误报。未引号 heredoc 的命令替换、喂给 shell 的脚本、sh -c / 反引号 / $(...) 和真实系统写入继续保护。主会话复核补掉自身保护与 stress 文本的全文匹配残留。在发布树独立验证：hard-guard + approval + host-control + sandbox-access **37/37** 通过，服务端与网页 typecheck 通过；未跑全量。发布按五平台构建和安装冒烟通过后自动公开 Latest。
+
 
 2026-10-14 发版：beta.13 的 Linux 两版、Mac arm64、Windows 已构建成功；Intel Mac 在 `bundle_dmg.sh` 运行约 16 分钟后失败，重试仍卡在此步骤，已取消（[run 38500745136](https://github.com/MyMiMang/pi-assistant/actions/runs/38500745136)）。上游 tauri-action 默认将 `TAURI_BUNDLER_DMG_IGNORE_CI` 设为 true，强制 Finder 排版；显式设为 false 恢复 bundler CI 模式，并给两次打包加 `--verbose`。参照 [上游问题 1091](https://github.com/tauri-apps/tauri-action/issues/1091)，这是对相同失败症状的兼容处理；beta.13 的简略日志不足以确认具体子命令。以 beta.14 重新构建验证，旧 tag 不移动、旧草稿不公开。YAML 解析和 CLI 参数检查通过，未重跑产品全量测试。
 

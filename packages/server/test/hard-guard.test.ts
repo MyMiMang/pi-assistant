@@ -28,6 +28,153 @@ test("shell：日常命令不命中", () => {
 		assert.equal(hit(c), null, c);
 });
 
+test("shell：引号 / 转义里的 | ; 等不算分隔符（beta16 误报回归）", () => {
+	// 用户截图里的真实命令：grep 参数里的 \|logout 曾被拆成独立 logout 而误报关机
+	const screenshot = `cd "/data/pia/pi-assistant" && sed -n '180,230p' packages/server/src/http.ts && echo "=== UI delete ===" && grep -n "delete\\|删除\\|remove\\|logout" apps/web/src/components/CustomProvider.tsx`;
+	assert.equal(hit(screenshot), null, screenshot);
+	for (const c of [
+		'grep -n "delete\\|remove\\|logout" f.ts',
+		'grep -rn "shutdown" src/',
+		'grep -rn "mkfs\\.ext4" docs/',
+		'grep -n "kill -9 1" f.ts',
+		'grep -rn "pi-assistant" docs/',
+		'echo "shutdown"',
+		'echo "please reboot the machine"',
+		'echo "fdisk -l"',
+		"echo 'rm -rf /'",
+		'printf "%s" "mkfs.ext4"',
+	]) assert.equal(hit(c), null, c);
+	// 真命令（分隔符在引号外）仍然命中
+	assert.equal(hit("cat x | shutdown -h now"), "power");
+	assert.equal(hit("cat x | mkfs.ext4 /dev/sdb1"), "disk");
+	assert.equal(hit("echo a; fdisk -l"), "disk");
+	assert.equal(hit("echo a && killall Finder"), "system-proc");
+});
+
+test("shell：beta16 真实审批误报记录（只读/文本/方向，全部为 null）", () => {
+	// 主会话只读 data.db recent15 里被误报的真实命令
+	const real = [
+		// 1 gh run view：--repo 参数里的仓库名 + 输出到工作目录文件，不是改自身
+		`gh run view --repo MyMiMang/pi-assistant 12345678 --log > beta16-run.json`,
+		`gh run view --repo MyMiMang/pi-assistant --log > beta16-run.json 2>&1`,
+		// 2 git log：--format 引号里的 > 和 | 是格式串，不是重定向/管道
+		`git log --format='%h %an <%ae> | %cn <%ce>' -5`,
+		`git log --format="%h %an <%ae> | %cn <%ce>" -5`,
+		`git log --pretty=format:'%h %s' --grep=logout`,
+		// 3 sed 只读源码、重定向到工作区里带产品名的相对路径
+		`sed -n '1,50p' packages/server/src/http.ts > pi-assistant/.tmp-verify-ui.mjs`,
+		`sed -n '1,50p' packages/server/src/http.ts > "/data/pia/workspace/a1/pi-assistant/.tmp-verify-ui.mjs"`,
+		// 4 export PATH 里带产品名 + typecheck，不是改自身
+		`export PATH="/opt/homebrew/bin:/Applications/Pi Assistant.app/Contents/MacOS:$PATH" && npm run typecheck`,
+		`export PATH='/opt/homebrew/bin:/Applications/Pi Assistant.app/Contents/MacOS':$PATH; npm run typecheck`,
+		// 5 heredoc 正文里的危险词是文本，不是要执行的命令
+		`cat > /tmp/probe.ts <<'EOF'\nconst x = "logout";\nshutdown -h now\nrm -rf /\nEOF\nnode /tmp/probe.ts`,
+		`cat > /tmp/x.sh <<EOF\nreboot\nmkfs.ext4 /dev/sdb1\nEOF`,
+		// 6 cp 方向：从受保护目录读到 /tmp，不是写数据目录
+		`cp "/data/pia/models.json" /tmp/isolated/`,
+		`cp -v /data/pia/pia.db /tmp/backup/`,
+		`cp /data/pia/workspace/models.json /tmp/isolated/`,
+	];
+	for (const c of real) assert.equal(hit(c), null, c);
+});
+
+test("shell：日常检索/文本里的危险词不误报，真正复合执行仍命中", () => {
+	// 危险词只是 grep/rg/echo/print 的参数或输出文本
+	const benign = [
+		`grep -rn "shutdown" src/`,
+		`grep -rn "mkfs.ext4" docs/`,
+		`grep -rn "rm -rf /" docs/`,
+		`grep -rn "password" packages/`,
+		`grep -rn "kill -9" src/`,
+		`rg -n "shutdown|reboot|halt" packages/`,
+		`rg --files-with-matches "password" .`,
+		`echo "shutdown -h now"`,
+		`echo "mkfs.ext4 /dev/sdb1"`,
+		`echo "rm -rf /"`,
+		`echo "killall Finder"`,
+		`echo "password: hunter2"`,
+		`node -e "console.log('shutdown')"`,
+		`python3 -c "print('mkfs')"`,
+		`git commit -m "fix logout button"`,
+		`cat README.md | grep shutdown`,
+		`cat /etc/passwd`,
+		`sed -n '1,10p' /data/pia/pia.db > /tmp/out.txt`,
+		`rm -rf pi-assistant/node_modules`,
+		`echo x > /data/pia/workspace/a1/out.txt`,
+	];
+	for (const c of benign) assert.equal(hit(c), null, c);
+	// 真正的复合危险执行仍然命中（分隔符在引号外 / 命令位置）
+	assert.equal(hit("grep x f.ts && shutdown -h now"), "power");
+	assert.equal(hit("cat > /tmp/x.sh <<'EOF'\nhello\nEOF\nshutdown -h now"), "power", "heredoc 之后的真命令仍命中");
+	assert.equal(hit("echo x > /data/pia/pia.db"), "self-data");
+	assert.equal(hit("cat > /data/pia/pia.db <<'EOF'\nhi\nEOF"), "self-data");
+	assert.equal(hit("cp /tmp/x /data/pia/pia.db"), "self-data");
+	assert.equal(hit("mv /data/pia/pia.db /tmp/"), "self-data");
+	assert.equal(hit('echo x > "/Applications/Pi Assistant.app/f"'), "self");
+	assert.equal(hit('chmod 777 "/Applications/Pi Assistant.app"'), "self");
+	assert.equal(hit("docker rm -f pia-desk-abc"), "self");
+	assert.equal(hit("brew uninstall pi-assistant"), "self");
+});
+
+test("shell：命令位置判断（参数/引号里的危险词不算，不靠 .test(s) 扫描）", () => {
+	for (const c of [
+		`echo 'systemctl poweroff'`,
+		`echo "systemctl reboot"`,
+		`grep 'diskutil eraseDisk' f.txt`,
+		`echo '.zshrc >'`,
+		`echo '/usr/bin >'`,
+		`echo 'crontab -r'`,
+		`echo 'dscl . -create /Users/x'`,
+		`echo 'useradd hacker'`,
+		`export PATH='/Applications/Pi Assistant.app/Contents/MacOS:$PATH'`,
+		`grep -n 'net user admin /add' docs/`,
+		`grep 'uninstall pi-assistant' docs/`,
+		`echo 'stress-ng'`,
+		`cp '/Applications/Pi Assistant.app/config' /tmp/config`,
+		`cp /usr/bin/ls /tmp/ls`,
+		`cp ~/.zshrc /tmp/zshrc`,
+		`sed -n '/shutdown/p' /etc/hosts > /data/pia/workspace/out`,
+	])
+		assert.equal(hit(c), null, c);
+	assert.equal(hit("echo a; fdisk -l"), "disk");
+	assert.equal(hit("systemctl poweroff"), "power");
+	assert.equal(hit("diskutil eraseDisk APFS X disk2"), "disk");
+	assert.equal(hit("del C:\\Windows\\System32\\x.dll"), "system-dir");
+	assert.equal(hit("stress-ng --cpu 8"), "fork-bomb");
+	assert.equal(hit("nano ~/.zshrc"), "rc");
+	assert.equal(hit("cp /tmp/config '/Applications/Pi Assistant.app/config'"), "self");
+});
+
+test("shell：heredoc 正文按语义处理（字面数据 / 未引号 $(...) 会执行 / 喂给 shell 是脚本）", () => {
+	// 引号分隔符 = 字面数据
+	assert.equal(hit(`cat <<'EOF'\nshutdown -h now\nrm -rf /\nEOF`), null);
+	assert.equal(hit(`cat > /tmp/x.sh <<'EOF'\nlogout\nmkfs.ext4 /dev/sdb1\nEOF`), null);
+	assert.equal(hit(`cat <<"EOF"\nreboot\nEOF`), null);
+	// 未引号分隔符：正文里的 $(...) 会真正执行
+	assert.equal(hit(`cat <<EOF\n$(shutdown -h now)\nEOF`), "power");
+	assert.equal(hit('cat <<EOF\n`shutdown -h now`\nEOF'), "power");
+	assert.equal(hit(`cat <<'EOF'\n$(shutdown -h now)\nEOF`), null);
+	assert.equal(hit(`cat <<EOF\nprefix $(rm -rf /) suffix\nEOF`), "mass-delete");
+	// 正文喂给 shell：就是脚本，照样拦
+	assert.equal(hit(`bash <<'EOF'\nshutdown -h now\nEOF`), "power");
+	assert.equal(hit(`bash <<EOF\nmkfs.ext4 /dev/sdb1\nEOF`), "disk");
+	assert.equal(hit(`cat <<'EOF' | bash\nrm -rf /\nEOF`), "mass-delete");
+	assert.equal(hit(`sh -s <<'EOF'\nreboot\nEOF`), "power");
+	// heredoc 之后的真命令仍命中
+	assert.equal(hit(`cat > /tmp/x.sh <<'EOF'\nhello\nEOF\nshutdown -h now`), "power");
+});
+
+test("shell：嵌套执行（命令替换 / 反引号 / sh -c）仍然命中", () => {
+	assert.equal(hit("echo $(shutdown -h now)"), "power");
+	assert.equal(hit("echo `reboot`"), "power");
+	assert.equal(hit('echo "$(mkfs.ext4 /dev/sdb1)"'), "disk");
+	assert.equal(hit("bash -c 'shutdown -h now'"), "power");
+	assert.equal(hit('sudo sh -c "mkfs.ext4 /dev/sdb1"'), "disk");
+	assert.equal(hit("echo $(rm -rf /)"), "mass-delete");
+	assert.equal(hit("echo `killall Finder`"), "system-proc");
+	assert.equal(hit("echo $(echo hello)"), null);
+});
+
 test("shell：只读命令（带无副作用重定向）不算写删系统目录", () => {
 	for (const c of ["ls /usr/local/bin/node 2>/dev/null", "ls -la /usr/local/bin/node 2>&1", "which node; ls /usr/local/bin/node", 'ls "/Applications/Pi Assistant.app" 2>/dev/null', "ls /usr/local/bin > /tmp/out.txt", "ls /usr/bin/git 2>/dev/null | head", "cat /usr/local/bin/node | head", "stat /usr/local/bin/node 2>/dev/null"])
 		assert.equal(hit(c), null, c);

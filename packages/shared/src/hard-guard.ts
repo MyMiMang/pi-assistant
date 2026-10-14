@@ -8,8 +8,12 @@
  * 批量删除（rm -rf 宽泛路径、大量文件）；fork 炸弹/资源耗尽；修改 shell 启动脚本 / 开机自启项。
  * 助理电脑（sandbox）另外保护它自己的运行环境（Xvfb、VNC、cua-driver 等）。
  *
- * 纯函数、无 Node 依赖：服务端、各扩展、测试都能直接用。启发式，宁严勿松（误报只是多问一次）。
+ * 判断原则：只看「命令位置」和「真正的写入目标」，不看命令串里出现的词。
+ * grep/echo/rg 的参数、引号里的 > |、PATH/--repo 里的产品名都不算执行。
+ * 词法拆分在 ./shell-lex.ts。纯函数、无 Node 依赖：服务端、各扩展、测试都能直接用。
  */
+
+import { baseName, commandOf, isAbsPath, isFlag, parseSegment, processHeredocs, segments, underPath, writeTargets } from "./shell-lex.ts";
 
 export interface GuardContext {
 	target: "host" | "sandbox";
@@ -26,30 +30,28 @@ export interface GuardHit {
 }
 
 const SELF_NAMES = /pi[-_ ]?assistant|piassistant|com\.piassistant|pia-desk-|pia-home-|cua-?driver|cuadriver|com\.trycua|cloudflared|hindsight/i;
+/** 只指 Pi Assistant 自身构件的强特征（不含裸产品名，避免仓库名 / 包 scope / PATH 里的 pi-assistant 误报） */
+const SELF_STRONG = /com\.piassistant|pia-desk-|pia-home-|cua-?driver|cuadriver|com\.trycua|cloudflared|hindsight|pi[-_ ]?assistant\.app/i;
 const SYSTEM_PROCS = /\b(launchd|kernel_task|WindowServer|loginwindow|SystemUIServer|Finder|Dock|coreaudiod|securityd|opendirectoryd|systemd|init|Xorg|gdm|sddm|explorer(\.exe)?|csrss(\.exe)?|winlogon(\.exe)?|lsass(\.exe)?|svchost(\.exe)?|dwm(\.exe)?|services\.exe|smss(\.exe)?|wininit(\.exe)?|sshd)\b/i;
 const SANDBOX_RUNTIME = /\b(Xvfb|x11vnc|websockify|novnc|socat|cua-driver|tini|xfce4-session|xfwm4|xfce4-panel|xfdesktop|dbus-daemon|pia-desktop)\b/;
 const SYSTEM_DIRS = /(^|[\s"'=:(])(\/(System|usr|bin|sbin|etc|boot|lib|lib32|lib64|Library|private|dev|proc|sys|opt\/homebrew|Applications\/Utilities)(\/|[\s"')]|$)|[A-Za-z]:\\+(Windows|Program Files( \(x86\))?|ProgramData)(\\|[\s"']|$)|%(SystemRoot|windir|ProgramFiles)%)/i;
 const RC_FILES = /(\.(bash|zsh)rc|\.bash_profile|\.bash_login|\.zprofile|\.zshenv|\.zlogin|\.profile|config\.fish|Library\/LaunchAgents|Library\/LaunchDaemons|\.config\/autostart|\/etc\/(profile|bash|zsh|cron|systemd|init|rc\.)|\/etc\/environment|CurrentVersion\\+Run|Start Menu\\+Programs\\+Startup|\\Startup\\)/i;
-const WRITE_VERB = /(>|\btee\b|\bsed\s+(-\w*\s+)*-i|\b(cp|mv|rm|rmdir|ln|install|truncate|chmod|chown|chflags|xattr|nano|vim?|emacs|code|unlink|shred|Remove-Item|Move-Item|Copy-Item|Set-Content|Add-Content|Out-File|New-Item|del|erase|rd|ren|icacls|takeown|attrib)\b)/i;
-/** 无副作用的输出重定向（写 /dev/null、复制文件描述符），不算写入，避免把只读命令（ls … 2>/dev/null）当成修改文件 */
-const NOOP_REDIRECT = /\d*\s*>>?\s*\/dev\/null\b|\d*\s*>&\s*\d+|\d*\s*>&-/gi;
 const BROAD = /^(\/|\/\*|~|~\/|~\/\*|\$HOME\/?\*?|\$\{HOME\}\/?\*?|\/Users\/?\*?|\/home\/?\*?|\/Users\/[^/\s]+\/?\*?|\/home\/[^/\s]+\/?\*?|\*|\.\.\/?\*?|[A-Za-z]:\\?\*?|\$\{?\w+\}?\/?\*?)$/;
-
-/** 把一条 shell 命令按 ; && || | 换行 拆成片段 */
-function segments(cmd: string): string[] {
-	return cmd
-		.split(/;|&&|\|\||\||\n/)
-		.map((s) => s.trim())
-		.filter(Boolean);
-}
-const strip = (s: string) => s.replace(/^["']|["']$/g, "");
+/** 按「命令位置」判断用的命令名集合（避免 grep "mkfs"、echo "shutdown" 这类纯文本参数误报） */
+const POWER_CMDS = /^(shutdown(\.exe)?|reboot|halt|poweroff|logout|stop-computer|restart-computer|xfce4-session-logout|gnome-session-quit)$/i;
+const DISK_CMDS = /^(mkfs(\.\w+)?|mke2fs|wipefs|fdisk|sfdisk|gdisk|sgdisk|parted|diskpart|newfs_\w+|clear-disk|format-volume|initialize-disk|remove-partition)$/i;
+const SECURITY_CMDS = /^(networksetup|pfctl|ufw|iptables|ip6tables|nft|firewall-cmd|netsh|socketfilterfw|csrutil|sysadminctl|useradd|userdel|usermod|groupadd|groupdel|chpasswd|passwd|visudo|fdesetup|bcdedit|set-mppreference|add-mppreference|new-localuser|remove-localuser|set-localuser|add-localgroupmember|set-executionpolicy|set-netfirewall\w*|new-netfirewallrule|disable-netadapter)$/i;
+const KILL_CMDS = /^(kill|pkill|killall|taskkill(\.exe)?|skill|stop-process)$/i;
+const SENSITIVE_WRITE_CMDS = /^(cp|mv|tee|sed|install|dd|chmod|chown|rm|rmdir|truncate|shred|ln)$/i;
+const RM_CMDS = /^(rm|remove-item|del|erase|rd|rmdir|unlink|shred)$/i;
 
 /** shell 命令是否命中硬性保护 */
 export function guardShell(cmd: string, ctx: GuardContext): GuardHit | null {
-	const c = String(cmd ?? "");
+	// heredoc 正文按语义处理：字面数据丢弃、未引号的 $(...) 保留、喂给 shell 的正文当脚本
+	const c = processHeredocs(String(cmd ?? ""));
 	if (!c.trim()) return null;
 	// 整条命令级别的规则
-	if (/:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;?\s*:/.test(c) || /%0\s*\|\s*%0/.test(c) || /\bwhile\s+(true|:|\[\s*1\s*\])\s*;?\s*do\b[\s\S]*&\s*;?\s*done/.test(c) || /\bfork\s*\(\s*\)\s*while|\bstress(-ng)?\b/.test(c))
+	if (/:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;?\s*:/.test(c) || /%0\s*\|\s*%0/.test(c) || /\bwhile\s+(true|:|\[\s*1\s*\])\s*;?\s*do\b[\s\S]*&\s*;?\s*done/.test(c) || /\bfork\s*\(\s*\)\s*while/.test(c))
 		return { rule: "fork-bomb", label: "可能耗尽系统资源（fork 炸弹 / 压力测试）" };
 	for (const seg of segments(c)) {
 		const hit = guardSegment(seg, ctx);
@@ -63,63 +65,103 @@ function guardSegment(seg: string, ctx: GuardContext): GuardHit | null {
 	// 允许的目录（助理工作区）里的路径不算受保护（工作区可能在数据目录里，路径里也可能带产品名）
 	let s = seg;
 	for (const a of ctx.allowedPaths ?? []) if (a) s = s.split(a).join("WORKSPACE");
-	// 去掉无副作用的输出重定向后的命令（只看写入类操作时用）
-	const w = s.replace(NOOP_REDIRECT, " ");
-	// 关机 / 重启 / 注销 / 休眠
-	if (/^(sudo\s+)?(shutdown|reboot|halt|poweroff|logout)\b|\bsystemctl\s+(poweroff|reboot|halt|suspend|hibernate|kexec)\b|\bshutdown(\.exe)?\s+\/[srlhp]\b|\bloginctl\s+(terminate|kill)-|\bpmset\s+sleepnow\b|\bStop-Computer\b|\bRestart-Computer\b|osascript\b.*\b(shut down|restart|log out)\b|\binit\s+[06]\b|\btelinit\s+[06]\b|\bxfce4-session-logout\b|\bgnome-session-quit\b/i.test(s))
+	// 词法切分：命令名 / 参数 / 重定向目标分开，避免纯文本参数、引号里的 > 与 | 误报
+	const toks = parseSegment(s);
+	const { cmd, args } = commandOf(s);
+	const rts = toks.filter((t) => t.kind === "redirect").map((t) => t.value);
+	const wts = writeTargets(cmd, args, rts);
+	// 关机 / 重启 / 注销 / 休眠（只认命令位置，不认参数文本）
+	if (
+		POWER_CMDS.test(cmd) ||
+		(cmd === "systemctl" && args.some((a) => /^(poweroff|reboot|halt|suspend|hibernate|kexec)$/i.test(a))) ||
+		(cmd === "loginctl" && args.some((a) => /^(terminate|kill)-/i.test(a))) ||
+		(cmd === "pmset" && args.some((a) => /^sleepnow$/i.test(a))) ||
+		((cmd === "init" || cmd === "telinit") && args.some((a) => /^[06]$/.test(a))) ||
+		(cmd === "osascript" && /\b(shut down|restart|log out)\b/i.test(s))
+	)
 		return { rule: "power", label: "关机 / 重启 / 注销" };
-	// 磁盘
-	if (/\b(mkfs(\.\w+)?|mke2fs|wipefs|fdisk|sfdisk|gdisk|sgdisk|parted|diskpart|newfs_\w+)\b|\bdiskutil\s+(erase\w*|partition\w*|zeroDisk|randomDisk|secureErase|reformat|apfs\s+(delete\w*|erase\w*)|unmountDisk\s+force)\b|\bformat(\.com)?\s+[A-Za-z]:|\bdd\b[^\n]*\bof=\/dev\/|\b(Clear-Disk|Format-Volume|Initialize-Disk|Remove-Partition)\b|\bcipher\s+\/w\b/i.test(s))
+	// 磁盘格式化 / 分区 / 抹掉
+	if (
+		DISK_CMDS.test(cmd) ||
+		(cmd === "dd" && /\bof=\/dev\//i.test(s)) ||
+		(cmd === "diskutil" && (/^(erase\w*|partition\w*|zeroDisk|randomDisk|secureErase|reformat|unmountDisk)$/i.test(args[0] ?? "") || (/^apfs$/i.test(args[0] ?? "") && /^(delete\w*|erase\w*)/i.test(args[1] ?? "")))) ||
+		((cmd === "format" || cmd === "format.com" || cmd === "format.exe") && args.some((a) => /^[A-Za-z]:$/.test(a))) ||
+		(cmd === "cipher" && args.some((a) => /^\/w$/i.test(a)))
+	)
 		return { rule: "disk", label: "磁盘格式化 / 分区 / 抹掉" };
 	// 资源耗尽
-	if (/\bfallocate\s+(-\w+\s+)*-l\s*\d+[GT]\b|\bdd\b[^\n]*if=\/dev\/(zero|urandom)[^\n]*\bbs=\d+[GT]|\bdd\b[^\n]*if=\/dev\/(zero|urandom)(?![^\n]*\bcount=)/i.test(s))
+	if (/^stress(-ng)?$/.test(cmd)) return { rule: "fork-bomb", label: "可能耗尽系统资源（压力测试）" };
+	if ((cmd === "fallocate" && /-l\s*\d+[GT]\b/i.test(s)) || (cmd === "dd" && /\bif=\/dev\/(zero|urandom)\b/i.test(s) && (/\bbs=\d+[GT]\b/i.test(s) || !/\bcount=/i.test(s))))
 		return { rule: "resource", label: "可能耗尽磁盘空间" };
-	// 安全 / 网络 / 防火墙 / 用户账户
-	if (/\b(networksetup|pfctl|ufw|iptables|ip6tables|nft|firewall-cmd|netsh|socketfilterfw|scutil\s+--set|csrutil|spctl\s+--(master-disable|global-disable|add)|sysadminctl|dscl\s+\S+\s+-(create|delete|passwd|append|change)|useradd|userdel|usermod|groupadd|groupdel|chpasswd|passwd|visudo|tccutil\s+reset|security\s+(delete|add|set|import|unlock)-?\w*|fdesetup|profiles\s+(remove|install)|net\s+(user|localgroup)|Set-MpPreference|Add-MpPreference|Set-NetFirewall\w*|New-NetFirewallRule|Disable-NetAdapter|New-LocalUser|Remove-LocalUser|Set-LocalUser|Add-LocalGroupMember|Set-ExecutionPolicy|bcdedit|nmcli\s+(con|connection|radio|networking)\s+(delete|down|off|modify))\b/i.test(s) || /\bdefaults\s+write\s+\S*(loginwindow|alf|com\.apple\.security|LaunchServices)/i.test(s) || /(^|\s)(sudo\s+)?(cp|mv|tee|sed\s+-i)[^\n]*\/etc\/(sudoers|hosts|passwd|shadow|group|resolv\.conf|ssh\/)/i.test(s))
+	// 安全 / 网络 / 防火墙 / 用户账户（只认命令位置）
+	if (
+		SECURITY_CMDS.test(cmd) ||
+		(cmd === "scutil" && args.some((a) => /^--set$/i.test(a))) ||
+		(cmd === "spctl" && args.some((a) => /^--(master-disable|global-disable|add)$/i.test(a))) ||
+		(cmd === "dscl" && args.some((a) => /^-(create|delete|passwd|append|change)$/i.test(a))) ||
+		(cmd === "tccutil" && args.some((a) => /^reset$/i.test(a))) ||
+		(cmd === "security" && args.some((a) => /^(delete|add|set|import|unlock)-?\w*/i.test(a))) ||
+		(cmd === "profiles" && args.some((a) => /^(remove|install)$/i.test(a))) ||
+		(cmd === "net" && /^(user|localgroup)$/i.test(args[0] ?? "")) ||
+		(cmd === "defaults" && /^write$/i.test(args[0] ?? "") && args.some((a) => /(loginwindow|alf|com\.apple\.security|LaunchServices)/i.test(a))) ||
+		(cmd === "nmcli" && /^(con|connection|radio|networking)$/i.test(args[0] ?? "") && args.some((a) => /^(delete|down|off|modify)$/i.test(a))) ||
+		(SENSITIVE_WRITE_CMDS.test(cmd) && wts.some((t) => /\/etc\/(sudoers|hosts|passwd|shadow|group|resolv\.conf|ssh\/)/i.test(t)))
+	)
 		return { rule: "security", label: "修改安全 / 网络 / 防火墙 / 用户账户设置" };
-	// 开机自启 / shell 启动脚本
-	if (/\bcrontab\b(?!\s+-l\b)|\bschtasks(\.exe)?\s+\/(create|delete|change)\b|\breg(\.exe)?\s+(add|delete|import)\b|\bsystemctl\s+(--user\s+)?(enable|disable|mask|unmask|edit)\b|\blaunchctl\s+(load|unload|bootstrap|bootout|remove|disable|enable|submit|kickstart\s+-k)\b|\bloginitems\b|\bosascript\b[^\n]*login item/i.test(s))
+	// 开机自启 / 系统服务（只认命令位置）
+	if (
+		(cmd === "crontab" && !/^\s*(sudo\s+)?crontab\s+-l\b/i.test(s)) ||
+		((cmd === "schtasks" || cmd === "schtasks.exe") && args.some((a) => /^\/(create|delete|change)$/i.test(a))) ||
+		((cmd === "reg" || cmd === "reg.exe") && args.some((a) => /^(add|delete|import)$/i.test(a))) ||
+		(cmd === "systemctl" && args.some((a) => /^(enable|disable|mask|unmask|edit)$/i.test(a))) ||
+		(cmd === "launchctl" && args.some((a) => /^(load|unload|bootstrap|bootout|remove|disable|enable|submit|kickstart)$/i.test(a))) ||
+		cmd === "loginitems" ||
+		(cmd === "osascript" && /\blogin item\b/i.test(s))
+	)
 		return { rule: "autostart", label: "修改开机自启 / 系统服务" };
-	if (RC_FILES.test(s) && WRITE_VERB.test(w)) return { rule: "rc", label: "修改 shell 启动脚本 / 自启动项" };
+	// shell 启动脚本 / 自启动项：只看真正的写入目标
+	if (wts.some((t) => RC_FILES.test(t))) return { rule: "rc", label: "修改 shell 启动脚本 / 自启动项" };
 	// Pi Assistant 自身与附属进程（结束、卸载、删除、改动）
-	if (SELF_NAMES.test(s) && /\b(kill|pkill|killall|taskkill|launchctl|systemctl|sc(\.exe)?\s+(stop|delete|config)|Stop-Process|Stop-Service|rm|rmdir|mv|del|rd|Remove-Item|uninstall|brew\s+(uninstall|remove)|npm\s+(uninstall|rm)|docker\s+(rm|kill|stop|volume\s+rm|rmi|system\s+prune)|winget\s+uninstall|chmod|chown|truncate|sqlite3)\b|>/i.test(w))
+	// 只在「真正被写/删/结束的目标」上匹配产品名：--repo pi-assistant、PATH、@pi-assistant 包名、相对路径 pi-assistant/xx 都不算
+	const isSelfRef = (t: string) => SELF_STRONG.test(t) || ((isAbsPath(t) || t.startsWith("~")) && SELF_NAMES.test(t));
+	const killSelf = KILL_CMDS.test(cmd) && args.some((a) => SELF_NAMES.test(a));
+	const pkgSelf = /^(brew|npm|pnpm|yarn|winget|pip\d?|pip3)$/i.test(cmd) && args.some((a) => /^(uninstall|remove|rm)$/i.test(a)) && args.some((a) => SELF_NAMES.test(a));
+	const dockerSelf = cmd === "docker" && /\b(rm|kill|stop|rmi|system\s+prune|volume\s+rm)\b/i.test(s) && SELF_STRONG.test(s);
+	const scSelf = (cmd === "sc" || cmd === "sc.exe") && /\b(stop|delete|config)\b/i.test(s) && SELF_NAMES.test(s);
+	if (
+		rts.some(isSelfRef) ||
+		wts.some(isSelfRef) ||
+		(/^(launchctl|systemctl|sqlite3)$/i.test(cmd) && args.some(isSelfRef)) ||
+		killSelf || pkgSelf || dockerSelf || scSelf
+	)
 		return { rule: "self", label: "结束 / 卸载 / 修改 Pi Assistant 本身或它的组件" };
+	// 数据目录：只看真正的写入目标（重定向目标 / 写入命令的路径参数），cp 的源、只读命令的文件参数不算
 	for (const p of ctx.protectedPaths ?? []) {
-		if (p && s.includes(p) && WRITE_VERB.test(w)) return { rule: "self-data", label: "修改 Pi Assistant 的数据目录 / 安装目录" };
+		if (p && wts.some((t) => underPath(p, t))) return { rule: "self-data", label: "修改 Pi Assistant 的数据目录 / 安装目录" };
 	}
-	if (/\bdocker\s+(system\s+prune|volume\s+prune|rm\s+-f\s+\$\(docker)/i.test(s)) return { rule: "self", label: "批量删除 Docker 容器 / 卷（包括助理电脑）" };
-	// 结束系统进程
-	if (/\b(kill|pkill|killall|taskkill|Stop-Process|skill)\b/i.test(s)) {
-		if (SYSTEM_PROCS.test(s.replace(/^\S+/, ""))) return { rule: "system-proc", label: "结束系统进程" };
+	if (cmd === "docker" && /\b(system\s+prune|volume\s+prune)\b/i.test(s)) return { rule: "self", label: "批量删除 Docker 容器 / 卷（包括助理电脑）" };
+	// 结束系统进程（只看目标参数）
+	if (KILL_CMDS.test(cmd)) {
+		if (args.some((a) => SYSTEM_PROCS.test(a))) return { rule: "system-proc", label: "结束系统进程" };
 		if (/\bkill\s+(-\S+\s+)*(-1|1)\b(?!\d)/.test(s)) return { rule: "system-proc", label: "结束所有进程 / init" };
-		if (sandbox && SANDBOX_RUNTIME.test(s)) return { rule: "sandbox-runtime", label: "结束助理电脑的运行环境进程" };
+		if (sandbox && args.some((a) => SANDBOX_RUNTIME.test(a))) return { rule: "sandbox-runtime", label: "结束助理电脑的运行环境进程" };
 	}
-	// 系统目录：只看真正的写删操作；去掉目标不在系统目录的重定向（ls /usr/bin > /tmp/x 不算修改系统目录）
-	const sw = w.replace(/\d*>>?\s*([^\s;&|<>]+)/g, (m, t: string) => (SYSTEM_DIRS.test(` ${t}`) ? m : " "));
-	if (SYSTEM_DIRS.test(s) && WRITE_VERB.test(sw)) {
-		// cp / install / Copy-Item 只有目标在系统目录才算（从系统目录复制出来没关系）
-		const cp = /^(sudo\s+)?(cp|install|Copy-Item|ditto|rsync)\b(.*)$/i.exec(s);
-		const other = WRITE_VERB.test(sw.replace(/^(sudo\s+)?(cp|install|Copy-Item|ditto|rsync)\b/i, ""));
-		if (!cp || other) return { rule: "system-dir", label: "删除 / 修改系统目录" };
-		const last = cp[3].trim().split(/\s+/).filter((a) => !a.startsWith("-")).at(-1) ?? "";
-		if (SYSTEM_DIRS.test(` ${strip(last)}`)) return { rule: "system-dir", label: "写入系统目录" };
-	}
+	// 系统目录：只看真正的写入目标
+	if (wts.some((t) => SYSTEM_DIRS.test(` ${t}`))) return { rule: "system-dir", label: "删除 / 修改系统目录" };
 	// 批量删除
-	const rm = /^(sudo\s+)?(rm|Remove-Item|del|erase|rd|rmdir|unlink|shred)\b(.*)$/i.exec(s);
-	if (rm) {
-		const args = rm[3].trim().split(/\s+/).filter(Boolean);
-		const flags = args.filter((a) => /^-|^\/[a-zA-Z]$/.test(a));
+	if (RM_CMDS.test(cmd)) {
+		const flags = args.filter(isFlag);
 		const recursive = flags.some((f) => /^-[a-zA-Z]*[rR]|^--recursive|^-Recurse|^\/[sS]$/.test(f));
-		const targets = args.filter((a) => !/^-|^\/[a-zA-Z]$/.test(a)).map(strip);
+		const targets = args.filter((a) => !isFlag(a));
 		if (recursive && targets.some((t) => BROAD.test(t))) return { rule: "mass-delete", label: "大范围删除（rm -rf 宽泛路径）" };
 		if (targets.length > (ctx.massDeleteThreshold ?? 20)) return { rule: "mass-delete", label: `一次删除 ${targets.length} 个文件` };
 		if (sandbox && targets.some((t) => /^\/home\/agent\/?$|^~\/?$|\.config\/pia-browser|\.cache\/cua-driver|\.local\/wechat/.test(t))) return { rule: "sandbox-runtime", label: "删除助理电脑的家目录 / 运行数据" };
 	}
-	if (/\bfind\b/.test(s) && /(-delete\b|-exec\s+(rm|shred)\b)/.test(s)) {
-		const root = /\bfind\s+("?[^\s"]+"?)/.exec(s)?.[1];
-		if (!root || BROAD.test(strip(root))) return { rule: "mass-delete", label: "大范围批量删除（find -delete）" };
+	if (cmd === "find" && /(-delete\b|-exec\s+(rm|shred)\b)/.test(s)) {
+		const root = args.find((a) => !isFlag(a));
+		if (!root || BROAD.test(root)) return { rule: "mass-delete", label: "大范围批量删除（find -delete）" };
 	}
-	if (/\bgit\s+clean\s+-\w*f\w*x/.test(s) && /\s(~|\/)\s*$/.test(s)) return { rule: "mass-delete", label: "大范围删除未跟踪文件" };
+	if (cmd === "git" && /\bclean\s+-\w*f\w*x/.test(s) && /\s(~|\/)\s*$/.test(s)) return { rule: "mass-delete", label: "大范围删除未跟踪文件" };
 	return null;
 }
 

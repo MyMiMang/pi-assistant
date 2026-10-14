@@ -1453,7 +1453,9 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - `host-control.test.ts`：`hostFileAccess` 在开/关、允许/不允许、full/其他、暂停/未暂停各组合下的取值；`draftHostSettings` 的“改默认档位固定旧默认”和“预览 hash = 保存后 hash”。
 - `approval.test.ts`：full 时普通命令/主机文件放行，凭据仍 deny，硬性保护仍要批准；非 full 行为不变。
 - `sandbox-access.test.ts`：full 文件工具越界放行 / 非 full 拦截；bash HOME 与秘密 env；Docker 模式下 full 走主机、非 full 走容器。
-- `hard-guard.test.ts`：只读命令（`ls /usr/local/bin/node 2>/dev/null`、`ls /usr/bin > /tmp/x`）不再误报“修改系统目录”，真写入仍命中。
+- `hard-guard.test.ts`：只读命令、grep 危险词、gh --repo 输出日志、git log 格式串、sed 工作区输出、PATH、cp 受保护源到 /tmp 与字面 heredoc 不误报；真写入、危险嵌套执行和 heredoc 脚本仍命中。beta.17 在独立发布树跑上述四组单测 37/37 通过，服务端与网页 typecheck 通过。
+
+命令词法集中在 `packages/shared/src/shell-lex.ts`：尊重单双引号、转义和命令替换，区分参数、重定向与写入目标。cp 只检查目标，mv 检查源与目标；字面 heredoc 正文作为数据，未引号正文提取命令替换，喂给 shell 的正文按脚本检查。`hard-guard.ts` 复用这些结果判断保护规则，避免把产品名、危险词或格式串中的符号当作实际操作。
 
 ### 23.6 权限矩阵（档位 → 实际行为）
 
