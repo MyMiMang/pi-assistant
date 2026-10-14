@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 最后更新：2026-10-14，当前版本 **v0.1.0-beta.10**（main = 已发布内容）。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
+> 最后更新：2026-10-14，当前公开版本 **v0.1.0-beta.11**；**v0.1.0-beta.13 打包中**，用户已确认发布。beta.12 仍是草稿（Intel Mac 构建失败），本次包含其工作中插话与停止功能。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
 ## 1. 这是什么
 
