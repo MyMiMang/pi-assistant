@@ -42,6 +42,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+      # tauri-action 默认强制 Finder 排版；CI 上 AppleScript 可超时，使用 bundler 原生 CI 模式。
+      TAURI_BUNDLER_DMG_IGNORE_CI: 'false'
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -87,7 +89,7 @@ jobs:
         with:
           projectPath: apps/tray
           tauriScript: npx tauri
-          args: --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
+          args: --verbose --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
           tagName: ${{ env.REL_TAG }}
           releaseName: "Pi Assistant ${{ env.REL_TAG }}"
           releaseBody: ${{ env.RELEASE_NOTES }}
@@ -108,7 +110,7 @@ jobs:
         with:
           projectPath: apps/tray
           tauriScript: npx tauri
-          args: --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
+          args: --verbose --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
           tagName: ${{ env.REL_TAG }}
           releaseName: "Pi Assistant ${{ env.REL_TAG }}"
           releaseBody: ${{ env.RELEASE_NOTES }}

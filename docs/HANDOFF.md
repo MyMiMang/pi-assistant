@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 最后更新：2026-10-14，当前公开版本 **v0.1.0-beta.11**；**v0.1.0-beta.13 打包中**，用户已确认发布。beta.12 仍是草稿（Intel Mac 构建失败），本次包含其工作中插话与停止功能。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
+> 最后更新：2026-10-14，当前公开版本 **v0.1.0-beta.11**；**v0.1.0-beta.14 打包中**，用户已确认发布。beta.12 / beta.13 仍是草稿（Intel Mac 的 DMG 失败；beta.13 的重试已取消），本次包含其全部功能。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
 ## 1. 这是什么
 
@@ -13,6 +13,9 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 手机通过内置的 Cloudflare 隧道远程使用。界面文字是中文。用户只通过安装包的自动更新来测试。
 
 ## 2. 进度（按版本）
+
+2026-10-14 发版：beta.13 的 Linux 两版、Mac arm64、Windows 已构建成功；Intel Mac 在 `bundle_dmg.sh` 运行约 16 分钟后失败，重试仍卡在此步骤，已取消（[run 38500745136](https://github.com/MyMiMang/pi-assistant/actions/runs/38500745136)）。上游 tauri-action 默认将 `TAURI_BUNDLER_DMG_IGNORE_CI` 设为 true，强制 Finder 排版；显式设为 false 恢复 bundler CI 模式，并给两次打包加 `--verbose`。参照 [上游问题 1091](https://github.com/tauri-apps/tauri-action/issues/1091)，这是对相同失败症状的兼容处理；beta.13 的简略日志不足以确认具体子命令。以 beta.14 重新构建验证，旧 tag 不移动、旧草稿不公开。YAML 解析和 CLI 参数检查通过，未重跑产品全量测试。
+
 
 | 版本 | 主要内容 |
 |---|---|
