@@ -230,6 +230,16 @@ jobs:
           cat tray.log; [ -f "$LOG" ] && tail -60 "$LOG"
           echo "::error title=mac launch: server not healthy::$( (tail -30 "$LOG" 2>/dev/null || tail -30 tray.log) | tr '\n' '|')"
           exit 1
+      - uses: actions/checkout@v4
+      - name: 演练也校验发布资产与更新平台
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SCOPE: ${{ needs.prepare.outputs.scope }}
+        run: |
+          gh release view "$REL_TAG" --json assets -q '.assets[].name' > assets.txt
+          gh release download "$REL_TAG" -p latest.json -O latest.json
+          node scripts/release-scope.mjs validate
 
   publish:
     needs: [prepare, build, linux, windows-smoke, mac-smoke]
