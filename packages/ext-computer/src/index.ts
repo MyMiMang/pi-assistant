@@ -9,7 +9,8 @@
  *  - sandbox（默认）：助理电脑容器里的 Linux 桌面，它自己的电脑：默认完全权限（Cua unrestricted），不逐个审批；
  *  - host（默认关闭）：用户本机，按助理分档：只看 / 限定（默认）/ 信任 / 完全权限。
  * 审批策略：host.approvals() = "observe"（只允许观察）| "all" | "sensitive"（发送/付款/删除/提交才问）| "none"。
- * 硬性保护：命中 @pi-assistant/shared 的 guardComputer 的动作在任何档位都必须明确批准（不能“本任务内都允许”）。
+ * 硬性保护：命中 @pi-assistant/shared 的 guardComputer 的动作在“只看 / 限定 / 信任”档位必须明确批准（不能“本任务内都允许”）；
+ * “完全权限”档位应用层不再弹审批（包括受保护动作），只有凭据文件、暂停 / 降权、系统权限弹窗和网站验证码仍然拦得住。
  * 一键暂停：host.isPaused() 为真时，所有电脑工具立即被拒绝（任何模式都生效）。
  * 操作记录：每个电脑动作（含被拒绝/暂停拦下的）都交给 host.log() 记录，供回看。
  */
@@ -53,7 +54,7 @@ export const hostBrowserPrompt = (fileAccess: boolean) => `<user-computer-browse
 </user-computer-browser>`;
 /** 本机桌面应用的操作方式（按 cua 0.34.1 官方 SKILL / WORKFLOW），注入系统提示 */
 export const hostDesktopPrompt = (p: Approvals) => `<user-computer-desktop>
-你可以像人一样操作用户的电脑${p === "all" ? "（“限定”档位：只能操作用户勾选的应用，每个动作都要用户批准）" : p === "none" ? "（用户给了完全权限：所有应用都能操作，日常动作不需要批准；只有关机、强制退出、系统设置这类受保护的操作会问用户）" : "（“信任”档位：所有应用都能操作；发送、付款、删除、提交类动作会先问用户）"}。按官方流程：
+你可以像人一样操作用户的电脑${p === "all" ? "（“限定”档位：只能操作用户勾选的应用，每个动作都要用户批准）" : p === "none" ? "（用户给了完全权限：所有应用都能操作，应用层不再弹审批——包括关机、强制退出、系统设置这类受保护操作也会直接执行；只有凭据文件、用户暂停或调低档位、系统权限弹窗和网站验证码仍拦得住）" : "（“信任”档位：所有应用都能操作；发送、付款、删除、提交类动作会先问用户）"}。按官方流程：
 1. 找目标：list_apps / list_windows 找到应用的 pid 和 window_id（不要用记住的旧 pid，也不要随手拿第一个窗口）；没开就 launch_app，之后有限次地 list_windows 等窗口出现，不要反复启动。
 2. 先看再动：get_window_state {pid, window_id}，用 structuredContent.elements 里的 element_token（每次快照都会换新，不要自己编、不要复用旧的）。
 3. 动作：click / double_click / right_click / type_text / set_value / press_key / hotkey / scroll / drag，带上精确的 {pid, window_id} 和最新的 element_token；控件够不到时才用同一次截图上的 x,y 像素坐标。菜单用 invoke_menu，调整窗口大小位置用 set_window_frame。
@@ -242,7 +243,7 @@ export function computerExtension(host: ComputerHost) {
 					? "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；只能操作用户允许的应用，每个动作都要用户批准）"
 					: policy() === "sensitive"
 					? "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；信任：所有应用都能看、能操作，发送/付款/删除类动作需要用户批准）"
-					: "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；完全权限：所有应用都能看、能操作，像人一样使用，只有受保护的操作需要用户批准）"
+					: "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；完全权限：所有应用都能看、能操作，像人一样使用，应用层不再弹审批（受保护操作也直接执行））"
 				: "助理自己的 Linux 桌面电脑（浏览器、微信等应用）——不是用户的电脑",
 			timeout: 60_000,
 		});
@@ -362,8 +363,8 @@ export function computerExtension(host: ComputerHost) {
 				log({ callId, tool, input, summary, phase: "blocked", detail: "“只看”档位不允许操作" });
 				return { block: true, reason: "你对用户电脑的权限是“只看”：只能截图和读取窗口内容，不能点击、输入或打开应用。需要操作请让用户在设置里调高权限。" };
 			}
-			// 硬性保护：任何档位都要明确批准，且不会记住
-			const g = observe ? null : guardComputer(tool, input, host.guard ?? { target: host.target }, recent);
+			// 硬性保护：非完全权限档位都要明确批准，且不会记住；完全权限（本机档位 full）应用层不弹审批
+			const g = observe || (host_ && p === "none") ? null : guardComputer(tool, input, host.guard ?? { target: host.target }, recent);
 			if (g) {
 				const res = await host.request({ toolName: event.toolName, input, summary: `⚠️ 受保护的操作（${g.label}）：${summary}`, risk: "high", allowTask: false });
 				if (!res.approved) {

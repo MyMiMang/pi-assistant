@@ -1,9 +1,14 @@
 /**
  * 等待用户回应的请求：审批（approval）与提问（question）。
  * 先写数据库与聊天卡片，再广播 + Web Push；任一设备回应后 resolve 对应的 Promise。
+ *
+ * 完全权限（“操作这台电脑”档位 full + 已开启 + 允许该助理 + 未暂停）：应用层不再弹审批。
+ * 这里是所有应用层审批的唯一入口（email / delivery / connectors / routines / skills / browser / computer / ext-approval），
+ * 所以在这里统一 bypass，各处不用再写特例；提问（ask_user）不受影响。
  */
 import { bus } from "./bus.ts";
 import { db, now, uid } from "./db.ts";
+import { hostFileAccess } from "./host-control.ts";
 import { insertMessage, roomOfConversation, updateMessage } from "./messages.ts";
 import { notify } from "./push.ts";
 
@@ -27,6 +32,9 @@ function create(kind: "approval" | "question", agentId: string, taskId: string |
 	// 主动巡检（后台、没人在聊）：主动 ≠ 自主执行。需要批准的操作一律拒绝、不弹卡片，也不打扰用户提问
 	if (taskId && (db.prepare("SELECT kind FROM tasks WHERE id = ?").get(taskId) as { kind: string | null } | undefined)?.kind === "heartbeat")
 		return Promise.resolve<{ approved?: boolean; answer?: string; note?: string; scope?: "task" }>(kind === "approval" ? { approved: false, note: "主动巡检中不能执行需要批准的操作。如果值得做，用 proactive_surface 向用户提议。" } : { answer: "（主动巡检中不能向用户提问；需要用户决定的事请用 proactive_surface 提出）" });
+	// 完全权限：应用层不弹审批，直接放行（含硬性保护动作）。只影响审批，不影响上面的主动巡检限制，也不影响提问。
+	// 凭据路径 deny、暂停 / 降权 / 关闭（hostFileAccess 每次求值立刻变假）与宿主系统权限弹窗、外部验证码都不受影响。
+	if (kind === "approval" && hostFileAccess(agentId)) return Promise.resolve<{ approved?: boolean; answer?: string; note?: string; scope?: "task" }>({ approved: true, note: "完全权限：应用层不弹审批，已自动放行" });
 	const id = uid(kind === "approval" ? "ap" : "q");
 	const roomId = roomOfConversation(conversationId ?? (taskId ? (db.prepare("SELECT conversation_id FROM tasks WHERE id = ?").get(taskId) as { conversation_id: string | null } | undefined)?.conversation_id : null));
 	db.prepare("INSERT INTO requests(id, agent_id, task_id, kind, tool_name, payload, status, created_at, room_id, conversation_id) VALUES(?,?,?,?,?,?,?,?,?,?)").run(

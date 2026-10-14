@@ -27,21 +27,32 @@ test("未知工具按 annotations 判断", () => {
 test("完全权限（hostAccess）：普通命令与主机文件放行，凭据仍拒绝；其他档位不变", () => {
 	assert.equal(evaluate("bash", { command: "rm -rf build" }, undefined, ws, true).kind, "allow");
 	assert.equal(evaluate("bash", { command: "git push origin main" }, undefined, ws, true).kind, "allow");
-	assert.equal(evaluate("bash", { command: "sudo apt install x" }, undefined, ws, true).kind, "allow", "普通 sudo 不再逐条审批（硬性保护在 approvalExtension 里单独问）");
+	assert.equal(evaluate("bash", { command: "sudo apt install x" }, undefined, ws, true).kind, "allow", "普通 sudo 不再逐条审批（完全权限下应用层不弹审批）");
 	assert.equal(evaluate("bash", { command: "cat ~/.aws/credentials" }, undefined, ws, true).kind, "deny", "凭据命令仍拒绝");
 	assert.equal(evaluate("write", { path: "/etc/hosts" }, undefined, ws, true).kind, "allow", "完全权限可写主机文件");
 	assert.equal(evaluate("write", { path: "/home/u/.ssh/id_rsa" }, undefined, ws, true).kind, "deny", "凭据文件仍拒绝");
 	assert.equal(evaluate("bash", { command: "rm -rf build" }, undefined, ws, false).kind, "ask", "非完全权限行为不变");
 	assert.equal(evaluate("write", { path: "/etc/hosts" }, undefined, ws, false).kind, "deny");
 });
-test("完全权限：普通命令不问，硬性保护仍要明确批准", async () => {
+test("完全权限：应用层完全不创建审批请求（含硬性保护），凭据仍拒绝；降权后立刻恢复审批", async () => {
 	const { approvalExtension } = await import("@pi-assistant/ext-approval");
 	const asks: string[] = [];
-	let fn: ((e: unknown) => Promise<{ block?: boolean } | undefined>) | null = null;
-	approvalExtension({ workspace: "/ws", guard: { target: "host" }, hostAccess: () => true, request: async (r) => (asks.push(r.summary), { approved: true }) })({ on: (_n: string, f: never) => (fn = f), getAllTools: () => [] } as never);
+	let full = true;
+	let fn: ((e: unknown) => Promise<{ block?: boolean; reason?: string } | undefined>) | null = null;
+	approvalExtension({ workspace: "/ws", guard: { target: "host" }, hostAccess: () => full, request: async (r) => (asks.push(r.summary), { approved: true }) })({ on: (_n: string, f: never) => (fn = f), getAllTools: () => [] } as never);
 	assert.equal(await fn!({ toolName: "bash", input: { command: "rm -rf build" } }), undefined, "普通删除不问");
 	assert.equal(await fn!({ toolName: "bash", input: { command: "npm install" } }), undefined);
-	assert.equal(asks.length, 0);
-	assert.equal(await fn!({ toolName: "bash", input: { command: "killall Finder" } }), undefined, "硬性保护：批准后放行");
+	assert.equal(await fn!({ toolName: "bash", input: { command: "killall Finder" } }), undefined, "硬性保护：完全权限下也直接放行");
+	assert.equal(await fn!({ toolName: "bash", input: { command: "shutdown -h now" } }), undefined, "关机这类受保护命令也直接放行");
+	assert.equal(await fn!({ toolName: "write", input: { path: "/etc/hosts" } }), undefined, "写系统文件也放行");
+	assert.equal(asks.length, 0, "完全权限：一次审批请求都不创建");
+	const secret = await fn!({ toolName: "bash", input: { command: "cat ~/.aws/credentials" } });
+	assert.equal(secret?.block, true, "凭据路径仍然拒绝");
+	assert.match(secret?.reason ?? "", /凭据/);
+	assert.equal((await fn!({ toolName: "read", input: { path: "/home/u/.ssh/id_rsa" } }))?.block, true);
+	assert.equal(asks.length, 0, "凭据拒绝不经过审批");
+	// 降权 / 暂停：hostAccess 立刻变假，硬性保护又回到明确批准
+	full = false;
+	assert.equal(await fn!({ toolName: "bash", input: { command: "killall Finder" } }), undefined, "非完全权限：批准后放行");
 	assert.match(asks[0], /受保护的操作/);
 });

@@ -5,7 +5,7 @@ import { useStore } from "../store";
 import { Badge, Button, cx, Input, avatarText, Help, useConfirm } from "./ui";
 
 /** 启用“完全权限”前的确认框（不再要求输入确认语） */
-const FULL_ASK = { title: "启用完全权限？", body: "助理几乎能做你在这台电脑上能做的任何事，包括使用已登录的账号和文件。受保护的操作仍会先问你，随时可以暂停。", ok: "确定启用", danger: true };
+const FULL_ASK = { title: "启用完全权限？", body: "助理几乎能做你在这台电脑上能做的任何事，包括使用已登录的账号和文件。这个档位下应用层不再弹审批：关机、删除、改系统设置这类受保护操作也会直接执行，随时可以一键暂停。仍然拦得住的只有凭据/密钥文件（直接拒绝）、暂停或调低档位、系统自己的权限弹窗和网站上的登录/验证码。", ok: "确定启用", danger: true };
 /** 与服务端 host-control.ts 的 FULL_CONFIRM 一致（旧版确认语，服务端仍兼容） */
 export const FULL_CONFIRM = "我了解风险，允许完全控制这台电脑";
 export type Tier = "observe" | "bounded" | "trusted" | "full";
@@ -13,7 +13,7 @@ export const TIER_INFO: Record<Tier, { label: string; desc: string; tone: string
 	observe: { label: "只看", desc: "截图、读取窗口内容，不能点击或输入", tone: "zinc" },
 	bounded: { label: "限定", desc: "只能操作勾选的应用，每个动作都问你（默认）；不能用你的 Chrome 做网页任务，需要“信任”或以上", tone: "green" },
 	trusted: { label: "信任", desc: "日常操作不问，发送、付款、删除前会问；可以连接你的 Chrome 操作网页", tone: "amber" },
-	full: { label: "完全权限", desc: "几乎不问，受保护的操作仍要问", tone: "red" },
+	full: { label: "完全权限", desc: "应用层不再弹审批（含关机/删除等受保护操作）", tone: "red" },
 };
 const TIER_ORDER: Tier[] = ["observe", "bounded", "trusted", "full"];
 
@@ -144,7 +144,7 @@ export function HostControlSettings() {
 		try {
 			const r = await api("/api/host-control", { method: "PUT", json: { enabled, agents: scope, apps, workspaceFiles: files, acknowledged: ack, manifestHash: hash, defaultTier, confirmFull } });
 			if (r.ok === false) setMsg({ ok: false, text: r.error });
-			else setMsg({ ok: true, text: enabled ? "已开启：按各助理的档位操作你的电脑，受保护的操作一律先问你，随时可以一键暂停" : "已关闭" });
+			else setMsg({ ok: true, text: enabled ? "已开启：按各助理的档位操作你的电脑；非完全权限档位的受保护操作一律先问你，随时可以一键暂停" : "已关闭" });
 			setPreview(null);
 			await load();
 		} catch (e) {
@@ -224,12 +224,12 @@ export function HostControlSettings() {
 						<ul className="list-disc pl-5">
 							<li>能打开任何应用、读写文件、使用你已登录的账号（聊天、邮箱、网银、云盘……），Cua Driver 以 unrestricted 模式运行，没有应用清单，日常动作不再问你。</li>
 							<li>网页、文档、聊天消息里的恶意内容可能诱导助理做出你不想要的操作（提示注入），后果可能无法撤回。</li>
-							<li>受保护的操作（结束/卸载 Pi Assistant、关机重启、格式化、改系统设置/防火墙/账户、大范围删除、改开机启动项等）仍然每次都会问你。</li>
+							<li>受保护的操作（结束/卸载 Pi Assistant、关机重启、格式化、改系统设置/防火墙/账户、大范围删除、改开机启动项等）在“完全权限”档位下也会直接执行、不再问你；“信任”“限定”档位仍然每次都会问你。</li>
 							<li>建议只在你在电脑旁边时使用；电脑和手机上都能一键暂停；所有动作都会记录。</li>
 						</ul>
 					</div>
 				)}
-				<p className="text-xs text-mut">无论哪个档位：受保护的操作都必须你明确批准，一键暂停始终有效，所有动作都会记录。</p>
+				<p className="text-xs text-mut">“完全权限”以外的档位：受保护的操作都必须你明确批准；“完全权限”档位应用层不再弹审批（凭据/密钥文件仍然直接拒绝）。任何档位一键暂停都有效，所有动作都会记录。</p>
 			</section>
 
 			{mac && (

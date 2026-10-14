@@ -1,6 +1,8 @@
 /**
  * @pi-assistant/ext-approval —— 审批闸门（Pi 扩展）。
  * 通过 pi.on("tool_call") 拦截有后果的工具调用：allow / ask（等待用户在任一设备批准）/ deny。
+ * “完全权限”（hostAccess 为真，即 host 档位 full + 已开启 + 允许该助理 + 未暂停）下应用层不创建任何审批请求，
+ * 硬性保护动作也直接放行；凭据路径 deny、暂停 / 降权 / 关闭（hostAccess 立刻变假）不受影响。
  * 只依赖 Pi 的 ExtensionAPI 类型，运行时能力由宿主注入。
  */
 import { isAbsolute, relative, resolve } from "node:path";
@@ -23,9 +25,9 @@ export interface ApprovalHost {
 	request(req: ApprovalRequest): Promise<{ approved: boolean; note?: string }>;
 	/** 由其它扩展自行把关的工具（例如 sandbox 目标下的电脑工具） */
 	trusted?: (toolName: string) => boolean;
-	/** 硬性保护清单的上下文（受保护路径等）；命中的 shell / 文件操作必须明确批准，任何设置都不能跳过 */
+	/** 硬性保护清单的上下文（受保护路径等）；非完全权限档位命中的 shell / 文件操作必须明确批准，任何设置都不能跳过 */
 	guard?: GuardContext;
-	/** “完全权限”下对用户主机统一可用：文件工具不再被工作区路径拦下、普通命令不再逐条审批（凭据路径拒绝与硬性保护不变） */
+	/** “完全权限”下对用户主机统一可用：文件工具不再被工作区路径拦下、不再逐条审批（含硬性保护动作）；凭据路径拒绝不变 */
 	hostAccess?: () => boolean;
 }
 
@@ -83,6 +85,8 @@ export function evaluate(
 		if (!hostAccess && path && outside(workspace, path)) return { kind: "deny", reason: "只能修改工作区内的文件" };
 		return { kind: "allow" };
 	}
+	// 完全权限：应用层不再请求审批（硬性保护动作也直接放行）；凭据 deny 与暂停 / 降权已在上面和调用方处理
+	if (hostAccess) return { kind: "allow" };
 	// 其他工具（MCP、连接器等）按 annotations 判断，缺省视为可能有副作用
 	if (annotations?.readOnlyHint) return { kind: "allow" };
 	if (annotations?.destructiveHint === true || annotations?.openWorldHint !== false)
@@ -95,17 +99,19 @@ export function approvalExtension(host: ApprovalHost) {
 		const rejected = new Map<string, number>();
 		pi.on("tool_call", async (event) => {
 			const input = (event.input ?? {}) as Record<string, unknown>;
-			// 硬性保护在一切规则之前：不看 trusted、不记“本任务内都允许”，每次都问
+			// 完全权限：应用层不创建任何审批请求（硬性保护动作也直接放行）。每次调用求值，暂停 / 降权立刻回到审批
+			const full = host.hostAccess?.() ?? false;
+			// 硬性保护在一切规则之前：不看 trusted、不记“本任务内都允许”，每次都问（完全权限档位除外）
 			const g = hardGuard(event.toolName, input, host.workspace, host.guard ?? { target: "host" });
 			let guarded = false;
-			if (g) {
+			if (g && !full) {
 				const res = await host.request({ toolName: event.toolName, input, summary: `⚠️ 受保护的操作（${g.label}）：${String(input.command ?? input.path ?? "")}`.slice(0, 400), risk: "high" });
 				if (!res.approved) return { block: true, reason: `这是受保护的操作（${g.label}），用户没有批准${res.note ? `：${res.note}` : ""}。不要换方式重试。` };
 				guarded = true;
 			}
 			if (host.trusted?.(event.toolName)) return;
 			const annotations = pi.getAllTools().find((t) => t.name === event.toolName)?.annotations;
-			const d = evaluate(event.toolName, input, annotations, host.workspace, host.hostAccess?.() ?? false);
+			const d = evaluate(event.toolName, input, annotations, host.workspace, full);
 			if (d.kind === "allow") return;
 			if (d.kind === "deny") return { block: true, reason: d.reason };
 			if (guarded) return; // 已经明确批准过

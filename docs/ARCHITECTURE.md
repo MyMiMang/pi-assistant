@@ -62,7 +62,7 @@ flowchart LR
 1. 网页 `POST /api/agents/:id/messages`（群聊用 `/api/rooms/:rid/messages`），可以带附件 id。
 2. `runtime.send()` / `turn()`：先由 `attachments.ts` 整理附件（图片、文档摘录），再调 Pi `session.prompt(text, {images})`。
 3. Pi 流式输出 → `bindSession` 写入 / 更新消息 → `bus` → WS 推给网页，同时由 channels 镜像到渠道。
-4. 工具调用经 ext-approval 判断要不要审批 → `requests.ts` 发出卡片 → 用户批准后继续。
+4. 工具调用经 ext-approval 判断要不要审批 → `requests.ts` 发出卡片 → 用户批准后继续。完全权限档位（`hostFileAccess`）下应用层不弹审批：`requests.approval()` 在唯一入口直接放行（含硬性保护动作）；凭据 deny、暂停 / 降权、系统权限弹窗与验证码不受影响（DESIGN §23.8）。
 5. 群聊：`rooms/index.ts` 按规则排队，每个成员在群里有一个隐藏对话，轮到它时注入还没看过的群消息和附件路径。
 
 ## 存储（数据目录：mac `~/Library/Application Support/Pi Assistant`，Linux 服务器 `/var/lib/pi-assistant`，开发时 `PIA_DATA_DIR`）

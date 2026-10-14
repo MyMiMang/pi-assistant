@@ -126,9 +126,9 @@ test("新助理继承默认档位；改默认不影响已有助理（固定成�
 	hc.saveHostSettings({ tiers: {}, defaultTier: "bounded", fullAck: {} });
 });
 
-test("只看档位：输入工具被隐藏并拦下；硬性保护在完全权限下也要批准且不能本任务内允许", async () => {
+test("只看档位：输入工具被隐藏并拦下；硬性保护只在非完全权限档位要求批准且不能本任务内允许", async () => {
 	const { computerExtension, HOST_MCP_PREFIX, INPUT_TOOLS } = await import("@pi-assistant/ext-computer");
-	let policy: "observe" | "none" = "observe";
+	let policy: "observe" | "sensitive" | "none" = "observe";
 	const asks: { summary: string; allowTask?: boolean }[] = [];
 	let answer = { approved: true, scope: "task" as const };
 	const h: Record<string, (e: unknown) => Promise<{ block?: boolean; reason?: string } | undefined>> = {};
@@ -143,15 +143,58 @@ test("只看档位：输入工具被隐藏并拦下；硬性保护在完全权�
 	assert.equal(await call("get_window_state", { pid: 1 }), undefined);
 	assert.match((await call("click", { x: 1 }))?.reason ?? "", /只看/);
 	assert.equal(asks.length, 0);
-	policy = "none";
-	assert.equal(await call("click", { x: 1 }), undefined, "完全权限：普通动作不问");
-	assert.equal(await call("kill_app", { name: "Pi Assistant" }), undefined, "批准了就放行");
+	// 信任：普通动作不问，受保护动作要批准、不能“本任务内都允许”、批准了也不记住
+	policy = "sensitive";
+	assert.equal(await call("click", { x: 1 }), undefined, "信任：普通点击不问");
+	assert.equal(asks.length, 0);
+	assert.equal(await call("hotkey", { keys: ["cmd", "shift", "q"] }), undefined, "信任：受保护快捷键批准后放行");
 	assert.match(asks[0].summary, /受保护的操作/);
 	assert.equal(asks[0].allowTask, false, "受保护的操作不提供本任务内都允许");
-	assert.equal(await call("kill_app", { name: "Pi Assistant" }), undefined);
-	assert.equal(asks.length, 2, "即使批准过、用户选了本任务内允许，下次仍要问");
 	answer = { approved: false } as never;
-	assert.equal((await call("hotkey", { keys: ["cmd", "shift", "q"] }))?.block, true);
+	assert.equal((await call("hotkey", { keys: ["cmd", "shift", "q"] }))?.block, true, "批准过也不记住，拒绝后拦下");
+	assert.equal(asks.length, 2);
+	// 完全权限：应用层不再创建审批请求（即使 stub 一律拒绝也不问）
+	policy = "none";
+	assert.equal(await call("click", { x: 1 }), undefined, "完全权限：普通动作不问");
+	assert.equal(await call("kill_app", { name: "Pi Assistant" }), undefined, "完全权限：受保护动作直接放行");
+	assert.equal(await call("hotkey", { keys: ["cmd", "shift", "q"] }), undefined, "完全权限：受保护快捷键也直接放行");
+	assert.equal(asks.length, 2, "完全权限：一次审批请求都不创建");
+});
+
+test("完全权限：应用层审批入口 requests.approval 直接放行、不写卡片；非 full 照常等用户；暂停后立刻恢复", async () => {
+	const { requests } = await import("../src/requests.ts");
+	const { db, now } = await import("../src/db.ts");
+	for (const [id, name] of [["fa", "完全"], ["ta", "信任"]] as const) db.prepare("INSERT OR REPLACE INTO agents(id, name, avatar, color, created_at) VALUES(?,?,?,?,?)").run(id, name, "A", "#000", now());
+	const count = (agent: string) => (db.prepare("SELECT COUNT(*) c FROM requests WHERE agent_id = ?").get(agent) as { c: number }).c;
+	hc.setHostEnv({ workspaceOf: (id) => `/ws/${id}`, agentIds: () => ["fa", "ta"] });
+	hc.saveHostSettings({ enabled: true, approvedHash: "h", agents: "all", tiers: { fa: "full", ta: "trusted" }, defaultTier: "bounded", fullAck: {} });
+	const ok = await requests.approval("fa", null, "email_send", { 收件: "a@b.c" }, "发送邮件给 a@b.c", "high");
+	assert.equal(ok.approved, true, "完全权限：直接批准");
+	assert.equal(ok.note, "完全权限：应用层不弹审批，已自动放行");
+	assert.equal(count("fa"), 0, "完全权限：不创建审批请求、不写卡片");
+	// 非 full：仍然创建 pending 卡片，等用户回应
+	const p = requests.approval("ta", null, "email_send", {}, "发送邮件", "high");
+	assert.equal((db.prepare("SELECT status FROM requests WHERE agent_id = ?").get("ta") as { status: string }).status, "pending");
+	requests.resolve((db.prepare("SELECT id FROM requests WHERE agent_id = ?").get("ta") as { id: string }).id, { approved: true }, "test");
+	assert.equal((await p).approved, true);
+	// 主 / 子 / 后台都用所属助理的当前档位：后台任务的审批同样直接放行
+	db.prepare("INSERT INTO tasks(id, agent_id, title, instructions, status, created_at, kind) VALUES(?,?,?,?,?,?,?)").run("bg1", "fa", "后台任务", "x", "running", now(), "task");
+	assert.equal((await requests.approval("fa", "bg1", "email_send", {}, "后台发邮件", "high")).approved, true, "后台任务用父助理档位：直接放行");
+	assert.equal(count("fa"), 0, "后台任务也不写卡片");
+	// 例外：主动巡检（心跳）仍然不自主执行需要批准的操作（主动 ≠ 自主），但不弹卡片
+	db.prepare("INSERT INTO tasks(id, agent_id, title, instructions, status, created_at, kind) VALUES(?,?,?,?,?,?,?)").run("hb1", "fa", "巡检", "x", "running", now(), "heartbeat");
+	const hb = await requests.approval("fa", "hb1", "email_send", {}, "巡检发邮件", "high");
+	assert.equal(hb.approved, false, "心跳任务仍不自主执行需批准的操作");
+	assert.equal(count("fa"), 0, "心跳只在内存里拒绝，不写卡片");
+	// 暂停（或降权 / 关闭）：hostFileAccess 立刻变假，完全权限也回到审批
+	await hc.setHostPaused(true);
+	const paused = requests.approval("fa", null, "email_send", {}, "发送邮件", "high");
+	const row = db.prepare("SELECT id, status FROM requests WHERE agent_id = ?").get("fa") as { id: string; status: string };
+	assert.equal(row.status, "pending", "暂停后不再 bypass");
+	requests.resolve(row.id, { approved: false, note: "测试拒绝" }, "test");
+	assert.equal((await paused).approved, false);
+	await hc.setHostPaused(false);
+	hc.saveHostSettings({ enabled: false, approvedHash: undefined, agents: "all", tiers: {}, defaultTier: "bounded", fullAck: {} });
 });
 
 test("ext-approval：硬性保护命中的 shell/文件操作必须批准，即使工具被标为 trusted", async () => {

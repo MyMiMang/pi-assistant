@@ -14,6 +14,8 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+2026-10-15 用户纠正权限定义（**已实现，未打包，beta.18 候选**）：『不是完全权限那就得全部都不用审批啊』——档位是“完全权限”（开启 + 允许该助理 + 未暂停，即 `hostFileAccess` 为真）时，**应用层不再创建任何审批请求**，包括硬性保护清单命中的动作（关机、删除、改系统设置等）。实现：`requests.ts` 的 `approval()` 是所有应用层审批的唯一入口（email / connectors / delivery / routines / skills / browser / ext-computer / ext-approval 都经它），在那里按 `hostFileAccess(agentId)` 直接放行、不写卡片（提问 `ask_user` 不受影响）；`ext-approval` 的 `evaluate()` 在 full 下对非 deny 一律 allow、`hardGuard` 命中时不再请求；`ext-computer` 的硬性保护在本机档位 full（`approvals = none`）下不再请求（助理电脑 / 只看 / 限定 / 信任仍照旧）；系统提示与设置页文案同步改掉“受保护操作仍会问你”。**保留的 deny / 阻断**：凭据 / 密钥路径直接 deny、暂停 / 降权 / 关闭（`hostFileAccess` 每次求值立刻变假）、`observe` 输入工具隐藏、宿主系统权限弹窗、网站登录 / 验证码（`request_handoff`）、心跳任务不能执行需批准的操作。注意：`hostPlan` 文字变了 → `approvedHash` 变，已开启“操作这台电脑”的用户需在设置页重新确认一次计划。验证：相关单测 65/65（approval / hard-guard / host-control / sandbox-access / pi-compat / channels / proactive / mirror），服务端全量 249 pass（1 个无关失败：`shared-computer.test.ts` 的合并脚本要 GNU tar，macOS BSD tar 不支持 `--skip-old-files`，在未改动的发布树上同样失败），服务端 + 网页 typecheck 通过；未跑 e2e（未改 e2e 断言）。DESIGN §23.2 / 23.5-23.8、ROADMAP、ARCHITECTURE 已同步。
+
 2026-10-14 beta.17 权限误报热修：基于公开 beta.16（4bfd0f9）的独立发布树，只选择性带入 hard-guard、shell-lex 和 hard-guard 测试，其他 UI / 模型 WIP 留待后续。命令按引号、命令位置和实际写入目标判定；修复 grep 危险词、gh --repo 输出日志、git log 格式串、sed 工作区输出、export PATH、复制受保护源到 /tmp、字面 heredoc 正文的误报。未引号 heredoc 的命令替换、喂给 shell 的脚本、sh -c / 反引号 / $(...) 和真实系统写入继续保护。主会话复核补掉自身保护与 stress 文本的全文匹配残留。在发布树独立验证：hard-guard + approval + host-control + sandbox-access **37/37** 通过，服务端与网页 typecheck 通过；未跑全量。发布按五平台构建和安装冒烟通过后自动公开 Latest。
 
 

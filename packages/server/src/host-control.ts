@@ -53,8 +53,8 @@ export interface HostControlSettings {
  *  - observe 只看：截图、读取窗口内容，不能输入（Cua unrestricted 守护进程 + 我们这层拦下所有输入工具）
  *  - bounded 限定（默认）：只能操作勾选的应用（Cua bounded 清单强制），每个动作都问
  *  - trusted 信任：所有应用；日常动作不问，发送 / 付款 / 删除 / 提交类动作仍要问
- *  - full 完全权限：几乎不问；需要输入确认语才能设置
- * 任何档位：硬性保护清单命中的动作一律要明确批准；一键暂停有效；操作全部记录。
+ *  - full 完全权限：应用层不弹审批（包括关机、强制退出、系统设置这类受保护操作）；需要输入确认语才能设置
+ * 任何档位：一键暂停有效；操作全部记录。“完全权限”之外的档位：硬性保护清单命中的动作一律要明确批准。
  */
 export type HostTier = "observe" | "bounded" | "trusted" | "full";
 export const TIERS: HostTier[] = ["observe", "bounded", "trusted", "full"];
@@ -249,10 +249,10 @@ export function draftHostSettings(
 /** 给用户审阅的完整权限计划：各助理档位 + bounded 清单。开启 = 用户确认了这份计划（哈希） */
 export function hostPlan(s = hostSettings()) {
 	const ids = allowedAgents(s);
-	const lines = ["# 各助理的权限档位（任何档位：硬性保护清单里的动作都要你明确批准；一键暂停有效；操作全部记录）", `# 新助理默认：${TIER_LABEL[s.defaultTier]}`];
+	const lines = ["# 各助理的权限档位（非“完全权限”档位：硬性保护清单里的动作都要你明确批准；“完全权限”档位应用层不再弹审批，包括受保护动作；任何档位：一键暂停有效、操作全部记录）", `# 新助理默认：${TIER_LABEL[s.defaultTier]}`];
 	for (const id of ids) lines.push(`# - ${id}: ${TIER_LABEL[tierOf(id, s)]}`);
 	if (!ids.length) lines.push("# （没有允许的助理）");
-	if (ids.some((a) => tierOf(a, s) !== "bounded")) lines.push("# 只看 / 信任 / 完全权限 的助理连接 Cua unrestricted 守护进程（所有应用），由 Pi Assistant 这一层把关审批。");
+	if (ids.some((a) => tierOf(a, s) !== "bounded")) lines.push("# 只看 / 信任 / 完全权限 的助理连接 Cua unrestricted 守护进程（所有应用），由 Pi Assistant 这一层把关：只看拦下所有输入，信任问发送/付款/删除类动作，完全权限不再弹审批。");
 	if (ids.some((a) => tierOf(a, s) === "bounded")) lines.push("", boundedManifest(s));
 	return `${lines.join("\n")}\n`;
 }
