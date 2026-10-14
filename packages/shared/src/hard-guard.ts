@@ -31,6 +31,8 @@ const SANDBOX_RUNTIME = /\b(Xvfb|x11vnc|websockify|novnc|socat|cua-driver|tini|x
 const SYSTEM_DIRS = /(^|[\s"'=:(])(\/(System|usr|bin|sbin|etc|boot|lib|lib32|lib64|Library|private|dev|proc|sys|opt\/homebrew|Applications\/Utilities)(\/|[\s"')]|$)|[A-Za-z]:\\+(Windows|Program Files( \(x86\))?|ProgramData)(\\|[\s"']|$)|%(SystemRoot|windir|ProgramFiles)%)/i;
 const RC_FILES = /(\.(bash|zsh)rc|\.bash_profile|\.bash_login|\.zprofile|\.zshenv|\.zlogin|\.profile|config\.fish|Library\/LaunchAgents|Library\/LaunchDaemons|\.config\/autostart|\/etc\/(profile|bash|zsh|cron|systemd|init|rc\.)|\/etc\/environment|CurrentVersion\\+Run|Start Menu\\+Programs\\+Startup|\\Startup\\)/i;
 const WRITE_VERB = /(>|\btee\b|\bsed\s+(-\w*\s+)*-i|\b(cp|mv|rm|rmdir|ln|install|truncate|chmod|chown|chflags|xattr|nano|vim?|emacs|code|unlink|shred|Remove-Item|Move-Item|Copy-Item|Set-Content|Add-Content|Out-File|New-Item|del|erase|rd|ren|icacls|takeown|attrib)\b)/i;
+/** 无副作用的输出重定向（写 /dev/null、复制文件描述符），不算写入，避免把只读命令（ls … 2>/dev/null）当成修改文件 */
+const NOOP_REDIRECT = /\d*\s*>>?\s*\/dev\/null\b|\d*\s*>&\s*\d+|\d*\s*>&-/gi;
 const BROAD = /^(\/|\/\*|~|~\/|~\/\*|\$HOME\/?\*?|\$\{HOME\}\/?\*?|\/Users\/?\*?|\/home\/?\*?|\/Users\/[^/\s]+\/?\*?|\/home\/[^/\s]+\/?\*?|\*|\.\.\/?\*?|[A-Za-z]:\\?\*?|\$\{?\w+\}?\/?\*?)$/;
 
 /** 把一条 shell 命令按 ; && || | 换行 拆成片段 */
@@ -61,6 +63,8 @@ function guardSegment(seg: string, ctx: GuardContext): GuardHit | null {
 	// 允许的目录（助理工作区）里的路径不算受保护（工作区可能在数据目录里，路径里也可能带产品名）
 	let s = seg;
 	for (const a of ctx.allowedPaths ?? []) if (a) s = s.split(a).join("WORKSPACE");
+	// 去掉无副作用的输出重定向后的命令（只看写入类操作时用）
+	const w = s.replace(NOOP_REDIRECT, " ");
 	// 关机 / 重启 / 注销 / 休眠
 	if (/^(sudo\s+)?(shutdown|reboot|halt|poweroff|logout)\b|\bsystemctl\s+(poweroff|reboot|halt|suspend|hibernate|kexec)\b|\bshutdown(\.exe)?\s+\/[srlhp]\b|\bloginctl\s+(terminate|kill)-|\bpmset\s+sleepnow\b|\bStop-Computer\b|\bRestart-Computer\b|osascript\b.*\b(shut down|restart|log out)\b|\binit\s+[06]\b|\btelinit\s+[06]\b|\bxfce4-session-logout\b|\bgnome-session-quit\b/i.test(s))
 		return { rule: "power", label: "关机 / 重启 / 注销" };
@@ -76,12 +80,12 @@ function guardSegment(seg: string, ctx: GuardContext): GuardHit | null {
 	// 开机自启 / shell 启动脚本
 	if (/\bcrontab\b(?!\s+-l\b)|\bschtasks(\.exe)?\s+\/(create|delete|change)\b|\breg(\.exe)?\s+(add|delete|import)\b|\bsystemctl\s+(--user\s+)?(enable|disable|mask|unmask|edit)\b|\blaunchctl\s+(load|unload|bootstrap|bootout|remove|disable|enable|submit|kickstart\s+-k)\b|\bloginitems\b|\bosascript\b[^\n]*login item/i.test(s))
 		return { rule: "autostart", label: "修改开机自启 / 系统服务" };
-	if (RC_FILES.test(s) && WRITE_VERB.test(s)) return { rule: "rc", label: "修改 shell 启动脚本 / 自启动项" };
+	if (RC_FILES.test(s) && WRITE_VERB.test(w)) return { rule: "rc", label: "修改 shell 启动脚本 / 自启动项" };
 	// Pi Assistant 自身与附属进程（结束、卸载、删除、改动）
-	if (SELF_NAMES.test(s) && /\b(kill|pkill|killall|taskkill|launchctl|systemctl|sc(\.exe)?\s+(stop|delete|config)|Stop-Process|Stop-Service|rm|rmdir|mv|del|rd|Remove-Item|uninstall|brew\s+(uninstall|remove)|npm\s+(uninstall|rm)|docker\s+(rm|kill|stop|volume\s+rm|rmi|system\s+prune)|winget\s+uninstall|chmod|chown|truncate|sqlite3)\b|>/i.test(s))
+	if (SELF_NAMES.test(s) && /\b(kill|pkill|killall|taskkill|launchctl|systemctl|sc(\.exe)?\s+(stop|delete|config)|Stop-Process|Stop-Service|rm|rmdir|mv|del|rd|Remove-Item|uninstall|brew\s+(uninstall|remove)|npm\s+(uninstall|rm)|docker\s+(rm|kill|stop|volume\s+rm|rmi|system\s+prune)|winget\s+uninstall|chmod|chown|truncate|sqlite3)\b|>/i.test(w))
 		return { rule: "self", label: "结束 / 卸载 / 修改 Pi Assistant 本身或它的组件" };
 	for (const p of ctx.protectedPaths ?? []) {
-		if (p && s.includes(p) && WRITE_VERB.test(s)) return { rule: "self-data", label: "修改 Pi Assistant 的数据目录 / 安装目录" };
+		if (p && s.includes(p) && WRITE_VERB.test(w)) return { rule: "self-data", label: "修改 Pi Assistant 的数据目录 / 安装目录" };
 	}
 	if (/\bdocker\s+(system\s+prune|volume\s+prune|rm\s+-f\s+\$\(docker)/i.test(s)) return { rule: "self", label: "批量删除 Docker 容器 / 卷（包括助理电脑）" };
 	// 结束系统进程
@@ -90,11 +94,12 @@ function guardSegment(seg: string, ctx: GuardContext): GuardHit | null {
 		if (/\bkill\s+(-\S+\s+)*(-1|1)\b(?!\d)/.test(s)) return { rule: "system-proc", label: "结束所有进程 / init" };
 		if (sandbox && SANDBOX_RUNTIME.test(s)) return { rule: "sandbox-runtime", label: "结束助理电脑的运行环境进程" };
 	}
-	// 系统目录
-	if (SYSTEM_DIRS.test(s) && WRITE_VERB.test(s)) {
+	// 系统目录：只看真正的写删操作；去掉目标不在系统目录的重定向（ls /usr/bin > /tmp/x 不算修改系统目录）
+	const sw = w.replace(/\d*>>?\s*([^\s;&|<>]+)/g, (m, t: string) => (SYSTEM_DIRS.test(` ${t}`) ? m : " "));
+	if (SYSTEM_DIRS.test(s) && WRITE_VERB.test(sw)) {
 		// cp / install / Copy-Item 只有目标在系统目录才算（从系统目录复制出来没关系）
 		const cp = /^(sudo\s+)?(cp|install|Copy-Item|ditto|rsync)\b(.*)$/i.exec(s);
-		const other = WRITE_VERB.test(s.replace(/^(sudo\s+)?(cp|install|Copy-Item|ditto|rsync)\b/i, ""));
+		const other = WRITE_VERB.test(sw.replace(/^(sudo\s+)?(cp|install|Copy-Item|ditto|rsync)\b/i, ""));
 		if (!cp || other) return { rule: "system-dir", label: "删除 / 修改系统目录" };
 		const last = cp[3].trim().split(/\s+/).filter((a) => !a.startsWith("-")).at(-1) ?? "";
 		if (SYSTEM_DIRS.test(` ${strip(last)}`)) return { rule: "system-dir", label: "写入系统目录" };

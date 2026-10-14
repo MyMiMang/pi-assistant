@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
 	createAgentSession,
 	createBashTool,
+	createLocalBashOperations,
 	createCodemodeExtension,
 	createMcpExtension,
 	createToolSearchExtension,
@@ -34,6 +35,11 @@ import { BRAND } from "@pi-assistant/shared";
 
 export { defineTool, Type };
 export type { AgentSession, AgentSessionEvent, BashOperations, ExtensionAPI, ExtensionFactory, ToolDefinition, CredentialStore };
+
+/** Pi 内置的“本机 bash”执行后端（给 ext-sandbox 在 Docker 偏好下切回主机时注入；扩展不直接依赖 Pi 运行时代码） */
+export function localBashOperations(): BashOperations {
+	return createLocalBashOperations();
+}
 
 
 export function piVersion(): string {

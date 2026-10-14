@@ -28,6 +28,15 @@ test("shell：日常命令不命中", () => {
 		assert.equal(hit(c), null, c);
 });
 
+test("shell：只读命令（带无副作用重定向）不算写删系统目录", () => {
+	for (const c of ["ls /usr/local/bin/node 2>/dev/null", "ls -la /usr/local/bin/node 2>&1", "which node; ls /usr/local/bin/node", 'ls "/Applications/Pi Assistant.app" 2>/dev/null', "ls /usr/local/bin > /tmp/out.txt", "ls /usr/bin/git 2>/dev/null | head", "cat /usr/local/bin/node | head", "stat /usr/local/bin/node 2>/dev/null"])
+		assert.equal(hit(c), null, c);
+	// 真写入仍然命中
+	assert.equal(hit("ls /usr/local/bin/node > /usr/local/bin/out"), "system-dir");
+	assert.equal(hit("echo x > /etc/hosts"), "system-dir");
+	assert.equal(hit('echo x > "/Applications/Pi Assistant.app/f"'), "self");
+});
+
 test("sandbox：保护助理电脑的运行环境", () => {
 	assert.equal(hit("pkill Xvfb", S), "sandbox-runtime");
 	assert.equal(hit("killall x11vnc", S), "sandbox-runtime");

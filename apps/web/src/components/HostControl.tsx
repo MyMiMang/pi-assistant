@@ -12,7 +12,7 @@ export type Tier = "observe" | "bounded" | "trusted" | "full";
 export const TIER_INFO: Record<Tier, { label: string; desc: string; tone: string }> = {
 	observe: { label: "只看", desc: "截图、读取窗口内容，不能点击或输入", tone: "zinc" },
 	bounded: { label: "限定", desc: "只能操作勾选的应用，每个动作都问你（默认）；不能用你的 Chrome 做网页任务，需要“信任”或以上", tone: "green" },
-	trusted: { label: "信任", desc: "日常操作不问，发送、付款、删除前会问；可以连接你的 Chrome 快速操作网页（Mac 上 Chrome 可能自己问一次“允许远程调试”）", tone: "amber" },
+	trusted: { label: "信任", desc: "日常操作不问，发送、付款、删除前会问；可以连接你的 Chrome 操作网页", tone: "amber" },
 	full: { label: "完全权限", desc: "几乎不问，受保护的操作仍要问", tone: "red" },
 };
 const TIER_ORDER: Tier[] = ["observe", "bounded", "trusted", "full"];
@@ -88,6 +88,7 @@ export function HostControlSettings() {
 	const [files, setFiles] = useState(true);
 	const [ack, setAck] = useState(false);
 	const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+	const [saveState, setSaveState] = useState<"idle" | "saving" | "ok" | "error">("idle");
 	const [busy, setBusy] = useState(false);
 	const [suggest, setSuggest] = useState<HostApp[] | null>(null);
 	const [custom, setCustom] = useState({ name: "", id: "" });
@@ -102,6 +103,30 @@ export function HostControlSettings() {
 			setFiles(d.settings.workspaceFiles);
 		}
 	}, [d]);
+	const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// 关闭状态下：选项改动自动保存成草稿（带反馈）；开启中改的是权限计划，必须用底部按钮重新确认
+	useEffect(() => {
+		if (!d || !apps || d.status.enabled) return;
+		const sameScope = scope === "all" ? d.settings.agents === "all" : Array.isArray(d.settings.agents) && scope.length === d.settings.agents.length && scope.every((x) => d.settings.agents.includes(x));
+		const sameApps = apps.length === d.settings.apps.length && apps.every((x) => d.settings.apps.some((y) => y.id === x.id));
+		if (defaultTier === (d.settings.defaultTier ?? "bounded") && sameScope && files === d.settings.workspaceFiles && sameApps) return;
+		if (autoTimer.current) clearTimeout(autoTimer.current);
+		autoTimer.current = setTimeout(async () => {
+			setSaveState("saving");
+			setMsg(null);
+			try {
+				await api("/api/host-control", { method: "PUT", json: { enabled: false, agents: scope, apps, workspaceFiles: files, defaultTier } });
+				setSaveState("ok");
+				await load();
+			} catch (e) {
+				setSaveState("error");
+				setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+			}
+		}, 600);
+		return () => {
+			if (autoTimer.current) clearTimeout(autoTimer.current);
+		};
+	}, [d, apps, scope, files, defaultTier]);
 	if (!d || !apps) return null;
 	const mac = d.status.platform === "darwin";
 	const win = d.status.platform === "win32";
@@ -110,6 +135,9 @@ export function HostControlSettings() {
 	const tierOf = (id: string): Tier => d.tiers?.[id] ?? d.settings.defaultTier ?? "bounded";
 	const anyBounded = defaultTier === "bounded" || allowedIds.some((id) => tierOf(id) === "bounded");
 	const anyFull = defaultTier === "full" || allowedIds.some((id) => tierOf(id) === "full");
+	const sameScope = scope === "all" ? d.settings.agents === "all" : Array.isArray(d.settings.agents) && scope.length === d.settings.agents.length && scope.every((x) => d.settings.agents.includes(x));
+	const sameApps = apps.length === d.settings.apps.length && apps.every((x) => d.settings.apps.some((y) => y.id === x.id));
+	const dirty = defaultTier !== (d.settings.defaultTier ?? "bounded") || !sameScope || files !== d.settings.workspaceFiles || !sameApps;
 	const save = async (enabled: boolean, hash?: string, confirmFull = false) => {
 		setBusy(true);
 		setMsg(null);
@@ -125,14 +153,15 @@ export function HostControlSettings() {
 			setBusy(false);
 		}
 	};
-	/** 先保存草稿（关闭状态）拿到对应的清单给用户审阅，确认后再开启 */
+	/** 先向服务端要一份草稿权限计划给用户审阅，确认后再保存（不会影响正在运行的守护进程） */
 	const review = async () => {
 		setBusy(true);
+		setMsg(null);
 		try {
-			const r = await api("/api/host-control", { method: "PUT", json: { enabled: false, agents: scope, apps, workspaceFiles: files, defaultTier } });
-			const j = (await api("/api/host-control")) as HostInfo;
-			setPreview({ yaml: j.manifest, hash: r.manifestHash ?? j.manifestHash });
-			void load();
+			const p = await api<{ yaml: string; hash: string }>("/api/host-control/plan", { method: "POST", json: { agents: scope, apps, workspaceFiles: files, defaultTier } });
+			setPreview({ yaml: p.yaml, hash: p.hash });
+		} catch (e) {
+			setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
 		} finally {
 			setBusy(false);
 		}
@@ -180,9 +209,9 @@ export function HostControlSettings() {
 				<div className="font-semibold">新助理的默认权限</div>
 				<div className="grid gap-1.5 sm:grid-cols-2">
 					{TIER_ORDER.map((t) => (
-						<button key={t} className={cx("rounded-xl border p-2.5 text-left text-xs text-mut transition", defaultTier === t ? (t === "full" ? "border-red-500/60 bg-red-500/10" : "border-accent bg-accent-soft") : "border-line hover:bg-hover")} onClick={() => (setDefaultTier(t), setPreview(null))} data-testid={`default-tier-${t}`}>
+						<button key={t} className={cx("min-w-0 whitespace-normal break-words rounded-xl border p-2.5 text-left text-xs text-mut transition", defaultTier === t ? (t === "full" ? "border-red-500/60 bg-red-500/10" : "border-accent bg-accent-soft") : "border-line hover:bg-hover")} onClick={() => (setDefaultTier(t), setPreview(null))} data-testid={`default-tier-${t}`}>
 							<b className={cx("text-sm", t === "full" ? "text-red-600" : t === "trusted" ? "text-amber-600" : "text-fg")}>{TIER_INFO[t].label}</b>
-							<div>{TIER_INFO[t].desc}</div>
+							<div className="break-words">{TIER_INFO[t].desc}</div>
 						</button>
 					))}
 				</div>
@@ -285,9 +314,14 @@ export function HostControlSettings() {
 			</section>
 
 			{!preview ? (
-				<Button variant="primary" disabled={busy || (anyBounded && !apps.length)} onClick={review} data-testid="host-review">
-					{busy && <Loader2 size={14} className="animate-spin" />} 查看权限清单并{on ? "更新" : "开启"}…
-				</Button>
+				<div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-card/95 px-3 py-2 backdrop-blur">
+					<Button variant="primary" disabled={busy || (anyBounded && !apps.length)} onClick={review} data-testid="host-review">
+						{busy && <Loader2 size={14} className="animate-spin" />} {on ? (dirty ? "保存更改并重新确认…" : "查看权限清单…") : "查看权限清单并开启…"}
+					</Button>
+					{on && dirty && <span className="text-xs text-amber-600" data-testid="host-dirty">有未保存的更改</span>}
+					{!on && saveState === "saving" && <span className="flex items-center gap-1 text-xs text-mut"><Loader2 size={12} className="animate-spin" /> 正在保存…</span>}
+					{!on && saveState === "ok" && <span className="text-xs text-green-600" data-testid="host-autosave">已自动保存</span>}
+				</div>
 			) : (
 				<section className="space-y-2" data-testid="host-manifest">
 					<div className="text-sm font-semibold">权限计划（各助理档位 + “限定”档位的 Cua 能力清单）</div>
@@ -341,18 +375,25 @@ function SandboxComputerSettings() {
 /** 切换某个助理的档位：调低直接生效；调高弹确认框（完全权限是红色的“确定启用”） */
 function TierPicker({ agentId, d, load, onDone, compact }: { agentId: string; d: HostInfo; load: () => void; onDone?: () => void; compact?: boolean }) {
 	const [err, setErr] = useState("");
+	const [saving, setSaving] = useState(false);
+	const [saved, setSaved] = useState(false);
 	const [dlg, ask] = useConfirm();
 	const cur: Tier = d.tiers?.[agentId] ?? d.settings.defaultTier ?? "bounded";
 	const rank = (t: Tier) => TIER_ORDER.indexOf(t);
 	const apply = async (t: Tier, raise: boolean) => {
 		setErr("");
+		setSaving(true);
+		setSaved(false);
 		try {
 			const r = await api(`/api/host-control/tier/${agentId}`, { method: "PUT", json: { tier: t, acknowledged: raise, confirmFull: t === "full" } });
 			if (r.ok === false) return setErr(r.error);
+			setSaved(true);
 			load();
 			onDone?.();
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			setSaving(false);
 		}
 	};
 	const pick = async (t: Tier) => {
@@ -380,6 +421,8 @@ function TierPicker({ agentId, d, load, onDone, compact }: { agentId: string; d:
 				)}
 			</div>
 			{!compact && <div className="text-xs text-mut">{TIER_INFO[cur].desc}</div>}
+			{saving && <div className="flex items-center gap-1 text-xs text-mut"><Loader2 size={12} className="animate-spin" /> 正在保存…</div>}
+			{saved && !saving && <div className="text-xs text-green-600">已保存</div>}
 			{err && <div className="text-xs text-red-600">{err}</div>}
 			{dlg}
 		</div>

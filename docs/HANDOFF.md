@@ -20,6 +20,10 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 2026-10-14 发 beta.15（用户说「打包」）：基于 94b78a6 + 本说明提交，内容同 beta.13/14（子代理、用量、组队选模型等）+ Intel Mac 打包修复。演练 [run 38508018735](https://github.com/MyMiMang/pi-assistant/actions/runs/38508018735) 全部通过。beta.13/14 的草稿不公开、tag 不动。
 
+2026-10-15 权限需求实现（**已完成，未打包**）：用户否掉“本地项目目录白名单”方案，要求把“完全权限”做成**用户主机上文件/命令/桌面的统一权限**，完全权限下日常命令自动放行、受保护系统动作仍明确批准，并要求可维护、权限判断集中、不新增框架。实现：`host-control.ts` 新增唯一判定 `hostFileAccess(agentId)`（full + 已开启 + 允许该助理 + 未暂停，每次调用求值）；`ext-sandbox` / `ext-approval` / `runtime`（系统提示、`deliver_file`、hostpc 浏览器上传下载、识图）统一调用；`initHostAccessWatch()` 在 `host.changed` 时中止正在跑的主会话/子代理/后台任务；Docker 偏好下 full 的 bash 改在主机跑（本机执行后端经 pi-adapter 注入，扩展不直接 import Pi）、非 full 仍进容器。普通 bash（npm/which/ls/git…）full 下自动放行，凭据路径仍拒绝，硬性保护清单仍每次明确批准。DESIGN §23 已由“设计稿”改为“已实现”并删掉过时的“docker 恒判否”。相关单测（host-control / approval / sandbox-access / hard-guard）全过。
+
+2026-10-15 发 beta.16（用户说「打包」）：基于 50d64c3 + 权限实现 + 本说明，**只含权限相关文件**（ext-approval / ext-sandbox / ext-computer / shared hard-guard、server 的 host-control / runtime / pi-adapter / files / vision-ext / http / main、HostControl、相关测试与 DESIGN/ROADMAP/HANDOFF），未验收的图片查看（ImageViewer / App / Attachments / Markdown / InfoPane）、发送快捷键与子代理卡片改动**不带入**本次发布，留待后续。在独立 worktree（`release-permissions`，基于 origin/main）核验：服务端 + 网页 typecheck 通过、受影响单测 31/31 通过。
+
 
 | 版本 | 主要内容 |
 |---|---|

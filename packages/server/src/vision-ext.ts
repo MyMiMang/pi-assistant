@@ -11,11 +11,13 @@ import { describeImages, loadImage, supportsVision, type ModelRef } from "./visi
 type ImageBlock = { type: "image"; data: string; mimeType: string };
 type Block = { type: "text"; text: string } | ImageBlock;
 
-export function visionExtension(o: { workspace: string; model: () => ModelRef | null }) {
+export function visionExtension(o: { workspace: string; model: () => ModelRef | null; hostAccess?: () => boolean }) {
+	const hostAccess = () => o.hostAccess?.() ?? false;
 	const inWs = (p: string) => {
 		let abs = isAbsolute(p) ? p : resolve(o.workspace, p);
 		// Docker 沙盒里的 /workspace/... 映射回本机工作区
 		if (!existsSync(abs) && p.startsWith("/workspace/")) abs = resolve(o.workspace, p.slice("/workspace/".length));
+		if (hostAccess()) return abs; // 完全权限：用户主机上的图片也能看
 		const rel = relative(o.workspace, abs);
 		if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`只能看工作区里的图片：${p}`);
 		return abs;
@@ -25,10 +27,10 @@ export function visionExtension(o: { workspace: string; model: () => ModelRef | 
 			name: "look_at_image",
 			label: "看图片",
 			description:
-				"看工作区里的图片并回答问题（一次最多 8 张）。当前模型不支持看图时，会自动交给设置里的识图模型，返回文字描述。发图片给用户之前，用它确认每张图确实符合用户要的内容；不相关的不要发。",
+				`看${hostAccess() ? "工作区或用户电脑上的" : "工作区里的"}图片并回答问题（一次最多 8 张）。当前模型不支持看图时，会自动交给设置里的识图模型，返回文字描述。发图片给用户之前，用它确认每张图确实符合用户要的内容；不相关的不要发。`,
 			promptSnippet: "look_at_image: 看图片（不支持识图的模型也能用）",
 			parameters: Type.Object({
-				paths: Type.Array(Type.String(), { description: "工作区里的图片路径", minItems: 1, maxItems: 8 }),
+				paths: Type.Array(Type.String(), { description: hostAccess() ? "图片路径（工作区或用户电脑上的绝对路径）" : "工作区里的图片路径", minItems: 1, maxItems: 8 }),
 				question: Type.Optional(Type.String({ description: "想确认什么，例如“是不是 2008 年穿越火线的游戏截图”" })),
 			}),
 			annotations: { readOnlyHint: true },

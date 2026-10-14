@@ -25,6 +25,8 @@ export interface ApprovalHost {
 	trusted?: (toolName: string) => boolean;
 	/** 硬性保护清单的上下文（受保护路径等）；命中的 shell / 文件操作必须明确批准，任何设置都不能跳过 */
 	guard?: GuardContext;
+	/** “完全权限”下对用户主机统一可用：文件工具不再被工作区路径拦下、普通命令不再逐条审批（凭据路径拒绝与硬性保护不变） */
+	hostAccess?: () => boolean;
 }
 
 /** 硬性保护：shell 命令、文件写入 */
@@ -64,18 +66,21 @@ export function evaluate(
 	input: Record<string, unknown>,
 	annotations: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean } | undefined,
 	workspace: string,
+	hostAccess = false,
 ): Decision {
 	const path = typeof input.path === "string" ? input.path : undefined;
 	if (path && SECRET_PATHS.some((r) => r.test(path))) return { kind: "deny", reason: "不允许访问凭据/密钥文件" };
 	if (toolName === "bash") {
 		const cmd = String(input.command ?? "");
 		if (SECRET_PATHS.some((r) => r.test(cmd))) return { kind: "deny", reason: "命令涉及凭据/密钥文件，已拒绝" };
-		for (const [re, label, risk] of RISKY_BASH) if (re.test(cmd)) return { kind: "ask", summary: `${label}：${cmd}`, risk };
+		// 完全权限：普通命令不再逐条审批（受保护操作仍由 hardGuard 每次明确批准）
+		if (!hostAccess) for (const [re, label, risk] of RISKY_BASH) if (re.test(cmd)) return { kind: "ask", summary: `${label}：${cmd}`, risk };
 		return { kind: "allow" };
 	}
 	if (SAFE_TOOLS.has(toolName)) return { kind: "allow" };
 	if (toolName === "write" || toolName === "edit") {
-		if (path && outside(workspace, path)) return { kind: "deny", reason: "只能修改工作区内的文件" };
+		// 完全权限：文件写入对用户主机统一可用，不再限制在工作区
+		if (!hostAccess && path && outside(workspace, path)) return { kind: "deny", reason: "只能修改工作区内的文件" };
 		return { kind: "allow" };
 	}
 	// 其他工具（MCP、连接器等）按 annotations 判断，缺省视为可能有副作用
@@ -100,7 +105,7 @@ export function approvalExtension(host: ApprovalHost) {
 			}
 			if (host.trusted?.(event.toolName)) return;
 			const annotations = pi.getAllTools().find((t) => t.name === event.toolName)?.annotations;
-			const d = evaluate(event.toolName, input, annotations, host.workspace);
+			const d = evaluate(event.toolName, input, annotations, host.workspace, host.hostAccess?.() ?? false);
 			if (d.kind === "allow") return;
 			if (d.kind === "deny") return { block: true, reason: d.reason };
 			if (guarded) return; // 已经明确批准过

@@ -45,14 +45,16 @@ function record(agentId: string, name: string, src: string | Buffer, workspacePa
 	return row;
 }
 
-/** 助理交付文件：从工作区复制一份快照（之后工作区文件变化不影响已发送的附件）。 */
-export function deliverFromWorkspace(agentId: string, p: string): FileRow {
-	const abs = insideWorkspace(agentId, p);
+/** 助理交付文件：从工作区复制一份快照（之后工作区文件变化不影响已发送的附件）。hostAccess=true（完全权限）时也允许用户主机上的文件。 */
+export function deliverFromWorkspace(agentId: string, p: string, hostAccess = false): FileRow {
+	const ws = workspaceOf(agentId);
+	const abs = insideWorkspace(agentId, p) ?? (hostAccess && isAbsolute(p) && !p.includes("\0") ? resolve(p) : null);
 	if (!abs) throw new Error("只能发送工作区内的文件");
 	const st = statSync(abs);
 	if (!st.isFile()) throw new Error("不是文件");
 	if (st.size > 200 * 1024 * 1024) throw new Error("文件超过 200MB");
-	return record(agentId, basename(abs), abs, relative(workspaceOf(agentId), abs), "out");
+	const rel = relative(ws, abs);
+	return record(agentId, basename(abs), abs, rel.startsWith("..") || isAbsolute(rel) ? null : rel, "out");
 }
 
 /** 用户上传：保存到工作区 uploads/ 并登记。 */

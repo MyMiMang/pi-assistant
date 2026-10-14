@@ -59,7 +59,7 @@ import { accountJson, deleteAccount, getAccount, listAccounts, PRESETS, saveAcco
 import { finishGoogle, googleClient, saveGoogleClient, startGoogle } from "./email-oauth.ts";
 import { actOnItem, cancelFollowup, defaultLevel, type ItemRow, type Level, listItems, proactiveJson, runHeartbeat, saveProactive, setDefaultLevel, unseenCount } from "./proactive.ts";
 import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
-import { hostAgentsChanged, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
+import { hostAgentsChanged, draftHostSettings, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 import { downloadInfo, listDownloads, startDownload } from "./downloads.ts";
 import { availableModels, confirmMemberProposal, confirmProposal, continueRoom, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, onAgentChanged, onAgentDeleted, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "./rooms/index.ts";
 import { copyAgentToUser } from "./rooms/copy.ts";
@@ -1104,7 +1104,7 @@ app.post("/api/wechat/:agentId/open", localOnly, async (c) => {
 });
 
 // ---------------------------------------------------------------- 操作这台电脑（Cua bounded）
-const hostManifest = () => (setHostEnv({ workspaceOf, agentIds: () => listAgents().map((a) => a.id) }), hostPlan());
+const hostManifest = (s = hostSettings()) => (setHostEnv({ workspaceOf, agentIds: () => listAgents().map((a) => a.id) }), hostPlan(s));
 app.get("/api/host-control", async (c) => {
 	const yaml = hostManifest();
 	const s = hostSettings();
@@ -1116,38 +1116,41 @@ app.get("/api/host-control", async (c) => {
 });
 app.get("/api/host-control/apps", localOnly, async (c) => c.json(await suggestApps()));
 const RANK: Record<HostTier, number> = { observe: 0, bounded: 1, trusted: 2, full: 3 };
+/** 按草稿设置预览权限计划：不保存、不影响正在运行的守护进程（用户确认后才写） */
+app.post("/api/host-control/plan", localOnly, async (c) => {
+	const next = draftHostSettings(await c.req.json<{ agents?: "all" | string[]; apps?: HostApp[]; workspaceFiles?: boolean; defaultTier?: HostTier }>());
+	if (Object.values(next.tiers).some((t) => !TIERS.includes(t)) || !TIERS.includes(next.defaultTier)) return c.json({ error: "权限档位不对" }, 400);
+	if (process.platform !== "darwin" && next.apps.some((a) => !/^([a-zA-Z]:\\|\/)/.test(a.id))) return c.json({ error: "Windows / Linux 上应用要填可执行文件的完整路径" }, 400);
+	const yaml = hostManifest(next);
+	return c.json({ yaml, hash: manifestHash(yaml) });
+});
 /** 保存设置。开启需要带上用户在页面上看到的权限计划哈希（= 用户审阅过），计划变了就要重新确认 */
 app.put("/api/host-control", localOnly, async (c) => {
 	const b = await c.req.json<{ enabled?: boolean; agents?: "all" | string[]; apps?: HostApp[]; workspaceFiles?: boolean; acknowledged?: boolean; manifestHash?: string; tiers?: Record<string, HostTier>; defaultTier?: HostTier; confirmText?: string; confirmFull?: boolean }>();
 	const cur = hostSettings();
-	const apps = (b.apps ?? cur.apps)
-		.filter((a) => a && typeof a.id === "string" && a.id.trim())
-		.map((a) => ({ name: String(a.name || a.id).slice(0, 60), id: a.id.trim().slice(0, 300) }));
-	if (process.platform !== "darwin" && apps.some((a) => !/^([a-zA-Z]:\\|\/)/.test(a.id))) return c.json({ error: "Windows / Linux 上应用要填可执行文件的完整路径" }, 400);
-	const tiers = { ...cur.tiers, ...(b.tiers ?? {}) };
-	// 改默认档位只影响之后新建的助理：现有助理先固定成它们当前（按旧默认）的档位
-	if (b.defaultTier && b.defaultTier !== cur.defaultTier) for (const a of listAgents()) tiers[a.id] ??= cur.defaultTier;
-	if (Object.values(tiers).some((t) => !TIERS.includes(t)) || (b.defaultTier && !TIERS.includes(b.defaultTier))) return c.json({ error: "权限档位不对" }, 400);
-	const defaultTier = b.defaultTier ?? cur.defaultTier;
-	const next = { ...cur, agents: b.agents ?? cur.agents, apps, workspaceFiles: b.workspaceFiles ?? cur.workspaceFiles, tiers, defaultTier };
-	saveHostSettings({ ...next, enabled: false, approvedHash: undefined });
-	const yaml = hostManifest();
+	const next = draftHostSettings(b);
+	if (Object.values(next.tiers).some((t) => !TIERS.includes(t)) || !TIERS.includes(next.defaultTier)) return c.json({ error: "权限档位不对" }, 400);
+	if (process.platform !== "darwin" && next.apps.some((a) => !/^([a-zA-Z]:\\|\/)/.test(a.id))) return c.json({ error: "Windows / Linux 上应用要填可执行文件的完整路径" }, 400);
+	const yaml = hostManifest(next);
 	if (b.enabled) {
 		if (!b.acknowledged) return c.json({ error: "请先阅读并确认风险提示" }, 400);
 		if (b.manifestHash !== manifestHash(yaml)) return c.json({ error: "权限设置已变化，请重新查看后再确认", manifestHash: manifestHash(yaml) }, 409);
 		const ids = (next.agents === "all" ? listAgents().map((a) => a.id) : next.agents) as string[];
 		const fullNow = ids.filter((a) => tierOf(a, next) === "full");
-		const needFull = fullNow.some((a) => !cur.fullAck[a] || tierOf(a, cur) !== "full" || !cur.enabled) || (defaultTier === "full" && (cur.defaultTier !== "full" || !cur.enabled));
+		const needFull = fullNow.some((a) => !cur.fullAck[a] || tierOf(a, cur) !== "full" || !cur.enabled) || (next.defaultTier === "full" && (cur.defaultTier !== "full" || !cur.enabled));
 		if (needFull && !fullConfirmed(b)) return c.json({ error: "涉及“完全权限”，需要先确认启用" }, 400);
-		if (ids.some((a) => tierOf(a, next) === "bounded") && !apps.length) return c.json({ error: "“限定”档位至少要选择一个允许操作的应用" }, 400);
+		if (ids.some((a) => tierOf(a, next) === "bounded") && !next.apps.length) return c.json({ error: "“限定”档位至少要选择一个允许操作的应用" }, 400);
 		const fullAck = Object.fromEntries(fullNow.map((a) => [a, cur.fullAck[a] && tierOf(a, cur) === "full" ? cur.fullAck[a] : Date.now()]));
-		saveHostSettings({ enabled: true, approvedHash: manifestHash(yaml), enabledAt: Date.now(), fullAck });
+		saveHostSettings({ ...next, enabled: true, approvedHash: manifestHash(yaml), enabledAt: Date.now(), fullAck });
 		try {
 			await startDaemon(yaml);
 		} catch (e) {
 			return c.json({ ok: false, error: e instanceof Error ? e.message : String(e), status: hostStatus() });
 		}
-	} else await stopDaemon();
+	} else {
+		saveHostSettings({ ...next, enabled: false, approvedHash: undefined });
+		await stopDaemon();
+	}
 	return c.json({ ok: true, status: hostStatus(), manifestHash: manifestHash(yaml) });
 });
 /**

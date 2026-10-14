@@ -38,8 +38,8 @@ export const HIDDEN_TOOLS = [
 ];
 /** cua 的 CDP 浏览器工具（DESIGN §14.8）。助理电脑上浏览器走 ext-browser（Playwright），这些隐藏，避免两套同名能力 */
 export const CUA_BROWSER_TOOLS = ["get_browser_state", "browser_prepare", "browser_navigate", "browser_click", "browser_type", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog"];
-/** 本机（hostpc）浏览器操作指引：注入系统提示 */
-export const HOST_BROWSER_PROMPT = `<user-computer-browser>
+/** 本机（hostpc）浏览器操作指引：注入系统提示。fileAccess = 完全权限（文件路径可用用户主机上的绝对路径） */
+export const hostBrowserPrompt = (fileAccess: boolean) => `<user-computer-browser>
 在用户自己的电脑上操作网页（Chrome / Edge）时，按这个顺序用 hostpc 的 CDP 浏览器工具，不要用截图 + 快捷键 + type_text：
 1. list_windows 找到浏览器的 pid 和 window_id。
 2. get_browser_state {pid, window_id, session} 绑定窗口。
@@ -49,7 +49,7 @@ export const HOST_BROWSER_PROMPT = `<user-computer-browser>
 6. browser_navigate 打开网址；browser_click {ref}（macOS / Linux 返回 browser_input_trust_unavailable 时改用 input_route:"dom_event"）；browser_type {ref, text, replace}；browser_pointer 滚动 / 悬停。
 7. 每次操作后重新 get_browser_state 读状态，绝不复用旧 ref（导航、新快照都会让旧 ref 失效）。要看结果画面时加 include_screenshot:true，用眼睛核对结果后再交付给用户。
 8. 整个任务用同一个 session 标签（如 "web"）。不要用 cmd+t / cmd+l / ctrl+l 等地址栏快捷键当浏览器接口；只有标签栏、权限弹窗、原生文件选择框，或 CDP 工具不可用（Safari / Firefox、用户拒绝）时，才退回 get_window_state + click / hotkey。
-9. 上传用 browser_set_input_files、下载用 browser_download，路径只能在你的工作区里。
+9. 上传用 browser_set_input_files、下载用 browser_download，路径${fileAccess ? "可以是用户电脑上的绝对路径（你在这个助理上是完全权限，工作区只是默认目录）" : "只能在你的工作区里"}。
 </user-computer-browser>`;
 /** 本机桌面应用的操作方式（按 cua 0.34.1 官方 SKILL / WORKFLOW），注入系统提示 */
 export const hostDesktopPrompt = (p: Approvals) => `<user-computer-desktop>
@@ -98,8 +98,10 @@ export interface ComputerHost {
 	before?(tool: string, input: Record<string, unknown>): Promise<string | null>;
 	/** host 目标：是否提供 cua 的 CDP 浏览器工具（“限定”档位不提供，见 HOST_BROWSER_BOUNDED_NOTE） */
 	browserTools?: boolean;
-	/** 允许浏览器上传/下载的目录（这个助理的工作区）；不设则 browser_download / browser_set_input_files 一律拒绝 */
+	/** 允许浏览器上传/下载的目录（这个助理的工作区）；不设则 browser_download / browser_set_input_files 一律拒绝。完全权限下允许用户主机上的绝对路径 */
 	workspace?: string;
+	/** 完全权限：文件工具 / 浏览器上传下载可用用户主机路径。每次调用求值 */
+	hostFileAccess?: () => boolean;
 	/** sandbox 目标：屏幕 / 电脑管理（computer_screen 工具） */
 	screens?: ScreenHost;
 }
@@ -177,9 +179,13 @@ export const BROWSER_PREPARE_SUMMARY = (input: Record<string, unknown>) =>
 		: "连接你正在用的 Chrome/Edge（调试接口，只在本机），助理可以直接读取和操作网页，比截图点鼠标快得多也准得多。会保留你的登录状态，不会重启浏览器。Chrome 可能会临时打开设置页开启“远程调试”再关掉，macOS 上 Chrome 还可能自己弹出“允许远程调试”请你点允许，浏览器窗口可能会来到前台。连接期间助理能看到这个浏览器里的网页内容，任务结束后自动断开。") +
 	"之后打开网址、点击、输入仍按你的权限档位审批。";
 
-/** browser_download / browser_set_input_files 的路径必须在工作区里；返回拒绝原因或 null */
-export function browserFileViolation(tool: string, input: Record<string, unknown>, workspace?: string): string | null {
+/** browser_download / browser_set_input_files 的路径：默认必须在工作区里，完全权限（hostAccess）下允许用户主机上的绝对路径；返回拒绝原因或 null */
+export function browserFileViolation(tool: string, input: Record<string, unknown>, workspace?: string, hostAccess = false): string | null {
 	if (tool !== "browser_download" && tool !== "browser_set_input_files") return null;
+	if (hostAccess) {
+		const paths = tool === "browser_download" ? [input.destination_root] : Array.isArray(input.files) ? input.files : [undefined];
+		return paths.every((p) => typeof p === "string" && isAbsolute(p) && !p.includes("\0")) ? null : "完全权限下也要用用户电脑上的绝对路径（destination_root 是目录，files 是文件）。";
+	}
 	if (!workspace) return "这台电脑上没有允许读写的工作区，不能上传或下载文件。";
 	const root = resolve(workspace);
 	const inside = (p: unknown) => typeof p === "string" && isAbsolute(p) && !p.includes("\0") && (resolve(p) === root || resolve(p).startsWith(root + sep));
@@ -288,7 +294,7 @@ export function computerExtension(host: ComputerHost) {
 			},
 		});
 		}
-		if (host_ && policy() !== "observe") pi.on("before_agent_start", async (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${hostDesktopPrompt(policy())}\n\n${browserOn ? HOST_BROWSER_PROMPT : HOST_BROWSER_BOUNDED_NOTE}` }));
+		if (host_ && policy() !== "observe") pi.on("before_agent_start", async (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${hostDesktopPrompt(policy())}\n\n${browserOn ? hostBrowserPrompt(host.hostFileAccess?.() ?? false) : HOST_BROWSER_BOUNDED_NOTE}` }));
 		if (!host_ && host.screens) {
 			const sc = host.screens;
 			pi.on("before_agent_start", async (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${SHARED_COMPUTER_PROMPT}` }));
@@ -338,7 +344,7 @@ export function computerExtension(host: ComputerHost) {
 				log({ callId, tool, input, summary, phase: "blocked", detail: why });
 				return { block: true, reason: why };
 			}
-			const fileWhy = browserFileViolation(tool, input, host.workspace);
+			const fileWhy = browserFileViolation(tool, input, host.workspace, host.hostFileAccess?.() ?? false);
 			if (fileWhy) {
 				log({ callId, tool, input, summary, phase: "blocked", detail: fileWhy });
 				return { block: true, reason: fileWhy };

@@ -314,3 +314,34 @@ test("本机桌面：只看隐藏全部输入工具（含剪贴板/鼠标按住�
 	assert.match(bp, /限定/);
 	assert.ok(!bp.includes("get_desktop_state"), "限定档位没有整屏观察");
 });
+
+test("完全权限判定 hostFileAccess：开启 + 允许该助理 + full + 未暂停；降权 / 暂停 / 关闭立即生效", async () => {
+	hc.setHostEnv({ workspaceOf: (id) => `/ws/${id}`, agentIds: () => ["a1", "a2"] });
+	hc.saveHostSettings({ enabled: true, approvedHash: "h", agents: "all", tiers: { a1: "full", a2: "trusted" }, defaultTier: "bounded", fullAck: {} });
+	assert.equal(hc.hostFileAccess("a1"), true);
+	assert.equal(hc.hostFileAccess("a2"), false, "非 full 档位");
+	hc.saveHostSettings({ tiers: { a1: "trusted", a2: "trusted" } });
+	assert.equal(hc.hostFileAccess("a1"), false, "降权立即生效");
+	hc.saveHostSettings({ tiers: { a1: "full" }, agents: ["a2"] });
+	assert.equal(hc.hostFileAccess("a1"), false, "不在允许名单");
+	hc.saveHostSettings({ agents: "all" });
+	await hc.setHostPaused(true);
+	assert.equal(hc.hostFileAccess("a1"), false, "暂停立即生效");
+	hc.saveHostSettings({ enabled: false, approvedHash: undefined });
+	assert.equal(hc.hostFileAccess("a1"), false, "关闭");
+	await hc.setHostPaused(false);
+	hc.saveHostSettings({ enabled: false, approvedHash: undefined, agents: "all", tiers: {}, defaultTier: "bounded", fullAck: {} });
+});
+
+test("草稿设置：改默认档位时现有助理固定成旧默认档位；预览与实际保存的计划 hash 一致", () => {
+	hc.setHostEnv({ workspaceOf: (id) => `/ws/${id}`, agentIds: () => ["a1", "a2"] });
+	hc.saveHostSettings({ enabled: false, agents: "all", apps: [{ name: "TextEdit", id: "/usr/bin/textedit" }], workspaceFiles: true, tiers: { a1: "bounded" }, defaultTier: "bounded", fullAck: {} });
+	const draft = hc.draftHostSettings({ defaultTier: "trusted" });
+	assert.equal(draft.tiers.a2, "bounded", "新助理按旧默认固定");
+	assert.equal(draft.defaultTier, "trusted");
+	// 客户端拿 /plan 的 hash 去 PUT：服务端用同一份草稿重算，哈希必须一致（否则会 409）
+	const previewHash = hc.manifestHash(hc.hostPlan(draft));
+	hc.saveHostSettings(draft);
+	assert.equal(hc.manifestHash(hc.hostPlan()), previewHash);
+	hc.saveHostSettings({ enabled: false, agents: "all", apps: [], tiers: {}, defaultTier: "bounded", fullAck: {} });
+});

@@ -13,7 +13,7 @@ import { visionExtension } from "./vision-ext.ts";
 import { computerExtension, computerLauncherExtension, isHostTool, trustedComputerTool, type ComputerHost } from "@pi-assistant/ext-computer";
 import { actionHistoryText, recordAction } from "./action-log.ts";
 import { guardContext } from "./guard.ts";
-import { describeHostAction, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
+import { describeHostAction, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostFileAccess, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
 import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
 import { emailExtension, isEmailTool, wechatExtension } from "@pi-assistant/ext-connectors";
 import { openWechat, WECHAT_PROMPT, wechatAllowed } from "./wechat.ts";
@@ -54,6 +54,7 @@ import {
 	injectContext,
 	isSessionBusy,
 	lastAssistantText,
+	localBashOperations,
 	makeBashTool,
 	promptSession,
 	sessionFileOf,
@@ -120,10 +121,10 @@ function setTask(id: string, patch: Partial<TaskRow>) {
 	return t;
 }
 
-const SYSTEM_RULES = (name: string, workspace: string, persona: string) => [
+const SYSTEM_RULES = (name: string, workspace: string, persona: string, hostAccess = false) => [
 	INTERJECTION_RULE,
 	`你是「${name}」，一个通用 AI 助理，运行在用户自己的电脑上，有自己的电脑（工作区，以及开启后的完整桌面）。你能写代码、运行命令、处理文件、操作网页和桌面应用，目标是替用户把事情真正做完。默认使用简体中文回复，语气简洁友好。用户时区 Asia/Shanghai。`,
-	`你有自己的工作区目录（${workspace}），可以在里面写代码、运行命令、生成文件。只在工作区内工作。`,
+	`你有自己的工作区目录（${workspace}），可以在里面写代码、运行命令、生成文件。${hostAccess ? "你在这个助理上是“完全权限”：文件工具和命令直接作用于用户的电脑（工作区只是默认目录，不是限制）；受保护的操作仍会请你批准。" : "只在工作区内工作。"}`,
 	"收到需要动手的任务时，先立刻用一句很短的话确认（例如“好，我先看一下。”），再开始调用工具；做完后简要汇报结果。",
 	"生成了用户需要的文件（报告、图片、表格等）后，必须调用 deliver_file 把文件发给用户。",
 	"发图片给用户之前必须先确认内容：用 look_at_image（当前模型不能看图时它会交给识图模型）逐张检查是否真的符合用户要的东西，不相关的删掉不发；只发确认过的。确认不了（没有识图模型、识图失败）就如实告诉用户“这些图我没法确认内容”，绝不能把没看过的图说成就是用户要的。找图优先在浏览器里打开图片页面，用 browser_save_image 保存页面上的图片，不要用脚本盲抓搜索结果。",
@@ -249,7 +250,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 	const approve = async (toolName: string, input: Record<string, unknown>, summary: string, risk = "medium") =>
 		!!(await requests.approval(agentId, taskId, toolName, input, summary, risk, conversationId)).approved;
 	const exts = [
-		{ name: "pia-sandbox", factory: sandboxExtension({ workspace, mode, readOnlyRoots: skillPaths(), makeBashTool: makeBashTool as never, dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined }) },
+		{ name: "pia-sandbox", factory: sandboxExtension({ workspace, mode, readOnlyRoots: skillPaths(), makeBashTool: makeBashTool as never, dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined, localOperations: mode === "docker" ? localBashOperations() : undefined, hostAccess: () => hostFileAccess(agentId) }) },
 		{
 			name: "pia-approval",
 			factory: approvalExtension({
@@ -261,13 +262,14 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId);
 					return { approved: !!res.approved, note: res.note };
 				},
+				hostAccess: () => hostFileAccess(agentId),
 			}),
 		},
 		{
 			name: "pia-delivery",
 			factory: deliveryExtension({
 				deliverFile: async (path, caption) => {
-					const f = deliverFromWorkspace(agentId, path);
+					const f = deliverFromWorkspace(agentId, path, hostFileAccess(agentId));
 					insertMessage({ agentId, conversationId, role: "assistant", content: caption ?? "", subagentId: opts.subagentId, meta: { attachments: [fileInfo(f)], fromTask: taskId } });
 					return { fileId: f.id, name: f.name };
 				},
@@ -420,6 +422,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 		name: "pia-vision",
 		factory: visionExtension({
 			workspace,
+			hostAccess: () => hostFileAccess(agentId),
 			model: () => {
 				const a = getAgent(agentId);
 				return a ? runtime(agentId).modelFor(a) : null;
@@ -489,6 +492,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				describe: describeHostAction,
 				workspace,
 				browserTools: tierOf(agentId) !== "bounded",
+				hostFileAccess: () => hostFileAccess(agentId),
 				approvals: () => hostApprovals(agentId),
 				guard: guardContext("host"),
 				log: (e) => recordAction(agentId, taskId, e),
@@ -503,8 +507,9 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 	exts.push(...imageExtensions(agentId, conversationId, taskId));
 	return exts;
 }
-/** 会话缓存键里的“本机操作”部分：开关、清单、守护进程状态变化都会重建会话 */
-const hostKey = (agentId: string) => (hostAllowedFor(agentId) ? `${hostSettings().approvedHash}:${tierOf(agentId)}:${hostStatus().daemon.state === "off" || hostStatus().daemon.state === "error" ? "down" : "up"}` : "off");
+/** 会话缓存键里的“本机操作”部分：开关、清单、档位、暂停、守护进程状态变化都会重建会话（权限本身仍每次调用动态求值） */
+const hostKey = (agentId: string) =>
+	hostAllowedFor(agentId) ? `${hostSettings().approvedHash}:${tierOf(agentId)}:${hostPaused() ? "paused" : hostStatus().daemon.state === "off" || hostStatus().daemon.state === "error" ? "down" : "up"}` : "off";
 
 /** 定时任务的人类可读说明（同时校验 cron） */
 export function describeRoutine(spec: { trigger: string; cron?: string | null; quietHours?: boolean }) {
@@ -565,7 +570,7 @@ class AgentRuntime {
 				sessionFile: getConversation(this.conversationId)?.session_file ?? undefined,
 				model,
 				thinking,
-				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona), ...(room?.rules ?? [])],
+				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), ...(room?.rules ?? [])],
 				extensions: await extensionsFor(this.id, this.conversationId, null, { allowSpawn: true }),
 				skillPaths: skillPaths(),
 				...integrationsFor(this.id, this.conversationId),
@@ -815,6 +820,36 @@ export function runtime(agentId: string, conversationId?: string | null) {
 	return r;
 }
 
+// ---------------------------------------------------------------- 完全权限：降权 / 暂停立即生效
+
+/** 当前“完全权限”可访问用户主机的助理集合（用于检测降权 / 暂停） */
+let hostAccessAgents = new Set<string>();
+/**
+ * 完全权限的主机文件 / 命令权限由 hostFileAccess() 每次工具调用求值，降权 / 暂停后下一个工具就被拦下。
+ * 这里额外在 host 状态变化时中止正在跑的会话（含子代理、后台任务），让正在执行的主机命令立刻停下，
+ * 而不是等这一轮自然结束（不依赖下一轮 session 重建）。启动时调用一次。
+ */
+export function initHostAccessWatch() {
+	const refresh = () => {
+		const next = new Set(listAgents().map((a) => a.id).filter((id) => hostFileAccess(id)));
+		const lost = [...hostAccessAgents].filter((id) => !next.has(id));
+		hostAccessAgents = next;
+		return lost;
+	};
+	refresh();
+	bus.on((e) => {
+		if (e.type !== "host.changed") return;
+		for (const id of refresh()) void stopHostWork(id);
+	});
+}
+
+/** 中止某个助理正在跑的主机工作：主会话、子代理、后台任务（复用已有 abort，命令子进程随 abort 信号结束） */
+async function stopHostWork(agentId: string) {
+	for (const r of [...runtimes.values()]) if (r.id === agentId && r.busy) await r.abort().catch(() => {});
+	await stopAgentSubagents(agentId).catch(() => {});
+	for (const [taskId, s] of [...live]) if (liveAgent.get(taskId) === agentId) await abortSession(s).catch(() => {});
+}
+
 // ---------------------------------------------------------------- 后台任务
 
 const MAX_CONCURRENT = 3;
@@ -861,7 +896,7 @@ export const tasks = {
 				sessionDir: join(config.agentsDir, a.id, "tasks"),
 				sessionFile: t.session_file ?? undefined,
 				model,
-				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona), "你正在执行一个后台任务。完成后用几句话总结结果作为最终回复。"],
+				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), "你正在执行一个后台任务。完成后用几句话总结结果作为最终回复。"],
 				extensions: await extensionsFor(a.id, t.conversation_id, t.id, { allowSpawn: false }),
 				skillPaths: skillPaths(),
 				...integrationsFor(a.id, t.conversation_id),
@@ -952,7 +987,7 @@ setSubagentDriver({
 			models, cwd: workspace, agentDir: join(config.agentsDir, a.id), sessionDir: join(config.agentsDir, a.id, "subagents", r.id),
 			sessionFile: r.session_file ?? undefined,
 			model: { provider: r.model_provider, id: r.model_id }, thinking: models.clampThinking(r.model_provider, r.model_id, a.thinking ?? defaultThinking()),
-			systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona), "你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报。"],
+			systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), "你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报。"],
 			extensions: await extensionsFor(a.id, r.conversation_id, r.id, { allowSpawn: false, subagentId: r.id }), skillPaths: skillPaths(), ...integrationsFor(a.id, r.conversation_id),
 		});
 		db.prepare("UPDATE subagents SET session_file = ? WHERE id = ?").run(sessionFileOf(session) ?? null, r.id);

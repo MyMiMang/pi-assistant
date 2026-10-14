@@ -216,10 +216,35 @@ export function hostAllowedFor(agentId: string) {
 	return s.enabled && !!s.approvedHash && (s.agents === "all" || s.agents.includes(agentId));
 }
 
+/**
+ * “完全权限”对用户主机的统一文件 / 命令访问：档位为 full、已开启并允许该助理、且未暂停。
+ * 这是唯一的“full 主机文件/命令”开关，ext-sandbox / ext-approval / runtime 都调用它。
+ * 每次调用求值（不缓存），所以降权 / 暂停对已存在的会话立即生效；docker 偏好不影响它——
+ * full 时命令在用户主机执行，不挂载全盘进容器（见 DESIGN §23）。
+ */
+export function hostFileAccess(agentId: string): boolean {
+	return hostAllowedFor(agentId) && !hostPaused() && tierOf(agentId) === "full";
+}
+
 /** bounded 守护进程用的清单（只包含“限定”档位助理的工作区） */
 export function boundedManifest(s = hostSettings()) {
 	const ids = allowedAgents(s).filter((a) => tierOf(a, s) === "bounded");
 	return buildManifest(s, ids.map(env.workspaceOf));
+}
+/**
+ * 把请求里的字段并进当前设置（纯函数，不保存）：改默认档位时把现有助理固定成旧默认档位。
+ * “预览权限计划”与实际“保存”都用它，保证两边的计划 hash 一致。
+ */
+export function draftHostSettings(
+	b: { agents?: "all" | string[]; apps?: HostApp[]; workspaceFiles?: boolean; tiers?: Record<string, HostTier>; defaultTier?: HostTier },
+	cur = hostSettings(),
+): HostControlSettings {
+	const apps = (b.apps ?? cur.apps)
+		.filter((a) => a && typeof a.id === "string" && a.id.trim())
+		.map((a) => ({ name: String(a.name || a.id).slice(0, 60), id: a.id.trim().slice(0, 300) }));
+	const tiers = { ...cur.tiers, ...(b.tiers ?? {}) };
+	if (b.defaultTier && b.defaultTier !== cur.defaultTier) for (const id of env.agentIds()) tiers[id] ??= cur.defaultTier;
+	return { ...cur, agents: b.agents ?? cur.agents, apps, workspaceFiles: b.workspaceFiles ?? cur.workspaceFiles, tiers, defaultTier: b.defaultTier ?? cur.defaultTier };
 }
 /** 给用户审阅的完整权限计划：各助理档位 + bounded 清单。开启 = 用户确认了这份计划（哈希） */
 export function hostPlan(s = hostSettings()) {

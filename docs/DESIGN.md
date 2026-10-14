@@ -1413,3 +1413,60 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - 擅长标签表要定期复查；汇率不会自动更新。
 
 2026-10-14 模型菜单修复：自定义模型从参数库 / Pi 目录补推理能力，旧配置启动时回填；接口显式 reasoning 和用户显式值保留。聊天模型列表随设置变化刷新，思考强度继续只显示当前模型支持的档位。
+
+## 23. 完全权限 = 用户主机统一权限（已实现，2026-10-15）
+
+**需求（用户原话大意）**：不要再单独做“本地项目目录白名单 / 逐目录授权”；选了“完全权限”就应当对用户主机上的**文件、命令、桌面**是**一致**的权限，不要出现“桌面能操作、文件读写却被工作区拦住”的割裂。权限判断集中在一处，各工具路径统一调用，不散落特判；不要过度设计。**用户已批准实现**。后续用户又明确：完全权限下**普通本机命令与操作（npm install / which / ls / git 等）应当自动放行**（不再走 `RISKY_BASH` 逐条审批），但**硬性保护清单**里的受保护系统动作仍要明确批准；不要新增第二个模型来审批；不要把个人文件都当成凭据 deny。
+
+### 23.1 一处判定（唯一开关）
+
+`host-control.ts` 里的纯函数 `hostFileAccess(agentId)`：`hostAllowedFor(agentId) && !hostPaused() && tierOf(agentId) === "full"`。**每次调用求值、不缓存**，所以降权 / 暂停对已存在的会话立即生效。**不看沙箱模式**：full 时命令就在用户主机上执行，不因为沙箱偏好是 Docker 而禁用（见 23.4）。`ext-sandbox` / `ext-approval` / `runtime.ts`（系统提示、`deliver_file`、hostpc 浏览器上传下载、识图）都调用它；`ext-computer` 桌面继续用 `tierOf` / `hostApprovals` / `hostPaused`。
+
+### 23.2 各路径行为
+
+| 位置 | full（hostFileAccess 为真） | 其他档位 |
+|---|---|---|
+| `ext-sandbox` 文件工具 | 不再因越出工作区被拦，可读写主机文件（仍无白名单） | 只能工作区（技能库只读） |
+| `ext-sandbox` bash | 在用户主机执行；真实 `HOME`；仍清理 `KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL/COOKIE/AUTH` 与 `PIA_*`；cwd 默认仍是工作区；Docker 模式下也不进容器（按每次调用判断，降权后立刻回到容器） | 与原来一致；Docker 模式进容器 |
+| `ext-approval` | `write/edit` 越界放行；bash 跳过 `RISKY_BASH` 逐条审批（普通命令自动放行） | `write/edit` 越界 deny；bash 命中风险模式要审批 |
+| 凭据路径 | 仍然 deny（`.ssh` / `.aws` / `auth.json` / `Cookies`…；保持 App 模型密钥隔离） | 同样 deny |
+| 硬性保护 `hardGuard` | 仍然每次明确批准（结束/卸载 Pi Assistant、关机重启、格式化、改系统/网络/账户、大范围删除、改自启动等） | 同样每次明确批准 |
+| `deliver_file` | 可把用户主机上的文件复制快照发回（`workspace_path` 记为 null） | 只能发工作区文件 |
+| hostpc 浏览器 `browser_download` / `browser_set_input_files` | 路径可用用户主机上的绝对路径 | 只能工作区路径 |
+| `look_at_image` / `read` 图片 | 可看用户主机上的图片 | 只能工作区图片 |
+| 桌面（`ext-computer`） | 按 `hostApprovals` = none（日常不问），硬性保护仍问 | 按档位审批 |
+| `runtime` 系统提示 | 加一句“文件/命令直接作用于用户电脑，工作区只是默认目录，受保护操作仍会请你批准” | 提示“只在工作区内工作” |
+
+### 23.3 降权 / 暂停立即生效
+
+- 工具侧：`hostAccess` 每次调用求值（文件守卫、审批、bash 的 HOME/容器选择、`deliver_file`、浏览器路径、识图）→ 下一件工具就被拦下，不依赖下一轮会话重建。
+- 命令侧：`runtime.ts` 的 `initHostAccessWatch()` 订阅 `host.changed`，对比“完全权限助理集合”；某个助理失去 full（降权 / 从允许名单移除 / 关闭 / 一键暂停）时，用**已有 abort**中止它正在跑的主会话、子代理、后台任务（命令子进程随 abort 信号结束）。
+- 后台任务 / 子代理继承所属助理的档位（走同一个 `extensionsFor`）。
+- `hostKey`（会话缓存键）纳入暂停状态，暂停 / 继续会让会话重建，系统提示同步更新。
+
+### 23.4 Docker 模式
+
+`hostFileAccess` **不**因 Docker 禁用：full 时 bash 仍走主机（按每次调用判断，降权后立刻回到容器）。非 full 时 Docker 模式行为不变（容器内执行、只挂载工作区）。**不夸大 L0**：workspace 模式本来就是当前用户身份在主机上跑，不是 OS 级隔离。
+
+### 23.5 测试（已跑，只跑受影响部分）
+
+- `host-control.test.ts`：`hostFileAccess` 在开/关、允许/不允许、full/其他、暂停/未暂停各组合下的取值；`draftHostSettings` 的“改默认档位固定旧默认”和“预览 hash = 保存后 hash”。
+- `approval.test.ts`：full 时普通命令/主机文件放行，凭据仍 deny，硬性保护仍要批准；非 full 行为不变。
+- `sandbox-access.test.ts`：full 文件工具越界放行 / 非 full 拦截；bash HOME 与秘密 env；Docker 模式下 full 走主机、非 full 走容器。
+- `hard-guard.test.ts`：只读命令（`ls /usr/local/bin/node 2>/dev/null`、`ls /usr/bin > /tmp/x`）不再误报“修改系统目录”，真写入仍命中。
+
+### 23.6 权限矩阵（档位 → 实际行为）
+
+| 档位 | 桌面（Cua） | 文件工具 | bash | 硬性保护 |
+|---|---|---|---|---|
+| 只看 observe | 只读窗口/截图，输入工具隐藏 | 工作区 | 工作区 | 明确批准 |
+| 限定 bounded（默认） | 只勾选应用，每个动作问 | 工作区 | 工作区（Docker 进容器）；风险命令问 | 明确批准 |
+| 信任 trusted | 所有应用，发送/付款/删除类问 | 工作区 | 工作区；风险命令问 | 明确批准 |
+| 完全权限 full | 所有应用，日常不问 | 主机（含工作区） | 主机；普通命令自动放行 | **仍明确批准** |
+
+### 23.7 硬性保护仍要批准的清单（full 也一样）
+
+结束 / 卸载 / 修改 Pi Assistant 本身与数据目录；关机 / 重启 / 注销；磁盘格式化 / 分区 / 抹掉；修改系统目录；批量删除（`rm -rf` 宽泛路径、一次删很多文件、`find -delete`）；fork 炸弹 / 资源耗尽；修改安全 / 网络 / 防火墙 / 用户账户；修改开机自启 / shell 启动脚本；结束系统进程；输入危险命令 / 危险快捷键 / 点危险按钮；凭据文件读写（直接拒绝）。
+
+**非目标**：不新增项目目录白名单；不做逐目录授权；不实现 OS 级沙箱（L1）；不改 cua / 桌面的档位语义；不新增第二个审批模型；不扩大凭据保护到普通用户文件。
+

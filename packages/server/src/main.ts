@@ -9,7 +9,7 @@ import { startSetupWatcher } from "./setup-code.ts";
 import { identity } from "./identity.ts";
 import { initModels } from "./models.ts";
 import { checkPiCompat } from "./pi-adapter/index.ts";
-import { bootstrap, listAgents } from "./runtime.ts";
+import { bootstrap, initHostAccessWatch, listAgents } from "./runtime.ts";
 import { workspaceOf } from "./files.ts";
 import { startTunnel } from "./tunnel.ts";
 import { startScheduler } from "./routines.ts";
@@ -37,6 +37,8 @@ if (hindsightInUse()) void sidecar.ensure();
 void startChannels();
 // 用户开启过“操作这台电脑”：随服务启动 bounded 守护进程（清单与开启时确认的一致才会启动）
 setHostEnv({ workspaceOf, agentIds: () => listAgents().map((a) => a.id) });
+// 完全权限：降权 / 暂停后中止正在跑的主机命令（每次工具调用仍由 hostFileAccess 动态判定）
+initHostAccessWatch();
 if (hostSettings().enabled) void startDaemon().catch((e) => console.warn(`[host-control] ${e instanceof Error ? e.message : e}`));
 
 for (const sig of ["SIGINT", "SIGTERM"] as const)
