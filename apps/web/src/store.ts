@@ -5,6 +5,7 @@ import { loadLayout, type LayoutPrefs, saveLayout } from "./layout";
 import type { Agent, Conversation, Device, Message, Room, SystemInfo, Task } from "./types";
 
 type Theme = "light" | "dark" | "system";
+export interface SubagentTab { id: string; task: string; agent_id: string; conversation_id: string; roomId: string | null }
 interface State {
 	conn: "connecting" | "open" | "closed" | "unauthorized";
 	system: SystemInfo | null;
@@ -13,6 +14,10 @@ interface State {
 	cloudflareSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
 	tunnelSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
 	current: string | null;
+	subagent: string | null;
+	subagentTabs: SubagentTab[];
+	openSubagent: (r: Omit<SubagentTab, "roomId">) => void;
+	closeSubagent: (id: string) => void;
 	/** 群聊 */
 	rooms: Room[];
 	/** 正在看的群（不为空时主区域显示群聊） */
@@ -76,6 +81,10 @@ export const useStore = create<State>((set, get) => ({
 	system: null,
 	agents: [],
 	current: null,
+	subagent: null,
+	subagentTabs: [],
+	openSubagent: (r) => set((s) => ({ subagent: r.id, subagentTabs: s.subagentTabs.some((t) => t.id === r.id) ? s.subagentTabs : [...s.subagentTabs, { id: r.id, task: r.task, agent_id: r.agent_id, conversation_id: r.conversation_id, roomId: s.room }], drawer: false })),
+	closeSubagent: (id) => set((s) => ({ subagentTabs: s.subagentTabs.filter((t) => t.id !== id), subagent: s.subagent === id ? null : s.subagent })),
 	rooms: [],
 	room: new URLSearchParams(location.search).get("room"),
 	roomMsgs: {},
@@ -135,13 +144,13 @@ export const useStore = create<State>((set, get) => ({
 		set({ rooms, room: get().room && !rooms.some((r) => r.id === get().room) ? null : get().room });
 	},
 	async selectRoom(id) {
-		set({ room: id, drawer: false, paneAgent: null });
+		set({ room: id, drawer: false, paneAgent: null, ...(get().room !== id ? { subagent: null } : {}) });
 		const msgs = await api<Message[]>(`/api/rooms/${id}/messages?limit=200`);
 		set((s) => ({ roomMsgs: { ...s.roomMsgs, [id]: msgs }, rooms: s.rooms.map((r) => (r.id === id ? { ...r, unread: 0 } : r)) }));
 		void api(`/api/rooms/${id}/read`, { method: "POST" }).catch(() => {});
 	},
 	async selectAgent(id) {
-		set({ current: id, drawer: false, room: null });
+		set({ current: id, drawer: false, room: null, ...(get().current !== id || get().room ? { subagent: null } : {}) });
 		const c = await get().loadConversations(id);
 		const msgs = await api<Message[]>(`/api/agents/${id}/messages?limit=300&conversation=${c.current}`);
 		set((s) => ({ messages: { ...s.messages, [id]: msgs } }));
@@ -154,6 +163,7 @@ export const useStore = create<State>((set, get) => ({
 		return c;
 	},
 	async switchConversation(agentId, convId) {
+		set({ subagent: null });
 		set((s) => ({ convs: { ...s.convs, [agentId]: { ...(s.convs[agentId] ?? { items: [] }), current: convId } }, messages: { ...s.messages, [agentId]: [] } }));
 		await api(`/api/agents/${agentId}/conversations/${convId}/select`, { method: "POST" });
 		const msgs = await api<Message[]>(`/api/agents/${agentId}/messages?limit=300&conversation=${convId}`);

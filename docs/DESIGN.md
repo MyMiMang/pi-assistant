@@ -1309,7 +1309,7 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 
 需求见 [ROADMAP](ROADMAP.md)。目标：像 Grok Bot 那样，前台一直能聊，活在后台跑。
 
-第一版实现：`packages/server/src/subagents.ts` + `subagent-routes.ts` 负责状态 / 事件 / 模型设置；`runtime.ts` 复用会话与扩展；`apps/web/src/components/Subagents.tsx` 负责卡片、只读详情和模型设置。专项验证见 `e2e/subagents.mjs`。限定档位的审批沿用现有主会话审批卡，未增加新的审批流程。
+实现：`packages/server/src/subagents.ts` + `subagent-routes.ts` 负责状态 / 事件 / 模型设置；`runtime.ts` 复用会话与扩展；`apps/web/src/components/Subagents.tsx` 负责卡片、子代理聊天窗口和模型设置，消息渲染复用 `ChatMessages.tsx`。专项验证见 `e2e/subagents.mjs`。限定档位的审批沿用现有主会话审批卡，未增加新的审批流程。
 
 ### 21.1 开发前基线（保留设计背景）
 - 只有一条工作线：忙时用户消息走 Pi SDK `steer`，在下一个工具边界送进**同一个**任务（`packages/server/src/interject.ts`、`runtime.ts` 的 steering 队列）。
@@ -1319,7 +1319,7 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 
 ### 21.2 分工
 - **主会话**：始终是用户对话的那个助理。轻活自己做；判断要花时间/多步骤的活，调用新工具 `spawn_subagent({ task, context, model? })`，立即返回 subagentId，主会话继续回复用户。
-- **子代理**：独立 Pi session（同一助理的工作区、权限档位、技能），只领一个任务；不直接对用户说话，结果交给主会话。
+- **子代理**：独立 Pi session（同一助理的工作区、权限档位、技能），执行分配的任务，结果交给主会话。用户主动进入子代理窗口时也可直接聊天，续聊沿用落库的 `session_file`；每轮运行独立计时和结束通知。
 - **中途消息路由**（主会话决定，系统提示写规则；工具：`subagent_message(id, text)` / `subagent_stop(id)` / `spawn_subagent`）：
   - 补充 → `subagent_message`，内部仍用 `steer`，子代理下一个工具边界读到；用户消息 `meta.delivery` 增加 `routedTo: subagentId`。
   - 改方向 → 补充指令，或 `subagent_stop` 后重派。
@@ -1335,8 +1335,9 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 
 ### 21.4 界面
 - **聊天里的子代理卡片**：派出时主会话消息下方出现小卡片「🔧 子代理：整理报价表 · 运行中 · 模型 X」，显示当前一步；完成后变成 ✓/✗。
-- **详情视图**：点卡片打开侧边面板（手机上全屏），实时显示步骤、工具调用（可展开参数/输出）、思考（折叠）、产出文件；顶部有「停止」按钮。只读 + 停止，不能在里面直接聊（要补充就在主会话说）（**已定**）。
-- 会话顶部显示「后台 2 个任务」入口，列出全部子代理。
+- **子代理会话**（2026-10-14 用户确认调整）：参考 Paseo 的子代理入口 → 选择任务 → 打开会话标签页。日常仍在主会话聊天；子代理启动时不自动开分页，不抢焦点。点子代理图标选择任务（或点聊天卡片）才打开独立分页，主 / 子会话通过标签切换，可关闭分页而不停止任务；聊天区内切换，不用叠加弹窗。复用消息气泡、工具步骤、模型返回的思考折叠和文件展示。可直接发消息，运行中用 `steer` 插话，结束后加载原 Pi 会话继续；主会话和已打开的子页保留输入草稿与滚动位置。子代理消息仍只留在自己的会话里，完成后仍向主会话回报。
+- 会话顶部显示子代理图标和数量，点击列出全部子代理，选中后才打开分页。
+- 导航参考：Paseo [`agent-tracks.tsx`](https://github.com/getpaseo/paseo/blob/main/packages/app/src/panels/agent-tracks.tsx) 从子代理列表调用 `openPreferredWorkspaceTarget`，选中后才打开会话标签。这里只借鉴入口与分页切换，保留本项目现有主 / 子会话与审批机制。
 
 ### 21.5 模型选择与设置
 - 设置 › 模型 › **子代理模型**：
@@ -1349,7 +1350,7 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 
 ### 21.6 决定
 - **已定**：只一层，子代理不能再派子代理（`spawn_subagent` 不提供给子代理）。
-- **已定**：每个助理最多 3 个并发子代理；详情面板只读 + 停止。
+- **已定**：每个助理最多 3 个并发子代理；子代理会话可查看、直接发消息和停止，续聊也计入并发上限。
 - **第一版沿用现有审批**：限定档位下子代理需要审批时，审批卡片经主会话转给用户（1:1 / 群聊 / 渠道一致），用户答复后回传子代理。
 
 ### 21.7 绝不默默卡住（用户 2026-10-14 要求）
@@ -1362,7 +1363,7 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - 缺口：单聊里没有心跳 / 看门狗 / 最长运行时间；出错只写一条消息，没有「通知另一个会话」的机制。
 
 **机制**
-1. **只有一个终态**：`done / failed / stopped / timeout / lost`（`stalled` 是可恢复的中间态）。子代理运行包在 `try/finally` 里：`finally` 中如果还没进终态，按情况写 `failed`（带原因）。`settled`、`promptSession` 的 catch、abort 都走同一个 `finishSubagent(id, state, reason)`，幂等（`UPDATE … WHERE status IN ('running','stalled')`），保证正好一次。
+1. **每轮运行只有一个终态**：`done / failed / stopped / timeout / lost`（`stalled` 是可恢复的中间态）。子代理运行包在 `try/finally` 里：`finally` 中如果还没进终态，按情况写 `failed`（带原因）。`settled`、`promptSession` 的 catch、abort 都走同一个 `finishSubagent(id, state, reason)`，幂等（`UPDATE … WHERE status IN ('running','stalled')`），保证每轮正好一次；用户主动续聊时重置运行状态与 `run_started_at`。
 2. **完成事件落库**：`finishSubagent` 在同一个事务里写 `subagent_events(id, subagent_id, kind, reason, created_at, delivered_at)`。不存内存，主会话忙也不丢。
 3. **唤醒主会话**：主会话忙 → 用 `steer` 在下一个工具边界送达（复用 §20 的通道），送达后填 `delivered_at`；主会话空闲 → 直接开一轮新的主会话回合去汇报。投递失败的下次再投，直到 `delivered_at` 有值。
 4. **心跳**：每个 Pi 事件（文字增量 / 工具开始结束 / 回合结束）更新 `last_activity_at`（写库节流到 ≤1 次/5 秒）。

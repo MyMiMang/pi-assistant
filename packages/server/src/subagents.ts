@@ -2,6 +2,7 @@
 import { bus } from "./bus.ts";
 import { db, getSetting, setSetting, uid } from "./db.ts";
 import { insertMessage, updateMessage } from "./messages.ts";
+import { isStopCommand } from "./interject.ts";
 import { configuredModels, modelProfiles } from "./rooms/model-pick.ts";
 import { inferNeeds, pickModel } from "./model-profile.ts";
 import { requests } from "./requests.ts";
@@ -13,6 +14,7 @@ export interface Subagent {
 	task: string; context: string; model_provider: string; model_id: string; model_reason: string;
 	status: SubagentStatus; last_activity_at: number; error_reason: string | null; notified_at: number | null;
 	result_summary: string | null; created_at: number; finished_at: number | null;
+	session_file: string | null; run_started_at: number | null;
 }
 export interface SubagentEvent { id: string; subagent_id: string; kind: string; reason: string; created_at: number; delivered_at: number | null }
 export interface SubagentSettings { mode: "follow" | "auto" | "fixed"; allowed: ModelRef[]; model?: ModelRef; maxMinutes: number }
@@ -29,6 +31,10 @@ db.exec(`CREATE TABLE IF NOT EXISTS subagents (
  CREATE TABLE IF NOT EXISTS subagent_events (
  id TEXT PRIMARY KEY, subagent_id TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL, delivered_at INTEGER);
 `);
+const columns = db.prepare("PRAGMA table_info(subagents)").all() as { name: string }[];
+for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"]]) {
+	if (!columns.some((c) => c.name === name)) db.exec(`ALTER TABLE subagents ADD COLUMN ${name} ${type}`);
+}
 export const getSubagent = (id: string) => db.prepare("SELECT * FROM subagents WHERE id = ?").get(id) as Subagent | undefined;
 export const listSubagents = (agentId?: string, conv?: string) => db.prepare(`SELECT * FROM subagents${conv ? " WHERE conversation_id = ?" : agentId ? " WHERE agent_id = ?" : ""} ORDER BY created_at DESC LIMIT 100`).all(...(conv ? [conv] : agentId ? [agentId] : [])) as unknown as Subagent[];
 const activeSubagents = (agentId?: string) => db.prepare(`SELECT * FROM subagents WHERE status IN ${ACTIVE}${agentId ? " AND agent_id = ?" : ""}`).all(...(agentId ? [agentId] : [])) as unknown as Subagent[];
@@ -73,7 +79,7 @@ export function chooseSubagentModel(agentId: string, fallback: ModelRef, task: s
 interface Live { stop?: () => Promise<void>; message?: (text: string, messageId?: string) => Promise<void>; pending: { text: string; messageId?: string }[]; toolUntil: number }
 const live = new Map<string, Live>();
 interface Driver {
-	run(r: Subagent, connect: (stop: () => Promise<void>, message: Live["message"]) => void): Promise<string>;
+	run(r: Subagent, connect: (stop: () => Promise<void>, message: Live["message"]) => void, input?: { text: string; messageId: string }): Promise<string>;
 	notify(r: Subagent, event: SubagentEvent): Promise<void>;
 }
 let driver: Driver;
@@ -108,18 +114,19 @@ export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef,
 	const id = uid("sa"), ts = Date.now();
 	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, parent_message_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, input.parentMessageId ?? null, input.task, input.context ?? "", picked.model.provider, picked.model.id, picked.reason, "running", ts, ts);
 	insertMessage({ agentId, conversationId: conv, role: "card", meta: { kind: "subagent", subagentId: id, subagent: getSubagent(id) } });
+	insertMessage({ agentId, conversationId: conv, subagentId: id, role: "user", content: input.task });
 	live.set(id, { pending: [], toolUntil: 0 });
 	queueMicrotask(() => void run(id));
 	return getSubagent(id)!;
 }
-async function run(id: string) {
+async function run(id: string, input?: { text: string; messageId: string }) {
 	try {
 		const result = await driver.run(getSubagent(id)!, (stop, message) => {
 			const l = live.get(id)!;
 			l.stop = stop; l.message = message;
 			if (!isActiveSubagent(getSubagent(id)!.status)) void stop();
-			else for (const p of l.pending.splice(0)) void message?.(p.text, p.messageId);
-		});
+			else queueMicrotask(() => { for (const p of l.pending.splice(0)) void message?.(p.text, p.messageId); });
+		}, input);
 		finishSubagent(id, "done", "", result);
 	} catch (e) { finishSubagent(id, "failed", e instanceof Error ? e.message : String(e)); }
 	finally {
@@ -145,6 +152,31 @@ export async function messageSubagent(id: string, text: string, messageId?: stri
 	if (l.message) await l.message(text, messageId);
 	else l.pending.push({ text, messageId });
 }
+/** 子窗口的用户消息留在子会话；续聊重新加载同一个 Pi session。 */
+export async function sendSubagentMessage(id: string, text: string) {
+	const r = getSubagent(id);
+	if (!r) throw new Error("子代理不存在");
+	text = text.trim();
+	if (!text) throw new Error("请输入消息");
+	const stopping = isStopCommand(text);
+	if (!isActiveSubagent(r.status) && !stopping) {
+		if (live.has(id)) throw new Error("子代理正在停止，请稍后再发");
+		if (activeSubagents(r.agent_id).length >= 3) throw new Error("这个助理已有 3 个后台子代理，请等一个完成");
+	}
+	const m = insertMessage({ agentId: r.agent_id, conversationId: r.conversation_id, subagentId: id, role: "user", content: text });
+	if (stopping) {
+		await stopSubagent(id);
+		updateMessage(m.id, { meta: { delivery: "stop" } });
+	} else if (isActiveSubagent(r.status)) await messageSubagent(id, text, m.id);
+	else {
+		const ts = Date.now();
+		db.prepare("UPDATE subagents SET status = 'running', last_activity_at = ?, run_started_at = ?, finished_at = NULL, error_reason = NULL, result_summary = NULL WHERE id = ?").run(ts, ts, id);
+		live.set(id, { pending: [], toolUntil: 0 });
+		changed(id);
+		queueMicrotask(() => void run(id, { text, messageId: m.id }));
+	}
+	return m;
+}
 export function subagentActivity(id: string, toolMs?: number) {
 	const r = getSubagent(id);
 	if (!r || !isActiveSubagent(r.status)) return;
@@ -162,7 +194,7 @@ export function subagentActivity(id: string, toolMs?: number) {
 }
 export async function checkSubagents(ts = Date.now()) {
 	for (const r of activeSubagents()) {
-		if (ts - r.created_at >= subagentSettings().maxMinutes * 60_000) await stopSubagent(r.id, "timeout");
+		if (ts - (r.run_started_at ?? r.created_at) >= subagentSettings().maxMinutes * 60_000) await stopSubagent(r.id, "timeout");
 		else if (r.status === "running" && ts - r.last_activity_at > 180_000 && ts > (live.get(r.id)?.toolUntil ?? 0) && !db.prepare("SELECT 1 FROM requests WHERE task_id = ? AND status = 'pending'").get(r.id)) {
 			db.prepare("UPDATE subagents SET status = 'stalled' WHERE id = ?").run(r.id);
 			addEvent(r, "stalled", "子代理已 3 分钟没有进展，请检查或重新派活");

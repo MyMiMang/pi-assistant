@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Message } from "../types";
 import { Help, Modal } from "./ui";
-import Markdown from "./Markdown";
-import Attachments from "./Attachments";
+import { ArrowLeft, ArrowUp, Bot, Square, X } from "lucide-react";
+import { useStore, type SubagentTab } from "../store";
+import { Avatar } from "./ui";
+import { BotTurn, group, SystemMsg, UserMsg } from "./ChatMessages";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string };
-interface Subagent { id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; last_activity_at: number; error_reason: string | null; result_summary: string | null }
+interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; last_activity_at: number; error_reason: string | null; result_summary: string | null }
 const labels: Record<string, string> = { running: "运行中", stalled: "暂无进展", done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "重启中断" };
 const active = (r: Subagent) => ["running", "stalled"].includes(r.status);
 function State({ r }: { r: Subagent }) {
@@ -17,43 +19,86 @@ function State({ r }: { r: Subagent }) {
 }
 export function SubagentCard({ m }: { m: Message }) {
 	const r = m.meta.subagent as Subagent;
-	const [open, setOpen] = useState(false);
 	if (!r) return null;
 	return <div className="pa-card w-full max-w-[560px]" data-testid="subagent-card" data-id={r.id} data-state={r.status}>
-		<button className="w-full text-left text-sm" onClick={() => setOpen(true)}><b>子代理：{r.task}</b><div className="mt-1"><State r={r} /></div><div className="mt-1 text-xs text-mut2">{r.model_id} · {r.model_reason}</div>{active(r) && m.meta.currentStep && <div className="mt-1 text-xs text-mut">当前：{({ bash: "运行命令", read: "读取文件", write: "写入文件", edit: "修改文件" } as Record<string, string>)[m.meta.currentStep] ?? m.meta.currentStep}</div>}</button>
+		<button className="w-full text-left text-sm" onClick={() => useStore.getState().openSubagent(r)}><b>子代理：{r.task}</b><div className="mt-1"><State r={r} /></div><div className="mt-1 text-xs text-mut2">{r.model_id} · {r.model_reason}</div>{active(r) && m.meta.currentStep && <div className="mt-1 text-xs text-mut">当前：{({ bash: "运行命令", read: "读取文件", write: "写入文件", edit: "修改文件" } as Record<string, string>)[m.meta.currentStep] ?? m.meta.currentStep}</div>}</button>
 		{r.error_reason && <div className="mt-2 text-xs text-red-500">{r.error_reason}</div>}
-		{open && <SubagentDetail id={r.id} onClose={() => setOpen(false)} />}
 	</div>;
 }
-function SubagentDetail({ id, onClose }: { id: string; onClose: () => void }) {
+export function SubagentTabs({ tabs }: { tabs: SubagentTab[] }) {
+	const selected = useStore((s) => s.subagent);
+	const set = useStore((s) => s.set);
+	if (!tabs.length) return null;
+	return <nav className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line px-3 py-2 text-sm" aria-label="会话分页" data-testid="subagent-tabs" role="tablist">
+		<button role="tab" aria-selected={!selected} className={`pa-chip shrink-0 ${!selected ? "active" : ""}`} onClick={() => set({ subagent: null })}>主会话</button>
+		{tabs.map((t) => <div key={t.id} className={`flex shrink-0 items-center rounded-lg border ${selected === t.id ? "border-accent bg-hover" : "border-transparent"}`}><button role="tab" aria-selected={selected === t.id} className="flex max-w-[220px] items-center gap-1 px-2 py-1.5 text-left" title={t.task} onClick={() => set({ subagent: t.id })}><Bot className="pa-ic shrink-0" /><span className="truncate">{t.task}</span></button><button className="pa-icon-btn pa-ghost !h-6 !w-6 shrink-0 mr-1" aria-label={`关闭分页：${t.task}`} title="关闭分页，后台任务继续运行" onClick={() => useStore.getState().closeSubagent(t.id)}><X size={12} /></button></div>)}
+	</nav>;
+}
+export function SubagentChat({ id, visible }: { id: string; visible: boolean }) {
+	const onClose = () => useStore.getState().set({ subagent: null });
 	const [d, setD] = useState<{ subagent: Subagent; messages: Message[] } | null>(null);
 	const [err, setErr] = useState("");
+	const [text, setText] = useState("");
+	const [sending, setSending] = useState(false);
+	const scroller = useRef<HTMLDivElement>(null);
+	const stick = useRef(true);
+	const ta = useRef<HTMLTextAreaElement>(null);
+	const agent = useStore((s) => s.agents.find((a) => a.id === d?.subagent.agent_id));
 	useEffect(() => {
+		if (!visible) return;
 		let off = false;
 		const load = () => void api<NonNullable<typeof d>>(`/api/subagents/${id}`).then((v) => !off && setD(v)).catch((e) => !off && setErr(String(e)));
 		load(); const t = setInterval(load, 1000);
 		return () => { off = true; clearInterval(t); };
-	}, [id]);
+	}, [id, visible]);
+	useLayoutEffect(() => {
+		if (stick.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
+	}, [d]);
+	useLayoutEffect(() => {
+		if (ta.current) { ta.current.style.height = "auto"; ta.current.style.height = `${Math.min(ta.current.scrollHeight, 200)}px`; }
+	}, [text]);
 	const action = async (kind: "stop" | "retry") => { try { await api(`/api/subagents/${id}/${kind}`, { method: "POST" }); if (kind === "retry") onClose(); } catch (e) { setErr(String(e)); } };
-	return <div className="fixed inset-0 z-[80] bg-black/20" onClick={onClose}>
-		<section className="absolute inset-y-0 right-0 flex w-full max-w-[560px] flex-col bg-panel shadow-xl" onClick={(e) => e.stopPropagation()} data-testid="subagent-detail">
-			<header className="flex shrink-0 items-center gap-2 border-b border-line p-4"><b className="min-w-0 flex-1 truncate">{d?.subagent.task ?? "子代理"}</b>{d && (active(d.subagent) ? <button className="pa-chip" onClick={() => void action("stop")} data-testid="subagent-stop">停止</button> : ["failed", "timeout", "lost"].includes(d.subagent.status) && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>)}<button className="pa-chip" onClick={onClose} aria-label="关闭子代理详情">关闭</button></header>
-			<div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-sm">
-				{d && <><State r={d.subagent} /><p className="text-xs text-mut2">{d.subagent.model_provider} / {d.subagent.model_id} · {d.subagent.model_reason}</p><p className="text-xs text-mut">要补充要求，请回主会话说。</p></>}
-				{err && <p className="text-red-500">{err}</p>}
-				{d?.messages.map((m) => <div key={m.id} className="rounded-lg border border-line p-3" data-testid="subagent-step">
-					{m.role === "tool" ? <details><summary>{m.meta.toolName} · {labels[m.status] ?? m.status}</summary><pre className="pa-pre">{JSON.stringify(m.meta.args, null, 2)}</pre><pre className="pa-pre">{m.meta.result ?? m.content}</pre></details> : <>{m.meta.thinking && <details><summary>思考</summary><pre className="pa-pre">{m.meta.thinking}</pre></details>}<Markdown text={m.content} /></>}
-					{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} /> : null}
-				</div>)}
-				{d?.subagent.error_reason && <p className="text-red-500">{d.subagent.error_reason}</p>}
+	const send = async () => {
+		if (!text.trim() || sending) return;
+		setSending(true); setErr("");
+		try {
+			await api(`/api/subagents/${id}/messages`, { method: "POST", json: { text } });
+			setText(""); stick.current = true;
+			setD(await api<NonNullable<typeof d>>(`/api/subagents/${id}`));
+		} catch (e) { setErr(String(e)); }
+		finally { setSending(false); }
+	};
+	const rows = group(d?.messages ?? []);
+	const running = !!d && active(d.subagent);
+	const last = rows[rows.length - 1];
+	const avatar = agent ?? { id: d?.subagent.agent_id ?? "", avatar: "🔧", color: "#888" };
+	return <section className="pa-chat" data-testid="subagent-detail" aria-label="子代理会话" role="tabpanel">
+			<header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3">
+				<button className="pa-icon-btn pa-ghost" onClick={onClose} aria-label="返回主会话" title="返回主会话"><ArrowLeft className="pa-ic" /></button>
+				<Avatar agentId={avatar.id} text={avatar.avatar} color={avatar.color} size={32} />
+				<div className="min-w-0 flex-1"><b className="block truncate text-sm">子代理：{d?.subagent.task ?? "加载中…"}</b><div className="truncate text-xs">{d && <State r={d.subagent} />}<span className="ml-2 text-mut2">{d?.subagent.model_id}</span></div></div>
+				{d && (running ? <button className="pa-chip" onClick={() => void action("stop")} data-testid="subagent-stop">停止</button> : ["failed", "timeout", "lost"].includes(d.subagent.status) && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>)}
+			</header>
+			<div ref={scroller} className="pa-scroll scrollbar-thin" onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
+				<div className="pa-thread-body">
+					{rows.map((r) => r.kind === "day" ? <div key={r.id} className="pa-day">{r.label}</div> : r.kind === "user" ? <UserMsg key={r.m.id} m={r.m} /> : r.kind === "system" ? <SystemMsg key={r.m.id} m={r.m} canContinue={false} /> : <BotTurn key={r.id} row={r} agent={avatar} live={running && r === last} />)}
+					{running && last?.kind !== "bot" && <BotTurn row={null} agent={avatar} live />}
+					{d?.subagent.error_reason && <p className="text-center text-xs text-red-500">{d.subagent.error_reason}</p>}
+				</div>
 			</div>
-		</section>
-	</div>;
+			<div className="pa-composer-wrap">
+				{err && <p className="mx-auto mb-2 max-w-[760px] text-xs text-red-500" role="alert">{err}</p>}
+				<div className="pa-composer">
+					<textarea ref={ta} rows={1} value={text} onChange={(e) => setText(e.target.value)} aria-label="给子代理发消息" placeholder={running ? "补充要求，或说「停」" : "给子代理发消息…"} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); void send(); } }} />
+					<div className="pa-composer-bar"><span className="flex-1 text-xs text-mut2">{running ? "子代理正在工作" : "继续这个子代理会话"}</span>{running && !text.trim() ? <button className="pa-send" onClick={() => void action("stop")} aria-label="停止子代理"><Square size={13} fill="currentColor" /></button> : <button className="pa-send" disabled={sending || !text.trim()} onClick={() => void send()} aria-label="发送给子代理"><ArrowUp className="pa-ic" /></button>}</div>
+				</div>
+				<div className="pa-foot-note">{agent?.name ?? "主会话"} 会收到子代理的完成回报</div>
+			</div>
+	</section>;
 }
 export function SubagentTasks({ agentId, conversation, room }: { agentId?: string; conversation?: string; room?: string }) {
 	const [rows, setRows] = useState<Subagent[]>([]);
 	const [open, setOpen] = useState(false);
-	const [selected, setSelected] = useState<string | null>(null);
 	useEffect(() => {
 		let off = false;
 		const q = new URLSearchParams({ ...(agentId ? { agent: agentId } : {}), ...(conversation ? { conversation } : {}), ...(room ? { room } : {}) });
@@ -61,7 +106,7 @@ export function SubagentTasks({ agentId, conversation, room }: { agentId?: strin
 		load(); const t = setInterval(load, 3000); return () => { off = true; clearInterval(t); };
 	}, [agentId, conversation, room]);
 	if (!rows.length) return null;
-	return <><button className="pa-chip" onClick={() => setOpen(true)} data-testid="subagent-tasks">后台 {rows.filter(active).length} 个任务</button><Modal open={open} onClose={() => setOpen(false)} title="后台子代理"><div className="space-y-2">{rows.map((r) => <button key={r.id} className="w-full rounded-lg border border-line p-3 text-left text-sm" onClick={() => setSelected(r.id)}><b>{r.task}</b><div><State r={r} /></div></button>)}</div></Modal>{selected && <SubagentDetail id={selected} onClose={() => setSelected(null)} />}</>;
+	return <><button className="pa-chip" onClick={() => setOpen(true)} data-testid="subagent-tasks" aria-label="选择子代理" title="子代理"><Bot className="pa-ic" /><span className="max-sm:hidden">子代理</span><span>{rows.filter(active).length || rows.length}</span></button><Modal open={open} onClose={() => setOpen(false)} title="后台子代理"><div className="space-y-2">{rows.map((r) => <button key={r.id} className="w-full rounded-lg border border-line p-3 text-left text-sm" onClick={() => { setOpen(false); useStore.getState().openSubagent(r); }}><b>{r.task}</b><div><State r={r} /></div></button>)}</div></Modal></>;
 }
 interface Settings { mode: "follow" | "auto" | "fixed"; allowed: Model[]; model?: Model; maxMinutes: number }
 export function SubagentModels({ agentId }: { agentId?: string }) {

@@ -13,9 +13,10 @@ import { useStore } from "./store";
 import { clampPane, clampSide, PANE, resolveLayout, SIDE, useWindowWidth } from "./layout";
 import { Resizer } from "./components/Resizer";
 import { BRAND } from "@pi-assistant/shared";
+import { SubagentChat, SubagentTabs } from "./components/Subagents";
 
 export default function App() {
-	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout, room, paneAgent, loadRooms, selectRoom } = useStore();
+	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout, room, paneAgent, loadRooms, selectRoom, subagent, subagentTabs, convs } = useStore();
 	const width = useWindowWidth();
 	const L = resolveLayout(width, layout);
 	const [fatal, setFatal] = useState<null | "unpaired" | "offline">(null);
@@ -77,6 +78,7 @@ export default function App() {
 		if (room) void selectRoom(room);
 	}, [room]);
 	const paneId = room ? paneAgent : current;
+	const tabs = subagentTabs.filter((t) => room ? t.roomId === room : !t.roomId && t.agent_id === current && t.conversation_id === convs[current ?? ""]?.current);
 
 	if (fatal)
 		return (
@@ -127,7 +129,11 @@ export default function App() {
 					{L.sideDocked && <Resizer side="right" value={layout.sideW} onChange={(v) => setLayout({ sideW: clampSide(v) })} onReset={() => setLayout({ sideW: SIDE.def })} onCollapse={() => setLayout({ sideCollapsed: true })} label="调整助理列表宽度" />}
 				</div>
 			)}
-			<main className="pa-chat">{room ? <RoomChat roomId={room} /> : current ? <Chat agentId={current} /> : null}</main>
+			<main className="pa-chat">
+				<SubagentTabs tabs={tabs} />
+				<div className="pa-chat" style={{ display: subagent ? "none" : undefined }} data-testid="main-conversation">{room ? <RoomChat roomId={room} /> : current ? <Chat agentId={current} /> : null}</div>
+				{tabs.map((tab) => <div key={tab.id} className="pa-chat" style={{ display: subagent === tab.id ? undefined : "none" }}><SubagentChat id={tab.id} visible={subagent === tab.id} /></div>)}
+			</main>
 			{info && paneId && (
 				<>
 					{!L.paneDocked && <div className="fixed inset-0 z-40 bg-black/40" onClick={() => set({ info: false })} />}

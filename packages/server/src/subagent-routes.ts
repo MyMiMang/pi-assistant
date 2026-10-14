@@ -5,7 +5,7 @@ import { getAgent, runtime } from "./runtime.ts";
 import { toMessage, type MessageRow } from "./messages.ts";
 import { providerNames } from "./models.ts";
 import { configuredModels } from "./rooms/model-pick.ts";
-import { agentSubagentChoice, getSubagent, isActiveSubagent, listSubagents, saveAgentSubagentChoice, saveSubagentSettings, spawnSubagent, stopSubagent, subagentSettings, type AgentSubagentChoice, type SubagentSettings } from "./subagents.ts";
+import { agentSubagentChoice, getSubagent, isActiveSubagent, listSubagents, saveAgentSubagentChoice, saveSubagentSettings, sendSubagentMessage, spawnSubagent, stopSubagent, subagentSettings, type AgentSubagentChoice, type SubagentSettings } from "./subagents.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: 同 http.ts
 export function mountSubagentRoutes(app: Hono<any>) {
@@ -28,6 +28,15 @@ export function mountSubagentRoutes(app: Hono<any>) {
 		return c.json({ subagent: r, messages });
 	});
 	app.post("/api/subagents/:id/stop", async (c) => c.json({ ok: await stopSubagent(c.req.param("id")) }));
+	app.post("/api/subagents/:id/messages", async (c) => {
+		const r = getSubagent(c.req.param("id"));
+		if (!r || !getAgent(r.agent_id) || !getConversation(r.conversation_id)) return c.json({ error: "会话已删除" }, 404);
+		try {
+			const { text } = await c.req.json<{ text: string }>();
+			if (typeof text !== "string") return c.json({ error: "请输入消息" }, 400);
+			return c.json(await sendSubagentMessage(r.id, text));
+		} catch (e) { return c.json({ error: String(e) }, 400); }
+	});
 	app.post("/api/subagents/:id/retry", (c) => {
 		const r = getSubagent(c.req.param("id"));
 		if (!r) return c.json({ error: "not_found" }, 404);

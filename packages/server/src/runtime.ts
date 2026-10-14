@@ -200,7 +200,7 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 					// App 里折叠显示；渠道出站另行剥离
 					const { text, thinking: inline } = splitThinking(e.text);
 					const thinking = [cur.thinking.trim(), inline].filter(Boolean).join("\n\n");
-					if (!text.trim()) deleteMessage(cur.id);
+					if (!text.trim() && !thinking) deleteMessage(cur.id);
 					else updateMessage(cur.id, { content: text, status: "done", meta: { model: `${e.provider}/${e.model}`, ...(usage ? { usage } : {}), ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}) } });
 				}
 				cur = null;
@@ -944,20 +944,28 @@ export async function bootstrap() {
 
 // 子代理只替换会话身份，工作区、权限、技能与审批仍走同一套扩展。
 setSubagentDriver({
-	async run(r, connect) {
+	async run(r, connect, input) {
 		const a = getAgent(r.agent_id);
 		if (!a) throw new Error("所属助理已删除");
 		const workspace = workspaceOf(a.id);
 		const session = await createPiSession({
 			models, cwd: workspace, agentDir: join(config.agentsDir, a.id), sessionDir: join(config.agentsDir, a.id, "subagents", r.id),
+			sessionFile: r.session_file ?? undefined,
 			model: { provider: r.model_provider, id: r.model_id }, thinking: models.clampThinking(r.model_provider, r.model_id, a.thinking ?? defaultThinking()),
-			systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona), "你是后台子代理，只执行分配的一个任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。结果和文件交给主会话核验，不直接向用户汇报。"],
+			systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona), "你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报。"],
 			extensions: await extensionsFor(a.id, r.conversation_id, r.id, { allowSpawn: false, subagentId: r.id }), skillPaths: skillPaths(), ...integrationsFor(a.id, r.conversation_id),
 		});
+		db.prepare("UPDATE subagents SET session_file = ? WHERE id = ?").run(sessionFileOf(session) ?? null, r.id);
 		let error: string | undefined;
 		const routed: string[] = [];
+		let started = false;
+		const early: string[] = [];
 		const unBind = bindSession(session, a.id, r.conversation_id, null, () => {}, r.id);
 		const unActivity = subscribeSession(session, (e) => {
+			if (e.type === "user_start" && !started) {
+				started = true;
+				queueMicrotask(() => { for (const text of early.splice(0)) void promptSession(session, text).catch((e) => { error = String(e); }); });
+			}
 			if (e.type === "assistant_end") error = e.error;
 			if (e.type === "user_start" && e.text.startsWith(INTERJECTION_PREFIX)) {
 				const mid = routed.shift();
@@ -966,10 +974,15 @@ setSubagentDriver({
 			const toolMs = e.type === "tool_start" ? (Number(e.args.timeout ?? e.args.timeoutMs ?? 120) * (e.args.timeoutMs ? 1 : 1000)) : e.type === "tool_end" ? 0 : undefined;
 			subagentActivity(r.id, toolMs);
 		});
-		connect(() => abortSession(session), async (text, mid) => { if (mid) routed.push(mid); await promptSession(session, text); });
+		connect(() => abortSession(session), async (text, mid) => {
+			if (mid) routed.push(mid);
+			if (!started) early.push(text);
+			else await promptSession(session, text);
+		});
 		try {
 			if (!isActiveSubagent(getSubagent(r.id)!.status)) return "";
-			await promptSession(session, `（后台子代理任务）${r.task}\n\n必要上下文：\n${r.context}`);
+			if (input) updateMessage(input.messageId, { meta: { delivery: "delivered" } });
+			await promptSession(session, input?.text ?? `（后台子代理任务）${r.task}\n\n必要上下文：\n${r.context}`);
 			if (error) throw new Error(error);
 			return lastAssistantText(session);
 		} finally {

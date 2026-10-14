@@ -84,3 +84,32 @@ test("重启恢复：运行中任务标 lost，事件落库；终态不再恢复
 	s.recoverSubagents();
 	assert.equal(events(r.id).length, 1);
 });
+
+test("子窗口直聊：运行中插话、只停止自己、完成后续聊、空消息与并发上限", async () => {
+	const inputs: string[] = [];
+	s.setSubagentDriver({ run: (_r, connect) => new Promise<string>((resolve) => connect(async () => { resolve("停止"); }, async (text) => { inputs.push(text); })), notify: async () => {} });
+	const r = spawn(), other = spawn(); await tick();
+	const m = await s.sendSubagentMessage(r.id, "子窗口补充");
+	assert.deepEqual(inputs, ["子窗口补充"]);
+	assert.equal(m.subagent_id, r.id);
+	assert.ok(!listMessages("sub-test", { conversationId: conv }).some((x) => x.id === m.id));
+	await assert.rejects(s.sendSubagentMessage(r.id, "  "), /请输入/);
+	await s.sendSubagentMessage(r.id, "停"); await tick();
+	assert.equal(s.getSubagent(r.id)!.status, "stopped");
+	assert.equal(s.getSubagent(other.id)!.status, "running");
+	await s.stopSubagent(other.id); await tick();
+	db.prepare("UPDATE subagents SET session_file = 'saved-child-session', created_at = 0 WHERE id = ?").run(r.id);
+	let resumed: Subagent | undefined;
+	let resumeInput: { text: string; messageId: string } | undefined;
+	s.setSubagentDriver({ run: async (row, _connect, input) => { resumed = row; resumeInput = input; return "续聊完成"; }, notify: async () => {} });
+	const follow = await s.sendSubagentMessage(r.id, "接着做"); await tick();
+	assert.equal(resumed?.session_file, "saved-child-session");
+	assert.deepEqual(resumeInput, { text: "接着做", messageId: follow.id });
+	assert.ok(s.getSubagent(r.id)!.run_started_at! > 0);
+	assert.equal(s.getSubagent(r.id)!.status, "done");
+	assert.deepEqual(events(r.id).map((e) => (e as { kind: string }).kind), ["stopped", "done"]);
+	waitingDriver(); const busy = [spawn(), spawn(), spawn()]; await tick();
+	await assert.rejects(s.sendSubagentMessage(r.id, "再继续"), /3 个/);
+	assert.equal(s.getSubagent(r.id)!.status, "done");
+	for (const x of busy) await s.stopSubagent(x.id);
+});

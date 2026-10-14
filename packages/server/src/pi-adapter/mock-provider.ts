@@ -2,7 +2,7 @@
  * 本地测试用 Mock 模型（仅在 PIA_MOCK=1 时注册，绝不在正式版默认启用）。
  * 根据用户消息里的关键词，脚本化地演示：流式回复、调用工具、审批、文件交付、选项提问、后台任务。
  */
-import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import type { PiModels } from "./index.ts";
 
 export const MOCK_PROVIDER = "mock";
@@ -79,9 +79,12 @@ function respond(messages: Msg[], systemPrompt = "") {
 		if (/报错/.test(u)) throw new Error("模拟子代理模型报错");
 		if (last.role === "toolResult") return fauxAssistantMessage(`子代理结果：${textOf(last)}`);
 		if (/审批/.test(u)) return fauxAssistantMessage([fauxToolCall("bash", { command: "rm -f subagent-old.txt; echo 子代理审批完成" })]);
-		return fauxAssistantMessage([fauxToolCall("bash", { command: "sleep 8; echo 子代理工作完成" })]);
+		return fauxAssistantMessage([fauxThinking("先确认子代理任务，再运行命令整理结果。"), fauxToolCall("bash", { command: "sleep 8; echo 子代理工作完成" })]);
 	}
-	if (messages.some((m) => m.role === "user" && textOf(m).startsWith("（后台子代理任务）")) && textOf(last).startsWith("（你工作时用户发来的新消息）")) return fauxAssistantMessage("子代理已按补充要求调整。");
+	if (messages.some((m) => m.role === "user" && textOf(m).startsWith("（后台子代理任务）"))) {
+		const secret = messages.filter((m) => m.role === "user").map(textOf).join("\n").match(/子代理暗号：([^\n]+)/)?.[1];
+		return fauxAssistantMessage([fauxThinking("结合这个子代理会话的上下文处理新消息。"), fauxText(/刚才暗号/.test(u) ? `刚才的暗号是：${secret ?? "不知道"}` : `子代理已按补充要求调整。收到：${u}`)]);
+	}
 	const subSaid = u.startsWith("（群聊「") ? ([...u.matchAll(/【用户】([^\n]*)/g)].pop()?.[1] ?? "") : u;
 	if (/聊个无关问题/.test(subSaid)) return fauxAssistantMessage("我在，后台任务继续跑。");
 	if (/派个子代理/.test(subSaid)) {
