@@ -86,6 +86,10 @@ export interface ModelInfo {
 	reasoning: boolean;
 	/** 这个模型支持的思考强度（Pi 的模型元数据；不支持推理时只有 "off"） */
 	thinking: string[];
+	/** Pi 的思考档位映射；自定义服务补全能力时参考（界面只用 thinking） */
+	thinkingLevelMap?: Record<string, string | null>;
+	/** Pi 的协议类型；自定义服务补全能力时优先同协议 */
+	api?: string;
 	input: string[];
 	contextWindow?: number;
 	maxTokens?: number;
@@ -143,6 +147,8 @@ export class PiModels {
 			name: m.name,
 			reasoning: !!m.reasoning,
 			thinking: getSupportedThinkingLevels(m as never),
+			thinkingLevelMap: (m as { thinkingLevelMap?: Record<string, string | null> }).thinkingLevelMap,
+			api: (m as { api?: string }).api,
 			input: [...(m.input ?? [])],
 			contextWindow: m.contextWindow,
 			maxTokens: m.maxTokens,

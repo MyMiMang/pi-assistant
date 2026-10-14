@@ -90,7 +90,7 @@ export const baseId = (n: string) => n.replace(/(-(\d{4}(-\d{2}){0,2}|\d{6,8}|la
 /** 模型厂商自己的服务优先（同一模型在不同托管商的上限不一样，以官方为准） */
 const OFFICIAL = ["deepseek", "zai", "zhipu", "moonshotai", "moonshot", "kimi-coding", "alibaba", "qwen", "minimax", "openai", "anthropic", "google", "xai", "mistral"];
 
-type Builtin = { id: string; provider?: string; contextWindow?: number; maxTokens?: number; vision?: boolean; imageOutput?: boolean; reasoning?: boolean; toolCall?: boolean; cost?: (number | null)[] };
+type Builtin = { id: string; provider?: string; api?: string; contextWindow?: number; maxTokens?: number; vision?: boolean; imageOutput?: boolean; reasoning?: boolean; toolCall?: boolean; cost?: (number | null)[]; thinkingLevelMap?: Record<string, string | null> };
 /** 模型参数库条目（同 Builtin，maxTokens 为 0 表示未知） */
 export type DbEntry = Builtin;
 /** models.dev 精简数据 → 条目列表 */
@@ -122,6 +122,23 @@ function knownCapability(id: string, db: DbEntry[], key: "vision" | "reasoning" 
 	const off = hits.filter((m) => m.provider && OFFICIAL.includes(m.provider));
 	const base = off.length ? off : hits;
 	return base.filter((m) => m[key]).length * 2 > base.length;
+}
+/**
+ * 思考档位映射（Pi 的 thinkingLevelMap）：自定义服务里的模型名若和 Pi 内置目录里的同一个模型一致，
+ * 就照搬 Pi 自己的元数据，让「支持的档位」和真实 API 一致（含 xhigh / max）。
+ * 匹配规则和 knownCapability 一致：同名优先、其次忽略日期快照；多个托管商给的不一样时，
+ * 优先同协议（自定义服务用的 api），其次官方服务——都认不出来就返回 undefined，绝不凭空补档位。
+ */
+export function knownThinkingLevelMap(id: string, builtin: Builtin[], api?: string): Record<string, string | null> | undefined {
+	const withMap = builtin.filter((m) => m.thinkingLevelMap && Object.keys(m.thinkingLevelMap).length);
+	const n = normId(id);
+	let hits = withMap.filter((m) => normId(m.id) === n);
+	if (!hits.length) hits = withMap.filter((m) => baseId(normId(m.id)) === baseId(n));
+	if (!hits.length) return undefined;
+	const official = (list: Builtin[]) => list.filter((m) => m.provider && OFFICIAL.includes(m.provider));
+	const sameApi = api ? hits.filter((m) => m.api === api) : [];
+	const pick = official(sameApi)[0] ?? sameApi[0] ?? official(hits)[0] ?? hits[0];
+	return pick ? { ...pick.thinkingLevelMap } : undefined;
 }
 /** 从 Base URL 猜服务商（api.deepseek.com → deepseek，open.bigmodel.cn → zhipuai…），用于“同服务商优先” */
 export function providerHint(baseUrl?: string): string[] {

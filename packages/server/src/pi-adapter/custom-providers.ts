@@ -11,7 +11,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getApiProviders } from "@earendil-works/pi-ai/compat";
 import type { PiModels } from "./index.ts";
 import { modelDb } from "../model-db.ts";
-import { detectLimits, knownVision, knownReasoning, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
+import { detectLimits, knownReasoning, knownThinkingLevelMap, knownVision, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
 
 export interface CustomModel {
 	id: string;
@@ -19,6 +19,8 @@ export interface CustomModel {
 	reasoning?: boolean;
 	/** 自动识别的推理能力，刷新参数库时可以重算。 */
 	reasoningAuto?: boolean;
+	/** 思考档位映射：按模型名照搬 Pi 内置目录里同一个模型的元数据（含 xhigh / max），认不出来就不写 */
+	thinkingLevelMap?: Record<string, string | null>;
 	input?: ("text" | "image")[];
 	contextWindow?: number;
 	maxTokens?: number;
@@ -182,7 +184,7 @@ export class CustomProviders {
 			baseUrl: input.baseUrl.trim().replace(/\/+$/, ""),
 			headerNames,
 			noKey: !!input.noKey,
-			models: input.models.map((m) => this.withLimits({ ...m, id: m.id.trim() }, undefined, input.baseUrl)),
+			models: input.models.map((m) => this.withLimits({ ...m, id: m.id.trim() }, undefined, input.baseUrl, input.api)),
 			createdAt: existing?.createdAt ?? Date.now(),
 		};
 		// 写入 Pi 的 models.json（保留用户手写的其它 provider）
@@ -226,10 +228,11 @@ export class CustomProviders {
 	}
 
 	/** 补上上下文 / 输出长度（缺哪项补哪项；用户填过的不动） */
-	withLimits(m: CustomModel, detected?: { contextWindow?: number; maxTokens?: number }, baseUrl?: string): CustomModel {
+	withLimits(m: CustomModel, detected?: { contextWindow?: number; maxTokens?: number }, baseUrl?: string, api?: string): CustomModel {
 		// Pi 内置目录 + models.dev 模型参数库；排除自定义服务自己（否则会拿自己存过的旧值当“已知模型”）
 		const own = new Set(this.store.loadMeta().map((x) => x.id));
-		const l = resolveLimits(m, detected, [...this.models.listModels().filter((x) => !own.has(x.provider)), ...modelDb()], providerHint(baseUrl));
+		const builtin = [...this.models.listModels().filter((x) => !own.has(x.provider)), ...modelDb()];
+		const l = resolveLimits(m, detected, builtin, providerHint(baseUrl));
 		const out: CustomModel = { ...m, contextWindow: l.contextWindow, maxTokens: l.maxTokens, limitsSource: l.source };
 		// 是否识图：用户没指定 input 时按 models.dev 判断（支持图片的模型 Pi 才会把图片发过去）
 		if (!m.input || m.inputAuto) {
@@ -241,6 +244,11 @@ export class CustomProviders {
 			const reasoning = knownReasoning(m.id, modelDb()) ?? knownReasoning(m.id, this.models.listModels().filter((x) => !own.has(x.provider)));
 			if (reasoning !== undefined) Object.assign(out, { reasoning, reasoningAuto: true });
 		}
+		// 思考档位：照搬 Pi 内置目录里同一个模型的 thinkingLevelMap（含 xhigh / max），让界面、切换与请求参数一致；
+		// 认不出来（模型名不标准 / 目录里没有）就不写，保持 Pi 的默认档位，不凭空补
+		const map = out.reasoning ? knownThinkingLevelMap(m.id, builtin, api) : undefined;
+		if (map) out.thinkingLevelMap = map;
+		else delete out.thinkingLevelMap;
 		return out;
 	}
 
@@ -267,8 +275,8 @@ export class CustomProviders {
 		const next = metas.map((meta) => {
 			const models = meta.models.map((x) => {
 				const keep = x.contextWindow && x.maxTokens && (x.limitsSource === "user" || x.limitsSource === "detected" || x.limitsSource === "learned");
-				const y = keep ? { ...this.withLimits(x, undefined, meta.baseUrl), contextWindow: x.contextWindow, maxTokens: x.maxTokens, limitsSource: x.limitsSource } : this.withLimits(x, undefined, meta.baseUrl);
-				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource || String(y.input) !== String(x.input) || y.reasoning !== x.reasoning) n++;
+				const y = keep ? { ...this.withLimits(x, undefined, meta.baseUrl, meta.api), contextWindow: x.contextWindow, maxTokens: x.maxTokens, limitsSource: x.limitsSource } : this.withLimits(x, undefined, meta.baseUrl, meta.api);
+				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource || String(y.input) !== String(x.input) || y.reasoning !== x.reasoning || JSON.stringify(y.thinkingLevelMap ?? null) !== JSON.stringify(x.thinkingLevelMap ?? null)) n++;
 				return y;
 			});
 			return { ...meta, models };
@@ -316,7 +324,7 @@ export class CustomProviders {
 		for (const raw of j.data ?? j.models ?? []) {
 			const id = String(raw.id ?? raw.name ?? "").replace(/^models\//, "");
 			if (!id || seen.has(id)) continue;
-			const m = this.withLimits({ id, ...(typeof raw.reasoning === "boolean" ? { reasoning: raw.reasoning } : {}) }, detectLimits(raw), base);
+			const m = this.withLimits({ id, ...(typeof raw.reasoning === "boolean" ? { reasoning: raw.reasoning } : {}) }, detectLimits(raw), base, o.api);
 			seen.set(id, { id, ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}), contextWindow: m.contextWindow!, maxTokens: m.maxTokens!, limitsSource: m.limitsSource! });
 		}
 		if (!seen.size) throw new Error("没有获取到模型，请手动填写");
