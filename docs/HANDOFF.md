@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 当前公开版本 **v0.1.0-beta.19**；本轮仅 macOS arm64，已构建、Mac 安装冒烟与更新资产校验通过并公开 Latest。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
+> 当前公开版本 **v0.1.0-beta.20**；本轮仅 macOS arm64，已构建、Mac 安装冒烟与更新资产校验通过并公开 Latest。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
 ## 1. 这是什么
 
@@ -14,7 +14,9 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
-2026-10-15 beta.20 候选整合完成，待发布：模型菜单合并思考强度、按渠道折叠/搜索、常用五项持久化；任务展示共用短标题与状态，移除顶部子代理 tabs 和聊天大指令卡，完整指令在详情保留；附件 72px 缩略图复用全屏查看器，步骤汇总正确区分失败与仍在运行；定时任务新增每天时分/工作日/每周/均匀分钟或小时间隔/高级 cron，保留特殊旧 cron 与自定义免打扰；macOS 透明标题栏与交通灯留白。`subagent-routes.ts` 返回 reasoning 供统一模型菜单判断思考能力。底层 background/subagent/followup 未合并，等待不常驻模型，不按耗时估算 token。
+2026-10-15 beta.20 已公开 Latest：https://github.com/MyMiMang/pi-assistant/releases/tag/v0.1.0-beta.20 。Actions https://github.com/MyMiMang/pi-assistant/actions/runs/38612956619 全部成功（arm64 build、mac-smoke、publish；Windows/Linux skipped，Intel 未入矩阵）。tag 固定 `07b3723`；公开四项资产 DMG、更新包、签名、latest.json，独立核验版本/中文 notes/正式下载地址，仅 darwin-aarch64 与 darwin-aarch64-app。未安装用户 App。
+
+beta.20 整合内容：模型菜单合并思考强度、按渠道折叠/搜索、常用五项持久化；任务展示共用短标题与状态，移除顶部子代理 tabs 和聊天大指令卡，完整指令在详情保留；附件 72px 缩略图复用全屏查看器，步骤汇总正确区分失败与仍在运行；定时任务新增每天时分/工作日/每周/均匀分钟或小时间隔/高级 cron，保留特殊旧 cron 与自定义免打扰；macOS 透明标题栏与交通灯留白。`subagent-routes.ts` 返回 reasoning 供统一模型菜单判断思考能力。底层 background/subagent/followup 未合并，等待不常驻模型，不按耗时估算 token。
 
 实际验证：主会话已独立跑通 `e2e/model-ui.mjs` 六组与 `e2e/task-ui.mjs` 全断言（不沿用代理旧 25 项计数）；更新后的子代理入口专项已通过。最终整合树两端 typecheck、web build、model-picks/subagents/approval/proactive 共 37 项、定时解析 3 项及 `e2e/routines-ui.mjs` 全通过。Rust 未再修改，复用标题栏代理 cargo check 与六组布局通过结果。原生交通灯位置、拖动、双击缩放、全屏进出待安装包真机验证；缺 Developer ID 证书的系统授权保留问题仍阻塞。全程 Mock，无真实模型费用，未替换用户 App。发布范围固定 mac-arm64；Homebrew 默认 Node 缺动态库，最终检查用已有 Node 24.20.0，未改系统 Node。
 
@@ -99,7 +101,7 @@ CI 已增加 `mac-arm64/all` 范围，tag 按 `.github/release-scope.json` 固�
 - **后台子代理已随 beta.19 发布**（默认 10 并发 / 排队 / 重启续跑）：主会话聊天、子代理后台干活、可查看过程、复用能力画像选模型。设计与实现见 DESIGN §21；真实模型与渠道真账号仍待验证。
 - **许可证**：建议用 MIT，等用户确认（现在 README 写的是「保留所有权利」，仓库里没有 LICENSE 文件）。
 - **代码签名**：Apple Developer ID 公证、Windows 代码签名证书，都要用户提供账号或证书。
-- 下一步：完成 beta.20 仅 macOS arm64 发布，监控构建、Mac 安装冒烟与公开 Latest，核验四项资产及更新清单。模型/任务/缩略图/定时 UI 已验收；标题栏原生交互待用户安装后真机验证。任务底层调度未合并，见 DESIGN §25。其他候选：cua-driver 升级、群聊复制工作区、Windows HEIC、扫描 PDF OCR。
+- 下一步：beta.20 仅 macOS arm64 已公开，构建、Mac 安装冒烟与四项公开资产核验完成；等待用户实际使用反馈。模型/任务/缩略图/定时 UI 已验收；标题栏原生交互待用户安装后真机验证。任务底层调度未合并，见 DESIGN §25。其他候选：cua-driver 升级、群聊复制工作区、Windows HEIC、扫描 PDF OCR。
 
 ## 6. 构建 / 测试 / 发版
 
