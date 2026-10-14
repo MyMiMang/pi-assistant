@@ -21,6 +21,7 @@ import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
 import { insertMessage, listMessages } from "./messages.ts";
 import { credentialBackend, customProviders, defaultModel, defaultThinking, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "./models.ts";
+import { getModelPicks, recordModelPick } from "./model-picks.ts";
 import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-providers.ts";
 import { checkPiCompat, sessionStats } from "./pi-adapter/index.ts";
 import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
@@ -231,6 +232,13 @@ app.get("/api/models", (c) => {
 	return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => withProviderName(m, names)));
 });
 app.post("/api/models/refresh", async (c) => (await models.refresh(), c.json({ ok: true })));
+// 用户选过哪些模型：输入栏「常用」置顶（只记 provider/id 的频次和最近一次时间，不存凭据）
+app.get("/api/models/picks", (c) => c.json({ picks: getModelPicks() }));
+app.post("/api/models/picks", async (c) => {
+	const b = await c.req.json<{ provider?: string; id?: string }>();
+	if (!b.provider || !b.id || !models.getModel(b.provider, b.id)) return c.json({ error: "模型不存在" }, 400);
+	return c.json({ picks: recordModelPick(b.provider, b.id) });
+});
 app.post("/api/models/login", async (c) => {
 	const b = await c.req.json<{ provider: string; type: "api_key" | "oauth" }>();
 	return c.json({ flowId: startLogin(b.provider, b.type) });

@@ -82,7 +82,7 @@ export function group(list: Message[]): Row[] {
 }
 
 // ------------------------------------------------------------------ 步骤列表：进行中展开，完成后自动收起
-function Steps({ items, live }: { items: Message[]; live: boolean }) {
+function Steps({ items, live, busy }: { items: Message[]; live: boolean; busy?: boolean }) {
 	const [open, setOpen] = useState(live);
 	const [detail, setDetail] = useState<string | null>(null);
 	const wasLive = useRef(live);
@@ -92,12 +92,16 @@ function Steps({ items, live }: { items: Message[]; live: boolean }) {
 		wasLive.current = live;
 	}, [live]);
 	const errors = items.filter((m) => m.status === "error").length;
+	const failed = items.filter((m) => m.status === "error").slice(-1)[0];
 	const took = Math.max(0, (items[items.length - 1].updated_at ?? 0) - items[0].created_at);
+	// 单个步骤失败 ≠ 整个任务停：汇总里写清成功/失败个数，并把失败的那一步点名
+	const head = live ? `正在进行 · 第 ${items.length} 步` : errors ? `${items.length} 个步骤 · ${items.length - errors} 成功 · ${errors} 失败` : `${items.length} 个步骤 · 全部成功`;
 	return (
 		<div className={cx("pa-steps", open && "open")} data-testid="steps">
 			<button className="pa-steps-head" onClick={() => setOpen(!open)}>
 				{live ? <span className="pa-spinner" /> : errors ? <X className="pa-ic text-red-500" /> : <Check className="pa-ic ok" />}
-				<span>{live ? `正在进行 · 第 ${items.length} 步` : `已完成 ${items.length} 个步骤`}</span>
+				<span>{head}</span>
+				{!live && failed && <small className="text-red-500" data-testid="steps-failed">· {TOOL_LABEL[failed.meta.toolName as string] ?? String(failed.meta.toolName ?? "")}失败{busy ? "（这一步失败，任务继续）" : ""}</small>}
 				{!live && <small>用时 {secs(took)}</small>}
 				<ChevronRight className="pa-ic pa-chev" />
 			</button>
@@ -152,8 +156,8 @@ export function Thinking({ text, live }: { text: string; live: boolean }) {
 	);
 }
 
-export function BotPart({ p, live, renderSubagent }: { p: Part; live: boolean; renderSubagent?: (m: Message) => ReactNode }) {
-	if (p.kind === "steps") return <Steps items={p.items} live={live} />;
+export function BotPart({ p, live, busy, renderSubagent }: { p: Part; live: boolean; busy?: boolean; renderSubagent?: (m: Message) => ReactNode }) {
+	if (p.kind === "steps") return <Steps items={p.items} live={live} busy={busy} />;
 	const m = p.m;
 	if (m.role === "card")
 		return m.meta.kind === "subagent" ? renderSubagent?.(m) ?? null : m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
@@ -191,11 +195,14 @@ function UsageLine({ u, model }: { u: MsgUsage; model: string }) {
 }
 
 export function BotTurn({ row, agent, live, renderSubagent }: { row: Extract<Row, { kind: "bot" }> | null; agent: Pick<Agent, "id" | "avatar" | "color">; live: boolean; renderSubagent?: (m: Message) => ReactNode }) {
-	const parts = row?.parts ?? [];
+	const all = row?.parts ?? [];
+	// 子代理指令卡不再显示（任务走 header 的「子代理」入口）；整轮只有它时这一轮也不占位
+	const parts = renderSubagent ? all : all.filter((p) => !(p.kind === "msg" && p.m.role === "card" && p.m.meta.kind === "subagent"));
 	const last = parts[parts.length - 1];
 	const runningTool = parts.flatMap((p) => (p.kind === "steps" ? p.items : [])).find((m) => m.status === "running");
 	const streaming = last?.kind === "msg" && last.m.status === "streaming";
 	const waitingCard = last?.kind === "msg" && last.m.role === "card" && last.m.meta.status === "pending";
+	if (!parts.length && !live) return null;
 	return (
 		<div className="pa-msg bot">
 			<div className="pa-av-col">
@@ -203,7 +210,7 @@ export function BotTurn({ row, agent, live, renderSubagent }: { row: Extract<Row
 			</div>
 			<div className="pa-bot-body">
 				{parts.map((p, i) => (
-					<BotPart renderSubagent={renderSubagent} key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} />
+					<BotPart renderSubagent={renderSubagent} busy={live} key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} />
 				))}
 				{live && !streaming && !waitingCard && <Activity tool={runningTool} />}
 			</div>

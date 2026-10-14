@@ -1,9 +1,10 @@
-import { Crown, Loader2, Plus, Trash2, Users, UserPlus, ChevronDown } from "lucide-react";
+import { Crown, Loader2, Plus, Trash2, Users, UserPlus, ChevronDown, Check } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Message } from "../types";
-import { type LabeledModel, ModelOptions, modelKey, modelLabel } from "./ModelOptions";
+import { type LabeledModel, modelKey, modelLabel } from "./ModelOptions";
+import { ModelPickerButton } from "./ModelPicker";
 import { Avatar, Help, cx } from "./ui";
 
 export interface PMember {
@@ -32,6 +33,7 @@ interface RankedModel extends LabeledModel {
 	tier: string;
 	tierLabel: string;
 	reason: string;
+	reasoning?: boolean;
 	excluded?: string;
 }
 const rankCache = new Map<string, Promise<RankedModel[]>>();
@@ -93,22 +95,32 @@ function MemberEditor({ m, models, onChange, onRemove, manager, onManager, locke
 				<>
 					<input className="pa-input mt-1.5 !h-8 !px-2 text-xs" placeholder="负责什么" value={m.role ?? ""} disabled={locked} onChange={(e) => onChange({ ...m, role: e.target.value })} aria-label="角色" />
 					<div className="mt-1.5 flex min-w-0 items-center gap-1.5">
-						<select className="pa-input !h-8 min-w-0 flex-1 !px-2 text-xs" disabled={locked} value={m.model ? modelKey(m.model) : ""} data-testid="pm-model" onChange={(e) => {
-							const [provider, ...rest] = e.target.value.split("/");
-							const r = ranked.find((x) => modelKey(x) === e.target.value);
-							onChange({ ...m, model: e.target.value ? { provider, id: rest.join("/") } : null, modelReason: r ? `你选的：${r.reason}` : "你选的" });
-						}}>
-							<option value="">默认模型</option>
-							{ranked.length ? (
-								ranked.map((x, i) => (
-									<option key={modelKey(x)} value={modelKey(x)}>
-										{i === 0 && !x.excluded ? "★ " : ""}{modelLabel(x)} · {x.tierLabel}{x.excluded ? `（${x.excluded}）` : ""}
-									</option>
-								))
-							) : (
-								<ModelOptions models={models} />
+						<ModelPickerButton
+							testid="pm-model"
+							models={ranked.length
+								? ranked.map((x, i) => ({ provider: x.provider, id: x.id, name: x.name ?? x.id, providerName: x.providerName, reasoning: x.reasoning, star: i === 0 && !x.excluded, badge: x.tierLabel, note: x.excluded }))
+								: models.map((x) => ({ provider: x.provider, id: x.id, name: x.name ?? x.id, providerName: x.providerName }))}
+							providers={[]}
+							value={m.model ?? null}
+							groupByProvider={false}
+							placement="down"
+							disabled={locked}
+							buttonClass="max-w-full"
+							text={m.model ? (cur ? modelLabel(cur) : modelKey(m.model)) : "默认模型"}
+							title="按角色需要排序的模型（★ 推荐）"
+							ariaLabel={`模型：${m.model ? (cur ? modelLabel(cur) : modelKey(m.model)) : "默认模型"}`}
+							onPick={(x) => {
+								if (!x.id) return void onChange({ ...m, model: null, modelReason: undefined });
+								const r = ranked.find((y) => modelKey(y) === `${x.provider}/${x.id}`);
+								onChange({ ...m, model: { provider: x.provider, id: x.id }, modelReason: r ? `你选的：${r.reason}` : "你选的" });
+							}}
+							header={(close) => (
+								<button type="button" className="mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover" data-testid="pm-model-default" onClick={() => (close(), onChange({ ...m, model: null, modelReason: undefined }))}>
+									<span className="min-w-0 flex-1 truncate">默认模型</span>
+									{!m.model && <Check size={14} className="shrink-0 text-accent" />}
+								</button>
 							)}
-						</select>
+						/>
 						{m.modelReason && <Help>{cur ? `${modelLabel(cur)}：` : ""}{m.modelReason}{m.needs?.length ? `。这个角色需要：${m.needs.map((n) => NEED_LABEL[n] ?? n).join("、")}` : ""}。下拉框按适合程度排序，★ 是推荐。</Help>}
 					</div>
 					{m.modelReason && <div className="mt-1 truncate text-[11px] text-mut2" data-testid="pm-reason" title={m.modelReason}>{m.modelReason}</div>}

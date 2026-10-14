@@ -1,6 +1,5 @@
 import { SubagentModels } from "./Subagents";
-import { BarChart3, Brain, Cat, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
-import { modelLabel } from "./ModelOptions";
+import { BarChart3, Brain, Cat, ChevronDown, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { getLang, setLang, t } from "../i18n";
@@ -16,14 +15,14 @@ import { DesktopSettings } from "./DesktopSettings";
 import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { ImageModelsSection } from "./ImageModels";
-import { DefaultModelPicker, ProviderList, ProviderSetup, useProviders } from "./Models";
+import { DefaultModelPicker, ProviderAccordion, useProviders } from "./Models";
 import { Badge, Button, cx, fmtTime, Help, Input, Modal } from "./ui";
 import { Downloads } from "./Downloads";
 import { AppUpdate } from "./AppUpdate";
 import { VisionModelPicker } from "./VisionModel";
 import { PetSettings } from "./PetSettings";
 import { UsageTab } from "./Usage";
-import { ModelStrengths } from "./ModelStrengths";
+import { useModelStrengths } from "./ModelStrengths";
 
 const TABS = [
 	["models", "模型", Monitor],
@@ -142,34 +141,29 @@ function SubagentConcurrency() {
 function ModelsTab() {
 	const { providers, reload } = useProviders();
 	const custom = useCustomProviders();
-	const [sel, setSel] = useState<Provider | null>(null);
 	const [customEdit, setCustomEdit] = useState<{ id?: string; k: number } | null>(null);
-	const system = useStore((s) => s.system);
-	const current = sel ? (providers.find((p) => p.id === sel.id) ?? sel) : null;
-	const reloadAll = () => (void reload(), void custom.reload(), void useStore.getState().loadSystem());
-	const back = () => (setSel(null), setCustomEdit(null));
+	const strengths = useModelStrengths();
+	const configured = providers.filter((p) => p.configured).length;
+	const reloadAll = () => (void reload(), void custom.reload(), void useStore.getState().loadSystem(), void strengths.reload());
+	const back = () => setCustomEdit(null);
 	return (
 		<div className="space-y-6">
 			<section>
-				<H>默认模型</H>
-				<div className="-mt-2 mb-3 truncate text-sm text-mut">{system?.defaultModel ? `当前：${modelLabel(system.defaultModel)}` : "还没有设置默认模型"}</div>
-				<DefaultModelPicker key={providers.filter((p) => p.configured).length + providers.length * 100} />
+				<H desc="新助理默认用这个模型；点按钮可以同时改模型和思考强度。">默认使用</H>
+				<DefaultModelPicker key={configured + providers.length * 100} onSaved={() => void strengths.reload()} />
 			</section>
 			<section>
 				<H desc="助理的模型不能看图时（例如 DeepSeek），由识图模型替它看图：读图片、确认搜到的图是不是你要的。">识图模型</H>
-				<VisionModelPicker key={providers.filter((p) => p.configured).length} />
+				<VisionModelPicker key={configured} />
 			</section>
-			<ModelStrengths key={`s${providers.filter((p) => p.configured).length}`} />
-			<SubagentModels />
-			<SubagentConcurrency />
 			<section>
-				<H desc="列表来自 Pi 的模型服务目录，升级 Pi 后新的服务会自动出现。也可以添加任意中转站、第三方或本地模型服务。凭据加密保存在本机。">模型服务</H>
+				<H desc="内置服务来自 Pi 的模型服务目录，升级 Pi 后新的服务自动出现；下面是你自己添加的渠道。展开看该服务支持的模型和配置，凭据加密保存在本机。">模型服务 / 渠道</H>
 				{customEdit ? (
 					<div className="space-y-3">
 						<Button size="sm" variant="ghost" onClick={back}>
 							← 返回列表
 						</Button>
-						<div className="font-medium">{customEdit.id ? "编辑自定义服务" : "添加自定义服务"}</div>
+						<div className="font-medium">{customEdit.id ? "编辑渠道" : "添加渠道"}</div>
 						<CustomProviderForm
 							key={customEdit.k}
 							apis={custom.apis}
@@ -179,25 +173,38 @@ function ModelsTab() {
 							onDeleted={() => (reloadAll(), back())}
 						/>
 					</div>
-				) : current ? (
-					<div className="space-y-3">
-						<Button size="sm" variant="ghost" onClick={back}>
-							← 返回列表
-						</Button>
-						<div className="font-medium">{current.name}</div>
-						<ProviderSetup provider={current} onConfigured={() => void reload()} />
-					</div>
 				) : (
 					<div className="space-y-3">
-						<Button variant="outline" onClick={() => setCustomEdit({ k: Date.now() })}>
-							<Plus size={15} /> 添加自定义服务（中转站 / 第三方 / 本地模型）
+						<Button variant="primary" onClick={() => setCustomEdit({ k: Date.now() })}>
+							<Plus size={15} /> 添加渠道（中转站 / 第三方 / 本地模型）
 						</Button>
-						<ProviderList providers={providers} onPick={(p) => (p.custom ? setCustomEdit({ id: p.id, k: Date.now() }) : setSel(p))} />
+						<ProviderAccordion providers={providers} onEditCustom={(id) => setCustomEdit({ id, k: Date.now() })} onConfigured={() => void reload()} strengths={strengths} />
 					</div>
 				)}
 			</section>
+			<SubagentSection />
 			<ImageModelsSection key={custom.providers.length} />
 		</div>
+	);
+}
+
+/** 子代理设置：独立短折叠，不跟渠道里的模型能力混在一起 */
+function SubagentSection() {
+	const [open, setOpen] = useState(false);
+	return (
+		<section data-testid="subagent-section">
+			<button className="flex w-full items-center gap-2 text-left" onClick={() => setOpen(!open)} aria-expanded={open} data-testid="subagent-section-toggle">
+				<ChevronDown size={14} className={cx("shrink-0 text-mut transition-transform", !open && "-rotate-90")} />
+				<span className="font-semibold">子代理</span>
+				<span className="truncate text-xs text-mut">后台干活用的模型、并发和最长运行时间</span>
+			</button>
+			{open && (
+				<div className="mt-3 space-y-4 border-l border-line pl-3">
+					<SubagentModels />
+					<SubagentConcurrency />
+				</div>
+			)}
+		</section>
 	);
 }
 

@@ -23,6 +23,8 @@
   button { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:7px 14px; font:inherit; cursor:pointer }
   button.pri { background:var(--acc); border-color:var(--acc); color:#fff }
   [hidden] { display:none !important }
+  /* macOS 桌面窗口：标题栏是透明覆盖式，红黄绿按钮浮在左上角，顶部多留一条，别被压住 */
+  html.macos-tauri body { padding-top: 52px }
 </style>
 </head>
 <body>

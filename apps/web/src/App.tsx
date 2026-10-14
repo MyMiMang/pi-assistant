@@ -13,7 +13,7 @@ import { useStore } from "./store";
 import { clampPane, clampSide, PANE, resolveLayout, SIDE, useWindowWidth } from "./layout";
 import { Resizer } from "./components/Resizer";
 import { BRAND } from "@pi-assistant/shared";
-import { SubagentChat, SubagentTabs } from "./components/Subagents";
+import { SubagentChat } from "./components/Subagents";
 import { ImageViewerHost } from "./components/ImageViewer";
 
 export default function App() {
@@ -131,7 +131,6 @@ export default function App() {
 				</div>
 			)}
 			<main className="pa-chat">
-				<SubagentTabs tabs={tabs} />
 				<div className="pa-chat" style={{ display: subagent ? "none" : undefined }} data-testid="main-conversation">{room ? <RoomChat roomId={room} /> : current ? <Chat agentId={current} /> : null}</div>
 				{tabs.map((tab) => <div key={tab.id} className="pa-chat" style={{ display: subagent === tab.id ? undefined : "none" }}><SubagentChat id={tab.id} visible={subagent === tab.id} /></div>)}
 			</main>

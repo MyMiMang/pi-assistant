@@ -51,13 +51,11 @@ const probe = (loc) => loc.evaluate((el) => {
 		hostLabel: labelShown("host-tier-pill"),
 		modelLabel: labelShown("model-picker"),
 		proactiveLabel: labelShown("proactive-picker"),
-		thinkingLabel: labelShown("thinking-picker"),
 		hostAria: q("host-tier-pill")?.getAttribute("aria-label") ?? "",
 		hostTitle: q("host-tier-pill")?.getAttribute("title") ?? "",
 		modelAria: q("model-picker")?.getAttribute("aria-label") ?? "",
 		modelTitle: q("model-picker")?.getAttribute("title") ?? "",
 		proactiveAria: q("proactive-picker")?.getAttribute("aria-label") ?? "",
-		thinkingAria: q("thinking-picker")?.getAttribute("aria-label") ?? "",
 		computerChip: [...el.querySelectorAll("button")].filter((b) => /助理电脑/.test(b.textContent)).length,
 		approvalFoot: [...el.closest(".pa-composer-wrap").querySelectorAll(".pa-foot-note")].filter((n) => /请你批准/.test(n.textContent)).length,
 	};
@@ -108,7 +106,7 @@ try {
 	check("header 不再有「电脑」chip", !(await headActions.locator("button").allTextContents()).some((t) => t.trim() === "电脑"));
 	let m = await probe(composer);
 	assertClean("1440", m);
-	check("1440：文字标签显示", m.hostLabel === true && m.modelLabel === true, JSON.stringify({ h: m.hostLabel, mo: m.modelLabel, p: m.proactiveLabel, t: m.thinkingLabel }));
+	check("1440：文字标签显示", m.hostLabel === true && m.modelLabel === true, JSON.stringify({ h: m.hostLabel, mo: m.modelLabel, p: m.proactiveLabel }));
 	await page.screenshot({ path: join(OUT, "01-single-1440-wide.png") });
 
 	// ---------------- 2) 1440 打开信息面板 → 点「电脑」tab（保留的入口）
@@ -126,7 +124,7 @@ try {
 	await page.waitForTimeout(500);
 	m = await probe(composer);
 	assertClean("1280-挤压", m);
-	check("1280-挤压：文字标签隐藏（只留图标）", m.hostLabel === false && m.modelLabel === false, JSON.stringify({ w: m.width, c: m.content, h: m.hostLabel, mo: m.modelLabel, p: m.proactiveLabel, t: m.thinkingLabel }));
+	check("1280-挤压：文字标签隐藏（只留图标）", m.hostLabel === false && m.modelLabel === false, JSON.stringify({ w: m.width, c: m.content, h: m.hostLabel, mo: m.modelLabel, p: m.proactiveLabel }));
 	await page.screenshot({ path: join(OUT, "03-single-1280-squeezed.png") });
 
 	// 按钮仍可点击（图标态）
@@ -190,9 +188,12 @@ try {
 	await box.waitFor();
 	await box.fill(LONG);
 	await page.keyboard.press("Shift+Enter");
-	const card = page.locator("[data-testid=subagent-card]").last();
-	await card.waitFor();
-	await card.locator("button").first().click();
+	// 子代理任务从 header 的「子代理」入口 → 任务概览 → 详情（聊天里不再显示指令卡）
+	await page.getByTestId("subagent-tasks").waitFor({ timeout: 30_000 });
+	await page.getByTestId("subagent-tasks").click();
+	const taskRow = page.getByTestId("subagent-row").first();
+	await taskRow.waitFor();
+	await taskRow.click();
 	const panel = page.locator('[data-testid="subagent-detail"]:visible');
 	await panel.waitFor();
 	const subComposer = panel.locator(".pa-composer");

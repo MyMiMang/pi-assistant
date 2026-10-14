@@ -1,4 +1,4 @@
-import { Download, File as FileIc, FileArchive, FileCode, FileImage, FileSpreadsheet, FileText, Loader2, Paperclip, Presentation, X } from "lucide-react";
+import { AlertCircle, Download, File as FileIc, FileArchive, FileCode, FileImage, FileSpreadsheet, FileText, Loader2, Paperclip, Presentation, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { download, fetchBlob } from "../api";
 import type { Attachment } from "../types";
@@ -61,6 +61,8 @@ export default function Attachments({ items, mine }: { items: Attachment[]; mine
 
 // ------------------------------------------------------------------ 输入框附件（单聊和群聊共用）
 export const MAX_UPLOAD = 100 * 1024 * 1024;
+/** 还在上传、还没拿到 fileId 的附件（图片带本地预览 blob） */
+export type Pending = { key: string; name: string; size: number; preview?: string; error?: string };
 export const ATTACH_HINT =
 	"添加图片或文件（也可以拖进来、直接粘贴截图）。单个文件不超过 100MB。\n助理能看到什么：图片会直接给支持看图的模型（不支持看图的模型只知道文件路径）；PDF、Word、Excel、PPT、文本会自动提取文字（最多约 2 万 token，扫描版 PDF 没有文字）；完整文件放在助理的工作区里，它可以用工具打开。";
 
@@ -93,10 +95,30 @@ const SEES: Record<ReturnType<typeof fileKind>, string> = {
 
 export function useAttachUploader(uploadFn: (f: File) => Promise<Attachment>) {
 	const [files, setFiles] = useState<Attachment[]>([]);
+	const [pending, setPending] = useState<Pending[]>([]);
 	const [uploading, setUploading] = useState(0);
 	const [error, setError] = useState("");
 	const fn = useRef(uploadFn);
 	fn.current = uploadFn;
+	const seq = useRef(0);
+	// 上传中的本地预览 blob：只给 tray 缩略图用，不交给 ImageViewer（查看器自己拉服务端文件、自己管生命周期），
+	// 所以卸载/移除时撤销不会打断已经打开的查看器。
+	const previews = useRef(new Map<string, string>());
+	const dropPreview = (key: string) => {
+		const u = previews.current.get(key);
+		if (u) {
+			URL.revokeObjectURL(u);
+			previews.current.delete(key);
+		}
+	};
+	useEffect(() => () => {
+		previews.current.forEach((u) => URL.revokeObjectURL(u));
+		previews.current.clear();
+	}, []);
+	const removePending = (key: string) => {
+		dropPreview(key);
+		setPending((p) => p.filter((x) => x.key !== key));
+	};
 	const addFiles = async (list: FileList | File[]) => {
 		setError("");
 		for (const raw of Array.from(list)) {
@@ -106,38 +128,88 @@ export function useAttachUploader(uploadFn: (f: File) => Promise<Attachment>) {
 				setError(`「${f.name}」超过 100MB，发不了。可以压缩或拆分后再发。`);
 				continue;
 			}
+			const key = `u${++seq.current}`;
+			const preview = f.type.startsWith("image/") && f.type !== "image/svg+xml" ? (previews.current.set(key, URL.createObjectURL(f)), previews.current.get(key)) : undefined;
+			setPending((p) => [...p, { key, name: f.name, size: f.size, preview }]);
 			setUploading((n) => n + 1);
 			try {
 				const info = await fn.current(f);
 				setFiles((x) => [...x, info]);
+				dropPreview(key);
+				setPending((p) => p.filter((x) => x.key !== key));
 			} catch (e) {
-				setError(`「${f.name}」上传失败：${(e as Error).message}`);
+				setPending((p) => p.map((x) => (x.key === key ? { ...x, error: (e as Error).message } : x)));
 			} finally {
 				setUploading((n) => n - 1);
 			}
 		}
 	};
-	return { files, setFiles, uploading, error, addFiles, clear: () => (setFiles([]), setError("")) };
+	return { files, setFiles, pending, uploading, error, addFiles, removePending, clear: () => (setFiles([]), setPending((p) => (p.forEach((x) => dropPreview(x.key)), [])), setError("")) };
 }
 
-export function AttachTray({ files, uploading, error, onRemove }: { files: Attachment[]; uploading: number; error?: string; onRemove: (id: string) => void }) {
-	if (!files.length && !uploading && !error) return null;
+export function AttachTray({ files, pending = [], uploading, error, onRemove, onRemovePending }: { files: Attachment[]; pending?: Pending[]; uploading: number; error?: string; onRemove: (id: string) => void; onRemovePending?: (key: string) => void }) {
+	if (!files.length && !pending.length && !uploading && !error) return null;
 	return (
 		<div className="flex flex-wrap gap-2 pb-2" data-testid="attach-tray">
-			{files.map((f) => (
-				<span key={f.fileId} className="pa-chip sm !h-7 max-w-full" title={`${f.name}\n${SEES[fileKind(f.name)]}`} data-testid="attach-chip">
-					<FileKindIcon name={f.name} size={12} /> <span className="max-w-[160px] truncate">{f.name}</span> <span className="text-mut2">{fmtSize(f.size)}</span>
-					<button onClick={() => onRemove(f.fileId)} aria-label="移除">
-						<X size={12} />
-					</button>
-				</span>
-			))}
+			{files.map((f) =>
+				f.mime.startsWith("image/") && f.mime !== "image/svg+xml" ? (
+					<TrayThumb
+						key={f.fileId}
+						name={f.name}
+						authPath={`/api/files/${f.fileId}?inline=1`}
+						onRemove={() => onRemove(f.fileId)}
+						onOpen={() => openImageViewer({ authPath: `/api/files/${f.fileId}?inline=1`, alt: f.name, name: f.name, downloadPath: `/api/files/${f.fileId}` })}
+					/>
+				) : (
+					<FileChip key={f.fileId} name={f.name} size={f.size} onRemove={() => onRemove(f.fileId)} />
+				),
+			)}
+			{pending.map((p) =>
+				p.preview ? <TrayThumb key={p.key} name={p.name} preview={p.preview} busy={!p.error} error={p.error} onRemove={() => onRemovePending?.(p.key)} /> : <FileChip key={p.key} name={p.name} size={p.size} busy={!p.error} error={p.error} onRemove={() => onRemovePending?.(p.key)} />,
+			)}
 			{uploading > 0 && (
 				<span className="flex items-center gap-1 text-xs text-mut">
 					<Loader2 size={12} className="animate-spin" /> 上传中…
 				</span>
 			)}
 			{error && <span className="w-full text-xs text-red-600" data-testid="attach-error">{error}</span>}
+		</div>
+	);
+}
+
+/** 非图片：保留原来的文件 chip（文件名 + 大小 + 移除） */
+function FileChip({ name, size, busy, error, onRemove }: { name: string; size: number; busy?: boolean; error?: string; onRemove: () => void }) {
+	return (
+		<span className={cx("pa-chip sm !h-7 max-w-full", error && "border-red-400")} title={`${name}\n${error ?? SEES[fileKind(name)]}`} data-testid="attach-chip" data-kind="file">
+			{busy ? <Loader2 size={12} className="animate-spin" /> : <FileKindIcon name={name} size={12} />} <span className="max-w-[160px] truncate">{name}</span> <span className="text-mut2">{fmtSize(size)}</span>
+			<button onClick={onRemove} aria-label={`移除 ${name}`} data-testid="attach-remove">
+				<X size={12} />
+			</button>
+		</span>
+	);
+}
+
+/** 图片：72px 缩略图，点击复用全屏查看器；上传中/失败盖一层状态。 */
+function TrayThumb({ name, authPath, preview, busy, error, onOpen, onRemove }: { name: string; authPath?: string; preview?: string; busy?: boolean; error?: string; onOpen?: () => void; onRemove: () => void }) {
+	const box = "relative h-[72px] w-[72px] overflow-hidden rounded-lg border bg-hover";
+	const face = preview ? <img src={preview} alt={name} className="h-full w-full object-cover" /> : authPath ? <AuthImage path={authPath} alt={name} className="h-full w-full object-cover" /> : <FileKindIcon name={name} className="pa-ic" />;
+	return (
+		<div className="relative" data-testid="attach-chip" data-kind="image" title={error ? `${name}\n${error}` : `${name}\n点击预览`}>
+			{onOpen ? (
+				<button type="button" className={cx(box, "cursor-zoom-in", error ? "border-red-400" : "border-line")} onClick={onOpen} aria-label={`预览 ${name}`} data-testid="attach-thumb">
+					{face}
+				</button>
+			) : (
+				<div className={cx(box, error ? "border-red-400" : "border-line")} data-testid="attach-thumb">
+					{face}
+				</div>
+			)}
+			{(busy || error) && (
+				<span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/40 text-white">{error ? <AlertCircle size={16} /> : <Loader2 size={16} className="animate-spin" />}</span>
+			)}
+			<button type="button" className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white shadow transition hover:bg-black/80" onClick={onRemove} aria-label={`移除 ${name}`} data-testid="attach-remove">
+				<X size={12} />
+			</button>
 		</div>
 	);
 }

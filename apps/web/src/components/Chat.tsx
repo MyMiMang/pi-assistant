@@ -1,6 +1,6 @@
-import { SubagentCard, SubagentTasks } from "./Subagents";
+import { SubagentTasks } from "./Subagents";
 import { HostControlBar, HostTierPill } from "./HostControl";
-import { ModelPicker, ThinkingPicker } from "./ModelPicker";
+import { ModelPicker } from "./ModelPicker";
 import { ContextRing } from "./ContextRing";
 import { ProactivityPicker } from "./Proactive";
 import { ArrowUp, Menu, PanelRight, Square, Users } from "lucide-react";
@@ -9,7 +9,7 @@ import { api, upload } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
 import { resolveLayout, useWindowWidth } from "../layout";
-import type { Agent, Attachment, Message } from "../types";
+import type { Agent, Attachment } from "../types";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
 import { Avatar, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
@@ -17,12 +17,12 @@ import { COMPOSER_LABEL, isSendKey, SEND_HINT } from "../composer";
 
 import { group, BotTurn as SharedBotTurn, BotPart as SharedBotPart, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
 export { Activity, activityOf, Thinking, group, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
-const renderSubagent = (m: Message) => <SubagentCard m={m} />;
-export function BotPart(props: { p: Part; live: boolean }) {
-	return <SharedBotPart {...props} renderSubagent={renderSubagent} />;
+// 聊天里不再显示子代理指令卡：任务统一从 header 的「子代理」入口 → 任务概览 → 详情查看。
+export function BotPart(props: { p: Part; live: boolean; busy?: boolean }) {
+	return <SharedBotPart {...props} />;
 }
 function BotTurn(props: { row: Extract<Row, { kind: "bot" }> | null; agent: Agent; live: boolean }) {
-	return <SharedBotTurn {...props} renderSubagent={renderSubagent} />;
+	return <SharedBotTurn {...props} />;
 }
 
 // ------------------------------------------------------------------ 主体
@@ -91,7 +91,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 							<span className="max-sm:hidden">回到群聊</span>
 						</button>
 					)}
-					<SubagentTasks agentId={agent.id} conversation={useStore.getState().convs[agent.id]?.current} />
+					<SubagentTasks withMain agentId={agent.id} conversation={useStore.getState().convs[agent.id]?.current} />
 					<ConversationMenu agentId={agent.id} />
 					{/* 「电脑」入口在右侧信息面板的电脑 tab 里，这里不再重复放一个 */}
 					<button className={cx("pa-icon-btn ghost", info && "!bg-hover")} onClick={() => set({ info: !info })} aria-label="信息面板" title={info ? "收起信息面板" : "打开信息面板"}>
@@ -133,7 +133,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 // ------------------------------------------------------------------ 悬浮输入框：拖拽文件 / 粘贴图片
 function Composer({ agentId, name, model, running, drag, ref }: { agentId: string; name: string; model?: string; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }> }) {
 	const [text, setText] = useState("");
-	const { files, setFiles, uploading, error: upErr, addFiles, clear } = useAttachUploader((f) => upload(agentId, f));
+	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f) => upload(agentId, f));
 	const ta = useRef<HTMLTextAreaElement>(null);
 	useLayoutEffect(() => {
 		const el = ta.current;
@@ -153,7 +153,7 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 		<div className="pa-composer-wrap">
 			<div className={cx("pa-composer @container", drag && "drag")}>
 				{drag && <div className="pointer-events-none pb-2 text-center text-sm text-accent">松开即可把文件发给 {name}</div>}
-				<AttachTray files={files} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} />
+				<AttachTray files={files} pending={pending} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} onRemovePending={removePending} />
 				<textarea
 					ref={ta}
 					rows={1}
@@ -174,7 +174,6 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 					<HostTierPill agentId={agentId} />
 					<ProactivityPicker agentId={agentId} />
 					<span className="flex-1" />
-					<ThinkingPicker agentId={agentId} />
 					<ContextRing agentId={agentId} running={!!running} />
 					<ModelPicker agentId={agentId} />
 					</div>

@@ -658,7 +658,7 @@ await step("Phase 2：定时任务（助理创建需审批 → 定时任务页 �
 	await infoTab("定时任务");
 	const item = pane.locator("[data-testid=routine-item]").first();
 	await item.getByText("每日简报").waitFor();
-	await item.getByText("0 8 * * *").waitFor();
+	await item.getByText("每天 08:00").waitFor();
 	await item.getByRole("button", { name: "运行" }).click();
 	await item.getByText(/上次：/).waitFor({ timeout: 15_000 });
 	await item.getByText("完成").first().waitFor({ timeout: 30_000 });
@@ -942,14 +942,14 @@ await step("多个自定义服务（中文名）：各自独立 id；默认模�
 		const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
 		const p = await c.newPage();
 		await p.goto(`${BASE}/?settings=models`);
-		const sel = p.getByTestId("default-model-select");
-		await sel.locator('optgroup[label="另一家中转"]').waitFor({ state: "attached", timeout: 15_000 });
-		const groups = await sel.locator("optgroup").evaluateAll((g) => g.map((x) => x.label));
-		if (!groups.includes("灯灯国产") || !groups.includes("另一家中转")) throw new Error(`默认模型下拉没按服务分组：${groups}`);
-		const texts = await sel.locator("option").allTextContents();
-		if (texts.some((t) => /custom-/.test(t))) throw new Error(`下拉里出现了内部 id：${texts.filter((t) => /custom-/.test(t))}`);
-		await sel.selectOption(`${ids[1]}/relay-chat`);
-		await p.getByRole("button", { name: "设为默认模型" }).click();
+		await p.getByTestId("default-model-picker").click();
+		const dmenu = p.getByTestId("default-model-menu");
+		await dmenu.waitFor();
+		const groups = await dmenu.locator('[data-testid^="default-model-group-"]').allTextContents();
+		if (!groups.some((t) => t.includes("灯灯国产")) || !groups.some((t) => t.includes("另一家中转"))) throw new Error(`默认模型菜单没按服务分组：${groups}`);
+		if ((await dmenu.innerText()).includes("custom-")) throw new Error("默认模型菜单里出现了内部 id");
+		await dmenu.getByTestId("default-model-search").fill("relay-chat");
+		await dmenu.locator(`[data-testid="default-model-option"][data-model="${ids[1]}/relay-chat"]`).click();
 		await p.getByText("当前：另一家中转 / relay-chat").waitFor({ timeout: 10_000 });
 		await p.screenshot({ path: join(SHOTS, "70-custom-providers-names.png") });
 		await c.close();
@@ -1207,11 +1207,11 @@ await step("权限档位：输入框工具栏「助理电脑」旁的权限按�
 	await page.waitForTimeout(300);
 });
 
-await step("输入框工具栏：模型选择（可搜索）+ 思考强度（只在支持推理的模型上出现）", async () => {
+await step("输入框工具栏：一个模型按钮里选模型 + 设思考强度（可搜索，思考强度只在支持推理的模型上出现）", async () => {
 	const mp = page.locator("[data-testid=model-picker]");
 	await mp.waitFor();
-	if (await page.locator("[data-testid=thinking-picker]").count()) throw new Error("不支持推理的模型不应显示思考强度");
 	await mp.click();
+	if (await page.locator("[data-testid=model-thinking]").count()) throw new Error("不支持推理的模型不应显示思考强度");
 	await page.locator("[data-testid=model-search]").fill("推理");
 	const opt = page.locator("[data-testid=model-option]");
 	await opt.first().waitFor();
@@ -1219,14 +1219,14 @@ await step("输入框工具栏：模型选择（可搜索）+ 思考强度（只
 	await page.waitForTimeout(200);
 	await page.screenshot({ path: join(SHOTS, "46-composer-model-picker.png") });
 	await opt.first().click();
-	await mp.getByText("Mock 推理模型").waitFor();
-	const tp = page.locator("[data-testid=thinking-picker]");
-	await tp.waitFor();
-	await tp.click();
+	await mp.getByText(/Mock 推理模型/).waitFor();
+	// 同一个菜单里设思考强度（按钮上直接显示模型 + 档位）
+	await mp.click();
+	await page.locator("[data-testid=model-thinking]").waitFor();
 	await page.locator("[data-testid=thinking-high]").click();
-	await tp.getByText("高").waitFor();
-	await tp.click();
-	await page.locator("[data-testid=thinking-menu]").waitFor();
+	await mp.getByText(/· 高/).waitFor();
+	await mp.click();
+	await page.locator("[data-testid=model-menu]").waitFor();
 	await page.waitForTimeout(200);
 	await page.screenshot({ path: join(SHOTS, "47-composer-thinking.png") });
 	await page.keyboard.press("Escape");
@@ -1235,11 +1235,14 @@ await step("输入框工具栏：模型选择（可搜索）+ 思考强度（只
 	await page.locator("main").getByText(/你好/).last().waitFor();
 	const before = await bubbleCount();
 	await page.waitForFunction((n) => document.querySelectorAll("main .prose").length > n, before - 1, { timeout: 20_000 });
-	// 换回不支持推理的模型：思考强度隐藏
+	// 换回不支持推理的模型：菜单里不再出现思考强度
 	await mp.click();
 	await page.locator("[data-testid=model-search]").fill("Mock 模型");
 	await page.locator("[data-testid=model-option]").first().click();
-	await tp.waitFor({ state: "detached", timeout: 10_000 });
+	await mp.click();
+	await page.locator("[data-testid=model-menu]").waitFor();
+	if (await page.locator("[data-testid=model-thinking]").count()) throw new Error("换回不支持推理的模型后不应显示思考强度");
+	await page.keyboard.press("Escape");
 });
 
 await step("Phase 3 渠道：飞书 / 钉钉 / 企业微信 添加表单 + 分步指引；个人微信需确认风险后开启", async () => {
@@ -1490,7 +1493,6 @@ await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上�
 		["host-tier-pill", "host-tier-menu"],
 		["proactive-picker", "proactive-menu"],
 		["model-picker", "model-menu"],
-		["thinking-picker", "thinking-menu"],
 		["context-ring", "context-pop"],
 	];
 	const problems = [];
@@ -1900,7 +1902,8 @@ await step("提议建群：聊天里说目标 → 可编辑的提议卡片（改
 	if ((await card.getByTestId("proposal-member").count()) !== 3) throw new Error("加成员");
 	await card.getByTestId("pm-remove").last().click();
 	await card.getByTestId("pm-name").nth(1).fill("写手");
-	await card.getByTestId("pm-model").nth(1).selectOption({ index: 1 });
+	await card.getByTestId("pm-model").nth(1).click();
+	await card.getByTestId("pm-model-option").first().click();
 	await card.getByTestId("pm-manager").nth(1).click();
 	await card.getByTestId("proposal-confirm").click();
 	await page.getByTestId("room-title").filter({ hasText: "发布小组" }).waitFor();
@@ -1950,12 +1953,17 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 	const card = page.getByTestId("room-proposal").last();
 	await card.waitFor({ timeout: 30_000 });
 	// 管理者「统筹」需要推理 → 挑 mock 推理模型；理由显示在卡片上
-	const sel0 = await card.getByTestId("pm-model").nth(0).inputValue();
-	if (sel0 !== "mock/echo-think") throw new Error(`统筹应挑推理模型：${sel0}`);
+	await card.getByTestId("pm-model").nth(0).click();
+	const modelMenu = card.getByTestId("pm-model-menu");
+	await modelMenu.waitFor();
+	const modelOpts = await modelMenu.getByTestId("pm-model-option").all();
+	const firstModel = await modelOpts[0].getAttribute("data-model");
+	if (firstModel !== "mock/echo-think") throw new Error(`统筹应挑推理模型：${firstModel}`);
+	const firstText = (await modelOpts[0].textContent()) ?? "";
+	if (!firstText.startsWith("★") || !/价格未知|免费|¥/.test(firstText)) throw new Error(`下拉应按分数排、带价格档：${firstText}`);
+	await page.keyboard.press("Escape");
 	const reasons = await card.getByTestId("pm-reason").allTextContents();
 	if (reasons.length !== 2 || !/推理/.test(reasons[0])) throw new Error(`理由：${reasons}`);
-	const opts = await card.getByTestId("pm-model").nth(0).locator("option").allTextContents();
-	if (!opts[1].startsWith("★") || !/价格未知|免费|¥/.test(opts[1])) throw new Error(`下拉应按分数排、带价格档：${opts}`);
 	const ranked = await (await fetch(`${BASE}/api/proposals/models?needs=vision`)).json();
 	if (ranked[0].id !== "echo" || !/看图/.test(ranked[0].reason)) throw new Error(`要看图应排 echo 第一：${JSON.stringify(ranked[0])}`);
 	await card.scrollIntoViewIfNeeded();
@@ -2004,17 +2012,19 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 	await page.getByTestId("usage-currency").selectOption("USD");
 	await page.waitForFunction(() => /\$/.test(document.querySelector("[data-testid=usage-cost]")?.textContent ?? ""), null, { timeout: 10_000 });
 	await page.getByTestId("usage-currency").selectOption("CNY");
-	// 模型擅长：点标签开关，恢复默认
+	// 模型能力（擅长）：在渠道展开后的模型行里编辑，点标签开关、恢复默认
 	await page.goto(`${BASE}/?agent=${AGENT}&settings=models`);
-	const ms = page.getByTestId("model-strengths");
-	await ms.waitFor();
-	const r0 = ms.getByTestId("strength-row").first();
-	const t = r0.getByTestId("tag-coding");
+	await page.getByTestId("provider-toggle-mock").click();
+	const pmRow = page.getByTestId("provider-models-mock").getByTestId("provider-model").first();
+	await pmRow.waitFor();
+	await pmRow.getByTestId("model-strength-toggle").click();
+	const t = page.getByTestId("strength-row").first().getByTestId("tag-coding");
+	await t.waitFor();
 	const was = await t.getAttribute("aria-pressed");
 	await t.click();
-	await page.waitForFunction((w) => document.querySelector("[data-testid=model-strengths] [data-testid=strength-row] [data-testid=tag-coding]")?.getAttribute("aria-pressed") !== w, was);
-	await ms.scrollIntoViewIfNeeded();
-	await ms.screenshot({ path: join(SHOTS, "93-model-strengths.png") });
+	await page.waitForFunction((w) => document.querySelector("[data-testid=strength-row] [data-testid=tag-coding]")?.getAttribute("aria-pressed") !== w, was);
+	await page.getByTestId("provider-accordion").scrollIntoViewIfNeeded();
+	await page.getByTestId("settings-dialog").screenshot({ path: join(SHOTS, "93-model-strengths.png") });
 	await r0.getByText("恢复默认").click();
 	// 手机宽度：用量页不横向溢出
 	const m = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN" });

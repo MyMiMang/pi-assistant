@@ -9,7 +9,7 @@ import { agentSubagentChoice, getSubagent, isLiveSubagent, listSubagents, saveAg
 
 // biome-ignore lint/suspicious/noExplicitAny: 同 http.ts
 export function mountSubagentRoutes(app: Hono<any>) {
-	app.get("/api/subagents/settings", (c) => c.json({ settings: subagentSettings(), models: configuredModels().map((m) => ({ provider: m.provider, id: m.id, name: m.name, providerName: providerNames().get(m.provider) ?? m.provider })) }));
+	app.get("/api/subagents/settings", (c) => c.json({ settings: subagentSettings(), models: configuredModels().map((m) => ({ provider: m.provider, id: m.id, name: m.name, reasoning: !!m.reasoning, providerName: providerNames().get(m.provider) ?? m.provider })) }));
 	app.put("/api/subagents/settings", async (c) => {
 		try { return c.json(saveSubagentSettings(await c.req.json<SubagentSettingsInput>())); }
 		catch (e) { return c.json({ error: String(e) }, 400); }

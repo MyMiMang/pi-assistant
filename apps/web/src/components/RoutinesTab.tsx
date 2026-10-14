@@ -3,20 +3,13 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Routine, RoutineRun } from "../types";
-import { Badge, Button, cx, fmtTime, Help, Input } from "./ui";
-
-const PRESETS: [string, string][] = [
-	["每天 08:00", "0 8 * * *"],
-	["工作日 09:00", "0 9 * * 1-5"],
-	["每周一 10:00", "0 10 * * 1"],
-	["每小时", "0 * * * *"],
-	["每 30 分钟", "*/30 * * * *"],
-];
+import { parseSchedule, scheduleCron, scheduleError, scheduleLabel, type Schedule } from "../routine-schedule";
+import { Badge, Button, cx, fmtTime, Help, Input, useConfirm } from "./ui";
 const RUN_TONE: Record<string, "green" | "red" | "amber" | "zinc" | "accent"> = { done: "green", failed: "red", skipped: "amber", cancelled: "zinc", running: "accent" };
 const RUN_LABEL: Record<string, string> = { done: "完成", failed: "失败", skipped: "跳过", cancelled: "取消", running: "运行中" };
 const TRIGGER_LABEL: Record<string, string> = { schedule: "到点", catchup: "补跑", webhook: "Webhook", manual: "手动" };
 
-type Draft = { id?: string; name: string; prompt: string; trigger: "cron" | "webhook"; cron: string; quiet: boolean };
+type Draft = { id?: string; name: string; prompt: string; trigger: "cron" | "webhook"; cron: string; quiet: boolean; quietWindow?: Routine["quiet"] };
 
 /** 助理信息面板 › 定时任务 */
 export function RoutinesTab({ agentId }: { agentId: string }) {
@@ -24,6 +17,20 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 	const tunnelUrl = useStore((s) => s.system?.tunnel.url);
 	const [list, setList] = useState<Routine[]>([]);
 	const [draft, setDraft] = useState<Draft | null>(null);
+	const [schedule, setSchedule] = useState<Schedule>(() => parseSchedule("0 8 * * *"));
+	const [confirmDialog, askConfirm] = useConfirm();
+	const localError = draft?.trigger === "cron" ? scheduleError(schedule) : null;
+	const openDraft = (next: Draft) => {
+		setSchedule(parseSchedule(next.cron));
+		setPreview(null);
+		setErr("");
+		setDraft(next);
+	};
+	const changeSchedule = (next: Schedule) => {
+		setSchedule(next);
+		setPreview(null);
+		if (draft) setDraft({ ...draft, cron: scheduleCron(next) ?? draft.cron });
+	};
 	const [preview, setPreview] = useState<{ ok: boolean; text?: string; error?: string } | null>(null);
 	const [runs, setRuns] = useState<Record<string, RoutineRun[]>>({});
 	const [err, setErr] = useState("");
@@ -33,14 +40,16 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 		for (const id of Object.keys(runs)) void api<RoutineRun[]>(`/api/routines/${id}/runs`).then((r) => setRuns((x) => ({ ...x, [id]: r })));
 	}, [agentId, version]);
 	useEffect(() => {
-		if (!draft) return;
-		const t = setTimeout(() => void api("/api/routines/preview", { method: "POST", json: { trigger: draft.trigger, cron: draft.cron, quietHours: draft.quiet } }).then(setPreview), 200);
-		return () => clearTimeout(t);
-	}, [draft?.cron, draft?.trigger, draft?.quiet]);
+		setPreview(null);
+		if (!draft || localError) return;
+		let active = true;
+		const t = setTimeout(() => void api<{ ok: boolean; text?: string; error?: string }>("/api/routines/preview", { method: "POST", json: { trigger: draft.trigger, cron: draft.cron, quietHours: draft.quiet } }).then((value) => { if (active) setPreview(value); }).catch((e) => { if (active) setPreview({ ok: false, error: String(e) }); }), 200);
+		return () => { active = false; clearTimeout(t); };
+	}, [draft?.id, draft?.cron, draft?.trigger, draft?.quiet, localError]);
 	const save = async () => {
-		if (!draft) return;
+		if (!draft || localError || (draft.trigger === "cron" && !preview?.ok)) return;
 		setErr("");
-		const body = { name: draft.name, prompt: draft.prompt, trigger: draft.trigger, cron: draft.trigger === "cron" ? draft.cron : null, quiet: draft.quiet ? { start: "23:00", end: "07:00" } : null };
+		const body = { name: draft.name, prompt: draft.prompt, trigger: draft.trigger, cron: draft.trigger === "cron" ? draft.cron : null, quiet: draft.quiet ? (draft.quietWindow ?? { start: "23:00", end: "07:00" }) : null };
 		try {
 			if (draft.id) await api(`/api/routines/${draft.id}`, { method: "PATCH", json: body });
 			else await api(`/api/agents/${agentId}/routines`, { method: "POST", json: body });
@@ -56,10 +65,11 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 	};
 	const hookUrl = (r: Routine) => (r.webhookPath ? `${tunnelUrl ?? location.origin}${r.webhookPath}` : "");
 	return (
-		<div className="space-y-3" data-testid="routines-tab">
+		<div className="min-w-0 space-y-3" data-testid="routines-tab">
+			{confirmDialog}
 			<div className="flex items-center gap-2">
 				<p className="flex-1 text-xs text-mut">到点自动让助理做事。 <Help>到点或收到 Webhook 时，用保存的指令唤醒助理在后台执行（电脑开着就行，不需要打开页面），结果发到聊天并推送。</Help></p>
-				<Button size="sm" variant="outline" onClick={() => setDraft({ name: "", prompt: "", trigger: "cron", cron: "0 8 * * *", quiet: true })}>
+				<Button size="sm" variant="outline" onClick={() => openDraft({ name: "", prompt: "", trigger: "cron", cron: "0 8 * * *", quiet: true })}>
 					<Plus size={14} /> 新建
 				</Button>
 			</div>
@@ -76,16 +86,21 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 					</div>
 					{draft.trigger === "cron" && (
 						<>
-							<div className="flex flex-wrap gap-1">
-								{PRESETS.map(([l, c]) => (
-									<button key={c} className={cx("pa-chip sm", draft.cron === c && "!border-accent !text-accent")} onClick={() => setDraft({ ...draft, cron: c })}>
-										{l}
-									</button>
-								))}
-							</div>
-							<Input className="font-mono" value={draft.cron} onChange={(e) => setDraft({ ...draft, cron: e.target.value })} aria-label="cron 表达式" />
+							<label className="block space-y-1 text-xs">执行频率
+								<select aria-label="执行频率" className="w-full rounded-lg border border-line bg-card p-2 text-sm" value={schedule.kind} onChange={(e) => changeSchedule({ ...schedule, kind: e.target.value as Schedule["kind"] })}>
+									<option value="daily">每天</option><option value="weekdays">工作日（周一至周五）</option><option value="weekly">每周</option><option value="interval">每隔一段时间</option><option value="advanced">高级：cron 表达式</option>
+								</select>
+							</label>
+							{schedule.kind === "advanced" ? <><Input className="font-mono" value={draft.cron} onChange={(e) => { setPreview(null); setDraft({ ...draft, cron: e.target.value }); }} aria-label="cron 表达式" /><p className="text-xs text-mut">保留原有表达式；格式为“分 时 日 月 周”。时间按任务时区计算，默认北京时间。</p></> : schedule.kind === "interval" ? <div className="flex min-w-0 items-center gap-2 text-xs">
+								<span className="shrink-0">每隔</span><Input className="min-w-0 flex-1" type="number" min={schedule.unit === "minutes" ? 5 : 1} max={schedule.unit === "minutes" ? 60 : 24} aria-label="间隔数值" value={schedule.every} onChange={(e) => changeSchedule({ ...schedule, every: e.target.value })} />
+								<select className="rounded-lg border border-line bg-card p-2" aria-label="间隔单位" value={schedule.unit} onChange={(e) => changeSchedule({ ...schedule, unit: e.target.value as Schedule["unit"], every: e.target.value === "hours" ? "1" : "30" })}><option value="minutes">分钟</option><option value="hours">小时</option></select>
+							</div> : <div className="flex flex-wrap items-center gap-2">
+								{schedule.kind === "weekly" && <select className="rounded-lg border border-line bg-card p-2 text-sm" aria-label="星期" value={schedule.weekday} onChange={(e) => changeSchedule({ ...schedule, weekday: e.target.value })}>{["日", "一", "二", "三", "四", "五", "六"].map((day, i) => <option key={day} value={i}>星期{day}</option>)}</select>}
+								<Input className="min-w-0 flex-1" type="time" aria-label="执行时间" value={schedule.time} onChange={(e) => changeSchedule({ ...schedule, time: e.target.value })} />
+							</div>}
+							{localError && <p role="alert" className="text-xs text-red-500">{localError}</p>}
 							<label className="flex items-center gap-2 text-xs">
-								<input type="checkbox" checked={draft.quiet} onChange={(e) => setDraft({ ...draft, quiet: e.target.checked })} /> 免打扰 23:00–07:00（落在时段内的执行顺延到 07:00）
+								<input type="checkbox" checked={draft.quiet} onChange={(e) => setDraft({ ...draft, quiet: e.target.checked })} /> 免打扰 {draft.quietWindow?.start ?? "23:00"}–{draft.quietWindow?.end ?? "07:00"}（时段内的执行顺延到结束）
 							</label>
 						</>
 					)}
@@ -95,7 +110,7 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 						<Button size="sm" variant="ghost" onClick={() => setDraft(null)}>
 							取消
 						</Button>
-						<Button size="sm" variant="primary" disabled={!draft.name.trim() || !draft.prompt.trim() || (draft.trigger === "cron" && !preview?.ok)} onClick={save}>
+						<Button size="sm" variant="primary" disabled={!draft.name.trim() || !draft.prompt.trim() || (draft.trigger === "cron" && (!!localError || !preview?.ok))} onClick={save}>
 							保存
 						</Button>
 					</div>
@@ -123,8 +138,8 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 								<div className="mt-1 text-xs text-mut">
 									{r.trigger === "cron" ? (
 										<>
-											<code className="font-mono">{r.cron}</code> · {r.status === "active" && r.next_run_at ? `下次 ${fmtTime(r.next_run_at)}` : "—"}
-											{r.quiet && " · 免打扰"}
+											<span className="[overflow-wrap:anywhere]">{scheduleLabel(r.cron ?? "")}</span> · {r.status === "active" && r.next_run_at ? `下次执行 ${new Date(r.next_run_at).toLocaleString("zh-CN", { timeZone: r.tz, month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", weekday: "short", hour12: false })}` : "暂无下次执行"}
+											{r.quiet && ` · 免打扰 ${r.quiet.start}–${r.quiet.end}`}
 										</>
 									) : (
 										<span className="flex items-center gap-1">
@@ -160,7 +175,7 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 							<Button size="sm" variant="ghost" onClick={() => api(`/api/routines/${r.id}/${r.status === "active" ? "pause" : "resume"}`, { method: "POST" }).then(load)}>
 								{r.status === "active" ? <Pause size={13} /> : <Play size={13} />} {r.status === "active" ? "暂停" : "恢复"}
 							</Button>
-							<Button size="sm" variant="ghost" aria-label="编辑" onClick={() => setDraft({ id: r.id, name: r.name, prompt: r.prompt, trigger: r.trigger, cron: r.cron ?? "0 8 * * *", quiet: !!r.quiet })}>
+							<Button size="sm" variant="ghost" aria-label="编辑" onClick={() => openDraft({ id: r.id, name: r.name, prompt: r.prompt, trigger: r.trigger, cron: r.cron ?? "0 8 * * *", quiet: !!r.quiet, quietWindow: r.quiet })}>
 								<Pencil size={13} />
 							</Button>
 							<Button
@@ -168,7 +183,7 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 								variant="ghost"
 								aria-label="删除定时任务"
 								onClick={async () => {
-									if (!confirm(`删除定时任务「${r.name}」？`)) return;
+									if (!(await askConfirm({ title: `删除定时任务「${r.name}」？`, danger: true, ok: "删除" }))) return;
 									await api(`/api/routines/${r.id}`, { method: "DELETE" });
 									void load();
 								}}

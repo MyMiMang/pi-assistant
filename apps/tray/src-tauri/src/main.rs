@@ -192,12 +192,30 @@ pub fn open_ui(app: &AppHandle, path: &str) {
     let opener_nav = app.clone();
     // 服务还没就绪：先显示打包进程序的启动页（不要让 WebView 显示「拒绝连接」），就绪后自动切过去
     let target = if ready { WebviewUrl::External(url) } else { WebviewUrl::App("startup.html".into()) };
-    let built = WebviewWindowBuilder::new(app, "main", target)
+    let builder = WebviewWindowBuilder::new(app, "main", target)
         .title("Pi Assistant")
         .inner_size(1280.0, 820.0)
         .min_inner_size(380.0, 560.0)
         .center()
-        .focused(true)
+        .focused(true);
+    // macOS：标题栏改成透明覆盖式（红黄绿按钮仍由系统绘制、位置和行为都不变），并隐藏窗口标题文字，
+    // 页面顶部背景就能一直顶到窗口边，不再有一条独立的深灰标题栏。
+    // 同时给页面注入 .macos-tauri 标记：只有 macOS 桌面窗口有，普通浏览器 / Windows / Linux 都没有，
+    // 页面侧据此留出顶部安全高度并放拖动区（apps/web/src/macosWindow.ts、themes/macos-titlebar.css）。
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .initialization_script(
+            // 注入标记：document start 时 <html> 可能还没建出来，用 MutationObserver 等它出现，
+            // 保证在首帧渲染前就带上 .macos-tauri（否则会闪一下没留白的布局）。
+            "(function(){function add(){var d=document.documentElement;if(d){d.classList.add('macos-tauri');return true;}return false;}\
+             if(add())return;\
+             var mo=new MutationObserver(function(){if(add())mo.disconnect();});\
+             mo.observe(document,{childList:true,subtree:true});\
+             setTimeout(function(){mo.disconnect();add();},3000);})();",
+        );
+    let built = builder
         // 页面里 target=_blank / window.open 的外部链接交给系统浏览器，不在应用里开新窗口
         .on_new_window(move |u, _| {
             let _ = opener.opener().open_url(u.as_str(), None::<&str>);

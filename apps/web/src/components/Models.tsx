@@ -2,10 +2,11 @@
  * 模型配置组件：provider 列表、登录流程、默认模型选择与连接测试。
  * 全部数据来自服务端的 Pi provider 目录，Pi 新增 provider/登录方式时这里自动支持。
  */
-import { ModelOptions } from "./ModelOptions";
-import { CheckCircle2, Copy, ExternalLink, KeyRound, Loader2, LogOut, Search, Sparkles, XCircle } from "lucide-react";
+import { ModelOptions, modelLabel } from "./ModelOptions";
+import { Brain, CheckCircle2, ChevronDown, Copy, ExternalLink, KeyRound, Loader2, LogOut, Pencil, Plus, Search, Sparkles, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { THINKING_DESC, THINKING_LABEL } from "./ModelPicker";
+import { ModelPickerButton, THINKING_LABEL, useConfiguredModels } from "./ModelPicker";
+import { StrengthTags, type StrengthModel, type StrengthTag } from "./ModelStrengths";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { ModelInfo, Provider } from "../types";
@@ -59,8 +60,126 @@ export function ProviderList({ providers, onPick, selected }: { providers: Provi
 	);
 }
 
-/** 通用登录流程：渲染 Pi 发来的 prompt / auth_url / device_code / progress 事件。 */
-export function LoginFlow({ provider, type, onDone }: { provider: Provider; type: "api_key" | "oauth"; onDone: (ok: boolean) => void }) {
+/** 设置 › 模型 › 模型服务：内置服务和用户添加的渠道分组、按服务折叠；展开看这个服务支持的模型和登录 / 编辑配置，
+ *  每个模型行里再展开「能力」改擅长标签（原来那个全局长清单去掉）。 */
+export function ProviderAccordion({ providers, onEditCustom, onConfigured, strengths }: { providers: Provider[]; onEditCustom: (id: string) => void; onConfigured: () => void; strengths: ReturnType<typeof import("./ModelStrengths").useModelStrengths> }) {
+	const [q, setQ] = useState("");
+	const [open, setOpen] = useState<string[]>([]);
+	const list = useMemo(() => {
+		const f = providers.filter((p) => !q || `${p.name} ${p.id}`.toLowerCase().includes(q.toLowerCase()));
+		return f.sort((a, b) => Number(b.id === "mock") - Number(a.id === "mock") || Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name));
+	}, [providers, q]);
+	const groups: { key: string; title: string; items: Provider[] }[] = [
+		{ key: "builtin", title: "内置服务", items: list.filter((p) => !p.custom) },
+		{ key: "mine", title: "我的渠道", items: list.filter((p) => p.custom) },
+	];
+	return (
+		<div className="space-y-3" data-testid="provider-accordion">
+			<div className="relative">
+				<Search size={15} className="absolute top-2.5 left-2.5 text-zinc-400" />
+				<Input placeholder={`搜索 ${providers.length} 个模型服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" />
+			</div>
+			{groups.map((g) =>
+				g.items.length ? (
+					<div key={g.key} className="space-y-2">
+						<div className="text-xs font-semibold text-mut" data-testid={`provider-group-${g.key}`}>
+							{g.title}（{g.items.length}）
+						</div>
+						{g.items.map((p) => (
+							<ProviderRow key={p.id} provider={p} open={open.includes(p.id)} onToggle={() => setOpen((l) => (l.includes(p.id) ? l.filter((x) => x !== p.id) : [...l, p.id]))} onEditCustom={onEditCustom} onConfigured={onConfigured} strengths={strengths} />
+						))}
+					</div>
+				) : null,
+			)}
+		</div>
+	);
+}
+
+const SOURCE_LABEL: Record<string, string> = { stored: "已保存凭据", models_json_key: "写在 models.json 的 Key", runtime: "运行时登录", env: "环境变量", environment: "环境变量" };
+
+/** 渠道折叠卡：标题一行显示名称 / 状态 / 模型数，展开后是该服务支持的模型（含能力标签编辑）和登录 / 编辑配置 */
+function ProviderRow({ provider, open, onToggle, onEditCustom, onConfigured, strengths }: { provider: Provider; open: boolean; onToggle: () => void; onEditCustom: (id: string) => void; onConfigured: () => void; strengths: ReturnType<typeof import("./ModelStrengths").useModelStrengths> }) {
+	const [models, setModels] = useState<ModelInfo[] | null>(null);
+	const [mq, setMq] = useState("");
+	useEffect(() => {
+		if (!open || models) return;
+		void api<ModelInfo[]>(`/api/models?provider=${encodeURIComponent(provider.id)}`)
+			.then(setModels)
+			.catch(() => setModels([]));
+	}, [open, models, provider.id]);
+	const shown = (models ?? []).filter((m) => !mq || `${m.name} ${m.id}`.toLowerCase().includes(mq.toLowerCase()));
+	const labels: StrengthTag[] = strengths.data?.labels ?? [];
+	return (
+		<div className="rounded-xl border border-line" data-testid="provider-row" data-provider={provider.id}>
+			<button className="flex w-full items-center gap-2 p-3 text-left" onClick={onToggle} aria-expanded={open} data-testid={`provider-toggle-${provider.id}`}>
+				<ChevronDown size={14} className={cx("shrink-0 text-mut transition-transform", !open && "-rotate-90")} />
+				<span className="min-w-0 flex-1 truncate text-sm font-medium">{provider.id === "mock" ? "Mock 模型（本地测试）" : provider.name}</span>
+				{provider.configured && <CheckCircle2 size={14} className="shrink-0 text-emerald-500" aria-label="已配置" />}
+				{provider.custom && <Badge tone="amber">自定义</Badge>}
+				<span className="shrink-0 text-[11px] text-zinc-400">{provider.modelCount} 个模型</span>
+			</button>
+			{open && (
+				<div className="space-y-3 border-t border-line p-3">
+					<div className="flex flex-wrap gap-1">
+						{provider.id === "mock" ? <Badge tone="amber">无需 Key</Badge> : null}
+						{provider.apiKey && provider.id !== "mock" && !provider.custom && <Badge>API Key</Badge>}
+						{provider.oauth && <Badge tone="accent">{provider.oauth.isSubscription ? "订阅登录" : "OAuth 登录"}</Badge>}
+						{provider.configured && <Badge tone="accent">已配置{provider.source && SOURCE_LABEL[provider.source] ? `（${SOURCE_LABEL[provider.source]}）` : ""}</Badge>}
+					</div>
+					<div className="space-y-1.5">
+						<div className="flex items-center justify-between gap-2">
+							<span className="text-xs font-medium text-zinc-500">支持的模型（{provider.modelCount}）</span>
+							{provider.modelCount > 12 && <Input placeholder="筛选模型…" value={mq} onChange={(e) => setMq(e.target.value)} className="!h-7 !w-40 !px-2 !text-xs" />}
+						</div>
+						<div className="max-h-64 divide-y divide-line overflow-y-auto rounded-lg border border-line" data-testid={`provider-models-${provider.id}`}>
+							{models === null && <div className="p-2 text-xs text-mut">加载中…</div>}
+							{models !== null && !shown.length && <div className="p-2 text-xs text-mut">{mq ? "没有匹配的模型" : "这个服务没有列出模型"}</div>}
+							{shown.map((m) => (
+								<ProviderModelRow key={m.id} provider={provider.id} m={m} labels={labels} strength={strengths.byModel.get(`${provider.id}/${m.id}`)} onPut={(tags) => void strengths.put(provider.id, m.id, tags)} />
+							))}
+						</div>
+						<div className="text-[11px] text-mut2">点模型行的「能力」可以改它擅长的方向（建群时按这个挑模型）。</div>
+					</div>
+					{provider.custom ? (
+						<Button size="sm" variant="outline" onClick={() => onEditCustom(provider.id)} data-testid={`provider-edit-${provider.id}`}>
+							<Pencil size={14} /> 编辑渠道（模型 / Key / 请求头）
+						</Button>
+					) : (
+						<ProviderSetup provider={provider} onConfigured={onConfigured} />
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** 渠道里的一个模型：一行显示模型 id / 名称 / 推理标记；有擅长标签时展开「能力」编辑 */
+function ProviderModelRow({ provider, m, labels, strength, onPut }: { provider: string; m: ModelInfo; labels: StrengthTag[]; strength?: StrengthModel; onPut: (tags: string[] | null) => void }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<div data-testid="provider-model" data-model={`${provider}/${m.id}`}>
+			<div className="flex items-center gap-2 px-2.5 py-1.5 text-xs">
+				<span className="min-w-0 flex-1 truncate font-mono" title={m.id}>
+					{m.id}
+				</span>
+				{m.name && m.name !== m.id && <span className="max-w-[45%] shrink-0 truncate text-mut">{m.name}</span>}
+				{m.reasoning && <Brain size={11} className="shrink-0 text-mut" aria-label="支持推理" />}
+				{strength && labels.length > 0 && (
+					<button className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-mut2 hover:bg-hover hover:text-fg" onClick={() => setOpen(!open)} aria-expanded={open} data-testid="model-strength-toggle">
+						能力{strength.tags.length ? ` ${strength.tags.length}` : ""}
+					</button>
+				)}
+			</div>
+			{open && strength && (
+				<div className="px-2.5 pb-2">
+					<StrengthTags labels={labels} model={strength} onPut={onPut} />
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** 通用登录流程：渲染 Pi 发来的 prompt / auth_url / device_code / progress 事件。 */export function LoginFlow({ provider, type, onDone }: { provider: Provider; type: "api_key" | "oauth"; onDone: (ok: boolean) => void }) {
 	const [flowId, setFlowId] = useState<string | null>(null);
 	const events = useStore((s) => (flowId ? s.loginEvents[flowId] : undefined)) ?? EMPTY;
 	const [value, setValue] = useState("");
@@ -202,38 +321,57 @@ export function ProviderSetup({ provider, onConfigured }: { provider: Provider; 
 	);
 }
 
+/** 默认使用：一个按钮同时设「默认模型」和「新助理的思考强度」，复用输入栏同一个模型菜单（搜索 / 常用 / 按渠道折叠） */
 export function DefaultModelPicker({ providerId, onSaved }: { providerId?: string; onSaved?: () => void }) {
 	const system = useStore((s) => s.system);
-	const [models, setModels] = useState<ModelInfo[]>([]);
-	const [sel, setSel] = useState(system?.defaultModel ? `${system.defaultModel.provider}/${system.defaultModel.id}` : "");
+	const d = useConfiguredModels();
+	const [thinking, setThinking] = useState<string | null>(null);
 	const [test, setTest] = useState<{ ok: boolean; message: string } | "running" | null>(null);
 	useEffect(() => {
-		Promise.all([api<Provider[]>("/api/models/providers"), api<ModelInfo[]>(`/api/models${providerId ? `?provider=${providerId}` : ""}`)]).then(([ps, ms]) => {
-			const ok = new Set(ps.filter((p) => p.configured).map((p) => p.id));
-			const list = ms.filter((m) => ok.has(m.provider));
-			setModels(list);
-			if (!sel || !list.some((m) => `${m.provider}/${m.id}` === sel)) if (list[0]) setSel(`${list[0].provider}/${list[0].id}`);
-		});
-	}, [providerId]);
-	const split = () => {
-		const [provider, ...rest] = sel.split("/");
-		return { provider, model: rest.join("/") };
+		void api<{ thinking: string }>("/api/models/defaults")
+			.then((x) => setThinking(x.thinking))
+			.catch(() => {});
+	}, []);
+	const cur = system?.defaultModel ?? null;
+	const models = (d?.models ?? []).filter((m) => !providerId || m.provider === providerId);
+	const entry = models.find((m) => m.provider === cur?.provider && m.id === cur?.id);
+	const levels = entry?.thinking ?? [];
+	const curThinking = thinking && levels.includes(thinking) ? thinking : levels[0];
+	const saveModel = async (m: { provider: string; id: string }) => {
+		await api("/api/models/default", { method: "PUT", json: { provider: m.provider, model: m.id } });
+		await useStore.getState().loadSystem();
+		await useStore.getState().loadAgents();
+		onSaved?.();
 	};
+	const saveThinking = async (l: string) => {
+		setThinking(l);
+		await api("/api/models/default", { method: "PUT", json: { thinking: l } }).catch(() => {});
+	};
+	const text = `${entry ? modelLabel(entry) : cur ? `${cur.provider} / ${cur.id}` : "选择默认模型"}${levels.length > 1 ? ` · ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}`;
 	return (
-		<div className="space-y-3">
-			<select data-testid="default-model-select" value={sel} onChange={(e) => (setSel(e.target.value), setTest(null))} className="h-10 w-full rounded-lg border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900">
-				{models.length === 0 && <option value="">（先登录一个模型服务）</option>}
-				<ModelOptions models={models} />
-			</select>
+		<div className="space-y-2" data-testid="default-model">
 			<div className="flex flex-wrap items-center gap-2">
-				<Button variant="outline" disabled={!sel || test === "running"} onClick={async () => (setTest("running"), setTest(await api("/api/models/test", { method: "POST", json: split() })))}>
+				<ModelPickerButton
+					testid="default-model-picker"
+					id="default-model"
+					models={models}
+					providers={d?.providers ?? []}
+					value={cur}
+					thinking={levels.length > 1 ? { levels, current: curThinking, onPick: (l) => void saveThinking(l) } : null}
+					onPick={(m) => void saveModel(m)}
+					text={text}
+					placement="down"
+					onOpen={d.reload}
+					buttonClass="max-w-full"
+					title="选择默认模型和新助理的思考强度"
+					ariaLabel={`默认使用：${text}`}
+				/>
+				<Button variant="outline" size="sm" disabled={!cur || test === "running"} onClick={async () => (setTest("running"), setTest(await api("/api/models/test", { method: "POST", json: { provider: cur!.provider, model: cur!.id } })))}>
 					{test === "running" ? <Loader2 size={14} className="animate-spin" /> : null} 测试连接
 				</Button>
-				<Button variant="primary" disabled={!sel} onClick={async () => (await api("/api/models/default", { method: "PUT", json: split() }), await useStore.getState().loadSystem(), await useStore.getState().loadAgents(), onSaved?.())}>
-					设为默认模型
-				</Button>
 			</div>
-			<DefaultThinking />
+			<div className="text-xs text-mut">{cur ? `当前：${modelLabel(cur)}${levels.length > 1 ? ` · 思考 ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}` : "还没有设置默认模型"}</div>
+			<div className="text-xs text-mut">模型不支持的思考档位会自动就近调整；每个助理可以在输入框下方单独切换。</div>
 			{test && test !== "running" && (
 				<div className={cx("flex items-start gap-2 rounded-lg p-2 text-sm", test.ok ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40" : "bg-red-50 text-red-700 dark:bg-red-950/40")}>
 					{test.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <XCircle size={16} className="mt-0.5 shrink-0" />}
@@ -241,25 +379,5 @@ export function DefaultModelPicker({ providerId, onSaved }: { providerId?: strin
 				</div>
 			)}
 		</div>
-	);
-}
-
-/** 新助理的默认思考强度 */
-function DefaultThinking() {
-	const [v, setV] = useState<string | null>(null);
-	useEffect(() => void api("/api/models/defaults").then((d) => setV(d.thinking)), []);
-	if (v === null) return null;
-	return (
-		<label className="flex flex-wrap items-center gap-2 text-sm" data-testid="default-thinking">
-			<span className="text-mut">新助理的默认思考强度</span>
-			<select value={v} onChange={async (e) => (setV(e.target.value), await api("/api/models/default", { method: "PUT", json: { thinking: e.target.value } }))} className="h-9 rounded-lg border border-line bg-card px-2 text-sm">
-				{Object.keys(THINKING_LABEL).map((l) => (
-					<option key={l} value={l}>
-						{THINKING_LABEL[l]}（{THINKING_DESC[l]}）
-					</option>
-				))}
-			</select>
-			<span className="text-xs text-mut">模型不支持的档位会自动就近调整；每个助理可在输入框下方单独切换。</span>
-		</label>
 	);
 }

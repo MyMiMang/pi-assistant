@@ -1,4 +1,5 @@
 import { SubagentModels } from "./Subagents";
+import { TaskRow, taskTitle } from "./Tasks";
 import { DesktopView } from "./DesktopView";
 import { fmtMoney, useFx } from "./usage-fmt";
 import { ChevronLeft, Download, File, Folder, HardDrive, X } from "lucide-react";
@@ -107,14 +108,7 @@ function Overview({ agentId }: { agentId: string }) {
 				<div className="pa-pane-label">{t("后台任务")}</div>
 				{list.length === 0 && <div className="text-xs text-zinc-500">还没有后台任务</div>}
 				<div className="space-y-1.5">
-					{list.slice(0, 20).map((x) => (
-						<div key={x.id} className="flex items-center gap-2 rounded-lg bg-hover px-3 py-2">
-							<span className="min-w-0 flex-1 truncate">{x.title}</span>
-							<Badge tone={x.status === "done" ? "green" : x.status === "failed" ? "red" : x.status === "running" ? "accent" : "zinc"}>
-								{{ queued: "排队", running: "进行中", done: "完成", failed: "失败", cancelled: "取消" }[x.status] ?? x.status}
-							</Badge>
-						</div>
-					))}
+					{list.slice(0, 20).map((x) => <TaskRow key={x.id} title={x.title || taskTitle(x.instructions)} status={x.status} />)}
 				</div>
 			</section>
 		</div>

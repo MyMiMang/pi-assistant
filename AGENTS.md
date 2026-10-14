@@ -41,10 +41,18 @@ Mock 模型（`packages/server/src/pi-adapter/mock-provider.ts`）按关键词�
 - 版本号取自 tag，不需要手动改。
 
 ## 约定
-- **用户一提出新需求或计划，马上记进 [docs/ROADMAP.md](docs/ROADMAP.md)**（写清原话大意和状态），做完再更新状态；进度同步写进 HANDOFF。
+- 文档和代码同等重要：新需求马上记进 [docs/ROADMAP.md](docs/ROADMAP.md)，做完同步 ROADMAP / HANDOFF（必要时 DESIGN）——具体标准见文末「文档维护（交付标准）」。
 - 界面文字是中文，越短越好；需要解释的放进「?」帮助气泡（`apps/web/src/components/ui.tsx` 的 `<Help>`）或悬停提示里。
 - 用到开源项目要写进 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，写明版本和许可证。下载的组件还要在 `third-party.json` 里固定版本和摘要。
 - 提交信息用中文，一行写清楚做了什么、为什么；截图更新单独提交。
 - 有后果的操作统一走 ext-approval / requests.ts；完全权限按 hostFileAccess 在应用层免审批（含受保护操作），其他档位维持审批，凭据 deny、暂停与系统权限弹窗不变。
 - 用户消息在助理忙时走 Pi `steer`（插话），不要改回 `followUp`；停止词判断统一用 `packages/server/src/interject.ts`（DESIGN §20）。
 - 新功能要加单测和 e2e，交付前跑 typecheck、单测和相关 e2e。
+
+## 文档维护（交付标准）
+每步都要留痕，不能代码做完一堆、文档还停在旧状态。三条硬要求：
+1. **新需求 / 计划**：用户一提出，立刻写进 [docs/ROADMAP.md](docs/ROADMAP.md)，一行写清**原话大意 + 状态 + 验收点**；需求变了先改这一行，再改设计。
+2. **做完**：同步三处——ROADMAP 改状态（带上发布版本，如 `已完成（beta.19）`）、HANDOFF 加一条进度（**改了哪些文件 / 什么行为、实际跑了什么测试、剩余限制或待办**）；涉及设计的更新 [docs/DESIGN.md](docs/DESIGN.md) 对应章节，新能力写新章节、改动章节补一句，不整段重抄。
+3. **发布说明**：只有用户说「打包」才写 `docs/release-notes/v0.1.0-beta.N.md`；HANDOFF 顶部写清**当前公开版本**，正文里没发布的改动标注「未打包 / beta.N 候选」，**不把「已合 main」写成「已发布」**。
+
+只写事实：验收以实际跑过的测试 / 真机结果为准，**不把子代理或自己的「已完成」自报当验收**；没跑就写「未验证 / 待真机」。风格：中文短句、一条一句话，一份事情只在一个地方写详细、别处链接过去，不重复全文、不搭大而全的文档框架。

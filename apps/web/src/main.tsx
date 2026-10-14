@@ -6,7 +6,12 @@ import HostFloatBar from "./components/HostFloatBar";
 import PairPage from "./components/PairPage";
 import PetWindow from "./pet/PetWindow";
 import "./styles.css";
+import "./themes/macos-titlebar.css";
+import { installMacWindowChrome } from "./macosWindow";
 import { applyTheme, useStore } from "./store";
+
+// macOS 桌面窗口：透明覆盖式标题栏的顶部留白 + 拖动区（其他环境是空操作）
+installMacWindowChrome();
 
 const { theme, accent, skin } = useStore.getState();
 applyTheme(theme, accent, skin);

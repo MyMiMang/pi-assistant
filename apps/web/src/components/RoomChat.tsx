@@ -136,7 +136,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					</small>
 				</div>
 				<div className="pa-head-actions">
-					<SubagentTasks room={room.id} />
+					<SubagentTasks withMain room={room.id} />
 					<button className="pa-chip" onClick={() => setSettings(true)} data-testid="room-settings-btn" title="群设置">
 						<Settings2 className="pa-ic" />
 						<span className="max-sm:hidden">群设置</span>
@@ -241,7 +241,7 @@ function RoomBotTurn({ row, room, agents, live, onAvatar }: { row: Extract<RRow,
 const ALL = { agentId: "__all", name: "所有人" } as const;
 function RoomComposer({ room, running, drag, ref }: { room: Room; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }> }) {
 	const [text, setText] = useState("");
-	const { files, setFiles, uploading, error: upErr, addFiles, clear } = useAttachUploader((f) => uploadRoom(room.id, f));
+	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f) => uploadRoom(room.id, f));
 	if (ref && typeof ref === "object") (ref as React.RefObject<{ addFiles: typeof addFiles } | null>).current = { addFiles };
 	const [picked, setPicked] = useState<string[]>([]);
 	const [q, setQ] = useState<{ at: number; query: string } | null>(null);
@@ -336,7 +336,7 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 			<div className={cx("pa-composer relative @container", drag && "drag")}>
 				{q && !sheet && <div className="pa-mention-pop">{list}</div>}
 				{drag && <div className="pointer-events-none pb-2 text-center text-sm text-accent">松开即可把文件发到群里</div>}
-				<AttachTray files={files} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} />
+				<AttachTray files={files} pending={pending} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} onRemovePending={removePending} />
 				{err && <div className="pb-2 text-xs text-red-600">{err}</div>}
 				<textarea
 					ref={ta}

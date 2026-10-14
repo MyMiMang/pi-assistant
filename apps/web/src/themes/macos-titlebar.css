@@ -1,0 +1,42 @@
+/* macOS 桌面窗口的透明覆盖式标题栏：顶部安全留白 + 拖动区。
+   配合 apps/web/src/macosWindow.ts（放拖动区）和 apps/tray/src-tauri/src/main.rs
+   （macOS 上建主窗口时，把 .macos-tauri 注入到 <html>，并设置 TitleBarStyle::Overlay + hidden_title）。
+
+   .macos-tauri 只有 macOS 桌面窗口有：普通浏览器、Windows / Linux 桌面窗口、手机都没有，
+   因此这些环境完全不受影响，不会多出空白。 */
+
+/* 顶部安全高度（= macOS 交通灯那一条）；原生全屏时系统会收起标题栏，高度归零 */
+html.macos-tauri { --pa-titlebar-h: 28px; }
+html.macos-tauri.macos-fullscreen { --pa-titlebar-h: 0px; }
+
+/* 留白加在「自己画背景的那一层」上，而不是 .pa-app 上，这样标题栏区域显示的就是各栏自己的背景色，
+   不会出现一条横贯窗口的灰底分隔条；下方内容顺延，不会被交通灯压住。
+   这几栏原本的顶部留白来自 .safe-top（刘海屏），这里在它基础上再加一条标题栏高度：
+   桌面端 env(safe-area-inset-top) 为 0，实际就是 28px。 */
+html.macos-tauri .pa-app > .pa-drawer > .pa-sidebar,
+html.macos-tauri .pa-app > .pa-chat {
+  padding-top: calc(env(safe-area-inset-top) + var(--pa-titlebar-h));
+}
+/* 信息面板在 InfoPane 里写死了 Tailwind 的 !p-0（各块自己管内边距）。Tailwind 的 utilities
+   在 @layer 里，按 CSS 规则「层内的 !important 优先于层外的 !important」，所以这条必须放进
+   同一个 utilities 层，再用更高的选择器优先级盖住它。 */
+@layer utilities {
+  html.macos-tauri .pa-app > .pa-pane-wrap > .pa-pane {
+    padding-top: calc(env(safe-area-inset-top) + var(--pa-titlebar-h)) !important;
+  }
+}
+
+/* 拖动区：透明、盖住顶部安全高度那一条。z-index 高于各栏内容（.pa-app 的栏是 1），
+   低于弹层 / 抽屉遮罩（z-40 / z-50），所以弹层仍然可以正常点击。里面没有任何可点元素，
+   不会挡住按钮；拖动、双击缩放由 Tauri 的 data-tauri-drag-region 处理。 */
+html.macos-tauri #pa-mac-drag {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--pa-titlebar-h);
+  z-index: 30;
+  background: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
