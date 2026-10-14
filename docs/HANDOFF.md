@@ -16,6 +16,8 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 2026-10-14 发版：beta.13 的 Linux 两版、Mac arm64、Windows 已构建成功；Intel Mac 在 `bundle_dmg.sh` 运行约 16 分钟后失败，重试仍卡在此步骤，已取消（[run 38500745136](https://github.com/MyMiMang/pi-assistant/actions/runs/38500745136)）。上游 tauri-action 默认将 `TAURI_BUNDLER_DMG_IGNORE_CI` 设为 true，强制 Finder 排版；显式设为 false 恢复 bundler CI 模式，并给两次打包加 `--verbose`。参照 [上游问题 1091](https://github.com/tauri-apps/tauri-action/issues/1091)，这是对相同失败症状的兼容处理；beta.13 的简略日志不足以确认具体子命令。以 beta.14 重新构建验证，旧 tag 不移动、旧草稿不公开。YAML 解析和 CLI 参数检查通过，未重跑产品全量测试。
 
+2026-10-14 Intel Mac 打包改法：beta.14（[run 38503909614](https://github.com/MyMiMang/pi-assistant/actions/runs/38503909614)）上面的兼容处理无效，Intel Mac 两次 `tauri build` 各约 20 分钟后失败，其余平台全部成功，草稿未公开。beta.9 起公开版就缺 x64.dmg / x64 更新包。现改为：macOS 只用 `--bundles app` 让 Tauri 出 .app + .app.tar.gz/.sig（Tauri CLI 2.12.2 源码确认：构建 app 目标即生成更新包，latest.json 的 darwin 项不受影响），dmg 由单独步骤用 `hdiutil create`（失败重试 3 次 + verify）打成 Tauri 同名 `Pi.Assistant_<版本>_<x64|aarch64>.dmg` 传进草稿；删掉 continue-on-error/重试/XProtect/`TAURI_BUNDLER_DMG_IGNORE_CI` 等旧补丁；mac-smoke 额外挂载检查 Intel dmg（含 x86_64 二进制和更新包）。先推 release-dryrun 演练验证，不打 tag。
+
 
 | 版本 | 主要内容 |
 |---|---|
@@ -88,7 +90,7 @@ npm run check:pi         # Pi 升级兼容检查
 
 桌面程序（需要 Rust ≥ 1.90；Linux 另需 `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev`）：见 `apps/tray/README.md`。
 
-**发版**：改好后在 main 上打 tag `v0.1.0-beta.N` 并 push → `.github/workflows/release.yml` 构建 5 个任务（mac arm64 / mac x64 / Windows / Linux x64 / Linux arm64，Intel Mac 偶发失败重跑即可），同时写 `docs/release-notes/v0.1.0-beta.N.md`（中文，给用户看）；构建结果并上传到 GitHub Release（自动更新签名用仓库 secrets `TAURI_SIGNING_PRIVATE_KEY`）。测试版 tag 也发布为**正式 latest 版本**（不是 pre-release），否则 `releases/latest/download/latest.json` 404，自动更新失效；`wsl-rootfs-v*` 例外（pre-release、不设 latest）。**只有用户要求时才打 tag。**
+**发版**：改好后在 main 上打 tag `v0.1.0-beta.N` 并 push → `.github/workflows/release.yml` 构建 5 个任务（mac arm64 / mac x64 / Windows / Linux x64 / Linux arm64；macOS 只让 Tauri 出 .app + 更新包，dmg 由 hdiutil 单独打——别再改回 Tauri 的 dmg 目标，Intel runner 上 bundle_dmg.sh 会失败），同时写 `docs/release-notes/v0.1.0-beta.N.md`（中文，给用户看）；构建结果并上传到 GitHub Release（自动更新签名用仓库 secrets `TAURI_SIGNING_PRIVATE_KEY`）。测试版 tag 也发布为**正式 latest 版本**（不是 pre-release），否则 `releases/latest/download/latest.json` 404，自动更新失效；`wsl-rootfs-v*` 例外（pre-release、不设 latest）。**只有用户要求时才打 tag。**
 
 **提交习惯**：中文提交信息，一行写清楚做了什么和为什么（参考 `git log`）；截图单独一个提交（“截图：…（编号）+ 全量 e2e 结果”）。不要 force-push 共享分支。
 

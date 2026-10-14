@@ -1,5 +1,5 @@
 # 打 v* tag 时构建安装包并发布到 GitHub Releases：
-#   macOS arm64 / x64 → .dmg（+ .app.tar.gz 更新包），Windows x64 → NSIS .exe（+ 更新包）
+#   macOS arm64 / x64 → .dmg（hdiutil 打包，非 Tauri bundle_dmg.sh）（+ .app.tar.gz 更新包），Windows x64 → NSIS .exe（+ 更新包）
 # 安装包内容：Tauri 托盘程序 + 内置 Node 运行时（sidecar）+ app 目录（服务端 + Pi + 生产依赖 + 网页 + cloudflared/uv/cua-driver），
 # Linux 服务器版 x64 / arm64 → pi-assistant-<版本>-linux-<arch>.tar.gz（+ .sha256），deploy/linux/install.sh 安装。
 # 版本与 SHA256 全部以 third-party.json 为准。所有 v* tag（包括 v0.2.0-beta.1 这类测试版）都发布为正式的 latest 版本：Tauri 自动更新读 releases/latest/download/latest.json，pre-release 不算 latest，会导致更新失效。
@@ -42,8 +42,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-      # tauri-action 默认强制 Finder 排版；CI 上 AppleScript 可超时，使用 bundler 原生 CI 模式。
-      TAURI_BUNDLER_DMG_IGNORE_CI: 'false'
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -73,15 +71,11 @@ jobs:
         if: env.HAS_UPDATER_KEY != 'true'
         shell: bash
         run: echo '{"bundle":{"createUpdaterArtifacts":false}}' > apps/tray/src-tauri/tauri.nosign.json
-      - name: macOS：避免 hdiutil 卡住（Intel runner 上 XProtect/Spotlight 扫描大 .app 会让 bundle_dmg.sh 挂起）
-        if: runner.os == 'macOS'
-        run: |
-          sudo mdutil -a -i off || true
-          (for i in $(seq 1 600); do sudo pkill -9 XProtect >/dev/null 2>&1 || true; sleep 3; done) &
+      # macOS 只让 Tauri 出 .app（+ .app.tar.gz/.sig 更新包，latest.json 的 darwin 项照常生成），
+      # dmg 由下一步用 hdiutil 直接打：Tauri 自带的 bundle_dmg.sh 在 macos-15-intel runner 上反复失败/卡住（beta.9–14 都缺 x64.dmg）。
       - uses: tauri-apps/tauri-action@v0
         id: tauri
-        continue-on-error: ${{ runner.os == 'macOS' }}
-        timeout-minutes: 45
+        timeout-minutes: 40
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -89,7 +83,7 @@ jobs:
         with:
           projectPath: apps/tray
           tauriScript: npx tauri
-          args: --verbose --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
+          args: --verbose --target ${{ matrix.target }} ${{ runner.os == 'macOS' && '--bundles app' || '' }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
           tagName: ${{ env.REL_TAG }}
           releaseName: "Pi Assistant ${{ env.REL_TAG }}"
           releaseBody: ${{ env.RELEASE_NOTES }}
@@ -97,27 +91,30 @@ jobs:
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
-      - name: macOS 打包失败时重试一次（打 dmg 偶发卡住）
-        if: steps.tauri.outcome == 'failure'
-        run: rm -rf apps/tray/src-tauri/target/${{ matrix.target }}/release/bundle/dmg
-      - uses: tauri-apps/tauri-action@v0
-        id: tauri_retry
-        if: steps.tauri.outcome == 'failure'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: apps/tray
-          tauriScript: npx tauri
-          args: --verbose --target ${{ matrix.target }} ${{ env.HAS_UPDATER_KEY != 'true' && '--config src-tauri/tauri.nosign.json' || '' }}
-          tagName: ${{ env.REL_TAG }}
-          releaseName: "Pi Assistant ${{ env.REL_TAG }}"
-          releaseBody: ${{ env.RELEASE_NOTES }}
-          releaseCommitish: ${{ github.sha }}
-          releaseDraft: true
-          prerelease: false
-          includeUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
+      - name: macOS：用 hdiutil 打 dmg 并传进草稿（Tauri 同名：Pi.Assistant_<版本>_<x64|aarch64>.dmg）
+        if: runner.os == 'macOS'
+        timeout-minutes: 20
+        shell: bash
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", GH_REPO: "${{ github.repository }}" }
+        run: |
+          set -euxo pipefail
+          B="apps/tray/src-tauri/target/${{ matrix.target }}/release/bundle"
+          ls -la "$B/macos"
+          APP=$(ls -d "$B"/macos/*.app | head -1)
+          if [ "$HAS_UPDATER_KEY" = true ]; then ls "$B"/macos/*.app.tar.gz "$B"/macos/*.app.tar.gz.sig; fi
+          ARCH=$([ "${{ matrix.target }}" = x86_64-apple-darwin ] && echo x64 || echo aarch64)
+          NAME=$(basename "$APP" .app)
+          mkdir -p "$B/dmg"; OUT="$B/dmg/${NAME// /.}_${REL_TAG#v}_${ARCH}.dmg"
+          S=$(mktemp -d); cp -R "$APP" "$S/"; ln -s /Applications "$S/Applications"
+          ok=
+          for i in 1 2 3; do
+            rm -f "$OUT"
+            if hdiutil create -volname "$NAME" -srcfolder "$S" -ov -format UDZO "$OUT"; then ok=1; break; fi
+            hdiutil info || true; sleep 15
+          done
+          [ -n "$ok" ] && hdiutil verify "$OUT"
+          gh release upload "$REL_TAG" "$OUT" --clobber
+          gh release view "$REL_TAG" --json assets -q '.assets[].name'
       - uses: actions/upload-artifact@v4
         with:
           name: pi-assistant-${{ matrix.label }}
@@ -126,7 +123,7 @@ jobs:
             apps/tray/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
             apps/tray/src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.tar.gz*
             apps/tray/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.sig
-          if-no-files-found: warn
+          if-no-files-found: error
 
   linux:
     needs: prepare
@@ -178,6 +175,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: { name: pi-assistant-macOS-arm64, path: art }
+      - uses: actions/download-artifact@v4
+        with: { name: pi-assistant-macOS-x64, path: art-x64 }
+      - name: Intel 版 dmg 能挂载、里面有 .app 和更新包
+        run: |
+          set -x
+          DMG=$(find art-x64 -name '*_x64.dmg' | head -1); test -n "$DMG"
+          hdiutil attach -nobrowse -mountpoint /tmp/pia-x64 "$DMG"
+          ls -d /tmp/pia-x64/*.app && file /tmp/pia-x64/*.app/Contents/MacOS/pi-assistant-tray | grep x86_64
+          hdiutil detach /tmp/pia-x64 || hdiutil detach -force /tmp/pia-x64
+          find art-x64 -name '*.app.tar.gz*'
       - name: 挂载 dmg，启动 .app，查服务
         run: |
           set -x
