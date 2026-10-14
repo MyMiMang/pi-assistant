@@ -37,7 +37,7 @@ Mock 模型（`packages/server/src/pi-adapter/mock-provider.ts`）按关键词�
 - 用户**只通过装好的 App 自动更新**来测试，不跑源码。
 - 改动直接推到 `main`（先 `git pull --rebase`），**永远不要 force-push**。
 - **只有用户说「打包」时才打 tag**：`v0.1.0-beta.N`，同时写 `docs/release-notes/v0.1.0-beta.N.md`（中文，写给用户看）。
-- tag 推上去后 `.github/workflows/release.yml` 会构建 5 个任务：mac arm64、mac x64、Windows、Linux x64、Linux arm64，先传进草稿 Release，Windows / Mac 安装冒烟通过后才公开成 Latest（自动更新读 `latest.json`）。用户中途说停：tag 没推就不推；推了要有 GitHub 登录才能取消（box 上 gh 未登录，见 ROADMAP「工作规则」）。macOS 的 dmg 不用 Tauri 的 bundle_dmg.sh（Intel runner 上反复失败），而是 `--bundles app` 后用 hdiutil 单独打；改发版流程先推 release-dryrun 分支演练。
+- tag 推上去后 `.github/workflows/release.yml` 会默认构建 4 个任务：mac arm64、Windows、Linux x64、Linux arm64，先传进草稿 Release，Windows / Mac 安装冒烟通过后才公开成 Latest（自动更新读 `latest.json`）。**Intel Mac（x86_64）暂缓**（用户要求等后期开发完善再带上）：需要时手动运行 workflow 勾选 `build_intel`，或设仓库变量 `BUILD_INTEL=true` 恢复第 5 个任务。用户中途说停：tag 没推就不推；推了要有 GitHub 登录才能取消（box 上 gh 未登录，见 ROADMAP「工作规则」）。macOS 的 dmg 不用 Tauri 的 bundle_dmg.sh（Intel runner 上反复失败），而是 `--bundles app` 后用 hdiutil 单独打；改发版流程先推 release-dryrun 分支演练。
 - 版本号取自 tag，不需要手动改。
 
 ## 约定

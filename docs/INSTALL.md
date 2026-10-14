@@ -5,7 +5,7 @@
 | 系统 | 文件 |
 |---|---|
 | macOS（Apple 芯片 M1/M2/M3/M4） | `Pi.Assistant_<版本>_aarch64.dmg` |
-| macOS（Intel） | `Pi.Assistant_<版本>_x64.dmg` |
+| macOS（Intel） | 暂缓发布（等后续开发完善，见 [ROADMAP.md](ROADMAP.md)）；旧版本仍可正常使用 |
 | Windows 10/11（64 位） | `Pi.Assistant_<版本>_x64-setup.exe` |
 | Linux 服务器（x64 / arm64） | `pi-assistant-<版本>-linux-<x64\|arm64>.tar.gz`，用下面的安装脚本装 |
 

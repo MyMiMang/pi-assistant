@@ -6,19 +6,38 @@
 # 先发草稿、验证通过才公开：prepare 建草稿 → build / linux 把安装包和 latest.json 传进草稿 → windows-smoke（静默安装刚构建的 setup.exe 到中文路径，启动托盘查 /api）
 # 和 mac-smoke（挂载 dmg 启动 .app 查 /api）→ 都通过才 publish（取消草稿、标 Latest）。草稿里的 latest.json 对自动更新不可见，任一步失败 Release 留在草稿，用户收不到。
 # 演练：推送到 release-dryrun 分支（或手动运行）会用 v0.0.0-dryrun.<run> 走完整流程，但不公开，最后自动删掉草稿。
+# Intel Mac（x86_64）默认不构建：耗时很久且长期失败（见 docs/ROADMAP.md「暂缓」）。恢复方式二选一：
+#   1) 手动运行本 workflow 时勾选 build_intel；2) 设置仓库变量 BUILD_INTEL=true（Settings › Secrets and variables › Actions › Variables）。
+# 跳过 Intel 时 latest.json 不含 darwin-x86_64，Intel 老用户不会被错误引到 arm 包（只停更，不会装错）。
 # 自动更新签名：仓库 secrets 设置 TAURI_SIGNING_PRIVATE_KEY（+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD）后生成 latest.json 与 .sig；
 # 没设置时照常出安装包，只是不带自动更新文件。暂不做 Apple 公证 / Windows 代码签名（见 docs/INSTALL.md）。
 name: release
 on:
   push: { tags: ["v*"], branches: [release-dryrun] }
   workflow_dispatch:
+    inputs:
+      build_intel:
+        description: 同时构建 Intel Mac（x86_64，默认关闭）
+        type: boolean
+        default: false
 permissions: { contents: write }
 env:
   REL_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v0.0.0-dryrun.{0}', github.run_number) }}
+  # Intel Mac 开关：手动触发看输入，其余触发看仓库变量 BUILD_INTEL（小写 true）。
+  BUILD_INTEL: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_intel) || vars.BUILD_INTEL == 'true' }}
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    outputs:
+      build_matrix: ${{ steps.matrix.outputs.build_matrix }}
     steps:
+      - id: matrix
+        name: 组装桌面构建矩阵（默认不含 Intel Mac）
+        run: |
+          ARM='{"os":"macos-14","target":"aarch64-apple-darwin","label":"macOS-arm64"}'
+          INTEL='{"os":"macos-15-intel","target":"x86_64-apple-darwin","label":"macOS-x64"}'
+          WIN='{"os":"windows-latest","target":"x86_64-pc-windows-msvc","label":"Windows-x64"}'
+          if [ "$BUILD_INTEL" = "true" ]; then echo "build_matrix=[$ARM,$INTEL,$WIN]" >> "$GITHUB_OUTPUT"; else echo "build_matrix=[$ARM,$WIN]" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - name: 建草稿 Release（已有草稿就复用；已经公开的版本不再重发）
@@ -35,10 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: macos-14, target: aarch64-apple-darwin, label: macOS-arm64 }
-          - { os: macos-15-intel, target: x86_64-apple-darwin, label: macOS-x64 }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, label: Windows-x64 }
+        include: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
     runs-on: ${{ matrix.os }}
     env:
       HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
@@ -176,8 +192,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: pi-assistant-macOS-arm64, path: art }
       - uses: actions/download-artifact@v4
+        if: env.BUILD_INTEL == 'true'
         with: { name: pi-assistant-macOS-x64, path: art-x64 }
       - name: Intel 版 dmg 能挂载、里面有 .app 和更新包
+        if: env.BUILD_INTEL == 'true'
         run: |
           set -x
           DMG=$(find art-x64 -name '*_x64.dmg' | head -1); test -n "$DMG"
@@ -209,9 +227,13 @@ jobs:
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", GH_REPO: "${{ github.repository }}" }
         run: |
           gh release view "$REL_TAG" --json assets -q '.assets[].name' | tee assets.txt
-          for p in 'x64-setup\.exe$' 'aarch64\.dmg$' 'x64\.dmg$' 'linux-x64\.tar\.gz$' 'linux-arm64\.tar\.gz$' '^latest\.json$'; do grep -Eq "$p" assets.txt || { echo "::error::草稿里缺少 $p，保持草稿"; exit 1; }; done
+          PATTERNS=('x64-setup\.exe$' 'aarch64\.dmg$' 'linux-x64\.tar\.gz$' 'linux-arm64\.tar\.gz$' '^latest\.json$')
+          if [ "$BUILD_INTEL" = true ]; then PATTERNS+=('x64\.dmg$'); fi
+          for p in "${PATTERNS[@]}"; do grep -Eq "$p" assets.txt || { echo "::error::草稿里缺少 $p，保持草稿"; exit 1; }; done
           # 草稿资产的下载地址是 untagged-…，公开后会失效：先把 latest.json 里的地址改成按 tag 的正式地址再公开
           gh release download "$REL_TAG" -p latest.json -O latest.json
+          # 未构建 Intel 时 latest.json 绝不能带 darwin-x86_64 项，否则 Intel 用户会被错误引到 arm 包
+          if [ "$BUILD_INTEL" != true ] && grep -q 'darwin-x86_64' latest.json; then echo "::error::未构建 Intel 版但 latest.json 仍含 darwin-x86_64"; exit 1; fi
           sed -E -i "s#/releases/download/[^/\"]+/#/releases/download/$REL_TAG/#g" latest.json
           grep -o '"url": *"[^"]*"' latest.json
           gh release upload "$REL_TAG" latest.json --clobber

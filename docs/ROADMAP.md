@@ -5,6 +5,8 @@
 
 ## 功能需求
 
+2026-10-15 用户要求暂缓 Intel 打包：『intel每次打包很久，下次不要打包他，等后期完全开发再带上』——开发版默认跳过 Intel Mac（x86_64）构建，保留 mac arm64 / Windows / Linux x64 / arm64；后期需要时手动运行 release workflow 勾选 `build_intel` 或设仓库变量 `BUILD_INTEL=true` 即可恢复（不改代码）。
+
 2026-10-14 用户要求最高优先修复完全权限下普通操作的审批误报，并明确「修完直接提交打包」。beta.17 热修已完成独立发布树验证（相关单测 37/37、两端 typecheck），待五平台构建与安装冒烟后公开；只发布权限词法 / 规则与回归测试，其他 WIP 留待后续。
 
 
@@ -18,6 +20,7 @@
 
 | 需求（用户原话大意） | 状态 | 说明 |
 |---|---|---|
+| Intel Mac（x86_64）构建 | 暂缓（默认不构建） | 用户要求等后期开发完善再带上。release.yml 默认只建 mac arm64 / Windows / Linux x64 / arm64（4 个任务）；恢复：`workflow_dispatch.build_intel` 勾选，或仓库变量 `BUILD_INTEL=true`。跳过时 latest.json 不含 darwin-x86_64，Intel 老用户只停更、不会被分到 arm 包 |
 | 完全权限 = 应用层全部不弹审批（含硬性保护动作） | 已完成（未打包，beta.18 候选） | DESIGN §23.8。`requests.approval()` 是唯一入口，按 `hostFileAccess()` 直接放行，email / connectors / delivery / routines / skills / browser / computer / ext-approval 全覆盖；full 下硬性保护不再请求；凭据 deny、暂停/降权/关闭、系统权限弹窗、验证码仍拦；主/子/后台都用父助理当前档位。相关单测 + 两端 typecheck 通过 |
 | 普通命令审批误报热修（grep / 日志 / PATH / heredoc / cp 源方向） | 已完成（beta.17 待发布） | 命令位置与实际写入目标集中判定；真实危险嵌套执行仍保护；37 项相关测试与 typecheck 通过 |
 | 完全权限 = 用户主机文件/命令/桌面统一权限（不做逐目录白名单） | 已完成（beta.16） | DESIGN §23。一处判定 `hostFileAccess()` 供 sandbox/approval/runtime 统一调用；full 普通命令自动放行（受保护动作的审批行为后由 2026-10-15 纠正改为“也不问”，见上一行）；docker 偏好下 full 走主机（本机执行后端经 pi-adapter 注入）；降权/暂停即中止在跑任务。相关单测通过 |
