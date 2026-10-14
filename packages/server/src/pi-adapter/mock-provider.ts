@@ -80,6 +80,8 @@ function respond(messages: Msg[], systemPrompt = "") {
 	// 子代理测试：事件由主会话汇报，执行步骤只留在子会话。
 	if (u.includes("（子代理事件 ")) return fauxAssistantMessage(`子代理回报：${u.replace(/^.*?）/, "").slice(0, 300)}`);
 	if (u.startsWith("（后台子代理任务）")) {
+		// 模拟“可恢复的模型故障”：首次派活时报 429，让子代理在候选池内自动 fallback（续跑时会成功）
+		if (/限流测试/.test(u)) throw new Error("429 rate limit exceeded（模拟子代理模型限流）");
 		if (/报错/.test(u)) throw new Error("模拟子代理模型报错");
 		if (last.role === "toolResult") return fauxAssistantMessage(`子代理结果：${textOf(last)}`);
 		if (/审批/.test(u)) return fauxAssistantMessage([fauxToolCall("bash", { command: "rm -f subagent-old.txt; echo 子代理审批完成" })]);

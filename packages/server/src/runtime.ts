@@ -1,5 +1,6 @@
-import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, type Subagent, type SubagentEvent } from "./subagents.ts";
+import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, type Subagent, type SubagentEvent } from "./subagents.ts";
 import { cancelWaitsForConversation, listWaits, parseDue, refreshWait, registerWait, cancelWait, setWaitWaker, startWaitScheduler, WAIT_DEFAULT_INTERVAL_MS } from "./task-waits.ts";
+import { classifyModelError, isRecoverableModelError } from "./model-errors.ts";
 /**
  * Agent 运行时：每个助理一个主会话（Pi AgentSession），后台任务各自一个会话。
  * 所有 Pi 调用都经过 pi-adapter；这里负责把 Pi 事件落盘为消息并广播。
@@ -994,6 +995,7 @@ setWaitWaker(async ({ wait, prompt }) => {
 });
 
 export async function bootstrap() {
+	migrateSubagentModelSettings();
 	recoverSubagents();
 	startSubagentWatcher();
 	startWaitScheduler();
@@ -1020,13 +1022,36 @@ setSubagentDriver({
 		const a = getAgent(r.agent_id);
 		if (!a) throw new Error("所属助理已删除");
 		const workspace = workspaceOf(a.id);
-		const session = await createPiSession({
-			models, cwd: workspace, agentDir: join(config.agentsDir, a.id), sessionDir: join(config.agentsDir, a.id, "subagents", r.id),
-			sessionFile: r.session_file ?? undefined,
-			model: { provider: r.model_provider, id: r.model_id }, thinking: models.clampThinking(r.model_provider, r.model_id, a.thinking ?? defaultThinking()),
-			systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), "你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报。"],
-			extensions: await extensionsFor(a.id, r.conversation_id, r.id, { allowSpawn: false, subagentId: r.id }), skillPaths: skillPaths(), ...integrationsFor(a.id, r.conversation_id),
-		});
+		const agentThinking = (m: { provider: string; id: string }) => models.clampThinking(m.provider, m.id, a.thinking ?? defaultThinking());
+		// 派活时定好的候选顺序（第一项就是实际用的）；模型可能后来被删，先过滤成当前配置着的
+		const stored = ((): { provider: string; id: string }[] => {
+			try { const v = JSON.parse(r.model_pool ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+		})();
+		const candidates = livePool([{ provider: r.model_provider, id: r.model_id }, ...stored.filter((m) => modelKey(m) !== `${r.model_provider}/${r.model_id}`)]);
+		if (!candidates.length) throw new Error("子代理模型已不可用，候选池里也没有其他可用模型");
+		let current = candidates[0];
+		let session: AgentSession | null = null;
+		// 每候选最多试一次：初始化阶段失败的候选也要记进 tried，避免请求阶段 fallback 又绕回它。
+		const tried = new Set<string>();
+		for (let i = 0; i < candidates.length && !session; i++) {
+			try {
+				session = await createPiSession({
+					models, cwd: workspace, agentDir: join(config.agentsDir, a.id), sessionDir: join(config.agentsDir, a.id, "subagents", r.id),
+					sessionFile: r.session_file ?? undefined,
+					model: { provider: candidates[i].provider, id: candidates[i].id }, thinking: agentThinking(candidates[i]),
+					systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), "你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报。"],
+					extensions: await extensionsFor(a.id, r.conversation_id, r.id, { allowSpawn: false, subagentId: r.id }), skillPaths: skillPaths(), ...integrationsFor(a.id, r.conversation_id),
+				});
+				current = candidates[i];
+			} catch (e) {
+				const msg = e instanceof Error ? e.message : String(e);
+				tried.add(modelKey(candidates[i]));
+				// 模型不存在 / 服务不可用等可恢复故障：换池内下一个；否则原样抛出
+				if (i < candidates.length - 1 && isRecoverableModelError(msg)) { switchSubagentModel(r.id, candidates[i + 1], `模型 ${candidates[i].provider}/${candidates[i].id} 不可用（${msg}），自动切换`); continue; }
+				throw e;
+			}
+		}
+		if (!session) throw new Error("候选池里没有可用模型");
 		db.prepare("UPDATE subagents SET session_file = ? WHERE id = ?").run(sessionFileOf(session) ?? null, r.id);
 		let error: string | undefined;
 		const routed: string[] = [];
@@ -1055,6 +1080,17 @@ setSubagentDriver({
 			if (!isActiveSubagent(getSubagent(r.id)!.status)) return "";
 			if (input?.messageId) updateMessage(input.messageId, { meta: { delivery: "delivered" } });
 			await promptSession(session, input?.text ?? `（后台子代理任务）${r.task}\n\n必要上下文：\n${r.context}`);
+			// 模型层可恢复故障：池内换下一个模型，从已保存的会话继续，不从头重跑；每个候选最多试一次，用尽就明确停下
+			while (isActiveSubagent(getSubagent(r.id)!.status)) {
+				tried.add(modelKey(current));
+				const next = planFallback(candidates, tried, error);
+				if (!next) break;
+				switchSubagentModel(r.id, next, `${classifyModelError(error)?.label ?? "模型请求失败"}：${error}`);
+				current = next;
+				error = undefined;
+				await applyModelSettings(session, models, next, agentThinking(next));
+				await promptSession(session, `（系统通知）上一个模型不可用，已切换到 ${next.provider}/${next.id}。请从断点继续完成这个任务：已经完成的步骤不要重做，也不要重复已经产生的副作用；某个操作状态不明的，先核实实际结果再决定。`);
+			}
 			if (error) throw new Error(error);
 			return lastAssistantText(session);
 		} finally {

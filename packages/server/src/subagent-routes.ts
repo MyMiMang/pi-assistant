@@ -5,7 +5,7 @@ import { getAgent, runtime } from "./runtime.ts";
 import { toMessage, type MessageRow } from "./messages.ts";
 import { providerNames } from "./models.ts";
 import { configuredModels } from "./rooms/model-pick.ts";
-import { agentSubagentChoice, getSubagent, isLiveSubagent, listSubagents, saveAgentSubagentChoice, saveSubagentSettings, sendSubagentMessage, spawnSubagent, stopSubagent, subagentSettings, type AgentSubagentChoice, type SubagentSettingsInput } from "./subagents.ts";
+import { agentSubagentPool, getSubagent, isLiveSubagent, listSubagents, saveAgentSubagentPool, saveAgentSubagentChoice, saveSubagentSettings, sendSubagentMessage, spawnSubagent, stopSubagent, subagentSettings, type SubagentSettingsInput } from "./subagents.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: 同 http.ts
 export function mountSubagentRoutes(app: Hono<any>) {
@@ -14,11 +14,15 @@ export function mountSubagentRoutes(app: Hono<any>) {
 		try { return c.json(saveSubagentSettings(await c.req.json<SubagentSettingsInput>())); }
 		catch (e) { return c.json({ error: String(e) }, 400); }
 	});
-	app.get("/api/agents/:id/subagent-model", (c) => c.json(agentSubagentChoice(c.req.param("id"))));
+	app.get("/api/agents/:id/subagent-model", (c) => c.json({ pool: agentSubagentPool(c.req.param("id")) }));
 	app.put("/api/agents/:id/subagent-model", async (c) => {
 		if (!getAgent(c.req.param("id"))) return c.json({ error: "not_found" }, 404);
-		try { return c.json(saveAgentSubagentChoice(c.req.param("id"), await c.req.json<AgentSubagentChoice>())); }
-		catch (e) { return c.json({ error: String(e) }, 400); }
+		try {
+			const body = await c.req.json<{ pool?: { provider: string; id: string }[]; mode?: string; model?: { provider: string; id: string } }>();
+			// 新形状：{ pool: [...] }；旧客户端可能还发 { mode, model }，兼容转换
+			const saved = Array.isArray(body.pool) ? saveAgentSubagentPool(c.req.param("id"), { pool: body.pool }) : saveAgentSubagentChoice(c.req.param("id"), body.mode === "fixed" && body.model ? { mode: "fixed", model: body.model } : { mode: "follow" });
+			return c.json(saved);
+		} catch (e) { return c.json({ error: String(e) }, 400); }
 	});
 	app.get("/api/subagents", (c) => c.json(listSubagents(c.req.query("agent"), c.req.query("conversation")).filter((r) => !c.req.query("room") || !!db.prepare("SELECT 1 FROM room_members WHERE conversation_id = ? AND room_id = ?").get(r.conversation_id, c.req.query("room") ?? ""))));
 	app.get("/api/subagents/:id", (c) => {

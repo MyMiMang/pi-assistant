@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Subagent, SubagentEvent } from "../src/subagents.ts";
 process.env.PIA_MOCK = "1";
-const { db } = await import("../src/db.ts");
+const { db, getSetting, setSetting } = await import("../src/db.ts");
 const { initModels } = await import("../src/models.ts");
 await initModels();
 const s = await import("../src/subagents.ts");
@@ -18,7 +18,7 @@ const status = (id: string) => s.getSubagent(id)!.status;
 const events = (id: string) => db.prepare("SELECT * FROM subagent_events WHERE subagent_id = ?").all(id);
 const spawn = () => s.spawnSubagent("sub-test", conv, model, { task: "写代码" });
 /** 设置全局设置（含并发上限）；不传 maxConcurrent 时保留当前上限（不重置）。 */
-const setSettings = (maxConcurrent?: number) => s.saveSubagentSettings({ mode: "follow", allowed: [], maxMinutes: 60, ...(maxConcurrent === undefined ? {} : { maxConcurrent }) });
+const setSettings = (maxConcurrent?: number) => s.saveSubagentSettings({ maxMinutes: 60, ...(maxConcurrent === undefined ? {} : { maxConcurrent }) });
 const cleanup = () => s.stopAgentSubagents("sub-test");
 
 // 可控 driver：run 一直挂着，直到显式完成（completeNext）或停止；记录启动过的 id、续聊输入与插话。
@@ -39,16 +39,27 @@ function manualDriver(notify: (r: Subagent, e: SubagentEvent) => Promise<void> =
 }
 const completeNext = () => { resolvers.shift()?.("结果"); };
 
-test("模型选择：默认跟随、允许清单内自动挑、显式限制、全局和助理指定", () => {
+test("模型选择：默认跟随主会话、候选池内自动挑并给出 fallback 顺序、显式限制在池内、旧形状兼容", () => {
+	// 默认（没设候选池）→ 跟随主会话当前模型，不做自动挑选
 	assert.equal(s.chooseSubagentModel("sub-test", model, "写代码").model.id, "echo");
-	s.saveSubagentSettings({ mode: "auto", allowed: [{ provider: "mock", id: "echo-think" }], maxMinutes: 60, maxConcurrent: 10 });
-	assert.equal(s.chooseSubagentModel("sub-test", model, "推理").model.id, "echo-think");
-	assert.throws(() => s.chooseSubagentModel("sub-test", model, "", [], model), /允许清单/);
-	s.saveSubagentSettings({ mode: "fixed", model, allowed: [], maxMinutes: 60, maxConcurrent: 10 });
-	assert.equal(s.chooseSubagentModel("sub-test", model, "").model.id, "echo");
+	assert.equal(s.chooseSubagentModel("sub-test", model, "写代码").reason, "跟随主会话模型");
+	// 设了候选池 → 池内按能力挑，pool 的第一项就是实际用的，后面是 fallback 顺序
+	s.saveAgentSubagentPool("sub-test", { pool: [{ provider: "mock", id: "echo-think" }] });
+	const single = s.chooseSubagentModel("sub-test", model, "推理");
+	assert.equal(single.model.id, "echo-think");
+	assert.deepEqual(single.pool, [{ provider: "mock", id: "echo-think" }]);
+	// 显式指定必须在池内（池外模型明确拒绝，不偷偷切换）
+	assert.throws(() => s.chooseSubagentModel("sub-test", model, "", [], model), /候选池/);
+	s.saveAgentSubagentPool("sub-test", { pool: [{ provider: "mock", id: "echo" }, { provider: "mock", id: "echo-think" }] });
+	const two = s.chooseSubagentModel("sub-test", model, "写代码");
+	assert.equal(two.pool.length, 2);
+	assert.equal(two.pool[0].id, two.model.id);
+	assert.equal(new Set(two.pool.map((m) => m.id)).size, 2);
+	// 旧单模型形状读成单项池（迁移兼容）
 	s.saveAgentSubagentChoice("sub-test", { mode: "fixed", model: { provider: "mock", id: "echo-think" } });
-	assert.equal(s.chooseSubagentModel("sub-test", model, "").model.id, "echo-think");
+	assert.deepEqual(s.agentSubagentPool("sub-test"), [{ provider: "mock", id: "echo-think" }]);
 	s.saveAgentSubagentChoice("sub-test", { mode: "follow" });
+	assert.deepEqual(s.agentSubagentPool("sub-test"), []);
 	setSettings(10);
 });
 
@@ -123,21 +134,21 @@ test("改变上限：调高立即派发排队，调低不打断正在跑的；�
 	// 非法边界
 	assert.throws(() => setSettings(0), /并发上限/);
 	assert.throws(() => setSettings(1.5), /并发上限/);
-	assert.throws(() => s.saveSubagentSettings({ mode: "follow", allowed: [], maxMinutes: 60, maxConcurrent: 101 }), /并发上限/);
+	assert.throws(() => s.saveSubagentSettings({ maxMinutes: 60, maxConcurrent: 101 }), /并发上限/);
 	assert.equal(s.subagentSettings().maxConcurrent, 4);
 	await cleanup();
 });
 
-test("只改模型选项（不传 maxConcurrent）不会重置并发上限", () => {
+test("只改最长运行时间（不传 maxConcurrent）不会重置并发上限", () => {
 	setSettings(3);
-	// 旧客户端 / 只改模型选项的界面只带 mode / allowed / maxMinutes
-	s.saveSubagentSettings({ mode: "auto", allowed: [], maxMinutes: 30 });
+	// 只改一项的界面 / 旧客户端不带 maxConcurrent
+	s.saveSubagentSettings({ maxMinutes: 30 });
 	assert.equal(s.subagentSettings().maxConcurrent, 3);
 	assert.equal(s.subagentSettings().maxMinutes, 30);
-	s.saveSubagentSettings({ mode: "fixed", model, allowed: [], maxMinutes: 60 });
+	s.saveSubagentSettings({ maxMinutes: 60 });
 	assert.equal(s.subagentSettings().maxConcurrent, 3);
 	// 显式传才改：非法值仍被拒
-	assert.throws(() => s.saveSubagentSettings({ mode: "follow", allowed: [], maxMinutes: 60, maxConcurrent: 0 }), /并发上限/);
+	assert.throws(() => s.saveSubagentSettings({ maxMinutes: 60, maxConcurrent: 0 }), /并发上限/);
 	assert.equal(s.subagentSettings().maxConcurrent, 3);
 	setSettings(10);
 });
@@ -316,4 +327,81 @@ test("子窗口直聊：运行中插话、只停止自己、完成后续聊、�
 	assert.equal(status(r.id), "done");
 	assert.deepEqual(events(r.id).map((e) => (e as { kind: string }).kind), ["stopped", "done"]);
 	await cleanup();
+});
+
+test("池内 fallback 决策：可恢复故障才换、只换未试过的、用尽/单项停下、工具失败不换", () => {
+	const pool = [{ provider: "mock", id: "a" }, { provider: "mock", id: "b" }, { provider: "mock", id: "c" }];
+	// 限流 / 服务不可用 / 模型不存在 / 鉴权不通：换下一个未试过的
+	assert.deepEqual(s.planFallback(pool, ["mock/a"], "429 Too Many Requests"), { provider: "mock", id: "b" });
+	assert.deepEqual(s.planFallback(pool, ["mock/a", "mock/b"], "model not found"), { provider: "mock", id: "c" });
+	assert.deepEqual(s.planFallback(pool, ["mock/a"], "503 Service Unavailable"), { provider: "mock", id: "b" });
+	assert.deepEqual(s.planFallback(pool, ["mock/a"], "401 Unauthorized: invalid api key"), { provider: "mock", id: "b" });
+	// 用尽候选 → null（不无限重试）
+	assert.equal(s.planFallback(pool, ["mock/a", "mock/b", "mock/c"], "service unavailable"), null);
+	// 单项池失败 → null（明确停下，不池外切换）
+	assert.equal(s.planFallback([{ provider: "mock", id: "a" }], ["mock/a"], "503"), null);
+	// 工具 / 命令失败、权限拒绝、未知错误都不是模型故障 → 不换模型
+	assert.equal(s.planFallback(pool, [], "命令执行失败：ENOENT"), null);
+	assert.equal(s.planFallback(pool, [], "用户拒绝了这次审批"), null);
+	assert.equal(s.planFallback(pool, [], "模型返回了奇怪的输出"), null);
+	// 空错误 / 没错误 → 不换
+	assert.equal(s.planFallback(pool, [], undefined), null);
+});
+
+// runtime 初始化阶段失败的候选也必须算“已试过”。否则 A 初始化失败换到 B、B 请求又失败时，
+// planFallback 可能把从未真正请求过的 A 再挑回来，违反“每个候选最多一次”。
+test("池内 fallback：初始化失败的候选不再被请求阶段绕回（每候选最多一次）", () => {
+	const pool = [{ provider: "mock", id: "a" }, { provider: "mock", id: "b" }, { provider: "mock", id: "c" }];
+	// 初始化阶段：A 失败（可恢复）→ tried 记入 A；会话建在 B 上
+	const tried = new Set<string>(["mock/a"]);
+	tried.add("mock/b");
+	// B 请求也失败：下一个应是 C，绝不能回到 A
+	assert.deepEqual(s.planFallback(pool, tried, "429 Too Many Requests"), { provider: "mock", id: "c" });
+	assert.notDeepEqual(s.planFallback(pool, tried, "429 Too Many Requests"), { provider: "mock", id: "a" });
+	// 候选用尽 → 停下，不绕回任何已试候选
+	assert.equal(s.planFallback(pool, ["mock/a", "mock/b", "mock/c"], "service unavailable"), null);
+});
+
+test("迁移旧设置：全局模型指定废弃、全局允许清单迁给无显式配置的助理、显式配置保留且幂等", () => {
+	// 旧全局配置 + 旧单模型助理 + 旧跟随助理 + 新格式助理 + 一个没有显式配置的助理
+	setSetting("subagentModels", { mode: "auto", allowed: [{ provider: "mock", id: "echo-think" }], maxMinutes: 42, maxConcurrent: 7 });
+	setSetting("subagentModel:legacy-fixed", { mode: "fixed", model: { provider: "mock", id: "echo" } });
+	setSetting("subagentModel:legacy-follow", { mode: "follow" });
+	setSetting("subagentModel:new-pool", { pool: [{ provider: "mock", id: "echo" }] });
+	db.prepare("INSERT OR REPLACE INTO agents(id, name, avatar, color, created_at) VALUES(?,?,?,?,?)").run("legacy-plain", "旧助理", "🤖", "#888", Date.now());
+	s.migrateSubagentModelSettings();
+	// 全局只留并发 / 超时，模型指定字段废弃
+	const g = getSetting<Record<string, unknown>>("subagentModels", {});
+	assert.deepEqual(Object.keys(g).sort(), ["maxConcurrent", "maxMinutes"]);
+	assert.equal(g.maxMinutes, 42);
+	assert.equal(g.maxConcurrent, 7);
+	// 旧单模型 → 单项池；旧跟随 → 空池；新格式不动
+	assert.deepEqual(s.agentSubagentPool("legacy-fixed"), [{ provider: "mock", id: "echo" }]);
+	assert.deepEqual(s.agentSubagentPool("legacy-follow"), []);
+	assert.deepEqual(s.agentSubagentPool("new-pool"), [{ provider: "mock", id: "echo" }]);
+	// 没有显式配置的助理继承旧的全局允许清单（用户已选清单不丢）
+	assert.deepEqual(s.agentSubagentPool("legacy-plain"), [{ provider: "mock", id: "echo-think" }]);
+	// 幂等：再跑一次结果不变
+	s.migrateSubagentModelSettings();
+	assert.deepEqual(s.agentSubagentPool("legacy-plain"), [{ provider: "mock", id: "echo-think" }]);
+	assert.deepEqual(Object.keys(getSetting<Record<string, unknown>>("subagentModels", {})).sort(), ["maxConcurrent", "maxMinutes"]);
+	db.prepare("DELETE FROM agents WHERE id = 'legacy-plain'").run();
+	setSettings(10);
+});
+
+test("切换模型记录：同一任务换模型只更新同一行，并写一条用户可见的系统消息", () => {
+	setSettings(10);
+	manualDriver();
+	const r = spawn();
+	// 换到池内另一个模型：行内 model_provider/model_id 更新，不产生新子代理、不重复卡片
+	s.switchSubagentModel(r.id, { provider: "mock", id: "echo-think" }, "触发限流：429");
+	const row = s.getSubagent(r.id)!;
+	assert.equal(row.model_id, "echo-think");
+	assert.equal(row.model_reason, "触发限流：429");
+	assert.equal(s.listSubagents("sub-test", conv).filter((x) => x.id === r.id).length, 1);
+	const msgs = db.prepare("SELECT content FROM messages WHERE subagent_id = ?").all(r.id) as { content: string }[];
+	assert.ok(msgs.some((m) => m.content.includes("已切换到候选池内")), "切换原因对用户可见");
+	assert.equal(db.prepare("SELECT COUNT(*) n FROM messages WHERE json_extract(meta, '$.subagentId') = ?").get(r.id)?.n, 1, "卡片只有一张");
+	void s.stopSubagent(r.id);
+	void cleanup();
 });

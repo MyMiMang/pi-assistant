@@ -135,23 +135,21 @@ test("删除自定义服务：引用它的默认/识图/子代理设置和助理
 	const ref = { provider: m.id, id: "relay-chat" };
 	setSetting("defaultModel", ref);
 	setSetting("visionModel", ref);
-	setSetting("subagentModels", { mode: "fixed", allowed: [ref], maxMinutes: 30, model: ref });
+	setSetting("subagentModels", { maxMinutes: 30, maxConcurrent: 5 });
 	const agentId = "ag-ref-clean";
 	db.prepare("INSERT OR REPLACE INTO agents(id, name, avatar, color, model_provider, model_id, sort, created_at) VALUES(?,?,?,?,?,?,?,?)").run(agentId, "引用测试助理", "测", "#000000", m.id, "relay-chat", 999, Date.now());
-	setSetting(`subagentModel:${agentId}`, { mode: "fixed", model: ref });
+	setSetting(`subagentModel:${agentId}`, { pool: [ref] });
 
-	assert.deepEqual(providerReferences(m.id), { defaultModel: true, visionModel: true, agents: ["引用测试助理"], subagents: true, subagentAgents: [agentId] });
+	assert.deepEqual(providerReferences(m.id), { defaultModel: true, visionModel: true, agents: ["引用测试助理"], subagents: false, subagentAgents: [agentId] });
 
 	assert.ok(await customProviders.remove(m.id));
 	const cleared = clearProviderReferences(m.id);
 	assert.equal(cleared.agents.length, 1);
 	assert.equal(getSetting("defaultModel", null), null);
 	assert.equal(getSetting("visionModel", null), null);
-	const s = getSetting<{ mode: string; allowed: unknown[]; maxMinutes: number }>("subagentModels", { mode: "x", allowed: [], maxMinutes: 0 });
-	assert.equal(s.mode, "follow", "全局固定模型回落为跟随主会话");
-	assert.deepEqual(s.allowed, [], "允许清单里被删的服务一并去掉");
+	const s = getSetting<{ maxMinutes: number }>("subagentModels", { maxMinutes: 0 });
 	assert.equal(s.maxMinutes, 30, "其它设置保持不变");
-	assert.equal(getSetting<{ mode: string }>(`subagentModel:${agentId}`, { mode: "x" }).mode, "follow");
+	assert.deepEqual(getSetting<{ pool: unknown[] }>(`subagentModel:${agentId}`, { pool: [1] }).pool, [], "候选池里被删的服务一并去掉");
 	assert.equal((db.prepare("SELECT model_provider FROM agents WHERE id = ?").get(agentId) as { model_provider: string | null }).model_provider, null, "助理模型回落默认");
 	// 删除只清引用，不删助理、不动用量历史
 	assert.ok(db.prepare("SELECT 1 FROM agents WHERE id = ?").get(agentId));

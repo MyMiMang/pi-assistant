@@ -1,4 +1,3 @@
-import { SubagentModels } from "./Subagents";
 import { BarChart3, Brain, Cat, ChevronDown, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
@@ -120,19 +119,25 @@ const H = ({ children, desc }: { children: React.ReactNode; desc?: React.ReactNo
 	</div>
 );
 
-interface SubagentSettingsDto { mode: "follow" | "auto" | "fixed"; allowed: { provider: string; id: string }[]; model?: { provider: string; id: string }; maxMinutes: number; maxConcurrent: number }
+interface SubagentSettingsDto { maxMinutes: number; maxConcurrent: number }
 const SUBAGENT_LIMIT = { min: 1, max: 100 };
-/** 子代理并发上限（按助理计算）；满额后新任务自动排队，这里只调上限。 */
-function SubagentConcurrency() {
+/** 子代理任务侧设置：并发上限 + 最长运行时间（模型改由每个助理的候选池决定）。 */
+function SubagentTaskSettings() {
 	const [d, setD] = useState<SubagentSettingsDto | null>(null);
 	const [err, setErr] = useState("");
 	useEffect(() => { void api<SubagentSettingsDto>("/api/subagents/settings").then(setD).catch((e) => setErr(String(e))); }, []);
 	if (!d) return null;
-	const save = async (n: number) => { try { setD(await api<SubagentSettingsDto>("/api/subagents/settings", { method: "PUT", json: { ...d, maxConcurrent: n } })); setErr(""); } catch (e) { setErr(String(e)); } };
+	const save = async (patch: Partial<SubagentSettingsDto>) => { try { setD(await api<SubagentSettingsDto>("/api/subagents/settings", { method: "PUT", json: { ...d, ...patch } })); setErr(""); } catch (e) { setErr(String(e)); } };
 	return (
-		<section data-testid="subagent-concurrency">
-			<H desc="按助理计算。同时运行的子代理达到上限后，新任务会自动排队，有空位就按先后顺序开始，不会丢。">子代理并发上限</H>
-			<label className="flex items-center gap-2 text-sm text-mut">最多同时<input className="pa-input !w-20" type="number" min={SUBAGENT_LIMIT.min} max={SUBAGENT_LIMIT.max} defaultValue={d.maxConcurrent} aria-label="子代理并发上限" onBlur={(e) => { const n = Math.round(Number(e.target.value)); if (n >= SUBAGENT_LIMIT.min && n <= SUBAGENT_LIMIT.max && n !== d.maxConcurrent) void save(n); }} />个子代理</label>
+		<section data-testid="subagent-concurrency" className="space-y-3">
+			<div>
+				<H desc="按助理计算。同时运行的子代理达到上限后，新任务会自动排队，有空位就按先后顺序开始，不会丢。">子代理并发上限</H>
+				<label className="flex items-center gap-2 text-sm text-mut">最多同时<input className="pa-input !w-20" type="number" min={SUBAGENT_LIMIT.min} max={SUBAGENT_LIMIT.max} defaultValue={d.maxConcurrent} aria-label="子代理并发上限" onBlur={(e) => { const n = Math.round(Number(e.target.value)); if (n >= SUBAGENT_LIMIT.min && n <= SUBAGENT_LIMIT.max && n !== d.maxConcurrent) void save({ maxConcurrent: n }); }} />个子代理</label>
+			</div>
+			<div>
+				<H desc="子代理是给长任务用的；超过这个时间会被停下，并告诉你原因。">子代理最长运行</H>
+				<label className="flex items-center gap-2 text-sm text-mut">最长<input className="pa-input !w-20" type="number" min="1" defaultValue={d.maxMinutes} aria-label="子代理最长运行分钟" onBlur={(e) => { const n = Number(e.target.value); if (n > 0 && n !== d.maxMinutes) void save({ maxMinutes: n }); }} />分钟</label>
+			</div>
 			{err && <p className="text-xs text-red-500">{err}</p>}
 		</section>
 	);
@@ -188,7 +193,7 @@ function ModelsTab() {
 	);
 }
 
-/** 子代理设置：独立短折叠，不跟渠道里的模型能力混在一起 */
+/** 子代理设置：独立短折叠，不跟渠道里的模型能力混在一起。模型在助理设置里按助理勾选候选池。 */
 function SubagentSection() {
 	const [open, setOpen] = useState(false);
 	return (
@@ -196,12 +201,12 @@ function SubagentSection() {
 			<button className="flex w-full items-center gap-2 text-left" onClick={() => setOpen(!open)} aria-expanded={open} data-testid="subagent-section-toggle">
 				<ChevronDown size={14} className={cx("shrink-0 text-mut transition-transform", !open && "-rotate-90")} />
 				<span className="font-semibold">子代理</span>
-				<span className="truncate text-xs text-mut">后台干活用的模型、并发和最长运行时间</span>
+				<span className="truncate text-xs text-mut">后台干活的并发和最长运行时间</span>
 			</button>
 			{open && (
 				<div className="mt-3 space-y-4 border-l border-line pl-3">
-					<SubagentModels />
-					<SubagentConcurrency />
+					<p className="text-xs text-mut2">子代理用哪个模型，在「助理设置 › 子代理模型」里按助理勾选候选池；默认跟随主会话。</p>
+					<SubagentTaskSettings />
 				</div>
 			)}
 		</section>

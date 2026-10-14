@@ -2,12 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Message } from "../types";
 import { Help, Modal } from "./ui";
-import { ArrowLeft, ArrowUp, Bot, Check, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowUp, Bot, Square } from "lucide-react";
 import { useStore } from "../store";
 import { Avatar, cx } from "./ui";
 import { BotTurn, group, SystemMsg, UserMsg } from "./ChatMessages";
 import { isSendKey, SEND_HINT } from "../composer";
-import { ModelPickerButton } from "./ModelPicker";
+import { useConfiguredModels, useModelPicks, ModelPoolButton } from "./ModelPicker";
 import { TaskInstructions, TaskRow, taskLive, taskTitle } from "./Tasks";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string; reasoning?: boolean };
@@ -124,52 +124,47 @@ export function SubagentTasks({ agentId, conversation, room, withMain }: { agent
 		</Modal>
 	</>;
 }
-interface Settings { mode: "follow" | "auto" | "fixed"; allowed: Model[]; model?: Model; maxMinutes: number; maxConcurrent: number }
-export function SubagentModels({ agentId }: { agentId?: string }) {
-	const [d, setD] = useState<{ settings: Settings; models: Model[] } | null>(null);
-	const [choice, setChoice] = useState<{ mode: "follow" | "fixed"; model?: Model }>({ mode: "follow" });
+/**
+ * 助理设置里的子代理模型：可搜索、按服务分组、多选的「候选池」。
+ * 一个都不选 = 跟随主会话当前模型；选了就在池内按任务能力挑，失败只在池内换（详见 Help）。
+ */
+export function SubagentModels({ agentId }: { agentId: string }) {
+	const d = useConfiguredModels();
+	const { picks, record } = useModelPicks();
+	const [pool, setPool] = useState<Model[]>([]);
 	const [err, setErr] = useState("");
-	useEffect(() => { void api<NonNullable<typeof d>>("/api/subagents/settings").then(setD); if (agentId) void api<typeof choice>(`/api/agents/${agentId}/subagent-model`).then(setChoice); }, [agentId]);
-	if (!d) return null;
-	const key = (m?: Model) => m ? `${m.provider}/${m.id}` : "";
-	const value = agentId ? choice.mode === "fixed" ? key(choice.model) : "follow" : d.settings.mode === "fixed" ? key(d.settings.model) : d.settings.mode;
-	const cur = d.models.find((m) => key(m) === value);
-	const save = async (s: Settings) => { setD({ ...d, settings: s }); try { await api("/api/subagents/settings", { method: "PUT", json: s }); setD({ ...d, settings: s }); setErr(""); } catch (e) { setD(d); setErr(String(e)); } };
-	const change = async (v: string) => {
-		const model = d.models.find((m) => key(m) === v);
-		if (agentId) { const c = model ? { mode: "fixed" as const, model } : { mode: "follow" as const }; try { await api(`/api/agents/${agentId}/subagent-model`, { method: "PUT", json: c }); setChoice(c); } catch (e) { setErr(String(e)); } }
-		else await save({ ...d.settings, mode: model ? "fixed" : v as "follow" | "auto", model });
+	useEffect(() => { void api<{ pool: Model[] }>(`/api/agents/${agentId}/subagent-model`).then((v) => setPool(v.pool ?? [])).catch((e) => setErr(String(e))); }, [agentId]);
+	const key = (m: Model) => `${m.provider}/${m.id}`;
+	const save = async (next: Model[]) => {
+		const prev = pool;
+		setPool(next);
+		try { await api(`/api/agents/${agentId}/subagent-model`, { method: "PUT", json: { pool: next } }); setErr(""); }
+		catch (e) { setPool(prev); setErr(String(e)); }
 	};
-	return <section className="space-y-2" data-testid={agentId ? "agent-subagent-model" : "subagent-models"}>
-		<div className="flex items-center gap-1 font-semibold">子代理模型<Help>{agentId ? "跟随全局设置，或给这个助理指定模型。" : "默认用主会话的模型。自动挑选只在勾选的清单内按任务能力选择；也可以固定用一个模型。最多同时跑几个由「设置 › 模型 › 子代理并发上限」决定（默认 10 个，按助理算），满了自动排队；只能派一层。"}</Help></div>
-		<ModelPickerButton
+	const toggle = (m: { provider: string; id: string }, checked: boolean) => {
+		record(m);
+		void save(checked ? [...pool.filter((x) => key(x) !== key(m)), { provider: m.provider, id: m.id }] : pool.filter((x) => key(x) !== key(m)));
+	};
+	const live = pool.filter((m) => d.models.some((x) => key(x) === key(m)));
+	const nameOf = (m: Model) => d.models.find((x) => key(x) === key(m))?.name ?? m.id;
+	const text = pool.length ? `候选池 · ${pool.length} 个` : "跟随主会话";
+	return <section className="space-y-2" data-testid="agent-subagent-model">
+		<div className="flex items-center gap-1 font-semibold">子代理模型<Help>不选 = 跟随主会话当前模型。勾选后，派活时在这个候选池内按任务能力挑一个；某个模型不可用（限流 / 服务不可用 / 模型不存在 / 鉴权失败等）时，只在池内自动换下一个，用尽就停下，不会用池外模型，也不会无限重试。最多同时跑几个由「设置 › 模型 › 子代理」里的并发上限决定。</Help></div>
+		<ModelPoolButton
 			testid="subagent-model"
-			models={d.models.map((m) => ({ provider: m.provider, id: m.id, name: m.name ?? m.id, providerName: m.providerName, reasoning: m.reasoning }))}
-			providers={[]}
-			value={choice.mode === "fixed" && agentId ? (choice.model ?? null) : !agentId && d.settings.mode === "fixed" ? (d.settings.model ?? null) : null}
+			models={d.models}
+			providers={d.providers}
+			value={pool}
+			picks={picks}
+			text={text}
 			placement="down"
 			buttonClass="max-w-full"
-			ariaLabel="子代理模型"
-			title="子代理用哪个模型"
-			text={value.startsWith("follow") ? (agentId ? "跟随全局" : "跟随主会话") : value === "auto" ? "在允许清单里自动挑" : cur ? `${cur.providerName ?? cur.provider} / ${cur.name ?? cur.id}` : "选择模型"}
-			onPick={(m) => void change(key(m))}
-			header={(close) => (
-				<>
-					<button type="button" className="mb-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover" data-testid="subagent-model-follow" onClick={() => (close(), void change("follow"))}>
-						<span className="min-w-0 flex-1 truncate">{agentId ? "跟随全局" : "跟随主会话"}</span>
-						{value === "follow" && <Check size={14} className="shrink-0 text-accent" />}
-					</button>
-					{!agentId && (
-						<button type="button" className="mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover" data-testid="subagent-model-auto" onClick={() => (close(), void change("auto"))}>
-							<span className="min-w-0 flex-1 truncate">在允许清单里自动挑</span>
-							{value === "auto" && <Check size={14} className="shrink-0 text-accent" />}
-						</button>
-					)}
-				</>
-			)}
+			ariaLabel="子代理候选池"
+			title="勾选这个助理允许子代理用的模型"
+			onToggle={toggle}
+			onOpen={d.reload}
 		/>
-		{!agentId && d.settings.mode === "auto" && <div className="space-y-1">{d.models.map((m) => <label className="flex items-center gap-2 text-sm" key={key(m)}><input type="checkbox" checked={d.settings.allowed.some((x) => key(x) === key(m))} onChange={(e) => void save({ ...d.settings, allowed: e.target.checked ? [...d.settings.allowed, m] : d.settings.allowed.filter((x) => key(x) !== key(m)) })} />{m.providerName ?? m.provider} / {m.name ?? m.id}</label>)}</div>}
-		{!agentId && <label className="flex items-center gap-2 text-sm text-mut">最长运行<input className="pa-input !w-20" type="number" min="1" defaultValue={d.settings.maxMinutes} aria-label="子代理最长运行分钟" onBlur={(e) => { const n = Number(e.target.value); if (n > 0 && n !== d.settings.maxMinutes) void save({ ...d.settings, maxMinutes: n }); }} />分钟</label>}
+		{live.length > 0 && <div className="flex flex-wrap gap-1">{live.map((m) => <span key={key(m)} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-mut">{nameOf(m)}</span>)}</div>}
 		{err && <p className="text-xs text-red-500">{err}</p>}
 	</section>;
 }

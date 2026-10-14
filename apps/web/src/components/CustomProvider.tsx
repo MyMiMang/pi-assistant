@@ -53,7 +53,7 @@ function deleteImpact(r?: ProviderReferences): string {
 	if (r.defaultModel) lines.push("• 默认模型会被清空，需要重新选一个");
 	if (r.visionModel) lines.push("• 识图模型会改回自动选择");
 	if (r.subagents) lines.push("• 子代理的固定模型会改回“跟随主会话模型”");
-	if (r.subagentAgents.length) lines.push(`• ${r.subagentAgents.length} 个助理单独指定的子代理模型会改回跟随主会话`);
+	if (r.subagentAgents.length) lines.push(`• ${r.subagentAgents.length} 个助理的子代理候选池里会去掉这个服务的模型`);
 	if (r.agents.length) {
 		const names = r.agents.slice(0, 3).join("、");
 		lines.push(`• ${r.agents.length} 个助理（${names}${r.agents.length > 3 ? " 等" : ""}）的模型会回落到默认模型`);

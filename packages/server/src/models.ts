@@ -62,38 +62,38 @@ export interface ProviderReferences {
 	visionModel: boolean;
 	/** 主模型指向这个服务的助理名字（含群聊成员） */
 	agents: string[];
-	/** 全局子代理固定模型指向这个服务 */
+	/** 已废弃：全局不再有子代理固定模型，恒为 false（保留字段兼容界面） */
 	subagents: boolean;
-	/** 助理级子代理固定模型指向这个服务的助理 id */
+	/** 候选池里引用了这个服务的助理 id */
 	subagentAgents: string[];
 }
 
 const refProvider = (v: unknown): string | undefined =>
 	v && typeof v === "object" && "provider" in v ? String((v as { provider?: unknown }).provider ?? "") : undefined;
 
-function subagentFixedRefs(id: string): { global: boolean; agents: string[] } {
-	const s = getSetting<{ mode?: string; model?: { provider?: string } | null }>("subagentModels", { mode: "follow" });
+/** 哪些助理的候选池引用了这个服务（兼容旧「固定一个模型」形状）。 */
+function subagentPoolRefs(id: string): string[] {
 	const rows = db.prepare("SELECT key, value FROM settings WHERE key LIKE 'subagentModel:%'").all() as { key: string; value: string }[];
 	const agents: string[] = [];
 	for (const r of rows) {
 		try {
-			const c = JSON.parse(r.value) as { mode?: string; model?: { provider?: string } | null };
-			if (c.mode === "fixed" && c.model?.provider === id) agents.push(r.key.slice("subagentModel:".length));
+			const c = JSON.parse(r.value) as { pool?: { provider?: string }[]; mode?: string; model?: { provider?: string } };
+			const pool = Array.isArray(c.pool) ? c.pool : c.mode === "fixed" && c.model ? [c.model] : [];
+			if (pool.some((m) => m?.provider === id)) agents.push(r.key.slice("subagentModel:".length));
 		} catch {
 			/* 坏数据忽略 */
 		}
 	}
-	return { global: s.mode === "fixed" && s.model?.provider === id, agents };
+	return agents;
 }
 
 export function providerReferences(id: string): ProviderReferences {
-	const fixed = subagentFixedRefs(id);
 	return {
 		defaultModel: refProvider(getSetting("defaultModel", null)) === id,
 		visionModel: refProvider(getSetting("visionModel", null)) === id,
 		agents: (db.prepare("SELECT name FROM agents WHERE model_provider = ?").all(id) as { name: string }[]).map((r) => r.name),
-		subagents: fixed.global,
-		subagentAgents: fixed.agents,
+		subagents: false,
+		subagentAgents: subagentPoolRefs(id),
 	};
 }
 
@@ -102,13 +102,11 @@ export function clearProviderReferences(id: string): ProviderReferences {
 	const refs = providerReferences(id);
 	if (refs.defaultModel) setSetting("defaultModel", null);
 	if (refs.visionModel) setSetting("visionModel", null);
-	// 子代理：固定模型回落为跟随；允许清单里被删的服务也去掉（保存时会按现有模型校验，留着会报“模型尚未配置”）
-	const s = getSetting<{ allowed?: { provider?: string }[] } | null>("subagentModels", null);
-	if (s) {
-		const allowed = (s.allowed ?? []).filter((m) => m.provider !== id);
-		if (refs.subagents || allowed.length !== (s.allowed ?? []).length) setSetting("subagentModels", refs.subagents ? { ...s, mode: "follow", model: undefined, allowed } : { ...s, allowed });
+	// 子代理候选池：把被删的服务从池里去掉（保存时会按现有模型校验，留着会报“模型尚未配置”）
+	for (const agentId of refs.subagentAgents) {
+		const cur = getSetting<{ pool?: { provider?: string }[] }>(`subagentModel:${agentId}`, {});
+		setSetting(`subagentModel:${agentId}`, { pool: (Array.isArray(cur.pool) ? cur.pool : []).filter((m) => m?.provider !== id) });
 	}
-	for (const agentId of refs.subagentAgents) setSetting(`subagentModel:${agentId}`, { mode: "follow" });
 	if (refs.agents.length) db.prepare("UPDATE agents SET model_provider = NULL, model_id = NULL WHERE model_provider = ?").run(id);
 	return refs;
 }

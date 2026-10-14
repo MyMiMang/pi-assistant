@@ -32,13 +32,20 @@ try {
 	const launch = async (text) => { const n = (await rows()).length; await say(text); await waitFor(async () => (await rows()).length > n); return (await rows())[0]; };
 	const finished = async (id, status) => waitFor(async () => (await rows()).find((r) => r.id === id)?.status === status);
 	/** 主聊不再有子代理卡片：统一从 header 的「子代理」入口 → 任务概览 → 点行开详情 */
-	const openTask = async (id) => {
-		await page.getByTestId("subagent-tasks").click();
+	const openTask = async (id) => {		await page.getByTestId("subagent-tasks").click();
 		await page.getByTestId("task-overview").waitFor();
 		const row = page.locator(`[data-testid=subagent-row][data-id="${id}"]`);
 		if (!(await row.isVisible().catch(() => false))) await page.getByTestId("task-finished").locator("summary").click();
 		await row.click();
 		await page.locator('[data-testid="subagent-detail"]:visible').waitFor();
+	};
+	/** 信息面板标签：可见就直接点，否则从「更多」菜单里选 */
+	const infoTab = async (name) => {
+		const bar = page.getByTestId("info-tabs");
+		const tab = bar.getByRole("tab", { name, exact: true });
+		if (await tab.count()) return tab.click();
+		await page.getByTestId("info-tabs-more").click();
+		await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name, exact: true }).click();
 	};
 	const first = await launch("派个子代理整理文件");
 	await page.getByText("子代理已在后台工作，我们可以继续聊。").last().waitFor();
@@ -148,18 +155,26 @@ try {
 	await waitFor(async () => (await j(`/api/subagents/${first.id}`)).messages.filter((m) => m.content === "刚才的暗号是：青山").length === 2);
 	await page.locator(`[data-testid="subagent-detail"]:visible`).getByLabel("返回主会话").click();
 	console.log("✅ 服务重启后子代理续聊仍保留原上下文");
-	await page.goto(`${BASE}/?agent=${a.id}&settings=models`);
-	const settings = page.getByTestId("subagent-models");
-	await page.getByTestId("subagent-section-toggle").click();
+	// 助理设置 › 子代理模型：候选池多选（可搜索、按服务分组、勾选不关菜单），窄屏不横向溢出
+	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
+	await page.locator(".pa-pane-wrap").waitFor();
+	await page.getByTestId("info-tabs").waitFor();
+	await infoTab("设置");
+	const settings = page.getByTestId("agent-subagent-model");
 	await settings.waitFor();
-	await settings.getByLabel("子代理模型", { exact: true }).click();
-	await settings.getByTestId("subagent-model-auto").click();
-	await settings.locator("input[type=checkbox]").last().check();
-	await waitFor(async () => (await j("/api/subagents/settings")).settings.allowed.length === 1);
+	await settings.getByTestId("subagent-model").click();
+	await settings.getByTestId("subagent-model-menu").waitFor();
+	await settings.getByTestId("subagent-model-check").first().check();
+	await waitFor(async () => (await j(`/api/agents/${a.id}/subagent-model`)).pool.length === 1);
+	assert.ok(await settings.getByTestId("subagent-model-menu").isVisible(), "勾选后菜单不关，可连续多选");
+	// 关闭菜单后检查窄屏不横向溢出（多选是 checkbox，不是原生 select）
+	await page.keyboard.press("Escape");
 	await page.setViewportSize({ width: 390, height: 844 });
 	assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 1));
-	console.log("✅ 模型允许清单与手机布局");
-	await j("/api/subagents/settings", "PUT", { settings: undefined, mode: "follow", allowed: [], maxMinutes: 60 });
+	assert.equal(await settings.locator("select").count(), 0, "不应再用原生下拉框");
+	console.log("✅ 助理候选池多选（勾选不关菜单）与手机布局");
+	await page.setViewportSize({ width: 1280, height: 860 });
+	await j(`/api/agents/${a.id}/subagent-model`, "PUT", { pool: [] });
 	const room = await j("/api/rooms", "POST", { name: "子代理群", memberIds: [a.id], managerId: a.id });
 	await page.setViewportSize({ width: 1280, height: 860 });
 	await page.goto(`${BASE}/?room=${room.id}`);

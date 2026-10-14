@@ -276,6 +276,119 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 	);
 }
 
+// ------------------------------------------------------------------ 候选池：多选（勾选后不关菜单）
+function PoolOption({ m, checked, id, onToggle }: { m: ModelEntry; checked: boolean; id: string; onToggle: (m: ModelEntry, checked: boolean) => void }) {
+	return (
+		<label className={cx("flex w-full cursor-pointer items-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover", checked && "bg-hover")} data-testid={`${id}-option`} data-model={pickKey(m)}>
+			<input type="checkbox" className="mt-1 shrink-0 accent-[var(--acc)]" checked={checked} onChange={(e) => onToggle(m, e.target.checked)} data-testid={`${id}-check`} />
+			<span className="min-w-0 flex-1">
+				<span className="block truncate">
+					{m.star ? "★ " : ""}
+					{m.name}
+				</span>
+				{(m.badge || m.note) && (
+					<span className="block truncate text-[11px] text-mut">
+						{m.badge ? `${m.badge} · ` : ""}
+						{m.note ?? ""}
+					</span>
+				)}
+			</span>
+			{m.reasoning && <Brain size={12} className="mt-1 shrink-0 text-mut" aria-label="支持推理" />}
+		</label>
+	);
+}
+
+export interface ModelPoolMenuProps {
+	id: string;
+	models: ModelEntry[];
+	providers: Provider[];
+	value: { provider: string; id: string }[];
+	picks?: ModelPicks;
+	onToggle: (m: ModelEntry, checked: boolean) => void;
+	placement?: "up" | "down";
+}
+
+/** 候选池多选菜单：搜索 + 常用 + 按服务分组，勾选不关菜单（复用 ModelMenu 的分组/搜索/常用规则）。 */
+export function ModelPoolMenu({ id, models, providers, value, picks, onToggle, placement = "down" }: ModelPoolMenuProps) {
+	const [q, setQ] = useState("");
+	const [openGroups, setOpenGroups] = useState<string[]>(() => (models[0] ? [models[0].provider] : []));
+	const nameOf = (p: string) => providers.find((x) => x.id === p)?.name ?? models.find((m) => m.provider === p)?.providerName ?? p;
+	const selKeys = new Set(value.map(pickKey));
+	const k = q.trim().toLowerCase();
+	const shown = models.filter((m) => !k || `${m.name} ${m.id} ${m.provider} ${nameOf(m.provider)}`.toLowerCase().includes(k));
+	const frequent = k ? [] : rankPicks(picks ?? {}, 5).map((key) => models.find((m) => pickKey(m) === key)).filter((m): m is ModelEntry => !!m);
+	const freqKeys = new Set(frequent.map(pickKey));
+	const rest = shown.filter((m) => !freqKeys.has(pickKey(m)));
+	const by = new Map<string, ModelEntry[]>();
+	for (const m of rest) by.set(m.provider, [...(by.get(m.provider) ?? []), m]);
+	const groups = [...by.entries()]
+		.map(([provider, ms]) => ({ provider, name: nameOf(provider), models: ms }))
+		.sort((a, b) => a.name.localeCompare(b.name, "zh"));
+	const isOpen = (p: string) => !!k || openGroups.includes(p);
+	return (
+		<div className={cx("pa-pop absolute right-0 z-30 flex max-h-[60vh] w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg", placement === "up" ? "bottom-full mb-2" : "top-full mt-2")} data-testid={`${id}-menu`}>
+			<label className="mb-1 flex items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5">
+				<Search size={14} className="text-mut" />
+				<input autoFocus className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索模型或服务…" value={q} onChange={(e) => setQ(e.target.value)} data-testid={`${id}-search`} />
+			</label>
+			<div className="px-2.5 pb-1 text-[11px] text-mut2">{value.length ? `已选 ${value.length} 个；派活时在池内按任务挑，失败只在池内换` : "一个都不选 = 跟随主会话当前模型"}</div>
+			<div className="min-h-0 flex-1 overflow-y-auto">
+				{!models.length && <div className="p-3 text-sm text-mut">还没有配置模型服务：在 设置 › 模型 里添加</div>}
+				{!!models.length && !shown.length && <div className="p-3 text-sm text-mut">没有匹配的模型</div>}
+				{frequent.length > 0 && (
+					<div className="py-1" data-testid={`${id}-frequent`}>
+						<div className="px-2.5 pb-0.5 text-[11px] font-semibold tracking-wide text-mut uppercase">常用</div>
+						{frequent.map((m) => (
+							<PoolOption key={pickKey(m)} m={m} checked={selKeys.has(pickKey(m))} id={id} onToggle={onToggle} />
+						))}
+					</div>
+				)}
+				{groups.map((g) => (
+					<div key={g.provider} className="py-1">
+						<button className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-left" onClick={() => setOpenGroups((l) => (l.includes(g.provider) ? l.filter((x) => x !== g.provider) : [...l, g.provider]))} aria-expanded={isOpen(g.provider)} data-testid={`${id}-group-${g.provider}`}>
+							<ChevronDown size={12} className={cx("shrink-0 text-mut transition-transform", !isOpen(g.provider) && "-rotate-90")} />
+							<span className="min-w-0 flex-1 truncate text-[11px] font-semibold tracking-wide text-mut uppercase">{g.name}</span>
+							<span className="shrink-0 text-[11px] text-mut2">{g.models.filter((m) => selKeys.has(pickKey(m))).length || g.models.length}</span>
+						</button>
+						{isOpen(g.provider) && g.models.map((m) => <PoolOption key={pickKey(m)} m={m} checked={selKeys.has(pickKey(m))} id={id} onToggle={onToggle} />)}
+					</div>
+				))}
+			</div>
+		</div>
+	);
+}
+
+export interface ModelPoolButtonProps {
+	testid: string;
+	id?: string;
+	models: ModelEntry[];
+	providers: Provider[];
+	value: { provider: string; id: string }[];
+	picks?: ModelPicks;
+	onToggle: (m: ModelEntry, checked: boolean) => void;
+	text: string;
+	title?: string;
+	ariaLabel?: string;
+	buttonClass?: string;
+	placement?: "up" | "down";
+	onOpen?: () => void;
+}
+
+/** 共用的「候选池按钮 + 多选菜单」：勾选后菜单不关，方便一次选好几个。 */
+export function ModelPoolButton({ testid, id = testid, models, providers, value, picks, onToggle, text, title, ariaLabel, buttonClass, placement, onOpen }: ModelPoolButtonProps) {
+	const { open, setOpen, ref } = usePopover();
+	return (
+		<div className="relative min-w-0" ref={ref}>
+			<button className={cx("pa-chip sm !shrink min-w-0", buttonClass)} onClick={() => { if (!open) onOpen?.(); setOpen(!open); }} title={title} aria-label={ariaLabel} data-testid={testid}>
+				<Cpu className="pa-ic" />
+				<span className="truncate">{text}</span>
+				<ChevronDown size={12} />
+			</button>
+			{open && <ModelPoolMenu id={id} models={models} providers={providers} value={value} picks={picks} onToggle={onToggle} placement={placement} />}
+		</div>
+	);
+}
+
 // ------------------------------------------------------------------ 单聊输入栏：一个按钮同时管模型和思考强度
 export function ModelPicker({ agentId }: { agentId: string }) {
 	const agent = useStore((s) => s.agents.find((a) => a.id === agentId));

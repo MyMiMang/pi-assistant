@@ -5,6 +5,7 @@ import { insertMessage, updateMessage } from "./messages.ts";
 import { isStopCommand } from "./interject.ts";
 import { configuredModels, modelProfiles } from "./rooms/model-pick.ts";
 import { inferNeeds, pickModel } from "./model-profile.ts";
+import { isRecoverableModelError } from "./model-errors.ts";
 import { requests } from "./requests.ts";
 
 export type ModelRef = { provider: string; id: string };
@@ -15,11 +16,17 @@ export interface Subagent {
 	status: SubagentStatus; last_activity_at: number; error_reason: string | null; notified_at: number | null;
 	result_summary: string | null; created_at: number; finished_at: number | null;
 	session_file: string | null; run_started_at: number | null; pending_input: string | null; resume: number | null;
+	/** 派活时解析出的候选模型顺序（JSON 数组，第一项是实际用的；池内 fallback 按这个顺序，空 = 只跟随主会话）。 */
+	model_pool: string | null;
 }
 export interface SubagentEvent { id: string; subagent_id: string; kind: string; reason: string; created_at: number; delivered_at: number | null }
-export interface SubagentSettings { mode: "follow" | "auto" | "fixed"; allowed: ModelRef[]; model?: ModelRef; maxMinutes: number; maxConcurrent: number }
-/** 保存设置时的入参：maxConcurrent 可省略 —— 省略时保留当前上限，绝不重置（旧客户端 / 只改模型选项的界面不传这个字段）。 */
-export type SubagentSettingsInput = Omit<SubagentSettings, "maxConcurrent"> & { maxConcurrent?: number };
+/** 全局子代理设置只保留任务侧参数：并发上限与最长运行时间。子代理模型改由每个助理的候选池决定（见 DESIGN §21.5）。 */
+export interface SubagentSettings { maxMinutes: number; maxConcurrent: number }
+/** 保存设置时的入参：两个字段都可省略 —— 省略时保留当前值，绝不重置（旧客户端 / 只改一项的界面不传另一个字段）。 */
+export type SubagentSettingsInput = { maxMinutes?: number; maxConcurrent?: number };
+/** 助理级：候选模型池。空池 = 跟随主会话当前模型。 */
+export type AgentSubagentPool = { pool: ModelRef[] };
+/** @deprecated 旧助理级设置形状，仅为兼容旧客户端保留，读写都会转成候选池。 */
 export type AgentSubagentChoice = { mode: "follow" } | { mode: "fixed"; model: ModelRef };
 /** 并发上限的默认值与允许范围（按助理计算，见 pumpSubagents）。 */
 export const SUBAGENT_CONCURRENCY = { default: 10, min: 1, max: 100 } as const;
@@ -40,7 +47,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS subagents (
  id TEXT PRIMARY KEY, subagent_id TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL, delivered_at INTEGER);
 `);
 const columns = db.prepare("PRAGMA table_info(subagents)").all() as { name: string }[];
-for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"]]) {
+for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"]]) {
 	if (!columns.some((c) => c.name === name)) db.exec(`ALTER TABLE subagents ADD COLUMN ${name} ${type}`);
 }
 export const getSubagent = (id: string) => db.prepare("SELECT * FROM subagents WHERE id = ?").get(id) as Subagent | undefined;
@@ -54,55 +61,124 @@ const clampConcurrent = (n: unknown) => {
 	const v = Math.round(Number(n));
 	return Number.isFinite(v) ? Math.min(SUBAGENT_CONCURRENCY.max, Math.max(SUBAGENT_CONCURRENCY.min, v)) : SUBAGENT_CONCURRENCY.default;
 };
-/** 读取全局子代理设置；兼容旧库里没有 maxConcurrent 的记录。 */
+/** 读取全局子代理设置；兼容旧库里没有 maxConcurrent 的记录，并忽略已废弃的模型指定/挑选字段。 */
 export const subagentSettings = (): SubagentSettings => {
 	const raw = getSetting<Partial<SubagentSettings>>("subagentModels", {});
 	return {
-		mode: raw.mode ?? "follow", allowed: raw.allowed ?? [],
 		maxMinutes: raw.maxMinutes && raw.maxMinutes > 0 ? raw.maxMinutes : 60,
 		maxConcurrent: clampConcurrent(raw.maxConcurrent),
-		...(raw.mode === "fixed" && raw.model ? { model: raw.model } : {}),
 	};
 };
-export const agentSubagentChoice = (id: string): AgentSubagentChoice => getSetting(`subagentModel:${id}`, { mode: "follow" });
-const modelKey = (m: ModelRef) => `${m.provider}/${m.id}`;
+export const modelKey = (m: ModelRef) => `${m.provider}/${m.id}`;
+/**
+ * 池内 fallback 决策（纯函数，便于单测）：只有明确可恢复的模型故障才换，且只换还没试过的候选。
+ * 工具 / 命令失败、权限拒绝、未知错误都不是模型故障 → 返回 null（不换模型）。用尽候选也返回 null。
+ */
+export function planFallback(candidates: ModelRef[], tried: Iterable<string>, error?: string | null): ModelRef | null {
+	if (!isRecoverableModelError(error)) return null;
+	const t = new Set(tried);
+	return candidates.find((m) => !t.has(modelKey(m))) ?? null;
+}
+const asRefs = (x: unknown): ModelRef[] =>
+	Array.isArray(x)
+		? x.flatMap((m) => (m && typeof m === "object" && "provider" in m && "id" in m ? [{ provider: String((m as ModelRef).provider), id: String((m as ModelRef).id) }] : []))
+		: [];
+/** 把库里的旧格式 / 新格式统一读成候选池：新格式 `{pool}`；旧「固定一个模型」= 单项池；旧「跟随」= 空池。 */
+export function normalizeAgentPool(v: unknown): ModelRef[] {
+	if (!v || typeof v !== "object") return [];
+	const o = v as { pool?: unknown; mode?: string; model?: unknown };
+	if (Array.isArray(o.pool)) return asRefs(o.pool);
+	if (o.mode === "fixed") return asRefs([o.model]);
+	return [];
+}
+export const agentSubagentPool = (id: string): ModelRef[] => normalizeAgentPool(getSetting<unknown>(`subagentModel:${id}`, null));
 function requireModel(m: ModelRef | undefined) {
 	if (!m || !configuredModels().some((x) => x.provider === m.provider && x.id === m.id)) throw new Error("模型尚未配置");
-	return m;
+	return { provider: m.provider, id: m.id };
 }
+/** 只保留当前仍然配置着的模型（服务被删 / 模型下线后，池里的悬空项不参与挑选与 fallback）。 */
+export const livePool = (pool: ModelRef[]): ModelRef[] => pool.filter((m) => configuredModels().some((x) => x.provider === m.provider && x.id === m.id)).map((m) => ({ provider: m.provider, id: m.id }));
 export function saveSubagentSettings(input: SubagentSettingsInput) {
-	if (!["follow", "auto", "fixed"].includes(input.mode)) throw new Error("模型选择方式不对");
-	const allowed = (input.allowed ?? []).map(requireModel);
-	const maxMinutes = Number(input.maxMinutes ?? 60);
+	const cur = subagentSettings();
+	const maxMinutes = Number(input?.maxMinutes ?? cur.maxMinutes);
 	if (!Number.isFinite(maxMinutes) || maxMinutes <= 0) throw new Error("最长运行时间必须大于 0");
-	// 不传就保留当前上限：只改模型选项（或旧客户端）不带这个字段，不能因此把它重置回默认值
-	const maxConcurrent = input.maxConcurrent == null ? subagentSettings().maxConcurrent : Number(input.maxConcurrent);
+	// 不传就保留当前值：只改一项（或旧客户端）不带另一个字段，不能因此把它重置回默认值
+	const maxConcurrent = input?.maxConcurrent == null ? cur.maxConcurrent : Number(input.maxConcurrent);
 	if (!Number.isInteger(maxConcurrent) || maxConcurrent < SUBAGENT_CONCURRENCY.min || maxConcurrent > SUBAGENT_CONCURRENCY.max) throw new Error(`并发上限必须是 ${SUBAGENT_CONCURRENCY.min} 到 ${SUBAGENT_CONCURRENCY.max} 之间的整数`);
-	const s: SubagentSettings = { mode: input.mode, allowed, maxMinutes, maxConcurrent, ...(input.mode === "fixed" ? { model: requireModel(input.model) } : {}) };
+	const s: SubagentSettings = { maxMinutes, maxConcurrent };
 	setSetting("subagentModels", s);
 	pumpSubagents();
 	return s;
 }
-export function saveAgentSubagentChoice(id: string, choice: AgentSubagentChoice) {
-	if (choice.mode !== "follow" && choice.mode !== "fixed") throw new Error("模型选择方式不对");
-	const c: AgentSubagentChoice = choice.mode === "fixed" ? { mode: "fixed", model: requireModel(choice.model) } : { mode: "follow" };
+/** 保存助理的候选池；空池 = 跟随主会话当前模型。 */
+export function saveAgentSubagentPool(id: string, input: { pool?: ModelRef[] }): AgentSubagentPool {
+	const pool = (input?.pool ?? []).map(requireModel);
+	const c: AgentSubagentPool = { pool };
 	setSetting(`subagentModel:${id}`, c);
 	return c;
 }
-export function chooseSubagentModel(agentId: string, fallback: ModelRef, task: string, needs: string[] = [], explicit?: ModelRef) {
-	const s = subagentSettings();
-	const choice = agentSubagentChoice(agentId);
-	if (choice.mode === "fixed") return { model: requireModel(choice.model), reason: "助理指定的子代理模型" };
-	if (s.mode === "fixed") return { model: requireModel(s.model), reason: "全局指定的子代理模型" };
-	if (s.mode === "follow" || !s.allowed.length) return { model: requireModel(fallback), reason: "跟随主会话模型" };
-	if (explicit) {
-		if (!s.allowed.some((m) => modelKey(m) === modelKey(explicit))) throw new Error("模型不在子代理允许清单内");
-		return { model: requireModel(explicit), reason: "主会话指定（在允许清单内）" };
+/** @deprecated 兼容旧客户端：旧的 follow/fixed 形状转成候选池。 */
+export function saveAgentSubagentChoice(id: string, choice: AgentSubagentChoice) {
+	return saveAgentSubagentPool(id, { pool: choice?.mode === "fixed" && choice.model ? [choice.model] : [] });
+}
+/**
+ * 给一个子代理挑模型，并给出池内 fallback 的候选顺序（第一项就是实际用的模型）：
+ * - 没设候选池（默认）→ 跟随主会话当前模型，不做任何自动挑选，也没有池外可换。
+ * - 设了候选池 → 用能力画像在池内挑最适合任务的；主会话显式指定时必须在池内。
+ * - 空池 / 池内没有可用模型 → 明确报错，绝不偷偷用池外模型。
+ */
+export function chooseSubagentModel(agentId: string, fallback: ModelRef, task: string, needs: string[] = [], explicit?: ModelRef): { model: ModelRef; reason: string; pool: ModelRef[] } {
+	const pool = livePool(agentSubagentPool(agentId));
+	const follow = requireModel(fallback);
+	if (!pool.length) {
+		if (explicit && modelKey(explicit) !== modelKey(follow)) throw new Error("这个助理没有设置候选池，子代理只能跟随主会话模型");
+		return { model: follow, reason: "跟随主会话模型", pool: [follow] };
 	}
-	const profiles = modelProfiles().filter((m) => s.allowed.some((x) => modelKey(x) === modelKey(m)));
-	const pick = pickModel({ needs: [...new Set([...inferNeeds(task), ...needs])] as never }, profiles, s.allowed[0]);
-	if (!pick.model) throw new Error("允许清单里没有可用模型");
-	return { model: pick.model, reason: pick.reason };
+	if (explicit) {
+		const hit = pool.find((m) => modelKey(m) === modelKey(explicit));
+		if (!hit) throw new Error("模型不在这个助理的候选池内");
+		return { model: hit, reason: "主会话指定（在候选池内）", pool: [hit, ...pool.filter((m) => modelKey(m) !== modelKey(hit))] };
+	}
+	const profiles = modelProfiles().filter((m) => pool.some((x) => modelKey(x) === modelKey(m)));
+	const pick = pickModel({ needs: [...new Set([...inferNeeds(task), ...needs])] as never }, profiles, pool[0]);
+	if (!pick.model) throw new Error("候选池里没有可用模型");
+	const chosen = requireModel(pick.model);
+	return { model: chosen, reason: pick.reason, pool: [chosen, ...pool.filter((m) => modelKey(m) !== modelKey(chosen))] };
+}
+/**
+ * 一次性迁移旧设置（幂等）：
+ * - 全局只保留并发 / 超时；旧的全局模型指定按新定义废弃，子代理默认跟随主会话。
+ * - 旧的「全局允许清单」迁移成还没有显式助理配置的助理的候选池，用户已选的清单不丢。
+ * - 助理已有的显式配置原样保留：旧单模型 → 单项池，旧跟随 → 空池。
+ */
+export function migrateSubagentModelSettings() {
+	const raw = getSetting<Record<string, unknown>>("subagentModels", {});
+	const globalAllowed = asRefs(raw.allowed);
+	if (raw.mode !== undefined || raw.allowed !== undefined || raw.model !== undefined) {
+		const s = subagentSettings();
+		setSetting("subagentModels", s);
+	}
+	const rows = db.prepare("SELECT key, value FROM settings WHERE key LIKE 'subagentModel:%'").all() as { key: string; value: string }[];
+	const explicit = new Set<string>();
+	for (const r of rows) {
+		explicit.add(r.key.slice("subagentModel:".length));
+		let parsed: unknown;
+		try { parsed = JSON.parse(r.value); } catch { parsed = null; }
+		// 新格式原样保留；旧格式写回成候选池
+		if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as { pool?: unknown }).pool)) setSetting(r.key, { pool: normalizeAgentPool(parsed) });
+	}
+	if (globalAllowed.length) for (const a of db.prepare("SELECT id FROM agents").all() as { id: string }[]) if (!explicit.has(a.id)) setSetting(`subagentModel:${a.id}`, { pool: globalAllowed });
+}
+/** 池内自动 fallback：换模型继续同一个子代理（同一张卡、同一个任务），并把原因记成一条用户可见的系统消息。 */
+export function switchSubagentModel(id: string, next: ModelRef, reason: string) {
+	const r = getSubagent(id);
+	if (!r) return;
+	const m = requireModel(next);
+	if (r.model_provider === m.provider && r.model_id === m.id) return;
+	const from = `${r.model_provider}/${r.model_id}`;
+	db.prepare("UPDATE subagents SET model_provider = ?, model_id = ?, model_reason = ? WHERE id = ?").run(m.provider, m.id, reason, id);
+	insertMessage({ agentId: r.agent_id, conversationId: r.conversation_id, subagentId: id, role: "system", content: `模型 ${from} 不可用，已切换到候选池内的 ${m.provider}/${m.id}：${reason}` });
+	changed(id);
 }
 
 interface Live { stop?: () => Promise<void>; message?: (text: string, messageId?: string) => Promise<void>; pending: { text: string; messageId?: string }[]; toolUntil: number }
@@ -185,7 +261,7 @@ export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef,
 	// 先把已有的排队任务补上空位，保证 FIFO；再决定新任务是否立即跑
 	pumpSubagents(agentId);
 	const status: SubagentStatus = hasSubagentCapacity(agentId) ? "running" : "queued";
-	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, parent_message_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, input.parentMessageId ?? null, input.task, input.context ?? "", picked.model.provider, picked.model.id, picked.reason, status, ts, ts);
+	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, parent_message_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, created_at, model_pool) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, input.parentMessageId ?? null, input.task, input.context ?? "", picked.model.provider, picked.model.id, picked.reason, status, ts, ts, JSON.stringify(picked.pool));
 	insertMessage({ agentId, conversationId: conv, role: "card", meta: { kind: "subagent", subagentId: id, subagent: getSubagent(id) } });
 	insertMessage({ agentId, conversationId: conv, subagentId: id, role: "user", content: input.task });
 	if (status === "running") { live.set(id, { pending: [], toolUntil: 0 }); queueMicrotask(() => void run(id)); }

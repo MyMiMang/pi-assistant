@@ -205,6 +205,8 @@ try {
 	await j("/api/models/default", "PUT", { provider: "mock", model: "echo-think" });
 	await page.reload();
 	await page.getByTestId("default-model-picker").waitFor();
+	// 等模型列表与 store 加载完（按钮文字出现模型名）再打开菜单，避免空列表竞态
+	await wait(async () => (await page.getByTestId("default-model-picker").innerText()).includes("Mock 推理模型"));
 	await page.getByTestId("default-model-picker").click();
 	await page.getByTestId("default-model-thinking").waitFor();
 	await page.getByTestId("thinking-low").click();
@@ -268,28 +270,37 @@ try {
 	await page.screenshot({ path: join(OUT, "07-room-member-picker.png") });
 	assert.ok(pmFirst, "群聊成员菜单应有可选模型");
 
+	// 设置 › 模型 › 子代理：只剩任务侧（并发 + 最长运行），不再有全局模型指定/挑选
 	await page.goto(`${BASE}/?agent=${agent.id}&settings=models`);
-	// 子代理设置是独立短折叠，默认收起
-	assert.equal(await page.getByTestId("subagent-models").count(), 0, "子代理设置默认收起");
+	await page.getByTestId("subagent-section-toggle").waitFor();
 	await page.getByTestId("subagent-section-toggle").click();
-	const sub = page.getByTestId("subagent-models");
+	const task = page.getByTestId("subagent-concurrency");
+	await task.waitFor();
+	assert.equal(await task.locator("select").count(), 0, "全局子代理设置不应有原生下拉框");
+	assert.equal(await page.getByTestId("subagent-models").count(), 0, "全局不再有子代理模型选择");
+	await page.screenshot({ path: join(OUT, "08-subagent-task-settings.png") });
+	// 助理设置 › 子代理模型：候选池多选，勾选不关菜单（不是原生单选下拉）
+	await page.goto(`${BASE}/?agent=${agent.id}`);
+	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
+	await page.locator(".pa-pane-wrap").waitFor();
+	{
+		const bar = page.getByTestId("info-tabs");
+		const tab = bar.getByRole("tab", { name: "设置", exact: true });
+		if (await tab.count()) await tab.click();
+		else { await page.getByTestId("info-tabs-more").click(); await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "设置", exact: true }).click(); }
+	}
+	const sub = page.getByTestId("agent-subagent-model");
 	await sub.waitFor();
-	await sub.getByLabel("子代理模型", { exact: true }).click();
+	assert.equal(await sub.locator("select").count(), 0, "候选池不应是原生 select");
+	await sub.getByTestId("subagent-model").click();
 	await sub.getByTestId("subagent-model-menu").waitFor();
-	await sub.getByTestId("subagent-model-auto").click();
-	await wait(async () => (await j("/api/subagents/settings")).settings.mode === "auto");
-	await sub.getByLabel("子代理模型", { exact: true }).click();
-	await sub.getByTestId("subagent-model-menu").waitFor();
-	const subOpt = sub.getByTestId("subagent-model-option").first();
-	await subOpt.waitFor();
-	const subModel = await subOpt.getAttribute("data-model");
-	await subOpt.click();
-	await wait(async () => {
-		const s = (await j("/api/subagents/settings")).settings;
-		return s.mode === "fixed" && `${s.model?.provider}/${s.model?.id}` === subModel;
-	});
-	await page.screenshot({ path: join(OUT, "08-subagent-picker.png") });
-	await j("/api/subagents/settings", "PUT", { mode: "follow", allowed: [], maxMinutes: 60, maxConcurrent: 10 });
+	await sub.getByTestId("subagent-model-check").first().check();
+	await wait(async () => (await j(`/api/agents/${agent.id}/subagent-model`)).pool.length === 1);
+	await sub.getByTestId("subagent-model-check").nth(1).check();
+	await wait(async () => (await j(`/api/agents/${agent.id}/subagent-model`)).pool.length === 2);
+	assert.ok(await sub.getByTestId("subagent-model-menu").isVisible(), "勾选后菜单不关，可连续多选");
+	await page.screenshot({ path: join(OUT, "09-subagent-pool.png") });
+	await j(`/api/agents/${agent.id}/subagent-model`, "PUT", { pool: [] });
 	assert.equal(nativeDialogs, 0, "全程不应出现原生 confirm");
 	console.log("\n全部通过");
 } catch (e) {
