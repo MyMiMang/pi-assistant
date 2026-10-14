@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 当前公开版本 **v0.1.0-beta.18**（用户已更新确认）；剩余功能在独立发布树验收中，用户已授权直接提交推送打包，本轮仅 macOS arm64。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
+> 当前公开版本 **v0.1.0-beta.19**；本轮仅 macOS arm64，已构建、Mac 安装冒烟与更新资产校验通过并公开 Latest。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
 ## 1. 这是什么
 
@@ -13,6 +13,9 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 手机通过内置的 Cloudflare 隧道远程使用。界面文字是中文。用户只通过安装包的自动更新来测试。
 
 ## 2. 进度（按版本）
+
+beta.19 已公开：https://github.com/MyMiMang/pi-assistant/releases/tag/v0.1.0-beta.19 。正式 Actions https://github.com/MyMiMang/pi-assistant/actions/runs/38584256097 最终成功；首次 publish 替换 latest.json 遇 GitHub HTTP 500，仅重试失败任务成功，未重构建、未移动 tag。arm64 构建与 Mac 安装冒烟成功，Windows/Linux skipped、Intel 未入矩阵。实际公开 4 资产：latest.json、aarch64.dmg、aarch64.app.tar.gz 与签名；清单仅 darwin-aarch64 / darwin-aarch64-app，版本/notes/正式下载地址已核验。系统授权保留仍缺 Developer ID 证书明确阻塞。未安装用户 App。
+
 
 本轮续接：发布树 `3a44fc0` 保留 beta.18 权限免审批基线，原 beta.15 + WIP 树未 reset、未覆盖。已精选合入图片全屏、模型删除（原生 confirm 改现有确认框）、子代理默认 10 / 持久 FIFO / 重启会话续跑、Tauri 外链。图片桌面/手机专项全部通过；模型 8 项单测与添加/取消/失败/重试删除 UI 链路通过；子代理 14 项 + 渠道 5 项、真实进程重启冒烟通过。UI 入口精简与容器宽度适配已在发布树复核：8 组场景全过，子代理专项 e2e 全过，受影响 types/build 通过。原生 Tauri 外链待 Mac CI 编译和安装冒烟，不能以网页测试代替原生测试。
 
