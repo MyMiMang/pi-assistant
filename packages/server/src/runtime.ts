@@ -741,12 +741,19 @@ class AgentRuntime {
 		return compactSession(s);
 	}
 
-	/** 让助理在后台接着做一轮（指令对模型可见，聊天里不显示） */
-	async nudge(text: string) {
+	/** 让助理在后台接着做一轮（指令对模型可见，聊天里不显示）。返回 false 表示这一轮没能触发（无会话/模型或 Pi 报错）——
+	 *  调用方（如任务等待唤醒）据此重试，而不是把“静默失败”当成已唤醒。 */
+	async nudge(text: string): Promise<boolean> {
 		const s = await this.ensure();
-		if (!s) return;
+		if (!s) return false;
 		setAgentStatus(this.id, "running");
-		await triggerHidden(s, NUDGE_TYPE, text).catch(() => settleAgent(this.id));
+		try {
+			await triggerHidden(s, NUDGE_TYPE, text);
+			return true;
+		} catch {
+			settleAgent(this.id);
+			return false;
+		}
 	}
 
 	async inject(text: string) {
@@ -979,9 +986,11 @@ export const tasks = {
 
 setRoutineSpawner((agentId, title, instructions, opts) => tasks.spawn(agentId, title, instructions, opts));
 setProactiveSpawner((agentId, title, instructions, opts) => tasks.spawn(agentId, title, instructions, opts));
-// 任务等待：有结果时用一次隐藏触发（nudge）唤醒对应会话；等待本身不耗模型 token
+// 任务等待：有结果时用一次隐藏触发（nudge）唤醒对应会话；等待本身不耗模型 token。
+// nudge 现在会把“没送达”如实返回 false（不再 catch 吞掉），这里转成异常，交给 task-waits 重试/补投。
 setWaitWaker(async ({ wait, prompt }) => {
-	await runtime(wait.agent_id, wait.conversation_id ?? undefined).nudge(prompt);
+	const ok = await runtime(wait.agent_id, wait.conversation_id ?? undefined).nudge(prompt);
+	if (!ok) throw new Error("nudge 未送达（没有可用会话/模型，或 Pi 触发失败）");
 });
 
 export async function bootstrap() {

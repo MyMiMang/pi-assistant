@@ -9,6 +9,10 @@ export const MOCK_PROVIDER = "mock";
 export const MOCK_MODEL = "echo";
 export const MOCK_REASONING_MODEL = "echo-think";
 
+/** 集成测试用：每次 mock 模型步骤（一次真实模型调用）计数，用来证明等待期间零模型调用。 */
+export const mockStats = { steps: 0 };
+export const resetMockStats = () => { mockStats.steps = 0; };
+
 type Msg = { role: string; content: unknown; toolName?: string };
 const textOf = (m: Msg) =>
 	typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((b: { text?: string }) => b.text ?? "").join("") : "";
@@ -187,6 +191,11 @@ function respond(messages: Msg[], systemPrompt = "") {
 		if (last.toolName === "browser_click") return fauxAssistantMessage(/没有批准|拒绝/.test(out) ? "好的，没有提交。" : `已提交 ✅\n\n${out.slice(0, 300)}`);
 		return fauxAssistantMessage(`网页打开了：\n\n${out.slice(0, 600)}`);
 	}
+	// 任务等待（task_wait）：登记后结束这一轮，不空等——集成测试用
+	if (/等构建完成/.test(u)) {
+		if (last.role === "toolResult" && last.toolName === "task_wait") return fauxAssistantMessage("已登记等待（等后台构建完成），这一轮先结束，有结果我再继续。");
+		return fauxAssistantMessage([fauxText("好，我登记一个等待，不在这一轮里空等。"), fauxToolCall("task_wait", { reason: "等后台构建完成后核对产物", due: "+30m" })]);
+	}
 	if (/晚点再看|再帮我看看/.test(u)) {
 		if (last.role !== "toolResult") return fauxAssistantMessage([fauxToolCall("followup_schedule", { when: "+2h", note: `跟进：${u.slice(0, 80)}` })]);
 		return fauxAssistantMessage(`好的，${textOf(last)}到时我再看看。`);
@@ -280,6 +289,7 @@ function respond(messages: Msg[], systemPrompt = "") {
 export async function registerMockProvider(models: PiModels) {
 	const faux = registerFauxProvider({ provider: MOCK_PROVIDER, models: [{ id: MOCK_MODEL, name: "Mock 模型（本地测试）", input: ["text", "image"] } as never, { id: MOCK_REASONING_MODEL, name: "Mock 推理模型（本地测试）", reasoning: true } as never], tokensPerSecond: 60 });
 	const step = (ctx: { messages: (Msg & { toolsAdded?: MockTool[] })[]; systemPrompt?: string }) => {
+		mockStats.steps++;
 		faux.appendResponses([step as never]);
 		// Pi 把系统提示词和工具声明放在 transcript 的 system 消息里
 		const sys = ctx.messages.filter((m) => m.role === "system");

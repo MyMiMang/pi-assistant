@@ -1532,17 +1532,19 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 
 ### 28.1 模型侧：登记等待，然后结束回合（busy 如何释放、为什么不会无限 hang）
 - 新增 Pi 工具 `task_wait`（`ext-delivery`，只在主会话 `allowSpawn` 时提供；子代理/后台任务不提供，避免把「结束回合」误当任务完成）：`task_wait({ reason, task_id? | subagent_id? | repo/run_id/branch? , due?, check_minutes? })`，另有 `task_wait_list` / `task_wait_check` / `task_wait_cancel`。
-- 工具调用只是往 `task_waits` 写一条记录并立即返回；返回文案要求模型**结束这一轮**（不要再轮询）。Pi 的 `promptSession` 工具循环随之结束、`settle` → 会话释放为空闲。**没有阻塞等待、没有常驻循环，因此不存在无限 hang**。
-- 有结果时用 `runtime(agent, conversation).nudge(prompt)` 唤醒（和 followup / routine 同一套隐藏触发）。会话忙时 `triggerHidden` 采用 `deliverAs:"followUp"` 排在当前轮之后，不会丢、不会抢占；空闲时直接开一轮。
+- 工具调用只是往 `task_waits` 写一条记录并立即返回；返回文案**请模型结束这一轮**（不要再轮询）。这是**合作式结束，不是强制 yield**：工具不阻塞、不中断模型，也没有强制释放会话；只有模型照做停止输出后，Pi 的 `promptSession` 工具循环才会自然结束、`settle` → 会话释放为空闲。**没有阻塞等待、没有常驻循环，因此不存在无限 hang**。
+- 模型是否真会照做用 **mock 集成测试**证明（`packages/server/test/task-wait-yield.test.ts`：真实 Pi 会话 + mock 模型，调用 `task_wait` 后 `isSessionBusy===false`、事件里有 `settled`，且等待期 mock 模型步骤计数不增长）。**不能**拿之后 waker 的 `triggerTurn` 当 yield 证据——那是另一次唤醒回合，不是本轮的结束。
+- 有结果时用 `runtime(agent, conversation).nudge(prompt)` 唤醒（和 followup / routine 同一套隐藏触发）。会话忙时 `triggerHidden` 采用 `deliverAs:"followUp"` 排在当前轮之后，不会丢、不会抢占；空闲时直接开一轮。`nudge` 现在返回 `false` 表示「没送达（无会话/模型或 Pi 触发失败）」，不再静默吞错。
 
 ### 28.2 等待状态（`packages/server/src/task-waits.ts`，表 `task_waits`）
-- 字段：`id, agent_id, conversation_id, target_kind(task|subagent|github_run|due), target_ref, reason, status(waiting|fired|cancelled), check_interval_ms, next_check_at, due_at, last_checked_at, check_count, last_state, last_error, fired_reason, outcome, created_at, updated_at`。
+- 字段：`id, agent_id, conversation_id, target_kind(task|subagent|github_run|due), target_ref, reason, status(waiting|fired|cancelled), check_interval_ms, next_check_at, due_at, last_checked_at, check_count, last_state, last_error, fired_reason, outcome, delivery_status(pending|delivered|failed), delivery_attempts, delivered_at, last_delivery_error, next_delivery_at, created_at, updated_at`。
 - **不新表结构之外的东西**：内部任务/子代理状态直接读现有 `tasks` / `subagents`；外部只读固定 GitHub 端点；唤醒复用现有会话运行时。
 
 ### 28.3 调度（due / event 两条路 + 兜底）
 - **事件快速通道**：`bus` 的 `task.updated`（终态 done/failed/cancelled）与 `subagent.updated`（done/failed/stopped/timeout/lost）立即匹配 waiting 记录并唤醒。
 - **定时检查**：`tickWaits`（20 秒一次，`startWaitScheduler`）——到 `due_at` 无条件唤醒（兜底，事件永久丢失也不会无限等）；`next_check_at` 到点重查任务/子代理状态或调 provider；provider 每个 tick 最多查 5 个，避免打爆外部接口。
 - **去重**：`fireWait` 用 `UPDATE … WHERE status='waiting'` 原子置 `fired`，重复事件 / 并发 tick 只有一个成功唤醒；同一会话 + 同一目标重复登记复用一条 waiting。
+- **可靠投递（fired 与 delivered 分离）**：`fired` 只表示「已判定有结果」，另用 `delivery_status(pending|delivered|failed)` / `delivery_attempts` / `last_delivery_error` / `next_delivery_at` 记录唤醒是否真的交给了 runtime。waker 失败会按退避重试（最多 5 次），`delivery_status='failed'` 时保留 fired 记录与错误、不再无限重试；`resumeWaits` 重启后把 `pending` 的补投时间重置到现在，第一次 tick 就补投，进程崩溃窗口内没送出的唤醒不会永久丢失。**不承诺 exactly-once**：崩溃在「已投递但未落 delivered」之间会重复投递，唤醒词带等待 id 作为幂等线索，模型据此避免重复已完成的操作。
 - **重启恢复**：记录持久化；`startWaitScheduler` 先 `resumeWaits()` 把 waiting 的 `next_check_at` 重置为现在，第一次 tick 就会处理「重启期间任务已结束 / 已到点」的等待，不重跑任务、不重复副作用。
 - **取消 / 停止**：`task_wait_cancel` / `cancelWait`；用户说停时 `AgentRuntime.abort()` 调 `cancelWaitsForConversation` 取消该会话所有等待，停下后不再被唤醒。任务被取消（`tasks.cancel` / 失败中止）时，`task.updated(status=cancelled)` 事件会连带取消等它的等待（`cancelWaitsForTask`），**不唤醒**模型。
 
@@ -1550,8 +1552,8 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - 只内置一种外部检查：GitHub Actions run。请求**固定端点** `https://api.github.com/repos/<owner>/<repo>/actions/runs[/<id>]`，`owner/repo`、`run_id`、`branch` 先按正则校验；`GET` + 15s 超时，公开仓库免登录，私有仓库用环境变量 `GITHUB_TOKEN`/`GH_TOKEN`（只读）。
 - 不保存、不执行任何用户提供的命令或回调；provider 出错只记录 `last_error` 并继续等，到 `due_at` 兜底唤醒并说明拿不到结果。
 
-### 28.5 唤醒词：结构化增量，不重载历史
-`wakePrompt` 只带：等的是什么、状态、结果（截断）、链接（GitHub）、当初登记的目的，并提示「只根据增量继续、信息不明先核实」。不注入完整会话历史，避免每次唤醒重读全量上下文。
+### 28.5 唤醒词：结构化增量（消息本身不叠加重复历史）
+`wakePrompt` 只带：等待 id（幂等线索）、等的是什么、状态、结果（截断）、链接（GitHub）、当初登记的目的，并提示「只根据增量继续、信息不明先核实、重复送达按等待 id 去重」。它是发在**已有会话**里的一条用户不可见消息，会话历史照样存在（同一对话继续），只是这条通知本身不重抄一份历史；**不是**「唤醒不加载会话历史」。
 
 ### 28.6 用量
 等待期间零模型调用；唤醒是一次正常的对话回合，由 `bindSession` 记入现有 `usage_calls`（含缓存/推理），**不按运行时长度估算 token / 费用**。累计用量沿用现有用量系统。
@@ -1560,7 +1562,7 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 `GET /api/agents/:id/task-waits`、`POST /api/task-waits/:id/refresh`、`POST /api/task-waits/:id/cancel`；工具 `task_wait_list` / `task_wait_check`。用户问「现在怎么样了」时，模型可立即刷新一次并返回最新状态与最后检查时间（等待不是停止，状态里区分 waiting / fired / cancelled）。
 
 ### 28.8 验证（本次实际跑过）
-`packages/server/test/task-waits.test.ts` 12 项通过：登记校验、任务/子代理事件唤醒且重复事件去重、等待未变化不唤醒（provider pending）、状态变化唤醒一次、事件丢失兜底、到期兜底、纯时间等待、重启恢复、取消与会话停止、手动刷新幂等、重复登记复用、provider 出错不误唤醒。回归：`proactive.test.ts` + `subagents.test.ts` 26 项通过；服务端 `tsc --noEmit` 通过。**未跑**：完整 e2e 与安装包真机；GitHub provider 在真实公开仓库端到端（当前出口 IP 被匿名限流 403，需配 `GITHUB_TOKEN`），待用户在打包后跟进 GitHub run 时实测。
+`packages/server/test/task-waits.test.ts` 19 项通过：登记校验、任务/子代理事件唤醒且重复事件去重、等待未变化不唤醒（provider pending）、状态变化唤醒一次、事件丢失兜底、到期兜底、纯时间等待、重启恢复、取消与会话停止、手动刷新幂等、重复登记复用、provider 出错不误唤醒，以及本轮新增的**唤醒投递可靠性**：成功后标记 `delivered` 不再重复、失败有限重试并留痕、超过上限记 `failed` 不再重试、重启后补投 fired-but-undelivered、fired 后取消是 no-op 不二次投递。合作式结束用 `task-wait-yield.test.ts`（真实 Pi 会话 + mock 模型）证明：`task_wait` 后会话 settle、等待期 mock 模型步骤计数不增长（零模型调用）。回归：`proactive.test.ts` + `subagents.test.ts` + `pi-compat.test.ts` + `custom-providers.test.ts` + `thinking-levels.test.ts` 共 43 项通过；服务端 + 网页 `npm run typecheck` 通过。**未跑**：完整 e2e 与安装包真机；GitHub provider 在真实公开仓库端到端（当前出口 IP 被匿名限流 403，需配 `GITHUB_TOKEN`），待用户在打包后跟进 GitHub run 时实测。
 
 ### 28.9 真实用例（GitHub run，用户本轮发布后跟进）
 发布 `v0.1.0-beta.N` 推 tag 后，主会话不需要反复问「CI 跑完了吗」，只需登记一次等待：

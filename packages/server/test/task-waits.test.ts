@@ -24,7 +24,9 @@ function makeTask(id: string, status: string, result: string | null = null, erro
 function makeSubagent(id: string, status: string, summary: string | null = null, error: string | null = null) {
 	db.prepare("INSERT OR REPLACE INTO subagents(id, agent_id, conversation_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, result_summary, error_reason, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, "tw-a", conv, "子任务", "", "mock", "echo", "", status, now(), summary, error, now());
 }
-const reset = () => { db.prepare("DELETE FROM task_waits").run(); db.prepare("DELETE FROM tasks").run(); db.prepare("DELETE FROM subagents").run(); wakes.length = 0; W.resetWaitProviderRunner(); };
+const reset = () => { db.prepare("DELETE FROM task_waits").run(); db.prepare("DELETE FROM tasks").run(); db.prepare("DELETE FROM subagents").run(); wakes.length = 0; W.resetWaitProviderRunner(); W.setWaitWaker((w) => { wakes.push({ id: w.wait.id, prompt: w.prompt, outcome: w.outcome }); }); };
+/** 等微任务/定时器跑完，让 fireWait 的异步投递结果落库 */
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 test("登记校验：一次只等一件事；仓库格式；必须有目标或时间", () => {
 	assert.throws(() => W.registerWait("tw-a", conv, { reason: "x", taskId: "a", subagentId: "b" }), /只等一件事/);
@@ -210,4 +212,114 @@ test("provider 检查出错：记录错误并继续等，不误唤醒", async ()
 	assert.equal(row.status, "waiting");
 	assert.match(row.last_error ?? "", /未登录/);
 	assert.ok(row.last_checked_at);
+});
+
+// ---------------------------------------------------------------- 唤醒投递可靠性（fired 与 delivered 分离）
+test("唤醒投递成功：标记 delivered，唤醒词带等待 id 幂等线索，不再重复", async () => {
+	reset();
+	const w = W.registerWait("tw-a", conv, { taskId: "td1", reason: "等构建" });
+	makeTask("td1", "done", "产物好了");
+	bus.emit({ type: "task.updated", task: { id: "td1", status: "done" } });
+	assert.equal(wakes.length, 1);
+	await flush();
+	const row = W.getWait(w.id)!;
+	assert.equal(row.status, "fired");
+	assert.equal(row.delivery_status, "delivered");
+	assert.equal(row.delivery_attempts, 1);
+	assert.ok(row.delivered_at);
+	assert.match(wakes[0].prompt, new RegExp(w.id), "唤醒词带等待 id，供重复送达时去重");
+	// 再跑几轮 tick 不会重复投递
+	await W.tickWaits(now() + 10 * 60_000);
+	await flush();
+	assert.equal(wakes.length, 1);
+});
+
+test("唤醒投递失败：有限重试并留痕，成功后不再重复，不把失败当已 fired", async () => {
+	reset();
+	let attempts = 0;
+	W.setWaitWaker(() => { attempts++; if (attempts < 3) throw new Error("nudge 未送达"); });
+	const w = W.registerWait("tw-a", conv, { taskId: "td2", reason: "等构建" });
+	makeTask("td2", "done", "产物好了");
+	bus.emit({ type: "task.updated", task: { id: "td2", status: "done" } });
+	await flush();
+	let row = W.getWait(w.id)!;
+	assert.equal(row.status, "fired");
+	assert.equal(row.delivery_status, "pending", "失败后仍是待投递，不是已送达");
+	assert.equal(row.delivery_attempts, 1);
+	assert.match(row.last_delivery_error ?? "", /未送达/);
+	// 第 2 次仍失败
+	db.prepare("UPDATE task_waits SET next_delivery_at = 0 WHERE id = ?").run(w.id);
+	await W.tickWaits(now() + 1);
+	await flush();
+	row = W.getWait(w.id)!;
+	assert.equal(row.delivery_attempts, 2);
+	assert.equal(row.delivery_status, "pending");
+	// 第 3 次成功
+	db.prepare("UPDATE task_waits SET next_delivery_at = 0 WHERE id = ?").run(w.id);
+	await W.tickWaits(now() + 2);
+	await flush();
+	row = W.getWait(w.id)!;
+	assert.equal(row.delivery_status, "delivered");
+	assert.equal(row.delivery_attempts, 3);
+	assert.equal(attempts, 3);
+	// 送达后不再重投
+	await W.tickWaits(now() + 10 * 60_000);
+	await flush();
+	assert.equal(attempts, 3);
+});
+
+test("唤醒投递失败达上限：记为 failed，不再无限重试", async () => {
+	reset();
+	let attempts = 0;
+	W.setWaitWaker(() => { attempts++; throw new Error("nudge 未送达"); });
+	const w = W.registerWait("tw-a", conv, { taskId: "td3", reason: "等构建" });
+	makeTask("td3", "done", "产物好了");
+	bus.emit({ type: "task.updated", task: { id: "td3", status: "done" } });
+	await flush();
+	for (let i = 1; i < W.MAX_DELIVERY_ATTEMPTS; i++) {
+		db.prepare("UPDATE task_waits SET next_delivery_at = 0 WHERE id = ?").run(w.id);
+		await W.dispatchWake(w.id);
+	}
+	const row = W.getWait(w.id)!;
+	assert.equal(row.delivery_attempts, W.MAX_DELIVERY_ATTEMPTS);
+	assert.equal(row.delivery_status, "failed");
+	assert.match(row.last_delivery_error ?? "", /未送达/);
+	const before = attempts;
+	db.prepare("UPDATE task_waits SET next_delivery_at = 0 WHERE id = ?").run(w.id);
+	await W.dispatchWake(w.id);
+	await W.tickWaits(now() + 10 * 60_000);
+	await flush();
+	assert.equal(attempts, before, "failed 后不再尝试投递");
+});
+
+test("重启恢复：已 fired 但未送达的唤醒在第一次 tick 补投一次", async () => {
+	reset();
+	const w = W.registerWait("tw-a", conv, { dueAt: now() + 600_000, reason: "等部署" });
+	// 模拟上个进程：已判 fire、投递失败 / 崩溃前未送达
+	db.prepare("UPDATE task_waits SET status='fired', fired_reason='已完成', outcome=?, delivery_status='pending', delivery_attempts=2, next_delivery_at=? WHERE id=?").run(JSON.stringify({ state: "completed", detail: "产物好了", at: now() }), now() + 999_999, w.id);
+	let delivered = 0;
+	let lastPrompt = "";
+	W.setWaitWaker(( wk) => { delivered++; lastPrompt = wk.prompt; });
+	assert.ok(W.resumeWaits() >= 1, "重启时重置补投时间");
+	await W.tickWaits(now());
+	await flush();
+	assert.equal(delivered, 1, "重启后补投一次");
+	assert.equal(W.getWait(w.id)!.delivery_status, "delivered");
+	await W.tickWaits(now() + 10 * 60_000);
+	await flush();
+	assert.equal(delivered, 1, "补投成功后不再重复");
+	assert.match(lastPrompt, /产物好了/);
+});
+
+test("取消与投递竞态：fired 后取消是 no-op，不会二次投递", async () => {
+	reset();
+	const w = W.registerWait("tw-a", conv, { taskId: "td4", reason: "等构建" });
+	makeTask("td4", "done", "好了");
+	bus.emit({ type: "task.updated", task: { id: "td4", status: "done" } });
+	await flush();
+	assert.equal(W.getWait(w.id)!.delivery_status, "delivered");
+	assert.equal(W.cancelWait(w.id), false, "已 fired 的等待不能再取消");
+	await W.tickWaits(now() + 10 * 60_000);
+	await flush();
+	assert.equal(wakes.length, 1, "不会二次投递");
 });

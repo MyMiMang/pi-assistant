@@ -1,10 +1,16 @@
 /**
  * 任务等待（DESIGN §25「可靠 + 省无效 token 的任务调度」）：
  *
- * 模型不再用 sleep / 轮询去盯任务，而是调用 task_wait 登记一次**持久等待**，然后结束这一轮、
- * 释放 Pi 会话（Pi 的 prompt 循环自然结束，会话变空闲——不是常驻模型循环，也不会无限 hang）。
+ * 模型不再用 sleep / 轮询去盯任务，而是调用 task_wait 登记一次**持久等待**，然后**由模型自己结束这一轮**。
+ * 这是合作式结束、不是强制 yield：工具只写一条记录并返回一句提示，不阻塞、不中断模型；Pi 的 prompt 循环
+ * 只有等模型停止输出后才会自然结束、会话变空闲（不是常驻模型循环，也不会无限 hang）。模型是否照做由
+ * mock 集成测试证明（会话确实 settle、等待期零模型调用），不能拿之后的 waker triggerTurn 当 yield 证据。
  * 之后由本模块在「事件到点 / 内部任务或子代理结束 / 外部 provider（GitHub Actions run）状态变化」时，
  * 做**一次**结构化增量唤醒（runtime.nudge）。等待期间只在程序里检查，不调用模型。
+ *
+ * 唤醒投递的可靠性：`fired`（已判定有结果）与 `delivered`（已把唤醒交给 runtime）分开持久化。waker 失败
+ * 会有限重试并留痕，重启后继续补投；**不承诺 exactly-once**，崩溃窗口内可能重复投递，唤醒词带等待 id
+ * 作为幂等线索，模型据此避免重复已完成的操作。
  *
  * 复用现有链路，不新造大调度框架：
  *  - 状态落 SQLite（tasks / subagents 已有各自的表，这里只加一张 task_waits 记录「在等什么」）；
@@ -39,6 +45,12 @@ export interface TaskWait {
 	last_error: string | null;
 	fired_reason: string | null;
 	outcome: string | null;
+	/** 唤醒投递状态：waiting 时为 null；fired 后 pending → delivered / failed */
+	delivery_status: "pending" | "delivered" | "failed" | null;
+	delivery_attempts: number;
+	delivered_at: number | null;
+	last_delivery_error: string | null;
+	next_delivery_at: number | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -73,16 +85,31 @@ db.exec(`CREATE TABLE IF NOT EXISTS task_waits (
  check_interval_ms INTEGER NOT NULL, next_check_at INTEGER, due_at INTEGER,
  last_checked_at INTEGER, check_count INTEGER NOT NULL DEFAULT 0,
  last_state TEXT, last_error TEXT, fired_reason TEXT, outcome TEXT,
+ delivery_status TEXT, delivery_attempts INTEGER NOT NULL DEFAULT 0, delivered_at INTEGER,
+ last_delivery_error TEXT, next_delivery_at INTEGER,
  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS task_waits_agent ON task_waits(agent_id, created_at);
 CREATE INDEX IF NOT EXISTS task_waits_due ON task_waits(status, next_check_at);
+CREATE INDEX IF NOT EXISTS task_waits_delivery ON task_waits(status, delivery_status, next_delivery_at);
 `);
 
 /** 缺列迁移（新列只追加，不动老数据） */
 {
 	const cols = (db.prepare("PRAGMA table_info(task_waits)").all() as { name: string }[]).map((c) => c.name);
-	for (const [name, ddl] of [["outcome", "TEXT"], ["last_error", "TEXT"]] as const) if (!cols.includes(name)) db.exec(`ALTER TABLE task_waits ADD COLUMN ${name} ${ddl}`);
+	const added = new Set<string>();
+	for (const [name, ddl] of [
+		["outcome", "TEXT"],
+		["last_error", "TEXT"],
+		["delivery_status", "TEXT"],
+		["delivery_attempts", "INTEGER NOT NULL DEFAULT 0"],
+		["delivered_at", "INTEGER"],
+		["last_delivery_error", "TEXT"],
+		["next_delivery_at", "INTEGER"],
+	] as const) if (!cols.includes(name)) { db.exec(`ALTER TABLE task_waits ADD COLUMN ${name} ${ddl}`); added.add(name); }
+	// 升级前的 fired 行没有投递记录：旧实现只在内存里投递过一次，无从判断是否送达。
+	// 保守地视为已送达，避免升级瞬间把所有历史 fired 重新唤醒一遍（新的 fired 行才会写 pending）。
+	if (added.has("delivery_status")) db.prepare("UPDATE task_waits SET delivery_status = 'delivered', delivered_at = COALESCE(delivered_at, updated_at) WHERE status = 'fired' AND delivery_status IS NULL").run();
 }
 
 // ---------------------------------------------------------------- provider（固定、安全的外部检查）
@@ -252,29 +279,71 @@ function markChecked(id: string, lastState: string | null, error: string | null,
 	db.prepare("UPDATE task_waits SET last_checked_at = ?, check_count = check_count + 1, last_state = ?, last_error = ?, next_check_at = ?, updated_at = ? WHERE id = ?").run(t, lastState, error, nextCheckAt, t, id);
 }
 
-/** 触发一次唤醒：原子地只成功一次（重复事件 / tick 并发只会有一个 changes=1）。 */
+/** 触发一次唤醒：原子地只从 waiting 转 fired 一次（重复事件 / tick 并发只会有一个 changes=1）。
+ *  转为 fired 后异步投递；投递结果单独记 delivery_status，失败由 tick 重试，不把失败当已送达。 */
 export function fireWait(id: string, reason: string, outcome: Outcome): boolean {
-	const n = db.prepare("UPDATE task_waits SET status = 'fired', fired_reason = ?, outcome = ?, last_checked_at = ?, updated_at = ? WHERE id = ? AND status = 'waiting'").run(reason, JSON.stringify(outcome), outcome.at, now(), id).changes;
+	const t = now();
+	const n = db.prepare("UPDATE task_waits SET status = 'fired', fired_reason = ?, outcome = ?, last_checked_at = ?, updated_at = ?, delivery_status = 'pending', delivery_attempts = 0, next_delivery_at = ? WHERE id = ? AND status = 'waiting'").run(reason, JSON.stringify(outcome), outcome.at, t, t, id).changes;
 	if (!n) return false;
 	const w = getWait(id);
 	if (!w) return false;
 	changed(w.agent_id);
-	if (waker && !waking.has(id)) {
-		waking.add(id);
-		try {
-			void Promise.resolve(waker({ wait: w, prompt: wakePrompt(w, reason, outcome), outcome })).catch((e) => {
-				console.warn("[task-waits] 唤醒失败，保留已 fired 状态", String(e));
-			}).finally(() => waking.delete(id));
-		} catch (e) { waking.delete(id); console.warn("[task-waits] 唤醒抛出", String(e)); }
-	}
+	void dispatchWake(id);
 	return true;
 }
 
-/** 结构化增量唤醒词：只带这一个目标的增量状态，不重载历史。 */
+/** 唤醒投递最多尝试几次；超过后记为 failed 并保留 fired 记录等待人工处理，不再无限重试。 */
+export const MAX_DELIVERY_ATTEMPTS = 5;
+
+function parseOutcome(w: TaskWait): Outcome {
+	try { return w.outcome ? (JSON.parse(w.outcome) as Outcome) : { state: "unknown", detail: "（无结果信息）", at: now() }; }
+	catch { return { state: "unknown", detail: "（结果信息无法解析）", at: now() }; }
+}
+function markDelivered(id: string, attempts: number) {
+	const t = now();
+	db.prepare("UPDATE task_waits SET delivery_status = 'delivered', delivery_attempts = ?, delivered_at = ?, last_delivery_error = NULL, updated_at = ? WHERE id = ?").run(attempts, t, t, id);
+}
+function markDeliveryFailed(id: string, agentId: string, attempts: number, err: unknown) {
+	const msg = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+	const t = now();
+	if (attempts >= MAX_DELIVERY_ATTEMPTS) {
+		db.prepare("UPDATE task_waits SET delivery_status = 'failed', delivery_attempts = ?, last_delivery_error = ?, updated_at = ? WHERE id = ?").run(attempts, msg, t, id);
+		console.warn(`[task-waits] 唤醒投递连续失败 ${attempts} 次，已保留 fired 记录待处理（等待 ${id}）：${msg}`);
+	} else {
+		// 退避重试，由下次 tick 补投；等待 id 不变，重复送达可幂等处理
+		db.prepare("UPDATE task_waits SET delivery_status = 'pending', delivery_attempts = ?, last_delivery_error = ?, next_delivery_at = ?, updated_at = ? WHERE id = ?").run(attempts, msg, t + Math.min(5 * 60_000, 30_000 * 2 ** (attempts - 1)), t, id);
+	}
+	changed(agentId);
+}
+
+/** 真正把一次已 fired 的唤醒交给 runtime；成功/失败分别落库（可在重启后由 tick 补投）。 */
+export function dispatchWake(id: string): Promise<void> {
+	const w = getWait(id);
+	if (!w || w.status !== "fired" || w.delivery_status === "delivered" || w.delivery_status === "failed") return Promise.resolve();
+	if (waking.has(id)) return Promise.resolve();
+	if (!waker) return Promise.resolve(); // 没装 waker（如仅查状态的进程）：保持 pending，交给能投递的进程 / 下次 tick
+	waking.add(id);
+	const attempt = (w.delivery_attempts ?? 0) + 1;
+	let result: void | Promise<void>;
+	try {
+		const outcome = parseOutcome(w);
+		result = waker({ wait: w, prompt: wakePrompt(w, w.fired_reason ?? "有结果了", outcome), outcome });
+	} catch (e) {
+		result = Promise.reject(e);
+	}
+	return Promise.resolve(result)
+		.then(() => markDelivered(id, attempt))
+		.catch((e) => markDeliveryFailed(id, w.agent_id, attempt, e))
+		.finally(() => waking.delete(id));
+}
+
+/** 结构化增量唤醒词：只在这一个目标的结果之外加一句说明，不重载会话历史
+ *  （这是发在**已有会话**里的一条用户不可见消息，会话历史照常存在，只是不再叠加一份重复历史）。 */
 export function wakePrompt(w: TaskWait, reason: string, o: Outcome): string {
 	const target = w.target_kind === "task" ? `后台任务 ${w.target_ref}` : w.target_kind === "subagent" ? `子代理 ${w.target_ref}` : w.target_kind === "github_run" ? `GitHub Actions（${w.target_ref}）` : `到点`;
 	const lines = [
 		"（系统通知：你之前登记的任务等待有结果了）",
+		`- 等待 id：${w.id}（同一 id 可能因重试/重启补投重复送达，请以它为准去重，不要重复已完成的操作）`,
 		`- 在等：${target}`,
 		`- 状态：${reason}`,
 		`- 结果：${o.detail ?? o.conclusion ?? "（无更多信息）"}`,
@@ -313,6 +382,9 @@ export async function tickWaits(at = now()): Promise<string[]> {
 	ticking = true;
 	const fired: string[] = [];
 	try {
+		// 0) 补投递：已 fired 但唤醒没送达的（waker 失败重试 / 进程崩溃后恢复），按退避时间重投
+		const undelivered = db.prepare("SELECT id FROM task_waits WHERE status = 'fired' AND delivery_status = 'pending' AND (next_delivery_at IS NULL OR next_delivery_at <= ?)").all(at) as unknown as { id: string }[];
+		for (const r of undelivered) void dispatchWake(r.id);
 		const waiting = db.prepare("SELECT * FROM task_waits WHERE status = 'waiting' ORDER BY COALESCE(next_check_at, due_at, created_at)").all() as unknown as TaskWait[];
 		let providerChecks = 0;
 		for (const w of waiting) {
@@ -385,9 +457,12 @@ bus.on((e) => {
 
 // ---------------------------------------------------------------- 启动
 let timer: NodeJS.Timeout | null = null;
-/** 重启后：所有 waiting 立刻重查一次（可能等待期间任务已结束、事件已错过），已到点的第一次 tick 就唤醒。 */
+/** 重启后：waiting 立刻重查一次；已 fired 但未送达的唤醒也立刻重试补投。 */
 export function resumeWaits(): number {
-	return Number(db.prepare("UPDATE task_waits SET next_check_at = ? WHERE status = 'waiting' AND target_kind != 'due'").run(now()).changes);
+	const t = now();
+	const recheck = Number(db.prepare("UPDATE task_waits SET next_check_at = ? WHERE status = 'waiting' AND target_kind != 'due'").run(t).changes);
+	const redeliver = Number(db.prepare("UPDATE task_waits SET next_delivery_at = ? WHERE status = 'fired' AND delivery_status = 'pending'").run(t).changes);
+	return recheck + redeliver;
 }
 export function startWaitScheduler() {
 	if (timer) return;
