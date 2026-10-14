@@ -14,6 +14,8 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+- beta.21 候选（未发布）主会话复核：投递索引移至旧等待表补列后创建，避免升级启动失败；使用旧表结构启动的回归用例与等待/真实 Pi mock 会话测试共 21/21 通过。等待为合作式结束，mock 已验证 settle 后等待期不增加模型步骤，不承诺任意模型强制停止。
+
 2026-10-15 beta.20 已公开 Latest：https://github.com/MyMiMang/pi-assistant/releases/tag/v0.1.0-beta.20 。Actions https://github.com/MyMiMang/pi-assistant/actions/runs/38612956619 全部成功（arm64 build、mac-smoke、publish；Windows/Linux skipped，Intel 未入矩阵）。tag 固定 `07b3723`；公开四项资产 DMG、更新包、签名、latest.json，独立核验版本/中文 notes/正式下载地址，仅 darwin-aarch64 与 darwin-aarch64-app。未安装用户 App。
 
 beta.20 整合内容：模型菜单合并思考强度、按渠道折叠/搜索、常用五项持久化；任务展示共用短标题与状态，移除顶部子代理 tabs 和聊天大指令卡，完整指令在详情保留；附件 72px 缩略图复用全屏查看器，步骤汇总正确区分失败与仍在运行；定时任务新增每天时分/工作日/每周/均匀分钟或小时间隔/高级 cron，保留特殊旧 cron 与自定义免打扰；macOS 透明标题栏与交通灯留白。`subagent-routes.ts` 返回 reasoning 供统一模型菜单判断思考能力。底层 background/subagent/followup 未合并，等待不常驻模型，不按耗时估算 token。

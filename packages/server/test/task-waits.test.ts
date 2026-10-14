@@ -6,6 +6,15 @@ import "./setup.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 const { db, now } = await import("../src/db.ts");
+// 模拟上一版已存在的等待表：新索引只能在补齐投递列后创建。
+db.exec(`CREATE TABLE task_waits (
+ id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT,
+ target_kind TEXT NOT NULL, target_ref TEXT, reason TEXT NOT NULL, status TEXT NOT NULL,
+ check_interval_ms INTEGER NOT NULL, next_check_at INTEGER, due_at INTEGER,
+ last_checked_at INTEGER, check_count INTEGER NOT NULL DEFAULT 0,
+ last_state TEXT, last_error TEXT, fired_reason TEXT, outcome TEXT,
+ created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+)`);
 const W = await import("../src/task-waits.ts");
 const { bus } = await import("../src/bus.ts");
 const { createConversation } = await import("../src/conversations.ts");
@@ -27,6 +36,12 @@ function makeSubagent(id: string, status: string, summary: string | null = null,
 const reset = () => { db.prepare("DELETE FROM task_waits").run(); db.prepare("DELETE FROM tasks").run(); db.prepare("DELETE FROM subagents").run(); wakes.length = 0; W.resetWaitProviderRunner(); W.setWaitWaker((w) => { wakes.push({ id: w.wait.id, prompt: w.prompt, outcome: w.outcome }); }); };
 /** 等微任务/定时器跑完，让 fireWait 的异步投递结果落库 */
 const flush = () => new Promise((r) => setTimeout(r, 0));
+
+test("旧等待表升级：先补投递列再创建索引", () => {
+	const columns = db.prepare("PRAGMA table_info(task_waits)").all() as { name: string }[];
+	assert.ok(columns.some((c) => c.name === "delivery_status"));
+	assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='task_waits_delivery'").get());
+});
 
 test("登记校验：一次只等一件事；仓库格式；必须有目标或时间", () => {
 	assert.throws(() => W.registerWait("tw-a", conv, { reason: "x", taskId: "a", subagentId: "b" }), /只等一件事/);

@@ -91,7 +91,6 @@ db.exec(`CREATE TABLE IF NOT EXISTS task_waits (
 );
 CREATE INDEX IF NOT EXISTS task_waits_agent ON task_waits(agent_id, created_at);
 CREATE INDEX IF NOT EXISTS task_waits_due ON task_waits(status, next_check_at);
-CREATE INDEX IF NOT EXISTS task_waits_delivery ON task_waits(status, delivery_status, next_delivery_at);
 `);
 
 /** 缺列迁移（新列只追加，不动老数据） */
@@ -111,6 +110,9 @@ CREATE INDEX IF NOT EXISTS task_waits_delivery ON task_waits(status, delivery_st
 	// 保守地视为已送达，避免升级瞬间把所有历史 fired 重新唤醒一遍（新的 fired 行才会写 pending）。
 	if (added.has("delivery_status")) db.prepare("UPDATE task_waits SET delivery_status = 'delivered', delivered_at = COALESCE(delivered_at, updated_at) WHERE status = 'fired' AND delivery_status IS NULL").run();
 }
+
+// 索引依赖新增列，必须在旧表补列后创建。
+db.exec("CREATE INDEX IF NOT EXISTS task_waits_delivery ON task_waits(status, delivery_status, next_delivery_at)");
 
 // ---------------------------------------------------------------- provider（固定、安全的外部检查）
 export interface GithubRunRef { repo: string; runId?: number; branch?: string }
