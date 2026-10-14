@@ -8,6 +8,7 @@ import { t } from "../i18n";
 import { useStore } from "../store";
 import type { Attachment, ModelInfo } from "../types";
 import { AuthImage } from "./Attachments";
+import { openImageViewer } from "./ImageViewer";
 import { AgentEditor } from "./AgentEditor";
 import { AgentImageModel } from "./ImageModels";
 import { MemoryTab } from "./MemoryTab";
@@ -133,7 +134,13 @@ function Files({ agentId }: { agentId: string }) {
 			{images.length > 0 && (
 				<div className="grid grid-cols-3 gap-1.5">
 					{images.map((f) => (
-						<AuthImage key={f.fileId} path={`/api/files/${f.fileId}?inline=1`} alt={f.name} className="aspect-square w-full rounded-lg object-cover" />
+						<AuthImage
+							key={f.fileId}
+							path={`/api/files/${f.fileId}?inline=1`}
+							alt={f.name}
+							className="aspect-square w-full cursor-zoom-in rounded-lg object-cover"
+							onClick={() => openImageViewer({ authPath: `/api/files/${f.fileId}?inline=1`, alt: f.name, name: f.name, downloadPath: `/api/files/${f.fileId}` })}
+						/>
 					))}
 				</div>
 			)}

@@ -6,11 +6,15 @@ import { ArrowLeft, ArrowUp, Bot, Square, X } from "lucide-react";
 import { useStore, type SubagentTab } from "../store";
 import { Avatar } from "./ui";
 import { BotTurn, group, SystemMsg, UserMsg } from "./ChatMessages";
+import { isSendKey, SEND_HINT } from "../composer";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string };
 interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; last_activity_at: number; error_reason: string | null; result_summary: string | null }
-const labels: Record<string, string> = { running: "运行中", stalled: "暂无进展", done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "重启中断" };
+const labels: Record<string, string> = { queued: "排队中", running: "运行中", stalled: "暂无进展", done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "重启中断" };
+/** 有实时活动（显示“最后活动 N 秒前”） */
 const active = (r: Subagent) => ["running", "stalled"].includes(r.status);
+/** 还没到终态：运行中、暂无进展、排队等空位 —— 都可以停止 */
+const live = (r: Subagent) => active(r) || r.status === "queued";
 function State({ r }: { r: Subagent }) {
 	const [ts, setTs] = useState(Date.now());
 	useEffect(() => { if (!active(r)) return; const t = setInterval(() => setTs(Date.now()), 1000); return () => clearInterval(t); }, [r.status]);
@@ -21,7 +25,7 @@ export function SubagentCard({ m }: { m: Message }) {
 	const r = m.meta.subagent as Subagent;
 	if (!r) return null;
 	return <div className="pa-card w-full max-w-[560px]" data-testid="subagent-card" data-id={r.id} data-state={r.status}>
-		<button className="w-full text-left text-sm" onClick={() => useStore.getState().openSubagent(r)}><b>子代理：{r.task}</b><div className="mt-1"><State r={r} /></div><div className="mt-1 text-xs text-mut2">{r.model_id} · {r.model_reason}</div>{active(r) && m.meta.currentStep && <div className="mt-1 text-xs text-mut">当前：{({ bash: "运行命令", read: "读取文件", write: "写入文件", edit: "修改文件" } as Record<string, string>)[m.meta.currentStep] ?? m.meta.currentStep}</div>}</button>
+		<button className="w-full min-w-0 whitespace-normal text-left text-sm" onClick={() => useStore.getState().openSubagent(r)}><b className="block break-words" title={r.task}>子代理：{r.task}</b><div className="mt-1"><State r={r} /></div><div className="mt-1 break-words text-xs text-mut2">{r.model_id} · {r.model_reason}</div>{active(r) && m.meta.currentStep && <div className="mt-1 text-xs text-mut">当前：{({ bash: "运行命令", read: "读取文件", write: "写入文件", edit: "修改文件" } as Record<string, string>)[m.meta.currentStep] ?? m.meta.currentStep}</div>}</button>
 		{r.error_reason && <div className="mt-2 text-xs text-red-500">{r.error_reason}</div>}
 	</div>;
 }
@@ -70,14 +74,16 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 	};
 	const rows = group(d?.messages ?? []);
 	const running = !!d && active(d.subagent);
+	const stoppable = !!d && live(d.subagent);
+	const queued = d?.subagent.status === "queued";
 	const last = rows[rows.length - 1];
 	const avatar = agent ?? { id: d?.subagent.agent_id ?? "", avatar: "🔧", color: "#888" };
 	return <section className="pa-chat" data-testid="subagent-detail" aria-label="子代理会话" role="tabpanel">
 			<header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3">
 				<button className="pa-icon-btn pa-ghost" onClick={onClose} aria-label="返回主会话" title="返回主会话"><ArrowLeft className="pa-ic" /></button>
 				<Avatar agentId={avatar.id} text={avatar.avatar} color={avatar.color} size={32} />
-				<div className="min-w-0 flex-1"><b className="block truncate text-sm">子代理：{d?.subagent.task ?? "加载中…"}</b><div className="truncate text-xs">{d && <State r={d.subagent} />}<span className="ml-2 text-mut2">{d?.subagent.model_id}</span></div></div>
-				{d && (running ? <button className="pa-chip" onClick={() => void action("stop")} data-testid="subagent-stop">停止</button> : ["failed", "timeout", "lost"].includes(d.subagent.status) && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>)}
+				<div className="min-w-0 flex-1"><b className="block truncate text-sm" title={d?.subagent.task}>子代理：{d?.subagent.task ?? "加载中…"}</b><div className="truncate text-xs">{d && <State r={d.subagent} />}<span className="ml-2 text-mut2">{d?.subagent.model_id}</span></div></div>
+				{d && (stoppable ? <button className="pa-chip" onClick={() => void action("stop")} data-testid="subagent-stop">停止</button> : ["failed", "timeout", "lost"].includes(d.subagent.status) && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>)}
 			</header>
 			<div ref={scroller} className="pa-scroll scrollbar-thin" onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
 				<div className="pa-thread-body">
@@ -89,10 +95,10 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 			<div className="pa-composer-wrap">
 				{err && <p className="mx-auto mb-2 max-w-[760px] text-xs text-red-500" role="alert">{err}</p>}
 				<div className="pa-composer">
-					<textarea ref={ta} rows={1} value={text} onChange={(e) => setText(e.target.value)} aria-label="给子代理发消息" placeholder={running ? "补充要求，或说「停」" : "给子代理发消息…"} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); void send(); } }} />
-					<div className="pa-composer-bar"><span className="flex-1 text-xs text-mut2">{running ? "子代理正在工作" : "继续这个子代理会话"}</span>{running && !text.trim() ? <button className="pa-send" onClick={() => void action("stop")} aria-label="停止子代理"><Square size={13} fill="currentColor" /></button> : <button className="pa-send" disabled={sending || !text.trim()} onClick={() => void send()} aria-label="发送给子代理"><ArrowUp className="pa-ic" /></button>}</div>
+					<textarea ref={ta} rows={1} value={text} onChange={(e) => setText(e.target.value)} aria-label="给子代理发消息" placeholder={stoppable ? "补充要求，或说「停」" : "给子代理发消息…"} onKeyDown={(e) => { if (isSendKey(e)) { e.preventDefault(); void send(); } }} />
+					<div className="pa-composer-bar"><span className="min-w-0 flex-1 truncate text-xs text-mut2">{queued ? "子代理排队中，说「停」可取消" : running ? "子代理正在工作" : "继续这个子代理会话"} · {SEND_HINT}</span>{stoppable && !text.trim() ? <button className="pa-send" onClick={() => void action("stop")} aria-label="停止子代理"><Square size={13} fill="currentColor" /></button> : <button className="pa-send" disabled={sending || !text.trim()} onClick={() => void send()} aria-label="发送给子代理" title={SEND_HINT} aria-keyshortcuts="Shift+Enter"><ArrowUp className="pa-ic" /></button>}</div>
 				</div>
-				<div className="pa-foot-note">{agent?.name ?? "主会话"} 会收到子代理的完成回报</div>
+				<div className="pa-foot-note">{agent?.name ?? "主会话"} 会收到子代理的完成回报 · {SEND_HINT}</div>
 			</div>
 	</section>;
 }
@@ -106,9 +112,9 @@ export function SubagentTasks({ agentId, conversation, room }: { agentId?: strin
 		load(); const t = setInterval(load, 3000); return () => { off = true; clearInterval(t); };
 	}, [agentId, conversation, room]);
 	if (!rows.length) return null;
-	return <><button className="pa-chip" onClick={() => setOpen(true)} data-testid="subagent-tasks" aria-label="选择子代理" title="子代理"><Bot className="pa-ic" /><span className="max-sm:hidden">子代理</span><span>{rows.filter(active).length || rows.length}</span></button><Modal open={open} onClose={() => setOpen(false)} title="后台子代理"><div className="space-y-2">{rows.map((r) => <button key={r.id} className="w-full rounded-lg border border-line p-3 text-left text-sm" onClick={() => { setOpen(false); useStore.getState().openSubagent(r); }}><b>{r.task}</b><div><State r={r} /></div></button>)}</div></Modal></>;
+	return <><button className="pa-chip" onClick={() => setOpen(true)} data-testid="subagent-tasks" aria-label="选择子代理" title="子代理"><Bot className="pa-ic" /><span className="max-sm:hidden">子代理</span><span>{rows.filter(live).length || rows.length}</span></button><Modal open={open} onClose={() => setOpen(false)} title="后台子代理"><div className="space-y-2">{rows.map((r) => <button key={r.id} className="w-full min-w-0 whitespace-normal rounded-lg border border-line p-3 text-left text-sm" onClick={() => { setOpen(false); useStore.getState().openSubagent(r); }}><b className="block break-words" title={r.task}>{r.task}</b><div><State r={r} /></div></button>)}</div></Modal></>;
 }
-interface Settings { mode: "follow" | "auto" | "fixed"; allowed: Model[]; model?: Model; maxMinutes: number }
+interface Settings { mode: "follow" | "auto" | "fixed"; allowed: Model[]; model?: Model; maxMinutes: number; maxConcurrent: number }
 export function SubagentModels({ agentId }: { agentId?: string }) {
 	const [d, setD] = useState<{ settings: Settings; models: Model[] } | null>(null);
 	const [choice, setChoice] = useState<{ mode: "follow" | "fixed"; model?: Model }>({ mode: "follow" });
@@ -124,7 +130,7 @@ export function SubagentModels({ agentId }: { agentId?: string }) {
 		else await save({ ...d.settings, mode: model ? "fixed" : v as "follow" | "auto", model });
 	};
 	return <section className="space-y-2" data-testid={agentId ? "agent-subagent-model" : "subagent-models"}>
-		<div className="flex items-center gap-1 font-semibold">子代理模型<Help>{agentId ? "跟随全局设置，或给这个助理指定模型。" : "默认用主会话的模型。自动挑选只在勾选的清单内按任务能力选择；也可以固定用一个模型。最多同时 3 个子代理，只能派一层。"}</Help></div>
+		<div className="flex items-center gap-1 font-semibold">子代理模型<Help>{agentId ? "跟随全局设置，或给这个助理指定模型。" : "默认用主会话的模型。自动挑选只在勾选的清单内按任务能力选择；也可以固定用一个模型。最多同时跑几个由「设置 › 模型 › 子代理并发上限」决定（默认 10 个，按助理算），满了自动排队；只能派一层。"}</Help></div>
 		<select className="pa-input" value={value} onChange={(e) => void change(e.target.value)} aria-label="子代理模型"><option value="follow">{agentId ? "跟随全局" : "跟随主会话"}</option>{!agentId && <option value="auto">在允许清单里自动挑</option>}{d.models.map((m) => <option key={key(m)} value={key(m)}>{m.providerName ?? m.provider} / {m.name ?? m.id}</option>)}</select>
 		{!agentId && d.settings.mode === "auto" && <div className="space-y-1">{d.models.map((m) => <label className="flex items-center gap-2 text-sm" key={key(m)}><input type="checkbox" checked={d.settings.allowed.some((x) => key(x) === key(m))} onChange={(e) => void save({ ...d.settings, allowed: e.target.checked ? [...d.settings.allowed, m] : d.settings.allowed.filter((x) => key(x) !== key(m)) })} />{m.providerName ?? m.provider} / {m.name ?? m.id}</label>)}</div>}
 		{!agentId && <label className="flex items-center gap-2 text-sm text-mut">最长运行<input className="pa-input !w-20" type="number" min="1" defaultValue={d.settings.maxMinutes} aria-label="子代理最长运行分钟" onBlur={(e) => { const n = Number(e.target.value); if (n > 0 && n !== d.settings.maxMinutes) void save({ ...d.settings, maxMinutes: n }); }} />分钟</label>}

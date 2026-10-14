@@ -121,6 +121,24 @@ const H = ({ children, desc }: { children: React.ReactNode; desc?: React.ReactNo
 	</div>
 );
 
+interface SubagentSettingsDto { mode: "follow" | "auto" | "fixed"; allowed: { provider: string; id: string }[]; model?: { provider: string; id: string }; maxMinutes: number; maxConcurrent: number }
+const SUBAGENT_LIMIT = { min: 1, max: 100 };
+/** 子代理并发上限（按助理计算）；满额后新任务自动排队，这里只调上限。 */
+function SubagentConcurrency() {
+	const [d, setD] = useState<SubagentSettingsDto | null>(null);
+	const [err, setErr] = useState("");
+	useEffect(() => { void api<SubagentSettingsDto>("/api/subagents/settings").then(setD).catch((e) => setErr(String(e))); }, []);
+	if (!d) return null;
+	const save = async (n: number) => { try { setD(await api<SubagentSettingsDto>("/api/subagents/settings", { method: "PUT", json: { ...d, maxConcurrent: n } })); setErr(""); } catch (e) { setErr(String(e)); } };
+	return (
+		<section data-testid="subagent-concurrency">
+			<H desc="按助理计算。同时运行的子代理达到上限后，新任务会自动排队，有空位就按先后顺序开始，不会丢。">子代理并发上限</H>
+			<label className="flex items-center gap-2 text-sm text-mut">最多同时<input className="pa-input !w-20" type="number" min={SUBAGENT_LIMIT.min} max={SUBAGENT_LIMIT.max} defaultValue={d.maxConcurrent} aria-label="子代理并发上限" onBlur={(e) => { const n = Math.round(Number(e.target.value)); if (n >= SUBAGENT_LIMIT.min && n <= SUBAGENT_LIMIT.max && n !== d.maxConcurrent) void save(n); }} />个子代理</label>
+			{err && <p className="text-xs text-red-500">{err}</p>}
+		</section>
+	);
+}
+
 function ModelsTab() {
 	const { providers, reload } = useProviders();
 	const custom = useCustomProviders();
@@ -143,6 +161,7 @@ function ModelsTab() {
 			</section>
 			<ModelStrengths key={`s${providers.filter((p) => p.configured).length}`} />
 			<SubagentModels />
+			<SubagentConcurrency />
 			<section>
 				<H desc="列表来自 Pi 的模型服务目录，升级 Pi 后新的服务会自动出现。也可以添加任意中转站、第三方或本地模型服务。凭据加密保存在本机。">模型服务</H>
 				{customEdit ? (

@@ -1,6 +1,7 @@
 import { AlertTriangle, ChevronDown, Hand, Loader2, Pause, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { COMPOSER_LABEL } from "../composer";
 import { useStore } from "../store";
 import { Badge, Button, cx, Input, avatarText, Help, useConfirm } from "./ui";
 
@@ -215,7 +216,7 @@ export function HostControlSettings() {
 						</button>
 					))}
 				</div>
-				<p className="text-xs text-mut">只影响之后新建的助理。 <Help>每个助理的权限在输入框下方「助理电脑」旁边的 <ShieldCheck size={11} className="inline" /> 按钮里单独切换（调高需要确认）。</Help></p>
+				<p className="text-xs text-mut">只影响之后新建的助理。 <Help>每个助理的权限在输入框下方的 <ShieldCheck size={11} className="inline" /> 按钮里单独切换（调高需要确认）。</Help></p>
 				{anyFull && (
 					<div className="space-y-1 rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm leading-relaxed text-red-800 dark:text-red-300" data-testid="host-full-warning">
 						<div className="flex items-center gap-2 font-semibold">
@@ -446,9 +447,9 @@ export function HostTierPill({ agentId }: { agentId: string }) {
 	const cur: Tier = d.tiers?.[agentId] ?? d.settings.defaultTier ?? "bounded";
 	return (
 		<div className="relative" ref={ref}>
-			<button className={cx("pa-chip sm", !d.status.enabled && "opacity-70", cur === "full" && "!border-red-500/50 !text-red-600", cur === "trusted" && "!text-amber-600")} onClick={() => setOpen(!open)} title={`操作你的电脑：${TIER_INFO[cur].desc}`} data-testid="host-tier-pill">
+			<button className={cx("pa-chip sm", !d.status.enabled && "opacity-70", cur === "full" && "!border-red-500/50 !text-red-600", cur === "trusted" && "!text-amber-600")} onClick={() => setOpen(!open)} title={`操作你的电脑：${TIER_INFO[cur].desc}`} aria-label={`操作你的电脑：${TIER_INFO[cur].label}`} data-testid="host-tier-pill">
 				<ShieldCheck className="pa-ic" />
-				<span>{TIER_INFO[cur].label}</span>
+				<span className={COMPOSER_LABEL}>{TIER_INFO[cur].label}</span>
 				<ChevronDown size={12} />
 			</button>
 			{open && (
@@ -474,7 +475,7 @@ export function AgentHostTier({ agentId }: { agentId: string }) {
 				{d.status.enabled && !allowed && <span className="text-xs font-normal text-mut">（这个助理不在允许名单里）</span>}
 			</div>
 			<TierPicker agentId={agentId} d={d} load={load} />
-			<div className="text-xs text-mut">也可以在输入框下方「助理电脑」旁边的权限按钮里切换。</div>
+			<div className="text-xs text-mut">也可以在输入框下方的权限按钮里切换。</div>
 		</section>
 	);
 }

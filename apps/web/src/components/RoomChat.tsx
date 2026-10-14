@@ -8,6 +8,7 @@ import { useStore } from "../store";
 import type { Agent, Message, Room, RoomMember } from "../types";
 import { Activity, BotPart, type Part, SideToggle, SystemMsg, UserMsg } from "./Chat";
 import { Avatar, Button, Help, Modal, cx } from "./ui";
+import { isSendKey, SEND_HINT, COMPOSER_LABEL } from "../composer";
 
 // ------------------------------------------------------------------ 显示用的成员信息（助理已删除时用群里存的快照）
 export function memberOf(room: Room | undefined, agents: Agent[], agentId: string): { id: string; name: string; avatar: string; color: string; deleted: boolean } {
@@ -332,7 +333,7 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 	);
 	return (
 		<div className="pa-composer-wrap">
-			<div className={cx("pa-composer relative", drag && "drag")}>
+			<div className={cx("pa-composer relative @container", drag && "drag")}>
 				{q && !sheet && <div className="pa-mention-pop">{list}</div>}
 				{drag && <div className="pointer-events-none pb-2 text-center text-sm text-accent">松开即可把文件发到群里</div>}
 				<AttachTray files={files} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} />
@@ -347,10 +348,10 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 						if (q && !sheet && options.length) {
 							if (e.key === "ArrowDown") return void (e.preventDefault(), setHi((hi + 1) % options.length));
 							if (e.key === "ArrowUp") return void (e.preventDefault(), setHi((hi - 1 + options.length) % options.length));
-							if ((e.key === "Enter" || e.key === "Tab") && !e.nativeEvent.isComposing) return void (e.preventDefault(), choose(options[hi]));
+							if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey && !e.nativeEvent.isComposing) return void (e.preventDefault(), choose(options[hi]));
 						}
 						if (e.key === "Escape" && q) return void (setQ(null), setSheet(false));
-						if (e.key === "Enter" && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) {
+						if (isSendKey(e)) {
 							e.preventDefault();
 							void send();
 						}
@@ -374,15 +375,16 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 						}}>
 							<AtSign className="pa-ic" />
 						</button>
-						<span className="pa-room-hint truncate">不 @ 人时由管理者回答</span>
+						<span className="pa-room-hint truncate @max-[660px]:hidden">不 @ 人时由管理者回答</span>
 						<Help>不 @ 人：只有管理者回答，需要时它会分配给其他成员。@ 某个助理：只有它回答。@所有人：每个成员依次回答。</Help>
+						<span className={cx("shrink-0 text-[11px] text-mut2", COMPOSER_LABEL)}>{SEND_HINT}</span>
 					</div>
 					{running && !text.trim() && !files.length ? (
 						<button className="pa-send" onClick={() => api(`/api/rooms/${room.id}/stop`, { method: "POST" })} aria-label="停止" title="停止所有助理" data-testid="room-stop">
 							<Square size={13} fill="currentColor" />
 						</button>
 					) : (
-						<button className="pa-send" disabled={(!text.trim() && !files.length) || uploading > 0} onClick={send} aria-label="发送" data-testid="room-send">
+						<button className="pa-send" disabled={(!text.trim() && !files.length) || uploading > 0} onClick={send} aria-label="发送" title={SEND_HINT} aria-keyshortcuts="Shift+Enter" data-testid="room-send">
 							<ArrowUp className="pa-ic" />
 						</button>
 					)}

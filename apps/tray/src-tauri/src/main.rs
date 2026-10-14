@@ -189,6 +189,7 @@ pub fn open_ui(app: &AppHandle, path: &str) {
         return;
     }
     let opener = app.clone();
+    let opener_nav = app.clone();
     // 服务还没就绪：先显示打包进程序的启动页（不要让 WebView 显示「拒绝连接」），就绪后自动切过去
     let target = if ready { WebviewUrl::External(url) } else { WebviewUrl::App("startup.html".into()) };
     let built = WebviewWindowBuilder::new(app, "main", target)
@@ -202,10 +203,18 @@ pub fn open_ui(app: &AppHandle, path: &str) {
             let _ = opener.opener().open_url(u.as_str(), None::<&str>);
             tauri::webview::NewWindowResponse::Deny
         })
-        .on_navigation(|u| {
-            // 主窗口只允许停留在本机服务页面；其他地址交给浏览器
+        .on_navigation(move |u| {
+            // 主窗口只允许停留在本机服务页面；其他 http(s) 地址交给系统默认浏览器。
+            // 注意：WebView 里点链接（含 target=_blank）可能先走到这里，只 return false 会「静默取消」→
+            // 浏览器没被打开、链接点了没反应。所以这里对真正的外部地址要主动 open_url 再拒绝内嵌跳转。
             let local = u.host_str() == Some("127.0.0.1") && u.port() == Some(port());
-            local || is_startup_url(u) || u.scheme() == "about" || u.scheme() == "blob" || u.scheme() == "data"
+            if local || is_startup_url(u) || u.scheme() == "about" || u.scheme() == "blob" || u.scheme() == "data" {
+                return true;
+            }
+            if matches!(u.scheme(), "http" | "https") {
+                let _ = opener_nav.opener().open_url(u.as_str(), None::<&str>);
+            }
+            false
         })
         .build();
     match built {
@@ -350,7 +359,11 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_ui(app, "/")))
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_opener::init())
+        // 关掉 opener 插件的 JS 链接拦截（open_js_links_on_click）：它会在点击 <a target=_blank> 时
+        // preventDefault 再经 IPC 调 plugin:opener|open_url，而主窗口是远程页面、capability 未放行该命令，
+        // 结果点击被吞、外链点了没反应。改为完全交给下面的 on_navigation / on_new_window 原生处理
+        // （Rust 侧 app.opener().open_url 不做 scope 校验，https 外链可直接打开系统浏览器）。
+        .plugin(tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--background"])))

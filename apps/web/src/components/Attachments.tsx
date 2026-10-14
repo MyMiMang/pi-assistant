@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { download, fetchBlob } from "../api";
 import type { Attachment } from "../types";
 import { cx, fmtSize } from "./ui";
+import { openImageViewer } from "./ImageViewer";
 
 export function AuthImage({ path, alt, className, onClick }: { path: string; alt: string; className?: string; onClick?: () => void }) {
 	const [src, setSrc] = useState<string>();
@@ -17,13 +18,17 @@ export function AuthImage({ path, alt, className, onClick }: { path: string; alt
 }
 
 export default function Attachments({ items, mine }: { items: Attachment[]; mine?: boolean }) {
-	const [zoom, setZoom] = useState<Attachment | null>(null);
 	return (
 		<div className={cx("flex flex-col gap-2", mine ? "mt-1.5 items-end" : "items-start")}>
 			{items.map((f) =>
 				f.mime.startsWith("image/") && f.mime !== "image/svg+xml" ? (
 					<div key={f.fileId} className="group relative max-w-full" data-testid="image-attachment">
-						<AuthImage path={`/api/files/${f.fileId}?inline=1`} alt={f.name} className="max-h-64 max-w-[min(300px,100%)] cursor-zoom-in rounded-xl border border-line object-cover shadow-sm" onClick={() => setZoom(f)} />
+						<AuthImage
+							path={`/api/files/${f.fileId}?inline=1`}
+							alt={f.name}
+							className="max-h-64 max-w-[min(300px,100%)] cursor-zoom-in rounded-xl border border-line object-cover shadow-sm"
+							onClick={() => openImageViewer({ authPath: `/api/files/${f.fileId}?inline=1`, alt: f.name, name: f.name, downloadPath: `/api/files/${f.fileId}` })}
+						/>
 						<button
 							type="button"
 							title={`下载 ${f.name}`}
@@ -49,14 +54,6 @@ export default function Attachments({ items, mine }: { items: Attachment[]; mine
 						</span>
 					</button>
 				),
-			)}
-			{zoom && (
-				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setZoom(null)}>
-					<AuthImage path={`/api/files/${zoom.fileId}?inline=1`} alt={zoom.name} className="max-h-full max-w-full rounded-lg" />
-					<button type="button" className="absolute top-4 right-4 inline-flex h-9 items-center gap-1.5 rounded-full bg-white/90 px-3 text-sm text-zinc-900" onClick={(e) => (e.stopPropagation(), download(`/api/files/${zoom.fileId}`, zoom.name))}>
-						<Download size={15} /> 下载
-					</button>
-				</div>
 			)}
 		</div>
 	);

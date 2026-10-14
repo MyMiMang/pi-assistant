@@ -3,6 +3,7 @@ import { Children, isValidElement, memo, type ReactElement, type ReactNode } fro
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import { openImageViewer } from "./ImageViewer";
 
 /** 单独成段的链接渲染成链接卡片（结果以卡片呈现） */
 function LinkCard({ href }: { href: string }) {
@@ -44,7 +45,17 @@ export default memo(function Markdown({ text }: { text: string }) {
 						</div>
 					),
 					pre: ({ node: _n, ...p }) => <pre {...p} className={`${p.className ?? ""} pa-pre-x`} />,
-					img: ({ node: _n, ...p }) => <img {...p} className="max-w-full h-auto" />,
+					// 正文里的图片：点击全屏查看（外链图片也能看，只是不给下载按钮）
+					img: ({ node: _n, src, alt, ...p }) => (
+						<img
+							{...p}
+							src={src}
+							alt={alt ?? ""}
+							draggable={false}
+							className="h-auto max-w-full cursor-zoom-in"
+							onClick={() => src && openImageViewer({ src, alt: alt ?? "", name: alt || undefined })}
+						/>
+					),
 					p: ({ children, node: _n, ...rest }) => {
 						const kids = Children.toArray(children as ReactNode).filter((c) => !(typeof c === "string" && !c.trim()));
 						const only = kids.length === 1 && isValidElement(kids[0]) ? (kids[0] as ReactElement<{ href?: string; children?: ReactNode }>) : null;

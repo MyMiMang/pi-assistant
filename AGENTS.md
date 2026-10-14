@@ -37,7 +37,7 @@ Mock 模型（`packages/server/src/pi-adapter/mock-provider.ts`）按关键词�
 - 用户**只通过装好的 App 自动更新**来测试，不跑源码。
 - 改动直接推到 `main`（先 `git pull --rebase`），**永远不要 force-push**。
 - **只有用户说「打包」时才打 tag**：`v0.1.0-beta.N`，同时写 `docs/release-notes/v0.1.0-beta.N.md`（中文，写给用户看）。
-- tag 推上去后 `.github/workflows/release.yml` 会默认构建 4 个任务：mac arm64、Windows、Linux x64、Linux arm64，先传进草稿 Release，Windows / Mac 安装冒烟通过后才公开成 Latest（自动更新读 `latest.json`）。**Intel Mac（x86_64）暂缓**（用户要求等后期开发完善再带上）：需要时手动运行 workflow 勾选 `build_intel`，或设仓库变量 `BUILD_INTEL=true` 恢复第 5 个任务。用户中途说停：tag 没推就不推；推了要有 GitHub 登录才能取消（box 上 gh 未登录，见 ROADMAP「工作规则」）。macOS 的 dmg 不用 Tauri 的 bundle_dmg.sh（Intel runner 上反复失败），而是 `--bundles app` 后用 hdiutil 单独打；改发版流程先推 release-dryrun 分支演练。
+- 当前发布范围以 `.github/release-scope.json` 为准：本轮 `mac-arm64` 只构建 Apple Silicon macOS，跳过 Intel / Windows / Linux；Mac 安装冒烟成功后校验实际资产与 latest.json 仅含 arm64 再公开。手动 `scope=all` 或把配置改为 `all` 可恢复以下多平台流程。tag 推上去后 `.github/workflows/release.yml` 在 all 范围构建 4 个任务：mac arm64、Windows、Linux x64、Linux arm64，先传进草稿 Release，Windows / Mac 安装冒烟通过后才公开成 Latest（自动更新读 `latest.json`）。**Intel Mac（x86_64）暂缓**（用户要求等后期开发完善再带上）：需要时手动运行 workflow 勾选 `build_intel`，或设仓库变量 `BUILD_INTEL=true` 恢复第 5 个任务。用户中途说停：tag 没推就不推；推了要有 GitHub 登录才能取消（box 上 gh 未登录，见 ROADMAP「工作规则」）。macOS 的 dmg 不用 Tauri 的 bundle_dmg.sh（Intel runner 上反复失败），而是 `--bundles app` 后用 hdiutil 单独打；改发版流程先推 release-dryrun 分支演练。
 - 版本号取自 tag，不需要手动改。
 
 ## 约定
@@ -45,6 +45,6 @@ Mock 模型（`packages/server/src/pi-adapter/mock-provider.ts`）按关键词�
 - 界面文字是中文，越短越好；需要解释的放进「?」帮助气泡（`apps/web/src/components/ui.tsx` 的 `<Help>`）或悬停提示里。
 - 用到开源项目要写进 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，写明版本和许可证。下载的组件还要在 `third-party.json` 里固定版本和摘要。
 - 提交信息用中文，一行写清楚做了什么、为什么；截图更新单独提交。
-- 有后果的操作（发送、删除、付款、提交）一律走审批（ext-approval / requests.ts）。
+- 有后果的操作统一走 ext-approval / requests.ts；完全权限按 hostFileAccess 在应用层免审批（含受保护操作），其他档位维持审批，凭据 deny、暂停与系统权限弹窗不变。
 - 用户消息在助理忙时走 Pi `steer`（插话），不要改回 `followUp`；停止词判断统一用 `packages/server/src/interject.ts`（DESIGN §20）。
 - 新功能要加单测和 e2e，交付前跑 typecheck、单测和相关 e2e。

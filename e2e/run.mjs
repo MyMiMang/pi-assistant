@@ -77,7 +77,7 @@ const send = async (text) => {
 		await box.fill(text);
 		if ((await box.inputValue()) === text) break;
 	}
-	await box.press("Enter");
+	await box.press("Shift+Enter");
 	// 聊天里可能还有提议卡片里的 textarea，只等主输入框清空
 	await page.waitForFunction(() => document.querySelector("main textarea:not(.pa-card textarea)")?.value === "", null, { timeout: 10_000 });
 };
@@ -1702,7 +1702,7 @@ const roomSay = async (text) => {
 	const box = page.getByTestId("room-input");
 	await box.waitFor();
 	await box.fill(text);
-	await box.press("Enter");
+	await box.press("Shift+Enter");
 	await page.waitForFunction(() => document.querySelector("[data-testid=room-input]")?.value === "", null, { timeout: 10_000 });
 };
 const roomIdle = () => page.waitForFunction(() => !document.querySelector("[data-testid=room-status]"), null, { timeout: 60_000 });

@@ -4,8 +4,9 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DATA = "/tmp/pia-e2e-subagents";
 const PORT = await new Promise((resolve) => { const sv = createServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => resolve(p)); }); });
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -26,7 +27,7 @@ try {
 	page.on("pageerror", console.error);
 	await page.goto(`${BASE}/?agent=${a.id}`);
 	const box = page.locator("[data-testid=main-conversation] textarea:visible:not(.pa-card textarea)");
-	const say = async (text) => { await box.fill(text); await box.press("Enter"); };
+	const say = async (text) => { await box.fill(text); await box.press("Shift+Enter"); };
 	const rows = () => j(`/api/subagents?agent=${a.id}`);
 	const launch = async (text) => { const n = (await rows()).length; await say(text); await waitFor(async () => (await rows()).length > n); return (await rows())[0]; };
 	const finished = async (id, status) => waitFor(async () => (await rows()).find((r) => r.id === id)?.status === status);
@@ -127,10 +128,11 @@ try {
 	const pending = await launch("派个子代理重启测试");
 	await waitFor(async () => (await j(`/api/subagents/${pending.id}`)).messages.some((m) => m.role === "tool"));
 	await stop(); await start();
-	await finished(pending.id, "lost");
+	// 重启后从断点续跑（不再是 lost）：复用落库 session，跑完回报主会话
+	await finished(pending.id, "done");
 	await page.reload();
-	await page.getByText(/子代理回报：.*lost/).last().waitFor();
-	console.log("✅ 重启后标记中断并回报");
+	await page.getByText(/子代理回报：.*done/).last().waitFor();
+	console.log("✅ 重启后从中断处续跑并回报");
 	await page.locator(`[data-testid=subagent-card][data-id="${first.id}"]`).locator("button").click();
 	await childBox.fill("刚才暗号再说一次");
 	await panel.getByRole("button", { name: "发送给子代理", exact: true }).click();

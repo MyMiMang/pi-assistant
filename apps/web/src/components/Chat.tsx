@@ -3,7 +3,7 @@ import { HostControlBar, HostTierPill } from "./HostControl";
 import { ModelPicker, ThinkingPicker } from "./ModelPicker";
 import { ContextRing } from "./ContextRing";
 import { ProactivityPicker } from "./Proactive";
-import { ArrowUp, Menu, Monitor, PanelRight, Paperclip, Square, Users } from "lucide-react";
+import { ArrowUp, Menu, PanelRight, Square, Users } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, upload } from "../api";
 import { t } from "../i18n";
@@ -13,6 +13,7 @@ import type { Agent, Attachment, Message } from "../types";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
 import { Avatar, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
+import { COMPOSER_LABEL, isSendKey, SEND_HINT } from "../composer";
 
 import { group, BotTurn as SharedBotTurn, BotPart as SharedBotPart, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
 export { Activity, activityOf, Thinking, group, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
@@ -92,10 +93,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 					)}
 					<SubagentTasks agentId={agent.id} conversation={useStore.getState().convs[agent.id]?.current} />
 					<ConversationMenu agentId={agent.id} />
-					<button className="pa-chip max-sm:!hidden" onClick={() => set({ info: true, infoTab: "computer" })}>
-						<Monitor className="pa-ic" />
-						<span>电脑</span>
-					</button>
+					{/* 「电脑」入口在右侧信息面板的电脑 tab 里，这里不再重复放一个 */}
 					<button className={cx("pa-icon-btn ghost", info && "!bg-hover")} onClick={() => set({ info: !info })} aria-label="信息面板" title={info ? "收起信息面板" : "打开信息面板"}>
 						<PanelRight className="pa-ic" />
 					</button>
@@ -137,7 +135,6 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 	const [text, setText] = useState("");
 	const { files, setFiles, uploading, error: upErr, addFiles, clear } = useAttachUploader((f) => upload(agentId, f));
 	const ta = useRef<HTMLTextAreaElement>(null);
-	const isTouch = matchMedia("(pointer: coarse)").matches;
 	useLayoutEffect(() => {
 		const el = ta.current;
 		if (!el) return;
@@ -154,7 +151,7 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 	if (ref && typeof ref === "object") (ref as React.RefObject<{ addFiles: typeof addFiles } | null>).current = { addFiles };
 	return (
 		<div className="pa-composer-wrap">
-			<div className={cx("pa-composer", drag && "drag")}>
+			<div className={cx("pa-composer @container", drag && "drag")}>
 				{drag && <div className="pointer-events-none pb-2 text-center text-sm text-accent">松开即可把文件发给 {name}</div>}
 				<AttachTray files={files} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} />
 				<textarea
@@ -164,7 +161,7 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 					onChange={(e) => setText(e.target.value)}
 					onPaste={(e) => pasteFiles(e, (fs) => void addFiles(fs))}
 					onKeyDown={(e) => {
-						if (e.key === "Enter" && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) {
+						if (isSendKey(e)) {
 							e.preventDefault();
 							void send();
 						}
@@ -174,10 +171,6 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 				<div className="pa-composer-bar">
 					<div className="pa-composer-tools">
 					<AttachButton label={t("上传")} onFiles={(f) => void addFiles(f)} />
-					<button className="pa-chip sm" onClick={() => useStore.getState().set({ info: true, infoTab: "computer" })}>
-						<Monitor className="pa-ic" />
-						<span className="max-sm:hidden">助理电脑</span>
-					</button>
 					<HostTierPill agentId={agentId} />
 					<ProactivityPicker agentId={agentId} />
 					<span className="flex-1" />
@@ -190,13 +183,12 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 							<Square size={13} fill="currentColor" />
 						</button>
 					) : (
-						<button className="pa-send" disabled={!text.trim() && !files.length} onClick={send} aria-label={t("发送")}>
+						<button className="pa-send" disabled={!text.trim() && !files.length} onClick={send} aria-label={t("发送")} title={SEND_HINT} aria-keyshortcuts="Shift+Enter">
 							<ArrowUp className="pa-ic" />
 						</button>
 					)}
 				</div>
 			</div>
-			<div className="pa-foot-note">发送、删除、付款等操作都会先请你批准</div>
 		</div>
 	);
 }

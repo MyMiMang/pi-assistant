@@ -5,13 +5,13 @@ import { getAgent, runtime } from "./runtime.ts";
 import { toMessage, type MessageRow } from "./messages.ts";
 import { providerNames } from "./models.ts";
 import { configuredModels } from "./rooms/model-pick.ts";
-import { agentSubagentChoice, getSubagent, isActiveSubagent, listSubagents, saveAgentSubagentChoice, saveSubagentSettings, sendSubagentMessage, spawnSubagent, stopSubagent, subagentSettings, type AgentSubagentChoice, type SubagentSettings } from "./subagents.ts";
+import { agentSubagentChoice, getSubagent, isLiveSubagent, listSubagents, saveAgentSubagentChoice, saveSubagentSettings, sendSubagentMessage, spawnSubagent, stopSubagent, subagentSettings, type AgentSubagentChoice, type SubagentSettingsInput } from "./subagents.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: 同 http.ts
 export function mountSubagentRoutes(app: Hono<any>) {
 	app.get("/api/subagents/settings", (c) => c.json({ settings: subagentSettings(), models: configuredModels().map((m) => ({ provider: m.provider, id: m.id, name: m.name, providerName: providerNames().get(m.provider) ?? m.provider })) }));
 	app.put("/api/subagents/settings", async (c) => {
-		try { return c.json(saveSubagentSettings(await c.req.json<SubagentSettings>())); }
+		try { return c.json(saveSubagentSettings(await c.req.json<SubagentSettingsInput>())); }
 		catch (e) { return c.json({ error: String(e) }, 400); }
 	});
 	app.get("/api/agents/:id/subagent-model", (c) => c.json(agentSubagentChoice(c.req.param("id"))));
@@ -40,7 +40,7 @@ export function mountSubagentRoutes(app: Hono<any>) {
 	app.post("/api/subagents/:id/retry", (c) => {
 		const r = getSubagent(c.req.param("id"));
 		if (!r) return c.json({ error: "not_found" }, 404);
-		if (isActiveSubagent(r.status)) return c.json({ error: "子代理仍在运行" }, 400);
+		if (isLiveSubagent(r.status)) return c.json({ error: r.status === "queued" ? "子代理正在排队，请先等它开始或停止" : "子代理仍在运行" }, 400);
 		const a = getAgent(r.agent_id), conv = getConversation(r.conversation_id);
 		if (!a || !conv) return c.json({ error: "会话已删除" }, 404);
 		const fallback = runtime(a.id, conv.id).modelFor(a);

@@ -5,6 +5,7 @@
 import { Bell, BellOff, Check, ChevronDown, Clock, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { COMPOSER_LABEL } from "../composer";
 import { useStore } from "../store";
 import { Badge, Button, cx, fmtTime, Help, Input, Modal, avatarText } from "./ui";
 
@@ -76,12 +77,9 @@ export function ProactivityPicker({ agentId }: { agentId: string }) {
 	if (!d) return null;
 	return (
 		<div className="relative" ref={ref}>
-			<button className="pa-chip sm" onClick={() => setOpen(!open)} title="主动性：助理会不会主动来找你" data-testid="proactive-picker">
+			<button className="pa-chip sm" onClick={() => setOpen(!open)} title="主动性：助理会不会主动来找你" aria-label={`主动性：${LEVEL_LABEL[d.level]}`} data-testid="proactive-picker">
 				{d.level === "off" ? <BellOff className="pa-ic" /> : <Sparkles className="pa-ic" />}
-				<span>
-					<span className="max-sm:hidden">主动·</span>
-					{LEVEL_LABEL[d.level]}
-				</span>
+				<span className={COMPOSER_LABEL}>主动·{LEVEL_LABEL[d.level]}</span>
 				<ChevronDown size={12} />
 			</button>
 			{open && (

@@ -5,6 +5,7 @@
 import { Brain, Check, ChevronDown, Cpu, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
+import { COMPOSER_LABEL } from "../composer";
 import { useStore } from "../store";
 import type { Provider } from "../types";
 import { cx } from "./ui";
@@ -70,9 +71,9 @@ export function ModelPicker({ agentId }: { agentId: string }) {
 	if (!agent) return null;
 	return (
 		<div className="relative min-w-0" ref={ref}>
-			<button className="pa-chip sm !shrink max-w-[220px] max-sm:max-w-[120px]" onClick={() => setOpen(!open)} title="选择这个助理用的模型" data-testid="model-picker">
+			<button className="pa-chip sm !shrink max-w-[220px] max-sm:max-w-[120px]" onClick={() => setOpen(!open)} title="选择这个助理用的模型" aria-label={`选择模型：${curEntry?.name ?? cur?.id ?? "未选择"}`} data-testid="model-picker">
 				<Cpu className="pa-ic" />
-				<span className="truncate">{curEntry?.name ?? cur?.id ?? "选择模型"}</span>
+				<span className={cx("truncate", COMPOSER_LABEL)}>{curEntry?.name ?? cur?.id ?? "选择模型"}</span>
 				<ChevronDown size={12} />
 			</button>
 			{open && (
@@ -121,9 +122,9 @@ export function ThinkingPicker({ agentId }: { agentId: string }) {
 	const cur = agent.thinking && levels.includes(agent.thinking) ? agent.thinking : levels[0];
 	return (
 		<div className="relative" ref={ref}>
-			<button className="pa-chip sm" onClick={() => setOpen(!open)} title="思考强度" data-testid="thinking-picker">
+			<button className="pa-chip sm" onClick={() => setOpen(!open)} title="思考强度" aria-label={`思考强度：${THINKING_LABEL[cur] ?? cur}`} data-testid="thinking-picker">
 				<Brain className="pa-ic" />
-				<span><span className="max-sm:hidden">思考·</span>{THINKING_LABEL[cur] ?? cur}</span>
+				<span className={COMPOSER_LABEL}>思考·{THINKING_LABEL[cur] ?? cur}</span>
 				<ChevronDown size={12} />
 			</button>
 			{open && (

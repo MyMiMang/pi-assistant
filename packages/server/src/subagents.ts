@@ -8,19 +8,27 @@ import { inferNeeds, pickModel } from "./model-profile.ts";
 import { requests } from "./requests.ts";
 
 export type ModelRef = { provider: string; id: string };
-export type SubagentStatus = "running" | "stalled" | "done" | "failed" | "stopped" | "timeout" | "lost";
+export type SubagentStatus = "queued" | "running" | "stalled" | "done" | "failed" | "stopped" | "timeout" | "lost";
 export interface Subagent {
 	id: string; agent_id: string; conversation_id: string; parent_message_id: string | null;
 	task: string; context: string; model_provider: string; model_id: string; model_reason: string;
 	status: SubagentStatus; last_activity_at: number; error_reason: string | null; notified_at: number | null;
 	result_summary: string | null; created_at: number; finished_at: number | null;
-	session_file: string | null; run_started_at: number | null;
+	session_file: string | null; run_started_at: number | null; pending_input: string | null; resume: number | null;
 }
 export interface SubagentEvent { id: string; subagent_id: string; kind: string; reason: string; created_at: number; delivered_at: number | null }
-export interface SubagentSettings { mode: "follow" | "auto" | "fixed"; allowed: ModelRef[]; model?: ModelRef; maxMinutes: number }
+export interface SubagentSettings { mode: "follow" | "auto" | "fixed"; allowed: ModelRef[]; model?: ModelRef; maxMinutes: number; maxConcurrent: number }
+/** 保存设置时的入参：maxConcurrent 可省略 —— 省略时保留当前上限，绝不重置（旧客户端 / 只改模型选项的界面不传这个字段）。 */
+export type SubagentSettingsInput = Omit<SubagentSettings, "maxConcurrent"> & { maxConcurrent?: number };
 export type AgentSubagentChoice = { mode: "follow" } | { mode: "fixed"; model: ModelRef };
+/** 并发上限的默认值与允许范围（按助理计算，见 pumpSubagents）。 */
+export const SUBAGENT_CONCURRENCY = { default: 10, min: 1, max: 100 } as const;
 const ACTIVE = "('running','stalled')";
+/** 未到终态的状态：运行中、暂无进展、排队等空位。 */
+const LIVE = "('queued','running','stalled')";
 export const isActiveSubagent = (s: string) => s === "running" || s === "stalled";
+export const isQueuedSubagent = (s: string) => s === "queued";
+export const isLiveSubagent = (s: string) => isActiveSubagent(s) || isQueuedSubagent(s);
 
 db.exec(`CREATE TABLE IF NOT EXISTS subagents (
  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT NOT NULL, parent_message_id TEXT,
@@ -32,26 +40,47 @@ db.exec(`CREATE TABLE IF NOT EXISTS subagents (
  id TEXT PRIMARY KEY, subagent_id TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL, delivered_at INTEGER);
 `);
 const columns = db.prepare("PRAGMA table_info(subagents)").all() as { name: string }[];
-for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"]]) {
+for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"]]) {
 	if (!columns.some((c) => c.name === name)) db.exec(`ALTER TABLE subagents ADD COLUMN ${name} ${type}`);
 }
 export const getSubagent = (id: string) => db.prepare("SELECT * FROM subagents WHERE id = ?").get(id) as Subagent | undefined;
 export const listSubagents = (agentId?: string, conv?: string) => db.prepare(`SELECT * FROM subagents${conv ? " WHERE conversation_id = ?" : agentId ? " WHERE agent_id = ?" : ""} ORDER BY created_at DESC LIMIT 100`).all(...(conv ? [conv] : agentId ? [agentId] : [])) as unknown as Subagent[];
 const activeSubagents = (agentId?: string) => db.prepare(`SELECT * FROM subagents WHERE status IN ${ACTIVE}${agentId ? " AND agent_id = ?" : ""}`).all(...(agentId ? [agentId] : [])) as unknown as Subagent[];
-export const subagentSettings = (): SubagentSettings => getSetting("subagentModels", { mode: "follow", allowed: [], maxMinutes: 60 });
+const liveSubagents = (agentId?: string) => db.prepare(`SELECT * FROM subagents WHERE status IN ${LIVE}${agentId ? " AND agent_id = ?" : ""}`).all(...(agentId ? [agentId] : [])) as unknown as Subagent[];
+const activeCount = (agentId: string) => (db.prepare(`SELECT COUNT(*) n FROM subagents WHERE agent_id = ? AND status IN ${ACTIVE}`).get(agentId) as { n: number }).n;
+/** 这个助理还有没有空位跑新子代理（按助理计算）。 */
+export const hasSubagentCapacity = (agentId: string) => activeCount(agentId) < subagentSettings().maxConcurrent;
+const clampConcurrent = (n: unknown) => {
+	const v = Math.round(Number(n));
+	return Number.isFinite(v) ? Math.min(SUBAGENT_CONCURRENCY.max, Math.max(SUBAGENT_CONCURRENCY.min, v)) : SUBAGENT_CONCURRENCY.default;
+};
+/** 读取全局子代理设置；兼容旧库里没有 maxConcurrent 的记录。 */
+export const subagentSettings = (): SubagentSettings => {
+	const raw = getSetting<Partial<SubagentSettings>>("subagentModels", {});
+	return {
+		mode: raw.mode ?? "follow", allowed: raw.allowed ?? [],
+		maxMinutes: raw.maxMinutes && raw.maxMinutes > 0 ? raw.maxMinutes : 60,
+		maxConcurrent: clampConcurrent(raw.maxConcurrent),
+		...(raw.mode === "fixed" && raw.model ? { model: raw.model } : {}),
+	};
+};
 export const agentSubagentChoice = (id: string): AgentSubagentChoice => getSetting(`subagentModel:${id}`, { mode: "follow" });
 const modelKey = (m: ModelRef) => `${m.provider}/${m.id}`;
 function requireModel(m: ModelRef | undefined) {
 	if (!m || !configuredModels().some((x) => x.provider === m.provider && x.id === m.id)) throw new Error("模型尚未配置");
 	return m;
 }
-export function saveSubagentSettings(input: SubagentSettings) {
+export function saveSubagentSettings(input: SubagentSettingsInput) {
 	if (!["follow", "auto", "fixed"].includes(input.mode)) throw new Error("模型选择方式不对");
 	const allowed = (input.allowed ?? []).map(requireModel);
 	const maxMinutes = Number(input.maxMinutes ?? 60);
 	if (!Number.isFinite(maxMinutes) || maxMinutes <= 0) throw new Error("最长运行时间必须大于 0");
-	const s: SubagentSettings = { mode: input.mode, allowed, maxMinutes, ...(input.mode === "fixed" ? { model: requireModel(input.model) } : {}) };
+	// 不传就保留当前上限：只改模型选项（或旧客户端）不带这个字段，不能因此把它重置回默认值
+	const maxConcurrent = input.maxConcurrent == null ? subagentSettings().maxConcurrent : Number(input.maxConcurrent);
+	if (!Number.isInteger(maxConcurrent) || maxConcurrent < SUBAGENT_CONCURRENCY.min || maxConcurrent > SUBAGENT_CONCURRENCY.max) throw new Error(`并发上限必须是 ${SUBAGENT_CONCURRENCY.min} 到 ${SUBAGENT_CONCURRENCY.max} 之间的整数`);
+	const s: SubagentSettings = { mode: input.mode, allowed, maxMinutes, maxConcurrent, ...(input.mode === "fixed" ? { model: requireModel(input.model) } : {}) };
 	setSetting("subagentModels", s);
+	pumpSubagents();
 	return s;
 }
 export function saveAgentSubagentChoice(id: string, choice: AgentSubagentChoice) {
@@ -79,7 +108,7 @@ export function chooseSubagentModel(agentId: string, fallback: ModelRef, task: s
 interface Live { stop?: () => Promise<void>; message?: (text: string, messageId?: string) => Promise<void>; pending: { text: string; messageId?: string }[]; toolUntil: number }
 const live = new Map<string, Live>();
 interface Driver {
-	run(r: Subagent, connect: (stop: () => Promise<void>, message: Live["message"]) => void, input?: { text: string; messageId: string }): Promise<string>;
+	run(r: Subagent, connect: (stop: () => Promise<void>, message: Live["message"]) => void, input?: { text: string; messageId?: string }): Promise<string>;
 	notify(r: Subagent, event: SubagentEvent): Promise<void>;
 }
 let driver: Driver;
@@ -95,31 +124,75 @@ function addEvent(r: Subagent, kind: string, reason: string) {
 	db.prepare("INSERT INTO subagent_events(id, subagent_id, kind, reason, created_at) VALUES(?,?,?,?,?)").run(uid("se"), r.id, kind, reason, Date.now());
 }
 /** 所有结束路径共享这一处；状态和待投递事件一起提交。 */
-export function finishSubagent(id: string, status: Exclude<SubagentStatus, "running" | "stalled">, reason = "", summary = "") {
+export function finishSubagent(id: string, status: Exclude<SubagentStatus, "queued" | "running" | "stalled">, reason = "", summary = "") {
+	const agentId = getSubagent(id)?.agent_id;
 	db.exec("BEGIN");
 	try {
-		const n = db.prepare(`UPDATE subagents SET status = ?, error_reason = ?, result_summary = ?, finished_at = ? WHERE id = ? AND status IN ${ACTIVE}`).run(status, status === "done" ? null : reason, summary, Date.now(), id).changes;
+		const n = db.prepare(`UPDATE subagents SET status = ?, error_reason = ?, result_summary = ?, finished_at = ? WHERE id = ? AND status IN ${LIVE}`).run(status, status === "done" ? null : reason, summary, Date.now(), id).changes;
 		if (n) addEvent(getSubagent(id)!, status, reason || summary);
 		db.exec("COMMIT");
 		if (!n) return false;
 	} catch (e) { db.exec("ROLLBACK"); throw e; }
 	changed(id);
 	void deliverSubagentEvents();
+	// 到终态就释放了一个并发名额：自动派发这个助理排队中的下一个
+	if (agentId) pumpSubagents(agentId);
 	return true;
 }
-export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef, input: { task: string; context?: string; needs?: string[]; model?: ModelRef; parentMessageId?: string }) {
+const parsePendingInput = (raw: string | null): { text: string; messageId: string } | undefined => {
+	if (!raw) return undefined;
+	try { const v = JSON.parse(raw); return typeof v?.text === "string" && typeof v?.messageId === "string" ? v : undefined; } catch { return undefined; }
+};
+const queuedAhead = (id: string, agentId: string) => {
+	const row = db.prepare("SELECT rowid FROM subagents WHERE id = ?").get(id) as { rowid: number } | undefined;
+	if (!row) return 0;
+	return (db.prepare(`SELECT COUNT(*) n FROM subagents WHERE agent_id = ? AND status = 'queued' AND rowid < ?`).get(agentId, row.rowid) as { n: number }).n;
+};
+/** 重启后恢复任务的续跑提示：先核验进度，不从头重做、不重复副作用。 */
+const SUBAGENT_RESUME_PROMPT = "（系统通知）服务刚刚重启，上一轮子代理执行被中断了。请先检查工作区里已经完成的进度和产出，确认哪些步骤已经做完、哪些没做完，然后从断点继续完成剩余任务。已经完成的步骤不要重做，也不要重复已经产生的副作用；某个操作在重启时状态不明（可能已执行也可能没执行）的，先核实实际结果再决定，不要盲目重跑。完成后简要总结结果。";
+/** 把一条排队的子代理切到 running 并开始执行；只对仍是 queued 的行生效，避免重复派发。 */
+function startQueued(id: string) {
+	const r = getSubagent(id);
+	if (!r || r.status !== "queued") return false;
+	const ts = Date.now();
+	const n = db.prepare("UPDATE subagents SET status = 'running', last_activity_at = ?, run_started_at = ?, resume = 0, pending_input = NULL WHERE id = ? AND status = 'queued'").run(ts, ts, id).changes;
+	if (!n) return false;
+	// 重启恢复的任务：有落库 session 就从断点续跑（无 session 的在 recoverSubagents 里已标 lost）
+	const input = r.resume ? { text: SUBAGENT_RESUME_PROMPT } : parsePendingInput(r.pending_input);
+	live.set(id, { pending: [], toolUntil: 0 });
+	changed(id);
+	queueMicrotask(() => void run(id, input));
+	return true;
+}
+/** 批量停止期间暂停这些助理的自动派发，避免「停 A → 释放名额 → 拉起 B → 再停 B」的短暂执行。 */
+const dispatchPaused = new Set<string>();
+/** 按每个助理的并发上限，把排队的子代理按先后顺序补上空位。 */
+export function pumpSubagents(agentId?: string) {
+	const limit = subagentSettings().maxConcurrent;
+	const agents = agentId ? [agentId] : (db.prepare("SELECT DISTINCT agent_id FROM subagents WHERE status = 'queued'").all() as { agent_id: string }[]).map((r) => r.agent_id);
+	for (const a of agents) {
+		if (dispatchPaused.has(a)) continue;
+		const free = limit - activeCount(a);
+		if (free <= 0) continue;
+		const queued = db.prepare(`SELECT id FROM subagents WHERE agent_id = ? AND status = 'queued' ORDER BY created_at, rowid LIMIT ?`).all(a, free) as { id: string }[];
+		for (const q of queued) startQueued(q.id);
+	}
+}
+export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef, input: { task: string; context?: string; needs?: string[]; model?: ModelRef; parentMessageId?: string }): Subagent & { queuedAhead?: number } {
 	if (!input.task?.trim()) throw new Error("请说明子代理任务");
-	if ((db.prepare(`SELECT COUNT(*) n FROM subagents WHERE agent_id = ? AND status IN ${ACTIVE}`).get(agentId) as { n: number }).n >= 3) throw new Error("这个助理已有 3 个后台子代理，请等一个完成");
 	const picked = chooseSubagentModel(agentId, fallback, input.task, input.needs, input.model);
 	const id = uid("sa"), ts = Date.now();
-	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, parent_message_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, input.parentMessageId ?? null, input.task, input.context ?? "", picked.model.provider, picked.model.id, picked.reason, "running", ts, ts);
+	// 先把已有的排队任务补上空位，保证 FIFO；再决定新任务是否立即跑
+	pumpSubagents(agentId);
+	const status: SubagentStatus = hasSubagentCapacity(agentId) ? "running" : "queued";
+	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, parent_message_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, input.parentMessageId ?? null, input.task, input.context ?? "", picked.model.provider, picked.model.id, picked.reason, status, ts, ts);
 	insertMessage({ agentId, conversationId: conv, role: "card", meta: { kind: "subagent", subagentId: id, subagent: getSubagent(id) } });
 	insertMessage({ agentId, conversationId: conv, subagentId: id, role: "user", content: input.task });
-	live.set(id, { pending: [], toolUntil: 0 });
-	queueMicrotask(() => void run(id));
-	return getSubagent(id)!;
+	if (status === "running") { live.set(id, { pending: [], toolUntil: 0 }); queueMicrotask(() => void run(id)); }
+	const row = getSubagent(id)!;
+	return status === "queued" ? { ...row, queuedAhead: queuedAhead(id, agentId) } : row;
 }
-async function run(id: string, input?: { text: string; messageId: string }) {
+async function run(id: string, input?: { text: string; messageId?: string }) {
 	try {
 		const result = await driver.run(getSubagent(id)!, (stop, message) => {
 			const l = live.get(id)!;
@@ -136,14 +209,27 @@ async function run(id: string, input?: { text: string; messageId: string }) {
 }
 export async function stopSubagent(id: string, status: "stopped" | "timeout" = "stopped") {
 	const r = getSubagent(id);
-	if (!r || !isActiveSubagent(r.status)) return false;
+	if (!r || !isLiveSubagent(r.status)) return false;
+	const input = parsePendingInput(r.pending_input);
 	finishSubagent(id, status, status === "timeout" ? "已超过最长运行时间" : "用户或主会话停止了任务");
+	// 排队中被停：把还没发出去的续聊消息标为已停止，不偷偷补跑
+	if (input?.messageId) updateMessage(input.messageId, { meta: { delivery: "stopped" } });
 	requests.cancelForTask(id);
 	await live.get(id)?.stop?.();
 	return true;
 }
 export async function stopAgentSubagents(agentId: string) {
-	for (const r of activeSubagents(agentId)) await stopSubagent(r.id);
+	// 停整个助理时先暂停派发：否则每停一个都会释放名额、把排队的下一个拉起来（不该执行的任务被短暂启动）
+	dispatchPaused.add(agentId);
+	try {
+		for (;;) {
+			const rows = liveSubagents(agentId);
+			if (!rows.length) return;
+			for (const r of rows) await stopSubagent(r.id);
+		}
+	} finally {
+		dispatchPaused.delete(agentId);
+	}
 }
 export async function messageSubagent(id: string, text: string, messageId?: string) {
 	const r = getSubagent(id), l = live.get(id);
@@ -159,21 +245,27 @@ export async function sendSubagentMessage(id: string, text: string) {
 	text = text.trim();
 	if (!text) throw new Error("请输入消息");
 	const stopping = isStopCommand(text);
-	if (!isActiveSubagent(r.status) && !stopping) {
-		if (live.has(id)) throw new Error("子代理正在停止，请稍后再发");
-		if (activeSubagents(r.agent_id).length >= 3) throw new Error("这个助理已有 3 个后台子代理，请等一个完成");
-	}
+	if (r.status === "queued" && !stopping) throw new Error("子代理正在排队，等它开始后再补充");
+	if (!isLiveSubagent(r.status) && !stopping && live.has(id)) throw new Error("子代理正在停止，请稍后再发");
 	const m = insertMessage({ agentId: r.agent_id, conversationId: r.conversation_id, subagentId: id, role: "user", content: text });
 	if (stopping) {
 		await stopSubagent(id);
 		updateMessage(m.id, { meta: { delivery: "stop" } });
 	} else if (isActiveSubagent(r.status)) await messageSubagent(id, text, m.id);
 	else {
-		const ts = Date.now();
-		db.prepare("UPDATE subagents SET status = 'running', last_activity_at = ?, run_started_at = ?, finished_at = NULL, error_reason = NULL, result_summary = NULL WHERE id = ?").run(ts, ts, id);
-		live.set(id, { pending: [], toolUntil: 0 });
-		changed(id);
-		queueMicrotask(() => void run(id, { text, messageId: m.id }));
+		// 先把已有排队任务补上空位，保证 FIFO
+		pumpSubagents(r.agent_id);
+		if (hasSubagentCapacity(r.agent_id)) {
+			const ts = Date.now();
+			db.prepare("UPDATE subagents SET status = 'running', last_activity_at = ?, run_started_at = ?, finished_at = NULL, error_reason = NULL, result_summary = NULL WHERE id = ?").run(ts, ts, id);
+			live.set(id, { pending: [], toolUntil: 0 });
+			changed(id);
+			queueMicrotask(() => void run(id, { text, messageId: m.id }));
+		} else {
+			// 满额：排队并持久化这一轮输入，释放名额后按顺序继续
+			db.prepare("UPDATE subagents SET status = 'queued', pending_input = ?, finished_at = NULL, error_reason = NULL, result_summary = NULL WHERE id = ?").run(JSON.stringify({ text, messageId: m.id }), id);
+			changed(id);
+		}
 	}
 	return m;
 }
@@ -193,6 +285,8 @@ export function subagentActivity(id: string, toolMs?: number) {
 	if (toolMs !== undefined) changed(id);
 }
 export async function checkSubagents(ts = Date.now()) {
+	// 兜底：即使某次 finish 后没派发，也定期把排队的补上
+	pumpSubagents();
 	for (const r of activeSubagents()) {
 		if (ts - (r.run_started_at ?? r.created_at) >= subagentSettings().maxMinutes * 60_000) await stopSubagent(r.id, "timeout");
 		else if (r.status === "running" && ts - r.last_activity_at > 180_000 && ts > (live.get(r.id)?.toolUntil ?? 0) && !db.prepare("SELECT 1 FROM requests WHERE task_id = ? AND status = 'pending'").get(r.id)) {
@@ -218,8 +312,24 @@ export async function deliverSubagentEvents() {
 		}).catch((err) => console.warn("[subagent] 通知待重试", String(err))).finally(() => delivering.delete(e.id));
 	}
 }
+/** 本进程已恢复过的子代理：重复调用不会把已续跑的任务再次入队（幂等）。 */
+const recovered = new Set<string>();
 export function recoverSubagents() {
-	for (const r of activeSubagents()) finishSubagent(r.id, "lost", "服务重启，子代理被中断，请重新派活");
+	// 运行中被重启打断：保留任务、已完成的工具结果和 session_file，重新排队从断点续跑
+	const interrupted = activeSubagents().filter((r) => !recovered.has(r.id));
+	const ts = Date.now();
+	for (const r of interrupted) {
+		recovered.add(r.id);
+		if (r.session_file) {
+			db.prepare(`UPDATE subagents SET status = 'queued', resume = 1, last_activity_at = ? WHERE id = ? AND status IN ${ACTIVE}`).run(ts, r.id);
+			changed(r.id);
+		} else {
+			// 没落库会话，无法确认已经执行到哪一步，不能假装没副作用从头重跑：标 lost，明确要求核验
+			finishSubagent(r.id, "lost", "服务重启，且这个子代理还没落库会话，无法确认已执行到哪一步；请核验工作区后重新派活");
+		}
+	}
+	// 排队的任务（含刚恢复的）按容量派发；已取消 / 已停止的不在 active 里，不会被恢复
+	pumpSubagents();
 }
 export function startSubagentWatcher() {
 	const timer = setInterval(() => void checkSubagents().catch(console.error), 30_000);

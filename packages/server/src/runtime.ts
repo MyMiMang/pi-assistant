@@ -1,4 +1,4 @@
-import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, recoverSubagents, startSubagentWatcher, type Subagent, type SubagentEvent } from "./subagents.ts";
+import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, type Subagent, type SubagentEvent } from "./subagents.ts";
 /**
  * Agent 运行时：每个助理一个主会话（Pi AgentSession），后台任务各自一个会话。
  * 所有 Pi 调用都经过 pi-adapter；这里负责把 Pi 事件落盘为消息并广播。
@@ -620,7 +620,7 @@ class AgentRuntime {
 	 * 消息上标 delivery = queued → delivered，界面显示“已送达正在进行的任务”。
 	 */
 	async send(text: string, files?: AttachmentInput[], opts: { messageId?: string } = {}): Promise<"started" | "steered" | "stopped" | "none"> {
-		if ((this.busy || listSubagents(this.id).some((r) => isActiveSubagent(r.status))) && !files?.length && isStopCommand(text)) {
+		if ((this.busy || listSubagents(this.id).some((r) => isLiveSubagent(r.status))) && !files?.length && isStopCommand(text)) {
 			if (opts.messageId) updateMessage(opts.messageId, { meta: { delivery: "stop" } });
 			await this.abort();
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "assistant", content: "好的，已经停下了。", status: "done", meta: { system: "stopped" } });
@@ -1016,7 +1016,7 @@ setSubagentDriver({
 		});
 		try {
 			if (!isActiveSubagent(getSubagent(r.id)!.status)) return "";
-			if (input) updateMessage(input.messageId, { meta: { delivery: "delivered" } });
+			if (input?.messageId) updateMessage(input.messageId, { meta: { delivery: "delivered" } });
 			await promptSession(session, input?.text ?? `（后台子代理任务）${r.task}\n\n必要上下文：\n${r.context}`);
 			if (error) throw new Error(error);
 			return lastAssistantText(session);

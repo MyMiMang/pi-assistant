@@ -14,6 +14,7 @@ import { clampPane, clampSide, PANE, resolveLayout, SIDE, useWindowWidth } from 
 import { Resizer } from "./components/Resizer";
 import { BRAND } from "@pi-assistant/shared";
 import { SubagentChat, SubagentTabs } from "./components/Subagents";
+import { ImageViewerHost } from "./components/ImageViewer";
 
 export default function App() {
 	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout, room, paneAgent, loadRooms, selectRoom, subagent, subagentTabs, convs } = useStore();
@@ -145,6 +146,7 @@ export default function App() {
 			)}
 			<Settings />
 			<DeviceApproval />
+			<ImageViewerHost />
 			{!system.onboarded && <Onboarding />}
 		</div>
 	);

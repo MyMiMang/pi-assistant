@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 最后更新：2026-10-14，当前公开版本 **v0.1.0-beta.16**；**v0.1.0-beta.17 权限误报热修待发布**，用户已明确授权「修完直接提交打包」。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
+> 当前公开版本 **v0.1.0-beta.18**（用户已更新确认）；剩余功能在独立发布树验收中，用户已授权直接提交推送打包，本轮仅 macOS arm64。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
 ## 1. 这是什么
 
@@ -13,6 +13,11 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 手机通过内置的 Cloudflare 隧道远程使用。界面文字是中文。用户只通过安装包的自动更新来测试。
 
 ## 2. 进度（按版本）
+
+本轮续接：发布树 `3a44fc0` 保留 beta.18 权限免审批基线，原 beta.15 + WIP 树未 reset、未覆盖。已精选合入图片全屏、模型删除（原生 confirm 改现有确认框）、子代理默认 10 / 持久 FIFO / 重启会话续跑、Tauri 外链。图片桌面/手机专项全部通过；模型 8 项单测与添加/取消/失败/重试删除 UI 链路通过；子代理 14 项 + 渠道 5 项、真实进程重启冒烟通过。UI 入口精简与容器宽度适配已在发布树复核：8 组场景全过，子代理专项 e2e 全过，受影响 types/build 通过。原生 Tauri 外链待 Mac CI 编译和安装冒烟，不能以网页测试代替原生测试。
+
+CI 已增加 `mac-arm64/all` 范围，tag 按 `.github/release-scope.json` 固定本轮仅 arm64；跳过 Windows/Linux/Intel，publish needs 明确容许计划内 skipped、要求 build 和 mac-smoke 成功；资产/latest.json 的平台、签名与包名校验失败保持草稿。静态 3 项测试与全部 shell 语法通过；CI 提交 8764c2a 已推 main，手动仅 Mac 演练 Actions 38581168432 进行中（https://github.com/MyMiMang/pi-assistant/actions/runs/38581168432）。尚未打新 tag；beta.19 说明已准备，发布前再次核对远端空闲号。macOS 系统授权保留因缺 Developer ID 证书明确阻塞，诊断报告保留，不宣称修复，不安装用户 App。
+
 
 2026-10-15 发布流程**暂缓 Intel Mac**（用户：『intel每次打包很久，下次不要打包他，等后期完全开发再带上』）：`.github/workflows/release.yml` 的桌面构建矩阵改为由 `prepare` 按 `BUILD_INTEL` 动态组装，默认只含 mac arm64 + Windows（加 Linux x64/arm64 两个 job，共 **4 个构建任务**），Intel x64 默认跳过。恢复方式二选一：手动运行 workflow 勾选 `build_intel`，或设仓库变量 `BUILD_INTEL=true`（Settings › Secrets and variables › Actions › Variables）。联动改动：`mac-smoke` 的 Intel dmg 挂载检查、`publish` 的 `x64.dmg` 资产断言都加了 `BUILD_INTEL` 条件，Windows / Linux / latest.json 依赖不因 Intel 缺失而阻塞；`publish` 新增守护——未构建 Intel 时若 `latest.json` 仍含 `darwin-x86_64` 则报错停在草稿，避免 Intel 用户被错误引到 arm 包（跳过时该字段自然缺失，Intel 老用户只停更）。文档（INSTALL / README 平台表、AGENTS、DESIGN CI 说明、ROADMAP）同步改掉「5 个平台」表述。本次只动发布流程与相关文档，未改产品代码、不触发新构建；**进行中的 beta.18（tag `v0.1.0-beta.18`，run 38567460857）用的是改动前的 workflow，照旧 5 平台构建，不受影响**。验证：release.yml YAML 解析通过、矩阵组装脚本用 `BUILD_INTEL=false/true` 两种取值跑出预期 JSON、`bash -n` 无语法错误；未跑产品测试、未另行打包。
 

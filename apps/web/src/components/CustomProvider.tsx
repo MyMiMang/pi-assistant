@@ -5,8 +5,8 @@
 import { CheckCircle2, Download, Loader2, Pencil, Plus, RotateCcw, Trash2, X, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { CustomModel, CustomProviderMeta } from "../types";
-import { Badge, Button, cx, Input, Help } from "./ui";
+import type { CustomModel, CustomProviderMeta, ProviderReferences } from "../types";
+import { Badge, Button, cx, Input, Help, useConfirm } from "./ui";
 
 const PLACEHOLDER: Record<string, string> = {
 	"openai-completions": "https://api.example.com/v1",
@@ -45,6 +45,21 @@ export function parseTokens(s: string): number | undefined {
 }
 const CTX_PRESETS: [string, number][] = [["32K", 32_768], ["64K", 65_536], ["128K", 131_072], ["200K", 200_000], ["1M", 1_048_576]];
 const OUT_PRESETS: [string, number][] = [["4K", 4096], ["8K", 8192], ["16K", 16_384], ["32K", 32_768], ["64K", 65_536]];
+
+/** 删除前把“谁会受影响”拼成人话，避免用户删完才发现别处坏了 */
+function deleteImpact(r?: ProviderReferences): string {
+	if (!r) return "";
+	const lines: string[] = [];
+	if (r.defaultModel) lines.push("• 默认模型会被清空，需要重新选一个");
+	if (r.visionModel) lines.push("• 识图模型会改回自动选择");
+	if (r.subagents) lines.push("• 子代理的固定模型会改回“跟随主会话模型”");
+	if (r.subagentAgents.length) lines.push(`• ${r.subagentAgents.length} 个助理单独指定的子代理模型会改回跟随主会话`);
+	if (r.agents.length) {
+		const names = r.agents.slice(0, 3).join("、");
+		lines.push(`• ${r.agents.length} 个助理（${names}${r.agents.length > 3 ? " 等" : ""}）的模型会回落到默认模型`);
+	}
+	return lines.length ? `\n\n会影响：\n${lines.join("\n")}` : "";
+}
 
 function LimitField({ label, value, presets, onChange, testid }: { label: string; value?: number; presets: [string, number][]; onChange: (v: number) => void; testid: string }) {
 	const [text, setText] = useState(value ? fmtTokens(value) : "");
@@ -124,6 +139,7 @@ function ModelRow({ m, onChange, onRemove }: { m: CustomModel; onChange: (p: Par
 }
 
 export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted }: { initial?: CustomProviderMeta; apis: { id: string; label: string }[]; onSaved: (m: CustomProviderMeta) => void; onCancel?: () => void; onDeleted?: () => void }) {
+	const [dialog, ask] = useConfirm();
 	const [name, setName] = useState(initial?.name ?? "");
 	const [apiType, setApiType] = useState(initial?.api ?? apis[0]?.id ?? "openai-completions");
 	const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
@@ -187,6 +203,7 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 	const label = (t: string) => <span className="text-xs font-medium text-zinc-500">{t}</span>;
 	return (
 		<div className="space-y-4" data-testid="custom-provider-form">
+			{dialog}
 			<div className="grid gap-3 sm:grid-cols-2">
 				<label className="block space-y-1">
 					{label("名称")}
@@ -288,10 +305,21 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 					<Button
 						variant="ghost"
 						className="ml-auto text-red-600"
+						disabled={!!busy}
 						onClick={async () => {
-							if (!confirm(`删除「${saved.name}」？`)) return;
-							await api(`/api/models/custom/${saved.id}`, { method: "DELETE" });
-							onDeleted();
+							setErr("");
+							try {
+								const current = await api<{ providers: CustomProviderMeta[] }>("/api/models/custom");
+								const impact = deleteImpact(current.providers.find((p) => p.id === saved.id)?.references);
+								if (!await ask({ title: `删除「${saved.name}」？`, body: <div className="whitespace-pre-wrap">{`删除后不能恢复。${impact}`}</div>, ok: "删除", danger: true })) return;
+								setBusy("save");
+								await api(`/api/models/custom/${saved.id}`, { method: "DELETE" });
+								onDeleted();
+							} catch (e) {
+								setErr(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+							} finally {
+								setBusy("");
+							}
 						}}
 					>
 						<Trash2 size={14} /> 删除

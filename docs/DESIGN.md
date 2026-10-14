@@ -202,7 +202,7 @@ sequenceDiagram
 - **安装包**：Tauri bundler 产出 macOS `.dmg`（Apple Silicon + Intel，或 universal）和 Windows NSIS `.exe`。体积目标 < 80MB（Node ~40MB + cloudflared ~35MB + 其余）。
 - **自动更新**：`tauri-plugin-updater`，签名校验，更新源为 GitHub Releases 的 `latest.json`。
 - **代码签名说明**：不签名也能装，但 macOS 首次需右键“打开”（Gatekeeper），Windows 会出现 SmartScreen 提示。正式分发建议：macOS Developer ID 证书 + 公证（需 Apple Developer 账号，仅用于桌面安装包，**与手机无关**）；Windows 代码签名证书（或 Azure Trusted Signing）。CI 里预留签名步骤，有证书时自动启用。
-- **CI 构建**：GitHub Actions（`.github/workflows/release.yml`），打 `v*` tag 触发，流程是「先草稿、验证通过才公开」：`prepare` 建草稿 Release → 构建 **默认 4 个 job**（`build` 矩阵由 `prepare` 按 `BUILD_INTEL` 动态组装，默认 2 个：macOS arm64 / Windows x64 桌面包，`tauri-apps/tauri-action` 把安装包和 `latest.json` 传进草稿；`linux` 矩阵 2 个：x64 / arm64 服务器包 `.tar.gz`）→ 两个真机冒烟：`windows-smoke`（调用 `windows-smoke.yml`，把刚构建的 setup.exe 静默装到带中文和空格的目录、数据目录也放中文路径，启动托盘查 `/api/system/public`）和 `mac-smoke`（挂载 arm64 dmg、启动 .app 查同一接口）→ 全部通过后 `publish` 检查资产齐全、把 `latest.json` 里草稿期的 `untagged-…` 地址改成按 tag 的地址，再取消草稿并标为 Latest。**Intel Mac（x86_64）默认跳过**（用户要求等后期开发完善再带上）：手动运行勾选 `build_intel` 或设仓库变量 `BUILD_INTEL=true` 恢复第 3 个桌面 job；跳过时 `latest.json` 不含 `darwin-x86_64`，`publish` 会在发现该字段时失败停在草稿，避免 Intel 用户被错误引到 arm 包。草稿里的 `latest.json` 对自动更新不可见，任何一步失败都停在草稿，用户收不到坏包。推送 `release-dryrun` 分支（或手动运行）用 `v0.0.0-dryrun.<序号>` 走完整流程但不公开，`cleanup-dry-run` 最后删掉草稿。Windows/macOS 构建里还会先用内置 Node 跑 `scripts/smoke-app.mjs`；每个平台先下载对应的 Node 与 cloudflared 二进制并校验 SHA256。
+- **CI 构建**：发布范围取 `.github/release-scope.json`，当前 `mac-arm64` 只构建 Apple Silicon macOS。手动 scope=all 可恢复 Windows/Linux，all 下 Intel 仍由 build_intel/BUILD_INTEL 决定。prepare 输出实际矩阵及平台开关，计划内跳过的 Windows/Linux 不阻塞 publish，但 build/mac-smoke 必须成功。草稿资产与 latest.json 的实际平台、签名、包名检查通过后才公开 Latest，Mac-only 清单不含 Windows/Linux/Intel 项。手动非 tag 触发为演练，不公开并清理草稿；不会移动旧 tag。
 
 - **悬浮条**（`/hostbar`）：透明、无边框、无阴影窗口（`transparent(true)`，macOS 需 `macOSPrivateApi: true` + Cargo feature `macos-private-api`），只露出圆角胶囊；右侧 × 关闭（`POST /api/host-control/bar/dismiss`，服务端记住当时状态，状态变化——新操作 / 暂停或继续——再弹出）；“打开设置”在主窗口里打开。
 
@@ -1329,9 +1329,9 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - **渠道一致**：1:1、群聊、微信等渠道都只和主会话交互；渠道里不展示子代理细节，只发主会话的回复（思考内容照旧只在外部渠道剥掉）。群聊里每个成员各自可派子代理。
 
 ### 21.3 数据模型（SQLite）
-- 新表 `subagents`：`id, agent_id, conversation_id, parent_message_id, task, model_provider, model_id, model_reason, status(running|stalled|done|failed|stopped|timeout|lost), last_activity_at, error_reason, notified_at, result_summary, created_at, finished_at`。
+- 新表 `subagents`：`id, agent_id, conversation_id, parent_message_id, task, model_provider, model_id, model_reason, status(queued|running|stalled|done|failed|stopped|timeout|lost), last_activity_at, error_reason, notified_at, result_summary, created_at, finished_at, session_file, run_started_at, pending_input`。`queued` 表示满额排队、还没开始；`pending_input` 保存排队中的续聊原文（重启可恢复）。
 - 子代理的步骤复用现有消息/事件存储，用 `subagent_id` 字段区分；用量行（用量系统）也带 `subagent_id`，算在所属助理名下。
-- 并发上限：每个助理最多 3 个运行中的子代理（**已定**）。
+- 并发上限（2026-10-15 用户要求改为可配置）：**按助理**计算，默认 10，设置里可改（1–100 的整数）。同时运行的子代理满额后，新任务不再拒绝，而是落库为 `queued` 排队；`finishSubagent` 释放名额时按 `created_at` 先来后到自动派发（`pumpSubagents`），排队任务不占名额、重启后保留。
 
 ### 21.4 界面
 - **聊天里的子代理卡片**：派出时主会话消息下方出现小卡片「🔧 子代理：整理报价表 · 运行中 · 模型 X」，显示当前一步；完成后变成 ✓/✗。
@@ -1346,11 +1346,12 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
     2. **配置了「允许子代理用的模型」清单** → 组合（自动）：主会话说明任务需要（写代码 / 推理 / 看图 / 长文 / 便宜快速），服务器用能力画像在清单内打分挑选，写 `model_reason`；主会话也可显式传 `model`（须在清单内）。
     3. **指定了模型** → 一律用指定模型。
   - 短文案 + ? 说明。
+  - **子代理并发上限**（2026-10-15 加）：设置 › 模型 里的独立小面板，按助理计算，默认 10，1–100；满额后新任务排队、有空位自动开始。
 - 每个助理可在自己的设置里覆盖（跟随全局 / 指定）。
 
 ### 21.6 决定
 - **已定**：只一层，子代理不能再派子代理（`spawn_subagent` 不提供给子代理）。
-- **已定**：每个助理最多 3 个并发子代理；子代理会话可查看、直接发消息和停止，续聊也计入并发上限。
+- **已定**：每个助理默认最多 10 个并发子代理（可配置，见 §21.3）；满额后新任务排队、有空位自动派发，不拒绝、不需要用户再派。子代理会话可查看、直接发消息和停止，续聊也计入并发上限、满额同样排队。
 - **第一版沿用现有审批**：限定档位下子代理需要审批时，审批卡片经主会话转给用户（1:1 / 群聊 / 渠道一致），用户答复后回传子代理。
 
 ### 21.7 绝不默默卡住（用户 2026-10-14 要求）
@@ -1370,12 +1371,13 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 5. **看门狗**（每 30 秒一次）：`last_activity_at` 超过 3 分钟没变 → `stalled`，发事件给主会话。正在跑、并且自己有更长超时的工具（命令、下载、助理电脑操作）不算，按该工具的超时 + 余量算。主会话可以：给子代理发消息、停掉重派、或者告诉用户在等什么。重新有活动就回到 `running`，再发一条「恢复了」。
 6. **最长运行时间**：默认 **60 分钟**（**已定**，设置可改；子代理是给长任务用的，短活主会话自己做），到了就 abort → `timeout`。
 7. **模型 / API 出错**：先用 Pi 的重试（退避）；用完还失败 → `failed`，原因写清楚（如「模型接口 429 限流，重试 5 次仍失败」）。
-8. **程序重启**：启动时把所有 `running/stalled` 的子代理标为 `lost`（照搬群聊 `interrupted` 的做法），对每个写事件，主会话启动后汇报，并提供「重新派」。
+8. **程序重启**（2026-10-15 用户同意改为续跑）：启动时把 `running/stalled` 且已落库 `session_file` 的子代理重新入队（`status='queued', resume=1`），保留任务和已完成的工具结果；按并发上限自动续跑（和普通排队同一套 FIFO 调度），续跑时先发「检查进度、不从头重做、不重复副作用」的提示；已取消 / 已停止的不恢复，重复调用幂等。**不做副作用 exactly once 承诺**：重启时正在执行的工具可能已完成也可能没完成，续跑提示要求先核实实际结果（写文件、发消息、提交等）再决定，状态不明的操作要在汇报里标注。**没有 `session_file` 的中断任务无法确认已执行到哪一步，标 `lost` 并明确要求核验，不从头重跑。**
 9. **主会话汇报**：每个终态和 `stalled` 都要对用户说一句：结果或原因 + 下一步（重试 / 换模型 / 需要用户做什么）。渠道（微信等）也发。
 10. **界面**：卡片显示实时状态 + 「最后活动 x 秒前」；`stalled` 黄色，`failed/timeout/lost` 红色带原因和「重新派」按钮。转圈只在 `running` 且有心跳时出现，永远不会一直转。
 
 **测试计划**
-- 单测：`finishSubagent` 幂等（重复调用只出一个事件）；抛异常 → finally 写 `failed`；看门狗用假时钟触发 `stalled`、恢复、长工具豁免；最长时间 → `timeout`；启动恢复 → `lost` + 事件。
+- 单测：`finishSubagent` 幂等（重复调用只出一个事件）；抛异常 → finally 写 `failed`；看门狗用假时钟触发 `stalled`、恢复、长工具豁免；最长时间 → `timeout`；启动恢复 → 重新入队续跑（带续跑提示）、取消 / 停止不恢复、重复调用幂等、无 `session_file` 时标 `lost` 要求核验、已完成的工具结果保留；批量停止不短暂启动排队任务。
+- 冒烟（真实进程重启）：`test/subagent-restart.smoke.ts` 起服务 → 派一个跑 8 秒命令的子代理 → 杀进程 → 同数据目录重启 → 断言复用 session 从断点续跑、不标 lost、原任务与续跑提示都在。
 - 单测：事件投递——主会话忙走 steer、空闲开新回合、投递失败重投。
 - e2e（Mock 模型）：子代理成功 / 模型报错 / 挂起不动 / 用户「停」/ 运行中重启服务，每种都在主会话看到汇报，卡片状态正确不转圈。
 

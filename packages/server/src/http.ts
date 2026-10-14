@@ -20,7 +20,7 @@ import { attachmentInputFor, fileInfo, getFile, insideWorkspace, listFiles, list
 import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
 import { insertMessage, listMessages } from "./messages.ts";
-import { credentialBackend, customProviders, defaultModel, defaultThinking, models, providerNames, withProviderName } from "./models.ts";
+import { credentialBackend, customProviders, defaultModel, defaultThinking, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "./models.ts";
 import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-providers.ts";
 import { checkPiCompat, sessionStats } from "./pi-adapter/index.ts";
 import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
@@ -187,7 +187,7 @@ app.get("/api/models/providers", (c) => {
 	return c.json(models.listProviders().map((p) => ({ ...p, custom: custom.has(p.id), configured: p.configured || !!custom.get(p.id)?.configured })));
 });
 // 自定义模型服务（中转站 / 第三方 / 本地），写入 Pi 的 models.json
-app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list(), apis: supportedApis() }));
+app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list().map((p) => ({ ...p, references: providerReferences(p.id) })), apis: supportedApis() }));
 const customErr = (c: Context<Env>, e: unknown) => c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 app.post("/api/models/custom", async (c) => {
 	try {
@@ -205,11 +205,14 @@ app.put("/api/models/custom/:id", async (c) => {
 });
 app.delete("/api/models/custom/:id", async (c) => {
 	const id = c.req.param("id");
-	const ok = await customProviders.remove(id);
-	const d = defaultModel();
-	if (!d || d.provider === id) setSetting("defaultModel", null);
-	bus.emit({ type: "settings.changed" });
-	return c.json({ ok });
+	try {
+		const ok = await customProviders.remove(id);
+		const cleared = ok ? clearProviderReferences(id) : null;
+		bus.emit({ type: "settings.changed" });
+		return c.json({ ok, cleared });
+	} catch (e) {
+		return customErr(c, e);
+	}
 });
 app.post("/api/models/custom/fetch-models", async (c) => {
 	try {
