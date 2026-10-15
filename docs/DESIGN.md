@@ -1634,11 +1634,11 @@ task_wait({
 - 触发入口：聊天附件卡片（`Attachments.tsx`）、信息面板「文件」列表（`InfoPane.tsx`）；子代理附件复用同一 `ChatMessages` → `Attachments`。图片附件**仍走 `ImageViewer`**（本组件只在 kind=image 时兜底，不替换原查看器）。
 
 **类型与安全边界**：
-- 支持：Markdown（复用现有 `react-markdown`，默认渲染）、纯文本 / log / json / 代码（行号 + 复制）、CSV / TSV（引号内换行、`""` 转义、有界表格）、PDF（`<object type=application/pdf>` + fallback 提示 + 下载）、图片兜底。
+- 支持：Markdown（复用现有 `react-markdown`，默认渲染，顶部可切「渲染 / 源码」）、纯文本 / log / json / 代码（行号 + 复制）、CSV / TSV（引号内换行、`""` 转义、有界表格）、PDF（`<object type=application/pdf>` + fallback 提示 + 下载）、图片兜底。
 - **明确暂不支持**（只下载、不 inline、不执行）：xlsx / docx / pptx 等 Office、HTML、SVG、压缩包、其它二进制。不做服务端 exec（LibreOffice）、不上传外部云、不读工作区任意路径。
 - 类型判定不只看扩展名、也不只看 Content-Type：两者一起判，再对实际字节嗅探（含 NUL / 控制字符比例），像二进制就不当文本解码。
 - 只通过授权资源地址 `/api/files/:id` 带登录凭证（`api.ts` 的 `fetchBlob` / `fetchBlobLimited`）拉取；`fetchBlobLimited` 先看 `content-length`，超限直接不读 body，界面只提示超限 + 保留下载。加载中有「取消」（卸载 abort fetch），失败按 404 / 权限 / 其它区分，可重试。
 - Markdown 预览：`Markdown.tsx` 新增 `blockRemoteImages`，远端图片显示「点击加载」占位、不自动请求（不把来源信息发出去）；链接只放行 `http/https/mailto` 和页内锚点，`javascript:` / `data:` / `file:` / 相对文件引用只显示文字，不渲染成可点链接。
 - 卡片结构：`<div class=pa-card pa-file-card>` 内是「主体 `<button>`（预览）+ 独立下载 `<button>`（`stopPropagation`）」，没有嵌套 button（合法 HTML + 键盘可达）。
 
-**验证**：`e2e/file-preview.mjs`（纯前端 fixture：静态托管 `apps/web/dist` + `page.route` 拦 `/api`，不启动服务端、不碰钥匙串）桌面 + 390 共 35 项；web `tsc --noEmit` + `vite build`；`e2e/mobile-viewport-ui.mjs` 回归。未验：Office 预览、真机 iOS 手势、真实 PDF 内嵌（headless 无 PDF 插件，只验 fallback）。
+**验证**：`e2e/file-preview.mjs`（纯前端 fixture：静态托管 `apps/web/dist` + `page.route` 拦 `/api`，不启动服务端、不碰钥匙串）桌面 + 390 共 37 项；web `tsc --noEmit` + `vite build`；`e2e/mobile-viewport-ui.mjs` 回归。未验：Office 预览、真机 iOS 手势、真实 PDF 内嵌（headless 无 PDF 插件，只验 fallback）。

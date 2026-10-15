@@ -13,7 +13,7 @@
 | 文件 | 改动 |
 |---|---|
 | `apps/web/src/preview.ts`（新增） | 纯逻辑：`previewKind`（扩展名 + MIME）、`looksBinary`（字节嗅探）、`parseCsv`（引号内换行 / `""` 转义 / 有界）、`stripBom`、上限常量 |
-| `apps/web/src/components/FilePreview.tsx`（新增） | `openFilePreview` + `FilePreviewHost`；复用 `Modal`；工具栏 = 文件名 + 类型·大小 + 下载 + 关闭；加载 / 取消 / 错误重试 / 404 / 权限 / 超限 / 二进制 / 不支持 各态；Markdown / CSV / 代码 / 文本 / PDF / 图片 渲染 |
+| `apps/web/src/components/FilePreview.tsx`（新增） | `openFilePreview` + `FilePreviewHost`；复用 `Modal`；工具栏 = 文件名 + 类型·大小 + 下载 + 关闭；加载 / 取消 / 错误重试 / 404 / 权限 / 超限 / 二进制 / 不支持 各态；Markdown（默认渲染，可切源码）/ CSV / 代码 / 文本 / PDF / 图片 渲染；手机底边 safe-area 内边距 |
 | `apps/web/src/api.ts` | `fetchBlob(path, signal)`；新增 `fetchBlobLimited(path, maxBytes, signal)`（先看 `content-length`，超限不读 body） |
 | `apps/web/src/components/Markdown.tsx` | 加 `blockRemoteImages`（远端图占位、不自动加载）；链接只放行 `http/https/mailto/#`，`javascript:`/`data:`/`file:`/相对路径只显示文字 |
 | `apps/web/src/components/Attachments.tsx` | 非图片卡片 = 主体 `<button>`（预览）+ 独立下载 `<button>`（`stopPropagation`）；无嵌套 button |
@@ -35,7 +35,7 @@
 - 环境：Node 24.20.0（`/opt/homebrew/opt/node@24/bin`），`node_modules` 用软链接指向 `unified-integration`（同 commit 依赖；web `vite build` 正常）。
 - `tsc --noEmit -p apps/web`：**exit 0**。
 - `vite build apps/web`：**通过**（2498 modules）。
-- `node e2e/file-preview.mjs`：桌面 + 390 **35 项全通过**（点主体预览 / 下载不误触 / 39KB Markdown 表格代码 / 外链图不自动加载 / 危险与相对链接不成链 / CSV 引号换行 / 代码行号复制 / 不支持类型 / 超限不下载 / 404 重试 / PDF object+fallback / 图片仍走 ImageViewer / Esc + 焦点返回 / 390 工具栏）。
+- `node e2e/file-preview.mjs`：桌面 + 390 **37 项全通过**（点主体预览、Markdown 渲染/源码切换 / 下载不误触 / 39KB Markdown 表格代码 / 外链图不自动加载 / 危险与相对链接不成链 / CSV 引号换行 / 代码行号复制 / 不支持类型 / 超限不下载 / 404 重试 / PDF object+fallback / 图片仍走 ImageViewer / Esc + 焦点返回 / 390 工具栏）。
 - `node e2e/mobile-viewport-ui.mjs`：**回归全通过**。
 - 截图：`evidence/file-preview/{desktop-chat,desktop-markdown-preview,desktop-csv-preview,mobile-390-markdown}.png`（已用识图核对内容）。
 

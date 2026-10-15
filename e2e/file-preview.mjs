@@ -214,6 +214,13 @@ try {
 		check("工具栏显示文件名与类型/大小", (await page.locator("[data-testid=file-preview-name]").textContent())?.includes("voice-input-feasibility.md") && (await page.locator("[data-testid=file-preview-toolbar]").textContent())?.includes("Markdown"));
 		check("Markdown 长内容已渲染（表格 + 代码块）", (await page.locator("[data-testid=file-preview-markdown] table").count()) >= 1 && (await page.locator("[data-testid=file-preview-markdown] pre code").count()) >= 1);
 		await page.screenshot({ path: join(OUT, "desktop-markdown-preview.png") });
+		// 渲染 / 源码切换
+		await page.locator("[data-testid=md-mode-source]").click();
+		await page.locator("[data-testid=file-preview-code]").waitFor({ timeout: 10_000 });
+		check("Markdown 可切到源码", (await page.locator("[data-testid=file-preview-code]").textContent())?.includes("# 语音输入可行性"));
+		await page.locator("[data-testid=md-mode-rendered]").click();
+		await page.locator("[data-testid=file-preview-markdown] table").first().waitFor({ timeout: 10_000 });
+		check("Markdown 可切回渲染", (await page.locator("[data-testid=file-preview-markdown] table").count()) >= 1);
 
 		// 外链图片不自动加载
 		check("外链图片显示占位、未自动请求", (await page.locator("[data-testid=md-remote-image-blocked]").count()) >= 1 && state.remoteHits.length === 0, JSON.stringify(state.remoteHits));

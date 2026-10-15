@@ -5,7 +5,7 @@ import { ApiError, download as downloadFile, fetchBlob, fetchBlobLimited } from 
 import { MAX_CSV_COLS, MAX_CSV_ROWS, MAX_TEXT_BYTES, MAX_TEXT_LINES, isTextKind, looksBinary, parseCsv, previewKind, stripBom, type PreviewKind } from "../preview";
 import { FileKindIcon } from "./Attachments";
 import Markdown from "./Markdown";
-import { Modal, fmtSize } from "./ui";
+import { Modal, cx, fmtSize } from "./ui";
 
 /**
  * 聊天 / 交付 / 信息面板 / 子代理附件共用的应用内文件预览。
@@ -71,7 +71,7 @@ export function FilePreviewHost() {
 	const dl = item.downloadPath ?? item.url;
 	return (
 		<Modal open onClose={close} wide fixed testId="file-preview">
-			<div className="flex h-full min-h-0 flex-col" data-kind={kind}>
+			<div className="flex h-full min-h-0 flex-col pb-[env(safe-area-inset-bottom)]" data-kind={kind}>
 				<header className="flex items-center gap-2 border-b border-line px-3 py-2" data-testid="file-preview-toolbar">
 					<FileKindIcon name={item.name} size={18} className="shrink-0 text-mut" />
 					<div className="min-w-0 flex-1">
@@ -237,10 +237,26 @@ function Notice({ icon, title, body, testId, children }: { icon: React.ReactNode
 }
 
 function MarkdownScroll({ text }: { text: string }) {
+	const [mode, setMode] = useState<"rendered" | "source">("rendered");
 	return (
-		<div className="h-full overflow-y-auto overflow-x-hidden px-4 py-3" data-testid="file-preview-markdown">
-			{/* 预览场景：外链图片默认不加载（不自动把来源信息发到外网） */}
-			<Markdown text={text} blockRemoteImages />
+		<div className="flex h-full min-h-0 flex-col">
+			<div className="flex items-center gap-1 border-b border-line px-3 py-1.5 text-xs text-mut2" data-testid="md-mode-bar">
+				<span className="mr-auto">Markdown</span>
+				<button type="button" className={cx("pa-chip sm", mode === "rendered" && "!text-accent")} onClick={() => setMode("rendered")} data-testid="md-mode-rendered">
+					渲染
+				</button>
+				<button type="button" className={cx("pa-chip sm", mode === "source" && "!text-accent")} onClick={() => setMode("source")} data-testid="md-mode-source">
+					源码
+				</button>
+			</div>
+			{mode === "rendered" ? (
+				<div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3" data-testid="file-preview-markdown">
+					{/* 预览场景：外链图片默认不加载（不自动把来源信息发到外网） */}
+					<Markdown text={text} blockRemoteImages />
+				</div>
+			) : (
+				<CodeView text={text} />
+			)}
 		</div>
 	);
 }
