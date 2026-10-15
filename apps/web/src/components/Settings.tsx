@@ -194,7 +194,7 @@ function FastComputerSection() {
 								/>
 							</label>
 							<p className="text-xs text-mut2">
-								真 Jev，有原生校准概率。只能从已配置凭据的 System One 分类器里选（TypeSafe / OpenRouter / 自定义渠道等），鉴权由 Pi 按所选服务解析，不读全局环境变量 Key。
+								真 Jev，有原生校准概率。分类器来自 Pi 目录（TypeSafe / OpenRouter / 自定义渠道等），标「未配置凭据」的还不能真调用；鉴权由 Pi 按所选服务解析，不读全局环境变量 Key。
 								{classifiers.length === 0 && " 目前没有可用的分类器，请先在模型服务里配置 TypeSafe / OpenRouter，或在自定义渠道里声明 System One 分类器。"}
 							</p>
 						</>

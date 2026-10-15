@@ -220,7 +220,8 @@ export class CustomProviders {
 			noKey: !!input.noKey,
 			models: input.models.map((m) => this.withLimits({ ...m, id: m.id.trim() }, undefined, input.baseUrl, input.api)),
 			// 不传就保留原有 classifier（与 Key / 请求头一致的“留空不改”语义）；传 [] 清空。
-			classifiers: normalizeClassifiers(input.classifiers === undefined ? existing?.classifiers : input.classifiers),			createdAt: existing?.createdAt ?? Date.now(),
+			classifiers: normalizeClassifiers(input.classifiers === undefined ? existing?.classifiers : input.classifiers),
+			createdAt: existing?.createdAt ?? Date.now(),
 		};
 		// 写入 Pi 的 models.json（保留用户手写的其它 provider）
 		const cfg = this.readFile();
@@ -236,7 +237,7 @@ export class CustomProviders {
 		this.writeFile(cfg);
 		this.store.saveMeta([...metas.filter((m) => m.id !== pid), meta]);
 		await this.models.reloadConfig();
-		// reloadConfig 会丢掉扩展注册的 classifier，这里按保存的公开元数据重新注册。
+		// reload 会用 models.json 重组 provider，扩展层里的 chat/classifier 要按最新元数据重建。
 		this.reapplyClassifiers();
 
 		// API Key 走 Pi 的通用登录 → 写入加密凭据存储
