@@ -57,13 +57,24 @@ export function Avatar({ text, color, size = 36, running, agentId, src }: { text
 	);
 }
 
+/** 已打开的弹窗栈（后打开的在上）：只让最上层响应 Esc，避免嵌套弹窗（如设置弹窗里的确认框）被一并关掉。 */
+const modalStack: symbol[] = [];
+
 /** fixed：固定尺寸（不随内容变高/变宽、位置不跳），内部自己负责滚动——设置窗口用，切换标签时左侧/顶部标签栏不动。 */
 export function Modal({ open, onClose, title, children, wide, fixed, testId }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; wide?: boolean; fixed?: boolean; testId?: string }) {
+	const idRef = useRef<symbol | undefined>(undefined);
+	if (!idRef.current) idRef.current = Symbol();
 	useEffect(() => {
 		if (!open) return;
-		const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+		const id = idRef.current!;
+		modalStack.push(id);
+		const k = (e: KeyboardEvent) => e.key === "Escape" && modalStack[modalStack.length - 1] === id && onClose();
 		addEventListener("keydown", k);
-		return () => removeEventListener("keydown", k);
+		return () => {
+			removeEventListener("keydown", k);
+			const i = modalStack.lastIndexOf(id);
+			if (i >= 0) modalStack.splice(i, 1);
+		};
 	}, [open, onClose]);
 	if (!open) return null;
 	return createPortal(

@@ -1,8 +1,8 @@
-import { AlertTriangle, ChevronDown, ChevronRight, Package, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AlertTriangle, ChevronDown, ChevronRight, Loader2, Package, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, Help, Input } from "./ui";
+import { Badge, Button, cx, Help, Input, useConfirm } from "./ui";
 
 type Exposure = "direct" | "deferred" | "codemode" | "hidden";
 interface McpConfig {
@@ -233,10 +233,32 @@ function McpItem({ s, reload }: { s: McpServer; reload: () => void }) {
 	const [open, setOpen] = useState(false);
 	const [edit, setEdit] = useState(false);
 	const [testing, setTesting] = useState(false);
+	const [deleting, setDeleting] = useState(false);
+	const [delErr, setDelErr] = useState("");
+	const [confirmDlg, askConfirm] = useConfirm();
+	const deletingRef = useRef(false);
 	if (edit) return <McpForm initial={s} onDone={() => (setEdit(false), reload())} />;
 	const target = s.config.type === "stdio" ? `${s.config.command} ${joinArgs(s.config.args)}` : s.config.url;
+	const del = async () => {
+		if (deletingRef.current) return;
+		const ok = await askConfirm({ title: `删除 MCP 服务「${s.name}」？`, body: "只删除这条 MCP 服务配置，不影响已装的其他扩展。", ok: "删除", danger: true });
+		if (!ok || deletingRef.current) return;
+		deletingRef.current = true;
+		setDeleting(true);
+		setDelErr("");
+		try {
+			await api(`/api/mcp/${s.id}`, { method: "DELETE" });
+			reload();
+		} catch (e) {
+			setDelErr(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			deletingRef.current = false;
+			setDeleting(false);
+		}
+	};
 	return (
 		<li className="pa-card !p-3 text-sm" data-testid="mcp-item">
+			{confirmDlg}
 			<div className="flex items-start gap-3">
 				<input type="checkbox" className="mt-1" checked={s.enabled} aria-label={`启用 ${s.name}`} onChange={async (e) => (await api(`/api/mcp/${s.id}`, { method: "PATCH", json: { enabled: e.target.checked } }), reload())} />
 				<div className="min-w-0 flex-1">
@@ -283,11 +305,12 @@ function McpItem({ s, reload }: { s: McpServer; reload: () => void }) {
 					<Button size="sm" variant="ghost" onClick={() => setEdit(true)}>
 						编辑
 					</Button>
-					<Button size="sm" variant="ghost" aria-label="删除 MCP 服务" onClick={async () => confirm(`删除 MCP 服务「${s.name}」？`) && (await api(`/api/mcp/${s.id}`, { method: "DELETE" }), reload())}>
-						<Trash2 size={13} />
+					<Button size="sm" variant="ghost" aria-label={`删除 MCP 服务「${s.name}」`} disabled={deleting} onClick={del} data-testid={`mcp-delete-${s.id}`}>
+						{deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
 					</Button>
 				</div>
 			</div>
+			{delErr && <div className="mt-1 text-sm text-red-600">{delErr}</div>}
 		</li>
 	);
 }
@@ -299,12 +322,34 @@ function PackagesSection() {
 	const [src, setSrc] = useState("");
 	const [scope, setScope] = useState<string[] | null>(null);
 	const [err, setErr] = useState("");
+	const [deleting, setDeleting] = useState("");
+	const [delErr, setDelErr] = useState("");
+	const [confirmDlg, askConfirm] = useConfirm();
+	const deletingRef = useRef(false);
 	const load = () => api<PiPackage[]>("/api/pi-packages").then(setList);
 	useEffect(() => {
 		void load();
 	}, [version]);
+	const uninstall = async (p: PiPackage) => {
+		if (deletingRef.current) return;
+		const ok = await askConfirm({ title: `卸载「${p.resources?.name || p.source}」？`, body: "会移除这个扩展包带来的扩展、技能和模板，不影响其他扩展包。", ok: "卸载", danger: true });
+		if (!ok || deletingRef.current) return;
+		deletingRef.current = true;
+		setDeleting(p.id);
+		setDelErr("");
+		try {
+			await api(`/api/pi-packages/${p.id}`, { method: "DELETE" });
+			load();
+		} catch (e) {
+			setDelErr(`卸载失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			deletingRef.current = false;
+			setDeleting("");
+		}
+	};
 	return (
 		<section className="space-y-3" data-testid="packages-section">
+			{confirmDlg}
 			<div className="flex items-center gap-2">
 				<Package size={16} />
 				<h3 className="font-semibold">Pi 扩展包</h3>
@@ -339,6 +384,7 @@ function PackagesSection() {
 				<AgentPicker value={scope} onChange={setScope} />
 				{err && <div className="text-sm text-red-500">{err}</div>}
 			</div>
+			{delErr && <div className="text-sm text-red-600">{delErr}</div>}
 			<ul className="space-y-2">
 				{list.map((p) => (
 					<li key={p.id} className="pa-card flex items-start gap-3 !p-3 text-sm" data-testid="package-item">
@@ -363,8 +409,8 @@ function PackagesSection() {
 								重试
 							</Button>
 						)}
-						<Button size="sm" variant="ghost" aria-label="卸载扩展包" onClick={async () => confirm(`卸载「${p.resources?.name || p.source}」？`) && (await api(`/api/pi-packages/${p.id}`, { method: "DELETE" }), load())}>
-							<Trash2 size={13} />
+						<Button size="sm" variant="ghost" aria-label={`卸载「${p.resources?.name || p.source}」`} disabled={deleting === p.id} onClick={() => uninstall(p)} data-testid={`package-uninstall-${p.id}`}>
+							{deleting === p.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
 						</Button>
 					</li>
 				))}

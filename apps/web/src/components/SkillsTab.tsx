@@ -1,10 +1,10 @@
 import { HindsightSettings } from "./HindsightSettings";
 import { ChevronLeft, History, Lock, Plus, Puzzle, RotateCcw, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { SkillMeta } from "../types";
-import { Badge, Button, Help, Input } from "./ui";
+import { Badge, Button, Help, Input, useConfirm } from "./ui";
 import Markdown from "./Markdown";
 import { DiffView } from "./Cards";
 
@@ -23,6 +23,9 @@ export function SkillsTab() {
 	const [versions, setVersions] = useState<Version[] | null>(null);
 	const [openV, setOpenV] = useState<number | null>(null);
 	const [suggest, setSuggest] = useState<{ enabled: boolean } | null>(null);
+	const [confirmDlg, askConfirm] = useConfirm();
+	const [delBusy, setDelBusy] = useState("");
+	const delRef = useRef(false);
 	const load = () => api<SkillMeta[]>("/api/skills").then(setList);
 	useEffect(() => {
 		void api("/api/skill-suggest").then(setSuggest);
@@ -48,6 +51,41 @@ export function SkillsTab() {
 			await view(s.name);
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
+		}
+	};
+	const del = async () => {
+		if (!open || delRef.current) return;
+		const ok = await askConfirm({ title: `删除技能「${open.name}」？`, body: "删除后无法恢复。", ok: "删除", danger: true });
+		if (!ok || delRef.current) return;
+		delRef.current = true;
+		setDelBusy("del");
+		setErr("");
+		try {
+			await api(`/api/skills/${open.name}`, { method: "DELETE" });
+			setOpen(null);
+			void load();
+		} catch (e) {
+			setErr(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			delRef.current = false;
+			setDelBusy("");
+		}
+	};
+	const rollback = async (version: number) => {
+		if (!open || delRef.current) return;
+		const ok = await askConfirm({ title: `把「${open.name}」回滚到 v${version}？`, body: "会生成一个新版本，历史都保留。", ok: "回滚", danger: true });
+		if (!ok || delRef.current) return;
+		delRef.current = true;
+		setDelBusy(`rollback:${version}`);
+		setErr("");
+		try {
+			await api(`/api/skills/${open.name}/rollback`, { method: "POST", json: { version } });
+			await view(open.name);
+		} catch (e) {
+			setErr(`回滚失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			delRef.current = false;
+			setDelBusy("");
 		}
 	};
 	if (edit)
@@ -82,6 +120,7 @@ export function SkillsTab() {
 	if (open)
 		return (
 			<div className="space-y-3">
+				{confirmDlg}
 				<button className="flex items-center gap-1 text-sm text-mut hover:text-fg" onClick={() => setOpen(null)}>
 					<ChevronLeft size={15} /> 全部技能
 				</button>
@@ -102,12 +141,9 @@ export function SkillsTab() {
 									size="sm"
 									variant="ghost"
 									aria-label="删除技能"
-									onClick={async () => {
-										if (!confirm(`删除技能「${open.name}」？`)) return;
-										await api(`/api/skills/${open.name}`, { method: "DELETE" });
-										setOpen(null);
-										void load();
-									}}
+									disabled={delBusy === "del"}
+									onClick={() => void del()}
+									data-testid="skill-delete"
 								>
 									<Trash2 size={14} />
 								</Button>
@@ -116,6 +152,7 @@ export function SkillsTab() {
 					</span>
 				</div>
 				<p className="text-sm text-mut">{open.description}</p>
+				{err && <div className="text-sm text-red-500" data-testid="skill-error">{err}</div>}
 				<div className="rounded-xl border border-line p-3 text-sm">
 					<Markdown text={open.body} />
 				</div>
@@ -137,11 +174,9 @@ export function SkillsTab() {
 											<Button
 												size="sm"
 												variant="ghost"
-												onClick={async () => {
-													if (!confirm(`把「${open.name}」回滚到 v${v.version}？（会生成一个新版本，历史都保留）`)) return;
-													await api(`/api/skills/${open.name}/rollback`, { method: "POST", json: { version: v.version } });
-													await view(open.name);
-												}}
+												disabled={delBusy === `rollback:${v.version}`}
+												onClick={() => void rollback(v.version)}
+												data-testid={`skill-rollback-${v.version}`}
 											>
 												<RotateCcw size={12} /> 回滚到此版本
 											</Button>
@@ -186,7 +221,7 @@ export function SkillsTab() {
 						<ul className="grid gap-2 sm:grid-cols-2">
 							{items.map((s) => (
 								<li key={s.name}>
-									<button className="pa-card flex h-full w-full items-start gap-2 !p-3 text-left hover:border-accent" onClick={() => view(s.name)}>
+									<button className="pa-card flex h-full w-full items-start gap-2 !p-3 text-left hover:border-accent" onClick={() => view(s.name)} data-testid={`skill-item-${s.name}`}>
 										{s.builtin ? <Lock size={15} className="mt-0.5 shrink-0 text-mut" /> : <Puzzle size={15} className="mt-0.5 shrink-0 text-accent" />}
 										<span className="min-w-0">
 											<span className="block font-mono text-sm font-medium">{s.name}</span>
