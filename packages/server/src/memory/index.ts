@@ -202,9 +202,10 @@ function ownedBy(hit: ScopedItem, ctx: WriteContext): boolean {
 	if (actor === "background" || actor === "group") return (o.actor === "background" || o.actor === "group") && !!ctx.taskId && o.taskId === ctx.taskId;
 	return false;
 }
-/** 能否直接删除/更新：主会话/用户可改任何条目；其余只能改本任务/本人写入的草稿 */
+/** 能否直接删除/更新：主会话/用户（含无 ctx 的内部可信调用）可改任何条目；其余只能改本任务/本人写入的草稿 */
 export function canMutate(hit: ScopedItem, ctx: WriteContext): boolean {
-	if (privileged(ctx.actor)) return true;
+	// ctx.actor 缺省视为可信主会话（与 ownedBy 的 ctx.actor ?? "main" 一致）；模型侧调用一律显式注入 actor。
+	if (privileged(ctx.actor ?? "main")) return true;
 	return ownedBy(hit, ctx);
 }
 
