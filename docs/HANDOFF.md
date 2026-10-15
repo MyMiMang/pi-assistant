@@ -2,11 +2,14 @@
 
 > 当前公开版本 **v0.1.0-beta.21**（已公开 Latest）；上一版 v0.1.0-beta.20。本轮仅 macOS arm64，已构建、Mac 安装冒烟与更新资产校验通过并公开 Latest。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
-**下一版发布准备（未发布 / 未 push / 未 tag）——readiness blockers**
-- **钥匙串弹窗 root cause 未证，不能因此降级安全**：本机出现「找不到用于储存 credential-master-key 钥匙串」，已知触点只是「测试/裸 node 进程直接 `new EncryptedCredentialStore()` 或无参 `initModels()`」，**为什么**会弹（进程身份 / 未登录钥匙串 / ACL）尚未证明。根治需要**用户本人系统动作**（登录/解锁钥匙串或授权访问），助理不替用户点系统弹窗、不改安全实现。
-- **历史敏感 WIP 不能混包**：`next-release-integration` 工作区仍有未审阅改动（`packages/server/src/secrets.ts`、`e2e/*`、`packages/server/package.json`、`test/setup.ts`）；发布包只能含已提交内容（当前 `a88edd4`），不得带上这些 WIP。`models.ts` WIP 仍在 `stash@{0}`（未 pop）。
-- **未验**：安装包真机、HTTP 级续跑 smoke（默认 `main.initModels()` 走钥匙串，未跑）、全量 e2e、真实副作用工具端到端。
-- remote 最新 tag 是 **v0.1.0-beta.21**（本地未 push、未建 beta.22）；是否发布由负责人决定。
+**下一版发布准备（beta.22 候选，未发布 / 未 push / 未 tag）——release-preflight 结果**
+- 基线 / HEAD：`next-release-integration` = `origin/main`（`5b6cf11`，已公开 beta.21）之后的 41 个提交；本 preflight 在独立干净 worktree（分支 `release-preflight`，基 `3d33d5a`）只做核对与文档修正，最终本地 HEAD = 本 preflight 提交（在 `3d33d5a` 之上、只改文档与发布说明，见 `git log`；未 push / 未 tag / 未打包）。
+- **已核对一致**：GHCR 镜像 tag `0.1.4` 的匿名 manifest digest = `sha256:6cc5c119…d54a42`，与 `desktop-image.json` 一致；`third-party.json` 的 cua-driver `0.35.4` darwin 资产实下 SHA256 = `97d5ea2f…4ec52e` 与钉住值一致；品牌图标来源 `@lobehub/icons-static-svg@1.95.1`（MIT）已记入 `THIRD_PARTY_NOTICES.md`，由 `scripts/gen-provider-icons.mjs` 生成 `provider-icons.ts`（已提交）；发布范围 `.github/release-scope.json` = `mac-arm64`，release.yml 的 `prepare` 按 `BUILD_INTEL` 组装矩阵、`publish` 只在 build + mac-smoke 成功且 linux/windows 计划内 skipped 时公开，`scripts/release-scope.mjs validate` 校验 latest.json 仅含 `darwin-aarch64` 且签名 / 资产齐全。
+- **钥匙串弹窗 root cause 未证，不能因此降级安全**：本机出现「找不到用于储存 credential-master-key 钥匙串」，已知触点只是「测试/裸 node 进程直接 `new EncryptedCredentialStore()` 或无参 `initModels()`」，**为什么**会弹（进程身份 / 未登录钥匙串 / ACL）尚未证明。根治需要**用户本人系统动作**（登录/解锁钥匙串或授权访问），助理不替用户点系统弹窗、不改安全实现。**这不是「用户系统坏了」的结论**，不要求用户 reset 钥匙串。
+- **历史敏感 WIP 不能混包**：`next-release-integration` 工作区仍有未审阅改动（`packages/server/src/secrets.ts`、`e2e/*`、`packages/server/package.json`、`test/setup.ts`）；发布包只能含已提交内容（本 preflight 树），不得带上这些 WIP。`models.ts` WIP 仍在 `stash@{0}`（未 pop）。
+- **本轮实际跑了（干净树，Node 24.20.0，全 Mock，未碰系统钥匙串）**：`classifier-persistence` + `fast-computer`×3 + `desktop-runtime` + `desktop-idle-watcher` + `desktop-lima` **81 项（80 通过 1 跳过 0 失败）**；`subagent-resume` + `subagent-resume-safety` + `subagents` + `task-waits` + `task-wait-yield` + `thinking-levels` + `model-picks` + `classifier` **91/91**。两端 typecheck 与 web build 见上一条（同 `3d33d5a`，未改代码、未重跑）。
+- **未验（明确边界）**：安装包真机、HTTP 级续跑 smoke（默认 `main.initModels()` 走钥匙串，未跑）、全量 e2e、真实副作用工具端到端、真实 Jev 调用、真实 VM 资源调整。
+- remote 最新 tag 仍是 **v0.1.0-beta.21**；下个可用号 **v0.1.0-beta.22**（本地未 push、未建 tag）。发布说明见 `docs/release-notes/v0.1.0-beta.22.md`。
 
 ## 1. 这是什么
 
@@ -68,7 +71,7 @@ beta.21 内容：子代理模型改为每个助理的候选池（全局只留并
 2026-10-22 **next-release 整合树 `next-release-integration`（beta.22 候选，基线 `origin/main` = `5b6cf11`）**：把 beta.21 之后的几条 WIP 合到一条线上。
 - **设置 › 模型 的品牌图标**：内置服务改用**真实品牌 logo**（`apps/web/src/components/provider-icons.ts`，由 `scripts/gen-provider-icons.mjs` 从 `@lobehub/icons-static-svg` 1.95.1（MIT，无依赖）只提取用到的 40 个服务生成，编译进网页、不联网下载）；自定义渠道和图标库未收录的品牌（Radius、TypeSafe、Mock）仍用「名称首字母 + 稳定配色」字母头像；`ProviderAvatar` 加 `data-provider-icon-kind`（brand / letter）。根 `devDependencies` 新增 `@lobehub/icons-static-svg`，许可记进 `THIRD_PARTY_NOTICES.md`。同一品牌的多个渠道共用一张 logo（OpenAI/OpenAI Codex、Moonshot AI/CN、Xiaomi 的 token plan、MiniMax/CN、Qwen 三个、ZAI/CN、Cloudflare 两个）。Onboarding 的 `ProviderList` 也带上同一图标。
 - **合并来源**：`model-settings-preview` 的 `57b9ad6`（大分类 `Fold`）+ 图标卡片网格工作区改动；`fast-computer-model` / `fast-computer-model-review` 的 `055ed8a` → `2a287eb` → `93570c5`（默认关闭的快速操作模型；G1–G4 + G3 核验修正）。唯一冲突在 `apps/web/src/components/Settings.tsx` 的 `ModelsTab` 开头（`Fold` 与 `<FastComputerSection />` + 原 `<section>` 撞在一起），取「`<FastComputerSection />` 在前、`Fold` 包住原来那整段」。
-- **原生 Jev 仍 BLOCKED**：G4 只是 fail-closed（移除全局 env key fallback、UI 移除 SystemOne 配置并注明接入待完成）；项目里没有已允许的 public auth 抽象，**不读/不绕过凭据、不从 env 发 host、不把 Key 明文存 settings**，所以原生 SystemOne 本轮只能 fail-closed，**不可宣称 Jev 已完成**；click 原型也**未做性能实测**。
+- **原生 Jev 已接入（原「BLOCKED」作废）**：早期 G4 只做到 fail-closed（移除全局 env key fallback、UI 暂移除 SystemOne 配置、注明接入待完成）；随后 `1fbbddb` / `d3432a8` / `78f3d24` / `a487ea5` 经 Pi 公开 `ModelRuntime` 接上原生 SystemOne 分类器——从 Pi classifier 目录选模型（TypeSafe / OpenRouter / 自定义渠道），`classify` 只发受限离散 choice（答案必须是候选 id、置信度缺失不合成、成本缺失记未知不记 0），鉴权由 Pi 在请求时按所选服务解析，**不读全局 env Key、不把 Key 明文存 settings**；自定义渠道的 SystemOne 分类器（协议 + 模型 id）持久化，启动 / reload 按元数据重新注册。**仍未验**：真实 Jev 调用（无真实 Key）、chat click 原型性能实测。默认关闭。
 - 验证（全 Mock，无真实 Key / 模型费用，未动用户 App / 浏览器；Node 用 `/opt/homebrew/opt/node@24/bin/node`）：`tsc --noEmit -p apps/web` exit 0；`npm run build -w @pi-assistant/web` exit 0；`node e2e/model-ui.mjs` 六组全过（第 5 组断言改为：每张卡都有图标、内置服务 ≥80% 有品牌图标（`data-provider-icon-kind=brand`）、图标不能全一样（同品牌多渠共用一张 logo，故不再要求 100% 唯一）、自定义渠道 6 个字母头像互不相同、390 单列不溢出）；截图 `evidence/model-ui/{06-settings-accordion,10-services-expanded,11-services-collapsed,12-services-collapsed-390,13-services-expanded-390,20-icons-0,20-icons-14,20-icons-28,20-icons-38}.png`（已逐张识图核对：OpenAI/Anthropic/Google/DeepSeek/AWS/GitHub Copilot/Meta/NVIDIA/Vercel/xAI/Xiaomi MiMo 等品牌 logo 正常，无空白/变形/缺图）。
 - 未完成：`e2e/run.mjs` 全量与安装包真机未跑。进度见 `progress-snapshots/next-release-state.md`。
 
