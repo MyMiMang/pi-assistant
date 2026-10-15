@@ -143,6 +143,17 @@
 | 聊天里的文件卡片（如 `voice-input-feasibility.md`）只有下载图标，点卡片没有任何预览；要求点卡片主体 / 文件名在应用内打开预览，下载图标保持独立（不误触预览） | 已实现代码，待主 review 合入（未打包） | 新增共享 `apps/web/src/components/FilePreview.tsx` + 纯逻辑 `apps/web/src/preview.ts`，聊天上传 / 交付 / 信息面板「文件」共用；非图片卡片改为「主体按钮（预览）+ 独立下载按钮」，避免嵌套按钮。支持 Markdown（默认渲染 + 可切源码，复用现有 react-markdown）/ 纯文本 / log / json / 代码（行号 + 复制）/ CSV（引号内换行、有界表格）/ PDF（`<object>` 内嵌 + fallback 提示 + 下载）；xlsx / docx / pptx / HTML / SVG / 压缩包明确标「暂不支持预览」，只下载、不执行。安全：只走授权资源地址 `/api/files/:id` 带登录凭证拉取，不读本机任意路径 / URL、不绕权限；类型判定扩展名 + MIME + 实际字节嗅探（二进制不当文本解码）；文本上限 1MB、CSV 500×50、代码 5000 行；Markdown 外链图片默认不自动加载、链接只放行 http/https/mailto（javascript: / data: / 相对文件引用不渲染成链接）；PDF 只用本会话 blob，不外源、不服务端 exec / 云上传。 |
 | 验证 | 已跑（纯前端 fixture，未碰钥匙串 / 真实数据） | `e2e/file-preview.mjs` 桌面 + 390 共 37 项全通过（点主体预览、Markdown 渲染/源码切换 / 下载不误触 / 39KB Markdown 表格代码 / 外链图不自动加载 / 危险与相对链接不成链 / CSV 引号换行 / 代码行号复制 / 不支持类型 / 超限不下载 / 404 重试 / PDF object+fallback / 图片仍走 ImageViewer / Esc + 焦点返回 / 390 工具栏）；web `tsc --noEmit` + `vite build` 通过；`e2e/mobile-viewport-ui.mjs` 回归全通过。**未做 / 未真机**：xlsx 等 Office 预览（无安全库，明确暂不支持）、真机 iOS 手势、真实 PDF 内嵌（headless 无 PDF 插件，只验 fallback）。 |
 
+## 语音输入（输入栏语音→文字草稿）（2026-10-15，`voice-input-implementation` 树，基 `unified-integration` `ad3526f`，**未 push / 未 tag**）
+
+| 需求（用户原话大意） | 状态 | 说明 |
+|---|---|---|
+| 输入栏加语音输入：点麦克风录音、再点停止，转成文字**插入开始录制时的光标锚点**，**保留用户后续编辑**，**不自动发送** | 已实现代码，待主 review 合入（未打包） | 独立 `VoiceInput.tsx` + `useVoiceInput` hook + 纯逻辑 `voice-input.ts`；发送键旁可发现麦克风按钮；状态 `idle/preparing/recording/transcribing/error/finish`；最长 60 s；取消只丢语音、不清 draft/replyTo；切对话/页面隐藏立即 stop tracks + 取消不发送；16 kHz PCM16 WAV 链路（真实重采样，不假 16000，不引 FFmpeg 全依赖）。设计见 [design/voice-input.md](design/voice-input.md)。 |
+| 服务端统一 ASR 模型类型 + 薄 adapter（不另起 key 孤岛） | 已实现代码，待主合 | 注册表 `ModelType` 加 `asr`、`ModelCapability` 加 `asr`；`POST /api/audio/transcriptions`（multipart，WAV 头/采样率/声道/时长/字节校验、abort+超时、幂等只在 completed 返回、错误 redact、音频只在内存、不远程 fetch/不 ffmpeg 任意路径/不 SSRF）；复用 provider 的 baseUrl+key（**不读 secret.ts**）；未知能力不靠名猜、chat 多模态不自动算 ASR、云 fallback 不偷偷变收费。 |
+| 本地 SenseVoice provider 的接口契约（安装/生命周期由另一子代理做） | 契约已定，另一子代理实现 | `source: "local"`、`kind: "local"`、`protocol: "openai-audio-transcriptions"`、`baseUrl` 本机回环、`local{installed,running,state,device}`、本地不需 key。见 design §4.1。 |
+| 双向语音通话 | **不做**（用户已取消） | 本设计明确排除，不实现。 |
+
+验证：服务端假 PCM / 假 provider / 内存凭据 / 强制 tmp 数据目录（不联网、不开麦、不产生费用）；前端纯逻辑（取消 0 请求、开始 1 次 getUserMedia、权限拒绝、页面隐藏、真实 16k WAV、真重采样、锚点插入、stale 对话不插入、IME、replyTo 共存、390）。真机（iOS 录音/键盘、真实音质、真实云 ASR、本地模型速度）**未验证**，不 claim。
+
 ## 待用户决定
 
 
