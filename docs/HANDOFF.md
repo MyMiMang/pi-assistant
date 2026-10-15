@@ -35,6 +35,15 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 - **已跑**（Node 24.20.0，纯前端 fixture：静态托管 `apps/web/dist` + `page.route` 拦 `/api`，**未启动 `packages/server/src/main.ts`、未碰系统钥匙串 / 真实数据 / 用户文件**）：web `tsc --noEmit` exit 0、`vite build` 通过；`e2e/file-preview.mjs` 桌面 + 390 共 **37 项全通过**；`e2e/mobile-viewport-ui.mjs` 回归全通过。截图 `evidence/file-preview/`。
 - **未做 / 未真机**：Office（xlsx 等）预览、真机 iOS 手势、真实 PDF 内嵌（headless 无 PDF 插件，只验 fallback）、全量 e2e。等主 review 合入 `unified-integration`（memory / model UI 之后）再统一发 beta.24（仅 mac arm64）。进度详见 `progress-snapshots/file-preview.md`。
 
+2026-10-22 快速操作基准「一键真实环境」（独立树 `benchmark-environment-bootstrap`，基 `benchmark-production-fix` `437116f`，**未 push / 未 tag / 未打包**）：
+- 解决上一树遗留的 P0：主入口 `createRuntimeBenchmarkHost` 没有任何隔离窗口 / 宿主网关的真实来源（`hostIsolatedWindow` 默认 false、`computerFixtureBaseUrl` 默认 null 且运行时从不传），导致按钮在两台电脑上默认永远 blocked，用户要么手填网关、要么给安全无效开关。
+- 新增 `benchmark-window.ts`：只凭目标 cua `tools/list` 推断「可准备」（hostpc 必须有驱动自有隔离浏览器 `browser_prepare`/`browser_navigate`/`get_browser_state`；computer 优先隔离浏览器、否则沙箱应用），**GET availability 只报 `preparable`/`targetKind` 元数据、绝不开窗**；点「开始实际操作测试」后的 POST 才「先建窗口 → pin 精确身份 → 再跑」。
+- `benchmark-driver.ts` 真实现隔离浏览器路径：`browser_prepare {allow_launch:true, profile:{mode:"isolated_new"}}` → `browser_navigate`（URL 带随机 nonce）→ `get_browser_state` 校验 `binding_quality=exact` / `mutation_allowed` / URL 含 nonce / `isolated_owned` → `list_windows`+`get_window_state` pin 原生 pid/window_id；结束只 `kill_app` 驱动自有 pid，拿不到就不关（绝不 kill 用户浏览器）。
+- 新增 `benchmark-guard.ts` 受限权限桥：所有 backend 调用过暂停 / 档位（「只看」禁止输入、不弹多余审批），并一律拒绝 `run_script`/`set_config` 等脚本 / 提权工具（不借基准逃规则）。
+- 新增 `benchmark-gateway.ts` 别名解析：Docker Desktop→`host.docker.internal`、Lima→`host.lima.internal`，Linux docker / 未知→null（fail-closed，绝不给 0.0.0.0）；fixture 路由收紧成窄网关（非白名单路径 403 + 上报必须同源）。
+- 实跑（Node v24.20.0，假 driver / 本地内存 HTTP，未开真实桌面）：两端 `tsc --noEmit` exit 0；`fast-computer*`+`host-control` **89/89**（连同 `classifier` 96/96）；新增 `fast-computer-benchmark-window` **9/9**（含真实本地 HTTP 窄网关证明：能取 fixture + 上报成功、非白名单路径 / 跨源上报 403）。
+- **未真机**：`browser_prepare` / `get_browser_state` 真实返回字段、`host.docker.internal` / `host.lima.internal` 从 guest 可达性均未实测，实现按官方说明解析、形状不符 fail-closed；未跑全量单测 / e2e、未安装 App、未开用户电脑 / VM / 浏览器、未碰系统钥匙串。生产路径与边界见 `docs/design/benchmark-environment-bootstrap.md`。
+
 2026-10-22 统一整合树 `unified-integration`（总体收尾 owner，基 `hotfix-integration` `b7d33d3`，**未 push / 未 tag / 未打包**）：
 - **合入 7 个分支**（`--no-ff` 保祖先）：`native-dialog-ui-fix` `9554628` → `unified-model-registry`（5 commits）→ `local-laya-runtime`（整分支 10 commits）→ `fast-model-benchmark`（`12fa47d`+`c98a299`）→ `model-settings-unified`（5 commits，含 merge `9554628`）→ `conversation-loading-restore-fix`（`d8d38fe`/`a940cfe`/`54f1956`）→ `mobile-chat-viewport-fix`（`1c565ab`+merge `9554628`）。冲突只出现在 `http.ts`（benchmark host + Laya 路由都保留）与 docs（两段都保留，不整文件覆盖）。
 - **验证**（Node 24.20.0，`npm ci` 真装、全程 Mock / 内存凭据 / 临时数据目录，未碰系统钥匙串）：服务端与网页 `tsc --noEmit` exit 0；web `vite build` 通过；专项单测 16 文件 **97/97**；`web-selection` 10/10；纯前端 e2e `native-dialog-ui` / `model-services-ui` / `channel-delete` / `model-ui` / `conversation-restore`(10/10) / `mobile-viewport-ui` 全通过。

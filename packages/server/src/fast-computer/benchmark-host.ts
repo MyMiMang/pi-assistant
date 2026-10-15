@@ -44,8 +44,10 @@ export interface FixtureWindowHandle {
 export interface BenchmarkDriver {
 	/** 用户显式选择的目标电脑；未授权 / 未启动返回 null（附原因）。传入 requested 表示用户点名要哪台。 */
 	target(requested?: "hostpc" | "computer"): { prefix: "hostpc" | "computer"; session?: string } | null;
-	/** 这台平台是否能拿到**独立受控 fixture 窗口**的证明；拿不到就必须 false（fail-closed，不假装 ready）。默认 true。 */
+	/** 这台平台是否能拿到**独立受控 fixture 窗口**的证明；拿不到就必须 false（fail-closed，不假装 ready）。默认 fail-closed。 */
 	capable?(): { ok: boolean; reason?: string };
+	/** 该目标用哪种隔离窗口来源（元数据，供 UI 显示；不自动开窗）。 */
+	windowKind?(prefix: "hostpc" | "computer"): "driver-isolated-browser" | "sandbox-app" | null;
 	/** 本次驱动来源：真实 CUA 返回 "cua"，测试 / 假驱动返回 "fixture"；不实现则按 unknown。 */
 	provenance?(): BenchmarkProvenance;
 	/** 打开属于本次运行的 fixture 窗口并 pin 身份；失败抛错。close 只关自己打开的窗口 / 标签页。 */
@@ -91,11 +93,20 @@ export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 		const reasons: string[] = [];
 		const targetSel = opts.driver.target();
 		if (!targetSel) reasons.push(opts.notReadyReason ?? "没有可用的真实电脑通道：请先在设置 › 电脑里开启「操作这台电脑」，或启动助理电脑。");
-		const capable = opts.driver.capable?.() ?? { ok: true };
+		const capable = opts.driver.capable?.() ?? { ok: false, reason: "未提供目标电脑能力探测（fail-closed）" };
 		if (targetSel && !capable.ok) reasons.push(capable.reason ?? "当前平台无法为基准测试取得独立受控窗口（fail-closed）。");
 		const model = modelTarget();
 		if (!model) reasons.push("还没选定快速操作模型（设置 › 模型 › 快速操作模型）。");
-		return { cuaReady: !!targetSel && capable.ok, modelReady: !!model, fixtureReady: !!targetSel && capable.ok, reasons };
+		const kind = targetSel ? (opts.driver.windowKind?.(targetSel.prefix) ?? null) : null;
+		return {
+			cuaReady: !!targetSel && capable.ok,
+			modelReady: !!model,
+			fixtureReady: !!targetSel && capable.ok,
+			reasons,
+			// 元数据：只有点了「开始实际操作测试」才会真正开窗（POST bootstrap）；GET 这里不开任何窗口。
+			preparable: !!targetSel && capable.ok,
+			...(kind ? { targetKind: kind } : {}),
+		};
 	};
 
 	const armRun = (runId: string, fixtureId: string, nonce: string, close: () => Promise<void>) => {

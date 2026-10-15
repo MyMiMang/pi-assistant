@@ -562,6 +562,9 @@ async function closeBrowserGracefully(cid: string) {
 	}
 }
 
+/** 当前桌面后端类型（docker / lima / wsl）；基准测试的助理电脑 fixture 网关按它推断 guest 可达别名。 */
+export const desktopRuntimeKind = (): "docker" | "lima" | "wsl" => backend().id;
+
 /** 正在运行的我们自己的电脑（按 pia.agent 标签过滤） → 电脑 id 列表（shared 或助理 id） */
 export async function runningDesktops(): Promise<string[]> {
 	// 虚拟机关机：一定没有在跑的桌面（不为了查询而开机）
