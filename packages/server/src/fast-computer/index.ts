@@ -10,22 +10,21 @@ import { MAX_FAST_CANDIDATES } from "./choosers.ts";
 import type { FastActionCandidate, FastActionChooser, FastChoiceResult, FastSemanticTarget, FastUsage } from "./types.ts";
 
 export type { FastActionCandidate, FastActionChooser, FastChoiceRequest, FastChoiceResult, FastSemanticTarget, FastUsage } from "./types.ts";
-export { MAX_FAST_CANDIDATES, createChatChooser, createMockChooser, createSystemOneChooser, parseChatChoice, parseSystemOneChoice } from "./choosers.ts";
+export { MAX_FAST_CANDIDATES, createChatChooser, createClassifierChooser, createMockChooser, parseChatChoice, parseClassifierChoice } from "./choosers.ts";
 
 // ---------------------------------------------------------------- 设置
 
 export interface FastComputerSettings {
 	/** 默认关闭：关闭时完全沿用主模型、零额外调用 */
 	enabled: boolean;
-	/** `systemone` = 原生 Jev；`chat` = OpenAI 兼容替代（非 Jev） */
+	/** `systemone` = 原生 Jev 分类器；`chat` = OpenAI 兼容替代（非 Jev） */
 	kind: "chat" | "systemone";
-	/** chat：provider id */
+	/** 所选模型：chat = 普通模型；systemone = classifier 目录里的 provider */
 	provider: string;
-	/** chat：模型 id */
+	/** 所选模型 id：chat = 普通模型 id；systemone = classifier 模型 id */
 	id: string;
-	/** systemone：baseURL（官方 / OpenRouter / 自建原生中转） */
+	/** 旧版 systemone 直连字段（保留兼容，已不再使用；原生 Jev 现在从 classifier 目录选） */
 	baseUrl: string;
-	/** systemone：模型名，如 `jev-latest` / `typesafe/jev-1.13` */
 	model: string;
 	/** 原生校准概率的阈值（只作用于 systemone；chat 替代没有概率，不适用） */
 	threshold: number;
@@ -196,8 +195,8 @@ export async function selectFastAction(input: SelectFastActionInput): Promise<Fa
 	return { kind: "selected", candidate, captureId, uncalibrated: !input.chooser.nativeProbability, confidence: result.confidence, model: result.model };
 }
 
-const usageProvider = (s: FastComputerSettings) => (s.kind === "systemone" ? "jev" : s.provider || "fast");
-const usageModel = (s: FastComputerSettings, r: { model?: string }) => (s.kind === "systemone" ? r.model ?? (s.model || "jev") : s.id || "fast");
+const usageProvider = (s: FastComputerSettings) => (s.kind === "systemone" ? s.provider || "jev" : s.provider || "fast");
+const usageModel = (s: FastComputerSettings, r: { model?: string }) => r.model ?? (s.kind === "systemone" ? s.id || "jev" : s.id || "fast");
 
 /** 校验通过但还没执行的候选，供工具层把 id 映射回预构建动作（复用 capture 校验）。 */
 export function resolveCandidate(captureId: string, candidateId: string): FastActionCandidate | undefined {

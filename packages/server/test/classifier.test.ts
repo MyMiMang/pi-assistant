@@ -10,7 +10,10 @@
  */
 import "./setup.ts";
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, test } from "node:test";
 // 官方公开子路径导出：给自定义 fixture provider 接上真实的 System One 传输实现，
 // 这样测试跑的是 Pi 真实的 HTTP 请求 / 鉴权解析，而不是桩。
@@ -27,6 +30,7 @@ interface SeenRequest {
 
 const seen: SeenRequest[] = [];
 let failWith: { status: number; body: string } | null = null;
+let omitUsage = false;
 
 const server = createServer((req, res) => {
 	const chunks: Buffer[] = [];
@@ -52,7 +56,7 @@ const server = createServer((req, res) => {
 					risky: { type: "noul", noul: 0.8 },
 					urgency: { type: "score", score: 0.4, confidence: 0.7 },
 				},
-				usage: { input_tokens: 12, output_tokens: 3 },
+				...(omitUsage ? {} : { usage: { input_tokens: 12, output_tokens: 3 } }),
 			}),
 		);
 	});
@@ -150,6 +154,30 @@ test("401 错误脱敏：不回显 key / 请求头，也不抛异常", async () 
 		assert.ok(!/Bearer\s+sk-/i.test(res.errorMessage!), `错误信息不得含 Bearer 凭据：${res.errorMessage}`);
 	} finally {
 		failWith = null;
+	}
+});
+
+test("models.json 不能注册 classifier（真实 SDK 限制）：classifier 目录为空，模型被当 chat", async () => {
+	// 真实 API fixture：把 type=classifier 写进 Pi 的 models.json，Pi 只按 chat 解析（不生成 classifier 模型）。
+	const dir = mkdtempSync(join(tmpdir(), "pia-mj-"));
+	const modelsPath = join(dir, "models.json");
+	writeFileSync(
+		modelsPath,
+		JSON.stringify({ providers: { "custom-cls": { name: "C", baseUrl: `http://127.0.0.1:${port}`, api: "typesafe-system-one", models: [{ id: "jev-x", name: "Jev X", type: "classifier", api: "typesafe-system-one", input: ["text"], contextWindow: 8192, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }),
+	);
+	const mj = await PiModels.create({ credentials: new EncryptedCredentialStore(), modelsPath, allowNetwork: false });
+	assert.deepEqual(mj.listClassifierModels("custom-cls"), [], "models.json 里的 classifier 条目不会进 classifier 目录（真实 SDK 限制）");
+	assert.ok(mj.listModels("custom-cls").some((x) => x.id === "jev-x"), "它被 Pi 当成 chat 模型，不能用于 classify");
+});
+
+test("服务不报 usage 时 → usage 缺失（未知），不捏造 0 / 免费", async () => {
+	omitUsage = true;
+	try {
+		const res = await models.classify("jevtest-a", "jevtest-a-jev", context);
+		assert.equal(res.stopReason, "stop");
+		assert.equal(res.usage, undefined, "没有真实 usage 就不写，不能当 0 记账");
+	} finally {
+		omitUsage = false;
 	}
 });
 

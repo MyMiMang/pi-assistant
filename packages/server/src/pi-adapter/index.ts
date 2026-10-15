@@ -123,7 +123,8 @@ export interface ClassifierOutcome {
 	model: string;
 	api: string;
 	answers: Record<string, ClassifierAnswer>;
-	usage?: { input: number; output: number; totalTokens: number; cost: number };
+	/** 服务只报 token 数时给出；cost 缺失表示价格未知（不是 0，也不代表免费） */
+	usage?: { input: number; output: number; totalTokens: number; cost?: number };
 	stopReason: "stop" | "error" | "aborted";
 	errorMessage?: string;
 	timestamp: number;
@@ -223,7 +224,11 @@ export class PiModels {
 		if (!model) return { provider: providerId, model: modelId, api: "", answers: {}, stopReason: "error", errorMessage: `找不到分类模型 ${providerId}/${modelId}`, timestamp: Date.now() };
 		const res = await this.runtime.classify(model, context, opts ? { signal: opts.signal, timeoutMs: opts.timeoutMs, temperature: opts.temperature } : undefined);
 		const out: ClassifierOutcome = { provider: res.provider, model: res.model, api: res.api, answers: res.answers, stopReason: res.stopReason, timestamp: res.timestamp };
-		if (res.usage) out.usage = { input: res.usage.input, output: res.usage.output, totalTokens: res.usage.totalTokens, cost: res.usage.cost?.total ?? 0 };
+		if (res.usage) {
+			// 缺 cost 时保持 undefined（价格未知），绝不回落到 0 —— 否则会把「未知」当「免费」记账。
+			const cost = res.usage.cost?.total;
+			out.usage = { input: res.usage.input, output: res.usage.output, totalTokens: res.usage.totalTokens, ...(typeof cost === "number" && Number.isFinite(cost) ? { cost } : {}) };
+		}
 		if (res.errorMessage) out.errorMessage = redactSecrets(res.errorMessage);
 		return out;
 	}

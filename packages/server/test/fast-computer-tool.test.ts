@@ -10,7 +10,7 @@ import { test } from "node:test";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { fastComputerSettings, saveFastComputerSettings, _resetFastComputerState } from "../src/fast-computer/index.ts";
 import { fastComputerExtension } from "../src/fast-computer/tool.ts";
-import { createMockChooser } from "../src/fast-computer/choosers.ts";
+import { createMockChooser, createClassifierChooser } from "../src/fast-computer/choosers.ts";
 
 interface El {
 	element_index: number;
@@ -135,4 +135,49 @@ test("执行前重查：异步期间动态关闭 → 零执行", async () => {
 	const { out, calls } = await runFastTool({ states: [preState, reState, postState], chooser });
 	assert.equal(calls.filter((c) => c.name.endsWith("click")).length, 0);
 	assert.match(textOf(out), /关闭/);
+});
+
+// ---------------------------------------------------------------- 原生 Jev（classifier）接入工具层
+
+/** 用假 classify 构建原生 Jev chooser（provider-bound；这里不碰真实网络 / 凭据）。 */
+function nativeChooser(answers: unknown, opts: { stopReason?: "stop" | "error" | "aborted"; errorMessage?: string } = {}) {
+	return createClassifierChooser({
+		provider: "openrouter",
+		model: "typesafe/jev-1.13",
+		classify: async (provider, model) => ({ provider, model, api: "typesafe-system-one", answers: answers as never, stopReason: opts.stopReason ?? "stop", errorMessage: opts.errorMessage, timestamp: 1 }),
+	});
+}
+
+const choice = (choiceId: string, confidence: number) => ({ pick: { type: "choice", choice: choiceId, probabilities: { "el-1": confidence }, confidence } });
+
+test("原生 Jev：选中候选 → 用新 element_token 派发一次 click", async () => {
+	const { out, calls } = await runFastTool({ states: [preState, reState, postState], chooser: nativeChooser(choice("el-1", 0.9)) });
+	const click = calls.find((c) => c.name.endsWith("click"));
+	assert.ok(click, "高可信原生选择应派发");
+	assert.equal(click!.args.element_token, "snap2:1");
+	assert.match(textOf(out), /原生 Jev|confidence 0\.9/);
+});
+
+test("原生 Jev：低可信 → 回退，零执行", async () => {
+	const { out, calls } = await runFastTool({ states: [preState, reState, postState], chooser: nativeChooser(choice("el-1", 0.2)) });
+	assert.equal(calls.filter((c) => c.name.endsWith("click")).length, 0);
+	assert.match(textOf(out), /low_confidence/);
+});
+
+test("原生 Jev：未授权（401）→ 回退，零执行", async () => {
+	const { out, calls } = await runFastTool({ states: [preState, reState, postState], chooser: nativeChooser({}, { stopReason: "error", errorMessage: "System One API error (401)" }) });
+	assert.equal(calls.filter((c) => c.name.endsWith("click")).length, 0);
+	assert.match(textOf(out), /快速路径跳过/);
+});
+
+test("原生 Jev：超时 → 回退，零执行", async () => {
+	const { out, calls } = await runFastTool({ states: [preState, reState, postState], chooser: nativeChooser({}, { stopReason: "aborted" }) });
+	assert.equal(calls.filter((c) => c.name.endsWith("click")).length, 0);
+	assert.match(textOf(out), /timeout/);
+});
+
+test("原生 Jev：越界 id → 回退，零执行（答案必须是候选 id）", async () => {
+	const { out, calls } = await runFastTool({ states: [preState, reState, postState], chooser: nativeChooser(choice("zzz", 0.99)) });
+	assert.equal(calls.filter((c) => c.name.endsWith("click")).length, 0);
+	assert.match(textOf(out), /快速路径跳过/);
 });
