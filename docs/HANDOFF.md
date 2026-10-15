@@ -23,6 +23,12 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+2026-10-22 统一整合树 `unified-integration`（总体收尾 owner，基 `hotfix-integration` `b7d33d3`，**未 push / 未 tag / 未打包**）：
+- **合入 7 个分支**（`--no-ff` 保祖先）：`native-dialog-ui-fix` `9554628` → `unified-model-registry`（5 commits）→ `local-laya-runtime`（整分支 10 commits）→ `fast-model-benchmark`（`12fa47d`+`c98a299`）→ `model-settings-unified`（5 commits，含 merge `9554628`）→ `conversation-loading-restore-fix`（`d8d38fe`/`a940cfe`/`54f1956`）→ `mobile-chat-viewport-fix`（`1c565ab`+merge `9554628`）。冲突只出现在 `http.ts`（benchmark host + Laya 路由都保留）与 docs（两段都保留，不整文件覆盖）。
+- **验证**（Node 24.20.0，`npm ci` 真装、全程 Mock / 内存凭据 / 临时数据目录，未碰系统钥匙串）：服务端与网页 `tsc --noEmit` exit 0；web `vite build` 通过；专项单测 16 文件 **97/97**；`web-selection` 10/10；纯前端 e2e `native-dialog-ui` / `model-services-ui` / `channel-delete` / `model-ui` / `conversation-restore`(10/10) / `mobile-viewport-ui` 全通过。
+- **顺手修**：`vision.test.ts`/`isolation.test.ts` 改注入内存 `CredentialStore`；`model-ui.mjs` 矮视口翻转断言改为确定性制造「下方放不下」；本地 Laya `GET /status` 顺带刷新 registry hints（已安装未启动也出现）。
+- **S5/S6 剩余（有阻塞）**：删旧 `VisionModelPicker`/`ImageModelsSection`/快速区需先迁移 `model-ui.mjs`/`run.mjs`/`fast-computer-ui.mjs`，且统一面板 `AddServiceDialog` 还是原型（未接 `/api/models/custom` 与 `/api/image-models` 真实 CRUD）；先接真实写接口再删旧区，否则用户失去添加入口。详见 `progress-snapshots/unified-integration.md`。
+
 2026-10-22 本地 Laya 一键安装（后端，独立树 `local-laya-runtime`，基 `hotfix-integration` `b7d33d3`，**未 push / 未 tag**）：
 - **背景**：用户批准「Laya 一键安装管理跨平台 + 可选性能测试」。本树只负责**后端 local-laya manager**，性能测试由另一任务做；调研与平台边界见 `research/laya-one-click-cross-platform-feasibility.md`。
 - **新增** `packages/server/src/local-laya/`：`platform.ts`（跨平台支持矩阵 / 加速器预检，**不照搬报告矛盾说法**：Win ARM64 明确 unsupported，AMD 不承诺 GPU，Intel Mac 条件 pin 老栈）；`manifest.ts`（pin Laya `0.4.8` + `convaiinnovations` 权重 revision SHA + 许可证）；`manager.ts`（可注入依赖的安装状态机：preflight→uv→venv→torch→laya→weights→verify→activate，staging 原子切换 / 失败回滚 / 取消 / 只绑 `127.0.0.1` / token 仅在进程内 + 子进程环境 / 错误脱敏）；`deps.ts`（真实 fs/process/http：复用 pinned `uv`、HF 断点续传缓存、空闲端口、`/health` 读取、canonical 卸载）；`routes.ts`（`GET status`、`POST install/cancel/start/stop/update`、`DELETE uninstall`）；`index.ts`（懒加载单例 + 统一下载登记 + `local-laya.changed` 事件）。`pi-adapter/index.ts` 仅加 `removeRuntimeApiKey` 包装；`http.ts` 挂 `localOnly` 路由。契约 `docs/design/local-laya-api.md`。

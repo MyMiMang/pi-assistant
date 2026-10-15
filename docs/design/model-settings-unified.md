@@ -149,11 +149,11 @@ UI 硬约束：
 |---|---|---|
 | S0 设计 + 契约 + 进度 | 本任务 | ✅ 已完成 |
 | S1 UI 契约与原型（纯前端 fixture，默认不渲染，`?unified=1` 预览） | 本任务 | ✅ 已完成（e2e 通过） |
-| S2 Registry DTO + 能力纠正 + 生图迁移 | registry agent | 部分（GET registry 已落地；生图迁移待续） |
-| S3 Laya 安装 / health（`/api/local-models/laya`） | laya agent | 契约冻结 + 后端完成（未实机验证） |
-| S4 实际操作测试 runner + fixture | benchmark agent | 部分（contract/runner/routes，真实 fixture/host 待续） |
-| S5 UI 接真实 API（去掉默认隐藏开关） | 本任务 | 待 S2/S3/S4 |
-| S6 电脑设置快速 / 生图统一（删旧区） | 本任务 + registry | 待 S2 |
+| S2 Registry DTO + 能力纠正 + 生图迁移 | registry agent | 已完成（GET registry + `PUT /capabilities` + `imageAdapter` + `kind:"local"` + legacy key 幂等迁移，已合入 `unified-integration`） |
+| S3 Laya 安装 / health（`/api/local-models/laya`） | laya agent | 契约冻结 + 后端完成（未实机验证）；已合入整合树，`GET /status` 现会刷新 registry hints |
+| S4 实际操作测试 runner + fixture | benchmark agent | 契约/runner/routes/host 已合入整合树；真实 CUA 运行仍 blocked（hostpc 未开 / VM 未就绪） |
+| S5 UI 接真实 API（去掉默认隐藏开关） | 本任务 | 面板已随 registry 就绪默认渲染；剩余同 S6 阻塞点 |
+| S6 电脑设置快速 / 生图统一（删旧区） | 本任务 + registry | **阻塞**：`AddServiceDialog` 尚未接 `/api/models/custom` 与 `/api/image-models` 真实 CRUD；`model-ui`/`run`/`fast-computer-ui` e2e 仍绑定旧区。先接真实写接口 + 迁移 e2e 再删 |
 
 ## 10. 边界与禁令
 
