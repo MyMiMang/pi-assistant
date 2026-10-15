@@ -32,7 +32,7 @@ beta.21 内容：子代理模型改为每个助理的候选池（全局只留并
 2026-10-22 **CUA 0.34.1 → 0.35.4 适配（beta.22 候选，同一整合树）**。背景：0.35.0 是 breaking change（`get_window_state` 默认不再回 `elements`），并新增批量动作 `run_steps` 与脚本 `run_script`；原实现的 `tool_call` 闸门只按外层工具名判权限，批量/脚本会绕过 guard。
 - `third-party.json` 钉 `cua-driver 0.35.4` + 官方 `SHA256SUMS` 的五个平台哈希（darwin 资产已**实下校验一致**、解包后 `cua-driver --version` = 0.35.4、`list-tools` 列出 60 个工具）。
 - `packages/ext-computer/src/index.ts`：新增 `expandComputerSteps`，把 `run_steps`/`run_actions` 展开成每一步（支持 `{tool,args}` 与官方简写 `{click:{…}}`；纯检查步骤算只读；认不出的步骤标 `__unknown__` 整批拦下），逐层套 `guardComputer` / `isSensitiveAction` / `browserFileViolation` / “只看”档位 / `host.before`；受保护操作在批量里同样单独弹审批、不提供“本任务内都允许”。`run_script` 列入 `HIDDEN_TOOLS`，并在 MCP 服务 env 设 `CUA_DRIVER_DISABLE_RUN_SCRIPT=1`（driver 侧也不列入 tools/list，双保险）。`INPUT_TOOLS` 按 0.35.4 **真实工具表**更新（补 `set_agent_cursor_*`、`run_steps`，去掉 0.35.4 已不存在的 `mouse_*`）。`hostDesktopPrompt` 按真实 schema 改写（`tree_format:"elements"` / `full_output:true` / `since:"latest"` / `run_steps` 批量 / `run_script` 已关）。
-- 新增 `packages/server/test/computer-batch.test.ts`（4 项：展开逻辑、run_script 拦、批量藏受保护快捷键要单独批准、危险点击/只看/浏览器/完全权限）；`host-control.test.ts` 断言按 0.35.4 更新。**未跑**：需 Docker 的 `computer.smoke.ts`（镜像内仍是 0.34.1，且本轮不重建镜像）、安装包真机。**助理电脑镜像仍为 0.34.1**（`desktop-image.json` 0.1.3 未变），重建后需把新 digest 写回。
+- 新增 `packages/server/test/computer-batch.test.ts`（4 项：展开逻辑、run_script 拦、批量藏受保护快捷键要单独批准、危险点击/只看/浏览器/完全权限）；`host-control.test.ts` 断言按 0.35.4 更新。**镜像已重建并核验**：`.github/workflows/desktop-image.yml` run [38683611869](https://github.com/MyMiMang/pi-assistant/actions/runs/38683611869)（workflow_dispatch，`--ref desktop-cua035`，version `0.1.4`）conclusion **success**——`build`（docker buildx `linux/amd64,linux/arm64` 推 GHCR + amd64 noVNC / cua-driver 冒烟）与 `nerdctl-smoke (ubuntu-24.04-arm)`、`nerdctl-smoke (ubuntu-latest)` 三个 job 全部成功，各 job 引用真实 manifest digest `sha256:6cc5c119…d54a42`；匿名 GHCR manifest（tag `0.1.4`）交叉核验 digest 一致，新 digest 已写回 `desktop-image.json`（version `0.1.4`）。**未做的验证**：需 Docker 的 `computer.smoke.ts`（本轮不跑）、安装包真机、在用户 Mac 上安装后开机（镜像仅经托管 CI 冒烟）。
 
 2026-10-22 **合入 token 去重与主动能力（`bf26b0e`）并修对话隔离**（beta.22 候选，同一整合树）。
 - 子代理终态跨机制去重：`task-waits.subagentWakeOwner` 按持久投递状态判 owner，`subagents.deliverSubagentEvents` 让位 / 收尾 / 补位；notify 文案只带短标题（任务 60 字）+ 结果摘要（300 字）+ 产出文件，完整内容用 `subagent_list` 查。主动巡检改变化驱动（`proactive_signals` + `recordSignal`，无变化不唤醒、兜底 ≥4h），支持 `proactive_advance` 在相关对话里推进（对话归属校验、忙时同一件事合并 / 不同事每对话排队 ≤3、队满进收件箱）。
@@ -129,7 +129,7 @@ CI 已增加 `mac-arm64/all` 范围，tag 按 `.github/release-scope.json` 固�
 - 安装包**没有签名**：macOS 第一次打开要右键选「打开」，Windows 会有 SmartScreen 提示（§5.2）。
 - 群聊：复制群专属助理时不会复制它工作区里的文件。管理者派活做得好不好，取决于用的是什么模型。
 - 附件：单个文件上限 100MB；文档摘录最多约 2 万 token；扫描版 PDF 不做 OCR。
-- cua-driver 还固定在 0.34.1（上游已经出了 0.35.x），升级前要重新核对 BROWSER.md、WORKFLOW.md 和工具参数格式。
+- cua-driver 已升级到 0.35.4（host 侧 `third-party.json`；助理电脑镜像 `0.1.4`，digest `sha256:6cc5c119…d54a42`）。0.35.0 是 breaking change，适配点见本文 2026-10-22「CUA 0.34.1 → 0.35.4 适配」一条。以后再升级要重新核对 BROWSER.md、WORKFLOW.md 和工具参数格式。
 - macOS 系统沙箱档没做。MCP 服务器经 npx 第一次下载时没有字节进度。
 - Hindsight 运行环境 / 向量模型的下载百分比是估算的。远程 Hindsight 换不同维度的向量模型时，要对方实例自己迁移。
 - 共用中转远程访问（Paseo 式）用户决定暂缓（§15.1）。

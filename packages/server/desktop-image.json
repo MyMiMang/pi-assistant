@@ -2,7 +2,7 @@
 	"$comment": "助理电脑镜像（packages/sandbox-desktop）固定版本：由 .github/workflows/desktop-image.yml 多架构构建并推到 GHCR，发布后把 digest 填在这里（按 digest 拉取，内容寻址校验）。见 docs/DESIGN.md §15.2。",
 	"repository": "ghcr.io/mymimang/pi-assistant-desktop",
 	"version": "0.1.4",
-	"digest": "sha256:c3103162a1692dc34e965ac7af355bd49e2dce15edc1db6c6ec4756c15e76764",
+	"digest": "sha256:6cc5c1190fe0111a7f4d6756efbe4c2c25e3c9913764349b07e3e66d28d54a42",
 	"downloadBytes": 1500000000,
 	"diskBytes": 5000000000
 }

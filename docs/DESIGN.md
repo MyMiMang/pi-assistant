@@ -933,7 +933,7 @@ cua-driver 0.35.4 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 
 ### 14.10 实现进度（2026-10-11）
 
-- ✅ `packages/sandbox-desktop`：Docker 镜像（Debian + Xvfb + xfce4 + x11vnc + noVNC/websockify + Chromium + 中文字体 + `cua-driver` Linux 静态二进制）；另装 `socat`（浏览器调试端口转发）、`libatomic1`/`libegl1`（微信运行库）。微信不再打进镜像，见 14.11。家目录持久化卷；VNC 只在容器内回环，noVNC 只绑定宿主 127.0.0.1。启动后关闭 cua-driver 遥测。已在本机 Docker 构建并运行：noVNC 页面 200，`cua-driver list-tools` 在 X11 下列出 60+ 工具。**注意：本轮把用户电脑的驱动升到 0.35.4（`third-party.json`），但助理电脑镜像（`desktop-image.json` 0.1.3）里仍是构建时的 0.34.1，需重建镜像才会同步；两者靠驱动自身工具描述各自工作，不冲突（`hostDesktopPrompt` 只给 host 目标）。**
+- ✅ `packages/sandbox-desktop`：Docker 镜像（Debian + Xvfb + xfce4 + x11vnc + noVNC/websockify + Chromium + 中文字体 + `cua-driver` Linux 静态二进制）；另装 `socat`（浏览器调试端口转发）、`libatomic1`/`libegl1`（微信运行库）。微信不再打进镜像，见 14.11。家目录持久化卷；VNC 只在容器内回环，noVNC 只绑定宿主 127.0.0.1。启动后关闭 cua-driver 遥测。已在本机 Docker 构建并运行：noVNC 页面 200，`cua-driver list-tools` 在 X11 下列出 60+ 工具。**注意：用户电脑驱动与助理电脑镜像都已升到 cua-driver 0.35.4（`third-party.json`；镜像 `desktop-image.json` `0.1.4`，CI run 38683611869 构建并冒烟，digest `sha256:6cc5c119…d54a42`），两者靠驱动自身工具描述各自工作。**
 - ✅ `scripts/fetch-cua-driver.mjs`：按 `third-party.json` 固定版本从官方 GitHub Release 下载并校验 SHA256。
 - ✅ `packages/server/src/desktop.ts`：每个助理一个容器（启动/停止/状态/整屏截图/MCP 命令 `docker exec -i … cua-driver mcp`）、实时画面一次性票据、一键暂停状态。
 - ✅ `packages/ext-computer`：`pi.registerMcpServer("computer", …)` 接入 cua-driver；隐藏 `install_extension`（会装 AGPL 的 cua-perception）、`parse_visual_regions`、自更新/改配置/重放等工具；`computer_screenshot`、`request_handoff`（截图 + 推送 + 等待“已完成”）；`tool_call` 钩子实现一键暂停与 host 目标逐项审批。pi-adapter 加载 Pi 自带的 MCP 扩展并调用 `bindExtensions()`；助理电脑启动/停止时会重建会话以挂上/卸下电脑工具。
@@ -1023,7 +1023,7 @@ cua-driver 0.35.4 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 目标：装好 Pi Assistant 就能用助理电脑，不要求用户安装 Docker Desktop（大公司还有授权限制），也不要求本地编译镜像。
 
 - **可选**：首次向导和 设置 里有「给助理安装电脑」开关（显示预计下载量 ≈1.5 GB、磁盘占用 ≈5 GB、内存 3–4 GB）。向导里默认推荐开启但由用户选；没开启前什么都不下载。关闭时：助理照常聊天，浏览器自动化走本机 Playwright（独立用户目录），“操作这台电脑”按权限档位；「助理电脑」按钮显示“未安装，去设置安装”。之后关掉会提供“关机”与“删除虚拟机和镜像释放空间（助理电脑里的登录状态也会清掉）”。
-- **镜像**：`packages/sandbox-desktop` 由 GitHub Actions 多架构构建（linux/amd64 + linux/arm64；cua-driver 两个架构都有官方 Linux 包，按 third-party.json 的 SHA256 校验）推到 GHCR `ghcr.io/mymimang/pi-assistant-desktop:<版本>`，配置里按版本 + digest 固定；设置里可换镜像地址 / 国内镜像加速（如 ghcr.nju.edu.cn）。**本轮未重建镜像**（镜像内仍 0.34.1），重建后需把新 digest 写回 `desktop-image.json`。
+- **镜像**：`packages/sandbox-desktop` 由 GitHub Actions 多架构构建（linux/amd64 + linux/arm64；cua-driver 两个架构都有官方 Linux 包，按 third-party.json 的 SHA256 校验）推到 GHCR `ghcr.io/mymimang/pi-assistant-desktop:<版本>`，配置里按版本 + digest 固定；设置里可换镜像地址 / 国内镜像加速（如 ghcr.nju.edu.cn）。镜像版本 + digest 固定在 `desktop-image.json`（当前 `0.1.4` / `sha256:6cc5c119…d54a42`，CI run 38683611869 已重建并核验）。
 - **运行时评估**：
   - macOS：选 **Lima**（Apache-2.0，v2.2.1，`vmType: vz` 用 Apple Virtualization.framework，Apple Silicon / Intel 都支持，macOS 13+）。用户开启时下载 `limactl`（arm64 ≈38 MB / x64 ≈25 MB，SHA256 固定在 third-party.json），`LIMA_HOME` 指向我们自己的数据目录，实例名固定 `pia-desktop`，`mounts: []`（不挂载用户家目录），Debian 12 genericcloud 镜像与 nerdctl-full（containerd，Apache-2.0）都由我们自己下载（断点续传 + SHA256 + 可配国内镜像）后以本地路径交给 Lima，不走 Lima 的 `~/Library/Caches`。客户机里用 rootless nerdctl 跑桌面容器，端口经 Lima 自动转发到宿主 127.0.0.1。Colima 只是 Lima 的包装且依赖 Docker CLI，不选；自写 VZ helper 维护成本高，不选。
   - Windows：WSL2 + 我们自己的发行版 `PiAssistant-Desktop`（从 Release 资产里的 rootfs 压缩包 `wsl --import` 到数据目录；内含 containerd/nerdctl）。缺 WSL 时用一次 UAC 执行 `wsl --install --no-distribution`，需要重启时明确告知。容器用 host 网络 + 每个助理分配独立端口（start.sh 端口改为环境变量）。尽力而为，需要真机验证。
