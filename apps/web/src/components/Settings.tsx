@@ -177,18 +177,34 @@ const SUBAGENT_LIMIT = { min: 1, max: 100 };
 function SubagentTaskSettings() {
 	const [d, setD] = useState<SubagentSettingsDto | null>(null);
 	const [err, setErr] = useState("");
-	useEffect(() => { void api<SubagentSettingsDto>("/api/subagents/settings").then(setD).catch((e) => setErr(String(e))); }, []);
-	if (!d) return null;
-	const save = async (patch: Partial<SubagentSettingsDto>) => { try { setD(await api<SubagentSettingsDto>("/api/subagents/settings", { method: "PUT", json: { ...d, ...patch } })); setErr(""); } catch (e) { setErr(String(e)); } };
+	// 输入框草稿：接口拿到的是 { settings, models }，必须取 settings，否则读到 undefined 会显示空白
+	const [draft, setDraft] = useState<{ maxConcurrent: string; maxMinutes: string } | null>(null);
+	const sync = (s: SubagentSettingsDto) => { setD(s); setDraft({ maxConcurrent: String(s.maxConcurrent), maxMinutes: String(s.maxMinutes) }); };
+	useEffect(() => { void api<{ settings: SubagentSettingsDto }>("/api/subagents/settings").then((r) => sync(r.settings)).catch((e) => setErr(String(e))); }, []);
+	const save = async (patch: Partial<SubagentSettingsDto>) => {
+		try { sync(await api<SubagentSettingsDto>("/api/subagents/settings", { method: "PUT", json: { ...d, ...patch } })); setErr(""); }
+		catch (e) { setErr(String(e)); if (d) sync(d); } // 保存失败：显示错误并把输入框恢复成仍生效的值，不留下假值
+	};
+	// 失焦提交：合法且变了才保存；空 / 非法 / 越界一律恢复成当前生效值，不静默存 0
+	const commit = (key: "maxConcurrent" | "maxMinutes", raw: string) => {
+		if (!d) return;
+		const n = key === "maxConcurrent" ? Math.round(Number(raw)) : Number(raw);
+		const ok = raw.trim() !== "" && Number.isFinite(n) && n >= (key === "maxConcurrent" ? SUBAGENT_LIMIT.min : 1) && (key === "maxConcurrent" ? n <= SUBAGENT_LIMIT.max : true);
+		if (!ok) { setDraft((x) => (x ? { ...x, [key]: String(d[key]) } : x)); return; }
+		if (n !== d[key]) void save({ [key]: n } as Partial<SubagentSettingsDto>);
+		else setDraft((x) => (x ? { ...x, [key]: String(n) } : x));
+	};
+	// 加载中 / 加载失败：不渲染可编辑的空输入框，失败时把原因显示出来（不用默认值覆盖）
+	if (!d || !draft) return <section data-testid="subagent-concurrency" className="space-y-3">{err ? <p className="text-xs text-red-500">{err}</p> : null}</section>;
 	return (
 		<section data-testid="subagent-concurrency" className="space-y-3">
 			<div>
 				<H desc="按助理计算。同时运行的子代理达到上限后，新任务会自动排队，有空位就按先后顺序开始，不会丢。">子代理并发上限</H>
-				<label className="flex items-center gap-2 text-sm text-mut">最多同时<input className="pa-input !w-20" type="number" min={SUBAGENT_LIMIT.min} max={SUBAGENT_LIMIT.max} defaultValue={d.maxConcurrent} aria-label="子代理并发上限" onBlur={(e) => { const n = Math.round(Number(e.target.value)); if (n >= SUBAGENT_LIMIT.min && n <= SUBAGENT_LIMIT.max && n !== d.maxConcurrent) void save({ maxConcurrent: n }); }} />个子代理</label>
+				<label className="flex items-center gap-2 text-sm text-mut">最多同时<input className="pa-input !w-24" type="number" min={SUBAGENT_LIMIT.min} max={SUBAGENT_LIMIT.max} value={draft.maxConcurrent} aria-label="子代理并发上限" onChange={(e) => setDraft({ ...draft, maxConcurrent: e.target.value })} onBlur={(e) => commit("maxConcurrent", e.target.value)} />个子代理</label>
 			</div>
 			<div>
 				<H desc="子代理是给长任务用的；超过这个时间会被停下，并告诉你原因。">子代理最长运行</H>
-				<label className="flex items-center gap-2 text-sm text-mut">最长<input className="pa-input !w-20" type="number" min="1" defaultValue={d.maxMinutes} aria-label="子代理最长运行分钟" onBlur={(e) => { const n = Number(e.target.value); if (n > 0 && n !== d.maxMinutes) void save({ maxMinutes: n }); }} />分钟</label>
+				<label className="flex items-center gap-2 text-sm text-mut">最长<input className="pa-input !w-24" type="number" min="1" value={draft.maxMinutes} aria-label="子代理最长运行分钟" onChange={(e) => setDraft({ ...draft, maxMinutes: e.target.value })} onBlur={(e) => commit("maxMinutes", e.target.value)} />分钟</label>
 			</div>
 			{err && <p className="text-xs text-red-500">{err}</p>}
 		</section>
