@@ -23,6 +23,20 @@ import type { CustomProviderMeta } from "./pi-adapter/custom-providers.ts";
 export type ModelCapability = "chat" | "vision" | "image" | "classifier";
 /** Pi 的操作类型（`type` 缺省即 chat）。 */
 export type ModelType = "chat" | "image" | "classifier";
+/** 模型 / 服务的来源：`local` = 本机跑的服务（如 local-laya，安装后经 Pi 运行时注册）。 */
+export type RegistrySource = "pi-catalog" | "custom" | "imagegen" | "guess" | "local";
+
+/** 本地服务的**安全**运行状态（来自其 status，绝不含 token / 凭据）。 */
+export interface RegistryLocalStatus {
+	/** 已安装（不代表能用） */
+	installed: boolean;
+	/** 运行中（auth 可用、已注册进 Pi 目录） */
+	running: boolean;
+	/** 原始运行状态：stopped / starting / running / stopping / crashed */
+	state: string;
+	/** 实测计算设备（来自 health），未运行 / 未知为 null */
+	device: string | null;
+}
 
 export interface RegistryModel {
 	provider: string;
@@ -37,9 +51,11 @@ export interface RegistryModel {
 	confirmed: boolean;
 	/** 靠 models.dev / 模型名等猜出来的能力，界面标“未确认”。 */
 	inferred: ModelCapability[];
-	source: "pi-catalog" | "custom" | "imagegen" | "guess";
-	/** 该 provider 是否已配置可用认证（只读状态，不暴露凭据）。 */
+	source: RegistrySource;
+	/** 该 provider 是否已配置可用认证（只读状态，不暴露凭据）。本地服务仅在运行中为 true。 */
 	configured: boolean;
+	/** 本地服务（如 local-laya）：安装 / 运行状态分开，stop 后仍保留卡片（只标暂不可用）。 */
+	local?: RegistryLocalStatus;
 	contextWindow?: number;
 	maxTokens?: number;
 	reasoning?: boolean;
@@ -49,12 +65,14 @@ export interface RegistryModel {
 	edit?: boolean;
 	/** 生图模型的参考价格说明（未知则不写，绝不填 0）。 */
 	costNote?: string;
+	/** 生图模型的适配器元数据（UI 展示用）：协议 kind / 端点 / 改图 / 参考价。 */
+	imageAdapter?: { kind: string; baseUrl: string; edit: boolean; costNote?: string };
 }
 
 export interface RegistryProvider {
 	id: string;
 	name: string;
-	kind: "builtin" | "custom" | "imagegen";
+	kind: "builtin" | "custom" | "imagegen" | "local";
 	configured: boolean;
 	baseUrl?: string;
 	/** 该服务出现过的协议集合。 */
@@ -76,6 +94,19 @@ export interface RegistryImageProvider {
 	baseUrl: string;
 	models: string[];
 	configured: boolean;
+	/** 复用别的服务（自定义 / 内置）的同一份凭据时，这里指向那个 provider id；共享一份 key → 合并成一张服务卡。 */
+	credentialProvider?: string;
+}
+
+/** 本地服务的安全元数据（由服务自己的 status 事件汇总；不 import 其实现、不含凭据）。 */
+export interface RegistryLocalProvider {
+	provider: string;
+	modelId: string;
+	protocol: string;
+	installed: boolean;
+	running: boolean;
+	state: string;
+	device: string | null;
 }
 
 export interface RegistryInput {
@@ -95,6 +126,8 @@ export interface RegistryInput {
 		/** 参考价格说明；未知返回 undefined（不填 0）。 */
 		costNote?: (model: string) => string | undefined;
 	};
+	/** 本地服务（如 local-laya）的安全状态：已安装但停止时仍保留卡片（source=local，标暂不可用）。 */
+	local?: RegistryLocalProvider[];
 }
 
 /** chat 模型的能力：input 含 image 即识图（识图属于 chat 能力，不是独立服务）。 */
@@ -214,13 +247,18 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 		}
 	}
 
-	// 3) 生图服务（迁移期临时来源）
+	// 3) 生图服务（迁移期临时来源）。复用别的服务的同一份凭据（credentialProvider）时并入那个服务，
+	//    一张卡同时有 chat / image 能力（一次 key 多 capabilities），不另建一张卡。
 	for (const ip of input.image.providers) {
-		const p = ensure(ip.id, { id: ip.id, name: ip.name || ip.id, kind: "imagegen", configured: !!ip.configured, baseUrl: ip.baseUrl });
+		const shared = ip.credentialProvider && providers.has(ip.credentialProvider) ? providers.get(ip.credentialProvider) : undefined;
+		const p = shared ?? ensure(ip.id, { id: ip.id, name: ip.name || ip.id, kind: "imagegen", configured: !!ip.configured, baseUrl: ip.baseUrl });
 		p.configured = p.configured || !!ip.configured;
+		if (shared) p.baseUrl ??= ip.baseUrl;
 		for (const model of ip.models) {
+			const edit = input.image.supportsEdit?.(ip.kind, model) ?? false;
+			const cost = input.image.costNote?.(model);
 			put(p, {
-				provider: ip.id,
+				provider: p.id,
 				id: model,
 				name: model,
 				type: "image",
@@ -230,10 +268,34 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 				inferred: [],
 				source: "imagegen",
 				configured: !!ip.configured,
-				edit: input.image.supportsEdit?.(ip.kind, model) ?? false,
-				costNote: input.image.costNote?.(model),
+				edit,
+				costNote: cost,
+				imageAdapter: { kind: ip.kind, baseUrl: ip.baseUrl, edit, ...(cost ? { costNote: cost } : {}) },
 			});
 		}
+	}
+
+	// 4) 本地服务（如 local-laya）：可靠地标 source=local；已安装但停止时仍保留卡片（只标暂不可用）。
+	//    即使 classifier 目录里没有（stop 后被摘掉），也按安全状态补一条，避免卡片消失。
+	for (const l of input.local ?? []) {
+		const p = ensure(l.provider, { id: l.provider, name: l.provider, kind: "local", configured: l.running });
+		p.kind = "local";
+		p.configured = p.configured || l.running;
+		const status: RegistryLocalStatus = { installed: l.installed, running: l.running, state: l.state, device: l.device };
+		const existing = p.models.find((x) => x.id === l.modelId && x.type === "classifier");
+		put(p, {
+			provider: l.provider,
+			id: l.modelId,
+			name: existing?.name || l.modelId,
+			type: "classifier",
+			capabilities: ["classifier"],
+			protocol: l.protocol,
+			confirmed: true,
+			inferred: [],
+			source: "local",
+			configured: l.running,
+			local: status,
+		});
 	}
 
 	// provider 内排序：按 type 再按 id，稳定可断言

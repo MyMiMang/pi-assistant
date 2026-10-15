@@ -79,6 +79,27 @@ RegistryModel {
 
 **未做（下一步）**：registry 把共享同一凭据的生图服务与自定义服务合并为一个「一次 key 多能力」的服务卡；local-laya 来源/运行状态联动。
 
+## B2. 统一 registry：一次 key 多能力 / 本地来源 / UI 契约（已落地）
+
+**UI owner 契约（`model-settings-unified` HEAD 7b5e5d6）已采纳**：
+- `RegistryProvider.kind` 新增 `"local"`。
+- `RegistryModel.source` 新增 `"local"`；新增 `RegistryModel.local?: { installed, running, state, device }`（安装 / 运行分开）。
+- `RegistryModel.imageAdapter?: { kind, baseUrl, edit, costNote? }`（生图适配器元数据，UI 展示用；`edit` / `costNote` 平铺字段保留兼容）。
+- 新增 `PUT /api/models/registry/:provider/models/:model/capabilities`：手动设置**自定义**模型能力（只改我们的元数据，不写 Pi 的 models.json），返回最新注册表；内置 / 生图 / 本地模型不可手改（400）。
+- 一次 key 多能力：生图服务 `keyFrom` → `credentialProvider`，registry 把共享同一份凭据的生图模型**并入那个服务卡**（不再另建卡），一张卡同时有 chat / image。
+
+**legacy 迁移**：`migrateLegacyImageProviders()` 仍幂等、不读/不复制明文；新增 `imageKeyMigrated` 标记；凭据唯一（统一 CredentialStore 一份 key）；`keyFrom` 指向自定义 provider（读同一份凭据）。
+
+## local-laya 联动（最小修，已落地）
+
+本地服务（`local-laya`，其 status API / benchmark 已完）经 Pi `registerClassifiers` 注册，**本模块不改对方文件**：
+- 新增 `local-models.ts`：订阅既有安全事件 `local-laya.changed`（payload 是 LayaStatus，**不含 token**），缓存“最后一次注册的 provider/model + 安装/运行状态”；stop（从 classifier 目录摘掉）后沿用上次信息，**卡片不消失**，只标暂不可用；重启同 id 继续。
+- registry 路由把 `localModelHints()` 传入 `buildRegistry`：可靠标 `source=local`，已安装但停止也保留卡片（`configured=false`，`local.running=false`）。
+- `custom-providers.reconcileFastReference()`：只有“已安装的本地服务”保留快速操作模型引用（**stop 不自动清掉 / 不删模型，只算暂不可调用**）；自定义服务被删仍会清悬空引用。
+- 测试：`test/local-models.test.ts`、`test/model-registry.test.ts`、`test/custom-providers.test.ts` 覆盖。
+
+**待主协调**：本分支无 local-laya 代码（它在 `local-laya-runtime` 分支）；合并后自动生效（事件名 `local-laya.changed` + provider `local-laya`）。若希望“全新启动、已安装未启动”也能立即显示卡片，需对方在 GET `/status` 时也发一次安全状态事件（或提供惰性状态钩子）——不改对方文件，仅记录契约。
+
 ## 后续（未做，按小步推进）
 
 1. **生图服务迁移**：`imageProviders`/`imageKey:<id>` 独立 settings → 统一 registry（一个 provider 一份 key 可同时 chat+image），

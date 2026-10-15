@@ -27,6 +27,8 @@ export interface ImageProvider {
 	hasCredential?: boolean;
 	/** 非秘密元数据：Key 现在存在哪（迁移 / 界面提示用，不含任何秘密） */
 	keyStored?: "unified" | "legacy" | "reference";
+	/** 非秘密元数据：已完成 legacy 元数据迁移（幂等标记） */
+	imageKeyMigrated?: boolean;
 	createdAt: number;
 }
 export interface ImageModelRef {
@@ -78,15 +80,15 @@ export function keySourceOf(p: ImageProvider): ImageProvider["keyStored"] {
 	return undefined;
 }
 
-/** 幂等、非秘密的 legacy 元数据迁移：只给每个生图服务补 `keyStored` 标记，**不读、不复制任何明文**。 */
+/** 幂等、非秘密的 legacy 元数据迁移：只给每个生图服务补 `keyStored` / `imageKeyMigrated` 标记，**不读、不复制任何明文**。 */
 export function migrateLegacyImageProviders(): number {
 	const list = listProviders();
 	let changed = 0;
 	const next = list.map((p) => {
 		const stored = keySourceOf(p);
-		if (stored === p.keyStored) return p;
+		if (stored === p.keyStored && p.imageKeyMigrated) return p;
 		changed++;
-		return { ...p, keyStored: stored };
+		return { ...p, keyStored: stored, imageKeyMigrated: true };
 	});
 	if (changed) setSetting("imageProviders", next);
 	return changed;
@@ -125,6 +127,7 @@ export async function saveProvider(id: string | null, i: ProviderInput): Promise
 		if (getSetting<string | null>(`imageKey:${p.id}`, null)) setSetting(`imageKey:${p.id}`, null);
 	}
 	p.keyStored = keySourceOf(p);
+	p.imageKeyMigrated = true;
 	saveList(cur ? list.map((x) => (x.id === p.id ? p : x)) : [...list, p]);
 	// 第一个配置好的模型自动成为默认
 	const d = defaultImageModel();

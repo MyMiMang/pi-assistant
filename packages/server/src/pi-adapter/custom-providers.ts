@@ -12,6 +12,7 @@ import { getApiProviders } from "@earendil-works/pi-ai/compat";
 import type { ClassifierChatModel, ClassifierDeclaration, PiModels } from "./index.ts";
 import { isClassifierProtocol } from "./index.ts";
 import type { ModelCapability } from "../model-registry.ts";
+import { localModelHint } from "../local-models.ts";
 import { modelDb } from "../model-db.ts";
 import { detectLimits, knownReasoning, knownThinkingLevelMap, knownVision, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
 
@@ -157,6 +158,17 @@ export class CustomProviders {
 	}
 	isCustom(id: string) {
 		return this.store.loadMeta().some((m) => m.id === id);
+	}
+
+	/** 手动设置某个自定义模型的能力（只改我们的元数据，不写进 Pi 的 models.json）。 */
+	setModelCapabilities(id: string, modelId: string, capabilities: ModelCapability[]): CustomProviderMeta {
+		const metas = this.store.loadMeta();
+		const meta = metas.find((m) => m.id === id);
+		if (!meta) throw new Error("自定义服务不存在");
+		if (!meta.models.some((m) => m.id === modelId)) throw new Error("模型不存在");
+		const next: CustomProviderMeta = { ...meta, models: meta.models.map((m) => (m.id === modelId ? { ...m, capabilities } : m)) };
+		this.store.saveMeta(metas.map((m) => (m.id === id ? next : m)));
+		return next;
 	}
 
 	/** 启动时把加密保存的请求头值注入本进程环境变量，供 models.json 插值。 */
@@ -316,6 +328,9 @@ export class CustomProviders {
 		const s = this.store.loadFastReference();
 		if (!s || s.kind !== "systemone" || !s.provider || !s.id) return;
 		if (this.models.listClassifierModels(s.provider).some((m) => m.id === s.id)) return;
+		// 本地服务（如 local-laya）可能只是暂时停止（stop 会把它从 classifier 目录摘掉），
+		// 只要它仍是已知的已安装本地服务，就保留引用，不自动清掉 / 不删模型，只算「暂不可调用」。
+		if (localModelHint(s.provider)) return;
 		this.store.saveFastReference({ provider: "", id: "" });
 	}
 

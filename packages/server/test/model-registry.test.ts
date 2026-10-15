@@ -95,6 +95,43 @@ test("生图服务合并进来，带改图与价格（未知不填 0）", () => 
 	assert.equal(m.type, "image");
 	assert.equal(m.edit, true);
 	assert.equal(m.costNote, "约 $0.01–0.17/张");
+	assert.deepEqual(m.imageAdapter, { kind: "openai", baseUrl: "https://api.openai.com/v1", edit: true, costNote: "约 $0.01–0.17/张" }, "生图适配器元数据（UI 展示用）");
+});
+
+test("生图服务复用同一份凭据时并入同一服务卡（一次 key 多 capabilities）", () => {
+	const input = base();
+	input.image.providers.push({ id: "img-shared", name: "复用中转", kind: "openai", baseUrl: "https://relay.example.com/v1", models: ["gpt-image-1"], configured: true, credentialProvider: "custom-relay" });
+	const reg = buildRegistry(input);
+	assert.equal(reg.find((p) => p.id === "img-shared"), undefined, "复用凭据的生图服务不再单独建卡");
+	const relay = reg.find((p) => p.id === "custom-relay")!;
+	assert.equal(relay.kind, "custom");
+	assert.ok(relay.models.some((m) => m.id === "gpt-image-1" && m.type === "image"), "同一张卡同时有 chat 与 image 能力");
+	assert.ok(relay.protocols.includes("openai"), "协议集合含生图协议");
+});
+
+test("本地服务：来源可靠区分，已安装停止后卡片不消失（安装/运行状态分开）", () => {
+	const input = base();
+	// 运行中：Pi classifier 目录里有它（经 registerClassifiers 注册），source 应被覆写为 local
+	input.classifierModels.push({ provider: "local-laya", id: "multilingual", name: "本地 Laya · multilingual", api: "typesafe-system-one", input: ["text"], contextWindow: 8192, configured: true });
+	input.local = [{ provider: "local-laya", modelId: "multilingual", protocol: "typesafe-system-one", installed: true, running: true, state: "running", device: "mps" }];
+	let reg = buildRegistry(input);
+	const running = reg.find((p) => p.id === "local-laya")!;
+	assert.equal(running.kind, "local");
+	const rm = findRegistryModel(reg, "local-laya", "multilingual", "classifier")!;
+	assert.equal(rm.source, "local");
+	assert.deepEqual(rm.local, { installed: true, running: true, state: "running", device: "mps" });
+	assert.equal(rm.name, "本地 Laya · multilingual", "运行中保留目录里的名字");
+	// 停止：classifier 目录里没有它了，但已安装 → 仍保留卡片，只标暂不可用
+	const stopped = base();
+	stopped.local = [{ provider: "local-laya", modelId: "multilingual", protocol: "typesafe-system-one", installed: true, running: false, state: "stopped", device: null }];
+	reg = buildRegistry(stopped);
+	const card = reg.find((p) => p.id === "local-laya")!;
+	assert.equal(card.kind, "local");
+	const sm = findRegistryModel(reg, "local-laya", "multilingual", "classifier")!;
+	assert.equal(sm.source, "local");
+	assert.equal(sm.configured, false, "停止时不可用");
+	assert.deepEqual(sm.local, { installed: true, running: false, state: "stopped", device: null });
+	assert.equal(sm.confirmed, true, "本地服务的能力是已确认的");
 });
 
 test("按能力筛选 + 同 id 同 type 去重（自定义覆盖内置）", () => {
