@@ -22,6 +22,7 @@ import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
 import { insertMessage, listMessages } from "./messages.ts";
 import { credentialBackend, customProviders, defaultModel, defaultThinking, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "./models.ts";
+import { onboardingState } from "./onboarding.ts";
 import { getModelPicks, recordModelPick } from "./model-picks.ts";
 import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-providers.ts";
 import { classifierProtocols } from "./pi-adapter/index.ts";
@@ -136,8 +137,9 @@ function appVersion() {
 		} catch {}
 	return (appVer = { version: v.version ?? "未知", builtAt: v.builtAt, launcher: process.env.PIA_LAUNCHER ?? (config.headless ? "server" : "source") });
 }
-app.get("/api/system", async (c) =>
-	c.json({
+app.get("/api/system", async (c) => {
+	const ob = onboardingState();
+	return c.json({
 		serverId: identity().serverId,
 		publicKey: identity().publicKey,
 		pi: checkPiCompat(),
@@ -148,8 +150,9 @@ app.get("/api/system", async (c) =>
 		owner: !!c.get("caller").owner,
 		server: config.headless,
 		deviceId: c.get("caller").deviceId,
-		onboarded: getSetting("onboarded", false) && !!defaultModel() && listAgents().length > 0,
-		modelSetupDone: getSetting("onboarded", false) && !!defaultModel(),
+		onboarded: ob.onboarded,
+		modelSetupDone: ob.modelSetupDone,
+		modelReady: ob.modelReady,
 		defaultModel: (() => {
 			const d = defaultModel();
 			return d ? withProviderName(d) : d;
@@ -161,8 +164,8 @@ app.get("/api/system", async (c) =>
 		workspaceRoot: config.workspaceRoot,
 		push: { publicKey: vapidPublicKey(), recent: pushLog.slice(-5) },
 		seq: bus.seq,
-	}),
-);
+	});
+});
 
 app.get("/api/settings", (c) => c.json({ entryDomain: entryDomain(), remoteEnabled: getSetting("remoteEnabled", false), sandbox: getSetting("sandbox", config.sandbox), onboarded: getSetting("onboarded", false) }));
 app.put("/api/settings", async (c) => {

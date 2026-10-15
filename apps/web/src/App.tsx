@@ -21,6 +21,8 @@ export default function App() {
 	const width = useWindowWidth();
 	const L = resolveLayout(width, layout);
 	const [fatal, setFatal] = useState<null | "unpaired" | "offline">(null);
+	/** 模型配置已存在但此刻读不出（凭据 / 目录暂时失败）：提示可恢复错误，不重走首次向导覆盖配置 */
+	const [modelWarnClosed, setModelWarnClosed] = useState(false);
 	/** Linux 服务器版：setup = 还没有主人设备（输设置码）；server = 已设置过（找主人设备要配对码） */
 	const [setupMode, setSetupMode] = useState<null | "setup" | "server">(null);
 	useEffect(() => {
@@ -146,6 +148,17 @@ export default function App() {
 			<Settings />
 			<DeviceApproval />
 			<ImageViewerHost />
+			{system.onboarded && system.modelReady === false && !modelWarnClosed && !fatal && (
+				<div className="fixed bottom-4 left-1/2 z-40 flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-lg dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200" data-testid="model-unavailable">
+					<span>模型配置暂时读不出（已保留原设置，未重置）。请检查网络，或到设置里重新登录模型服务。</span>
+					<Button size="sm" variant="outline" onClick={() => set({ settings: "models" })}>
+						去设置
+					</Button>
+					<button className="text-amber-700 underline dark:text-amber-300" onClick={() => setModelWarnClosed(true)}>
+						忽略
+					</button>
+				</div>
+			)}
 			{!system.onboarded && <Onboarding />}
 		</div>
 	);
