@@ -172,6 +172,12 @@
 
 麦克风位置修正（2026-10-16，本树本地未发布，用户调整）：`e2e/voice-input-ui.mjs` 加几何断言——`voice-mic` 与 `.pa-composer-bar .pa-send` 必须同一 composer-bar、DOM 在发送键之前、同一行（中心 y 差 ≤6px）、紧贴其左（间隙 ≤14px），且不在 `.pa-composer-tools` 里；单聊 / 群聊 / 390 / 1440×560 矮窗各验一遍，并断言录音时发送键 x 不位移（提示走独立 status 行）。实跑：该脚本全通过；`e2e/composer-compact.mjs`（单 / 群 / 子三入口 390 / 1280 / 1440）回归全通过；web `tsc --noEmit` + `vite build` 通过。未跑全量 e2e。
 
+## Pi 依赖升级 1.1.0 → 1.2.0（2026-10-22，`deps/pi-1.2.0` 树，基 `release-candidate-validation` `a905b42`，**未 push / 未 tag / 未打包**）
+
+| 需求（用户原话大意） | 状态 | 说明 |
+|---|---|---|
+| 批准跟进 Pi 官方 1.1.0 → 1.2.0 升级；硬约束：不改 Pi 本体 / 不 fork / 不改 `node_modules` 源码 / 不 monkeypatch 私有接口，兼容逻辑只放自有 `pi-adapter` 与扩展、走公开 API；独立提交、模块化、便于以后继续升级 | 已完成代码 + 本地验证，待主会话合入（未打包） | 三个 `@earendil-works` 包一致升到 `^1.2.0`（锁文件锁 1.2.0），锁差异只涉及 8 个 Pi 包（含上游不再依赖的 `@earendil-works/chord` 被移除）；唯一 breaking（`before_agent_start` 变 union）已在 ext-memory / ext-skills 按 `messageType` 收窄；版本记录（compat / third-party / NOTICES）同步，每周自动升级改为走 `scripts/pi-update.mjs` 统一升三包 + 版本记录。验证、基线与未验边界见 HANDOFF 同日条目。 |
+
 ## 待用户决定
 
 

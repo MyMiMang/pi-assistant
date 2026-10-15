@@ -40,7 +40,9 @@ export function skillsExtension(host: SkillsHost) {
 	return (pi: ExtensionAPI) => {
 		let lastPrompt = "";
 		pi.on("before_agent_start", (e) => {
-			lastPrompt = e.prompt ?? "";
+			// Pi 1.2.0 起本事件也会对扩展触发的 run（后台唤醒、triggerTurn）触发，那种事件没有 prompt。
+			// 只记用户原话：custom run 置空，避免把唤醒回合当成用户输入传给技能建议的授权判断。
+			lastPrompt = e.messageType === "user" ? e.prompt : "";
 		});
 		pi.on("agent_end", (e) => {
 			if (!host.observe) return;

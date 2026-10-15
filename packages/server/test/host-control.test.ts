@@ -294,14 +294,16 @@ test("CDP 浏览器工具：限定档位不提供且清单不放行；连接浏�
 	};
 	// 限定档位（bounded → approvals all）
 	const b = mk({ approvals: () => "all", browserTools: false });
+	// Pi 1.2.0 起 before_agent_start 是按 messageType 区分的 union；测试桩按真实的用户回合事件传参
+	const userEvent = { systemPrompt: "", messageType: "user" as const, prompt: "" };
 	for (const t of CUA_BROWSER_TOOLS) assert.equal(b.cfg.toolExposure[t], "hidden");
-	assert.match((await b.h.before_agent_start({ systemPrompt: "" }))?.systemPrompt ?? "", /信任/);
+	assert.match((await b.h.before_agent_start(userEvent))?.systemPrompt ?? "", /信任/);
 	assert.match((await b.call("browser_prepare", { pid: 1 }))?.reason ?? "", /信任/);
 	// 完全权限
 	const f = mk({ approvals: () => "none" });
 	for (const t of CUA_BROWSER_TOOLS) assert.equal(f.cfg.toolExposure[t], undefined, `${t} 可见`);
 	for (const t of ["page", "install_extension", "set_config", "parse_visual_regions"]) assert.ok(HIDDEN_TOOLS.includes(t) && f.cfg.toolExposure[t] === "hidden");
-	const prompt = (await f.h.before_agent_start({ systemPrompt: "" }))?.systemPrompt ?? "";
+	const prompt = (await f.h.before_agent_start(userEvent))?.systemPrompt ?? "";
 	assert.ok(prompt.indexOf("get_browser_state {pid") < prompt.indexOf("browser_prepare {pid"), "先绑定，需要时才 prepare");
 	assert.match(prompt, /include_screenshot:true/);
 	assert.match(prompt, /dom_event/);
@@ -344,7 +346,7 @@ test("本机桌面：只看隐藏全部输入工具（含剪贴板/窗口大小/
 		assert.equal(await f.call(t, i), undefined, `${t} 完全权限直接执行`);
 	assert.equal(f.asks.length, 0, "完全权限：普通动作（含回车/发送/结束应用）都不问");
 	assert.match(f.cfg.description, /完全权限：所有应用/);
-	const fp = (await f.h.before_agent_start({ systemPrompt: "" }))?.systemPrompt ?? "";
+	const fp = (await f.h.before_agent_start({ systemPrompt: "", messageType: "user" as const, prompt: "" }))?.systemPrompt ?? "";
 	for (const k of ["get_window_state", "element_token", "background_unavailable", "delivery_mode:\"foreground\"", "get_desktop_state", "verify_state"]) assert.ok(fp.includes(k), k);
 	const t = mk("sensitive");
 	await t.call("drag", {});
@@ -353,7 +355,7 @@ test("本机桌面：只看隐藏全部输入工具（含剪贴板/窗口大小/
 	await t.call("press_key", { key: "return" });
 	assert.equal(t.asks.length, 1, "信任：回车（可能是发送）要问");
 	const b = mk("all");
-	const bp = (await b.h.before_agent_start({ systemPrompt: "" }))?.systemPrompt ?? "";
+	const bp = (await b.h.before_agent_start({ systemPrompt: "", messageType: "user" as const, prompt: "" }))?.systemPrompt ?? "";
 	assert.match(bp, /限定/);
 	assert.ok(!bp.includes("get_desktop_state"), "限定档位没有整屏观察");
 });
