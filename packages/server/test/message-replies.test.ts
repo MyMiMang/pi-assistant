@@ -137,6 +137,19 @@ test("幂等：同 clientId 重复投递只落一条", () => {
 	rooms.stop(room.id, false);
 });
 
+test("助理引用助理不自动唤醒（无机器循环）；旧消息无引用回读为 null", () => {
+	const target = roomMsg("rqc", "丙说过的");
+	const before = (db.prepare("SELECT COUNT(*) AS n FROM room_turns WHERE room_id = ?").get(room.id) as { n: number }).n;
+	// 助理消息直接 insertMessage（不经 postUserMessage），引用另一条助理消息
+	const a1 = insertMessage({ agentId: "rqb", roomId: room.id, conversationId: null, role: "assistant", content: "乙回应", replyToId: target.id, replySnapshot: buildReplySnapshot(target, roomScope) });
+	assert.equal(getMessage(a1.id)!.reply!.excerpt, "丙说过的");
+	assert.equal((db.prepare("SELECT COUNT(*) AS n FROM room_turns WHERE room_id = ?").get(room.id) as { n: number }).n, before, "助理引用不新增回合");
+	// 旧消息（未带引用）回读为 null，向后兼容
+	const plain = roomMsg("rqc", "普通消息");
+	assert.equal(getMessage(plain.id)!.reply, null);
+	assert.equal(getMessage(plain.id)!.replyToId, null);
+});
+
 // ---------------------------------------------------------------- provider payload（真实 Pi 会话 + mock provider）
 
 test("provider payload：引用块 + 用户正文都进模型输入", async () => {
