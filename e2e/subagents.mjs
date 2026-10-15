@@ -65,6 +65,8 @@ try {
 	await panel.waitFor();
 	assert.equal(await panel.getAttribute("role"), "tabpanel");
 	assert.equal(await page.locator('[role="dialog"]').count(), 0, "子代理会话不是弹窗");
+	// 详情面板先渲染（d 还没到，头部是「加载中…」），等数据到了再断言，避免抢在 fetch 前面
+	await waitFor(async () => /任务：.*派个子代理整理文件/.test((await panel.locator("header").first().textContent()) ?? ""));
 	assert.match((await panel.locator("header").first().textContent()) ?? "", /任务：.*派个子代理整理文件/, "详情头部显示任务短标题");
 	await page.locator(`[data-testid="subagent-detail"]:visible`).getByLabel("返回主会话").click();
 	assert.equal(await box.inputValue(), "主会话未发送草稿");
@@ -91,7 +93,7 @@ try {
 	await page.screenshot({ path: join(SHOTS, "97-subagent-detail.png") });
 	await page.locator(`[data-testid="subagent-detail"]:visible`).getByLabel("返回主会话").click();
 	await finished(first.id, "done");
-	await page.getByText(/子代理回报：.*done/).last().waitFor();
+	await page.getByText(/子代理回报：.*已完成/).last().waitFor();
 	const history = await j(`/api/agents/${a.id}/messages`);
 	assert.ok(!history.some((m) => m.subagent_id));
 	await page.getByTestId("subagent-tasks").click();
@@ -139,7 +141,10 @@ try {
 	console.log("✅ 主会话空闲时说停也停止子代理");
 	const bad = await launch("派个子代理测试报错");
 	await finished(bad.id, "failed");
-	await page.getByText(/子代理回报：.*failed/).last().waitFor();
+	// 通知文案这轮改成中文（子代理「…」失败：<原因>），断言跟着改；顺带确认原因真的带上了
+	const failText = await page.getByText(/子代理回报：.*失败/).last().textContent();
+	assert.match(failText ?? "", /子代理回报：.*失败/);
+	assert.match(failText ?? "", /模拟子代理模型报错/, "回报里要带失败原因");
 	console.log("✅ 模型报错落终态，主会话收到原因");
 	const pending = await launch("派个子代理重启测试");
 	await waitFor(async () => (await j(`/api/subagents/${pending.id}`)).messages.some((m) => m.role === "tool"));
@@ -147,7 +152,7 @@ try {
 	// 重启后从断点续跑（不再是 lost）：复用落库 session，跑完回报主会话
 	await finished(pending.id, "done");
 	await page.reload();
-	await page.getByText(/子代理回报：.*done/).last().waitFor();
+	await page.getByText(/子代理回报：.*已完成/).last().waitFor();
 	console.log("✅ 重启后从中断处续跑并回报");
 	await openTask(first.id);
 	await childBox.fill("刚才暗号再说一次");
@@ -180,7 +185,7 @@ try {
 	await page.goto(`${BASE}/?room=${room.id}`);
 	const group = await launch("派个子代理群聊测试");
 	await finished(group.id, "done");
-	await page.getByText(/子代理回报：.*done/).last().waitFor();
+	await page.getByText(/子代理回报：.*已完成/).last().waitFor();
 	const groupMessages = await j(`/api/rooms/${room.id}/messages`);
 	assert.ok(!groupMessages.some((m) => m.subagent_id));
 	console.log("✅ 群成员派子代理，结果回群，步骤留在详情");
