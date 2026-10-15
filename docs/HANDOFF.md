@@ -14,6 +14,13 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+2026-10-15 子代理断网续跑（合 `subagent-resume-fix` 4 commit + `chat-scrollbar-fix`，**未 push / 未 tag / 未打包**，`next-release-integration` 树，基线 `661550f`）：
+- **原 id 断点续跑**（`5e7012b` `5934a67` `3a06ea9` `a8cedac`）：失败分类纯函数 `subagent-resume.ts`（`classifyResume` / `shouldAutoRetry` / `transportBackoffMs`）；`subagents` 加 `attempt` / `retry_at` 列，`resumeSubagent(id)` 用**原子代理 id** 续跑（复用落库 Pi session、原任务、历史与用量，不新开子代理；满额照旧 FIFO 排队；原子占用、重复调用只生效一次；`resume=2` 走失败续跑提示）；`POST /api/subagents/:id/resume` + 工具 `subagent_resume`，`subagent_list` 带 `canResume` / `resumeReason` / `retryable` / `attempt`；连接类错误在同一会话有界退避（3 次、指数 + 抖动、封顶 8s），退避期间只等时钟不发请求、可被停止打断；429/5xx 仍走 Pi 自身请求重试 + 池内 fallback，不重复等一个周期；晚到旧代际终态只收尾不唤醒。UI 失败卡「继续」+「等待重试 N 秒」。合并提交 `d5ab8db`（a8cedac）/ `f33092e`（afe70a4），两处自动合并无冲突。
+- **聊天滚动条修复**（`afe70a4`）：`.pa-scroll` 常显滚动条 + composer 让出槽位，主会话 / 群聊 / 子代理共用。
+- **本轮安全复核 + 最小补丁**（`4a12ef5`）：自动退避续跑原来把**原始任务**重发一遍（`firstPrompt`），连接中断时工具可能已执行也可能没执行，重发会让模型把已做步骤再做一遍（发送 / 付款等副作用不可撤销）。改为只发 `TRANSPORT_RETRY_PROMPT`「先核验、从断点继续、不重做、不重复副作用」——只续模型轮次、不重发原任务；补两条回归：续跑提示不含原任务占位、全任务最长运行时间超时（`已超过最长运行时间`）不误判为连接类（`auto=false`）。
+- **验证（临时干净 worktree，Node 24.20.0，全程 Mock、无真实模型费用、未碰系统钥匙串）**：合并树 + 补丁后服务端 / 网页 `tsc --noEmit` exit 0；`subagent-resume.test.ts` + `subagents.test.ts` + `task-waits.test.ts` + `task-wait-yield.test.ts` **68/68**。
+- **未做 / 待主核验**：`subagent-resume.smoke.ts`（HTTP 级 tool 计数证据）**未跑**——它起的默认服务会构造走 OS 钥匙串的凭据后端，本机 `new EncryptedCredentialStore()` 会弹「找不到钥匙串」，与本轮「不得动系统钥匙串」冲突；要安全起服务需要主会话决定是否加测试专用注入（现只有公开 `initModels(credentials?)` 注入点，`main.ts` 仍无参调用）。**未审阅 WIP（含 `secrets.ts`）原样留在 `next-release-integration` 工作区**：`e2e/*`、`package.json`、`test/setup.ts`、`secrets.ts` 未动；与合并重叠的 `models.ts` WIP 暂存于 `stash@{0}`（内容未读、未采用其 env 耦合），另存全量备份 `/tmp/nri-wip-full-*.patch`。
+
 2026-10-22 整合收尾：子代理思考强度 / CUA 镜像 0.1.4 / VM 资源 / 模型菜单定位（`next-release-integration` 树，分支 `next-release-integration`，**未 push / 未 tag**）：
 - **子代理独立思考强度**（合 `subagent-thinking-fix` = `7d7fc8c`，基 `5b6cf11`；合并提交 `d9b4a48`）：三层取值「单个子代理覆盖 > 助理默认（跟随 / 固定）> 跟随主会话」，一律按子代理实际模型 `clampThinking`；`subagents.thinking` 列 + `PATCH /api/subagents/:id` + `GET/PUT /api/agents/:id/subagent-thinking` + `spawn_subagent.thinking`；运行中切换走 `applyModelSettings`，不动主会话。两边都改 `runtime.ts`，唯一冲突在 import 行，按最小合并保留整合树的 `subagentNotifyText` / `setWaitNoteInjector` 与分支的 `resolveSubagentThinking`；`subagents.ts` 自动合并，终态 claim / task_wait 唤醒 / 候选池 fallback / 识图用量 / 快速操作模型 / CUA 均未被覆盖。
 - **CUA 镜像 0.1.4**（cherry-pick `d494d0d` + `1a197ad` = `807b5c6` / `c6fa7ba`）：`desktop-image.json` version `0.1.4` / digest `sha256:6cc5c119…d54a42`（run 38683611869 三个 job success，匿名 GHCR manifest 交叉核验一致）；`SHARED_COMPUTER_PROMPT` 补 0.35 真实 schema。driver 0.35.4 的 host 侧此前已在树里，未重复。

@@ -1369,6 +1369,16 @@ cua-driver 0.35.4 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - **运行中切换**：`PATCH` 后 `applyLiveSubagentThinking()` 走 `pi-adapter.applyModelSettings`（`session.setModel` / `setThinkingLevel`），不重建会话、不丢上下文，**只动这个子代理的会话，不改主会话**。
 - 界面档位来源：助理池取候选模型支持档位的交集（空池则取主会话当前模型）；子代理详情取该子代理模型的档位。
 
+### 21.9 子代理断点续跑（2026-10-15，beta.22 候选）
+- **不新开子代理**：失败 / 超时 / 停止后一律用**原 subagent id** 续跑，复用落库 Pi session、原任务、历史与用量（同一任务、同一份用量与历史）。`resumeSubagent(id)` 先校验「已到终态、非 done、已落库 session」；无 session 直接拒绝（无法确认执行到哪一步，要求先核验再重派）。原子占用（`UPDATE … WHERE status NOT IN ('queued','running','stalled')`），重复调用只生效一次；满额照旧 FIFO 排队不超并发。
+- **失败分类**（`subagent-resume.ts` 纯函数）：`transport`（网络 / 连接 / DNS / 请求超时）与 `transient`（429 / 5xx / 临时不可用）可**有界退避**自动重试；`config`（401/403/额度/模型被删）、`context`（上下文超限）、`session`（会话损坏）、`blocked`（用户停止 / 权限拒绝）、`unknown` 一律**不自动**，只允许用户 / 主模型显式原 id 继续。未知原因不做全量白名单（避免盲目重放）。
+- **只续模型轮次，不重发原任务**：连接中断时工具可能已执行也可能没执行，重发原任务会让模型重做已执行步骤（发送 / 付款等副作用不可撤销）。自动退避与手动续跑都只发「先核验已持久的结果、从断点继续、不重做、不重复副作用」的指令（`TRANSPORT_RETRY_PROMPT` / `subagentResumePrompt`），任务正文由落库会话承载。**不承诺 exactly-once**。
+- **与 Pi 重试分工**：429 / 5xx 已由 Pi 自身请求重试 + 池内 fallback 处理，app 层不再叠一层退避（`shouldAutoRetry` 只认 `transport`）。连接类最多 3 次、指数 + 抖动、封顶 8s；退避期间只等时钟、不发模型请求，停止 / 拒绝立即打断（每轮重查 `isActiveSubagent`）。
+- **超时区分**：全任务「最长运行时间」超时原因写作 `已超过最长运行时间`（`stopSubagent(id,"timeout")`），**不含**「超时」子串 → 分类为 `unknown`，绝不自动重跑整个任务；只有请求级 `timeout` 才可自动续。
+- **终态代际**：`subagent_events.generation` = 当时的 `finished_at`；晚到的旧代际终态只收尾不唤醒，避免旧 attempt 覆盖新 attempt。
+- **授权**：`canResume` 只在子代理所属的助理 + 对话内可用（runtime 工具的 `resume` 校验 `agent_id` + `conversation_id`）。
+- **测试隔离**：单测 / 冒烟用公开 `initModels(credentials?)` 注入内存 `CredentialStore`（`test/in-memory-credentials.ts`），不构造会走 OS 钥匙串的后端。
+
 ### 21.6 决定
 - **已定**：只一层，子代理不能再派子代理（`spawn_subagent` 不提供给子代理）。
 - **已定**：每个助理默认最多 10 个并发子代理（可配置，见 §21.3）；满额后新任务排队、有空位自动派发，不拒绝、不需要用户再派。子代理会话可查看、直接发消息和停止，续聊也计入并发上限、满额同样排队。
