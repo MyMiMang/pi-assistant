@@ -2,6 +2,17 @@
 
 > 当前公开版本 **v0.1.0-beta.23**（2026-10-15 已公开 Latest，仅 macOS arm64）；下一版 **v0.1.0-beta.24 候选**见 `progress-snapshots/hotfix-integration.md`（热修整合，未发布）。上一版 v0.1.0-beta.22。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
+2026-10-22 release-candidate-validation 最终最小整合（子代理思考档位 + 记忆后端 Select；worktree `release-candidate-validation`，**未 push / 未 tag / 未打包**；beta.24 候选）：
+- 合并 `subagent-thinking-options-fix`（HEAD `de4491e`，基 `f3b27dd`）与 `memory-backend-select-ui-fix`（HEAD `3c3fdd4`，基 `5fa4c1e`），均 `--no-ff` 保祖先、无冲突；候选树里已有的 memory / voice / queue / 技能等改动未被覆盖。
+- 思考档位：候选池档位改**并集**（不再用整池交集裁掉 xhigh / max）、`shared/thinking-levels.ts` 统一规则、服务端 `PiModels.supportedThinking`、档位菜单内部滚动都在（详见下一条）。
+- 记忆后端：助理页 + 设置 › 记忆的全局后端从原生 `<select>` 换成应用内统一 `Select`（保留能力徽标、保存中 / 失败回滚）。
+- 修统一 `Select` 的可访问性：`aria-activedescendant` 从不支持它的 `button` 移到**获得焦点的 `listbox`**（打开即聚焦菜单、选项 `tabIndex=-1`），触发按钮保留 button 语义并加 `aria-controls`；键盘行为不变（方向键只移高亮、`Esc` 不保存并还焦点、回车提交）。
+- 实跑（Node 24.19.0，全 Mock / 临时 `PIA_DATA_DIR`，未碰系统钥匙串 / 真实 key / 真实 db）：thinking 6/6、queue/replies/rooms/subagents 等 99/99、memory 19/19、voice/ASR 67/67、两端 `tsc --noEmit` exit 0、web `vite build` 通过；前端真实 fixture e2e `subagent-thinking-levels`（新增）、`memory-provider-select`、`model-ui`、`model-services-ui` 全通过。日志见 `evidence/final-arm64-preflight/`。
+- 打包范围：`.github/release-scope.json` = `mac-arm64`（强制跳过 Intel / Windows / Linux）；`release.yml` 的 `prepare` 按 `BUILD_INTEL` 组装矩阵，`publish` 前跑 mac-smoke。
+- 远端只读核对（`gh` 已登录 MyMiMang，**未 push**）：remote `main` = `8d7a7d8`（= 本地 main，是候选 HEAD 的祖先），最新公开 `v0.1.0-beta.23`，**`v0.1.0-beta.24` 未占用**。
+- 资源核对：本地 ASR 的 `serve-script.ts` 是代码内字符串、安装时写盘（无外部打包资源、无 `dirname` 运行时路径缺失）；语音 `AudioWorklet` 用内联 `Blob` 注入（无 static / Tauri 资源依赖）。`node_modules` / Pi SDK 未改（`git diff main..HEAD -- node_modules` 为空）。
+- 未验（如实）：真实 Hindsight LLM retain/reflect、真下载 / 起 SenseVoice、真实云 ASR、手机真机、安装包真机、全量 `e2e/run.mjs`（本轮没跑）。
+
 2026-10-22 子代理思考档位「选项不全」（用户反馈）修复（独立树 `subagent-thinking-options-fix`，基 `release-candidate-validation` `f3b27dd`，**未 push / 未 tag / 未打包**；改动 DESIGN §21.8）：
 - **根因**：助理设置 › 子代理模型 › 思考强度原来取候选池**所有模型支持档位的交集**（`candidates.map(levelsOf).reduce(intersection)`）。候选池里只要有一个模型不支持 xhigh / max（例如只能到 high），这两档就被裁掉；空池跟随主会话时是单模型所以正常，因此用户看到「子代理档位比主会话少 / 不全」。子代理详情用的是实际模型档位，本身没这个问题。
 - **改动**：新增共享纯函数 `packages/shared/src/thinking-levels.ts`（`thinkingLevelsUnion` / `thinkingLevelsFor`：按 Pi 顺序取**并集**、过滤非法档位、空输入安全），主会话 / 子代理默认 / 子代理详情共用同一份 Pi 能力来源；`Subagents.tsx` 默认档位改并集（空池 = 主会话模型，与主会话完全一致），已保存但当前池没人支持的固定档位黄字说明会被降级；子代理详情在用户选的档位被模型 clamp 时给出 tooltip（不静默吞）；`ModelPicker.tsx` 的 `ThinkingButton` 菜单加内部滚动（小屏 / 档位多时 xhigh / max 不被裁）。`pi-adapter` 抽出 `supportedThinkingLevels` / `PiModels.supportedThinking`，模型目录与 clamp 用同一份元数据。

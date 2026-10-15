@@ -1,6 +1,6 @@
 # release-candidate-validation 集成收尾报告（memory + voice + queue dedup + ASR 供应链）
 
-- worktree：`release-candidate-validation`，起点 `362ccaf`，**当前 HEAD `bbf7bac`**（工作区 clean）
+- worktree：`release-candidate-validation`，起点 `362ccaf`，**当前 HEAD 见 `git log`**（本轮已在 `5fa4c1e` 之上追加：合并 thinking `de4491e`、合并 memory UI `3c3fdd4`、修统一 `Select` 可访问性、新增 thinking 前端 e2e；工作区 clean）
 - 全程未 push / 未 tag / 未打包；只构建 Apple 芯片 macOS 的约束未触发（本阶段没打包）
 - 全程 Mock / 内存 CredentialStore / 临时 `PIA_DATA_DIR`+`PIA_WORKSPACE`；**未读用户 key / 凭据 / 真实 db / Hindsight bank**，未碰系统钥匙串、未真下载权重、未真录音、未起 sidecar、未调付费模型
 - Node 用 `/Users/dengdeng/.local/node-v24.19.0/bin`（Homebrew 的 node 25.8.2 因 simdjson 动态库缺失不可用，未做系统升级）
@@ -58,3 +58,14 @@
 
 ## 8. 边界
 未 push / 未 tag；未读 `secrets.ts` / 真实 keys / db / Hindsight bank / SDK 凭据历史；未改系统设置 / mic / 付费 / 大模型下载 / VM / App；未动 `voice-input-implementation` 与 `subagent-thinking-options-fix` 的源 tree。
+
+## 9. 最终最小整合（thinking + 记忆后端 Select，2026-10-22 续做）
+- 合并 `subagent-thinking-options-fix`（`de4491e`）到本树：候选池档位改**并集**、`packages/shared/src/thinking-levels.ts` 统一规则、服务端 `PiModels.supportedThinking`、档位菜单内部滚动、clamp 说明；`--no-ff` 无冲突。候选池原有的 memory / voice / queue 改动未被覆盖。
+- 合并 `memory-backend-select-ui-fix`（`3c3fdd4`）到本树：助理页 + 设置全局记忆后端改应用内统一 `Select`。同样 `--no-ff` 无冲突；`ui.tsx` 的 `Select` 是唯一共享改动点，thinking 的菜单在 `ModelPicker.tsx`（另一处），两者不冲突，内部滚动保留。
+- 修统一 `Select` 可访问性（上游自报的 `aria-activedescendant` 挂在 `button` 上属于非法 ARIA）：把 `aria-activedescendant` 移到**获得焦点的 `listbox`**（打开时聚焦菜单、选项 `tabIndex=-1`），触发按钮保留 button 语义并加 `aria-controls`。键盘语义不变（方向键只移高亮、`Esc` 不保存并还焦点、`Enter` 提交）。
+- 前端真实 fixture e2e 新增 `e2e/subagent-thinking-levels.mjs`（真实服务端 + 真实 React 构建 + Chromium）：候选池为空=跟随主会话（档位=主会话模型、sol 无 off 则菜单无 off）；mixed 候选池取并集（含 xhigh/max/off，并集是旧交集严格超集）；非推理只有 off；固定档位被候选池不支持时黄字说明 + 按钮 tooltip；390 窄矮窗菜单限高 + 内部滚动，底部 max 可达可点。
+- 实跑（Node 24.19.0，全 Mock / 临时数据，未碰钥匙串 / 真实 key / db）：thinking 6/6、queue/replies/rooms/subagents/custom-providers/model-registry 99/99、memory 19/19、voice/ASR 67/67、两端 `tsc --noEmit` exit 0、web `vite build` 通过；`e2e/subagent-thinking-levels`（新增）、`e2e/memory-provider-select`、`e2e/model-ui`、`e2e/model-services-ui` 全通过（`e2e/run.mjs` 的 `selectOption` 已由 memory UI 分支改为按钮点击，`node --check` 语法通过；未跑全量 run.mjs）。
+- 远端只读核对（`gh` 已登录 MyMiMang，只读、未 push）：remote `main` = `8d7a7d8`（= 本地 main，是候选 HEAD 的祖先），最新公开 `v0.1.0-beta.23`，**`v0.1.0-beta.24` 未占用**。发布范围 `mac-arm64`。
+- 资源核对：本地 ASR `serve-script.ts` 为代码内字符串、安装时写盘（无外部打包资源 / 无 `dirname` 运行时路径问题）；语音 `AudioWorklet` 用内联 `Blob` 注入（无 static / Tauri 资源依赖）；`git diff main..HEAD -- node_modules` 为空（未改 Pi SDK）。
+- 日志：`evidence/final-arm64-preflight/`（tests-thinking / tests-queue-replies / tests-memory / tests-voice-asr / typecheck-build / e2e-subagent-thinking-levels / summary）。
+- 未验（如实）：真实 Hindsight LLM retain/reflect、真下载 / 起 SenseVoice、真实云 ASR、手机真机、安装包真机、全量 `e2e/run.mjs`。
