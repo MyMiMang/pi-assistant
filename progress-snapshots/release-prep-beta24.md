@@ -2,7 +2,7 @@
 
 > 目标：把候选做成可发布状态——写发布说明、把「发布前的平台静态核查」真正跑一遍并修掉挡路的真问题、提交推送打 tag 触发 CI。
 > 树：`release-candidate-validation`（baseline `main` = `8d7a7d8`；候选存在 173 个提交 / 295 个改动文件）。发布范围 `.github/release-scope.json` = `mac-arm64`。
-> 状态：**候选，未发布**（tag 推上去由 release workflow 构建 + Mac 安装冒烟通过后才公开）。
+> 状态：**已公开发布 v0.1.0-beta.24（Latest）**。tag `747c7442306bf7231d7981b40d97958282747751`；[run 38794686456](https://github.com/MyMiMang/pi-assistant/actions/runs/38794686456) 的 prepare / arm64 build / 内置服务冒烟 / mac-smoke / publish 均成功，2026-10-15 19:43:48 UTC 公开。主会话独立读取公开 Release（非草稿、非 prerelease）与 latest.json：四项资产，版本 `0.1.0-beta.24`，平台仅 `darwin-aarch64` / `darwin-aarch64-app` 且签名非空。没有安装用户 App。以下为发布前实施记录，真实模型 / 麦克风 / iPhone 等未验项仍未转为已验证。
 
 ## 1. 本轮改了 3 处（都是发布前核查发现的真问题）
 
