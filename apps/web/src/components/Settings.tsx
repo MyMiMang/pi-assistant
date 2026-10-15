@@ -15,6 +15,7 @@ import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { ImageModelsSection } from "./ImageModels";
 import { DefaultModelPicker, ProviderAccordion, useProviders } from "./Models";
+import { ModelServicesPanel } from "./ModelServices";
 import { Badge, Button, cx, Fold, fmtTime, Help, Input, Modal, Select, useConfirm } from "./ui";
 import { Downloads } from "./Downloads";
 import { AppUpdate } from "./AppUpdate";
@@ -276,6 +277,8 @@ function ModelsTab() {
 				<H desc="新助理默认用这个模型；点按钮可以同时改模型和思考强度。">默认使用</H>
 				<DefaultModelPicker key={configured + providers.length * 100} onSaved={() => void strengths.reload()} />
 			</section>
+			{/* 统一模型服务（原型）：接口就绪后由它接管「识图模型 + 模型服务 / 渠道」，见 docs/design/model-settings-unified.md */}
+			<ModelServicesPanel />
 			<section>
 				<H desc="助理的模型不能看图时（例如 DeepSeek），由识图模型替它看图：读图片、确认搜到的图是不是你要的。">识图模型</H>
 				<VisionModelPicker key={configured} />

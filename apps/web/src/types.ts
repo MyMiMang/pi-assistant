@@ -51,3 +51,73 @@ export interface CustomModel { id: string; name?: string; reasoning?: boolean; i
 export interface CustomClassifier { protocol: string; modelId: string; name?: string; contextWindow?: number }
 export interface CustomProviderMeta { id: string; name: string; api: string; baseUrl: string; headerNames: string[]; noKey: boolean; models: CustomModel[]; classifiers?: CustomClassifier[]; configured: boolean; references?: ProviderReferences }
 export interface ProviderReferences { defaultModel: boolean; visionModel: boolean; agents: string[]; subagents: boolean; subagentAgents: string[] }
+
+// ---- 统一模型服务（design: docs/design/model-settings-unified.md §6）----
+export type ModelCapability = "chat" | "vision" | "image" | "classifier";
+export type CapabilitySource = "metadata" | "catalog" | "user" | "unknown";
+export interface ModelCapabilityDto {
+	capability: ModelCapability;
+	source: CapabilitySource;
+	confidence: "high" | "medium" | "low";
+	verifiedAt?: number;
+}
+export interface ModelEntryDto {
+	id: string;
+	name?: string;
+	contextWindow?: number;
+	reasoning?: boolean;
+	thinking?: string[];
+	capabilities: ModelCapabilityDto[];
+}
+export interface PhaseDto {
+	state: "idle" | "downloading" | "verifying" | "done" | "error" | "cancelled";
+	percent: number;
+	bytes?: number;
+	total?: number;
+	speed?: number;
+	error?: string;
+}
+export interface LocalHealthDto {
+	status: "ok" | "degraded" | "unavailable";
+	checkedAt: number;
+	cpu: { label: string; cores?: number; baseline: true };
+	gpu: { vendor: "apple" | "nvidia" | "amd" | "intel" | "none"; backend: "mps" | "cuda" | "xpu" | "cpu" | "none"; available: boolean; label: string; source: "probe" };
+}
+export interface LocalRuntimeDto {
+	installed: boolean;
+	ready: "not_installed" | "installing" | "offline_ready" | "ready" | "error" | "stopped";
+	offlineReady: boolean;
+	taskId?: string;
+	phases: { env: PhaseDto; weights: PhaseDto; verify: PhaseDto };
+	health?: LocalHealthDto;
+	platform: { os: string; arch: string; support: "baseline" | "conditional" | "experimental" | "unsupported"; note: string };
+}
+export interface ModelServiceDto {
+	id: string;
+	name: string;
+	kind: "official" | "custom" | "local";
+	icon?: string;
+	baseUrl?: string;
+	configured: boolean;
+	source?: string;
+	models: ModelEntryDto[];
+	counts: Record<ModelCapability, number>;
+	references?: ProviderReferences;
+	local?: LocalRuntimeDto;
+}
+// ---- 实际操作测试（design §6.5）：真实受控 CUA 任务，不是 API 延迟 ----
+export interface ActualTaskTestDto {
+	kind: "controlled-cua-task";
+	target: "assistant" | "host";
+	status: "preflight" | "running" | "done" | "cancelled" | "error";
+	steps: { id: string; label: string; state: "pending" | "running" | "done" | "error" }[];
+	success: boolean;
+	totalMs: number;
+	errors: { step: string; message: string }[];
+	retries: number;
+	mainFallback: number;
+	preflight: { permissionsOk: boolean; vmReady: boolean; confirmedByUser: boolean; costNote?: string };
+	samples: number;
+	verdict: { level: "recommended" | "caution" | "not_recommended"; advisory: true; reason: string; accuracyNote: string };
+	apiLatency?: { p50: number; p95: number };
+}
