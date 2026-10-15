@@ -23,6 +23,11 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+2026-10-22 桌面聊天 markdown 外链左键点击无反应（已摘入 `hotfix-integration` 树，基 `origin/main` `8d7a7d8`，**未 push / 未 tag**，交主会话 review 后统一发布）：
+- **根因**（完整链路）：`Markdown.tsx` 渲染 `<a target="_blank">`；主窗口是远程页面（`remote-ui` capability）；`tauri-plugin-opener` 默认 JS 拦截会 `preventDefault` 再 invoke `plugin:opener|open_url`，但 `remote-ui` **没放行该命令**（`default.json` 的 `opener:default` 是 `"windows": []`，不覆盖任何窗口）→ ACL 拒绝 → 点击被吞。beta.19 只关掉 JS 拦截改走原生 `on_new_window`/`on_navigation`，安装版实测（用户 `beta.21` 截图）仍无反应，且原回调 `let _ = open_url(...)` 吞错误、无日志无反馈。
+- **改动**：新增 `apps/web/src/externalLinks.ts`（只认 `__TAURI_INTERNALS__`；只放行 `http/https/mailto`；左键/中键 → `preventDefault` → `invoke("plugin:opener|open_url")` → 失败退回 `window.open` → 再失败弹底部提示卡片含原地址+复制，绝不静默；右键/双击/拖动选中/已 preventDefault/同源/非外链都不接管），`main.tsx` 入口安装（聊天/群聊/子代理/工具结果共用）；`remote-ui.json` 放行 `opener:allow-open-url` + `opener:allow-default-urls`；`main.rs` 新增 `is_external_link()`（http/https/mailto）并 `eprintln!` 出 `open_url` 错误。
+- **已跑**：`test/external-links.test.ts` **13/13**；`tsc --noEmit -p apps/web` 与 `-p packages/server` exit 0；web `vite build` 通过。**未跑**：`cargo build`（本机无 Rust 工具链，Rust 只做静态断言）、安装包真机点击、真实 desktop/VM。详见 `progress-snapshots/external-link-click-fix.md`。
+
 2026-10-15 用户授权「打包」：**v0.1.0-beta.23 已公开 Latest**，tag=`c8c19bd`，仅含 `6cf31fe` 的渠道凭据崩溃修复及发布文档；沿用 `mac-arm64` 范围，不改发布流程。[Actions 38710953760](https://github.com/MyMiMang/pi-assistant/actions/runs/38710953760) 的构建、内置服务启动、DMG 挂载启动与更新清单校验均成功；公开后独立下载 latest.json、查询 Latest Release 并用 `validateRelease` 再核验：4 项资产齐全，仅含 arm64 两个更新项，版本 / 签名字段 / 下载地址正确。发布说明见 `release-notes/v0.1.0-beta.23.md`；用户原数据下启动及真实微信扫码恢复待验证。
 
 2026-10-15 beta.22 启动崩溃（修复已发布 **beta.23**，用户原数据恢复待验证；以下保留修复时的验证记录）：

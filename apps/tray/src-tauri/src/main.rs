@@ -216,21 +216,29 @@ pub fn open_ui(app: &AppHandle, path: &str) {
              setTimeout(function(){mo.disconnect();add();},3000);})();",
         );
     let built = builder
-        // 页面里 target=_blank / window.open 的外部链接交给系统浏览器，不在应用里开新窗口
+        // 页面里 target=_blank / window.open 的外部链接交给系统浏览器，不在应用里开新窗口。
+        // 这是兜底路径：页面侧（apps/web/src/externalLinks.ts）会先 preventDefault 并 invoke
+        // plugin:opener|open_url；没走页面侧（原生新窗口请求）时才落到这里。
         .on_new_window(move |u, _| {
-            let _ = opener.opener().open_url(u.as_str(), None::<&str>);
+            if is_external_link(&u) {
+                if let Err(e) = opener.opener().open_url(u.as_str(), None::<&str>) {
+                    eprintln!("[tray] 外链交给系统浏览器失败（{}）：{e}", u.as_str());
+                }
+            }
             tauri::webview::NewWindowResponse::Deny
         })
         .on_navigation(move |u| {
-            // 主窗口只允许停留在本机服务页面；其他 http(s) 地址交给系统默认浏览器。
+            // 主窗口只允许停留在本机服务页面；其他外部地址交给系统默认浏览器。
             // 注意：WebView 里点链接（含 target=_blank）可能先走到这里，只 return false 会「静默取消」→
             // 浏览器没被打开、链接点了没反应。所以这里对真正的外部地址要主动 open_url 再拒绝内嵌跳转。
             let local = u.host_str() == Some("127.0.0.1") && u.port() == Some(port());
             if local || is_startup_url(u) || u.scheme() == "about" || u.scheme() == "blob" || u.scheme() == "data" {
                 return true;
             }
-            if matches!(u.scheme(), "http" | "https") {
-                let _ = opener_nav.opener().open_url(u.as_str(), None::<&str>);
+            if is_external_link(u) {
+                if let Err(e) = opener_nav.opener().open_url(u.as_str(), None::<&str>) {
+                    eprintln!("[tray] 外链交给系统浏览器失败（{}）：{e}", u.as_str());
+                }
             }
             false
         })
@@ -252,6 +260,12 @@ pub fn open_ui(app: &AppHandle, path: &str) {
 /// 程序自带页面（启动页）的地址：macOS/Linux 是 tauri://localhost，Windows 是 http://tauri.localhost
 pub fn is_startup_url(u: &tauri::Url) -> bool {
     u.scheme() == "tauri" || u.host_str() == Some("tauri.localhost")
+}
+
+/// 允许交给系统默认浏览器打开的协议白名单，和页面侧 apps/web/src/externalLinks.ts 保持一致：
+/// 只放行 http / https / mailto；javascript: / data: / file: / blob: 等一律不打开。
+fn is_external_link(u: &tauri::Url) -> bool {
+    matches!(u.scheme(), "http" | "https" | "mailto")
 }
 
 /// 悬浮条窗口：服务就绪后再建（它加载的是本机服务的 /hostbar 页面）
@@ -378,9 +392,10 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_ui(app, "/")))
         .plugin(tauri_plugin_shell::init())
         // 关掉 opener 插件的 JS 链接拦截（open_js_links_on_click）：它会在点击 <a target=_blank> 时
-        // preventDefault 再经 IPC 调 plugin:opener|open_url，而主窗口是远程页面、capability 未放行该命令，
-        // 结果点击被吞、外链点了没反应。改为完全交给下面的 on_navigation / on_new_window 原生处理
-        // （Rust 侧 app.opener().open_url 不做 scope 校验，https 外链可直接打开系统浏览器）。
+        // preventDefault 再经 IPC 调 plugin:opener|open_url。页面侧自己接管这件事
+        // （apps/web/src/externalLinks.ts，remote-ui capability 已放行 opener:allow-open-url +
+        // opener:allow-default-urls），避免插件脚本和页面处理器重复打开两次。
+        // 原生侧下面的 on_navigation / on_new_window 仍作为兜底。
         .plugin(tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

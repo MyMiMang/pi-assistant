@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "remote-ui",
-  "description": "主窗口加载的是本机 8787（被占用时 8788…8796） 的网页：只允许它调用「关于 / 更新」的几个命令，以及 macOS 透明标题栏需要的窗口拖动 / 双击缩放",
+  "description": "主窗口加载的是本机 8787（被占用时 8788…8796） 的网页：只允许它调用「关于 / 更新」的几个命令、把外链交给系统默认浏览器（opener 只放行 http/https/mailto/tel 范围），以及 macOS 透明标题栏需要的窗口拖动 / 双击缩放",
   "windows": [
     "main"
   ],
@@ -30,6 +30,8 @@
     ]
   },
   "permissions": [
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
     "allow-app-update-status",
     "allow-app-update-check",
     "allow-app-update-install",

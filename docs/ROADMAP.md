@@ -21,7 +21,7 @@
 | 自定义模型服务删除报不支持 | 已完成（beta.19） | 原生 confirm 换现有 useConfirm；显示当前引用影响；失败保留配置并显示原因；取消/失败/重试/删除链路通过，8 项模型单测通过 |
 | Shift+Enter 发送、Enter 换行、IME 防误发、长子代理卡片 | 已完成（beta.19） | 发布树子代理专项与容器宽度专项通过；Enter/Shift+Enter/IME、长路径卡片桌面/390px通过 |
 | 移除顶部和输入栏重复电脑入口、按聊天容器隐藏按钮文字、删除审批页脚 | 已完成（beta.19） | 发布树专项8组全过；保留右侧 InfoPane 电脑页；628px容器隐藏文字，宽屏显示，tooltip/aria保留 |
-| 聊天外链交给系统浏览器 | 已完成（beta.19），原生点击待用户实测 | Tauri 禁用吞掉点击的 JS opener 拦截，由原生 navigation/new-window 打开；Mac CI 编译与安装冒烟通过，网页外链属性已验证；系统浏览器实际点击未自动操作用户账号 |
+| 聊天外链交给系统浏览器 | 已修（`external-link-click-fix`，待安装冒烟） | 根因：主窗口是远程页面，opener 插件默认 JS 拦截会 `preventDefault` 再 invoke `plugin:opener|open_url`，但 `remote-ui` capability 未放行该命令（`opener:default` 的 `windows: []` 不覆盖任何窗口）→ 点击被吞；beta.19 只关掉 JS 拦截、改走原生 `on_new_window`/`on_navigation`，安装版实测仍无反应且原回调 `let _ =` 吞错误。修法：`apps/web/src/externalLinks.ts` 页面侧显式接管（只认 `__TAURI_INTERNALS__`、只放行 http/https/mailto、preventDefault→invoke→退回 window.open→失败弹可见提示），`remote-ui` 放行 `opener:allow-open-url`+`opener:allow-default-urls`，Rust 加 `is_external_link` 白名单并不再吞错误。已跑：13/13 单测、两端 typecheck、web build；**未跑**：cargo build、安装包真机点击 |
 | macOS 更新后重复系统授权 | 明确阻塞（不阻塞其他交付） | 本机无 Developer ID 签名证书；adhoc cdhash 随构建变化，不能承诺保留 TCC。诊断见 beta18-macos-signing-tcc-report.md；不自行签证书或安装用户 App |
 
 
