@@ -5,7 +5,8 @@
  * 服务名一律用 provider 目录 / 用户给自定义服务起的名字，绝不按模型 id 猜。
  */
 import { Brain, Check, ChevronDown, Cpu, Search } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api";
 import { COMPOSER_LABEL } from "../composer";
 import { useStore } from "../store";
@@ -74,12 +75,48 @@ export function useModelPicks() {
 	return { picks, record };
 }
 
-export function usePopover() {
+// 弹层定位：菜单用 createPortal 挂到 body、position: fixed 锚定触发器。
+// 不能直接用 absolute right-0：在设置弹窗这种块级容器里，按钮 wrapper 会被拉成整行宽，
+// 菜单就相对整行右对齐、跑到触发器老远；而 fixed 在 .pa-modal（glass 皮肤的 backdrop-filter、
+// 入场动画的 transform 等会创建 containing block 的祖先）里坐标又是相对该祖先的，
+// 只有挂到 body 才是真正相对视口。
+const POP_GAP = 8;
+const POP_MARGIN = 8;
+
+/** 按触发器位置算弹层坐标：默认放在 placement 一侧，放不下且另一侧更宽裕就翻转；水平/垂直都收在视口内。 */
+function popoverStyle(anchor: HTMLElement, panel: HTMLElement, placement: "up" | "down", naturalHeight: number): CSSProperties {
+	const r = anchor.getBoundingClientRect();
+	const vw = document.documentElement.clientWidth;
+	const vh = document.documentElement.clientHeight;
+	const w = panel.offsetWidth || panel.getBoundingClientRect().width || 320;
+	const h = naturalHeight || panel.offsetHeight;
+	const roomBelow = vh - POP_MARGIN - (r.bottom + POP_GAP);
+	const roomAbove = r.top - POP_GAP - POP_MARGIN;
+	let below = placement !== "up";
+	if (placement === "up" ? h > roomAbove && roomBelow > roomAbove : h > roomBelow && roomAbove > roomBelow) below = !below;
+	const top = Math.max(POP_MARGIN, below ? r.bottom + POP_GAP : r.top - POP_GAP - h);
+	const left = Math.max(POP_MARGIN, Math.min(r.left, vw - POP_MARGIN - w));
+	// 窄屏：.pa-pop 的媒体查询会把菜单固定成底部弹窗（left/right 8px、bottom 6rem），
+	// 这时 top/left 会被 !important 覆盖，只需给个高度上限。
+	if (vw <= 640) return { position: "fixed", top, left, zIndex: 70, visibility: "visible", maxHeight: Math.round(vh * 0.6) };
+	// 宽屏：限高，超出视口的部分交给菜单内部滚动，弹层本身不被裁、也不出屏
+	return { position: "fixed", top, left, zIndex: 70, visibility: "visible", maxHeight: Math.max(120, vh - POP_MARGIN - top) };
+}
+
+/** 按钮 + 弹层的通用状态：open、触发器 ref、弹层 ref、弹层内联定位 style。 */
+export function usePopover(placement: "up" | "down" = "down") {
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
+	const menuRef = useRef<HTMLDivElement>(null);
+	const natural = useRef(0);
+	const [style, setStyle] = useState<CSSProperties>({ position: "fixed", top: 0, left: 0, zIndex: 70, visibility: "hidden" });
 	useEffect(() => {
 		if (!open) return;
-		const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+		// 菜单 portal 到了 body，点击判断要同时看触发器和菜单本身
+		const inside = (t: EventTarget | null) => !!ref.current?.contains(t as Node) || !!menuRef.current?.contains(t as Node);
+		const h = (e: MouseEvent) => {
+			if (!inside(e.target)) setOpen(false);
+		};
 		// 捕获阶段吃掉 Escape：菜单开着时按 Esc 只关菜单，不把底下的设置弹窗一起关掉
 		const k = (e: KeyboardEvent) => {
 			if (e.key !== "Escape") return;
@@ -90,7 +127,32 @@ export function usePopover() {
 		document.addEventListener("keydown", k, true);
 		return () => (document.removeEventListener("mousedown", h), document.removeEventListener("keydown", k, true));
 	}, [open]);
-	return { open, setOpen, ref };
+	useLayoutEffect(() => {
+		if (!open) return;
+		const anchor = ref.current;
+		const panel = menuRef.current;
+		if (!anchor || !panel) return;
+		natural.current = panel.offsetHeight; // 不受 maxHeight 限制的自然高度，用来决定往上还是往下
+		const place = () => {
+			const a = ref.current;
+			const p = menuRef.current;
+			if (!a || !p) return;
+			const next = popoverStyle(a, p, placement, natural.current);
+			setStyle((prev) => (prev.top === next.top && prev.left === next.left && prev.maxHeight === next.maxHeight && prev.visibility === next.visibility ? prev : next));
+		};
+		place();
+		// 设置弹窗内容滚动、窗口缩放、菜单自己变高都要重新贴回触发器
+		const ro = new ResizeObserver(place);
+		ro.observe(panel);
+		addEventListener("resize", place);
+		document.addEventListener("scroll", place, true);
+		return () => {
+			ro.disconnect();
+			removeEventListener("resize", place);
+			document.removeEventListener("scroll", place, true);
+		};
+	}, [open, placement]);
+	return { open, setOpen, ref, menuRef, style };
 }
 
 async function patchAgent(agentId: string, body: Record<string, unknown>) {
@@ -110,7 +172,7 @@ export interface ThinkingChoice {
  * current = null 表示跟随默认；传 followLabel 时菜单里多一个「跟随…」选项（子代理用）。
  */
 export function ThinkingButton({ testid, levels, current, followLabel, onPick, text, title, ariaLabel, buttonClass, placement = "down" }: { testid: string; levels: string[]; current: string | null; followLabel?: string; onPick: (level: string | null) => void; text?: string; title?: string; ariaLabel?: string; buttonClass?: string; placement?: "up" | "down" }) {
-	const { open, setOpen, ref } = usePopover();
+	const { open, setOpen, ref, menuRef, style } = usePopover(placement);
 	const label = text ?? (current ? (THINKING_LABEL[current] ?? current) : (followLabel ?? "思考"));
 	return (
 		<div className="relative min-w-0" ref={ref}>
@@ -122,25 +184,27 @@ export function ThinkingButton({ testid, levels, current, followLabel, onPick, t
 				</span>
 				<ChevronDown size={12} />
 			</button>
-			{open && (
-				<div className={cx("pa-pop absolute right-0 z-30 flex w-56 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg", placement === "up" ? "bottom-full mb-2" : "top-full mt-2")} data-testid={`${testid}-menu`}>
-					{followLabel && (
+			{open &&
+				createPortal(
+					<div ref={menuRef} style={style} className="pa-pop flex w-56 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${testid}-menu`}>
+						{followLabel && (
 						<button className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", current === null && "bg-hover")} onClick={() => (setOpen(false), onPick(null))} data-testid={`${testid}-follow`}>
 							<span className="flex-1 text-sm">{followLabel}</span>
 							{current === null && <Check size={14} className="text-accent" />}
 						</button>
 					)}
-					{levels.map((l) => (
-						<button key={l} className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", current === l && "bg-hover")} onClick={() => (setOpen(false), onPick(l))} data-testid={`${testid}-${l}`}>
-							<span className="flex-1">
-								<span className="text-sm">{THINKING_LABEL[l] ?? l}</span>
-								<span className="block text-xs text-mut">{THINKING_DESC[l] ?? ""}</span>
-							</span>
-							{current === l && <Check size={14} className="text-accent" />}
-						</button>
-					))}
-				</div>
-			)}
+						{levels.map((l) => (
+							<button key={l} className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", current === l && "bg-hover")} onClick={() => (setOpen(false), onPick(l))} data-testid={`${testid}-${l}`}>
+								<span className="flex-1">
+									<span className="text-sm">{THINKING_LABEL[l] ?? l}</span>
+									<span className="block text-xs text-mut">{THINKING_DESC[l] ?? ""}</span>
+								</span>
+								{current === l && <Check size={14} className="text-accent" />}
+							</button>
+						))}
+					</div>,
+					document.body,
+				)}
 		</div>
 	);
 }
@@ -177,12 +241,14 @@ export interface ModelMenuProps {
 	onPick: (m: ModelEntry) => void;
 	/** false 时按传入顺序平铺（组队排序用），不按服务分组 */
 	groupByProvider?: boolean;
-	placement?: "up" | "down";
 	/** 菜单顶部固定内容（子代理的「跟随 / 自动挑」等） */
 	header?: ReactNode;
+	/** 弹层定位由 ModelPickerButton 的 usePopover 提供（portal 到 body + fixed 锚定触发器） */
+	panelRef?: RefObject<HTMLDivElement | null>;
+	panelStyle?: CSSProperties;
 }
 
-export function ModelMenu({ id, models, providers, value, thinking, picks, onPick, groupByProvider = true, placement = "up", header }: ModelMenuProps) {
+export function ModelMenu({ id, models, providers, value, thinking, picks, onPick, groupByProvider = true, header, panelRef, panelStyle }: ModelMenuProps) {
 	const [q, setQ] = useState("");
 	const [openGroups, setOpenGroups] = useState<string[]>(() => (value?.provider ? [value.provider] : models[0] ? [models[0].provider] : []));
 	const nameOf = (p: string) => providers.find((x) => x.id === p)?.name ?? models.find((m) => m.provider === p)?.providerName ?? p;
@@ -201,7 +267,7 @@ export function ModelMenu({ id, models, providers, value, thinking, picks, onPic
 	} else if (rest.length) groups.push({ provider: "", name: "", models: rest });
 	const isOpen = (p: string) => !groupByProvider || !!k || openGroups.includes(p);
 	return (
-		<div className={cx("pa-pop absolute right-0 z-30 flex max-h-[60vh] w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg", placement === "up" ? "bottom-full mb-2" : "top-full mt-2")} data-testid={`${id}-menu`}>
+		<div ref={panelRef} style={panelStyle} className="pa-pop flex w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${id}-menu`}>
 			<label className="mb-1 flex items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5">
 				<Search size={14} className="text-mut" />
 				<input autoFocus className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索模型或服务…" value={q} onChange={(e) => setQ(e.target.value)} data-testid={`${id}-search`} />
@@ -280,7 +346,7 @@ export interface ModelPickerButtonProps {
 
 /** 共用的「模型按钮 + 菜单」；聊天 / 群聊成员 / 子代理都用它，避免各写一套 */
 export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen }: ModelPickerButtonProps) {
-	const { open, setOpen, ref } = usePopover();
+	const { open, setOpen, ref, menuRef, style } = usePopover(placement ?? "up");
 	return (
 		<div className="relative min-w-0" ref={ref}>
 			<button
@@ -298,20 +364,23 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 				{text ? <span className={cx("truncate", hideTextInNarrow && COMPOSER_LABEL)}>{text}</span> : null}
 				<ChevronDown size={12} />
 			</button>
-			{open && (
-				<ModelMenu
-					id={id}
-					models={models}
-					providers={providers}
-					value={value}
-					thinking={thinking ? { ...thinking, onPick: (l) => (setOpen(false), thinking.onPick(l)) } : null}
-					picks={picks}
-					groupByProvider={groupByProvider}
-					placement={placement}
-					header={header?.(() => setOpen(false))}
-					onPick={(m) => (setOpen(false), onPick(m))}
-				/>
-			)}
+			{open &&
+				createPortal(
+					<ModelMenu
+						id={id}
+						models={models}
+						providers={providers}
+						value={value}
+						thinking={thinking ? { ...thinking, onPick: (l) => (setOpen(false), thinking.onPick(l)) } : null}
+						picks={picks}
+						groupByProvider={groupByProvider}
+						panelRef={menuRef}
+						panelStyle={style}
+						header={header?.(() => setOpen(false))}
+						onPick={(m) => (setOpen(false), onPick(m))}
+					/>,
+					document.body,
+				)}
 		</div>
 	);
 }
@@ -345,11 +414,13 @@ export interface ModelPoolMenuProps {
 	value: { provider: string; id: string }[];
 	picks?: ModelPicks;
 	onToggle: (m: ModelEntry, checked: boolean) => void;
-	placement?: "up" | "down";
+	/** 弹层定位由 ModelPoolButton 的 usePopover 提供（portal 到 body + fixed 锚定触发器） */
+	panelRef?: RefObject<HTMLDivElement | null>;
+	panelStyle?: CSSProperties;
 }
 
 /** 候选池多选菜单：搜索 + 常用 + 按服务分组，勾选不关菜单（复用 ModelMenu 的分组/搜索/常用规则）。 */
-export function ModelPoolMenu({ id, models, providers, value, picks, onToggle, placement = "down" }: ModelPoolMenuProps) {
+export function ModelPoolMenu({ id, models, providers, value, picks, onToggle, panelRef, panelStyle }: ModelPoolMenuProps) {
 	const [q, setQ] = useState("");
 	const [openGroups, setOpenGroups] = useState<string[]>(() => (models[0] ? [models[0].provider] : []));
 	const nameOf = (p: string) => providers.find((x) => x.id === p)?.name ?? models.find((m) => m.provider === p)?.providerName ?? p;
@@ -366,7 +437,7 @@ export function ModelPoolMenu({ id, models, providers, value, picks, onToggle, p
 		.sort((a, b) => a.name.localeCompare(b.name, "zh"));
 	const isOpen = (p: string) => !!k || openGroups.includes(p);
 	return (
-		<div className={cx("pa-pop absolute right-0 z-30 flex max-h-[60vh] w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg", placement === "up" ? "bottom-full mb-2" : "top-full mt-2")} data-testid={`${id}-menu`}>
+		<div ref={panelRef} style={panelStyle} className="pa-pop flex w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${id}-menu`}>
 			<label className="mb-1 flex items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5">
 				<Search size={14} className="text-mut" />
 				<input autoFocus className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索模型或服务…" value={q} onChange={(e) => setQ(e.target.value)} data-testid={`${id}-search`} />
@@ -416,7 +487,7 @@ export interface ModelPoolButtonProps {
 
 /** 共用的「候选池按钮 + 多选菜单」：勾选后菜单不关，方便一次选好几个。 */
 export function ModelPoolButton({ testid, id = testid, models, providers, value, picks, onToggle, text, title, ariaLabel, buttonClass, placement, onOpen }: ModelPoolButtonProps) {
-	const { open, setOpen, ref } = usePopover();
+	const { open, setOpen, ref, menuRef, style } = usePopover(placement ?? "down");
 	return (
 		<div className="relative min-w-0" ref={ref}>
 			<button className={cx("pa-chip sm !shrink min-w-0", buttonClass)} onClick={() => { if (!open) onOpen?.(); setOpen(!open); }} title={title} aria-label={ariaLabel} data-testid={testid}>
@@ -424,7 +495,7 @@ export function ModelPoolButton({ testid, id = testid, models, providers, value,
 				<span className="truncate">{text}</span>
 				<ChevronDown size={12} />
 			</button>
-			{open && <ModelPoolMenu id={id} models={models} providers={providers} value={value} picks={picks} onToggle={onToggle} placement={placement} />}
+			{open && createPortal(<ModelPoolMenu id={id} models={models} providers={providers} value={value} picks={picks} onToggle={onToggle} panelRef={menuRef} panelStyle={style} />, document.body)}
 		</div>
 	);
 }

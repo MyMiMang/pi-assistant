@@ -315,6 +315,75 @@ try {
 	ok("模型服务是带图标的卡片网格（每张卡一个可区分图标）");
 	ok("模型服务 / 渠道是一个大分类，可一键全部关上，默认使用 / 识图模型不受影响");
 
+	// ============================================================ 5b) 模型菜单锚定触发器（回归：设置弹窗里跑到容器右边 / 出屏 / 被裁）
+	console.log("\n[5b] 模型菜单锚定触发器：设置弹窗里不再跑到右边，多视口 / 滚动 / 翻转都贴住按钮");
+	const geom = async (btnId, menuId) => ({ btn: await page.getByTestId(btnId).boundingBox(), menu: await page.getByTestId(menuId).boundingBox() });
+	const assertAnchored = (g, label, vw, vh) => {
+		assert.ok(g.btn && g.menu, `${label}：应有按钮和菜单`);
+		// 关键回归：旧实现 absolute right-0 贴的是整行容器右边，菜单会比按钮左缘偏出几百像素
+		assert.ok(Math.abs(g.menu.x - g.btn.x) <= 2, `${label}：菜单左缘应贴住按钮（btn.x=${g.btn.x} menu.x=${g.menu.x}）`);
+		assert.ok(g.menu.x >= -0.5 && g.menu.x + g.menu.width <= vw + 1, `${label}：菜单不能水平出屏`);
+		assert.ok(g.menu.y >= -0.5 && g.menu.y + g.menu.height <= vh + 1, `${label}：菜单不能垂直出屏（不能被弹窗 overflow 裁掉）`);
+	};
+	const settingsStillOpen = async () => assert.ok(await page.getByTestId("settings-dialog").isVisible(), "模型菜单不应把设置弹窗一起关掉");
+
+	// 识图模型 / 默认使用两个 picker 都锚定按钮（设置弹窗是块级容器，正是以前跑偏的地方）
+	await page.getByTestId("vision-model-picker").click();
+	await page.getByTestId("vision-model-menu").waitFor();
+	{
+		const g = await geom("vision-model-picker", "vision-model-menu");
+		assertAnchored(g, "1280 识图模型", 1280, 900);
+		assert.ok(g.menu.y >= g.btn.y + g.btn.height - 1 && g.menu.y <= g.btn.y + g.btn.height + 14, `识图模型菜单应贴在按钮下方：btnBottom=${g.btn.y + g.btn.height} menuTop=${g.menu.y}`);
+		await settingsStillOpen();
+	}
+	// 滚动设置弹窗内容：菜单要跟着触发器一起走（不能留在原地）
+	{
+		const before = await geom("vision-model-picker", "vision-model-menu");
+		await page.getByTestId("settings-content").evaluate((el) => (el.scrollTop += 120));
+		await page.waitForTimeout(150);
+		const after = await geom("vision-model-picker", "vision-model-menu");
+		assert.ok(Math.abs((after.menu.y - after.btn.y) - (before.menu.y - before.btn.y)) <= 2, `滚动后菜单要贴回触发器：before ${before.menu.y - before.btn.y} / after ${after.menu.y - after.btn.y}`);
+		assert.ok(Math.abs((after.menu.x - after.btn.x) - (before.menu.x - before.btn.x)) <= 2, "滚动后水平偏移不变");
+		await page.getByTestId("settings-content").evaluate((el) => (el.scrollTop -= 120));
+		await page.waitForTimeout(150);
+	}
+	// 窗口缩放后仍锚定
+	await page.setViewportSize({ width: 1024, height: 800 });
+	await page.waitForTimeout(150);
+	assertAnchored(await geom("vision-model-picker", "vision-model-menu"), "1024 识图模型", 1024, 800);
+	await page.keyboard.press("Escape");
+	assert.equal(await page.getByTestId("vision-model-menu").count(), 0, "Escape 应只关菜单");
+	await settingsStillOpen();
+
+	// 视口矮时下方放不下：菜单要翻到按钮上方，而不是被弹窗 overflow 裁掉
+	await page.setViewportSize({ width: 1280, height: 420 });
+	await page.waitForTimeout(150);
+	await page.getByTestId("vision-model-picker").click();
+	await page.getByTestId("vision-model-menu").waitFor();
+	{
+		const g = await geom("vision-model-picker", "vision-model-menu");
+		assert.ok(g.btn && g.menu);
+		assert.ok(g.menu.y + g.menu.height <= 420 + 1, "矮视口菜单不能出屏");
+		assert.ok(g.menu.y + g.menu.height <= g.btn.y + 2, `下方放不下应翻到按钮上方：menuBottom=${g.menu.y + g.menu.height} btnTop=${g.btn.y}`);
+		assert.ok(Math.abs(g.menu.x - g.btn.x) <= 2, "翻转后水平仍锚定按钮");
+	}
+	await page.keyboard.press("Escape");
+	// 390 窄屏：底部弹窗模式，菜单仍在屏内、仍不裁
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.waitForTimeout(200);
+	await page.getByTestId("vision-model-picker").scrollIntoViewIfNeeded();
+	await page.getByTestId("vision-model-picker").click();
+	await page.getByTestId("vision-model-menu").waitFor();
+	{
+		const m = await page.getByTestId("vision-model-menu").boundingBox();
+		assert.ok(m && m.x >= -0.5 && m.x + m.width <= 390 + 1, `390 菜单不能水平出屏：${JSON.stringify(m)}`);
+		assert.ok(m && m.y >= -0.5 && m.y + m.height <= 844 + 1, `390 菜单不能垂直出屏：${JSON.stringify(m)}`);
+	}
+	await page.keyboard.press("Escape");
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.waitForTimeout(150);
+	ok("模型菜单锚定触发器：设置弹窗不再跑偏，滚动 / 缩放 / 翻转 / 390 都正常");
+
 	// ============================================================ 6) 群聊成员 / 子代理入口复用
 	console.log("\n[6] 群聊成员与子代理复用同一个模型菜单");
 	await page.goto(`${BASE}/?agent=${agent.id}`);
@@ -323,7 +392,7 @@ try {
 	const card = page.getByTestId("room-proposal").last();
 	await card.waitFor({ timeout: 30_000 });
 	await card.getByTestId("pm-model").first().click();
-	const pmMenu = card.getByTestId("pm-model-menu");
+	const pmMenu = page.getByTestId("pm-model-menu");
 	await pmMenu.waitFor();
 	await pmMenu.getByTestId("pm-model-option").first().waitFor();
 	const pmFirst = await pmMenu.getByTestId("pm-model-option").first().getAttribute("data-model");
@@ -356,12 +425,12 @@ try {
 	await sub.waitFor();
 	assert.equal(await sub.locator("select").count(), 0, "候选池不应是原生 select");
 	await sub.getByTestId("subagent-model").click();
-	await sub.getByTestId("subagent-model-menu").waitFor();
-	await sub.getByTestId("subagent-model-check").first().check();
+	await page.getByTestId("subagent-model-menu").waitFor();
+	await page.getByTestId("subagent-model-check").first().check();
 	await wait(async () => (await j(`/api/agents/${agent.id}/subagent-model`)).pool.length === 1);
-	await sub.getByTestId("subagent-model-check").nth(1).check();
+	await page.getByTestId("subagent-model-check").nth(1).check();
 	await wait(async () => (await j(`/api/agents/${agent.id}/subagent-model`)).pool.length === 2);
-	assert.ok(await sub.getByTestId("subagent-model-menu").isVisible(), "勾选后菜单不关，可连续多选");
+	assert.ok(await page.getByTestId("subagent-model-menu").isVisible(), "勾选后菜单不关，可连续多选");
 	await page.screenshot({ path: join(OUT, "09-subagent-pool.png") });
 	await j(`/api/agents/${agent.id}/subagent-model`, "PUT", { pool: [] });
 	assert.equal(nativeDialogs, 0, "全程不应出现原生 confirm");

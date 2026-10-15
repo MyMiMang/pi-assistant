@@ -163,10 +163,10 @@ try {
 	const settings = page.getByTestId("agent-subagent-model");
 	await settings.waitFor();
 	await settings.getByTestId("subagent-model").click();
-	await settings.getByTestId("subagent-model-menu").waitFor();
-	await settings.getByTestId("subagent-model-check").first().check();
+	await page.getByTestId("subagent-model-menu").waitFor();
+	await page.getByTestId("subagent-model-check").first().check();
 	await waitFor(async () => (await j(`/api/agents/${a.id}/subagent-model`)).pool.length === 1);
-	assert.ok(await settings.getByTestId("subagent-model-menu").isVisible(), "勾选后菜单不关，可连续多选");
+	assert.ok(await page.getByTestId("subagent-model-menu").isVisible(), "勾选后菜单不关，可连续多选");
 	// 关闭菜单后检查窄屏不横向溢出（多选是 checkbox，不是原生 select）
 	await page.keyboard.press("Escape");
 	await page.setViewportSize({ width: 390, height: 844 });

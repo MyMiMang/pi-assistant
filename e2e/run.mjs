@@ -1904,7 +1904,7 @@ await step("提议建群：聊天里说目标 → 可编辑的提议卡片（改
 	await card.getByTestId("pm-remove").last().click();
 	await card.getByTestId("pm-name").nth(1).fill("写手");
 	await card.getByTestId("pm-model").nth(1).click();
-	await card.getByTestId("pm-model-option").first().click();
+	await page.getByTestId("pm-model-option").first().click();
 	await card.getByTestId("pm-manager").nth(1).click();
 	await card.getByTestId("proposal-confirm").click();
 	await page.getByTestId("room-title").filter({ hasText: "发布小组" }).waitFor();
@@ -1955,7 +1955,7 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 	await card.waitFor({ timeout: 30_000 });
 	// 管理者「统筹」需要推理 → 挑 mock 推理模型；理由显示在卡片上
 	await card.getByTestId("pm-model").nth(0).click();
-	const modelMenu = card.getByTestId("pm-model-menu");
+	const modelMenu = page.getByTestId("pm-model-menu");
 	await modelMenu.waitFor();
 	const modelOpts = await modelMenu.getByTestId("pm-model-option").all();
 	const firstModel = await modelOpts[0].getAttribute("data-model");
