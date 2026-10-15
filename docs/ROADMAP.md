@@ -54,7 +54,8 @@
 | 工作中随时发消息、说停就停 | 已完成（beta.12） | DESIGN §20 |
 | Windows 装上就能用（中文用户名、端口被占、杀毒软件等），出错时有友好页面 | 已完成（beta.11） | 启动页 + 日志 + 发版前 Windows/Mac 安装冒烟 |
 | 桌宠：多款预设 + 用户一句话自己做 | 已完成（beta.10，第一版） | 第二版：每个助理一只、新消息冒泡 |
-| jev（TypeSafe）快速决策模型 | 暂缓 | 用户决定先不接；以后可做成默认关闭的选项 |
+| jev（TypeSafe）快速决策模型 | 已升级为「快速操作模型」，**预览 / 未发布** | 见下方 2026-10-21 新增需求 |
+| 快速操作模型（可选，默认关闭）：开启后主模型仍规划 / 授权 / 异常决策，快速模型只在程序给出的有界候选里挑一个控件；关闭时完全沿用主模型、零额外调用 | **预览 / 未发布**（分支树 `fast-computer-model`） | 2026-10-21 用户批准（原话大意『用 jev 这种快速模型代替操作，主模型还是思考，没开就主模型来』）。协议调研见 `research/jev-multichannel-evaluation.md`；原生 SystemOne adapter（`POST /v1/systemone`，baseURL 可自定义）+ chat 替代 adapter（**非 Jev、不合成校准概率**）；`fast-computer/{types,choosers,index,tool,routes}.ts` + `fast_pick_action` 工具（`ctx.executeTool` 走既有 ext-computer 钩子）；单测 16 项 + 两端 typecheck + web build 通过。**未 push / 未 tag / 未打包 / 未替换用户 App**；未跑真实 Jev 调用、未跑 e2e |
 
 ## beta.20 已发布需求
 

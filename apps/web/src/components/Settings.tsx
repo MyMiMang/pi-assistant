@@ -120,6 +120,78 @@ const H = ({ children, desc }: { children: React.ReactNode; desc?: React.ReactNo
 );
 
 interface SubagentSettingsDto { maxMinutes: number; maxConcurrent: number }
+
+interface FastComputerDto { enabled: boolean; kind: "chat" | "systemone"; provider: string; id: string; baseUrl: string; model: string; threshold: number; timeoutMs: number }
+interface FastComputerModelDto { provider: string; id: string; name: string; providerName: string }
+
+/** 快速操作模型（默认关闭）：开启后主模型仍规划 / 授权，快速模型只在有界候选里挑一个控件。 */
+function FastComputerSection() {
+	const [d, setD] = useState<FastComputerDto | null>(null);
+	const [models, setModels] = useState<FastComputerModelDto[]>([]);
+	const [err, setErr] = useState("");
+	useEffect(() => {
+		void api<{ settings: FastComputerDto; models: FastComputerModelDto[] }>("/api/fast-computer/settings")
+			.then((r) => (setD(r.settings), setModels(r.models)))
+			.catch((e) => setErr(String(e)));
+	}, []);
+	if (!d) return null;
+	const save = async (patch: Partial<FastComputerDto>) => {
+		try {
+			setD(await api<FastComputerDto>("/api/fast-computer/settings", { method: "PUT", json: { ...d, ...patch } }));
+			setErr("");
+		} catch (e) {
+			setErr(String(e));
+		}
+	};
+	return (
+		<section data-testid="fast-computer-section" className="space-y-3">
+			<H desc="默认关闭。开启后主模型仍负责规划、授权和异常判断；快速模型只从程序给出的有限候选里挑一个控件，不能自由调工具、不接管会话。选中不等于授权，执行仍走原有权限与审批。">快速操作模型</H>
+			<label className="flex items-center gap-2 text-sm">
+				<input type="checkbox" aria-label="开启快速操作模型" checked={d.enabled} onChange={(e) => void save({ enabled: e.target.checked })} />
+				开启（关闭时完全沿用主模型）
+			</label>
+			{d.enabled && (
+				<div className="space-y-3 border-l border-line pl-3">
+					<label className="flex items-center gap-2 text-sm">
+						类型
+						<select className="pa-input" aria-label="快速模型类型" value={d.kind} onChange={(e) => void save({ kind: e.target.value as FastComputerDto["kind"] })}>
+							<option value="chat">快速模型（OpenAI 兼容替代，非 Jev）</option>
+							<option value="systemone">Jev（原生 SystemOne）</option>
+						</select>
+					</label>
+					{d.kind === "chat" ? (
+						<label className="flex items-center gap-2 text-sm">
+							模型
+							<select className="pa-input" aria-label="快速操作模型" value={d.provider && d.id ? `${d.provider}/${d.id}` : ""} onChange={(e) => { const [provider, ...rest] = e.target.value.split("/"); void save({ provider, id: rest.join("/") }); }}>
+								<option value="">未选择</option>
+								{models.map((m) => (
+									<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.providerName} · {m.name}</option>
+								))}
+							</select>
+						</label>
+					) : (
+						<>
+							<label className="flex items-center gap-2 text-sm">
+								baseURL
+								<input className="pa-input" aria-label="SystemOne baseURL" defaultValue={d.baseUrl} onBlur={(e) => e.target.value !== d.baseUrl && void save({ baseUrl: e.target.value })} />
+							</label>
+							<label className="flex items-center gap-2 text-sm">
+								模型
+								<input className="pa-input" aria-label="SystemOne 模型" defaultValue={d.model} onBlur={(e) => e.target.value !== d.model && void save({ model: e.target.value })} />
+							</label>
+							<p className="text-xs text-mut2">用环境变量 TYPESAFE_API_KEY 或 OPENROUTER_API_KEY 提供 Key；没有 Key 时快速路径会自动回到主模型。</p>
+						</>
+					)}
+					<label className="flex items-center gap-2 text-sm text-mut">
+						原生概率阈值
+						<input className="pa-input !w-20" type="number" step="0.05" min="0" max="1" aria-label="快速模型阈值" defaultValue={d.threshold} onBlur={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n >= 0 && n <= 1 && n !== d.threshold) void save({ threshold: n }); }} />
+					</label>
+					{err && <p className="text-xs text-red-500">{err}</p>}
+				</div>
+			)}
+		</section>
+	);
+}
 const SUBAGENT_LIMIT = { min: 1, max: 100 };
 /** 子代理任务侧设置：并发上限 + 最长运行时间（模型改由每个助理的候选池决定）。 */
 function SubagentTaskSettings() {
@@ -162,6 +234,7 @@ function ModelsTab() {
 				<H desc="助理的模型不能看图时（例如 DeepSeek），由识图模型替它看图：读图片、确认搜到的图是不是你要的。">识图模型</H>
 				<VisionModelPicker key={configured} />
 			</section>
+			<FastComputerSection />
 			<Fold
 				testId="provider-section"
 				icon={Boxes}

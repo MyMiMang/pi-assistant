@@ -7,6 +7,7 @@ import { classifyModelError, isRecoverableModelError } from "./model-errors.ts";
  */
 import { recordUsage } from "./usage/index.ts";
 import { imageExtensions } from "./image-gen/extension.ts";
+import { fastComputerExtension } from "./fast-computer/tool.ts";
 import { imageKey } from "./image-gen/index.ts";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -527,6 +528,8 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 		});
 	// 配置了图片模型 → 挂 generate_image（image-gen/extension.ts）
 	exts.push(...imageExtensions(agentId, conversationId, taskId));
+	// 快速操作模型（默认关闭；工具常挂，调用时按设置自判，关闭即零额外调用）
+	exts.push(fastComputerExtension({ agentId, conversationId, taskId }));
 	return exts;
 }
 /** 会话缓存键里的“本机操作”部分：开关、清单、档位、暂停、守护进程状态变化都会重建会话（权限本身仍每次调用动态求值） */
