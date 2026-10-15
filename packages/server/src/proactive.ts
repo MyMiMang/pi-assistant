@@ -190,7 +190,7 @@ export function nextHeartbeat(agentId: string, t = now()): number | null {
 	if (!a) return null;
 	const e = effective(a, t);
 	if (e.level === "off") return null;
-	let x = Math.max(t, (lastRun(agentId) ?? 0) + e.cadenceMin * 60_000);
+	let x = Math.max(t, (lastRun(agentId) ?? 0) + Math.max(FALLBACK_MIN_MS, e.cadenceMin * 60_000));
 	for (let i = 0; i < 14 * 24 * 4; i++) {
 		if (!inQuiet(x, e.cfg.quiet) && !(e.cfg.weekdaysOnly && isWeekend(x))) return x;
 		x += 15 * 60_000;
@@ -209,19 +209,33 @@ export interface SurfaceInput {
 	sourceRun?: string | null;
 }
 const norm = (s: string) => s.toLowerCase().replace(/[\s\p{P}]+/gu, "");
-export function surface(agentId: string, i: SurfaceInput, t = now()): { status: "delivered" | "inbox" | "held" | "rejected"; reason?: string; id?: string } {
+export interface SurfaceDecision {
+	status: "delivered" | "inbox" | "held" | "rejected";
+	reason?: string;
+	id: string;
+	key: string;
+	deliverNow: boolean;
+}
+/**
+ * 主动消息的准入判断（去重 / 免打扰 / 预算 / 静音 / 相关对话归属），只做判断与落库，不投递。
+ * `surface` 用它 + 投递；`advanceConversation` 用它 + 在相关对话里推进。
+ */
+function evaluateSurface(agentId: string, i: SurfaceInput, t = now()): SurfaceDecision {
+	const reject = (reason: string): SurfaceDecision => ({ status: "rejected", reason, id: "", key: "", deliverNow: false });
 	const a = agentOf(agentId);
-	if (!a) return { status: "rejected", reason: "助理不存在" };
+	if (!a) return reject("助理不存在");
 	const e = effective(a, t);
-	if (e.level === "off") return { status: "rejected", reason: "这个助理的主动提醒已关闭" };
+	if (e.level === "off") return reject("这个助理的主动提醒已关闭");
 	const title = i.title.trim().slice(0, 60);
 	const body = i.body.trim().slice(0, 600);
-	if (!title) return { status: "rejected", reason: "标题不能为空" };
+	if (!title) return reject("标题不能为空");
+	// 相关对话绑定：指定了对话就必须属于这个助理且不是隐藏的巡检对话，避免主动消息投到别的对话
+	if (i.conversationId && !db.prepare("SELECT 1 FROM conversations WHERE id = ? AND agent_id = ? AND COALESCE(hidden,0) = 0").get(i.conversationId, agentId)) return reject("指定的对话不属于这个助理");
 	const key = (i.dedupeKey?.trim() || `${i.kind}:${createHash("sha1").update(norm(title)).digest("hex").slice(0, 16)}`).slice(0, 200);
 	const dup = db.prepare("SELECT status, created_at FROM proactive_items WHERE agent_id = ? AND dedupe_key = ? ORDER BY created_at DESC LIMIT 1").get(agentId, key) as { status: string; created_at: number } | undefined;
-	if (dup?.status === "dismissed") return { status: "rejected", reason: "用户之前忽略过这件事，不再提" };
-	if (dup && t - dup.created_at < 3 * 86400_000) return { status: "rejected", reason: "这件事最近已经说过了" };
-	if ((e.cfg.muted[i.kind] ?? 0) > t) return { status: "rejected", reason: "用户暂时不想收到这一类提醒" };
+	if (dup?.status === "dismissed") return reject("用户之前忽略过这件事，不再提");
+	if (dup && t - dup.created_at < 3 * 86400_000) return reject("这件事最近已经说过了");
+	if ((e.cfg.muted[i.kind] ?? 0) > t) return reject("用户暂时不想收到这一类提醒");
 	const importance = Math.min(3, Math.max(1, Math.round(i.importance)));
 	const id = uid("pi");
 	let status: ItemRow["status"] = "new";
@@ -235,13 +249,14 @@ export function surface(agentId: string, i: SurfaceInput, t = now()): { status: 
 		id, agentId, i.kind, title, body, importance, key, status, reason, i.conversationId ?? null, after, i.sourceRun ?? null, t, t,
 	);
 	if (i.sourceRun) db.prepare("UPDATE proactive_runs SET surfaced = surfaced + 1 WHERE id = ?").run(i.sourceRun);
-	if (status === "new" && !reason) {
-		deliver(id, t);
-		changed(agentId);
-		return { status: "delivered", id };
-	}
+	if (status === "new" && !reason) return { status: "delivered", id, key, deliverNow: true };
+	return { status: status === "held" ? "held" : "inbox", reason: reason ?? undefined, id, key, deliverNow: false };
+}
+export function surface(agentId: string, i: SurfaceInput, t = now()): { status: "delivered" | "inbox" | "held" | "rejected"; reason?: string; id?: string } {
+	const d = evaluateSurface(agentId, i, t);
+	if (d.deliverNow) deliver(d.id, t);
 	changed(agentId);
-	return { status: status === "held" ? "held" : "inbox", reason: reason ?? undefined, id };
+	return { status: d.status, reason: d.reason, id: d.id || undefined };
 }
 
 /** 助理先开口的消息写到哪个对话：提醒自带的对话 → 用户最近 24 小时在渠道里比在 App 里聊得更近 → 那个渠道对话 → 当前对话 */
@@ -279,6 +294,115 @@ export function deliver(id: string, t = now()) {
 	const via = ["app", ...new Set(mirrors.map((m) => `channel:${m.channel_id}`))].join(",");
 	db.prepare("UPDATE proactive_items SET status = 'delivered', delivered_via = ?, delivered_at = ?, deliver_after = NULL, updated_at = ? WHERE id = ?").run(via, t, t, id);
 }
+
+// ---------------------------------------------------------------- 变化信号（程序检测，零模型）
+/**
+ * 主动巡检从「定时空巡」改成「变化驱动」：这里只做廉价的状态差分，把「值得关注的变化」落成信号，
+ * 只有存在未处理信号时才唤醒模型（无变化不调用模型）。信号只来自现有 bus 事件与轮询差分，不新造调度框架。
+ */
+db.exec(`CREATE TABLE IF NOT EXISTS proactive_signals (
+ id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT,
+ kind TEXT NOT NULL, dedupe_key TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL,
+ importance INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+ created_at INTEGER NOT NULL, handled_at INTEGER);
+CREATE INDEX IF NOT EXISTS proactive_signals_pending ON proactive_signals(agent_id, status, created_at);
+`);
+
+/** 同一 dedupeKey 3 天内不重复产生信号（与 proactive_items 的去重窗口一致）。 */
+export const SIGNAL_TTL_MS = 3 * 86400_000;
+/** 信号驱动巡检的最低间隔：避免连续变化把模型打得太频（变化再快也只到这个下限）。 */
+export const SIGNAL_MIN_GAP_MS = 15 * 60_000;
+/** 兜底巡检的最低间隔：没有变化信号时，有未闭环事项也不会比这更频繁（低频有界）。 */
+export const FALLBACK_MIN_MS = 4 * 3600_000;
+
+export interface SignalRow { id: string; agent_id: string; conversation_id: string | null; kind: string; dedupe_key: string; title: string; detail: string; importance: number; status: string; created_at: number; handled_at: number | null }
+
+/** 记一条「值得关注的变化」。返回是否新产生（同一件事在窗口内只产生一次）。 */
+export function recordSignal(agentId: string, s: { kind: string; conversationId?: string | null; title: string; detail?: string; importance?: number; dedupeKey: string }, t = now()): boolean {
+	const key = s.dedupeKey.slice(0, 200);
+	if (db.prepare("SELECT 1 FROM proactive_signals WHERE agent_id = ? AND dedupe_key = ? AND created_at >= ? LIMIT 1").get(agentId, key, t - SIGNAL_TTL_MS)) return false;
+	db.prepare("INSERT INTO proactive_signals(id, agent_id, conversation_id, kind, dedupe_key, title, detail, importance, status, created_at) VALUES(?,?,?,?,?,?,?,?,'pending',?)").run(
+		uid("sg"), agentId, s.conversationId ?? null, s.kind, key, (s.title ?? "").slice(0, 120), (s.detail ?? "").slice(0, 600), Math.min(3, Math.max(1, Math.round(s.importance ?? 2))), t,
+	);
+	changed(agentId);
+	return true;
+}
+export const listSignals = (agentId: string, status = "pending") => db.prepare("SELECT * FROM proactive_signals WHERE agent_id = ? AND status = ? ORDER BY created_at LIMIT 20").all(agentId, status) as unknown as SignalRow[];
+function markSignalsHandled(ids: string[], t: number) {
+	for (const id of ids) db.prepare("UPDATE proactive_signals SET status = 'handled', handled_at = ? WHERE id = ? AND status = 'pending'").run(t, id);
+}
+
+// ---------------------------------------------------------------- 推进（心跳 → 相关对话，走主会话正常权限）
+/**
+ * 主动推进：不只是往收件箱写一条，而是把「要不要在对应对话里继续帮用户推进」交给主会话。
+ * 关键约束：推进在**相关对话的主会话**里跑，权限按用户统一定义（完全权限免审批，其他档位审批）；
+ * 心跳任务本身没有额外权限。忙时同一件事合并到既有 steer，不同的事排队；去重/免打扰/预算仍走 evaluateSurface。
+ */
+export interface AdvanceInput { conversationId: string; kind: string; title: string; body: string; importance: number; dedupeKey?: string }
+export interface AdvanceResult { status: "started" | "steered" | "queued" | "inbox" | "held" | "rejected"; reason?: string; id?: string }
+type AdvanceHooks = {
+	busy: (agentId: string, conversationId: string) => boolean;
+	send: (agentId: string, conversationId: string, text: string) => Promise<"started" | "steered" | "none">;
+};
+let advanceHooks: AdvanceHooks | null = null;
+export function setAdvanceHooks(h: AdvanceHooks | null) { advanceHooks = h; }
+/** 每个对话正在推进的事件 key（忙时同一件事合并，不重复插回合） */
+const advancing = new Map<string, string>();
+/** 每个对话排队的推进（不同的事排队，等对话空闲再送） */
+const advanceQueue = new Map<string, { key: string; agentId: string; text: string; itemId: string }[]>();
+export const MAX_ADVANCE_QUEUE = 3;
+
+function markItemDelivered(id: string, via: string, t: number) {
+	db.prepare("UPDATE proactive_items SET status = 'delivered', delivered_via = ?, delivered_at = ?, deliver_after = NULL, updated_at = ? WHERE id = ?").run(via, t, t, id);
+}
+
+export async function advanceConversation(agentId: string, i: AdvanceInput, t = now()): Promise<AdvanceResult> {
+	if (!db.prepare("SELECT 1 FROM conversations WHERE id = ? AND agent_id = ? AND COALESCE(hidden,0) = 0").get(i.conversationId, agentId)) return { status: "rejected", reason: "指定的对话不属于这个助理" };
+	const d = evaluateSurface(agentId, { ...i, conversationId: i.conversationId }, t);
+	if (d.status !== "delivered") return { status: d.status, reason: d.reason, id: d.id || undefined };
+	if (!advanceHooks) { deliver(d.id, t); return { status: "inbox", reason: "当前无法在对话里推进，已放进收件箱", id: d.id }; }
+	const text = `（主动推进）后台巡检注意到一件事，你在相关对话里继续帮用户推进；需要用户决定或需要权限的操作按你平时的规则来，不确定就先问清楚，不要自行对外发送。\n\n${i.body.trim().slice(0, 600)}`;
+	if (advanceHooks.busy(agentId, i.conversationId)) {
+		// 忙：同一件事已经在推进 → 合并到既有 steer，不重复插回合；不同的事 → 排队
+		if (advancing.get(i.conversationId) === d.key) { markItemDelivered(d.id, "advance-merged", t); return { status: "steered", reason: "同一件事正在推进，已合并", id: d.id }; }
+		const q = advanceQueue.get(i.conversationId) ?? [];
+		if (q.length >= MAX_ADVANCE_QUEUE) { deliver(d.id, t); return { status: "inbox", reason: "这个对话在忙，排队已满，先放进收件箱", id: d.id }; }
+		q.push({ key: d.key, agentId, text, itemId: d.id });
+		advanceQueue.set(i.conversationId, q);
+		markItemDelivered(d.id, "advance-queued", t);
+		return { status: "queued", reason: "对话正忙，已排队", id: d.id };
+	}
+	const r = await advanceHooks.send(agentId, i.conversationId, text).catch(() => "none" as const);
+	if (r === "none") { deliver(d.id, t); return { status: "inbox", reason: "没能开始推进，已放进收件箱", id: d.id }; }
+	advancing.set(i.conversationId, d.key);
+	markItemDelivered(d.id, `advance-${r}`, t);
+	return { status: r === "started" ? "started" : "steered", id: d.id };
+}
+
+/** 对话空闲时把排队里的下一条推进送出去（runtime 在一轮结束、会话 settle 时调用）。 */
+export function drainAdvances(agentId: string, conversationId: string) {
+	advancing.delete(conversationId);
+	const q = advanceQueue.get(conversationId);
+	if (!q?.length || !advanceHooks) return;
+	if (advanceHooks.busy(agentId, conversationId)) return;
+	const next = q.shift()!;
+	if (!q.length) advanceQueue.delete(conversationId);
+	advancing.set(conversationId, next.key);
+	void advanceHooks.send(agentId, conversationId, next.text).then((r) => {
+		if (r === "none") db.prepare("UPDATE proactive_items SET status = 'new', delivered_via = NULL, delivered_at = NULL, reason = ?, updated_at = ? WHERE id = ?").run("没能开始推进，回到收件箱", now(), next.itemId);
+	}).catch(() => {});
+}
+
+// 变化信号来源：复用现有 bus 事件。只记「已经有专用唤醒」以外的真正卡点：
+// 子代理失败/停滞已有 notify 会唤醒主会话，不再记信号（避免同一件事多花一次模型回合）；
+// 后台任务失败目前只有推送通知、不会唤醒模型，是真正的缺口，记一条信号交给变化驱动的巡检。
+bus.on((e) => {
+	const ev = e as unknown as { type: string; task?: { id: string; agent_id: string; conversation_id: string | null; title: string; status: string; error?: string | null; kind?: string | null } };
+	if (ev.type === "task.updated" && ev.task && ev.task.kind !== "heartbeat" && ev.task.status === "failed") {
+		const t = ev.task;
+		recordSignal(t.agent_id, { kind: "task_failed", conversationId: t.conversation_id, title: `后台任务失败：${t.title}`, detail: t.error ?? "", importance: 3, dedupeKey: `task:${t.id}:failed` });
+	}
+});
 
 export function listItems(opts: { agentId?: string; all?: boolean } = {}) {
 	const where: string[] = [];
@@ -384,8 +508,30 @@ const clip = (s: string | null | undefined, n = 160) => {
 	const v = (s ?? "").replace(/\s+/g, " ").trim();
 	return v.length > n ? `${v.slice(0, n)}…` : v;
 };
+/** 变化信号的差量提示（不是整份 situation）：只列后台检测到的变化 + 规则，让模型判断值不值得介入/推进。 */
+function signalPrompt(agentId: string, signals: SignalRow[], t: number): string {
+	const a = agentOf(agentId)!;
+	const e = effective(a, t);
+	return [
+		`现在是 ${fmt(t)}（${TZ}）。这是一次主动巡检：后台检测到有值得关注的变化（没有人在和你聊天）。`,
+		"",
+		"## 需要关注的信号（增量，不是完整快照）",
+		...signals.map((s) => `- [${s.kind}] ${s.title}${s.detail ? `：${clip(s.detail, 200)}` : ""}${s.conversation_id ? `（相关对话 ${s.conversation_id}）` : ""}`),
+		"",
+		"## 规则",
+		"- 判断这些变化里有没有真正值得打扰用户、或值得在对应对话里推进的事。没有就什么都不做，回复“无”。",
+		"- 值得告诉用户：用 proactive_surface（可以带 conversationId 指定写进哪个对话）；同一件事用稳定的 dedupeKey。",
+		"- 需要推进（不只是通知）：用 proactive_advance，指定 conversationId；它会在那个对话里用正常权限继续做事（心跳本身没有额外权限）。",
+		`- 主动等级：${e.effectiveLevel ?? e.level}；今天还能推送 ${Math.max(0, e.budget - deliveredToday(agentId, t))} 条。`,
+		"- 不要对每条日常消息都唤醒；只处理上面这些信号。重要度不够 / 免打扰 / 已推送过的，系统会自己拦下。",
+		"- 这是后台巡检：不能直接执行需要批准的操作，也不能向用户提问；需要推进就用 proactive_advance。",
+		"- 最后用一句话说明你做了什么（没有就回复“无”）。",
+	].join("\n");
+}
 /** 给助理的“现在的情况” */
-export function situation(agentId: string, reason: string, extra?: { followup?: { note: string; conversationId: string | null; createdAt: number } }, t = now()) {
+export function situation(agentId: string, reason: string, extra?: { followup?: { note: string; conversationId: string | null; createdAt: number }; signals?: SignalRow[] }, t = now()) {
+	// 变化驱动：只带差量（信号），不重载整份快照——这是与旧「定时空巡」最大的差别（省 token）。
+	if (reason === "signal" && extra?.signals?.length) return signalPrompt(agentId, extra.signals, t);
 	const a = agentOf(agentId)!;
 	const e = effective(a, t);
 	const since = lastRun(agentId) ?? t - 24 * 3600_000;
@@ -438,12 +584,12 @@ export function situation(agentId: string, reason: string, extra?: { followup?: 
 	].join("\n");
 }
 
-export function runHeartbeat(agentId: string, reason: "heartbeat" | "followup" | "brief" | "manual", extra?: Parameters<typeof situation>[2], t = now()) {
+export function runHeartbeat(agentId: string, reason: "heartbeat" | "followup" | "brief" | "manual" | "signal", extra?: Parameters<typeof situation>[2], t = now()) {
 	if (!spawner) throw new Error("运行时尚未就绪");
 	if (running(agentId)) return null;
 	const runId = uid("pr");
 	db.prepare("INSERT INTO proactive_runs(id, agent_id, reason, status, started_at) VALUES(?,?,?,?,?)").run(runId, agentId, reason === "manual" ? "heartbeat" : reason, "running", t);
-	const title = { heartbeat: "主动巡检", manual: "主动巡检", followup: "跟进", brief: "每日简报" }[reason];
+	const title = { heartbeat: "主动巡检", manual: "主动巡检", followup: "跟进", brief: "每日简报", signal: "主动巡检" }[reason];
 	const task = spawner(agentId, title, situation(agentId, reason, extra, t), { conversationId: hiddenConversation(agentId), kind: "heartbeat" });
 	db.prepare("UPDATE proactive_runs SET task_id = ? WHERE id = ?").run(task.id, runId);
 	changed(agentId);
@@ -462,6 +608,12 @@ bus.on((e) => {
 // ---------------------------------------------------------------- 调度
 /** 有过对话的助理才巡检（新建还没用过的助理没什么可看的，也省钱） */
 const used = (agentId: string) => !!db.prepare("SELECT 1 FROM messages WHERE agent_id = ? AND role = 'user' LIMIT 1").get(agentId);
+/** 可能存在未闭环的事（未完成/失败的内部任务、待回应的请求、最近用户说过话）→ 低频兜底仍要覆盖，不为了省 token 砍掉主动性。 */
+function hasUnclosed(agentId: string, t: number) {
+	if (db.prepare("SELECT 1 FROM tasks WHERE agent_id = ? AND (status IN ('queued','running') OR (status = 'failed' AND finished_at >= ?)) LIMIT 1").get(agentId, t - 3 * 86400_000)) return true;
+	if (db.prepare("SELECT 1 FROM requests WHERE agent_id = ? AND status = 'pending' LIMIT 1").get(agentId)) return true;
+	return !!db.prepare("SELECT 1 FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.agent_id = ? AND m.role = 'user' AND COALESCE(c.hidden,0) = 0 AND m.created_at >= ? LIMIT 1").get(agentId, t - 3 * 86400_000);
+}
 
 export function tickProactive(t = now()) {
 	const fired: string[] = [];
@@ -501,9 +653,19 @@ export function tickProactive(t = now()) {
 				continue;
 			}
 		}
-		// 4. 常规巡检
+		// 4. 变化信号：有值得关注的变化就即时唤醒（不再无变化空巡）；同一件事在窗口内只产生一次
 		if (!used(a.id)) continue;
+		const signals = listSignals(a.id, "pending");
+		if (signals.length && !inQuiet(t, e.cfg.quiet) && deliveredToday(a.id, t) < e.budget && t - (lastRun(a.id) ?? 0) >= SIGNAL_MIN_GAP_MS) {
+			if (runHeartbeat(a.id, "signal", { signals }, t)) {
+				markSignalsHandled(signals.map((s) => s.id), t);
+				fired.push(`${a.id}:signal`);
+			}
+			continue;
+		}
+		// 5. 兜底巡检：只有可能存在未闭环的事，且到了低频兜底间隔，才唤醒一次（避免为了省 token 砍掉主动性）
 		if (deliveredToday(a.id, t) >= e.budget) continue; // 今天额度用完：不再巡检（省钱，也不会再打扰）
+		if (!hasUnclosed(a.id, t)) continue;
 		const next = nextHeartbeat(a.id, t);
 		if (next !== null && next <= t) if (runHeartbeat(a.id, "heartbeat", undefined, t)) fired.push(`${a.id}:heartbeat`);
 	}

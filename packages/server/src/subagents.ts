@@ -7,6 +7,7 @@ import { configuredModels, modelProfiles } from "./rooms/model-pick.ts";
 import { inferNeeds, pickModel } from "./model-profile.ts";
 import { isRecoverableModelError } from "./model-errors.ts";
 import { requests } from "./requests.ts";
+import { subagentWakeOwner } from "./task-waits.ts";
 
 export type ModelRef = { provider: string; id: string };
 export type SubagentStatus = "queued" | "running" | "stalled" | "done" | "failed" | "stopped" | "timeout" | "lost";
@@ -374,6 +375,14 @@ export async function checkSubagents(ts = Date.now()) {
 	await deliverSubagentEvents();
 }
 const delivering = new Set<string>();
+/** 会触发一次模型回合的事件：终态 + 停滞告警。`resumed` 只更新卡片（changed 已做），不再单独唤醒。 */
+const WAKE_KINDS = new Set(["done", "failed", "stopped", "timeout", "lost", "stalled"]);
+/** 终态：可能已由一条 task_wait 负责唤醒，需要跨机制去重。 */
+const TERMINAL_KINDS = new Set(["done", "failed", "stopped", "timeout", "lost"]);
+const clip = (s: string, n: number) => {
+	const v = (s ?? "").replace(/\s+/g, " ").trim();
+	return v.length > n ? `${v.slice(0, n)}…` : v;
+};
 export async function deliverSubagentEvents() {
 	if (!driver) return;
 	const events = db.prepare("SELECT * FROM subagent_events WHERE delivered_at IS NULL ORDER BY created_at, rowid").all() as unknown as SubagentEvent[];
@@ -381,6 +390,22 @@ export async function deliverSubagentEvents() {
 		if (delivering.has(e.id)) continue;
 		const r = getSubagent(e.subagent_id);
 		if (!r || !db.prepare("SELECT 1 FROM conversations WHERE id = ?").get(r.conversation_id)) continue;
+		// resumed 只更新卡片，不再起一次模型回合：直接标记已投递，避免每 30 秒重试
+		if (!WAKE_KINDS.has(e.kind)) {
+			db.prepare("UPDATE subagent_events SET delivered_at = ? WHERE id = ?").run(Date.now(), e.id);
+			continue;
+		}
+		// 跨机制去重：终态事件若已由一条 task_wait 负责唤醒，就不再用 notify 重复唤醒。
+		// delivered → 等待已送达，这里只收尾；pending → 让位（等它送达后再收尾）；none（无等待 / 已取消 / 投递彻底失败）→ notify 投递，保证不丢。
+		if (TERMINAL_KINDS.has(e.kind)) {
+			const owner = subagentWakeOwner(r.id, r.agent_id);
+			if (owner === "delivered") {
+				db.prepare("UPDATE subagent_events SET delivered_at = ? WHERE id = ?").run(Date.now(), e.id);
+				db.prepare("UPDATE subagents SET notified_at = ? WHERE id = ?").run(Date.now(), r.id);
+				continue;
+			}
+			if (owner === "pending") continue;
+		}
 		delivering.add(e.id);
 		void driver.notify(r, e).then(() => {
 			db.prepare("UPDATE subagent_events SET delivered_at = ? WHERE id = ?").run(Date.now(), e.id);

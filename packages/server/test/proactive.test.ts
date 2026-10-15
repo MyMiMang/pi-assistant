@@ -27,6 +27,7 @@ const reset = () => {
 	db.prepare("DELETE FROM proactive_items").run();
 	db.prepare("DELETE FROM proactive_runs").run();
 	db.prepare("DELETE FROM proactive_followups").run();
+	db.prepare("DELETE FROM proactive_signals").run();
 	db.prepare("UPDATE agents SET proactivity = NULL, proactive_cfg = NULL WHERE id = 'pa'").run();
 	spawned.length = 0;
 };
@@ -130,8 +131,9 @@ test("巡检调度：没用过的助理不巡检；工作日按间隔巡检；�
 	assert.match(spawned[0].instructions, /宁缺毋滥/);
 	assert.deepEqual(P.tickProactive(MON10 + 60_000), [], "上一次还在运行");
 	finishRuns();
-	assert.deepEqual(P.tickProactive(MON10 + 30 * 60_000), [], "没到间隔（normal = 2 小时）");
-	assert.deepEqual(P.tickProactive(MON10 + 2 * 3600_000 + 60_000), ["pa:heartbeat"]);
+	assert.deepEqual(P.tickProactive(MON10 + 30 * 60_000), [], "没到兜底间隔");
+	assert.deepEqual(P.tickProactive(MON10 + 2 * 3600_000 + 60_000), [], "2 小时不再空巡（变化驱动，兜底最低 4 小时）");
+	assert.deepEqual(P.tickProactive(MON10 + 4 * 3600_000 + 60_000), ["pa:heartbeat"], "到低频兜底间隔才巡检");
 	finishRuns();
 	assert.deepEqual(P.tickProactive(T(17, 11)), [], "星期六");
 	P.saveProactive("pa", { cfg: { weekdaysOnly: false } });
@@ -166,6 +168,7 @@ test("主动 ≠ 自主：巡检任务里的审批一律拒绝、不弹卡片；
 	const r = await requests.approval("pa", "hb1", "email_send", {}, "给客户发邮件", "high");
 	assert.equal(r.approved, false);
 	assert.match(r.note!, /主动巡检/);
+	assert.match(r.note!, /proactive_advance/, "心跳不给额外权限，要推进就通过相关对话的主会话（正常权限路径）");
 	const q = await requests.question("pa", "hb1", "要不要？", ["要", "不要"], false);
 	assert.match(q.answer!, /不能向用户提问/);
 	assert.equal((db.prepare("SELECT COUNT(*) AS n FROM messages WHERE role = 'card'").get() as { n: number }).n, before);
@@ -189,4 +192,99 @@ test("隐藏的巡检对话不出现在对话列表里", async () => {
 	const id = P.hiddenConversation("pa");
 	assert.equal(P.hiddenConversation("pa"), id);
 	assert.ok(!listConversations("pa").some((c) => c.id === id));
+});
+
+// ---------------------------------------------------------------- 变化驱动 / 相关对话 / 主动推进
+test("变化驱动：无信号不空巡；有信号才唤醒一次并只带差量，标记已处理、窗口内不重复", () => {
+	reset();
+	P.saveProactive("pa", { level: "normal" });
+	db.prepare("DELETE FROM messages WHERE agent_id = 'pa'").run();
+	// 没有用户消息、没有任务、没有信号 → 即使过了很久也不唤醒（零模型）
+	assert.deepEqual(P.tickProactive(MON10 + 24 * 3600_000), []);
+	// 有用户消息（可能未闭环）→ 低频兜底仍会覆盖，避免为了省 token 砍掉主动性
+	db.prepare("INSERT INTO messages(id, agent_id, conversation_id, role, content, status, created_at, updated_at) VALUES('msig','pa','cwx','user','周五要交季度报告','done',?,?)").run(MON10 - 3600_000, MON10 - 3600_000);
+	assert.deepEqual(P.tickProactive(MON10), ["pa:heartbeat"]);
+	finishRuns();
+	// 变化信号：即使没到兜底间隔也即时唤醒，且只带差量（不是整份快照）
+	assert.equal(P.recordSignal("pa", { kind: "task_failed", conversationId: "cwx", title: "后台任务失败：导出报表", detail: "磁盘满了", importance: 3, dedupeKey: "task:t-x:failed" }), true);
+	assert.equal(P.recordSignal("pa", { kind: "task_failed", title: "又一次", importance: 3, dedupeKey: "task:t-x:failed" }), false, "同一 key 窗口内不重复产生");
+	assert.deepEqual(P.tickProactive(MON10 + P.SIGNAL_MIN_GAP_MS), ["pa:signal"]);
+	const s = spawned.at(-1)!;
+	assert.equal(s.kind, "heartbeat");
+	assert.match(s.instructions, /需要关注的信号/);
+	assert.match(s.instructions, /磁盘满了/);
+	assert.match(s.instructions, /不是完整快照/);
+	assert.equal(P.listSignals("pa", "pending").length, 0, "信号已标记已处理");
+	finishRuns();
+	// 已处理的信号不会再唤醒
+	assert.deepEqual(P.tickProactive(MON10 + P.SIGNAL_MIN_GAP_MS + 60_000), []);
+});
+
+test("bus 信号：后台任务失败记信号；正常完成 / 心跳任务 / 子代理事件不记（避免与 notify 双唤醒）", async () => {
+	reset();
+	const { bus } = await import("../src/bus.ts");
+	db.prepare("INSERT INTO tasks(id, agent_id, conversation_id, title, instructions, status, created_at, kind) VALUES('t-bus','pa','cwx','导出','x','running',?,NULL)").run(now());
+	bus.emit({ type: "task.updated", task: { id: "t-bus", agent_id: "pa", conversation_id: "cwx", title: "导出", status: "failed", error: "磁盘满了", kind: null } as never });
+	assert.equal(P.listSignals("pa").length, 1);
+	assert.match(P.listSignals("pa")[0].title, /失败/);
+	bus.emit({ type: "task.updated", task: { id: "t-bus2", agent_id: "pa", conversation_id: "cwx", title: "统计", status: "done", kind: null } as never });
+	assert.equal(P.listSignals("pa").length, 1, "正常完成不产生信号（已有 notify + 下一轮注入）");
+	bus.emit({ type: "task.updated", task: { id: "t-hb", agent_id: "pa", conversation_id: "cwx", title: "主动巡检", status: "failed", kind: "heartbeat" } as never });
+	assert.equal(P.listSignals("pa").length, 1, "心跳任务本身不产生信号");
+	bus.emit({ type: "subagent.updated", subagent: { id: "sa-x", agent_id: "pa", conversation_id: "cwx", task: "整理报价", status: "failed", error_reason: "模型报错" } as never });
+	assert.equal(P.listSignals("pa").length, 1, "子代理终态已有 notify 唤醒，不重复记信号");
+});
+
+test("相关对话绑定：surface 指定对话必须属于这个助理；不属于则拒绝，不会投到别的对话", () => {
+	reset();
+	P.saveProactive("pa", { level: "high" });
+	db.prepare("INSERT OR REPLACE INTO conversations(id, agent_id, title, created_at, updated_at) VALUES('c-other','other','别的',?,?)").run(now(), now());
+	const bad = P.surface("pa", { kind: "reminder", title: "走错门", body: "x", importance: 3, conversationId: "c-other" }, MON10);
+	assert.equal(bad.status, "rejected");
+	assert.match(bad.reason!, /不属于/);
+	db.prepare("INSERT OR REPLACE INTO conversations(id, agent_id, title, created_at, updated_at) VALUES('c-mine','pa','我的',?,?)").run(now(), now());
+	const r = P.surface("pa", { kind: "reminder", title: "回到正题", body: "b", importance: 3, conversationId: "c-mine" }, MON10);
+	assert.equal(r.status, "delivered");
+	assert.ok(db.prepare("SELECT 1 FROM messages WHERE conversation_id='c-mine' AND json_extract(meta,'$.proactive.id')=?").get(r.id!));
+});
+
+test("主动推进：空闲→在相关对话开始；忙时排队、同一件事去重合并、队满回收件箱、drain 逐个送出", async () => {
+	reset();
+	P.saveProactive("pa", { level: "high" });
+	db.prepare("INSERT OR REPLACE INTO conversations(id, agent_id, title, created_at, updated_at) VALUES('c-adv','pa','推进',?,?)").run(now(), now());
+	let busy = false;
+	const sent: string[] = [];
+	P.setAdvanceHooks({ busy: () => busy, send: async (_a, _c, text) => { sent.push(text); return "started"; } });
+	try {
+		const a = await P.advanceConversation("pa", { conversationId: "c-adv", kind: "followup", title: "跟进报告", body: "帮用户把报告导出发过去", importance: 3, dedupeKey: "adv:1" });
+		assert.equal(a.status, "started");
+		assert.equal(sent.length, 1);
+		assert.match(sent[0], /主动推进/);
+		// 同一件事在窗口内去重：不会重复推进
+		const dup = await P.advanceConversation("pa", { conversationId: "c-adv", kind: "followup", title: "跟进报告", body: "x", importance: 3, dedupeKey: "adv:1" });
+		assert.equal(dup.status, "rejected");
+		assert.equal(sent.length, 1, "同一件事不重复插回合");
+		// 忙：不同的事排队
+		busy = true;
+		const q = await P.advanceConversation("pa", { conversationId: "c-adv", kind: "reminder", title: "第二件", body: "b2", importance: 3, dedupeKey: "adv:2" });
+		assert.equal(q.status, "queued");
+		assert.equal(sent.length, 1, "忙时不直接插回合");
+		// 队满：再塞 3 件，只放得下 2 件（上限 3），多余的回收件箱
+		const results = [];
+		for (let i = 3; i <= 5; i++) results.push((await P.advanceConversation("pa", { conversationId: "c-adv", kind: "other", title: `第${i}件`, body: "b", importance: 3, dedupeKey: `adv:${i}` })).status);
+		assert.deepEqual(results, ["queued", "queued", "inbox"], "排队上限 3，超出放进收件箱");
+		// 空闲后 drain 逐个送出
+		busy = false;
+		P.drainAdvances("pa", "c-adv");
+		await new Promise((r) => setTimeout(r, 0));
+		assert.equal(sent.length, 2);
+		P.drainAdvances("pa", "c-adv");
+		await new Promise((r) => setTimeout(r, 0));
+		assert.equal(sent.length, 3);
+		P.drainAdvances("pa", "c-adv");
+		await new Promise((r) => setTimeout(r, 0));
+		assert.equal(sent.length, 4);
+	} finally {
+		P.setAdvanceHooks(null);
+	}
 });

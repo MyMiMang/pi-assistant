@@ -93,6 +93,11 @@
 - 运行机制已符合：`runtime.ts` 的 `tasks.run` 是独立 Pi session，`promptSession` 跑完工具循环、settle 即 `done` 并释放 session，**不是常驻模型循环**；`proactive.ts` 的跟进落 `proactive_followups` 表，本地 timer（`tickProactive`）到点才 `runHeartbeat`（一次模型调用）。
 - 常用任务可展示**累计用量**（按真实模型调用累加）；**文档和界面不能按运行时长估算 / 计算 token**。
 
+**token 效率与主动能力（2026-10-22，`proactive-efficiency` 树，待负责人 cherry-pick）**：
+- 子代理终态「双唤醒」修复：同一子代理终态只唤醒一次（`task_wait` 与自动 `notify` 跨机制去重，复用持久投递状态；等待取消 / 投递彻底失败时 notify 补位，不丢不重）。`resumed` 只更新卡片不再唤醒；notify 只带短标题 + 结果摘要，全文用 `subagent_list` 按需查。DESIGN §21.7。
+- 主动巡检改为**变化驱动**：复用 bus 信号（后台任务失败等尚无专用唤醒的卡点）+ 已有跟进 / 定时；无变化不空巡（零模型）；有未闭环事项时保留低频有界兜底（最低 4 小时）；提示只带信号差量。`proactive_surface` 可指定相关对话；新增心跳专用 `proactive_advance`，通过相关对话的主会话按用户统一定义走正常权限（完全权限免审批、其他档位审批），忙时同事件合并、异任务排队（每对话 ≤3）。DESIGN §14.12 / §23.8。
+- 未做：识图 / 图片生成用量补齐（公开接口未暴露真实 usage，见状态报告）；记忆块缓存与截图累积未实测，不盲改。
+
 ## 待用户决定
 
 | 事项 | 状态 | 说明 |

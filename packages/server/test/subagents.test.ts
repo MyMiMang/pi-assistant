@@ -7,6 +7,7 @@ const { db, getSetting, setSetting } = await import("../src/db.ts");
 const { initModels } = await import("../src/models.ts");
 await initModels();
 const s = await import("../src/subagents.ts");
+await import("../src/task-waits.ts"); // 建 task_waits 表：终态唤醒跨机制去重会查它
 const { createConversation } = await import("../src/conversations.ts");
 const { listMessages, insertMessage } = await import("../src/messages.ts");
 const { recordUsage, usageSummary } = await import("../src/usage/index.ts");
@@ -404,4 +405,98 @@ test("切换模型记录：同一任务换模型只更新同一行，并写一�
 	assert.equal(db.prepare("SELECT COUNT(*) n FROM messages WHERE json_extract(meta, '$.subagentId') = ?").get(r.id)?.n, 1, "卡片只有一张");
 	void s.stopSubagent(r.id);
 	void cleanup();
+});
+
+// ---------------------------------------------------------------- 终态唤醒跨机制去重（notify 与 task_wait）
+/** 直接写一条 task_wait（避免依赖 task-waits 的注册/触发时序），用来控制终态去重的各种状态。 */
+function makeWait(id: string, subagentId: string, status: string, delivery: string | null) {
+	db.prepare(
+		"INSERT OR REPLACE INTO task_waits(id, agent_id, conversation_id, target_kind, target_ref, reason, status, check_interval_ms, next_check_at, due_at, delivery_status, delivery_attempts, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+	).run(id, "sub-test", conv, "subagent", subagentId, "等它完成", status, 60_000, null, null, delivery, 0, Date.now(), Date.now());
+}
+const clearWaits = () => db.prepare("DELETE FROM task_waits").run();
+
+/** 返回一个「有等待登记」的已终态子代理（bus 事件已让等待 fired，等待还没投递）。 */
+function terminalWithWait(notify: () => Promise<void>) {
+	clearWaits();
+	let notified = 0;
+	manualDriver(async () => { notified++; await notify(); });
+	const r = spawn();
+	return { r, notified: () => notified };
+}
+
+test("终态去重：有等待时 notify 让位（等待还没送达 → 事件不标记已投递），等待送达后只收尾", async () => {
+	setSettings(10);
+	const { r, notified } = terminalWithWait(async () => {});
+	await tick();
+	makeWait("tw-dedup-1", r.id, "waiting", null);
+	s.finishSubagent(r.id, "done", "", "结果");
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(notified(), 0, "等待负责唤醒时 notify 不重复唤醒");
+	const before = events(r.id)[0] as { delivered_at: number | null };
+	assert.equal(before.delivered_at, null, "等待还没送达：事件不标记已投递，留待等待路径收尾");
+	assert.equal((db.prepare("SELECT status FROM task_waits WHERE id='tw-dedup-1'").get() as { status: string }).status, "fired", "bus 事件已把等待置为 fired");
+	// 模拟等待投递成功（task_waits.markDelivered 做的事）
+	db.prepare("UPDATE task_waits SET delivery_status='delivered', delivered_at=? WHERE id='tw-dedup-1'").run(Date.now());
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(notified(), 0, "等待已送达：notify 仍不唤醒，避免双回合");
+	assert.ok((events(r.id)[0] as { delivered_at: number | null }).delivered_at, "事件被收尾标记已投递");
+	assert.ok(s.getSubagent(r.id)!.notified_at, "notified_at 已更新");
+	await cleanup();
+});
+
+test("终态去重：等待已送达（fired+delivered）时 notify 直接收尾，不再唤醒", async () => {
+	setSettings(10);
+	const { r, notified } = terminalWithWait(async () => {});
+	await tick();
+	makeWait("tw-dedup-2", r.id, "fired", "delivered");
+	s.finishSubagent(r.id, "done", "", "结果");
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(notified(), 0);
+	assert.ok((events(r.id)[0] as { delivered_at: number | null }).delivered_at, "事件直接收尾");
+	await cleanup();
+});
+
+test("终态去重：等待被取消 / 投递彻底失败 → notify 补位，终态不丢", async () => {
+	setSettings(10);
+	const { r, notified } = terminalWithWait(async () => {});
+	await tick();
+	makeWait("tw-dedup-3", r.id, "cancelled", null);
+	s.finishSubagent(r.id, "failed", "模型报错");
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(notified(), 1, "等待已取消：notify 补位，终态不丢");
+	assert.ok((events(r.id)[0] as { delivered_at: number | null }).delivered_at);
+	// 投递彻底失败的等待也不再拥有唤醒
+	setSettings(10);
+	const { r: r2, notified: n2 } = terminalWithWait(async () => {});
+	await tick();
+	makeWait("tw-dedup-4", r2.id, "fired", "failed");
+	s.finishSubagent(r2.id, "done", "", "结果");
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(n2(), 1, "等待投递失败：notify 补位，不丢");
+	await cleanup();
+});
+
+test("resumed 只更新卡片：不触发模型回合，事件直接标记已投递", async () => {
+	setSettings(10);
+	clearWaits();
+	let notified = 0;
+	manualDriver(async () => { notified++; });
+	const r = spawn();
+	await tick();
+	s.subagentActivity(r.id, 0);
+	await s.checkSubagents(Date.now() + 181_000); // → stalled（会唤醒，有价值告警）
+	assert.equal(notified, 1, "stalled 保留告警");
+	s.subagentActivity(r.id); // → resumed（只更新卡片）
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(notified, 1, "resumed 不再单独唤醒");
+	const resumed = events(r.id).find((e) => (e as { kind: string }).kind === "resumed") as { delivered_at: number | null };
+	assert.ok(resumed.delivered_at, "resumed 事件直接标记已投递，不再重试");
+	await cleanup();
 });

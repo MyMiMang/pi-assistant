@@ -198,6 +198,24 @@ export const listWaits = (agentId?: string, opts: { status?: WaitStatus } = {}) 
 };
 export const getWait = (id: string) => db.prepare("SELECT * FROM task_waits WHERE id = ?").get(id) as TaskWait | undefined;
 
+/**
+ * 跨机制去重：这个子代理的终态唤醒是否已由一条 task_wait 负责（复用 task_waits 的持久投递状态）。
+ *  - `none`：没有等待（或等待已取消 / 投递彻底失败）→ 走子代理自身的自动 notify。
+ *  - `pending`：等待已登记或正在投递 → notify 让位，等它送达后再收尾，避免「终态唤醒两次」。
+ *  - `delivered`：等待已送达 → notify 只收尾（标记事件已投递），不再唤醒。
+ * 只看 waiting / fired：取消掉的等待不再拥有唤醒，交回 notify，保证不丢也不重。
+ */
+export function subagentWakeOwner(subagentId: string, agentId: string): "none" | "pending" | "delivered" {
+	const rows = db.prepare("SELECT status, delivery_status FROM task_waits WHERE target_kind = 'subagent' AND target_ref = ? AND agent_id = ? AND status IN ('waiting','fired')").all(subagentId, agentId) as { status: string; delivery_status: string | null }[];
+	let pending = false;
+	for (const r of rows) {
+		if (r.status === "fired" && r.delivery_status === "delivered") return "delivered";
+		// waiting 一定还没投递；fired 里 pending / 还没写过投递状态（旧数据）都算待投递；failed 不再拥有唤醒
+		if (r.status === "waiting" || r.delivery_status === null || r.delivery_status === "pending") pending = true;
+	}
+	return pending ? "pending" : "none";
+}
+
 /** 登记一次等待（同一个会话对同一个目标只留一条 waiting，避免重复等待重复唤醒）。 */
 export function registerWait(agentId: string, conversationId: string | null, input: RegisterWaitInput): TaskWait {
 	const reason = (input.reason ?? "").trim();

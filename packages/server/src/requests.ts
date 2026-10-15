@@ -29,9 +29,10 @@ export interface RequestRow {
 }
 
 function create(kind: "approval" | "question", agentId: string, taskId: string | null, toolName: string | null, payload: Record<string, unknown>, title: string, conversationId?: string | null) {
-	// 主动巡检（后台、没人在聊）：主动 ≠ 自主执行。需要批准的操作一律拒绝、不弹卡片，也不打扰用户提问
+	// 主动巡检（后台、没人在聊）：不给心跳额外权限。需要批准的操作不在巡检任务里直接执行，也不弹卡片、不打扰用户提问；
+	// 要推进就用 proactive_advance 到相关对话的主会话里做（那里走用户平时的权限规则）。
 	if (taskId && (db.prepare("SELECT kind FROM tasks WHERE id = ?").get(taskId) as { kind: string | null } | undefined)?.kind === "heartbeat")
-		return Promise.resolve<{ approved?: boolean; answer?: string; note?: string; scope?: "task" }>(kind === "approval" ? { approved: false, note: "主动巡检中不能执行需要批准的操作。如果值得做，用 proactive_surface 向用户提议。" } : { answer: "（主动巡检中不能向用户提问；需要用户决定的事请用 proactive_surface 提出）" });
+		return Promise.resolve<{ approved?: boolean; answer?: string; note?: string; scope?: "task" }>(kind === "approval" ? { approved: false, note: "主动巡检本身没有额外权限，不能直接执行需要批准的操作。如果值得做，用 proactive_advance 到相关对话里推进（走用户平时的权限规则），或用 proactive_surface 提议。" } : { answer: "（主动巡检中不能向用户提问；需要用户决定的事请用 proactive_surface 提出，或在相关对话里推进）" });
 	// 完全权限：应用层不弹审批，直接放行（含硬性保护动作）。只影响审批，不影响上面的主动巡检限制，也不影响提问。
 	// 凭据路径 deny、暂停 / 降权 / 关闭（hostFileAccess 每次求值立刻变假）与宿主系统权限弹窗、外部验证码都不受影响。
 	if (kind === "approval" && hostFileAccess(agentId)) return Promise.resolve<{ approved?: boolean; answer?: string; note?: string; scope?: "task" }>({ approved: true, note: "完全权限：应用层不弹审批，已自动放行" });

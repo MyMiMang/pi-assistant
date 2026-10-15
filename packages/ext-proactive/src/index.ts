@@ -14,10 +14,14 @@ export interface SurfaceInput {
 	body: string;
 	importance: 1 | 2 | 3;
 	dedupeKey?: string;
+	/** 写进哪个相关对话（不填 = 系统按最近的对话 / 渠道选）；只能填当前助理自己的非隐藏对话 */
+	conversationId?: string;
 }
 export interface ProactiveHost {
 	/** 只有主动巡检任务里才有 */
 	surface?(i: SurfaceInput): { status: "delivered" | "inbox" | "held" | "rejected"; reason?: string };
+	/** 主动推进：在相关对话的主会话里继续做事（走正常权限，心跳本身没有额外权限）。只有主动巡检里才有。 */
+	advance?(i: { kind: SurfaceKind; title: string; body: string; importance: 1 | 2 | 3; dedupeKey?: string; conversationId: string }): Promise<{ status: "started" | "steered" | "queued" | "inbox" | "held" | "rejected"; reason?: string }>;
 	schedule(i: { dueAt: number; note: string }): { id: string; dueAt: number };
 	list(): { id: string; dueAt: number; note: string }[];
 	cancel(id: string): boolean;
@@ -83,11 +87,34 @@ export function proactiveExtension(host: ProactiveHost) {
 				body: Type.String({ description: "简短正文：发生了什么、为什么现在告诉用户、建议怎么做（≤300 字，像朋友发消息一样自然）" }),
 				importance: Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3)], { description: "1 可有可无（只进收件箱）/ 2 值得知道 / 3 重要且有时效" }),
 				dedupeKey: Type.Optional(Type.String({ description: "去重键：同一件事用同一个键（例如 email:<Message-ID>、task:<id>、remind:<事>）" })),
+				conversationId: Type.Optional(Type.String({ description: "写进哪个相关对话（不填由系统选）；只能填这个助理自己的非隐藏对话" })),
 			}),
 			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 			async execute(_id, p) {
 				const r = surface(p as unknown as SurfaceInput);
 				const msg = { delivered: "已告诉用户。", inbox: "已放进收件箱（没有推送）。", held: "已放进收件箱，免打扰结束后再推送。", rejected: "没有发出。" }[r.status];
+				return text(`${msg}${r.reason ? `（${r.reason}）` : ""}`);
+			},
+		});
+		const advance = host.advance;
+		if (!advance) return;
+		pi.registerTool({
+			name: "proactive_advance",
+			label: "在对话里推进",
+			description:
+				"需要主动推进一件事（不只是提醒）时用它：在指定的相关对话里让主会话继续帮用户做事。会走用户平时的权限规则（完全权限免审批，其他档位审批），心跳任务本身没有额外权限；对话正忙时同一件事合并、不同的事排队。去重、免打扰、每日预算仍然生效。",
+			parameters: Type.Object({
+				conversationId: Type.String({ description: "在哪个对话里推进（必须是这个助理自己的非隐藏对话 id）" }),
+				kind: Type.Union(["followup", "reminder", "email", "suggest_routine", "suggest_skill", "brief", "other"].map((k) => Type.Literal(k)) as never, { description: "同 proactive_surface" }),
+				title: Type.String({ description: "一句话标题（≤40 字）" }),
+				body: Type.String({ description: "要推进什么、为什么（≤300 字，写清楚上下文）" }),
+				importance: Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3)]),
+				dedupeKey: Type.Optional(Type.String({ description: "去重键：同一件事用同一个键" })),
+			}),
+			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+			async execute(_id, p) {
+				const r = await advance(p as never);
+				const msg = { started: "已在相关对话里开始推进。", steered: "同一件事正在推进，已合并。", queued: "对话正忙，已排队。", inbox: "已放进收件箱（没有推进）。", held: "已放进收件箱，免打扰结束后再推送。", rejected: "没有推进。" }[r.status];
 				return text(`${msg}${r.reason ? `（${r.reason}）` : ""}`);
 			},
 		});

@@ -26,7 +26,7 @@ import { deliveryExtension } from "@pi-assistant/ext-delivery";
 import { memoryExtension } from "@pi-assistant/ext-memory";
 import { routinesExtension } from "@pi-assistant/ext-routines";
 import { proactiveExtension } from "@pi-assistant/ext-proactive";
-import { cancelFollowup, fmt as fmtTime, hiddenConversation, isHeartbeatTask, listFollowups, parseWhen, runOfTask, scheduleFollowup, setProactiveSpawner, surface as proactiveSurface } from "./proactive.ts";
+import { advanceConversation, cancelFollowup, drainAdvances, fmt as fmtTime, hiddenConversation, isHeartbeatTask, listFollowups, parseWhen, runOfTask, scheduleFollowup, setAdvanceHooks, setProactiveSpawner, surface as proactiveSurface } from "./proactive.ts";
 import { sandboxExtension } from "@pi-assistant/ext-sandbox";
 import { NUDGE_TYPE, skillsExtension } from "@pi-assistant/ext-skills";
 import { currentConversation, getConversation, setConversationSession } from "./conversations.ts";
@@ -109,6 +109,12 @@ export interface TaskRow {
 export const getAgent = (id: string) => db.prepare("SELECT * FROM agents WHERE id = ?").get(id) as AgentRow | undefined;
 export const listAgents = () => db.prepare("SELECT * FROM agents ORDER BY sort, created_at").all() as unknown as AgentRow[];
 export const getTask = (id: string) => db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
+
+/** 短摘要：把多行任务/结果压成一行并截断（notify 只发短标题 + 结果摘要，完整内容用 subagent_list 按需查）。 */
+const clipText = (s: string, n: number) => {
+	const v = (s ?? "").replace(/\s+/g, " ").trim();
+	return v.length > n ? `${v.slice(0, n)}…` : v;
+};
 
 function setAgentStatus(id: string, status: string) {
 	db.prepare("UPDATE agents SET status = ? WHERE id = ?").run(status, id);
@@ -359,6 +365,8 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			factory: proactiveExtension({
 				// 巡检任务里才能“告诉用户”；普通聊天里助理直接说就行
 				surface: heartbeat ? (i) => proactiveSurface(agentId, { ...i, sourceRun: taskId ? runOfTask(taskId) : null }) : undefined,
+				// 主动推进：在相关对话的主会话里继续做事（正常权限路径）；心跳本身没有额外权限
+				advance: heartbeat ? (i) => advanceConversation(agentId, i) : undefined,
 				schedule: (i) => scheduleFollowup(agentId, conversationId && conversationId !== hiddenConversation(agentId) ? conversationId : null, i.dueAt, i.note),
 				list: () => listFollowups(agentId),
 				cancel: (id) => cancelFollowup(agentId, id),
@@ -611,6 +619,7 @@ class AgentRuntime {
 				if (isSessionBusy(session)) return;
 				this.dropSteering(aborted ? "stopped" : "delivered");
 				settleAgent(this.id);
+				drainAdvances(this.id, this.conversationId);
 				for (const w of [...this.waiters]) w(aborted);
 			});
 			this.unsub = () => (unUser(), unBind());
@@ -996,6 +1005,14 @@ setWaitWaker(async ({ wait, prompt }) => {
 	const ok = await runtime(wait.agent_id, wait.conversation_id ?? undefined).nudge(prompt);
 	if (!ok) throw new Error("nudge 未送达（没有可用会话/模型，或 Pi 触发失败）");
 });
+// 主动推进：在相关对话的主会话里跑（走用户平时的权限规则），忙时由 proactive.ts 合并 / 排队。
+setAdvanceHooks({
+	busy: (agentId, conversationId) => runtime(agentId, conversationId).busy,
+	send: async (agentId, conversationId, text) => {
+		const r = await runtime(agentId, conversationId).send(text);
+		return r === "started" || r === "steered" ? r : "none";
+	},
+});
 
 export async function bootstrap() {
 	migrateSubagentModelSettings();
@@ -1108,7 +1125,16 @@ setSubagentDriver({
 		const marker = `（子代理事件 ${event.id}）`;
 		const files = db.prepare("SELECT meta FROM messages WHERE (subagent_id = ? OR task_id = ?) AND json_array_length(meta, '$.attachments') > 0").all(r.id, r.id) as { meta: string }[];
 		const artifacts = files.flatMap((m) => (JSON.parse(m.meta).attachments ?? [])).map((f: { name: string; workspacePath?: string }) => `${f.name}：${f.workspacePath ?? "工作区内"}`).join("\n");
-		const text = `${marker}任务「${r.task}」：${event.kind}。${event.reason}\n子代理 ID：${r.id}。\n产出文件：\n${artifacts || "无"}\n请核验产出后向用户汇报结果；失败、停止或没进展也要说明原因和下一步。停止后只汇报状态，不继续原任务。`;
+		// 只发短标题 + 结果摘要：完整任务说明与最新结果可用 subagent_list 按需查，不重复整段 task（省 token）。
+		const kindLabel = { done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "中断待核验", stalled: "停滞" }[event.kind] ?? event.kind;
+		const title = clipText(r.task, 60);
+		const summary = clipText(r.result_summary || event.reason || "", 300);
+		const text = [
+			`${marker}子代理「${title}」${kindLabel}${summary ? `：${summary}` : ""}`,
+			`子代理 ID：${r.id}。需要完整任务说明或结果时用 subagent_list 查看。`,
+			`产出文件：\n${artifacts || "无"}`,
+			"请核验产出后向用户简短汇报结果；失败、停止或没进展也要说明原因和下一步。停止后只汇报状态，不继续原任务。",
+		].join("\n");
 		await new Promise<void>((resolve, reject) => {
 			const unsub = subscribeSession(session, (e) => {
 				if (e.type === "user_start" && e.text.includes(marker)) { unsub(); resolve(); }
