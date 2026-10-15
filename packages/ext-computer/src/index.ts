@@ -57,7 +57,7 @@ export const hostBrowserPrompt = (fileAccess: boolean) => `<user-computer-browse
 8. 整个任务用同一个 session 标签（如 "web"）。不要用 cmd+t / cmd+l / ctrl+l 等地址栏快捷键当浏览器接口；只有标签栏、权限弹窗、原生文件选择框，或 CDP 工具不可用（Safari / Firefox、用户拒绝）时，才退回 get_window_state + click / hotkey。
 9. 上传用 browser_set_input_files、下载用 browser_download，路径${fileAccess ? "可以是用户电脑上的绝对路径（你在这个助理上是完全权限，工作区只是默认目录）" : "只能在你的工作区里"}。
 </user-computer-browser>`;
-/** 本机桌面应用的操作方式（按 cua 0.34.1 官方 SKILL / WORKFLOW），注入系统提示 */
+/** 本机桌面应用的操作方式（按 cua 0.35 官方 SKILL / WORKFLOW），注入系统提示 */
 export const hostDesktopPrompt = (p: Approvals) => `<user-computer-desktop>
 你可以像人一样操作用户的电脑${p === "all" ? "（“限定”档位：只能操作用户勾选的应用，每个动作都要用户批准）" : p === "none" ? "（用户给了完全权限：所有应用都能操作，应用层不再弹审批——包括关机、强制退出、系统设置这类受保护操作也会直接执行；只有凭据文件、用户暂停或调低档位、系统权限弹窗和网站验证码仍拦得住）" : "（“信任”档位：所有应用都能操作；发送、付款、删除、提交类动作会先问用户）"}。按官方流程：
 1. 找目标：list_apps / list_windows 找到应用的 pid 和 window_id（不要用记住的旧 pid，也不要随手拿第一个窗口）；没开就 launch_app，之后有限次地 list_windows 等窗口出现，不要反复启动。
@@ -250,6 +250,7 @@ export const SHARED_COMPUTER_PROMPT = `<assistant-computer>
 - 主屏幕有别的助理在操作时，你的桌面操作会自动换到你自己的屏幕（computer_screen own 也可以主动开）；要长时间操作桌面应用时先开自己的屏幕。用完 computer_screen main 关掉。
 - 需要用另一个账号登录、或不想带上共用的登录状态时，用 browser_context isolated 开一个单独的浏览器环境，并告诉用户。
 - 只有必须长期和其他助理分开账号 / 数据时才用 computer_screen separate_on 开单独的电脑，并告诉用户原因。
+- cua-driver 已是 0.35：get_window_state 默认只回精简的 tree_markdown（没有 elements），要拿 element_token 就传 tree_format:"elements"（或 full_output:true）；重复读同一个窗口用 since:"latest" 只取变化。想一次做多步用 run_steps（最多 64 步，遇错即停、不自动回滚），批量里每一步都会按你的权限档位单独检查；脚本 run_script 已关闭，不要用它。
 </assistant-computer>`;
 
 export const isComputerTool = (name: string) => name.startsWith(MCP_PREFIX) || name.startsWith(HOST_MCP_PREFIX) || name === "computer_screenshot" || name === "request_handoff" || name === "computer_screen";
