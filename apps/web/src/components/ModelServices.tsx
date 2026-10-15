@@ -818,14 +818,14 @@ function LocalSenseVoiceCard() {
 		void load();
 	}, []);
 	useEffect(() => {
-		if (!st || (st.install.state !== "installing" && st.runtime.state !== "starting" && st.runtime.state !== "stopping")) return;
+		if (!st || !st.install || !st.runtime || (st.install.state !== "installing" && st.runtime.state !== "starting" && st.runtime.state !== "stopping")) return;
 		const t = setInterval(load, 1000);
 		return () => clearInterval(t);
-	}, [st?.install.state, st?.runtime.state]);
-	if (!st)
+	}, [st?.install?.state, st?.runtime?.state]);
+	if (!st || !st.license || !st.source || !st.model || !st.install || !st.runtime)
 		return (
 			<div className="rounded-xl border border-dashed border-line p-3 text-xs text-mut" data-testid="local-sensevoice-card" data-state="unavailable">
-				{err ? `本地 SenseVoice 状态读取失败：${err}` : "正在读取本地 SenseVoice 状态…"}
+				{err ? `本地 SenseVoice 状态读取失败：${err}` : "本地 SenseVoice 状态不可用（响应不完整，不假装已就绪）"}
 			</div>
 		);
 	const post = async (path: string, body?: unknown) => {

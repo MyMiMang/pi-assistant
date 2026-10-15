@@ -134,6 +134,7 @@ try {
 		}
 	});
 	const page = await context.newPage();
+	page.on("pageerror", (e) => console.error("  ⚠️ pageerror", String(e.stack ?? e).slice(0, 700)));
 	const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 	await page.route('**/api/**', async (route) => {
 		const req = route.request();
@@ -170,6 +171,20 @@ try {
 		}
 		if (path === '/api/models/custom/fetch-models') return json(route, { models: [{ id: 'gpt-4o', contextWindow: 128000, maxTokens: 16384, limitsSource: 'known' }, { id: 'gpt-image-1', contextWindow: 32000, maxTokens: 4096, limitsSource: 'known' }] });
 		if (path === '/api/models/registry' && method === 'GET') return json(route, { providers: registry() });
+		if (path === '/api/models' && method === 'GET') return json(route, []);
+		if (path === '/api/audio/asr/providers' && method === 'GET') return json(route, { protocols: ['openai-audio-transcriptions', 'local-asr-http'], providers: [] });
+		if (path === '/api/local-models/asr/sensevoice/status' && method === 'GET')
+			return json(route, {
+				platform: { key: 'darwin-arm64', os: 'darwin', arch: 'arm64', support: 'supported' },
+				license: { licenseName: 'FunASR Model Open Source License Agreement', termsVersion: '1.1', decision: 'unresolved', redistribution: false, attribution: 'a', links: { modelCard: 'https://h/', modelLicense: 'https://l/', issue: 'https://i/', engineLicense: 'https://e/' }, restrictions: ['r1'], reason: 'why', acceptValue: '1.1' },
+				install: { state: 'not_installed', phase: 'idle', received: 0, total: null, error: null, source: null },
+				runtime: { state: 'stopped', pid: null, port: null, host: '127.0.0.1', lastError: null },
+				configured: false,
+				registered: null,
+				source: { project: 'SenseVoice', repoUrl: 'https://r/', weightsRepo: 'w', weightsRevision: 'v', weightsLicense: 'wl', note: 'n' },
+				model: { id: 'sensevoice-small-int8', bytes: 1, sampleRate: 16000, channels: 1, languages: ['zh'], punctuation: true },
+				notes: ['未实测'],
+			});
 		if (/^\/api\/models\/registry\/[^/]+\/models\/[^/]+\/capabilities$/.test(path) && method === 'PUT') {
 			const [, , , providerId, , modelId] = path.split('/');
 			const body = req.postDataJSON();
