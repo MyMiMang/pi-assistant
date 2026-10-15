@@ -117,3 +117,9 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 - [Docker](https://www.docker.com/) / [Podman](https://podman.io/)：Linux 上助理电脑使用用户自己安装的容器运行时，不随产品分发。
 - [WSL](https://github.com/microsoft/WSL)：Windows 系统组件，由用户按需安装。
 - 测试用：hoodiecrow-imap、smtp-server（MIT），不随产品分发。
+
+## 本地语音识别（可选，用户自行导入 / 许可未闭环）
+
+- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)（**Apache-2.0**）：本地 ASR 推理引擎，按需经 uv/pip 安装 `sherpa-onnx==1.13.8`（**不随产品分发**；轮子按平台 / CPython 版本分片，当前只 pin 版本号，未 pin 各轮子 SHA256）。
+- [SenseVoiceSmall](https://github.com/FunAudioLLM/SenseVoice) 权重（**FunASR Model Open Source License Agreement v1.1，不是 Apache-2.0**）：**不随产品分发、不镜像**。许可适用范围未最终确认（官方 issue [#334](https://github.com/QwenAudio/SenseVoice/issues/334) 仍 open），因此安装入口默认关闭；用户可自行导入合法取得的权重。使用时须遵守 §2.2 署名与保留模型名要求（界面显示 `SenseVoiceSmall by FunASR / FunAudioLLM`）。复核记录见 `research/sensevoice-weight-license-review.md`。
+- 参考项目（未复制代码）：[Handy](https://github.com/cjpais/handy)（MIT）的「独立 worker + 可配置 idle 卸载 + 首按先开麦」思路、[OpenWhispr](https://github.com/OpenWhispr/openwhispr)（MIT）的组件级 idle 超时。

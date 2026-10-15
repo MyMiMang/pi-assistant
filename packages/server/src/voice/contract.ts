@@ -7,8 +7,8 @@
  * OpenAI 兼容的 `/v1/audio/transcriptions`；**不修改 Pi SDK / node_modules / secret.ts**。
  */
 
-/** 目前只认这一种 ASR 协议：OpenAI 兼容的 multipart `/v1/audio/transcriptions`。 */
-export const ASR_PROTOCOLS = ["openai-audio-transcriptions"] as const;
+/** 认这两种 ASR 协议：云 = OpenAI 兼容 multipart `/v1/audio/transcriptions`；本地 = loopback sidecar raw WAV。 */
+export const ASR_PROTOCOLS = ["openai-audio-transcriptions", "local-asr-http"] as const;
 export type AsrProtocol = (typeof ASR_PROTOCOLS)[number];
 
 /** 本地上报 ASR 状态的 bus 事件名（本地 runtime 用 `bus.emit({ type: LOCAL_ASR_EVENT, status })`）。 */

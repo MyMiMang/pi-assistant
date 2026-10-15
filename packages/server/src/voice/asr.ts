@@ -103,6 +103,8 @@ function pickUsage(j: unknown): AsrUsage | undefined {
 	const o = j as Record<string, unknown>;
 	const usage: AsrUsage = {};
 	if (typeof o.duration === "number" && Number.isFinite(o.duration)) usage.audioSeconds = o.duration;
+	// 本地 sidecar 返回的是 audioSeconds（真实值），同样只记真实数字。
+	if (typeof o.audioSeconds === "number" && Number.isFinite(o.audioSeconds)) usage.audioSeconds = o.audioSeconds;
 	const u = o.usage;
 	if (u && typeof u === "object") {
 		const uu = u as Record<string, unknown>;
@@ -119,9 +121,19 @@ export interface UpstreamDeps {
 	signal?: AbortSignal;
 }
 
+/** OpenAI 兼容的 multipart 表单（云 ASR）。 */
+function openAiForm(req: AsrRequest): FormData {
+	const fd = new FormData();
+	fd.append("file", new Blob([req.audio as unknown as BlobPart], { type: "audio/wav" }), req.filename || "audio.wav");
+	fd.append("model", req.model);
+	if (req.language) fd.append("language", req.language);
+	fd.append("response_format", "json");
+	return fd;
+}
+
 /**
- * 调上游 `/v1/audio/transcriptions`。**只**用传入的音频字节，不解析任何 URL / 本地路径。
- * 失败一律返回脱敏错误码，不透传上游正文。
+ * 调上游转写。**只**用传入的音频字节，不解析任何 URL / 本地路径。
+ * 云 = OpenAI 兼容 multipart；本地 = loopback raw WAV（Bearer 进程内 token）。失败一律返回脱敏错误码。
  */
 export async function transcribeUpstream(ep: AsrEndpoint, req: AsrRequest, deps: UpstreamDeps = {}): Promise<AsrOutcome<{ text: string; usage?: AsrUsage; durationMs: number }>> {
 	if (!isAsrProtocol(ep.protocol)) return fail(ASR_ERRORS.notConfigured, 400, `不支持的 ASR 协议：${String(ep.protocol).slice(0, 40)}`);
@@ -134,18 +146,14 @@ export async function transcribeUpstream(ep: AsrEndpoint, req: AsrRequest, deps:
 	const timer = setTimeout(() => ctrl.abort(new Error("timeout")), timeoutMs);
 	const started = Date.now();
 	try {
-		const fd = new FormData();
-		fd.append("file", new Blob([req.audio as unknown as BlobPart], { type: "audio/wav" }), req.filename || "audio.wav");
-		fd.append("model", req.model);
-		if (req.language) fd.append("language", req.language);
-		fd.append("response_format", "json");
-		const url = `${ep.baseUrl.replace(/\/+$/, "")}/v1/audio/transcriptions`;
-		const res = await fetchImpl(url, {
-			method: "POST",
-			headers: ep.apiKey ? { authorization: `Bearer ${ep.apiKey}` } : undefined,
-			body: fd,
-			signal: ctrl.signal,
-		});
+		const base = ep.baseUrl.replace(/\/+$/, "");
+		const auth = ep.apiKey ? { authorization: `Bearer ${ep.apiKey}` } : undefined;
+		// 本地 sidecar（local-asr-http）：raw WAV body 到 `{baseUrl}audio/transcriptions`（baseUrl 已含 /v1/）。
+		const local = ep.protocol === "local-asr-http";
+		const url = local ? `${base}/audio/transcriptions` : `${base}/v1/audio/transcriptions`;
+		const res = local
+			? await fetchImpl(url, { method: "POST", headers: { ...(auth ?? {}), "content-type": "audio/wav" }, body: req.audio as unknown as BodyInit, signal: ctrl.signal })
+			: await fetchImpl(url, { method: "POST", headers: auth, body: openAiForm(req), signal: ctrl.signal });
 		if (!res.ok) return fail(ASR_ERRORS.upstream, 502, `语音服务返回 ${res.status}`);
 		let j: unknown;
 		try {

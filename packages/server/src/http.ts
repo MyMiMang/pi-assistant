@@ -2,6 +2,7 @@ import { mountSubagentRoutes } from "./subagent-routes.ts";
 import { mountFastComputerRoutes } from "./fast-computer/routes.ts";
 import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
 import { mountAsrRoutes, registryAsrProviders } from "./voice/index.ts";
+import { mountLocalAsrRoutes } from "./local-asr/routes.ts";
 import { createRuntimeBenchmarkHost } from "./fast-computer/benchmark-runtime.ts";
 import { isStopCommand } from "./interject.ts";
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -243,6 +244,7 @@ mountUsageRoutes(app);
 mountSubagentRoutes(app);
 mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null, desktopKind: () => desktopBackend().id }).host);
 mountLocalLayaRoutes(app, localOnly);
+mountLocalAsrRoutes(app, localOnly);
 mountAsrRoutes(app);
 app.get("/api/models", (c) => {
 	const names = providerNames();

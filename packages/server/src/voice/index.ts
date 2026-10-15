@@ -14,6 +14,7 @@ import type { RegistryAsrProvider } from "../model-registry.ts";
 import { ASR_ERRORS, ASR_PROTOCOLS, type AsrEndpoint } from "./contract.ts";
 import { mountVoiceRoutes } from "./routes.ts";
 import { isAsrProtocol, type AsrOutcome } from "./asr.ts";
+import { asrEndpoint } from "../local-asr/adapter-registry.ts";
 
 /** 用户在设置里显式声明的云 ASR 模型（统一注册表 `type:"asr"` 的云来源）。 */
 export interface AsrDeclaration {
@@ -69,13 +70,12 @@ export async function resolveAsrEndpoint(provider: string, model: string): Promi
 		const apiKey = await keyOf(provider);
 		return { ok: true, value: { protocol, baseUrl, apiKey, location: "cloud" } };
 	}
-	// 2) 本地 runtime 上报的 ASR（loopback，音频不出设备）
+	// 2) 本地 runtime 上报的 ASR（loopback，音频不出设备）：端点（含进程内 token）只在 adapter-registry。
 	const local = localModelHints().find((h) => h.type === "asr" && h.provider === provider && h.modelId === model);
 	if (local) {
-		const baseUrl = local.baseUrl ?? baseUrlOf(provider, model);
-		if (!baseUrl) return { ok: false, code: ASR_ERRORS.notConfigured, status: 400, message: "本地语音服务未运行" };
-		const apiKey = await keyOf(provider);
-		return { ok: true, value: { protocol: isAsrProtocol(local.protocol) ? local.protocol : ASR_PROTOCOLS[0], baseUrl, apiKey, location: "local" } };
+		const ep = asrEndpoint(provider);
+		if (!ep) return { ok: false, code: ASR_ERRORS.notConfigured, status: 409, message: "本地语音服务未运行，请先启动" };
+		return { ok: true, value: { protocol: "local-asr-http", baseUrl: ep.baseUrl, apiKey: ep.token, location: "local" } };
 	}
 	return { ok: false, code: ASR_ERRORS.notConfigured, status: 400, message: "请先在设置里选择语音识别模型" };
 }

@@ -185,6 +185,21 @@ test("GET /api/audio/asr/config：返回上限与协议，供前端对齐", asyn
 	assert.equal(body.protocol, "openai-audio-transcriptions");
 });
 
+test("transcribeUpstream：local-asr-http 走 raw WAV + Bearer token 到 loopback，取真实 audioSeconds", async () => {
+	let seen: { url: string; auth?: string; ct?: string; body?: unknown } | null = null;
+	const fetchImpl: typeof fetch = async (url, init) => {
+		seen = { url: String(url), auth: (init?.headers as Record<string, string>)?.authorization, ct: (init?.headers as Record<string, string>)?.["content-type"], body: init?.body };
+		return jsonRes({ text: "本地转写", language: "zh", segments: [], audioSeconds: 2.5 });
+	};
+	const out = await transcribeUpstream(ep({ protocol: "local-asr-http", baseUrl: "http://127.0.0.1:9999/v1/", apiKey: "tok-123", location: "local" }), req(wav()), { fetchImpl });
+	assert.ok(out.ok);
+	assert.equal(out.value.text, "本地转写");
+	assert.deepEqual(out.value.usage, { audioSeconds: 2.5 });
+	assert.equal(seen!.url, "http://127.0.0.1:9999/v1/audio/transcriptions");
+	assert.equal(seen!.auth, "Bearer tok-123");
+	assert.equal(seen!.ct, "audio/wav");
+});
+
 // ---------------------------------------------------------------- 注册表契约
 test("注册表：显式声明的 ASR 进 type:\"asr\" + capability asr；本地 ASR 标 local", () => {
 	const list = buildRegistry({
@@ -207,6 +222,25 @@ test("注册表：显式声明的 ASR 进 type:\"asr\" + capability asr；本地
 	assert.equal(local.local?.running, true);
 	const cloud = asr.find((m) => m.provider === "openai")!;
 	assert.equal(cloud.asrAdapter?.location, "cloud");
+});
+
+test("注册表：本地 asr 卡片用收敛后的 asrAdapter 形状（location/requiresApiKey/采样率）", () => {
+	const list = buildRegistry({
+		providers: [],
+		chatModels: [],
+		classifierModels: [],
+		custom: [],
+		image: { providers: [] },
+		local: [{ provider: "local-sensevoice", label: "本地 SenseVoice（语音识别）", modelId: "sensevoice-small-int8", protocol: "local-asr-http", type: "asr", installed: true, running: true, state: "running", device: "cpu", asr: { sampleRate: 16000, maxSeconds: 120, languages: ["zh"], punctuation: true } }],
+	});
+	const m = modelsWithCapability(list, "asr")[0];
+	assert.equal(m.type, "asr");
+	assert.equal(m.source, "local");
+	assert.equal(m.asrAdapter?.location, "local");
+	assert.equal(m.asrAdapter?.requiresApiKey, false);
+	assert.equal(m.asrAdapter?.sampleRate, 16000);
+	assert.equal(m.asrAdapter?.punctuation, true);
+	assert.equal(m.local?.running, true);
 });
 
 test("注册表：ModelType 含 asr（类型契约），chat 多模态不会被当成 ASR", () => {
