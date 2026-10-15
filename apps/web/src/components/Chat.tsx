@@ -16,7 +16,7 @@ import { ConversationMenu } from "./Conversations";
 import { COMPOSER_LABEL, isSendKey, SEND_HINT } from "../composer";
 import { VoiceInput } from "./VoiceInput";
 import { SkillChips, SkillPicker } from "./SkillPicker";
-import { clearSkillDraft, setSkillDraft, useSkillDrafts } from "../skillDrafts";
+import { clearSkillDraft, setSkillDraft, useSkillDrafts, EMPTY_SKILLS } from "../skillDrafts";
 
 import { group, BotTurn as SharedBotTurn, BotPart as SharedBotPart, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
 import { agentSendBody, buildReplyRef, draftSignature, newClientId, resolveAgentReplyTarget, replyDraftKey, type ReplyRef } from "../replies";
@@ -192,7 +192,7 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 	const clientRef = useRef<{ sig: string; id: string } | null>(null);
 	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f) => upload(agentId, f));
 	const quote = useReplyDrafts((s) => s.drafts[replyKey] ?? null);
-	const skills = useSkillDrafts((s) => s.drafts[replyKey] ?? []);
+	const skills = useSkillDrafts((s) => s.drafts[replyKey] ?? EMPTY_SKILLS);
 	const ta = useRef<HTMLTextAreaElement>(null);
 	useLayoutEffect(() => {
 		const el = ta.current;

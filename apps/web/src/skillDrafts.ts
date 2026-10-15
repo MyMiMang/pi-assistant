@@ -16,7 +16,10 @@ export const useSkillDrafts = create<SkillDraftsState>((set) => ({
 	clear: (key) => set((s) => ({ drafts: { ...s.drafts, [key]: [] } })),
 }));
 
-export const getSkillDraft = (key: string) => useSkillDrafts.getState().drafts[key] ?? [];
+export const getSkillDraft = (key: string) => useSkillDrafts.getState().drafts[key] ?? EMPTY_SKILLS;
+
+/** 稳定的空数组：给 hook selector 用，避免每次返回新数组导致 useSyncExternalStore 无限重渲染。 */
+export const EMPTY_SKILLS: string[] = [];
 export const setSkillDraft = (key: string, ids: string[]) => useSkillDrafts.getState().set(key, ids);
 export const clearSkillDraft = (key: string) => useSkillDrafts.getState().clear(key);
 

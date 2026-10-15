@@ -7,7 +7,7 @@ import { Check, Search, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { setSkillDraft, skillNameOf, useSkillDrafts } from "../skillDrafts";
+import { setSkillDraft, skillNameOf, useSkillDrafts, EMPTY_SKILLS } from "../skillDrafts";
 import { COMPOSER_LABEL } from "../composer";
 import { Help, cx } from "./ui";
 
@@ -21,7 +21,7 @@ interface EnabledSkill {
 /** 技能入口按钮 + 多选菜单。 */
 export function SkillPicker({ agentId, draftKey }: { agentId: string; draftKey: string }) {
 	const version = useStore((s) => s.skillsVersion);
-	const selected = useSkillDrafts((s) => s.drafts[draftKey] ?? []);
+	const selected = useSkillDrafts((s) => s.drafts[draftKey] ?? EMPTY_SKILLS);
 	const [open, setOpen] = useState(false);
 	const [list, setList] = useState<EnabledSkill[] | null>(null);
 	const [q, setQ] = useState("");
@@ -38,8 +38,13 @@ export function SkillPicker({ agentId, draftKey }: { agentId: string; draftKey: 
 	useEffect(() => {
 		if (!open) return;
 		const h = (e: PointerEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+		const k = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
 		document.addEventListener("pointerdown", h);
-		return () => document.removeEventListener("pointerdown", h);
+		addEventListener("keydown", k);
+		return () => {
+			document.removeEventListener("pointerdown", h);
+			removeEventListener("keydown", k);
+		};
 	}, [open]);
 	const shown = useMemo(() => {
 		const s = q.trim().toLowerCase();
@@ -106,7 +111,7 @@ export function SkillPicker({ agentId, draftKey }: { agentId: string; draftKey: 
 
 /** 已选技能的 chip 行（挂在输入框上方，和引用条 / 附件共存）。 */
 export function SkillChips({ draftKey }: { draftKey: string }) {
-	const selected = useSkillDrafts((s) => s.drafts[draftKey] ?? []);
+	const selected = useSkillDrafts((s) => s.drafts[draftKey] ?? EMPTY_SKILLS);
 	if (!selected.length) return null;
 	return (
 		<div className="flex flex-wrap items-center gap-1.5 pb-1.5" data-testid="skill-chips">
