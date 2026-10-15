@@ -261,14 +261,25 @@ export class LocalLayaManager {
 			this.onChange();
 		});
 		this.onChange();
-		// 自检：拿实际 device / cpu_fallbacks（失败不阻止启动，health=ok:false）
-		try {
-			this.runtime.health = await this.deps.health(port, token);
-		} catch {
-			this.runtime.health = { ok: false, device: null, checkpointDevices: null, cpuFallbacks: null, revisions: null, loaded: null };
-		}
+		// 自检：拿实际 device / cpu_fallbacks（重启前几次可能连不上，短暂重试；失败不阻止启动，health=ok:false）
+		this.runtime.health = await this.probeHealth(port, token);
 		this.onChange();
 		return this.status();
+	}
+
+	/** 启动后 /health 可能还没就绪：最多重试几次（已就绪就不等）。 */
+	private async probeHealth(port: number, token: string, attempts = 10): Promise<LayaHealth> {
+		let last: LayaHealth = { ok: false, device: null, checkpointDevices: null, cpuFallbacks: null, revisions: null, loaded: null };
+		for (let i = 0; i < attempts; i++) {
+			try {
+				last = await this.deps.health(port, token);
+				if (last.ok) return last;
+			} catch {
+				/* 继续重试 */
+			}
+			if (i < attempts - 1) await new Promise((r) => setTimeout(r, 500));
+		}
+		return last;
 	}
 
 	/** 停止 sidecar：只 kill 我们自己 spawn 的 child，绝不动任意 pid。 */
