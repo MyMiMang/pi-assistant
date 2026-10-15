@@ -15,7 +15,7 @@ const { db, setSetting } = await import("../src/db.ts");
 const modelsMod = await import("../src/models.ts");
 await modelsMod.initModels(memoryCredentialStore());
 const { sidecar } = await import("../src/memory/hindsight/sidecar.ts");
-const { flush, pendingCount } = await import("../src/memory/hindsight/provider.ts");
+const { flush, pendingCount, hindsightMemory } = await import("../src/memory/hindsight/provider.ts");
 const settings = await import("../src/memory/hindsight/settings.ts");
 const { memory, agentBank, USER_BANK } = await import("../src/memory/index.ts");
 const { basicMemory } = await import("../src/memory/basic.ts");
@@ -156,6 +156,59 @@ test("旧记忆 legacy 保留可读、TTL 到期隐藏、task 草稿有默认 TT
 	const draft = await memory.remember(A, "convL", { content: "任务草稿有 TTL", kind: "fact", actor: "subagent", taskId: "l1", subagentId: "l1" });
 	const item = (await memory.list(A, "convL", undefined, { parent: true })).find((i) => i.id === draft.id)!;
 	assert.ok(item.expiresAt && item.expiresAt > Date.now() + 6 * DAY, "task 草稿默认 7 天 TTL");
+});
+
+test("reflect 源端隔离：子代理 reflect 请求按 provenance tag 过滤，兄弟 task 草稿不进入服务端上下文（不只是下游删输出）", async () => {
+	const A = "sa_reflect";
+	insertAgent(A);
+	await memory.remember(A, "convR", { content: "本任务草稿：用户提到想去看海", kind: "fact", actor: "subagent", taskId: "r1", subagentId: "r1" });
+	await memory.remember(A, "convR", { content: "兄弟草稿机密：用户的私钥线索甲乙丙", kind: "fact", actor: "subagent", taskId: "r2", subagentId: "r2" });
+	await memory.remember(A, "convR", { content: "已核验的助理级事实：用户喜欢海边", kind: "fact", actor: "main", scope: "agent" });
+	await flush();
+	assert.equal(pendingCount(), 0, "队列应清空");
+
+	const agentBankId = agentBank(A);
+	const reflectCount = () => fake.reflects.filter((x: { bank: string }) => x.bank === agentBankId).length;
+	const before = reflectCount();
+	const r = await memory.reflect(A, "用户喜欢什么", { actor: "subagent", conversationId: "convR", taskId: "r1" });
+	const reqs = fake.reflects.filter((x: { bank: string }) => x.bank === agentBankId);
+	assert.equal(reqs.length, before + 1, "agent 库应收到一次 reflect 请求");
+	const req = reqs[reqs.length - 1];
+	// 请求在发出时就限定范围（源端过滤），不是空过滤
+	assert.ok(Array.isArray(req.body.tag_groups) && req.body.tag_groups.length, "子代理 reflect 必须带服务端 tag_groups 过滤");
+	const filter = JSON.stringify(req.body.tag_groups);
+	assert.ok(filter.includes("task:r1"), "过滤允许本任务草稿");
+	assert.ok(!filter.includes("task:r2"), "过滤不允许兄弟任务");
+	assert.ok(filter.includes("status:verified"), "过滤允许已核验事实");
+	// 服务端（fake）按过滤命中：真正送给模型的依据里根本没有兄弟草稿
+	assert.ok(!req.hits.some((h: { text: string }) => h.text.includes("私钥线索")), "兄弟草稿不进入 reflect 上下文");
+	assert.ok(!JSON.stringify(req.body).includes("私钥线索"), "reflect 请求正文不含兄弟草稿正文");
+	assert.ok(req.hits.some((h: { text: string }) => h.text.includes("想去看海")), "本任务草稿可见");
+	assert.ok(req.hits.some((h: { text: string }) => h.text.includes("喜欢海边")), "已核验助理级事实可见");
+	assert.ok(r && !r.answer.includes("私钥线索"), "答案不含兄弟草稿");
+
+	// 主会话核验视角：不限制（可读本助理下全部草稿），但落到的库仍是 agent 库
+	const beforeParent = reflectCount();
+	await memory.reflect(A, "用户喜欢什么", { actor: "main", conversationId: "convR", parent: true });
+	const parentReq = fake.reflects.filter((x: { bank: string }) => x.bank === agentBankId).slice(-1)[0];
+	assert.equal(reflectCount(), beforeParent + 1);
+	assert.ok(!parentReq.body.tag_groups, "主会话核验视角不做 tag 限制");
+});
+
+test("reflect fail closed + 跨助理隔离：未限定作用域直接拒绝；别的助理的草稿不进入本助理 reflect", async () => {
+	const A = "sa_refl_a";
+	const B = "sa_refl_b";
+	insertAgent(A);
+	insertAgent(B);
+	await memory.remember(B, "convB", { content: "B助理草稿：用户的备用邮箱是 b@example.com", kind: "fact", actor: "subagent", taskId: "b1", subagentId: "b1" });
+	await flush();
+	// fail closed：provider 没拿到显式作用域就不反思（不把整库送回模型）
+	await assert.rejects(() => (hindsightMemory.reflect as (b: string, q: string, s?: unknown) => Promise<unknown>)(agentBank(A), "邮箱", undefined), /未限定作用域/);
+	// 跨助理：A 的 reflect 只落到 A 自己的库，B 的草稿不在 A 的上下文里
+	await memory.reflect(A, "邮箱", { actor: "subagent", conversationId: "convA", taskId: "a1" });
+	const aReq = fake.reflects.filter((x: { bank: string }) => x.bank === agentBank(A)).slice(-1)[0];
+	assert.ok(aReq, "A 的 agent 库收到 reflect");
+	assert.ok(!JSON.stringify(aReq.hits).includes("备用邮箱"), "B 的草稿不在 A 的 reflect 上下文");
 });
 
 test("工具 annotation：recall/reflect 只读不误拦；remember 真实写入但不弹；forget 破坏性、完全权限仍放行", () => {

@@ -340,7 +340,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				remember: (i) => memory.remember(agentId, conversationId, { ...i, actor: memActor, taskId: memTaskId, subagentId: opts.subagentId, source: memParent ? "agent" : memActor }),
 				recall: async (q, limit) => (await memory.recall(agentId, conversationId, q, limit, { taskId: memTaskId, parent: memParent })).map((m) => ({ id: m.id, text: m.text, scope: m.scope, kind: m.kind, createdAt: m.createdAt, status: m.status })),
 				forget: (id) => memory.forget(agentId, id, { actor: memActor, taskId: memTaskId, subagentId: opts.subagentId }),
-				reflect: memory.capabilities(agentId).reflect ? (q) => memory.reflect(agentId, q) : undefined,
+				reflect: memory.capabilities(agentId).reflect ? (q) => memory.reflect(agentId, q, { actor: memActor, conversationId, taskId: memTaskId, parent: memParent }) : undefined,
 				review: memParent
 					? {
 						list: async () => (await memory.listDrafts(agentId)).map((m) => ({ id: m.id, text: m.text, scope: m.scope, kind: m.kind, createdAt: m.createdAt, status: m.status })),

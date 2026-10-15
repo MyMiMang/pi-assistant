@@ -16,9 +16,9 @@ import { config } from "../config.ts";
 import { db, getSetting } from "../db.ts";
 import { basicMemory } from "./basic.ts";
 import { hindsightMemory } from "./hindsight/provider.ts";
-import type { MemoryExport, MemoryItem, MemoryProvider } from "./types.ts";
+import type { MemoryExport, MemoryItem, MemoryProvider, ReflectScope } from "./types.ts";
 
-export type { MemoryItem, MemoryProvider } from "./types.ts";
+export type { MemoryItem, MemoryProvider, ReflectScope } from "./types.ts";
 export type Scope = "user" | "agent" | "conversation" | "task";
 export type Kind = "fact" | "experience" | "note";
 export type MemoryActor = "main" | "subagent" | "background" | "user" | "group";
@@ -59,6 +59,14 @@ export interface ReadContext {
 	taskId: string | null;
 	/** 主会话/用户（父）视角：能读到本助理下的全部草稿用于核验 */
 	parent: boolean;
+}
+
+/** reflect 的读取上下文：决定源端 tag 允许集合 */
+export interface ReflectContext {
+	actor?: MemoryActor;
+	conversationId?: string | null;
+	taskId?: string | null;
+	parent?: boolean;
 }
 
 const privileged = (actor?: MemoryActor) => actor === "main" || actor === "user";
@@ -400,14 +408,31 @@ export const memory = {
 		return true;
 	},
 
-	async reflect(agentId: string, query: string) {
+	async reflect(agentId: string, query: string, ctx: ReflectContext = {}) {
 		const p = providerFor(agentId);
 		if (!p.reflect) return null;
-		// 反思按库进行：助理自己的库 + 所有助理共享的「关于你」库都问一遍，
-		// 取依据更多的那个回答，依据合并（共享事实通常记在 user 库里）
-		const banks = [agentBank(agentId), USER_BANK];
-		for (const b of banks) await ready(p, b, agentId);
-		const rs = await Promise.all(banks.map((b) => p.reflect!(b, query).catch((e: unknown) => ({ error: e }))));
+		// 反思按库进行：助理自己的库 + 所有助理共享的「关于你」库都问一遍，取依据更多的那个回答，依据合并。
+		// 源端隔离：请求里显式限定允许进入反思的记忆范围（provenance tag），服务端按 tag 过滤，
+		// 绝不先把整库（含兄弟任务草稿）送给模型、再在下游把输出删掉。
+		const actor = ctx.actor ?? "main";
+		const privilegedView = privileged(actor) || ctx.parent === true;
+		const taskId = ctx.taskId ?? null;
+		const conversationId = ctx.conversationId ?? null;
+		const leaf = (tags: string[]) => ({ tags, match: "all_strict" as const });
+		// 共享 user 库只会被主会话/用户写入（子代理写 user 会被降级），整库无草稿；不过滤以保留 legacy 原可见性。
+		const userScope: ReflectScope = { all: true };
+		let agentScope: ReflectScope;
+		if (privilegedView) agentScope = { all: true };
+		else {
+			// 允许集合：已验证的助理级事实 + 本对话的已验证条目 + 本任务自己的草稿；未标 tag 的一律排除（fail closed）。
+			const groups: unknown[] = [{ and: [leaf(["scope:agent"]), leaf(["status:verified"])] }];
+			if (conversationId) groups.push({ and: [leaf(["scope:conversation"]), leaf([`conv:${conversationId}`])] });
+			if (taskId) groups.push(leaf([`task:${taskId}`]));
+			agentScope = { tagGroups: [{ or: groups }] };
+		}
+		const banks: [string, ReflectScope][] = [[agentBank(agentId), agentScope], [USER_BANK, userScope]];
+		for (const [b] of banks) await ready(p, b, agentId);
+		const rs = await Promise.all(banks.map(([b, s]) => p.reflect!(b, query, s).catch((e: unknown) => ({ error: e }))));
 		const ok = rs.filter((r): r is Exclude<(typeof rs)[number], { error: unknown }> => !("error" in r));
 		if (!ok.length) throw (rs[0] as { error: unknown }).error;
 		const best = ok.reduce((a, b) => ((b.citations?.length ?? 0) > (a.citations?.length ?? 0) ? b : a));

@@ -129,7 +129,8 @@
 | 删除/更新只能 own 任务/own writer；共享需主/用户 | 已改，待核验 | `canMutate`：子代理删共享 user / 他人条目服务端拒绝（含完全权限档位，语义非审批）。 |
 | 旧记忆不降级/不删、legacy 可读；不批量 rewrite | 已改，待核验 | 无 origin 的旧条目读取标 `legacy`、保持原 scope 可见；`meta` 增量字段。 |
 | readOnlyHint 修正；别一刀每条记忆都弹审批 | 已改，待核验 | `remember` 真实写入但 `destructive:false/openWorld:false`（非完全权限也不弹）；`forget` `destructive:true`（按档位审批）；`recall/reflect` 保持只读。完全权限仍应用层免审批。 |
-| 测试（fake Hindsight + 临时目录 + 内存凭据） | 已跑 7/7 | `memory-scope-safety`(5) + `memory-retain-dedup`(1) + 复用审计 `hindsight-scope`(1)，全通过；两端 typecheck exit 0。未跑真实 Hindsight/钥匙串/真实数据目录。 |
+| 测试（fake Hindsight + 临时目录 + 内存凭据） | 已跑 9/9 | `memory-scope-safety`(7) + `memory-retain-dedup`(1) + 复用审计 `hindsight-scope`(1)，全通过；服务端 `tsc --noEmit` exit 0。未跑真实 Hindsight/钥匙串/真实数据目录。 |
+| reflect 源端隔离：子代理反思不能看到兄弟 task 草稿 | 已改，待核验 | 服务端 retain 打 provenance tag（`scope:`/`status:`/`actor:`/`task:`/`conv:`）；`memory.reflect` 按 actor/task/conversation 在**请求里**限定允许集合（`tag_groups`），provider 未拿到显式作用域直接拒绝（fail closed）；子代理请求不把兄弟草稿送进模型。假 Hindsight 断言请求带过滤且命中无兄弟草稿。 |
 
 
 | 需求（用户原话大意） | 状态 | 说明 |

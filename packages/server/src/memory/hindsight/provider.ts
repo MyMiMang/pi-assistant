@@ -100,7 +100,17 @@ export function flush(): Promise<void> {
 						const r = row(job.item_id!);
 						if (r && r.bank === job.bank) {
 							const m = metaOf(r);
-							const tags = [`kind:${m.kind ?? r.kind ?? "fact"}`, ...(m.conversationId ? [`conv:${m.conversationId}`] : [])];
+							const origin = (m.origin ?? {}) as { status?: string; actor?: string };
+							// 作用域标签：reflect 的源端隔离靠这些 tag（服务端按 tag 过滤，不把兄弟草稿送进模型）
+							const scope = job.bank === "user" ? "user" : m.conversationId ? "conversation" : m.taskId ? "task" : "agent";
+							const tags = [
+								`kind:${m.kind ?? r.kind ?? "fact"}`,
+								`scope:${scope}`,
+								`status:${String(origin.status ?? "legacy")}`,
+								`actor:${String(origin.actor ?? "legacy")}`,
+								...(m.conversationId ? [`conv:${m.conversationId}`] : []),
+								...(m.taskId ? [`task:${m.taskId}`] : []),
+							];
 							const metadata: Record<string, string> = { kind: String(m.kind ?? r.kind ?? "fact"), source: String(m.source ?? "") };
 							if (m.conversationId) metadata.conversationId = String(m.conversationId);
 							await c.retain(job.bank, r.text, { documentId: r.id, timestamp: r.occurred_at ?? r.created_at, metadata, tags, async: true });
@@ -188,10 +198,18 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 		}
 	},
 
-	async reflect(bank, query) {
+	async reflect(bank, query, scope) {
 		if (!sidecar.ready) throw new Error("高级记忆暂时不可用（Hindsight 未就绪），稍后再试");
+		// 源端隔离 fail closed：没有显式作用域就拒绝反思，避免把整个库（含兄弟草稿）送回模型
+		if (!scope) throw new Error("拒绝在未限定作用域的记忆库上反思");
 		await ensureRemoteBank(bank);
-		const r = await withTimeout(client().reflect(bank, query, { budget: "mid", includeFacts: true } as never), RECALL_TIMEOUT_MS, "记忆反思");
+		const filter: Record<string, unknown> =
+			"all" in scope
+				? {}
+				: "tagGroups" in scope
+					? { tagGroups: scope.tagGroups }
+					: { tags: scope.tags, tagsMatch: scope.tagsMatch ?? "any" };
+		const r = await withTimeout(client().reflect(bank, query, { budget: "mid", includeFacts: true, ...filter } as never), RECALL_TIMEOUT_MS, "记忆反思");
 		const memories = ((r.based_on as { memories?: Parameters<typeof toItem>[1][] } | null)?.memories ?? []).map((m, i) => toItem(bank, m, 1 / (1 + i))).filter(Boolean) as MemoryItem[];
 		return { answer: r.text, citations: memories };
 	},

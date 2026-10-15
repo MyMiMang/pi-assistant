@@ -45,6 +45,17 @@ export interface RememberInput {
 	meta?: Record<string, unknown>;
 }
 
+/**
+ * reflect 的作用域过滤（源端隔离）：必须在请求里显式限定允许进入反思的记忆范围，
+ * 未限定范围一律拒绝（fail closed），不能先拿全库喂给模型再在下游删输出。
+ *  - { all: true }：仅主会话/用户核验视角可用（能看到全部草稿）。
+ *  - { tags, tagsMatch } / { tagGroups }：只允许命中这些 provenance tag 的记忆进入服务端上下文。
+ */
+export type ReflectScope =
+	| { all: true }
+	| { tags: string[]; tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact" }
+	| { tagGroups: unknown[] };
+
 export interface MemoryProvider {
 	readonly id: "basic" | "hindsight" | "memos" | string;
 	readonly name: string;
@@ -54,7 +65,7 @@ export interface MemoryProvider {
 	ensureBank(bank: BankId, profile: { name: string; persona?: string; language?: string }): Promise<void>;
 	remember(bank: BankId, input: RememberInput): Promise<{ ids?: string[]; async?: boolean }>;
 	recall(bank: BankId, query: string, opts?: { tokenBudget?: number; limit?: number; timeRange?: [string, string] }): Promise<MemoryItem[]>;
-	reflect?(bank: BankId, query: string): Promise<{ answer: string; citations?: MemoryItem[] }>;
+	reflect?(bank: BankId, query: string, scope: ReflectScope): Promise<{ answer: string; citations?: MemoryItem[] }>;
 	list(bank: BankId, opts?: { cursor?: string; limit?: number; q?: string }): Promise<{ items: MemoryItem[]; cursor?: string }>;
 	forget(bank: BankId, target: { id?: string; documentId?: string; all?: boolean }): Promise<void>;
 	/** 会话开始时注入的“已确定的认识” */

@@ -741,7 +741,7 @@ app.get("/api/agents/:id/memory/export", async (c) => {
 app.post("/api/agents/:id/memory/reflect", async (c) => {
 	const { query } = await c.req.json<{ query: string }>();
 	try {
-		const r = await memory.reflect(c.req.param("id") as string, String(query ?? "").slice(0, 1000));
+		const r = await memory.reflect(c.req.param("id") as string, String(query ?? "").slice(0, 1000), { actor: "user" });
 		if (!r) return c.json({ error: "当前记忆后端不支持反思" }, 400);
 		return c.json({ answer: r.answer, citations: (r.citations ?? []).slice(0, 8).map((i) => ({ id: i.id, text: i.text })) });
 	} catch (e) {
