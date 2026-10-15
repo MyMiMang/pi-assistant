@@ -4,12 +4,12 @@
  * 共用电脑（§15.4）：默认所有助理共用一台；列出每个助理用哪台电脑，可以单独开 / 关、把单独电脑合并进共用电脑。
  */
 import { Loader2, Power, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
 import { AgentComputer } from "./AgentComputer";
-import { Avatar, avatarText, Badge, Button, Help, Input, Select } from "./ui";
+import { Avatar, avatarText, Badge, Button, Help, Input, Select, useConfirm } from "./ui";
 
 type ResourceNums = { cpus?: number; memoryGiB?: number; diskGiB?: number };
 
@@ -70,6 +70,8 @@ export function DesktopSettings() {
 	const [fileMirror, setFileMirror] = useState<string | null>(null);
 	const [offered, setOffered] = useState(false);
 	const [wslMsg, setWslMsg] = useState("");
+	const [confirmDlg, askConfirm] = useConfirm();
+	const purgeRef = useRef(false);
 	if (!g) return null;
 	/** Windows：一键安装 WSL（服务端用 UAC 提权执行 wsl --install --no-distribution） */
 	const installWsl = async () => {
@@ -111,9 +113,22 @@ export function DesktopSettings() {
 		const r = await put({ enabled: on });
 		if (r && !on) setOffered(true);
 	};
+	const purge = async () => {
+		if (purgeRef.current) return;
+		const ok = await askConfirm({ title: t("删除助理电脑的虚拟机和镜像？"), body: t("删除后助理电脑里的登录状态（微信、各网站账号）都会清掉，下次开启要重新下载。"), ok: t("删除"), danger: true });
+		if (!ok || purgeRef.current) return;
+		purgeRef.current = true;
+		try {
+			await post("purge", "purge");
+			setOffered(false);
+		} finally {
+			purgeRef.current = false;
+		}
+	};
 	const ins = g.install;
 	return (
 		<div className="space-y-6" data-testid="desktop-settings">
+			{confirmDlg}
 			<section className="space-y-2">
 				<div className="mb-3">
 					<div className="font-semibold">{t("给助理安装电脑")}</div>
@@ -167,7 +182,7 @@ export function DesktopSettings() {
 							<Button size="sm" variant="outline" disabled={!!busy} onClick={() => void post("shutdown", "shutdown")}>
 								{busy === "shutdown" ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />} {t("关机")}
 							</Button>
-							<Button size="sm" variant="danger" disabled={!!busy} onClick={() => confirm(t("删除后助理电脑里的登录状态（微信、各网站账号）都会清掉，下次开启要重新下载。确定删除？")) && void post("purge", "purge").then(() => setOffered(false))}>
+							<Button size="sm" variant="danger" disabled={!!busy} onClick={() => void purge()} data-testid="desktop-purge">
 								{busy === "purge" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} {t("删除虚拟机和镜像（登录状态会清掉）")}
 							</Button>
 						</div>

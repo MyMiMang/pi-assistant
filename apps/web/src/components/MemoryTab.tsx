@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, download } from "../api";
 import { useStore } from "../store";
 import type { MemoryEntry, MemoryProviderInfo } from "../types";
-import { Badge, Button, cx, Input } from "./ui";
+import { Badge, Button, cx, Input, useConfirm } from "./ui";
 
 const KIND: Record<MemoryEntry["kind"], string> = { fact: "事实", experience: "日志", note: "便签" };
 const SCOPE: Record<MemoryEntry["scope"], string> = { user: "共享·关于你", agent: "仅此助理", conversation: "仅当前对话" };
@@ -25,6 +25,10 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 	const [filter, setFilter] = useState<"" | MemoryEntry["kind"]>("");
 	const [edit, setEdit] = useState<{ id?: string; text: string; kind: MemoryEntry["kind"]; scope: MemoryEntry["scope"] } | null>(null);
 	const [err, setErr] = useState("");
+	const [confirmDlg, askConfirm] = useConfirm();
+	const [delBusy, setDelBusy] = useState("");
+	const [delErr, setDelErr] = useState("");
+	const delRef = useRef(false);
 	const load = () => api(`/api/agents/${agentId}/memory${q ? `?q=${encodeURIComponent(q)}` : ""}`).then(setData);
 	useEffect(() => {
 		const t = setTimeout(() => void load(), q ? 250 : 0);
@@ -77,8 +81,26 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 			setErr(e instanceof Error ? e.message : String(e));
 		}
 	};
+	const del = async (m: MemoryEntry) => {
+		if (delRef.current) return;
+		const ok = await askConfirm({ title: "删除这条记忆？", body: m.text.length > 120 ? `${m.text.slice(0, 120)}…` : m.text, ok: "删除", danger: true });
+		if (!ok || delRef.current) return;
+		delRef.current = true;
+		setDelBusy(m.id);
+		setDelErr("");
+		try {
+			await api(`/api/agents/${agentId}/memory/${m.id}`, { method: "DELETE" });
+			void load();
+		} catch (e) {
+			setDelErr(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			delRef.current = false;
+			setDelBusy("");
+		}
+	};
 	return (
 		<div className="space-y-3" data-testid="memory-tab">
+			{confirmDlg}
 			<div className="flex items-center gap-2 text-xs text-mut">
 				<Brain size={14} className="shrink-0" />
 				<select
@@ -195,11 +217,9 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 								<button
 									className="pa-icon-btn ghost !h-6 !w-6"
 									aria-label="删除记忆"
-									onClick={async () => {
-										if (!confirm("删除这条记忆？")) return;
-										await api(`/api/agents/${agentId}/memory/${m.id}`, { method: "DELETE" });
-										void load();
-									}}
+									disabled={delBusy === m.id}
+									onClick={() => void del(m)}
+									data-testid={`memory-delete-${m.id}`}
 								>
 									<Trash2 size={12} />
 								</button>
@@ -208,6 +228,7 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 					</li>
 				))}
 			</ul>
+			{delErr && <div className="text-sm text-red-600" data-testid="memory-delete-error">{delErr}</div>}
 		</div>
 	);
 }
