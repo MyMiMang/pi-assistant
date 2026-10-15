@@ -105,6 +105,46 @@ export interface ThinkingChoice {
 	onPick: (level: string) => void;
 }
 
+/**
+ * 独立的「思考强度」小按钮（复用同一套档位文案与样式）。
+ * current = null 表示跟随默认；传 followLabel 时菜单里多一个「跟随…」选项（子代理用）。
+ */
+export function ThinkingButton({ testid, levels, current, followLabel, onPick, text, title, ariaLabel, buttonClass, placement = "down" }: { testid: string; levels: string[]; current: string | null; followLabel?: string; onPick: (level: string | null) => void; text?: string; title?: string; ariaLabel?: string; buttonClass?: string; placement?: "up" | "down" }) {
+	const { open, setOpen, ref } = usePopover();
+	const label = text ?? (current ? (THINKING_LABEL[current] ?? current) : (followLabel ?? "思考"));
+	return (
+		<div className="relative min-w-0" ref={ref}>
+			<button className={cx("pa-chip sm !shrink min-w-0", buttonClass)} onClick={() => setOpen(!open)} title={title ?? "思考强度"} aria-label={ariaLabel ?? `思考强度：${label}`} data-testid={testid}>
+				<Brain className="pa-ic" />
+				<span className="truncate">
+					<span className="max-sm:hidden">思考·</span>
+					{label}
+				</span>
+				<ChevronDown size={12} />
+			</button>
+			{open && (
+				<div className={cx("pa-pop absolute right-0 z-30 flex w-56 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg", placement === "up" ? "bottom-full mb-2" : "top-full mt-2")} data-testid={`${testid}-menu`}>
+					{followLabel && (
+						<button className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", current === null && "bg-hover")} onClick={() => (setOpen(false), onPick(null))} data-testid={`${testid}-follow`}>
+							<span className="flex-1 text-sm">{followLabel}</span>
+							{current === null && <Check size={14} className="text-accent" />}
+						</button>
+					)}
+					{levels.map((l) => (
+						<button key={l} className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", current === l && "bg-hover")} onClick={() => (setOpen(false), onPick(l))} data-testid={`${testid}-${l}`}>
+							<span className="flex-1">
+								<span className="text-sm">{THINKING_LABEL[l] ?? l}</span>
+								<span className="block text-xs text-mut">{THINKING_DESC[l] ?? ""}</span>
+							</span>
+							{current === l && <Check size={14} className="text-accent" />}
+						</button>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
 function Option({ m, sel, id, onPick }: { m: ModelEntry; sel: boolean; id: string; onPick: (m: ModelEntry) => void }) {
 	return (
 		<button className={cx("flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover", sel && "bg-hover")} onClick={() => onPick(m)} data-testid={`${id}-option`} data-model={pickKey(m)}>

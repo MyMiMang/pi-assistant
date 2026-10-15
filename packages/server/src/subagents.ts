@@ -6,6 +6,7 @@ import { isStopCommand } from "./interject.ts";
 import { configuredModels, modelProfiles } from "./rooms/model-pick.ts";
 import { inferNeeds, pickModel } from "./model-profile.ts";
 import { isRecoverableModelError } from "./model-errors.ts";
+import { isThinkingLevel, models } from "./models.ts";
 import { requests } from "./requests.ts";
 import { claimSubagentWake, markSubagentWakeDelivered, releaseSubagentWake, subagentWakeOwner, wakeClaimKey } from "./task-waits.ts";
 
@@ -14,6 +15,8 @@ export type SubagentStatus = "queued" | "running" | "stalled" | "done" | "failed
 export interface Subagent {
 	id: string; agent_id: string; conversation_id: string; parent_message_id: string | null;
 	task: string; context: string; model_provider: string; model_id: string; model_reason: string;
+	/** 单个子代理的思考强度覆盖（Pi 档位）；null = 继承助理的子代理默认设置 */
+	thinking: string | null;
 	status: SubagentStatus; last_activity_at: number; error_reason: string | null; notified_at: number | null;
 	result_summary: string | null; created_at: number; finished_at: number | null;
 	session_file: string | null; run_started_at: number | null; pending_input: string | null; resume: number | null;
@@ -29,6 +32,8 @@ export type SubagentSettingsInput = { maxMinutes?: number; maxConcurrent?: numbe
 export type AgentSubagentPool = { pool: ModelRef[] };
 /** @deprecated 旧助理级设置形状，仅为兼容旧客户端保留，读写都会转成候选池。 */
 export type AgentSubagentChoice = { mode: "follow" } | { mode: "fixed"; model: ModelRef };
+/** 助理的子代理默认思考强度：跟随主会话（默认）或指定一个 Pi 档位（实际用时会按子代理实际模型收敛）。 */
+export type SubagentThinking = { mode: "follow" } | { mode: "fixed"; level: string };
 /** 并发上限的默认值与允许范围（按助理计算，见 pumpSubagents）。 */
 export const SUBAGENT_CONCURRENCY = { default: 10, min: 1, max: 100 } as const;
 const ACTIVE = "('running','stalled')";
@@ -48,7 +53,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS subagents (
  id TEXT PRIMARY KEY, subagent_id TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL, delivered_at INTEGER);
 `);
 const columns = db.prepare("PRAGMA table_info(subagents)").all() as { name: string }[];
-for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"]]) {
+for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"], ["thinking", "TEXT"]]) {
 	if (!columns.some((c) => c.name === name)) db.exec(`ALTER TABLE subagents ADD COLUMN ${name} ${type}`);
 }
 // 事件记录当时的终态代际：同一子代理续聊后多次结束时，用每一代自己的 finished_at 去重
@@ -124,6 +129,40 @@ export function saveAgentSubagentPool(id: string, input: { pool?: ModelRef[] }):
 export function saveAgentSubagentChoice(id: string, choice: AgentSubagentChoice) {
 	return saveAgentSubagentPool(id, { pool: choice?.mode === "fixed" && choice.model ? [choice.model] : [] });
 }
+/** 这个助理的子代理默认思考强度（默认跟随主会话） */
+export const agentSubagentThinking = (id: string): SubagentThinking => getSetting<SubagentThinking>(`subagentThinking:${id}`, { mode: "follow" });
+export function saveAgentSubagentThinking(id: string, input: SubagentThinking): SubagentThinking {
+	if (input?.mode !== "follow" && input?.mode !== "fixed") throw new Error("思考强度方式不对");
+	if (input.mode === "fixed" && !isThinkingLevel(input.level)) throw new Error("思考强度不对");
+	const c: SubagentThinking = input.mode === "fixed" ? { mode: "fixed", level: input.level } : { mode: "follow" };
+	setSetting(`subagentThinking:${id}`, c);
+	return c;
+}
+/**
+ * 子代理实际用的思考强度：单个子代理覆盖 > 助理默认（fixed 档位 / 跟随主会话）> 传入的 mainThinking（runtime 的 a.thinking ?? 全局默认），
+ * 最后一律按实际使用的模型收敛（clampThinkingLevel），不支持推理的模型不会得到 xhigh/max。
+ */
+export function resolveSubagentThinking(agentId: string, model: ModelRef, mainThinking: string, override?: string | null): string {
+	const setting = agentSubagentThinking(agentId);
+	const wanted = override ?? (setting.mode === "fixed" ? setting.level : mainThinking);
+	return models.clampThinking(model.provider, model.id, wanted);
+}
+/** 改单个子代理的思考覆盖（null = 跟随助理默认）；落库并广播。 */
+export function setSubagentThinkingOverride(id: string, thinking: string | null): Subagent {
+	const r = getSubagent(id);
+	if (!r) throw new Error("子代理不存在");
+	if (thinking !== null && !isThinkingLevel(thinking)) throw new Error("思考强度不对");
+	db.prepare("UPDATE subagents SET thinking = ? WHERE id = ?").run(thinking, id);
+	changed(id);
+	return getSubagent(id)!;
+}
+/** 运行中的子代理立即切换思考强度（走 pi-adapter 公开的 applyModelSettings，不动主会话）。 */
+export async function applyLiveSubagentThinking(id: string, level: string): Promise<boolean> {
+	const r = getSubagent(id), l = live.get(id);
+	if (!r || !l?.apply || !isActiveSubagent(r.status)) return false;
+	await l.apply({ provider: r.model_provider, id: r.model_id }, level);
+	return true;
+}
 /**
  * 给一个子代理挑模型，并给出池内 fallback 的候选顺序（第一项就是实际用的模型）：
  * - 没设候选池（默认）→ 跟随主会话当前模型，不做任何自动挑选，也没有池外可换。
@@ -184,10 +223,10 @@ export function switchSubagentModel(id: string, next: ModelRef, reason: string) 
 	changed(id);
 }
 
-interface Live { stop?: () => Promise<void>; message?: (text: string, messageId?: string) => Promise<void>; pending: { text: string; messageId?: string }[]; toolUntil: number }
+interface Live { stop?: () => Promise<void>; message?: (text: string, messageId?: string) => Promise<void>; apply?: (model: ModelRef, thinking: string) => Promise<void>; pending: { text: string; messageId?: string }[]; toolUntil: number }
 const live = new Map<string, Live>();
 interface Driver {
-	run(r: Subagent, connect: (stop: () => Promise<void>, message: Live["message"]) => void, input?: { text: string; messageId?: string }): Promise<string>;
+	run(r: Subagent, connect: (stop: () => Promise<void>, message: Live["message"], apply?: Live["apply"]) => void, input?: { text: string; messageId?: string }): Promise<string>;
 	notify(r: Subagent, event: SubagentEvent): Promise<void>;
 }
 let driver: Driver;
@@ -259,14 +298,15 @@ export function pumpSubagents(agentId?: string) {
 		for (const q of queued) startQueued(q.id);
 	}
 }
-export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef, input: { task: string; context?: string; needs?: string[]; model?: ModelRef; parentMessageId?: string }): Subagent & { queuedAhead?: number } {
+export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef, input: { task: string; context?: string; needs?: string[]; model?: ModelRef; thinking?: string; parentMessageId?: string }): Subagent & { queuedAhead?: number } {
 	if (!input.task?.trim()) throw new Error("请说明子代理任务");
+	if (input.thinking !== undefined && !isThinkingLevel(input.thinking)) throw new Error("思考强度不对");
 	const picked = chooseSubagentModel(agentId, fallback, input.task, input.needs, input.model);
 	const id = uid("sa"), ts = Date.now();
 	// 先把已有的排队任务补上空位，保证 FIFO；再决定新任务是否立即跑
 	pumpSubagents(agentId);
 	const status: SubagentStatus = hasSubagentCapacity(agentId) ? "running" : "queued";
-	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, parent_message_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, created_at, model_pool) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, input.parentMessageId ?? null, input.task, input.context ?? "", picked.model.provider, picked.model.id, picked.reason, status, ts, ts, JSON.stringify(picked.pool));
+	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, parent_message_id, task, context, model_provider, model_id, model_reason, thinking, status, last_activity_at, created_at, model_pool) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, input.parentMessageId ?? null, input.task, input.context ?? "", picked.model.provider, picked.model.id, picked.reason, input.thinking ?? null, status, ts, ts, JSON.stringify(picked.pool));
 	insertMessage({ agentId, conversationId: conv, role: "card", meta: { kind: "subagent", subagentId: id, subagent: getSubagent(id) } });
 	insertMessage({ agentId, conversationId: conv, subagentId: id, role: "user", content: input.task });
 	if (status === "running") { live.set(id, { pending: [], toolUntil: 0 }); queueMicrotask(() => void run(id)); }
@@ -275,9 +315,9 @@ export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef,
 }
 async function run(id: string, input?: { text: string; messageId?: string }) {
 	try {
-		const result = await driver.run(getSubagent(id)!, (stop, message) => {
+		const result = await driver.run(getSubagent(id)!, (stop, message, apply) => {
 			const l = live.get(id)!;
-			l.stop = stop; l.message = message;
+			l.stop = stop; l.message = message; l.apply = apply;
 			if (!isActiveSubagent(getSubagent(id)!.status)) void stop();
 			else queueMicrotask(() => { for (const p of l.pending.splice(0)) void message?.(p.text, p.messageId); });
 		}, input);

@@ -249,8 +249,9 @@ try {
 	const stateTxt = (await detail.locator("[data-testid=subagent-state]").first().textContent()) ?? "";
 	check("queued：详情状态显示「排队中」且不带秒数", stateTxt.includes("排队中") && !stateTxt.includes("秒前"), stateTxt);
 	check("queued：输入栏提示排队中", ((await detail.locator(".pa-composer-bar").first().textContent()) ?? "").includes("排队中"));
-	const stopBtn = detail.locator('[data-testid="subagent-stop"]');
-	check("queued：有停止按钮且可用", (await stopBtn.count()) === 1 && (await stopBtn.isEnabled()));
+	const stopBtn = detail.getByLabel("停止子代理");
+	check("queued：详情右侧无重复停止按钮", (await detail.getByTestId("subagent-stop").count()) === 0);
+	check("queued：输入框停止按钮可用", (await stopBtn.count()) === 1 && (await stopBtn.isEnabled()));
 	await stopBtn.click();
 	await page.waitForTimeout(300);
 	check("queued：点停止会调用 /stop", stopCalled);

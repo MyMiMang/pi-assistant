@@ -86,6 +86,13 @@
 
 **beta.21 整合验证**：定向 typecheck、单测 62/62、web/rendezvous 构建、Mock fallback 冒烟、`e2e/model-ui.mjs` 六组、`e2e/subagents.mjs` 全过。仅 macOS arm64。
 
+## beta.22 候选需求
+
+| 需求（用户原话大意） | 状态 | 说明 |
+|---|---|---|
+| 子代理要能设自己的思考强度（不是一直跟着主会话），每助理可设默认、单个子代理可临时改，运行中也能改 | 已实现待验证（beta.22 候选） | 三层取值「单个覆盖 > 助理默认（跟随/固定）> 跟随主会话」，一律按子代理实际模型 clamp；运行中走 `applyModelSettings`，不动主会话。`subagents.thinking` 列 + `PATCH /api/subagents/:id` + `GET/PUT /api/agents/:id/subagent-thinking` + `spawn_subagent.thinking`。`subagents.test.ts` 20/20，两端 typecheck、web tsc 通过。DESIGN §21.8 |
+| 会话 header 上「主会话」chip 去掉；子代理详情保留左上角「返回主会话」；子代理详情 header 的「停止」去掉，停止统一由输入栏按钮承担 | 已实现待验证（beta.22 候选） | `SubagentTasks` 移除 `withMain`；`SubagentChat` header 去停止、保留返回；停止按钮在 composer。`e2e/task-ui.mjs`、`e2e/composer-compact.mjs` 断言已同步 |
+
 **统一任务展示**：本轮共用展示组件，短标题由前端截取、不调用模型；完整指令保留。子代理、后台长任务、定时跟进的底层机制保持独立，统一总列表与服务端可选标题接口仍属后续。
 
 **任务等待（task_wait，已实现未打包）**：模型不再 sleep 轮询，而是登记一次持久等待，然后**由模型结束当前回合**（合作式结束，不是强制 yield；工具只写记录并返回提示，模型照做会话才 settle）；内部任务/子代理结束走 bus 事件快速通道，外部 GitHub Actions 走固定 REST 端点按间隔检查，另有到点兜底。等待期间由程序检查、不调用模型；只有结果变化才做一次结构化增量唤醒，唤醒投递失败可重试/重启补投。见 DESIGN §28。

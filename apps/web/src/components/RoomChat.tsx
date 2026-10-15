@@ -136,7 +136,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					</small>
 				</div>
 				<div className="pa-head-actions">
-					<SubagentTasks withMain room={room.id} />
+					<SubagentTasks room={room.id} />
 					<button className="pa-chip" onClick={() => setSettings(true)} data-testid="room-settings-btn" title="群设置">
 						<Settings2 className="pa-ic" />
 						<span className="max-sm:hidden">群设置</span>

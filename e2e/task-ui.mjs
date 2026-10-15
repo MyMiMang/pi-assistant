@@ -77,8 +77,7 @@ try {
 	check("聊天里不再渲染子代理指令大卡", (await page.getByTestId("subagent-card").count()) === 0);
 	const top = await page.evaluate(() => { const main = document.querySelector("main.pa-chat"); const first = main?.firstElementChild; return { hasHeader: !!first?.querySelector("header.pa-chat-head"), isConversation: first?.getAttribute("data-testid") === "main-conversation" }; });
 	check("助理身份 header 在最顶（主区域第一个元素就是会话，会话里第一个是 header）", top.hasHeader && top.isConversation, JSON.stringify(top));
-	const adjacent = await page.evaluate(() => document.querySelector("[data-testid=subagent-main]")?.nextElementSibling?.getAttribute("data-testid") ?? null);
-	check("「主会话」紧邻「子代理」入口", adjacent === "subagent-tasks", String(adjacent));
+	check("header 不再有「主会话」chip（只靠子代理入口）", (await page.getByTestId("subagent-main").count()) === 0, String(await page.getByTestId("subagent-main").count()));
 	check("「子代理」入口显示运行中的数量", ((await page.getByTestId("subagent-tasks").textContent()) ?? "").includes("2"), (await page.getByTestId("subagent-tasks").textContent()) ?? "");
 	await page.screenshot({ path: join(OUT, "01-nav-1280.png") });
 
@@ -128,7 +127,9 @@ try {
 	const steps = (await detail.getByTestId("steps").first().textContent()) ?? "";
 	check("Steps 汇总显示成功/失败个数", /\d+ 个步骤 · \d+ 成功 · \d+ 失败/.test(steps), steps);
 	check("Steps 点名失败步骤，且说明任务继续", steps.includes("运行命令失败（这一步失败，任务继续）"), steps);
-	check("详情有停止按钮", (await detail.getByTestId("subagent-stop").count()) === 1);
+	check("详情 header 不再有重复的停止按钮", (await detail.getByTestId("subagent-stop").count()) === 0);
+	check("详情左上保留返回「主会话」", (await detail.getByLabel("返回主会话").count()) === 1);
+	check("停止改由输入框按钮承担（运行/停滞/排队都可停）", (await detail.getByLabel("停止子代理").count()) === 1);
 	await page.screenshot({ path: join(OUT, "03-task-detail.png") });
 	await detail.getByLabel("返回主会话").click();
 	await page.waitForTimeout(300);
@@ -199,6 +200,7 @@ try {
 	await waitFor(async () => !(await page.locator("[data-testid=attach-tray] .animate-spin").count()));
 	const m = await page.evaluate(() => { const tray = document.querySelector("[data-testid=attach-tray]"); return { doc: document.documentElement.scrollWidth, vw: innerWidth, tray: tray ? tray.scrollWidth - tray.clientWidth : 0 }; });
 	check("390：附件条与页面不横向溢出", m.doc <= m.vw && m.tray <= 1, JSON.stringify(m));
+	check("390：header 无「主会话」chip、子代理入口可见", (await page.getByTestId("subagent-main").count()) === 0 && (await page.getByTestId("subagent-tasks").isVisible()));
 	await page.screenshot({ path: join(OUT, "05-390-composer.png") });
 	await page.getByTestId("subagent-tasks").click();
 	await page.getByTestId("task-overview").waitFor();

@@ -45,6 +45,10 @@ export function defaultModel(): { provider: string; id: string } | null {
 	return null;
 }
 
+/** Pi SDK 允许的思考档位（ModelThinkingLevel），存设置 / 接口校验用同一份 */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const isThinkingLevel = (v: unknown): v is string => typeof v === "string" && (THINKING_LEVELS as readonly string[]).includes(v);
+
 /** 新助理的默认思考强度（每个模型实际用的会按它支持的档位收敛） */
 export const defaultThinking = (): string => getSetting<string>("defaultThinking", "medium");
 
