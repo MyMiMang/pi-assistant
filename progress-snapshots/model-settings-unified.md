@@ -14,7 +14,7 @@
   - 能力多标签（对话 / 识图 / 生图 / 分类器）；推断能力标「未确认」；点「能力」手动纠正（`PUT /api/models/registry/:p/models/:m/capabilities`）。
   - 添加服务：`Select` 选官方 / 自定义（非原生 select）+ 填地址 Key；本地 Laya 在管理卡里安装，不在添加对话框。
   - **本地 Laya 管理卡**（按 `local-laya-runtime` 冻结契约 `/api/local-models/laya/*`）：安装 / 取消 / 启动 / 停止 / 更新 / 卸载确认；阶段进度；**health 读实测 `device` / `cpuFallbacks` / `revisions`**（不是 `platform.accelerator`）；`source=local`；**停止后模型显示未就绪、不删条目/配置**；平台不支持置灰 + reason；**明写「尚未在本机实机验证」**；永不显示 token。
-  - **实际操作测试**：渲染 `FastBenchmarkResult`（不另定义结果结构），先显示 availability / 「尚未运行」/「真实执行未验证（fake ≠ CUA 成功）」，advisory 建议不 hard-disable，云提示计费，选测试电脑（assistant / host）。
+  - **实际操作测试**：渲染 `FastBenchmarkResult`（不另定义结果结构），先显示 availability / 「尚未运行」/「真实执行未验证（本轮未在真实桌面开窗、未跑 CUA，假 driver ≠ CUA 成功）」；选测试电脑 `hostpc` / `computer`；重点展示**冷启动（单次）/ 任务成功率 / 总用时**，**p50 标「步骤延迟（诊断）」**；advisory 不 hard-disable；云提示计费；`fallbackCount` 恒 0 不当接管收益。
   - `apps/web/src/types.ts`：registry / benchmark / **LayaStatus** 类型（镜像服务端契约）。
   - **默认不渲染**：`/api/models/registry` 未就绪时面板返回 null，保持旧界面（避免影响现有 e2e）；`?unified=1` 预览原型。registry 就绪后自动接管。
 - [x] **e2e 通过**：`e2e/model-services-ui.mjs`（纯前端 fixture，静态 dist + 拦截 /api，不起 main、不碰钥匙串）：
@@ -49,7 +49,7 @@
 2. `RegistryModel.imageAdapter`（仅 image）：`{ kind, baseUrl, edit, costNote? }` —— 取代 `imageProviders` / `imageKey:<id>` 两套 key。
 3. 生图迁移 `migrateLegacyImageProviders`：凭据唯一（`credentialId===provider.id`），`keyFrom` 只挂到自定义 provider，独立 Key 迁到统一凭据并标 `imageKeyMigrated:<id>`，旧密文保留但运行时不读；幂等不删原数据。
 4. 能力纠正 `PUT /api/models/registry/:providerId/models/:modelId/capabilities`。
-5. benchmark `POST` body 可选 `target`（assistant / host → `target.prefix`）。
+5. ~~benchmark POST target~~ 已由 benchmark agent 落地（`target: "hostpc" | "computer"`，c98a299），UI 已对接。
 
 ## 边界
 

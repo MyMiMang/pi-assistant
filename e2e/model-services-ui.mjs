@@ -75,14 +75,16 @@ const fixtures = () => [
 ];
 let providers = fixtures();
 let capPuts = [];
+let benchPosts = [];
 const availability = { cuaReady: true, modelReady: true, fixtureReady: true, reasons: [] };
 const benchmarkRun = (status) => ({
 	id: 'b1', status, provider: 'local-laya', model: 'multilingual', modelVersion: 'unknown',
-	target: { prefix: 'computer', fixtureId: 'fix-1' }, createdAt: new Date().toISOString(),
+	target: { prefix: 'computer', fixtureId: 'fix-1' }, startedAt: new Date(Date.now() - 9000).toISOString(), finishedAt: new Date().toISOString(), createdAt: new Date().toISOString(),
 	warmup: 2, samples: 24, coldStartMs: 1320, p50Ms: 860, p95Ms: 1420, p95Approx: false,
-	timeouts: 0, errors: 1, successRatio: 0.92, actions: 30, retries: 2, fallbackCount: 1, abstains: 1,
-	correctness: 0.9, correctTrials: 22, note: '样本 24 条；推理时延仅诊断子项，不代表整个 CUA 速度。',
+	timeouts: 0, errors: 1, successRatio: 0.92, actions: 30, retries: 2, fallbackCount: 0, abstains: 1,
+	correctness: 0.9, correctTrials: 22, note: '样本 24 条；p50 仅为步骤诊断，不代表整个 CUA 速度。',
 	advisory: { verdict: 'slow', recommended: true, message: 'p50 略高于目标预算，仍可继续使用。', reason: 'p50 > budget' },
+	reason: null,
 });
 
 let browser;
@@ -143,7 +145,7 @@ try {
 		}
 		// 实际操作测试（benchmark agent 契约）
 		if (path === '/api/fast-computer/benchmark' && method === 'GET') return json(route, { availability, runs: [] });
-		if (path === '/api/fast-computer/benchmark' && method === 'POST') return json(route, { ok: true, run: benchmarkRun('running') });
+		if (path === '/api/fast-computer/benchmark' && method === 'POST') { benchPosts.push(req.postDataJSON()); return json(route, { ok: true, run: benchmarkRun('running') }); }
 		if (path === '/api/fast-computer/benchmark/b1' && method === 'GET') return json(route, benchmarkRun('done'));
 		if (path === '/api/fast-computer/benchmark/b1/cancel') return json(route, { ok: true });
 		return json(route, {});
@@ -200,14 +202,22 @@ try {
 	await page.getByTestId('actual-task-test').waitFor();
 	assert.match(await page.getByTestId('actual-task-test').textContent(), /专用隔离测试窗口/);
 	assert.match(await page.getByTestId('actual-task-preflight').textContent(), /前置条件/);
-	assert.match(await page.getByTestId('benchmark-unverified-note').textContent(), /不等于 CUA 成功/);
+	assert.match(await page.getByTestId('benchmark-unverified-note').textContent(), /未在真实桌面打开测试窗口/, '需声明未真实执行');
 	assert.match(await page.getByTestId('actual-task-verdict').textContent(), /尚未运行/, '未跑过时显示尚未运行');
 	await page.getByTestId('actual-task-target').click();
 	await page.getByRole('option', { name: /助理电脑/ }).click();
 	await page.getByTestId('actual-task-ack').check();
 	await page.getByTestId('actual-task-start').click();
 	await page.waitForFunction(() => document.querySelector('[data-testid=actual-task-verdict]')?.textContent?.includes('偏慢'), null, { timeout: 5000 });
-	assert.match(await page.getByTestId('actual-task-accuracy-note').textContent(), /不代表整个 CUA 速度/, '需声明不等于整个 CUA 速度');
+	const resultText = await page.getByTestId('actual-task-result').textContent();
+	assert.match(resultText, /冷启动（单次）/, '需单列冷启动');
+	assert.match(resultText, /任务成功率/, '需显示任务成功率');
+	assert.match(resultText, /总用时/, '需显示总用时');
+	assert.match(resultText, /步骤延迟 p50（诊断）/, 'p50 应标为步骤诊断');
+	assert.match(resultText, /不代表整个 CUA 速度/, '需声明不代表整个 CUA 速度');
+	assert.match(resultText, /本轮不执行主模型回退/, '不得把 fallbackCount 当接管收益');
+	assert.equal(benchPosts.length, 1, '应发出一次 benchmark POST');
+	assert.ok(['hostpc', 'computer'].includes(benchPosts[0].target), 'POST target 必须是 hostpc | computer');
 	if (SHOT) await page.getByTestId('actual-task-test').screenshot({ path: `${SHOT}/2-actual-task-test.png` });
 	await page.getByTestId('actual-task-use-anyway').click();
 

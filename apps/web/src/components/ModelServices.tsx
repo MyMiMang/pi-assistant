@@ -297,7 +297,7 @@ function LocalLayaCard({ demo, onBenchmark }: { demo: boolean; onBenchmark: (pro
 
 /** 实际操作测试：真实受控 CUA 任务（不是 API 延迟）。渲染 FastBenchmarkResult，不另定义结果结构。 */
 function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; onClose: () => void; provider: RegistryProvider; model: RegistryModel }) {
-	const [target, setTarget] = useState<"assistant" | "host">("assistant");
+	const [target, setTarget] = useState<"hostpc" | "computer">("computer");
 	const [ack, setAck] = useState(false);
 	const [availability, setAvailability] = useState<BenchmarkAvailability | null>(null);
 	const [run, setRun] = useState<FastBenchmarkResult | null>(null);
@@ -362,7 +362,7 @@ function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; on
 					)}
 				</div>
 				<div className="rounded-lg border border-dashed border-line p-2.5 text-[11px] text-mut2" data-testid="benchmark-unverified-note">
-					真实执行尚未验证：开发环境的 runner 是 fake，<b>不等于 CUA 成功</b>；下面结果只作参考，样本少时结论有限。
+					真实执行未验证：本轮开发未在真实桌面打开测试窗口、也未运行 CUA；开发 / CI 用假 driver，<b>不等于 CUA 成功</b>。下面结果只作参考，样本少时结论有限。
 				</div>
 				{!running && (
 					<>
@@ -373,10 +373,10 @@ function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; on
 								ariaLabel="测试电脑"
 								testId="actual-task-target"
 								options={[
-									{ value: "assistant", label: "助理电脑（虚拟机）" },
-									{ value: "host", label: "用户电脑（这台 Mac）" },
+									{ value: "computer", label: "助理电脑（虚拟机）" },
+									{ value: "hostpc", label: "用户电脑（这台 Mac，需先开启「操作这台电脑」）" },
 								]}
-								onChange={(v) => setTarget(v as "assistant" | "host")}
+								onChange={(v) => setTarget(v as "hostpc" | "computer")}
 							/>
 						</div>
 						<label className="flex items-center gap-2 text-xs">
@@ -415,17 +415,22 @@ function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; on
 					{run ? (
 						<>
 							<div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
+								<Metric label="冷启动（单次）" value={run.coldStartMs == null ? "—" : `${run.coldStartMs}ms`} />
+								<Metric label="任务成功率" value={run.samples ? `${Math.round(run.successRatio * 100)}%` : "—"} />
+								<Metric label="总用时" value={totalMs(run) == null ? "—" : `${(totalMs(run)! / 1000).toFixed(1)}s`} />
+								<Metric label="步骤延迟 p50（诊断）" value={run.p50Ms == null ? "—" : `${run.p50Ms}ms`} />
+								<Metric label="步骤 p95" value={run.p95Ms == null ? "—" : `${run.p95Ms}ms${run.p95Approx ? "（粗略）" : ""}`} />
 								<Metric label="有效样本" value={String(run.samples)} />
-								<Metric label="成功率" value={run.successRatio == null ? "—" : `${Math.round(run.successRatio * 100)}%`} />
-								<Metric label="p50" value={run.p50Ms == null ? "—" : `${run.p50Ms}ms`} />
-								<Metric label="p95" value={run.p95Ms == null ? "—" : `${run.p95Ms}ms${run.p95Approx ? "（粗略）" : ""}`} />
-								<Metric label="冷启动" value={run.coldStartMs == null ? "—" : `${run.coldStartMs}ms`} />
 								<Metric label="动作 / 重试" value={`${run.actions} / ${run.retries}`} />
-								<Metric label="回退 / 弃权" value={`${run.fallbackCount} / ${run.abstains}`} />
+								<Metric label="弃权" value={String(run.abstains)} />
 								<Metric label="超时 / 错误" value={`${run.timeouts} / ${run.errors}`} />
+								<Metric label="基准任务正确率" value={run.correctness == null ? "—" : `${Math.round(run.correctness * 100)}%`} />
+								<Metric label="回退（本轮不执行主模型回退，恒 0）" value={String(run.fallbackCount)} />
 							</div>
 							{run.note && <div className="text-[11px] text-mut2" data-testid="actual-task-accuracy-note">{run.note}</div>}
-							<div className="text-[11px] text-mut2">模型版本：{run.modelVersion}（未知不编造） · 只针对本次受控任务，不代表普遍准确，也不等于整个 CUA 速度。</div>
+							<div className="text-[11px] text-mut2">
+								目标：{run.target.prefix === "hostpc" ? "用户电脑" : "助理电脑"} · 模型版本：{run.modelVersion}（未知不编造） · p50 只是步骤诊断，<b>不代表整个 CUA 速度</b>；只针对本轮受控任务，不代表普遍准确。
+							</div>
 						</>
 					) : (
 						<div className="text-[11px] text-mut2" data-testid="actual-task-accuracy-note">还没有跑过测试。点「开始测试」会真实执行一次受控任务。</div>
@@ -450,6 +455,12 @@ function Metric({ label, value }: { label: string; value: string }) {
 			<div className="font-medium">{value}</div>
 		</div>
 	);
+}
+/** 总用时：从开始到结束（仅取合约里的 startedAt / finishedAt，不编造其它耗时）。 */
+function totalMs(run: FastBenchmarkResult): number | null {
+	if (!run.startedAt || !run.finishedAt) return null;
+	const ms = Date.parse(run.finishedAt) - Date.parse(run.startedAt);
+	return Number.isFinite(ms) && ms >= 0 ? ms : null;
 }
 
 /** 服务卡：图标 + 名称 / 状态 / 能力标签；展开是模型列表（能力可纠正）。 */

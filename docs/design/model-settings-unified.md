@@ -101,12 +101,14 @@ migrateLegacyImageProviders(input: { imageProviders: ImageProvider[]; customProv
 
 **不是 API 延迟**：让快速模型在专用隔离 fixture 窗口里真实走 observe → candidate → classify → fresh click → verify，评估适用性。
 
-- API：`GET /api/fast-computer/benchmark` → `{ availability: BenchmarkAvailability, runs: FastBenchmarkResult[] }`；`POST` body `{ provider, model, maxTrials?, warmup?, target? }`（未就绪 → `409 { blocked, availability }`）；`GET /:id`；`POST /:id/cancel`。
-- `BenchmarkAvailability = { cuaReady, modelReady, fixtureReady, reasons[] }`；任一 false → UI 显示 reasons 并禁用开始（**不偷偷开 VM / 装模型**）。
-- 结果 `FastBenchmarkResult`：`status / provider / model / modelVersion / target / samples / coldStartMs / p50Ms / p95Ms / p95Approx / timeouts / errors / successRatio / actions / retries / fallbackCount / abstains / correctness / note / advisory{verdict: ok|slow|unstable|blocked, recommended, message, reason}`。
-- advisory **不 hard-disable**：`successRatio<0.6` 或 `errors≥3` → unstable（建议排查）；`p50>responseBudgetMs`（默认 1000，可配）→ slow（仍可继续用）。
-- UI 必显：**尚未运行**（无 runs 时）、**真实执行未验证**（开发 runner 是 fake，不等于 CUA 成功）、冷启动不进 p50/p95、样本少结论有限、**不等于整个 CUA 速度**。
-- 云分类器前提示**可能少量计费**；local 无费用。测试电脑选择（assistant / host）映射到 `target.prefix`（schema 增量，可选）。
+- API：`GET /api/fast-computer/benchmark` → `{ availability: BenchmarkAvailability, runs: FastBenchmarkResult[] }`；`POST` body `{ provider, model, maxTrials?, warmup?, target? }`，`target: "hostpc" | "computer"`（未就绪 → `409 { blocked, availability }`）；`GET /:id`；`POST /:id/cancel`；fixture 页 `GET /fixture/:id` + `POST /fixture/:id/state?nonce=`（nonce 强绑定）。
+- `BenchmarkAvailability = { cuaReady, modelReady, fixtureReady, reasons[] }`；任一 false → UI 显示 reasons 并禁用开始（**不偷偷开 VM**；hostpc 需先开启「操作这台电脑」）。
+- 结果 `FastBenchmarkResult`：`status / provider / model / modelVersion / target{prefix,fixtureId} / startedAt / finishedAt / samples / coldStartMs / p50Ms / p95Ms / p95Approx / timeouts / errors / successRatio / actions / retries / fallbackCount / abstains / correctness / note / advisory{verdict,recommended,message,reason} / reason`。
+- UI 展示重点：**冷启动（单次）· 任务成功率 · 总用时**（由 `startedAt`/`finishedAt` 算）；**p50 标「步骤延迟（诊断）」**，不代表整个 CUA 速度；正确率是本轮 bench task 正确率（不是泛化 accuracy）。
+- advisory **不 hard-disable**：`successRatio<0.6` 或 `errors≥3` → unstable（建议排查）；`p50>responseBudgetMs`（默认 1000）→ slow（仍可继续用）。
+- UI 必显：**尚未运行**（无 runs 时）、**真实执行未验证**（本轮开发未在真实桌面打开窗口 / 未跑 CUA，假 driver ≠ CUA 成功）。
+- `fallbackCount` 只在真正执行主模型回退时才算，基准不执行回退 → 恒 0；**不得当「接管收益」报告**。
+- 云分类器前提示**可能少量计费**；local 无费用。
 
 ## 7. 本地 Laya：安装 / health 契约（laya agent 已冻结，UI 直接对接）
 
