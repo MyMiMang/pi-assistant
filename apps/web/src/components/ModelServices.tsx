@@ -260,6 +260,30 @@ function ImageAdapterSection({ provider, images, onReload }: { provider: Registr
 	);
 }
 
+/** 默认图片模型：在统一面板里选一个已注册的生图模型（共享 Select，不用原生 select）。 */
+function DefaultImageModel({ images, onReload }: { images: ImageModelsData | null; onReload: () => void }) {
+	if (!images || !images.models.length) return null;
+	const key = (m: { provider: string; model?: string; id?: string }) => `${m.provider}::${m.model ?? m.id}`;
+	const cur = images.default ? key(images.default) : "";
+	return (
+		<div className="flex flex-wrap items-center gap-2 text-xs" data-testid="default-image-model">
+			<span className="font-medium text-zinc-500">默认图片模型</span>
+			<div className="min-w-48 flex-1">
+				<Select
+					value={cur}
+					ariaLabel="默认图片模型"
+					testId="default-image-model"
+					options={images.models.map((m) => ({ value: key(m), label: `${m.providerName} / ${m.id}` }))}
+					onChange={(v) => {
+						const m = images.models.find((x) => key(x) === v);
+						if (m) void api("/api/image-models/default", { method: "PUT", json: { provider: m.provider, model: m.id } }).then(onReload);
+					}}
+				/>
+			</div>
+		</div>
+	);
+}
+
 /** 服务卡：图标 + 名称 / 状态 / 能力标签；展开是模型列表（能力可纠正）+ 测试连接 + 官方登录 / 自定义编辑删除 / 生图适配。 */
 function ServiceCard({
 	provider,
@@ -385,7 +409,7 @@ function ServiceCard({
 
 /** 添加服务：官方（完整目录，未配置也能接）/ 自定义中转 / 本地（Laya 卡）。 */
 function AddServiceDialog({ open, onClose, official, custom, images, onReload }: { open: boolean; onClose: () => void; official: Provider[]; custom: ReturnType<typeof useCustomProviders>; images: ImageModelsData | null; onReload: () => void }) {
-	const [kind, setKind] = useState<"builtin" | "custom" | "local">("builtin");
+	const [kind, setKind] = useState<"builtin" | "custom" | "image" | "local">("builtin");
 	const [picked, setPicked] = useState<Provider | null>(null);
 	const [q, setQ] = useState("");
 	useEffect(() => {
@@ -407,6 +431,7 @@ function AddServiceDialog({ open, onClose, official, custom, images, onReload }:
 						options={[
 							{ value: "builtin", label: "官方服务（内置目录，填 Key 登录）" },
 							{ value: "custom", label: "自定义 / 中转（填 Base URL + Key）" },
+							{ value: "image", label: "生图服务（OpenAI / 百炼 / 方舟 / Gemini / xAI）" },
 							{ value: "local", label: "本地模型（Laya 一键安装）" },
 						]}
 						onChange={(v) => (setKind(v as typeof kind), setPicked(null))}
@@ -454,6 +479,11 @@ function AddServiceDialog({ open, onClose, official, custom, images, onReload }:
 							onSaved={() => (onReload(), onClose())}
 							onCancel={onClose}
 						/>
+					</div>
+				)}
+				{kind === "image" && images && (
+					<div className="space-y-3">
+						<ImageProviderForm data={images} onDone={() => (onReload(), onClose())} onCancel={onClose} />
 					</div>
 				)}
 				{kind === "local" && (
@@ -891,6 +921,7 @@ export function ModelServicesPanel() {
 			<div className="space-y-3" data-testid="model-services-panel">
 				{confirmUi}
 				<LocalLayaCard onBenchmark={(p, m) => setBench({ provider: p, model: m })} />
+				<DefaultImageModel images={images} onReload={reloadAll} />
 				<div className="flex flex-wrap items-center gap-2">
 					<div className="relative min-w-40 flex-1">
 						<Search size={15} className="absolute top-2.5 left-2.5 text-zinc-400" />

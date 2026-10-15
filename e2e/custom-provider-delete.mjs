@@ -22,8 +22,8 @@ try {
   const page=await browser.newPage({viewport:{width:1280,height:900}});
   let nativeDialogs=0;page.on('dialog',d=>{nativeDialogs++;void d.dismiss()});
   await page.goto(base+'/?settings=models');
-  await page.getByTestId(`provider-toggle-${provider.id}`).click();
-  await page.getByTestId(`provider-edit-${provider.id}`).click();
+  await page.getByTestId(`service-toggle-${provider.id}`).click();
+  await page.getByTestId(`service-edit-${provider.id}`).click();
   const form=page.getByTestId('custom-provider-form');
   await form.getByRole('button',{name:'删除',exact:true}).click();
   await page.getByTestId('confirm-dialog').waitFor();

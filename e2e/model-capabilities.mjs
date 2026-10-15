@@ -48,8 +48,13 @@ try {
 	await wait(async () => (await j("/api/agents")).find((x) => x.id === a.id).thinking === "low");
 	console.log("✅ 手机聊天可选择思考强度");
 	await page.goto(`${BASE}/?agent=${a.id}&settings=models`);
-	await page.getByTestId("add-image-provider").click();
+	// 统一面板里添加生图服务（不再有独立的「图片生成」区块）
+	await page.getByTestId("add-service-open").click();
+	await page.getByTestId("add-service").waitFor();
+	await page.getByTestId("add-service-kind").click();
+	await page.getByRole("option", { name: /生图服务/ }).click();
 	const f = page.getByTestId("image-provider-form");
+	await f.waitFor();
 	await f.getByTestId("image-base-url").fill(relayBase);
 	await f.getByTestId("image-fetch").click();
 	await f.locator('[data-model="relay-painter"]').waitFor();

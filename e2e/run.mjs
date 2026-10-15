@@ -986,25 +986,27 @@ await step("快速操作模型：自定义渠道声明 Jev 分类器 → 设置�
 
 		const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
 		const p = await c.newPage();
-		await p.goto(`${BASE}/?settings=models`);
-		const sec = p.getByTestId("fast-computer-section");
-		await sec.getByTestId("fast-refresh").click();
+		await p.goto(`${BASE}/?settings=host`);
+		const sec = p.getByTestId("fast-computer-hostpc");
+		await sec.waitFor();
+		await sec.getByTestId("fast-refresh-hostpc").click();
 		await sec.getByLabel("开启快速操作模型").check();
 		if (await sec.locator("select").count()) throw new Error("快速操作模型仍在用原生 <select>");
-		await sec.getByTestId("fast-kind").click();
-		await p.getByTestId("fast-kind-option-systemone").click();
-		await p.waitForFunction(async (b) => (await (await fetch(`${b}/api/fast-computer/settings`)).json()).settings.kind === "systemone", BASE);
-		await sec.getByTestId("fast-classifier").click();
-		await p.getByTestId(`fast-classifier-option-${id}/jev-relay`).click();
-		await p.waitForFunction(async (b) => { const s = (await (await fetch(`${b}/api/fast-computer/settings`)).json()).settings; return !!s.provider && s.id === "jev-relay"; }, BASE);
+		if (await sec.getByTestId("fast-kind").count()) throw new Error("不应再有 chat 替代类型选择");
+		await sec.getByTestId("fast-classifier-hostpc").click();
+		await p.getByTestId(`fast-classifier-hostpc-option-${id}/jev-relay`).click();
+		await p.waitForFunction(async (b) => { const s = (await (await fetch(`${b}/api/fast-computer/settings?scope=hostpc`)).json()).settings; return s.kind === "systemone" && !!s.provider && s.id === "jev-relay"; }, BASE);
+		// 每台电脑各一份：助理电脑 scope 不受用户电脑设置影响
+		const computerScope = await (await fetch(`${BASE}/api/fast-computer/settings?scope=computer`)).json();
+		if (computerScope.settings.enabled) throw new Error("助理电脑 scope 不应被用户电脑设置影响");
 		// 390：下拉菜单在视口内，Esc 只关菜单不关设置弹窗
 		await p.setViewportSize({ width: 390, height: 844 });
-		await sec.getByTestId("fast-classifier").click();
-		await p.getByTestId("fast-classifier-menu").waitFor();
-		const box = await p.getByTestId("fast-classifier-menu").boundingBox();
+		await sec.getByTestId("fast-classifier-hostpc").click();
+		await p.getByTestId("fast-classifier-hostpc-menu").waitFor();
+		const box = await p.getByTestId("fast-classifier-hostpc-menu").boundingBox();
 		if (!box || box.x < -1 || box.x + box.width > 391) throw new Error(`390 下拉溢出：${JSON.stringify(box)}`);
 		await p.keyboard.press("Escape");
-		await p.getByTestId("fast-classifier-menu").waitFor({ state: "detached" });
+		await p.getByTestId("fast-classifier-hostpc-menu").waitFor({ state: "detached" });
 		if (!(await p.getByTestId("settings-dialog").isVisible())) throw new Error("Esc 把设置弹窗一起关了");
 		await p.screenshot({ path: join(SHOTS, "71-fast-computer-select-390.png") });
 		await p.setViewportSize({ width: 1440, height: 900 });
@@ -1012,13 +1014,13 @@ await step("快速操作模型：自定义渠道声明 Jev 分类器 → 设置�
 		await fetch(`${BASE}/api/models/custom/${id}`, { method: "DELETE" });
 		const goneId = id;
 		id = undefined;
-		await sec.getByTestId("fast-refresh").click();
+		await sec.getByTestId("fast-refresh-hostpc").click();
 		await p.waitForTimeout(400);
-		fs = await (await fetch(`${BASE}/api/fast-computer/settings`)).json();
+		fs = await (await fetch(`${BASE}/api/fast-computer/settings?scope=hostpc`)).json();
 		if (fs.settings.provider || fs.settings.id) throw new Error("删除渠道后快速操作模型引用没清");
-		await sec.getByTestId("fast-classifier").click();
-		await p.getByTestId("fast-classifier-menu").waitFor();
-		if (await p.getByTestId(`fast-classifier-option-${goneId}/jev-relay`).count()) throw new Error("已删 classifier 不应还在下拉");
+		await sec.getByTestId("fast-classifier-hostpc").click();
+		await p.getByTestId("fast-classifier-hostpc-menu").waitFor();
+		if (await p.getByTestId(`fast-classifier-hostpc-option-${goneId}/jev-relay`).count()) throw new Error("已删 classifier 不应还在下拉");
 		await p.keyboard.press("Escape");
 		await sec.getByLabel("开启快速操作模型").click();
 		await p.screenshot({ path: join(SHOTS, "71-fast-computer-select.png") });
@@ -2074,10 +2076,10 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 	await page.getByTestId("usage-currency").selectOption("USD");
 	await page.waitForFunction(() => /\$/.test(document.querySelector("[data-testid=usage-cost]")?.textContent ?? ""), null, { timeout: 10_000 });
 	await page.getByTestId("usage-currency").selectOption("CNY");
-	// 模型能力（擅长）：在渠道展开后的模型行里编辑，点标签开关、恢复默认
+	// 模型能力（擅长）：在统一面板的服务卡片展开后的模型行里编辑，点标签开关、恢复默认
 	await page.goto(`${BASE}/?agent=${AGENT}&settings=models`);
-	await page.getByTestId("provider-toggle-mock").click();
-	const pmRow = page.getByTestId("provider-models-mock").getByTestId("provider-model").first();
+	await page.getByTestId("service-toggle-mock").click();
+	const pmRow = page.getByTestId("service-models-mock").getByTestId("service-model").first();
 	await pmRow.waitFor();
 	await pmRow.getByTestId("model-strength-toggle").click();
 	const t = page.getByTestId("strength-row").first().getByTestId("tag-coding");
@@ -2085,7 +2087,7 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 	const was = await t.getAttribute("aria-pressed");
 	await t.click();
 	await page.waitForFunction((w) => document.querySelector("[data-testid=strength-row] [data-testid=tag-coding]")?.getAttribute("aria-pressed") !== w, was);
-	await page.getByTestId("provider-accordion").scrollIntoViewIfNeeded();
+	await page.getByTestId("service-grid").scrollIntoViewIfNeeded();
 	await page.getByTestId("settings-dialog").screenshot({ path: join(SHOTS, "93-model-strengths.png") });
 	await r0.getByText("恢复默认").click();
 	// 手机宽度：用量页不横向溢出
@@ -2105,10 +2107,13 @@ await step("图片生成：设置里添加图片服务（自动获取识别图�
 		const c = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: "light", locale: "zh-CN" });
 		const p = await c.newPage();
 		await p.goto(`${BASE}/?settings=models`);
-		const sec = p.getByTestId("image-models");
-		await sec.scrollIntoViewIfNeeded();
-		await sec.getByTestId("add-image-provider").click();
+		// 统一面板里添加生图服务（不再有独立的「图片生成」区块）
+		await p.getByTestId("add-service-open").click();
+		await p.getByTestId("add-service").waitFor();
+		await p.getByTestId("add-service-kind").click();
+		await p.getByRole("option", { name: /生图服务/ }).click();
 		const f = p.getByTestId("image-provider-form");
+		await f.waitFor();
 		await f.locator("[data-kind=openai]").click();
 		await f.getByTestId("image-name").fill("画图中转");
 		await f.getByTestId("image-base-url").fill(img.url);
@@ -2121,10 +2126,9 @@ await step("图片生成：设置里添加图片服务（自动获取识别图�
 		await f.getByTestId("image-test-ok").waitFor({ timeout: 20_000 });
 		await p.screenshot({ path: join(SHOTS, "90-image-provider.png") });
 		await f.getByTestId("image-save").click();
-		await sec.getByTestId("image-provider").filter({ hasText: "画图中转" }).waitFor();
-		const opt = await sec.getByTestId("default-image-model").locator("option:checked").textContent();
-		if (!/画图中转 \/ /.test(opt ?? "")) throw new Error(`默认图片模型显示不对：${opt}`);
-		await sec.getByTestId("default-image-model").selectOption({ label: "画图中转 / gpt-image-1" });
+		await p.getByTestId("default-image-model").waitFor();
+		const opt = await p.getByTestId("default-image-model").innerText();
+		if (!/画图中转 \/ gpt-image-1/.test(opt)) throw new Error(`默认图片模型显示不对：${opt}`);
 		await c.close();
 		// 单聊：画图 → 图片附件（预览 + 下载）
 		// 用一个新助理（前面步骤的聊天里可能有带输入框的卡片）
