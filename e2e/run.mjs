@@ -484,6 +484,70 @@ await step("外观：4 套主题 + 浅色/深色/跟随系统 + 强调色，按�
 	if (await p.evaluate(() => document.documentElement.dataset.mode !== "light")) throw new Error("跟随系统未生效");
 	await c.close();
 });
+await step("外观 DIY：设计面板入口 / 导入校验 / 全应用预览 / 保存 / 另存新 id / 取消恢复 / 390", async () => {
+	const REQUIRED = { "--bg": "#fffdf8", "--side": "#f6f1e6", "--panel": "#f6f1e6", "--card": "#ffffff", "--fg": "#2a251f", "--mut": "#5f564b", "--mut2": "#9a8f80", "--line": "#e4dccd", "--line-strong": "#cfc4b1", "--hover": "#ebe4d6", "--active": "#e6dccb", "--user-bg": "#ece4d4", "--user-fg": "#2a251f", "--acc": "#8fd3c1", "--acc-fg": "#123123", "--acc-soft": "rgba(143,211,193,.12)", "--ok": "#5f8a5a", "--warn": "#c08a2c", "--z-light": "#ffffff", "--z-dark": "#2a251f" };
+	const mk = (id, name) => ({ manifestVersion: 1, id, name, modes: { light: { ...REQUIRED }, dark: { ...REQUIRED, "--bg": "#141218", "--fg": "#f3eee6", "--z-light": "#f3eee6", "--z-dark": "#141218" } }, createdAt: "2026-10-22T00:00:00.000Z", updatedAt: "2026-10-22T00:00:00.000Z" });
+	const importFile = (p, obj) => p.getByTestId("theme-import-input").setInputFiles({ name: "t.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(obj)) });
+
+	const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
+	const p = await c.newPage();
+	await p.goto(`${BASE}/?settings=appearance`);
+	await p.getByTestId("open-theme-designer").waitFor();
+	const before = await p.evaluate(() => document.documentElement.dataset.skin);
+
+	// 主入口打开设计面板；未接后端不假装生成
+	await p.getByTestId("open-theme-designer").click();
+	if (!(await p.getByTestId("theme-generate").isDisabled())) throw new Error("未接后端时「生成主题」应禁用");
+	await p.getByTestId("theme-ai-offline").waitFor();
+
+	// 恶意 JSON：报错、不改变当前主题
+	await importFile(p, { manifestVersion: 1, id: "../etc/passwd", name: "x", modes: { light: { "--bg": "url(https://evil/x.png)" }, dark: {} } });
+	await p.getByTestId("theme-errors").waitFor();
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== before) throw new Error("坏 JSON 不应改变当前主题");
+
+	// 合法 JSON：进入全应用临时预览，但不写 localStorage
+	await importFile(p, mk("11111111-2222-3333-4444-555555555555", "测试奶油"));
+	await p.getByTestId("theme-apply").waitFor();
+	const previewSkin = await p.evaluate(() => document.documentElement.dataset.skin);
+	if (previewSkin !== "custom-11111111-2222-3333-4444-555555555555") throw new Error(`预览 skin 不对：${previewSkin}`);
+	if ((await p.evaluate(() => localStorage.getItem("pia.skin"))) === previewSkin) throw new Error("预览不应写 localStorage");
+
+	// 取消：完整恢复
+	await p.getByTestId("theme-cancel").click();
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== before) throw new Error("取消应恢复原主题");
+
+	// 再导入并「应用并保存」
+	await p.getByTestId("open-theme-designer").click();
+	await importFile(p, mk("11111111-2222-3333-4444-555555555555", "测试奶油"));
+	await p.getByTestId("theme-apply").click();
+	await p.getByTestId("theme-designer").waitFor({ state: "detached" });
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== "custom-11111111-2222-3333-4444-555555555555") throw new Error("保存后应切到自定义主题");
+	await p.getByTestId("edit-11111111-2222-3333-4444-555555555555").waitFor();
+
+	// 刷新后仍生效（注册表在 store 初始化前安装）
+	await p.reload();
+	await p.getByTestId("open-theme-designer").waitFor();
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== "custom-11111111-2222-3333-4444-555555555555") throw new Error("刷新后自定义主题丢失");
+
+	// 编辑 → 另存为新主题 → 新 id、原主题保留
+	await p.getByTestId("edit-11111111-2222-3333-4444-555555555555").click();
+	await importFile(p, mk("11111111-2222-3333-4444-555555555555", "测试奶油"));
+	await p.getByTestId("theme-save-as").click();
+	await p.getByTestId("theme-designer").waitFor({ state: "detached" });
+	const ids = await p.evaluate(() => JSON.parse(localStorage.getItem("pia.customThemes") || "[]").map((m) => m.id));
+	if (ids.length !== 2 || new Set(ids).size !== 2) throw new Error(`另存为新主题应产生新 id：${JSON.stringify(ids)}`);
+	const activeId = (await p.evaluate(() => document.documentElement.dataset.skin)).replace("custom-", "");
+	if (!ids.includes(activeId)) throw new Error("另存后应切到新主题");
+
+	// 390 宽度下面板可用、不横向溢出
+	await p.setViewportSize({ width: 390, height: 780 });
+	await p.getByTestId("open-theme-designer").click();
+	await p.getByTestId("theme-prompt").waitFor();
+	const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+	if (overflow > 2) throw new Error(`390 下面板横向溢出 ${overflow}px`);
+	await p.screenshot({ path: join(SHOTS, "16c-theme-designer-390.png") });
+	await c.close();
+});
 
 await step("深色模式截图", async () => {
 	const d = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark", locale: "zh-CN" });
