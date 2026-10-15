@@ -56,12 +56,34 @@ export async function api<T = any>(path: string, init: RequestInit & { json?: un
 	return (ct.includes("json") ? res.json() : res.text()) as Promise<T>;
 }
 
-export async function fetchBlob(path: string): Promise<Blob> {
+export async function fetchBlob(path: string, signal?: AbortSignal): Promise<Blob> {
 	const headers = new Headers();
 	if (conn?.token) headers.set("authorization", `Bearer ${conn.token}`);
-	const res = await fetch(base() + path, { headers });
+	const res = await fetch(base() + path, { headers, signal });
 	if (!res.ok) throw new ApiError(res.status, res.statusText);
 	return res.blob();
+}
+
+/**
+ * 预览用：带字节上限地拉取文件。超过上限不读完 body，只回报 oversized（界面提示 + 下载）。
+ * 认证方式与 fetchBlob 一致（带登录凭证），只走授权资源地址。
+ */
+export async function fetchBlobLimited(path: string, maxBytes: number, signal?: AbortSignal): Promise<{ blob: Blob; oversized: boolean }> {
+	const headers = new Headers();
+	if (conn?.token) headers.set("authorization", `Bearer ${conn.token}`);
+	const res = await fetch(base() + path, { headers, signal });
+	if (!res.ok) throw new ApiError(res.status, res.statusText);
+	const len = Number(res.headers.get("content-length"));
+	if (Number.isFinite(len) && len > maxBytes) {
+		try {
+			await res.body?.cancel();
+		} catch {
+			/* ignore */
+		}
+		return { blob: new Blob(), oversized: true };
+	}
+	const blob = await res.blob();
+	return { blob, oversized: blob.size > maxBytes };
 }
 
 export async function download(path: string, name: string) {

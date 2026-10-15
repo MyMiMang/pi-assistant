@@ -9,6 +9,7 @@ import { t } from "../i18n";
 import { useStore } from "../store";
 import type { Attachment, ModelInfo } from "../types";
 import { AuthImage } from "./Attachments";
+import { openFilePreview } from "./FilePreview";
 import { openImageViewer } from "./ImageViewer";
 import { AgentEditor } from "./AgentEditor";
 import { AgentImageModel } from "./ImageModels";
@@ -141,12 +142,31 @@ function Files({ agentId }: { agentId: string }) {
 			<div className="space-y-1">
 				{files.length === 0 && <div className="text-sm text-zinc-500">还没有文件。</div>}
 				{files.map((f) => (
-					<button key={f.fileId} onClick={() => download(`/api/files/${f.fileId}`, f.name)} className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
-						<File size={16} className="shrink-0 text-zinc-400" />
-						<span className="min-w-0 flex-1 truncate">{f.name}</span>
-						<Badge>{f.direction === "in" ? "上传" : "交付"}</Badge>
-						<span className="text-xs text-zinc-400">{fmtSize(f.size)}</span>
-					</button>
+					<div key={f.fileId} className="flex items-center gap-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800">
+						<button
+							type="button"
+							onClick={() => openFilePreview({ name: f.name, mime: f.mime, size: f.size, url: `/api/files/${f.fileId}`, downloadPath: `/api/files/${f.fileId}` })}
+							className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-1.5 text-left text-sm"
+							title={`预览 ${f.name}`}
+							aria-label={`预览 ${f.name}`}
+							data-testid="info-file-open"
+						>
+							<File size={16} className="shrink-0 text-zinc-400" />
+							<span className="min-w-0 flex-1 truncate">{f.name}</span>
+							<Badge>{f.direction === "in" ? "上传" : "交付"}</Badge>
+							<span className="text-xs text-zinc-400">{fmtSize(f.size)}</span>
+						</button>
+						<button
+							type="button"
+							className="pa-icon-btn ghost !h-7 !w-7 shrink-0"
+							onClick={() => void download(`/api/files/${f.fileId}`, f.name)}
+							title={`下载 ${f.name}`}
+							aria-label={`下载 ${f.name}`}
+							data-testid="info-file-download"
+						>
+							<Download size={14} />
+						</button>
+					</div>
 				))}
 			</div>
 		</div>

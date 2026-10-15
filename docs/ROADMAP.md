@@ -135,7 +135,15 @@
 | 点输入框页面自动放大，打完看聊天要手动缩回 | 已修，待真机确认 | 根因：默认皮肤 `.pa-app` 13.5px 继承进 `textarea/input`（`.pa-composer textarea{font:inherit}`，实测 computed 13.5px < iOS 的 16px 阈值）。修复：`@media (max-width:820px),(pointer:coarse)` 下只把 `input/textarea/select` 提到 16px，**不动版面字号**（整页仍 13.5px），桌宠小窗排除。**不加** `user-scalable=no`/`maximum-scale=1`，保留双指缩放与文字缩放。 |
 | 键盘弹起 / 收回、横竖切换、地址栏折叠后输入与末消息仍可见 | 已实现，待真机确认 | iOS Safari 键盘是覆盖式、不缩布局视口，`100dvh` 也不变，所以用 `visualViewport` 写 `--pa-vvh`（Chromium 另有 `interactive-widget=resizes-content` 兜底）；视口变矮后把原本贴底的聊天区重新贴住最后一条（按塌缩高度补松弛量）。`scale != 1` 时不介入，保住 pinch zoom。主会话 / 群聊 / 子代理共用同一套 `html`/`#root` 规则，**没有三份复制**。真机 iOS 键盘未验证（Playwright 无真 iOS 键盘，e2e 用缩小视口近似）。详见 `progress-snapshots/mobile-chat-viewport-fix.md` |
 
+## 聊天附件应用内预览（2026-10-22，`file-preview` 树，基 `unified-integration` `3bf2c01`，**未 push / 未 tag**）
+
+| 需求（用户原话大意） | 状态 | 说明 |
+|---|---|---|
+| 聊天里的文件卡片（如 `voice-input-feasibility.md`）只有下载图标，点卡片没有任何预览；要求点卡片主体 / 文件名在应用内打开预览，下载图标保持独立（不误触预览） | 已实现代码，待主 review 合入（未打包） | 新增共享 `apps/web/src/components/FilePreview.tsx` + 纯逻辑 `apps/web/src/preview.ts`，聊天上传 / 交付 / 信息面板「文件」共用；非图片卡片改为「主体按钮（预览）+ 独立下载按钮」，避免嵌套按钮。支持 Markdown（默认渲染 + 可切源码，复用现有 react-markdown）/ 纯文本 / log / json / 代码（行号 + 复制）/ CSV（引号内换行、有界表格）/ PDF（`<object>` 内嵌 + fallback 提示 + 下载）；xlsx / docx / pptx / HTML / SVG / 压缩包明确标「暂不支持预览」，只下载、不执行。安全：只走授权资源地址 `/api/files/:id` 带登录凭证拉取，不读本机任意路径 / URL、不绕权限；类型判定扩展名 + MIME + 实际字节嗅探（二进制不当文本解码）；文本上限 1MB、CSV 500×50、代码 5000 行；Markdown 外链图片默认不自动加载、链接只放行 http/https/mailto（javascript: / data: / 相对文件引用不渲染成链接）；PDF 只用本会话 blob，不外源、不服务端 exec / 云上传。 |
+| 验证 | 已跑（纯前端 fixture，未碰钥匙串 / 真实数据） | `e2e/file-preview.mjs` 桌面 + 390 共 37 项全通过（点主体预览、Markdown 渲染/源码切换 / 下载不误触 / 39KB Markdown 表格代码 / 外链图不自动加载 / 危险与相对链接不成链 / CSV 引号换行 / 代码行号复制 / 不支持类型 / 超限不下载 / 404 重试 / PDF object+fallback / 图片仍走 ImageViewer / Esc + 焦点返回 / 390 工具栏）；web `tsc --noEmit` + `vite build` 通过；`e2e/mobile-viewport-ui.mjs` 回归全通过。**未做 / 未真机**：xlsx 等 Office 预览（无安全库，明确暂不支持）、真机 iOS 手势、真实 PDF 内嵌（headless 无 PDF 插件，只验 fallback）。 |
+
 ## 待用户决定
+
 
 | 事项 | 状态 | 说明 |
 |---|---|---|
