@@ -58,6 +58,9 @@ const CLASSIFIER_PROTOCOLS: Record<string, any> = {
 export const classifierProtocols = (): string[] => Object.keys(CLASSIFIER_PROTOCOLS);
 export const isClassifierProtocol = (v: unknown): v is string => typeof v === "string" && Object.prototype.hasOwnProperty.call(CLASSIFIER_PROTOCOLS, v);
 
+/** Pi 元数据里某个模型支持的思考档位（唯一能力来源：模型目录、界面下拉、clamp 都用这一份）。 */
+const supportedThinkingLevels = (m: unknown): string[] => getSupportedThinkingLevels(m as never);
+
 /** 一个自定义服务声明的 classifier：协议 + 对端模型 id（只含公开元数据，不含 baseUrl / 凭据）。 */
 export interface ClassifierDeclaration {
 	protocol: string;
@@ -233,7 +236,7 @@ export class PiModels {
 			id: m.id,
 			name: m.name,
 			reasoning: !!m.reasoning,
-			thinking: getSupportedThinkingLevels(m as never),
+			thinking: supportedThinkingLevels(m),
 			thinkingLevelMap: (m as { thinkingLevelMap?: Record<string, string | null> }).thinkingLevelMap,
 			api: (m as { api?: string }).api,
 			input: [...(m.input ?? [])],
@@ -278,6 +281,12 @@ export class PiModels {
 	clampThinking(providerId: string, modelId: string, level: string): string {
 		const m = this.runtime.getModel(providerId, modelId);
 		return m ? clampThinkingLevel(m as never, level as never) : "off";
+	}
+
+	/** 某个模型支持的思考档位（与模型目录同一份 Pi 元数据；模型不存在返回 []）。 */
+	supportedThinking(providerId: string, modelId: string): string[] {
+		const m = this.runtime.getModel(providerId, modelId);
+		return m ? supportedThinkingLevels(m) : [];
 	}
 
 	getModel(providerId: string, modelId: string) {
