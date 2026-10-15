@@ -65,6 +65,20 @@ RegistryModel {
 
 **测试**：`test/vision.test.ts` 4/4（models.dev 标记 / 当前模型支持图片直接给图且不调别的模型 / 不支持时明确报错且不调别的模型 / legacy 设置保留）。回归：`attachments` 3/3、`custom-providers` 8/8、`model-registry` 6/6，服务端 `tsc` 通过。
 
+## B1. 生图 Key 统一到公开凭据存储 + legacy 幂等迁移（已落地）
+
+**写路径统一**：生图服务的 Key 改走 **统一凭据存储**（Pi 公开 `CredentialStore`，与 chat 服务同一份，按 provider id 绑定），不再写 `imageKey:<id>` settings。
+- `models.ts` 暴露 `credentialStore`（公开 `CredentialStore` 接口，不暴露实现）。
+- `image-gen/index.ts`：`saveProvider`/`removeProvider` 改 async；新 Key 用 `store.modify` 写入，清 legacy 设置；`keyOf` 解析顺序 = 统一存储 → legacy `imageKey:<id>` 桥接（只读）→ `keyFrom` 引用（读同一份存储）。
+- `ImageProvider` 新增非秘密元数据 `hasCredential` / `keyStored`（`unified` | `legacy` | `reference`）；`providerJson` 回给 UI。
+- `migrateLegacyImageProviders()`：幂等、非秘密元数据迁移，**不读、不复制明文**；启动时（`main.ts`）跑一次。
+- 既有 dashscope/ark/gemini/xai/openai HTTP adapter 不动；鉴权仍由 adapter 的 `apiKey` 回调，不读 env / 全局 Key，错误不泄露 Key。
+- 路由：`POST/PUT/DELETE /api/image-models/providers` 适配 async。
+
+**测试**：`test/image-gen.test.ts` 13/13（含“Key 写统一存储不落 settings”“legacy 桥接仍可读、密文不复制”“迁移幂等”“keyFrom 复用统一凭据”）。
+
+**未做（下一步）**：registry 把共享同一凭据的生图服务与自定义服务合并为一个「一次 key 多能力」的服务卡；local-laya 来源/运行状态联动。
+
 ## 后续（未做，按小步推进）
 
 1. **生图服务迁移**：`imageProviders`/`imageKey:<id>` 独立 settings → 统一 registry（一个 provider 一份 key 可同时 chat+image），

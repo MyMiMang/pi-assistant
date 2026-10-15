@@ -25,19 +25,19 @@ export function mountImageRoutes(app: Hono<any>, admin: MiddlewareHandler<any>) 
 	});
 	app.post("/api/image-models/providers", admin, async (c) => {
 		try {
-			return c.json(providerJson(saveProvider(null, await c.req.json<ProviderInput>())));
+			return c.json(providerJson(await saveProvider(null, await c.req.json<ProviderInput>())));
 		} catch (e) {
 			return c.json(errJson(e), 400);
 		}
 	});
 	app.put("/api/image-models/providers/:id", admin, async (c) => {
 		try {
-			return c.json(providerJson(saveProvider(c.req.param("id"), await c.req.json<ProviderInput>())));
+			return c.json(providerJson(await saveProvider(c.req.param("id"), await c.req.json<ProviderInput>())));
 		} catch (e) {
 			return c.json(errJson(e), 400);
 		}
 	});
-	app.delete("/api/image-models/providers/:id", admin, (c) => c.json({ ok: removeProvider(c.req.param("id")) }));
+	app.delete("/api/image-models/providers/:id", admin, async (c) => c.json({ ok: await removeProvider(c.req.param("id")) }));
 	app.post("/api/image-models/fetch-models", admin, async (c) => c.json(await fetchModelsFor(await c.req.json())));
 	app.put("/api/image-models/default", admin, async (c) => {
 		try {

@@ -10,6 +10,8 @@ import { EncryptedCredentialStore, openJson, sealJson } from "./secrets.ts";
 export let models: PiModels;
 export let customProviders: CustomProviders;
 export let credentialBackend = "";
+/** 统一凭据存储（公开 `CredentialStore` 接口）：chat / 生图等所有服务共用这一份，按 provider id 绑定一份 key。 */
+export let credentialStore: CredentialStore | undefined;
 /** 显式注入过的凭据后端：同一进程内后续无参 initModels 复用它，不再重复构造会走 OS 钥匙串的后端。 */
 let injectedCredentials: CredentialStore | undefined;
 
@@ -18,6 +20,7 @@ export async function initModels(credentials?: CredentialStore) {
 	// 注入过的后端在后续无参调用中复用，保证一个进程最多构造一次安全后端。
 	if (credentials) injectedCredentials = credentials;
 	const store: CredentialStore = credentials ?? injectedCredentials ?? new EncryptedCredentialStore();
+	credentialStore = store;
 	if (store instanceof EncryptedCredentialStore) credentialBackend = store.backend;
 	const modelsPath = join(config.dataDir, "models.json");
 	models = await PiModels.create({ credentials: store, modelsPath, allowNetwork: config.allowModelNetwork });
