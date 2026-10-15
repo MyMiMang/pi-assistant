@@ -39,7 +39,7 @@ interface LayaStatusLike {
  * 把一个本地服务状态并入缓存（安全元数据）。停止后 `registered` 为 null，
  * 沿用上一次的 provider / model，保证卡片不消失；只认 provider / model 标识，绝不读 token。
  */
-export function rememberLocalModelStatus(status: unknown, providerHint?: string, now = Date.now()): void {
+export function rememberLocalModelStatus(status: unknown, providerHint?: string, fallbackModelId?: string, now = Date.now()): void {
 	const s = status as LayaStatusLike | null;
 	if (!s || typeof s !== "object") return;
 	const reg = s.registered ?? undefined;
@@ -47,7 +47,8 @@ export function rememberLocalModelStatus(status: unknown, providerHint?: string,
 	const provider = reg?.provider ?? providerHint;
 	if (!provider) return;
 	const prev = cache.get(provider);
-	const modelId = reg?.modelId ?? prev?.modelId;
+	// 已安装但从未启动时 registered 为 null 且无历史：用已知的默认模型 id 补齐，条目仍然出现。
+	const modelId = reg?.modelId ?? prev?.modelId ?? fallbackModelId;
 	if (!modelId) return;
 	const state = s.runtime?.state ?? "stopped";
 	cache.set(provider, {

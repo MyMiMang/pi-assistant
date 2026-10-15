@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Hono } from "hono";
 import { mountLocalLayaRoutes } from "../src/local-laya/routes.ts";
+import { LAYA_MODEL_ID } from "../src/local-laya/manager.ts";
+import { localModelHints, resetLocalModelHints } from "../src/local-models.ts";
 import { LAYA_SOURCE } from "../src/local-laya/manifest.ts";
 import { platformProfile } from "../src/local-laya/platform.ts";
 import type { LocalLayaManager, LayaStatus } from "../src/local-laya/manager.ts";
@@ -65,6 +67,22 @@ test("GET status：返回契约字段，且绝不含 token / 凭据", async () =
 	assert.ok(body.platform.support);
 	assert.ok(body.source.version);
 	assert.ok(!JSON.stringify(body).toLowerCase().includes("token"));
+});
+
+test("GET status：把安全 hints 刷新进注册表（已安装未启动也出现，不靠 bus 缓存）", async () => {
+	resetLocalModelHints();
+	const { app, st } = buildApp();
+	// 重启后：已安装、从未启动 → registered 为 null
+	st.install.state = "installed";
+	st.runtime.state = "stopped";
+	assert.deepEqual(localModelHints().map((h) => h.provider), [], "读之前还没有 hints");
+	await app.request("/api/local-models/laya/status");
+	const h = localModelHints().find((x) => x.provider === "local-laya");
+	assert.ok(h, "GET status 后 local-laya 应进入 hints");
+	assert.equal(h!.modelId, LAYA_MODEL_ID);
+	assert.equal(h!.installed, true);
+	assert.equal(h!.running, false);
+	resetLocalModelHints();
 });
 
 test("GET source：只读来源元数据", async () => {

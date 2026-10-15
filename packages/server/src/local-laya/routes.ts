@@ -6,7 +6,8 @@
 import type { Context, Hono, Next } from "hono";
 import { probeNvidia, readLayaLogs } from "./deps.ts";
 import { layaManager } from "./index.ts";
-import type { LocalLayaManager } from "./manager.ts";
+import { rememberLocalModelStatus } from "../local-models.ts";
+import { LAYA_MODEL_ID, LAYA_PROVIDER_ID, type LocalLayaManager } from "./manager.ts";
 import { DEFAULT_CHECKPOINT, LAYA_CHECKPOINTS, LAYA_SOURCE } from "./manifest.ts";
 import { platformProfile } from "./platform.ts";
 
@@ -22,7 +23,12 @@ interface InstallBody {
 export function mountLocalLayaRoutes(app: Hono<any>, localOnly: LocalOnly, getManager: () => LocalLayaManager = layaManager) {
 	const base = "/api/local-models/laya";
 
-	app.get(`${base}/status`, localOnly, (c) => c.json(getManager().status()));
+	// 读状态时顺带把安全元数据刷新进本地模型 hints：重启后「已安装但从未启动」也能在注册表里出现（不再只靠 bus 内存缓存）。
+	app.get(`${base}/status`, localOnly, (c) => {
+		const st = getManager().status();
+		rememberLocalModelStatus(st, LAYA_PROVIDER_ID, LAYA_MODEL_ID);
+		return c.json(st);
+	});
 
 	// 安装前预检：探测 NVIDIA 驱动（只看，不自动装系统驱动）+ 平台能力；UI 据此决定是否提供 CUDA / XPU 选项。
 	app.get(`${base}/platform`, localOnly, async (c) => {
