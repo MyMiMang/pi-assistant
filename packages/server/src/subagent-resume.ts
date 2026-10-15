@@ -44,6 +44,70 @@ const CONFIG = /unauthorized|invalid[\s_-]*api[\s_-]*key|authentication|incorrec
 export const TRANSPORT_RETRY = { maxAttempts: 3, baseMs: 500, maxMs: 8000 } as const;
 
 /**
+ * 续跑安全核验结果：自动续跑前先证明「没有结果未知的副作用」。
+ *
+ * 关键认知（用户 2026-10-22 明确）：**「提示模型别重做」不是副作用幂等保证**。
+ * 工具在模型连接中断 / 进程被杀时，可能已经把调用**落库**（助手消息里的 toolCall）、
+ * 却还没把工具结果落库（toolResult）。这种情况下外部副作用未知，无论提示词怎么写，
+ * 自动化都不能替用户断定「没做过」，因此自动续跑必须先停下、转人工 / 主模型核验。
+ */
+export interface ResumeSafety {
+	/** true = 会话里没有「已派发但结果未落库」的工具调用，自动续跑模型轮次不会重放副作用。 */
+	safe: boolean;
+	/** 已落库、但没有对应工具结果的调用（id + 工具名）。 */
+	pendingToolCalls: { id: string; name: string }[];
+	/** 中文原因：safe 时说明为什么可以续；不安全时说明要核验什么。 */
+	reason: string;
+}
+
+/** 从一条（公开 Pi 会话里的）消息取出 toolCall 块。消息形状来自 Pi 公开的 message-types。 */
+function toolCallsOf(message: unknown): { id: string; name: string }[] {
+	const m = message as { role?: string; content?: unknown } | null | undefined;
+	if (m?.role !== "assistant" || !Array.isArray(m.content)) return [];
+	const out: { id: string; name: string }[] = [];
+	for (const block of m.content as { type?: string; id?: unknown; name?: unknown }[]) {
+		if (block?.type === "toolCall" && typeof block.id === "string") out.push({ id: block.id, name: typeof block.name === "string" ? block.name : "未知工具" });
+	}
+	return out;
+}
+
+/**
+ * 只凭公开的会话消息（`session.messages` 或落库 session 分支）判断自动续跑是否安全。
+ * 纯函数，不碰数据库 / 模型 / 凭据，便于单测与跨模块复用。
+ *
+ * 规则：收齐所有 assistant 消息里的 toolCall id 与所有 toolResult 的 toolCallId，
+ * 差集就是「已派发、结果未落库」的调用。任何一个存在 → 不安全。
+ */
+export function assessResumeSafety(messages: readonly unknown[]): ResumeSafety {
+	const results = new Set<string>();
+	for (const m of messages) {
+		const r = m as { role?: string; toolCallId?: unknown } | null | undefined;
+		if (r?.role === "toolResult" && typeof r.toolCallId === "string") results.add(r.toolCallId);
+	}
+	const pending: { id: string; name: string }[] = [];
+	const seen = new Set<string>();
+	for (const m of messages) {
+		for (const call of toolCallsOf(m)) {
+			if (seen.has(call.id)) continue;
+			seen.add(call.id);
+			if (!results.has(call.id)) pending.push(call);
+		}
+	}
+	if (pending.length === 0) return { safe: true, pendingToolCalls: [], reason: "没有已派发但结果未落库的工具调用，可安全续跑模型轮次" };
+	const names = [...new Set(pending.map((p) => p.name))].join("、");
+	return {
+		safe: false,
+		pendingToolCalls: pending,
+		reason: `有 ${pending.length} 个工具调用已派发、但没有落库结果（${names}），外部副作用未知；不能自动重试，需人工或主模型核验实际结果后再决定`,
+	};
+}
+
+/** 自动续跑前的合并判定：连接类错误 + 会话安全都满足才允许（attempt 从 1 起）。 */
+export function shouldAutoRetrySafely(message: string | null | undefined, attempt: number, safety: ResumeSafety): boolean {
+	return safety.safe && shouldAutoRetry(message, attempt);
+}
+
+/**
  * 分类一条失败原因，给出「能否自动重试 / 能否原 id 手动继续」。
  * 空原因按未识别处理：不自动重试，可由用户核验后手动继续。
  */

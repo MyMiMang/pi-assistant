@@ -14,6 +14,15 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+2026-10-22 子代理续跑安全实证（独立 worktree `resume-safety-proof`，分支 `resume-safety-proof`，基 `next-release-integration` = `15812de`，**未 push / 未 tag / 未打包；主核验后由负责人最终发布**）：
+- **动机**：`4a12ef5` 只是把自动续跑从「重发原任务」改成 `TRANSPORT_RETRY_PROMPT`「先核验、不重做」——但**提示词不是副作用幂等保证**。连接中断时工具可能已派发（`toolCall` 落库）、结果未落库（无 `toolResult`），外部副作用未知；不能只换提示词就声称自动续跑安全。
+- **代码（只读公开 Pi SDK，5 个文件）**：`subagent-resume.ts` 新增纯函数 `assessResumeSafety(messages)`（收齐 assistant 的 `toolCall.id` 与 `toolResult.toolCallId` 求差集，非空即不安全）与 `shouldAutoRetrySafely`；`pi-adapter/index.ts` 新增只读 `readSessionFileMessages(file)`（`SessionManager.open` 读原始分支，含被 `context_edit` 略去的失败轮次）与 `branchMessagesOf(session)`；`runtime.ts` 的连接类退避循环 + 池内换模型循环加闸（不安全 → 带原因 `break`，不再 `promptSession`）；`subagents.ts` 的 `recoverSubagents`（重启恢复）与 `resumeSubagent(mode:"auto")` 先读落库会话核验，不安全就标 `lost` / 拒绝自动，`subagentResumePrompt(r, safety)` 把未知工具名显式列进核验提示，`withResumeInfo` 暴露 `needsVerify` / `pendingToolNames`。仅「纯模型连接失败、没有未配平工具调用」才自动续。
+- **测试（公开 `PiModels.create({credentials: memoryCredentialStore()})` + `createPiSession`，本地 faux provider，不起 `main`、不碰钥匙串、不花钱）**：
+  - `subagent-resume.test.ts` 新增 5 项（共 13 项全过）：调用与结果都落库→安全；调用已派发、无结果→不安全且列出工具名；多调用一缺即不安全；空会话 / 纯错误助手消息 / 只有结果→安全；`shouldAutoRetrySafely` 连接类+安全才 true。
+  - 新增 `subagent-resume-safety.test.ts`（会话级）：副作用工具执行一次（count=1）→ 模型连接中断（`EHOSTUNREACH`，Pi 自身不重试）→ 按 runtime 同一动作发 `TRANSPORT_RETRY_PROMPT` 续跑 → **count 仍为 1**、最终文字正确、落库会话调用与结果配平、`assessResumeSafety(落库文件)` 安全。
+  - `subagent-resume.test.ts` + `subagents.test.ts` **50/50**；服务端 `tsc --noEmit -p .` exit 0。
+- **未做 / 未证明**：`subagent-resume.smoke.ts` / `subagent-restart.smoke.ts` 等 HTTP 级冒烟本次未跑（默认 `main.initModels()` 无参会构造走 OS 钥匙串的后端；实测 `PIA_CREDENTIAL_STORE=memory node --import tsx test/subagent-resume.smoke.ts` 可安全跑通，但未纳入本次交付，留给主会话决定是否加测试启动注入）。**不声称解决所有网络重试 / exactly-once**：跨进程崩溃时工具「是否真的执行成功」无法从会话文件唯一证明，本改动只把「结果未知就不自动动手」变成硬约束。详见 `docs/DESIGN.md` §21.9「恢复矩阵」。
+
 2026-10-15 子代理断网续跑（合 `subagent-resume-fix` 4 commit + `chat-scrollbar-fix`，**未 push / 未 tag / 未打包**，`next-release-integration` 树，基线 `661550f`）：
 - **原 id 断点续跑**（`5e7012b` `5934a67` `3a06ea9` `a8cedac`）：失败分类纯函数 `subagent-resume.ts`（`classifyResume` / `shouldAutoRetry` / `transportBackoffMs`）；`subagents` 加 `attempt` / `retry_at` 列，`resumeSubagent(id)` 用**原子代理 id** 续跑（复用落库 Pi session、原任务、历史与用量，不新开子代理；满额照旧 FIFO 排队；原子占用、重复调用只生效一次；`resume=2` 走失败续跑提示）；`POST /api/subagents/:id/resume` + 工具 `subagent_resume`，`subagent_list` 带 `canResume` / `resumeReason` / `retryable` / `attempt`；连接类错误在同一会话有界退避（3 次、指数 + 抖动、封顶 8s），退避期间只等时钟不发请求、可被停止打断；429/5xx 仍走 Pi 自身请求重试 + 池内 fallback，不重复等一个周期；晚到旧代际终态只收尾不唤醒。UI 失败卡「继续」+「等待重试 N 秒」。合并提交 `d5ab8db`（a8cedac）/ `f33092e`（afe70a4），两处自动合并无冲突。
 - **聊天滚动条修复**（`afe70a4`）：`.pa-scroll` 常显滚动条 + composer 让出槽位，主会话 / 群聊 / 子代理共用。

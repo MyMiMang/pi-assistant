@@ -1373,6 +1373,21 @@ cua-driver 0.35.4 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - **不新开子代理**：失败 / 超时 / 停止后一律用**原 subagent id** 续跑，复用落库 Pi session、原任务、历史与用量（同一任务、同一份用量与历史）。`resumeSubagent(id)` 先校验「已到终态、非 done、已落库 session」；无 session 直接拒绝（无法确认执行到哪一步，要求先核验再重派）。原子占用（`UPDATE … WHERE status NOT IN ('queued','running','stalled')`），重复调用只生效一次；满额照旧 FIFO 排队不超并发。
 - **失败分类**（`subagent-resume.ts` 纯函数）：`transport`（网络 / 连接 / DNS / 请求超时）与 `transient`（429 / 5xx / 临时不可用）可**有界退避**自动重试；`config`（401/403/额度/模型被删）、`context`（上下文超限）、`session`（会话损坏）、`blocked`（用户停止 / 权限拒绝）、`unknown` 一律**不自动**，只允许用户 / 主模型显式原 id 继续。未知原因不做全量白名单（避免盲目重放）。
 - **只续模型轮次，不重发原任务**：连接中断时工具可能已执行也可能没执行，重发原任务会让模型重做已执行步骤（发送 / 付款等副作用不可撤销）。自动退避与手动续跑都只发「先核验已持久的结果、从断点继续、不重做、不重复副作用」的指令（`TRANSPORT_RETRY_PROMPT` / `subagentResumePrompt`），任务正文由落库会话承载。**不承诺 exactly-once**。
+- **提示不是幂等保证（2026-10-22 补强）**：「让模型别重做」只是提示词，不能当作副作用幂等证明。自动续跑前必须先从公开 Pi 会话历史里证明**没有「已派发、结果未落库」的工具调用**（`assessResumeSafety`：收齐 assistant 消息里的 `toolCall.id` 与 `toolResult.toolCallId` 求差集，非空即不安全）。
+  - 有未落库结果的调用 → 自动续跑一律**停下**，转人工 / 主模型核验；`runtime.ts` 的连接类退避循环与池内换模型循环都加了这道闸（不安全就带原因 `break`，不再 `promptSession`）。
+  - 仅**纯模型连接失败（助手消息里没有未配平的工具调用）**才允许自动续跑——不是「所有网络错误都能自动重试」。
+  - 重启恢复（`recoverSubagents`）与 `resumeSubagent(mode:"auto")` 同样先只读落库会话文件核验：不安全就标 `lost` / 拒绝自动，保留会话与已完成结果，要求核验后手动续。手动续跑仍走「先核验」提示，并把未知工具名显式列进提示（`subagentResumePrompt(r, safety)`）；`withResumeInfo` 给出 `needsVerify` / `pendingToolNames` 供界面与主模型判断，不盲目一键重放。
+- **恢复矩阵（按「证据强度」决定能不能自动续）**：
+
+  | 情况（会话末尾状态） | 自动续跑 | 手动续跑 | 依据 |
+  |---|---|---|---|
+  | 纯模型连接失败，没有未配平的工具调用 | ✅ 可（连接类、有界退避） | ✅ | `assessResumeSafety.safe` + `classifyResume=transport` |
+  | 工具调用与结果都已落库，才发生模型连接失败 | ✅ 可 | ✅ | 同上；工具不会重放 |
+  | 工具调用已落库、结果未落库（崩溃 / 被杀 / 中断在工具执行中） | ❌ 停（需核验） | ⚠️ 需先核验（提示里列出未知工具） | `assessResumeSafety.pendingToolCalls` 非空 |
+  | 没有落库会话 / 会话文件读不出 | ❌ 停 | ❌ 拒绝自动、要求核验后重派 | `recoverSubagents` / `resumeSubagent` 现有校验 |
+  | 401/403/额度/上下文/会话损坏 / 用户停止 / 未识别 | ❌ | ✅（用原 id） | `classifyResume` |
+
+  **不保证 exactly-once**：这套逻辑只把「结果未知时不再自动动手」变成硬约束，不声称解决了所有网络重试 / 副作用重复问题。
 - **与 Pi 重试分工**：429 / 5xx 已由 Pi 自身请求重试 + 池内 fallback 处理，app 层不再叠一层退避（`shouldAutoRetry` 只认 `transport`）。连接类最多 3 次、指数 + 抖动、封顶 8s；退避期间只等时钟、不发模型请求，停止 / 拒绝立即打断（每轮重查 `isActiveSubagent`）。
 - **超时区分**：全任务「最长运行时间」超时原因写作 `已超过最长运行时间`（`stopSubagent(id,"timeout")`），**不含**「超时」子串 → 分类为 `unknown`，绝不自动重跑整个任务；只有请求级 `timeout` 才可自动续。
 - **终态代际**：`subagent_events.generation` = 当时的 `finished_at`；晚到的旧代际终态只收尾不唤醒，避免旧 attempt 覆盖新 attempt。

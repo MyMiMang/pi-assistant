@@ -1,7 +1,7 @@
 import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, subagentNotifyText, resolveSubagentThinking, resumeSubagent, setSubagentRetryAt, withResumeInfo, type Subagent, type SubagentEvent } from "./subagents.ts";
 import { cancelWaitsForConversation, listWaits, parseDue, refreshWait, registerWait, cancelWait, setWaitWaker, setWaitNoteInjector, startWaitScheduler, WAIT_DEFAULT_INTERVAL_MS } from "./task-waits.ts";
 import { classifyModelError, isRecoverableModelError } from "./model-errors.ts";
-import { shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY_PROMPT } from "./subagent-resume.ts";
+import { assessResumeSafety, shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY_PROMPT } from "./subagent-resume.ts";
 /**
  * Agent 运行时：每个助理一个主会话（Pi AgentSession），后台任务各自一个会话。
  * 所有 Pi 调用都经过 pi-adapter；这里负责把 Pi 事件落盘为消息并广播。
@@ -62,6 +62,7 @@ import {
 	makeBashTool,
 	promptSession,
 	sessionFileOf,
+	branchMessagesOf,
 	sessionStats,
 	subscribeSession,
 	INTERJECTION_PREFIX,
@@ -1127,6 +1128,8 @@ setSubagentDriver({
 			// 运行中改思考强度：直接调 pi-adapter 公开的 applyModelSettings（不重建会话、不动主会话）
 			await applyModelSettings(session, models, model, thinking);
 		});
+		// 续跑前的副作用核验：只读公开会话原始历史 / 落库文件，不碰模型与凭据
+		const safetyOfSession = () => assessResumeSafety(branchMessagesOf(session));
 		try {
 			if (!isActiveSubagent(getSubagent(r.id)!.status)) return "";
 			if (input?.messageId) updateMessage(input.messageId, { meta: { delivery: "delivered" } });
@@ -1134,6 +1137,12 @@ setSubagentDriver({
 			await promptSession(session, firstPrompt);
 			// 连接类 / 服务临时不可用：同一会话有界退避重试。退避期间只等时钟、不发模型请求（不忙轮询），可被停止打断。
 			for (let attempt = 1; shouldAutoRetry(error, attempt) && isActiveSubagent(getSubagent(r.id)!.status); attempt++) {
+				// 先证明没有「已派发、结果未落库」的工具调用：提示模型别重做不是幂等保证，有未知副作用就停下核验
+				const safety = safetyOfSession();
+				if (!safety.safe) {
+					error = safety.reason;
+					break;
+				}
 				const wait = transportBackoffMs(attempt);
 				setSubagentRetryAt(r.id, Date.now() + wait);
 				subagentActivity(r.id);
@@ -1150,6 +1159,12 @@ setSubagentDriver({
 				tried.add(modelKey(current));
 				const next = planFallback(candidates, tried, error);
 				if (!next) break;
+				// 换模型继续同样是「续跑」：结果未知的副作用同样不允许自动重放，停下核验
+				const safety = safetyOfSession();
+				if (!safety.safe) {
+					error = safety.reason;
+					break;
+				}
 				switchSubagentModel(r.id, next, `${classifyModelError(error)?.label ?? "模型请求失败"}：${error}`);
 				current = next;
 				error = undefined;
