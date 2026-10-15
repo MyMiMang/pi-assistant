@@ -51,6 +51,20 @@ RegistryModel {
 现在 `ProviderReferences` 增加 `imageProviders`（受影响的生图服务名），删除时清掉这些生图服务的 `keyFrom`
 （只清引用，**不删生图服务本身、不动凭据**），界面可据此提示“这些生图服务需要重新配 Key”。
 
+## A. 图片理解只跟当前对话模型（已落地）
+
+**行为变化（API 契约）**：
+- 聊天附件、`look_at_image`、`read` 读到的图片**只跟随当前对话/会话模型**：
+  - 当前模型 Pi 公开元数据 `input` 含 `image` → 图片作为真正的内容发给它；
+  - 不含 `image` → 明确提示换模型（`visionUnsupportedMessage`），**不再静默改用别的模型**（不产生额外云费用）。
+- `GET /api/models/vision`：保留为 **deprecated 只读兼容**，返回增加 `deprecated: true` / `deprecatedNote`；旧字段 `setting/current/source/candidates` 不变。
+- `PUT /api/models/vision`：保留写入（旧 UI 可用），返回 `{ ok: true, deprecated: true }`；只存设置，不影响图片路由，**不删凭据 / 模型**。
+- `visionModel` 设置**保留不删**；删除服务时仍按原逻辑清引用（`clearProviderReferences` 不变）。
+
+**代码落点**：`vision.ts`（`supportsVision` 按 Pi 公开 `input`；新增 `visionUnsupportedMessage`；`pickVisionModel`/`describeImages` 降级为 legacy/显式）、`vision-ext.ts`（不再 import `describeImages`，去掉 `onUsage`）、`runtime.ts`（`withAttachments` 不再传 `describe`，去掉识图用量上报）、`attachments.ts`（不支持看图时的文案改为引导换当前对话模型）。
+
+**测试**：`test/vision.test.ts` 4/4（models.dev 标记 / 当前模型支持图片直接给图且不调别的模型 / 不支持时明确报错且不调别的模型 / legacy 设置保留）。回归：`attachments` 3/3、`custom-providers` 8/8、`model-registry` 6/6，服务端 `tsc` 通过。
+
 ## 后续（未做，按小步推进）
 
 1. **生图服务迁移**：`imageProviders`/`imageKey:<id>` 独立 settings → 统一 registry（一个 provider 一份 key 可同时 chat+image），

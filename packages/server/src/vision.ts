@@ -1,7 +1,14 @@
 /**
- * 识图：当前模型不支持图片时，把图片交给一个支持识图的模型看，换成文字描述。
- *  - 设置项 visionModel：{provider,id} = 用户指定；null / 未设 = 自动（从已配置的服务里挑支持识图的模型）
- *  - 是否支持识图：Pi 模型元数据 input 含 image（自定义服务按 models.dev 参数库自动补，见 custom-providers withLimits）
+ * 识图能力判定与（显式）识图调用。
+ *
+ * 事实来源是 Pi 公开模型元数据：`input` 含 `image` 才算能看图（自定义服务按 models.dev 参数库自动补，见 custom-providers withLimits）。
+ *
+ * 现在的请求路径（聊天附件、look_at_image、read 图片）**只跟随当前对话/会话模型**：
+ *  - 当前模型支持图片 → 图片直接作为内容发给它；
+ *  - 当前模型不支持图片 → 明确说明并引导用户换一个支持图片的模型，**绝不静默改用别的模型**（避免额外云费用）。
+ *
+ * `describeImages` / `pickVisionModel` 只保留给显式调用与 legacy `/api/models/vision` 只读兼容，
+ * 不再被任何默认请求路径使用；`visionModel` 设置保留不删（旧 UI 仍可读写）。
  */
 import { readFileSync, statSync } from "node:fs";
 import { extname } from "node:path";
@@ -18,7 +25,7 @@ export function supportsVision(ref: ModelRef | null | undefined): boolean {
 	return !!models.listModels(ref.provider).find((x) => x.id === ref.id)?.input.includes("image");
 }
 
-/** 自动挑选的优先级：默认模型 > 名字里带 vl/vision/4o/gemini 等的 > 其它；越便宜的（flash/mini/lite）越靠前 */
+/** legacy 自动挑选（仅 `/api/models/vision` 只读兼容）：默认模型 > 名字里带 vl/vision/4o/gemini 等的 > 其它；越便宜的（flash/mini/lite）越靠前。不用于请求路径。 */
 const cheap = (id: string) => (/flash|mini|lite|haiku|turbo|small/i.test(id) ? 0 : 1);
 export function pickVisionModel(): { model: ModelRef | null; source: "user" | "auto" | "none" } {
 	const set = getSetting<ModelRef | null>("visionModel", null);
@@ -33,7 +40,14 @@ export function pickVisionModel(): { model: ModelRef | null; source: "user" | "a
 	return cands[0] ? { model: { provider: cands[0].provider, id: cands[0].id }, source: "auto" } : { model: null, source: "none" };
 }
 
-const NO_VISION = "没有可用的识图模型：当前模型不支持看图，已配置的服务里也没有支持识图的模型。请告诉用户：在 设置 › 模型 › 识图模型 里选一个支持图片的模型（例如 qwen-vl、gpt-4o-mini、gemini-flash），否则你无法确认图片内容。";
+/** 当前对话模型不能看图时的统一提示：明确、可执行、不静默换模型、不产生别的模型费用。 */
+export function visionUnsupportedMessage(ref?: ModelRef | null): string {
+	const who = ref ? `当前对话用的模型（${ref.provider}/${ref.id}）` : "当前对话用的模型";
+	return `${who}不支持图片输入，我看不到图片内容。请让用户在 设置 › 模型 里把当前对话/助理换成支持看图的模型（例如 qwen-vl、gpt-4o-mini、gemini-flash），再把图片发一次；我不会自动改用别的模型看图（那会产生额外费用）。`;
+}
+
+/** legacy 显式识图（不用于默认请求路径）：没有可用识图模型时的说明。 */
+const NO_VISION = "没有可用的识图模型：当前模型不支持看图，已配置的服务里也没有支持识图的模型。请告诉用户：在 设置 › 模型 里选一个支持图片的模型（例如 qwen-vl、gpt-4o-mini、gemini-flash），否则无法确认图片内容。";
 
 export type DescribeImpl = (ref: ModelRef, prompt: string, images: { data: string; mimeType: string }[], signal?: AbortSignal) => Promise<{ text: string; error?: string; usage?: { input: number; output: number } }>;
 let impl: DescribeImpl = async (ref, prompt, images, signal) => {
@@ -43,7 +57,10 @@ let impl: DescribeImpl = async (ref, prompt, images, signal) => {
 /** 测试用：替换识图调用 */
 export const setDescribeImpl = (f: DescribeImpl) => void (impl = f);
 
-/** 让识图模型看一张或几张图片，返回文字描述（失败时返回说明，ok=false） */
+/**
+ * 让**显式指定的**识图模型看图片，返回文字描述（失败时返回说明，ok=false）。
+ * legacy / 显式调用用；默认请求路径不再走这里（见文件头说明）。
+ */
 export async function describeImages(imgs: { data: string; mimeType: string; label?: string }[], question?: string, signal?: AbortSignal): Promise<{ ok: boolean; text: string; model?: ModelRef; usage?: { input: number; output: number } }> {
 	const { model } = pickVisionModel();
 	if (!model) return { ok: false, text: NO_VISION };

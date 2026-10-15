@@ -197,7 +197,7 @@ export async function prepareAttachments(files: AttachmentInput[], opts: Prepare
 				lines.push(
 					desc
 						? `${head} 图片。当前模型不能直接看图，以下是识图模型的描述：\n${desc}`
-						: `${head} 图片。当前模型不支持看图，看不到图片内容；需要时用 look_at_image 工具，或让用户在 设置 › 模型 › 识图模型 里选一个支持图片的模型。`,
+						: `${head} 图片。当前模型不支持看图，看不到图片内容；请让用户把当前对话换成支持图片的模型（设置 › 模型）后再发。`,
 				);
 				continue;
 			}

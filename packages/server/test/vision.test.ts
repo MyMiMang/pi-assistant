@@ -1,4 +1,4 @@
-/** 识图：models.dev 识图标记、非识图模型读图时换成识图模型的描述、look_at_image、没有识图模型时明确说明 */
+/** 识图：只跟随当前对话模型；不支持时明确提示、不静默换模型；legacy 设置保留不删。 */
 await import("./setup.ts");
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -8,9 +8,26 @@ const { indexModelDb, knownVision } = await import("../src/pi-adapter/model-limi
 const { trimModelsDev } = await import("../src/model-db.ts");
 const { config } = await import("../src/config.ts");
 const { initModels } = await import("../src/models.ts");
-const { setSetting } = await import("../src/db.ts");
+const modelsMod = await import("../src/models.ts");
+const { setSetting, getSetting } = await import("../src/db.ts");
 const vision = await import("../src/vision.ts");
 const { visionExtension } = await import("../src/vision-ext.ts");
+
+type Tool = { execute: (id: string, p: unknown) => Promise<{ content: { type: string; text?: string }[]; isError?: boolean }> };
+const mountVision = (model: () => { provider: string; id: string } | null) => {
+	const tools = new Map<string, Tool>();
+	let onResult: ((e: unknown) => Promise<unknown>) | null = null;
+	visionExtension({ workspace: join(config.workspaceRoot, "vision-test"), model })({
+		registerTool: (t: { name: string }) => tools.set(t.name, t as never),
+		on: (ev, h) => ev === "tool_result" && (onResult = h as never),
+	});
+	return { tools, onResult: () => onResult };
+};
+const writePng = (name: string) => {
+	const ws = join(config.workspaceRoot, "vision-test");
+	mkdirSync(ws, { recursive: true });
+	writeFileSync(join(ws, name), Buffer.from("89504e470d0a1a0a", "hex"));
+};
 
 test("models.dev：识图标记写进精简数据并能按模型名查到", () => {
 	const t = trimModelsDev({ a: { models: { "qwen-vl-max": { limit: { context: 131072, output: 8192 }, modalities: { input: ["text", "image"] } }, "deepseek-v4-flash": { limit: { context: 1_000_000, output: 384_000 }, modalities: { input: ["text"] } } } } });
@@ -29,64 +46,59 @@ test("models.dev：识图标记写进精简数据并能按模型名查到", () =
 	assert.equal(knownVision("gpt-4o-mini", snap), true);
 });
 
-test("非识图模型：read 到的图片换成识图模型的描述；look_at_image；没有识图模型时说清楚", async () => {
+test("当前对话模型支持图片：look_at_image 直接把图片给它，绝不调用别的模型", async () => {
 	await initModels();
-	const ws = join(config.workspaceRoot, "vision-test");
-	mkdirSync(ws, { recursive: true });
-	writeFileSync(join(ws, "a.png"), Buffer.from("89504e470d0a1a0a", "hex"));
-	const seen: string[] = [];
-	vision.setDescribeImpl(async (ref, prompt, imgs) => (seen.push(`${ref.provider}/${ref.id}:${imgs.length}:${prompt.includes("穿越火线") ? "q" : ""}`), { text: "一张热交换器示意图，与穿越火线不相关" }));
-	const tools = new Map<string, { execute: (id: string, p: unknown) => Promise<{ content: { type: string; text?: string }[]; isError?: boolean }> }>();
-	let onResult: ((e: unknown) => Promise<unknown>) | null = null;
-	const textModel = { provider: "x", id: "no-such-text-model" };
-	visionExtension({ workspace: ws, model: () => textModel })({ registerTool: (t: { name: string }) => tools.set(t.name, t as never), on: (ev, h) => ev === "tool_result" && (onResult = h as never) });
-
-	// 没有识图模型
-	setSetting("visionModel", null);
-	const none = vision.pickVisionModel();
-	if (none.source === "none") {
-		const r = await tools.get("look_at_image")!.execute("1", { paths: ["a.png"] });
-		assert.match(r.content[0].text!, /没有可用的识图模型/);
-		assert.equal(r.isError, true);
+	writePng("a.png");
+	// 造一个「公开元数据 input 含 image」的会话模型（能力判定只按 Pi 元数据）
+	const models = modelsMod.models;
+	const orig = models.listModels.bind(models);
+	models.listModels = ((p?: string) => (p === "fake" ? [{ provider: "fake", id: "vision-model", name: "v", input: ["text", "image"] }] : orig(p))) as never;
+	let described = 0;
+	vision.setDescribeImpl(async () => (described++, { text: "不该被调用" }));
+	try {
+		const { tools } = mountVision(() => ({ provider: "fake", id: "vision-model" }));
+		const r = await tools.get("look_at_image")!.execute("1", { paths: ["a.png"], question: "是不是猫" });
+		assert.notEqual(r.isError, true);
+		assert.equal(r.content.filter((c) => c.type === "image").length, 1, "图片原样发给当前模型");
+		assert.equal(described, 0, "没有静默改用别的模型");
+	} finally {
+		models.listModels = orig as never;
 	}
-	// 指定识图模型（mock 模型存在即可；调用被替换）
-	const { models } = await import("../src/models.ts");
-	const any = models.listModels()[0];
-	assert.ok(any, "至少有一个模型");
-	setSetting("visionModel", { provider: any.provider, id: any.id });
-	assert.equal(vision.pickVisionModel().source, "user");
+});
+
+test("当前模型不支持图片：明确提示换模型，不静默换模型 / 不产生额外费用", async () => {
+	await initModels();
+	writePng("a.png");
+	let described = 0;
+	vision.setDescribeImpl(async () => (described++, { text: "不该被调用" }));
+	const { tools, onResult } = mountVision(() => ({ provider: "x", id: "no-such-text-model" }));
 	const r = await tools.get("look_at_image")!.execute("1", { paths: ["a.png"], question: "是不是 2008 年穿越火线的截图" });
-	assert.match(r.content[0].text!, /热交换器/);
-	assert.ok(seen.at(-1)!.endsWith(":1:q"));
-	// read 的图片结果被替换
-	const out = (await onResult!({ toolName: "read", input: { path: "a.png" }, isError: false, content: [{ type: "text", text: "Read image file" }, { type: "image", data: "AAAA", mimeType: "image/png" }] })) as { content: { type: string; text?: string }[] };
+	assert.equal(r.isError, true);
+	assert.match(r.content[0].text!, /不支持图片输入/);
+	assert.match(r.content[0].text!, /设置 › 模型/);
+	assert.equal(described, 0, "没有静默调用别的模型看图");
+	// read 的图片结果被换成提示，图片不进上下文，也不调用别的模型
+	const out = (await onResult()!({ toolName: "read", input: { path: "a.png" }, isError: false, content: [{ type: "text", text: "Read image file" }, { type: "image", data: "AAAA", mimeType: "image/png" }] })) as { content: { type: string; text?: string }[] };
 	assert.ok(out.content.every((c) => c.type === "text"));
-	assert.match(out.content.at(-1)!.text!, /当前模型不能直接看图.*\n.*热交换器/s);
+	assert.match(out.content.at(-1)!.text!, /不支持图片输入/);
+	assert.equal(described, 0);
 	// 非图片 / 其它工具不处理
-	assert.equal(await onResult!({ toolName: "bash", input: {}, isError: false, content: [{ type: "image", data: "A", mimeType: "image/png" }] }), undefined);
+	assert.equal(await onResult()!({ toolName: "bash", input: {}, isError: false, content: [{ type: "image", data: "A", mimeType: "image/png" }] }), undefined);
 	// 工作区外的路径拒绝
 	const bad = await tools.get("look_at_image")!.execute("1", { paths: ["/etc/passwd.png"] });
 	assert.match(bad.content[0].text!, /只能看工作区里的图片/);
-	setSetting("visionModel", null);
 });
 
-test("识图用量：describeImages 返回真实 usage，扩展通过 onUsage 上报（不碰凭据）", async () => {
+test("legacy 识图设置保留不删；能力判定按 Pi 公开 input 元数据", async () => {
 	await initModels();
-	const ws = join(config.workspaceRoot, "vision-usage-test");
-	mkdirSync(ws, { recursive: true });
-	writeFileSync(join(ws, "b.png"), Buffer.from("89504e470d0a1a0a", "hex"));
-	const { models } = await import("../src/models.ts");
-	const any = models.listModels()[0];
+	const any = modelsMod.models.listModels()[0];
 	assert.ok(any, "至少有一个模型");
 	setSetting("visionModel", { provider: any.provider, id: any.id });
-	vision.setDescribeImpl(async () => ({ text: "描述", usage: { input: 123, output: 45 } }));
-	const r = await vision.describeImages([{ data: "AAAA", mimeType: "image/png" }]);
-	assert.equal(r.ok, true);
-	assert.deepEqual(r.usage, { input: 123, output: 45 }, "公开 usage 原样透传");
-	const usage: { provider: string; model: string; input: number; output: number }[] = [];
-	const tools = new Map<string, { execute: (id: string, p: unknown) => Promise<{ content: { text?: string }[] }> }>();
-	visionExtension({ workspace: ws, model: () => ({ provider: "x", id: "no-such-text-model" }), onUsage: (u) => usage.push(u) })({ registerTool: (t: { name: string }) => tools.set(t.name, t as never), on: () => {} });
-	await tools.get("look_at_image")!.execute("1", { paths: ["b.png"] });
-	assert.deepEqual(usage, [{ provider: any.provider, model: any.id, input: 123, output: 45 }], "识图调用上报用量");
+	assert.deepEqual(getSetting("visionModel", null), { provider: any.provider, id: any.id }, "legacy visionModel 设置保留，不被迁移清掉");
+	// pickVisionModel 仅 legacy 只读兼容：设了就用设的
+	assert.equal(vision.pickVisionModel().source, "user");
+	assert.equal(vision.supportsVision({ provider: any.provider, id: any.id }), any.input.includes("image"));
+	assert.equal(vision.supportsVision({ provider: "x", id: "no-such-model" }), false);
+	assert.match(vision.visionUnsupportedMessage({ provider: any.provider, id: any.id }), /不支持图片输入/);
 	setSetting("visionModel", null);
 });
