@@ -628,7 +628,8 @@ await step("高级记忆（Hindsight）：设置三个模型 → 连接（假的
 		await c.close();
 		// 这个助理单独改用高级记忆：之前在 basic 里记下的内容自动补写进 Hindsight
 		await infoTab("记忆");
-		await pane.getByLabel("此助理的记忆后端").selectOption("hindsight");
+		await pane.getByTestId("memory-provider").click();
+		await page.getByTestId("memory-provider-option-hindsight").click();
 		await pane.getByTestId("hindsight-status").getByText("高级记忆运行中").waitFor({ timeout: 20_000 });
 		for (let i = 0; i < 40 && ![...hs.banks.values()].some((d) => [...d.values()].includes("我喜欢简洁的回答")); i++) await page.waitForTimeout(250);
 		if (![...hs.banks.values()].some((d) => [...d.values()].includes("我喜欢简洁的回答"))) throw new Error("旧记忆没有补写进 Hindsight");
@@ -646,7 +647,8 @@ await step("高级记忆（Hindsight）：设置三个模型 → 连接（假的
 		await page.screenshot({ path: join(SHOTS, "39-memory-hindsight.png") });
 	} finally {
 		// 后面的步骤继续用基础记忆
-		await pane.getByLabel("此助理的记忆后端").selectOption("").catch(() => {});
+		await pane.getByTestId("memory-provider").click().catch(() => {});
+		await page.getByTestId("memory-provider-option-").click().catch(() => {});
 		await hs.stop();
 	}
 });

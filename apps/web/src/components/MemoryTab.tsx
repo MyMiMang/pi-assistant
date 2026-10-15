@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, download } from "../api";
 import { useStore } from "../store";
 import type { MemoryEntry, MemoryProviderInfo } from "../types";
-import { Badge, Button, cx, Input, useConfirm } from "./ui";
+import { Badge, Button, cx, Input, Select, useConfirm } from "./ui";
 
 const KIND: Record<MemoryEntry["kind"], string> = { fact: "事实", experience: "日志", note: "便签" };
 const SCOPE: Record<MemoryEntry["scope"], string> = { user: "共享·关于你", agent: "仅此助理", conversation: "仅当前对话", task: "任务草稿" };
@@ -16,6 +16,8 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 	const conv = useStore((s) => s.convs[agentId]?.current);
 	const [data, setData] = useState<{ provider: MemoryProviderInfo; agentProvider: string | null; items: MemoryEntry[] } | null>(null);
 	const [provs, setProvs] = useState<{ global: string; providers: MemoryProviderInfo[] } | null>(null);
+	const [provSaving, setProvSaving] = useState(false);
+	const [provErr, setProvErr] = useState("");
 	const [hs, setHs] = useState<{ state: string; detail: string; pending: number } | null>(null);
 	const [ask, setAsk] = useState("");
 	const [answer, setAnswer] = useState<{ answer: string; citations: { id: string; text: string }[] } | null>(null);
@@ -45,8 +47,17 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 		if (effective === "hindsight") void api("/api/memory/hindsight").then((j) => setHs(j.status));
 	}, [effective, hsVersion]);
 	const setProvider = async (id: string | null) => {
-		await api(`/api/agents/${agentId}/memory-provider`, { method: "PUT", json: { id } });
-		void load();
+		setProvErr("");
+		setProvSaving(true);
+		try {
+			await api(`/api/agents/${agentId}/memory-provider`, { method: "PUT", json: { id } });
+			await load();
+		} catch (e) {
+			// 不重新加载：Select 的值来自 data.agentProvider，保存失败时自然回到原值
+			setProvErr(`切换失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			setProvSaving(false);
+		}
 	};
 	const doImport = async (f: File) => {
 		setNote("");
@@ -105,19 +116,21 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 			{confirmDlg}
 			<div className="flex items-center gap-2 text-xs text-mut">
 				<Brain size={14} className="shrink-0" />
-				<select
-					className="pa-input !h-7 !w-auto min-w-0 !py-0 !text-xs"
-					aria-label="此助理的记忆后端"
+				<Select
 					value={data?.agentProvider ?? ""}
-					onChange={(e) => void setProvider(e.target.value || null)}
-				>
-					<option value="">跟随全局（{provs?.providers.find((p) => p.id === provs.global)?.name ?? "…"}）</option>
-					{provs?.providers.map((p) => (
-						<option key={p.id} value={p.id}>
-							{p.name}
-						</option>
-					))}
-				</select>
+					ariaLabel="此助理的记忆后端"
+					testId="memory-provider"
+					placeholder="跟随全局"
+					menuMinWidth={260}
+					className="!h-7 !px-2 !text-xs"
+					disabled={provSaving}
+					options={[
+						{ value: "", label: `跟随全局（${provs?.providers.find((p) => p.id === provs.global)?.name ?? "…"}）` },
+						...(provs?.providers ?? []).map((p) => ({ value: p.id, label: p.name })),
+					]}
+					onChange={(v) => void setProvider(v || null)}
+				/>
+				{provSaving && <span className="shrink-0 text-mut">保存中…</span>}
 				<button className="ml-auto inline-flex items-center gap-1 hover:text-fg" onClick={() => fileRef.current?.click()} title="导入（本应用导出的记忆 JSON，可来自另一个后端或另一台电脑）">
 					<Upload size={13} /> 导入
 				</button>
@@ -126,6 +139,11 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 					<Download size={13} /> 导出
 				</button>
 			</div>
+			{provErr && (
+				<div className="text-xs text-red-500" data-testid="memory-provider-error">
+					{provErr}
+				</div>
+			)}
 			{effective === "hindsight" && hs && (
 				<div className="flex items-center gap-2 text-xs text-mut" data-testid="hindsight-status">
 					<span className={cx("inline-block h-2 w-2 shrink-0 rounded-full", hs.state === "ready" ? "bg-green-500" : hs.state === "error" || hs.state === "down" ? "bg-red-500" : "animate-pulse bg-amber-500")} />
@@ -172,21 +190,23 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 			{edit && (
 				<div className="pa-card space-y-2 !p-3">
 					<textarea className="w-full rounded-lg border border-line bg-card p-2 text-sm outline-none focus:border-accent" rows={3} autoFocus placeholder="例如：我叫邓邓，喜欢简洁的回答" value={edit.text} onChange={(e) => setEdit({ ...edit, text: e.target.value })} />
-					<div className="flex flex-wrap gap-2 text-xs">
-						<select className="rounded-md border border-line bg-card px-2 py-1" value={edit.kind} onChange={(e) => setEdit({ ...edit, kind: e.target.value as MemoryEntry["kind"] })}>
-							{Object.entries(KIND).map(([k, v]) => (
-								<option key={k} value={k}>
-									{v}
-								</option>
-							))}
-						</select>
-						<select className="rounded-md border border-line bg-card px-2 py-1" value={edit.scope} onChange={(e) => setEdit({ ...edit, scope: e.target.value as MemoryEntry["scope"] })}>
-							{Object.entries(SCOPE).map(([k, v]) => (
-								<option key={k} value={k}>
-									{v}
-								</option>
-							))}
-						</select>
+					<div className="flex flex-wrap items-center gap-2 text-xs">
+						<Select
+							value={edit.kind}
+							ariaLabel="记忆类型"
+							testId="memory-kind"
+							className="!h-8 !px-2 !text-xs"
+							options={Object.entries(KIND).map(([k, v]) => ({ value: k, label: v }))}
+							onChange={(v) => setEdit({ ...edit, kind: v as MemoryEntry["kind"] })}
+						/>
+						<Select
+							value={edit.scope}
+							ariaLabel="记忆作用域"
+							testId="memory-scope"
+							className="!h-8 !px-2 !text-xs"
+							options={Object.entries(SCOPE).map(([k, v]) => ({ value: k, label: v }))}
+							onChange={(v) => setEdit({ ...edit, scope: v as MemoryEntry["scope"] })}
+						/>
 						<span className="ml-auto flex gap-1.5">
 							<Button size="sm" variant="ghost" onClick={() => setEdit(null)}>
 								取消

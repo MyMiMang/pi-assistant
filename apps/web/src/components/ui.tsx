@@ -1,5 +1,5 @@
 import { Check, ChevronDown, CircleHelp, type LucideIcon, X } from "lucide-react";
-import { type ButtonHTMLAttributes, type ReactNode, useEffect, useRef, useState } from "react";
+import { type ButtonHTMLAttributes, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchBlob } from "../api";
 
@@ -285,6 +285,7 @@ export function Select({
 	className,
 	disabled,
 	placeholder,
+	menuMinWidth,
 }: {
 	value: string | number;
 	options: SelectOption[];
@@ -294,12 +295,19 @@ export function Select({
 	className?: string;
 	disabled?: boolean;
 	placeholder?: string;
+	/** 弹出列表的最小宽度（默认 168）：长选项文案可适度调宽，仍会被视口 clamp */
+	menuMinWidth?: number;
 }) {
 	const [open, setOpen] = useState(false);
+	// 键盘高亮项：方向键只移动高亮，回车/空格才提交（避免每按一次方向键就触发一次保存）
+	const [active, setActive] = useState(0);
 	const [rect, setRect] = useState<{ left: number; top: number; width: number; up: boolean; maxH: number } | null>(null);
 	const btn = useRef<HTMLButtonElement>(null);
 	const pop = useRef<HTMLDivElement>(null);
+	const uid = useId();
+	const optId = (i: number) => `${uid}-opt-${i}`;
 	const cur = options.find((o) => String(o.value) === String(value));
+	const curIndex = Math.max(0, options.findIndex((o) => String(o.value) === String(value)));
 	const place = () => {
 		const r = btn.current?.getBoundingClientRect();
 		if (!r) return;
@@ -310,13 +318,14 @@ export function Select({
 		const above = r.top - GAP - 8;
 		const up = below < want && above > below;
 		const maxH = Math.max(96, Math.min(want, up ? above : below));
-		const width = Math.min(Math.max(r.width, 168), Math.max(120, window.innerWidth - 16));
+		const width = Math.min(Math.max(r.width, menuMinWidth ?? 168), Math.max(120, window.innerWidth - 16));
 		const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
 		setRect({ left, top: up ? r.top - GAP : r.bottom + GAP, width, up, maxH });
 	};
 	const openMenu = () => {
 		if (disabled) return;
 		place();
+		setActive(curIndex);
 		setOpen(true);
 	};
 	useEffect(() => {
@@ -325,18 +334,33 @@ export function Select({
 			if (!pop.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) setOpen(false);
 		};
 		// 捕获阶段吃掉：菜单开着时 Esc 只关菜单，不把底下的设置弹窗一起关掉
+		const commit = (i: number) => {
+			const o = options[i];
+			if (o) onChange(String(o.value));
+			setOpen(false);
+			btn.current?.focus();
+		};
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === "Escape") {
 				e.stopPropagation();
 				setOpen(false);
 				btn.current?.focus();
-			} else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+			} else if (e.key === "ArrowDown") {
 				e.preventDefault();
-				const i = options.findIndex((o) => String(o.value) === String(value));
-				const n = e.key === "ArrowDown" ? (i + 1) % options.length : (i - 1 + options.length) % options.length;
-				if (n >= 0 && options[n]) onChange(String(options[n].value));
+				if (options.length) setActive((i) => (i + 1) % options.length);
+			} else if (e.key === "ArrowUp") {
+				e.preventDefault();
+				if (options.length) setActive((i) => (i - 1 + options.length) % options.length);
+			} else if (e.key === "Home") {
+				e.preventDefault();
+				setActive(0);
+			} else if (e.key === "End") {
+				e.preventDefault();
+				setActive(options.length - 1);
 			} else if (e.key === "Enter" || e.key === " ") {
 				e.preventDefault();
+				commit(active);
+			} else if (e.key === "Tab") {
 				setOpen(false);
 			}
 		};
@@ -353,7 +377,16 @@ export function Select({
 			window.removeEventListener("scroll", onScroll, true);
 			window.removeEventListener("resize", close);
 		};
-	}, [open, options, value, onChange, disabled]);
+	}, [open, options, value, onChange, disabled, active]);
+	// 键盘移动高亮时，把当前项滚进可视区（只动菜单自身滚动，不滚祖先/页面）
+	useEffect(() => {
+		if (!open) return;
+		const box = pop.current;
+		const el = box?.querySelector<HTMLElement>(`[data-idx="${active}"]`);
+		if (!box || !el) return;
+		if (el.offsetTop < box.scrollTop) box.scrollTop = el.offsetTop;
+		else if (el.offsetTop + el.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = el.offsetTop + el.offsetHeight - box.clientHeight;
+	}, [open, active]);
 	return (
 		<>
 			<button
@@ -363,6 +396,8 @@ export function Select({
 				aria-haspopup="listbox"
 				aria-expanded={open}
 				aria-label={ariaLabel}
+				aria-activedescendant={open && options.length ? optId(active) : undefined}
+				title={cur?.label}
 				data-testid={testId}
 				onClick={() => (open ? setOpen(false) : openMenu())}
 				onKeyDown={(e) => {
@@ -387,21 +422,25 @@ export function Select({
 						className="fixed z-[60] max-h-[280px] max-w-[calc(100vw-16px)] overflow-auto rounded-xl border border-line bg-card p-1 shadow-xl"
 						style={{ left: rect.left, top: rect.top, width: rect.width, maxHeight: rect.maxH, transform: rect.up ? "translateY(-100%)" : undefined }}
 					>
-						{options.map((o) => {
+						{options.map((o, i) => {
 							const sel = String(o.value) === String(value);
+							const hi = i === active;
 							return (
 								<button
 									key={o.value}
 									type="button"
+									id={optId(i)}
+									data-idx={i}
 									role="option"
 									aria-selected={sel}
+									onMouseEnter={() => setActive(i)}
 									onClick={() => {
 										onChange(String(o.value));
 										setOpen(false);
 										btn.current?.focus();
 									}}
 									data-testid={testId ? `${testId}-option-${o.value}` : undefined}
-									className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover", sel && "bg-hover font-medium")}
+									className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover", (sel || hi) && "bg-hover", sel && "font-medium")}
 								>
 									<Check size={14} className={cx("shrink-0", sel ? "opacity-100" : "opacity-0")} />
 									<span className="min-w-0 flex-1 truncate">{o.label}</span>
