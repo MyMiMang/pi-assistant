@@ -1,6 +1,6 @@
 import { BarChart3, Brain, Cat, ChevronDown, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, QrCode, Smartphone, Sparkles, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
-import { stripReferenceImages, type ThemeManifestV1 } from "@pi-assistant/shared";
+import { stripReferenceImages, type ThemeDraftRequest, type ThemeDraftResult, type ThemeManifestV1 } from "@pi-assistant/shared";
 import { api, upload } from "../api";
 import { getLang, setLang, t } from "../i18n";
 import { setAppearance, useStore } from "../store";
@@ -621,6 +621,10 @@ function AppearanceTab() {
 	const [confirmNode, confirm] = useConfirm();
 	const refresh = () => setCustoms(loadCustomThemes());
 	const uploadFn = agentId ? (f: File) => upload(agentId, f) : undefined;
+	// 真实 AI 创作：走后端 /api/themes/draft（当前助理的模型 + 临时专用会话）；支持取消（abort）。
+	const onThemeDraft = agentId
+		? (req: ThemeDraftRequest, opts?: { signal?: AbortSignal }) => api<ThemeDraftResult>("/api/themes/draft", { method: "POST", json: { ...req, agentId }, signal: opts?.signal })
+		: undefined;
 	const openDesigner = (initial: ThemeManifestV1 | null) => setDesigner({ open: true, initial });
 
 	// 内置主题不能覆盖 / 删除，只能「另存为我的主题」（读真实 CSS 变量转成 manifest）。
@@ -756,7 +760,7 @@ function AppearanceTab() {
 					</Button>
 				</div>
 			</section>
-			<ThemeDesigner open={designer.open} initial={designer.initial} onClose={() => setDesigner({ open: false, initial: null })} uploadFn={uploadFn} onSaved={() => refresh()} />
+			<ThemeDesigner open={designer.open} initial={designer.initial} agentId={agentId} onThemeDraft={onThemeDraft} onClose={() => setDesigner({ open: false, initial: null })} uploadFn={uploadFn} onSaved={() => refresh()} />
 		</div>
 	);
 }

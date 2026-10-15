@@ -497,6 +497,23 @@ export interface CreateSessionOptions {
 	onMcpAuthUrl?: (url: string) => void;
 	/** 已安装的 Pi 扩展包目录（按 Pi 的包发现规则加载其中的扩展/技能） */
 	packagePaths?: string[];
+	/**
+	 * 工具允许清单（不含 `+`/`-` 前缀；传了就只启用匹配的工具）。
+	 * 受限专用会话（如主题设计）用它把会话收敛到**唯一**业务工具，不继承 bash / 主机 / 桌面 / 邮箱等全工具集。
+	 * 不传 = 现有默认（内建 read/write/edit/bash + grep/find/ls 与扩展工具）。
+	 */
+	tools?: string[];
+	/** 在 `tools` 之后再禁用的工具名 / 通配（Pi 的 excludeTools 语义）。 */
+	excludeTools?: string[];
+	/** 直接注册的自定义工具（Pi 的 customTools）。 */
+	customTools?: ToolDefinition[];
+	/**
+	 * 不加载 Pi 自带的 MCP / codemode / tool-search 扩展（受限专用会话用）。
+	 * 这些扩展会连接 MCP 服务器、并把别的工具经 codemode 间接暴露出去；主题设计不需要。
+	 */
+	minimalExtensions?: boolean;
+	/** 用内存会话（不落盘、不碰任何用户会话文件）。受限专用会话用，避免污染助理对话历史。 */
+	inMemorySession?: boolean;
 }
 
 /** 服务端拒绝 max_tokens / 上下文后学到的上限：由 models.ts 接到自定义服务存储（只对自定义服务生效） */
@@ -568,27 +585,33 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		// Pi 自带的 MCP 扩展（SDK 会话默认不加载）：ext-computer 等通过 pi.registerMcpServer 注册服务器
 		// 配置来源只有我们自己（loadConfig），不读 ~/.pi/agent/mcp.json 或项目 .pi/mcp.json；/mcp 的修改不落盘。
 		extensionFactories: [
-			{
-				name: "pi-mcp",
-				factory: createMcpExtension({
-					startupWaitMs: 8000,
-					loadConfig: () => ({ servers: (o.mcpServers ?? []).map((s) => ({ name: s.name, config: s.config as never, source: "pi-assistant", scope: "global" as const })), errors: [], autoEnableCodemode: true }),
-					updateConfig: () => {},
-					logPath: o.mcpLogPath,
-					openUrl: o.onMcpAuthUrl,
-				}),
-			},
-			{ name: "pi-codemode", factory: createCodemodeExtension({ models: false }) },
-			{ name: "pi-tool-search", factory: createToolSearchExtension() },
+			...(o.minimalExtensions
+				? []
+				: [
+						{
+							name: "pi-mcp",
+							factory: createMcpExtension({
+								startupWaitMs: 8000,
+								loadConfig: () => ({ servers: (o.mcpServers ?? []).map((s) => ({ name: s.name, config: s.config as never, source: "pi-assistant", scope: "global" as const })), errors: [], autoEnableCodemode: true }),
+								updateConfig: () => {},
+								logPath: o.mcpLogPath,
+								openUrl: o.onMcpAuthUrl,
+							}),
+						},
+						{ name: "pi-codemode", factory: createCodemodeExtension({ models: false }) },
+						{ name: "pi-tool-search", factory: createToolSearchExtension() },
+					]),
 			...o.extensions.map((e) => ({ name: e.name, factory: e.factory })),
 		],
 	});
 	await resourceLoader.reload();
-	const sessionManager = o.sessionFile
-		? SessionManager.open(o.sessionFile, o.sessionDir, o.cwd)
-		: o.continueRecent
-			? SessionManager.continueRecent(o.cwd, o.sessionDir)
-			: SessionManager.create(o.cwd, o.sessionDir);
+	const sessionManager = o.inMemorySession
+		? SessionManager.inMemory(o.cwd)
+		: o.sessionFile
+			? SessionManager.open(o.sessionFile, o.sessionDir, o.cwd)
+			: o.continueRecent
+				? SessionManager.continueRecent(o.cwd, o.sessionDir)
+				: SessionManager.create(o.cwd, o.sessionDir);
 	const { session } = await createAgentSession({
 		cwd: o.cwd,
 		agentDir: o.agentDir,
@@ -598,7 +621,9 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		resourceLoader,
 		sessionManager,
 		settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 5 } } as never),
-		tools: ["+grep", "+find", "+ls"],
+		tools: o.tools ?? ["+grep", "+find", "+ls"],
+		...(o.excludeTools?.length ? { excludeTools: o.excludeTools } : {}),
+		...(o.customTools?.length ? { customTools: o.customTools } : {}),
 	});
 	installLimitLearning(session);
 	// 触发 session_start：MCP 扩展在此时连接服务器（如 cua-driver）

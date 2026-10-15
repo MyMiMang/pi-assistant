@@ -7,6 +7,7 @@ import { customSkinId } from "../themes/manifest";
 import { exportCustomTheme, installCustomThemes, newThemeId, saveCustomTheme } from "../themes/custom-store";
 import { registerTheme, unregisterTheme } from "../themes/registry";
 import { cancelPreview, commitPreview, revisePreview, startPreview, undoPreview, type AppearanceSnapshot, type PreviewEffects, type PreviewSession } from "../themes/preview";
+import { DraftTurns } from "../themes/design-session";
 import { ThemeImagePicker } from "./ThemeImagePicker";
 import { ThemePreview } from "./ThemePreview";
 import { Button, Help, Modal, cx } from "./ui";
@@ -49,13 +50,15 @@ export interface ThemeDesignerProps {
 	/** 编辑已有 DIY 主题时传入（「编辑 / 继续用AI修改」走这里）。 */
 	initial?: ThemeManifestV1 | null;
 	/** 后端接线（主会话接真实当前 agent 模型）。未传 = 未联通，面板如实标注，不做假生成。 */
-	onThemeDraft?: (req: ThemeDraftRequest) => Promise<ThemeDraftResult>;
+	onThemeDraft?: (req: ThemeDraftRequest, opts?: { signal?: AbortSignal }) => Promise<ThemeDraftResult>;
 	/** 复用附件上传。 */
 	uploadFn?: (f: File) => Promise<Attachment>;
+	/** 当前助理 id（后端按它选模型；不传则请求会缺少 agentId 被拒绝）。 */
+	agentId?: string;
 	onSaved?: (m: ThemeManifestV1) => void;
 }
 
-export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, onSaved }: ThemeDesignerProps) {
+export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, agentId, onSaved }: ThemeDesignerProps) {
 	const connected = !!onThemeDraft;
 	const [prompt, setPrompt] = useState("");
 	const [images, setImages] = useState<ThemeImageRef[]>([]);
@@ -67,7 +70,10 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 	const [visionHint, setVisionHint] = useState(false);
 	const [renamed, setRenamed] = useState(false);
 	const fileRef = useRef<HTMLInputElement>(null);
-	const turnSeq = useRef(0);
+	// 在飞轮次：关闭面板 / 发新一轮 / 保存后真 abort；晚到的响应丢弃，不应用。
+	const turns = useRef(new DraftTurns());
+
+	const abortDraft = () => turns.current.cancel();
 
 	const snapshot = useMemo<AppearanceSnapshot>(() => {
 		const s = useStore.getState();
@@ -80,6 +86,8 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 
 	// 关闭时若还在预览且未保存 → 完整恢复进入前的外观
 	const closeAndRestore = () => {
+		abortDraft();
+		setBusy(false);
 		if (session && !session.saved) cancelPreview(session, liveEffects);
 		setSession(null);
 		setErrors([]);
@@ -91,25 +99,37 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 
 	useEffect(() => {
 		if (open) return;
-		// 面板被外部关掉（比如 ESC / 遮罩）时也要恢复
+		// 面板被外部关掉（比如 ESC / 遮罩）时也要恢复 + 取消在飞请求
+		abortDraft();
+		setBusy(false);
 		if (session && !session.saved) cancelPreview(session, liveEffects);
 		setSession(null);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open]);
 
-	// 卸载兜底：清掉临时样式，避免残留
-	useEffect(() => () => installPreviewStyle(null), []);
+	// 卸载兜底：清掉临时样式 + 中止在飞请求，避免残留
+	useEffect(
+		() => () => {
+			turns.current.cancel();
+			installPreviewStyle(null);
+		},
+		[],
+	);
 
 	const runDraft = async (previous?: ThemeManifestV1) => {
 		if (!onThemeDraft) return;
+		const { turnId, signal } = turns.current.begin();
 		setBusy(true);
 		setErrors([]);
 		setWarnings([]);
 		setVisionHint(false);
 		try {
-			const req: ThemeDraftRequest = { turnId: `t${++turnSeq.current}`, prompt: prompt.trim(), previousManifest: previous };
+			const req: ThemeDraftRequest = { turnId, prompt: prompt.trim(), previousManifest: previous };
+			if (agentId) req.agentId = agentId;
 			if (images.length) req.images = images;
-			const res = await onThemeDraft(req);
+			const res = await onThemeDraft(req, { signal });
+			// 迟到的响应（用户已关面板 / 又发了新一轮）一律丢弃，不应用、不报错。
+			if (!turns.current.isCurrent(turnId)) return;
 			if (res.ok) {
 				setText(res.text);
 				setWarnings(res.warnings ?? []);
@@ -121,9 +141,11 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 				setWarnings(res.warnings ?? []);
 			}
 		} catch (e) {
+			// 取消（abort）导致的 rejection 不当错误报；只有真正的新一轮请求还在等才显示错误
+			if (signal.aborted || !turns.current.isCurrent(turnId)) return;
 			setErrors([String((e as Error).message ?? e)]);
 		} finally {
-			setBusy(false);
+			if (turns.current.finish(turnId)) setBusy(false);
 		}
 	};
 
@@ -138,6 +160,7 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 
 	const doSave = (asNew: boolean) => {
 		if (!draft) return;
+		abortDraft();
 		let m: ThemeManifestV1 = draft;
 		if (asNew) m = { ...draft, id: newThemeId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), name: `${draft.name} 副本` };
 		const r = saveCustomTheme(m);
