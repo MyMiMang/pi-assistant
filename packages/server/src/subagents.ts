@@ -522,6 +522,11 @@ export async function deliverSubagentEvents() {
 			markSubagentEventDelivered(e.id, r.id);
 			continue;
 		}
+		// 晚到的旧代际终态：子代理已进入新一轮（live）或已产生更新的终态 → 只收尾不唤醒，避免旧 attempt 覆盖新的。
+		if (TERMINAL_KINDS.has(e.kind) && (isLiveSubagent(r.status) || (r.finished_at ?? 0) > (e.generation ?? 0))) {
+			markSubagentEventDelivered(e.id, r.id);
+			continue;
+		}
 		// 跨机制去重：终态事件与 task_wait 共抢一个持久 owner（claim），保证正常并发下只唤醒一次模型。
 		// 先看已有等待（waiting / fired-pending）是否已经为这一代终态负责：是就让位给等待路径投递。
 		// 否则原子抢 claim：抢不到（另一机制正在投递）就等下一轮；已送达就只收尾。

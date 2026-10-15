@@ -828,3 +828,31 @@ test("满额时继续也排队：不超并发，释放后自动用原 id 续跑"
 	assert.match(inputs.at(-1)!.text, /上一轮执行因为/);
 	await cleanup();
 });
+
+test("晚到的旧代际终态不覆盖新 attempt：子代理已续跑后旧失败事件只收尾不唤醒", async () => {
+	setSettings(10);
+	clearWaits();
+	let notified = 0;
+	manualDriver(async () => { notified++; });
+	const r = spawn();
+	await tick();
+	db.prepare("UPDATE subagents SET session_file = 'sess-old' WHERE id = ?").run(r.id);
+	// 直接把上一代置成失败终态（未投递事件），当前不在跑
+	const gen = Date.now();
+	db.prepare("UPDATE subagents SET status = 'failed', finished_at = ?, error_reason = 'ECONNRESET 断网' WHERE id = ?").run(gen, r.id);
+	db.prepare("INSERT INTO subagent_events(id, subagent_id, kind, reason, created_at, generation) VALUES(?,?,?,?,?,?)").run("se-old", r.id, "failed", "ECONNRESET 断网", gen - 1000, gen);
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(notified, 1, "正常终态仍唤醒一次");
+	// 从断点续跑 → 进入新一轮（live）
+	s.resumeSubagent(r.id);
+	await tick();
+	assert.equal(status(r.id), "running");
+	// 再塞一条上一代未投递的旧终态：子代理已在跑新一轮，旧事件不应再唤醒
+	db.prepare("INSERT INTO subagent_events(id, subagent_id, kind, reason, created_at, generation) VALUES(?,?,?,?,?,?)").run("se-old2", r.id, "failed", "旧代际失败", gen + 1, gen);
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(notified, 1, "旧代际不再唤醒，避免覆盖新 attempt");
+	assert.ok((events(r.id).find((e) => (e as { id: string }).id === "se-old2") as { delivered_at: number | null }).delivered_at, "旧事件只收尾");
+	await cleanup();
+});
