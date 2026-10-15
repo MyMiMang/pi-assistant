@@ -188,6 +188,19 @@
 | 单聊里每条**可分支**的消息提供「从这里另开对话」：用 Pi 公开会话 fork 能力另起一条分支，生成新的自有 conversation（新 Pi 会话文件 + `parentSession` 父关系），原对话保留、可返回；保留原 agent / 模型 / 思考强度 / 附件引用权限；不从同一个 Pi 会话状态平行共享、不自动发 prompt、不重放工具、不复制排队任务 / 等待 / 后台任务 / 审批单 / 旧用量账单；busy 时明确 409 不 abort 用户任务；`clientId` 幂等只建 1 个对话（`(source_conversation_id, client_id)` 唯一索引）；群聊分支另议 | 已实现 + 合入候选（未打包） | 设计契约 `docs/design/session-fork.md`、DESIGN §31。锚点范围以官方为准：`getUserMessagesForForking()` + `fork(entryId)` 只支持 **user** 消息（分支点在该 user 消息之前、正文放回输入框「另开并编辑」，绝不自动重发）；`SessionManager.createBranchedSession(leafId)` 只读源文件另写新文件、头带 `parentSession`。app 消息 ↔ Pi entry 用服务端持久化的 `meta.piEntryId` 映射（`pi-adapter` 在 `message_end` 持久化后用公开 `SessionManager.getEntries()` 按**消息对象身份**反查，user 按发送顺序 FIFO 配对），不靠 `getLeafId()` / 文本 / 下标猜。API `POST /api/conversations/:cid/fork { messageId, clientId }`。 |
 | 验证 | 已跑（真实公开 Pi 1.2.0 + Mock provider + 临时数据 + 内存凭据） | `test/session-fork.test.ts` **4/4**（源文件不变 / 前缀 / 0 额外请求 / 幂等 / 忙时 409 不 abort / 两会话不共享 / 连发同文本插话 FIFO 映射不串）、`test/pi-entry-mapping.test.ts` **1/1**（真实 Pi 会话 + faux 模型：并行工具结果 / 连发同文本 user 各自映射到自己的 entry，用 toolCallId / 消息身份核验）、`pi-compat`+`pi-events-union`+`message-replies`+`isolation` 24/24 无回归、`e2e/session-fork-frontend.test.mjs` 4/4、`e2e/session-fork-http.mjs`（真 server）8/8、`e2e/session-fork-ui.mjs`（Chrome headless）5/5、服务端 tsc + web tsc/build 通过。**未做 / 未验**：分支树可视化、群聊分支、assistant / 工具锚点、全量 e2e、真机、首条消息分支的真机走查。 |
 
+## 发布准备 beta.24（本轮，`release-candidate-validation`，**候选未发布**）
+
+`mac-arm64` 发布前的核查与收口，详细记录（含实测输出 / 命令 / 未验边界）见 [../progress-snapshots/release-prep-beta24.md](../progress-snapshots/release-prep-beta24.md)。
+
+| 事项 | 状态 | 说明 |
+|---|---|---|
+| 发布说明 `docs/release-notes/v0.1.0-beta.24.md` | 已重写 | 原文件只有早期的 hotfix 内容；现覆盖本轮全部新能力与修复、已知问题与未验边界（用户可读的中文精简版），并在末尾链接仓库里的验收文档 |
+| 发布前平台静态核查：CSP / 语音 / PDF | **发现真问题并已修** | 真浏览器 + 真响应头实测：原 CSP `script-src 'self'` 会拦掉语音采集的 `audioWorklet.addModule(blob:)`（`AbortError`）与 PDF 预览（`object-src` / `frame-src` 回落 `default-src`），**安装版里这两个功能会静默失效**；现在 `http.ts` 只加必需项 `script-src/object-src/frame-src … blob:`，不放开 inline / 远程脚本。新增 `e2e/fixtures/csp-probe.mjs`（`e2e/run.mjs` 新增步骤 + `e2e/voice-csp-audioworklet.mjs` 共用）与静态断言 |
+| 发布前平台静态核查：macOS 麦克风 | 已补最小声明 | 新增 `apps/tray/src-tauri/Info.plist`（Tauri 自动合并同目录 Info.plist）只声明 `NSMicrophoneUsageDescription`；当前无 App Sandbox、也无 `codesign --options runtime` 步骤，所以不加 `com.apple.security.device.audio-input`（将来加签名步骤必须补，静态测试已写成断言）。**未跑 `tauri build`**（无 Rust 工具链），未真机验证麦克风 |
+| 静态回归测试 | 新增 | `packages/server/test/tray-macos-mic-usage.test.ts` 3/3（plist 内容 / 与 tauri.conf 一致性 / CSP 必需项 / 无 inline 脚本 + 首屏同源外部脚本） |
+| 全量单测与范围校验 | 已跑 | `npm test` 757 项 742 过 / 5 失败 / 10 跳过；5 个失败里 2 个是已记录基线（proactive `'held' !== 'started'`、macOS bsdtar `--skip-old-files`），3 个是本机用 App 自带 Node（路径含空格）导致 `mcp.test.ts` 的 `process.execPath` 被命令校验拒——同一 Node 的无空格副本单跑 **3/3 通过**。`scripts/release-scope.mjs` = `mac-arm64`（无 Windows / Linux / Intel），其测试 3/3 |
+| 既有基线问题（不修） | 记录 | `e2e/run.mjs` 第 1 步「首次运行向导」仍等旧「设为默认模型」按钮（现行 UI 在 `default-model-picker` 里保存）；在独立 worktree 的 `main`（`8d7a7d8`）同样失败，**不是本候选引入**；修它要单独提交，不在本轮发布范围 |
+
 ## 待用户决定
 
 

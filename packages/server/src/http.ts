@@ -104,7 +104,12 @@ app.use("*", async (c, next) => {
 	if (!c.req.path.startsWith("/api/"))
 		c.header(
 			"Content-Security-Policy",
-			"default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:; script-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+			// 新增的三个 `blob:` 是功能必需，不是放宽策略：
+			//  - script-src：语音输入的采集 worklet 用 `URL.createObjectURL(new Blob([...]))` 注入（Chromium 按 script-src 判定 worklet 模块，
+			//    worker-src 不管用）；仍不允许 inline 脚本、不允许远程脚本（HTML / 首屏主题都用同源外部文件）。
+			//  - object-src / frame-src：文件预览用 `<object data="blob:" type="application/pdf">`；Chromium 内置 PDF 查看器再把
+			//    这个 blob 套一层 frame，两条都不写会被 default-src 'self' 拦掉。
+			"default-src 'self'; script-src 'self' blob:; object-src 'self' blob:; frame-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:; frame-ancestors 'none'; base-uri 'none'",
 		);
 });
 

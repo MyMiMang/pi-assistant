@@ -426,7 +426,7 @@ sequenceDiagram
 - **限流**：按 IP 与设备分别令牌桶（未认证请求 10 次/分钟，配对 5 次/10 分钟，认证后 API 600 次/分钟）；连续认证失败的 IP 临时封禁。
 - 隧道入口上的所有请求都必须带设备 token（除配对与 PWA 静态资源）；WebSocket 握手后首帧认证，超时 5 秒断开。
 - 敏感操作二次确认：在手机上批准“发送/付款/删除”类审批时，可要求设备生物识别（WebAuthn 平台认证器）。
-- 安全头：严格 CSP、`frame-ancestors 'none'`、`Referrer-Policy: no-referrer`；Cookie 不用于认证（避免 CSRF）。
+- 安全头：严格 CSP、`frame-ancestors 'none'`、`Referrer-Policy: no-referrer`；Cookie 不用于认证（避免 CSRF）。CSP 的具体白名单见 `packages/server/src/http.ts`：`script-src` / `object-src` / `frame-src` 各放行 `blob:` 是功能必需（语音采集的 AudioWorklet 模块、文件预览的 `<object data="blob:">` PDF 与内置查看器套的那层 frame），**不放 inline / 远程脚本**；`style-src 'unsafe-inline'` 是 DIY 主题注入 token 需要。静态断言在 `packages/server/test/tray-macos-mic-usage.test.ts`，真浏览器行为在 `e2e/fixtures/csp-probe.mjs`（e2e 步骤）。
 - 用户可随时在托盘菜单“关闭远程访问”，cloudflared 立刻停止。
 
 ### 5.14 模型与凭据：不内置任何 Key，Pi 支持的都能用

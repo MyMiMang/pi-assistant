@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 语音输入在应用内（WKWebView 页面来自本机 8787）用 getUserMedia 采集麦克风；
+	     macOS 要求 bundle 的 Info.plist 有用途说明，否则请求麦克风时系统会直接终止进程。
+	     Tauri 会把本文件（与 tauri.conf.json 同目录）合并进安装包的 Info.plist。 -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>用于语音输入：只有你主动点按麦克风后才会录音，录音结束立即停止，不录音时不会访问麦克风。</string>
+</dict>
+</plist>

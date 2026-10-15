@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { startMockOpenAI } from "./mock-openai.mjs";
+import { cspProblems, probeCsp } from "./fixtures/csp-probe.mjs";
 import { startMockImages } from "./mock-images.mjs";
 
 // fileURLToPath 而不是 URL.pathname：路径含空格/中文时 pathname 会保留 %20，导致子进程 cwd 与文件读取都找不到。
@@ -2275,6 +2276,22 @@ await step("图片生成：设置里添加图片服务（自动获取识别图�
 		}
 	} finally {
 		img.close();
+	}
+});
+
+// 语音采集 worklet（blob: 模块）与 PDF 预览（<object data=blob:>）都靠 CSP 里的 blob: 白名单，
+// 少写一条就静默失效（真浏览器实测过：worklet 报 AbortError、PDF 被 frame-src 拦）；首屏主题靠同源外部 script。
+await step("CSP：语音采集 worklet / PDF 预览 / 首屏主题在真实响应头下可用", async () => {
+	const msgs = [];
+	const onMsg = (m) => msgs.push(`${m.type()}: ${m.text()}`);
+	page.on("console", onMsg);
+	try {
+		const csp = (await fetch(BASE)).headers.get("content-security-policy") ?? "";
+		const probe = await probeCsp(page);
+		const problems = cspProblems(csp, probe, msgs);
+		if (problems.length) throw new Error(problems.join("；"));
+	} finally {
+		page.off("console", onMsg);
 	}
 });
 
