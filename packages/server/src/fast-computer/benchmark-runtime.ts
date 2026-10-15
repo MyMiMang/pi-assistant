@@ -87,15 +87,17 @@ export function createRuntimeBenchmarkHost(opts: RuntimeBenchmarkOptions): { hos
 		benchmarkToolGuard({ ...input, paused: input.prefix === "hostpc" ? hostPaused() : desktopPause.isPaused(opts.agentId() ?? ""), ...(input.prefix === "hostpc" ? { tier: tierOf(opts.agentId() ?? "") } : {}) });
 
 	// 单一目标的无副作用能力探测（只 tools/list，不开窗）。
-	const probe = async (prefix: "hostpc" | "computer"): Promise<BenchmarkCapabilityResult> => {
+	const probe = async (prefix: "hostpc" | "computer"): Promise<{ cap: BenchmarkCapabilityResult; plan: ReturnType<typeof planFixtureWindow> }> => {
 		const ready = prefix === "computer" ? cache.computer : cache.hostpc;
-		if (!ready) return { ok: false, reason: "目标电脑未就绪（「操作这台电脑」未开启 / 助理电脑未运行）" };
+		if (!ready) return { cap: { ok: false, reason: "目标电脑未就绪（「操作这台电脑」未开启 / 助理电脑未运行）" }, plan: { ok: false } };
 		const tools = await listTools(prefix);
 		if (prefix === "computer") {
 			const base = computerBase();
-			return evaluateBenchmarkCapability({ ready, tools, openTool, window: planFixtureWindow({ prefix, tools, openTool, gateway: { ok: !!base, reason: "助理电脑没有已证实的宿主 fixture 别名（不把 Pi 控制 API 暴露到 0.0.0.0）" } }) });
+			const plan = planFixtureWindow({ prefix, tools, openTool, gateway: { ok: !!base, reason: "助理电脑没有已证实的宿主 fixture 别名（不把 Pi 控制 API 暴露到 0.0.0.0）" } });
+			return { cap: evaluateBenchmarkCapability({ ready, tools, openTool, window: plan }), plan };
 		}
-		return evaluateBenchmarkCapability({ ready, tools, openTool, window: planFixtureWindow({ prefix, tools, openTool }) });
+		const plan = planFixtureWindow({ prefix, tools, openTool });
+		return { cap: evaluateBenchmarkCapability({ ready, tools, openTool, window: plan }), plan };
 	};
 
 	const driver = createInvokeBenchmarkDriver({
@@ -129,9 +131,11 @@ export function createRuntimeBenchmarkHost(opts: RuntimeBenchmarkOptions): { hos
 		} catch {
 			cache.computer = false;
 		}
-		cache.capability = { computer: await probe("computer"), hostpc: await probe("hostpc") };
-		cache.computerKind = cache.capability.computer.ok ? "sandbox-app" : null;
-		cache.hostpcKind = cache.capability.hostpc.ok ? "driver-isolated-browser" : null;
+		const pComputer = await probe("computer");
+		const pHostpc = await probe("hostpc");
+		cache.capability = { computer: pComputer.cap, hostpc: pHostpc.cap };
+		cache.computerKind = pComputer.plan.ok ? (pComputer.plan.kind ?? null) : null;
+		cache.hostpcKind = pHostpc.plan.ok ? (pHostpc.plan.kind ?? null) : null;
 		return { ...cache };
 	};
 	void refresh();

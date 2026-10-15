@@ -30,9 +30,13 @@ export interface BenchmarkGuardResult {
 	reason?: string;
 }
 
+/** 无论档位如何都不得由基准派发的工具（脚本 / 配置 / 重放 / 提权）：不能借基准逃「run_script 已关闭」等规则。 */
+export const BENCHMARK_ALWAYS_DENIED = ["run_script", "run_actions", "set_config", "replay_trajectory", "escalate_session", "install_extension", "install_ffmpeg"] as const;
+
 /** 判定一个基准动作能不能派发。fail-closed：拿不准就拒绝并说明原因。 */
 export function benchmarkToolGuard(input: BenchmarkGuardInput): BenchmarkGuardResult {
 	const tool = input.tool.replace(/^mcp__[a-z0-9_-]+__/, "");
+	if ((BENCHMARK_ALWAYS_DENIED as readonly string[]).includes(tool)) return { ok: false, reason: `基准不派发脚本 / 配置 / 提权类工具（${tool}）` };
 	if (input.paused) return { ok: false, reason: "电脑已暂停：基准动作一律拒绝（先恢复再跑测试）。" };
 	if (input.prefix === "hostpc" && input.tier === "observe" && !isBenchmarkReadOnly(tool)) {
 		return { ok: false, reason: "当前是「只看」档位：不能执行输入动作，真实操控基准需要「限定」及以上。可以在设置 › 电脑里调整档位。" };

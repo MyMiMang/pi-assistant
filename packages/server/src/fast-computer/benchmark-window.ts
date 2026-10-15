@@ -60,6 +60,8 @@ export function planFixtureWindow(input: FixtureWindowPlanInput): FixtureWindowP
 	const missing = required.filter((t) => !have.has(t));
 	if (missing.length) return { ok: false, reason: `助理电脑缺少取得独立窗口所需能力：${missing.join("、")}` };
 	if (input.gateway && !input.gateway.ok) return { ok: false, reason: input.gateway.reason ?? "助理电脑没有安全可达的宿主 fixture 网关（不把 Pi 控制 API 暴露到 0.0.0.0）" };
+	// 能拿到驱动自有隔离浏览器就用它（独立 profile / 窗口）；否则退回 sandbox-app（launch_app 打开专用窗口）。
+	if (DRIVER_BROWSER_TOOLS.every((t) => have.has(t))) return { ok: true, kind: "driver-isolated-browser" };
 	return { ok: true, kind: "sandbox-app" };
 }
 

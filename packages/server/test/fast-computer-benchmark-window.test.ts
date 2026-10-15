@@ -38,6 +38,8 @@ test("窗口计划：hostpc 必须能拿到驱动自有隔离浏览器，否则 
 test("窗口计划：助理电脑需要工具齐全 + 已证实宿主别名，否则 fail-closed", () => {
 	const tools = ["launch_app", "get_window_state", "list_windows", "click", "scroll"];
 	assert.equal(planFixtureWindow({ prefix: "computer", tools, gateway: { ok: true } }).kind, "sandbox-app");
+	// 有驱动自有浏览器能力时优先隔离浏览器（独立 profile / 窗口）。
+	assert.equal(planFixtureWindow({ prefix: "computer", tools: [...tools, ...DRIVER_BROWSER_TOOLS], gateway: { ok: true } }).kind, "driver-isolated-browser");
 	assert.match(planFixtureWindow({ prefix: "computer", tools, gateway: { ok: false } }).reason ?? "", /网关/);
 	assert.match(planFixtureWindow({ prefix: "computer", tools: ["launch_app"], gateway: { ok: true } }).reason ?? "", /缺少/);
 });
@@ -122,6 +124,7 @@ test("权限桥：暂停拒绝一切；只看档位拒绝输入、允许读取�
 	assert.equal(benchmarkToolGuard({ prefix: "hostpc", tool: "get_window_state", paused: false, tier: "observe" }).ok, true);
 	assert.equal(benchmarkToolGuard({ prefix: "hostpc", tool: "click", paused: false, tier: "bounded" }).ok, true);
 	assert.equal(benchmarkToolGuard({ prefix: "computer", tool: "click", paused: false }).ok, true);
+	assert.equal(benchmarkToolGuard({ prefix: "hostpc", tool: "run_script", paused: false, tier: "full" }).ok, false, "不能借基准逃 run_script 规则");
 	assert.equal(isBenchmarkReadOnly("mcp__hostpc__list_windows"), true);
 });
 
