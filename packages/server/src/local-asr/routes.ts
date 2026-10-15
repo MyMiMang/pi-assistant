@@ -75,12 +75,12 @@ export function mountLocalAsrRoutes(app: Hono<any>, localOnly: LocalOnly, getMan
 		const body = await c.req.json<InstallBody>().catch(() => ({}) as InstallBody);
 		const m = getManager();
 		const source: AsrInstallSource = body.source === "import" ? "import" : "download";
-		try {
-			void m.install({ source, acceptLicense: body.acceptLicense ?? null, importDir: body.importDir }).catch(() => {});
-			return c.json({ ok: true, status: m.status() });
-		} catch (e) {
-			return c.json({ ok: false, error: msg(e), status: m.status() }, 400);
-		}
+		const opts = { source, acceptLicense: body.acceptLicense ?? null, importDir: body.importDir };
+		// 同步预检决定 HTTP 状态码（异步 install 的抛错会变成 rejected promise，不能用来选状态码）
+		const pre = m.precheck(opts);
+		if (!pre.ok) return c.json({ ok: false, error: pre.error, status: m.status() }, 400);
+		void m.install(opts).catch(() => {});
+		return c.json({ ok: true, status: m.status() });
 	});
 
 	app.post(`${base}/cancel`, localOnly, (c) => {
@@ -122,18 +122,18 @@ export function mountLocalAsrRoutes(app: Hono<any>, localOnly: LocalOnly, getMan
 	app.post(`${base}/update`, localOnly, async (c) => {
 		const body = await c.req.json<{ acceptLicense?: string }>().catch(() => ({}) as { acceptLicense?: string });
 		const m = getManager();
-		try {
-			void m.update({ acceptLicense: body.acceptLicense ?? null }).catch(() => {});
-			return c.json({ ok: true, status: m.status() });
-		} catch (e) {
-			return c.json({ ok: false, error: msg(e), status: m.status() }, 400);
-		}
+		const opts = { source: "download" as AsrInstallSource, acceptLicense: body.acceptLicense ?? null };
+		const pre = m.precheck(opts);
+		if (!pre.ok) return c.json({ ok: false, error: pre.error, status: m.status() }, 400);
+		void m.install(opts).catch(() => {});
+		return c.json({ ok: true, status: m.status() });
 	});
 
 	app.delete(base, localOnly, async (c) => {
 		const body = await c.req.json<{ confirm?: boolean }>().catch(() => ({}) as { confirm?: boolean });
+		if (!body.confirm) return c.json({ ok: false, error: "卸载需要显式确认", status: getManager().status() }, 400);
 		try {
-			await getManager().uninstall(!!body.confirm);
+			await getManager().uninstall(true);
 			return c.json({ ok: true, status: getManager().status() });
 		} catch (e) {
 			return c.json({ ok: false, error: msg(e), status: getManager().status() }, 400);

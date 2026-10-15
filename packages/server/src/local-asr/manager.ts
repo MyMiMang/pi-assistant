@@ -254,17 +254,25 @@ export class LocalAsrManager {
 	// --------------------------------------------------------------- install
 
 	/**
+	 * 同步预检：许可门槛 + 平台 + 导入参数 + 是否已在安装中。
+	 * 供路由在**返回 400 之前**判断（异步 install() 的抛错会变成 rejected promise，不能用来选 HTTP 状态码）。
+	 */
+	precheck(opts: AsrInstallOptions): { ok: true } | { ok: false; error: string } {
+		if (this.installInfo.state === "installing") return { ok: false, error: "安装已在进行中" };
+		const gate = opts.source === "import" ? importGate(this.license) : installGate(this.license, opts.acceptLicense, { allowUnresolved: opts.ctx?.allowUnresolvedLicense });
+		if (!gate.allowed) return { ok: false, error: gate.reason ?? "许可门槛未通过" };
+		if (opts.source === "import" && !opts.importDir) return { ok: false, error: "导入需要提供权重目录" };
+		if (this.platform.support === "unsupported") return { ok: false, error: this.platform.reason };
+		return { ok: true };
+	}
+
+	/**
 	 * 安装：许可门槛 → uv → staging venv → 引擎 → 权重（下载或导入）→ 校验 → 原子 activate。
 	 * 失败 / 取消：清理 staging，回滚旧环境，state=failed 且 error 已脱敏；**不产生半安装 ready**。
 	 */
 	async install(opts: AsrInstallOptions): Promise<AsrStatus> {
-		if (this.installInfo.state === "installing") throw new Error("安装已在进行中");
-		// 许可门槛：download 走 installGate（unresolved 默认关闭）；import 走 importGate。
-		const gate = opts.source === "import" ? importGate(this.license) : installGate(this.license, opts.acceptLicense, { allowUnresolved: opts.ctx?.allowUnresolvedLicense });
-		if (!gate.allowed) throw new Error(gate.reason ?? "许可门槛未通过");
-		if (opts.source === "import" && !opts.importDir) throw new Error("导入需要提供权重目录");
-		if (this.platform.support === "unsupported") throw new Error(this.platform.reason);
-
+		const pre = this.precheck(opts);
+		if (!pre.ok) throw new Error(pre.error);
 		const signal = opts.signal ?? (this.abort = new AbortController()).signal;
 		this.set("preflight", { state: "installing", error: null, received: 0, total: null, source: opts.source });
 		try {
@@ -395,8 +403,15 @@ export class LocalAsrManager {
 				this.runtime.failures += 1;
 				this.runtime.restarts += 1;
 				this.runtime.nextStartAt = this.deps.now() + backoffMs(this.runtime.failures);
+				if (this.runtime.failures >= MAX_CONSECUTIVE_FAILURES) {
+					this.paused = true;
+					this.runtime.state = "paused";
+					this.runtime.lastError = "连续启动失败次数过多，已暂停自动重启";
+				}
 			}
-			this.noteActive();
+			// 启动成功就开始计时（TTL>0 时）；TTL=0 不在启动时就释放，而是等一次推理 / 录音结束后再释放。
+			this.lastActiveAt = this.deps.now();
+			this.rescheduleIdle();
 			this.onChange();
 			return this.status();
 		} catch (e) {
@@ -405,6 +420,11 @@ export class LocalAsrManager {
 			this.runtime.state = "crashed";
 			this.runtime.lastError = sanitizeError(e);
 			this.runtime.nextStartAt = this.deps.now() + backoffMs(this.runtime.failures);
+			if (this.runtime.failures >= MAX_CONSECUTIVE_FAILURES) {
+				this.paused = true;
+				this.runtime.state = "paused";
+				this.runtime.lastError = "连续启动失败次数过多，已暂停自动重启";
+			}
 			this.onChange();
 			throw e;
 		}
@@ -511,9 +531,13 @@ export class LocalAsrManager {
 		};
 	}
 
-	/** 记录一次活动并重排 idle 定时器。 */
+	/** 记录一次活动并重排 idle 定时器。TTL=0 时，等这次活动结束就立即释放（启动时不触发）。 */
 	noteActive(): void {
 		this.lastActiveAt = this.deps.now();
+		if (this.idleSeconds <= 0) {
+			if (this.active === 0 && this.leases === 0 && this.runtime.state === "running") void this.unloadNow().catch(() => {});
+			return;
+		}
 		this.rescheduleIdle();
 	}
 
@@ -538,11 +562,7 @@ export class LocalAsrManager {
 
 	private rescheduleIdle() {
 		this.cancelIdle();
-		if (this.idleSeconds <= 0) {
-			// 立即释放：等当前活动结束（noteActive 时触发）。
-			if (this.active === 0 && this.leases === 0 && this.runtime.state === "running") this.unloadNow().catch(() => {});
-			return;
-		}
+		if (this.idleSeconds <= 0) return; // TTL=0：只在活动结束时立即释放（见 noteActive）
 		if (this.active > 0 || this.leases > 0) return; // 忙时不排定时器
 		this.idleTimer = this.deps.setTimer(() => this.idleCheck(), this.idleSeconds * 1000);
 	}
