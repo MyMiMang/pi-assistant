@@ -8,6 +8,7 @@ const { indexModelDb, knownVision } = await import("../src/pi-adapter/model-limi
 const { trimModelsDev } = await import("../src/model-db.ts");
 const { config } = await import("../src/config.ts");
 const { initModels } = await import("../src/models.ts");
+import { memoryCredentialStore } from "./in-memory-credentials.ts";
 const modelsMod = await import("../src/models.ts");
 const { setSetting, getSetting } = await import("../src/db.ts");
 const vision = await import("../src/vision.ts");
@@ -47,7 +48,7 @@ test("models.dev：识图标记写进精简数据并能按模型名查到", () =
 });
 
 test("当前对话模型支持图片：look_at_image 直接把图片给它，绝不调用别的模型", async () => {
-	await initModels();
+	await initModels(memoryCredentialStore());
 	writePng("a.png");
 	// 造一个「公开元数据 input 含 image」的会话模型（能力判定只按 Pi 元数据）
 	const models = modelsMod.models;
@@ -67,7 +68,7 @@ test("当前对话模型支持图片：look_at_image 直接把图片给它，绝
 });
 
 test("当前模型不支持图片：明确提示换模型，不静默换模型 / 不产生额外费用", async () => {
-	await initModels();
+	await initModels(memoryCredentialStore());
 	writePng("a.png");
 	let described = 0;
 	vision.setDescribeImpl(async () => (described++, { text: "不该被调用" }));
@@ -90,7 +91,7 @@ test("当前模型不支持图片：明确提示换模型，不静默换模型 /
 });
 
 test("legacy 识图设置保留不删；能力判定按 Pi 公开 input 元数据", async () => {
-	await initModels();
+	await initModels(memoryCredentialStore());
 	const any = modelsMod.models.listModels()[0];
 	assert.ok(any, "至少有一个模型");
 	setSetting("visionModel", { provider: any.provider, id: any.id });

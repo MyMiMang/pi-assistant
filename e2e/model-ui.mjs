@@ -355,9 +355,12 @@ try {
 	assert.equal(await page.getByTestId("vision-model-menu").count(), 0, "Escape 应只关菜单");
 	await settingsStillOpen();
 
-	// 视口矮时下方放不下：菜单要翻到按钮上方，而不是被弹窗 overflow 裁掉
+	// 视口矮时下方放不下：菜单要翻到按钮上方，而不是被弹窗 overflow 裁掉。
+	// 先把触发器滚到滚动容器底部，确定性地制造“下方放不下”（否则滚动位置会因数据量不同而在下方恰好放得下，翻不翻转都合规）。
 	await page.setViewportSize({ width: 1280, height: 420 });
 	await page.waitForTimeout(150);
+	await page.getByTestId("vision-model-picker").evaluate((el) => el.scrollIntoView({ block: "end" }));
+	await page.waitForTimeout(100);
 	await page.getByTestId("vision-model-picker").click();
 	await page.getByTestId("vision-model-menu").waitFor();
 	{

@@ -40,6 +40,7 @@ const before = snapshot(fakeHome);
 await import("./setup.ts");
 const { config } = await import("../src/config.ts");
 const modelsMod = await import("../src/models.ts");
+import { memoryCredentialStore } from "./in-memory-credentials.ts";
 const { createPiSession, disposeSession, loadedResources } = await import("../src/pi-adapter/index.ts");
 const { skillPaths } = await import("../src/skills.ts");
 
@@ -50,7 +51,7 @@ test("Pi 默认目录指向我们的数据目录", () => {
 
 test("会话不加载用户自己的 Pi 扩展/技能，也不在 HOME 里读写任何文件", async () => {
 	process.env.PIA_MOCK = "1";
-	await modelsMod.initModels();
+	await modelsMod.initModels(memoryCredentialStore());
 	const ws = join(config.workspaceRoot, "iso");
 	mkdirSync(ws, { recursive: true });
 	const session = await createPiSession({
