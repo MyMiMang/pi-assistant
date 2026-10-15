@@ -1,3 +1,4 @@
+import "./setup.ts"; // 必须在 config 之前：否则单测会读到真实数据目录
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
