@@ -119,6 +119,28 @@ test("主会话晋升：写 provenance、可幂等、命中去重不新增不覆
 	assert.equal(afterCount, beforeCount, "不重复写入");
 });
 
+test("晋升去重只对已确认条目：同文本的两个草稿不会互相吞掉，合并保留全部证据", async () => {
+	const A = "sa_dedup2";
+	insertAgent(A);
+	const d1 = await memory.remember(A, "convD", { content: "用户喜欢 Espresso", kind: "fact", actor: "subagent", taskId: "d1", subagentId: "d1" });
+	const d2 = await memory.remember(A, "convD", { content: "用户喜欢 espresso", kind: "fact", actor: "subagent", taskId: "d2", subagentId: "d2" });
+	assert.notEqual(d1.id, d2.id, "字面不同的两条草稿是两条账本条目");
+	// 晋升 d2 时 d1 仍是草稿：不能把 d2 合并进 d1（否则 d1 还在待核验、d2 内容丢失）
+	const r2 = await memory.promote(A, d2.id, { scope: "agent", actor: "main" });
+	assert.equal(r2.promoted, true, "没有已确认同文本条目时应新建，而不是并入另一个草稿");
+	assert.notEqual(r2.id, d1.id);
+	const promotedItem = (await memory.list(A, undefined, undefined, { parent: true })).find((i) => i.id === r2.id);
+	assert.ok(promotedItem && promotedItem.status === "verified" && promotedItem.scope === "agent", "agent 级晋升原地转正且可见（不被账本去重吞掉）");
+	assert.ok((await memory.listDrafts(A)).some((i) => i.id === d1.id), "另一个草稿仍待核验");
+	// 再晋升 d1：此时已有 verified 同文本条目 → 合并，证据累积、不覆盖正文
+	const r1 = await memory.promote(A, d1.id, { scope: "agent", actor: "main" });
+	assert.equal(r1.deduped, true);
+	assert.equal(r1.id, r2.id);
+	const item = (await memory.list(A, undefined, undefined, { parent: true })).find((i) => i.id === r2.id)!;
+	const refs = new Set([...(item.origin?.evidenceRefs ?? []), item.origin?.evidenceRef].filter(Boolean));
+	assert.ok(refs.has(d2.id) && refs.has(d1.id), "两条草稿的证据都保留");
+});
+
 test("归属删除：子代理不能删共享/他人条目（含完全权限档位语义），只能删自己的草稿", async () => {
 	const A = "sa_forget";
 	insertAgent(A);

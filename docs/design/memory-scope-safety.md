@@ -44,8 +44,10 @@ MemoryOrigin = { actor, assistantId, conversationId?, taskId?, subagentId?,
 - 草稿不直接进共享库；由主会话/用户核验后 `memory.promote(agentId, draftId, {scope})`：
   - 只允许 actor=main/user；子代理/后台拒绝。
   - **幂等**：草稿已 `promoted` 直接返回既有晋升 id。
-  - **去重/冲突**：目标库已有同文本 verified 条目 → 不新增、不覆盖，把 `evidenceRef` 追加到该条目并把草稿标 `promoted`，返回既有 id。
+  - **去重/冲突**：只与目标库里**已确认**（verified/legacy）的同规范化文本条目去重；**绝不与别的草稿互相合并**（否则同文本不同事实会互相吞掉）。命时不新增、不覆盖正文，把草稿 id 累积进 `evidenceRefs`（保留旧证据）并把草稿标 `promoted`，返回既有 id。
+  - **agent 级原地转正**：目标库与草稿同库时（scope=agent）原地把 `status` 改为 `verified`、清掉 `taskId`，不新建也不隐藏——否则账本按 bank+同文本去重会把草稿行当成「新条目」又标成 promoted 而消失。
   - 否则在目标库写 `status=verified` 新条目，`origin.source="promotion"`，`evidenceRef=draftId`。
+  - 晋升要求草稿带可信 provenance（`origin`，非 legacy）且 `origin.assistantId` 确为本助理。
 - 新增最小工具 `memory_review`（仅主会话注入）：列出待核验草稿 / 晋升 / 驳回。晋升是显式用户授权动作，不写成「每轮自动 retain」。
 - 技能仍走 `ext-skills` 现有用户同意，记忆晋升**不绕过** `skill_save` 审批。
 

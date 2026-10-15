@@ -125,7 +125,7 @@
 | 需求（用户原话大意） | 状态 | 说明 |
 |---|---|---|
 | Hindsight 记忆按主建议改：完整可用 + 分层，不禁子代理 | 已改，待核验 | 依据 `docs/research/hindsight-integration-audit.md`。新增 `MemoryOrigin{actor/status/…}` provenance（服务端注入，工具不可伪造 actor）；子代理/后台/群来源写 fact 默认降为 task 草稿（不落共享 user 库），主会话/用户写 verified；新增 `scope=task` 短期草稿（默认 7 天 TTL，`memoryTaskDraftTtlDays` 可配）。设计见 `docs/design/memory-scope-safety.md`。 |
-| 主会话核验后晋升，去重/幂等，不盲覆盖 | 已改，待核验 | `memory.promote`（幂等；命同文本已有事实不新增不覆盖、只补证据）+ `memory.rejectDraft`；新增仅主会话注入的 `memory_review` 工具。 |
+| 主会话核验后晋升，去重/幂等，不盲覆盖 | 已改，待核验 | `memory.promote`（幂等；只与已确认条目按规范化文本去重、不新增不覆盖正文、证据累积到 `evidenceRefs`；agent 级晋升原地转正、不因账本同文本去重而消失）+ `memory.rejectDraft`；新增仅主会话注入的 `memory_review` 工具。 |
 | 删除/更新只能 own 任务/own writer；共享需主/用户 | 已改，待核验 | `canMutate`：子代理删共享 user / 他人条目服务端拒绝（含完全权限档位，语义非审批）。 |
 | 旧记忆不降级/不删、legacy 可读；不批量 rewrite | 已改，待核验 | 无 origin 的旧条目读取标 `legacy`、保持原 scope 可见；`meta` 增量字段。 |
 | readOnlyHint 修正；别一刀每条记忆都弹审批 | 已改，待核验 | `remember` 真实写入但 `destructive:false/openWorld:false`（非完全权限也不弹）；`forget` `destructive:true`（按档位审批）；`recall/reflect` 保持只读。完全权限仍应用层免审批。 |

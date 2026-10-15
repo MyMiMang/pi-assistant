@@ -38,6 +38,8 @@ export interface MemoryOrigin {
 	source?: string;
 	/** 只放安全 ID（如晋升来源记忆 id / taskId），绝不写任务正文或敏感内容 */
 	evidenceRef?: string | null;
+	/** 晋升合并到已有条目时累积的多条安全证据 id（不覆盖旧的） */
+	evidenceRefs?: string[];
 	createdAt: string;
 	status: MemoryStatus;
 	/** 已晋升草稿指向的目标条目 id */
@@ -366,23 +368,33 @@ export const memory = {
 		const all = await rawItems(agentId);
 		const draft = all.find((i) => i.id === draftId);
 		if (!draft) throw new Error("找不到要晋升的草稿");
+		if (draft.origin?.assistantId && draft.origin.assistantId !== agentId) throw new Error("只能晋升本助理的草稿");
 		if (draft.origin?.status === "promoted") return { id: draft.origin.promotedTo ?? draftId, promoted: false, deduped: true };
 		if (!draft.origin || draft.status === "legacy") throw new Error("只能晋升带来源的草稿");
 		const scope = opts.scope ?? "agent";
 		const bank = scope === "user" ? USER_BANK : agentBank(agentId);
 		await ready(p, bank, agentId);
 		const target = (await p.list(bank, { limit: 1000 })).items.map((i) => scoped(i, bank)).filter((i) => i.status !== "promoted");
-		const exist = target.find((i) => norm(i.text) === norm(draft.text));
+		// 只与目标库里「已确认」的条目去重；绝不与别的草稿互相合并，否则同文本不同事实会互相吞掉
+		const exist = target.find((i) => (i.status === "verified" || i.status === "legacy") && norm(i.text) === norm(draft.text));
 		const markPromoted = async (toId: string | null) => {
 			if (!p.update) return;
 			await p.update(draft.bank, draft.id, { meta: { kind: draft.kind, ...(draft.meta ?? {}), origin: { ...draft.origin, status: "promoted", promotedTo: toId } } });
 		};
 		if (exist) {
-			// 命中已有事实：不新增、不覆盖；把草稿 id 作为证据追加到已有条目的 origin
-			const merged: MemoryOrigin = { ...(exist.origin ?? { actor: "user", assistantId: agentId, createdAt: new Date().toISOString(), status: exist.status, source: "user" }), evidenceRef: exist.origin?.evidenceRef ?? draft.id };
+			// 命中已有事实：不新增、不覆盖正文；把草稿 id 累积到证据（保留旧证据，不丢失）
+			const evidenceRefs = [...new Set([...(exist.origin?.evidenceRefs ?? []), ...(exist.origin?.evidenceRef ? [exist.origin.evidenceRef] : []), draft.id])];
+			const merged: MemoryOrigin = { ...(exist.origin ?? { actor: "user", assistantId: agentId, createdAt: new Date().toISOString(), status: exist.status, source: "user" }), evidenceRef: exist.origin?.evidenceRef ?? draft.id, evidenceRefs };
 			if (p.update) await p.update(exist.bank, exist.id, { meta: { kind: exist.kind, ...(exist.meta ?? {}), origin: merged } });
 			await markPromoted(exist.id);
 			return { id: exist.id, promoted: false, deduped: true };
+		}
+		if (bank === draft.bank && p.update) {
+			// 草稿本就在目标库（agent 级晋升）：原地转正，改 status/清掉 taskId，不新建也不隐藏，否则账本按同文本去重会把草稿行当成新条目又标成 promoted 而消失
+			const origin: MemoryOrigin = { ...draft.origin, status: "verified", source: "promotion", taskId: null, conversationId: null, evidenceRef: draft.origin.evidenceRef ?? draft.id };
+			const meta = { ...(draft.meta ?? {}), taskId: undefined, conversationId: undefined, expiresAt: undefined, origin };
+			await p.update(draft.bank, draft.id, { meta });
+			return { id: draft.id, promoted: true, deduped: false };
 		}
 		const r = await memory.remember(agentId, opts.conversationId ?? null, {
 			content: draft.text,
