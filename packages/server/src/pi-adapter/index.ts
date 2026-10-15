@@ -29,6 +29,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { ClassifierAnswer, ClassifierContext, CredentialStore } from "@earendil-works/pi-ai";
+// 官方公开子路径：原生 System One 传输实现（与内建 typesafe / openrouter classifier 同一实现）。
+import { classify as systemOneClassify } from "@earendil-works/pi-ai/api/typesafe-system-one";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 import compat from "./compat.json" with { type: "json" };
 import { BRAND } from "@pi-assistant/shared";
@@ -325,6 +327,50 @@ export class PiModels {
 	/** 注册一个本地 provider（mock 模型用）。 */
 	registerProvider(id: string, config: unknown) {
 		this.runtime.registerProvider(id, config as never);
+	}
+
+	/**
+	 * 给自定义 provider 补一个原生 System One classifier 模型（最小公开入口）。
+	 *
+	 * SDK 真实限制（已用 fixture 验证）：models.json 只能定义 chat 模型，写 `type: "classifier"` 也会被当成 chat，
+	 * 所以自定义 provider 的 classifier 只能经扩展 `registerProvider` 注册。这里：
+	 *  - 把该 provider 现有 chat 模型原样带上（否则扩展的 models 会整体替换掉它们）；
+	 *  - 追加一个 `typesafe-system-one` classifier（协议模型 id 由调用方给）；
+	 *  - 鉴权复用该 provider 已保存的凭据（server 的安全 provider 保存），本方法不读 key、不传 key。
+	 */
+	registerSystemOneClassifier(providerId: string, modelId: string, opts?: { name?: string; baseUrl?: string; contextWindow?: number }) {
+		const chatModels = this.runtime.getModels(providerId);
+		const baseUrl = opts?.baseUrl ?? (chatModels[0] as { baseUrl?: string } | undefined)?.baseUrl;
+		if (!baseUrl) throw new Error(`provider ${providerId} 没有 baseUrl，无法注册 classifier`);
+		const models: unknown[] = chatModels.map((m) => ({
+			type: "chat" as const,
+			id: m.id,
+			name: m.name,
+			api: m.api,
+			baseUrl: (m as { baseUrl?: string }).baseUrl ?? baseUrl,
+			input: [...(m.input ?? [])],
+			cost: m.cost,
+			reasoning: !!(m as { reasoning?: boolean }).reasoning,
+			contextWindow: (m as { contextWindow?: number }).contextWindow ?? 128_000,
+			maxTokens: (m as { maxTokens?: number }).maxTokens ?? 16_384,
+			...(m as { thinkingLevelMap?: unknown }).thinkingLevelMap ? { thinkingLevelMap: (m as { thinkingLevelMap?: unknown }).thinkingLevelMap } : {},
+		}));
+		models.push({
+			type: "classifier",
+			id: modelId,
+			name: opts?.name ?? modelId,
+			api: "typesafe-system-one",
+			baseUrl,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: opts?.contextWindow ?? 8192,
+		});
+		this.runtime.registerProvider(providerId, {
+			name: this.runtime.getProvider(providerId)?.name ?? providerId,
+			baseUrl,
+			classifiers: { "typesafe-system-one": { classify: systemOneClassify } },
+			models,
+		} as never);
 	}
 	setRuntimeApiKey(id: string, key: string) {
 		return this.runtime.setRuntimeApiKey(id, key);

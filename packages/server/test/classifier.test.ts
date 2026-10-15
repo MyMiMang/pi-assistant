@@ -170,6 +170,44 @@ test("models.json 不能注册 classifier（真实 SDK 限制）：classifier �
 	assert.ok(mj.listModels("custom-cls").some((x) => x.id === "jev-x"), "它被 Pi 当成 chat 模型，不能用于 classify");
 });
 
+test("自定义 provider（models.json 只有 chat）经公开入口补 SystemOne classifier：复用已存凭据、保留 chat", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pia-relay-"));
+	const modelsPath = join(dir, "models.json");
+	const relayBase = `http://127.0.0.1:${port}/relay`;
+	writeFileSync(
+		modelsPath,
+		JSON.stringify({
+			providers: {
+				"custom-relay": {
+					name: "自建中转",
+					baseUrl: relayBase,
+					api: "openai-completions",
+					models: [{ id: "relay-chat", name: "Relay Chat", api: "openai-completions", input: ["text"], reasoning: false, contextWindow: 8192, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
+				},
+			},
+		}),
+	);
+	const KEY_C = "sk-relay-key-cccc-0123456789abcdef";
+	const mj = await PiModels.create({ credentials: new EncryptedCredentialStore(), modelsPath, allowNetwork: false });
+	await mj.setRuntimeApiKey("custom-relay", KEY_C);
+	await mj.reloadConfig();
+	assert.deepEqual(mj.listClassifierModels("custom-relay"), [], "models.json 自定义 provider 本身没有 classifier");
+
+	mj.registerSystemOneClassifier("custom-relay", "jev-relay");
+	await mj.reloadConfig();
+	const list = mj.listClassifierModels("custom-relay");
+	assert.ok(list.some((m) => m.id === "jev-relay"), "公开入口应把 SystemOne classifier 加进目录");
+	assert.equal(list.find((m) => m.id === "jev-relay")?.configured, true, "复用该 provider 已保存的凭据");
+	assert.ok(mj.listModels("custom-relay").some((m) => m.id === "relay-chat"), "原有 chat 模型必须保留");
+
+	seen.length = 0;
+	const res = await mj.classify("custom-relay", "jev-relay", context);
+	assert.equal(res.stopReason, "stop");
+	assert.equal(seen.length, 1);
+	assert.equal(seen[0].url, "/relay/systemone", "按该 provider 的 baseUrl 发 System One 请求");
+	assert.equal(seen[0].authorization, `Bearer ${KEY_C}`, "复用该 provider 已存凭据，不串用别的 provider");
+});
+
 test("服务不报 usage 时 → usage 缺失（未知），不捏造 0 / 免费", async () => {
 	omitUsage = true;
 	try {

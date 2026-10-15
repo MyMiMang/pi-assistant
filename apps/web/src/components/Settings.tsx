@@ -123,15 +123,17 @@ interface SubagentSettingsDto { maxMinutes: number; maxConcurrent: number }
 
 interface FastComputerDto { enabled: boolean; kind: "chat" | "systemone"; provider: string; id: string; baseUrl: string; model: string; threshold: number; timeoutMs: number }
 interface FastComputerModelDto { provider: string; id: string; name: string; providerName: string }
+interface FastComputerClassifierDto { provider: string; id: string; name: string; api: string; configured: boolean; providerName: string }
 
 /** 快速操作模型（默认关闭）：开启后主模型仍规划 / 授权，快速模型只在有界候选里挑一个控件。 */
 function FastComputerSection() {
 	const [d, setD] = useState<FastComputerDto | null>(null);
 	const [models, setModels] = useState<FastComputerModelDto[]>([]);
+	const [classifiers, setClassifiers] = useState<FastComputerClassifierDto[]>([]);
 	const [err, setErr] = useState("");
 	useEffect(() => {
-		void api<{ settings: FastComputerDto; models: FastComputerModelDto[] }>("/api/fast-computer/settings")
-			.then((r) => (setD(r.settings), setModels(r.models)))
+		void api<{ settings: FastComputerDto; models: FastComputerModelDto[]; classifierModels?: FastComputerClassifierDto[] }>("/api/fast-computer/settings")
+			.then((r) => (setD(r.settings), setModels(r.models), setClassifiers(r.classifierModels ?? [])))
 			.catch((e) => setErr(String(e)));
 	}, []);
 	if (!d) return null;
@@ -153,19 +155,46 @@ function FastComputerSection() {
 			{d.enabled && (
 				<div className="space-y-3 border-l border-line pl-3">
 					<label className="flex items-center gap-2 text-sm">
-						模型
-						<select className="pa-input" aria-label="快速操作模型" value={d.provider && d.id ? `${d.provider}/${d.id}` : ""} onChange={(e) => { const [provider, ...rest] = e.target.value.split("/"); void save({ kind: "chat", provider, id: rest.join("/") }); }}>
-							<option value="">未选择</option>
-							{models.map((m) => (
-								<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.providerName} · {m.name}</option>
-							))}
+						类型
+						<select className="pa-input" aria-label="快速操作模型类型" value={d.kind} onChange={(e) => void save({ kind: e.target.value === "systemone" ? "systemone" : "chat", provider: "", id: "" })}>
+							<option value="chat">快模型（OpenAI 兼容，替代，非 Jev）</option>
+							<option value="systemone">原生 Jev（System One 分类器）</option>
 						</select>
 					</label>
-					<p className="text-xs text-mut2">
-						目前只支持已配置的 OpenAI 兼容快模型（替代，<span className="font-medium">不是 Jev</span>，拿不到原生校准概率）。
-						原生 Jev（SystemOne）渠道接入待完成，暂不可配置；未接入前该项 fail-closed 跳过，不会用全局环境变量 Key 去访问自定义地址。
-					</p>
-					{d.kind !== "chat" && <p className="text-xs text-mut2">当前保存的仍是未接入的原生 Jev 配置，快速路径会直接跳过；选择上面的快模型即可切回受支持的路径。</p>}
+					{d.kind === "systemone" ? (
+						<>
+							<label className="flex items-center gap-2 text-sm">
+								模型
+								<select className="pa-input" aria-label="原生 Jev 分类器模型" value={d.provider && d.id ? `${d.provider}/${d.id}` : ""} onChange={(e) => { const [provider, ...rest] = e.target.value.split("/"); void save({ provider, id: rest.join("/") }); }}>
+									<option value="">未选择</option>
+									{classifiers.map((m) => (
+										<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+											{m.providerName} · {m.name}{m.configured ? "" : "（未配置凭据）"}
+										</option>
+									))}
+								</select>
+							</label>
+							<p className="text-xs text-mut2">
+								真 Jev，有原生校准概率。只能从已配置凭据的 System One 分类器里选（TypeSafe / OpenRouter / OpenAI Decisions 等），鉴权由 Pi 按所选服务解析，不读全局环境变量 Key。
+								{classifiers.length === 0 && " 目前没有可用的分类器，请先在模型服务里配置 TypeSafe / OpenRouter 等。"}
+							</p>
+						</>
+					) : (
+						<>
+							<label className="flex items-center gap-2 text-sm">
+								模型
+								<select className="pa-input" aria-label="快速操作模型" value={d.provider && d.id ? `${d.provider}/${d.id}` : ""} onChange={(e) => { const [provider, ...rest] = e.target.value.split("/"); void save({ provider, id: rest.join("/") }); }}>
+									<option value="">未选择</option>
+									{models.map((m) => (
+										<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.providerName} · {m.name}</option>
+									))}
+								</select>
+							</label>
+							<p className="text-xs text-mut2">
+								OpenAI 兼容快模型（替代，<span className="font-medium">不是 Jev</span>，拿不到原生校准概率，一律要求独立核验）。
+							</p>
+						</>
+					)}
 					{err && <p className="text-xs text-red-500">{err}</p>}
 				</div>
 			)}
