@@ -1,6 +1,6 @@
 # Pi Assistant · 基于 Pi 的本地私人助理 —— 设计文档 v0.5
 
-> **当前进度和待验证事项以 [HANDOFF.md](HANDOFF.md) 为准**（当前版本 v0.1.0-beta.10）；组件概览见 [ARCHITECTURE.md](ARCHITECTURE.md)。下面各节里的“实现状态 / 日期”是当时写的记录，后面的章节（§15–§19）是最新的设计。
+> **当前进度和待验证事项以 [HANDOFF.md](HANDOFF.md) 为准**（公开版本 v0.1.0-beta.23；beta.24 候选未发布）；组件概览见 [ARCHITECTURE.md](ARCHITECTURE.md)。下面各节里的“实现状态 / 日期”是当时写的记录，后面的章节（§15–§19）是最新的设计。
 
 > 状态：v0.5（2026-10-11）。**远程入口改为按用户自选**：不再内置任何默认域名，用户用自己的域名 + 自己的 Cloudflare Token 在 App 内一键部署（§5.13.2，已实现并实测）；新增密钥扫描（§9.1）；助理电脑与 ext-computer 已开始实现（§14.10）。v0.4：新增：§5.14.1 自定义模型服务（中转站/第三方/本地，已实现），§5.16 第三方集成通用规则，§14 Phase 3 国内优先方案（它自己的电脑、自己的账号、微信/企业微信/飞书/钉钉、Cua）。v0.3：Phase 1 的服务端 + Web UI 已实现并通过端到端测试（实现状态见 §13）。新增：§5.14 模型与凭据（不内置任何 Key，全部 Pi provider 动态支持），§5.15 模块边界与 Pi 升级维护流程。默认入口域名 `app.dengdengyun.shop`。
 > 参考：Pi 仓库 `earendil-works/pi`（本文基于 `@earendil-works/pi-coding-agent@1.2.0` 的源码和文档阅读结果，API 名称均来自实际代码）。
@@ -487,7 +487,7 @@ Pi 目录里没有的服务（各种 OpenAI 兼容“中转站”、公司内网
 | `subscribeSession()` → 归一化事件 `assistant_start / text_delta / assistant_end / tool_start / tool_end / settled` | `AgentSessionEvent` |
 | `promptSession / abortSession / injectContext / lastAssistantText` | `prompt(streamingBehavior)`、`abort`、`sendCustomMessage` |
 | `makeBashTool()` | `createBashTool`（供沙箱扩展覆盖内置 bash） |
-| `checkPiCompat()` + `compat.json` | 读取已安装 Pi 版本，对比测试基线 |
+| `checkPiCompat()` + `compat.json` | 读取已安装 Pi 版本，对比测试基线（`testedWith` 只在测试通过后由 `scripts/pi-update.mjs finalize` 记录，bump 阶段只写 `target` 预期版本） |
 | `mock-provider.ts` | `registerFauxProvider`（仅开发/测试） |
 
 Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依赖适配层自己的类型。
@@ -505,12 +505,12 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 
 **5）CI 自动跟进 Pi**：
 - `ci.yml`：每次 push/PR 跑 `check:pi`、typecheck、单元+兼容测试、Worker 测试、构建、E2E（上传截图）。
-- `pi-latest.yml`：**每周一自动**把 Pi 升到 npm 最新版 → 跑全部测试 → 通过则更新 `compat.json` 并**自动开 PR**；失败则**自动开 issue** 附日志，提示需要改 `pi-adapter`。
+- `pi-latest.yml`：**每周一自动**把 Pi 升到 npm 最新版（走 `scripts/pi-update.mjs`）→ 跑全部测试 → **通过后才 `finalize` 记录 `compat.json` 的 `testedWith` 并自动开 PR**；失败则**自动开 issue** 附日志（`testedWith` 不前进），提示需要改 `pi-adapter`。
 - `renovate.json`：Pi 包单独分组、发布 1 天后即提 PR（与上面互为备份）。
 
 **6）发布与用户侧更新**：合并升级 PR → 打 tag `vX.Y.Z` → `release.yml` 构建 Mac/Windows 安装包（sidecar 内含新版 Pi）→ 托盘程序的 Tauri updater（签名校验）静默下载安装。用户数据（SQLite、Pi 会话 JSONL、加密凭据）与程序分离，升级不丢。
 
-**维护者升级清单**：`npm run check:pi` → `npm i -w @pi-assistant/server @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest` → `npm test && npm run e2e` → 失败时只改 `pi-adapter/`（必要时 `ext-*` 的类型）→ 更新 `compat.json` → PR。
+**维护者升级清单**：`npm run check:pi` → `node scripts/pi-update.mjs latest`（三包一起升 + 同步依赖记录）→ `npm test && npm run e2e` → 失败时只改 `pi-adapter/`（必要时 `ext-*` 的类型）→ **全通过后 `node scripts/pi-update.mjs finalize`** 记录 `compat.json` → PR。
 
 ---
 
@@ -522,7 +522,7 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 2. **版本集中固定**：仓库根目录 `third-party.json`（第三方清单）登记每个组件：名称、来源（npm / GitHub Release / Docker 镜像）、固定版本、许可证、校验和、用在哪个适配层、对应的冒烟测试。安装包构建脚本和沙箱镜像只从清单取版本。npm 依赖同时写在 `package.json`，清单与之由 CI 校验一致。
    ```json
    { "components": [
-     { "name": "pi-coding-agent", "kind": "npm", "version": "1.1.0", "license": "MIT", "adapter": "packages/server/src/pi-adapter", "smoke": "test/pi-compat.test.ts" },
+     { "name": "pi-coding-agent", "kind": "npm", "version": "1.2.0", "license": "MIT", "adapter": "packages/server/src/pi-adapter", "smoke": "test/pi-compat.test.ts" },
      { "name": "cua-driver", "kind": "github-release", "repo": "trycua/cua", "version": "0.32.0", "license": "MIT", "adapter": "packages/ext-computer", "smoke": "e2e/computer-smoke.mjs", "forbid": ["cua-perception", "cua-spaces"] },
      { "name": "cloudflared", "kind": "github-release", "repo": "cloudflare/cloudflared", "version": "2026.x", "license": "Apache-2.0", "adapter": "packages/server/src/tunnel.ts", "smoke": "test/tunnel-parse.test.ts" },
      { "name": "playwright-core", "kind": "npm", "version": "1.x", "license": "Apache-2.0", "adapter": "packages/ext-browser", "smoke": "e2e/run.mjs" }

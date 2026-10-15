@@ -69,3 +69,10 @@
 - 资源核对：本地 ASR `serve-script.ts` 为代码内字符串、安装时写盘（无外部打包资源 / 无 `dirname` 运行时路径问题）；语音 `AudioWorklet` 用内联 `Blob` 注入（无 static / Tauri 资源依赖）；`git diff main..HEAD -- node_modules` 为空（未改 Pi SDK）。
 - 日志：`evidence/final-arm64-preflight/`（tests-thinking / tests-queue-replies / tests-memory / tests-voice-asr / typecheck-build / e2e-subagent-thinking-levels / summary）。
 - 未验（如实）：真实 Hindsight LLM retain/reflect、真下载 / 起 SenseVoice、真实云 ASR、手机真机、安装包真机、全量 `e2e/run.mjs`。
+
+## 10. Pi SDK 1.1.0 → 1.2.0 合入候选（本轮）
+- `deps/pi-1.2.0` 的四个提交（`1db53e7` 依赖升级 + union 适配 / `811062b` union 回归测试 / `e0462c2` 升级脚本 / `2948a05` 文档）以 `--no-ff` 合入本候选，合并提交 `bfd621a`，保祖先；候选自有 `node_modules` 官方装 1.2.0（无源码 patch / 无 fork），未系统升级 Node。
+- 语义修正：`scripts/pi-update.mjs` 拆成 bump（升三包 + 同步依赖记录，compat 只写 `target`）与 `finalize`（**测试通过后**才写 `compat.json` 的 `testedWith`）；`pi-latest.yml` 把 `finalize` 放在测试成功之后，失败开 issue 且基线不前进。`check-pi.mjs` 对 `target != testedWith` 给提示。
+- 新增本地验收：`test/pi-mcp-1.2.test.ts` 3/3、`test/pi-1.2-custom-provider.test.ts` 3/3、`test/pi-1.2-boot-context.test.ts` 5/5（都是真实 Pi 会话 + 本地 fake MCP / loopback 假服务 + 假 Key + 临时目录）。受影响定向测试 57 通过 / 1 失败（既有 macOS bsdtar 基线）/ 2 跳过；两端 typecheck exit 0；web `vite build` 2507 模块通过。
+- 设计与验收自包含入库：`docs/design/pi-1.2-upgrade.md`；未验边界见 HANDOFF 本轮条目。
+- 本候选此阶段**未合入**（各自独立树进行中，由主统一合并，勿提前标完成）：从消息 fork、上下文/技能整理与按需启用、tool discovery / codemode 受控验证、主题 UI 与 AI 主题。真实云 / 真实 Key / 真实定时 / 安装包真机仍未验。
