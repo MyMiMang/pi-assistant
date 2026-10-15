@@ -20,9 +20,9 @@ import type { ClassifierModelInfo, ModelInfo } from "./pi-adapter/index.ts";
 import type { CustomProviderMeta } from "./pi-adapter/custom-providers.ts";
 
 /** 一个模型能做的事；`vision` 属于 chat 能力（不是独立服务）。 */
-export type ModelCapability = "chat" | "vision" | "image" | "classifier";
-/** Pi 的操作类型（`type` 缺省即 chat）。 */
-export type ModelType = "chat" | "image" | "classifier";
+export type ModelCapability = "chat" | "vision" | "image" | "classifier" | "asr";
+/** Pi 的操作类型（`type` 缺省即 chat）；`asr` 是本地语音识别的类型（不经 Pi chat/classifier 运行时）。 */
+export type ModelType = "chat" | "image" | "classifier" | "asr";
 /** 模型 / 服务的来源：`local` = 本机跑的服务（如 local-laya，安装后经 Pi 运行时注册）。 */
 export type RegistrySource = "pi-catalog" | "custom" | "imagegen" | "guess" | "local";
 
@@ -67,6 +67,22 @@ export interface RegistryModel {
 	costNote?: string;
 	/** 生图模型的适配器元数据（UI 展示用）：协议 kind / 端点 / 改图 / 参考价。 */
 	imageAdapter?: { kind: string; baseUrl: string; edit: boolean; costNote?: string };
+	/** ASR（本地语音识别）的适配器元数据：协议 / 采样率 / 上限 / 语种；**不含凭据**（本地服务不需要用户 key）。 */
+	asrAdapter?: RegistryAsrAdapter;
+}
+
+/** 本地 ASR 的适配器元数据（与 `local-asr/adapter.ts` 的薄契约对应；token 绝不进注册表）。 */
+export interface RegistryAsrAdapter {
+	/** 协议标识，如 `local-asr-http` */
+	protocol: string;
+	sampleRate: number;
+	/** 单次音频上限（秒） */
+	maxSeconds: number;
+	languages: string[];
+	/** 模型输出是否自带标点 / ITN */
+	punctuation: boolean;
+	/** 本地 provider **不需要**用户 API key */
+	requiresApiKey: false;
 }
 
 export interface RegistryProvider {
@@ -101,12 +117,18 @@ export interface RegistryImageProvider {
 /** 本地服务的安全元数据（由服务自己的 status 事件汇总；不 import 其实现、不含凭据）。 */
 export interface RegistryLocalProvider {
 	provider: string;
+	/** 界面显示名（如「本地 SenseVoice」） */
+	label?: string;
 	modelId: string;
 	protocol: string;
+	/** 该本地模型在注册表里的类型（Laya=classifier，SenseVoice=asr） */
+	type?: "classifier" | "asr";
 	installed: boolean;
 	running: boolean;
 	state: string;
 	device: string | null;
+	/** asr 专用元数据（采样率 / 语种 / 标点） */
+	asr?: { sampleRate: number; maxSeconds: number; languages: string[]; punctuation: boolean };
 }
 
 export interface RegistryInput {
@@ -278,13 +300,40 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 		}
 	}
 
-	// 4) 本地服务（如 local-laya）：可靠地标 source=local；已安装但停止时仍保留卡片（只标暂不可用）。
-	//    即使 classifier 目录里没有（stop 后被摘掉），也按安全状态补一条，避免卡片消失。
+	// 4) 本地服务（如 local-laya=classifier / local-sensevoice=asr）：可靠地标 source=local；
+	//    已安装但停止时仍保留卡片（只标暂不可用）。即使目录里没有（stop 后被摘掉），也按安全状态补一条。
 	for (const l of input.local ?? []) {
-		const p = ensure(l.provider, { id: l.provider, name: l.provider, kind: "local", configured: l.running });
+		const p = ensure(l.provider, { id: l.provider, name: l.label ?? l.provider, kind: "local", configured: l.running });
 		p.kind = "local";
 		p.configured = p.configured || l.running;
 		const status: RegistryLocalStatus = { installed: l.installed, running: l.running, state: l.state, device: l.device };
+		const localType = l.type ?? "classifier";
+		if (localType === "asr") {
+			const existing = p.models.find((x) => x.id === l.modelId && x.type === "asr");
+			const a = l.asr;
+			put(p, {
+				provider: l.provider,
+				id: l.modelId,
+				name: existing?.name || l.modelId,
+				type: "asr",
+				capabilities: ["asr"],
+				protocol: l.protocol,
+				confirmed: true,
+				inferred: [],
+				source: "local",
+				configured: l.running,
+				local: status,
+				asrAdapter: {
+					protocol: l.protocol,
+					sampleRate: a?.sampleRate ?? 16000,
+					maxSeconds: a?.maxSeconds ?? 120,
+					languages: a?.languages ?? [],
+					punctuation: !!a?.punctuation,
+					requiresApiKey: false,
+				},
+			});
+			continue;
+		}
 		const existing = p.models.find((x) => x.id === l.modelId && x.type === "classifier");
 		put(p, {
 			provider: l.provider,
