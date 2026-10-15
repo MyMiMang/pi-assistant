@@ -19,6 +19,8 @@ import { VoiceInput } from "./VoiceInput";
 import { group, BotTurn as SharedBotTurn, BotPart as SharedBotPart, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
 import { agentSendBody, buildReplyRef, draftSignature, newClientId, resolveAgentReplyTarget, replyDraftKey, type ReplyRef } from "../replies";
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
+import { canFork, forkErrorMessage, forkFromMessage, newForkClientId } from "../fork-api";
+import { setComposerDraft, useComposerDrafts } from "../composerDrafts";
 import { locateAgentMessage } from "../replies-api";
 import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
 import { mergeMessages } from "../selection";
@@ -51,7 +53,23 @@ export default function Chat({ agentId }: { agentId: string }) {
 	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: agentId, name: agent?.name ?? "助理" }));
 	const onInsert = (msgs: Message[]) => useStore.setState((s) => ({ messages: { ...s.messages, [agentId]: mergeMessages(msgs, s.messages[agentId]) } }));
 	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), onInsert);
-	const replyCtx = useReplyContext(onQuote);
+	const [forkNotice, setForkNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+	// 「从这条消息另开新对话」：用 Pi 公开 fork 在服务端建分支对话；切到新对话并把正文放回输入框（不自动发）。
+	const onFork = async (m: Message) => {
+		if (!convId || !canFork(m)) return;
+		setForkNotice(null);
+		try {
+			const r = await forkFromMessage(convId, m.id, newForkClientId());
+			// 先把正文写进新对话的草稿桶再切过去：切对话不丢字、不串到原对话
+			setComposerDraft(replyDraftKey.agent(agentId, r.conversationId), r.draft ?? "");
+			await useStore.getState().loadConversations(agentId);
+			await useStore.getState().switchConversation(agentId, r.conversationId);
+			setForkNotice({ kind: "ok", text: r.draft ? "已从这条消息另开新对话，原文放回输入框了，改完自己发。" : "已从这条消息另开新对话。" });
+		} catch (e) {
+			setForkNotice({ kind: "error", text: forkErrorMessage(e) });
+		}
+	};
+	const replyCtx = useReplyContext(onQuote, onFork, canFork);
 	useComposerInset(scroller, composerWrap, stick);
 	useLayoutEffect(() => {
 		const el = scroller.current;
@@ -152,7 +170,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 								{r.label}
 							</div>
 						) : r.kind === "user" ? (
-							<UserMsg key={r.m.id} m={r.m} reaction={reactions.get(r.m.id)} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf(r.m)} />
+							<UserMsg key={r.m.id} m={r.m} reaction={reactions.get(r.m.id)} onQuote={onQuote} onFork={onFork} onJump={jump} interaction={replyCtx.interactionOf(r.m)} />
 						) : r.kind === "system" ? (
 							<SystemMsg key={r.m.id} m={r.m} />
 						) : (
@@ -164,6 +182,14 @@ export default function Chat({ agentId }: { agentId: string }) {
 			</div>
 			{replyCtx.menuEl}
 			{jumpState && !quote && <JumpHint s={jumpState.s} onRetry={retryJump} />}
+			{forkNotice && (
+				<div className={cx("pa-fork-notice", forkNotice.kind === "error" && "error")} role="status" data-testid="fork-notice">
+					<span>{forkNotice.text}</span>
+					<button type="button" aria-label="关闭提示" onClick={() => setForkNotice(null)}>
+						×
+					</button>
+				</div>
+			)}
 			<Composer ref={composer} agentId={agentId} name={agent.name} model={agent.model?.id} running={running} drag={drag} replyKey={rKey} replyLabel={replyLabel} onJump={jump} jumpState={jumpState} onRetryJump={retryJump} wrapRef={composerWrap} />
 		</div>
 	);
@@ -183,9 +209,12 @@ function ThreadSkeleton() {
 
 // ------------------------------------------------------------------ 悬浮输入框：拖拽文件 / 粘贴图片
 function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLabel, onJump, jumpState, onRetryJump, wrapRef }: { agentId: string; name: string; model?: string; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; replyLabel: string | null; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
-	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const [sendErr, setSendErr] = useState("");
+	// 草稿按「助理 + 对话」分桶（replyKey 复用回复草稿的键）：切对话 / fork 切换不丢字、不串对话
+	const draftKey = replyKey;
+	const text = useComposerDrafts((s) => s.drafts[draftKey] ?? "");
+	const setText = (v: string) => setComposerDraft(draftKey, v);
 	// 幂等：同一份草稿（文字 + 附件 + 引用）重试复用同一 clientId；草稿一变就换新的，避免重复唤醒
 	const clientRef = useRef<{ sig: string; id: string } | null>(null);
 	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f) => upload(agentId, f));

@@ -208,6 +208,10 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 /* 触屏：常显描边，方便直接点到 */
 @media (hover: none) { .pa-quote-btn { color: var(--mut); border-color: var(--line); background: var(--card); } }
 @media (max-width: 820px) { .pa-quote-btn-txt { display: inline; } }
+@media (max-width: 420px) { [data-testid="fork-btn"] .pa-quote-btn-txt { display: none; } }
+.pa-fork-notice { display: flex; align-items: center; gap: 8px; margin: 0 auto 6px; max-width: 92%; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--mut); font-size: 12px; }
+.pa-fork-notice.error { color: #b91c1c; border-color: color-mix(in srgb, #ef4444 35%, transparent); }
+.pa-fork-notice button { margin-left: auto; color: inherit; opacity: .7; }
 
 /* composer 上方的引用条：作者 / 目标 + 1–2 行摘录 + 附件名 + 取消 */
 .pa-quote-bar { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 8px; padding: 6px 6px 6px 10px; border-left: 2px solid var(--acc); border-radius: 8px; background: var(--hover); min-width: 0; }

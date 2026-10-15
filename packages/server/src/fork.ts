@@ -81,6 +81,16 @@ function titleFor(msg: Message): string {
 }
 
 /**
+ * 放回新对话输入框的正文（不自动发送）：以 app 里用户原话为准，不带我们内部的插话前缀 / 引用上下文包装；
+ * 只有空正文（例如只发附件）时才退回 Pi entry 文本，并去掉插话前缀。
+ */
+function draftText(msgContent: string, piText: string): string | null {
+	if (String(msgContent ?? "").trim()) return msgContent;
+	const t = piText.replace(/^（你工作时用户发来的新消息）\n?/, "").trim();
+	return t || null;
+}
+
+/**
  * 建分支。抛 `ForkError`（fail-closed，调用方按 code 给明确提示）。
  * `clientId` 用于幂等：同一源对话内重复投递只创建一个新对话。
  */
@@ -139,5 +149,5 @@ export function forkConversation(input: { conversationId: string; messageId: str
 	}
 	db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(now(), conv.id);
 
-	return { conversationId: conv.id, agentId: conv.agent_id, draft: point.text || null, forkedFrom: { conversationId: source.id, messageId: msg.id, entryId }, created: true };
+	return { conversationId: conv.id, agentId: conv.agent_id, draft: draftText(msg.content, point.text), forkedFrom: { conversationId: source.id, messageId: msg.id, entryId }, created: true };
 }

@@ -182,8 +182,8 @@
 
 | 需求（用户原话大意） | 状态 | 说明 |
 |---|---|---|
-| 单聊里每条**可分支**的消息提供「从这里另开对话」：用 Pi 公开会话 fork 能力另起一条分支，生成新的自有 conversation（新 Pi 会话文件 + `parentSession` 父关系），原对话保留、可返回；保留原 agent / 模型 / 思考强度 / 附件引用权限；不从同一个 Pi 会话状态平行共享、不自动发 prompt、不重放工具、不复制排队任务 / 等待 / 后台任务 / 审批单 / 旧用量账单；busy 时明确 409 不 abort 用户任务；`clientId` 幂等只建 1 个对话；群聊分支另议 | 开发中（本树，未打包） | 设计契约 `docs/design/session-fork.md`。锚点范围以官方为准：`getUserMessagesForForking()` + `fork(entryId)` 只支持 **user** 消息（分支点在该 user 消息之前、正文放回输入框「另开并编辑」，绝不自动重发）；`SessionManager.createBranchedSession(leafId)` 只读源文件另写新文件、头带 `parentSession`。app 消息 ↔ Pi entry 用服务端持久化的 `meta.piEntryId` 映射（`pi-adapter` 在 `message_end` 持久化后取 `getLeafId()`），不靠前端下传文件名 / 下标。API `POST /api/conversations/:cid/fork { messageId, clientId }`。 |
-| 验证 | 待跑 | 目标：真实公开 SessionManager + Mock provider（临时数据目录 / 内存凭据）证明源文件不被改、新文件 `parentSession` 正确、分支为前缀、0 额外模型请求 / 0 工具调用、busy 409 不 abort、幂等、跨对话 messageId 拒绝；两端 typecheck + web build；前端 390 界面与草稿保留。 |
+| 单聊里每条**可分支**的消息提供「从这里另开对话」：用 Pi 公开会话 fork 能力另起一条分支，生成新的自有 conversation（新 Pi 会话文件 + `parentSession` 父关系），原对话保留、可返回；保留原 agent / 模型 / 思考强度 / 附件引用权限；不从同一个 Pi 会话状态平行共享、不自动发 prompt、不重放工具、不复制排队任务 / 等待 / 后台任务 / 审批单 / 旧用量账单；busy 时明确 409 不 abort 用户任务；`clientId` 幂等只建 1 个对话；群聊分支另议 | 已实现代码 + 本地验证，待主 review 合入（未打包） | 设计契约 `docs/design/session-fork.md`、DESIGN §31。锚点范围以官方为准：`getUserMessagesForForking()` + `fork(entryId)` 只支持 **user** 消息（分支点在该 user 消息之前、正文放回输入框「另开并编辑」，绝不自动重发）；`SessionManager.createBranchedSession(leafId)` 只读源文件另写新文件、头带 `parentSession`。app 消息 ↔ Pi entry 用服务端持久化的 `meta.piEntryId` 映射（`pi-adapter` 在 `message_end` 持久化后取 `getLeafId()`），不靠前端下传文件名 / 下标。API `POST /api/conversations/:cid/fork { messageId, clientId }`。 |
+| 验证 | 已跑（真实公开 Pi 1.2.0 + Mock provider + 临时数据 + 内存凭据） | `test/session-fork.test.ts` **3/3**（源文件不变 / 前缀 / 0 额外请求 / 幂等 / 忙时 409 不 abort / 两会话不共享）、`pi-compat`+`message-replies`+`isolation` 22/22 无回归、`e2e/session-fork-frontend.test.mjs` 4/4、`e2e/session-fork-http.mjs`（真 server）8/8、`e2e/session-fork-ui.mjs`（Chrome headless）5/5、服务端 tsc + web tsc/build 通过。**未做 / 未验**：分支树可视化、群聊分支、assistant / 工具锚点、全量 e2e、真机、首条消息分支的真机走查。 |
 
 ## 待用户决定
 
