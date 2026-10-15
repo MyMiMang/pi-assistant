@@ -127,6 +127,14 @@
 | 更新后已配置还强制走 setup 环节 | 已改，待核验 | 根因：`/api/system.onboarded` 依赖 `defaultModel()` 解析，配置读取暂时失败 / 模型暂不可解析时返回 null → 已配置被误判为未配置。改为只看持久信号（向导标志 / `defaultModel` 设置 / 助理数量）并新增 `modelReady` 单列模型可用性；启动时幂等恢复丢失的向导标志；界面提示可恢复错误而不重走向导。新装仍引导，只助理或只模型都不算完成。新增 `onboarding.test.ts`（7 项）+ `onboarding-recovery.test.ts`（HTTP 级），连同 `custom-providers`/`channels`/`clawbot` 共 32/32 通过。 |
 | beta.23 渠道修复复核 | 已复核，无需再改 | `6cf31fe` 把 `makeAdapter` 纳入启动 try、解密失败转中文恢复提示、未重填保留密文；覆盖现场崩溃路径，未触碰 `secrets.ts` 与用户数据。本轮不重复改，也未把未解的钥匙串根因宣称已解决。 |
 
+## 手机端 App shell / 输入框 viewport 修复（2026-10-15，`mobile-chat-viewport-fix` 树，基 `hotfix-integration` `b7d33d3` + `9554628`，**未 push / 未 tag**）
+
+| 需求（用户原话大意） | 状态 | 说明 |
+|---|---|---|
+| 手机浏览器用 Pi，最顶栏和底部输入框会随整页上下移动、不固定 | 已修，待真机确认 | 根因：① 手机媒体查询里 `body{overflow:auto}` 让**整页**成了滚动容器；② `html,body,#root{height:100%}` 在 iOS Safari 取的是「地址栏收起后」的高度（比可见区域高）→ 页面本身可上下拖，`position:absolute` 的输入栏和外层顶栏就跟着走。修复：`html,body{overflow:hidden}` + `#root{height:var(--pa-vvh)}`（由 `visualViewport` 写 px，无 JS 时退回 `100dvh`/`100vh`），只有聊天内容区 `.pa-scroll` 滚动。新增 `e2e/mobile-viewport-ui.mjs`（纯前端 fixture，390/375/430 三档 + 群聊 + 横竖屏 + 桌面回归，123 项全通过）。 |
+| 点输入框页面自动放大，打完看聊天要手动缩回 | 已修，待真机确认 | 根因：默认皮肤 `.pa-app` 13.5px 继承进 `textarea/input`（`.pa-composer textarea{font:inherit}`，实测 computed 13.5px < iOS 的 16px 阈值）。修复：`@media (max-width:820px),(pointer:coarse)` 下只把 `input/textarea/select` 提到 16px，**不动版面字号**（整页仍 13.5px），桌宠小窗排除。**不加** `user-scalable=no`/`maximum-scale=1`，保留双指缩放与文字缩放。 |
+| 键盘弹起 / 收回、横竖切换、地址栏折叠后输入与末消息仍可见 | 已实现，待真机确认 | iOS Safari 键盘是覆盖式、不缩布局视口，`100dvh` 也不变，所以用 `visualViewport` 写 `--pa-vvh`（Chromium 另有 `interactive-widget=resizes-content` 兜底）；视口变矮后把原本贴底的聊天区重新贴住最后一条（按塌缩高度补松弛量）。`scale != 1` 时不介入，保住 pinch zoom。主会话 / 群聊 / 子代理共用同一套 `html`/`#root` 规则，**没有三份复制**。真机 iOS 键盘未验证（Playwright 无真 iOS 键盘，e2e 用缩小视口近似）。详见 `progress-snapshots/mobile-chat-viewport-fix.md` |
+
 ## 待用户决定
 
 | 事项 | 状态 | 说明 |
