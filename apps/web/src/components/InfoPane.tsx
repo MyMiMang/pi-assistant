@@ -15,6 +15,7 @@ import { AgentEditor } from "./AgentEditor";
 import { AgentImageModel } from "./ImageModels";
 import { MemoryTab } from "./MemoryTab";
 import { AgentExtensions } from "./AgentExtensions";
+import { AgentSkills } from "./AgentSkills";
 import { AgentHostTier, useHostControl } from "./HostControl";
 import { ResponsiveTabs } from "./ResponsiveTabs";
 import { RoutinesTab } from "./RoutinesTab";
@@ -235,6 +236,7 @@ function AgentSettings({ agentId }: { agentId: string }) {
 			<AgentImageModel agentId={agentId} />
 			<SubagentModels agentId={agentId} />
 			<AgentExtensions agentId={agentId} />
+			<AgentSkills agentId={agentId} />
 			<AgentHostTier agentId={agentId} />
 		</div>
 	);

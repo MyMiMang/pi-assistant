@@ -1,10 +1,10 @@
 import { HindsightSettings } from "./HindsightSettings";
-import { ChevronLeft, History, Lock, Plus, Puzzle, RotateCcw, Trash2 } from "lucide-react";
+import { ChevronLeft, History, Lock, Plus, Puzzle, RotateCcw, Trash2, UserCog } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { SkillMeta } from "../types";
-import { Badge, Button, Help, Input, useConfirm } from "./ui";
+import { Badge, Button, Help, Input, Modal, useConfirm } from "./ui";
 import Markdown from "./Markdown";
 import { DiffView } from "./Cards";
 
@@ -16,8 +16,10 @@ type Full = SkillMeta & { body: string };
 /** 设置 › 技能库：内置技能（只读）+ 我的技能（可编辑）。用的是 Pi 原生 Agent Skills（SKILL.md）。 */
 export function SkillsTab() {
 	const version = useStore((s) => s.skillsVersion);
+	const agents = useStore((s) => s.agents);
 	const [list, setList] = useState<SkillMeta[]>([]);
 	const [open, setOpen] = useState<Full | null>(null);
+	const [assign, setAssign] = useState<SkillMeta | null>(null);
 	const [edit, setEdit] = useState<{ previousName?: string; name: string; description: string; body: string } | null>(null);
 	const [err, setErr] = useState("");
 	const [versions, setVersions] = useState<Version[] | null>(null);
@@ -55,13 +57,20 @@ export function SkillsTab() {
 	};
 	const del = async () => {
 		if (!open || delRef.current) return;
-		const ok = await askConfirm({ title: `删除技能「${open.name}」？`, body: "删除后无法恢复。", ok: "删除", danger: true });
+		const affected = open.enabledAgents ?? [];
+		const names = affected.map((id) => agents.find((a) => a.id === id)?.name ?? id);
+		const ok = await askConfirm({
+			title: `删除技能「${open.name}」？`,
+			body: affected.length ? `有 ${affected.length} 个助理正在启用它（${names.join("、")}），删除后它们将不再有该技能，无法恢复。` : "删除后无法恢复。",
+			ok: "删除",
+			danger: true,
+		});
 		if (!ok || delRef.current) return;
 		delRef.current = true;
 		setDelBusy("del");
 		setErr("");
 		try {
-			await api(`/api/skills/${open.name}`, { method: "DELETE" });
+			await api(`/api/skills/${open.name}${affected.length ? "?force=1" : ""}`, { method: "DELETE" });
 			setOpen(null);
 			void load();
 		} catch (e) {
@@ -194,7 +203,7 @@ export function SkillsTab() {
 		<div className="space-y-4" data-testid="skills-tab">
 			<div className="flex items-start gap-3">
 				<p className="flex-1 text-xs text-mut">
-					所有助理共用的做事方法。 <Help>技能是可复用的做事方法（Agent Skills 标准的 SKILL.md）。模型只看到名称和描述，遇到相关任务时才读取完整内容。助理也可以自己把学到的流程存成技能。</Help>
+					所有技能的统一库存（内置 / 我的 / 导入）。 <Help>技能是可复用的做事方法（Agent Skills 标准的 SKILL.md）。默认所有助理都不启用任何技能（内置也不例外），在「助理 › 设置 › 技能」里按需勾选。助理只看到已启用技能的名称和描述，遇到相关任务时才读取完整内容。</Help>
 				</p>
 				<Button variant="outline" size="sm" onClick={() => setEdit({ name: "", description: "", body: "# 步骤\n\n1. \n" })}>
 					<Plus size={14} /> 新建技能
@@ -212,6 +221,14 @@ export function SkillsTab() {
 					</span>
 				</label>
 			)}
+			{(() => {
+				const unassigned = list.filter((s) => (s.enabledAgents ?? []).length === 0).length;
+				return unassigned > 0 ? (
+					<div className="rounded-lg bg-hover/60 px-3 py-2 text-xs text-mut" data-testid="skills-unassigned-hint">
+						{unassigned} 个技能未分配给任何助理（升级不会删除技能，需要时在助理设置里勾选）。
+					</div>
+				) : null;
+			})()}
 			{(["我的技能", "内置技能"] as const).map((title) => {
 				const items = list.filter((s) => s.builtin === (title === "内置技能"));
 				return (
@@ -220,21 +237,76 @@ export function SkillsTab() {
 						{items.length === 0 && <div className="text-sm text-mut">还没有技能。 <Help>可以新建，或在聊天里让助理“把刚才的流程存成技能”。</Help></div>}
 						<ul className="grid gap-2 sm:grid-cols-2">
 							{items.map((s) => (
-								<li key={s.name}>
-									<button className="pa-card flex h-full w-full items-start gap-2 !p-3 text-left hover:border-accent" onClick={() => view(s.name)} data-testid={`skill-item-${s.name}`}>
-										{s.builtin ? <Lock size={15} className="mt-0.5 shrink-0 text-mut" /> : <Puzzle size={15} className="mt-0.5 shrink-0 text-accent" />}
-										<span className="min-w-0">
-											<span className="block font-mono text-sm font-medium">{s.name}</span>
-											<span className="line-clamp-2 text-xs text-mut">{s.description}</span>
-										</span>
-									</button>
+								<li key={s.id}>
+									<div className="pa-card flex h-full w-full items-start gap-2 !p-3 hover:border-accent">
+										<button className="flex min-w-0 flex-1 items-start gap-2 text-left" onClick={() => view(s.name)} data-testid={`skill-item-${s.name}`}>
+											{s.builtin ? <Lock size={15} className="mt-0.5 shrink-0 text-mut" /> : <Puzzle size={15} className="mt-0.5 shrink-0 text-accent" />}
+											<span className="min-w-0">
+												<span className="flex items-center gap-1.5">
+													<span className="font-mono text-sm font-medium">{s.name}</span>
+													{s.source !== "user" && <Badge tone={s.builtin ? "zinc" : "accent"}>{s.source === "external" ? "导入" : "内置"}</Badge>}
+												</span>
+												<span className="line-clamp-2 text-xs text-mut">{s.description}</span>
+												<span className="mt-0.5 block text-[11px] text-mut" data-testid={`skill-enabled-${s.name}`}>{(s.enabledAgents ?? []).length} 个助理已启用</span>
+											</span>
+										</button>
+										<Button size="sm" variant="ghost" aria-label={`分配「${s.name}」给助理`} title="按助理配置" onClick={() => setAssign(s)} data-testid={`skill-assign-${s.name}`}>
+											<UserCog size={14} />
+										</Button>
+									</div>
 								</li>
 							))}
 						</ul>
 					</section>
 				);
 			})}
+			{assign && <AssignModal skill={assign} agents={agents} onClose={() => setAssign(null)} onChanged={() => void load()} />}
 		</div>
+	);
+}
+
+/** 按助理配置：勾选哪些助理启用这个技能（写 /api/agents/:id/skills）。 */
+function AssignModal({ skill, agents, onClose, onChanged }: { skill: SkillMeta; agents: { id: string; name: string }[]; onClose: () => void; onChanged: () => void }) {
+	const [enabled, setEnabled] = useState<Set<string>>(new Set(skill.enabledAgents ?? []));
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	const apply = async (agentId: string, v: boolean) => {
+		setBusy(true);
+		setErr("");
+		try {
+			const mine = await api<{ enabled: string[] }>(`/api/agents/${agentId}/skills`);
+			const next = v ? [...new Set([...mine.enabled, skill.id])] : mine.enabled.filter((x) => x !== skill.id);
+			await api(`/api/agents/${agentId}/skills`, { method: "PUT", json: { ids: next } });
+			setEnabled((s) => {
+				const n = new Set(s);
+				v ? n.add(agentId) : n.delete(agentId);
+				return n;
+			});
+			onChanged();
+		} catch (e) {
+			setErr(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<Modal open onClose={onClose} title={`「${skill.name}」分配给谁`} testId="skill-assign-modal">
+			<div className="space-y-2">
+				<p className="text-xs text-mut">勾选启用这个技能的助理。默认谁都不启用。</p>
+				{err && <div className="text-xs text-red-500">{err}</div>}
+				<ul className="space-y-1">
+					{agents.map((a) => (
+						<li key={a.id}>
+							<label className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-hover">
+								<input type="checkbox" disabled={busy} checked={enabled.has(a.id)} onChange={(e) => void apply(a.id, e.target.checked)} data-testid={`skill-assign-${skill.name}-${a.id}`} />
+								<span className="truncate">{a.name}</span>
+							</label>
+						</li>
+					))}
+					{agents.length === 0 && <li className="text-sm text-mut">还没有助理。</li>}
+				</ul>
+			</div>
+		</Modal>
 	);
 }
 
