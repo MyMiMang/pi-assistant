@@ -75,6 +75,9 @@ try {
 	const d = await j<{ messages: Msg[] }>(`/api/subagents/${sub.id}`);
 	assert.ok(d.messages.some((m) => m.content.includes("网络断开测试")), "原任务要保留");
 	assert.ok(d.messages.some((m) => m.content.includes("断网后继续完成")), "退避重试后在同一会话继续执行");
+	// 路由已挂载：已完成的子代理拒绝继续
+	const res = await fetch(`${BASE}/api/subagents/${sub.id}/resume`, { method: "POST" });
+	assert.equal(res.status, 400, "已完成的子代理拒绝 /resume（路由已挂载）");
 	console.log("✅ 断网后在同一子代理会话有界退避续跑：唯一记录、保留原任务、最终完成");
 } finally {
 	await kill();
