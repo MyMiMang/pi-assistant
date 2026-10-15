@@ -4,7 +4,7 @@
  * 契约见 docs/design/local-laya-api.md。全部 localOnly（仅本机回环），安装由**显式按钮**触发。
  */
 import type { Context, Hono, Next } from "hono";
-import { probeNvidia } from "./deps.ts";
+import { probeNvidia, readLayaLogs } from "./deps.ts";
 import { layaManager } from "./index.ts";
 import type { LocalLayaManager } from "./manager.ts";
 import { DEFAULT_CHECKPOINT, LAYA_CHECKPOINTS, LAYA_SOURCE } from "./manifest.ts";
@@ -88,6 +88,9 @@ export function mountLocalLayaRoutes(app: Hono<any>, localOnly: LocalOnly, getMa
 
 	// 只读的来源信息（界面「来源」标签），不碰安装状态。
 	app.get(`${base}/source`, localOnly, (c) => c.json(LAYA_SOURCE));
+
+	// 最近日志（已脱敏，不含 token）；界面「查看日志」用。
+	app.get(`${base}/logs`, localOnly, (c) => c.json({ lines: readLayaLogs(Number(c.req.query("lines") ?? 200)) }));
 }
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));

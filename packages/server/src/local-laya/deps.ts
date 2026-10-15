@@ -215,3 +215,17 @@ function spawnServe(exe: string, args: string[], env: Record<string, string>): L
 export function tokenDigest(token: string): string {
 	return createHash("sha256").update(token).digest("hex").slice(0, 12);
 }
+
+/** 读最近 N 行 sidecar 日志（已脱敏，供界面「查看日志」）。 */
+export function readLayaLogs(maxLines = 200): string[] {
+	try {
+		const p = join(layaRoot(), "logs", "serve.log");
+		if (!existsSync(p)) return [];
+		return readFileSync(p, "utf8")
+			.split(/\r?\n/)
+			.filter(Boolean)
+			.slice(-Math.max(1, Math.min(2000, maxLines)));
+	} catch {
+		return [];
+	}
+}

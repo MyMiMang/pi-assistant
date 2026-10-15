@@ -11,6 +11,8 @@
 | --- | --- | --- | --- |
 | GET | `/api/local-models/laya/status` | 读状态（平台 / 安装 / 运行 / health / 注册） | 轮询 / WS `local-laya.changed` |
 | GET | `/api/local-models/laya/platform` | 安装前预检：平台能力 + NVIDIA 驱动探测（只看不装驱动） | 打开设置页时 |
+| GET | `/api/local-models/laya/source` | 只读来源元数据（版本 / revision / 许可证） | 打开设置页时 |
+| GET | `/api/local-models/laya/logs?lines=200` | 最近日志（已脱敏，不含 token） | 用户点「查看日志」 |
 | POST | `/api/local-models/laya/install` | 一键安装（提交后异步跑；用 status 轮询进度） | **用户显式按钮** |
 | POST | `/api/local-models/laya/cancel` | 取消进行中的安装 / 下载 | 用户点「取消」 |
 | POST | `/api/local-models/laya/start` | 启动 sidecar（按需） | 用户点「启动」或按需触发 |

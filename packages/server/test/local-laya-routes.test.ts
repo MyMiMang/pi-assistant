@@ -95,6 +95,14 @@ test("GET platform：预检返回平台 + NVIDIA 探测（未装驱动也不报�
 	if (body.cudaAvailable) assert.ok(body.options.some((o) => o.id === "cuda"));
 });
 
+test("GET logs：返回数组（已脱敏，无 token 字段）", async () => {
+	const { app } = buildApp();
+	const res = await app.request("/api/local-models/laya/logs");
+	assert.equal(res.status, 200);
+	const body = (await res.json()) as { lines: string[] };
+	assert.ok(Array.isArray(body.lines));
+});
+
 test("POST start/stop：转发到 manager", async () => {
 	const { app, calls } = buildApp();
 	assert.equal((await app.request("/api/local-models/laya/start", { method: "POST" })).status, 200);
