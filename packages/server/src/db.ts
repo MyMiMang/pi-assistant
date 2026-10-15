@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS conversation_forks (
   parent_session TEXT, client_id TEXT, created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS conversation_forks_conv ON conversation_forks(conversation_id);
-CREATE INDEX IF NOT EXISTS conversation_forks_idem ON conversation_forks(source_conversation_id, client_id);
+DROP INDEX IF EXISTS conversation_forks_idem;
+CREATE UNIQUE INDEX IF NOT EXISTS conversation_forks_idem ON conversation_forks(source_conversation_id, client_id) WHERE client_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS memory_items (
   id TEXT PRIMARY KEY, bank TEXT NOT NULL, text TEXT NOT NULL, kind TEXT, document_id TEXT,
   created_at TEXT NOT NULL, occurred_at TEXT, source_json TEXT, meta_json TEXT, embedding BLOB);

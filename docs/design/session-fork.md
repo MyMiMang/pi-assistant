@@ -1,6 +1,6 @@
 # 从消息另开会话分支（session fork）
 
-状态：设计中（本文件随第一版实现一起冻结；实现见 `packages/server/src/pi-adapter`、`src/fork.ts`、`http.ts`、`apps/web`）。
+状态：已实现（已合入候选 `release-candidate-validation`，未打包；实现见 `packages/server/src/pi-adapter`、`src/fork.ts`、`http.ts`、`apps/web`）。
 
 ## 1. 目标与非目标
 
@@ -53,7 +53,9 @@ body: { messageId: string, clientId?: string }
 
 前端**不能**传 session 文件名 / 下标。锚点必须是服务端可信的 `messageId`，由服务端解析成 Pi entry id。
 
-**落库**：服务端在 Pi 把消息写进会话文件后，把该消息的 entry id 写进 app 消息的 `meta.piEntryId`（Pi 的 `message_end` 事件里，公开监听器先于持久化触发，所以在同一个同步块之后读 `sessionManager.getLeafId()` 即刚追加的 entry；实现放在 `pi-adapter` 的 `subscribeSession`，用 `queueMicrotask` 在持久化完成后取）。
+**落库**：服务端在 Pi 把消息写进会话文件后，把该消息的 entry id 写进 app 消息的 `meta.piEntryId`（Pi 的 `message_end` 事件里，公开监听器先于持久化触发，所以在同一个同步块之后用公开 `SessionManager.getEntries()` 按**消息对象身份**（`entry.message === message`）反查刚追加的 entry；实现放在 `pi-adapter` 的 `subscribeSession`，用 `queueMicrotask` 在持久化完成后取）。不用 `getLeafId()`（多条 `message_end` 落在同一个 tick 时会把它们都指到最后一条），也不靠文本 / 下标猜。
+
+**user 消息配对**：`runtime.bindSession` 把每条 user 消息在 `send()` 时按**发送顺序**入队，收到 `entry_id`（role=user）时按同一顺序出队 —— Pi 把 user 消息按送达顺序持久化（普通发送立即、插话在工具边界），连发**同文本**也不会串；发送失败 / 未送达的从队列去掉。
 
 **覆盖范围**：`user` / `assistant` / `toolResult` 三类消息都会拿到 `piEntryId`。user 是 fork 锚点；assistant / tool 用于把分支前缀投影成新对话的消息行。
 

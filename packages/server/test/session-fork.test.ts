@@ -163,3 +163,33 @@ test("锚点没有 piEntryId（Pi 会话文件被清理 / 消息没送达）：f
 	const withEntry = insertMessage({ agentId: AGENT, conversationId: conv.id, role: "user", content: "有 entry 但文件没了", meta: { piEntryId: "deadbeef" } });
 	assert.throws(() => forkConversation({ conversationId: conv.id, messageId: withEntry.id }), (e) => e instanceof ForkError && e.code === "fork_no_session");
 });
+
+test("连发同文本的插话（都还没落盘）：每条 app 消息映射到自己的 Pi entry，不串（FIFO）", async () => {
+	const conv = createConversation(AGENT, "同文本映射");
+	// 「月度汇总」是多步任务：插话里再提一次会继续调用工具，保证两条插话都会在工具边界被送达
+	const u1 = insertMessage({ agentId: AGENT, conversationId: conv.id, role: "user", content: "月度汇总" });
+	void runtime(AGENT, conv.id).send("月度汇总", undefined, { messageId: u1.id });
+	assert.ok(await waitFor(() => runtime(AGENT, conv.id).busy, 10_000), "任务开始流式输出");
+
+	// 两条**同文本**插话，都在第一条落盘之前发出：两条 app 消息都还没 piEntryId
+	const s1 = insertMessage({ agentId: AGENT, conversationId: conv.id, role: "user", content: "月度汇总" });
+	void runtime(AGENT, conv.id).send("月度汇总", undefined, { messageId: s1.id });
+	const s2 = insertMessage({ agentId: AGENT, conversationId: conv.id, role: "user", content: "月度汇总" });
+	void runtime(AGENT, conv.id).send("月度汇总", undefined, { messageId: s2.id });
+
+	assert.ok(await waitFor(() => !runtime(AGENT, conv.id).busy, 40_000), "任务结束");
+
+	const e1 = getMessage(s1.id)!.meta.piEntryId as string | undefined;
+	const e2 = getMessage(s2.id)!.meta.piEntryId as string | undefined;
+	assert.equal(typeof e1, "string", "第一条插话拿到 piEntryId");
+	assert.equal(typeof e2, "string", "第二条插话拿到 piEntryId");
+	assert.notEqual(e1, e2, "两条同文本插话映射到不同的 Pi entry（不互相顶替）");
+
+	// 映射顺序必须与发送顺序一致（同文本不能靠文本猜；这里用会话文件里的 entry 顺序验证）
+	const file = getConversation(conv.id)!.session_file!;
+	const ids = jsonl(file).map((x) => x.id).filter(Boolean) as string[];
+	const i1 = ids.indexOf(e1!);
+	const i2 = ids.indexOf(e2!);
+	assert.ok(i1 >= 0 && i2 >= 0, "两个 entry 都在源会话文件里");
+	assert.ok(i1 < i2, "先发的插话映射到更早的 Pi entry（顺序正确，没有对调）");
+});

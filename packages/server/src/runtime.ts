@@ -161,7 +161,7 @@ export function setRoomHooks(h: RoomHooks) {
 }
 
 /** 把一个 Pi 会话的事件落盘并广播。 */
-function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void, subagentId?: string) {
+function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void, subagentId?: string, pendingUserEntries?: string[]) {
 	const insert = (m: Parameters<typeof insertMessage>[0]) => insertMessage({ ...m, subagentId });
 	let cur: { id: string; text: string; thinking: string; flushAt: number } | null = null;
 	// app 消息 ↔ Pi entry 的映射：assistant 消息的 id（供紧随 message_end 的 entry_id 事件落 meta.piEntryId）
@@ -184,17 +184,11 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 			return;
 		}
 		if (e.role === "user" && conversationId) {
-			// 用户消息在 Pi 真正持久化时才拿到 entry id（插话会在很晚才送达）。
-			// 取本对话最近一条还没映射的 user 消息：每次投递只留一条未映射，不会错位。
-			const rows = db.prepare("SELECT id, meta FROM messages WHERE conversation_id = ? AND role = 'user' AND task_id IS NULL AND subagent_id IS NULL ORDER BY rowid DESC LIMIT 5").all(conversationId) as { id: string; meta: string }[];
-			const target = rows.find((r) => {
-				try {
-					return !(JSON.parse(r.meta) as { piEntryId?: string }).piEntryId;
-				} catch {
-					return true;
-				}
-			});
-			if (target) updateMessage(target.id, { meta: { piEntryId: e.entryId } }, false);
+			// 用户消息按发送顺序（FIFO）配对：Pi 把 user 消息按送达顺序持久化（普通发送 / 插话都在各自 message_end 时才落盘），
+			// 每条 app 消息在 send() 时入队，这里按同一顺序出队——不靠「第几个 / 同文本」猜，连发同文本也不会串。
+			const mid = pendingUserEntries?.shift();
+			if (mid) updateMessage(mid, { meta: { piEntryId: e.entryId } }, false);
+			return;
 		}
 	};
 	return subscribeSession(session, (e) => {
@@ -691,7 +685,7 @@ class AgentRuntime {
 				settleAgent(this.id);
 				drainAdvances(this.id, this.conversationId);
 				for (const w of [...this.waiters]) w(aborted);
-			});
+			}, undefined, this.pendingUserEntries);
 			this.unsub = () => (unUser(), unBind());
 			this.session = session;
 			this.modelKey = key;
@@ -715,8 +709,13 @@ class AgentRuntime {
 
 	/** 已经发出、还没送进模型上下文的插话（用户消息 id，按顺序） */
 	private steering: string[] = [];
+	/** 已交给 Pi、还没落 meta.piEntryId 的 user 消息 id（按发送顺序）；与 entry_id(user) 事件 FIFO 配对 */
+	private pendingUserEntries: string[] = [];
 	private dropSteering(state: "stopped" | "delivered") {
-		for (const mid of this.steering.splice(0)) updateMessage(mid, { meta: { delivery: state } });
+		const ids = this.steering.splice(0);
+		// 没送达的插话也从待映射队列里去掉，免得后面一条 user 消息误配到它
+		if (ids.length) this.pendingUserEntries = this.pendingUserEntries.filter((x) => !ids.includes(x));
+		for (const mid of ids) updateMessage(mid, { meta: { delivery: state } });
 	}
 
 	/**
@@ -751,8 +750,13 @@ class AgentRuntime {
 			this.steering.push(opts.messageId);
 			updateMessage(opts.messageId, { meta: { delivery: "queued" } });
 		}
+		// 记入待映射队列：Pi 落盘时按同一顺序回填 meta.piEntryId（插话要等到工具边界才落盘）
+		if (opts.messageId) this.pendingUserEntries.push(opts.messageId);
 		promptSession(s, input.text, input.images).catch((e: unknown) => {
-			if (opts.messageId) this.steering = this.steering.filter((x) => x !== opts.messageId);
+			if (opts.messageId) {
+				this.steering = this.steering.filter((x) => x !== opts.messageId);
+				this.pendingUserEntries = this.pendingUserEntries.filter((x) => x !== opts.messageId);
+			}
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `出错了：${e instanceof Error ? e.message : String(e)}`, status: "error" });
 			if (!isSessionBusy(s)) settleAgent(this.id);
 		});

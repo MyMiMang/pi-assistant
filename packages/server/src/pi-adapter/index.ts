@@ -740,11 +740,30 @@ export type AgentEvent =
 	| { type: "user_start"; text: string }
 	/**
 	 * 一条消息写进 Pi 会话文件后，它对应的 entry id（app 消息 ↔ Pi entry 的可信映射，用于「从消息另开会话分支」）。
-	 * 监听器先于 Pi 的持久化触发，所以这里在持久化之后的微任务里读 leaf；role 可能是 user / assistant / toolResult。
+	 * 监听器先于 Pi 的持久化触发，所以这里在持久化之后的微任务里，用公开 `SessionManager.getEntries()`
+	 * 按**消息对象身份**（`entry.message === message`）反查 entry id；role 可能是 user / assistant / toolResult。
 	 */
 	| { type: "entry_id"; entryId: string; role: string; toolCallId?: string }
 	| { type: "compaction_start"; reason: string }
 	| { type: "compaction_end"; reason: string; ok: boolean; aborted: boolean; error?: string; tokensBefore?: number; summary?: string };
+
+/**
+ * 把刚持久化的消息解析成 Pi entry id：用公开 `SessionManager.getEntries()` 按**消息对象身份**匹配
+ * （`entry.message === message`）。Pi 的 `appendMessage(event.message)` 存的就是同一个对象，所以即使
+ * 多条 message_end 落在同一个 tick（并行工具结果 / 连发同文本 user / steer），也各归各的 entry——
+ * 不读 leaf、不按文本或下标猜（读 leaf 会把同 tick 的几条都指到最后一个 entry）。
+ * 会话已释放 / 找不到（例如 leaf 被切走）返回 null，调用方跳过映射，绝不落一个错的 id。
+ */
+function entryIdOfMessage(session: AgentSession, message: unknown): string | null {
+	try {
+		for (const entry of session.sessionManager.getEntries()) {
+			if (entry.type === "message" && entry.message === message) return entry.id;
+		}
+	} catch {
+		/* 会话已释放 */
+	}
+	return null;
+}
 
 export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => void): () => void {
 	return session.subscribe((e: AgentSessionEvent) => {
@@ -763,15 +782,12 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 				const persisted = ev.message as { role?: string; toolCallId?: string } | undefined;
 				if (persisted?.role === "user" || persisted?.role === "assistant" || persisted?.role === "toolResult") {
 					const role = persisted.role;
-					// Pi 在把这条消息 appendXXX 到 SessionManager 之前就通知了监听器；appendMessage 紧随其后且中间没有 await，
-					// 所以在微任务里读 getLeafId() 拿到的就是刚写入的这条 entry。
+					const message = persisted;
+					// Pi 在把这条消息 appendMessage 到 SessionManager 之前就通知了监听器；append 紧随其后且中间没有 await，
+					// 所以在微任务里按消息对象身份反查 entry id，同 tick 的多条也不会互相顶替。
 					queueMicrotask(() => {
-						try {
-							const entryId = session.sessionManager.getLeafId();
-							if (entryId) fn({ type: "entry_id", entryId, role, toolCallId: persisted.toolCallId });
-						} catch {
-							/* 会话已释放：忽略 */
-						}
+						const entryId = entryIdOfMessage(session, message);
+						if (entryId) fn({ type: "entry_id", entryId, role, toolCallId: persisted.toolCallId });
 					});
 				}
 				if (ev.message?.role === "assistant") {

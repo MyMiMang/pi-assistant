@@ -6,7 +6,7 @@
  *  - `pi-adapter.forkSessionAt` 用 `SessionManager.createBranchedSession(leafId)` 只读源会话文件、另写新会话文件（头带 parentSession）；
  *  - 不建 AgentSession、不调用模型、不重放工具、不复制排队任务 / 等待 / 审批单 / 用量账单。
  */
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "./config.ts";
 import { createConversation, getConversation, setConversationSession, type ConversationRow } from "./conversations.ts";import { db, now, uid } from "./db.ts";
@@ -134,20 +134,39 @@ export function forkConversation(input: { conversationId: string; messageId: str
 	}
 
 	const conv: ConversationRow = createConversation(source.agent_id, titleFor(msg), { makeCurrent: false });
-	// 分支为前缀（有历史）→ 直接用新会话文件；分支点在首条消息之前 → 只记父关系，首条消息落盘时才写文件
-	if (branch.sessionFile) setConversationSession(conv.id, branch.sessionFile);
-	db.prepare(
-		"INSERT INTO conversation_forks(id, conversation_id, agent_id, source_conversation_id, source_message_id, source_entry_id, parent_session, client_id, created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-	).run(uid("fk"), conv.id, conv.agent_id, source.id, msg.id, entryId, branch.sessionFile ? null : branch.parentSession, input.clientId ?? null, now());
+	// 建对话 / 写分支记录 / 投影消息任一步失败：只清理本次自己新建的会话文件与对话行，绝不碰源会话；
+	// clientId 幂等冲突时回退到已存在的那条（并发 / 重试都只留一个对话，不无界堆磁盘文件）
+	try {
+		// 分支为前缀（有历史）→ 直接用新会话文件；分支点在首条消息之前 → 只记父关系，首条消息落盘时才写文件
+		if (branch.sessionFile) setConversationSession(conv.id, branch.sessionFile);
+		db.prepare(
+			"INSERT INTO conversation_forks(id, conversation_id, agent_id, source_conversation_id, source_message_id, source_entry_id, parent_session, client_id, created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+		).run(uid("fk"), conv.id, conv.agent_id, source.id, msg.id, entryId, branch.sessionFile ? null : branch.parentSession, input.clientId ?? null, now());
 
-	// 把分支前缀投影成新对话的消息行：按 Pi entry id 反查源 app 消息，命中才复制（缺映射不猜、不错位）
-	for (const id of branch.entryIds) {
-		const row = db
-			.prepare("SELECT * FROM messages WHERE conversation_id = ? AND json_extract(meta, '$.piEntryId') = ? ORDER BY rowid LIMIT 1")
-			.get(source.id, id) as MessageRow | undefined;
-		if (row) copyMessage(row, conv.id);
+		// 把分支前缀投影成新对话的消息行：按 Pi entry id 反查源 app 消息，命中才复制（缺映射不猜、不错位）
+		for (const id of branch.entryIds) {
+			const row = db
+				.prepare("SELECT * FROM messages WHERE conversation_id = ? AND json_extract(meta, '$.piEntryId') = ? ORDER BY rowid LIMIT 1")
+				.get(source.id, id) as MessageRow | undefined;
+			if (row) copyMessage(row, conv.id);
+		}
+		db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(now(), conv.id);
+	} catch (e) {
+		if (branch.sessionFile) {
+			try {
+				unlinkSync(branch.sessionFile);
+			} catch {
+				/* 已被清掉：忽略 */
+			}
+		}
+		db.prepare("DELETE FROM messages WHERE conversation_id = ?").run(conv.id);
+		db.prepare("DELETE FROM conversations WHERE id = ?").run(conv.id);
+		if (input.clientId) {
+			const dup = findFork(source.id, input.clientId);
+			if (dup) return { conversationId: dup.conversation_id, agentId: dup.agent_id, draft: null, forkedFrom: { conversationId: source.id, messageId: input.messageId, entryId: dup.source_entry_id }, created: false };
+		}
+		throw new ForkError("fork_failed", e instanceof Error ? e.message : "创建分支失败", 500);
 	}
-	db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(now(), conv.id);
 
 	return { conversationId: conv.id, agentId: conv.agent_id, draft: draftText(msg.content, point.text), forkedFrom: { conversationId: source.id, messageId: msg.id, entryId }, created: true };
 }
