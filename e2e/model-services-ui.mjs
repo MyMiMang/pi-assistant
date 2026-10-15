@@ -5,11 +5,15 @@ import { existsSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
 
-// 统一模型服务 UI 原型链路测试（纯前端 fixture）：
+// 统一模型服务 UI 专项测试（纯前端 fixture）：
 // 静态托管 apps/web/dist，page.route 拦截所有 /api，不启动 packages/server/src/main.ts，
 // 因此不碰系统钥匙串、不碰真实用户配置、不跑真实 API 收费、不装模型、不操作电脑。
-// 覆盖：服务卡片 / 能力标签（含「未确认」）/ 能力纠正 / 添加服务 / 本地 Laya 管理卡（安装态·运行态·health·未就绪不删配置·卸载确认）/
-//       实际操作测试（availability、尚未运行、真实执行未验证、结果 advisory）/ Esc 关弹窗 / 390 宽 / 无原生 dialog。
+// fixture 用内存状态真实模拟 CRUD：POST/PUT/DELETE /api/models/custom 会改动状态，GET /api/models/registry 从中派生，
+// 不是把 demo 数据直接塞进界面。覆盖：
+//   能力标签（含「未确认」）/ 能力纠正 PUT / 官方完整目录（未接入也能点开登录）/ 自定义服务新增保存（真实 POST）/
+//   编辑（PUT）/ 测试连接 / 删除确认（DELETE）/ 生图适配按 keyFrom 绑定同一个 provider /
+//   本地 Laya 管理卡（安装态·运行态·health·未就绪不删配置·卸载确认）/ 实际操作测试（availability、provenance、advisory）/
+//   Esc 关弹窗 / 390 宽 / 无原生 dialog。
 const root = decodeURIComponent(new URL('..', import.meta.url).pathname);
 const dist = join(root, 'apps/web/dist');
 if (!existsSync(join(dist, 'index.html'))) {
@@ -55,30 +59,32 @@ const layaStatus = (over = {}) => ({
 });
 let laya = layaStatus();
 
-const fixtures = () => [
-	{
-		id: 'openai', name: 'OpenAI', kind: 'builtin', configured: true, protocols: ['openai-completions'],
-		models: [
-			{ provider: 'openai', id: 'gpt-4o', name: 'GPT-4o', type: 'chat', capabilities: ['chat', 'vision'], protocol: 'openai-completions', confirmed: true, inferred: [], source: 'pi-catalog', configured: true },
-			{ provider: 'openai', id: 'gpt-image-1', name: 'gpt-image-1', type: 'image', capabilities: ['image'], protocol: 'openai', confirmed: true, inferred: [], source: 'pi-catalog', configured: true, imageAdapter: { kind: 'openai', baseUrl: 'https://api.openai.com/v1', edit: true }, costNote: '约 $0.04/张' },
-		],
-	},
-	{
-		id: 'custom-relay', name: '我的中转站', kind: 'custom', baseUrl: 'https://relay.example.com/v1', configured: true, protocols: ['openai-completions'],
-		models: [
-			{ provider: 'custom-relay', id: 'deepseek-v3', name: 'deepseek-v3', type: 'chat', capabilities: ['chat'], protocol: 'openai-completions', confirmed: true, inferred: [], source: 'custom', configured: true },
-			{ provider: 'custom-relay', id: 'mystery-model', name: 'mystery-model', type: 'chat', capabilities: ['chat', 'vision'], protocol: 'openai-completions', confirmed: false, inferred: ['vision'], source: 'custom', configured: true },
-		],
-	},
-	// registry 里本地 Laya 会作为 local-laya 出现；UI 用管理卡统一展示，不重复成卡片
-	{ id: 'local-laya', name: '本地 Laya', kind: 'local', configured: true, protocols: ['typesafe-system-one'], models: [{ provider: 'local-laya', id: 'multilingual', name: 'multilingual', type: 'classifier', capabilities: ['classifier'], protocol: 'typesafe-system-one', confirmed: true, inferred: [], source: 'pi-catalog', configured: true }] },
+// ---- 内存状态：模拟真实 CRUD（fixture 不是直接塞 demo 给界面）----
+const official = [
+	{ id: 'mock', name: 'Mock', custom: false, configured: true, modelCount: 1, apiKey: { name: 'API Key' } },
+	{ id: 'openai', name: 'OpenAI', custom: false, configured: true, modelCount: 2, apiKey: { name: 'API Key' } },
+	{ id: 'anthropic', name: 'Anthropic', custom: false, configured: false, modelCount: 3, apiKey: { name: 'API Key' } },
 ];
-let providers = fixtures();
+const officialRegistryModels = {
+	openai: [
+		{ provider: 'openai', id: 'gpt-4o', name: 'GPT-4o', type: 'chat', capabilities: ['chat', 'vision'], protocol: 'openai-completions', confirmed: true, inferred: [], source: 'pi-catalog', configured: true },
+	],
+};
+let customProviders = [
+	{ id: 'custom-relay', name: '我的中转站', api: 'openai-completions', baseUrl: 'https://relay.example.com/v1', headerNames: [], noKey: false, configured: true, createdAt: 1, models: [
+		{ id: 'deepseek-v3', capabilities: ['chat'] },
+		{ id: 'mystery-model', capabilities: ['chat', 'vision'] },
+	] },
+];
+let imageProviders = [];
+let loginPosts = [];
 let capPuts = [];
+let customWrites = [];
+let testPosts = [];
 let benchPosts = [];
 const availability = { cuaReady: true, modelReady: true, fixtureReady: true, reasons: [] };
-const benchmarkRun = (status) => ({
-	id: 'b1', status, provider: 'local-laya', model: 'multilingual', modelVersion: 'unknown',
+const benchmarkRun = (status, provenance) => ({
+	id: 'b1', status, provider: 'local-laya', model: 'multilingual', modelVersion: 'unknown', provenance,
 	target: { prefix: 'computer', fixtureId: 'fix-1' }, startedAt: new Date(Date.now() - 9000).toISOString(), finishedAt: new Date().toISOString(), createdAt: new Date().toISOString(),
 	warmup: 2, samples: 24, coldStartMs: 1320, p50Ms: 860, p95Ms: 1420, p95Approx: false,
 	timeouts: 0, errors: 1, successRatio: 0.92, actions: 30, retries: 2, fallbackCount: 0, abstains: 1,
@@ -86,6 +92,34 @@ const benchmarkRun = (status) => ({
 	advisory: { verdict: 'slow', recommended: true, message: 'p50 略高于目标预算，仍可继续使用。', reason: 'p50 > budget' },
 	reason: null,
 });
+let benchProvenance = 'cua';
+
+const registry = () => {
+	const out = [];
+	for (const o of official) {
+		if (o.id === 'mock' || !o.configured) continue;
+		out.push({ id: o.id, name: o.name, kind: 'builtin', configured: true, protocols: ['openai-completions'], models: officialRegistryModels[o.id] ?? [] });
+	}
+	for (const c of customProviders) {
+		const models = c.models.map((m) => ({ provider: c.id, id: m.id, name: m.id, type: 'chat', capabilities: m.capabilities?.length ? m.capabilities : ['chat'], protocol: c.api, confirmed: true, inferred: [], source: 'custom', configured: true }));
+		for (const cl of c.classifiers ?? []) models.push({ provider: c.id, id: cl.modelId, name: cl.modelId, type: 'classifier', capabilities: ['classifier'], protocol: cl.protocol, confirmed: true, inferred: [], source: 'custom', configured: true });
+		out.push({ id: c.id, name: c.name, kind: 'custom', configured: true, baseUrl: c.baseUrl, protocols: [c.api], models });
+	}
+	for (const ip of imageProviders) {
+		const shared = ip.keyFrom ? out.find((p) => p.id === ip.keyFrom) : null;
+		let target = shared;
+		if (!target) {
+			target = { id: ip.id, name: ip.name, kind: 'imagegen', configured: true, baseUrl: ip.baseUrl, protocols: [ip.kind], models: [] };
+			out.push(target);
+		}
+		for (const m of ip.models) target.models.push({ provider: target.id, id: m, name: m, type: 'image', capabilities: ['image'], protocol: ip.kind, confirmed: true, inferred: [], source: 'imagegen', configured: true, edit: true, imageAdapter: { kind: ip.kind, baseUrl: ip.baseUrl, edit: true } });
+	}
+	// 本地 Laya 也出现在 registry（UI 用管理卡展示，不重复成卡片）
+	out.push({ id: 'local-laya', name: '本地 Laya', kind: 'local', configured: true, protocols: ['typesafe-system-one'], models: [{ provider: 'local-laya', id: 'multilingual', name: 'multilingual', type: 'classifier', capabilities: ['classifier'], protocol: 'typesafe-system-one', confirmed: true, inferred: [], source: 'local', configured: true }] });
+	return out;
+};
+const customJson = () => ({ providers: customProviders.map((p) => ({ ...p, references: { defaultModel: false, visionModel: false, agents: [], subagents: false, subagentAgents: [] } })), apis: [{ id: 'openai-completions', label: 'OpenAI 兼容' }], classifierProtocols: ['typesafe-system-one'] });
+const imageJson = () => ({ kinds: [{ kind: 'openai', label: 'OpenAI 兼容', baseUrl: 'https://api.openai.com/v1', models: ['gpt-image-1'] }], providers: imageProviders, models: imageProviders.flatMap((p) => p.models.map((m) => ({ provider: p.id, providerName: p.name, id: m, edit: true, cost: null }))), default: null, reusable: customProviders.map((p) => ({ id: p.id, name: p.name, baseUrl: p.baseUrl, api: p.api })) });
 
 let browser;
 try {
@@ -110,21 +144,61 @@ try {
 		if (path === '/api/rooms') return json(route, []);
 		if (path === '/api/downloads') return json(route, { items: [] });
 		if (path.startsWith('/api/proactive/inbox')) return json(route, { items: [], count: 0, defaultLevel: 'normal' });
-		// 模型页依赖的既有接口：返回空壳，保证旧区块不崩
-		if (path === '/api/models/providers') return json(route, []);
-		if (path === '/api/models/custom') return json(route, { providers: [], apis: [], classifierProtocols: [] });
+		if (path === '/api/model-strengths') return json(route, { labels: [{ key: 'coding', label: '编码' }], models: [{ provider: 'openai', providerName: 'OpenAI', id: 'gpt-4o', name: 'GPT-4o', tags: [], tierLabel: '旗舰', userEdited: false }] });
+		if (path === '/api/models/providers') return json(route, official);
 		if (path === '/api/models/vision') return json(route, { setting: null, current: null, source: 'none', candidates: [] });
-		if (path === '/api/model-strengths') return json(route, { labels: [], models: [] });
-		if (path === '/api/image-models') return json(route, { kinds: [], providers: [], models: [], default: null, reusable: [] });
-		if (path === '/api/fast-computer/settings') return json(route, { settings: { enabled: false, kind: 'systemone', provider: '', id: '' }, models: [], classifierModels: [] });
-		if (path === '/api/subagents/settings') return json(route, { settings: { maxConcurrent: 10, maxMinutes: 10 }, models: [] });
-		// 统一模型服务（registry agent 契约）
-		if (path === '/api/models/registry' && method === 'GET') return json(route, { providers });
-		if (/^\/api\/models\/registry\/[^/]+\/models\/[^/]+\/capabilities$/.test(path) && method === 'PUT') {
-			capPuts.push({ path, body: req.postDataJSON() });
+		if (path === '/api/models/custom' && method === 'GET') return json(route, customJson());
+		if (path === '/api/models/custom' && method === 'POST') {
+			const body = req.postDataJSON();
+			customWrites.push({ method: 'POST', body });
+			const id = `custom-${customWrites.length}`;
+			customProviders = [...customProviders, { id, name: body.name, api: body.api, baseUrl: body.baseUrl, headerNames: [], noKey: !!body.noKey, configured: !!body.apiKey || !!body.noKey, createdAt: Date.now(), models: body.models ?? [], classifiers: body.classifiers ?? [] }];
+			return json(route, customProviders.find((p) => p.id === id));
+		}
+		if (/^\/api\/models\/custom\/[^/]+$/.test(path) && method === 'PUT') {
+			const id = path.split('/').pop();
+			const body = req.postDataJSON();
+			customWrites.push({ method: 'PUT', id, body });
+			customProviders = customProviders.map((p) => (p.id === id ? { ...p, name: body.name, api: body.api, baseUrl: body.baseUrl, configured: p.configured || !!body.apiKey, models: body.models ?? p.models, classifiers: body.classifiers ?? p.classifiers } : p));
+			return json(route, customProviders.find((p) => p.id === id));
+		}
+		if (/^\/api\/models\/custom\/[^/]+$/.test(path) && method === 'DELETE') {
+			const id = path.split('/').pop();
+			customWrites.push({ method: 'DELETE', id });
+			customProviders = customProviders.filter((p) => p.id !== id);
 			return json(route, { ok: true });
 		}
-		// 本地 Laya（local-laya-runtime 冻结契约）
+		if (path === '/api/models/custom/fetch-models') return json(route, { models: [{ id: 'gpt-4o', contextWindow: 128000, maxTokens: 16384, limitsSource: 'known' }, { id: 'gpt-image-1', contextWindow: 32000, maxTokens: 4096, limitsSource: 'known' }] });
+		if (path === '/api/models/registry' && method === 'GET') return json(route, { providers: registry() });
+		if (/^\/api\/models\/registry\/[^/]+\/models\/[^/]+\/capabilities$/.test(path) && method === 'PUT') {
+			const [, , , providerId, , modelId] = path.split('/');
+			const body = req.postDataJSON();
+			capPuts.push({ providerId, modelId, body });
+			customProviders = customProviders.map((p) => (p.id !== providerId ? p : { ...p, models: p.models.map((m) => (m.id !== modelId ? m : { ...m, capabilities: body.capabilities })) }));
+			return json(route, { providers: registry() });
+		}
+		if (path === '/api/models/test') {
+			testPosts.push(req.postDataJSON());
+			return json(route, { ok: true, message: '连接成功（fixture）' });
+		}
+		if (path === '/api/models/login' && method === 'POST') {
+			loginPosts.push(req.postDataJSON());
+			return json(route, { flowId: 'f1' });
+		}
+		if (/^\/api\/models\/login\/[^/]+$/.test(path) && method === 'GET') return json(route, { done: false, events: [] });
+		if (path === '/api/image-models' && method === 'GET') return json(route, imageJson());
+		if (path === '/api/image-models/providers' && method === 'POST') {
+			const body = req.postDataJSON();
+			const id = `img-${imageProviders.length + 1}`;
+			imageProviders = [...imageProviders, { id, name: body.name, kind: body.kind, kindLabel: 'OpenAI 兼容', baseUrl: body.baseUrl, models: body.models, keyFrom: body.keyFrom ?? null, hasKey: true }];
+			return json(route, imageProviders.find((p) => p.id === id));
+		}
+		if (/^\/api\/image-models\/providers\/[^/]+$/.test(path) && method === 'DELETE') {
+			imageProviders = imageProviders.filter((p) => p.id !== path.split('/').pop());
+			return json(route, { ok: true });
+		}
+		if (path === '/api/fast-computer/settings') return json(route, { settings: { enabled: false, kind: 'systemone', provider: '', id: '' }, models: [], classifierModels: [] });
+		if (path === '/api/subagents/settings') return json(route, { settings: { maxConcurrent: 10, maxMinutes: 10 }, models: [] });
 		if (path === '/api/local-models/laya/status') return json(route, laya);
 		if (path === '/api/local-models/laya/stop') {
 			laya = layaStatus({ runtime: { state: 'stopped', pid: null, port: null, host: '127.0.0.1' }, registered: null, health: null });
@@ -143,10 +217,9 @@ try {
 			laya = layaStatus({ install: { state: 'not_installed', phase: 'idle', received: 0, total: null, error: null, installedAt: null }, runtime: { state: 'stopped', pid: null, port: null, host: '127.0.0.1' }, registered: null, health: null });
 			return json(route, { ok: true, status: laya });
 		}
-		// 实际操作测试（benchmark agent 契约）
 		if (path === '/api/fast-computer/benchmark' && method === 'GET') return json(route, { availability, runs: [] });
-		if (path === '/api/fast-computer/benchmark' && method === 'POST') { benchPosts.push(req.postDataJSON()); return json(route, { ok: true, run: benchmarkRun('running') }); }
-		if (path === '/api/fast-computer/benchmark/b1' && method === 'GET') return json(route, benchmarkRun('done'));
+		if (path === '/api/fast-computer/benchmark' && method === 'POST') { benchPosts.push(req.postDataJSON()); return json(route, { ok: true, run: benchmarkRun('running', benchProvenance) }); }
+		if (path === '/api/fast-computer/benchmark/b1' && method === 'GET') return json(route, benchmarkRun('done', benchProvenance));
 		if (path === '/api/fast-computer/benchmark/b1/cancel') return json(route, { ok: true });
 		return json(route, {});
 	});
@@ -156,18 +229,15 @@ try {
 	const panel = page.getByTestId('model-services-panel');
 	await panel.waitFor();
 	const cards = () => page.locator('[data-testid=service-card]');
-	assert.equal(await cards().count(), 2, 'registry 里 2 个服务卡片（local-laya 由管理卡展示，不重复）');
+	assert.equal(await cards().count(), 2, 'registry 里 2 个服务卡片（openai + custom-relay；local-laya 由管理卡展示，不重复）');
 	await page.getByTestId('local-laya-card').waitFor();
 	const SHOT = process.env.SHOT_DIR;
 	if (SHOT) await page.locator('[data-testid=model-services]').screenshot({ path: `${SHOT}/1-services-desktop.png` });
 
-	// 1) 能力标签：推断出来的能力标「未确认」
+	// 1) 能力标签：推断出来的能力标「未确认」；能力纠正 → PUT registry
 	const relay = page.locator('[data-testid=service-card][data-service=custom-relay]');
 	await relay.getByTestId('service-toggle-custom-relay').click();
 	const mystery = page.locator('[data-testid=service-model][data-model=mystery-model]');
-	assert.match(await mystery.getByTestId('model-caps').textContent(), /识图？/, '推断能力应标「未确认」');
-
-	// 2) 能力纠正：给 mystery-model 加「生图」，PUT 到 registry，标签更新
 	await mystery.getByTestId('model-capability-toggle').click();
 	await mystery.getByTestId('cap-image').check();
 	await mystery.getByTestId('cap-save').click();
@@ -176,19 +246,78 @@ try {
 	assert.ok(capPuts[0].body.capabilities.includes('image'), '纠正内容应含 image');
 	assert.match(await mystery.getByTestId('model-caps').textContent(), /生图/, '纠正后应显示生图标签');
 
-	// 3) 添加服务：Select 选类型（非原生 select）+ 填地址 Key + 添加
+	// 2) 生图适配：把 mystery-model 的生图能力绑定到同一个 provider（keyFrom），不新建第二套 Key
+	await relay.getByTestId('image-adapter-bind-custom-relay').click();
+	await page.waitForTimeout(80);
+	assert.equal(imageProviders.length, 1, '应创建一个生图适配');
+	assert.equal(imageProviders[0].keyFrom, 'custom-relay', '生图适配必须复用同一个 provider 的 Key');
+	assert.equal(imageProviders[0].models[0], 'mystery-model', '生图模型应来自同一服务的生图能力');
+	await relay.getByTestId('image-adapter-bound-custom-relay').waitFor();
+	assert.match(await relay.getByTestId('image-adapter-bound-custom-relay').textContent(), /复用本服务 Key/, '绑定后标明复用同一个 Key');
+
+	// 3) 官方完整目录：未接入的官方服务也能点开（走公开登录 API）
+	await page.getByTestId('add-service-open').click();
+	await page.getByTestId('add-service').waitFor();
+	await page.getByTestId('add-service-official-grid').waitFor();
+	assert.ok(await page.getByTestId('official-provider-anthropic').isVisible(), '未接入的官方服务应出现在完整目录里');
+	await page.getByTestId('official-provider-anthropic').click();
+	await page.getByTestId('official-login-anthropic').waitFor();
+	// 点开 API Key 登录 → POST /api/models/login（公开登录流程），不需要真实 Key
+	await page.getByTestId('official-login-anthropic').getByRole('button', { name: /API Key/ }).click();
+	await page.waitForTimeout(80);
+	assert.equal(loginPosts.length, 1, '应发出一次登录请求');
+	assert.equal(loginPosts[0].provider, 'anthropic', '登录请求应指向所选官方服务');
+	await page.getByTestId('add-service').getByRole('button', { name: '取消' }).click();
+	await page.waitForTimeout(60);
+
+	// 4) 添加自定义服务：真实 POST /api/models/custom，保存后 registry 派生出新卡片
 	await page.getByTestId('add-service-open').click();
 	await page.getByTestId('add-service').waitFor();
 	await page.getByTestId('add-service-kind').click();
 	await page.getByRole('option', { name: /自定义/ }).click();
-	await page.getByTestId('add-service-name').fill('新中转');
-	await page.getByTestId('add-service-baseurl').fill('https://new.example.com/v1');
-	await page.getByTestId('add-service-key').fill('sk-test-not-real');
-	await page.getByTestId('add-service-submit').click();
-	await page.waitForTimeout(80);
-	assert.equal(await cards().count(), 3, '添加后应有 3 个服务卡片');
+	const form = page.getByTestId('custom-provider-form');
+	await form.waitFor();
+	await form.getByPlaceholder('例如：我的中转站').fill('新中转');
+	await form.getByPlaceholder('https://api.example.com/v1').fill('https://new.example.com/v1');
+	await form.getByPlaceholder('sk-…').fill('sk-test-not-real');
+	await form.getByRole('button', { name: /自动获取/ }).click();
+	await page.getByRole('button', { name: 'gpt-4o', exact: true }).click();
+	await form.getByRole('button', { name: /^保存$/ }).click();
+	await page.waitForTimeout(120);
+	assert.equal(customWrites.filter((w) => w.method === 'POST').length, 1, '应发出一次 POST 保存自定义服务');
+	assert.equal(customWrites[0].body.baseUrl, 'https://new.example.com/v1', '地址一次保存到 provider');
+	assert.equal(customWrites[0].body.apiKey, 'sk-test-not-real', 'Key 随同一次保存');
+	assert.equal(await cards().count(), 3, '保存后 registry 派生出新卡片');
 
-	// 4) 本地 Laya 管理卡：运行态 + health 实际设备 + 已注册模型
+	// 5) 测试连接（真实 POST /api/models/test）+ 编辑（PUT）
+	const added = page.locator('[data-testid=service-card][data-service=custom-1]');
+	await added.getByTestId('service-toggle-custom-1').click();
+	await added.getByTestId('service-test-run-custom-1').click();
+	await added.getByTestId('service-test-result-custom-1').waitFor();
+	assert.match(await added.getByTestId('service-test-result-custom-1').textContent(), /连接成功/, '测试连接应显示成功');
+	assert.equal(testPosts.length, 1, '应发出一次测试连接请求');
+	await added.getByTestId('service-edit-custom-1').click();
+	const editForm = page.getByTestId('custom-provider-form');
+	await editForm.getByPlaceholder('例如：我的中转站').fill('新中转改名');
+	await editForm.getByRole('button', { name: /保存修改/ }).click();
+	await page.waitForTimeout(120);
+	assert.equal(customWrites.filter((w) => w.method === 'PUT').length, 1, '应发出一次 PUT 编辑');
+	assert.ok(customProviders.some((p) => p.name === '新中转改名'), '编辑应改动状态');
+
+	// 6) 删除确认 → DELETE；取消不动
+	await added.getByTestId('service-delete-custom-1').click();
+	await page.getByTestId('confirm-dialog').waitFor();
+	await page.getByTestId('confirm-cancel').click();
+	await page.waitForTimeout(60);
+	assert.ok(customProviders.some((p) => p.id === 'custom-1'), '取消删除后服务仍在');
+	await added.getByTestId('service-delete-custom-1').click();
+	await page.getByTestId('confirm-ok').click();
+	await page.waitForTimeout(120);
+	assert.equal(customWrites.filter((w) => w.method === 'DELETE').length, 1, '应发出一次 DELETE');
+	assert.ok(!customProviders.some((p) => p.id === 'custom-1'), '删除后状态里不再有该服务');
+	assert.equal(await cards().count(), 2, '删除后卡片恢复为 2 个');
+
+	// 7) 本地 Laya 管理卡：运行态 + health 实际设备 + 已注册模型
 	const layaCard = page.getByTestId('local-laya-card');
 	assert.equal(await layaCard.getAttribute('data-source'), 'local');
 	assert.match(await page.getByTestId('laya-install-state').textContent(), /已安装/);
@@ -197,12 +326,10 @@ try {
 	assert.match(await page.getByTestId('laya-unverified-note').textContent(), /尚未在本机实机验证/, '需声明未实机验证');
 	assert.equal(await page.getByTestId('laya-model-row').getAttribute('data-registered'), 'true');
 
-	// 5) 实际操作测试：尚未运行 / 真实执行未验证 / advisory
+	// 8) 实际操作测试：provenance 按每次结果标明，不是永久硬文案
 	await page.getByTestId('benchmark-open-multilingual').click();
 	await page.getByTestId('actual-task-test').waitFor();
-	assert.match(await page.getByTestId('actual-task-test').textContent(), /专用隔离测试窗口/);
 	assert.match(await page.getByTestId('actual-task-preflight').textContent(), /前置条件/);
-	assert.match(await page.getByTestId('benchmark-unverified-note').textContent(), /未在真实桌面打开测试窗口/, '需声明未真实执行');
 	assert.match(await page.getByTestId('actual-task-verdict').textContent(), /尚未运行/, '未跑过时显示尚未运行');
 	await page.getByTestId('actual-task-target').click();
 	await page.getByRole('option', { name: /助理电脑/ }).click();
@@ -216,12 +343,25 @@ try {
 	assert.match(resultText, /步骤延迟 p50（诊断）/, 'p50 应标为步骤诊断');
 	assert.match(resultText, /不代表整个 CUA 速度/, '需声明不代表整个 CUA 速度');
 	assert.match(resultText, /本轮不执行主模型回退/, '不得把 fallbackCount 当接管收益');
+	assert.match(await page.getByTestId('actual-task-provenance').textContent(), /真实 CUA 驱动/, 'provenance=cua 时应标明来自真实 CUA');
+	assert.equal(await page.getByTestId('actual-task-provenance').getAttribute('data-provenance'), 'cua');
 	assert.equal(benchPosts.length, 1, '应发出一次 benchmark POST');
 	assert.ok(['hostpc', 'computer'].includes(benchPosts[0].target), 'POST target 必须是 hostpc | computer');
 	if (SHOT) await page.getByTestId('actual-task-test').screenshot({ path: `${SHOT}/2-actual-task-test.png` });
 	await page.getByTestId('actual-task-use-anyway').click();
 
-	// 6) Laya 停止：不删配置，模型显示未就绪
+	// 8b) 测试假驱动：provenance=fixture 时明确说明不是真实桌面
+	benchProvenance = 'fixture';
+	await page.getByTestId('benchmark-open-multilingual').click();
+	await page.getByTestId('actual-task-test').waitFor();
+	await page.getByTestId('actual-task-ack').check();
+	await page.getByTestId('actual-task-start').click();
+	await page.waitForFunction(() => document.querySelector('[data-testid=actual-task-verdict]')?.textContent?.includes('偏慢'), null, { timeout: 5000 });
+	assert.match(await page.getByTestId('actual-task-provenance').textContent(), /测试 \/ 假驱动/, 'provenance=fixture 时应标明不是真实桌面');
+	await page.getByTestId('actual-task-use-anyway').click();
+	benchProvenance = 'cua';
+
+	// 9) Laya 停止：不删配置，模型显示未就绪
 	await page.getByTestId('laya-stop').click();
 	await page.waitForTimeout(80);
 	assert.match(await page.getByTestId('laya-runtime-state').textContent(), /未运行/);
@@ -229,7 +369,7 @@ try {
 	assert.match(await page.getByTestId('laya-model-row').textContent(), /未就绪/, '停止后模型显示未就绪，不删配置');
 	assert.ok(await page.getByTestId('laya-start').isVisible(), '停止后仍可启动');
 
-	// 7) Laya 卸载：自绘确认框（不是原生 confirm）；取消不变，确认后回到未安装
+	// 10) Laya 卸载：自绘确认框（不是原生 confirm）；取消不变，确认后回到未安装
 	await page.getByTestId('laya-uninstall').click();
 	await page.getByTestId('confirm-dialog').waitFor();
 	assert.match(await page.getByTestId('confirm-dialog').textContent(), /卸载本地 Laya/);
@@ -242,14 +382,14 @@ try {
 	assert.match(await page.getByTestId('laya-install-state').textContent(), /未安装/, '确认后卸载');
 	assert.ok(await page.getByTestId('laya-install').isVisible(), '卸载后显示一键安装');
 
-	// 8) Esc 关弹窗（键盘可达）
+	// 11) Esc 关弹窗（键盘可达）
 	await page.getByTestId('add-service-open').click();
 	await page.getByTestId('add-service').waitFor();
 	await page.keyboard.press('Escape');
 	await page.waitForTimeout(80);
 	assert.equal(await page.getByTestId('add-service').count(), 0, 'Esc 应关闭添加服务弹窗');
 
-	// 9) 390 宽不横向溢出
+	// 12) 390 宽不横向溢出
 	await page.setViewportSize({ width: 390, height: 780 });
 	await page.reload();
 	await page.getByTestId('settings-dialog').waitFor();
@@ -260,7 +400,7 @@ try {
 
 	const nativeDialogs = await page.evaluate(() => window.__nativeDialogs ?? 0);
 	assert.equal(nativeDialogs, 0, '不得调用原生 confirm/alert/prompt');
-	console.log('通过：统一模型服务原型（能力标签/纠正、添加服务、Laya 管理卡安装/运行/未就绪/卸载确认、实际操作测试 availability/未验证/advisory、Esc、390 宽、无原生 dialog）。');
+	console.log('通过：统一模型服务真实 CRUD（官方完整目录登录 / 自定义新增保存编辑删除 / 测试连接 / 生图 keyFrom 绑定）、能力纠正、Laya 管理卡、实际操作测试 provenance、Esc、390 宽、无原生 dialog。');
 } finally {
 	await browser?.close();
 	web.close();
