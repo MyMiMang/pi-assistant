@@ -1,6 +1,6 @@
 # 统一模型管理 + 本地 Laya 跨平台 + 实际操作测试（交互架构与接口契约）
 
-> 状态：**UI 原型已落地**（`model-settings-unified` 树，基 `hotfix-integration` `b7d33d3`，已 merge `native-dialog-ui-fix` `9554628`）。
+> 状态：**UI 已落地并接真实 CRUD**（统一整合树 `unified-integration`，基 `hotfix-integration` `b7d33d3`，已 merge `native-dialog-ui-fix` `9554628`）。旧区（`VisionModelPicker` / `ImageModelsSection` / 快速操作独立区）已删除，e2e 已迁移。
 > 2026-10-15 用户纠正：性能测试 = **一次真实受控 CUA 任务**（不是 API 连接延迟），按钮叫「实际操作测试」，见 §6.5。
 > 契约以两个已落地模块为**唯一事实来源**：
 > - registry agent：`packages/server/src/model-registry.ts` + `GET /api/models/registry`（`unified-model-registry` 树，`98415a8`+`54b1ef1`）
@@ -40,7 +40,7 @@
     └─ 快速操作模型：enable（默认 off）+ 统一目录里的 classifier；每机独立，不可用主模型 fallback
 ```
 
-**已移除（目标态）**：独立「识图模型」选择器、独立 `ImageModels` 配置区、快速操作单独凭据区。迁移期旧区保留在统一面板下方，待 registry 生图迁移落地后由 S5/S6 删除。
+**已移除**：独立「识图模型」选择器、独立 `ImageModels` 配置区、快速操作单独凭据区、「模型服务 / 渠道」旧折叠区。生图服务在统一面板的「添加服务 › 生图服务」里新建，或把已有服务的生图能力按 `keyFrom` 绑定到同一个 provider；默认图片模型在统一面板里选。
 
 ## 4. 能力识别规则
 
@@ -106,7 +106,7 @@ migrateLegacyImageProviders(input: { imageProviders: ImageProvider[]; customProv
 - 结果 `FastBenchmarkResult`：`status / provider / model / modelVersion / target{prefix,fixtureId} / startedAt / finishedAt / samples / coldStartMs / p50Ms / p95Ms / p95Approx / timeouts / errors / successRatio / actions / retries / fallbackCount / abstains / correctness / note / advisory{verdict,recommended,message,reason} / reason`。
 - UI 展示重点：**冷启动（单次）· 任务成功率 · 总用时**（由 `startedAt`/`finishedAt` 算）；**p50 标「步骤延迟（诊断）」**，不代表整个 CUA 速度；正确率是本轮 bench task 正确率（不是泛化 accuracy）。
 - advisory **不 hard-disable**：`successRatio<0.6` 或 `errors≥3` → unstable（建议排查）；`p50>responseBudgetMs`（默认 1000）→ slow（仍可继续用）。
-- UI 必显：**尚未运行**（无 runs 时）、**真实执行未验证**（本轮开发未在真实桌面打开窗口 / 未跑 CUA，假 driver ≠ CUA 成功）。
+- UI 必显：**尚未运行**（无 runs 时）；结果来源按每次的 `provenance` 标明（`cua` = 真实 CUA 驱动；`fixture` = 测试 / 假驱动，只验证路径；`unknown` = 未知）——不用永久硬文案，真实执行情况写文档而不是常驻提示。
 - `fallbackCount` 只在真正执行主模型回退时才算，基准不执行回退 → 恒 0；**不得当「接管收益」报告**。
 - 云分类器前提示**可能少量计费**；local 无费用。
 
@@ -152,8 +152,8 @@ UI 硬约束：
 | S2 Registry DTO + 能力纠正 + 生图迁移 | registry agent | 已完成（GET registry + `PUT /capabilities` + `imageAdapter` + `kind:"local"` + legacy key 幂等迁移，已合入 `unified-integration`） |
 | S3 Laya 安装 / health（`/api/local-models/laya`） | laya agent | 契约冻结 + 后端完成（未实机验证）；已合入整合树，`GET /status` 现会刷新 registry hints |
 | S4 实际操作测试 runner + fixture | benchmark agent | 契约/runner/routes/host 已合入整合树；真实 CUA 运行仍 blocked（hostpc 未开 / VM 未就绪） |
-| S5 UI 接真实 API（去掉默认隐藏开关） | 本任务 | 面板已随 registry 就绪默认渲染；剩余同 S6 阻塞点 |
-| S6 电脑设置快速 / 生图统一（删旧区） | 本任务 + registry | **阻塞**：`AddServiceDialog` 尚未接 `/api/models/custom` 与 `/api/image-models` 真实 CRUD；`model-ui`/`run`/`fast-computer-ui` e2e 仍绑定旧区。先接真实写接口 + 迁移 e2e 再删 |
+| S5 UI 接真实 API（去掉默认隐藏开关） | 本任务 | ✅ 已完成（面板随 registry 就绪默认渲染；接口失败错误 + 重试，无 demo fallback） |
+| S6 电脑设置快速 / 生图统一（删旧区） | 本任务 + registry | ✅ 已完成（AddServiceDialog 接 `/api/models/custom` / `/api/image-models` 真实 CRUD；删旧识图 / 生图 / 快速操作区；快速操作按 hostpc/computer 各一份 scope；e2e 已迁移） |
 
 ## 10. 边界与禁令
 

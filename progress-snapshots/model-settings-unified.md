@@ -35,12 +35,16 @@
 
 - worktree 构建失败根因：**worktree 缺 `apps/web/node_modules`**（`highlight.js` / `typescript` 装在 workspace 层）。修复：从主树 `cp -Rc apps/web/node_modules` 到 worktree 后构建通过。
 
-## 待做
+## 待做（S5/S6 已在统一整合树完成，此处保留历史记录）
 
-- [ ] S5 UI 接真实 API（去掉默认隐藏开关）：registry GET 可用；等生图迁移（registry）+ Laya 实机 + benchmark 真实 fixture。
-- [ ] S6 电脑设置快速 / 生图统一到 registry，删除独立 `ImageModelsSection` / `VisionModelPicker` / 快速凭据区。
-- [ ] 能力纠正接口 `PUT /api/models/registry/:provider/models/:id/capabilities`（UI 已按此调用，待 registry 落地）。
-- [ ] Laya `WS local-laya.changed`（原型先轮询 1s）。
+- [x] S5 UI 接真实 API（去掉默认隐藏开关）：面板已随 registry 就绪默认渲染，接口失败显示错误 + 重试（无 demo fallback）。
+- [x] S6 电脑设置快速 / 生图统一到 registry，删除独立 `ImageModelsSection` / `VisionModelPicker` / 快速凭据区；
+  统一面板 AddServiceDialog 接 `/api/models/custom` / `/api/image-models` 真实 CRUD，生图服务在统一面板添加（保留 `ImageProviderForm`），默认图片模型在面板内选；
+  快速操作按 `hostpc` / `computer` 各一份 scope，只从已配置的 System One 分类器选。
+- [x] 能力纠正接口 `PUT /api/models/registry/:provider/models/:id/capabilities`（已落地，UI 调用）。
+- [x] Laya `WS local-laya.changed`（store `localLayaVersion` 驱动刷新，过渡期 1s 轮询）。
+
+> 详细收尾记录见 `progress-snapshots/unified-integration.md` 阶段二。
 
 ## 交给主协调的 schema 增量
 
