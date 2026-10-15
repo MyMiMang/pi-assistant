@@ -82,8 +82,34 @@ export async function fetchBlobLimited(path: string, maxBytes: number, signal?: 
 		}
 		return { blob: new Blob(), oversized: true };
 	}
-	const blob = await res.blob();
-	return { blob, oversized: blob.size > maxBytes };
+	// 没有 content-length（分块传输 / 代理改写）时也必须真按上限中断，绝不 read-all 大文件。
+	if (!res.body) {
+		const blob = await res.blob();
+		return { blob, oversized: blob.size > maxBytes };
+	}
+	const reader = res.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > maxBytes) {
+				try {
+					await reader.cancel();
+				} catch {
+					/* ignore */
+				}
+				return { blob: new Blob(), oversized: true };
+			}
+			chunks.push(value);
+		}
+	} catch (e) {
+		if (total > maxBytes) return { blob: new Blob(), oversized: true };
+		throw e;
+	}
+	return { blob: new Blob(chunks as BlobPart[]), oversized: false };
 }
 
 export async function download(path: string, name: string) {
