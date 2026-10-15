@@ -11,6 +11,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getApiProviders } from "@earendil-works/pi-ai/compat";
 import type { ClassifierChatModel, ClassifierDeclaration, PiModels } from "./index.ts";
 import { isClassifierProtocol } from "./index.ts";
+import type { ModelCapability } from "../model-registry.ts";
 import { modelDb } from "../model-db.ts";
 import { detectLimits, knownReasoning, knownThinkingLevelMap, knownVision, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
 
@@ -31,6 +32,11 @@ export interface CustomModel {
 	limitsSource?: LimitsSource;
 	/** input 是按 models.dev 自动判断的（是否识图）；用户没填过 input 时每次按最新数据重算（只存在元数据里） */
 	inputAuto?: boolean;
+	/**
+	 * 显式声明的能力（chat / vision / image / classifier）。留给统一注册表与“手动设能力”用；
+	 * 不写就按 input 元数据推导。只存在我们的元数据里，不写进 Pi 的 models.json。
+	 */
+	capabilities?: ModelCapability[];
 }
 export interface FetchedModel {
 	id: string;
@@ -76,6 +82,20 @@ export interface CustomStorage {
 }
 
 /** 规范化 classifier 声明：去空白、去空项、去重，只留公开字段。 */
+export const MODEL_CAPABILITIES: readonly ModelCapability[] = ["chat", "vision", "image", "classifier"];
+
+/** 从服务端 /models 返回的条目里读可靠的输入模态（是否识图）；读不到返回 undefined（不猜）。 */
+export function detectInput(raw: Record<string, unknown>): ("text" | "image")[] | undefined {
+	const direct = raw.input ?? (raw.capabilities as { input?: unknown } | undefined)?.input;
+	if (Array.isArray(direct)) {
+		const arr = direct.filter((x): x is "text" | "image" => x === "text" || x === "image");
+		if (arr.length) return arr.includes("image") ? ["text", "image"] : ["text"];
+	}
+	const mods = (raw.modalities as { input?: unknown } | undefined)?.input ?? (raw.architecture as { input_modalities?: unknown } | undefined)?.input_modalities;
+	if (Array.isArray(mods) && mods.length) return mods.includes("image") ? ["text", "image"] : ["text"];
+	return undefined;
+}
+
 export function normalizeClassifiers(list: ClassifierDeclaration[] | undefined): ClassifierDeclaration[] {
 	if (!Array.isArray(list)) return [];
 	const seen = new Set<string>();
@@ -182,6 +202,7 @@ export class CustomProviders {
 		if (ids.some((x) => !x)) return "模型 ID 不能为空";
 		if (new Set(ids).size !== ids.length) return "模型 ID 重复";
 		for (const h of input.headers ?? []) if (!/^[A-Za-z0-9-]+$/.test(h.name)) return `请求头名称不合法：${h.name}`;
+		for (const m of input.models) for (const cap of m.capabilities ?? []) if (!MODEL_CAPABILITIES.includes(cap)) return `不支持的模型能力：${cap}`;
 		for (const c of input.classifiers ?? []) {
 			if (!isClassifierProtocol(c.protocol)) return `不支持的 classifier 协议：${c.protocol}`;
 			if (!c.modelId?.trim()) return "classifier 模型 ID 不能为空";
@@ -396,7 +417,8 @@ export class CustomProviders {
 		for (const raw of j.data ?? j.models ?? []) {
 			const id = String(raw.id ?? raw.name ?? "").replace(/^models\//, "");
 			if (!id || seen.has(id)) continue;
-			const m = this.withLimits({ id, ...(typeof raw.reasoning === "boolean" ? { reasoning: raw.reasoning } : {}) }, detectLimits(raw), base, o.api);
+			const input = detectInput(raw);
+			const m = this.withLimits({ id, ...(typeof raw.reasoning === "boolean" ? { reasoning: raw.reasoning } : {}), ...(input ? { input } : {}) }, detectLimits(raw), base, o.api);
 			seen.set(id, { id, ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}), contextWindow: m.contextWindow!, maxTokens: m.maxTokens!, limitsSource: m.limitsSource! });
 		}
 		if (!seen.size) throw new Error("没有获取到模型，请手动填写");
@@ -411,6 +433,6 @@ function chatModelFromMeta(meta: CustomProviderMeta, m: CustomModel): Classifier
 
 /** 写进 Pi models.json 的模型条目：去掉我们自己的字段和空值 */
 function piModel(m: CustomModel) {
-	const { limitsSource: _s, inputAuto: _a, reasoningAuto: _r, thinkingLevelSource: _t, ...rest } = m;
+	const { limitsSource: _s, inputAuto: _a, reasoningAuto: _r, thinkingLevelSource: _t, capabilities: _c, ...rest } = m;
 	return Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== ""));
 }

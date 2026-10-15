@@ -24,6 +24,9 @@ import { insertMessage, listMessages } from "./messages.ts";
 import { credentialBackend, customProviders, defaultModel, defaultThinking, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "./models.ts";
 import { onboardingState } from "./onboarding.ts";
 import { getModelPicks, recordModelPick } from "./model-picks.ts";
+import { buildRegistry, type RegistryImageProvider, type RegistryProviderHint } from "./model-registry.ts";
+import { hasKey as hasImageKey, listProviders as listImageProviders } from "./image-gen/index.ts";
+import { costNote, supportsEdit } from "./image-gen/providers.ts";
 import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-providers.ts";
 import { classifierProtocols } from "./pi-adapter/index.ts";
 import { checkPiCompat, sessionStats } from "./pi-adapter/index.ts";
@@ -237,6 +240,21 @@ mountFastComputerRoutes(app);
 app.get("/api/models", (c) => {
 	const names = providerNames();
 	return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => withProviderName(m, names)));
+});
+/** 统一模型服务注册表：一份带能力的元数据视图（内置 + 自定义 + 生图；凭据仍由 Pi 按 provider 解析）。 */
+app.get("/api/models/registry", (c) => {
+	const names = providerNames();
+	const providers: RegistryProviderHint[] = models.listProviders().map((p) => ({ id: p.id, name: p.name, configured: p.configured, source: p.source }));
+	const image: RegistryImageProvider[] = listImageProviders().map((p) => ({ id: p.id, name: p.name, kind: p.kind, baseUrl: p.baseUrl, models: p.models, configured: hasImageKey(p) }));
+	return c.json({
+		providers: buildRegistry({
+			providers,
+			chatModels: models.listModels(),
+			classifierModels: models.listClassifierModels(),
+			custom: customProviders.list().map((p) => ({ ...p, name: p.name || names.get(p.id) || p.id })),
+			image: { providers: image, supportsEdit: (kind, model) => supportsEdit(kind as Parameters<typeof supportsEdit>[0], model), costNote },
+		}),
+	});
 });
 app.post("/api/models/refresh", async (c) => (await models.refresh(), c.json({ ok: true })));
 // 用户选过哪些模型：输入栏「常用」置顶（只记 provider/id 的频次和最近一次时间，不存凭据）
