@@ -15,6 +15,7 @@ import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { ImageModelsSection } from "./ImageModels";
 import { DefaultModelPicker, ProviderAccordion, useProviders } from "./Models";
+import { ModelServicesPanel } from "./ModelServices";
 import { Badge, Button, cx, Fold, fmtTime, Help, Input, Modal, Select, useConfirm } from "./ui";
 import { Downloads } from "./Downloads";
 import { AppUpdate } from "./AppUpdate";
@@ -318,6 +319,9 @@ function ModelsTab() {
 			</Fold>
 			<SubagentSection />
 			<ImageModelsSection key={custom.providers.length} />
+			{/* 统一模型服务（原型）：接口就绪后由它接管「识图模型 + 模型服务 / 渠道 + 生图」，见 docs/design/model-settings-unified.md。
+			    原型期放最后，避免影响现有 picker 定位 e2e；S5/S6 接真实 API 时再前移并删旧区。 */}
+			<ModelServicesPanel />
 		</div>
 	);
 }

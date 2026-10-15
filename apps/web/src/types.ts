@@ -50,4 +50,142 @@ export interface CustomModel { id: string; name?: string; reasoning?: boolean; i
 /** 声明的 classifier（协议 + 对端模型 id）；保存后由服务端在启动/reload 时重新注册。 */
 export interface CustomClassifier { protocol: string; modelId: string; name?: string; contextWindow?: number }
 export interface CustomProviderMeta { id: string; name: string; api: string; baseUrl: string; headerNames: string[]; noKey: boolean; models: CustomModel[]; classifiers?: CustomClassifier[]; configured: boolean; references?: ProviderReferences }
-export interface ProviderReferences { defaultModel: boolean; visionModel: boolean; agents: string[]; subagents: boolean; subagentAgents: string[] }
+export interface ProviderReferences { defaultModel: boolean; visionModel: boolean; agents: string[]; subagents: boolean; subagentAgents: string[]; imageProviders?: string[] }
+
+// ---- 统一模型服务（对齐 registry agent 契约：packages/server/src/model-registry.ts）----
+export type ModelCapability = "chat" | "vision" | "image" | "classifier";
+export type ModelType = "chat" | "image" | "classifier";
+export type RegistryModelSource = "pi-catalog" | "custom" | "imagegen" | "guess";
+/** 生图模型适配器：统一服务不再有独立生图凭据，凭据就是 provider 的凭据。 */
+export interface ImageAdapter {
+	kind: "openai" | "dashscope" | "ark" | "gemini" | "xai";
+	baseUrl: string;
+	edit: boolean;
+	costNote?: string;
+}
+export interface RegistryModel {
+	provider: string;
+	id: string;
+	name: string;
+	type: ModelType;
+	capabilities: ModelCapability[];
+	protocol: string;
+	confirmed: boolean;
+	inferred: ModelCapability[];
+	source: RegistryModelSource;
+	configured: boolean;
+	contextWindow?: number;
+	maxTokens?: number;
+	reasoning?: boolean;
+	thinkingLevelMap?: Record<string, string | null>;
+	input?: string[];
+	edit?: boolean;
+	costNote?: string;
+	/** 仅 type=image：生图适配器（迁移期由旧生图服务补齐）。 */
+	imageAdapter?: ImageAdapter;
+}
+export interface RegistryProvider {
+	id: string;
+	name: string;
+	kind: "builtin" | "custom" | "imagegen" | "local";
+	configured: boolean;
+	baseUrl?: string;
+	protocols: string[];
+	models: RegistryModel[];
+}
+export interface PhaseDto {
+	state: "idle" | "downloading" | "verifying" | "done" | "error" | "cancelled";
+	percent: number;
+	bytes?: number;
+	total?: number;
+	speed?: number;
+	error?: string;
+}
+// ---- 本地 Laya（对齐 local-laya-runtime 冻结契约：docs/design/local-laya-api.md）----
+export interface LayaPlatform {
+	key: string;
+	os: string;
+	arch: string;
+	accelerator: "cpu" | "mps" | "cuda" | "xpu";
+	support: "supported" | "conditional" | "experimental" | "unsupported";
+	torchBackend: string;
+	pins: string[];
+	reason: string;
+}
+export interface LayaInstall {
+	state: "not_installed" | "installing" | "installed" | "failed";
+	phase: string;
+	received: number;
+	total: number | null;
+	error: string | null;
+	installedAt: number | null;
+}
+export interface LayaRuntime {
+	state: "stopped" | "starting" | "running" | "stopping" | "crashed";
+	pid: number | null;
+	port: number | null;
+	host: "127.0.0.1";
+}
+export interface LayaHealth {
+	ok: boolean;
+	device: string | null;
+	checkpointDevices: Record<string, string> | null;
+	cpuFallbacks: { count: number; lastReason: string | null } | null;
+	revisions: Record<string, string> | null;
+	loaded: string[] | null;
+}
+export interface LayaSource {
+	project: string;
+	repoUrl: string;
+	weightsOrg: string;
+	codeLicense: string;
+	weightsLicense: string;
+	version: string;
+	reviewedRevisions: Record<string, string>;
+}
+export interface LayaStatus {
+	platform: LayaPlatform;
+	install: LayaInstall;
+	runtime: LayaRuntime;
+	health: LayaHealth | null;
+	registered: { provider: string; modelId: string; protocol: string } | null;
+	source: LayaSource;
+}
+
+// ---- 实际操作测试（对齐 benchmark agent 契约：fast-computer/benchmark.ts）----
+// 真实受控 CUA 任务，不是 API 延迟；UI 直接渲染这份结果，不另定义一套。
+export interface BenchmarkAvailability {
+	cuaReady: boolean;
+	modelReady: boolean;
+	fixtureReady: boolean;
+	reasons: string[];
+}
+export interface FastBenchmarkResult {
+	id: string;
+	status: "running" | "done" | "cancelled" | "blocked" | "failed";
+	provider: string;
+	model: string;
+	modelVersion: string;
+	target: { prefix: "hostpc" | "computer"; fixtureId: string };
+	startedAt: string;
+	finishedAt: string | null;
+	createdAt: string;
+	warmup: number;
+	samples: number;
+	coldStartMs: number | null;
+	p50Ms: number | null;
+	p95Ms: number | null;
+	p95Approx: boolean;
+	timeouts: number;
+	errors: number;
+	successRatio: number;
+	actions: number;
+	retries: number;
+	fallbackCount: number;
+	abstains: number;
+	correctness: number | null;
+	correctTrials: number;
+	note: string;
+	advisory: { verdict: "ok" | "slow" | "unstable" | "blocked"; recommended: boolean; message: string; reason: string };
+	reason: string | null;
+}
