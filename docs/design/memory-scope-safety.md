@@ -1,0 +1,84 @@
+# 记忆作用域安全（memory-scope-safety）
+
+> 基：`unified-integration` HEAD `66ae16b`（2026-10-15）。依据：`docs/research/hindsight-integration-audit.md`。
+> 目标：**完整可用 + 分层权限**——不砍子代理记忆能力，但堵住「未验证结论污染共享 user 库 / 子代理删共享事实 / 无 provenance」。
+
+## 1. 问题（来自审计 §4）
+
+- `memory/index.ts:91`：fact 默认 `scope=user`；子代理/后台与主会话共用同一批工具，直接写进**所有助理共享**的 `user` 库。
+- `ext-memory`：4 个工具全标 `readOnlyHint:true` → 任何档位免审批；`forget` 可删共享 user 条目。
+- `meta` 只有 `{kind,source,...}`，没有 provenance/status，分不清「主/用户确认」与「子代理推测」。
+- 没有 `task` 短期作用域，临时假设只能混进 agent/user 库。
+
+## 2. 设计
+
+### 2.1 Provenance（`MemoryOrigin`，存 `meta.origin`）
+
+服务端按会话上下文**注入**，工具参数无法伪造 actor：
+
+```
+MemoryActor = "main" | "subagent" | "background" | "user" | "group"
+MemoryStatus = "draft" | "verified" | "promoted" | "legacy"
+MemoryOrigin = { actor, assistantId, conversationId?, taskId?, subagentId?,
+                 source?, evidenceRef?, createdAt, status }
+```
+
+- `actor`：主会话 `main`；子代理 `subagent`；后台任务/定时/心跳/群成员 `background|group`；界面 HTTP 写入 `user`。
+- `status`：主/用户写入 = `verified`；子代理/后台写入 = `draft`；晋升后草稿 = `promoted`；旧条目（无 origin）读取时视为 `legacy`（不改盘）。
+- `evidenceRef` 只放**安全 ID**（如晋升来源记忆 id / taskId），绝不写任务 prompt/正文/敏感内容。
+
+### 2.2 作用域分层
+
+| 来源 actor | 请求 scope=user | scope=agent/conversation | 默认 |
+|---|---|---|---|
+| main / user | `user` 库，`verified` | 直接写，`verified` | 原行为 |
+| subagent | **降级**为 `task` 草稿（不落 user） | `draft`，可带 conversationId | fact/log/note 全 draft |
+| background / group | 同上 | 同上 | 同上 |
+
+- 新增 `scope=task`：仍落 `agent_<id>` 库，带 `meta.taskId`，`status=draft`，`expiresAt = now + 任务草稿 TTL`（默认 7 天，设置 `memoryTaskDraftTtlDays`）。
+- **读**：所有会话可读 `user`（verified）+ 本助理 `agent_<id>`（verified）+ 本对话 conversation；子代理额外可读**自己 taskId 的草稿**；主会话（parent）可读本助理下的**全部草稿+来源**用于核验；其它子代理默认读不到兄弟草稿。
+- `conversation`/`task` 的可见性同时按 `conversationId`/`taskId` 过滤；越权 deny **不能靠换 scope 绕过**（校验在实际 bank/item 上）。
+
+### 2.3 晋升（promotion）
+
+- 草稿不直接进共享库；由主会话/用户核验后 `memory.promote(agentId, draftId, {scope})`：
+  - 只允许 actor=main/user；子代理/后台拒绝。
+  - **幂等**：草稿已 `promoted` 直接返回既有晋升 id。
+  - **去重/冲突**：目标库已有同文本 verified 条目 → 不新增、不覆盖，把 `evidenceRef` 追加到该条目并把草稿标 `promoted`，返回既有 id。
+  - 否则在目标库写 `status=verified` 新条目，`origin.source="promotion"`，`evidenceRef=draftId`。
+- 新增最小工具 `memory_review`（仅主会话注入）：列出待核验草稿 / 晋升 / 驳回。晋升是显式用户授权动作，不写成「每轮自动 retain」。
+- 技能仍走 `ext-skills` 现有用户同意，记忆晋升**不绕过** `skill_save` 审批。
+
+### 2.4 删除/更新归属
+
+- 只能对自己的 task 草稿 / 自己写入的条目直接 `forget`/`update`。
+- 共享 `user` 库、`verified`、他人/legacy 写入的条目：子代理/后台**拒绝**（即使完全权限档位，服务端语义拒绝，不是审批）；主会话/用户可操作。
+
+### 2.5 审批与 permissions
+
+- `memory_recall` / `memory_reflect`：`readOnlyHint:true`（反思是推理，不写事实），不误拦。
+- `memory_remember`：`readOnlyHint:false`（真实写入），`destructiveHint:false, openWorldHint:false` → 非完全权限档位也不弹（不「一刀每记忆都弹审批」），完全权限档位照旧应用层免审批。
+- `memory_forget`：`readOnlyHint:false, destructiveHint:true` → 非完全权限档位按原有档位走审批，完全权限免审批。
+- scope/ownership 的 deny 是服务端逻辑，不等于审批。
+
+### 2.6 兼容 / 迁移
+
+- 旧条目无 origin/status → 读取标 `legacy`，**保持原作用域可见、不自动降级/删除**；不做批量 rewrite，只渐进写新 metadata。
+- `meta` 增量字段，旧后端忽略也无碍；迁移逻辑用 mock 旧 rows 测幂等。
+- retain 队列：去重条件去掉 `attempts=0`（失败重试后不再重复入队）；写失败仍经 `pending/lastError` 对用户可见；TTL 草稿到期由展示层隐藏。
+
+## 3. 测试（fake Hindsight + 临时 PIA_DATA_DIR/WORKSPACE + 内存 CredentialStore）
+
+1. 主子同 parent：recall 得到 verified；子写 fact 落 task 草稿，**不是** shared user。
+2. 父晋升：保存 provenance、幂等；去重命中不新增不覆盖。
+3. 子 `forget` 共享 user/他人条目被拒（含完全权限档位上下文）。
+4. legacy 条目保留、可读；task 草稿 TTL；伪 actor 字段被忽略。
+5. agent/user 隔离；background 来源不入 user。
+6. 队列 retain 去重：失败 attempts>0 后不重复入队；runtime resume 任务 origin 不变。
+7. permissions：readOnlyHint 修正后普通档位不误拦 recall/reflect、完全权限仍 bypass。
+
+## 4. 不做 / 边界
+
+- 不改 Hindsight backend、不读 `secrets.ts`、不碰真实 Hindsight/钥匙串/真实数据目录。
+- 不做「每轮自动总结/自动 retain」；不整段移除上下文注入（缓存未实测）。
+- 新发布仅 mac-arm64，下一个未用 beta（24），需主协调合入后统一发布。
