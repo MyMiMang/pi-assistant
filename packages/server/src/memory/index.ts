@@ -241,6 +241,8 @@ export const memory = {
 		const r = await p.remember(bank, {
 			content: a.content,
 			timestamp: new Date().toISOString(),
+			// 已确认写入保持账本同文本去重；草稿不去重，避免不同任务的同文本草稿被并成一行、跨任务串位
+			dedupe: priv,
 			meta: {
 				kind,
 				source: origin.source,

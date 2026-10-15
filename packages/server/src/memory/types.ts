@@ -43,6 +43,8 @@ export interface RememberInput {
 	timestamp?: string;
 	documentId?: string;
 	meta?: Record<string, unknown>;
+	/** 同一账本内完全相同文本是否复用已有行（默认复用）。task 草稿传 false，避免不同任务的同文本草稿被账本去重吞成一行、跨任务串位。 */
+	dedupe?: boolean;
 }
 
 /**

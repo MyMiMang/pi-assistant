@@ -141,6 +141,23 @@ test("晋升去重只对已确认条目：同文本的两个草稿不会互相�
 	assert.ok(refs.has(d2.id) && refs.has(d1.id), "两条草稿的证据都保留");
 });
 
+test("同文本不同 task 草稿不互吞：草稿不走账本同文本去重，兄弟各自只看自己的", async () => {
+	const A = "sa_sametext";
+	insertAgent(A);
+	const t1 = await memory.remember(A, "convS", { content: "用户喜欢拿铁", kind: "fact", actor: "subagent", taskId: "s1", subagentId: "s1" });
+	const t2 = await memory.remember(A, "convS", { content: "用户喜欢拿铁", kind: "fact", actor: "subagent", taskId: "s2", subagentId: "s2" });
+	assert.notEqual(t1.id, t2.id, "同文本不同任务必须是两条账本条目");
+	const v1 = await memory.list(A, "convS", undefined, { taskId: "s1", parent: false });
+	const v2 = await memory.list(A, "convS", undefined, { taskId: "s2", parent: false });
+	assert.ok(v1.some((i) => i.id === t1.id) && !v1.some((i) => i.id === t2.id), "任务1只看自己的草稿");
+	assert.ok(v2.some((i) => i.id === t2.id) && !v2.some((i) => i.id === t1.id), "任务2只看自己的草稿");
+	assert.equal((await memory.listDrafts(A)).filter((i) => i.text === "用户喜欢拿铁").length, 2, "主会话看到两条待核验草稿");
+	// 已确认写入仍按账本同文本去重（回归保护）
+	const m1 = await memory.remember(A, "convS", { content: "共享同文本事实", kind: "fact", actor: "main", scope: "agent" });
+	const m2 = await memory.remember(A, "convS", { content: "共享同文本事实", kind: "fact", actor: "main", scope: "agent" });
+	assert.equal(m1.id, m2.id, "已确认写入仍去重（不重复写事实）");
+});
+
 test("归属删除：子代理不能删共享/他人条目（含完全权限档位语义），只能删自己的草稿", async () => {
 	const A = "sa_forget";
 	insertAgent(A);
