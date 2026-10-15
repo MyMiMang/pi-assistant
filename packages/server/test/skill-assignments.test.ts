@@ -137,3 +137,20 @@ test("同名不同来源的 canonical id 不互相错启", () => {
 	assert.ok(enabled.has("user/foo"));
 	assert.ok(!enabled.has("builtin/foo"));
 });
+
+test("effective 选集按所属助理 id：后台 / 子代理共用同一份，不 expand", async () => {
+	const { skillFilterFor, enabledSkillsFor } = await import("../src/skill-scope.ts");
+	const builtin = listSkills().find((s) => s.builtin)!;
+	const other = listSkills().find((s) => s.id !== builtin.id)!;
+	sa.setAssignedSkillIds("parent-agent", [builtin.id]);
+	// 主会话 / 后台任务 / 子代理都传同一个 agentId → 同一份 filter 结果
+	const f = skillFilterFor("parent-agent");
+	assert.equal(f({ name: builtin.name, filePath: builtin.path }), true);
+	assert.equal(f({ name: other.name, filePath: other.path }), false);
+	// 未分配的其它助理：空集，不因「父代理启用了」而跟着可见
+	assert.equal(skillFilterFor("child-agent")({ name: builtin.name, filePath: builtin.path }), false);
+	assert.deepEqual(enabledSkillsFor("child-agent"), []);
+	assert.deepEqual(enabledSkillsFor("parent-agent").map((s) => s.id), [builtin.id]);
+	// 不在任何已知根目录里的路径：一律不启用（fail closed）
+	assert.equal(skillFilterFor("parent-agent")({ name: "x", filePath: "/tmp/nowhere/SKILL.md" }), false);
+});

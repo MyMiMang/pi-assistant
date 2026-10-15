@@ -24,6 +24,7 @@ import { models, defaultModel, defaultThinking } from "../models.ts";
 import { requests } from "../requests.ts";
 import { getAgent, listAgents, runtime, setRoomHooks } from "../runtime.ts";
 import { listSkills } from "../skills.ts";
+import { setAssignedSkillIds } from "../skill-assignments.ts";
 import { STRENGTHS, STRENGTH_LABEL, type Strength } from "../model-profile.ts";
 import { cleanNeeds, configuredModels, modelProfiles, pickFor, roleNeeds } from "./model-pick.ts";
 import { buildTranscript, capCheck, normalizeCaps, parseMentions, planAfter, planForUser, type PlannedTurn, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
@@ -622,6 +623,9 @@ export function createRoomAgent(roomId: string | null, m: ProposalMember, sort =
 		id, name, [...(m.avatar || name)].slice(0, 2).join(""), m.color ?? COLORS[0], persona, (m.role ?? "").slice(0, 200), m.model?.provider ?? null, m.model?.id ?? null, 1000 + sort, now(), "room", roomId,
 	);
 	db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(defaultThinking(), id);
+	// 群成员声明的 skills 落成真实的启用集合（canonical id），不只是写进 persona 说明
+	const ids = [...new Set((m.skills ?? []).map((n) => listSkills().find((s) => s.name === n)?.id).filter((x): x is string => !!x))];
+	if (ids.length) setAssignedSkillIds(id, ids);
 	return id;
 }
 

@@ -148,6 +148,28 @@ test("提议：模型只能是已配置的；确认后创建群专属助理；�
 	await rooms.deleteRoom(room2.id, { keepAgents: [b] });
 	assert.equal((db.prepare("SELECT scope FROM agents WHERE id = ?").get(b) as { scope: string }).scope, "user");
 });
+test("群成员声明的 skills 落成真实启用集合（不只是 persona 说明）", async () => {
+	const { listSkills } = await import("../src/skills.ts");
+	const { assignedSkillIds } = await import("../src/skill-assignments.ts");
+	const s = listSkills()[0];
+	const room = await rooms.confirmProposal({ name: "技能群", manager: 0, members: [{ name: "C", skills: [s.name, "不存在的技能"] }] });
+	const cid = (db.prepare("SELECT id FROM agents WHERE room_id = ?").get(room.id) as { id: string }).id;
+	assert.deepEqual(assignedSkillIds(cid), [s.id], "成员声明的技能应写成该成员的 canonical 启用集合，未知名字被过滤");
+});
+
+test("复制群成员为我的助理：不会扩大技能启用集合", async () => {
+	const { listSkills } = await import("../src/skills.ts");
+	const { assignedSkillIds } = await import("../src/skill-assignments.ts");
+	const { copyAgentToUser } = await import("../src/rooms/copy.ts");
+	const s = listSkills()[0];
+	const room = await rooms.confirmProposal({ name: "复制群", manager: 0, members: [{ name: "D", skills: [s.name] }] });
+	const src = (db.prepare("SELECT id FROM agents WHERE room_id = ?").get(room.id) as { id: string }).id;
+	assert.deepEqual(assignedSkillIds(src), [s.id]);
+	const copy = await copyAgentToUser(src, {});
+	const copied = assignedSkillIds(copy.id);
+	assert.ok(copied.every((id) => assignedSkillIds(src).includes(id)), "复制出来的不会多出源没有的技能");
+});
+
 test("服务重启：运行中的群聊回合标记中断，群里出现“继续”", () => {
 	const r = rooms.createRoom({ name: "重启群", memberIds: ["rb", "rc"] });
 	db.prepare("INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, depth, status, created_at) VALUES('t1', ?, 'rd', 'rb', 'manager', 0, 'running', ?)").run(r.id, now());

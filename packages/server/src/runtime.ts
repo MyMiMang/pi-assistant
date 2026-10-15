@@ -34,8 +34,9 @@ import { currentConversation, getConversation, setConversationSession } from "./
 import { memory } from "./memory/index.ts";
 import { computeNext, createRoutine, deleteRoutine, getRoutine, listRoutines, setRoutineSpawner, setRoutineStatus, updateRoutine, validateCron, webhookPath } from "./routines.ts";
 import { DUP_THRESHOLD, hasCreateGrant, observeTurn, recordSuggestion, resolveSuggestion, saveSkillVersioned, searchSkills, skillDiff, type Suggestion, suggestionPrompt } from "./skill-intel.ts";
-import { deleteSkill, getSkill, listSkills, skillIdOfPath, skillPaths, skillsVersion } from "./skills.ts";
+import { deleteSkill, getSkill, skillPaths, skillsVersion } from "./skills.ts";
 import { assignedSkillIds, assignmentsVersion, enableSkillForAgent, unassignSkillEverywhere } from "./skill-assignments.ts";
+import { enabledSkillsFor, skillFilterFor } from "./skill-scope.ts";
 import { bus } from "./bus.ts";
 import { mcpServersFor, mcpVersion } from "./mcp.ts";
 import { packagePathsFor, packagesVersion } from "./pi-packages.ts";
@@ -74,24 +75,6 @@ import { dockerOperations, sandboxMode } from "./sandbox.ts";
 import { beforeComputerAction, computerFor, cuaMcpCommand, desktopPause, desktopStatus, screenTools, screenshotDesktop, startDesktop, touchAgent } from "./desktop.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { BRAND } from "@pi-assistant/shared";
-
-/**
- * 某助理的实际技能选集：只保留 canonical id（`来源/名称`）在分配表里的技能。
- * 分配表缺失 / 空 → 一个都不启用（含内置）；主会话、后台任务、子代理共用这一处逻辑。
- */
-function skillFilterFor(agentId: string): (s: { name: string; filePath: string }) => boolean {
-	const enabled = new Set(assignedSkillIds(agentId));
-	return (s) => {
-		const id = skillIdOfPath(s.filePath, s.name);
-		return id !== null && enabled.has(id);
-	};
-}
-
-/** 该助理可用集（库存 ∩ 分配表）：技能工具只能看到这些，不泄露未选中的名字 / 描述。 */
-function enabledSkillsFor(agentId: string) {
-	const enabled = new Set(assignedSkillIds(agentId));
-	return listSkills().filter((s) => enabled.has(s.id));
-}
 
 export interface AgentRow {
 	id: string;
