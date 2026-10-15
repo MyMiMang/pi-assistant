@@ -150,6 +150,8 @@ export interface LayaStatus {
 	install: LayaInstall;
 	runtime: LayaRuntime;
 	health: LayaHealth | null;
+	/** 已安装配置（重启后仍会注册）；与 registered（进程内已注册）分开，UI 不因没在跑就显示成未配置 */
+	configured?: boolean;
 	registered: { provider: string; modelId: string; protocol: string } | null;
 	source: LayaSource;
 }
