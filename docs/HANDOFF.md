@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 当前公开版本 **v0.1.0-beta.23**（2026-10-15 已公开 Latest，仅 macOS arm64）；上一版 v0.1.0-beta.22。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
+> 当前公开版本 **v0.1.0-beta.23**（2026-10-15 已公开 Latest，仅 macOS arm64）；下一版 **v0.1.0-beta.24 候选**见 `progress-snapshots/hotfix-integration.md`（热修整合，未发布）。上一版 v0.1.0-beta.22。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
 **beta.22 发布前核对记录（历史记录；该版现已发布）——release-preflight 结果**
 - 基线 / HEAD：`next-release-integration` = `origin/main`（`5b6cf11`，已公开 beta.21）之后的 41 个提交；本 preflight 在独立干净 worktree（分支 `release-preflight`，基 `3d33d5a`）只做核对与文档修正，最终本地 HEAD = 本 preflight 提交（在 `3d33d5a` 之上、只改文档与发布说明，见 `git log`；未 push / 未 tag / 未打包）。
@@ -22,6 +22,12 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 手机通过内置的 Cloudflare 隧道远程使用。界面文字是中文。用户只通过安装包的自动更新来测试。
 
 ## 2. 进度（按版本）
+
+2026-10-22 热修整合（`hotfix-integration` 树，基 `origin/main` `8d7a7d8`，**未 push / 未 tag / 未打包**，等主会话 review 与其余对话弹窗修复 commit 后统一发 **beta.24（仅 mac-arm64）**）：
+- **合入 4 项（按顺序）**：`bd174fd` 单测数据目录 fail-closed（修「侧边栏凭空多出助理小微」根因：`test/setup.ts` 的 `PIA_DATA_DIR ??=` 在外部已有该变量时把 `clawbot.test.ts` 的测试助理 / 渠道行写进用户真实数据目录 → 下次启动「微信凭据无法解密」；改 `=` 强制覆盖 + 新增 `test-data-isolation.test.ts` + `seed-copy.test.ts` 补 setup 前置）；`eb111b9` 聊天外链左键无反应（opener ACL 未放行 → 页面侧接管 + 放行 `opener:allow-open-url`/`allow-default-urls` + Rust `is_external_link` 白名单不再吞错）；`48c50b0` 升级后已配置仍强制向导（`/api/system.onboarded` 不再依赖 `defaultModel()` 实时解析，改看持久信号 + 启动恢复丢失标志 + `modelReady` 可恢复提示）；`91d3b94` 渠道删除按钮点不动（Tauri remote webview 原生 `confirm` 不弹窗返回 false → 换应用内 `useConfirm`，删除中 disabled + ref 防双击，失败显示原因）。
+- **public-startup-audit 去重**：`2d9d95d` 与 `f1fcf11` 的 models 启动注入重叠，**只复用**后者经公开 `initModels(credentials?)` 的内存 `CredentialStore` 注入（`test/launch-memory.ts` + `models.ts` 同进程复用），未重复全合；树内无 `PIA_CREDENTIAL_STORE` 依赖、未碰 `secrets.ts` WIP。
+- **实际跑的**（本机 Node 24.20.0，全程 Mock / 注入内存凭据，未碰系统钥匙串、未安装 App）：服务端与网页 `tsc --noEmit` exit 0；网页 `vite build` 通过（2493 模块）；单测 `test-data-isolation`+`seed-copy` **3/3**、`external-links`+`onboarding`+`onboarding-recovery` **21/21**、`channels`+`clawbot`+`isolation` **18/18**；e2e `e2e/channel-delete.mjs`（纯前端 fixture，静态 dist + 拦截 /api，不起 main、不碰钥匙串）**通过**（取消零请求 / 失败保留并提示 / 慢删除防双击 / 坏凭据可删 / 390 宽 / 无原生 confirm）。
+- **未做 / 边界**：未 push / 未 tag / 未打包 / 未装真机；未验证安装包外链真机点击、`cargo build`（本机无 Rust 工具链）、真实 VM；钥匙串系统弹窗根因**仍未证**，本轮没修钥匙串也没宣称已修；未访问 / 删除用户真实「小微」与微信连接；其余 `Settings/Extensions/Email/Conversations/Memory/Skills/DesktopSettings` 的原生 `confirm/alert/prompt` 由主会话另一任务统一改，本树不碰、发布等这些 commit 到齐。详见 `progress-snapshots/hotfix-integration.md`。
 
 2026-10-22 桌面聊天 markdown 外链左键点击无反应（已摘入 `hotfix-integration` 树，基 `origin/main` `8d7a7d8`，**未 push / 未 tag**，交主会话 review 后统一发布）：
 - **根因**（完整链路）：`Markdown.tsx` 渲染 `<a target="_blank">`；主窗口是远程页面（`remote-ui` capability）；`tauri-plugin-opener` 默认 JS 拦截会 `preventDefault` 再 invoke `plugin:opener|open_url`，但 `remote-ui` **没放行该命令**（`default.json` 的 `opener:default` 是 `"windows": []`，不覆盖任何窗口）→ ACL 拒绝 → 点击被吞。beta.19 只关掉 JS 拦截改走原生 `on_new_window`/`on_navigation`，安装版实测（用户 `beta.21` 截图）仍无反应，且原回调 `let _ = open_url(...)` 吞错误、无日志无反馈。
