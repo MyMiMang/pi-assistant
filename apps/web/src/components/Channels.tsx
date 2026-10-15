@@ -1,8 +1,8 @@
 import { CheckCircle2, ChevronDown, Copy, Loader2, MessageSquare, Plus, RefreshCw, Trash2, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Badge, Button, cx, Help, Input, avatarText } from "./ui";
+import { Badge, Button, cx, Help, Input, avatarText, useConfirm } from "./ui";
 
 type Kind = "wecom_bot" | "wecom" | "feishu" | "dingtalk";
 type AnyKind = Kind | "wechat_clawbot";
@@ -195,6 +195,10 @@ function ClawbotSection({ items, agents, onChange }: { items: Channel[]; agents:
 function ClawbotCard({ c, agents, onChange }: { c: Channel; agents: { id: string; name: string; avatar: string }[]; onChange: () => void }) {
 	const [login, setLogin] = useState<Login | undefined>(c.login);
 	const [code, setCode] = useState("");
+	const [deleting, setDeleting] = useState(false);
+	const [delErr, setDelErr] = useState("");
+	const [confirmDlg, askConfirm] = useConfirm();
+	const deletingRef = useRef(false);
 	const st = STATE[c.status.state] ?? STATE.off;
 	const agent = agents.find((a) => a.id === c.agentId);
 	const active = login && ["wait", "scaned", "need_verifycode"].includes(login.state);
@@ -206,8 +210,26 @@ function ClawbotCard({ c, agents, onChange }: { c: Channel; agents: { id: string
 	}, [active, c.id]);
 	const start = async () => setLogin(await api(`/api/channels/${c.id}/clawbot/login`, { method: "POST" }));
 	const connected = !!c.config.accountId;
+	const del = async () => {
+		if (deletingRef.current) return;
+		const ok = await askConfirm({ title: `断开并删除「${c.name}」？`, body: "只删除这条微信连接，助理和对话记录都会保留；以后可以重新扫码连接。", ok: "删除", danger: true });
+		if (!ok || deletingRef.current) return;
+		deletingRef.current = true;
+		setDeleting(true);
+		setDelErr("");
+		try {
+			await api(`/api/channels/${c.id}`, { method: "DELETE" });
+			onChange();
+		} catch (e) {
+			setDelErr(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			deletingRef.current = false;
+			setDeleting(false);
+		}
+	};
 	return (
 		<div className="space-y-3 rounded-lg bg-hover/60 p-3" data-testid="channel-wechat_clawbot">
+			{confirmDlg}
 			<div className="flex flex-wrap items-center gap-2">
 				<Badge tone={st.tone}>{c.status.state === "waiting" ? "未连接" : st.label}</Badge>
 				<span className="min-w-0 truncate text-xs text-mut">{c.status.detail}</span>
@@ -265,9 +287,10 @@ function ClawbotCard({ c, agents, onChange }: { c: Channel; agents: { id: string
 				<Button size="sm" variant="ghost" onClick={() => api(`/api/channels/${c.id}`, { method: "PUT", json: { kind: c.kind, enabled: !c.enabled } }).then(onChange)}>
 					{c.enabled ? "停用" : "启用"}
 				</Button>
-				<Button size="sm" variant="danger" onClick={() => confirm("断开并删除微信 ClawBot？") && api(`/api/channels/${c.id}`, { method: "DELETE" }).then(onChange)}>
-					<Trash2 size={14} />
+				<Button size="sm" variant="danger" aria-label={`删除微信 ClawBot「${c.name}」`} disabled={deleting} onClick={del} data-testid={`channel-delete-${c.id}`}>
+					{deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
 				</Button>
+				{delErr && <span className="text-sm text-red-600">{delErr}</span>}
 			</div>
 		</div>
 	);
@@ -434,12 +457,34 @@ function ChannelForm({ kind, agents, publicUrl, existing, onDone }: { kind: Kind
 function ChannelCard({ c, publicUrl, agents, onChange }: { c: Channel; publicUrl: string | null; agents: { id: string; name: string; avatar: string }[]; onChange: () => void }) {
 	const [edit, setEdit] = useState(false);
 	const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null);
+	const [deleting, setDeleting] = useState(false);
+	const [delErr, setDelErr] = useState("");
+	const [confirmDlg, askConfirm] = useConfirm();
+	const deletingRef = useRef(false);
 	const st = STATE[c.status.state] ?? STATE.off;
 	const agent = agents.find((a) => a.id === c.agentId);
 	const cb = c.callbackPath ? `${publicUrl ?? "<公网地址>"}${c.callbackPath}` : null;
+	const del = async () => {
+		if (deletingRef.current) return;
+		const ok = await askConfirm({ title: `删除「${c.name}」？`, body: "只删除这条渠道连接，助理和对话记录都会保留。", ok: "删除", danger: true });
+		if (!ok || deletingRef.current) return;
+		deletingRef.current = true;
+		setDeleting(true);
+		setDelErr("");
+		try {
+			await api(`/api/channels/${c.id}`, { method: "DELETE" });
+			onChange();
+		} catch (e) {
+			setDelErr(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			deletingRef.current = false;
+			setDeleting(false);
+		}
+	};
 	if (edit) return <ChannelForm kind={c.kind as Kind} agents={agents} publicUrl={publicUrl} existing={c} onDone={() => (setEdit(false), onChange())} />;
 	return (
 		<div className="space-y-3 rounded-xl border border-line p-4" data-testid={`channel-${c.kind}`}>
+			{confirmDlg}
 			<div className="flex items-center gap-2">
 				<MessageSquare size={16} />
 				<b>{c.name}</b>
@@ -491,10 +536,11 @@ function ChannelCard({ c, publicUrl, agents, onChange }: { c: Channel; publicUrl
 				<Button size="sm" variant="ghost" onClick={() => api(`/api/channels/${c.id}`, { method: "PUT", json: { enabled: !c.enabled } }).then(onChange)}>
 					{c.enabled ? "停用" : "启用"}
 				</Button>
-				<Button size="sm" variant="danger" onClick={() => confirm(`删除「${c.name}」？`) && api(`/api/channels/${c.id}`, { method: "DELETE" }).then(onChange)}>
-					<Trash2 size={14} />
+				<Button size="sm" variant="danger" aria-label={`删除渠道「${c.name}」`} disabled={deleting} onClick={del} data-testid={`channel-delete-${c.id}`}>
+					{deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
 				</Button>
 				{test && <span className={cx("text-sm", test.ok ? "text-green-600" : "text-red-600")}>{test.message}</span>}
+				{delErr && <span className="text-sm text-red-600">{delErr}</span>}
 			</div>
 		</div>
 	);
