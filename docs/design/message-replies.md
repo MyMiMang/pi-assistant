@@ -148,7 +148,7 @@ export interface ReplySnapshot {
 
 - 发送路由只发生一次；重复投递同一 `clientId` 返回已有消息，不再唤醒。
 - `room_turns.source_message_id` 记录触发消息；入队前若已存在该 source 的未取消回合，则跳过，避免 retry / 重启后 double wake。
-- 实现（`packages/server/src/rooms/index.ts`）：`postUserMessage` 先落库，再由 `routeUserMessage(roomId, messageId)` 按 DB 里的**可信来源消息 id** 路由，不接受客户端传参。同一来源只路由一次（已有任何非 `cancelled` 回合 → 整组不再路由）；`enqueue(..., sourceMessageId, dedup)` 对根回合用 `INSERT … WHERE NOT EXISTS` 原子认领 `(room, source, agent, reason)`，因此 @所有人 每人 1 条、管理者分工（reason 不同）与多步 followup 照常入队，不会被同 source 误吞；真正不同的消息（即使同文本）各唤醒一次。
+- 实现（`packages/server/src/rooms/index.ts`）：`postUserMessage` 先落库，再由 `routeUserMessage(roomId, messageId)` 按 DB 里的**可信来源消息 id** 路由，不接受客户端传参。同一来源只路由一次（已有任何回合，**含已 `cancelled`** → 整组不再路由）；只有显式 `retry`（`routeUserMessage(roomId, messageId, { retry: true })`）且此前全部回合都已取消时，才允许重新唤醒（避免用户 stop 后被普通重复事件误叫起来）。`enqueue(..., sourceMessageId, dedup)` 对根回合用 `INSERT … WHERE NOT EXISTS` 原子认领 `(room, source, agent, reason)`，且多收件人组整体在一个事务里入队（要么全认领、要么全不认领，避免「部分入队后 crash」留下半组被守卫跳过），因此 @所有人 每人 1 条、管理者分工（reason 不同）与多步 followup 照常入队，不会被同 source 误吞；真正不同的消息（即使同文本）各唤醒一次。这是 best-effort 去重，**不是 exactly-once 保证**。
 - 服务重启沿用现有 `bootstrapRooms()`：`running/queued` 标 `interrupted`，用户“继续”时按 `source_message_id` 恢复，不重新路由。
 
 ## 8. 模型上下文（Pi 适配，不改 SDK）

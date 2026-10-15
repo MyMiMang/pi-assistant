@@ -256,7 +256,7 @@ const emitState = (roomId: string) => bus.emit({ type: "room.state", roomId, sta
  * 使重复路由事件 / 客户端重试 / 服务重启不重复唤醒；真正分工出的不同收件人 / 用途照常入队（见 docs/design/message-replies.md §7）。
  */
 function enqueue(roomId: string, s: RoomState, turns: PlannedTurn[], sourceMessageId: string | null = null, dedup = false) {
-	for (const t of turns) {
+	const insert = (t: PlannedTurn) => {
 		const turnId = uid("rt");
 		if (dedup && sourceMessageId) {
 			const res = db.prepare(
@@ -264,11 +264,25 @@ function enqueue(roomId: string, s: RoomState, turns: PlannedTurn[], sourceMessa
 				 SELECT ?,?,?,?,?,?,?,?,?,?
 				 WHERE NOT EXISTS (SELECT 1 FROM room_turns WHERE room_id = ? AND source_message_id = ? AND agent_id = ? AND reason = ? AND status != 'cancelled')`,
 			).run(turnId, roomId, s.roundId, t.agentId, t.reason, t.task ?? null, t.depth, "queued", now(), sourceMessageId, roomId, sourceMessageId, t.agentId, t.reason);
-			if (!res.changes) continue;
+			if (!res.changes) return;
 		} else {
 			db.prepare("INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, task, depth, status, created_at, source_message_id) VALUES(?,?,?,?,?,?,?,?,?,?)").run(turnId, roomId, s.roundId, t.agentId, t.reason, t.task ?? null, t.depth, "queued", now(), sourceMessageId);
 		}
 		s.queue.push({ ...t, turnId });
+	};
+	// 去重批次整体事务化：@所有人 等多收件人组要么全认领、要么全不认领，
+	// 避免「部分入队后 crash」留下半组、下一次被 source 守卫整组跳过而丢掉其余唤醒。
+	if (dedup && sourceMessageId && turns.length > 1) {
+		db.exec("BEGIN");
+		try {
+			for (const t of turns) insert(t);
+			db.exec("COMMIT");
+		} catch (e) {
+			db.exec("ROLLBACK");
+			throw e;
+		}
+	} else {
+		for (const t of turns) insert(t);
 	}
 }
 function cancelQueue(roomId: string, s: RoomState) {
@@ -312,16 +326,21 @@ export function postUserMessage(roomId: string, text: string, opts: { mentions?:
 }
 
 /**
- * 按已持久化的群用户消息路由本轮。以 DB 行（可信 sourceMessageId）为准，不接受客户端传参；
- * 同一来源消息只路由一次：已有未取消回合（重试 / 重启 / 重复路由事件）就不再入队、不重复唤醒。
+ * 按已持久化的群用户消息路由本轮。以 DB 行（可信 sourceMessageId）为准，不接受客户端传参。
+ * 幂等：同一来源已有任何回合（重试 / 重启 / 重复路由事件）就整组不再路由、不重复唤醒。
+ * 被取消（用户 stop / 中断）的回合也算「已路由」：普通重复事件不会把它重新叫起来，
+ * 只有显式 `retry`（用户主动重试）才允许在**全部已取消**时重新唤醒（见 docs/design/message-replies.md §7）。
+ * 这不是 exactly-once 保证，只是「同一来源不重复唤醒」的 best-effort 去重。
  */
-export function routeUserMessage(roomId: string, messageId: string): void {
+export function routeUserMessage(roomId: string, messageId: string, opts: { retry?: boolean } = {}): void {
 	const r = getRoom(roomId);
 	if (!r) throw new Error("群不存在");
 	const msg = getMessage(messageId);
 	if (!msg || msg.room_id !== roomId || msg.role !== "user" || msg.agent_id !== "") throw new Error("不是群里的用户消息");
-	// 幂等：这个来源已经产生过未取消回合 → 整组不再重复路由 / 唤醒
-	if (db.prepare("SELECT 1 FROM room_turns WHERE room_id = ? AND source_message_id = ? AND status != 'cancelled' LIMIT 1").get(roomId, messageId)) return;
+	// 幂等：这个来源已经产生过回合 → 整组不再路由 / 唤醒（含被取消的回合）。
+	// 仅当显式 retry 且此前**全部**回合都被取消时，才允许重新唤醒。
+	const prior = db.prepare("SELECT status FROM room_turns WHERE room_id = ? AND source_message_id = ?").all(roomId, messageId) as { status: string }[];
+	if (prior.length && !(opts.retry && prior.every((x) => x.status === "cancelled"))) return;
 	const meta = msg.meta ?? {};
 	const body = msg.content;
 	const files = (((meta.attachments as { fileId?: string }[] | undefined) ?? []).map((a) => (a.fileId ? getFile(a.fileId) : undefined)).filter((f): f is FileRow => !!f && f.room_id === roomId && f.agent_id === ""));

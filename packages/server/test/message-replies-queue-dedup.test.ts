@@ -113,3 +113,20 @@ test("clientId 幂等仍然生效（不落第二条、不重复路由）", async
 	assert.equal(turnsFor(a.id).length, 1);
 	await rooms.stop(room.id, false);
 });
+
+test("全部取消：普通重复事件不重唤，只有显式 retry 才重新唤醒（不承诺 exactly-once）", async () => {
+	const msg = rooms.postUserMessage(room.id, "@甲 取消语义", { mentions: ["qd-a"] });
+	// 先停下这一轮（中止当前、取消排队），再把这个来源的所有回合置为 cancelled
+	await rooms.stop(room.id, false);
+	db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE room_id = ? AND source_message_id = ?").run(now(), room.id, msg.id);
+	const cancelled = turnsFor(msg.id);
+	assert.ok(cancelled.length >= 1);
+	assert.ok(cancelled.every((t) => t.status === "cancelled"));
+	// 普通重复路由事件：不重新唤醒（避免取消后被误叫起来）
+	rooms.routeUserMessage(room.id, msg.id);
+	assert.equal(turnsFor(msg.id).length, cancelled.length, "普通重复事件不重新唤醒");
+	// 显式 retry：允许重新入队
+	rooms.routeUserMessage(room.id, msg.id, { retry: true });
+	assert.ok(turnsFor(msg.id).length > cancelled.length, "显式 retry 才重新入队");
+	await rooms.stop(room.id, false);
+});
