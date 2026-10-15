@@ -75,4 +75,28 @@
 - 语义修正：`scripts/pi-update.mjs` 拆成 bump（升三包 + 同步依赖记录，compat 只写 `target`）与 `finalize`（**测试通过后**才写 `compat.json` 的 `testedWith`）；`pi-latest.yml` 把 `finalize` 放在测试成功之后，失败开 issue 且基线不前进。`check-pi.mjs` 对 `target != testedWith` 给提示。
 - 新增本地验收：`test/pi-mcp-1.2.test.ts` 3/3、`test/pi-1.2-custom-provider.test.ts` 3/3、`test/pi-1.2-boot-context.test.ts` 5/5（都是真实 Pi 会话 + 本地 fake MCP / loopback 假服务 + 假 Key + 临时目录）。受影响定向测试 57 通过 / 1 失败（既有 macOS bsdtar 基线）/ 2 跳过；两端 typecheck exit 0；web `vite build` 2507 模块通过。
 - 设计与验收自包含入库：`docs/design/pi-1.2-upgrade.md`；未验边界见 HANDOFF 本轮条目。
-- 本候选此阶段**未合入**（各自独立树进行中，由主统一合并，勿提前标完成）：从消息 fork、上下文/技能整理与按需启用、tool discovery / codemode 受控验证、主题 UI 与 AI 主题。真实云 / 真实 Key / 真实定时 / 安装包真机仍未验。
+- 此阶段随后已由「独占最终候选整合」把从消息 fork / 主题 UI 与 AI 主题 / 上下文技能整理 / tool discovery 受控验证**全部合入**（见 §11）。真实云 / 真实 Key / 真实定时 / 安装包真机仍未验。
+
+## 11. 独占最终候选整合：fork / 主题 / 上下文技能 / tool-discovery（本轮，main owner 复核）
+四棵独立树以 `--no-ff` 合入本候选（保 `deps/pi-1.2.0` 祖先；均未 push / 未 tag / 未打包）：
+
+| 树 | HEAD | 合并提交 | 冲突与处理 |
+|---|---|---|---|
+| `pi-session-fork` | `14c4c0a` | `53961eb` | 仅 `docs/HANDOFF.md` 冲突；按候选为准合并 |
+| `appearance-theme-ai-workflow`（含 `appearance-theme-implementation` 祖先） | `8b49628` | `3e388bd` | 仅 `packages/server/src/pi-adapter/index.ts` 冲突；保 `inMemorySession` 与 `parentSession` 两者 |
+| `pi-context-skill-actions` | `1a4d7bc` | `1924d20` | `docs/HANDOFF.md` / `docs/ROADMAP.md` / `src/http.ts` / `src/runtime.ts` 4 处；保 fork 的 entry 映射队列与技能的 `skillCmd`（`promptSession` 第 4 参），compact 路由取带 `instructions` 的版本 |
+| `pi-tool-discovery-validation` | `16fde00` | `8513b9c` | 无冲突；只加测试 + 报告，无生产改动 |
+
+关键修复（不是重派已 done 任务）：
+- **entry 映射去风险**（`953bc2c`）：`pi-adapter` 的 `entry_id` 事件不再用 `getLeafId()`（多个 `message_end` 落在同一 tick 会把几条都指到最后一条），改为在持久化后的微任务里用公开 `SessionManager.getEntries()` 按**消息对象身份**（`entry.message === message`）反查；`runtime` 的 user 映射从「最近一条未映射」改为**发送顺序 FIFO**（连发同文本不再前后对调）。新增 `test/pi-entry-mapping.test.ts`（真实 Pi 会话 + faux 模型，并行工具结果 + 连发同文本 user）与 `session-fork.test.ts` 的 FIFO 用例；旧「最近未映射」实现下 FIFO 用例会挂（已实测）。
+- **fork 幂等 / 失败清理**（`953bc2c`）：`conversation_forks(source_conversation_id, client_id)` 建**唯一索引**（原只是普通索引）；建会话 / 写库任一步失败只清理本次自己新建的会话文件与对话行，绝不碰源。
+- **主题素材诚实化**（`39313fd`）：主题引擎只用 enum 装饰、**不会把素材图绘成背景**，`ThemeImagePicker` 只留「仅作参考」，不再提供「用作背景 / 装饰」，避免界面承诺未实现的能力（manifest v1 仍保留那两个素材位）。参考图仍可上传作视觉参考（AI 生成用），导出默认剥离。
+
+实跑（Node 24.19.0，全 Mock / faux / 临时数据目录 / 内存凭据；未碰真实 key / 云 / VM / 麦克风 / 用户数据）：
+- 服务端单测：`theme-ai` **13/13**、`theme-manifest` 22/22、`appearance-theme` 8/8、`session-fork` **4/4**、`pi-entry-mapping` **1/1**、`context-compact-skill-pick` 4/4、`context-skill-pick-http` **5/5**、`tool-discovery` **13/13**、`pi-compat` 5/5、`pi-events-union` 2/2、`pi-1.2-boot-context` 5/5、`isolation` 6/6、`message-replies` 11/11 —— 全部通过。
+- 前端真实界面 e2e（真实 server + Chromium）：`e2e/skill-pick-ui.mjs` 全过（技能单选 / 语音取消不清 chip / 引用条 + chip 共存 / 390 不撑宽 / 整理弹窗）、`e2e/session-fork-ui.mjs` 5/5（390 + 引用 + 草稿分桶）、`e2e/theme-ai-ui.mjs` 5/5（AI 生成 / 继续改 / 保存 / 另存 / 390）。
+- 前端纯逻辑 fixture：`theme-ai-frontend.test.mjs` 4/4、`session-fork-frontend.test.mjs` 4/4（需 `node --import tsx`）。
+- 真实 HTTP：`e2e/session-fork-http.mjs` 8/8。
+- 两端 `tsc --noEmit` exit 0；web `vite build` 2517→随后 2518 模块通过。
+
+未验（如实）：真实云模型的生成质量与参考图实际效果；真实 MCP（cua-driver / http）、真实云模型与凭据、真实电脑（宿主）守卫全量回归（tool-discovery 只用手头 fake host tool fixtures 的最小证明）；「用作背景 / 装饰」素材图渲染与 zip 导出；全量 `e2e/run.mjs`（「首次运行向导」为既有基线失败）；真机安装包。未 push / 未 tag。
