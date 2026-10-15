@@ -11,6 +11,8 @@ import { splitThinking } from "../thinking";
 import { fmtMoney, fmtTok, type MsgUsage, useFx } from "./usage-fmt";
 import { Avatar, cx } from "./ui";
 import { ProposalCard } from "./RoomCards";
+import { MessageActions, QuotedMessage, type MessageInteraction } from "./MessageReply";
+import { quotedBlock } from "../replies";
 
 // ------------------------------------------------------------------ 工具 → 文案
 const TOOL_LABEL: Record<string, string> = {
@@ -156,7 +158,7 @@ export function Thinking({ text, live }: { text: string; live: boolean }) {
 	);
 }
 
-export function BotPart({ p, live, busy, renderSubagent }: { p: Part; live: boolean; busy?: boolean; renderSubagent?: (m: Message) => ReactNode }) {
+export function BotPart({ p, live, busy, renderSubagent, onQuote, onJump, interaction }: { p: Part; live: boolean; busy?: boolean; renderSubagent?: (m: Message) => ReactNode; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => MessageInteraction }) {
 	if (p.kind === "steps") return <Steps items={p.items} live={live} busy={busy} />;
 	const m = p.m;
 	if (m.role === "card")
@@ -165,17 +167,22 @@ export function BotPart({ p, live, busy, renderSubagent }: { p: Part; live: bool
 	const split = splitThinking(m.content);
 	const thinking = [String(m.meta.thinking ?? "").trim(), split.thinking].filter(Boolean).join("\n\n");
 	const body = split.text;
+	const quoted = onJump ? quotedBlock(m) : null;
 	return (
 		<>
 			{thinking && <Thinking text={thinking} live={m.status === "streaming" && !body} />}
-			{(body || (m.status === "streaming" && !thinking)) && (
-				<div className={cx("pa-bubble prose-wrap", m.status === "error" && "error")}>
-					{body ? <Markdown text={body} /> : null}
-					{m.status === "streaming" && <span className="caret text-sm" />}
-					{m.status === "error" && <div className="mt-1 text-xs text-red-500">{String(m.meta.error ?? "出错了")}</div>}
-					{m.status === "interrupted" && <div className="mt-1 text-xs text-mut2">（已中断）</div>}
-				</div>
-			)}
+			<div className="pa-bot-msg" data-mid={m.id} {...(interaction ? interaction(m) : undefined)}>
+				{quoted && <QuotedMessage block={quoted} onJump={onJump!} />}
+				{(body || (m.status === "streaming" && !thinking)) && (
+					<div className={cx("pa-bubble prose-wrap", m.status === "error" && "error")}>
+						{body ? <Markdown text={body} /> : null}
+						{m.status === "streaming" && <span className="caret text-sm" />}
+						{m.status === "error" && <div className="mt-1 text-xs text-red-500">{String(m.meta.error ?? "出错了")}</div>}
+						{m.status === "interrupted" && <div className="mt-1 text-xs text-mut2">（已中断）</div>}
+					</div>
+				)}
+				<MessageActions m={m} onQuote={onQuote} side="left" />
+			</div>
 			{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} /> : null}
 			{m.meta.usage && m.status === "done" ? <UsageLine u={m.meta.usage as MsgUsage} model={String(m.meta.model ?? "")} /> : null}
 		</>
@@ -194,7 +201,7 @@ function UsageLine({ u, model }: { u: MsgUsage; model: string }) {
 	);
 }
 
-export function BotTurn({ row, agent, live, renderSubagent }: { row: Extract<Row, { kind: "bot" }> | null; agent: Pick<Agent, "id" | "avatar" | "color">; live: boolean; renderSubagent?: (m: Message) => ReactNode }) {
+export function BotTurn({ row, agent, live, renderSubagent, onQuote, onJump, interaction }: { row: Extract<Row, { kind: "bot" }> | null; agent: Pick<Agent, "id" | "avatar" | "color">; live: boolean; renderSubagent?: (m: Message) => ReactNode; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => MessageInteraction }) {
 	const all = row?.parts ?? [];
 	// 子代理指令卡不再显示（任务走 header 的「子代理」入口）；整轮只有它时这一轮也不占位
 	const parts = renderSubagent ? all : all.filter((p) => !(p.kind === "msg" && p.m.role === "card" && p.m.meta.kind === "subagent"));
@@ -210,7 +217,7 @@ export function BotTurn({ row, agent, live, renderSubagent }: { row: Extract<Row
 			</div>
 			<div className="pa-bot-body">
 				{parts.map((p, i) => (
-					<BotPart renderSubagent={renderSubagent} busy={live} key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} />
+					<BotPart renderSubagent={renderSubagent} onQuote={onQuote} onJump={onJump} interaction={interaction} busy={live} key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} />
 				))}
 				{live && !streaming && !waitingCard && <Activity tool={runningTool} />}
 			</div>
@@ -218,9 +225,11 @@ export function BotTurn({ row, agent, live, renderSubagent }: { row: Extract<Row
 	);
 }
 
-export function UserMsg({ m, reaction }: { m: Message; reaction?: "eyes" | "done" }) {
+export function UserMsg({ m, reaction, onQuote, onJump, interaction }: { m: Message; reaction?: "eyes" | "done"; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: MessageInteraction }) {
+	const quoted = onJump ? quotedBlock(m) : null;
 	return (
-		<div className="pa-msg user">
+		<div className="pa-msg user" data-mid={m.id} {...interaction}>
+			{quoted && <QuotedMessage block={quoted} onJump={onJump!} mine />}
 			{m.content && (
 				<div className="pa-bubble relative">
 					{m.content}
@@ -229,6 +238,7 @@ export function UserMsg({ m, reaction }: { m: Message; reaction?: "eyes" | "done
 			)}
 			{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} mine /> : null}
 			<Delivery state={m.meta.delivery} />
+			<MessageActions m={m} onQuote={onQuote} side="right" />
 		</div>
 	);
 }

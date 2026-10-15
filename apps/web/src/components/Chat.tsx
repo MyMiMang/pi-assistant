@@ -9,25 +9,30 @@ import { api, upload } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
 import { resolveLayout, useWindowWidth } from "../layout";
-import type { Agent, Attachment } from "../types";
+import type { Agent, Attachment, Message } from "../types";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
 import { Avatar, Button, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
 import { COMPOSER_LABEL, isSendKey, SEND_HINT } from "../composer";
 
 import { group, BotTurn as SharedBotTurn, BotPart as SharedBotPart, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
+import { agentSendBody, buildReplyRef, draftSignature, newClientId, resolveAgentReplyTarget, replyDraftKey, type ReplyRef } from "../replies";
+import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
+import { locateAgentMessage } from "../replies-api";
+import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
+import { mergeMessages } from "../selection";
 export { Activity, activityOf, Thinking, group, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
 // 聊天里不再显示子代理指令卡：任务统一从 header 的「子代理」入口 → 任务概览 → 详情查看。
-export function BotPart(props: { p: Part; live: boolean; busy?: boolean }) {
+export function BotPart(props: { p: Part; live: boolean; busy?: boolean; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => any }) {
 	return <SharedBotPart {...props} />;
 }
-function BotTurn(props: { row: Extract<Row, { kind: "bot" }> | null; agent: Agent; live: boolean }) {
+function BotTurn(props: { row: Extract<Row, { kind: "bot" }> | null; agent: Agent; live: boolean; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => any }) {
 	return <SharedBotTurn {...props} />;
 }
 
 // ------------------------------------------------------------------ 主体
 export default function Chat({ agentId }: { agentId: string }) {
-	const { agents, messages, msgState, set, info } = useStore();
+	const { agents, messages, msgState, set, info, convs } = useStore();
 	const agent = agents.find((a) => a.id === agentId);
 	const list = messages[agentId] ?? [];
 	const st = msgState[agentId];
@@ -37,6 +42,16 @@ export default function Chat({ agentId }: { agentId: string }) {
 	const stick = useRef(true);
 	const [drag, setDrag] = useState(false);
 	const composer = useRef<{ addFiles: (f: FileList | File[]) => void }>(null);
+	const composerWrap = useRef<HTMLDivElement>(null);
+	// ---- 引用回复：draft 按「助理 + 对话」分桶；右键 / 长按只是辅助入口
+	const convId = convs[agentId]?.current ?? null;
+	const rKey = replyDraftKey.agent(agentId, convId);
+	const quote = useReplyDrafts((s) => s.drafts[rKey] ?? null);
+	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: agentId, name: agent?.name ?? "助理" }));
+	const onInsert = (msgs: Message[]) => useStore.setState((s) => ({ messages: { ...s.messages, [agentId]: mergeMessages(msgs, s.messages[agentId]) } }));
+	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), onInsert);
+	const replyCtx = useReplyContext(onQuote);
+	useComposerInset(scroller, composerWrap, stick);
 	useLayoutEffect(() => {
 		const el = scroller.current;
 		if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -46,6 +61,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 	}, [agentId]);
 	if (!agent) return null;
 	const running = agent.status === "running";
+	const replyLabel = resolveAgentReplyTarget(quote, agent.name).quoteLabel;
 	// 反应：最后一条用户消息在处理中 👀；小任务（≤3 步且无错误）完成后 ✓
 	const reactions = new Map<string, "eyes" | "done">();
 	rows.forEach((r, i) => {
@@ -135,17 +151,19 @@ export default function Chat({ agentId }: { agentId: string }) {
 								{r.label}
 							</div>
 						) : r.kind === "user" ? (
-							<UserMsg key={r.m.id} m={r.m} reaction={reactions.get(r.m.id)} />
+							<UserMsg key={r.m.id} m={r.m} reaction={reactions.get(r.m.id)} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf(r.m)} />
 						) : r.kind === "system" ? (
 							<SystemMsg key={r.m.id} m={r.m} />
 						) : (
-							<BotTurn key={r.id} row={r} agent={agent} live={running && r === lastRow} />
+							<BotTurn key={r.id} row={r} agent={agent} live={running && r === lastRow} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf} />
 						),
 					)}
 					{pendingTurn && <BotTurn row={null} agent={agent} live />}
 				</div>
 			</div>
-			<Composer ref={composer} agentId={agentId} name={agent.name} model={agent.model?.id} running={running} drag={drag} />
+			{replyCtx.menuEl}
+			{jumpState && !quote && <JumpHint s={jumpState.s} onRetry={retryJump} />}
+			<Composer ref={composer} agentId={agentId} name={agent.name} model={agent.model?.id} running={running} drag={drag} replyKey={rKey} replyLabel={replyLabel} onJump={jump} jumpState={jumpState} onRetryJump={retryJump} wrapRef={composerWrap} />
 		</div>
 	);
 }
@@ -163,9 +181,14 @@ function ThreadSkeleton() {
 }
 
 // ------------------------------------------------------------------ 悬浮输入框：拖拽文件 / 粘贴图片
-function Composer({ agentId, name, model, running, drag, ref }: { agentId: string; name: string; model?: string; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }> }) {
+function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLabel, onJump, jumpState, onRetryJump, wrapRef }: { agentId: string; name: string; model?: string; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; replyLabel: string | null; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
 	const [text, setText] = useState("");
+	const [sending, setSending] = useState(false);
+	const [sendErr, setSendErr] = useState("");
+	// 幂等：同一份草稿（文字 + 附件 + 引用）重试复用同一 clientId；草稿一变就换新的，避免重复唤醒
+	const clientRef = useRef<{ sig: string; id: string } | null>(null);
 	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f) => upload(agentId, f));
+	const quote = useReplyDrafts((s) => s.drafts[replyKey] ?? null);
 	const ta = useRef<HTMLTextAreaElement>(null);
 	useLayoutEffect(() => {
 		const el = ta.current;
@@ -174,17 +197,36 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 		el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
 	}, [text]);
 	const send = async () => {
-		if (!text.trim() && !files.length) return;
-		const body = { text, attachments: files.map((f) => f.fileId), conversationId: useStore.getState().convs[agentId]?.current };
+		if (sending || (!text.trim() && !files.length)) return;
+		setSending(true);
+		setSendErr("");
+		// 幂等：同一份草稿（文字 + 附件 + 引用）重试复用同一 clientId，避免重复唤醒；草稿一变就换新的
+		const sig = draftSignature({ text, attachmentIds: files.map((f) => f.fileId), replyToId: quote?.messageId });
+		if (!clientRef.current || clientRef.current.sig !== sig) clientRef.current = { sig, id: newClientId() };
+		const body = agentSendBody(text, files.map((f) => f.fileId), useStore.getState().convs[agentId]?.current, quote?.messageId, clientRef.current.id);
+		const snapshot = { text, files };
 		setText("");
 		clear();
-		await api(`/api/agents/${agentId}/messages`, { method: "POST", json: body });
+		try {
+			await api(`/api/agents/${agentId}/messages`, { method: "POST", json: body });
+			clearReplyDraft(replyKey); // 发送成功才清引用
+			clientRef.current = null; // 下次是一份新草稿
+		} catch (e) {
+			// 网络失败：还原文字 / 附件，且**保留引用**
+			setText(snapshot.text);
+			setFiles(snapshot.files);
+			setSendErr((e as Error).message);
+		} finally {
+			setSending(false);
+		}
 	};
 	if (ref && typeof ref === "object") (ref as React.RefObject<{ addFiles: typeof addFiles } | null>).current = { addFiles };
 	return (
-		<div className="pa-composer-wrap">
+		<div className="pa-composer-wrap" ref={wrapRef}>
 			<div className={cx("pa-composer @container", drag && "drag")}>
 				{drag && <div className="pointer-events-none pb-2 text-center text-sm text-accent">松开即可把文件发给 {name}</div>}
+				{quote && <ReplyBar reply={quote} quoteLabel={replyLabel} mentionLabel={null} onCancel={() => clearReplyDraft(replyKey)} onJump={onJump} jump={jumpState ? { s: jumpState.s, retry: onRetryJump } : null} />}
+				{sendErr && <div className="pb-2 text-xs text-red-600" data-testid="send-error">{sendErr}</div>}
 				<AttachTray files={files} pending={pending} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} onRemovePending={removePending} />
 				<textarea
 					ref={ta}
@@ -193,6 +235,12 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 					onChange={(e) => setText(e.target.value)}
 					onPaste={(e) => pasteFiles(e, (fs) => void addFiles(fs))}
 					onKeyDown={(e) => {
+						if (e.key === "Escape" && quote) {
+							// 只取消引用，不清空已输入文字（菜单 / 弹窗的 Esc 由它们自己处理顶层）
+							e.preventDefault();
+							clearReplyDraft(replyKey);
+							return;
+						}
 						if (isSendKey(e)) {
 							e.preventDefault();
 							void send();
@@ -214,7 +262,7 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 							<Square size={13} fill="currentColor" />
 						</button>
 					) : (
-						<button className="pa-send" disabled={!text.trim() && !files.length} onClick={send} aria-label={t("发送")} title={SEND_HINT} aria-keyshortcuts="Shift+Enter">
+						<button className="pa-send" disabled={sending || (!text.trim() && !files.length)} onClick={send} aria-label={t("发送")} title={SEND_HINT} aria-keyshortcuts="Shift+Enter">
 							<ArrowUp className="pa-ic" />
 						</button>
 					)}
