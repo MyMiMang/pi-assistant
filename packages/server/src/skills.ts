@@ -131,7 +131,10 @@ export function saveSkill(input: { name: string; description: string; body: stri
 
 export function deleteSkill(name: string) {
 	if (!NAME_RE.test(name)) return false;
-	const dir = join(userSkillsDir(), name);
+	const existing = getSkill(name);
+	if (!existing || existing.builtin) return false;
+	// 内置不可删；用户自建在 skills/，外部导入在 skills-external/，按来源删对应目录
+	const dir = join(existing.source === "external" ? externalSkillsDir() : userSkillsDir(), name);
 	if (!existsSync(dir)) return false;
 	rmSync(dir, { recursive: true, force: true });
 	changed();
