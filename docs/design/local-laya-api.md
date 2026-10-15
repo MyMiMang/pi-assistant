@@ -59,7 +59,8 @@ interface LayaStatus {
     revisions: Record<string, string> | null;    // 实际加载的 commit SHA
     loaded: string[] | null;
   } | null;
-  registered: { provider: string; modelId: string; protocol: string } | null;  // 已注册进 classifier 目录
+  registered: { provider: string; modelId: string; protocol: string } | null;  // 进程内已注册（= 当前可用）
+  configured: boolean;           // 已安装配置（重启后仍会注册）；与 registered 分开，停止 / 崩溃不改变它
   source: {                      // 界面「来源」标签
     project: string; repoUrl: string; weightsOrg: string;
     codeLicense: string; weightsLicense: string; version: string;
@@ -94,11 +95,27 @@ interface LayaStatus {
 - 「电脑 → 快速操作模型」页：仅从**已注册的 classifier 目录**里选（`local-laya · multilingual`）；未就绪置灰并提示去模型服务页装。
 - **不把 Laya 当 chat 模型**（协议是 `/v1/systemone`，没有 OpenAI 兼容端点）。
 
-## 6. 与统一模型注册表的关系
+## 6. 权重供应链完整性（下载后校验，通过才 activate）
+
+一键安装的「校验」阶段不只看 `import laya`，还会对下载到**我们自己的 HF 缓存目录**里的每个文件做完整性校验：
+
+- 固定清单在 `packages/server/src/local-laya/checkpoint-files.ts`：每个 checkpoint 的**必需文件 + 大小 + SHA256**。
+- SHA256 来源：大文件（`model.safetensors`、`tokenizer/tokenizer.json`）取 HuggingFace **LFS oid**（`/api/models/<repo>/revision/<sha>?blobs=true`，公开、无需 Key、不下载权重）；
+  小文件（config / tokenizer_config / rl_agent_config）在**同一 reviewed revision** 下取回后本地算 SHA256。
+  绝不用 `main` / `latest` 的哈希去套旧 revision；升级 revision 必须重算清单。
+- 校验方式：`verify.ts` 对每个文件**流式**算 SHA256 + 比对大小；缺文件 / 大小或哈希不符 → 抛错 → manager 回滚 staging、置 `failed`，**绝不产生半安装 ready**。
+- 路径安全：只读该 snapshot 目录，拒绝绝对路径 / `..` 越界；symlink 必须仍指向目录内（HF 缓存快照本身是 symlink → blob）。
+- 只按清单 `allow_patterns` 下载，**不执行 checkpoint 仓库里的任何脚本**（safetensors-only；清单出现 `.py` / `.bin` 等直接判不安全）。
+- 取消下载：保留 HF 缓存里的 partial（可续传恢复），但安装状态回到 `not_installed`，不会误判 ready。
+- 复核清单：`npx tsx scripts/laya-checkpoint-digests.ts`（只读 HF 元数据 + 小文件，不下载 GB 权重）。
+
+> 说明：清单里的 SHA256 已与公开 HF 元数据逐条核对一致；**未在真机上下载 GB 权重做过端到端实测**。
+
+## 7. 与统一模型注册表的关系
 
 Laya 启动后经 Pi 公开的 `registerClassifiers` 注册本地 provider，凭据只在进程内（`setRuntimeApiKey`，不落盘）。因此它会自动出现在统一注册表 `GET /api/models/registry` 里：
 
 - provider id：`local-laya`；模型：`multilingual`；`type: "classifier"`；`protocol: "typesafe-system-one"`；`capabilities: ["classifier"]`。
 - registry 的 `source` 目前归入 `pi-catalog`（因为它经 Pi 运行时注册）；**界面可用 provider id `local-laya` 识别为本地条目**，无需后端另加来源字段。
-- 未启动 / 已停止时不会出现在 classifier 目录里（未就绪）；这是预期的 fail-closed 行为。
+- 未启动 / 已停止时不会出现在 classifier 目录里（未就绪）；这是预期的 fail-closed 行为。UI 用 `configured`（已安装）与 `registered`（进程内已注册）区分：没在跑也不显示成「没配置」，停止不删配置。
 - 本模块**不新建 chat 模型**，也不自造 chat 模型入口。

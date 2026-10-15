@@ -3,10 +3,13 @@
  *
  * 供应链原则：一切版本 pin 在这里，不从上游 `curl | sh`，不跟随 `latest`。
  *  - Laya 代码：PyPI `laya==0.4.8`（Apache-2.0）
- *  - 权重：HuggingFace `convaiinnovations/*`，pin 到 Laya 审核过的 commit SHA（见其三份 revisions.py）
+ *  - 权重：HuggingFace `convaiinnovations/*`，pin 到 Laya 审核过的 commit SHA；每个 checkpoint 的必需文件 / 大小 / SHA256
+ *    另见 `checkpoint-files.ts`（下载后流式校验通过才 activate，见 verify.ts）
  *  - Python：uv 托管的 CPython 3.12（python-build-standalone）
  * 升级本文件即代表「换审核快照」，必须同步 docs 与测试。
  */
+
+import { checkpointBytes } from "./checkpoint-files.ts";
 
 /** 面向用户的来源说明（界面「来源标签」用）。 */
 export interface LayaSourceMeta {
@@ -52,21 +55,20 @@ export interface LayaCheckpoint {
 	/** 大约大小（字节），仅界面显示用 */
 	bytes: number;
 }
-
 export const LAYA_CHECKPOINTS: Record<string, LayaCheckpoint> = {
 	[`${DEFAULT_CHECKPOINT}`]: {
 		id: DEFAULT_CHECKPOINT,
 		repo: `convaiinnovations/${DEFAULT_CHECKPOINT}`,
 		revision: LAYA_SOURCE.reviewedRevisions[`convaiinnovations/${DEFAULT_CHECKPOINT}`],
 		license: LAYA_SOURCE.weightsLicense,
-		bytes: 678_000_000,
+		bytes: checkpointBytes(DEFAULT_CHECKPOINT),
 	},
 	"laya-typed-decisions": {
 		id: "laya-typed-decisions",
 		repo: "convaiinnovations/laya-typed-decisions",
 		revision: LAYA_SOURCE.reviewedRevisions["convaiinnovations/laya-typed-decisions"],
 		license: LAYA_SOURCE.weightsLicense,
-		bytes: 846_000_000,
+		bytes: checkpointBytes("laya-typed-decisions"),
 	},
 };
 

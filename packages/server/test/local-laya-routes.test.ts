@@ -19,6 +19,7 @@ function stubStatus(): LayaStatus {
 		install: { state: "not_installed", phase: "idle", received: 0, total: null, error: null, installedAt: null },
 		runtime: { state: "stopped", pid: null, port: null, host: "127.0.0.1" },
 		health: null,
+		configured: false,
 		registered: null,
 		source: LAYA_SOURCE,
 	};

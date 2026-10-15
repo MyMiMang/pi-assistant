@@ -50,11 +50,13 @@ interface FakeOpts {
 	health?: LayaHealth;
 	installed?: boolean;
 	downloadHold?: boolean;
+	/** 让 verifyCheckpoint 报「校验失败」，验证失败时绝不 activate */
+	verifyFail?: boolean;
 }
 
 function fakeDeps(dir: string, opts: FakeOpts = {}) {
 	const calls: { run: string[][]; spawned: string[]; phases: string[] } = { run: [], spawned: [], phases: [] };
-	const state = { installed: opts.installed ?? false, registered: null as null | { provider: string; modelId: string; protocol: string; baseUrl: string; token: string }, activated: false, rolledBack: false, uninstalled: false, aborted: false, pid: null as number | null };
+	const state = { installed: opts.installed ?? false, registered: null as null | { provider: string; modelId: string; protocol: string; baseUrl: string; token: string }, activated: false, rolledBack: false, uninstalled: false, aborted: false, pid: null as number | null, verifyCalls: 0 };
 	let child: FakeChild | null = null;
 	const deps: LayaDeps = {
 		profile: (ctx) => platformProfile(opts.platform ?? "darwin", opts.arch ?? "arm64", ctx),
@@ -80,6 +82,11 @@ function fakeDeps(dir: string, opts: FakeOpts = {}) {
 				throw new Error("已取消");
 			}
 			p(1000, 1000);
+		},
+		verifyCheckpoint: async (_cp, signal) => {
+			state.verifyCalls += 1;
+			if (signal.aborted) throw new Error("已取消");
+			if (opts.verifyFail) throw new Error("权重校验未通过：SHA256 不符：model.safetensors");
 		},
 		findFreePort: async () => 18080,
 		health: async () => opts.health ?? { ok: true, device: "mps", checkpointDevices: { multilingual: "mps" }, cpuFallbacks: { count: 0, lastReason: null }, revisions: { multilingual: LAYA_CHECKPOINTS["laya-multilingual"].revision }, loaded: ["multilingual"] },
@@ -133,6 +140,34 @@ test("install：一次成功 → installed/done，走完 preflight→uv→venv�
 	// 安装命令里出现 pin 的版本与 torch 后端
 	assert.ok(calls.run.some((a) => a.some((x) => x.includes("laya[serve]==0.4.8"))));
 	assert.ok(calls.run.some((a) => a.includes("--torch-backend")));
+	// 下载后必须跑过固定清单校验，且在 activate 之前
+	assert.equal(state.verifyCalls, 1, "安装必须校验权重文件清单");
+});
+
+test("install：权重校验失败 → failed + 回滚，绝不 activate（不产生半安装 ready）", async () => {
+	const { deps, state } = fakeDeps(dir(), { verifyFail: true });
+	const m = new LocalLayaManager(deps, LAYA_SOURCE);
+	await assert.rejects(() => m.install({ checkpoint: LAYA_CHECKPOINTS["laya-multilingual"] }), /权重校验未通过/);
+	assert.equal(state.verifyCalls, 1);
+	assert.equal(m.status().install.state, "failed");
+	assert.ok(state.rolledBack);
+	assert.equal(state.activated, false, "校验未过绝不能 activate");
+	assert.equal(m.status().configured, false);
+});
+
+test("status：configured（已安装配置）与 registered（进程内可用）分离，stop 不删配置", async () => {
+	const { deps, state } = fakeDeps(dir(), { installed: true });
+	const m = new LocalLayaManager(deps, LAYA_SOURCE);
+	assert.equal(m.status().configured, true, "已安装即 configured");
+	assert.equal(m.status().registered, null, "未启动则进程内未注册（但 configured 仍为 true）");
+	await m.start();
+	assert.ok(m.status().registered);
+	await m.stop();
+	const st = m.status();
+	assert.equal(st.registered, null, "停止后进程内不再注册");
+	assert.equal(st.configured, true, "停止不得删掉已安装配置");
+	assert.equal(st.install.state, "installed", "停止不得把安装状态重置");
+	assert.equal(state.registered, null, "停止清掉进程内 runtime key");
 });
 
 test("install：Windows ARM64 预检直接失败，不用假 no-op 冒充支持", async () => {

@@ -83,6 +83,8 @@ export interface LayaDeps {
 	spawn(exe: string, args: string[], opts: { env: Record<string, string> }): LayaChild;
 	/** 下某个 checkpoint（HF 缓存自带续传）；pythonPath = 本次安装 staging venv 的解释器 */
 	downloadCheckpoint(cp: LayaCheckpoint, p: (received: number, total: number | null) => void, signal: AbortSignal, env: Record<string, string>, pythonPath: string): Promise<void>;
+	/** 下载完成后按**固定清单**校验权重（缺失 / 大小 / SHA256 不符 → 抛错，绝不 activate） */
+	verifyCheckpoint(cp: LayaCheckpoint, signal: AbortSignal): Promise<void>;
 	findFreePort(): Promise<number>;
 	health(port: number, token: string, signal?: AbortSignal): Promise<LayaHealth>;
 	/** 原子 activate：staging → 生效 env（旧 env 保留为 envPrev 供回滚） */
@@ -109,6 +111,9 @@ export interface LayaStatus {
 	install: { state: LayaInstallState; phase: LayaInstallPhase; received: number; total: number | null; error: string | null; installedAt: number | null };
 	runtime: { state: LayaRuntimeState; pid: number | null; port: number | null; host: string };
 	health: LayaHealth | null;
+	/** 已安装（配置在，重启后仍会注册）——与进程内是否已注册分开，UI 不能因为「没在跑」就显示成没配置 */
+	configured: boolean;
+	/** 当前进程内已注册（= 真正可用）；停止 / 崩溃后为 null，但 configured 不变 */
 	registered: { provider: string; modelId: string; protocol: string } | null;
 	source: LayaSourceMeta;
 }
@@ -164,6 +169,7 @@ export class LocalLayaManager {
 			install: { ...this.installInfo },
 			runtime: { state: this.runtime.state, pid: this.runtime.pid, port: this.runtime.port, host: LAYA_BIND_HOST },
 			health: this.runtime.health,
+			configured: this.installInfo.state === "installed",
 			registered: this.runtime.token ? { provider: LAYA_PROVIDER_ID, modelId: LAYA_MODEL_ID, protocol: "typesafe-system-one" } : null,
 			source: this.source,
 		};
@@ -213,6 +219,8 @@ export class LocalLayaManager {
 			}
 			this.set("verify");
 			await this.step(signal, () => this.runOrThrow(this.envPython(paths.envStaging), ["-c", "import laya"], { env, signal }));
+			// 权重完整性：只有清单里每个文件的大小 / SHA256 都对，才允许进入 activate；否则抛错回滚，不产生半安装 ready。
+			if (cp) await this.step(signal, () => this.deps.verifyCheckpoint(cp, signal));
 			if (signal.aborted) throw new Error("已取消");
 			this.set("activate");
 			await this.deps.activate(paths);

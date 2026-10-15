@@ -15,6 +15,9 @@ import { ensureUv as ensureUvPinned, uvPath as uvPinnedPath } from "../memory/hi
 import { watchDir } from "../downloads.ts";
 import { models } from "../models.ts";
 import { PYTHON_VERSION } from "./manifest.ts";
+import { checkpointFiles } from "./checkpoint-files.ts";
+import { hfSnapshotDir } from "./hf-metadata.ts";
+import { verifyCheckpointFiles } from "./verify.ts";
 import { platformProfile, type NvidiaProbe, type PlatformContext } from "./platform.ts";
 import { LAYA_BIND_HOST, LAYA_MODEL_ID, LAYA_PROVIDER_ID, type LayaChild, type LayaDeps, type LayaHealth, type LayaPaths, type LayaRunResult } from "./manager.ts";
 
@@ -124,13 +127,24 @@ export function createLayaDeps(): LayaDeps {
 			const paths = layaPaths();
 			mkdirSync(paths.hfHome, { recursive: true });
 			const py = pythonPath;
-			const script = "import sys; from huggingface_hub import snapshot_download; snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], local_files_only=False)";
+			// 只按固定清单取文件（allow_patterns），不下 repo 里的多余脚本；snapshot_download 自带续传（取消后 partial 保留可恢复）。
+			const allow = checkpointFiles(cp.id).map((f) => f.path);
+			const script =
+				"import sys; from huggingface_hub import snapshot_download; snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], allow_patterns=sys.argv[3].split(',') if sys.argv[3] else None, local_files_only=False)";
 			await watchDir([paths.hfHome], { bytes: (r, t) => p(r, t), detail: () => {} }, cp.bytes, () =>
 				new Promise<void>((res, rej) => {
-					const child = execFile(py, ["-c", script, cp.repo, cp.revision], { env: { ...process.env, ...env } as NodeJS.ProcessEnv, signal, timeout: 60 * 60_000 }, (err, _o, stderr) => (err ? rej(new Error(String(stderr || err.message).slice(0, 300))) : res()));
+					const child = execFile(py, ["-c", script, cp.repo, cp.revision, allow.join(",")], { env: { ...process.env, ...env } as NodeJS.ProcessEnv, signal, timeout: 60 * 60_000 }, (err, _o, stderr) => (err ? rej(new Error(String(stderr || err.message).slice(0, 300))) : res()));
 					child.on("error", rej);
 				}),
 			);
+		},
+		verifyCheckpoint: async (cp, signal) => {
+			if (signal.aborted) throw new Error("已取消");
+			const files = checkpointFiles(cp.id);
+			if (!files.length) throw new Error(`没有 ${cp.id} 的固定文件清单，拒绝在未校验下激活`);
+			const dir = hfSnapshotDir(layaPaths().hfHome, cp.repo, cp.revision);
+			const res = await verifyCheckpointFiles(dir, files);
+			if (!res.ok) throw new Error(`权重校验未通过：${res.problems.slice(0, 3).join("；")}`);
 		},
 		findFreePort,
 		health: readHealth,
