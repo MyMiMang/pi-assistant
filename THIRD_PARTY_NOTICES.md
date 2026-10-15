@@ -81,7 +81,7 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 | 组件 | 版本 | 许可证 | 用途 |
 |---|---|---|---|
 | [cloudflared](https://github.com/cloudflare/cloudflared) | 2026.10.0 | Apache-2.0 | 远程访问隧道 |
-| [Cua Driver](https://github.com/trycua/cua) | 0.34.1 | MIT | 截图与键鼠操作 |
+| [Cua Driver](https://github.com/trycua/cua) | 0.35.4 | MIT | 截图与键鼠操作（助理电脑镜像内仍为 0.34.1，待重建镜像） |
 | [Lima](https://github.com/lima-vm/lima) | 2.2.1 | Apache-2.0 | macOS 助理电脑虚拟机 |
 | [nerdctl-full](https://github.com/containerd/nerdctl)（containerd、nerdctl、runc、CNI、BuildKit） | 2.4.1 | Apache-2.0 | 虚拟机内容器引擎 |
 | [Debian 12 genericcloud](https://cloud.debian.org/images/cloud/) | 20260923-2610 | DFSG 自由软件（各包许可证不同） | Lima 虚拟机系统盘 |
