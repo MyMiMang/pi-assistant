@@ -58,8 +58,10 @@ export function resourceBounds(host: HostFacts = hostFacts()) {
 
 const isInt = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n);
 
-/** 校验用户输入：只收整数、必须在范围内（API 直接拒非法值，不给 shell 注入留口子） */
-export function validateResourceChoice(input: unknown, host: HostFacts = hostFacts()): { ok: true; value: VmResourceChoice } | { ok: false; error: string } {
+/** 校验用户输入：只收整数、必须在范围内（API 直接拒非法值，不给 shell 注入留口子）。
+ *  existing：现有虚拟机的实际值。换机器 / 旧环境变量可能让现值超出按当前宿主收窄后的上限，
+ *  这种情况「保留现值」不算调大，放行；想调得比现值更大仍按上限拒。 */
+export function validateResourceChoice(input: unknown, host: HostFacts = hostFacts(), existing: Partial<VmResources> | null = null): { ok: true; value: VmResourceChoice } | { ok: false; error: string } {
 	if (input === undefined || input === null) return { ok: true, value: {} };
 	if (typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "资源设置格式不正确" };
 	const b = resourceBounds(host);
@@ -69,7 +71,9 @@ export function validateResourceChoice(input: unknown, host: HostFacts = hostFac
 		const v = o[key];
 		if (v === undefined || v === null) continue;
 		if (!isInt(v)) return { ok: false, error: `${FIELD_LABEL[key]}要填整数` };
-		if (v < b[key].min || v > b[key].max) return { ok: false, error: `${FIELD_LABEL[key]}要在 ${b[key].min}–${b[key].max} 之间` };
+		if (v < b[key].min || v > b[key].max) {
+			if (existing?.[key] !== v) return { ok: false, error: `${FIELD_LABEL[key]}要在 ${b[key].min}–${b[key].max} 之间` };
+		}
 		out[key] = v;
 	}
 	return { ok: true, value: out };

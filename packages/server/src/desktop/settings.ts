@@ -30,7 +30,7 @@ export interface DesktopSettings {
 const DEFAULTS: DesktopSettings = { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "", separate: [], legacyMigrated: false, resources: {} };
 export const desktopSettings = (): DesktopSettings => ({ ...DEFAULTS, ...getSetting<Partial<DesktopSettings>>("desktop", {}) });
 
-export function updateDesktopSettings(b: Partial<DesktopSettings>) {
+export function updateDesktopSettings(b: Partial<DesktopSettings>, existingResources: VmResourceChoice | null = null) {
 	const cur = desktopSettings();
 	if (b.enabled !== undefined) cur.enabled = !!b.enabled;
 	if (b.backend !== undefined) {
@@ -44,7 +44,7 @@ export function updateDesktopSettings(b: Partial<DesktopSettings>) {
 	if (b.mirror !== undefined) cur.mirror = normalizeMirror(b.mirror);
 	if (b.fileMirror !== undefined) cur.fileMirror = normalizeFileMirror(b.fileMirror);
 	if (b.resources !== undefined) {
-		const v = validateResourceChoice(b.resources);
+		const v = validateResourceChoice(b.resources, undefined, existingResources);
 		if (!v.ok) throw new Error(v.error);
 		cur.resources = v.value;
 	}

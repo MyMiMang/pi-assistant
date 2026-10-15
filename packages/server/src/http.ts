@@ -29,7 +29,7 @@ import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
 import { describeRoutine, disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
-import { desktopPause, desktopStatus, ensureOwnScreen, forgetAgentComputer, hasSeparateData, issueTicket, mergeIntoShared, purgeAll, releaseScreen, resetAvailability, screenshotDesktop, setSeparateComputer, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket, viewerClose, viewerOpen, viewToken, vmResourceDiskError, vmResourceInfo } from "./desktop.ts";
+import { desktopPause, desktopStatus, ensureOwnScreen, forgetAgentComputer, hasSeparateData, issueTicket, mergeIntoShared, purgeAll, releaseScreen, resetAvailability, screenshotDesktop, setSeparateComputer, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket, viewerClose, viewerOpen, viewToken, vmResourceApplied, vmResourceDiskError, vmResourceInfo } from "./desktop.ts";
 import { backend as desktopBackend, builtinFor, dockerBackend } from "./desktop/backend.ts";
 import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop/image.ts";
 import { installWsl, wslInstalling } from "./desktop/wsl.ts";
@@ -1310,7 +1310,7 @@ app.put("/api/desktop", async (c) => {
 	try {
 		const diskErr = b.resources !== undefined ? vmResourceDiskError(b.resources as { diskGiB?: number }) : null;
 		if (diskErr) return c.json({ error: diskErr }, 400);
-		const s = updateDesktopSettings(b);
+		const s = updateDesktopSettings(b, vmResourceApplied());
 		if (before.enabled && !s.enabled) cancelInstall();
 		if (before.backend !== s.backend || before.mirror !== s.mirror) resetAvailability();
 		// 开启 = 开始下载（之前什么都不下载）

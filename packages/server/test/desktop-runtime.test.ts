@@ -166,6 +166,20 @@ test("虚拟机资源：尊重现值不强行降配，磁盘只扩不缩", () =>
 	assert.equal(checkDiskGrowOnly({ diskGiB: 10 }, null), null);
 });
 
+test("虚拟机资源：现值超出当前范围时能保留（不算调大），调大仍被拒", () => {
+	const host = { ncpu: 4, totalBytes: 8 * G }; // 内存上限 = 8 × 75% = 6 GiB
+	assert.equal(resourceBounds(host).memoryGiB.max, 6);
+	// 换到更小的机器 / 旧环境变量留下的 8 GiB 超出上限：只改 CPU 时保留现值放行，不因内存被拒
+	assert.deepEqual(validateResourceChoice({ cpus: 2, memoryGiB: 8 }, host, { memoryGiB: 8 }), { ok: true, value: { cpus: 2, memoryGiB: 8 } });
+	// 没有现值、或想调得比现值更大：仍按上限拒（不把「保留」当成放开上限）
+	assert.equal(validateResourceChoice({ memoryGiB: 8 }, host).ok, false);
+	assert.equal(validateResourceChoice({ memoryGiB: 10 }, host, { memoryGiB: 8 }).ok, false);
+	assert.equal(validateResourceChoice({ cpus: 6 }, host, { cpus: 6 }).ok, true);
+	assert.equal(validateResourceChoice({ cpus: 8 }, host, { cpus: 6 }).ok, false);
+	// 合并也保留现值，不强行降配
+	assert.equal(mergeInstanceResources({}, { memoryGiB: 8 }, host).memoryGiB, 8);
+});
+
 test("下载进度：解析 docker / podman 拉取输出", () => {
 	const L = new Map<string, boolean>();
 	for (const l of ["0.1.0: Pulling from mymimang/pi-assistant-desktop", "aaaaaaaaaaaa: Pulling fs layer", "bbbbbbbbbbbb: Already exists", "cccccccccccc: Waiting", "aaaaaaaaaaaa: Downloading  12MB/50MB", "aaaaaaaaaaaa: Pull complete"]) parsePullLine(l, L);

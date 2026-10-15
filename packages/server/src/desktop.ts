@@ -639,6 +639,8 @@ export function vmResourceInfo() {
 }
 /** 用户选的磁盘比现有虚拟机小 → 中文错误（只扩不缩，避免重建丢数据） */
 export const vmResourceDiskError = (choice: { diskGiB?: number }) => (backend().id === "lima" ? checkDiskGrowOnly(choice, limaInstanceResources()) : null);
+/** 现有虚拟机的实际资源（校验时用来放行「保留现值」，不因宿主变小而阻止用户改其它字段） */
+export const vmResourceApplied = () => (backend().id === "lima" ? limaInstanceResources() : null);
 function forgetScreens(cid: string) {
 	const m = screens.get(cid);
 	screens.delete(cid);

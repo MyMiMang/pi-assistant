@@ -262,8 +262,9 @@ function VmResources({ g, put }: { g: DesktopGlobal; put: (b: Partial<DesktopGlo
 		diskGiB: r.choice.diskGiB ?? r.applied?.diskGiB ?? r.suggested.diskGiB,
 	};
 	const diskMin = Math.max(r.bounds.diskGiB.min, r.applied?.diskGiB ?? 0);
-	const diskOpts = [...new Set([diskMin, eff.diskGiB, 40, 60, 80, 100, 128, 160, 200, 256].filter((n) => n >= diskMin && n <= r.bounds.diskGiB.max))].sort((a, b) => a - b);
-	const range = (lo: number, hi: number) => Array.from({ length: Math.max(0, hi - lo + 1) }, (_, i) => lo + i);
+	// 现有虚拟机可能带着超出「按当前宿主收窄后范围」的值（换机器 / 旧环境变量）：一定要能显示和保留，不能空白
+	const nums = (lo: number, hi: number, cur: number) => [...new Set([...Array.from({ length: Math.max(0, hi - lo + 1) }, (_, i) => lo + i), cur].filter((n) => Number.isFinite(n) && n > 0))].sort((a, b) => a - b);
+	const diskOpts = [...new Set([...([diskMin, 40, 60, 80, 100, 128, 160, 200, 256].filter((n) => n >= diskMin && n <= r.bounds.diskGiB.max)), eff.diskGiB])].sort((a, b) => a - b);
 	const set = (patch: Partial<typeof eff>) => void put({ resources: { ...eff, ...patch } });
 	const changed = !!r.applied && (r.applied.cpus !== eff.cpus || r.applied.memoryGiB !== eff.memoryGiB || r.applied.diskGiB !== eff.diskGiB);
 	return (
@@ -277,11 +278,11 @@ function VmResources({ g, put }: { g: DesktopGlobal; put: (b: Partial<DesktopGlo
 			<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
 				<label className="space-y-1 text-sm">
 					<span className="text-zinc-500">{t("CPU 核数")}</span>
-					<Select value={eff.cpus} ariaLabel={t("CPU 核数")} testId="desktop-cpus" className="w-full" options={range(r.bounds.cpus.min, r.bounds.cpus.max).map((n) => ({ value: n, label: String(n) }))} onChange={(v) => set({ cpus: Number(v) })} />
+					<Select value={eff.cpus} ariaLabel={t("CPU 核数")} testId="desktop-cpus" className="w-full" options={nums(r.bounds.cpus.min, r.bounds.cpus.max, eff.cpus).map((n) => ({ value: n, label: String(n) }))} onChange={(v) => set({ cpus: Number(v) })} />
 				</label>
 				<label className="space-y-1 text-sm">
 					<span className="text-zinc-500">{t("内存")}</span>
-					<Select value={eff.memoryGiB} ariaLabel={t("内存")} testId="desktop-memory" className="w-full" options={range(r.bounds.memoryGiB.min, r.bounds.memoryGiB.max).map((n) => ({ value: n, label: String(n), hint: "GiB" }))} onChange={(v) => set({ memoryGiB: Number(v) })} />
+					<Select value={eff.memoryGiB} ariaLabel={t("内存")} testId="desktop-memory" className="w-full" options={nums(r.bounds.memoryGiB.min, r.bounds.memoryGiB.max, eff.memoryGiB).map((n) => ({ value: n, label: String(n), hint: "GiB" }))} onChange={(v) => set({ memoryGiB: Number(v) })} />
 				</label>
 				<label className="space-y-1 text-sm">
 					<span className="text-zinc-500">{t("磁盘")}</span>

@@ -285,19 +285,23 @@ export function Select({
 	placeholder?: string;
 }) {
 	const [open, setOpen] = useState(false);
-	const [rect, setRect] = useState<{ left: number; top: number; width: number; up: boolean } | null>(null);
+	const [rect, setRect] = useState<{ left: number; top: number; width: number; up: boolean; maxH: number } | null>(null);
 	const btn = useRef<HTMLButtonElement>(null);
 	const pop = useRef<HTMLDivElement>(null);
 	const cur = options.find((o) => String(o.value) === String(value));
 	const place = () => {
 		const r = btn.current?.getBoundingClientRect();
 		if (!r) return;
-		const menuH = Math.min(280, options.length * 34 + 12);
-		const below = window.innerHeight - r.bottom;
-		const up = below < menuH && r.top > below;
+		const GAP = 6;
+		const want = Math.min(280, options.length * 34 + 12);
+		// 上下各留 8px 边距，按真正可用的空间限高（向上翻转时不能顶出屏幕）
+		const below = window.innerHeight - r.bottom - GAP - 8;
+		const above = r.top - GAP - 8;
+		const up = below < want && above > below;
+		const maxH = Math.max(96, Math.min(want, up ? above : below));
 		const width = Math.min(Math.max(r.width, 168), Math.max(120, window.innerWidth - 16));
 		const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-		setRect({ left, top: up ? r.top - 6 : r.bottom + 6, width, up });
+		setRect({ left, top: up ? r.top - GAP : r.bottom + GAP, width, up, maxH });
 	};
 	const openMenu = () => {
 		if (disabled) return;
@@ -326,14 +330,16 @@ export function Select({
 			}
 		};
 		const close = () => setOpen(false);
+		// capture 阶段会先收到菜单内部的 scroll；菜单自己滚不该把它关掉
+		const onScroll = (e: Event) => { if (!pop.current?.contains(e.target as Node)) setOpen(false); };
 		document.addEventListener("mousedown", onDoc);
 		document.addEventListener("keydown", onKey, true);
-		window.addEventListener("scroll", close, true);
+		window.addEventListener("scroll", onScroll, true);
 		window.addEventListener("resize", close);
 		return () => {
 			document.removeEventListener("mousedown", onDoc);
 			document.removeEventListener("keydown", onKey, true);
-			window.removeEventListener("scroll", close, true);
+			window.removeEventListener("scroll", onScroll, true);
 			window.removeEventListener("resize", close);
 		};
 	}, [open, options, value, onChange, disabled]);
@@ -367,8 +373,8 @@ export function Select({
 						role="listbox"
 						aria-label={ariaLabel}
 						data-testid={testId ? `${testId}-menu` : undefined}
-						className="fixed z-50 max-h-[280px] max-w-[calc(100vw-16px)] overflow-auto rounded-xl border border-line bg-card p-1 shadow-xl"
-						style={{ left: rect.left, top: rect.top, width: rect.width, transform: rect.up ? "translateY(-100%)" : undefined }}
+						className="fixed z-[60] max-h-[280px] max-w-[calc(100vw-16px)] overflow-auto rounded-xl border border-line bg-card p-1 shadow-xl"
+						style={{ left: rect.left, top: rect.top, width: rect.width, maxHeight: rect.maxH, transform: rect.up ? "translateY(-100%)" : undefined }}
 					>
 						{options.map((o) => {
 							const sel = String(o.value) === String(value);
