@@ -5,9 +5,9 @@
 
 ## 功能需求
 
-2026-10-15 用户报告 beta.22 启动退出（`openJson → makeAdapter → restartChannel`，AES-GCM authentication failed），随后授权「打包」。代码已修复，准备发布 beta.23（仅 mac-arm64）：渠道解密错误不再退出后台，设置可打开、停用保留原密文、微信可重新扫码恢复；渠道相关单测 16/16、两端 typecheck 通过。待构建与安装冒烟通过后公开；真实密钥失配原因与用户安装恢复待验证，详见 HANDOFF「beta.22 启动崩溃」。
+2026-10-15 用户报告 beta.22 启动退出（`openJson → makeAdapter → restartChannel`，AES-GCM authentication failed），随后授权「打包」。已完成并发布 beta.23（仅 mac-arm64）：渠道解密错误不再退出后台，设置可打开、停用保留原密文、微信可重新扫码恢复；渠道相关单测 16/16、两端 typecheck、构建、Mac 安装包启动及公开更新清单核验通过。真实密钥失配原因与用户原数据恢复待验证，详见 HANDOFF「beta.22 启动崩溃」。
 
-当前公开版为 v0.1.0-beta.21（仅 Apple Silicon Mac，Actions 38621370349 构建/安装冒烟/publish 成功；四项公开资产和 arm64 更新清单独立核验，beta.18 完全权限行为保留）。上一版 v0.1.0-beta.20。用户授权剩余功能验收后直接提交、推送、打包；本轮仅 macOS arm64，跳过 Intel、Windows、Linux。发布范围由 `.github/release-scope.json` 的 `mac-arm64` 固定，手动 `scope=all` 可恢复多平台，安装冒烟与平台清单校验成功后才公开。
+当前公开版为 v0.1.0-beta.23（仅 Apple Silicon Mac，Actions 38710953760 构建 / 安装包启动 / publish 成功；四项公开资产和 arm64 更新清单独立核验）。上一版 v0.1.0-beta.22。发布范围由 `.github/release-scope.json` 的 `mac-arm64` 固定，跳过 Intel、Windows、Linux；手动 `scope=all` 可恢复多平台，安装冒烟与平台清单校验成功后才公开。下表保留 beta.22 等前序功能的交付记录。
 
 | 本轮剩余需求 | 当前状态 | 验收与限制 |
 |---|---|---|

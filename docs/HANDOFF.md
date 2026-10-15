@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）
 
-> 当前公开版本 **v0.1.0-beta.22**（2026-10-15 经 GitHub Latest 查询确认，本机已安装同版）；上一版 v0.1.0-beta.21。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
+> 当前公开版本 **v0.1.0-beta.23**（2026-10-15 已公开 Latest，仅 macOS arm64）；上一版 v0.1.0-beta.22。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
 **beta.22 发布前核对记录（历史记录；该版现已发布）——release-preflight 结果**
 - 基线 / HEAD：`next-release-integration` = `origin/main`（`5b6cf11`，已公开 beta.21）之后的 41 个提交；本 preflight 在独立干净 worktree（分支 `release-preflight`，基 `3d33d5a`）只做核对与文档修正，最终本地 HEAD = 本 preflight 提交（在 `3d33d5a` 之上、只改文档与发布说明，见 `git log`；未 push / 未 tag / 未打包）。
@@ -23,9 +23,9 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
-2026-10-15 用户授权「打包」：准备发布 **v0.1.0-beta.23**，仅含 `6cf31fe` 的渠道凭据崩溃修复及发布文档；沿用 `mac-arm64` 范围，不改发布流程。发布说明见 `release-notes/v0.1.0-beta.23.md`；前述 16 项相关测试与两端类型检查通过，待 Actions 构建、Mac 安装冒烟与更新清单校验成功后公开，暂不标记为已发布。
+2026-10-15 用户授权「打包」：**v0.1.0-beta.23 已公开 Latest**，tag=`c8c19bd`，仅含 `6cf31fe` 的渠道凭据崩溃修复及发布文档；沿用 `mac-arm64` 范围，不改发布流程。[Actions 38710953760](https://github.com/MyMiMang/pi-assistant/actions/runs/38710953760) 的构建、内置服务启动、DMG 挂载启动与更新清单校验均成功；公开后独立下载 latest.json、查询 Latest Release 并用 `validateRelease` 再核验：4 项资产齐全，仅含 arm64 两个更新项，版本 / 签名字段 / 下载地址正确。发布说明见 `release-notes/v0.1.0-beta.23.md`；用户原数据下启动及真实微信扫码恢复待验证。
 
-2026-10-15 beta.22 启动崩溃（修复代码，**未打包，安装包待验证**）：
+2026-10-15 beta.22 启动崩溃（修复已发布 **beta.23**，用户原数据恢复待验证；以下保留修复时的验证记录）：
 - **现场**：已拉 main 至 `f3cb6c9`；安装版 beta.22 的 `secrets.ts` 与源码一致。`server.log` 在 HTTP 启动后因 `openJson → makeAdapter → restartChannel` 的 AES-GCM 校验失败退出 code 1。本机启用了两个微信渠道；仅查询元数据，没有输出凭据或修改真实数据库 / 钥匙串。密钥文件不存在；App 专用钥匙串非交互读取返回 OSStatus -25293，不能据此断言密钥丢失 / 被覆盖或密文损坏，真实失配原因仍待查。
 - **改动**：`src/channels/index.ts` 将创建适配器纳入启动异常处理；设置列表可返回坏渠道及中文恢复提示；不改密钥时原样保留密文，损坏凭据仅完整填写后替换；微信旧 token 无法读取仍可发起扫码，确认成功才覆盖。未改 `secrets.ts` 的系统存储策略、未重置用户数据。
 - **实测**：`node --import tsx --test --test-concurrency=1 packages/server/test/channels.test.ts packages/server/test/clawbot.test.ts` **16/16**（坏渠道与正常渠道共存、设置可读、停用保留密文、完整替换、扫码取消 / 成功恢复）；`npm run typecheck` 通过。`test/channel-credentials.ts` 为这两组测试拦截 App 主密钥的 security 命令并返回固定测试密钥，拒绝钥匙串写入；其余平台继续使用独立临时数据目录。未跑全量、未打包、未验证真实微信重连。Hindsight 搜索接口本次返回 500，直接读知识页可用；故排查结论以现场和源码为准。
