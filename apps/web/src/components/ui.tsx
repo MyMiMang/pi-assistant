@@ -306,6 +306,7 @@ export function Select({
 	const pop = useRef<HTMLDivElement>(null);
 	const uid = useId();
 	const optId = (i: number) => `${uid}-opt-${i}`;
+	const listId = `${uid}-list`;
 	const cur = options.find((o) => String(o.value) === String(value));
 	const curIndex = Math.max(0, options.findIndex((o) => String(o.value) === String(value)));
 	const place = () => {
@@ -378,9 +379,10 @@ export function Select({
 			window.removeEventListener("resize", close);
 		};
 	}, [open, options, value, onChange, disabled, active]);
-	// 键盘移动高亮时，把当前项滚进可视区（只动菜单自身滚动，不滚祖先/页面）
+	// 键盘移动高亮时，把当前项滚进可视区（只动菜单自身滚动，不滚祖先/页面），并把焦点交给 listbox 以播报高亮项
 	useEffect(() => {
 		if (!open) return;
+		pop.current?.focus({ preventScroll: true });
 		const box = pop.current;
 		const el = box?.querySelector<HTMLElement>(`[data-idx="${active}"]`);
 		if (!box || !el) return;
@@ -395,8 +397,8 @@ export function Select({
 				disabled={disabled}
 				aria-haspopup="listbox"
 				aria-expanded={open}
+				aria-controls={open && options.length ? listId : undefined}
 				aria-label={ariaLabel}
-				aria-activedescendant={open && options.length ? optId(active) : undefined}
 				title={cur?.label}
 				data-testid={testId}
 				onClick={() => (open ? setOpen(false) : openMenu())}
@@ -416,8 +418,11 @@ export function Select({
 				createPortal(
 					<div
 						ref={pop}
+						id={listId}
 						role="listbox"
+						tabIndex={-1}
 						aria-label={ariaLabel}
+						aria-activedescendant={options.length ? optId(active) : undefined}
 						data-testid={testId ? `${testId}-menu` : undefined}
 						className="fixed z-[60] max-h-[280px] max-w-[calc(100vw-16px)] overflow-auto rounded-xl border border-line bg-card p-1 shadow-xl"
 						style={{ left: rect.left, top: rect.top, width: rect.width, maxHeight: rect.maxH, transform: rect.up ? "translateY(-100%)" : undefined }}
@@ -430,6 +435,7 @@ export function Select({
 									key={o.value}
 									type="button"
 									id={optId(i)}
+									tabIndex={-1}
 									data-idx={i}
 									role="option"
 									aria-selected={sel}
