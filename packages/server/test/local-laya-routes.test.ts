@@ -85,6 +85,16 @@ test("POST install：异步启动，立即返回 ok + status", async () => {
 	assert.equal(calls.install, 1);
 });
 
+test("GET platform：预检返回平台 + NVIDIA 探测（未装驱动也不报错）", async () => {
+	const { app } = buildApp();
+	const res = await app.request("/api/local-models/laya/platform");
+	assert.equal(res.status, 200);
+	const body = (await res.json()) as { cudaAvailable: boolean; options: { id: string }[]; nvidia: { available: boolean } };
+	assert.equal(typeof body.cudaAvailable, "boolean");
+	assert.ok(body.options.some((o) => o.id === "cpu"));
+	if (body.cudaAvailable) assert.ok(body.options.some((o) => o.id === "cuda"));
+});
+
 test("POST start/stop：转发到 manager", async () => {
 	const { app, calls } = buildApp();
 	assert.equal((await app.request("/api/local-models/laya/start", { method: "POST" })).status, 200);

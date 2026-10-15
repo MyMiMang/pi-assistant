@@ -24,6 +24,20 @@ export function mountLocalLayaRoutes(app: Hono<any>, localOnly: LocalOnly, getMa
 
 	app.get(`${base}/status`, localOnly, (c) => c.json(getManager().status()));
 
+	// 安装前预检：探测 NVIDIA 驱动（只看，不自动装系统驱动）+ 平台能力；UI 据此决定是否提供 CUDA / XPU 选项。
+	app.get(`${base}/platform`, localOnly, async (c) => {
+		const nvidia = await probeNvidia();
+		return c.json({
+			platform: platformProfile(process.platform, process.arch),
+			nvidia,
+			cudaAvailable: nvidia.available,
+			options: [
+				{ id: "cpu", label: "CPU（基线，所有平台可用）" },
+				...(nvidia.available ? [{ id: "cuda", label: `NVIDIA CUDA（驱动 ${nvidia.driver ?? "已检测到"}）` }] : []),
+			],
+		});
+	});
+
 	app.post(`${base}/install`, localOnly, async (c) => {
 		const body = await c.req.json<InstallBody>().catch(() => ({}) as InstallBody);
 		const ctx = { wantCuda: !!body.cuda, wantXpu: !!body.xpu, nvidia: body.cuda ? await probeNvidia() : undefined };
