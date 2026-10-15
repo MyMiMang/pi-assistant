@@ -205,8 +205,12 @@ export const getWait = (id: string) => db.prepare("SELECT * FROM task_waits WHER
  *  - `delivered`：等待已送达 → notify 只收尾（标记事件已投递），不再唤醒。
  * 只看 waiting / fired：取消掉的等待不再拥有唤醒，交回 notify，保证不丢也不重。
  */
-export function subagentWakeOwner(subagentId: string, agentId: string): "none" | "pending" | "delivered" {
-	const rows = db.prepare("SELECT status, delivery_status FROM task_waits WHERE target_kind = 'subagent' AND target_ref = ? AND agent_id = ? AND status IN ('waiting','fired')").all(subagentId, agentId) as { status: string; delivery_status: string | null }[];
+export function subagentWakeOwner(subagentId: string, agentId: string, conversationId: string | null): "none" | "pending" | "delivered" {
+	// 只认「同一助理 + 同一对话 + 同一目标」的等待：别的对话（或没有对话）登记的等待不拥有这条终态唤醒，
+	// 否则会把本该发到子代理所属对话的 notify 吞掉。conversation_id 可为 NULL，两边都 COALESCE 后比较。
+	const rows = db
+		.prepare("SELECT status, delivery_status FROM task_waits WHERE target_kind = 'subagent' AND target_ref = ? AND agent_id = ? AND COALESCE(conversation_id,'') = COALESCE(?,'') AND status IN ('waiting','fired')")
+		.all(subagentId, agentId, conversationId) as { status: string; delivery_status: string | null }[];
 	let pending = false;
 	for (const r of rows) {
 		if (r.status === "fired" && r.delivery_status === "delivered") return "delivered";

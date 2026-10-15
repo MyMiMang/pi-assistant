@@ -7,7 +7,7 @@ const { db, getSetting, setSetting } = await import("../src/db.ts");
 const { initModels } = await import("../src/models.ts");
 await initModels();
 const s = await import("../src/subagents.ts");
-await import("../src/task-waits.ts"); // 建 task_waits 表：终态唤醒跨机制去重会查它
+const W = await import("../src/task-waits.ts"); // 建 task_waits 表：终态唤醒跨机制去重会查它
 const { createConversation } = await import("../src/conversations.ts");
 const { listMessages, insertMessage } = await import("../src/messages.ts");
 const { recordUsage, usageSummary } = await import("../src/usage/index.ts");
@@ -409,10 +409,10 @@ test("切换模型记录：同一任务换模型只更新同一行，并写一�
 
 // ---------------------------------------------------------------- 终态唤醒跨机制去重（notify 与 task_wait）
 /** 直接写一条 task_wait（避免依赖 task-waits 的注册/触发时序），用来控制终态去重的各种状态。 */
-function makeWait(id: string, subagentId: string, status: string, delivery: string | null) {
+function makeWait(id: string, subagentId: string, status: string, delivery: string | null, conversationId: string | null = conv) {
 	db.prepare(
 		"INSERT OR REPLACE INTO task_waits(id, agent_id, conversation_id, target_kind, target_ref, reason, status, check_interval_ms, next_check_at, due_at, delivery_status, delivery_attempts, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-	).run(id, "sub-test", conv, "subagent", subagentId, "等它完成", status, 60_000, null, null, delivery, 0, Date.now(), Date.now());
+	).run(id, "sub-test", conversationId, "subagent", subagentId, "等它完成", status, 60_000, null, null, delivery, 0, Date.now(), Date.now());
 }
 const clearWaits = () => db.prepare("DELETE FROM task_waits").run();
 
@@ -479,6 +479,38 @@ test("终态去重：等待被取消 / 投递彻底失败 → notify 补位，�
 	await s.deliverSubagentEvents();
 	await tick();
 	assert.equal(n2(), 1, "等待投递失败：notify 补位，不丢");
+	await cleanup();
+});
+
+test("终态去重按对话隔离：别的对话登记的同目标等待不算 owner，notify 照常补位（不吞通知）", async () => {
+	setSettings(10);
+	const { r, notified } = terminalWithWait(async () => {});
+	await tick();
+	// 同一个子代理、同一助理，但等待登记在另一个对话（或没有对话）：不能拥有本对话终态的唤醒
+	makeWait("tw-dedup-other", r.id, "waiting", null, "other-conv");
+	makeWait("tw-dedup-null", r.id, "fired", "delivered", null);
+	assert.equal(W.subagentWakeOwner(r.id, "sub-test", conv), "none", "本对话没有等待 → 不是 owner");
+	assert.equal(W.subagentWakeOwner(r.id, "sub-test", "other-conv"), "pending", "别的对话的等待只对它自己那个对话负责");
+	s.finishSubagent(r.id, "done", "", "结果");
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(notified(), 1, "别的对话（或无对话）的等待不能吞掉本对话的 notify");
+	assert.ok((events(r.id)[0] as { delivered_at: number | null }).delivered_at, "notify 投递后事件标记已投递");
+	// 同一个对话的等待才算 owner：waiting 让位
+	clearWaits();
+	const { r: r2, notified: n2 } = terminalWithWait(async () => {});
+	await tick();
+	makeWait("tw-dedup-same", r2.id, "waiting", null);
+	assert.equal(W.subagentWakeOwner(r2.id, "sub-test", conv), "pending", "同对话的等待是 owner");
+	s.finishSubagent(r2.id, "done", "", "结果");
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(n2(), 0, "同对话的等待负责唤醒时 notify 让位");
+	// 收尾（等待送达）后事件标已投递，不留给后面的用例
+	db.prepare("UPDATE task_waits SET delivery_status='delivered', delivered_at=? WHERE id='tw-dedup-same'").run(Date.now());
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.ok((events(r2.id)[0] as { delivered_at: number | null }).delivered_at, "等待送达后 notify 只收尾");
 	await cleanup();
 });
 

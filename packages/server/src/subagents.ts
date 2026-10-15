@@ -398,7 +398,7 @@ export async function deliverSubagentEvents() {
 		// 跨机制去重：终态事件若已由一条 task_wait 负责唤醒，就不再用 notify 重复唤醒。
 		// delivered → 等待已送达，这里只收尾；pending → 让位（等它送达后再收尾）；none（无等待 / 已取消 / 投递彻底失败）→ notify 投递，保证不丢。
 		if (TERMINAL_KINDS.has(e.kind)) {
-			const owner = subagentWakeOwner(r.id, r.agent_id);
+			const owner = subagentWakeOwner(r.id, r.agent_id, r.conversation_id);
 			if (owner === "delivered") {
 				db.prepare("UPDATE subagent_events SET delivered_at = ? WHERE id = ?").run(Date.now(), e.id);
 				db.prepare("UPDATE subagents SET notified_at = ? WHERE id = ?").run(Date.now(), r.id);
