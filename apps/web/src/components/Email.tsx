@@ -1,8 +1,8 @@
 import { Loader2, Mail, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Button, cx, Help, Input, avatarText } from "./ui";
+import { Button, cx, Help, Input, avatarText, useConfirm } from "./ui";
 
 interface Server {
 	host: string;
@@ -37,9 +37,30 @@ export function EmailSettings() {
 	const [busy, setBusy] = useState(false);
 	const [msg, setMsg] = useState<Record<string, { ok: boolean; message: string }>>({});
 	const [err, setErr] = useState("");
+	const [delBusy, setDelBusy] = useState("");
+	const [delErr, setDelErr] = useState("");
+	const [confirmDlg, askConfirm] = useConfirm();
+	const delRef = useRef(false);
 	const load = () => api("/api/email").then(setD);
 	useEffect(() => void load(), [v]);
 	if (!d) return null;
+	const del = async (a: Account) => {
+		if (delRef.current) return;
+		const ok = await askConfirm({ title: `删除邮箱「${a.address}」？`, body: "只从这台电脑移除这个邮箱账号，邮件本身不会被动。", ok: "删除", danger: true });
+		if (!ok || delRef.current) return;
+		delRef.current = true;
+		setDelBusy(a.id);
+		setDelErr("");
+		try {
+			await api(`/api/email/${a.id}`, { method: "DELETE" });
+			await load();
+		} catch (e) {
+			setDelErr(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			delRef.current = false;
+			setDelBusy("");
+		}
+	};
 	const preset = d.presets.find((p) => p.id === form?.preset);
 	const save = async () => {
 		if (!form) return;
@@ -70,6 +91,7 @@ export function EmailSettings() {
 	};
 	return (
 		<div className="space-y-4" data-testid="email-settings">
+			{confirmDlg}
 			<p className="text-sm text-mut">
 				助理可以读邮件、写草稿，<b>发送前一定先请你批准</b>。
 				<Help className="ml-1">用邮箱的「授权码 / 应用专用密码」登录（不是登录密码），加密保存在这台电脑上。助理可以查看、搜索、阅读邮件，帮你写草稿；发送前会给你看完整草稿。</Help>
@@ -85,13 +107,14 @@ export function EmailSettings() {
 						<Button size="sm" onClick={() => api(`/api/email/${a.id}/test`, { method: "POST" }).then((r) => setMsg((m) => ({ ...m, [a.id]: r })))}>
 							测试
 						</Button>
-						<Button size="sm" variant="danger" aria-label="删除邮箱" onClick={() => confirm(`删除 ${a.address}？`) && api(`/api/email/${a.id}`, { method: "DELETE" }).then(load)}>
-							<Trash2 size={14} />
+						<Button size="sm" variant="danger" aria-label={`删除邮箱 ${a.address}`} disabled={delBusy === a.id} onClick={() => del(a)} data-testid={`email-delete-${a.id}`}>
+							{delBusy === a.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
 						</Button>
 					</span>
 					{msg[a.id] && <div className={cx("w-full text-xs", msg[a.id].ok ? "text-green-600" : "text-red-600")}>{msg[a.id].message}</div>}
 				</div>
 			))}
+			{delErr && <div className="text-sm text-red-600">{delErr}</div>}
 			{form ? (
 				<div className="space-y-3 rounded-xl border border-line p-4" data-testid="email-form">
 					<div className="flex flex-wrap gap-1.5">

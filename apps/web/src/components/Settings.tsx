@@ -15,7 +15,7 @@ import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { ImageModelsSection } from "./ImageModels";
 import { DefaultModelPicker, ProviderAccordion, useProviders } from "./Models";
-import { Badge, Button, cx, Fold, fmtTime, Help, Input, Modal, Select } from "./ui";
+import { Badge, Button, cx, Fold, fmtTime, Help, Input, Modal, Select, useConfirm } from "./ui";
 import { Downloads } from "./Downloads";
 import { AppUpdate } from "./AppUpdate";
 import { VisionModelPicker } from "./VisionModel";
@@ -349,6 +349,8 @@ function RemoteTab() {
 	const [devices, setDevices] = useState<Device[]>([]);
 	const [left, setLeft] = useState(0);
 	const [pushState, setPushState] = useState<string>(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
+	const [ownerErr, setOwnerErr] = useState("");
+	const [confirmDlg, askConfirm] = useConfirm();
 	const loadDevices = () => api<Device[]>("/api/devices").then(setDevices);
 	useEffect(() => {
 		void loadDevices();
@@ -380,6 +382,7 @@ function RemoteTab() {
 	};
 	return (
 		<div className="space-y-6">
+			{confirmDlg}
 			<section>
 				<H desc="开启后，手机在任何网络（4G/5G、外面的 Wi-Fi）下都能连回这台电脑。使用内置加密隧道，无需任何网络设置。">远程访问</H>
 				<div className="flex items-center gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
@@ -405,8 +408,8 @@ function RemoteTab() {
 					{system.local && tun.enabled && (tun.state === "error" || tun.state === "cooldown" || tun.state === "missing") && (
 						<Button
 							variant="outline"
-							onClick={() => {
-								if (tun.state === "cooldown" && !confirm("现在正处于 Cloudflare 限流冷却期，立即重试很可能再次被限流、冷却时间会更长。仍然重试？")) return;
+							onClick={async () => {
+								if (tun.state === "cooldown" && !(await askConfirm({ title: "现在正处于 Cloudflare 限流冷却期", body: "立即重试很可能再次被限流、冷却时间会更长。仍然重试？", ok: "仍然重试", danger: true }))) return;
 								void api("/api/remote/tunnel/retry", { method: "POST" });
 							}}
 						>
@@ -486,10 +489,11 @@ function RemoteTab() {
 							)}
 							{system.local && system.server && d.status === "active" && (
 								<Button size="sm" variant="ghost" title="主人设备可以改所有设置、批准新设备" onClick={async () => {
+									setOwnerErr("");
 									try {
 										await api(`/api/devices/${d.id}/owner`, { method: "POST", json: { owner: !d.owner } });
 									} catch (e) {
-										alert(e instanceof Error ? e.message : String(e));
+										setOwnerErr(e instanceof Error ? e.message : String(e));
 									}
 									void loadDevices();
 								}} data-testid="device-owner">
@@ -504,6 +508,7 @@ function RemoteTab() {
 						</div>
 					))}
 				</div>
+				{ownerErr && <div className="mt-1 text-xs text-red-500" data-testid="device-owner-error">{ownerErr}</div>}
 			</section>
 			<section>
 				<H desc="审批请求、后台任务完成时通知这台设备。iPhone 需先“添加到主屏幕”。">通知</H>
@@ -526,6 +531,7 @@ function EntryTab() {
 	const [token, setToken] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
+	const [confirmDlg, askConfirm] = useConfirm();
 	const load = () =>
 		api("/api/remote/cloudflare")
 			.then((r) => {
@@ -552,7 +558,7 @@ function EntryTab() {
 		}
 	};
 	const remove = async () => {
-		if (!confirm("删除远程入口？会解绑域名并删除 Worker，本机保存的 Token 也会清除。")) return;
+		if (!(await askConfirm({ title: "删除远程入口？", body: "会解绑域名并删除 Worker，本机保存的 Token 也会清除。", ok: "删除", danger: true }))) return;
 		await api("/api/remote/cloudflare", { method: "DELETE" });
 		await load();
 		await useStore.getState().loadSystem();
@@ -560,6 +566,7 @@ function EntryTab() {
 	if (!system.local) return <p className="text-sm text-zinc-500">远程入口只能在电脑上设置。</p>;
 	return (
 		<div className="space-y-5">
+			{confirmDlg}
 			<NamedTunnelSection defaultZone={zone} hasToken={!!st?.hasToken} />
 			<div className="border-t border-line" />
 			<H desc="备选（没有给 Token 隧道/DNS 权限时用）。用你自己的域名做一个固定网址：手机扫一次码，以后在任何网络下都能打开，电脑的隧道地址变了也会自动找到。部署在你自己的 Cloudflare 账号里，只交换“电脑现在在哪个地址”，不经手任何聊天内容。">入口页（Rendezvous）</H>
@@ -570,7 +577,7 @@ function EntryTab() {
 						https://{st.config.hostname}
 					</a>
 					<span className="text-xs text-zinc-500">{new Date(st.config.deployedAt).toLocaleString()}</span>
-					<Button size="sm" variant="ghost" className="ml-auto text-red-600" onClick={remove}>
+					<Button size="sm" variant="ghost" className="ml-auto text-red-600" onClick={remove} data-testid="entry-remove">
 						<Trash2 size={14} /> 删除
 					</Button>
 				</div>
@@ -635,6 +642,7 @@ function NamedTunnelSection({ defaultZone, hasToken }: { defaultZone: string; ha
 	const [check, setCheck] = useState<PermCheck | null>(null);
 	const [busy, setBusy] = useState<"" | "check" | "setup" | "remove">("");
 	const [err, setErr] = useState("");
+	const [confirmDlg, askConfirm] = useConfirm();
 	const load = () =>
 		api<NamedInfo>("/api/remote/named").then((r) => {
 			setInfo(r);
@@ -664,8 +672,8 @@ function NamedTunnelSection({ defaultZone, hasToken }: { defaultZone: string; ha
 			setCheck(null);
 			await load();
 		});
-	const doRemove = () => {
-		if (!confirm("删除固定地址？会删除 Cloudflare 里的隧道和这条 DNS 记录，之后改用临时地址。已配对的手机需要重新扫码。")) return;
+	const doRemove = async () => {
+		if (!(await askConfirm({ title: "删除固定地址？", body: "会删除 Cloudflare 里的隧道和这条 DNS 记录，之后改用临时地址。已配对的手机需要重新扫码。", ok: "删除", danger: true }))) return;
 		void run("remove", async () => (await api("/api/remote/named", { method: "DELETE" }), await load()));
 	};
 	const tokenKnown = hasToken || info?.hasToken;
@@ -677,6 +685,7 @@ function NamedTunnelSection({ defaultZone, hasToken }: { defaultZone: string; ha
 	);
 	return (
 		<section className="space-y-4" data-testid="named-tunnel">
+			{confirmDlg}
 			<H desc="推荐。在你自己的 Cloudflare 账号里建一条专属隧道，手机访问地址永远不变（例如 https://pi.example.com），扫一次码长期可用；不需要上面的临时链接，也不会遇到临时隧道的 429 限流。只要你开启了远程访问并且 Token 权限足够，会自动优先使用。">
 				固定地址（推荐）
 			</H>
@@ -687,7 +696,7 @@ function NamedTunnelSection({ defaultZone, hasToken }: { defaultZone: string; ha
 						https://{info.config.hostname}
 					</a>
 					<span className="text-xs text-zinc-500">隧道 {info.config.tunnelName}</span>
-					<Button size="sm" variant="ghost" className="ml-auto text-red-600" disabled={!!busy} onClick={doRemove}>
+					<Button size="sm" variant="ghost" className="ml-auto text-red-600" disabled={!!busy} onClick={doRemove} data-testid="named-remove">
 						{busy === "remove" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} 删除
 					</Button>
 				</div>
