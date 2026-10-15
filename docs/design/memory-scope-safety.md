@@ -48,6 +48,7 @@ MemoryOrigin = { actor, assistantId, conversationId?, taskId?, subagentId?,
   - **agent 级原地转正**：目标库与草稿同库时（scope=agent）原地把 `status` 改为 `verified`、清掉 `taskId`，不新建也不隐藏——否则账本按 bank+同文本去重会把草稿行当成「新条目」又标成 promoted 而消失。
   - 否则在目标库写 `status=verified` 新条目，`origin.source="promotion"`，`evidenceRef=draftId`。
   - 晋升要求草稿带可信 provenance（`origin`，非 legacy）且 `origin.assistantId` 确为本助理。
+- **同文本不同 task 草稿不互吞**：`RememberInput.dedupe`（默认 true）；`memory.remember` 对未确认草稿传 `dedupe:false`，账本（`basicMemory.remember`）不再按 `bank+text` 把不同任务/子代理的同文本草稿并成一行（修跨任务串位）；已确认写入仍去重。
 - 新增最小工具 `memory_review`（仅主会话注入）：列出待核验草稿 / 晋升 / 驳回。晋升是显式用户授权动作，不写成「每轮自动 retain」。
 - 技能仍走 `ext-skills` 现有用户同意，记忆晋升**不绕过** `skill_save` 审批。
 
@@ -56,11 +57,11 @@ MemoryOrigin = { actor, assistantId, conversationId?, taskId?, subagentId?,
 主 review 发现：同助理多任务的 `reflect` 原先都落在同一个 `agent_<id>` 库、只在下游按 recall id 过滤已生成的 text，等于先把整库（含兄弟 task 草稿）送给模型再删输出——会泄露，也会影响答案。
 
 - retain 时给每条打 provenance tag：`scope:<user|agent|conversation|task>`、`status:<draft|verified|…>`、`actor:<…>`、`task:<taskId>`、`conv:<conversationId>`。
-- `MemoryProvider.reflect(bank, query, scope)` **必须**带显式作用域，没给直接拒绝（fail closed）；`memory.reflect` 按 actor/taskId/conversationId 算每库允许集合：
-  - 共享 `user` 库：整库不过滤（`{all:true}`；该库只会被主/用户写，子代理写 user 会被降级，库内无草稿，legacy 原可见性也保留）。
-  - `agent_<id>` 库：主会话/用户核验视角 `{all:true}`；子代理/后台用 `tag_groups: OR( AND(scope:agent,status:verified), AND(scope:conversation,conv:本对话), task:本任务 )`，`all_strict`——未标 tag 的一律排除。兄弟 task 草稿既不带 `status:verified` 也不带本任务 tag，在**请求端**就被服务端过滤掉。
+- `MemoryProvider.reflect(bank, query, scope)` **必须**带显式作用域，没给直接拒绝（fail closed）；`memory.reflect` 按 actor/taskId/conversationId 算每库允许集合。**非核验视角对每个库都显式列范围**，并加一条官方 untagged/global 范围（`{tags:[],match:'exact'}`，经安装包 0.10.3 `engine/search/tags.py` 实物核实：`any`/`all` 含无 tag、`_strict`/`exact` 不含）来保留无 provenance tag 的旧忆：
+  - 共享 `user` 库：主会话/用户核验视角 `{all:true}`；子代理/后台 = `OR( AND(scope:user,status:verified), untagged/global )`（不再整库 `all`；万一库里出现异常 tag 的草稿也不会被非核验视角读到）。
+  - `agent_<id>` 库：主会话/用户核验视角 `{all:true}`；子代理/后台 = `OR( AND(scope:agent,status:verified), AND(scope:conversation,conv:本对话), AND(task:本任务,status:draft), untagged/global )`，叶子用 `all_strict`。本任务只取 `status=draft`（已驳回/已晋升草稿重打 tag 后不再进证据）；兄弟 task 草稿带自己的 task tag 又非本任务，在**请求端**就被服务端过滤掉；无 tag 旧忆保留可见。
 - 若后端根本不支持 tags/tag_groups 过滤（无法证明正确 filter），回退方案是 task 草稿物理分 bank/namespace 隔离 + 分调用安全聚合；本轮 Hindsight 公开 API 支持 `tags`/`tags_match`/`tag_groups`，未触发回退。
-- 验证：假 Hindsight 按官方语义实现 tag 过滤，测试断言 reflect **请求**带精确 provenance 过滤、且服务端实际喂给模型的命中里没有兄弟草稿（不是断言最后 text 不含）。
+- 验证：假 Hindsight 按官方语义实现 tag 过滤，测试断言 reflect **请求**带精确 provenance 过滤、且服务端实际喂给模型的命中里没有兄弟草稿（不是断言最后 text 不含）；另用**本机安装的真实 0.10.3 服务代码**（`ReflectRequest` 校验器 + `build_tag_groups_where_clause`/`tags_satisfy_groups`）对实际请求体生成 SQL 并逐条命中判定为证。
 
 ### 2.4 删除/更新归属
 
@@ -89,11 +90,11 @@ MemoryOrigin = { actor, assistantId, conversationId?, taskId?, subagentId?,
 5. agent/user 隔离；background 来源不入 user。
 6. 队列 retain 去重：失败 attempts>0 后不重复入队；runtime resume 任务 origin 不变。
 7. permissions：readOnlyHint 修正后普通档位不误拦 recall/reflect、完全权限仍 bypass。
-8. **reflect 源端隔离**：子代理 reflect 请求带 provenance `tag_groups`，兄弟 task 草稿不出现在服务端命中（fake 记录**真正送给模型的依据**，断言请求正文与命中都不含兄弟草稿）；主会话核验视角不做 tag 限制；`provider.reflect` 无 scope 直接拒绝；跨助理草稿不进入本助理 reflect。
+8. **reflect 源端隔离**：子代理 reflect 请求带 provenance `tag_groups`，兄弟 task 草稿不出现在服务端命中（fake 记录**真正送给模型的依据**，断言请求正文与命中都不含兄弟草稿）；本任务只取 `status=draft`（已驳回不进证据）；无 tag 旧忆保留可见；主会话核验视角不做 tag 限制；user 库非核验视角也显式限定；`provider.reflect` 无 scope 直接拒绝；跨助理草稿不进入本助理 reflect；同文本不同 task 草稿隔离；并发晋升不重复。
 
 ## 4. 不做 / 边界
 
 - 不改 Hindsight backend、不读 `secrets.ts`、不碰真实 Hindsight/钥匙串/真实数据目录。
-- reflect 源端隔离本轮靠 Hindsight 的 `tags`/`tags_match`/`tag_groups`（公开 API）；过滤语义只在假服务上验证，真实 Hindsight 未验；未拆物理 bank。
+- reflect 源端隔离靠 Hindsight 公开 API `tags`/`tags_match`/`tag_groups`；字段/枚举/SQL 语义已用**本机安装的真实 0.10.3 服务代码**实物验证，但**端到端 HTTP retain/reflect 未验**（需 LLM 凭据，按约定不读用户 key；独立实例需 Docker 或另起嵌入式 Postgres，本轮未做）；未拆物理 bank。
 - 不做「每轮自动总结/自动 retain」；不整段移除上下文注入（缓存未实测）。
 - 新发布仅 mac-arm64，下一个未用 beta（24），需主协调合入后统一发布。
