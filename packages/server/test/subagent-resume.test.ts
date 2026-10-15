@@ -77,6 +77,9 @@ test("有界自动重试：次数上限、指数退避 + 抖动、封顶", () =>
 	assert.equal(shouldAutoRetry("ECONNRESET", TRANSPORT_RETRY.maxAttempts), false);
 	assert.equal(shouldAutoRetry("模型返回了奇怪的输出", 1), false);
 	assert.equal(shouldAutoRetry("用户停止了任务", 1), false);
+	// 429 / 5xx 已由 Pi 自身请求重试 + 池内 fallback 处理，不在 app 层重复退避（否则每轮多等一个 Pi 重试周期）
+	assert.equal(shouldAutoRetry("429 Too Many Requests", 1), false);
+	assert.equal(shouldAutoRetry("503 Service Unavailable", 1), false);
 	// 第 1 次 ≤ base*1.5；单调增（固定抖动）；封顶 maxMs
 	assert.ok(transportBackoffMs(1, () => 0.5) > 0);
 	assert.ok(transportBackoffMs(1, () => 1) <= TRANSPORT_RETRY.baseMs * 1.5);

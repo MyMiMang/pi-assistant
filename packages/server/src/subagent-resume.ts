@@ -65,7 +65,10 @@ export function transportBackoffMs(attempt: number, rand: () => number = Math.ra
 	return Math.round(Math.min(TRANSPORT_RETRY.maxMs, capped * (0.5 + rand())));
 }
 
-/** 这次失败是否可以再自动重试：只有连接类 / 服务临时不可用，且没到次数上限。 */
+/**
+ * 这次失败是否需要在**同一会话**做有界退避重试（仅 app 层能救回来的连接类错误）。
+ * 只限连接/超时类：429 / 5xx 等已经由 Pi 自身请求重试 + 池内 fallback 处理，不在这里重复。
+ */
 export function shouldAutoRetry(message: string | null | undefined, attempt: number): boolean {
-	return classifyResume(message).auto && attempt < TRANSPORT_RETRY.maxAttempts;
+	return classifyResume(message).cls === "transport" && attempt < TRANSPORT_RETRY.maxAttempts;
 }

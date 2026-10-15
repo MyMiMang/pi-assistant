@@ -12,6 +12,8 @@ export const MOCK_REASONING_MODEL = "echo-think";
 /** 集成测试用：每次 mock 模型步骤（一次真实模型调用）计数，用来证明等待期间零模型调用。 */
 export const mockStats = { steps: 0 };
 export const resetMockStats = () => { mockStats.steps = 0; };
+/** 「网络断开测试」专用：第一次模型请求抛 ECONNRESET，之后恢复（验证有界退避重试后在同一会话续跑）。 */
+let netFlaky = 0;
 
 type Msg = { role: string; content: unknown; toolName?: string };
 const textOf = (m: Msg) =>
@@ -83,6 +85,11 @@ function respond(messages: Msg[], systemPrompt = "") {
 		// 模拟“可恢复的模型故障”：首次派活时报 429，让子代理在候选池内自动 fallback（续跑时会成功）
 		if (/限流测试/.test(u)) throw new Error("429 rate limit exceeded（模拟子代理模型限流）");
 		if (/报错/.test(u)) throw new Error("模拟子代理模型报错");
+		// 模拟断网：第一次请求 ECONNRESET，退避重试后在同一会话恢复正常
+		if (/网络断开测试/.test(u) && last.role !== "toolResult") {
+			if (netFlaky++ === 0) throw new Error("ECONNRESET socket hang up（模拟网络连接被重置）");
+			return fauxAssistantMessage([fauxToolCall("bash", { command: "echo 断网后继续完成" })]);
+		}
 		if (last.role === "toolResult") return fauxAssistantMessage(`子代理结果：${textOf(last)}`);
 		if (/审批/.test(u)) return fauxAssistantMessage([fauxToolCall("bash", { command: "rm -f subagent-old.txt; echo 子代理审批完成" })]);
 		return fauxAssistantMessage([fauxThinking("先确认子代理任务，再运行命令整理结果。"), fauxToolCall("bash", { command: "sleep 8; echo 子代理工作完成" })]);
