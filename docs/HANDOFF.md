@@ -2,6 +2,14 @@
 
 > 当前公开版本 **v0.1.0-beta.23**（2026-10-15 已公开 Latest，仅 macOS arm64）；下一版 **v0.1.0-beta.24 候选**见 `progress-snapshots/hotfix-integration.md`（热修整合，未发布）。上一版 v0.1.0-beta.22。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
+2026-10-22 外观：默认换「暗夜」、移除「极简」（子代理 `appearance-theme-design`，基 `release-candidate-validation` `0752dee`，**未 push / 未 tag / 未打包**；改动 DESIGN §5.18）：
+- 用户原话：『默认的这个外观替换成暗夜这个外观变成默认；极简删掉；再设计一套可爱一点像素风；外观开放给用户 DIY 让他们 AI 创造，你看怎么弄』。主会话确认：用户主动选择过的其他主题保留、不 reset。
+- 概念澄清：这是 **Pi Assistant 应用（`apps/web`）外观**，不是 Pi SDK TUI themes；不改 SDK / node_modules。**主题（skin）≠ 明暗（light/dark/system）**：暗夜 = `noir`，不是 dark mode，两者独立持久化。
+- 改动：`themes/registry.ts` `DEFAULT_THEME="noir"`、删 `linear`、加 `REMOVED_SKINS={linear:noir}` 与 `normalizeSkin`；删 `themes/linear.css`、`index.css` 去 import、`app.css` 清 `[data-skin=linear]` 残留；新增 `appearance-migration.ts`（纯函数）+ `migrate.ts` 调用，`pia.skin=linear` → `noir`（其他主题不动）、旧默认强调色清掉；新增 `public/theme-boot.js` 首屏同步预置 `data-skin`/`data-mode`/`theme-color`（CSP 只能外部文件），`index.html` 默认 `theme-color=#09090b`，SW 预缓存（`pia-shell-v3`）；e2e 默认断言与「4 套」枚举改 3 套。
+- 文档：新增 [docs/design/appearance-themes.md](design/appearance-themes.md)（盘点 + 模块边界 + 像素风方向 + DIY typed manifest / 校验 / 流程 / 文件计划 / 分期）；DESIGN §5.18 改 3 套 + 迁移 + 首屏；ROADMAP 记录需求。
+- 实跑（Node 24.19.0，纯 fixture，未碰真实 localStorage / 配置 / 凭据）：`packages/server/test/appearance-theme.test.ts` **7/7**（含直接执行 `theme-boot.js` 验证默认暗夜 / `linear` 迁移 / 其他主题保留）；两端 `tsc --noEmit` exit 0；真实主题 CSS fixture 截图 `evidence/appearance-theme-design/`（桌面 + 手机，look_at_image 确认深色、3 卡、无「极简」、暗夜选中）。
+- **未做 / 未验**：全量 `e2e/run.mjs`、真机、打包；像素风与 DIY **未实现**（待用户定配色/深浅版/导入方式）。环境限制：本树借用其他树 `node_modules`，`vite build` 在 base 提交（`0752dee`，独立临时 worktree 复现）同样失败（brand 插件 `closeBundle` 读不到 `dist/manifest.webmanifest`），是环境问题、非本次改动；因此本次未跑真实构建产物 e2e。
+
 2026-10-16 语音麦克风位置修正（用户 UI 反馈：麦克风放在发送键旁边；worktree `release-candidate-validation`，**未 push / 未 tag / 未打包**；beta.24 候选）：
 - **原状**：`VoiceInput` 渲染在 `.pa-composer-tools`（附件工具列，回形针旁边），与最初「发送键旁」不符。
 - **改动**：`Chat.tsx` / `RoomChat.tsx` 把 `<VoiceInput>` 从 `pa-composer-tools` 移到 `pa-composer-bar` 中发送键之前；`VoiceInput.tsx` 拆成两块——`.pa-voice-ctl`（麦克风 / 停止 / 取消，`flex:none`、`align-self:flex-end`）固定在发送键左侧，`.pa-voice-status`（提示文字 + 未配置时的「去设置」）独立成行；`themes/base.css` 给 `.pa-composer-bar` 加 `flex-wrap:wrap`，`.pa-voice-status{order:1;flex:0 0 100%}`。单聊 / 群聊一致；子代理输入栏本来就没麦克风（语音只做主 / 群），共享 composer CSS 一并适配。

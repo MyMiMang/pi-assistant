@@ -542,9 +542,12 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 
 ### 5.18 主题系统与对话界面
 
-- **4 套可切换主题**（设置 → 外观，按设备保存在 localStorage）：`linear` 极简专业（默认）、`glass` 毛玻璃、`warm` 暖色人文、`noir` 暗夜。每套都有浅色/深色，另可“跟随系统”，并可选强调色（“主题默认”或该主题推荐的几种）。设置页的主题卡片是**用真实主题 CSS 渲染的缩小版界面**（实时预览）。
+- **3 套可切换主题**（设置 → 外观，按设备保存在 localStorage）：`noir` 暗夜（**默认**）、`glass` 毛玻璃、`warm` 暖色人文。每套都有浅色/深色（暗夜默认深色），另可“跟随系统”，并可选强调色（“主题默认”或该主题推荐的几种）。设置页的主题卡片是**用真实主题 CSS 渲染的缩小版界面**（实时预览）。
+  - 内置「极简专业」（`linear`）已移除（2026-10-22，用户要求）：它的 CSS 与设置卡片都不再出现；旧设备上的 `pia.skin=linear` 在启动时迁移为 `noir`，用户显式选过的其他主题不动。迁移逻辑见 `apps/web/src/appearance-migration.ts`（纯函数，可单测）。
+  - **首屏不闪白**：`apps/web/public/theme-boot.js` 在打包脚本之前**同步**执行（CSP 是 `script-src 'self'`，所以放外部文件而非内联），按 localStorage 预置 `<html data-skin data-mode class>` 与 `<meta name="theme-color">`；常量与 `registry.ts` 一致，由单测钉住。
 - **实现**：`apps/web/src/themes/`
-  - `registry.ts`：主题注册表（id、名称、简介、默认强调色、可选强调色、地址栏颜色、默认明暗）；`registerTheme()` 预留运行时扩展。
+  - `registry.ts`：主题注册表（id、名称、简介、默认强调色、可选强调色、地址栏颜色、默认明暗），以及默认主题与已移除 id 的迁移别名；`registerTheme()` 预留运行时扩展。
+  - `appearance-migration.ts`：外观存储值迁移（旧默认强调色、已移除主题 → 默认主题），纯函数，`migrate.ts` 在应用启动最前面调用。
   - `base.css`：组件样式（侧边栏、消息、活动行、步骤列表、卡片、输入框……，类名 `pa-*`），全部只读 CSS 变量。
   - `<id>.css`：主题 token（颜色、圆角、阴影、字体、动效）与少量组件微调，全部限定在 `[data-skin=<id>]` / `[data-skin=<id>][data-mode=light|dark]` 下。
   - `app.css`：布局胶水、Tailwind 接 token（语义色 `bg-card`/`text-mut`/`border-line`…；`zinc-50…950` 按主题的 `--z-light`/`--z-dark` 锚点混合，旧组件自动跟随主题；`rounded-lg/xl/2xl` 跟随 `--r-sm/--r`）。

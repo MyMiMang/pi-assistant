@@ -458,14 +458,14 @@ await step("设置窗口固定尺寸：切换所有标签，窗口/标签栏/每
 	}
 });
 
-await step("外观：4 套主题 + 浅色/深色/跟随系统 + 强调色，按设备持久化", async () => {
+await step("外观：3 套主题 + 浅色/深色/跟随系统 + 强调色，按设备持久化", async () => {
 	const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
 	const p = await c.newPage();
 	await p.goto(`${BASE}/?settings=appearance`);
 	await p.getByRole("button", { name: "跟随系统" }).waitFor();
 	const radios = p.getByRole("radio");
-	if ((await radios.count()) < 4) throw new Error("应至少有 4 套主题");
-	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== "linear") throw new Error("默认主题应为 linear");
+	if ((await radios.count()) < 3) throw new Error("应至少有 3 套主题");
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== "noir") throw new Error("默认主题应为 noir");
 	await p.waitForTimeout(400);
 	await p.screenshot({ path: join(SHOTS, "16-settings-appearance.png") });
 	await p.getByRole("radio", { name: "暖色人文" }).click();
@@ -796,9 +796,9 @@ await step("Phase 2：多对话（新对话 → 切回旧对话历史仍在）",
 	await page.locator("main").getByText("我喜欢简洁的回答").first().waitFor();
 });
 
-await step("四套主题截图（桌面浅色/深色 + 手机）", async () => {
+await step("三套主题截图（桌面浅色/深色 + 手机）", async () => {
 	mkdirSync(join(SHOTS, "themes"), { recursive: true });
-	for (const skin of ["linear", "glass", "warm", "noir"]) {
+	for (const skin of ["glass", "warm", "noir"]) {
 		for (const [mode, vp] of [["light", { width: 1440, height: 900 }], ["dark", { width: 1440, height: 900 }], ["mobile", { width: 390, height: 844 }]]) {
 			const m = mode === "mobile" ? (skin === "noir" ? "dark" : "light") : mode;
 			const c = await browser.newContext({ viewport: vp, deviceScaleFactor: mode === "mobile" ? 2 : 1, colorScheme: m, locale: "zh-CN", isMobile: mode === "mobile", hasTouch: mode === "mobile" });
@@ -1539,7 +1539,7 @@ await step("左侧助理列表：右键 → 编辑 / 删除助理（确认框）
 	void b;
 });
 
-await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上下文菜单在 4 套主题、桌面和手机宽度下内容都在菜单内、菜单在屏幕内", async () => {
+await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上下文菜单在 3 套主题、桌面和手机宽度下内容都在菜单内、菜单在屏幕内", async () => {
 	const vp0 = page.viewportSize();
 	const check = (el) => {
 		const r = el.getBoundingClientRect();
@@ -1575,7 +1575,7 @@ await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上�
 			await ov.dispatchEvent("click").catch(() => {});
 			await page.waitForTimeout(300);
 		}
-		for (const skin of ["linear", "glass", "warm", "noir"]) {
+		for (const skin of ["glass", "warm", "noir"]) {
 			await page.evaluate((s) => (document.documentElement.dataset.skin = s), skin);
 			for (const [btn, menu] of menus) {
 				const b = page.locator(`main [data-testid=${btn}]`).first();
@@ -1596,7 +1596,7 @@ await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上�
 			}
 		}
 	}
-	await page.evaluate(() => (document.documentElement.dataset.skin = localStorage.getItem("pia.skin") || "linear"));
+	await page.evaluate(() => (document.documentElement.dataset.skin = localStorage.getItem("pia.skin") || "noir"));
 	if (vp0) await page.setViewportSize(vp0);
 	if (checked < 30) throw new Error(`检查到的菜单太少（${checked}）`);
 	if (problems.length) throw new Error(problems.join("\n"));
@@ -1878,7 +1878,7 @@ await step("群聊附件：发图片+文件 → @A 看到路径和图片 → 管
 	await roomIdle();
 	await page.screenshot({ path: join(SHOTS, "83-room-attachments.png") });
 });
-await step("群聊：手机宽度 @ 底部面板、整页不横向滚动；4 套主题下群聊界面不溢出", async () => {
+await step("群聊：手机宽度 @ 底部面板、整页不横向滚动；3 套主题下群聊界面不溢出", async () => {
 	const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN" });
 	const pp = await phone.newPage();
 	await pp.goto(`${BASE}/?room=${ROOM}`);
@@ -1895,7 +1895,7 @@ await step("群聊：手机宽度 @ 底部面板、整页不横向滚动；4 套
 	if (m.doc > m.vw || m.sc > 1) throw new Error(`手机上群聊被撑宽：${JSON.stringify(m)}`);
 	await pp.screenshot({ path: join(SHOTS, "81-room-phone.png") });
 	await phone.close();
-	for (const skin of ["linear", "glass", "warm", "noir"]) {
+	for (const skin of ["glass", "warm", "noir"]) {
 		const c = await browser.newContext({ viewport: { width: 1100, height: 800 }, locale: "zh-CN", colorScheme: skin === "noir" ? "dark" : "light" });
 		await c.addInitScript((s) => localStorage.setItem("pia.skin", s), skin);
 		const p = await c.newPage();

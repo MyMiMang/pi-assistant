@@ -1,6 +1,5 @@
 /* 主题系统入口：公共组件样式（来自设计稿）+ 各主题 token。新增主题在此 @import。 */
 @import "./base.css";
-@import "./linear.css";
 @import "./glass.css";
 @import "./warm.css";
 @import "./noir.css";
