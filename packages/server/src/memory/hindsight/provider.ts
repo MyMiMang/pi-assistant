@@ -22,13 +22,21 @@ const MENTAL_MODELS = [
 ];
 
 const client = () => new HindsightClient({ baseUrl: sidecar.baseUrl!, apiKey: sidecar.apiKey(), userAgent: "pi-assistant" } as never);
+/** recall/reflect 没有显式取消；用 AbortController 真正中止 fetch（不是只 race 掉 Promise），避免超时后请求还在跑 */
+const RECALL_TIMEOUT_MS = Number(process.env.PIA_MEMORY_TIMEOUT_MS ?? 20_000);
+function abortable<T>(run: (signal: AbortSignal) => Promise<T>, ms: number, what: string): Promise<T> {
+	const ac = new AbortController();
+	const t = setTimeout(() => ac.abort(new Error(`${what}超时（${ms}ms）`)), ms);
+	t.unref?.();
+	return run(ac.signal).finally(() => clearTimeout(t));
+}
 const row = (id: string) => db.prepare("SELECT * FROM memory_items WHERE id = ?").get(id) as { id: string; bank: string; text: string; kind: string | null; created_at: string; occurred_at: string | null; meta_json: string | null } | undefined;
 const metaOf = (r: { meta_json: string | null }) => (r.meta_json ? (JSON.parse(r.meta_json) as Record<string, unknown>) : {});
 
-/** 入队；同一条目已有未处理的 retain 就不重复排（每次 retain 都要调用模型抽取，重复会白花 token） */
+/** 入队；同一条目已有未处理的 retain 就不重复排（每次 retain 都要调用模型抽取，重复会白花 token；失败重试后也靠这条去重） */
 const insertJob = (bank: string, op: string, itemId: string | null) =>
 	db
-		.prepare("INSERT INTO memory_sync(bank, item_id, op, created_at) SELECT ?,?,?,? WHERE NOT (? = 'retain' AND EXISTS (SELECT 1 FROM memory_sync WHERE bank = ? AND item_id = ? AND op = 'retain' AND attempts = 0))")
+		.prepare("INSERT INTO memory_sync(bank, item_id, op, created_at) SELECT ?,?,?,? WHERE NOT (? = 'retain' AND EXISTS (SELECT 1 FROM memory_sync WHERE bank = ? AND item_id = ? AND op = 'retain'))")
 		.run(bank, itemId, op, Date.now(), op, bank, itemId);
 export function enqueue(bank: string, op: "retain" | "delete" | "purge", itemId?: string) {
 	insertJob(bank, op, itemId ?? null);
@@ -91,7 +99,17 @@ export function flush(): Promise<void> {
 						const r = row(job.item_id!);
 						if (r && r.bank === job.bank) {
 							const m = metaOf(r);
-							const tags = [`kind:${m.kind ?? r.kind ?? "fact"}`, ...(m.conversationId ? [`conv:${m.conversationId}`] : [])];
+							const origin = (m.origin ?? {}) as { status?: string; actor?: string };
+							// 作用域标签：reflect 的源端隔离靠这些 tag（服务端按 tag 过滤，不把兄弟草稿送进模型）
+							const scope = job.bank === "user" ? "user" : m.conversationId ? "conversation" : m.taskId ? "task" : "agent";
+							const tags = [
+								`kind:${m.kind ?? r.kind ?? "fact"}`,
+								`scope:${scope}`,
+								`status:${String(origin.status ?? "legacy")}`,
+								`actor:${String(origin.actor ?? "legacy")}`,
+								...(m.conversationId ? [`conv:${m.conversationId}`] : []),
+								...(m.taskId ? [`task:${m.taskId}`] : []),
+							];
 							const metadata: Record<string, string> = { kind: String(m.kind ?? r.kind ?? "fact"), source: String(m.source ?? "") };
 							if (m.conversationId) metadata.conversationId = String(m.conversationId);
 							await c.retain(job.bank, r.text, { documentId: r.id, timestamp: r.occurred_at ?? r.created_at, metadata, tags, async: true });
@@ -167,7 +185,7 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 		if (!sidecar.ready) return basicMemory.recall(bank, query, opts);
 		try {
 			if (!db.prepare("SELECT 1 FROM hindsight_banks WHERE bank = ?").get(bank)) await ensureRemoteBank(bank);
-			const res = await client().recall(bank, query, { maxTokens: opts.tokenBudget ?? 2048, budget: "mid", types: ["world", "experience", "observation"] } as never);
+			const res = await abortable((signal) => client().recall(bank, query, { maxTokens: opts.tokenBudget ?? 2048, budget: "mid", types: ["world", "experience", "observation"], signal } as never), RECALL_TIMEOUT_MS, "记忆召回");
 			const results = ((res as { results?: unknown[] }).results ?? []) as Parameters<typeof toItem>[1][];
 			const items = results.map((r, i) => toItem(bank, r, 1 / (1 + i))).filter(Boolean) as MemoryItem[];
 			const limit = opts.limit ?? 8;
@@ -179,10 +197,18 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 		}
 	},
 
-	async reflect(bank, query) {
+	async reflect(bank, query, scope) {
 		if (!sidecar.ready) throw new Error("高级记忆暂时不可用（Hindsight 未就绪），稍后再试");
+		// 源端隔离 fail closed：没有显式作用域就拒绝反思，避免把整个库（含兄弟草稿）送回模型
+		if (!scope) throw new Error("拒绝在未限定作用域的记忆库上反思");
 		await ensureRemoteBank(bank);
-		const r = await client().reflect(bank, query, { budget: "mid", includeFacts: true } as never);
+		const filter: Record<string, unknown> =
+			"all" in scope
+				? {}
+				: "tagGroups" in scope
+					? { tagGroups: scope.tagGroups }
+					: { tags: scope.tags, tagsMatch: scope.tagsMatch ?? "any" };
+		const r = await abortable((signal) => client().reflect(bank, query, { budget: "mid", includeFacts: true, ...filter, signal } as never), RECALL_TIMEOUT_MS, "记忆反思");
 		const memories = ((r.based_on as { memories?: Parameters<typeof toItem>[1][] } | null)?.memories ?? []).map((m, i) => toItem(bank, m, 1 / (1 + i))).filter(Boolean) as MemoryItem[];
 		return { answer: r.text, citations: memories };
 	},

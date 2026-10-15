@@ -760,12 +760,12 @@ app.get("/api/agents/:id/memory", async (c) => {
 	if (!a) return c.json({ error: "not_found" }, 404);
 	const items = await memory.list(id, undefined, c.req.query("q") || undefined);
 	const p = listMemoryProviders().find((x) => x.id === (a.memory_provider ?? globalMemoryProviderId()))!;
-	return c.json({ provider: p, agentProvider: a.memory_provider ?? null, items: items.map((i) => ({ id: i.id, text: i.text, kind: i.kind, scope: i.scope, createdAt: i.createdAt, expiresAt: i.expiresAt ?? null, conversationId: i.conversationId ?? null, source: i.meta?.source ?? null })) });
+	return c.json({ provider: p, agentProvider: a.memory_provider ?? null, items: items.map((i) => ({ id: i.id, text: i.text, kind: i.kind, scope: i.scope, status: i.status, taskId: i.taskId ?? null, createdAt: i.createdAt, expiresAt: i.expiresAt ?? null, conversationId: i.conversationId ?? null, source: i.origin?.source ?? i.meta?.source ?? null })) });
 });
 app.post("/api/agents/:id/memory", async (c) => {
 	const b = await c.req.json<{ text: string; kind?: "fact" | "experience" | "note"; scope?: "user" | "agent" | "conversation"; conversationId?: string; ttlDays?: number }>();
 	try {
-		const r = await memory.remember(c.req.param("id"), b.conversationId ?? null, { content: String(b.text ?? ""), kind: b.kind, scope: b.scope, ttlDays: b.ttlDays, source: "user" });
+		const r = await memory.remember(c.req.param("id"), b.conversationId ?? null, { content: String(b.text ?? ""), kind: b.kind, scope: b.scope, ttlDays: b.ttlDays, source: "user", actor: "user" });
 		bus.emit({ type: "memory.changed", agentId: c.req.param("id") });
 		return c.json(r);
 	} catch (e) {
@@ -774,12 +774,17 @@ app.post("/api/agents/:id/memory", async (c) => {
 });
 app.patch("/api/agents/:id/memory/:mid", async (c) => {
 	const b = await c.req.json<{ text?: string; kind?: "fact" | "experience" | "note"; scope?: "user" | "agent" | "conversation" }>();
-	const id = await memory.update(c.req.param("id"), c.req.param("mid"), b);
+	const id = await memory.update(c.req.param("id"), c.req.param("mid"), b, null, { actor: "user" });
 	bus.emit({ type: "memory.changed", agentId: c.req.param("id") });
 	return id ? c.json({ ok: true, id }) : c.json({ error: "not_found" }, 404);
 });
 app.delete("/api/agents/:id/memory/:mid", async (c) => {
-	const ok = await memory.forget(c.req.param("id"), c.req.param("mid"));
+	let ok = false;
+	try {
+		ok = await memory.forget(c.req.param("id"), c.req.param("mid"), { actor: "user" });
+	} catch (e) {
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 403);
+	}
 	bus.emit({ type: "memory.changed", agentId: c.req.param("id") });
 	return c.json({ ok });
 });
@@ -795,7 +800,7 @@ app.get("/api/agents/:id/memory/export", async (c) => {
 app.post("/api/agents/:id/memory/reflect", async (c) => {
 	const { query } = await c.req.json<{ query: string }>();
 	try {
-		const r = await memory.reflect(c.req.param("id") as string, String(query ?? "").slice(0, 1000));
+		const r = await memory.reflect(c.req.param("id") as string, String(query ?? "").slice(0, 1000), { actor: "user" });
 		if (!r) return c.json({ error: "当前记忆后端不支持反思" }, 400);
 		return c.json({ answer: r.answer, citations: (r.citations ?? []).slice(0, 8).map((i) => ({ id: i.id, text: i.text })) });
 	} catch (e) {

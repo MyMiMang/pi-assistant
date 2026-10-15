@@ -47,7 +47,7 @@ export const basicMemory: MemoryProvider = {
 		const text = input.content.trim();
 		if (!text) throw new Error("记忆内容不能为空");
 		const meta = input.meta ?? {};
-		const dup = db.prepare("SELECT id FROM memory_items WHERE bank = ? AND text = ?").get(bank, text) as { id: string } | undefined;
+		const dup = input.dedupe === false ? undefined : (db.prepare("SELECT id FROM memory_items WHERE bank = ? AND text = ?").get(bank, text) as { id: string } | undefined);
 		if (dup) {
 			db.prepare("UPDATE memory_items SET meta_json = ?, created_at = ? WHERE id = ?").run(JSON.stringify(meta), iso(), dup.id);
 			return { ids: [dup.id] };
