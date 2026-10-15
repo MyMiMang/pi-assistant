@@ -6,6 +6,8 @@
 [data-skin=glass][data-mode=dark]   { --z-light: #f5f5f7; --z-dark: #0b0d1a; }
 [data-skin=warm][data-mode=light]   { --z-light: #fffcf6; --z-dark: #2a251f; }
 [data-skin=warm][data-mode=dark]    { --z-light: #ede5d6; --z-dark: #1c1915; }
+[data-skin=pixel][data-mode=light]  { --z-light: #fffdf8; --z-dark: #3a3340; }
+[data-skin=pixel][data-mode=dark]   { --z-light: #f0ecf7; --z-dark: #181524; }
 [data-skin=noir][data-mode=light]   { --z-light: #ffffff; --z-dark: #0c0c10; }
 [data-skin=noir][data-mode=dark]    { --z-light: #f4f4f5; --z-dark: #09090b; }
 

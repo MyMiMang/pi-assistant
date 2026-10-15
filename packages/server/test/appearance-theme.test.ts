@@ -28,10 +28,10 @@ function fakeStorage(init: Record<string, string> = {}) {
 
 test("默认主题是暗夜，且内置极简（linear）已移除", () => {
 	assert.equal(DEFAULT_THEME, "noir");
-	assert.equal(THEMES.length, 3);
+	assert.equal(THEMES.length, 4);
 	assert.deepEqual(
 		THEMES.map((t) => t.id),
-		["glass", "warm", "noir"],
+		["glass", "warm", "pixel", "noir"],
 	);
 	assert.equal(existsSync(join(THEME_DIR, "linear.css")), false, "linear.css 应已删除");
 	assert.equal(read(join(THEME_DIR, "index.css")).includes("linear.css"), false, "index.css 不应再 @import linear");
@@ -40,7 +40,7 @@ test("默认主题是暗夜，且内置极简（linear）已移除", () => {
 
 test("注册表：显式选择的其他主题不受影响，未知/已移除 id 落到暗夜", () => {
 	// 用户显式选过的主题原样保留（“不动其他 selected”）
-	for (const id of ["glass", "warm", "noir"]) assert.equal(getTheme(id).id, id);
+	for (const id of ["glass", "warm", "pixel", "noir"]) assert.equal(getTheme(id).id, id);
 	// 已移除的旧默认 id → 暗夜
 	assert.equal(getTheme("linear").id, "noir");
 	assert.equal(normalizeSkin("linear"), "noir");
@@ -68,7 +68,7 @@ test("外观值迁移：极简 → 暗夜，其他主题与空值不动，旧默
 	const removedAccent = migrateAppearance(fakeStorage({ "pia.accent": "#6366f1", "pia.skin": "linear" }));
 	assert.deepEqual(removedAccent, { accentRemoved: true, skinMigrated: "noir" });
 
-	for (const id of ["glass", "warm", "noir"]) {
+	for (const id of ["glass", "warm", "pixel", "noir"]) {
 		const s = fakeStorage({ "pia.skin": id, "pia.accent": "#0a84ff" });
 		assert.deepEqual(migrateAppearance(s), { accentRemoved: false, skinMigrated: null });
 		assert.equal(s.getItem("pia.skin"), id, `${id} 不应被迁移改动`);
@@ -140,4 +140,25 @@ test("首屏不闪白：index.html 默认 theme-color 跟随默认主题深色�
 	assert.ok(html.includes(`<meta name="theme-color" content="${noir.chrome.dark}" />`), "theme-color 默认应为暗夜深色");
 	assert.ok(/<script src="\/theme-boot\.js"><\/script>/.test(html), "index.html 应在打包前同步加载 theme-boot.js");
 	assert.ok(read(join(ROOT, "apps/web/public/sw.js")).includes('"/theme-boot.js"'), "SW 应预缓存 theme-boot.js");
+});
+
+test("像素风：浅深双版 token 齐全、装饰纯 CSS（无远程资源 / url / 像素字体下载），正文仍是系统字体", () => {
+	const css = read(join(THEME_DIR, "pixel.css"));
+	assert.ok(read(join(THEME_DIR, "index.css")).includes("pixel.css"), "index.css 应 @import pixel.css");
+	const block = (mode: string) => {
+		const m = css.match(new RegExp(`\\[data-skin=pixel\\]\\[data-mode=${mode}\\]\\{([^}]*)\\}`));
+		assert.ok(m, `pixel.css 缺 ${mode} 模式块`);
+		return m![1];
+	};
+	const light = block("light");
+	const dark = block("dark");
+	for (const tok of ["--bg", "--fg", "--card", "--line", "--acc", "--acc-soft"]) {
+		assert.ok(light.includes(`${tok}:`), `浅色缺 ${tok}`);
+		assert.ok(dark.includes(`${tok}:`), `深色缺 ${tok}`);
+	}
+	assert.match(light, /--bg:#fbf7ef/i, "浅色应是奶油底");
+	assert.ok(!/url\s*\(/.test(css), "像素风不得引入 url() / 远程资源");
+	assert.ok(!/@import/.test(css), "像素风不得 @import");
+	assert.match(css, /\[data-skin=pixel\]\{[^}]*--font:-apple-system/, "正文应保留系统字体（不做全像素字体）");
+	assert.equal(getTheme("pixel").name, "像素风");
 });

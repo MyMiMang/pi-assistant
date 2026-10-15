@@ -48,6 +48,14 @@ export const THEMES: ThemeDef[] = [
 		chrome: { light: "#f7f3ea", dark: "#1c1915" },
 	},
 	{
+		id: "pixel",
+		name: "像素风",
+		tagline: "奶油底 + 薄荷/桃粉/淡紫点缀，8bit 阶梯边角，正文仍是系统字体",
+		accent: { light: "#6fc7b2", dark: "#c3b6f0" },
+		accents: ["#6fc7b2", "#f2b8c6", "#c3b6f0", "#d9932f", "#5aa88f", "#8fd3c1"],
+		chrome: { light: "#fbf7ef", dark: "#181524" },
+	},
+	{
 		id: "noir",
 		name: "暗夜",
 		tagline: "深黑底、霓虹紫青渐变、流光与辉光动效",

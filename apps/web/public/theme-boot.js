@@ -8,7 +8,7 @@
  */
 (function () {
 	try {
-		var DATA = { "default": "noir", "legacy": { "linear": "noir" }, "themes": { "noir": { "mode": "dark", "light": "#f4f4f6", "dark": "#09090b" }, "glass": { "light": "#eef1f8", "dark": "#0b0d1a" }, "warm": { "light": "#f7f3ea", "dark": "#1c1915" } } };
+		var DATA = { "default": "noir", "legacy": { "linear": "noir" }, "themes": { "noir": { "mode": "dark", "light": "#f4f4f6", "dark": "#09090b" }, "glass": { "light": "#eef1f8", "dark": "#0b0d1a" }, "warm": { "light": "#f7f3ea", "dark": "#1c1915" }, "pixel": { "light": "#fbf7ef", "dark": "#181524" } } };
 		var store = window.localStorage;
 		var skin = store.getItem("pia.skin") || "";
 		skin = DATA.legacy[skin] || skin;
