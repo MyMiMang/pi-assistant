@@ -6,8 +6,9 @@ import type { MemoryEntry, MemoryProviderInfo } from "../types";
 import { Badge, Button, cx, Input, useConfirm } from "./ui";
 
 const KIND: Record<MemoryEntry["kind"], string> = { fact: "事实", experience: "日志", note: "便签" };
-const SCOPE: Record<MemoryEntry["scope"], string> = { user: "共享·关于你", agent: "仅此助理", conversation: "仅当前对话" };
-const SCOPE_TONE: Record<MemoryEntry["scope"], "accent" | "zinc" | "amber"> = { user: "accent", agent: "zinc", conversation: "amber" };
+const SCOPE: Record<MemoryEntry["scope"], string> = { user: "共享·关于你", agent: "仅此助理", conversation: "仅当前对话", task: "任务草稿" };
+const SCOPE_TONE: Record<MemoryEntry["scope"], "accent" | "zinc" | "amber"> = { user: "accent", agent: "zinc", conversation: "amber", task: "amber" };
+const SOURCE_LABEL: Record<string, string> = { agent: "助理记下", user: "你添加", subagent: "子代理草稿", background: "后台草稿", group: "群聊", promotion: "核验晋升" };
 
 /** 助理信息面板 › 记忆：查看 / 搜索 / 添加 / 编辑 / 删除 / 导出（与记忆后端无关） */
 export function MemoryTab({ agentId }: { agentId: string }) {
@@ -23,6 +24,7 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 	const fileRef = useRef<HTMLInputElement>(null);
 	const [q, setQ] = useState("");
 	const [filter, setFilter] = useState<"" | MemoryEntry["kind"]>("");
+	const [draftOnly, setDraftOnly] = useState(false);
 	const [edit, setEdit] = useState<{ id?: string; text: string; kind: MemoryEntry["kind"]; scope: MemoryEntry["scope"] } | null>(null);
 	const [err, setErr] = useState("");
 	const [confirmDlg, askConfirm] = useConfirm();
@@ -68,7 +70,7 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 			setBusy(false);
 		}
 	};
-	const items = (data?.items ?? []).filter((m) => !filter || m.kind === filter).filter((m) => m.scope !== "conversation" || m.conversationId === conv);
+	const items = (data?.items ?? []).filter((m) => !filter || m.kind === filter).filter((m) => !draftOnly || m.status === "draft").filter((m) => m.scope !== "conversation" || m.conversationId === conv);
 	const save = async () => {
 		if (!edit?.text.trim()) return;
 		setErr("");
@@ -163,6 +165,9 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 						{k ? KIND[k] : "全部"}
 					</button>
 				))}
+				<button className={cx("pa-chip sm", draftOnly && "!bg-hover !text-fg font-medium")} onClick={() => setDraftOnly((v) => !v)} title="只看子代理/后台写的待核验草稿">
+					待核验
+				</button>
 			</div>
 			{edit && (
 				<div className="pa-card space-y-2 !p-3">
@@ -206,10 +211,11 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 						<div className="whitespace-pre-wrap">{m.text}</div>
 						<div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-mut">
 							<Badge tone={SCOPE_TONE[m.scope]}>{SCOPE[m.scope]}</Badge>
+							{m.status === "draft" && <Badge tone="amber">待核验</Badge>}
 							<span>{KIND[m.kind]}</span>
 							<span>{new Date(m.createdAt).toLocaleDateString("zh-CN")}</span>
 							{m.expiresAt && <span>· {new Date(m.expiresAt).toLocaleDateString("zh-CN")} 到期</span>}
-							{m.source === "agent" && <span>· 助理记下</span>}
+							{m.source && <span>· {SOURCE_LABEL[m.source] ?? m.source}</span>}
 							<span className="ml-auto flex gap-0.5 opacity-0 group-hover:opacity-100 max-sm:opacity-100">
 								<button className="pa-icon-btn ghost !h-6 !w-6" aria-label="编辑" onClick={() => setEdit({ id: m.id, text: m.text, kind: m.kind, scope: m.scope })}>
 									<Pencil size={12} />

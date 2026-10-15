@@ -21,7 +21,7 @@ export interface Room {
 	members: RoomMember[]; last?: { content: string; role: string; agent_id: string; created_at: number } | null; created_at: number; updated_at: number; state: RoomState;
 }
 export interface Conversation { id: string; agent_id: string; title: string; created_at: number; updated_at: number; message_count: number; last: string | null }
-export interface MemoryEntry { id: string; text: string; kind: "fact" | "experience" | "note"; scope: "user" | "agent" | "conversation"; createdAt: string; expiresAt: number | null; conversationId: string | null; source: string | null }
+export interface MemoryEntry { id: string; text: string; kind: "fact" | "experience" | "note"; scope: "user" | "agent" | "conversation" | "task"; status?: "draft" | "verified" | "promoted" | "legacy"; taskId?: string | null; createdAt: string; expiresAt: number | null; conversationId: string | null; source: string | null }
 export interface MemoryProviderInfo { id: string; name: string; capabilities: { reflect: boolean; mentalModels: boolean; temporal: boolean; graph: boolean; exportImport: boolean; mcpEndpoint: boolean } }
 export interface SkillMeta { name: string; description: string; builtin: boolean; updatedAt: number; size: number }
 export interface RoutineRun { id: string; routine_id: string; trigger: string; status: string; task_id: string | null; result: string | null; error: string | null; started_at: number; finished_at: number | null }

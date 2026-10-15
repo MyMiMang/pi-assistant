@@ -171,6 +171,17 @@ const SECRET_RE = /(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|
 
 const norm = (t: string) => t.trim().replace(/\s+/g, " ").toLowerCase();
 
+/** 不过滤状态的原始条目（晋升/驳回需要看到已 promoted 的草稿） */
+async function rawItems(agentId: string): Promise<ScopedItem[]> {
+	const p = providerFor(agentId);
+	const out: ScopedItem[] = [];
+	for (const bank of [USER_BANK, agentBank(agentId)]) {
+		await ready(p, bank, agentId);
+		out.push(...(await p.list(bank, { limit: 1000 })).items.map((i) => scoped(i, bank)));
+	}
+	return out;
+}
+
 /** 条目是否由该写入者拥有（用于直接删除/更新） */
 function ownedBy(hit: ScopedItem, ctx: WriteContext): boolean {
 	const o = hit.origin;
@@ -344,7 +355,7 @@ export const memory = {
 		const actor: MemoryActor = opts.actor ?? "main";
 		if (!privileged(actor)) throw new Error("只有主会话或用户能把草稿晋升为长期记忆");
 		const p = providerFor(agentId);
-		const all = await memory.list(agentId, undefined, undefined, { parent: true });
+		const all = await rawItems(agentId);
 		const draft = all.find((i) => i.id === draftId);
 		if (!draft) throw new Error("找不到要晋升的草稿");
 		if (draft.origin?.status === "promoted") return { id: draft.origin.promotedTo ?? draftId, promoted: false, deduped: true };
@@ -382,7 +393,7 @@ export const memory = {
 	async rejectDraft(agentId: string, draftId: string, ctx: WriteContext = {}) {
 		if (!privileged(ctx.actor)) throw new Error("只有主会话或用户能驳回草稿");
 		const p = providerFor(agentId);
-		const draft = (await memory.list(agentId, undefined, undefined, { parent: true })).find((i) => i.id === draftId);
+		const draft = (await rawItems(agentId)).find((i) => i.id === draftId);
 		if (!draft) throw new Error("找不到草稿");
 		if (!p.update || !draft.origin) return false;
 		await p.update(draft.bank, draft.id, { meta: { kind: draft.kind, ...(draft.meta ?? {}), origin: { ...draft.origin, status: "promoted", promotedTo: null } } });
