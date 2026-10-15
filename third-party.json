@@ -58,29 +58,29 @@
       "kind": "github-release",
       "repo": "trycua/cua",
       "tagPrefix": "cua-driver-rs-v",
-      "version": "0.34.1",
+      "version": "0.35.4",
       "license": "MIT",
       "assets": {
         "linux-x64": {
           "file": "cua-driver-rs-{v}-linux-x86_64-binary.tar.gz",
-          "sha256": "a41fe2bdcbeea4501dc594c074f16b0975728e0cc7b08b90acea8564d48fafee"
+          "sha256": "0c79ce80d9a9522c3afc93c481d72f7370678d7fb610189358457a17686914fe"
         },
         "linux-arm64": {
           "file": "cua-driver-rs-{v}-linux-arm64-binary.tar.gz",
-          "sha256": "1c839d35401bbdea20f3e1cf50ace926ef17be6f32cea7e821b02b263c4933dc"
+          "sha256": "6e405e4b539446e9aae57527336978dc1550fdf3f23f9a507e80deecfa94929f"
         },
         "darwin": {
           "file": "cua-driver-rs-{v}-darwin-universal.tar.gz",
-          "sha256": "4c7edf1ebbad7e4bc9fac90a4dc4f50d544592e00b35f15b681ccf8b41cb4ff1",
+          "sha256": "97d5ea2fd446331947c717c433d4cf5aae063f4824e1ba24303c4696184ec52e",
           "$comment": "含已签名的 CuaDriver.app（macOS 的辅助功能/屏幕录制授权归属于它）"
         },
         "win-x64": {
           "file": "cua-driver-rs-{v}-windows-x86_64-binary.zip",
-          "sha256": "021bc2e5330c80a6c5e2c347c305fafbd4defe195d6282e0d20436f2f13c19bb"
+          "sha256": "8960e8144f9dedaad21680a908f2a1f53d874a14470629e26303cbd1a26f5499"
         },
         "win-arm64": {
           "file": "cua-driver-rs-{v}-windows-arm64-binary.zip",
-          "sha256": "21820a2ae20cb4bb998a340ff87c11007b9eb5cec8d1b8338c7b0d6dc88b01a6"
+          "sha256": "f6fd988ad404d6dc0dc61e7e962c72cc85d84dca066347fc4a92d3edeeb86e69"
         }
       },
       "checksums": "SHA256SUMS",

@@ -323,9 +323,9 @@ test("CDP 浏览器工具：限定档位不提供且清单不放行；连接浏�
 	assert.equal((await s.call("browser_click", {}))?.block, true);
 });
 
-test("本机桌面：只看隐藏全部输入工具（含剪贴板/鼠标按住拖动/窗口大小）；完全权限任意应用不问；信任只问敏感动作；提示按官方流程", async () => {
+test("本机桌面：只看隐藏全部输入工具（含剪贴板/窗口大小/录屏/光标/批量）；完全权限任意应用不问；信任只问敏感动作；提示按官方流程", async () => {
 	const { computerExtension, HOST_MCP_PREFIX, INPUT_TOOLS } = await import("@pi-assistant/ext-computer");
-	for (const t of ["drag", "scroll", "hotkey", "launch_app", "clipboard_write", "mouse_drag", "mouse_button_down", "set_window_frame"]) assert.ok(INPUT_TOOLS.includes(t), t);
+	for (const t of ["drag", "scroll", "hotkey", "launch_app", "clipboard_write", "set_window_frame", "start_recording", "stop_recording", "set_agent_cursor_enabled", "run_steps"]) assert.ok(INPUT_TOOLS.includes(t), t);
 	const mk = (p: string) => {
 		const asks: unknown[] = [];
 		const h: Record<string, (e: unknown) => Promise<{ block?: boolean; reason?: string; systemPrompt?: string } | undefined>> = {};
@@ -336,10 +336,10 @@ test("本机桌面：只看隐藏全部输入工具（含剪贴板/鼠标按住�
 		return { asks, h, cfg: cfg!, call: (tool: string, input: Record<string, unknown> = {}) => h.tool_call({ toolName: `${HOST_MCP_PREFIX}${tool}`, input, toolCallId: tool }) };
 	};
 	const o = mk("observe");
-	for (const t of ["clipboard_write", "mouse_drag", "set_window_frame", "drag"]) assert.equal(o.cfg.toolExposure[t], "hidden");
+	for (const t of ["clipboard_write", "set_agent_cursor_enabled", "set_window_frame", "drag"]) assert.equal(o.cfg.toolExposure[t], "hidden");
 	assert.equal(o.cfg.toolExposure.get_desktop_state, undefined, "只看也能看全屏");
 	const f = mk("none");
-	for (const t of ["get_desktop_state", "drag", "scroll", "hotkey", "launch_app", "clipboard_write", "mouse_drag"]) assert.equal(f.cfg.toolExposure[t], undefined, `${t} 完全权限可见`);
+	for (const t of ["get_desktop_state", "drag", "scroll", "hotkey", "launch_app", "clipboard_write", "set_agent_cursor_enabled"]) assert.equal(f.cfg.toolExposure[t], undefined, `${t} 完全权限可见`);
 	for (const [t, i] of [["launch_app", { bundle_id: "com.tencent.xinWeChat" }], ["click", { pid: 1, window_id: 2, element_token: "s1:3" }], ["type_text", { text: "hi\n" }], ["press_key", { key: "return" }], ["hotkey", { keys: ["cmd", "tab"] }], ["drag", { from_x: 1, from_y: 1, to_x: 9, to_y: 9 }], ["scroll", {}], ["kill_app", { name: "TextEdit" }]] as const)
 		assert.equal(await f.call(t, i), undefined, `${t} 完全权限直接执行`);
 	assert.equal(f.asks.length, 0, "完全权限：普通动作（含回车/发送/结束应用）都不问");

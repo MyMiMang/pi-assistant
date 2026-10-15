@@ -17,7 +17,7 @@
 import { isAbsolute, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { guardComputer, type GuardContext } from "@pi-assistant/shared";
+import { guardComputer, type GuardContext, type GuardHit } from "@pi-assistant/shared";
 
 export const MCP_SERVER = "computer";
 export const MCP_PREFIX = "mcp__computer__";
@@ -25,7 +25,7 @@ export const MCP_PREFIX = "mcp__computer__";
 export const HOST_MCP_SERVER = "hostpc";
 export const HOST_MCP_PREFIX = "mcp__hostpc__";
 
-/** 不暴露给模型的 cua-driver 工具：许可证风险、自我更新、改配置、重放。 */
+/** 不暴露给模型的 cua-driver 工具：许可证风险、自我更新、改配置、重放、脚本。 */
 export const HIDDEN_TOOLS = [
 	"install_extension",
 	"install_ffmpeg",
@@ -36,6 +36,11 @@ export const HIDDEN_TOOLS = [
 	"escalate_session",
 	"get_session_state",
 	"page",
+	// 0.35 起 driver 默认提供 run_script（沙箱 JavaScript，一次调用里跑循环/分支）。它的权限与直接调用相同，
+	// 但我们的 tool_call 闸门看不到脚本内部要做什么，无法逐层套 guard / 敏感动作 / 文件限制，所以先不提供；
+	// 另外在 MCP 服务 env 里设 CUA_DRIVER_DISABLE_RUN_SCRIPT=1，让 driver 自己也不列入 tools/list（双保险）。
+	"run_script",
+	"run_actions",
 ];
 /** cua 的 CDP 浏览器工具（DESIGN §14.8）。助理电脑上浏览器走 ext-browser（Playwright），这些隐藏，避免两套同名能力 */
 export const CUA_BROWSER_TOOLS = ["get_browser_state", "browser_prepare", "browser_navigate", "browser_click", "browser_type", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog"];
@@ -56,8 +61,8 @@ export const hostBrowserPrompt = (fileAccess: boolean) => `<user-computer-browse
 export const hostDesktopPrompt = (p: Approvals) => `<user-computer-desktop>
 你可以像人一样操作用户的电脑${p === "all" ? "（“限定”档位：只能操作用户勾选的应用，每个动作都要用户批准）" : p === "none" ? "（用户给了完全权限：所有应用都能操作，应用层不再弹审批——包括关机、强制退出、系统设置这类受保护操作也会直接执行；只有凭据文件、用户暂停或调低档位、系统权限弹窗和网站验证码仍拦得住）" : "（“信任”档位：所有应用都能操作；发送、付款、删除、提交类动作会先问用户）"}。按官方流程：
 1. 找目标：list_apps / list_windows 找到应用的 pid 和 window_id（不要用记住的旧 pid，也不要随手拿第一个窗口）；没开就 launch_app，之后有限次地 list_windows 等窗口出现，不要反复启动。
-2. 先看再动：get_window_state {pid, window_id}，用 structuredContent.elements 里的 element_token（每次快照都会换新，不要自己编、不要复用旧的）。
-3. 动作：click / double_click / right_click / type_text / set_value / press_key / hotkey / scroll / drag，带上精确的 {pid, window_id} 和最新的 element_token；控件够不到时才用同一次截图上的 x,y 像素坐标。菜单用 invoke_menu，调整窗口大小位置用 set_window_frame。
+2. 先看再动：get_window_state {pid, window_id, tree_format:"elements"}，用 structuredContent.elements 里的 element_token（每次快照都会换新，不要自己编、不要复用旧的）。driver 0.35 起默认只回精简的 tree_markdown（没有 elements），要 token 就传 tree_format:"elements"（或 full_output:true）；重复读同一个窗口用 since:"latest" 只取变化。
+3. 动作：click / double_click / right_click / type_text / set_value / press_key / hotkey / scroll / drag，带上精确的 {pid, window_id} 和最新的 element_token；控件够不到时才用同一次截图上的 x,y 像素坐标。菜单用 invoke_menu，调整窗口大小位置用 set_window_frame。连续几步已经想好的动作（填表 → 点按钮）可以用 run_steps {steps:[{tool,args}], observe:{}} 一次做完并顺带观察（最多 64 步，遇错即停、不自动回滚）；批量里每一步都会按你的权限档位单独检查。脚本工具 run_script 已关闭，不要用它。
 4. 默认后台送达（不抢用户的前台、不动用户的鼠标）。只有返回 background_unavailable 或动作明显没生效时，才对这一个动作用 delivery_mode:"foreground"（会把窗口提到前台，用户能看见）。
 ${p === "all" ? "" : '5. 窗口截图拿不到、或必须操作整个桌面时，用 get_desktop_state 看全屏，再用 target:{kind:"desktop",display_id:"primary"} 操作，操作后再 get_desktop_state 核对。\n'}6. 每个动作后都要重新观察并核对结果（verify_state 或新的 get_window_state / 截图）。"成功"返回不等于任务完成；effect 为 unverifiable / suspected_noop 时先看清楚再决定，不要盲目重复。
 7. 系统权限弹窗（辅助功能、屏幕录制、钥匙串等）由用户自己点，不要替用户点，也不要改安全设置。
@@ -70,7 +75,50 @@ export const HOST_BROWSER_BOUNDED_NOTE = `<user-computer-browser>
 </user-computer-browser>`;
 const READ_ONLY = /^(get_|list_|zoom$|check_permissions$|health_report$|verify_state$|screenshot$)/;
 /** 会改变电脑状态的 Cua 工具（“只看”档位隐藏） */
-export const INPUT_TOOLS = ["click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag", "move_cursor", "invoke_menu", "launch_app", "kill_app", "bring_to_front", "browser_prepare", "browser_click", "browser_type", "browser_navigate", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog", "clipboard_write", "mouse_button_down", "mouse_button_up", "mouse_drag", "parallel_mouse_drag", "set_window_frame", "start_recording", "stop_recording"];
+export const INPUT_TOOLS = ["click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag", "move_cursor", "invoke_menu", "launch_app", "kill_app", "bring_to_front", "browser_prepare", "browser_click", "browser_type", "browser_navigate", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog", "clipboard_write", "set_window_frame", "start_recording", "stop_recording", "set_agent_cursor_enabled", "set_agent_cursor_motion", "set_agent_cursor_theme", "run_steps"];
+/** 只读判定：observation 工具，以及 0.35 批量动作里“读窗口 / 纯检查”不算改状态 */
+const isObserveTool = (t: string) => READ_ONLY.test(t) || t === "start_session" || t === "end_session" || t === STEP_CHECK;
+/** 批量里“只有检查、没有动作”的步骤（只读） */
+export const STEP_CHECK = "__check__";
+/** 认不出的批量步骤：不能证明安全，整批拦下 */
+export const STEP_UNKNOWN = "__unknown__";
+/** 批量步骤里允许当作“动作”的工具名（含批量自身，用于识别简写 `{click:{…}}`） */
+const BATCH_TOOLS = new Set([...INPUT_TOOLS, "run_steps", "run_script", "run_actions"]);
+/** 纯检查步骤允许的字段（0.35 run_steps 的 check） */
+const CHECK_KEYS = new Set(["role", "name", "text", "gone", "value", "value_contains", "enabled", "selected", "app", "window", "timeout_ms"]);
+/**
+ * 0.35 起 cua-driver 有批量动作 `run_steps({steps:[…],…})`：一次调用里顺序跑多步。
+ * 我们的 tool_call 闸门只看得到外层工具名，看不到里面的步骤，嵌套的动作会绕过 guard / 敏感动作 / 文件限制，
+ * 所以先展开成每一步的 (tool, args)，再逐层过同一套检查。步骤支持两种写法：`{tool, args}` 和简写 `{click:{…}}`；
+ * 纯检查步骤（只有 role/name/text…）标成 STEP_CHECK（只读）；认不出的步骤标成 STEP_UNKNOWN，由调用方整批拦下。
+ * 嵌套的批量（driver 不允许，但以防万一）也递归展开。
+ */
+export function expandComputerSteps(tool: string, input: Record<string, unknown>): { tool: string; input: Record<string, unknown> }[] {
+	if (tool !== "run_steps" && tool !== "run_actions") return [{ tool, input }];
+	const out: { tool: string; input: Record<string, unknown> }[] = [];
+	const steps = Array.isArray(input.steps) ? input.steps : [];
+	for (const raw of steps) {
+		const s = (raw ?? {}) as Record<string, unknown>;
+		let name = String(s.tool ?? "");
+		let args = (s.args ?? {}) as Record<string, unknown>;
+		if (!name) {
+			const keys = Object.keys(s);
+			const toolKeys = keys.filter((k) => BATCH_TOOLS.has(k));
+			if (toolKeys.length === 1) {
+				name = toolKeys[0];
+				args = (s[name] ?? {}) as Record<string, unknown>;
+			} else if (!toolKeys.length && keys.length > 0 && keys.every((k) => CHECK_KEYS.has(k))) {
+				out.push({ tool: STEP_CHECK, input: s });
+				continue;
+			} else {
+				out.push({ tool: STEP_UNKNOWN, input: s });
+				continue;
+			}
+		}
+		out.push(...expandComputerSteps(name, args));
+	}
+	return out;
+}
 
 export interface ComputerHost {
 	target: "sandbox" | "host";
@@ -232,7 +280,7 @@ export function computerExtension(host: ComputerHost) {
 		pi.registerMcpServer(host_ ? HOST_MCP_SERVER : MCP_SERVER, {
 			command: host.mcp.command,
 			args: host.mcp.args,
-			env: { CUA_DRIVER_TELEMETRY: "0", ...(host.mcp.env ?? {}) },
+			env: { CUA_DRIVER_TELEMETRY: "0", CUA_DRIVER_DISABLE_RUN_SCRIPT: "1", ...(host.mcp.env ?? {}) },
 			exposure: "direct",
 			// “只看”档位：输入类工具直接不给模型（调用时也会被拦下）
 			toolExposure: Object.fromEntries([...HIDDEN_TOOLS, ...(host_ && browserOn ? [] : CUA_BROWSER_TOOLS), ...(policy() === "observe" ? INPUT_TOOLS : [])].map((t) => [t, "hidden" as const])),
@@ -340,53 +388,79 @@ export function computerExtension(host: ComputerHost) {
 			}
 			if (!own) return;
 			let approval: ActionLogEntry["approval"] = "auto";
-			if (CUA_BROWSER_TOOLS.includes(tool) && !browserOn) {
-				const why = host_ ? "“限定”档位不能连接用户的浏览器；需要用户把档位调到“信任”或以上。" : "助理电脑上的网页请用浏览器工具（browser_*，Playwright），不用 cua 的浏览器工具。";
-				log({ callId, tool, input, summary, phase: "blocked", detail: why });
+			// 0.35 批量动作：展开成每一步，逐层过同一套权限检查（否则嵌套的动作会绕过 guard / 敏感动作 / 文件限制）
+			const steps = expandComputerSteps(tool, input);
+			const batch = steps.length > 1 ? `（批量 ${steps.length} 步：${[...new Set(steps.map((s) => s.tool))].join("、")}）` : "";
+			const fullSummary = summary + batch;
+			const hiddenStep = steps.find((s) => HIDDEN_TOOLS.includes(s.tool) || s.tool === STEP_UNKNOWN);
+			if (hiddenStep) {
+				const why = hiddenStep.tool === STEP_UNKNOWN ? "批量动作里有认不出的步骤，不能确认安全，已整批拦下。" : `不提供的电脑工具：${hiddenStep.tool}（批量动作里也拦）。`;
+				log({ callId, tool, input, summary: fullSummary, phase: "blocked", detail: why });
 				return { block: true, reason: why };
 			}
-			const fileWhy = browserFileViolation(tool, input, host.workspace, host.hostFileAccess?.() ?? false);
+			if (steps.some((s) => CUA_BROWSER_TOOLS.includes(s.tool)) && !browserOn) {
+				const why = host_ ? "“限定”档位不能连接用户的浏览器；需要用户把档位调到“信任”或以上。" : "助理电脑上的网页请用浏览器工具（browser_*，Playwright），不用 cua 的浏览器工具。";
+				log({ callId, tool, input, summary: fullSummary, phase: "blocked", detail: why });
+				return { block: true, reason: why };
+			}
+			const fileWhy = steps.map((s) => browserFileViolation(s.tool, s.input, host.workspace, host.hostFileAccess?.() ?? false)).find(Boolean);
 			if (fileWhy) {
-				log({ callId, tool, input, summary, phase: "blocked", detail: fileWhy });
+				log({ callId, tool, input, summary: fullSummary, phase: "blocked", detail: fileWhy });
 				return { block: true, reason: fileWhy };
 			}
-			const observe = READ_ONLY.test(tool) || tool === "start_session" || tool === "end_session";
+			const observe = steps.every((s) => isObserveTool(s.tool));
 			if (!observe && host.before) {
-				const why = await host.before(tool, input).catch(() => null);
-				if (why) {
-					log({ callId, tool, input, summary, phase: "blocked", detail: why });
-					return { block: true, reason: why };
+				for (const s of steps) {
+					if (isObserveTool(s.tool)) continue;
+					const why = await host.before(s.tool, s.input).catch(() => null);
+					if (why) {
+						log({ callId, tool, input, summary: fullSummary, phase: "blocked", detail: why });
+						return { block: true, reason: why };
+					}
 				}
 			}
 			const p = policy();
 			if (p === "observe" && !observe) {
-				log({ callId, tool, input, summary, phase: "blocked", detail: "“只看”档位不允许操作" });
+				log({ callId, tool, input, summary: fullSummary, phase: "blocked", detail: "“只看”档位不允许操作" });
 				return { block: true, reason: "你对用户电脑的权限是“只看”：只能截图和读取窗口内容，不能点击、输入或打开应用。需要操作请让用户在设置里调高权限。" };
 			}
 			// 硬性保护：非完全权限档位都要明确批准，且不会记住；完全权限（本机档位 full）应用层不弹审批
-			const g = observe || (host_ && p === "none") ? null : guardComputer(tool, input, host.guard ?? { target: host.target }, recent);
+			let g: GuardHit | null = null;
+			let gTool = "";
+			if (!observe && !(host_ && p === "none")) {
+				for (const s of steps) {
+					const hit = guardComputer(s.tool, s.input, host.guard ?? { target: host.target }, recent);
+					if (hit) {
+						g = hit;
+						gTool = s.tool;
+						break;
+					}
+				}
+			}
 			if (g) {
-				const res = await host.request({ toolName: event.toolName, input, summary: `⚠️ 受保护的操作（${g.label}）：${summary}`, risk: "high", allowTask: false });
+				const label = gTool && gTool !== tool ? `${g.label}（批量里的 ${gTool}）` : g.label;
+				const res = await host.request({ toolName: event.toolName, input, summary: `⚠️ 受保护的操作（${label}）：${fullSummary}`, risk: "high", allowTask: false });
 				if (!res.approved) {
-					log({ callId, tool, input, summary, phase: "blocked", detail: `受保护的操作（${g.label}），用户没有批准${res.note ? `：${res.note}` : ""}` });
-					return { block: true, reason: `这是受保护的操作（${g.label}），用户没有批准。不要换方式重试。` };
+					log({ callId, tool, input, summary: fullSummary, phase: "blocked", detail: `受保护的操作（${label}），用户没有批准${res.note ? `：${res.note}` : ""}` });
+					return { block: true, reason: `这是受保护的操作（${label}），用户没有批准。不要换方式重试。` };
 				}
 				approval = "guarded";
 			} else {
 				// browser_prepare 和其他动作一样按档位审批（完全权限 / 信任不问）；需要问时卡片上说明连接浏览器意味着什么
-				const needs = !observe && p !== "none" && (p === "all" || isSensitiveAction(tool, input, recent)) && !granted.has(tool);
+				const sensitive = steps.some((s) => isSensitiveAction(s.tool, s.input, recent));
+				const needs = !observe && p !== "none" && (p === "all" || sensitive) && !granted.has(tool);
 				if (needs) {
-					const res = await host.request({ toolName: event.toolName, input, summary: tool === "browser_prepare" && host_ ? BROWSER_PREPARE_SUMMARY(input) : summary, risk: "high", allowTask: p === "all" });
+					const res = await host.request({ toolName: event.toolName, input, summary: tool === "browser_prepare" && host_ ? BROWSER_PREPARE_SUMMARY(input) : fullSummary, risk: "high", allowTask: p === "all" });
 					if (!res.approved) {
-						log({ callId, tool, input, summary, phase: "blocked", detail: `用户拒绝${res.note ? `：${res.note}` : ""}` });
+						log({ callId, tool, input, summary: fullSummary, phase: "blocked", detail: `用户拒绝${res.note ? `：${res.note}` : ""}` });
 						return { block: true, reason: `用户拒绝了这个电脑操作${res.note ? `：${res.note}` : ""}。不要换方式重试。` };
 					}
 					approval = res.scope === "task" ? "task" : "approved";
 					if (res.scope === "task") granted.add(tool);
 				}
 			}
-			pending.set(callId, { tool, input, summary, approval });
-			log({ callId, tool, input, summary, phase: "start", approval });
+			pending.set(callId, { tool, input, summary: fullSummary, approval });
+			log({ callId, tool, input, summary: fullSummary, phase: "start", approval });
 		});
 		pi.on("tool_result", async (event) => {
 			const e = event as { toolCallId: string; toolName: string; content: { type: string; text?: string }[]; isError: boolean };
