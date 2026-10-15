@@ -1,6 +1,7 @@
-import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, subagentNotifyText, resolveSubagentThinking, type Subagent, type SubagentEvent } from "./subagents.ts";
+import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, subagentNotifyText, resolveSubagentThinking, resumeSubagent, setSubagentRetryAt, withResumeInfo, type Subagent, type SubagentEvent } from "./subagents.ts";
 import { cancelWaitsForConversation, listWaits, parseDue, refreshWait, registerWait, cancelWait, setWaitWaker, setWaitNoteInjector, startWaitScheduler, WAIT_DEFAULT_INTERVAL_MS } from "./task-waits.ts";
 import { classifyModelError, isRecoverableModelError } from "./model-errors.ts";
+import { shouldAutoRetry, transportBackoffMs } from "./subagent-resume.ts";
 /**
  * Agent 运行时：每个助理一个主会话（Pi AgentSession），后台任务各自一个会话。
  * 所有 Pi 调用都经过 pi-adapter；这里负责把 Pi 事件落盘为消息并广播。
@@ -286,15 +287,19 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 						const parent = latestUserMessage(conversationId);
 						return spawnSubagent(agentId, conversationId!, fallback, { ...input, parentMessageId: parent?.id });
 					},
-					list: () => listSubagents(agentId, conversationId ?? undefined),
+					list: () => listSubagents(agentId, conversationId ?? undefined).map(withResumeInfo),
 					get: (id) => {
 						const r = getSubagent(id);
-						return r && r.agent_id === agentId && r.conversation_id === conversationId ? r : null;
+						return r && r.agent_id === agentId && r.conversation_id === conversationId ? withResumeInfo(r) : null;
 					},
 					message: async (id, text) => {
 						if (getSubagent(id)?.agent_id !== agentId || getSubagent(id)?.conversation_id !== conversationId) throw new Error("不是本会话的子代理");
 						const parent = latestUserMessage(conversationId);
 						await messageSubagent(id, text, parent?.id);
+					},
+					resume: async (id) => {
+						if (getSubagent(id)?.agent_id !== agentId || getSubagent(id)?.conversation_id !== conversationId) throw new Error("不是本会话的子代理");
+						return withResumeInfo(resumeSubagent(id, { mode: "manual" }));
 					},
 					stop: async (id) => {
 						if (getSubagent(id)?.agent_id !== agentId || getSubagent(id)?.conversation_id !== conversationId) throw new Error("不是本会话的子代理");
@@ -1125,7 +1130,20 @@ setSubagentDriver({
 		try {
 			if (!isActiveSubagent(getSubagent(r.id)!.status)) return "";
 			if (input?.messageId) updateMessage(input.messageId, { meta: { delivery: "delivered" } });
-			await promptSession(session, input?.text ?? `（后台子代理任务）${r.task}\n\n必要上下文：\n${r.context}`);
+			const firstPrompt = input?.text ?? `（后台子代理任务）${r.task}\n\n必要上下文：\n${r.context}`;
+			await promptSession(session, firstPrompt);
+			// 连接类 / 服务临时不可用：同一会话有界退避重试。退避期间只等时钟、不发模型请求（不忙轮询），可被停止打断。
+			for (let attempt = 1; shouldAutoRetry(error, attempt) && isActiveSubagent(getSubagent(r.id)!.status); attempt++) {
+				const wait = transportBackoffMs(attempt);
+				setSubagentRetryAt(r.id, Date.now() + wait);
+				subagentActivity(r.id);
+				const end = Date.now() + wait;
+				while (Date.now() < end && isActiveSubagent(getSubagent(r.id)!.status)) await new Promise((res) => setTimeout(res, Math.min(200, end - Date.now())));
+				setSubagentRetryAt(r.id, null);
+				if (!isActiveSubagent(getSubagent(r.id)!.status)) break;
+				error = undefined;
+				await promptSession(session, firstPrompt);
+			}
 			// 模型层可恢复故障：池内换下一个模型，从已保存的会话继续，不从头重跑；每个候选最多试一次，用尽就明确停下
 			while (isActiveSubagent(getSubagent(r.id)!.status)) {
 				tried.add(modelKey(current));

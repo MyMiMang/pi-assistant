@@ -5,14 +5,14 @@ import { getAgent, runtime } from "./runtime.ts";
 import { toMessage, type MessageRow } from "./messages.ts";
 import { providerNames, defaultThinking } from "./models.ts";
 import { configuredModels } from "./rooms/model-pick.ts";
-import { agentSubagentPool, agentSubagentThinking, applyLiveSubagentThinking, getSubagent, isLiveSubagent, listSubagents, resolveSubagentThinking, saveAgentSubagentPool, saveAgentSubagentChoice, saveAgentSubagentThinking, saveSubagentSettings, sendSubagentMessage, setSubagentThinkingOverride, spawnSubagent, stopSubagent, subagentSettings, type SubagentThinking, type SubagentSettingsInput } from "./subagents.ts";
+import { agentSubagentPool, agentSubagentThinking, applyLiveSubagentThinking, getSubagent, isLiveSubagent, listSubagents, resolveSubagentThinking, resumeSubagent, saveAgentSubagentPool, saveAgentSubagentChoice, saveAgentSubagentThinking, saveSubagentSettings, sendSubagentMessage, setSubagentThinkingOverride, spawnSubagent, stopSubagent, subagentSettings, withResumeInfo, type SubagentThinking, type SubagentSettingsInput } from "./subagents.ts";
 
-/** 子代理行 + 实际生效的思考强度（已按模型收敛） */
+/** 子代理行 + 恢复摘要 + 实际生效的思考强度（已按模型收敛） */
 const withThinking = (r: ReturnType<typeof getSubagent>) => {
 	if (!r) return r;
 	const a = getAgent(r.agent_id);
 	const main = a?.thinking ?? defaultThinking();
-	return { ...r, resolvedThinking: resolveSubagentThinking(r.agent_id, { provider: r.model_provider, id: r.model_id }, main, r.thinking) };
+	return { ...withResumeInfo(r), resolvedThinking: resolveSubagentThinking(r.agent_id, { provider: r.model_provider, id: r.model_id }, main, r.thinking) };
 };
 
 // biome-ignore lint/suspicious/noExplicitAny: 同 http.ts
@@ -38,7 +38,7 @@ export function mountSubagentRoutes(app: Hono<any>) {
 		try { return c.json(saveAgentSubagentThinking(c.req.param("id"), await c.req.json<SubagentThinking>())); }
 		catch (e) { return c.json({ error: String(e) }, 400); }
 	});
-	app.get("/api/subagents", (c) => c.json(listSubagents(c.req.query("agent"), c.req.query("conversation")).filter((r) => !c.req.query("room") || !!db.prepare("SELECT 1 FROM room_members WHERE conversation_id = ? AND room_id = ?").get(r.conversation_id, c.req.query("room") ?? ""))));
+	app.get("/api/subagents", (c) => c.json(listSubagents(c.req.query("agent"), c.req.query("conversation")).filter((r) => !c.req.query("room") || !!db.prepare("SELECT 1 FROM room_members WHERE conversation_id = ? AND room_id = ?").get(r.conversation_id, c.req.query("room") ?? "")).map(withResumeInfo)));
 	app.get("/api/subagents/:id", (c) => {
 		const r = getSubagent(c.req.param("id"));
 		if (!r) return c.json({ error: "not_found" }, 404);
@@ -62,6 +62,12 @@ export function mountSubagentRoutes(app: Hono<any>) {
 		} catch (e) { return c.json({ error: String(e) }, 400); }
 	});
 	app.post("/api/subagents/:id/stop", async (c) => c.json({ ok: await stopSubagent(c.req.param("id")) }));
+	// 用原 id 从断点继续：不新开子代理、不建新任务（失败/超时/停止后用户点「继续」）
+	app.post("/api/subagents/:id/resume", (c) => {
+		if (!getSubagent(c.req.param("id"))) return c.json({ error: "not_found" }, 404);
+		try { return c.json(withThinking(resumeSubagent(c.req.param("id"), { mode: "manual" }))); }
+		catch (e) { return c.json({ error: String(e) }, 400); }
+	});
 	app.post("/api/subagents/:id/messages", async (c) => {
 		const r = getSubagent(c.req.param("id"));
 		if (!r || !getAgent(r.agent_id) || !getConversation(r.conversation_id)) return c.json({ error: "会话已删除" }, 404);
