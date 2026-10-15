@@ -14,7 +14,16 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
-2026-10-22 助理电脑资源可配 + 空闲关机实测（`vm-resource-settings` 树，分支 `vm-resource-settings`，基线 `next-release-integration` = `13e717b`，**未 push / 未 tag，待负责人合入**）：
+2026-10-22 整合收尾：子代理思考强度 / CUA 镜像 0.1.4 / VM 资源 / 模型菜单定位（`next-release-integration` 树，分支 `next-release-integration`，**未 push / 未 tag**）：
+- **子代理独立思考强度**（合 `subagent-thinking-fix` = `7d7fc8c`，基 `5b6cf11`；合并提交 `d9b4a48`）：三层取值「单个子代理覆盖 > 助理默认（跟随 / 固定）> 跟随主会话」，一律按子代理实际模型 `clampThinking`；`subagents.thinking` 列 + `PATCH /api/subagents/:id` + `GET/PUT /api/agents/:id/subagent-thinking` + `spawn_subagent.thinking`；运行中切换走 `applyModelSettings`，不动主会话。两边都改 `runtime.ts`，唯一冲突在 import 行，按最小合并保留整合树的 `subagentNotifyText` / `setWaitNoteInjector` 与分支的 `resolveSubagentThinking`；`subagents.ts` 自动合并，终态 claim / task_wait 唤醒 / 候选池 fallback / 识图用量 / 快速操作模型 / CUA 均未被覆盖。
+- **CUA 镜像 0.1.4**（cherry-pick `d494d0d` + `1a197ad` = `807b5c6` / `c6fa7ba`）：`desktop-image.json` version `0.1.4` / digest `sha256:6cc5c119…d54a42`（run 38683611869 三个 job success，匿名 GHCR manifest 交叉核验一致）；`SHARED_COMPUTER_PROMPT` 补 0.35 真实 schema。driver 0.35.4 的 host 侧此前已在树里，未重复。
+- **VM 资源 + 空闲下拉**（cherry-pick `236572e` = `492223f`，随后修三处 = `a2bc7a4`）：见下一条。
+- **模型菜单定位**（cherry-pick `c5cda4b` = `a4e01a4`）：设置弹窗里菜单跑偏 438px 的根因是 wrapper 被拉成整行、菜单 `absolute right-0` 相对整行对齐（**不是 transform**）；改为 `usePopover` 统一 portal 到 body + fixed 锚定触发器。
+- **设置 › 模型 › 子代理两个数字输入框空白**（`3cd39b6`）：根因是 `GET /api/subagents/settings` 返回 `{settings,models}` 而组件把整个响应当设置对象，`d.maxConcurrent/d.maxMinutes` 都是 `undefined`；后端默认（60 / 10）一直是好的。改读 `r.settings` + 受控草稿 + 失焦提交，失败显示原因、非法 / 空恢复生效值。
+- **本轮实际跑的**（本整合树，本地 Node 24.20.0，全程 Mock）：两端 typecheck 通过；web `vite build` 通过（分支原来“借用别的树 node_modules 导致 brand 插件报错”在整合树不复现）；单测 subagents/task-waits/task-wait-yield/thinking-levels/model-errors/model-picks **64/64**、proactive/proactive-signal/fast-computer 三件套/usage/computer-batch/host-control/vision **82/82**、desktop 系列 **32/34（2 skip：Docker / Windows）**；e2e `task-ui` / `composer-compact` / `model-ui`（含新 [5b] 锚定）/ `subagents` / 新增 `settings-subagent`（25 项）/ 新增 `settings-desktop-resources`（39 项）全过。**未做**：安装包真机、真实 VM 资源调整、用户电脑真机、`computer.smoke.ts`。
+- **e2e 陈旧断言修正**（`523912c`）：`subagents.mjs` 里 `/子代理回报：.*done/`（及 `failed`）命中的是通知文案里的英文状态词；本轮 token 去重把文案换成 `subagentNotifyText`（`子代理「…」已完成：<摘要>`），实测旧断言命中 0、新文案命中 2 —— **不是 wake claim / 去重逻辑的问题**。断言改中文并顺带要求失败回报带出真实原因；详情头部「任务：短标题」加了 waitFor（d 未到时会先渲染「加载中…」）。
+
+2026-10-22 助理电脑资源可配 + 空闲关机实测（已 cherry-pick 进整合树 `next-release-integration`，`492223f`）：
 - **用户自定义虚拟机资源**（macOS Lima）：新增 `packages/server/src/desktop/resources.ts`（建议值 / 可调范围 / 整数校验 / `mergeInstanceResources` 关机后合并 / `checkDiskGrowOnly`）。`settings.ts` 的 `desktop.resources`（`{cpus?,memoryGiB?,diskGiB?}`，默认空）；`lima.ts` 的 `instanceResources()` 读现有实例、`configForInstance()` 写配置时用户选择 > 现有值 > 建议值、磁盘只扩不缩；`http.ts` 的 `/api/desktop` 返回 `resources{supported,choice,suggested,bounds,applied,note}`、PUT 拒绝缩小磁盘并以 400 拒非法值。只 macOS Lima 可调，Docker / WSL2 界面明示不可调。**未动真实虚拟机 / 用户设置 / 凭据。**
 - **空闲自动关机实测**：`startIdleWatcher` 改为依赖可注入（`now/tracker/running/stop/release/engineRunning/stopEngine/fixedPorts/settings`），新增 `test/desktop-idle-watcher.test.ts`（假时钟 + 假后端）：10 分钟整点关、差 1 秒不关、busy 阻关且结束后重计时、有人在看画面阻关且关掉后重计时、服务重启（新 tracker）不立即关、虚拟机空转 10 分钟关、设为从不永不关。根因：touch 来自启动 / 状态查询 / 电脑工具 `log`/`before`（`touchAgent`）与 noVNC `viewerOpen/Close`；busy = 对话回合 / 后台任务 / 子代理在跑；休眠唤醒后 `Date.now()` 跳变会让首个 tick 立即判空闲（符合“整机空闲”语义）。
 - **设置 UI**：`apps/web/src/components/ui.tsx` 新增 `Select`（按钮 + portal 弹出列表，`role=listbox`，Esc 关、上下键选、窄屏不溢出）；`DesktopSettings.tsx` 空闲时间与 CPU / 内存 / 磁盘全部换掉原生 `<select>`，新增资源区（显示当前虚拟机值与“有改动，关机后生效”）。`e2e/run.mjs` 的 `desktop-idle` 从 `selectOption` 改为点击按钮 + 选项。
@@ -241,7 +250,7 @@ npm run check:pi         # Pi 升级兼容检查
 - **Windows（Chrome / Edge）**：trusted 点击应该能在后台送达；守护进程要在交互式桌面里（不是 Session 0）。
 - **限定档位**：看不到 browser_* 工具，提示里会让用户调到“信任”。限定档位的清单里本来就没有 drag 和剪贴板，这次没改。
 - 测试机的 Docker 不支持 user namespace，所以 isolated_new（cua 自己另开 Chromium）跑不起来；不影响用户电脑上的用法。
-- cua-driver 已经出了 0.35.x，这次没升级，还固定在 0.34.1。以后升级时要重新核对 BROWSER.md、WORKFLOW.md 和工具的参数格式。
+- cua-driver 已升级到 0.35.4（host 侧 `third-party.json`；助理电脑镜像 `0.1.4`，digest `sha256:6cc5c119…d54a42`）。0.35.0 是 breaking change，适配点见本文 2026-10-22「CUA 0.34.1 → 0.35.4 适配」一条。以后再升级要重新核对 BROWSER.md、WORKFLOW.md 和工具参数格式。
 
 
 ### 助理电脑镜像 0.1.3（修 Apple 芯片 Mac 开机即退出）

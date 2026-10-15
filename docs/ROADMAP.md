@@ -93,6 +93,9 @@
 |---|---|---|
 | 子代理要能设自己的思考强度（不是一直跟着主会话），每助理可设默认、单个子代理可临时改，运行中也能改 | 已实现待验证（beta.22 候选） | 三层取值「单个覆盖 > 助理默认（跟随/固定）> 跟随主会话」，一律按子代理实际模型 clamp；运行中走 `applyModelSettings`，不动主会话。`subagents.thinking` 列 + `PATCH /api/subagents/:id` + `GET/PUT /api/agents/:id/subagent-thinking` + `spawn_subagent.thinking`。`subagents.test.ts` 20/20，两端 typecheck、web tsc 通过。DESIGN §21.8 |
 | 会话 header 上「主会话」chip 去掉；子代理详情保留左上角「返回主会话」；子代理详情 header 的「停止」去掉，停止统一由输入栏按钮承担 | 已实现待验证（beta.22 候选） | `SubagentTasks` 移除 `withMain`；`SubagentChat` header 去停止、保留返回；停止按钮在 composer。`e2e/task-ui.mjs`、`e2e/composer-compact.mjs` 断言已同步 |
+| 设置 › 模型 › 子代理 的「子代理并发上限」「子代理最长运行」输入框空白（只有 spinner） | 已修（未发布，beta.22 候选） | 根因：`GET /api/subagents/settings` 返回 `{settings,models}`，组件把整个响应当设置对象 → `d.maxConcurrent/d.maxMinutes` 为 `undefined` → `defaultValue={undefined}` 空白；**后端默认一直是好的**（未配置时 `maxMinutes 60` / `maxConcurrent clampConcurrent()=10`，实测接口原样返回）。改为读 `r.settings` + 受控草稿 + 失焦提交：加载中/失败不渲染可编辑空框、失败显示原因、空/0/越界恢复生效值不静默存 0。新增 `e2e/settings-subagent.mjs`（25 项，含预置旧记录缺字段） |
+| 设置弹窗里模型菜单跑偏到整行右边（识图模型实测偏 438px） | 已修（未发布，beta.22 候选） | 根因不是 transform：设置在块级容器里时 wrapper 被拉成整行宽，菜单 `absolute right-0` 相对整行右对齐。改为共享 `usePopover` 统一 portal 到 body + `position:fixed` 按 `getBoundingClientRect` 锚定触发器（上下翻转 + 按可用空间限高 + resize/scroll 重定位）。`e2e/model-ui.mjs` 新增 [5b]（锚定 / 滚动 / 缩放 / 翻转 / 390） |
+| 助理电脑：用户自定义虚拟机 CPU / 内存 / 磁盘；空闲自动关机改应用内下拉 | 已实现待验证（beta.22 候选） | 合 `236572e`；review 后又修：共享 `Select` 向上翻转限高（否则 top 可能为负）、菜单内部滚动不再被 window 的 capture scroll 监听关掉、`z-[60]` 高于设置弹窗；`validateResourceChoice` 放行「保留超范围现值」（换到更小的机器时不因内存超 75% 上限而拒绝改其它字段），UI 选项带上现值不空白。新增 `e2e/settings-desktop-resources.mjs`（39 项）。Lima 主盘扩容已核实：`limactl start` 会 `prepareDisk` 对账并扩到配置值，缩小被 Lima 拒绝（`disk shrinking is not supported`），启动失败不吞（转中文错误） |
 
 **统一任务展示**：本轮共用展示组件，短标题由前端截取、不调用模型；完整指令保留。子代理、后台长任务、定时跟进的底层机制保持独立，统一总列表与服务端可选标题接口仍属后续。
 
