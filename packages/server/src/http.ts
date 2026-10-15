@@ -1,6 +1,7 @@
 import { mountSubagentRoutes } from "./subagent-routes.ts";
 import { mountFastComputerRoutes } from "./fast-computer/routes.ts";
 import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
+import { createRuntimeBenchmarkHost } from "./fast-computer/benchmark-runtime.ts";
 import { isStopCommand } from "./interject.ts";
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
@@ -239,7 +240,7 @@ mountImageRoutes(app, localOnly);
 mountPetRoutes(app, localOnly);
 mountUsageRoutes(app);
 mountSubagentRoutes(app);
-mountFastComputerRoutes(app);
+mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null }).host);
 mountLocalLayaRoutes(app, localOnly);
 app.get("/api/models", (c) => {
 	const names = providerNames();
