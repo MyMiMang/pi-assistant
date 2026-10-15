@@ -22,7 +22,7 @@
 import { McpClient, StdioTransport } from "@earendil-works/pi-mcp";
 import { config } from "../config.ts";
 import { cuaMcpCommand, desktopPause, runningDesktops } from "../desktop.ts";
-import { hostMcpCommand, hostPaused, hostSettings, hostStatus, tierOf } from "../host-control.ts";
+import { hostMcpCommand, hostAllowedFor, hostPaused, hostSettings, hostStatus, tierOf } from "../host-control.ts";
 import { createBenchmarkHost, type BenchmarkHost } from "./benchmark-host.ts";
 import { BenchmarkFixtureStateStore } from "./benchmark-fixture.ts";
 import { createInvokeBenchmarkDriver, defaultOpenTool, type ComputerInvoke, type InvokeResult } from "./benchmark-driver.ts";
@@ -88,6 +88,7 @@ export function createRuntimeBenchmarkHost(opts: RuntimeBenchmarkOptions): { hos
 
 	// 单一目标的无副作用能力探测（只 tools/list，不开窗）。
 	const probe = async (prefix: "hostpc" | "computer"): Promise<{ cap: BenchmarkCapabilityResult; plan: ReturnType<typeof planFixtureWindow> }> => {
+		if (prefix === "hostpc" && hostPaused()) return { cap: { ok: false, reason: "「操作这台电脑」已暂停：先恢复再跑基准。" }, plan: { ok: false } };
 		const ready = prefix === "computer" ? cache.computer : cache.hostpc;
 		if (!ready) return { cap: { ok: false, reason: "目标电脑未就绪（「操作这台电脑」未开启 / 助理电脑未运行）" }, plan: { ok: false } };
 		const tools = await listTools(prefix);
@@ -125,7 +126,9 @@ export function createRuntimeBenchmarkHost(opts: RuntimeBenchmarkOptions): { hos
 	});
 
 	const refresh = async (): Promise<TargetCache> => {
-		cache.hostpc = hostSettings().enabled && hostStatus().daemon.state === "running";
+		const id = opts.agentId();
+		// 「操作这台电脑」：全局开启 + 允许这个助理 + 守护进程在跑（暂停时 probe 会给明确原因）。
+		cache.hostpc = hostSettings().enabled && !!id && hostAllowedFor(id) && hostStatus().daemon.state === "running";
 		try {
 			cache.computer = (await runningDesktops()).length > 0;
 		} catch {
