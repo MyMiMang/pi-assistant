@@ -5,7 +5,11 @@
  *      user          → 记忆库 `user`（所有助理共享的“关于用户”的事实）
  *      agent         → 记忆库 `agent_<id>`
  *      conversation  → 记忆库 `agent_<id>`，meta.conversationId 限定只在该对话可见
+ *      task          → 记忆库 `agent_<id>`，meta.taskId 限定任务/子代理范围内可见（短期草稿，默认 7 天）
  *  - 种类：fact（资料，总是注入）/ experience（按日日志）/ note（短期便签，meta.expiresAt 到期后不再可见）
+ *  - 来源分层（memory-scope-safety，依据 docs/research/hindsight-integration-audit.md）：
+ *      主会话/用户写入 → verified；子代理/后台/群来源写入 → draft（默认进 task 草稿，绝不直接进共享 user 库）；
+ *      草稿由主会话核验后 promote 成 verified。写入者身份由服务端按会话上下文注入，工具参数无法伪造。
  * 以后接入 Hindsight / MemOS：实现 MemoryProvider 并 register，ext-memory 与界面都不用改。
  */
 import { config } from "../config.ts";
@@ -15,11 +19,49 @@ import { hindsightMemory } from "./hindsight/provider.ts";
 import type { MemoryExport, MemoryItem, MemoryProvider } from "./types.ts";
 
 export type { MemoryItem, MemoryProvider } from "./types.ts";
-export type Scope = "user" | "agent" | "conversation";
+export type Scope = "user" | "agent" | "conversation" | "task";
 export type Kind = "fact" | "experience" | "note";
+export type MemoryActor = "main" | "subagent" | "background" | "user" | "group";
+export type MemoryStatus = "draft" | "verified" | "promoted" | "legacy";
 export const USER_BANK = "user";
 export const agentBank = (agentId: string) => `agent_${agentId}`;
 const DAY = 86_400_000;
+
+/** 每条记忆的来源信息（写进 meta.origin，服务端注入，工具参数不可伪造） */
+export interface MemoryOrigin {
+	actor: MemoryActor;
+	assistantId: string;
+	conversationId?: string | null;
+	taskId?: string | null;
+	subagentId?: string | null;
+	/** 来源说明（agent / user / subagent / background / promotion） */
+	source?: string;
+	/** 只放安全 ID（如晋升来源记忆 id / taskId），绝不写任务正文或敏感内容 */
+	evidenceRef?: string | null;
+	createdAt: string;
+	status: MemoryStatus;
+	/** 已晋升草稿指向的目标条目 id */
+	promotedTo?: string | null;
+}
+
+/** 服务端按会话上下文注入的写入者身份 */
+export interface WriteContext {
+	actor?: MemoryActor;
+	taskId?: string | null;
+	subagentId?: string | null;
+	conversationId?: string | null;
+}
+
+/** 读取上下文：决定 task/conversation 作用域与草稿是否可见 */
+export interface ReadContext {
+	/** undefined = 不按对话过滤（界面列表）；null = 主会话无对话上下文 */
+	conversationId: string | null | undefined;
+	taskId: string | null;
+	/** 主会话/用户（父）视角：能读到本助理下的全部草稿用于核验 */
+	parent: boolean;
+}
+
+const privileged = (actor?: MemoryActor) => actor === "main" || actor === "user";
 
 const providers = new Map<string, MemoryProvider>([
 	[basicMemory.id, basicMemory],
@@ -63,16 +105,46 @@ export interface ScopedItem extends MemoryItem {
 	bank: string;
 	scope: Scope;
 	kind: Kind;
+	status: MemoryStatus;
+	origin?: MemoryOrigin;
 	expiresAt?: number;
 	conversationId?: string;
+	taskId?: string;
 }
 function scoped(it: MemoryItem, bank: string): ScopedItem {
 	const m = it.meta ?? {};
-	const scope = (bank === USER_BANK ? "user" : m.conversationId ? "conversation" : "agent") as Scope;
+	const origin = m.origin as MemoryOrigin | undefined;
+	const taskId = (m.taskId as string | undefined) ?? origin?.taskId ?? undefined;
+	const scope = (bank === USER_BANK ? "user" : m.conversationId ? "conversation" : taskId ? "task" : "agent") as Scope;
 	const kind = ((m.kind as string) === "log" ? "experience" : ((m.kind as string) ?? it.kind ?? "fact")) as Kind;
-	return { ...it, bank, scope, kind, expiresAt: (m.expiresAt as number | undefined) ?? undefined, conversationId: (m.conversationId as string | undefined) ?? undefined };
+	return {
+		...it,
+		bank,
+		scope,
+		kind,
+		status: origin?.status ?? "legacy",
+		origin,
+		expiresAt: (m.expiresAt as number | undefined) ?? undefined,
+		conversationId: (m.conversationId as string | undefined) ?? undefined,
+		taskId,
+	};
 }
-const visible = (it: ScopedItem, conversationId?: string | null) => (!it.expiresAt || it.expiresAt > Date.now()) && (it.scope !== "conversation" || it.conversationId === conversationId);
+/** 条目对某个读取上下文是否可见；task/草稿按 taskId 隔离，父视角可读全部草稿 */
+export function memoryVisible(it: ScopedItem, ctx: ReadContext): boolean {
+	if (it.expiresAt && it.expiresAt <= Date.now()) return false;
+	if (it.status === "promoted") return false;
+	if (it.scope === "conversation" && ctx.conversationId !== undefined && it.conversationId !== ctx.conversationId) return false;
+	if (it.scope === "task" && !ctx.parent && it.taskId !== ctx.taskId) return false;
+	if (it.status === "draft" && !ctx.parent && (it.taskId ?? null) !== (ctx.taskId ?? null)) return false;
+	return true;
+}
+const readCtx = (conversationId: string | null | undefined, o?: { taskId?: string | null; parent?: boolean }): ReadContext => {
+	const taskId = o?.taskId ?? null;
+	return { conversationId, taskId, parent: o?.parent ?? !taskId };
+};
+export function isParentView(o?: { taskId?: string | null; parent?: boolean }) {
+	return o?.parent ?? !o?.taskId;
+}
 
 export interface RememberArgs {
 	content: string;
@@ -80,56 +152,122 @@ export interface RememberArgs {
 	scope?: Scope;
 	ttlDays?: number;
 	source?: string;
+	/** 服务端注入的写入者身份（工具参数里没有这些字段，模型伪造不了） */
+	actor?: MemoryActor;
+	taskId?: string | null;
+	subagentId?: string | null;
+	/** 晋升时用：来源记忆 id（只存安全 ID） */
+	evidenceRef?: string | null;
+	promotedFrom?: string | null;
 }
+
+const taskDraftTtlDays = () => {
+	const n = Number(getSetting<number>("memoryTaskDraftTtlDays", 7));
+	return Number.isFinite(n) && n > 0 ? n : 7;
+};
 
 /** 写入前的简单密钥扫描：疑似密码/令牌的内容不进记忆 */
 const SECRET_RE = /(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:password|passwd|密码)\s*[:：=]\s*\S{4,})/i;
 
+const norm = (t: string) => t.trim().replace(/\s+/g, " ").toLowerCase();
+
+/** 条目是否由该写入者拥有（用于直接删除/更新） */
+function ownedBy(hit: ScopedItem, ctx: WriteContext): boolean {
+	const o = hit.origin;
+	if (!o) return false; // legacy：没有写入者，按他人/共享处理
+	if (o.status === "promoted") return false; // 已晋升的共享条目
+	const actor = ctx.actor ?? "main";
+	if (actor === "subagent") return o.actor === "subagent" && !!ctx.subagentId && o.subagentId === ctx.subagentId;
+	if (actor === "background" || actor === "group") return (o.actor === "background" || o.actor === "group") && !!ctx.taskId && o.taskId === ctx.taskId;
+	return false;
+}
+/** 能否直接删除/更新：主会话/用户可改任何条目；其余只能改本任务/本人写入的草稿 */
+export function canMutate(hit: ScopedItem, ctx: WriteContext): boolean {
+	if (privileged(ctx.actor)) return true;
+	return ownedBy(hit, ctx);
+}
+
 export const memory = {
 	async remember(agentId: string, conversationId: string | null, a: RememberArgs) {
 		if (SECRET_RE.test(a.content)) throw new Error("内容看起来包含密码或密钥，出于安全不写入记忆");
+		const actor: MemoryActor = a.actor ?? "main";
+		const priv = privileged(actor);
 		const kind: Kind = a.kind === "log" ? "experience" : (a.kind ?? "fact");
-		const scope: Scope = a.scope ?? (kind === "fact" ? "user" : "agent");
+		let scope: Scope = a.scope ?? (kind === "fact" ? "user" : "agent");
+		// 分层：非主/用户来源不能直接写共享 user 库 → 降级为 task 草稿（没有任务上下文时退为 agent 草稿）
+		if (!priv && scope === "user") scope = a.taskId ? "task" : "agent";
+		const taskId = a.taskId ?? null;
+		if (scope === "task" && !taskId) scope = "agent";
 		if (scope === "conversation" && !conversationId) throw new Error("当前没有对话，不能保存对话级记忆");
+		if (scope === "task" && !conversationId && !taskId) throw new Error("当前没有任务上下文，不能保存任务级记忆");
 		const bank = scope === "user" ? USER_BANK : agentBank(agentId);
+		const status: MemoryStatus = priv ? "verified" : "draft";
+		const ttl = a.ttlDays ?? (kind === "note" ? 7 : scope === "task" ? taskDraftTtlDays() : undefined);
+		const origin: MemoryOrigin = {
+			actor,
+			assistantId: agentId,
+			conversationId: scope === "conversation" ? conversationId : null,
+			taskId: taskId ?? null,
+			subagentId: a.subagentId ?? null,
+			source: a.source ?? (priv ? "user" : actor),
+			evidenceRef: a.evidenceRef ?? null,
+			createdAt: new Date().toISOString(),
+			status,
+			promotedTo: null,
+		};
 		const p = await ready(providerFor(agentId), bank, agentId);
-		const ttl = a.ttlDays ?? (kind === "note" ? 7 : undefined);
 		const r = await p.remember(bank, {
 			content: a.content,
 			timestamp: new Date().toISOString(),
-			meta: { kind, source: a.source ?? "user", ...(scope === "conversation" ? { conversationId } : {}), ...(ttl ? { expiresAt: Date.now() + ttl * DAY } : {}) },
+			meta: {
+				kind,
+				source: origin.source,
+				...(scope === "conversation" ? { conversationId } : {}),
+				...(taskId ? { taskId } : {}),
+				...(ttl ? { expiresAt: Date.now() + ttl * DAY } : {}),
+				origin,
+			},
 		});
-		return { id: r.ids?.[0] ?? "", bank, scope, kind, async: !!r.async };
+		return { id: r.ids?.[0] ?? "", bank, scope, kind, status, async: !!r.async };
 	},
 
-	async recall(agentId: string, conversationId: string | null, query: string, limit = 8): Promise<ScopedItem[]> {
+	async recall(agentId: string, conversationId: string | null, query: string, limit = 8, opts?: { taskId?: string | null; parent?: boolean }): Promise<ScopedItem[]> {
 		const p = providerFor(agentId);
+		const ctx = readCtx(conversationId, opts);
 		const out: ScopedItem[] = [];
 		for (const bank of [agentBank(agentId), USER_BANK]) {
 			await ready(p, bank, agentId);
-			out.push(...(await p.recall(bank, query, { limit: limit * 2 })).map((i) => scoped(i, bank)).filter((i) => visible(i, conversationId)));
+			out.push(...(await p.recall(bank, query, { limit: limit * 2 })).map((i) => scoped(i, bank)).filter((i) => memoryVisible(i, ctx)));
 		}
 		return out.sort((x, y) => (y.score ?? 0) - (x.score ?? 0)).slice(0, limit);
 	},
 
-	async list(agentId: string, conversationId?: string | null, q?: string): Promise<ScopedItem[]> {
+	async list(agentId: string, conversationId?: string | null, q?: string, opts?: { taskId?: string | null; parent?: boolean }): Promise<ScopedItem[]> {
 		const p = providerFor(agentId);
+		const ctx = readCtx(conversationId, opts);
 		const out: ScopedItem[] = [];
 		for (const bank of [USER_BANK, agentBank(agentId)]) {
 			await ready(p, bank, agentId);
 			out.push(...(await p.list(bank, { limit: 500, q })).items.map((i) => scoped(i, bank)));
 		}
-		// 过期便签不再显示；对话级记忆只在指定对话（或不指定时全部）显示
-		return out.filter((i) => (!i.expiresAt || i.expiresAt > Date.now()) && (conversationId === undefined || i.scope !== "conversation" || i.conversationId === conversationId));
+		// 过期便签不再显示；对话级/任务级/草稿按读取上下文过滤（父视角可看全部草稿）
+		return out.filter((i) => memoryVisible(i, ctx));
+	},
+
+	/** 列出本助理下待核验的 task 草稿（父视角） */
+	async listDrafts(agentId: string): Promise<ScopedItem[]> {
+		return (await memory.list(agentId, undefined, undefined, { parent: true })).filter((i) => i.status === "draft");
 	},
 
 	/** 本轮注入给模型的记忆块 */
-	async context(agentId: string, conversationId: string | null, prompt: string, budgetChars = 6000): Promise<string> {
+	async context(agentId: string, conversationId: string | null, prompt: string, budgetChars = 6000, opts?: { taskId?: string | null; parent?: boolean }): Promise<string> {
 		const p = providerFor(agentId);
-		const all = await memory.list(agentId, conversationId);
-		const vis = all.filter((i) => visible(i, conversationId));
-		// 明确记下的事实按作用域筛选（别的对话的对话级事实不会混进来）；有心智模型的后端（Hindsight）再补上自动整理出的认识
-		const facts = vis.filter((i) => i.kind === "fact");
+		const ctx = readCtx(conversationId, opts);
+		const all = await memory.list(agentId, conversationId, undefined, opts);
+		const vis = all.filter((i) => memoryVisible(i, ctx));
+		// 明确记下的事实按作用域筛选（别的对话/任务的记忆不会混进来）；草稿单独标注，不混进长期事实
+		const facts = vis.filter((i) => i.kind === "fact" && i.status !== "draft");
+		const drafts = vis.filter((i) => i.status === "draft");
 		const insights: string[] = [];
 		if (p.capabilities.mentalModels && p.bootContext)
 			for (const bank of [USER_BANK, agentBank(agentId)]) {
@@ -137,12 +275,12 @@ export const memory = {
 				const b = (await p.bootContext(bank).catch(() => "")).trim();
 				if (b) insights.push(...b.split("\n"));
 			}
-		const notes = vis.filter((i) => i.kind === "note");
-		const logs = vis.filter((i) => i.kind === "experience" && Date.now() - Date.parse(i.createdAt) < 3 * DAY).slice(0, 15);
-		const seen = new Set([...facts, ...notes, ...logs].map((x) => x.id));
-		const related = prompt.trim() ? (await memory.recall(agentId, conversationId, prompt.slice(0, 200), 5)).filter((i) => !seen.has(i.id)) : [];
+		const notes = vis.filter((i) => i.kind === "note" && i.status !== "draft");
+		const logs = vis.filter((i) => i.kind === "experience" && i.status !== "draft" && Date.now() - Date.parse(i.createdAt) < 3 * DAY).slice(0, 15);
+		const seen = new Set([...facts, ...drafts, ...notes, ...logs].map((x) => x.id));
+		const related = prompt.trim() ? (await memory.recall(agentId, conversationId, prompt.slice(0, 200), 5, opts)).filter((i) => !seen.has(i.id)) : [];
 		const day = (t: string | number) => new Date(t).toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
-		const line = (i: ScopedItem) => `- [${i.id}] (${i.scope}) ${i.text}`;
+		const line = (i: ScopedItem) => `- [${i.id}] (${i.scope}${i.status === "draft" ? "/草稿待核验" : ""}) ${i.text}`;
 		const parts: string[] = [];
 		let used = 0;
 		const add = (title: string, lines: string[]) => {
@@ -156,35 +294,99 @@ export const memory = {
 		};
 		add("关于用户与长期事实", facts.map(line));
 		add("自动整理出的认识", insights);
+		// 父视角只给草稿入口/计数，不把草稿全文塞进每轮 prompt；子代理视角可读自己的任务草稿
+		if (ctx.parent) {
+			const pending = drafts.length;
+			if (pending) add("待核验的任务草稿", [`- 有 ${pending} 条子代理/后台草稿待核验（用 memory_review 查看并晋升，不要直接当成事实）`]);
+		} else {
+			add("本任务草稿（未核验）", drafts.map(line));
+		}
 		add("短期便签", notes.map((i) => `${line(i)}${i.expiresAt ? `（${day(i.expiresAt)} 到期）` : ""}`));
 		add("最近几天的日志", logs.map((i) => `- [${i.id}] ${day(i.createdAt)} ${i.text}`));
 		add("可能相关的较早记忆", related.map(line));
 		return parts.join("\n\n");
 	},
 
-	async forget(agentId: string, id: string) {
+	async forget(agentId: string, id: string, ctx: WriteContext = {}) {
 		const p = providerFor(agentId);
-		const items = await memory.list(agentId);
+		const items = await memory.list(agentId, undefined, undefined, { taskId: ctx.taskId ?? null, parent: privileged(ctx.actor) || !ctx.taskId });
 		const hit = items.find((i) => i.id === id);
 		if (!hit) return false;
+		if (!canMutate(hit, ctx)) throw new Error("只能删除本任务/本人写入的草稿；共享或他人写入的记忆需要主会话或用户确认");
 		await p.forget(hit.bank, { id });
 		return true;
 	},
 
-	async update(agentId: string, id: string, patch: { text?: string; kind?: Kind; scope?: Scope }, conversationId?: string | null) {
+	async update(agentId: string, id: string, patch: { text?: string; kind?: Kind; scope?: Scope }, conversationId?: string | null, ctx: WriteContext = {}) {
 		const p = providerFor(agentId);
-		const hit = (await memory.list(agentId)).find((i) => i.id === id);
+		const hit = (await memory.list(agentId, undefined, undefined, { taskId: ctx.taskId ?? null, parent: privileged(ctx.actor) || !ctx.taskId })).find((i) => i.id === id);
 		if (!hit) return null;
+		if (!canMutate(hit, ctx)) throw new Error("只能修改本任务/本人写入的草稿；共享或他人写入的记忆需要主会话或用户确认");
 		const scope = patch.scope ?? hit.scope;
 		const kind = patch.kind ?? hit.kind;
 		const targetBank = scope === "user" ? USER_BANK : agentBank(agentId);
+		const status: MemoryStatus = privileged(ctx.actor) ? "verified" : hit.status;
+		const origin: MemoryOrigin = { ...(hit.origin ?? { actor: (ctx.actor ?? "main"), assistantId: agentId, createdAt: new Date().toISOString(), source: "user", status: hit.status }), status, createdAt: hit.origin?.createdAt ?? new Date().toISOString() };
 		if (targetBank !== hit.bank || !p.update || (scope === "conversation") !== (hit.scope === "conversation")) {
 			await p.forget(hit.bank, { id });
-			const r = await memory.remember(agentId, scope === "conversation" ? (hit.conversationId ?? conversationId ?? null) : null, { content: patch.text ?? hit.text, kind, scope, source: "user" });
+			const r = await memory.remember(agentId, scope === "conversation" ? (hit.conversationId ?? conversationId ?? null) : null, { content: patch.text ?? hit.text, kind, scope, source: "user", actor: ctx.actor, taskId: ctx.taskId, subagentId: ctx.subagentId });
 			return r.id;
 		}
-		await p.update(hit.bank, id, { text: patch.text, kind: kind as never, meta: { kind } });
+		await p.update(hit.bank, id, { text: patch.text, kind: kind as never, meta: { kind, origin } });
 		return id;
+	},
+
+	/**
+	 * 把一条 task 草稿晋升为共享/长期记忆（只有主会话/用户能做）。
+	 * 幂等：草稿已是 promoted 直接返回；去重：目标库已有同文本条目则不新增、只补证据（不覆盖）。
+	 */
+	async promote(agentId: string, draftId: string, opts: { scope?: "user" | "agent"; actor?: MemoryActor; conversationId?: string | null; taskId?: string | null } = {}) {
+		const actor: MemoryActor = opts.actor ?? "main";
+		if (!privileged(actor)) throw new Error("只有主会话或用户能把草稿晋升为长期记忆");
+		const p = providerFor(agentId);
+		const all = await memory.list(agentId, undefined, undefined, { parent: true });
+		const draft = all.find((i) => i.id === draftId);
+		if (!draft) throw new Error("找不到要晋升的草稿");
+		if (draft.origin?.status === "promoted") return { id: draft.origin.promotedTo ?? draftId, promoted: false, deduped: true };
+		if (!draft.origin || draft.status === "legacy") throw new Error("只能晋升带来源的草稿");
+		const scope = opts.scope ?? "agent";
+		const bank = scope === "user" ? USER_BANK : agentBank(agentId);
+		await ready(p, bank, agentId);
+		const target = (await p.list(bank, { limit: 1000 })).items.map((i) => scoped(i, bank)).filter((i) => i.status !== "promoted");
+		const exist = target.find((i) => norm(i.text) === norm(draft.text));
+		const markPromoted = async (toId: string | null) => {
+			if (!p.update) return;
+			await p.update(draft.bank, draft.id, { meta: { kind: draft.kind, ...(draft.meta ?? {}), origin: { ...draft.origin, status: "promoted", promotedTo: toId } } });
+		};
+		if (exist) {
+			// 命中已有事实：不新增、不覆盖；把草稿 id 作为证据追加到已有条目的 origin
+			const merged: MemoryOrigin = { ...(exist.origin ?? { actor: "user", assistantId: agentId, createdAt: new Date().toISOString(), status: exist.status, source: "user" }), evidenceRef: exist.origin?.evidenceRef ?? draft.id };
+			if (p.update) await p.update(exist.bank, exist.id, { meta: { kind: exist.kind, ...(exist.meta ?? {}), origin: merged } });
+			await markPromoted(exist.id);
+			return { id: exist.id, promoted: false, deduped: true };
+		}
+		const r = await memory.remember(agentId, opts.conversationId ?? null, {
+			content: draft.text,
+			kind: draft.kind,
+			scope,
+			source: "promotion",
+			actor: "user",
+			taskId: opts.taskId ?? null,
+			evidenceRef: draft.id,
+		});
+		await markPromoted(r.id);
+		return { id: r.id, promoted: true, deduped: false };
+	},
+
+	/** 驳回草稿：标记 promoted（不再可见）但不写入。只有主会话/用户能做。 */
+	async rejectDraft(agentId: string, draftId: string, ctx: WriteContext = {}) {
+		if (!privileged(ctx.actor)) throw new Error("只有主会话或用户能驳回草稿");
+		const p = providerFor(agentId);
+		const draft = (await memory.list(agentId, undefined, undefined, { parent: true })).find((i) => i.id === draftId);
+		if (!draft) throw new Error("找不到草稿");
+		if (!p.update || !draft.origin) return false;
+		await p.update(draft.bank, draft.id, { meta: { kind: draft.kind, ...(draft.meta ?? {}), origin: { ...draft.origin, status: "promoted", promotedTo: null } } });
+		return true;
 	},
 
 	async reflect(agentId: string, query: string) {

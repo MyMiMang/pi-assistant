@@ -22,13 +22,22 @@ const MENTAL_MODELS = [
 ];
 
 const client = () => new HindsightClient({ baseUrl: sidecar.baseUrl!, apiKey: sidecar.apiKey(), userAgent: "pi-assistant" } as never);
+/** recall/reflect 没有显式取消；加一个短超时，避免卡住主模型回合（超时后 recall 退回账本检索） */
+const RECALL_TIMEOUT_MS = Number(process.env.PIA_MEMORY_TIMEOUT_MS ?? 20_000);
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const t = setTimeout(() => reject(new Error(`${what}超时（${ms}ms）`)), ms);
+		t.unref?.();
+		p.then((v) => (clearTimeout(t), resolve(v)), (e) => (clearTimeout(t), reject(e)));
+	});
+}
 const row = (id: string) => db.prepare("SELECT * FROM memory_items WHERE id = ?").get(id) as { id: string; bank: string; text: string; kind: string | null; created_at: string; occurred_at: string | null; meta_json: string | null } | undefined;
 const metaOf = (r: { meta_json: string | null }) => (r.meta_json ? (JSON.parse(r.meta_json) as Record<string, unknown>) : {});
 
-/** 入队；同一条目已有未处理的 retain 就不重复排（每次 retain 都要调用模型抽取，重复会白花 token） */
+/** 入队；同一条目已有未处理的 retain 就不重复排（每次 retain 都要调用模型抽取，重复会白花 token；失败重试后也靠这条去重） */
 const insertJob = (bank: string, op: string, itemId: string | null) =>
 	db
-		.prepare("INSERT INTO memory_sync(bank, item_id, op, created_at) SELECT ?,?,?,? WHERE NOT (? = 'retain' AND EXISTS (SELECT 1 FROM memory_sync WHERE bank = ? AND item_id = ? AND op = 'retain' AND attempts = 0))")
+		.prepare("INSERT INTO memory_sync(bank, item_id, op, created_at) SELECT ?,?,?,? WHERE NOT (? = 'retain' AND EXISTS (SELECT 1 FROM memory_sync WHERE bank = ? AND item_id = ? AND op = 'retain'))")
 		.run(bank, itemId, op, Date.now(), op, bank, itemId);
 export function enqueue(bank: string, op: "retain" | "delete" | "purge", itemId?: string) {
 	insertJob(bank, op, itemId ?? null);
@@ -167,7 +176,7 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 		if (!sidecar.ready) return basicMemory.recall(bank, query, opts);
 		try {
 			if (!db.prepare("SELECT 1 FROM hindsight_banks WHERE bank = ?").get(bank)) await ensureRemoteBank(bank);
-			const res = await client().recall(bank, query, { maxTokens: opts.tokenBudget ?? 2048, budget: "mid", types: ["world", "experience", "observation"] } as never);
+			const res = await withTimeout(client().recall(bank, query, { maxTokens: opts.tokenBudget ?? 2048, budget: "mid", types: ["world", "experience", "observation"] } as never), RECALL_TIMEOUT_MS, "记忆召回");
 			const results = ((res as { results?: unknown[] }).results ?? []) as Parameters<typeof toItem>[1][];
 			const items = results.map((r, i) => toItem(bank, r, 1 / (1 + i))).filter(Boolean) as MemoryItem[];
 			const limit = opts.limit ?? 8;
@@ -182,7 +191,7 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 	async reflect(bank, query) {
 		if (!sidecar.ready) throw new Error("高级记忆暂时不可用（Hindsight 未就绪），稍后再试");
 		await ensureRemoteBank(bank);
-		const r = await client().reflect(bank, query, { budget: "mid", includeFacts: true } as never);
+		const r = await withTimeout(client().reflect(bank, query, { budget: "mid", includeFacts: true } as never), RECALL_TIMEOUT_MS, "记忆反思");
 		const memories = ((r.based_on as { memories?: Parameters<typeof toItem>[1][] } | null)?.memories ?? []).map((m, i) => toItem(bank, m, 1 / (1 + i))).filter(Boolean) as MemoryItem[];
 		return { answer: r.text, citations: memories };
 	},
