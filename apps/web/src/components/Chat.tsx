@@ -102,7 +102,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 			<HostControlBar />
 			<div
 				ref={scroller}
-				className="pa-scroll scrollbar-thin"
+				className="pa-scroll"
 				onScroll={(e) => {
 					const el = e.currentTarget;
 					stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;

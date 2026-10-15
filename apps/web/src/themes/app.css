@@ -151,6 +151,26 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 
 /* 聊天区只竖向滚动：消息里的宽内容不能把它撑宽 */
 .pa-scroll { overflow-x: hidden; overflow-y: auto; overscroll-behavior-x: none; }
+/* 聊天区滚动条：macOS 的覆盖式（overlay）滚动条静止就自动隐藏，用户既看不到位置也抓不到（本轮报的 bug）。
+   这里只给聊天滚动容器 .pa-scroll（主会话 / 群聊 / 子代理共用）一个应用内稳定的经典滚动条：
+   配置 ::-webkit-scrollbar 后 Chromium / WebKit 会改用非覆盖式滚动条，所以真的能常显；不动其它 UI，也不动系统设置。
+   触屏（无精细指针）保持系统原生 overlay 行为。 */
+@media (hover: hover) and (pointer: fine) {
+  .pa-scroll { scrollbar-gutter: stable; }
+  .pa-scroll::-webkit-scrollbar { width: var(--pa-sbw, 10px); height: var(--pa-sbw, 10px); }
+  .pa-scroll::-webkit-scrollbar-track { background: transparent; }
+  .pa-scroll::-webkit-scrollbar-thumb { border-radius: 999px; border: 2px solid transparent; background-clip: content-box; background-color: color-mix(in srgb, var(--fg) 22%, transparent); }
+  .pa-scroll::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--fg) 40%, transparent); }
+  /* 输入框浮层不要压住滚动条槽，否则底部 thumb 会被渐变压在下面 */
+  .pa-composer-wrap { right: var(--pa-sbw, 10px); }
+}
+/* 没有 ::-webkit-scrollbar 的引擎（Firefox）：用标准属性给出细滚动条 */
+@supports not selector(::-webkit-scrollbar) {
+  @media (hover: hover) and (pointer: fine) {
+    .pa-scroll { scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 22%, transparent) transparent; }
+    .pa-composer-wrap { right: var(--pa-sbw, 10px); }
+  }
+}
 .pa-thread-body, .pa-thread-body > *, .pa-msg { min-width: 0; max-width: 100%; }
 .pa-bubble { min-width: 0; }
 

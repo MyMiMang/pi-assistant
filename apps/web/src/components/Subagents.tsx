@@ -81,7 +81,7 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 				{d && !stoppable && ["failed", "timeout", "lost"].includes(d.subagent.status) && !d.subagent.canResume && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>}
 			</header>
 			{d?.subagent.task ? <div className="shrink-0 border-b border-line px-4 py-2"><TaskInstructions text={d.subagent.task} label="查看任务说明（完整指令）" /></div> : null}
-			<div ref={scroller} className="pa-scroll scrollbar-thin" onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
+			<div ref={scroller} className="pa-scroll" onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
 				<div className="pa-thread-body">
 					{rows.map((r) => r.kind === "day" ? <div key={r.id} className="pa-day">{r.label}</div> : r.kind === "user" ? <UserMsg key={r.m.id} m={r.m} /> : r.kind === "system" ? <SystemMsg key={r.m.id} m={r.m} canContinue={false} /> : <BotTurn key={r.id} row={r} agent={avatar} live={running && r === last} />)}
 					{running && last?.kind !== "bot" && <BotTurn row={null} agent={avatar} live />}
