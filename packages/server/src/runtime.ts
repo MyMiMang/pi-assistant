@@ -35,7 +35,7 @@ import { memory } from "./memory/index.ts";
 import { computeNext, createRoutine, deleteRoutine, getRoutine, listRoutines, setRoutineSpawner, setRoutineStatus, updateRoutine, validateCron, webhookPath } from "./routines.ts";
 import { DUP_THRESHOLD, hasCreateGrant, observeTurn, recordSuggestion, resolveSuggestion, saveSkillVersioned, searchSkills, skillDiff, type Suggestion, suggestionPrompt } from "./skill-intel.ts";
 import { deleteSkill, getSkill, listSkills, skillIdOfPath, skillPaths, skillsVersion } from "./skills.ts";
-import { assignedSkillIds, assignmentsVersion } from "./skill-assignments.ts";
+import { assignedSkillIds, assignmentsVersion, enableSkillForAgent, unassignSkillEverywhere } from "./skill-assignments.ts";
 import { bus } from "./bus.ts";
 import { mcpServersFor, mcpVersion } from "./mcp.ts";
 import { packagePathsFor, packagesVersion } from "./pi-packages.ts";
@@ -85,6 +85,12 @@ function skillFilterFor(agentId: string): (s: { name: string; filePath: string }
 		const id = skillIdOfPath(s.filePath, s.name);
 		return id !== null && enabled.has(id);
 	};
+}
+
+/** 该助理可用集（库存 ∩ 分配表）：技能工具只能看到这些，不泄露未选中的名字 / 描述。 */
+function enabledSkillsFor(agentId: string) {
+	const enabled = new Set(assignedSkillIds(agentId));
+	return listSkills().filter((s) => enabled.has(s.id));
 }
 
 export interface AgentRow {
@@ -356,12 +362,25 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 		{
 			name: "pia-skills",
 			factory: skillsExtension({
-				list: () => listSkills(),
-				get: (n) => getSkill(n),
-				search: (q, ex) => searchSkills(q, { exclude: ex }),
+				list: () => enabledSkillsFor(agentId),
+				get: (n) => enabledSkillsFor(agentId).find((s) => s.name === n),
+				search: (q, ex) => {
+					const enabled = new Set(assignedSkillIds(agentId));
+					return searchSkills(q, { exclude: ex }).filter((h) => enabled.has(h.id));
+				},
 				dupThreshold: DUP_THRESHOLD,
-				save: (i) => saveSkillVersioned(i, "agent"),
-				remove: (n) => deleteSkill(n),
+				save: (i) => {
+					const s = saveSkillVersioned(i, "agent");
+					// 模型给本助理新建的技能：默认只启用给本助理，其它助理不受影响
+					enableSkillForAgent(agentId, s.id);
+					return s;
+				},
+				remove: (n) => {
+					const s = getSkill(n);
+					if (!s) return false;
+					unassignSkillEverywhere(s.id);
+					return deleteSkill(n);
+				},
 				confirm: (summary) => approve("skill_delete", {}, summary),
 				confirmCreate: async ({ name, description, userText }) => {
 					// 用户这轮明确提到技能，或刚同意过“做成技能”的建议 → 不再重复确认

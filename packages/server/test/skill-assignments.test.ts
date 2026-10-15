@@ -19,6 +19,7 @@ const modelsMod = await import("../src/models.ts");
 const { memoryCredentialStore } = await import("./in-memory-credentials.ts");
 const { createPiSession, disposeSession, loadedResources } = await import("../src/pi-adapter/index.ts");
 const { listSkills, skillPaths, skillIdOfPath, saveSkill, canonicalSkillId, builtinSkillsDir } = await import("../src/skills.ts");
+const { searchSkills } = await import("../src/skill-intel.ts");
 const sa = await import("../src/skill-assignments.ts");
 
 test("分配表：缺失 / 显式 [] 都是不启用任何技能，没有全局默认", () => {
@@ -106,4 +107,33 @@ test("会话只加载被启用的技能，未选中不进 prompt", async () => {
 
 	// 内置目录里确实有技能（确认上面不是「库存为空」导致的假通过）
 	assert.ok(skillPaths().includes(builtinSkillsDir));
+});
+
+test("变更分配会递增版本号（运行时据此重建会话）", () => {
+	const v0 = sa.assignmentsVersion();
+	sa.setAssignedSkillIds("ver-agent", []);
+	const v1 = sa.assignmentsVersion();
+	assert.ok(v1 > v0, "写分配后版本号递增");
+	sa.enableSkillForAgent("ver-agent", "user/x");
+	assert.ok(sa.assignmentsVersion() > v1);
+});
+
+test("skill_search 只检可用集：未选中技能的名字 / 描述不外泄", () => {
+	const secret = saveSkill({ name: "secret-unselected", description: "未分配给这个助理的敏感技能", body: "不该被搜到。" });
+	const shared = saveSkill({ name: "shared-selected", description: "已启用的共享技能", body: "可以被搜到。" });
+	sa.setAssignedSkillIds("search-agent", [shared.id]);
+	const enabled = new Set(sa.assignedSkillIds("search-agent"));
+	const hits = searchSkills("技能").filter((h) => enabled.has(h.id));
+	assert.ok(hits.some((h) => h.id === shared.id), "已启用技能可搜到");
+	assert.ok(!hits.some((h) => h.id === secret.id), "未启用技能不出现在可用集搜索里");
+	// 全库存搜索仍能看到它（供用户手动管理），说明不是文件没建成功
+	assert.ok(searchSkills("技能").some((h) => h.id === secret.id));
+});
+
+test("同名不同来源的 canonical id 不互相错启", () => {
+	// 用两个 id 字符串直接验证过滤语义：只启用 user/foo，不应把 builtin/foo 也放进来
+	sa.setAssignedSkillIds("same-name", [canonicalSkillId("user", "foo")]);
+	const enabled = new Set(sa.assignedSkillIds("same-name"));
+	assert.ok(enabled.has("user/foo"));
+	assert.ok(!enabled.has("builtin/foo"));
 });

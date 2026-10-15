@@ -92,7 +92,7 @@ export function similarity(a: string, b: string) {
 export function searchSkills(query: string, opts: { exclude?: string; limit?: number } = {}) {
 	return listSkills()
 		.filter((s) => s.name !== opts.exclude)
-		.map((s) => ({ name: s.name, description: s.description, builtin: s.builtin, score: Math.max(similarity(query, `${s.name.replace(/-/g, " ")} ${s.description}`), 0.8 * similarity(query, s.body.slice(0, 2000))) }))
+		.map((s) => ({ id: s.id, name: s.name, description: s.description, source: s.source, builtin: s.builtin, score: Math.max(similarity(query, `${s.name.replace(/-/g, " ")} ${s.description}`), 0.8 * similarity(query, s.body.slice(0, 2000))) }))
 		.filter((s) => s.score > 0.15)
 		.sort((a, b) => b.score - a.score)
 		.slice(0, opts.limit ?? 5);

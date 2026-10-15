@@ -57,6 +57,7 @@ import { configuredModels, resetEmbeddingStore, resolveMemoryModel, sidecar } fr
 import { embeddingSignature, LOCAL_EMBEDDINGS, LOCAL_RERANKERS, pickMemoryModel, publicSettings, saveHindsightSettings } from "./memory/hindsight/settings.ts";
 import { llmProxy } from "./llm-proxy.ts";
 import { deleteSkill, getSkill, listSkills } from "./skills.ts";
+import { agentsUsingSkill, assignedSkillIds, enableSkillForAgents, setAssignedSkillIds, unassignSkillEverywhere } from "./skill-assignments.ts";
 import { agentsOf, configOf, deleteMcp, getMcp, listMcp, type McpServerRow, redact, saveMcp, setMcpEnabled, testMcp } from "./mcp.ts";
 import { addPackage, install as installPackage, listPackages, type PiPackageRow, removePackage, setPackageEnabled } from "./pi-packages.ts";
 import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
@@ -762,21 +763,50 @@ app.put("/api/agents/:id/memory-provider", async (c) => {
 });
 
 // ---------------------------------------------------------------- 技能库（Pi 原生 Agent Skills）
-app.get("/api/skills", (c) => c.json(listSkills().map(({ body, ...s }) => ({ ...s, path: undefined, size: body.length }))));
+// 库存带 canonical id / 来源 / 启用了它的助理列表，供界面显示「启用数」与按 agent 配置。
+const skillJson = (s: ReturnType<typeof listSkills>[number]) => ({ id: s.id, name: s.name, description: s.description, source: s.source, builtin: s.builtin, size: s.body.length, enabledAgents: agentsUsingSkill(s.id) });
+app.get("/api/skills", (c) => c.json(listSkills().map(skillJson)));
 app.get("/api/skills/:name", (c) => {
 	const s = getSkill(c.req.param("name"));
-	return s ? c.json({ ...s, path: undefined }) : c.json({ error: "not_found" }, 404);
+	return s ? c.json({ ...skillJson(s), body: s.body }) : c.json({ error: "not_found" }, 404);
+});
+// 某助理启用的技能（canonical id 列表）；缺失 / [] 都是不启用任何技能。
+app.get("/api/agents/:id/skills", (c) => c.json({ enabled: assignedSkillIds(c.req.param("id")) }));
+app.put("/api/agents/:id/skills", async (c) => {
+	const b = await c.req.json<{ ids?: unknown }>();
+	if (!Array.isArray(b.ids) || !b.ids.every((x) => typeof x === "string")) return c.json({ error: "ids 必须是字符串数组" }, 400);
+	if (!getAgent(c.req.param("id"))) return c.json({ error: "not_found" }, 404);
+	setAssignedSkillIds(c.req.param("id"), b.ids as string[]);
+	return c.json({ enabled: assignedSkillIds(c.req.param("id")) });
+});
+// 批量给当前所有助理启用某技能（UI 的「给所有助理启用」）；不建立对未来新助理的继承。
+app.post("/api/skills/:name/enable-all", (c) => {
+	const s = getSkill(c.req.param("name"));
+	if (!s) return c.json({ error: "not_found" }, 404);
+	enableSkillForAgents(listAgents().map((a) => a.id), s.id);
+	return c.json({ ok: true, id: s.id, agents: agentsUsingSkill(s.id) });
 });
 app.post("/api/skills", async (c) => {
-	const b = await c.req.json<{ name: string; description: string; body: string; previousName?: string }>();
+	const b = await c.req.json<{ name: string; description: string; body: string; previousName?: string; agentId?: string }>();
 	if (getSkill(b.name)?.builtin) return c.json({ error: "内置技能不能覆盖，请换一个名字" }, 400);
 	try {
-		return c.json({ ...saveSkillVersioned(b, "user"), path: undefined });
+		const s = saveSkillVersioned(b, "user");
+		// 模型给某个助理新建的技能：默认只启用给那个助理（没有 target 就是不给任何人启用）
+		if (b.agentId && getAgent(b.agentId)) setAssignedSkillIds(b.agentId, [...new Set([...assignedSkillIds(b.agentId), s.id])]);
+		return c.json({ ...s, path: undefined });
 	} catch (e) {
 		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 	}
 });
-app.delete("/api/skills/:name", (c) => c.json({ ok: deleteSkill(c.req.param("name")) }));
+// 删除物理库存：先提示影响哪些已启用它的助理；未确认（?force 缺失）且有助理在用则返回 409。
+app.delete("/api/skills/:name", (c) => {
+	const s = getSkill(c.req.param("name"));
+	if (!s) return c.json({ error: "not_found" }, 404);
+	const affected = agentsUsingSkill(s.id);
+	if (affected.length && c.req.query("force") !== "1") return c.json({ error: "in_use", agents: affected }, 409);
+	unassignSkillEverywhere(s.id);
+	return c.json({ ok: deleteSkill(s.name), agents: affected });
+});
 app.get("/api/skills-search", (c) => c.json(searchSkills(c.req.query("q") ?? "")));
 app.get("/api/skills/:name/versions", (c) => {
 	const vs = listVersions(c.req.param("name"));
