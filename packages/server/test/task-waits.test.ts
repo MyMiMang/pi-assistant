@@ -33,7 +33,7 @@ function makeTask(id: string, status: string, result: string | null = null, erro
 function makeSubagent(id: string, status: string, summary: string | null = null, error: string | null = null) {
 	db.prepare("INSERT OR REPLACE INTO subagents(id, agent_id, conversation_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, result_summary, error_reason, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, "tw-a", conv, "子任务", "", "mock", "echo", "", status, now(), summary, error, now());
 }
-const reset = () => { db.prepare("DELETE FROM task_waits").run(); db.prepare("DELETE FROM tasks").run(); db.prepare("DELETE FROM subagents").run(); wakes.length = 0; W.resetWaitProviderRunner(); W.setWaitWaker((w) => { wakes.push({ id: w.wait.id, prompt: w.prompt, outcome: w.outcome }); }); };
+const reset = () => { db.prepare("DELETE FROM task_waits").run(); db.prepare("DELETE FROM tasks").run(); db.prepare("DELETE FROM subagents").run(); db.prepare("DELETE FROM subagent_wake_claims").run(); wakes.length = 0; W.resetWaitProviderRunner(); W.setWaitWaker((w) => { wakes.push({ id: w.wait.id, prompt: w.prompt, outcome: w.outcome }); }); };
 /** 等微任务/定时器跑完，让 fireWait 的异步投递结果落库 */
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -337,4 +337,26 @@ test("取消与投递竞态：fired 后取消是 no-op，不会二次投递", as
 	await W.tickWaits(now() + 10 * 60_000);
 	await flush();
 	assert.equal(wakes.length, 1, "不会二次投递");
+});
+
+// ---------------------------------------------------------------- 子代理终态唤醒单 owner claim（原子选路）
+test("终态 claim：先抢者 won，同 owner 续租 owned，另一方 yield；送达后双方都得 delivered", () => {
+	reset();
+	const key = W.wakeClaimKey("sa-claim", "tw-a", conv, 111);
+	assert.equal(W.claimSubagentWake("sa-claim", "tw-a", conv, 111, "notify", "ev1"), "won");
+	assert.equal(W.claimSubagentWake("sa-claim", "tw-a", conv, 111, "wait", "tw1"), "yield", "notify 持有 → 等待让位");
+	assert.equal(W.claimSubagentWake("sa-claim", "tw-a", conv, 111, "notify", "ev1"), "owned", "同一 owner 可续租");
+	W.markSubagentWakeDelivered(key, "notify");
+	assert.equal(W.claimSubagentWake("sa-claim", "tw-a", conv, 111, "wait", "tw1"), "delivered", "已送达：等待不能再唤醒");
+	// 不同代际 / 不同对话互不影响
+	assert.equal(W.claimSubagentWake("sa-claim", "tw-a", conv, 222, "wait", "tw1"), "won", "新一代终态是新 claim");
+	assert.equal(W.claimSubagentWake("sa-claim", "tw-a", "other", 111, "wait", "tw2"), "won", "不同对话互不影响");
+});
+
+test("终态 claim：投递失败 release 后另一机制可补位接管", () => {
+	reset();
+	const key = W.wakeClaimKey("sa-rel", "tw-a", conv, 7);
+	assert.equal(W.claimSubagentWake("sa-rel", "tw-a", conv, 7, "wait", "tw1"), "won");
+	W.releaseSubagentWake(key, "wait");
+	assert.equal(W.claimSubagentWake("sa-rel", "tw-a", conv, 7, "notify", "ev1"), "won", "release 后 notify 可补位");
 });

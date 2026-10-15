@@ -51,6 +51,8 @@ export interface TaskWait {
 	delivered_at: number | null;
 	last_delivery_error: string | null;
 	next_delivery_at: number | null;
+	/** 终态唤醒的单一 owner claim key（仅子代理等待会写；见 claimSubagentWake） */
+	wake_key: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -105,6 +107,7 @@ CREATE INDEX IF NOT EXISTS task_waits_due ON task_waits(status, next_check_at);
 		["delivered_at", "INTEGER"],
 		["last_delivery_error", "TEXT"],
 		["next_delivery_at", "INTEGER"],
+		["wake_key", "TEXT"],
 	] as const) if (!cols.includes(name)) { db.exec(`ALTER TABLE task_waits ADD COLUMN ${name} ${ddl}`); added.add(name); }
 	// 升级前的 fired 行没有投递记录：旧实现只在内存里投递过一次，无从判断是否送达。
 	// 保守地视为已送达，避免升级瞬间把所有历史 fired 重新唤醒一遍（新的 fired 行才会写 pending）。
@@ -113,6 +116,16 @@ CREATE INDEX IF NOT EXISTS task_waits_due ON task_waits(status, next_check_at);
 
 // 索引依赖新增列，必须在旧表补列后创建。
 db.exec("CREATE INDEX IF NOT EXISTS task_waits_delivery ON task_waits(status, delivery_status, next_delivery_at)");
+
+// 子代理终态唤醒的单 owner claim：notify 与 task_wait 两条路径共抢一个持久 owner，
+// 抢到的人投递，另一条路径让位；投递失败释放，另一条路径补位。
+db.exec(`CREATE TABLE IF NOT EXISTS subagent_wake_claims (
+ wake_key TEXT PRIMARY KEY, subagent_id TEXT NOT NULL, agent_id TEXT NOT NULL, conversation_id TEXT,
+ generation INTEGER NOT NULL, owner TEXT NOT NULL, owner_ref TEXT, status TEXT NOT NULL,
+ instance TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS subagent_wake_claims_sub ON subagent_wake_claims(subagent_id, agent_id, status);
+`);
 
 // ---------------------------------------------------------------- provider（固定、安全的外部检查）
 export interface GithubRunRef { repo: string; runId?: number; branch?: string }
@@ -185,6 +198,13 @@ export interface WaitWake { wait: TaskWait; prompt: string; outcome: ProviderSta
 export type WaitWaker = (w: WaitWake) => void | Promise<void>;
 let waker: WaitWaker | null = null;
 export function setWaitWaker(fn: WaitWaker | null) { waker = fn; }
+/**
+ * 等待被「子代理完成通知」抢先送达时，把这条等待的目的留到下一轮注入（不重复唤醒，也不丢目的）。
+ * 由 runtime 接到 `runtime(agent, conv).inject()`（`deliverAs:"nextTurn"`）。
+ */
+export type WaitNoteInjector = (agentId: string, conversationId: string | null, text: string) => void | Promise<void>;
+let noteInjector: WaitNoteInjector | null = null;
+export function setWaitNoteInjector(fn: WaitNoteInjector | null) { noteInjector = fn; }
 /** 本进程已经派发过的唤醒（防止 tick 与 bus 事件并发重复唤醒；真正去重仍以 DB 的 fired 状态为准） */
 const waking = new Set<string>();
 
@@ -205,19 +225,91 @@ export const getWait = (id: string) => db.prepare("SELECT * FROM task_waits WHER
  *  - `delivered`：等待已送达 → notify 只收尾（标记事件已投递），不再唤醒。
  * 只看 waiting / fired：取消掉的等待不再拥有唤醒，交回 notify，保证不丢也不重。
  */
-export function subagentWakeOwner(subagentId: string, agentId: string, conversationId: string | null): "none" | "pending" | "delivered" {
+export function subagentWakeOwner(subagentId: string, agentId: string, conversationId: string | null, generation?: number): "none" | "pending" | "delivered" {
 	// 只认「同一助理 + 同一对话 + 同一目标」的等待：别的对话（或没有对话）登记的等待不拥有这条终态唤醒，
 	// 否则会把本该发到子代理所属对话的 notify 吞掉。conversation_id 可为 NULL，两边都 COALESCE 后比较。
+	// 传了 generation（终态代际）时只看「为这一代负责」的已送达等待：上一代残留的 delivered 等待
+	// 不能吞掉续聊后新一代终态的通知。
 	const rows = db
-		.prepare("SELECT status, delivery_status FROM task_waits WHERE target_kind = 'subagent' AND target_ref = ? AND agent_id = ? AND COALESCE(conversation_id,'') = COALESCE(?,'') AND status IN ('waiting','fired')")
-		.all(subagentId, agentId, conversationId) as { status: string; delivery_status: string | null }[];
+		.prepare("SELECT status, delivery_status, wake_key FROM task_waits WHERE target_kind = 'subagent' AND target_ref = ? AND agent_id = ? AND COALESCE(conversation_id,'') = COALESCE(?,'') AND status IN ('waiting','fired')")
+		.all(subagentId, agentId, conversationId) as { status: string; delivery_status: string | null; wake_key: string | null }[];
+	const curKey = generation === undefined ? null : wakeClaimKey(subagentId, agentId, conversationId, generation);
 	let pending = false;
 	for (const r of rows) {
-		if (r.status === "fired" && r.delivery_status === "delivered") return "delivered";
+		if (r.status === "fired" && r.delivery_status === "delivered") {
+			// wake_key 为空的已送达等待是升级前 / 测试构造的旧数据：按旧行为视为拥有，不因缺少代际信息而吞掉通知
+			if (curKey === null || r.wake_key === null || r.wake_key === curKey) return "delivered";
+			continue;
+		}
 		// waiting 一定还没投递；fired 里 pending / 还没写过投递状态（旧数据）都算待投递；failed 不再拥有唤醒
-		if (r.status === "waiting" || r.delivery_status === null || r.delivery_status === "pending") pending = true;
+		if (r.status === "waiting" || r.delivery_status === null || r.delivery_status === "pending") {
+			if (curKey === null || r.wake_key === null || r.wake_key === curKey) pending = true;
+		}
 	}
 	return pending ? "pending" : "none";
+}
+
+// ---------------------------------------------------------------- 终态唤醒单 owner claim
+/**
+ * subagent notify（`deliverSubagentEvents`）与 task_wait 终态唤醒是两条独立路径，过去各自只做一次
+ * check-then-act：notify 判定「没有等待」后就异步投递，等待随后才登记/触发，于是同一次子代理终态会被
+ * 唤醒两次（多花一次模型回合）。这里用一条**持久**的 claim 做单一 owner：
+ *  - key 维度 = 子代理 + 助理 + 对话 + 终态代际（`subagents.finished_at`），跨对话 / 跨代际互不干扰；
+ *  - 谁先原子抢到谁负责投递，另一条路径让位；
+ *  - 投递成功记 `delivered`（这一代终态只唤醒一次）；投递失败 `release`，另一条路径补位（终态不丢）；
+ *  - 进程重启后 instance 变化，旧 instance 的 claim 视为过期可接管；另有 TTL 兜底。
+ * 不承诺崩溃窗口内的 exactly-once（崩溃前可能已经投递过一次），但正常并发下只唤醒一次模型。
+ */
+export const WAKE_CLAIM_TTL_MS = 30 * 60_000;
+const INSTANCE = uid("inst");
+export type WakeOwner = "notify" | "wait";
+export type WakeClaimResult = "won" | "owned" | "delivered" | "yield";
+interface WakeClaimRow { wake_key: string; owner: string; owner_ref: string | null; status: string; instance: string; updated_at: number }
+
+export const wakeClaimKey = (subagentId: string, agentId: string, conversationId: string | null, generation: number) => `${subagentId}|${agentId}|${conversationId ?? ""}|${generation}`;
+/** 从 claim key 取回代际（id 里不含 `|`）；用于补投时沿用登记当时的代际，不因后来续聊而错位。 */
+const generationFromWakeKey = (key: string): number => {
+	const i = key.lastIndexOf("|");
+	return i < 0 ? 0 : Number(key.slice(i + 1)) || 0;
+};
+const getWakeClaim = (key: string) => db.prepare("SELECT * FROM subagent_wake_claims WHERE wake_key = ?").get(key) as WakeClaimRow | undefined;
+
+/** 当前子代理的终态代际：每次结束（含续聊后再次结束）都是新的一代；未结束为 0。 */
+export function subagentWakeGeneration(subagentId: string): number {
+	const r = db.prepare("SELECT finished_at FROM subagents WHERE id = ?").get(subagentId) as { finished_at: number | null } | undefined;
+	return r?.finished_at ?? 0;
+}
+
+/**
+ * 原子抢 / 续 claim。`won` / `owned` = 由你投递；`delivered` = 已由（任一机制）投递过，别重复唤醒；
+ * `yield` = 另一机制持有，先让位（它失败会 release，下一 tick 再抢）。
+ */
+export function claimSubagentWake(subagentId: string, agentId: string, conversationId: string | null, generation: number, owner: WakeOwner, ownerRef: string, t = now()): WakeClaimResult {
+	const key = wakeClaimKey(subagentId, agentId, conversationId, generation);
+	const inserted = db.prepare("INSERT OR IGNORE INTO subagent_wake_claims(wake_key, subagent_id, agent_id, conversation_id, generation, owner, owner_ref, status, instance, created_at, updated_at) VALUES(?,?,?,?,?,?,?,'claimed',?,?,?)").run(key, subagentId, agentId, conversationId, generation, owner, ownerRef, INSTANCE, t, t).changes;
+	const row = getWakeClaim(key);
+	if (!row) return "yield";
+	if (row.status === "delivered") return "delivered";
+	if (inserted) return "won";
+	if (row.owner === owner) {
+		db.prepare("UPDATE subagent_wake_claims SET owner_ref = ?, instance = ?, updated_at = ? WHERE wake_key = ?").run(ownerRef, INSTANCE, t, key);
+		return "owned";
+	}
+	// 别的 owner：跨 instance（崩溃重启）或超时未落地 → 接管；同 instance 的并发 → 让位
+	if (row.instance !== INSTANCE || t - row.updated_at > WAKE_CLAIM_TTL_MS) {
+		const n = db.prepare("UPDATE subagent_wake_claims SET owner = ?, owner_ref = ?, status = 'claimed', instance = ?, updated_at = ? WHERE wake_key = ? AND status = 'claimed' AND instance = ? AND updated_at = ?").run(owner, ownerRef, INSTANCE, t, key, row.instance, row.updated_at).changes;
+		if (n) return "won";
+		const again = getWakeClaim(key);
+		if (again?.status === "delivered") return "delivered";
+		if (again?.owner === owner) return "owned";
+	}
+	return "yield";
+}
+export function markSubagentWakeDelivered(key: string, owner: WakeOwner, t = now()) {
+	db.prepare("UPDATE subagent_wake_claims SET status = 'delivered', updated_at = ? WHERE wake_key = ? AND owner = ?").run(t, key, owner);
+}
+export function releaseSubagentWake(key: string, owner: WakeOwner) {
+	db.prepare("DELETE FROM subagent_wake_claims WHERE wake_key = ? AND owner = ? AND status = 'claimed'").run(key, owner);
 }
 
 /** 登记一次等待（同一个会话对同一个目标只留一条 waiting，避免重复等待重复唤醒）。 */
@@ -306,9 +398,22 @@ function markChecked(id: string, lastState: string | null, error: string | null,
 /** 触发一次唤醒：原子地只从 waiting 转 fired 一次（重复事件 / tick 并发只会有一个 changes=1）。
  *  转为 fired 后异步投递；投递结果单独记 delivery_status，失败由 tick 重试，不把失败当已送达。 */
 export function fireWait(id: string, reason: string, outcome: Outcome): boolean {
+	const w0 = getWait(id);
+	if (!w0 || w0.status !== "waiting") return false;
+	// 子代理终态：先原子抢单一 owner（notify 与等待二选一），避免并发双唤醒。
+	let claimKey: string | null = null;
+	if (w0.target_kind === "subagent" && w0.target_ref) {
+		const gen = subagentWakeGeneration(w0.target_ref);
+		claimKey = wakeClaimKey(w0.target_ref, w0.agent_id, w0.conversation_id, gen);
+		const c = claimSubagentWake(w0.target_ref, w0.agent_id, w0.conversation_id, gen, "wait", id);
+		// 已由 notify 送达：这次不唤醒，但把等待目的转入下一轮
+		if (c === "delivered") { resolveWaitCoveredByNotify(w0, reason, claimKey); return false; }
+		// 另一机制正在投递：先让位，它失败会 release，下一 tick 再抢
+		if (c === "yield") return false;
+	}
 	const t = now();
-	const n = db.prepare("UPDATE task_waits SET status = 'fired', fired_reason = ?, outcome = ?, last_checked_at = ?, updated_at = ?, delivery_status = 'pending', delivery_attempts = 0, next_delivery_at = ? WHERE id = ? AND status = 'waiting'").run(reason, JSON.stringify(outcome), outcome.at, t, t, id).changes;
-	if (!n) return false;
+	const n = db.prepare("UPDATE task_waits SET status = 'fired', fired_reason = ?, outcome = ?, last_checked_at = ?, updated_at = ?, delivery_status = 'pending', delivery_attempts = 0, next_delivery_at = ?, wake_key = ? WHERE id = ? AND status = 'waiting'").run(reason, JSON.stringify(outcome), outcome.at, t, t, claimKey, id).changes;
+	if (!n) { if (claimKey) releaseSubagentWake(claimKey, "wait"); return false; }
 	const w = getWait(id);
 	if (!w) return false;
 	changed(w.agent_id);
@@ -327,17 +432,29 @@ function markDelivered(id: string, attempts: number) {
 	const t = now();
 	db.prepare("UPDATE task_waits SET delivery_status = 'delivered', delivery_attempts = ?, delivered_at = ?, last_delivery_error = NULL, updated_at = ? WHERE id = ?").run(attempts, t, t, id);
 }
-function markDeliveryFailed(id: string, agentId: string, attempts: number, err: unknown) {
+function markDeliveryFailed(id: string, agentId: string, attempts: number, err: unknown, claimKey: string | null = null) {
 	const msg = (err instanceof Error ? err.message : String(err)).slice(0, 500);
 	const t = now();
 	if (attempts >= MAX_DELIVERY_ATTEMPTS) {
 		db.prepare("UPDATE task_waits SET delivery_status = 'failed', delivery_attempts = ?, last_delivery_error = ?, updated_at = ? WHERE id = ?").run(attempts, msg, t, id);
+		// 彻底放弃：释放 claim，让 notify 补位（终态不丢）
+		if (claimKey) releaseSubagentWake(claimKey, "wait");
 		console.warn(`[task-waits] 唤醒投递连续失败 ${attempts} 次，已保留 fired 记录待处理（等待 ${id}）：${msg}`);
 	} else {
-		// 退避重试，由下次 tick 补投；等待 id 不变，重复送达可幂等处理
+		// 退避重试，由下次 tick 补投；claim 继续持有，避免与 notify 并发双投
 		db.prepare("UPDATE task_waits SET delivery_status = 'pending', delivery_attempts = ?, last_delivery_error = ?, next_delivery_at = ?, updated_at = ? WHERE id = ?").run(attempts, msg, t + Math.min(5 * 60_000, 30_000 * 2 ** (attempts - 1)), t, id);
 	}
 	changed(agentId);
+}
+
+/** 终态唤醒已由子代理完成通知送达：这条等待不再唤醒模型（避免双回合），但把「当初登记的目的」留到下一轮注入。 */
+function resolveWaitCoveredByNotify(w: TaskWait, reason: string, claimKey: string | null = null) {
+	const t = now();
+	db.prepare("UPDATE task_waits SET status = 'fired', fired_reason = ?, delivery_status = 'delivered', delivered_at = ?, last_delivery_error = NULL, wake_key = COALESCE(?, wake_key), updated_at = ? WHERE id = ? AND status IN ('waiting','fired')").run(`已完成（已由子代理完成通知送达，未重复唤醒）：${reason}`, t, claimKey, t, w.id);
+	changed(w.agent_id);
+	if (!noteInjector) return;
+	const text = `（系统通知：等待目的转入下一轮）你登记的等待 ${w.id} 等的是子代理 ${w.target_ref}。它的完成通知已经由系统送达，这次不再重复唤醒你；你当初登记的目的是：${w.reason}。如果这件事还没做，请按这个目的继续。`;
+	try { void Promise.resolve(noteInjector(w.agent_id, w.conversation_id, text)).catch(() => {}); } catch { /* 注入失败不影响去重 */ }
 }
 
 /** 真正把一次已 fired 的唤醒交给 runtime；成功/失败分别落库（可在重启后由 tick 补投）。 */
@@ -346,6 +463,15 @@ export function dispatchWake(id: string): Promise<void> {
 	if (!w || w.status !== "fired" || w.delivery_status === "delivered" || w.delivery_status === "failed") return Promise.resolve();
 	if (waking.has(id)) return Promise.resolve();
 	if (!waker) return Promise.resolve(); // 没装 waker（如仅查状态的进程）：保持 pending，交给能投递的进程 / 下次 tick
+	// 子代理终态：复核 claim（重启 / 补投时可能已被 notify 接管或送达）。沿用登记当时的代际（wake_key）。
+	let claimKey: string | null = null;
+	if (w.target_kind === "subagent" && w.target_ref) {
+		const gen = w.wake_key ? generationFromWakeKey(w.wake_key) : subagentWakeGeneration(w.target_ref);
+		claimKey = wakeClaimKey(w.target_ref, w.agent_id, w.conversation_id, gen);
+		const c = claimSubagentWake(w.target_ref, w.agent_id, w.conversation_id, gen, "wait", id);
+		if (c === "delivered") { resolveWaitCoveredByNotify(w, w.fired_reason ?? "有结果了", claimKey); return Promise.resolve(); }
+		if (c === "yield") return Promise.resolve();
+	}
 	waking.add(id);
 	const attempt = (w.delivery_attempts ?? 0) + 1;
 	let result: void | Promise<void>;
@@ -356,8 +482,8 @@ export function dispatchWake(id: string): Promise<void> {
 		result = Promise.reject(e);
 	}
 	return Promise.resolve(result)
-		.then(() => markDelivered(id, attempt))
-		.catch((e) => markDeliveryFailed(id, w.agent_id, attempt, e))
+		.then(() => { markDelivered(id, attempt); if (claimKey) markSubagentWakeDelivered(claimKey, "wait"); })
+		.catch((e) => markDeliveryFailed(id, w.agent_id, attempt, e, claimKey))
 		.finally(() => waking.delete(id));
 }
 

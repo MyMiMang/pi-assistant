@@ -7,7 +7,7 @@ import { configuredModels, modelProfiles } from "./rooms/model-pick.ts";
 import { inferNeeds, pickModel } from "./model-profile.ts";
 import { isRecoverableModelError } from "./model-errors.ts";
 import { requests } from "./requests.ts";
-import { subagentWakeOwner } from "./task-waits.ts";
+import { claimSubagentWake, markSubagentWakeDelivered, releaseSubagentWake, subagentWakeOwner, wakeClaimKey } from "./task-waits.ts";
 
 export type ModelRef = { provider: string; id: string };
 export type SubagentStatus = "queued" | "running" | "stalled" | "done" | "failed" | "stopped" | "timeout" | "lost";
@@ -20,7 +20,7 @@ export interface Subagent {
 	/** 派活时解析出的候选模型顺序（JSON 数组，第一项是实际用的；池内 fallback 按这个顺序，空 = 只跟随主会话）。 */
 	model_pool: string | null;
 }
-export interface SubagentEvent { id: string; subagent_id: string; kind: string; reason: string; created_at: number; delivered_at: number | null }
+export interface SubagentEvent { id: string; subagent_id: string; kind: string; reason: string; created_at: number; delivered_at: number | null; /** 终态代际（= 当时的 finished_at）：同一子代理续聊多次结束时区分每一代唤醒 */ generation: number | null }
 /** 全局子代理设置只保留任务侧参数：并发上限与最长运行时间。子代理模型改由每个助理的候选池决定（见 DESIGN §21.5）。 */
 export interface SubagentSettings { maxMinutes: number; maxConcurrent: number }
 /** 保存设置时的入参：两个字段都可省略 —— 省略时保留当前值，绝不重置（旧客户端 / 只改一项的界面不传另一个字段）。 */
@@ -51,6 +51,8 @@ const columns = db.prepare("PRAGMA table_info(subagents)").all() as { name: stri
 for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"]]) {
 	if (!columns.some((c) => c.name === name)) db.exec(`ALTER TABLE subagents ADD COLUMN ${name} ${type}`);
 }
+// 事件记录当时的终态代际：同一子代理续聊后多次结束时，用每一代自己的 finished_at 去重
+if (!(db.prepare("PRAGMA table_info(subagent_events)").all() as { name: string }[]).some((c) => c.name === "generation")) db.exec("ALTER TABLE subagent_events ADD COLUMN generation INTEGER");
 export const getSubagent = (id: string) => db.prepare("SELECT * FROM subagents WHERE id = ?").get(id) as Subagent | undefined;
 export const listSubagents = (agentId?: string, conv?: string) => db.prepare(`SELECT * FROM subagents${conv ? " WHERE conversation_id = ?" : agentId ? " WHERE agent_id = ?" : ""} ORDER BY created_at DESC LIMIT 100`).all(...(conv ? [conv] : agentId ? [agentId] : [])) as unknown as Subagent[];
 const activeSubagents = (agentId?: string) => db.prepare(`SELECT * FROM subagents WHERE status IN ${ACTIVE}${agentId ? " AND agent_id = ?" : ""}`).all(...(agentId ? [agentId] : [])) as unknown as Subagent[];
@@ -198,7 +200,9 @@ function changed(id: string) {
 	bus.emit({ type: "subagent.updated", subagent: r });
 }
 function addEvent(r: Subagent, kind: string, reason: string) {
-	db.prepare("INSERT INTO subagent_events(id, subagent_id, kind, reason, created_at) VALUES(?,?,?,?,?)").run(uid("se"), r.id, kind, reason, Date.now());
+	// 带上当时的终态代际（finished_at）：续聊后多次结束才能区分每一代的终态唤醒
+	const gen = (db.prepare("SELECT finished_at FROM subagents WHERE id = ?").get(r.id) as { finished_at: number | null } | undefined)?.finished_at ?? 0;
+	db.prepare("INSERT INTO subagent_events(id, subagent_id, kind, reason, created_at, generation) VALUES(?,?,?,?,?,?)").run(uid("se"), r.id, kind, reason, Date.now(), gen);
 }
 /** 所有结束路径共享这一处；状态和待投递事件一起提交。 */
 export function finishSubagent(id: string, status: Exclude<SubagentStatus, "queued" | "running" | "stalled">, reason = "", summary = "") {
@@ -383,6 +387,26 @@ const clip = (s: string, n: number) => {
 	const v = (s ?? "").replace(/\s+/g, " ").trim();
 	return v.length > n ? `${v.slice(0, n)}…` : v;
 };
+/** notify 摘要的截断长度：完整内容用 subagent_list 按 id 查，不重复整段 task/结果（省 token）。 */
+export const SUBAGENT_SUMMARY_CLIP = 300;
+/**
+ * 子代理事件通知的短文案（纯函数，便于单测）：标题 / 摘要都截断；
+ * 摘要被截断时明确给出「按子代理 ID 查全文」的入口，避免模型以为已经看全。
+ */
+export function subagentNotifyText(r: Subagent, event: SubagentEvent, artifacts: string): string {
+	const marker = `（子代理事件 ${event.id}）`;
+	const kindLabel = ({ done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "中断待核验", stalled: "停滞" } as Record<string, string>)[event.kind] ?? event.kind;
+	const title = clip(r.task, 60);
+	const raw = r.result_summary || event.reason || "";
+	const summary = clip(raw, SUBAGENT_SUMMARY_CLIP);
+	const clipped = raw.replace(/\s+/g, " ").trim().length > SUBAGENT_SUMMARY_CLIP;
+	return [
+		`${marker}子代理「${title}」${kindLabel}${summary ? `：${summary}` : ""}`,
+		`子代理 ID：${r.id}。${clipped ? `上面摘要已截断到 ${SUBAGENT_SUMMARY_CLIP} 字；` : ""}需要完整任务说明或结果时，用 subagent_list 按子代理 ID 查全文（subagent_list{subagent_id:"${r.id}"}）。`,
+		`产出文件：\n${artifacts || "无"}`,
+		"请核验产出后向用户简短汇报结果；失败、停止或没进展也要说明原因和下一步。停止后只汇报状态，不继续原任务。",
+	].join("\n");
+}
 export async function deliverSubagentEvents() {
 	if (!driver) return;
 	const events = db.prepare("SELECT * FROM subagent_events WHERE delivered_at IS NULL ORDER BY created_at, rowid").all() as unknown as SubagentEvent[];
@@ -392,26 +416,38 @@ export async function deliverSubagentEvents() {
 		if (!r || !db.prepare("SELECT 1 FROM conversations WHERE id = ?").get(r.conversation_id)) continue;
 		// resumed 只更新卡片，不再起一次模型回合：直接标记已投递，避免每 30 秒重试
 		if (!WAKE_KINDS.has(e.kind)) {
-			db.prepare("UPDATE subagent_events SET delivered_at = ? WHERE id = ?").run(Date.now(), e.id);
+			markSubagentEventDelivered(e.id, r.id);
 			continue;
 		}
-		// 跨机制去重：终态事件若已由一条 task_wait 负责唤醒，就不再用 notify 重复唤醒。
-		// delivered → 等待已送达，这里只收尾；pending → 让位（等它送达后再收尾）；none（无等待 / 已取消 / 投递彻底失败）→ notify 投递，保证不丢。
+		// 跨机制去重：终态事件与 task_wait 共抢一个持久 owner（claim），保证正常并发下只唤醒一次模型。
+		// 先看已有等待（waiting / fired-pending）是否已经为这一代终态负责：是就让位给等待路径投递。
+		// 否则原子抢 claim：抢不到（另一机制正在投递）就等下一轮；已送达就只收尾。
+		let claimKey: string | null = null;
 		if (TERMINAL_KINDS.has(e.kind)) {
-			const owner = subagentWakeOwner(r.id, r.agent_id, r.conversation_id);
-			if (owner === "delivered") {
-				db.prepare("UPDATE subagent_events SET delivered_at = ? WHERE id = ?").run(Date.now(), e.id);
-				db.prepare("UPDATE subagents SET notified_at = ? WHERE id = ?").run(Date.now(), r.id);
-				continue;
-			}
+			const gen = e.generation ?? r.finished_at ?? 0;
+			const owner = subagentWakeOwner(r.id, r.agent_id, r.conversation_id, gen);
+			if (owner === "delivered") { markSubagentEventDelivered(e.id, r.id); continue; }
 			if (owner === "pending") continue;
+			const c = claimSubagentWake(r.id, r.agent_id, r.conversation_id, gen, "notify", e.id);
+			if (c === "delivered") { markSubagentEventDelivered(e.id, r.id); continue; }
+			if (c === "yield") continue;
+			claimKey = wakeClaimKey(r.id, r.agent_id, r.conversation_id, gen);
 		}
 		delivering.add(e.id);
 		void driver.notify(r, e).then(() => {
-			db.prepare("UPDATE subagent_events SET delivered_at = ? WHERE id = ?").run(Date.now(), e.id);
-			db.prepare("UPDATE subagents SET notified_at = ? WHERE id = ?").run(Date.now(), r.id);
-		}).catch((err) => console.warn("[subagent] 通知待重试", String(err))).finally(() => delivering.delete(e.id));
+			if (claimKey) markSubagentWakeDelivered(claimKey, "notify");
+			markSubagentEventDelivered(e.id, r.id);
+		}).catch((err) => {
+			// 投递失败：释放 claim，让等待路径补位（终态不丢）
+			if (claimKey) releaseSubagentWake(claimKey, "notify");
+			console.warn("[subagent] 通知待重试", String(err));
+		}).finally(() => delivering.delete(e.id));
 	}
+}
+/** 事件已投递的收尾（事件标记 + 子代理 notified_at）：无论由 notify 还是等待路径唤醒，都走这里。 */
+function markSubagentEventDelivered(eventId: string, subagentId: string) {
+	db.prepare("UPDATE subagent_events SET delivered_at = ? WHERE id = ?").run(Date.now(), eventId);
+	db.prepare("UPDATE subagents SET notified_at = ? WHERE id = ?").run(Date.now(), subagentId);
 }
 /** 本进程已恢复过的子代理：重复调用不会把已续跑的任务再次入队（幂等）。 */
 const recovered = new Set<string>();

@@ -414,7 +414,7 @@ function makeWait(id: string, subagentId: string, status: string, delivery: stri
 		"INSERT OR REPLACE INTO task_waits(id, agent_id, conversation_id, target_kind, target_ref, reason, status, check_interval_ms, next_check_at, due_at, delivery_status, delivery_attempts, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
 	).run(id, "sub-test", conversationId, "subagent", subagentId, "等它完成", status, 60_000, null, null, delivery, 0, Date.now(), Date.now());
 }
-const clearWaits = () => db.prepare("DELETE FROM task_waits").run();
+const clearWaits = () => { db.prepare("DELETE FROM task_waits").run(); db.prepare("DELETE FROM subagent_wake_claims").run(); };
 
 /** 返回一个「有等待登记」的已终态子代理（bus 事件已让等待 fired，等待还没投递）。 */
 function terminalWithWait(notify: () => Promise<void>) {
@@ -512,6 +512,167 @@ test("终态去重按对话隔离：别的对话登记的同目标等待不算 o
 	await tick();
 	assert.ok((events(r2.id)[0] as { delivered_at: number | null }).delivered_at, "等待送达后 notify 只收尾");
 	await cleanup();
+});
+
+// ---------------------------------------------------------------- notify 与 task_wait 并发：持久单 owner claim
+test("终态去重（notify 先到）：晚注册的等待不再唤醒，目的转入下一轮注入", async () => {
+	setSettings(10);
+	clearWaits();
+	let notified = 0, waked = 0;
+	const notes: string[] = [];
+	manualDriver(async () => { notified++; });
+	W.setWaitWaker(() => { waked++; });
+	W.setWaitNoteInjector((_a, _c, t) => { notes.push(t); });
+	try {
+		const r = spawn();
+		await tick();
+		s.finishSubagent(r.id, "done", "", "结果");
+		await s.deliverSubagentEvents();
+		await tick();
+		assert.equal(notified, 1, "没有等待时 notify 唤醒一次");
+		assert.equal(waked, 0);
+		// 晚注册：模型在 notify 唤醒后的这一轮才登记等待
+		const w = W.registerWait("sub-test", conv, { subagentId: r.id, reason: "等它完成后把结果汇总给用户" });
+		await W.tickWaits(Date.now() + 6 * 60_000); // 新登记的子代理等待兜底检查在 5 分钟后
+		await tick();
+		assert.equal(waked, 0, "已由 notify 送达：等待不再唤醒（不双回合）");
+		assert.equal(W.getWait(w.id)!.delivery_status, "delivered", "等待被标记已送达，终态不丢");
+		assert.equal(W.getWait(w.id)!.wake_key, W.wakeClaimKey(r.id, "sub-test", conv, s.getSubagent(r.id)!.finished_at!), "让位时也绑定这一代 claim，不吞后续代际");
+		assert.ok(notes.some((t) => t.includes("等它完成后把结果汇总给用户")), "等待目的转入下一轮注入");
+	} finally {
+		W.setWaitWaker(null);
+		W.setWaitNoteInjector(null);
+	}
+	await cleanup();
+});
+
+test("终态去重（等待先到）：等待真实投递一次，notify 让位并只收尾", async () => {
+	setSettings(10);
+	clearWaits();
+	let notified = 0, waked = 0;
+	manualDriver(async () => { notified++; });
+	W.setWaitWaker(() => { waked++; });
+	try {
+		const r = spawn();
+		await tick();
+		const w = W.registerWait("sub-test", conv, { subagentId: r.id, reason: "等它" });
+		s.finishSubagent(r.id, "done", "", "结果");
+		await tick();
+		assert.equal(waked, 1, "等待负责唤醒一次");
+		assert.equal(notified, 0, "notify 让位");
+		const row = W.getWait(w.id)!;
+		assert.equal(row.delivery_status, "delivered");
+		assert.equal(row.wake_key, W.wakeClaimKey(r.id, "sub-test", conv, s.getSubagent(r.id)!.finished_at!), "claim 绑定这一代终态");
+		// 等待已送达：后续 deliverSubagentEvents 只收尾，不再唤醒
+		await s.deliverSubagentEvents();
+		await tick();
+		assert.equal(notified, 0);
+		assert.ok((events(r.id)[0] as { delivered_at: number | null }).delivered_at, "事件收尾标记已投递");
+	} finally {
+		W.setWaitWaker(null);
+	}
+	await cleanup();
+});
+
+test("终态去重（notify 投递中）：等待让位不唤醒；notify 完成后目的转入下一轮", async () => {
+	setSettings(10);
+	clearWaits();
+	let notified = 0, waked = 0;
+	let releaseNotify!: () => void;
+	const notes: string[] = [];
+	manualDriver(() => new Promise<void>((res) => { notified++; releaseNotify = res; }));
+	W.setWaitWaker(() => { waked++; });
+	W.setWaitNoteInjector((_a, _c, t) => { notes.push(t); });
+	try {
+		const r = spawn();
+		await tick();
+		s.finishSubagent(r.id, "done", "", "结果"); // notify 开始投递，promise 挂起（持有 claim）
+		const w = W.registerWait("sub-test", conv, { subagentId: r.id, reason: "等它" });
+		await W.tickWaits(Date.now() + 6 * 60_000);
+		await tick();
+		assert.equal(waked, 0, "notify 持有 claim：等待让位，不并发双唤醒");
+		assert.equal(W.getWait(w.id)!.status, "waiting", "让位时等待仍在等待，等 claim 落地");
+		releaseNotify();
+		await tick();
+		await tick();
+		await W.tickWaits(Date.now() + 12 * 60_000);
+		await tick();
+		assert.equal(notified, 1, "notify 只唤醒一次");
+		assert.equal(waked, 0, "notify 已送达：等待不再唤醒");
+		assert.equal(W.getWait(w.id)!.delivery_status, "delivered");
+		assert.ok(notes.length >= 1, "等待目的转入下一轮注入");
+	} finally {
+		W.setWaitWaker(null);
+		W.setWaitNoteInjector(null);
+	}
+	await cleanup();
+});
+
+test("终态去重（等待投递彻底失败）：释放 claim，notify 补位不丢终态", async () => {
+	setSettings(10);
+	clearWaits();
+	let notified = 0;
+	manualDriver(async () => { notified++; });
+	W.setWaitWaker(() => { throw new Error("nudge 未送达"); });
+	try {
+		const r = spawn();
+		await tick();
+		const w = W.registerWait("sub-test", conv, { subagentId: r.id, reason: "等它" });
+		s.finishSubagent(r.id, "done", "", "结果");
+		await tick();
+		assert.equal(notified, 0, "等待持有 claim：notify 让位");
+		for (let i = 1; i < W.MAX_DELIVERY_ATTEMPTS; i++) {
+			db.prepare("UPDATE task_waits SET next_delivery_at = 0 WHERE id = ?").run(w.id);
+			await W.dispatchWake(w.id);
+		}
+		assert.equal(W.getWait(w.id)!.delivery_status, "failed", "投递彻底失败");
+		await s.deliverSubagentEvents();
+		await tick();
+		assert.equal(notified, 1, "claim 已释放：notify 补位，终态不丢");
+	} finally {
+		W.setWaitWaker(null);
+	}
+	await cleanup();
+});
+
+test("终态去重按代际：续聊后新一代终态不被上一代已送达等待吞掉", async () => {
+	setSettings(10);
+	clearWaits();
+	let notified = 0;
+	manualDriver(async () => { notified++; });
+	W.setWaitWaker(() => {});
+	try {
+		const r = spawn();
+		await tick();
+		W.registerWait("sub-test", conv, { subagentId: r.id, reason: "等它" });
+		s.finishSubagent(r.id, "done", "", "第一轮");
+		await tick();
+		assert.equal(notified, 0, "第一代由等待唤醒");
+		// 续聊：子代理再次运行并结束（新的一代终态）
+		db.prepare("UPDATE subagents SET status = 'running', finished_at = NULL, notified_at = NULL WHERE id = ?").run(r.id);
+		s.finishSubagent(r.id, "done", "", "第二轮");
+		await s.deliverSubagentEvents();
+		await tick();
+		assert.equal(notified, 1, "新一代终态重新通知，不被上一代已送达等待吞掉");
+	} finally {
+		W.setWaitWaker(null);
+	}
+	await cleanup();
+});
+
+test("notify 文案：摘要截断到 300 字并给出按 id 查全文的入口；未截断时不误导", () => {
+	const row = { id: "sa-notify", agent_id: "sub-test", conversation_id: conv, task: "整理报价表" } as never;
+	const ev = { id: "ev-notify", subagent_id: "sa-notify", kind: "done", reason: "", created_at: 0, delivered_at: null, generation: 1 } as never;
+	const short = s.subagentNotifyText({ ...(row as object), result_summary: "短结果" } as never, ev, "无");
+	assert.match(short, /短结果/);
+	assert.doesNotMatch(short, /已截断/);
+	assert.match(short, /subagent_list\{subagent_id:"sa-notify"\}/, "未截断也给全文查询入口");
+	const long = "长".repeat(400);
+	const clipped = s.subagentNotifyText({ ...(row as object), result_summary: long } as never, ev, "");
+	assert.match(clipped, /上面摘要已截断到 300 字/);
+	assert.ok(clipped.includes("长".repeat(300)), "保留前 300 字");
+	assert.ok(!clipped.includes("长".repeat(301)), "超出部分被截断");
+	assert.match(clipped, /subagent_list\{subagent_id:"sa-notify"\}/);
 });
 
 test("resumed 只更新卡片：不触发模型回合，事件直接标记已投递", async () => {

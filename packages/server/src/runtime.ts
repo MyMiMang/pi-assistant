@@ -1,5 +1,5 @@
-import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, type Subagent, type SubagentEvent } from "./subagents.ts";
-import { cancelWaitsForConversation, listWaits, parseDue, refreshWait, registerWait, cancelWait, setWaitWaker, startWaitScheduler, WAIT_DEFAULT_INTERVAL_MS } from "./task-waits.ts";
+import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, subagentNotifyText, type Subagent, type SubagentEvent } from "./subagents.ts";
+import { cancelWaitsForConversation, listWaits, parseDue, refreshWait, registerWait, cancelWait, setWaitWaker, setWaitNoteInjector, startWaitScheduler, WAIT_DEFAULT_INTERVAL_MS } from "./task-waits.ts";
 import { classifyModelError, isRecoverableModelError } from "./model-errors.ts";
 /**
  * Agent 运行时：每个助理一个主会话（Pi AgentSession），后台任务各自一个会话。
@@ -109,12 +109,6 @@ export interface TaskRow {
 export const getAgent = (id: string) => db.prepare("SELECT * FROM agents WHERE id = ?").get(id) as AgentRow | undefined;
 export const listAgents = () => db.prepare("SELECT * FROM agents ORDER BY sort, created_at").all() as unknown as AgentRow[];
 export const getTask = (id: string) => db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
-
-/** 短摘要：把多行任务/结果压成一行并截断（notify 只发短标题 + 结果摘要，完整内容用 subagent_list 按需查）。 */
-const clipText = (s: string, n: number) => {
-	const v = (s ?? "").replace(/\s+/g, " ").trim();
-	return v.length > n ? `${v.slice(0, n)}…` : v;
-};
 
 function setAgentStatus(id: string, status: string) {
 	db.prepare("UPDATE agents SET status = ? WHERE id = ?").run(status, id);
@@ -293,6 +287,10 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 						return spawnSubagent(agentId, conversationId!, fallback, { ...input, parentMessageId: parent?.id });
 					},
 					list: () => listSubagents(agentId, conversationId ?? undefined),
+					get: (id) => {
+						const r = getSubagent(id);
+						return r && r.agent_id === agentId && r.conversation_id === conversationId ? r : null;
+					},
 					message: async (id, text) => {
 						if (getSubagent(id)?.agent_id !== agentId || getSubagent(id)?.conversation_id !== conversationId) throw new Error("不是本会话的子代理");
 						const parent = latestUserMessage(conversationId);
@@ -457,6 +455,14 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			model: () => {
 				const a = getAgent(agentId);
 				return a ? runtime(agentId).modelFor(a) : null;
+			},
+			// 识图模型的一次真实调用也计入用量（models.complete 公开返回 input/output，不碰凭据）
+			onUsage: (u) => {
+				try {
+					recordUsage({ agentId, conversationId, subagentId: opts.subagentId, provider: u.provider, model: u.model, input: u.input, output: u.output, cacheRead: 0, cacheWrite: 0 });
+				} catch (e) {
+					console.error("[usage] 记录识图用量失败", e);
+				}
 			},
 		}) as never,
 	});
@@ -638,7 +644,22 @@ class AgentRuntime {
 	private async withAttachments(s: NonNullable<Awaited<ReturnType<typeof this.ensure>>>, text: string, files?: AttachmentInput[]) {
 		if (!files?.length) return { text, images: undefined };
 		const vision = supportsVision(this.modelFor(getAgent(this.id)!));
-		const p = await prepareAttachments(files, { vision, describe: vision ? undefined : (imgs) => describeImages(imgs) });
+		const p = await prepareAttachments(files, {
+			vision,
+			describe: vision
+				? undefined
+				: async (imgs) => {
+						const r = await describeImages(imgs);
+						if (r.ok && r.usage && r.model) {
+							try {
+								recordUsage({ agentId: this.id, conversationId: this.conversationId, provider: r.model.provider, model: r.model.id, input: r.usage.input, output: r.usage.output, cacheRead: 0, cacheWrite: 0 });
+							} catch (e) {
+								console.error("[usage] 记录识图用量失败", e);
+							}
+						}
+						return { ok: r.ok, text: r.text };
+					},
+		});
 		return { text: [text, p.text].filter((x) => x.trim()).join("\n\n"), images: p.images };
 	}
 
@@ -1005,6 +1026,8 @@ setWaitWaker(async ({ wait, prompt }) => {
 	const ok = await runtime(wait.agent_id, wait.conversation_id ?? undefined).nudge(prompt);
 	if (!ok) throw new Error("nudge 未送达（没有可用会话/模型，或 Pi 触发失败）");
 });
+// 子代理完成通知抢先送达、等待让位时：把等待目的作为「下一轮才生效」的上下文注入，不重复唤醒也不丢目的。
+setWaitNoteInjector((agentId, conversationId, text) => runtime(agentId, conversationId ?? undefined).inject(text));
 // 主动推进：在相关对话的主会话里跑（走用户平时的权限规则），忙时由 proactive.ts 合并 / 排队。
 setAdvanceHooks({
 	busy: (agentId, conversationId) => runtime(agentId, conversationId).busy,
@@ -1125,16 +1148,8 @@ setSubagentDriver({
 		const marker = `（子代理事件 ${event.id}）`;
 		const files = db.prepare("SELECT meta FROM messages WHERE (subagent_id = ? OR task_id = ?) AND json_array_length(meta, '$.attachments') > 0").all(r.id, r.id) as { meta: string }[];
 		const artifacts = files.flatMap((m) => (JSON.parse(m.meta).attachments ?? [])).map((f: { name: string; workspacePath?: string }) => `${f.name}：${f.workspacePath ?? "工作区内"}`).join("\n");
-		// 只发短标题 + 结果摘要：完整任务说明与最新结果可用 subagent_list 按需查，不重复整段 task（省 token）。
-		const kindLabel = { done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "中断待核验", stalled: "停滞" }[event.kind] ?? event.kind;
-		const title = clipText(r.task, 60);
-		const summary = clipText(r.result_summary || event.reason || "", 300);
-		const text = [
-			`${marker}子代理「${title}」${kindLabel}${summary ? `：${summary}` : ""}`,
-			`子代理 ID：${r.id}。需要完整任务说明或结果时用 subagent_list 查看。`,
-			`产出文件：\n${artifacts || "无"}`,
-			"请核验产出后向用户简短汇报结果；失败、停止或没进展也要说明原因和下一步。停止后只汇报状态，不继续原任务。",
-		].join("\n");
+		// 只发短标题 + 结果摘要：完整任务说明与最新结果可用 subagent_list 按 id 查（摘要截断时会明确给出查询入口），不重复整段 task（省 token）。
+		const text = subagentNotifyText(r, event, artifacts);
 		await new Promise<void>((resolve, reject) => {
 			const unsub = subscribeSession(session, (e) => {
 				if (e.type === "user_start" && e.text.includes(marker)) { unsub(); resolve(); }

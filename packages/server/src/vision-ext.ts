@@ -11,8 +11,12 @@ import { describeImages, loadImage, supportsVision, type ModelRef } from "./visi
 type ImageBlock = { type: "image"; data: string; mimeType: string };
 type Block = { type: "text"; text: string } | ImageBlock;
 
-export function visionExtension(o: { workspace: string; model: () => ModelRef | null; hostAccess?: () => boolean }) {
+export function visionExtension(o: { workspace: string; model: () => ModelRef | null; hostAccess?: () => boolean; onUsage?: (u: { provider: string; model: string; input: number; output: number }) => void }) {
 	const hostAccess = () => o.hostAccess?.() ?? false;
+	/** 识图模型也是一次真实调用：有公开 usage 就记进用量（不碰凭据）。 */
+	const reportUsage = (r: { ok: boolean; model?: ModelRef; usage?: { input: number; output: number } }) => {
+		if (r.ok && r.usage && r.model) o.onUsage?.({ provider: r.model.provider, model: r.model.id, ...r.usage });
+	};
 	const inWs = (p: string) => {
 		let abs = isAbsolute(p) ? p : resolve(o.workspace, p);
 		// Docker 沙盒里的 /workspace/... 映射回本机工作区
@@ -40,6 +44,7 @@ export function visionExtension(o: { workspace: string; model: () => ModelRef | 
 					if (supportsVision(o.model()))
 						return { content: [{ type: "text", text: `以下是 ${imgs.length} 张图片（按顺序：${params.paths.join("、")}）。${params.question ? `请据此判断：${params.question}` : ""}` }, ...imgs.map(({ data, mimeType }) => ({ type: "image", data, mimeType }))], details: undefined };
 					const r = await describeImages(imgs, params.question, signal);
+					reportUsage(r);
 					return { content: [{ type: "text", text: r.ok ? `识图模型（${r.model?.provider}/${r.model?.id}）的描述：\n${r.text}` : r.text }], details: undefined, isError: !r.ok };
 				} catch (e) {
 					return { content: [{ type: "text", text: `失败：${e instanceof Error ? e.message : String(e)}` }], details: undefined, isError: true };
@@ -52,6 +57,7 @@ export function visionExtension(o: { workspace: string; model: () => ModelRef | 
 			const imgs = (e.content ?? []).filter((c): c is ImageBlock => c.type === "image");
 			if (!imgs.length) return;
 			const r = await describeImages(imgs.map((x) => ({ data: x.data, mimeType: x.mimeType, label: String(e.input?.path ?? "") })));
+			reportUsage(r);
 			const note = r.ok ? `（当前模型不能直接看图，以下是识图模型 ${r.model?.provider}/${r.model?.id} 对这张图片的描述）\n${r.text}` : r.text;
 			return { content: [...e.content.filter((c) => c.type !== "image"), { type: "text", text: note }] };
 		});

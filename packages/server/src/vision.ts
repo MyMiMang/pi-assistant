@@ -35,16 +35,16 @@ export function pickVisionModel(): { model: ModelRef | null; source: "user" | "a
 
 const NO_VISION = "没有可用的识图模型：当前模型不支持看图，已配置的服务里也没有支持识图的模型。请告诉用户：在 设置 › 模型 › 识图模型 里选一个支持图片的模型（例如 qwen-vl、gpt-4o-mini、gemini-flash），否则你无法确认图片内容。";
 
-export type DescribeImpl = (ref: ModelRef, prompt: string, images: { data: string; mimeType: string }[], signal?: AbortSignal) => Promise<{ text: string; error?: string }>;
+export type DescribeImpl = (ref: ModelRef, prompt: string, images: { data: string; mimeType: string }[], signal?: AbortSignal) => Promise<{ text: string; error?: string; usage?: { input: number; output: number } }>;
 let impl: DescribeImpl = async (ref, prompt, images, signal) => {
 	const r = await models.complete(ref.provider, ref.id, { messages: [{ role: "user", text: prompt, images }], maxTokens: 1500, signal });
-	return { text: r.text, error: r.error };
+	return { text: r.text, error: r.error, usage: r.usage };
 };
 /** 测试用：替换识图调用 */
 export const setDescribeImpl = (f: DescribeImpl) => void (impl = f);
 
 /** 让识图模型看一张或几张图片，返回文字描述（失败时返回说明，ok=false） */
-export async function describeImages(imgs: { data: string; mimeType: string; label?: string }[], question?: string, signal?: AbortSignal): Promise<{ ok: boolean; text: string; model?: ModelRef }> {
+export async function describeImages(imgs: { data: string; mimeType: string; label?: string }[], question?: string, signal?: AbortSignal): Promise<{ ok: boolean; text: string; model?: ModelRef; usage?: { input: number; output: number } }> {
 	const { model } = pickVisionModel();
 	if (!model) return { ok: false, text: NO_VISION };
 	const labels = imgs.map((x, i) => `图${i + 1}${x.label ? `：${x.label}` : ""}`).join("\n");
@@ -58,7 +58,7 @@ export async function describeImages(imgs: { data: string; mimeType: string; lab
 	try {
 		const r = await impl(model, prompt, imgs.map(({ data, mimeType }) => ({ data, mimeType })), signal);
 		if (r.error || !r.text.trim()) return { ok: false, text: `识图模型 ${model.provider}/${model.id} 调用失败：${r.error ?? "没有返回内容"}`, model };
-		return { ok: true, text: r.text.trim(), model };
+		return { ok: true, text: r.text.trim(), model, usage: r.usage };
 	} catch (e) {
 		return { ok: false, text: `识图模型调用失败：${e instanceof Error ? e.message : String(e)}`, model };
 	}

@@ -69,3 +69,24 @@ test("非识图模型：read 到的图片换成识图模型的描述；look_at_i
 	assert.match(bad.content[0].text!, /只能看工作区里的图片/);
 	setSetting("visionModel", null);
 });
+
+test("识图用量：describeImages 返回真实 usage，扩展通过 onUsage 上报（不碰凭据）", async () => {
+	await initModels();
+	const ws = join(config.workspaceRoot, "vision-usage-test");
+	mkdirSync(ws, { recursive: true });
+	writeFileSync(join(ws, "b.png"), Buffer.from("89504e470d0a1a0a", "hex"));
+	const { models } = await import("../src/models.ts");
+	const any = models.listModels()[0];
+	assert.ok(any, "至少有一个模型");
+	setSetting("visionModel", { provider: any.provider, id: any.id });
+	vision.setDescribeImpl(async () => ({ text: "描述", usage: { input: 123, output: 45 } }));
+	const r = await vision.describeImages([{ data: "AAAA", mimeType: "image/png" }]);
+	assert.equal(r.ok, true);
+	assert.deepEqual(r.usage, { input: 123, output: 45 }, "公开 usage 原样透传");
+	const usage: { provider: string; model: string; input: number; output: number }[] = [];
+	const tools = new Map<string, { execute: (id: string, p: unknown) => Promise<{ content: { text?: string }[] }> }>();
+	visionExtension({ workspace: ws, model: () => ({ provider: "x", id: "no-such-text-model" }), onUsage: (u) => usage.push(u) })({ registerTool: (t: { name: string }) => tools.set(t.name, t as never), on: () => {} });
+	await tools.get("look_at_image")!.execute("1", { paths: ["b.png"] });
+	assert.deepEqual(usage, [{ provider: any.provider, model: any.id, input: 123, output: 45 }], "识图调用上报用量");
+	setSetting("visionModel", null);
+});
