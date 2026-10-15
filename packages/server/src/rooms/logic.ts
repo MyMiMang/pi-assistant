@@ -85,6 +85,8 @@ export interface PlannedTurn {
 	task?: string;
 	/** 派活深度（用户触发 = 0） */
 	depth: number;
+	/** 用户引用定向的一轮：只回应引用，默认不自动扩派（见 docs/design/message-replies.md §5） */
+	directed?: boolean;
 }
 
 /** 用户发言后谁来说：@ 了谁就是谁（按顺序）；没 @ = 只有管理者 */
@@ -93,6 +95,43 @@ export function planForUser(mentioned: string[], managerId: string | null, activ
 	if (ids.length) return ids.map((agentId) => ({ agentId, reason: "mention" as const, depth: 0 }));
 	const mgr = managerId && activeIds.includes(managerId) ? managerId : activeIds[0];
 	return mgr ? [{ agentId: mgr, reason: "manager", depth: 0 }] : [];
+}
+
+/** 引用目标的解析结果（供纯逻辑判断，不含内容）。 */
+export interface QuoteTarget {
+	/** 目标是否可引用（user / assistant） */
+	quotable: boolean;
+	role: "user" | "assistant" | "system" | "other";
+	/** assistant 的作者 agentId；user / system 为 null */
+	authorAgentId: string | null;
+	/** 作者是否是当前群里可用（存在、未删除、未移出）的成员 */
+	authorActive: boolean;
+}
+
+/**
+ * 群聊用户消息的路由（含引用）。优先级见 docs/design/message-replies.md §5：
+ *  1. 显式 @（含 @all）优先，引用只作上下文；
+ *  2. 无 @ + 引用群内可用助理 → 只唤醒作者 A；
+ *  3. 无 @ + 引用用户 / system / 不可路由消息 → 走既有管理者路由；
+ *  4. 无 @ + 引用被删除 / 停用的助理 → 不误唤管理者，给用户明确提示。
+ * `directed` 标记“只回应引用、默认不自动扩派”的定向回合。
+ */
+export function planForUserWithQuote(o: {
+	mentioned: string[];
+	managerId: string | null;
+	activeIds: string[];
+	quote: QuoteTarget | null;
+}): { turns: PlannedTurn[]; notice?: string; directed: boolean } {
+	const ids = o.mentioned.filter((id) => o.activeIds.includes(id));
+	if (ids.length) return { turns: ids.map((agentId) => ({ agentId, reason: "mention" as const, depth: 0, directed: true })), directed: true };
+	const q = o.quote;
+	if (q && q.role === "assistant" && q.authorAgentId) {
+		if (q.quotable && q.authorActive && o.activeIds.includes(q.authorAgentId))
+			return { turns: [{ agentId: q.authorAgentId, reason: "mention", depth: 0, directed: true }], directed: true };
+		return { turns: [], notice: "你引用的这位成员已被删除或停用，不能定向回复；请用 @ 选择群里其它成员。", directed: true };
+	}
+	// 无 @，引用的是用户 / system / 不可引用消息：走既有管理者路由
+	return { turns: planForUser([], o.managerId, o.activeIds), directed: false };
 }
 
 /**

@@ -47,6 +47,7 @@ import { deliverFromWorkspace, fileInfo, insideWorkspace, workspaceOf } from "./
 import { INTERJECTION_RULE, isStopCommand } from "./interject.ts";
 import { deleteMessage, insertMessage, updateMessage, roomOfConversation } from "./messages.ts";
 import { defaultModel, defaultThinking, models } from "./models.ts";
+import { composeQuotedInput } from "./replies.ts";
 import {
 	abortSession,
 	type AgentSession,
@@ -658,7 +659,7 @@ class AgentRuntime {
 	 * 正在工作：整条是停止词 → 立刻全部停下；否则作为插话在下一个工具边界送达（Pi steer），
 	 * 消息上标 delivery = queued → delivered，界面显示“已送达正在进行的任务”。
 	 */
-	async send(text: string, files?: AttachmentInput[], opts: { messageId?: string } = {}): Promise<"started" | "steered" | "stopped" | "none"> {
+	async send(text: string, files?: AttachmentInput[], opts: { messageId?: string; quote?: string } = {}): Promise<"started" | "steered" | "stopped" | "none"> {
 		if ((this.busy || listSubagents(this.id).some((r) => isLiveSubagent(r.status))) && !files?.length && isStopCommand(text)) {
 			if (opts.messageId) updateMessage(opts.messageId, { meta: { delivery: "stop" } });
 			await this.abort();
@@ -678,7 +679,9 @@ class AgentRuntime {
 		}
 		const steer = isSessionBusy(s);
 		setAgentStatus(this.id, "running");
-		const input = await this.withAttachments(s, text, files).catch(() => ({ text, images: undefined }));
+		// 引用作为带 role wrapper 的上下文拼在用户新消息之前（不改 Pi 消息格式）
+		const fullText = composeQuotedInput(text, opts.quote);
+		const input = await this.withAttachments(s, fullText, files).catch(() => ({ text: fullText, images: undefined }));
 		if (steer && opts.messageId) {
 			this.steering.push(opts.messageId);
 			updateMessage(opts.messageId, { meta: { delivery: "queued" } });
