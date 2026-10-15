@@ -117,7 +117,7 @@ test("computer_screen 工具 + 系统提示 + 动作前钩子（主屏幕忙时�
 	await assert.rejects(pi.tools.get("computer_screen")!.execute("i", { action: "separate_on" }), /reason/);
 	await pi.call("computer_screen", { action: "separate_on", reason: "要登录另一个淘宝号" });
 	assert.deepEqual(calls, ["own", "list", "sep:true:要登录另一个淘宝号"]);
-	const sp = (await (pi.handlers.get("before_agent_start")![0] as (e: { systemPrompt: string }) => Promise<{ systemPrompt: string }>)({ systemPrompt: "基础" })).systemPrompt;
+	const sp = (await (pi.handlers.get("before_agent_start")![0] as (e: { systemPrompt: string; messageType: "user"; prompt: string }) => Promise<{ systemPrompt: string }>)({ systemPrompt: "基础", messageType: "user", prompt: "" })).systemPrompt;
 	assert.ok(sp.startsWith("基础") && sp.includes(SHARED_COMPUTER_PROMPT));
 	assert.match(SHARED_COMPUTER_PROMPT, /shell[\s\S]*browser_context isolated[\s\S]*separate_on/);
 	const hook = pi.handlers.get("tool_call")![0] as (e: unknown) => Promise<{ block?: boolean; reason?: string } | undefined>;
