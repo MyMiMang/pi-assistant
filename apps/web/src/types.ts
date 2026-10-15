@@ -1,9 +1,24 @@
 export interface Attachment { fileId: string; name: string; mime: string; size: number; direction?: string; workspacePath?: string | null }
+/** 引用快照：服务端生成、客户端只读（镜像 packages/server/src/messages.ts 的 ReplySnapshot）。 */
+export interface ReplySnapshot {
+	messageId: string;
+	author: { id: string; name: string; role: "user" | "assistant"; avatar?: string };
+	source: { kind: "room" | "conversation"; id: string };
+	excerpt: string;
+	truncated: boolean;
+	edited: boolean;
+	attachments?: { fileId: string; name: string; mime: string; size: number }[];
+	createdAt: number;
+	unavailable?: boolean;
+}
 export interface Message {
 	id: string; agent_id: string; conversation_id?: string | null; task_id: string | null;
 	subagent_id?: string | null; role: "user" | "assistant" | "tool" | "system" | "card";
 	content: string; meta: Record<string, any> & { attachments?: Attachment[] }; status: string; created_at: number; updated_at: number;
 	room_id?: string | null; seq?: number;
+	/** 引用的被引用消息 id（服务端可信解析；客户端只传 replyToId，不自填作者 / 摘录） */
+	replyToId?: string | null;
+	reply?: ReplySnapshot | null;
 }
 export interface Agent {
 	id: string; name: string; avatar: string; color: string; persona: string; description: string; status: string; unread: number;
