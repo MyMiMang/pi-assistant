@@ -10,8 +10,8 @@ export const MOCK_MODEL = "echo";
 export const MOCK_REASONING_MODEL = "echo-think";
 
 /** 集成测试用：每次 mock 模型步骤（一次真实模型调用）计数，用来证明等待期间零模型调用。 */
-export const mockStats = { steps: 0 };
-export const resetMockStats = () => { mockStats.steps = 0; };
+export const mockStats = { steps: 0, lastUserText: "" };
+export const resetMockStats = () => { mockStats.steps = 0; mockStats.lastUserText = ""; };
 /** 「网络断开测试」专用：第一次模型请求抛 ECONNRESET，之后恢复（验证有界退避重试后在同一会话续跑）。 */
 let netFlaky = 0;
 
@@ -305,6 +305,8 @@ export async function registerMockProvider(models: PiModels) {
 		const systemPrompt = [ctx.systemPrompt ?? "", ...sys.map(textOf)].filter(Boolean).join("\n");
 		const tools = sys.flatMap((m) => m.toolsAdded ?? []);
 		const msgs = ctx.messages.filter((m) => m.role !== "system");
+		const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+		if (lastUser) mockStats.lastUserText = textOf(lastUser);
 		const hs = hindsightReply(msgs, systemPrompt, tools);
 		if (hs !== null) return typeof hs === "string" ? fauxAssistantMessage(hs) : fauxAssistantMessage([fauxToolCall(hs.tool, hs.args as never)]);
 		return respond(msgs, systemPrompt);

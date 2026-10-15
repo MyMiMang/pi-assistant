@@ -22,7 +22,7 @@ import { db, getSetting, now, setSetting } from "./db.ts";
 import { attachmentInputFor, fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, saveRoomUpload, saveUpload, workspaceOf } from "./files.ts";
 import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
-import { insertMessage, listMessages } from "./messages.ts";
+import { getMessageByClientId, insertMessage, listMessages, toMessage, type MessageRow } from "./messages.ts";
 import { credentialBackend, customProviders, defaultModel, defaultThinking, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "./models.ts";
 import { onboardingState } from "./onboarding.ts";
 import { getModelPicks, recordModelPick } from "./model-picks.ts";
@@ -76,6 +76,7 @@ import { downloadInfo, listDownloads, startDownload } from "./downloads.ts";
 import { availableModels, confirmMemberProposal, confirmProposal, continueRoom, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, onAgentChanged, onAgentDeleted, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "./rooms/index.ts";
 import { copyAgentToUser } from "./rooms/copy.ts";
 import { getMessage, updateMessage as patchMessage } from "./messages.ts";
+import { buildReplySnapshot, formatQuotedContext, ReplyError, resolveReplyTarget } from "./replies.ts";
 import { mountImageRoutes } from "./image-gen/routes.ts";
 import { mountPetRoutes } from "./pet/routes.ts";
 import { mountUsageRoutes } from "./usage/routes.ts";
@@ -445,16 +446,32 @@ app.get("/api/agents/:id/messages", (c) => {
 app.post("/api/agents/:id/messages", async (c) => {
 	const id = c.req.param("id");
 	if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
-	const b = await c.req.json<{ text: string; attachments?: string[]; conversationId?: string }>();
+	const b = await c.req.json<{ text: string; attachments?: string[]; conversationId?: string; replyToId?: string; clientId?: string }>();
 	const conv = b.conversationId && getConversation(b.conversationId)?.agent_id === id ? b.conversationId : currentConversation(id);
+	// 幂等：同 clientId 重复投递直接返回已存在的那条，不再唤醒
+	if (b.clientId) {
+		const dup = getMessageByClientId({ conversationId: conv, clientId: b.clientId });
+		if (dup) return c.json(dup);
+	}
+	// 引用：服务端解析，失败 fail closed（不落库、不唤醒）
+	let snapshot = null;
+	if (b.replyToId) {
+		try {
+			const target = resolveReplyTarget({ scope: { kind: "conversation", id: conv }, messageId: b.replyToId });
+			snapshot = buildReplySnapshot(target, { kind: "conversation", id: conv });
+		} catch (e) {
+			if (e instanceof ReplyError) return c.json({ error: e.message, code: e.code }, e.status as 400 | 403 | 404);
+			throw e;
+		}
+	}
 	const files = (b.attachments ?? []).map(getFile).filter((f) => f && f.agent_id === id) as NonNullable<ReturnType<typeof getFile>>[];
 	const text = (b.text ?? "").slice(0, 100_000);
 	if (!text.trim() && !files.length) return c.json({ error: "empty" }, 400);
-	const msg = insertMessage({ agentId: id, conversationId: conv, role: "user", content: text, meta: { attachments: files.map(fileInfo), from: by(c) } });
+	const msg = insertMessage({ agentId: id, conversationId: conv, role: "user", content: text, replyToId: b.replyToId ?? null, replySnapshot: snapshot, clientId: b.clientId ?? null, meta: { attachments: files.map(fileInfo), from: by(c), ...(b.replyToId ? { replyTo: b.replyToId } : {}) } });
 	// 正在工作时：停止词立即停；其他消息插进正在进行的任务（delivery: queued → delivered）
 	const r = runtime(id, conv);
 	const busy = r.busy;
-	void r.send(text, files.map((f) => attachmentInputFor(id, f)), { messageId: msg.id });
+	void r.send(text, files.map((f) => attachmentInputFor(id, f)), { messageId: msg.id, quote: snapshot ? formatQuotedContext(snapshot) : undefined });
 	return c.json(busy ? { ...msg, meta: { ...msg.meta, delivery: isStopCommand(text) && !files.length ? "stop" : "queued" } } : msg);
 });
 app.post("/api/agents/:id/abort", async (c) => {
@@ -464,7 +481,10 @@ app.post("/api/agents/:id/abort", async (c) => {
 });
 
 // ---------------------------------------------------------------- 群聊
-const roomErr = (c: Context, e: unknown) => c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+const roomErr = (c: Context, e: unknown) => {
+	if (e instanceof ReplyError) return c.json({ error: e.message, code: e.code }, e.status as 400 | 403 | 404);
+	return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+};
 app.get("/api/rooms", (c) => c.json(listRooms()));
 app.post("/api/rooms", async (c) => {
 	const b = await c.req.json<{ name?: string; purpose?: string; memberIds?: string[]; managerId?: string }>();
@@ -506,12 +526,49 @@ app.post("/api/rooms/:rid/upload", async (c) => {
 	return c.json(fileInfo(saveRoomUpload(rid, f.name, Buffer.from(await f.arrayBuffer()))));
 });
 app.post("/api/rooms/:rid/messages", async (c) => {
-	const b = await c.req.json<{ text: string; mentions?: string[]; attachments?: string[] }>();
+	const b = await c.req.json<{ text: string; mentions?: string[]; attachments?: string[]; replyToId?: string; clientId?: string }>();
 	try {
-		return c.json(postUserMessage(c.req.param("rid"), String(b.text ?? ""), { mentions: Array.isArray(b.mentions) ? b.mentions.map(String) : [], from: by(c), attachments: Array.isArray(b.attachments) ? b.attachments.map(String) : [] }));
+		return c.json(postUserMessage(c.req.param("rid"), String(b.text ?? ""), {
+			mentions: Array.isArray(b.mentions) ? b.mentions.map(String) : [],
+			from: by(c),
+			attachments: Array.isArray(b.attachments) ? b.attachments.map(String) : [],
+			replyToId: typeof b.replyToId === "string" && b.replyToId ? b.replyToId : undefined,
+			clientId: typeof b.clientId === "string" && b.clientId ? b.clientId : undefined,
+		}));
 	} catch (e) {
 		return roomErr(c, e);
 	}
+});
+/** 单条消息（引用跳转用）；带 roomId / conversationId 时校验容器，不一致 fail closed 不泄露。 */
+app.get("/api/messages/:mid", (c) => {
+	const m = getMessage(c.req.param("mid"));
+	if (!m) return c.json({ error: "not_found" }, 404);
+	const rid = c.req.query("roomId");
+	const cid = c.req.query("conversationId");
+	if (rid && m.room_id !== rid) return c.json({ error: "不在这个群里", code: "reply_cross_scope" }, 403);
+	if (cid && (m.room_id || m.conversation_id !== cid)) return c.json({ error: "不在这个对话里", code: "reply_cross_scope" }, 403);
+	return c.json(m);
+});
+/** 目标消息的有界上下文窗口（前后各 ≤ limit/2），用于点击引用后定位，不拉全量历史。 */
+app.get("/api/messages/:mid/context", (c) => {
+	const mid = c.req.param("mid");
+	const m = getMessage(mid);
+	if (!m) return c.json({ error: "not_found" }, 404);
+	const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50) || 50, 1), 100);
+	const rid = c.req.query("roomId");
+	const cid = c.req.query("conversationId");
+	const half = Math.floor(limit / 2);
+	if (m.room_id) {
+		if (rid && m.room_id !== rid) return c.json({ error: "不在这个群里", code: "reply_cross_scope" }, 403);
+		const row = db.prepare("SELECT rowid AS seq FROM messages WHERE id = ?").get(mid) as { seq: number };
+		const rows = db.prepare("SELECT rowid AS seq, * FROM messages WHERE room_id = ? AND rowid >= ? AND rowid <= ? ORDER BY rowid").all(m.room_id, row.seq - half, row.seq + half) as unknown as (MessageRow & { seq: number })[];
+		return c.json(rows.map((r) => ({ ...toMessage(r), seq: r.seq })));
+	}
+	if (m.subagent_id || m.task_id || !m.conversation_id) return c.json({ error: "not_found" }, 404);
+	if (cid && m.conversation_id !== cid) return c.json({ error: "不在这个对话里", code: "reply_cross_scope" }, 403);
+	const row = db.prepare("SELECT rowid AS seq FROM messages WHERE id = ?").get(mid) as { seq: number };
+	const rows = db.prepare("SELECT rowid AS seq, * FROM messages WHERE conversation_id = ? AND task_id IS NULL AND subagent_id IS NULL AND rowid >= ? AND rowid <= ? ORDER BY rowid").all(m.conversation_id, row.seq - half, row.seq + half) as unknown as (MessageRow & { seq: number })[];
+	return c.json(rows.map((r) => ({ ...toMessage(r), seq: r.seq })));
 });
 app.post("/api/rooms/:rid/stop", async (c) => c.json({ ok: await stopRoom(c.req.param("rid")) }));
 app.post("/api/rooms/:rid/continue", (c) => {

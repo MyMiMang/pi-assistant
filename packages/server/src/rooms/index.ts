@@ -19,14 +19,15 @@ import { createConversation } from "../conversations.ts";
 import { db, now, uid } from "../db.ts";
 import { attachmentInputFor, deleteRoomFiles, type FileRow, fileInfo, getFile, materializeFor } from "../files.ts";
 import { isStopCommand } from "../interject.ts";
-import { insertMessage, listRoomMessages, updateMessage } from "../messages.ts";
+import { getMessageByClientId, insertMessage, listRoomMessages, updateMessage, type Message, type ReplySnapshot } from "../messages.ts";
+import { buildReplySnapshot, formatQuotedContext, ReplyError, resolveReplyTarget } from "../replies.ts";
 import { models, defaultModel, defaultThinking } from "../models.ts";
 import { requests } from "../requests.ts";
 import { getAgent, listAgents, runtime, setRoomHooks } from "../runtime.ts";
 import { listSkills } from "../skills.ts";
 import { STRENGTHS, STRENGTH_LABEL, type Strength } from "../model-profile.ts";
 import { cleanNeeds, configuredModels, modelProfiles, pickFor, roleNeeds } from "./model-pick.ts";
-import { buildTranscript, capCheck, normalizeCaps, parseMentions, planAfter, planForUser, type PlannedTurn, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
+import { buildTranscript, capCheck, normalizeCaps, parseMentions, planAfter, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
 
 export interface RoomRow {
 	id: string;
@@ -55,6 +56,20 @@ export interface MemberRow {
 }
 
 export const getRoom = (id: string) => db.prepare("SELECT * FROM rooms WHERE id = ?").get(id) as RoomRow | undefined;
+
+/** 已解析的引用：快照（给模型/UI）+ 纯逻辑路由目标 */
+type QuoteInfo = { snapshot: ReplySnapshot; target: QuoteTarget };
+
+/** 从群内可信消息行算引用路由目标（作者是否仍是可用成员）。 */
+function quoteTargetOf(roomId: string, target: Message): QuoteTarget {
+	if (target.role === "user") return { quotable: true, role: "user", authorAgentId: null, authorActive: false };
+	if (target.role === "assistant") {
+		const m = memberRow(roomId, target.agent_id);
+		const active = !!m && !m.left_at && !m.deleted && !!getAgent(target.agent_id);
+		return { quotable: true, role: "assistant", authorAgentId: target.agent_id, authorActive: active };
+	}
+	return { quotable: false, role: "system", authorAgentId: null, authorActive: false };
+}
 export const membersOf = (roomId: string, all = false) =>
 	db.prepare(`SELECT * FROM room_members WHERE room_id = ? ${all ? "" : "AND left_at IS NULL"} ORDER BY sort, joined_at`).all(roomId) as unknown as MemberRow[];
 const memberRow = (roomId: string, agentId: string) => db.prepare("SELECT * FROM room_members WHERE room_id = ? AND agent_id = ?").get(roomId, agentId) as MemberRow | undefined;
@@ -216,12 +231,14 @@ interface RoomState {
 	/** 正在进行的管理者回合里收集到的派活 */
 	assignments: { agentId: string; task?: string }[];
 	/** 运行中用户又发了消息：当前发言结束后重新安排 */
-	replan: { mentions: string[] } | null;
+	replan: { mentions: string[]; quote: QuoteInfo | null } | null;
+	/** 本轮用户消息带来的引用快照（模型上下文），无引用为 null */
+	quote: ReplySnapshot | null;
 	stopped: boolean;
 	running: boolean;
 }
 const states = new Map<string, RoomState>();
-const fresh = (): RoomState => ({ roundId: uid("rd"), queue: [], current: null, counters: { turns: 0, perAgent: {}, tokens: 0 }, batch: new Set(), batchRan: false, assignments: [], replan: null, stopped: false, running: false });
+const fresh = (): RoomState => ({ roundId: uid("rd"), queue: [], current: null, counters: { turns: 0, perAgent: {}, tokens: 0 }, batch: new Set(), batchRan: false, assignments: [], replan: null, quote: null, stopped: false, running: false });
 
 export function stateOf(roomId: string) {
 	const s = states.get(roomId);
@@ -254,16 +271,30 @@ const activeIds = (roomId: string) => membersOf(roomId).filter((m) => getAgent(m
 const memberRefs = (roomId: string) => membersOf(roomId).map((m) => ({ id: m.agent_id, name: getAgent(m.agent_id)?.name ?? m.name }));
 
 /** 用户在群里发言 */
-export function postUserMessage(roomId: string, text: string, opts: { mentions?: string[]; from?: unknown; attachments?: string[] } = {}) {
+export function postUserMessage(roomId: string, text: string, opts: { mentions?: string[]; from?: unknown; attachments?: string[]; replyToId?: string; clientId?: string } = {}) {
 	const r = getRoom(roomId);
 	if (!r) throw new Error("群不存在");
+	// 幂等：同 clientId 重复投递直接返回已存在的那条，不再路由 / 唤醒
+	if (opts.clientId) {
+		const dup = getMessageByClientId({ roomId, clientId: opts.clientId });
+		if (dup) return dup;
+	}
 	const body = text.slice(0, 100_000);
 	const files = (opts.attachments ?? []).map(getFile).filter((f): f is FileRow => !!f && f.room_id === roomId && f.agent_id === "");
 	if (!body.trim() && !files.length) throw new Error("empty");
+	// 引用：服务端解析（不可见 / 跨群 / 不可引用一律 fail closed，抛 ReplyError）
+	let quote: QuoteInfo | null = null;
+	if (opts.replyToId) {
+		const target = resolveReplyTarget({ scope: { kind: "room", id: roomId }, messageId: opts.replyToId });
+		quote = { snapshot: buildReplySnapshot(target, { kind: "room", id: roomId }), target: quoteTargetOf(roomId, target) };
+	}
 	const parsed = parseMentions(body, memberRefs(roomId), opts.mentions ?? []);
-	const msg = insertMessage({ agentId: "", roomId, conversationId: null, role: "user", content: body, meta: { from: opts.from, mentions: parsed.ids, all: parsed.all, ...(files.length ? { attachments: files.map(fileInfo) } : {}) } });
+	const msg = insertMessage({ agentId: "", roomId, conversationId: null, role: "user", content: body, replyToId: opts.replyToId ?? null, replySnapshot: quote?.snapshot ?? null, clientId: opts.clientId ?? null, meta: { from: opts.from, mentions: parsed.ids, all: parsed.all, ...(quote ? { replyTo: opts.replyToId } : {}), ...(files.length ? { attachments: files.map(fileInfo) } : {}) } });
+	const plan = planForUserWithQuote({ mentioned: parsed.ids, managerId: r.manager_id, activeIds: activeIds(roomId), quote: quote?.target ?? null });
+	// 引用了被删除 / 停用的成员：不误唤管理者，群内明确提示用户改用 @
+	if (plan.notice) sys(roomId, plan.notice, { kind: "reply-unroutable" });
 	// 暂停后回复“继续”：接着跑没说完的
-	if (r.paused && !states.get(roomId)?.current && !parsed.ids.length && /^\s*(继续|接着来|continue)\s*[。.!！]?\s*$/i.test(body)) {
+	if (r.paused && !states.get(roomId)?.current && !parsed.ids.length && !quote && /^\s*(继续|接着来|continue)\s*[。.!！]?\s*$/i.test(body)) {
 		continueRoom(roomId);
 		changed(roomId);
 		return msg;
@@ -279,31 +310,29 @@ export function postUserMessage(roomId: string, text: string, opts: { mentions?:
 	}
 	if (s?.current) {
 		const cur = s.current;
-		// 正在说话的成员是这条消息的对象（被 @，或没 @ 人时它就是管理者 / 正在干活的成员）：插进它当前这一轮，下一个工具边界就能读到
-		const forCurrent = parsed.ids.length ? parsed.ids.includes(cur.agentId) : true;
+		// 正在说话的成员是这条消息的对象：被引用的定向目标、被 @，或没 @ 人时它就是管理者 / 正在干活的成员
+		const directedIds = plan.directed ? plan.turns.map((t) => t.agentId) : null;
+		const forCurrent = plan.notice ? false : directedIds ? directedIds.includes(cur.agentId) : parsed.ids.length ? parsed.ids.includes(cur.agentId) : true;
 		const rt = runtime(cur.agentId, cur.conversationId);
-		if (forCurrent && rt.busy) void rt.send(`（用户在群里说）${body}${files.length ? `\n（附带 ${files.length} 个附件，见群聊记录）` : ""}`, undefined, { messageId: msg.id });
-		// 取消排队的，等它说完按新消息重新安排；只剩它自己要处理（被 @ 的就是它 / 它是管理者）时不再重复安排
+		const quoteText = quote && forCurrent ? formatQuotedContext(quote.snapshot) : undefined;
+		if (forCurrent && rt.busy) void rt.send(`（用户在群里说）${body}${files.length ? `\n（附带 ${files.length} 个附件，见群聊记录）` : ""}`, undefined, { messageId: msg.id, quote: quoteText });
+		// 取消排队的，等它说完按新消息重新安排；只剩它自己要处理时不再重复安排
 		cancelQueue(roomId, s);
 		s.batch.clear();
-		const others = parsed.ids.filter((x) => x !== cur.agentId);
-		const handled = forCurrent && rt.busy && (parsed.ids.length ? !others.length : cur.agentId === r.manager_id);
-		s.replan = handled ? null : { mentions: parsed.ids.length ? others : [] };
+		const others = plan.directed ? plan.turns.map((t) => t.agentId).filter((x) => x !== cur.agentId) : parsed.ids.filter((x) => x !== cur.agentId);
+		const handled = !plan.notice && forCurrent && rt.busy && (plan.directed ? others.length === 0 : parsed.ids.length ? !others.length : cur.agentId === r.manager_id);
+		s.replan = handled || !plan.turns.length ? null : { mentions: parsed.ids, quote };
 		emitState(roomId);
-	} else startRound(roomId, parsed.ids);
+	} else if (plan.turns.length) startRound(roomId, plan.turns, quote);
+	else if (!plan.notice && !parsed.ids.length) sys(roomId, "群里还没有可以回答的助理，请在群设置里添加。", { action: "room-settings" });
 	changed(roomId);
 	return msg;
 }
 
-function startRound(roomId: string, mentions: string[]) {
-	const r = getRoom(roomId)!;
+function startRound(roomId: string, plan: PlannedTurn[], quote: QuoteInfo | null) {
 	const s = fresh();
 	states.set(roomId, s);
-	const plan = planForUser(mentions, r.manager_id, activeIds(roomId));
-	if (!plan.length) {
-		sys(roomId, "群里还没有可以回答的助理，请在群设置里添加。", { action: "room-settings" });
-		return;
-	}
+	s.quote = quote?.snapshot ?? null;
 	enqueue(roomId, s, plan);
 	void pump(roomId);
 }
@@ -365,7 +394,10 @@ async function pump(roomId: string) {
 				Object.assign(s, { roundId: uid("rd"), counters: { turns: 0, perAgent: {}, tokens: 0 }, batch: new Set(), batchRan: false });
 				const r = getRoom(roomId);
 				if (!r) break;
-				enqueue(roomId, s, planForUser(re.mentions, r.manager_id, activeIds(roomId)));
+				s.quote = re.quote?.snapshot ?? null;
+				const replan = planForUserWithQuote({ mentioned: re.mentions, managerId: r.manager_id, activeIds: activeIds(roomId), quote: re.quote?.target ?? null });
+				if (replan.notice) sys(roomId, replan.notice, { kind: "reply-unroutable" });
+				enqueue(roomId, s, replan.turns);
 			}
 			const next = s.queue[0];
 			if (!next) break;
@@ -415,7 +447,9 @@ async function runTurn(roomId: string, s: RoomState, t: PlannedTurn & { turnId: 
 			return [];
 		}
 	});
-	const prompt = [`（群聊「${r.name}」里的新消息 · 你是 ${selfName}${t.agentId === r.manager_id ? "（管理者）" : ""}）`, tr.text || "（没有新消息）", "——", REASON_LINE(t, managerName, caps.maxDepth - t.depth - 1)].join("\n");
+	const quoteBlock = s.quote ? formatQuotedContext(s.quote) : "";
+	const directedLine = t.directed && t.agentId === r.manager_id ? "用户引用了你的消息，只回应用户引用的这条；除非用户明确要求你分工，否则不要 room_assign、不要 @ 其他成员。" : "";
+	const prompt = [`（群聊「${r.name}」里的新消息 · 你是 ${selfName}${t.agentId === r.manager_id ? "（管理者）" : ""}）`, ...(quoteBlock ? [quoteBlock, "——"] : []), tr.text || "（没有新消息）", "——", REASON_LINE(t, managerName, caps.maxDepth - t.depth - 1), ...(directedLine ? [directedLine] : [])].join("\n");
 	db.prepare("UPDATE room_members SET cursor = ? WHERE room_id = ? AND agent_id = ?").run(tr.lastSeq || memberRow(roomId, t.agentId)?.cursor || 0, roomId, t.agentId);
 	s.current = { agentId: t.agentId, turnId: t.turnId, conversationId: conv, reason: t.reason };
 	s.assignments = [];
