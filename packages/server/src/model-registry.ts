@@ -19,10 +19,11 @@
 import type { ClassifierModelInfo, ModelInfo } from "./pi-adapter/index.ts";
 import type { CustomProviderMeta } from "./pi-adapter/custom-providers.ts";
 
-/** 一个模型能做的事；`vision` 属于 chat 能力（不是独立服务）。 */
-export type ModelCapability = "chat" | "vision" | "image" | "classifier";
-/** Pi 的操作类型（`type` 缺省即 chat）。 */
-export type ModelType = "chat" | "image" | "classifier";
+/** 一个模型能做的事；`vision` 属于 chat 能力（不是独立服务）。`asr` = 语音转文字（语音输入），与 chat / vision 互不蕴含。 */
+export type ModelCapability = "chat" | "vision" | "image" | "classifier" | "asr";
+/** Pi 的操作类型（`type` 缺省即 chat）。`asr` 是 Pi Assistant 自有的第四种类型（Pi SDK 暂无 audio）：
+ *  云走 OpenAI 兼容 `/v1/audio/transcriptions`，本地走 loopback sidecar，都不伪造成 chat / classifier。 */
+export type ModelType = "chat" | "image" | "classifier" | "asr";
 /** 模型 / 服务的来源：`local` = 本机跑的服务（如 local-laya，安装后经 Pi 运行时注册）。 */
 export type RegistrySource = "pi-catalog" | "custom" | "imagegen" | "guess" | "local";
 
@@ -67,6 +68,30 @@ export interface RegistryModel {
 	costNote?: string;
 	/** 生图模型的适配器元数据（UI 展示用）：协议 kind / 端点 / 改图 / 参考价。 */
 	imageAdapter?: { kind: string; baseUrl: string; edit: boolean; costNote?: string };
+	/** 语音转文字（ASR）模型的适配器元数据；**不含凭据**（本地不需要用户 key）。 */
+	asrAdapter?: RegistryAsrAdapter;
+}
+
+/**
+ * 语音转文字（ASR）的适配器元数据（云 + 本地**同一形状**，避免两套 RegistryAsr 类型）：
+ *  - 云：`protocol="openai-audio-transcriptions"`、`location="cloud"`、`requiresApiKey=true`、带展示用 `baseUrl`；
+ *  - 本地：`protocol="local-asr-http"`、`location="local"`、`requiresApiKey=false`、带采样率 / 上限 / 语种 / 标点。
+ * 进程内 token 绝不进注册表（本地端点只在 `local-asr/adapter-registry.ts`）。
+ */
+export interface RegistryAsrAdapter {
+	protocol: string;
+	/** 音频是否会离开本机。 */
+	location: "cloud" | "local";
+	/** 是否需要用户 API key（本地 provider 为 false）。 */
+	requiresApiKey: boolean;
+	sampleRate?: number;
+	/** 单次音频上限（秒） */
+	maxSeconds?: number;
+	languages?: string[];
+	/** 模型输出是否自带标点 / ITN */
+	punctuation?: boolean;
+	/** 展示用地址（绝不含 token）。 */
+	baseUrl?: string;
 }
 
 export interface RegistryProvider {
@@ -101,12 +126,36 @@ export interface RegistryImageProvider {
 /** 本地服务的安全元数据（由服务自己的 status 事件汇总；不 import 其实现、不含凭据）。 */
 export interface RegistryLocalProvider {
 	provider: string;
+	/** 界面显示名（如「本地 SenseVoice」） */
+	label?: string;
 	modelId: string;
 	protocol: string;
+	/** 该本地服务提供的能力类型：classifier（如 local-laya）或 asr（如本地 SenseVoice）。缺省 classifier。 */
+	type?: "classifier" | "asr";
 	installed: boolean;
 	running: boolean;
 	state: string;
 	device: string | null;
+	/** asr 专用元数据（采样率 / 语种 / 标点） */
+	asr?: { sampleRate: number; maxSeconds: number; languages: string[]; punctuation: boolean };
+}
+
+/** 显式声明（或本地 runtime 上报）的语音转文字服务；不靠模型名猜能力。 */
+export interface RegistryAsrProvider {
+	provider: string;
+	modelId: string;
+	name?: string;
+	/** 协议：`openai-audio-transcriptions`（云）或 `local-asr-http`（本地 loopback）。 */
+	protocol: string;
+	/** 是否已配置可用（云看凭据，本地看 running）。 */
+	configured: boolean;
+	/** 音频是否会离开本机：cloud 会外发，local 只在本机。 */
+	location: "cloud" | "local";
+	language?: string;
+	/** 本地服务（如本地 SenseVoice）：安装 / 运行状态。 */
+	local?: RegistryLocalStatus;
+	/** 参考价格说明；未知不填（绝不填 0）。 */
+	costNote?: string;
 }
 
 export interface RegistryInput {
@@ -128,6 +177,8 @@ export interface RegistryInput {
 	};
 	/** 本地服务（如 local-laya）的安全状态：已安装但停止时仍保留卡片（source=local，标暂不可用）。 */
 	local?: RegistryLocalProvider[];
+	/** 显式声明的语音转文字服务（云 provider 由用户声明；本地 ASR 由 runtime 上报）。 */
+	asr?: RegistryAsrProvider[];
 }
 
 /** chat 模型的能力：input 含 image 即识图（识图属于 chat 能力，不是独立服务）。 */
@@ -278,26 +329,55 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 		}
 	}
 
-	// 4) 本地服务（如 local-laya）：可靠地标 source=local；已安装但停止时仍保留卡片（只标暂不可用）。
-	//    即使 classifier 目录里没有（stop 后被摘掉），也按安全状态补一条，避免卡片消失。
+	// 4) 本地服务（如 local-laya=classifier / local-sensevoice=asr）：可靠地标 source=local；
+	//    已安装但停止时仍保留卡片（只标暂不可用）。即使目录里没有（stop 后被摘掉），也按安全状态补一条。
 	for (const l of input.local ?? []) {
-		const p = ensure(l.provider, { id: l.provider, name: l.provider, kind: "local", configured: l.running });
+		const p = ensure(l.provider, { id: l.provider, name: l.label ?? l.provider, kind: "local", configured: l.running });
 		p.kind = "local";
 		p.configured = p.configured || l.running;
 		const status: RegistryLocalStatus = { installed: l.installed, running: l.running, state: l.state, device: l.device };
-		const existing = p.models.find((x) => x.id === l.modelId && x.type === "classifier");
+		const localType = l.type ?? "classifier";
+		const existing = p.models.find((x) => x.id === l.modelId && x.type === localType);
+		const a = l.asr;
 		put(p, {
 			provider: l.provider,
 			id: l.modelId,
 			name: existing?.name || l.modelId,
-			type: "classifier",
-			capabilities: ["classifier"],
+			type: localType,
+			capabilities: [localType],
 			protocol: l.protocol,
 			confirmed: true,
 			inferred: [],
 			source: "local",
 			configured: l.running,
 			local: status,
+			...(localType === "asr"
+				? { asrAdapter: { protocol: l.protocol, location: "local" as const, requiresApiKey: false, sampleRate: a?.sampleRate ?? 16000, maxSeconds: a?.maxSeconds ?? 120, languages: a?.languages ?? [], punctuation: !!a?.punctuation } }
+				: {}),
+		});
+	}
+
+	// 5) 语音转文字（ASR）：只收录**显式声明**的（云 provider 由用户声明协议 + 模型；本地由 runtime 上报）。
+	//    不靠模型名 / chat 能力猜；未确认的不进这里，界面不给入口。
+	for (const a of input.asr ?? []) {
+		const existing = providers.get(a.provider);
+		const p = existing ?? ensure(a.provider, { id: a.provider, name: a.provider, kind: a.location === "local" ? "local" : "custom", configured: a.configured });
+		if (a.location === "local") p.kind = "local";
+		p.configured = p.configured || a.configured;
+		put(p, {
+			provider: a.provider,
+			id: a.modelId,
+			name: a.name || a.modelId,
+			type: "asr",
+			capabilities: ["asr"],
+			protocol: a.protocol,
+			confirmed: true,
+			inferred: [],
+			source: a.location === "local" ? "local" : "custom",
+			configured: a.configured,
+			...(a.costNote ? { costNote: a.costNote } : {}),
+			...(a.local ? { local: a.local } : {}),
+			asrAdapter: { protocol: a.protocol, location: a.location, requiresApiKey: a.location === "cloud", ...(existing?.baseUrl ? { baseUrl: existing.baseUrl } : {}), ...(a.language ? { languages: [a.language] } : {}) },
 		});
 	}
 

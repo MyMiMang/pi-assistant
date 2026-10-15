@@ -141,6 +141,65 @@ export async function upload(agentId: string, file: File) {
 	return api(`/api/agents/${agentId}/upload`, { method: "POST", body: fd });
 }
 
+/** 语音输入：上传 16 kHz PCM16 WAV 到自有 Pi Server 转写（音频只在内存，不落附件/消息）。 */
+export interface TranscribeInput {
+	audio: Uint8Array;
+	provider: string;
+	model: string;
+	requestId: string;
+	language?: string;
+	agentId?: string;
+	conversationId?: string;
+	signal?: AbortSignal;
+}
+export async function transcribeAudio(input: TranscribeInput): Promise<{ text: string; provider: string; model: string; durationMs: number }> {
+	const fd = new FormData();
+	fd.append("file", new Blob([input.audio as unknown as BlobPart], { type: "audio/wav" }), "audio.wav");
+	fd.append("provider", input.provider);
+	fd.append("model", input.model);
+	fd.append("requestId", input.requestId);
+	if (input.language) fd.append("language", input.language);
+	if (input.agentId) fd.append("agentId", input.agentId);
+	if (input.conversationId) fd.append("conversationId", input.conversationId);
+	return api(`/api/audio/transcriptions`, { method: "POST", body: fd, signal: input.signal });
+}
+
+/** 注册表里可用的 ASR 模型（type:"asr" 且已配置）；用于语音输入自动选源。 */
+export interface AsrModelOption {
+	provider: string;
+	model: string;
+	name: string;
+	location: "cloud" | "local";
+	configured: boolean;
+	language?: string;
+}
+export async function listAsrModels(): Promise<AsrModelOption[]> {
+	const reg = await api<{ providers: { id: string; models: { id: string; name: string; type: string; configured: boolean; asrAdapter?: { location?: string }; local?: unknown }[] }[] }>("/api/models/registry");
+	const out: AsrModelOption[] = [];
+	for (const p of reg.providers ?? []) for (const m of p.models ?? []) {
+		if (m.type !== "asr") continue;
+		out.push({ provider: p.id, model: m.id, name: m.name || m.id, location: m.asrAdapter?.location === "local" ? "local" : "cloud", configured: !!m.configured });
+	}
+	return out;
+}
+
+/** 录音租约（只对本地 ASR 有意义）：录音期间持有，避免本地模型被 idle 卸载。失败不阻塞录音。 */
+export async function acquireAsrLease(provider: string, model: string): Promise<string | null> {
+	try {
+		const r = await api<{ leaseId: string }>("/api/audio/asr/lease", { method: "POST", json: { provider, model } });
+		return r.leaseId ?? null;
+	} catch {
+		return null;
+	}
+}
+export async function releaseAsrLease(leaseId: string): Promise<void> {
+	try {
+		await api(`/api/audio/asr/lease/${encodeURIComponent(leaseId)}`, { method: "DELETE" });
+	} catch {
+		/* 释放失败不影响用户 */
+	}
+}
+
 /** 从入口域名的 Rendezvous 查询服务当前地址，并校验签名。 */
 export async function refreshFromRendezvous(): Promise<boolean> {
 	if (!conn?.publicKey || !conn.serverId) return false;
