@@ -233,6 +233,45 @@ test("reflect fail closed + 跨助理隔离：未限定作用域直接拒绝；�
 	assert.ok(!JSON.stringify(aReq.hits).includes("备用邮箱"), "B 的草稿不在 A 的 reflect 上下文");
 });
 
+test("reflect 源端隔离保留旧忆、排除已驳回/兄弟草稿（官方 tag 语义：exact 空 tags = untagged/global）", async () => {
+	const A = "sa_reflect2";
+	insertAgent(A);
+	await memory.remember(A, "convR2", { content: "本任务草稿：用户提到想去爬山", kind: "fact", actor: "subagent", taskId: "q1", subagentId: "q1" });
+	const rej = await memory.remember(A, "convR2", { content: "已驳回的推测：用户爱潜水", kind: "fact", actor: "subagent", taskId: "q1", subagentId: "q1" });
+	assert.equal(await memory.rejectDraft(A, rej.id, { actor: "main" }), true);
+	await flush();
+	assert.equal(pendingCount(), 0, "队列应清空");
+	const bank = agentBank(A);
+	// 直接把「无 provenance tag 的旧版本记忆」与「兄弟草稿」放进 fake（模拟旧数据 / 兄弟任务），只测源端过滤
+	fake.banks.get(bank)!.set("legacy_q", "旧记忆：用户喜欢江边散步");
+	fake.docTags.get(bank)!.set("legacy_q", []);
+	fake.banks.get(bank)!.set("sib_q", "兄弟草稿：用户的私钥线索甲乙丙");
+	fake.docTags.get(bank)!.set("sib_q", ["kind:fact", "scope:task", "status:draft", "actor:subagent", "task:q2"]);
+	await memory.reflect(A, "用户 爬山 江边 潜水", { actor: "subagent", conversationId: "convR2", taskId: "q1" });
+	const req = fake.reflects.filter((x: { bank: string }) => x.bank === bank).slice(-1)[0];
+	const filter = JSON.stringify(req.body.tag_groups);
+	assert.ok(filter.includes('"match":"exact"'), "请求带 official untagged/global 范围，保留无 tag 的旧记忆");
+	assert.ok(filter.includes("status:draft"), "本任务只取 status=draft，不把已驳回算成证据");
+	assert.ok(filter.includes("task:q1") && !filter.includes("task:q2"), "只允许本任务");
+	assert.ok(req.hits.some((h: { text: string }) => h.text.includes("爬山")), "本任务草稿可见");
+	assert.ok(req.hits.some((h: { text: string }) => h.text.includes("江边散步")), "无 tag 旧记忆保留可见（旧忆不消失）");
+	assert.ok(!req.hits.some((h: { text: string }) => h.text.includes("潜水")), "已驳回的草稿不再进证据（tag 重打后 status=promoted 且无 task 归属）");
+	assert.ok(!req.hits.some((h: { text: string }) => h.text.includes("私钥线索")), "兄弟草稿进不来");
+});
+
+test("reflect 非核验视角：user 库也只放已验证/旧条目，不整库 all", async () => {
+	const A = "sa_reflect_user";
+	insertAgent(A);
+	await memory.remember(A, "convU", { content: "用户叫灯灯大王，喜欢简洁", kind: "fact", actor: "main" });
+	await flush();
+	await memory.reflect(A, "灯灯大王 简洁", { actor: "subagent", conversationId: "convU", taskId: "u1" });
+	const req = fake.reflects.filter((x: { bank: string }) => x.bank === USER_BANK).slice(-1)[0];
+	assert.ok(req.body.tag_groups, "非核验视角下 user 库也带显式 tag_groups，不整个 all");
+	const filter = JSON.stringify(req.body.tag_groups);
+	assert.ok(filter.includes("scope:user") && filter.includes("status:verified"), "只允许已验证 user 事实");
+	assert.ok(filter.includes('"match":"exact"'), "保留无 tag 的旧 user 记忆");
+});
+
 test("工具 annotation：recall/reflect 只读不误拦；remember 真实写入但不弹；forget 破坏性、完全权限仍放行", () => {
 	const tools: { name: string; annotations?: Record<string, unknown> }[] = [];
 	const pi = { on: () => {}, registerTool: (t: never) => tools.push(t) } as never;

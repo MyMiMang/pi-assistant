@@ -22,14 +22,13 @@ const MENTAL_MODELS = [
 ];
 
 const client = () => new HindsightClient({ baseUrl: sidecar.baseUrl!, apiKey: sidecar.apiKey(), userAgent: "pi-assistant" } as never);
-/** recall/reflect 没有显式取消；加一个短超时，避免卡住主模型回合（超时后 recall 退回账本检索） */
+/** recall/reflect 没有显式取消；用 AbortController 真正中止 fetch（不是只 race 掉 Promise），避免超时后请求还在跑 */
 const RECALL_TIMEOUT_MS = Number(process.env.PIA_MEMORY_TIMEOUT_MS ?? 20_000);
-function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
-	return new Promise<T>((resolve, reject) => {
-		const t = setTimeout(() => reject(new Error(`${what}超时（${ms}ms）`)), ms);
-		t.unref?.();
-		p.then((v) => (clearTimeout(t), resolve(v)), (e) => (clearTimeout(t), reject(e)));
-	});
+function abortable<T>(run: (signal: AbortSignal) => Promise<T>, ms: number, what: string): Promise<T> {
+	const ac = new AbortController();
+	const t = setTimeout(() => ac.abort(new Error(`${what}超时（${ms}ms）`)), ms);
+	t.unref?.();
+	return run(ac.signal).finally(() => clearTimeout(t));
 }
 const row = (id: string) => db.prepare("SELECT * FROM memory_items WHERE id = ?").get(id) as { id: string; bank: string; text: string; kind: string | null; created_at: string; occurred_at: string | null; meta_json: string | null } | undefined;
 const metaOf = (r: { meta_json: string | null }) => (r.meta_json ? (JSON.parse(r.meta_json) as Record<string, unknown>) : {});
@@ -186,7 +185,7 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 		if (!sidecar.ready) return basicMemory.recall(bank, query, opts);
 		try {
 			if (!db.prepare("SELECT 1 FROM hindsight_banks WHERE bank = ?").get(bank)) await ensureRemoteBank(bank);
-			const res = await withTimeout(client().recall(bank, query, { maxTokens: opts.tokenBudget ?? 2048, budget: "mid", types: ["world", "experience", "observation"] } as never), RECALL_TIMEOUT_MS, "记忆召回");
+			const res = await abortable((signal) => client().recall(bank, query, { maxTokens: opts.tokenBudget ?? 2048, budget: "mid", types: ["world", "experience", "observation"], signal } as never), RECALL_TIMEOUT_MS, "记忆召回");
 			const results = ((res as { results?: unknown[] }).results ?? []) as Parameters<typeof toItem>[1][];
 			const items = results.map((r, i) => toItem(bank, r, 1 / (1 + i))).filter(Boolean) as MemoryItem[];
 			const limit = opts.limit ?? 8;
@@ -209,7 +208,7 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 				: "tagGroups" in scope
 					? { tagGroups: scope.tagGroups }
 					: { tags: scope.tags, tagsMatch: scope.tagsMatch ?? "any" };
-		const r = await withTimeout(client().reflect(bank, query, { budget: "mid", includeFacts: true, ...filter } as never), RECALL_TIMEOUT_MS, "记忆反思");
+		const r = await abortable((signal) => client().reflect(bank, query, { budget: "mid", includeFacts: true, ...filter, signal } as never), RECALL_TIMEOUT_MS, "记忆反思");
 		const memories = ((r.based_on as { memories?: Parameters<typeof toItem>[1][] } | null)?.memories ?? []).map((m, i) => toItem(bank, m, 1 / (1 + i))).filter(Boolean) as MemoryItem[];
 		return { answer: r.text, citations: memories };
 	},

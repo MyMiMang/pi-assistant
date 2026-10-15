@@ -353,7 +353,8 @@ export const memory = {
 			const r = await memory.remember(agentId, scope === "conversation" ? (hit.conversationId ?? conversationId ?? null) : null, { content: patch.text ?? hit.text, kind, scope, source: "user", actor: ctx.actor, taskId: ctx.taskId, subagentId: ctx.subagentId });
 			return r.id;
 		}
-		await p.update(hit.bank, id, { text: patch.text, kind: kind as never, meta: { kind, origin } });
+		// 保留原 meta（taskId/conversationId/expiresAt）再改，避免编辑草稿后 TTL/对话/任务标签丢失导致 Hindsight 重打 tag 时作用域漂移
+		await p.update(hit.bank, id, { text: patch.text, kind: kind as never, meta: { ...(hit.meta ?? {}), kind, origin } });
 		return id;
 	},
 
@@ -416,7 +417,9 @@ export const memory = {
 		const draft = (await rawItems(agentId)).find((i) => i.id === draftId);
 		if (!draft) throw new Error("找不到草稿");
 		if (!p.update || !draft.origin) return false;
-		await p.update(draft.bank, draft.id, { meta: { kind: draft.kind, ...(draft.meta ?? {}), origin: { ...draft.origin, status: "promoted", promotedTo: null } } });
+		// 驳回后清掉 task/conversation 归属：重打 tag 时不再命中「本任务草稿」范围，避免已驳回草稿继续进入 reflect 证据
+		const origin = { ...draft.origin, status: "promoted" as const, promotedTo: null, taskId: null, conversationId: null };
+		await p.update(draft.bank, draft.id, { meta: { ...(draft.meta ?? {}), taskId: undefined, conversationId: undefined, origin } });
 		return true;
 	},
 
@@ -431,15 +434,23 @@ export const memory = {
 		const taskId = ctx.taskId ?? null;
 		const conversationId = ctx.conversationId ?? null;
 		const leaf = (tags: string[]) => ({ tags, match: "all_strict" as const });
-		// 共享 user 库只会被主会话/用户写入（子代理写 user 会被降级），整库无草稿；不过滤以保留 legacy 原可见性。
-		const userScope: ReflectScope = { all: true };
+		// 官方 tag 语义（安装包 0.10.3 engine/search/tags.py 已核实）：any/all 含无 tag 条目，any_strict/all_strict/exact 不含；
+		// {tags: [], match: "exact"} 即官方「untagged/global」范围，用来保留旧版本（无 provenance tag）的记忆。
+		const legacyLane = { tags: [], match: "exact" as const };
+		// 共享 user 库由主会话/用户写入（子代理写 user 会被降级为草稿），但仍显式限定：已验证 user + 无 tag 旧条目，
+		// 万一库里出现异常 tag 的草稿也不会被非核验视角读到（比整库 all 更 fail closed）。
+		const userScope: ReflectScope = privilegedView
+			? { all: true }
+			: { tagGroups: [{ or: [{ and: [leaf(["scope:user"]), leaf(["status:verified"])] }, legacyLane] }] };
 		let agentScope: ReflectScope;
 		if (privilegedView) agentScope = { all: true };
 		else {
-			// 允许集合：已验证的助理级事实 + 本对话的已验证条目 + 本任务自己的草稿；未标 tag 的一律排除（fail closed）。
+			// 允许集合：已验证的助理级事实 + 本对话的已验证条目 + 本任务自己的草稿（只看 status=draft，
+			// 已驳回/已晋升的不再进证据）+ 无 tag 的旧条目（保留旧忆）；兄弟草稿有 task tag，不会命中。
 			const groups: unknown[] = [{ and: [leaf(["scope:agent"]), leaf(["status:verified"])] }];
 			if (conversationId) groups.push({ and: [leaf(["scope:conversation"]), leaf([`conv:${conversationId}`])] });
-			if (taskId) groups.push(leaf([`task:${taskId}`]));
+			if (taskId) groups.push({ and: [leaf([`task:${taskId}`]), leaf(["status:draft"])] });
+			groups.push(legacyLane);
 			agentScope = { tagGroups: [{ or: groups }] };
 		}
 		const banks: [string, ReflectScope][] = [[agentBank(agentId), agentScope], [USER_BANK, userScope]];
