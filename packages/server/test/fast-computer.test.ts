@@ -187,3 +187,64 @@ test("设置保存：边界收敛 + 未知 kind 回落", () => {
 	fc.saveFastComputerSettings({ enabled: false });
 	assert.equal(fc.fastComputerSettings().enabled, false);
 });
+
+// ---------------------------------------------------------------- G2/G3/G4 专项
+
+test("G2 执行前新鲜度：语义唯一且 value/actions 未变 → 用新 element_token 重构", () => {
+	const candidate = { id: "el-1", label: "button：登录", tool: "mcp__hostpc__click", args: { pid: 1, window_id: 2, element_token: "snap1:1" }, semantic: { role: "button", label: "登录", value: "", actions: ["press"] } };
+	const structured = { elements: [{ element_index: 1, role: "button", label: "登录", value: "", actions: ["press"], element_token: "snap9:1" }] };
+	const r = fc.resolveFreshCandidate(candidate, structured);
+	assert.equal(r.ok, true);
+	if (r.ok) {
+		assert.equal(r.candidate.args.element_token, "snap9:1");
+		assert.notEqual(r.candidate.args.element_token, "snap1:1");
+	}
+});
+
+test("G2：目标找不到 / 不唯一 / 值或 actions 变化 → 中止（不复用旧 token）", () => {
+	const base = { id: "el-1", label: "button：登录", tool: "mcp__hostpc__click", args: { element_token: "snap1:1" }, semantic: { role: "button", label: "登录", value: "", actions: ["press"] } };
+	assert.equal(fc.resolveFreshCandidate(base, { elements: [] }).ok, false);
+	const notFound = fc.resolveFreshCandidate(base, { elements: [{ role: "button", label: "取消", value: "", element_token: "s:2" }] });
+	assert.deepEqual(notFound, { ok: false, reason: "not_found" });
+	const ambiguous = fc.resolveFreshCandidate(base, { elements: [{ role: "button", label: "登录", value: "", actions: ["press"], element_token: "s:1" }, { role: "button", label: "登录", value: "", actions: ["press"], element_token: "s:2" }] });
+	assert.deepEqual(ambiguous, { ok: false, reason: "ambiguous" });
+	const valueChanged = fc.resolveFreshCandidate(base, { elements: [{ role: "button", label: "登录", value: "忙", actions: ["press"], element_token: "s:1" }] });
+	assert.deepEqual(valueChanged, { ok: false, reason: "changed" });
+	const actionsChanged = fc.resolveFreshCandidate(base, { elements: [{ role: "button", label: "登录", value: "", actions: ["press", "show_menu"], element_token: "s:1" }] });
+	assert.deepEqual(actionsChanged, { ok: false, reason: "changed" });
+	const noSemantic = fc.resolveFreshCandidate({ id: "x", label: "x", tool: "click", args: {} }, { elements: [] });
+	assert.deepEqual(noSemantic, { ok: false, reason: "no_semantic" });
+});
+
+test("G3 核验：无 expected → unknown；不把执行成功当成功", () => {
+	assert.equal(fc.verifyExpectation(undefined, { elements: [] }), "unknown");
+	assert.equal(fc.verifyExpectation({ role: "button" }, {}), "unknown");
+});
+
+test("G3 核验：confirmed / unsatisfied（存在、值、actions、不存在）", () => {
+	const state = { elements: [{ role: "button", label: "登录", value: "已登录", actions: ["press"] }] };
+	assert.equal(fc.verifyExpectation({ role: "button", label_contains: "登录", exists: true }, state), "confirmed");
+	assert.equal(fc.verifyExpectation({ role: "button", value_equals: "已登录" }, state), "confirmed");
+	assert.equal(fc.verifyExpectation({ role: "button", value_equals: "未登录" }, state), "unsatisfied");
+	assert.equal(fc.verifyExpectation({ role: "button", action_contains: "show_menu" }, state), "unsatisfied");
+	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: true }, state), "unsatisfied");
+	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: false }, state), "confirmed");
+});
+
+test("G4：systemone 不再读全局 env key，fail-closed；chat 仍可构建", async () => {
+	const { buildChooser } = await import("../src/fast-computer/tool.ts");
+	const oldA = process.env.TYPESAFE_API_KEY;
+	const oldB = process.env.OPENROUTER_API_KEY;
+	process.env.TYPESAFE_API_KEY = "should-not-be-used";
+	process.env.OPENROUTER_API_KEY = "should-not-be-used";
+	try {
+		assert.equal(buildChooser(settings({ kind: "systemone", baseUrl: "https://evil.example", model: "jev-latest" })), null);
+		assert.ok(buildChooser(settings({ kind: "chat", provider: "openai", id: "gpt-x" })));
+		assert.equal(buildChooser(settings({ kind: "chat", provider: "", id: "" })), null);
+	} finally {
+		if (oldA === undefined) delete process.env.TYPESAFE_API_KEY;
+		else process.env.TYPESAFE_API_KEY = oldA;
+		if (oldB === undefined) delete process.env.OPENROUTER_API_KEY;
+		else process.env.OPENROUTER_API_KEY = oldB;
+	}
+});

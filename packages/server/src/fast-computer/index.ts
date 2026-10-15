@@ -7,9 +7,9 @@
 import { getSetting, setSetting } from "../db.ts";
 import { INPUT_TOOLS } from "@pi-assistant/ext-computer";
 import { MAX_FAST_CANDIDATES } from "./choosers.ts";
-import type { FastActionCandidate, FastActionChooser, FastChoiceResult, FastUsage } from "./types.ts";
+import type { FastActionCandidate, FastActionChooser, FastChoiceResult, FastSemanticTarget, FastUsage } from "./types.ts";
 
-export type { FastActionCandidate, FastActionChooser, FastChoiceRequest, FastChoiceResult, FastUsage } from "./types.ts";
+export type { FastActionCandidate, FastActionChooser, FastChoiceRequest, FastChoiceResult, FastSemanticTarget, FastUsage } from "./types.ts";
 export { MAX_FAST_CANDIDATES, createChatChooser, createMockChooser, createSystemOneChooser, parseChatChoice, parseSystemOneChoice } from "./choosers.ts";
 
 // ---------------------------------------------------------------- 设置
@@ -202,4 +202,77 @@ const usageModel = (s: FastComputerSettings, r: { model?: string }) => (s.kind =
 /** 校验通过但还没执行的候选，供工具层把 id 映射回预构建动作（复用 capture 校验）。 */
 export function resolveCandidate(captureId: string, candidateId: string): FastActionCandidate | undefined {
 	return captures.get(captureId)?.candidates.get(candidateId);
+}
+
+// ---------------------------------------------------------------- 执行前新鲜度校验（G2）
+
+/** 窗口状态里的一行元素（只取校验需要的字段）。 */
+interface StateElement extends FastSemanticTarget {
+	element_token?: string;
+}
+
+const norm = (v: unknown) => (v === undefined || v === null ? "" : String(v));
+const sameActions = (a: string[] | undefined, b: string[] | undefined) => [...(a ?? [])].sort().join("\u0000") === [...(b ?? [])].sort().join("\u0000");
+
+export type FreshCandidateResult = { ok: true; candidate: FastActionCandidate } | { ok: false; reason: "no_semantic" | "not_found" | "ambiguous" | "changed" };
+
+/**
+ * 用「重新读取的同窗口状态」校验候选目标，并用新的 element_token 重构动作。
+ *
+ * 不变量：
+ *  - 只按语义（role + label）匹配，且要求**唯一**命中；命中 0 个 → not_found，多个 → ambiguous；
+ *  - 命中后要求 value / actions 与收集时一致，变了 → changed；
+ *  - 命中元素必须有 element_token，否则无法派发；
+ *  - 绝不使用旧的 element_token（每次都填新快照的 token）。
+ */
+export function resolveFreshCandidate(candidate: FastActionCandidate, structured: unknown): FreshCandidateResult {
+	const sem = candidate.semantic;
+	if (!sem || (!sem.role && !sem.label)) return { ok: false, reason: "no_semantic" };
+	const elements = (structured as { elements?: StateElement[] } | null)?.elements;
+	if (!Array.isArray(elements)) return { ok: false, reason: "not_found" };
+	const matches = elements.filter((e) => norm(e.role) === norm(sem.role) && norm(e.label) === norm(sem.label));
+	if (matches.length === 0) return { ok: false, reason: "not_found" };
+	if (matches.length > 1) return { ok: false, reason: "ambiguous" };
+	const hit = matches[0];
+	if (!hit.element_token) return { ok: false, reason: "changed" };
+	if (norm(hit.value) !== norm(sem.value) || !sameActions(hit.actions, sem.actions)) return { ok: false, reason: "changed" };
+	return { ok: true, candidate: { ...candidate, args: { ...candidate.args, element_token: hit.element_token } } };
+}
+
+// ---------------------------------------------------------------- 执行后独立核验（G3）
+
+/** 主模型给的可验证后置条件（只允许窗口状态里能读到的字段，不接受任意表达式）。 */
+export interface FastExpectation {
+	role?: string;
+	label_contains?: string;
+	value_equals?: string;
+	action_contains?: string;
+	/** false 表示要求「匹配到的元素不存在」 */
+	exists?: boolean;
+}
+
+/** 执行后核验结论：满足 / 不满足 / 无法判定（无 expected 或缺状态一律 unknown，绝不把「执行返回成功」当任务成功）。 */
+export type VerifyOutcome = "confirmed" | "unsatisfied" | "unknown";
+
+/**
+ * 用执行后**重新读取**的窗口状态核验 expected 后置条件。只会返回 confirmed / unsatisfied / unknown；
+ * 没有 expected、读不到 elements、或没有可判定的匹配（例如多个匹配里没一个满足全部条件）都不臆断成功。
+ */
+export function verifyExpectation(expected: FastExpectation | undefined, structured: unknown): VerifyOutcome {
+	if (!expected) return "unknown";
+	const elements = (structured as { elements?: StateElement[] } | null)?.elements;
+	if (!Array.isArray(elements)) return "unknown";
+	const matched = elements.filter((e) => {
+		if (expected.role !== undefined && norm(e.role) !== expected.role) return false;
+		if (expected.label_contains !== undefined && !norm(e.label).includes(expected.label_contains)) return false;
+		return true;
+	});
+	if (expected.exists === false) return matched.length === 0 ? "confirmed" : "unsatisfied";
+	if (matched.length === 0) return "unsatisfied";
+	const satisfied = matched.some((e) => {
+		if (expected.value_equals !== undefined && norm(e.value) !== expected.value_equals) return false;
+		if (expected.action_contains !== undefined && !(e.actions ?? []).includes(expected.action_contains)) return false;
+		return true;
+	});
+	return satisfied ? "confirmed" : "unsatisfied";
 }

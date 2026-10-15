@@ -10,6 +10,17 @@
  *  - abstain / reobserve / error / 超时 / 低可信 不派发任何动作；高分不等于授权。
  */
 
+/**
+ * 候选目标在窗口状态里的语义身份：用于执行前「独立重读同窗口」校验
+ * （同 session 同窗口重取，要求语义目标唯一且 role / value / actions 不变，再用新 element_token 重构动作）。
+ */
+export interface FastSemanticTarget {
+	role?: string;
+	label?: string;
+	value?: string;
+	actions?: string[];
+}
+
 /** 一个预构建动作：由程序（或主模型作为规划者）给出，快速模型只看 id + label。 */
 export interface FastActionCandidate {
 	id: string;
@@ -17,6 +28,8 @@ export interface FastActionCandidate {
 	/** 真正执行用的电脑工具名 + 参数；快速模型看不到（只在程序侧） */
 	tool: string;
 	args: Record<string, unknown>;
+	/** 收集候选时的语义身份；执行前据此重读窗口状态校验目标未变（见 resolveFreshCandidate） */
+	semantic?: FastSemanticTarget;
 }
 
 /** 快速模型收到的请求（有界、无副作用） */

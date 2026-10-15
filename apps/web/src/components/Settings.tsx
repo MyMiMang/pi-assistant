@@ -153,39 +153,19 @@ function FastComputerSection() {
 			{d.enabled && (
 				<div className="space-y-3 border-l border-line pl-3">
 					<label className="flex items-center gap-2 text-sm">
-						类型
-						<select className="pa-input" aria-label="快速模型类型" value={d.kind} onChange={(e) => void save({ kind: e.target.value as FastComputerDto["kind"] })}>
-							<option value="chat">快速模型（OpenAI 兼容替代，非 Jev）</option>
-							<option value="systemone">Jev（原生 SystemOne）</option>
+						模型
+						<select className="pa-input" aria-label="快速操作模型" value={d.provider && d.id ? `${d.provider}/${d.id}` : ""} onChange={(e) => { const [provider, ...rest] = e.target.value.split("/"); void save({ kind: "chat", provider, id: rest.join("/") }); }}>
+							<option value="">未选择</option>
+							{models.map((m) => (
+								<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.providerName} · {m.name}</option>
+							))}
 						</select>
 					</label>
-					{d.kind === "chat" ? (
-						<label className="flex items-center gap-2 text-sm">
-							模型
-							<select className="pa-input" aria-label="快速操作模型" value={d.provider && d.id ? `${d.provider}/${d.id}` : ""} onChange={(e) => { const [provider, ...rest] = e.target.value.split("/"); void save({ provider, id: rest.join("/") }); }}>
-								<option value="">未选择</option>
-								{models.map((m) => (
-									<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.providerName} · {m.name}</option>
-								))}
-							</select>
-						</label>
-					) : (
-						<>
-							<label className="flex items-center gap-2 text-sm">
-								baseURL
-								<input className="pa-input" aria-label="SystemOne baseURL" defaultValue={d.baseUrl} onBlur={(e) => e.target.value !== d.baseUrl && void save({ baseUrl: e.target.value })} />
-							</label>
-							<label className="flex items-center gap-2 text-sm">
-								模型
-								<input className="pa-input" aria-label="SystemOne 模型" defaultValue={d.model} onBlur={(e) => e.target.value !== d.model && void save({ model: e.target.value })} />
-							</label>
-							<p className="text-xs text-mut2">用环境变量 TYPESAFE_API_KEY 或 OPENROUTER_API_KEY 提供 Key；没有 Key 时快速路径会自动回到主模型。</p>
-						</>
-					)}
-					<label className="flex items-center gap-2 text-sm text-mut">
-						原生概率阈值
-						<input className="pa-input !w-20" type="number" step="0.05" min="0" max="1" aria-label="快速模型阈值" defaultValue={d.threshold} onBlur={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n >= 0 && n <= 1 && n !== d.threshold) void save({ threshold: n }); }} />
-					</label>
+					<p className="text-xs text-mut2">
+						目前只支持已配置的 OpenAI 兼容快模型（替代，<span className="font-medium">不是 Jev</span>，拿不到原生校准概率）。
+						原生 Jev（SystemOne）渠道接入待完成，暂不可配置；未接入前该项 fail-closed 跳过，不会用全局环境变量 Key 去访问自定义地址。
+					</p>
+					{d.kind !== "chat" && <p className="text-xs text-mut2">当前保存的仍是未接入的原生 Jev 配置，快速路径会直接跳过；选择上面的快模型即可切回受支持的路径。</p>}
 					{err && <p className="text-xs text-red-500">{err}</p>}
 				</div>
 			)}
