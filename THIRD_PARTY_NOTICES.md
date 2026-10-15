@@ -62,6 +62,7 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 | [highlight.js](https://github.com/highlightjs/highlight.js) | 11.x | BSD-3-Clause |
 | [lucide-react](https://github.com/lucide-icons/lucide) | 1.55.0 | ISC |
 | [@noble/ed25519](https://github.com/paulmillr/noble-ed25519) | 3.2.0 | MIT |
+| [@lobehub/icons-static-svg](https://github.com/lobehub/lobe-icons)（设置 › 模型 里内置服务的品牌图标；只提取 `scripts/gen-provider-icons.mjs` 用到的图标，生成 `apps/web/src/components/provider-icons.ts`） | 1.95.1 | MIT |
 | [@novnc/novnc](https://github.com/novnc/noVNC) | 1.7.0 | MPL-2.0 |
 | [TypeScript](https://github.com/microsoft/TypeScript)（构建） | 5.9 / 7.0 | Apache-2.0 |
 

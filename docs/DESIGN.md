@@ -446,7 +446,7 @@ sequenceDiagram
 
 **首次运行向导**（Web UI）：欢迎 → 选择模型服务（搜索 43 个）→ 登录（API Key / 订阅）→ 选默认模型 + 测试连接 → 完成。之后在「设置 → 模型」管理：登录/退出、默认模型、测试。开发模式（`PIA_MOCK=1`）额外出现“Mock 模型（本地测试）”。
 
-**设置 › 模型 的排版**：顶部两张卡固定可见且不在任何折叠里——「默认使用」（模型 + 思考强度合一）与「识图模型」。「模型服务 / 渠道」是一个**大分类折叠**（展开箭头 + 图标 + 标题 + 服务数量徽标 + 已配置数，说明收在「?」里），**收起时里面整块不渲染**（添加渠道按钮、搜索框、内置服务、我的渠道全部隐藏），可以一键全部关上；展开后「内置服务」「我的渠道」两组各自是**带服务图标的卡片网格**（`grid-cols-1 sm:grid-cols-2`，390 单列），每张卡 = 服务图标 + 名称 + 状态徽章 + 模型数，**点卡片展开**（`sm:col-span-2`）看该服务支持的模型与登录 / 编辑配置。仓库里没有各服务的品牌 logo，服务图标用「名称首字母 + 按 provider.id 稳定取色」的字母头像做 fallback（`ProviderAvatar`，testid `provider-icon`），不联网下载、不伪造品牌图；多词取首尾词首字母（`Xiaomi Token Plan AMS/CN/SGP` → `XA/XC/XS`），中文名取首字 + 末尾字母数字（`渠道1…6` → `渠1…渠6`），保证不出现所有服务一个图标。通用折叠组件 `apps/web/src/components/ui.tsx` 的 `<Fold>`。
+**设置 › 模型 的排版**：顶部两张卡固定可见且不在任何折叠里——「默认使用」（模型 + 思考强度合一）与「识图模型」。「模型服务 / 渠道」是一个**大分类折叠**（展开箭头 + 图标 + 标题 + 服务数量徽标 + 已配置数，说明收在「?」里），**收起时里面整块不渲染**（添加渠道按钮、搜索框、内置服务、我的渠道全部隐藏），可以一键全部关上；展开后「内置服务」「我的渠道」两组各自是**带服务图标的卡片网格**（`grid-cols-1 sm:grid-cols-2`，390 单列），每张卡 = 服务图标 + 名称 + 状态徽章 + 模型数，**点卡片展开**（`sm:col-span-2`）看该服务支持的模型与登录 / 编辑配置。仓库里没有各服务的品牌 logo，服务图标：**内置服务用真实品牌 logo**——`apps/web/src/components/provider-icons.ts`，由 `scripts/gen-provider-icons.mjs` 从 `@lobehub/icons-static-svg`（MIT，见 THIRD_PARTY_NOTICES.md）只提取用到的图标生成，编译进网页、不联网下载；**自定义渠道和图标库未收录的品牌**（Radius、TypeSafe、Mock）用「名称首字母 + 按 provider.id 稳定取色」的字母头像 fallback（`ProviderAvatar`，testid `provider-icon`、`data-provider-icon-kind`），多词取首尾词首字母（`Xiaomi Token Plan AMS/CN/SGP` → `XA/XC/XS`），中文名取首字 + 末尾字母数字（`渠道1…6` → `渠1…渠6`），保证不出现所有服务一个图标；同一品牌的多个渠道共用一张 logo（OpenAI/OpenAI Codex、Moonshot AI/CN、Xiaomi 的 token plan 等）。通用折叠组件 `apps/web/src/components/ui.tsx` 的 `<Fold>`。
 
 #### 5.14.1 自定义模型服务（中转站 / 第三方 / 本地推理）——已实现
 

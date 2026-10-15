@@ -228,9 +228,13 @@ try {
 	const mineIcons = await mineGrid.getByTestId("provider-icon").allTextContents();
 	assert.equal(mineIcons.length, 6, `我的渠道应有 6 个图标：${mineIcons.length}`);
 	assert.equal(new Set(mineIcons).size, mineIcons.length, `6 个渠道图标必须互不相同：${JSON.stringify(mineIcons)}`);
-	const builtinIcons = await builtinGrid.getByTestId("provider-icon").allTextContents();
-	assert.ok(new Set(builtinIcons).size >= Math.floor(builtinIcons.length * 0.8), `内置服务图标大部分要互不相同：${builtinIcons.length} 个服务只有 ${new Set(builtinIcons).size} 种图标`);
-	assert.ok(builtinIcons.every((t) => t.trim().length > 0), "服务图标不能为空");
+	assert.ok(mineIcons.every((t) => t.trim().length > 0), "自定义渠道图标不能为空");
+	const builtinIcons = await builtinGrid.getByTestId("provider-icon").evaluateAll((els) => els.map((e) => ({ kind: e.getAttribute("data-provider-icon-kind"), html: e.innerHTML })));
+	const brandCount = builtinIcons.filter((i) => i.kind === "brand").length;
+	assert.ok(brandCount >= Math.floor(builtinIcons.length * 0.8), `内置服务大部分要有品牌图标：${builtinIcons.length} 个里只有 ${brandCount} 个有品牌图标`);
+	// 同一品牌的多个渠道（moonshotai/-cn、openai/codex、xiaomi 的几个 token plan…）共用一张 logo，所以只要求足够多不重复、不能所有服务一个样
+	assert.ok(new Set(builtinIcons.map((i) => i.html)).size >= Math.floor(builtinIcons.length * 0.6), `内置服务图标不能所有服务一个样：${builtinIcons.length} 个服务只有 ${new Set(builtinIcons.map((i) => i.html)).size} 种图标`);
+	assert.ok(builtinIcons.every((i) => i.html.trim().length > 0), "服务图标不能为空");
 	const target = providers[0];
 	assert.equal(await acc.getByTestId(`provider-toggle-${target.id}`).getAttribute("aria-expanded"), "false", "服务默认应收起");
 	assert.equal(await acc.getByTestId(`provider-models-${target.id}`).count(), 0);

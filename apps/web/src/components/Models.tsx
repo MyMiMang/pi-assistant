@@ -3,6 +3,7 @@
  * 全部数据来自服务端的 Pi provider 目录，Pi 新增 provider/登录方式时这里自动支持。
  */
 import { ModelOptions, modelLabel } from "./ModelOptions";
+import { PROVIDER_ICONS } from "./provider-icons";
 import { Brain, CheckCircle2, ChevronDown, Copy, ExternalLink, KeyRound, Loader2, LogOut, Pencil, Plus, Search, Sparkles, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ModelPickerButton, THINKING_LABEL, useConfiguredModels } from "./ModelPicker";
@@ -42,8 +43,9 @@ export function ProviderList({ providers, onPick, selected }: { providers: Provi
 						onClick={() => onPick(p)}
 						className={cx("rounded-xl border p-3 text-left transition hover:border-accent", selected === p.id ? "border-accent bg-accent-soft" : "border-line")}
 					>
-						<div className="flex items-center gap-2">
-							<span className="truncate text-sm font-medium">{p.id === "mock" ? "Mock 模型（本地测试）" : p.name}</span>
+						<div className="flex items-center gap-2.5">
+							<ProviderAvatar provider={p} />
+							<span className="min-w-0 flex-1 truncate text-sm font-medium">{providerName(p)}</span>
 							{p.configured && <CheckCircle2 size={14} className="shrink-0 text-emerald-500" />}
 						</div>
 						<div className="mt-1.5 flex flex-wrap gap-1">
@@ -63,7 +65,7 @@ export function ProviderList({ providers, onPick, selected }: { providers: Provi
 /** 服务显示名：Mock 用固定中文名，其余用 provider 目录 / 用户起的名字。 */
 const providerName = (p: Provider) => (p.id === "mock" ? "Mock 模型（本地测试）" : p.name);
 
-/** 服务图标配色：没有品牌图可用，用「首字母 + 稳定配色」的字母头像做清楚 fallback，每个服务靠字母 + 颜色区分。 */
+/** 字母头像配色：内置服务用品牌 logo；自定义渠道、以及图标库里没有的品牌用「首字母 + 稳定配色」的字母头像兜底。 */
 const AVATAR_TONES = [
 	"bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
 	"bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
@@ -90,12 +92,27 @@ function providerInitials(name: string) {
 	const last = chars[chars.length - 1] ?? "";
 	return (first + (/[A-Za-z0-9]/.test(last) ? last : "")).toUpperCase();
 }
+/** 服务图标：内置服务用品牌 logo（来自 @lobehub/icons-static-svg，MIT，见 provider-icons.ts）；
+ *  自定义渠道和未收录品牌用「首字母 + 稳定配色」的字母头像，每个服务靠字母 + 颜色区分。 */
 function ProviderAvatar({ provider }: { provider: Provider }) {
+	const brand = provider.custom ? undefined : PROVIDER_ICONS[provider.id];
+	if (brand) {
+		return (
+			<span
+				aria-hidden
+				className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-white text-zinc-700 [&>svg]:size-5 dark:bg-zinc-800 dark:text-zinc-200"
+				data-testid="provider-icon"
+				data-provider-icon={provider.id}
+				data-provider-icon-kind="brand"
+				dangerouslySetInnerHTML={{ __html: brand }}
+			/>
+		);
+	}
 	let h = 0;
 	for (const c of provider.id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
 	const tone = AVATAR_TONES[h % AVATAR_TONES.length];
 	return (
-		<span aria-hidden className={cx("flex size-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold", tone)} data-testid="provider-icon" data-provider-icon={provider.id}>
+		<span aria-hidden className={cx("flex size-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold", tone)} data-testid="provider-icon" data-provider-icon={provider.id} data-provider-icon-kind="letter">
 			{providerInitials(providerName(provider))}
 		</span>
 	);

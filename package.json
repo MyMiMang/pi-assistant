@@ -21,5 +21,8 @@
     "check:pi": "node scripts/check-pi.mjs",
     "prepare": "git config core.hooksPath .githooks || true",
     "scan:secrets": "gitleaks git --redact --no-banner . && gitleaks dir --redact --no-banner --max-target-megabytes 5 apps packages scripts docs e2e"
+  },
+  "devDependencies": {
+    "@lobehub/icons-static-svg": "^1.95.1"
   }
 }
