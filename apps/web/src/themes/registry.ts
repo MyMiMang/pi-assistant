@@ -75,9 +75,8 @@ export const DEFAULT_THEME = "noir";
 export const REMOVED_SKINS: Record<string, string> = { linear: "noir" };
 
 const registry = new Map(THEMES.map((t) => [t.id, t]));
-/** 预留：运行时注册额外主题（例如以后从插件/技能加载） */
+/** 预留：运行时注册额外主题（例如从已保存的 DIY manifest 注册）。不写入 THEMES（THEMES 始终是内置列表）。 */
 export function registerTheme(def: ThemeDef) {
-	if (!registry.has(def.id)) THEMES.push(def);
 	registry.set(def.id, def);
 }
 /** 移除运行时注册的主题（仅用于取消未保存的临时预览；内置主题不会被移除）。 */

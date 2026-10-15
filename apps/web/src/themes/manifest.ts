@@ -5,7 +5,7 @@
  * 内置中性默认。**不做 token 继承**（`basedOn` 仅作来源标注），避免「内置主题 token 在 CSS 里、引擎读不到」
  * 造成静默缺变量白屏。装饰只走 enum → 内置纯 CSS（渐变），不引入 url() / SVG / 远程资源。
  */
-import { OPTIONAL_FONT_TOKENS, OPTIONAL_SIZE_TOKENS, REQUIRED_COLOR_TOKENS, type ThemeDecor, type ThemeManifestV1 } from "@pi-assistant/shared";
+import { OPTIONAL_COLOR_TOKENS, OPTIONAL_FONT_TOKENS, OPTIONAL_SIZE_TOKENS, REQUIRED_COLOR_TOKENS, validateThemeManifest, type ThemeDecor, type ThemeManifestV1 } from "@pi-assistant/shared";
 import type { Mode, ThemeDef } from "./registry.ts";
 
 /** 自定义主题在 DOM / 注册表里的 skin id 前缀（与 manifest.id 一一对应，避免撞内置 id）。 */
@@ -125,4 +125,42 @@ export function themeDefFromManifest(manifest: ThemeManifestV1): ThemeDef {
 		accents,
 		chrome: { light: l["--bg"] ?? "#f4f4f6", dark: d["--bg"] ?? "#09090b" },
 	};
+}
+
+/**
+ * 「内置主题另存为 DIY 主题」：读取内置主题在两个模式下的真实 CSS 变量（getComputedStyle），
+ * 转成一份合法 manifest。内置的渐变类 token（如 glass / warm 的 `--user-bg`）不在 v1 白名单内，
+ * 这里退化成 `--acc`（保证校验通过、视觉接近），读到的值若整体校验不过就返回 null（不硬塞坏数据）。
+ */
+export function builtinManifestFromComputed(builtinId: string, name: string): ThemeManifestV1 | null {
+	if (typeof document === "undefined") return null;
+	const el = document.documentElement;
+	const prevSkin = el.dataset.skin;
+	const prevMode = el.dataset.mode;
+	const readMode = (mode: Mode): Record<string, string> => {
+		el.dataset.skin = builtinId;
+		el.dataset.mode = mode;
+		const cs = getComputedStyle(el);
+		const out: Record<string, string> = {};
+		for (const t of [...REQUIRED_COLOR_TOKENS, ...OPTIONAL_COLOR_TOKENS, ...OPTIONAL_SIZE_TOKENS, ...OPTIONAL_FONT_TOKENS]) {
+			const v = cs.getPropertyValue(t).trim();
+			if (v) out[t] = v;
+		}
+		return out;
+	};
+	try {
+		const light = readMode("light");
+		const dark = readMode("dark");
+		// 渐变（不在白名单）→ 用强调色兜底，避免整体校验失败
+		for (const mode of [light, dark]) if (/gradient\(/i.test(mode["--user-bg"] ?? "")) mode["--user-bg"] = mode["--acc"];
+		const now = new Date().toISOString();
+		const c = globalThis.crypto as Crypto | undefined;
+		const id = c?.randomUUID ? c.randomUUID() : `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+		const candidate = { manifestVersion: 1, id, name, basedOn: builtinId, modes: { light, dark }, createdAt: now, updatedAt: now };
+		const r = validateThemeManifest(candidate);
+		return r.ok ? r.manifest : null;
+	} finally {
+		if (prevSkin) el.dataset.skin = prevSkin;
+		if (prevMode) el.dataset.mode = prevMode;
+	}
 }
