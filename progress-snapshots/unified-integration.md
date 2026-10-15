@@ -27,14 +27,15 @@
 - **下载按钮不重复开预览**：卡片主体（预览）与下载图标是并列按钮，下载 `stopPropagation`；`file-preview` 工具栏下载独立。
 - **手机 viewport / 弹窗栈**：`mobile-viewport-ui` 回归通过；`Modal` 栈 Esc 只关最上层（`modalStack` 末位匹配），`native-dialog-ui` 验证 Esc 不关底层。
 - **Laya 清单无 no-op / 无错 revision**：实跑只读 HF 元数据的 `scripts/laya-checkpoint-digests.ts`，两个 checkpoint `@e4e9ddf…` / `@1a793eb…` 各 7 文件与公开 HF 元数据一致（未下载 GB 权重）。修掉 `checkpoint-files.ts` 里 `.mjs` 脚本名笔误。
-- **benchmark 一键真实环境（第 5 合并）**：`benchmark-window.ts` 只凭 `tools/list` 报 `preparable`（GET 不开窗，POST 才建），隔离浏览器走 `browser_prepare{allow_launch,profile.isolated_new}` → `browser_navigate`(URL 带 nonce) → `get_browser_state`（要求 URL 含 nonce + 有可 pin 快照 id，`binding_quality`/`mutation_allowed` 只在显式不符时拦，`isolated_owned` 缺省不拦），再 `list_windows`+`get_window_state` pin 原生 pid/window_id；结束只 `kill_app` 自有 pid。复核：未用幻觉字段硬判导致永久 block；`browser_prepare`/`get_browser_state` 真实字段未与 cua-driver 对过，形状不符 fail-closed，设计文档明确写「未真机、不冒充可用」。
+- **benchmark 一键真实环境（第 5 合并）**：`benchmark-window.ts` 只凭 `tools/list` 报 `preparable`（GET 不开窗，POST 才建），隔离浏览器走 `browser_prepare{allow_launch,profile.isolated_new}` → `browser_navigate`(URL 带 nonce) → `get_browser_state`（要求 URL 含 nonce + 有可 pin 快照 id），结束只 `kill_app` 自有 pid。
+- **真实驱动字段校正（本轮复核 P0）**：对照本机 cua-driver 0.35.4 二进制内嵌文档——隔离 `browser_prepare` 只返回 `prepared_pid`（**不是 `target_id`**），`binding_quality`/`mutation_allowed`/`target_id`/`tab_id`/`snapshot_id` 都在 `get_browser_state` 绑定后；`isolated_owned` 根本不存在（原校验是空操作）。原实现把 `target_id` 挂在 prepare 上 → 隔离路径会永远 fail-closed。已改为官方真实序列（prepare→list_windows(pid)→bind(pid,window_id)→navigate(target_id)→复核 URL+快照），严格要求 `binding_quality=exact`+`mutation_allowed=true`，删掉 `isolated_owned`。改测试为真实序列（9/9）。
 - **设置›模型界面实拍（回应用户）**：新增一次性纯前端 fixture 脚本 `e2e/model-services-shots.mjs`（静态 dist + 拦 `/api`，Laya 未安装态，弹窗内标注「测试示例数据」），产出 5 张（桌面顶/底、添加服务弹窗、390 顶/底）到 `evidence/model-services-current-<ts>-<commit>/` 并记 commit + dist 摘要。旧 `screenshots/1-services-desktop.png`（v1 原型）不复用。
 - **benchmark provenance 不冒充真实 CUA**：`provenance` 三态（`cua` / `fixture` / `unknown`），真实运行时 driver 才返回 `cua`，且 `start()` 先过 capability fail-closed；UI 按每次结果标注，e2e 覆盖 fixture 文案。
 
 ### 本轮实跑
 
 - 两端 `tsc --noEmit` exit 0；`vite build` 通过。
-- 受影响服务端单测 20 文件 **162/162**；合并 benchmark-environment-bootstrap 后再跑 `fast-computer*`+`host-control`+`classifier` **96/96**；全程 Mock + 内存凭据 + 临时数据目录，未碰系统钥匙串。
+- 受影响服务端单测 20 文件 **162/162**；合并 benchmark-environment-bootstrap 后再跑 `fast-computer*`+`host-control`+`classifier` **96/96**，字段校正后再跑 **102/102**；全程 Mock + 内存凭据 + 临时数据目录，未碰系统钥匙串。
 - 纯前端 e2e：`file-preview` 37/37、`model-services-ui`（真实 CRUD）、`model-ui`、`model-capabilities`、`custom-provider-delete`、`channel-delete`、`native-dialog-ui`、`mobile-viewport-ui`、`conversation-restore` 10/10、`fast-computer-ui`、`image-viewer` 全部通过。
 - Laya 清单与 HF 元数据一致（只读元数据 + 小文件）。
 

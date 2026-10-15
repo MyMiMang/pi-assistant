@@ -7,11 +7,12 @@
  *    `click` / `scroll` / `launch_app`；所有动作仍走受限权限桥（暂停 / 档位）。
  *  - 测试：注入假 invoke，模拟真 driver 的调用序列（含窗口 token 变化、URL nonce、隔离浏览器绑定）。
  *
- * 窗口来源（2026-10-22）：
+ * 窗口来源（2026-10-22，字段以官方 cua-driver 0.35.4 为准）：
  *  - hostpc 用**驱动自有隔离浏览器**（`browser_prepare {allow_launch:true, profile:{mode:"isolated_new"}}`），
- *    不用用户日常 Chrome / launch_app；随后 `browser_navigate` 打开随机 nonce 的 fixture，`get_browser_state`
- *    校验 `binding_quality=exact` + URL 含本次 fixtureId+nonce，再用 `list_windows` + `get_window_state` pin 原生
- *    pid/window_id + 快照 id，供统一 trial runner 使用。**关闭只 kill 驱动自有的那个浏览器进程**。
+ *    不用用户日常 Chrome / launch_app。官方隔离启动**只返回 `prepared_pid`**，因此正确序列是：
+ *    prepare(prepared_pid) → list_windows(pid) → get_browser_state(pid, window_id) 绑定拿 target_id/tab_id
+ *    + 精确绑定证据 → browser_navigate(target_id, url 带 nonce) → get_browser_state(target_id, tab_id) 复核 URL + 快照 id。
+ *    （旧实现把 target_id 挂在 prepare 上，会让隔离路径永远 fail-closed。）
  *  - computer（助理电脑 VM）天然隔离，仍用 cua 原生 `launch_app({urls})` 打开 fixture 窗口（配合宿主网关）。
  *
  * **未验证声明**：本文件是真实 driver 路径的源码实现，但当前开发环境没有开启 hostpc、也没有跑助理电脑 VM，
@@ -20,7 +21,7 @@
 import type { BenchmarkDriver, FixtureWindowHandle } from "./benchmark-host.ts";
 import type { ObservedWindow } from "./benchmark.ts";
 import { benchmarkToolGuard, type BenchmarkGuardInput } from "./benchmark-guard.ts";
-import { fixtureUrlMatches, parseBrowserBinding, parsePreparedBrowserTarget, type FixtureWindowKind } from "./benchmark-window.ts";
+import { fixtureUrlMatches, parseBrowserBinding, parsePreparedBrowser, pickWindowForPid, type FixtureWindowKind } from "./benchmark-window.ts";
 
 export interface InvokeResult {
 	isError: boolean;
@@ -99,37 +100,40 @@ export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): Benchmar
 
 	const openDriverBrowser = async (prefix: "hostpc" | "computer", session: string | undefined, absolute: string, fixtureId: string, nonce: string) => {
 		const s = session ? { session } : {};
-		// 1) 拉起驱动自有的隔离浏览器（官方 attested 路径；不用用户日常 profile）。
+		// 1) 拉起驱动自有的隔离浏览器（官方 attested 路径；不用用户日常 profile）。隔离启动只保证返回 `prepared_pid`。
 		const prep = await call(prefix, "browser_prepare", { allow_launch: true, profile: { mode: "isolated_new" }, ...s });
 		if (prep.isError) throw new Error(`打开驱动自有隔离浏览器失败：${prep.contentText ?? "未知错误"}`);
-		const target = parsePreparedBrowserTarget(prep.structuredContent);
-		if (!target) throw new Error("驱动没有返回可 pin 的隔离浏览器 target（fail-closed）");
-		// 2) 在隔离浏览器里打开本次随机 nonce 的 fixture。
-		const navArgs: Record<string, unknown> = { target_id: target.targetId, url: absolute, ...s };
-		if (target.tabId) navArgs.tab_id = target.tabId;
+		const prepared = parsePreparedBrowser(prep.structuredContent);
+		if (!prepared) throw new Error("驱动没有返回 prepared_pid，无法证明是本次自有的隔离浏览器（fail-closed）");
+		// 2) 列该自有进程的窗口，pin 原生 pid/window_id（隔离浏览器刚启动一般是唯一 / 空白窗口）。
+		const listed = await call(prefix, "list_windows", { pid: prepared.preparedPid, ...s });
+		const windows = (asObj(listed.structuredContent)?.windows ?? asObj(listed.structuredContent)?.result ?? []) as unknown;
+		const win = pickWindowForPid(windows, prepared.preparedPid);
+		if (!win) throw new Error("找不到驱动自有隔离浏览器的窗口（fail-closed）");
+		// 3) bind：拿 target_id/tab_id + 精确绑定证据（此时 URL 还是空白，不能用 fixture nonce 校验）。
+		const bind = await call(prefix, "get_browser_state", { pid: win.pid, window_id: win.windowId, snapshot_format: "semantic_v2", ...s });
+		if (bind.isError) throw new Error(`绑定隔离浏览器失败：${bind.contentText ?? "未知错误"}`);
+		const binding = parseBrowserBinding(bind.structuredContent);
+		if (!binding.ok) throw new Error(binding.reason ?? "隔离浏览器绑定校验失败（fail-closed）");
+		if (!binding.targetId) throw new Error("隔离浏览器绑定没有 target_id，无法导航（fail-closed）");
+		// 4) 在隔离浏览器里打开本次随机 nonce 的 fixture。
+		const navArgs: Record<string, unknown> = { target_id: binding.targetId, url: absolute, ...s };
+		if (binding.tabId) navArgs.tab_id = binding.tabId;
 		const nav = await call(prefix, "browser_navigate", navArgs);
 		if (nav.isError) throw new Error(`在隔离浏览器里打开 fixture 失败：${nav.contentText ?? "未知错误"}`);
-		// 3) 取精确绑定 + 校验 URL 是本次 fixture；owner pid 用于结束后只关自有浏览器。
-		const stateArgs: Record<string, unknown> = { target_id: target.targetId, snapshot_format: "semantic_v2", ...s };
-		if (target.tabId) stateArgs.tab_id = target.tabId;
+		// 5) 复核：URL 必须带本次 fixtureId+nonce，并重新拿可 pin 的快照 id。
+		const stateArgs: Record<string, unknown> = { target_id: binding.targetId, snapshot_format: "semantic_v2", ...s };
+		if (binding.tabId) stateArgs.tab_id = binding.tabId;
 		const state = await call(prefix, "get_browser_state", stateArgs);
-		if (state.isError) throw new Error(`读隔离浏览器状态失败：${state.contentText ?? "未知错误"}`);
-		const binding = parseBrowserBinding(state.structuredContent, { fixtureId, nonce });
-		if (!binding.ok) throw new Error(binding.reason ?? "隔离浏览器身份校验失败（fail-closed）");
-		// 4) 隔离浏览器也是真实桌面窗口：用 list_windows + get_window_state pin 原生 pid/window_id，供统一 runner 使用。
-		const listed = await call(prefix, "list_windows", { ...s });
-		const windows = (asObj(listed.structuredContent)?.windows ?? asObj(listed.structuredContent)?.result ?? []) as unknown;
-		const match = pickFixtureWindow(windows, fixtureId, nonce);
-		if (!match) throw new Error("找不到本次隔离浏览器窗口（fail-closed）");
-		const win = await call(prefix, "get_window_state", { pid: match.pid, window_id: match.windowId, tree_format: "elements", ...s });
-		const token = asObj(win.structuredContent)?.snapshot_id ?? binding.token;
-		if (typeof token !== "string" || !token) throw new Error("读不到窗口快照 id（fail-closed）");
-		const ownerPid = binding.ownerPid ?? target.ownerPid;
-		const handle: FixtureWindowHandle = { prefix, session, pid: match.pid, windowId: match.windowId, windowToken: token, fixtureId, url: absolute };
+		if (state.isError) throw new Error(`复核隔离浏览器状态失败：${state.contentText ?? "未知错误"}`);
+		const verified = parseBrowserBinding(state.structuredContent, { fixtureId, nonce });
+		if (!verified.ok) throw new Error(verified.reason ?? "隔离浏览器 fixture 校验失败（fail-closed）");
+		const ownerPid = verified.ownerPid ?? binding.ownerPid ?? prepared.preparedPid;
+		const handle: FixtureWindowHandle = { prefix, session, pid: win.pid, windowId: win.windowId, windowToken: verified.token!, fixtureId, url: absolute };
 		return {
 			handle,
 			close: async () => {
-				// 只关**驱动自有**的隔离浏览器进程；拿不到自有 pid 就不关（绝不 kill 用户浏览器 / 别的窗口）。
+				// 只关**驱动自有**的隔离浏览器进程（prepared_pid 由本次 browser_prepare 拉起）；拿不到就不关。
 				if (ownerPid === undefined) return;
 				if (opts.closeOwn) {
 					await opts.closeOwn(handle).catch(() => {});

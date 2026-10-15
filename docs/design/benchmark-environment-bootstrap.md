@@ -31,15 +31,20 @@
 
 ### 2. 专用 fixture 窗口生命周期（`benchmark-driver.ts`）
 
-`driver-isolated-browser` 路径（hostpc / 具备能力的 computer）：
+`driver-isolated-browser` 路径（hostpc / 具备能力的 computer，字段以官方 cua-driver 0.35.4 为准）：
 
 1. `browser_prepare { allow_launch: true, profile: { mode: "isolated_new" } }` —— 官方 attested 的驱动自有隔离 profile，
-   不接受任意 argv，模型 / 用户都不能手写 profile 去破权限；
-2. `browser_navigate { target_id, tab_id?, url }` —— URL 带本次随机 `fixtureId` + `nonce`；
-3. `get_browser_state { target_id, tab_id?, snapshot_format: "semantic_v2" }` —— 要求 `binding_quality=exact`、
-   `mutation_allowed` 不是 false、URL 同时含 `fixtureId` + `nonce`、`isolated_owned` 不为 false；
-4. `list_windows` + `get_window_state` pin 原生 `pid` / `window_id` + 快照 id；
-5. 结束后**只 kill 驱动自有浏览器的 pid**（`kill_app`）；拿不到自有 pid 就不关，绝不 kill 用户浏览器 / 别的窗口。
+   不接受任意 argv，模型 / 用户都不能手写 profile 去破权限；**隔离启动只返回 `prepared_pid`，不返回 `target_id`**；
+2. `list_windows { pid: prepared_pid }` —— 列该自有进程的窗口，pin 原生 `window_id`；
+3. `get_browser_state { pid, window_id, snapshot_format: "semantic_v2" }` —— 绑定并拿 `target_id` / `tab_id`（此时 URL 还是空白）；
+   要求 `binding_quality:"exact"` + `mutation_allowed:true`，字段缺失一律 fail-closed；
+4. `browser_navigate { target_id, tab_id?, url }` —— URL 带本次随机 `fixtureId` + `nonce`；
+5. `get_browser_state { target_id, tab_id?, snapshot_format: "semantic_v2" }` —— 复核 URL 同时含 `fixtureId` + `nonce`，并取回 `snapshot_id`；
+6. 结束后**只 kill 驱动自有浏览器的 pid**（`kill_app`）；拿不到自有 pid 就不关，绝不 kill 用户浏览器 / 别的窗口。
+
+> 修正（2026-10-22 复核）：上一版把 `target_id` 当成 `browser_prepare` 的返回字段，并校验 `isolated_owned`。
+> 实际 cua-driver 0.35.4 的隔离启动只给 `prepared_pid`，`target_id` / `binding_quality` / `snapshot_id` 都来自
+> `get_browser_state` 绑定；二进制里**不存在 `isolated_owned`**（原校验是空操作），已删除。若不修，隔离路径会永远 fail-closed。
 
 `sandbox-app` 路径（助理电脑退回方案）：`launch_app({urls})` 打开 fixture 窗口，`list_windows` 唯一命中
 `fixtureId`+`nonce` 的窗口，再 `get_window_state` pin 身份。
@@ -74,9 +79,9 @@ POST /api/fast-computer/benchmark            → 用户点了「开始实际操�
 
 ## 未真机边界（重要）
 
-- **没有在真实桌面上验证过**：本环境未开启 hostpc、未跑助理电脑 VM，`browser_prepare` / `get_browser_state` 的
-  真实返回字段（`target_id` / `tab_id` / `owner_pid` / `isolated_owned`）**未与真实 cua-driver 对过**；
-  实现按官方工具说明解析，形状不符一律 fail-closed。
+- **未在真实桌面上验证**：本环境未开 hostpc、未跑助理电脑 VM；字段名已对照本机 cua-driver 0.35.4 二进制内嵌文档确认
+  （`browser_prepare` 隔离启动返回 `prepared_pid`；`get_browser_state` 绑定返回 `binding_quality` / `mutation_allowed` / `target_id` / `tab_id` / `snapshot_id`；
+  `isolated_owned` 不存在），但**真实调用序列未跑通**（需 hostpc + 真浏览器）。形状不符一律 fail-closed。
 - **别名可达性未验证**：`host.docker.internal` / `host.lima.internal` 能否从 guest 浏览器的网络命名空间访问到
   绑定 127.0.0.1 的 Pi fixture 服务，**未在真实 VM 上实测**；拿不到就是 `null`（blocked），不假装可用。
 - 单测里的假 driver **不代表 native 支持**；本文件不声称已支持，只描述实现与边界。

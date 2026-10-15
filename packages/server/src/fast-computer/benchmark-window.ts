@@ -9,8 +9,11 @@
  *
  * 这个模块不认识 MCP / CUA，只吃工具名清单与驱动返回的 JSON，因此能在单测里完整验证：
  *  - `planFixtureWindow`：只凭 tools/list 判断这台电脑有没有「驱动自有、与日常环境隔离」的窗口来源；
- *  - `parsePreparedBrowserTarget` / `parseBrowserBinding`：把 `browser_prepare` / `get_browser_state` 的返回收紧成
- *    可 pin 的精确身份（target_id / tab_id / owner_pid），任何缺失都 fail-closed；
+ *  - `parsePreparedBrowser` / `parseBrowserBinding`：把 `browser_prepare` / `get_browser_state` 的返回收紧成
+ *    可 pin 的精确身份；任何缺失都 fail-closed。
+ *    **字段以官方 cua-driver 为准**（0.35.4 实测）：隔离启动 `browser_prepare{allow_launch,profile.isolated_new}`
+ *    只保证返回 `prepared_pid`（不是 `target_id`）；`target_id` / `tab_id` / `binding_quality` / `mutation_allowed` /
+ *    `snapshot_id` 都要在 `get_browser_state` **绑定之后**才有。旧实现把 `target_id` 挂在 prepare 上会导致隔离路径永远 blocked。
  *  - `fixtureUrlMatches`：fixture URL 必须同时带本次 fixtureId + nonce，防串扰。
  */
 
@@ -65,15 +68,17 @@ export function planFixtureWindow(input: FixtureWindowPlanInput): FixtureWindowP
 	return { ok: true, kind: "sandbox-app" };
 }
 
-/** 从 `browser_prepare` 的返回里取出可 pin 的隔离浏览器 target；缺失 / 形状不符 → null（fail-closed）。 */
-export function parsePreparedBrowserTarget(structured: unknown): { targetId: string; tabId?: string; ownerPid?: number } | null {
+/**
+ * 从 `browser_prepare` 的返回里取出驱动自有隔离浏览器的进程 pid。
+ * 官方 isolated_new / isolated_named 只保证返回 `prepared_pid`（`target_id` / `tab_id` 要 bind 之后才有）；
+ * 拿不到 pid 就无法证明「这是本次驱动拉起的自有进程」→ null（fail-closed）。
+ */
+export function parsePreparedBrowser(structured: unknown): { preparedPid: number } | null {
 	const s = asObj(structured);
 	if (!s) return null;
-	const targetId = firstString(s.target_id, s.targetId, asObj(s.target)?.id);
-	if (!targetId) return null;
-	const tabId = firstString(s.tab_id, s.tabId, firstTabId(s.tabs), firstTabId(asObj(s.target)?.tabs));
-	const ownerPid = firstNumber(s.pid, s.owner_pid, s.ownerPid);
-	return { targetId, ...(tabId ? { tabId } : {}), ...(ownerPid !== undefined ? { ownerPid } : {}) };
+	const pid = firstNumber(s.prepared_pid, s.preparedPid, s.pid, s.owner_pid, s.ownerPid);
+	if (pid === undefined) return null;
+	return { preparedPid: pid };
 }
 
 export interface BrowserBinding {
@@ -82,30 +87,39 @@ export interface BrowserBinding {
 	/** 驱动自有浏览器进程 pid（仅当能证明是本次 driver 拉起时非空，关闭只 kill 它）。 */
 	ownerPid?: number;
 	tabId?: string;
+	/** 导航 / snapshot 需要的绑定 target id（由 get_browser_state 绑定后给出）。 */
+	targetId?: string;
 	token?: string;
+	url?: string;
 }
 
 /**
- * 校验 `get_browser_state` 的返回：必须是精确绑定、可变更、且 URL 带本次 fixtureId + nonce。
- * 任何一项缺失都 fail-closed（不“大概是它”）。
+ * 校验 `get_browser_state` 的绑定 / snapshot 返回。
+ * 官方约定：绑定必须证明 `binding_quality:"exact"` + `mutation_allowed:true`，并有可 pin 的 `snapshot_id`；
+ * 任一字段缺失都 fail-closed（不“大概是它”）。
+ * 传入 `fixtureId` + `nonce` 时，额外要求当前 URL 是本次 fixture（绑定初始 URL 是空白，应只在导航后传）。
  */
-export function parseBrowserBinding(structured: unknown, input: { fixtureId: string; nonce: string }): BrowserBinding {
+export function parseBrowserBinding(structured: unknown, input: { fixtureId?: string; nonce?: string } = {}): BrowserBinding {
 	const s = asObj(structured);
 	if (!s) return { ok: false, reason: "读不到隔离浏览器状态（fail-closed）" };
 	const quality = firstString(s.binding_quality, s.bindingQuality);
-	if (quality !== undefined && quality !== "exact") return { ok: false, reason: `隔离浏览器不是精确绑定（binding_quality=${quality}），fail-closed` };
+	if (quality !== "exact") {
+		return { ok: false, reason: quality ? `隔离浏览器不是精确绑定（binding_quality=${quality}），fail-closed` : "隔离浏览器没有 binding_quality=exact 证据（fail-closed）" };
+	}
 	const mutation = s.mutation_allowed ?? s.mutationAllowed;
-	if (mutation === false) return { ok: false, reason: "隔离浏览器不可变更（mutation_allowed=false），fail-closed" };
-	const url = firstString(s.url, s.current_url, asObj(s.tab)?.url);
-	if (!url || !fixtureUrlMatches(url, input.fixtureId, input.nonce)) return { ok: false, reason: "隔离浏览器当前 URL 不是本次 fixture（nonce 不符，fail-closed）" };
+	if (mutation !== true) {
+		return { ok: false, reason: mutation === false ? "隔离浏览器不可变更（mutation_allowed=false），fail-closed" : "隔离浏览器没有 mutation_allowed=true 证据（fail-closed）" };
+	}
+	const url = firstString(s.url, s.current_url, s.currentUrl, asObj(s.tab)?.url);
 	const token = firstString(s.snapshot_id, s.snapshotId, s.state_id, s.stateId);
 	if (!token) return { ok: false, reason: "隔离浏览器读不到可 pin 的快照 id（fail-closed）" };
+	if (input.fixtureId && input.nonce && (!url || !fixtureUrlMatches(url, input.fixtureId, input.nonce))) {
+		return { ok: false, reason: "隔离浏览器当前 URL 不是本次 fixture（nonce 不符，fail-closed）" };
+	}
 	const ownerPid = firstNumber(s.pid, s.owner_pid, s.ownerPid, asObj(s.browser)?.pid);
 	const tabId = firstString(s.tab_id, s.tabId);
-	// isolatedOwned 必须为真才允许之后 kill（关闭只关驱动自有浏览器，绝不关用户浏览器）。
-	const owned = s.isolated_owned ?? s.isolatedOwned ?? s.owned ?? true;
-	if (owned === false) return { ok: false, reason: "隔离浏览器不是驱动自有（isolated_owned=false），fail-closed" };
-	return { ok: true, ...(ownerPid !== undefined ? { ownerPid } : {}), ...(tabId ? { tabId } : {}), token };
+	const targetId = firstString(s.target_id, s.targetId, asObj(s.target)?.id);
+	return { ok: true, ...(ownerPid !== undefined ? { ownerPid } : {}), ...(tabId ? { tabId } : {}), ...(targetId ? { targetId } : {}), token, ...(url ? { url } : {}) };
 }
 
 /** fixture URL 必须同时含本次 fixtureId + nonce（防别的 run / 别的页面串扰）。 */
@@ -122,8 +136,16 @@ const firstNumber = (...vals: unknown[]): number | undefined => {
 	for (const v of vals) if (typeof v === "number" && Number.isFinite(v)) return v;
 	return undefined;
 };
-const firstTabId = (tabs: unknown): string | undefined => {
-	if (!Array.isArray(tabs) || !tabs.length) return undefined;
-	const t = asObj(tabs[0]);
-	return t ? firstString(t.tab_id, t.tabId, t.id) : undefined;
-};
+/** 按进程挑出唯一窗口（隔离浏览器刚启动时一般只有一个 / 空白窗）；多个无法确定 → null（fail-closed）。 */
+export function pickWindowForPid(windows: unknown, pid: number): { pid: number; windowId: number } | null {
+	if (!Array.isArray(windows)) return null;
+	const hits = windows
+		.map((w) => asObj(w))
+		.filter((w): w is Record<string, unknown> => !!w)
+		.filter((w) => Number(w.pid) === pid)
+		.map((w) => ({ pid: Number(w.pid), windowId: Number(w.window_id ?? w.windowId), url: String(w.url ?? "") }))
+		.filter((w) => Number.isFinite(w.pid) && Number.isFinite(w.windowId));
+	if (hits.length === 1) return { pid: hits[0].pid, windowId: hits[0].windowId };
+	const blank = hits.filter((w) => !w.url || /^about:/.test(w.url));
+	return blank.length === 1 ? { pid: blank[0].pid, windowId: blank[0].windowId } : null;
+}
