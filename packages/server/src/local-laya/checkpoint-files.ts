@@ -10,7 +10,7 @@
  *  - 只允许 safetensors + tokenizer/config：清单里出现 `.py` / `.bin` / `.pt` / `.pth` 等一律判不安全，
  *    下载也只按本清单 `allow_patterns` 取文件，不执行 repo 内任何脚本（trust_remote_code=false）。
  *
- * 生成 / 复核：`node scripts/laya-checkpoint-digests.mjs`（只读 HF 元数据 + 小文件，不下 GB 权重）。
+ * 生成 / 复核：`npx tsx scripts/laya-checkpoint-digests.ts`（只读 HF 元数据 + 小文件，不下 GB 权重）。
  */
 
 export interface LayaCheckpointFile {

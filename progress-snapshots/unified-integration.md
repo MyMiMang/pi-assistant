@@ -4,6 +4,46 @@
 树：`unified-integration`（worktree，基 `hotfix-integration` `b7d33d3`）
 状态：**本地提交，未 push / 未 tag / 未打包**（等主会话把 mobile 之后统一发布，仅 mac-arm64）。
 
+## 阶段一最终整合（本轮 owner，2026-10-22）
+
+在 `3bf2c01`（clean）之上合入 4 个已提交分支，全部 `--no-ff` 保留祖先：
+
+| 顺序 | 来源 | 提交 | 结果 |
+|---|---|---|---|
+| 1 | `unified-final-review` | `8d68f1e` | 干净。真实驱动快照身份改按 `snapshot_id`（原来要求 token 相等让真实路径永远跑不起来）、生图 legacy Key 语义、Laya 崩溃注销 |
+| 2 | `laya-download-verification` | `8b7fa75`（基 `8d68f1e`） | 干净。固定文件清单 + 下载后流式 SHA256，通过才 activate |
+| 3 | `benchmark-production-fix` | `437116f`（基 `8d68f1e`） | `apps/web/src/types.ts` 自动合并。能力动态探测 / 程序侧滚动 / guest 网关 fail-closed / fixture 上报收紧 |
+| 4 | `file-preview` | `5e3afca`+`d166649`+`d4cc992` | 仅 `docs/HANDOFF.md` 冲突（两段都保留） |
+| 5 | `benchmark-environment-bootstrap` | `8bf4ac8`+`0048d6a`+`cd69f3a`（基 `437116f`） | `docs/HANDOFF.md` 冲突（两段都保留）；`web/types.ts` 自动合并 |
+
+合并 HEAD：`97f9759`（benchmark-environment-bootstrap 合入）→ 加 fetch 上限加固后 `6932235`。**未合** `memory-scope-safety`（含已提交 `a43b55f`）：主协调另有 writer promote / evidenceRefs 未定，等主核验；本轮只做 git 元数据跟踪，不读用户记忆、不改其工作区。
+
+### 阶段后独立复核（实际做过）
+
+- **file-preview 附件授权 fetch 路径**：走 `/api/files/:id` 带登录凭证（`Bearer`）；服务端 `sendFile` 始终设 `Content-Length`。**发现并修**：`fetchBlobLimited` 原来在没有 `content-length` 时 `await res.blob()` 会把大文件整份读进内存；改为 `ReadableStream` 分片累计、超 1MB 立即 `reader.cancel()`。新增 `web-fetch-limited.test.ts` 3 项（无 content-length 中断 / 带 content-length 不读 body / 小文件正常）。
+- **Markdown 限制范围**：`safeHref` 只放行 http/https/mailto/`#`；相对路径 / `javascript:` / `data:` / `file:` 不再渲染成可点链接（e2e 断言）。仓库内没有「聊天 markdown 用相对路径指文件」的既有约定，未误伤正常聊天文件链接（文件走附件卡片）。
+- **html / svg / Office / 压缩包**：`previewKind` 一律 `unsupported`，不 inline、不执行。
+- **PDF**：`<object>` + fallback + 下载；headless 无插件时只验 fallback（e2e）。
+- **下载按钮不重复开预览**：卡片主体（预览）与下载图标是并列按钮，下载 `stopPropagation`；`file-preview` 工具栏下载独立。
+- **手机 viewport / 弹窗栈**：`mobile-viewport-ui` 回归通过；`Modal` 栈 Esc 只关最上层（`modalStack` 末位匹配），`native-dialog-ui` 验证 Esc 不关底层。
+- **Laya 清单无 no-op / 无错 revision**：实跑只读 HF 元数据的 `scripts/laya-checkpoint-digests.ts`，两个 checkpoint `@e4e9ddf…` / `@1a793eb…` 各 7 文件与公开 HF 元数据一致（未下载 GB 权重）。修掉 `checkpoint-files.ts` 里 `.mjs` 脚本名笔误。
+- **benchmark 一键真实环境（第 5 合并）**：`benchmark-window.ts` 只凭 `tools/list` 报 `preparable`（GET 不开窗，POST 才建），隔离浏览器走 `browser_prepare{allow_launch,profile.isolated_new}` → `browser_navigate`(URL 带 nonce) → `get_browser_state`（要求 URL 含 nonce + 有可 pin 快照 id，`binding_quality`/`mutation_allowed` 只在显式不符时拦，`isolated_owned` 缺省不拦），再 `list_windows`+`get_window_state` pin 原生 pid/window_id；结束只 `kill_app` 自有 pid。复核：未用幻觉字段硬判导致永久 block；`browser_prepare`/`get_browser_state` 真实字段未与 cua-driver 对过，形状不符 fail-closed，设计文档明确写「未真机、不冒充可用」。
+- **设置›模型界面实拍（回应用户）**：新增一次性纯前端 fixture 脚本 `e2e/model-services-shots.mjs`（静态 dist + 拦 `/api`，Laya 未安装态，弹窗内标注「测试示例数据」），产出 5 张（桌面顶/底、添加服务弹窗、390 顶/底）到 `evidence/model-services-current-<ts>-<commit>/` 并记 commit + dist 摘要。旧 `screenshots/1-services-desktop.png`（v1 原型）不复用。
+- **benchmark provenance 不冒充真实 CUA**：`provenance` 三态（`cua` / `fixture` / `unknown`），真实运行时 driver 才返回 `cua`，且 `start()` 先过 capability fail-closed；UI 按每次结果标注，e2e 覆盖 fixture 文案。
+
+### 本轮实跑
+
+- 两端 `tsc --noEmit` exit 0；`vite build` 通过。
+- 受影响服务端单测 20 文件 **162/162**；合并 benchmark-environment-bootstrap 后再跑 `fast-computer*`+`host-control`+`classifier` **96/96**；全程 Mock + 内存凭据 + 临时数据目录，未碰系统钥匙串。
+- 纯前端 e2e：`file-preview` 37/37、`model-services-ui`（真实 CRUD）、`model-ui`、`model-capabilities`、`custom-provider-delete`、`channel-delete`、`native-dialog-ui`、`mobile-viewport-ui`、`conversation-restore` 10/10、`fast-computer-ui`、`image-viewer` 全部通过。
+- Laya 清单与 HF 元数据一致（只读元数据 + 小文件）。
+
+### 未完成 / 待下一接线（blocked，别重复其文件）
+
+- **benchmark 真实环境**：真实 hostpc / VM 上的 `browser_prepare` / `get_browser_state` 字段、guest 别名可达性仍未实测；本轮已合 `benchmark-environment-bootstrap`（形状不符 fail-closed，未 claim 实机）。
+- **memory-scope-safety**：未合；writer promote / evidenceRefs 真实作用域未定，等主核验后再合。
+- **未真机**：真实 hostpc / VM CUA、真实 Laya 下载安装、真机 iOS、真实 PDF 内嵌、全量 e2e（25 分钟）。
+
 ## 阶段一：合并既有分支（已完成，全部 `--no-ff` 保留祖先）
 
 按顺序合入，每次先 `git log` 安全 review 依赖再合：
