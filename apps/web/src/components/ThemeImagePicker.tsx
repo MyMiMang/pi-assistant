@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { ThemeImageRef, ThemeImageUsage } from "@pi-assistant/shared";
+import type { ThemeImageRef } from "@pi-assistant/shared";
 import type { Attachment } from "../types";
 import { AttachButton, AttachTray, useAttachUploader } from "./Attachments";
-import { Help, cx } from "./ui";
+import { Help } from "./ui";
 
 /** 主题设计允许的图片 MIME：默认拒绝 SVG（不执行任意矢量脚本），只收常见位图。 */
 const THEME_IMAGE_MIME = /^image\/(png|jpe?g|gif|webp|bmp|heic|heif|avif)$/i;
@@ -18,23 +18,23 @@ export interface ThemeImagePickerProps {
 
 /**
  * 主题设计的图片素材选择器（复用聊天附件的安全上传 + 预览）。
- * 默认「仅作参考」：只参与用户显式发起的那一轮 AI 请求，不写进主题、不随主题导出；
- * 用户显式切换「用作背景 / 装饰素材」才会进入 manifest 的 images（usage != reference）。
+ * **首版只支持「仅作参考」**：图片只参与用户显式发起的那一轮 AI 请求，不写进主题、不随主题导出。
+ * （manifest v1 保留了 `background` / `decor` 素材位，但主题引擎目前只用 enum 装饰、**不会把素材图绘成背景**，
+ * 所以这里不提供这两个选项，避免界面承诺一个还没实现的能力。）
  */
 export function ThemeImagePicker({ uploadFn, value, onChange, disabled }: ThemeImagePickerProps) {
 	const { files, pending, uploading, error, addFiles, removePending } = useAttachUploader(uploadFn ?? (() => Promise.reject(new Error("未配置上传"))));
-	const [usage, setUsage] = useState<Record<string, ThemeImageUsage>>({});
 	const [localErr, setLocalErr] = useState("");
 	const onChangeRef = useRef(onChange);
 	onChangeRef.current = onChange;
 
-	// 从已上传附件派生引用（只取白名单图片 MIME）。
+	// 从已上传附件派生引用（只取白名单图片 MIME，一律 usage=reference，不写进主题）
 	useEffect(() => {
 		const refs: ThemeImageRef[] = files
 			.filter((f) => THEME_IMAGE_MIME.test(f.mime))
-			.map((f) => ({ attachmentId: f.fileId, mime: f.mime, bytes: f.size, usage: usage[f.fileId] ?? "reference" }));
+			.map((f) => ({ attachmentId: f.fileId, mime: f.mime, bytes: f.size, usage: "reference" }));
 		onChangeRef.current(refs);
-	}, [files, usage]);
+	}, [files]);
 
 	const pick = (list: FileList) => {
 		setLocalErr("");
@@ -56,33 +56,24 @@ export function ThemeImagePicker({ uploadFn, value, onChange, disabled }: ThemeI
 	return (
 		<div className="space-y-2" data-testid="theme-image-picker">
 			<div className="flex items-center gap-2">
-				<AttachButton onFiles={pick} label="加图片" />
+				{!disabled && <AttachButton onFiles={pick} label="加图片" />}
 				<Help>
-					图片默认**仅作参考**：只用于你这次发起的 AI 生成请求，帮你定配色 / 风格 / 材质 / 布局，不会写进主题、也不随主题导出。
-					只有你显式切换成「用作背景 / 装饰素材」，它才会作为主题素材保存（仍只存附件引用，不存图片内容）。
+					图片**仅作参考**：只用于你这次发起的 AI 生成请求，帮你定配色 / 风格 / 材质 / 布局，不会写进主题、也不随主题导出。
+					（把素材图真正绘成背景 / 装饰暂未支持，所以这里没有那两个选项；后续版本再说。）
 					图片会像平时发附件一样上传到本机服务；带位置等 EXIF 的照片建议先处理。SVG 暂不支持。
 				</Help>
 				{!uploadFn && <span className="text-xs text-mut2">上传不可用（未配置助理）</span>}
 			</div>
 			{(error || localErr) && <div className="text-xs text-red-500">{localErr || error}</div>}
-			<AttachTray files={files} pending={pending} uploading={uploading} onRemove={(id) => setUsage((u) => { const n = { ...u }; delete n[id]; return n; })} onRemovePending={removePending} />
+			<AttachTray files={files} pending={pending} uploading={uploading} onRemove={() => {}} onRemovePending={removePending} />
 			{files.length > 0 && (
 				<ul className="space-y-1">
 					{files.map((f) => (
 						<li key={f.fileId} className="flex items-center gap-2 text-xs">
 							<span className="min-w-0 flex-1 truncate text-mut">{f.name}</span>
-							{(["reference", "background", "decor"] as const).map((u) => (
-								<button
-									key={u}
-									type="button"
-									disabled={disabled}
-									onClick={() => setUsage((s) => ({ ...s, [f.fileId]: u }))}
-									className={cx("rounded-full border px-2 py-0.5", (usage[f.fileId] ?? "reference") === u ? "border-accent text-accent" : "border-line text-mut2")}
-									data-usage={u}
-								>
-									{u === "reference" ? "仅作参考" : u === "background" ? "用作背景" : "用作装饰"}
-								</button>
-							))}
+							<span className="rounded-full border border-line px-2 py-0.5 text-mut2" data-usage="reference">
+								仅作参考
+							</span>
 						</li>
 					))}
 				</ul>
