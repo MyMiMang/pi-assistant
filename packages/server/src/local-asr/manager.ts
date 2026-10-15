@@ -15,7 +15,7 @@
 import type { AsrPlatformProfile } from "./platform.ts";
 import { capThreads } from "./platform.ts";
 import type { AsrLicenseMeta, AsrModelManifest, AsrSourceMeta, AsrWeightFile } from "./manifest.ts";
-import { ASR_BIND_HOST, ASR_DEFAULT_IDLE_SECONDS, ASR_MAX_IDLE_SECONDS, ASR_MIN_IDLE_SECONDS } from "./manifest.ts";
+import { ASR_BIND_HOST, ASR_DEFAULT_IDLE_SECONDS, ASR_MAX_IDLE_SECONDS, ASR_MIN_IDLE_SECONDS, sherpaRequirements } from "./manifest.ts";
 import { importGate, installGate, licenseDisclosure, type LicenseDisclosure } from "./license.ts";
 
 export type AsrInstallState = "not_installed" | "installing" | "installed" | "failed";
@@ -71,6 +71,8 @@ export interface AsrDeps {
 	ensureUv(): Promise<string>;
 	uvPath(): string;
 	pythonVersion(): string;
+	/** 按固定摘要安装引擎 wheel（`--require-hashes`）；平台无摘要时调用方已拒绝，这里不接受未校验的安装。 */
+	installEngine(pythonPath: string, requirements: string, opts: { env: Record<string, string>; signal?: AbortSignal }): Promise<void>;
 	run(cmd: string, args: string[], opts: { env: Record<string, string>; signal?: AbortSignal; timeoutMs?: number }): Promise<AsrRunResult>;
 	spawnServe(exe: string, args: string[], opts: { env: Record<string, string> }): AsrChild;
 	/** 从**官方源**按固定清单下载权重（清单外文件一律不取）；`pythonPath` = staging venv 解释器 */
@@ -283,10 +285,10 @@ export class LocalAsrManager {
 			this.set("venv");
 			await this.step(signal, () => this.runOrThrow(this.deps.uvPath(), ["venv", "--python", this.deps.pythonVersion(), paths.envStaging], { env, signal }));
 			this.set("engine");
-			// 只装 pinned 版本；无 torch（用户要求：不强绑定同 venv 依赖 torch）。
-			await this.step(signal, () =>
-				this.runOrThrow(this.deps.uvPath(), ["pip", "install", "--python", this.envPython(paths.envStaging), `sherpa-onnx==${this.source.engineVersion}`], { env, signal }),
-			);
+			// 只装 pinned 版本，且必须带官方 wheel SHA256（--require-hashes）；无固定摘要的平台 fail closed，不暗装。
+			const req = sherpaRequirements(this.platform.key);
+			if (!req.ok) throw new Error(req.reason);
+			await this.step(signal, () => this.deps.installEngine(this.envPython(paths.envStaging), req.content, { env, signal }));
 			this.set("weights");
 			if (opts.source === "import") {
 				const res = await this.deps.importWeights(String(opts.importDir), this.model.files, signal);

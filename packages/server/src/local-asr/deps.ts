@@ -188,8 +188,24 @@ export function createAsrDeps(): AsrDeps {
 				);
 				child.on("error", rej);
 			}),
-		spawnServe: (exe, args, opts) => spawnServe(exe, args, opts.env),
-		downloadWeights: async (files, p, signal, env, pythonPath) => {
+		installEngine: async (pythonPath, requirements, opts) => {
+			const paths = asrPaths();
+			mkdirSync(paths.root, { recursive: true });
+			// requirements 只有公开包名 / 版本 / SHA256，不含凭据；留档便于审计。
+			const reqFile = join(paths.root, "engine-requirements.txt");
+			writeFileSync(reqFile, requirements);
+			const r = await new Promise<AsrRunResult>((res, rej) => {
+				const child = execFile(
+					uvPinnedPath(),
+					["pip", "install", "--python", pythonPath, "--require-hashes", "-r", reqFile],
+					{ env: { ...process.env, ...opts.env } as NodeJS.ProcessEnv, timeout: 30 * 60_000, signal: opts.signal, maxBuffer: 32 * 1024 * 1024 },
+					(err, stdout, stderr) => res({ code: err ? ((err as { code?: number }).code ?? 1) : 0, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }),
+				);
+				child.on("error", rej);
+			});
+			if (r.code !== 0) throw new Error(`引擎安装失败（wheel 校验不通过或下载失败）：${r.stderr.slice(0, 300)}`);
+		},
+		spawnServe: (exe, args, opts) => spawnServe(exe, args, opts.env),		downloadWeights: async (files, p, signal, env, pythonPath) => {
 			const paths = asrPaths();
 			mkdirSync(paths.weightsStaging, { recursive: true });
 			const allow = files.map((f) => f.path);

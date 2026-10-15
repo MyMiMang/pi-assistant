@@ -139,6 +139,56 @@ export const SENSEVOICE_MODEL: AsrModelManifest = {
 	languages: ["zh", "yue", "en", "ja", "ko"],
 };
 
+/**
+ * 引擎（sherpa-onnx）wheel 供应链固定。
+ *
+ * 公开来源：PyPI `sherpa-onnx==1.13.8` 的 JSON 元数据（2026-10-15 复核），
+ * `sherpa-onnx` 仅依赖 `sherpa-onnx-core==1.13.8`（后者无依赖）。两个 wheel 的 SHA256 逐平台固定。
+ * Python 固定 3.12（`ASR_PYTHON_VERSION`）→ `sherpa-onnx` 用 cp312 轮子；`sherpa-onnx-core` 是 py3-none。
+ * macOS 上 pip 可能在 arch 专用与 universal2 间选择，故两组摘要都列入（`--require-hashes` 任一匹配即可）。
+ * 缺固定摘要的平台 = **fail closed**，绝回退到未校验安装。
+ */
+export interface SherpaEnginePin {
+	package: string;
+	version: string;
+	/** 该平台可接受的官方 wheel SHA256（多个=任一匹配即通过） */
+	sha256: string[];
+}
+export const SHERPA_ONNX_WHEEL_PINS: Record<string, SherpaEnginePin[]> = {
+	"darwin-arm64": [
+		{ package: "sherpa-onnx", version: SHERPA_ONNX_VERSION, sha256: ["04b9268c348e9f4bd61315754ad06b02a3c185d3d7770acd8e2dcee9c2e039f9", "17ff957b1b33849671262ddbac51815a5a82286f963091bddf85540c9e728c12"] },
+		{ package: "sherpa-onnx-core", version: SHERPA_ONNX_VERSION, sha256: ["9312bbd46c93e31cecd3abda9cc8e71881d86cc3da3c35c7445ab04025b9fc3e", "b279ad024b37f2999834abc5583fe9e70df0fb3f37c20a2d1e76e75ad2ccb1a1"] },
+	],
+	"darwin-x64": [
+		{ package: "sherpa-onnx", version: SHERPA_ONNX_VERSION, sha256: ["ef218d6545a9dcc2aff7043f39026c7d78d6cf46a3876d450d508feebffc00a9", "17ff957b1b33849671262ddbac51815a5a82286f963091bddf85540c9e728c12"] },
+		{ package: "sherpa-onnx-core", version: SHERPA_ONNX_VERSION, sha256: ["917422880287baa0f0ae1bd10d9528fa78af8cc7c233d2a953a185a4fe8d83f2", "b279ad024b37f2999834abc5583fe9e70df0fb3f37c20a2d1e76e75ad2ccb1a1"] },
+	],
+	"win32-x64": [
+		{ package: "sherpa-onnx", version: SHERPA_ONNX_VERSION, sha256: ["566e49ad3fb2aa8ceb723a52f9809aa6c2ee0a5eb3b0946c3fd2374af807a5c6"] },
+		{ package: "sherpa-onnx-core", version: SHERPA_ONNX_VERSION, sha256: ["5579e80196d516e6dae23c8f629292ce3142ab8869925d32b94612fd86f93733"] },
+	],
+	"win32-arm64": [
+		{ package: "sherpa-onnx", version: SHERPA_ONNX_VERSION, sha256: ["1613f14db38b6936098c660f610baee95541378edbdec39a973a591d8df58f5b"] },
+		{ package: "sherpa-onnx-core", version: SHERPA_ONNX_VERSION, sha256: ["85e9b12e9e985d73ad9165a1122c396e2c9384256a4023cd7cf9c91bc8d32073"] },
+	],
+	"linux-x64": [
+		{ package: "sherpa-onnx", version: SHERPA_ONNX_VERSION, sha256: ["6949773017647febc0c3696dffb2c67dd3febd4737b87e3dd135a42773704a06"] },
+		{ package: "sherpa-onnx-core", version: SHERPA_ONNX_VERSION, sha256: ["4da90acf435373d7b2ba9cc0be806e7e274d28f63f5780880b5dea6721626e36"] },
+	],
+	"linux-arm64": [
+		{ package: "sherpa-onnx", version: SHERPA_ONNX_VERSION, sha256: ["2520b1e7b779a29a493a8cec893612218dfad7304786bf3f64df2ff7ac6c3302"] },
+		{ package: "sherpa-onnx-core", version: SHERPA_ONNX_VERSION, sha256: ["a51a03d55c376c32e15dd63ea852236042ba91a5cd73e253bbf7cf21f6582ba9"] },
+	],
+};
+
+/** 生成 `uv pip install --require-hashes -r` 用的 requirements 内容；平台无固定摘要时返回原因（拒绝安装）。 */
+export function sherpaRequirements(platformKey: string): { ok: true; content: string } | { ok: false; reason: string } {
+	const pins = SHERPA_ONNX_WHEEL_PINS[platformKey];
+	if (!pins || !pins.length) return { ok: false, reason: `没有 ${platformKey} 的引擎 wheel 固定摘要，拒绝未校验的安装` };
+	const lines = pins.map((p) => `${p.package}==${p.version} ${p.sha256.map((h) => `--hash=sha256:${h}`).join(" ")}`);
+	return { ok: true, content: `${lines.join("\n")}\n` };
+}
+
 /** 注册进统一注册表时用的稳定 provider / model id。 */
 export const ASR_PROVIDER_ID = "local-sensevoice";
 export const ASR_MODEL_ID = "sensevoice-small-int8";

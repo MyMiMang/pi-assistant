@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { LocalAsrManager, backoffMs, sanitizeError, type AsrDeps, type AsrPaths, type AsrTimer } from "../src/local-asr/manager.ts";
-import { ASR_DEFAULT_IDLE_SECONDS, ASR_MODEL_ID, ASR_PROVIDER_ID, SENSEVOICE_LICENSE, SENSEVOICE_MODEL, SENSEVOICE_SOURCE } from "../src/local-asr/manifest.ts";
+import { ASR_DEFAULT_IDLE_SECONDS, ASR_MODEL_ID, ASR_PROVIDER_ID, SENSEVOICE_LICENSE, SENSEVOICE_MODEL, SENSEVOICE_SOURCE, sherpaRequirements } from "../src/local-asr/manifest.ts";
 import { ASR_PROTOCOL } from "../src/local-asr/adapter.ts";
 import { senseVoicePlatform } from "../src/local-asr/platform.ts";
 
@@ -63,6 +63,7 @@ interface Harness {
 function harness(opts: { license?: typeof SENSEVOICE_LICENSE; idleSeconds?: number; platformSupport?: "supported" | "unsupported" } = {}): Harness {
 	const clock = new FakeClock();
 	const calls: string[] = [];
+	const engineRequirements: string[] = [];
 	const state: Harness["state"] = { pid: null, registered: null, kills: [], rollbacks: 0, activates: 0, installed: false, spawns: 0 };
 	const behavior: Harness["behavior"] = { healthOk: true };
 	const deps: AsrDeps = {
@@ -78,6 +79,10 @@ function harness(opts: { license?: typeof SENSEVOICE_LICENSE; idleSeconds?: numb
 		run: async (_cmd, args) => {
 			calls.push(`run:${args[0] ?? ""}`);
 			return { code: 0, stdout: "", stderr: "" };
+		},
+		installEngine: async (_pythonPath, requirements) => {
+			calls.push("engine");
+			engineRequirements.push(requirements);
 		},
 		spawnServe: () => {
 			state.spawns += 1;
@@ -169,7 +174,18 @@ test("cleared 许可：download 需要正确版本的 acceptLicense；版本不�
 	const st = await h.manager.install({ source: "download", acceptLicense: "1.1" });
 	assert.equal(st.install.state, "installed");
 	assert.equal(st.install.source, "download");
-	assert.deepEqual(h.calls, ["ensureUv", "run:venv", "run:pip", "download", "verify"]);
+	assert.deepEqual(h.calls, ["ensureUv", "run:venv", "engine", "download", "verify"]);
+});
+
+test("引擎 wheel 供应链：支持平台生成带 SHA256 的 requirements，未知平台 fail closed", () => {
+	const ok = sherpaRequirements("darwin-arm64");
+	assert.equal(ok.ok, true);
+	if (ok.ok) {
+		assert.match(ok.content, /sherpa-onnx==1\.13\.8 --hash=sha256:[0-9a-f]{64}/);
+		assert.match(ok.content, /sherpa-onnx-core==1\.13\.8 --hash=sha256:[0-9a-f]{64}/);
+	}
+	const bad = sherpaRequirements("plan9-mips");
+	assert.equal(bad.ok, false, "无固定摘要的平台必须 fail closed，不得暗装");
 });
 
 test("不支持平台：安装直接拒绝（不用假 no-op 冒充）", async () => {
