@@ -1,4 +1,4 @@
-import { BarChart3, Brain, Cat, ChevronDown, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { BarChart3, Boxes, Brain, Cat, ChevronDown, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, Plus, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { getLang, setLang, t } from "../i18n";
@@ -15,7 +15,7 @@ import type { Device, PermCheck, Provider } from "../types";
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { ImageModelsSection } from "./ImageModels";
 import { DefaultModelPicker, ProviderAccordion, useProviders } from "./Models";
-import { Badge, Button, cx, fmtTime, Help, Input, Modal } from "./ui";
+import { Badge, Button, cx, Fold, fmtTime, Help, Input, Modal } from "./ui";
 import { Downloads } from "./Downloads";
 import { AppUpdate } from "./AppUpdate";
 import { VisionModelPicker } from "./VisionModel";
@@ -147,6 +147,7 @@ function ModelsTab() {
 	const { providers, reload } = useProviders();
 	const custom = useCustomProviders();
 	const [customEdit, setCustomEdit] = useState<{ id?: string; k: number } | null>(null);
+	const [servicesOpen, setServicesOpen] = useState(true);
 	const strengths = useModelStrengths();
 	const configured = providers.filter((p) => p.configured).length;
 	const reloadAll = () => (void reload(), void custom.reload(), void useStore.getState().loadSystem(), void strengths.reload());
@@ -161,8 +162,16 @@ function ModelsTab() {
 				<H desc="助理的模型不能看图时（例如 DeepSeek），由识图模型替它看图：读图片、确认搜到的图是不是你要的。">识图模型</H>
 				<VisionModelPicker key={configured} />
 			</section>
-			<section>
-				<H desc="内置服务来自 Pi 的模型服务目录，升级 Pi 后新的服务自动出现；下面是你自己添加的渠道。展开看该服务支持的模型和配置，凭据加密保存在本机。">模型服务 / 渠道</H>
+			<Fold
+				testId="provider-section"
+				icon={Boxes}
+				title="模型服务 / 渠道"
+				count={providers.length}
+				hint={configured ? `已配置 ${configured}` : undefined}
+				desc="内置服务来自 Pi 的模型服务目录，升级 Pi 后新的服务自动出现；下面是你自己添加的渠道。展开看该服务支持的模型和配置，凭据加密保存在本机。"
+				open={servicesOpen}
+				onToggle={() => setServicesOpen((v) => !v)}
+			>
 				{customEdit ? (
 					<div className="space-y-3">
 						<Button size="sm" variant="ghost" onClick={back}>
@@ -186,7 +195,7 @@ function ModelsTab() {
 						<ProviderAccordion providers={providers} onEditCustom={(id) => setCustomEdit({ id, k: Date.now() })} onConfigured={() => void reload()} strengths={strengths} />
 					</div>
 				)}
-			</section>
+			</Fold>
 			<SubagentSection />
 			<ImageModelsSection key={custom.providers.length} />
 		</div>

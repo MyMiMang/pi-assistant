@@ -1,4 +1,4 @@
-import { CircleHelp, X } from "lucide-react";
+import { ChevronDown, CircleHelp, type LucideIcon, X } from "lucide-react";
 import { type ButtonHTMLAttributes, type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchBlob } from "../api";
@@ -159,6 +159,26 @@ export function Help({ children, className }: { children: ReactNode; className?:
 					document.body,
 				)}
 		</span>
+	);
+}
+
+/** 大分类折叠：图标 + 标题 + 数量 + 展开箭头；收起时里面的内容完全不渲染（可以一键全部关上）。
+ *  说明用 desc（渲染成独立的「?」按钮，不嵌在折叠按钮里，避免按钮套按钮）。 */
+export function Fold({ icon: Icon, title, count, hint, desc, open, onToggle, testId, children }: { icon?: LucideIcon; title: ReactNode; count?: number; hint?: ReactNode; desc?: ReactNode; open: boolean; onToggle: () => void; testId?: string; children: ReactNode }) {
+	return (
+		<section data-testid={testId}>
+			<div className="flex min-w-0 items-center gap-1.5">
+				<button type="button" className="flex min-w-0 items-center gap-2 text-left" aria-expanded={open} onClick={onToggle} data-testid={testId ? `${testId}-toggle` : undefined}>
+					<ChevronDown size={14} className={cx("shrink-0 text-mut transition-transform", !open && "-rotate-90")} />
+					{Icon && <Icon size={16} className="shrink-0 text-mut" />}
+					<span className="min-w-0 truncate font-semibold">{title}</span>
+					{count !== undefined && <span className="shrink-0 rounded-full bg-zinc-100 px-1.5 py-0.5 text-[11px] font-normal text-mut dark:bg-zinc-800">{count}</span>}
+					{hint && <span className="min-w-0 truncate text-xs font-normal text-mut">{hint}</span>}
+				</button>
+				{desc && <Help>{desc}</Help>}
+			</div>
+			{open && <div className="mt-3">{children}</div>}
+		</section>
 	);
 }
 

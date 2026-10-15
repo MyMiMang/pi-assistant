@@ -4,7 +4,8 @@
  * 2) 常用 5：按选择频次置顶、分组里不重复、刷新后仍在（服务端持久化）
  * 3) 模型 + 思考强度合并在同一个菜单 / 同一个按钮
  * 4) 390 窄中栏：按钮只留图标、无横向溢出、上下文圆环独立
- * 5) 设置 › 模型：顶部紧凑（默认使用 / 识图模型都是合一的按钮）、渠道按内置/我的分组折叠、
+ * 5) 设置 › 模型：顶部紧凑（默认使用 / 识图模型都是合一的按钮）、整个「模型服务 / 渠道」（添加渠道 + 内置 + 我的渠道）
+ *    是一个带图标 / 数量 / 箭头的可折叠大分类、可一键全部关上；里面渠道按内置/我的分组折叠、
  *    展开看该服务模型、模型行内改能力标签、编辑/删除沿用应用内确认框（无原生 confirm）
  * 6) 群聊成员与子代理的模型入口复用同一个菜单
  */
@@ -250,7 +251,46 @@ try {
 	await page.getByTestId("confirm-ok").click();
 	await wait(async () => !(await j("/api/models/custom")).providers.some((p) => p.id === target.id));
 	assert.equal(nativeDialogs, 0, "不得调用原生 confirm");
+	// 删除完成后回到列表（等列表 / 默认使用 / 识图模型都重新渲染完再验大分类折叠）
+	await page.getByTestId("provider-accordion").waitFor();
+	await page.getByTestId("default-model-picker").waitFor();
+	await page.getByTestId("vision-model-picker").waitFor();
+	// 大分类折叠：整个「模型服务 / 渠道」（添加渠道 + 内置服务 + 我的渠道）能一键全部关上，默认使用 / 识图模型不受影响
+	const foldToggle = page.getByTestId("provider-section-toggle");
+	await foldToggle.waitFor();
+	assert.equal(await foldToggle.getAttribute("aria-expanded"), "true", "模型服务 / 渠道默认展开");
+	assert.match(await foldToggle.innerText(), /模型服务 \/ 渠道/, "保留标题");
+	assert.match(await foldToggle.innerText(), /\d+/, "标题应带服务数量");
+	assert.equal(await page.getByTestId("provider-accordion").count(), 1, "展开时能看到渠道列表");
+	const rowsOpen = await page.getByTestId("provider-row").count();
+	assert.ok(rowsOpen > 0, `展开时应有渠道行：${rowsOpen}`);
+	await foldToggle.scrollIntoViewIfNeeded();
+	await page.screenshot({ path: join(OUT, "10-services-expanded.png") });
+	await foldToggle.click();
+	assert.equal(await page.getByTestId("provider-section-toggle").getAttribute("aria-expanded"), "false", "可一键收起");
+	assert.equal(await page.getByTestId("provider-accordion").count(), 0, "父级收起应完全不渲染渠道列表");
+	assert.equal(await page.getByTestId("provider-row").count(), 0, "父级收起应隐藏所有渠道");
+	assert.equal(await page.getByTestId("provider-group-builtin").count(), 0, "内置服务分组也隐藏");
+	assert.equal(await page.getByTestId("provider-group-mine").count(), 0, "我的渠道分组也隐藏");
+	assert.equal(await page.getByTestId("default-model-picker").count(), 1, "默认使用不受父级折叠影响");
+	assert.equal(await page.getByTestId("vision-model-picker").count(), 1, "识图模型不受父级折叠影响");
+	await foldToggle.scrollIntoViewIfNeeded();
+	await page.screenshot({ path: join(OUT, "11-services-collapsed.png") });
+	// 390 窄屏同样可收起 / 展开，且不横向溢出
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.waitForTimeout(300);
+	await page.getByTestId("provider-section-toggle").scrollIntoViewIfNeeded();
+	assert.equal(await page.getByTestId("provider-accordion").count(), 0, "390 收起后仍不渲染渠道");
+	assert.ok((await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 1, "390 收起不应横向溢出");
+	await page.screenshot({ path: join(OUT, "12-services-collapsed-390.png") });
+	await page.getByTestId("provider-section-toggle").click();
+	await page.getByTestId("provider-accordion").waitFor();
+	assert.equal(await page.getByTestId("provider-section-toggle").getAttribute("aria-expanded"), "true", "390 可重新展开");
+	await page.getByTestId("provider-section-toggle").scrollIntoViewIfNeeded();
+	await page.screenshot({ path: join(OUT, "13-services-expanded-390.png") });
+	await page.setViewportSize({ width: 1280, height: 900 });
 	ok("设置按服务折叠、可看模型、编辑/删除用应用内确认框");
+	ok("模型服务 / 渠道是一个大分类，可一键全部关上，默认使用 / 识图模型不受影响");
 
 	// ============================================================ 6) 群聊成员 / 子代理入口复用
 	console.log("\n[6] 群聊成员与子代理复用同一个模型菜单");
