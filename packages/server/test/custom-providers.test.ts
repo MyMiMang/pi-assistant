@@ -7,10 +7,12 @@ import { startMockOpenAI } from "../../../e2e/mock-openai.mjs";
 import { config } from "../src/config.ts";
 import { customProviders, initModels, models } from "../src/models.ts";
 import { supportedApis } from "../src/pi-adapter/custom-providers.ts";
+import { memoryCredentialStore } from "./in-memory-credentials.ts";
+import { rememberLocalModelStatus, resetLocalModelHints } from "../src/local-models.ts";
 
 const relay = await startMockOpenAI({ port: 18081, key: "sk-unit", requiredHeader: ["x-team", "t1"] });
 after(() => relay.close());
-await initModels();
+await initModels(memoryCredentialStore());
 
 test("API 类型来自 pi-ai 注册表", () => {
 	const ids = supportedApis().map((a) => a.id);
@@ -139,19 +141,50 @@ test("删除自定义服务：引用它的默认/识图/子代理设置和助理
 	const agentId = "ag-ref-clean";
 	db.prepare("INSERT OR REPLACE INTO agents(id, name, avatar, color, model_provider, model_id, sort, created_at) VALUES(?,?,?,?,?,?,?,?)").run(agentId, "引用测试助理", "测", "#000000", m.id, "relay-chat", 999, Date.now());
 	setSetting(`subagentModel:${agentId}`, { pool: [ref] });
+	// 生图服务复用这个自定义服务的 Key：删除时要报告影响并清掉 keyFrom（不删生图服务本身）
+	setSetting("imageProviders", [{ id: "img-ref", name: "生图引用", kind: "openai", baseUrl: "https://x.example", models: ["gpt-image-1"], keyFrom: m.id, createdAt: 1 }]);
 
-	assert.deepEqual(providerReferences(m.id), { defaultModel: true, visionModel: true, agents: ["引用测试助理"], subagents: false, subagentAgents: [agentId] });
+	assert.deepEqual(providerReferences(m.id), { defaultModel: true, visionModel: true, agents: ["引用测试助理"], subagents: false, subagentAgents: [agentId], imageProviders: ["生图引用"] });
 
 	assert.ok(await customProviders.remove(m.id));
 	const cleared = clearProviderReferences(m.id);
 	assert.equal(cleared.agents.length, 1);
+	assert.deepEqual(cleared.imageProviders, ["生图引用"]);
 	assert.equal(getSetting("defaultModel", null), null);
 	assert.equal(getSetting("visionModel", null), null);
 	const s = getSetting<{ maxMinutes: number }>("subagentModels", { maxMinutes: 0 });
 	assert.equal(s.maxMinutes, 30, "其它设置保持不变");
 	assert.deepEqual(getSetting<{ pool: unknown[] }>(`subagentModel:${agentId}`, { pool: [1] }).pool, [], "候选池里被删的服务一并去掉");
 	assert.equal((db.prepare("SELECT model_provider FROM agents WHERE id = ?").get(agentId) as { model_provider: string | null }).model_provider, null, "助理模型回落默认");
+	assert.equal(getSetting<{ keyFrom: string | null }[]>("imageProviders", [])[0].keyFrom, null, "生图服务的 keyFrom 清掉，不删生图服务");
 	// 删除只清引用，不删助理、不动用量历史
 	assert.ok(db.prepare("SELECT 1 FROM agents WHERE id = ?").get(agentId));
+	setSetting("imageProviders", []);
 	db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
+});
+
+test("手动设置自定义模型能力（只改元数据，不写 models.json）", async () => {
+	const m = await customProviders.save(null, { name: "能力设置", api: "openai-completions", baseUrl: relay.url, noKey: true, models: [{ id: "cap-chat" }] });
+	const next = customProviders.setModelCapabilities(m.id, "cap-chat", ["chat", "vision"]);
+	assert.deepEqual(next.models.find((x) => x.id === "cap-chat")!.capabilities, ["chat", "vision"]);
+	const file = readFileSync(join(config.dataDir, "models.json"), "utf8");
+	assert.ok(!file.includes("capabilities"), "能力只存我们的元数据，不写进 models.json");
+	assert.throws(() => customProviders.setModelCapabilities(m.id, "nope", ["chat"]), /模型不存在/);
+	assert.throws(() => customProviders.setModelCapabilities("nope", "cap-chat", ["chat"]), /自定义服务不存在/);
+	await customProviders.remove(m.id);
+});
+
+test("快速操作模型引用本地服务（local-laya）时，classifier 暂时消失也不自动清掉引用", async () => {
+	const { getSetting, setSetting } = await import("../src/db.ts");
+	const ref = { kind: "systemone", provider: "local-laya", id: "multilingual", enabled: true };
+	setSetting("fastComputer", ref);
+	// 本地服务已安装但当前停止：安全状态缓存里有它（先记一次注册事件，再记停止）
+	resetLocalModelHints();
+	rememberLocalModelStatus({ install: { state: "installed" }, runtime: { state: "running" }, health: { device: "mps" }, registered: { provider: "local-laya", modelId: "multilingual", protocol: "typesafe-system-one" } });
+	rememberLocalModelStatus({ install: { state: "installed" }, runtime: { state: "stopped" }, health: null, registered: null }, "local-laya");
+	// 本地服务停止（classifier 目录里没有它）后重算引用：已知本地服务 → 保留，只算暂不可调用
+	customProviders.reapplyClassifiers();
+	assert.deepEqual(getSetting("fastComputer", null), ref, "本地服务 stop 后引用保留，不自动清掉 / 不删模型");
+	setSetting("fastComputer", {});
+	resetLocalModelHints();
 });

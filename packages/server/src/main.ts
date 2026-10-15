@@ -8,6 +8,7 @@ import { startHttp } from "./http.ts";
 import { startSetupWatcher } from "./setup-code.ts";
 import { identity } from "./identity.ts";
 import { initModels } from "./models.ts";
+import { migrateLegacyImageProviders } from "./image-gen/index.ts";
 import { checkPiCompat } from "./pi-adapter/index.ts";
 import { bootstrap, initHostAccessWatch, listAgents } from "./runtime.ts";
 import { workspaceOf } from "./files.ts";
@@ -22,6 +23,8 @@ import { recoverOnboardingFlag } from "./onboarding.ts";
 const compat = checkPiCompat();
 console.log(`[pi-assistant] ${compat.message}`);
 await initModels();
+// 幂等、非秘密的 legacy 生图凭据元数据迁移（不读、不复制明文；Key 桥接读取）
+migrateLegacyImageProviders();
 // 升级 / 旧数据：已配置但向导标志丢失时恢复，避免误弹首次向导覆盖原配置
 recoverOnboardingFlag();
 startHttp();

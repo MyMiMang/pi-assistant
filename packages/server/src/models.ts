@@ -10,6 +10,8 @@ import { EncryptedCredentialStore, openJson, sealJson } from "./secrets.ts";
 export let models: PiModels;
 export let customProviders: CustomProviders;
 export let credentialBackend = "";
+/** 统一凭据存储（公开 `CredentialStore` 接口）：chat / 生图等所有服务共用这一份，按 provider id 绑定一份 key。 */
+export let credentialStore: CredentialStore | undefined;
 /** 显式注入过的凭据后端：同一进程内后续无参 initModels 复用它，不再重复构造会走 OS 钥匙串的后端。 */
 let injectedCredentials: CredentialStore | undefined;
 
@@ -18,6 +20,7 @@ export async function initModels(credentials?: CredentialStore) {
 	// 注入过的后端在后续无参调用中复用，保证一个进程最多构造一次安全后端。
 	if (credentials) injectedCredentials = credentials;
 	const store: CredentialStore = credentials ?? injectedCredentials ?? new EncryptedCredentialStore();
+	credentialStore = store;
 	if (store instanceof EncryptedCredentialStore) credentialBackend = store.backend;
 	const modelsPath = join(config.dataDir, "models.json");
 	models = await PiModels.create({ credentials: store, modelsPath, allowNetwork: config.allowModelNetwork });
@@ -79,6 +82,8 @@ export interface ProviderReferences {
 	subagents: boolean;
 	/** 候选池里引用了这个服务的助理 id */
 	subagentAgents: string[];
+	/** 生图服务复用了这个服务的 Key（删除后它们需要重新配 Key，不会被误删） */
+	imageProviders: string[];
 }
 
 const refProvider = (v: unknown): string | undefined =>
@@ -100,6 +105,21 @@ function subagentPoolRefs(id: string): string[] {
 	return agents;
 }
 
+/** 生图服务里 `keyFrom = id`（复用这个自定义服务 Key）的条目名（只读引用关系，不碰凭据）。 */
+function imageProvidersKeyedFrom(id: string): { id: string; name: string }[] {
+	const rows = getSetting<{ id?: string; name?: string; keyFrom?: string | null }[]>("imageProviders", []);
+	return rows.filter((p) => p.keyFrom === id && p.id).map((p) => ({ id: String(p.id), name: p.name || String(p.id) }));
+}
+
+/** 复用某个自定义服务 Key 的生图服务：清掉 keyFrom（不动这些服务自己的配置与凭据）。 */
+function clearImageKeyFrom(id: string): string[] {
+	const rows = getSetting<{ id?: string; name?: string; keyFrom?: string | null }[]>("imageProviders", []);
+	const hit = rows.filter((p) => p.keyFrom === id);
+	if (!hit.length) return [];
+	setSetting("imageProviders", rows.map((p) => (p.keyFrom === id ? { ...p, keyFrom: null } : p)));
+	return hit.map((p) => p.name || p.id || "");
+}
+
 export function providerReferences(id: string): ProviderReferences {
 	return {
 		defaultModel: refProvider(getSetting("defaultModel", null)) === id,
@@ -107,6 +127,7 @@ export function providerReferences(id: string): ProviderReferences {
 		agents: (db.prepare("SELECT name FROM agents WHERE model_provider = ?").all(id) as { name: string }[]).map((r) => r.name),
 		subagents: false,
 		subagentAgents: subagentPoolRefs(id),
+		imageProviders: imageProvidersKeyedFrom(id).map((p) => p.name),
 	};
 }
 
@@ -123,6 +144,8 @@ export function clearProviderReferences(id: string): ProviderReferences {
 	// 快速操作模型：引用被删服务的 classifier → 清掉引用（回落为未选择，fail-closed）
 	const fast = getSetting<{ kind?: string; provider?: string; id?: string } | null>("fastComputer", null);
 	if (fast && fast.provider === id) setSetting("fastComputer", { ...fast, provider: "", id: "" });
+	// 生图服务复用被删服务的 Key → 清掉 keyFrom，让其提示重新配 Key（不删生图服务本身）
+	if (refs.imageProviders.length) clearImageKeyFrom(id);
 	if (refs.agents.length) db.prepare("UPDATE agents SET model_provider = NULL, model_id = NULL WHERE model_provider = ?").run(id);
 	return refs;
 }

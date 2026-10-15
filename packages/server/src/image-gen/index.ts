@@ -1,6 +1,9 @@
 /**
- * 图片生成：服务配置（加密 Key）、默认模型、每个助理的选择，以及“生成 → 存进工作区 → 发到聊天”。
- * 配置都在 settings 表里：imageProviders、imageKey:<id>（sealJson）、defaultImageModel、agentImage:<agentId>。
+ * 图片生成：服务配置（Key 走统一凭据存储）、默认模型、每个助理的选择，以及“生成 → 存进工作区 → 发到聊天”。
+ *
+ * 凭据统一：一个服务的 Key 存在 **统一凭据存储**（Pi 公开 `CredentialStore`，与 chat 服务同一份，按 provider id 绑定），
+ * 不再写 `imageKey:<id>` settings。旧版写在 `imageKey:<id>`（sealJson）的 Key 由 `keyOf` 桥接读取（只读，不复制明文）；
+ * 复用别的服务（`keyFrom`）也读同一份凭据。
  */
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
@@ -8,7 +11,8 @@ import { bus } from "../bus.ts";
 import { getSetting, setSetting, uid } from "../db.ts";
 import { deliverFromWorkspace, fileInfo, insideWorkspace, mimeOf, workspaceOf } from "../files.ts";
 import { insertMessage } from "../messages.ts";
-import { EncryptedCredentialStore, openJson, sealJson } from "../secrets.ts";
+import { credentialStore } from "../models.ts";
+import { openJson } from "../secrets.ts";
 import { costNote, defaultCtx, generate, type Ctx, type GenResult, type ImageEndpoint, type ImageKind, ImageGenError, KINDS, kindInfo, listModels, supportsEdit } from "./providers.ts";
 
 export interface ImageProvider {
@@ -17,8 +21,14 @@ export interface ImageProvider {
 	kind: ImageKind;
 	baseUrl: string;
 	models: string[];
-	/** 复用某个自定义模型服务的 Key（不再单独保存） */
+	/** 复用某个自定义模型服务的 Key（统一凭据存储里的同一份，不再单独保存） */
 	keyFrom?: string | null;
+	/** 非秘密元数据：自己的 Key 已写入统一凭据存储（`keyFrom` 时不适用） */
+	hasCredential?: boolean;
+	/** 非秘密元数据：Key 现在存在哪（迁移 / 界面提示用，不含任何秘密） */
+	keyStored?: "unified" | "legacy" | "reference";
+	/** 非秘密元数据：已完成 legacy 元数据迁移（幂等标记） */
+	imageKeyMigrated?: boolean;
 	createdAt: number;
 }
 export interface ImageModelRef {
@@ -31,19 +41,60 @@ export const listProviders = () => getSetting<ImageProvider[]>("imageProviders",
 export const getProvider = (id: string) => listProviders().find((p) => p.id === id);
 const saveList = (l: ImageProvider[]) => (setSetting("imageProviders", l), bus.emit({ type: "settings.changed" }));
 
-let creds: EncryptedCredentialStore | null = null;
+/** 生图服务在统一凭据存储里的 provider id：复用别的服务就用那个 id，否则用自己的。 */
+const credentialIdOf = (p: Pick<ImageProvider, "id" | "keyFrom">) => p.keyFrom || p.id;
+
+async function readStoredKey(providerId: string): Promise<string | undefined> {
+	if (!providerId) return undefined;
+	const store = credentialStore;
+	if (!store) return undefined;
+	const c = await store.read(providerId);
+	return c?.type === "api_key" ? c.key : undefined;
+}
+
+/** 唯一写路径：Key 写进统一凭据存储（公开 `CredentialStore`），不落 settings、不写日志、不复制明文。 */
+async function writeStoredKey(providerId: string, key: string | null): Promise<void> {
+	const store = credentialStore;
+	if (!store) throw new Error("凭据存储还没准备好，请稍后重试");
+	if (key) await store.modify(providerId, async () => ({ type: "api_key", key }));
+	else await store.delete(providerId);
+}
+
+/**
+ * 解析服务的 Key：统一凭据存储 → legacy `imageKey:<id>` 加密设置（桥接，只读）→ `keyFrom` 引用。
+ * 绝不读 env / 全局 Key，也不把 Key 写进 settings 或日志；错误信息不含 Key。
+ */
 async function keyOf(p: Pick<ImageProvider, "id" | "keyFrom">): Promise<string | undefined> {
-	if (p.keyFrom) {
-		creds ??= new EncryptedCredentialStore();
-		const c = await creds.read(p.keyFrom);
-		return c?.type === "api_key" ? (c as { key: string }).key : undefined;
-	}
+	const unified = await readStoredKey(credentialIdOf(p));
+	if (unified) return unified;
+	// legacy 桥接：旧版写在 imageKey:<id> 的加密设置（不复制明文，仅读）
 	const s = getSetting<string | null>(`imageKey:${p.id}`, null);
 	return s ? openJson<string>(s) : undefined;
 }
-export const hasKey = (p: ImageProvider) => !!p.keyFrom || !!getSetting<string | null>(`imageKey:${p.id}`, null);
+export const hasKey = (p: ImageProvider) => !!p.keyFrom || !!p.hasCredential || !!getSetting<string | null>(`imageKey:${p.id}`, null);
+/** 非秘密元数据：这个服务的 Key 现在存在哪（界面提示 / 迁移用）。 */
+export function keySourceOf(p: ImageProvider): ImageProvider["keyStored"] {
+	if (p.keyFrom) return "reference";
+	if (p.hasCredential) return "unified";
+	if (getSetting<string | null>(`imageKey:${p.id}`, null)) return "legacy";
+	return undefined;
+}
 
-export const providerJson = (p: ImageProvider) => ({ ...p, hasKey: hasKey(p), kindLabel: kindInfo(p.kind)?.label ?? p.kind });
+/** 幂等、非秘密的 legacy 元数据迁移：只给每个生图服务补 `keyStored` / `imageKeyMigrated` 标记，**不读、不复制任何明文**。 */
+export function migrateLegacyImageProviders(): number {
+	const list = listProviders();
+	let changed = 0;
+	const next = list.map((p) => {
+		const stored = keySourceOf(p);
+		if (stored === p.keyStored && p.imageKeyMigrated) return p;
+		changed++;
+		return { ...p, keyStored: stored, imageKeyMigrated: true };
+	});
+	if (changed) setSetting("imageProviders", next);
+	return changed;
+}
+
+export const providerJson = (p: ImageProvider) => ({ ...p, hasKey: hasKey(p), keyStored: keySourceOf(p), kindLabel: kindInfo(p.kind)?.label ?? p.kind });
 
 export interface ProviderInput {
 	name?: string;
@@ -53,7 +104,7 @@ export interface ProviderInput {
 	keyFrom?: string | null;
 	models?: string[];
 }
-export function saveProvider(id: string | null, i: ProviderInput): ImageProvider {
+export async function saveProvider(id: string | null, i: ProviderInput): Promise<ImageProvider> {
 	if (!KINDS.some((k) => k.kind === i.kind)) throw new Error("不支持的服务类型");
 	const info = kindInfo(i.kind);
 	const baseUrl = (i.baseUrl?.trim() || info.baseUrl).replace(/\/+$/, "");
@@ -63,19 +114,33 @@ export function saveProvider(id: string | null, i: ProviderInput): ImageProvider
 	const list = listProviders();
 	const cur = id ? list.find((p) => p.id === id) : undefined;
 	if (id && !cur) throw new Error("服务不存在");
-	const p: ImageProvider = { id: cur?.id ?? uid("img"), name: i.name?.trim() || info.label.replace(/（.*$/, ""), kind: i.kind, baseUrl, models, keyFrom: i.keyFrom || null, createdAt: cur?.createdAt ?? Date.now() };
-	if (i.apiKey?.trim()) setSetting(`imageKey:${p.id}`, sealJson(i.apiKey.trim()));
-	if (p.keyFrom) setSetting(`imageKey:${p.id}`, null);
+	const keyFrom = i.keyFrom === undefined ? (cur?.keyFrom ?? null) : (i.keyFrom || null);
+	const p: ImageProvider = { id: cur?.id ?? uid("img"), name: i.name?.trim() || info.label.replace(/（.*$/, ""), kind: i.kind, baseUrl, models, keyFrom, hasCredential: keyFrom ? false : (cur?.hasCredential ?? false), createdAt: cur?.createdAt ?? Date.now() };
+	if (keyFrom) {
+		// 改成复用别的服务的 Key：清掉自己名下的统一凭据（不删别的服务、不动 legacy 设置）
+		if (cur && !cur.keyFrom && cur.hasCredential) await writeStoredKey(cur.id, null).catch(() => {});
+		p.hasCredential = false;
+	} else if (i.apiKey?.trim()) {
+		// 新 Key 走统一凭据存储；同时清掉 legacy 加密设置（只清引用，不复制明文）
+		await writeStoredKey(p.id, i.apiKey.trim());
+		p.hasCredential = true;
+		if (getSetting<string | null>(`imageKey:${p.id}`, null)) setSetting(`imageKey:${p.id}`, null);
+	}
+	p.keyStored = keySourceOf(p);
+	p.imageKeyMigrated = true;
 	saveList(cur ? list.map((x) => (x.id === p.id ? p : x)) : [...list, p]);
 	// 第一个配置好的模型自动成为默认
 	const d = defaultImageModel();
 	if (!d || (d.provider === p.id && !p.models.includes(d.model))) setDefaultImageModel({ provider: p.id, model: p.models[0] });
 	return p;
 }
-export function removeProvider(id: string) {
+export async function removeProvider(id: string) {
 	const list = listProviders();
-	if (!list.some((p) => p.id === id)) return false;
+	const p = list.find((x) => x.id === id);
+	if (!p) return false;
 	setSetting(`imageKey:${id}`, null);
+	// 删掉统一凭据里自己名下的 Key（keyFrom 引用别的服务的 Key 时不动别人的）
+	if (!p.keyFrom) await writeStoredKey(id, null).catch(() => {});
 	saveList(list.filter((p) => p.id !== id));
 	if (getSetting<ImageModelRef | null>("defaultImageModel", null)?.provider === id) {
 		const next = listProviders()[0];

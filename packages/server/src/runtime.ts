@@ -42,7 +42,7 @@ import { config } from "./config.ts";
 import { db, now, uid } from "./db.ts";
 import { splitThinking } from "./thinking.ts";
 import { type AttachmentInput, prepareAttachments } from "./attachments.ts";
-import { describeImages, supportsVision } from "./vision.ts";
+import { supportsVision } from "./vision.ts";
 import { deliverFromWorkspace, fileInfo, insideWorkspace, workspaceOf } from "./files.ts";
 import { INTERJECTION_RULE, isStopCommand } from "./interject.ts";
 import { deleteMessage, insertMessage, updateMessage, roomOfConversation } from "./messages.ts";
@@ -462,14 +462,6 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				const a = getAgent(agentId);
 				return a ? runtime(agentId).modelFor(a) : null;
 			},
-			// 识图模型的一次真实调用也计入用量（models.complete 公开返回 input/output，不碰凭据）
-			onUsage: (u) => {
-				try {
-					recordUsage({ agentId, conversationId, subagentId: opts.subagentId, provider: u.provider, model: u.model, input: u.input, output: u.output, cacheRead: 0, cacheWrite: 0 });
-				} catch (e) {
-					console.error("[usage] 记录识图用量失败", e);
-				}
-			},
 		}) as never,
 	});
 	exts.push({
@@ -649,23 +641,9 @@ class AgentRuntime {
 	/** 把附件整理成模型输入（看图模型收到图片本身；文档附上文字摘录） */
 	private async withAttachments(s: NonNullable<Awaited<ReturnType<typeof this.ensure>>>, text: string, files?: AttachmentInput[]) {
 		if (!files?.length) return { text, images: undefined };
+		// 图片只跟随当前对话模型：能看图就把图片发给它；不能看图就明确提示换模型，不静默改用别的模型。
 		const vision = supportsVision(this.modelFor(getAgent(this.id)!));
-		const p = await prepareAttachments(files, {
-			vision,
-			describe: vision
-				? undefined
-				: async (imgs) => {
-						const r = await describeImages(imgs);
-						if (r.ok && r.usage && r.model) {
-							try {
-								recordUsage({ agentId: this.id, conversationId: this.conversationId, provider: r.model.provider, model: r.model.id, input: r.usage.input, output: r.usage.output, cacheRead: 0, cacheWrite: 0 });
-							} catch (e) {
-								console.error("[usage] 记录识图用量失败", e);
-							}
-						}
-						return { ok: r.ok, text: r.text };
-					},
-		});
+		const p = await prepareAttachments(files, { vision });
 		return { text: [text, p.text].filter((x) => x.trim()).join("\n\n"), images: p.images };
 	}
 
