@@ -28,13 +28,16 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { CredentialStore } from "@earendil-works/pi-ai";
+import type { ClassifierAnswer, ClassifierContext, CredentialStore } from "@earendil-works/pi-ai";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 import compat from "./compat.json" with { type: "json" };
 import { BRAND } from "@pi-assistant/shared";
 
 export { defineTool, Type };
 export type { AgentSession, AgentSessionEvent, BashOperations, ExtensionAPI, ExtensionFactory, ToolDefinition, CredentialStore };
+// classifier（System One / Jev）的官方类型：server 只经这里使用 Pi，业务侧按官方结构传参
+// ClassifierQuestion / ClassifierResult 直接复用 Pi 的定义，不再自造一套。
+export type { ClassifierAnswer, ClassifierContext, ClassifierQuestion, ClassifierResult } from "@earendil-works/pi-ai";
 
 /** Pi 内置的“本机 bash”执行后端（给 ext-sandbox 在 Docker 偏好下切回主机时注入；扩展不直接依赖 Pi 运行时代码） */
 export function localBashOperations(): BashOperations {
@@ -95,6 +98,48 @@ export interface ModelInfo {
 	maxTokens?: number;
 }
 
+/** classifier 模型的安全元数据（不含 baseUrl / headers / 凭据）。 */
+export interface ClassifierModelInfo {
+	provider: string;
+	id: string;
+	name: string;
+	api: string;
+	input: string[];
+	contextWindow: number;
+	/** 该 provider 是否已配置认证（只看状态，不暴露凭据内容） */
+	configured: boolean;
+}
+
+/** 分类请求的受限参数：不允许调用方注入 apiKey / headers / fetch，鉴权一律交给 Pi 的 request-time 解析。 */
+export interface ClassifierCallOptions {
+	signal?: AbortSignal;
+	timeoutMs?: number;
+	temperature?: number;
+}
+
+/** 中性分类结果：只含答案与用量，绝不带 headers / 凭据；errorMessage 已脱敏。 */
+export interface ClassifierOutcome {
+	provider: string;
+	model: string;
+	api: string;
+	answers: Record<string, ClassifierAnswer>;
+	usage?: { input: number; output: number; totalTokens: number; cost: number };
+	stopReason: "stop" | "error" | "aborted";
+	errorMessage?: string;
+	timestamp: number;
+}
+
+/**
+ * 错误信息脱敏：provider 报错常把响应体原样带出（可能含请求头 / key）。
+ * 这里统一抹掉 Bearer 凭据、key/token/secret 字段和超长疑似密钥串，再对外返回。
+ */
+function redactSecrets(text: string): string {
+	return text
+		.replace(/(bearer)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [已隐藏]")
+		.replace(/(api[_-]?key|access[_-]?token|authorization|secret|token)["']?\s*[:=]\s*["']?[^\s"',;}]+/gi, "$1=[已隐藏]")
+		.replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[已隐藏]");
+}
+
 export type LoginPrompt =
 	| { type: "text" | "secret" | "manual_code"; message: string; placeholder?: string }
 	| { type: "select"; message: string; options: readonly { id: string; label: string; description?: string }[] };
@@ -153,6 +198,34 @@ export class PiModels {
 			contextWindow: m.contextWindow,
 			maxTokens: m.maxTokens,
 		}));
+	}
+
+	/** classifier（System One / Jev）模型目录：只列 classifier 类型，只含安全元数据。 */
+	listClassifierModels(providerId?: string): ClassifierModelInfo[] {
+		return this.runtime.getModelsOfType("classifier", providerId).map((m) => ({
+			provider: m.provider,
+			id: m.id,
+			name: m.name,
+			api: m.api,
+			input: [...(m.input ?? [])],
+			contextWindow: m.contextWindow,
+			configured: this.runtime.hasConfiguredAuth(m.provider),
+		}));
+	}
+
+	/**
+	 * 受限分类请求：只按 provider/model 找 classifier 模型，鉴权由 Pi 的 request-time 解析完成
+	 * （按 model.provider 绑定 baseURL/headers/key，不会串到别的 provider）。
+	 * 返回中性结果：不返回 headers / key，错误信息已脱敏；SDK 契约上不抛异常。
+	 */
+	async classify(providerId: string, modelId: string, context: ClassifierContext, opts?: ClassifierCallOptions): Promise<ClassifierOutcome> {
+		const model = this.runtime.getModelOfType("classifier", providerId, modelId);
+		if (!model) return { provider: providerId, model: modelId, api: "", answers: {}, stopReason: "error", errorMessage: `找不到分类模型 ${providerId}/${modelId}`, timestamp: Date.now() };
+		const res = await this.runtime.classify(model, context, opts ? { signal: opts.signal, timeoutMs: opts.timeoutMs, temperature: opts.temperature } : undefined);
+		const out: ClassifierOutcome = { provider: res.provider, model: res.model, api: res.api, answers: res.answers, stopReason: res.stopReason, timestamp: res.timestamp };
+		if (res.usage) out.usage = { input: res.usage.input, output: res.usage.output, totalTokens: res.usage.totalTokens, cost: res.usage.cost?.total ?? 0 };
+		if (res.errorMessage) out.errorMessage = redactSecrets(res.errorMessage);
+		return out;
 	}
 
 	/** 把想要的思考强度收敛到模型支持的档位（Pi 的 clampThinkingLevel） */
