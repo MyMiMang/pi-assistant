@@ -225,7 +225,7 @@ export function BotTurn({ row, agent, live, renderSubagent, onQuote, onJump, int
 	);
 }
 
-export function UserMsg({ m, reaction, onQuote, onJump, interaction }: { m: Message; reaction?: "eyes" | "done"; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: MessageInteraction }) {
+export function UserMsg({ m, reaction, onQuote, onFork, onJump, interaction }: { m: Message; reaction?: "eyes" | "done"; onQuote?: (m: Message) => void; onFork?: (m: Message) => void; onJump?: (id: string) => void; interaction?: MessageInteraction }) {
 	const quoted = onJump ? quotedBlock(m) : null;
 	return (
 		<div className="pa-msg user" data-mid={m.id} {...interaction}>
@@ -238,7 +238,7 @@ export function UserMsg({ m, reaction, onQuote, onJump, interaction }: { m: Mess
 			)}
 			{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} mine /> : null}
 			<Delivery state={m.meta.delivery} />
-			<MessageActions m={m} onQuote={onQuote} side="right" />
+			<MessageActions m={m} onQuote={onQuote} onFork={onFork} side="right" />
 		</div>
 	);
 }

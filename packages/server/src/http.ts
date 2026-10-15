@@ -55,6 +55,7 @@ import { entryDomain, restartTunnel, retryTunnel, startTunnel, stopTunnel, tunne
 import { checkNamedPerms, namedConfig, removeNamedTunnel, setupNamedTunnel } from "./named-tunnel.ts";
 import { sealJson } from "./secrets.ts";
 import { createConversation, currentConversation, deleteConversation, getConversation, listConversations, renameConversation, setCurrentConversation } from "./conversations.ts";
+import { forkConversation, ForkError } from "./fork.ts";
 import { globalMemoryProviderId, hindsightInUse, listMemoryProviders, memory } from "./memory/index.ts";
 import { flush, hindsightMemory, resyncAll } from "./memory/hindsight/provider.ts";
 import { configuredModels, resetEmbeddingStore, resolveMemoryModel, sidecar } from "./memory/hindsight/sidecar.ts";
@@ -706,13 +707,25 @@ app.get("/api/conversations/:cid/context", async (c) => {
 	return c.json({ tokens: null, contextWindow: null, percent: null, model: null, session: null });
 });
 /** 手动整理上下文（Pi compaction） */
-app.post("/api/conversations/:cid/compact", async (c) => {
-	const conv = getConversation(c.req.param("cid"));
+app.post("/api/conversations/:cid/compact", async (c) => {	const conv = getConversation(c.req.param("cid"));
 	if (!conv) return c.json({ error: "not_found" }, 404);
 	try {
 		return c.json({ ok: true, ...(await runtime(conv.agent_id, conv.id).compact()) });
 	} catch (e) {
 		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+
+// ---------------------------------------------------------------- 从消息另开会话分支
+/** 从某一则 user 消息另开一个分支对话（Pi 公开 SessionManager fork）；不自动发 prompt、不重放工具。 */
+app.post("/api/conversations/:cid/fork", async (c) => {
+	const b = await c.req.json<{ messageId?: string; clientId?: string }>().catch(() => ({}) as { messageId?: string; clientId?: string });
+	if (!b.messageId || typeof b.messageId !== "string") return c.json({ error: "缺少 messageId", code: "not_found" }, 404);
+	try {
+		return c.json(forkConversation({ conversationId: c.req.param("cid"), messageId: b.messageId, clientId: typeof b.clientId === "string" && b.clientId ? b.clientId : null }));
+	} catch (e) {
+		if (e instanceof ForkError) return c.json({ error: e.message, code: e.code }, e.status);
+		return c.json({ error: e instanceof Error ? e.message : String(e), code: "fork_failed" }, 500);
 	}
 });
 

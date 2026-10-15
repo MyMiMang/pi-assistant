@@ -30,7 +30,7 @@ import { proactiveExtension } from "@pi-assistant/ext-proactive";
 import { advanceConversation, cancelFollowup, drainAdvances, fmt as fmtTime, hiddenConversation, isHeartbeatTask, listFollowups, parseWhen, runOfTask, scheduleFollowup, setAdvanceHooks, setProactiveSpawner, surface as proactiveSurface } from "./proactive.ts";
 import { sandboxExtension } from "@pi-assistant/ext-sandbox";
 import { NUDGE_TYPE, skillsExtension } from "@pi-assistant/ext-skills";
-import { currentConversation, getConversation, setConversationSession } from "./conversations.ts";
+import { conversationForkParent, currentConversation, getConversation, setConversationSession } from "./conversations.ts";
 import { memory, type MemoryActor } from "./memory/index.ts";
 import { computeNext, createRoutine, deleteRoutine, getRoutine, listRoutines, setRoutineSpawner, setRoutineStatus, updateRoutine, validateCron, webhookPath } from "./routines.ts";
 import { DUP_THRESHOLD, hasCreateGrant, observeTurn, recordSuggestion, resolveSuggestion, saveSkillVersioned, searchSkills, skillDiff, type Suggestion, suggestionPrompt } from "./skill-intel.ts";
@@ -164,7 +164,39 @@ export function setRoomHooks(h: RoomHooks) {
 function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void, subagentId?: string) {
 	const insert = (m: Parameters<typeof insertMessage>[0]) => insertMessage({ ...m, subagentId });
 	let cur: { id: string; text: string; thinking: string; flushAt: number } | null = null;
+	// app 消息 ↔ Pi entry 的映射：assistant 消息的 id（供紧随 message_end 的 entry_id 事件落 meta.piEntryId）
+	let lastAssistantMid: string | null = null;
 	const tools = new Map<string, string>();
+
+	/** 把刚写进 Pi 会话文件的 entry id 落到 app 消息的 meta.piEntryId（不额外广播 message.updated，避免刷屏）。 */
+	const mapEntry = (e: { entryId: string; role: string; toolCallId?: string }) => {
+		if (e.role === "assistant" && lastAssistantMid) {
+			updateMessage(lastAssistantMid, { meta: { piEntryId: e.entryId } }, false);
+			lastAssistantMid = null;
+			return;
+		}
+		if (e.role === "toolResult" && e.toolCallId) {
+			const mid = tools.get(e.toolCallId);
+			if (mid) {
+				updateMessage(mid, { meta: { piEntryId: e.entryId } }, false);
+				tools.delete(e.toolCallId);
+			}
+			return;
+		}
+		if (e.role === "user" && conversationId) {
+			// 用户消息在 Pi 真正持久化时才拿到 entry id（插话会在很晚才送达）。
+			// 取本对话最近一条还没映射的 user 消息：每次投递只留一条未映射，不会错位。
+			const rows = db.prepare("SELECT id, meta FROM messages WHERE conversation_id = ? AND role = 'user' AND task_id IS NULL AND subagent_id IS NULL ORDER BY rowid DESC LIMIT 5").all(conversationId) as { id: string; meta: string }[];
+			const target = rows.find((r) => {
+				try {
+					return !(JSON.parse(r.meta) as { piEntryId?: string }).piEntryId;
+				} catch {
+					return true;
+				}
+			});
+			if (target) updateMessage(target.id, { meta: { piEntryId: e.entryId } }, false);
+		}
+	};
 	return subscribeSession(session, (e) => {
 		switch (e.type) {
 			case "assistant_start": {
@@ -212,9 +244,13 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 					if (!text.trim() && !thinking) deleteMessage(cur.id);
 					else updateMessage(cur.id, { content: text, status: "done", meta: { model: `${e.provider}/${e.model}`, ...(usage ? { usage } : {}), ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}) } });
 				}
+				lastAssistantMid = cur.id;
 				cur = null;
 				break;
 			}
+			case "entry_id":
+				mapEntry(e);
+				break;
 			case "tool_start": {
 				const m = insert({ agentId, conversationId, taskId, role: "tool", content: "", status: "running", meta: { toolName: e.name, args: e.args, toolCallId: e.id } });
 				tools.set(e.id, m.id);
@@ -223,7 +259,7 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 			case "tool_end": {
 				const mid = tools.get(e.id);
 				if (mid) updateMessage(mid, { status: e.isError ? "error" : "done", meta: { result: e.resultText.slice(0, 4000) } });
-				tools.delete(e.id);
+				// 不从 tools 里删：toolResult 的 entry id 在 message_end 之后才到，那时还要用它落 meta.piEntryId（落完再删）
 				break;
 			}
 			case "settled":
@@ -632,6 +668,8 @@ class AgentRuntime {
 				agentDir: join(config.agentsDir, this.id),
 				sessionDir: join(config.agentsDir, this.id, "sessions"),
 				sessionFile: getConversation(this.conversationId)?.session_file ?? undefined,
+				// 从消息另开、且分支点在首条消息之前：新会话只记父关系，等首条消息落盘（官方 newSession({ parentSession }) 语义）
+				parentSession: conversationForkParent(this.conversationId),
 				model,
 				thinking,
 				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), ...(room?.rules ?? [])],

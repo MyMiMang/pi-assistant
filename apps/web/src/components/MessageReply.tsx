@@ -6,7 +6,7 @@
  * - 长按移动（滚动 / 选择）自动取消，不阻正常文字选择与复制粘贴。
  * - 引用条 Esc 只取消引用（由调用方在 textarea 处理），不清空已输入文字。
  */
-import { Quote, RotateCcw, X } from "lucide-react";
+import { GitBranch, Quote, RotateCcw, X } from "lucide-react";
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { attachmentLabel, isQuotable, type QuotedBlock, type ReplyRef } from "../replies";
@@ -21,15 +21,25 @@ export function shouldUseNativeContextMenu(target: EventTarget | null): boolean 
 	return !!el.closest("a, img, input, textarea, select, video, audio, [contenteditable='true']");
 }
 
-/** 每条可引用消息底部的操作行：目前只有「引用」，文字常显（不只 hover）。 */
-export function MessageActions({ m, onQuote, side = "left" }: { m: Message; onQuote?: (m: Message) => void; side?: "left" | "right" }) {
-	if (!onQuote || !isQuotable(m)) return null;
+/** 每条可引用 / 可分支消息底部的操作行：「引用」文字常显（不只 hover）；「另开新对话」只出现在用户消息上。 */
+export function MessageActions({ m, onQuote, onFork, side = "left" }: { m: Message; onQuote?: (m: Message) => void; onFork?: (m: Message) => void; side?: "left" | "right" }) {
+	const quoteOk = !!onQuote && isQuotable(m);
+	const forkOk = !!onFork && m.role === "user";
+	if (!quoteOk && !forkOk) return null;
 	return (
 		<div className={cx("pa-msg-actions", side)} data-testid="msg-actions">
-			<button type="button" className="pa-quote-btn" onClick={() => onQuote(m)} title="引用这条消息" aria-label="引用这条消息" data-testid="quote-btn">
-				<Quote className="pa-ic" />
-				<span className="pa-quote-btn-txt">引用</span>
-			</button>
+			{quoteOk && (
+				<button type="button" className="pa-quote-btn" onClick={() => onQuote!(m)} title="引用这条消息" aria-label="引用这条消息" data-testid="quote-btn">
+					<Quote className="pa-ic" />
+					<span className="pa-quote-btn-txt">引用</span>
+				</button>
+			)}
+			{forkOk && (
+				<button type="button" className="pa-quote-btn" onClick={() => onFork!(m)} title="从这条消息另开新对话（原文放回输入框，不会自动发送）" aria-label="从这条消息另开新对话" data-testid="fork-btn">
+					<GitBranch className="pa-ic" />
+					<span className="pa-quote-btn-txt">另开新对话</span>
+				</button>
+			)}
 		</div>
 	);
 }
@@ -109,8 +119,8 @@ export function JumpHint({ s, onRetry }: { s: "loading" | "notfound" | "error"; 
 	);
 }
 
-/** 桌面右键小菜单（只放「引用」，不替换原生菜单）。 */
-export function ReplyContextMenu({ open, at, onQuote, onClose }: { open: boolean; at: { x: number; y: number }; onQuote: () => void; onClose: () => void }) {
+/** 桌面右键小菜单（「引用」+「另开新对话」，不替换原生菜单）。 */
+export function ReplyContextMenu({ open, at, canFork, onFork, onQuote, onClose }: { open: boolean; at: { x: number; y: number }; canFork?: boolean; onFork?: () => void; onQuote: () => void; onClose: () => void }) {
 	const ref = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		if (!open) return;
@@ -136,7 +146,8 @@ export function ReplyContextMenu({ open, at, onQuote, onClose }: { open: boolean
 	if (!open) return null;
 	const w = 168;
 	const left = Math.max(8, Math.min(at.x, window.innerWidth - w - 8));
-	const top = Math.max(8, Math.min(at.y, window.innerHeight - 56));
+	const h = canFork && onFork ? 92 : 56;
+	const top = Math.max(8, Math.min(at.y, window.innerHeight - h));
 	return createPortal(
 		<div ref={ref} role="menu" className="pa-reply-menu" style={{ left, top, width: w }} data-testid="reply-menu">
 			<button
@@ -151,6 +162,20 @@ export function ReplyContextMenu({ open, at, onQuote, onClose }: { open: boolean
 			>
 				<Quote className="pa-ic" /> 引用
 			</button>
+			{canFork && onFork && (
+				<button
+					type="button"
+					role="menuitem"
+					className="pa-reply-menu-item"
+					onClick={() => {
+						onFork();
+						onClose();
+					}}
+					data-testid="reply-menu-fork"
+				>
+					<GitBranch className="pa-ic" /> 另开新对话
+				</button>
+			)}
 		</div>,
 		document.body,
 	);
@@ -275,7 +300,7 @@ export interface MessageInteraction {
  * 一个聊天区共用一个右键菜单 + 长按控制器（避免每条消息一个 hook）。
  * 返回：interactionOf(m) 给消息元素展开；menuEl 挂到聊天区里。
  */
-export function useReplyContext(onQuote: (m: Message) => void) {
+export function useReplyContext(onQuote: (m: Message) => void, onFork?: (m: Message) => void, canFork?: (m: Message) => boolean) {
 	const [menu, setMenu] = useState<{ m: Message; x: number; y: number } | null>(null);
 	const lp = useRef<{ timer?: number; start?: { x: number; y: number } }>({});
 	const cancel = () => {
@@ -309,7 +334,16 @@ export function useReplyContext(onQuote: (m: Message) => void) {
 		onPointerCancel: cancel,
 		onPointerLeave: cancel,
 	});
-	const menuEl = <ReplyContextMenu open={!!menu} at={menu ?? { x: 0, y: 0 }} onQuote={() => menu && onQuote(menu.m)} onClose={() => setMenu(null)} />;
+	const menuEl = (
+		<ReplyContextMenu
+			open={!!menu}
+			at={menu ?? { x: 0, y: 0 }}
+			canFork={!!menu && !!canFork?.(menu.m)}
+			onFork={() => menu && onFork?.(menu.m)}
+			onQuote={() => menu && onQuote(menu.m)}
+			onClose={() => setMenu(null)}
+		/>
+	);
 	return { interactionOf, menuEl };
 }
 

@@ -477,6 +477,8 @@ export interface CreateSessionOptions {
 	sessionDir: string;
 	/** 已存在的会话文件：恢复；否则 continueRecent=true 时续上最近的会话，否则新建。 */
 	sessionFile?: string;
+	/** 新建会话时的父会话文件（Pi 会话头 parentSession）：从消息另开分支且分支点在首条消息之前时用。 */
+	parentSession?: string;
 	continueRecent?: boolean;
 	model: { provider: string; id: string };
 	/** 思考强度（已按模型收敛） */
@@ -588,7 +590,7 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		? SessionManager.open(o.sessionFile, o.sessionDir, o.cwd)
 		: o.continueRecent
 			? SessionManager.continueRecent(o.cwd, o.sessionDir)
-			: SessionManager.create(o.cwd, o.sessionDir);
+			: SessionManager.create(o.cwd, o.sessionDir, o.parentSession ? { parentSession: o.parentSession } : undefined);
 	const { session } = await createAgentSession({
 		cwd: o.cwd,
 		agentDir: o.agentDir,
@@ -625,6 +627,61 @@ export function loadedResources(session: AgentSession) {
 
 export function sessionFileOf(session: AgentSession): string | undefined {
 	return session.sessionManager.getSessionFile();
+}
+
+// ---------------------------------------------------------------- 会话分支（fork）
+
+/** 一个可分支的锚点：app 消息对应的 Pi entry 及其分支点（该 entry 的父 entry）。 */
+export interface ForkPoint {
+	entryId: string;
+	/** 分支点：新会话覆盖到这条 entry 为止（不包含锚点消息本身） */
+	parentId: string | null;
+	role: string;
+	/** 锚点 user 消息的正文（官方 `fork(entryId)` 的 `selectedText`，放回新对话输入框，不自动发送） */
+	text: string;
+}
+
+/**
+ * 只读源会话文件，把某个 entry id 解析成分支锚点；文件/entry 不存在返回 null（调用方 fail-closed）。
+ * 语义与官方 `getUserMessagesForForking()` + `fork(entryId)` 对齐：锚点是 user 消息，分支点是它的 parentId。
+ */
+export function resolveForkPoint(sessionFile: string, entryId: string): ForkPoint | null {
+	if (!existsSync(sessionFile)) return null;
+	let sm: SessionManager;
+	try {
+		sm = SessionManager.open(sessionFile);
+	} catch {
+		return null;
+	}
+	const entry = sm.getEntry(entryId) as { type?: string; id?: string; parentId?: string | null; message?: unknown } | undefined;
+	if (!entry || entry.type !== "message" || !entry.message) return null;
+	const role = String((entry.message as { role?: string }).role ?? "");
+	return { entryId, parentId: entry.parentId ?? null, role, text: role === "user" ? messageText(entry.message) : "" };
+}
+
+export interface ForkBranch {
+	/** 新会话文件；null = 分支点在首条消息之前：按官方语义只记父关系，首条消息落盘时才写文件 */
+	sessionFile: string | null;
+	/** 分支路径上 message entry 的 id，用于把新会话前缀投影成 app 消息行 */
+	entryIds: string[];
+	/** 新会话的父会话文件（Pi 会话头 parentSession） */
+	parentSession: string;
+}
+
+/**
+ * 用 Pi 公开 API 从源会话另开一条分支：`SessionManager.createBranchedSession(leafId)` 只读源文件、
+ * 另写一个新会话文件（头带 `parentSession`），内容是根到 `parentLeafId` 这一条路径。
+ * 不碰 AgentSession、不调用模型、不重放工具。
+ */
+export function forkSessionAt(sourceFile: string, parentLeafId: string | null, opts: { cwd: string; sessionDir: string }): ForkBranch {
+	if (!existsSync(sourceFile)) throw new Error("源会话文件不存在");
+	if (!parentLeafId) return { sessionFile: null, entryIds: [], parentSession: sourceFile };
+	const sm = SessionManager.open(sourceFile, opts.sessionDir, opts.cwd);
+	if (!sm.getEntry(parentLeafId)) throw new Error("分支点不在源会话里");
+	const entryIds = sm.getBranch(parentLeafId).flatMap((e) => (e.type === "message" ? [e.id] : []));
+	const file = sm.createBranchedSession(parentLeafId);
+	if (!file) throw new Error("无法创建分支会话");
+	return { sessionFile: file, entryIds, parentSession: sourceFile };
 }
 
 /**
@@ -681,6 +738,11 @@ export type AgentEvent =
 	| { type: "settled"; aborted: boolean }
 	/** 一条用户消息真正进入了模型上下文（插话在下一个工具边界送达时触发） */
 	| { type: "user_start"; text: string }
+	/**
+	 * 一条消息写进 Pi 会话文件后，它对应的 entry id（app 消息 ↔ Pi entry 的可信映射，用于「从消息另开会话分支」）。
+	 * 监听器先于 Pi 的持久化触发，所以这里在持久化之后的微任务里读 leaf；role 可能是 user / assistant / toolResult。
+	 */
+	| { type: "entry_id"; entryId: string; role: string; toolCallId?: string }
 	| { type: "compaction_start"; reason: string }
 	| { type: "compaction_end"; reason: string; ok: boolean; aborted: boolean; error?: string; tokensBefore?: number; summary?: string };
 
@@ -697,7 +759,21 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 				if (ev.assistantMessageEvent?.type === "text_delta") fn({ type: "text_delta", delta: ev.assistantMessageEvent.delta });
 				else if (ev.assistantMessageEvent?.type === "thinking_delta") fn({ type: "thinking_delta", delta: ev.assistantMessageEvent.delta });
 				break;
-			case "message_end":
+			case "message_end": {
+				const persisted = ev.message as { role?: string; toolCallId?: string } | undefined;
+				if (persisted?.role === "user" || persisted?.role === "assistant" || persisted?.role === "toolResult") {
+					const role = persisted.role;
+					// Pi 在把这条消息 appendXXX 到 SessionManager 之前就通知了监听器；appendMessage 紧随其后且中间没有 await，
+					// 所以在微任务里读 getLeafId() 拿到的就是刚写入的这条 entry。
+					queueMicrotask(() => {
+						try {
+							const entryId = session.sessionManager.getLeafId();
+							if (entryId) fn({ type: "entry_id", entryId, role, toolCallId: persisted.toolCallId });
+						} catch {
+							/* 会话已释放：忽略 */
+						}
+					});
+				}
 				if (ev.message?.role === "assistant") {
 					const m = ev.message;
 					fn({
@@ -710,6 +786,7 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 					});
 				}
 				break;
+			}
 			case "tool_execution_start":
 				fn({ type: "tool_start", id: ev.toolCallId, name: ev.toolName, args: ev.args ?? {} });
 				break;

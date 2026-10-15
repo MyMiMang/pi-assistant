@@ -60,6 +60,15 @@ export function setConversationSession(id: string, file: string) {
 	db.prepare("UPDATE conversations SET session_file = ? WHERE id = ?").run(file, id);
 }
 
+/**
+ * 从消息另开的分支对话：分支点在首条消息之前时新 Pi 会话还没落盘，
+ * 父会话文件暂存在 conversation_forks.parent_session，由 runtime 建会话时带上（Pi 会话头 parentSession）。
+ */
+export function conversationForkParent(id: string): string | undefined {
+	const r = db.prepare("SELECT parent_session FROM conversation_forks WHERE conversation_id = ?").get(id) as { parent_session?: string | null } | undefined;
+	return r?.parent_session ?? undefined;
+}
+
 /** 有新消息时刷新时间；首条用户消息自动成为标题。 */
 export function touchConversation(id: string, userText?: string) {
 	const c = getConversation(id);
