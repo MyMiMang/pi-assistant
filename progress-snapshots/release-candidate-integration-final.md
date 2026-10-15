@@ -1,0 +1,60 @@
+# release-candidate-validation 集成收尾报告（memory + voice + queue dedup + ASR 供应链）
+
+- worktree：`release-candidate-validation`，起点 `362ccaf`，**当前 HEAD `bbf7bac`**（工作区 clean）
+- 全程未 push / 未 tag / 未打包；只构建 Apple 芯片 macOS 的约束未触发（本阶段没打包）
+- 全程 Mock / 内存 CredentialStore / 临时 `PIA_DATA_DIR`+`PIA_WORKSPACE`；**未读用户 key / 凭据 / 真实 db / Hindsight bank**，未碰系统钥匙串、未真下载权重、未真录音、未起 sidecar、未调付费模型
+- Node 用 `/Users/dengdeng/.local/node-v24.19.0/bin`（Homebrew 的 node 25.8.2 因 simdjson 动态库缺失不可用，未做系统升级）
+
+## 1. 本轮合入（`--no-ff` 保祖先）
+| commit | 内容 |
+|---|---|
+| `b4474b6` | 合并 `memory-scope-safety`（HEAD `31fb220`，含 `dcb491c`/`065be28` 等**全部祖先**）：provenance + task 草稿分层、reflect 源端隔离、晋升去重、超时真中止。冲突只在 `runtime.ts`（子代理 extensions 行）与 `docs/HANDOFF.md`——**双方功能都保留**（memory 的 actor 注入 + 技能作用域 `skillFilter`/`skillPaths` 都在），未整文件覆盖。`http.ts` 自动合并后核对：记忆端点 actor 与技能/引用端点均在。 |
+| `1ab56f9` | 合并 `voice-input-implementation`（HEAD `2c673f9`，含 local-asr-sensevoice `88a6909` + 引用 UI `dc83728` 祖先）：无冲突。 |
+| `80bce16` | 合并 `message-replies-queue-dedup`（`771e3f0`）：群聊入队按可信来源消息幂等。 |
+| `566ffce` | queue 收尾小修：多收件人组**整体事务化**（`BEGIN/COMMIT`，避免「部分入队后 crash」半组被 source 守卫整组跳过）+ 取消语义显式化（已有任何回合含 cancelled 即不再路由；仅显式 `retry` 且全部 cancelled 才重新唤醒；**不承诺 exactly-once**）。 |
+| `f3b27dd` | 语音收尾：云 ASR 设置 + 本地 SenseVoice 许可卡 + 麦克风设置入口（见下）。 |
+| `607ecbe` | 本地 ASR 引擎供应链：按平台固定 sherpa wheel SHA256 + `--require-hashes`。 |
+| `bbf7bac` | 修回归：SenseVoice 卡状态响应不完整不崩面板；补 `model-services-ui` fixture 缺失的 `/api/models` 与 ASR 路由。 |
+
+## 2. 实际跑过的检查（真实输出）
+| 检查 | 结果 |
+|---|---|
+| 服务端 `tsc --noEmit -p packages/server` | exit 0 |
+| 网页 `tsc --noEmit -p apps/web` | exit 0 |
+| web `vite build`（2506 模块） | 通过 |
+| 记忆相关单测（memory-scope-safety + retain-dedup + hindsight-scope + hindsight + hindsight-switch） | **19/19**（注：memory 报告写的 20 是把一个含子用例的用例按 2 计；实际断言 19 条，0 fail / 0 skip） |
+| 群聊入队 + 引用 + rooms（queue-dedup + message-replies + message-replies-http + rooms） | **42/42** |
+| 技能 + 语音/ASR（skill-assignments + skill-import + skill-intel + voice-asr + voice-input + local-asr-license/manager/transcribe/wav + asr-providers-http） | **103/103** |
+| `e2e/voice-input-ui.mjs`（新写，纯前端 fixture + Chromium 假麦克风） | **全部通过**（25 项）：麦克风可见 / 未配置给「去设置」且 0 转写 / 录音→停止→转写插入锚点且保留草稿、不自动发送 / 取消 0 次转写且不动草稿与引用 / 切后台取消不发送 / 390 不溢出 / 云 ASR 声明区块 / SenseVoice 许可卡（限制默认可见、未确认时接受勾选禁用、下载安装禁用、导入可用） |
+| `e2e/model-services-ui.mjs` | 通过（含**修的回归**：见 §4） |
+| `e2e/model-ui.mjs` | 通过 |
+| `e2e/custom-provider-delete.mjs` | 通过 |
+
+## 3. 云 ASR 设置（补「上游 API 有、用户不可配置」的缺口）
+- 服务端新增 `GET/POST /api/audio/asr/providers`、`DELETE /api/audio/asr/providers/:provider/:model`：**复用既有 provider 的 baseUrl / Key**，只声明「这个模型走语音转写」；不新建第二套 Key。未知服务 / 不支持协议 / 缺参数一律 400 且不写设置（`asr-providers-http.test.ts` 真实 HTTP 3/3 验证：声明后 `GET /api/models/registry` 出现 `type:"asr"`，删除后消失）。
+- UI：`ModelServices` 每个非本地服务展开后有「语音识别（ASR）」区块（选模型 + 协议，复用该服务凭据），本地 SenseVoice 独立许可卡（限制默认可见、`decision=unresolved` 时接受勾选禁用、下载安装禁用、`导入已下载权重` 可用）。
+- 麦克风：未配置 ASR 时按钮提示「未配置语音识别模型」并给「去设置」入口；`pickAsrModel` 只在注册表里选**已声明**的 ASR（本地优先），**没有未选自动云 fallback**。
+
+## 4. 供应链（sherpa wheels）
+- 从 PyPI 公开元数据（2026-10-15 复核）取 `sherpa-onnx==1.13.8`（依赖仅 `sherpa-onnx-core==1.13.8`，后者无依赖）两个包的官方 wheel SHA256，按 6 个支持平台（darwin arm64/x64、win x64/arm64、linux x64/arm64，Python 固定 3.12）固定；macOS 同时列 arch 专用与 universal2 摘要。
+- 安装改为写 requirements + `uv pip install --require-hashes -r`；**无固定摘要的平台 fail closed，不回退未校验安装**。许可 `unresolved` 时安装入口本就默认关闭（勾选不能绕过），本轮只做固定与校验，**没有真下载 / 真安装**。
+
+## 5. 修的回归（重要）
+- 我新增的 `LocalSenseVoiceCard` 用 `st?.install.state` 作为 `useEffect` 依赖，状态响应为 `{}` 时会在**依赖数组求值阶段**崩掉整个模型服务面板（`model-services-ui` 从 2 张卡变 0）。已改为可选链 + 缺字段降级为「不可用」，不再崩。
+- `model-services-ui` fixture 一直没 mock `/api/models`（`useConfiguredModels` 要求数组），已补 `[]` 与 ASR 两条路由；该用例现已通过。
+
+## 6. 记忆 REST 安全（代码核对，未端到端）
+- 用户侧记忆端点（GET/POST/PATCH/DELETE/reflect）一律在**服务端**显式传 `actor:"user"`，请求体类型不含 actor，**客户端无法伪造成 main**；工具路径 actor 由 runtime 按会话上下文注入（子代理/后台/群/主）。`promote/rejectDraft` 只给主会话。
+- `canMutate` 缺省 actor 视为主会话，仅影响内部/旧调用；外部入口均已显式传 actor。属「代码审阅确认」，未跑真实 Hindsight 端到端。
+
+## 7. 未验 / 限制（如实）
+- **未 push / 未 tag / 未打包**（等 subagent-thinking-options-fix 交付后整体最小合，再走最后的 arm64 preflight）。
+- 真实 Hindsight **HTTP retain/reflect（LLM）未验**：未配大模型凭据、无 Docker、未碰用户正在跑的 Hindsight 服务；只做了官方 0.10.3 查询层（`ReflectRequest` 校验器 + tag SQL helpers）实物验证。
+- 本地 SenseVoice：**未真下载权重 / 未起 sidecar / 未真机录音**；sherpa 安装只到「生成带 SHA256 的 requirements」层，未跑真 `uv pip install`。许可 `unresolved`（FunASR MODEL_LICENSE v1.1，issue #334 未终局）→ 默认不自动安装、不随包分发、不镜像；只保留用户自行导入合法权重。
+- 云 ASR：未用真实云 key 打通转写（无付费调用）。
+- **webhook / 外部渠道引用未接**：不声称支持外部渠道的 reply。
+- 全量 e2e / 安装包真机 / VM / 用户电脑未跑。
+- `model-services-ui` 的 fixture 补 `/api/models` 是测试夹具修正，不代表生产 `/api/models` 行为变化。
+
+## 8. 边界
+未 push / 未 tag；未读 `secrets.ts` / 真实 keys / db / Hindsight bank / SDK 凭据历史；未改系统设置 / mic / 付费 / 大模型下载 / VM / App；未动 `voice-input-implementation` 与 `subagent-thinking-options-fix` 的源 tree。
