@@ -6,7 +6,7 @@ import { CheckCircle2, Download, Loader2, Pencil, Plus, RotateCcw, Trash2, X, XC
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { CustomModel, CustomProviderMeta, ProviderReferences } from "../types";
-import { Badge, Button, cx, Input, Help, useConfirm } from "./ui";
+import { Badge, Button, cx, Input, Help, Select, useConfirm } from "./ui";
 
 const PLACEHOLDER: Record<string, string> = {
 	"openai-completions": "https://api.example.com/v1",
@@ -16,7 +16,7 @@ const PLACEHOLDER: Record<string, string> = {
 };
 
 export function useCustomProviders() {
-	const [data, setData] = useState<{ providers: CustomProviderMeta[]; apis: { id: string; label: string }[] }>({ providers: [], apis: [] });
+	const [data, setData] = useState<{ providers: CustomProviderMeta[]; apis: { id: string; label: string }[]; classifierProtocols: string[] }>({ providers: [], apis: [], classifierProtocols: [] });
 	const reload = () => api("/api/models/custom").then(setData);
 	useEffect(() => {
 		void reload();
@@ -138,7 +138,7 @@ function ModelRow({ m, onChange, onRemove }: { m: CustomModel; onChange: (p: Par
 	);
 }
 
-export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted }: { initial?: CustomProviderMeta; apis: { id: string; label: string }[]; onSaved: (m: CustomProviderMeta) => void; onCancel?: () => void; onDeleted?: () => void }) {
+export function CustomProviderForm({ initial, apis, classifierProtocols = [], onSaved, onCancel, onDeleted }: { initial?: CustomProviderMeta; apis: { id: string; label: string }[]; classifierProtocols?: string[]; onSaved: (m: CustomProviderMeta) => void; onCancel?: () => void; onDeleted?: () => void }) {
 	const [dialog, ask] = useConfirm();
 	const [name, setName] = useState(initial?.name ?? "");
 	const [apiType, setApiType] = useState(initial?.api ?? apis[0]?.id ?? "openai-completions");
@@ -147,6 +147,7 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 	const [noKey, setNoKey] = useState(initial?.noKey ?? false);
 	const [headers, setHeaders] = useState<{ name: string; value?: string; saved?: boolean }[]>(initial?.headerNames.map((n) => ({ name: n, saved: true })) ?? []);
 	const [models, setModels] = useState<CustomModel[]>(initial?.models ?? []);
+	const [classifiers, setClassifiers] = useState<{ protocol: string; modelId: string }[]>(initial?.classifiers?.map((c) => ({ protocol: c.protocol, modelId: c.modelId })) ?? []);
 	const [newModel, setNewModel] = useState("");
 	const [fetched, setFetched] = useState<CustomModel[] | null>(null);
 	const [busy, setBusy] = useState<"" | "fetch" | "save" | "test">("");
@@ -180,11 +181,12 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 		setBusy("save");
 		setErr("");
 		try {
-			const body = { name, api: apiType, baseUrl, apiKey: noKey ? undefined : apiKey || undefined, noKey, headers: hdrPayload(), models };
+			const body = { name, api: apiType, baseUrl, apiKey: noKey ? undefined : apiKey || undefined, noKey, headers: hdrPayload(), models, classifiers: classifiers.filter((c) => c.modelId.trim()).map((c) => ({ protocol: c.protocol, modelId: c.modelId.trim() })) };
 			const editId = saved?.id ?? initial?.id;
 			const m: CustomProviderMeta = await api(editId ? `/api/models/custom/${editId}` : "/api/models/custom", { method: editId ? "PUT" : "POST", json: body });
 			setSaved(m);
 			setModels(m.models);
+			setClassifiers(m.classifiers?.map((c) => ({ protocol: c.protocol, modelId: c.modelId })) ?? []);
 			setApiKey("");
 			setHeaders(m.headerNames.map((n) => ({ name: n, saved: true })));
 			if (!m.models.some((x) => x.id === testModel)) setTestModel(m.models[0]?.id ?? "");
@@ -273,7 +275,28 @@ export function CustomProviderForm({ initial, apis, onSaved, onCancel, onDeleted
 						添加
 					</Button>
 				</form>
-				{fetched && (
+				{/* classifier 声明（可选）：保存后由服务端在启动 / reload 时重新注册，供快速操作模型选用 */}
+			<div className="space-y-2" data-testid="custom-classifiers">
+				<div className="flex items-center justify-between">
+					<span className="flex items-center gap-1">
+						{label(`分类器（Jev，可选）${classifiers.length ? `（${classifiers.length}）` : ""}`)}
+						<Help>声明这是原生 System One 分类器（真 Jev，有校准概率）。只需填协议和对端模型 ID；鉴权沿用本渠道已保存的 Key，不会把 Key 发给别的地址。保存后才会出现在「快速操作模型」目录里。</Help>
+					</span>
+					<Button size="sm" variant="ghost" onClick={() => setClassifiers((l) => [...l, { protocol: classifierProtocols[0] ?? "typesafe-system-one", modelId: "" }])}>
+						<Plus size={14} /> 添加
+					</Button>
+				</div>
+				{classifiers.map((c, i) => (
+					<div key={i} className="flex gap-2">
+						<Select value={c.protocol} ariaLabel="分类器协议" testId={`classifier-protocol-${i}`} options={(classifierProtocols.length ? classifierProtocols : ["typesafe-system-one"]).map((p) => ({ value: p, label: p }))} onChange={(v) => setClassifiers((l) => l.map((x, j) => (j === i ? { ...x, protocol: v } : x)))} />
+						<Input placeholder="对端模型 ID，例如 jev-latest" value={c.modelId} onChange={(e) => setClassifiers((l) => l.map((x, j) => (j === i ? { ...x, modelId: e.target.value } : x)))} />
+						<Button size="icon" variant="ghost" onClick={() => setClassifiers((l) => l.filter((_, j) => j !== i))} aria-label="删除分类器">
+							<X size={15} />
+						</Button>
+					</div>
+				))}
+			</div>
+			{fetched && (
 					<div className="rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
 						<div className="mb-1.5 flex items-center justify-between text-xs text-zinc-500">
 							获取到 {fetched.length} 个模型，点击添加

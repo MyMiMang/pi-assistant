@@ -24,6 +24,7 @@ import { insertMessage, listMessages } from "./messages.ts";
 import { credentialBackend, customProviders, defaultModel, defaultThinking, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "./models.ts";
 import { getModelPicks, recordModelPick } from "./model-picks.ts";
 import { supportedApis, type CustomProviderInput } from "./pi-adapter/custom-providers.ts";
+import { classifierProtocols } from "./pi-adapter/index.ts";
 import { checkPiCompat, sessionStats } from "./pi-adapter/index.ts";
 import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
@@ -190,7 +191,7 @@ app.get("/api/models/providers", (c) => {
 	return c.json(models.listProviders().map((p) => ({ ...p, custom: custom.has(p.id), configured: p.configured || !!custom.get(p.id)?.configured })));
 });
 // 自定义模型服务（中转站 / 第三方 / 本地），写入 Pi 的 models.json
-app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list().map((p) => ({ ...p, references: providerReferences(p.id) })), apis: supportedApis() }));
+app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list().map((p) => ({ ...p, references: providerReferences(p.id) })), apis: supportedApis(), classifierProtocols: classifierProtocols() }));
 const customErr = (c: Context<Env>, e: unknown) => c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 app.post("/api/models/custom", async (c) => {
 	try {
