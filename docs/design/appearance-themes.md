@@ -1,6 +1,6 @@
 # 外观主题：默认暗夜、移除极简、可爱像素风与用户 DIY（设计）
 
-状态：**P1 已实现**（默认暗夜 + 移除极简 + 迁移 + 首屏预置）；**P2 像素风已实现**；**P3 DIY 的 schema / 引擎 / 库存 / 预览事务 / 管理 UI 已实现**，**AI 后端未接通**（面板留了 `onThemeDraft` 接线接口，未接时按钮禁用并如实标注，不做假生成）。入口只有「设置 → 外观 → 用 AI 设计主题」；用户已明确**取消** `/主题设计` slash 命令，不注册任何 slash、不注入 prompt、不加命令列表。
+状态：**P1 已实现**（默认暗夜 + 移除极简 + 迁移 + 首屏预置）；**P2 像素风已实现**；**P3 DIY 的 schema / 引擎 / 库存 / 预览事务 / 管理 UI 已实现**，**AI 后端已接通**（`POST /api/themes/draft` + 临时专用 Pi 会话，见 §5.7）。入口只有「设置 → 外观 → 用 AI 设计主题」；用户已明确**取消** `/主题设计` slash 命令，不注册任何 slash、不注入 prompt、不加命令列表。
 用户原话（2026-10-22）：『默认的这个外观替换成暗夜这个外观变成默认；极简删掉；再设计一套可爱一点像素风；外观开放给用户 DIY 让他们 AI 创造，你看怎么弄』。
 后续追加（同一轮）：DIY 保存后仍可编辑；图片素材作视觉参考（先定配色/风格/材质/布局），上传默认**不**嵌入主题、只有用户显式选「用作背景/装饰」才算素材；AI 后端复用当前 agent 模型（主会话另接）。
 主会话确认：**用户主动选择过的其他主题保留、不 reset**。
@@ -56,6 +56,8 @@
 > 下面第 5.1 是最初的草案；**实际冻结的实现**以 `packages/shared/src/theme-manifest.ts` 为准。两处差异：
 > 1. **必需颜色 token 必须齐全**（fail-closed），不做 token 继承；`basedOn` 仅作来源标注（v1 不做 CSS 变量继承，避免内置 token 在 CSS 里、引擎读不到而静默白屏）。
 > 2. 尺寸 / 字体 token 可选，缺省由引擎补内置中性默认；装饰（纹理/边角/阴影/背景）全部 enum。
+>
+> AI 生成 / 继续修改的后端契约见 §5.7；数据契约仍是冻结的 `ThemeDraftRequest` / `ThemeDraftResult`。
 
 ### 5.1 数据模型（Pi Assistant 自有 Typed ThemeManifest，v1）
 
@@ -131,6 +133,24 @@
 }
 ```
 
+### 5.7 AI 后端（已实现：`POST /api/themes/draft`）
+
+设计目标：让「用 AI 设计主题」真的走一次**当前助理的模型**，而不是聊天主线程里塞一句自然语言、让 agent 混着命令/代码产出 CSS。
+
+- **入口**：`packages/server/src/themes/routes.ts` → `POST /api/themes/draft`（带 `/api/*` 鉴权中间件）。请求 / 响应就是冻结的 `ThemeDraftRequest` / `ThemeDraftResult`；客户端关面板 / 离开时 `fetch` abort，经 `c.req.raw.signal` 透传，后端**真 abort 模型请求**。
+- **模型**：`runtime(agentId).modelFor(agent)`（当前助理已选的模型，否则用户默认模型）。**未知 agent / 没有模型一律拒绝**，不猜、不取第一个模型、不建新助理。
+- **临时专用会话**（`packages/server/src/themes/index.ts` + `pi-adapter` 的 `CreateSessionOptions` 新选项）：
+  - `inMemorySession: true` → 内存会话，**不落盘**、不动主聊天会话、不挪当前对话/场景、不写用户会话历史；
+  - `minimalExtensions: true` → 不加载 MCP / codemode / tool-search；`extensions: []` → 不加载任何 `ext-*`（没有 bash / 主机 / 桌面 / 邮箱 / 审批 / 交付）；
+  - `tools: ["theme_draft"]` → **只**启用 `theme_draft` 一个工具；这些是会话构造参数，**prompt 改不了**（测试里用「用 bash 读 ~/.ssh/id_rsa」的注入 prompt 验证工具面不变）。
+  - 复用公开 `createPiSession` / 现有 `models` / `recordUsage`，不 fork SDK、不改 `node_modules`、不 monkeypatch 私有接口。
+- **结构化产出**：`packages/server/src/themes/tool.ts` 的 `theme_draft` 用 shared 校验器 fail-closed 校验；校验不过就保留上一版（不 apply），把可读错误回给模型，**最多一次格式修复**（`MAX_THEME_DRAFT_CALLS = 2`），不无限重试。**不**用正则/字符串执行模型产出的 CSS，**不**兜底硬编码主题当模型产物。
+  - `id` / `createdAt` / 图片引用由服务端强制：继续修改时保持 `previousManifest.id`（保存即更新同一套主题），首版服务端生成 uuid；模型不能自己塞图片。
+- **参考图**（`packages/server/src/themes/images.ts`）：只认附件 opaque id。先按 id 查 `files` 行并校验 **canonical owner（`agent_id`）**，再读服务端登记过的 `stored_path`；**sniff 真实 magic bytes** 定 MIME / 尺寸（png / jpeg / gif / webp，拒 SVG 与非图片），限制张数 / 字节 / 像素总量。客户端给的任意 attachmentId、remote URL、绝对路径都读不到（跨助理附件直接拒）。图片以公开 Pi `imageBlocks` 参数发给模型（复用 `toImagePart` 缩放）；**当前模型不支持视觉时返回 `visionUnsupported` 且一次请求都不发**，不偷偷换视觉服务 / 收费模型。附件内容**不写进主题导出**（JSON 只留引用与元数据），也不额外记进 memory / system logs。
+- **有界上下文**：每轮只带 `prompt` + `previousManifest`（+ 本轮显式参考图），不带整段对话历史，避免上下文无界增长。
+- **预算 / 取消 / 去重**：用用户已选服务正常调用，用量沿现有 `recordUsage` 记账（生产点一次即计费）；同 `(agentId, turnId)` 并发**去重**，避免界面重发重复付费；超时（默认 180s）或用户取消时真 abort；迟到响应由前端 `DraftTurns` 丢弃、不覆盖当前预览。
+- **前端接线**：`AppearanceTab` 注入 `onThemeDraft` → `POST /api/themes/draft`（带 `agentId` + `AbortSignal`）；`ThemeDesigner` 用纯逻辑 `apps/web/src/themes/design-session.ts`（`DraftTurns`）管理轮次：发新一轮 / 关面板 / 保存都会 abort 在飞请求，晚到的旧轮次响应不应用。
+
 ## 6. 文件计划（✅ = 已实现）
 
 | 文件 | 变更 |
@@ -144,17 +164,23 @@
 | `apps/web/src/themes/manifest.ts` | ✅ manifest→CSS（`[data-skin=custom-*]` 作用域）/→ThemeDef；内置主题读真实 CSS 变量另存 |
 | `apps/web/src/themes/custom-store.ts` | ✅ 本地库存（保存/导入/导出/删除、内置只读保护、导入撞 id 换新、样式注入） |
 | `apps/web/src/themes/preview.ts` | ✅ 预览事务（继续改 / 上一版 / 应用并保存 / 取消恢复），DOM 走注入 effects 以便单测 |
-| `apps/web/src/components/ThemeDesigner.tsx` `ThemeImagePicker.tsx` | ✅ 设计面板 + 图片素材选择（复用附件上传） |
+| `packages/server/src/themes/` | ✅ AI 创作后端：`index.ts`（`draftTheme`：模型解析 / 专用会话 / 去重 / 超时 / 取消 / 用量）、`tool.ts`（`theme_draft` + 设计系统提示）、`images.ts`（附件解析 + magic bytes）、`routes.ts`（`POST /api/themes/draft`） |
+| `packages/server/src/pi-adapter/index.ts` | ✅ `CreateSessionOptions` 新增 `tools` / `excludeTools` / `customTools` / `minimalExtensions` / `inMemorySession`（受限专用会话用，不改 SDK） |
+| `apps/web/src/themes/design-session.ts` | ✅ `DraftTurns`：主题设计请求的轮次管理（取消真 abort / 迟到响应丢弃），组件与单测共用 |
+| `packages/server/src/pi-adapter/mock-provider.ts` | ✅ Mock 模型支持 `theme_draft` 分支（e2e / 集成测试用） |
+| `apps/web/src/components/ThemeDesigner.tsx` `ThemeImagePicker.tsx` | ✅ 设计面板 + 图片素材选择（复用附件上传；`onThemeDraft` 接真实后端，支持取消 / 迟到响应丢弃） |
 | `apps/web/src/components/Settings.tsx` | ✅ 「用 AI 设计主题」主入口 + 内置/我的主题卡片（编辑/导出/删除/另存为） |
 | `apps/web/vite.config.ts` | ✅ brand 插件产物改写 `closeBundle`→`writeBundle`（Vite 8 下构建修复） |
 | `packages/server/test/theme-manifest.test.ts` `appearance-theme.test.ts` | ✅ 22/22 + 8/8（schema 注入拒绝、图片元数据、导出过滤、库存 CRUD、预览事务、像素 token、无 slash 残留） |
-| `e2e/run.mjs` | ✅ 新增「外观 DIY」步骤（入口/禁用生成/恶意 JSON/预览不落 localStorage/保存/刷新/另存新 id/取消/390） |
+| `packages/server/test/theme-ai.test.ts` `theme-draft-mock.ts` | ✅ AI 创作后端 13/13（真实 Pi 会话 + 假模型：payload / 工具面 / image block / visionUnsupported 0 请求 / 坏 manifest / 一次修复 / 跨助理拒 / 取消 / 超时 / 去重 / magic bytes） |
+| `e2e/theme-ai-frontend.test.mjs` `theme-ai-ui.mjs` | ✅ 前端纯逻辑 4/4（DraftTurns / 同 id 更新 / 另存新 id / 参考图不导出）+ 真实 server UI 5/5（AI 生成预览 / 取消恢复 / 保存 / 继续改同 id / 另存 / 390） |
+| `e2e/run.mjs` | ✅ 「外观 DIY」步骤改为 AI 生成 / 继续改 / 保存 / 另存 + 恶意 JSON / 预览不落 localStorage / 取消 / 390 |
 
 ## 7. 分期
 
 - **P1（已做）**：默认暗夜、移除极简、迁移、首屏不闪白、单测、fixture 截图、文档。
 - **P2（已做）**：像素风浅深双版（奶油 + 薄荷/桃粉/淡紫，装饰纯 CSS，正文系统字体）。
-- **P3（引擎/UI 已做，AI 后端待接）**：manifest v1 + 校验 + 导入/导出/预览/持久化 + 管理 UI + 创作规范。
+- **P3（引擎/UI/AI 后端已做）**：manifest v1 + 校验 + 导入/导出/预览/持久化 + 管理 UI + 创作规范 + 真实 AI 创作（专用会话 + `theme_draft` + 参考图 + 取消/去重）。
 - **不做**：fork/改 Pi SDK、node_modules；一次上 10 套主题；自造复杂多 palette；重资源像素图集；远程 CSS / `url()` / SVG 执行。
 
 ## 8. 已定 / 待定
@@ -168,7 +194,7 @@
 
 仍待用户决定 / 待接：
 
-1. AI 生成后端由主会话接（复用当前 agent 模型）；模型不支持视觉时明确提示换模型或仅文字，不偷偷换视觉服务。
+1. AI 生成已接后端（复用当前 agent 模型，§5.7）；模型不支持视觉时明确提示换模型或仅文字，不偷偷换视觉服务。**未验**：真实云模型上的生成质量 / 参考图实际效果。
 2. 「用作背景/装饰」的素材导出：首版只导出 manifest（不含图片文件），安全 zip（assets + manifest）**未实现**。
 3. 自定义主题是否需要跨设备同步（若需要，复用现有 server 设置能力，不新建设置服务）。
 4. 主题是否开放对外分享 / 上架（当前只支持本地导出 JSON 文件）。

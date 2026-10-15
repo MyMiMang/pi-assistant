@@ -62,8 +62,51 @@ export function hindsightReply(messages: Msg[], systemPrompt: string, tools: Moc
 	return null;
 }
 
-function respond(messages: Msg[], systemPrompt = "") {
+/** 外观 AI 创作的 Mock 产出：设计专用会话的系统提示里有「外观主题设计器」标记。 */
+const themeTokens = (bg: string, fg: string, acc: string) => ({
+	"--bg": bg,
+	"--side": bg,
+	"--panel": bg,
+	"--card": bg,
+	"--fg": fg,
+	"--mut": fg,
+	"--mut2": fg,
+	"--line": bg,
+	"--line-strong": bg,
+	"--hover": bg,
+	"--active": bg,
+	"--user-bg": bg,
+	"--user-fg": fg,
+	"--acc": acc,
+	"--acc-fg": bg,
+	"--acc-soft": "rgba(0,0,0,.12)",
+	"--ok": "#5f8a5a",
+	"--warn": "#c08a2c",
+	"--z-light": "#ffffff",
+	"--z-dark": "#1b1b22",
+});
+function mockThemeManifest(said: string) {
+	const warm = /奶油|紫|可爱|暖|粉/.test(said);
+	return {
+		manifestVersion: 1,
+		name: warm ? "奶油紫" : "薄荷清爽",
+		author: "AI 生成",
+		basedOn: warm ? "pixel" : "noir",
+		modes: warm
+			? { light: themeTokens("#f7f3ea", "#2a251f", "#8fd3c1"), dark: themeTokens("#141218", "#f3eee6", "#c3b6f0") }
+			: { light: themeTokens("#f2f7f5", "#1f2a27", "#4fb39a"), dark: themeTokens("#0f1614", "#e6f2ee", "#63d0b3") },
+		decor: { texture: "none", corner: "round", shadow: "soft", background: warm ? "glow" : "flat" },
+	};
+}
+
+function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 	const last = messages[messages.length - 1];
+	// 外观 AI 创作：专用会话只挂 theme_draft 工具 → 用 theme_draft 提交一份合法 manifest
+	if (tools.some((t) => t.name === "theme_draft")) {
+		if (last?.role === "toolResult") return fauxAssistantMessage("已生成一套主题，正在预览；想调整就继续说。");
+		const said = textOf([...messages].reverse().find((m) => m.role === "user") ?? { role: "user", content: "" });
+		return fauxAssistantMessage([fauxToolCall("theme_draft", { manifest: mockThemeManifest(said), text: "奶油底 + 薄荷 / 淡紫点缀，圆角小一点。" })]);
+	}
 	// Pi 的上下文整理（compaction）请求：返回一段结构化摘要
 	if (/context summarization assistant/i.test(systemPrompt) || textOf(last).startsWith("<conversation>"))
 		return fauxAssistantMessage("## Goal\n用户在测试 Pi Assistant 的各项功能。\n\n## Progress\n- 已演示流式回复、文件、审批、后台任务等。\n\n## Next Steps\n- 继续按用户要求操作。");
@@ -309,7 +352,7 @@ export async function registerMockProvider(models: PiModels) {
 		if (lastUser) mockStats.lastUserText = textOf(lastUser);
 		const hs = hindsightReply(msgs, systemPrompt, tools);
 		if (hs !== null) return typeof hs === "string" ? fauxAssistantMessage(hs) : fauxAssistantMessage([fauxToolCall(hs.tool, hs.args as never)]);
-		return respond(msgs, systemPrompt);
+		return respond(msgs, systemPrompt, tools);
 	};
 	faux.setResponses([step as never]);
 	const m = faux.getModel();
