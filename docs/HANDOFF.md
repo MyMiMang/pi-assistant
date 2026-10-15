@@ -23,6 +23,10 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+2026-10-22 快速操作基准产出化修复（独立树 `benchmark-production-fix`，基 `unified-final-review` `8d68f1e`，**未 push / 未 tag / 未打包**）：
+- 把 `unified-final-review` 报的 benchmark 未修 P0 逐个真修：`capable` 不再硬编码 true（改为只读 `tools/list` + 就绪 + 隔离窗口 + 宿主网关的动态探测，fail-closed）；`scroll-target` 用正式 backend `scroll` 做**程序侧**滚动并按 `programAssists` 单列（模型仍只 click）；助理电脑 fixture 回调不再回退 127.0.0.1，需受控宿主网关否则 unsupported，且上报收紧为 nonce + 每次 run token + 私有来源；fixture 状态 POST 只收白名单 schema、要求 arm 归属与 `updatedAt` freshness。打开 fixture 改用 cua 原生 `launch_app`（`browser_*` 不在 cua MCP）。详见 `progress-snapshots/benchmark-production-fix.md`。
+- 实跑：两端 `tsc --noEmit` exit 0；`fast-computer*` 单测 **65/65**（含 benchmark 24/24）。未真机开 hostpc / VM，真实 driver 路径仍未实测。
+
 2026-10-22 统一整合树 `unified-integration`（总体收尾 owner，基 `hotfix-integration` `b7d33d3`，**未 push / 未 tag / 未打包**）：
 - **合入 7 个分支**（`--no-ff` 保祖先）：`native-dialog-ui-fix` `9554628` → `unified-model-registry`（5 commits）→ `local-laya-runtime`（整分支 10 commits）→ `fast-model-benchmark`（`12fa47d`+`c98a299`）→ `model-settings-unified`（5 commits，含 merge `9554628`）→ `conversation-loading-restore-fix`（`d8d38fe`/`a940cfe`/`54f1956`）→ `mobile-chat-viewport-fix`（`1c565ab`+merge `9554628`）。冲突只出现在 `http.ts`（benchmark host + Laya 路由都保留）与 docs（两段都保留，不整文件覆盖）。
 - **验证**（Node 24.20.0，`npm ci` 真装、全程 Mock / 内存凭据 / 临时数据目录，未碰系统钥匙串）：服务端与网页 `tsc --noEmit` exit 0；web `vite build` 通过；专项单测 16 文件 **97/97**；`web-selection` 10/10；纯前端 e2e `native-dialog-ui` / `model-services-ui` / `channel-delete` / `model-ui` / `conversation-restore`(10/10) / `mobile-viewport-ui` 全通过。

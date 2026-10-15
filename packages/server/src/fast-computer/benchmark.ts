@@ -37,6 +37,11 @@ export interface FastBenchmarkTask {
 	timeoutMs: number;
 	/** 多步任务需要的动作步数（默认 1）；每步都重新观察 → 选 → 派发 */
 	steps?: number;
+	/**
+	 * 程序侧辅助（**不计入模型操控能力**）：在第一次观察/选择前由程序用正式 backend 工具执行的固定动作。
+	 * 目前只支持滚动（按方向，不给坐标）；模型仍然只做有界 click。计进 `programAssists`。
+	 */
+	programAssist?: { scroll?: { direction: "down" | "up"; amount?: number } };
 	/** 预期后置条件：fixture 机器状态字段 + 独立 UI 观测共同判定（见 validateTrial） */
 	expect: BenchmarkExpectation;
 }
@@ -129,12 +134,30 @@ export function matchMachineExpectation(expected: Record<string, unknown> | unde
  *  - 其余（unknown）→ unknown，**不计入 success**，也绝不当成正确。
  * 模型自己的「我觉得点对了」不参与判分。
  */
-export function validateTrial(opts: { expect: BenchmarkExpectation; machine: unknown; ui: unknown; verifyUi: (expected: BenchmarkExpectation["ui"], observed: unknown) => VerifyOutcome }): { outcome: GroundtruthOutcome; reason: string } {
-	const machineOutcome = matchMachineExpectation(opts.expect.machine, opts.machine);
+export function validateTrial(opts: {
+	expect: BenchmarkExpectation;
+	machine: unknown;
+	/** 机器状态最后一次上报时间；没有 = null（freshness 无法证明） */
+	machineUpdatedAt?: number | null;
+	/** 本轮试次开始时间（含）；机器状态早于它 → 不能算 confirmed（防旧状态 / 预置伪造跨轮生效） */
+	machineFreshAfter?: number;
+	ui: unknown;
+	verifyUi: (expected: BenchmarkExpectation["ui"], observed: unknown) => VerifyOutcome;
+}): { outcome: GroundtruthOutcome; reason: string } {
+	let machineOutcome = matchMachineExpectation(opts.expect.machine, opts.machine);
+	let freshnessNote = "";
+	if (machineOutcome === "confirmed" && opts.machineFreshAfter !== undefined) {
+		const at = opts.machineUpdatedAt;
+		if (at === null || at === undefined || at < opts.machineFreshAfter) {
+			// 机器状态不是本轮主动作之后写的，不能当正证据（模型自报 / 旧状态 / 预置全部不算）。
+			machineOutcome = "unknown";
+			freshnessNote = `机器状态过期（updatedAt=${String(at)} < 本轮开始 ${opts.machineFreshAfter}）`;
+		}
+	}
 	const uiOutcome = opts.expect.ui ? opts.verifyUi(opts.expect.ui, opts.ui) : "unknown";
 	if (machineOutcome === "unsatisfied" || uiOutcome === "unsatisfied") return { outcome: "incorrect", reason: `反证（machine=${machineOutcome}, ui=${uiOutcome}）` };
 	if (machineOutcome === "confirmed" && uiOutcome === "confirmed") return { outcome: "correct", reason: "双证据通过" };
-	return { outcome: "unknown", reason: `证据不足（machine=${machineOutcome}, ui=${uiOutcome}）` };
+	return { outcome: "unknown", reason: `证据不足（machine=${machineOutcome}, ui=${uiOutcome}${freshnessNote ? `；${freshnessNote}` : ""}）` };
 }
 
 // ---------------------------------------------------------------- 单次试验指标
@@ -146,6 +169,8 @@ export interface TrialMetrics {
 	timeout?: boolean;
 	/** 本试验实际派发的动作数 */
 	actions: number;
+	/** 程序侧辅助动作数（滚动等，不计入模型操控能力结论） */
+	programAssists: number;
 	/** fast 路径未选中 / 需重试的累计（reobserve / 目标变化 / 执行错误等，诊断用） */
 	retries: number;
 	/** **真正执行了主模型回退**的次数；基准不执行主模型回退，所以恒为 0（不把「未选中」冒充回退） */
@@ -196,6 +221,8 @@ export interface FastBenchmarkResult {
 	errors: number;
 	successRatio: number;
 	actions: number;
+	/** 程序侧辅助动作数（滚动等，**不计入模型操控能力**） */
+	programAssists: number;
 	retries: number;
 	fallbackCount: number;
 	abstains: number;
@@ -312,12 +339,13 @@ export function snapshot(state: RunState): FastBenchmarkResult {
 		errors,
 		successRatio: total ? success / total : 0,
 		actions: sum(measured, (t) => t.metrics.actions),
+		programAssists: sum(measured, (t) => t.metrics.programAssists ?? 0),
 		retries: sum(measured, (t) => t.metrics.retries),
 		fallbackCount: sum(measured, (t) => t.metrics.fallbackCount),
 		abstains: measured.filter((t) => t.metrics.abstain).length,
 		correctness: total ? correctTrials / total : null,
 		correctTrials,
-		note: noteFor(total, state.coldStartMs, p95Min, maxTrials),
+		note: noteFor(total, state.coldStartMs, p95Min, maxTrials, sum(measured, (t) => t.metrics.programAssists ?? 0)),
 		advisory: advisoryFor({ status: state.status, reason: state.reason, total, budget, p50: total >= 2 ? percentile(lat, 0.5) : null, successRatio: total ? success / total : 0, errors, timeouts, fallbackCount: sum(measured, (t) => t.metrics.fallbackCount) }),
 		reason: state.reason,
 		createdAt: iso(state.finishedAt ?? state.startedAt),
@@ -326,8 +354,9 @@ export function snapshot(state: RunState): FastBenchmarkResult {
 
 const sum = <T>(arr: T[], f: (x: T) => number) => arr.reduce((a, x) => a + f(x), 0);
 
-function noteFor(samples: number, coldStartMs: number | null, p95Min: number, maxTrials: number): string {
+function noteFor(samples: number, coldStartMs: number | null, p95Min: number, maxTrials: number, programAssists: number): string {
 	const parts = ["真实受控 CUA 操控；模型推理时延仅诊断子项，不作为推荐唯一依据", "type 由程序固定输入，不计入模型 typing 能力", "本轮 bench task 正确率不等于泛化 accuracy"];
+	if (programAssists > 0) parts.push(`其中 ${programAssists} 次为程序侧滚动辅助，不计入模型操控能力`);
 	if (coldStartMs !== null) parts.push("冷启动为单独一次，未混入 p50/p95");
 	if (samples === 0) parts.push("尚无有效样本");
 	else if (samples < p95Min) parts.push(`样本仅 ${samples} 条（< ${p95Min}），p95 为粗略值，场景结论有限`);
@@ -456,7 +485,7 @@ async function runAll(state: RunState, deps: BenchmarkDeps) {
 					return;
 				}
 				if (state.controller.signal.aborted) return;
-				metrics = { correctness: "unknown", error: e instanceof Error ? e.message : String(e), actions: 0, retries: 0, fallbackCount: 0, abstain: false };
+				metrics = { correctness: "unknown", error: e instanceof Error ? e.message : String(e), actions: 0, programAssists: 0, retries: 0, fallbackCount: 0, abstain: false };
 			}
 			const latencyMs = Math.max(0, now() - started);
 			state.trials.push({ taskId: item.task.id, metrics, latencyMs, coldStart: item.coldStart, warmup: item.warmup });

@@ -21,6 +21,7 @@ import {
 	type TrialMetrics,
 } from "../src/fast-computer/benchmark.ts";
 import { createCuaTrialRunner, BENCHMARK_ALLOWED_TOOLS } from "../src/fast-computer/benchmark-cua.ts";
+import { evaluateBenchmarkCapability, BENCHMARK_REQUIRED_TOOLS } from "../src/fast-computer/benchmark-capability.ts";
 import { verifyExpectation } from "../src/fast-computer/index.ts";
 
 const win = (patch: Partial<BenchmarkWindow> = {}): BenchmarkWindow => ({ prefix: "computer", pid: 4242, windowId: 7, windowToken: "tok-1", fixtureId: "fixture-bench", ...patch });
@@ -36,7 +37,7 @@ const task = (patch: Partial<FastBenchmarkTask> = {}): FastBenchmarkTask => ({
 	...patch,
 });
 
-const metrics = (patch: Partial<TrialMetrics> = {}): TrialMetrics => ({ correctness: "correct", actions: 1, retries: 0, fallbackCount: 0, abstain: false, ...patch });
+const metrics = (patch: Partial<TrialMetrics> = {}): TrialMetrics => ({ correctness: "correct", actions: 1, programAssists: 0, retries: 0, fallbackCount: 0, abstain: false, ...patch });
 
 const waitFor = async (id: string, statuses: string[]) => {
 	for (let i = 0; i < 200; i++) {
@@ -65,6 +66,29 @@ test("双证据判分：两者 confirmed 才 correct；任一反证 incorrect；
 	assert.equal(validateTrial({ expect: task().expect, machine: { clicked: "other" }, ui: { elements: [{ role: "button", label: "提交", value: "1", actions: [] }] }, verifyUi }).outcome, "incorrect");
 	assert.equal(validateTrial({ expect: { machine: { clicked: "submit" } }, machine: { clicked: "submit" }, ui: {}, verifyUi }).outcome, "unknown");
 	assert.equal(validateTrial({ expect: task().expect, machine: {}, ui: {}, verifyUi }).outcome, "unknown");
+});
+
+test("双证据判分：机器状态 freshness —— 早于本轮 / 无时间戳一律不能 confirmed", () => {
+	const verifyUi = (e: unknown, s: unknown) => verifyExpectation(e as never, s);
+	const ui = { elements: [{ role: "button", label: "提交", value: "1", actions: [] }] };
+	// 时间戳早于本轮开始 → 降为 unknown，不能当正证据
+	const stale = validateTrial({ expect: task().expect, machine: { clicked: "submit" }, machineUpdatedAt: 100, machineFreshAfter: 200, ui, verifyUi });
+	assert.equal(stale.outcome, "unknown");
+	assert.match(stale.reason, /过期/);
+	// 缺少时间戳 → unknown
+	assert.equal(validateTrial({ expect: task().expect, machine: { clicked: "submit" }, machineUpdatedAt: null, machineFreshAfter: 200, ui, verifyUi }).outcome, "unknown");
+	// 本轮之后写的才 confirmed
+	assert.equal(validateTrial({ expect: task().expect, machine: { clicked: "submit" }, machineUpdatedAt: 300, machineFreshAfter: 200, ui, verifyUi }).outcome, "correct");
+});
+
+test("能力探测：就绪 + 隔离窗口 + 工具齐全 + 网关 → ok；缺任一样 fail-closed", () => {
+	const tools = ["launch_app", ...BENCHMARK_REQUIRED_TOOLS];
+	assert.equal(evaluateBenchmarkCapability({ ready: true, tools, openTool: "launch_app", sandbox: true }).ok, true);
+	assert.match(evaluateBenchmarkCapability({ ready: false, tools, openTool: "launch_app", sandbox: true }).reason ?? "", /未就绪/);
+	assert.match(evaluateBenchmarkCapability({ ready: true, tools, openTool: "launch_app", sandbox: false }).reason ?? "", /隔离/);
+	assert.match(evaluateBenchmarkCapability({ ready: true, tools: null, openTool: "launch_app", sandbox: true }).reason ?? "", /能力清单/);
+	assert.match(evaluateBenchmarkCapability({ ready: true, tools: ["launch_app", "click"], openTool: "launch_app", sandbox: true }).reason ?? "", /缺少/);
+	assert.match(evaluateBenchmarkCapability({ ready: true, tools, openTool: "launch_app", sandbox: true, gateway: { ok: false } }).reason ?? "", /网关/);
 });
 
 test("runner：完成并聚合，冷启动单列、p95 样本不足标粗略、advisory 不 hard-disable", async () => {
@@ -177,7 +201,7 @@ function cuaHarness(overrides: Partial<Parameters<typeof createCuaTrialRunner>[1
 			dispatched.push({ tool, args });
 			return { isError: false };
 		},
-		readMachineState: async () => ({ clicked: "submit" }),
+		readMachineState: async () => ({ state: { clicked: "submit" }, updatedAt: Date.now() }),
 		...overrides,
 	};
 	return { deps, dispatched };
@@ -200,6 +224,18 @@ test("CUA 执行器：候选为非 click（type）不派发，计 unknown（不�
 	assert.equal(r.correctness, "unknown");
 	assert.match(r.error ?? "", /白名单/);
 	assert.equal(dispatched.length, 0);
+});
+
+test("CUA 执行器：程序侧滚动辅助 —— 先走正式 backend scroll（无坐标），再只 click；计入 programAssists", async () => {
+	const { deps, dispatched } = cuaHarness();
+	const scrollTask = task({ id: "scroll-target", kind: "click", goal: "点击最下面的「深度目标」", programAssist: { scroll: { direction: "down", amount: 8 } }, expect: { machine: { clicked: "submit" }, ui: { role: "button", label_contains: "提交" } } });
+	const r = await runOne(createCuaTrialRunner(win(), deps), scrollTask);
+	assert.equal(dispatched[0]?.tool, "scroll", "程序侧先滚动");
+	assert.deepEqual(Object.keys(dispatched[0]?.args ?? {}).sort(), ["amount", "direction", "pid", "window_id"].sort(), "滚动只给方向，不给坐标");
+	assert.equal((dispatched[0]?.args as { direction?: string }).direction, "down");
+	assert.equal(dispatched[1]?.tool, "mcp__computer__click", "模型只 click");
+	assert.equal(r.programAssists, 1, "滚动计入程序辅助");
+	assert.equal(r.actions, 1, "模型动作只有 1 次 click");
 });
 
 test("CUA 执行器：窗口身份变化（pid）→ fail-closed 中止（抛 WindowIdentityError）", async () => {
