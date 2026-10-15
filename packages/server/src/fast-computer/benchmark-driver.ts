@@ -58,8 +58,9 @@ export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): Benchmar
 			const match = pickFixtureWindow(windows, fixtureId, nonce);
 			if (!match) throw new Error("找不到带本次 fixture nonce 的独立窗口（fail-closed）");
 			const state = await opts.invoke(sel.prefix, "get_window_state", { pid: match.pid, window_id: match.windowId, tree_format: "elements", ...(sel.session ? { session: sel.session } : {}) });
-			const token = asObj(state.structuredContent)?.window_token ?? asObj(state.structuredContent)?.windowToken;
-			if (typeof token !== "string" || !token) throw new Error("读不到窗口身份 token（fail-closed）");
+			// cua `get_window_state` 只给 `snapshot_id`（每次读取都换新），没有 `window_token`；用它作为「拿到了新鲜快照」标记。
+			const token = asObj(state.structuredContent)?.snapshot_id ?? asObj(state.structuredContent)?.window_token ?? asObj(state.structuredContent)?.windowToken;
+			if (typeof token !== "string" || !token) throw new Error("读不到窗口快照 id（fail-closed）");
 			const handle: FixtureWindowHandle = { prefix: sel.prefix, session: sel.session, pid: match.pid, windowId: match.windowId, windowToken: token, fixtureId, url: absolute };
 			return {
 				handle,
@@ -93,7 +94,8 @@ export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): Benchmar
 
 /** 从 get_window_state 的 structuredContent 抽出窗口身份；fixture_id 取自 URL / 标题上的 nonce 标记。 */
 function observedFrom(s: Record<string, unknown>, handle: FixtureWindowHandle): ObservedWindow | null {
-	const token = s.window_token ?? s.windowToken;
+	// 真实 cua 返回 `snapshot_id`；`window_token` 仅作兼容。
+	const token = s.snapshot_id ?? s.window_token ?? s.windowToken;
 	const pid = s.pid ?? s.owner_pid;
 	const windowId = s.window_id ?? s.windowId;
 	if (typeof token !== "string" || typeof pid !== "number" || typeof windowId !== "number") return null;

@@ -4,7 +4,7 @@
  * 用**假 driver** 模拟真实 computer backend 的调用序列（get_window_state / click），全程：
  *  - 数据目录临时、模型注入内存 store（见 setup.ts / 本文件不调真实模型）、0 真实付费、0 真实桌面；
  *  - 假 driver 的 execute 模拟 fixture 的机器状态 reporter（POST 语义），独立 UI 观测来自 observe；
- *  - 覆盖：正确闭环、窗口 token 变化 → 0 执行 fail-closed、取消 / 清理、URL nonce 串扰、平台不支持、ready。
+ *  - 覆盖：正确闭环、窗口身份变化 → 0 执行 fail-closed、取消 / 清理、URL nonce 串扰、平台不支持、ready。
  */
 await import("./setup.ts");
 import assert from "node:assert/strict";
@@ -20,7 +20,7 @@ import { mountFastComputerRoutes } from "../src/fast-computer/routes.ts";
 const TASK = benchmarkFixtureTasks()[0]; // pick-submit
 
 /** 模拟真 driver：observe 给出元素，execute 只接受 click 并更新 store（= fixture reporter 的机器状态）。 */
-function fakeDriver(store: BenchmarkFixtureStateStore, opts: { tokenChangesAfter?: number; hangObserve?: boolean } = {}) {
+function fakeDriver(store: BenchmarkFixtureStateStore, opts: { windowChangesAfter?: number; hangObserve?: boolean } = {}) {
 	let readCount = 0;
 	let fixtureId = "";
 	let nonce = "";
@@ -52,8 +52,9 @@ function fakeDriver(store: BenchmarkFixtureStateStore, opts: { tokenChangesAfter
 		},
 		async readWindow() {
 			const reads = readCount++;
-			const token = opts.tokenChangesAfter !== undefined && reads >= opts.tokenChangesAfter ? `CHANGED-${reads}` : "tok-1";
-			return { prefix: "computer", pid: 4242, window_id: 7, window_token: token, fixture_id: fixtureId };
+			// 模拟窗口被替换：window_id 变化（真实 cua 的 snapshot_id 每读都换，不能当身份不变量）
+			const changed = opts.windowChangesAfter !== undefined && reads >= opts.windowChangesAfter;
+			return { prefix: "computer", pid: 4242, window_id: changed ? 999 : 7, window_token: "tok-1", fixture_id: fixtureId };
 		},
 		async observe() {
 			if (opts.hangObserve) await observeGate;
@@ -115,16 +116,16 @@ test("host：真实闭环——模型只选 click，双证据（机器状态 + U
 	assert.ok(dispatched.length === 1 && dispatched[0].tool.startsWith("mcp__computer__click"), `只应派发一次 click，实际 ${JSON.stringify(dispatched)}`);
 });
 
-test("host：窗口 token 变化 → fail-closed，blocked 且 0 执行", async () => {
+test("host：窗口身份变化（window_id）→ fail-closed，blocked 且 0 执行", async () => {
 	_resetBenchmarks();
 	saveFastComputerSettings({ enabled: true, kind: "chat", provider: "p", id: "m" });
 	const store = new BenchmarkFixtureStateStore();
-	const { driver, dispatched } = fakeDriver(store, { tokenChangesAfter: 0 });
+	const { driver, dispatched } = fakeDriver(store, { windowChangesAfter: 0 });
 	const host = createBenchmarkHost({ driver, store, tasks: [TASK], warmup: 0, maxTrials: 1, chooserFor: mockChooser });
 	const run = await host.start({});
 	const s = await waitTerminal(run.id);
 	assert.equal(s?.status, "blocked");
-	assert.match(s?.reason ?? "", /token/);
+	assert.match(s?.reason ?? "", /window_id/);
 	assert.equal(dispatched.length, 0, "身份变化时绝不执行");
 });
 

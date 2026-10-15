@@ -256,8 +256,10 @@ export class LocalLayaManager {
 		this.deps.registerClassifier({ provider: LAYA_PROVIDER_ID, modelId: LAYA_MODEL_ID, protocol: "typesafe-system-one", baseUrl: `http://${LAYA_BIND_HOST}:${port}/v1/`, token });
 		child.onExit((code) => {
 			if (this.runtime.child !== child) return;
+			// sidecar 意外退出也必须撤销 classifier 注册，否则 Pi 目录里会留一个指向死端口的本地服务。
+			this.deps.unregisterClassifier(LAYA_PROVIDER_ID);
 			this.deps.recordPid(null);
-			this.runtime = { ...this.runtime, state: "crashed", pid: null, child: null, token: null };
+			this.runtime = { ...this.runtime, state: "crashed", pid: null, child: null, token: null, health: null };
 			this.onChange();
 		});
 		this.onChange();

@@ -58,7 +58,7 @@ export interface BenchmarkWindow {
 	pid: number;
 	windowId: number;
 	session?: string;
-	/** cua 读取窗口状态时给出的精确窗口身份 token（每次读取都可能变，必须逐次相等比较） */
+	/** cua 读取窗口状态时给出的快照标记（每次读取都会换新，仅用于证明拿到了新鲜快照，不做相等比较） */
 	windowToken: string;
 	/** fixture 实例 id（测试页窗口标题里带的稳定标记），防止命中同名窗口 */
 	fixtureId: string;
@@ -76,7 +76,10 @@ export interface ObservedWindow {
 
 /**
  * 精确比较窗口身份。返回 null = 一致；否则返回不一致原因（fail-closed）。
- * 逐项严格相等，缺一不可；`fixture_id` 必须与给定 fixtureId 一致（没有则视为不一致，绝不「大概是它」）。
+ * 身份 = prefix + pid + window_id + session + fixture_id，全部严格相等。
+ * **不使用 token 相等比较**：cua `get_window_state` 每次读取都会换新的 `snapshot_id`，把「token 必须相等」当不变量
+ * 会让真实驱动永远失配（真实路径根本跑不起来）。窗口被替换会体现为 pid / window_id 变化，仍由上述字段拦住。
+ * `observed.window_token` 存在只证明「读到了新鲜快照」，不做相等断言。
  */
 export function windowIdentityMismatch(expected: BenchmarkWindow, observed: ObservedWindow | null | undefined): string | null {
 	if (!observed) return "读不到窗口身份";
@@ -84,7 +87,7 @@ export function windowIdentityMismatch(expected: BenchmarkWindow, observed: Obse
 	if (observed.pid !== expected.pid) return `pid 不一致（期望 ${expected.pid}，实际 ${observed.pid}）`;
 	if (observed.window_id !== expected.windowId) return `window_id 不一致（期望 ${expected.windowId}，实际 ${observed.window_id}）`;
 	if ((observed.session ?? "") !== (expected.session ?? "")) return "cua session 不一致";
-	if (!observed.window_token || observed.window_token !== expected.windowToken) return "窗口 token 已变化";
+	if (!observed.window_token) return "读不到窗口快照（token 缺失）";
 	if (observed.fixture_id !== expected.fixtureId) return "fixture id 不一致";
 	return null;
 }

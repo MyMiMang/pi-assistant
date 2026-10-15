@@ -192,6 +192,7 @@ test("legacy Key 桥接与幂等元数据迁移：旧 imageKey 仍能读、不�
 	// 元数据迁移：只补 keyStored 标记，不读、不复制明文
 	assert.equal(migrateLegacyImageProviders(), 1);
 	assert.equal(listProviders()[0].keyStored, "legacy");
+	assert.equal(listProviders()[0].imageKeyMigrated, false, "Key 仍在旧位置，不得标成已迁移");
 	assert.equal(migrateLegacyImageProviders(), 0, "幂等：再跑不变");
 	assert.notEqual(getSetting(`imageKey:${id}`, null), null, "legacy 密文原样保留，未复制 / 删除");
 	// 桥接读取：旧 Key 仍能用于真实请求（走 HTTP adapter 的 apiKey）
@@ -201,6 +202,12 @@ test("legacy Key 桥接与幂等元数据迁移：旧 imageKey 仍能读、不�
 	const p2 = await saveProvider(null, { kind: "openai", name: "复用", baseUrl: mock.url, keyFrom: "svc-x", models: ["gpt-image-1"] });
 	assert.equal((await endpointOf(p2)).apiKey, "sk-svc-x");
 	assert.equal(p2.keyStored, "reference");
+	assert.equal(p2.imageKeyMigrated, true, "引用别的服务也算已迁移（不再仅存 legacy）");
+	// keyFrom 时绝不回退读本服务旧的 legacy Key（避免把旧 Key 串到引用目标上）
+	setSetting(`imageKey:${p2.id}`, sealJson("sk-old-own"));
+	await credentials.delete("svc-x");
+	assert.equal((await endpointOf(p2)).apiKey, undefined, "引用目标没 Key 也不能用自己旧的 legacy Key 顶上");
+	setSetting(`imageKey:${p2.id}`, null);
 	setSetting("imageProviders", []);
 	setSetting(`imageKey:${id}`, null);
 });
