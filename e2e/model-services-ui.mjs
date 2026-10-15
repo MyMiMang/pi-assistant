@@ -8,7 +8,7 @@ import { chromium } from 'playwright-core';
 // 统一模型服务 UI 原型链路测试（纯前端 fixture）：
 // 静态托管 apps/web/dist，page.route 拦截所有 /api，不启动 packages/server/src/main.ts，
 // 因此不碰系统钥匙串、不碰真实用户配置、不跑真实 API 收费、不装模型、不操作电脑。
-// 覆盖：服务卡片 / 能力标签（含「未确认」）/ 能力纠正 / 添加服务 / 本地 Laya health 与卸载确认 /
+// 覆盖：服务卡片 / 能力标签（含「未确认」）/ 能力纠正 / 添加服务 / 本地 Laya 管理卡（安装态·运行态·health·未就绪不删配置·卸载确认）/
 //       实际操作测试（availability、尚未运行、真实执行未验证、结果 advisory）/ Esc 关弹窗 / 390 宽 / 无原生 dialog。
 const root = decodeURIComponent(new URL('..', import.meta.url).pathname);
 const dist = join(root, 'apps/web/dist');
@@ -44,12 +44,16 @@ const system = {
 	workspaceRoot: '/tmp/ws', push: { publicKey: 'pk' }, seq: 1,
 };
 
-const localOffline = {
-	installed: true, ready: 'offline_ready', offlineReady: true,
-	phases: { env: { state: 'done', percent: 100 }, weights: { state: 'done', percent: 100 }, verify: { state: 'done', percent: 100 } },
-	health: { status: 'ok', checkedAt: Date.now(), cpu: { label: 'Apple M2 Pro', cores: 12, baseline: true }, gpu: { vendor: 'apple', backend: 'mps', available: true, label: 'Apple MPS', source: 'probe' } },
-	platform: { os: 'macOS', arch: 'arm64', support: 'baseline', note: '' },
-};
+const layaStatus = (over = {}) => ({
+	platform: { key: 'darwin-arm64', os: 'macOS', arch: 'arm64', accelerator: 'mps', support: 'supported', torchBackend: 'default', pins: [], reason: '' },
+	install: { state: 'installed', phase: 'done', received: 0, total: null, error: null, installedAt: Date.now() },
+	runtime: { state: 'running', pid: 4242, port: 51789, host: '127.0.0.1' },
+	health: { ok: true, device: 'mps', checkpointDevices: { multilingual: 'mps' }, cpuFallbacks: { count: 0, lastReason: null }, revisions: { laya: 'abc1234' }, loaded: ['multilingual'] },
+	registered: { provider: 'local-laya', modelId: 'multilingual', protocol: 'typesafe-system-one' },
+	source: { project: 'Laya', repoUrl: 'https://example.invalid/laya', weightsOrg: 'Laya', codeLicense: 'Apache-2.0', weightsLicense: 'see repo', version: 'v1', reviewedRevisions: {} },
+	...over,
+});
+let laya = layaStatus();
 
 const fixtures = () => [
 	{
@@ -66,17 +70,14 @@ const fixtures = () => [
 			{ provider: 'custom-relay', id: 'mystery-model', name: 'mystery-model', type: 'chat', capabilities: ['chat', 'vision'], protocol: 'openai-completions', confirmed: false, inferred: ['vision'], source: 'custom', configured: true },
 		],
 	},
-	{
-		id: 'laya-local', name: '本地 Laya', kind: 'local', configured: true, protocols: ['llama-cpp-classify'],
-		models: [{ provider: 'laya-local', id: 'laya-fast', name: 'laya-fast', type: 'classifier', capabilities: ['classifier'], protocol: 'llama-cpp-classify', confirmed: true, inferred: [], source: 'custom', configured: true }],
-		local: localOffline,
-	},
+	// registry 里本地 Laya 会作为 local-laya 出现；UI 用管理卡统一展示，不重复成卡片
+	{ id: 'local-laya', name: '本地 Laya', kind: 'local', configured: true, protocols: ['typesafe-system-one'], models: [{ provider: 'local-laya', id: 'multilingual', name: 'multilingual', type: 'classifier', capabilities: ['classifier'], protocol: 'typesafe-system-one', confirmed: true, inferred: [], source: 'pi-catalog', configured: true }] },
 ];
 let providers = fixtures();
 let capPuts = [];
 const availability = { cuaReady: true, modelReady: true, fixtureReady: true, reasons: [] };
 const benchmarkRun = (status) => ({
-	id: 'b1', status, provider: 'laya-local', model: 'laya-fast', modelVersion: 'unknown',
+	id: 'b1', status, provider: 'local-laya', model: 'multilingual', modelVersion: 'unknown',
 	target: { prefix: 'computer', fixtureId: 'fix-1' }, createdAt: new Date().toISOString(),
 	warmup: 2, samples: 24, coldStartMs: 1320, p50Ms: 860, p95Ms: 1420, p95Approx: false,
 	timeouts: 0, errors: 1, successRatio: 0.92, actions: 30, retries: 2, fallbackCount: 1, abstains: 1,
@@ -121,10 +122,24 @@ try {
 			capPuts.push({ path, body: req.postDataJSON() });
 			return json(route, { ok: true });
 		}
-		if (/^\/api\/model-services\/[^/]+\/local$/.test(path) && method === 'DELETE') {
-			const id = path.split('/')[3];
-			providers = providers.map((p) => (p.id === id ? { ...p, configured: false, local: { ...localOffline, installed: false, ready: 'not_installed', offlineReady: false, health: undefined } } : p));
-			return json(route, providers.find((p) => p.id === id).local);
+		// 本地 Laya（local-laya-runtime 冻结契约）
+		if (path === '/api/local-models/laya/status') return json(route, laya);
+		if (path === '/api/local-models/laya/stop') {
+			laya = layaStatus({ runtime: { state: 'stopped', pid: null, port: null, host: '127.0.0.1' }, registered: null, health: null });
+			return json(route, { ok: true, status: laya });
+		}
+		if (path === '/api/local-models/laya/start') {
+			laya = layaStatus();
+			return json(route, { ok: true, status: laya });
+		}
+		if (path === '/api/local-models/laya/install') {
+			laya = layaStatus({ install: { state: 'installing', phase: 'weights', received: 40, total: 100, error: null, installedAt: null }, runtime: { state: 'stopped', pid: null, port: null, host: '127.0.0.1' }, registered: null, health: null });
+			return json(route, { ok: true, status: laya });
+		}
+		if (path === '/api/local-models/laya/cancel' || path === '/api/local-models/laya/update') return json(route, { ok: true, status: laya });
+		if (path === '/api/local-models/laya' && method === 'DELETE') {
+			laya = layaStatus({ install: { state: 'not_installed', phase: 'idle', received: 0, total: null, error: null, installedAt: null }, runtime: { state: 'stopped', pid: null, port: null, host: '127.0.0.1' }, registered: null, health: null });
+			return json(route, { ok: true, status: laya });
 		}
 		// 实际操作测试（benchmark agent 契约）
 		if (path === '/api/fast-computer/benchmark' && method === 'GET') return json(route, { availability, runs: [] });
@@ -139,7 +154,10 @@ try {
 	const panel = page.getByTestId('model-services-panel');
 	await panel.waitFor();
 	const cards = () => page.locator('[data-testid=service-card]');
-	assert.equal(await cards().count(), 3, '应显示 3 个模型服务卡片');
+	assert.equal(await cards().count(), 2, 'registry 里 2 个服务卡片（local-laya 由管理卡展示，不重复）');
+	await page.getByTestId('local-laya-card').waitFor();
+	const SHOT = process.env.SHOT_DIR;
+	if (SHOT) await page.locator('[data-testid=model-services]').screenshot({ path: `${SHOT}/1-services-desktop.png` });
 
 	// 1) 能力标签：推断出来的能力标「未确认」
 	const relay = page.locator('[data-testid=service-card][data-service=custom-relay]');
@@ -166,64 +184,73 @@ try {
 	await page.getByTestId('add-service-key').fill('sk-test-not-real');
 	await page.getByTestId('add-service-submit').click();
 	await page.waitForTimeout(80);
-	assert.equal(await cards().count(), 4, '添加后应有 4 个服务卡片');
+	assert.equal(await cards().count(), 3, '添加后应有 3 个服务卡片');
 
-	// 4) 本地 Laya：health 用实际探测标签；卸载走自绘确认框（不是原生 confirm）
-	const laya = page.locator('[data-testid=service-card][data-service=laya-local]');
-	await laya.getByTestId('service-toggle-laya-local').click();
-	await laya.getByTestId('local-health').waitFor();
-	assert.match(await laya.getByTestId('local-gpu').textContent(), /Apple MPS/, 'GPU 标签应来自实际探测');
-	assert.equal(await laya.getByTestId('local-gpu').getAttribute('data-gpu-available'), 'true');
-	await laya.getByTestId('local-uninstall').click();
-	await page.getByTestId('confirm-dialog').waitFor();
-	assert.match(await page.getByTestId('confirm-dialog').textContent(), /卸载本地 Laya/, '卸载需自绘确认框');
-	await page.getByTestId('confirm-cancel').click();
-	await page.waitForTimeout(60);
-	assert.equal(await laya.getByTestId('local-ready').textContent(), '离线可用', '取消卸载后状态不变');
-	await laya.getByTestId('local-uninstall').click();
-	await page.getByTestId('confirm-ok').click();
-	await page.waitForTimeout(80);
-	assert.equal(await laya.getByTestId('local-ready').textContent(), '未安装', '确认后卸载');
+	// 4) 本地 Laya 管理卡：运行态 + health 实际设备 + 已注册模型
+	const layaCard = page.getByTestId('local-laya-card');
+	assert.equal(await layaCard.getAttribute('data-source'), 'local');
+	assert.match(await page.getByTestId('laya-install-state').textContent(), /已安装/);
+	assert.match(await page.getByTestId('laya-runtime-state').textContent(), /运行中/);
+	assert.match(await page.getByTestId('laya-device').textContent(), /mps/, 'health 实际设备应来自测量值');
+	assert.match(await page.getByTestId('laya-unverified-note').textContent(), /尚未在本机实机验证/, '需声明未实机验证');
+	assert.equal(await page.getByTestId('laya-model-row').getAttribute('data-registered'), 'true');
 
-	// 5) 实际操作测试：先显示「尚未运行 / 真实执行未验证」，再选电脑 + 确认 + 跑出结果
-	providers = fixtures();
-	await page.reload();
-	await page.getByTestId('settings-dialog').waitFor();
-	const laya2 = page.locator('[data-testid=service-card][data-service=laya-local]');
-	await laya2.getByTestId('service-toggle-laya-local').click();
-	await laya2.getByTestId('benchmark-open-laya-fast').click();
+	// 5) 实际操作测试：尚未运行 / 真实执行未验证 / advisory
+	await page.getByTestId('benchmark-open-multilingual').click();
 	await page.getByTestId('actual-task-test').waitFor();
-	assert.match(await page.getByTestId('actual-task-test').textContent(), /专用隔离测试窗口/, '需说明专用测试窗口');
-	assert.match(await page.getByTestId('actual-task-preflight').textContent(), /前置条件/, '需说明前置条件校验');
-	assert.match(await page.getByTestId('benchmark-unverified-note').textContent(), /不等于 CUA 成功/, '需声明真实执行未验证');
+	assert.match(await page.getByTestId('actual-task-test').textContent(), /专用隔离测试窗口/);
+	assert.match(await page.getByTestId('actual-task-preflight').textContent(), /前置条件/);
+	assert.match(await page.getByTestId('benchmark-unverified-note').textContent(), /不等于 CUA 成功/);
 	assert.match(await page.getByTestId('actual-task-verdict').textContent(), /尚未运行/, '未跑过时显示尚未运行');
 	await page.getByTestId('actual-task-target').click();
 	await page.getByRole('option', { name: /助理电脑/ }).click();
 	await page.getByTestId('actual-task-ack').check();
 	await page.getByTestId('actual-task-start').click();
 	await page.waitForFunction(() => document.querySelector('[data-testid=actual-task-verdict]')?.textContent?.includes('偏慢'), null, { timeout: 5000 });
-	assert.match(await page.getByTestId('actual-task-verdict').textContent(), /偏慢，仍可继续用/, '结果应给 advisory 建议');
 	assert.match(await page.getByTestId('actual-task-accuracy-note').textContent(), /不代表整个 CUA 速度/, '需声明不等于整个 CUA 速度');
+	if (SHOT) await page.getByTestId('actual-task-test').screenshot({ path: `${SHOT}/2-actual-task-test.png` });
 	await page.getByTestId('actual-task-use-anyway').click();
 
-	// 6) Esc 关弹窗（键盘可达）
+	// 6) Laya 停止：不删配置，模型显示未就绪
+	await page.getByTestId('laya-stop').click();
+	await page.waitForTimeout(80);
+	assert.match(await page.getByTestId('laya-runtime-state').textContent(), /未运行/);
+	assert.equal(await page.getByTestId('laya-model-row').getAttribute('data-registered'), 'false');
+	assert.match(await page.getByTestId('laya-model-row').textContent(), /未就绪/, '停止后模型显示未就绪，不删配置');
+	assert.ok(await page.getByTestId('laya-start').isVisible(), '停止后仍可启动');
+
+	// 7) Laya 卸载：自绘确认框（不是原生 confirm）；取消不变，确认后回到未安装
+	await page.getByTestId('laya-uninstall').click();
+	await page.getByTestId('confirm-dialog').waitFor();
+	assert.match(await page.getByTestId('confirm-dialog').textContent(), /卸载本地 Laya/);
+	await page.getByTestId('confirm-cancel').click();
+	await page.waitForTimeout(60);
+	assert.match(await page.getByTestId('laya-install-state').textContent(), /已安装/, '取消卸载后状态不变');
+	await page.getByTestId('laya-uninstall').click();
+	await page.getByTestId('confirm-ok').click();
+	await page.waitForTimeout(80);
+	assert.match(await page.getByTestId('laya-install-state').textContent(), /未安装/, '确认后卸载');
+	assert.ok(await page.getByTestId('laya-install').isVisible(), '卸载后显示一键安装');
+
+	// 8) Esc 关弹窗（键盘可达）
 	await page.getByTestId('add-service-open').click();
 	await page.getByTestId('add-service').waitFor();
 	await page.keyboard.press('Escape');
 	await page.waitForTimeout(80);
 	assert.equal(await page.getByTestId('add-service').count(), 0, 'Esc 应关闭添加服务弹窗');
 
-	// 7) 390 宽不横向溢出
+	// 9) 390 宽不横向溢出
 	await page.setViewportSize({ width: 390, height: 780 });
 	await page.reload();
 	await page.getByTestId('settings-dialog').waitFor();
 	await panel.waitFor();
+	if (SHOT) await page.locator('[data-testid=model-services]').screenshot({ path: `${SHOT}/3-services-390.png` });
 	const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 	assert.ok(overflow <= 1, `390 宽不应横向溢出（实际 ${overflow}px）`);
 
 	const nativeDialogs = await page.evaluate(() => window.__nativeDialogs ?? 0);
 	assert.equal(nativeDialogs, 0, '不得调用原生 confirm/alert/prompt');
-	console.log('通过：统一模型服务原型（能力标签/纠正、添加服务、Laya health+卸载确认、实际操作测试 availability/未验证/advisory、Esc、390 宽、无原生 dialog）。');
+	console.log('通过：统一模型服务原型（能力标签/纠正、添加服务、Laya 管理卡安装/运行/未就绪/卸载确认、实际操作测试 availability/未验证/advisory、Esc、390 宽、无原生 dialog）。');
 } finally {
 	await browser?.close();
 	web.close();

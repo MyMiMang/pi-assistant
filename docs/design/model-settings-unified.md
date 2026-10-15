@@ -108,21 +108,28 @@ migrateLegacyImageProviders(input: { imageProviders: ImageProvider[]; customProv
 - UI 必显：**尚未运行**（无 runs 时）、**真实执行未验证**（开发 runner 是 fake，不等于 CUA 成功）、冷启动不进 p50/p95、样本少结论有限、**不等于整个 CUA 速度**。
 - 云分类器前提示**可能少量计费**；local 无费用。测试电脑选择（assistant / host）映射到 `target.prefix`（schema 增量，可选）。
 
-## 7. 本地 Laya：安装 / health 契约（交主协调派子任务）
+## 7. 本地 Laya：安装 / health 契约（laya agent 已冻结，UI 直接对接）
 
-```ts
-interface PhaseDto { state: "idle"|"downloading"|"verifying"|"done"|"error"|"cancelled"; percent; bytes?; total?; speed?; error? }
-interface LocalHealthDto { status: "ok"|"degraded"|"unavailable"; checkedAt; cpu:{label;cores?;baseline:true}; gpu:{vendor:"apple"|"nvidia"|"amd"|"intel"|"none"; backend:"mps"|"cuda"|"xpu"|"cpu"|"none"; available; label; source:"probe"} }
-interface LocalRuntimeDto { installed; ready: "not_installed"|"installing"|"offline_ready"|"ready"|"error"|"stopped"; offlineReady; taskId?; phases:{env;weights;verify}; health?; platform:{os;arch;support:"baseline"|"conditional"|"experimental"|"unsupported";note} }
+契约唯一事实来源：`local-laya-runtime` 树 `docs/design/local-laya-api.md`（前缀 `/api/local-models/laya`）。
 ```
+GET    /api/local-models/laya/status          → LayaStatus（轮询 / WS local-laya.changed）
+GET    /api/local-models/laya/platform        → 安装前预检（能力 + NVIDIA 驱动探测，只读）
+GET    /api/local-models/laya/source          → 来源元数据（版本 / revision / 许可证）
+GET    /api/local-models/laya/logs?lines=200  → 已脱敏日志（无 token）
+POST   /api/local-models/laya/install         body {cuda?,xpu?,checkpoint?} → {ok,status}（异步，轮询 status）
+POST   /api/local-models/laya/cancel | start | stop | update → {ok,status}
+DELETE /api/local-models/laya                 body {confirm:true} → {ok,status}
+WS     local-laya.changed                     → {type,status}
 ```
-GET    /api/model-services/:id/local
-POST   /api/model-services/:id/local/install                 → { taskId }   # 一键下载（自动地址+token，用户无需 key）
-GET    /api/model-services/:id/local/install/:taskId         → LocalRuntimeDto（三阶段）
-POST   /api/model-services/:id/local/install/:taskId/{cancel,resume,retry,stop}
-DELETE /api/model-services/:id/local                         # 卸载（前端 confirm）
-GET    /api/model-services/:id/local/health                  → LocalHealthDto
-```
+`LayaStatus = { platform{key,os,arch,accelerator,support,torchBackend,pins,reason}, install{state,phase,received,total,error,installedAt}, runtime{state,pid,port,host}, health|null{ok,device,checkpointDevices,cpuFallbacks,revisions,loaded}, registered|null{provider,modelId,protocol}, source{project,repoUrl,weightsOrg,codeLicense,weightsLicense,version,reviewedRevisions} }`。
+
+UI 硬约束：
+- **永不显示 / 依赖 token**（status 里没有）；`host` 恒 `127.0.0.1`。
+- **能力标签读 `health.device` / `cpuFallbacks` 实测值**，不用 `platform.accelerator`（后者只是安装意图）。
+- **安装管理卡始终可见（`source=local`）**；`stop` 后模型显示**未就绪**，**不删配置、不删条目**。
+- 未启动 / 已停止时 registry 不会出现 `local-laya`（fail-closed），UI 用 provider id `local-laya` 识别本地条目。
+- **不把 Laya 当 chat 模型**（协议 `/v1/systemone`）；快速操作只从已注册 classifier 目录选 `local-laya · multilingual`。
+- **不声称实机验证**：后端 22 local + 80 class + 46 download 测试均为 fake / 环回 HTTP，未真下载 venv、未启动 Laya、未跑 GPU；UI 明写「尚未在本机实机验证」。
 
 ## 8. 平台支持矩阵
 
@@ -139,11 +146,11 @@ GET    /api/model-services/:id/local/health                  → LocalHealthDto
 | 步骤 | 负责 | 状态 |
 |---|---|---|
 | S0 设计 + 契约 + 进度 | 本任务 | ✅ 已完成 |
-| S1 UI 契约与原型（纯前端 fixture） | 本任务 | ✅ 已完成（e2e 通过） |
-| S2 Registry DTO + 能力纠正 + 迁移 | registry agent | 部分（GET registry 已落地；生图迁移待续） |
-| S3 Laya 安装 / health | 安装子任务 | 待派 |
+| S1 UI 契约与原型（纯前端 fixture，默认不渲染，`?unified=1` 预览） | 本任务 | ✅ 已完成（e2e 通过） |
+| S2 Registry DTO + 能力纠正 + 生图迁移 | registry agent | 部分（GET registry 已落地；生图迁移待续） |
+| S3 Laya 安装 / health（`/api/local-models/laya`） | laya agent | 契约冻结 + 后端完成（未实机验证） |
 | S4 实际操作测试 runner + fixture | benchmark agent | 部分（contract/runner/routes，真实 fixture/host 待续） |
-| S5 UI 接真实 API（去 demo 开关） | 本任务 | 待 S2/S3/S4 |
+| S5 UI 接真实 API（去掉默认隐藏开关） | 本任务 | 待 S2/S3/S4 |
 | S6 电脑设置快速 / 生图统一（删旧区） | 本任务 + registry | 待 S2 |
 
 ## 10. 边界与禁令

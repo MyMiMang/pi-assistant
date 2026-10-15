@@ -92,8 +92,6 @@ export interface RegistryProvider {
 	baseUrl?: string;
 	protocols: string[];
 	models: RegistryModel[];
-	/** 仅 kind=local（本地 Laya）：安装 / health（laya owner 契约）。 */
-	local?: LocalRuntimeDto;
 }
 export interface PhaseDto {
 	state: "idle" | "downloading" | "verifying" | "done" | "error" | "cancelled";
@@ -103,20 +101,55 @@ export interface PhaseDto {
 	speed?: number;
 	error?: string;
 }
-export interface LocalHealthDto {
-	status: "ok" | "degraded" | "unavailable";
-	checkedAt: number;
-	cpu: { label: string; cores?: number; baseline: true };
-	gpu: { vendor: "apple" | "nvidia" | "amd" | "intel" | "none"; backend: "mps" | "cuda" | "xpu" | "cpu" | "none"; available: boolean; label: string; source: "probe" };
+// ---- 本地 Laya（对齐 local-laya-runtime 冻结契约：docs/design/local-laya-api.md）----
+export interface LayaPlatform {
+	key: string;
+	os: string;
+	arch: string;
+	accelerator: "cpu" | "mps" | "cuda" | "xpu";
+	support: "supported" | "conditional" | "experimental" | "unsupported";
+	torchBackend: string;
+	pins: string[];
+	reason: string;
 }
-export interface LocalRuntimeDto {
-	installed: boolean;
-	ready: "not_installed" | "installing" | "offline_ready" | "ready" | "error" | "stopped";
-	offlineReady: boolean;
-	taskId?: string;
-	phases: { env: PhaseDto; weights: PhaseDto; verify: PhaseDto };
-	health?: LocalHealthDto;
-	platform: { os: string; arch: string; support: "baseline" | "conditional" | "experimental" | "unsupported"; note: string };
+export interface LayaInstall {
+	state: "not_installed" | "installing" | "installed" | "failed";
+	phase: string;
+	received: number;
+	total: number | null;
+	error: string | null;
+	installedAt: number | null;
+}
+export interface LayaRuntime {
+	state: "stopped" | "starting" | "running" | "stopping" | "crashed";
+	pid: number | null;
+	port: number | null;
+	host: "127.0.0.1";
+}
+export interface LayaHealth {
+	ok: boolean;
+	device: string | null;
+	checkpointDevices: Record<string, string> | null;
+	cpuFallbacks: { count: number; lastReason: string | null } | null;
+	revisions: Record<string, string> | null;
+	loaded: string[] | null;
+}
+export interface LayaSource {
+	project: string;
+	repoUrl: string;
+	weightsOrg: string;
+	codeLicense: string;
+	weightsLicense: string;
+	version: string;
+	reviewedRevisions: Record<string, string>;
+}
+export interface LayaStatus {
+	platform: LayaPlatform;
+	install: LayaInstall;
+	runtime: LayaRuntime;
+	health: LayaHealth | null;
+	registered: { provider: string; modelId: string; protocol: string } | null;
+	source: LayaSource;
 }
 
 // ---- 实际操作测试（对齐 benchmark agent 契约：fast-computer/benchmark.ts）----

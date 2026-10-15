@@ -1,22 +1,24 @@
 /**
  * 统一模型服务（原型 → 接 API）。
- * 设计见 docs/design/model-settings-unified.md；契约对齐：
+ * 设计见 docs/design/model-settings-unified.md；契约对齐（唯一事实来源）：
  *  - registry agent：`GET /api/models/registry` → `{ providers: RegistryProvider[] }`（packages/server/src/model-registry.ts）
  *  - benchmark agent：`GET/POST /api/fast-computer/benchmark`、`GET /:id`、`POST /:id/cancel`（fast-computer/benchmark.ts）
+ *  - laya agent：`/api/local-models/laya/{status,platform,source,logs,install,cancel,start,stop,update}`（docs/design/local-laya-api.md）
  * 一个服务 = 一份 baseUrl + 一份凭据，可同时含 chat / vision / image / classifier；生图与快速操作不再单独配凭据。
- * 能力只按可靠来源；猜出来的标「未确认」。本文件先纯前端原型：接口未就绪时可「预览原型」用示例数据走完整交互。
+ * 能力只按可靠来源；猜出来的标「未确认」。接口未就绪时面板默认不渲染（保持旧界面），可用 `?unified=1` 预览原型。
  */
-import { Activity, AlertTriangle, Check, CheckCircle2, ChevronDown, Cpu, Download, Gauge, Loader2, Monitor, Pause, Play, Plus, RotateCcw, Search, ShieldCheck, Square, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, Check, CheckCircle2, ChevronDown, Download, Gauge, Loader2, Monitor, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import { PROVIDER_ICONS } from "./provider-icons";
-import type { BenchmarkAvailability, FastBenchmarkResult, LocalRuntimeDto, ModelCapability, ModelType, PhaseDto, RegistryModel, RegistryProvider } from "../types";
+import type { BenchmarkAvailability, FastBenchmarkResult, LayaStatus, ModelCapability, ModelType, RegistryModel, RegistryProvider } from "../types";
 import { Badge, Button, cx, Fold, Help, Input, Modal, Select, useConfirm } from "./ui";
 
 const CAPS: ModelCapability[] = ["chat", "vision", "image", "classifier"];
 const CAP_LABEL: Record<ModelCapability, string> = { chat: "对话", vision: "识图", image: "生图", classifier: "分类器" };
 const CAP_TONE: Record<ModelCapability, "accent" | "green" | "amber" | "zinc"> = { chat: "accent", vision: "green", image: "amber", classifier: "zinc" };
 const TYPE_LABEL: Record<ModelType, string> = { chat: "对话", image: "生图", classifier: "分类器" };
+const PHASE_LABEL: Record<string, string> = { preflight: "预检", uv: "环境", venv: "虚拟环境", torch: "框架", laya: "Laya", weights: "权重", verify: "校验", activate: "启用", rollback: "回滚", done: "完成" };
 const AVATAR_TONES = [
 	"bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
 	"bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
@@ -33,9 +35,8 @@ function initials(name: string) {
 	const chars = [...name.trim()].filter((c) => c.trim());
 	return ((chars[0] ?? "") + (chars[chars.length - 1] ?? "")).toUpperCase();
 }
-/** 服务图标：官方用品牌 logo；自定义 / 本地 / 生图 / 未收录品牌用「首字母 + 稳定配色」字母头像。 */
 function ServiceIcon({ provider }: { provider: RegistryProvider }) {
-	const brand = provider.kind === "builtin" ? PROVIDER_ICONS[provider.id] : undefined;
+	const brand = provider.kind === "builtin" && provider.id !== "local-laya" ? PROVIDER_ICONS[provider.id] : undefined;
 	if (brand)
 		return <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-white text-zinc-700 [&>svg]:size-5 dark:bg-zinc-800 dark:text-zinc-200" data-testid="service-icon" data-service-icon={provider.id} data-service-icon-kind="brand" dangerouslySetInnerHTML={{ __html: brand }} />;
 	let h = 0;
@@ -51,15 +52,12 @@ function ServiceIcon({ provider }: { provider: RegistryProvider }) {
 function CapabilityChips({ capabilities, inferred = [], testId }: { capabilities: ModelCapability[]; inferred?: ModelCapability[]; testId?: string }) {
 	return (
 		<span className="flex flex-wrap items-center gap-1" data-testid={testId}>
-			{capabilities.map((c) => {
-				const guess = inferred.includes(c);
-				return (
-					<Badge key={c} tone={guess ? "zinc" : CAP_TONE[c]}>
-						{CAP_LABEL[c]}
-						{guess ? "？" : ""}
-					</Badge>
-				);
-			})}
+			{capabilities.map((c) => (
+				<Badge key={c} tone={inferred.includes(c) ? "zinc" : CAP_TONE[c]}>
+					{CAP_LABEL[c]}
+					{inferred.includes(c) ? "？" : ""}
+				</Badge>
+			))}
 			{!capabilities.length && <span className="text-[11px] text-mut2">能力未知</span>}
 		</span>
 	);
@@ -130,114 +128,168 @@ function ModelRow({ model, onSave, onBenchmark }: { model: RegistryModel; onSave
 	);
 }
 
-const PHASE_LABEL: Record<string, string> = { env: "环境", weights: "权重", verify: "校验" };
-function PhaseBar({ name, phase }: { name: string; phase: PhaseDto }) {
-	const done = phase.state === "done";
-	return (
-		<div className="flex items-center gap-2 text-[11px]" data-testid={`phase-${name}`} data-phase-state={phase.state}>
-			<span className="w-8 shrink-0 text-mut">{PHASE_LABEL[name]}</span>
-			<div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-hover">
-				<div className={cx("h-full rounded-full transition-all", phase.state === "error" ? "bg-red-500" : done ? "bg-emerald-500" : "bg-accent")} style={{ width: `${Math.max(0, Math.min(100, phase.percent))}%` }} />
-			</div>
-			<span className="w-24 shrink-0 text-right text-mut2">{done ? "完成" : phase.state === "error" ? phase.error ?? "失败" : `${Math.round(phase.percent)}%`}</span>
-		</div>
-	);
-}
-
-/** 本地运行时（Laya）：安装进度 / cancel / resume / retry / stop / 卸载确认；health 用实际探测标签，不是安装时猜。 */
-function LocalRuntimeCard({ provider, onChange }: { provider: RegistryProvider; onChange: (r: LocalRuntimeDto) => void }) {
-	const local = provider.local;
-	const [dlg, ask] = useConfirm();
+/** 本地 Laya 安装管理卡：按 local-laya-runtime 冻结契约接线；始终可见（source=local），停进程也不删条目。 */
+function LocalLayaCard({ demo, onBenchmark }: { demo: boolean; onBenchmark: (provider: RegistryProvider, model: RegistryModel) => void }) {
+	const [st, setSt] = useState<LayaStatus | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
-	if (!local) return null;
-	const p = local.platform;
-	const call = async (path: string, method = "POST") => {
+	const [dlg, ask] = useConfirm();
+	const load = () =>
+		api<LayaStatus>("/api/local-models/laya/status")
+			.then(setSt)
+			.catch(() => setSt((cur) => cur ?? (demo ? DEMO_LAYA : null)));
+	useEffect(() => {
+		void load();
+	}, []);
+	// 安装 / 启动中轮询（契约：安装中建议 1s）；WS 事件由服务端推送，原型先轮询
+	useEffect(() => {
+		if (!st || (st.install.state !== "installing" && st.runtime.state !== "starting" && st.runtime.state !== "stopping")) return;
+		const t = setInterval(load, 1000);
+		return () => clearInterval(t);
+	}, [st?.install.state, st?.runtime.state]);
+	if (!st) return null;
+	const post = async (path: string, body?: unknown) => {
 		setBusy(path);
 		try {
-			onChange(await api<LocalRuntimeDto>(`/api/model-services/${provider.id}/local${path}`, { method }));
+			const r = await api<{ ok: boolean; status?: LayaStatus; error?: string }>(`/api/local-models/laya${path}`, { method: "POST", json: body });
+			if (r.status) setSt(r.status);
+			else await load();
 		} catch {
-			/* 原型：接口未就绪时忽略，状态由父级 demo 逻辑推进 */
+			/* 原型：接口未就绪时忽略 */
 		} finally {
 			setBusy(null);
 		}
 	};
 	const uninstall = async () => {
-		if (!(await ask({ title: "卸载本地 Laya？", body: "会删除已下载的环境与权重，之后需要重新下载。不影响你的模型服务与其它设置。", ok: "卸载", danger: true }))) return;
-		await call("", "DELETE");
+		if (!(await ask({ title: "卸载本地 Laya？", body: "会停止 sidecar 并删除自己下载的环境与权重，之后需要重新安装。不影响你的其它模型服务与设置。", ok: "卸载", danger: true }))) return;
+		setBusy("uninstall");
+		try {
+			await api("/api/local-models/laya", { method: "DELETE", json: { confirm: true } });
+			await load();
+		} catch {
+			/* ignore */
+		} finally {
+			setBusy(null);
+		}
 	};
-	const installing = local.ready === "installing";
+	const p = st.platform;
+	const installing = st.install.state === "installing";
+	const installed = st.install.state === "installed";
+	const running = st.runtime.state === "running";
+	const percent = st.install.total ? Math.round((st.install.received / st.install.total) * 100) : null;
+	const unsupported = p.support === "unsupported";
+	const model: RegistryModel = { provider: "local-laya", id: st.registered?.modelId ?? "multilingual", name: st.registered?.modelId ?? "multilingual", type: "classifier", capabilities: ["classifier"], protocol: st.registered?.protocol ?? "typesafe-system-one", confirmed: true, inferred: [], source: "pi-catalog", configured: true };
 	return (
-		<div className="space-y-3 rounded-xl border border-line p-3" data-testid="local-runtime" data-ready={local.ready}>
+		<div className="space-y-3 rounded-xl border border-line p-3" data-testid="local-laya-card" data-install-state={st.install.state} data-runtime-state={st.runtime.state} data-source="local">
 			{dlg}
 			<div className="flex flex-wrap items-center gap-2 text-xs">
-				<span data-testid="local-ready">
-					<Badge tone={local.ready === "offline_ready" || local.ready === "ready" ? "green" : local.ready === "error" ? "red" : "zinc"}>
-						{local.ready === "not_installed" ? "未安装" : local.ready === "installing" ? "安装中" : local.ready === "offline_ready" ? "离线可用" : local.ready === "ready" ? "就绪" : local.ready === "error" ? "出错" : "已停止"}
+				<ServiceIcon provider={{ id: "local-laya", name: "本地 Laya", kind: "local", configured: true, protocols: [], models: [] }} />
+				<span className="text-sm font-medium">本地 Laya</span>
+				<Badge tone="accent">本地</Badge>
+				<span data-testid="laya-install-state">
+					<Badge tone={installing ? "amber" : installed ? "green" : st.install.state === "failed" ? "red" : "zinc"}>
+						{st.install.state === "not_installed" ? "未安装" : installing ? "安装中" : installed ? "已安装" : "安装失败"}
 					</Badge>
 				</span>
-				<span className="text-mut" data-testid="platform-support" data-support={p.support}>
-					平台：{p.os} / {p.arch} · {p.support === "baseline" ? "支持" : p.support === "conditional" ? "有条件支持" : p.support === "experimental" ? "实验性" : "不支持"}
+				<span data-testid="laya-runtime-state">
+					<Badge tone={running ? "green" : st.runtime.state === "crashed" ? "red" : "zinc"}>
+						{running ? "运行中" : st.runtime.state === "starting" ? "启动中" : st.runtime.state === "stopping" ? "停止中" : st.runtime.state === "crashed" ? "已崩溃" : "未运行"}
+					</Badge>
 				</span>
-				{p.support === "unsupported" && (
-					<span className="flex items-center gap-1 text-amber-600" data-testid="platform-note">
-						<AlertTriangle size={12} /> {p.note || "此平台暂不支持本地 Laya，不假装成功"}
+			</div>
+			<div className="flex flex-wrap items-center gap-2 text-[11px] text-mut">
+				<span data-testid="laya-platform" data-support={p.support}>
+					平台：{p.os} / {p.arch} · {p.support === "supported" ? "支持" : p.support === "conditional" ? "有条件支持" : p.support === "experimental" ? "实验性" : "不支持"}（安装意图 {p.accelerator}）
+				</span>
+				{unsupported && (
+					<span className="flex items-center gap-1 text-amber-600" data-testid="laya-platform-reason">
+						<AlertTriangle size={12} /> {p.reason || "此平台暂不支持，不假装成功"}
 					</span>
 				)}
 			</div>
-			{(installing || local.phases.env.state !== "idle") && (
-				<div className="space-y-1.5">
-					<PhaseBar name="env" phase={local.phases.env} />
-					<PhaseBar name="weights" phase={local.phases.weights} />
-					<PhaseBar name="verify" phase={local.phases.verify} />
+			{installing && (
+				<div className="space-y-1.5 text-[11px]" data-testid="laya-progress">
+					<div className="flex items-center gap-2">
+						<span className="w-14 shrink-0 text-mut">{PHASE_LABEL[st.install.phase] ?? st.install.phase}</span>
+						<div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-hover">
+							<div className="h-full rounded-full bg-accent transition-all" style={{ width: `${percent ?? 8}%` }} />
+						</div>
+						<span className="w-24 shrink-0 text-right text-mut2">{percent != null ? `${percent}%` : "进行中"}</span>
+					</div>
+					{st.install.error && <div className="text-red-600">{st.install.error}</div>}
 				</div>
 			)}
-			{local.health && (
-				<div className="flex flex-wrap items-center gap-2 text-[11px] text-mut" data-testid="local-health">
-					<span className="flex items-center gap-1">
-						<Cpu size={12} /> CPU：{local.health.cpu.label}（基线）
+			{st.install.state === "failed" && st.install.error && <div className="text-[11px] text-red-600" data-testid="laya-error">{st.install.error}</div>}
+			{installed && st.health && (
+				<div className="flex flex-wrap items-center gap-2 text-[11px] text-mut" data-testid="laya-health">
+					<span className="flex items-center gap-1" data-testid="laya-device">
+						<Gauge size={12} /> 实际设备：{st.health.device ?? "未知"}
 					</span>
-					<span className="flex items-center gap-1" data-testid="local-gpu" data-gpu-backend={local.health.gpu.backend} data-gpu-available={String(local.health.gpu.available)}>
-						<Gauge size={12} /> GPU：{local.health.gpu.available ? local.health.gpu.label : "不可用"}（实际探测）
-					</span>
-					<span className="text-mut2">检测于 {new Date(local.health.checkedAt).toLocaleTimeString("zh-CN")}</span>
+					{st.health.cpuFallbacks && st.health.cpuFallbacks.count > 0 && (
+						<span className="flex items-center gap-1 text-amber-600" data-testid="laya-cpu-fallback">
+							<AlertTriangle size={12} /> CPU 回退 {st.health.cpuFallbacks.count} 次{st.health.cpuFallbacks.lastReason ? `：${st.health.cpuFallbacks.lastReason}` : ""}
+						</span>
+					)}
+					{st.health.revisions && Object.keys(st.health.revisions).length > 0 && <span className="text-mut2">revision：{Object.values(st.health.revisions).join(", ").slice(0, 12)}</span>}
 				</div>
 			)}
+			<div className="flex flex-wrap items-center gap-2 text-[11px] text-mut2" data-testid="laya-source">
+				来源：{st.source.project} {st.source.version} · 代码 {st.source.codeLicense} / 权重 {st.source.weightsLicense}
+			</div>
+			{/* 分类器模型：注册进目录后可选 + 实际操作测试；未运行显示未就绪，而不是删掉配置 */}
+			<div className="rounded-lg border border-line" data-testid="laya-model-row" data-registered={String(!!st.registered)}>
+				<div className="flex flex-wrap items-center gap-2 px-2.5 py-1.5 text-xs">
+					<span className="rounded bg-hover px-1.5 py-0.5 text-[11px] text-mut">分类器</span>
+					<span className="min-w-0 flex-1 truncate font-mono">local-laya / {model.id}</span>
+					<CapabilityChips capabilities={["classifier"]} testId="laya-model-caps" />
+					{!st.registered && <span className="text-[11px] text-amber-600">未就绪（启动后自动注册，不删配置）</span>}
+				</div>
+				{st.registered && (
+					<div className="px-2.5 pb-2">
+						<Button size="sm" variant="outline" onClick={() => onBenchmark({ id: "local-laya", name: "本地 Laya", kind: "local", configured: true, protocols: [], models: [] }, model)} data-testid="benchmark-open-multilingual">
+							<Monitor size={13} /> 实际操作测试
+						</Button>
+					</div>
+				)}
+			</div>
 			<div className="flex flex-wrap gap-2">
-				{local.ready === "not_installed" && (
-					<Button size="sm" variant="primary" disabled={busy !== null} onClick={() => void call("/install")} data-testid="local-install">
-						<Download size={14} /> 一键下载（自动地址，无需填 Key）
+				{!installed && !installing && (
+					<Button size="sm" variant="primary" disabled={busy !== null || unsupported} onClick={() => void post("/install")} data-testid="laya-install">
+						<Download size={14} /> 一键安装（自动地址，无需填 Key）
 					</Button>
 				)}
 				{installing && (
-					<>
-						<Button size="sm" variant="outline" onClick={() => void call(`/install/${local.taskId}/cancel`)} data-testid="local-cancel">
-							<Square size={13} /> 取消
-						</Button>
-						<Button size="sm" variant="outline" onClick={() => void call(`/install/${local.taskId}/stop`)} data-testid="local-stop">
-							<Pause size={13} /> 停止
-						</Button>
-					</>
-				)}
-				{local.ready === "stopped" && (
-					<Button size="sm" variant="primary" onClick={() => void call(`/install/${local.taskId}/resume`)} data-testid="local-resume">
-						<Play size={13} /> 继续下载
+					<Button size="sm" variant="outline" onClick={() => void post("/cancel")} data-testid="laya-cancel">
+						<Square size={13} /> 取消
 					</Button>
 				)}
-				{local.ready === "error" && (
-					<Button size="sm" variant="primary" onClick={() => void call(`/install/${local.taskId}/retry`)} data-testid="local-retry">
-						<RotateCcw size={13} /> 重试
+				{st.install.state === "failed" && (
+					<Button size="sm" variant="primary" onClick={() => void post("/install")} data-testid="laya-retry">
+						<RotateCcw size={13} /> 重试安装
 					</Button>
 				)}
-				{(local.ready === "ready" || local.ready === "offline_ready") && (
+				{installed && !running && (
+					<Button size="sm" variant="primary" disabled={busy !== null} onClick={() => void post("/start")} data-testid="laya-start">
+						<Play size={13} /> 启动
+					</Button>
+				)}
+				{running && (
+					<Button size="sm" variant="outline" onClick={() => void post("/stop")} data-testid="laya-stop">
+						<Square size={13} /> 停止
+					</Button>
+				)}
+				{installed && (
 					<>
-						<Button size="sm" variant="outline" onClick={() => void call("/health", "GET")} data-testid="local-health-refresh">
-							<Activity size={13} /> 重新检测
+						<Button size="sm" variant="outline" onClick={() => void post("/update")} data-testid="laya-update">
+							<RefreshCw size={13} /> 更新
 						</Button>
-						<Button size="sm" variant="ghost" onClick={() => void uninstall()} data-testid="local-uninstall">
+						<Button size="sm" variant="ghost" onClick={() => void uninstall()} data-testid="laya-uninstall">
 							<Trash2 size={13} /> 卸载
 						</Button>
 					</>
 				)}
+			</div>
+			<div className="text-[11px] text-mut2" data-testid="laya-unverified-note">
+				本地 Laya 的下载 / 启动尚未在本机实机验证（后端测试为 fake / 环回 HTTP，未真下载 venv、未启动 Laya、未跑 GPU）；状态以实际 health 为准。
 			</div>
 		</div>
 	);
@@ -400,8 +452,8 @@ function Metric({ label, value }: { label: string; value: string }) {
 	);
 }
 
-/** 服务卡：图标 + 名称 / 状态 / 能力标签；展开是模型列表（能力可纠正）与配置 / 本地运行时。 */
-function ServiceCard({ provider, open, onToggle, onSaveCaps, onChangeLocal, onBenchmark }: { provider: RegistryProvider; open: boolean; onToggle: () => void; onSaveCaps: (modelId: string, caps: ModelCapability[]) => void; onChangeLocal: (r: LocalRuntimeDto) => void; onBenchmark: (m: RegistryModel) => void }) {
+/** 服务卡：图标 + 名称 / 状态 / 能力标签；展开是模型列表（能力可纠正）。 */
+function ServiceCard({ provider, open, onToggle, onSaveCaps, onBenchmark }: { provider: RegistryProvider; open: boolean; onToggle: () => void; onSaveCaps: (modelId: string, caps: ModelCapability[]) => void; onBenchmark: (m: RegistryModel) => void }) {
 	const [test, setTest] = useState(false);
 	const caps = CAPS.filter((c) => provider.models.some((m) => m.capabilities.includes(c)));
 	return (
@@ -425,7 +477,6 @@ function ServiceCard({ provider, open, onToggle, onSaveCaps, onChangeLocal, onBe
 			</button>
 			{open && (
 				<div className="space-y-3 border-t border-line p-3">
-					{provider.kind === "local" && <LocalRuntimeCard provider={provider} onChange={onChangeLocal} />}
 					<div className="space-y-1.5">
 						<div className="flex items-center justify-between gap-2">
 							<span className="text-xs font-medium text-zinc-500">模型（{provider.models.length}）</span>
@@ -436,7 +487,7 @@ function ServiceCard({ provider, open, onToggle, onSaveCaps, onChangeLocal, onBe
 						<div className="max-h-72 divide-y divide-line overflow-y-auto rounded-lg border border-line" data-testid={`service-models-${provider.id}`}>
 							{!provider.models.length && <div className="p-2 text-xs text-mut">还没有载入模型</div>}
 							{provider.models.map((m) => (
-								<ModelRow key={`${m.type}:${m.id}`} model={m} onSave={(c) => onSaveCaps(m.id, c)} onBenchmark={provider.kind === "local" || provider.kind === "custom" || provider.kind === "builtin" ? onBenchmark : undefined} />
+								<ModelRow key={`${m.type}:${m.id}`} model={m} onSave={(c) => onSaveCaps(m.id, c)} onBenchmark={onBenchmark} />
 							))}
 						</div>
 						<div className="text-[11px] text-mut2">能力来自 Pi 目录 / 用户显式配置 / 服务端 /models 元数据；靠 models.dev 或名字猜的标「未确认」。不会逐个模型做隐式付费探测。</div>
@@ -449,13 +500,13 @@ function ServiceCard({ provider, open, onToggle, onSaveCaps, onChangeLocal, onBe
 
 /** 添加服务：官方 / 自定义 / 本地（Select 选类型，不用原生 select）。 */
 function AddServiceDialog({ open, onClose, onAdd }: { open: boolean; onClose: () => void; onAdd: (p: RegistryProvider) => void }) {
-	const [kind, setKind] = useState<"builtin" | "custom" | "local">("builtin");
+	const [kind, setKind] = useState<"builtin" | "custom">("builtin");
 	const [name, setName] = useState("");
 	const [baseUrl, setBaseUrl] = useState("");
 	const [key, setKey] = useState("");
 	const submit = () => {
 		const id = `demo-${Date.now()}`;
-		onAdd({ id, name: name.trim() || (kind === "builtin" ? "OpenAI" : kind === "custom" ? "我的中转" : "本地 Laya"), kind, baseUrl: kind === "builtin" ? undefined : baseUrl.trim() || undefined, configured: !!key || kind === "local", protocols: [], models: [], local: kind === "local" ? demoLocal("not_installed") : undefined });
+		onAdd({ id, name: name.trim() || (kind === "builtin" ? "OpenAI" : "我的中转"), kind, baseUrl: kind === "builtin" ? undefined : baseUrl.trim() || undefined, configured: !!key, protocols: [], models: [] });
 		onClose();
 	};
 	return (
@@ -470,10 +521,10 @@ function AddServiceDialog({ open, onClose, onAdd }: { open: boolean; onClose: ()
 						options={[
 							{ value: "builtin", label: "官方服务（内置目录）" },
 							{ value: "custom", label: "自定义 / 中转（填 Base URL + Key）" },
-							{ value: "local", label: "本地模型（Laya，一键下载）" },
 						]}
-						onChange={(v) => setKind(v as "builtin" | "custom" | "local")}
+						onChange={(v) => setKind(v as "builtin" | "custom")}
 					/>
+					<div className="text-[11px] text-mut2">本地模型（Laya）在上面「本地 Laya」卡里一键安装，不在这里添加。</div>
 				</div>
 				{kind !== "builtin" && (
 					<>
@@ -487,13 +538,13 @@ function AddServiceDialog({ open, onClose, onAdd }: { open: boolean; onClose: ()
 						</label>
 					</>
 				)}
-				{kind !== "local" && (
+				{kind !== "builtin" && (
 					<label className="block space-y-1.5 text-xs">
 						<span className="font-medium">API Key</span>
 						<Input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="粘贴 Key（加密保存在本机）" data-testid="add-service-key" />
 					</label>
 				)}
-				<div className="text-[11px] text-mut2">{kind === "local" ? "本地模型无需填 Key：一键下载会自动获取地址与凭据。" : "保存后点「载入模型」按对端元数据 / 官方目录识别能力；不做隐式付费探测。"}</div>
+				<div className="text-[11px] text-mut2">保存后点「载入模型」按对端元数据 / 官方目录识别能力；不做隐式付费探测。</div>
 				<div className="flex justify-end gap-2">
 					<Button variant="ghost" onClick={onClose}>
 						取消
@@ -507,19 +558,15 @@ function AddServiceDialog({ open, onClose, onAdd }: { open: boolean; onClose: ()
 	);
 }
 
-function demoLocal(ready: LocalRuntimeDto["ready"]): LocalRuntimeDto {
-	const idle: PhaseDto = { state: "idle", percent: 0 };
-	return {
-		installed: ready === "ready" || ready === "offline_ready",
-		ready,
-		offlineReady: ready === "offline_ready" || ready === "ready",
-		phases: { env: idle, weights: idle, verify: idle },
-		health: ready === "ready" || ready === "offline_ready" ? { status: "ok", checkedAt: Date.now(), cpu: { label: "Apple M2 Pro", cores: 12, baseline: true }, gpu: { vendor: "apple", backend: "mps", available: true, label: "Apple MPS", source: "probe" } } : undefined,
-		platform: { os: "macOS", arch: "arm64", support: "baseline", note: "" },
-	};
-}
-
-/** 原型示例数据（接口未就绪时可点「预览原型」查看完整交互）。 */
+/** 原型示例数据（`?unified=1` 且接口未就绪时用）。 */
+const DEMO_LAYA: LayaStatus = {
+	platform: { key: "darwin-arm64", os: "macOS", arch: "arm64", accelerator: "mps", support: "supported", torchBackend: "default", pins: [], reason: "" },
+	install: { state: "installed", phase: "done", received: 0, total: null, error: null, installedAt: Date.now() },
+	runtime: { state: "running", pid: 4242, port: 51789, host: "127.0.0.1" },
+	health: { ok: true, device: "mps", checkpointDevices: { multilingual: "mps" }, cpuFallbacks: { count: 0, lastReason: null }, revisions: { laya: "abc1234" }, loaded: ["multilingual"] },
+	registered: { provider: "local-laya", modelId: "multilingual", protocol: "typesafe-system-one" },
+	source: { project: "Laya", repoUrl: "https://example.invalid/laya", weightsOrg: "Laya", codeLicense: "Apache-2.0", weightsLicense: "see repo", version: "v1", reviewedRevisions: {} },
+};
 export const DEMO_PROVIDERS: RegistryProvider[] = [
 	{
 		id: "openai", name: "OpenAI", kind: "builtin", configured: true, protocols: ["openai-completions"],
@@ -535,20 +582,17 @@ export const DEMO_PROVIDERS: RegistryProvider[] = [
 			{ provider: "custom-relay", id: "mystery-model", name: "mystery-model", type: "chat", capabilities: ["chat", "vision"], protocol: "openai-completions", confirmed: false, inferred: ["vision"], source: "custom", configured: true },
 		],
 	},
-	{
-		id: "laya-local", name: "本地 Laya", kind: "local", configured: true, protocols: ["llama-cpp-classify"],
-		models: [{ provider: "laya-local", id: "laya-fast", name: "laya-fast", type: "classifier", capabilities: ["classifier"], protocol: "llama-cpp-classify", confirmed: true, inferred: [], source: "custom", configured: true }],
-		local: demoLocal("offline_ready"),
-	},
 ];
 
 /**
- * 统一模型服务面板：真实接口 `/api/models/registry` 就绪时优先真实数据；未就绪时可「预览原型」用示例数据看完整交互。
- * 默认 chat 紧凑区在 ModelsTab 里，不随折叠隐藏。
+ * 统一模型服务面板。
+ * 接口未就绪（`/api/models/registry` 失败）时**默认不渲染**，保持旧界面，避免影响现有 e2e；
+ * `?unified=1` 时强制显示并用示例数据预览原型。registry 就绪后由它接管（S5 再接真实生图 / Laya）。
  */
 export function ModelServicesPanel({ providers: initial, demo = false, onChange }: { providers?: RegistryProvider[]; demo?: boolean; onChange?: (p: RegistryProvider[]) => void }) {
-	const [providers, setProviders] = useState<RegistryProvider[]>(initial ?? []);
-	const [isDemo, setIsDemo] = useState(demo || !!initial);
+	const forced = demo || (typeof location !== "undefined" && new URLSearchParams(location.search).has("unified"));
+	const [providers, setProviders] = useState<RegistryProvider[]>(initial ?? (forced ? DEMO_PROVIDERS : []));
+	const [phase, setPhase] = useState<"loading" | "ready" | "hidden">(initial || forced ? "ready" : "loading");
 	const [open, setOpen] = useState<string[]>([]);
 	const [q, setQ] = useState("");
 	const [addOpen, setAddOpen] = useState(false);
@@ -558,8 +602,12 @@ export function ModelServicesPanel({ providers: initial, demo = false, onChange 
 		if (initial) return;
 		let alive = true;
 		void api<{ providers: RegistryProvider[] }>("/api/models/registry")
-			.then((r) => alive && setProviders(r.providers))
-			.catch(() => {});
+			.then((r) => {
+				if (!alive) return;
+				setProviders(r.providers);
+				setPhase("ready");
+			})
+			.catch(() => alive && setPhase(forced ? "ready" : "hidden"));
 		return () => {
 			alive = false;
 		};
@@ -572,15 +620,17 @@ export function ModelServicesPanel({ providers: initial, demo = false, onChange 
 		apply(providers.map((p) => (p.id !== providerId ? p : { ...p, models: p.models.map((m) => (m.id !== modelId ? m : { ...m, capabilities: caps, inferred: [], confirmed: true, source: "custom" as const })) })));
 		void api(`/api/models/registry/${providerId}/models/${modelId}/capabilities`, { method: "PUT", json: { capabilities: caps } }).catch(() => {});
 	};
-	const changeLocal = (providerId: string, r: LocalRuntimeDto) => apply(providers.map((p) => (p.id === providerId ? { ...p, local: r, configured: r.installed } : p)));
 	const list = useMemo(() => {
-		const f = providers.filter((s) => !q || `${s.name} ${s.id}`.toLowerCase().includes(q.toLowerCase()));
+		// 本地 Laya 由管理卡统一展示，registry 里的 local-laya 条目不重复成卡片
+		const f = providers.filter((s) => s.id !== "local-laya" && (!q || `${s.name} ${s.id}`.toLowerCase().includes(q.toLowerCase())));
 		return [...f].sort((a, b) => Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name));
 	}, [providers, q]);
+	if (phase !== "ready") return null;
 	const configured = providers.filter((s) => s.configured).length;
 	return (
-		<Fold testId="model-services" icon={Gauge} title="模型服务" count={providers.length} hint={configured ? `已配置 ${configured}` : undefined} desc="一个服务 = 一份地址 + 一份凭据，可同时含对话 / 识图 / 生图 / 分类器模型。能力按 Pi 目录或对端元数据识别，猜的标「未确认」，可手动纠正。" open={expanded} onToggle={() => setExpanded((v) => !v)}>
-			<div className="space-y-3" data-testid="model-services-panel" data-demo={String(isDemo)}>
+		<Fold testId="model-services" icon={Gauge} title="模型服务" count={providers.length + 1} hint={configured ? `已配置 ${configured}` : undefined} desc="一个服务 = 一份地址 + 一份凭据，可同时含对话 / 识图 / 生图 / 分类器模型。能力按 Pi 目录或对端元数据识别，猜的标「未确认」，可手动纠正。" open={expanded} onToggle={() => setExpanded((v) => !v)}>
+			<div className="space-y-3" data-testid="model-services-panel">
+				<LocalLayaCard demo={forced} onBenchmark={(p, m) => setBench({ provider: p, model: m })} />
 				<div className="flex flex-wrap items-center gap-2">
 					<div className="relative min-w-40 flex-1">
 						<Search size={15} className="absolute top-2.5 left-2.5 text-zinc-400" />
@@ -589,23 +639,11 @@ export function ModelServicesPanel({ providers: initial, demo = false, onChange 
 					<Button variant="primary" onClick={() => setAddOpen(true)} data-testid="add-service-open">
 						<Plus size={15} /> 添加服务
 					</Button>
-					{!isDemo && !initial && (
-						<Button
-							variant="outline"
-							onClick={() => {
-								setProviders(DEMO_PROVIDERS);
-								setIsDemo(true);
-							}}
-							data-testid="service-preview-demo"
-						>
-							预览原型
-						</Button>
-					)}
 				</div>
-				{!list.length && <div className="rounded-xl border border-dashed border-line p-4 text-center text-xs text-mut">还没有模型服务。点「添加服务」选官方 / 自定义 / 本地。</div>}
+				{!list.length && <div className="rounded-xl border border-dashed border-line p-4 text-center text-xs text-mut">还没有其它模型服务。点「添加服务」选官方 / 自定义。</div>}
 				<div className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-testid="service-grid">
 					{list.map((s) => (
-						<ServiceCard key={s.id} provider={s} open={open.includes(s.id)} onToggle={() => setOpen((l) => (l.includes(s.id) ? l.filter((x) => x !== s.id) : [...l, s.id]))} onSaveCaps={(m, c) => saveCaps(s.id, m, c)} onChangeLocal={(r) => changeLocal(s.id, r)} onBenchmark={(m) => setBench({ provider: s, model: m })} />
+						<ServiceCard key={s.id} provider={s} open={open.includes(s.id)} onToggle={() => setOpen((l) => (l.includes(s.id) ? l.filter((x) => x !== s.id) : [...l, s.id]))} onSaveCaps={(m, c) => saveCaps(s.id, m, c)} onBenchmark={(m) => setBench({ provider: s, model: m })} />
 					))}
 				</div>
 				<div className="flex items-center gap-1.5 text-[11px] text-mut2">
