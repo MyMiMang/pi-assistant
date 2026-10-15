@@ -10,7 +10,7 @@
 import "../test/setup.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifyResume, shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY } from "../src/subagent-resume.ts";
+import { classifyResume, shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY, TRANSPORT_RETRY_PROMPT } from "../src/subagent-resume.ts";
 
 test("连接类 / 超时：可自动续跑", () => {
 	for (const msg of [
@@ -68,6 +68,24 @@ test("未知/空原因：不全量白名单、不自动重试，可核验后手�
 		assert.equal(info.auto, false, String(msg));
 		assert.equal(info.manual, true, String(msg));
 	}
+});
+
+test("自动续跑只发「先核验、不重做」的续跑提示，不重发原任务（避免重放已执行的副作用）", () => {
+	const p = TRANSPORT_RETRY_PROMPT;
+	assert.ok(/先检查工作区|先核验/.test(p), "要先核验已持久的结果");
+	assert.ok(/不要重做/.test(p) && /不要重复/.test(p), "要禁止重做与重复副作用");
+	assert.ok(/可能已经执行、也可能没有执行/.test(p), "要承认副作用结果未知，不承诺 exactly-once");
+	// 提示里不含任务正文占位：自动续跑绝不把原任务重新发一遍
+	assert.equal(p.includes("${task}"), false);
+});
+
+test("全任务最长运行时间超时不误判为连接类（不自动重试）", () => {
+	// subagents.ts stopSubagent(id,"timeout") 的文案；必须与「请求超时」区分，绝不自动重跑整个任务
+	const info = classifyResume("已超过最长运行时间");
+	assert.equal(info.auto, false);
+	assert.equal(shouldAutoRetry("已超过最长运行时间", 1), false);
+	// 真正的请求级超时仍然可自动续
+	assert.equal(shouldAutoRetry("request timed out after 60s", 1), true);
 });
 
 test("有界自动重试：次数上限、指数退避 + 抖动、封顶", () => {

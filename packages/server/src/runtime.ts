@@ -1,7 +1,7 @@
 import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, subagentNotifyText, resolveSubagentThinking, resumeSubagent, setSubagentRetryAt, withResumeInfo, type Subagent, type SubagentEvent } from "./subagents.ts";
 import { cancelWaitsForConversation, listWaits, parseDue, refreshWait, registerWait, cancelWait, setWaitWaker, setWaitNoteInjector, startWaitScheduler, WAIT_DEFAULT_INTERVAL_MS } from "./task-waits.ts";
 import { classifyModelError, isRecoverableModelError } from "./model-errors.ts";
-import { shouldAutoRetry, transportBackoffMs } from "./subagent-resume.ts";
+import { shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY_PROMPT } from "./subagent-resume.ts";
 /**
  * Agent 运行时：每个助理一个主会话（Pi AgentSession），后台任务各自一个会话。
  * 所有 Pi 调用都经过 pi-adapter；这里负责把 Pi 事件落盘为消息并广播。
@@ -1142,7 +1142,8 @@ setSubagentDriver({
 				setSubagentRetryAt(r.id, null);
 				if (!isActiveSubagent(getSubagent(r.id)!.status)) break;
 				error = undefined;
-				await promptSession(session, firstPrompt);
+				// 只续模型轮次：发「先核验、不重做」的续跑指令，**不重发原任务**（firstPrompt 是原始任务，重发会重放已执行的副作用）
+				await promptSession(session, TRANSPORT_RETRY_PROMPT);
 			}
 			// 模型层可恢复故障：池内换下一个模型，从已保存的会话继续，不从头重跑；每个候选最多试一次，用尽就明确停下
 			while (isActiveSubagent(getSubagent(r.id)!.status)) {

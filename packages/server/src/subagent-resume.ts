@@ -72,3 +72,11 @@ export function transportBackoffMs(attempt: number, rand: () => number = Math.ra
 export function shouldAutoRetry(message: string | null | undefined, attempt: number): boolean {
 	return classifyResume(message).cls === "transport" && attempt < TRANSPORT_RETRY.maxAttempts;
 }
+
+/**
+ * 连接类失败后在同一会话自动续跑的提示：**只续模型轮次，不重发原任务**。
+ * 连接中断时工具可能已执行、也可能没执行；重发原任务会让模型把已经做过的步骤再做一遍
+ * （发送 / 付款等副作用无法撤销）。任务本身已落在会话里，这里只发「先核验、从断点继续、
+ * 不重做、不重复副作用」的指令。注意：这不承诺 exactly-once，工具结果未知时要求先核实。
+ */
+export const TRANSPORT_RETRY_PROMPT = "（系统通知）上一次模型请求因为网络/连接问题中断了，这一轮不算完成。请只从断点继续：先检查工作区里已经完成的进度和产出，确认哪些步骤已经做完、哪些没做完（工具在中断时可能已经执行、也可能没有执行）；已经完成的步骤不要重做，也不要重复已经产生的副作用。某个操作状态不明时，先核实实际结果再决定，不要盲目重跑。完成后简要总结结果。";
