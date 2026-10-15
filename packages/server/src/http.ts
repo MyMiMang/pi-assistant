@@ -58,6 +58,7 @@ import { embeddingSignature, LOCAL_EMBEDDINGS, LOCAL_RERANKERS, pickMemoryModel,
 import { llmProxy } from "./llm-proxy.ts";
 import { deleteSkill, getSkill, listSkills } from "./skills.ts";
 import { agentsUsingSkill, assignedSkillIds, enableSkillForAgents, setAssignedSkillIds, unassignSkillEverywhere } from "./skill-assignments.ts";
+import { ImportConflict, importSkillFromPath, importSkillFromZip } from "./skill-import.ts";
 import { agentsOf, configOf, deleteMcp, getMcp, listMcp, type McpServerRow, redact, saveMcp, setMcpEnabled, testMcp } from "./mcp.ts";
 import { addPackage, install as installPackage, listPackages, type PiPackageRow, removePackage, setPackageEnabled } from "./pi-packages.ts";
 import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
@@ -785,6 +786,28 @@ app.post("/api/skills/:name/enable-all", (c) => {
 	if (!s) return c.json({ error: "not_found" }, 404);
 	enableSkillForAgents(listAgents().map((a) => a.id), s.id);
 	return c.json({ ok: true, id: s.id, agents: agentsUsingSkill(s.id) });
+});
+// 外部导入：zip 文件或本机路径（目录 / 单个 SKILL.md）。先入库，可选只 enable 目标助理。
+// 同名内容不同返回 409 conflict，由界面让用户选 update / newName，绝不静默覆盖。
+app.post("/api/skills/import", async (c) => {
+	const body = await c.req.parseBody();
+	const mode = (typeof body.mode === "string" && ["conflict", "update", "rename"].includes(body.mode) ? body.mode : "conflict") as "conflict" | "update" | "rename";
+	const newName = typeof body.newName === "string" && body.newName.trim() ? body.newName.trim() : undefined;
+	const agentId = typeof body.agentId === "string" && body.agentId ? body.agentId : undefined;
+	try {
+		const file = body.file as { arrayBuffer?: () => Promise<ArrayBuffer> } | undefined;
+		const r = file?.arrayBuffer
+			? await importSkillFromZip(new Uint8Array(await file.arrayBuffer()), { mode, newName })
+			: typeof body.path === "string" && body.path.trim()
+				? importSkillFromPath(body.path.trim(), { mode, newName })
+				: null;
+		if (!r) return c.json({ error: "请上传 zip，或填写本机目录 / SKILL.md 路径" }, 400);
+		if (agentId && getAgent(agentId)) setAssignedSkillIds(agentId, [...new Set([...assignedSkillIds(agentId), r.id])]);
+		return c.json(r);
+	} catch (e) {
+		if (e instanceof ImportConflict) return c.json({ error: "conflict", existing: e.existing, incoming: e.incoming }, 409);
+		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+	}
 });
 app.post("/api/skills", async (c) => {
 	const b = await c.req.json<{ name: string; description: string; body: string; previousName?: string; agentId?: string }>();

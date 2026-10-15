@@ -110,6 +110,11 @@ function changed() {
 }
 export const skillsVersion = () => getSetting("skillsVersion", 0);
 
+/** 外部模块（如导入）改了技能库存后调用：递增版本号并广播，运行时会话在下一轮重建。 */
+export function notifySkillsChanged() {
+	changed();
+}
+
 export function saveSkill(input: { name: string; description: string; body: string; previousName?: string }): Skill {
 	const name = input.name.trim().toLowerCase();
 	if (!NAME_RE.test(name)) throw new Error("技能名只能用小写字母、数字和连字符（例如 weekly-report），最长 64 个字符");
