@@ -86,37 +86,46 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 	const busy = voice.state === "preparing" || voice.state === "transcribing";
 	const label = !voice.supported ? (voice.unsupportedReason === "insecure_context" ? "需要 HTTPS 或本机地址才能用麦克风" : "当前浏览器不支持麦克风") : !voice.asrModel ? "未配置语音识别模型" : recording ? "停止录音并转写" : "语音输入";
 	const hint = notice || (recording ? "正在听…（点停止）" : busy ? "转写中…" : "");
+	const showSettings = voice.supported && !voice.asrModel && !recording;
 
+	// 结构约定（用户 UI 修正）：麦克风 / 停止 / 取消固定贴在发送键左侧，包在 .pa-voice-ctl 里不换行、不挤压右组；
+	// 提示文字与「去设置」放进 .pa-voice-status（CSS order:1 + flex-basis:100%），单独占一行，不动发送键。
 	return (
 		<>
-			{recording ? (
-				<>
-					<button type="button" className="pa-icon-btn ghost pa-voice-rec" data-testid="voice-stop" aria-label="停止录音并转写" title="停止录音并转写" onClick={voice.stop}>
-						<Square size={13} fill="currentColor" />
+			<span className="pa-voice-ctl">
+				{recording ? (
+					<>
+						<button type="button" className="pa-icon-btn ghost pa-voice-rec" data-testid="voice-stop" aria-label="停止录音并转写" title="停止录音并转写" onClick={voice.stop}>
+							<Square size={13} fill="currentColor" />
+						</button>
+						<button type="button" className="pa-icon-btn ghost" data-testid="voice-cancel" aria-label="取消语音输入" title="取消（不发送）" onClick={() => { setNotice(""); voice.cancel(); }}>
+							<X className="pa-ic" />
+						</button>
+					</>
+				) : (
+					<button
+						type="button"
+						className="pa-icon-btn ghost"
+						data-testid="voice-mic"
+						aria-label={label}
+						aria-pressed={false}
+						title={hint || label}
+						disabled={disabled || busy}
+						onClick={voice.start}
+					>
+						{busy ? <Loader2 className="pa-ic animate-spin" /> : <Mic className="pa-ic" />}
 					</button>
-					<button type="button" className="pa-icon-btn ghost" data-testid="voice-cancel" aria-label="取消语音输入" title="取消（不发送）" onClick={() => { setNotice(""); voice.cancel(); }}>
-						<X className="pa-ic" />
-					</button>
-				</>
-			) : (
-				<button
-					type="button"
-					className="pa-icon-btn ghost"
-					data-testid="voice-mic"
-					aria-label={label}
-					aria-pressed={false}
-					title={hint || label}
-					disabled={disabled || busy}
-					onClick={voice.start}
-				>
-					{busy ? <Loader2 className="pa-ic animate-spin" /> : <Mic className="pa-ic" />}
-				</button>
-			)}
-			{hint && <span className="pa-voice-hint max-w-[180px] truncate text-[11px] text-mut2" data-testid="voice-hint" title={hint}>{hint}</span>}
-			{voice.supported && !voice.asrModel && !recording && (
-				<button type="button" className="text-[11px] text-accent underline" data-testid="voice-open-settings" onClick={() => openSettings({ settings: "models" })}>
-					去设置
-				</button>
+				)}
+			</span>
+			{(hint || showSettings) && (
+				<div className="pa-voice-status" data-testid="voice-status">
+					{hint && <span className="pa-voice-hint max-w-[180px] truncate text-[11px] text-mut2" data-testid="voice-hint" title={hint}>{hint}</span>}
+					{showSettings && (
+						<button type="button" className="shrink-0 text-[11px] text-accent underline" data-testid="voice-open-settings" onClick={() => openSettings({ settings: "models" })}>
+							去设置
+						</button>
+					)}
+				</div>
 			)}
 		</>
 	);

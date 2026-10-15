@@ -403,23 +403,6 @@ function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, o
 				<div className="pa-composer-bar">
 					<div className="pa-composer-tools">
 						<AttachButton onFiles={(f) => void addFiles(f)} />
-						<VoiceInput
-							agentId={room.managerId ?? undefined}
-							conversationId={room.id}
-							textareaRef={ta}
-							value={text}
-							replyTo={quote?.messageId ?? null}
-							onChange={(next, cursor) => {
-								setText(next);
-								requestAnimationFrame(() => {
-									const el = ta.current;
-									if (el) {
-										el.focus();
-										el.setSelectionRange(cursor, cursor);
-									}
-								});
-							}}
-						/>
 						<button className="pa-icon-btn ghost" title="@ 某个助理" aria-label="@ 某个助理" data-testid="mention-btn" onClick={() => {
 							const el = ta.current;
 							const at = el?.selectionStart ?? text.length;
@@ -436,6 +419,24 @@ function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, o
 						<Help>不 @ 人：只有管理者回答，需要时它会分配给其他成员。@ 某个助理：只有它回答。@所有人：每个成员依次回答。</Help>
 						<span className={cx("shrink-0 text-[11px] text-mut2", COMPOSER_LABEL)}>{SEND_HINT}</span>
 					</div>
+					{/* 麦克风固定贴在发送键左侧（同一行、不换行）；提示 / 「去设置」由组件渲染到独立 status 行，不挤右组 */}
+					<VoiceInput
+						agentId={room.managerId ?? undefined}
+						conversationId={room.id}
+						textareaRef={ta}
+						value={text}
+						replyTo={quote?.messageId ?? null}
+						onChange={(next, cursor) => {
+							setText(next);
+							requestAnimationFrame(() => {
+								const el = ta.current;
+								if (el) {
+									el.focus();
+									el.setSelectionRange(cursor, cursor);
+								}
+							});
+						}}
+					/>
 					{running && !text.trim() && !files.length ? (
 						<button className="pa-send" onClick={() => api(`/api/rooms/${room.id}/stop`, { method: "POST" })} aria-label="停止" title="停止所有助理" data-testid="room-stop">
 							<Square size={13} fill="currentColor" />

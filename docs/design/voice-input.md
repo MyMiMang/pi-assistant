@@ -1,6 +1,6 @@
 # 语音输入（输入栏语音→文字草稿）设计
 
-- 状态：设计 + 契约（本树 `voice-input-implementation`，基 `unified-integration` `ad3526f`，**未 push / 未 tag**）。
+- 状态：设计 + 契约（本树 `voice-input-implementation`，基 `unified-integration` `ad3526f`，**未 push / 未 tag**）。2026-10-16 用户 UI 修正：麦克风从附件工具列移到**发送键左侧紧邻**，提示 / 「去设置」走独立 status 行（本树本地未发布）。
 - 依据：`research/voice-input-feasibility.md`、`research/sensevoice-local-asr-feasibility.md`、`research/voice-input-project-comparison.md`。
 - 范围：**只做「输入栏语音→文字草稿」**。用户已明确取消双向语音通话，**绝不实现**。本地 SenseVoice provider（安装/生命周期）由另一子代理负责，本设计只给出它要实现的接口契约。
 
@@ -8,7 +8,7 @@
 
 | 项 | 决定 |
 |---|---|
-| 入口 | 发送键**旁边**一个可发现的麦克风按钮（`pa-icon-btn ghost` + `Mic` 图标，带 `aria-label`/`title`）。 |
+| 入口 | 发送键**左侧紧邻**一个可发现的麦克风按钮（`pa-icon-btn ghost` + `Mic` 图标，带 `aria-label`/`title`）。麦克风 / 停止 / 取消包在 `.pa-voice-ctl`（`flex:none`）里，与发送键同属 `.pa-composer-bar`，同一行不换行；提示文字与未配置时的「去设置」放在**独立 status 行** `.pa-voice-status`（`order:1;flex:0 0 100%`），不挤附件 / 权限 / 模型选择器、不拖动发送键。 |
 | 操作 | **点击开始录音，再点停止**（toggle，默认）；**长按作为可选增强，首期不做**。 |
 | 结果 | 转写文本**插入开始录制时的光标锚点**；**保留**用户在转写期间对草稿的后续编辑；**不自动发送**。 |
 | 草稿 | 只改输入框文本，**不清 draft、不清 replyTo（引用）**。 |
@@ -107,7 +107,7 @@ idle ──start──▶ preparing ──(getUserMedia ok)──▶ recording �
 - `apps/web/src/hooks/useVoiceInput.ts`：React hook，真实浏览器管线（getUserMedia / AudioContext / AudioWorklet），薄封装。
 - `apps/web/src/components/VoiceInput.tsx`：独立组件（按钮 + 状态 + 可访问性），**不改整个 composer**。
 - `apps/web/src/api.ts`：`transcribeAudio(...)`（multipart 上传 + abort）。
-- 主会话/群聊 composer：只加**极小 hunk**（import + 一行 `<VoiceInput ... />`），与「消息引用」子任务改动**不重叠**。
+- 主会话/群聊 composer：只加**极小 hunk**（import + 发送键前一行 `<VoiceInput ... />`），与「消息引用」子任务改动**不重叠**。子代理 composer 不加麦克风（语音只做主 / 群）；共享 `.pa-composer-bar` / `.pa-voice-*` 样式已适配（2026-10-16 用户 UI 修正：麦克风从附件列移到发送键左侧，提示走独立 status 行）。
 
 ## 6. 安全红线（写死）
 

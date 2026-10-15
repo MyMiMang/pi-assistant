@@ -252,6 +252,13 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 				<div className="pa-composer-bar">
 					<div className="pa-composer-tools">
 					<AttachButton label={t("上传")} onFiles={(f) => void addFiles(f)} />
+					<HostTierPill agentId={agentId} />
+					<ProactivityPicker agentId={agentId} />
+					<span className="flex-1" />
+					<ContextRing agentId={agentId} running={!!running} />
+					<ModelPicker agentId={agentId} />
+					</div>
+					{/* 麦克风固定贴在发送键左侧（同一行、不换行）；提示 / 「去设置」由组件渲染到独立 status 行，不挤右组 */}
 					<VoiceInput
 						agentId={agentId}
 						conversationId={useStore.getState().convs[agentId]?.current}
@@ -269,12 +276,6 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 							});
 						}}
 					/>
-					<HostTierPill agentId={agentId} />
-					<ProactivityPicker agentId={agentId} />
-					<span className="flex-1" />
-					<ContextRing agentId={agentId} running={!!running} />
-					<ModelPicker agentId={agentId} />
-					</div>
 					{running && !text.trim() && !files.length ? (
 						<button className="pa-send" onClick={() => api(`/api/agents/${agentId}/abort?conversation=${useStore.getState().convs[agentId]?.current ?? ""}`, { method: "POST" })} aria-label={t("停止")} title={t("停止")}>
 							<Square size={13} fill="currentColor" />

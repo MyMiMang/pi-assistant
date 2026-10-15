@@ -2,6 +2,12 @@
 
 > 当前公开版本 **v0.1.0-beta.23**（2026-10-15 已公开 Latest，仅 macOS arm64）；下一版 **v0.1.0-beta.24 候选**见 `progress-snapshots/hotfix-integration.md`（热修整合，未发布）。上一版 v0.1.0-beta.22。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
+2026-10-16 语音麦克风位置修正（用户 UI 反馈：麦克风放在发送键旁边；worktree `release-candidate-validation`，**未 push / 未 tag / 未打包**；beta.24 候选）：
+- **原状**：`VoiceInput` 渲染在 `.pa-composer-tools`（附件工具列，回形针旁边），与最初「发送键旁」不符。
+- **改动**：`Chat.tsx` / `RoomChat.tsx` 把 `<VoiceInput>` 从 `pa-composer-tools` 移到 `pa-composer-bar` 中发送键之前；`VoiceInput.tsx` 拆成两块——`.pa-voice-ctl`（麦克风 / 停止 / 取消，`flex:none`、`align-self:flex-end`）固定在发送键左侧，`.pa-voice-status`（提示文字 + 未配置时的「去设置」）独立成行；`themes/base.css` 给 `.pa-composer-bar` 加 `flex-wrap:wrap`，`.pa-voice-status{order:1;flex:0 0 100%}`。单聊 / 群聊一致；子代理输入栏本来就没麦克风（语音只做主 / 群），共享 composer CSS 一并适配。
+- **实跑**（Node 24.19.0，纯前端 fixture，假麦克风，未碰真实麦克风 / 服务端 / key）：`e2e/voice-input-ui.mjs` 全通过（新增几何断言：同一 composer-bar、DOM 在发送键之前、同一行、紧贴其左、不在附件列；单聊 / 群聊 / 390 / 矮窗；录音时发送键不位移）；`e2e/composer-compact.mjs`（单 / 群 / 子 390 / 1280 / 1440）全通过；web `tsc --noEmit` + `vite build` 通过。截图 `evidence/voice-input-ui/`（desktop / 390 / 矮窗 / 群聊，已逐张 look_at_image 确认）。
+- **未验**：真实麦克风录音音质、真机 iOS 键盘、全量 `e2e/run.mjs`；本轮不 push / 不打 tag。
+
 2026-10-22 release-candidate-validation 最终最小整合（子代理思考档位 + 记忆后端 Select；worktree `release-candidate-validation`，**未 push / 未 tag / 未打包**；beta.24 候选）：
 - 合并 `subagent-thinking-options-fix`（HEAD `de4491e`，基 `f3b27dd`）与 `memory-backend-select-ui-fix`（HEAD `3c3fdd4`，基 `5fa4c1e`），均 `--no-ff` 保祖先、无冲突；候选树里已有的 memory / voice / queue / 技能等改动未被覆盖。
 - 思考档位：候选池档位改**并集**（不再用整池交集裁掉 xhigh / max）、`shared/thinking-levels.ts` 统一规则、服务端 `PiModels.supportedThinking`、档位菜单内部滚动都在（详见下一条）。

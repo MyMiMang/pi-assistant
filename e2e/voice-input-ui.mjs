@@ -55,6 +55,7 @@ const system = () => ({
 const hostInfo = { settings: { enabled: false, agents: "all", apps: [], workspaceFiles: false, tiers: {}, defaultTier: "bounded" }, tiers: {}, status: { enabled: false, tiers: {}, paused: false, daemon: { state: "off", detail: "" }, platform: "darwin", installed: false, version: "" }, manifest: "", manifestHash: "", permissions: null, activity: { active: false, agent: null, summary: null } };
 const mkMsg = (over) => ({ id: "x", agent_id: "a1", role: "assistant", content: "", meta: {}, status: "done", created_at: now, updated_at: now, conversation_id: "c1", ...over });
 const MSGS = [mkMsg({ id: "u1", role: "user", content: "先前的对话", created_at: now - 4000, updated_at: now - 4000 }), mkMsg({ id: "a1m", content: "好的。", created_at: now - 3000, updated_at: now - 3000 })];
+const ROOM = { id: "r1", name: "测试群", purpose: "验证群聊麦克风位置", managerId: "a1", caps: { maxTurns: 12, maxDepth: 2, perAgent: 3, tokenBudget: 0, followup: true }, unread: 0, paused: null, members: [{ agentId: "a1", name: "测试助理", avatar: "测", color: "#3b82f6", left: false, deleted: false, scope: "user", status: "idle" }], last: null, created_at: now, updated_at: now, state: { running: false, current: null, queue: [] } };
 
 const ASR_PROVIDER = {
 	id: "openai", name: "OpenAI", kind: "custom", configured: true, baseUrl: "https://api.openai.com/v1",
@@ -87,6 +88,31 @@ const check = (name, cond, detail = "") => {
 	}
 };
 
+/** 语音按钮几何（用户 UI 修正）：麦克风必须在发送键左侧、同一行、同一 composer-bar，且不在附件工具列。 */
+async function voiceLayout(page) {
+	return page.evaluate(() => {
+		const mic = document.querySelector('[data-testid="voice-mic"]');
+		const send = document.querySelector(".pa-composer-bar .pa-send");
+		if (!mic || !send) return { ok: false, why: !mic ? "缺 voice-mic" : "缺发送键" };
+		const m = mic.getBoundingClientRect();
+		const s = send.getBoundingClientRect();
+		const r = {
+			domBefore: !!(mic.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING),
+			sameComposer: !!mic.closest(".pa-composer-bar") && mic.closest(".pa-composer-bar") === send.closest(".pa-composer-bar"),
+			notInTools: !mic.closest(".pa-composer-tools"),
+			sameRow: Math.abs(m.top + m.height / 2 - (s.top + s.height / 2)) <= 6,
+			leftOf: m.right <= s.left + 1,
+			gap: +(s.left - m.right).toFixed(1),
+			micRect: { x: Math.round(m.x), y: Math.round(m.y) },
+			sendRect: { x: Math.round(s.x), y: Math.round(s.y) },
+		};
+		r.ok = r.domBefore && r.sameComposer && r.notInTools && r.sameRow && r.leftOf && r.gap <= 14;
+		return r;
+	});
+}
+
+const sendX = (page) => page.evaluate(() => Math.round(document.querySelector(".pa-composer-bar .pa-send").getBoundingClientRect().x));
+
 async function installRoutes(context, state) {
 	await context.route("**/api/**", async (route) => {
 		const req = route.request();
@@ -95,7 +121,8 @@ async function installRoutes(context, state) {
 		if (p === "/api/system") return json(system());
 		if (p === "/api/system/public") return json({});
 		if (p === "/api/agents" && req.method() === "GET") return json([AGENT("a1", "测试助理")]);
-		if (p === "/api/rooms") return json([]);
+		if (p === "/api/rooms") return json([ROOM]);
+		if (p.startsWith("/api/rooms/")) return json(p.endsWith("/messages") ? [] : {});
 		if (p === "/api/channels") return json({ items: [], publicUrl: null });
 		if (p === "/api/wechat") return json({ enabled: false, acknowledgedAt: null, agentIds: [] });
 		if (p === "/api/downloads") return json({ items: [] });
@@ -159,7 +186,18 @@ try {
 
 	console.log("\n── 未配置 ASR：明确设置入口，不自动 fallback ──");
 	await page.locator('[data-testid="voice-mic"]').waitFor({ timeout: 10_000 });
-	check("麦克风按钮可见（发送键旁）", await page.locator('[data-testid="voice-mic"]').isVisible());
+	check("麦克风按钮可见", await page.locator('[data-testid="voice-mic"]').isVisible());
+	const lay0 = await voiceLayout(page);
+	check("麦克风紧贴发送键左侧（同一行、同一 composer-bar、不在附件工具列）", lay0.ok, JSON.stringify(lay0));
+	check("权限 / 模型选择器仍在输入栏（未被麦克风挤掉）", (await page.locator('[data-testid="host-tier-pill"]').isVisible()) && (await page.locator('[data-testid="model-picker"]').isVisible()));
+	check("未配置的「去设置」在独立 status 行，不占发送键右侧", await page.evaluate(() => {
+		const st = document.querySelector('[data-testid="voice-status"]');
+		const send = document.querySelector(".pa-composer-bar .pa-send");
+		if (!st || !send) return false;
+		const a = st.getBoundingClientRect();
+		const b = send.getBoundingClientRect();
+		return a.top >= b.bottom - 1 || a.left <= b.left;
+	}));
 	check("未配置时按钮提示「未配置语音识别模型」", ((await page.locator('[data-testid="voice-mic"]').getAttribute("aria-label")) ?? "").includes("未配置语音识别模型"));
 	check("给出明确的「去设置」入口", await page.locator('[data-testid="voice-open-settings"]').isVisible());
 	await page.locator('[data-testid="voice-mic"]').click();
@@ -175,9 +213,11 @@ try {
 	check("配置后按钮变为可用语音输入", ((await page.locator('[data-testid="voice-mic"]').getAttribute("aria-label")) ?? "").includes("语音输入"));
 	await ta.fill("原有草稿 ");
 	await ta.press("End");
+	const sendXBefore = await sendX(page);
 	await page.locator('[data-testid="voice-mic"]').click();
 	await page.locator('[data-testid="voice-stop"]').waitFor({ timeout: 10_000 });
 	check("开始录音出现停止按钮", await page.locator('[data-testid="voice-stop"]').isVisible());
+	check("录音时发送键不位移（提示走独立 status 行，不拖动发送键）", (await sendX(page)) === sendXBefore, `before=${sendXBefore} after=${await sendX(page)}`);
 	await page.waitForTimeout(600);
 	await page.locator('[data-testid="voice-stop"]').click();
 	await page.waitForTimeout(1500);
@@ -217,6 +257,15 @@ try {
 	});
 	await page.locator('[data-testid="quote-cancel"]').click();
 
+	console.log("\n── 群聊：麦克风同样紧贴发送键左侧 ──");
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto(`${base}/?room=r1`);
+	await page.locator('[data-testid="room-input"]').waitFor({ timeout: 20_000 });
+	check("群聊麦克风按钮可见", await page.locator('[data-testid="voice-mic"]').isVisible());
+	const layRoom = await voiceLayout(page);
+	check("群聊麦克风紧贴发送键左侧（与单聊一致）", layRoom.ok, JSON.stringify(layRoom));
+	await page.screenshot({ path: join(OUT, "room-desktop-voice.png") });
+
 	console.log("\n── 390 窄屏 ──");
 	const ctx2 = await browser.newContext({ viewport: { width: 390, height: 700 }, locale: "zh-CN", permissions: ["microphone"], hasTouch: true });
 	await installRoutes(ctx2, state);
@@ -224,9 +273,25 @@ try {
 	await p2.goto(`${base}/?agent=a1`);
 	await p2.locator('[data-mid="a1m"]').waitFor({ timeout: 20_000 });
 	check("390 麦克风按钮可见", await p2.locator('[data-testid="voice-mic"]').isVisible());
+	const lay390 = await voiceLayout(p2);
+	check("390 麦克风仍在发送键左侧且不换行", lay390.ok, JSON.stringify(lay390));
 	const overflow = await p2.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 	check("390 不横向溢出", overflow <= 1, `overflow=${overflow}`);
 	await p2.screenshot({ path: join(OUT, "mobile-390-voice.png") });
+
+	console.log("\n── 矮窗（1440×560）──");
+	const ctx3 = await browser.newContext({ viewport: { width: 1440, height: 560 }, locale: "zh-CN", permissions: ["microphone"] });
+	await installRoutes(ctx3, state);
+	const p3 = await ctx3.newPage();
+	await p3.goto(`${base}/?agent=a1`);
+	await p3.locator('[data-mid="a1m"]').waitFor({ timeout: 20_000 });
+	const layShort = await voiceLayout(p3);
+	check("矮窗麦克风仍在发送键左侧且不换行", layShort.ok, JSON.stringify(layShort));
+	check("矮窗发送键在视口内（未被挤出）", await p3.evaluate(() => {
+		const s = document.querySelector(".pa-composer-bar .pa-send").getBoundingClientRect();
+		return s.bottom <= window.innerHeight + 1 && s.left >= 0;
+	}));
+	await p3.screenshot({ path: join(OUT, "short-window-voice.png") });
 
 	console.log("\n── 云 ASR 设置 + 本地 SenseVoice 许可卡 ──");
 	await page.goto(`${base}/?settings=models`);
