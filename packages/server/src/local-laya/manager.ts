@@ -81,8 +81,8 @@ export interface LayaDeps {
 	pythonVersion(): string;
 	run(cmd: string, args: string[], opts: { env: Record<string, string>; signal?: AbortSignal; timeoutMs?: number; onOutput?: (line: string) => void }): Promise<LayaRunResult>;
 	spawn(exe: string, args: string[], opts: { env: Record<string, string> }): LayaChild;
-	/** 下某个 checkpoint（HF 缓存自带续传） */
-	downloadCheckpoint(cp: LayaCheckpoint, p: (received: number, total: number | null) => void, signal: AbortSignal, env: Record<string, string>): Promise<void>;
+	/** 下某个 checkpoint（HF 缓存自带续传）；pythonPath = 本次安装 staging venv 的解释器 */
+	downloadCheckpoint(cp: LayaCheckpoint, p: (received: number, total: number | null) => void, signal: AbortSignal, env: Record<string, string>, pythonPath: string): Promise<void>;
 	findFreePort(): Promise<number>;
 	health(port: number, token: string, signal?: AbortSignal): Promise<LayaHealth>;
 	/** 原子 activate：staging → 生效 env（旧 env 保留为 envPrev 供回滚） */
@@ -209,7 +209,7 @@ export class LocalLayaManager {
 			this.set("laya");
 			if (cp) {
 				this.set("weights");
-				await this.deps.downloadCheckpoint(cp, (received, total) => this.set("weights", { received, total }), signal, env);
+				await this.deps.downloadCheckpoint(cp, (received, total) => this.set("weights", { received, total }), signal, env, this.envPython(paths.envStaging));
 			}
 			this.set("verify");
 			await this.step(signal, () => this.runOrThrow(this.envPython(paths.envStaging), ["-c", "import laya"], { env, signal }));

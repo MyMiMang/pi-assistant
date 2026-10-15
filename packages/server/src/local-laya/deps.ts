@@ -120,10 +120,10 @@ export function createLayaDeps(): LayaDeps {
 				child.on("error", rej);
 			}),
 		spawn: (exe, args, opts) => spawnServe(exe, args, opts.env),
-			downloadCheckpoint: async (cp, p, signal, env) => {
+			downloadCheckpoint: async (cp, p, signal, env, pythonPath) => {
 			const paths = layaPaths();
 			mkdirSync(paths.hfHome, { recursive: true });
-			const py = join(paths.env, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+			const py = pythonPath;
 			const script = "import sys; from huggingface_hub import snapshot_download; snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], local_files_only=False)";
 			await watchDir([paths.hfHome], { bytes: (r, t) => p(r, t), detail: () => {} }, cp.bytes, () =>
 				new Promise<void>((res, rej) => {
