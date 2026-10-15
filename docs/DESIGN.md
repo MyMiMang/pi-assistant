@@ -3,7 +3,7 @@
 > **当前进度和待验证事项以 [HANDOFF.md](HANDOFF.md) 为准**（当前版本 v0.1.0-beta.10）；组件概览见 [ARCHITECTURE.md](ARCHITECTURE.md)。下面各节里的“实现状态 / 日期”是当时写的记录，后面的章节（§15–§19）是最新的设计。
 
 > 状态：v0.5（2026-10-11）。**远程入口改为按用户自选**：不再内置任何默认域名，用户用自己的域名 + 自己的 Cloudflare Token 在 App 内一键部署（§5.13.2，已实现并实测）；新增密钥扫描（§9.1）；助理电脑与 ext-computer 已开始实现（§14.10）。v0.4：新增：§5.14.1 自定义模型服务（中转站/第三方/本地，已实现），§5.16 第三方集成通用规则，§14 Phase 3 国内优先方案（它自己的电脑、自己的账号、微信/企业微信/飞书/钉钉、Cua）。v0.3：Phase 1 的服务端 + Web UI 已实现并通过端到端测试（实现状态见 §13）。新增：§5.14 模型与凭据（不内置任何 Key，全部 Pi provider 动态支持），§5.15 模块边界与 Pi 升级维护流程。默认入口域名 `app.dengdengyun.shop`。
-> 参考：Pi 仓库 `earendil-works/pi`（本文基于 `@earendil-works/pi-coding-agent@1.1.0` 的源码和文档阅读结果，API 名称均来自实际代码）。
+> 参考：Pi 仓库 `earendil-works/pi`（本文基于 `@earendil-works/pi-coding-agent@1.2.0` 的源码和文档阅读结果，API 名称均来自实际代码）。
 
 ---
 
@@ -149,7 +149,7 @@ sequenceDiagram
 - `pi.registerTool({ name, description, parameters(TypeBox), execute, annotations, exposure })`：注册 `deliver_file`、`memory_*`、`browser_*`、`gmail_create_draft` 等
 - `pi.on("tool_call", …)` → `{ block: true, reason }` 或就地修改 `event.input`：**审批闸门核心**
 - `pi.on("tool_result", …)`：脱敏、截断大输出、收集产出文件
-- `pi.on("before_agent_start", …)` → `{ message }` / `systemPromptOptions`：注入记忆、人设、当前时间时区
+- `pi.on("before_agent_start", …)` → `{ message }` / `systemPromptOptions`：注入记忆、人设、当前时间时区。Pi 1.2.0 起事件是按 `messageType` 区分的 union（`user` 有 `prompt`；扩展用 `triggerTurn` 触发的 `custom` 回合只有 `message`），只处理用户输入时要先判 `messageType === "user"`
 - `pi.on("session_start" | "session_shutdown")`：启动/释放浏览器、沙箱连接（文档要求不要在工厂函数里起进程）
 - `pi.on("agent_before_settle")`、`pi.on("turn_end")`：任务收尾（写日志、生成摘要）
 - `pi.on("input")`：解析附件、斜杠命令
@@ -434,7 +434,7 @@ sequenceDiagram
 **原则**：安装包里**永远没有任何 API Key**。每个用户在 App 里配置自己的模型账号；凭据只加密保存在用户自己的电脑上，**绝不发送给 Rendezvous 或任何第三方**（只发给对应的模型服务商）。
 
 **完全由 Pi 驱动，不写死 provider 列表**：
-- provider 目录：`ModelRuntime.getProviders()`（当前 Pi 1.1.0 有 43 个：OpenAI、Anthropic、Google、DeepSeek、Kimi、Qwen、智谱、MiniMax、OpenRouter、Bedrock、Azure、GitHub Copilot……）。每个 provider 自带 `auth.apiKey` / `auth.oauth`（含 `isSubscription`、`loginLabel`）描述，UI 据此渲染“API Key”“订阅登录”按钮。Pi 以后新增 provider 或登录方式，**我们不改代码就会自动出现**。
+- provider 目录：`ModelRuntime.getProviders()`（当前 Pi 1.2.0 的目录，离线实测 42 个：OpenAI、Anthropic、Google、DeepSeek、Kimi、Qwen、智谱、MiniMax、OpenRouter、Bedrock、Azure、GitHub Copilot……）。每个 provider 自带 `auth.apiKey` / `auth.oauth`（含 `isSubscription`、`loginLabel`）描述，UI 据此渲染“API Key”“订阅登录”按钮。Pi 以后新增 provider 或登录方式，**我们不改代码就会自动出现**。
 - 登录：统一调用 `ModelRuntime.login(providerId, "api_key" | "oauth", interaction)`。Pi 通过 `AuthInteraction` 发出 `prompt`（text / secret / select / manual_code）与 `notify`（info / auth_url / device_code / progress）事件；服务端 `login-flows.ts` 把它们桥接成 WebSocket 事件，Web UI 的 `LoginFlow` 组件通用渲染（输入框、选项、打开授权页、显示设备码）。因此 API Key、ChatGPT/Claude/Copilot/Kimi/xAI 等订阅 OAuth、AWS 多种认证方式都走同一条通道。
 - 测试连接：`completeSimple()` 发一条 16 token 的请求；错误信息原样展示（例如 401 无效 Key）。
 - 模型列表：`getModels(providerId)`；默认模型存 `settings.defaultModel`，每个助理可单独覆盖。
@@ -476,7 +476,7 @@ Pi 目录里没有的服务（各种 OpenAI 兼容“中转站”、公司内网
 
 目标：**Pi 发新版时我们能在一天内跟上**，并通过托盘自动更新推给所有用户。
 
-**1）只把 Pi 当普通 npm 依赖**：`@earendil-works/pi-coding-agent`、`@earendil-works/pi-ai` 写在 `packages/server/package.json`（`^1.1.0`）。不 fork、不打补丁（无 patch-package）、不 vendoring 源码。
+**1）只把 Pi 当普通 npm 依赖**：`@earendil-works/pi-coding-agent`、`@earendil-works/pi-ai` 写在 `packages/server/package.json`（`^1.2.0`）。不 fork、不打补丁（无 patch-package）、不 vendoring 源码。
 
 **2）唯一适配层 `packages/server/src/pi-adapter/`**——服务端其余代码禁止直接 import Pi：
 
@@ -682,7 +682,7 @@ pi-assistant/
 | 层 | 选择 | 理由 |
 |---|---|---|
 | 语言 | TypeScript（strict），Node 22.19+ | 与 Pi 一致，SDK 直接用 |
-| Agent | `@earendil-works/pi-coding-agent`（SDK）、`pi-ai` | 地基；普通 npm 依赖（当前 1.1.0），只经 `pi-adapter` 使用；每周 CI 自动尝试升级（§5.15） |
+| Agent | `@earendil-works/pi-coding-agent`（SDK）、`pi-ai` | 地基；普通 npm 依赖（当前 1.2.0），只经 `pi-adapter` 使用；每周 CI 自动尝试升级（§5.15，统一走 `scripts/pi-update.mjs`，三包 + 版本记录一起升） |
 | HTTP/WS | Hono + `@hono/node-server` + `ws` | 轻、类型好 |
 | DB | `node:sqlite`（WAL） | 免原生模块，便于打包 |
 | 调度 | `croner` | 时区感知 cron |
