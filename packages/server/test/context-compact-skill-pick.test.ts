@@ -15,16 +15,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { parseSkillBlock } from "@earendil-works/pi-coding-agent";
 
 const { config } = await import("../src/config.ts");
 const modelsMod = await import("../src/models.ts");
 const { memoryCredentialStore } = await import("./in-memory-credentials.ts");
-const { compactSession, createPiSession, disposeSession, withSkillInvocations } = await import("../src/pi-adapter/index.ts");
+const { compactSession, createPiSession, disposeSession, skillCommand } = await import("../src/pi-adapter/index.ts");
 const { saveSkill, skillPaths } = await import("../src/skills.ts");
 const sa = await import("../src/skill-assignments.ts");
 const { resolveSelectedSkills, skillFilterFor } = await import("../src/skill-scope.ts");
-const { agentSendBody, draftSignature } = await import("../../../apps/web/src/replies.ts");
 const { clearSkillDraft, getSkillDraft, setSkillDraft, skillNameOf } = await import("../../../apps/web/src/skillDrafts.ts");
 
 await modelsMod.initModels(memoryCredentialStore());
@@ -59,38 +57,22 @@ test("compactSession：把 instructions 原样交给 Pi，空值保持原行为"
 	assert.equal(got, undefined, "不传 = 原行为（undefined）");
 });
 
-test("withSkillInvocations：只展开会话已加载的技能，块可被 Pi 公开 parseSkillBlock 解析", async () => {
+test("skillCommand：用 Pi 原生 `/skill:name`，只接受会话已加载技能，多个 / 未加载抛错", async () => {
 	const skill = saveSkill({ name: "pick-demo", description: "选用测试技能", body: "步骤：先读文件，再改，最后说明验证。" });
-	sa.setAssignedSkillIds("pick-agent", [skill.id]);
+	const other = saveSkill({ name: "pick-demo-2", description: "第二个技能", body: "另一个做法。" });
+	sa.setAssignedSkillIds("pick-agent", [skill.id, other.id]);
 	const session = await mkSession("pick-agent");
 	try {
-		const text = withSkillInvocations(session, [{ id: skill.id, name: skill.name, filePath: skill.path }], "帮我看下");
-		assert.ok(!text.startsWith("/skill:"), "不用 /skill: 前缀，避免 Pi 二次展开");
-		const parsed = parseSkillBlock(text);
-		assert.ok(parsed, "生成的技能块能被 Pi 公开 parseSkillBlock 解析");
-		assert.equal(parsed!.name, skill.name);
-		assert.equal(parsed!.location, skill.path);
-		assert.ok(parsed!.content.includes("步骤：先读文件，再改，最后说明验证。"), "正文来自 Pi 解析出的 SKILL.md");
-		assert.equal(parsed!.userMessage, "帮我看下");
-
-		// 不在会话里的技能（未分配 / 假路径）：抛错 fail closed，不接受客户端路径
-		assert.throws(() => withSkillInvocations(session, [{ id: "user/nope", name: "nope", filePath: "/tmp/nope/SKILL.md" }], "x"), /技能未加载/);
-	} finally {
-		await disposeSession(session);
-	}
-});
-
-test("withSkillInvocations：一次多个技能各生成一段（Pi 的 /skill: 只支持开头一个）", async () => {
-	const a = saveSkill({ name: "pick-multi-a", description: "多选 A", body: "A 的做法。" });
-	const b = saveSkill({ name: "pick-multi-b", description: "多选 B", body: "B 的做法。" });
-	sa.setAssignedSkillIds("pick-multi", [a.id, b.id]);
-	const session = await mkSession("pick-multi");
-	try {
-		const text = withSkillInvocations(session, [{ id: a.id, name: a.name, filePath: a.path }, { id: b.id, name: b.name, filePath: b.path }], "两个一起用");
-		assert.ok(text.includes(`<skill name="${a.name}"`));
-		assert.ok(text.includes(`<skill name="${b.name}"`));
-		assert.ok(text.includes("A 的做法。") && text.includes("B 的做法。"));
-		assert.ok(text.trimEnd().endsWith("两个一起用"));
+		// Pi 原生公开路径：不读正文 / 不自拼块，只给 /skill:name，由 Pi 自己展开
+		assert.equal(skillCommand(session, [{ id: skill.id, name: skill.name, filePath: skill.path }]), `/skill:${skill.name}`);
+		assert.equal(skillCommand(session, []), undefined);
+		// 第一版一次一个：多个直接拒（Pi 原生只展开开头一个）
+		assert.throws(
+			() => skillCommand(session, [{ id: skill.id, name: skill.name, filePath: skill.path }, { id: other.id, name: other.name, filePath: other.path }]),
+			/一次只能选一个技能/,
+		);
+		// 不在会话里的技能（未分配 / 假路径）：fail closed，不接受客户端路径
+		assert.throws(() => skillCommand(session, [{ id: "user/nope", name: "nope", filePath: "/tmp/nope/SKILL.md" }]), /技能未加载/);
 	} finally {
 		await disposeSession(session);
 	}
@@ -111,10 +93,7 @@ test("resolveSelectedSkills：只接受已启用 + 库存存在的 canonical id"
 	assert.equal(resolveSelectedSkills("pick-scope-agent", [skill.id, skill.id])?.length, 1);
 });
 
-test("前端纯逻辑：草稿签名纳入技能、payload 只在有技能时带 skills、draft 按对话分桶", () => {
-	assert.notEqual(draftSignature({ text: "hi", attachmentIds: [], skills: ["user/a"] }), draftSignature({ text: "hi", attachmentIds: [] }));
-	assert.deepEqual(agentSendBody("hi", [], "c1", null, "cid", ["user/a"]).skills, ["user/a"]);
-	assert.ok(!("skills" in agentSendBody("hi", [], "c1", null, "cid")), "没选技能时不带 skills 字段");
+test("前端纯逻辑：技能名解析 + draft 按对话分桶", () => {
 	assert.equal(skillNameOf("builtin/web-research"), "web-research");
 	setSkillDraft("a:1:2", ["user/a"]);
 	setSkillDraft("a:1:3", ["user/b"]);

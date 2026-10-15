@@ -20,7 +20,6 @@ import {
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
-	stripFrontmatter,
 	type AgentSession,
 	type AgentSessionEvent,
 	type BashOperations,
@@ -740,10 +739,12 @@ export const INTERJECTION_PREFIX = "（你工作时用户发来的新消息）";
  * 会话正在运行：用 Pi 的 steer 插话——在当前这批工具调用结束、下一次请求模型之前送达，
  * 模型能马上读到（而不是等整轮做完才看到，followUp 的旧行为）。
  */
-export function promptSession(session: AgentSession, text: string, images?: { type: "image"; data: string; mimeType: string }[]): Promise<void> {
+export function promptSession(session: AgentSession, text: string, images?: { type: "image"; data: string; mimeType: string }[], leading?: string): Promise<void> {
 	const img = images?.length ? { images } : {};
-	if (session.isStreaming) return session.prompt(`${INTERJECTION_PREFIX}\n${text}`, { streamingBehavior: "steer", ...img });
-	return session.prompt(text, img);
+	// leading 放在最前面（如 Pi 原生 `/skill:name`），保证 Pi 的 skill 命令展开能命中；插话前缀随后
+	const cmd = leading ? `${leading} ` : "";
+	if (session.isStreaming) return session.prompt(`${cmd}${INTERJECTION_PREFIX}\n${text}`, { streamingBehavior: "steer", ...img });
+	return session.prompt(`${cmd}${text}`, img);
 }
 /** 停止时清掉还没送达的插话 / 排队消息，免得停下后又被它们重新启动 */
 export function clearQueued(s: AgentSession) {
@@ -760,7 +761,7 @@ export async function compactSession(s: AgentSession, instructions?: string) {
 	return { tokensBefore: (r as { tokensBefore?: number }).tokensBefore, summary: (r as { summary?: string }).summary };
 }
 
-/** 本次要用的技能（canonical id + Pi 解析出的名字 / SKILL.md 路径）。服务端已按分配表校验。 */
+/** 本次要用的技能（canonical id + 库存里解析出的名字 / SKILL.md 路径）。服务端已按分配表校验。 */
 export interface SkillInvocationInput {
 	id: string;
 	name: string;
@@ -768,22 +769,20 @@ export interface SkillInvocationInput {
 }
 
 /**
- * 把本次选中的技能展开成 Pi 公开的技能块，拼在用户正文之前（Pi 的 `/skill:name` 只展开开头一个，
- * 这里用同一块语法支持一次多个）。
+ * 本次选中的技能 → Pi **原生** `/skill:name` 命令，交给 Pi 自己读 SKILL.md 并拼进本轮输入。
  *
  * - 只接受这个会话**已加载**的技能（= 已分配给该助理且通过 `skillFilter`）；找不到就抛错（fail closed）。
- * - 正文只读 Pi 解析出的 `filePath`，不接受客户端路径 / 正文；**不写进 system prompt**，只作为本条用户消息内容。
- * - 生成的块与 Pi 的 `parseSkillBlock` 语法一致。
+ * - 不读技能正文、不自拼技能块、不写 system prompt，也不接受客户端路径 / 正文。
+ * - 第一版一次只支持一个：Pi 原生只展开开头一个 `/skill:` 命令，多个会被当成上一条的参数。
  */
-export function withSkillInvocations(session: AgentSession, skills: SkillInvocationInput[], userText: string): string {
-	const loaded = session.resourceLoader.getSkills().skills as unknown as { name: string; filePath: string; baseDir: string }[];
-	const blocks = skills.map((want) => {
-		const s = loaded.find((x) => x.filePath === want.filePath) ?? loaded.find((x) => x.name === want.name);
-		if (!s) throw new Error(`技能未加载：${want.name}`);
-		const body = stripFrontmatter(readFileSync(s.filePath, "utf-8")).trim();
-		return `<skill name="${s.name}" location="${s.filePath}">\nReferences are relative to ${s.baseDir}.\n\n${body}\n</skill>`;
-	});
-	return blocks.length ? `${blocks.join("\n\n")}\n\n${userText}` : userText;
+export function skillCommand(session: AgentSession, skills: SkillInvocationInput[]): string | undefined {
+	if (!skills.length) return undefined;
+	if (skills.length > 1) throw new Error("一次只能选一个技能");
+	const want = skills[0];
+	const loaded = session.resourceLoader.getSkills().skills as unknown as { name: string; filePath: string }[];
+	const s = loaded.find((x) => x.filePath === want.filePath) ?? loaded.find((x) => x.name === want.name);
+	if (!s) throw new Error(`技能未加载：${want.name}`);
+	return `/skill:${s.name}`;
 }
 /** 当前上下文用量（用于界面提示“对话较长”） */
 export function contextUsage(s: AgentSession): { tokens: number | null; contextWindow: number | null } {

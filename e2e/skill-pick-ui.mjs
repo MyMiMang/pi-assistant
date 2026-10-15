@@ -41,9 +41,10 @@ try {
 	const a = await j("/api/agents", "POST", { name: "技能选用验证" });
 	const b = await j("/api/agents", "POST", { name: "无技能助理" });
 	const pick = await j("/api/skills", "POST", { name: "e2e-pick", description: "e2e 选用测试技能", body: "步骤：按技能说明做。" });
+	const pick2 = await j("/api/skills", "POST", { name: "e2e-pick-2", description: "e2e 第二个已启用技能", body: "第二个做法。" });
 	const other = await j("/api/skills", "POST", { name: "e2e-unassigned", description: "未分配技能，不该出现在菜单", body: "不该出现。" });
 	assert.equal(pick.id, "user/e2e-pick");
-	await j(`/api/agents/${a.id}/skills`, "PUT", { ids: [pick.id] });
+	await j(`/api/agents/${a.id}/skills`, "PUT", { ids: [pick.id, pick2.id] });
 
 	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: "zh-CN" });
@@ -74,34 +75,41 @@ try {
 	console.log("\n[1] 技能入口：只列已启用技能，未分配不出现");
 	await page.getByTestId("skill-picker").click();
 	await page.getByTestId("skill-menu").waitFor();
-	check("菜单列出已启用技能", (await page.getByTestId(`skill-${pick.id}`).count()) === 1);
+	check("菜单列出已启用技能", (await page.getByTestId(`skill-${pick.id}`).count()) === 1 && (await page.getByTestId(`skill-${pick2.id}`).count()) === 1);
 	check("未分配技能名不出现", (await page.locator('[data-testid=skill-list]').getByText("e2e-unassigned").count()) === 0);
 	check("未分配技能描述不出现", (await page.locator('[data-testid=skill-list]').getByText("不该出现").count()) === 0);
 	await page.screenshot({ path: join(OUT, "01-skill-menu.png") });
 
-	// ---------------- 2) 点选挂 chip、可取消
-	console.log("\n[2] 点选只挂 chip、可取消");
+	// ---------------- 2) 点选挂 chip、可取消（第一版一次一个：选另一个会替换）
+	console.log("\n[2] 点选只挂 chip、可取消 / 单选替换");
 	await page.getByTestId(`skill-${pick.id}`).click();
 	check("点选后出现 chip", (await page.getByTestId("skill-chips").count()) === 1);
 	check("chip 显示技能名", ((await page.getByTestId("skill-chips").textContent()) ?? "").includes("e2e-pick"));
+	await page.getByTestId(`skill-${pick2.id}`).click();
+	const chipTxt = (await page.getByTestId("skill-chips").textContent()) ?? "";
+	check("选另一个会替换（单选）", chipTxt.includes("e2e-pick-2") && !chipTxt.includes("e2e-pick "), chipTxt);
 	await page.keyboard.press("Escape");
 	await page.waitForTimeout(150);
-	await page.getByTestId(`skill-chip-remove-${pick.id}`).click();
+	await page.getByTestId(`skill-chip-remove-${pick2.id}`).click();
 	check("取消后 chip 消失", (await page.getByTestId("skill-chips").count()) === 0);
 	await page.screenshot({ path: join(OUT, "02-skill-chip.png") });
 
 	// ---------------- 3) 发送 payload 带 canonical id，成功清 chip
-	console.log("\n[3] 发送 payload 只带 canonical id，成功清 chip");
+	console.log("\n[3] 发送 payload 只带 canonical id / 没选不带 skills，成功清 chip");
+	const box = composer.locator("textarea").first();
+	await box.fill("不带技能");
+	await page.keyboard.press("Shift+Enter");
+	await waitFor(() => sends.length === 1);
+	check("没选技能时不带 skills", !("skills" in sends[0]), JSON.stringify(sends[0]));
 	await page.getByTestId("skill-picker").click();
 	await page.getByTestId(`skill-${pick.id}`).click();
 	await page.keyboard.press("Escape");
 	await page.waitForTimeout(150);
-	const box = composer.locator("textarea").first();
 	await box.fill("用这个技能");
 	await page.keyboard.press("Shift+Enter");
-	await waitFor(() => sends.length === 1);
-	check("payload.skills = [canonical id]", JSON.stringify(sends[0].skills) === JSON.stringify([pick.id]), JSON.stringify(sends[0]));
-	check("payload 不含路径 / 正文", !JSON.stringify(sends[0]).includes("SKILL.md") && !JSON.stringify(sends[0]).includes("按技能说明做"));
+	await waitFor(() => sends.length === 2);
+	check("payload.skills = [canonical id]", JSON.stringify(sends[1].skills) === JSON.stringify([pick.id]), JSON.stringify(sends[1]));
+	check("payload 不含路径 / 正文", !JSON.stringify(sends[1]).includes("SKILL.md") && !JSON.stringify(sends[1]).includes("按技能说明做"));
 	check("发送成功清 chip", (await page.getByTestId("skill-chips").count()) === 0);
 
 	// ---------------- 4) 切对话 chip 不串

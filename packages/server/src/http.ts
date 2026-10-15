@@ -493,7 +493,9 @@ app.post("/api/agents/:id/messages", async (c) => {
 	// 本次选用技能：只接受 canonical id，服务端按该助理分配表重新校验（fail closed，不自动启用、不接受路径 / 正文）
 	let selectedSkills: NonNullable<ReturnType<typeof resolveSelectedSkills>> = [];
 	if (b.skills !== undefined) {
-		if (!Array.isArray(b.skills) || b.skills.length > 8 || !b.skills.every((x) => typeof x === "string" && x.length > 0 && x.length <= 200)) return c.json({ error: "invalid_skills" }, 400);
+		if (!Array.isArray(b.skills) || !b.skills.every((x) => typeof x === "string" && x.length > 0 && x.length <= 200)) return c.json({ error: "invalid_skills" }, 400);
+		// 第一版一次只选一个：Pi 原生 `/skill:` 只展开开头一个命令
+		if (b.skills.length > 1) return c.json({ error: "本次只能选一个技能", code: "too_many_skills" }, 400);
 		const resolved = resolveSelectedSkills(id, b.skills as string[]);
 		if (!resolved) return c.json({ error: "技能未启用或不存在", code: "skill_not_enabled" }, 400);
 		selectedSkills = resolved;

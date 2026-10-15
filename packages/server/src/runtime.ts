@@ -65,7 +65,7 @@ import {
 	localBashOperations,
 	makeBashTool,
 	promptSession,
-	withSkillInvocations,
+	skillCommand,
 	sessionFileOf,
 	branchMessagesOf,
 	sessionStats,
@@ -709,23 +709,23 @@ class AgentRuntime {
 		const steer = isSessionBusy(s);
 		// 引用作为带 role wrapper 的上下文拼在用户新消息之前（不改 Pi 消息格式）
 		const fullText = composeQuotedInput(text, opts.quote);
-		// 本次点选的技能：展开成 Pi 公开技能块拼在正文之前；只读会话已加载的技能，失败不发送
-		let promptText = fullText;
+		// 本次点选的技能 → Pi 原生 `/skill:name`（Pi 自己读全文并拼进本轮输入）；只接受会话已加载的技能，失败不发送
+		let skillCmd: string | undefined;
 		if (opts.skills?.length) {
 			try {
-				promptText = withSkillInvocations(s, opts.skills, fullText);
+				skillCmd = skillCommand(s, opts.skills);
 			} catch (e) {
 				insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `本次选用的技能不可用：${e instanceof Error ? e.message : String(e)}`, status: "error" });
 				return "none";
 			}
 		}
 		setAgentStatus(this.id, "running");
-		const input = await this.withAttachments(s, promptText, files).catch(() => ({ text: promptText, images: undefined }));
+		const input = await this.withAttachments(s, fullText, files).catch(() => ({ text: fullText, images: undefined }));
 		if (steer && opts.messageId) {
 			this.steering.push(opts.messageId);
 			updateMessage(opts.messageId, { meta: { delivery: "queued" } });
 		}
-		promptSession(s, input.text, input.images).catch((e: unknown) => {
+		promptSession(s, input.text, input.images, skillCmd).catch((e: unknown) => {
 			if (opts.messageId) this.steering = this.steering.filter((x) => x !== opts.messageId);
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `出错了：${e instanceof Error ? e.message : String(e)}`, status: "error" });
 			if (!isSessionBusy(s)) settleAgent(this.id);

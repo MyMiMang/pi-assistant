@@ -185,11 +185,12 @@ test("发送消息：skills 只接受已启用 canonical id，fail closed，通�
 		assert.equal(r.status, 400, `应拒绝 ${JSON.stringify(badSkills)}`);
 		assert.equal(r.body.code, "skill_not_enabled");
 	}
-	// 非数组 / 超长数组 → invalid_skills
+	// 非数组 / 非字符串元素 → invalid_skills；多个 → too_many_skills（第一版一次一个，Pi 原生只展开开头一个）
 	assert.equal((await req(`/api/agents/${a.id}/messages`, { method: "POST", body: { text: "x", skills: "nope" } })).body.error, "invalid_skills");
-	assert.equal((await req(`/api/agents/${a.id}/messages`, { method: "POST", body: { text: "x", skills: Array.from({ length: 9 }, (_, i) => `user/s${i}`) } })).body.error, "invalid_skills");
-	// 非字符串元素
 	assert.equal((await req(`/api/agents/${a.id}/messages`, { method: "POST", body: { text: "x", skills: [1] } })).body.error, "invalid_skills");
+	const tooMany = await req(`/api/agents/${a.id}/messages`, { method: "POST", body: { text: "x", skills: [s.id, s.id] } });
+	assert.equal(tooMany.status, 400);
+	assert.equal(tooMany.body.code, "too_many_skills");
 });
 
 test("停用后重发：fail closed，不自动启用", async () => {
