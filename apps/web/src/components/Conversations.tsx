@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { api } from "../api";
 import { useStore } from "../store";
 import { Button, cx, fmtTime, Input, Modal, useConfirm } from "./ui";
+import { useCompactDialog } from "./CompactDialog";
 
 /** 聊天头部的“对话”菜单：切换 / 新对话 / 重命名 / 删除 / 整理上下文 */
 export function ConversationMenu({ agentId }: { agentId: string }) {
@@ -19,6 +20,9 @@ export function ConversationMenu({ agentId }: { agentId: string }) {
 	const delRef = useRef(false);
 	const btn = useRef<HTMLButtonElement>(null);
 	const cur = conv?.items.find((c) => c.id === conv.current);
+	// 助理正在工作时不整理（会话忙，服务端也会拒绝），避免“边跑边整理”
+	const running = useStore((s) => s.agents.find((a) => a.id === agentId)?.status === "running");
+	const [compactNode, openCompact] = useCompactDialog(conv?.current ?? null);
 	useEffect(() => {
 		if (!open) return;
 		const r = btn.current!.getBoundingClientRect();
@@ -33,19 +37,6 @@ export function ConversationMenu({ agentId }: { agentId: string }) {
 		return () => removeEventListener("keydown", close);
 	}, [open, renaming, confirmOpen]);
 	const st = useStore.getState();
-	const compact = async () => {
-		if (!conv) return;
-		setBusy("compact");
-		setErr("");
-		try {
-			await api(`/api/conversations/${conv.current}/compact`, { method: "POST" });
-			setOpen(false);
-		} catch (e) {
-			setErr(`整理失败：${e instanceof Error ? e.message : String(e)}`);
-		} finally {
-			setBusy("");
-		}
-	};
 	const remove = async (c: { id: string; title: string | null }) => {
 		if (delRef.current) return;
 		setConfirmOpen(true);
@@ -85,6 +76,7 @@ export function ConversationMenu({ agentId }: { agentId: string }) {
 	return (
 		<>
 			{confirmDlg}
+			{compactNode}
 			<button ref={btn} className="pa-chip max-w-[14rem]" onClick={() => setOpen((v) => !v)} aria-label="对话" data-testid="conv-menu">
 				<Layers className="pa-ic" />
 				<span className="truncate">{cur?.title || "新对话"}</span>
@@ -98,8 +90,14 @@ export function ConversationMenu({ agentId }: { agentId: string }) {
 								<button className="pa-btn primary flex-1 justify-center" onClick={async () => (setOpen(false), await st.newConversation(agentId))}>
 									<MessageSquarePlus size={15} /> 新对话
 								</button>
-								<button className="pa-btn flex-1 justify-center" disabled={busy === "compact" || !cur?.message_count} onClick={compact} title="把较早的消息压缩成摘要，节省上下文（对话很长时也会自动进行）">
-									<Layers size={15} /> {busy === "compact" ? "整理中…" : "整理上下文"}
+								<button
+									className="pa-btn flex-1 justify-center"
+									disabled={running || !cur?.message_count}
+									onClick={() => (setOpen(false), openCompact())}
+									title={running ? "助理正在工作，等这一轮结束再整理" : "把较早的消息压缩成摘要，节省上下文（对话很长时也会自动进行）"}
+									data-testid="conv-compact"
+								>
+									<Layers size={15} /> 整理上下文
 								</button>
 							</div>
 							{err && <div className="px-2 pb-1 text-xs text-red-600" data-testid="conv-menu-error">{err}</div>}

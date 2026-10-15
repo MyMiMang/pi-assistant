@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import { Button, cx } from "./ui";
+import { useCompactDialog } from "./CompactDialog";
 
 interface Ctx {
 	tokens: number | null;
@@ -22,8 +23,8 @@ export function ContextRing({ agentId, running }: { agentId: string; running: bo
 	const cid = useStore((s) => s.convs[agentId]?.current ?? null);
 	const [c, setC] = useState<Ctx | null>(null);
 	const [open, setOpen] = useState(false);
-	const [busy, setBusy] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
+	const [compactNode, openCompact] = useCompactDialog(cid);
 	const load = () => (cid ? api<Ctx>(`/api/conversations/${cid}/context`).then(setC).catch(() => setC(null)) : setC(null));
 	useEffect(() => {
 		void load();
@@ -40,13 +41,6 @@ export function ContextRing({ agentId, running }: { agentId: string; running: bo
 	const len = 2 * Math.PI * r;
 	const tone = pct >= 85 ? "#ef4444" : pct >= 60 ? "#f59e0b" : "var(--acc)";
 	const brief = c?.tokens != null ? `上下文 ${fmtTok(c.tokens)} / ${fmtTok(c.contextWindow)}（${c.percent ?? 0}%）` : "上下文：发送消息后显示";
-	const compact = async () => {
-		if (!cid) return;
-		setBusy(true);
-		await api(`/api/conversations/${cid}/compact`, { method: "POST" }).catch(() => {});
-		setBusy(false);
-		void load();
-	};
 	return (
 		<div className="relative" ref={ref}>
 			<button className="pa-ctx-ring" onClick={() => setOpen(!open)} title={brief} aria-label="上下文用量" data-testid="context-ring" data-percent={c?.percent ?? ""}>
@@ -99,12 +93,13 @@ export function ContextRing({ agentId, running }: { agentId: string; running: bo
 					)}
 					{!c?.session && <div className="text-xs text-mut">发送消息后显示用量。</div>}
 					<div className={cx("flex justify-end", !cid && "hidden")}>
-						<Button size="sm" variant="outline" disabled={busy || running || !c?.tokens} onClick={compact} title="把较早的对话压缩成摘要，腾出上下文">
-							{busy ? "整理中…" : "整理上下文"}
+						<Button size="sm" variant="outline" disabled={running || !c?.tokens} onClick={() => openCompact(() => void load())} title={running ? "助理正在工作，等这一轮结束再整理" : "把较早的对话压缩成摘要，腾出上下文"} data-testid="context-compact">
+							整理上下文
 						</Button>
 					</div>
 				</div>
 			)}
+			{compactNode}
 		</div>
 	);
 }

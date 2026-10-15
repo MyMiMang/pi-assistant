@@ -23,3 +23,29 @@ export function enabledSkillsFor(agentId: string) {
 	const enabled = new Set(assignedSkillIds(agentId));
 	return listSkills().filter((s) => enabled.has(s.id));
 }
+
+/** 本次选中要用的技能（composer 点选，canonical id）。 */
+export interface SelectedSkill {
+	id: string;
+	name: string;
+	description: string;
+	filePath: string;
+}
+
+/**
+ * 把 composer 传来的 canonical id 解析成可交给 pi-adapter 的技能。
+ * 只接受该助理**已启用**且库存里存在的技能；任一 id 不可用就返回 null（fail closed，
+ * 不自动启用、不接受客户端路径 / 正文）。
+ */
+export function resolveSelectedSkills(agentId: string, ids: string[]): SelectedSkill[] | null {
+	const enabled = new Set(assignedSkillIds(agentId));
+	const byId = new Map(listSkills().map((s) => [s.id, s]));
+	const out: SelectedSkill[] = [];
+	for (const id of [...new Set(ids)]) {
+		if (!enabled.has(id)) return null;
+		const s = byId.get(id);
+		if (!s) return null;
+		out.push({ id: s.id, name: s.name, description: s.description, filePath: s.path });
+	}
+	return out;
+}

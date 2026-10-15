@@ -118,8 +118,9 @@ export function quotedBlock(m: Pick<Message, "reply">): QuotedBlock | null {
 
 // ------------------------------------------------------------------ 发送 payload（typed adapter 复用）
 // 客户端只传 replyToId（+ 幂等 clientId）；作者 / 摘录 / 接收人由服务端可信解析。
-export function agentSendBody(text: string, attachmentIds: string[], conversationId?: string | null, replyToId?: string | null, clientId?: string | null) {
-	return { text, attachments: attachmentIds, conversationId, ...(replyToId ? { replyToId } : {}), ...(clientId ? { clientId } : {}) };
+// skills 只传 canonical id；服务端按分配表重新校验（不接受路径 / 正文）。
+export function agentSendBody(text: string, attachmentIds: string[], conversationId?: string | null, replyToId?: string | null, clientId?: string | null, skillIds?: string[]) {
+	return { text, attachments: attachmentIds, conversationId, ...(replyToId ? { replyToId } : {}), ...(clientId ? { clientId } : {}), ...(skillIds?.length ? { skills: skillIds } : {}) };
 }
 export function roomSendBody(text: string, mentions: string[], attachmentIds: string[], replyToId?: string | null, clientId?: string | null) {
 	return { text, mentions, attachments: attachmentIds, ...(replyToId ? { replyToId } : {}), ...(clientId ? { clientId } : {}) };
@@ -145,9 +146,9 @@ export function newClientId(): string {
 	}
 }
 
-/** 一份草稿的签名：文字 + 附件 + 引用。变了就该换新的 clientId。 */
-export function draftSignature(o: { text: string; attachmentIds: string[]; replyToId?: string | null }): string {
-	return JSON.stringify([o.text, o.attachmentIds, o.replyToId ?? null]);
+/** 一份草稿的签名：文字 + 附件 + 引用 + 本次技能。变了就该换新的 clientId。 */
+export function draftSignature(o: { text: string; attachmentIds: string[]; replyToId?: string | null; skills?: string[] }): string {
+	return JSON.stringify([o.text, o.attachmentIds, o.replyToId ?? null, o.skills ?? []]);
 }
 
 // ------------------------------------------------------------------ 目标标签（展示用；最终由后端裁定）

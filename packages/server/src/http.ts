@@ -65,6 +65,7 @@ import { llmProxy } from "./llm-proxy.ts";
 import { deleteSkill, getSkill, listSkills } from "./skills.ts";
 import { agentsUsingSkill, assignedSkillIds, enableSkillForAgents, setAssignedSkillIds, unassignSkillEverywhere } from "./skill-assignments.ts";
 import { ImportConflict, importSkillFromPath, importSkillFromZip } from "./skill-import.ts";
+import { enabledSkillsFor, resolveSelectedSkills } from "./skill-scope.ts";
 import { agentsOf, configOf, deleteMcp, getMcp, listMcp, type McpServerRow, redact, saveMcp, setMcpEnabled, testMcp } from "./mcp.ts";
 import { addPackage, install as installPackage, listPackages, type PiPackageRow, removePackage, setPackageEnabled } from "./pi-packages.ts";
 import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
@@ -485,12 +486,22 @@ app.get("/api/agents/:id/messages", (c) => {
 app.post("/api/agents/:id/messages", async (c) => {
 	const id = c.req.param("id");
 	if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
-	const b = await c.req.json<{ text: string; attachments?: string[]; conversationId?: string; replyToId?: string; clientId?: string }>();
+	const b = await c.req.json<{ text: string; attachments?: string[]; conversationId?: string; replyToId?: string; clientId?: string; skills?: unknown }>();
 	const conv = b.conversationId && getConversation(b.conversationId)?.agent_id === id ? b.conversationId : currentConversation(id);
-	// 幂等：同 clientId 重复投递直接返回已存在的那条，不再唤醒
+	// 幂等：同 clientId 重复投递直接返回已存在的那条，不再唤醒（也不再校验技能，重试幂等优先）
 	if (b.clientId) {
 		const dup = getMessageByClientId({ conversationId: conv, clientId: b.clientId });
 		if (dup) return c.json(dup);
+	}
+	// 本次选用技能：只接受 canonical id，服务端按该助理分配表重新校验（fail closed，不自动启用、不接受路径 / 正文）
+	let selectedSkills: NonNullable<ReturnType<typeof resolveSelectedSkills>> = [];
+	if (b.skills !== undefined) {
+		if (!Array.isArray(b.skills) || !b.skills.every((x) => typeof x === "string" && x.length > 0 && x.length <= 200)) return c.json({ error: "invalid_skills" }, 400);
+		// 第一版一次只选一个：Pi 原生 `/skill:` 只展开开头一个命令
+		if (b.skills.length > 1) return c.json({ error: "本次只能选一个技能", code: "too_many_skills" }, 400);
+		const resolved = resolveSelectedSkills(id, b.skills as string[]);
+		if (!resolved) return c.json({ error: "技能未启用或不存在", code: "skill_not_enabled" }, 400);
+		selectedSkills = resolved;
 	}
 	// 引用：服务端解析，失败 fail closed（不落库、不唤醒）
 	let snapshot = null;
@@ -510,7 +521,7 @@ app.post("/api/agents/:id/messages", async (c) => {
 	// 正在工作时：停止词立即停；其他消息插进正在进行的任务（delivery: queued → delivered）
 	const r = runtime(id, conv);
 	const busy = r.busy;
-	void r.send(text, files.map((f) => attachmentInputFor(id, f)), { messageId: msg.id, quote: snapshot ? formatQuotedContext(snapshot) : undefined });
+	void r.send(text, files.map((f) => attachmentInputFor(id, f)), { messageId: msg.id, quote: snapshot ? formatQuotedContext(snapshot) : undefined, skills: selectedSkills.length ? selectedSkills : undefined });
 	return c.json(busy ? { ...msg, meta: { ...msg.meta, delivery: isStopCommand(text) && !files.length ? "stop" : "queued" } } : msg);
 });
 app.post("/api/agents/:id/abort", async (c) => {
@@ -565,7 +576,9 @@ app.post("/api/rooms/:rid/upload", async (c) => {
 	return c.json(fileInfo(saveRoomUpload(rid, f.name, Buffer.from(await f.arrayBuffer()))));
 });
 app.post("/api/rooms/:rid/messages", async (c) => {
-	const b = await c.req.json<{ text: string; mentions?: string[]; attachments?: string[]; replyToId?: string; clientId?: string }>();
+	const b = await c.req.json<{ text: string; mentions?: string[]; attachments?: string[]; replyToId?: string; clientId?: string; skills?: unknown }>();
+	// 本次选用技能第一版只支持单聊：群聊多接收人需按目标逐个过滤，这里明确拒绝而不是静默丢掉
+	if (b.skills !== undefined) return c.json({ error: "群聊暂不支持选用技能", code: "skills_not_supported" }, 400);
 	try {
 		return c.json(postUserMessage(c.req.param("rid"), String(b.text ?? ""), {
 			mentions: Array.isArray(b.mentions) ? b.mentions.map(String) : [],
@@ -708,11 +721,17 @@ app.get("/api/conversations/:cid/context", async (c) => {
 	}
 	return c.json({ tokens: null, contextWindow: null, percent: null, model: null, session: null });
 });
-/** 手动整理上下文（Pi compaction） */
-app.post("/api/conversations/:cid/compact", async (c) => {	const conv = getConversation(c.req.param("cid"));
+/** 手动整理上下文（Pi compaction）。可选 body { instructions }：只影响摘要请求（希望保留什么），
+ *  不进主会话 system prompt、不改变权限 / 安全策略；缺省 / 空串 = 原行为。 */
+app.post("/api/conversations/:cid/compact", async (c) => {
+	const conv = getConversation(c.req.param("cid"));
 	if (!conv) return c.json({ error: "not_found" }, 404);
+	const b = await c.req.json<{ instructions?: unknown }>().catch(() => ({}) as { instructions?: unknown });
+	if (b.instructions !== undefined && b.instructions !== null && typeof b.instructions !== "string") return c.json({ error: "invalid_instructions" }, 400);
+	const raw = typeof b.instructions === "string" ? b.instructions : "";
+	if (raw.length > 2000) return c.json({ error: "instructions_too_long" }, 400);
 	try {
-		return c.json({ ok: true, ...(await runtime(conv.agent_id, conv.id).compact()) });
+		return c.json({ ok: true, ...(await runtime(conv.agent_id, conv.id).compact(raw)) });
 	} catch (e) {
 		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 	}
@@ -882,8 +901,11 @@ app.get("/api/skills/:name", (c) => {
 	const s = getSkill(c.req.param("name"));
 	return s ? c.json({ ...skillJson(s), body: s.body }) : c.json({ error: "not_found" }, 404);
 });
-// 某助理启用的技能（canonical id 列表）；缺失 / [] 都是不启用任何技能。
-app.get("/api/agents/:id/skills", (c) => c.json({ enabled: assignedSkillIds(c.req.param("id")) }));
+// 某助理启用的技能：`enabled` 是 canonical id 列表；`enabledSkills` 只给已启用技能的元数据（composer 技能入口用，不下发未分配技能）。
+app.get("/api/agents/:id/skills", (c) => {
+	const id = c.req.param("id");
+	return c.json({ enabled: assignedSkillIds(id), enabledSkills: enabledSkillsFor(id).map((s) => ({ id: s.id, name: s.name, description: s.description, source: s.source })) });
+});
 app.put("/api/agents/:id/skills", async (c) => {
 	const b = await c.req.json<{ ids?: unknown }>();
 	if (!Array.isArray(b.ids) || !b.ids.every((x) => typeof x === "string")) return c.json({ error: "ids 必须是字符串数组" }, 400);
