@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { getTheme } from "./themes/registry";
 import { api } from "./api";
 import { loadLayout, type LayoutPrefs, saveLayout } from "./layout";
+import { loadSelection, mergeMessages, resolveInitialAgent, saveSelection, selectionKey, storedConversation, type Selection } from "./selection";
 import type { Agent, Conversation, Device, Message, Room, SystemInfo, Task } from "./types";
 
 type Theme = "light" | "dark" | "system";
@@ -32,6 +33,10 @@ interface State {
 	messages: Record<string, Message[]>;
 	/** 每个助理的对话列表与当前对话 */
 	convs: Record<string, { current: string; items: Conversation[] }>;
+	/** 每个助理的消息加载状态：loading / error / 已加载 / 对应对话 / 还有更早的 */
+	msgState: Record<string, MsgState>;
+	/** 账号隔离的选择存储 key（loadSystem 后确定；空 = 不持久化） */
+	selKey: string;
 	memoryVersion: number;
 	/** Hindsight 状态 / 同步队列变化 */
 	hindsightVersion: number;
@@ -68,9 +73,50 @@ interface State {
 	selectAgent: (id: string) => Promise<void>;
 	loadTasks: (id: string) => Promise<void>;
 	loadConversations: (id: string) => Promise<{ current: string; items: Conversation[] }>;
+	/** 拉取某个对话的消息；req 用于并发保护（晚返回的旧请求不覆盖新目标） */
+	loadMessages: (agentId: string, convId: string, req?: Request) => Promise<void>;
+	/** 加载失败后重试当前目标 */
+	retryMessages: (agentId: string) => Promise<void>;
+	/** 向上翻页加载更早的消息（不截断服务端模型会话） */
+	loadMoreMessages: (agentId: string) => Promise<void>;
 	switchConversation: (agentId: string, convId: string) => Promise<void>;
 	newConversation: (agentId: string) => Promise<void>;
 	handle: (e: any) => void;
+}
+
+/** 消息加载状态；conv = 当前这批消息属于哪个对话（用于判断能不能和迟到的 history 合并） */
+export interface MsgState {
+	loading: boolean;
+	error: string | null;
+	loaded: boolean;
+	conv: string | null;
+	hasMore: boolean;
+}
+const MSG_BASE: MsgState = { loading: false, error: null, loaded: false, conv: null, hasMore: false };
+/** 每页消息数（和服务端上限 500 之内一致） */
+const PAGE = 300;
+
+/** 每个助理的最新请求代号：晚返回的旧请求不能覆盖新目标 */
+const reqGen: Record<string, number> = {};
+const aborters: Record<string, AbortController | undefined> = {};
+interface Request {
+	gen: number;
+	signal: AbortSignal;
+}
+/** 开一次新请求：中止同一助理上一个还没回来的请求，并拿到新的代号 */
+function newRequest(agentId: string): Request {
+	aborters[agentId]?.abort();
+	const c = new AbortController();
+	aborters[agentId] = c;
+	return { gen: (reqGen[agentId] = (reqGen[agentId] ?? 0) + 1), signal: c.signal };
+}
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** 只写公开 id；不存消息、不存 token / 凭据 */
+function persistSelection(key: string, patch: { agentId?: string | null; conv?: { agentId: string; convId: string } }) {
+	if (!key) return;
+	const cur = loadSelection(key);
+	const next: Selection = { agentId: patch.agentId !== undefined ? patch.agentId : cur.agentId, convs: patch.conv ? { ...cur.convs, [patch.conv.agentId]: patch.conv.convId } : cur.convs };
+	saveSelection(key, next);
 }
 
 const isVisible = () => document.visibilityState === "visible";
@@ -91,6 +137,8 @@ export const useStore = create<State>((set, get) => ({
 	paneAgent: null,
 	messages: {},
 	convs: {},
+	msgState: {},
+	selKey: "",
 	memoryVersion: 0,
 	hindsightVersion: 0,
 	downloads: {},
@@ -132,12 +180,19 @@ export const useStore = create<State>((set, get) => ({
 		saveLayout(layout);
 	},
 	async loadSystem() {
-		set({ system: await api<SystemInfo>("/api/system") });
+		const system = await api<SystemInfo>("/api/system");
+		// 选择按账号隔离：服务器 id + 设备 id 决定存储 key，换账号读不到对方的 id
+		set({ system, selKey: selectionKey(system.serverId, system.deviceId) });
 	},
 	async loadAgents() {
 		const agents = await api<Agent[]>("/api/agents");
-		const cur = get().current;
-		set({ agents, current: cur && agents.some((a) => a.id === cur) ? cur : (new URLSearchParams(location.search).get("agent") ?? agents.find((a) => a.scope !== "room")?.id ?? agents[0]?.id ?? null) });
+		const st = get();
+		const stored = loadSelection(st.selKey).agentId;
+		const requested = new URLSearchParams(location.search).get("agent");
+		const r = resolveInitialAgent({ agents, current: st.current, requested, stored });
+		set({ agents, current: r.agentId });
+		// 首次打开 / 上次的助理已删除 → 只回退一次并记下；有效选择不覆盖
+		if (r.persist) persistSelection(st.selKey, { agentId: r.agentId });
 	},
 	async loadRooms() {
 		const rooms = await api<Room[]>("/api/rooms");
@@ -150,10 +205,25 @@ export const useStore = create<State>((set, get) => ({
 		void api(`/api/rooms/${id}/read`, { method: "POST" }).catch(() => {});
 	},
 	async selectAgent(id) {
-		set({ current: id, drawer: false, room: null, ...(get().current !== id || get().room ? { subagent: null } : {}) });
-		const c = await get().loadConversations(id);
-		const msgs = await api<Message[]>(`/api/agents/${id}/messages?limit=300&conversation=${c.current}`);
-		set((s) => ({ messages: { ...s.messages, [id]: msgs } }));
+		set((s) => ({ current: id, drawer: false, room: null, ...(s.current !== id || s.room ? { subagent: null } : {}) }));
+		persistSelection(get().selKey, { agentId: id });
+		const req = newRequest(id);
+		set((s) => ({ msgState: { ...s.msgState, [id]: { ...MSG_BASE, ...(s.msgState[id] ?? {}), loading: true, error: null, loaded: false } } }));
+		try {
+			const c = await get().loadConversations(id);
+			if (reqGen[id] !== req.gen) return; // 期间又切走了：丢弃这次结果
+			// 服务端 current 是权威；只有它不在列表里才退回本地记录（仍须属于这个助理）
+			const stored = storedConversation(loadSelection(get().selKey), id);
+			const target = c.items.some((x) => x.id === c.current) ? c.current : stored && c.items.some((x) => x.id === stored) ? stored : c.current;
+			if (target !== c.current) {
+				set((s) => ({ convs: { ...s.convs, [id]: { ...c, current: target } } }));
+				void api(`/api/agents/${id}/conversations/${target}/select`, { method: "POST" }).catch(() => {});
+			}
+			await get().loadMessages(id, target, req);
+		} catch (e) {
+			if (reqGen[id] !== req.gen) return;
+			set((s) => ({ msgState: { ...s.msgState, [id]: { ...MSG_BASE, ...(s.msgState[id] ?? {}), loading: false, error: errText(e), loaded: false } } }));
+		}
 		void get().loadTasks(id);
 		void api(`/api/agents/${id}/read`, { method: "POST" }).catch(() => {});
 	},
@@ -162,12 +232,61 @@ export const useStore = create<State>((set, get) => ({
 		set((s) => ({ convs: { ...s.convs, [id]: c } }));
 		return c;
 	},
+	async loadMessages(agentId, convId, req) {
+		const r = req ?? newRequest(agentId);
+		set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...MSG_BASE, ...(s.msgState[agentId] ?? {}), loading: true, error: null, loaded: false } } }));
+		try {
+			const msgs = await api<Message[]>(`/api/agents/${agentId}/messages?limit=${PAGE}&conversation=${convId}`, { signal: r.signal });
+			if (reqGen[agentId] !== r.gen) return; // 晚返回的旧请求不覆盖新目标
+			set((s) => {
+				// 同一对话：并进本地还没落库的乐观 / 流式消息；换了对话：直接替换，不混
+				const sameConv = s.msgState[agentId]?.conv === convId;
+				const list = sameConv ? mergeMessages(msgs, s.messages[agentId]) : msgs;
+				return { messages: { ...s.messages, [agentId]: list }, msgState: { ...s.msgState, [agentId]: { loading: false, error: null, loaded: true, conv: convId, hasMore: msgs.length >= PAGE } } };
+			});
+		} catch (e) {
+			if (reqGen[agentId] !== r.gen) return;
+			set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...MSG_BASE, ...(s.msgState[agentId] ?? {}), loading: false, error: errText(e), loaded: false } } }));
+		}
+	},
+	async retryMessages(agentId) {
+		const conv = get().convs[agentId]?.current;
+		if (!conv) return get().selectAgent(agentId);
+		await get().loadMessages(agentId, conv);
+	},
+	async loadMoreMessages(agentId) {
+		const st = get().msgState[agentId];
+		const list = get().messages[agentId] ?? [];
+		if (!st || st.loading || !st.hasMore || !st.conv || !list.length) return;
+		const gen = reqGen[agentId] ?? 0;
+		const conv = st.conv;
+		set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: true, error: null } } }));
+		try {
+			const older = await api<Message[]>(`/api/agents/${agentId}/messages?limit=${PAGE}&conversation=${conv}&before=${list[0].created_at}`);
+			if ((reqGen[agentId] ?? 0) !== gen) return;
+			set((s) => ({ messages: { ...s.messages, [agentId]: mergeMessages(older, s.messages[agentId]) }, msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: false, error: null, loaded: true, conv, hasMore: older.length >= PAGE } } }));
+		} catch (e) {
+			if ((reqGen[agentId] ?? 0) !== gen) return;
+			set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: false, error: errText(e) } } }));
+		}
+	},
 	async switchConversation(agentId, convId) {
 		set({ subagent: null });
-		set((s) => ({ convs: { ...s.convs, [agentId]: { ...(s.convs[agentId] ?? { items: [] }), current: convId } }, messages: { ...s.messages, [agentId]: [] } }));
-		await api(`/api/agents/${agentId}/conversations/${convId}/select`, { method: "POST" });
-		const msgs = await api<Message[]>(`/api/agents/${agentId}/messages?limit=300&conversation=${convId}`);
-		set((s) => ({ messages: { ...s.messages, [agentId]: msgs } }));
+		persistSelection(get().selKey, { conv: { agentId, convId } });
+		const req = newRequest(agentId);
+		// 立即切到目标并进入 loading：不显示旧对话内容（避免旧 chat flash）
+		set((s) => ({
+			convs: { ...s.convs, [agentId]: { ...(s.convs[agentId] ?? { items: [] }), current: convId } },
+			messages: { ...s.messages, [agentId]: [] },
+			msgState: { ...s.msgState, [agentId]: { ...MSG_BASE, conv: convId, loading: true } },
+		}));
+		try {
+			await api(`/api/agents/${agentId}/conversations/${convId}/select`, { method: "POST" });
+			await get().loadMessages(agentId, convId, req);
+		} catch (e) {
+			if (reqGen[agentId] !== req.gen) return;
+			set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...MSG_BASE, conv: convId, loading: false, error: errText(e) } } }));
+		}
 	},
 	async newConversation(agentId) {
 		const c = await api<Conversation>(`/api/agents/${agentId}/conversations`, { method: "POST", json: {} });
