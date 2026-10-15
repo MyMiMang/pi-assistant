@@ -43,6 +43,13 @@ CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', session_file TEXT,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS conversations_agent ON conversations(agent_id, updated_at);
+CREATE TABLE IF NOT EXISTS conversation_forks (
+  id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+  source_conversation_id TEXT NOT NULL, source_message_id TEXT NOT NULL, source_entry_id TEXT NOT NULL,
+  parent_session TEXT, client_id TEXT, created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS conversation_forks_conv ON conversation_forks(conversation_id);
+CREATE INDEX IF NOT EXISTS conversation_forks_idem ON conversation_forks(source_conversation_id, client_id);
 CREATE TABLE IF NOT EXISTS memory_items (
   id TEXT PRIMARY KEY, bank TEXT NOT NULL, text TEXT NOT NULL, kind TEXT, document_id TEXT,
   created_at TEXT NOT NULL, occurred_at TEXT, source_json TEXT, meta_json TEXT, embedding BLOB);
