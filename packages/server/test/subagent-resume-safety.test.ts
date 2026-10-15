@@ -109,3 +109,9 @@ test("副作用工具执行一次后模型连接中断，续跑恢复不重放�
 		await disposeSession(session);
 	}
 });
+
+test("落库会话文件不在时按「读不到」处理：不能当成没有未配平的调用（否则会把结果未知当成安全）", () => {
+	// 回归：SessionManager.open 对不存在的文件不报错、只给空分支，必须显式识别为读不到。
+	const missing = join(tmpdir(), `pia-missing-session-${Date.now()}`, "nope.jsonl");
+	assert.equal(readSessionFileMessages(missing), null, "不存在的会话文件必须返回 null（读不到）而不是空数组");
+});

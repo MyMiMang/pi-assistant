@@ -1,6 +1,10 @@
 import "./setup.ts";
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { Subagent, SubagentEvent } from "../src/subagents.ts";
 import { memoryCredentialStore } from "./in-memory-credentials.ts";
 process.env.PIA_MOCK = "1";
@@ -20,6 +24,15 @@ const tick = () => new Promise((r) => setTimeout(r, 20));
 const status = (id: string) => s.getSubagent(id)!.status;
 const events = (id: string) => db.prepare("SELECT * FROM subagent_events WHERE subagent_id = ?").all(id);
 const spawn = () => s.spawnSubagent("sub-test", conv, model, { task: "写代码" });
+/** 造一个真实可读、无未配平工具调用的落库会话文件（恢复/续跑的安全核验会真的去读它）。 */
+const safeSessionFile = (label: string) => {
+	const dir = mkdtempSync(join(tmpdir(), "pia-sub-sess-"));
+	const sm = SessionManager.create(dir, join(dir, "sessions"));
+	sm.appendMessage({ role: "user", content: label } as never);
+	sm.appendMessage({ role: "assistant", content: [{ type: "text", text: "已执行" }, { type: "toolCall", id: "c1", name: "bash", arguments: {} }] } as never);
+	sm.appendMessage({ role: "toolResult", toolCallId: "c1", toolName: "bash", content: [{ type: "text", text: "ok" }] } as never);
+	return sm.getSessionFile()!;
+};
 /** 设置全局设置（含并发上限）；不传 maxConcurrent 时保留当前上限（不重置）。 */
 const setSettings = (maxConcurrent?: number) => s.saveSubagentSettings({ maxMinutes: 60, ...(maxConcurrent === undefined ? {} : { maxConcurrent }) });
 const cleanup = () => s.stopAgentSubagents("sub-test");
@@ -226,9 +239,9 @@ test("重启恢复：中断任务保留并从断点续跑（带续跑提示）�
 	manualDriver();
 	const rows = [spawn(), spawn(), spawn(), spawn()];
 	await tick();
-	// 模拟两个已经跑过一段、落了 session 的任务
-	db.prepare("UPDATE subagents SET session_file = 'sess-1' WHERE id = ?").run(rows[0].id);
-	db.prepare("UPDATE subagents SET session_file = 'sess-2' WHERE id = ?").run(rows[1].id);
+	// 模拟两个已经跑过一段、落了真实 session 的任务（核验会读文件，无未配平调用才续跑）
+	db.prepare("UPDATE subagents SET session_file = ? WHERE id = ?").run(safeSessionFile("sess-1"), rows[0].id);
+	db.prepare("UPDATE subagents SET session_file = ? WHERE id = ?").run(safeSessionFile("sess-2"), rows[1].id);
 	assert.deepEqual(started, [rows[0].id, rows[1].id]);
 	// 一个排队的被用户停掉，重启不应该把它拉起来
 	await s.stopSubagent(rows[3].id);
@@ -248,6 +261,20 @@ test("重启恢复：中断任务保留并从断点续跑（带续跑提示）�
 	const before = started.length;
 	s.recoverSubagents(); await tick();
 	assert.equal(started.length, before);
+	await cleanup();
+});
+
+test("重启恢复：会话文件读不到（缺失）的中断任务标 lost，不假装没副作用就续跑", async () => {
+	setSettings(10);
+	manualDriver();
+	const r = spawn();
+	await tick();
+	// 落了 session 但文件已不在（被清理 / 路径失效）：无法核验，必须按不安全处理
+	db.prepare("UPDATE subagents SET session_file = ? WHERE id = ?").run(join(tmpdir(), `pia-missing-${Date.now()}`, "gone.jsonl"), r.id);
+	s.recoverSubagents(); await tick();
+	assert.equal(status(r.id), "lost");
+	assert.match(s.getSubagent(r.id)!.error_reason ?? "", /核验|读不到/);
+	assert.equal(started.filter((id) => id === r.id).length, 1, "不会从头重跑");
 	await cleanup();
 });
 
@@ -804,6 +831,9 @@ test("恢复摘要给主模型看：canResume / resumeReason / retryable / attem
 	assert.equal(info.canResume, true);
 	assert.match(info.resumeReason, /临时|自动续跑|网络/);
 	assert.equal(info.attempt, 0);
+	// 会话文件读不到（这里是假路径，真实场景是被清理 / 路径失效）：必须暴露 needsVerify，
+	// UI 才能显示「先核验」+ 工具名，不能无感点「继续」。
+	assert.equal(info.needsVerify, true, "读不到会话文件必须提示先核验，不能静默允许继续");
 	await cleanup();
 });
 

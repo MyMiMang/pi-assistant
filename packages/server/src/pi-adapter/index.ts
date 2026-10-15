@@ -5,7 +5,7 @@
  * Pi 升级出现 API 变化时，只需要改这个目录（以及 packages/ext-* 里的扩展，它们只依赖 Pi 的 ExtensionAPI 类型）。
  */
 import { learnFromError } from "./model-limits.ts";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -607,6 +607,9 @@ export function sessionFileOf(session: AgentSession): string | undefined {
  */
 export function readSessionFileMessages(file: string): unknown[] | null {
 	try {
+		// 文件不在（被清理 / 路径失效）时 SessionManager.open 会给出空分支，不能据此当作「没有未配平的调用」：
+		// 核验的前提是读得到真实历史，读不到一律返回 null，由调用方按不安全处理。
+		if (!existsSync(file)) return null;
 		const sm = SessionManager.open(file);
 		return sm.getBranch().flatMap((e) => (e.type === "message" ? [e.message] : []));
 	} catch {

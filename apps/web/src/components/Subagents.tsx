@@ -11,8 +11,10 @@ import { useConfiguredModels, useModelPicks, ModelPoolButton, ThinkingButton, TH
 import { TaskInstructions, TaskRow, taskLive, taskTitle } from "./Tasks";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string; reasoning?: boolean };
-interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; thinking: string | null; resolvedThinking?: string; last_activity_at: number; error_reason: string | null; result_summary: string | null; attempt?: number; retry_at?: number | null; canResume?: boolean; resumeReason?: string }
+interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; thinking: string | null; resolvedThinking?: string; last_activity_at: number; error_reason: string | null; result_summary: string | null; attempt?: number; retry_at?: number | null; canResume?: boolean; resumeReason?: string; needsVerify?: boolean; pendingToolNames?: string[] }
 const labels: Record<string, string> = { queued: "排队中", running: "运行中", stalled: "暂无进展", done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "重启中断" };
+/** 结果未知的工具名（needsVerify 时给用户看的危险名单；读不到会话时没有具体名字，给一句兜底）。 */
+const verifyNames = (r: Subagent) => r.pendingToolNames?.length ? r.pendingToolNames.join("、") : "有工具调用结果未落库";
 /** 有实时活动（显示“最后活动 N 秒前”） */
 const active = (r: Subagent) => ["running", "stalled"].includes(r.status);
 /** 还没到终态：运行中、暂无进展、排队等空位 —— 都可以停止 */
@@ -77,7 +79,7 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 				<Avatar agentId={avatar.id} text={avatar.avatar} color={avatar.color} size={32} />
 				<div className="min-w-0 flex-1"><b className="block truncate text-sm" title={d?.subagent.task}>任务：{d ? taskTitle(d.subagent.task) : "加载中…"}</b><div className="truncate text-xs">{d && <State r={d.subagent} />}<span className="ml-2 text-mut2">{d?.subagent.model_id}</span></div></div>
 				{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
-				{d && !stoppable && ["failed", "timeout", "lost", "stopped"].includes(d.subagent.status) && d.subagent.canResume && <button className="pa-chip" onClick={() => void action("resume")} title={d.subagent.resumeReason ?? "用原任务从断点继续"} data-testid="subagent-resume">继续</button>}
+				{d && !stoppable && ["failed", "timeout", "lost", "stopped"].includes(d.subagent.status) && d.subagent.canResume && <button className="pa-chip" onClick={() => void action("resume")} title={d.subagent.needsVerify ? `先核验这些工具的实际结果再继续：${verifyNames(d.subagent)}` : d.subagent.resumeReason ?? "用原任务从断点继续"} data-testid="subagent-resume">继续</button>}
 				{d && !stoppable && ["failed", "timeout", "lost"].includes(d.subagent.status) && !d.subagent.canResume && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>}
 			</header>
 			{d?.subagent.task ? <div className="shrink-0 border-b border-line px-4 py-2"><TaskInstructions text={d.subagent.task} label="查看任务说明（完整指令）" /></div> : null}
@@ -90,6 +92,7 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 			</div>
 			<div className="pa-composer-wrap">
 				{err && <p className="mx-auto mb-2 max-w-[760px] text-xs text-red-500" role="alert">{err}</p>}
+				{d?.subagent.needsVerify && <p className="mx-auto mb-2 max-w-[760px] text-xs text-amber-600" role="status" data-testid="subagent-needs-verify">续跑前先核验：{verifyNames(d.subagent)}（这些工具调用已派发但结果没落库，副作用未知，别直接重跑）</p>}
 				<div className="pa-composer">
 					<textarea ref={ta} rows={1} value={text} onChange={(e) => setText(e.target.value)} aria-label="给子代理发消息" placeholder={stoppable ? "补充要求，或说「停」" : "给子代理发消息…"} onKeyDown={(e) => { if (isSendKey(e)) { e.preventDefault(); void send(); } }} />
 					<div className="pa-composer-bar"><span className="min-w-0 flex-1 truncate text-xs text-mut2">{queued ? "子代理排队中，说「停」可取消" : running ? "子代理正在工作" : "继续这个子代理会话"} · {SEND_HINT}</span>{stoppable && !text.trim() ? <button className="pa-send" onClick={() => void action("stop")} aria-label="停止子代理"><Square size={13} fill="currentColor" /></button> : <button className="pa-send" disabled={sending || !text.trim()} onClick={() => void send()} aria-label="发送给子代理" title={SEND_HINT} aria-keyshortcuts="Shift+Enter"><ArrowUp className="pa-ic" /></button>}</div>
