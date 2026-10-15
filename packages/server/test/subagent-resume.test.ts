@@ -10,7 +10,7 @@
 import "../test/setup.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifyResume, shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY, TRANSPORT_RETRY_PROMPT } from "../src/subagent-resume.ts";
+import { assessResumeSafety, classifyResume, shouldAutoRetry, shouldAutoRetrySafely, transportBackoffMs, TRANSPORT_RETRY, TRANSPORT_RETRY_PROMPT } from "../src/subagent-resume.ts";
 
 test("连接类 / 超时：可自动续跑", () => {
 	for (const msg of [
@@ -103,4 +103,41 @@ test("有界自动重试：次数上限、指数退避 + 抖动、封顶", () =>
 	assert.ok(transportBackoffMs(1, () => 1) <= TRANSPORT_RETRY.baseMs * 1.5);
 	assert.ok(transportBackoffMs(3, () => 1) >= transportBackoffMs(2, () => 1));
 	assert.ok(transportBackoffMs(20, () => 1) <= TRANSPORT_RETRY.maxMs);
+});
+
+const assistantWithCalls = (...calls: { id: string; name: string }[]) => ({ role: "assistant", content: calls.map((c) => ({ type: "toolCall", id: c.id, name: c.name, arguments: {} })) });
+const toolResult = (id: string) => ({ role: "toolResult", toolCallId: id, toolName: "bash", content: [{ type: "text", text: "ok" }] });
+
+// —— 副作用核验：判断自动续跑是否安全。用户要求「提示别重做」不能当作幂等保证，必须有状态证据 ——
+test("续跑安全：工具调用与结果都落库 → 可安全自动续跑", () => {
+	const s = assessResumeSafety([{ role: "user", content: "任务" }, assistantWithCalls({ id: "c1", name: "bash" }), toolResult("c1"), { role: "assistant", content: [{ type: "text", text: "继续" }] }]);
+	assert.equal(s.safe, true);
+	assert.deepEqual(s.pendingToolCalls, []);
+});
+
+test("续跑不安全：工具调用已派发、结果未落库 → 禁止自动重试", () => {
+	const s = assessResumeSafety([{ role: "user", content: "任务" }, assistantWithCalls({ id: "c1", name: "send_email" })]);
+	assert.equal(s.safe, false);
+	assert.deepEqual(s.pendingToolCalls.map((p) => p.name), ["send_email"]);
+	assert.match(s.reason, /需人工或主模型核验/);
+});
+
+test("续跑不安全：多个调用里只要有一个结果缺失就算不安全（保守）", () => {
+	const s = assessResumeSafety([assistantWithCalls({ id: "a", name: "read" }, { id: "b", name: "pay" }), toolResult("a")]);
+	assert.equal(s.safe, false);
+	assert.deepEqual(s.pendingToolCalls, [{ id: "b", name: "pay" }]);
+});
+
+test("续跑安全：纯模型连接失败（助手消息无工具调用）、空会话、只有工具结果都算安全", () => {
+	assert.equal(assessResumeSafety([]).safe, true);
+	assert.equal(assessResumeSafety([{ role: "assistant", content: [{ type: "text", text: "" }], stopReason: "error", errorMessage: "ECONNRESET" }]).safe, true);
+	assert.equal(assessResumeSafety([toolResult("x")]).safe, true);
+});
+
+test("合并判定：只有「连接类 + 会话安全」才自动续跑；有未知副作用一律停", () => {
+	const ok = assessResumeSafety([assistantWithCalls({ id: "c1", name: "bash" }), toolResult("c1")]);
+	const unknown = assessResumeSafety([assistantWithCalls({ id: "c1", name: "bash" })]);
+	assert.equal(shouldAutoRetrySafely("ECONNRESET", 1, ok), true);
+	assert.equal(shouldAutoRetrySafely("ECONNRESET", 1, unknown), false, "结果未知绝不自动重放");
+	assert.equal(shouldAutoRetrySafely("用户停止了任务", 1, ok), false);
 });

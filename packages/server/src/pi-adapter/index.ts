@@ -600,6 +600,25 @@ export function sessionFileOf(session: AgentSession): string | undefined {
 	return session.sessionManager.getSessionFile();
 }
 
+/**
+ * 只读一个落库会话文件的原始消息（含被 context_edit 略去、但仍在原始历史里的失败轮次）。
+ * 用于自动续跑前的副作用核验：不建会话、不碰模型 / 凭据，读不到返回 null。
+ * 消息形状即公开的 Pi `AgentMessage`（message-types.md）。
+ */
+export function readSessionFileMessages(file: string): unknown[] | null {
+	try {
+		const sm = SessionManager.open(file);
+		return sm.getBranch().flatMap((e) => (e.type === "message" ? [e.message] : []));
+	} catch {
+		return null;
+	}
+}
+
+/** 当前会话（含原始历史）的消息，供续跑前核验副作用。 */
+export function branchMessagesOf(session: AgentSession): unknown[] {
+	return session.sessionManager.getBranch().flatMap((e) => (e.type === "message" ? [e.message] : []));
+}
+
 export function lastAssistantText(session: AgentSession): string {
 	return session.getLastAssistantText() ?? "";
 }
