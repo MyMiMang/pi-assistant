@@ -19,7 +19,7 @@ import { createConversation } from "../conversations.ts";
 import { db, now, uid } from "../db.ts";
 import { attachmentInputFor, deleteRoomFiles, type FileRow, fileInfo, getFile, materializeFor } from "../files.ts";
 import { isStopCommand } from "../interject.ts";
-import { getMessageByClientId, insertMessage, listRoomMessages, updateMessage, type Message, type ReplySnapshot } from "../messages.ts";
+import { getMessage, getMessageByClientId, insertMessage, listRoomMessages, updateMessage, type Message, type ReplySnapshot } from "../messages.ts";
 import { buildReplySnapshot, formatQuotedContext, ReplyError, resolveReplyTarget } from "../replies.ts";
 import { models, defaultModel, defaultThinking } from "../models.ts";
 import { requests } from "../requests.ts";
@@ -232,14 +232,16 @@ interface RoomState {
 	/** 正在进行的管理者回合里收集到的派活 */
 	assignments: { agentId: string; task?: string }[];
 	/** 运行中用户又发了消息：当前发言结束后重新安排 */
-	replan: { mentions: string[]; quote: QuoteInfo | null } | null;
+	replan: { mentions: string[]; quote: QuoteInfo | null; sourceMessageId: string } | null;
 	/** 本轮用户消息带来的引用快照（模型上下文），无引用为 null */
 	quote: ReplySnapshot | null;
+	/** 触发这一轮的用户消息 id（可信持久化来源；幂等键，见 routeUserMessage） */
+	sourceMessageId: string | null;
 	stopped: boolean;
 	running: boolean;
 }
 const states = new Map<string, RoomState>();
-const fresh = (): RoomState => ({ roundId: uid("rd"), queue: [], current: null, counters: { turns: 0, perAgent: {}, tokens: 0 }, batch: new Set(), batchRan: false, assignments: [], replan: null, quote: null, stopped: false, running: false });
+const fresh = (): RoomState => ({ roundId: uid("rd"), queue: [], current: null, counters: { turns: 0, perAgent: {}, tokens: 0 }, batch: new Set(), batchRan: false, assignments: [], replan: null, quote: null, sourceMessageId: null, stopped: false, running: false });
 
 export function stateOf(roomId: string) {
 	const s = states.get(roomId);
@@ -248,10 +250,24 @@ export function stateOf(roomId: string) {
 }
 const emitState = (roomId: string) => bus.emit({ type: "room.state", roomId, state: stateOf(roomId) });
 
-function enqueue(roomId: string, s: RoomState, turns: PlannedTurn[]) {
+/**
+ * 入队。`sourceMessageId` 记录触发本轮的用户消息（可信持久化 id）。
+ * `dedup=true` 时原子认领：同一来源消息的同一「收件人 + 用途」已有未取消回合 → 跳过，
+ * 使重复路由事件 / 客户端重试 / 服务重启不重复唤醒；真正分工出的不同收件人 / 用途照常入队（见 docs/design/message-replies.md §7）。
+ */
+function enqueue(roomId: string, s: RoomState, turns: PlannedTurn[], sourceMessageId: string | null = null, dedup = false) {
 	for (const t of turns) {
 		const turnId = uid("rt");
-		db.prepare("INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, task, depth, status, created_at) VALUES(?,?,?,?,?,?,?,?,?)").run(turnId, roomId, s.roundId, t.agentId, t.reason, t.task ?? null, t.depth, "queued", now());
+		if (dedup && sourceMessageId) {
+			const res = db.prepare(
+				`INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, task, depth, status, created_at, source_message_id)
+				 SELECT ?,?,?,?,?,?,?,?,?,?
+				 WHERE NOT EXISTS (SELECT 1 FROM room_turns WHERE room_id = ? AND source_message_id = ? AND agent_id = ? AND reason = ? AND status != 'cancelled')`,
+			).run(turnId, roomId, s.roundId, t.agentId, t.reason, t.task ?? null, t.depth, "queued", now(), sourceMessageId, roomId, sourceMessageId, t.agentId, t.reason);
+			if (!res.changes) continue;
+		} else {
+			db.prepare("INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, task, depth, status, created_at, source_message_id) VALUES(?,?,?,?,?,?,?,?,?,?)").run(turnId, roomId, s.roundId, t.agentId, t.reason, t.task ?? null, t.depth, "queued", now(), sourceMessageId);
+		}
 		s.queue.push({ ...t, turnId });
 	}
 }
@@ -271,7 +287,7 @@ function cancelQueuedFor(roomId: string, agentId: string) {
 const activeIds = (roomId: string) => membersOf(roomId).filter((m) => getAgent(m.agent_id)).map((m) => m.agent_id);
 const memberRefs = (roomId: string) => membersOf(roomId).map((m) => ({ id: m.agent_id, name: getAgent(m.agent_id)?.name ?? m.name }));
 
-/** 用户在群里发言 */
+/** 用户在群里发言：先落库，再按可信持久化源消息路由（幂等，见 routeUserMessage）。 */
 export function postUserMessage(roomId: string, text: string, opts: { mentions?: string[]; from?: unknown; attachments?: string[]; replyToId?: string; clientId?: string } = {}) {
 	const r = getRoom(roomId);
 	if (!r) throw new Error("群不存在");
@@ -291,6 +307,30 @@ export function postUserMessage(roomId: string, text: string, opts: { mentions?:
 	}
 	const parsed = parseMentions(body, memberRefs(roomId), opts.mentions ?? []);
 	const msg = insertMessage({ agentId: "", roomId, conversationId: null, role: "user", content: body, replyToId: opts.replyToId ?? null, replySnapshot: quote?.snapshot ?? null, clientId: opts.clientId ?? null, meta: { from: opts.from, mentions: parsed.ids, all: parsed.all, ...(quote ? { replyTo: opts.replyToId } : {}), ...(files.length ? { attachments: files.map(fileInfo) } : {}) } });
+	routeUserMessage(roomId, msg.id);
+	return msg;
+}
+
+/**
+ * 按已持久化的群用户消息路由本轮。以 DB 行（可信 sourceMessageId）为准，不接受客户端传参；
+ * 同一来源消息只路由一次：已有未取消回合（重试 / 重启 / 重复路由事件）就不再入队、不重复唤醒。
+ */
+export function routeUserMessage(roomId: string, messageId: string): void {
+	const r = getRoom(roomId);
+	if (!r) throw new Error("群不存在");
+	const msg = getMessage(messageId);
+	if (!msg || msg.room_id !== roomId || msg.role !== "user" || msg.agent_id !== "") throw new Error("不是群里的用户消息");
+	// 幂等：这个来源已经产生过未取消回合 → 整组不再重复路由 / 唤醒
+	if (db.prepare("SELECT 1 FROM room_turns WHERE room_id = ? AND source_message_id = ? AND status != 'cancelled' LIMIT 1").get(roomId, messageId)) return;
+	const meta = msg.meta ?? {};
+	const body = msg.content;
+	const files = (((meta.attachments as { fileId?: string }[] | undefined) ?? []).map((a) => (a.fileId ? getFile(a.fileId) : undefined)).filter((f): f is FileRow => !!f && f.room_id === roomId && f.agent_id === ""));
+	let quote: QuoteInfo | null = null;
+	if (msg.replyToId) {
+		const target = resolveReplyTarget({ scope: { kind: "room", id: roomId }, messageId: msg.replyToId });
+		quote = { snapshot: msg.reply ?? buildReplySnapshot(target, { kind: "room", id: roomId }), target: quoteTargetOf(roomId, target) };
+	}
+	const parsed = parseMentions(body, memberRefs(roomId), Array.isArray(meta.mentions) ? (meta.mentions as string[]) : []);
 	const plan = planForUserWithQuote({ mentioned: parsed.ids, managerId: r.manager_id, activeIds: activeIds(roomId), quote: quote?.target ?? null });
 	// 引用了被删除 / 停用的成员：不误唤管理者，群内明确提示用户改用 @
 	if (plan.notice) sys(roomId, plan.notice, { kind: "reply-unroutable" });
@@ -298,7 +338,7 @@ export function postUserMessage(roomId: string, text: string, opts: { mentions?:
 	if (r.paused && !states.get(roomId)?.current && !parsed.ids.length && !quote && /^\s*(继续|接着来|continue)\s*[。.!！]?\s*$/i.test(body)) {
 		continueRoom(roomId);
 		changed(roomId);
-		return msg;
+		return;
 	}
 	if (r.paused) db.prepare("UPDATE rooms SET paused = NULL WHERE id = ?").run(roomId);
 	const s = states.get(roomId);
@@ -307,7 +347,7 @@ export function postUserMessage(roomId: string, text: string, opts: { mentions?:
 		updateMessage(msg.id, { meta: { delivery: "stop" } });
 		void stop(roomId);
 		changed(roomId);
-		return msg;
+		return;
 	}
 	if (s?.current) {
 		const cur = s.current;
@@ -322,19 +362,22 @@ export function postUserMessage(roomId: string, text: string, opts: { mentions?:
 		s.batch.clear();
 		const others = plan.directed ? plan.turns.map((t) => t.agentId).filter((x) => x !== cur.agentId) : parsed.ids.filter((x) => x !== cur.agentId);
 		const handled = !plan.notice && forCurrent && rt.busy && (plan.directed ? others.length === 0 : parsed.ids.length ? !others.length : cur.agentId === r.manager_id);
-		s.replan = handled || !plan.turns.length ? null : { mentions: parsed.ids, quote };
+		s.replan = handled || !plan.turns.length ? null : { mentions: parsed.ids, quote, sourceMessageId: msg.id };
 		emitState(roomId);
-	} else if (plan.turns.length) startRound(roomId, plan.turns, quote);
+	} else if (plan.turns.length) startRound(roomId, plan.turns, quote, msg.id);
 	else if (!plan.notice && !parsed.ids.length) sys(roomId, "群里还没有可以回答的助理，请在群设置里添加。", { action: "room-settings" });
 	changed(roomId);
-	return msg;
 }
 
-function startRound(roomId: string, plan: PlannedTurn[], quote: QuoteInfo | null) {
+function startRound(roomId: string, plan: PlannedTurn[], quote: QuoteInfo | null, sourceMessageId: string) {
 	const s = fresh();
-	states.set(roomId, s);
 	s.quote = quote?.snapshot ?? null;
-	enqueue(roomId, s, plan);
+	s.sourceMessageId = sourceMessageId;
+	enqueue(roomId, s, plan, sourceMessageId, true);
+	// 全是已认领的回合（重复路由事件）：别把正在跑的这一轮状态清掉
+	const prev = states.get(roomId);
+	if (!s.queue.length && prev && (prev.current || prev.queue.length)) return;
+	states.set(roomId, s);
 	void pump(roomId);
 }
 
@@ -396,9 +439,10 @@ async function pump(roomId: string) {
 				const r = getRoom(roomId);
 				if (!r) break;
 				s.quote = re.quote?.snapshot ?? null;
+				s.sourceMessageId = re.sourceMessageId;
 				const replan = planForUserWithQuote({ mentioned: re.mentions, managerId: r.manager_id, activeIds: activeIds(roomId), quote: re.quote?.target ?? null });
 				if (replan.notice) sys(roomId, replan.notice, { kind: "reply-unroutable" });
-				enqueue(roomId, s, replan.turns);
+				enqueue(roomId, s, replan.turns, re.sourceMessageId, true);
 			}
 			const next = s.queue[0];
 			if (!next) break;
@@ -488,7 +532,7 @@ async function runTurn(roomId: string, s: RoomState, t: PlannedTurn & { turnId: 
 			s.batch = new Set(follow.map((f) => f.agentId));
 			s.batchRan = false;
 		}
-		enqueue(roomId, s, follow);
+		enqueue(roomId, s, follow, s.sourceMessageId);
 	}
 	s.assignments = [];
 }
