@@ -1367,7 +1367,8 @@ cua-driver 0.35.4 自带 CDP 浏览器工具（get_browser_state、browser_prepa
   3. `spawn_subagent` 的 `thinking` 参数（显式，需是 Pi 档位）。
 - **一律按实际使用的子代理模型收敛**：`resolveSubagentThinking()` 最后调 `pi-adapter.models.clampThinking`，不支持推理的模型得到 `off`，不会出现 xhigh / max。fallback 换模型时用新模型的 clamp 值重算。
 - **运行中切换**：`PATCH` 后 `applyLiveSubagentThinking()` 走 `pi-adapter.applyModelSettings`（`session.setModel` / `setThinkingLevel`），不重建会话、不丢上下文，**只动这个子代理的会话，不改主会话**。
-- 界面档位来源：助理池取候选模型支持档位的交集（空池则取主会话当前模型）；子代理详情取该子代理模型的档位。
+- 界面档位来源（**统一走 `@pi-assistant/shared` 的 `thinkingLevelsFor` / `thinkingLevelsUnion`，和主会话用同一份 Pi 能力来源**）：空池取主会话当前模型的档位（与主会话完全一致）；多候选池取候选模型支持档位的**并集**（只要有一个候选支持 xhigh / max 就保留，**不取最低共同集合**，否则会把部分模型支持的档位裁掉，用户看到「子代理档位比主会话少」）；子代理详情取该子代理实际模型的档位。真正落到某个模型时由服务端 `clampThinkingLevel` 收敛：不支持就合法降级，界面（详情 header 的提示、助理设置里的黄字说明）如实写明降级到哪一档，不静默吞掉用户的选择。
+- 回归：`packages/server/test/subagent-thinking-options.test.ts`（真实 Pi 目录 + 临时数据目录 + 内存凭据）证明「跟随主会话时子代理档位 = 主会话档位」「多候选池并集保留 xhigh/max，旧交集会裁掉」「不支持档位 clamp 到 high」。
 
 ### 21.9 子代理断点续跑（2026-10-15，beta.22 候选）
 - **不新开子代理**：失败 / 超时 / 停止后一律用**原 subagent id** 续跑，复用落库 Pi session、原任务、历史与用量（同一任务、同一份用量与历史）。`resumeSubagent(id)` 先校验「已到终态、非 done、已落库 session」；无 session 直接拒绝（无法确认执行到哪一步，要求先核验再重派）。原子占用（`UPDATE … WHERE status NOT IN ('queued','running','stalled')`），重复调用只生效一次；满额照旧 FIFO 排队不超并发。

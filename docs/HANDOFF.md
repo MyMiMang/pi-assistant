@@ -2,6 +2,12 @@
 
 > 当前公开版本 **v0.1.0-beta.23**（2026-10-15 已公开 Latest，仅 macOS arm64）；下一版 **v0.1.0-beta.24 候选**见 `progress-snapshots/hotfix-integration.md`（热修整合，未发布）。上一版 v0.1.0-beta.22。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
+2026-10-22 子代理思考档位「选项不全」（用户反馈）修复（独立树 `subagent-thinking-options-fix`，基 `release-candidate-validation` `f3b27dd`，**未 push / 未 tag / 未打包**；改动 DESIGN §21.8）：
+- **根因**：助理设置 › 子代理模型 › 思考强度原来取候选池**所有模型支持档位的交集**（`candidates.map(levelsOf).reduce(intersection)`）。候选池里只要有一个模型不支持 xhigh / max（例如只能到 high），这两档就被裁掉；空池跟随主会话时是单模型所以正常，因此用户看到「子代理档位比主会话少 / 不全」。子代理详情用的是实际模型档位，本身没这个问题。
+- **改动**：新增共享纯函数 `packages/shared/src/thinking-levels.ts`（`thinkingLevelsUnion` / `thinkingLevelsFor`：按 Pi 顺序取**并集**、过滤非法档位、空输入安全），主会话 / 子代理默认 / 子代理详情共用同一份 Pi 能力来源；`Subagents.tsx` 默认档位改并集（空池 = 主会话模型，与主会话完全一致），已保存但当前池没人支持的固定档位黄字说明会被降级；子代理详情在用户选的档位被模型 clamp 时给出 tooltip（不静默吞）；`ModelPicker.tsx` 的 `ThinkingButton` 菜单加内部滚动（小屏 / 档位多时 xhigh / max 不被裁）。`pi-adapter` 抽出 `supportedThinkingLevels` / `PiModels.supportedThinking`，模型目录与 clamp 用同一份元数据。
+- **验证**：新增 `packages/server/test/subagent-thinking-options.test.ts` 2/2（真实 Pi 目录 + 临时数据目录 + 内存凭据 + mock 中转：证明「跟随主会话 = 主会话档位」「多候选池并集保留 xhigh/max，旧交集确实裁掉」「不支持档位 clamp 到 high」，以及 helper 顺序 / 非法值 / 空输入）；`subagents`(38) + `custom-providers` + `subagent-resume-safety` 共 51/51 通过；服务端与网页 `tsc --noEmit` 均通过。**未做 / 未验证**：浏览器端 e2e（390px 滚动、下拉实际渲染）没跑——本树借用其他树 `node_modules`，`vite build` 在 rolldown 收尾阶段报环境错（HANDOFF 已记的已知问题），未起真实前端；不是本次改动导致。
+- **未杜撰档位**：档位仍完全由 Pi SDK 的 `getSupportedThinkingLevels`（`thinkingLevelMap`）决定，xhigh / max 只在 SDK 对某模型明确给出时出现；非推理模型仍是 off，不会乱开。
+
 **beta.22 发布前核对记录（历史记录；该版现已发布）——release-preflight 结果**
 - 基线 / HEAD：`next-release-integration` = `origin/main`（`5b6cf11`，已公开 beta.21）之后的 41 个提交；本 preflight 在独立干净 worktree（分支 `release-preflight`，基 `3d33d5a`）只做核对与文档修正，最终本地 HEAD = 本 preflight 提交（在 `3d33d5a` 之上、只改文档与发布说明，见 `git log`；未 push / 未 tag / 未打包）。
 - **已核对一致**：GHCR 镜像 tag `0.1.4` 的匿名 manifest digest = `sha256:6cc5c119…d54a42`，与 `desktop-image.json` 一致；`third-party.json` 的 cua-driver `0.35.4` darwin 资产实下 SHA256 = `97d5ea2f…4ec52e` 与钉住值一致；品牌图标来源 `@lobehub/icons-static-svg@1.95.1`（MIT）已记入 `THIRD_PARTY_NOTICES.md`，由 `scripts/gen-provider-icons.mjs` 生成 `provider-icons.ts`（已提交）；发布范围 `.github/release-scope.json` = `mac-arm64`，release.yml 的 `prepare` 按 `BUILD_INTEL` 组装矩阵、`publish` 只在 build + mac-smoke 成功且 linux/windows 计划内 skipped 时公开，`scripts/release-scope.mjs validate` 校验 latest.json 仅含 `darwin-aarch64` 且签名 / 资产齐全。
