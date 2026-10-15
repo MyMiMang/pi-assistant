@@ -6,7 +6,7 @@
  * 库存 CRUD（stable id / createdAt、内置保护、导入撞 id 换新、导出剥参考图）、预览事务（继续改 / 上一版 / 应用 / 取消恢复）。
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -292,7 +292,14 @@ test("preview：继续提意见 / 上一版 走历史栈；撤销回上一版", 
 
 test("入口：没有 /主题设计 slash 命令，只有设置→外观的主入口", () => {
 	const settings = readFileSync(join(ROOT, "apps/web/src/components/Settings.tsx"), "utf8");
-	assert.ok(!settings.includes("/主题设计"), "不应残留 /主题设计 快捷入口");
+	assert.ok(!settings.includes("/主题设计"), "Settings 不应残留 /主题设计 入口");
+	// 全前端源码里不得出现 /主题设计 命令注册（引号形式）；文档可以把它写成「已取消」。
+	const srcDir = join(ROOT, "apps/web/src");
+	const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
+	for (const f of walk(srcDir)) {
+		if (!/\.(ts|tsx)$/.test(f)) continue;
+		assert.ok(!readFileSync(f, "utf8").includes('\"/主题设计\"'), `${f} 不应注册 /主题设计 命令`);
+	}
 	const doc = readFileSync(join(ROOT, "docs/design/appearance-themes.md"), "utf8");
-	assert.ok(!doc.includes("/主题设计"), "文档不应把 /主题设计 写成入口");
+	assert.ok(/取消/.test(doc) && doc.includes("/主题设计"), "文档应写明 /主题设计 已取消，而不是写成入口");
 });

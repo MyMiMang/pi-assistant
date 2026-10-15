@@ -1,7 +1,8 @@
 # 外观主题：默认暗夜、移除极简、可爱像素风与用户 DIY（设计）
 
-状态：**第一段已实现**（默认暗夜 + 移除极简 + 迁移 + 首屏预置，见第 3 节）；**像素风 / DIY 是方案，待用户确认后再实现**（第 4、5 节）。
+状态：**P1 已实现**（默认暗夜 + 移除极简 + 迁移 + 首屏预置）；**P2 像素风已实现**；**P3 DIY 的 schema / 引擎 / 库存 / 预览事务 / 管理 UI 已实现**，**AI 后端未接通**（面板留了 `onThemeDraft` 接线接口，未接时按钮禁用并如实标注，不做假生成）。入口只有「设置 → 外观 → 用 AI 设计主题」；用户已明确**取消** `/主题设计` slash 命令，不注册任何 slash、不注入 prompt、不加命令列表。
 用户原话（2026-10-22）：『默认的这个外观替换成暗夜这个外观变成默认；极简删掉；再设计一套可爱一点像素风；外观开放给用户 DIY 让他们 AI 创造，你看怎么弄』。
+后续追加（同一轮）：DIY 保存后仍可编辑；图片素材作视觉参考（先定配色/风格/材质/布局），上传默认**不**嵌入主题、只有用户显式选「用作背景/装饰」才算素材；AI 后端复用当前 agent 模型（主会话另接）。
 主会话确认：**用户主动选择过的其他主题保留、不 reset**。
 
 ## 1. 边界（先说清楚这是什么）
@@ -39,7 +40,7 @@
 - 验证：`packages/server/test/appearance-theme.test.ts` 7/7（含**直接执行 `theme-boot.js`** 的默认/迁移/保留三态）、两端 `tsc --noEmit` exit 0、真实主题 CSS fixture 截图（`evidence/appearance-theme-design/`）。
 - 未做：全量 `e2e/run.mjs`、真机、打包。环境限制：本树借用其他树 `node_modules`，`vite build` 在 basе 提交同样失败（brand 插件 closeBundle 读不到 dist，环境问题，非本次改动）。
 
-## 4. 可爱像素风（第二段，用户已明确要设计一套 → 可开始；配色等细节待用户定）
+## 4. 可爱像素风（已实现：`pixel`）
 
 方向（克制、不压业务）：
 
@@ -51,6 +52,10 @@
 - 落地：新增 `apps/web/src/themes/pixel.css`（`[data-skin=pixel]`）+ `registry.ts` 一条元数据 + `index.css` 一条 `@import`，复用同一批 token；组件代码不改。
 
 ## 5. DIY：用户 / AI 造主题
+
+> 下面第 5.1 是最初的草案；**实际冻结的实现**以 `packages/shared/src/theme-manifest.ts` 为准。两处差异：
+> 1. **必需颜色 token 必须齐全**（fail-closed），不做 token 继承；`basedOn` 仅作来源标注（v1 不做 CSS 变量继承，避免内置 token 在 CSS 里、引擎读不到而静默白屏）。
+> 2. 尺寸 / 字体 token 可选，缺省由引擎补内置中性默认；装饰（纹理/边角/阴影/背景）全部 enum。
 
 ### 5.1 数据模型（Pi Assistant 自有 Typed ThemeManifest，v1）
 
@@ -94,31 +99,76 @@
 - 导入失败：列出每条错误（字段、期望、实际）。
 - 对比度低：黄色 warning 列表，允许继续。
 
-## 6. 文件计划
+### 5.5 图片素材（用户新增要求，已落地接口）
+
+- 面板里的图片上传复用**聊天附件的安全上传与预览**（`ThemeImagePicker`）；图片只存**附件 id + 元数据**（mime / 尺寸 / 字节数 / sha256），**绝不写 base64 / 本地绝对路径**。
+- 默认「**仅作参考**」（`usage: "reference"`）：只参与用户显式发起的那一轮 AI 请求，**不写进主题、不随主题导出**。只有用户显式切换「用作背景 / 装饰」（`background` / `decor`）才作为主题素材。
+- 历史每轮只带引用（`ThemeDraftRequest.images`），不带图片内容；图片原件不重复存进历史。
+- 模型不支持视觉时后端返回 `visionUnsupported`，UI 提示换支持视觉的模型或仅用文字；**不偷偷换视觉服务 / 收费模型**，不猜模型能力。
+- 安全：默认拒 SVG（避免任意矢量脚本）；MIME / 大小 / 像素总量有上限；EXIF 与远端上传提示沿用已有附件文案。
+- 导出：默认剥掉参考图（`stripReferenceImages`）；用户显式作背景/装饰的素材以**引用**形式保留（首版**不打包图片 zip**，已如实说明）。
+- 外部远程 URL 不为参考图放开：仍禁 CSS `url()` / `@import`。
+
+### 5.6 创作规范 / 样例（给 AI 照着写）
+
+必需颜色 token：`--bg --side --panel --card --fg --mut --mut2 --line --line-strong --hover --active --user-bg --user-fg --acc --acc-fg --acc-soft --ok --warn --z-light --z-dark`（每个 light/dark 都要有）。可选：`--acc2 --live`、`--r/--r-sm/--r-bubble/--r-tail/--r-comp/--r-btn/--r-chip/--r-logo/--r-av`（px/rem，限范围）、`--font/--display/--mono`（字体名列表）。装饰 enum：`texture: none|dots|grid`、`corner: round|step2|step4`、`shadow: soft|elevated|none`、`background: flat|glow`。
+
+```jsonc
+{
+  "manifestVersion": 1,
+  "id": "11111111-2222-3333-4444-555555555555",
+  "name": "我的奶油紫",
+  "author": "AI 生成",
+  "basedOn": "noir",
+  "modes": {
+    "light": { "--bg": "#fffdf8", "--side": "#f6f1e6", "--panel": "#f6f1e6", "--card": "#ffffff", "--fg": "#2a251f", "--mut": "#5f564b", "--mut2": "#9a8f80", "--line": "#e4dccd", "--line-strong": "#cfc4b1", "--hover": "#ebe4d6", "--active": "#e6dccb", "--user-bg": "#ece4d4", "--user-fg": "#2a251f", "--acc": "#8fd3c1", "--acc-fg": "#123123", "--acc-soft": "rgba(143,211,193,.12)", "--ok": "#5f8a5a", "--warn": "#c08a2c", "--z-light": "#ffffff", "--z-dark": "#2a251f", "--r": "10px" },
+    "dark":  { "--bg": "#141218", "--side": "#1e1a2b", "--panel": "#1e1a2b", "--card": "#241f33", "--fg": "#f3eee6", "--mut": "#c0b8d4", "--mut2": "#8b83a3", "--line": "#332c45", "--line-strong": "#463d5c", "--hover": "#2a2438", "--active": "#322b42", "--user-bg": "#2f2a44", "--user-fg": "#e9e3f5", "--acc": "#c3b6f0", "--acc-fg": "#221d33", "--acc-soft": "rgba(195,182,240,.16)", "--ok": "#8fd3c1", "--warn": "#f2b8c6", "--z-light": "#f0ecf7", "--z-dark": "#181524" }
+  },
+  "decor": { "texture": "dots", "corner": "step2", "background": "glow" },
+  "images": [{ "attachmentId": "att_abc123", "usage": "background", "mime": "image/png", "width": 1200, "height": 800, "bytes": 204800 }],
+  "createdAt": "2026-10-22T00:00:00.000Z",
+  "updatedAt": "2026-10-22T00:00:00.000Z"
+}
+```
+
+## 6. 文件计划（✅ = 已实现）
 
 | 文件 | 变更 |
 |---|---|
-| `apps/web/src/themes/registry.ts` | ✅ 默认 noir、删 linear、迁移别名、`normalizeSkin`；后续加 `pixel` 元数据 |
-| `apps/web/src/themes/appearance-migration.ts` `migrate.ts` | ✅ 纯函数迁移 + 启动调用 |
-| `apps/web/src/themes/linear.css` / `index.css` / `app.css` | ✅ 删文件、去 import、清残留 |
-| `apps/web/public/theme-boot.js` / `index.html` / `public/sw.js` | ✅ 首屏预置、默认 theme-color、SW 预缓存 |
-| `apps/web/src/themes/pixel.css` | ⏳ 像素风 token + 装饰（P2） |
-| `apps/web/src/themes/manifest.ts` | ⏳ typed manifest 解析 + 校验 + 变量白名单（P3） |
-| `apps/web/src/themes/custom-store.ts` | ⏳ 自定义主题库存（导入/导出/删除，本地持久化）（P3） |
-| `apps/web/src/components/Settings.tsx` + `ThemePreview.tsx` | ⏳ 自定义主题卡片、导入/预览/应用 UI（P3） |
-| `docs/design/appearance-themes.md` + 样例 JSON | ⏳ 创作规范（P3） |
-| `packages/server/test/appearance-theme.test.ts` | ✅ 现有 7 项；后续加 manifest 校验、迁移、像素 token 覆盖的 fixture 测试 |
+| `apps/web/src/themes/registry.ts` | ✅ 默认 noir、删 linear、迁移别名、`normalizeSkin`、`pixel` 元数据、`unregisterTheme`（取消未保存预览用） |
+| `apps/web/src/appearance-migration.ts` `migrate.ts` | ✅ 纯函数迁移 + 启动调用；启动时 `installCustomThemes()`（必须在 store 读 `pia.skin` 之前） |
+| `apps/web/src/themes/linear.css` / `index.css` / `app.css` | ✅ 删文件、去 import、清残留；`index.css` `@import pixel.css`、`app.css` 补 pixel 的 `--z-*` 锚点 |
+| `apps/web/public/theme-boot.js` / `index.html` / `public/sw.js` | ✅ 首屏预置（含 `custom-` 皮肤保留）、默认 theme-color、SW 预缓存 |
+| `apps/web/src/themes/pixel.css` | ✅ 像素风 token + 装饰（浅深双版） |
+| `packages/shared/src/theme-manifest.ts` | ✅ Typed ThemeManifest v1 + 白名单 + fail-closed 校验 + 图片引用 + AI 草稿 DTO（前后端共用） |
+| `apps/web/src/themes/manifest.ts` | ✅ manifest→CSS（`[data-skin=custom-*]` 作用域）/→ThemeDef；内置主题读真实 CSS 变量另存 |
+| `apps/web/src/themes/custom-store.ts` | ✅ 本地库存（保存/导入/导出/删除、内置只读保护、导入撞 id 换新、样式注入） |
+| `apps/web/src/themes/preview.ts` | ✅ 预览事务（继续改 / 上一版 / 应用并保存 / 取消恢复），DOM 走注入 effects 以便单测 |
+| `apps/web/src/components/ThemeDesigner.tsx` `ThemeImagePicker.tsx` | ✅ 设计面板 + 图片素材选择（复用附件上传） |
+| `apps/web/src/components/Settings.tsx` | ✅ 「用 AI 设计主题」主入口 + 内置/我的主题卡片（编辑/导出/删除/另存为） |
+| `apps/web/vite.config.ts` | ✅ brand 插件产物改写 `closeBundle`→`writeBundle`（Vite 8 下构建修复） |
+| `packages/server/test/theme-manifest.test.ts` `appearance-theme.test.ts` | ✅ 22/22 + 8/8（schema 注入拒绝、图片元数据、导出过滤、库存 CRUD、预览事务、像素 token、无 slash 残留） |
+| `e2e/run.mjs` | ✅ 新增「外观 DIY」步骤（入口/禁用生成/恶意 JSON/预览不落 localStorage/保存/刷新/另存新 id/取消/390） |
 
 ## 7. 分期
 
-- **P1（本次，已做）**：默认暗夜、移除极简、迁移、首屏不闪白、单测、fixture 截图、文档。
-- **P2**：可爱像素风一套（用户已明确要，先定配色/深浅版/是否像素字体标题）。
-- **P3**：DIY manifest v1 + 校验 + 导入/预览/持久化 + 创作规范文档。
-- **不做**：fork/改 Pi SDK、node_modules；一次上 10 套主题；自造复杂多 palette；重资源像素图集。
+- **P1（已做）**：默认暗夜、移除极简、迁移、首屏不闪白、单测、fixture 截图、文档。
+- **P2（已做）**：像素风浅深双版（奶油 + 薄荷/桃粉/淡紫，装饰纯 CSS，正文系统字体）。
+- **P3（引擎/UI 已做，AI 后端待接）**：manifest v1 + 校验 + 导入/导出/预览/持久化 + 管理 UI + 创作规范。
+- **不做**：fork/改 Pi SDK、node_modules；一次上 10 套主题；自造复杂多 palette；重资源像素图集；远程 CSS / `url()` / SVG 执行。
 
-## 8. 待用户决定
+## 8. 已定 / 待定
 
-1. 像素风的深浅版（只做浅色奶油底，还是同时给深色版）？像素字体是否只用于装饰性文字（推荐）？
-2. DIY 首版导入方式：只支持粘贴 JSON，还是同时支持 file import？
-3. 是否需要「导出/分享」主题（仅 manifest、无凭据）？
-4. 自定义主题是否需要跨设备同步（若需要，复用现有 server 设置能力，不新建设置服务）。
+已定（用户本轮确认）：
+
+1. 入口：设置 → 外观 →「用 AI 设计主题」；已存 DIY 卡「编辑 / 用 AI 改」进同一面板。**取消 `/主题设计`**。
+2. 像素风：浅深双版；奶油 + 薄荷/桃粉/淡紫；像素只做装饰、正文系统字体、无远程素材。
+3. DIY：保存后仍可编辑；AI 继续修改；另存为新 UUID；导出/删除；预览未保存不可覆盖原主题；取消完整恢复。
+4. 图片：默认「仅作参考」（只参与本轮 AI 请求、不写主题、不导出）；显式「用作背景/装饰」才进 manifest；只存附件引用与元数据。
+
+仍待用户决定 / 待接：
+
+1. AI 生成后端由主会话接（复用当前 agent 模型）；模型不支持视觉时明确提示换模型或仅文字，不偷偷换视觉服务。
+2. 「用作背景/装饰」的素材导出：首版只导出 manifest（不含图片文件），安全 zip（assets + manifest）**未实现**。
+3. 自定义主题是否需要跨设备同步（若需要，复用现有 server 设置能力，不新建设置服务）。
+4. 主题是否开放对外分享 / 上架（当前只支持本地导出 JSON 文件）。

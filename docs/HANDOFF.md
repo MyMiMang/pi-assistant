@@ -2,6 +2,14 @@
 
 > 当前公开版本 **v0.1.0-beta.23**（2026-10-15 已公开 Latest，仅 macOS arm64）；下一版 **v0.1.0-beta.24 候选**见 `progress-snapshots/hotfix-integration.md`（热修整合，未发布）。上一版 v0.1.0-beta.22。接手前先读根目录 [AGENTS.md](../AGENTS.md)（规则和流程），再读本页（进度），然后看 [ARCHITECTURE.md](ARCHITECTURE.md)（组件）和 [DESIGN.md](DESIGN.md)（完整设计，下面写的 § 是它的章节号）。
 
+2026-10-22 外观 DIY：像素风 + 主题创作引擎 / 管理 UI（子代理 `appearance-theme-implementation`，基 `release-candidate-validation` `a905b42` + cherry-pick `appearance-theme-design` `e2a72f5`，**未 push / 未 tag / 未打包**；改动 DESIGN §5.18）：
+- 用户原话：外观开放给用户 DIY、让 AI 创造；再设计一套可爱像素风。后续补充：DIY 保存后仍可编辑；图片素材作参考（默认不嵌主题）。用户最新明确**取消 `/主题设计`**，入口只留「设置 → 外观 → 用 AI 设计主题」。
+- 已实现（4 个小 commit）：① `packages/shared/theme-manifest.ts` Typed ThemeManifest v1（白名单 token、fail-closed 校验、拒 `url()`/`@import`/未知 token/路径 id、图片只存附件 id+元数据、AI 草稿 DTO）+ `themes/manifest.ts`（manifest→CSS/ThemeDef）/`custom-store.ts`（本地库存、内置只读、导入撞 id 换新、导出剥参考图）/`preview.ts`（预览事务：继续改/上一版/应用并保存/取消完整恢复）；② `pixel` 像素风浅深双版（奶油+薄荷/桃粉/淡紫，装饰纯 CSS、正文系统字体）；③ 设置→外观「用 AI 设计主题」主入口 + `ThemeDesigner`/`ThemeImagePicker` + 「我的主题」卡（编辑/导出/删除/另存为）+ `migrate.ts` 启动安装 DIY 主题；④ 修 brand 插件 `closeBundle`→`writeBundle`（Vite 8 下构建修复）+ e2e 新步骤。
+- 关键约束：AI 后端**未接**（面板留 `onThemeDraft` 接口，未接时生成按钮禁用并标注「开发阶段未接通」，不假生成 / 不硬编码现成主题）；内置主题只可另存不可覆盖/删；预览只改运行时状态 + 临时 `<style>`，**不写 localStorage**（未保存不覆盖原主题）。
+- 实跑（Node 24.19.0，全 fixture / 假 effects，未碰真实 localStorage / 凭据 / 网络 / 桌面）：`theme-manifest.test.ts` **22/22**、`appearance-theme.test.ts` **8/8**（含像素风 token 齐全 + 无 url/@import + 系统字体断言、无 `/主题设计` 残留）；两端 `tsc --noEmit` exit 0；`npm run build -w apps/web` **通过**（brand 占位符替换、dist/sw.js、dist/theme-boot.js 正常）；e2e「外观 DIY」步骤实跑通过（入口/禁用生成/恶意 JSON 拒绝/预览不落 localStorage/保存/刷新仍在/另存新 id/取消恢复/390，截图 `docs/screenshots/16c-theme-designer-390.png`）。
+- **未验 / 待办**：AI 生成端到端（等主会话接后端）、「用作背景/装饰」素材的 zip 打包导出（首版不做）、跨设备同步、全量 `e2e/run.mjs`、真机、打包。**已知既有问题**：e2e「首次运行向导」步骤在本环境失败（已在本树与基线树 `release-candidate-validation` 各复跑一次，同样失败，与本次改动无关）。
+- 环境：本树无 `node_modules`，按候选既有路径软链了 base 树的 `node_modules`（含 `apps/web`、`packages/ext-*` 的嵌套目录）以跑构建 / e2e。
+
 2026-10-22 外观：默认换「暗夜」、移除「极简」（子代理 `appearance-theme-design`，基 `release-candidate-validation` `0752dee`，**未 push / 未 tag / 未打包**；改动 DESIGN §5.18）：
 - 用户原话：『默认的这个外观替换成暗夜这个外观变成默认；极简删掉；再设计一套可爱一点像素风；外观开放给用户 DIY 让他们 AI 创造，你看怎么弄』。主会话确认：用户主动选择过的其他主题保留、不 reset。
 - 概念澄清：这是 **Pi Assistant 应用（`apps/web`）外观**，不是 Pi SDK TUI themes；不改 SDK / node_modules。**主题（skin）≠ 明暗（light/dark/system）**：暗夜 = `noir`，不是 dark mode，两者独立持久化。

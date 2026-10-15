@@ -542,7 +542,7 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 
 ### 5.18 主题系统与对话界面
 
-- **3 套可切换主题**（设置 → 外观，按设备保存在 localStorage）：`noir` 暗夜（**默认**）、`glass` 毛玻璃、`warm` 暖色人文。每套都有浅色/深色（暗夜默认深色），另可“跟随系统”，并可选强调色（“主题默认”或该主题推荐的几种）。设置页的主题卡片是**用真实主题 CSS 渲染的缩小版界面**（实时预览）。
+- **4 套内置主题**（设置 → 外观，按设备保存在 localStorage）：`noir` 暗夜（**默认**）、`glass` 毛玻璃、`warm` 暖色人文、`pixel` 像素风。每套都有浅色/深色（暗夜默认深色），另可“跟随系统”，并可选强调色（“主题默认”或该主题推荐的几种）。设置页的主题卡片是**用真实主题 CSS 渲染的缩小版界面**（实时预览）。
   - 内置「极简专业」（`linear`）已移除（2026-10-22，用户要求）：它的 CSS 与设置卡片都不再出现；旧设备上的 `pia.skin=linear` 在启动时迁移为 `noir`，用户显式选过的其他主题不动。迁移逻辑见 `apps/web/src/appearance-migration.ts`（纯函数，可单测）。
   - **首屏不闪白**：`apps/web/public/theme-boot.js` 在打包脚本之前**同步**执行（CSP 是 `script-src 'self'`，所以放外部文件而非内联），按 localStorage 预置 `<html data-skin data-mode class>` 与 `<meta name="theme-color">`；常量与 `registry.ts` 一致，由单测钉住。
 - **实现**：`apps/web/src/themes/`
@@ -554,6 +554,8 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
   - `<html data-skin data-mode class="dark">` 由 `applyTheme()` 设置；自选强调色写 `--user-acc`。
   - 设计稿源文件在 `docs/design/mockups/`；`apps/web/scripts/port-mockup-css.py` 把设计稿 CSS 移植成主题 CSS（类名加 `pa-` 前缀、作用域化）。
   - **新增主题**：加一个 `<id>.css` + 在 `themes/index.css` 里 `@import` + 在 `THEMES` 里加一条元数据，组件代码不用改。
+- **像素风（`pixel`）**：浅色奶油底 + 深色淡紫底双版；薄荷 / 桃粉 / 淡紫点缀。像素只做装饰（点阵底纹、8bit 阶梯 `clip-path` 边角、等宽分组标签），正文沿用系统字体，不下载像素字体、不引远程素材（纯 CSS 渐变）。
+- **DIY（用户 / AI 造主题）**：设置 → 外观的「用 AI 设计主题」是唯一入口（**没有** `/主题设计` slash 命令）。生成 → 全应用真实临时预览（只改运行时状态 + 临时 `<style>`，不写 localStorage）→ 继续提意见 / 上一版 → 应用并保存 / 另存为新主题（新 UUID）/ 取消（完整恢复外观）。数据模型是自有 **Typed ThemeManifest v1**（`packages/shared/src/theme-manifest.ts`，前后端共用）：白名单 CSS 变量 + enum 装饰 + fail-closed 校验（拒 `url()`/`@import`/未知 token/路径 id），对比度只给 warning。图片素材只存**附件 id + 元数据**（无 base64 / 绝对路径），默认「仅作参考」不写进主题、不导出。模块：`themes/manifest.ts`（manifest→CSS/ThemeDef）、`themes/custom-store.ts`（本地持久化 + 内置只读保护 + 导入撞 id 换新）、`themes/preview.ts`（预览事务）。**AI 后端尚未接通**（面板接口 `onThemeDraft` 已留，未接时按钮禁用并如实标注，不做假生成）。
 - **对话界面**（与主题无关的行为）：
   - 先确认再动手：系统提示要求助理收到任务先用一句短话确认；用户刚发出、还没有输出时显示“正在思考…”。
   - **活动提示行**：工作中在助理消息下方显示“正在读取文件… / 正在打开网页… / 正在运行命令… / 正在操作电脑…”（微光文字动效 + 细节如路径/网址），由 Pi `tool_execution_*` 事件生成的工具步骤推导。
