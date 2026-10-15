@@ -23,6 +23,13 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+2026-10-15 手机浏览器顶栏 / 输入栏 viewport 修复（`mobile-chat-viewport-fix` 树，基 `hotfix-integration` `b7d33d3` + 合 `9554628` 弹窗栈，**未 push / 未 tag / 未打包**）：
+- **用户报的**：手机浏览器里最顶栏和底部输入框会随整页上下移动、不固定；点输入框整页自动放大，打完看聊天要手动缩回。
+- **根因（真实源码）**：`themes/base.css` 手机媒体查询里的 `body{overflow:auto}` 让整页成了滚动容器；`html,body,#root{height:100%}` 在 iOS Safari 取的是「地址栏收起后」的高度（比可见区域高）→ 页面本身能上下拖，`position:absolute` 的输入栏和外层顶栏就跟着走；输入框字号则是默认皮肤 `.pa-app` 的 13.5px 继承进 `textarea/input`（iOS 聚焦自动放大的阈值是 16px）。
+- **改动**：`themes/app.css`（`html,body{overflow:hidden}` + `#root{height:var(--pa-vvh)}`，由 visualViewport 写 px、无 JS 退回 `100dvh`/`100vh`；手机/触屏下只把 `input/textarea/select` 提到 16px、不动版面字号；`html.pa-kb-open` 收起底部安全区留白）；新增 `apps/web/src/viewport.ts`（`installViewportHeight()`，视口变矮后把原本贴底的聊天区重新贴住，`scale!=1` 时不介入以保住双指缩放）；`main.tsx` 加一行安装。主会话 / 群聊 / 子代理共用同一套 `html`/`#root` 规则，`Chat/RoomChat/Subagents` 本次未改，也不碰 `App.tsx` 与模型 UI owner 文件。
+- **实际跑的**（Node 24.20.0，全 Mock）：`npm run typecheck` exit 0；web `vite build` 通过；新增 `e2e/mobile-viewport-ui.mjs`（纯前端 fixture，静态 dist + 拦 /api，不起 main、不碰钥匙串）**123 项全通过**（390/375/430 × 800、输入控件 ≥16px、整页不可滚、键盘模拟后顶栏/输入栏/末消息仍可见、横竖屏、群聊再跑一遍、viewport meta 未禁用缩放、桌面 1280 不泄漏手机规则）；回归 `e2e/composer-compact.mjs`（含 IME）、`e2e/task-ui.mjs`、`e2e/native-dialog-ui.mjs` 均通过。截图在 `workspace/.../evidence/mobile-viewport/`。
+- **未验 / 边界**：**没有真机 iOS 键盘验证** —— Playwright 无真 iOS 键盘，「键盘弹起」是 `setViewportSize` 缩小视口的近似；iOS 聚焦自动放大在 Chromium 里复现不出来，只证了「控件字号 ≥ 16px」这个阈值条件。未安装 App、未碰用户手机浏览器 / 系统操作 / 钥匙串 / 真实数据、未跑全量 e2e。详见 `progress-snapshots/mobile-chat-viewport-fix.md`。
+
 2026-10-22 热修整合（`hotfix-integration` 树，基 `origin/main` `8d7a7d8`，**未 push / 未 tag / 未打包**，等主会话 review 与其余对话弹窗修复 commit 后统一发 **beta.24（仅 mac-arm64）**）：
 - **合入 4 项（按顺序）**：`bd174fd` 单测数据目录 fail-closed（修「侧边栏凭空多出助理小微」根因：`test/setup.ts` 的 `PIA_DATA_DIR ??=` 在外部已有该变量时把 `clawbot.test.ts` 的测试助理 / 渠道行写进用户真实数据目录 → 下次启动「微信凭据无法解密」；改 `=` 强制覆盖 + 新增 `test-data-isolation.test.ts` + `seed-copy.test.ts` 补 setup 前置）；`eb111b9` 聊天外链左键无反应（opener ACL 未放行 → 页面侧接管 + 放行 `opener:allow-open-url`/`allow-default-urls` + Rust `is_external_link` 白名单不再吞错）；`48c50b0` 升级后已配置仍强制向导（`/api/system.onboarded` 不再依赖 `defaultModel()` 实时解析，改看持久信号 + 启动恢复丢失标志 + `modelReady` 可恢复提示）；`91d3b94` 渠道删除按钮点不动（Tauri remote webview 原生 `confirm` 不弹窗返回 false → 换应用内 `useConfirm`，删除中 disabled + ref 防双击，失败显示原因）。
 - **public-startup-audit 去重**：`2d9d95d` 与 `f1fcf11` 的 models 启动注入重叠，**只复用**后者经公开 `initModels(credentials?)` 的内存 `CredentialStore` 注入（`test/launch-memory.ts` + `models.ts` 同进程复用），未重复全合；树内无 `PIA_CREDENTIAL_STORE` 依赖、未碰 `secrets.ts` WIP。
