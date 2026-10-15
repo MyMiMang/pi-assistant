@@ -740,6 +740,7 @@ function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; on
 					{availability && (
 						<div className="mt-1" data-testid="benchmark-availability">
 							就绪状态：CUA {availability.cuaReady ? "✓" : "✗"} · 模型 {availability.modelReady ? "✓" : "✗"} · 测试窗口 {availability.fixtureReady ? "✓" : "✗"}
+							{availability.targetKind === "driver-isolated-browser" ? "（点开始后创建驱动自有的隔离浏览器窗口）" : availability.targetKind === "sandbox-app" ? "（点开始后在助理电脑里开一个专用窗口）" : ""}
 							{availability.reasons?.length ? <div className="text-amber-600">· {availability.reasons.join("；")}</div> : null}
 						</div>
 					)}

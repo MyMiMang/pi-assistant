@@ -523,4 +523,8 @@ export interface BenchmarkAvailability {
 	fixtureReady: boolean;
 	/** 不满足时的中文原因（供 UI 显示，不隐藏） */
 	reasons: string[];
+	/** 元数据：目标电脑是否**可准备**一个隔离 fixture 窗口（GET 只报可准备，**不开窗口**；无副作用）。 */
+	preparable?: boolean;
+	/** 元数据：准备好的窗口来源类型。 */
+	targetKind?: "driver-isolated-browser" | "sandbox-app";
 }

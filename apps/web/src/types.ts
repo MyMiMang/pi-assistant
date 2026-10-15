@@ -161,6 +161,9 @@ export interface BenchmarkAvailability {
 	modelReady: boolean;
 	fixtureReady: boolean;
 	reasons: string[];
+	/** 元数据：目标电脑是否可准备一个隔离 fixture 窗口（GET 只报可准备，不开窗口）。 */
+	preparable?: boolean;
+	targetKind?: "driver-isolated-browser" | "sandbox-app";
 }
 export interface FastBenchmarkResult {
 	id: string;

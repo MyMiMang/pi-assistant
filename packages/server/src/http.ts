@@ -240,7 +240,7 @@ mountImageRoutes(app, localOnly);
 mountPetRoutes(app, localOnly);
 mountUsageRoutes(app);
 mountSubagentRoutes(app);
-mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null }).host);
+mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null, desktopKind: () => desktopBackend().id }).host);
 mountLocalLayaRoutes(app, localOnly);
 app.get("/api/models", (c) => {
 	const names = providerNames();

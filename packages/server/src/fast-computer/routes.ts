@@ -4,6 +4,7 @@ import { configuredModels } from "../rooms/model-pick.ts";
 import { fastComputerSettings, saveFastComputerSettings, type FastComputerScope, type FastComputerSettings } from "./index.ts";
 import { benchmarkStatus, cancelBenchmark, listBenchmarks, type BenchmarkAvailability, type FastBenchmarkResult } from "./benchmark.ts";
 import { BenchmarkFixtureStateStore, isPrivateSource, renderBenchmarkFixtureHtml } from "./benchmark-fixture.ts";
+import { FIXTURE_GATEWAY_PREFIX, fixtureOriginAllowed } from "./benchmark-gateway.ts";
 
 /**
  * 基准测试的宿主（由 runtime / 电脑模块注入）。
@@ -60,6 +61,11 @@ export function mountFastComputerRoutes(app: Hono<any>, hostOrOpts?: BenchmarkHo
 		const token = c.req.header("x-bench-fixture-token") ?? "";
 		const remote = (c as unknown as { env?: { incoming?: { socket?: { remoteAddress?: string } } } }).env?.incoming?.socket?.remoteAddress;
 		if (!isPrivateSource(remote)) return c.json({ ok: false, reason: "source_not_private" }, 403);
+		// Origin / Referer 若存在必须同源：别的站点 / 别的 run 的页面不能借浏览器发起上报。
+		const selfOrigin = new URL(c.req.url).origin;
+		if (!fixtureOriginAllowed({ origin: c.req.header("origin"), referer: c.req.header("referer"), selfOrigin })) {
+			return c.json({ ok: false, reason: "origin_not_allowed" }, 403);
+		}
 		let patch: Record<string, unknown> = {};
 		try {
 			patch = await c.req.json<Record<string, unknown>>();
@@ -69,6 +75,8 @@ export function mountFastComputerRoutes(app: Hono<any>, hostOrOpts?: BenchmarkHo
 		const accepted = store.record(fixtureId, nonce, token, patch);
 		return c.json({ ok: accepted });
 	});
+	// 窄网关：fixture 前缀下除上面两个固定路由外，其它路径 / 方法一律 403（无其它 API）。
+	app.all(`${FIXTURE_GATEWAY_PREFIX}*`, (c) => c.json({ ok: false, reason: "fixture_gateway_only" }, 403));
 
 	const parseScope = (v: unknown): FastComputerScope | undefined => (v === "hostpc" || v === "computer" ? v : undefined);
 	app.get("/api/fast-computer/settings", (c) =>

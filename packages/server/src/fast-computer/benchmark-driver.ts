@@ -3,19 +3,24 @@
  *
  * 这一层把「统一 computer backend」抽象成 `invoke(prefix, tool, args)`：
  *  - 生产：`createMcpInvoke` 经 cua 的 MCP（hostpc 用 `hostMcpCommand`，助理电脑用 `cuaMcpCommand`）调用
- *    `get_window_state` / `list_windows` / `click` / `scroll` / 打开 fixture 的 `launch_app`；
- *    所有动作仍走 cua 自身的权限与保护；
- *  - 测试：注入假 invoke，模拟真 driver 的调用序列（含窗口 token 变化、URL nonce、窗口失焦等）。
+ *    `browser_prepare` / `browser_navigate` / `get_browser_state` / `get_window_state` / `list_windows` /
+ *    `click` / `scroll` / `launch_app`；所有动作仍走受限权限桥（暂停 / 档位）。
+ *  - 测试：注入假 invoke，模拟真 driver 的调用序列（含窗口 token 变化、URL nonce、隔离浏览器绑定）。
  *
- * 重要（2026-10-22 复核）：浏览器 `browser_*` 工具来自 ext-browser（CDP），**不在** cua 的 MCP 工具清单里；
- * 所以真实驱动用 cua 原生的 `launch_app({urls})` 在目标电脑上打开 fixture 窗口，再用 `list_windows` +
- * `get_window_state`（同一条 cua 通道）pin 身份。这样「打开 / 观察 / 派发」都只用 cua MCP 能力，能力探测才有意义。
+ * 窗口来源（2026-10-22）：
+ *  - hostpc 用**驱动自有隔离浏览器**（`browser_prepare {allow_launch:true, profile:{mode:"isolated_new"}}`），
+ *    不用用户日常 Chrome / launch_app；随后 `browser_navigate` 打开随机 nonce 的 fixture，`get_browser_state`
+ *    校验 `binding_quality=exact` + URL 含本次 fixtureId+nonce，再用 `list_windows` + `get_window_state` pin 原生
+ *    pid/window_id + 快照 id，供统一 trial runner 使用。**关闭只 kill 驱动自有的那个浏览器进程**。
+ *  - computer（助理电脑 VM）天然隔离，仍用 cua 原生 `launch_app({urls})` 打开 fixture 窗口（配合宿主网关）。
  *
  * **未验证声明**：本文件是真实 driver 路径的源码实现，但当前开发环境没有开启 hostpc、也没有跑助理电脑 VM，
  * 因此**没有在真实桌面上验证过**。CI / 无真实 CUA 环境一律走 blocked，不 mock 冒充 ready。
  */
 import type { BenchmarkDriver, FixtureWindowHandle } from "./benchmark-host.ts";
 import type { ObservedWindow } from "./benchmark.ts";
+import { benchmarkToolGuard, type BenchmarkGuardInput } from "./benchmark-guard.ts";
+import { fixtureUrlMatches, parseBrowserBinding, parsePreparedBrowserTarget, type FixtureWindowKind } from "./benchmark-window.ts";
 
 export interface InvokeResult {
 	isError: boolean;
@@ -36,58 +41,120 @@ export interface InvokeDriverOptions {
 	/** fixture 页面在目标电脑里的可达 URL；返回 null = 该目标没有安全可达地址（fail-closed）。 */
 	fixtureUrl(path: string, prefix: "hostpc" | "computer"): string | null;
 	/**
-	 * 打开 fixture 窗口的工具与参数。默认用 cua 原生 `launch_app`（用 `urls` 交给应用打开目标地址）。
+	 * 打开 fixture 窗口的工具与参数（仅 **sandbox-app** 路径）。默认用 cua 原生 `launch_app`（用 `urls` 交给应用打开目标地址）。
 	 * 平台 / 后端没有该能力时 `capable()` 必须 false（fail-closed），不假装 ready。
 	 */
 	open?: (url: string) => { tool: string; args: Record<string, unknown> };
+	/** 该目标用哪种隔离窗口来源；由 runtime 的 `planFixtureWindow` 推断。默认 hostpc=driver-isolated-browser / computer=sandbox-app。 */
+	windowKindOf?: (prefix: "hostpc" | "computer") => FixtureWindowKind | null;
+	/** 受限权限桥（暂停 / 档位）；不提供则不做额外拦截（测试 / 内部调用）。传入裸工具名。 */
+	guard?: (input: { prefix: "hostpc" | "computer"; tool: string }) => { ok: boolean; reason?: string };
 	/** 能力探测（由 runtime 缓存后注入）；不提供 = fail-closed，不默认 true。 */
 	capable?: () => { ok: boolean; reason?: string };
-	/** 结束后关闭自有 fixture 窗口的可选实现；不提供则不关（绝不 kill 用户浏览器）。 */
+	/** 结束后关闭自有 fixture 窗口的可选实现；driver-isolated-browser 有内置实现（kill 自有 pid）。 */
 	closeOwn?: (handle: FixtureWindowHandle) => Promise<void>;
 }
 
 const asObj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" ? (v as Record<string, unknown>) : null);
 
-/** 默认打开方式：cua 原生 launch_app，把 fixture 地址作为待打开目标交给应用。 */
+/** 默认打开方式：cua 原生 launch_app，把 fixture 地址作为待打开目标交给应用（沙箱路径）。 */
 export const defaultOpenTool = "launch_app";
 const defaultOpen = (url: string) => ({ tool: defaultOpenTool, args: { urls: [url] } });
 
 /**
- * 用统一 backend 调用构造真实 driver。所有失败都 fail-closed（返回 null / ok:false），绝不「大概是它」。
+ * 用统一 backend 调用构造真实 driver。所有失败都 fail-closed（返回 null / ok:false / 抛错），绝不「大概是它」。
  */
 export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): BenchmarkDriver {
 	const open = opts.open ?? defaultOpen;
+	const windowKindOf = (prefix: "hostpc" | "computer"): FixtureWindowKind =>
+		opts.windowKindOf?.(prefix) ?? (prefix === "hostpc" ? "driver-isolated-browser" : "sandbox-app");
+
+	/** 每次 backend 调用前过受限权限桥（暂停 / 只看档位）；拒绝的调用直接作为 isError 返回，不派发。 */
+	const call = async (prefix: "hostpc" | "computer", tool: string, args: Record<string, unknown>): Promise<InvokeResult> => {
+		const bare = bareTool(tool);
+		if (opts.guard) {
+			const g = opts.guard({ prefix, tool: bare });
+			if (!g.ok) return { isError: true, contentText: g.reason ?? "基准动作被权限桥拒绝" };
+		}
+		return opts.invoke(prefix, tool, args);
+	};
+
+	const openSandboxApp = async (prefix: "hostpc" | "computer", session: string | undefined, absolute: string, fixtureId: string, nonce: string) => {
+		const s = session ? { session } : {};
+		const { tool: openTool, args: openArgs } = open(absolute);
+		const opened = await call(prefix, bareTool(openTool), { ...openArgs, ...s });
+		if (opened.isError) throw new Error(`打开 fixture 窗口失败：${opened.contentText ?? "未知错误"}`);
+		// 用 list_windows 找到标题 / URL 里带 fixtureId + nonce 的那一个窗口（只认唯一命中）。
+		const listed = await call(prefix, "list_windows", { ...s });
+		const windows = (asObj(listed.structuredContent)?.windows ?? asObj(listed.structuredContent)?.result ?? []) as unknown;
+		const match = pickFixtureWindow(windows, fixtureId, nonce);
+		if (!match) throw new Error("找不到带本次 fixture nonce 的独立窗口（fail-closed）");
+		const state = await call(prefix, "get_window_state", { pid: match.pid, window_id: match.windowId, tree_format: "elements", ...s });
+		// cua `get_window_state` 只给 `snapshot_id`（每次读取都换新），没有 `window_token`；用它作为「拿到了新鲜快照」标记。
+		const token = asObj(state.structuredContent)?.snapshot_id ?? asObj(state.structuredContent)?.window_token ?? asObj(state.structuredContent)?.windowToken;
+		if (typeof token !== "string" || !token) throw new Error("读不到窗口快照 id（fail-closed）");
+		const handle: FixtureWindowHandle = { prefix, session, pid: match.pid, windowId: match.windowId, windowToken: token, fixtureId, url: absolute };
+		return { handle, close: async () => void (await opts.closeOwn?.(handle).catch(() => {})) };
+	};
+
+	const openDriverBrowser = async (prefix: "hostpc" | "computer", session: string | undefined, absolute: string, fixtureId: string, nonce: string) => {
+		const s = session ? { session } : {};
+		// 1) 拉起驱动自有的隔离浏览器（官方 attested 路径；不用用户日常 profile）。
+		const prep = await call(prefix, "browser_prepare", { allow_launch: true, profile: { mode: "isolated_new" }, ...s });
+		if (prep.isError) throw new Error(`打开驱动自有隔离浏览器失败：${prep.contentText ?? "未知错误"}`);
+		const target = parsePreparedBrowserTarget(prep.structuredContent);
+		if (!target) throw new Error("驱动没有返回可 pin 的隔离浏览器 target（fail-closed）");
+		// 2) 在隔离浏览器里打开本次随机 nonce 的 fixture。
+		const navArgs: Record<string, unknown> = { target_id: target.targetId, url: absolute, ...s };
+		if (target.tabId) navArgs.tab_id = target.tabId;
+		const nav = await call(prefix, "browser_navigate", navArgs);
+		if (nav.isError) throw new Error(`在隔离浏览器里打开 fixture 失败：${nav.contentText ?? "未知错误"}`);
+		// 3) 取精确绑定 + 校验 URL 是本次 fixture；owner pid 用于结束后只关自有浏览器。
+		const stateArgs: Record<string, unknown> = { target_id: target.targetId, snapshot_format: "semantic_v2", ...s };
+		if (target.tabId) stateArgs.tab_id = target.tabId;
+		const state = await call(prefix, "get_browser_state", stateArgs);
+		if (state.isError) throw new Error(`读隔离浏览器状态失败：${state.contentText ?? "未知错误"}`);
+		const binding = parseBrowserBinding(state.structuredContent, { fixtureId, nonce });
+		if (!binding.ok) throw new Error(binding.reason ?? "隔离浏览器身份校验失败（fail-closed）");
+		// 4) 隔离浏览器也是真实桌面窗口：用 list_windows + get_window_state pin 原生 pid/window_id，供统一 runner 使用。
+		const listed = await call(prefix, "list_windows", { ...s });
+		const windows = (asObj(listed.structuredContent)?.windows ?? asObj(listed.structuredContent)?.result ?? []) as unknown;
+		const match = pickFixtureWindow(windows, fixtureId, nonce);
+		if (!match) throw new Error("找不到本次隔离浏览器窗口（fail-closed）");
+		const win = await call(prefix, "get_window_state", { pid: match.pid, window_id: match.windowId, tree_format: "elements", ...s });
+		const token = asObj(win.structuredContent)?.snapshot_id ?? binding.token;
+		if (typeof token !== "string" || !token) throw new Error("读不到窗口快照 id（fail-closed）");
+		const ownerPid = binding.ownerPid ?? target.ownerPid;
+		const handle: FixtureWindowHandle = { prefix, session, pid: match.pid, windowId: match.windowId, windowToken: token, fixtureId, url: absolute };
+		return {
+			handle,
+			close: async () => {
+				// 只关**驱动自有**的隔离浏览器进程；拿不到自有 pid 就不关（绝不 kill 用户浏览器 / 别的窗口）。
+				if (ownerPid === undefined) return;
+				if (opts.closeOwn) {
+					await opts.closeOwn(handle).catch(() => {});
+					return;
+				}
+				await call(prefix, "kill_app", { pid: ownerPid, ...s });
+			},
+		};
+	};
+
 	return {
 		target: (requested) => opts.target(requested),
 		capable: () => opts.capable?.() ?? { ok: false, reason: "未提供目标电脑能力探测（fail-closed，不默认可用）" },
 		// 经统一 computer backend（cua MCP）真实调用；来源标 cua，不是测试假驱动
 		provenance: () => "cua",
+		windowKind: (prefix) => windowKindOf(prefix),
 
 		async openFixtureWindow({ url, fixtureId, nonce, target }) {
 			const sel = opts.target(target);
 			if (!sel) throw new Error("目标电脑未授权或未启动");
 			const absolute = opts.fixtureUrl(url, sel.prefix);
 			if (!absolute) throw new Error("目标电脑没有安全可达的 fixture 地址（需要受控宿主网关）");
-			const { tool: openTool, args: openArgs } = open(absolute);
-			const opened = await opts.invoke(sel.prefix, bareTool(openTool), { ...openArgs, ...(sel.session ? { session: sel.session } : {}) });
-			if (opened.isError) throw new Error(`打开 fixture 窗口失败：${opened.contentText ?? "未知错误"}`);
-			// 用 list_windows 找到标题 / URL 里带 fixtureId + nonce 的那一个窗口（只认唯一命中）。
-			const listed = await opts.invoke(sel.prefix, "list_windows", { ...(sel.session ? { session: sel.session } : {}) });
-			const windows = (asObj(listed.structuredContent)?.windows ?? asObj(listed.structuredContent)?.result ?? []) as unknown;
-			const match = pickFixtureWindow(windows, fixtureId, nonce);
-			if (!match) throw new Error("找不到带本次 fixture nonce 的独立窗口（fail-closed）");
-			const state = await opts.invoke(sel.prefix, "get_window_state", { pid: match.pid, window_id: match.windowId, tree_format: "elements", ...(sel.session ? { session: sel.session } : {}) });
-			// cua `get_window_state` 只给 `snapshot_id`（每次读取都换新），没有 `window_token`；用它作为「拿到了新鲜快照」标记。
-			const token = asObj(state.structuredContent)?.snapshot_id ?? asObj(state.structuredContent)?.window_token ?? asObj(state.structuredContent)?.windowToken;
-			if (typeof token !== "string" || !token) throw new Error("读不到窗口快照 id（fail-closed）");
-			const handle: FixtureWindowHandle = { prefix: sel.prefix, session: sel.session, pid: match.pid, windowId: match.windowId, windowToken: token, fixtureId, url: absolute };
-			return {
-				handle,
-				close: async () => {
-					// 只关本次打开的 fixture 窗口（若后端提供受控关闭接口）；绝不 kill 整个浏览器 / 动别的窗口。
-					if (opts.closeOwn) await opts.closeOwn(handle).catch(() => {});
-				},
-			};
+			if (!fixtureUrlMatches(absolute, fixtureId, nonce)) throw new Error("fixture 地址缺少本次 nonce（fail-closed）");
+			const kind = windowKindOf(sel.prefix);
+			return kind === "driver-isolated-browser" ? openDriverBrowser(sel.prefix, sel.session, absolute, fixtureId, nonce) : openSandboxApp(sel.prefix, sel.session, absolute, fixtureId, nonce);
 		},
 
 		async readWindow(handle) {
@@ -106,7 +173,7 @@ export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): Benchmar
 
 		async execute(handle, tool, args, signal) {
 			if (signal.aborted) return { isError: true };
-			return opts.invoke(handle.prefix, bareTool(tool), args);
+			return call(handle.prefix, bareTool(tool), args);
 		},
 	};
 }

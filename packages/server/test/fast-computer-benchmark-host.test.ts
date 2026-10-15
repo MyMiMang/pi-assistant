@@ -130,7 +130,7 @@ test("host：真实闭环——模型只选 click，双证据（机器状态 + U
 	const { driver, dispatched } = fakeDriver(store);
 	const host = readyHost(driver, store);
 	const avail = host.availability();
-	assert.deepEqual(avail, { cuaReady: true, modelReady: true, fixtureReady: true, reasons: [] });
+	assert.deepEqual(avail, { cuaReady: true, modelReady: true, fixtureReady: true, reasons: [], preparable: true });
 	const run = await host.start({});
 	const s = await waitTerminal(run.id);
 	assert.equal(s?.status, "done");
