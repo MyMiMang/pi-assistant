@@ -1,22 +1,27 @@
 /**
  * 自定义 provider 的 classifier 持久化 / 重注册集成测试（评审补缺口）。
  *
+ * ⚠️ 本测试**只用公开的内存 CredentialStore**（./in-memory-credentials.ts）+ 临时 data 目录，
+ * 绝不构造 server 的安全凭据后端（会走 OS 钥匙串）、不读真实配置 / key。
+ *
  * 覆盖：
- *  1) 保存后 classifier 出现在目录、可分类，且把 System One 请求发到**该 provider 的 baseUrl**；
- *  2) reloadConfig（丢掉扩展注册）后靠公开元数据 reapplyClassifiers（= 启动路径）重新注册；
- *  3) 更新 provider 时 chat 模型不丢、classifier 不丢（留空不改）；改 classifier 后旧引用被清；
+ *  1) 保存后 classifier 出现在目录、可分类，且把 System One 请求发到**该 provider 的 baseUrl**、用它的 key；
+ *  2) 模拟重启（扩展层丢失）后 reapplyClassifiers（= 启动路径）按公开元数据重新注册；
+ *  3) 更新 provider 时 chat 不丢、classifier 留空不改；改 classifier 后旧引用被清；
  *  4) 删除 provider → 分类器消失、快速操作模型引用被清理；
  *  5) 不合法的 classifier 协议 / 空模型 id 被拒。
- *
- * 凭据只用临时 PIA_DATA_DIR 写假值，不读任何真实配置。
  */
 import "./setup.ts";
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, test } from "node:test";
-import { getSetting, setSetting } from "../src/db.ts";
-import { clearProviderReferences, customProviders, initModels, models } from "../src/models.ts";
+import { CustomProviders, type CustomProviderMeta, type CustomStorage } from "../src/pi-adapter/custom-providers.ts";
 import type { ClassifierContext } from "../src/pi-adapter/index.ts";
+import { PiModels } from "../src/pi-adapter/index.ts";
+import { memoryCredentialStore } from "./in-memory-credentials.ts";
 
 interface SeenRequest {
 	url: string;
@@ -46,7 +51,27 @@ after(() => {
 const KEY_A = "sk-relay-a-0123456789abcdef";
 const KEY_B = "sk-relay-b-0123456789abcdef";
 
-await initModels();
+// 内存元数据 / 请求头 / 快速操作引用：隔离，不碰真实配置。
+function memoryStorage() {
+	let metaList: CustomProviderMeta[] = [];
+	const headers = new Map<string, Record<string, string>>();
+	let fast: { kind?: string; provider: string; id: string } | null = null;
+	const store: CustomStorage = {
+		loadMeta: () => metaList,
+		saveMeta: (l) => void (metaList = l),
+		loadHeaders: (id) => headers.get(id) ?? {},
+		saveHeaders: (id, h) => void (h ? headers.set(id, h) : headers.delete(id)),
+		readKey: async () => undefined,
+		loadFastReference: () => fast,
+		saveFastReference: (ref) => void (fast = { kind: fast?.kind, ...ref }),
+	};
+	return { store, getFast: () => fast, setFast: (v: typeof fast) => (fast = v), getMetas: () => metaList };
+}
+
+const modelsPath = join(mkdtempSync(join(tmpdir(), "pia-cls-persist-")), "models.json");
+const models = await PiModels.create({ credentials: memoryCredentialStore(), modelsPath, allowNetwork: false });
+const mem = memoryStorage();
+const customProviders = new CustomProviders(models, modelsPath, mem.store);
 
 const context: ClassifierContext = {
 	state: { text: "你好" },
@@ -87,8 +112,8 @@ test("模拟重启：扩展层丢失后 reapplyClassifiers（启动路径）按�
 	assert.equal(models.listClassifierModels(id).length, 0, "无扩展层时 classifier 不生效（证明不是靠 models.json 持久化）");
 	customProviders.reapplyClassifiers();
 	assert.ok(models.listClassifierModels(id).some((m) => m.id === "jev-relay-a"), "启动重注册后 classifier 回来");
-	// 元数据持久化在 settings（公开 store），不是 models.json
-	assert.ok(!JSON.stringify(getSetting("customProviders", [])).includes("sk-relay"), "元数据不含 key");
+	// 元数据持久化在公开 store，不含 key
+	assert.ok(!JSON.stringify(mem.getMetas()).includes("sk-relay"), "元数据不含 key");
 });
 
 test("更新 provider：chat 不丢、classifier 留空不改；改 classifier 后旧引用被清", async () => {
@@ -98,12 +123,11 @@ test("更新 provider：chat 不丢、classifier 留空不改；改 classifier �
 	assert.ok(models.listClassifierModels(id).some((m) => m.id === "jev-relay-a"), "classifier 留空不改");
 
 	// 改 classifier：旧 fast 引用应被清掉
-	setSetting("fastComputer", { enabled: true, kind: "systemone", provider: id, id: "jev-relay-a", threshold: 0.6, timeoutMs: 4000 });
+	mem.setFast({ kind: "systemone", provider: id, id: "jev-relay-a" });
 	await customProviders.save(id, { name: "Relay A3", api: "openai-completions", baseUrl: baseA, models: [{ id: "relayA-chat" }], classifiers: [{ protocol: "typesafe-system-one", modelId: "jev-relay-a2" }] });
 	assert.ok(!models.listClassifierModels(id).some((m) => m.id === "jev-relay-a"), "旧 classifier 移除");
 	assert.ok(models.listClassifierModels(id).some((m) => m.id === "jev-relay-a2"));
-	const fast = getSetting<{ provider: string; id: string }>("fastComputer", { provider: "", id: "" });
-	assert.deepEqual([fast.provider, fast.id], ["", ""], "悬空的快速操作模型引用被清");
+	assert.deepEqual([mem.getFast()?.provider, mem.getFast()?.id], ["", ""], "悬空的快速操作模型引用被清");
 });
 
 test("多个 provider：各自的 key 只发给自己的 baseUrl，不串", async () => {
@@ -131,12 +155,10 @@ test("非法 classifier 被拒：未知协议 / 空模型 id", async () => {
 
 test("删除 provider：分类器消失，快速操作模型引用被清", async () => {
 	const id = "custom-relay-a";
-	setSetting("fastComputer", { enabled: true, kind: "systemone", provider: id, id: "jev-relay-a2", threshold: 0.6, timeoutMs: 4000 });
+	mem.setFast({ kind: "systemone", provider: id, id: "jev-relay-a2" });
 	assert.ok(await customProviders.remove(id));
-	clearProviderReferences(id);
 	assert.equal(models.listClassifierModels(id).length, 0);
-	const fast = getSetting<{ provider: string; id: string }>("fastComputer", { provider: "x", id: "x" });
-	assert.deepEqual([fast.provider, fast.id], ["", ""], "删除服务后清理快速操作模型引用");
+	assert.deepEqual([mem.getFast()?.provider, mem.getFast()?.id], ["", ""], "删除服务后清理快速操作模型引用");
 	const b = customProviders.list().find((p) => p.name === "Relay B");
 	if (b) await customProviders.remove(b.id);
 });

@@ -19,7 +19,8 @@ import { after, test } from "node:test";
 // 这样测试跑的是 Pi 真实的 HTTP 请求 / 鉴权解析，而不是桩。
 import { classify as systemOneClassify } from "@earendil-works/pi-ai/api/typesafe-system-one";
 import { PiModels, type ClassifierContext } from "../src/pi-adapter/index.ts";
-import { EncryptedCredentialStore } from "../src/secrets.ts";
+// 只用公开的内存 CredentialStore：绝不构造会走 OS 钥匙串的安全后端（见 in-memory-credentials.ts）。
+import { memoryCredentialStore } from "./in-memory-credentials.ts";
 
 interface SeenRequest {
 	url: string;
@@ -71,7 +72,7 @@ after(() => {
 const KEY_A = "sk-test-key-aaaa-0123456789abcdef";
 const KEY_B = "sk-test-key-bbbb-0123456789abcdef";
 
-const models = await PiModels.create({ credentials: new EncryptedCredentialStore(), modelsPath: null, allowNetwork: false });
+const models = await PiModels.create({ credentials: memoryCredentialStore(), modelsPath: null, allowNetwork: false });
 
 function register(id: string, path: string) {
 	models.registerProvider(id, {
@@ -165,7 +166,7 @@ test("models.json 不能注册 classifier（真实 SDK 限制）：classifier �
 		modelsPath,
 		JSON.stringify({ providers: { "custom-cls": { name: "C", baseUrl: `http://127.0.0.1:${port}`, api: "typesafe-system-one", models: [{ id: "jev-x", name: "Jev X", type: "classifier", api: "typesafe-system-one", input: ["text"], contextWindow: 8192, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }),
 	);
-	const mj = await PiModels.create({ credentials: new EncryptedCredentialStore(), modelsPath, allowNetwork: false });
+	const mj = await PiModels.create({ credentials: memoryCredentialStore(), modelsPath, allowNetwork: false });
 	assert.deepEqual(mj.listClassifierModels("custom-cls"), [], "models.json 里的 classifier 条目不会进 classifier 目录（真实 SDK 限制）");
 	assert.ok(mj.listModels("custom-cls").some((x) => x.id === "jev-x"), "它被 Pi 当成 chat 模型，不能用于 classify");
 });
@@ -188,7 +189,7 @@ test("自定义 provider（models.json 只有 chat）经公开入口补 SystemOn
 		}),
 	);
 	const KEY_C = "sk-relay-key-cccc-0123456789abcdef";
-	const mj = await PiModels.create({ credentials: new EncryptedCredentialStore(), modelsPath, allowNetwork: false });
+	const mj = await PiModels.create({ credentials: memoryCredentialStore(), modelsPath, allowNetwork: false });
 	await mj.setRuntimeApiKey("custom-relay", KEY_C);
 	await mj.reloadConfig();
 	assert.deepEqual(mj.listClassifierModels("custom-relay"), [], "models.json 自定义 provider 本身没有 classifier");
