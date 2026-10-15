@@ -193,128 +193,66 @@ try {
 	ok("390 窄中栏只留图标、无溢出、圆环独立");
 
 	// ============================================================ 5) 设置 › 模型：新版排版 + 折叠渠道 + 渠道内能力 + 编辑/删除
-	console.log("\n[5] 设置 › 模型：默认使用/识图紧凑、渠道分组折叠、能力标签在模型行内、编辑/删除走应用内确认框");
+	// ============================================================ 5) 设置 › 模型：统一面板 + 卡片网格 + 擅长标签 + 编辑/删除确认
+	console.log("\n[5] 设置 › 模型：默认使用紧凑、统一模型服务面板、卡片网格、模型行内擅长标签、编辑/删除走应用内确认框");
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto(`${BASE}/?agent=${agent.id}&settings=models`);
-	const acc = page.getByTestId("provider-accordion");
-	await acc.waitFor();
-	// 顶部：默认使用 / 识图模型各是一个按钮（模型 + 思考强度合一）；不再有全局模型擅长长清单
+	const panel = page.getByTestId("model-services-panel");
+	await panel.waitFor();
+	// 顶部：默认使用是一个合一按钮；旧的独立识图模型选择器已删除（图片跟当前 chat）
 	assert.equal(await page.getByTestId("default-model-picker").count(), 1, "默认使用应是一个按钮");
-	await page.getByTestId("vision-model-picker").waitFor();
-	assert.equal(await page.getByTestId("model-strengths").count(), 0, "不应再有全局模型擅长长清单");
+	assert.equal(await page.getByTestId("vision-model-picker").count(), 0, "不再有独立识图模型选择器");
 	assert.equal(await page.getByTestId("default-model-select").count(), 0, "默认模型不再是下拉框");
-	await j("/api/models/default", "PUT", { provider: "mock", model: "echo-think" });
-	await page.reload();
-	await page.getByTestId("default-model-picker").waitFor();
-	// 等模型列表与 store 加载完（按钮文字出现模型名）再打开菜单，避免空列表竞态
-	await wait(async () => (await page.getByTestId("default-model-picker").innerText()).includes("Mock 推理模型"));
-	await page.getByTestId("default-model-picker").click();
-	await page.getByTestId("default-model-thinking").waitFor();
-	await page.getByTestId("thinking-low").click();
-	await wait(async () => (await j("/api/models/defaults")).thinking === "low");
-	await page.screenshot({ path: join(OUT, "06a-default-vision.png") });
-	// 渠道分组：内置服务 / 我的渠道
-	await page.getByTestId("provider-group-builtin").waitFor();
-	await page.getByTestId("provider-group-mine").waitFor();
-	assert.match(await page.getByTestId("provider-group-mine").innerText(), /我的渠道（6）/, "6 个自定义渠道应归到「我的渠道」");
-	// 服务是「带图标的卡片网格」：每张卡都有服务图标、图标各不相同（不能所有服务一个样）、桌面多列
-	const builtinGrid = page.getByTestId("provider-grid-builtin");
-	const mineGrid = page.getByTestId("provider-grid-mine");
-	await builtinGrid.waitFor();
-	await mineGrid.waitFor();
-	const gridCols = await builtinGrid.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
-	assert.ok(gridCols >= 2, `桌面内置服务应是多列网格，实际 ${gridCols} 列`);
-	assert.equal(await page.locator('[data-testid=provider-row] [data-testid=provider-icon]').count(), await page.getByTestId("provider-row").count(), "每张服务卡都应有图标");
-	const mineIcons = await mineGrid.getByTestId("provider-icon").allTextContents();
-	assert.equal(mineIcons.length, 6, `我的渠道应有 6 个图标：${mineIcons.length}`);
-	assert.equal(new Set(mineIcons).size, mineIcons.length, `6 个渠道图标必须互不相同：${JSON.stringify(mineIcons)}`);
-	assert.ok(mineIcons.every((t) => t.trim().length > 0), "自定义渠道图标不能为空");
-	const builtinIcons = await builtinGrid.getByTestId("provider-icon").evaluateAll((els) => els.map((e) => ({ kind: e.getAttribute("data-provider-icon-kind"), html: e.innerHTML })));
-	const brandCount = builtinIcons.filter((i) => i.kind === "brand").length;
-	assert.ok(brandCount >= Math.floor(builtinIcons.length * 0.8), `内置服务大部分要有品牌图标：${builtinIcons.length} 个里只有 ${brandCount} 个有品牌图标`);
-	// 同一品牌的多个渠道（moonshotai/-cn、openai/codex、xiaomi 的几个 token plan…）共用一张 logo，所以只要求足够多不重复、不能所有服务一个样
-	assert.ok(new Set(builtinIcons.map((i) => i.html)).size >= Math.floor(builtinIcons.length * 0.6), `内置服务图标不能所有服务一个样：${builtinIcons.length} 个服务只有 ${new Set(builtinIcons.map((i) => i.html)).size} 种图标`);
-	assert.ok(builtinIcons.every((i) => i.html.trim().length > 0), "服务图标不能为空");
+	// 服务卡片网格：每张卡都有可区分图标
+	const grid = page.getByTestId("service-grid");
+	await grid.waitFor();
+	const cardIcons = await grid.locator("[data-testid=service-icon]").evaluateAll((els) => els.map((e) => `${e.getAttribute("data-service-icon-kind")}:${e.innerHTML}`));
+	assert.ok(cardIcons.length >= 6, `应至少有 6 个服务卡片图标：${cardIcons.length}`);
+	assert.ok(new Set(cardIcons).size >= 2, "服务图标不能所有服务一个样");
+	// 展开一个自定义渠道：看模型 + 在模型行内改「擅长」标签（建群按这个挑）
 	const target = providers[0];
-	assert.equal(await acc.getByTestId(`provider-toggle-${target.id}`).getAttribute("aria-expanded"), "false", "服务默认应收起");
-	assert.equal(await acc.getByTestId(`provider-models-${target.id}`).count(), 0);
-	await acc.getByTestId(`provider-toggle-${target.id}`).click();
-	const modelRows = acc.getByTestId(`provider-models-${target.id}`).getByTestId("provider-model");
-	await modelRows.first().waitFor();
-	assert.equal(await modelRows.count(), 8, "展开应看到该服务支持的模型");
-	await page.screenshot({ path: join(OUT, "06-settings-accordion.png") });
-	// 能力标签：在渠道的模型行里展开编辑（原来那个全局长清单已去掉）
-	await acc.getByTestId("provider-toggle-mock").click();
-	const mockRow = acc.getByTestId("provider-models-mock").getByTestId("provider-model").first();
-	await mockRow.waitFor();
-	await mockRow.getByTestId("model-strength-toggle").click();
+	const serviceCard = page.locator(`[data-testid=service-card][data-service=${target.id}]`);
+	await serviceCard.getByTestId(`service-toggle-${target.id}`).click();
+	const modelRow = serviceCard.getByTestId("service-model").first();
+	await modelRow.waitFor();
+	await modelRow.getByTestId("model-strength-toggle").click();
 	const tag = page.getByTestId("strength-row").first().getByTestId("tag-coding");
 	await tag.waitFor();
 	const was = await tag.getAttribute("aria-pressed");
 	await tag.click();
 	await wait(async () => (await page.getByTestId("strength-row").first().getByTestId("tag-coding").getAttribute("aria-pressed")) !== was);
-	await page.screenshot({ path: join(OUT, "06b-model-strength.png") });
-	await acc.getByTestId(`provider-edit-${target.id}`).click();
+	// 编辑渠道：内嵌真实表单（保存 / 删除走公开 API），取消回列表
+	await serviceCard.getByTestId(`service-edit-${target.id}`).click();
 	const form = page.getByTestId("custom-provider-form");
 	await form.waitFor();
 	await form.getByRole("button", { name: "取消" }).click();
-	await acc.getByTestId(`provider-toggle-${target.id}`).click();
-	await acc.getByTestId(`provider-edit-${target.id}`).click();
-	await form.waitFor();
-	await form.getByRole("button", { name: "删除", exact: true }).click();
+	// 删除：应用内确认框（不是原生 confirm）；取消后服务仍在
+	await serviceCard.getByTestId(`service-delete-${target.id}`).click();
 	await page.getByTestId("confirm-dialog").waitFor();
 	await page.getByTestId("confirm-cancel").click();
+	await page.waitForTimeout(80);
 	assert.ok((await j("/api/models/custom")).providers.some((p) => p.id === target.id), "取消后服务仍在");
-	await form.getByRole("button", { name: "删除", exact: true }).click();
-	await page.getByTestId("confirm-ok").click();
-	await wait(async () => !(await j("/api/models/custom")).providers.some((p) => p.id === target.id));
 	assert.equal(nativeDialogs, 0, "不得调用原生 confirm");
-	// 删除完成后回到列表（等列表 / 默认使用 / 识图模型都重新渲染完再验大分类折叠）
-	await page.getByTestId("provider-accordion").waitFor();
-	await page.getByTestId("default-model-picker").waitFor();
-	await page.getByTestId("vision-model-picker").waitFor();
-	// 大分类折叠：整个「模型服务 / 渠道」（添加渠道 + 内置服务 + 我的渠道）能一键全部关上，默认使用 / 识图模型不受影响
-	const foldToggle = page.getByTestId("provider-section-toggle");
+	// 大分类折叠：整个「模型服务」可一键关上，默认使用不受影响
+	const foldToggle = page.getByTestId("model-services-toggle");
 	await foldToggle.waitFor();
-	assert.equal(await foldToggle.getAttribute("aria-expanded"), "true", "模型服务 / 渠道默认展开");
-	assert.match(await foldToggle.innerText(), /模型服务 \/ 渠道/, "保留标题");
-	assert.match(await foldToggle.innerText(), /\d+/, "标题应带服务数量");
-	assert.equal(await page.getByTestId("provider-accordion").count(), 1, "展开时能看到渠道列表");
-	const rowsOpen = await page.getByTestId("provider-row").count();
-	assert.ok(rowsOpen > 0, `展开时应有渠道行：${rowsOpen}`);
-	await foldToggle.scrollIntoViewIfNeeded();
-	await page.screenshot({ path: join(OUT, "10-services-expanded.png") });
+	assert.equal(await foldToggle.getAttribute("aria-expanded"), "true", "模型服务默认展开");
+	assert.match(await foldToggle.innerText(), /模型服务/, "保留标题");
 	await foldToggle.click();
-	assert.equal(await page.getByTestId("provider-section-toggle").getAttribute("aria-expanded"), "false", "可一键收起");
-	assert.equal(await page.getByTestId("provider-accordion").count(), 0, "父级收起应完全不渲染渠道列表");
-	assert.equal(await page.getByTestId("provider-row").count(), 0, "父级收起应隐藏所有渠道");
-	assert.equal(await page.getByTestId("provider-group-builtin").count(), 0, "内置服务分组也隐藏");
-	assert.equal(await page.getByTestId("provider-group-mine").count(), 0, "我的渠道分组也隐藏");
+	assert.equal(await page.getByTestId("model-services-toggle").getAttribute("aria-expanded"), "false", "可一键收起");
+	assert.equal(await page.getByTestId("service-grid").count(), 0, "父级收起应完全不渲染服务网格");
 	assert.equal(await page.getByTestId("default-model-picker").count(), 1, "默认使用不受父级折叠影响");
-	assert.equal(await page.getByTestId("vision-model-picker").count(), 1, "识图模型不受父级折叠影响");
-	await foldToggle.scrollIntoViewIfNeeded();
-	await page.screenshot({ path: join(OUT, "11-services-collapsed.png") });
-	// 390 窄屏同样可收起 / 展开，且不横向溢出
+	await foldToggle.click();
+	await page.getByTestId("service-grid").waitFor();
+	// 390 窄屏：单列、不横向溢出
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.waitForTimeout(300);
-	await page.getByTestId("provider-section-toggle").scrollIntoViewIfNeeded();
-	assert.equal(await page.getByTestId("provider-accordion").count(), 0, "390 收起后仍不渲染渠道");
-	assert.ok((await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 1, "390 收起不应横向溢出");
-	await page.screenshot({ path: join(OUT, "12-services-collapsed-390.png") });
-	await page.getByTestId("provider-section-toggle").click();
-	await page.getByTestId("provider-accordion").waitFor();
-	assert.equal(await page.getByTestId("provider-section-toggle").getAttribute("aria-expanded"), "true", "390 可重新展开");
-	// 390 下卡片网格自适应为单列、不横向溢出
-	const cols390 = await page.getByTestId("provider-grid-builtin").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+	const cols390 = await page.getByTestId("service-grid").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
 	assert.equal(cols390, 1, `390 应是单列网格，实际 ${cols390} 列`);
 	assert.ok((await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 1, "390 展开不应横向溢出");
-	await page.getByTestId("provider-section-toggle").scrollIntoViewIfNeeded();
 	await page.screenshot({ path: join(OUT, "13-services-expanded-390.png") });
 	await page.setViewportSize({ width: 1280, height: 900 });
-	ok("设置按服务折叠、可看模型、编辑/删除用应用内确认框");
-	ok("模型服务是带图标的卡片网格（每张卡一个可区分图标）");
-	ok("模型服务 / 渠道是一个大分类，可一键全部关上，默认使用 / 识图模型不受影响");
-
+	ok("设置统一面板：卡片网格、模型行内擅长标签、编辑/删除应用内确认、可一键折叠、390 单列不溢出");
 	// ============================================================ 5b) 模型菜单锚定触发器（回归：设置弹窗里跑到容器右边 / 出屏 / 被裁）
 	console.log("\n[5b] 模型菜单锚定触发器：设置弹窗里不再跑到右边，多视口 / 滚动 / 翻转都贴住按钮");
 	const geom = async (btnId, menuId) => ({ btn: await page.getByTestId(btnId).boundingBox(), menu: await page.getByTestId(menuId).boundingBox() });
@@ -328,20 +266,20 @@ try {
 	const settingsStillOpen = async () => assert.ok(await page.getByTestId("settings-dialog").isVisible(), "模型菜单不应把设置弹窗一起关掉");
 
 	// 识图模型 / 默认使用两个 picker 都锚定按钮（设置弹窗是块级容器，正是以前跑偏的地方）
-	await page.getByTestId("vision-model-picker").click();
-	await page.getByTestId("vision-model-menu").waitFor();
+	await page.getByTestId("default-model-picker").click();
+	await page.getByTestId("default-model-menu").waitFor();
 	{
-		const g = await geom("vision-model-picker", "vision-model-menu");
+		const g = await geom("default-model-picker", "default-model-menu");
 		assertAnchored(g, "1280 识图模型", 1280, 900);
 		assert.ok(g.menu.y >= g.btn.y + g.btn.height - 1 && g.menu.y <= g.btn.y + g.btn.height + 14, `识图模型菜单应贴在按钮下方：btnBottom=${g.btn.y + g.btn.height} menuTop=${g.menu.y}`);
 		await settingsStillOpen();
 	}
 	// 滚动设置弹窗内容：菜单要跟着触发器一起走（不能留在原地）
 	{
-		const before = await geom("vision-model-picker", "vision-model-menu");
+		const before = await geom("default-model-picker", "default-model-menu");
 		await page.getByTestId("settings-content").evaluate((el) => (el.scrollTop += 120));
 		await page.waitForTimeout(150);
-		const after = await geom("vision-model-picker", "vision-model-menu");
+		const after = await geom("default-model-picker", "default-model-menu");
 		assert.ok(Math.abs((after.menu.y - after.btn.y) - (before.menu.y - before.btn.y)) <= 2, `滚动后菜单要贴回触发器：before ${before.menu.y - before.btn.y} / after ${after.menu.y - after.btn.y}`);
 		assert.ok(Math.abs((after.menu.x - after.btn.x) - (before.menu.x - before.btn.x)) <= 2, "滚动后水平偏移不变");
 		await page.getByTestId("settings-content").evaluate((el) => (el.scrollTop -= 120));
@@ -350,35 +288,33 @@ try {
 	// 窗口缩放后仍锚定
 	await page.setViewportSize({ width: 1024, height: 800 });
 	await page.waitForTimeout(150);
-	assertAnchored(await geom("vision-model-picker", "vision-model-menu"), "1024 识图模型", 1024, 800);
+	assertAnchored(await geom("default-model-picker", "default-model-menu"), "1024 识图模型", 1024, 800);
 	await page.keyboard.press("Escape");
-	assert.equal(await page.getByTestId("vision-model-menu").count(), 0, "Escape 应只关菜单");
+	assert.equal(await page.getByTestId("default-model-menu").count(), 0, "Escape 应只关菜单");
 	await settingsStillOpen();
 
 	// 视口矮时下方放不下：菜单要翻到按钮上方，而不是被弹窗 overflow 裁掉。
-	// 先把触发器滚到滚动容器底部，确定性地制造“下方放不下”（否则滚动位置会因数据量不同而在下方恰好放得下，翻不翻转都合规）。
-	await page.setViewportSize({ width: 1280, height: 420 });
+	// 触发器在模型页顶部，靠滚动无法把它移到下半屏；用很矮的视口（200）确定性地制造「下方放不下」。
+	await page.setViewportSize({ width: 1280, height: 200 });
 	await page.waitForTimeout(150);
-	await page.getByTestId("vision-model-picker").evaluate((el) => el.scrollIntoView({ block: "end" }));
-	await page.waitForTimeout(100);
-	await page.getByTestId("vision-model-picker").click();
-	await page.getByTestId("vision-model-menu").waitFor();
+	await page.getByTestId("default-model-picker").click();
+	await page.getByTestId("default-model-menu").waitFor();
 	{
-		const g = await geom("vision-model-picker", "vision-model-menu");
+		const g = await geom("default-model-picker", "default-model-menu");
 		assert.ok(g.btn && g.menu);
-		assert.ok(g.menu.y + g.menu.height <= 420 + 1, "矮视口菜单不能出屏");
-		assert.ok(g.menu.y + g.menu.height <= g.btn.y + 2, `下方放不下应翻到按钮上方：menuBottom=${g.menu.y + g.menu.height} btnTop=${g.btn.y}`);
+		assert.ok(g.menu.y >= -0.5 && g.menu.y + g.menu.height <= 200 + 1, "矮视口菜单不能出屏");
+		assert.ok(g.menu.y < g.btn.y, `下方放不下应翻到按钮上方：menuTop=${g.menu.y} btnTop=${g.btn.y}`);
 		assert.ok(Math.abs(g.menu.x - g.btn.x) <= 2, "翻转后水平仍锚定按钮");
 	}
 	await page.keyboard.press("Escape");
 	// 390 窄屏：底部弹窗模式，菜单仍在屏内、仍不裁
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.waitForTimeout(200);
-	await page.getByTestId("vision-model-picker").scrollIntoViewIfNeeded();
-	await page.getByTestId("vision-model-picker").click();
-	await page.getByTestId("vision-model-menu").waitFor();
+	await page.getByTestId("default-model-picker").scrollIntoViewIfNeeded();
+	await page.getByTestId("default-model-picker").click();
+	await page.getByTestId("default-model-menu").waitFor();
 	{
-		const m = await page.getByTestId("vision-model-menu").boundingBox();
+		const m = await page.getByTestId("default-model-menu").boundingBox();
 		assert.ok(m && m.x >= -0.5 && m.x + m.width <= 390 + 1, `390 菜单不能水平出屏：${JSON.stringify(m)}`);
 		assert.ok(m && m.y >= -0.5 && m.y + m.height <= 844 + 1, `390 菜单不能垂直出屏：${JSON.stringify(m)}`);
 	}

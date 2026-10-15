@@ -63,6 +63,15 @@ test("一个服务可同时挂 chat / 识图 / classifier，内置模型也在�
 	assert.ok(findRegistryModel(reg, "openai", "gpt-6-luna", "classifier"));
 });
 
+test("自定义服务的 chat 模型也出现在 Pi 目录时，registry 仍标 kind=custom（不冒充官方）", () => {
+	const input = base();
+	input.chatModels.push({ provider: "custom-relay", id: "relay-chat", name: "Relay Chat", reasoning: false, thinking: ["off"], api: "openai-completions", input: ["text"], contextWindow: 128_000, maxTokens: 8192 });
+	const reg = buildRegistry(input);
+	const relay = reg.find((p) => p.id === "custom-relay")!;
+	assert.equal(relay.kind, "custom", "Pi 目录里先出现同名 provider 也不能把自定义服务当成官方");
+	assert.equal(relay.models.filter((m) => m.type === "chat" && m.id === "relay-chat").length, 1, "同一个 chat 模型只保留一条");
+});
+
 test("自定义服务：一个 baseUrl + 一份凭据下多类模型", () => {
 	const reg = buildRegistry(base());
 	const relay = reg.find((p) => p.id === "custom-relay")!;

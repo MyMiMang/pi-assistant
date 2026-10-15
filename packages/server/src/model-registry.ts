@@ -206,6 +206,9 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 	// 2) 自定义服务（chat 模型 + 声明的 classifier）
 	for (const c of input.custom) {
 		const p = ensure(c.id, { id: c.id, name: c.name || c.id, kind: "custom", configured: !!c.configured, baseUrl: c.baseUrl });
+		// 自定义服务的 chat 模型也会出现在 Pi 的 chat 目录里（builtin 循环先建了这条）——
+		// 这里必须把它重新标回 custom，否则界面会把中转站当成官方服务（显示登录而不是编辑渠道）。
+		p.kind = "custom";
 		p.configured = p.configured || !!c.configured;
 		p.baseUrl ??= c.baseUrl;
 		for (const m of c.models) {
