@@ -23,6 +23,14 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+2026-10-22 聊天附件应用内预览（独立 `file-preview` 树，基 `unified-integration` `3bf2c01`，**未 push / 未 tag / 未打包**）：
+- **背景**：用户报「聊天里的文件卡片只有下载图标，点卡片没有任何预览」（截图 `uploads/粘贴的图片-1792069605963.png`，`voice-input-feasibility.md` 只有右侧下载按钮）。
+- **改动**：新增共享 `apps/web/src/components/FilePreview.tsx`（zustand 打开入口 `openFilePreview` + `FilePreviewHost`，复用现有 `Modal` 栈、Portal 到 body、Esc 只关最上层、关闭后焦点回到触发卡片）与纯逻辑 `apps/web/src/preview.ts`（`previewKind` 扩展名+MIME 判定、`looksBinary` 字节嗅探、`parseCsv` 有界解析、上限常量）。`Attachments.tsx` 非图片卡片改成「主体按钮（预览）+ 独立下载按钮」（不再是嵌套 button，下载 `stopPropagation` 不误触预览，键盘 Enter/Space 可用）；`InfoPane.tsx` 「文件」列表同样改为预览 + 独立下载；`App.tsx` 挂 `FilePreviewHost`；`Markdown.tsx` 加 `blockRemoteImages`（预览场景外链图不自动加载）并把链接收紧到 http/https/mailto/#；`api.ts` 的 `fetchBlob` 支持 `signal`，新增 `fetchBlobLimited`（按 `content-length` / blob 大小判超限，不读完大文件）。图片附件仍走 `ImageViewer`，未新建重复图片预览。
+- **支持**：Markdown（默认渲染 + 复用 react-markdown）/ 纯文本 / log / json / 代码（行号 + 复制）/ CSV（引号内换行、500×50 有界表格）/ PDF（`<object>` + fallback + 下载）/ 图片兜底。**明确暂不支持**（只下载、不执行）：xlsx/docx/pptx 等 Office、HTML、SVG、压缩包。
+- **安全**：只走授权资源地址 `/api/files/:id` 带登录凭证拉取，不读本机任意路径 / URL、不绕权限；类型不只看扩展名 / Content-Type，还嗅探实际字节（二进制不当文本解码）；文本上限 1MB、代码最多 5000 行；Markdown 外链图片默认不加载，`javascript:` / `data:` / `file:` / 相对文件引用不渲染成可点链接；PDF 只用本会话 blob（不外源、不服务端 exec、不上传云）。
+- **已跑**（Node 24.20.0，纯前端 fixture：静态托管 `apps/web/dist` + `page.route` 拦 `/api`，**未启动 `packages/server/src/main.ts`、未碰系统钥匙串 / 真实数据 / 用户文件**）：web `tsc --noEmit` exit 0、`vite build` 通过；`e2e/file-preview.mjs` 桌面 + 390 共 **35 项全通过**；`e2e/mobile-viewport-ui.mjs` 回归全通过。截图 `evidence/file-preview/`。
+- **未做 / 未真机**：Office（xlsx 等）预览、真机 iOS 手势、真实 PDF 内嵌（headless 无 PDF 插件，只验 fallback）、全量 e2e。等主 review 合入 `unified-integration`（memory / model UI 之后）再统一发 beta.24（仅 mac arm64）。进度详见 `progress-snapshots/file-preview.md`。
+
 2026-10-22 统一整合树 `unified-integration`（总体收尾 owner，基 `hotfix-integration` `b7d33d3`，**未 push / 未 tag / 未打包**）：
 - **合入 7 个分支**（`--no-ff` 保祖先）：`native-dialog-ui-fix` `9554628` → `unified-model-registry`（5 commits）→ `local-laya-runtime`（整分支 10 commits）→ `fast-model-benchmark`（`12fa47d`+`c98a299`）→ `model-settings-unified`（5 commits，含 merge `9554628`）→ `conversation-loading-restore-fix`（`d8d38fe`/`a940cfe`/`54f1956`）→ `mobile-chat-viewport-fix`（`1c565ab`+merge `9554628`）。冲突只出现在 `http.ts`（benchmark host + Laya 路由都保留）与 docs（两段都保留，不整文件覆盖）。
 - **验证**（Node 24.20.0，`npm ci` 真装、全程 Mock / 内存凭据 / 临时数据目录，未碰系统钥匙串）：服务端与网页 `tsc --noEmit` exit 0；web `vite build` 通过；专项单测 16 文件 **97/97**；`web-selection` 10/10；纯前端 e2e `native-dialog-ui` / `model-services-ui` / `channel-delete` / `model-ui` / `conversation-restore`(10/10) / `mobile-viewport-ui` 全通过。

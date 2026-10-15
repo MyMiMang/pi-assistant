@@ -1623,3 +1623,22 @@ task_wait({
 模型随即结束这一轮、告诉用户「已登记，等 CI 结束会汇报」。之后：`tickWaits`（每 20s 一轮兜底，GitHub 按 `check_minutes`，默认 5 分钟）查固定端点 `api.github.com/repos/MyMiMang/pi-assistant/actions/runs?...`，`status=completed` 时 `fireWait` 唤醒一次，模型读到 `conclusion / url` 后去核对资产。期间**不产生任何模型调用**。用户中途问「现在怎么样了」，模型调 `task_wait_check`（或界面 `POST /api/task-waits/:id/refresh`）立即拿最新状态。
 
 当前环境出口 IP 被 GitHub 匿名限流（403）；公开仓库免登录但匿名每 IP 每小时只有 60 次，配 `GITHUB_TOKEN`/`GH_TOKEN`（进程已有环境变量，只读）可提高限额。限流 / 认证失败会给出明确提示并记录在等待记录的 `last_error`，到 `due_at` 兑底唤醒时说明，不会静默。
+
+## 29. 聊天附件应用内预览（2026-10-22，`file-preview` 树，未打包）
+
+**问题**：聊天里的非图片文件卡片只有一个下载图标，点卡片主体没有预览，用户只能下载再在系统里打开。
+
+**方案（共享一个预览模块，不改整个聊天）**：
+- `apps/web/src/preview.ts`（纯逻辑，可单测）：`previewKind(name, mime)` 类型判定、`looksBinary(bytes)` 字节嗅探、`parseCsv(text, opts)` 有界 CSV 解析、上限常量（`MAX_TEXT_BYTES` 1MB / `MAX_CSV_ROWS` 500 / `MAX_CSV_COLS` 50 / `MAX_TEXT_LINES` 5000）。
+- `apps/web/src/components/FilePreview.tsx`：`openFilePreview(item)`（zustand）+ `FilePreviewHost`（`App.tsx` 挂一次）。复用现有 `Modal`（`ui.tsx` 的 modalStack）：Portal 到 body、Esc 只关最上层、点背景关闭、手机是底部大面板；关闭后把焦点还给触发卡片。工具栏显示文件名（可换行）+ 类型 · 大小 + 下载 + 关闭。
+- 触发入口：聊天附件卡片（`Attachments.tsx`）、信息面板「文件」列表（`InfoPane.tsx`）；子代理附件复用同一 `ChatMessages` → `Attachments`。图片附件**仍走 `ImageViewer`**（本组件只在 kind=image 时兜底，不替换原查看器）。
+
+**类型与安全边界**：
+- 支持：Markdown（复用现有 `react-markdown`，默认渲染）、纯文本 / log / json / 代码（行号 + 复制）、CSV / TSV（引号内换行、`""` 转义、有界表格）、PDF（`<object type=application/pdf>` + fallback 提示 + 下载）、图片兜底。
+- **明确暂不支持**（只下载、不 inline、不执行）：xlsx / docx / pptx 等 Office、HTML、SVG、压缩包、其它二进制。不做服务端 exec（LibreOffice）、不上传外部云、不读工作区任意路径。
+- 类型判定不只看扩展名、也不只看 Content-Type：两者一起判，再对实际字节嗅探（含 NUL / 控制字符比例），像二进制就不当文本解码。
+- 只通过授权资源地址 `/api/files/:id` 带登录凭证（`api.ts` 的 `fetchBlob` / `fetchBlobLimited`）拉取；`fetchBlobLimited` 先看 `content-length`，超限直接不读 body，界面只提示超限 + 保留下载。加载中有「取消」（卸载 abort fetch），失败按 404 / 权限 / 其它区分，可重试。
+- Markdown 预览：`Markdown.tsx` 新增 `blockRemoteImages`，远端图片显示「点击加载」占位、不自动请求（不把来源信息发出去）；链接只放行 `http/https/mailto` 和页内锚点，`javascript:` / `data:` / `file:` / 相对文件引用只显示文字，不渲染成可点链接。
+- 卡片结构：`<div class=pa-card pa-file-card>` 内是「主体 `<button>`（预览）+ 独立下载 `<button>`（`stopPropagation`）」，没有嵌套 button（合法 HTML + 键盘可达）。
+
+**验证**：`e2e/file-preview.mjs`（纯前端 fixture：静态托管 `apps/web/dist` + `page.route` 拦 `/api`，不启动服务端、不碰钥匙串）桌面 + 390 共 35 项；web `tsc --noEmit` + `vite build`；`e2e/mobile-viewport-ui.mjs` 回归。未验：Office 预览、真机 iOS 手势、真实 PDF 内嵌（headless 无 PDF 插件，只验 fallback）。

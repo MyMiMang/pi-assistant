@@ -2,6 +2,7 @@ import { AlertCircle, Download, File as FileIc, FileArchive, FileCode, FileImage
 import { useEffect, useRef, useState } from "react";
 import { download, fetchBlob } from "../api";
 import type { Attachment } from "../types";
+import { openFilePreview } from "./FilePreview";
 import { cx, fmtSize } from "./ui";
 import { openImageViewer } from "./ImageViewer";
 
@@ -40,19 +41,39 @@ export default function Attachments({ items, mine }: { items: Attachment[]; mine
 						</button>
 					</div>
 				) : (
-					<button key={f.fileId} onClick={() => download(`/api/files/${f.fileId}`, f.name)} className="pa-card pa-file-card w-full text-left" title="下载">
-						<span className="pa-file-ic">
-							<FileKindIcon name={f.name} className="pa-ic" />
-							<em>{(f.name.split(".").pop() ?? "").slice(0, 4).toUpperCase()}</em>
-						</span>
-						<span className="pa-file-txt">
-							<b>{f.name}</b>
-							<small>{fmtSize(f.size)}{f.workspacePath ? ` · ${f.workspacePath}` : ""}</small>
-						</span>
-						<span className="pa-icon-btn">
+					// 非图片：点卡片主体 / 文件名 = 应用内预览；右侧下载图标是独立按钮（stopPropagation，不会误触预览）
+					<div key={f.fileId} className="pa-card pa-file-card w-full" data-testid="file-attachment">
+						<button
+							type="button"
+							onClick={() => openFilePreview({ name: f.name, mime: f.mime, size: f.size, url: `/api/files/${f.fileId}`, downloadPath: `/api/files/${f.fileId}` })}
+							className="flex min-w-0 flex-1 items-center gap-3 text-left"
+							title={`预览 ${f.name}`}
+							aria-label={`预览 ${f.name}`}
+							data-testid="file-preview-open"
+						>
+							<span className="pa-file-ic">
+								<FileKindIcon name={f.name} className="pa-ic" />
+								<em>{(f.name.split(".").pop() ?? "").slice(0, 4).toUpperCase()}</em>
+							</span>
+							<span className="pa-file-txt">
+								<b>{f.name}</b>
+								<small>{fmtSize(f.size)}{f.workspacePath ? ` · ${f.workspacePath}` : ""}</small>
+							</span>
+						</button>
+						<button
+							type="button"
+							className="pa-icon-btn shrink-0"
+							onClick={(e) => {
+								e.stopPropagation();
+								void download(`/api/files/${f.fileId}`, f.name);
+							}}
+							title={`下载 ${f.name}`}
+							aria-label={`下载 ${f.name}`}
+							data-testid="file-download"
+						>
 							<Download className="pa-ic" />
-						</span>
-					</button>
+						</button>
+					</div>
 				),
 			)}
 		</div>

@@ -14,6 +14,7 @@ import { clampPane, clampSide, PANE, resolveLayout, SIDE, useWindowWidth } from 
 import { Resizer } from "./components/Resizer";
 import { BRAND } from "@pi-assistant/shared";
 import { SubagentChat } from "./components/Subagents";
+import { FilePreviewHost } from "./components/FilePreview";
 import { ImageViewerHost } from "./components/ImageViewer";
 
 export default function App() {
@@ -148,6 +149,7 @@ export default function App() {
 			<Settings />
 			<DeviceApproval />
 			<ImageViewerHost />
+			<FilePreviewHost />
 			{system.onboarded && system.modelReady === false && !modelWarnClosed && !fatal && (
 				<div className="fixed bottom-4 left-1/2 z-40 flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-lg dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200" data-testid="model-unavailable">
 					<span>模型配置暂时读不出（已保留原设置，未重置）。请检查网络，或到设置里重新登录模型服务。</span>
