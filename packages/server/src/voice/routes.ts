@@ -18,6 +18,9 @@ export interface VoiceRouteDeps {
 	fetchImpl?: typeof fetch;
 	timeoutMs?: number;
 	now?: () => number;
+	/** 录音租约：录音期间持有，避免本地 ASR 被 idle 卸载（不传则不挂租约路由）。 */
+	acquireLease?: (provider: string, model: string) => Promise<{ ok: true; leaseId: string } | { ok: false; code: string; status: number; message: string }>;
+	releaseLease?: (leaseId: string) => void;
 }
 
 /** multipart 解析前的粗上限：正文（含表单头）不得超过音频上限 + 64 KB。 */
@@ -61,6 +64,23 @@ export function mountVoiceRoutes(app: AnyHono, deps: VoiceRouteDeps, service?: A
 		const out = await svc.transcribe(req, c.req.raw.signal);
 		if (!out.ok) return c.json({ error: out.code, message: out.message }, out.status as 400);
 		return c.json(out.value);
+	});
+
+	// 录音租约：用户按麦→上传结束期间持有，本地 ASR 的 idle 卸载会让路（不 kill 正在录音的模型）。
+	// 前端在开始录音时 acquire，停止/取消/失败后 release；未配置本地 ASR 时返回明确错误，不静默。
+	app.post("/api/audio/asr/lease", async (c) => {
+		if (!deps.acquireLease) return c.json({ error: ASR_ERRORS.notConfigured, message: "当前没有可用的本地语音识别" }, 400);
+		const body = await c.req.json<{ provider?: string; model?: string }>().catch(() => ({}) as { provider?: string; model?: string });
+		const provider = String(body.provider ?? "").trim();
+		const model = String(body.model ?? "").trim();
+		if (!provider || !model) return c.json({ error: ASR_ERRORS.notConfigured, message: "缺少 provider / model" }, 400);
+		const out = await deps.acquireLease(provider, model);
+		if (!out.ok) return c.json({ error: out.code, message: out.message }, out.status as 400);
+		return c.json({ leaseId: out.leaseId });
+	});
+	app.delete("/api/audio/asr/lease/:id", (c) => {
+		deps.releaseLease?.(c.req.param("id"));
+		return c.json({ ok: true });
 	});
 
 	// 契约常量给前端用（上限、协议），避免前端硬编码漂移。

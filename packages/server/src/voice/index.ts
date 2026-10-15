@@ -15,6 +15,7 @@ import { ASR_ERRORS, ASR_PROTOCOLS, type AsrEndpoint } from "./contract.ts";
 import { mountVoiceRoutes } from "./routes.ts";
 import { isAsrProtocol, type AsrOutcome } from "./asr.ts";
 import { asrEndpoint } from "../local-asr/adapter-registry.ts";
+import { asrManager } from "../local-asr/index.ts";
 
 /** 用户在设置里显式声明的云 ASR 模型（统一注册表 `type:"asr"` 的云来源）。 */
 export interface AsrDeclaration {
@@ -94,7 +95,31 @@ async function keyOf(provider: string): Promise<string | undefined> {
 	return c?.type === "api_key" ? c.key : undefined;
 }
 
+/** 录音租约：本地 ASR 的 idle 卸载会让路，避免录音中被 kill（最多 60s 录音 ≤ idle 90s，但仍显式持有更稳）。 */
+const leases = new Map<string, { release: () => void }>();
+let leaseSeq = 0;
+
+async function acquireAsrLease(provider: string, model: string): Promise<{ ok: true; leaseId: string } | { ok: false; code: string; status: number; message: string }> {
+	const local = localModelHints().find((h) => h.type === "asr" && h.provider === provider && h.modelId === model);
+	if (!local) return { ok: false, code: ASR_ERRORS.notConfigured, status: 400, message: "只有本地语音识别需要录音租约" };
+	const st = asrManager().status();
+	if (st.install.state !== "installed") return { ok: false, code: ASR_ERRORS.notConfigured, status: 409, message: "本地语音识别未安装" };
+	// 边录边加载：不阻塞录音；启动失败由随后的转写返回 409，UI 再提示。
+	void asrManager().start().catch(() => {});
+	const lease = asrManager().acquireRecording();
+	const leaseId = `asr-lease-${++leaseSeq}`;
+	leases.set(leaseId, lease);
+	return { ok: true, leaseId };
+}
+
+function releaseAsrLease(leaseId: string): void {
+	const l = leases.get(leaseId);
+	if (!l) return;
+	l.release();
+	leases.delete(leaseId);
+}
+
 /** 挂载 ASR 路由（生产装配）。 */
 export function mountAsrRoutes(app: Hono<any>) {
-	mountVoiceRoutes(app, { resolve: resolveAsrEndpoint });
+	mountVoiceRoutes(app, { resolve: resolveAsrEndpoint, acquireLease: acquireAsrLease, releaseLease: releaseAsrLease });
 }

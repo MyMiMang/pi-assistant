@@ -200,6 +200,28 @@ test("transcribeUpstream：local-asr-http 走 raw WAV + Bearer token 到 loopbac
 	assert.equal(seen!.ct, "audio/wav");
 });
 
+test("录音租约路由：acquire 返回 leaseId，DELETE 释放；未装配时明确报错", async () => {
+	const released: string[] = [];
+	const app = new Hono();
+	mountVoiceRoutes(app, {
+		resolve: async () => ({ ok: true, value: ep() }),
+		fetchImpl: async () => jsonRes({ text: "x" }),
+		acquireLease: async () => ({ ok: true, leaseId: "L1" }),
+		releaseLease: (id) => released.push(id),
+	});
+	const acq = await app.request("/api/audio/asr/lease", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "local-sensevoice", model: "sensevoice-small-int8" }) });
+	assert.equal(acq.status, 200);
+	assert.equal(((await acq.json()) as { leaseId: string }).leaseId, "L1");
+	const del = await app.request("/api/audio/asr/lease/L1", { method: "DELETE" });
+	assert.equal(del.status, 200);
+	assert.deepEqual(released, ["L1"]);
+
+	const bare = new Hono();
+	mountVoiceRoutes(bare, { resolve: async () => ({ ok: true, value: ep() }) });
+	const no = await bare.request("/api/audio/asr/lease", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+	assert.equal(no.status, 400);
+});
+
 // ---------------------------------------------------------------- 注册表契约
 test("注册表：显式声明的 ASR 进 type:\"asr\" + capability asr；本地 ASR 标 local", () => {
 	const list = buildRegistry({

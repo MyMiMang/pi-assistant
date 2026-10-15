@@ -8,7 +8,7 @@
  *  - 自动从统一注册表挑一个已配置的 ASR 模型（本地优先，音频不出设备）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listAsrModels, transcribeAudio, type AsrModelOption } from "../api";
+import { acquireAsrLease, listAsrModels, releaseAsrLease, transcribeAudio, type AsrModelOption } from "../api";
 import { VoiceInputController, voiceCapability, type VoiceError, type VoiceResult, type VoiceState } from "../voice-input";
 
 const WORKLET_SRC = `class PiaCapture extends AudioWorkletProcessor {
@@ -118,6 +118,27 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 	const optsRef = useRef(opts);
 	optsRef.current = opts;
 
+	// 录音租约（只对本地 ASR）：边录边加载期间持有，避免 idle 卸载把正在录的模型 kill 掉。
+	const leaseRef = useRef<{ id: string | null; cancelled: boolean }>({ id: null, cancelled: false });
+	const beginLease = (provider: string, model: string) => {
+		leaseRef.current = { id: null, cancelled: false };
+		void acquireAsrLease(provider, model).then((id) => {
+			if (leaseRef.current.cancelled) {
+				if (id) void releaseAsrLease(id);
+				return;
+			}
+			leaseRef.current.id = id;
+		});
+	};
+	const endLease = () => {
+		const cur = leaseRef.current;
+		cur.cancelled = true;
+		if (cur.id) {
+			void releaseAsrLease(cur.id);
+			cur.id = null;
+		}
+	};
+
 	// 选源：注册表里挑一个已配置的 ASR（本地优先）；失败不报错，只是按钮提示未配置。
 	useEffect(() => {
 		let alive = true;
@@ -145,6 +166,8 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 					onState: (s) => {
 						setState(s);
 						if (s === "recording" || s === "preparing") setError(null);
+						// 转写结束 / 出错 / 回到 idle 时释放录音租约。
+						if (s === "finish" || s === "error" || s === "idle") endLease();
 					},
 					onResult: (r) => optsRef.current.onResult(r),
 					onError: (e) => setError(e),
@@ -153,17 +176,26 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		[],
 	);
 
-	// 页面隐藏 / 切后台：停轨道 + 取消（不发送）。
+	// 页面隐藏 / 切后台：停轨道 + 取消（不发送），并释放录音租约。
 	useEffect(() => {
 		const onHide = () => {
-			if (document.hidden) controller.onHidden();
+			if (document.hidden) {
+				controller.onHidden();
+				endLease();
+			}
 		};
 		document.addEventListener("visibilitychange", onHide);
 		return () => document.removeEventListener("visibilitychange", onHide);
 	}, [controller]);
 
-	// 组件卸载：释放麦克风。
-	useEffect(() => () => controller.cancel(), [controller]);
+	// 组件卸载：释放麦克风与录音租约。
+	useEffect(
+		() => () => {
+			controller.cancel();
+			endLease();
+		},
+		[controller],
+	);
 
 	const start = useCallback(() => {
 		setError(null);
@@ -175,6 +207,8 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 			setError({ code: "asr_not_configured", message: "请先在设置 › 模型 里配置语音识别模型" });
 			return;
 		}
+		// 本地 ASR：先拿录音租约（边录边加载）；云端不需要。
+		if (asrModel.location === "local") beginLease(asrModel.provider, asrModel.model);
 		void controller.start({ provider: asrModel.provider, model: asrModel.model, language: asrModel.language, agentId: optsRef.current.agentId, conversationId: optsRef.current.conversationId, anchor: optsRef.current.getAnchor() });
 	}, [capability.available, capability.reason, asrModel, controller]);
 
@@ -188,6 +222,9 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		toggle: () => (controller.isActive() ? void controller.stop() : start()),
 		start,
 		stop: () => void controller.stop(),
-		cancel: () => controller.cancel(),
+		cancel: () => {
+			controller.cancel();
+			endLease();
+		},
 	};
 }

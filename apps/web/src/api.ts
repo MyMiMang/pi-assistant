@@ -176,6 +176,23 @@ export async function listAsrModels(): Promise<AsrModelOption[]> {
 	return out;
 }
 
+/** 录音租约（只对本地 ASR 有意义）：录音期间持有，避免本地模型被 idle 卸载。失败不阻塞录音。 */
+export async function acquireAsrLease(provider: string, model: string): Promise<string | null> {
+	try {
+		const r = await api<{ leaseId: string }>("/api/audio/asr/lease", { method: "POST", json: { provider, model } });
+		return r.leaseId ?? null;
+	} catch {
+		return null;
+	}
+}
+export async function releaseAsrLease(leaseId: string): Promise<void> {
+	try {
+		await api(`/api/audio/asr/lease/${encodeURIComponent(leaseId)}`, { method: "DELETE" });
+	} catch {
+		/* 释放失败不影响用户 */
+	}
+}
+
 /** 从入口域名的 Rendezvous 查询服务当前地址，并校验签名。 */
 export async function refreshFromRendezvous(): Promise<boolean> {
 	if (!conn?.publicKey || !conn.serverId) return false;

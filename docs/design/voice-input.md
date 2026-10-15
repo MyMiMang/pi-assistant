@@ -51,7 +51,19 @@ idle ──start──▶ preparing ──(getUserMedia ok)──▶ recording �
 
 - `ModelType` 增加 `"asr"`；`ModelCapability` 增加 `"asr"`。
 - 云 ASR：复用 provider registry 的**同一份 baseUrl + key**，`protocol: "openai-audio-transcriptions"`，`source: "custom"`，**只有用户显式声明才 `confirmed: true`**。
-- 本地 ASR（另一代理）：`source: "local"`、`kind: "local"`、`protocol: "openai-audio-transcriptions"`（或本地 runtime 自己声明的协议）、`baseUrl: "http://127.0.0.1:<port>"`，**不需要用户 key**；`local: { installed, running, state, device }` 复用现有结构。
+- 本地 ASR（另一代理）：`source: "local"`、`kind: "local"`、`protocol: "local-asr-http"`（本机 loopback sidecar），`baseUrl: "http://127.0.0.1:<port>/v1/"`，**不需要用户 key**；运行中端点（含进程内 token）只在 `local-asr/adapter-registry.ts`，**绝不进注册表**。
+- **`asrAdapter` 只有一种形状**（云 / 本地共用，避免两套 RegistryAsr 类型）：
+  ```ts
+  interface RegistryAsrAdapter {
+    protocol: string;               // openai-audio-transcriptions | local-asr-http
+    location: "cloud" | "local";
+    requiresApiKey: boolean;        // 本地 false
+    sampleRate?: number; maxSeconds?: number; languages?: string[]; punctuation?: boolean;
+    baseUrl?: string;               // 展示用，绝不含 token
+  }
+  ```
+- 本地卡片经 `local-asr.changed` 事件 → `local-models.ts` 缓存（`type:"asr"` + `asr` 元数据）；**停止后保留卡片**只标暂不可用。
+- **许可证**：SenseVoice 权重许可 `unresolved`（issue #334 仍 open）→ 本地安装入口**默认关闭**，**不 bundle / 不镜像**权重；只开放**用户自行合法导入**。**不允许**把 `unresolved` 强开成 allow；云端 ASR 作为可切换选项，**不强制云优先**。
 - **不靠模型名猜能力**：`chat` 能通 ≠ 能转写；`/v1/models` 不含能力元数据。未知能力默认 `confirmed: false`，界面不给入口。
 - **chat 多模态不自动算 ASR**：`vision` 不等于 `asr`。
 - **免费/本地 fallback 不能偷偷变收费**：切换 provider 必须用户可见；默认只在用户已配置的 ASR 里选。
@@ -81,6 +93,13 @@ idle ──start──▶ preparing ──(getUserMedia ok)──▶ recording �
 
 - **第一次用云 ASR 前**必须有一次明确说明：**音频会上传到该 provider、可能产生费用**；用户同意后才发请求。
 - 本地 provider：明确「音频只留在你的电脑」，只在必要时经**自有 Pi Server** 传到本机（手机经 HTTPS 隧道）。
+
+### 4.4 录音租约（避免录中 kill）
+
+本地 ASR 的 idle TTL 默认 **90 s**，从「最后一次推理结束 / **录音租约释放**」起算；**正在推理或有录音租约时绝不卸载**。
+因此前端在开始录音时 `POST /api/audio/asr/lease { provider, model }` 拿租约（同时**非阻塞**触发本地 sidecar 启动，边录边加载），
+停止 / 取消 / 出错 / 回到 idle 时 `DELETE /api/audio/asr/lease/:id` 释放。云端 ASR 不涉及租约。
+本地未安装时租约接口明确 `409`（不静默）；转写时端点未运行也明确 `409`。
 
 ## 5. 前端模块边界（便于主合并）
 
