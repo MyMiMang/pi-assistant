@@ -397,35 +397,61 @@ function AssignModal({ skill, agents, onClose, onChanged }: { skill: SkillMeta; 
 /** 设置 › 记忆：选择全局记忆后端（以后会有 Hindsight 等高级后端） */
 export function MemorySettings() {
 	const [data, setData] = useState<{ global: string; providers: { id: string; name: string; capabilities: Record<string, boolean> }[] } | null>(null);
+	const [saving, setSaving] = useState(false);
+	const [err, setErr] = useState("");
 	const load = () => api("/api/memory/providers").then(setData);
 	useEffect(() => {
 		void load();
 	}, []);
+	const setGlobal = async (id: string) => {
+		setErr("");
+		setSaving(true);
+		try {
+			await api("/api/memory/provider", { method: "PUT", json: { id } });
+			await load();
+		} catch (e) {
+			// 不重新加载：Select 的值来自 data.global，保存失败时自然回到原值
+			setErr(`切换失败：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			setSaving(false);
+		}
+	};
 	const CAP: Record<string, string> = { reflect: "反思", mentalModels: "心智模型", temporal: "时间推理", graph: "实体图谱", exportImport: "导出/导入", mcpEndpoint: "MCP 端点" };
 	return (
 		<div className="space-y-4">
 			<p className="text-xs text-mut">
 				助理怎样保存和检索长期记忆。 <Help>每个助理默认跟随这里的设置，也可以在助理的「记忆」页单独选择。记忆里有三种作用域：共享（关于你，所有助理可见）、仅此助理、仅当前对话。</Help>
 			</p>
+			<div className="flex items-center gap-2">
+				<Select
+					value={data?.global ?? ""}
+					ariaLabel="全局记忆后端"
+					testId="memory-global-provider"
+					placeholder="选择记忆后端…"
+					menuMinWidth={240}
+					disabled={saving || !data}
+					options={(data?.providers ?? []).map((p) => ({ value: p.id, label: p.name }))}
+					onChange={(v) => void setGlobal(v)}
+				/>
+				{saving && <span className="text-xs text-mut">保存中…</span>}
+			</div>
+			{err && <p className="text-xs text-red-600" data-testid="memory-global-provider-error">{err}</p>}
 			<ul className="space-y-2">
 				{data?.providers.map((p) => (
-					<li key={p.id}>
-						<label className="pa-card flex cursor-pointer items-start gap-3 !p-3">
-							<input type="radio" name="memprov" className="mt-1" checked={data.global === p.id} onChange={async () => (await api("/api/memory/provider", { method: "PUT", json: { id: p.id } }), load())} />
-							<span className="min-w-0 flex-1">
-								<span className="block text-sm font-medium">{p.name}</span>
-								<span className="mt-1 flex flex-wrap gap-1">
-									{Object.entries(CAP).map(([k, v]) => (
-										<Badge key={k} tone={p.capabilities[k] ? "green" : "zinc"}>
-											{p.capabilities[k] ? "✓" : "–"} {v}
-										</Badge>
-									))}
-								</span>
-							</span>
-						</label>
+					<li key={p.id} className="pa-card !p-3">
+						<span className="flex items-center gap-2 text-sm font-medium">
+							{p.name}
+							{data.global === p.id && <Badge tone="accent">当前</Badge>}
+						</span>
+						<span className="mt-1 flex flex-wrap gap-1">
+							{Object.entries(CAP).map(([k, v]) => (
+								<Badge key={k} tone={p.capabilities[k] ? "green" : "zinc"}>
+									{p.capabilities[k] ? "✓" : "–"} {v}
+								</Badge>
+							))}
+						</span>
 					</li>
 				))}
-
 			</ul>
 			{data?.providers.some((p) => p.id === "hindsight") && <HindsightSettings />}
 		</div>
