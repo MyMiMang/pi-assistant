@@ -55,7 +55,7 @@ MemoryOrigin = { actor, assistantId, conversationId?, taskId?, subagentId?,
 
 - retain 时给每条打 provenance tag：`scope:<user|agent|conversation|task>`、`status:<draft|verified|…>`、`actor:<…>`、`task:<taskId>`、`conv:<conversationId>`。
 - `MemoryProvider.reflect(bank, query, scope)` **必须**带显式作用域，没给直接拒绝（fail closed）；`memory.reflect` 按 actor/taskId/conversationId 算每库允许集合：
-  - 共享 `user` 库：`tags:[scope:user], tags_match:any`（该库只会被主/用户写，legacy 无 tag 也保留可见）。
+  - 共享 `user` 库：整库不过滤（`{all:true}`；该库只会被主/用户写，子代理写 user 会被降级，库内无草稿，legacy 原可见性也保留）。
   - `agent_<id>` 库：主会话/用户核验视角 `{all:true}`；子代理/后台用 `tag_groups: OR( AND(scope:agent,status:verified), AND(scope:conversation,conv:本对话), task:本任务 )`，`all_strict`——未标 tag 的一律排除。兄弟 task 草稿既不带 `status:verified` 也不带本任务 tag，在**请求端**就被服务端过滤掉。
 - 若后端根本不支持 tags/tag_groups 过滤（无法证明正确 filter），回退方案是 task 草稿物理分 bank/namespace 隔离 + 分调用安全聚合；本轮 Hindsight 公开 API 支持 `tags`/`tags_match`/`tag_groups`，未触发回退。
 - 验证：假 Hindsight 按官方语义实现 tag 过滤，测试断言 reflect **请求**带精确 provenance 过滤、且服务端实际喂给模型的命中里没有兄弟草稿（不是断言最后 text 不含）。
@@ -72,25 +72,7 @@ MemoryOrigin = { actor, assistantId, conversationId?, taskId?, subagentId?,
 - `memory_forget`：`readOnlyHint:false, destructiveHint:true` → 非完全权限档位按原有档位走审批，完全权限免审批。
 - scope/ownership 的 deny 是服务端逻辑，不等于审批。
 
-### 2.6 反思（reflect）的源端隔离（本次补强，堵主 review 缺口）
-
-原实现 `memory.reflect` 直接把 `agent_<id>` 整库交给 Hindsight reflect，同助理多任务只在下游按 recall id 过滤输出——服务端已把兄弟任务草稿喂给模型，属已知不安全。改为**请求端限定**：
-
-- retain 时为每条账本条目打 provenance tag：`scope:<user|agent|conversation|task>`、`status:<draft|verified|legacy>`、`actor:<...>`，以及已有 `kind:`、`conv:<id>`、`task:<id>`。
-- `memory.reflect(agentId, query, ctx)` 按读取上下文算出每个库的允许集合，传给 `provider.reflect(bank, query, scope)`：
-  - `user` 库：整库不过滤（子代理/后台写 user 会被降级，库内无草稿）；保留 legacy 原可见性。
-  - `agent_<id>` 库、主/用户核验视角：`{ all: true }`（可读全部草稿，用于核验）。
-  - `agent_<id>` 库、子代理/后台/群任务视角：`tag_groups = [{ or: [
-      {and:[scope:agent, status:verified]},              // 已核验助理级事实
-      {and:[scope:conversation, conv:<本对话>]},          // 本对话已核验条目
-      {tags:[task:<本任务>]}                             // 本任务自己的草稿
-    ] }]`，各 leaf 用 `all_strict`（未标 tag 一律不匹配）。
-- **fail closed**：`provider.reflect` 没有显式 `scope` 就抛错，绝不静默退回整库；这也让未来新增调用方必须显式限定。
-- 不采用「先召回 id、再过滤已生成文本」——那既可能泄露也可能影响答案；过滤发生在服务端检索之前。
-
-残余边界（诚实记录）：Hindsight 的观察/心智模型条目若未继承原 tag，会被判定为不可证而排除（fail closed）；legacy 的 agent 级条目在子代理 reflect 中不再可见（recall/list 仍可见）。
-
-### 2.7 兼容 / 迁移
+### 2.6 兼容 / 迁移
 
 - 旧条目无 origin/status → 读取标 `legacy`，**保持原作用域可见、不自动降级/删除**；不做批量 rewrite，只渐进写新 metadata。
 - `meta` 增量字段，旧后端忽略也无碍；迁移逻辑用 mock 旧 rows 测幂等。
@@ -106,7 +88,6 @@ MemoryOrigin = { actor, assistantId, conversationId?, taskId?, subagentId?,
 6. 队列 retain 去重：失败 attempts>0 后不重复入队；runtime resume 任务 origin 不变。
 7. permissions：readOnlyHint 修正后普通档位不误拦 recall/reflect、完全权限仍 bypass。
 8. **reflect 源端隔离**：子代理 reflect 请求带 provenance `tag_groups`，兄弟 task 草稿不出现在服务端命中（fake 记录**真正送给模型的依据**，断言请求正文与命中都不含兄弟草稿）；主会话核验视角不做 tag 限制；`provider.reflect` 无 scope 直接拒绝；跨助理草稿不进入本助理 reflect。
-8. reflect 源端隔离：子代理 reflect 的请求带 `tag_groups` provenance 过滤，服务端命中的依据里无兄弟 task 草稿；未给作用域时 provider fail closed；跨助理 reflect 不串库。
 
 ## 4. 不做 / 边界
 
