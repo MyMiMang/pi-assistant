@@ -23,6 +23,12 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+2026-10-22 手机每次打开默认第一个助理 + 点会话白屏很久（独立 `conversation-loading-restore-fix` 树，基 `hotfix-integration` `b7d33d3`，**未 push / 未 tag / 未打包**）：
+- **根因**：`store.ts` 的 `current` 只在内存，`loadAgents()` 用 `agents.find(scope!=="room")` 兜底且无持久化 → 重开永远第一个助理；`switchConversation` / `selectAgent` 清空或覆盖消息却没有任何 loading / 错误 / 空态渲染，也无并发保护（晚返回的旧 history 覆盖新目标、失败无重试）→ 白屏像坏了。
+- **改动**：新增 `apps/web/src/selection.ts`（纯函数：账号隔离 key + 恢复优先级 + 消息合并，只存公开 id）；`store.ts` 加 `selKey`（`pia.sel.<serverId>.<deviceId>`）、`msgState`（loading/error/loaded/conv/hasMore）、请求代号 + `AbortController` 竞态保护、`retryMessages` / `loadMoreMessages`；`Chat.tsx` 加骨架 / 错误 + 重试 / 空对话 / 加载更早。恢复优先级：有效 current > `?agent=` > 上次明确打开 > 第一个（仅一次），已删除 id 回退并回写。**未改 `App.tsx` / 向导 / 统一模型设置 UI**。
+- **实际跑的**：两端 `tsc --noEmit` exit 0；纯逻辑单测 `web-selection.test.ts` **10/10**；纯前端 fixture `e2e/conversation-restore.mjs` **10/10**（手机 390 + 桌面；静态 dist + 拦 `/api`，不起 `main.ts`、不碰钥匙串、不读写用户数据）。性能证据：切目标对话只发 1 次 `messages` 请求，晚返回旧请求被丢弃。
+- **未做 / 边界**：未真机（真实手机 / 安装包未测）；未跑全量 e2e / 服务端全量单测；未做真实大历史耗时秒数（只给请求次数）。详见 `progress-snapshots/conversation-loading-restore-fix.md`。
+
 2026-10-22 热修整合（`hotfix-integration` 树，基 `origin/main` `8d7a7d8`，**未 push / 未 tag / 未打包**，等主会话 review 与其余对话弹窗修复 commit 后统一发 **beta.24（仅 mac-arm64）**）：
 - **合入 4 项（按顺序）**：`bd174fd` 单测数据目录 fail-closed（修「侧边栏凭空多出助理小微」根因：`test/setup.ts` 的 `PIA_DATA_DIR ??=` 在外部已有该变量时把 `clawbot.test.ts` 的测试助理 / 渠道行写进用户真实数据目录 → 下次启动「微信凭据无法解密」；改 `=` 强制覆盖 + 新增 `test-data-isolation.test.ts` + `seed-copy.test.ts` 补 setup 前置）；`eb111b9` 聊天外链左键无反应（opener ACL 未放行 → 页面侧接管 + 放行 `opener:allow-open-url`/`allow-default-urls` + Rust `is_external_link` 白名单不再吞错）；`48c50b0` 升级后已配置仍强制向导（`/api/system.onboarded` 不再依赖 `defaultModel()` 实时解析，改看持久信号 + 启动恢复丢失标志 + `modelReady` 可恢复提示）；`91d3b94` 渠道删除按钮点不动（Tauri remote webview 原生 `confirm` 不弹窗返回 false → 换应用内 `useConfirm`，删除中 disabled + ref 防双击，失败显示原因）。
 - **public-startup-audit 去重**：`2d9d95d` 与 `f1fcf11` 的 models 启动注入重叠，**只复用**后者经公开 `initModels(credentials?)` 的内存 `CredentialStore` 注入（`test/launch-memory.ts` + `models.ts` 同进程复用），未重复全合；树内无 `PIA_CREDENTIAL_STORE` 依赖、未碰 `secrets.ts` WIP。
