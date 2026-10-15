@@ -193,15 +193,18 @@ export function ThinkingButton({ testid, levels, current, followLabel, onPick, t
 							{current === null && <Check size={14} className="text-accent" />}
 						</button>
 					)}
-						{levels.map((l) => (
-							<button key={l} className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", current === l && "bg-hover")} onClick={() => (setOpen(false), onPick(l))} data-testid={`${testid}-${l}`}>
-								<span className="flex-1">
-									<span className="text-sm">{THINKING_LABEL[l] ?? l}</span>
-									<span className="block text-xs text-mut">{THINKING_DESC[l] ?? ""}</span>
-								</span>
-								{current === l && <Check size={14} className="text-accent" />}
-							</button>
-						))}
+						{/* 档位多 / 小屏（≤640 走底部弹窗）时自身可滚动，底部的 xhigh / max 不会被裁掉 */}
+						<div className="min-h-0 flex-1 overflow-y-auto">
+							{levels.map((l) => (
+								<button key={l} className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", current === l && "bg-hover")} onClick={() => (setOpen(false), onPick(l))} data-testid={`${testid}-${l}`}>
+									<span className="flex-1">
+										<span className="text-sm">{THINKING_LABEL[l] ?? l}</span>
+										<span className="block text-xs text-mut">{THINKING_DESC[l] ?? ""}</span>
+									</span>
+									{current === l && <Check size={14} className="text-accent" />}
+								</button>
+							))}
+						</div>
 					</div>,
 					document.body,
 				)}

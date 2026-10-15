@@ -8,6 +8,7 @@ import { Avatar } from "./ui";
 import { BotTurn, group, SystemMsg, UserMsg } from "./ChatMessages";
 import { isSendKey, SEND_HINT } from "../composer";
 import { useConfiguredModels, useModelPicks, ModelPoolButton, ThinkingButton, THINKING_LABEL } from "./ModelPicker";
+import { thinkingLevelsFor } from "@pi-assistant/shared";
 import { TaskInstructions, TaskRow, taskLive, taskTitle } from "./Tasks";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string; reasoning?: boolean };
@@ -40,7 +41,12 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 	const ta = useRef<HTMLTextAreaElement>(null);
 	const agent = useStore((s) => s.agents.find((a) => a.id === d?.subagent.agent_id));
 	const dm = useConfiguredModels();
-	const levels = dm.models.find((m) => m.provider === d?.subagent.model_provider && m.id === d?.subagent.model_id)?.thinking ?? [];
+	// 档位来源与实际选中的子代理模型一致（服务端也按这个模型 clamp）；用并集 helper，和主会话 / 助理默认同一套规则
+	const levels: string[] = thinkingLevelsFor(dm.models, d?.subagent ? [{ provider: d.subagent.model_provider, id: d.subagent.model_id }] : []);
+	// 用户设了固定档位但当前模型不支持 → 服务端已合法降级，这里如实说明，不静默吞掉用户选择
+	const asked = d?.subagent.thinking ?? null;
+	const resolved = d?.subagent.resolvedThinking ?? null;
+	const clampNote = asked && resolved && asked !== resolved ? `这个模型不支持「${THINKING_LABEL[asked] ?? asked}」，实际按「${THINKING_LABEL[resolved] ?? resolved}」运行` : undefined;
 	useEffect(() => {
 		if (!visible) return;
 		let off = false;
@@ -78,7 +84,7 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 				<button className="pa-chip" onClick={onClose} aria-label="返回主会话" title="返回主会话"><ArrowLeft className="pa-ic" /><span className="max-sm:hidden">主会话</span></button>
 				<Avatar agentId={avatar.id} text={avatar.avatar} color={avatar.color} size={32} />
 				<div className="min-w-0 flex-1"><b className="block truncate text-sm" title={d?.subagent.task}>任务：{d ? taskTitle(d.subagent.task) : "加载中…"}</b><div className="truncate text-xs">{d && <State r={d.subagent} />}<span className="ml-2 text-mut2">{d?.subagent.model_id}</span></div></div>
-				{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
+				{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} title={clampNote} text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
 				{d && !stoppable && ["failed", "timeout", "lost", "stopped"].includes(d.subagent.status) && d.subagent.canResume && <button className="pa-chip" onClick={() => void action("resume")} title={d.subagent.needsVerify ? `先核验这些工具的实际结果再继续：${verifyNames(d.subagent)}` : d.subagent.resumeReason ?? "用原任务从断点继续"} data-testid="subagent-resume">继续</button>}
 				{d && !stoppable && ["failed", "timeout", "lost"].includes(d.subagent.status) && !d.subagent.canResume && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>}
 			</header>
@@ -158,10 +164,12 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 	};
 	const live = pool.filter((m) => d.models.some((x) => key(x) === key(m)));
 	const nameOf = (m: Model) => d.models.find((x) => key(x) === key(m))?.name ?? m.id;
-	// 这个助理的子代理实际会用哪些模型（候选池；空池则跟随主会话）→ 据此把可选档位 clamp 到它们的交集
+	// 这个助理的子代理实际会用哪些模型（候选池；空池则跟随主会话）→ 取它们支持档位的**并集**，
+	// 不取最低共同集合：候选池里只要有一个模型支持 xhigh/max 就保留，派到别的模型时由服务端 clamp。
 	const candidates: Model[] = pool.length ? pool : agent?.model ? [agent.model] : [];
-	const levelsOf = (m: Model) => d.models.find((x) => key(x) === key(m))?.thinking ?? [];
-	const levels = candidates.length ? candidates.map(levelsOf).reduce((a, b) => (a.length && b.length ? a.filter((x) => b.includes(x)) : [])) : [];
+	const levels: string[] = thinkingLevelsFor(d.models, candidates);
+	// 用户已保存的固定档位若当前候选池里没有模型支持（比如换了池子），仍然显示出来并说明会被降级，不静默吞掉
+	const unsupportedFixed = thinking.mode === "fixed" && !levels.includes(thinking.level) ? `当前候选池里没有模型支持「${THINKING_LABEL[thinking.level] ?? thinking.level}」，运行时会被收敛到实际模型支持的档位` : undefined;
 	const saveThinking = async (v: string | null) => {
 		const c: { mode: "follow" } | { mode: "fixed"; level: string } = v ? { mode: "fixed", level: v } : { mode: "follow" };
 		try { await api(`/api/agents/${agentId}/subagent-thinking`, { method: "PUT", json: c }); setThinking(c); setErr(""); } catch (e) { setErr(String(e)); }
@@ -184,7 +192,8 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 			onOpen={d.reload}
 		/>
 		{live.length > 0 && <div className="flex flex-wrap gap-1">{live.map((m) => <span key={key(m)} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-mut">{nameOf(m)}</span>)}</div>}
-		<div className="flex items-center gap-2"><span className="text-sm text-mut">思考强度</span><ThinkingButton testid="agent-subagent-thinking" levels={levels} current={thinking.mode === "fixed" ? thinking.level : null} followLabel="跟随主会话" onPick={(v) => void saveThinking(v)} /></div>
+		<div className="flex items-center gap-2"><span className="text-sm text-mut">思考强度</span><ThinkingButton testid="agent-subagent-thinking" levels={levels} current={thinking.mode === "fixed" ? thinking.level : null} followLabel="跟随主会话" title={unsupportedFixed} onPick={(v) => void saveThinking(v)} /></div>
+		{unsupportedFixed && <p className="text-xs text-amber-600" data-testid="agent-subagent-thinking-note">{unsupportedFixed}</p>}
 		{err && <p className="text-xs text-red-500">{err}</p>}
 	</section>;
 }
