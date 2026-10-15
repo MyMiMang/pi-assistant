@@ -8,6 +8,7 @@ import { inferNeeds, pickModel } from "./model-profile.ts";
 import { isRecoverableModelError } from "./model-errors.ts";
 import { isThinkingLevel, models } from "./models.ts";
 import { requests } from "./requests.ts";
+import { classifyResume } from "./subagent-resume.ts";
 import { claimSubagentWake, markSubagentWakeDelivered, releaseSubagentWake, subagentWakeOwner, wakeClaimKey } from "./task-waits.ts";
 
 export type ModelRef = { provider: string; id: string };
@@ -20,9 +21,15 @@ export interface Subagent {
 	status: SubagentStatus; last_activity_at: number; error_reason: string | null; notified_at: number | null;
 	result_summary: string | null; created_at: number; finished_at: number | null;
 	session_file: string | null; run_started_at: number | null; pending_input: string | null; resume: number | null;
+	/** 已经开始的轮次数（含每次原任务续跑）；工具摘要用 */
+	attempt: number;
+	/** 有界退避重试的下一次时间（毫秒），不在退避中为 null；工具摘要用 */
+	retry_at: number | null;
 	/** 派活时解析出的候选模型顺序（JSON 数组，第一项是实际用的；池内 fallback 按这个顺序，空 = 只跟随主会话）。 */
 	model_pool: string | null;
 }
+/** 子代理行 + 恢复决策的安全摘要（给 subagent_list / 接口，不含内部提示词或凭据）。 */
+export interface SubagentSummary extends Subagent { retryable: boolean; resumeReason: string; canResume: boolean; waitingRetry: boolean }
 export interface SubagentEvent { id: string; subagent_id: string; kind: string; reason: string; created_at: number; delivered_at: number | null; /** 终态代际（= 当时的 finished_at）：同一子代理续聊多次结束时区分每一代唤醒 */ generation: number | null }
 /** 全局子代理设置只保留任务侧参数：并发上限与最长运行时间。子代理模型改由每个助理的候选池决定（见 DESIGN §21.5）。 */
 export interface SubagentSettings { maxMinutes: number; maxConcurrent: number }
@@ -53,7 +60,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS subagents (
  id TEXT PRIMARY KEY, subagent_id TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL, delivered_at INTEGER);
 `);
 const columns = db.prepare("PRAGMA table_info(subagents)").all() as { name: string }[];
-for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"], ["thinking", "TEXT"]]) {
+for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"], ["thinking", "TEXT"], ["attempt", "INTEGER DEFAULT 0"], ["retry_at", "INTEGER"]]) {
 	if (!columns.some((c) => c.name === name)) db.exec(`ALTER TABLE subagents ADD COLUMN ${name} ${type}`);
 }
 // 事件记录当时的终态代际：同一子代理续聊后多次结束时，用每一代自己的 finished_at 去重
@@ -259,9 +266,13 @@ export function finishSubagent(id: string, status: Exclude<SubagentStatus, "queu
 	if (agentId) pumpSubagents(agentId);
 	return true;
 }
-const parsePendingInput = (raw: string | null): { text: string; messageId: string } | undefined => {
+const parsePendingInput = (raw: string | null): { text: string; messageId?: string } | undefined => {
 	if (!raw) return undefined;
-	try { const v = JSON.parse(raw); return typeof v?.text === "string" && typeof v?.messageId === "string" ? v : undefined; } catch { return undefined; }
+	try {
+		const v = JSON.parse(raw);
+		if (typeof v?.text !== "string") return undefined;
+		return typeof v?.messageId === "string" ? { text: v.text, messageId: v.messageId } : { text: v.text };
+	} catch { return undefined; }
 };
 const queuedAhead = (id: string, agentId: string) => {
 	const row = db.prepare("SELECT rowid FROM subagents WHERE id = ?").get(id) as { rowid: number } | undefined;
@@ -270,6 +281,15 @@ const queuedAhead = (id: string, agentId: string) => {
 };
 /** 重启后恢复任务的续跑提示：先核验进度，不从头重做、不重复副作用。 */
 const SUBAGENT_RESUME_PROMPT = "（系统通知）服务刚刚重启，上一轮子代理执行被中断了。请先检查工作区里已经完成的进度和产出，确认哪些步骤已经做完、哪些没做完，然后从断点继续完成剩余任务。已经完成的步骤不要重做，也不要重复已经产生的副作用；某个操作在重启时状态不明（可能已执行也可能没执行）的，先核实实际结果再决定，不要盲目重跑。完成后简要总结结果。";
+/**
+ * 失败后续跑的提示：按失败分类给出中文原因，统一要求「先核验、不重做、不重复副作用」。
+ * 不承诺 exactly-once——工具在中断时可能已执行也可能没执行。
+ */
+export function subagentResumePrompt(r: Subagent): string {
+	const info = classifyResume(r.error_reason ?? r.result_summary ?? "");
+	const why = (r.error_reason ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+	return `（系统通知）上一轮执行因为${info.label}中断了${why ? `（原因：${why}）` : ""}。请先检查工作区里已经完成的进度和产出，确认哪些步骤已经做完、哪些没做完，然后从断点继续完成剩余任务。已经完成的步骤不要重做，也不要重复已经产生的副作用；某个操作在中断时状态不明（可能已执行也可能没执行）的，先核实实际结果再决定，不要盲目重跑。完成后简要总结结果。`;
+}
 /** 把一条排队的子代理切到 running 并开始执行；只对仍是 queued 的行生效，避免重复派发。 */
 function startQueued(id: string) {
 	const r = getSubagent(id);
@@ -277,8 +297,8 @@ function startQueued(id: string) {
 	const ts = Date.now();
 	const n = db.prepare("UPDATE subagents SET status = 'running', last_activity_at = ?, run_started_at = ?, resume = 0, pending_input = NULL WHERE id = ? AND status = 'queued'").run(ts, ts, id).changes;
 	if (!n) return false;
-	// 重启恢复的任务：有落库 session 就从断点续跑（无 session 的在 recoverSubagents 里已标 lost）
-	const input = r.resume ? { text: SUBAGENT_RESUME_PROMPT } : parsePendingInput(r.pending_input);
+	// 重启恢复（resume=1）/ 失败续跑（resume=2）：有落库 session 就从断点续跑（无 session 的已拒绝恢复）
+	const input = r.resume === 2 ? { text: subagentResumePrompt(r) } : r.resume ? { text: SUBAGENT_RESUME_PROMPT } : parsePendingInput(r.pending_input);
 	live.set(id, { pending: [], toolUntil: 0 });
 	changed(id);
 	queueMicrotask(() => void run(id, input));
@@ -352,6 +372,49 @@ export async function stopAgentSubagents(agentId: string) {
 		dispatchPaused.delete(agentId);
 	}
 }
+/** 子代理行 + 恢复摘要：给 subagent_list / 接口用，供主模型判断「优先续跑而不是重派」。 */
+export function withResumeInfo(r: Subagent): SubagentSummary {
+	const info = classifyResume(r.error_reason ?? r.result_summary ?? "");
+	const terminal = !isLiveSubagent(r.status);
+	return {
+		...r,
+		retryable: info.auto,
+		resumeReason: info.label,
+		canResume: terminal && r.status !== "done" && info.manual && !!r.session_file,
+		waitingRetry: r.retry_at != null,
+	};
+}
+export const listSubagentSummaries = (agentId?: string, conv?: string) => listSubagents(agentId, conv).map(withResumeInfo);
+/**
+ * 用**原子代理 id**继续：不新开子代理、不新建任务，复用落库的 Pi session 从断点续跑。
+ * - 只对已到终态、非 done、且落库了 session 的行生效；重复调用只生效一次（原子占用，状态一变为 queued 就拒绝第二次）。
+ * - 满额时按既有 FIFO 进排队，不超并发；恢复仍算同一个任务、同一份用量与历史。
+ * - mode="auto" 仅用于系统自动重试：只有连接类 / 服务临时不可用才会被接受；用户停止、权限拒绝、未知错误一律拒绝。
+ */
+export function resumeSubagent(id: string, opts: { mode?: "auto" | "manual" } = {}): Subagent {
+	const r = getSubagent(id);
+	if (!r) throw new Error("子代理不存在");
+	if (isLiveSubagent(r.status)) throw new Error("子代理正在运行或排队，无需继续");
+	if (r.status === "done") throw new Error("子代理已完成，无需继续");
+	const info = classifyResume(r.error_reason ?? r.result_summary ?? "");
+	if (!info.manual) throw new Error(`这个失败不能继续：${info.label}`);
+	if (opts.mode === "auto" && !info.auto) throw new Error(`这个失败不能自动继续：${info.label}`);
+	if (!r.session_file) throw new Error("没有落库会话，无法确认执行到哪一步；请先核验工作区再重新派活");
+	// 原子占用：状态仍非 live 才置为 queued（resume=2 表示失败续跑），attempt 计数 +1
+	const ts = Date.now();
+	const n = db.prepare(`UPDATE subagents SET status = 'queued', resume = 2, attempt = COALESCE(attempt, 0) + 1, retry_at = NULL, last_activity_at = ? WHERE id = ? AND status NOT IN ${LIVE}`).run(ts, id).changes;
+	if (!n) throw new Error("子代理状态已变化，请稍后重试");
+	changed(id);
+	pumpSubagents(r.agent_id);
+	return getSubagent(id)!;
+}
+/** 标记 / 清除「正在等待退避重试」的下一次时间；只更新卡片，不触发模型回合（不产生 wake 风暴）。 */
+export function setSubagentRetryAt(id: string, at: number | null) {
+	const r = getSubagent(id);
+	if (!r) return;
+	db.prepare("UPDATE subagents SET retry_at = ? WHERE id = ?").run(at, id);
+	changed(id);
+}
 export async function messageSubagent(id: string, text: string, messageId?: string) {
 	const r = getSubagent(id), l = live.get(id);
 	if (!r || !isActiveSubagent(r.status) || !l) throw new Error("子代理已结束");
@@ -378,13 +441,13 @@ export async function sendSubagentMessage(id: string, text: string) {
 		pumpSubagents(r.agent_id);
 		if (hasSubagentCapacity(r.agent_id)) {
 			const ts = Date.now();
-			db.prepare("UPDATE subagents SET status = 'running', last_activity_at = ?, run_started_at = ?, finished_at = NULL, error_reason = NULL, result_summary = NULL WHERE id = ?").run(ts, ts, id);
+			db.prepare("UPDATE subagents SET status = 'running', last_activity_at = ?, run_started_at = ?, finished_at = NULL, error_reason = NULL, result_summary = NULL, attempt = COALESCE(attempt, 0) + 1 WHERE id = ?").run(ts, ts, id);
 			live.set(id, { pending: [], toolUntil: 0 });
 			changed(id);
 			queueMicrotask(() => void run(id, { text, messageId: m.id }));
 		} else {
 			// 满额：排队并持久化这一轮输入，释放名额后按顺序继续
-			db.prepare("UPDATE subagents SET status = 'queued', pending_input = ?, finished_at = NULL, error_reason = NULL, result_summary = NULL WHERE id = ?").run(JSON.stringify({ text, messageId: m.id }), id);
+			db.prepare("UPDATE subagents SET status = 'queued', pending_input = ?, finished_at = NULL, error_reason = NULL, result_summary = NULL, attempt = COALESCE(attempt, 0) + 1 WHERE id = ?").run(JSON.stringify({ text, messageId: m.id }), id);
 			changed(id);
 		}
 	}
@@ -456,6 +519,11 @@ export async function deliverSubagentEvents() {
 		if (!r || !db.prepare("SELECT 1 FROM conversations WHERE id = ?").get(r.conversation_id)) continue;
 		// resumed 只更新卡片，不再起一次模型回合：直接标记已投递，避免每 30 秒重试
 		if (!WAKE_KINDS.has(e.kind)) {
+			markSubagentEventDelivered(e.id, r.id);
+			continue;
+		}
+		// 晚到的旧代际终态：子代理已进入新一轮（live）或已产生更新的终态 → 只收尾不唤醒，避免旧 attempt 覆盖新的。
+		if (TERMINAL_KINDS.has(e.kind) && (isLiveSubagent(r.status) || (r.finished_at ?? 0) > (e.generation ?? 0))) {
 			markSubagentEventDelivered(e.id, r.id);
 			continue;
 		}

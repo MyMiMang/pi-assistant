@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { config } from "./config.ts";
 import { db, getSetting, setSetting } from "./db.ts";
 import { CustomProviders, type CustomProviderMeta } from "./pi-adapter/custom-providers.ts";
-import { PiModels, setLimitsLearner } from "./pi-adapter/index.ts";
+import { PiModels, setLimitsLearner, type CredentialStore } from "./pi-adapter/index.ts";
 import { refreshModelDb } from "./model-db.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, registerMockProvider } from "./pi-adapter/mock-provider.ts";
 import { EncryptedCredentialStore, openJson, sealJson } from "./secrets.ts";
@@ -11,9 +11,10 @@ export let models: PiModels;
 export let customProviders: CustomProviders;
 export let credentialBackend = "";
 
-export async function initModels() {
-	const store = new EncryptedCredentialStore();
-	credentialBackend = store.backend;
+export async function initModels(credentials?: CredentialStore) {
+	// 测试可注入公开的内存 CredentialStore，避免构造会走 OS 钥匙串的安全后端（见 test/in-memory-credentials.ts）。
+	const store: CredentialStore = credentials ?? new EncryptedCredentialStore();
+	if (!credentials) credentialBackend = (store as EncryptedCredentialStore).backend;
 	const modelsPath = join(config.dataDir, "models.json");
 	models = await PiModels.create({ credentials: store, modelsPath, allowNetwork: config.allowModelNetwork });
 	customProviders = new CustomProviders(models, modelsPath, {

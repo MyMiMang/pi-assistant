@@ -2,10 +2,12 @@ import "./setup.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Subagent, SubagentEvent } from "../src/subagents.ts";
+import { memoryCredentialStore } from "./in-memory-credentials.ts";
 process.env.PIA_MOCK = "1";
 const { db, getSetting, setSetting } = await import("../src/db.ts");
 const { initModels } = await import("../src/models.ts");
-await initModels();
+// 只用公开的内存 CredentialStore：绝不 new 默认安全后端 / 碰 OS 钥匙串（见 in-memory-credentials.ts）
+await initModels(memoryCredentialStore());
 const s = await import("../src/subagents.ts");
 const W = await import("../src/task-waits.ts"); // 建 task_waits 表：终态唤醒跨机制去重会查它
 const { createConversation } = await import("../src/conversations.ts");
@@ -740,5 +742,117 @@ test("resumed 只更新卡片：不触发模型回合，事件直接标记已投
 	assert.equal(notified, 1, "resumed 不再单独唤醒");
 	const resumed = events(r.id).find((e) => (e as { kind: string }).kind === "resumed") as { delivered_at: number | null };
 	assert.ok(resumed.delivered_at, "resumed 事件直接标记已投递，不再重试");
+	await cleanup();
+});
+
+// ---------------------------------------------------------------- 用原 id 从断点继续（DESIGN §21.9）
+test("用原 id 继续：不新开子代理、复用会话、带核验提示、attempt 递增、重复调用只生效一次", async () => {
+	setSettings(10);
+	manualDriver();
+	const r = spawn();
+	await tick();
+	db.prepare("UPDATE subagents SET session_file = 'sess-x' WHERE id = ?").run(r.id);
+	s.finishSubagent(r.id, "failed", "ECONNRESET socket hang up（模拟断网）");
+	assert.equal(status(r.id), "failed");
+	const resumed = s.resumeSubagent(r.id);
+	assert.equal(resumed.id, r.id, "仍是同一个子代理 id");
+	await tick();
+	assert.equal(status(r.id), "running");
+	assert.equal(started.filter((x) => x === r.id).length, 2, "原 id 被再次运行，但没有新 id");
+	assert.equal(s.listSubagents("sub-test", conv).filter((x) => x.id === r.id).length, 1, "没有新建子代理行");
+	const input = inputs.at(-1)!;
+	assert.match(input.text, /上一轮执行因为/);
+	assert.match(input.text, /核实|不要重做|不要重复/);
+	assert.equal(s.getSubagent(r.id)!.attempt, 1);
+	assert.throws(() => s.resumeSubagent(r.id), /运行或排队|状态已变化/);
+	await cleanup();
+});
+
+test("没有落库会话不能假装续跑：拒绝原 id 继续（要求先核验再重派）", async () => {
+	setSettings(10);
+	manualDriver();
+	const r = spawn();
+	await tick();
+	s.finishSubagent(r.id, "lost", "服务重启，且这个子代理还没落库会话，无法确认已执行到哪一步；请核验工作区后重新派活");
+	assert.throws(() => s.resumeSubagent(r.id), /没有落库会话/);
+	assert.equal(started.filter((x) => x === r.id).length, 1);
+	await cleanup();
+});
+
+test("自动续跑只接受连接类/临时故障：用户停止、未知错误一律拒绝自动，手动可续", async () => {
+	setSettings(10);
+	manualDriver();
+	const stopped = spawn();
+	await tick();
+	db.prepare("UPDATE subagents SET session_file = 'sess-stop' WHERE id = ?").run(stopped.id);
+	s.finishSubagent(stopped.id, "stopped", "用户或主会话停止了任务");
+	assert.throws(() => s.resumeSubagent(stopped.id, { mode: "auto" }), /不能自动继续/);
+	assert.equal(status(stopped.id), "stopped", "自动续跑被拒后状态不变");
+	assert.equal(s.resumeSubagent(stopped.id).id, stopped.id, "手动可显式继续");
+	await cleanup();
+});
+
+test("恢复摘要给主模型看：canResume / resumeReason / retryable / attempt", async () => {
+	setSettings(10);
+	manualDriver();
+	const r = spawn();
+	await tick();
+	db.prepare("UPDATE subagents SET session_file = 'sess-sum' WHERE id = ?").run(r.id);
+	s.finishSubagent(r.id, "failed", "503 Service Unavailable");
+	const info = s.withResumeInfo(s.getSubagent(r.id)!);
+	assert.equal(info.retryable, true, "服务临时不可用可自动重试");
+	assert.equal(info.canResume, true);
+	assert.match(info.resumeReason, /临时|自动续跑|网络/);
+	assert.equal(info.attempt, 0);
+	await cleanup();
+});
+
+test("满额时继续也排队：不超并发，释放后自动用原 id 续跑", async () => {
+	setSettings(1);
+	manualDriver();
+	const busy = spawn(); // 占满唯一名额
+	await tick();
+	const done = spawn(); // 满额 → queued
+	assert.equal(status(done.id), "queued");
+	await s.stopSubagent(done.id);
+	db.prepare("UPDATE subagents SET session_file = 'sess-q', attempt = 0 WHERE id = ?").run(done.id);
+	const resumed = s.resumeSubagent(done.id);
+	assert.equal(resumed.id, done.id);
+	assert.equal(status(done.id), "queued", "满额时进排队，不超并发");
+	assert.equal(s.getSubagent(done.id)!.resume, 2);
+	// 释放名额 → 自动开始，仍是原 id
+	s.finishSubagent(busy.id, "done", "", "ok");
+	await tick();
+	assert.equal(status(done.id), "running");
+	assert.equal(started.filter((x) => x === done.id).length, 1);
+	assert.match(inputs.at(-1)!.text, /上一轮执行因为/);
+	await cleanup();
+});
+
+test("晚到的旧代际终态不覆盖新 attempt：子代理已续跑后旧失败事件只收尾不唤醒", async () => {
+	setSettings(10);
+	clearWaits();
+	let notified = 0;
+	manualDriver(async () => { notified++; });
+	const r = spawn();
+	await tick();
+	db.prepare("UPDATE subagents SET session_file = 'sess-old' WHERE id = ?").run(r.id);
+	// 直接把上一代置成失败终态（未投递事件），当前不在跑
+	const gen = Date.now();
+	db.prepare("UPDATE subagents SET status = 'failed', finished_at = ?, error_reason = 'ECONNRESET 断网' WHERE id = ?").run(gen, r.id);
+	db.prepare("INSERT INTO subagent_events(id, subagent_id, kind, reason, created_at, generation) VALUES(?,?,?,?,?,?)").run("se-old", r.id, "failed", "ECONNRESET 断网", gen - 1000, gen);
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(notified, 1, "正常终态仍唤醒一次");
+	// 从断点续跑 → 进入新一轮（live）
+	s.resumeSubagent(r.id);
+	await tick();
+	assert.equal(status(r.id), "running");
+	// 再塞一条上一代未投递的旧终态：子代理已在跑新一轮，旧事件不应再唤醒
+	db.prepare("INSERT INTO subagent_events(id, subagent_id, kind, reason, created_at, generation) VALUES(?,?,?,?,?,?)").run("se-old2", r.id, "failed", "旧代际失败", gen + 1, gen);
+	await s.deliverSubagentEvents();
+	await tick();
+	assert.equal(notified, 1, "旧代际不再唤醒，避免覆盖新 attempt");
+	assert.ok((events(r.id).find((e) => (e as { id: string }).id === "se-old2") as { delivered_at: number | null }).delivered_at, "旧事件只收尾");
 	await cleanup();
 });

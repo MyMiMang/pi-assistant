@@ -11,7 +11,7 @@ import { useConfiguredModels, useModelPicks, ModelPoolButton, ThinkingButton, TH
 import { TaskInstructions, TaskRow, taskLive, taskTitle } from "./Tasks";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string; reasoning?: boolean };
-interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; thinking: string | null; resolvedThinking?: string; last_activity_at: number; error_reason: string | null; result_summary: string | null }
+interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; thinking: string | null; resolvedThinking?: string; last_activity_at: number; error_reason: string | null; result_summary: string | null; attempt?: number; retry_at?: number | null; canResume?: boolean; resumeReason?: string }
 const labels: Record<string, string> = { queued: "排队中", running: "运行中", stalled: "暂无进展", done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "重启中断" };
 /** 有实时活动（显示“最后活动 N 秒前”） */
 const active = (r: Subagent) => ["running", "stalled"].includes(r.status);
@@ -21,7 +21,9 @@ function State({ r }: { r: Subagent }) {
 	const [ts, setTs] = useState(Date.now());
 	useEffect(() => { if (!active(r)) return; const t = setInterval(() => setTs(Date.now()), 1000); return () => clearInterval(t); }, [r.status]);
 	const seconds = Math.max(0, Math.round((ts - r.last_activity_at) / 1000));
-	return <span className={r.status === "stalled" ? "text-amber-600" : ["failed", "timeout", "lost"].includes(r.status) ? "text-red-500" : "text-mut"} data-testid="subagent-state">{labels[r.status]}{active(r) ? ` · 最后活动 ${seconds} 秒前` : ""}</span>;
+	// 有界退避重试的等待时间：显示「等待重试 N 秒」，不空转、不误导成已停止
+	const retryIn = r.retry_at ? Math.max(0, Math.ceil((r.retry_at - ts) / 1000)) : 0;
+	return <span className={r.status === "stalled" ? "text-amber-600" : ["failed", "timeout", "lost"].includes(r.status) ? "text-red-500" : "text-mut"} data-testid="subagent-state">{labels[r.status]}{active(r) ? (retryIn > 0 ? ` · 等待重试 ${retryIn} 秒后` : ` · 最后活动 ${seconds} 秒前`) : ""}</span>;
 }
 /** 聊天里不再渲染子代理指令卡：任务统一走 header 的「子代理」入口 → 任务概览 → 详情。
  *  子代理的完成/失败回报仍由主会话的普通消息（“子代理回报：…”）承担，语义不变。 */
@@ -50,7 +52,7 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 	useLayoutEffect(() => {
 		if (ta.current) { ta.current.style.height = "auto"; ta.current.style.height = `${Math.min(ta.current.scrollHeight, 200)}px`; }
 	}, [text]);
-	const action = async (kind: "stop" | "retry") => { try { await api(`/api/subagents/${id}/${kind}`, { method: "POST" }); if (kind === "retry") onClose(); } catch (e) { setErr(String(e)); } };
+	const action = async (kind: "stop" | "retry" | "resume") => { try { await api(`/api/subagents/${id}/${kind}`, { method: "POST" }); if (kind === "retry") onClose(); else setD(await api<NonNullable<typeof d>>(`/api/subagents/${id}`)); } catch (e) { setErr(String(e)); } };
 	// 改思考强度：写单个子代理的覆盖值（null = 跟随助理默认）；运行中后端会立即切换（不动主会话）
 	const setThinking = async (v: string | null) => { try { await api(`/api/subagents/${id}`, { method: "PATCH", json: { thinking: v } }); setD(await api<NonNullable<typeof d>>(`/api/subagents/${id}`)); } catch (e) { setErr(String(e)); } };
 	const send = async () => {
@@ -75,7 +77,8 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 				<Avatar agentId={avatar.id} text={avatar.avatar} color={avatar.color} size={32} />
 				<div className="min-w-0 flex-1"><b className="block truncate text-sm" title={d?.subagent.task}>任务：{d ? taskTitle(d.subagent.task) : "加载中…"}</b><div className="truncate text-xs">{d && <State r={d.subagent} />}<span className="ml-2 text-mut2">{d?.subagent.model_id}</span></div></div>
 				{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
-				{d && !stoppable && ["failed", "timeout", "lost"].includes(d.subagent.status) && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>}
+				{d && !stoppable && ["failed", "timeout", "lost", "stopped"].includes(d.subagent.status) && d.subagent.canResume && <button className="pa-chip" onClick={() => void action("resume")} title={d.subagent.resumeReason ?? "用原任务从断点继续"} data-testid="subagent-resume">继续</button>}
+				{d && !stoppable && ["failed", "timeout", "lost"].includes(d.subagent.status) && !d.subagent.canResume && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>}
 			</header>
 			{d?.subagent.task ? <div className="shrink-0 border-b border-line px-4 py-2"><TaskInstructions text={d.subagent.task} label="查看任务说明（完整指令）" /></div> : null}
 			<div ref={scroller} className="pa-scroll scrollbar-thin" onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
