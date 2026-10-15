@@ -93,12 +93,13 @@ try {
 	await page.getByTestId("skills-tab").waitFor();
 	await page.getByTestId(`skill-enabled-${builtin.name}`).waitFor();
 	check("技能库显示「已启用」计数", /1 个助理已启用/.test(await page.getByTestId(`skill-enabled-${builtin.name}`).innerText()), await page.getByTestId(`skill-enabled-${builtin.name}`).innerText());
+	await page.screenshot({ path: join(OUT, "01-inventory.png") });
 	await page.getByTestId(`skill-assign-${builtin.name}`).click();
 	await page.getByTestId("skill-assign-modal").waitFor();
 	check("按助理配置弹窗打开", await page.getByTestId("skill-assign-modal").isVisible());
 	check("弹窗里甲已勾选", await page.getByTestId(`skill-assign-${builtin.name}-${a}`).isChecked());
+	await page.screenshot({ path: join(OUT, "01b-assign-modal.png") });
 	await page.keyboard.press("Escape");
-	await page.screenshot({ path: join(OUT, "01-inventory.png") });
 
 	// 助理设置 › 技能（打开右侧信息面板的「设置」页）
 	await page.addInitScript(() => localStorage.setItem("pia.layout", JSON.stringify({ sideW: 264, paneW: 340, sideCollapsed: false, info: true })));
