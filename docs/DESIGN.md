@@ -620,7 +620,7 @@ App 自己下载的东西都登记到同一个下载管理器，界面统一显�
   - 存储：`mcp_servers` 表，整份配置用本机主密钥加密（env / headers 里常有 token），界面上敏感值打码，编辑时保留原值。
   - 接入：会话创建时把该助理启用的服务交给 **Pi 内置 MCP 扩展**（`createMcpExtension({ loadConfig, updateConfig: noop, logPath, openUrl })`），同时加载 Pi 的 codemode 与 tool_search 扩展；Pi 负责连接、重连、OAuth（凭据存在我们的 `pi-agent/mcp-auth.json`）、工具注册（`mcp__<服务>__<工具>`）。OAuth 授权页在电脑上打开（回调是本机回环地址），同时把链接发到聊天里。
   - 测试连接用 Pi 的 `@earendil-works/pi-mcp` 客户端直接连一次（initialize + tools/list）。
-  - 审批：MCP 工具照常经过审批闸门；`readOnlyHint` 的直接执行，其余每次调用前审批（`destructiveHint` 标高风险）；卡片写明“调用 MCP 服务「X」的工具 Y”。codemode / tool_search 本身免审批，脚本里的每次工具调用仍单独过闸门。
+  - 审批：MCP 工具照常经过审批闸门；`readOnlyHint` 的直接执行，其余每次调用前审批（`destructiveHint` 标高风险）；卡片写明“调用 MCP 服务「X」的工具 Y”。codemode / tool_search 本身免审批，脚本里的每次工具调用仍单独过闸门。**已实际验证**（`test/tool-discovery.test.ts` 13/13，真实 Pi 会话 + 临时 stdio MCP + faux provider）：`direct`（默认，不变）/ `deferred`（tool_search）/ `codemode` / `hidden` + 未分配四种下适配器按需激活或不可见，codemode 脚本里的嵌套调用仍走审批、被拒即不执行；**不需要改 `defaultTools`**，也不承诺省 token。**未验**：真实 cua-driver / 真实 http MCP / 真实云模型与凭据 / 真实电脑守卫全量回归。
   - 会话结束时发 `session_shutdown`，MCP 子进程随之关闭。
 - **Pi 扩展包**（npm / git / 本机目录，可含扩展、技能、提示模板）：同一页面安装、启用/停用、按助理启用、卸载、失败重试；显示包名、版本、包含的资源。
   - 用 Pi 自己的 `DefaultPackageManager` 安装，但 `agentDir = 数据目录/pi-packages`，设置用内存版 SettingsManager；安装期间 `npm_config_cache / userconfig / globalconfig` 指向我们自己的目录（可设国内 npm 镜像），不读写用户的 `~/.npmrc`、`~/.npm`、`~/.pi/agent/settings.json`。安装包里打包的 npm 通过 `PIA_NPM` 指定。
