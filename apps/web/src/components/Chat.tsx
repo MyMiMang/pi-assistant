@@ -11,7 +11,7 @@ import { useStore } from "../store";
 import { resolveLayout, useWindowWidth } from "../layout";
 import type { Agent, Attachment } from "../types";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
-import { Avatar, cx, fmtSize } from "./ui";
+import { Avatar, Button, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
 import { COMPOSER_LABEL, isSendKey, SEND_HINT } from "../composer";
 
@@ -27,9 +27,10 @@ function BotTurn(props: { row: Extract<Row, { kind: "bot" }> | null; agent: Agen
 
 // ------------------------------------------------------------------ 主体
 export default function Chat({ agentId }: { agentId: string }) {
-	const { agents, messages, set, info } = useStore();
+	const { agents, messages, msgState, set, info } = useStore();
 	const agent = agents.find((a) => a.id === agentId);
 	const list = messages[agentId] ?? [];
+	const st = msgState[agentId];
 	const mainList = list;
 	const rows = useMemo(() => group(mainList), [mainList]);
 	const scroller = useRef<HTMLDivElement>(null);
@@ -109,6 +110,25 @@ export default function Chat({ agentId }: { agentId: string }) {
 				}}
 			>
 				<div className="pa-thread-body">
+					{st?.hasMore && (
+						<button className="mx-auto my-2 block rounded-lg border border-line px-3 py-1 text-xs text-mut hover:bg-hover disabled:opacity-60" disabled={st.loading} onClick={() => void useStore.getState().loadMoreMessages(agentId)} data-testid="load-more">
+							{st.loading ? "加载中…" : "加载更早的消息"}
+						</button>
+					)}
+					{!list.length && !st?.error && (st?.loading || !st?.loaded) && <ThreadSkeleton />}
+					{!list.length && st?.error && (
+						<div className="flex flex-col items-center gap-3 px-4 py-10 text-center text-sm text-mut" data-testid="thread-error">
+							<p>聊天记录加载失败：{st.error}</p>
+							<Button size="sm" variant="outline" onClick={() => void useStore.getState().retryMessages(agentId)} data-testid="thread-retry">
+								重试
+							</Button>
+						</div>
+					)}
+					{!list.length && st?.loaded && !st.error && (
+						<div className="px-4 py-10 text-center text-sm text-mut2" data-testid="thread-empty">
+							还没有消息，在下面输入开始对话
+						</div>
+					)}
 					{rows.map((r) =>
 						r.kind === "day" ? (
 							<div key={r.id} className="pa-day">
@@ -126,6 +146,18 @@ export default function Chat({ agentId }: { agentId: string }) {
 				</div>
 			</div>
 			<Composer ref={composer} agentId={agentId} name={agent.name} model={agent.model?.id} running={running} drag={drag} />
+		</div>
+	);
+}
+
+// ------------------------------------------------------------------ 加载骨架：切助理 / 切对话时先给可见反馈，不再是白屏
+function ThreadSkeleton() {
+	return (
+		<div className="flex flex-col gap-3 px-4 py-6" data-testid="thread-loading" aria-busy="true">
+			<span className="text-xs text-mut2">正在加载聊天记录…</span>
+			{[70, 52, 84, 44].map((w, i) => (
+				<div key={i} className="h-4 animate-pulse rounded bg-hover" style={{ width: `${w}%` }} />
+			))}
 		</div>
 	);
 }
