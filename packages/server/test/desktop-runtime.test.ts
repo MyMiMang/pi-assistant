@@ -5,10 +5,12 @@ import { test } from "node:test";
 import { assertOwnTarget, containerName, isOwnContainer, isOwnImage, isOwnLimaInstance, isOwnVolume, isOwnWslDistro, safeId, volumeName } from "../src/desktop/names.ts";
 import { IdleTracker, shouldStop } from "../src/desktop/idle.ts";
 import { pickBackend } from "../src/desktop/backend.ts";
+import { checkDiskGrowOnly, mergeInstanceResources, resolveResources, resourceBounds, suggestResources, validateResourceChoice } from "../src/desktop/resources.ts";
 import { normalizeMirror, pullRef, updateDesktopSettings, desktopSettings } from "../src/desktop/settings.ts";
 import { parsePullLine } from "../src/desktop/image.ts";
 
 const REPOS = ["ghcr.io/mymimang/pi-assistant-desktop", "ghcr.nju.edu.cn/mymimang/pi-assistant-desktop"];
+const G = 1024 ** 3;
 const ok = (args: string[]) => assert.doesNotThrow(() => assertOwnTarget(args, REPOS), args.join(" "));
 const no = (args: string[]) => assert.throws(() => assertOwnTarget(args, REPOS), /拒绝操作/, args.join(" "));
 
@@ -90,13 +92,78 @@ test("镜像地址：按 digest 固定，加速地址只换注册表主机", () 
 });
 
 test("设置：默认关闭（不下载），空闲时间只能 5/10/30/从不", () => {
-	assert.deepEqual(desktopSettings(), { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "", separate: [], legacyMigrated: false });
+	assert.deepEqual(desktopSettings(), { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "", separate: [], legacyMigrated: false, resources: {} });
 	assert.equal(updateDesktopSettings({ idleMinutes: 30 }).idleMinutes, 30);
 	assert.equal(updateDesktopSettings({ idleMinutes: 0 }).idleMinutes, 0);
 	assert.throws(() => updateDesktopSettings({ idleMinutes: 7 }));
 	assert.throws(() => updateDesktopSettings({ backend: "lima" as never }));
 	assert.equal(updateDesktopSettings({ backend: "docker", enabled: true }).backend, "docker");
 	updateDesktopSettings({ enabled: false, backend: "auto", idleMinutes: 10 });
+});
+
+test("虚拟机资源：用户选择按范围校验，非法值直接拒", () => {
+	const before = desktopSettings().resources;
+	assert.deepEqual(updateDesktopSettings({ resources: { cpus: 6, memoryGiB: 8, diskGiB: 80 } }).resources, { cpus: 6, memoryGiB: 8, diskGiB: 80 });
+	assert.throws(() => updateDesktopSettings({ resources: { cpus: 0 } }), /CPU 核数/);
+	assert.throws(() => updateDesktopSettings({ resources: { cpus: 2.5 } }), /整数/);
+	assert.throws(() => updateDesktopSettings({ resources: { memoryGiB: 1 } }), /内存/);
+	assert.throws(() => updateDesktopSettings({ resources: { memoryGiB: 999 } }), /内存/);
+	assert.throws(() => updateDesktopSettings({ resources: { diskGiB: 5 } }), /磁盘/);
+	assert.throws(() => updateDesktopSettings({ resources: { diskGiB: 99999 } }), /磁盘/);
+	assert.throws(() => updateDesktopSettings({ resources: { cpus: "8" as never } }), /整数/); // 不能字符串注入
+	assert.throws(() => updateDesktopSettings({ resources: [1, 2] as never }), /格式/);
+	updateDesktopSettings({ resources: before });
+});
+
+test("虚拟机资源：建议值按机器算，范围不超配宿主", () => {
+	// 与 vmSize 一致：内存一半（4–8）、CPU 留 2 核（2–4）、磁盘 40
+	assert.deepEqual(suggestResources({ ncpu: 8, totalBytes: 8 * G }), { cpus: 4, memoryGiB: 4, diskGiB: 40 });
+	assert.deepEqual(suggestResources({ ncpu: 10, totalBytes: 16 * G }), { cpus: 4, memoryGiB: 8, diskGiB: 40 });
+	assert.deepEqual(suggestResources({ ncpu: 3, totalBytes: 64 * G }), { cpus: 2, memoryGiB: 8, diskGiB: 40 });
+	// 内存上限 = 总内存 75%（不把总内存当可用内存花完）；CPU 上限不超过宿主核数
+	assert.deepEqual(resourceBounds({ ncpu: 8, totalBytes: 8 * G }).memoryGiB, { min: 2, max: 6 });
+	assert.equal(resourceBounds({ ncpu: 8, totalBytes: 0 }).memoryGiB.max, 2); // 读不到内存就只给最小
+	assert.equal(resourceBounds({ ncpu: 4, totalBytes: 64 * G }).cpus.max, 4);
+	assert.equal(resourceBounds({ ncpu: 64, totalBytes: 128 * G }).cpus.max, 16);
+});
+
+test("虚拟机资源：用户选择叠加到建议值，越界收窄", () => {
+	const host = { ncpu: 10, totalBytes: 16 * G };
+	assert.deepEqual(resolveResources({}, host), suggestResources(host));
+	assert.deepEqual(resolveResources({ cpus: 6, memoryGiB: 10, diskGiB: 80 }, host), { cpus: 6, memoryGiB: 10, diskGiB: 80 });
+	assert.deepEqual(resolveResources({ cpus: 999, memoryGiB: 999, diskGiB: 999 }, host), { cpus: 10, memoryGiB: 12, diskGiB: 256 });
+	assert.deepEqual(resolveResources({ cpus: 0 }, host).cpus, 1);
+});
+
+test("虚拟机资源：校验只收范围内的整数", () => {
+	const host = { ncpu: 10, totalBytes: 16 * G };
+	assert.deepEqual(validateResourceChoice({ cpus: 4, memoryGiB: 8 }, host), { ok: true, value: { cpus: 4, memoryGiB: 8 } });
+	assert.equal(validateResourceChoice({ cpus: 2.5 }, host).ok, false);
+	assert.equal(validateResourceChoice({ cpus: -1 }, host).ok, false);
+	assert.equal(validateResourceChoice({ memoryGiB: 1 }, host).ok, false);
+	assert.equal(validateResourceChoice({ diskGiB: 1e9 }, host).ok, false);
+	assert.equal(validateResourceChoice({ cpus: "4" }, host).ok, false);
+	assert.equal(validateResourceChoice([], host).ok, false);
+});
+
+test("虚拟机资源：尊重现值不强行降配，磁盘只扩不缩", () => {
+	const host = { ncpu: 8, totalBytes: 8 * G }; // 建议 4 核 / 4 GiB / 40 GiB
+	// 没设置：保留现有实例值（不升级也不降级）
+	assert.deepEqual(mergeInstanceResources({}, { cpus: 6, memoryGiB: 8, diskGiB: 120 }, host), { cpus: 6, memoryGiB: 8, diskGiB: 120 });
+	// 用户显式设置优先于现有值
+	assert.deepEqual(mergeInstanceResources({ cpus: 2 }, { cpus: 6, memoryGiB: 8, diskGiB: 120 }, host), { cpus: 2, memoryGiB: 8, diskGiB: 120 });
+	// 磁盘比现有小：保留现有（只扩不缩），并标记
+	const m = mergeInstanceResources({ diskGiB: 60 }, { cpus: 6, memoryGiB: 8, diskGiB: 120 }, host);
+	assert.equal(m.diskGiB, 120);
+	assert.equal(m.diskKeptLarger, true);
+	// 没有现有值时用建议值
+	assert.deepEqual(mergeInstanceResources({}, null, host), suggestResources(host));
+	// 只扩不缩的显式校验
+	assert.match(checkDiskGrowOnly({ diskGiB: 60 }, { diskGiB: 120 })!, /只能扩大/);
+	assert.equal(checkDiskGrowOnly({ diskGiB: 120 }, { diskGiB: 120 }), null);
+	assert.equal(checkDiskGrowOnly({ diskGiB: 200 }, { diskGiB: 120 }), null);
+	assert.equal(checkDiskGrowOnly({}, { diskGiB: 120 }), null);
+	assert.equal(checkDiskGrowOnly({ diskGiB: 10 }, null), null);
 });
 
 test("下载进度：解析 docker / podman 拉取输出", () => {

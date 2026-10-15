@@ -1031,7 +1031,7 @@ cua-driver 0.35.4 自带 CDP 浏览器工具（get_browser_state、browser_prepa
   - 已装 Docker 的用户可在 设置 里选 “Docker” 作为后端；默认用自带运行时。
   - （第 2 步实现时的调整：macOS 虚拟机里用 rootful containerd，而不是上面写的 rootless，因为 Lima 2.x 的 rootful 端口转发由 Lima 官方维护、`limactl shell … sudo nerdctl` 最稳；虚拟机本身就是隔离边界。）
   - **硬性保护**：永远只操作自己命名的实例（Lima `pia-desktop`、WSL `PiAssistant-*`、带 `pia.agent` 标签的容器），不调用 PATH 里用户自己的 limactl，不动用户已有的 Docker 容器 / WSL 发行版；有单测覆盖名字校验。
-- **按需启停（所有后端通用）**：助理要用电脑类工具或用户打开「助理电脑」时自动启动（虚拟机 + 桌面容器）；空闲（没有工具调用、没有人在看画面、没有任务/定时任务占用）超过设定时间自动关机，默认 10 分钟，设置里可选 5 / 10 / 30 分钟 / 从不。家目录是持久卷，关机不丢登录状态。所有桌面都停了就关掉虚拟机释放内存。界面显示 关机 / 启动中 / 运行中。空闲判定逻辑有单测。
+- **按需启停（所有后端通用）**：助理要用电脑类工具或用户打开「助理电脑」时自动启动（虚拟机 + 桌面容器）；空闲（没有工具调用、没有人在看画面、没有任务/定时任务占用）超过设定时间自动关机，默认 10 分钟，设置里可选 5 / 10 / 30 分钟 / 从不。家目录是持久卷，关机不丢登录状态。所有桌面都停了就关掉虚拟机释放内存。界面显示 关机 / 启动中 / 运行中。空闲判定逻辑有单测；`startIdleWatcher` 依赖可注入（假时钟 + 假后端），可在不真睡眠、不碰真虚拟机的前提下证明 10 分钟边界、busy / 有人在看画面阻关、服务重启重新计时、虚拟机空转单独计时（`test/desktop-idle-watcher.test.ts`）。设置里空闲时间与资源都用应用内下拉（`ui.tsx` 的 `Select`，非原生 select）。
 
 **实现进度（2026-10-12，分支 `wip/assistant-computer-vm`）**
 
@@ -1048,7 +1048,8 @@ cua-driver 0.35.4 自带 CDP 浏览器工具（get_browser_state、browser_prepa
   - **引擎选型**：虚拟机里用 rootful containerd + nerdctl，而不是 Docker Engine：nerdctl-full 是一个可校验的离线包，由我们下载后作为本地文件交给 Lima，虚拟机里不需要联网 apt 安装（国内网络不稳时 Docker 官方源经常失败）；Lima 官方支持并维护它的端口转发；命令行与 docker 兼容，第 1 步的 `engine()`、硬性保护、桌面启动逻辑原样复用。
   - **下载**：打开开关时登记到统一下载管理器（`desktop-vm`，「下载与组件」页可见），三个文件依次下载到 `数据目录/vm/files`：`.part` 文件 + HTTP Range 断点续传，每个文件最多 3 次重试、可换源，下完校验摘要再改名，`.ok` 记录已校验过的摘要；磁盘满时明确提示且保留已下部分。设置里可填 GitHub 加速前缀（如 `https://ghfast.top/`），先走加速、失败回官方；Debian 盘可用 `PIA_DEBIAN_MIRROR`。Lima tarball 解压到 `数据目录/vm/dist/lima-<版本>`，去掉隔离属性。升级固定版本后旧文件 / 旧 dist 自动清理。
   - **目录**：`LIMA_HOME` 是我们自己的目录：数据目录路径没有空格且足够短时用 `数据目录/vm/lima`，否则（macOS 的 “Application Support” 有空格，且 Lima 的 ssh 控制套接字受 104 字节限制）用 `~/.pia-vm`。从不使用用户的 `~/.lima`，调用 limactl 时去掉环境里所有 `LIMA_*` 变量。
-  - **虚拟机配置**（`limaConfig()` 纯函数）：`vmType: vz`、`mounts: []`、本地系统盘 + 本地 nerdctl-full 包（带摘要）、`containerd: {system: true, user: false}`、不加载 `~/.ssh` 公钥、不转发 ssh agent、端口只转发到 `127.0.0.1`；内存 = Mac 内存一半（4–8 GiB），CPU = 核数 − 2（2–4），磁盘 40 GiB（稀疏）。每次开机前按当前固定版本重写（只在关机时改实例配置）。macOS CI 上用真实 limactl 跑 `limactl validate`。
+  - **虚拟机配置**（`limaConfig()` 纯函数）：`vmType: vz`、`mounts: []`、本地系统盘 + 本地 nerdctl-full 包（带摘要）、`containerd: {system: true, user: false}`、不加载 `~/.ssh` 公钥、不转发 ssh agent、端口只转发到 `127.0.0.1`。资源默认内存 = Mac 内存一半（4–8 GiB），CPU = 核数 − 2（2–4），磁盘 40 GiB（稀疏）；用户可在 设置 › 助理电脑 自定义 CPU / 内存 / 磁盘。每次开机前按当前固定版本重写（只在关机时改实例配置）。macOS CI 上用真实 limactl 跑 `limactl validate`。
+  - **用户自定义资源**（`desktop/resources.ts` 纯函数 + `lima.ts`）：建议值、按宿主收窄的可调范围（内核 1–16，内存 2 GiB–总内存 75%（上限 32），磁盘 20–256）、整数校验（API 拒非法值 / 字符串注入）。写配置用 `mergeInstanceResources`：用户显式选择 > 现有实例值（不强行升级 / 降配）> 建议值；磁盘只扩不缩（比现有小则保留现值，API 也拒绝缩小）。只在虚拟机关机后写配置（不打断正在跑的任务、不静默改运行中的虚拟机、不重建有数据的实例）。只有 macOS Lima 支持在这里调；Docker 由 Docker Desktop 管、WSL2 由 Windows `.wslconfig` 管，界面明示不可调而不是假装能调。只读宿主 CPU / 总内存用于建议与上限，不夸大成可用内存。
   - **共用虚拟机 + 每助理一个容器**：所有助理共用 `pia-desktop`；容器通过 `limactl shell --workdir / pia-desktop sudo nerdctl …` 管理。端口：宿主端口由我们在 Mac 上挑空闲的，容器在虚拟机里发布同号端口，Lima 转发到 Mac 的 127.0.0.1（虚拟机网络只有本机可达）；开机就绪要求日志 “ready” 且 Mac 上能连通端口。容器上次的端口被 Mac 上别的程序占了：删容器换端口重建（家目录卷保留）。
   - **按需开关机**：用到时自动开机（第一次建实例 + 安装容器引擎约 1–3 分钟，之后十几秒）；状态查询从不为了查询而开机（虚拟机关着 = 桌面关着；“镜像已下载”用 `vm/image.ok` 标记判断）；所有桌面停了立刻关虚拟机；虚拟机开着但没有桌面（App 重启前留下的、刚下载完镜像）也在空闲时间后关掉；App 退出时用独立进程关虚拟机（不拖慢退出）。界面在“启动中”显示虚拟机阶段（正在创建虚拟机 / 第一次开机正在安装容器引擎 / 正在启动虚拟机 / 正在重启）。
   - **异常恢复**：虚拟机显示运行但引擎没响应（睡眠唤醒、containerd 卡住）→ 强制关机再开；实例 Broken（Mac 崩溃 / 强退留下的残留）→ `stop --force` 后再开，仍坏就提示“删除虚拟机和镜像”后重开；开机前检查磁盘空间（新建需 ≥ 8 GB 余量）。错误都转成中文（虚拟化不可用、磁盘不足、超时）。

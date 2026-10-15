@@ -986,7 +986,8 @@ await step("助理电脑开箱即用：向导没开启时什么都不下载；�
 	if (!(await page.getByTestId("settings-nav").locator("button[data-tab=computer]").getAttribute("aria-current"))) throw new Error("没有跳到「助理电脑」标签");
 	await ds.getByTestId("desktop-cost").getByText(/≈1\.5 GB.*≈5 GB.*3–4 GB/).waitFor();
 	if (await ds.getByTestId("desktop-enabled").isChecked()) throw new Error("开关应为关闭");
-	await ds.getByTestId("desktop-idle").selectOption("30");
+	await ds.getByTestId("desktop-idle").click();
+	await page.getByTestId("desktop-idle-option-30").click();
 	await page.waitForFunction(async (b) => (await (await fetch(`${b}/api/desktop`)).json()).settings.idleMinutes === 30, BASE);
 	await ds.getByTestId("desktop-mirror").fill("https://ghcr.nju.edu.cn/");
 	await ds.getByRole("button", { name: "保存" }).click();

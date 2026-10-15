@@ -10,7 +10,9 @@ import { randomBytes } from "node:crypto";
 import { WebSocket } from "ws";
 import { createConnection, createServer } from "node:net";
 import { backend, engine, engineCommand } from "./desktop/backend.ts";
+import { instanceResources as limaInstanceResources } from "./desktop/lima.ts";
 import { IdleTracker } from "./desktop/idle.ts";
+import { checkDiskGrowOnly, resourceBounds, suggestResources } from "./desktop/resources.ts";
 import { imagePresent, installState, startInstall } from "./desktop/image.ts";
 import { computerFor, describeScreens, isSharedComputer, legacySeparate, MAIN, mainScreenDecision, ownScreenKey, SHARED, type Lease } from "./desktop/computers.ts";
 import { containerName, LABEL, labelValues, safeId, volumeName } from "./desktop/names.ts";
@@ -618,6 +620,25 @@ const mainLease = new Map<string, Lease>();
 /** 助理最近一次用电脑的时间（自己的屏幕空闲了自动收回） */
 const agentLastUse = new Map<string, number>();
 export const touchAgent = (agentId: string) => (agentLastUse.set(agentId, Date.now()), idle.touch(computerFor(agentId)));
+/**
+ * 虚拟机资源信息（只读，不开机）：用户选择、这台机器的建议值与可调范围、现有实例实际值。
+ * 只有 macOS 自带虚拟机（Lima）能在这里调：Docker 由 Docker Desktop 管，WSL2 由 Windows 的 .wslconfig 管，
+ * 在这些后端上显示“不可调”而不是假装能调。
+ */
+export function vmResourceInfo() {
+	const b = backend();
+	const supported = b.id === "lima";
+	return {
+		supported,
+		choice: desktopSettings().resources,
+		suggested: suggestResources(),
+		bounds: resourceBounds(),
+		applied: supported ? limaInstanceResources() : null,
+		note: supported ? null : "只有 macOS 自带虚拟机（Lima）能在这里调 CPU / 内存 / 磁盘。用 Docker 时资源由 Docker Desktop 管，用 WSL2 时由 Windows 的 .wslconfig 管。",
+	};
+}
+/** 用户选的磁盘比现有虚拟机小 → 中文错误（只扩不缩，避免重建丢数据） */
+export const vmResourceDiskError = (choice: { diskGiB?: number }) => (backend().id === "lima" ? checkDiskGrowOnly(choice, limaInstanceResources()) : null);
 function forgetScreens(cid: string) {
 	const m = screens.get(cid);
 	screens.delete(cid);
@@ -763,45 +784,72 @@ const installBusy = () => installState().phase === "downloading";
 let onChange: ((agentId: string) => void) | null = null;
 /** 电脑忙：用它的任何一个助理在跑任务 */
 const computerBusy = (busy: (agentId: string) => boolean) => (cid: string) => (isSharedComputer(cid) ? agentsOn(cid) : [cid]).some(busy);
-/** main/http 启动时调用：每 30 秒检查一次；busy 由 runtime 提供（对话/后台任务/定时任务在跑） */
-export function startIdleWatcher(opts: { busy: (agentId: string) => boolean; changed: (agentId: string) => void; intervalMs?: number }) {
+export interface IdleWatcherDeps {
+	busy: (agentId: string) => boolean;
+	changed: (agentId: string) => void;
+	intervalMs?: number;
+	/** 以下可选参数供单测注入假时钟 / 假后端，不真睡眠、不碰真虚拟机 */
+	now?: () => number;
+	tracker?: IdleTracker;
+	running?: () => Promise<string[]>;
+	stop?: (cid: string) => Promise<void>;
+	release?: (agentId: string) => Promise<void>;
+	engineRunning?: () => Promise<boolean>;
+	stopEngine?: () => Promise<void>;
+	fixedPorts?: boolean;
+	settings?: () => { enabled: boolean; idleMinutes: number };
+}
+/** main/http 启动时调用：每 30 秒检查一次；busy 由 runtime 提供（对话/后台任务/定时任务在跑）。返回 { stop, tick } 方便单测手动推进 */
+export function startIdleWatcher(opts: IdleWatcherDeps) {
 	onChange = opts.changed;
-	const tick = async () => {
+	const now = opts.now ?? Date.now;
+	const tracker = opts.tracker ?? idle;
+	const listRunning = opts.running ?? runningDesktops;
+	const stopOne = opts.stop ?? stopComputer;
+	const release = opts.release ?? releaseScreen;
+	const engineRunning = opts.engineRunning ?? (() => backend().engineRunning());
+	const stopEngine = opts.stopEngine ?? (() => backend().stopEngine());
+	const fixedPorts = opts.fixedPorts ?? backend().fixedPorts === true;
+	const readSettings = opts.settings ?? (() => {
 		const s = desktopSettings();
+		return { enabled: s.enabled, idleMinutes: s.idleMinutes };
+	});
+	const tick = async () => {
+		const s = readSettings();
 		if (!s.enabled || !s.idleMinutes) return;
 		let running: string[];
 		try {
-			running = await runningDesktops();
+			running = await listRunning();
 		} catch {
 			return;
 		}
 		// 虚拟机开着但一个桌面都没在跑（例如 App 重启前留下的、下载完镜像后的）：同样空闲时间后关掉虚拟机
-		if (!running.length && !starting.size && backend().fixedPorts) {
-			if (!(await backend().engineRunning())) vmIdleSince = 0;
-			else if (!vmIdleSince) vmIdleSince = Date.now();
-			else if (Date.now() - vmIdleSince >= s.idleMinutes * 60_000 && !installBusy()) {
+		if (!running.length && !starting.size && fixedPorts) {
+			if (!(await engineRunning())) vmIdleSince = 0;
+			else if (!vmIdleSince) vmIdleSince = now();
+			else if (now() - vmIdleSince >= s.idleMinutes * 60_000 && !installBusy()) {
 				console.log(`[desktop] 虚拟机空闲超过 ${s.idleMinutes} 分钟，关机`);
 				vmIdleSince = 0;
-				await backend().stopEngine().catch(() => {});
+				await stopEngine().catch(() => {});
 				opts.changed("");
 			}
 		} else vmIdleSince = 0;
 		// 自己的屏幕：这个助理空闲超过设定时间就收回（电脑本身可能还有别的助理在用）
 		for (const [agentId] of [...agentScreen]) {
 			const last = agentLastUse.get(agentId) ?? 0;
-			if (!opts.busy(agentId) && Date.now() - last >= s.idleMinutes * 60_000) {
+			if (!opts.busy(agentId) && now() - last >= s.idleMinutes * 60_000) {
 				console.log(`[desktop] ${agentId} 自己的屏幕空闲超过 ${s.idleMinutes} 分钟，收回`);
-				await releaseScreen(agentId).catch(() => {});
+				await release(agentId).catch(() => {});
 			}
 		}
-		for (const cid of idle.due(running.filter((r) => !starting.has(r)), computerBusy(opts.busy), s.idleMinutes)) {
+		for (const cid of tracker.due(running.filter((r) => !starting.has(r)), computerBusy(opts.busy), s.idleMinutes)) {
 			console.log(`[desktop] ${cid === SHARED ? "共用电脑" : cid} 空闲超过 ${s.idleMinutes} 分钟，自动关机`);
-			await stopComputer(cid);
+			await stopOne(cid);
 		}
 	};
 	const t = setInterval(() => void tick(), opts.intervalMs ?? 30_000);
 	t.unref();
-	return () => clearInterval(t);
+	return { stop: () => clearInterval(t), tick };
 }
 export { startInstall };
 

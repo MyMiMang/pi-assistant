@@ -9,10 +9,12 @@ import { api } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
 import { AgentComputer } from "./AgentComputer";
-import { Avatar, avatarText, Badge, Button, Help, Input } from "./ui";
+import { Avatar, avatarText, Badge, Button, Help, Input, Select } from "./ui";
+
+type ResourceNums = { cpus?: number; memoryGiB?: number; diskGiB?: number };
 
 export type DesktopGlobal = {
-	settings: { enabled: boolean; backend: "auto" | "docker"; idleMinutes: number; mirror: string; fileMirror: string; separate?: string[] };
+	settings: { enabled: boolean; backend: "auto" | "docker"; idleMinutes: number; mirror: string; fileMirror: string; separate?: string[]; resources?: ResourceNums };
 	backend: { id: string; label: string; ok: boolean | null; reason?: string; fix?: "install-wsl" | "reboot" };
 	builtin: { id: string; label: string; ready: boolean };
 	dockerAvailable: boolean;
@@ -21,6 +23,15 @@ export type DesktopGlobal = {
 	install: { phase: "idle" | "downloading" | "done" | "error"; progress: number; layersDone: number; layersTotal: number; error?: string; detail?: string };
 	/** 自带虚拟机 / 发行版（macOS Lima、Windows WSL）状态；其他情况为 null */
 	vm: { phase: string; detail?: string; running: boolean } | null;
+	/** 虚拟机资源：能不能调、用户选择、建议值、可调范围、现有实例实际值 */
+	resources: {
+		supported: boolean;
+		choice: ResourceNums;
+		suggested: { cpus: number; memoryGiB: number; diskGiB: number };
+		bounds: { cpus: { min: number; max: number }; memoryGiB: { min: number; max: number }; diskGiB: { min: number; max: number } };
+		applied: ResourceNums | null;
+		note: string | null;
+	};
 	/** Windows：正在安装 WSL（等 UAC / 安装中） */
 	wslInstalling?: boolean;
 };
@@ -198,12 +209,17 @@ export function DesktopSettings() {
 			<section className="space-y-2">
 				<div className="font-semibold">{t("空闲自动关机")}</div>
 				<div className="text-sm text-zinc-500">{t("闲置多久后关机，登录状态不丢。")} <Help>{t("没有工具调用、没人在看画面、没有任务占用超过这个时间，就自动关机释放内存；登录状态不会丢，下次用到时自动开机。")}</Help></div>
-				<select value={s.idleMinutes} onChange={(e) => void put({ idleMinutes: Number(e.target.value) })} className="h-9 rounded-lg border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900" aria-label={t("空闲自动关机")} data-testid="desktop-idle">
-					{[5, 10, 30, 0].map((m) => (
-						<option key={m} value={m}>{m ? t("{m} 分钟", { m }) : t("从不")}</option>
-					))}
-				</select>
+				<Select
+					value={s.idleMinutes}
+					ariaLabel={t("空闲自动关机")}
+					testId="desktop-idle"
+					className="w-36"
+					onChange={(v) => void put({ idleMinutes: Number(v) })}
+					options={[5, 10, 30, 0].map((m) => ({ value: m, label: m ? t("{m} 分钟", { m }) : t("从不") }))}
+				/>
 			</section>
+
+			{s.enabled && <VmResources g={g} put={put} />}
 
 			<section className="space-y-2">
 				<div className="font-semibold">{t("镜像下载地址")}</div>
@@ -226,6 +242,57 @@ export function DesktopSettings() {
 			)}
 			{err && <div className="text-xs text-red-600">{err}</div>}
 		</div>
+	);
+}
+
+/** 共用电脑：说明 + 每个助理用哪台电脑 */
+function VmResources({ g, put }: { g: DesktopGlobal; put: (b: Partial<DesktopGlobal["settings"]>) => Promise<DesktopGlobal | undefined> }) {
+	const r = g.resources;
+	if (!r.supported) {
+		return (
+			<section className="space-y-2" data-testid="desktop-resources">
+				<div className="font-semibold">{t("虚拟机资源")}</div>
+				<div className="text-sm text-zinc-500" data-testid="desktop-resources-note">{r.note}</div>
+			</section>
+		);
+	}
+	const eff = {
+		cpus: r.choice.cpus ?? r.applied?.cpus ?? r.suggested.cpus,
+		memoryGiB: r.choice.memoryGiB ?? r.applied?.memoryGiB ?? r.suggested.memoryGiB,
+		diskGiB: r.choice.diskGiB ?? r.applied?.diskGiB ?? r.suggested.diskGiB,
+	};
+	const diskMin = Math.max(r.bounds.diskGiB.min, r.applied?.diskGiB ?? 0);
+	const diskOpts = [...new Set([diskMin, eff.diskGiB, 40, 60, 80, 100, 128, 160, 200, 256].filter((n) => n >= diskMin && n <= r.bounds.diskGiB.max))].sort((a, b) => a - b);
+	const range = (lo: number, hi: number) => Array.from({ length: Math.max(0, hi - lo + 1) }, (_, i) => lo + i);
+	const set = (patch: Partial<typeof eff>) => void put({ resources: { ...eff, ...patch } });
+	const changed = !!r.applied && (r.applied.cpus !== eff.cpus || r.applied.memoryGiB !== eff.memoryGiB || r.applied.diskGiB !== eff.diskGiB);
+	return (
+		<section className="space-y-3" data-testid="desktop-resources">
+			<div>
+				<div className="font-semibold">{t("虚拟机资源")}</div>
+				<div className="mt-0.5 text-sm text-zinc-500">
+					{t("给助理电脑分配多少 CPU、内存和磁盘。")} <Help>{t("改动在虚拟机关机后生效，不会打断正在跑的任务。磁盘是稀疏分配，这里填的是上限，用多少占多少；磁盘只能扩大，不能缩小。内存上限按这台电脑的实际内存算，不会把整台机器占满。")}</Help>
+				</div>
+			</div>
+			<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+				<label className="space-y-1 text-sm">
+					<span className="text-zinc-500">{t("CPU 核数")}</span>
+					<Select value={eff.cpus} ariaLabel={t("CPU 核数")} testId="desktop-cpus" className="w-full" options={range(r.bounds.cpus.min, r.bounds.cpus.max).map((n) => ({ value: n, label: String(n) }))} onChange={(v) => set({ cpus: Number(v) })} />
+				</label>
+				<label className="space-y-1 text-sm">
+					<span className="text-zinc-500">{t("内存")}</span>
+					<Select value={eff.memoryGiB} ariaLabel={t("内存")} testId="desktop-memory" className="w-full" options={range(r.bounds.memoryGiB.min, r.bounds.memoryGiB.max).map((n) => ({ value: n, label: String(n), hint: "GiB" }))} onChange={(v) => set({ memoryGiB: Number(v) })} />
+				</label>
+				<label className="space-y-1 text-sm">
+					<span className="text-zinc-500">{t("磁盘")}</span>
+					<Select value={eff.diskGiB} ariaLabel={t("磁盘")} testId="desktop-disk" className="w-full" options={diskOpts.map((n) => ({ value: n, label: String(n), hint: "GiB" }))} onChange={(v) => set({ diskGiB: Number(v) })} />
+				</label>
+			</div>
+			<div className="text-xs text-zinc-500" data-testid="desktop-resources-state">
+				{t("当前虚拟机：{c} 核 / {m} GiB 内存 / {d} GiB 磁盘（上限）。", { c: r.applied?.cpus ?? eff.cpus, m: r.applied?.memoryGiB ?? eff.memoryGiB, d: r.applied?.diskGiB ?? eff.diskGiB })}
+				{changed ? ` ${t("有改动，关机后生效（磁盘只扩不缩）。")}` : ""}
+			</div>
+		</section>
 	);
 }
 

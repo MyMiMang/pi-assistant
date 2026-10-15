@@ -1,4 +1,4 @@
-import { ChevronDown, CircleHelp, type LucideIcon, X } from "lucide-react";
+import { Check, ChevronDown, CircleHelp, type LucideIcon, X } from "lucide-react";
 import { type ButtonHTMLAttributes, type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchBlob } from "../api";
@@ -252,5 +252,149 @@ export function ErrorBox({ text, className }: { text: string; className?: string
 			</div>
 			{open && <pre className="max-h-60 max-w-full overflow-auto whitespace-pre-wrap rounded-lg bg-hover p-2 font-mono text-[11px] leading-relaxed text-mut [overflow-wrap:anywhere]" data-testid="error-details">{full}</pre>}
 		</div>
+	);
+}
+
+/**
+ * 应用内下拉选择（不用原生 select）：按钮 + 弹出列表，键盘支持（Esc 关、上下键选），窄屏也不溢出。
+ * 选项少时直接用；value 用字符串比较。
+ */
+export interface SelectOption {
+	value: string | number;
+	label: string;
+	/** 选项右侧的小字（单位等） */
+	hint?: string;
+}
+export function Select({
+	value,
+	options,
+	onChange,
+	ariaLabel,
+	testId,
+	className,
+	disabled,
+	placeholder,
+}: {
+	value: string | number;
+	options: SelectOption[];
+	onChange: (value: string) => void;
+	ariaLabel?: string;
+	testId?: string;
+	className?: string;
+	disabled?: boolean;
+	placeholder?: string;
+}) {
+	const [open, setOpen] = useState(false);
+	const [rect, setRect] = useState<{ left: number; top: number; width: number; up: boolean } | null>(null);
+	const btn = useRef<HTMLButtonElement>(null);
+	const pop = useRef<HTMLDivElement>(null);
+	const cur = options.find((o) => String(o.value) === String(value));
+	const place = () => {
+		const r = btn.current?.getBoundingClientRect();
+		if (!r) return;
+		const menuH = Math.min(280, options.length * 34 + 12);
+		const below = window.innerHeight - r.bottom;
+		const up = below < menuH && r.top > below;
+		const width = Math.min(Math.max(r.width, 168), Math.max(120, window.innerWidth - 16));
+		const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+		setRect({ left, top: up ? r.top - 6 : r.bottom + 6, width, up });
+	};
+	const openMenu = () => {
+		if (disabled) return;
+		place();
+		setOpen(true);
+	};
+	useEffect(() => {
+		if (!open) return;
+		const onDoc = (e: MouseEvent) => {
+			if (!pop.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) setOpen(false);
+		};
+		// 捕获阶段吃掉：菜单开着时 Esc 只关菜单，不把底下的设置弹窗一起关掉
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				e.stopPropagation();
+				setOpen(false);
+				btn.current?.focus();
+			} else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+				e.preventDefault();
+				const i = options.findIndex((o) => String(o.value) === String(value));
+				const n = e.key === "ArrowDown" ? (i + 1) % options.length : (i - 1 + options.length) % options.length;
+				if (n >= 0 && options[n]) onChange(String(options[n].value));
+			} else if (e.key === "Enter" || e.key === " ") {
+				e.preventDefault();
+				setOpen(false);
+			}
+		};
+		const close = () => setOpen(false);
+		document.addEventListener("mousedown", onDoc);
+		document.addEventListener("keydown", onKey, true);
+		window.addEventListener("scroll", close, true);
+		window.addEventListener("resize", close);
+		return () => {
+			document.removeEventListener("mousedown", onDoc);
+			document.removeEventListener("keydown", onKey, true);
+			window.removeEventListener("scroll", close, true);
+			window.removeEventListener("resize", close);
+		};
+	}, [open, options, value, onChange, disabled]);
+	return (
+		<>
+			<button
+				ref={btn}
+				type="button"
+				disabled={disabled}
+				aria-haspopup="listbox"
+				aria-expanded={open}
+				aria-label={ariaLabel}
+				data-testid={testId}
+				onClick={() => (open ? setOpen(false) : openMenu())}
+				onKeyDown={(e) => {
+					if (!open && (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ")) {
+						e.preventDefault();
+						openMenu();
+					}
+				}}
+				className={cx("inline-flex h-9 min-w-0 items-center gap-2 rounded-lg border border-line bg-card px-2.5 text-sm text-fg hover:bg-hover disabled:opacity-50", className)}
+			>
+				<span className={cx("min-w-0 flex-1 truncate text-left", !cur && "text-mut")}>{cur?.label ?? placeholder ?? ""}</span>
+				<ChevronDown size={15} className={cx("shrink-0 text-mut transition", open && "rotate-180")} />
+			</button>
+			{open &&
+				rect &&
+				createPortal(
+					<div
+						ref={pop}
+						role="listbox"
+						aria-label={ariaLabel}
+						data-testid={testId ? `${testId}-menu` : undefined}
+						className="fixed z-50 max-h-[280px] max-w-[calc(100vw-16px)] overflow-auto rounded-xl border border-line bg-card p-1 shadow-xl"
+						style={{ left: rect.left, top: rect.top, width: rect.width, transform: rect.up ? "translateY(-100%)" : undefined }}
+					>
+						{options.map((o) => {
+							const sel = String(o.value) === String(value);
+							return (
+								<button
+									key={o.value}
+									type="button"
+									role="option"
+									aria-selected={sel}
+									onClick={() => {
+										onChange(String(o.value));
+										setOpen(false);
+										btn.current?.focus();
+									}}
+									data-testid={testId ? `${testId}-option-${o.value}` : undefined}
+									className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover", sel && "bg-hover font-medium")}
+								>
+									<Check size={14} className={cx("shrink-0", sel ? "opacity-100" : "opacity-0")} />
+									<span className="min-w-0 flex-1 truncate">{o.label}</span>
+									{o.hint && <span className="shrink-0 text-[11px] text-mut">{o.hint}</span>}
+								</button>
+							);
+						})}
+					</div>,
+					document.body,
+				)}
+		</>
 	);
 }

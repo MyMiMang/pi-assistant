@@ -29,7 +29,7 @@ import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
 import { describeRoutine, disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
-import { desktopPause, desktopStatus, ensureOwnScreen, forgetAgentComputer, hasSeparateData, issueTicket, mergeIntoShared, purgeAll, releaseScreen, resetAvailability, screenshotDesktop, setSeparateComputer, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket, viewerClose, viewerOpen, viewToken } from "./desktop.ts";
+import { desktopPause, desktopStatus, ensureOwnScreen, forgetAgentComputer, hasSeparateData, issueTicket, mergeIntoShared, purgeAll, releaseScreen, resetAvailability, screenshotDesktop, setSeparateComputer, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket, viewerClose, viewerOpen, viewToken, vmResourceDiskError, vmResourceInfo } from "./desktop.ts";
 import { backend as desktopBackend, builtinFor, dockerBackend } from "./desktop/backend.ts";
 import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop/image.ts";
 import { installWsl, wslInstalling } from "./desktop/wsl.ts";
@@ -1289,6 +1289,7 @@ const deskGlobal = async () => {
 		image: b.downloadId ? { ...pinnedInfo(), downloadBytes: pinnedInfo().downloadBytes + (downloadInfo(b.downloadId)?.size ?? 0), diskBytes: pinnedInfo().diskBytes + 2e9 } : pinnedInfo(),
 		installed: s.enabled && det?.ok ? await imagePresent() : false,
 		install: installState(),
+		resources: vmResourceInfo(),
 		vm: b.phase ? { ...b.phase(), running: s.enabled && det?.ok ? await b.engineRunning() : false } : null,
 		wslInstalling: wslInstalling(),
 	};
@@ -1307,6 +1308,8 @@ app.put("/api/desktop", async (c) => {
 	const b = await c.req.json<Partial<ReturnType<typeof desktopSettings>>>();
 	const before = desktopSettings();
 	try {
+		const diskErr = b.resources !== undefined ? vmResourceDiskError(b.resources as { diskGiB?: number }) : null;
+		if (diskErr) return c.json({ error: diskErr }, 400);
 		const s = updateDesktopSettings(b);
 		if (before.enabled && !s.enabled) cancelInstall();
 		if (before.backend !== s.backend || before.mirror !== s.mirror) resetAvailability();

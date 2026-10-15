@@ -14,6 +14,7 @@ import { parsePullLine } from "../src/desktop/image.ts";
 import * as L from "../src/desktop/lima.ts";
 import { labelValues } from "../src/desktop/names.ts";
 import { normalizeFileMirror } from "../src/desktop/settings.ts";
+import { updateDesktopSettings } from "../src/desktop/settings.ts";
 import { pickBackend } from "../src/desktop/backend.ts";
 
 process.env.PIA_TEST_FAST = "1";
@@ -73,6 +74,28 @@ test("虚拟机大小：内存一半（4–8 GiB），CPU 核数 − 2（2–4�
 	assert.deepEqual(L.vmSize(8 * G, 8), { memoryGiB: 4, cpus: 4, diskGiB: 40 });
 	assert.deepEqual(L.vmSize(16 * G, 10), { memoryGiB: 8, cpus: 4, diskGiB: 40 });
 	assert.deepEqual(L.vmSize(64 * G, 3), { memoryGiB: 8, cpus: 2, diskGiB: 40 });
+});
+
+test("虚拟机资源：写配置时尊重现有实例、用户选择优先、磁盘只扩不缩", () => {
+	const c = (y: string) => {
+		const p = parse(y) as { cpus: number; memory: string; disk: string };
+		return { cpus: p.cpus, memory: p.memory, disk: p.disk };
+	};
+	const existing = { cpus: 6, memoryGiB: 8, diskGiB: 120 };
+	updateDesktopSettings({ resources: {} });
+	// 没设置：完全保留现有实例（不升级也不降配）
+	assert.deepEqual(c(L.configForInstance("arm64", existing)), { cpus: 6, memory: "8GiB", disk: "120GiB" });
+	// 用户选 CPU 变小、磁盘变小时：CPU 按用户，磁盘保留现有（只扩不缩）
+	updateDesktopSettings({ resources: { cpus: 2, diskGiB: 60 } });
+	assert.deepEqual(c(L.configForInstance("arm64", existing)), { cpus: 2, memory: "8GiB", disk: "120GiB" });
+	// 用户选磁盘变大：按用户
+	updateDesktopSettings({ resources: { diskGiB: 160 } });
+	assert.deepEqual(c(L.configForInstance("arm64", existing)), { cpus: 6, memory: "8GiB", disk: "160GiB" });
+	// 新虚拟机（没有现有值）：按建议值
+	updateDesktopSettings({ resources: {} });
+	const fresh = parse(L.configForInstance("arm64", null)) as { cpus: number; disk: string };
+	assert.equal(fresh.cpus, L.vmSize().cpus);
+	assert.equal(fresh.disk, "40GiB");
 });
 
 test("环境检测：macOS 版本、虚拟化、架构，中文说明", () => {

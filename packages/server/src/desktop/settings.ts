@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "../config.ts";
 import { getSetting, setSetting } from "../db.ts";
+import { validateResourceChoice, type VmResourceChoice } from "./resources.ts";
 
 export const IDLE_CHOICES = [5, 10, 30, 0] as const; // 0 = 从不
 export interface DesktopSettings {
@@ -23,8 +24,10 @@ export interface DesktopSettings {
 	separate: string[];
 	/** 旧版（每个助理一台电脑）的数据已经处理过：已有自己电脑数据的助理默认保留为单独的电脑，登录状态不丢 */
 	legacyMigrated: boolean;
+	/** 用户自定义的虚拟机资源（CPU / 内存 / 磁盘）；没设的字段按建议值 / 现有虚拟机值。只在虚拟机后端（macOS Lima）生效，关机后应用 */
+	resources: VmResourceChoice;
 }
-const DEFAULTS: DesktopSettings = { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "", separate: [], legacyMigrated: false };
+const DEFAULTS: DesktopSettings = { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "", separate: [], legacyMigrated: false, resources: {} };
 export const desktopSettings = (): DesktopSettings => ({ ...DEFAULTS, ...getSetting<Partial<DesktopSettings>>("desktop", {}) });
 
 export function updateDesktopSettings(b: Partial<DesktopSettings>) {
@@ -40,6 +43,11 @@ export function updateDesktopSettings(b: Partial<DesktopSettings>) {
 	}
 	if (b.mirror !== undefined) cur.mirror = normalizeMirror(b.mirror);
 	if (b.fileMirror !== undefined) cur.fileMirror = normalizeFileMirror(b.fileMirror);
+	if (b.resources !== undefined) {
+		const v = validateResourceChoice(b.resources);
+		if (!v.ok) throw new Error(v.error);
+		cur.resources = v.value;
+	}
 	setSetting("desktop", cur);
 	return cur;
 }

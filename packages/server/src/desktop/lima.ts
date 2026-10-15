@@ -15,6 +15,7 @@ import { config } from "../config.ts";
 import { downloadFile, registerDownload, trackDownload, type FileSpec, type Progress } from "../downloads.ts";
 import { LIMA_INSTANCE } from "./names.ts";
 import { desktopSettings } from "./settings.ts";
+import { hostFacts, mergeInstanceResources, resolveResources, suggestResources, type VmResources } from "./resources.ts";
 
 const run = promisify(execFile);
 const GiB = 1024 ** 3;
@@ -140,16 +141,47 @@ export function limaConfig(i: LimaConfigInput) {
 }
 /** 按这台 Mac 的配置算虚拟机大小：内存 = 总内存一半，4–8 GiB；CPU = 核数 − 2，2–4 个；磁盘 40 GiB（稀疏文件，用多少占多少） */
 export function vmSize(total = totalmem(), ncpu = cpus().length) {
-	return { memoryGiB: Math.min(8, Math.max(4, Math.floor(total / GiB / 2))), cpus: Math.min(4, Math.max(2, ncpu - 2)), diskGiB: 40 };
+	return suggestResources(hostFacts(ncpu, total));
+}
+/** 现有实例 lima.yaml 里的资源（用户没自定义时尊重它，不强行升降配）；只返回读到的正整数字段，读不到返回 null */
+export function instanceResources(instYaml = join(limaHome(), LIMA_INSTANCE, "lima.yaml")): Partial<VmResources> | null {
+	if (!existsSync(instYaml)) return null;
+	try {
+		const text = readFileSync(instYaml, "utf8");
+		const num = (re: RegExp) => {
+			const m = re.exec(text);
+			const n = m ? Number(m[1]) : Number.NaN;
+			return Number.isFinite(n) && n > 0 ? n : undefined;
+		};
+		const out: Partial<VmResources> = {};
+		const cpus = num(/^cpus:\s*(\d+)\s*$/m);
+		const memoryGiB = num(/^memory:\s*"?(\d+)GiB"?\s*$/m);
+		const diskGiB = num(/^disk:\s*"?(\d+)GiB"?\s*$/m);
+		if (cpus !== undefined) out.cpus = cpus;
+		if (memoryGiB !== undefined) out.memoryGiB = memoryGiB;
+		if (diskGiB !== undefined) out.diskGiB = diskGiB;
+		return Object.keys(out).length ? out : null;
+	} catch {
+		return null;
+	}
 }
 export function currentConfig(arch = process.arch) {
+	const size = resolveResources(desktopSettings().resources);
+	if (process.env.PIA_LIMA_MEMORY_GIB) size.memoryGiB = Number(process.env.PIA_LIMA_MEMORY_GIB);
+	return buildConfig(arch, size);
+}
+/** 写配置时把“用户选择 / 现有值 / 建议值”合并；existing 只含读到的正整数字段，可为 null */
+export function configForInstance(arch = process.arch, existing: Partial<VmResources> | null = null) {
+	const merged = mergeInstanceResources(desktopSettings().resources, existing);
+	if (process.env.PIA_LIMA_MEMORY_GIB) merged.memoryGiB = Number(process.env.PIA_LIMA_MEMORY_GIB);
+	return buildConfig(arch, merged);
+}
+function buildConfig(arch: NodeJS.Architecture, size: VmResources) {
 	const k = archKeys(arch);
 	const f = vmFiles(arch);
 	const nd = f.find((x) => x.id === "nerdctl")!;
 	const db = f.find((x) => x.id === "debian")!;
-	const size = vmSize();
-	if (process.env.PIA_LIMA_MEMORY_GIB) size.memoryGiB = Number(process.env.PIA_LIMA_MEMORY_GIB);
-	return limaConfig({ vmType: process.env.PIA_LIMA_VMTYPE === "qemu" ? "qemu" : "vz", arch: k.lima, imagePath: db.dest, imageDigest: db.digest, nerdctlPath: nd.dest, nerdctlDigest: nd.digest, ...size });
+	return limaConfig({ vmType: process.env.PIA_LIMA_VMTYPE === "qemu" ? "qemu" : "vz", arch: k.lima, imagePath: db.dest, imageDigest: db.digest, nerdctlPath: nd.dest, nerdctlDigest: nd.digest, cpus: size.cpus, memoryGiB: size.memoryGiB, diskGiB: size.diskGiB });
 }
 
 // ---------------------------------------------------------------- 环境检测（纯函数）
@@ -337,10 +369,10 @@ async function engineHealthy(timeout = 30_000) {
 		return false;
 	}
 }
-/** 关机状态下把配置同步成当前固定版本（升级 / 内存变化）；运行中不改 */
+/** 关机状态下把配置同步成当前固定版本 + 用户选择的资源（升级 / 内存变化）；运行中不改 */
 function syncInstanceConfig() {
 	const inst = join(limaHome(), LIMA_INSTANCE, "lima.yaml");
-	const want = currentConfig();
+	const want = configForInstance(process.arch, instanceResources(inst));
 	writeFileSync(configPath(), want);
 	if (existsSync(inst) && readFileSync(inst, "utf8") !== want) writeFileSync(inst, want);
 }
