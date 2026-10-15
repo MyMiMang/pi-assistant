@@ -120,7 +120,17 @@
 - 主动巡检改为**变化驱动**：复用 bus 信号（后台任务失败等尚无专用唤醒的卡点）+ 已有跟进 / 定时；无变化不空巡（零模型）；有未闭环事项时保留低频有界兜底（最低 4 小时）；提示只带信号差量。`proactive_surface` 可指定相关对话；新增心跳专用 `proactive_advance`，通过相关对话的主会话按用户统一定义走正常权限（完全权限免审批、其他档位审批），忙时同事件合并、异任务排队（每对话 ≤3）。DESIGN §14.12 / §23.8。
 - 未做：识图 / 图片生成用量补齐（公开接口未暴露真实 usage，见状态报告）；记忆块缓存与截图累积未实测，不盲改。
 
-## 首次向导「已配置却被强行重设」修复（2026-10-15，`update-onboarding-fix` 树，基 `origin/main` = `8d7a7d8`，**未 push / 未 tag**）
+## 记忆作用域安全（2026-10-15，`memory-scope-safety` 树，基 `unified-integration` `66ae16b`，**未 push / 未 tag / 未打包**）
+
+| 需求（用户原话大意） | 状态 | 说明 |
+|---|---|---|
+| Hindsight 记忆按主建议改：完整可用 + 分层，不禁子代理 | 已改，待核验 | 依据 `docs/research/hindsight-integration-audit.md`。新增 `MemoryOrigin{actor/status/…}` provenance（服务端注入，工具不可伪造 actor）；子代理/后台/群来源写 fact 默认降为 task 草稿（不落共享 user 库），主会话/用户写 verified；新增 `scope=task` 短期草稿（默认 7 天 TTL，`memoryTaskDraftTtlDays` 可配）。设计见 `docs/design/memory-scope-safety.md`。 |
+| 主会话核验后晋升，去重/幂等，不盲覆盖 | 已改，待核验 | `memory.promote`（幂等；命同文本已有事实不新增不覆盖、只补证据）+ `memory.rejectDraft`；新增仅主会话注入的 `memory_review` 工具。 |
+| 删除/更新只能 own 任务/own writer；共享需主/用户 | 已改，待核验 | `canMutate`：子代理删共享 user / 他人条目服务端拒绝（含完全权限档位，语义非审批）。 |
+| 旧记忆不降级/不删、legacy 可读；不批量 rewrite | 已改，待核验 | 无 origin 的旧条目读取标 `legacy`、保持原 scope 可见；`meta` 增量字段。 |
+| readOnlyHint 修正；别一刀每条记忆都弹审批 | 已改，待核验 | `remember` 真实写入但 `destructive:false/openWorld:false`（非完全权限也不弹）；`forget` `destructive:true`（按档位审批）；`recall/reflect` 保持只读。完全权限仍应用层免审批。 |
+| 测试（fake Hindsight + 临时目录 + 内存凭据） | 已跑 7/7 | `memory-scope-safety`(5) + `memory-retain-dedup`(1) + 复用审计 `hindsight-scope`(1)，全通过；两端 typecheck exit 0。未跑真实 Hindsight/钥匙串/真实数据目录。 |
+
 
 | 需求（用户原话大意） | 状态 | 说明 |
 |---|---|---|

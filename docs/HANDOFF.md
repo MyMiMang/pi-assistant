@@ -23,6 +23,11 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 2. 进度（按版本）
 
+2026-10-15 记忆作用域安全 `memory-scope-safety`（基 `unified-integration` `66ae16b`，**未 push / 未 tag / 未打包**；依据 `docs/research/hindsight-integration-audit.md`，设计 `docs/design/memory-scope-safety.md`）：
+- **改动**：`packages/server/src/memory/index.ts` 新增 `MemoryOrigin{actor/status/…}` provenance 与 `scope=task`，写入按 actor 分层（子代理/后台/群 → task 草稿，不落共享 `user`；主会话/用户 → verified）；`promote`/`rejectDraft`（幂等、去重不覆盖）+ `listDrafts`；`forget`/`update` 按 own 任务/own writer 校验。`ext-memory` 修正工具 annotation（`remember` 真实写入不弹、`forget` destructive、`recall/reflect` 只读）并加主会话 `memory_review`。`runtime.ts` 按会话注入 actor/taskId/subagentId 并把核验入口只给主会话。`hindsight/provider.ts` retain 入队去重去掉 `attempts=0`、recall/reflect 加 20s 超时。记忆 UI 显示来源/草稿/作用域 + 待核验筛选。
+- **已跑**（Node 24.20.0，全 Mock / 内存 CredentialStore / 临时数据目录，未碰真实 Hindsight、钥匙串、真实数据目录）：`memory-scope-safety`(5) + `memory-retain-dedup`(1) + `hindsight-scope`(1) **7/7**；服务端与网页 `tsc --noEmit` exit 0。
+- **未做 / 边界**：`hindsight.test.ts`/`hindsight-switch.test.ts` 仍无参 `initModels()`（有钥匙串风险，未跑）；真实 Hindsight retain/reflect 质量、全量 e2e、UI 真机未验；同助理多任务的 reflect 仍共用 agent bank（未拆 bank，仅在 recall/list/context 层过滤）。
+
 2026-10-22 统一整合树 `unified-integration`（总体收尾 owner，基 `hotfix-integration` `b7d33d3`，**未 push / 未 tag / 未打包**）：
 - **合入 7 个分支**（`--no-ff` 保祖先）：`native-dialog-ui-fix` `9554628` → `unified-model-registry`（5 commits）→ `local-laya-runtime`（整分支 10 commits）→ `fast-model-benchmark`（`12fa47d`+`c98a299`）→ `model-settings-unified`（5 commits，含 merge `9554628`）→ `conversation-loading-restore-fix`（`d8d38fe`/`a940cfe`/`54f1956`）→ `mobile-chat-viewport-fix`（`1c565ab`+merge `9554628`）。冲突只出现在 `http.ts`（benchmark host + Laya 路由都保留）与 docs（两段都保留，不整文件覆盖）。
 - **验证**（Node 24.20.0，`npm ci` 真装、全程 Mock / 内存凭据 / 临时数据目录，未碰系统钥匙串）：服务端与网页 `tsc --noEmit` exit 0；web `vite build` 通过；专项单测 16 文件 **97/97**；`web-selection` 10/10；纯前端 e2e `native-dialog-ui` / `model-services-ui` / `channel-delete` / `model-ui` / `conversation-restore`(10/10) / `mobile-viewport-ui` 全通过。
