@@ -184,6 +184,8 @@ export interface FastBenchmarkResult {
 	errors: number;
 	successRatio: number;
 	actions: number;
+	/** 程序侧辅助动作数（滚动等，**不计入模型操控能力**） */
+	programAssists: number;
 	retries: number;
 	fallbackCount: number;
 	abstains: number;

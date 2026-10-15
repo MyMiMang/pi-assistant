@@ -3,7 +3,7 @@ import { models, providerNames } from "../models.ts";
 import { configuredModels } from "../rooms/model-pick.ts";
 import { fastComputerSettings, saveFastComputerSettings, type FastComputerScope, type FastComputerSettings } from "./index.ts";
 import { benchmarkStatus, cancelBenchmark, listBenchmarks, type BenchmarkAvailability, type FastBenchmarkResult } from "./benchmark.ts";
-import { BenchmarkFixtureStateStore, benchmarkFixtureStatePath, renderBenchmarkFixtureHtml } from "./benchmark-fixture.ts";
+import { BenchmarkFixtureStateStore, isPrivateSource, renderBenchmarkFixtureHtml } from "./benchmark-fixture.ts";
 
 /**
  * 基准测试的宿主（由 runtime / 电脑模块注入）。
@@ -45,21 +45,28 @@ export function mountFastComputerRoutes(app: Hono<any>, hostOrOpts?: BenchmarkHo
 	const runOwners = new Map<string, string>();
 
 	// ------------------------------------------------------------ 隔离 fixture（测试页 + 机器状态 reporter）
+	// GET 页面：run token 只从服务端已 arm 的存储取出后再烤进页面；未 arm 则 token 为空（页面无法上报）。
+	// 这保证只有本次 run 真正打开的那个页面能获得 token。
 	app.get("/api/fast-computer/benchmark/fixture/:fixtureId", (c) => {
 		const fixtureId = c.req.param("fixtureId")!;
 		const nonce = c.req.query("nonce") ?? "";
-		return c.html(renderBenchmarkFixtureHtml(fixtureId, nonce));
+		const token = store.tokenOf(fixtureId, nonce) ?? "";
+		return c.html(renderBenchmarkFixtureHtml(fixtureId, nonce, token));
 	});
+	// POST 机器状态：必须同时带对 nonce + run token，且来源是私有 / 回环地址；缺一不可。
 	app.post("/api/fast-computer/benchmark/fixture/:fixtureId/state", async (c) => {
 		const fixtureId = c.req.param("fixtureId")!;
 		const nonce = c.req.query("nonce") ?? c.req.header("x-bench-nonce") ?? "";
+		const token = c.req.header("x-bench-fixture-token") ?? "";
+		const remote = (c as unknown as { env?: { incoming?: { socket?: { remoteAddress?: string } } } }).env?.incoming?.socket?.remoteAddress;
+		if (!isPrivateSource(remote)) return c.json({ ok: false, reason: "source_not_private" }, 403);
 		let patch: Record<string, unknown> = {};
 		try {
 			patch = await c.req.json<Record<string, unknown>>();
 		} catch {
 			/* 空 body 允许 */
 		}
-		const accepted = store.record(fixtureId, nonce, patch);
+		const accepted = store.record(fixtureId, nonce, token, patch);
 		return c.json({ ok: accepted });
 	});
 

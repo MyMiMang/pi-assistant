@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Hono } from "hono";
 import { _resetBenchmarks, benchmarkStatus, type FastBenchmarkResult } from "../src/fast-computer/benchmark.ts";
-import { BenchmarkFixtureStateStore, benchmarkFixtureTasks, renderBenchmarkFixtureHtml } from "../src/fast-computer/benchmark-fixture.ts";
+import { BenchmarkFixtureStateStore, benchmarkFixtureTasks, renderBenchmarkFixtureHtml, sanitizeBenchmarkStatePatch, isPrivateSource } from "../src/fast-computer/benchmark-fixture.ts";
 import { createBenchmarkHost, type BenchmarkDriver, type FixtureWindowHandle } from "../src/fast-computer/benchmark-host.ts";
 import { createMockChooser } from "../src/fast-computer/choosers.ts";
 import { fastComputerSettings, saveFastComputerSettings, _resetFastComputerState } from "../src/fast-computer/index.ts";
@@ -62,8 +62,11 @@ function fakeDriver(store: BenchmarkFixtureStateStore, opts: { windowChangesAfte
 		},
 		async execute(_handle, tool, args) {
 			dispatched.push({ tool, args });
-			const token = String(args.element_token ?? "");
-			if (tool.endsWith("click") && token === "tok-submit") store.record(fixtureId, nonce, { clicked: "submit" });
+			const token = store.tokenOf(fixtureId, nonce) ?? "";
+			const bare = tool.replace(/^mcp__[a-z0-9_-]+__/, "");
+			const tokenArg = String(args.element_token ?? "");
+			if (bare === "scroll") store.record(fixtureId, nonce, token, { step: 1 });
+			if (bare === "click" && tokenArg === "tok-submit") store.record(fixtureId, nonce, token, { clicked: "submit" });
 			return { isError: false };
 		},
 	};
@@ -84,19 +87,39 @@ const waitTerminal = async (id: string): Promise<FastBenchmarkResult | null> => 
 	return benchmarkStatus(id);
 };
 
-test("fixture：HTML 带 fixtureId + nonce，状态只接受 arm 过的 (fixtureId, nonce)", () => {
-	const html = renderBenchmarkFixtureHtml("fx-1", "nonce-1");
+test("fixture：HTML 带 fixtureId + nonce + token；状态只接受 arm 过且 nonce/token 都对的请求", () => {
+	const html = renderBenchmarkFixtureHtml("fx-1", "nonce-1", "tok-1");
 	assert.match(html, /fx-1/);
 	assert.match(html, /nonce-1/);
+	assert.match(html, /tok-1/);
 	assert.match(html, /\/api\/fast-computer\/benchmark\/fixture\/fx-1\/state/);
 	const store = new BenchmarkFixtureStateStore();
-	assert.equal(store.record("fx-1", "nonce-1", { clicked: "submit" }), false, "未 arm 不接受");
-	store.arm("fx-1", "nonce-1");
-	assert.equal(store.record("fx-1", "nonce-1", { clicked: "submit" }), true);
+	assert.equal(store.record("fx-1", "nonce-1", "tok-1", { clicked: "submit" }), false, "未 arm 不接受");
+	store.arm("fx-1", "nonce-1", "tok-1");
+	assert.equal(store.record("fx-1", "nonce-1", "wrong", { clicked: "submit" }), false, "token 不符不接受");
+	assert.equal(store.record("fx-1", "wrong", "tok-1", { clicked: "submit" }), false, "nonce 不符不接受（防串扰）");
+	assert.equal(store.record("fx-1", "nonce-1", "tok-1", { clicked: "submit" }), true);
 	assert.deepEqual(store.get("fx-1", "nonce-1"), { clicked: "submit" });
-	assert.equal(store.record("fx-1", "wrong", { clicked: "submit" }), false, "nonce 不符不接受（防串扰）");
+	// 白名单 schema：未知键 / 类型不符整条拒绝
+	assert.equal(store.record("fx-1", "nonce-1", "tok-1", { hacked: true }), false);
+	assert.equal(store.record("fx-1", "nonce-1", "tok-1", { step: "two" }), false);
+	assert.deepEqual(store.get("fx-1", "nonce-1"), { clicked: "submit" }, "拒绝的请求不写入任何状态");
 	store.reset("fx-1", "nonce-1");
 	assert.deepEqual(store.get("fx-1", "nonce-1"), {});
+	assert.equal(store.getEvidence("fx-1", "nonce-1").updatedAt, null, "reset 后无可信时间戳");
+});
+
+test("fixture：sanitize 白名单 + 来源限制", () => {
+	assert.deepEqual(sanitizeBenchmarkStatePatch({ clicked: "submit" }), { clicked: "submit" });
+	assert.deepEqual(sanitizeBenchmarkStatePatch({ step: 2 }), { step: 2 });
+	assert.equal(sanitizeBenchmarkStatePatch({ clicked: "submit", extra: 1 }), null);
+	assert.equal(sanitizeBenchmarkStatePatch({ step: Number.NaN }), null);
+	assert.equal(sanitizeBenchmarkStatePatch([1, 2]), null);
+	assert.equal(isPrivateSource("127.0.0.1"), true);
+	assert.equal(isPrivateSource("::1"), true);
+	assert.equal(isPrivateSource("::ffff:192.168.1.9"), true);
+	assert.equal(isPrivateSource(undefined), true);
+	assert.equal(isPrivateSource("8.8.8.8"), false);
 });
 
 test("host：真实闭环——模型只选 click，双证据（机器状态 + UI 观测）判 correct", async () => {
@@ -159,11 +182,15 @@ test("routes：fixture 页面 + 状态上报（错误 nonce 不生效），run �
 	assert.equal(page.status, 200);
 	assert.match(await page.text(), /n-r/);
 
-	store.arm("fx-r", "n-r");
-	const ok = await app.request("/api/fast-computer/benchmark/fixture/fx-r/state?nonce=n-r", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clicked: "submit" }) });
+	store.arm("fx-r", "n-r", "t-r");
+	const ok = await app.request("/api/fast-computer/benchmark/fixture/fx-r/state?nonce=n-r", { method: "POST", headers: { "content-type": "application/json", "x-bench-fixture-token": "t-r" }, body: JSON.stringify({ clicked: "submit" }) }, { incoming: { socket: { remoteAddress: "127.0.0.1" } } });
 	assert.deepEqual(await ok.json(), { ok: true });
-	const bad = await app.request("/api/fast-computer/benchmark/fixture/fx-r/state?nonce=other", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clicked: "cancel" }) });
+	const badToken = await app.request("/api/fast-computer/benchmark/fixture/fx-r/state?nonce=n-r", { method: "POST", headers: { "content-type": "application/json", "x-bench-fixture-token": "nope" }, body: JSON.stringify({ clicked: "cancel" }) }, { incoming: { socket: { remoteAddress: "127.0.0.1" } } });
+	assert.deepEqual(await badToken.json(), { ok: false });
+	const bad = await app.request("/api/fast-computer/benchmark/fixture/fx-r/state?nonce=other", { method: "POST", headers: { "content-type": "application/json", "x-bench-fixture-token": "t-r" }, body: JSON.stringify({ clicked: "cancel" }) }, { incoming: { socket: { remoteAddress: "127.0.0.1" } } });
 	assert.deepEqual(await bad.json(), { ok: false });
+	const publicSource = await app.request("/api/fast-computer/benchmark/fixture/fx-r/state?nonce=n-r", { method: "POST", headers: { "content-type": "application/json", "x-bench-fixture-token": "t-r" }, body: JSON.stringify({ clicked: "cancel" }) }, { incoming: { socket: { remoteAddress: "8.8.8.8" } } });
+	assert.equal(publicSource.status, 403, "公网来源拒绝");
 
 	const listed = await app.request("/api/fast-computer/benchmark");
 	const body = (await listed.json()) as { availability: unknown; runs: unknown[] };

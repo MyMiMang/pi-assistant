@@ -123,7 +123,9 @@ export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 		const targetSel = opts.driver.target(input.target)!;
 		const fixtureId = `bench-${randomToken(6)}`;
 		const nonce = randomToken(10);
-		opts.store.arm(fixtureId, nonce);
+		// run token：页面上报机器状态时必须带（连同 nonce），杜绝别的页面 / 别的 run 伪造上报。
+		const token = randomToken(24);
+		opts.store.arm(fixtureId, nonce, token);
 
 		let opened: { handle: FixtureWindowHandle; close: () => Promise<void> };
 		try {
@@ -150,7 +152,7 @@ export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 			collectCandidates: (structured) => clickCandidatesFromWindowState(prefixTool, fastTarget, structured),
 			choose: (goal, candidates, signal) => selectFastAction({ key: `${handle.prefix}:${handle.pid}:${handle.windowId}`, goal, candidates, chooser, settings, signal }),
 			execute: (tool, args, signal) => opts.driver.execute(handle, tool, args, signal),
-			readMachineState: async () => opts.store.get(fixtureId, nonce),
+			readMachineState: async () => opts.store.getEvidence(fixtureId, nonce),
 		});
 
 		let started: FastBenchmarkResult;

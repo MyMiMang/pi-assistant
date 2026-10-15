@@ -805,6 +805,7 @@ function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; on
 								<Metric label="步骤 p95" value={run.p95Ms == null ? "—" : `${run.p95Ms}ms${run.p95Approx ? "（粗略）" : ""}`} />
 								<Metric label="有效样本" value={String(run.samples)} />
 								<Metric label="动作 / 重试" value={`${run.actions} / ${run.retries}`} />
+								<Metric label="程序辅助（滚动，不计模型能力）" value={String(run.programAssists ?? 0)} />
 								<Metric label="弃权" value={String(run.abstains)} />
 								<Metric label="超时 / 错误" value={`${run.timeouts} / ${run.errors}`} />
 								<Metric label="基准任务正确率" value={run.correctness == null ? "—" : `${Math.round(run.correctness * 100)}%`} />

@@ -44,8 +44,11 @@ export function benchmarkFixtureTasks(): FastBenchmarkTask[] {
 			id: "scroll-target",
 			kind: "click",
 			title: "滚动后点击底部目标",
-			goal: "向下滚动页面，点击最下面的「深度目标」按钮",
+			goal: "点击最下面的「深度目标」按钮",
 			timeoutMs: 12_000,
+			// 滚动是**程序侧策略**（用正式 backend 的 scroll 工具按方向滚，不给模型坐标），
+			// 计进 programAssists，不计入模型的操控能力结论；模型仍只做有界 click。
+			programAssist: { scroll: { direction: "down", amount: 8 } },
 			expect: { machine: { clicked: "deep-target" }, ui: { role: "status", label_contains: "深度目标完成" } },
 		},
 		{
@@ -64,9 +67,10 @@ export function benchmarkFixtureTasks(): FastBenchmarkTask[] {
  * fixture 页面 HTML：把 fixtureId + nonce 写进标题（供窗口身份 / URL 校验），
  * 状态变化经相对路径 `state?nonce=…` POST 回本机；每个动作后写入可见的 `role=status` 结果元素（独立 UI 证据）。
  */
-export function renderBenchmarkFixtureHtml(fixtureId: string, nonce: string): string {
+export function renderBenchmarkFixtureHtml(fixtureId: string, nonce: string, token: string): string {
 	const id = JSON.stringify(fixtureId);
 	const n = JSON.stringify(nonce);
+	const t = JSON.stringify(token);
 	const statePath = JSON.stringify(`${benchmarkFixtureStatePath(fixtureId)}?nonce=${encodeURIComponent(nonce)}`);
 	return `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8" />
@@ -87,6 +91,7 @@ export function renderBenchmarkFixtureHtml(fixtureId: string, nonce: string): st
 "use strict";
 var FIXTURE_ID = ${id};
 var NONCE = ${n};
+var TOKEN = ${t};
 var STATE_URL = ${statePath};
 window.__BENCH_FIXTURE__ = { fixtureId: FIXTURE_ID, nonce: NONCE, state: {} };
 function post(patch){
@@ -94,7 +99,7 @@ function post(patch){
   try {
     fetch(STATE_URL, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-bench-nonce": NONCE },
+      headers: { "content-type": "application/json", "x-bench-nonce": NONCE, "x-bench-fixture-token": TOKEN },
       body: JSON.stringify(patch),
       keepalive: true,
     });
@@ -147,34 +152,105 @@ main();
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /**
- * fixture 机器状态存储（服务端内存）：只接受被 `arm` 过的 (fixtureId, nonce)。
- * 每次试次开始前 `reset`，避免上一轮遗留状态把本轮误判成通过。
+ * fixture 页面允许上报的机器状态键（白名单，固定 schema）。未知键一律整条拒绝，杜绝任意伪造 success。
+ * `step` 允许数字，其余只允许字符串。
+ */
+export const BENCHMARK_ALLOWED_STATE_KEYS = ["clicked", "selected", "step"] as const;
+
+/** 只保留白名单字段并做类型校验；出现未知键 / 类型不符 → null（整条拒绝）。 */
+export function sanitizeBenchmarkStatePatch(patch: unknown): Record<string, unknown> | null {
+	if (!patch || typeof patch !== "object" || Array.isArray(patch)) return null;
+	const out: Record<string, unknown> = {};
+	for (const [k, v] of Object.entries(patch as Record<string, unknown>)) {
+		if (!(BENCHMARK_ALLOWED_STATE_KEYS as readonly string[]).includes(k)) return null;
+		if (k === "step") {
+			if (typeof v !== "number" || !Number.isFinite(v)) return null;
+		} else if (typeof v !== "string") return null;
+		out[k] = v;
+	}
+	return out;
+}
+
+/** 一条 fixture 机器状态的证据：状态 + 最后一次被 active 上报的机器时间（freshness 用）。 */
+export interface BenchmarkMachineEvidence {
+	state: Record<string, unknown>;
+	updatedAt: number | null;
+}
+
+/**
+ * fixture 回调来源限制：只接受回环 / RFC1918 私有 / link-local / ULA 地址。
+ * 未知（undefined / 空 / 测试无 socket）按允许处理（本机 fixture）；明确的公网地址一律拒绝。
+ */
+export function isPrivateSource(ip: string | null | undefined): boolean {
+	if (!ip) return true;
+	const s = ip.trim().toLowerCase();
+	if (s === "::1" || s === "127.0.0.1" || s.startsWith("127.")) return true;
+	if (s.startsWith("::ffff:")) return isPrivateSource(s.slice(7));
+	if (s.startsWith("10.") || s.startsWith("192.168.")) return true;
+	if (/^172\.(1[6-9]|2\d|3[01])\./.test(s)) return true;
+	if (s.startsWith("169.254.") || s.startsWith("fe80:") || s.startsWith("fc") || s.startsWith("fd")) return true;
+	if (s.startsWith("localhost")) return true;
+	return false;
+}
+
+/**
+ * fixture 机器状态存储（服务端内存）：只接受被 `arm` 过、且 nonce + run token 都对的 (fixtureId, nonce)。
+ * 每次试次开始前 `reset`，避免上一轮遗留状态把本轮误判成通过；并记录 `updatedAt` 供 freshness 判定。
  */
 export class BenchmarkFixtureStateStore {
 	private readonly states = new Map<string, Record<string, unknown>>();
-	private readonly armed = new Set<string>();
+	private readonly tokens = new Map<string, string>();
+	private readonly updatedAt = new Map<string, number>();
+	private now: () => number = () => Date.now();
 	private static key(fixtureId: string, nonce: string) {
 		return `${fixtureId}\u0000${nonce}`;
 	}
-	arm(fixtureId: string, nonce: string) {
-		this.armed.add(BenchmarkFixtureStateStore.key(fixtureId, nonce));
-		this.states.set(BenchmarkFixtureStateStore.key(fixtureId, nonce), {});
+	/** 仅供测试注入假时钟。 */
+	_setNow(now: () => number) {
+		this.now = now;
+	}
+	arm(fixtureId: string, nonce: string, token: string) {
+		const k = BenchmarkFixtureStateStore.key(fixtureId, nonce);
+		this.tokens.set(k, token);
+		this.states.set(k, {});
+		this.updatedAt.delete(k);
 	}
 	disarm(fixtureId: string, nonce: string) {
-		this.armed.delete(BenchmarkFixtureStateStore.key(fixtureId, nonce));
-		this.states.delete(BenchmarkFixtureStateStore.key(fixtureId, nonce));
-	}
-	/** 返回是否被接受（未 arm / nonce 不符 → false，杜绝其它 run 串扰）。 */
-	record(fixtureId: string, nonce: string, patch: Record<string, unknown>): boolean {
 		const k = BenchmarkFixtureStateStore.key(fixtureId, nonce);
-		if (!this.armed.has(k) || !patch || typeof patch !== "object") return false;
-		this.states.set(k, { ...(this.states.get(k) ?? {}), ...patch });
+		this.tokens.delete(k);
+		this.states.delete(k);
+		this.updatedAt.delete(k);
+	}
+	/** 当前已 arm 的 run token；未 arm 返回 null（页面渲染据此决定能否上报）。 */
+	tokenOf(fixtureId: string, nonce: string): string | null {
+		return this.tokens.get(BenchmarkFixtureStateStore.key(fixtureId, nonce)) ?? null;
+	}
+	/**
+	 * 返回是否被接受。拒绝条件：未 arm、nonce 不符、run token 不符、patch 非白名单 schema。
+	 * 任一条不满足 → false，且**不写入任何状态**（杜绝伪造 success / 其它 run 串扰）。
+	 */
+	record(fixtureId: string, nonce: string, token: string, patch: Record<string, unknown>): boolean {
+		const k = BenchmarkFixtureStateStore.key(fixtureId, nonce);
+		const expected = this.tokens.get(k);
+		if (expected === undefined || !token || token !== expected) return false;
+		const clean = sanitizeBenchmarkStatePatch(patch);
+		if (!clean) return false;
+		this.states.set(k, { ...(this.states.get(k) ?? {}), ...clean });
+		this.updatedAt.set(k, this.now());
 		return true;
 	}
 	get(fixtureId: string, nonce: string): Record<string, unknown> {
 		return this.states.get(BenchmarkFixtureStateStore.key(fixtureId, nonce)) ?? {};
 	}
+	getEvidence(fixtureId: string, nonce: string): BenchmarkMachineEvidence {
+		const k = BenchmarkFixtureStateStore.key(fixtureId, nonce);
+		return { state: this.states.get(k) ?? {}, updatedAt: this.updatedAt.get(k) ?? null };
+	}
 	reset(fixtureId: string, nonce: string) {
-		if (this.armed.has(BenchmarkFixtureStateStore.key(fixtureId, nonce))) this.states.set(BenchmarkFixtureStateStore.key(fixtureId, nonce), {});
+		const k = BenchmarkFixtureStateStore.key(fixtureId, nonce);
+		if (this.tokens.has(k)) {
+			this.states.set(k, {});
+			this.updatedAt.delete(k);
+		}
 	}
 }
