@@ -44,7 +44,11 @@ export function memoryExtension(host: MemoryHost) {
 	return (pi: ExtensionAPI) => {
 		pi.on("before_agent_start", async (event) => {
 			try {
-				const block = await host.context(event.prompt);
+				// Pi 1.2.0 起本事件也会对扩展触发的 run（后台唤醒、triggerTurn）触发，那种事件没有 prompt。
+				// custom run 用空 query 走宿主 context：仍注入 bootContext / 已记事实，只是不做本轮召回；
+				// 不能直接读 event.prompt（undefined 会让 context 抛错、整块记忆丢失且每轮告警）。
+				const query = event.messageType === "user" ? event.prompt : "";
+				const block = await host.context(query);
 				if (!block.trim()) return;
 				return {
 					systemPrompt: `${event.systemPrompt}\n\n<memory>\n以下是你记得的信息（来自记忆库，可能过时；与用户当前说法冲突时以用户为准，并用 memory_remember / memory_forget 更新。方括号里是记忆 id）：\n${block}\n</memory>`,

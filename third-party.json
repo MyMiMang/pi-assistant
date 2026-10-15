@@ -40,7 +40,7 @@
     {
       "name": "@earendil-works/pi-coding-agent",
       "kind": "npm",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "license": "MIT",
       "adapter": "packages/server/src/pi-adapter",
       "smoke": "packages/server/test/pi-compat.test.ts"
@@ -48,7 +48,7 @@
     {
       "name": "@earendil-works/pi-ai",
       "kind": "npm",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "license": "MIT",
       "adapter": "packages/server/src/pi-adapter",
       "smoke": "packages/server/test/pi-compat.test.ts"
