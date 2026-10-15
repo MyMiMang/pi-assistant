@@ -4,6 +4,7 @@
  * 飞书 / 钉钉事件解析与回复（模拟 OpenAPI / sessionWebhook / 过期后改用机器人单聊接口）。
  */
 await import("./setup.ts");
+await import("./channel-credentials.ts");
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
@@ -278,6 +279,42 @@ test("钉钉：Stream 消息解析，回复走 sessionWebhook；过期后改用�
 	assert.match(String(calls.at(-1)!.body.msgParam), /actionURL2/);
 	await a.sendCard!({ ...m!.ctx, group: true }, card);
 	assert.equal(calls.at(-1)!.body.msgtype, "markdown", "群聊里退回文字");
+});
+
+test("坏渠道凭据不阻止其他渠道启动，设置可读且停用时保留原密文", async () => {
+	const bad = ch.saveChannel({ kind: "wechat_clawbot", agentId: "ca", enabled: false });
+	const good = ch.saveChannel({ kind: "wechat_clawbot", agentId: "ca" });
+	const { sealJson } = await import("../src/secrets.ts");
+	const bytes = Buffer.from(sealJson({ botToken: "OLD_TEST_TOKEN" }), "base64");
+	bytes[28] ^= 1;
+	const broken = bytes.toString("base64");
+	db.prepare("UPDATE channels SET secret = ?, enabled = 1 WHERE id = ?").run(broken, bad.id);
+	await assert.doesNotReject(ch.restartChannel(bad.id));
+	await ch.startChannels();
+	await wait(() => ch.channelJson(ch.getChannel(good.id)!).status.state === "waiting");
+	const publicRow = ch.channelJson(ch.getChannel(bad.id)!);
+	assert.equal(publicRow.status.state, "error");
+	assert.match(publicRow.status.detail!, /凭据无法解密.*重新扫码/);
+	assert.deepEqual(publicRow.secretsSet, []);
+	assert.doesNotThrow(() => ch.listChannels().map(ch.channelJson));
+	ch.saveChannel({ id: bad.id, kind: bad.kind, agentId: "ca", enabled: false });
+	await ch.restartChannel(bad.id);
+	assert.equal(ch.getChannel(bad.id)!.secret, broken);
+	assert.equal(ch.channelJson(ch.getChannel(bad.id)!).status.state, "off");
+	await ch.deleteChannel(bad.id);
+	await ch.deleteChannel(good.id);
+});
+
+test("不可读的渠道密钥只允许完整替换，部分填写不会覆盖旧数据", async () => {
+	const c = ch.saveChannel({ kind: "wecom", agentId: "ca", enabled: false, config: { corpId: CORP, agentId: "1000002", apiBase: BASE }, secret: { secret: "S", token: "tok", aesKey: AES } });
+	const broken = Buffer.alloc(40).toString("base64");
+	db.prepare("UPDATE channels SET secret = ? WHERE id = ?").run(broken, c.id);
+	assert.throws(() => ch.saveChannel({ id: c.id, kind: c.kind, agentId: "ca", secret: { token: "new" } }), /重新填写全部密钥/);
+	assert.equal(ch.getChannel(c.id)!.secret, broken);
+	const fixed = ch.saveChannel({ id: c.id, kind: c.kind, agentId: "ca", secret: { secret: "newS", token: "newT", aesKey: AES } });
+	const { openJson } = await import("../src/secrets.ts");
+	assert.deepEqual(openJson(fixed.secret!), { secret: "newS", token: "newT", aesKey: AES });
+	await ch.deleteChannel(c.id);
 });
 
 test.after(async () => {

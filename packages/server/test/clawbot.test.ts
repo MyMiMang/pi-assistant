@@ -4,6 +4,7 @@
  * 平台限制：没有 token 不发；超过 23 小时 / 本轮预算用完 / 被限流（ret=-2）→ 排队，用户下次发消息时补发；隔离：状态目录在数据目录。
  */
 await import("./setup.ts");
+await import("./channel-credentials.ts");
 import assert from "node:assert/strict";
 import { createCipheriv } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
@@ -80,6 +81,24 @@ test("入站文字解析：文字、语音转文字、引用", () => {
 });
 
 let chId = "";
+test("旧凭据无法解密仍可扫码，取消保留密文，确认后恢复上线", async () => {
+	const c = ch.saveChannel({ kind: "wechat_clawbot", agentId: "wa", enabled: false, config: { apiBase: BASE, cdnBase: BASE } });
+	const broken = Buffer.alloc(40).toString("base64");
+	db.prepare("UPDATE channels SET secret = ?, enabled = 1 WHERE id = ?").run(broken, c.id);
+	await ch.restartChannel(c.id);
+	assert.equal(ch.channelJson(ch.getChannel(c.id)!).status.state, "error");
+	qrSeq = ["wait"];
+	assert.ok((await ch.clawbotLogin(c.id)).qrUrl);
+	ch.clawbotCancel(c.id);
+	assert.equal(ch.getChannel(c.id)!.secret, broken);
+	qrSeq = ["confirmed"];
+	await ch.clawbotLogin(c.id);
+	await wait(() => ch.channelJson(ch.getChannel(c.id)!).status.state === "online");
+	assert.equal(openJson<{ botToken: string }>(ch.getChannel(c.id)!.secret!).botToken, "BOT_TOKEN_SECRET");
+	await ch.deleteChannel(c.id);
+	qrSeq = ["wait", "scaned", "need_verifycode", "confirmed"];
+});
+
 test("扫码登录 → 输入数字 → 凭据加密保存 → 主人自动授权 → 上线", async () => {
 	const c = ch.saveChannel({ kind: "wechat_clawbot", agentId: "wa", config: { apiBase: BASE, cdnBase: BASE } });
 	chId = c.id;

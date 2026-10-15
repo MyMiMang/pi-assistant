@@ -76,9 +76,23 @@ function changed() {
 	bus.emit({ type: "channels.changed" } as never);
 }
 
+function channelSecret(c: ChannelRow): Record<string, string> {
+	try {
+		return c.secret ? openJson<Record<string, string>>(c.secret) : {};
+	} catch {
+		throw new Error(c.kind === "wechat_clawbot" ? "微信凭据无法解密，请重新扫码连接" : "渠道凭据无法解密，请重新填写全部密钥");
+	}
+}
+
 /** 给 UI 的公开信息（不含密钥） */
 export function channelJson(c: ChannelRow) {
-	const secretKeys = c.secret ? Object.keys(openJson<Record<string, string>>(c.secret)) : [];
+	let secretKeys: string[] = [];
+	let status = statuses.get(c.id) ?? { state: c.enabled ? "connecting" : "off", detail: c.enabled ? "启动中" : "已停用" };
+	try {
+		secretKeys = Object.keys(channelSecret(c));
+	} catch (e) {
+		status = { state: c.enabled ? "error" : "off", detail: (e as Error).message };
+	}
 	return {
 		id: c.id,
 		kind: c.kind,
@@ -88,7 +102,7 @@ export function channelJson(c: ChannelRow) {
 		config: JSON.parse(c.config) as Record<string, string>,
 		secretsSet: secretKeys,
 		bindCode: c.bind_code,
-		status: statuses.get(c.id) ?? { state: c.enabled ? "connecting" : "off", detail: c.enabled ? "启动中" : "已停用" },
+		status,
 		users: peers(c.id)
 			.filter((p) => !p.peer_id.startsWith("chat:"))
 			.map((p) => ({ id: p.peer_id, display: p.display, allowed: !!p.allowed, lastAt: p.last_at })),
@@ -110,17 +124,30 @@ export function saveChannel(input: { id?: string; kind: ChannelKind; name?: stri
 	const cur = input.id ? getChannel(input.id) : undefined;
 	const f = FIELDS[input.kind];
 	const config = { ...(cur ? JSON.parse(cur.config) : {}), ...pick(input.config, f.config) };
-	// 密钥：留空 = 不修改
-	const secret = { ...(cur?.secret ? openJson<Record<string, string>>(cur.secret) : {}), ...pick(input.secret, f.secret) };
 	const required = { feishu: ["appId"], dingtalk: ["clientId"], wecom: ["corpId", "agentId"], wecom_bot: ["botId"], wechat_clawbot: [] as string[] }[input.kind];
 	for (const k of required) if (!config[k]) throw new Error(`缺少 ${k}`);
-	for (const k of f.secret) if (!secret[k]) throw new Error(`缺少 ${k}`);
-	if (input.kind === "wecom" && String(secret.aesKey).length !== 43) throw new Error("EncodingAESKey 应为 43 位");
+	// 密钥：留空 = 不修改
+	const supplied = pick(input.secret, f.secret);
+	let sealed = cur?.secret ?? null;
+	if (!sealed || Object.keys(supplied).length) {
+		let previous: Record<string, string> = {};
+		if (cur) {
+			try {
+				previous = channelSecret(cur);
+			} catch (e) {
+				if (f.secret.some((k) => !supplied[k])) throw e;
+			}
+		}
+		const secret = { ...previous, ...supplied };
+		for (const k of f.secret) if (!secret[k]) throw new Error(`缺少 ${k}`);
+		if (input.kind === "wecom" && String(secret.aesKey).length !== 43) throw new Error("EncodingAESKey 应为 43 位");
+		sealed = sealJson(secret);
+	}
 	const name = (input.name ?? cur?.name ?? KIND_LABEL[input.kind]).slice(0, 40);
 	const enabled = input.enabled ?? (cur ? !!cur.enabled : true);
 	const id = cur?.id ?? uid("ch");
-	if (cur) db.prepare("UPDATE channels SET name = ?, agent_id = ?, enabled = ?, config = ?, secret = ? WHERE id = ?").run(name, input.agentId, enabled ? 1 : 0, JSON.stringify(config), sealJson(secret), id);
-	else db.prepare("INSERT INTO channels(id, kind, name, agent_id, enabled, config, secret, bind_code, created_at) VALUES(?,?,?,?,?,?,?,?,?)").run(id, input.kind, name, input.agentId, enabled ? 1 : 0, JSON.stringify(config), sealJson(secret), newCode(), now());
+	if (cur) db.prepare("UPDATE channels SET name = ?, agent_id = ?, enabled = ?, config = ?, secret = ? WHERE id = ?").run(name, input.agentId, enabled ? 1 : 0, JSON.stringify(config), sealed, id);
+	else db.prepare("INSERT INTO channels(id, kind, name, agent_id, enabled, config, secret, bind_code, created_at) VALUES(?,?,?,?,?,?,?,?,?)").run(id, input.kind, name, input.agentId, enabled ? 1 : 0, JSON.stringify(config), sealed, newCode(), now());
 	void restartChannel(id);
 	changed();
 	return getChannel(id)!;
@@ -146,7 +173,7 @@ export function setPeerAllowed(channelId: string, peerId: string, allowed: boole
 function makeAdapter(c: ChannelRow): ChannelAdapter {
 	const deps = {
 		config: JSON.parse(c.config),
-		secret: c.secret ? openJson(c.secret) : {},
+		secret: channelSecret(c),
 		onMessage: (m: Inbound) => void handleInbound(c.id, m).catch((e) => console.warn(`[channel ${c.kind}] ${e instanceof Error ? e.message : e}`)),
 		onAction: (a: CardAction) => handleAction(c.id, a),
 		setStatus: (s: AdapterStatus) => {
@@ -180,9 +207,9 @@ export async function restartChannel(id: string) {
 		statuses.set(id, { state: "off", detail: "已停用" });
 		return changed();
 	}
-	const a = makeAdapter(c);
-	adapters.set(id, a);
 	try {
+		const a = makeAdapter(c);
+		adapters.set(id, a);
 		await a.start();
 	} catch (e) {
 		statuses.set(id, { state: "error", detail: e instanceof Error ? e.message : String(e) });
@@ -205,8 +232,13 @@ export async function clawbotLogin(id: string) {
 	const c = getChannel(id);
 	if (!c || c.kind !== "wechat_clawbot") throw new Error("不是微信 ClawBot 渠道");
 	const cfg = JSON.parse(c.config) as ClawbotConfig;
-	const sec = c.secret ? openJson<{ botToken?: string }>(c.secret) : {};
-	const st = await startLogin(id, cfg, sec.botToken, (r) => {
+	let existingToken: string | undefined;
+	try {
+		existingToken = channelSecret(c).botToken;
+	} catch {
+		/* 旧凭据不可读也允许重新扫码；确认成功前保留原密文 */
+	}
+	const st = await startLogin(id, cfg, existingToken, (r) => {
 		const cur = getChannel(id);
 		if (!cur) return;
 		const next: ClawbotConfig = { ...JSON.parse(cur.config), accountId: r.accountId, ...(r.baseUrl ? { apiBase: r.baseUrl } : {}), ...(r.userId ? { ownerUserId: r.userId } : {}) };
