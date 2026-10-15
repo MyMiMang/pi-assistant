@@ -53,6 +53,7 @@ import { composeQuotedInput } from "./replies.ts";
 import {
 	abortSession,
 	type AgentSession,
+	type SkillInvocationInput,
 	compactSession,
 	triggerHidden,
 	applyModelSettings,
@@ -64,6 +65,7 @@ import {
 	localBashOperations,
 	makeBashTool,
 	promptSession,
+	withSkillInvocations,
 	sessionFileOf,
 	branchMessagesOf,
 	sessionStats,
@@ -686,7 +688,7 @@ class AgentRuntime {
 	 * 正在工作：整条是停止词 → 立刻全部停下；否则作为插话在下一个工具边界送达（Pi steer），
 	 * 消息上标 delivery = queued → delivered，界面显示“已送达正在进行的任务”。
 	 */
-	async send(text: string, files?: AttachmentInput[], opts: { messageId?: string; quote?: string } = {}): Promise<"started" | "steered" | "stopped" | "none"> {
+	async send(text: string, files?: AttachmentInput[], opts: { messageId?: string; quote?: string; skills?: SkillInvocationInput[] } = {}): Promise<"started" | "steered" | "stopped" | "none"> {
 		if ((this.busy || listSubagents(this.id).some((r) => isLiveSubagent(r.status))) && !files?.length && isStopCommand(text)) {
 			if (opts.messageId) updateMessage(opts.messageId, { meta: { delivery: "stop" } });
 			await this.abort();
@@ -705,10 +707,20 @@ class AgentRuntime {
 			return "none";
 		}
 		const steer = isSessionBusy(s);
-		setAgentStatus(this.id, "running");
 		// 引用作为带 role wrapper 的上下文拼在用户新消息之前（不改 Pi 消息格式）
 		const fullText = composeQuotedInput(text, opts.quote);
-		const input = await this.withAttachments(s, fullText, files).catch(() => ({ text: fullText, images: undefined }));
+		// 本次点选的技能：展开成 Pi 公开技能块拼在正文之前；只读会话已加载的技能，失败不发送
+		let promptText = fullText;
+		if (opts.skills?.length) {
+			try {
+				promptText = withSkillInvocations(s, opts.skills, fullText);
+			} catch (e) {
+				insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `本次选用的技能不可用：${e instanceof Error ? e.message : String(e)}`, status: "error" });
+				return "none";
+			}
+		}
+		setAgentStatus(this.id, "running");
+		const input = await this.withAttachments(s, promptText, files).catch(() => ({ text: promptText, images: undefined }));
 		if (steer && opts.messageId) {
 			this.steering.push(opts.messageId);
 			updateMessage(opts.messageId, { meta: { delivery: "queued" } });
@@ -781,12 +793,13 @@ class AgentRuntime {
 		return !!this.session && isSessionBusy(this.session);
 	}
 
-	/** 手动整理上下文（Pi compaction） */
-	async compact() {
+	/** 手动整理上下文（Pi compaction）。instructions 可选，只影响摘要请求（希望保留什么）；空 = 原行为，不改变主会话 / 安全策略。 */
+	async compact(instructions?: string) {
 		const s = await this.ensure();
 		if (!s) throw new Error("还没有可用的模型");
 		if (isSessionBusy(s)) throw new Error("助理正在工作，等这一轮结束再整理");
-		return compactSession(s);
+		const focus = typeof instructions === "string" ? instructions.trim() : "";
+		return compactSession(s, focus || undefined);
 	}
 
 	/** 让助理在后台接着做一轮（指令对模型可见，聊天里不显示）。返回 false 表示这一轮没能触发（无会话/模型或 Pi 报错）——

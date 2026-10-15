@@ -20,6 +20,7 @@ import {
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
+	stripFrontmatter,
 	type AgentSession,
 	type AgentSessionEvent,
 	type BashOperations,
@@ -757,6 +758,32 @@ export const isSessionBusy = (s: AgentSession) => s.isStreaming;
 export async function compactSession(s: AgentSession, instructions?: string) {
 	const r = await s.compact(instructions);
 	return { tokensBefore: (r as { tokensBefore?: number }).tokensBefore, summary: (r as { summary?: string }).summary };
+}
+
+/** 本次要用的技能（canonical id + Pi 解析出的名字 / SKILL.md 路径）。服务端已按分配表校验。 */
+export interface SkillInvocationInput {
+	id: string;
+	name: string;
+	filePath: string;
+}
+
+/**
+ * 把本次选中的技能展开成 Pi 公开的技能块，拼在用户正文之前（Pi 的 `/skill:name` 只展开开头一个，
+ * 这里用同一块语法支持一次多个）。
+ *
+ * - 只接受这个会话**已加载**的技能（= 已分配给该助理且通过 `skillFilter`）；找不到就抛错（fail closed）。
+ * - 正文只读 Pi 解析出的 `filePath`，不接受客户端路径 / 正文；**不写进 system prompt**，只作为本条用户消息内容。
+ * - 生成的块与 Pi 的 `parseSkillBlock` 语法一致。
+ */
+export function withSkillInvocations(session: AgentSession, skills: SkillInvocationInput[], userText: string): string {
+	const loaded = session.resourceLoader.getSkills().skills as unknown as { name: string; filePath: string; baseDir: string }[];
+	const blocks = skills.map((want) => {
+		const s = loaded.find((x) => x.filePath === want.filePath) ?? loaded.find((x) => x.name === want.name);
+		if (!s) throw new Error(`技能未加载：${want.name}`);
+		const body = stripFrontmatter(readFileSync(s.filePath, "utf-8")).trim();
+		return `<skill name="${s.name}" location="${s.filePath}">\nReferences are relative to ${s.baseDir}.\n\n${body}\n</skill>`;
+	});
+	return blocks.length ? `${blocks.join("\n\n")}\n\n${userText}` : userText;
 }
 /** 当前上下文用量（用于界面提示“对话较长”） */
 export function contextUsage(s: AgentSession): { tokens: number | null; contextWindow: number | null } {
