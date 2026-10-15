@@ -194,14 +194,14 @@ test("采集到非 16000 采样率时真重采样，上传的是 16k WAV", async
 test("最长时长：默认 60 秒，到点自动停止转写", async () => {
 	assert.equal(DEFAULT_MAX_DURATION_MS, 60_000);
 	const { d, calls } = deps();
-	let fire: (() => void) | null = null;
+	const timer: { fn: null | (() => void) } = { fn: null };
 	const c = new VoiceInputController(
-		{ ...d, setTimer: (fn, ms) => { assert.equal(ms, 60_000); fire = fn; return 1; }, clearTimer: () => {} },
+		{ ...d, setTimer: (fn, ms) => { assert.equal(ms, 60_000); timer.fn = fn; return 1; }, clearTimer: () => {} },
 		{},
 	);
 	await c.start({ provider: "p", model: "m", anchor: 0 });
-	assert.ok(fire);
-	fire!();
+	assert.ok(timer.fn);
+	timer.fn!();
 	await new Promise((r) => setTimeout(r, 0));
 	assert.equal(calls.transcribe, 1);
 });

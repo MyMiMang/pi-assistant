@@ -9,6 +9,7 @@ import type { Agent, Message, Room, RoomMember } from "../types";
 import { Activity, BotPart, type Part, SideToggle, SystemMsg, UserMsg } from "./Chat";
 import { Avatar, Button, Help, Modal, cx } from "./ui";
 import { isSendKey, SEND_HINT, COMPOSER_LABEL } from "../composer";
+import { VoiceInput } from "./VoiceInput";
 
 // ------------------------------------------------------------------ 显示用的成员信息（助理已删除时用群里存的快照）
 export function memberOf(room: Room | undefined, agents: Agent[], agentId: string): { id: string; name: string; avatar: string; color: string; deleted: boolean } {
@@ -363,6 +364,22 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 				<div className="pa-composer-bar">
 					<div className="pa-composer-tools">
 						<AttachButton onFiles={(f) => void addFiles(f)} />
+						<VoiceInput
+							agentId={room.managerId ?? undefined}
+							conversationId={room.id}
+							textareaRef={ta}
+							value={text}
+							onChange={(next, cursor) => {
+								setText(next);
+								requestAnimationFrame(() => {
+									const el = ta.current;
+									if (el) {
+										el.focus();
+										el.setSelectionRange(cursor, cursor);
+									}
+								});
+							}}
+						/>
 						<button className="pa-icon-btn ghost" title="@ 某个助理" aria-label="@ 某个助理" data-testid="mention-btn" onClick={() => {
 							const el = ta.current;
 							const at = el?.selectionStart ?? text.length;

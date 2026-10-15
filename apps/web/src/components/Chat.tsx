@@ -14,6 +14,7 @@ import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attac
 import { Avatar, Button, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
 import { COMPOSER_LABEL, isSendKey, SEND_HINT } from "../composer";
+import { VoiceInput } from "./VoiceInput";
 
 import { group, BotTurn as SharedBotTurn, BotPart as SharedBotPart, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
 export { Activity, activityOf, Thinking, group, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
@@ -203,6 +204,22 @@ function Composer({ agentId, name, model, running, drag, ref }: { agentId: strin
 				<div className="pa-composer-bar">
 					<div className="pa-composer-tools">
 					<AttachButton label={t("上传")} onFiles={(f) => void addFiles(f)} />
+					<VoiceInput
+						agentId={agentId}
+						conversationId={useStore.getState().convs[agentId]?.current}
+						textareaRef={ta}
+						value={text}
+						onChange={(next, cursor) => {
+							setText(next);
+							requestAnimationFrame(() => {
+								const el = ta.current;
+								if (el) {
+									el.focus();
+									el.setSelectionRange(cursor, cursor);
+								}
+							});
+						}}
+					/>
 					<HostTierPill agentId={agentId} />
 					<ProactivityPicker agentId={agentId} />
 					<span className="flex-1" />
