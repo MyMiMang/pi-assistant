@@ -10,6 +10,7 @@
 import { Loader2, Mic, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useVoiceInput } from "../hooks/useVoiceInput";
+import { useStore } from "../store";
 import { insertAtAnchor, shouldInsert, type VoiceResult } from "../voice-input";
 
 export interface VoiceInputProps {
@@ -52,6 +53,7 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 	};
 
 	const voice = useVoiceInput({ agentId, conversationId, getAnchor: () => textareaRef.current?.selectionStart ?? valueRef.current.length, onResult });
+	const openSettings = useStore((s) => s.set);
 
 	// IME 组合状态：组合中不插入（推迟到 compositionend），不打断候选。
 	useEffect(() => {
@@ -111,6 +113,11 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 				</button>
 			)}
 			{hint && <span className="pa-voice-hint max-w-[180px] truncate text-[11px] text-mut2" data-testid="voice-hint" title={hint}>{hint}</span>}
+			{voice.supported && !voice.asrModel && !recording && (
+				<button type="button" className="text-[11px] text-accent underline" data-testid="voice-open-settings" onClick={() => openSettings({ settings: "models" })}>
+					去设置
+				</button>
+			)}
 		</>
 	);
 }

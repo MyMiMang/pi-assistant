@@ -260,6 +260,104 @@ function ImageAdapterSection({ provider, images, onReload }: { provider: Registr
 	);
 }
 
+interface AsrDeclaration {
+	provider: string;
+	model: string;
+	protocol?: string;
+	name?: string;
+	language?: string;
+}
+interface AsrProvidersData {
+	protocols: string[];
+	providers: AsrDeclaration[];
+}
+
+/**
+ * 语音识别（ASR）适配：复用本服务的地址 / Key，只声明「这个模型走语音转写」，不新建第二套 Key。
+ * 本地 SenseVoice 由 runtime 上报（在「本地模型」里），不走这里。
+ */
+function AsrAdapterSection({ provider, onReload }: { provider: RegistryProvider; onReload: () => void }) {
+	const [data, setData] = useState<AsrProvidersData | null>(null);
+	const [model, setModel] = useState("");
+	const [protocol, setProtocol] = useState("openai-audio-transcriptions");
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	const load = () =>
+		api<AsrProvidersData>("/api/audio/asr/providers")
+			.then(setData)
+			.catch(() => setData(null));
+	useEffect(() => {
+		void load();
+	}, []);
+	if (provider.kind === "local" || provider.kind === "imagegen") return null;
+	const mine = (data?.providers ?? []).filter((d) => d.provider === provider.id);
+	const cloudProtocols = (data?.protocols ?? ["openai-audio-transcriptions"]).filter((p) => p !== "local-asr-http");
+	const options = provider.models.map((m) => ({ value: m.id, label: m.type === "chat" ? m.id : `${m.id}（${TYPE_LABEL[m.type]}）` }));
+	const save = async () => {
+		const id = model.trim();
+		if (!id) return;
+		setBusy(true);
+		setErr("");
+		try {
+			setData(await api<AsrProvidersData>("/api/audio/asr/providers", { method: "POST", json: { provider: provider.id, model: id, protocol, name: provider.name } }));
+			setModel("");
+			onReload();
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+	const remove = async (m: string) => {
+		setBusy(true);
+		setErr("");
+		try {
+			setData(await api<AsrProvidersData>(`/api/audio/asr/providers/${encodeURIComponent(provider.id)}/${encodeURIComponent(m)}`, { method: "DELETE" }));
+			onReload();
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<div className="space-y-1.5 rounded-lg border border-line p-2.5" data-testid={`asr-adapter-section-${provider.id}`} data-bound={String(mine.length > 0)}>
+			<div className="flex items-center gap-1.5 text-xs font-medium text-zinc-500">
+				语音识别（ASR）
+				<Help>把本服务的某个模型声明为语音转写：复用这里的地址和 Key，不新建第二套 Key。录音会先传到本机服务，再由本服务转发（音频会离开本机）。未声明时麦克风按钮会提示去设置。</Help>
+			</div>
+			{mine.length ? (
+				<div className="space-y-1">
+					{mine.map((d) => (
+						<div key={d.model} className="flex items-center gap-2 text-xs" data-testid={`asr-bound-${provider.id}-${d.model}`}>
+							<Badge tone="accent">语音</Badge>
+							<span className="min-w-0 flex-1 truncate font-mono">{d.model}</span>
+							<span className="text-[11px] text-mut2">{d.protocol ?? "openai-audio-transcriptions"}</span>
+							<button className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-hover" disabled={busy} onClick={() => void remove(d.model)} data-testid={`asr-unbind-${provider.id}-${d.model}`}>
+								解除
+							</button>
+						</div>
+					))}
+				</div>
+			) : (
+				<div className="text-[11px] text-mut2">未声明语音模型；麦克风会提示「未配置语音识别模型」。</div>
+			)}
+			<div className="flex flex-wrap items-center gap-2">
+				{options.length ? (
+					<Select value={model} ariaLabel="选择语音识别模型" testId={`asr-model-${provider.id}`} options={[{ value: "", label: "选择模型…" }, ...options]} onChange={setModel} className="min-w-[180px]" />
+				) : (
+					<Input placeholder="语音模型 id" value={model} onChange={(e) => setModel(e.target.value)} data-testid={`asr-model-input-${provider.id}`} className="min-w-[180px]" />
+				)}
+				<Select value={protocol} ariaLabel="语音协议" testId={`asr-protocol-${provider.id}`} options={cloudProtocols.map((p) => ({ value: p, label: p === "openai-audio-transcriptions" ? "OpenAI 语音转写" : p }))} onChange={setProtocol} className="min-w-[160px]" />
+				<Button size="sm" variant="outline" disabled={busy || !model.trim()} onClick={() => void save()} data-testid={`asr-bind-${provider.id}`}>
+					声明为语音识别
+				</Button>
+			</div>
+			{err && <div className="text-[11px] text-red-600">{err}</div>}
+		</div>
+	);
+}
+
 /** 默认图片模型：在统一面板里选一个已注册的生图模型（共享 Select，不用原生 select）。 */
 function DefaultImageModel({ images, onReload }: { images: ImageModelsData | null; onReload: () => void }) {
 	if (!images || !images.models.length) return null;
@@ -361,6 +459,7 @@ function ServiceCard({
 						<div className="text-[11px] text-mut2">能力来自 Pi 目录 / 用户显式配置 / 服务端 /models 元数据；靠 models.dev 或名字猜的标「未确认」。不会逐个模型做隐式付费探测。</div>
 					</div>
 					<TestConnection providerId={provider.id} models={provider.models} />
+					<AsrAdapterSection provider={provider} onReload={onReload} />
 					<ImageAdapterSection provider={provider} images={images} onReload={onReload} />
 					{provider.kind === "custom" && customMeta && (
 						<div className="flex flex-wrap gap-2">
@@ -677,6 +776,174 @@ function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: RegistryProvid
 	);
 }
 
+interface AsrLicenseView {
+	licenseName: string;
+	termsVersion: string;
+	decision: "cleared" | "unresolved" | "prohibited";
+	redistribution: boolean;
+	attribution: string;
+	links: { modelCard: string; modelLicense: string; issue: string; engineLicense: string };
+	restrictions: string[];
+	reason: string;
+	acceptValue: string;
+}
+interface AsrStatusView {
+	platform: { os: string; arch: string; support: string; reason?: string };
+	license: AsrLicenseView;
+	install: { state: string; phase: string; received: number; total: number | null; error: string | null; source: string | null };
+	runtime: { state: string; pid: number | null; port: number | null; host: string; lastError: string | null };
+	configured: boolean;
+	registered: { provider: string; modelId: string; protocol: string } | null;
+	source: { project: string; repoUrl: string; weightsRepo: string; weightsRevision: string; weightsLicense: string; note: string };
+	model: { id: string; bytes: number; sampleRate: number; channels: number; languages: string[]; punctuation: boolean };
+	notes: string[];
+}
+
+/**
+ * 本地 SenseVoice（语音识别）安装 / 许可卡。
+ * 许可限制**默认可见**（不折叠遮盖）；许可未确认（decision !== "cleared"）时下载安装入口默认关闭，
+ * 接受勾选框**不能绕过**（仅允许用户自行导入已合法取得的权重）。
+ */
+function LocalSenseVoiceCard() {
+	const [st, setSt] = useState<AsrStatusView | null>(null);
+	const [err, setErr] = useState("");
+	const [busy, setBusy] = useState<string | null>(null);
+	const [accepted, setAccepted] = useState(false);
+	const [importDir, setImportDir] = useState("");
+	const load = () =>
+		api<AsrStatusView>("/api/local-models/asr/sensevoice/status")
+			.then((s) => (setSt(s), setErr("")))
+			.catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+	useEffect(() => {
+		void load();
+	}, []);
+	useEffect(() => {
+		if (!st || (st.install.state !== "installing" && st.runtime.state !== "starting" && st.runtime.state !== "stopping")) return;
+		const t = setInterval(load, 1000);
+		return () => clearInterval(t);
+	}, [st?.install.state, st?.runtime.state]);
+	if (!st)
+		return (
+			<div className="rounded-xl border border-dashed border-line p-3 text-xs text-mut" data-testid="local-sensevoice-card" data-state="unavailable">
+				{err ? `本地 SenseVoice 状态读取失败：${err}` : "正在读取本地 SenseVoice 状态…"}
+			</div>
+		);
+	const post = async (path: string, body?: unknown) => {
+		setBusy(path);
+		setErr("");
+		try {
+			const r = await api<{ ok: boolean; status?: AsrStatusView; error?: string }>(`/api/local-models/asr/sensevoice${path}`, { method: "POST", json: body });
+			if (r.status) setSt(r.status);
+			else await load();
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(null);
+		}
+	};
+	const lic = st.license;
+	const installing = st.install.state === "installing";
+	const installed = st.install.state === "installed";
+	const running = st.runtime.state === "running";
+	const blocked = lic.decision !== "cleared";
+	const percent = st.install.total ? Math.round((st.install.received / st.install.total) * 100) : null;
+	return (
+		<div className="space-y-3 rounded-xl border border-line p-3" data-testid="local-sensevoice-card" data-install-state={st.install.state} data-runtime-state={st.runtime.state} data-license-decision={lic.decision} data-source="local">
+			<div className="flex flex-wrap items-center gap-2 text-xs">
+				<ServiceIcon provider={{ id: "local-sensevoice", name: "本地 SenseVoice", kind: "local" }} />
+				<span className="text-sm font-medium">本地 SenseVoice（语音识别）</span>
+				<Badge tone="accent">本地</Badge>
+				<span data-testid="sensevoice-install-state">
+					<Badge tone={installing ? "amber" : installed ? "green" : st.install.state === "failed" ? "red" : "zinc"}>
+						{st.install.state === "not_installed" ? "未安装" : installing ? "安装中" : installed ? "已安装" : "安装失败"}
+					</Badge>
+				</span>
+				<span data-testid="sensevoice-runtime-state">
+					<Badge tone={running ? "green" : st.runtime.state === "crashed" ? "red" : "zinc"}>
+						{running ? "运行中" : st.runtime.state === "starting" ? "启动中" : st.runtime.state === "stopping" ? "停止中" : st.runtime.state === "crashed" ? "已崩溃" : "未运行"}
+					</Badge>
+				</span>
+			</div>
+			<div className="text-[11px] text-mut" data-testid="sensevoice-source">
+				来源：{st.source.project} · 引擎 sherpa-onnx（{st.source.weightsLicense}）· 权重 {st.model.id}（{(st.model.bytes / 1024 / 1024).toFixed(0)} MB，{st.model.sampleRate} Hz {st.model.channels}ch，{st.model.languages.join("/")}）
+			</div>
+			<div className="space-y-1 rounded-lg border border-amber-300/60 bg-amber-50/60 p-2.5 text-[11px] text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" data-testid="sensevoice-license">
+				<div className="font-medium">
+					许可：{lic.licenseName} v{lic.termsVersion}（{lic.decision === "cleared" ? "已确认" : lic.decision === "unresolved" ? "适用范围未最终确认" : "禁止"}）
+				</div>
+				<ul className="list-disc space-y-0.5 pl-4">
+					{lic.restrictions.map((r) => (
+						<li key={r}>{r}</li>
+					))}
+				</ul>
+				<div className="flex flex-wrap gap-2 pt-0.5">
+					<a className="underline" href={st.source.repoUrl} target="_blank" rel="noreferrer" data-testid="sensevoice-link-repo">
+						源码仓库
+					</a>
+					<a className="underline" href={lic.links.modelLicense} target="_blank" rel="noreferrer" data-testid="sensevoice-link-license">
+						许可正文
+					</a>
+					<a className="underline" href={lic.links.modelCard} target="_blank" rel="noreferrer" data-testid="sensevoice-link-card">
+						权重页
+					</a>
+					<a className="underline" href={lic.links.issue} target="_blank" rel="noreferrer" data-testid="sensevoice-link-issue">
+						适用范围澄清（issue）
+					</a>
+				</div>
+				<div className="text-amber-800/80 dark:text-amber-300/80">
+					{lic.reason}。不随 App 分发 / 不镜像；{blocked ? "下载安装入口已关闭" : "接受条款后可安装"}，用户可自行导入已合法取得的权重。
+				</div>
+			</div>
+			{installing && (
+				<div className="space-y-1.5 text-[11px]" data-testid="sensevoice-progress">
+					<div className="flex items-center gap-2">
+						<span className="w-14 shrink-0 text-mut">{st.install.phase}</span>
+						<div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-hover">
+							<div className="h-full rounded-full bg-accent transition-all" style={{ width: `${percent ?? 8}%` }} />
+						</div>
+						<span className="w-24 shrink-0 text-right text-mut2">{percent != null ? `${percent}%` : "进行中"}</span>
+					</div>
+					<Button size="sm" variant="ghost" onClick={() => void post("/cancel")} data-testid="sensevoice-cancel">
+						取消
+					</Button>
+				</div>
+			)}
+			{st.install.state === "failed" && st.install.error && (
+				<div className="text-[11px] text-red-600" data-testid="sensevoice-error">
+					{st.install.error}
+				</div>
+			)}
+			<div className="flex flex-wrap items-center gap-2 text-[11px]">
+				<label className="flex items-center gap-1.5" title={blocked ? "许可未确认，勾选不能绕过；请用下方「导入」" : undefined}>
+					<input type="checkbox" checked={accepted} disabled={blocked} onChange={(e) => setAccepted(e.target.checked)} data-testid="sensevoice-accept" />
+					我已阅读上述许可条款（v{lic.termsVersion}）
+				</label>
+				<Button size="sm" variant="outline" disabled={!!busy || installing || blocked || !accepted} title={blocked ? lic.reason : undefined} onClick={() => void post("/install", { acceptLicense: lic.acceptValue, source: "download" })} data-testid="sensevoice-install">
+					{blocked ? "下载安装（许可未确认，已关闭）" : "下载并安装"}
+				</Button>
+			</div>
+			<div className="flex flex-wrap items-center gap-2 text-[11px]">
+				<Input placeholder="已下载权重目录（含 model.int8.onnx / tokens.txt）" value={importDir} onChange={(e) => setImportDir(e.target.value)} className="min-w-[240px]" data-testid="sensevoice-import-dir" />
+				<Button size="sm" variant="outline" disabled={!!busy || installing || !importDir.trim() || lic.decision === "prohibited"} onClick={() => void post("/install", { source: "import", importDir: importDir.trim() })} data-testid="sensevoice-import">
+					导入已下载权重
+				</Button>
+			</div>
+			{installed && (
+				<div className="flex flex-wrap gap-2">
+					<Button size="sm" variant={running ? "ghost" : "primary"} disabled={!!busy} onClick={() => void post(running ? "/stop" : "/start")} data-testid="sensevoice-toggle">
+						{running ? "停止" : "启动"}
+					</Button>
+					<Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void post("/idle", { seconds: 0 })} data-testid="sensevoice-idle">
+						空闲立即释放
+					</Button>
+				</div>
+			)}
+			{err && <div className="text-[11px] text-red-600" data-testid="sensevoice-op-error">{err}</div>}
+			<div className="text-[11px] text-mut2">{st.notes[0]}</div>
+		</div>
+	);
+}
+
 /** 实际操作测试：真实受控 CUA 任务（不是 API 延迟）。渲染 FastBenchmarkResult，不另定义结果结构。 */
 function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; onClose: () => void; provider: RegistryProvider; model: RegistryModel }) {
 	const [target, setTarget] = useState<"hostpc" | "computer">("computer");
@@ -904,7 +1171,7 @@ export function ModelServicesPanel() {
 	};
 	const list = useMemo(() => {
 		// 本地 Laya 由管理卡统一展示，registry 里的 local-laya 条目不重复成卡片
-		const f = registry.filter((s) => s.id !== "local-laya" && (!q || `${s.name} ${s.id}`.toLowerCase().includes(q.toLowerCase())));
+		const f = registry.filter((s) => s.id !== "local-laya" && s.id !== "local-sensevoice" && (!q || `${s.name} ${s.id}`.toLowerCase().includes(q.toLowerCase())));
 		return [...f].sort((a, b) => Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name));
 	}, [registry, q]);
 	if (phase === "loading") return <div className="rounded-xl border border-dashed border-line p-4 text-center text-xs text-mut" data-testid="model-services-loading">正在载入模型服务…</div>;
@@ -923,6 +1190,7 @@ export function ModelServicesPanel() {
 			<div className="space-y-3" data-testid="model-services-panel">
 				{confirmUi}
 				<LocalLayaCard onBenchmark={(p, m) => setBench({ provider: p, model: m })} />
+				<LocalSenseVoiceCard />
 				<DefaultImageModel images={images} onReload={reloadAll} />
 				<div className="flex flex-wrap items-center gap-2">
 					<div className="relative min-w-40 flex-1">

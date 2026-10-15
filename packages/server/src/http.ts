@@ -1,7 +1,9 @@
 import { mountSubagentRoutes } from "./subagent-routes.ts";
 import { mountFastComputerRoutes } from "./fast-computer/routes.ts";
 import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
-import { mountAsrRoutes, registryAsrProviders } from "./voice/index.ts";
+import { mountAsrRoutes, registryAsrProviders, type AsrDeclaration } from "./voice/index.ts";
+import { ASR_PROTOCOLS } from "./voice/contract.ts";
+import { isAsrProtocol } from "./voice/asr.ts";
 import { mountLocalAsrRoutes } from "./local-asr/routes.ts";
 import { createRuntimeBenchmarkHost } from "./fast-computer/benchmark-runtime.ts";
 import { isStopCommand } from "./interject.ts";
@@ -290,6 +292,33 @@ app.put("/api/models/registry/:provider/models/:model/capabilities", async (c) =
 	return c.json(registryJson());
 });
 app.post("/api/models/refresh", async (c) => (await models.refresh(), c.json({ ok: true })));
+/**
+ * 云语音识别（ASR）声明：复用**已有 provider 的地址 / Key**，只额外记「这个模型走语音转写」。
+ * 不新建第二套 Key（凭据仍由 Pi 按 provider 解析）；本地 SenseVoice 由 runtime 上报，不在这里声明。
+ */
+const asrProvidersJson = () => ({ protocols: ASR_PROTOCOLS, providers: getSetting<AsrDeclaration[]>("asrProviders", []) });
+app.get("/api/audio/asr/providers", (c) => c.json(asrProvidersJson()));
+app.post("/api/audio/asr/providers", async (c) => {
+	const b = await c.req.json<{ provider?: string; model?: string; protocol?: string; name?: string; language?: string }>().catch(() => ({}) as Record<string, string>);
+	const provider = String(b.provider ?? "").trim();
+	const model = String(b.model ?? "").trim();
+	const protocol = String(b.protocol ?? ASR_PROTOCOLS[0]).trim();
+	if (!provider || !model) return c.json({ error: "请选择服务和模型" }, 400);
+	if (!isAsrProtocol(protocol)) return c.json({ error: "不支持的语音协议" }, 400);
+	const known = models.listProviders().some((p) => p.id === provider) || customProviders.list().some((p) => p.id === provider);
+	if (!known) return c.json({ error: "服务不存在" }, 400);
+	const list = getSetting<AsrDeclaration[]>("asrProviders", []).filter((d) => !(d.provider === provider && d.model === model));
+	list.push({ provider, model, protocol, ...(b.name?.trim() ? { name: b.name.trim() } : {}), ...(b.language?.trim() ? { language: b.language.trim() } : {}) });
+	setSetting("asrProviders", list);
+	bus.emit({ type: "settings.changed" });
+	return c.json(asrProvidersJson());
+});
+app.delete("/api/audio/asr/providers/:provider/:model", (c) => {
+	const list = getSetting<AsrDeclaration[]>("asrProviders", []).filter((d) => !(d.provider === c.req.param("provider") && d.model === c.req.param("model")));
+	setSetting("asrProviders", list);
+	bus.emit({ type: "settings.changed" });
+	return c.json(asrProvidersJson());
+});
 // 用户选过哪些模型：输入栏「常用」置顶（只记 provider/id 的频次和最近一次时间，不存凭据）
 app.get("/api/models/picks", (c) => c.json({ picks: getModelPicks() }));
 app.post("/api/models/picks", async (c) => {
