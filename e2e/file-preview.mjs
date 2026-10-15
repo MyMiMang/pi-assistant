@@ -86,7 +86,7 @@ const MD_BODY = [
 	"",
 	"[危险链接](javascript:alert(1)) 和 [相对文件](./secret.txt) 和 [官网](https://example.com/docs)。",
 	"",
-	...Array.from({ length: 220 }, (_, i) => `第 ${i + 1} 段：手机需 HTTPS，局域网普通 HTTP 通常拿不到麦克风权限，转写模型要统一在模型服务里管理。`),
+	...Array.from({ length: 300 }, (_, i) => `第 ${i + 1} 段：手机需 HTTPS，局域网普通 HTTP 通常拿不到麦克风权限，转写模型要统一在模型服务里管理。`),
 ].join("\n");
 
 const CSV_BODY = 'name,note,count\n"张三","第一行\n第二行",3\n"带,逗号","他说""你好""",4\n';
@@ -125,6 +125,8 @@ const check = (name, cond, detail = "") => {
 	}
 };
 const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+// 需求要求 Markdown 长内容（约 39KB）也要能预览
+check(`Markdown fixture ≥ 39KB（实际 ${(Buffer.byteLength(MD_BODY) / 1024).toFixed(1)}KB）`, Buffer.byteLength(MD_BODY) >= 39 * 1024);
 
 /** 每个页面装一套 route：返回 fixture 文件 / 记录请求（用于断言「不自动加载外链图」「大文件不下载」）。 */
 async function installRoutes(context, state) {
