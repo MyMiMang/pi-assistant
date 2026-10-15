@@ -33,7 +33,7 @@ Pi Assistant 是基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
   - **权限一致性**：`canMutate` 对缺省 actor 与 `ownedBy` 对齐（视为主会话），修内部/旧调用被误拒。
   - **超时真中止**：recall/reflect 超时改 `AbortController` + 官方客户端 `signal` 真取消 fetch（不再只 race 掉 Promise）。
   - **编辑/驳回保 meta**：`update` 保留原 `taskId/conversationId/expiresAt`；`rejectDraft` 清 task/conversation 归属，避免重打 tag 漂移。
-- **已跑**（Node 24.19.0，全 Mock / 内存 CredentialStore / 临时数据目录，未碰真实 Hindsight、钥匙串、真实数据目录）：记忆相关单测 **19/19**（`memory-scope-safety` 12 + `memory-retain-dedup` 1 + `hindsight-scope` 1 + `hindsight` 4 + `hindsight-switch` 2）；服务端 `tsc --noEmit` exit 0。`hindsight.test.ts`/`hindsight-switch.test.ts` 已由无参 `initModels()` 改为注入内存 `CredentialStore`，不再有钥匙串风险，因此这批旧测试首次真实跑通。
+- **已跑**（Node 24.19.0，全 Mock / 内存 CredentialStore / 临时数据目录，未碰真实 Hindsight、钥匙串、真实数据目录）：记忆相关单测 **20/20**（`memory-scope-safety` 12 + `memory-retain-dedup` 1 + `hindsight-scope` 1 + `hindsight` 4 + `hindsight-switch` 2）；服务端 `tsc --noEmit` exit 0。`hindsight.test.ts`/`hindsight-switch.test.ts` 已由无参 `initModels()` 改为注入内存 `CredentialStore`，不再有钥匙串风险，因此这批旧测试首次真实跑通。
 - **真实 Hindsight 过滤验证（非 fake）**：本机 sidecar `/version` = `api_version 0.10.3`（与 node client 0.10.3 一致）；`/openapi.json` 确认 `ReflectRequest.tag_groups`/`tags`/`tags_match` 字段与枚举；直接调用**安装包 0.10.3 的** `ReflectRequest` 校验器 + `build_tag_groups_where_clause`/`tags_satisfy_groups`，对 Pi Assistant 实际会发的请求体生成 SQL 并逐条命中判定（`evidence/memory-scope-real/real_0103_filter_run.txt`）：兄弟草稿/别的对话/已驳回 = 不可见，已验证/本任务草稿/无 tag 旧忆 = 可见。
 - **未做 / 边界**：端到端 **HTTP retain/reflect 真实运行未验**——启动独立 Hindsight 实例需 Docker（本机无）或另起嵌入式 Postgres（会碰正在跑的用户服务），而真实 retain/reflect 需配置大模型凭据；按约定**不读用户 key/凭据**，故只做「官方 server 内查询层（无 LLM）实物验证」，如实区分：字段/语义/SQL **已验**，LLM 端到端产物质量**未验**。全量 e2e、UI 真机未验；本轮**未拆物理 bank**。
 
