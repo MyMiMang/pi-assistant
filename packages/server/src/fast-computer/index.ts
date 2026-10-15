@@ -247,7 +247,7 @@ export interface FastExpectation {
 	label_contains?: string;
 	value_equals?: string;
 	action_contains?: string;
-	/** false 表示要求「匹配到的元素不存在」 */
+	/** false 表示要求「匹配到的元素不存在」；控件树不保证完整覆盖，absence 不可证，只会 unsatisfied / unknown，绝不 confirmed。 */
 	exists?: boolean;
 }
 
@@ -257,6 +257,9 @@ export type VerifyOutcome = "confirmed" | "unsatisfied" | "unknown";
 /**
  * 用执行后**重新读取**的窗口状态核验 expected 后置条件。只会返回 confirmed / unsatisfied / unknown；
  * 没有 expected、读不到 elements、或没有可判定的匹配（例如多个匹配里没一个满足全部条件）都不臆断成功。
+ *
+ * 关键不变量：控件树搜索非穷尽 / 可能被截断或过滤（部分可见），**没匹配到 ≠ 不存在**。
+ * 缺少「完整覆盖」的可信证明时一律 unknown，绝不据此 confirmed（与 host `verify_state` 的「absence 不可证」一致）。
  */
 export function verifyExpectation(expected: FastExpectation | undefined, structured: unknown): VerifyOutcome {
 	if (!expected) return "unknown";
@@ -267,12 +270,22 @@ export function verifyExpectation(expected: FastExpectation | undefined, structu
 		if (expected.label_contains !== undefined && !norm(e.label).includes(expected.label_contains)) return false;
 		return true;
 	});
-	if (expected.exists === false) return matched.length === 0 ? "confirmed" : "unsatisfied";
-	if (matched.length === 0) return "unsatisfied";
-	const satisfied = matched.some((e) => {
-		if (expected.value_equals !== undefined && norm(e.value) !== expected.value_equals) return false;
-		if (expected.action_contains !== undefined && !(e.actions ?? []).includes(expected.action_contains)) return false;
-		return true;
-	});
-	return satisfied ? "confirmed" : "unsatisfied";
+	// 没匹配到：可能真的不存在，也可能只是没覆盖到 → 无法判定，绝不 confirmed。
+	if (matched.length === 0) return "unknown";
+	// 确实匹配到元素 → 「不存在」后置条件被正向证据证伪。
+	if (expected.exists === false) return "unsatisfied";
+	let undecidable = false;
+	for (const e of matched) {
+		if (expected.value_equals !== undefined) {
+			// 元素缺 value 字段时不能把 undefined 当空串（norm(undefined) === ""）；值断言无法判定 → unknown，不误判 confirmed。
+			if (e.value === undefined || e.value === null) {
+				undecidable = true;
+				continue;
+			}
+			if (norm(e.value) !== expected.value_equals) continue;
+		}
+		if (expected.action_contains !== undefined && !(e.actions ?? []).includes(expected.action_contains)) continue;
+		return "confirmed";
+	}
+	return undecidable ? "unknown" : "unsatisfied";
 }

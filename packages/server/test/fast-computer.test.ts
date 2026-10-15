@@ -227,8 +227,40 @@ test("G3 核验：confirmed / unsatisfied（存在、值、actions、不存在�
 	assert.equal(fc.verifyExpectation({ role: "button", value_equals: "已登录" }, state), "confirmed");
 	assert.equal(fc.verifyExpectation({ role: "button", value_equals: "未登录" }, state), "unsatisfied");
 	assert.equal(fc.verifyExpectation({ role: "button", action_contains: "show_menu" }, state), "unsatisfied");
-	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: true }, state), "unsatisfied");
-	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: false }, state), "confirmed");
+	// 确实匹配到元素 → 「不存在」断言被正向证据证伪（可以 unsatisfied）
+	assert.equal(fc.verifyExpectation({ label_contains: "登录", exists: false }, state), "unsatisfied");
+});
+
+test("G3 核验：没匹配到 ≠ 不存在 —— 缺少完整覆盖证明一律 unknown，不得 confirmed", () => {
+	const state = { elements: [{ role: "button", label: "登录", value: "已登录", actions: ["press"] }] };
+	// 正向断言找不到 → unknown（不是 unsatisfied）
+	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: true }, state), "unknown");
+	// 「不存在」断言找不到 → unknown（不是 confirmed）：控件树可能没覆盖全
+	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: false }, state), "unknown");
+	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: false }, { elements: [] }), "unknown");
+});
+
+test("G3 核验：截断 / 过滤 / 部分可见的响应不把「没找到」误判 confirmed", () => {
+	// truncated：元素太多只回了一部分
+	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: false }, { elements: [{ role: "button", label: "登录", value: "" }], truncated: true }), "unknown");
+	// filtered：只回过滤后的部分元素
+	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: false }, { elements: [{ role: "button", label: "登录", value: "" }], filtered_element_count: 1 }), "unknown");
+	// partial / 覆盖不完整
+	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: false }, { elements: [], elements_complete: false }), "unknown");
+	assert.equal(fc.verifyExpectation({ label_contains: "取消", exists: false }, { elements: [], degraded_reason: "ax_window_unresolved" }), "unknown");
+	// 但确实出现在（哪怕不完整的）响应里的元素仍能证伪「不存在」
+	assert.equal(fc.verifyExpectation({ label_contains: "登录", exists: false }, { elements: [{ role: "button", label: "登录", value: "" }], truncated: true }), "unsatisfied");
+});
+
+test("G3 核验：值断言缺 value 字段 → unknown，不把 undefined 当空串误判 confirmed", () => {
+	// 元素没有 value 字段：norm(undefined) === ""，若 value_equals:"" 会被误判 confirmed
+	assert.equal(fc.verifyExpectation({ role: "button", value_equals: "" }, { elements: [{ role: "button", label: "登录" }] }), "unknown");
+	// 显式空串才算满足
+	assert.equal(fc.verifyExpectation({ role: "button", value_equals: "" }, { elements: [{ role: "button", label: "登录", value: "" }] }), "confirmed");
+	// 有值但不匹配 → unsatisfied
+	assert.equal(fc.verifyExpectation({ role: "button", value_equals: "已登录" }, { elements: [{ role: "button", label: "登录", value: "未登录" }] }), "unsatisfied");
+	// 多命中里有一个满足即可 confirmed
+	assert.equal(fc.verifyExpectation({ role: "button", value_equals: "已登录" }, { elements: [{ role: "button", label: "登录" }, { role: "button", label: "登录", value: "已登录" }] }), "confirmed");
 });
 
 test("G4：systemone 不再读全局 env key，fail-closed；chat 仍可构建", async () => {
