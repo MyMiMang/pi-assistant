@@ -190,13 +190,15 @@ test("start/stop：running 时 token 不进 status；注册 loopback baseUrl；s
 	assert.equal(state.pid, null);
 });
 
-test("install 中途子进程崩溃 → crashed，且不再报 registered", async () => {
-	const { deps, child } = fakeDeps(dir(), { installed: true });
+test("install 中途子进程崩溃 → crashed，且不再报 registered，并撤销 classifier 注册", async () => {
+	const { deps, child, state } = fakeDeps(dir(), { installed: true });
 	const m = new LocalLayaManager(deps, LAYA_SOURCE);
 	await m.start();
+	assert.ok(state.registered, "启动后先注册");
 	child()?.kill("SIGKILL");
 	assert.equal(m.status().runtime.state, "crashed");
 	assert.equal(m.status().registered, null);
+	assert.equal(state.registered, null, "崩溃也必须从 Pi 目录里撤销注册，不留死端口的本地服务");
 });
 
 test("uninstall：必须显式确认；确认后调 deps.uninstall 并重置状态", async () => {

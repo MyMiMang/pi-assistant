@@ -49,7 +49,9 @@ const waitFor = async (id: string, statuses: string[]) => {
 
 test("窗口身份 fail-closed：任一字段不符都返回原因", () => {
 	assert.equal(windowIdentityMismatch(win(), observed()), null);
-	assert.match(windowIdentityMismatch(win(), observed({ window_token: "tok-2" })) ?? "", /token/);
+	// snapshot_id 每次读取都会换新，token 不等不再算失配；缺失才算读不到
+	assert.equal(windowIdentityMismatch(win(), observed({ window_token: "tok-2" })), null, "token 换新不算失配");
+	assert.match(windowIdentityMismatch(win(), observed({ window_token: "" })) ?? "", /token/);
 	assert.match(windowIdentityMismatch(win(), observed({ pid: 1 })) ?? "", /pid/);
 	assert.match(windowIdentityMismatch(win(), observed({ window_id: 9 })) ?? "", /window_id/);
 	assert.match(windowIdentityMismatch(win(), observed({ fixture_id: "other" })) ?? "", /fixture/);
@@ -200,9 +202,9 @@ test("CUA 执行器：候选为非 click（type）不派发，计 unknown（不�
 	assert.equal(dispatched.length, 0);
 });
 
-test("CUA 执行器：窗口 token 变化 → fail-closed 中止（抛 WindowIdentityError）", async () => {
-	const { deps } = cuaHarness({ readWindow: async () => observed({ window_token: "CHANGED" }) });
-	await assert.rejects(() => runOne(createCuaTrialRunner(win(), deps)), (e) => e instanceof WindowIdentityError && /token/.test((e as Error).message));
+test("CUA 执行器：窗口身份变化（pid）→ fail-closed 中止（抛 WindowIdentityError）", async () => {
+	const { deps } = cuaHarness({ readWindow: async () => observed({ pid: 9999 }) });
+	await assert.rejects(() => runOne(createCuaTrialRunner(win(), deps)), (e) => e instanceof WindowIdentityError && /pid/.test((e as Error).message));
 });
 
 test("CUA 执行器：快速路径 fallback/abstain 不派发任何动作", async () => {

@@ -67,6 +67,8 @@ async function writeStoredKey(providerId: string, key: string | null): Promise<v
 async function keyOf(p: Pick<ImageProvider, "id" | "keyFrom">): Promise<string | undefined> {
 	const unified = await readStoredKey(credentialIdOf(p));
 	if (unified) return unified;
+	// `keyFrom` 引用别的服务时**不再回退读本服务旧的 legacy Key**，避免把旧 Key 串到引用目标上（不复制明文）。
+	if (p.keyFrom) return undefined;
 	// legacy 桥接：旧版写在 imageKey:<id> 的加密设置（不复制明文，仅读）
 	const s = getSetting<string | null>(`imageKey:${p.id}`, null);
 	return s ? openJson<string>(s) : undefined;
@@ -80,15 +82,20 @@ export function keySourceOf(p: ImageProvider): ImageProvider["keyStored"] {
 	return undefined;
 }
 
-/** 幂等、非秘密的 legacy 元数据迁移：只给每个生图服务补 `keyStored` / `imageKeyMigrated` 标记，**不读、不复制任何明文**。 */
+/**
+ * 幂等、非秘密的 legacy 元数据迁移：只给每个生图服务刷新 `keyStored` / `imageKeyMigrated` 标记，**不读、不复制任何明文**。
+ * `imageKeyMigrated=true` 只表示「Key 已不再仅存于 legacy（在统一凭据存储或引用别的服务）」，
+ * 仍只存在 legacy 加密设置的服务标 `false`——避免标记已完成但 Keys 其实还在旧位置。
+ */
 export function migrateLegacyImageProviders(): number {
 	const list = listProviders();
 	let changed = 0;
 	const next = list.map((p) => {
 		const stored = keySourceOf(p);
-		if (stored === p.keyStored && p.imageKeyMigrated) return p;
+		const migrated = stored !== "legacy";
+		if (stored === p.keyStored && migrated === !!p.imageKeyMigrated) return p;
 		changed++;
-		return { ...p, keyStored: stored, imageKeyMigrated: true };
+		return { ...p, keyStored: stored, imageKeyMigrated: migrated };
 	});
 	if (changed) setSetting("imageProviders", next);
 	return changed;
@@ -127,7 +134,8 @@ export async function saveProvider(id: string | null, i: ProviderInput): Promise
 		if (getSetting<string | null>(`imageKey:${p.id}`, null)) setSetting(`imageKey:${p.id}`, null);
 	}
 	p.keyStored = keySourceOf(p);
-	p.imageKeyMigrated = true;
+	// 只有 Key 确实在统一凭据存储 / 引用别的服务时才算「已迁移」；仍旧只有 legacy Key 的服务标 false。
+	p.imageKeyMigrated = p.keyStored !== "legacy";
 	saveList(cur ? list.map((x) => (x.id === p.id ? p : x)) : [...list, p]);
 	// 第一个配置好的模型自动成为默认
 	const d = defaultImageModel();
