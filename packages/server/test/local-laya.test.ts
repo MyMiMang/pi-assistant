@@ -54,7 +54,7 @@ interface FakeOpts {
 
 function fakeDeps(dir: string, opts: FakeOpts = {}) {
 	const calls: { run: string[][]; spawned: string[]; phases: string[] } = { run: [], spawned: [], phases: [] };
-	const state = { installed: opts.installed ?? false, registered: null as null | { provider: string; modelId: string; protocol: string; baseUrl: string; token: string }, activated: false, rolledBack: false, uninstalled: false, aborted: false };
+	const state = { installed: opts.installed ?? false, registered: null as null | { provider: string; modelId: string; protocol: string; baseUrl: string; token: string }, activated: false, rolledBack: false, uninstalled: false, aborted: false, pid: null as number | null };
 	let child: FakeChild | null = null;
 	const deps: LayaDeps = {
 		profile: (ctx) => platformProfile(opts.platform ?? "darwin", opts.arch ?? "arm64", ctx),
@@ -90,6 +90,9 @@ function fakeDeps(dir: string, opts: FakeOpts = {}) {
 		},
 		unregisterClassifier: () => {
 			state.registered = null;
+		},
+		recordPid: (pid) => {
+			state.pid = pid;
 		},
 		now: () => 1000,
 		isInstalled: () => state.installed,
@@ -179,10 +182,12 @@ test("start/stop：running 时 token 不进 status；注册 loopback baseUrl；s
 	assert.ok(!JSON.stringify(st).includes("deadbeef"));
 	assert.ok(state.registered?.baseUrl.startsWith("http://127.0.0.1:18080/v1/"));
 	assert.equal(state.registered?.token, "deadbeefdeadbeefdeadbeefdeadbeef");
+	assert.equal(state.pid, 4321);
 	await m.stop();
 	assert.equal(m.status().runtime.state, "stopped");
 	assert.equal(child()?.killed, "SIGTERM");
 	assert.equal(state.registered, null);
+	assert.equal(state.pid, null);
 });
 
 test("install 中途子进程崩溃 → crashed，且不再报 registered", async () => {

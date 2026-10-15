@@ -87,6 +87,8 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 | [Debian 12 genericcloud](https://cloud.debian.org/images/cloud/) | 20260923-2610 | DFSG 自由软件（各包许可证不同） | Lima 虚拟机系统盘 |
 | pia-wsl-rootfs（本项目构建：Debian 12 slim + containerd / nerdctl / runc） | 0.1.0 | 各组件许可证 | Windows WSL2 发行版 |
 | 微信 Linux 版（可选，用户主动开启才下载） | 4.1.13.23 | 腾讯专有软件 | 个人微信渠道 |
+| [Laya](https://github.com/NandhaKishorM/laya)（可选，用户点「一键安装」才装） | 0.4.8（PyPI `laya`） | Apache-2.0 | 本地判断模型（TypeSafe Jev `/v1/systemone` 分类器） |
+| [laya-multilingual / laya-typed-decisions 权重](https://huggingface.co/convaiinnovations)（可选，随本地 Laya 下载） | revision `e4e9ddf2…` / `1a793eb5…`（pin SHA） | Apache-2.0 | 本地判断模型权重 |
 
 ## 助理电脑镜像（packages/sandbox-desktop，基于 debian:bookworm-slim）
 

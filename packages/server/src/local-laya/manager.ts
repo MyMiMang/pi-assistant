@@ -10,6 +10,7 @@
  * 测试：注入 fake deps，绝不真正下载 GB 依赖 / 起真实 Laya / 占 GPU。
  */
 import type { NvidiaProbe, PlatformContext, PlatformProfile } from "./platform.ts";
+import { availableParallelism } from "node:os";
 import type { LayaCheckpoint, LayaSourceMeta } from "./manifest.ts";
 
 export type LayaInstallState = "not_installed" | "installing" | "installed" | "failed";
@@ -95,6 +96,8 @@ export interface LayaDeps {
 	/** 注册/重注册 classifier provider（进程内注入 token；不落盘真实密钥） */
 	registerClassifier(info: { provider: string; modelId: string; protocol: string; baseUrl: string; token: string }): void;
 	unregisterClassifier(provider: string): void;
+	/** 记录我们自己的 sidecar pid（只写 pid + token 摘要，不写 token 原文）；null 表示清掉 */
+	recordPid(pid: number | null): void;
 	now(): number;
 	/** 已安装判定（真实实现看 env 目录 + meta） */
 	isInstalled(): boolean;
@@ -246,12 +249,14 @@ export class LocalLayaManager {
 		this.onChange();
 		const port = await this.deps.findFreePort();
 		const token = this.deps.randomToken();
-		const env = { ...this.baseEnv(paths), LAYA_HOST: LAYA_BIND_HOST, LAYA_PORT: String(port), LAYA_API_KEY: token, LAYA_JEV_STRICT: "1" };
+		const env = { ...this.baseEnv(paths), LAYA_HOST: LAYA_BIND_HOST, LAYA_PORT: String(port), LAYA_API_KEY: token, LAYA_JEV_STRICT: "1", LAYA_THREADS: this.cpuThreads(), LAYA_IDLE_UNLOAD_SECONDS: "300" };
 		const child = this.deps.spawn(this.envBin(paths.env, "laya-serve"), [], { env });
 		this.runtime = { state: "running", pid: child.pid ?? null, port, token, child, health: null };
+		this.deps.recordPid(child.pid ?? null);
 		this.deps.registerClassifier({ provider: LAYA_PROVIDER_ID, modelId: LAYA_MODEL_ID, protocol: "typesafe-system-one", baseUrl: `http://${LAYA_BIND_HOST}:${port}/v1/`, token });
 		child.onExit((code) => {
 			if (this.runtime.child !== child) return;
+			this.deps.recordPid(null);
 			this.runtime = { ...this.runtime, state: "crashed", pid: null, child: null, token: null };
 			this.onChange();
 		});
@@ -279,6 +284,7 @@ export class LocalLayaManager {
 			}
 		}
 		this.deps.unregisterClassifier(LAYA_PROVIDER_ID);
+		this.deps.recordPid(null);
 		this.runtime = { state: "stopped", pid: null, port: null, token: null, child: null, health: null };
 		this.onChange();
 		return this.status();
@@ -329,6 +335,15 @@ export class LocalLayaManager {
 	}
 	private envBin(env: string, name: string): string {
 		return process.platform === "win32" ? `${env}\\Scripts\\${name}` : `${env}/bin/${name}`;
+	}
+	/** CPU 上最大的性能开关：线程数取可用并行度（Laya 要求 ≤ 物理核数；拿不到按 4）。 */
+	private cpuThreads(): string {
+		try {
+			const n = availableParallelism();
+			return String(Math.max(1, Math.min(64, n)));
+		} catch {
+			return "4";
+		}
 	}
 }
 

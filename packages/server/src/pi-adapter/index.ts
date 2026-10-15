@@ -433,6 +433,10 @@ export class PiModels {
 	setRuntimeApiKey(id: string, key: string) {
 		return this.runtime.setRuntimeApiKey(id, key);
 	}
+	/** 清掉进程内注入的运行时 key（本地 sidecar 停止 / 换 token 时用；不碰持久凭据）。 */
+	removeRuntimeApiKey(id: string) {
+		return this.runtime.removeRuntimeApiKey(id);
+	}
 }
 
 export type ChatMessage =
