@@ -60,8 +60,49 @@ export function ProviderList({ providers, onPick, selected }: { providers: Provi
 	);
 }
 
-/** 设置 › 模型 › 模型服务：内置服务和用户添加的渠道分组、按服务折叠；展开看这个服务支持的模型和登录 / 编辑配置，
- *  每个模型行里再展开「能力」改擅长标签（原来那个全局长清单去掉）。 */
+/** 服务显示名：Mock 用固定中文名，其余用 provider 目录 / 用户起的名字。 */
+const providerName = (p: Provider) => (p.id === "mock" ? "Mock 模型（本地测试）" : p.name);
+
+/** 服务图标配色：没有品牌图可用，用「首字母 + 稳定配色」的字母头像做清楚 fallback，每个服务靠字母 + 颜色区分。 */
+const AVATAR_TONES = [
+	"bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
+	"bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
+	"bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+	"bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
+	"bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300",
+	"bg-teal-100 text-teal-700 dark:bg-teal-500/15 dark:text-teal-300",
+	"bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-500/15 dark:text-fuchsia-300",
+	"bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300",
+	"bg-lime-100 text-lime-700 dark:bg-lime-500/15 dark:text-lime-300",
+	"bg-cyan-100 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300",
+	"bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300",
+	"bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300",
+];
+function providerInitials(name: string) {
+	const t = name.trim();
+	const ascii = t.match(/[A-Za-z0-9]+/g) ?? [];
+	if (ascii.length >= 2) return ((ascii[0]?.charAt(0) ?? "") + (ascii[ascii.length - 1]?.charAt(0) ?? "")).toUpperCase(); // Amazon Bedrock → AB；Xiaomi Token Plan AMS/CN/SGP → XA/XC/XS
+	const one = ascii[0];
+	if (one && one.length >= 2) return one.slice(0, 2).toUpperCase(); // Anthropic → AN / Mock… → MO
+	// 其余（中文名，或只有一个字母/数字）：首字符 + 末尾可识别字符，保证「渠道1…6」这种也能区分
+	const chars = [...t].filter((c) => c.trim());
+	const first = chars[0] ?? "";
+	const last = chars[chars.length - 1] ?? "";
+	return (first + (/[A-Za-z0-9]/.test(last) ? last : "")).toUpperCase();
+}
+function ProviderAvatar({ provider }: { provider: Provider }) {
+	let h = 0;
+	for (const c of provider.id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+	const tone = AVATAR_TONES[h % AVATAR_TONES.length];
+	return (
+		<span aria-hidden className={cx("flex size-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold", tone)} data-testid="provider-icon" data-provider-icon={provider.id}>
+			{providerInitials(providerName(provider))}
+		</span>
+	);
+}
+
+/** 设置 › 模型 › 模型服务：内置服务和用户添加的渠道分组，每组是带服务图标的卡片网格；
+ *  点卡片展开这个服务支持的模型和登录 / 编辑配置，每个模型行里再展开「能力」改擅长标签。 */
 export function ProviderAccordion({ providers, onEditCustom, onConfigured, strengths }: { providers: Provider[]; onEditCustom: (id: string) => void; onConfigured: () => void; strengths: ReturnType<typeof import("./ModelStrengths").useModelStrengths> }) {
 	const [q, setQ] = useState("");
 	const [open, setOpen] = useState<string[]>([]);
@@ -85,9 +126,11 @@ export function ProviderAccordion({ providers, onEditCustom, onConfigured, stren
 						<div className="text-xs font-semibold text-mut" data-testid={`provider-group-${g.key}`}>
 							{g.title}（{g.items.length}）
 						</div>
-						{g.items.map((p) => (
-							<ProviderRow key={p.id} provider={p} open={open.includes(p.id)} onToggle={() => setOpen((l) => (l.includes(p.id) ? l.filter((x) => x !== p.id) : [...l, p.id]))} onEditCustom={onEditCustom} onConfigured={onConfigured} strengths={strengths} />
-						))}
+						<div className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-testid={`provider-grid-${g.key}`}>
+							{g.items.map((p) => (
+								<ProviderRow key={p.id} provider={p} open={open.includes(p.id)} onToggle={() => setOpen((l) => (l.includes(p.id) ? l.filter((x) => x !== p.id) : [...l, p.id]))} onEditCustom={onEditCustom} onConfigured={onConfigured} strengths={strengths} />
+							))}
+						</div>
 					</div>
 				) : null,
 			)}
@@ -97,7 +140,7 @@ export function ProviderAccordion({ providers, onEditCustom, onConfigured, stren
 
 const SOURCE_LABEL: Record<string, string> = { stored: "已保存凭据", models_json_key: "写在 models.json 的 Key", runtime: "运行时登录", env: "环境变量", environment: "环境变量" };
 
-/** 渠道折叠卡：标题一行显示名称 / 状态 / 模型数，展开后是该服务支持的模型（含能力标签编辑）和登录 / 编辑配置 */
+/** 渠道卡片：图标 + 名称 / 状态 / 模型数；展开后（跨两列）是该服务支持的模型（含能力标签编辑）和登录 / 编辑配置 */
 function ProviderRow({ provider, open, onToggle, onEditCustom, onConfigured, strengths }: { provider: Provider; open: boolean; onToggle: () => void; onEditCustom: (id: string) => void; onConfigured: () => void; strengths: ReturnType<typeof import("./ModelStrengths").useModelStrengths> }) {
 	const [models, setModels] = useState<ModelInfo[] | null>(null);
 	const [mq, setMq] = useState("");
@@ -110,22 +153,31 @@ function ProviderRow({ provider, open, onToggle, onEditCustom, onConfigured, str
 	const shown = (models ?? []).filter((m) => !mq || `${m.name} ${m.id}`.toLowerCase().includes(mq.toLowerCase()));
 	const labels: StrengthTag[] = strengths.data?.labels ?? [];
 	return (
-		<div className="rounded-xl border border-line" data-testid="provider-row" data-provider={provider.id}>
-			<button className="flex w-full items-center gap-2 p-3 text-left" onClick={onToggle} aria-expanded={open} data-testid={`provider-toggle-${provider.id}`}>
-				<ChevronDown size={14} className={cx("shrink-0 text-mut transition-transform", !open && "-rotate-90")} />
-				<span className="min-w-0 flex-1 truncate text-sm font-medium">{provider.id === "mock" ? "Mock 模型（本地测试）" : provider.name}</span>
-				{provider.configured && <CheckCircle2 size={14} className="shrink-0 text-emerald-500" aria-label="已配置" />}
-				{provider.custom && <Badge tone="amber">自定义</Badge>}
-				<span className="shrink-0 text-[11px] text-zinc-400">{provider.modelCount} 个模型</span>
-			</button>
-			{open && (
-				<div className="space-y-3 border-t border-line p-3">
-					<div className="flex flex-wrap gap-1">
+		<div className={cx("rounded-xl border border-line", open && "sm:col-span-2")} data-testid="provider-row" data-provider={provider.id}>
+			<button className="flex w-full items-center gap-2.5 p-3 text-left" onClick={onToggle} aria-expanded={open} data-testid={`provider-toggle-${provider.id}`}>
+				<ProviderAvatar provider={provider} />
+				<span className="min-w-0 flex-1">
+					<span className="flex items-center gap-1.5">
+						<span className="min-w-0 truncate text-sm font-medium">{providerName(provider)}</span>
+						{provider.configured && <CheckCircle2 size={14} className="shrink-0 text-emerald-500" aria-label="已配置" />}
+						{provider.custom && <Badge tone="amber">自定义</Badge>}
+					</span>
+					<span className="mt-1 flex flex-wrap items-center gap-1">
 						{provider.id === "mock" ? <Badge tone="amber">无需 Key</Badge> : null}
 						{provider.apiKey && provider.id !== "mock" && !provider.custom && <Badge>API Key</Badge>}
 						{provider.oauth && <Badge tone="accent">{provider.oauth.isSubscription ? "订阅登录" : "OAuth 登录"}</Badge>}
-						{provider.configured && <Badge tone="accent">已配置{provider.source && SOURCE_LABEL[provider.source] ? `（${SOURCE_LABEL[provider.source]}）` : ""}</Badge>}
-					</div>
+						<span className="text-[11px] text-zinc-400">{provider.modelCount} 个模型</span>
+					</span>
+				</span>
+				<ChevronDown size={14} className={cx("shrink-0 text-mut transition-transform", !open && "-rotate-90")} />
+			</button>
+			{open && (
+				<div className="space-y-3 border-t border-line p-3">
+					{provider.configured && (
+						<div className="flex flex-wrap gap-1">
+							<Badge tone="accent">已配置{provider.source && SOURCE_LABEL[provider.source] ? `（${SOURCE_LABEL[provider.source]}）` : ""}</Badge>
+						</div>
+					)}
 					<div className="space-y-1.5">
 						<div className="flex items-center justify-between gap-2">
 							<span className="text-xs font-medium text-zinc-500">支持的模型（{provider.modelCount}）</span>

@@ -5,8 +5,8 @@
  * 3) 模型 + 思考强度合并在同一个菜单 / 同一个按钮
  * 4) 390 窄中栏：按钮只留图标、无横向溢出、上下文圆环独立
  * 5) 设置 › 模型：顶部紧凑（默认使用 / 识图模型都是合一的按钮）、整个「模型服务 / 渠道」（添加渠道 + 内置 + 我的渠道）
- *    是一个带图标 / 数量 / 箭头的可折叠大分类、可一键全部关上；里面渠道按内置/我的分组折叠、
- *    展开看该服务模型、模型行内改能力标签、编辑/删除沿用应用内确认框（无原生 confirm）
+ *    是一个带图标 / 数量 / 箭头的可折叠大分类、可一键全部关上；里面渠道按内置/我的分组成「带服务图标的卡片网格」，
+ *    点卡片展开看该服务模型、模型行内改能力标签、编辑/删除沿用应用内确认框（无原生 confirm）
  * 6) 群聊成员与子代理的模型入口复用同一个菜单
  */
 import assert from "node:assert/strict";
@@ -217,6 +217,20 @@ try {
 	await page.getByTestId("provider-group-builtin").waitFor();
 	await page.getByTestId("provider-group-mine").waitFor();
 	assert.match(await page.getByTestId("provider-group-mine").innerText(), /我的渠道（6）/, "6 个自定义渠道应归到「我的渠道」");
+	// 服务是「带图标的卡片网格」：每张卡都有服务图标、图标各不相同（不能所有服务一个样）、桌面多列
+	const builtinGrid = page.getByTestId("provider-grid-builtin");
+	const mineGrid = page.getByTestId("provider-grid-mine");
+	await builtinGrid.waitFor();
+	await mineGrid.waitFor();
+	const gridCols = await builtinGrid.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+	assert.ok(gridCols >= 2, `桌面内置服务应是多列网格，实际 ${gridCols} 列`);
+	assert.equal(await page.locator('[data-testid=provider-row] [data-testid=provider-icon]').count(), await page.getByTestId("provider-row").count(), "每张服务卡都应有图标");
+	const mineIcons = await mineGrid.getByTestId("provider-icon").allTextContents();
+	assert.equal(mineIcons.length, 6, `我的渠道应有 6 个图标：${mineIcons.length}`);
+	assert.equal(new Set(mineIcons).size, mineIcons.length, `6 个渠道图标必须互不相同：${JSON.stringify(mineIcons)}`);
+	const builtinIcons = await builtinGrid.getByTestId("provider-icon").allTextContents();
+	assert.ok(new Set(builtinIcons).size >= Math.floor(builtinIcons.length * 0.8), `内置服务图标大部分要互不相同：${builtinIcons.length} 个服务只有 ${new Set(builtinIcons).size} 种图标`);
+	assert.ok(builtinIcons.every((t) => t.trim().length > 0), "服务图标不能为空");
 	const target = providers[0];
 	assert.equal(await acc.getByTestId(`provider-toggle-${target.id}`).getAttribute("aria-expanded"), "false", "服务默认应收起");
 	assert.equal(await acc.getByTestId(`provider-models-${target.id}`).count(), 0);
@@ -286,10 +300,15 @@ try {
 	await page.getByTestId("provider-section-toggle").click();
 	await page.getByTestId("provider-accordion").waitFor();
 	assert.equal(await page.getByTestId("provider-section-toggle").getAttribute("aria-expanded"), "true", "390 可重新展开");
+	// 390 下卡片网格自适应为单列、不横向溢出
+	const cols390 = await page.getByTestId("provider-grid-builtin").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+	assert.equal(cols390, 1, `390 应是单列网格，实际 ${cols390} 列`);
+	assert.ok((await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 1, "390 展开不应横向溢出");
 	await page.getByTestId("provider-section-toggle").scrollIntoViewIfNeeded();
 	await page.screenshot({ path: join(OUT, "13-services-expanded-390.png") });
 	await page.setViewportSize({ width: 1280, height: 900 });
 	ok("设置按服务折叠、可看模型、编辑/删除用应用内确认框");
+	ok("模型服务是带图标的卡片网格（每张卡一个可区分图标）");
 	ok("模型服务 / 渠道是一个大分类，可一键全部关上，默认使用 / 识图模型不受影响");
 
 	// ============================================================ 6) 群聊成员 / 子代理入口复用
