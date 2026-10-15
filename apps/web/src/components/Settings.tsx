@@ -1,9 +1,13 @@
-import { BarChart3, Brain, Cat, ChevronDown, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, QrCode, Smartphone, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { BarChart3, Brain, Cat, ChevronDown, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, QrCode, Smartphone, Sparkles, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { stripReferenceImages, type ThemeDraftRequest, type ThemeDraftResult, type ThemeManifestV1 } from "@pi-assistant/shared";
+import { api, upload } from "../api";
 import { getLang, setLang, t } from "../i18n";
 import { setAppearance, useStore } from "../store";
-import { getTheme, type Mode, THEMES } from "../themes/registry";
+import { DEFAULT_THEME, getTheme, type Mode, type ThemeDef, THEMES } from "../themes/registry";
+import { builtinManifestFromComputed, customSkinId, themeDefFromManifest } from "../themes/manifest";
+import { exportCustomTheme, installCustomThemes, loadCustomThemes, removeCustomThemeEverywhere, saveCustomTheme } from "../themes/custom-store";
+import { ThemeDesigner } from "./ThemeDesigner";
 import { ThemePreview } from "./ThemePreview";
 import { MemorySettings, SkillsTab } from "./SkillsTab";
 import { ExtensionsTab } from "./ExtensionsTab";
@@ -611,30 +615,109 @@ function AppearanceTab() {
 	const def = getTheme(skin);
 	const sysDark = matchMedia("(prefers-color-scheme: dark)").matches;
 	const mode: Mode = theme === "system" ? (sysDark ? "dark" : "light") : theme;
+	const [customs, setCustoms] = useState<ThemeManifestV1[]>(() => loadCustomThemes());
+	const [designer, setDesigner] = useState<{ open: boolean; initial: ThemeManifestV1 | null }>({ open: false, initial: null });
+	const agentId = useStore((s) => s.current ?? s.agents[0]?.id);
+	const [confirmNode, confirm] = useConfirm();
+	const refresh = () => setCustoms(loadCustomThemes());
+	const uploadFn = agentId ? (f: File) => upload(agentId, f) : undefined;
+	// 真实 AI 创作：走后端 /api/themes/draft（当前助理的模型 + 临时专用会话）；支持取消（abort）。
+	const onThemeDraft = agentId
+		? (req: ThemeDraftRequest, opts?: { signal?: AbortSignal }) => api<ThemeDraftResult>("/api/themes/draft", { method: "POST", json: { ...req, agentId }, signal: opts?.signal })
+		: undefined;
+	const openDesigner = (initial: ThemeManifestV1 | null) => setDesigner({ open: true, initial });
+
+	// 内置主题不能覆盖 / 删除，只能「另存为我的主题」（读真实 CSS 变量转成 manifest）。
+	const copyBuiltin = (th: ThemeDef) => {
+		const m = builtinManifestFromComputed(th.id, `${th.name} 副本`);
+		if (!m) return;
+		const r = saveCustomTheme(m);
+		if (!r.ok) return;
+		installCustomThemes();
+		refresh();
+		setAppearance({ skin: customSkinId(r.manifest.id), accent: "" });
+		openDesigner(r.manifest);
+	};
+
+	const removeCustom = async (m: ThemeManifestV1) => {
+		if (!(await confirm({ title: `删除「${m.name}」？`, body: "删除后无法恢复；如果正在使用会切回暗夜。", ok: "删除", danger: true }))) return;
+		const wasActive = skin === customSkinId(m.id);
+		removeCustomThemeEverywhere(m.id);
+		refresh();
+		if (wasActive) setAppearance({ skin: DEFAULT_THEME, accent: "" });
+	};
+
+	const exportOne = (m: ThemeManifestV1) => {
+		const json = exportCustomTheme(stripReferenceImages(m));
+		const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `theme-${m.name}.json`;
+		a.click();
+		setTimeout(() => URL.revokeObjectURL(url), 30_000);
+	};
+
+	const cardCls = (active: boolean) => cx("group w-full rounded-2xl border p-2 text-left transition", active ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-zinc-400");
+	const actions = "mt-1 flex flex-wrap gap-1 px-1";
+
 	return (
 		<div className="space-y-6">
+			{confirmNode}
 			<section>
-				<H>主题</H>
+				<div className="flex flex-wrap items-center gap-3">
+					<H>主题</H>
+					<Button variant="primary" className="ml-auto" onClick={() => openDesigner(null)} data-testid="open-theme-designer">
+						<Sparkles size={15} /> 用 AI 设计主题
+					</Button>
+				</div>
+				<p className="mb-3 text-xs text-mut2">说一句想要的感觉，AI 会生成一套主题并在整个界面实时预览；不满意继续提意见或回上一版，满意再保存。也可以导入 / 导出 JSON。</p>
 				<div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="主题">
 					{THEMES.map((th) => (
-						<button
-							key={th.id}
-							role="radio"
-							aria-checked={th.id === skin}
-							aria-label={th.name}
-							data-theme-id={th.id}
-							onClick={() => setAppearance({ skin: th.id })}
-							className={cx("group rounded-2xl border p-2 text-left transition", th.id === skin ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-zinc-400")}
-						>
-							<ThemePreview theme={th} mode={mode} accent={th.id === skin ? accent || undefined : undefined} />
-							<div className="flex items-center gap-2 px-1.5 pt-2">
-								<span className="font-medium">{th.name}</span>
-								<span className="text-xs text-mut2">{th.id}</span>
-								{th.id === skin && <Check size={15} className="ml-auto text-accent" />}
+						<div key={th.id}>
+							<button role="radio" aria-checked={th.id === skin} aria-label={th.name} data-theme-id={th.id} onClick={() => setAppearance({ skin: th.id })} className={cardCls(th.id === skin)}>
+								<ThemePreview theme={th} mode={mode} accent={th.id === skin ? accent || undefined : undefined} />
+								<div className="flex items-center gap-2 px-1.5 pt-2">
+									<span className="font-medium">{th.name}</span>
+									<span className="text-xs text-mut2">{th.id}</span>
+									{th.id === skin && <Check size={15} className="ml-auto text-accent" />}
+								</div>
+								<div className="px-1.5 pb-1 text-xs text-mut">{th.tagline}</div>
+							</button>
+							<div className={actions}>
+								<Button size="sm" variant="ghost" onClick={() => copyBuiltin(th)} data-testid={`copy-${th.id}`}>
+									另存为我的主题
+								</Button>
 							</div>
-							<div className="px-1.5 pb-1 text-xs text-mut">{th.tagline}</div>
-						</button>
+						</div>
 					))}
+					{customs.map((m) => {
+						const sid = customSkinId(m.id);
+						const td = themeDefFromManifest(m);
+						return (
+							<div key={m.id}>
+								<button role="radio" aria-checked={sid === skin} aria-label={m.name} data-theme-id={sid} onClick={() => setAppearance({ skin: sid, accent: "" })} className={cardCls(sid === skin)}>
+									<ThemePreview theme={td} mode={mode} accent={sid === skin ? accent || undefined : undefined} />
+									<div className="flex items-center gap-2 px-1.5 pt-2">
+										<span className="font-medium">{m.name}</span>
+										<Badge tone="accent">我的</Badge>
+										{sid === skin && <Check size={15} className="ml-auto text-accent" />}
+									</div>
+									<div className="px-1.5 pb-1 text-xs text-mut">{td.tagline}</div>
+								</button>
+								<div className={actions}>
+									<Button size="sm" variant="outline" onClick={() => openDesigner(m)} data-testid={`edit-${m.id}`}>
+										编辑 / 用 AI 改
+									</Button>
+									<Button size="sm" variant="ghost" onClick={() => exportOne(m)}>
+										导出
+									</Button>
+									<Button size="sm" variant="ghost" onClick={() => void removeCustom(m)}>
+										<Trash2 size={13} /> 删除
+									</Button>
+								</div>
+							</div>
+						);
+					})}
 				</div>
 			</section>
 			<section>
@@ -677,6 +760,7 @@ function AppearanceTab() {
 					</Button>
 				</div>
 			</section>
+			<ThemeDesigner open={designer.open} initial={designer.initial} agentId={agentId} onThemeDraft={onThemeDraft} onClose={() => setDesigner({ open: false, initial: null })} uploadFn={uploadFn} onSaved={() => refresh()} />
 		</div>
 	);
 }

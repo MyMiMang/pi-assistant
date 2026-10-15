@@ -32,14 +32,6 @@ export interface ThemeDef {
 
 export const THEMES: ThemeDef[] = [
 	{
-		id: "linear",
-		name: "极简专业",
-		tagline: "黑白灰 + 单一强调色，信息密度高，克制专业",
-		accent: { light: "#3d5afe", dark: "#5b7cff" },
-		accents: ["#3d5afe", "#0a0a0a", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"],
-		chrome: { light: "#ffffff", dark: "#0a0a0a" },
-	},
-	{
 		id: "glass",
 		name: "毛玻璃",
 		tagline: "半透明磨砂层叠、柔和光晕、圆润大圆角",
@@ -56,6 +48,14 @@ export const THEMES: ThemeDef[] = [
 		chrome: { light: "#f7f3ea", dark: "#1c1915" },
 	},
 	{
+		id: "pixel",
+		name: "像素风",
+		tagline: "奶油底 + 薄荷/桃粉/淡紫点缀，8bit 阶梯边角，正文仍是系统字体",
+		accent: { light: "#6fc7b2", dark: "#c3b6f0" },
+		accents: ["#6fc7b2", "#f2b8c6", "#c3b6f0", "#d9932f", "#5aa88f", "#8fd3c1"],
+		chrome: { light: "#fbf7ef", dark: "#181524" },
+	},
+	{
 		id: "noir",
 		name: "暗夜",
 		tagline: "深黑底、霓虹紫青渐变、流光与辉光动效",
@@ -65,14 +65,34 @@ export const THEMES: ThemeDef[] = [
 		defaultMode: "dark",
 	},
 ];
-export const DEFAULT_THEME = "linear";
+/** 默认主题：暗夜。首次安装 / 清空存储 / 无效 id 都落到它。 */
+export const DEFAULT_THEME = "noir";
+
+/**
+ * 已移除的内置主题 id → 迁移目标。只用于解析**注册表里没有**的旧 id，
+ * 所以用户自己通过 registerTheme() 注册成同名 id 的主题不会被误并。
+ */
+export const REMOVED_SKINS: Record<string, string> = { linear: "noir" };
 
 const registry = new Map(THEMES.map((t) => [t.id, t]));
-/** 预留：运行时注册额外主题（例如以后从插件/技能加载） */
+/** 预留：运行时注册额外主题（例如从已保存的 DIY manifest 注册）。不写入 THEMES（THEMES 始终是内置列表）。 */
 export function registerTheme(def: ThemeDef) {
-	if (!registry.has(def.id)) THEMES.push(def);
 	registry.set(def.id, def);
 }
+/** 移除运行时注册的主题（仅用于取消未保存的临时预览；内置主题不会被移除）。 */
+export function unregisterTheme(id: string) {
+	if (THEMES.some((t) => t.id === id)) return;
+	registry.delete(id);
+}
 export function getTheme(id: string | null | undefined): ThemeDef {
-	return registry.get(id ?? "") ?? registry.get(DEFAULT_THEME)!;
+	const key = id ?? "";
+	const direct = registry.get(key);
+	if (direct) return direct;
+	const migrated = REMOVED_SKINS[key];
+	return (migrated && registry.get(migrated)) || registry.get(DEFAULT_THEME)!;
+}
+
+/** 把任意历史 / 非法 skin 值解析成当前有效的主题 id（例如已移除的 `linear` → `noir`）。 */
+export function normalizeSkin(id: string | null | undefined): string {
+	return getTheme(id).id;
 }

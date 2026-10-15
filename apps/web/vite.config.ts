@@ -21,7 +21,9 @@ function brand(): Plugin {
 				res.end(rep(readFileSync(join(import.meta.dirname, "public", f), "utf8")));
 			});
 		},
-		closeBundle() {
+		// 用 writeBundle（产物写盘后）而不是 closeBundle：Vite 8 + rolldown 下 closeBundle 早于写盘，
+		// 会读不到 dist/manifest.webmanifest。
+		writeBundle() {
 			for (const f of ["manifest.webmanifest", "sw.js"]) {
 				const p = join(import.meta.dirname, outDir, f);
 				writeFileSync(p, rep(readFileSync(p, "utf8")));

@@ -1,0 +1,44 @@
+/* 可爱像素风（浅色奶油底 / 深色淡紫底双版）：像素只做装饰，正文保留系统字体。
+   配色：奶油 + 薄荷 + 桃粉 + 淡紫；全部纯 CSS（box-shadow / clip-path / 渐变），无远程资源、无像素字体下载。 */
+[data-skin=pixel]{--font:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif;--display:var(--font);--mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;--num:var(--mono);
+--r:10px;--r-sm:6px;--r-bubble:10px;--r-tail:4px;--r-comp:12px;--r-btn:6px;--r-chip:6px;--r-logo:6px;--r-av:8px;--side-w:264px;--pane-w:320px;--label-ls:.18em}
+[data-skin=pixel][data-mode=light]{--bg:#fbf7ef;--side:#f3ecdf;--panel:#f3ecdf;--card:#fffdf8;--fg:#3a3340;--mut:#6b6070;--mut2:#9c93a3;--line:#e6dccb;--line-strong:#cdbfae;--hover:#f0e8da;--active:#eae0cf;--user-bg:#e9f6f1;--user-fg:#2f4f47;--acc:#6fc7b2;--acc2:#f2b8c6;--acc-fg:#12312b;--acc-soft:rgba(111,199,178,.16);--ok:#5aa88f;--live:#5aa88f;--warn:#d9932f;--shadow:0 2px 0 rgba(58,51,64,.06),0 8px 22px rgba(58,51,64,.08);--comp-shadow:0 0 0 2px #e6dccb,0 10px 30px rgba(58,51,64,.12);--btn-shadow:0 3px 0 rgba(18,49,43,.25);--glow:rgba(111,199,178,.4);--desk:linear-gradient(135deg,#f7f3ea,#e9f6f1 60%,#efe7fa)}
+[data-skin=pixel][data-mode=dark]{--bg:#181524;--side:#1e1a2b;--panel:#1e1a2b;--card:#241f33;--fg:#f0ecf7;--mut:#c0b8d4;--mut2:#8b83a3;--line:#332c45;--line-strong:#463d5c;--hover:#2a2438;--active:#322b42;--user-bg:#2f2a44;--user-fg:#e9e3f5;--acc:#c3b6f0;--acc2:#8fd3c1;--acc-fg:#221d33;--acc-soft:rgba(195,182,240,.16);--ok:#8fd3c1;--live:#8fd3c1;--warn:#f2b8c6;--shadow:0 2px 0 rgba(0,0,0,.35),0 10px 28px rgba(0,0,0,.5);--comp-shadow:0 0 0 2px #332c45,0 14px 40px rgba(0,0,0,.6);--btn-shadow:0 3px 0 rgba(0,0,0,.4);--glow:rgba(195,182,240,.4);--desk:radial-gradient(circle at 28% 18%,#2b2440,#181524 72%)}
+/* 像素点阵底纹（纯 CSS 渐变，不引入图片） */
+[data-skin=pixel] .pa-app{background-image:radial-gradient(color-mix(in srgb,var(--acc) 22%,transparent) 1px,transparent 1.5px);background-size:14px 14px;background-position:0 0}
+[data-skin=pixel][data-mode=dark] .pa-app{background-image:radial-gradient(color-mix(in srgb,var(--acc) 18%,transparent) 1px,transparent 1.5px)}
+[data-skin=pixel] .pa-sidebar,[data-skin=pixel] .pa-pane{background:var(--side);border-color:var(--line)}
+/* 8bit 阶梯边角：只用在装饰性元素，正文容器保持圆角 */
+[data-skin=pixel] .pa-badge,[data-skin=pixel] .pa-send,[data-skin=pixel] .pa-logo{clip-path:polygon(3px 0,calc(100% - 3px) 0,100% 3px,100% calc(100% - 3px),calc(100% - 3px) 100%,3px 100%,0 calc(100% - 3px),0 3px)}
+[data-skin=pixel] .pa-av{clip-path:polygon(3px 0,calc(100% - 3px) 0,100% 3px,100% calc(100% - 3px),calc(100% - 3px) 100%,3px 100%,0 calc(100% - 3px),0 3px);box-shadow:0 0 0 2px var(--card),0 0 0 3px var(--line-strong)}
+[data-skin=pixel] .pa-av1{background:var(--acc)}
+[data-skin=pixel] .pa-av2{background:var(--acc2)}
+[data-skin=pixel] .pa-av3{background:#f2b8c6;color:#5b3a44}
+[data-skin=pixel][data-mode=dark] .pa-av3{background:#8fd3c1;color:#12312b}
+[data-skin=pixel] .pa-av.lg{width:76px;height:76px;font-size:28px}
+/* 分组标题：像素点 + 等宽标签（正文仍系统字体） */
+[data-skin=pixel] .pa-sec-label{font-family:var(--mono);text-transform:uppercase;font-size:10px;letter-spacing:.18em;color:var(--mut2)}
+[data-skin=pixel] .pa-sec-label::before{content:"";display:inline-block;width:5px;height:5px;margin-right:6px;background:var(--acc);box-shadow:5px 0 0 var(--acc2);vertical-align:1px}
+[data-skin=pixel] .pa-pane-label{font-family:var(--mono);text-transform:uppercase;font-size:10px;letter-spacing:.14em}
+[data-skin=pixel] .pa-brand-name{font-weight:700;letter-spacing:0}
+[data-skin=pixel] .pa-new-btn{border-style:dashed;border-color:var(--line-strong);background:transparent}
+[data-skin=pixel] .pa-agent{border-radius:var(--r-sm)}
+[data-skin=pixel] .pa-agent.active{background:var(--acc-soft)}
+[data-skin=pixel] .pa-badge{background:var(--acc2);color:var(--acc-fg);font-family:var(--mono);font-size:10px}
+[data-skin=pixel] .pa-tag{font-family:var(--mono);font-size:10px;letter-spacing:.08em;background:var(--acc-soft);color:var(--acc)}
+[data-skin=pixel] .pa-msg.user .pa-bubble{border:2px solid color-mix(in srgb,var(--acc) 55%,transparent)}
+[data-skin=pixel] .pa-activity{background:var(--card);border:2px solid var(--line);box-shadow:var(--shadow)}
+[data-skin=pixel] .pa-spinner{border-top-color:var(--acc2);border-right-color:var(--acc);border-width:2px}
+[data-skin=pixel] .pa-steps{background:var(--card);border:2px solid var(--line)}
+[data-skin=pixel] .pa-st-dot{background:var(--acc-soft);box-shadow:0 0 0 2px var(--ok) inset}
+[data-skin=pixel] .pa-card{border:2px solid var(--line);border-radius:var(--r)}
+[data-skin=pixel] .pa-file-ic{background:var(--acc-soft);color:var(--acc);border:2px solid var(--line-strong);border-radius:var(--r-sm)}
+[data-skin=pixel] .pa-approval,[data-skin=pixel] .pa-question{border:2px solid var(--acc-soft)}
+[data-skin=pixel] .pa-btn.primary{background:var(--acc);color:var(--acc-fg);border:2px solid color-mix(in srgb,var(--acc) 60%,var(--fg));box-shadow:var(--btn-shadow)}
+[data-skin=pixel] .pa-btn.primary:hover:not(:disabled){box-shadow:0 4px 0 color-mix(in srgb,var(--acc) 45%,var(--fg))}
+[data-skin=pixel] .pa-send{background:var(--acc);color:var(--acc-fg)}
+[data-skin=pixel] .pa-composer{background:var(--card);border:2px solid var(--line);border-radius:var(--r-comp)}
+[data-skin=pixel] .pa-model{font-family:var(--mono);font-size:11px}
+[data-skin=pixel] .pa-screen{border:2px solid var(--line-strong);border-radius:var(--r-sm)}
+[data-skin=pixel] .pa-live{color:var(--acc)}
+[data-skin=pixel] .pa-ov h2{font-weight:700;letter-spacing:0}

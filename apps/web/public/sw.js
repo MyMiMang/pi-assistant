@@ -1,7 +1,7 @@
 // Service Worker：应用外壳缓存 + Web Push 通知
-const CACHE = "pia-shell-v2";
+const CACHE = "pia-shell-v3";
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/", "/manifest.webmanifest", "/icon-192.png"])).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/", "/theme-boot.js", "/manifest.webmanifest", "/icon-192.png"])).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));

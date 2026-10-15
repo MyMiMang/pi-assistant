@@ -1,4 +1,5 @@
 import { mountSubagentRoutes } from "./subagent-routes.ts";
+import { mountThemeRoutes } from "./themes/routes.ts";
 import { mountFastComputerRoutes } from "./fast-computer/routes.ts";
 import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
 import { mountAsrRoutes, registryAsrProviders, type AsrDeclaration } from "./voice/index.ts";
@@ -248,6 +249,7 @@ mountImageRoutes(app, localOnly);
 mountPetRoutes(app, localOnly);
 mountUsageRoutes(app);
 mountSubagentRoutes(app);
+mountThemeRoutes(app);
 mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null, desktopKind: () => desktopBackend().id }).host);
 mountLocalLayaRoutes(app, localOnly);
 mountLocalAsrRoutes(app, localOnly);

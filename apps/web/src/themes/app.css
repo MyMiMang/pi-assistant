@@ -2,12 +2,12 @@
 .pa-bg-layer { display: none; }
 
 /* Tailwind zinc 灰阶的两端锚点：zinc-50…950 = 在两者之间按比例混合，让旧组件自动带上主题的冷暖与明暗。 */
-[data-skin=linear][data-mode=light] { --z-light: #ffffff; --z-dark: #0a0a0a; }
-[data-skin=linear][data-mode=dark]  { --z-light: #ededed; --z-dark: #0a0a0a; }
 [data-skin=glass][data-mode=light]  { --z-light: #f7f8fc; --z-dark: #1d1d1f; }
 [data-skin=glass][data-mode=dark]   { --z-light: #f5f5f7; --z-dark: #0b0d1a; }
 [data-skin=warm][data-mode=light]   { --z-light: #fffcf6; --z-dark: #2a251f; }
 [data-skin=warm][data-mode=dark]    { --z-light: #ede5d6; --z-dark: #1c1915; }
+[data-skin=pixel][data-mode=light]  { --z-light: #fffdf8; --z-dark: #3a3340; }
+[data-skin=pixel][data-mode=dark]   { --z-light: #f0ecf7; --z-dark: #181524; }
 [data-skin=noir][data-mode=light]   { --z-light: #ffffff; --z-dark: #0c0c10; }
 [data-skin=noir][data-mode=dark]    { --z-light: #f4f4f5; --z-dark: #09090b; }
 
@@ -98,8 +98,7 @@ body.pa-resizing .pa-chat, body.pa-resizing .pa-pane { pointer-events: none; }
 .pa-ui-btn.h-9.w-9, .pa-ui-btn.h-8.w-8 { border-radius: var(--r-sm); }
 .pa-ui-primary { background: var(--acc); color: var(--acc-fg); box-shadow: var(--btn-shadow, none); }
 .pa-ui-primary:hover:not(:disabled) { filter: brightness(1.08); }
-[data-skin=linear] .pa-ui-primary, [data-skin=warm] .pa-ui-primary { background: var(--fg); color: var(--bg); }
-[data-skin=linear] .pa-ui-primary:hover:not(:disabled) { background: var(--acc); color: #fff; filter: none; }
+[data-skin=warm] .pa-ui-primary { background: var(--fg); color: var(--bg); }
 [data-skin=warm] .pa-ui-primary:hover:not(:disabled) { background: var(--acc); color: var(--acc-fg); filter: none; }
 [data-skin=noir] .pa-ui-primary { background: linear-gradient(135deg, var(--acc), color-mix(in srgb, var(--acc) 60%, var(--acc2))); color: #fff; }
 [data-skin=glass] .pa-ui-primary { background: linear-gradient(160deg, color-mix(in srgb, var(--acc) 80%, #fff), var(--acc)); }

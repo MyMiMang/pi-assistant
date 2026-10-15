@@ -465,7 +465,7 @@ await step("外观：4 套主题 + 浅色/深色/跟随系统 + 强调色，按�
 	await p.getByRole("button", { name: "跟随系统" }).waitFor();
 	const radios = p.getByRole("radio");
 	if ((await radios.count()) < 4) throw new Error("应至少有 4 套主题");
-	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== "linear") throw new Error("默认主题应为 linear");
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== "noir") throw new Error("默认主题应为 noir");
 	await p.waitForTimeout(400);
 	await p.screenshot({ path: join(SHOTS, "16-settings-appearance.png") });
 	await p.getByRole("radio", { name: "暖色人文" }).click();
@@ -482,6 +482,110 @@ await step("外观：4 套主题 + 浅色/深色/跟随系统 + 强调色，按�
 	await p.reload();
 	await p.locator("main textarea").waitFor();
 	if (await p.evaluate(() => document.documentElement.dataset.mode !== "light")) throw new Error("跟随系统未生效");
+	await c.close();
+});
+await step("外观 DIY：AI 生成/继续改/保存/另存 + 导入校验 + 全应用预览 + 取消恢复 + 390", async () => {
+	// 前面向导失败 / 未建助理时，这里兜底建一个，保证本步能独立验证 AI 创作
+	if (!AGENT) {
+		const a = await (await fetch(`${BASE}/api/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "主题测试" }) })).json();
+		if (!a?.id) throw new Error(`兜底创建助理失败：${JSON.stringify(a)}`);
+		AGENT = a.id;
+	}
+	const REQUIRED = { "--bg": "#fffdf8", "--side": "#f6f1e6", "--panel": "#f6f1e6", "--card": "#ffffff", "--fg": "#2a251f", "--mut": "#5f564b", "--mut2": "#9a8f80", "--line": "#e4dccd", "--line-strong": "#cfc4b1", "--hover": "#ebe4d6", "--active": "#e6dccb", "--user-bg": "#ece4d4", "--user-fg": "#2a251f", "--acc": "#8fd3c1", "--acc-fg": "#123123", "--acc-soft": "rgba(143,211,193,.12)", "--ok": "#5f8a5a", "--warn": "#c08a2c", "--z-light": "#ffffff", "--z-dark": "#2a251f" };
+	const mk = (id, name) => ({ manifestVersion: 1, id, name, modes: { light: { ...REQUIRED }, dark: { ...REQUIRED, "--bg": "#141218", "--fg": "#f3eee6", "--z-light": "#f3eee6", "--z-dark": "#141218" } }, createdAt: "2026-10-22T00:00:00.000Z", updatedAt: "2026-10-22T00:00:00.000Z" });
+	const importFile = (p, obj) => p.getByTestId("theme-import-input").setInputFiles({ name: "t.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(obj)) });
+
+	const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
+	const p = await c.newPage();
+	await p.goto(`${BASE}/?settings=appearance`);
+	await p.getByTestId("open-theme-designer").waitFor();
+	const before = await p.evaluate(() => document.documentElement.dataset.skin);
+
+	// 主入口打开设计面板；已接真实后端（Mock 模型）→ AI 生成进入全应用临时预览，但不写 localStorage
+	await p.getByTestId("open-theme-designer").click();
+	await p.getByTestId("theme-prompt").fill("奶油底色加淡紫点缀，圆角小一点");
+	await p.getByTestId("theme-generate").click();
+	await p.getByTestId("theme-apply").waitFor({ timeout: 60000 });
+	const aiSkin = await p.evaluate(() => document.documentElement.dataset.skin);
+	if (!aiSkin.startsWith("custom-")) throw new Error(`AI 生成后应进入预览：${aiSkin}`);
+	if ((await p.evaluate(() => localStorage.getItem("pia.skin"))) === aiSkin) throw new Error("AI 预览不应写 localStorage");
+	// 继续修改：仍保持预览
+	await p.getByTestId("theme-generate").click();
+	await p.getByTestId("theme-apply").waitFor({ timeout: 60000 });
+	// 取消：完整恢复（AI 预览不落库）
+	await p.getByTestId("theme-cancel").click();
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== before) throw new Error("取消应恢复原主题");
+	if ((await p.evaluate(() => JSON.parse(localStorage.getItem("pia.customThemes") || "[]").length)) !== 0) throw new Error("取消后不应留下 AI 主题");
+
+	// AI 生成 → 应用并保存 → 出现「我的主题」卡片
+	await p.getByTestId("open-theme-designer").click();
+	await p.getByTestId("theme-prompt").fill("薄荷清爽一点");
+	await p.getByTestId("theme-generate").click();
+	await p.getByTestId("theme-apply").waitFor({ timeout: 60000 });
+	await p.getByTestId("theme-apply").click();
+	await p.getByTestId("theme-designer").waitFor({ state: "detached" });
+	const aiIds = await p.evaluate(() => JSON.parse(localStorage.getItem("pia.customThemes") || "[]").map((m) => m.id));
+	if (aiIds.length !== 1) throw new Error(`AI 保存应产生 1 条自定义主题：${JSON.stringify(aiIds)}`);
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== `custom-${aiIds[0]}`) throw new Error("保存后应切到 AI 主题");
+	await p.getByTestId(`edit-${aiIds[0]}`).waitFor();
+
+	// 「编辑 / 用 AI 改」：继续改已保存主题 → 保存回同一 id（不新增）
+	await p.getByTestId(`edit-${aiIds[0]}`).click();
+	await p.getByTestId("theme-prompt").fill("再暖一点，奶油紫");
+	await p.getByTestId("theme-generate").click();
+	await p.getByTestId("theme-apply").waitFor({ timeout: 60000 });
+	await p.getByTestId("theme-apply").click();
+	await p.getByTestId("theme-designer").waitFor({ state: "detached" });
+	const afterEdit = await p.evaluate(() => JSON.parse(localStorage.getItem("pia.customThemes") || "[]").map((m) => m.id));
+	if (afterEdit.length !== 1 || afterEdit[0] !== aiIds[0]) throw new Error(`AI 继续修改应更新同一主题：${JSON.stringify(afterEdit)}`);
+
+	// 恶意 JSON：报错、不改变当前主题
+	await p.getByTestId("open-theme-designer").click();
+	await importFile(p, { manifestVersion: 1, id: "../etc/passwd", name: "x", modes: { light: { "--bg": "url(https://evil/x.png)" }, dark: {} } });
+	await p.getByTestId("theme-errors").waitFor();
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== `custom-${aiIds[0]}`) throw new Error("坏 JSON 不应改变当前主题");
+
+	// 合法 JSON：进入全应用临时预览，但不写 localStorage
+	await importFile(p, mk("11111111-2222-3333-4444-555555555555", "测试奶油"));
+	await p.getByTestId("theme-apply").waitFor();
+	const previewSkin = await p.evaluate(() => document.documentElement.dataset.skin);
+	if (previewSkin !== "custom-11111111-2222-3333-4444-555555555555") throw new Error(`预览 skin 不对：${previewSkin}`);
+	if ((await p.evaluate(() => localStorage.getItem("pia.skin"))) === previewSkin) throw new Error("预览不应写 localStorage");
+
+	// 取消：完整恢复
+	await p.getByTestId("theme-cancel").click();
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== `custom-${aiIds[0]}`) throw new Error("取消应恢复原主题");
+
+	// 再导入并「应用并保存」
+	await p.getByTestId("open-theme-designer").click();
+	await importFile(p, mk("11111111-2222-3333-4444-555555555555", "测试奶油"));
+	await p.getByTestId("theme-apply").click();
+	await p.getByTestId("theme-designer").waitFor({ state: "detached" });
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== "custom-11111111-2222-3333-4444-555555555555") throw new Error("保存后应切到自定义主题");
+	await p.getByTestId("edit-11111111-2222-3333-4444-555555555555").waitFor();
+
+	// 刷新后仍生效（注册表在 store 初始化前安装）
+	await p.reload();
+	await p.getByTestId("open-theme-designer").waitFor();
+	if ((await p.evaluate(() => document.documentElement.dataset.skin)) !== "custom-11111111-2222-3333-4444-555555555555") throw new Error("刷新后自定义主题丢失");
+
+	// 编辑 → 另存为新主题 → 新 id、原主题保留
+	await p.getByTestId("edit-11111111-2222-3333-4444-555555555555").click();
+	await importFile(p, mk("11111111-2222-3333-4444-555555555555", "测试奶油"));
+	await p.getByTestId("theme-save-as").click();
+	await p.getByTestId("theme-designer").waitFor({ state: "detached" });
+	const ids = await p.evaluate(() => JSON.parse(localStorage.getItem("pia.customThemes") || "[]").map((m) => m.id));
+	if (ids.length !== 3 || new Set(ids).size !== 3) throw new Error(`另存为新主题应产生新 id：${JSON.stringify(ids)}`);
+	const activeId = (await p.evaluate(() => document.documentElement.dataset.skin)).replace("custom-", "");
+	if (!ids.includes(activeId)) throw new Error("另存后应切到新主题");
+
+	// 390 宽度下面板可用、不横向溢出
+	await p.setViewportSize({ width: 390, height: 780 });
+	await p.getByTestId("open-theme-designer").click();
+	await p.getByTestId("theme-prompt").waitFor();
+	const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+	if (overflow > 2) throw new Error(`390 下面板横向溢出 ${overflow}px`);
+	await p.screenshot({ path: join(SHOTS, "16c-theme-designer-390.png") });
 	await c.close();
 });
 
@@ -798,7 +902,7 @@ await step("Phase 2：多对话（新对话 → 切回旧对话历史仍在）",
 
 await step("四套主题截图（桌面浅色/深色 + 手机）", async () => {
 	mkdirSync(join(SHOTS, "themes"), { recursive: true });
-	for (const skin of ["linear", "glass", "warm", "noir"]) {
+	for (const skin of ["glass", "warm", "pixel", "noir"]) {
 		for (const [mode, vp] of [["light", { width: 1440, height: 900 }], ["dark", { width: 1440, height: 900 }], ["mobile", { width: 390, height: 844 }]]) {
 			const m = mode === "mobile" ? (skin === "noir" ? "dark" : "light") : mode;
 			const c = await browser.newContext({ viewport: vp, deviceScaleFactor: mode === "mobile" ? 2 : 1, colorScheme: m, locale: "zh-CN", isMobile: mode === "mobile", hasTouch: mode === "mobile" });
@@ -1575,7 +1679,7 @@ await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上�
 			await ov.dispatchEvent("click").catch(() => {});
 			await page.waitForTimeout(300);
 		}
-		for (const skin of ["linear", "glass", "warm", "noir"]) {
+		for (const skin of ["glass", "warm", "pixel", "noir"]) {
 			await page.evaluate((s) => (document.documentElement.dataset.skin = s), skin);
 			for (const [btn, menu] of menus) {
 				const b = page.locator(`main [data-testid=${btn}]`).first();
@@ -1596,7 +1700,7 @@ await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上�
 			}
 		}
 	}
-	await page.evaluate(() => (document.documentElement.dataset.skin = localStorage.getItem("pia.skin") || "linear"));
+	await page.evaluate(() => (document.documentElement.dataset.skin = localStorage.getItem("pia.skin") || "noir"));
 	if (vp0) await page.setViewportSize(vp0);
 	if (checked < 30) throw new Error(`检查到的菜单太少（${checked}）`);
 	if (problems.length) throw new Error(problems.join("\n"));
@@ -1895,7 +1999,7 @@ await step("群聊：手机宽度 @ 底部面板、整页不横向滚动；4 套
 	if (m.doc > m.vw || m.sc > 1) throw new Error(`手机上群聊被撑宽：${JSON.stringify(m)}`);
 	await pp.screenshot({ path: join(SHOTS, "81-room-phone.png") });
 	await phone.close();
-	for (const skin of ["linear", "glass", "warm", "noir"]) {
+	for (const skin of ["glass", "warm", "pixel", "noir"]) {
 		const c = await browser.newContext({ viewport: { width: 1100, height: 800 }, locale: "zh-CN", colorScheme: skin === "noir" ? "dark" : "light" });
 		await c.addInitScript((s) => localStorage.setItem("pia.skin", s), skin);
 		const p = await c.newPage();

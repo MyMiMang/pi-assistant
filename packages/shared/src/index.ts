@@ -24,3 +24,4 @@ export const BRAND = {
 export const LEGACY = { dataDirName: "HuHao", linuxDir: "huhao", keychainService: "HuHao", envPrefix: "HUHAO_", storagePrefix: "huhao.", dbFile: "huhao.db" } as const;
 export * from "./hard-guard.ts";
 export * from "./thinking-levels.ts";
+export * from "./theme-manifest.ts";

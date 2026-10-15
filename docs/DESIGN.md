@@ -542,15 +542,21 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 
 ### 5.18 主题系统与对话界面
 
-- **4 套可切换主题**（设置 → 外观，按设备保存在 localStorage）：`linear` 极简专业（默认）、`glass` 毛玻璃、`warm` 暖色人文、`noir` 暗夜。每套都有浅色/深色，另可“跟随系统”，并可选强调色（“主题默认”或该主题推荐的几种）。设置页的主题卡片是**用真实主题 CSS 渲染的缩小版界面**（实时预览）。
+- **4 套内置主题**（设置 → 外观，按设备保存在 localStorage）：`noir` 暗夜（**默认**）、`glass` 毛玻璃、`warm` 暖色人文、`pixel` 像素风。每套都有浅色/深色（暗夜默认深色），另可“跟随系统”，并可选强调色（“主题默认”或该主题推荐的几种）。设置页的主题卡片是**用真实主题 CSS 渲染的缩小版界面**（实时预览）。
+  - 内置「极简专业」（`linear`）已移除（2026-10-22，用户要求）：它的 CSS 与设置卡片都不再出现；旧设备上的 `pia.skin=linear` 在启动时迁移为 `noir`，用户显式选过的其他主题不动。迁移逻辑见 `apps/web/src/appearance-migration.ts`（纯函数，可单测）。
+  - **首屏不闪白**：`apps/web/public/theme-boot.js` 在打包脚本之前**同步**执行（CSP 是 `script-src 'self'`，所以放外部文件而非内联），按 localStorage 预置 `<html data-skin data-mode class>` 与 `<meta name="theme-color">`；常量与 `registry.ts` 一致，由单测钉住。
 - **实现**：`apps/web/src/themes/`
-  - `registry.ts`：主题注册表（id、名称、简介、默认强调色、可选强调色、地址栏颜色、默认明暗）；`registerTheme()` 预留运行时扩展。
+  - `registry.ts`：主题注册表（id、名称、简介、默认强调色、可选强调色、地址栏颜色、默认明暗），以及默认主题与已移除 id 的迁移别名；`registerTheme()` 预留运行时扩展。
+  - `appearance-migration.ts`：外观存储值迁移（旧默认强调色、已移除主题 → 默认主题），纯函数，`migrate.ts` 在应用启动最前面调用。
   - `base.css`：组件样式（侧边栏、消息、活动行、步骤列表、卡片、输入框……，类名 `pa-*`），全部只读 CSS 变量。
   - `<id>.css`：主题 token（颜色、圆角、阴影、字体、动效）与少量组件微调，全部限定在 `[data-skin=<id>]` / `[data-skin=<id>][data-mode=light|dark]` 下。
   - `app.css`：布局胶水、Tailwind 接 token（语义色 `bg-card`/`text-mut`/`border-line`…；`zinc-50…950` 按主题的 `--z-light`/`--z-dark` 锚点混合，旧组件自动跟随主题；`rounded-lg/xl/2xl` 跟随 `--r-sm/--r`）。
   - `<html data-skin data-mode class="dark">` 由 `applyTheme()` 设置；自选强调色写 `--user-acc`。
   - 设计稿源文件在 `docs/design/mockups/`；`apps/web/scripts/port-mockup-css.py` 把设计稿 CSS 移植成主题 CSS（类名加 `pa-` 前缀、作用域化）。
   - **新增主题**：加一个 `<id>.css` + 在 `themes/index.css` 里 `@import` + 在 `THEMES` 里加一条元数据，组件代码不用改。
+- **像素风（`pixel`）**：浅色奶油底 + 深色淡紫底双版；薄荷 / 桃粉 / 淡紫点缀。像素只做装饰（点阵底纹、8bit 阶梯 `clip-path` 边角、等宽分组标签），正文沿用系统字体，不下载像素字体、不引远程素材（纯 CSS 渐变）。
+- **DIY（用户 / AI 造主题）**：设置 → 外观的「用 AI 设计主题」是唯一入口（**没有** `/主题设计` slash 命令）。生成 → 全应用真实临时预览（只改运行时状态 + 临时 `<style>`，不写 localStorage）→ 继续提意见 / 上一版 → 应用并保存 / 另存为新主题（新 UUID）/ 取消（完整恢复外观）。数据模型是自有 **Typed ThemeManifest v1**（`packages/shared/src/theme-manifest.ts`，前后端共用）：白名单 CSS 变量 + enum 装饰 + fail-closed 校验（拒 `url()`/`@import`/未知 token/路径 id），对比度只给 warning。图片素材只存**附件 id + 元数据**（无 base64 / 绝对路径），默认「仅作参考」不写进主题、不导出。模块：`themes/manifest.ts`（manifest→CSS/ThemeDef）、`themes/custom-store.ts`（本地持久化 + 内置只读保护 + 导入撞 id 换新）、`themes/preview.ts`（预览事务）、`themes/design-session.ts`（请求轮次：取消 / 迟到响应丢弃）。
+  - **AI 后端已接通**（`POST /api/themes/draft`）：复用**当前助理已选模型**（未知 agent / 无模型一律拒，不猜、不取第一个），开一个**内存临时专用会话**——不落盘、不动主聊天 / 当前对话 / 用户会话历史，`minimalExtensions` + 不加载任何 `ext-*` + `tools: ["theme_draft"]`（没有 bash / 主机 / 桌面 / 邮箱 / 审批，且 prompt 改不了）。模型只能经结构化 `theme_draft` 工具提交，服务端用 shared 校验器 fail-closed 校验（坏 manifest 保留上一版、最多一次格式修复）；`id` / 时间戳 / 图片引用服务端强制。参考图只认附件 opaque id（canonical owner + magic bytes，拒 SVG / 跨助理），当前模型不支持视觉时返回 `visionUnsupported` 且 **0 请求**（不偷偷换收费模型）。同 `(agentId, turnId)` 并发去重，超时 / 取消真 abort，用量沿既有 `recordUsage`。
 - **对话界面**（与主题无关的行为）：
   - 先确认再动手：系统提示要求助理收到任务先用一句短话确认；用户刚发出、还没有输出时显示“正在思考…”。
   - **活动提示行**：工作中在助理消息下方显示“正在读取文件… / 正在打开网页… / 正在运行命令… / 正在操作电脑…”（微光文字动效 + 细节如路径/网址），由 Pi `tool_execution_*` 事件生成的工具步骤推导。

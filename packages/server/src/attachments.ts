@@ -144,7 +144,7 @@ async function heicToJpeg(abs: string): Promise<Buffer | null> {
 const MIME_OF: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" };
 
 /** 缩小到 provider 能接受的尺寸（Pi 自带的 Photon 缩放）；失败时原图小于 4MB 就原样发 */
-async function toImagePart(bytes: Buffer, mimeType: string): Promise<ImagePart | null> {
+export async function toImagePart(bytes: Buffer, mimeType: string): Promise<ImagePart | null> {
 	try {
 		const { resizeImage } = await import("@earendil-works/pi-coding-agent");
 		const r = await resizeImage(new Uint8Array(bytes), mimeType, { maxWidth: 2000, maxHeight: 2000 } as never);
