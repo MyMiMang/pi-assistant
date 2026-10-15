@@ -91,7 +91,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 							<span className="max-sm:hidden">回到群聊</span>
 						</button>
 					)}
-					<SubagentTasks withMain agentId={agent.id} conversation={useStore.getState().convs[agent.id]?.current} />
+					<SubagentTasks agentId={agent.id} conversation={useStore.getState().convs[agent.id]?.current} />
 					<ConversationMenu agentId={agent.id} />
 					{/* 「电脑」入口在右侧信息面板的电脑 tab 里，这里不再重复放一个 */}
 					<button className={cx("pa-icon-btn ghost", info && "!bg-hover")} onClick={() => set({ info: !info })} aria-label="信息面板" title={info ? "收起信息面板" : "打开信息面板"}>

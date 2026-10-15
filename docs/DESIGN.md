@@ -1337,7 +1337,7 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 ### 21.4 界面
 - **聊天里的子代理卡片**：派出时主会话消息下方出现小卡片「🔧 子代理：整理报价表 · 运行中 · 模型 X」，显示当前一步；完成后变成 ✓/✗。
 - **子代理会话**：beta.20 从「子代理」入口打开任务概览，选择任务进入独立会话详情；日常仍在主会话聊天，启动子代理不抢焦点。通过「主会话」返回，离开详情不停止任务；顶部不再展示分页条，主聊天不再展示指令卡。复用消息气泡、工具步骤、模型思考折叠和文件展示；运行中可用 `steer` 插话，结束后加载原 Pi 会话继续，切换保留草稿与滚动。消息留在自己的会话里，完成后向主会话回报。
-- 助理身份位于会话顶部，「主会话」紧邻「子代理」入口；点击子代理打开任务概览，再进入详情。beta.20 移除顶部铺开的分页条，切换仍保留会话上下文。
+- 助理身份位于会话顶部；点击「子代理」打开任务概览，再进入详情。会话顶部不再放「主会话」chip（回到主会话只靠子代理详情左上角的「主会话」返回按钮）。子代理详情左侧的「停止」按钮也去掉：停止统一由输入栏右侧的停机按钮承担（运行 / 停滞 / 排队都可停），详情 header 只保留返回、任务名、模型与思考强度。beta.20 移除顶部铺开的分页条，切换仍保留会话上下文。
 - 导航参考：Paseo [`agent-tracks.tsx`](https://github.com/getpaseo/paseo/blob/main/packages/app/src/panels/agent-tracks.tsx) 从子代理列表调用 `openPreferredWorkspaceTarget`，选中后才打开会话标签。这里只借鉴按需进入子会话的方式；beta.20 使用任务概览与详情导航，保留本项目主 / 子会话与审批机制。
 
 ### 21.5 模型选择与设置（2026-10-15 改版）
@@ -1348,6 +1348,16 @@ cua-driver 0.34.1 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 - **池内有限 fallback**：子代理的模型请求失败时，只对**明确可恢复的模型故障**（限流 / 服务不可用 / 模型不存在 / 鉴权不通 / 超时，见 `packages/server/src/model-errors.ts`）在候选池内换下一个模型，从已保存的会话继续（不从头重跑、不重复副作用）；每个候选最多试一次，用尽就明确停下。**“已试过”的边界**：初始化阶段（`createPiSession`）失败的候选与请求阶段失败的一样记入本轮 `tried`，不会被后续 fallback 绕回；但 `tried` 只在一次驱动运行内存在、不落库，进程重启后驱动重跑会重新构建候选顺序（`current` 打头 + 持久化的池），因此**跨重启不保证历史候选永不重试**——最多是按新顺序各再试一次，仍有界、不会无限重试。工具 / 命令失败、权限拒绝、未知错误、用户主动停止一律不换模型；也绝不使用池外模型、不无限重试。每次切换写一条用户可见的系统消息（切换原因 + 新模型），用量仍算在同一个子代理（同一张卡、不重复）。
 - **子代理并发上限 + 最长运行时间**（任务侧，仍在 设置 › 模型 › 子代理）：并发按助理计算，默认 10，1–100；满额后新任务排队、有空位自动开始。最长运行默认 60 分钟。
 - **迁移**：旧全局 `subagentModels` 只保留 `maxMinutes` / `maxConcurrent`，旧的全局模型指定按新定义废弃（跟随主会话）；旧全局「允许清单」迁给还没有显式助理配置的助理作为候选池；助理已有的显式配置保留（旧「固定一个模型」→ 单项池，旧「跟随」→ 空池）。`migrateSubagentModelSettings()` 幂等，启动时执行。
+
+### 21.8 子代理思考强度（2026-10-21，beta.22 候选）
+- **根因**：子代理会话创建时的 `thinking` 直接取主会话的 `a.thinking ?? defaultThinking()`，没有子代理自己的入口；`spawn_subagent` 参数、助理子代理设置、`subagents` 表都没有思考强度。
+- **三层取值（显式 > 助理默认 > 跟随主会话）**：
+  1. 单个子代理覆盖：`subagents.thinking`（NULL = 继承助理默认），详情页改，`PATCH /api/subagents/:id` 落库；
+  2. 助理默认：setting `subagentThinking:<agentId>` = `{mode:"follow"}`（默认）或 `{mode:"fixed", level}`，`GET/PUT /api/agents/:id/subagent-thinking`，界面复用 `ModelPicker` 的 `ThinkingButton`；
+  3. `spawn_subagent` 的 `thinking` 参数（显式，需是 Pi 档位）。
+- **一律按实际使用的子代理模型收敛**：`resolveSubagentThinking()` 最后调 `pi-adapter.models.clampThinking`，不支持推理的模型得到 `off`，不会出现 xhigh / max。fallback 换模型时用新模型的 clamp 值重算。
+- **运行中切换**：`PATCH` 后 `applyLiveSubagentThinking()` 走 `pi-adapter.applyModelSettings`（`session.setModel` / `setThinkingLevel`），不重建会话、不丢上下文，**只动这个子代理的会话，不改主会话**。
+- 界面档位来源：助理池取候选模型支持档位的交集（空池则取主会话当前模型）；子代理详情取该子代理模型的档位。
 
 ### 21.6 决定
 - **已定**：只一层，子代理不能再派子代理（`spawn_subagent` 不提供给子代理）。

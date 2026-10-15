@@ -1,4 +1,4 @@
-import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, type Subagent, type SubagentEvent } from "./subagents.ts";
+import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, resolveSubagentThinking, type Subagent, type SubagentEvent } from "./subagents.ts";
 import { cancelWaitsForConversation, listWaits, parseDue, refreshWait, registerWait, cancelWait, setWaitWaker, startWaitScheduler, WAIT_DEFAULT_INTERVAL_MS } from "./task-waits.ts";
 import { classifyModelError, isRecoverableModelError } from "./model-errors.ts";
 /**
@@ -1022,7 +1022,7 @@ setSubagentDriver({
 		const a = getAgent(r.agent_id);
 		if (!a) throw new Error("所属助理已删除");
 		const workspace = workspaceOf(a.id);
-		const agentThinking = (m: { provider: string; id: string }) => models.clampThinking(m.provider, m.id, a.thinking ?? defaultThinking());
+		const agentThinking = (m: { provider: string; id: string }) => resolveSubagentThinking(r.agent_id, m, a.thinking ?? defaultThinking(), getSubagent(r.id)?.thinking ?? r.thinking);
 		// 派活时定好的候选顺序（第一项就是实际用的）；模型可能后来被删，先过滤成当前配置着的
 		const stored = ((): { provider: string; id: string }[] => {
 			try { const v = JSON.parse(r.model_pool ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -1075,6 +1075,9 @@ setSubagentDriver({
 			if (mid) routed.push(mid);
 			if (!started) early.push(text);
 			else await promptSession(session, text);
+		}, async (model, thinking) => {
+			// 运行中改思考强度：直接调 pi-adapter 公开的 applyModelSettings（不重建会话、不动主会话）
+			await applyModelSettings(session, models, model, thinking);
 		});
 		try {
 			if (!isActiveSubagent(getSubagent(r.id)!.status)) return "";

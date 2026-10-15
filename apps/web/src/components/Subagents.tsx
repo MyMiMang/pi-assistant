@@ -4,14 +4,14 @@ import type { Message } from "../types";
 import { Help, Modal } from "./ui";
 import { ArrowLeft, ArrowUp, Bot, Square } from "lucide-react";
 import { useStore } from "../store";
-import { Avatar, cx } from "./ui";
+import { Avatar } from "./ui";
 import { BotTurn, group, SystemMsg, UserMsg } from "./ChatMessages";
 import { isSendKey, SEND_HINT } from "../composer";
-import { useConfiguredModels, useModelPicks, ModelPoolButton } from "./ModelPicker";
+import { useConfiguredModels, useModelPicks, ModelPoolButton, ThinkingButton, THINKING_LABEL } from "./ModelPicker";
 import { TaskInstructions, TaskRow, taskLive, taskTitle } from "./Tasks";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string; reasoning?: boolean };
-interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; last_activity_at: number; error_reason: string | null; result_summary: string | null }
+interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; thinking: string | null; resolvedThinking?: string; last_activity_at: number; error_reason: string | null; result_summary: string | null }
 const labels: Record<string, string> = { queued: "排队中", running: "运行中", stalled: "暂无进展", done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "重启中断" };
 /** 有实时活动（显示“最后活动 N 秒前”） */
 const active = (r: Subagent) => ["running", "stalled"].includes(r.status);
@@ -35,6 +35,8 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 	const stick = useRef(true);
 	const ta = useRef<HTMLTextAreaElement>(null);
 	const agent = useStore((s) => s.agents.find((a) => a.id === d?.subagent.agent_id));
+	const dm = useConfiguredModels();
+	const levels = dm.models.find((m) => m.provider === d?.subagent.model_provider && m.id === d?.subagent.model_id)?.thinking ?? [];
 	useEffect(() => {
 		if (!visible) return;
 		let off = false;
@@ -49,6 +51,8 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 		if (ta.current) { ta.current.style.height = "auto"; ta.current.style.height = `${Math.min(ta.current.scrollHeight, 200)}px`; }
 	}, [text]);
 	const action = async (kind: "stop" | "retry") => { try { await api(`/api/subagents/${id}/${kind}`, { method: "POST" }); if (kind === "retry") onClose(); } catch (e) { setErr(String(e)); } };
+	// 改思考强度：写单个子代理的覆盖值（null = 跟随助理默认）；运行中后端会立即切换（不动主会话）
+	const setThinking = async (v: string | null) => { try { await api(`/api/subagents/${id}`, { method: "PATCH", json: { thinking: v } }); setD(await api<NonNullable<typeof d>>(`/api/subagents/${id}`)); } catch (e) { setErr(String(e)); } };
 	const send = async () => {
 		if (!text.trim() || sending) return;
 		setSending(true); setErr("");
@@ -70,7 +74,8 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 				<button className="pa-chip" onClick={onClose} aria-label="返回主会话" title="返回主会话"><ArrowLeft className="pa-ic" /><span className="max-sm:hidden">主会话</span></button>
 				<Avatar agentId={avatar.id} text={avatar.avatar} color={avatar.color} size={32} />
 				<div className="min-w-0 flex-1"><b className="block truncate text-sm" title={d?.subagent.task}>任务：{d ? taskTitle(d.subagent.task) : "加载中…"}</b><div className="truncate text-xs">{d && <State r={d.subagent} />}<span className="ml-2 text-mut2">{d?.subagent.model_id}</span></div></div>
-				{d && (stoppable ? <button className="pa-chip" onClick={() => void action("stop")} data-testid="subagent-stop">停止</button> : ["failed", "timeout", "lost"].includes(d.subagent.status) && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>)}
+				{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
+				{d && !stoppable && ["failed", "timeout", "lost"].includes(d.subagent.status) && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>}
 			</header>
 			{d?.subagent.task ? <div className="shrink-0 border-b border-line px-4 py-2"><TaskInstructions text={d.subagent.task} label="查看任务说明（完整指令）" /></div> : null}
 			<div ref={scroller} className="pa-scroll scrollbar-thin" onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
@@ -90,11 +95,10 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 			</div>
 	</section>;
 }
-/** 「子代理」入口 + 任务概览。withMain 时在它旁边带上「主会话」——助理 header 里的一对。 */
-export function SubagentTasks({ agentId, conversation, room, withMain }: { agentId?: string; conversation?: string; room?: string; withMain?: boolean }) {
+/** 「子代理」入口 + 任务概览。 */
+export function SubagentTasks({ agentId, conversation, room }: { agentId?: string; conversation?: string; room?: string }) {
 	const [rows, setRows] = useState<Subagent[]>([]);
 	const [open, setOpen] = useState(false);
-	const selected = useStore((s) => s.subagent);
 	useEffect(() => {
 		let off = false;
 		const q = new URLSearchParams({ ...(agentId ? { agent: agentId } : {}), ...(conversation ? { conversation } : {}), ...(room ? { room } : {}) });
@@ -107,7 +111,6 @@ export function SubagentTasks({ agentId, conversation, room, withMain }: { agent
 	const openTask = (r: Subagent) => { setOpen(false); useStore.getState().openSubagent(r); };
 	const row = (r: Subagent) => <TaskRow key={r.id} testId="subagent-row" id={r.id} title={taskTitle(r.task)} status={r.status} meta={`子代理 · ${r.model_id || "未指定模型"}`} time={r.last_activity_at} onClick={() => openTask(r)} />;
 	return <>
-		{withMain && <button className={cx("pa-chip", !selected && "active")} aria-current={!selected ? "page" : undefined} data-testid="subagent-main" title="回到主会话" onClick={() => useStore.getState().set({ subagent: null })}>主会话</button>}
 		<button className="pa-chip" onClick={() => setOpen(true)} data-testid="subagent-tasks" aria-label="任务列表" title="任务"><Bot className="pa-ic" /><span className="max-sm:hidden">子代理</span><span>{running.length || rows.length}</span></button>
 		<Modal open={open} onClose={() => setOpen(false)} title="任务" testId="task-overview">
 			<div className="space-y-3 p-4" data-testid="task-list">
@@ -132,8 +135,10 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 	const d = useConfiguredModels();
 	const { picks, record } = useModelPicks();
 	const [pool, setPool] = useState<Model[]>([]);
+	const [thinking, setThinking] = useState<{ mode: "follow" } | { mode: "fixed"; level: string }>({ mode: "follow" });
 	const [err, setErr] = useState("");
-	useEffect(() => { void api<{ pool: Model[] }>(`/api/agents/${agentId}/subagent-model`).then((v) => setPool(v.pool ?? [])).catch((e) => setErr(String(e))); }, [agentId]);
+	const agent = useStore((s) => s.agents.find((a) => a.id === agentId));
+	useEffect(() => { void api<{ pool: Model[] }>(`/api/agents/${agentId}/subagent-model`).then((v) => setPool(v.pool ?? [])).catch((e) => setErr(String(e))); void api<typeof thinking>(`/api/agents/${agentId}/subagent-thinking`).then(setThinking).catch(() => {}); }, [agentId]);
 	const key = (m: Model) => `${m.provider}/${m.id}`;
 	const save = async (next: Model[]) => {
 		const prev = pool;
@@ -147,6 +152,14 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 	};
 	const live = pool.filter((m) => d.models.some((x) => key(x) === key(m)));
 	const nameOf = (m: Model) => d.models.find((x) => key(x) === key(m))?.name ?? m.id;
+	// 这个助理的子代理实际会用哪些模型（候选池；空池则跟随主会话）→ 据此把可选档位 clamp 到它们的交集
+	const candidates: Model[] = pool.length ? pool : agent?.model ? [agent.model] : [];
+	const levelsOf = (m: Model) => d.models.find((x) => key(x) === key(m))?.thinking ?? [];
+	const levels = candidates.length ? candidates.map(levelsOf).reduce((a, b) => (a.length && b.length ? a.filter((x) => b.includes(x)) : [])) : [];
+	const saveThinking = async (v: string | null) => {
+		const c: { mode: "follow" } | { mode: "fixed"; level: string } = v ? { mode: "fixed", level: v } : { mode: "follow" };
+		try { await api(`/api/agents/${agentId}/subagent-thinking`, { method: "PUT", json: c }); setThinking(c); setErr(""); } catch (e) { setErr(String(e)); }
+	};
 	const text = pool.length ? `候选池 · ${pool.length} 个` : "跟随主会话";
 	return <section className="space-y-2" data-testid="agent-subagent-model">
 		<div className="flex items-center gap-1 font-semibold">子代理模型<Help>不选 = 跟随主会话当前模型。勾选后，派活时在这个候选池内按任务能力挑一个；某个模型不可用（限流 / 服务不可用 / 模型不存在 / 鉴权失败等）时，只在池内自动换下一个，用尽就停下，不会用池外模型，也不会无限重试。最多同时跑几个由「设置 › 模型 › 子代理」里的并发上限决定。</Help></div>
@@ -165,6 +178,7 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 			onOpen={d.reload}
 		/>
 		{live.length > 0 && <div className="flex flex-wrap gap-1">{live.map((m) => <span key={key(m)} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-mut">{nameOf(m)}</span>)}</div>}
+		<div className="flex items-center gap-2"><span className="text-sm text-mut">思考强度</span><ThinkingButton testid="agent-subagent-thinking" levels={levels} current={thinking.mode === "fixed" ? thinking.level : null} followLabel="跟随主会话" onPick={(v) => void saveThinking(v)} /></div>
 		{err && <p className="text-xs text-red-500">{err}</p>}
 	</section>;
 }

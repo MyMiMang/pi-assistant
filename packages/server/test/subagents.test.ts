@@ -63,6 +63,55 @@ test("模型选择：默认跟随主会话、候选池内自动挑并给出 fall
 	setSettings(10);
 });
 
+test("子代理思考强度：每助理默认跟随/指定、单个覆盖优先、按实际模型 clamp、spawn 参数校验", async () => {
+	// 默认跟随主会话
+	assert.deepEqual(s.agentSubagentThinking("sub-test"), { mode: "follow" });
+	// 助理默认固定档位
+	assert.deepEqual(s.saveAgentSubagentThinking("sub-test", { mode: "fixed", level: "high" }), { mode: "fixed", level: "high" });
+	assert.deepEqual(s.agentSubagentThinking("sub-test"), { mode: "fixed", level: "high" });
+	assert.throws(() => s.saveAgentSubagentThinking("sub-test", { mode: "fixed", level: "bogus" }), /思考强度/);
+	// 固定档位生效；单个子代理覆盖优先于助理默认
+	assert.equal(s.resolveSubagentThinking("sub-test", { provider: "mock", id: "echo-think" }, "low"), "high");
+	assert.equal(s.resolveSubagentThinking("sub-test", { provider: "mock", id: "echo-think" }, "low", "minimal"), "minimal");
+	// 跟随时继承主会话当前档位
+	s.saveAgentSubagentThinking("sub-test", { mode: "follow" });
+	assert.equal(s.resolveSubagentThinking("sub-test", { provider: "mock", id: "echo-think" }, "low"), "low");
+	// 不支持推理的模型一律 clamp 成 off（不会出现 xhigh/max）；推理模型按支持的档位收敛
+	assert.equal(s.resolveSubagentThinking("sub-test", { provider: "mock", id: "echo" }, "xhigh"), "off");
+	assert.equal(s.resolveSubagentThinking("sub-test", { provider: "mock", id: "echo-think" }, "xhigh"), "high");
+	// spawn 的 thinking 参数：合法落库，非法直接拒绝
+	manualDriver();
+	s.saveAgentSubagentPool("sub-test", { pool: [] });
+	assert.throws(() => s.spawnSubagent("sub-test", conv, model, { task: "x", thinking: "bogus" }), /思考强度/);
+	const withThinking = s.spawnSubagent("sub-test", conv, model, { task: "带强度", thinking: "low" });
+	assert.equal(s.getSubagent(withThinking.id)!.thinking, "low");
+	const follow = s.spawnSubagent("sub-test", conv, model, { task: "不传强度" });
+	assert.equal(s.getSubagent(follow.id)!.thinking, null);
+	await cleanup();
+});
+
+test("运行中改子代理思考：落库覆盖并即时 apply（走 driver 的 apply，不动主会话）", async () => {
+	const applied: { model: { provider: string; id: string }; thinking: string }[] = [];
+	s.setSubagentDriver({
+		run: (_r, connect) => new Promise<string>((resolve) => { connect(async () => resolve("停止"), async () => {}, async (m, thinking) => { applied.push({ model: m as { provider: string; id: string }, thinking }); }); }),
+		notify: async () => {},
+	});
+	s.saveAgentSubagentPool("sub-test", { pool: [] });
+	const r = s.spawnSubagent("sub-test", conv, { provider: "mock", id: "echo-think" }, { task: "思考任务" });
+	await tick();
+	assert.equal(s.getSubagent(r.id)!.thinking, null);
+	// 设为固定档位 → 落库
+	assert.equal(s.setSubagentThinkingOverride(r.id, "high").thinking, "high");
+	assert.throws(() => s.setSubagentThinkingOverride(r.id, "bogus"), /思考强度/);
+	// 运行中立即切换
+	assert.equal(await s.applyLiveSubagentThinking(r.id, "high"), true);
+	assert.deepEqual(applied.at(-1), { model: { provider: "mock", id: "echo-think" }, thinking: "high" });
+	// 清回跟随（null）后不再 apply 覆盖，但仍可即时切换助理默认解析值
+	assert.equal(s.setSubagentThinkingOverride(r.id, null).thinking, null);
+	await s.stopSubagent(r.id);
+	await cleanup();
+});
+
 test("并发上限：满额第 4 个排队，唯一终态、通知失败后重投，历史步骤不混入主会话且用量归属助理", async () => {
 	setSettings(3);
 	let attempts = 0;
