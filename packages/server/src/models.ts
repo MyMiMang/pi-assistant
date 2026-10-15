@@ -15,6 +15,9 @@ export let credentialStore: CredentialStore | undefined;
 /** 显式注入过的凭据后端：同一进程内后续无参 initModels 复用它，不再重复构造会走 OS 钥匙串的后端。 */
 let injectedCredentials: CredentialStore | undefined;
 
+/** 快速操作模型设置可能存在的 storage key：旧的全局 + 每台电脑 scope（与 fast-computer/index.ts 的 scopeKey 一致）。 */
+const FAST_COMPUTER_KEYS = ["fastComputer", "fastComputer:hostpc", "fastComputer:computer"];
+
 export async function initModels(credentials?: CredentialStore) {
 	// 测试可注入公开的内存 CredentialStore，避免构造会走 OS 钥匙串的安全后端（见 test/in-memory-credentials.ts）；
 	// 注入过的后端在后续无参调用中复用，保证一个进程最多构造一次安全后端。
@@ -36,8 +39,11 @@ export async function initModels(credentials?: CredentialStore) {
 			const c = await store.read(id);
 			return c?.type === "api_key" ? c.key : undefined;
 		},
-		loadFastReference: () => getSetting<{ kind?: string; provider: string; id: string } | null>("fastComputer", null),
-		saveFastReference: (ref) => setSetting("fastComputer", { ...getSetting<Record<string, unknown>>("fastComputer", {}), ...ref }),
+		loadFastReferences: () => FAST_COMPUTER_KEYS.map((key) => ({ storageKey: key, ...getSetting<{ kind?: string; provider: string; id: string }>(key, { provider: "", id: "" }) })).filter((r) => r.provider || r.id),
+		saveFastReference: (ref, storageKey) => {
+			const key = storageKey ?? "fastComputer";
+			setSetting(key, { ...getSetting<Record<string, unknown>>(key, {}), ...ref });
+		},
 	});
 	customProviders.applyEnv();
 	setLimitsLearner((p, m, l) => customProviders.learnLimits(p, m, l));

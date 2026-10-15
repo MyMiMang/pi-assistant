@@ -55,17 +55,17 @@ const KEY_B = "sk-relay-b-0123456789abcdef";
 function memoryStorage() {
 	let metaList: CustomProviderMeta[] = [];
 	const headers = new Map<string, Record<string, string>>();
-	let fast: { kind?: string; provider: string; id: string } | null = null;
+	const fastRefs = new Map<string, { kind?: string; provider: string; id: string }>();
 	const store: CustomStorage = {
 		loadMeta: () => metaList,
 		saveMeta: (l) => void (metaList = l),
 		loadHeaders: (id) => headers.get(id) ?? {},
 		saveHeaders: (id, h) => void (h ? headers.set(id, h) : headers.delete(id)),
 		readKey: async () => undefined,
-		loadFastReference: () => fast,
-		saveFastReference: (ref) => void (fast = { kind: fast?.kind, ...ref }),
+		loadFastReferences: () => [...fastRefs.entries()].map(([storageKey, r]) => ({ storageKey, ...r })),
+		saveFastReference: (ref, storageKey = "fastComputer") => void fastRefs.set(storageKey, { kind: fastRefs.get(storageKey)?.kind, ...ref }),
 	};
-	return { store, getFast: () => fast, setFast: (v: typeof fast) => (fast = v), getMetas: () => metaList };
+	return { store, getFast: () => fastRefs.get("fastComputer") ?? null, setFast: (v: { kind?: string; provider: string; id: string } | null) => void (v ? fastRefs.set("fastComputer", v) : fastRefs.delete("fastComputer")), getMetas: () => metaList };
 }
 
 const modelsPath = join(mkdtempSync(join(tmpdir(), "pia-cls-persist-")), "models.json");

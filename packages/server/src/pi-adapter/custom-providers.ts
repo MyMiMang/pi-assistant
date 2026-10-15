@@ -77,9 +77,9 @@ export interface CustomStorage {
 	loadHeaders(id: string): Record<string, string>;
 	saveHeaders(id: string, h: Record<string, string> | null): void;
 	readKey(id: string): Promise<string | undefined>;
-	/** 快速操作模型引用的 classifier（只读/清空 provider + id，避免 pi-adapter 反向依赖业务模块） */
-	loadFastReference(): { kind?: string; provider: string; id: string } | null;
-	saveFastReference(ref: { provider: string; id: string }): void;
+	/** 快速操作模型引用的 classifier（按电脑 scope 各一份；只读/清空 provider + id，避免 pi-adapter 反向依赖业务模块） */
+	loadFastReferences(): { storageKey: string; kind?: string; provider: string; id: string }[];
+	saveFastReference(ref: { provider: string; id: string }, storageKey?: string): void;
 }
 
 /** 规范化 classifier 声明：去空白、去空项、去重，只留公开字段。 */
@@ -323,15 +323,16 @@ export class CustomProviders {
 		this.reconcileFastReference();
 	}
 
-	/** 快速操作模型引用的 classifier 已不存在（服务被编辑 / classifier 被移除）时清掉引用，不留悬空。 */
+	/** 快速操作模型引用的 classifier 已不存在（服务被编辑 / classifier 被移除）时清掉引用，不留悬空（每台电脑 scope 各清各的）。 */
 	private reconcileFastReference() {
-		const s = this.store.loadFastReference();
-		if (!s || s.kind !== "systemone" || !s.provider || !s.id) return;
-		if (this.models.listClassifierModels(s.provider).some((m) => m.id === s.id)) return;
-		// 本地服务（如 local-laya）可能只是暂时停止（stop 会把它从 classifier 目录摘掉），
-		// 只要它仍是已知的已安装本地服务，就保留引用，不自动清掉 / 不删模型，只算「暂不可调用」。
-		if (localModelHint(s.provider)) return;
-		this.store.saveFastReference({ provider: "", id: "" });
+		for (const s of this.store.loadFastReferences()) {
+			if (!s || s.kind !== "systemone" || !s.provider || !s.id) continue;
+			if (this.models.listClassifierModels(s.provider).some((m) => m.id === s.id)) continue;
+			// 本地服务（如 local-laya）可能只是暂时停止（stop 会把它从 classifier 目录摘掉），
+			// 只要它仍是已知的已安装本地服务，就保留引用，不自动清掉 / 不删模型，只算「暂不可调用」。
+			if (localModelHint(s.provider)) continue;
+			this.store.saveFastReference({ provider: "", id: "" }, s.storageKey);
+		}
 	}
 
 	/** 补上上下文 / 输出长度（缺哪项补哪项；用户填过的不动） */
