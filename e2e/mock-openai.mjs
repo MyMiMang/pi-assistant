@@ -16,6 +16,14 @@ export function startMockOpenAI({ port = 0, key = "sk-relay-test", requiredHeade
 			res.writeHead(200, { "content-type": "application/json" });
 			return res.end(JSON.stringify({ object: "list", data: [{ id: "relay-chat", object: "model", context_length: 65536, top_provider: { max_completion_tokens: 4096 } }, { id: "relay-pro", object: "model" }] }));
 		}
+		// System One 分类器（真 Jev 协议）：把第一个候选 id 作为 choice 回，带原生 confidence。
+		if (req.method === "POST" && req.url === "/v1/systemone") {
+			const j = JSON.parse(body || "{}");
+			const ids = Object.keys(j.questions?.pick?.criteria ?? {});
+			const choice = ids[0] ?? "";
+			res.writeHead(200, { "content-type": "application/json" });
+			return res.end(JSON.stringify({ answers: { pick: { type: "choice", choice, probabilities: Object.fromEntries(ids.map((id, i) => [id, i === 0 ? 0.9 : 0.1])), confidence: ids.length ? 0.9 : 0 } }, usage: { input_tokens: 5, output_tokens: 1 } }));
+		}
 		if (req.method === "POST" && req.url === "/v1/chat/completions") {
 			const j = JSON.parse(body || "{}");
 			const last = [...(j.messages ?? [])].reverse().find((m) => m.role === "user");

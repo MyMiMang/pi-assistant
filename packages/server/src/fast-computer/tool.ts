@@ -17,7 +17,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { models } from "../models.ts";
 import { recordUsage } from "../usage/index.ts";
-import { createChatChooser, MAX_FAST_CANDIDATES } from "./choosers.ts";
+import { createChatChooser, createClassifierChooser, MAX_FAST_CANDIDATES } from "./choosers.ts";
 import {
 	fastComputerSettings,
 	selectFastAction,
@@ -34,12 +34,18 @@ import {
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
 
-/** 按设置构建选择器。systemone = 原生 Jev；chat = OpenAI 兼容替代（非 Jev）。 */
+/** 按设置构建选择器。systemone = 原生 Jev 分类器（从 classifier 目录选）；chat = OpenAI 兼容替代（非 Jev）。 */
 export function buildChooser(s: FastComputerSettings): FastActionChooser | null {
 	if (s.kind === "systemone") {
-		// 原生 Jev（SystemOne）渠道需要「用户所选渠道」的授权凭据；在拿到已授权的公开 auth 抽象之前
-		// fail-closed：不再从全局 env 取 Key（否则可能把全局 Key 发给任意自定义 baseURL），也不再假装可用。
-		return null;
+		// 原生 Jev 必须绑定到「用户已配置认证的 classifier 模型」：provider/id 来自 Pi 的 classifier 目录，
+		// 鉴权由 Pi 的 request-time 解析（按 model.provider 绑定 baseURL/headers/key），这里不取、不传 key。
+		if (!s.provider || !s.id) return null;
+		return createClassifierChooser({
+			provider: s.provider,
+			model: s.id,
+			timeoutMs: s.timeoutMs,
+			classify: (provider, model, context, opts) => models.classify(provider, model, context, opts),
+		});
 	}
 	if (!s.provider || !s.id) return null;
 	return createChatChooser({
@@ -186,7 +192,7 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 
 const noChooserText = (s: FastComputerSettings) =>
 	s.kind === "systemone"
-		? "原生 Jev（SystemOne）渠道接入待完成：当前没有可用的已授权渠道凭据，快速路径 fail-closed 跳过。请自己完成。"
+		? "原生 Jev（SystemOne）还没选好 classifier 模型（设置 › 模型 › 快速操作模型），快速路径跳过。请自己完成。"
 		: "快速操作模型没有选好模型，快速路径跳过。请自己完成。";
 
 const freshReasonText = (reason: "no_semantic" | "not_found" | "ambiguous" | "changed") =>

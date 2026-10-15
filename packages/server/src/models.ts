@@ -28,6 +28,8 @@ export async function initModels() {
 			const c = await store.read(id);
 			return c?.type === "api_key" ? c.key : undefined;
 		},
+		loadFastReference: () => getSetting<{ kind?: string; provider: string; id: string } | null>("fastComputer", null),
+		saveFastReference: (ref) => setSetting("fastComputer", { ...getSetting<Record<string, unknown>>("fastComputer", {}), ...ref }),
 	});
 	customProviders.applyEnv();
 	setLimitsLearner((p, m, l) => customProviders.learnLimits(p, m, l));
@@ -36,6 +38,8 @@ export async function initModels() {
 	await models.reloadConfig();
 	await customProviders.backfillLimits().catch((e) => console.error("[models] 补齐自定义模型上下文长度失败", e));
 	if (config.mock) await registerMockProvider(models);
+	// classifier 只能经扩展注册，reloadConfig/backfill 后按保存的公开元数据重新注册（凭据仍走 Pi 原 provider）。
+	customProviders.reapplyClassifiers();
 	if (config.mock && !getSetting("defaultModel", null)) setSetting("defaultModel", { provider: MOCK_PROVIDER, id: MOCK_MODEL });
 }
 
@@ -111,6 +115,9 @@ export function clearProviderReferences(id: string): ProviderReferences {
 		const cur = getSetting<{ pool?: { provider?: string }[] }>(`subagentModel:${agentId}`, {});
 		setSetting(`subagentModel:${agentId}`, { pool: (Array.isArray(cur.pool) ? cur.pool : []).filter((m) => m?.provider !== id) });
 	}
+	// 快速操作模型：引用被删服务的 classifier → 清掉引用（回落为未选择，fail-closed）
+	const fast = getSetting<{ kind?: string; provider?: string; id?: string } | null>("fastComputer", null);
+	if (fast && fast.provider === id) setSetting("fastComputer", { ...fast, provider: "", id: "" });
 	if (refs.agents.length) db.prepare("UPDATE agents SET model_provider = NULL, model_id = NULL WHERE model_provider = ?").run(id);
 	return refs;
 }

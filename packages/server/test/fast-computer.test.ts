@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FastActionCandidate, FastActionChooser, FastComputerSettings } from "../src/fast-computer/index.ts";
 const fc = await import("../src/fast-computer/index.ts");
-const { createMockChooser, createSystemOneChooser, parseChatChoice, parseSystemOneChoice } = await import("../src/fast-computer/choosers.ts");
+const { createMockChooser, createClassifierChooser, parseChatChoice, parseClassifierChoice } = await import("../src/fast-computer/choosers.ts");
 
 const cand = (id: string, tool = "click"): FastActionCandidate => ({ id, label: `候选 ${id}`, tool, args: { element_token: `${id}:1` } });
 const settings = (patch: Partial<FastComputerSettings> = {}): FastComputerSettings => ({ ...fc.FAST_COMPUTER_DEFAULT, enabled: true, ...patch });
@@ -104,11 +104,11 @@ test("用量按真实返回记账（有 usage 才记）", async () => {
 		goal: "g",
 		candidates: [cand("a")],
 		chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", usage: { input: 12, output: 3 }, model: "typesafe/jev-1.13" })),
-		settings: settings({ kind: "systemone", model: "jev-latest" }),
+		settings: settings({ kind: "systemone", provider: "openrouter", id: "typesafe/jev-1.13" }),
 		onUsage: (u) => seen.push(u),
 	});
 	assert.equal(seen.length, 1);
-	assert.deepEqual(seen[0], { provider: "jev", model: "typesafe/jev-1.13", input: 12, output: 3 });
+	assert.deepEqual(seen[0], { provider: "openrouter", model: "typesafe/jev-1.13", input: 12, output: 3 });
 	// 没有 usage 就不记
 	await fc.selectFastAction({ key: "ku2", goal: "g", candidates: [cand("a")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a" })), settings: settings(), onUsage: (u) => seen.push(u) });
 	assert.equal(seen.length, 1);
@@ -122,17 +122,25 @@ test("候选校验：空 / 超限 / 重复 / 非白名单工具", () => {
 	assert.equal(fc.validateCandidates([cand("a"), cand("b", "type_text")]), null);
 });
 
-test("SystemOne 解析：选中 / 并列 / 非法概率 / 越界", () => {
+test("classifier 解析：选中 / 并列 / 非法概率 / 越界 / 缺置信度不合成", () => {
 	const ids = ["a", "b"];
-	const ok = parseSystemOneChoice({ answers: { pick: { type: "choice", choice: "a", confidence: 0.8, probabilities: { a: 0.8, b: 0.2 } } }, usage: { input_tokens: 5, output_tokens: 1 } }, ids);
-	assert.deepEqual(ok, { kind: "selected", candidateId: "a", confidence: 0.8, probabilities: { a: 0.8, b: 0.2 }, usage: { input: 5, output: 1 }, model: undefined });
-	const tie = parseSystemOneChoice({ answers: { pick: { type: "choice", choice: "a", probabilities: { a: 0.5, b: 0.5 } } } }, ids);
+	const base = { provider: "openrouter", model: "typesafe/jev-1.13", api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1 };
+	const ok = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8, probabilities: { a: 0.8, b: 0.2 } } }, usage: { input: 5, output: 1, totalTokens: 6 } }, ids);
+	assert.deepEqual(ok, { kind: "selected", candidateId: "a", confidence: 0.8, probabilities: { a: 0.8, b: 0.2 }, usage: { input: 5, output: 1 }, model: "openrouter/typesafe/jev-1.13" });
+	const tie = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.5, probabilities: { a: 0.5, b: 0.5 } } } }, ids);
 	assert.equal(tie.kind, "abstain");
-	const badProbs = parseSystemOneChoice({ answers: { pick: { type: "choice", choice: "a", probabilities: { a: 1.4, b: -0.1 } } } }, ids);
+	const badProbs = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8, probabilities: { a: 1.4, b: -0.1 } } } }, ids);
 	assert.equal(badProbs.kind, "selected");
 	if (badProbs.kind === "selected") assert.equal(badProbs.probabilities, undefined, "非法概率整体丢弃，不部分信任");
-	const outOfSet = parseSystemOneChoice({ answers: { pick: { type: "choice", choice: "z" } } }, ids);
+	const noConf = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", probabilities: { a: 0.8, b: 0.2 } } } as never }, ids);
+	assert.equal(noConf.kind, "abstain", "SDK 未给置信度一律 unknown，绝不合成");
+	const noProbs = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8 } } as never }, ids);
+	assert.equal(noProbs.kind, "selected");
+	if (noProbs.kind === "selected") assert.equal(noProbs.probabilities, undefined, "概率缺失 → unknown，不合成");
+	const outOfSet = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "z", confidence: 0.9, probabilities: { z: 1 } } } }, ids);
 	assert.equal(outOfSet.kind, "error");
+	const failed = parseClassifierChoice({ ...base, stopReason: "error", errorMessage: "System One API error (401)", answers: {} }, ids);
+	assert.equal(failed.kind, "error");
 });
 
 test("chat 解析：不合成 confidence", () => {
@@ -145,22 +153,31 @@ test("chat 解析：不合成 confidence", () => {
 	assert.equal(parseChatChoice('{"id":"z"}', ids).kind, "error");
 });
 
-test("SystemOne chooser：请求形状正确、解析响应（假 fetch）", async () => {
-	let url = "";
-	let body: unknown;
-	const fetchImpl = (async (u: string | URL | Request, init?: RequestInit) => {
-		url = String(u);
-		body = JSON.parse(String(init?.body));
-		return new Response(JSON.stringify({ answers: { pick: { type: "choice", choice: "a", confidence: 0.9, probabilities: { a: 0.9, b: 0.1 } } }, model: "typesafe/jev-1.13", usage: { input_tokens: 7, output_tokens: 2 } }), { status: 200 });
-	}) as unknown as typeof fetch;
-	const chooser = createSystemOneChooser({ baseUrl: "https://openrouter.ai/api/", model: "typesafe/jev-1.13", apiKey: "k", fetchImpl });
+test("classifier chooser：只发离散 choice 问题、答案必须是候选 id（假 classify）", async () => {
+	let got: { provider: string; model: string; context: { questions: { pick: { type: string; criteria: Record<string, string> } } } } | undefined;
+	const chooser = createClassifierChooser({
+		provider: "openrouter",
+		model: "typesafe/jev-1.13",
+		classify: async (provider, model, context) => {
+			got = { provider, model, context: context as never };
+			return { provider, model, api: "typesafe-system-one", answers: { pick: { type: "choice", choice: "a", confidence: 0.9, probabilities: { a: 0.9, b: 0.1 } } }, usage: { input: 7, output: 2, totalTokens: 9 }, stopReason: "stop", timestamp: 1 };
+		},
+	});
 	const r = await chooser.choose({ goal: "点登录", captureId: "cap-1", candidates: [{ id: "a", label: "按钮：登录" }, { id: "b", label: "按钮：取消" }] });
-	assert.equal(url, "https://openrouter.ai/api/v1/systemone");
-	const b = body as { model: string; questions: { pick: { type: string; criteria: Record<string, string> } } };
-	assert.equal(b.model, "typesafe/jev-1.13");
-	assert.equal(b.questions.pick.type, "choice");
-	assert.deepEqual(b.questions.pick.criteria, { a: "按钮：登录", b: "按钮：取消" });
+	assert.equal(chooser.id, "systemone");
+	assert.equal(chooser.nativeProbability, true);
+	assert.equal(got?.provider, "openrouter");
+	assert.equal(got?.model, "typesafe/jev-1.13");
+	assert.equal(got?.context.questions.pick.type, "choice");
+	assert.deepEqual(got?.context.questions.pick.criteria, { a: "按钮：登录", b: "按钮：取消" });
 	assert.equal(r.kind === "selected" && r.candidateId, "a");
+});
+
+test("classifier chooser：classify 抛错 / 中止 → error（超时归 timeout）", async () => {
+	const boom = createClassifierChooser({ provider: "p", model: "m", classify: async () => { throw new Error("aborted"); } });
+	const r = await boom.choose({ goal: "g", captureId: "c", candidates: [{ id: "a", label: "a" }] });
+	assert.equal(r.kind, "error");
+	if (r.kind === "error") assert.equal(r.error, "timeout");
 });
 
 test("程序收集：从窗口状态生成点击候选（限上限、只取可点击）", async () => {
@@ -263,14 +280,21 @@ test("G3 核验：值断言缺 value 字段 → unknown，不把 undefined 当�
 	assert.equal(fc.verifyExpectation({ role: "button", value_equals: "已登录" }, { elements: [{ role: "button", label: "登录" }, { role: "button", label: "登录", value: "已登录" }] }), "confirmed");
 });
 
-test("G4：systemone 不再读全局 env key，fail-closed；chat 仍可构建", async () => {
+test("G4：systemone 从 classifier 目录选（provider+id）构建，不读全局 env key；chat 仍可构建", async () => {
 	const { buildChooser } = await import("../src/fast-computer/tool.ts");
 	const oldA = process.env.TYPESAFE_API_KEY;
 	const oldB = process.env.OPENROUTER_API_KEY;
 	process.env.TYPESAFE_API_KEY = "should-not-be-used";
 	process.env.OPENROUTER_API_KEY = "should-not-be-used";
 	try {
+		// 选了 classifier 模型 → 构建原生 Jev chooser（不再看 baseUrl / 全局 env）
+		const native = buildChooser(settings({ kind: "systemone", provider: "openrouter", id: "typesafe/jev-1.13" }));
+		assert.ok(native, "选了 classifier 模型应构建原生 Jev chooser");
+		assert.equal(native!.id, "systemone");
+		assert.equal(native!.nativeProbability, true);
+		// 没选 classifier 模型 / 只有旧 baseUrl → 不构建，不猜
 		assert.equal(buildChooser(settings({ kind: "systemone", baseUrl: "https://evil.example", model: "jev-latest" })), null);
+		assert.equal(buildChooser(settings({ kind: "systemone", provider: "openrouter", id: "" })), null);
 		assert.ok(buildChooser(settings({ kind: "chat", provider: "openai", id: "gpt-x" })));
 		assert.equal(buildChooser(settings({ kind: "chat", provider: "", id: "" })), null);
 	} finally {

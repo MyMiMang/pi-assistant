@@ -28,13 +28,57 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { CredentialStore } from "@earendil-works/pi-ai";
+import type { ClassifierAnswer, ClassifierContext, CredentialStore } from "@earendil-works/pi-ai";
+// 官方公开子路径：原生 System One 传输实现（与内建 typesafe / openrouter classifier 同一实现）。
+import { classify as systemOneClassify } from "@earendil-works/pi-ai/api/typesafe-system-one";
+// 其它公开 classifier 协议实现（本地 llama-server / Cloudflare Workers AI）；自定义服务可显式声明用哪个。
+import { classify as cloudflareSystemOneClassify } from "@earendil-works/pi-ai/api/cloudflare-workers-ai-system-one";
+import { classify as llamaCppClassify } from "@earendil-works/pi-ai/api/llama-cpp-classify";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 import compat from "./compat.json" with { type: "json" };
 import { BRAND } from "@pi-assistant/shared";
 
 export { defineTool, Type };
 export type { AgentSession, AgentSessionEvent, BashOperations, ExtensionAPI, ExtensionFactory, ToolDefinition, CredentialStore };
+// classifier（System One / Jev）的官方类型：server 只经这里使用 Pi，业务侧按官方结构传参
+// ClassifierQuestion / ClassifierResult 直接复用 Pi 的定义，不再自造一套。
+export type { ClassifierAnswer, ClassifierContext, ClassifierQuestion, ClassifierResult } from "@earendil-works/pi-ai";
+
+/**
+ * 可由自定义服务声明的 classifier 协议（pi-ai 的公开 ClassifierApi）。
+ * 只登记**公开子路径导出**的实现；不在这里的协议一律拒绝，不猜、不硬编码其它内部实现。
+ */
+// biome-ignore lint/suspicious/noExplicitAny: 各协议的 ClassifierFunction 泛型参数不同，这里只按协议名做查表
+const CLASSIFIER_PROTOCOLS: Record<string, any> = {
+	"typesafe-system-one": systemOneClassify,
+	"cloudflare-workers-ai-system-one": cloudflareSystemOneClassify,
+	"llama-cpp-classify": llamaCppClassify,
+};
+/** 协议 id 列表（给界面/接口展示，顺序即注册顺序）。 */
+export const classifierProtocols = (): string[] => Object.keys(CLASSIFIER_PROTOCOLS);
+export const isClassifierProtocol = (v: unknown): v is string => typeof v === "string" && Object.prototype.hasOwnProperty.call(CLASSIFIER_PROTOCOLS, v);
+
+/** 一个自定义服务声明的 classifier：协议 + 对端模型 id（只含公开元数据，不含 baseUrl / 凭据）。 */
+export interface ClassifierDeclaration {
+	protocol: string;
+	modelId: string;
+	name?: string;
+	contextWindow?: number;
+}
+
+/** 注册 classifier 时一并带上的 chat 模型（来自持久化元数据，避免扩展层遮蔽 models.json 的更新）。 */
+export interface ClassifierChatModel {
+	id: string;
+	name?: string;
+	api: string;
+	baseUrl?: string;
+	input?: string[];
+	cost?: unknown;
+	reasoning?: boolean;
+	contextWindow?: number;
+	maxTokens?: number;
+	thinkingLevelMap?: unknown;
+}
 
 /** Pi 内置的“本机 bash”执行后端（给 ext-sandbox 在 Docker 偏好下切回主机时注入；扩展不直接依赖 Pi 运行时代码） */
 export function localBashOperations(): BashOperations {
@@ -95,6 +139,49 @@ export interface ModelInfo {
 	maxTokens?: number;
 }
 
+/** classifier 模型的安全元数据（不含 baseUrl / headers / 凭据）。 */
+export interface ClassifierModelInfo {
+	provider: string;
+	id: string;
+	name: string;
+	api: string;
+	input: string[];
+	contextWindow: number;
+	/** 该 provider 是否已配置认证（只看状态，不暴露凭据内容） */
+	configured: boolean;
+}
+
+/** 分类请求的受限参数：不允许调用方注入 apiKey / headers / fetch，鉴权一律交给 Pi 的 request-time 解析。 */
+export interface ClassifierCallOptions {
+	signal?: AbortSignal;
+	timeoutMs?: number;
+	temperature?: number;
+}
+
+/** 中性分类结果：只含答案与用量，绝不带 headers / 凭据；errorMessage 已脱敏。 */
+export interface ClassifierOutcome {
+	provider: string;
+	model: string;
+	api: string;
+	answers: Record<string, ClassifierAnswer>;
+	/** 服务只报 token 数时给出；cost 缺失表示价格未知（不是 0，也不代表免费） */
+	usage?: { input: number; output: number; totalTokens: number; cost?: number };
+	stopReason: "stop" | "error" | "aborted";
+	errorMessage?: string;
+	timestamp: number;
+}
+
+/**
+ * 错误信息脱敏：provider 报错常把响应体原样带出（可能含请求头 / key）。
+ * 这里统一抹掉 Bearer 凭据、key/token/secret 字段和超长疑似密钥串，再对外返回。
+ */
+function redactSecrets(text: string): string {
+	return text
+		.replace(/(bearer)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [已隐藏]")
+		.replace(/(api[_-]?key|access[_-]?token|authorization|secret|token)["']?\s*[:=]\s*["']?[^\s"',;}]+/gi, "$1=[已隐藏]")
+		.replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[已隐藏]");
+}
+
 export type LoginPrompt =
 	| { type: "text" | "secret" | "manual_code"; message: string; placeholder?: string }
 	| { type: "select"; message: string; options: readonly { id: string; label: string; description?: string }[] };
@@ -153,6 +240,38 @@ export class PiModels {
 			contextWindow: m.contextWindow,
 			maxTokens: m.maxTokens,
 		}));
+	}
+
+	/** classifier（System One / Jev）模型目录：只列 classifier 类型，只含安全元数据。 */
+	listClassifierModels(providerId?: string): ClassifierModelInfo[] {
+		return this.runtime.getModelsOfType("classifier", providerId).map((m) => ({
+			provider: m.provider,
+			id: m.id,
+			name: m.name,
+			api: m.api,
+			input: [...(m.input ?? [])],
+			contextWindow: m.contextWindow,
+			configured: this.runtime.hasConfiguredAuth(m.provider),
+		}));
+	}
+
+	/**
+	 * 受限分类请求：只按 provider/model 找 classifier 模型，鉴权由 Pi 的 request-time 解析完成
+	 * （按 model.provider 绑定 baseURL/headers/key，不会串到别的 provider）。
+	 * 返回中性结果：不返回 headers / key，错误信息已脱敏；SDK 契约上不抛异常。
+	 */
+	async classify(providerId: string, modelId: string, context: ClassifierContext, opts?: ClassifierCallOptions): Promise<ClassifierOutcome> {
+		const model = this.runtime.getModelOfType("classifier", providerId, modelId);
+		if (!model) return { provider: providerId, model: modelId, api: "", answers: {}, stopReason: "error", errorMessage: `找不到分类模型 ${providerId}/${modelId}`, timestamp: Date.now() };
+		const res = await this.runtime.classify(model, context, opts ? { signal: opts.signal, timeoutMs: opts.timeoutMs, temperature: opts.temperature } : undefined);
+		const out: ClassifierOutcome = { provider: res.provider, model: res.model, api: res.api, answers: res.answers, stopReason: res.stopReason, timestamp: res.timestamp };
+		if (res.usage) {
+			// 缺 cost 时保持 undefined（价格未知），绝不回落到 0 —— 否则会把「未知」当「免费」记账。
+			const cost = res.usage.cost?.total;
+			out.usage = { input: res.usage.input, output: res.usage.output, totalTokens: res.usage.totalTokens, ...(typeof cost === "number" && Number.isFinite(cost) ? { cost } : {}) };
+		}
+		if (res.errorMessage) out.errorMessage = redactSecrets(res.errorMessage);
+		return out;
 	}
 
 	/** 把想要的思考强度收敛到模型支持的档位（Pi 的 clampThinkingLevel） */
@@ -247,6 +366,69 @@ export class PiModels {
 	/** 注册一个本地 provider（mock 模型用）。 */
 	registerProvider(id: string, config: unknown) {
 		this.runtime.registerProvider(id, config as never);
+	}
+
+	/**
+	 * 给自定义 provider 注册一个或多个 classifier（协议 + 模型 id，最小公开入口）。
+	 *
+	 * SDK 真实限制（已用 fixture 验证）：models.json 只能定义 chat 模型，写 `type: "classifier"` 也会被当成 chat，
+	 * 所以自定义 provider 的 classifier 只能经扩展 `registerProvider` 注册。这里：
+	 *  - 把该 provider 现有 **chat** 模型原样带上（`getModelsOfType("chat")`，不会把上次注册的 classifier 再当 chat 混进来）；
+	 *  - 按声明追加 classifier（协议来自公开白名单，模型 id 由调用方给）；
+	 *  - 鉴权复用该 provider 已保存的凭据（Pi request-time 按 model.provider 解析），本方法不读 key、不传 key、不换 baseURL。
+	 */
+	registerClassifiers(providerId: string, classifiers: ClassifierDeclaration[], opts?: { baseUrl?: string; chatModels?: ClassifierChatModel[] }) {
+		if (!classifiers.length) return;
+		// chat 模型优先用调用方给的持久化元数据（扩展 provider 的 models 会整体替换 models.json 的模型列表，
+		// 靠 runtime 读会拿到上一次注册时的旧列表，导致编辑后的模型/长度丢失）。
+		const source: ClassifierChatModel[] = opts?.chatModels ?? [...(this.runtime.getModelsOfType("chat", providerId) as readonly ClassifierChatModel[])];
+		const baseUrl = opts?.baseUrl ?? source[0]?.baseUrl;
+		if (!baseUrl) throw new Error(`provider ${providerId} 没有 baseUrl，无法注册 classifier`);
+		const models: unknown[] = source.map((m) => ({
+			type: "chat" as const,
+			id: m.id,
+			name: m.name ?? m.id,
+			api: m.api,
+			baseUrl: m.baseUrl ?? baseUrl,
+			input: [...(m.input ?? ["text"])],
+			cost: m.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			reasoning: !!m.reasoning,
+			contextWindow: m.contextWindow ?? 128_000,
+			maxTokens: m.maxTokens ?? 16_384,
+			...(m.thinkingLevelMap ? { thinkingLevelMap: m.thinkingLevelMap } : {}),
+		}));
+		const apis: Record<string, unknown> = {};
+		for (const c of classifiers) {
+			const fn = CLASSIFIER_PROTOCOLS[c.protocol];
+			if (!fn) throw new Error(`不支持的 classifier 协议：${c.protocol}`);
+			apis[c.protocol] = { classify: fn };
+			models.push({
+				type: "classifier",
+				id: c.modelId,
+				name: c.name ?? c.modelId,
+				api: c.protocol,
+				baseUrl,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: c.contextWindow ?? 8192,
+			});
+		}
+		this.runtime.registerProvider(providerId, {
+			name: this.runtime.getProvider(providerId)?.name ?? providerId,
+			baseUrl,
+			classifiers: apis,
+			models,
+		} as never);
+	}
+
+	/** 兼容旧调用：等价于声明一个 `typesafe-system-one` classifier。 */
+	registerSystemOneClassifier(providerId: string, modelId: string, opts?: { name?: string; baseUrl?: string; contextWindow?: number }) {
+		this.registerClassifiers(providerId, [{ protocol: "typesafe-system-one", modelId, name: opts?.name, contextWindow: opts?.contextWindow }], { baseUrl: opts?.baseUrl });
+	}
+
+	/** 摘掉扩展注册的 provider 层，让 models.json（及 Pi 内置目录）重新生效。 */
+	unregisterProvider(providerId: string) {
+		this.runtime.unregisterProvider(providerId);
 	}
 	setRuntimeApiKey(id: string, key: string) {
 		return this.runtime.setRuntimeApiKey(id, key);

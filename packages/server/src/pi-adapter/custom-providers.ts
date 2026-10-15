@@ -9,7 +9,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getApiProviders } from "@earendil-works/pi-ai/compat";
-import type { PiModels } from "./index.ts";
+import type { ClassifierChatModel, ClassifierDeclaration, PiModels } from "./index.ts";
+import { isClassifierProtocol } from "./index.ts";
 import { modelDb } from "../model-db.ts";
 import { detectLimits, knownReasoning, knownThinkingLevelMap, knownVision, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
 
@@ -46,6 +47,8 @@ export interface CustomProviderMeta {
 	headerNames: string[];
 	noKey: boolean;
 	models: CustomModel[];
+	/** 该服务公开声明的 classifier（协议 + 模型 id）；只存元数据，凭据仍走 Pi 原 provider 的登录保存 */
+	classifiers?: ClassifierDeclaration[];
 	createdAt: number;
 }
 export interface CustomProviderInput {
@@ -58,6 +61,8 @@ export interface CustomProviderInput {
 	/** value 为 undefined 表示保持原值 */
 	headers?: { name: string; value?: string }[];
 	models: CustomModel[];
+	/** 不传 = 保持原有 classifier 不变；传 [] 表示清空 */
+	classifiers?: ClassifierDeclaration[];
 }
 export interface CustomStorage {
 	loadMeta(): CustomProviderMeta[];
@@ -65,6 +70,24 @@ export interface CustomStorage {
 	loadHeaders(id: string): Record<string, string>;
 	saveHeaders(id: string, h: Record<string, string> | null): void;
 	readKey(id: string): Promise<string | undefined>;
+	/** 快速操作模型引用的 classifier（只读/清空 provider + id，避免 pi-adapter 反向依赖业务模块） */
+	loadFastReference(): { kind?: string; provider: string; id: string } | null;
+	saveFastReference(ref: { provider: string; id: string }): void;
+}
+
+/** 规范化 classifier 声明：去空白、去空项、去重，只留公开字段。 */
+export function normalizeClassifiers(list: ClassifierDeclaration[] | undefined): ClassifierDeclaration[] {
+	if (!Array.isArray(list)) return [];
+	const seen = new Set<string>();
+	const out: ClassifierDeclaration[] = [];
+	for (const c of list) {
+		const protocol = typeof c?.protocol === "string" ? c.protocol.trim() : "";
+		const modelId = typeof c?.modelId === "string" ? c.modelId.trim() : "";
+		if (!protocol || !modelId || seen.has(`${protocol}/${modelId}`)) continue;
+		seen.add(`${protocol}/${modelId}`);
+		out.push({ protocol, modelId, ...(c.name?.trim() ? { name: c.name.trim() } : {}), ...(typeof c.contextWindow === "number" ? { contextWindow: c.contextWindow } : {}) });
+	}
+	return out;
 }
 
 /** 常用协议的友好名称；其余直接显示 Pi 的 API id。 */
@@ -99,6 +122,9 @@ export function slugId(name: string, taken: Set<string>): string {
 }
 
 export class CustomProviders {
+	/** 本进程内注册过扩展 layer 的 provider（classifier 被清空时需要摘掉）。 */
+	private extended = new Set<string>();
+
 	constructor(
 		private models: PiModels,
 		private modelsPath: string,
@@ -156,6 +182,12 @@ export class CustomProviders {
 		if (ids.some((x) => !x)) return "模型 ID 不能为空";
 		if (new Set(ids).size !== ids.length) return "模型 ID 重复";
 		for (const h of input.headers ?? []) if (!/^[A-Za-z0-9-]+$/.test(h.name)) return `请求头名称不合法：${h.name}`;
+		for (const c of input.classifiers ?? []) {
+			if (!isClassifierProtocol(c.protocol)) return `不支持的 classifier 协议：${c.protocol}`;
+			if (!c.modelId?.trim()) return "classifier 模型 ID 不能为空";
+		}
+		const cids = (input.classifiers ?? []).map((c) => `${c.protocol}/${c.modelId.trim()}`);
+		if (new Set(cids).size !== cids.length) return "classifier（协议 + 模型 ID）重复";
 		return null;
 	}
 
@@ -187,6 +219,8 @@ export class CustomProviders {
 			headerNames,
 			noKey: !!input.noKey,
 			models: input.models.map((m) => this.withLimits({ ...m, id: m.id.trim() }, undefined, input.baseUrl, input.api)),
+			// 不传就保留原有 classifier（与 Key / 请求头一致的“留空不改”语义）；传 [] 清空。
+			classifiers: normalizeClassifiers(input.classifiers === undefined ? existing?.classifiers : input.classifiers),
 			createdAt: existing?.createdAt ?? Date.now(),
 		};
 		// 写入 Pi 的 models.json（保留用户手写的其它 provider）
@@ -203,6 +237,8 @@ export class CustomProviders {
 		this.writeFile(cfg);
 		this.store.saveMeta([...metas.filter((m) => m.id !== pid), meta]);
 		await this.models.reloadConfig();
+		// reload 会用 models.json 重组 provider，扩展层里的 chat/classifier 要按最新元数据重建。
+		this.reapplyClassifiers();
 
 		// API Key 走 Pi 的通用登录 → 写入加密凭据存储
 		if (meta.noKey) await this.models.logout(pid).catch(() => {});
@@ -226,7 +262,40 @@ export class CustomProviders {
 		this.store.saveHeaders(id, null);
 		await this.models.logout(id).catch(() => {});
 		await this.models.reloadConfig();
+		// 服务已从元数据移除：reapply 会摘掉它的扩展层并清悬空的快速操作引用。
+		this.reapplyClassifiers();
 		return true;
+	}
+
+	/**
+	 * 启动 / reload 后按保存的公开元数据重新注册 classifier。
+	 * 凭据仍由 Pi 按原 provider 解析（request-time），本方法不读 key、不换 baseURL。
+	 * chat 模型同时从元数据重建（扩展层会整体替换 models.json 的模型列表）。
+	 */
+	reapplyClassifiers() {
+		const want = new Set<string>();
+		for (const meta of this.store.loadMeta()) {
+			const classifiers = normalizeClassifiers(meta.classifiers);
+			if (!classifiers.length) continue;
+			want.add(meta.id);
+			try {
+				this.models.registerClassifiers(meta.id, classifiers, { baseUrl: meta.baseUrl, chatModels: meta.models.map((m) => chatModelFromMeta(meta, m)) });
+			} catch (e) {
+				console.error(`[models] 重新注册 ${meta.id} 的 classifier 失败`, e);
+			}
+		}
+		// classifier 被清空的服务要摘掉扩展层，否则扩展会一直遮蔽 models.json 里的模型更新。
+		for (const id of this.extended) if (!want.has(id)) this.models.unregisterProvider(id);
+		this.extended = want;
+		this.reconcileFastReference();
+	}
+
+	/** 快速操作模型引用的 classifier 已不存在（服务被编辑 / classifier 被移除）时清掉引用，不留悬空。 */
+	private reconcileFastReference() {
+		const s = this.store.loadFastReference();
+		if (!s || s.kind !== "systemone" || !s.provider || !s.id) return;
+		if (this.models.listClassifierModels(s.provider).some((m) => m.id === s.id)) return;
+		this.store.saveFastReference({ provider: "", id: "" });
 	}
 
 	/** 补上上下文 / 输出长度（缺哪项补哪项；用户填过的不动） */
@@ -333,6 +402,11 @@ export class CustomProviders {
 		if (!seen.size) throw new Error("没有获取到模型，请手动填写");
 		return [...seen.values()].sort((a, b) => a.id.localeCompare(b.id));
 	}
+}
+
+/** 把持久化元数据里的 chat 模型映射成注册 classifier 时要一并重建的模型。 */
+function chatModelFromMeta(meta: CustomProviderMeta, m: CustomModel): ClassifierChatModel {
+	return { id: m.id, name: m.name, api: meta.api, baseUrl: meta.baseUrl, input: m.input, reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, thinkingLevelMap: m.thinkingLevelMap };
 }
 
 /** 写进 Pi models.json 的模型条目：去掉我们自己的字段和空值 */
