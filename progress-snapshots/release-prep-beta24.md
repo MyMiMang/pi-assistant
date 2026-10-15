@@ -58,8 +58,12 @@
 ## 5. 未验（如实，别写进发布说明当已完成）
 真实云模型质量与参考图效果、真实云端 ASR、本地 SenseVoice 真实安装 / 转写、真机安装包（含真麦克风与 `tauri build` 后的 plist）、真实手机 / iOS、真实 MCP（cua-driver / http）、真实电脑操控基准、全量 `e2e/run.mjs`、系统钥匙串根因。
 
-## 6. 发布动作
-1. 本文件 + 发布说明重写 + §1 的三处改动 → 一个中文提交（release prep）。
-2. `git fetch origin main` 确认没前进 → `git push origin HEAD:main`（普通 ff，不 force）。
-3. 在同一个验证过的 HEAD 上打 `v0.1.0-beta.24` 并推 tag → 触发 release workflow（`mac-arm64`；`prepare` → `build` → `mac-smoke` → `publish`）。失败不移动 tag；基础设施原因可 rerun 原 run，源码原因必须新 commit + 下一个未占用 tag。
-4. 触发后把 commit / tag / run id + URL + 阶段报给主会话（由主会话用 `task_wait` 盯远端 run）。**CI 成功前不写「已发布」**；成功后另起一个文档提交记录 publish（沿用 beta.23 的做法：main 上的「记录 … 已发布」提交）。
+## 6. 发布动作（已执行，等 CI）
+1. **已提交** `747c744`（发布准备：CSP 修复 + Info.plist + 静态测试 + e2e 探针 + 发布说明/文档），`git merge-base --is-ancestor main HEAD` 成立。
+2. **已推 main**：`git fetch origin main` 确认仍为 `8d7a7d8` → `git push origin HEAD:main` → `8d7a7d8..747c744`（**普通 ff，未 force**）。
+3. **已打并推 tag**：`v0.1.0-beta.24`（lightweight，指向同一个 `747c744`，同 beta.23 的做法）→ 触发 release workflow。
+4. **release run**：[38794686456](https://github.com/MyMiMang/pi-assistant/actions/runs/38794686456) —— `prepare` ✓ success（12s）、`linux` skipped（证明 `.github/release-scope.json` 的 `mac-arm64` 生效）、`build (macos-14, aarch64-apple-darwin, macOS-arm64)` 进行中。后续还有 `mac-smoke` → `publish`；**全部成功才算公开**。
+5. 同时触发的两个旁路 run（都不是 block 发布的）：
+   - `ci` run [38794652575](https://github.com/MyMiMang/pi-assistant/actions/runs/38794652575)：预期会停在 §4 的既有基线（`e2e/run.mjs` 第 1 步「首次运行向导」等旧按钮），**main `8d7a7d8` 的 ci 同样是 failure**（run 38712172517）。
+   - `secrets`（gitleaks 全历史扫描）run [38794652527](https://github.com/MyMiMang/pi-assistant/actions/runs/38794652527)：failure，5 处 finding 全是 `packages/server/test/classifier.test.ts` 里的**假 Key 测试夹具**（`const KEY_A/KEY_B`，来自早已合入的 `d3432a8`）；main `8d7a7d8` 与 `beta.23` 上的同名 run 也一直 failure，**不是本轮引入**（本轮新增文件里没有任何凭据类路径）。
+6. 后续：CI 成功前**不写「已发布」**；成功后另起一个纯文档提交记录 publish（沿用 beta.23 的「记录 … 已发布」提交）。失败**不移动 tag**；基础设施原因可重跑原 run，源码原因必须新 commit + 下一个未占用 tag。

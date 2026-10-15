@@ -200,6 +200,7 @@
 | 静态回归测试 | 新增 | `packages/server/test/tray-macos-mic-usage.test.ts` 3/3（plist 内容 / 与 tauri.conf 一致性 / CSP 必需项 / 无 inline 脚本 + 首屏同源外部脚本） |
 | 全量单测与范围校验 | 已跑 | `npm test` 757 项 742 过 / 5 失败 / 10 跳过；5 个失败里 2 个是已记录基线（proactive `'held' !== 'started'`、macOS bsdtar `--skip-old-files`），3 个是本机用 App 自带 Node（路径含空格）导致 `mcp.test.ts` 的 `process.execPath` 被命令校验拒——同一 Node 的无空格副本单跑 **3/3 通过**。`scripts/release-scope.mjs` = `mac-arm64`（无 Windows / Linux / Intel），其测试 3/3 |
 | 既有基线问题（不修） | 记录 | `e2e/run.mjs` 第 1 步「首次运行向导」仍等旧「设为默认模型」按钮（现行 UI 在 `default-model-picker` 里保存）；在独立 worktree 的 `main`（`8d7a7d8`）同样失败，**不是本候选引入**；修它要单独提交，不在本轮发布范围 |
+| 发布触发（本轮） | 已推 main + tag，等 CI | 发布准备提交 `747c744` 推 main（`8d7a7d8..747c744`，普通 ff）→ `v0.1.0-beta.24` tag → release run [38794686456](https://github.com/MyMiMang/pi-assistant/actions/runs/38794686456)（`prepare` ✓ / `linux` skipped / `build macos-14 aarch64` 进行中 → `mac-smoke` → `publish`）。**成功前不写「已发布」** |
 
 ## 待用户决定
 
