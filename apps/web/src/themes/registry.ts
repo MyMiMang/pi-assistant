@@ -72,6 +72,11 @@ export function registerTheme(def: ThemeDef) {
 	if (!registry.has(def.id)) THEMES.push(def);
 	registry.set(def.id, def);
 }
+/** 移除运行时注册的主题（仅用于取消未保存的临时预览；内置主题不会被移除）。 */
+export function unregisterTheme(id: string) {
+	if (THEMES.some((t) => t.id === id)) return;
+	registry.delete(id);
+}
 export function getTheme(id: string | null | undefined): ThemeDef {
 	const key = id ?? "";
 	const direct = registry.get(key);
