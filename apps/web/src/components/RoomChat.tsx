@@ -10,6 +10,11 @@ import { Activity, BotPart, type Part, SideToggle, SystemMsg, UserMsg } from "./
 import { Avatar, Button, Help, Modal, cx } from "./ui";
 import { isSendKey, SEND_HINT, COMPOSER_LABEL } from "../composer";
 import { VoiceInput } from "./VoiceInput";
+import { buildReplyRef, draftSignature, liveMentions, newClientId, replyDraftKey, resolveRoomReplyTarget, roomSendBody } from "../replies";
+import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
+import { locateRoomMessage } from "../replies-api";
+import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
+import { mergeMessages } from "../selection";
 
 // ------------------------------------------------------------------ 显示用的成员信息（助理已删除时用群里存的快照）
 export function memberOf(room: Room | undefined, agents: Agent[], agentId: string): { id: string; name: string; avatar: string; color: string; deleted: boolean } {
@@ -76,6 +81,15 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const [older, setOlder] = useState<"idle" | "loading" | "end">("idle");
 	const [drag, setDrag] = useState(false);
 	const composer = useRef<{ addFiles: (f: FileList | File[]) => void }>(null);
+	const composerWrap = useRef<HTMLDivElement>(null);
+	// ---- 引用回复（draft 按群分桶；右键 / 长按只是辅助入口）
+	const rKey = replyDraftKey.room(roomId);
+	const quote = useReplyDrafts((s) => s.drafts[rKey] ?? null);
+	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: m.agent_id, name: memberOf(room, agents, m.agent_id).name }));
+	const onInsert = (msgs: Message[]) => useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: mergeMessages(msgs, s.roomMsgs[roomId]) } }));
+	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateRoomMessage(roomId, mid), onInsert);
+	const replyCtx = useReplyContext(onQuote);
+	useComposerInset(scroller, composerWrap, stick);
 	useLayoutEffect(() => {
 		const el = scroller.current;
 		if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -178,11 +192,11 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 						r.kind === "day" ? (
 							<div key={r.id} className="pa-day">{r.label}</div>
 						) : r.kind === "user" ? (
-							<UserMsg key={r.m.id} m={r.m} />
+							<UserMsg key={r.m.id} m={r.m} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf(r.m)} />
 						) : r.kind === "system" ? (
 							<SystemMsg key={r.m.id} m={r.m} canContinue={r.m.id === lastPause} />
 						) : (
-							<RoomBotTurn key={r.id} row={r} room={room} agents={agents} live={speaking === r.agentId && r === lastRow} onAvatar={openMember} />
+							<RoomBotTurn key={r.id} row={r} room={room} agents={agents} live={speaking === r.agentId && r === lastRow} onAvatar={openMember} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf} />
 						),
 					)}
 					{speaking && (lastRow?.kind !== "bot" || lastRow.agentId !== speaking) && <RoomBotTurn row={{ kind: "bot", id: "pending", agentId: speaking, parts: [] }} room={room} agents={agents} live onAvatar={openMember} />}
@@ -201,13 +215,15 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					))}
 				</div>
 			)}
-			<RoomComposer room={room} running={st.running} drag={drag} ref={composer} />
+			<RoomComposer room={room} running={st.running} drag={drag} ref={composer} replyKey={rKey} onJump={jump} jumpState={jumpState} onRetryJump={retryJump} wrapRef={composerWrap} />
 			<RoomSettings room={room} open={settings} onClose={() => setSettings(false)} />
+			{replyCtx.menuEl}
+			{jumpState && !quote && <JumpHint s={jumpState.s} onRetry={retryJump} />}
 		</div>
 	);
 }
 
-function RoomBotTurn({ row, room, agents, live, onAvatar }: { row: Extract<RRow, { kind: "bot" }>; room: Room; agents: Agent[]; live: boolean; onAvatar: (id: string) => void }) {
+function RoomBotTurn({ row, room, agents, live, onAvatar, onQuote, onJump, interaction }: { row: Extract<RRow, { kind: "bot" }>; room: Room; agents: Agent[]; live: boolean; onAvatar: (id: string) => void; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => any }) {
 	const who = memberOf(room, agents, row.agentId);
 	const parts = row.parts;
 	const last = parts[parts.length - 1];
@@ -230,7 +246,7 @@ function RoomBotTurn({ row, room, agents, live, onAvatar }: { row: Extract<RRow,
 					{who.deleted && <span className="pa-room-badge muted">已删除</span>}
 				</div>
 				{parts.map((p, i) => (
-					<BotPart key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} />
+					<BotPart key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} onQuote={onQuote} onJump={onJump} interaction={interaction} />
 				))}
 				{live && !streaming && !waitingCard && <Activity tool={runningTool} />}
 			</div>
@@ -240,8 +256,11 @@ function RoomBotTurn({ row, room, agents, live, onAvatar }: { row: Extract<RRow,
 
 // ------------------------------------------------------------------ 输入框：@ 选择（桌面弹出层，手机底部面板）
 const ALL = { agentId: "__all", name: "所有人" } as const;
-function RoomComposer({ room, running, drag, ref }: { room: Room; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }> }) {
+function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, onRetryJump, wrapRef }: { room: Room; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
 	const [text, setText] = useState("");
+	const [sending, setSending] = useState(false);
+	const clientRef = useRef<{ sig: string; id: string } | null>(null);
+	const quote = useReplyDrafts((s) => s.drafts[replyKey] ?? null);
 	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f) => uploadRoom(room.id, f));
 	if (ref && typeof ref === "object") (ref as React.RefObject<{ addFiles: typeof addFiles } | null>).current = { addFiles };
 	const [picked, setPicked] = useState<string[]>([]);
@@ -253,6 +272,14 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 	const isTouch = matchMedia("(pointer: coarse)").matches;
 	const narrow = typeof window !== "undefined" && window.innerWidth < 640;
 	const members = room.members.filter((m) => !m.left && !m.deleted);
+	// 引用 + @ 的目标标签（展示用；最终由后端裁定）
+	const liveMentionIds = liveMentions(picked, text, (id) => members.find((m) => m.agentId === id)?.name);
+	const target = resolveRoomReplyTarget({
+		ref: quote,
+		mentions: liveMentionIds.map((id) => ({ agentId: id, name: members.find((m) => m.agentId === id)?.name ?? "" })),
+		members: room.members.map((m) => ({ agentId: m.agentId, name: m.name, left: m.left, deleted: m.deleted })),
+		managerId: room.managerId,
+	});
 	useLayoutEffect(() => {
 		const el = ta.current;
 		if (!el) return;
@@ -293,21 +320,31 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 		});
 	};
 	const send = async () => {
-		if (!text.trim() && !files.length) return;
-		const body = text;
+		if (sending || (!text.trim() && !files.length)) return;
+		setSending(true);
 		const sentFiles = files;
 		// 只保留文字里还在的 @（删掉的不算）
-		const mentions = picked.filter((id) => body.includes(`@${members.find((m) => m.agentId === id)?.name ?? "\u0000"}`));
+		const mentions = liveMentionIds;
+		const sig = draftSignature({ text, attachmentIds: sentFiles.map((f) => f.fileId), replyToId: quote?.messageId });
+		if (!clientRef.current || clientRef.current.sig !== sig) clientRef.current = { sig, id: newClientId() };
+		const payload = roomSendBody(text, mentions, sentFiles.map((f) => f.fileId), quote?.messageId, clientRef.current.id);
+		const snapshot = { text, picked };
 		setText("");
 		setPicked([]);
 		setErr("");
 		clear();
 		try {
-			await api(`/api/rooms/${room.id}/messages`, { method: "POST", json: { text: body, mentions, attachments: sentFiles.map((f) => f.fileId) } });
+			await api(`/api/rooms/${room.id}/messages`, { method: "POST", json: payload });
+			clearReplyDraft(replyKey); // 发送成功才清引用
+			clientRef.current = null;
 		} catch (e) {
-			setText(body);
+			// 网络失败：还原文字 / @，并**保留引用**
+			setText(snapshot.text);
+			setPicked(snapshot.picked);
 			setFiles(sentFiles);
 			setErr((e as Error).message);
+		} finally {
+			setSending(false);
 		}
 	};
 	const list = (
@@ -333,10 +370,11 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 		</div>
 	);
 	return (
-		<div className="pa-composer-wrap">
+		<div className="pa-composer-wrap" ref={wrapRef}>
 			<div className={cx("pa-composer relative @container", drag && "drag")}>
 				{q && !sheet && <div className="pa-mention-pop">{list}</div>}
 				{drag && <div className="pointer-events-none pb-2 text-center text-sm text-accent">松开即可把文件发到群里</div>}
+				{quote && <ReplyBar reply={quote} quoteLabel={target.quoteLabel} mentionLabel={target.mentionLabel} unavailable={target.unavailable} onCancel={() => clearReplyDraft(replyKey)} onJump={onJump} jump={jumpState ? { s: jumpState.s, retry: onRetryJump } : null} />}
 				<AttachTray files={files} pending={pending} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} onRemovePending={removePending} />
 				{err && <div className="pb-2 text-xs text-red-600">{err}</div>}
 				<textarea
@@ -352,6 +390,7 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 							if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey && !e.nativeEvent.isComposing) return void (e.preventDefault(), choose(options[hi]));
 						}
 						if (e.key === "Escape" && q) return void (setQ(null), setSheet(false));
+						if (e.key === "Escape" && quote) return void (e.preventDefault(), clearReplyDraft(replyKey));
 						if (isSendKey(e)) {
 							e.preventDefault();
 							void send();
@@ -369,6 +408,7 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 							conversationId={room.id}
 							textareaRef={ta}
 							value={text}
+							replyTo={quote?.messageId ?? null}
 							onChange={(next, cursor) => {
 								setText(next);
 								requestAnimationFrame(() => {
@@ -401,7 +441,7 @@ function RoomComposer({ room, running, drag, ref }: { room: Room; running: boole
 							<Square size={13} fill="currentColor" />
 						</button>
 					) : (
-						<button className="pa-send" disabled={(!text.trim() && !files.length) || uploading > 0} onClick={send} aria-label="发送" title={SEND_HINT} aria-keyshortcuts="Shift+Enter" data-testid="room-send">
+						<button className="pa-send" disabled={(!text.trim() && !files.length) || uploading > 0 || sending} onClick={send} aria-label="发送" title={SEND_HINT} aria-keyshortcuts="Shift+Enter" data-testid="room-send">
 							<ArrowUp className="pa-ic" />
 						</button>
 					)}
