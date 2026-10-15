@@ -79,6 +79,8 @@ export interface ProviderReferences {
 	subagents: boolean;
 	/** 候选池里引用了这个服务的助理 id */
 	subagentAgents: string[];
+	/** 生图服务复用了这个服务的 Key（删除后它们需要重新配 Key，不会被误删） */
+	imageProviders: string[];
 }
 
 const refProvider = (v: unknown): string | undefined =>
@@ -100,6 +102,21 @@ function subagentPoolRefs(id: string): string[] {
 	return agents;
 }
 
+/** 生图服务里 `keyFrom = id`（复用这个自定义服务 Key）的条目名（只读引用关系，不碰凭据）。 */
+function imageProvidersKeyedFrom(id: string): { id: string; name: string }[] {
+	const rows = getSetting<{ id?: string; name?: string; keyFrom?: string | null }[]>("imageProviders", []);
+	return rows.filter((p) => p.keyFrom === id && p.id).map((p) => ({ id: String(p.id), name: p.name || String(p.id) }));
+}
+
+/** 复用某个自定义服务 Key 的生图服务：清掉 keyFrom（不动这些服务自己的配置与凭据）。 */
+function clearImageKeyFrom(id: string): string[] {
+	const rows = getSetting<{ id?: string; name?: string; keyFrom?: string | null }[]>("imageProviders", []);
+	const hit = rows.filter((p) => p.keyFrom === id);
+	if (!hit.length) return [];
+	setSetting("imageProviders", rows.map((p) => (p.keyFrom === id ? { ...p, keyFrom: null } : p)));
+	return hit.map((p) => p.name || p.id || "");
+}
+
 export function providerReferences(id: string): ProviderReferences {
 	return {
 		defaultModel: refProvider(getSetting("defaultModel", null)) === id,
@@ -107,6 +124,7 @@ export function providerReferences(id: string): ProviderReferences {
 		agents: (db.prepare("SELECT name FROM agents WHERE model_provider = ?").all(id) as { name: string }[]).map((r) => r.name),
 		subagents: false,
 		subagentAgents: subagentPoolRefs(id),
+		imageProviders: imageProvidersKeyedFrom(id).map((p) => p.name),
 	};
 }
 
@@ -123,6 +141,8 @@ export function clearProviderReferences(id: string): ProviderReferences {
 	// 快速操作模型：引用被删服务的 classifier → 清掉引用（回落为未选择，fail-closed）
 	const fast = getSetting<{ kind?: string; provider?: string; id?: string } | null>("fastComputer", null);
 	if (fast && fast.provider === id) setSetting("fastComputer", { ...fast, provider: "", id: "" });
+	// 生图服务复用被删服务的 Key → 清掉 keyFrom，让其提示重新配 Key（不删生图服务本身）
+	if (refs.imageProviders.length) clearImageKeyFrom(id);
 	if (refs.agents.length) db.prepare("UPDATE agents SET model_provider = NULL, model_id = NULL WHERE model_provider = ?").run(id);
 	return refs;
 }

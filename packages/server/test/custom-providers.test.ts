@@ -139,19 +139,24 @@ test("删除自定义服务：引用它的默认/识图/子代理设置和助理
 	const agentId = "ag-ref-clean";
 	db.prepare("INSERT OR REPLACE INTO agents(id, name, avatar, color, model_provider, model_id, sort, created_at) VALUES(?,?,?,?,?,?,?,?)").run(agentId, "引用测试助理", "测", "#000000", m.id, "relay-chat", 999, Date.now());
 	setSetting(`subagentModel:${agentId}`, { pool: [ref] });
+	// 生图服务复用这个自定义服务的 Key：删除时要报告影响并清掉 keyFrom（不删生图服务本身）
+	setSetting("imageProviders", [{ id: "img-ref", name: "生图引用", kind: "openai", baseUrl: "https://x.example", models: ["gpt-image-1"], keyFrom: m.id, createdAt: 1 }]);
 
-	assert.deepEqual(providerReferences(m.id), { defaultModel: true, visionModel: true, agents: ["引用测试助理"], subagents: false, subagentAgents: [agentId] });
+	assert.deepEqual(providerReferences(m.id), { defaultModel: true, visionModel: true, agents: ["引用测试助理"], subagents: false, subagentAgents: [agentId], imageProviders: ["生图引用"] });
 
 	assert.ok(await customProviders.remove(m.id));
 	const cleared = clearProviderReferences(m.id);
 	assert.equal(cleared.agents.length, 1);
+	assert.deepEqual(cleared.imageProviders, ["生图引用"]);
 	assert.equal(getSetting("defaultModel", null), null);
 	assert.equal(getSetting("visionModel", null), null);
 	const s = getSetting<{ maxMinutes: number }>("subagentModels", { maxMinutes: 0 });
 	assert.equal(s.maxMinutes, 30, "其它设置保持不变");
 	assert.deepEqual(getSetting<{ pool: unknown[] }>(`subagentModel:${agentId}`, { pool: [1] }).pool, [], "候选池里被删的服务一并去掉");
 	assert.equal((db.prepare("SELECT model_provider FROM agents WHERE id = ?").get(agentId) as { model_provider: string | null }).model_provider, null, "助理模型回落默认");
+	assert.equal(getSetting<{ keyFrom: string | null }[]>("imageProviders", [])[0].keyFrom, null, "生图服务的 keyFrom 清掉，不删生图服务");
 	// 删除只清引用，不删助理、不动用量历史
 	assert.ok(db.prepare("SELECT 1 FROM agents WHERE id = ?").get(agentId));
+	setSetting("imageProviders", []);
 	db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
 });

@@ -42,6 +42,14 @@ RegistryModel {
 - `packages/server` `tsc --noEmit -p .` ✅
 - `test/model-registry.test.ts` 6/6 ✅（多类型同服务 / 识图属 chat / 猜的能力标未确认 / 生图合并 / 同 id 去重 / 按能力筛选）
 - `test/custom-providers.test.ts` 8/8 ✅（回归，未读凭据）
+- `test/vision.test.ts` 3/3 ✅（回归，未改识图行为）
+
+## 删除引用清理（已修）
+
+`providerReferences()` / `clearProviderReferences()` 以前只看默认 / 识图 / 助理 / 子代理池 / 快速操作，
+**漏了生图服务复用自定义服务 Key（`keyFrom`）的引用**：删掉自定义服务后生图服务会留着指向已删服务的 keyFrom。
+现在 `ProviderReferences` 增加 `imageProviders`（受影响的生图服务名），删除时清掉这些生图服务的 `keyFrom`
+（只清引用，**不删生图服务本身、不动凭据**），界面可据此提示“这些生图服务需要重新配 Key”。
 
 ## 后续（未做，按小步推进）
 
