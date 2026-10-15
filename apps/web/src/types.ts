@@ -50,24 +50,50 @@ export interface CustomModel { id: string; name?: string; reasoning?: boolean; i
 /** 声明的 classifier（协议 + 对端模型 id）；保存后由服务端在启动/reload 时重新注册。 */
 export interface CustomClassifier { protocol: string; modelId: string; name?: string; contextWindow?: number }
 export interface CustomProviderMeta { id: string; name: string; api: string; baseUrl: string; headerNames: string[]; noKey: boolean; models: CustomModel[]; classifiers?: CustomClassifier[]; configured: boolean; references?: ProviderReferences }
-export interface ProviderReferences { defaultModel: boolean; visionModel: boolean; agents: string[]; subagents: boolean; subagentAgents: string[] }
+export interface ProviderReferences { defaultModel: boolean; visionModel: boolean; agents: string[]; subagents: boolean; subagentAgents: string[]; imageProviders?: string[] }
 
-// ---- 统一模型服务（design: docs/design/model-settings-unified.md §6）----
+// ---- 统一模型服务（对齐 registry agent 契约：packages/server/src/model-registry.ts）----
 export type ModelCapability = "chat" | "vision" | "image" | "classifier";
-export type CapabilitySource = "metadata" | "catalog" | "user" | "unknown";
-export interface ModelCapabilityDto {
-	capability: ModelCapability;
-	source: CapabilitySource;
-	confidence: "high" | "medium" | "low";
-	verifiedAt?: number;
+export type ModelType = "chat" | "image" | "classifier";
+export type RegistryModelSource = "pi-catalog" | "custom" | "imagegen" | "guess";
+/** 生图模型适配器：统一服务不再有独立生图凭据，凭据就是 provider 的凭据。 */
+export interface ImageAdapter {
+	kind: "openai" | "dashscope" | "ark" | "gemini" | "xai";
+	baseUrl: string;
+	edit: boolean;
+	costNote?: string;
 }
-export interface ModelEntryDto {
+export interface RegistryModel {
+	provider: string;
 	id: string;
-	name?: string;
+	name: string;
+	type: ModelType;
+	capabilities: ModelCapability[];
+	protocol: string;
+	confirmed: boolean;
+	inferred: ModelCapability[];
+	source: RegistryModelSource;
+	configured: boolean;
 	contextWindow?: number;
+	maxTokens?: number;
 	reasoning?: boolean;
-	thinking?: string[];
-	capabilities: ModelCapabilityDto[];
+	thinkingLevelMap?: Record<string, string | null>;
+	input?: string[];
+	edit?: boolean;
+	costNote?: string;
+	/** 仅 type=image：生图适配器（迁移期由旧生图服务补齐）。 */
+	imageAdapter?: ImageAdapter;
+}
+export interface RegistryProvider {
+	id: string;
+	name: string;
+	kind: "builtin" | "custom" | "imagegen" | "local";
+	configured: boolean;
+	baseUrl?: string;
+	protocols: string[];
+	models: RegistryModel[];
+	/** 仅 kind=local（本地 Laya）：安装 / health（laya owner 契约）。 */
+	local?: LocalRuntimeDto;
 }
 export interface PhaseDto {
 	state: "idle" | "downloading" | "verifying" | "done" | "error" | "cancelled";
@@ -92,32 +118,41 @@ export interface LocalRuntimeDto {
 	health?: LocalHealthDto;
 	platform: { os: string; arch: string; support: "baseline" | "conditional" | "experimental" | "unsupported"; note: string };
 }
-export interface ModelServiceDto {
-	id: string;
-	name: string;
-	kind: "official" | "custom" | "local";
-	icon?: string;
-	baseUrl?: string;
-	configured: boolean;
-	source?: string;
-	models: ModelEntryDto[];
-	counts: Record<ModelCapability, number>;
-	references?: ProviderReferences;
-	local?: LocalRuntimeDto;
+
+// ---- 实际操作测试（对齐 benchmark agent 契约：fast-computer/benchmark.ts）----
+// 真实受控 CUA 任务，不是 API 延迟；UI 直接渲染这份结果，不另定义一套。
+export interface BenchmarkAvailability {
+	cuaReady: boolean;
+	modelReady: boolean;
+	fixtureReady: boolean;
+	reasons: string[];
 }
-// ---- 实际操作测试（design §6.5）：真实受控 CUA 任务，不是 API 延迟 ----
-export interface ActualTaskTestDto {
-	kind: "controlled-cua-task";
-	target: "assistant" | "host";
-	status: "preflight" | "running" | "done" | "cancelled" | "error";
-	steps: { id: string; label: string; state: "pending" | "running" | "done" | "error" }[];
-	success: boolean;
-	totalMs: number;
-	errors: { step: string; message: string }[];
-	retries: number;
-	mainFallback: number;
-	preflight: { permissionsOk: boolean; vmReady: boolean; confirmedByUser: boolean; costNote?: string };
+export interface FastBenchmarkResult {
+	id: string;
+	status: "running" | "done" | "cancelled" | "blocked" | "failed";
+	provider: string;
+	model: string;
+	modelVersion: string;
+	target: { prefix: string; fixtureId: string };
+	startedAt?: string;
+	finishedAt?: string;
+	createdAt: string;
+	warmup: number;
 	samples: number;
-	verdict: { level: "recommended" | "caution" | "not_recommended"; advisory: true; reason: string; accuracyNote: string };
-	apiLatency?: { p50: number; p95: number };
+	coldStartMs?: number;
+	p50Ms?: number;
+	p95Ms?: number;
+	p95Approx?: boolean;
+	timeouts: number;
+	errors: number;
+	successRatio?: number;
+	actions: number;
+	retries: number;
+	fallbackCount: number;
+	abstains: number;
+	correctness?: number | null;
+	correctTrials?: number;
+	note?: string;
+	advisory?: { verdict: "ok" | "slow" | "unstable" | "blocked"; recommended: boolean; message: string; reason: string };
+	reason?: string;
 }

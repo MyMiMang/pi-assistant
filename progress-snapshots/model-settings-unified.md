@@ -7,31 +7,41 @@
 
 ## 已完成
 
-- [x] 建树：`model-settings-unified`（基 hotfix-integration `b7d33d3`）。
-- [x] 合并 `native-dialog-ui-fix`（`9554628`，原生 dialog → 应用内确认框），未丢既有资源 / modalstack / delete / onboarding / isolation / links。合并提交 `35992b1`。
-- [x] 交互架构 + 接口契约文档：`docs/design/model-settings-unified.md`（一页精确交互架构、能力识别规则、legacy 无损迁移、最小 metadata DTO、Laya 安装/health/API 诊断契约、**实际操作测试**契约、平台支持矩阵、分工）。
-- [x] 按用户纠正更新：性能测试 = **一次真实受控 CUA 任务**（不是 API 连接延迟）；按钮「实际操作测试」；需选测试电脑（assistant/host）；前置条件（permissions / VM ready）由用户明确确认；专用隔离窗口，失焦 abort，不碰真实 appdata；报告 success / 总时长 / errors / retries / mainFallback（非单 p50）；建议分「使用 / 谨慎 / 不建议」但仍允许选择；API 时延仅诊断。
+- [x] 建树 + 合并 `native-dialog-ui-fix`（`9554628`），未丢既有资源 / modalstack / delete / onboarding / isolation / links（合并提交 `35992b1`）。
+- [x] 交互架构 + 接口契约：`docs/design/model-settings-unified.md`（已对齐 registry / benchmark 真实契约）。
+- [x] **UI 原型（S1）**：`apps/web/src/components/ModelServices.tsx`
+  - 统一服务卡片网格（官方 / 自定义 / 生图 / 本地）+ 搜索 + 折叠。
+  - 能力多标签（对话 / 识图 / 生图 / 分类器）；推断能力标「未确认」；点「能力」可手动纠正（PUT registry）。
+  - 添加服务：`Select` 选官方 / 自定义 / 本地（非原生 select）+ 填地址 Key。
+  - 本地 Laya：三阶段进度、cancel / resume / retry / stop、卸载走 `useConfirm`、health 用实际探测 CPU/GPU 标签、平台不支持明示。
+  - 实际操作测试：渲染 `FastBenchmarkResult`（不另定义结果结构），先显示 availability / 「尚未运行」/「真实执行未验证（fake ≠ CUA 成功）」，advisory 建议不 hard-disable，云提示计费，选测试电脑（assistant / host）。
+  - `apps/web/src/types.ts` 新增 registry / benchmark / Laya 类型（镜像服务端契约）。
+  - `Settings.tsx` 的 ModelsTab 挂载统一面板（接口未就绪时可「预览原型」）。
+- [x] **e2e 通过**：`e2e/model-services-ui.mjs`（纯前端 fixture，静态 dist + 拦截 /api，不起 main、不碰钥匙串）：
+  能力标签/纠正、添加服务、Laya health + 卸载确认、实际操作测试 availability/未验证/advisory、Esc 关弹窗、390 宽不溢出、无原生 dialog —— **通过**。
+- [x] 专项验证：`tsc --noEmit -p apps/web` exit 0；`vite build` 通过（2493 模块）。
 
-## 待做（清单，按顺序）
+## 环境记录（构建坑，供后续）
 
-- [ ] S1 UI 契约与原型（纯前端 fixture，复用 `Select`/`Modal`/`useConfirm`，390 / 键盘 / Esc / focus）——**进行中**。
-- [ ] S2 Registry DTO + legacy 迁移（registry agent，按 §6 契约）。
-- [ ] S3 Laya 安装 / health（安装子任务，按 §7 前半契约）。
-- [ ] S4 实际操作测试 + API 诊断（benchmark 子任务，按 §6.5 / §7 契约）。
-- [ ] S5 UI 接真实 API（去 fixture 开关）。
-- [ ] S6 电脑设置快速 / 生图统一到 registry（每机独立偏好、默认 off、主模型 fallback）。
+- worktree 构建失败根因：**worktree 缺 `apps/web/node_modules`**（`highlight.js` / `typescript` 装在 workspace 层，不是 symlink 问题）。修复：从主树 `cp -Rc apps/web/node_modules` 到 worktree 后 `npm run build -w @pi-assistant/web` 通过。
 
-## 契约交付给主协调（registry / Laya / benchmark 子任务）
+## 待做
 
-见 `docs/design/model-settings-unified.md`：
-- §6 最小 metadata DTO + `/api/model-services*` 接口。
-- §6.5 实际操作测试 `ActualTaskTestDto` + `/api/actual-task-test/*`（优先项）。
-- §7 Laya `LocalRuntimeDto` / `LocalHealthDto` / `ApiDiagnosticDto` + `/api/model-services/:id/local*`。
-- §8 平台支持矩阵（Windows ARM = unsupported，明示不假成功）。
+- [ ] S5 UI 接真实 API（去「预览原型」demo 开关）：registry GET 已可用，等生图迁移 + Laya 安装 + benchmark 真实 fixture。
+- [ ] S6 电脑设置快速 / 生图统一到 registry，删除独立 `ImageModelsSection` / `VisionModelPicker` / 快速凭据区。
+- [ ] 能力纠正接口 `PUT /api/models/registry/:provider/models/:id/capabilities`（UI 已按此调用，待 registry 落地）。
+
+## 交给主协调的 schema 增量（请转 registry / benchmark / laya owner）
+
+见 `docs/design/model-settings-unified.md` §6.1 / §6.2：
+1. `RegistryProvider.kind` 增加 `"local"` + `local: LocalRuntimeDto`。
+2. `RegistryModel.imageAdapter`（仅 image）：`{ kind, baseUrl, edit, costNote? }` —— 取代 `imageProviders` / `imageKey:<id>` 两套 key。
+3. 生图迁移 `migrateLegacyImageProviders`：凭据唯一（`credentialId===provider.id`），`keyFrom` 只挂到自定义 provider，独立 Key 迁到统一凭据并标 `imageKeyMigrated:<id>`，旧密文保留但运行时不读；幂等不删原数据。
+4. 能力纠正 `PUT /api/models/registry/:providerId/models/:modelId/capabilities`。
+5. benchmark `POST` body 可选 `target`（assistant / host → `target.prefix`）。
 
 ## 边界
 
-- 不改 shared credential backend / `secrets.ts` / SDK 钥匙串实现；不引入明文；不重置用户配置。
-- 测试先强制 tempdata（内存 `CredentialStore`，`test/setup.ts` 隔离 `5a4614f` 已含）；不跑真实 API 收费 / 桌面 VM / App 安装。
-- 只做专项 typecheck / build / UI 测试。
+- 不改 shared credential backend / `secrets.ts` / SDK 钥匙串实现；不引入明文；不重置用户配置；各自独立 tree。
+- 测试先强制 tempdata（内存 `CredentialStore`）；未跑真实 API 收费 / 桌面 VM / App 安装。
 - 未 push / 未 tag / 未打包 / 未装真机。

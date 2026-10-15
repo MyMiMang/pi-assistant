@@ -7,9 +7,9 @@ import { chromium } from 'playwright-core';
 
 // 统一模型服务 UI 原型链路测试（纯前端 fixture）：
 // 静态托管 apps/web/dist，page.route 拦截所有 /api，不启动 packages/server/src/main.ts，
-// 因此不碰系统钥匙串、不碰真实用户配置、不跑真实 API 收费、不装模型。
-// 覆盖：服务卡片 / 能力标签（含未知灰态）/ 能力纠正 / 添加服务 / 本地 Laya health 与卸载确认 /
-//       实际操作测试（选电脑、确认、结果建议）/ Esc 关弹窗 / 390 宽不溢出 / 无原生 dialog。
+// 因此不碰系统钥匙串、不碰真实用户配置、不跑真实 API 收费、不装模型、不操作电脑。
+// 覆盖：服务卡片 / 能力标签（含「未确认」）/ 能力纠正 / 添加服务 / 本地 Laya health 与卸载确认 /
+//       实际操作测试（availability、尚未运行、真实执行未验证、结果 advisory）/ Esc 关弹窗 / 390 宽 / 无原生 dialog。
 const root = decodeURIComponent(new URL('..', import.meta.url).pathname);
 const dist = join(root, 'apps/web/dist');
 if (!existsSync(join(dist, 'index.html'))) {
@@ -53,30 +53,36 @@ const localOffline = {
 
 const fixtures = () => [
 	{
-		id: 'openai', name: 'OpenAI', kind: 'official', configured: true,
+		id: 'openai', name: 'OpenAI', kind: 'builtin', configured: true, protocols: ['openai-completions'],
 		models: [
-			{ id: 'gpt-4o', name: 'GPT-4o', capabilities: [{ capability: 'chat', source: 'catalog', confidence: 'high' }, { capability: 'vision', source: 'catalog', confidence: 'high' }] },
-			{ id: 'gpt-image-1', capabilities: [{ capability: 'image', source: 'catalog', confidence: 'high' }] },
+			{ provider: 'openai', id: 'gpt-4o', name: 'GPT-4o', type: 'chat', capabilities: ['chat', 'vision'], protocol: 'openai-completions', confirmed: true, inferred: [], source: 'pi-catalog', configured: true },
+			{ provider: 'openai', id: 'gpt-image-1', name: 'gpt-image-1', type: 'image', capabilities: ['image'], protocol: 'openai', confirmed: true, inferred: [], source: 'pi-catalog', configured: true, imageAdapter: { kind: 'openai', baseUrl: 'https://api.openai.com/v1', edit: true }, costNote: '约 $0.04/张' },
 		],
-		counts: { chat: 1, vision: 1, image: 1, classifier: 0 },
 	},
 	{
-		id: 'custom-relay', name: '我的中转站', kind: 'custom', baseUrl: 'https://relay.example.com/v1', configured: true,
+		id: 'custom-relay', name: '我的中转站', kind: 'custom', baseUrl: 'https://relay.example.com/v1', configured: true, protocols: ['openai-completions'],
 		models: [
-			{ id: 'deepseek-v3', capabilities: [{ capability: 'chat', source: 'metadata', confidence: 'high' }] },
-			{ id: 'mystery-model', capabilities: [{ capability: 'chat', source: 'unknown', confidence: 'low' }] },
+			{ provider: 'custom-relay', id: 'deepseek-v3', name: 'deepseek-v3', type: 'chat', capabilities: ['chat'], protocol: 'openai-completions', confirmed: true, inferred: [], source: 'custom', configured: true },
+			{ provider: 'custom-relay', id: 'mystery-model', name: 'mystery-model', type: 'chat', capabilities: ['chat', 'vision'], protocol: 'openai-completions', confirmed: false, inferred: ['vision'], source: 'custom', configured: true },
 		],
-		counts: { chat: 2, vision: 0, image: 0, classifier: 0 },
 	},
 	{
-		id: 'laya-local', name: '本地 Laya', kind: 'local', configured: true,
-		models: [{ id: 'laya-fast', capabilities: [{ capability: 'classifier', source: 'catalog', confidence: 'medium' }] }],
-		counts: { chat: 0, vision: 0, image: 0, classifier: 1 }, local: localOffline,
+		id: 'laya-local', name: '本地 Laya', kind: 'local', configured: true, protocols: ['llama-cpp-classify'],
+		models: [{ provider: 'laya-local', id: 'laya-fast', name: 'laya-fast', type: 'classifier', capabilities: ['classifier'], protocol: 'llama-cpp-classify', confirmed: true, inferred: [], source: 'custom', configured: true }],
+		local: localOffline,
 	},
 ];
-let services = fixtures();
+let providers = fixtures();
 let capPuts = [];
-let nativeDialogs = 0;
+const availability = { cuaReady: true, modelReady: true, fixtureReady: true, reasons: [] };
+const benchmarkRun = (status) => ({
+	id: 'b1', status, provider: 'laya-local', model: 'laya-fast', modelVersion: 'unknown',
+	target: { prefix: 'computer', fixtureId: 'fix-1' }, createdAt: new Date().toISOString(),
+	warmup: 2, samples: 24, coldStartMs: 1320, p50Ms: 860, p95Ms: 1420, p95Approx: false,
+	timeouts: 0, errors: 1, successRatio: 0.92, actions: 30, retries: 2, fallbackCount: 1, abstains: 1,
+	correctness: 0.9, correctTrials: 22, note: '样本 24 条；推理时延仅诊断子项，不代表整个 CUA 速度。',
+	advisory: { verdict: 'slow', recommended: true, message: 'p50 略高于目标预算，仍可继续使用。', reason: 'p50 > budget' },
+});
 
 let browser;
 try {
@@ -85,7 +91,7 @@ try {
 	await context.addInitScript(() => {
 		for (const k of ['confirm', 'alert', 'prompt']) {
 			window[k] = () => {
-				(window).__nativeDialogs = ((window).__nativeDialogs ?? 0) + 1;
+				window.__nativeDialogs = (window.__nativeDialogs ?? 0) + 1;
 				return k === 'confirm' ? false : null;
 			};
 		}
@@ -109,27 +115,22 @@ try {
 		if (path === '/api/image-models') return json(route, { kinds: [], providers: [], models: [], default: null, reusable: [] });
 		if (path === '/api/fast-computer/settings') return json(route, { settings: { enabled: false, kind: 'systemone', provider: '', id: '' }, models: [], classifierModels: [] });
 		if (path === '/api/subagents/settings') return json(route, { settings: { maxConcurrent: 10, maxMinutes: 10 }, models: [] });
-		// 统一模型服务（本任务）
-		if (path === '/api/model-services' && method === 'GET') return json(route, { services });
-		if (/^\/api\/model-services\/[^/]+\/models\/[^/]+\/capabilities$/.test(path) && method === 'PUT') {
+		// 统一模型服务（registry agent 契约）
+		if (path === '/api/models/registry' && method === 'GET') return json(route, { providers });
+		if (/^\/api\/models\/registry\/[^/]+\/models\/[^/]+\/capabilities$/.test(path) && method === 'PUT') {
 			capPuts.push({ path, body: req.postDataJSON() });
 			return json(route, { ok: true });
 		}
 		if (/^\/api\/model-services\/[^/]+\/local$/.test(path) && method === 'DELETE') {
 			const id = path.split('/')[3];
-			services = services.map((s) => (s.id === id ? { ...s, configured: false, local: { ...localOffline, installed: false, ready: 'not_installed', offlineReady: false, health: undefined } } : s));
-			return json(route, services.find((s) => s.id === id).local);
+			providers = providers.map((p) => (p.id === id ? { ...p, configured: false, local: { ...localOffline, installed: false, ready: 'not_installed', offlineReady: false, health: undefined } } : p));
+			return json(route, providers.find((p) => p.id === id).local);
 		}
-		if (path === '/api/actual-task-test/start' && method === 'POST') return json(route, { taskId: 't1' });
-		if (path === '/api/actual-task-test/t1') return json(route, {
-			kind: 'controlled-cua-task', target: 'assistant', status: 'done',
-			steps: ['observe', 'candidate', 'classify', 'fresh-click', 'verify'].map((id) => ({ id, label: id, state: 'done' })),
-			success: true, totalMs: 8420, errors: [], retries: 1, mainFallback: 0,
-			preflight: { permissionsOk: true, vmReady: true, confirmedByUser: true },
-			samples: 3,
-			verdict: { level: 'caution', advisory: true, reason: '成功率尚可，但样本只有 3 次。', accuracyNote: '样本有限，不代表普遍准确；结论仅针对本次受控任务。' },
-			apiLatency: { p50: 640, p95: 1180 },
-		});
+		// 实际操作测试（benchmark agent 契约）
+		if (path === '/api/fast-computer/benchmark' && method === 'GET') return json(route, { availability, runs: [] });
+		if (path === '/api/fast-computer/benchmark' && method === 'POST') return json(route, { ok: true, run: benchmarkRun('running') });
+		if (path === '/api/fast-computer/benchmark/b1' && method === 'GET') return json(route, benchmarkRun('done'));
+		if (path === '/api/fast-computer/benchmark/b1/cancel') return json(route, { ok: true });
 		return json(route, {});
 	});
 
@@ -140,20 +141,20 @@ try {
 	const cards = () => page.locator('[data-testid=service-card]');
 	assert.equal(await cards().count(), 3, '应显示 3 个模型服务卡片');
 
-	// 1) 能力标签：未知能力显示灰态「？」
+	// 1) 能力标签：推断出来的能力标「未确认」
 	const relay = page.locator('[data-testid=service-card][data-service=custom-relay]');
 	await relay.getByTestId('service-toggle-custom-relay').click();
 	const mystery = page.locator('[data-testid=service-model][data-model=mystery-model]');
-	assert.match(await mystery.getByTestId('model-caps').textContent(), /对话？/, '未知能力应带「？」灰态');
+	assert.match(await mystery.getByTestId('model-caps').textContent(), /识图？/, '推断能力应标「未确认」');
 
-	// 2) 能力纠正：给 mystery-model 加「识图」，PUT 到接口，标签更新为手动来源
+	// 2) 能力纠正：给 mystery-model 加「生图」，PUT 到 registry，标签更新
 	await mystery.getByTestId('model-capability-toggle').click();
-	await mystery.getByTestId('cap-vision').check();
+	await mystery.getByTestId('cap-image').check();
 	await mystery.getByTestId('cap-save').click();
 	await page.waitForTimeout(80);
 	assert.equal(capPuts.length, 1, '应发出一次能力纠正 PUT');
-	assert.deepEqual(capPuts[0].body.capabilities.sort(), ['chat', 'vision'], '纠正内容应为 chat+vision');
-	assert.match(await mystery.getByTestId('model-caps').textContent(), /识图/, '纠正后应显示识图标签');
+	assert.ok(capPuts[0].body.capabilities.includes('image'), '纠正内容应含 image');
+	assert.match(await mystery.getByTestId('model-caps').textContent(), /生图/, '纠正后应显示生图标签');
 
 	// 3) 添加服务：Select 选类型（非原生 select）+ 填地址 Key + 添加
 	await page.getByTestId('add-service-open').click();
@@ -184,25 +185,25 @@ try {
 	await page.waitForTimeout(80);
 	assert.equal(await laya.getByTestId('local-ready').textContent(), '未安装', '确认后卸载');
 
-	// 5) 实际操作测试：选测试电脑 + 确认 + 结果建议（使用/谨慎/不建议）但仍可继续用
-	await laya.getByTestId('local-install').waitFor();
-	// 先恢复为可用，再从卡片进测试
-	services = fixtures();
+	// 5) 实际操作测试：先显示「尚未运行 / 真实执行未验证」，再选电脑 + 确认 + 跑出结果
+	providers = fixtures();
 	await page.reload();
 	await page.getByTestId('settings-dialog').waitFor();
 	const laya2 = page.locator('[data-testid=service-card][data-service=laya-local]');
 	await laya2.getByTestId('service-toggle-laya-local').click();
-	await laya2.getByTestId('actual-task-open-laya-local').click();
+	await laya2.getByTestId('benchmark-open-laya-fast').click();
 	await page.getByTestId('actual-task-test').waitFor();
-	assert.match(await page.getByTestId('actual-task-test').textContent(), /专用测试窗口/, '需说明会打开专用测试窗口');
-	assert.match(await page.getByTestId('actual-task-test').textContent(), /前置条件/, '需说明前置条件校验');
+	assert.match(await page.getByTestId('actual-task-test').textContent(), /专用隔离测试窗口/, '需说明专用测试窗口');
+	assert.match(await page.getByTestId('actual-task-preflight').textContent(), /前置条件/, '需说明前置条件校验');
+	assert.match(await page.getByTestId('benchmark-unverified-note').textContent(), /不等于 CUA 成功/, '需声明真实执行未验证');
+	assert.match(await page.getByTestId('actual-task-verdict').textContent(), /尚未运行/, '未跑过时显示尚未运行');
 	await page.getByTestId('actual-task-target').click();
 	await page.getByRole('option', { name: /助理电脑/ }).click();
 	await page.getByTestId('actual-task-ack').check();
 	await page.getByTestId('actual-task-start').click();
-	await page.getByTestId('actual-task-result').waitFor();
-	assert.match(await page.getByTestId('actual-task-verdict').textContent(), /谨慎使用/, '报告应给建议等级');
-	assert.match(await page.getByTestId('actual-task-accuracy-note').textContent(), /样本有限/, '需声明样本有限不代表普遍准确');
+	await page.waitForFunction(() => document.querySelector('[data-testid=actual-task-verdict]')?.textContent?.includes('偏慢'), null, { timeout: 5000 });
+	assert.match(await page.getByTestId('actual-task-verdict').textContent(), /偏慢，仍可继续用/, '结果应给 advisory 建议');
+	assert.match(await page.getByTestId('actual-task-accuracy-note').textContent(), /不代表整个 CUA 速度/, '需声明不等于整个 CUA 速度');
 	await page.getByTestId('actual-task-use-anyway').click();
 
 	// 6) Esc 关弹窗（键盘可达）
@@ -220,9 +221,9 @@ try {
 	const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 	assert.ok(overflow <= 1, `390 宽不应横向溢出（实际 ${overflow}px）`);
 
-	nativeDialogs = await page.evaluate(() => (window).__nativeDialogs ?? 0);
+	const nativeDialogs = await page.evaluate(() => window.__nativeDialogs ?? 0);
 	assert.equal(nativeDialogs, 0, '不得调用原生 confirm/alert/prompt');
-	console.log('通过：统一模型服务原型（能力标签/纠正、添加服务、Laya health+卸载确认、实际操作测试、Esc、390 宽、无原生 dialog）。');
+	console.log('通过：统一模型服务原型（能力标签/纠正、添加服务、Laya health+卸载确认、实际操作测试 availability/未验证/advisory、Esc、390 宽、无原生 dialog）。');
 } finally {
 	await browser?.close();
 	web.close();
