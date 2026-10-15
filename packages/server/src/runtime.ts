@@ -34,7 +34,9 @@ import { currentConversation, getConversation, setConversationSession } from "./
 import { memory } from "./memory/index.ts";
 import { computeNext, createRoutine, deleteRoutine, getRoutine, listRoutines, setRoutineSpawner, setRoutineStatus, updateRoutine, validateCron, webhookPath } from "./routines.ts";
 import { DUP_THRESHOLD, hasCreateGrant, observeTurn, recordSuggestion, resolveSuggestion, saveSkillVersioned, searchSkills, skillDiff, type Suggestion, suggestionPrompt } from "./skill-intel.ts";
-import { deleteSkill, getSkill, listSkills, skillPaths, skillsVersion } from "./skills.ts";
+import { deleteSkill, getSkill, skillPaths, skillsVersion } from "./skills.ts";
+import { assignedSkillIds, assignmentsVersion, enableSkillForAgent, unassignSkillEverywhere } from "./skill-assignments.ts";
+import { enabledSkillsFor, skillFilterFor } from "./skill-scope.ts";
 import { bus } from "./bus.ts";
 import { mcpServersFor, mcpVersion } from "./mcp.ts";
 import { packagePathsFor, packagesVersion } from "./pi-packages.ts";
@@ -344,12 +346,25 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 		{
 			name: "pia-skills",
 			factory: skillsExtension({
-				list: () => listSkills(),
-				get: (n) => getSkill(n),
-				search: (q, ex) => searchSkills(q, { exclude: ex }),
+				list: () => enabledSkillsFor(agentId),
+				get: (n) => enabledSkillsFor(agentId).find((s) => s.name === n),
+				search: (q, ex) => {
+					const enabled = new Set(assignedSkillIds(agentId));
+					return searchSkills(q, { exclude: ex }).filter((h) => enabled.has(h.id));
+				},
 				dupThreshold: DUP_THRESHOLD,
-				save: (i) => saveSkillVersioned(i, "agent"),
-				remove: (n) => deleteSkill(n),
+				save: (i) => {
+					const s = saveSkillVersioned(i, "agent");
+					// 模型给本助理新建的技能：默认只启用给本助理，其它助理不受影响
+					enableSkillForAgent(agentId, s.id);
+					return s;
+				},
+				remove: (n) => {
+					const s = getSkill(n);
+					if (!s) return false;
+					unassignSkillEverywhere(s.id);
+					return deleteSkill(n);
+				},
 				confirm: (summary) => approve("skill_delete", {}, summary),
 				confirmCreate: async ({ name, description, userText }) => {
 					// 用户这轮明确提到技能，或刚同意过“做成技能”的建议 → 不再重复确认
@@ -590,7 +605,7 @@ class AgentRuntime {
 		const thinking = this.thinkingFor(a);
 		// 模型 / 思考强度不在 key 里：用 session.setModel / setThinkingLevel 原地切换，不重建会话
 		const room = roomHooks?.info(this.id, this.conversationId) ?? null;
-		const key = `${a.name}|${a.persona}|room:${room?.key ?? "-"}|desk:${desk}|pc:${computerFor(this.id)}|skills:${skillsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}|img:${imageKey(this.id)}`;
+		const key = `${a.name}|${a.persona}|room:${room?.key ?? "-"}|desk:${desk}|pc:${computerFor(this.id)}|skills:${skillsVersion()}|assign:${assignmentsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}|img:${imageKey(this.id)}`;
 		if (this.session && this.modelKey === key) {
 			if (!isSessionBusy(this.session)) await applyModelSettings(this.session, models, model, thinking).catch((e) => console.warn(`[model] ${e instanceof Error ? e.message : e}`));
 			return this.session;
@@ -611,6 +626,7 @@ class AgentRuntime {
 				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), ...(room?.rules ?? [])],
 				extensions: await extensionsFor(this.id, this.conversationId, null, { allowSpawn: true }),
 				skillPaths: skillPaths(),
+				skillFilter: skillFilterFor(this.id),
 				...integrationsFor(this.id, this.conversationId),
 			});
 			const file = sessionFileOf(session);
@@ -950,6 +966,7 @@ export const tasks = {
 				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), "你正在执行一个后台任务。完成后用几句话总结结果作为最终回复。"],
 				extensions: await extensionsFor(a.id, t.conversation_id, t.id, { allowSpawn: false }),
 				skillPaths: skillPaths(),
+				skillFilter: skillFilterFor(a.id),
 				...integrationsFor(a.id, t.conversation_id),
 			});
 			live.set(t.id, session);
@@ -1070,7 +1087,7 @@ setSubagentDriver({
 					sessionFile: r.session_file ?? undefined,
 					model: { provider: candidates[i].provider, id: candidates[i].id }, thinking: agentThinking(candidates[i]),
 					systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), "你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报。"],
-					extensions: await extensionsFor(a.id, r.conversation_id, r.id, { allowSpawn: false, subagentId: r.id }), skillPaths: skillPaths(), ...integrationsFor(a.id, r.conversation_id),
+					extensions: await extensionsFor(a.id, r.conversation_id, r.id, { allowSpawn: false, subagentId: r.id }), skillPaths: skillPaths(), skillFilter: skillFilterFor(a.id), ...integrationsFor(a.id, r.conversation_id),
 				});
 				current = candidates[i];
 			} catch (e) {

@@ -29,7 +29,11 @@ export const getConn = () => conn;
 export const base = () => (conn && conn.base && conn.base !== location.origin ? conn.base : "");
 
 export class ApiError extends Error {
-	constructor(readonly status: number, message: string) {
+	constructor(
+		readonly status: number,
+		message: string,
+		readonly data?: unknown,
+	) {
 		super(message);
 	}
 }
@@ -45,12 +49,15 @@ export async function api<T = any>(path: string, init: RequestInit & { json?: un
 	const res = await fetch(base() + path, { ...init, headers, body });
 	if (!res.ok) {
 		let msg = res.statusText;
+		let data: unknown;
 		try {
-			msg = (await res.json()).error ?? msg;
+			const j = await res.json();
+			msg = (j as { error?: string }).error ?? msg;
+			data = j;
 		} catch {
 			/* ignore */
 		}
-		throw new ApiError(res.status, msg);
+		throw new ApiError(res.status, msg, data);
 	}
 	const ct = res.headers.get("content-type") ?? "";
 	return (ct.includes("json") ? res.json() : res.text()) as Promise<T>;

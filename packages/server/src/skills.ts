@@ -5,21 +5,57 @@
  * 两个目录都通过 DefaultResourceLoader 的 additionalSkillPaths 交给 Pi，由 Pi 负责发现与按需加载。
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { bus } from "./bus.ts";
 import { config } from "./config.ts";
 import { getSetting, setSetting } from "./db.ts";
 
 export const builtinSkillsDir = join(import.meta.dirname, "..", "skills");
 export const userSkillsDir = () => join(config.dataDir, "skills");
-export const skillPaths = () => [builtinSkillsDir, userSkillsDir()].filter((d) => existsSync(d));
+/** 外部导入的技能（zip / 目录 / 单文件 SKILL.md）：与用户自建分开，来源标签不同、同一份库存只放一处。 */
+export const externalSkillsDir = () => join(config.dataDir, "skills-external");
+
+/** 技能来源。canonical id 用 `来源/名称`，同名不同来源不会互相错启。 */
+export type SkillSource = "builtin" | "user" | "external";
+
+/** 技能根目录，**顺序即 Pi 的发现优先级**（先出现者胜，同名冲突 Pi 保留第一个）。
+ *  user / external 放在 builtin 前面：用户自己或导入的技能可以覆盖同名内置技能。 */
+export const skillRoots = (): { source: SkillSource; dir: string }[] => [
+	{ source: "user", dir: userSkillsDir() },
+	{ source: "external", dir: externalSkillsDir() },
+	{ source: "builtin", dir: builtinSkillsDir },
+];
+
+export const skillPaths = () => skillRoots().map((r) => r.dir).filter((d) => existsSync(d));
 export const NAME_RE = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/;
+
+/** 规范化技能 id：来源 + 名称。同一份库存里来源内名称唯一，因此 (来源, 名称) 唯一定位一个技能。 */
+export const canonicalSkillId = (source: SkillSource, name: string) => `${source}/${name}`;
+
+/** 技能路径落在哪个根目录下；不在任何已知根目录内返回 null（调用方按「未分配」处理）。 */
+export function skillSourceOfPath(p: string): SkillSource | null {
+	const r = resolve(p);
+	for (const { source, dir } of skillRoots()) {
+		const rel = relative(resolve(dir), r);
+		if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return source;
+	}
+	return null;
+}
+
+/** 由 SKILL.md 路径 + Pi 解析出的名称得到 canonical id；不在已知根目录内返回 null。 */
+export function skillIdOfPath(p: string, name: string): string | null {
+	const source = skillSourceOfPath(p);
+	return source ? canonicalSkillId(source, name) : null;
+}
 
 export interface Skill {
 	name: string;
 	description: string;
 	body: string;
 	builtin: boolean;
+	source: SkillSource;
+	/** canonical id：`来源/名称`（分配表里存的就是它） */
+	id: string;
 	path: string;
 	updatedAt: number;
 }
@@ -37,7 +73,7 @@ export function parseSkill(md: string): { name?: string; description?: string; b
 const yamlStr = (s: string) => (/[:#"'\n]|^\s|\s$/.test(s) ? JSON.stringify(s) : s);
 export const renderSkill = (name: string, description: string, body: string) => `---\nname: ${name}\ndescription: ${yamlStr(description.replace(/\s+/g, " ").trim())}\n---\n\n${body.trim()}\n`;
 
-function readDir(dir: string, builtin: boolean): Skill[] {
+function readDir(dir: string, source: SkillSource): Skill[] {
 	if (!existsSync(dir)) return [];
 	return readdirSync(dir)
 		.map((n) => join(dir, n, "SKILL.md"))
@@ -45,14 +81,25 @@ function readDir(dir: string, builtin: boolean): Skill[] {
 		.map((p) => {
 			const s = parseSkill(readFileSync(p, "utf8"));
 			const name = s.name ?? p.split(/[\\/]/).at(-2)!;
-			return { name, description: s.description ?? "", body: s.body, builtin, path: p, updatedAt: statSync(p).mtimeMs };
+			return { name, description: s.description ?? "", body: s.body, builtin: source === "builtin", source, id: canonicalSkillId(source, name), path: p, updatedAt: statSync(p).mtimeMs };
 		});
 }
 
+/**
+ * 库存列表。按 Pi 的发现顺序（skillRoots 顺序）去重：同名保留第一个，和 Pi 实际加载的一致，
+ * 避免「库存显示 user/foo，实际加载的却是 builtin/foo」导致启用错技能。
+ */
 export function listSkills(): Skill[] {
-	const user = readDir(userSkillsDir(), false);
-	const names = new Set(user.map((s) => s.name));
-	return [...readDir(builtinSkillsDir, true).filter((s) => !names.has(s.name)), ...user].sort((a, b) => Number(a.builtin) - Number(b.builtin) || a.name.localeCompare(b.name));
+	const seen = new Set<string>();
+	const out: Skill[] = [];
+	for (const { source, dir } of skillRoots()) {
+		for (const s of readDir(dir, source)) {
+			if (seen.has(s.name)) continue;
+			seen.add(s.name);
+			out.push(s);
+		}
+	}
+	return out.sort((a, b) => Number(a.builtin) - Number(b.builtin) || a.name.localeCompare(b.name));
 }
 export const getSkill = (name: string) => listSkills().find((s) => s.name === name);
 
@@ -62,6 +109,11 @@ function changed() {
 	bus.emit({ type: "skills.changed" });
 }
 export const skillsVersion = () => getSetting("skillsVersion", 0);
+
+/** 外部模块（如导入）改了技能库存后调用：递增版本号并广播，运行时会话在下一轮重建。 */
+export function notifySkillsChanged() {
+	changed();
+}
 
 export function saveSkill(input: { name: string; description: string; body: string; previousName?: string }): Skill {
 	const name = input.name.trim().toLowerCase();
@@ -79,7 +131,10 @@ export function saveSkill(input: { name: string; description: string; body: stri
 
 export function deleteSkill(name: string) {
 	if (!NAME_RE.test(name)) return false;
-	const dir = join(userSkillsDir(), name);
+	const existing = getSkill(name);
+	if (!existing || existing.builtin) return false;
+	// 内置不可删；用户自建在 skills/，外部导入在 skills-external/，按来源删对应目录
+	const dir = join(existing.source === "external" ? externalSkillsDir() : userSkillsDir(), name);
 	if (!existsSync(dir)) return false;
 	rmSync(dir, { recursive: true, force: true });
 	changed();

@@ -46,6 +46,7 @@ Mock 模型（`packages/server/src/pi-adapter/mock-provider.ts`）按关键词�
 - 用到开源项目要写进 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，写明版本和许可证。下载的组件还要在 `third-party.json` 里固定版本和摘要。
 - 提交信息用中文，一行写清楚做了什么、为什么；截图更新单独提交。
 - 有后果的操作统一走 ext-approval / requests.ts；完全权限按 hostFileAccess 在应用层免审批（含受保护操作），其他档位维持审批，凭据 deny、暂停与系统权限弹窗不变。
+- 技能作用域：**不修改 / 不 fork Pi SDK、不改 node_modules、不 monkeypatch 私有 API**；只用 Pi 公开的 Agent Skills 规范与 `DefaultResourceLoader.skillsOverride` / `additionalSkillPaths`。库存统一（builtin/user/external），**默认所有助理不启用任何技能（内置也不例外）**，每个助理一份显式启用清单（`settings.skillAssignments`，缺失/`[]` 都是 none，无全局默认）。运行时统一经 `pi-adapter`，主会话 / 后台任务 / 子代理共用同一 `skillFilterFor(agentId)`。详见 [docs/design/skill-scope-assignment.md](docs/design/skill-scope-assignment.md)。
 - 用户消息在助理忙时走 Pi `steer`（插话），不要改回 `followUp`；停止词判断统一用 `packages/server/src/interject.ts`（DESIGN §20）。
 - 新功能要加单测和 e2e，交付前跑 typecheck、单测和相关 e2e。
 

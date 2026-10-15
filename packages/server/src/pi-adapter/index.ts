@@ -475,6 +475,12 @@ export interface CreateSessionOptions {
 	systemPromptAppend: string[];
 	extensions: { name: string; factory: ExtensionFactory }[];
 	skillPaths?: string[];
+	/**
+	 * 技能选集：只保留返回 true 的技能（在路径白名单之后再次过滤）。
+	 * 由调用方给出「该助理启用了哪些技能」；不传则保持旧的「路径内全部加载」行为（低层测试 / 诊断用）。
+	 * 生产路径（runtime 的助理 / 后台任务 / 子代理）都会显式传入，默认不启用任何技能。
+	 */
+	skillFilter?: (skill: { name: string; filePath: string }) => boolean;
 	/** 我们自己配置的 MCP 服务器（不读 mcp.json） */
 	mcpServers?: { name: string; config: Record<string, unknown> }[];
 	mcpLogPath?: string;
@@ -530,11 +536,19 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		const rel = relative(r, resolve(p));
 		return !rel.startsWith("..") && !isAbsolute(rel);
 	});
+	const skillFilter = o.skillFilter;
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: o.cwd,
 		agentDir: o.agentDir,
 		noExtensions: true,
-		skillsOverride: (base) => ({ skills: base.skills.filter((s) => inside((s as { filePath: string }).filePath)), diagnostics: base.diagnostics }),
+		skillsOverride: (base) => ({
+			skills: base.skills.filter((s) => {
+				const filePath = (s as { filePath: string }).filePath;
+				if (!inside(filePath)) return false;
+				return skillFilter ? skillFilter({ name: s.name, filePath }) : true;
+			}),
+			diagnostics: base.diagnostics,
+		}),
 		noPromptTemplates: true,
 		noThemes: true,
 		noContextFiles: true,
