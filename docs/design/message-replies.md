@@ -148,6 +148,7 @@ export interface ReplySnapshot {
 
 - 发送路由只发生一次；重复投递同一 `clientId` 返回已有消息，不再唤醒。
 - `room_turns.source_message_id` 记录触发消息；入队前若已存在该 source 的未取消回合，则跳过，避免 retry / 重启后 double wake。
+- 实现（`packages/server/src/rooms/index.ts`）：`postUserMessage` 先落库，再由 `routeUserMessage(roomId, messageId)` 按 DB 里的**可信来源消息 id** 路由，不接受客户端传参。同一来源只路由一次（已有任何非 `cancelled` 回合 → 整组不再路由）；`enqueue(..., sourceMessageId, dedup)` 对根回合用 `INSERT … WHERE NOT EXISTS` 原子认领 `(room, source, agent, reason)`，因此 @所有人 每人 1 条、管理者分工（reason 不同）与多步 followup 照常入队，不会被同 source 误吞；真正不同的消息（即使同文本）各唤醒一次。
 - 服务重启沿用现有 `bootstrapRooms()`：`running/queued` 标 `interrupted`，用户“继续”时按 `source_message_id` 恢复，不重新路由。
 
 ## 8. 模型上下文（Pi 适配，不改 SDK）
@@ -183,7 +184,7 @@ export interface ReplySnapshot {
 - 路由：A 引用 → 只 A、manager 0；引用 A 但 @B → 只 B；manager 被引用 → 只 manager 且不自动扩派；普通无引用 → manager 1；无 @ 引用用户/system → 管理者或明确提示。
 - 权限：群禁用 / 已删除成员被引用 → 明确提示，不误唤 manager。
 - 跨 room / 跨单聊引用 → 403/404 且不泄露内容。
-- 幂等：同 `clientId` / 同 source 重复 → 只唤醒一次。
+- 幂等：同 `clientId` / 同 source 重复 → 只唤醒一次。`test/message-replies-queue-dedup.test.ts` 覆盖：同一来源路由两次只入队一组、@all 每人 1 条且重复事件不翻倍、重启后同源 0 新回合、引用甲只叫甲（管理者 0）、引用甲但 @乙只叫乙、引用管理者只叫管理者、两条同文本不同消息各 1 条、clientId 幂等。
 - 助理消息引用 → 不自动触发 loop。
 - provider payload：断言含引用块与用户正文。
 - 完全权限档位下不受影响。
