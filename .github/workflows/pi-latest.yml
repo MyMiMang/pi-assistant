@@ -14,10 +14,10 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci --ignore-scripts
       - id: bump
-        name: 升级 Pi 到最新版
+        name: 升级 Pi 到最新版（三包一致 + 同步版本记录）
         run: |
           BEFORE=$(node -p "require('./node_modules/@earendil-works/pi-coding-agent/package.json').version")
-          npm install --ignore-scripts -w @pi-assistant/server @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest
+          node scripts/pi-update.mjs latest
           AFTER=$(node -p "require('./node_modules/@earendil-works/pi-coding-agent/package.json').version")
           echo "before=$BEFORE" >> "$GITHUB_OUTPUT"; echo "after=$AFTER" >> "$GITHUB_OUTPUT"
       - name: 测试
@@ -31,18 +31,14 @@ jobs:
           npm run build
           npx playwright-core install chromium
           CHROME=$(node -e "console.log(require('playwright-core').chromium.executablePath())") node e2e/run.mjs 2>&1 | tee -a /tmp/test.log
-      - name: 测试通过 → 更新兼容基线并开 PR
-        if: steps.bump.outputs.before != steps.bump.outputs.after && steps.test.outcome == 'success'
-        env: { PI_VERSION: "${{ steps.bump.outputs.after }}" }
-        run: |
-          printf '{\n  "testedWith": "%s"\n}\n' "$PI_VERSION" > packages/server/src/pi-adapter/compat.json
       - uses: peter-evans/create-pull-request@v7
         if: steps.bump.outputs.before != steps.bump.outputs.after && steps.test.outcome == 'success'
         with:
           branch: deps/pi-${{ steps.bump.outputs.after }}
           title: "deps: 升级 Pi ${{ steps.bump.outputs.before }} → ${{ steps.bump.outputs.after }}"
-          body: "自动升级。typecheck、单元测试、Pi 兼容性测试与 E2E 全部通过。合并后打 tag 即可通过托盘自动更新推送给用户。"
+          body: "自动升级。typecheck、单元测试、Pi 兼容性测试与 E2E 全部通过；版本记录（compat.json / third-party.json / THIRD_PARTY_NOTICES.md）已由 scripts/pi-update.mjs 同步。合并后打 tag 即可通过托盘自动更新推送给用户。"
           commit-message: "deps: 升级 Pi 到 ${{ steps.bump.outputs.after }}"
+          # 不自动合并：Pi 的 API 变化需要人看一眼适配再合
       - name: 测试失败 → 开 issue
         if: steps.bump.outputs.before != steps.bump.outputs.after && steps.test.outcome != 'success'
         env: { GH_TOKEN: "${{ github.token }}" }
