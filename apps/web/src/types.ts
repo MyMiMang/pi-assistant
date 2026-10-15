@@ -55,7 +55,7 @@ export interface ProviderReferences { defaultModel: boolean; visionModel: boolea
 // ---- 统一模型服务（对齐 registry agent 契约：packages/server/src/model-registry.ts）----
 export type ModelCapability = "chat" | "vision" | "image" | "classifier";
 export type ModelType = "chat" | "image" | "classifier";
-export type RegistryModelSource = "pi-catalog" | "custom" | "imagegen" | "guess";
+export type RegistryModelSource = "pi-catalog" | "custom" | "imagegen" | "guess" | "local";
 /** 生图模型适配器：统一服务不再有独立生图凭据，凭据就是 provider 的凭据。 */
 export interface ImageAdapter {
 	kind: "openai" | "dashscope" | "ark" | "gemini" | "xai";
@@ -81,6 +81,8 @@ export interface RegistryModel {
 	input?: string[];
 	edit?: boolean;
 	costNote?: string;
+	/** 本地服务（如 local-laya）的安全运行状态（不含凭据）。 */
+	local?: { installed: boolean; running: boolean; state: string; device: string | null };
 	/** 仅 type=image：生图适配器（迁移期由旧生图服务补齐）。 */
 	imageAdapter?: ImageAdapter;
 }
@@ -166,6 +168,8 @@ export interface FastBenchmarkResult {
 	provider: string;
 	model: string;
 	modelVersion: string;
+	/** 本次结果的来源：cua = 真实 CUA；fixture = 测试 / 假驱动；unknown = 未知。按每次结果标明，不用永久硬文案。 */
+	provenance: "cua" | "fixture" | "unknown";
 	target: { prefix: "hostpc" | "computer"; fixtureId: string };
 	startedAt: string;
 	finishedAt: string | null;

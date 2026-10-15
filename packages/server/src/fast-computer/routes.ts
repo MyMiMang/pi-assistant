@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import { models, providerNames } from "../models.ts";
 import { configuredModels } from "../rooms/model-pick.ts";
-import { fastComputerSettings, saveFastComputerSettings, type FastComputerSettings } from "./index.ts";
+import { fastComputerSettings, saveFastComputerSettings, type FastComputerScope, type FastComputerSettings } from "./index.ts";
 import { benchmarkStatus, cancelBenchmark, listBenchmarks, type BenchmarkAvailability, type FastBenchmarkResult } from "./benchmark.ts";
 import { BenchmarkFixtureStateStore, benchmarkFixtureStatePath, renderBenchmarkFixtureHtml } from "./benchmark-fixture.ts";
 
@@ -63,9 +63,10 @@ export function mountFastComputerRoutes(app: Hono<any>, hostOrOpts?: BenchmarkHo
 		return c.json({ ok: accepted });
 	});
 
+	const parseScope = (v: unknown): FastComputerScope | undefined => (v === "hostpc" || v === "computer" ? v : undefined);
 	app.get("/api/fast-computer/settings", (c) =>
 		c.json({
-			settings: fastComputerSettings(),
+			settings: fastComputerSettings(parseScope(c.req.query("scope"))),
 			models: configuredModels().map((m) => ({ provider: m.provider, id: m.id, name: m.name, providerName: providerNames().get(m.provider) ?? m.provider })),
 			// 原生 Jev（System One）只能从 Pi 的 classifier 目录选；只回安全元数据（无 baseUrl / headers / 凭据）
 			classifierModels: models.listClassifierModels().map((m) => ({ provider: m.provider, id: m.id, name: m.name, api: m.api, configured: m.configured, providerName: providerNames().get(m.provider) ?? m.provider })),
@@ -73,7 +74,9 @@ export function mountFastComputerRoutes(app: Hono<any>, hostOrOpts?: BenchmarkHo
 	);
 	app.put("/api/fast-computer/settings", async (c) => {
 		try {
-			return c.json(saveFastComputerSettings(await c.req.json<Partial<FastComputerSettings>>()));
+			const body = await c.req.json<Partial<FastComputerSettings> & { scope?: unknown }>();
+			const { scope: rawScope, ...patch } = body;
+			return c.json(saveFastComputerSettings(patch, parseScope(rawScope)));
 		} catch (e) {
 			return c.json({ error: String(e) }, 400);
 		}

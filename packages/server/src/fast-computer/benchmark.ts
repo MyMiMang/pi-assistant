@@ -163,6 +163,9 @@ export interface FastBenchmarkAdvisory {
 
 export type BenchmarkStatus = "running" | "done" | "cancelled" | "blocked" | "failed";
 
+/** 本次结果是怎么跑出来的：`cua` = 真实 CUA 驱动；`fixture` = 测试 / 假驱动（只验证路径，不等于真实桌面）；`unknown` = 未知。 */
+export type BenchmarkProvenance = "cua" | "fixture" | "unknown";
+
 export interface FastBenchmarkResult {
 	id: string;
 	status: BenchmarkStatus;
@@ -170,6 +173,8 @@ export interface FastBenchmarkResult {
 	model: string;
 	/** 实际版本（真实调用后由 provider 回填）；未知写 "unknown"，不编造 */
 	modelVersion: string;
+	/** 本次结果的来源（真实 CUA / 测试假驱动），UI 按每次结果标明，不用永久硬文案 */
+	provenance: BenchmarkProvenance;
 	/** 本次测试作用的电脑 + fixture（只安全元数据，无凭据） */
 	target: { prefix: "hostpc" | "computer"; fixtureId: string };
 	/** 开始 / 结束时间（UTC ISO） */
@@ -210,6 +215,8 @@ export interface BenchmarkRunInput {
 	provider: string;
 	model: string;
 	modelVersion?: string;
+	/** 结果来源：真实 CUA / 测试假驱动；不传按 unknown（不假装真实）。 */
+	provenance?: BenchmarkProvenance;
 	window: BenchmarkWindow;
 	tasks: FastBenchmarkTask[];
 	/** 预热次数（默认 1，预热不进统计）；第一条无论预热与否都记为冷启动 */
@@ -288,6 +295,7 @@ export function snapshot(state: RunState): FastBenchmarkResult {
 		provider: input.provider,
 		model: input.model,
 		modelVersion: input.modelVersion || "unknown",
+		provenance: input.provenance ?? "unknown",
 		target: { prefix: input.window.prefix, fixtureId: input.window.fixtureId },
 		startedAt: iso(state.startedAt),
 		finishedAt: state.finishedAt ? iso(state.finishedAt) : null,

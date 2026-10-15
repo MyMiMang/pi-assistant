@@ -9,6 +9,7 @@ import { api } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
 import { AgentComputer } from "./AgentComputer";
+import { FastComputerSettingsSection } from "./FastComputerSettings";
 import { Avatar, avatarText, Badge, Button, Help, Input, Select, useConfirm } from "./ui";
 
 type ResourceNums = { cpus?: number; memoryGiB?: number; diskGiB?: number };
@@ -235,6 +236,12 @@ export function DesktopSettings() {
 			</section>
 
 			{s.enabled && <VmResources g={g} put={put} />}
+
+			<section className="space-y-2" data-testid="desktop-fast-computer">
+				<div className="font-semibold">{t("快速操作模型")}</div>
+				<div className="text-sm text-zinc-500">{t("助理操作这台电脑（虚拟机）时，可选让一个快速模型帮忙挑控件。只影响这台助理电脑。")}</div>
+				<FastComputerSettingsSection scope="computer" />
+			</section>
 
 			<section className="space-y-2">
 				<div className="font-semibold">{t("镜像下载地址")}</div>

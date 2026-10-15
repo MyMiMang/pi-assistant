@@ -49,6 +49,8 @@ interface State {
 	inbox: boolean;
 	routinesVersion: number;
 	skillsVersion: number;
+	/** 本地 Laya 状态变化（来自 local-laya.changed 事件），驱动安装 / 运行卡片刷新 */
+	localLayaVersion: number;
 	extVersion: number;
 	tasks: Record<string, Task[]>;
 	pendingDevices: Device[];
@@ -149,6 +151,7 @@ export const useStore = create<State>((set, get) => ({
 	inbox: false,
 	routinesVersion: 0,
 	skillsVersion: 0,
+	localLayaVersion: 0,
 	extVersion: 0,
 	tasks: {},
 	pendingDevices: [],
@@ -464,6 +467,9 @@ export const useStore = create<State>((set, get) => ({
 				break;
 			case "skills.changed":
 				set({ skillsVersion: get().skillsVersion + 1 });
+				break;
+			case "local-laya.changed":
+				set({ localLayaVersion: get().localLayaVersion + 1 });
 				break;
 			case "mcp.changed":
 			case "packages.changed":

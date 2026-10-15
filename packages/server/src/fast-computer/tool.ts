@@ -26,6 +26,7 @@ import {
 	verifyExpectation,
 	type FastActionCandidate,
 	type FastActionChooser,
+	type FastComputerScope,
 	type FastComputerSettings,
 	type FastExpectation,
 	type FastSemanticTarget,
@@ -124,12 +125,12 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 					),
 				}),
 				async execute(_id: string, args: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionToolContext) {
-					const s = fastComputerSettings();
-					if (!s.enabled) return text("快速操作模型没有开启（设置 › 模型 › 快速操作模型）。请直接用电脑工具自己完成。");
+					const prefix = resolvePrefix(ctx, args.prefix);
+					const s = fastComputerSettings(scopeOfPrefix(prefix));
+					if (!s.enabled) return text("快速操作模型没有开启（设置 › 电脑 › 快速操作模型）。请直接用电脑工具自己完成。");
 					const goal = String(args.goal ?? "").trim();
 					const pid = Number(args.pid);
 					const windowId = Number(args.window_id);
-					const prefix = resolvePrefix(ctx, args.prefix);
 					if (!prefix) return text("没有可用的电脑工具（操作这台电脑 / 助理电脑都没开），无法收集候选。请自己完成。");
 					const session = typeof args.session === "string" && args.session ? args.session : undefined;
 					const target: FastTarget = { pid, window_id: windowId, session };
@@ -164,7 +165,7 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 
 					// 执行前重查：用户在异步等待快模型期间取消 / 动态关闭，一律不派发任何动作。
 					if (signal?.aborted) return text("已取消（用户停止）。未执行任何动作。请自己完成。");
-					if (!fastComputerSettings().enabled) return text("快速操作模型在执行前已被关闭，未执行任何动作。请自己完成。");
+					if (!fastComputerSettings(scopeOfPrefix(prefix)).enabled) return text("快速操作模型在执行前已被关闭，未执行任何动作。请自己完成。");
 
 					// G2：独立重读同 session 同窗口，校验语义目标唯一且 role/value/actions 未变，用新 element_token 重构动作。
 					const fresh = await collectCandidates(ctx, prefix, target);
@@ -211,6 +212,13 @@ function normalizeExpected(raw: unknown): FastExpectation | undefined {
 	if (typeof o.action_contains === "string") out.action_contains = o.action_contains;
 	if (typeof o.exists === "boolean") out.exists = o.exists;
 	return Object.keys(out).length ? out : undefined;
+}
+
+/** 电脑前缀 → 快速操作设置的 scope：hostpc=用户电脑，computer=助理电脑；解析不出来就用全局（向后兼容）。 */
+function scopeOfPrefix(prefix: string | null): FastComputerScope | undefined {
+	if (prefix === "mcp__hostpc__") return "hostpc";
+	if (prefix === "mcp__computer__") return "computer";
+	return undefined;
 }
 
 function resolvePrefix(ctx: ExtensionToolContext, requested: unknown): string | null {

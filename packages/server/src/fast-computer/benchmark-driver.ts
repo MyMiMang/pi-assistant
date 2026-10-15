@@ -42,6 +42,8 @@ export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): Benchmar
 	return {
 		target: (requested) => opts.target(requested),
 		capable: () => opts.capable?.() ?? { ok: true },
+		// 经统一 computer backend（cua MCP）真实调用；来源标 cua，不是测试假驱动
+		provenance: () => "cua",
 
 		async openFixtureWindow({ url, fixtureId, nonce, target }) {
 			const sel = opts.target(target);

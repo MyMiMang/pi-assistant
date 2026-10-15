@@ -42,8 +42,18 @@ export const FAST_COMPUTER_DEFAULT: FastComputerSettings = {
 	timeoutMs: 4000,
 };
 
-export function fastComputerSettings(): FastComputerSettings {
-	const raw = getSetting<Partial<FastComputerSettings>>("fastComputer", {});
+/** 每台电脑各自一份快速操作偏好：`hostpc` = 用户电脑，`computer` = 助理电脑。 */
+export type FastComputerScope = "hostpc" | "computer";
+const scopeKey = (scope: FastComputerScope) => `fastComputer:${scope}`;
+
+/**
+ * 读取快速操作设置。
+ * 传 scope 时优先读这台电脑自己的设置（`fastComputer:<scope>`）；没有就回落到旧的全局 `fastComputer`，
+ * 保证老用户的既有配置不丢（最小向后兼容，不做破坏性迁移）。
+ */
+export function fastComputerSettings(scope?: FastComputerScope): FastComputerSettings {
+	const scoped = scope ? getSetting<Partial<FastComputerSettings> | null>(scopeKey(scope), null) : null;
+	const raw = scoped ?? getSetting<Partial<FastComputerSettings>>("fastComputer", {});
 	const s: FastComputerSettings = { ...FAST_COMPUTER_DEFAULT, ...raw };
 	if (s.kind !== "systemone" && s.kind !== "chat") s.kind = "chat";
 	s.threshold = clamp(s.threshold, 0, 1, FAST_COMPUTER_DEFAULT.threshold);
@@ -53,12 +63,12 @@ export function fastComputerSettings(): FastComputerSettings {
 
 const clamp = (v: unknown, min: number, max: number, dflt: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : dflt);
 
-/** 保存设置（只接受已知字段，做边界收敛）。默认关闭，不写就沿用默认。 */
-export function saveFastComputerSettings(patch: Partial<FastComputerSettings>): FastComputerSettings {
-	const cur = fastComputerSettings();
+/** 保存设置（只接受已知字段，做边界收敛）。默认关闭，不写就沿用默认。传 scope 只改这台电脑自己的设置。 */
+export function saveFastComputerSettings(patch: Partial<FastComputerSettings>, scope?: FastComputerScope): FastComputerSettings {
+	const cur = fastComputerSettings(scope);
 	const next: FastComputerSettings = { ...cur, ...patch };
-	setSetting("fastComputer", next);
-	return fastComputerSettings();
+	setSetting(scope ? scopeKey(scope) : "fastComputer", next);
+	return fastComputerSettings(scope);
 }
 
 // ---------------------------------------------------------------- 候选校验 + capture 登记

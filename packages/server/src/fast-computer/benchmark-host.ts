@@ -18,6 +18,7 @@ import {
 	onBenchmarkUpdate,
 	startBenchmark,
 	type BenchmarkAvailability,
+	type BenchmarkProvenance,
 	type BenchmarkWindow,
 	type FastBenchmarkResult,
 	type FastBenchmarkTask,
@@ -45,6 +46,8 @@ export interface BenchmarkDriver {
 	target(requested?: "hostpc" | "computer"): { prefix: "hostpc" | "computer"; session?: string } | null;
 	/** 这台平台是否能拿到**独立受控 fixture 窗口**的证明；拿不到就必须 false（fail-closed，不假装 ready）。默认 true。 */
 	capable?(): { ok: boolean; reason?: string };
+	/** 本次驱动来源：真实 CUA 返回 "cua"，测试 / 假驱动返回 "fixture"；不实现则按 unknown。 */
+	provenance?(): BenchmarkProvenance;
 	/** 打开属于本次运行的 fixture 窗口并 pin 身份；失败抛错。close 只关自己打开的窗口 / 标签页。 */
 	openFixtureWindow(input: { url: string; fixtureId: string; nonce: string; target?: "hostpc" | "computer" }): Promise<{ handle: FixtureWindowHandle; close: () => Promise<void> }>;
 	/** 读取窗口身份（fail-closed 用）；读不到返回 null。 */
@@ -153,7 +156,7 @@ export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 		let started: FastBenchmarkResult;
 		try {
 			started = startBenchmark(
-				{ provider, model, window, tasks: opts.tasks ?? benchmarkFixtureTasks(), warmup: opts.warmup ?? 1, maxTrials: opts.maxTrials ?? 6, concurrency: 1 },
+				{ provider, model, provenance: opts.driver.provenance?.() ?? "unknown", window, tasks: opts.tasks ?? benchmarkFixtureTasks(), warmup: opts.warmup ?? 1, maxTrials: opts.maxTrials ?? 6, concurrency: 1 },
 				{
 					now: opts.now,
 					runTrial: async (task, ctx) => {

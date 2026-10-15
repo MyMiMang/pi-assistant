@@ -2,20 +2,20 @@
  * 图片生成模型：设置 › 模型 里的「图片生成」小节（添加服务、自动获取 / 识别图片模型、试生成、默认模型），
  * 以及助理设置里的「图片模型」选择（跟随默认 / 指定 / 关闭）。
  */
-import { Download, ImageIcon, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Download, ImageIcon, Loader2, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { Badge, Button, cx, ErrorBox, Help, Input, useConfirm } from "./ui";
+import { Button, cx, ErrorBox, Help, Input, useConfirm } from "./ui";
 
 type Kind = "openai" | "dashscope" | "ark" | "gemini" | "xai";
 interface KindInfo { kind: Kind; label: string; baseUrl: string; models: string[]; keyUrl?: string; note?: string }
-interface ImgProvider { id: string; name: string; kind: Kind; kindLabel: string; baseUrl: string; models: string[]; keyFrom?: string | null; hasKey: boolean }
+export interface ImgProvider { id: string; name: string; kind: Kind; kindLabel: string; baseUrl: string; models: string[]; keyFrom?: string | null; hasKey: boolean }
 interface ImgModel { provider: string; providerName: string; id: string; edit: boolean; cost: string | null }
-interface Data { kinds: KindInfo[]; providers: ImgProvider[]; models: ImgModel[]; default: { provider: string; model: string; label: string } | null; reusable: { id: string; name: string; baseUrl: string; api: string }[] }
+export interface ImageModelsData { kinds: KindInfo[]; providers: ImgProvider[]; models: ImgModel[]; default: { provider: string; model: string; label: string } | null; reusable: { id: string; name: string; baseUrl: string; api: string }[] }
 
 export function useImageModels() {
-	const [data, setData] = useState<Data | null>(null);
-	const reload = () => api<Data>("/api/image-models").then(setData);
+	const [data, setData] = useState<ImageModelsData | null>(null);
+	const reload = () => api<ImageModelsData>("/api/image-models").then(setData);
 	useEffect(() => {
 		void reload();
 	}, []);
@@ -44,63 +44,8 @@ function Options({ models }: { models: ImgModel[] }) {
 
 const selectCls = "h-9 w-full min-w-0 rounded-lg border border-line bg-transparent px-2 text-sm";
 
-export function ImageModelsSection() {
-	const { data, reload } = useImageModels();
-	const [edit, setEdit] = useState<{ id?: string; k: number } | null>(null);
-	if (!data) return null;
-	const cur = data.models.find((m) => data.default && key(m) === key(data.default));
-	return (
-		<section data-testid="image-models">
-			<div className="mb-3 flex min-w-0 items-center gap-1.5 font-semibold">
-				<span className="min-w-0 truncate">图片生成</span>
-				<Help>配置后，你想要图片时助理会调用图片模型画图或改图，生成的图直接出现在聊天里（单聊和群聊都行）。支持 OpenAI 兼容接口（OpenAI、各种中转站、硅基流动等）、阿里云百炼、火山方舟、Google Gemini、xAI。Key 加密保存在本机。</Help>
-			</div>
-			{edit ? (
-				<ImageProviderForm key={edit.k} data={data} initial={data.providers.find((p) => p.id === edit.id)} onDone={() => (void reload(), setEdit(null))} onCancel={() => setEdit(null)} />
-			) : (
-				<div className="space-y-3">
-					{data.models.length > 0 && (
-						<div className="space-y-1.5">
-							<div className="text-xs text-mut">默认图片模型</div>
-							<select
-								data-testid="default-image-model"
-								className={selectCls}
-								value={data.default ? key(data.default) : ""}
-								onChange={(e) => {
-									const m = data.models.find((x) => key(x) === e.target.value);
-									if (m) void api("/api/image-models/default", { method: "PUT", json: { provider: m.provider, model: m.id } }).then(reload);
-								}}
-							>
-								<Options models={data.models} />
-							</select>
-							{cur?.cost && <div className="text-[11px] text-mut">参考价 {cur.cost}（以服务商为准）{cur.edit ? " · 支持改图" : " · 只能文生图"}</div>}
-						</div>
-					)}
-					{data.providers.map((p) => (
-						<div key={p.id} className="flex min-w-0 items-center gap-2 rounded-xl border border-line p-3" data-testid="image-provider">
-							<ImageIcon size={16} className="shrink-0 text-mut" />
-							<div className="min-w-0 flex-1">
-								<div className="truncate text-sm font-medium">{p.name}</div>
-								<div className="truncate text-[11px] text-mut">
-									{p.kindLabel} · {p.models.join("、")}
-								</div>
-							</div>
-							{!p.hasKey && <Badge tone="amber">没有 Key</Badge>}
-							<Button size="sm" variant="ghost" title="编辑" onClick={() => setEdit({ id: p.id, k: Date.now() })}>
-								<Pencil size={14} />
-							</Button>
-						</div>
-					))}
-					<Button variant="outline" onClick={() => setEdit({ k: Date.now() })} data-testid="add-image-provider">
-						<Plus size={15} /> 添加图片生成服务
-					</Button>
-				</div>
-			)}
-		</section>
-	);
-}
-
-function ImageProviderForm({ data, initial, onDone, onCancel }: { data: Data; initial?: ImgProvider; onDone: () => void; onCancel: () => void }) {
+/** 图片生成服务表单：统一模型面板用它编辑 / 新建生图适配器（复用同一个服务 Key 时传 keyFrom）。 */
+export function ImageProviderForm({ data, initial, onDone, onCancel }: { data: ImageModelsData; initial?: ImgProvider; onDone: () => void; onCancel: () => void }) {
 	const [kind, setKind] = useState<Kind>(initial?.kind ?? "openai");
 	const info = data.kinds.find((k) => k.kind === kind)!;
 	const [name, setName] = useState(initial?.name ?? "");
