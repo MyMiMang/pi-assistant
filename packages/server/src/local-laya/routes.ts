@@ -6,6 +6,7 @@
 import type { Context, Hono, Next } from "hono";
 import { probeNvidia } from "./deps.ts";
 import { layaManager } from "./index.ts";
+import type { LocalLayaManager } from "./manager.ts";
 import { DEFAULT_CHECKPOINT, LAYA_CHECKPOINTS, LAYA_SOURCE } from "./manifest.ts";
 import { platformProfile } from "./platform.ts";
 
@@ -18,10 +19,10 @@ interface InstallBody {
 	checkpoint?: string;
 }
 
-export function mountLocalLayaRoutes(app: Hono<any>, localOnly: LocalOnly) {
+export function mountLocalLayaRoutes(app: Hono<any>, localOnly: LocalOnly, getManager: () => LocalLayaManager = layaManager) {
 	const base = "/api/local-models/laya";
 
-	app.get(`${base}/status`, localOnly, (c) => c.json(layaManager().status()));
+	app.get(`${base}/status`, localOnly, (c) => c.json(getManager().status()));
 
 	app.post(`${base}/install`, localOnly, async (c) => {
 		const body = await c.req.json<InstallBody>().catch(() => ({}) as InstallBody);
@@ -29,34 +30,34 @@ export function mountLocalLayaRoutes(app: Hono<any>, localOnly: LocalOnly) {
 		const profile = platformProfile(process.platform, process.arch, { wantCuda: ctx.wantCuda, wantXpu: ctx.wantXpu, nvidia: ctx.nvidia });
 		if (profile.support === "unsupported") return c.json({ ok: false, error: profile.reason }, 400);
 		const checkpoint = LAYA_CHECKPOINTS[body.checkpoint ?? DEFAULT_CHECKPOINT] ?? LAYA_CHECKPOINTS[DEFAULT_CHECKPOINT];
-		const m = layaManager();
+		const m = getManager();
 		void m.install({ checkpoint, ctx: { wantCuda: ctx.wantCuda, wantXpu: ctx.wantXpu, nvidia: ctx.nvidia } }).catch(() => {});
 		return c.json({ ok: true, status: m.status() });
 	});
 
 	app.post(`${base}/cancel`, localOnly, (c) => {
-		const m = layaManager();
+		const m = getManager();
 		return c.json({ ok: m.cancel().ok, status: m.status() });
 	});
 
 	app.post(`${base}/start`, localOnly, async (c) => {
 		try {
-			const m = layaManager();
+			const m = getManager();
 			await m.start();
 			return c.json({ ok: true, status: m.status() });
 		} catch (e) {
-			return c.json({ ok: false, error: msg(e), status: layaManager().status() }, 400);
+			return c.json({ ok: false, error: msg(e), status: getManager().status() }, 400);
 		}
 	});
 
 	app.post(`${base}/stop`, localOnly, async (c) => {
-		const m = layaManager();
+		const m = getManager();
 		await m.stop();
 		return c.json({ ok: true, status: m.status() });
 	});
 
 	app.post(`${base}/update`, localOnly, async (c) => {
-		const m = layaManager();
+		const m = getManager();
 		void m.update().catch(() => {});
 		return c.json({ ok: true, status: m.status() });
 	});
@@ -64,10 +65,10 @@ export function mountLocalLayaRoutes(app: Hono<any>, localOnly: LocalOnly) {
 	app.delete(base, localOnly, async (c) => {
 		const body = await c.req.json<{ confirm?: boolean }>().catch(() => ({}) as { confirm?: boolean });
 		try {
-			await layaManager().uninstall(!!body.confirm);
-			return c.json({ ok: true, status: layaManager().status() });
+			await getManager().uninstall(!!body.confirm);
+			return c.json({ ok: true, status: getManager().status() });
 		} catch (e) {
-			return c.json({ ok: false, error: msg(e), status: layaManager().status() }, 400);
+			return c.json({ ok: false, error: msg(e), status: getManager().status() }, 400);
 		}
 	});
 

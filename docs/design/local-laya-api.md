@@ -90,3 +90,12 @@ interface LayaStatus {
 - 「模型服务」页：安装 / 更新 / 停止 / 卸载 / 进度 / health 能力标签 / 来源与 revision。
 - 「电脑 → 快速操作模型」页：仅从**已注册的 classifier 目录**里选（`local-laya · multilingual`）；未就绪置灰并提示去模型服务页装。
 - **不把 Laya 当 chat 模型**（协议是 `/v1/systemone`，没有 OpenAI 兼容端点）。
+
+## 6. 与统一模型注册表的关系
+
+Laya 启动后经 Pi 公开的 `registerClassifiers` 注册本地 provider，凭据只在进程内（`setRuntimeApiKey`，不落盘）。因此它会自动出现在统一注册表 `GET /api/models/registry` 里：
+
+- provider id：`local-laya`；模型：`multilingual`；`type: "classifier"`；`protocol: "typesafe-system-one"`；`capabilities: ["classifier"]`。
+- registry 的 `source` 目前归入 `pi-catalog`（因为它经 Pi 运行时注册）；**界面可用 provider id `local-laya` 识别为本地条目**，无需后端另加来源字段。
+- 未启动 / 已停止时不会出现在 classifier 目录里（未就绪）；这是预期的 fail-closed 行为。
+- 本模块**不新建 chat 模型**，也不自造 chat 模型入口。
