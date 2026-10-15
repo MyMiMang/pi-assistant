@@ -19,10 +19,10 @@
 import type { ClassifierModelInfo, ModelInfo } from "./pi-adapter/index.ts";
 import type { CustomProviderMeta } from "./pi-adapter/custom-providers.ts";
 
-/** 一个模型能做的事；`vision` 属于 chat 能力（不是独立服务）。 */
-export type ModelCapability = "chat" | "vision" | "image" | "classifier";
-/** Pi 的操作类型（`type` 缺省即 chat）。 */
-export type ModelType = "chat" | "image" | "classifier";
+/** 一个模型能做的事；`vision` 属于 chat 能力（不是独立服务）。`asr` = 语音转文字（语音输入），与 chat / vision 互不蕴含。 */
+export type ModelCapability = "chat" | "vision" | "image" | "classifier" | "asr";
+/** Pi 的操作类型（`type` 缺省即 chat）。`asr` 是 Pi Assistant 自有的第四种类型（Pi SDK 暂无 audio）。 */
+export type ModelType = "chat" | "image" | "classifier" | "asr";
 /** 模型 / 服务的来源：`local` = 本机跑的服务（如 local-laya，安装后经 Pi 运行时注册）。 */
 export type RegistrySource = "pi-catalog" | "custom" | "imagegen" | "guess" | "local";
 
@@ -67,6 +67,8 @@ export interface RegistryModel {
 	costNote?: string;
 	/** 生图模型的适配器元数据（UI 展示用）：协议 kind / 端点 / 改图 / 参考价。 */
 	imageAdapter?: { kind: string; baseUrl: string; edit: boolean; costNote?: string };
+	/** 语音转文字（ASR）模型的适配器元数据：协议 / 端点 / 音频是否离开本机。 */
+	asrAdapter?: { protocol: string; baseUrl?: string; location: "cloud" | "local" };
 }
 
 export interface RegistryProvider {
@@ -103,10 +105,30 @@ export interface RegistryLocalProvider {
 	provider: string;
 	modelId: string;
 	protocol: string;
+	/** 该本地服务提供的能力类型：classifier（如 local-laya）或 asr（如本地 SenseVoice）。缺省 classifier。 */
+	type?: "classifier" | "asr";
 	installed: boolean;
 	running: boolean;
 	state: string;
 	device: string | null;
+}
+
+/** 显式声明（或本地 runtime 上报）的语音转文字服务；不靠模型名猜能力。 */
+export interface RegistryAsrProvider {
+	provider: string;
+	modelId: string;
+	name?: string;
+	/** 协议：目前只认 `openai-audio-transcriptions`（OpenAI 兼容 `/v1/audio/transcriptions`）。 */
+	protocol: string;
+	/** 是否已配置可用（云看凭据，本地看 running）。 */
+	configured: boolean;
+	/** 音频是否会离开本机：cloud 会外发，local 只在本机。 */
+	location: "cloud" | "local";
+	language?: string;
+	/** 本地服务（如本地 SenseVoice）：安装 / 运行状态。 */
+	local?: RegistryLocalStatus;
+	/** 参考价格说明；未知不填（绝不填 0）。 */
+	costNote?: string;
 }
 
 export interface RegistryInput {
@@ -128,6 +150,8 @@ export interface RegistryInput {
 	};
 	/** 本地服务（如 local-laya）的安全状态：已安装但停止时仍保留卡片（source=local，标暂不可用）。 */
 	local?: RegistryLocalProvider[];
+	/** 显式声明的语音转文字服务（云 provider 由用户声明；本地 ASR 由 runtime 上报）。 */
+	asr?: RegistryAsrProvider[];
 }
 
 /** chat 模型的能力：input 含 image 即识图（识图属于 chat 能力，不是独立服务）。 */
@@ -285,19 +309,45 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 		p.kind = "local";
 		p.configured = p.configured || l.running;
 		const status: RegistryLocalStatus = { installed: l.installed, running: l.running, state: l.state, device: l.device };
-		const existing = p.models.find((x) => x.id === l.modelId && x.type === "classifier");
+		const type = l.type ?? "classifier";
+		const existing = p.models.find((x) => x.id === l.modelId && x.type === type);
 		put(p, {
 			provider: l.provider,
 			id: l.modelId,
 			name: existing?.name || l.modelId,
-			type: "classifier",
-			capabilities: ["classifier"],
+			type,
+			capabilities: [type],
 			protocol: l.protocol,
 			confirmed: true,
 			inferred: [],
 			source: "local",
 			configured: l.running,
 			local: status,
+			...(type === "asr" ? { asrAdapter: { protocol: l.protocol, location: "local" as const } } : {}),
+		});
+	}
+
+	// 5) 语音转文字（ASR）：只收录**显式声明**的（云 provider 由用户声明协议 + 模型；本地由 runtime 上报）。
+	//    不靠模型名 / chat 能力猜；未确认的不进这里，界面不给入口。
+	for (const a of input.asr ?? []) {
+		const existing = providers.get(a.provider);
+		const p = existing ?? ensure(a.provider, { id: a.provider, name: a.provider, kind: a.location === "local" ? "local" : "custom", configured: a.configured });
+		if (a.location === "local") p.kind = "local";
+		p.configured = p.configured || a.configured;
+		put(p, {
+			provider: a.provider,
+			id: a.modelId,
+			name: a.name || a.modelId,
+			type: "asr",
+			capabilities: ["asr"],
+			protocol: a.protocol,
+			confirmed: true,
+			inferred: [],
+			source: a.location === "local" ? "local" : "custom",
+			configured: a.configured,
+			...(a.costNote ? { costNote: a.costNote } : {}),
+			...(a.local ? { local: a.local } : {}),
+			asrAdapter: { protocol: a.protocol, ...(existing?.baseUrl ? { baseUrl: existing.baseUrl } : {}), location: a.location },
 		});
 	}
 

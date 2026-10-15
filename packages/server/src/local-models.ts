@@ -15,6 +15,10 @@ export interface LocalModelHint {
 	provider: string;
 	modelId: string;
 	protocol: string;
+	/** 该本地服务提供的能力类型：classifier（如 local-laya）或 asr（如本地 SenseVoice）。 */
+	type: "classifier" | "asr";
+	/** 本地服务的回环地址（如 http://127.0.0.1:port）；不上报则为空。**绝不含 token。** */
+	baseUrl?: string;
 	/** 已安装（不代表能用） */
 	installed: boolean;
 	/** 运行中（auth 可用、已注册） */
@@ -30,16 +34,16 @@ const cache = new Map<string, LocalModelHint>();
 
 interface LayaStatusLike {
 	install?: { state?: string };
-	runtime?: { state?: string };
+	runtime?: { state?: string; port?: number | null };
 	health?: { device?: string | null } | null;
-	registered?: { provider?: string; modelId?: string; protocol?: string } | null;
+	registered?: { provider?: string; modelId?: string; protocol?: string; baseUrl?: string } | null;
 }
 
 /**
  * 把一个本地服务状态并入缓存（安全元数据）。停止后 `registered` 为 null，
  * 沿用上一次的 provider / model，保证卡片不消失；只认 provider / model 标识，绝不读 token。
  */
-export function rememberLocalModelStatus(status: unknown, providerHint?: string, fallbackModelId?: string, now = Date.now()): void {
+export function rememberLocalModelStatus(status: unknown, providerHint?: string, fallbackModelId?: string, now = Date.now(), type: "classifier" | "asr" = "classifier"): void {
 	const s = status as LayaStatusLike | null;
 	if (!s || typeof s !== "object") return;
 	const reg = s.registered ?? undefined;
@@ -51,10 +55,13 @@ export function rememberLocalModelStatus(status: unknown, providerHint?: string,
 	const modelId = reg?.modelId ?? prev?.modelId ?? fallbackModelId;
 	if (!modelId) return;
 	const state = s.runtime?.state ?? "stopped";
+	const baseUrl = reg?.baseUrl ?? prev?.baseUrl ?? (s.runtime?.port ? `http://127.0.0.1:${s.runtime.port}` : undefined);
 	cache.set(provider, {
 		provider,
 		modelId,
-		protocol: reg?.protocol ?? prev?.protocol ?? "typesafe-system-one",
+		protocol: reg?.protocol ?? prev?.protocol ?? (type === "asr" ? "openai-audio-transcriptions" : "typesafe-system-one"),
+		type,
+		...(baseUrl ? { baseUrl } : {}),
 		installed: s.install?.state === "installed" || !!prev?.installed,
 		running: state === "running",
 		state,
@@ -63,9 +70,11 @@ export function rememberLocalModelStatus(status: unknown, providerHint?: string,
 	});
 }
 
-// 只认这一个已知事件名（来自本地服务自己的 status，安全元数据）；不改对方的文件。
+// 只认这两个已知事件名（来自本地服务自己的 status，安全元数据）；不改对方的文件。
 bus.on((e) => {
 	if (e.type === "local-laya.changed") rememberLocalModelStatus((e as { status?: unknown }).status, "local-laya");
+	// 本地语音输入（如 SenseVoice）：与 local-laya 同构的状态事件，type=asr。
+	if (e.type === "local-asr.changed") rememberLocalModelStatus((e as { status?: unknown }).status, (e as { provider?: string }).provider, (e as { modelId?: string }).modelId, Date.now(), "asr");
 });
 
 /** 当前已知的本地模型服务（安全元数据；未安装且未运行的不会进来）。 */

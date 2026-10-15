@@ -1,6 +1,7 @@
 import { mountSubagentRoutes } from "./subagent-routes.ts";
 import { mountFastComputerRoutes } from "./fast-computer/routes.ts";
 import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
+import { mountAsrRoutes, registryAsrProviders } from "./voice/index.ts";
 import { createRuntimeBenchmarkHost } from "./fast-computer/benchmark-runtime.ts";
 import { isStopCommand } from "./interject.ts";
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -242,6 +243,7 @@ mountUsageRoutes(app);
 mountSubagentRoutes(app);
 mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null, desktopKind: () => desktopBackend().id }).host);
 mountLocalLayaRoutes(app, localOnly);
+mountAsrRoutes(app);
 app.get("/api/models", (c) => {
 	const names = providerNames();
 	return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => withProviderName(m, names)));
@@ -259,6 +261,7 @@ const registryJson = () => {
 			custom: customProviders.list().map((p) => ({ ...p, name: p.name || names.get(p.id) || p.id })),
 			image: { providers: image, supportsEdit: (kind, model) => supportsEdit(kind as Parameters<typeof supportsEdit>[0], model), costNote },
 			local: localModelHints(),
+			asr: registryAsrProviders(),
 		}),
 	};
 };

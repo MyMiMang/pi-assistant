@@ -83,7 +83,7 @@ export interface CustomStorage {
 }
 
 /** 规范化 classifier 声明：去空白、去空项、去重，只留公开字段。 */
-export const MODEL_CAPABILITIES: readonly ModelCapability[] = ["chat", "vision", "image", "classifier"];
+export const MODEL_CAPABILITIES: readonly ModelCapability[] = ["chat", "vision", "image", "classifier", "asr"];
 
 /** 从服务端 /models 返回的条目里读可靠的输入模态（是否识图）；读不到返回 undefined（不猜）。 */
 export function detectInput(raw: Record<string, unknown>): ("text" | "image")[] | undefined {
