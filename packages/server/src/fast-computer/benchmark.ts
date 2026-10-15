@@ -143,8 +143,9 @@ export interface TrialMetrics {
 	timeout?: boolean;
 	/** 本试验实际派发的动作数 */
 	actions: number;
-	/** fast 路径回退到主模型的次数（fallback / abstain / reobserve / error 合计由调用方归类） */
+	/** fast 路径未选中 / 需重试的累计（reobserve / 目标变化 / 执行错误等，诊断用） */
 	retries: number;
+	/** **真正执行了主模型回退**的次数；基准不执行主模型回退，所以恒为 0（不把「未选中」冒充回退） */
 	fallbackCount: number;
 	/** 是否 abstain（快速模型拿不准）——计入稳定性诊断，不算错误 */
 	abstain: boolean;
@@ -190,7 +191,7 @@ export interface FastBenchmarkResult {
 	retries: number;
 	fallbackCount: number;
 	abstains: number;
-	/** synthetic 正确率（**不是**真实任务 accuracy），未知为 null */
+	/** 本轮 bench task 正确率（**不是**泛化 accuracy），未知为 null */
 	correctness: number | null;
 	correctTrials: number;
 	/** 诊断说明（例如「推理时延仅诊断子项」「样本少，结论有限」） */
@@ -315,7 +316,7 @@ export function snapshot(state: RunState): FastBenchmarkResult {
 const sum = <T>(arr: T[], f: (x: T) => number) => arr.reduce((a, x) => a + f(x), 0);
 
 function noteFor(samples: number, coldStartMs: number | null, p95Min: number, maxTrials: number): string {
-	const parts = ["真实受控 CUA 操控；模型推理时延仅诊断子项，不作为推荐唯一依据", "type 由程序固定输入，不计入模型 typing 能力", "Synthetic 任务正确率不等于真实任务 accuracy"];
+	const parts = ["真实受控 CUA 操控；模型推理时延仅诊断子项，不作为推荐唯一依据", "type 由程序固定输入，不计入模型 typing 能力", "本轮 bench task 正确率不等于泛化 accuracy"];
 	if (coldStartMs !== null) parts.push("冷启动为单独一次，未混入 p50/p95");
 	if (samples === 0) parts.push("尚无有效样本");
 	else if (samples < p95Min) parts.push(`样本仅 ${samples} 条（< ${p95Min}），p95 为粗略值，场景结论有限`);

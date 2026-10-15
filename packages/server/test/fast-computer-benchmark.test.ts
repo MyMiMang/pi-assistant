@@ -209,7 +209,8 @@ test("CUA 执行器：快速路径 fallback/abstain 不派发任何动作", asyn
 	const { deps, dispatched } = cuaHarness({ choose: async (): Promise<FastSelectResult> => ({ kind: "fallback", reason: "abstain", detail: "拿不准" }) });
 	const r = await runOne(createCuaTrialRunner(win(), deps));
 	assert.equal(dispatched.length, 0);
-	assert.equal(r.fallbackCount, 1);
+	assert.equal(r.fallbackCount, 0, "未真正执行主模型回退 → fallbackCount 必须为 0");
+	assert.equal(r.retries, 0);
 	assert.equal(r.abstain, true);
 });
 

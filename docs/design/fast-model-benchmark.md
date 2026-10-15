@@ -68,21 +68,28 @@
 
 ## 6. 注入点（runtime / registry / UI 协作）
 
-- `mountFastComputerRoutes(app, host?: BenchmarkHost)`：默认 `unavailableHost`（全 blocked）。runtime 就绪后注入真实 `host`。
-- `BenchmarkHost.availability()`：由电脑模块判断 hostpc 授权 / 助理电脑就绪、registry 判断模型就绪、fixture 模块判断窗口就绪。
-- `startBenchmark(input, deps)` / `createCuaTrialRunner(window, deps)`：真实 deps 由 runtime 用同一套 `ctx.executeTool` / `get_window_state` 接线；核心状态机、取消、fail-closed、聚合、判定纯逻辑可单测。
-- **共享结果 DTO 只此一份**：UI 渲染 `FastBenchmarkResult`，不要在 UI 侧再定义一套结果结构。
+- `mountFastComputerRoutes(app, host?)`：默认 `unavailableHost`（全 blocked）。`http.ts` 现在实际注入 `createRuntimeBenchmarkHost({ agentId })`，不是「永无 host」。
+- `BenchmarkHost.availability()`：目标电脑（`hostpc` 需开启「操作这台电脑」且 cua 守护进程在跑 / `computer` 需助理电脑运行中）、快速模型、fixture 是否就绪；任一不就绪 → 阻塞并给原因，**绝不偷偷开 VM**。
+- `BenchmarkDriver`（`benchmark-driver.ts`）：`target(requested?)` / `capable()` / `openFixtureWindow` / `readWindow` / `observe` / `execute`。生产经统一 computer backend 的 MCP（`createMcpInvoke` → `get_window_state` / `list_windows` / `click`）；测试注入假 driver，源码仍是真路径。拿不到「独立受控窗口」证明时 `capable:false` → blocked，不假装 ready。
+- `createBenchmarkHost`（`benchmark-host.ts`）：`start()` 只为本次运行打开受控 fixture 窗口并 pin `prefix/pid/window_id/session/window_token/fixture_id/nonce`；全局并发互斥；结束时**只关闭自己打开的那个 fixture 窗口 / 标签页**，绝不杀用户浏览器；每轮试次前重置 fixture 状态。
+- fixture（`benchmark-fixture.ts`）：本地 sandbox HTML（多按钮选对 / 下拉展开选对 / 滚动后目标 / 动态布局两步），机器状态经 `POST …/fixture/:id/state?nonce=` 回传，`BenchmarkFixtureStateStore` 只接受被 `arm` 过的 `(fixtureId, nonce)`。
+- 共享结果 DTO 只此一份：UI 渲染 `FastBenchmarkResult`，不要在 UI 侧再定义一套结果结构。
 
 ## 7. 未做 / 边界（本轮）
 
-- 真实 CUA 运行**未实测**：需先开「操作这台电脑」或助理电脑就绪（当前未开）；CI 无真实支持 → `blocked`。
-- fixture 测试页 / 机器状态 reporter 由应用提供（sandbox 本地 fixture），本轮只定契约与注入点。
-- 未跑真实付费模型、未跑 GPU / desktop / App VM / keychain、未做全量 e2e。
+- **真实 CUA 运行仍未实测**：当前开发环境未开启「操作这台电脑」、也未启动助理电脑，`createRuntimeBenchmarkHost` 的 `refresh()` 探测到两者都没就绪 → availability 全 blocked。真实桌面上打开 fixture 窗口 / 执行动作**未在真实桌面上验证**。
+- fixture 页 / 机器状态 reporter / host / driver 的**逻辑**已实现并用假 driver 的调用序列做了集成测试；CI / 无真实 CUA 环境明确标 `blocked`，不 mock 冒充 real。
+- 未跑真实付费模型、未跑 GPU / desktop / App VM / keychain、未做全量 e2e；未真下载模型。
 - 结果持久化只允许安全 metadata + timestamp，需提示「可能过时」；不永久判定机器性能优劣；缓存按 `provider/model/actualVersion/device` 区分，避免混用。
+- 快速操控基准只测**本轮 bench task** 正确率（不是泛化 accuracy）；`fallbackCount` 只有在**真正执行了主模型回退**时才算，基准不执行回退 → 恒为 0。
 
 ## 8. 已实现文件
 
 - `packages/server/src/fast-computer/benchmark.ts`：契约 + 可注入 runner（状态 / 取消 / 聚合 / advisory）+ 窗口身份 fail-closed + 双证据判分。
-- `packages/server/src/fast-computer/benchmark-cua.ts`：真实 CUA 试验执行器（同一工具路径、click 白名单、程序固定输入、逐次 fail-closed）。
-- `packages/server/src/fast-computer/routes.ts`：`GET/POST /api/fast-computer/benchmark`、`GET /:id`、`POST /:id/cancel` + 注入宿主。
-- `packages/server/test/fast-computer-benchmark.test.ts`：13 项（假时钟 / 假 CUA deps / 0 真实付费 / 无副作用工具）。
+- `packages/server/src/fast-computer/benchmark-cua.ts`：真实 CUA 试验执行器（click 白名单、程序固定输入、逐次 fail-closed）。
+- `packages/server/src/fast-computer/benchmark-fixture.ts`：本地 sandbox fixture（HTML + 任务集 + 机器状态存储，arm + nonce）。
+- `packages/server/src/fast-computer/benchmark-host.ts`：`BenchmarkHost`（availability / 并发互斥 / 只关自有窗口 / 清理）。
+- `packages/server/src/fast-computer/benchmark-driver.ts`：真实 driver 路径（统一 computer backend invoke + fixture 窗口身份 pin，capable fail-closed）。
+- `packages/server/src/fast-computer/benchmark-runtime.ts`：运行时接线（目标探测 + MCP invoke），`http.ts` 实际注入。
+- `packages/server/src/fast-computer/routes.ts`：`GET/POST /api/fast-computer/benchmark`、`GET /:id`、`POST /:id/cancel` + fixture 页 / 状态上报 + owner 过滤。
+- `packages/server/test/fast-computer-benchmark.test.ts` + `fast-computer-benchmark-host.test.ts`：契约 13 项 + fixture/host/routes 7 项（假 driver 模拟真调用序列、0 真实付费 / 0 真实桌面）。

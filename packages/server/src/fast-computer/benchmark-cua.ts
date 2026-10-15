@@ -71,7 +71,8 @@ export function createCuaTrialRunner(window: BenchmarkWindow, deps: CuaBenchmark
 			}
 			if (result.kind === "disabled") return { correctness: "unknown", error: "快速操作模型未开启", actions, retries, fallbackCount, abstain };
 			if (result.kind === "fallback") {
-				fallbackCount++;
+				// 基准只测快速路径本身：这里不真的执行主模型回退，因此 fallbackCount 保持 0
+				// （「未选中」只记进 retries / abstain 诊断），绝不把没发生的回退计成真实回退次数。
 				if (result.reason === "abstain") abstain = true;
 				else retries++;
 				return { correctness: "unknown", error: `快速路径未选中（${result.reason}）`, actions, retries, fallbackCount, abstain };
