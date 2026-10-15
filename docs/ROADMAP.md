@@ -178,6 +178,13 @@
 |---|---|---|
 | 批准跟进 Pi 官方 1.1.0 → 1.2.0 升级；硬约束：不改 Pi 本体 / 不 fork / 不改 `node_modules` 源码 / 不 monkeypatch 私有接口，兼容逻辑只放自有 `pi-adapter` 与扩展、走公开 API；独立提交、模块化、便于以后继续升级 | 已完成代码 + 本地验证，待主会话合入（未打包） | 三个 `@earendil-works` 包一致升到 `^1.2.0`（锁文件锁 1.2.0），锁差异只涉及 8 个 Pi 包（含上游不再依赖的 `@earendil-works/chord` 被移除）；唯一 breaking（`before_agent_start` 变 union）已在 ext-memory / ext-skills 按 `messageType` 收窄；版本记录（compat / third-party / NOTICES）同步，每周自动升级改为走 `scripts/pi-update.mjs` 统一升三包 + 版本记录。验证、基线与未验边界见 HANDOFF 同日条目。 |
 
+## 从消息另开会话分支（2026-10-22，`pi-session-fork` 树，基 `deps/pi-1.2.0` `2948a05`，**未 push / 未 tag / 未打包**）
+
+| 需求（用户原话大意） | 状态 | 说明 |
+|---|---|---|
+| 单聊里每条**可分支**的消息提供「从这里另开对话」：用 Pi 公开会话 fork 能力另起一条分支，生成新的自有 conversation（新 Pi 会话文件 + `parentSession` 父关系），原对话保留、可返回；保留原 agent / 模型 / 思考强度 / 附件引用权限；不从同一个 Pi 会话状态平行共享、不自动发 prompt、不重放工具、不复制排队任务 / 等待 / 后台任务 / 审批单 / 旧用量账单；busy 时明确 409 不 abort 用户任务；`clientId` 幂等只建 1 个对话；群聊分支另议 | 开发中（本树，未打包） | 设计契约 `docs/design/session-fork.md`。锚点范围以官方为准：`getUserMessagesForForking()` + `fork(entryId)` 只支持 **user** 消息（分支点在该 user 消息之前、正文放回输入框「另开并编辑」，绝不自动重发）；`SessionManager.createBranchedSession(leafId)` 只读源文件另写新文件、头带 `parentSession`。app 消息 ↔ Pi entry 用服务端持久化的 `meta.piEntryId` 映射（`pi-adapter` 在 `message_end` 持久化后取 `getLeafId()`），不靠前端下传文件名 / 下标。API `POST /api/conversations/:cid/fork { messageId, clientId }`。 |
+| 验证 | 待跑 | 目标：真实公开 SessionManager + Mock provider（临时数据目录 / 内存凭据）证明源文件不被改、新文件 `parentSession` 正确、分支为前缀、0 额外模型请求 / 0 工具调用、busy 409 不 abort、幂等、跨对话 messageId 拒绝；两端 typecheck + web build；前端 390 界面与草稿保留。 |
+
 ## 待用户决定
 
 
