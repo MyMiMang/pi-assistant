@@ -50,11 +50,21 @@ const check = (name, cond, detail = "") => { if (cond) console.log(`  ✅ ${name
 const start = async () => { server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] }); server.stdout.on("data", (d) => process.stdout.write(d)); server.stderr.on("data", (d) => process.stdout.write(d)); await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
 const stop = async () => { if (!server || server.exitCode !== null) return; const done = new Promise((r) => server.once("exit", r)); server.kill("SIGTERM"); await done; };
 
+/** 打开信息面板（`info` 会按设备持久化，reload 后可能自动开，所以按可见性收敛而不是盲点）。 */
+const openPane = async (page) => {
+	for (let i = 0; i < 3; i++) {
+		if (await page.locator(".pa-pane-wrap").isVisible().catch(() => false)) return;
+		const btn = page.getByRole("button", { name: "信息面板" });
+		if (await btn.count()) await btn.click({ timeout: 3000 }).catch(() => {});
+		await page.waitForTimeout(250);
+	}
+	await page.locator(".pa-pane-wrap").waitFor();
+};
 /** 打开「助理设置 › 设置」tab（信息面板），返回任务上限区块 */
 const openLimits = async (page, agentId) => {
 	await page.goto(`${BASE}/?agent=${agentId}`);
-	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
-	await page.locator(".pa-pane-wrap").waitFor();
+	await page.waitForTimeout(150);
+	await openPane(page);
 	const bar = page.getByTestId("info-tabs");
 	const tab = bar.getByRole("tab", { name: "设置", exact: true });
 	if (await tab.count()) await tab.click();

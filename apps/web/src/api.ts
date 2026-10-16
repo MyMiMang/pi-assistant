@@ -164,38 +164,33 @@ export async function transcribeAudio(input: TranscribeInput): Promise<{ text: s
 	return api(`/api/audio/transcriptions`, { method: "POST", body: fd, signal: input.signal });
 }
 
-/** 注册表里可用的 ASR 模型（type:"asr"）；用于「语音配置」里给用户显式选择，不自动挑。 */
-export interface AsrModelOption {
-	provider: string;
-	model: string;
-	name: string;
-	location: "cloud" | "local";
-	configured: boolean;
-	language?: string;
-}
-export async function listAsrModels(): Promise<AsrModelOption[]> {
-	const reg = await api<{ providers: { id: string; models: { id: string; name: string; type: string; configured: boolean; asrAdapter?: { location?: string }; local?: unknown }[] }[] }>("/api/models/registry");
-	const out: AsrModelOption[] = [];
-	for (const p of reg.providers ?? []) for (const m of p.models ?? []) {
-		if (m.type !== "asr") continue;
-		out.push({ provider: p.id, model: m.id, name: m.name || m.id, location: m.asrAdapter?.location === "local" ? "local" : "cloud", configured: !!m.configured });
-	}
-	return out;
-}
-
-/** 语音识别来源（用户显式选择）：null = 未配置。后端 fail-closed，不会回落到第一个云。 */
+/** 语音识别来源（用户显式选择）：null = 未配置。后端 fail-closed，不回落到第一个云。 */
 export interface VoiceSource {
 	location: "cloud" | "local";
 	provider: string;
 	model: string;
 }
-export interface VoiceSourceResponse {
+/** 来源可用性：**只有 ready 表示现在就能用**，其余一律带中文 reason（由后端归一化）。 */
+export type VoiceSourceAvailability = "ready" | "not_configured" | "not_installed" | "not_running" | "deleted";
+export interface VoiceSourceOption {
+	location: "cloud" | "local";
+	provider: string;
+	model: string;
+	name: string;
+	protocol: string;
+	availability: VoiceSourceAvailability;
+	reason: string | null;
+	selected: boolean;
+}
+/** `GET/PUT /api/audio/asr/source` 同一 DTO：当前选择 + 归一化候选列表。 */
+export interface VoiceSourceView {
 	source: VoiceSource | null;
+	options: VoiceSourceOption[];
 }
 
-/** 读取当前语音来源；接口不可用时抛出（调用方按「暂不可用」处理，不静默改默认）。 */
-export async function getVoiceSource(): Promise<VoiceSourceResponse> {
-	return api<VoiceSourceResponse>("/api/audio/asr/source");
+/** 读取当前语音来源与候选（不启动 / 不下载 / 不连云 / 不读 Key）。接口不可用时抛出（调用方按「暂不可用」处理）。 */
+export async function getVoiceSource(): Promise<VoiceSourceView> {
+	return api<VoiceSourceView>("/api/audio/asr/source");
 }
 
 // 「语音配置」保存成功后通知语音输入按钮刷新选中（前端事件，不做轮询）。
@@ -209,9 +204,9 @@ export function emitVoiceSourceChanged() {
 	for (const cb of [...voiceSourceListeners]) cb();
 }
 
-/** 写入语音来源（传 null = 改回未配置）；成功返回后端确认值，失败抛出让 UI 回滚。 */
-export async function setVoiceSource(source: VoiceSource | null): Promise<VoiceSourceResponse> {
-	const r = await api<VoiceSourceResponse>("/api/audio/asr/source", { method: "PUT", json: { source } });
+/** 写入语音来源（`null` = 改回未配置）；成功返回后端确认视图，失败抛出让 UI 回滚。 */
+export async function setVoiceSource(source: VoiceSource | null): Promise<VoiceSourceView> {
+	const r = await api<VoiceSourceView>("/api/audio/asr/source", { method: "PUT", json: { source } });
 	emitVoiceSourceChanged();
 	return r;
 }

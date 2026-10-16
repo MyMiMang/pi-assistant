@@ -122,7 +122,7 @@ async function installRoutes(context, state) {
 		if (p === "/api/models/custom") return json({ providers: [], apis: [], classifierProtocols: [] });
 		if (p === "/api/image-models/providers") return json({ providers: [], models: [], default: null });
 		if (p === "/api/image-models") return json({ kinds: [], providers: [], models: [], default: null, reusable: [] });
-		if (p === "/api/models/registry") return json({ providers: state.options ? [CLOUD_ASR, LOCAL_ASR, LAYA] : [] });
+		if (p === "/api/models/registry") return json({ providers: [CLOUD_ASR, LOCAL_ASR, LAYA] });
 		if (p === "/api/models") return json([]);
 		if (p === "/api/model-strengths") return json({ labels: [], models: [] });
 		if (p === "/api/fast-computer/benchmark") return json({ availability: { available: false, reason: "未启用" }, runs: [] });
@@ -134,12 +134,14 @@ async function installRoutes(context, state) {
 		if (p === "/api/audio/asr/config") return json({ maxDurationMs: 60000, maxBytes: 5242880, protocol: "openai-audio-transcriptions" });
 		if (p === "/api/audio/asr/providers") return json({ protocols: ["openai-audio-transcriptions", "local-asr-http"], providers: [] });
 		if (p === "/api/audio/asr/source") {
+			const opts = [];
+			if (state.cloudOption) opts.push({ location: "cloud", provider: "openai", model: "whisper-1", name: "OpenAI / whisper-1", protocol: "openai-audio-transcriptions", availability: "ready", reason: null, selected: state.source?.location === "cloud" && state.source?.provider === "openai" && state.source?.model === "whisper-1" });
+			opts.push({ location: "local", provider: "local-sensevoice", model: "sensevoice-small-int8", name: "本地语音识别（SenseVoice）", protocol: "local-asr-http", availability: "not_installed", reason: "本地语音识别未安装", selected: state.source?.location === "local" });
 			if (req.method() === "PUT") {
-				if (state.putFails) return json({ error: "模拟保存失败" }, 500);
+				if (state.putFails) return json({ error: "asr_not_configured", message: "模拟保存失败" }, 400);
 				state.source = JSON.parse(req.postData() ?? "{}").source ?? null;
-				return json({ source: state.source });
 			}
-			return json({ source: state.source ?? null });
+			return json({ source: state.source ?? null, options: opts });
 		}
 		if (p === "/api/local-models/asr/sensevoice/status") return json(SENSEVOICE_STATUS);
 		if (p === "/api/local-models/laya/status") return json(LAYA_STATUS);
@@ -162,7 +164,7 @@ const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/M
 let browser;
 try {
 	browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--autoplay-policy=no-user-gesture-required"] });
-	const state = { options: true, source: null, putFails: false };
+	const state = { cloudOption: true, source: null, putFails: false };
 	const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN", permissions: ["microphone"] });
 	await installRoutes(ctx, state);
 	await countGum(ctx);
@@ -232,6 +234,7 @@ try {
 	// 刷新后仍在
 	await page.reload();
 	await page.getByTestId("voice-source-status").waitFor();
+	await page.waitForFunction(() => (document.querySelector('[data-testid="voice-source-status"]')?.textContent ?? "").includes("whisper-1"), null, { timeout: 10_000 });
 	check("刷新后仍是云端 whisper-1", ((await page.getByTestId("voice-source-status").textContent()) ?? "").includes("whisper-1"));
 	// 保存失败回滚
 	state.source = null;
@@ -248,14 +251,14 @@ try {
 	await page.screenshot({ path: join(OUT, "05-voice-rollback.png") });
 
 	console.log("\n── 语音配置：云空态 → 去模型服务 ──");
-	state.options = false;
+	state.cloudOption = false;
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-cloud-empty").waitFor();
 	check("云空态可见 + 添加入口", (await page.getByTestId("voice-cloud-empty").isVisible()) && (await page.getByTestId("voice-cloud-go-models").isVisible()));
 	await page.getByTestId("voice-cloud-go-models").click();
 	await page.getByTestId("settings-nav").locator("button[data-tab=models]").waitFor();
 	check("点「添加在线服务」跳到模型服务页", (await page.getByTestId("settings-nav").locator("button[data-tab=models]").getAttribute("aria-current")) === "page");
-	state.options = true;
+	state.cloudOption = true;
 
 	console.log("\n── 语音配置：本地许可常驻「下载暂不可用」+ 导入可用 ──");
 	await page.goto(`${base}/?settings=voice`);

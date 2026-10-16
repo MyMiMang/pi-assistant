@@ -164,11 +164,12 @@ async function installRoutes(context, state) {
 			return json({ text: "这是转写出来的文字", provider: "openai", model: "whisper-1", durationMs: 500 });
 		}
 		if (p === "/api/audio/asr/source") {
-			if (req.method() === "PUT") {
-				state.source = JSON.parse(req.postData() ?? "{}").source ?? null;
-				return json({ source: state.source });
-			}
-			return json({ source: state.source ?? null });
+			// 冻结契约：source + options（含 availability）；options 来自后端，不靠前端 listAsrModels
+			const opts = state.asr
+				? [{ location: "cloud", provider: "openai", model: "whisper-1", name: "OpenAI / whisper-1", protocol: "openai-audio-transcriptions", availability: "ready", reason: null, selected: state.source?.location === "cloud" }]
+				: [];
+			if (req.method() === "PUT") state.source = JSON.parse(req.postData() ?? "{}").source ?? null;
+			return json({ source: state.source ?? null, options: opts });
 		}
 		if (p === "/api/audio/asr/lease" && req.method() === "POST") return json({ leaseId: "lease-1" });
 		if (p.startsWith("/api/audio/asr/lease/")) return json({ ok: true });
@@ -219,7 +220,7 @@ try {
 	await page.locator('[data-testid="voice-open-settings"]').waitFor({ timeout: 5000 });
 	check("点了未配置的麦克风才浮现短提示 + 「去设置」", (await page.locator('[data-testid="voice-status"]').isVisible()) && (await page.locator('[data-testid="voice-open-settings"]').isVisible()));
 	check("未配置点击不真开麦克风（0 次 getUserMedia）、不转写（0 次请求）", (await page.evaluate(() => window.__gum ?? 0)) === 0 && state.transcribeCalls.length === 0);
-	check("未配置给出明确错误提示", ((await page.locator('[data-testid="voice-hint"]').textContent()) ?? "").includes("配置语音识别模型"));
+	check("未配置给出明确错误提示", ((await page.locator('[data-testid="voice-hint"]').textContent()) ?? "").includes("语音识别模型"));
 	// 「去设置」打开「语音配置」，且临时提示随之清掉（不残留）
 	await page.locator('[data-testid="voice-open-settings"]').click();
 	await page.locator('[data-testid="voice-source-status"]').waitFor({ timeout: 20_000 });

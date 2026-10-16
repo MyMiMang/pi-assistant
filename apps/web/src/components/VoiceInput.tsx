@@ -94,9 +94,10 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 	const recording = voice.state === "recording";
 	const busy = voice.state === "preparing" || voice.state === "transcribing";
 	const label = !voice.supported ? (voice.unsupportedReason === "insecure_context" ? "需要 HTTPS 或本机地址才能用麦克风" : "当前浏览器不支持麦克风") : !voice.asrModel ? "未配置语音识别模型（设置 › 语音配置）" : recording ? "停止录音并转写" : "语音输入";
-	// 只有「用户点了麦克风、hook 回了未配置 / 不可用」才浮现设置入口；
+	// 只有「用户点了麦克风、hook 回了语音来源类错误」才浮现设置入口；
 	// idle 不常驻状态行、不常驻「去设置」——没配 ASR 时的说明放在按钮 title 里。
-	const needSetup = (voice.error?.code === "asr_not_configured" || voice.error?.code === "asr_unavailable") && !recording;
+	const asrSetupCodes = new Set(["asr_not_configured", "asr_unavailable", "asr_not_installed", "asr_deleted"]);
+	const needSetup = !!voice.error && asrSetupCodes.has(voice.error.code) && !recording;
 	// notice 只在「点过麦克风之后」才有值：其它错误也只在这时短暂提示，不常驻。
 	const hint = notice || (recording ? "正在听…（点停止）" : busy ? "转写中…" : "");
 	const showSettings = needSetup;

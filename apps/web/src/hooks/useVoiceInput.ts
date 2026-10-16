@@ -8,7 +8,7 @@
  *  - 用哪一源**只读服务端持久化的显式选择**（`/api/audio/asr/source`），未配置就用不了，绝不自动挑第一个云。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { acquireAsrLease, getVoiceSource, listAsrModels, onVoiceSourceChanged, releaseAsrLease, transcribeAudio, type AsrModelOption, type VoiceSource } from "../api";
+import { acquireAsrLease, getVoiceSource, onVoiceSourceChanged, releaseAsrLease, transcribeAudio, type VoiceSource, type VoiceSourceOption } from "../api";
 import { VoiceInputController, voiceCapability, type VoiceError, type VoiceResult, type VoiceState } from "../voice-input";
 
 const WORKLET_SRC = `class PiaCapture extends AudioWorkletProcessor {
@@ -80,10 +80,9 @@ async function startAudioCapture(stream: MediaStream, onData: (chunk: Float32Arr
 	};
 }
 
-/** 当前选中的 ASR 模型（由服务端显式选择 + 注册表选项换算；未配置为 null）。 */
-function resolveAsrModel(models: AsrModelOption[], source: VoiceSource | null): AsrModelOption | null {
-	if (!source) return null;
-	return models.find((m) => m.provider === source.provider && m.model === source.model) ?? null;
+/** 当前选中的候选（由后端 `options[].selected` 给出；未配置为 null）。 */
+function resolveSelected(view: { options: VoiceSourceOption[] }): VoiceSourceOption | null {
+	return view.options.find((o) => o.selected) ?? null;
 }
 
 export interface UseVoiceInputOptions {
@@ -101,8 +100,8 @@ export interface UseVoiceInput {
 	supported: boolean;
 	/** 支持的否定原因，用于按钮提示。 */
 	unsupportedReason?: string;
-	/** 当前选中的 ASR 模型（未配置为 null）。 */
-	asrModel: AsrModelOption | null;
+	/** 当前选中的 ASR 选项（未配置为 null）。 */
+	asrModel: VoiceSourceOption | null;
 	/** 服务端持久化的显式来源（null = 未配置）。 */
 	source: VoiceSource | null;
 	/** 来源读取失败（接口暂不可用）：按钮按未配置处理，但不伪造选择。 */
@@ -123,7 +122,7 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 	const [error, setError] = useState<VoiceError | null>(null);
 	const [source, setSource] = useState<VoiceSource | null>(null);
 	const [sourceUnavailable, setSourceUnavailable] = useState(false);
-	const [asrModel, setAsrModel] = useState<AsrModelOption | null>(null);
+	const [asrModel, setAsrModel] = useState<VoiceSourceOption | null>(null);
 	const [capability, setCapability] = useState(() => voiceCapability({ mediaDevices: typeof navigator !== "undefined" ? navigator.mediaDevices : null, isSecureContext: typeof window !== "undefined" ? window.isSecureContext : true }));
 
 	const optsRef = useRef(opts);
@@ -150,15 +149,15 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		}
 	};
 
-	// 选源：只读服务端持久化的显式选择，再与注册表选项对应；未配置 = null，不自动挑（本地优先 / 第一个云都不选）。
+	// 选源：只读后端 `GET /api/audio/asr/source` 的显式选择 + 归一化候选（availability 也来自后端）；未配置 = null。
 	useEffect(() => {
 		let alive = true;
 		const load = async () => {
 			try {
-				const [models, src] = await Promise.all([listAsrModels(), getVoiceSource()]);
+				const view = await getVoiceSource();
 				if (!alive) return;
-				setSource(src.source);
-				setAsrModel(resolveAsrModel(models, src.source));
+				setSource(view.source);
+				setAsrModel(resolveSelected(view));
 				setSourceUnavailable(false);
 			} catch {
 				// 接口暂不可用：当作「未配置」，不伪造选择；界面用 title 说明。
@@ -234,13 +233,15 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 			setError({ code: "asr_not_configured", message: sourceUnavailable ? "语音识别设置暂不可用，请稍后重试或在设置 › 语音配置 里检查" : "请先在设置 › 语音配置 里选择语音识别模型" });
 			return;
 		}
-		if (!asrModel.configured) {
-			setError({ code: "asr_unavailable", message: "当前选择的语音识别模型不可用，请到设置 › 语音配置 重新选择" });
+		// 只有 ready 表示当下可用；本地「已安装但未运行」（not_running）允许：录音租约会按需加载（不在这里起进程）。
+		const usable = asrModel.availability === "ready" || (asrModel.location === "local" && asrModel.availability === "not_running");
+		if (!usable) {
+			setError({ code: asrModel.availability === "not_installed" ? "asr_not_installed" : asrModel.availability === "deleted" ? "asr_deleted" : "asr_unavailable", message: asrModel.reason || "当前选择的语音识别模型不可用，请到设置 › 语音配置 重新选择" });
 			return;
 		}
 		// 本地 ASR：先拿录音租约（边录边加载）；云端不需要。
 		if (asrModel.location === "local") beginLease(asrModel.provider, asrModel.model);
-		void controller.start({ provider: asrModel.provider, model: asrModel.model, language: asrModel.language, agentId: optsRef.current.agentId, conversationId: optsRef.current.conversationId, anchor: optsRef.current.getAnchor() });
+		void controller.start({ provider: asrModel.provider, model: asrModel.model, agentId: optsRef.current.agentId, conversationId: optsRef.current.conversationId, anchor: optsRef.current.getAnchor() });
 	}, [capability.available, capability.reason, source, asrModel, sourceUnavailable, controller]);
 
 	const dismissError = useCallback(() => setError(null), []);

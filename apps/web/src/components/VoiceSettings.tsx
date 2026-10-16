@@ -1,25 +1,26 @@
 /**
  * 设置 › 语音配置：显式选择语音识别来源（云端 / 本地），并管理本地 SenseVoice。
  *
- * 契约（与后端 owner 对齐，前端只消费）：
- *  - GET  /api/audio/asr/source → { source: null | { location:"cloud"|"local", provider, model } }
- *  - PUT  /api/audio/asr/source   同形状；成功回显后端确认值，失败由本页回滚（不留下假值）。
- *  - 模型选项来自统一注册表（listAsrModels），不在这里新建第二套 Key。
+ * 契约（后端 `settings-functional-backend` 冻结，前端只消费）：
+ *  - GET  /api/audio/asr/source → { source: null | { location, provider, model }, options: [{ location, provider, model, name, protocol, availability, reason, selected }] }
+ *  - PUT  /api/audio/asr/source   同 DTO；`availability`：ready | not_configured | not_installed | not_running | deleted（只有 ready 表示当下可用）。
+ *  - 候选（含 availability/reason）全部来自后端，不在这里新建第二套 Key，也不自动挑第一个云。
  *
- * 关键取舍：没有选择就是「未配置」，绝不自动回落到云端；打开本页不安装 / 不启动 / 不取麦克风。
+ * 关键取舍：没有选择就是「未配置」，绝不自动回落到云端；打开本页不安装 / 不启动 / 不取麦克风 / 不连云。
  */
 import { AlertTriangle, Cloud, HardDrive, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { getVoiceSource, listAsrModels, setVoiceSource, type AsrModelOption, type VoiceSource } from "../api";
+import { getVoiceSource, setVoiceSource, type VoiceSource, type VoiceSourceOption, type VoiceSourceView } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, Help, Select, cx } from "./ui";
 import { LocalSenseVoiceCard } from "./ModelServices";
 
-const keyOf = (s: { provider: string; model: string }) => `${s.provider}::${s.model}`;
+const keyOf = (o: { provider: string; model: string }) => `${o.provider}::${o.model}`;
+const AVAIL_LABEL: Record<string, string> = { ready: "可用", not_configured: "未配置", not_installed: "未安装", not_running: "未运行", deleted: "已不可用" };
 
 export function VoiceSettings() {
 	const setSettings = useStore((s) => s.set);
-	const [options, setOptions] = useState<AsrModelOption[]>([]);
+	const [view, setView] = useState<VoiceSourceView | null>(null);
 	const [source, setSource] = useState<VoiceSource | null>(null);
 	const [sourceUnavailable, setSourceUnavailable] = useState(false);
 	const [loading, setLoading] = useState(true);
@@ -31,45 +32,68 @@ export function VoiceSettings() {
 
 	const reload = async () => {
 		setLoading(true);
-		const [opts, src] = await Promise.allSettled([listAsrModels(), getVoiceSource()]);
-		const next = src.status === "fulfilled" ? src.value.source : null;
-		setOptions(opts.status === "fulfilled" ? opts.value : []);
-		setSource(next);
-		setSourceUnavailable(src.status === "rejected");
-		setLoadErr(src.status === "rejected" ? (src.reason instanceof Error ? src.reason.message : String(src.reason)) : "");
-		setPick(next && next.location === "cloud" ? keyOf(next) : "");
-		setTab(next?.location ?? "cloud");
-		setLoading(false);
+		try {
+			const v = await getVoiceSource();
+			setView(v);
+			setSource(v.source);
+			setPick(v.source && v.source.location === "cloud" ? keyOf(v.source) : "");
+			setTab(v.source?.location ?? "cloud");
+			setSourceUnavailable(false);
+			setLoadErr("");
+		} catch (e) {
+			setView({ source: null, options: [] });
+			setSource(null);
+			setPick("");
+			setSourceUnavailable(true);
+			setLoadErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			setLoading(false);
+		}
 	};
 	useEffect(() => {
 		void reload();
 	}, []);
 
+	const options = view?.options ?? [];
 	const cloud = options.filter((o) => o.location === "cloud");
 	const local = options.filter((o) => o.location === "local");
-	const picked = cloud.find((o) => keyOf(o) === pick);
-	const localPick = local.find((o) => o.configured) ?? local[0];
-	const nameOf = (s: VoiceSource) => options.find((o) => o.provider === s.provider && o.model === s.model)?.name ?? `${s.provider} · ${s.model}`;
+	const picked = cloud.find((o) => keyOf(o) === pick) ?? null;
+	const selected = options.find((o) => o.selected) ?? null;
+	const localPick = local.find((o) => o.selected) ?? local[0] ?? null;
+	// 云端只有 ready 才能保存（未配置会被后端 400）；本地允许存「未安装 / 未运行」的意图，但 deleted / not_configured 不允许。
+	const canSave = (o: VoiceSourceOption | null) => !!o && (o.availability === "ready" || (o.location === "local" && (o.availability === "not_installed" || o.availability === "not_running")));
+	const statusLabel = () => {
+		if (loading) return "读取中…";
+		if (sourceUnavailable) return "设置暂不可用（没读到当前来源）";
+		if (!source) return "未配置";
+		if (!selected) return `${source.location === "cloud" ? "云端" : "本地"} · ${source.provider} · ${source.model}`;
+		return `${source.location === "cloud" ? "云端" : "本地"} · ${selected.name}${selected.availability === "ready" ? "" : ` · ${AVAIL_LABEL[selected.availability] ?? selected.availability}`}`;
+	};
 
-	// 选择 + 保存：失败时回滚到上一次生效值，不留下假值。
+	// 选择 + 保存：失败时回滚到上一次生效值（重新拉取），不留下假值。
 	const choose = async (next: VoiceSource) => {
-		const prev = source;
 		setSaving(true);
 		setSaveErr("");
 		try {
-			const r = await setVoiceSource(next);
-			setSource(r.source);
-			setPick(r.source && r.source.location === "cloud" ? keyOf(r.source) : "");
+			const v = await setVoiceSource(next);
+			setView(v);
+			setSource(v.source);
+			setPick(v.source && v.source.location === "cloud" ? keyOf(v.source) : "");
 		} catch (e) {
-			setSource(prev);
-			setPick(prev && prev.location === "cloud" ? keyOf(prev) : "");
+			// 保存失败：重新拉取仍生效的值，并把草稿恢复到它。
 			setSaveErr(e instanceof Error ? e.message : String(e));
+			try {
+				const v = await getVoiceSource();
+				setView(v);
+				setSource(v.source);
+				setPick(v.source && v.source.location === "cloud" ? keyOf(v.source) : "");
+			} catch {
+				/* 回滚也读不到：保持现状并显示错误 */
+			}
 		} finally {
 			setSaving(false);
 		}
 	};
-
-	const statusLabel = sourceUnavailable ? "设置暂不可用（没读到当前来源）" : !source ? "未配置" : `${source.location === "cloud" ? "云端" : "本地"} · ${nameOf(source)}`;
 
 	return (
 		<div className="space-y-6">
@@ -80,16 +104,17 @@ export function VoiceSettings() {
 						把麦克风录音转成文字草稿。<b>没选择就是未配置</b>：麦克风会提示你来这里选，不会自动改用云端、不会静默计费。云端模型来自「模型服务」里声明的 ASR，复用同一服务的地址与 Key，不在这里再填一遍。
 					</Help>
 				</div>
-				<div className="flex flex-wrap items-center gap-2 text-sm" data-testid="voice-source-status">
+				<div className="flex flex-wrap items-center gap-2 text-sm" data-testid="voice-source-status" data-availability={selected?.availability ?? (source ? "unknown" : "none")}>
 					<span className="text-mut">当前来源：</span>
-					<Badge tone={sourceUnavailable ? "red" : !source ? "zinc" : source.location === "cloud" ? "amber" : "green"}>{loading ? "读取中…" : statusLabel}</Badge>
-					{sourceUnavailable && <Button size="sm" variant="outline" onClick={() => void reload()}>重试</Button>}
+					<Badge tone={sourceUnavailable || (selected && selected.availability === "deleted") ? "red" : !source ? "zinc" : selected?.availability === "ready" ? "green" : "amber"}>{statusLabel()}</Badge>
+					{source && selected && selected.availability !== "ready" && selected.reason && <span className="text-xs text-amber-600" data-testid="voice-source-reason">{selected.reason}</span>}
+					{sourceUnavailable && (
+						<Button size="sm" variant="outline" onClick={() => void reload()}>
+							重试
+						</Button>
+					)}
 				</div>
-				{loading ? (
-					<div className="flex items-center gap-2 text-xs text-mut" data-testid="voice-loading"><Loader2 size={14} className="animate-spin" /> 正在读取语音设置…</div>
-				) : sourceUnavailable ? (
-					<div className="text-xs text-amber-600" data-testid="voice-source-error">无法读取语音来源设置（{loadErr || "接口暂不可用"}）。先按「未配置」处理，配置与本地安装仍可在下方进行。</div>
-				) : null}
+				{sourceUnavailable && <div className="text-xs text-amber-600" data-testid="voice-source-error">无法读取语音来源设置（{loadErr || "接口暂不可用"}）。先按「未配置」处理，本地安装仍可在下方进行。</div>}
 
 				{/* 来源显式切换；切换只改显示，不会自动改当前来源 */}
 				<div className="inline-flex rounded-xl border border-line p-0.5" role="tablist" aria-label="语音来源">
@@ -107,17 +132,20 @@ export function VoiceSettings() {
 							<div className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-line p-3 text-xs text-mut" data-testid="voice-cloud-empty">
 								<AlertTriangle size={14} className="shrink-0 text-amber-500" />
 								<span className="min-w-0 flex-1">还没有可用的云端语音模型。</span>
-								<Button size="sm" variant="outline" onClick={() => setSettings({ settings: "models" })} data-testid="voice-cloud-go-models">添加在线服务</Button>
+								<Button size="sm" variant="outline" onClick={() => setSettings({ settings: "models" })} data-testid="voice-cloud-go-models">
+									添加在线服务
+								</Button>
 							</div>
 						) : (
 							<div className="space-y-2">
 								<div className="flex flex-wrap items-center gap-2">
 									<span className="text-sm text-mut">使用哪个模型</span>
-									<Select value={pick} options={cloud.map((o) => ({ value: keyOf(o), label: `${o.name}（${o.provider}）` }))} onChange={setPick} ariaLabel="云端语音模型" testId="voice-cloud-select" className="min-w-[220px]" placeholder="选择模型…" />
-									<Button variant="primary" disabled={!picked || saving || pick === (source?.location === "cloud" ? keyOf(source) : "")} onClick={() => picked && void choose({ location: "cloud", provider: picked.provider, model: picked.model })} data-testid="voice-cloud-save">
+									<Select value={pick} options={cloud.map((o) => ({ value: keyOf(o), label: `${o.name}${o.availability === "ready" ? "" : `（${AVAIL_LABEL[o.availability] ?? o.availability}）`}` }))} onChange={setPick} ariaLabel="云端语音模型" testId="voice-cloud-select" className="min-w-[220px]" placeholder="选择模型…" />
+									<Button variant="primary" disabled={!picked || saving || !canSave(picked) || pick === (source?.location === "cloud" ? keyOf(source) : "")} onClick={() => picked && void choose({ location: "cloud", provider: picked.provider, model: picked.model })} data-testid="voice-cloud-save">
 										{saving && <Loader2 size={14} className="animate-spin" />} 使用这个
 									</Button>
 								</div>
+								{picked && picked.availability !== "ready" && picked.reason && <p className="text-xs text-amber-600" data-testid="voice-cloud-reason">{picked.reason}</p>}
 								<p className="text-xs text-mut2">音频会先到本机服务，再转发给该服务（<b>会离开本机</b>，按量计费）。模型来自「模型服务」的 ASR 声明。</p>
 							</div>
 						)}
@@ -134,11 +162,20 @@ export function VoiceSettings() {
 					<div className="space-y-3" data-testid="voice-local-section">
 						<LocalSenseVoiceCard />
 						{localPick && (
-							<div className="flex flex-wrap items-center gap-2">
-								<Button variant="primary" disabled={saving || (source?.location === "local" && source.provider === localPick.provider && source.model === localPick.model)} onClick={() => void choose({ location: "local", provider: localPick.provider, model: localPick.model })} data-testid="voice-local-use">
-									{saving && <Loader2 size={14} className="animate-spin" />} 使用本地语音识别（SenseVoice）
-								</Button>
-								{source?.location === "local" && <Badge tone="green">当前使用</Badge>}
+							<div className="space-y-1">
+								<div className="flex flex-wrap items-center gap-2">
+									<Button
+										variant="primary"
+										disabled={saving || !canSave(localPick) || (source?.location === "local" && source.provider === localPick.provider && source.model === localPick.model)}
+										onClick={() => void choose({ location: "local", provider: localPick.provider, model: localPick.model })}
+										data-testid="voice-local-use"
+									>
+										{saving && <Loader2 size={14} className="animate-spin" />} 使用本地语音识别（SenseVoice）
+									</Button>
+									{source?.location === "local" && <Badge tone={localPick.availability === "ready" ? "green" : "amber"}>{localPick.availability === "ready" ? "当前使用" : `${AVAIL_LABEL[localPick.availability] ?? localPick.availability}（已选，点麦克风会尝试加载）`}</Badge>}
+								</div>
+								{localPick.availability === "not_installed" && <p className="text-xs text-mut2">可以先把本地语音识别设为来源；未安装前点麦克风不会录音，装好后会自动用上。</p>}
+								{localPick.reason && localPick.availability !== "ready" && <p className="text-xs text-amber-600" data-testid="voice-local-reason">{localPick.reason}</p>}
 							</div>
 						)}
 					</div>
