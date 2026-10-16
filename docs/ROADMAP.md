@@ -187,7 +187,7 @@
 
 | 需求（用户原话大意） | 状态 | 说明 |
 |---|---|---|
-| 用户先要求只读审计、后同意「看看怎么升级吧」：独立分支做 Pi 1.3.0 升级适配；不改 Pi 本体 / 不 fork / 不改 `node_modules` / 不 monkeypatch；兼容逻辑只放自有 `pi-adapter` 与公开 API；独立提交、可回滚 | 独立验证进行中（未合入候选） | 三个直连包 `^1.2.0 → 精确 1.3.0`（`pi-update` 改用 `--save-exact`，对齐上游 #10865 的精确 pin 政策）；lock 差异只涉及 7 个 `@earendil-works/*` + 3 条 spec。最高风险是 1.3 起 resume 会恢复转录里的 active tools（#10785）：已在真实 Pi 会话实测「server 移除 / hidden / 受限纯名单」不会复活，且**当前 eligible 的 direct/deferred 工具恢复保留（不裁掉 1.3 特性）**；已知残余：MCP 从 direct 改 deferred 对同一段被 resume 的会话不追溯（重新开会话才生效，仅可见性/token 回归，非越权）；强约束工具面用纯工具名列表 / `excludeTools`。另实测 codemode 跨会话 worker 上限 2（第 3 个可读错误、不排队）、kimi-coding 转 openai-completions 随 Pi 目录自动生效（不误伤私有 relay）、坏 JSON 工具参数不执行残缺字段。设计与实测见 `docs/design/pi-1.3-upgrade.md`。**未验**：全量 e2e、真机、真实云/MCP、`compat.json` `testedWith` 仍停在 1.2.0（待全量通过再 `finalize`）。 |
+| 用户先要求只读审计、后同意「看看怎么升级吧」：独立分支做 Pi 1.3.0 升级适配；不改 Pi 本体 / 不 fork / 不改 `node_modules` / 不 monkeypatch；兼容逻辑只放自有 `pi-adapter` 与公开 API；独立提交、可回滚 | 已完成本轮独立验证，待合入（未发布） | 三个直连包 `^1.2.0 → 精确 1.3.0`（`pi-update` 改用 `--save-exact`，对齐上游 #10865 的精确 pin 政策）；lock 差异只涉及 7 个 `@earendil-works/*` + 3 条 spec。最高风险是 1.3 起 resume 会恢复转录里的 active tools（#10785）：已在真实 Pi 会话实测「server 移除 / hidden / 受限纯名单」不会复活，且**当前 eligible 的 direct/deferred 工具恢复保留（不裁掉 1.3 特性）**；已知残余：MCP 从 direct 改 deferred 对同一段被 resume 的会话不追溯（重新开会话才生效，仅可见性/token 回归，非越权）；强约束工具面用纯工具名列表 / `excludeTools`。另实测 codemode 跨会话 worker 上限 2（第 3 个可读错误、不排队）、kimi-coding 转 openai-completions 随 Pi 目录自动生效（不误伤私有 relay）、坏 JSON 工具参数不执行残缺字段。设计与实测见 `docs/design/pi-1.3-upgrade.md`。**未验**：全量 e2e、真机、真实云/MCP、`compat.json` `testedWith` 仍停在 1.2.0（待全量通过再 `finalize`）。 |
 
 ## 从消息另开会话分支（本轮，`pi-session-fork` 树，基 `deps/pi-1.2.0` `2948a05`，**已 `--no-ff` 合入候选 `release-candidate-validation`；未 push / 未 tag / 未打包**）
 

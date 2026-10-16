@@ -1,6 +1,6 @@
 # Pi SDK 1.2.0 → 1.3.0 升级（设计 + 验收）
 
-- 状态：**独立分支 `deps/pi-1.3.0` 已实施并本地验证中**（基发布树 `release-candidate-validation` `decb8eb`）；**未合入候选 / 未 push / 未 tag / 未打包，未改动已公开发布的 beta.24**。
+- 状态：**独立分支 `deps/pi-1.3.0` 已实施并完成本轮本地验证，待合入**（基发布树 `release-candidate-validation` `decb8eb`）；**未合入候选 / 未 push / 未 tag / 未打包，未改动已公开发布的 beta.24**。
 - 用户新授权：已完成只读审计后，用户已同意开展这次独立升级适配；本页取代审计报告中「本轮未授权」的旧口径。
 - 约束：不改 Pi 本体 / 不 fork / 不改 `node_modules` 内上游文件 / 不 monkeypatch 私有接口；兼容逻辑只放自有 `pi-adapter` 与 `packages/ext-*`，只走公开 API；三个直连包**精确 pin**。
 - 上游来源：npm `latest` = 1.3.0（publish `2026-10-15T19:13:30Z`），GitHub tag `v1.3.0` CHANGELOG 同一版本；三个包 `pi-coding-agent` / `pi-ai` / `pi-mcp` 同版。`main` 的 `[Unreleased]` 为空，不按 main 走。
@@ -10,7 +10,7 @@
 - `packages/server/package.json`：`@earendil-works/pi-coding-agent` / `pi-ai` / `pi-mcp` 由 `^1.2.0` 改为**精确 `1.3.0`**（对齐上游 1.3.0 起对内部 Pi 依赖的精确 pin，#10865；避免无 lock 的 fresh install 静默混入下一个 minor）。
 - `scripts/pi-update.mjs`：`bump` 用 `npm install --save-exact`，以后升级都写精确版本；`testedWith` 仍只在 `finalize`（测试通过后）改写，bump 只写 `target`。
 - `package-lock.json` 差异**逐条审阅**：只涉及 7 个 `@earendil-works/*` 条目（`pi-agent-core` / `pi-ai` / `pi-codemode` / `pi-coding-agent` / `pi-mcp` / `pi-telemetry` / `pi-tui` 1.2.0→1.3.0）+ `packages/server` 的 3 条 spec 变精确；integrity 与 npm registry 值一致；**无新增其它依赖、无密钥文件**。上游 1.3.0 起把内部 Pi 依赖从 `^1.x` 改成精确 `1.3.0`（锁文件可见）。
-- `third-party.json` / `THIRD_PARTY_NOTICES.md` 由脚本同步到 1.3.0；`compat.json` 先为 `{ "testedWith": "1.2.0", "target": "1.3.0" }`，本轮定向 + 全量验证通过后已由 `node scripts/pi-update.mjs finalize` 提升为 `{ "testedWith": "1.3.0" }`（`check:pi` = `Pi 已安装 1.3.0 · 兼容基线 1.3.0 · npm 最新 1.3.0`）。`SessionManager.CURRENT_SESSION_VERSION` 仍为 3，会话 JSONL 无需迁移。
+- `third-party.json` / `THIRD_PARTY_NOTICES.md` 由脚本同步到 1.3.0；`compat.json` 先为 `{ "testedWith": "1.2.0", "target": "1.3.0" }`，本轮定向通过、全量无新增失败（仍有一项已复现的基线失败）后已由 `node scripts/pi-update.mjs finalize` 提升为 `{ "testedWith": "1.3.0" }`（`check:pi` = `Pi 已安装 1.3.0 · 兼容基线 1.3.0 · npm 最新 1.3.0`）。`SessionManager.CURRENT_SESSION_VERSION` 仍为 3，会话 JSONL 无需迁移。
 
 ## 2. 公开 API 面差异（对已安装包实测 `.d.ts`）
 
@@ -71,8 +71,8 @@ Node 24.19.0（`/Users/dengdeng/.local/node-v24.19.0/bin/node`，未系统升级
 | `npm run typecheck`（server + apps/web） | exit 0 |
 | 1.2 兼容面定向（`pi-compat` / `pi-events-union` / `pi-mcp-1.2` / `pi-1.2-boot-context` / `pi-1.2-custom-provider` / `pi-sdk-boundary`） | **19/19** |
 | 受影响面（`tool-discovery` / `session-fork` / `pi-entry-mapping` / `theme-ai` / `context-skill-pick-http` / `model-registry` / `thinking-levels` / `subagent-thinking-options` / `skill-assignments` / `mcp` / `mcp-install` / `model-picks`） | **70/70** |
-| 新增 1.3 回归（`pi-1.3-tool-restore` / `pi-1.3-codemode-limit` / `pi-1.3-providers` / `pi-1.3-tool-args`） | **14/14**（见上各条实测） |
-| `npm run check:pi` | `Pi 已安装 1.3.0 · 兼容基线 1.2.0 · npm 最新 1.3.0`（提示待验证升级目标） |
+| 新增 1.3 回归（`pi-1.3-tool-restore` / `pi-1.3-codemode-limit` / `pi-1.3-providers` / `pi-1.3-tool-args`） | **12/12**（7+1+3+1；主会话独立重跑，0 fail / 0 skip，约 29.4 秒；更正初报的 14/14） |
+| `npm run check:pi` | finalize 前基线仍为 1.2.0 并提示待验证；finalize 后已核验安装版本 / 兼容基线 / 当次 npm latest 均为 1.3.0 |
 | `npm run build -w apps/web` | `vite build` 通过（1255.88 kB 主包） |
 | 全量 `npm test`（769 项） | **758 过 / 1 失败 / 10 跳过**；唯一失败 `shared-computer 合并脚本` 是 macOS bsdtar 不支持 `--skip-old-files` 的**既有基线**（发布树 `decb8eb` 上同样失败），**1.3.0 无新增失败** |
 
@@ -83,4 +83,4 @@ Node 24.19.0（`/Users/dengdeng/.local/node-v24.19.0/bin/node`，未系统升级
 - H6 的「切换模型后旧 thinking 不进 provider payload」未在 payload 层直接断言（属 `pi-ai` 内部；本轮只验证档位目录与既有测试无回归）。
 - H4 的「取消后 worker 实际退出」官方描述针对 Bun，Node 下由 SDK 计数保证；本轮验证了上限与错误可读性，未测取消后的额度回收时长。
 - 官方安全公告未取（GitHub API 限流）——**「未提到 CVE」不等于「无漏洞」**，升级不以「安全紧急」为由。
-- 未 push / 未 tag / 未打包；`compat.json` 已 `finalize` 为 `{ "testedWith": "1.3.0" }`（定向 + 全量通过后提升，完整 e2e / 真机仍属未验边界）。
+- 未 push / 未 tag / 未打包；`compat.json` 已 `finalize` 为 `{ "testedWith": "1.3.0" }`（定向通过、全量无新增失败后提升；全量仍有一项既有基线失败，完整 e2e / 真机仍属未验边界）。
