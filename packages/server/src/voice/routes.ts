@@ -6,11 +6,22 @@
  * 幂等只在 completed 返回、错误脱敏。**不**接受远程 URL / 本地路径 / 任意 ffmpeg 输入。
  */
 import type { Context, Hono, Next } from "hono";
-import { ASR_ERRORS, ASR_MAX_BYTES, ASR_MAX_DURATION_MS, type AsrEndpoint, type AsrRequest } from "./contract.ts";
+import { ASR_ERRORS, ASR_MAX_BYTES, ASR_MAX_DURATION_MS, type AsrEndpoint, type AsrRequest, type AsrSource, type AsrSourceOption } from "./contract.ts";
 import { createAsrService, validateAsrAudio, type AsrOutcome, type AsrService } from "./asr.ts";
+import { parseAsrSourceBody } from "./source.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: 与 http.ts 一致的挂载风格
 type AnyHono = Hono<any>;
+
+/** 显式语音来源的读写访问（生产由 voice/index.ts 注入；不注入则不挂来源路由、也不做来源校验）。 */
+export interface VoiceSourceAccess {
+	/** 当前显式来源；`null` = 未配置。只读，不启动 / 不下载 / 不连云。 */
+	read: () => AsrSource | null;
+	/** 归一化候选（含 availability / reason），只读元数据。 */
+	options: () => AsrSourceOption[];
+	/** 校验并写入；未知 / 未配置的 provider-model 抛带 code / status 的错误（不落库）。 */
+	write: (next: AsrSource | null) => void;
+}
 
 export interface VoiceRouteDeps {
 	/** 解析 provider/model → 端点；由注册表 + 公开凭据接口提供（不在此模块解析 key）。 */
@@ -21,13 +32,44 @@ export interface VoiceRouteDeps {
 	/** 录音租约：录音期间持有，避免本地 ASR 被 idle 卸载（不传则不挂租约路由）。 */
 	acquireLease?: (provider: string, model: string) => Promise<{ ok: true; leaseId: string } | { ok: false; code: string; status: number; message: string }>;
 	releaseLease?: (leaseId: string) => void;
+	/** 显式来源（用户已确认的产品行为）；传了就必须按它授权转写 / 租约，缺失或过期一律 fail-closed。 */
+	source?: VoiceSourceAccess;
 }
+
+/** 来源访问的稳定错误形状（voice/index.ts 的 AsrSourceError 兼容）。 */
+const asError = (e: unknown): { code: string; status: number; message: string } => {
+	const x = e as { code?: unknown; status?: unknown; message?: unknown };
+	return {
+		code: typeof x?.code === "string" ? x.code : ASR_ERRORS.invalidSource,
+		status: typeof x?.status === "number" ? x.status : 400,
+		message: typeof x?.message === "string" ? x.message : String(e),
+	};
+};
 
 /** multipart 解析前的粗上限：正文（含表单头）不得超过音频上限 + 64 KB。 */
 const BODY_OVERHEAD = 64 * 1024;
 
 export function mountVoiceRoutes(app: AnyHono, deps: VoiceRouteDeps, service?: AsrService) {
 	const svc = service ?? createAsrService({ resolve: deps.resolve, fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs, now: deps.now });
+
+	/**
+	 * 按**显式来源**授权一次转写 / 租约请求（用户要求：不能 source=local 时让过期客户端把云端当默认上传）。
+	 * 返回 `null` 表示通过并给出要用的 provider/model；否则返回已经填好的错误响应。
+	 */
+	const authorize = (requested: { provider: string; model: string }): { error: Response } | { provider: string; model: string } => {
+		if (!deps.source) {
+			if (!requested.provider || !requested.model) return { error: Response.json({ error: ASR_ERRORS.notConfigured, message: "请先在设置里选择语音识别模型" }, { status: 400 }) };
+			return requested;
+		}
+		const src = deps.source.read();
+		if (!src) return { error: Response.json({ error: ASR_ERRORS.notConfigured, message: "请先在设置 › 语音配置里选择语音识别来源" }, { status: 409 }) };
+		if (!requested.provider && !requested.model) return { provider: src.provider, model: src.model };
+		if (requested.provider !== src.provider || requested.model !== src.model) {
+			const where = src.location === "local" ? "本地" : "云端";
+			return { error: Response.json({ error: ASR_ERRORS.sourceChanged, message: `语音识别来源已改为${where}（${src.provider}/${src.model}），请刷新后重试` }, { status: 409 }) };
+		}
+		return requested;
+	};
 
 	app.post("/api/audio/transcriptions", async (c) => {
 		const ct = c.req.header("content-type") ?? "";
@@ -49,14 +91,15 @@ export function mountVoiceRoutes(app: AnyHono, deps: VoiceRouteDeps, service?: A
 
 		const provider = String(form.get("provider") ?? "").trim();
 		const model = String(form.get("model") ?? "").trim();
-		if (!provider || !model) return c.json({ error: ASR_ERRORS.notConfigured, message: "请先在设置里选择语音识别模型" }, 400);
+		const auth = authorize({ provider, model });
+		if ("error" in auth) return auth.error;
 
 		const req: AsrRequest = {
-			provider,
-			model,
+			provider: auth.provider,
+			model: auth.model,
 			audio,
 			filename: "audio.wav",
-			requestId: String(form.get("requestId") ?? "").trim() || `${provider}:${model}:${Date.now()}`,
+			requestId: String(form.get("requestId") ?? "").trim() || `${auth.provider}:${auth.model}:${Date.now()}`,
 			language: String(form.get("language") ?? "").trim() || undefined,
 			agentId: String(form.get("agentId") ?? "").trim() || undefined,
 			conversationId: String(form.get("conversationId") ?? "").trim() || undefined,
@@ -71,10 +114,9 @@ export function mountVoiceRoutes(app: AnyHono, deps: VoiceRouteDeps, service?: A
 	app.post("/api/audio/asr/lease", async (c) => {
 		if (!deps.acquireLease) return c.json({ error: ASR_ERRORS.notConfigured, message: "当前没有可用的本地语音识别" }, 400);
 		const body = await c.req.json<{ provider?: string; model?: string }>().catch(() => ({}) as { provider?: string; model?: string });
-		const provider = String(body.provider ?? "").trim();
-		const model = String(body.model ?? "").trim();
-		if (!provider || !model) return c.json({ error: ASR_ERRORS.notConfigured, message: "缺少 provider / model" }, 400);
-		const out = await deps.acquireLease(provider, model);
+		const auth = authorize({ provider: String(body.provider ?? "").trim(), model: String(body.model ?? "").trim() });
+		if ("error" in auth) return auth.error;
+		const out = await deps.acquireLease(auth.provider, auth.model);
 		if (!out.ok) return c.json({ error: out.code, message: out.message }, out.status as 400);
 		return c.json({ leaseId: out.leaseId });
 	});
@@ -82,6 +124,24 @@ export function mountVoiceRoutes(app: AnyHono, deps: VoiceRouteDeps, service?: A
 		deps.releaseLease?.(c.req.param("id"));
 		return c.json({ ok: true });
 	});
+
+	// 显式来源（用户要求：云 / 本地显式切换，不自动挑源；未配置就是 null）。只挂在注入 source 的生产装配上。
+	if (deps.source) {
+		const view = (c: Context) => c.json({ source: deps.source!.read(), options: deps.source!.options() });
+		app.get("/api/audio/asr/source", (c) => view(c));
+		app.put("/api/audio/asr/source", async (c) => {
+			const body = await c.req.json<unknown>().catch(() => undefined);
+			const parsed = parseAsrSourceBody(body);
+			if (!parsed.ok) return c.json({ error: ASR_ERRORS.invalidSource, message: parsed.reason }, 400);
+			try {
+				deps.source!.write(parsed.source);
+			} catch (e) {
+				const err = asError(e);
+				return c.json({ error: err.code, message: err.message }, err.status as 400);
+			}
+			return view(c);
+		});
+	}
 
 	// 契约常量给前端用（上限、协议），避免前端硬编码漂移。
 	app.get("/api/audio/asr/config", (c) => c.json({ maxDurationMs: ASR_MAX_DURATION_MS, maxBytes: ASR_MAX_BYTES, protocol: "openai-audio-transcriptions" }));

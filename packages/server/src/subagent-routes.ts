@@ -5,7 +5,7 @@ import { getAgent, runtime } from "./runtime.ts";
 import { toMessage, type MessageRow } from "./messages.ts";
 import { providerNames, defaultThinking } from "./models.ts";
 import { configuredModels } from "./rooms/model-pick.ts";
-import { agentSubagentPool, agentSubagentThinking, applyLiveSubagentThinking, getSubagent, isLiveSubagent, listSubagents, resolveSubagentThinking, resumeSubagent, saveAgentSubagentPool, saveAgentSubagentChoice, saveAgentSubagentThinking, saveSubagentSettings, sendSubagentMessage, setSubagentThinkingOverride, spawnSubagent, stopSubagent, subagentSettings, withResumeInfo, type SubagentThinking, type SubagentSettingsInput } from "./subagents.ts";
+import { agentSubagentPool, agentSubagentSettingsDto, agentSubagentThinking, applyLiveSubagentThinking, getSubagent, isLiveSubagent, listSubagents, resolveSubagentThinking, resumeSubagent, saveAgentSubagentPool, saveAgentSubagentChoice, saveAgentSubagentThinking, saveAgentSubagentLimits, saveSubagentSettings, sendSubagentMessage, setSubagentThinkingOverride, spawnSubagent, stopSubagent, subagentSettings, withResumeInfo, type SubagentThinking, type SubagentSettingsInput, type SubagentLimitsInput } from "./subagents.ts";
 
 /** 子代理行 + 恢复摘要 + 实际生效的思考强度（已按模型收敛） */
 const withThinking = (r: ReturnType<typeof getSubagent>) => {
@@ -21,6 +21,26 @@ export function mountSubagentRoutes(app: Hono<any>) {
 	app.put("/api/subagents/settings", async (c) => {
 		try { return c.json(saveSubagentSettings(await c.req.json<SubagentSettingsInput>())); }
 		catch (e) { return c.json({ error: String(e) }, 400); }
+	});
+	// 助理级子代理上限（并发 / 最长运行）：只读写该助理自己的独立键，不在旧全局接口里暴露（避免误以为改的是全局）。
+	app.get("/api/agents/:id/subagents/settings", (c) => {
+		const id = c.req.param("id");
+		if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
+		return c.json(agentSubagentSettingsDto(id));
+	});
+	app.put("/api/agents/:id/subagents/settings", async (c) => {
+		const id = c.req.param("id");
+		if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
+		const body = await c.req.json<unknown>().catch(() => undefined);
+		// 严格入参：只认 maxConcurrent / maxMinutes（number 或 null），未知字段一律拒绝，不落库
+		if (!body || typeof body !== "object" || Array.isArray(body)) return c.json({ error: "请求体必须是 JSON 对象" }, 400);
+		const b = body as Record<string, unknown>;
+		const extra = Object.keys(b).filter((k) => k !== "maxConcurrent" && k !== "maxMinutes");
+		if (extra.length) return c.json({ error: `不认识的字段：${extra.join("、")}` }, 400);
+		const bad = (["maxConcurrent", "maxMinutes"] as const).find((k) => k in b && b[k] !== null && typeof b[k] !== "number");
+		if (bad) return c.json({ error: `${bad} 必须是数字或 null` }, 400);
+		try { return c.json(saveAgentSubagentLimits(id, b as SubagentLimitsInput)); }
+		catch (e) { return c.json({ error: e instanceof Error ? e.message : String(e) }, 400); }
 	});
 	app.get("/api/agents/:id/subagent-model", (c) => c.json({ pool: agentSubagentPool(c.req.param("id")) }));
 	app.put("/api/agents/:id/subagent-model", async (c) => {

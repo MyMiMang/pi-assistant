@@ -32,8 +32,48 @@ export const ASR_ERRORS = {
 	upstream: "asr_upstream_error",
 	aborted: "asr_aborted",
 	busy: "asr_busy",
+	/** PUT 来源时 provider / model 不在已声明（或已配置）的 ASR 列表里 */
+	notDeclared: "asr_not_declared",
+	/** 请求带的 provider / model 与当前显式来源不一致（旧 UI 过期状态） */
+	sourceChanged: "voice_source_changed",
+	/** PUT 来源的 JSON 形状不合法（未知字段 / 类型不对），不落库 */
+	invalidSource: "asr_invalid_source",
 } as const;
 export type AsrErrorCode = (typeof ASR_ERRORS)[keyof typeof ASR_ERRORS];
+
+/** 用户显式选择的语音识别来源（**单一全局用户偏好**）：`null` = 未配置，绝不自动挑第一个云端。 */
+export interface AsrSource {
+	location: "cloud" | "local";
+	provider: string;
+	model: string;
+}
+
+/**
+ * 来源可用性的归一化状态：**只有 `ready` 表示现在就能用**，其余一律带 `reason`（可直接显示的中文）。
+ * 未安装的本地模型也允许被显式选择（先把「用本地」的意图存下来），但可用性必须如实标 `not_installed`。
+ */
+export type AsrSourceAvailability = "ready" | "not_configured" | "not_installed" | "not_running" | "deleted";
+
+/** 语音配置页的一个候选项（`GET /api/audio/asr/source` 的 `options`）。只含元数据，不含 Key / token。 */
+export interface AsrSourceOption {
+	location: "cloud" | "local";
+	provider: string;
+	model: string;
+	/** 界面显示名（「中文功能名（模型名）」口径） */
+	name: string;
+	protocol: string;
+	availability: AsrSourceAvailability;
+	/** `availability !== "ready"` 时的中文原因；ready 时为 null */
+	reason: string | null;
+	/** 是否等于当前已保存的 `source` */
+	selected: boolean;
+}
+
+/** 语音来源的完整视图：当前选择 + 归一化的候选列表。 */
+export interface AsrSourceView {
+	source: AsrSource | null;
+	options: AsrSourceOption[];
+}
 
 /** 客户端提交的转写请求（路由层解析 multipart 后得到；音频只在内存里）。 */
 export interface AsrRequest {
