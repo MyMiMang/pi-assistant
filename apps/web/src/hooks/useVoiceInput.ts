@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { acquireAsrLease, getVoiceSource, onVoiceSourceChanged, releaseAsrLease, transcribeAudio, type VoiceSource, type VoiceSourceOption } from "../api";
-import { VoiceInputController, voiceCapability, type VoiceError, type VoiceResult, type VoiceState } from "../voice-input";
+import { VoiceInputController, voiceCapability, type VoiceError, type VoiceProgress, type VoiceResult, type VoiceSegment, type VoiceState } from "../voice-input";
 
 const WORKLET_SRC = `class PiaCapture extends AudioWorkletProcessor {
 	process(inputs) {
@@ -91,6 +91,8 @@ export interface UseVoiceInputOptions {
 	/** 开始录制时取光标锚点。 */
 	getAnchor: () => number;
 	onResult: (r: VoiceResult) => void;
+	/** 增量模式（本地 ASR）下每段确认后回调（按序）。 */
+	onSegment?: (s: VoiceSegment) => void;
 }
 
 export interface UseVoiceInput {
@@ -107,6 +109,12 @@ export interface UseVoiceInput {
 	/** 来源读取失败（接口暂不可用）：按钮按未配置处理，但不伪造选择。 */
 	sourceUnavailable: boolean;
 	active: boolean;
+	/** 真实音量（0..1，已平滑限频）。 */
+	level: number;
+	/** 分段进度（等待 / 在途 / 失败 / 积压）。 */
+	progress: VoiceProgress;
+	/** 增量模式下重试失败段（只重发失败的，已完成的绝不重传）。 */
+	retryFailed: () => void;
 	toggle: () => void;
 	start: () => void;
 	stop: () => void;
@@ -124,6 +132,8 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 	const [sourceUnavailable, setSourceUnavailable] = useState(false);
 	const [asrModel, setAsrModel] = useState<VoiceSourceOption | null>(null);
 	const [capability, setCapability] = useState(() => voiceCapability({ mediaDevices: typeof navigator !== "undefined" ? navigator.mediaDevices : null, isSecureContext: typeof window !== "undefined" ? window.isSecureContext : true }));
+	const [level, setLevel] = useState(0);
+	const [progress, setProgress] = useState<VoiceProgress>({ pending: 0, inflight: 0, failed: 0, backlog: false });
 
 	const optsRef = useRef(opts);
 	optsRef.current = opts;
@@ -196,7 +206,11 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 						if (s === "finish" || s === "error" || s === "idle") endLease();
 					},
 					onResult: (r) => optsRef.current.onResult(r),
+					onSegment: (s) => optsRef.current.onSegment?.(s),
 					onError: (e) => setError(e),
+					onLevel: (v) => setLevel(v),
+					onProgress: (p) => setProgress(p),
+					onNoSpeech: () => setError({ code: "asr_no_speech", message: "没有听到声音，请靠近麦克风再说一次" }),
 				},
 			),
 		[],
@@ -212,6 +226,17 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		};
 		document.addEventListener("visibilitychange", onHide);
 		return () => document.removeEventListener("visibilitychange", onHide);
+	}, [controller]);
+
+	// 语音来源被改（另一个页面 / 设置页保存）：正在录音就立即停轨道 + 取消，避免把旧来源的请求串到新会话。
+	useEffect(() => {
+		const off = onVoiceSourceChanged(() => {
+			if (controller.isActive()) {
+				controller.cancel();
+				endLease();
+			}
+		});
+		return off;
 	}, [controller]);
 
 	// 组件卸载：释放麦克风与录音租约。
@@ -241,10 +266,14 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		}
 		// 本地 ASR：先拿录音租约（边录边加载）；云端不需要。
 		if (asrModel.location === "local") beginLease(asrModel.provider, asrModel.model);
-		void controller.start({ provider: asrModel.provider, model: asrModel.model, agentId: optsRef.current.agentId, conversationId: optsRef.current.conversationId, anchor: optsRef.current.getAnchor() });
+		void controller.start({ provider: asrModel.provider, model: asrModel.model, agentId: optsRef.current.agentId, conversationId: optsRef.current.conversationId, anchor: optsRef.current.getAnchor(), incremental: asrModel.location === "local" });
 	}, [capability.available, capability.reason, source, asrModel, sourceUnavailable, controller]);
 
 	const dismissError = useCallback(() => setError(null), []);
+	const retryFailed = useCallback(() => {
+		setError(null);
+		void controller.retryFailed();
+	}, [controller]);
 	const cancel = useCallback(() => {
 		controller.cancel();
 		endLease();
@@ -266,6 +295,9 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		source,
 		sourceUnavailable,
 		active: controller.isActive(),
+		level,
+		progress,
+		retryFailed,
 		toggle: () => (controller.isActive() ? void controller.stop() : start()),
 		start,
 		stop: () => void controller.stop(),
