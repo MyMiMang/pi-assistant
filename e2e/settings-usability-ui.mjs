@@ -130,7 +130,8 @@ async function newPage(browser, state, { width = 1440, height = 900 } = {}) {
 		if (p === "/api/host-control" && req.method() === "GET") {
 			const g = gate("host");
 			if (g) return g;
-			return json(HOST_OK());
+			const base = HOST_OK();
+			return json(state.hostSaved ? { ...base, settings: { ...base.settings, ...state.hostSaved } } : base);
 		}
 		if (p === "/api/host-control/plan") return json({ yaml: "agents: all\napps: []", hash: "h1" });
 		if (p === "/api/host-control/apps") return json([]);
@@ -145,6 +146,7 @@ async function newPage(browser, state, { width = 1440, height = 900 } = {}) {
 			return json({ approvals: state.sandbox ?? "none" });
 		}
 		if (p === "/api/desktop" && req.method() === "PUT") {
+			if (state.desktopPutFail) return json({ error: "boom", message: "模拟保存失败" }, 500);
 			const body = JSON.parse(req.postData() ?? "{}");
 			state.desktopSaved = body;
 			return json({ ...DESKTOP_OK(), settings: { ...DESKTOP_OK().settings, ...body } });
@@ -176,7 +178,7 @@ async function newPage(browser, state, { width = 1440, height = 900 } = {}) {
 	});
 	const page = await ctx.newPage();
 	page.setDefaultTimeout(15_000);
-	return { ctx, page };
+	return { ctx, page, state };
 }
 
 async function open(page, key) {
@@ -261,7 +263,103 @@ try {
 		await ctx.close();
 	}
 
-	console.log("\n── Test A 完成 ──");
+	console.log("\n── B 助理自己的电脑：只在助理电脑页 + 三档保存刷新 ──");
+	{
+		const state = { sandbox: "none" };
+		const { ctx, page } = await newPage(browser, state);
+		await open(page, "computer");
+		await page.getByTestId("sandbox-approvals").waitFor();
+		check("助理电脑页出现 sandbox-approvals", await page.getByTestId("sandbox-approvals").isVisible());
+		await page.getByTestId("sandbox-approvals").getByRole("radio").nth(1).click();
+		await page.waitForTimeout(200);
+		check("选择后 PUT 写回（语义不变）", state.sandbox === "sensitive", String(state.sandbox));
+		await page.reload();
+		await page.getByTestId("sandbox-approvals").waitFor();
+		check("刷新后仍是所选档位", await page.getByTestId("sandbox-approvals").getByRole("radio").nth(1).isChecked());
+		await page.screenshot({ path: join(OUT, "B-computer-sandbox.png") });
+		await open(page, "host");
+		await page.getByTestId("host-settings").waitFor();
+		check("操作这台电脑页不再出现 sandbox-approvals", (await page.getByTestId("sandbox-approvals").count()) === 0);
+		await ctx.close();
+	}
+
+	console.log("\n── C 模型服务计数 + ASR 文案 ──");
+	{
+		const { ctx, page } = await newPage(browser, {});
+		await open(page, "models");
+		await page.getByTestId("model-services").waitFor();
+		const cards = await page.locator('[data-testid="service-card"]').count();
+		const badge = (await page.getByTestId("model-services-toggle").locator("span.rounded-full").innerText()).trim();
+		check(`折叠计数 = 实际卡片数（${badge} / ${cards}）`, badge === String(cards), `badge=${badge} cards=${cards}`);
+		check("搜索占位同一口径", (await page.getByTestId("service-search").getAttribute("placeholder")) === `搜索 ${cards} 个模型服务…`);
+		await page.getByTestId("service-toggle-openai").click();
+		await page.getByTestId("asr-adapter-section-openai").waitFor();
+		const asr = page.getByTestId("asr-adapter-section-openai");
+		const asrText = await asr.innerText();
+		check("ASR 空态为短句「尚未添加语音模型」", asrText.includes("尚未添加语音模型"), asrText.replace(/\n/g, " "));
+		check("删掉底部重复灰字", !asrText.includes("声明只表示"));
+		check("ASR 小节只留一处 Help", (await asr.getByTestId("help").count()) === 1, String(await asr.getByTestId("help").count()));
+		check("保留协议选择", (await page.getByTestId("asr-protocol-openai").count()) === 1);
+		check("保留模型选择/输入", (await asr.locator('[data-testid^="asr-model"]').count()) >= 1);
+		await page.screenshot({ path: join(OUT, "C-model-services.png") });
+		await ctx.close();
+	}
+
+	console.log("\n── D 关闭态保存反馈 + 计划 → ack → 确认 ──");
+	{
+		const state = { host: "ok" };
+		const { ctx, page } = await newPage(browser, state);
+		await open(page, "host");
+		await page.getByTestId("host-settings").waitFor();
+		await page.getByTestId("default-tier-trusted").click();
+		await page.getByTestId("host-autosave").waitFor();
+		check("关闭态自动保存文案为草稿", (await page.getByTestId("host-autosave").innerText()).includes("已保存草稿（未开启）"));
+		await page.getByTestId("host-review").click();
+		await page.getByTestId("host-manifest").waitFor();
+		check("仍走权限计划", await page.getByTestId("host-manifest").isVisible());
+		await page.getByTestId("host-ack").check();
+		await page.getByTestId("host-enable").click();
+		await page.getByTestId("host-msg").waitFor();
+		check("ack 后确认开启成功", /已开启/.test(await page.getByTestId("host-msg").innerText()));
+		await ctx.close();
+	}
+
+	console.log("\n── E 下载来源折叠 ──");
+	{
+		const a = await newPage(browser, {});
+		await open(a.page, "computer");
+		await a.page.getByTestId("desktop-settings").waitFor();
+		check("无自定义值时默认收起", !(await a.page.getByTestId("desktop-download-source").evaluate((el) => el.open)) && !(await a.page.getByTestId("desktop-mirror").isVisible()));
+		await a.ctx.close();
+
+		const b = await newPage(browser, { mirror: "ghcr.nju.edu.cn" });
+		await open(b.page, "computer");
+		await b.page.getByTestId("desktop-mirror").waitFor();
+		check("有自定义值时自动展开且值回填", (await b.page.getByTestId("desktop-mirror").inputValue()) === "ghcr.nju.edu.cn");
+		await b.page.getByTestId("desktop-download-source").scrollIntoViewIfNeeded();
+		await b.page.screenshot({ path: join(OUT, "E-download-source-open.png") });
+		await b.ctx.close();
+
+		const c = await newPage(browser, { mirror: "ghcr.nju.edu.cn", desktopPutFail: true });
+		await open(c.page, "computer");
+		await c.page.getByTestId("desktop-mirror").waitFor();
+		await c.page.getByTestId("desktop-mirror").fill("ghcr.nju.edu.cn/alt");
+		await c.page.locator('xpath=//input[@data-testid="desktop-mirror"]/following-sibling::button').click();
+		await c.page.getByText("模拟保存失败").waitFor();
+		check("保存失败显示错误、不崩", await c.page.getByTestId("desktop-settings").isVisible());
+		check("保存失败不改动已存值", c.state.desktopSaved === undefined, JSON.stringify(c.state.desktopSaved));
+		await c.ctx.close();
+
+		const d = await newPage(browser, { mirror: "ghcr.nju.edu.cn" }, { width: 390, height: 844 });
+		await open(d.page, "computer");
+		await d.page.getByTestId("desktop-settings").waitFor();
+		const ov = await d.page.evaluate(() => ({ doc: document.documentElement.scrollWidth, vw: innerWidth, c: (() => { const el = document.querySelector("[data-testid=settings-content]"); return el.scrollWidth - el.clientWidth; })() }));
+		check("390 窄屏详情展开不横向溢出", ov.doc <= ov.vw && ov.c <= 1, JSON.stringify(ov));
+		await d.page.screenshot({ path: join(OUT, "E-download-source-390.png") });
+		await d.ctx.close();
+	}
+
+	console.log("\n── 全部完成 ──");
 } catch (e) {
 	failed++;
 	console.error("  ❌ 运行异常", e?.stack ?? e);
