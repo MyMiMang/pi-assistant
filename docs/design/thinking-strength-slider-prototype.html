@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="zh-CN" data-skin="linear" data-mode="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>思考强度滑块 · 交互设计稿</title>
+<!--
+  交互设计稿，不调用模型、不连网络、无外部依赖。
+  数据全部是假的（MOCKS），档位来自 Pi SDK 的 getSupportedThinkingLevels 语义，这里只用模拟样本演示。
+  样式全部走主题 token（--acc / --line / --r / --font …），JS 不写死颜色，DIY 主题也能沿用。
+-->
+<style>
+/* =========================================================================
+   主题 token（与产品 themes/<id>.css 的约定一致：--bg --card --fg --mut --line
+   --hover --acc --acc-soft --r --font 以及动效强度 --mo-scale / --mo-ease）
+   这里只为设计稿内置 5 个样本主题 + 1 个 DIY fallback；实际产品里由主题 CSS 提供。
+   ========================================================================= */
+:root{
+  --bg:#0a0a0a;--card:#111111;--fg:#ededed;--mut:#a1a1a1;--mut2:#6b6b6b;
+  --line:#1f1f1f;--line-strong:#333;--hover:#1a1a1a;--acc:#5b7cff;--acc2:#5b7cff;
+  --acc-soft:rgba(91,124,255,.12);--r:10px;--r-sm:6px;
+  --font:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:"SF Mono",ui-monospace,Menlo,monospace;
+  --mo-scale:1;--mo-ease:cubic-bezier(.2,.7,.2,1);--mo-shape:1;--mo-glow:1;
+}
+[data-skin="linear"][data-mode="light"]{--bg:#ffffff;--card:#ffffff;--fg:#0a0a0a;--mut:#525252;--mut2:#8f8f8f;--line:#ebebeb;--line-strong:#d4d4d4;--hover:#f2f2f2;--acc:#3d5afe;--acc-soft:rgba(61,90,254,.08);--mo-scale:1;--mo-ease:cubic-bezier(.2,.7,.2,1);--mo-glow:0}
+[data-skin="linear"][data-mode="dark"]{--bg:#0a0a0a;--card:#111111;--fg:#ededed;--mut:#a1a1a1;--mut2:#6b6b6b;--line:#1f1f1f;--line-strong:#333;--hover:#1a1a1a;--acc:#5b7cff;--acc-soft:rgba(91,124,255,.12);--mo-scale:1;--mo-ease:cubic-bezier(.2,.7,.2,1);--mo-glow:0}
+[data-skin="glass"][data-mode="light"]{--bg:#eef1f8;--card:rgba(255,255,255,.62);--fg:#1d1d1f;--mut:#4b4b55;--mut2:#8a8a96;--line:rgba(255,255,255,.75);--line-strong:rgba(0,0,0,.08);--hover:rgba(255,255,255,.6);--acc:#0a84ff;--acc-soft:rgba(10,132,255,.12);--r:16px;--mo-scale:1.18;--mo-ease:cubic-bezier(.4,.1,.2,1);--mo-glow:1.6}
+[data-skin="glass"][data-mode="dark"]{--bg:#0b0d1a;--card:rgba(60,62,84,.42);--fg:#f5f5f7;--mut:#c7c7d1;--mut2:#8b8ba0;--line:rgba(255,255,255,.1);--line-strong:rgba(255,255,255,.22);--hover:rgba(255,255,255,.08);--acc:#409cff;--acc-soft:rgba(64,156,255,.18);--r:16px;--mo-scale:1.18;--mo-ease:cubic-bezier(.4,.1,.2,1);--mo-glow:1.8}
+[data-skin="warm"][data-mode="light"]{--bg:#f7f3ea;--card:#fffcf6;--fg:#2a251f;--mut:#5f564b;--mut2:#9a8f80;--line:#e4dccd;--line-strong:#cfc4b1;--hover:#ebe4d6;--acc:#b5532c;--acc2:#5f8a5a;--acc-soft:rgba(181,83,44,.08);--r:12px;--mo-scale:1.1;--mo-ease:ease-in-out;--mo-glow:.6}
+[data-skin="warm"][data-mode="dark"]{--bg:#1c1915;--card:#27231d;--fg:#ede5d6;--mut:#bfb3a1;--mut2:#857a6b;--line:#363027;--line-strong:#4a4236;--hover:#2d2821;--acc:#e0895b;--acc2:#8fb987;--acc-soft:rgba(224,137,91,.12);--r:12px;--mo-scale:1.1;--mo-ease:ease-in-out;--mo-glow:.6}
+[data-skin="pixel"][data-mode="light"]{--bg:#fbf7ef;--card:#fffdf8;--fg:#3a3340;--mut:#6b6070;--mut2:#9c93a3;--line:#e6dccb;--line-strong:#cdbfae;--hover:#f0e8da;--acc:#6fc7b2;--acc2:#f2b8c6;--acc-soft:rgba(111,199,178,.16);--r:10px;--mono:"SF Mono",ui-monospace,Menlo,monospace;--mo-scale:.86;--mo-ease:steps(3,end);--mo-glow:.4}
+[data-skin="pixel"][data-mode="dark"]{--bg:#181524;--card:#241f33;--fg:#f0ecf7;--mut:#c0b8d4;--mut2:#8b83a3;--line:#332c45;--line-strong:#463d5c;--hover:#2a2438;--acc:#c3b6f0;--acc2:#8fd3c1;--acc-soft:rgba(195,182,240,.16);--r:10px;--mono:"SF Mono",ui-monospace,Menlo,monospace;--mo-scale:.86;--mo-ease:steps(3,end);--mo-glow:.4}
+[data-skin="noir"][data-mode="light"]{--bg:#f4f4f6;--card:#ffffff;--fg:#0c0c10;--mut:#52525b;--mut2:#8b8b95;--line:rgba(0,0,0,.08);--line-strong:rgba(0,0,0,.18);--hover:rgba(0,0,0,.04);--acc:#6a57ff;--acc2:#0fb894;--acc-soft:rgba(106,87,255,.09);--mo-scale:.94;--mo-ease:cubic-bezier(.3,0,.2,1);--mo-glow:.8}
+[data-skin="noir"][data-mode="dark"]{--bg:#09090b;--card:#121216;--fg:#f4f4f5;--mut:#a1a1aa;--mut2:#63636e;--line:rgba(255,255,255,.07);--line-strong:rgba(255,255,255,.16);--hover:rgba(255,255,255,.045);--acc:#8b7bff;--acc2:#4fe3c1;--acc-soft:rgba(139,123,255,.12);--mo-scale:.94;--mo-ease:cubic-bezier(.3,0,.2,1);--mo-glow:1.4}
+/* DIY / 自定义主题：不内置配色，用 token fallback（--user-acc / --user-r），沿用字体与边框 */
+[data-skin="custom"]{--acc:var(--user-acc,#5b7cff);--acc2:var(--user-acc2,#4fe3c1);--acc-soft:color-mix(in srgb,var(--acc) 14%,transparent);--r:var(--user-r,12px);--mo-scale:var(--user-mo,1);--mo-glow:1}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);-webkit-font-smoothing:antialiased;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 18px 64px}
+
+/* ---------- 顶部：设计稿声明 + 演示控件 ---------- */
+.banner{border:1px dashed var(--line-strong);background:var(--hover);border-radius:var(--r);padding:8px 12px;font-size:12px;color:var(--mut);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.banner b{color:var(--fg)}
+.banner .tag{font-family:var(--mono);font-size:11px;border:1px solid var(--line-strong);border-radius:999px;padding:1px 8px;color:var(--mut)}
+h1{font-size:20px;margin:18px 0 6px}
+.lede{color:var(--mut);font-size:13px;max-width:820px;margin:0 0 16px}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;background:var(--card)}
+.ctl{display:flex;flex-direction:column;gap:4px}
+.ctl label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2);font-family:var(--mono)}
+.ctl select,.ctl input[type="text"]{background:var(--bg);color:var(--fg);border:1px solid var(--line-strong);border-radius:var(--r-sm);padding:5px 8px;font-size:12px;font-family:var(--font)}
+.ctl input[type="color"]{width:44px;height:28px;padding:1px;background:var(--bg);border:1px solid var(--line-strong);border-radius:var(--r-sm)}
+.seg{display:flex;border:1px solid var(--line-strong);border-radius:var(--r-sm);overflow:hidden}
+.seg button{background:transparent;color:var(--mut);border:0;padding:6px 10px;font-size:12px;cursor:pointer;font-family:var(--font)}
+.seg button[aria-pressed="true"]{background:var(--acc);color:#fff}
+.spacer{flex:1 1 auto}
+
+/* ---------- 舞台：模拟输入栏 + popover ---------- */
+.stage{display:flex;gap:24px;flex-wrap:wrap;margin-top:18px;align-items:flex-start}
+.device{width:390px;max-width:100%;border:1px solid var(--line);border-radius:calc(var(--r) + 6px);background:var(--bg);position:relative;box-shadow:0 18px 40px rgba(0,0,0,.18)}
+.device-head{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--mut)}
+.device-head .dot{width:8px;height:8px;border-radius:50%;background:var(--acc)}
+.thread{padding:14px 12px;min-height:320px;display:flex;flex-direction:column;gap:10px;background:var(--bg)}
+.bub{max-width:78%;border-radius:var(--r);padding:8px 11px;font-size:12.5px}
+.bub.me{align-self:flex-end;background:var(--acc-soft);color:var(--fg)}
+.bub.ai{align-self:flex-start;background:var(--card);border:1px solid var(--line);color:var(--mut)}
+.composer{margin:0 10px 10px;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--card);padding:8px;position:relative}
+.composer textarea{width:100%;border:0;background:transparent;color:var(--fg);font-family:var(--font);font-size:13px;resize:none;outline:none;min-height:38px}
+.composer-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 9px;border-radius:calc(var(--r) * .6);border:1px solid var(--line-strong);background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--font);cursor:pointer}
+.chip:hover{border-color:var(--acc)}
+.chip .caret{color:var(--mut2);font-size:10px}
+.chip .flake{width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 40% 38%,var(--acc),transparent 72%);border:1px solid var(--acc)}
+.send{margin-left:auto;height:30px;width:30px;border-radius:calc(var(--r) * .6);border:0;background:var(--acc);color:#fff;cursor:pointer}
+.hint{font-size:11px;color:var(--mut2)}
+
+/* popover 320 宽，390 视口内不溢出（JS 会再做一次边界收敛） */
+.pop{position:absolute;width:320px;max-width:calc(100% - 16px);z-index:40;background:var(--card);border:1px solid var(--line-strong);border-radius:var(--r);box-shadow:0 16px 44px rgba(0,0,0,.28);padding:12px}
+.pop[hidden]{display:none}
+.pop-head{display:flex;align-items:baseline;gap:8px;margin-bottom:2px}
+.pop-title{font-size:13px;font-weight:600}
+.pop-sub{font-size:11px;color:var(--mut2);font-family:var(--mono);margin-left:auto;text-align:right}
+.pop-cur{font-family:var(--font);font-size:12px;color:var(--fg);font-weight:600}
+.follow-row{margin:8px 0 2px}
+.follow{display:flex;align-items:center;gap:8px;width:100%;border:1px dashed var(--line-strong);border-radius:var(--r-sm);background:transparent;color:var(--mut);font-family:var(--font);font-size:12px;padding:7px 9px;cursor:pointer;text-align:left}
+.follow[aria-pressed="true"]{border-style:solid;border-color:var(--acc);color:var(--fg);background:var(--acc-soft)}
+.follow .fbadge{margin-left:auto;font-size:10.5px;font-family:var(--mono);color:var(--mut2)}
+.follow .tick{color:var(--acc);font-weight:700}
+
+.slider-wrap{margin-top:10px;padding-top:4px}
+.track{position:relative;height:52px;padding:0 22px}
+.track-inner{position:relative;height:52px}
+.rail{position:absolute;left:0;right:0;top:50%;height:3px;transform:translateY(-50%);background:var(--line);border-radius:2px}
+.fill{position:absolute;left:0;top:50%;height:3px;transform:translateY(-50%);width:calc(var(--pos) * 100%);background:linear-gradient(90deg,color-mix(in srgb,var(--acc) 45%,transparent),var(--acc));border-radius:2px}
+.tick{position:absolute;top:50%;left:calc(var(--i) * (100% / var(--n)));width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:var(--line-strong);border:1px solid transparent}
+.tick.hot{background:var(--acc)}
+.tick.dim{opacity:.45}
+.tick.nosup{background:transparent;border:1px dashed var(--mut2);width:7px;height:7px;margin:-3.5px 0 0 -3.5px}
+.tickbtn{position:absolute;top:0;left:calc(var(--i) * (100% / var(--n)) - 15px);width:30px;height:52px;border:0;background:transparent;cursor:pointer;padding:0}
+.tickbtn:focus-visible{outline:2px solid var(--acc);outline-offset:-4px;border-radius:8px}
+
+.handle{position:absolute;top:50%;left:calc(var(--pos) * 100%);width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;
+  background:radial-gradient(circle at 50% 42%,color-mix(in srgb,var(--acc) var(--e-pct,45%),transparent),transparent 72%),var(--card);
+  border:1.5px solid var(--acc);cursor:grab;touch-action:none;
+  transition:left calc(180ms * var(--mo-scale)) var(--mo-ease);
+  display:flex;align-items:center;justify-content:center;overflow:hidden;
+  box-shadow:0 0 calc(18px * var(--mo-glow)) color-mix(in srgb,var(--acc) 38%,transparent)}
+.handle:active{cursor:grabbing}
+.handle:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+.handle .hlabel{position:relative;z-index:2;font-size:13px;font-weight:700;color:var(--fg);font-family:var(--font)}
+.handle.following{border-style:dashed}
+.handle .energy{position:absolute;inset:0;z-index:1}
+.star{position:absolute;left:calc(50% + var(--x) * 1px);top:calc(50% + var(--y) * 1px);width:calc(var(--s) * 1px);height:calc(var(--s) * 1px);margin:calc(var(--s) * -.5px) 0 0 calc(var(--s) * -.5px);border-radius:50%;background:var(--acc);opacity:var(--o,.8);box-shadow:0 0 calc(var(--s) * 2px * var(--mo-glow)) color-mix(in srgb,var(--acc) 60%,transparent)}
+.star.far{opacity:calc(var(--o,.8) * .45)}
+.star[data-ln="1"]{background:var(--acc2)}
+.labels{display:grid;grid-template-columns:repeat(var(--n),1fr);margin-top:2px}
+.labels span{font-size:10px;color:var(--mut2);text-align:center;font-family:var(--font)}
+.labels span.on{color:var(--fg);font-weight:700}
+.labels span.nosup{text-decoration:line-through;opacity:.6}
+.pop-note{margin-top:10px;font-size:11px;color:var(--mut2);border-top:1px solid var(--line);padding-top:8px}
+.pop-norm{margin-top:8px;font-size:11.5px;border:1px solid var(--line-strong);border-left:3px solid var(--acc);border-radius:var(--r-sm);padding:7px 9px;color:var(--mut);background:var(--hover)}
+.pop-norm b{color:var(--fg)}
+.pop-norm .acts{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.mini{border:1px solid var(--line-strong);background:var(--bg);color:var(--fg);font-family:var(--font);font-size:11px;border-radius:var(--r-sm);padding:4px 8px;cursor:pointer}
+.mini.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
+.pop-empty{padding:10px 2px 4px;font-size:12px;color:var(--mut)}
+.pop-empty b{color:var(--fg)}
+
+/* ---------- 七档全量展示 ---------- */
+.gallery{margin-top:30px}
+.gallery h2{font-size:16px;margin:0 0 4px}
+.gallery .sub{font-size:12px;color:var(--mut);margin:0 0 12px;max-width:860px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.card{border:1px solid var(--line);border-radius:var(--r);background:var(--card);padding:10px;display:flex;flex-direction:column;gap:8px;align-items:center}
+.card .k{font-size:12.5px;font-weight:600}
+.card .e{font-size:10px;color:var(--mut2);font-family:var(--mono)}
+.card .m{font-size:11px;color:var(--mut);text-align:center;min-height:44px;line-height:1.35}
+.mini-handle{width:44px;height:44px;border-radius:50%;position:relative;overflow:hidden;border:1.5px solid var(--acc);background:radial-gradient(circle at 50% 42%,color-mix(in srgb,var(--acc) var(--e-pct,10%),transparent),transparent 72%),var(--card);flex:0 0 auto}
+.mini-handle .hlabel{position:absolute;inset:0;display:grid;place-items:center;font-size:13px;font-weight:700;z-index:2}
+.mini-handle .energy{position:absolute;inset:0;z-index:1}
+.card .again{font-size:10px}
+
+/* ---------- 说明区 ---------- */
+.notes{margin-top:30px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.note{border:1px solid var(--line);border-radius:var(--r);background:var(--card);padding:12px}
+.note h3{margin:0 0 6px;font-size:13px}
+.note p,.note li{font-size:12px;color:var(--mut);margin:4px 0}
+.note ul{padding-left:16px;margin:4px 0}
+code{font-family:var(--mono);font-size:11px;background:var(--hover);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+
+/* ---------- 主题差异：动效只改 density / duration / texture ---------- */
+[data-skin="pixel"] .chip,[data-skin="pixel"] .pop,[data-skin="pixel"] .bub,[data-skin="pixel"] .mini,[data-skin="pixel"] .card{clip-path:polygon(4px 0,calc(100% - 4px) 0,100% 4px,100% calc(100% - 4px),calc(100% - 4px) 100%,4px 100%,0 calc(100% - 4px),0 4px)}
+[data-skin="pixel"] .labels span,[data-skin="pixel"] .pop-sub,[data-skin="pixel"] .e,[data-skin="pixel"] .ctl label{font-family:var(--mono);letter-spacing:.06em}
+[data-skin="pixel"] .handle,[data-skin="pixel"] .mini-handle{transition:none;border-radius:0;clip-path:polygon(5px 0,calc(100% - 5px) 0,100% 5px,100% calc(100% - 5px),calc(100% - 5px) 100%,5px 100%,0 calc(100% - 5px),0 5px);box-shadow:0 3px 0 color-mix(in srgb,var(--acc) 45%,transparent)}
+[data-skin="linear"] .handle,[data-skin="linear"] .mini-handle{box-shadow:none;border-width:2px}
+[data-skin="linear"] .star{box-shadow:none}
+[data-skin="glass"] .pop,[data-skin="glass"] .card{backdrop-filter:blur(12px) saturate(140%)}
+[data-skin="warm"] .handle{box-shadow:0 0 calc(14px * var(--mo-glow)) color-mix(in srgb,var(--acc) 30%,transparent)}
+[data-skin="noir"] .pop,[data-skin="noir"] .card{box-shadow:0 0 0 1px var(--line),0 14px 40px rgba(0,0,0,.5)}
+[data-skin="noir"] .handle{border-width:1px;box-shadow:0 0 calc(22px * var(--mo-glow)) color-mix(in srgb,var(--acc) 45%,transparent)}
+
+/* 档位动效：仅在 .preview 期间播放一次；静止时没有任何动画 */
+.energy.preview .star{animation-duration:calc(var(--dur,420) * var(--mo-scale,1) * 1ms);animation-timing-function:var(--mo-ease,ease-out);animation-fill-mode:both}
+.a-minimal .star{animation-name:k-flash}
+.a-low .star{animation-name:k-drift}
+.a-medium .star{animation-name:k-soft}
+.a-high .star{animation-name:k-layers}
+.a-xhigh .star{animation-name:k-fine}
+.a-max .star{animation-name:k-rich}
+@keyframes k-flash{0%{opacity:0;transform:scale(.5)}42%{opacity:1;transform:scale(1.3)}100%{opacity:var(--o,.8);transform:scale(1)}}
+@keyframes k-drift{0%{transform:translate3d(0,0,0);opacity:calc(var(--o,.8) * .55)}50%{opacity:var(--o,.8)}100%{transform:translate3d(calc(var(--dx,1) * 1px),calc(var(--dy,1) * 1px),0);opacity:calc(var(--o,.8) * .85)}}
+@keyframes k-soft{0%{opacity:calc(var(--o,.8) * .5);transform:translate3d(0,0,0)}35%{opacity:var(--o,.8)}70%{opacity:calc(var(--o,.8) * .72)}100%{opacity:calc(var(--o,.8) * .9);transform:translate3d(calc(var(--dx,1) * 1px),calc(var(--dy,1) * 1px),0)}}
+@keyframes k-layers{0%{opacity:calc(var(--o,.8) * .35);transform:scale(.85)}30%{opacity:1;transform:scale(1.06)}60%{opacity:calc(var(--o,.8) * .7);transform:scale(1)}100%{opacity:var(--o,.8);transform:translate3d(calc(var(--dx,1) * 1.4px),calc(var(--dy,1) * 1.4px),0) scale(1)}}
+@keyframes k-fine{0%{opacity:calc(var(--o,.8) * .4)}18%{opacity:1}38%{opacity:calc(var(--o,.8) * .62)}58%{opacity:.95}100%{opacity:calc(var(--o,.8) * .82);transform:translate3d(calc(var(--dx,1) * .8px),calc(var(--dy,1) * .8px),0)}}
+@keyframes k-rich{0%{opacity:calc(var(--o,.8) * .3);transform:scale(.9)}22%{opacity:1;transform:scale(1.08)}48%{opacity:calc(var(--o,.8) * .66);transform:scale(1)}72%{opacity:.95;transform:scale(1.03)}100%{opacity:var(--o,.8);transform:translate3d(calc(var(--dx,1) * 1.6px),calc(var(--dy,1) * 1.6px),0) scale(1)}}
+
+/* 减少动态效果：去掉位移与粒子动画，仅保留静态对比差 */
+@media (prefers-reduced-motion: reduce){
+  .energy.preview .star{animation:none !important}
+  .handle{transition:none !important}
+  .star{box-shadow:none}
+}
+html[data-rm="1"] .energy.preview .star{animation:none !important}
+html[data-rm="1"] .handle{transition:none !important}
+html[data-rm="1"] .star{box-shadow:none}
+html[data-rm="1"] .energy.rm-static{outline:2px solid var(--acc);outline-offset:-4px;border-radius:50%}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--card);border:1px solid var(--line-strong);border-radius:var(--r-sm);padding:8px 12px;font-size:12px;color:var(--fg);z-index:99;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+.toast[hidden]{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="banner">
+    <b>交互设计稿 · 不调用模型 · 不联网 · 不写入任何设置</b>
+    <span class="tag">数据为模拟样本</span>
+    <span class="tag">仅表现层</span>
+    <span>档位语义沿用 Pi SDK：off / minimal / low / medium / high / xhigh / max，跟随 ≠ off</span>
+  </div>
+
+  <h1>思考强度滑块 · 交互设计稿</h1>
+  <p class="lede">输入栏 chip 打开的小弹层：档位由当前模型真实支持的集合生成（离散 snap，不是百分比），跟随/默认是滑块外的 reset 动作；拖动或切换时只有一段 300–700ms 的短暂预览动效，静止时完全静态。下面「全部 7 档」只作设计展示，不代表当前模型全部支持。</p>
+
+  <div class="controls">
+    <div class="ctl"><label>主题（表现层，仅展示）</label>
+      <select id="skin">
+        <option value="linear">linear 极简专业</option>
+        <option value="glass">glass 毛玻璃</option>
+        <option value="warm">warm 暖色人文</option>
+        <option value="pixel">pixel 像素风</option>
+        <option value="noir">noir 暗夜</option>
+        <option value="custom">custom DIY（token fallback）</option>
+      </select>
+    </div>
+    <div class="ctl"><label>明暗</label>
+      <div class="seg" id="mode"><button data-mode="light">浅色</button><button data-mode="dark" aria-pressed="true">深色</button></div>
+    </div>
+    <div class="ctl"><label>DIY 强调色 / 圆角</label>
+      <div style="display:flex;gap:6px;align-items:center"><input type="color" id="userAcc" value="#5b7cff" /><input type="text" id="userR" value="12px" size="4" /></div>
+    </div>
+    <div class="ctl"><label>模型支持档位（模拟）</label>
+      <select id="model"></select>
+    </div>
+    <div class="ctl"><label>场景</label>
+      <div class="seg" id="ctx"><button data-ctx="main" aria-pressed="true">单聊</button><button data-ctx="room">群聊成员</button><button data-ctx="sub">子代理</button></div>
+    </div>
+    <div class="ctl"><label>减少动态效果</label>
+      <div class="seg" id="rm"><button data-rm="0" aria-pressed="true">关</button><button data-rm="1">开</button></div>
+    </div>
+    <span class="spacer"></span>
+    <span class="hint">演示控件只切换本页的 <code>data-skin</code> / token，不影响产品里已保存的主题</span>
+  </div>
+
+  <!-- ===================== 舞台 ===================== -->
+  <div class="stage">
+    <div class="device" id="device">
+      <div class="device-head"><span class="dot"></span>模拟会话（假数据）<span style="margin-left:auto" id="ctxName">单聊 · 主会话</span></div>
+      <div class="thread">
+        <div class="bub me">帮我把这个月的报销单整理一下。</div>
+        <div class="bub ai">好，我先看一下目录里的票据文件。</div>
+        <div class="bub me">顺便算下总额。</div>
+      </div>
+      <div class="composer">
+        <textarea rows="1" aria-label="消息输入框">顺便算下总额。</textarea>
+        <div class="composer-bar">
+          <button class="chip" id="chip" aria-haspopup="dialog" aria-expanded="false">
+            <span class="flake"></span><span id="chipText">思考·中</span><span class="caret">▾</span>
+          </button>
+          <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+          <button class="send" aria-label="发送">↑</button>
+        </div>
+        <div class="pop" id="pop" role="dialog" aria-label="思考强度" hidden></div>
+      </div>
+    </div>
+
+    <div class="note" style="flex:1 1 320px;max-width:520px">
+      <h3>这个原型在演示什么</h3>
+      <ul>
+        <li>档位来自「当前模型支持的集合」：换模型后档位会真的变少/变多，不是固定 7 格。</li>
+        <li>离散 snap：点击刻度、拖动、方向键、Home/End 都能到档；<code>aria-valuetext</code> 是中文档位名。</li>
+        <li>跟随/默认在滑块外做 reset，左侧第一格永远是真正的「关闭」，两者不混。</li>
+        <li>换模型后旧档位不被支持时，不假装保留：显示「待规范化 旧→新」，由用户确认（示意）。</li>
+        <li>动效只在拖动/切换时播放一次；弹层收起后没有任何后台动画或定时器。</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== 七档全量展示 ===================== -->
+  <section class="gallery">
+    <h2>全部 7 档 · 静态差异与切换动效（设计展示，不代表当前模型支持）</h2>
+    <p class="sub">每档的「星点能量」密度、层次与动效幅度不同：关闭无动画；极简只一点短闪；低稀疏；中柔和；高多一层景深；超高更细密；最大最丰富但幅度克制。下表随主题切换也会变（玻璃更柔、像素离散成步、暗夜高对比克制、暖色轻微呼吸、线性最干脆）。点「播放」只看一次短暂预览，播完即停。</p>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <!-- ===================== 说明 ===================== -->
+  <div class="notes">
+    <div class="note">
+      <h3>为什么是离散滑块，不是自由滑杆</h3>
+      <p>Pi 的思考档位是枚举（<code>ModelThinkingLevel</code>），不是连续百分比；不同模型支持的子集也不同。自由滑杆会造出「63%」这种模型并不存在的档位，还会诱导「越高越好」的误解。</p>
+    </div>
+    <div class="note">
+      <h3>跟随 / 默认 ≠ 关闭</h3>
+      <p>「关闭」是模型自己的一档（最左）；「跟随主会话 / 跟随助理默认」是继承别的设置，不是第 8 档。因此 reset 放在滑块外，当前实际生效档位另用 badge 标明。</p>
+    </div>
+    <div class="note">
+      <h3>关于速度与用量（非承诺）</h3>
+      <p>较高强度通常更慢，并可能增加用量；具体取决于模型。这里不写「最快 / 默认就是最好 / 更贵」这类绝对说法。</p>
+    </div>
+    <div class="note">
+      <h3>实施方向（不在本文件）</h3>
+      <p>复用现有 <code>ThinkingButton</code> 的入口位置与共用组件，档位来自 <code>getSupportedThinkingLevels</code> / <code>thinkingLevelsUnion</code>，不新增一套状态。本文件不替换生产控件。</p>
+    </div>
+  </div>
+
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+/* =============================================================================
+   设计稿脚本：只驱动本页假数据与演示动画，不调用任何模型 / 接口。
+   ============================================================================= */
+(function () {
+  "use strict";
+
+  var ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  var LABEL = { off: "关闭", minimal: "极简", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最大" };
+  var SHORT = { off: "关", minimal: "极", low: "低", medium: "中", high: "高", xhigh: "超", max: "最" };
+  var DESC = {
+    off: "无星点，完全静态",
+    minimal: "1 点，一次短闪（约 320ms）",
+    low: "3 点，稀疏缓移（约 400ms）",
+    medium: "5 点，柔和两层（约 480ms）",
+    high: "8 点，加一层景深（约 560ms）",
+    xhigh: "12 点，细密微闪（约 620ms）",
+    max: "16 点，最丰富但幅度克制（约 700ms）"
+  };
+  var ENERGY = { off: 0, minimal: .18, low: .32, medium: .5, high: .68, xhigh: .84, max: 1 };
+  var COUNT = { off: 0, minimal: 1, low: 3, medium: 5, high: 8, xhigh: 12, max: 16 };
+  var DUR = { off: 0, minimal: 320, low: 400, medium: 480, high: 560, xhigh: 620, max: 700 };
+
+  // 模拟模型目录：thinking = Pi 对该模型给出的可用档位（真实实现里来自 getSupportedThinkingLevels）
+  var MOCKS = [
+    { key: "full7", name: "codex-5", note: "支持全部 7 档（模拟）", levels: ORDER.slice() },
+    { key: "six", name: "qwen3-max", note: "6 档，无「最大」（模拟）", levels: ["off", "minimal", "low", "medium", "high", "xhigh"] },
+    { key: "four", name: "claude-sonnet-4.5", note: "4 档，无「极简/超高/最大」（模拟）", levels: ["off", "low", "medium", "high"] },
+    { key: "two", name: "gemini-lite", note: "只有 2 档（模拟）", levels: ["off", "high"] },
+    { key: "one", name: "fixed-medium", note: "只有 1 档，不可调（模拟）", levels: ["medium"] },
+    { key: "none", name: "embed-text-3", note: "不支持思考强度（模拟）", levels: [] }
+  ];
+
+  var state = {
+    ctx: "main",            // main | room | sub
+    model: "full7",
+    value: { main: "medium", room: "medium", sub: null }, // sub 的 null = 跟随
+    subResolved: "medium",
+    pending: { main: null, room: null, sub: null },       // 换模型后待规范化的旧档位
+    previewing: false
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var chip = $("chip"), pop = $("pop"), chipText = $("chipText"), toast = $("toast");
+
+  function model() {
+    for (var i = 0; i < MOCKS.length; i++) if (MOCKS[i].key === state.model) return MOCKS[i];
+    return MOCKS[0];
+  }
+  function levels() { return model().levels; }
+  function val() { return state.ctx === "sub" ? state.value.sub : state.value[state.ctx]; }
+  function setVal(v) { if (state.ctx === "sub") state.value.sub = v; else state.value[state.ctx] = v; }
+  function isReasoning() { return levels().length > 1; }
+
+  // 示意用的「合法降级」：取不超过目标档的最高支持档，否则最低支持档（与 clampThinkingLevel 语义一致）
+  function clampTo(list, wanted) {
+    if (!list.length) return null;
+    var wi = ORDER.indexOf(wanted);
+    if (wi < 0) return list[0];
+    var best = null;
+    for (var i = 0; i < list.length; i++) {
+      var li = ORDER.indexOf(list[i]);
+      if (li <= wi) best = list[i];
+    }
+    return best || list[0];
+  }
+
+  function mulberry32(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function hash(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+  function renderEnergy(el, level, seed) {
+    el.innerHTML = "";
+    var n = COUNT[level] || 0;
+    if (!n) return;
+    var rnd = mulberry32(hash(level + "#" + seed));
+    for (var i = 0; i < n; i++) {
+      var t = (i + .5) / n;
+      var ang = i * 2.3999632 + rnd() * .5;
+      var rad = 13 * Math.sqrt(t) + rnd() * 2.5;
+      var s = document.createElement("i");
+      s.className = "star" + (i % 3 === 0 ? " far" : "");
+      if (i % 5 === 3) s.setAttribute("data-ln", "1");
+      s.style.setProperty("--x", (Math.cos(ang) * rad).toFixed(1));
+      s.style.setProperty("--y", (Math.sin(ang) * rad).toFixed(1));
+      s.style.setProperty("--s", (1.5 + (n > 10 ? .5 : 1.1) * (1 - t) + rnd() * .5).toFixed(2));
+      s.style.setProperty("--o", Math.max(.3, Math.min(1, .6 + .4 * (1 - t) - rnd() * .15)).toFixed(2));
+      s.style.setProperty("--d", String(Math.round(i * 60 / n)));
+      s.style.setProperty("--dx", ((rnd() * 2 - 1) * (1 + t * 2)).toFixed(2));
+      s.style.setProperty("--dy", ((rnd() * 2 - 1) * (1 + t * 2)).toFixed(2));
+      el.appendChild(s);
+    }
+  }
+
+  // 只播放一次短暂预览；播完即停，不循环、无后台 RAF
+  var previewTimer = null;
+  function pulse(energyEl, level) {
+    if (!energyEl || !level || level === "off") return;
+    var rm = document.documentElement.getAttribute("data-rm") === "1" ||
+      (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    energyEl.classList.remove("preview", "a-minimal", "a-low", "a-medium", "a-high", "a-xhigh", "a-max");
+    energyEl.style.setProperty("--dur", String(DUR[level] || 400));
+    if (rm) {
+      // 减少动态：不做位移/粒子动画，只给一个静态对比提示
+      energyEl.classList.add("rm-static");
+      window.setTimeout(function () { energyEl.classList.remove("rm-static"); }, 260);
+      return;
+    }
+    void energyEl.offsetWidth; // 重启动画
+    energyEl.classList.add("preview", "a-" + level);
+    if (previewTimer) window.clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(function () {
+      energyEl.classList.remove("preview", "a-minimal", "a-low", "a-medium", "a-high", "a-xhigh", "a-max");
+      previewTimer = null;
+    }, (DUR[level] || 400) + 120);
+  }
+
+  function stopPreview() {
+    if (previewTimer) { window.clearTimeout(previewTimer); previewTimer = null; }
+    var e = pop.querySelector(".energy");
+    if (e) e.classList.remove("preview", "a-minimal", "a-low", "a-medium", "a-high", "a-xhigh", "a-max", "rm-static");
+  }
+
+  // ---------------- 输入栏 chip ----------------
+  function chipLabel() {
+    var lv = levels();
+    if (!lv.length) return "思考·不支持";
+    if (lv.length === 1) return "思考·固定" + LABEL[lv[0]];
+    if (state.ctx === "sub" && state.value.sub === null) {
+      var r = clampTo(lv, state.subResolved) || lv[0];
+      return "思考·跟随·" + LABEL[r];
+    }
+    var v = val();
+    if (lv.indexOf(v) < 0) {
+      var c = clampTo(lv, v);
+      return "思考·待规范化→" + LABEL[c];
+    }
+    return "思考·" + LABEL[v];
+  }
+
+  function renderChip() {
+    chipText.textContent = chipLabel();
+    var lv = levels();
+    var v = state.ctx === "sub" && state.value.sub === null ? (clampTo(lv, state.subResolved) || lv[0]) : val();
+    var e = ENERGY[v] == null ? .3 : ENERGY[v];
+    chip.querySelector(".flake").style.background =
+      "radial-gradient(circle at 40% 38%, var(--acc) " + Math.round(e * 100) + "%, transparent 72%)";
+    $("ctxName").textContent = state.ctx === "sub" ? "子代理会话" : state.ctx === "room" ? "群聊 · 成员" : "单聊 · 主会话";
+  }
+
+  // ---------------- 弹层 ----------------
+  function renderPop() {
+    var lv = levels();
+    var m = model();
+    var html = "";
+    var follow = state.ctx === "sub";
+    var following = follow && state.value.sub === null;
+    var want = state.ctx === "sub" ? (following ? state.subResolved : state.value.sub) : val();
+    var resolved = lv.length ? (lv.indexOf(want) >= 0 ? want : clampTo(lv, want)) : null;
+    var pending = state.pending[state.ctx];
+
+    var curText = lv.length ? (following ? "跟随·" + LABEL[resolved] : LABEL[resolved]) : "不支持";
+    html += '<div class="pop-head"><span class="pop-title">思考强度</span>' +
+      '<span class="pop-sub"><span class="pop-cur">' + curText + '</span> · ' + m.name + '</span></div>';
+
+    if (follow) {
+      html += '<div class="follow-row"><button class="follow" id="followBtn" aria-pressed="' + (following ? "true" : "false") +
+        '"><span>' + (following ? '<span class="tick">✓</span> ' : "") +
+        '跟随助理默认</span><span class="fbadge">当前实际：' + (lv.length ? LABEL[clampTo(lv, state.subResolved)] : "—") +
+        '</span></button></div>';
+    }
+
+    if (!lv.length) {
+      html += '<div class="pop-empty"><b>' + m.name + '</b> 不支持调整思考强度。</div>' +
+        '<div class="pop-note">' + m.note + '。这里不显示滑块，避免让用户以为能调。</div>';
+    } else if (lv.length === 1) {
+      html += '<div class="pop-empty">这个模型只有一档 <b>' + LABEL[lv[0]] + '</b>，不需要调整。</div>' +
+        '<div class="pop-note">' + m.note + '。</div>';
+    } else {
+      if (pending) {
+        var to = clampTo(lv, pending);
+        html += '<div class="pop-norm">换模型后，<b>' + LABEL[pending] + '</b> 不在 <b>' + m.name +
+          '</b> 支持的档位里。运行时会按 <b>' + LABEL[to] + '</b> 收敛（合法降级，不静默假装保留）。' +
+          '<div class="acts"><button class="mini pri" id="normOk">按「' + LABEL[to] + '」运行</button>' +
+          '<button class="mini" id="normPick">改选支持「' + LABEL[pending] + '」的模型</button></div></div>';
+      }
+      var pos = Math.max(0, lv.indexOf(resolved));
+      var n = lv.length - 1;
+      var posPct = n > 0 ? (pos / n).toFixed(4) : 0;
+      html += '<div class="slider-wrap"><div class="track"><div class="track-inner" style="--pos:' + posPct + '">' +
+        '<div class="rail"></div><div class="fill"></div>';
+      for (var i = 0; i < lv.length; i++) {
+        html += '<button class="tickbtn" data-i="' + i + '" aria-label="' + LABEL[lv[i]] + '" style="--i:' + i + ';--n:' + n + '"></button>' +
+          '<i class="tick' + (lv[i] === resolved ? " hot" : "") + '" style="--i:' + i + ';--n:' + n + '"></i>';
+      }
+      html += '<div class="handle' + (following ? " following" : "") + '" id="handle" role="slider" tabindex="0" ' +
+        'aria-label="思考强度" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="' + n + '" ' +
+        'aria-valuenow="' + pos + '" aria-valuetext="思考强度：' + LABEL[resolved] + '" ' +
+        'style="--e-pct:' + Math.round((ENERGY[resolved] || 0) * 100) + '%">' +
+        '<span class="energy" id="energy"></span><span class="hlabel">' + SHORT[resolved] + '</span></div>';
+      html += '</div></div>';
+      html += '<div class="labels" style="--n:' + lv.length + '">';
+      for (var j = 0; j < lv.length; j++) html += '<span class="' + (lv[j] === resolved ? "on" : "") + '">' + LABEL[lv[j]] + '</span>';
+      html += '</div>';
+      var all = ORDER.length;
+      html += '<div class="pop-note">这个模型支持 ' + lv.length + ' 档（Pi 的 ' + all + ' 档里的子集）。' +
+        '较高强度通常更慢，并可能增加用量；具体取决于模型。</div>';
+      if (state.ctx === "sub") {
+        html += '<div class="pop-note">运行中的子代理：改动立即用于这个子代理，不影响主会话；排队/未开始的：下一次派活生效。<b>（此处只做语义标注，不新增行为）</b></div>';
+      }
+    }
+    pop.innerHTML = html;
+    pop.setAttribute("aria-label", "思考强度 · " + m.name);
+    if (lv.length > 1) {
+      var energy = $("energy");
+      renderEnergy(energy, resolved, m.key + state.ctx);
+      bindSlider(lv, resolved);
+    }
+    var fb = $("followBtn");
+    if (fb) fb.addEventListener("click", function () { commit(null); });
+    var no = $("normOk");
+    if (no) no.addEventListener("click", function () {
+      var to = clampTo(lv, pending); state.pending[state.ctx] = null; setVal(to); close(true); toastMsg("已按「" + LABEL[to] + "」运行（原型状态，无真实持久化）");
+    });
+    var np = $("normPick");
+    if (np) np.addEventListener("click", function () { toastMsg("设计示意：这里会引导改选支持该档的模型"); });
+
+    function toastMsg(t) { toast.textContent = t; toast.hidden = false; window.setTimeout(function () { toast.hidden = true; }, 1800); }
+    return { lv: lv, resolved: resolved, following: following };
+  }
+
+  function bindSlider(lv, resolved) {
+    var handle = $("handle"), energy = $("energy"), track = pop.querySelector(".track-inner");
+    var preview = lv.indexOf(resolved);
+
+    function commit(i) {
+      var idx = Math.max(0, Math.min(lv.length - 1, i));
+      var changed = lv[idx] !== currentApplied();
+      if (state.ctx === "sub" && state.value.sub === null) state.value.sub = lv[idx];
+      else setVal(lv[idx]);
+      state.pending[state.ctx] = null;
+      renderChip();
+      // 只重画位置/标签，保留弹层
+      var h = $("handle");
+      track.style.setProperty("--pos", lv.length > 1 ? (idx / (lv.length - 1)).toFixed(4) : 0);
+      h.style.setProperty("--e-pct", Math.round((ENERGY[lv[idx]] || 0) * 100) + "%");
+      h.querySelector(".hlabel").textContent = SHORT[lv[idx]];
+      h.setAttribute("aria-valuenow", String(idx));
+      h.setAttribute("aria-valuetext", "思考强度：" + LABEL[lv[idx]]);
+      h.classList.remove("following");
+      var ticks = pop.querySelectorAll(".tick");
+      for (var k = 0; k < ticks.length; k++) ticks[k].classList.toggle("hot", k === idx);
+      var labs = pop.querySelectorAll(".labels span");
+      for (var q = 0; q < labs.length; q++) labs[q].classList.toggle("on", q === idx);
+      renderEnergy(energy, lv[idx], model().key + state.ctx);
+      pulse(energy, lv[idx]);
+      var fb = $("followBtn"); if (fb) fb.setAttribute("aria-pressed", "false");
+      return changed;
+    }
+    function currentApplied() {
+      return state.ctx === "sub" && state.value.sub === null ? (clampTo(lv, state.subResolved) || lv[0]) : val();
+    }
+
+    // 点击刻度
+    var btns = pop.querySelectorAll(".tickbtn");
+    for (var b = 0; b < btns.length; b++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          var i = parseInt(btn.getAttribute("data-i"), 10);
+          preview = i; commit(i);
+        });
+      })(btns[b]);
+    }
+
+    // 拖动：拖动中只更新预览，pointerup 才提交原型 state
+    var dragging = false;
+    function indexFor(clientX) {
+      var r = track.getBoundingClientRect();
+      var t = (clientX - r.left) / Math.max(1, r.width);
+      return Math.round(Math.max(0, Math.min(1, t)) * (lv.length - 1));
+    }
+    function moveTo(i) {
+      if (i === preview) return;
+      preview = i;
+      var h = $("handle");
+      track.style.setProperty("--pos", lv.length > 1 ? (i / (lv.length - 1)).toFixed(4) : 0);
+      h.style.setProperty("--e-pct", Math.round((ENERGY[lv[i]] || 0) * 100) + "%");
+      h.querySelector(".hlabel").textContent = SHORT[lv[i]];
+      renderEnergy(energy, lv[i], model().key + state.ctx);
+      pulse(energy, lv[i]);
+      var labs = pop.querySelectorAll(".labels span");
+      for (var q = 0; q < labs.length; q++) labs[q].classList.toggle("on", q === i);
+      var ticks = pop.querySelectorAll(".tick");
+      for (var k = 0; k < ticks.length; k++) ticks[k].classList.toggle("hot", k === i);
+    }
+    handle.addEventListener("pointerdown", function (ev) {
+      dragging = true; preview = indexFor(ev.clientX); moveTo(preview);
+      try { handle.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+      ev.preventDefault();
+    });
+    handle.addEventListener("pointermove", function (ev) { if (dragging) moveTo(indexFor(ev.clientX)); });
+    function endDrag(ev) {
+      if (!dragging) return;
+      dragging = false;
+      try { handle.releasePointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+      commit(preview); // pointerup 才写原型 state（无真实持久化 / 无 API）
+    }
+    handle.addEventListener("pointerup", endDrag);
+    handle.addEventListener("pointercancel", endDrag);
+    track.addEventListener("pointerdown", function (ev) {
+      if (ev.target === handle || handle.contains(ev.target)) return;
+      dragging = true; preview = indexFor(ev.clientX); moveTo(preview);
+      try { track.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+      ev.preventDefault();
+    });
+    track.addEventListener("pointermove", function (ev) { if (dragging && ev.buttons) moveTo(indexFor(ev.clientX)); });
+    track.addEventListener("pointerup", function (ev) { if (dragging) { dragging = false; commit(preview); } });
+
+    // 键盘：方向键 / Home / End，逐次提交（keyboard commit）
+    handle.addEventListener("keydown", function (ev) {
+      var i = preview;
+      if (ev.key === "ArrowRight" || ev.key === "ArrowUp") i = i + 1;
+      else if (ev.key === "ArrowLeft" || ev.key === "ArrowDown") i = i - 1;
+      else if (ev.key === "Home") i = 0;
+      else if (ev.key === "End") i = lv.length - 1;
+      else if (ev.key === "PageUp") i = lv.length - 1;
+      else if (ev.key === "PageDown") i = 0;
+      else return;
+      ev.preventDefault(); ev.stopPropagation();
+      i = Math.max(0, Math.min(lv.length - 1, i));
+      preview = i;
+      commit(i);
+      var h = $("handle"); if (h) h.focus();
+    });
+  }
+
+  // ---------------- 开关 ----------------
+  var lastFocusByKeyboard = false;
+  function openPop() {
+    if (pop.hidden === false) return;
+    pop.hidden = false;
+    var st = renderPop();
+    chip.setAttribute("aria-expanded", "true");
+    position();
+    if (lastFocusByKeyboard && st && st.lv && st.lv.length > 1) {
+      var h = $("handle"); if (h) h.focus();
+    }
+  }
+  function close(keepChipFocus) {
+    if (pop.hidden) return;
+    stopPreview();
+    pop.hidden = true;
+    chip.setAttribute("aria-expanded", "false");
+    if (keepChipFocus !== false) chip.focus();
+  }
+  function position() {
+    // .pop 的 offsetParent 是 .composer（position:relative），按它算锚点
+    var comp = chip.closest(".composer").getBoundingClientRect();
+    var c = chip.getBoundingClientRect();
+    var pw = pop.offsetWidth || 320;
+    var maxLeft = Math.max(8, comp.width - pw - 8);
+    var left = Math.max(8, Math.min(c.left - comp.left, maxLeft));
+    var bottom = comp.bottom - c.top + 8;
+    pop.style.left = left + "px";
+    pop.style.bottom = bottom + "px";
+    pop.style.top = "auto";
+  }
+  chip.addEventListener("click", function (ev) {
+    lastFocusByKeyboard = ev.detail === 0;
+    if (pop.hidden) openPop(); else close();
+  });
+  document.addEventListener("mousedown", function (ev) {
+    if (pop.hidden) return;
+    if (pop.contains(ev.target) || chip.contains(ev.target)) return;
+    close(false); // 点外部关闭，但不抢走被点元素的焦点（编辑不中断）
+  });
+  document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && !pop.hidden) close(true); });
+  window.addEventListener("resize", function () { if (!pop.hidden) position(); });
+  window.addEventListener("scroll", function () { if (!pop.hidden) position(); }, true);
+
+  // 模型切换：旧档位不被支持时进入「待规范化」，不静默保留
+  $("model").addEventListener("change", function (ev) {
+    state.model = ev.target.value;
+    var lv = levels();
+    var cur = val();
+    if (state.ctx === "sub" && cur === null) { /* 跟随：交给 resolved 收敛 */ }
+    else if (lv.length && lv.indexOf(cur) < 0) state.pending[state.ctx] = cur;
+    else state.pending[state.ctx] = null;
+    renderChip();
+    if (!pop.hidden) renderPop();
+  });
+
+  // 演示控件
+  $("skin").addEventListener("change", function (ev) { applySkin(ev.target.value); });
+  $("mode").addEventListener("click", function (ev) {
+    var b = ev.target.closest("button"); if (!b) return;
+    document.documentElement.setAttribute("data-mode", b.getAttribute("data-mode"));
+    var kids = $("mode").querySelectorAll("button");
+    for (var i = 0; i < kids.length; i++) kids[i].setAttribute("aria-pressed", String(kids[i] === b));
+  });
+  $("ctx").addEventListener("click", function (ev) {
+    var b = ev.target.closest("button"); if (!b) return;
+    state.ctx = b.getAttribute("data-ctx");
+    var kids = $("ctx").querySelectorAll("button");
+    for (var i = 0; i < kids.length; i++) kids[i].setAttribute("aria-pressed", String(kids[i] === b));
+    renderChip();
+    if (!pop.hidden) renderPop();
+  });
+  $("rm").addEventListener("click", function (ev) {
+    var b = ev.target.closest("button"); if (!b) return;
+    document.documentElement.setAttribute("data-rm", b.getAttribute("data-rm"));
+    var kids = $("rm").querySelectorAll("button");
+    for (var i = 0; i < kids.length; i++) kids[i].setAttribute("aria-pressed", String(kids[i] === b));
+  });
+  $("userAcc").addEventListener("input", function (ev) { document.documentElement.style.setProperty("--user-acc", ev.target.value); });
+  $("userR").addEventListener("change", function (ev) { document.documentElement.style.setProperty("--user-r", ev.target.value || "12px"); });
+
+  function applySkin(id) {
+    document.documentElement.setAttribute("data-skin", id);
+    // 主题只换 token；DIY 用 --user-acc / --user-r fallback，不强行覆盖用户主题
+    if (id !== "custom") {
+      document.documentElement.style.removeProperty("--user-acc");
+      document.documentElement.style.removeProperty("--user-r");
+    }
+  }
+
+  // ---------------- 七档展示 ----------------
+  function buildGallery() {
+    var host = $("cards");
+    host.innerHTML = "";
+    ORDER.forEach(function (level, i) {
+      var card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML =
+        '<div class="k">' + LABEL[level] + '</div>' +
+        '<div class="mini-handle" style="--e-pct:' + Math.round((ENERGY[level] || 0) * 100) + '%">' +
+        '<span class="energy" data-lv="' + level + '"></span><span class="hlabel">' + SHORT[level] + '</span></div>' +
+        '<div class="e">' + level + ' · ' + COUNT[level] + ' 点</div>' +
+        '<div class="m">' + DESC[level] + '</div>' +
+        '<button class="mini again" data-play="' + level + '">播放切换预览</button>';
+      host.appendChild(card);
+      renderEnergy(card.querySelector(".energy"), level, "gallery" + i);
+    });
+    host.addEventListener("click", function (ev) {
+      var b = ev.target.closest("[data-play]"); if (!b) return;
+      var lv = b.getAttribute("data-play");
+      var energy = b.closest(".card").querySelector(".energy");
+      pulse(energy, lv);
+    });
+  }
+
+  // ---------------- 初始化 ----------------
+  var sel = $("model");
+  MOCKS.forEach(function (m) {
+    var o = document.createElement("option");
+    o.value = m.key; o.textContent = m.name + "（" + m.levels.length + " 档）";
+    sel.appendChild(o);
+  });
+  sel.value = state.model;
+  document.documentElement.setAttribute("data-rm", "0");
+  applySkin("linear");
+  buildGallery();
+  renderChip();
+})();
+</script>
+</body>
+</html>

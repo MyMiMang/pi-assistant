@@ -1,5 +1,15 @@
 # 交接文档（HANDOFF）
 
+> **本轮当前状态（beta.28 候选，2026-10-24）——接手先读这一段**
+>
+> - **公开版本**：`v0.1.0-beta.27`（Latest，2026-10-16T12:48:14Z；tag `6d6c1ee`，Actions `38901767310` 构建 / Mac 安装启动冒烟 / publish 全成功；主核四项公开资产与 latest.json：版本 `0.1.0-beta.27`、仅 `darwin-aarch64` / `darwin-aarch64-app`、签名非空）。**beta.28 尚未发布**，未自动更新用户 App。
+> - **候选树**：`release-candidate-validation`，起始 `6d6c1ee`。已 `--no-ff` 合入 6 组（`laya-benchmark-selection-fix` `9eb23c2` / `voice-incremental-input` `9f61f1f` / `mobile-chat-history-performance` `1f6f4b5` / `chat-content-overflow-fix` `d4c5899` / `subagent-composer-navigation` `17f0652` / `ui-consistency-motion` `e47bac8`），HEAD 见 `git log`。
+> - **验收结果与未验边界**：`progress-snapshots/beta28-final-validation.md`（合并检查点：`beta28-integration-merge-checkpoint.md`）。要点：两端类型/构建 exit 0；定向单测 31 + 56 + 133 + 5 全过；浏览器 e2e 6 个脚本串行全过（其中修复了两个此前从未跑过的新脚本自身的 bug）。
+> - **发布范围已改为全平台含 Intel**：`.github/release-scope.json` = `all-intel`（Mac arm64 + Intel Mac x64 + Windows x64 + Linux x64/arm64），**tag 触发也进 Intel 矩阵、不依赖仓库变量**；机制见 [design/release-scope.md](design/release-scope.md)。旧「Intel 暂缓 / mac-arm64 固定」描述只是当时事实，**已被取代**。
+> - **提问卡片（ask_user）改版**：选项一行一个、整行可点、文案左对齐、长文案换行、选中勾在右；桌面/手机同结构，历史已回答卡片同 render。改动：`apps/web/src/components/Cards.tsx` + `themes/base.css`。
+> - **未发布 / 不要当已完成**：思考强度 **7 档滑块只有设计稿**（[design/thinking-strength-slider.md](design/thinking-strength-slider.md) + 同目录 `-prototype.html`），**设计稿待确认，生产仍是原来的选择器（未合入）**；**AI DIY 主题的动效参数（时长/缓动/光晕）还没进 manifest schema**，属于待接，见 [design/ai-theme-diy.md](design/ai-theme-diy.md)；发布说明 [release-notes/v0.1.0-beta.28.md](release-notes/v0.1.0-beta.28.md)。
+> - **本轮未验**：全量 `npm test`（757）/ 全量 `e2e/run.mjs`；真机 App、真手机与隧道、真麦克风、真实云模型与计费；Windows / Linux / Intel Mac 实机；未在本地跑全平台构建（由 CI 执行）。真实语音证据沿用上一轮 `evidence/voice-incremental-real/report-2026-10-16T18-00-18.json`（**只能证链路与分段行为，不能声称「分段未增误差」**）。
+
 > **当前公开版本 beta.27（Latest，仅 macOS arm64）**：2026-10-16T12:48:14Z 公开，tag `6d6c1ee238ea65f3884853b6307c97733d4ebeb0`，Actions `38901767310` 构建、Mac 安装启动冒烟、publish 全成功。主会话核验四项公开资产及公开 latest.json：版本 `0.1.0-beta.27`、仅 darwin-aarch64/darwin-aarch64-app、URL对应本版且签名非空。未自动更新用户App。下文候选/准备状态为历史，以本段及发布说明为准。
 > **基准测试「点哪条测哪条」+ 快速模型列表刷新（2026-10-16，worktree `laya-benchmark-selection-fix`，基 `release-candidate-validation` HEAD `6d6c1ee`；**beta.28 候选，未 push / 未 tag / 未打包 / 未发布**）**：用户 beta.27 实测「Laya 卡点实际操作测试，开始按钮灰掉（截图 CUA✓ 模型✗ 测试窗口✓，提示还没选定快速模型）」，并要求一并查「第一次打开快速模型区域没有模型选择/列表，退出再进才出现」（用户说「好像」，按待复现处理）。
 > - **根因（已定位）**：`apps/web/src/components/ModelServices.tsx` 的 `BenchmarkDialog` 拉 `GET /api/fast-computer/benchmark` 时不带所点 provider/model；`benchmark-host.ts` 的 `availability()` 无参、只看全局 `fastComputerSettings`；`routes.ts` 的 `POST` 虽把 provider/model 传给 `start()`，但先被无参 `availability()` 拦成 409。所以从 Laya 卡点测时，只要全局快速模型没开 / 没选，`modelReady=false` → 按钮禁用。
