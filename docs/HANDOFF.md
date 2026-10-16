@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> **当前公开版本 beta.27（Latest，仅 macOS arm64）**：2026-10-16T12:48:14Z 公开，tag `6d6c1ee238ea65f3884853b6307c97733d4ebeb0`，Actions `38901767310` 构建、Mac 安装启动冒烟、publish 全成功。主会话核验四项公开资产及公开 latest.json：版本 `0.1.0-beta.27`、仅 darwin-aarch64/darwin-aarch64-app、URL对应本版且签名非空。未自动更新用户App。下文候选/准备状态为历史，以本段及发布说明为准。
+
 > **beta.27 发布准备，尚未公开**：Laya 双层缓存校验及真实启动修复、权限操作条正常滚动、SenseVoice 保留原列表并支持一键下载安装，已全部合入。主会话独立通过两端类型/构建、87项服务端、6项前端逻辑、ASR与设置交互回归；已复核Laya真实启动分类和SenseVoice真实中文转写记录。详见 `progress-snapshots/beta27-final-validation.md` 与 `docs/release-notes/v0.1.0-beta.27.md`。按既有授权直接推送打包，仅arm64；公开后再更新状态。
 
 > **当前公开版本 v0.1.0-beta.26（Latest，仅 Apple 芯片 macOS arm64）**：tag 指向 `dd963a4da9f55b64912fb171ebc0271948d766d1`；[发布 run 38880524575](https://github.com/MyMiMang/pi-assistant/actions/runs/38880524575) 的 arm64 构建、内置服务、Mac 安装启动冒烟和 publish 均成功，2026-10-16 09:38:56 UTC 公开。主会话独立核验非草稿 / 非 prerelease、四项公开资产、公开 Latest 的 `latest.json` 为 `0.1.0-beta.26`，仅 `darwin-aarch64` / `darwin-aarch64-app` 且签名非空。未安装或更新用户 App，已有 tag 未移动。验收及未验边界见 [发布说明](release-notes/v0.1.0-beta.26.md)。

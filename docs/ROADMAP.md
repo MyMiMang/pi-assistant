@@ -1,5 +1,7 @@
 # 需求与计划（ROADMAP）
 
+> **已公开（beta.27）**：Laya 安装校验与启动、权限按钮滚动、SenseVoice 原列表一键安装三项已发布。Actions `38901767310` 成功，2026-10-16 20:48（上海）为 Latest，仅arm64；主核公开资产和更新清单。以下发布准备状态为历史，未自动安装用户App。
+
 > **beta.27 候选已完成整合验收，准备发布**：修复Laya共享缓存链接与安装后启动，SenseVoice在原列表支持一键下载安装，权限清单按钮不再吸底遮挡。主审实跑与真实模型证据见 `progress-snapshots/beta27-final-validation.md`。未公开前仍以beta.26为公开版本；只构建Apple芯片版。
 
 > **已完成并公开（beta.26）**：2026-10-16 17:38（Asia/Shanghai）公开为 Latest，仅 Apple 芯片 macOS arm64。tag `dd963a4`，Actions `38880524575` 构建、内置服务、Mac 安装启动冒烟及 publish 成功；主会话核验四项公开资产、Latest JSON 版本 / arm64 平台 / 非空签名。未自动更新用户 App。整合树 `release-candidate-validation`（起点公开 `dcce520`）。四块已 `--no-ff` 合入：Laya 下载统一链路（`10317d0`，stage1 `1dbb652`）、本地语音多模型 UI + 后端（`55a09e7` / 后端 `18478d4`，stage1 `277ddfb`）+ 生产修复（`8f8d458`，本轮 `42f9613`）、主题设计选本次草稿模型（`0781b9c`，stage1 `12370a5`）、Laya 测试隔离收口（`8e9a223`，本轮 `17a3da7`）。
