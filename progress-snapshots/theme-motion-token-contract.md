@@ -70,3 +70,10 @@
 | `packages/server/src/themes/tool.ts` | `theme_draft` 参数 + 系统提示加 `motion`（模型按同一 schema 产） | 本线 |
 | `apps/web/src/components/ThemeDesigner.tsx` | 同页「动效微调」按需入口（编辑 `motion` 立即预览） | 本线 |
 | 七档滑块组件 / CSS | 消费 `--mo-*` + `--pa-*`，不写死颜色 | 滑块 worker |
+
+## 6. 重测试槽验收结果（2026-10-17，候选未发布）
+
+- **单测 / 类型 / 构建**：`theme-manifest.test.ts` + `theme-ai.test.ts` 定向 **40/40**（含 AI motion payload + 一次修复、取消预览保留已保存注册）；server + web `tsc --noEmit` exit 0；`npm run build -w @pi-assistant/web` 成功。
+- **真实 DOM 夹具** `e2e/theme-motion-ui.mjs`（真实 server + 假 AI 响应注入 motion + Playwright）**9/9**：生成带 motion → 预览 `getComputedStyle` 真值 → 通用控件 `transition-duration` 真消费 → 只改倍率不 reset 自定义 bezier → 保存 / 刷新恢复 → 继续 AI 改 → 取消完整恢复 → 另存 → 导出 / 导入 motion 不丢 → 旧无 motion 主题补默认 → reduce 静态置 0 → 390 不溢出。截图 `docs/screenshots/17-theme-motion-390.png`。
+- **本槽小修**：`ThemeDesigner` 动效下拉列出枚举外的合法值（自定义 `cubic-bezier()` 不再显示成「默认」）；`custom-store.unregisterPreviewTheme()` 让取消预览保留已保存 DIY 主题的注册（原来编辑已有主题再取消会回退默认主题）。
+- **边界**：滑块组件对 `--mo-*` 的消费（含 `--mo-style` live 切换）由集成 / 滑块线核；本树只证 token 按契约输出且通用控件真消费。未跑全量 `npm test` / 全量 e2e；未改 Pi SDK / node_modules；未 push / 未 tag。

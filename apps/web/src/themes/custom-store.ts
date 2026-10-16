@@ -9,7 +9,7 @@
  * - 导出：默认剥掉「仅作参考」的图片（`stripReferenceImages`），不悄悄带原始参考图 / 本地路径。
  */
 import { stripReferenceImages, validateThemeManifest, type ThemeManifestV1 } from "@pi-assistant/shared";
-import { manifestToCss, themeDefFromManifest } from "./manifest.ts";
+import { manifestIdFromSkin, manifestToCss, themeDefFromManifest } from "./manifest.ts";
 import { registerTheme, THEMES, unregisterTheme } from "./registry.ts";
 
 export const CUSTOM_THEMES_KEY = "pia.customThemes";
@@ -151,6 +151,17 @@ export function installCustomThemes(storage: StorageLike | null = safeStorage())
 /** 重新注入所有自定义主题的 CSS（保存 / 删除后调用）。 */
 export function refreshCustomStyles(storage: StorageLike | null = safeStorage()) {
 	applyCustomStyles(loadCustomThemes(storage));
+}
+
+/**
+ * 取消预览时移除运行时注册：**仅当该 skin 不是已保存的 DIY 主题**时才移除。
+ * 编辑已有主题再取消，注册必须保留 —— 否则 applyTheme 找不到主题会回退到默认主题，
+ * 用户会看到自己的主题“消失”（预览事务的 saved 标记只记本轮是否保存，不够）。
+ */
+export function unregisterPreviewTheme(skin: string, storage: StorageLike | null = safeStorage()): void {
+	const id = manifestIdFromSkin(skin);
+	if (id && loadCustomThemes(storage).some((m) => m.id === id)) return;
+	unregisterTheme(skin);
 }
 
 function applyCustomStyles(list: ThemeManifestV1[]) {

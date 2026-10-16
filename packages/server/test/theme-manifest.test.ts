@@ -16,7 +16,8 @@ import {
 	validateThemeManifest,
 	type ThemeManifestV1,
 } from "../../../packages/shared/src/theme-manifest.ts";
-import { CUSTOM_THEMES_KEY, deleteCustomTheme, exportCustomTheme, importCustomTheme, loadCustomThemes, newThemeId, saveCustomTheme } from "../../../apps/web/src/themes/custom-store.ts";
+import { CUSTOM_THEMES_KEY, deleteCustomTheme, exportCustomTheme, importCustomTheme, installCustomThemes, loadCustomThemes, newThemeId, saveCustomTheme, unregisterPreviewTheme } from "../../../apps/web/src/themes/custom-store.ts";
+import { getTheme, registerTheme } from "../../../apps/web/src/themes/registry.ts";
 import { completeTokens, customSkinId, manifestToCss, motionTokens, themeDefFromManifest } from "../../../apps/web/src/themes/manifest.ts";
 import { cancelPreview, commitPreview, revisePreview, startPreview, undoPreview, type AppearanceSnapshot, type PreviewEffects } from "../../../apps/web/src/themes/preview.ts";
 
@@ -186,6 +187,24 @@ test("store：保存 / 读取 / 删除；编辑保留 createdAt 只改 updatedAt
 	assert.equal(deleteCustomTheme("noir", st), false, "内置不可删");
 	assert.equal(deleteCustomTheme("11111111-2222-3333-4444-555555555555", st), true);
 	assert.equal(loadCustomThemes(st).length, 0);
+});
+
+test("store：取消预览时已保存的 DIY 主题保留注册（编辑后取消不回退默认），未保存的临时预览才移除", () => {
+	const st = fakeStorage();
+	const m = sample({ id: "saved-preview-1" });
+	assert.equal(saveCustomTheme(m, st).ok, true);
+	installCustomThemes(st);
+	const skin = customSkinId(m.id);
+	assert.equal(getTheme(skin).id, skin, "已保存主题应先注册");
+	// 编辑已有主题再取消：注册必须保留，否则 applyTheme 会回退默认主题
+	unregisterPreviewTheme(skin, st);
+	assert.equal(getTheme(skin).id, skin, "已保存主题取消预览后仍应在注册表");
+	// 未保存的临时预览：取消后移除，回退默认
+	registerTheme(themeDefFromManifest(sample({ id: "never-saved-1" })));
+	const temp = customSkinId("never-saved-1");
+	assert.equal(getTheme(temp).id, temp);
+	unregisterPreviewTheme(temp, st);
+	assert.equal(getTheme(temp).id, "noir", "未保存预览应回退默认主题");
 });
 
 test("store：坏数据（手改 localStorage）不炸、被丢弃", () => {

@@ -6,7 +6,7 @@ import { applyTheme, setAppearance, useStore } from "../store";
 import { customSkinId } from "../themes/manifest";
 import { buildThemeModelChoice, refVisionStatus, themeModelButtonText, themeModelLabel } from "../themes/model-choice";
 import { ModelPickerButton, useConfiguredModels, useModelPicks } from "./ModelPicker";
-import { exportCustomTheme, installCustomThemes, newThemeId, saveCustomTheme } from "../themes/custom-store";
+import { exportCustomTheme, installCustomThemes, newThemeId, saveCustomTheme, unregisterPreviewTheme } from "../themes/custom-store";
 import { registerTheme, unregisterTheme } from "../themes/registry";
 import { cancelPreview, commitPreview, revisePreview, startPreview, undoPreview, type AppearanceSnapshot, type PreviewEffects, type PreviewSession } from "../themes/preview";
 import { DraftTurns } from "../themes/design-session";
@@ -24,6 +24,9 @@ const MOTION_STYLE_OPTS = ["smooth", "steps"] as const;
 const MOTION_SCALES = ["0.8", "1", "1.2", "1.5"] as const;
 
 function MotionRow({ label, value, options, onChange, testid }: { label: string; value: string; options: readonly string[]; onChange: (v: string) => void; testid: string }) {
+	// AI 可能给出枚举之外的合法值（如自定义 cubic-bezier() / 非预设时长）：原样列成一个选项，
+	// 否则 <select> 找不到匹配项会显示成「默认」，看着像被重置、也可能被用户顺手改掉。
+	const custom = value && !options.includes(value) ? value : null;
 	return (
 		<label className="flex items-center justify-between gap-2 text-xs">
 			<span className="text-mut">{label}</span>
@@ -34,6 +37,11 @@ function MotionRow({ label, value, options, onChange, testid }: { label: string;
 						{o}
 					</option>
 				))}
+				{custom && (
+					<option value={custom}>
+						{custom}
+					</option>
+				)}
 			</select>
 		</label>
 	);
@@ -60,7 +68,8 @@ const liveEffects: PreviewEffects = {
 		applyTheme(snap.theme, snap.accent, snap.skin);
 	},
 	registerTheme,
-	unregisterTheme,
+	// 取消预览时不要把「已保存」的 DIY 主题从注册表移除（见 unregisterPreviewTheme）。
+	unregisterTheme: unregisterPreviewTheme,
 	setPreviewCss: installPreviewStyle,
 	saveTheme: (m) => {
 		const r = saveCustomTheme(m);
