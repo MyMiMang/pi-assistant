@@ -128,3 +128,105 @@ interface AsrStatus {
 - CoreML / MPS：**未启用、未验证**（上游未证 SenseVoice 的加速声明）。
 - sherpa-onnx 轮子 SHA256：**未 pin**（按平台/CPython 分片，v1 只 pin 版本号，依赖 uv/PyPI 索引完整性）。
 - 许可：issue #334 仍 open，**不是法律意见**。
+
+---
+
+# 本地 ASR 多模型目录（v2，分支 `local-asr-multi-model`，基 `release-candidate-validation` = `dcce520`）
+
+> 状态：**后端已实现**（未 push / 未打包）。用户要求：本地语音提供**多个可选择模型**，按性能档位推荐，
+> 一键下载安装配置后可用，不是解禁单一 SenseVoice 按钮。UI 由 `local-asr-model-choice-ui` 树消费。
+> 事实来源：`local-asr-model-catalog-2026-10-16.json`（HF LFS oid + 实测 tokens SHA256 + sherpa-onnx 1.13.8 sdist 工厂签名）。
+
+## A. 目录里有哪些模型（正式 6 项）
+
+| modelId | family | 档位 | 权重体积 | 许可 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `paraformer-zh-2023-09-14-int8` | paraformer | 轻量 | 243,446,974 B | Apache-2.0（cleared） | 中文主力，中英混说；**无标点** |
+| `whisper-base-int8` | whisper | 轻量 | 160,609,290 B | MIT（cleared） | 多语，中文弱于同体积 Paraformer |
+| `whisper-small-int8` | whisper | 均衡 | 375,485,327 B | MIT（cleared） | 多语均衡（16GB 档推荐） |
+| `whisper-turbo-int8` | whisper | 高质量 | 1,036,613,791 B | MIT（cleared） | 高质量里的速度优先版 |
+| `whisper-large-v3-int8` | whisper | 高质量 | 1,775,753,918 B | MIT（cleared） | 最高精度档（32GB 档推荐） |
+| `sensevoice-small-int8` | sensevoice | 均衡 | 239,549,735 B | **unresolved** | 存量兼容：**只保留自行导入**，不进下载面板 |
+
+- **Whisper 输出为模型原生文本（含标点 / 大小写）**：研究 JSON 的 `punctuation:false` 字段不可靠，本实现按真实原生输出记为 `punctuation:true`，不做云端纠错。
+- **Qwen3-ASR 0.6B 暂不上目录**：sherpa 1.13.8 真实支持 `from_qwen3_asr`，但公开 tar 缺 per-file / tar SHA256 pin → 未 pin 前不放「空可下载按钮」；运行族扩展点保留（`runner.ts`）。
+- **许可准确**：正式项均为 MIT / Apache-2.0；SenseVoice 仍按 `unresolved`（issue #334 open），**不新增 accept 勾框把它洗成允许**，老 `provider=local-sensevoice` / modelId / 权重 pin 不变，历史 `voiceSource` 与已安装目录继续可读。
+
+## B. 读：`GET /api/local-models/asr/catalog`
+
+字段 = 现有 `AsrStatus` / `AsrSourceMeta` / `LicenseDisclosure` 的组合（**不重复定义几份 types**），实际类型见
+`packages/server/src/local-asr/service.ts` 的 `LocalAsrCatalog` / `LocalAsrModelView`：
+
+```ts
+interface LocalAsrCatalog {
+  hardware: { os; arch; cpuCores; memoryBytes; tier: "light"|"balanced"|"high"|"unknown"; tierNote };  // 按系统总 RAM 8/16/32 保守分档（估算，非跑分）
+  runtime: { engine: "sherpa-onnx"; version; python; depsBytes: number|null; depsNote };                 // 共享引擎与权重分开
+  recommendedId: string | null;
+  models: LocalAsrModelView[];
+  notes: string[];                                                                                        // 未实测边界
+}
+interface LocalAsrModelView {
+  id; provider; family; variant; name; nameEn; languages; note;
+  tier; tags: AsrTier[]; recommended: boolean; recommendationReason;
+  available; unavailableReason;
+  weightsBytes; depsBytes: number|null; depsNote; suggestedMemoryBytes; memoryNote;   // 内存=模型进程估算，非整机门槛
+  capabilities; multilingual;
+  license: LicenseDisclosure;                                                          // 同 /source
+  source: { source: AsrSourceMeta; model: { id; repo; revision; files[] } };           // 同 /source 的 model.files
+  installed; selected; running;
+  install: { state; phase; phaseLabel; received; total; percent; error; installedAt; source; jobId; attempt };
+  runtime: { state; pid; port; host; restarts; lastError; healthOk; loaded };
+}
+```
+
+- 一次请求拿全（硬件档位 / 体积 / 依赖 / 内存估算 / 许可 / 来源 / 安装态 / 运行态），GET **不下载、不启动 worker**。
+- **许可确认分级**：`license.agreementRequired` 为 `false` 时（MIT / Apache-2.0）**不强制每次点同意** —— 正常展示署名与许可证链接即可，`acceptLicense` 可不传（一键装）；为 `true` 时才要求 `acceptLicense === acceptValue`。SenseVoice（unresolved）仍**阻下载**、保留自行导入，不新增勾框将其洗成允许。
+- `install.total === null` → 前端画不定进度条（`phaseLabel` 给中文阶段），不编假百分比。
+- `jobId` = 统一下载注册表稳定 id `asr:<modelId>`（同一次安装 = 同一个 job）；`attempt` 是第几次安装尝试（generation 概念，不要求 jobId 唯一到 attempt）。
+- 不含 token：catalog / status 只有 provider / model / protocol。
+
+## C. 写：按模型 id 路由（旧 `/asr/sensevoice/*` 保留兼容，语义不变）
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| POST | `/api/local-models/asr/models/:id/install` | body `{ acceptLicense?, source?: "download"\|"import", importDir?, intent?: "install"\|"install_and_use" }`；许可门槛同步 precheck 定状态码 |
+| POST | `/api/local-models/asr/models/:id/cancel` | 取消进行中的安装 / 下载，回滚 staging |
+| POST | `/api/local-models/asr/models/:id/select` | 切到该模型并停旧 worker；有录音租约 / 活跃推理时 400（忙时明确拒绝） |
+| POST | `/api/local-models/asr/models/:id/start` / `stop` / `pause` / `resume` / `idle` / `update` | 生命周期（lazy，idle TTL 沿用 90s） |
+| GET | `/api/local-models/asr/models/:id/status` | 单模型 status（catalog 子集，轮询用） |
+| DELETE | `/api/local-models/asr/models/:id` | body `{ confirm: true }`；只删**该模型**权重 / 元数据，不卸共享 runtime 与其它模型 |
+
+## D. 装 ≠ 用；stale intent 防覆盖
+
+- `install` 只负责**装**，不改当前 ASR 来源。
+- `intent:"install_and_use"`：安装成功后，**仅当**当前 `voiceSource` 与安装开始时完全一致才写「用本地该模型」；
+  期间用户改选云端 / 别的模型 → 迟到的安装完成**不得覆盖**新选择（`LocalAsrService.install` 的 `selectionAtStart` 比对）。
+- 来源真相仍是 `PUT /api/audio/asr/source`（UI 也可在安装成功后自己 PUT，二者幂等）。
+- **跨客户端 stale（CAS）**：`GET /api/audio/asr/source` 额外返回 `version`（每次写入递增）；`PUT` 可带可选 `expectedVersion`（非负整数），与当前版本不一致时返回 `409` + `error:"asr_source_conflict"` 且**不写入**（旧客户端不带该字段照旧可用）。后端 `install_and_use` 在安装完成时用**安装开始捕获的版本**做 CAS：期间别的页面 / 客户端改选 cloud 或别的模型 → 写入失败则**不覆盖**（UI 提示「已装但未切来源」）。
+
+## E. 统一下载（复用 `downloads.ts`，不另造 registry）
+
+- 每个 cleared 且平台支持的模型登记稳定 downloadId `asr:<modelId>`（`local-asr/download.ts`）：
+  `status()` 把 manager 的 install 状态投影成统一下载状态；`cancel()` 走同一个 manager AbortController；
+  `hidden()` 对 SenseVoice（unresolved）与不支持平台返回 true。
+- 「组件页下载」与「语音页安装并使用」是**同一个 job**：任何入口触发的安装经 `local-asr.changed` 事件（**事件驱动，不装永久定时 loop**）同步进下载面板。
+
+## F. 运行族（有界扩展点）
+
+`runner.ts` 注册 `sensevoice` / `paraformer` / `whisper`（sherpa 同一 `OfflineRecognizer`，按族构造）：
+- SenseVoice：`from_sense_voice(model, tokens, use_itn=True, language)`；
+- Paraformer：`from_paraformer(paraformer, tokens, num_threads, feature_dim=80)`（无标点）；
+- Whisper：`from_whisper(encoder, decoder, tokens, language="", task="transcribe")` —— **`language=""` 自动检测，绝不回落引擎默认 `en`**；large-v3 的 128 mel 由引擎内部处理，不手造参数。
+- 未注册 family → `precheck` fail closed（不假 runner 冒充）；Qwen3-ASR 待 pin。
+
+## G. 隔离与资源
+
+- **共享 runtime**（venv / uv / python / logs），**per-model 权重目录与 metadata**（老 SenseVoice 用历史布局）；全局**串行安装**避免并发 `uv pip` 污染同一 env。
+- 一次只运行一个 worker；`select` 先停旧 worker；有录音租约 / 活跃推理时明确拒绝，不把进行中的音频送给别的模型。
+- 卸载一个模型不卸共享 runtime / 其它模型权重；不删正在用（有租约）的模型。
+
+## H. 未实测边界（诚实）
+
+- 真实下载 / 安装 / 启动 / 转写、RTF、峰值内存：**全部未在本机跑过**（本轮只跑 fake deps + 统计测试）。
+- 硬件档位与模型内存是**保守估算**，未跑 benchmark；`suggestedMemoryBytes` 是模型进程估算，不是整机门槛。
+- 许可为公开来源核对，**不是法律意见**；Whisper 原生标点仍待真机确认。

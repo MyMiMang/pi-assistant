@@ -9,11 +9,12 @@
  * 关键取舍：没有选择就是「未配置」，绝不自动回落到云端；打开本页不安装 / 不启动 / 不取麦克风 / 不连云。
  */
 import { AlertTriangle, Cloud, HardDrive, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { getVoiceSource, setVoiceSource, type VoiceSource, type VoiceSourceOption, type VoiceSourceView } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { getVoiceSource, onVoiceSourceChanged, setVoiceSource, type VoiceSource, type VoiceSourceOption, type VoiceSourceView } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, Help, Select, cx } from "./ui";
 import { LocalSenseVoiceCard } from "./ModelServices";
+import { LocalAsrModels } from "./LocalAsrModels";
 
 const keyOf = (o: { provider: string; model: string }) => `${o.provider}::${o.model}`;
 const AVAIL_LABEL: Record<string, string> = { ready: "可用", not_configured: "未配置", not_installed: "未安装", not_running: "未运行", deleted: "已不可用" };
@@ -53,13 +54,17 @@ export function VoiceSettings() {
 	useEffect(() => {
 		void reload();
 	}, []);
+	// 来源可能在别处被改（例如本页下方「本地模型」的安装并使用 / 使用）：同步刷新状态徽标。
+	const reloadRef = useRef(reload);
+	reloadRef.current = reload;
+	useEffect(() => onVoiceSourceChanged(() => void reloadRef.current()), []);
 
 	const options = view?.options ?? [];
 	const cloud = options.filter((o) => o.location === "cloud");
 	const local = options.filter((o) => o.location === "local");
 	const picked = cloud.find((o) => keyOf(o) === pick) ?? null;
 	const selected = options.find((o) => o.selected) ?? null;
-	const localPick = local.find((o) => o.selected) ?? local[0] ?? null;
+	const localPick = local.find((o) => o.provider === "local-sensevoice") ?? null;
 	// 云端只有 ready 才能保存（未配置会被后端 400）；本地允许存「未安装 / 未运行」的意图，但 deleted / not_configured 不允许。
 	const canSave = (o: VoiceSourceOption | null) => !!o && (o.availability === "ready" || (o.location === "local" && (o.availability === "not_installed" || o.availability === "not_running")));
 	const statusLabel = () => {
@@ -162,7 +167,11 @@ export function VoiceSettings() {
 
 				{tab === "local" && (
 					<div className="space-y-3" data-testid="voice-local-section">
-						<LocalSenseVoiceCard />
+						<LocalAsrModels />
+						<details className="rounded-xl border border-line p-3" open={source?.provider === "local-sensevoice"} data-testid="voice-local-legacy">
+							<summary className="cursor-pointer text-xs text-mut" data-testid="voice-local-legacy-label">SenseVoice 已有权重（许可待确认，仅导入）</summary>
+							<div className="mt-3 space-y-3">
+								<LocalSenseVoiceCard />
 						{localPick && (
 							<div className="flex flex-wrap items-center gap-2">
 								<Button
@@ -171,11 +180,13 @@ export function VoiceSettings() {
 									onClick={() => void choose({ location: "local", provider: localPick.provider, model: localPick.model })}
 									data-testid="voice-local-use"
 								>
-									{saving && <Loader2 size={14} className="animate-spin" />} 设为语音来源
+									{saving && <Loader2 size={14} className="animate-spin" />} 使用已导入的 SenseVoice
 								</Button>
-								{source?.location === "local" && <Badge tone={localPick.availability === "ready" ? "green" : "amber"}>{localPick.availability === "ready" ? "当前使用" : `${AVAIL_LABEL[localPick.availability] ?? localPick.availability}（点麦克风会尝试加载）`}</Badge>}
+								{source?.location === "local" && source.provider === localPick.provider && <Badge tone={localPick.availability === "ready" ? "green" : "amber"}>{localPick.availability === "ready" ? "当前使用" : `${AVAIL_LABEL[localPick.availability] ?? localPick.availability}（点麦克风会尝试加载）`}</Badge>}
 							</div>
 						)}
+							</div>
+						</details>
 					</div>
 				)}
 

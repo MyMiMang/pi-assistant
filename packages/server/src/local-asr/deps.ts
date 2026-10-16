@@ -9,7 +9,7 @@
  */
 import { spawn as nodeSpawn, execFile, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { cpus, homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -23,27 +23,51 @@ import { serveScriptSource } from "./serve-script.ts";
 import { verifyAsrWeights } from "./weights.ts";
 import type { AsrChild, AsrDeps, AsrHealth, AsrPaths, AsrRunResult } from "./manager.ts";
 import { senseVoicePlatform } from "./platform.ts";
+import { asrRunnerFamily } from "./runner.ts";
 
 /** 我们自己的数据根目录：`数据目录/local-asr`。 */
 export function asrRoot(): string {
 	return join(config.dataDir, "local-asr");
 }
 
-export function asrPaths(): AsrPaths {
+/** 老布局的默认模型（历史安装落在 `root/weights`、`root/runtime/meta.json`，继续可读）。 */
+export const LEGACY_ASR_MODEL_ID = SENSEVOICE_MODEL.id;
+
+/**
+ * Per-model 数据目录：**共享 runtime（venv / uv / python / logs）**，**隔离权重与元数据**。
+ * 老 SenseVoice 沿用历史布局（`root/weights`、`runtime/meta.json`、`runtime/serve.py`），其余模型落到
+ * `root/models/<modelId>/`，互不影响；卸载一个模型不碰共享 runtime 与其它模型权重。
+ */
+export function asrPaths(modelId?: string): AsrPaths {
 	const root = asrRoot();
 	const runtime = join(root, "runtime");
-	return {
+	const shared = {
 		root,
 		env: join(runtime, "env"),
 		envStaging: join(runtime, "env.new"),
 		envPrev: join(runtime, "env.old"),
 		python: join(root, "python"),
 		uvCache: join(root, "uv-cache"),
-		weights: join(root, "weights"),
-		weightsStaging: join(root, "weights.new"),
 		logs: join(root, "logs"),
+		// 一次只跑一个 worker，pid 文件共享
 		pidFile: join(runtime, "serve.pid"),
-		metaFile: join(runtime, "meta.json"),
+	};
+	if (!modelId || modelId === LEGACY_ASR_MODEL_ID) {
+		return {
+			...shared,
+			weights: join(root, "weights"),
+			weightsStaging: join(root, "weights.new"),
+			metaFile: join(runtime, "meta.json"),
+			serve: join(runtime, "serve.py"),
+		};
+	}
+	const dir = join(root, "models", modelId);
+	return {
+		...shared,
+		weights: join(dir, "weights"),
+		weightsStaging: join(dir, "weights.new"),
+		metaFile: join(dir, "meta.json"),
+		serve: join(runtime, `serve-${modelId}.py`),
 	};
 }
 
@@ -225,9 +249,9 @@ export function createAsrDeps(): AsrDeps {
 				}),
 			);
 		},
-		verifyWeights: async (files, signal) => {
+		verifyWeights: async (files, signal, opts) => {
 			if (signal.aborted) throw new Error("已取消");
-			const res = await verifyAsrWeights(asrPaths().weightsStaging, files, { signal });
+			const res = await verifyAsrWeights(asrPaths().weightsStaging, files, { signal, assertManifest: opts?.assertManifest });
 			if (!res.ok) throw new Error(`权重校验未通过：${res.problems.slice(0, 3).join("；")}`);
 		},
 		importWeights: async (sourceDir, files, signal) => {
@@ -237,7 +261,7 @@ export function createAsrDeps(): AsrDeps {
 		findFreePort,
 		health: readHealth,
 		randomToken: () => randomBytes(32).toString("hex"),
-		paths: asrPaths,
+		paths: (modelId?: string) => asrPaths(modelId),
 		registerAsr: (info) => {
 			registerAsrEndpoint({
 				provider: info.provider,
@@ -246,7 +270,7 @@ export function createAsrDeps(): AsrDeps {
 				baseUrl: info.baseUrl,
 				token: info.token,
 				sampleRate: info.sampleRate,
-				languages: [],
+				languages: info.languages ?? [],
 			});
 		},
 		unregisterAsr: (provider) => unregisterAsrEndpoint(provider),
@@ -266,7 +290,10 @@ export function createAsrDeps(): AsrDeps {
 			t.unref?.();
 			return { cancel: () => clearTimeout(t) };
 		},
-		isInstalled: () => existsSync(asrPaths().env) && existsSync(asrPaths().weights) && existsSync(asrPaths().metaFile),
+		isInstalled: (modelId?: string) => {
+			const p = asrPaths(modelId);
+			return existsSync(p.env) && existsSync(p.weights) && existsSync(p.metaFile);
+		},
 		log: (line) => appendLog(asrPaths(), line),
 		activate: async (paths, meta) => {
 			mkdirSync(join(paths.root, "runtime"), { recursive: true });
@@ -280,7 +307,8 @@ export function createAsrDeps(): AsrDeps {
 			if (existsSync(paths.env)) renameSync(paths.env, paths.envPrev);
 			renameSync(paths.envStaging, paths.env);
 			writeFileSync(paths.metaFile, JSON.stringify({ installedAt: Date.now(), ...meta }, null, 2));
-			writeFileSync(join(paths.root, "serve.py"), serveScriptSource());
+			const family = asrRunnerFamily(meta.runner);
+			writeFileSync(paths.serve ?? join(paths.root, "serve.py"), family.serveScript({ roles: meta.fileRoles, sampleRate: meta.sampleRate, maxAudioBytes: meta.maxAudioBytes }));
 			rmSync(weightsPrev, { recursive: true, force: true });
 		},
 		rollback: async (paths) => {
@@ -290,10 +318,26 @@ export function createAsrDeps(): AsrDeps {
 			const weightsPrev = `${paths.weights}.old`;
 			if (!existsSync(paths.weights) && existsSync(weightsPrev)) renameSync(weightsPrev, paths.weights);
 		},
-		uninstall: async (paths) => {
+		uninstall: async (paths, modelId) => {
 			const expected = resolve(asrRoot());
 			if (resolve(paths.root) !== expected) throw new Error("卸载路径不在本地 ASR 目录下，已拒绝");
-			if (existsSync(paths.root)) rmSync(paths.root, { recursive: true, force: true });
+			// 只删该模型的权重 / staging / 元数据 / 专属 serve 脚本；共享 runtime（venv / uv / python）
+			// 与其它模型的权重一律保留（用户要求：卸载 model 不卸 shared runtime / 其它 weights）。
+			rmSync(paths.weights, { recursive: true, force: true });
+			rmSync(paths.weightsStaging, { recursive: true, force: true });
+			rmSync(`${paths.weights}.old`, { recursive: true, force: true });
+			rmSync(paths.metaFile, { force: true });
+			rmSync(paths.serve ?? join(paths.root, "serve.py"), { force: true });
+			if (modelId && modelId !== LEGACY_ASR_MODEL_ID) {
+				const dir = resolve(join(asrRoot(), "models", modelId));
+				if (dir.startsWith(expected + sep)) {
+					try {
+						if (!readdirSync(dir).length) rmSync(dir, { recursive: true, force: true });
+					} catch {
+						/* 目录已不在 */
+					}
+				}
+			}
 		},
 	};
 }

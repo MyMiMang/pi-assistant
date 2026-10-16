@@ -30,12 +30,12 @@ export class WavRejectedError extends Error {
 }
 
 /** 只做校验，便于上层在拿到音频时就先给用户明确错误。 */
-export function validateWav(wav: Uint8Array): WavInfo {
+export function validateWav(wav: Uint8Array, opts: { sampleRate?: number; channels?: number } = {}): WavInfo {
 	const res = checkWav(wav, {
 		maxBytes: ASR_MAX_AUDIO_BYTES,
 		maxSeconds: ASR_MAX_AUDIO_SECONDS,
-		expectSampleRate: SENSEVOICE_MODEL.sampleRate,
-		expectChannels: SENSEVOICE_MODEL.channels,
+		expectSampleRate: opts.sampleRate ?? SENSEVOICE_MODEL.sampleRate,
+		expectChannels: opts.channels ?? SENSEVOICE_MODEL.channels,
 	});
 	if (!res.ok || !res.info) throw new WavRejectedError(res.problems);
 	return res.info;
@@ -43,7 +43,7 @@ export function validateWav(wav: Uint8Array): WavInfo {
 
 /** 调用运行中的本地 ASR 端点转写一段 WAV。调用方负责保证端点来自 `asrEndpoint()`（服务端内部）。 */
 export async function transcribeWav(manager: LocalAsrManager, endpoint: AsrEndpoint, wav: Uint8Array, opts: TranscribeOptions = {}): Promise<AsrResult> {
-	const info = validateWav(wav); // 先校验：不合格不占租约
+	const info = validateWav(wav, { sampleRate: endpoint.sampleRate }); // 先校验：不合格不占租约
 	const lease = manager.beginInference();
 	const timeoutMs = opts.timeoutMs ?? 60_000;
 	const ctrl = new AbortController();

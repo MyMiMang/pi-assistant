@@ -35,6 +35,20 @@ test("cleared 许可：install 仍要求 acceptLicense 与当前版本完全一�
 	assert.equal(installGate(cleared, "1.0").allowed, false);
 	assert.match(String(installGate(cleared, "1.0").reason), /版本不匹配/);
 	assert.equal(installGate(cleared, "1.1").allowed, true);
+	// SenseVoice 确实需要显式确认（授权 override 路径）
+	assert.equal(licenseDisclosure(SENSEVOICE_LICENSE).agreementRequired, true);
+});
+
+test("宽松许可（MIT / Apache-2.0）：cleared 不强制 acceptLicense，一键装；只需展示署名与链接", () => {
+	const mit = { ...SENSEVOICE_LICENSE, decision: "cleared" as const, redistribution: true, licenseName: "MIT License (OpenAI Whisper)", termsVersion: "MIT", requiresExplicitAgreement: false };
+	assert.equal(installGate(mit, null).allowed, true, "MIT 不应因缺少 acceptLicense 被拦");
+	assert.equal(installGate(mit, "MIT").allowed, true);
+	const d = licenseDisclosure(mit);
+	assert.equal(d.agreementRequired, false, "宽松许可不需要用户勾同意");
+	assert.equal(d.attribution.length > 0, true, "仍必须展示署名");
+	assert.ok(d.links.modelLicense.startsWith("http"), "仍必须展示许可证链接");
+	// cleared 但需要确认的仍拦
+	assert.equal(installGate(cleared, null).allowed, false);
 });
 
 test("prohibited 许可：install 与 import 都关闭", () => {
@@ -52,7 +66,7 @@ test("条款披露：限制摘要与链接默认可见，acceptValue 就是条�
 	assert.match(d.restrictions.join("\n"), /reference and learning purposes only/);
 	assert.match(d.restrictions.join("\n"), /单方改版/);
 	assert.ok(d.links.modelLicense.includes("MODEL_LICENSE"));
-	assert.ok(d.links.issue.includes("334"));
+	assert.ok((d.links.issue ?? "").includes("334"));
 	assert.equal(d.attribution, "SenseVoiceSmall by FunASR / FunAudioLLM", "§2.2 署名是硬要求");
 });
 

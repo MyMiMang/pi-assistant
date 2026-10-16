@@ -114,6 +114,23 @@ test("PUT 未知 provider-model → 400 asr_not_declared，不落库", async () 
 	assert.equal((await api("/api/audio/asr/source")).body.source, null);
 });
 
+test("PUT 来源 CAS：expectedVersion 过期 → 409 不覆盖；带当前版本成功且版本递增；旧客户端不带仍可用", async () => {
+	const g0 = await api("/api/audio/asr/source");
+	const v0 = Number(g0.body.version);
+	assert.equal(Number.isInteger(v0), true, "GET /source 应返回 version");
+	const stale = await api("/api/audio/asr/source", { method: "PUT", body: JSON.stringify({ source: LOCAL, expectedVersion: v0 + 5 }) });
+	assert.equal(stale.status, 409, JSON.stringify(stale.body));
+	assert.equal(stale.body.error, "asr_source_conflict");
+	assert.equal((await api("/api/audio/asr/source")).body.source, null, "CAS 失败不得写入");
+	const ok = await api("/api/audio/asr/source", { method: "PUT", body: JSON.stringify({ source: LOCAL, expectedVersion: v0 }) });
+	assert.equal(ok.status, 200, JSON.stringify(ok.body));
+	assert.deepEqual(ok.body.source, LOCAL);
+	assert.equal(Number(ok.body.version), v0 + 1, "每次写入版本递增");
+	// 旧客户端 / 不带 expectedVersion 仍可写（向后兼容）
+	const legacy = await api("/api/audio/asr/source", { method: "PUT", body: JSON.stringify({ source: null }) });
+	assert.equal(legacy.status, 200);
+});
+
 test("本地未安装允许先选「用本地」意图，但 availability 仍 not_installed", async () => {
 	const put = await api("/api/audio/asr/source", { method: "PUT", body: JSON.stringify({ source: LOCAL }) });
 	assert.equal(put.status, 200, JSON.stringify(put.body));

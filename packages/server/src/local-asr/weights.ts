@@ -7,28 +7,26 @@
  */
 import { assertSafePinnedFiles, verifyPinnedFiles, type PinnedFile, type VerifyResult } from "../managed-weights/verify.ts";
 import type { AsrWeightFile } from "./manifest.ts";
+import { assertNoExecutableWeights } from "./runner.ts";
 
-const FORBIDDEN_EXT = /\.(py|pyc|pth|pt|bin|ckpt|h5|pkl|pickle|so|dylib|dll|exe|sh|bat|ps1|safetensors)$/i;
-
-/** SenseVoice 清单自检（不碰磁盘）：路径安全 + 只允许 onnx 权重与 tokens 表。 */
+/** SenseVoice 清单自检（兼容旧调用）：路径安全 + 只允许 onnx 权重与 tokens 表。 */
 export function assertSafeAsrManifest(files: PinnedFile[]): string[] {
-	const problems = assertSafePinnedFiles(files);
+	const problems = [...assertSafePinnedFiles(files), ...assertNoExecutableWeights(files)];
 	const seen = new Set(files.map((f) => String(f.path).replace(/\\/g, "/")));
-	for (const f of files) {
-		const rel = String(f.path).replace(/\\/g, "/");
-		if (FORBIDDEN_EXT.test(rel)) problems.push(`清单含脚本 / 非预期权重格式：${rel}`);
-	}
 	if (![...seen].some((p) => p.endsWith(".onnx"))) problems.push("缺少 onnx 模型文件");
 	if (![...seen].some((p) => /(^|\/)tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
 	return problems;
 }
 
-/** 校验 SenseVoice 权重目录；`ok` 仅在零问题时为 true。 */
+/**
+ * 校验权重目录；`ok` 仅在零问题时为 true。
+ * `assertManifest` = 运行族自己的规则（见 runner.ts）；不传则回退到 SenseVoice 规则。
+ */
 export async function verifyAsrWeights(
 	dir: string,
 	files: AsrWeightFile[],
-	opts: { hashFile?: (p: string) => Promise<string>; signal?: AbortSignal } = {},
+	opts: { hashFile?: (p: string) => Promise<string>; signal?: AbortSignal; assertManifest?: (files: PinnedFile[]) => string[] } = {},
 ): Promise<VerifyResult> {
 	if (opts.signal?.aborted) throw new Error("已取消");
-	return verifyPinnedFiles(dir, files, { hashFile: opts.hashFile, assertManifest: assertSafeAsrManifest });
+	return verifyPinnedFiles(dir, files, { hashFile: opts.hashFile, assertManifest: opts.assertManifest ?? assertSafeAsrManifest });
 }
