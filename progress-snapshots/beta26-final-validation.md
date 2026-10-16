@@ -2,7 +2,7 @@
 
 树：`release-candidate-validation`（worktree `/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/release-candidate-validation`）。
 起点：第一轮整合后 HEAD `6075b3e`（stage1 已合 Laya `10317d0` / 语音多模型 `55a09e7` 含后端 `18478d4` / 主题选模型 `0781b9c`）。
-本轮 HEAD：`fb31539`（合并 1 `42f9613`、合并 2 `17a3da7`、收口文档 `f905c4d`、截图 `fb31539`；首父链干净、`git status` 干净）。
+本轮 HEAD：`fb31539`（功能定稿；其后仅本快照 / 文档微调，最终 HEAD 以 `git rev-parse HEAD` 为准）。合并 1 `42f9613`、合并 2 `17a3da7`、收口文档 `f905c4d`、截图 `fb31539`；首父链干净、`git status` 干净。
 **本任务不是发布动作：未 push / 未 tag / 未建 Release / 未更新用户 App / 未改 `.github/release-scope.json`（仍 `mac-arm64`）。** push / tag 由主会话在复核后做。
 
 ## 1. 本轮合并（均 `--no-ff`，保留各自祖先）
