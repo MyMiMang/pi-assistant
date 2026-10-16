@@ -12,7 +12,7 @@ import { useComposerKeys, COMPOSER_LABEL } from "../composer";
 import { VoiceInput } from "./VoiceInput";
 import { buildReplyRef, draftSignature, liveMentions, newClientId, replyDraftKey, resolveRoomReplyTarget, roomSendBody } from "../replies";
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
-import { locateRoomMessage } from "../replies-api";
+import { locateRoomMessage, type LocateResult } from "../replies-api";
 import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
 
 // ------------------------------------------------------------------ 显示用的成员信息（助理已删除时用群里存的快照）
@@ -70,7 +70,7 @@ function groupRoom(list: Message[]): RRow[] {
 const STATUS = (reason: string) => (reason === "followup" ? "总结中" : "思考中");
 
 export default function RoomChat({ roomId }: { roomId: string }) {
-	const { rooms, agents, roomMsgs, info, set } = useStore();
+	const { rooms, agents, roomMsgs, roomWindow, info, set } = useStore();
 	const room = rooms.find((r) => r.id === roomId);
 	const list = roomMsgs[roomId] ?? [];
 	const rows = useMemo(() => groupRoom(list), [list]);
@@ -85,31 +85,19 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const rKey = replyDraftKey.room(roomId);
 	const quote = useReplyDrafts((s) => s.drafts[rKey] ?? null);
 	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: m.agent_id, name: memberOf(room, agents, m.agent_id).name }));
-	const ensureLoaded = async (mid: string): Promise<boolean> => {
-		const has = () => (useStore.getState().roomMsgs[roomId] ?? []).some((m) => m.id === mid);
-		if (has()) return true;
-		// 有界：最多 20 页；全程连续向更早分页，不插入孤立窗口 → 前后无 gap。
-		for (let i = 0; i < 20; i++) {
-			const first = (useStore.getState().roomMsgs[roomId] ?? [])[0];
-			if (!first?.seq) return false;
-			let more: Message[];
-			try {
-				more = await api<Message[]>(`/api/rooms/${roomId}/messages?before=${first.seq}&limit=${ROOM_PAGE}`);
-			} catch {
-				setOlder("error");
-				return false;
-			}
-			if (!more.length) {
-				setOlder("end");
-				return has();
-			}
-			setOlder(more.length < ROOM_PAGE ? "end" : "idle");
-			useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: [...more, ...(s.roomMsgs[roomId] ?? [])] } }));
-			if (has()) return true;
-		}
-		return has();
+	const ensureLoaded = (r: LocateResult) => {
+		// 用服务端有界上下文窗口替换当前群列表：目标一定在窗口里、窗口内连续无洞；窗口外不预加载。
+		stick.current = false; // 跳进历史窗口后不自动贴底，滚动交给 flash 定位目标
+		useStore.getState().openRoomHistoryWindow(roomId, { messages: r.context, hasOlder: r.hasOlder, hasNewer: r.hasNewer });
+		setOlder(r.hasOlder === false ? "end" : "idle");
 	};
 	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateRoomMessage(roomId, mid), ensureLoaded);
+	// 从历史窗口回到最新：重新拉最近一页、清空窗口状态（不改数据、不删消息）
+	const returnLatest = async () => {
+		setOlder("idle");
+		stick.current = true; // 用户主动回最新：跟随到底
+		await useStore.getState().returnRoomToLatest(roomId);
+	};
 	const replyCtx = useReplyContext(onQuote);
 	useComposerInset(scroller, composerWrap, stick);
 	useLayoutEffect(() => {
@@ -228,6 +216,21 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 						),
 					)}
 					{speaking && (lastRow?.kind !== "bot" || lastRow.agentId !== speaking) && <RoomBotTurn row={{ kind: "bot", id: "pending", agentId: speaking, parts: [] }} room={room} agents={agents} live onAvatar={openMember} />}
+					{roomWindow[roomId] && (
+						<div className="pa-history-window" data-testid="history-window">
+							<span className="pa-history-note">{roomWindow[roomId]!.newCount > 0 ? `有 ${roomWindow[roomId]!.newCount} 条新消息` : "正在查看历史消息"}</span>
+							<div className="pa-history-actions">
+								{roomWindow[roomId]!.hasNewer && (
+									<button className="pa-chip sm" onClick={() => void useStore.getState().loadNewerRoomMessages(roomId)} data-testid="history-load-newer">
+										加载较新消息
+									</button>
+								)}
+								<button className="pa-chip sm" onClick={() => void returnLatest()} data-testid="history-return-latest">
+									回到最新
+								</button>
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 			{st.running && (
@@ -284,7 +287,7 @@ function RoomBotTurn({ row, room, agents, live, onAvatar, onQuote, onJump, inter
 
 // ------------------------------------------------------------------ 输入框：@ 选择（桌面弹出层，手机底部面板）
 const ALL = { agentId: "__all", name: "所有人" } as const;
-function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, onRetryJump, wrapRef }: { room: Room; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" | "far" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
+function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, onRetryJump, wrapRef }: { room: Room; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const clientRef = useRef<{ sig: string; id: string } | null>(null);

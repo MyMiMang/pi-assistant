@@ -23,7 +23,7 @@ import { agentSendBody, buildReplyRef, draftSignature, newClientId, resolveAgent
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
 import { canFork, forkErrorMessage, forkFromMessage, newForkClientId } from "../fork-api";
 import { setComposerDraft, useComposerDrafts } from "../composerDrafts";
-import { locateAgentMessage } from "../replies-api";
+import { locateAgentMessage, type LocateResult } from "../replies-api";
 import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
 export { Activity, activityOf, Thinking, group, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
 // 聊天里不再显示子代理指令卡：任务统一从 header 的「子代理」入口 → 任务概览 → 详情查看。
@@ -54,10 +54,15 @@ export default function Chat({ agentId }: { agentId: string }) {
 	const rKey = replyDraftKey.agent(agentId, convId);
 	const quote = useReplyDrafts((s) => s.drafts[rKey] ?? null);
 	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: agentId, name: agent?.name ?? "助理" }));
-	// 引用/搜索 jump 到未加载的旧消息：从当前窗口连续向更早分页直到目标进入列表（见 store.loadUntilMessage）。
-	// 不再插入孤立的 context 窗口：那会在当前列表和定位窗口之间留一段永远看不到的历史，滚动无法补上。
-	const ensureLoaded = (mid: string) => useStore.getState().loadUntilMessage(agentId, mid);
-	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), ensureLoaded);
+	// 引用/搜索 jump 到未加载的旧消息：用服务端有界上下文窗口替换当前列表（窗口内连续无洞、不把沿途历史全加载），
+	// 再滚到目标。窗口外的新消息不跨 gap 合入，只计数提示（见 store.handle）。
+	const openWindow = (r: LocateResult) => {
+		if (!convId) return;
+		// 跳进历史窗口后不再自动贴底（新消息不拉到底，滚动交给 flash 定位目标）
+		stick.current = false;
+		useStore.getState().openHistoryWindow(agentId, convId, { messages: r.context, hasOlder: r.hasOlder, hasNewer: r.hasNewer });
+	};
+	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), openWindow);
 	const [forkNotice, setForkNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 	// 「从这条消息另开新对话」：用 Pi 公开 fork 在服务端建分支对话；切到新对话并把正文放回输入框（不自动发）。
 	const onFork = async (m: Message) => {
@@ -213,6 +218,21 @@ export default function Chat({ agentId }: { agentId: string }) {
 						),
 					)}
 					{pendingTurn && <BotTurn row={null} agent={agent} live />}
+					{st?.window && (
+						<div className="pa-history-window" data-testid="history-window">
+							<span className="pa-history-note">{st.window.newCount > 0 ? `有 ${st.window.newCount} 条新消息` : "正在查看历史消息"}</span>
+							<div className="pa-history-actions">
+								{st.window.hasNewer && (
+									<button className="pa-chip sm" onClick={() => void useStore.getState().loadNewerMessages(agentId)} disabled={st.loading} data-testid="history-load-newer">
+										{st.loading ? "加载中…" : "加载较新消息"}
+									</button>
+								)}
+								<button className="pa-chip sm" onClick={() => { stick.current = true; void useStore.getState().returnToLatest(agentId); }} data-testid="history-return-latest">
+									回到最新
+								</button>
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 			{replyCtx.menuEl}
@@ -243,7 +263,7 @@ function ThreadSkeleton() {
 }
 
 // ------------------------------------------------------------------ 悬浮输入框：拖拽文件 / 粘贴图片
-function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLabel, onJump, jumpState, onRetryJump, wrapRef }: { agentId: string; name: string; model?: string; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; replyLabel: string | null; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" | "far" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
+function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLabel, onJump, jumpState, onRetryJump, wrapRef }: { agentId: string; name: string; model?: string; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; replyLabel: string | null; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
 	const [sending, setSending] = useState(false);
 	const [sendErr, setSendErr] = useState("");
 	// 草稿按「助理 + 对话」分桶（replyKey 复用回复草稿的键）：切对话 / fork 切换不丢字、不串对话

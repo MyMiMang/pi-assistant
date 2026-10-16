@@ -194,9 +194,15 @@ export function deleteMessage(id: string) {
 /**
  * 群消息（按插入顺序，稳定游标 before = rowid）。
  * rowid 单调递增，不受 created_at 相同影响：同一毫秒的多条消息不会在分页边界被跳过 / 重复。
+ *
+ * 前向分页（历史窗口「加载较新消息」）：`after=seq`，`rowid > after` 升序取回，不含游标本身。
  */
-export function listRoomMessages(roomId: string, opts: { before?: number; limit?: number } = {}) {
+export function listRoomMessages(roomId: string, opts: { before?: number; after?: number; limit?: number } = {}) {
 	const limit = Math.min(opts.limit ?? 200, 500);
+	if (opts.after !== undefined) {
+		const rows = db.prepare("SELECT rowid AS seq, * FROM messages WHERE room_id = ? AND rowid > ? ORDER BY rowid ASC LIMIT ?").all(roomId, opts.after, limit) as unknown as (MessageRow & { seq: number })[];
+		return rows.map((r) => ({ ...toMessage(r), seq: r.seq }));
+	}
 	const rows = db.prepare("SELECT rowid AS seq, * FROM messages WHERE room_id = ? AND rowid < ? ORDER BY rowid DESC LIMIT ?").all(roomId, opts.before ?? Number.MAX_SAFE_INTEGER, limit) as unknown as (MessageRow & { seq: number })[];
 	return rows.reverse().map((r) => ({ ...toMessage(r), seq: r.seq }));
 }
@@ -207,15 +213,25 @@ export function listRoomMessages(roomId: string, opts: { before?: number; limit?
  * 游标语义：
  *  - 传 `beforeSeq`（推荐，新客户端）：按 `(created_at, rowid)` 复合游标，稳定，不跳不重；
  *  - 只传 `before`（旧客户端 / 旧接口契约）：沿用 `created_at < before`，行为不变；
+ *  - 传 `after` / `afterSeq`：**前向分页**（历史窗口「加载较新消息」），同一复合游标升序取更新的，不含游标本身；
  *  - 都不传：从最新一页开始。
  * 每条返回带 `seq`（rowid），供客户端下一页复用。
  */
-export function listMessages(agentId: string, opts: { taskId?: string | null; conversationId?: string; before?: number; beforeSeq?: number; limit?: number }) {
+export function listMessages(agentId: string, opts: { taskId?: string | null; conversationId?: string; before?: number; beforeSeq?: number; after?: number; afterSeq?: number; limit?: number }) {
 	const conv = opts.conversationId ?? currentConversation(agentId);
 	const limit = Math.min(opts.limit ?? 200, 500);
 	if (opts.taskId) {
 		const rows = db.prepare("SELECT rowid AS seq, * FROM messages WHERE task_id = ? AND created_at < ? ORDER BY created_at DESC, rowid DESC LIMIT ?").all(opts.taskId, opts.before ?? Number.MAX_SAFE_INTEGER, limit) as unknown as (MessageRow & { seq: number })[];
 		return rows.reverse().map((r) => ({ ...toMessage(r), seq: r.seq }));
+	}
+	if (opts.after !== undefined || opts.afterSeq !== undefined) {
+		const fwdComposite = opts.afterSeq !== undefined;
+		const fwdFilter = fwdComposite ? "(created_at > ? OR (created_at = ? AND rowid > ?))" : "created_at > ?";
+		const fwdParams: number[] = fwdComposite ? [opts.after ?? 0, opts.after ?? 0, opts.afterSeq!] : [opts.after ?? 0];
+		const fwdRows = db
+			.prepare(`SELECT rowid AS seq, * FROM messages WHERE agent_id = ? AND conversation_id = ? AND task_id IS NULL AND subagent_id IS NULL AND ${fwdFilter} ORDER BY created_at ASC, rowid ASC LIMIT ?`)
+			.all(agentId, conv, ...fwdParams, limit) as unknown as (MessageRow & { seq: number })[];
+		return fwdRows.map((r) => ({ ...toMessage(r), seq: r.seq }));
 	}
 	const composite = opts.beforeSeq !== undefined;
 	const filter = composite ? "(created_at < ? OR (created_at = ? AND rowid < ?))" : "created_at < ?";

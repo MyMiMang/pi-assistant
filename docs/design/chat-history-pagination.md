@@ -38,7 +38,20 @@
 ### 前端 `Chat.tsx` / `RoomChat.tsx`
 - 滚动接近顶部自动加载更早；插入上方后按 `scrollHeight` 高度差回填 `scrollTop`，**保视觉锚点不跳**；正在往上翻 `stick=false`，新消息不把视图拉到底。
 - 加载失败显示错误 + 重试；`hasMore=false`（收到空页）后不再发请求。
-- **引用 / 搜索 jump** 到未加载的旧消息：继续用有界 `GET /api/messages/:mid/context`（前后各 ≤ limit/2），插入后把 `hasMore` 置真、群聊把 `older` 复位，保证从窗口继续向上加载**不出现分页断档**；不为跳一条拉全量。
+- **引用 / 搜索 jump 到未加载的旧消息**：见下面「context 窗口导航」——用服务端有界上下文窗口**替换**当前列表，不把沿途历史全部加载进 DOM。
+
+## 2.1 context 窗口导航（引用跳任意远的消息）
+
+旧实现有两个问题：① 把 `/api/messages/:mid/context` 的孤立窗口 merge 进当前列表，当前窗口与目标窗口之间那段历史**永久不可达**（`loadMore` 补不上）；② 改成「从当前窗口连续向更早分页」后，跳一条很远的老消息会把沿途上千条塞进 DOM（手机正是要避免的），且需要设一个页数上限，超过就跳不了。
+
+现在改成**切换到一个围绕目标的连续历史窗口**，任意远都能一跳到位、且不把沿途历史进 DOM：
+
+- **服务端**：`GET /api/messages/:mid/context` 保留旧契约（默认升序 `Message[]`）；新增 `?bounds=1` 回 `{ messages, hasOlder, hasNewer }`。窗口仍是同容器 `rowid ∈ [seq-half, seq+half]`（`limit≤100`，前后各 ≤ half），本身连续无洞。`hasOlder/hasNewer` 的边界查询与窗口用**同一过滤条件**（`task_id IS NULL AND subagent_id IS NULL`），否则子代理 / 任务消息会把 `hasNewer` 永远顶成 true。
+- **前向分页**：`GET /api/agents/:id/messages` 增 `after` / `afterSeq`（与 `before` / `beforeSeq` 对称的 `(created_at, rowid)` 复合游标，升序、不含游标本身）；`GET /api/rooms/:rid/messages` 增 `after=seq`。只传旧参数的客户端行为不变。
+- **前端 store**：`openHistoryWindow` / `openRoomHistoryWindow` 用窗口替换列表，`msgState.window` / `roomWindow` 记 `{ hasNewer, newCount }`；`loadNewerMessages` / `loadNewerRoomMessages` 按需向前分页到实时末尾；`returnToLatest` / `returnRoomToLatest` 重新拉最近一页并清空窗口（`loadMessages(..., replace=true)`，**不与窗口合并**，否则会跨 gap 拼出中段不可达的列表）。
+- **不跨 gap 合入新消息**：窗口还不到实时末尾（`hasNewer=true`）时，WS 的 `message.created` 只累加 `newCount` 提示，不追加进列表；窗口内已载消息的 `message.updated` / `deleted` / `delta` 仍按 id 正常更新。
+- **UI**：窗口底部提示条（`data-testid="history-window"`）显示「正在查看历史消息」或「有 N 条新消息」，提供「加载较新消息」（`hasNewer` 时）和「回到最新」；用户能明确知道这不是实时末尾。
+- 已在当前列表里的目标仍然直接滚动高亮（`flash`），不开窗口。
 
 ## 3. 实测（合成 1000 条历史，模拟手机网络）
 
@@ -53,6 +66,5 @@ HTTP 层（本机回环，仅服务端查询 + 序列化）：单聊 `limit=300`
 
 ## 4. 未做 / 未验（如实）
 - 模拟网络是 CDP 限速，**不是真实手机 / 隧道实测**；真机、隧道压缩、PWA 缓存命中未验。
-- 服务端未加 gzip/br 压缩——这是下一个更大的杠杆（bundle 393KB gzip / 消息 JSON 同理），本轮未做，避免扩大改动面。
 - 全量 `npm test`（757）/ 全量 e2e 未跑。
-- 群聊「向上加载」在 jump 后与单聊共用同一套语义，但未做逐条 DOM 断言。
+- 本轮 context 窗口导航的定向测试（服务端前向分页 / context bounds；纯前端 fixture 含 10k 有界跳转、WS 不跨 gap、群聊窗口）**已写但尚未运行**（等待主放行重测试槽）；真机未验。

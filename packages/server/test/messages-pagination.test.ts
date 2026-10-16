@@ -67,3 +67,35 @@ test("群聊：seq（rowid）游标逐页不漏不重", () => {
 	assert.equal(seen.length, 7);
 	assert.deepEqual(seen, ["rm_0", "rm_1", "rm_2", "rm_3", "rm_4", "rm_5", "rm_6"]);
 });
+
+test("单聊：afterSeq 复合游标前向分页在 created_at 相同时不漏不重（历史窗口「加载较新消息」）", () => {
+	const convFwd = createConversation("ap").id;
+	const at = now() - 8000;
+	for (let i = 0; i < 10; i++) ins.run(`m_fwd_${i}`, "ap", convFwd, null, i % 2 ? "assistant" : "tool", `前向 ${i}`, "{}", "done", at, at, null, null);
+	ins.run("m_fwd_after", "ap", convFwd, null, "user", "更新", "{}", "done", at + 1000, at + 1000, null, null);
+	const expected = [...Array.from({ length: 10 }, (_, i) => `m_fwd_${i}`), "m_fwd_after"];
+	const seen: string[] = [];
+	// 从最早一条之前开始，按升序逐页向前（第一页用旧语义 after=created_at，后续用复合游标）
+	let page = listMessages("ap", { conversationId: convFwd, limit: 3, after: at - 1 });
+	while (page.length) {
+		for (const m of page) assert.equal(typeof m.seq, "number", "每条都应带 seq（rowid），供前向游标复用");
+		seen.push(...page.map((m) => m.id));
+		const newest = page[page.length - 1];
+		page = listMessages("ap", { conversationId: convFwd, limit: 3, after: newest.created_at, afterSeq: newest.seq });
+	}
+	assert.equal(new Set(seen).size, seen.length, "不应重复");
+	assert.deepEqual(seen, expected, "正序、无缺");
+});
+
+test("群聊：after（rowid）前向分页不漏不重", () => {
+	db.prepare("INSERT INTO rooms(id, name, created_at, updated_at) VALUES(?,?,?,?)").run("rp2", "前向群", now(), now());
+	const at = now() - 3000;
+	for (let i = 0; i < 7; i++) db.prepare("INSERT INTO messages(id, agent_id, conversation_id, role, content, meta, status, created_at, updated_at, room_id) VALUES(?,?,?,?,?,?,?,?,?,?)").run(`rm2_${i}`, "ap", null, i % 2 ? "assistant" : "user", `前向群 ${i}`, "{}", "done", at + i, at + i, "rp2");
+	const seen: string[] = [];
+	let page = listRoomMessages("rp2", { limit: 2, after: 0 });
+	while (page.length) {
+		seen.push(...page.map((m) => m.id));
+		page = listRoomMessages("rp2", { limit: 2, after: page[page.length - 1].seq });
+	}
+	assert.deepEqual(seen, ["rm2_0", "rm2_1", "rm2_2", "rm2_3", "rm2_4", "rm2_5", "rm2_6"]);
+});
