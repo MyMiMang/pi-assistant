@@ -129,10 +129,13 @@ html{--pa-dur-fast:.12s;--pa-dur:.18s;--pa-dur-slow:.26s;--pa-ease-out:cubic-bez
 @keyframes pa-fadeup{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .pa-opts{display:flex;flex-direction:column;gap:6px}
 .pa-opt{display:flex;align-items:center;gap:8px;text-align:left;padding:9px 12px;border-radius:var(--r-sm);border:1px solid var(--line);transition:background var(--pa-dur),border-color var(--pa-dur),box-shadow var(--pa-dur);font-size:13.5px}
-.pa-opt small{margin-left:auto;font-size:11px;color:var(--acc)}
+/* 问题卡片选项：一行一个（桌面 / 手机同结构）。选项正文占满剩余宽度并左对齐，长文案自然换行不撑破父容器；
+   推荐标 / 选中勾固定在右侧不参与换行（问题本身在 .pa-card-top，长问题也自然换行）。 */
+.pa-opt-label{flex:1 1 auto;min-width:0;text-align:left;white-space:normal;overflow-wrap:anywhere}
+.pa-opt small{margin-left:auto;flex:none;font-size:11px;color:var(--acc)}
 .pa-opt:hover{border-color:var(--acc);background:var(--acc-soft)}
 .pa-opt.picked{border-color:var(--acc);background:var(--acc-soft);box-shadow:inset 0 0 0 1px var(--acc)}
-.pa-opt.picked::after{content:"✓";margin-left:8px;color:var(--acc);font-weight:700}
+.pa-opt.picked::after{content:"✓";flex:none;margin-left:8px;color:var(--acc);font-weight:700}
 /* composer */
 .pa-composer-wrap{position:absolute;left:0;right:0;bottom:0;padding:0 24px 16px;background:linear-gradient(transparent,var(--fade,var(--bg)) 40%)}
 .pa-composer{max-width:760px;margin:0 auto;border:1px solid var(--line);border-radius:var(--r-comp,22px);background:var(--card);box-shadow:var(--comp-shadow,var(--shadow));padding:12px 12px 10px 16px;transition:border-color .2s,box-shadow .2s}
@@ -182,8 +185,9 @@ html{--pa-dur-fast:.12s;--pa-dur:.18s;--pa-dur-slow:.26s;--pa-ease-out:cubic-bez
   .style-tag{display:none}
   body.side-open .sidebar{display:flex;position:fixed;inset:0 20% 0 0;z-index:30;box-shadow:0 0 0 100vmax rgba(0,0,0,.35)}
 }
-.pa-opts{flex-direction:row;flex-wrap:wrap}
-.pa-opt{flex:none}
+/* 问题卡片选项：一律一行一个（不再在宽屏横向排成 chips）；整行可点、左对齐。 */
+.pa-opts{flex-direction:column;flex-wrap:nowrap}
+.pa-opt{flex:1 1 auto;width:100%;white-space:normal}
 .pa-scroll{padding-bottom:150px}
 /* 允许操作这台电脑时的提示条（聊天顶部，带一键暂停） */
 .pa-hostbar-wrap{position:relative;height:0;z-index:20;display:flex;justify-content:center;pointer-events:none}

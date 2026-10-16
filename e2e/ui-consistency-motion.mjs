@@ -81,6 +81,12 @@ const toolMsg = (id, i, status, t0) => mkMsg({ id, role: "tool", content: "", me
 const A1_MSGS = [mkMsg({ id: "u1", role: "user", content: "把这件事做完", created_at: now - 30_000, updated_at: now - 30_000 }), ...Array.from({ length: 20 }, (_, i) => toolMsg(`t${i + 1}`, i, i === 19 ? "running" : "done", now - 28_000 + i * 1_000))];
 // a2：已完成，4 步
 const A2_MSGS = [mkMsg({ id: "u2", role: "user", content: "整理一下", created_at: now - 20_000, updated_at: now - 20_000 }), ...Array.from({ length: 4 }, (_, i) => toolMsg(`s${i + 1}`, i, "done", now - 18_000 + i * 1_000))];
+// a3：问题卡片（一条待回答、一条已回答）——验证选项一行一个 / 整行宽 / 长文案换行 / answered 状态。
+const LONG_OPT = "我先不改任何东西，只跑一遍完整的只读检查并把结论汇总给你（这条故意写得很长，用来验证长文案在窄屏下自然换行、不撑破父容器、不触发整页横向滚动）";
+const A3_MSGS = [
+	mkMsg({ id: "q1", role: "card", content: "", meta: { kind: "question", requestId: "r1", question: "这次打包要覆盖哪些平台？（长问题也要自然换行）", options: ["全部平台，含 Intel Mac", LONG_OPT, "只打 Apple 芯片 Mac（arm64）"], allowFreeText: true, recommended: "全部平台，含 Intel Mac", status: "pending" }, created_at: now - 6_000, updated_at: now - 6_000 }),
+	mkMsg({ id: "q2", role: "card", content: "", meta: { kind: "question", requestId: "r2", question: "已回答的问题也保持一行一个的布局吗？", options: [LONG_OPT, "是，历史也同结构"], allowFreeText: false, status: "answered", answer: "是，历史也同结构" }, created_at: now - 5_000, updated_at: now - 5_000 }),
+];
 
 let failed = 0;
 const check = (name, cond, detail = "") => {
@@ -99,7 +105,7 @@ async function installRoutes(context) {
 		const json = (body, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 		if (p === "/api/system") return json(system());
 		if (p === "/api/system/public") return json({});
-		if (p === "/api/agents" && req.method() === "GET") return json([AGENT("a1", "运行中的助理", "running"), AGENT("a2", "已完成的助理", "idle")]);
+		if (p === "/api/agents" && req.method() === "GET") return json([AGENT("a1", "运行中的助理", "running"), AGENT("a2", "已完成的助理", "idle"), AGENT("a3", "提问的助理", "idle")]);
 		if (p === "/api/rooms") return json([]);
 		if (p === "/api/channels") return json({ items: [], publicUrl: null });
 		if (p === "/api/wechat") return json({ enabled: false, acknowledgedAt: null, agentIds: [] });
@@ -125,6 +131,7 @@ async function installRoutes(context) {
 		if (/^\/api\/agents\/a\d\/computer$/.test(p)) return json({ separate: false, hasData: null, desktop: { enabled: false, state: "off" } });
 		if (p === "/api/agents/a1/messages" && req.method() === "GET") return json(A1_MSGS);
 		if (p === "/api/agents/a2/messages" && req.method() === "GET") return json(A2_MSGS);
+		if (p === "/api/agents/a3/messages" && req.method() === "GET") return json(A3_MSGS);
 		if (/^\/api\/agents\/a\d\/conversations$/.test(p) && req.method() === "GET") return json({ current: "c1", items: [{ id: "c1", agent_id: p.includes("a1") ? "a1" : "a2", title: "当前", created_at: now, updated_at: now, message_count: 0, last: null }] });
 		if (/^\/api\/agents\/a\d\/tasks$/.test(p)) return json([]);
 		if (p === "/api/agents/a1/subagent-model" || p === "/api/agents/a2/subagent-model") return json({ pool: [] });
@@ -327,6 +334,49 @@ try {
 			}
 		}
 		await p.screenshot({ path: join(OUT, `F-${tag}-pixel.png`) });
+		await c.close();
+	}
+	// ============================================================ G) 问题卡片：选项一行一个 / 左对齐 / 长文案换行 / answered 状态
+	console.log("\n── G) 问题卡片选项：一行一个 / 整行宽 / 长文案换行 / answered 状态保留 ──");
+	for (const [w, h, tag] of [[1280, 900, "desktop"], [390, 844, "390"]]) {
+		const c = await browser.newContext({ viewport: { width: w, height: h }, locale: "zh-CN" });
+		await installRoutes(c);
+		const p = await c.newPage();
+		p.setDefaultTimeout(20_000);
+		await p.goto(`${base}/?agent=a3`);
+		await p.locator(".pa-question").first().waitFor({ timeout: 20_000 });
+		const geom = await p.evaluate(() => {
+			const cards = [];
+			document.querySelectorAll(".pa-question").forEach((card) => {
+				const optsBox = card.querySelector(".pa-opts");
+				const rect = (el) => el.getBoundingClientRect();
+				cards.push({
+					answered: !!card.querySelector(".pa-tag"),
+					containerW: rect(optsBox).width,
+					items: [...card.querySelectorAll(".pa-opt")].map((o) => {
+						const label = o.querySelector(".pa-opt-label");
+						const small = o.querySelector("small");
+						return { top: Math.round(rect(o).top), width: Math.round(rect(o).width), right: Math.round(rect(o).right), labelRight: Math.round(rect(label).right), labelW: Math.round(rect(label).width), textAlign: getComputedStyle(label).textAlign, picked: o.classList.contains("picked"), disabled: o.disabled, labelText: label.textContent, smallRight: small ? Math.round(rect(small).right) : null };
+					}),
+				});
+			});
+			return { cards, docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+		});
+		const first = geom.cards[0];
+		check(`[${tag}] 每个选项独占一行（top 严格递增）`, first.items.length >= 3 && first.items.every((it, i) => i === 0 || it.top > first.items[i - 1].top), JSON.stringify(first.items.map((i) => i.top)));
+		check(`[${tag}] 选项整行可点（宽度≈容器宽）`, first.items.every((it) => it.width >= first.containerW - 2), JSON.stringify({ containerW: Math.round(first.containerW), widths: first.items.map((i) => i.width) }));
+		check(`[${tag}] 选项文案左对齐（非居中 chip）`, first.items.every((it) => it.textAlign === "left"));
+		check(`[${tag}] 长文案在选项内换行、不越过选项右边界`, first.items.every((it) => it.labelRight <= it.right + 1), JSON.stringify(first.items.map((it) => ({ lr: it.labelRight, r: it.right }))));
+		check(`[${tag}] 长文案不撑破页面（无整页横向滚动）`, geom.docOverflow <= 1, `overflow=${geom.docOverflow}`);
+		check(`[${tag}] 首个选项的「推荐」标留在右侧且正文仍在左`, first.items[0].smallRight !== null && first.items[0].smallRight > first.items[0].labelRight, JSON.stringify(first.items[0]));
+		const answered = geom.cards[1];
+		const picked = answered.items.filter((it) => it.picked);
+		check(`[${tag}] 已回答卡片保留选中态（picked 且是被选那条）`, answered.answered && picked.length === 1 && picked[0].labelText.includes("历史也同结构"), JSON.stringify(answered.items.map((i) => ({ p: i.picked, d: i.disabled }))));
+		check(`[${tag}] 已回答卡片的非选中项仍禁用`, answered.items.filter((it) => !it.picked).every((it) => it.disabled));
+		// 证据截图用浅色主题，便于人工核对（不影响上面的断言，断言在默认主题下跑）
+		await p.evaluate(() => { document.documentElement.dataset.skin = "warm"; document.documentElement.dataset.mode = "light"; });
+		await p.waitForTimeout(60);
+		await p.screenshot({ path: join(OUT, `G-question-${tag}.png`) });
 		await c.close();
 	}
 } catch (e) {

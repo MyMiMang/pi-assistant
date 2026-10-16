@@ -74,7 +74,7 @@ export function QuestionCard({ m }: { m: Message }) {
 			<div className="pa-opts">
 				{options.map((o, i) => (
 					<button key={o} disabled={!pending && meta.answer !== o} onClick={() => pending && answer(o)} className={cx("pa-opt", meta.answer === o && "picked", !pending && meta.answer !== o && "opacity-50")}>
-						{o}
+						<span className="pa-opt-label">{o}</span>
 						{pending && i === 0 && meta.recommended === o && <small>推荐</small>}
 					</button>
 				))}
