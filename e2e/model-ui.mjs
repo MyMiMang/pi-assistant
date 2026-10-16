@@ -341,15 +341,14 @@ try {
 	await page.screenshot({ path: join(OUT, "07-room-member-picker.png") });
 	assert.ok(pmFirst, "群聊成员菜单应有可选模型");
 
-	// 设置 › 模型 › 子代理：只剩任务侧（并发 + 最长运行），不再有全局模型指定/挑选
+	// 设置 › 模型：只剩在线服务（不再有本地 Laya / SenseVoice 卡，也不再有子代理折叠区）
 	await page.goto(`${BASE}/?agent=${agent.id}&settings=models`);
-	await page.getByTestId("subagent-section-toggle").waitFor();
-	await page.getByTestId("subagent-section-toggle").click();
-	const task = page.getByTestId("subagent-concurrency");
-	await task.waitFor();
-	assert.equal(await task.locator("select").count(), 0, "全局子代理设置不应有原生下拉框");
-	assert.equal(await page.getByTestId("subagent-models").count(), 0, "全局不再有子代理模型选择");
-	await page.screenshot({ path: join(OUT, "08-subagent-task-settings.png") });
+	await page.getByTestId("model-services").waitFor();
+	assert.equal(await page.getByTestId("subagent-section").count(), 0, "模型页不再有子代理折叠区");
+	assert.equal(await page.getByTestId("subagent-concurrency").count(), 0, "模型页不再有全局子代理任务设置");
+	assert.equal(await page.getByTestId("local-laya-card").count(), 0, "模型页不再有 Laya 卡");
+	assert.equal(await page.getByTestId("local-sensevoice-card").count(), 0, "模型页不再有 SenseVoice 卡");
+	await page.screenshot({ path: join(OUT, "08-model-services-slim.png") });
 	// 助理设置 › 子代理模型：候选池多选，勾选不关菜单（不是原生单选下拉）
 	await page.goto(`${BASE}/?agent=${agent.id}`);
 	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();

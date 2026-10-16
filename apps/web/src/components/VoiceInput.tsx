@@ -85,17 +85,19 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 	useEffect(() => {
 		setNotice(voice.error?.message ?? "");
 	}, [voice.error]);
-	// 切会话 / 换助理：临时提示不跟着走（旧的麦克风错误不留到新对话里）。
+	// 切会话 / 换助理：停轨道 + 释放租约 + 清掉 hook 错误与临时提示（旧的麦克风错误不留到新对话里）。
 	useEffect(() => {
 		setNotice("");
-	}, [agentId, conversationId]);
+		voice.resetContext();
+	}, [agentId, conversationId, voice.resetContext]);
 
 	const recording = voice.state === "recording";
 	const busy = voice.state === "preparing" || voice.state === "transcribing";
-	const label = !voice.supported ? (voice.unsupportedReason === "insecure_context" ? "需要 HTTPS 或本机地址才能用麦克风" : "当前浏览器不支持麦克风") : !voice.asrModel ? "未配置语音识别模型" : recording ? "停止录音并转写" : "语音输入";
-	// 只有「用户点了麦克风、hook 回 asr_not_configured」才浮现设置入口；
+	const label = !voice.supported ? (voice.unsupportedReason === "insecure_context" ? "需要 HTTPS 或本机地址才能用麦克风" : "当前浏览器不支持麦克风") : !voice.asrModel ? "未配置语音识别模型（设置 › 语音配置）" : recording ? "停止录音并转写" : "语音输入";
+	// 只有「用户点了麦克风、hook 回了语音来源类错误」才浮现设置入口；
 	// idle 不常驻状态行、不常驻「去设置」——没配 ASR 时的说明放在按钮 title 里。
-	const needSetup = voice.error?.code === "asr_not_configured" && !recording;
+	const asrSetupCodes = new Set(["asr_not_configured", "asr_unavailable", "asr_not_installed", "asr_deleted"]);
+	const needSetup = !!voice.error && asrSetupCodes.has(voice.error.code) && !recording;
 	// notice 只在「点过麦克风之后」才有值：其它错误也只在这时短暂提示，不常驻。
 	const hint = notice || (recording ? "正在听…（点停止）" : busy ? "转写中…" : "");
 	const showSettings = needSetup;
@@ -133,7 +135,7 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 				<div className="pa-voice-status" data-testid="voice-status">
 					{hint && <span className="pa-voice-hint max-w-[180px] truncate text-[11px] text-mut2" data-testid="voice-hint" title={hint}>{hint}</span>}
 					{showSettings && (
-						<button type="button" className="shrink-0 text-[11px] text-accent underline" data-testid="voice-open-settings" onClick={() => { setNotice(""); openSettings({ settings: "models" }); }}>
+						<button type="button" className="shrink-0 text-[11px] text-accent underline" data-testid="voice-open-settings" onClick={() => { setNotice(""); voice.dismissError(); openSettings({ settings: "voice" }); }}>
 							去设置
 						</button>
 					)}

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, getAgentSubagentSettings, setAgentSubagentSettings, type SubagentSettingsResponse } from "../api";
 import type { Message } from "../types";
 import { Help, Modal } from "./ui";
 import { ArrowLeft, ArrowUp, Bot, Square } from "lucide-react";
@@ -176,7 +176,7 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 	};
 	const text = pool.length ? `候选池 · ${pool.length} 个` : "跟随主会话";
 	return <section className="space-y-2" data-testid="agent-subagent-model">
-		<div className="flex items-center gap-1 font-semibold">子代理模型<Help>不选 = 跟随主会话当前模型。勾选后，派活时在这个候选池内按任务能力挑一个；某个模型不可用（限流 / 服务不可用 / 模型不存在 / 鉴权失败等）时，只在池内自动换下一个，用尽就停下，不会用池外模型，也不会无限重试。最多同时跑几个由「设置 › 模型 › 子代理」里的并发上限决定。</Help></div>
+		<div className="flex items-center gap-1 font-semibold">子代理模型<Help>不选 = 跟随主会话当前模型。勾选后，派活时在这个候选池内按任务能力挑一个；某个模型不可用（限流 / 服务不可用 / 模型不存在 / 鉴权失败等）时，只在池内自动换下一个，用尽就停下，不会用池外模型，也不会无限重试。最多同时跑几个由下面的「任务上限」按助理决定（未覆盖则用整个安装的默认值）。</Help></div>
 		<ModelPoolButton
 			testid="subagent-model"
 			models={d.models}
@@ -194,6 +194,87 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 		{live.length > 0 && <div className="flex flex-wrap gap-1">{live.map((m) => <span key={key(m)} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-mut">{nameOf(m)}</span>)}</div>}
 		<div className="flex items-center gap-2"><span className="text-sm text-mut">思考强度</span><ThinkingButton testid="agent-subagent-thinking" levels={levels} current={thinking.mode === "fixed" ? thinking.level : null} followLabel="跟随主会话" title={unsupportedFixed} onPick={(v) => void saveThinking(v)} /></div>
 		{unsupportedFixed && <p className="text-xs text-amber-600" data-testid="agent-subagent-thinking-note">{unsupportedFixed}</p>}
+		<AgentSubagentLimits agentId={agentId} />
 		{err && <p className="text-xs text-red-500">{err}</p>}
 	</section>;
+}
+
+/**
+ * 子代理的任务上限（并发 / 最长运行）：按助理设置，未覆盖 = 继承整个安装的默认值。
+ * 旧版把这两个值当全局放在「模型」页，容易误读成每助理；改为这里显式覆盖，后端 defaults 兼容旧全局只读值。
+ */
+function AgentSubagentLimits({ agentId }: { agentId: string }) {
+	const [d, setD] = useState<SubagentSettingsResponse | null>(null);
+	const [draft, setDraft] = useState<{ maxConcurrent: string; maxMinutes: string } | null>(null);
+	const [err, setErr] = useState("");
+	const sync = (r: SubagentSettingsResponse) => {
+		setD(r);
+		setDraft({ maxConcurrent: String(r.settings.maxConcurrent), maxMinutes: String(r.settings.maxMinutes) });
+	};
+	useEffect(() => {
+		setD(null);
+		setDraft(null);
+		setErr("");
+		void getAgentSubagentSettings(agentId)
+			.then(sync)
+			.catch((e) => setErr(String(e)));
+	}, [agentId]);
+	const save = async (patch: { maxConcurrent?: number | null; maxMinutes?: number | null }) => {
+		try {
+			sync(await setAgentSubagentSettings(agentId, patch));
+			setErr("");
+		} catch (e) {
+			// 保存失败：重新拉取生效值回滚，不留下假值。
+			setErr(String(e));
+			try {
+				sync(await getAgentSubagentSettings(agentId));
+			} catch {
+				/* 回滚也读不到：保持原草稿并显示错误 */
+			}
+		}
+	};
+	// 失焦提交：清空 = 继承默认；非法值恢复成生效值，不静默写 0。
+	const commit = (key: "maxConcurrent" | "maxMinutes", raw: string) => {
+		if (!d) return;
+		const trimmed = raw.trim();
+		if (trimmed === "") {
+			void save({ [key]: null });
+			return;
+		}
+		const n = key === "maxConcurrent" ? Math.round(Number(trimmed)) : Number(trimmed);
+		const ok = Number.isFinite(n) && n >= 1 && (key === "maxConcurrent" ? n <= 100 : true);
+		if (!ok) {
+			setDraft((x) => (x ? { ...x, [key]: String(d.settings[key]) } : x));
+			return;
+		}
+		if (n !== d.settings[key]) void save({ [key]: n });
+		else setDraft((x) => (x ? { ...x, [key]: String(n) } : x));
+	};
+	if (!d || !draft)
+		return (
+			<section data-testid="agent-subagent-limits" className="space-y-2">
+				{err ? <p className="text-xs text-red-500" data-testid="agent-subagent-limits-error">{err}</p> : null}
+			</section>
+		);
+	const inherit = (k: "maxConcurrent" | "maxMinutes") => d.overrides[k] === undefined;
+	const inheritHint = (k: "maxConcurrent" | "maxMinutes") => (inherit(k) ? <span className="text-[11px] text-mut2">默认 {d.defaults[k]}</span> : <button type="button" className="text-[11px] text-accent underline" onClick={() => void save({ [k]: null })} data-testid={`agent-subagent-inherit-${k}`}>继承默认</button>);
+	return (
+		<section data-testid="agent-subagent-limits" className="space-y-2">
+			<div className="flex items-center gap-1 text-sm font-semibold">
+				任务上限
+				<Help>只对这个助理生效；留空或点「继承默认」就用整个安装的默认值（默认并发 {d.defaults.maxConcurrent}、最长 {d.defaults.maxMinutes} 分钟）。并发指这个助理同时运行的子代理最多几个，满了自动排队。运行中的任务在聊天顶部的「子代理」里看。</Help>
+			</div>
+			<label className="flex flex-wrap items-center gap-2 text-sm text-mut">
+				最多同时
+				<input className="pa-input !w-24" type="number" min={1} max={100} value={draft.maxConcurrent} aria-label="子代理并发上限" onChange={(e) => setDraft({ ...draft, maxConcurrent: e.target.value })} onBlur={(e) => commit("maxConcurrent", e.target.value)} />
+				个子代理{inheritHint("maxConcurrent")}
+			</label>
+			<label className="flex flex-wrap items-center gap-2 text-sm text-mut">
+				最长
+				<input className="pa-input !w-24" type="number" min={1} value={draft.maxMinutes} aria-label="子代理最长运行分钟" onChange={(e) => setDraft({ ...draft, maxMinutes: e.target.value })} onBlur={(e) => commit("maxMinutes", e.target.value)} />
+				分钟{inheritHint("maxMinutes")}
+			</label>
+			{err && <p className="text-xs text-red-500" data-testid="agent-subagent-limits-error">{err}</p>}
+		</section>
+	);
 }

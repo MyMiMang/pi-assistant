@@ -1,12 +1,20 @@
 /**
- * 定向验证「设置 › 模型 › 子代理」的「子代理并发上限」「子代理最长运行」两个数字输入框。
+ * 定向验证「助理设置 › 子代理模型 › 任务上限」：每助理覆盖 + 缺省继承旧全局默认值。
+ *
+ * 背景：旧版把「并发上限 / 最长运行」当全局值放在「设置 › 模型」页；现在改为每个助理可覆盖，
+ * 缺省 / 清空 = 继承整个安装的默认值（后端 `defaults` 兼容旧 `settings.subagentModels` 只读）。
+ *
+ * 后端接口（`GET/PUT /api/agents/:id/subagents/settings` → `{settings, overrides, defaults}`）由后端 owner 实现，
+ * 本测试用 page.route 以纯前端 fixture 模拟，不依赖后端合并；旧全局 key 仍用真实服务端读取以确认兼容。
+ *
  * 覆盖：
- *  1) 打开即显示生效值：预置一条「旧版」设置记录（只有 maxMinutes、没有 maxConcurrent），
- *     期望并发上限显示后端默认 10、最长运行保留已配置的 42（不是空白，也不是假默认）。
- *  2) 保存后刷新仍在：改并发上限 → 失焦保存 → reload 后仍是新值。
- *  3) 非法 / 空输入：清空、0、越界，失焦后恢复成仍生效的值，且不静默写 0。
- *  4) 接口失败：显示错误原因，不渲染可编辑的空输入框、不用默认值覆盖。
- *  5) 390 窄屏：不横向溢出，输入框内文字不被 spinner 挤掉。
+ *  1) 旧库只有 maxMinutes 时：默认并发 10、最长 42，且显示「默认 N」= 继承。
+ *  2) 改并发上限 → 失焦保存 → reload 后仍是新值（只改这个助理）。
+ *  3) 清空 → 继承默认（PUT 传 null），输入框回到默认值。
+ *  4) 非法 / 空 / 越界：失焦恢复成生效值，不静默写 0。
+ *  5) 接口失败：显示错误原因，不渲染可编辑的空输入框。
+ *  6) 两个助理互不受影响（per-agent scope）。
+ *  7) 390 窄屏不横向溢出。
  * 运行前先构建：npm run build -w @pi-assistant/web
  */
 import assert from "node:assert/strict";
@@ -42,93 +50,147 @@ const check = (name, cond, detail = "") => { if (cond) console.log(`  ✅ ${name
 const start = async () => { server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] }); server.stdout.on("data", (d) => process.stdout.write(d)); server.stderr.on("data", (d) => process.stdout.write(d)); await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
 const stop = async () => { if (!server || server.exitCode !== null) return; const done = new Promise((r) => server.once("exit", r)); server.kill("SIGTERM"); await done; };
 
-/** 打开设置 › 模型 › 子代理，返回两个输入框 locator */
-const openSection = async (page, agentId) => {
-	await page.goto(`${BASE}/?agent=${agentId}&settings=models`);
-	await page.getByTestId("subagent-section-toggle").waitFor();
-	if ((await page.getByTestId("subagent-concurrency").locator("input").count()) === 0) await page.getByTestId("subagent-section-toggle").click();
-	await page.getByTestId("subagent-concurrency").waitFor();
-	return { sec: page.getByTestId("subagent-concurrency"), conc: page.getByLabel("子代理并发上限"), mins: page.getByLabel("子代理最长运行分钟") };
+/** 打开信息面板（`info` 会按设备持久化，reload 后可能自动开，所以按可见性收敛而不是盲点）。 */
+const openPane = async (page) => {
+	for (let i = 0; i < 3; i++) {
+		if (await page.locator(".pa-pane-wrap").isVisible().catch(() => false)) return;
+		const btn = page.getByRole("button", { name: "信息面板" });
+		if (await btn.count()) await btn.click({ timeout: 3000 }).catch(() => {});
+		await page.waitForTimeout(250);
+	}
+	await page.locator(".pa-pane-wrap").waitFor();
+};
+/** 打开「助理设置 › 设置」tab（信息面板），返回任务上限区块 */
+const openLimits = async (page, agentId) => {
+	await page.goto(`${BASE}/?agent=${agentId}`);
+	await page.waitForTimeout(150);
+	await openPane(page);
+	const bar = page.getByTestId("info-tabs");
+	const tab = bar.getByRole("tab", { name: "设置", exact: true });
+	if (await tab.count()) await tab.click();
+	else { await page.getByTestId("info-tabs-more").click(); await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "设置", exact: true }).click(); }
+	const sec = page.getByTestId("agent-subagent-limits");
+	await sec.waitFor();
+	return { sec, conc: page.getByLabel("子代理并发上限"), mins: page.getByLabel("子代理最长运行分钟") };
 };
 
 try {
 	await start();
 	await j("/api/settings", "PUT", { onboarded: true });
-	const a = await j("/api/agents", "POST", { name: "设置测试" });
+	const a = await j("/api/agents", "POST", { name: "设置测试 A" });
+	const b = await j("/api/agents", "POST", { name: "设置测试 B" });
+	// 旧全局默认值（兼容读取）
+	const legacy = (await j("/api/subagents/settings")).settings;
+	const defaults = { maxConcurrent: legacy.maxConcurrent, maxMinutes: legacy.maxMinutes };
+
 	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
 	const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, locale: "zh-CN" });
 	page.setDefaultTimeout(15_000);
 
-	// ---------------------------------------------------------------- 1) 默认 + 旧缺字段
-	console.log("\n[1] 打开默认 / 旧记录缺字段");
-	let { sec, conc, mins } = await openSection(page, a.id);
-	check("旧记录缺 maxConcurrent：并发上限显示后端默认 10", (await conc.inputValue()) === "10", await conc.inputValue());
+	// 纯前端 fixture：模拟每助理覆盖 + defaults（后端合并前不依赖真实接口）
+	const overrides = { [a.id]: {}, [b.id]: {} };
+	let fail = false;
+	const payload = (agentId) => {
+		const ov = overrides[agentId] ?? {};
+		return { settings: { maxConcurrent: ov.maxConcurrent ?? defaults.maxConcurrent, maxMinutes: ov.maxMinutes ?? defaults.maxMinutes }, overrides: ov, defaults };
+	};
+	await page.route("**/api/agents/*/subagents/settings", async (route) => {
+		const url = new URL(route.request().url());
+		const m = url.pathname.match(/\/api\/agents\/([^/]+)\/subagents\/settings/);
+		const agentId = decodeURIComponent(m?.[1] ?? "");
+		if (fail) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "模拟接口失败" }) });
+		if (route.request().method() === "PUT") {
+			const body = JSON.parse(route.request().postData() ?? "{}");
+			const ov = { ...(overrides[agentId] ?? {}) };
+			for (const k of ["maxConcurrent", "maxMinutes"]) if (k in body) { if (body[k] === null) delete ov[k]; else ov[k] = body[k]; }
+			overrides[agentId] = ov;
+		}
+		return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload(agentId)) });
+	});
+
+	// ---------------------------------------------------------------- 1) 默认（旧记录缺字段）
+	console.log("\n[1] 打开默认：旧全局值作默认 + 显示「继承（默认 N）」");
+	let { sec, conc, mins } = await openLimits(page, a.id);
+	check("旧记录缺 maxConcurrent：并发上限显示默认 10", (await conc.inputValue()) === "10", await conc.inputValue());
 	check("旧记录已配置的 maxMinutes 保留：最长运行显示 42", (await mins.inputValue()) === "42", await mins.inputValue());
-	await page.screenshot({ path: join(OUT, "01-default.png") });
+	check("未覆盖时显示「默认 10」= 继承", ((await sec.textContent()) ?? "").includes("默认 10"));
+	await page.screenshot({ path: join(OUT, "01-default-inherit.png") });
 
 	// ---------------------------------------------------------------- 2) 保存后刷新仍在
-	console.log("\n[2] 改并发上限 → 失焦保存 → 刷新");
+	console.log("\n[2] 改并发上限 → 失焦保存 → reload 后仍是新值");
 	await conc.fill("25");
 	await conc.blur();
-	await waitFor(async () => (await j("/api/subagents/settings")).settings.maxConcurrent === 25);
-	check("失焦即保存到后端", true);
-	({ sec, conc, mins } = await openSection(page, a.id));
+	await waitFor(() => overrides[a.id].maxConcurrent === 25);
+	check("失焦即保存到后端（per-agent override）", true);
+	({ sec, conc, mins } = await openLimits(page, a.id));
 	check("刷新后并发上限仍是 25", (await conc.inputValue()) === "25", await conc.inputValue());
+	check("刷新后不再显示「默认 10」", !((await sec.textContent()) ?? "").includes("默认 10"));
 	check("刷新后最长运行仍是 42", (await mins.inputValue()) === "42", await mins.inputValue());
 
-	// ---------------------------------------------------------------- 3) 非法 / 空输入
-	console.log("\n[3] 清空 / 0 / 越界 → 失焦恢复，不静默存 0");
-	for (const bad of ["", "0", "999", "-3"]) {
+	// ---------------------------------------------------------------- 3) 清空 = 继承默认
+	console.log("\n[3] 清空 → 继承默认（PUT null）");
+	await conc.fill("");
+	await conc.blur();
+	await waitFor(() => overrides[a.id].maxConcurrent === undefined);
+	check("清空后 override 被删除（回继承）", overrides[a.id].maxConcurrent === undefined);
+	check("清空后输入框回到默认 10", (await conc.inputValue()) === "10", await conc.inputValue());
+
+	// 重新设成 25 继续下面的用例
+	await conc.fill("25");
+	await conc.blur();
+	await waitFor(() => overrides[a.id].maxConcurrent === 25);
+
+	// ---------------------------------------------------------------- 4) 非法 / 空输入
+	console.log("\n[4] 清空 / 0 / 越界 → 失焦恢复，不静默存 0");
+	for (const bad of ["0", "999", "-3"]) {
 		await conc.fill(bad);
 		await conc.blur();
 		await page.waitForTimeout(250);
 		check(`并发上限输入「${bad}」后恢复成 25`, (await conc.inputValue()) === "25", await conc.inputValue());
 	}
-	check("非法输入没有写进后端（仍是 25）", (await j("/api/subagents/settings")).settings.maxConcurrent === 25);
-	for (const bad of ["", "0", "-5"]) {
+	check("非法输入没有写进后端（仍是 25）", overrides[a.id].maxConcurrent === 25);
+	for (const bad of ["0", "-5"]) {
 		await mins.fill(bad);
 		await mins.blur();
 		await page.waitForTimeout(250);
 		check(`最长运行输入「${bad}」后恢复成 42`, (await mins.inputValue()) === "42", await mins.inputValue());
 	}
-	check("最长运行没被写成 0", (await j("/api/subagents/settings")).settings.maxMinutes === 42);
-	// 合法边界：1 和 100 都能存
-	await conc.fill("100");
-	await conc.blur();
-	await waitFor(async () => (await j("/api/subagents/settings")).settings.maxConcurrent === 100);
-	check("边界 100 可以保存", (await conc.inputValue()) === "100", await conc.inputValue());
-	await conc.fill("25");
-	await conc.blur();
-	await waitFor(async () => (await j("/api/subagents/settings")).settings.maxConcurrent === 25);
+	check("最长运行没被写成 0", overrides[a.id].maxMinutes === undefined || overrides[a.id].maxMinutes === 42);
 
-	// ---------------------------------------------------------------- 4) 接口失败
-	console.log("\n[4] 接口失败：显示原因，不渲染空输入框、不用默认值覆盖");
-	await page.route("**/api/subagents/settings", (r) => r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "模拟接口失败" }) }));
-	({ sec, conc, mins } = await openSection(page, a.id));
+	// ---------------------------------------------------------------- 5) per-agent scope 独立
+	console.log("\n[5] 助理 B 不受 A 的覆盖影响");
+	const bLimits = await openLimits(page, b.id);
+	check("助理 B 并发上限是默认 10", (await bLimits.conc.inputValue()) === "10", await bLimits.conc.inputValue());
+	check("助理 B 最长运行是默认 42", (await bLimits.mins.inputValue()) === "42", await bLimits.mins.inputValue());
+	await bLimits.conc.fill("7");
+	await bLimits.conc.blur();
+	await waitFor(() => overrides[b.id].maxConcurrent === 7);
+	check("助理 B 改成 7 只写 B", overrides[b.id].maxConcurrent === 7 && overrides[a.id].maxConcurrent === 25);
+	await page.screenshot({ path: join(OUT, "02-per-agent.png") });
+
+	// ---------------------------------------------------------------- 6) 接口失败
+	console.log("\n[6] 接口失败：显示原因，不渲染空输入框");
+	fail = true;
+	({ sec, conc, mins } = await openLimits(page, a.id));
 	check("接口失败时不渲染可编辑输入框", (await sec.locator("input").count()) === 0, String(await sec.locator("input").count()));
 	check("接口失败时显示错误原因", ((await sec.textContent()) ?? "").includes("模拟接口失败"), (await sec.textContent()) ?? "");
-	await page.unroute("**/api/subagents/settings");
-	({ sec, conc, mins } = await openSection(page, a.id));
+	fail = false;
+	({ sec, conc, mins } = await openLimits(page, a.id));
 	check("接口恢复后回到生效值 25 / 42", (await conc.inputValue()) === "25" && (await mins.inputValue()) === "42", `${await conc.inputValue()}/${await mins.inputValue()}`);
 
-	// ---------------------------------------------------------------- 5) 390 窄屏
-	console.log("\n[5] 390 窄屏：不溢出、文字不被 spinner 挤掉");
+	// ---------------------------------------------------------------- 7) 390 窄屏
+	console.log("\n[7] 390 窄屏：不溢出、文字不被 spinner 挤掉");
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.waitForTimeout(300);
 	const m = await page.evaluate(() => {
-		const sec = document.querySelector('[data-testid="subagent-concurrency"]');
+		const sec = document.querySelector('[data-testid="agent-subagent-limits"]');
 		const inputs = [...(sec?.querySelectorAll("input") ?? [])];
-		return {
-			doc: document.documentElement.scrollWidth, vw: innerWidth,
-			sec: sec ? sec.scrollWidth - sec.clientWidth : -1,
-			// scrollWidth <= clientWidth 说明输入框里的数字没有被 spinner 挤到需要横向滚动
-			inputs: inputs.map((i) => ({ v: i.value, sw: i.scrollWidth, cw: i.clientWidth })),
-		};
+		return { doc: document.documentElement.scrollWidth, vw: innerWidth, sec: sec ? sec.scrollWidth - sec.clientWidth : -1, inputs: inputs.map((i) => ({ v: i.value, sw: i.scrollWidth, cw: i.clientWidth })) };
 	});
 	check("390：页面不横向溢出", m.doc <= m.vw, JSON.stringify({ doc: m.doc, vw: m.vw }));
-	check("390：子代理区块不横向溢出", m.sec <= 1, String(m.sec));
-	check("390：两个输入框文字都放得下（不被 spinner 遮挡）", m.inputs.length === 2 && m.inputs.every((i) => i.sw <= i.cw && i.v.length > 0), JSON.stringify(m.inputs));
-	await page.screenshot({ path: join(OUT, "02-390.png") });
+	check("390：任务上限区块不横向溢出", m.sec <= 1, String(m.sec));
+	check("390：两个输入框文字都放得下", m.inputs.length === 2 && m.inputs.every((i) => i.sw <= i.cw && i.v.length > 0), JSON.stringify(m.inputs));
+	await page.screenshot({ path: join(OUT, "03-390.png") });
 } finally {
 	if (browser) await browser.close().catch(() => {});
 	await stop();

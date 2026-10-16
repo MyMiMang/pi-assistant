@@ -4,6 +4,7 @@ import { api } from "../api";
 import { COMPOSER_LABEL } from "../composer";
 import { useStore } from "../store";
 import { FastComputerSettingsSection } from "./FastComputerSettings";
+import { LocalLayaSection } from "./ModelServices";
 import { Badge, Button, cx, Input, avatarText, Help, useConfirm } from "./ui";
 
 /** 启用“完全权限”前的确认框（不再要求输入确认语） */
@@ -205,6 +206,10 @@ export function HostControlSettings() {
 						</Button>
 					</div>
 				)}
+			</section>
+
+			<section className="space-y-2" data-testid="host-local-laya">
+				<LocalLayaSection />
 			</section>
 
 			<section className="space-y-2" data-testid="host-fast-computer">

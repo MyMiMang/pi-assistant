@@ -34,8 +34,17 @@ export interface SubagentSummary extends Subagent { retryable: boolean; resumeRe
 export interface SubagentEvent { id: string; subagent_id: string; kind: string; reason: string; created_at: number; delivered_at: number | null; /** 终态代际（= 当时的 finished_at）：同一子代理续聊多次结束时区分每一代唤醒 */ generation: number | null }
 /** 全局子代理设置只保留任务侧参数：并发上限与最长运行时间。子代理模型改由每个助理的候选池决定（见 DESIGN §21.5）。 */
 export interface SubagentSettings { maxMinutes: number; maxConcurrent: number }
+/**
+ * 助理级覆盖（独立键 `subagentLimits:<agentId>`）：只存**显式覆盖**的字段，缺省 = 继承全局默认。
+ * 绝不把全局值 copy 成每个助理的覆盖（旧行为不变，只做加法）。
+ */
+export interface SubagentLimitsOverride { maxConcurrent?: number; maxMinutes?: number }
 /** 保存设置时的入参：两个字段都可省略 —— 省略时保留当前值，绝不重置（旧客户端 / 只改一项的界面不传另一个字段）。 */
 export type SubagentSettingsInput = { maxMinutes?: number; maxConcurrent?: number };
+/** PUT 助理级上限：省略 = 保留，`null` = 清除覆盖（继承全局默认），数字 = 校验后写入覆盖。 */
+export type SubagentLimitsInput = { maxConcurrent?: number | null; maxMinutes?: number | null };
+/** `GET/PUT /api/agents/:id/subagents/settings` 的 DTO。 */
+export interface AgentSubagentSettings { settings: SubagentSettings; overrides: SubagentLimitsOverride; defaults: SubagentSettings }
 /** 助理级：候选模型池。空池 = 跟随主会话当前模型。 */
 export type AgentSubagentPool = { pool: ModelRef[] };
 /** @deprecated 旧助理级设置形状，仅为兼容旧客户端保留，读写都会转成候选池。 */
@@ -71,13 +80,13 @@ export const listSubagents = (agentId?: string, conv?: string) => db.prepare(`SE
 const activeSubagents = (agentId?: string) => db.prepare(`SELECT * FROM subagents WHERE status IN ${ACTIVE}${agentId ? " AND agent_id = ?" : ""}`).all(...(agentId ? [agentId] : [])) as unknown as Subagent[];
 const liveSubagents = (agentId?: string) => db.prepare(`SELECT * FROM subagents WHERE status IN ${LIVE}${agentId ? " AND agent_id = ?" : ""}`).all(...(agentId ? [agentId] : [])) as unknown as Subagent[];
 const activeCount = (agentId: string) => (db.prepare(`SELECT COUNT(*) n FROM subagents WHERE agent_id = ? AND status IN ${ACTIVE}`).get(agentId) as { n: number }).n;
-/** 这个助理还有没有空位跑新子代理（按助理计算）。 */
-export const hasSubagentCapacity = (agentId: string) => activeCount(agentId) < subagentSettings().maxConcurrent;
+/** 这个助理还有没有空位跑新子代理（按助理计算；上限走该助理的有效设置）。 */
+export const hasSubagentCapacity = (agentId: string) => activeCount(agentId) < getSubagentSettings(agentId).maxConcurrent;
 const clampConcurrent = (n: unknown) => {
 	const v = Math.round(Number(n));
 	return Number.isFinite(v) ? Math.min(SUBAGENT_CONCURRENCY.max, Math.max(SUBAGENT_CONCURRENCY.min, v)) : SUBAGENT_CONCURRENCY.default;
 };
-/** 读取全局子代理设置；兼容旧库里没有 maxConcurrent 的记录，并忽略已废弃的模型指定/挑选字段。 */
+/** 读全局默认（旧 `subagentModels`）；兼容旧库里没有 maxConcurrent 的记录，并忽略已废弃的模型指定/挑选字段。 */
 export const subagentSettings = (): SubagentSettings => {
 	const raw = getSetting<Partial<SubagentSettings>>("subagentModels", {});
 	return {
@@ -85,6 +94,60 @@ export const subagentSettings = (): SubagentSettings => {
 		maxConcurrent: clampConcurrent(raw.maxConcurrent),
 	};
 };
+/** 助理的显式覆盖（只在 `subagentLimits:<id>` 里存覆盖字段；坏数据字段忽略）。 */
+export function agentSubagentLimits(agentId: string): SubagentLimitsOverride {
+	const raw = getSetting<unknown>(`subagentLimits:${agentId}`, null);
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+	const o = raw as { maxConcurrent?: unknown; maxMinutes?: unknown };
+	const out: SubagentLimitsOverride = {};
+	const c = Number(o.maxConcurrent);
+	if (Number.isInteger(c) && c >= SUBAGENT_CONCURRENCY.min && c <= SUBAGENT_CONCURRENCY.max) out.maxConcurrent = c;
+	const m = Number(o.maxMinutes);
+	if (Number.isFinite(m) && m > 0) out.maxMinutes = m;
+	return out;
+}
+/**
+ * 有效子代理设置：助理覆盖 > 全局默认。**唯一集中入口**：spawn / queue pump / deadline / resume
+ * 都传自己的 owner agentId，不再各自读全局值，也不接受工具参数自报的 agent。
+ */
+export function getSubagentSettings(agentId?: string): SubagentSettings {
+	const d = subagentSettings();
+	if (!agentId) return d;
+	const o = agentSubagentLimits(agentId);
+	return { maxConcurrent: o.maxConcurrent ?? d.maxConcurrent, maxMinutes: o.maxMinutes ?? d.maxMinutes };
+}
+/** 助理级上限的 DTO（GET 返回；`settings` = 有效值，`overrides` = 显式覆盖，`defaults` = 全局默认）。 */
+export function agentSubagentSettingsDto(agentId: string): AgentSubagentSettings {
+	return { settings: getSubagentSettings(agentId), overrides: agentSubagentLimits(agentId), defaults: subagentSettings() };
+}
+/**
+ * 保存助理级上限（patch 语义）：只写这个助理的独立键，绝不改全局 `subagentModels`、也不动其它助理。
+ * 新值在**下一次 pump / 下一个任务**生效（不回溯改正在跑的任务）。
+ */
+export function saveAgentSubagentLimits(agentId: string, input: SubagentLimitsInput): AgentSubagentSettings {
+	const next: SubagentLimitsOverride = { ...agentSubagentLimits(agentId) };
+	if (input?.maxConcurrent !== undefined) {
+		if (input.maxConcurrent === null) delete next.maxConcurrent;
+		else {
+			const n = Number(input.maxConcurrent);
+			if (!Number.isInteger(n) || n < SUBAGENT_CONCURRENCY.min || n > SUBAGENT_CONCURRENCY.max) throw new Error(`并发上限必须是 ${SUBAGENT_CONCURRENCY.min} 到 ${SUBAGENT_CONCURRENCY.max} 之间的整数`);
+			next.maxConcurrent = n;
+		}
+	}
+	if (input?.maxMinutes !== undefined) {
+		if (input.maxMinutes === null) delete next.maxMinutes;
+		else {
+			const n = Number(input.maxMinutes);
+			if (!Number.isFinite(n) || n <= 0) throw new Error("最长运行时间必须大于 0");
+			next.maxMinutes = n;
+		}
+	}
+	setSetting(`subagentLimits:${agentId}`, Object.keys(next).length ? next : null);
+	pumpSubagents(agentId);
+	return agentSubagentSettingsDto(agentId);
+}
+/** 助理被删时清掉它的覆盖键（不碰全局默认）。 */
+export const deleteAgentSubagentLimits = (agentId: string) => db.prepare("DELETE FROM settings WHERE key = ?").run(`subagentLimits:${agentId}`);
 export const modelKey = (m: ModelRef) => `${m.provider}/${m.id}`;
 /**
  * 池内 fallback 决策（纯函数，便于单测）：只有明确可恢复的模型故障才换，且只换还没试过的候选。
@@ -317,12 +380,12 @@ function startQueued(id: string) {
 }
 /** 批量停止期间暂停这些助理的自动派发，避免「停 A → 释放名额 → 拉起 B → 再停 B」的短暂执行。 */
 const dispatchPaused = new Set<string>();
-/** 按每个助理的并发上限，把排队的子代理按先后顺序补上空位。 */
+/** 按每个助理的**有效**并发上限，把排队的子代理按先后顺序补上空位（各助理分别计数，不共用全局池）。 */
 export function pumpSubagents(agentId?: string) {
-	const limit = subagentSettings().maxConcurrent;
 	const agents = agentId ? [agentId] : (db.prepare("SELECT DISTINCT agent_id FROM subagents WHERE status = 'queued'").all() as { agent_id: string }[]).map((r) => r.agent_id);
 	for (const a of agents) {
 		if (dispatchPaused.has(a)) continue;
+		const limit = getSubagentSettings(a).maxConcurrent;
 		const free = limit - activeCount(a);
 		if (free <= 0) continue;
 		const queued = db.prepare(`SELECT id FROM subagents WHERE agent_id = ? AND status = 'queued' ORDER BY created_at, rowid LIMIT ?`).all(a, free) as { id: string }[];
@@ -489,7 +552,7 @@ export async function checkSubagents(ts = Date.now()) {
 	// 兜底：即使某次 finish 后没派发，也定期把排队的补上
 	pumpSubagents();
 	for (const r of activeSubagents()) {
-		if (ts - (r.run_started_at ?? r.created_at) >= subagentSettings().maxMinutes * 60_000) await stopSubagent(r.id, "timeout");
+		if (ts - (r.run_started_at ?? r.created_at) >= getSubagentSettings(r.agent_id).maxMinutes * 60_000) await stopSubagent(r.id, "timeout");
 		else if (r.status === "running" && ts - r.last_activity_at > 180_000 && ts > (live.get(r.id)?.toolUntil ?? 0) && !db.prepare("SELECT 1 FROM requests WHERE task_id = ? AND status = 'pending'").get(r.id)) {
 			db.prepare("UPDATE subagents SET status = 'stalled' WHERE id = ?").run(r.id);
 			addEvent(r, "stalled", "子代理已 3 分钟没有进展，请检查或重新派活");
