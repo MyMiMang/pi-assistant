@@ -1,4 +1,6 @@
-# beta.26 最终整合验证 + 发布准备（停在 push 前）
+# beta.26 最终整合验证 + 发布准备
+
+主会话最终复核（2026-10-16）：独立重跑两端类型检查通过，主题/ASR 前端逻辑 **17/17**；具体 ASR deps、多模型生命周期、Laya HF 布局、来源 CAS 与测试隔离子进程 **43/43**。全部显式使用临时 DATA/WORKSPACE/HOME，未读用户数据、未重新下载大权重。已核两份真实 ASR report JSON，发布说明修正缓存复用事实，并明确 small/turbo/large-v3 未做真实安装推理验证、真实 Safari/iPhone 输入法仍未验。按本轮既有发布授权准备普通推送及新 beta.26 tag，不再要求重复确认；公开状态在 Actions 与实际资产核验后记录。
 
 树：`release-candidate-validation`（worktree `/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/release-candidate-validation`）。
 起点：第一轮整合后 HEAD `6075b3e`（stage1 已合 Laya `10317d0` / 语音多模型 `55a09e7` 含后端 `18478d4` / 主题选模型 `0781b9c`）。
@@ -67,5 +69,5 @@
 ## 6. 下一步（交主会话）
 
 1. 主会话复核本整合树（HEAD `fb31539`）→ `git push`（不 force）。
-2. 用户说「打包」后打 tag `v0.1.0-beta.26`（不移动旧 tag），走 `release.yml`（scope `mac-arm64`），Mac 安装启动冒烟通过再公开为 Latest。
+2. 按本轮已有「完成验证后直接推送打包」授权打新 tag `v0.1.0-beta.26`（不移动旧 tag），走 `release.yml`（scope `mac-arm64`），Mac 安装启动冒烟通过再公开为 Latest。
 3. 如需，就 §3 的 `select` 提示做小增补（可选，不阻塞）。
