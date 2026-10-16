@@ -631,6 +631,14 @@ export class VoiceInputController {
 			this.events.onError?.(voiceErrorFrom(e));
 			return;
 		}
+		// 打开采集期间可能已被取消（页面隐藏 / 切会话 / 换来源 / 卸载）：不能再进录音态，
+		// 否则会「复活」一个已取消、轨道已停的会话并卡在 recording（且 60s 定时器已被取消清掉）。
+		if (this.state !== "preparing") {
+			this.capture.stop();
+			this.capture = null;
+			this.releaseStream();
+			return;
+		}
 		// 采集已就绪：初始化分段器，把之前同步收到的分片补喂一遍
 		this.sampleRate = this.capture.sampleRate;
 		if (this.opts.incremental) {
@@ -776,22 +784,25 @@ export class VoiceInputController {
 		const pcm = pcm16FromFloat32(resampleTo16k(concatFloat32(chunks), sampleRate));
 		const audio = encodeWav16(pcm, TARGET_SAMPLE_RATE);
 		const requestId = this.newRequestId();
-		this.abort = new AbortController();
+		// 用局部 abort 引用：取消会同时 abort 并置空 this.abort；若在 await 之后继续读 this.abort 会拿到 null
+		// （取消在途的云端整段请求时抛 TypeError 被 catch 当成失败，把状态写成 error）。取消后旧返回一律不写。
+		const abort = new AbortController();
+		this.abort = abort;
 		this.events.onRequest?.(requestId);
 		try {
-			const out = await this.deps.transcribe({ audio, requestId, provider: opts.provider, model: opts.model, language: opts.language, signal: this.abort.signal });
-			if (this.abort.signal.aborted) return;
+			const out = await this.deps.transcribe({ audio, requestId, provider: opts.provider, model: opts.model, language: opts.language, signal: abort.signal });
+			if (abort.signal.aborted) return;
 			this.opts = null;
 			this.set("finish");
 			this.events.onResult?.({ text: out.text, requestId, anchor: opts.anchor, agentId: opts.agentId, conversationId: opts.conversationId });
 			this.set("idle");
 		} catch (e) {
-			if (this.abort?.signal.aborted) return;
+			if (abort.signal.aborted) return;
 			this.opts = null;
 			this.set("error");
 			this.events.onError?.(voiceErrorFrom(e));
 		} finally {
-			this.abort = null;
+			if (this.abort === abort) this.abort = null;
 		}
 	}
 

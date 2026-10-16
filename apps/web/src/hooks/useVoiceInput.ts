@@ -141,13 +141,23 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 	// 录音租约（只对本地 ASR）：边录边加载期间持有，避免 idle 卸载把正在录的模型 kill 掉。
 	const leaseRef = useRef<{ id: string | null; cancelled: boolean }>({ id: null, cancelled: false });
 	const beginLease = (provider: string, model: string) => {
-		leaseRef.current = { id: null, cancelled: false };
+		// 先取消 / 释放上一次租约：并发开始（极快的重复点击，或 start 在 preparing 期间被再次触发）时，
+		// 若只覆盖引用，前一个已拿到的 leaseId 会丢失、服务端租约一直不释放（本地模型无法 idle 卸载）。
+		const prev = leaseRef.current;
+		prev.cancelled = true;
+		if (prev.id) {
+			void releaseAsrLease(prev.id);
+			prev.id = null;
+		}
+		// 回调只读写本次创建的对象（不读 leaseRef.current，避免被后续 beginLease 覆盖串号）。
+		const entry = { id: null as string | null, cancelled: false };
+		leaseRef.current = entry;
 		void acquireAsrLease(provider, model).then((id) => {
-			if (leaseRef.current.cancelled) {
+			if (entry.cancelled) {
 				if (id) void releaseAsrLease(id);
 				return;
 			}
-			leaseRef.current.id = id;
+			entry.id = id;
 		});
 	};
 	const endLease = () => {

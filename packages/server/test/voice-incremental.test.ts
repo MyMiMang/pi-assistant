@@ -426,3 +426,57 @@ test("增量控制器：页面隐藏 → 停轨道 + 取消，不发送", async 
 	assert.equal(track.stopped, true);
 	assert.equal(c.getState(), "idle");
 });
+
+test("控制器：打开采集期间被取消（隐藏 / 切会话 / 换来源）→ 不被复活成 recording，停掉刚拿到的采集", async () => {
+	// 回归：startCapture 是 await 的，取消可能发生在它 in-flight 时；若之后不重新校验状态，
+	// 会 set("recording") 复活一个已取消、轨道已停、定时器已清的会话。
+	let releaseCapture: (() => void) | null = null;
+	const gate = new Promise<void>((r) => {
+		releaseCapture = r;
+	});
+	let captureStop = 0;
+	const { stream, track } = fakeStream();
+	const d: VoiceControllerDeps = {
+		getUserMedia: async () => stream,
+		startCapture: async (_s, _onData): Promise<VoiceCaptureHandle> => {
+			await gate;
+			return { sampleRate: RATE, stop: () => { captureStop++; } };
+		},
+		transcribe: async () => ({ text: "x" }),
+	};
+	const c = new VoiceInputController(d, {});
+	const started = c.start({ provider: "p", model: "m", anchor: 0, incremental: true });
+	await tick();
+	assert.equal(c.getState(), "preparing", "应卡在打开采集阶段");
+	c.cancel(); // 采集还没就绪时取消
+	releaseCapture!();
+	await started;
+	await tick();
+	assert.equal(c.getState(), "idle", "取消后不得被 startCapture 回调复活成 recording");
+	assert.equal(track.stopped, true, "轨道应已停");
+	assert.equal(captureStop, 1, "刚拿到的采集要被停掉");
+});
+
+test("批量（云端）控制器：整段转写中途取消 → 保持 idle、不误报 error", async () => {
+	// 回归：cancel() 会 abort 并置空 this.abort；旧代码在 await 之后读 this.abort.signal 会抛 TypeError，
+	// 被 catch 当成失败 → 取消后反而进入 error 并弹错误。
+	const { d, feed } = incDeps({
+		transcribeImpl: async ({ signal }) =>
+			new Promise<{ text: string }>((_res, rej) => {
+				const fail = () => rej(Object.assign(new Error("aborted"), { name: "AbortError" }));
+				if (signal.aborted) return fail();
+				signal.addEventListener("abort", fail, { once: true });
+			}),
+	});
+	const errors: string[] = [];
+	const c = new VoiceInputController(d, { onError: (e) => errors.push(e.code) });
+	await c.start({ provider: "p", model: "m", anchor: 0 });
+	feed(speech(500));
+	const stopping = c.stop();
+	await tick();
+	c.cancel();
+	await stopping;
+	await tick();
+	assert.equal(c.getState(), "idle");
+	assert.deepEqual(errors, [], "取消不该产生错误提示");
+});

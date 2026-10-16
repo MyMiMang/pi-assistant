@@ -1,7 +1,7 @@
 /**
  * 语音输入按钮（发送键旁，可发现）：点麦克风开始录音，再点停止 → 转写成文字草稿。
  *
- * 独立组件，不改整个 composer：主会话 / 群聊 / 子代理三处都复用它，只加一行。
+ * 独立组件，不改整个 composer：主会话 / 群聊复用它，只加一行（子代理输入栏不加麦克风，见设计 §5）。
  * 逻辑与浏览器管线在 `../voice-input.ts` 与 `../hooks/useVoiceInput.ts`；这里只做 UI 与草稿插入。
  *
  * 行为（docs/design/voice-input.md）：不自动发送、不自动重试；结果插到开始录制时的光标锚点并保留用户后续编辑；
@@ -15,7 +15,7 @@
  * 没配 ASR 时把说明放在按钮 title。只有用户点了麦克风、hook 回 `asr_not_configured` 时，
  * 才短暂浮现短说明 + 「去设置」；取消、切会话、点「去设置」后都清掉临时提示。
  */
-import { Loader2, Mic, RotateCcw, Square, X } from "lucide-react";
+import { Loader2, Mic, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useVoiceInput } from "../hooks/useVoiceInput";
 import { useStore } from "../store";
