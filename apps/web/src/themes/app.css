@@ -64,7 +64,6 @@ body.pa-resizing .pa-chat, body.pa-resizing .pa-pane { pointer-events: none; }
 .pa-steps-list li .pa-st-dot.err { color: #ef4444; }
 .pa-steps-list li code { font-family: var(--mono); font-size: 11.5px; color: var(--mut2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%; }
 .pa-steps-list li .pa-step-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pa-steps.open .pa-steps-list { max-height: 420px; overflow: auto; }
 .pa-link-card { display: flex; align-items: center; gap: 12px; padding: 10px 14px; max-width: 440px; text-decoration: none !important; color: inherit !important; }
 .pa-link-card:hover { border-color: var(--line-strong, var(--mut2)); }
 .pa-link-card .pa-file-ic { width: 36px; height: 36px; }
@@ -75,6 +74,9 @@ body.pa-resizing .pa-chat, body.pa-resizing .pa-pane { pointer-events: none; }
 .pa-input { height: 38px; width: 100%; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--card); color: var(--fg); padding: 0 12px; font-size: 14px; outline: none; transition: border-color .15s, box-shadow .15s; }
 .pa-input:focus { border-color: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); }
 .pa-modal { background: var(--card); color: var(--fg); border-radius: calc(var(--r) + 6px); box-shadow: var(--comp-shadow, 0 20px 60px rgba(0,0,0,.25)); }
+/* 弹窗：温和进入（透明度 + 轻微上移/缩小）。关闭 / 取消不做延迟动画，状态与关闭都是立即的。 */
+.pa-modal { animation: pa-modal-in var(--pa-dur, .18s) var(--pa-ease-out, cubic-bezier(.2,.8,.2,1)) both; }
+@keyframes pa-modal-in { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
 [data-skin=glass] .pa-modal { backdrop-filter: blur(40px) saturate(170%); -webkit-backdrop-filter: blur(40px) saturate(170%); background: color-mix(in srgb, var(--bg) 70%, transparent); border: 1px solid var(--line); }
 
 .caret::after { content: "▍"; animation: pa-blink 1s steps(1) infinite; margin-left: 1px; color: var(--acc); }
@@ -158,6 +160,11 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 
 /* ---- 弹出菜单（权限 / 主动性 / 模型 / 思考 / 上下文…）：按内容宽度，最多不超过视口；文字正常换行 ---- */
 .pa-pop { width: max-content; min-width: 12rem; max-width: min(var(--pop-w, 20rem), calc(100vw - 16px)); overflow-wrap: anywhere; }
+/* 下拉 / 弹层：统一温和进入（只做透明度 + 2px 位移，不用 transform，避免覆盖定位用的 inline transform） */
+.pa-pop, .pa-menu-in { animation: pa-menu-in var(--pa-dur-fast, .12s) var(--pa-ease-out, cubic-bezier(.2,.8,.2,1)) both; }
+@keyframes pa-menu-in { from { opacity: 0; translate: 0 -2px; } to { opacity: 1; translate: none; } }
+/* 折叠展开的内容：同样温和渐入（不高度动画，避免长内容 / Markdown 做高度过渡造成滚动抖动） */
+.pa-fold-in { animation: pa-menu-in var(--pa-dur, .18s) var(--pa-ease-out, cubic-bezier(.2,.8,.2,1)) both; }
 .pa-pop button { white-space: normal; }
 .pa-pop .truncate { white-space: nowrap; }
 @media (max-width: 640px) {
@@ -247,3 +254,40 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 /* 跳转原消息的提示（无 draft 引用条时） */
 .pa-jump-hint { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel, var(--card)); box-shadow: var(--shadow); font-size: 12.5px; color: var(--mut); }
 .pa-quoted-tag { margin-left: 6px; padding: 0 5px; border-radius: 4px; background: var(--hover); color: var(--mut2); font-size: 10.5px; font-weight: 400; }
+
+/* 键盘焦点统一可见：只给交互元素补一个 outline（不覆盖各主题既有的 :focus box-shadow / ring，
+   两者可共存）；`:where()` 保持 0 优先级，任何主题自己的 focus 规则都能盖过它，不损高对比主题。 */
+:where(button, a, summary, [role="option"], [role="tab"], [role="menuitem"]):focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- 减弱动效
+   prefers-reduced-motion: reduce —— 关闭非必需的循环 / 位移 / 缩放动画（app.css 最后导入，能盖过各主题自己的键帧）。
+   状态要仍然读得出来：spinner 只停转（保留强调色半环）、shimmer 停止后不留透明字、不定进度保留静态块、
+   真实音量条仍随真实 level 更新（去掉过渡而已）。
+   注意：不用全局 transform:none（下拉向上翻转靠 inline transform 定位），只取消交互反馈的位移 / 缩放。 */
+@media (prefers-reduced-motion: reduce) {
+  .pa-app *, .pa-app *::before, .pa-app *::after,
+  .pa-modal, .pa-modal *::before, .pa-modal *::after,
+  .pa-pop, .pa-pop *::before, .pa-pop *::after,
+  .pa-menu-in, .pa-help-pop, .pa-mention-pop, .pa-mention-sheet,
+  .pa-bg-layer, .pa-bg-layer *,
+  .pa-floatbar, .pa-floatbar * { animation: none !important; }
+
+  /* hover / pressed 的位移 / 缩放反馈取消（颜色 / 描边 / 透明度变化保留） */
+  .pa-app .pa-btn:hover, .pa-app .pa-btn:active, .pa-app .pa-btn.primary:hover,
+  .pa-app .pa-send:hover, .pa-app .pa-send:active,
+  .pa-app .pa-file-card:hover,
+  .pa-app [class*="active:scale"]:active { transform: none !important; }
+
+  /* 形状过渡一并取消（高度 / 位移 / 旋转），不拖慢交互 */
+  .pa-app .pa-icon-btn, .pa-app .pa-new-btn, .pa-app .pa-agent, .pa-app .pa-thread,
+  .pa-app .pa-chip, .pa-app .pa-btn, .pa-app .pa-opt, .pa-app .pa-send, .pa-app .pa-file-card,
+  .pa-modal, .pa-pop, .pa-menu-in,
+  .pa-steps-list, .pa-steps-list > ol, .pa-steps-head, .pa-steps-head .pa-chev { transition: none !important; }
+
+  /* 等待状态：spinner 停转，但保留强调色半环（不是空圆） */
+  .pa-spinner { border-color: var(--line); border-top-color: var(--acc); }
+  /* 文字 shimmer 停止后不能留下透明字 */
+  .pa-shimmer { background: none; -webkit-background-clip: border-box; background-clip: border-box; color: var(--mut); }
+  /* 不定进度（没有真实分母）：保留一个静态可见的进度块，不假装在走 */
+  .pa-dl-bar.indet > i { width: 38% !important; }
+}

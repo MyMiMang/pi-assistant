@@ -1,5 +1,9 @@
 /* 由 apps/web/scripts/port-mockup-css.py 从 docs/design/mockups/src 生成；可手工微调。 */
 html,.pa-app{height:100%}
+/* ---- 动效 token（本轮相关控件引用；不批量替换其它既有硬编码时长，保住各主题原调性） ----
+   时长：fast=按下/悬停这类即时反馈；base=常规状态切换；slow=折叠 / 展开这类形变。
+   弹窗 / 菜单 / 折叠 / 按钮统一从这里取值，reduced-motion 见 app.css。 */
+html{--pa-dur-fast:.12s;--pa-dur:.18s;--pa-dur-slow:.26s;--pa-ease-out:cubic-bezier(.2,.8,.2,1);--pa-ease-expand:cubic-bezier(.22,1,.36,1);--pa-ease-spring:cubic-bezier(.2,.9,.3,1.35)}
 .pa-app{font-family:var(--font);background:var(--bg);color:var(--fg);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;overflow:hidden;transition:background .3s,color .3s}
 .pa-ic{width:16px;height:16px;flex:none}
 /* sidebar */
@@ -8,17 +12,17 @@ html,.pa-app{height:100%}
 .pa-logo{width:28px;height:28px;display:block;flex-shrink:0;object-fit:contain}
 .pa-brand-name{font-weight:600;font-family:var(--display);letter-spacing:var(--brand-ls,-.01em);font-size:15px}
 .pa-brand .pa-theme-toggle{margin-left:auto}
-.pa-icon-btn{width:32px;height:32px;display:grid;place-items:center;border-radius:var(--r-sm);color:var(--mut);transition:background .15s,color .15s,transform .15s;border:1px solid var(--line);background:var(--card)}
+.pa-icon-btn{width:32px;height:32px;display:grid;place-items:center;border-radius:var(--r-sm);color:var(--mut);transition:background var(--pa-dur),color var(--pa-dur),transform var(--pa-dur-fast);border:1px solid var(--line);background:var(--card)}
 .pa-icon-btn.ghost{border-color:transparent;background:transparent}
 .pa-icon-btn:hover{background:var(--hover);color:var(--fg)}
 [data-mode=light] .pa-i-moon,[data-mode=dark] .pa-i-sun{display:none}
-.pa-new-btn{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:var(--r-sm);background:var(--card);border:1px solid var(--line);font-weight:500;transition:.15s}
+.pa-new-btn{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:var(--r-sm);background:var(--card);border:1px solid var(--line);font-weight:500;transition:border-color var(--pa-dur),background var(--pa-dur)}
 .pa-new-btn:hover{border-color:var(--line-strong,var(--mut2))}
 .pa-search{display:flex;align-items:center;gap:8px;padding:8px 10px;color:var(--mut2);border-radius:var(--r-sm);cursor:text}
 .pa-search:hover{background:var(--hover)}
 .pa-sec-label{font-size:11.5px;color:var(--mut2);padding:12px 10px 4px;letter-spacing:var(--label-ls,.02em);font-weight:500}
 .pa-agents,.pa-threads{display:flex;flex-direction:column;gap:2px}
-.pa-agent{display:flex;align-items:center;gap:10px;padding:8px;border-radius:var(--r-sm);text-align:left;transition:background .15s}
+.pa-agent{display:flex;align-items:center;gap:10px;padding:8px;border-radius:var(--r-sm);text-align:left;transition:background var(--pa-dur)}
 .pa-agent:hover{background:var(--hover)}
 .pa-agent.active{background:var(--active,var(--hover))}
 .pa-agent-txt{display:flex;flex-direction:column;min-width:0;flex:1}
@@ -31,7 +35,7 @@ html,.pa-app{height:100%}
 .pa-av.lg{width:64px;height:64px;font-size:24px}
 .pa-av .pa-dot{position:absolute;right:-1px;bottom:-1px;width:9px;height:9px;border-radius:50%;background:var(--ok,#22c55e);box-shadow:0 0 0 2px var(--side)}
 .pa-av.lg .pa-dot{width:13px;height:13px;box-shadow:0 0 0 3px var(--panel)}
-.pa-thread{padding:7px 10px;border-radius:var(--r-sm);color:var(--mut);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:.15s}
+.pa-thread{padding:7px 10px;border-radius:var(--r-sm);color:var(--mut);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background var(--pa-dur),color var(--pa-dur)}
 .pa-thread:hover{background:var(--hover);color:var(--fg)}
 .pa-thread.active{color:var(--fg);background:var(--hover)}
 .pa-side-foot{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px 8px 2px;border-top:1px solid var(--line)}
@@ -49,7 +53,7 @@ html,.pa-app{height:100%}
 .pa-pulse{width:6px;height:6px;border-radius:50%;background:var(--ok,#22c55e);animation:pa-pulse 2s infinite}
 @keyframes pa-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok,#22c55e) 60%,transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
 .pa-head-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
-.pa-chip{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex-shrink:0;height:32px;padding:0 12px;border-radius:var(--r-chip,999px);border:1px solid var(--line);background:var(--card);color:var(--mut);font-size:13px;transition:.15s}
+.pa-chip{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex-shrink:0;height:32px;padding:0 12px;border-radius:var(--r-chip,999px);border:1px solid var(--line);background:var(--card);color:var(--mut);font-size:13px;transition:color var(--pa-dur),border-color var(--pa-dur),background var(--pa-dur)}
 .pa-chip:hover{color:var(--fg);border-color:var(--line-strong,var(--mut2))}
 .pa-chip.sm{height:28px;padding:0 10px;font-size:12.5px}
 /* 历史窗口提示条：引用跳远后列表是围绕目标的连续窗口，不是实时末尾；底部提供加载较新/回到最新 */
@@ -72,22 +76,25 @@ html,.pa-app{height:100%}
 .pa-shimmer{background:linear-gradient(90deg,var(--mut) 0%,var(--mut) 40%,var(--fg) 50%,var(--mut) 60%,var(--mut) 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:pa-shim 2s linear infinite}
 @keyframes pa-shim{from{background-position:100% 0}to{background-position:-100% 0}}
 .pa-steps{border:1px solid var(--line);border-radius:var(--r);background:var(--card);overflow:hidden}
-.pa-steps-head{display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;text-align:left;transition:background .15s}
+.pa-steps-head{display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;text-align:left;transition:background var(--pa-dur)}
 .pa-steps-head:hover{background:var(--hover)}
 .pa-steps-head small{color:var(--mut2);font-size:12px;margin-left:4px}
-.pa-steps-head .pa-chev{margin-left:auto;color:var(--mut2);transition:transform .25s}
+.pa-steps-head .pa-chev{margin-left:auto;color:var(--mut2);transition:transform var(--pa-dur-slow) var(--pa-ease-out)}
 .pa-steps.open .pa-chev{transform:rotate(90deg)}
 .pa-ic.ok{color:var(--ok,#22c55e)}
-.pa-steps-list{list-style:none;display:grid;grid-template-rows:0fr;transition:grid-template-rows .3s ease;padding:0 14px}
-.pa-steps-list>li:first-child{margin-top:0}
-.pa-steps-list{display:block;max-height:0;overflow:hidden;transition:max-height .35s ease,padding .35s}
-.pa-steps.open .pa-steps-list{max-height:240px;padding:2px 14px 12px}
+/* 可折叠步骤列表：真 grid 0fr↔1fr 平滑收起，展开显示**完整内容**（不再用固定 max-height 截断长步骤）。
+   外层 grid 只负责高度过渡，内层 ol 负责 clip / 内边距（grid 动画需要单一子元素 + min-height:0 + overflow:hidden）。 */
+.pa-steps-list{display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--pa-dur-slow) var(--pa-ease-expand);padding:0 14px}
+.pa-steps-list>ol{list-style:none;min-height:0;overflow:hidden;margin:0;padding:0;transition:padding var(--pa-dur-slow) var(--pa-ease-expand)}
+.pa-steps.open .pa-steps-list{grid-template-rows:1fr}
+.pa-steps.open .pa-steps-list>ol{padding:2px 0 12px}
+.pa-steps-list>ol>li:first-child{margin-top:0}
 .pa-steps-list li{display:flex;align-items:center;gap:10px;padding:6px 0;color:var(--mut);font-size:13px;position:relative}
 .pa-steps-list li small{margin-left:auto;color:var(--mut2);font-size:11.5px;font-variant-numeric:tabular-nums}
 .pa-st-dot{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:var(--hover);color:var(--ok,#22c55e)}
 .pa-st-dot .pa-ic{width:11px;height:11px;stroke-width:2.4}
 .pa-card{border:1px solid var(--line);border-radius:var(--r);background:var(--card);box-shadow:var(--shadow)}
-.pa-file-card{display:flex;align-items:center;gap:12px;padding:12px 14px;max-width:440px;transition:.15s;cursor:pointer}
+.pa-file-card{display:flex;align-items:center;gap:12px;padding:12px 14px;max-width:440px;transition:border-color var(--pa-dur),transform var(--pa-dur);cursor:pointer}
 .pa-file-card:hover{border-color:var(--line-strong,var(--mut2));transform:translateY(-1px)}
 .pa-file-ic{position:relative;width:40px;height:44px;border-radius:10px;display:grid;place-items:center;background:var(--file-bg,var(--hover));color:var(--file-fg,var(--fg))}
 .pa-file-ic .pa-ic{width:20px;height:20px}
@@ -105,7 +112,7 @@ html,.pa-app{height:100%}
 .pa-kv span{color:var(--mut2);width:52px;flex:none}
 .pa-kv b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pa-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
-.pa-btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:var(--r-btn,999px);font-weight:500;font-size:13px;transition:.15s;border:1px solid var(--line)}
+.pa-btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:var(--r-btn,999px);font-weight:500;font-size:13px;transition:background var(--pa-dur),border-color var(--pa-dur),filter var(--pa-dur),transform var(--pa-dur-fast),box-shadow var(--pa-dur);border:1px solid var(--line)}
 .pa-btn .pa-ic{width:14px;height:14px}
 .pa-btn.sm{height:28px;padding:0 10px;font-size:12px}
 .pa-btn.ghost{background:var(--card)}
@@ -121,7 +128,7 @@ html,.pa-app{height:100%}
 .pa-res.no{background:var(--hover);color:var(--mut)}
 @keyframes pa-fadeup{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .pa-opts{display:flex;flex-direction:column;gap:6px}
-.pa-opt{display:flex;align-items:center;gap:8px;text-align:left;padding:9px 12px;border-radius:var(--r-sm);border:1px solid var(--line);transition:.15s;font-size:13.5px}
+.pa-opt{display:flex;align-items:center;gap:8px;text-align:left;padding:9px 12px;border-radius:var(--r-sm);border:1px solid var(--line);transition:background var(--pa-dur),border-color var(--pa-dur),box-shadow var(--pa-dur);font-size:13.5px}
 .pa-opt small{margin-left:auto;font-size:11px;color:var(--acc)}
 .pa-opt:hover{border-color:var(--acc);background:var(--acc-soft)}
 .pa-opt.picked{border-color:var(--acc);background:var(--acc-soft);box-shadow:inset 0 0 0 1px var(--acc)}
@@ -134,7 +141,7 @@ html,.pa-app{height:100%}
 .pa-composer-input:empty::before{content:attr(data-ph);color:var(--mut2)}
 .pa-composer-bar{display:flex;align-items:center;gap:6px}
 .pa-model{font-size:12px;color:var(--mut2);margin-right:6px}
-.pa-send{width:34px;height:34px;border-radius:var(--r-send,50%);display:grid;place-items:center;background:var(--acc);color:var(--acc-fg);transition:.15s;box-shadow:var(--btn-shadow,none)}
+.pa-send{width:34px;height:34px;border-radius:var(--r-send,50%);display:grid;place-items:center;background:var(--acc);color:var(--acc-fg);transition:transform var(--pa-dur-fast),filter var(--pa-dur);box-shadow:var(--btn-shadow,none)}
 .pa-send:hover{transform:translateY(-1px) scale(1.04)}
 .pa-foot-note{text-align:center;font-size:11.5px;color:var(--mut2);margin-top:8px}
 /* pane */
