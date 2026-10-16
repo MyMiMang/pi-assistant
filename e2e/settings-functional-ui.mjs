@@ -125,6 +125,7 @@ async function installRoutes(context, state) {
 		if (p === "/api/models/registry") return json({ providers: [CLOUD_ASR, LOCAL_ASR, LAYA] });
 		if (p === "/api/models") return json([]);
 		if (p === "/api/model-strengths") return json({ labels: [], models: [] });
+		if (p === "/api/fast-computer/settings") return json({ settings: { enabled: false, kind: "systemone", provider: "", id: "", baseUrl: "", model: "", threshold: 0.5, timeoutMs: 3000 }, classifierModels: [] });
 		if (p === "/api/fast-computer/benchmark") return json({ availability: { available: false, reason: "未启用" }, runs: [] });
 		if (p === "/api/host-control") return json({ settings: { enabled: false, agents: "all", apps: [], workspaceFiles: false, tiers: {}, defaultTier: "bounded" }, tiers: {}, status: { enabled: false, tiers: {}, paused: false, daemon: { state: "off", detail: "" }, platform: "darwin", installed: false, version: "" }, manifest: "", manifestHash: "", permissions: null, activity: { active: false, agent: null, summary: null } });
 		if (p.startsWith("/api/usage/summary")) return json({ totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, unknownCalls: 0 } });
@@ -223,6 +224,12 @@ try {
 	await page.getByTestId("host-local-laya").waitFor();
 	check("操作这台电脑页有本地快速操作模型（Laya）卡", await page.getByTestId("local-laya-card").isVisible());
 	check("Laya 区块与「快速操作模型」并列（不整屏长文）", await page.getByTestId("host-fast-computer").isVisible());
+	// 等快速操作设置真正 loaded（不要拿「正在载入…」的静态图当已加载）
+	await page.waitForFunction(() => {
+		const el = document.querySelector('[data-testid="fast-computer-hostpc"]');
+		return !!el && !(el.textContent ?? "").includes("正在载入");
+	});
+	check("快速操作设置已 loaded（不是载入中）", !((await page.getByTestId("fast-computer-hostpc").textContent()) ?? "").includes("正在载入"));
 	await page.screenshot({ path: join(OUT, "03b-host-laya.png") });
 
 	console.log("\n── 语音配置：云空态 / 选择保存 / 失败回滚 / 无第二套 Key ──");
