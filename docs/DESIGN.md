@@ -448,6 +448,8 @@ sequenceDiagram
 
 **设置 › 模型 的排版**：顶部两张卡固定可见且不在任何折叠里——「默认使用」（模型 + 思考强度合一）与「识图模型」。「模型服务 / 渠道」是一个**大分类折叠**（展开箭头 + 图标 + 标题 + 服务数量徽标 + 已配置数，说明收在「?」里），**收起时里面整块不渲染**（添加渠道按钮、搜索框、内置服务、我的渠道全部隐藏），可以一键全部关上；展开后「内置服务」「我的渠道」两组各自是**带服务图标的卡片网格**（`grid-cols-1 sm:grid-cols-2`，390 单列），每张卡 = 服务图标 + 名称 + 状态徽章 + 模型数，**点卡片展开**（`sm:col-span-2`）看该服务支持的模型与登录 / 编辑配置。仓库里没有各服务的品牌 logo，服务图标：**内置服务用真实品牌 logo**——`apps/web/src/components/provider-icons.ts`，由 `scripts/gen-provider-icons.mjs` 从 `@lobehub/icons-static-svg`（MIT，见 THIRD_PARTY_NOTICES.md）只提取用到的图标生成，编译进网页、不联网下载；**自定义渠道和图标库未收录的品牌**（Radius、TypeSafe、Mock）用「名称首字母 + 按 provider.id 稳定取色」的字母头像 fallback（`ProviderAvatar`，testid `provider-icon`、`data-provider-icon-kind`），多词取首尾词首字母（`Xiaomi Token Plan AMS/CN/SGP` → `XA/XC/XS`），中文名取首字 + 末尾字母数字（`渠道1…6` → `渠1…渠6`），保证不出现所有服务一个图标；同一品牌的多个渠道共用一张 logo（OpenAI/OpenAI Codex、Moonshot AI/CN、Xiaomi 的 token plan 等）。通用折叠组件 `apps/web/src/components/ui.tsx` 的 `<Fold>`。
 
+**设置可用性收口（低风险 UX）**：「操作这台电脑 / 助理电脑 / 渠道」三页在接口慢或失败时不再整页空白——失败显示「载入失败：中文原因」+ 重试，载入中显示「正在载入…」，已加载后刷新失败保留旧数据并给非阻塞提示（`useHostControl` / `useDesktopGlobal` 带 `err` / `loading`，请求序号保证旧请求不覆盖）。「助理自己的电脑」审批（服务端 `sandboxComputer`，三档语义不变）归「助理电脑」页，不再出现在「操作这台电脑」页。模型服务折叠徽标 = 实际可见服务卡数（同一口径排除本地 Laya / 语音管理卡），不再 `+1`。ASR「声明 ≠ 启用」只在标题 `Help` 说明一处，空态为短句「尚未添加语音模型」。助理电脑「下载来源」（镜像地址 / 虚拟机组件加速）收进默认收起的 `details`，有自定义值或下载 / 保存失败时自动展开，值 / 校验 / 固定摘要不变。
+
 #### 5.14.1 自定义模型服务（中转站 / 第三方 / 本地推理）——已实现
 
 Pi 目录里没有的服务（各种 OpenAI 兼容“中转站”、公司内网网关、Ollama / vLLM / LM Studio、新出的国产模型 API）都可以在「设置 → 模型 → 添加自定义服务」或首次向导里添加。**完全走 Pi 自己的 `models.json` 机制**，不自己实现任何协议：

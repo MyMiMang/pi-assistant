@@ -1,4 +1,4 @@
-import { AlertTriangle, ChevronDown, Hand, Loader2, Pause, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, Hand, Loader2, Pause, Play, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { COMPOSER_LABEL } from "../composer";
@@ -37,9 +37,31 @@ interface HostInfo {
 export function useHostControl() {
 	const v = useStore((s) => s.hostVersion);
 	const [d, setD] = useState<HostInfo | null>(null);
-	const load = () => api("/api/host-control").then(setD).catch(() => {});
-	useEffect(() => void load(), [v]);
-	return { d, load };
+	const [err, setErr] = useState("");
+	const [loading, setLoading] = useState(true);
+	// 只让最后一次请求落地：旧请求迟到 / 组件卸载后不再覆盖当前数据
+	const seq = useRef(0);
+	const load = async () => {
+		const my = ++seq.current;
+		try {
+			const r = await api<HostInfo>("/api/host-control");
+			if (my !== seq.current) return;
+			setD(r);
+			setErr("");
+		} catch (e) {
+			if (my !== seq.current) return;
+			setErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			if (my === seq.current) setLoading(false);
+		}
+	};
+	useEffect(() => {
+		void load();
+		return () => {
+			seq.current++;
+		};
+	}, [v]);
+	return { d, load, err, loading };
 }
 
 /**
@@ -84,7 +106,7 @@ const PERM: Record<string, string> = { granted: "已授权", denied: "未授权"
 
 /** 设置 › 操作这台电脑 */
 export function HostControlSettings() {
-	const { d, load } = useHostControl();
+	const { d, load, err: loadErr, loading } = useHostControl();
 	const agents = useStore((s) => s.agents);
 	const [apps, setApps] = useState<HostApp[] | null>(null);
 	const [scope, setScope] = useState<"all" | string[]>("all");
@@ -130,7 +152,17 @@ export function HostControlSettings() {
 			if (autoTimer.current) clearTimeout(autoTimer.current);
 		};
 	}, [d, apps, scope, files, defaultTier]);
-	if (!d || !apps) return null;
+	if (!d || !apps) {
+		if (loading) return <div className="text-sm text-mut" data-testid="host-loading">正在载入…</div>;
+		return (
+			<div className="space-y-2 text-sm" data-testid="host-load-error">
+				<div className="text-red-600">载入失败：{loadErr || "无法连接本机服务"}</div>
+				<Button size="sm" variant="outline" onClick={() => void load()} data-testid="host-retry">
+					<RefreshCw size={13} /> 重试
+				</Button>
+			</div>
+		);
+	}
 	const mac = d.status.platform === "darwin";
 	const win = d.status.platform === "win32";
 	const on = d.status.enabled;
@@ -173,6 +205,7 @@ export function HostControlSettings() {
 	return (
 		<div className="space-y-5" data-testid="host-settings">
 			{dlg}
+			{loadErr && <div className="text-xs text-amber-600" data-testid="host-refresh-error">刷新失败：{loadErr}（下面显示的是上次的数据）</div>}
 			<div className="rounded-xl border border-amber-300/60 bg-amber-50 p-4 text-sm leading-relaxed text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
 				<div className="mb-1 flex items-center gap-2 font-semibold">
 					<AlertTriangle size={16} /> 让助理操作你自己的电脑
@@ -332,8 +365,8 @@ export function HostControlSettings() {
 						{busy && <Loader2 size={14} className="animate-spin" />} {on ? (dirty ? "保存更改并重新确认…" : "查看权限清单…") : "查看权限清单并开启…"}
 					</Button>
 					{on && dirty && <span className="text-xs text-amber-600" data-testid="host-dirty">有未保存的更改</span>}
-					{!on && saveState === "saving" && <span className="flex items-center gap-1 text-xs text-mut"><Loader2 size={12} className="animate-spin" /> 正在保存…</span>}
-					{!on && saveState === "ok" && <span className="text-xs text-green-600" data-testid="host-autosave">已自动保存</span>}
+					{!on && saveState === "saving" && <span className="flex items-center gap-1 text-xs text-mut"><Loader2 size={12} className="animate-spin" /> 正在保存草稿…</span>}
+					{!on && saveState === "ok" && <span className="text-xs text-green-600" data-testid="host-autosave">已保存草稿（未开启）</span>}
 				</div>
 			) : (
 				<section className="space-y-2" data-testid="host-manifest">
@@ -354,34 +387,7 @@ export function HostControlSettings() {
 				</section>
 			)}
 			{msg && <div className={cx("text-sm", msg.ok ? "text-green-600" : "text-red-600")} data-testid="host-msg">{msg.text}</div>}
-
-			<SandboxComputerSettings />
-
 		</div>
-	);
-}
-
-/** 助理自己的电脑（Docker 桌面）：默认完全权限，不逐项审批 */
-function SandboxComputerSettings() {
-	const v = useStore((s) => s.hostVersion);
-	const [a, setA] = useState<"all" | "sensitive" | "none" | null>(null);
-	useEffect(() => void api("/api/sandbox-computer").then((r) => setA(r.approvals)), [v]);
-	if (!a) return null;
-	const set = (approvals: "all" | "sensitive" | "none") => api("/api/sandbox-computer", { method: "PUT", json: { approvals } }).then((r) => setA(r.approvals));
-	return (
-		<section className="space-y-2 rounded-xl bg-hover p-4 text-sm" data-testid="sandbox-approvals">
-			<div className="font-semibold">助理自己的电脑</div>
-			<p className="text-mut">助理自己的隔离电脑，默认完全权限。 <Help>如果它登录了你在意的账号（比如它的微信、邮箱），可以要求它在关键动作前先问你。一键暂停始终有效（在助理的「电脑」页）。</Help></p>
-			<label className="flex items-center gap-2">
-				<input type="radio" checked={a === "none"} onChange={() => set("none")} /> 完全权限，不用问我（默认）
-			</label>
-			<label className="flex items-center gap-2">
-				<input type="radio" checked={a === "sensitive"} onChange={() => set("sensitive")} /> 发送 / 付款 / 删除类动作先问我
-			</label>
-			<label className="flex items-center gap-2">
-				<input type="radio" checked={a === "all"} onChange={() => set("all")} /> 每个动作都先问我
-			</label>
-		</section>
 	);
 }
 

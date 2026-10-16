@@ -112,11 +112,44 @@ export function ChannelsSettings() {
 	const agents = useStore((s) => s.agents);
 	const [d, setD] = useState<{ items: Channel[]; publicUrl: string | null } | null>(null);
 	const [adding, setAdding] = useState<Kind | null>(null);
-	const load = () => api("/api/channels").then(setD);
-	useEffect(() => void load(), [v]);
-	if (!d) return null;
+	const [err, setErr] = useState("");
+	const [loading, setLoading] = useState(true);
+	// 只让最后一次请求落地：旧请求迟到 / 组件卸载后不再覆盖当前数据
+	const seq = useRef(0);
+	const load = async () => {
+		const my = ++seq.current;
+		try {
+			const r = await api<{ items: Channel[]; publicUrl: string | null }>("/api/channels");
+			if (my !== seq.current) return;
+			setD(r);
+			setErr("");
+		} catch (e) {
+			if (my !== seq.current) return;
+			setErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			if (my === seq.current) setLoading(false);
+		}
+	};
+	useEffect(() => {
+		void load();
+		return () => {
+			seq.current++;
+		};
+	}, [v]);
+	if (!d) {
+		if (loading) return <div className="text-sm text-mut" data-testid="channels-loading">正在载入…</div>;
+		return (
+			<div className="space-y-2 text-sm" data-testid="channels-load-error">
+				<div className="text-red-600">载入失败：{err || "无法连接本机服务"}</div>
+				<Button size="sm" variant="outline" onClick={() => void load()} data-testid="channels-retry">
+					<RefreshCw size={13} /> 重试
+				</Button>
+			</div>
+		);
+	}
 	return (
 		<div className="space-y-5" data-testid="channels">
+			{err && <div className="text-xs text-amber-600" data-testid="channels-refresh-error">刷新失败：{err}（下面显示的是上次的数据）</div>}
 			<ClawbotSection items={d.items.filter((c) => c.kind === "wechat_clawbot")} agents={agents} onChange={load} />
 			<p className="text-sm text-mut">
 				在企业微信、飞书、钉钉里和助理聊天。

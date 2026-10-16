@@ -3,7 +3,7 @@
  * 空闲自动关机、镜像加速、下载进度；关掉后可关机或删除虚拟机和镜像释放空间。
  * 共用电脑（§15.4）：默认所有助理共用一台；列出每个助理用哪台电脑，可以单独开 / 关、把单独电脑合并进共用电脑。
  */
-import { Loader2, Power, Trash2 } from "lucide-react";
+import { Loader2, Power, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
@@ -40,10 +40,30 @@ const GB = (n: number) => `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1).replace(/\.0$/
 
 export function useDesktopGlobal() {
 	const [g, setG] = useState<DesktopGlobal | null>(null);
+	const [loadErr, setLoadErr] = useState("");
+	const [loading, setLoading] = useState(true);
 	const ver = useStore((s) => s.desktopVersion);
-	const load = () => api<DesktopGlobal>("/api/desktop").then(setG).catch(() => {});
+	// 只让最后一次请求落地：旧请求迟到 / 组件卸载后不再覆盖当前数据
+	const seq = useRef(0);
+	const load = async () => {
+		const my = ++seq.current;
+		try {
+			const r = await api<DesktopGlobal>("/api/desktop");
+			if (my !== seq.current) return;
+			setG(r);
+			setLoadErr("");
+		} catch (e) {
+			if (my !== seq.current) return;
+			setLoadErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			if (my === seq.current) setLoading(false);
+		}
+	};
 	useEffect(() => {
 		void load();
+		return () => {
+			seq.current++;
+		};
 	}, [ver]);
 	// 下载中每秒刷新进度
 	useEffect(() => {
@@ -51,7 +71,7 @@ export function useDesktopGlobal() {
 		const i = setInterval(() => void load(), 1000);
 		return () => clearInterval(i);
 	}, [g?.install.phase]);
-	return { g, setG, load };
+	return { g, setG, load, loadErr, loading };
 }
 
 /** 开关旁的说明：预计下载量 / 磁盘 / 内存（向导和设置共用） */
@@ -64,7 +84,7 @@ export function DesktopCost({ image }: { image?: DesktopGlobal["image"] }) {
 }
 
 export function DesktopSettings() {
-	const { g, setG } = useDesktopGlobal();
+	const { g, setG, load, loadErr, loading } = useDesktopGlobal();
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState("");
 	const [mirror, setMirror] = useState<string | null>(null);
@@ -73,7 +93,22 @@ export function DesktopSettings() {
 	const [wslMsg, setWslMsg] = useState("");
 	const [confirmDlg, askConfirm] = useConfirm();
 	const purgeRef = useRef(false);
-	if (!g) return null;
+	// 下载源（镜像加速）属于高级设置，默认收起；有自定义值 / 下载或保存失败时自动展开，方便发现
+	const [dlOpen, setDlOpen] = useState(false);
+	useEffect(() => {
+		if (g?.settings.mirror || g?.settings.fileMirror || g?.install.phase === "error" || err) setDlOpen(true);
+	}, [g?.settings.mirror, g?.settings.fileMirror, g?.install.phase, err]);
+	if (!g) {
+		if (loading) return <div className="text-sm text-zinc-500" data-testid="desktop-loading">{t("正在载入…")}</div>;
+		return (
+			<div className="space-y-2 text-sm" data-testid="desktop-load-error">
+				<div className="text-red-600">{t("载入失败：")}{loadErr || t("无法连接本机服务")}</div>
+				<Button size="sm" variant="outline" onClick={() => void load()} data-testid="desktop-retry">
+					<RefreshCw size={13} /> {t("重试")}
+				</Button>
+			</div>
+		);
+	}
 	/** Windows：一键安装 WSL（服务端用 UAC 提权执行 wsl --install --no-distribution） */
 	const installWsl = async () => {
 		setBusy("wsl");
@@ -130,6 +165,7 @@ export function DesktopSettings() {
 	return (
 		<div className="space-y-6" data-testid="desktop-settings">
 			{confirmDlg}
+			{loadErr && <div className="text-xs text-amber-600" data-testid="desktop-refresh-error">{t("刷新失败：{e}（下面显示的是上次的数据）", { e: loadErr })}</div>}
 			<section className="space-y-2">
 				<div className="mb-3">
 					<div className="font-semibold">{t("给助理安装电脑")}</div>
@@ -222,6 +258,8 @@ export function DesktopSettings() {
 
 			{s.enabled && <SharedComputerSection />}
 
+			<SandboxComputerSettings />
+
 			<section className="space-y-2">
 				<div className="font-semibold">{t("空闲自动关机")}</div>
 				<div className="text-sm text-zinc-500">{t("闲置多久后关机，登录状态不丢。")} <Help>{t("没有工具调用、没人在看画面、没有任务占用超过这个时间，就自动关机释放内存；登录状态不会丢，下次用到时自动开机。")}</Help></div>
@@ -249,25 +287,32 @@ export function DesktopSettings() {
 				</p>
 			</section>
 
-			<section className="space-y-2">
-				<div className="font-semibold">{t("镜像下载地址")}</div>
-				<div className="text-sm text-zinc-500">{t("国内下载慢时可以填加速地址（替换 ghcr.io），例如 ghcr.nju.edu.cn。下载内容按固定版本校验，换地址不影响安全。")}</div>
-				<div className="flex gap-2">
-					<Input value={mirror ?? s.mirror} placeholder="ghcr.io" onChange={(e) => setMirror(e.target.value)} data-testid="desktop-mirror" />
-					<Button variant="outline" disabled={mirror === null || mirror === s.mirror} onClick={() => void put({ mirror: mirror ?? "" }).then((r) => r && setMirror(null))}>{t("保存")}</Button>
+			<details className="rounded-xl border border-line" open={dlOpen} onToggle={(e) => setDlOpen(e.currentTarget.open)} data-testid="desktop-download-source">
+				<summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+					{t("下载来源")} <span className="ml-1 text-xs font-normal text-zinc-500">{t("国内下载慢时可改（高级）")}</span>
+				</summary>
+				<div className="space-y-4 px-3 pb-3">
+					<section className="space-y-2">
+						<div className="font-semibold">{t("镜像下载地址")}</div>
+						<div className="text-sm text-zinc-500">{t("国内下载慢时可以填加速地址（替换 ghcr.io），例如 ghcr.nju.edu.cn。下载内容按固定版本校验，换地址不影响安全。")}</div>
+						<div className="flex gap-2">
+							<Input value={mirror ?? s.mirror} placeholder="ghcr.io" onChange={(e) => setMirror(e.target.value)} data-testid="desktop-mirror" />
+							<Button variant="outline" disabled={mirror === null || mirror === s.mirror} onClick={() => void put({ mirror: mirror ?? "" }).then((r) => r && setMirror(null))}>{t("保存")}</Button>
+						</div>
+						<div className="break-all text-xs text-zinc-400">{g.image.ref}{g.image.custom ? `（${t("自定义镜像")}）` : ""}</div>
+					</section>
+					{(g.builtin.id === "lima" || g.builtin.id === "wsl") && (
+						<section className="space-y-2">
+							<div className="font-semibold">{t("虚拟机组件下载加速")}</div>
+							<div className="text-sm text-zinc-500">{t("从 GitHub 下载运行时组件慢时填加速前缀，例如 https://ghfast.top/ 。文件按固定摘要校验，加速失败会自动回到官方地址。")}</div>
+							<div className="flex gap-2">
+								<Input value={fileMirror ?? s.fileMirror} placeholder={t("留空 = 直连 GitHub")} onChange={(e) => setFileMirror(e.target.value)} data-testid="desktop-file-mirror" />
+								<Button variant="outline" disabled={fileMirror === null || fileMirror === s.fileMirror} onClick={() => void put({ fileMirror: fileMirror ?? "" }).then((r) => r && setFileMirror(null))}>{t("保存")}</Button>
+							</div>
+						</section>
+					)}
 				</div>
-				<div className="break-all text-xs text-zinc-400">{g.image.ref}{g.image.custom ? `（${t("自定义镜像")}）` : ""}</div>
-			</section>
-			{(g.builtin.id === "lima" || g.builtin.id === "wsl") && (
-				<section className="space-y-2">
-					<div className="font-semibold">{t("虚拟机组件下载加速")}</div>
-					<div className="text-sm text-zinc-500">{t("从 GitHub 下载运行时组件慢时填加速前缀，例如 https://ghfast.top/ 。文件按固定摘要校验，加速失败会自动回到官方地址。")}</div>
-					<div className="flex gap-2">
-						<Input value={fileMirror ?? s.fileMirror} placeholder={t("留空 = 直连 GitHub")} onChange={(e) => setFileMirror(e.target.value)} data-testid="desktop-file-mirror" />
-						<Button variant="outline" disabled={fileMirror === null || fileMirror === s.fileMirror} onClick={() => void put({ fileMirror: fileMirror ?? "" }).then((r) => r && setFileMirror(null))}>{t("保存")}</Button>
-					</div>
-				</section>
-			)}
+			</details>
 			{err && <div className="text-xs text-red-600">{err}</div>}
 		</div>
 	);
@@ -346,6 +391,33 @@ function SharedComputerSection() {
 					</div>
 				))}
 			</div>
+		</section>
+	);
+}
+
+/**
+ * 助理自己的电脑（Docker 桌面）：默认完全权限，不逐项审批。
+ * 属于「助理电脑」页（与操作用户自己的电脑分开），服务端 `sandboxComputer` 语义不变。
+ */
+function SandboxComputerSettings() {
+	const v = useStore((s) => s.hostVersion);
+	const [a, setA] = useState<"all" | "sensitive" | "none" | null>(null);
+	useEffect(() => void api("/api/sandbox-computer").then((r) => setA(r.approvals)), [v]);
+	if (!a) return null;
+	const set = (approvals: "all" | "sensitive" | "none") => api("/api/sandbox-computer", { method: "PUT", json: { approvals } }).then((r) => setA(r.approvals));
+	return (
+		<section className="space-y-2 rounded-xl bg-hover p-4 text-sm" data-testid="sandbox-approvals">
+			<div className="font-semibold">助理自己的电脑</div>
+			<p className="text-mut">助理自己的隔离电脑，默认完全权限。 <Help>如果它登录了你在意的账号（比如它的微信、邮箱），可以要求它在关键动作前先问你。一键暂停始终有效（在助理的「电脑」页）。</Help></p>
+			<label className="flex items-center gap-2">
+				<input type="radio" checked={a === "none"} onChange={() => set("none")} /> 完全权限，不用问我（默认）
+			</label>
+			<label className="flex items-center gap-2">
+				<input type="radio" checked={a === "sensitive"} onChange={() => set("sensitive")} /> 发送 / 付款 / 删除类动作先问我
+			</label>
+			<label className="flex items-center gap-2">
+				<input type="radio" checked={a === "all"} onChange={() => set("all")} /> 每个动作都先问我
+			</label>
 		</section>
 	);
 }
