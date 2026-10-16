@@ -2,6 +2,7 @@
 
 树：`release-candidate-validation`（worktree `/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/release-candidate-validation`）。
 起点：第一轮整合后 HEAD `6075b3e`（stage1 已合 Laya `10317d0` / 语音多模型 `55a09e7` 含后端 `18478d4` / 主题选模型 `0781b9c`）。
+本轮 HEAD：`fb31539`（合并 1 `42f9613`、合并 2 `17a3da7`、收口文档 `f905c4d`、截图 `fb31539`；首父链干净、`git status` 干净）。
 **本任务不是发布动作：未 push / 未 tag / 未建 Release / 未更新用户 App / 未改 `.github/release-scope.json`（仍 `mac-arm64`）。** push / tag 由主会话在复核后做。
 
 ## 1. 本轮合并（均 `--no-ff`，保留各自祖先）
@@ -65,6 +66,6 @@
 
 ## 6. 下一步（交主会话）
 
-1. 主会话复核本整合树（HEAD = 本快照提交）→ `git push`（不 force）。
+1. 主会话复核本整合树（HEAD `fb31539`）→ `git push`（不 force）。
 2. 用户说「打包」后打 tag `v0.1.0-beta.26`（不移动旧 tag），走 `release.yml`（scope `mac-arm64`），Mac 安装启动冒烟通过再公开为 Latest。
 3. 如需，就 §3 的 `select` 提示做小增补（可选，不阻塞）。
