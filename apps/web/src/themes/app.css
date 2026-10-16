@@ -280,13 +280,13 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 .pa-think-tick.on { background: var(--pa-think-tick-on, var(--acc)); }
 .pa-think-step { position: absolute; top: 0; left: calc(var(--pa-think-i) * (100% / var(--pa-think-n)) - 22px); width: 44px; height: 52px; padding: 0; border: 0; border-radius: 10px; background: transparent; cursor: pointer; }
 .pa-think-step:focus-visible { outline: 2px solid var(--acc); outline-offset: -4px; }
-.pa-think-handle { position: absolute; top: 50%; left: calc(var(--pa-think-pos, 0) * 100%); width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; border: 1.5px solid var(--pa-think-handle-ring, var(--acc)); background: var(--pa-think-handle-bg, var(--card)); display: flex; align-items: center; justify-content: center; overflow: hidden; pointer-events: none; touch-action: none; transition: left var(--pa-think-move, var(--pa-dur)) var(--pa-ease-out), border-color var(--pa-dur); box-shadow: 0 0 calc(18px * var(--pa-think-glow, 1)) var(--acc-soft); }
+.pa-think-handle { position: absolute; top: 50%; left: calc(var(--pa-think-pos, 0) * 100%); width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; border: 1.5px solid var(--pa-think-handle-ring, var(--acc)); background: var(--pa-think-handle-bg, var(--card)); display: flex; align-items: center; justify-content: center; overflow: hidden; pointer-events: none; touch-action: none; transition: left calc(var(--pa-dur) * var(--mo-scale, 1)) var(--mo-ease, var(--pa-ease-out)), border-color var(--pa-dur); box-shadow: 0 0 calc(18px * var(--mo-glow, 1)) var(--acc-soft); }
 .pa-think-handle:active { cursor: grabbing; }
 .pa-think-handle.following { border-style: dashed; }
 .pa-think-handle-label { position: relative; z-index: 2; font-size: 13px; font-weight: 700; color: var(--fg); }
 .pa-think-handle:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; }
 .pa-think-energy { position: absolute; inset: 0; z-index: 1; }
-.pa-think-star { position: absolute; left: calc(50% + var(--x, 0) * 1px); top: calc(50% + var(--y, 0) * 1px); width: calc(var(--s, 2) * 1px); height: calc(var(--s, 2) * 1px); margin: calc(var(--s, 2) * -0.5px) 0 0 calc(var(--s, 2) * -0.5px); border-radius: 50%; background: var(--pa-think-star, var(--acc)); opacity: var(--o, .8); box-shadow: 0 0 calc(var(--s, 2) * 2px * var(--pa-think-glow, 1)) var(--acc-soft); }
+.pa-think-star { position: absolute; left: calc(50% + var(--x, 0) * 1px); top: calc(50% + var(--y, 0) * 1px); width: calc(var(--s, 2) * 1px); height: calc(var(--s, 2) * 1px); margin: calc(var(--s, 2) * -0.5px) 0 0 calc(var(--s, 2) * -0.5px); border-radius: 50%; background: var(--pa-think-star, var(--acc)); opacity: var(--o, .8); box-shadow: 0 0 calc(var(--s, 2) * 2px * var(--mo-glow, 1)) var(--acc-soft); }
 .pa-think-star.far { opacity: calc(var(--o, .8) * .45); }
 .pa-think-star[data-ln="1"] { background: var(--pa-think-star-2, var(--acc2, var(--acc))); }
 .pa-think-labels { position: relative; height: 14px; margin-top: 2px; padding: 0 22px; }
@@ -301,7 +301,7 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 @media (max-width: 640px) { .pa-think-pop { width: auto; } }
 
 /* 预览动效：只在切换 / 拖动预览时播一次（320–700ms），播完即停；静止没有任何动画 */
-.pa-think-energy.pa-think-pulse .pa-think-star { animation-duration: calc(var(--pa-think-dur, 420) * var(--pa-motion-scale, 1) * 1ms); animation-timing-function: var(--pa-think-ease, var(--pa-ease-out)); animation-fill-mode: both; }
+.pa-think-energy.pa-think-pulse .pa-think-star { animation-duration: calc(var(--pa-think-dur, 420) * var(--mo-scale, 1) * 1ms); animation-timing-function: var(--mo-ease, var(--pa-ease-out)); animation-fill-mode: both; }
 .pa-think-a-minimal .pa-think-star { animation-name: pa-think-flash; }
 .pa-think-a-low .pa-think-star { animation-name: pa-think-drift; }
 .pa-think-a-medium .pa-think-star { animation-name: pa-think-soft; }
@@ -315,16 +315,27 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 @keyframes pa-think-fine { 0% { opacity: calc(var(--o, .8) * .4) } 18% { opacity: 1 } 38% { opacity: calc(var(--o, .8) * .62) } 58% { opacity: .95 } 100% { opacity: calc(var(--o, .8) * .82); transform: translate3d(calc(var(--dx, 1) * .8px), calc(var(--dy, 1) * .8px), 0) } }
 @keyframes pa-think-rich { 0% { opacity: calc(var(--o, .8) * .3); transform: scale(.9) } 22% { opacity: 1; transform: scale(1.08) } 48% { opacity: calc(var(--o, .8) * .66) } 72% { opacity: .95; transform: scale(1.03) } 100% { opacity: var(--o, .8); transform: translate3d(calc(var(--dx, 1) * 1.6px), calc(var(--dy, 1) * 1.6px), 0) scale(1) } }
 
-/* 主题差异（仅表现层）：同一组件 + 每主题覆盖 token，不 JS 写死颜色 */
-[data-skin=glass] .pa-think-handle { --pa-think-glow: 1.6; border-width: 1px; }
+/* 主题差异（仅表现层）：同一组件 + 每主题覆盖 --mo-* / 既有颜色 token，不 JS 写死颜色 */
+[data-skin=glass] .pa-think { --mo-glow: 1.6; }
+[data-skin=glass] .pa-think-handle { border-width: 1px; }
 [data-skin=glass] .pa-think-pop { backdrop-filter: blur(12px) saturate(140%); }
-[data-skin=pixel] .pa-think-handle { --pa-think-glow: .4; border-radius: 0; clip-path: polygon(5px 0, calc(100% - 5px) 0, 100% 5px, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0 calc(100% - 5px), 0 5px); transition: none; box-shadow: 0 3px 0 var(--acc-soft); }
+[data-skin=warm] .pa-think { --mo-glow: .6; }
+[data-skin=noir] .pa-think { --mo-glow: 1.4; }
+[data-skin=noir] .pa-think-handle { border-width: 1px; }
+[data-skin=noir] .pa-think-pop { box-shadow: 0 0 0 1px var(--line), 0 14px 40px rgba(0, 0, 0, .5); }
+/* pixel：内置也声明 --mo-style: steps，组件读到的就是 steps，走同一 data 属性分支（不把 CSS 字符串当缓动） */
+[data-skin=pixel] .pa-think { --mo-glow: .4; --mo-style: steps; }
+[data-skin=pixel] .pa-think-handle { border-radius: 0; clip-path: polygon(5px 0, calc(100% - 5px) 0, 100% 5px, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0 calc(100% - 5px), 0 5px); transition: none; box-shadow: 0 3px 0 var(--acc-soft); }
 [data-skin=pixel] .pa-think-tick, [data-skin=pixel] .pa-think-star { border-radius: 0; }
 [data-skin=pixel] .pa-think-labels span, [data-skin=pixel] .pa-think-sub { font-family: var(--mono); }
 [data-skin=pixel] .pa-think-energy.pa-think-pulse .pa-think-star { animation-timing-function: steps(3, end); }
-[data-skin=noir] .pa-think-handle { --pa-think-glow: 1.4; border-width: 1px; }
-[data-skin=noir] .pa-think-pop { box-shadow: 0 0 0 1px var(--line), 0 14px 40px rgba(0, 0, 0, .5); }
-[data-skin=warm] .pa-think-handle { --pa-think-glow: .6; }
+
+/* --mo-style: steps → 真实 data 属性（组件从主题定义读出后设置）；离散成步、不做连续位移。
+   同时覆盖 DIY 主题（manifest 里 style=steps）和内置 pixel 的兜底。 */
+[data-pa-mo-style=steps] .pa-think-handle { transition: none; }
+[data-pa-mo-style=steps] .pa-think-fill { transition: none; }
+[data-pa-mo-style=steps] .pa-think-energy.pa-think-pulse .pa-think-star { animation-timing-function: steps(3, end); }
+[data-pa-mo-style=steps] .pa-think-star, [data-pa-mo-style=steps] .pa-think-tick { border-radius: 0; }
 @media (prefers-reduced-motion: reduce) {
   .pa-think-energy.pa-think-pulse .pa-think-star { animation: none !important; }
   .pa-think-handle { transition: none !important; }

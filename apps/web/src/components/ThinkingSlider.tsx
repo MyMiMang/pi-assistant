@@ -50,6 +50,15 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	const reduced = useReducedMotion();
 	const [idx, setIdx] = useState(view.index);
 	const [pulse, setPulse] = useState<{ level: string; key: number } | null>(null);
+	const rootRef = useRef<HTMLDivElement>(null);
+	// `--mo-style` 是主题声明的字符串（smooth / steps），不能直接当 animation-timing-function。
+	// 这里把主题定义里的值安全映射成真实 data 属性，CSS 再按属性走 steps 分支（不读硬编码调色板、不写 JS 颜色）。
+	const [moStyle, setMoStyle] = useState<string | null>(null);
+	useLayoutEffect(() => {
+		const el = rootRef.current;
+		if (!el || typeof getComputedStyle !== "function") return;
+		setMoStyle(getComputedStyle(el).getPropertyValue("--mo-style").trim() || null);
+	}, []);
 	const handleRef = useRef<HTMLDivElement>(null);
 	const innerRef = useRef<HTMLDivElement>(null);
 	const dragging = useRef(false);
@@ -164,7 +173,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 
 	if (view.kind === "unsupported") {
 		return (
-			<div className="pa-think" data-testid={`${testid}-body`}>
+			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
 				{showHead && <Head title="思考强度" current="不支持" modelName={modelName} />}
 				{followLabel && <FollowRow testid={testid} label={followLabel} following={view.following} effective={view.effective} onPick={onPick} />}
 				<p className="pa-think-empty" data-testid={`${testid}-unsupported`}>
@@ -177,7 +186,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 
 	if (view.kind === "fixed") {
 		return (
-			<div className="pa-think" data-testid={`${testid}-body`}>
+			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
 				{showHead && <Head title="思考强度" current={label(view.level)} modelName={modelName} />}
 				{followLabel && <FollowRow testid={testid} label={followLabel} following={view.following} effective={view.effective} onPick={onPick} />}
 				<p className="pa-think-empty" data-testid={`${testid}-fixed`}>
@@ -193,7 +202,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	const curText = view.following ? `跟随·${label(view.effective)}` : view.unsupportedPick ? `${label(view.unsupportedPick)} → ${label(view.level)}` : label(level);
 
 	return (
-		<div className="pa-think" data-testid={`${testid}-body`}>
+		<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
 			{showHead && <Head title="思考强度" current={curText} modelName={modelName} />}
 			{followLabel && <FollowRow testid={testid} label={followLabel} following={view.following} effective={view.effective} onPick={onPick} />}
 
