@@ -179,17 +179,21 @@
 
 麦克风位置修正（2026-10-16，本树本地未发布，用户调整）：`e2e/voice-input-ui.mjs` 加几何断言——`voice-mic` 与 `.pa-composer-bar .pa-send` 必须同一 composer-bar、DOM 在发送键之前、同一行（中心 y 差 ≤6px）、紧贴其左（间隙 ≤14px），且不在 `.pa-composer-tools` 里；单聊 / 群聊 / 390 / 1440×560 矮窗各验一遍，并断言录音时发送键 x 不位移（提示走独立 status 行）。实跑：该脚本全通过；`e2e/composer-compact.mjs`（单 / 群 / 子三入口 390 / 1280 / 1440）回归全通过；web `tsc --noEmit` + `vite build` 通过。未跑全量 e2e。
 
-## 设置信息架构重排（2026-10-16，分支 `settings-information-architecture`，基候选 `a80b2cb`，**仅文档 / 未 push / 未 tag / 未打包**）
+## 设置信息架构重排（2026-10-16，设计分支 `settings-information-architecture`（仅文档 `20e2b39`）；实施分支 `settings-functional-ui`，基候选 `a80b2cb`，**前端已做 / 后端接口待合 / 未 push / 未 tag / 未打包**）
+
+> 经主确认的最终方案与原设计偏差：**不新增「后台任务」页**（子代理并发 / 时限改为每助理覆盖）、**不合并 entry / downloads**（保留 16 项一层导航、只加 5 个分组标题）。已按此修正。
 
 | 需求（用户原话大意） | 状态 | 说明 |
 |---|---|---|
-| 「设置 IA 混乱，站用户角度按功能重新整理，先设计整体再开发」 | 设计已完成，待用户 / 主会话确认后实施 | 只读审计 + 方案：`docs/design/settings-ia.md`（含 before→after 映射、数据 scope 审计、三块关键界面、文件与接口范围、最小测试验收、迁移规则）。用户可读版 `docs/design/settings-ia-user-brief.md`。**未改任何业务代码。** |
-| 模型页只放**在线模型服务**（地址 / Key + chat / vision / image / classifier / ASR **能力声明**），业务选择参数不塞模型页 | 待实施 | 模型页移出本地 Laya 卡、本地 SenseVoice 卡、子代理任务参数；ASR「声明」保留（文案改为「声明 ≠ 启用」） |
-| 新增独立**语音配置**页：云 / 本地切换，云只选模型页已声明的 ASR，本地 SenseVoice 安装 / 导入 / 启停 / idle / status / 选择都在此；**不自动 fallback cloud** | 待实施 | 新增设置 key `voiceSource`（缺省 = 未配置，不臆造历史选择）+ `GET/PUT /api/audio/asr/source`；删除前端 `pickAsrModel()` 的「本地优先 / 第一个已配置」自动选源 |
-| Laya 是电脑快速**分类**模型、不是 ASR：本地 Laya 管理放**电脑操作**页；语音页只放真 ASR；标签用「中文功能名（模型名）」 | 待实施 | Laya 卡迁到「操作这台电脑」页；`fastComputer:hostpc` / `fastComputer:computer` **不合并**（运行时共用一份安装，选择仍分 scope） |
-| 子代理默认模型 / 思考 / 并发归**助理配置单一来源** | 事实纠正 + 待实施 | 审计结论：`settings.subagentModels`（并发 / 最长运行）是**全局单一值**，不是每助理；每助理的只有候选池 + 思考强度（已在 InfoPane）。方案：全局值只**换位置**到「后台任务」并改文案，禁止 global→per-agent 误迁 |
-| 长说明统一用 `ui.tsx` 的 `<Help>`（悬停 / 点击 / touch / 键盘），主视图只留标题 / 简状态 / 主操作 / 必要 error；许可未解决的「下载不可用」、进度、音频出本机 / 计费等风险不得藏进 tooltip | 待实施 | 现 `<Help>`（`apps/web/src/components/ui.tsx` L144-174）**缺 focus 打开与 Escape 关闭**，实施前需补 |
-| 聊天语音入口修复只做了一半 | 待实施 | `VoiceInput.tsx` 点「去设置」/ 取消 / 切会话只 `setNotice("")`，**未清 hook 的 `error`** → 「去设置」会一直挂着；需 hook 增加 `dismissError()` / `resetContext()`，`showSettings` 绑定本次麦克风尝试 + 当前上下文 |
+| 「设置 IA 混乱，站用户角度按功能重新整理，先设计整体再开发」 | 设计 + 前端已实施（未打包） | 审计 + 方案：`docs/design/settings-ia.md`（已按最终方案修正）。实施见分支 `settings-functional-ui`。 |
+| 导航：保 15 个 key / 深链 / 主要功能，不合并 entry、downloads；新增 `voice` 为第 16 项，分 5 组（模型与语音 / 电脑 / 助理能力 / 连接 / 偏好与系统） | 前端已实施 | `Settings.tsx` 改 `GROUPS` 分组标题（桌面侧栏显示，手机保持横向滚动）；`?settings=model` → `models` 别名；entry / downloads 原页保留 |
+| 模型页只放**在线模型服务**（地址 / Key + chat / vision / image / classifier / ASR **能力声明**），业务选择参数不塞模型页 | 前端已实施 | 模型页移出本地 Laya 卡、本地 SenseVoice 卡、子代理任务参数；默认模型改「新助理默认模型」；ASR 保留「声明」并标明「声明 ≠ 启用」 |
+| 新增独立**语音配置**页：云 / 本地切换，云只选模型页已声明的 ASR，本地 SenseVoice 安装 / 导入 / 启停 / idle / status / 选择都在此；**不自动 fallback cloud** | 前端已实施，后端接口待合 | 新增 `VoiceSettings.tsx`；消费 `GET/PUT /api/audio/asr/source`（前端契约已实现，后端 owner 独立树）；删除前端 `pickAsrModel()` 的「本地优先 / 第一个已配置」自动选源，未配置 = 未配置 |
+| Laya 是电脑快速**分类**模型、不是 ASR：本地 Laya 管理放**电脑操作**页；语音页只放真 ASR；标签用「中文功能名（模型名）」 | 前端已实施 | Laya 卡迁到「操作这台电脑」（`LocalLayaSection`），助理电脑页只给跳转提示；`fastComputer:hostpc` / `fastComputer:computer` **不合并** |
+| 子代理默认模型 / 思考 / 并发归**助理配置单一来源** | 前端已实施，后端接口待合 | 审计：旧 `settings.subagentModels`（全局并发 / 最长运行）只是**默认值**；前端改为「每助理覆盖，缺省继承默认」：`GET/PUT /api/agents/:id/subagents/settings` 返回 `{settings, overrides, defaults}`；移除「模型」页 `SubagentSection`，**不新「后台任务」页** |
+| 长说明统一用 `ui.tsx` 的 `<Help>`（悬停 / 点击 / touch / 键盘），主视图只留标题 / 简状态 / 主操作 / 必要 error；许可未解决的「下载不可用」、进度、音频出本机 / 计费等风险不得藏进 tooltip | 前端已实施 | `<Help>` 补 focus 打开 / Escape 只关气泡 / 点外部关闭 / `aria-describedby`；SenseVoice 许可摘要常驻（含「下载暂不可用」），条款 / 链接收进「条款与详情」折叠 |
+| 聊天语音入口修复只做了一半 | 前端已实施 | hook 新增 `dismissError()` / `resetContext()`；`showSettings` 绑定本次麦克风尝试 + 当前上下文；点「去设置」跳 `voice` 并真清 error；取消 / 切会话清提示且停轨道 |
+
 
 ## Pi 依赖升级 1.1.0 → 1.2.0（本轮，`deps/pi-1.2.0` 四提交已 `--no-ff` 合入候选 `release-candidate-validation`（合并提交 `bfd621a`），**未 push / 未 tag / 未打包**）
 
