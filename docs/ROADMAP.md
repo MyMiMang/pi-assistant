@@ -11,18 +11,18 @@
 > - **本轮验证口径**：只跑受影响的定向单测 + 相关 e2e，不跑全量；机器资源要错峰，跑完清理进程与临时目录，见 `progress-snapshots/beta28-final-validation.md`「复现命令」与「资源与清理」。
 > - **beta.29 候选整合已完成合并（2026-10-24）**：`thinking-slider-implementation`（`4e15158`）+ `theme-diy-motion-implementation`（快照 `ffbfb7f`）已 `--no-ff` 合入候选树（`b051a39` / `43e7afb`），代码零冲突。本步**只合并 + 读代码 review、未跑测试/构建**；逐项 review 结论、必修项（主题实时切换后滑块 `--mo-style` 分支滞后、`Models.tsx` 回滚竞态）与待验清单见 `progress-snapshots/beta29-integration-checkpoint.md`。theme-DIY 树若有新 commit 需再走一次增量合并；未 push / 未 tag。
 
-## 默认本地语音「装好就能用」（beta.30 候选，**设计与选型已完成，未实施**）
+## 默认本地语音「装好就能用」（beta.30 候选，**后端已实现、未验证 / 未发布**）
 
 用户要求（原话大意）：**安装应用就能用语音**——不让人手动找模型 / 点下载 / 配路径；设置里可切其他；**已有「云 / 本地」选择不得被默认覆盖或删除**；不需要用户提供云 key、不加付费云隐藏调用；优先**真正本地流式**听写，中文 / 英文都要实际可用；模型不限现目录，学优秀成品但不照搬 GPL 代码；尽量**随安装包带合法小模型 + runtime** 满足 offline-first，体积 / 许可合理，不先随意下载 GB；**首次必须联网时如实明示，不能把后台自动下载说成首次断网可用**。
 
 | 事项 | 状态 | 说明 |
 |---|---|---|
-| 选型（推荐一个默认 + 备用 + 口径） | **已完成（2026-10-24，未实施）** | 默认 = 原生流式 **streaming zipformer bilingual zh-en int8**（`csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20` @ `98590b7ed6443e77b714204da2757d75e1a642f4`，4 文件 198,270,793 B，逐文件 SHA256 已 pin；引擎 `sherpa-onnx==1.13.8` 沿用现有 managed Python 运行时）。备用：streaming paraformer bilingual（237 MB，源许可未核）；轻量：zh-14M（25 MB）+ en-20M（44 MB）单语各一。**明确否掉 Moonshine 路线**（Handy catalog 里 `moonshine-streaming-tiny` 是 `languages=['en']`，中文只有单语变体，无中英双语流式）。证据、体积账与阻塞见 `progress-snapshots/default-local-voice-decision.md` |
-| 设计 + 最小实现清单 + 验收方案 | **已完成（设计，未实施）** | `docs/design/default-local-voice.md`（运行族 `online-zipformer`、chunked `/stream` 协议、默认语义只在 `voiceSource==null` 时生效、预热 / 权限 / 打包三口径 / 验收清单）；外部成品研究摘要入库 `docs/research/local-streaming-asr-summary-2026-10.md` |
+| 选型（推荐一个默认 + 备用 + 口径） | **已完成（2026-10-17，未实施）** | 默认 = 原生流式 **streaming zipformer bilingual zh-en int8**（`csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20` @ `98590b7ed6443e77b714204da2757d75e1a642f4`，4 文件 198,270,793 B，逐文件 SHA256 已 pin；引擎 `sherpa-onnx==1.13.8` 沿用现有 managed Python 运行时）。备用：streaming paraformer bilingual（237 MB，源许可未核）；轻量：zh-14M（25 MB）+ en-20M（44 MB）单语各一。**明确否掉 Moonshine 路线**（Handy catalog 里 `moonshine-streaming-tiny` 是 `languages=['en']`，中文只有单语变体，无中英双语流式）。证据、体积账与阻塞见 `progress-snapshots/default-local-voice-decision.md` |
+| 设计 + 后端实现 | **后端已实现（未验证 / 未发布）** | 设计 `docs/design/default-local-voice.md`（运行族 `online-zipformer`、默认语义只在 `voiceSource==null` 时生效、预热 / 权限 / 打包三口径 / 验收清单）；**后端实现（worktree `default-local-voice`，未 push / 未 tag）**：catalog `defaultVoice` 标记 + `AsrAdapterCapability`（`asr-stream-v1`）；独立原生流式 sidecar（`OnlineRecognizer.from_transducer`，不动 `OfflineRecognizer`）；有界流式会话（start/append/end/cancel，单流 busy、seq 去重、来源版本 + 授权主体绑定）；P2 自动准备（unset 才启动、全局一次、CAS 完成后自动 selected&ready、不覆盖已选）。契约见 `progress-snapshots/default-stream-contract.md`；外部成品研究摘要 `docs/research/local-streaming-asr-summary-2026-10.md` |
 | **阻塞 1：权重再分发许可** | **待主口径** | 两个权重仓都**没有 LICENSE 文件**，只有 HF card `license: apache-2.0`；真 LICENSE 只在上游训练代码 icefall（Apache-2.0）。按「不用 HF tag 单独确认商用」规则 → **本地按需下载放行**，**随包内置（再分发）暂不放行**；训练数据（AIShell-1 / WenetSpeech）许可未核 |
-| 阻塞 2：流式协议 + 流会话生命周期 | 待实施 | 现有 sidecar 只有一次性 WAV POST；需新增 chunked `/stream` 端点与 `manager` 流会话（复用 lease / idle / 录制中不卸载） |
+| 阻塞 2：流式协议 + 流会话生命周期 | **后端已实现（未验证）** | 独立原生流式 sidecar（`/v1/stream/start|append|end|cancel`，`OnlineRecognizer.from_transducer`）+ `LocalAsrStreamHub` 有界会话（复用 lease / idle / 录制中不卸载、来源版本 + 授权主体绑定）；前端对接契约 `progress-snapshots/default-stream-contract.md`（committed/tentative server-authoritative）。**待前端接线 + 全链验证** |
 | 阻塞 3：真 offline-first 需内置 CPython | 待实施 | uv 已随包内置，**CPython 没有**（现靠 uv 首次联网下 ~71 MB）；全内置口径每平台约 +285–295 MB |
-| 验收 | **未做** | 中英文真实质量 / RTF / 首字延迟均未实测；单测、真实 smoke、断网复测方案已写，等测试槽（本树按用户要求未跑任何测试） |
+| 验收 | **未做** | 中英文真实质量 / RTF / 首字延迟均未实测；单测（新增 `local-asr-stream.test.ts` / `default-voice-auto-prep.test.ts` / `local-asr-streaming-runner.test.ts`，**已写待测试槽**）、真实 smoke、断网复测方案已写（本树按用户要求未跑任何测试 / 构建） |
 
 > **已公开（beta.27）**：Laya 安装校验与启动、权限按钮滚动、SenseVoice 原列表一键安装三项已发布。Actions `38901767310` 成功，2026-10-16 20:48（上海）为 Latest，仅arm64；主核公开资产和更新清单。以下发布准备状态为历史，未自动安装用户App。
 

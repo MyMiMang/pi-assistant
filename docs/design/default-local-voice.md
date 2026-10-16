@@ -60,22 +60,19 @@ platforms: SHERPA_PLATFORMS（6 项）
   ```
   端点规则取 sherpa 官方默认量级；**具体数值以真实 smoke 调**（不是拍脑袋当已验）。
 
-### 3.3 流式协议（新件）
-复用现有 `ThreadingHTTPServer`，**不引入 WebSocket 依赖**：
-- `POST /stream`（`Content-Type: application/octet-stream`，body = 连续 16k mono s16le PCM 帧），响应 `Transfer-Encoding: chunked`，每行一个 JSON 事件：
-  - `{"type":"partial","text":"…"}`：每次 `acceptWaveform → isReady → decode` 后发当前 `get_result`；
-  - `{"type":"final","text":"…"}`：`is_endpoint` 为真时发，随后 `reset(stream)` 继续听下一句；
-  - `{"type":"error","message":"…"}`：异常即终止。
-- 鉴权沿用现有 `Authorization: Bearer <每次启动新 token>`；只绑 `127.0.0.1`。
-- 取消 = 客户端断开连接 → 服务端 `finally` 里释放 stream。
+### 3.3 流式协议（已实现，契约以 `progress-snapshots/default-stream-contract.md` 为准）
 
-**为什么不用 WS**：`ThreadingHTTPServer` 天然支持长连接请求，chunked 响应足够；少一个依赖、少一类握手失败。
+**本小节为早期设计草稿，已被契约取代**：实现采用 `start / append / end / cancel` 四步**有界 HTTP 会话**（而非单个 chunked POST），以便手机 / 远程浏览器经 host server 既有鉴权使用、并支持取消 / 幂等 / 主体绑定。
+
+- `POST /api/audio/asr/stream`（create）→ `{ sessionId, modelId, provider, sourceVersion, leaseId, protocol:"asr-stream-v1", sampleRate, channels, format:"s16le", maxChunkBytes, partialIntervalHintMs, maxSessionMs, idleTimeoutMs, nextSeq:0, state:"ready" }`；
+- `POST /api/audio/asr/stream/:id/append`（body = 裸 16k mono s16le PCM，头 `X-Asr-Seq`）→ `{ seq, accepted, nextSeq, state, events[], buffered }`；
+- `POST /api/audio/asr/stream/:id/end` → `{ state:"ended", finals[] }`（幂等）；`POST .../cancel` → `{ state:"cancelled" }`（幂等）。
+- 鉴权：**只有 sidecar 绑 `127.0.0.1`**；host server 路由走现 safe API 鉴权（**非 localOnly，手机可用**）；会话绑定**授权主体 + agent/conversation + sourceVersion**，别的会话拿 sessionId 不能操作。
+- 事件：`committed`（段稳定前缀，绝对文本）/ `tentative`（该段剩余整体文本）/ `final` / `endpoint` / `error`，**server-authoritative per-segment**（前端不做 LCP）。
 
 ### 3.4 稳定前缀（前端）
-- 服务端只给 `partial` / `final`；**稳定前缀在客户端算**（学 whisper_streaming 的「最长公共前缀」，MIT，只学思路自研）：
-  - `committed`：与上一次 partial 的最长公共前缀，只追加、不回退；
-  - `tentative`：本次 partial 的剩余部分，可重写；
-  - `final` 到达即冻结该句，并 `reset` 后的新 partial 进入下一句。
+- 服务端在 sidecar 内计算并直接给出 `committed`（段稳定前缀）与 `tentative`（该段剩余整体），**前端只做 `committed + tentative` 拼接，不做最长公共前缀**（详见契约 §2.3；早期「客户端算 LCP」的草稿已废弃）。
+- `final` 到达即冻结该段，并 `reset` 后的新 partial 进入下一句（新 `segmentId`）。
 - 复用现有 `VoiceDraftAssembler` 的「用户已编辑区不覆盖」规则：只改 tentative 区，用户动过的段一律冻结。
 
 ## 4. 默认语义（关键：不覆盖用户选择）
