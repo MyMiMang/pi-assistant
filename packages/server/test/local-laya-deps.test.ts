@@ -220,3 +220,35 @@ test("createLayaDeps（共享 blob 形态）：真实 verify + materialize + act
 		rmSync(paths.root, { recursive: true, force: true });
 	}
 });
+
+test("checkpointProgressBytes：共享 blob 两层链接的 snapshot 仍能 stat 跟随计满；断链不计也不抛", async () => {
+	const { checkpointProgressBytes } = await import("../src/local-laya/deps.ts");
+	const { LAYA_CHECKPOINTS } = await import("../src/local-laya/manifest.ts");
+	const cp = LAYA_CHECKPOINTS["laya-multilingual"];
+	const root = mkdtempSync(join(tmpdir(), "laya-prog-nested-"));
+	try {
+		const hfHome = join(root, "hf");
+		const hubBlobs = hfSharedBlobsDir(hfHome);
+		const repoDir = hfRepoDir(hfHome, cp.repo);
+		const snap = hfSnapshotDir(hfHome, cp.repo, cp.revision);
+		const repoBlobs = join(repoDir, "blobs");
+		mkdirSync(repoBlobs, { recursive: true });
+		const h = "f".repeat(64);
+		// 形态 B：共享 blob 普通文件 + repo/blobs/<sha> 与 snapshot 两层 symlink。
+		const blob = join(hubBlobs, h.slice(0, 2), h);
+		mkdirSync(dirname(blob), { recursive: true });
+		writeFileSync(blob, Buffer.alloc(1000));
+		const link = join(repoBlobs, h);
+		symlinkSync(relative(repoBlobs, blob), link);
+		mkdirSync(snap, { recursive: true });
+		symlinkSync(relative(snap, link), join(snap, "model.safetensors"));
+		const files = [{ path: "model.safetensors", size: 1000, sha256: h }];
+		// 进度不需要另造下载器 / 不自己解析缓存：statSync 跟随两层链接即可计满。
+		assert.equal(checkpointProgressBytes(hfHome, cp, files), 1000, "两层链接也要 stat 跟随到真实 blob 计满");
+		// 共享 blob 缺失（断链）→ 不计、不抛（绝不把残缺算成进度）。
+		rmSync(blob);
+		assert.equal(checkpointProgressBytes(hfHome, cp, files), 0, "断链不计入，且不抛");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
