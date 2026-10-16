@@ -211,7 +211,24 @@ html, body { overflow-x: hidden; max-width: 100%; overscroll-behavior-x: none; }
 @media (pointer: coarse) { body { touch-action: pan-y pinch-zoom; } }
 .pa-scroll-x, .pa-pre-x { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
 .pa-scroll-x { margin: .5rem 0; }
-.pa-scroll-x > table { margin: 0; width: max-content; min-width: 100%; }
+/* 表格按可用宽度排版，单元格里的中文 / 长链接在列内自然换行（width:max-content 会让整张表按最长行铺开、
+   逼着用户横向滚动才能看到最后一列）。真的放不下时（很多列 / 列里有不可断的长串）由外层 .pa-scroll-x 局部横滚。 */
+.pa-scroll-x > table { margin: 0; width: 100%; }
+/* 表格 / 代码块真的溢出时，横向滚动要看得见：macOS 覆盖式滚动条静止会隐藏，
+   和聊天区 .pa-scroll 同一套做法，配置 ::-webkit-scrollbar 换成常显的经典滚动条（只在溢出时出现）。 */
+@media (hover: hover) and (pointer: fine) {
+  .pa-scroll-x::-webkit-scrollbar, .pa-pre-x::-webkit-scrollbar { height: var(--pa-sbw, 10px); }
+  .pa-scroll-x::-webkit-scrollbar-track, .pa-pre-x::-webkit-scrollbar-track { background: transparent; }
+  .pa-scroll-x::-webkit-scrollbar-thumb, .pa-pre-x::-webkit-scrollbar-thumb { border-radius: 999px; border: 2px solid transparent; background-clip: content-box; background-color: color-mix(in srgb, var(--fg) 22%, transparent); }
+  .pa-scroll-x::-webkit-scrollbar-thumb:hover, .pa-pre-x::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--fg) 40%, transparent); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  @media (hover: hover) and (pointer: fine) {
+    .pa-scroll-x, .pa-pre-x { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 22%, transparent) transparent; }
+  }
+}
+/* 溢出的表格 / 代码块成为可聚焦的局部滚动区（键盘左右键可滚），聚焦时给可见轮廓 */
+.pa-scroll-x:focus-visible, .pa-pre-x:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; border-radius: var(--r-sm, 8px); }
 .pa-md pre code { white-space: pre; overflow-wrap: normal; word-break: normal; }
 .pa-md img, .pa-md video { max-width: 100%; height: auto; }
 .pa-md a { overflow-wrap: anywhere; }
