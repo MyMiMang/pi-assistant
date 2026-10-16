@@ -104,15 +104,20 @@ interface LayaStatus {
   小文件（config / tokenizer_config / rl_agent_config）在**同一 reviewed revision** 下取回后本地算 SHA256。
   绝不用 `main` / `latest` 的哈希去套旧 revision；升级 revision 必须重算清单。
 - 校验方式：`verify.ts` 对每个文件**流式**算 SHA256 + 比对大小；缺文件 / 大小或哈希不符 → 抛错 → manager 回滚 staging、置 `failed`，**绝不产生半安装 ready**。
-- 路径安全（2026-10-16 修正）：**受信根是同 cache 根的 `hub/models--org--repo/`**，不是 snapshot 目录本身。HF 缓存里 `snapshots/<rev>/<file>` 是指向同根下 `../../blobs/<sha>` 的 symlink，realpath 落在受信根内即合法；逃出 cache 根 / 绝对路径跳出仍拒绝。
-  （旧实现把受信根设成 snapshot 目录，把自控 cache 的合法 blob 链接误报「符号链接越界」——beta.25 用户实报失败，已修。）
+- 路径安全：**受信根是自有 HF 缓存内的目录，且可以有多个**（2026-10-17 扩）。
+  - 主根：同 cache 根的 `hub/models--org--repo/`（旧实现把根设成 snapshot 目录，把自控 cache 的合法 blob 链接误报「符号链接越界」——beta.25 用户实报失败，已修）。
+  - 额外根：自有 hub 缓存内的共享 `hub/blobs/`。本机已观察到真实缓存形态：较大的 LFS 文件是 `snapshots/<rev>/<file>` → `models--org--repo/blobs/<sha>` → `hub/blobs/<aa>/<hash>` 普通文件的**两层 symlink**；beta.26 只把 repo 目录当受信根，大文件因此被判「越界」、安装卡在校验（小文件通过，故不是所有文件都失败）。这不是某个用户的特殊部署，而是真实会出现的缓存落盘形态，产品校验必须承认它。
+  - 防滥用：所有受信根的 realpath 必须落在**自有**缓存根（`hub/`）内（`trustRootBase`），某个根本身被换成指向外部的 symlink → fail closed；跨到任意用户目录、同前缀兄弟目录（如 `blobs-evil/`）仍拒绝。
+  - **断链与真外跳分开报**：symlink 目标缺失（缺 blob / 缓存残缺）报「符号链接断链（目标缺失）」，跳过受信根的外跳才报「越界」，用户 / 日志能区分「没下完」和「有东西想读缓存外」。
+  - 路径安全与根边界统一按 `/` 比较（`isSafeRelPath` / `containedIn`）：POSIX 绝对路径、Windows 盘符 / UNC / `\` 都收口，跨盘符直接拒绝；纯字符串判断，可离线单测（**不宣称 Windows 实机已验证**）。
 - 辅助元数据（`README.md` / `.gitattributes`）标 `optional`：缺失不算失败；存在仍校验大小 / SHA256。`encoder/config.json`、`model.safetensors`、`tokenizer/*` 仍逐个严格校验，**不是跳过 symlink 放弃校验**。
 - 校验通过后 `materializePinnedFiles` 把必需文件**物化成 staging 里的普通文件**（优先硬链接真实 blob，跨设备退回复制）并再核大小 / SHA256；`activate` 原子 rename 到生效目录。**不动 HF 缓存**，partial 保留。
 - 只按清单 `allow_patterns` 下载，**不执行 checkpoint 仓库里的任何脚本**（safetensors-only；清单出现 `.py` / `.bin` 等直接判不安全）。
 - 取消下载：保留 HF 缓存里的 partial（可续传恢复），但安装状态回到 `not_installed`，不会误判 ready。
 - 复核清单：`npx tsx scripts/laya-checkpoint-digests.ts`（只读 HF 元数据 + 小文件，不下载 GB 权重）。
 
-> 说明：清单里的 SHA256 已与公开 HF 元数据逐条核对一致；**未在真机上下载 GB 权重做过端到端实测**。
+> 说明：清单里的 SHA256 已与公开 HF 元数据逐条核对一致；**未在真机上下载 GB 权重做过端到端实测**，因此「校验 / 物化链路在共享 blob 形态下成立」由离线小文件夹具证明，**不等于本机真下 GB 权重并启动 Laya 已验证**。
+> 证据与推断分开：上文的「`snap → repo/blobs/<sha> → hub/blobs/<aa>/<hash>` 两层链接」是**本机只读观察到的缓存落盘形态**（一个具体证据）；「这是 huggingface_hub / Xet 官方普遍采用的布局」属于推断，本仓库**不以此作结论**，代码只按实际 realpath 落在自有缓存内判定。
 
 ## 7. 与统一模型注册表的关系
 
