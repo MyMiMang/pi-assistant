@@ -1,6 +1,7 @@
 # 默认本地语音（开箱即用）——选型决策与阻塞（2026-10-24）
 
 > 本树：worktree `default-local-voice`，分支 `default-local-voice`，**基 `release-candidate-validation` 已提交 HEAD `b20ec81`**（`b20ec81f730627b4493fcecaac1c4fa5f38d0782`，"文档：beta.28 已公开为 Latest"）。**未复制该树的 WIP**（`e2e/.dbg-settings.mjs`、`e2e/thinking-slider-ui.mjs` 属主是 candidate owner，本树未取）。
+> 本树首个提交：`a51c548`（分支 `default-local-voice`，基于 `b20ec81`）。**未 push / 未 tag。**
 > 本轮范围：**只做选型 + 事实核验 + 设计**。未跑 `npm ci` / 构建 / 浏览器 / 测试 / 真实模型与权重下载（只取公开元数据与几 KB 文本文件）。未 push / 未 tag。
 > 上游研究（本树外，只读）：`research/local-streaming-asr-2026-10/research/local-streaming-asr-github-review.md`；摘要已入库 `docs/research/local-streaming-asr-summary-2026-10.md`。
 
