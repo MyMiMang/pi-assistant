@@ -1,8 +1,8 @@
 # local-laya-download-tracking：Laya 下载/校验统一链路（beta.26 候选，未发布）
 
-更新时间：2026-10-16（Asia/Shanghai）
+更新时间：2026-10-16（Asia/Shanghai，第二轮补缺口）
 树：`local-laya-download-tracking`（独立 worktree，基 `release-candidate-validation` 干净 HEAD `dcce520`，即当前公开 beta.25 `8afc3aa` 的后续文档提交；Pi 1.3.0）
-状态：**本地提交，未 push / 未 tag / 未打包**；供主合本地 ASR 方案后统一发布（用户长期授权、无需重复确认，但本阶段不发半成品）。下一个未用 tag 是 `v0.1.0-beta.26`（未创建）。
+状态：**本地提交，未 push / 未 tag / 未打包**；HEAD `ff1d25e`（主审补缺口 d66016d + 夹具 89f0a4c + 截图 ff1d25e，见第八节）；供主合本地 ASR 方案后统一发布（用户长期授权、无需重复确认，但本阶段不发半成品）。下一个未用 tag 是 `v0.1.0-beta.26`（未创建）。
 边界：全程临时目录 / 假文件 / 本地小 HTTP fixture；**未真下载 GB 权重、未建 uv venv、未起真实 Laya、未碰 GPU / 麦克风 / 真实用户数据 / 钥匙串 / `secrets.ts` / Pi SDK / node_modules**。
 
 ## 一、用户实报（beta.25 安装真实失败）
@@ -42,7 +42,8 @@
 ## 四、验证（本树实跑，Node v24.20.0，tsx，临时数据目录）
 
 - server `tsc --noEmit -p .` exit 0；web `tsc --noEmit -p apps/web` exit 0。
-- 定向单测全过：`local-laya-verify-hf` 5 + `local-laya-verify` 6 + `local-laya` 17（含「并发第二个 install 被拒」）+ `local-laya-deps` 3 + `local-laya-routes` + `local-laya-register` + `downloads` 9（投影 / 取消 / followStatus）+ `local-laya-download` 2（投影映射 + 登记存在）+ `desktop-image-download` + `mcp-install` 共 **31 + 25 + 9 = 65 项全过**（分两批跑）。
+- 定向单测全过：`local-laya-verify-hf` 5 + `local-laya-verify` 6 + `local-laya` 12 + `local-laya-deps` 3 + `local-laya-routes` 8 + `local-laya-register` 3 + `downloads` 7 + `local-laya-download` 2 + `desktop-image-download` 1 + `mcp-install` 4 = **51 项**（一次运行 51/51，`--test-concurrency=1`）。
+  - 注：本快照初稿曾写「31 + 25 + 9 = 65」，2026-10-16 第二轮按上述命令在 Node v24.20.0 实跑复现不到 65（`local-laya` 实为 12、`downloads` 实为 7），以本节与第八节的实数与命令为准。
 - **未跑全量 `npm test`（757）/ 全量 e2e（25min）**：本树只跑受影响项与必要邻居。
 
 ## 五、剩余限制 / 未验（如实）
@@ -73,3 +74,54 @@ followStatus(id: string, read: () => { active: boolean; detail?: string | null;
 - **每个模型一个 id**（例如 `asr:sensevoice`、`asr:<model>`）：两个官方权重可同时各占一行，不要用一条唯一 ASR 行藏真实选项。
 - 取消统一走 `POST /api/downloads/:id/cancel`；服务端只调你登记的 `cancel()`，不另建 controller。
 - 进度：**知道总量就给 `total`**（字节条 + 百分比）；不知道就 `total: null`（界面自动 `pa-dl-bar indet` 不定条 + 阶段文字）。复用 `downloadFile`（Range / sha 校验 / 原子改名）与 `watchDir`，不要新下载引擎。
+
+## 八、主审补缺口（第二轮，2026-10-16）
+
+主审核验后确认前两提交的核心（HF symlink 校验根治）保留，但还有 4 个真实缺口；本轮只补缺口，不回滚、不重写下载链路、不新框架。
+
+### 提交
+- `d66016d`：源码 + 服务端测试。
+- `89f0a4c`：新增纯前端夹具 `e2e/local-laya-download-ui.mjs`（11→20 项断言）。
+- `ff1d25e`：夹具截图 `evidence/local-laya-download/`（单独提交，按 AGENTS.md）。
+
+### 缺口 1：下载行没有取消
+- `apps/web/src/components/Downloads.tsx`：`DownloadInfo` 加 `canCancel`；`DownloadRow` 加 `onCancel` + `pending`（按钮转圈）；下载中且 `canCancel` 显示「取消」→ `POST /api/downloads/:id/cancel`（服务端 `cancelDownload` → Laya `manager.cancel`，**同一个 AbortController**，未新建）。
+- GET 列表失败原来 `catch(() => setItems([]))`：会把「读取失败」显示成「没有需要下载的组件」。改为**保留已加载旧行** + 可见错误条（`downloads-error`）+ 重试（`downloads-retry`）；起 / 停失败的 `catch` 不再吞，行内短错误（`download-row-error`），不用原生 alert。
+- 跨阶段混字节：下载中不再拿 `def.size` 当已下载分母（原来依赖阶段显示「0 B / 约 646 MB」）。
+
+### 缺口 2：全局每秒 setInterval
+- `packages/server/src/local-laya/download.ts` 删掉 `setInterval(…, 1000)` 全局 watcher（会强制构造 manager、每秒重复 FS 查询）。
+- 新增 `downloads.ts` 的 `notifyDownload(id, force)`：组件在**自己的 bus 事件**里把投影转发给 `downloads.changed`。Laya 订阅既有 `local-laya.changed`，首 / 终事件 `force` 立即发；两个入口（电脑页 `/api/local-models/laya/install`、下载页 `/api/downloads/local-laya/start`）同一 job。只用事件里的 status，不在回调里懒构造 manager。`followStatus` 保留（ASR 等按需可用），不再被 Laya 全局用。
+- 兼容：`DownloadDef.status` / `cancel` 与 `DownloadStatus` 契约**未改**（只新增 `notifyDownload`），ASR 侧 `download.ts` 的全局轮询不归本树。
+
+### 缺口 3：权重进度真实来源 + 本地校验物化真正接进运行时
+- 进度：原来 `watchDir([hfHome], …)` 会把整个 HF 缓存（含别的 repo / 历史）当本模型字节。改为 `checkpointProgressBytes(hfHome, cp, files)`：只统计**本 checkpoint 必需文件**对应的 `blobs/<sha256>`（含 `.incomplete` 增量）与已完成 snapshot；返回 ≤ 必需文件总量。已缓存部分立刻可见（不从 0 起，避免 0→100 假闪）。采样器在成功 / 失败 / 取消的 `finally` 里 `clearInterval`，不留永久 timer。
+- 依赖阶段（pip，总量未知）：新增 `watchDirBytes(dirs, onBytes)` 用 uv 缓存 + staging venv 真实目录字节，`total` 保持 null → 不定进度；不跨阶段混 bytes/total。
+- 运行时接入（主审给的两选一，选**真正 wire**，不是删物化）：Laya 公开配置 `LAYA_EXTRA_MODELS`（`{名字: repo 或本地 checkpoint 目录}`，见 `research/laya/docs/http-api.md` 与 `laya/serve.py`）支持本地目录。`manager.start()` 现在传 `LAYA_EXTRA_MODELS={"multilingual": <runtime/weights>}` + `LAYA_MODELS=multilingual`（默认会预加载全部三个，另两个会去下载）。`runtime/weights` 就是 `verifyCheckpoint` 里 `materializePinnedFiles` 校验后物化的普通文件目录 → 运行时读的确实是被校验的文件，而不是 HF 缓存 snapshot。目录不存在（如仅 `update()` 未换权重）则不设，避免指向空目录。`LayaPaths` 加 `weights` / `weightsStaging`；deps 加 `checkpointSource()`、`watchBytes()`（均可选）。
+
+### 缺口 4：精确测试数
+- 见第四节：本轮实跑 **59/59**（`--test-concurrency=1`，一次运行）：`local-laya-verify-hf` 5 + `local-laya-verify` 6 + `local-laya` 14 + `local-laya-deps` 6 + `local-laya-routes` 9 + `local-laya-register` 3 + `downloads` 7 + `local-laya-download` 4 + `desktop-image-download` 1 + `mcp-install` 4。
+- 新增测试：`local-laya` 两条 start env 接线（有 / 无物化目录）；`local-laya-deps` 三条（blob 进度含 `.incomplete` / 别 repo 不计 / 封顶；已缓存计满；`checkpointSourcePath` + `watchDirBytes` 停止）；`local-laya-routes` 一条 POST cancel 转发；`local-laya-download` 事件驱动转发 + 取消链路。
+
+### 真实 UI 夹具（首验）
+`e2e/local-laya-download-ui.mjs`（静态托管 `apps/web/dist` + `page.route` 拦 `/api`，不启服务、不碰真实数据），20/20 全过：
+- 权重阶段 308.0 MB / 616.1 MB · 50% + 实条 + 取消按钮；点取消 → `POST /api/downloads/local-laya/cancel`；取消后 `出错` + `重试`。
+- 依赖阶段 12.0 MB · 阶段文字 + 不定条，**不含「约」**（不混字节）。
+- GET 失败：红色错误条「下载列表读取失败…」+ 重试，**旧行仍在**；重试后错误条消失。
+- POST start 失败：行内红字「启动失败」。
+- 电脑页 `?settings=host` Laya 卡安装中 → 取消 → `POST /api/local-models/laya/cancel`。
+- 390 窄屏不横向溢出。
+截图已用 `look_at_image` 逐张确认，见 `evidence/local-laya-download/`。
+
+### 本轮实跑
+- server `tsc --noEmit -p .` exit 0；web `tsc --noEmit -p apps/web` exit 0；web `vite build` 通过。
+- 定向单测 **59/59**（命令见第四节）；UI 夹具 20/20。
+- **未跑全量 `npm test`（757）/ 全量 e2e（25min）**；**未真机下 GB 权重、未装 uv Python、未起真实 Laya、未碰 GPU / 麦克风 / 真实用户数据 / 钥匙串**。
+
+### 本轮发现的既有隐患（如实，未修，待主定）
+- `test/setup.ts` 用 `await import()` 设置 `PIA_DATA_DIR`，但 ESM 静态 import 先于模块体求值 → `config.dataDir` 在单测里**仍是真实数据目录**（实测：`config.dataDir=/Users/dengdeng/Library/Application Support/Pi Assistant`，而 `TEST_DATA_DIR` 是临时目录）。现有测试靠「显式注入 `paths(dir)` / 不用 `config.dataDir`」避开；本轮我的一条测试曾误用 `createLayaDeps()` 而写到一个真实路径，已立即删除还原（只删自己新建的 `local-laya/runtime`，未动 `hf/` / `python/` / `uv-cache/`）。建议后续单独修 `test/setup.ts` 的加载顺序并跑全量单测验证（本轮未动，避免超出定向范围）。
+
+### 剩余限制 / 未验（更新）
+- 仍未真机端到端下载 GB 权重；symlink 根治与 blob 进度已用真实 HF 形状 fixture 证明，不等于真实网络 / 真实 Laya 启动已成功。
+- `LAYA_EXTRA_MODELS` 接线只做了**环境变量与路径**级别单测（断言 spawn env），未真实启动 sidecar 证明 Laya 从该目录加载（禁止装真实 Torch/Laya）。
+- 未 push / 未 tag / 未打包；未读 / 未改用户真实 HF 缓存与 partial。

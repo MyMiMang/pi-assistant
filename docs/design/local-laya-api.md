@@ -133,6 +133,7 @@ Laya **登记进统一「下载与组件」面板**（`packages/server/src/downl
   - `installed()`：首屏「已下载 / 未安装」；`start()`：下载 / 重试；`cancel()`：取消（走各自 manager 的同一个 AbortController）；
   - `status()`：组件自己的阶段状态投影，字段 `{ state, received?, total?, detail?, error? }`，比内部计数权威。
 - `followStatus(id, read, intervalMs?)`：轮询组件阶段 → Progress。**已知总字节 → 字节进度 / 百分比；未知 → 不定进度（界面 `pa-dl-bar indet`）+ 阶段文字，不编假百分比。**
+- `notifyDownload(id, force?)`（**推荐给有自己状态事件的组件**）：在自己的 bus 事件里把 `status()` 投影转发给 `downloads.changed`，不用每项再起一个永久 `setInterval`；`force=true` 用于首 / 终事件（立即推，不走 500ms 节流）。Laya 已改用它（订阅自身 `local-laya.changed`），**不再全局轮询**；`followStatus` 保留给无事件源的组件按需用。
 - 取消：`POST /api/downloads/:id/cancel`（服务端只调你登记的 `cancel()`）。
 - **每个模型一个 id**（如 `asr:sensevoice` / `asr:<model>`）：两个官方权重可同时各占一行，不要用一条唯一 ASR 行藏真实选项。
 - 复用既有 `downloadFile`（Range 续传 / sha 校验 / 原子改名）与 `watchDir`，不新下载引擎。
