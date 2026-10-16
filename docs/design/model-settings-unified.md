@@ -168,6 +168,13 @@ UI 硬约束：
 | S5 UI 接真实 API（去掉默认隐藏开关） | 本任务 | ✅ 已完成（面板随 registry 就绪默认渲染；接口失败错误 + 重试，无 demo fallback） |
 | S6 电脑设置快速 / 生图统一（删旧区） | 本任务 + registry | ✅ 已完成（AddServiceDialog 接 `/api/models/custom` / `/api/image-models` 真实 CRUD；删旧识图 / 生图 / 快速操作区；快速操作按 hostpc/computer 各一份 scope；e2e 已迁移） |
 
+## 10.5 UI 收口（beta.25 候选，2026-10-16）
+
+- 能力 / 类型标签里的 `classifier` 一律显示为「快速操作」（`CAP_LABEL` / `TYPE_LABEL`），DTO 里的 `type: "classifier"` 不变；用户可见文案不再出现「分类器」这个内部词。
+- **Jev 自动识别**：官方同 id（`canonicalClassifierProtocols` 取自 Pi 公开 native 目录，排除自定义 / 本地 / 同 id 不同协议歧义）或服务端 `/models` 明确给了 `type/api/capabilities=classifier` 时自动注册；无法确定协议一律 fail-closed，不猜 `jev-router`、不付费探测、复用同一 provider 凭据（详见 §4）。
+- **快速操作模型**（`FastComputerSettings`）：aria / 标题统一为「快速操作模型」；技术说明（原生 System One 校准概率、鉴权不读全局 Key、自动识别）全部进 `Help`；0 可选项时只在选型区给一句「还没有可用模型，请先在模型服务中添加或安装 Laya。」；不新增第二份 Key 表单 / 云本地大开关。
+- **Laya 主卡**（`LocalLayaCard`，位置「电脑 › 操作这台电脑」）：主视图只有标题 + **单状态**（未安装 / 安装中 percent / 可用 / 已停止 / 启动中 / 失败）+ 按态的安装 / 启动 / 停止（安装中显示取消、失败显示重试、运行时显示「实际操作测试」）；协议 / 模型 id / 设备 health / 平台 / 来源许可 / 更新与卸载都收进「详情」；下载 phase 与取消仍可见，硬件不支持原因主视图直接显示。
+
 ## 10. 边界与禁令
 
 - 不改 shared credential backend / `secrets.ts` / SDK 钥匙串实现；不引入明文；不重置用户配置；各自独立 tree，不改对方。
