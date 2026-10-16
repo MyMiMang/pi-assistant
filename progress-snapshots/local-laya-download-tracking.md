@@ -125,3 +125,77 @@ followStatus(id: string, read: () => { active: boolean; detail?: string | null;
 - 仍未真机端到端下载 GB 权重；symlink 根治与 blob 进度已用真实 HF 形状 fixture 证明，不等于真实网络 / 真实 Laya 启动已成功。
 - `LAYA_EXTRA_MODELS` 接线只做了**环境变量与路径**级别单测（断言 spawn env），未真实启动 sidecar 证明 Laya 从该目录加载（禁止装真实 Torch/Laya）。
 - 未 push / 未 tag / 未打包；未读 / 未改用户真实 HF 缓存与 partial。
+
+## 九、第三轮：测试隔离收口（P0）+ `LAYA_EXTRA_MODELS` 公开链路核对（2026-10-16）
+
+本轮只做有限安全收尾，不重做、不新建树、不 push / tag / 打包。HEAD 基 `10317d0`。
+
+### 9.1 事故自报的边界（先写清，不夸大）
+
+- 第二轮一条新测试 `test/local-laya-deps.test.ts` 因为 setup 的 `await import()` 晚于 ESM 静态 import，
+  让 `../src/config.ts` 在 setup 之前捕获真实数据目录，`createLayaDeps()` 因而把
+  `.../Pi Assistant/local-laya/runtime/weights/rl_agent_config.json` 写进**真实数据目录**。
+- 原 agent **自报**：已删除自己新建的那份 `local-laya/runtime` 还原；**主会话未独立确认**。
+- 本轮**没有访问、没有查看、没有删除、也没有试图再恢复用户真实数据目录**（不碰真实 `HOME` / App / 钥匙串 / HF 缓存）。
+  因此本轮**不能**声称「已对用户真实数据完成审计 / 恢复」——只证明并修好了**未来测试的隔离**。
+
+### 9.2 修法（未来测试不再落到真实目录）
+
+- `packages/server/package.json` `test` 加**预加载**：
+  `node --import tsx --import ./test/setup.ts --test --test-concurrency=1 test/*.test.ts`
+  → setup 在**任何测试模块求值之前**跑完（`config.ts` 于是读到本次临时目录）。
+- `test/setup.ts` 文档写清「预加载 + 文件内第一条静态 `import "./setup.ts";`」两种姿势；修 `isTempDataDir`：
+  由裸 `startsWith(tmpdir())` 改为 **realpath + 分隔符边界**（`/tmpfoo` / `/tmp-evil` 不再误判；temp 目录内指向外部的
+  symlink 也拒绝；解析失败 fail-closed）。不大重构。
+- `test/local-laya-deps.test.ts`：`await import("./setup.ts")` 改成**第一条静态** `import "./setup.ts";`
+  （排在静态 import 的 config 依赖之前），即使有人绕过预加载直接 `node --test test/local-laya-deps.test.ts` 也安全。
+- 新增 `test/test-data-isolation.test.ts` 用例：
+  ①`isTempDataDir` 边界 + symlink 外跳；②**隔离子进程 fixture**：用**假 HOME** + 毒化 `PIA_DATA_DIR` / `PIA_WORKSPACE`
+  两个 tmp sentinel，`--import ./test/setup.ts` 预加载后断言 `config.dataDir` / `workspaceRoot` 必是**新 tmp**、
+  两个 sentinel 目录**不被创建**、假 HOME 下**不创建** App 数据目录。**全程假 HOME / tmp，不访问用户真实 HOME**。
+- 新增 `test/local-laya-deps.test.ts` 一条：固定清单（`checkpoint-files.ts`）必须覆盖 Laya 本地加载会读的
+  `rl_agent_config.json` / `model.safetensors` / `encoder/config.json` / `tokenizer/tokenizer.json` / `tokenizer/tokenizer_config.json`。
+
+**顺序 bug 的真实证据（用假 HOME，安全复现）**：一个临时探针文件（跑完即删）静态 `import "../src/config.ts";` 再
+`import "./setup.ts";`：
+- 无预加载 → 假 HOME 下被建出 `Library/Application Support/Pi Assistant/{workspace,agents,files,pi-agent}`（= 旧行为）；
+- 加 `--import ./test/setup.ts` 预加载 → 假 HOME **完全为空**（config 读到 tmp）。
+
+### 9.3 `LAYA_EXTRA_MODELS` 公开链路核对（结论：真实存在，保留接线）
+
+- **版本**：`manifest.ts` pin PyPI `laya==0.4.8`（`LAYA_SOURCE.project`/`repoUrl` = `NandhaKishorM/laya`）。
+  PyPI `laya` 0.4.8 wheel（405 KB，`__version__ = "0.4.8"`，`laya/revisions.py PINNED_REVISIONS` 与 `manifest.ts`
+  三个 revision **逐字一致**）已下载**仅解包只读检查**（不装、不拉 torch）。
+  ⚠️ `research/laya` 本地克隆是 `v0.4.7-16-g432312b3`（`pyproject` 0.4.7），**不是 0.4.8**；两边都含该能力，但引用源码行号请以 0.4.8 wheel 为准。
+- **链路**（0.4.8 源码行号）：`serve.py:672 _extra_models_option()` 接受字符串源（含**本地 checkpoint 目录**）→
+  `:1131 options["models"]` → `:1132 Router(...)` → `router.py:881 _add()` 把内置名 `multilingual` **重指**到本地目录
+  （`:910`）→ `agent.py:575` 路径存在即**跳过** `snapshot_download`（`:595` 只在不存在时下载）→ 本地读
+  `model_dir/{rl_agent_config.json,model.safetensors,tokenizer/,encoder/}`。
+- **实测**（0.4.8 wheel 的 `laya.router` 纯 Python resolver，不需 torch）：`Router(models={"multilingual": "/tmp/..."})`
+  → `models["multilingual"]=="/tmp/..."`、`_split==("/tmp/...", None)`；不设时仍解析为 `("convaiinnovations/laya","multilingual")`。
+  另：`LAYA_MODELS=multilingual`（`serve.py:1116`）只预加载该名。
+- 结论：**不是 unused mirror**，保留现有接线，不删、不改 source；并在 `docs/design/local-laya-api.md` §9 记录行号与未验边界。
+
+### 9.4 本轮实跑（Node v24.20.0，`tsx`，setup 强制临时数据目录）
+
+```bash
+cd packages/server
+node --import tsx --import ./test/setup.ts --test --test-concurrency=1 \
+  test/local-laya-verify-hf.test.ts test/local-laya-verify.test.ts test/local-laya.test.ts \
+  test/local-laya-deps.test.ts test/local-laya-routes.test.ts test/local-laya-register.test.ts \
+  test/downloads.test.ts test/local-laya-download.test.ts test/desktop-image-download.test.ts \
+  test/mcp-install.test.ts test/test-data-isolation.test.ts
+```
+- **62/62 通过**（上一轮 59 + 本轮新增 3 条隔离/清单用例；`local-laya-deps` 现 7 条）。
+  注：`mcp-install` 的「真实 npx / uvx」用例要联网下包；用**假 HOME** 跑时因 npm 缓存为空会超时（≥240 s），
+  用正常 HOME（warm cache）跑 **4/4 通过、31 s**——这是测试环境（npm 缓存）差异，不是本次改动引入。
+- `tsc --noEmit -p .`：**唯一报错是既有** `src/themes/index.ts(165) ThemeDraftResult 缺 model`（与 `@pi-assistant/shared`
+  的跨包类型漂移有关，`git stash` 后干净 HEAD **同样报同一错**）；本轮改的 test 文件**零新增类型错误**。
+- 全量 `npm test`（757）/ 全量 e2e **未跑**（按「只跑受影响项」）。
+
+### 9.5 本轮未验 / 边界（如实）
+
+- 未真机装 Torch / 下 GB 权重 / 起真实 Laya；0.4.8 本地目录加载**未实机验证**。
+- 未访问用户真实数据目录，**不声称**已审计 / 恢复 9.1 那次自报的真实写入。
+- Laya 加载可能改写 `tokenizer_config.json`（见 §9 design 注），「物化字节永远等于清单 SHA256」不成立。
+- 未 push / 未 tag / 未打包。
