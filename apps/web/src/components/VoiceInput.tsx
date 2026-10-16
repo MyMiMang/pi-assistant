@@ -183,12 +183,6 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 			<span className="pa-voice-ctl">
 				{recording ? (
 					<>
-						{/* 真实音量（aria-hidden：状态由下方文字传达） */}
-						<span className="pa-voice-level" data-testid="voice-level" aria-hidden="true">
-							{levels.map((v, i) => (
-								<i key={i} data-level={v.toFixed(2)} style={{ height: `${Math.round(3 + v * 15)}px` }} />
-							))}
-						</span>
 						<button type="button" className="pa-icon-btn ghost pa-voice-rec" data-testid="voice-stop" aria-label="停止录音并转写" title="停止录音并转写" onClick={voice.stop}>
 							<Square size={13} fill="currentColor" />
 						</button>
@@ -211,8 +205,16 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 					</button>
 				)}
 			</span>
-			{(hint || showSettings || showRetry) && (
+			{(hint || showSettings || showRetry || recording) && (
 				<div className="pa-voice-status" data-testid="voice-status">
+					{/* 真实音量（aria-hidden：状态由文字传达）；放在独立 status 行，不拖动发送键 */}
+					{recording && (
+						<span className="pa-voice-level" data-testid="voice-level" aria-hidden="true">
+							{levels.map((v, i) => (
+								<i key={i} data-level={v.toFixed(2)} style={{ height: `${Math.round(3 + v * 15)}px` }} />
+							))}
+						</span>
+					)}
 					{hint && <span className="pa-voice-hint max-w-[180px] truncate text-[11px] text-mut2" data-testid="voice-hint" title={hint}>{hint}</span>}
 					{showRetry && (
 						<button type="button" className="shrink-0 text-[11px] text-accent underline" data-testid="voice-retry" onClick={() => { setNotice(""); voice.retryFailed(); }}>

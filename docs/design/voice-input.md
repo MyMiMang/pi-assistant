@@ -143,3 +143,19 @@ idle ──start──▶ preparing ──(getUserMedia ok)──▶ recording �
 - 云 ASR provider 的 UI 配置页（主会话按统一 registry 合）。
 - 本地 SenseVoice 的安装/生命周期（另一子代理，按 §4.1 契约实现）。
 - 语音通话（用户已取消，不做）。
+
+## 9. 分段增量转写 + 真实音量反馈（本地，2026-10-18，`voice-incremental-input` 树，基 `release-candidate-validation` `6d6c1ee`，**未 push / 未 tag / 未打包**）
+
+用户要求：录音时「听到没听到可见」+「边说边出字」。已说明 **sherpa OfflineRecognizer（SenseVoice / Paraformer / Whisper）都不是原生流式**，所以做的是**分段增量**，不是原生流式；**不更换用户所选模型、不自动发送**。
+
+- **音量（真实 PCM，不假波形）**：`computeLevel`（RMS / peak）→ `normalizeLevel`（对数、静音严格 0）→ `LevelMeter`（指数平滑 + 80ms 限频）。UI 用 24 格滚动历史展示真实音量，静音归零；停止 / 取消 / 隐藏立即清空。无循环动画，`prefers-reduced-motion` 下无过渡；390 不换行、不挤发送键（复用 `.pa-voice-status` 独立行）。
+- **分段（停顿 VAD + 最长窗口）**：`SpeechSegmenter` 在**原始采样坐标**上判边界：连续静音 ≥700ms 且段内有语音 → 合一段；段长 ≥12s → 强制合一段；<300ms 的段并进下一段。**不重叠、不加滑窗上下文**，因此相邻段文本天然不重复（不做危险的 substring 去重）。
+- **连续重采样（不制造 gap）**：`resampleTo16kRange` 按**全局输出位置** `j * inputRate / targetRate` 取点，相邻段的输出区间首尾相接，拼起来等于整段一次重采样（单测断言逐采样一致）。
+- **有界并发与积压**：单并发（`pump`），等待队列上限 `MAX_PENDING_SEGMENTS = 2`；到上限时 `setBackpressure(true)` **不合新段**（把语音并进当前段，**不丢音频**），UI 显示「转写跟不上，仍在录音」。总时长仍由 60s 上限兜底，内存有界。
+- **停止 flush 尾段**：`stop()` 只等「在途 + 尾段」，**不整段重传**（增量模式不再发整段请求）；纯静音且过短才丢弃。
+- **每段唯一 requestId + 有界重试**：每段一个 requestId（服务端幂等只对 completed 生效）；失败按 `SEGMENT_RETRY_DELAYS` 退避重试（默认 3 次，只针对本段，避免副作用 / 费用无限）；最终失败**保留该段音频**，UI 给「重试这段」按钮，只重发失败段，已完成的绝不重传。
+- **草稿合并（不覆盖用户编辑）**：`VoiceDraftAssembler` 按锚点顺序追加已确认段；用 `mapPositionThroughEdit`（公共前后缀 diff）在用户编辑后平移光标，段永远接在语音块末尾（不重复、不乱序）。IME 组合中推迟到 `compositionend`。切会话 / 换助理 / 隐藏 / 卸载 / **来源变更** 立即停轨道 + 取消；取消丢弃未应用结果，**已进输入框的文字保留、不自动发送**。单聊 / 群聊共用同一组件（子代理输入栏无麦克风）。
+- **云端保持整段批量**：`incremental` 只在来源 `location === "local"` 时开启；云端仍是一次整段请求——OpenAI 兼容转写按请求最小计费且无 partial，分段会**成倍增加调用与费用**，故**不擅自切云、不隐藏增加调用**（e2e 断言云录音期间 0 次请求、停止后 1 次）。
+- **服务端不改**：分段走既有 `POST /api/audio/transcriptions`（16k mono 16bit、≤60s、requestId 幂等、abort）；租约贯穿录音 + 全部段转写（状态回到 finish/error/idle 才释放）。
+- **测试**：`packages/server/test/voice-incremental.test.ts`（合成 PCM 音量、分段、连续重采样、队列 / 积压、stop flush、取消、有界重试、草稿装配、`mapPositionThroughEdit`）；`e2e/voice-incremental-ui.mjs`（合成 WAV 喂 Chromium 假麦克风：真实音量非零、停止清零、本地多段按序出字且 requestId 唯一、取消保留已出文字、云端 1 次整段）。
+- **未验（如实）**：真实麦克风 / 真机 App、真实本地模型端到端中文增量延迟与文本误差（未跑 owned 权重多段 smoke，见 HANDOFF）、云端真实计费差异未实测；分段时长 / 阈值（700ms / 12s / 300ms）为工程取值，非实测最优。
