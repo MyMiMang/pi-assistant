@@ -17,10 +17,18 @@ import { models } from "../models.ts";
 import { materializePinnedFiles } from "../managed-weights/verify.ts";
 import { PYTHON_VERSION, type LayaCheckpoint } from "./manifest.ts";
 import { checkpointFiles, type LayaCheckpointFile } from "./checkpoint-files.ts";
-import { hfRepoDir, hfSnapshotDir } from "./hf-metadata.ts";
+import { hfRepoDir, hfSnapshotDir, hfTrustRoots } from "./hf-metadata.ts";
 import { verifyCheckpointFiles } from "./verify.ts";
 import { platformProfile, type NvidiaProbe, type PlatformContext } from "./platform.ts";
 import { LAYA_BIND_HOST, LAYA_MODEL_ID, LAYA_PROVIDER_ID, type LayaChild, type LayaDeps, type LayaHealth, type LayaPaths, type LayaRunResult } from "./manager.ts";
+
+/**
+ * `createLayaDeps` 的可注入点：只用于让测试用**小清单**驱动真实的下载后校验 / 物化链路，
+ * 不改变生产行为、不引入第二套实现。默认全部走生产值。
+ */
+export interface LayaDepsOverrides {
+	checkpointFiles?: (id: string) => LayaCheckpointFile[];
+}
 
 /** 我们自己的数据根目录：`数据目录/local-laya`（与用户文件、系统 Python 完全隔离）。 */
 export function layaRoot(): string {
@@ -68,7 +76,9 @@ export function watchDirBytes(dirs: string[], onBytes: (received: number) => voi
  * 权重阶段的 received：只统计**本 checkpoint 必需文件**对应的 HF blob 当前字节。
  *
  *  - 已在 snapshot 里且大小对 → 计满（已缓存 / 已完成的文件，progress 不从 0 起）；
- *  - 否则按清单 sha256 找 `blobs/<sha256>`（LF 大文件 blob 名就是 LFS oid=sha256）或其 `.incomplete` 部分；
+ *  - 否则按清单 sha256 找 `repo/blobs/<sha256>`（LF 大文件 blob 名就是 LFS oid=sha256）或其 `.incomplete` 部分；
+ *    两种形态都只需 stat：一层是普通 blob，共享 blob 形态下是经一层 symlink 指向 `hub/blobs/<xx>/<hash>`，
+ *    `statSync` 会跟随到真实普通文件（不另造下载器 / 不自己解析缓存布局）；
  *  - **不**统计缓存里别的 repo / pip 目录，不会把别的字节算成本模型；
  *  - 返回 <= 必需文件总字节（分母），不可能报假比例。
  */
@@ -159,7 +169,9 @@ function appendLog(paths: LayaPaths, line: string) {
 	}
 }
 
-export function createLayaDeps(): LayaDeps {
+export function createLayaDeps(overrides: LayaDepsOverrides = {}): LayaDeps {
+	// 生产用清单；测试可注入小清单，驱动**真实的** verify/materialize 代码而不下载 GB 权重。
+	const filesFor = overrides.checkpointFiles ?? checkpointFiles;
 	return {
 		profile: (ctx?: PlatformContext) => platformProfile(process.platform, process.arch, ctx),
 		nvidiaProbe: probeNvidia,
@@ -184,7 +196,7 @@ export function createLayaDeps(): LayaDeps {
 			const paths = layaPaths();
 			mkdirSync(paths.hfHome, { recursive: true });
 			const py = pythonPath;
-			const files = checkpointFiles(cp.id);
+			const files = filesFor(cp.id);
 			const total = cp.bytes || null;
 			// 进度只用**本 checkpoint 必需文件**对应的 HF blob（含 `.incomplete`）真实字节，不把缓存里别的 repo / pip 目录算进来。
 			const sample = () => p(checkpointProgressBytes(paths.hfHome, cp, files), total);
@@ -208,20 +220,21 @@ export function createLayaDeps(): LayaDeps {
 		},
 		verifyCheckpoint: async (cp, signal) => {
 			if (signal.aborted) throw new Error("已取消");
-			const files = checkpointFiles(cp.id);
+			const files = filesFor(cp.id);
 			if (!files.length) throw new Error(`没有 ${cp.id} 的固定文件清单，拒绝在未校验下激活`);
 			const paths = layaPaths();
 			const dir = hfSnapshotDir(paths.hfHome, cp.repo, cp.revision);
-			// 受信根是同 cache 根的 repo 目录：HF 快照文件合法地 symlink 到 `../../blobs/<sha>`；跨到用户目录仍拒。
-			const trustRoot = hfRepoDir(paths.hfHome, cp.repo);
-			const res = await verifyCheckpointFiles(dir, files, { trustRoot });
+			// 受信根 = 同自有 hub 缓存内的 repo 目录 + 共享 blobs 目录；两层合法链接都通过，
+			// 真正跨出自有缓存（含兄弟同前缀目录 / 某个根自身被换成外部 symlink）仍拒。
+			const trust = hfTrustRoots(paths.hfHome, cp.repo);
+			const res = await verifyCheckpointFiles(dir, files, trust);
 			if (!res.ok) throw new Error(`权重校验未通过：${res.problems.slice(0, 3).join("；")}`);
 			if (signal.aborted) throw new Error("已取消");
 			// 校验通过后再把必需文件物化成 staging 里的**普通文件**（硬链接/副本，不再依赖 symlink）；
 			// activate 时原子切换生效。全程不动 HF 缓存，断点续传的 partial 保留可恢复。
 			const staging = paths.weightsStaging;
 			rmSync(staging, { recursive: true, force: true });
-			const mat = await materializePinnedFiles(dir, staging, files, { trustRoot });
+			const mat = await materializePinnedFiles(dir, staging, files, trust);
 			if (!mat.ok) throw new Error(`权重物化失败：${mat.problems.slice(0, 3).join("；")}`);
 		},
 		findFreePort,
