@@ -527,4 +527,8 @@ export interface BenchmarkAvailability {
 	preparable?: boolean;
 	/** 元数据：准备好的窗口来源类型。 */
 	targetKind?: "driver-isolated-browser" | "sandbox-app";
+	/** 本次评估的模型（点了哪条就评估哪条）；未显式指定时为 null，此时按该目标电脑的快速操作设置评估。 */
+	model?: { provider: string; id: string } | null;
+	/** 该模型已安装但未运行、可由应用按**既有流程**启动（当前只有本地 Laya）；只表示可启动，**不等于已就绪**。 */
+	modelStartable?: boolean;
 }

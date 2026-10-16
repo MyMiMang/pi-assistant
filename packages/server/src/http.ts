@@ -225,14 +225,19 @@ app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list().
 const customErr = (c: Context<Env>, e: unknown) => c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 app.post("/api/models/custom", async (c) => {
 	try {
-		return c.json(await customProviders.save(null, await c.req.json<CustomProviderInput>()));
+		const saved = await customProviders.save(null, await c.req.json<CustomProviderInput>());
+		// 模型目录变化广播：已打开的页面（快速操作模型列表等）靠这个刷新，不用退出重进。
+		bus.emit({ type: "settings.changed" });
+		return c.json(saved);
 	} catch (e) {
 		return customErr(c, e);
 	}
 });
 app.put("/api/models/custom/:id", async (c) => {
 	try {
-		return c.json(await customProviders.save(c.req.param("id"), await c.req.json<CustomProviderInput>()));
+		const saved = await customProviders.save(c.req.param("id"), await c.req.json<CustomProviderInput>());
+		bus.emit({ type: "settings.changed" });
+		return c.json(saved);
 	} catch (e) {
 		return customErr(c, e);
 	}

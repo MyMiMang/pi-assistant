@@ -130,7 +130,7 @@ test("host：真实闭环——模型只选 click，双证据（机器状态 + U
 	const { driver, dispatched } = fakeDriver(store);
 	const host = readyHost(driver, store);
 	const avail = host.availability();
-	assert.deepEqual(avail, { cuaReady: true, modelReady: true, fixtureReady: true, reasons: [], preparable: true });
+	assert.deepEqual(avail, { cuaReady: true, modelReady: true, fixtureReady: true, reasons: [], preparable: true, model: { provider: "p", id: "m" } });
 	const run = await host.start({});
 	const s = await waitTerminal(run.id);
 	assert.equal(s?.status, "done");
@@ -225,4 +225,114 @@ test("host：无目标电脑 / 无快速模型 → blocked 原因明确，start 
 	assert.equal(avail.modelReady, false);
 	assert.ok(fastComputerSettings().enabled === false);
 	await assert.rejects(() => host.start({}));
+});
+
+test("host：点哪条测哪条——显式 provider/model 按解析器评估，不改全局设置，GET 不开窗", async () => {
+	_resetBenchmarks();
+	_resetFastComputerState();
+	// 全局快速模型保持关闭 / 未选：从 Laya 卡点测不应依赖它
+	saveFastComputerSettings({ enabled: false, kind: "systemone", provider: "", id: "" });
+	const store = new BenchmarkFixtureStateStore();
+	const { driver } = fakeDriver(store);
+	let opened = 0;
+	const counting: BenchmarkDriver = { ...driver, async openFixtureWindow(args) { opened++; return driver.openFixtureWindow(args); } };
+	const resolverCalls: { provider: string; model: string }[] = [];
+	const host = createBenchmarkHost({
+		driver: counting,
+		store,
+		tasks: [TASK],
+		warmup: 0,
+		maxTrials: 1,
+		chooserFor: mockChooser,
+		resolveModel: (provider, model) => (resolverCalls.push({ provider, model }), provider === "local-laya" && model === "multilingual" ? { ok: true } : { ok: false, reason: "nope" }),
+	});
+	const avail = host.availability({ provider: "local-laya", model: "multilingual", target: "computer" });
+	assert.equal(avail.modelReady, true);
+	assert.deepEqual(avail.model, { provider: "local-laya", id: "multilingual" });
+	assert.deepEqual(resolverCalls, [{ provider: "local-laya", model: "multilingual" }]);
+	assert.equal(opened, 0, "GET availability 不开窗");
+	assert.equal(fastComputerSettings().enabled, false, "不偷开全局快速模型");
+	assert.equal(fastComputerSettings().provider, "", "不改全局选择");
+	const run = await host.start({ provider: "local-laya", model: "multilingual", target: "computer" });
+	const s = await waitTerminal(run.id);
+	assert.equal(s?.status, "done");
+	assert.equal(s?.provider, "local-laya");
+	assert.equal(s?.model, "multilingual");
+	assert.equal(fastComputerSettings().enabled, false, "跑完仍不改全局设置");
+});
+
+test("host：非法 / 未注册 provider/model → blocked，start 抛错且不开窗", async () => {
+	_resetBenchmarks();
+	_resetFastComputerState();
+	saveFastComputerSettings({ enabled: true, kind: "systemone", provider: "p", id: "m" });
+	const store = new BenchmarkFixtureStateStore();
+	const { driver } = fakeDriver(store);
+	let opened = 0;
+	const counting: BenchmarkDriver = { ...driver, async openFixtureWindow(args) { opened++; return driver.openFixtureWindow(args); } };
+	const host = createBenchmarkHost({ driver: counting, store, chooserFor: mockChooser, resolveModel: () => ({ ok: false, reason: "找不到快速模型 x/y" }) });
+	const avail = host.availability({ provider: "x", model: "y", target: "computer" });
+	assert.equal(avail.modelReady, false);
+	assert.match(avail.reasons.join(" "), /找不到快速模型/);
+	await assert.rejects(() => host.start({ provider: "x", model: "y", target: "computer" }), /找不到快速模型/);
+	assert.equal(opened, 0, "被拒时绝不开窗");
+	// provider / model 必须成对，不能只传一半
+	await assert.rejects(() => host.start({ provider: "x", target: "computer" }), /同时指定/);
+	assert.equal(opened, 0);
+});
+
+test("host：本地 Laya 已装未运行 → 明确 blocked + startable，不伪 ready", async () => {
+	_resetBenchmarks();
+	_resetFastComputerState();
+	saveFastComputerSettings({ enabled: true, kind: "systemone", provider: "local-laya", id: "multilingual" });
+	const store = new BenchmarkFixtureStateStore();
+	const { driver } = fakeDriver(store);
+	const host = createBenchmarkHost({ driver, store, chooserFor: mockChooser, resolveModel: () => ({ ok: false, reason: "本地 Laya 已安装但未运行：先点「启动」，再回来测试。", startable: true }) });
+	const avail = host.availability({ provider: "local-laya", model: "multilingual", target: "computer" });
+	assert.equal(avail.modelReady, false, "不伪 ready");
+	assert.equal(avail.modelStartable, true);
+	assert.match(avail.reasons.join(" "), /已安装但未运行/);
+});
+
+test("host：目标切换按所选电脑评估，不 fallback 到另一台", async () => {
+	_resetBenchmarks();
+	_resetFastComputerState();
+	saveFastComputerSettings({ enabled: true, kind: "systemone", provider: "p", id: "m" });
+	const store = new BenchmarkFixtureStateStore();
+	const { driver } = fakeDriver(store);
+	// hostpc 未就绪（target(requested=hostpc) → null），computer 就绪
+	const onlyComputer: BenchmarkDriver = { ...driver, target: (requested) => (requested === "hostpc" ? null : { prefix: "computer" }) };
+	const host = createBenchmarkHost({ driver: onlyComputer, store, chooserFor: mockChooser, notReadyReason: "「操作这台电脑」未就绪。" });
+	const hostAvail = host.availability({ target: "hostpc" });
+	assert.equal(hostAvail.cuaReady, false);
+	assert.match(hostAvail.reasons.join(" "), /未就绪/);
+	const compAvail = host.availability({ target: "computer" });
+	assert.equal(compAvail.cuaReady, true);
+	assert.equal(compAvail.modelReady, true);
+});
+
+test("routes：GET/POST 按所点 provider/model 评估；未就绪 409 且不开窗", async () => {
+	_resetBenchmarks();
+	_resetFastComputerState();
+	saveFastComputerSettings({ enabled: false, kind: "systemone", provider: "", id: "" });
+	const store = new BenchmarkFixtureStateStore();
+	const { driver } = fakeDriver(store);
+	let opened = 0;
+	const counting: BenchmarkDriver = { ...driver, async openFixtureWindow(args) { opened++; return driver.openFixtureWindow(args); } };
+	const host = createBenchmarkHost({ driver: counting, store, tasks: [TASK], warmup: 0, maxTrials: 1, chooserFor: mockChooser, resolveModel: (p, m) => (p === "local-laya" && m === "multilingual" ? { ok: true } : { ok: false, reason: "未注册" }) });
+	const app = new Hono();
+	mountFastComputerRoutes(app, { host, store });
+
+	const ok = await app.request("/api/fast-computer/benchmark?provider=local-laya&model=multilingual&target=computer");
+	const okBody = (await ok.json()) as { availability: { modelReady: boolean; model: unknown } };
+	assert.equal(okBody.availability.modelReady, true);
+	assert.deepEqual(okBody.availability.model, { provider: "local-laya", id: "multilingual" });
+	assert.equal(opened, 0, "GET 不开窗");
+
+	const bad = await app.request("/api/fast-computer/benchmark", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "x", model: "y", target: "computer" }) });
+	assert.equal(bad.status, 409);
+	const badBody = (await bad.json()) as { ok: boolean; blocked: boolean; availability: { modelReady: boolean } };
+	assert.equal(badBody.ok, false);
+	assert.equal(badBody.blocked, true);
+	assert.equal(badBody.availability.modelReady, false);
+	assert.equal(opened, 0, "未就绪 409 绝不开窗");
 });

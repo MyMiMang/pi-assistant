@@ -44,8 +44,9 @@ export interface FixtureWindowHandle {
 export interface BenchmarkDriver {
 	/** 用户显式选择的目标电脑；未授权 / 未启动返回 null（附原因）。传入 requested 表示用户点名要哪台。 */
 	target(requested?: "hostpc" | "computer"): { prefix: "hostpc" | "computer"; session?: string } | null;
-	/** 这台平台是否能拿到**独立受控 fixture 窗口**的证明；拿不到就必须 false（fail-closed，不假装 ready）。默认 fail-closed。 */
-	capable?(): { ok: boolean; reason?: string };
+	/** 这台平台是否能拿到**独立受控 fixture 窗口**的证明；拿不到就必须 false（fail-closed，不假装 ready）。默认 fail-closed。
+	 *  传 requested 表示按用户点名的那台电脑判定（不传按当前默认目标）。 */
+	capable?(requested?: "hostpc" | "computer"): { ok: boolean; reason?: string };
 	/** 该目标用哪种隔离窗口来源（元数据，供 UI 显示；不自动开窗）。 */
 	windowKind?(prefix: "hostpc" | "computer"): "driver-isolated-browser" | "sandbox-app" | null;
 	/** 本次驱动来源：真实 CUA 返回 "cua"，测试 / 假驱动返回 "fixture"；不实现则按 unknown。 */
@@ -60,6 +61,24 @@ export interface BenchmarkDriver {
 	execute(handle: FixtureWindowHandle, tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ isError: boolean }>;
 }
 
+/** 一次基准评估的输入：显式点名的 provider/model（点哪条测哪条）+ 目标电脑。 */
+export interface BenchmarkTargetInput {
+	provider?: string;
+	model?: string;
+	target?: "hostpc" | "computer";
+}
+
+export interface BenchmarkStartInput extends BenchmarkTargetInput {
+	maxTrials?: number;
+	warmup?: number;
+}
+
+/**
+ * 解析某个 provider/model 是否**真的**能跑：已注册进分类器目录且凭据可用。
+ * 不能只看前端传的字符串或全局「已选定」。返回 startable 表示可按既有流程启动（本地 Laya 已装未运行）。
+ */
+export type BenchmarkModelResolver = (provider: string, model: string) => { ok: boolean; reason?: string; startable?: boolean };
+
 export interface BenchmarkHostOptions {
 	driver: BenchmarkDriver;
 	store: BenchmarkFixtureStateStore;
@@ -71,11 +90,13 @@ export interface BenchmarkHostOptions {
 	maxTrials?: number;
 	/** 目标未就绪时的额外说明（例如「先在设置 › 电脑里开启操作这台电脑」）。 */
 	notReadyReason?: string;
+	/** 按具体 provider/model 校验真实可用性；不提供时只认该目标电脑的快速操作设置里的选中项。 */
+	resolveModel?: BenchmarkModelResolver;
 }
 
 export interface BenchmarkHost {
-	availability(): BenchmarkAvailability;
-	start(input: { provider?: string; model?: string; maxTrials?: number; warmup?: number; target?: "hostpc" | "computer" }): Promise<FastBenchmarkResult>;
+	availability(input?: BenchmarkTargetInput): BenchmarkAvailability;
+	start(input: BenchmarkStartInput): Promise<FastBenchmarkResult>;
 }
 
 const TERMINAL = new Set(["done", "cancelled", "blocked", "failed"]);
@@ -84,27 +105,49 @@ const TERMINAL = new Set(["done", "cancelled", "blocked", "failed"]);
 export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 	let active: { id: string; fixtureId: string; nonce: string; close: () => Promise<void>; unsubscribe: () => void } | null = null;
 
-	const modelTarget = (): { provider: string; id: string } | null => {
-		const s = fastComputerSettings();
-		return s.enabled && s.provider && s.id ? { provider: s.provider, id: s.id } : null;
+	/**
+	 * 解析要评估的模型。显式传入 provider/model 时**只评估这一对**（点哪条测哪条，不需要先改全局设置）；
+	 * 否则回落到该目标电脑自己的快速操作设置（`fastComputer:<scope>`），再回落到旧全局设置。
+	 */
+	const resolveRequestedModel = (input?: BenchmarkTargetInput): { model: { provider: string; id: string } | null; reason?: string; startable?: boolean } => {
+		const requested = input?.provider && input?.model ? { provider: input.provider, id: input.model } : null;
+		if (requested) {
+			if (opts.resolveModel) {
+				const r = opts.resolveModel(requested.provider, requested.id);
+				return r.ok ? { model: requested } : { model: null, reason: r.reason ?? `快速模型 ${requested.provider}/${requested.id} 当前不可用。`, startable: !!r.startable };
+			}
+			// 没有注入解析器（测试 / 内部）：只认「这台电脑的快速操作设置就是它」，不凭字符串假装 ready。
+			const s = fastComputerSettings(input?.target);
+			if (s.enabled && s.provider === requested.provider && s.id === requested.id) return { model: requested };
+			return { model: null, reason: `快速模型 ${requested.provider}/${requested.id} 当前不可用。` };
+		}
+		const s = fastComputerSettings(input?.target);
+		if (!s.enabled || !s.provider || !s.id) return { model: null, reason: "还没选定快速操作模型（设置 › 电脑 › 快速操作模型）。" };
+		if (opts.resolveModel) {
+			const r = opts.resolveModel(s.provider, s.id);
+			return r.ok ? { model: { provider: s.provider, id: s.id } } : { model: null, reason: r.reason ?? `快速模型 ${s.provider}/${s.id} 当前不可用。`, startable: !!r.startable };
+		}
+		return { model: { provider: s.provider, id: s.id } };
 	};
 
-	const availability = (): BenchmarkAvailability => {
+	const availability = (input?: BenchmarkTargetInput): BenchmarkAvailability => {
 		const reasons: string[] = [];
-		const targetSel = opts.driver.target();
+		const targetSel = opts.driver.target(input?.target);
 		if (!targetSel) reasons.push(opts.notReadyReason ?? "没有可用的真实电脑通道：请先在设置 › 电脑里开启「操作这台电脑」，或启动助理电脑。");
-		const capable = opts.driver.capable?.() ?? { ok: false, reason: "未提供目标电脑能力探测（fail-closed）" };
+		const capable = opts.driver.capable?.(input?.target) ?? { ok: false, reason: "未提供目标电脑能力探测（fail-closed）" };
 		if (targetSel && !capable.ok) reasons.push(capable.reason ?? "当前平台无法为基准测试取得独立受控窗口（fail-closed）。");
-		const model = modelTarget();
-		if (!model) reasons.push("还没选定快速操作模型（设置 › 模型 › 快速操作模型）。");
+		const resolved = resolveRequestedModel(input);
+		if (!resolved.model && resolved.reason) reasons.push(resolved.reason);
 		const kind = targetSel ? (opts.driver.windowKind?.(targetSel.prefix) ?? null) : null;
 		return {
 			cuaReady: !!targetSel && capable.ok,
-			modelReady: !!model,
+			modelReady: !!resolved.model,
 			fixtureReady: !!targetSel && capable.ok,
 			reasons,
 			// 元数据：只有点了「开始实际操作测试」才会真正开窗（POST bootstrap）；GET 这里不开任何窗口。
 			preparable: !!targetSel && capable.ok,
+			model: resolved.model,
+			...(resolved.startable ? { modelStartable: true } : {}),
 			...(kind ? { targetKind: kind } : {}),
 		};
 	};
@@ -121,15 +164,16 @@ export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 		active = { id: runId, fixtureId, nonce, close, unsubscribe };
 	};
 
-	const start = async (input: { provider?: string; model?: string; maxTrials?: number; warmup?: number; target?: "hostpc" | "computer" }): Promise<FastBenchmarkResult> => {
-		const avail = availability();
+	const start = async (input: BenchmarkStartInput): Promise<FastBenchmarkResult> => {
+		if ((input.provider && !input.model) || (!input.provider && input.model)) throw new Error("provider 和 model 必须同时指定。");
+		// 用本次请求的 provider/model/target 评估，而不是全局设置：点哪条就测哪条。
+		const avail = availability(input);
 		if (!avail.cuaReady || !avail.modelReady || !avail.fixtureReady) throw new Error(avail.reasons.join(" "));
 		if (active) throw new Error("已有一次真实操控测试在运行，请等它结束或先取消。");
 
-		const settings = fastComputerSettings();
-		const provider = input.provider || settings.provider;
-		const model = input.model || settings.id;
-		if (!provider || !model) throw new Error("需要先选定快速操作模型（provider/model）。");
+		const settings = fastComputerSettings(input.target);
+		const provider = avail.model!.provider;
+		const model = avail.model!.id;
 
 		const targetSel = opts.driver.target(input.target)!;
 		const fixtureId = `bench-${randomToken(6)}`;

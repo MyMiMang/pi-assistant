@@ -5,8 +5,9 @@
  *  - 只从「已配置凭据」的原生 System One（Jev）分类器目录里选；不走 chat 替代，不读全局 Key。
  */
 import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { useStore } from "../store";
 import { Button, Help, Select } from "./ui";
 
 interface FastComputerDto { enabled: boolean; kind: "chat" | "systemone"; provider: string; id: string; baseUrl: string; model: string; threshold: number; timeoutMs: number }
@@ -17,15 +18,32 @@ export function FastComputerSettingsSection({ scope }: { scope: "hostpc" | "comp
 	const [classifiers, setClassifiers] = useState<ClassifierDto[]>([]);
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState(false);
-	const load = () => {
+	// 模型目录 / 本地 Laya 注册变化时自动刷新列表：复用既有 store 事件（settings.changed → system、local-laya.changed），
+	// 不另建轮询。这样“Laya 稍后启动注册”时已开页面也能出现选项，无需退出重进。
+	const layaVersion = useStore((s) => s.localLayaVersion);
+	const system = useStore((s) => s.system);
+	// 只让最后一次请求落地：旧的迟到响应不覆盖当前数据（保留已加载的选择，不重置）。
+	const seq = useRef(0);
+	const load = useCallback(() => {
+		const my = ++seq.current;
 		setErr("");
 		return api<{ settings: FastComputerDto; classifierModels?: ClassifierDto[] }>(`/api/fast-computer/settings?scope=${scope}`)
-			.then((r) => (setD(r.settings), setClassifiers(r.classifierModels ?? [])))
-			.catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-	};
+			.then((r) => {
+				if (my !== seq.current) return;
+				setD(r.settings);
+				setClassifiers(r.classifierModels ?? []);
+			})
+			.catch((e) => {
+				if (my !== seq.current) return;
+				setErr(e instanceof Error ? e.message : String(e));
+			});
+	}, [scope]);
 	useEffect(() => {
 		void load();
-	}, [scope]);
+		return () => {
+			seq.current++;
+		};
+	}, [load, layaVersion, system]);
 	if (!d && !err) return <div className="text-xs text-mut" data-testid={`fast-computer-${scope}`}>正在载入快速操作设置…</div>;
 	if (!d && err)
 		return (
@@ -42,7 +60,9 @@ export function FastComputerSettingsSection({ scope }: { scope: "hostpc" | "comp
 		setBusy(true);
 		setErr("");
 		try {
-			setD(await api<FastComputerDto>("/api/fast-computer/settings", { method: "PUT", json: { ...settings, ...patch, scope } }));
+			const next = await api<FastComputerDto>("/api/fast-computer/settings", { method: "PUT", json: { ...settings, ...patch, scope } });
+			seq.current++; // 作废在途的旧读取，避免用旧值覆盖刚保存的选择
+			setD(next);
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
 		} finally {

@@ -23,7 +23,10 @@ import { McpClient, StdioTransport } from "@earendil-works/pi-mcp";
 import { config } from "../config.ts";
 import { cuaMcpCommand, desktopPause, runningDesktops } from "../desktop.ts";
 import { hostMcpCommand, hostAllowedFor, hostPaused, hostSettings, hostStatus, tierOf } from "../host-control.ts";
+import { models } from "../models.ts";
+import { LAYA_PROVIDER_ID, layaManager } from "../local-laya/index.ts";
 import { createBenchmarkHost, type BenchmarkHost } from "./benchmark-host.ts";
+import { resolveBenchmarkModel } from "./benchmark-model.ts";
 import { BenchmarkFixtureStateStore } from "./benchmark-fixture.ts";
 import { createInvokeBenchmarkDriver, defaultOpenTool, type ComputerInvoke, type InvokeResult } from "./benchmark-driver.ts";
 import { evaluateBenchmarkCapability, type BenchmarkCapabilityResult } from "./benchmark-capability.ts";
@@ -111,17 +114,36 @@ export function createRuntimeBenchmarkHost(opts: RuntimeBenchmarkOptions): { hos
 			const base = computerBase();
 			return base ? `${base.replace(/\/$/, "")}${path}` : null;
 		},
-		capable: () => {
-			const sel = targetOf();
-			if (sel?.prefix === "computer") return cache.capability.computer;
-			if (sel?.prefix === "hostpc") return cache.capability.hostpc;
-			return { ok: false, reason: "没有可用的真实电脑通道：请先在设置 › 电脑里开启「操作这台电脑」，或启动助理电脑。" };
+		capable: (requested) => {
+			const sel = targetOf(requested);
+			if (!sel) return { ok: false, reason: targetNotReadyReason(requested) };
+			return sel.prefix === "computer" ? cache.capability.computer : cache.capability.hostpc;
 		},
 	});
+
+	/**
+	 * 按具体 provider/model 校验**真实可用性**（不是前端字符串 / 全局「已选定」）：
+	 *  - 已在分类器目录且凭据可用 → ok；
+	 *  - 本地 Laya 已装未运行 → 明确 blocked + startable（由 UI 走既有 `/api/local-models/laya/start`，不在这里偷开）；
+	 *  - 其它未注册 / 未配置 → 明确 blocked。
+	 */
+	const resolveModel = (provider: string, model: string): { ok: boolean; reason?: string; startable?: boolean } => {
+		if (!models) return { ok: false, reason: "模型目录还没就绪，请稍后重试。" };
+		const classifiers = models.listClassifierModels(provider).map((m) => ({ id: m.id, configured: m.configured }));
+		const isLocalLaya = provider === LAYA_PROVIDER_ID;
+		// 只有本地 Laya 且还没注册时才读它的真实状态（避免无谓地懒构造 manager）。
+		let laya: { installed: boolean; installing: boolean; running: boolean } | null = null;
+		if (isLocalLaya && !classifiers.some((m) => m.id === model)) {
+			const st = layaManager().status();
+			laya = { installed: st.install.state === "installed", installing: st.install.state === "installing", running: st.runtime.state === "running" };
+		}
+		return resolveBenchmarkModel({ classifiers, isLocalLaya, laya }, provider, model);
+	};
 
 	const host = createBenchmarkHost({
 		driver,
 		store,
+		resolveModel,
 		notReadyReason: "真实操控基准需要先在设置 › 电脑里开启「操作这台电脑」或启动助理电脑；当前都没就绪。",
 	});
 
@@ -183,6 +205,13 @@ export function createMcpInvoke(agentId: () => string | null): { invoke: Compute
 		}
 	};
 	return { invoke, listTools };
+}
+
+/** 点名某台电脑但未就绪时，按那台电脑给明确原因（不 fallback 到另一台）。 */
+function targetNotReadyReason(requested?: "hostpc" | "computer"): string {
+	if (requested === "hostpc") return "「操作这台电脑」未就绪：先在设置 › 电脑里开启，并确保守护进程在跑。";
+	if (requested === "computer") return "助理电脑未运行：先在设置 › 电脑里启动助理电脑。";
+	return "没有可用的真实电脑通道：请先在设置 › 电脑里开启「操作这台电脑」，或启动助理电脑。";
 }
 
 const textOf = (content: unknown): string =>
