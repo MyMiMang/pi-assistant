@@ -11,11 +11,12 @@ import { getSetting } from "../db.ts";
 import { credentialStore, customProviders, models } from "../models.ts";
 import { localModelHints } from "../local-models.ts";
 import type { RegistryAsrProvider } from "../model-registry.ts";
-import { ASR_ERRORS, ASR_PROTOCOLS, type AsrEndpoint } from "./contract.ts";
+import { ASR_ERRORS, ASR_PROTOCOLS, type AsrEndpoint, type AsrSource, type AsrSourceOption, type AsrSourceView } from "./contract.ts";
 import { mountVoiceRoutes } from "./routes.ts";
 import { isAsrProtocol, type AsrOutcome } from "./asr.ts";
 import { asrEndpoint } from "../local-asr/adapter-registry.ts";
-import { asrManager } from "../local-asr/index.ts";
+import { ASR_MODEL_ID, ASR_PROVIDER_ID, asrManager } from "../local-asr/index.ts";
+import { readVoiceSource, withSelected, writeVoiceSource } from "./source.ts";
 
 /** 用户在设置里显式声明的云 ASR 模型（统一注册表 `type:"asr"` 的云来源）。 */
 export interface AsrDeclaration {
@@ -59,7 +60,7 @@ function providerConfigured(provider: string): boolean {
 	return !!models.listProviders().find((p) => p.id === provider)?.configured;
 }
 
-/** 解析 provider/model → 端点。找不到就 fail-closed（不猜、不用默认 provider）。 */
+/** 解析 provider/model → 端点。找不到就 fail-closed（不猜、不用默认 provider、不回落第一个云端）。 */
 export async function resolveAsrEndpoint(provider: string, model: string): Promise<AsrOutcome<AsrEndpoint>> {
 	// 1) 显式声明的云 ASR
 	const decl = asrDeclarations().find((d) => d.provider === provider && d.model === model);
@@ -72,13 +73,95 @@ export async function resolveAsrEndpoint(provider: string, model: string): Promi
 		return { ok: true, value: { protocol, baseUrl, apiKey, location: "cloud" } };
 	}
 	// 2) 本地 runtime 上报的 ASR（loopback，音频不出设备）：端点（含进程内 token）只在 adapter-registry。
-	const local = localModelHints().find((h) => h.type === "asr" && h.provider === provider && h.modelId === model);
+	// 未安装 / 未运行时本地条目也要认得（按固定 id 判断），给「未安装 / 未运行」的明确 409，不回落云端。
+	const local = localModelHints().find((h) => h.type === "asr" && h.provider === provider && h.modelId === model) ?? (provider === ASR_PROVIDER_ID && model === ASR_MODEL_ID ? { installed: false, running: false } : undefined);
 	if (local) {
 		const ep = asrEndpoint(provider);
-		if (!ep) return { ok: false, code: ASR_ERRORS.notConfigured, status: 409, message: "本地语音服务未运行，请先启动" };
+		if (!ep) return { ok: false, code: ASR_ERRORS.notConfigured, status: 409, message: "本地语音识别未安装或未运行，请先在语音配置里安装 / 启动" };
 		return { ok: true, value: { protocol: "local-asr-http", baseUrl: ep.baseUrl, apiKey: ep.token, location: "local" } };
 	}
 	return { ok: false, code: ASR_ERRORS.notConfigured, status: 400, message: "请先在设置里选择语音识别模型" };
+}
+
+/**
+ * 语音来源的候选列表（只读元数据）：云端 = 已声明的 ASR（按 provider 的凭据状态给 availability）；
+ * 本地 = SenseVoice（未安装也出现，但 availability 明确 not_ready）。**不启动 / 不下载 / 不连云。**
+ */
+export function asrSourceOptions(): AsrSourceOption[] {
+	const out: AsrSourceOption[] = [];
+	for (const d of asrDeclarations()) {
+		if (!d?.provider || !d?.model) continue;
+		const protocol = d.protocol || ASR_PROTOCOLS[0];
+		if (!isAsrProtocol(protocol)) continue;
+		const configured = providerConfigured(d.provider);
+		out.push({
+			location: "cloud",
+			provider: d.provider,
+			model: d.model,
+			name: d.name || `${d.provider} / ${d.model}`,
+			protocol,
+			availability: configured ? "ready" : "not_configured",
+			reason: configured ? null : "该服务尚未登录 / 缺少密钥，请先到模型服务配置",
+			selected: false,
+		});
+	}
+	const hint = localModelHints().find((h) => h.type === "asr");
+	const installed = !!hint?.installed;
+	const running = !!hint?.running;
+	out.push({
+		location: "local",
+		provider: hint?.provider ?? ASR_PROVIDER_ID,
+		model: hint?.modelId ?? ASR_MODEL_ID,
+		name: hint?.label ?? "本地语音识别（SenseVoice）",
+		protocol: hint?.protocol ?? "local-asr-http",
+		availability: running ? "ready" : installed ? "not_running" : "not_installed",
+		reason: running ? null : installed ? "已安装但未运行（开始录音时会自动启动）" : "本地语音识别未安装",
+		selected: false,
+	});
+	return out;
+}
+
+/** 当前来源 + 归一化候选（UI 只读数据；`selected` 只在 `withSelected` 里算，避免多处漂移）。 */
+export const asrSourceView = (): AsrSourceView => withSelected(readVoiceSource(), asrSourceOptions());
+const selectedSourceOptions = () => asrSourceView().options;
+
+/** 来源校验失败（路由层映射成 HTTP 错误；不落库）。 */
+export class AsrSourceError extends Error {
+	constructor(
+		public code: string,
+		public status: number,
+		message: string,
+	) {
+		super(message);
+	}
+}
+
+/** 本地已知的 provider/model（运行时上报优先，否则固定清单 id）。 */
+function localAsrRefs(): { provider: string; model: string }[] {
+	const hint = localModelHints().find((h) => h.type === "asr");
+	const refs = hint ? [{ provider: hint.provider, model: hint.modelId }] : [];
+	if (!refs.some((r) => r.provider === ASR_PROVIDER_ID && r.model === ASR_MODEL_ID)) refs.push({ provider: ASR_PROVIDER_ID, model: ASR_MODEL_ID });
+	return refs;
+}
+
+/** 云：只认**已配置**的声明（未登录的服务不能被选为生效来源）；本地：固定 id 即可选（未安装也能先选意图）。 */
+function selectable(source: AsrSource): boolean {
+	if (source.location === "local") return localAsrRefs().some((r) => r.provider === source.provider && r.model === source.model);
+	return asrDeclarations().some((d) => d.provider === source.provider && d.model === source.model && isAsrProtocol(d.protocol || ASR_PROTOCOLS[0]) && providerConfigured(d.provider));
+}
+
+/** 保存显式来源；`null` = 清空（未配置）。未知 / 未配置的 provider-model 抛 `AsrSourceError`，不写库。 */
+export function saveAsrSource(next: AsrSource | null): void {
+	if (!next) {
+		writeVoiceSource(null);
+		return;
+	}
+	if (selectable(next)) {
+		writeVoiceSource(next);
+		return;
+	}
+	const declared = next.location === "cloud" && asrDeclarations().some((d) => d.provider === next.provider && d.model === next.model);
+	throw new AsrSourceError(declared ? ASR_ERRORS.notConfigured : ASR_ERRORS.notDeclared, 400, declared ? "该云语音服务尚未配置（缺少密钥），请先到模型服务登录" : "该语音模型不在已声明 / 已知的语音识别列表里");
 }
 
 function baseUrlOf(provider: string, model: string): string | undefined {
@@ -121,5 +204,10 @@ function releaseAsrLease(leaseId: string): void {
 
 /** 挂载 ASR 路由（生产装配）。 */
 export function mountAsrRoutes(app: Hono<any>) {
-	mountVoiceRoutes(app, { resolve: resolveAsrEndpoint, acquireLease: acquireAsrLease, releaseLease: releaseAsrLease });
+	mountVoiceRoutes(app, {
+		resolve: resolveAsrEndpoint,
+		acquireLease: acquireAsrLease,
+		releaseLease: releaseAsrLease,
+		source: { read: readVoiceSource, options: selectedSourceOptions, write: saveAsrSource },
+	});
 }

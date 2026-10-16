@@ -1,4 +1,5 @@
 import { mountSubagentRoutes } from "./subagent-routes.ts";
+import { deleteAgentSubagentLimits } from "./subagents.ts";
 import { mountThemeRoutes } from "./themes/routes.ts";
 import { mountFastComputerRoutes } from "./fast-computer/routes.ts";
 import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
@@ -447,6 +448,7 @@ async function deleteAgentFully(id: string) {
 	await disposeRuntime(a.id);
 	await forgetAgentComputer(a.id).catch(() => {});
 	deleteAgentRoutines(a.id);
+	deleteAgentSubagentLimits(a.id);
 	await memory.purgeAgent(a.id);
 	onAgentDeleted(a.id);
 	// 群里的消息保留（标“已删除”），其余一并删除
