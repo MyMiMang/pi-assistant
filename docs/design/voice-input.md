@@ -1,6 +1,6 @@
 # 语音输入（输入栏语音→文字草稿）设计
 
-- 状态：设计 + 契约（本树 `voice-input-implementation`，基 `unified-integration` `ad3526f`，**未 push / 未 tag**）。2026-10-16 用户 UI 修正：麦克风从附件工具列移到**发送键左侧紧邻**，提示 / 「去设置」走独立 status 行（本树本地未发布）。
+- 状态：设计 + 契约（本树 `voice-input-implementation`，基 `unified-integration` `ad3526f`，**未 push / 未 tag**）。2026-10-16 用户 UI 修正：麦克风从附件工具列移到**发送键左侧紧邻**，提示 / 「去设置」走独立 status 行。**2026-10-16 二次用户修正（入口克制）**：idle（含未配置 ASR）**不再常驻** status 行 / 「去设置」，只有用户点麦克风且 hook 回 `asr_not_configured` 时才短暂出现；**beta.24 已发布的是旧常驻行为，本修正未发布（候选树 `0069d36`）。**
 - 依据：`research/voice-input-feasibility.md`、`research/sensevoice-local-asr-feasibility.md`、`research/voice-input-project-comparison.md`。
 - 范围：**只做「输入栏语音→文字草稿」**。用户已明确取消双向语音通话，**绝不实现**。本地 SenseVoice provider（安装/生命周期）由另一子代理负责，本设计只给出它要实现的接口契约。
 
@@ -8,7 +8,7 @@
 
 | 项 | 决定 |
 |---|---|
-| 入口 | 发送键**左侧紧邻**一个可发现的麦克风按钮（`pa-icon-btn ghost` + `Mic` 图标，带 `aria-label`/`title`）。麦克风 / 停止 / 取消包在 `.pa-voice-ctl`（`flex:none`）里，与发送键同属 `.pa-composer-bar`，同一行不换行；提示文字与未配置时的「去设置」放在**独立 status 行** `.pa-voice-status`（`order:1;flex:0 0 100%`），不挤附件 / 权限 / 模型选择器、不拖动发送键。 |
+| 入口 | 发送键**左侧紧邻**一个可发现的麦克风按钮（`pa-icon-btn ghost` + `Mic` 图标，带 `aria-label`/`title`）。麦克风 / 停止 / 取消包在 `.pa-voice-ctl`（`flex:none`）里，与发送键同属 `.pa-composer-bar`，同一行不换行。**idle 不常驻任何状态行 / 入口**（未配置 ASR 的说明只在按钮 `title` 里）；只有在用户**点了麦克风**且 hook 回 `asr_not_configured` 时，才短暂浮现短说明 + 「去设置」——放在独立 status 行 `.pa-voice-status`（`order:1;flex:0 0 100%`），不挤附件 / 权限 / 模型选择器、不拖动发送键；取消 / 切会话 / 点「去设置」后清掉临时提示。 |
 | 操作 | **点击开始录音，再点停止**（toggle，默认）；**长按作为可选增强，首期不做**。 |
 | 结果 | 转写文本**插入开始录制时的光标锚点**；**保留**用户在转写期间对草稿的后续编辑；**不自动发送**。 |
 | 草稿 | 只改输入框文本，**不清 draft、不清 replyTo（引用）**。 |

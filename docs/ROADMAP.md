@@ -175,6 +175,8 @@
 
 验证：服务端假 PCM / 假 provider / 内存凭据 / 强制 tmp 数据目录（不联网、不开麦、不产生费用）；前端纯逻辑（取消 0 请求、开始 1 次 getUserMedia、权限拒绝、页面隐藏、真实 16k WAV、真重采样、锚点插入、stale 对话不插入、IME、replyTo 共存、390）。真机（iOS 录音/键盘、真实音质、真实云 ASR、本地模型速度）**未验证**，不 claim。
 
+语音入口克制（2026-10-16，用户反馈「升级后聊天栏多了一个去设置」，`release-candidate-validation`，**未发布 / 未 push / 未 tag**）：根因是我们自有的 `VoiceInput.tsx` 让**未配置 ASR 就常驻** status 行 + 「去设置」（非 Pi 上游）。改为 idle 只保留发送键左侧麦克风图标（未配说明放 `title`）；**只有点麦克风且 hook 回 `asr_not_configured`** 才短暂浮现短说明 + 「去设置」（打开设置 › 模型、保持路由，点击 / 取消 / 切会话都清临时提示）。**beta.24 里是旧行为，本修复未发布。** 实跑：`e2e/voice-input-ui.mjs` 38/38（idle 无 `voice-status`/`voice-open-settings`；点未配置才出现且 0 getUserMedia / 0 转写；已配录音原流程；390 / 矮窗发送键不位移、引用条不动）+ `composer-compact` 全通过。设置 IA 整体重排由另一 owner 负责（模型页 / 语音配置页 / Laya 归电脑操作），本树不重复大改。
+
 麦克风位置修正（2026-10-16，本树本地未发布，用户调整）：`e2e/voice-input-ui.mjs` 加几何断言——`voice-mic` 与 `.pa-composer-bar .pa-send` 必须同一 composer-bar、DOM 在发送键之前、同一行（中心 y 差 ≤6px）、紧贴其左（间隙 ≤14px），且不在 `.pa-composer-tools` 里；单聊 / 群聊 / 390 / 1440×560 矮窗各验一遍，并断言录音时发送键 x 不位移（提示走独立 status 行）。实跑：该脚本全通过；`e2e/composer-compact.mjs`（单 / 群 / 子三入口 390 / 1280 / 1440）回归全通过；web `tsc --noEmit` + `vite build` 通过。未跑全量 e2e。
 
 ## Pi 依赖升级 1.1.0 → 1.2.0（本轮，`deps/pi-1.2.0` 四提交已 `--no-ff` 合入候选 `release-candidate-validation`（合并提交 `bfd621a`），**未 push / 未 tag / 未打包**）
@@ -183,11 +185,11 @@
 |---|---|---|
 | 批准跟进 Pi 官方 1.1.0 → 1.2.0 升级；硬约束：不改 Pi 本体 / 不 fork / 不改 `node_modules` 源码 / 不 monkeypatch 私有接口，兼容逻辑只放自有 `pi-adapter` 与扩展、走公开 API；独立提交、模块化、便于以后继续升级 | 已合入候选 + 本地验证（未打包） | 三个 `@earendil-works` 包一致升到 `^1.2.0`（锁文件锁 1.2.0），锁差异只涉及 8 个 Pi 包（含上游不再依赖的 `@earendil-works/chord` 被移除）；唯一 breaking（`before_agent_start` 变 union）已在 ext-memory / ext-skills 按 `messageType` 收窄；版本记录（compat / third-party / NOTICES）同步，每周自动升级改为走 `scripts/pi-update.mjs`（`testedWith` 只在测试通过后 `finalize` 记录，bump 只写 target 预期）。新增本地验证：`pi-mcp-1.2` 3/3、`pi-1.2-custom-provider` 3/3、`pi-1.2-boot-context` 5/5。设计与验收见 `docs/design/pi-1.2-upgrade.md`，结果与未验边界见 HANDOFF 本轮条目。 |
 
-## Pi 依赖升级 1.2.0 → 1.3.0（本轮，独立分支 `deps/pi-1.3.0`，基 `release-candidate-validation` `decb8eb`，**独立验证进行中**；未合入候选 / 未 push / 未 tag / 未打包；不改已发布 beta.24）
+## Pi 依赖升级 1.2.0 → 1.3.0（本轮，分支 `deps/pi-1.3.0`（`bbd5940`）；**已 `--no-ff` 合入候选树** `release-candidate-validation`（合并 `dc93fe4`，候选 HEAD `0069d36`，`decb8eb` 仍是祖先可回滚）；未 push / 未 tag / 未打包；不改已发布 beta.24（tag `747c744` 未移）；不改已发布 beta.24）
 
 | 需求（用户原话大意） | 状态 | 说明 |
 |---|---|---|
-| 用户先要求只读审计、后同意「看看怎么升级吧」：独立分支做 Pi 1.3.0 升级适配；不改 Pi 本体 / 不 fork / 不改 `node_modules` / 不 monkeypatch；兼容逻辑只放自有 `pi-adapter` 与公开 API；独立提交、可回滚 | 已完成本轮独立验证，待合入（未发布） | 三个直连包 `^1.2.0 → 精确 1.3.0`（`pi-update` 改用 `--save-exact`，对齐上游 #10865 的精确 pin 政策）；lock 差异只涉及 7 个 `@earendil-works/*` + 3 条 spec。最高风险是 1.3 起 resume 会恢复转录里的 active tools（#10785）：已在真实 Pi 会话实测「server 移除 / hidden / 受限纯名单」不会复活，且**当前 eligible 的 direct/deferred 工具恢复保留（不裁掉 1.3 特性）**；已知残余：MCP 从 direct 改 deferred 对同一段被 resume 的会话不追溯（重新开会话才生效，仅可见性/token 回归，非越权）；强约束工具面用纯工具名列表 / `excludeTools`。另实测 codemode 跨会话 worker 上限 2（第 3 个可读错误、不排队）、kimi-coding 转 openai-completions 随 Pi 目录自动生效（不误伤私有 relay）、坏 JSON 工具参数不执行残缺字段。设计与实测见 `docs/design/pi-1.3-upgrade.md`。**未验**：全量 e2e、真机、真实云/MCP、`compat.json` `testedWith` 仍停在 1.2.0（待全量通过再 `finalize`）。 |
+| 用户先要求只读审计、后同意「看看怎么升级吧」：独立分支做 Pi 1.3.0 升级适配；不改 Pi 本体 / 不 fork / 不改 `node_modules` / 不 monkeypatch；兼容逻辑只放自有 `pi-adapter` 与公开 API；独立提交、可回滚 | 已合入候选 + 补验（未发布） | 三个直连包 `^1.2.0 → 精确 1.3.0`（`pi-update` 改用 `--save-exact`，对齐上游 #10865 的精确 pin 政策）；lock 差异只涉及 7 个 `@earendil-works/*` + 3 条 spec。最高风险是 1.3 起 resume 会恢复转录里的 active tools（#10785）：已在真实 Pi 会话实测「server 移除 / hidden / 受限纯名单」不会复活，且**当前 eligible 的 direct/deferred 工具恢复保留（不裁掉 1.3 特性）**；已知残余：MCP 从 direct 改 deferred 对同一段被 resume 的会话不追溯（重新开会话才生效，仅可见性/token 回归，非越权）；强约束工具面用纯工具名列表 / `excludeTools`。另实测 codemode 跨会话 worker 上限 2（第 3 个可读错误、不排队）、kimi-coding 转 openai-completions 随 Pi 目录自动生效（不误伤私有 relay）、坏 JSON 工具参数不执行残缺字段。设计与实测见 `docs/design/pi-1.3-upgrade.md`。**未验**：全量 e2e、真机、真实云/MCP、`compat.json` `testedWith` 仍停在 1.2.0（待全量通过再 `finalize`）。 |
 
 ## 从消息另开会话分支（本轮，`pi-session-fork` 树，基 `deps/pi-1.2.0` `2948a05`，**已 `--no-ff` 合入候选 `release-candidate-validation`；未 push / 未 tag / 未打包**）
 

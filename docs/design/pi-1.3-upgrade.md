@@ -1,6 +1,6 @@
 # Pi SDK 1.2.0 → 1.3.0 升级（设计 + 验收）
 
-- 状态：**独立分支 `deps/pi-1.3.0` 已实施并完成本轮本地验证，待合入**（基发布树 `release-candidate-validation` `decb8eb`）；**未合入候选 / 未 push / 未 tag / 未打包，未改动已公开发布的 beta.24**。
+- 状态：**已 `--no-ff` 合入候选树 `release-candidate-validation`（合并提交 `dc93fe4`，`decb8eb` 仍是祖先，可整条回滚）；未 push / 未 tag / 未打包**。原实施分支 `deps/pi-1.3.0`（`bbd5940`）保留。合入后又在候选树补了 H6 的 payload 实证（`3bc1094`）与一个自有语音 UI 修复（`0069d36`，与本升级无关）。**未改动已公开发布的 beta.24（tag `747c744` 未移动、候选树 HEAD 仍不是发布点）。**
 - 用户新授权：已完成只读审计后，用户已同意开展这次独立升级适配；本页取代审计报告中「本轮未授权」的旧口径。
 - 约束：不改 Pi 本体 / 不 fork / 不改 `node_modules` 内上游文件 / 不 monkeypatch 私有接口；兼容逻辑只放自有 `pi-adapter` 与 `packages/ext-*`，只走公开 API；三个直连包**精确 pin**。
 - 上游来源：npm `latest` = 1.3.0（publish `2026-10-15T19:13:30Z`），GitHub tag `v1.3.0` CHANGELOG 同一版本；三个包 `pi-coding-agent` / `pi-ai` / `pi-mcp` 同版。`main` 的 `[Unreleased]` 为空，不按 main 走。
@@ -60,11 +60,11 @@
 - **H4 codemode worker 上限**（`test/pi-1.3-codemode-limit.test.ts`）：worker 在**一个进程里跨会话共享、上限 2**（`#10748`）。真实 3 会话并发实测：前两个各占 1 个 worker（脚本各 ≈3s）正常完成，**第 3 个立刻**拿到可读错误 `Codemode worker limit reached (2 workers are still running or shutting down). Retry after they exit.`，会话不挂起、无自动重试队列。结论：多会话单进程下第 3 个 codemode 调用会**快速失败并可重试**，不是排队；上层可把它当「稍后重试」。取消后 worker 真正退出（受 SDK 计数控制）——不绕 SDK 上限另开进程。
 - **H3 Kimi 协议**（`test/pi-1.3-providers.test.ts`）：`kimi-coding` 的 4 个模型全部 `openai-completions`，**来自 Pi 目录 metadata**（我们经 `runtime.getProviders` 动态读取，不硬编码协议）。自定义服务写进 Pi `models.json` 的 `baseUrl` **原样保留**（含不带 `/v1` 的私有 relay），不因为 1.3 的新要求去给所有中转补 `/v1`。残留：用户若在**自己的** `models.json` 手写 `kimi-coding` 覆盖且不带 `/v1`，会被 1.3 拒绝——我们只在 `{dataDir}/models.json` 写自定义 service，正常不会命中；如命中需要手动补 `/v1`（不自动改用户私有配置）。
 - **H5 工具参数坏 JSON**（`test/pi-1.3-tool-args.test.ts`）：带 `argumentsError` 的工具调用**校验失败且不执行残缺字段**，模型看到 `Invalid arguments for tool "write": Invalid JSON. Raw arguments: {...`，目标文件未被创建。嵌套 codemode 调用仍走 `ext-approval`、abort 后 `final_delete` 不执行 —— 由既有 `test/tool-discovery.test.ts` 13/13 覆盖。
-- **H6 模型切换丢旧 thinking / 思考档位**：旧模型 thinking 不再当文本喂给新模型（上游 #10995），对我们原地切模型是正收益。档位仍全部来自 Pi 目录（`getSupportedThinkingLevels`，签名未变）：`test/thinking-levels.test.ts`、`test/subagent-thinking-options.test.ts` 在 1.3.0 下通过（`xhigh`/`max` union、不灵空补档位）。同一模型改档位是否保持 prompt cache（GPT-6）由 Pi/`pi-ai` 负责，我们自有层不额外加盐、不改缓存 ID。
+- **H6 模型切换丢旧 thinking / 思考档位**：旧模型 thinking 不再当文本喂给新模型（上游 #10995），对我们原地切模型是正收益。**已在候选树做 payload 级实证**（`test/pi-1.3-model-switch-thinking.test.ts`）：用 loopback OpenAI 兼容中转记录 new provider 实际收到的 HTTP 请求体——切换前 faux 模型产出的 thinking block 只在转录里、**不出现在 payload**，而普通用户文字、引用历史、本次选用技能正文**都仍在**（正对照：旧模型的正文回复也仍在，证明不是整条 assistant 消息被丢）。档位仍全部来自 Pi 目录（`getSupportedThinkingLevels`，签名未变）：`test/thinking-levels.test.ts`、`test/subagent-thinking-options.test.ts` 在 1.3.0 下通过（`xhigh`/`max` union、不灵空补档位）。同一模型改档位是否保持 prompt cache（GPT-6）由 Pi/`pi-ai` 负责，我们自有层不额外加盐、不改缓存 ID。
 
 ## 5. 验收（本轮实际跑了什么）
 
-Node 24.19.0（`/Users/dengdeng/.local/node-v24.19.0/bin/node`，未系统升级）；依赖装在 `deps-pi-1.3.0` 自有 `node_modules`（官方 `npm ci --ignore-scripts` + `pi-update` bump，独立 npm cache，无源码 patch）。
+Node 24.19.0（`/Users/dengdeng/.local/node-v24.19.0/bin/node`，未系统升级）；依赖装在独立 worktree 自有 `node_modules`（官方 `npm ci --ignore-scripts` + `pi-update` bump，无源码 patch）。**合入候选树后**又把候选树自己的 `node_modules` 从 1.2.0 用官方 `npm ci --ignore-scripts` 升到 1.3.0（与 `deps-pi-1.3.0` 逐文件摘要一致、无 symlink / APFS clone、不改其它 Worktree）；候选树的定向测试与 UI fixture 都在这份 1.3.0 上跑。全量 757 项只在 `deps-pi-1.3.0` 树跑，**不在候选树重复**（指令：不重跑全量，只补新 payload + 关键 smoke + 基本 UI）。
 
 | 检查 | 结果 |
 |---|---|
@@ -72,15 +72,16 @@ Node 24.19.0（`/Users/dengdeng/.local/node-v24.19.0/bin/node`，未系统升级
 | 1.2 兼容面定向（`pi-compat` / `pi-events-union` / `pi-mcp-1.2` / `pi-1.2-boot-context` / `pi-1.2-custom-provider` / `pi-sdk-boundary`） | **19/19** |
 | 受影响面（`tool-discovery` / `session-fork` / `pi-entry-mapping` / `theme-ai` / `context-skill-pick-http` / `model-registry` / `thinking-levels` / `subagent-thinking-options` / `skill-assignments` / `mcp` / `mcp-install` / `model-picks`） | **70/70** |
 | 新增 1.3 回归（`pi-1.3-tool-restore` / `pi-1.3-codemode-limit` / `pi-1.3-providers` / `pi-1.3-tool-args`） | **12/12**（7+1+3+1；主会话独立重跑，0 fail / 0 skip，约 29.4 秒；更正初报的 14/14） |
+| **合入候选后新补 H6 payload**（`pi-1.3-model-switch-thinking`，loopback HTTP 真实请求体） | **1/1**（候选树实跑：`含thinking=false 含旧正文=true 含技能=true 含引用=true`）；含 SDK 边界守护共 **14/14** |
+| 受影响 UI fixture（候选树实跑，`apps/web` 用 1.3.0 构建产物） | `e2e/model-ui`、`model-services-ui`、`skill-pick-ui`、`session-fork-ui` 5/5、`theme-ai-ui` 5/5、`voice-input-ui` 38/38、`composer-compact` 全通过 |
 | `npm run check:pi` | finalize 前基线仍为 1.2.0 并提示待验证；finalize 后已核验安装版本 / 兼容基线 / 当次 npm latest 均为 1.3.0 |
 | `npm run build -w apps/web` | `vite build` 通过（1255.88 kB 主包） |
-| 全量 `npm test`（769 项） | **758 过 / 1 失败 / 10 跳过**；唯一失败 `shared-computer 合并脚本` 是 macOS bsdtar 不支持 `--skip-old-files` 的**既有基线**（发布树 `decb8eb` 上同样失败），**1.3.0 无新增失败** |
+| 全量 `npm test`（769 项，在 `deps-pi-1.3.0` 树跑） | **758 过 / 1 失败 / 10 跳过**；唯一失败 `shared-computer 合并脚本` 是 macOS bsdtar 不支持 `--skip-old-files` 的**既有基线**（发布树 `decb8eb` 上同样失败），**1.3.0 无新增失败** |
 
 ## 6. 未验（明确边界，不 claim）
 
-- 未真机运行 1.3.0；未跑全量 `e2e/run.mjs`、桌宠 e2e；未真机安装包 / 自动更新。
-- 未连真实云模型 / 真实 MCP（cua-driver、真实 http 服务）/ 真实自定义服务 Key（只用 loopback + 假 Key）。
-- H6 的「切换模型后旧 thinking 不进 provider payload」未在 payload 层直接断言（属 `pi-ai` 内部；本轮只验证档位目录与既有测试无回归）。
+- 未真机运行 1.3.0；未跑全量 `e2e/run.mjs`（第 1 步「首次运行向导」仍等旧「设为默认模型」按钮，是**既有基线失败**，与本升级无关；受影响 UI 改用各自 standalone fixture 验证，见 §5）、未跑桌宠 e2e；未真机安装包 / 自动更新。
+- 未连真实云模型 / 真实 MCP（cua-driver、真实 http 服务）/ 真实自定义服务 Key（只用 loopback + 假 Key）。H6 payload 断言用 loopback 中转的 HTTP 请求体（真协议目标），不是 faux 的预变换 context。
 - H4 的「取消后 worker 实际退出」官方描述针对 Bun，Node 下由 SDK 计数保证；本轮验证了上限与错误可读性，未测取消后的额度回收时长。
 - 官方安全公告未取（GitHub API 限流）——**「未提到 CVE」不等于「无漏洞」**，升级不以「安全紧急」为由。
 - 未 push / 未 tag / 未打包；`compat.json` 已 `finalize` 为 `{ "testedWith": "1.3.0" }`（定向通过、全量无新增失败后提升；全量仍有一项既有基线失败，完整 e2e / 真机仍属未验边界）。
