@@ -494,7 +494,16 @@ app.get("/api/agents/:id/avatar", (c) => {
 });
 app.get("/api/agents/:id/messages", (c) => {
 	const before = c.req.query("before");
-	return c.json(listMessages(c.req.param("id"), { conversationId: c.req.query("conversation") || undefined, before: before ? Number(before) : undefined, limit: Number(c.req.query("limit") ?? 200) }));
+	const beforeSeq = c.req.query("beforeSeq");
+	return c.json(
+		listMessages(c.req.param("id"), {
+			conversationId: c.req.query("conversation") || undefined,
+			before: before ? Number(before) : undefined,
+			// 稳定游标：同一毫秒的多条消息不会被分页边界跳过 / 重复；不传时保持旧行为
+			beforeSeq: beforeSeq ? Number(beforeSeq) : undefined,
+			limit: Number(c.req.query("limit") ?? 200),
+		}),
+	);
 });
 app.post("/api/agents/:id/messages", async (c) => {
 	const id = c.req.param("id");
