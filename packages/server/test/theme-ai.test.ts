@@ -333,3 +333,125 @@ test("应用自带 Mock 模型也走通真实链路（e2e 用同一分支）", a
 	}
 	assert.ok(mockStats.steps >= 2, "至少两次模型调用（提交工具 + 工具结果回话）");
 });
+
+// ------------------------------------------------------------------ 面板显式选模型（beta.26 候选）
+// 主题设计面板可显式传 `model`：服务端按 canonical (provider,id) 校验并**只用这一个**，
+// 同 id 不同 provider 必须选对；无效 / 缺凭据明确报错、0 请求、**不 fallback 到别的收费模型**；
+// 结果带回本轮 resolved model 供 UI 核验；改模型不写回助理主模型。
+
+test("显式选模型：同 id 不同 provider 只走选中的那个，结果带 resolved model", async () => {
+	const mockA = await startThemeDraftMock([{ toolCall: { name: "theme_draft", args: { manifest: validManifest({ name: "A" }) } } }, { text: "A 完成" }]);
+	const mockB = await startThemeDraftMock([{ toolCall: { name: "theme_draft", args: { manifest: validManifest({ name: "B" }) } } }, { text: "B 完成" }]);
+	// 两个服务各有同名模型 id；agent 主模型指向 A，但本轮显式选 B。
+	const pA = await withProvider("主题渠道A", mockA);
+	const pB = await withProvider("主题渠道B", mockB);
+	mkAgent("ta_sameid", pA.id);
+	resetThemeDraftInFlight();
+	try {
+		const r = await draftTheme({ turnId: "t1", prompt: "用 B", agentId: "ta_sameid", model: { provider: pB.id, id: "theme-mock" } });
+		assert.equal(r.ok, true, JSON.stringify(r));
+		if (!r.ok) return;
+		assert.equal(r.manifest.name, "B", "必须用选中的 B 渠道");
+		assert.equal(r.model.provider, pB.id);
+		assert.equal(r.model.id, "theme-mock");
+		assert.equal(r.model.providerName, "主题渠道B", "结果带回实际服务短名");
+		assert.ok(r.model.name, "结果带回模型友好名");
+		assert.ok(mockB.seen.length >= 1, "选中的 B 渠道应收到请求");
+		assert.equal(mockA.seen.length, 0, "没选的 A 渠道不能收到任何请求");
+	} finally {
+		mockA.close();
+		mockB.close();
+		await customProviders.remove(pA.id);
+		await customProviders.remove(pB.id);
+	}
+});
+
+test("显式选模型：已不存在 / 无效的模型明确报错，0 请求，不 fallback", async () => {
+	const mock = await startThemeDraftMock([{ text: "不该被调用" }]);
+	const p = await withProvider("主题无效模型", mock);
+	mkAgent("ta_badmodel", p.id);
+	resetThemeDraftInFlight();
+	try {
+		const r = await draftTheme({ turnId: "t1", prompt: "x", agentId: "ta_badmodel", model: { provider: p.id, id: "no-such-model" } });
+		assert.equal(r.ok, false);
+		if (r.ok) return;
+		assert.ok(r.errors.some((e) => e.path === "model" && e.code === "value"), "应明确报「模型不存在」");
+		assert.match(r.errors.map((e) => e.message).join(" "), /不会自动改用别的模型/);
+		assert.equal(mock.seen.length, 0, "无效模型不能退到别的模型发请求");
+	} finally {
+		mock.close();
+		await customProviders.remove(p.id);
+	}
+});
+
+test("显式选模型：服务缺少凭据明确报错，0 请求（不 fallback 到别的收费模型）", async () => {
+	const mock = await startThemeDraftMock([{ text: "不该被调用" }]);
+	// 没有 apiKey 也没有 noKey → 该服务 configured=false（等同云端凭据不可用）。
+	const p = await customProviders.save(null, { name: "主题未配置服务", api: "openai-completions", baseUrl: mock.url, models: [{ id: "theme-mock", input: ["text", "image"], reasoning: false }] } as never);
+	mkAgent("ta_nocred", null);
+	resetThemeDraftInFlight();
+	try {
+		const r = await draftTheme({ turnId: "t1", prompt: "x", agentId: "ta_nocred", model: { provider: p.id, id: "theme-mock" } });
+		assert.equal(r.ok, false);
+		if (r.ok) return;
+		assert.ok(r.errors.some((e) => e.path === "model" && e.code === "required"), "应明确报缺少凭据");
+		assert.equal(r.model?.provider, p.id, "失败也应带回目标模型，便于 UI 显示真实来源");
+		assert.equal(mock.seen.length, 0, "凭据不可用时不能发请求");
+	} finally {
+		mock.close();
+		await customProviders.remove(p.id);
+	}
+});
+
+test("显式选模型：带参考图只认支持视觉的模型；不支持则 0 请求 + visionUnsupported", async () => {
+	const visionMock = await startThemeDraftMock([{ toolCall: { name: "theme_draft", args: { manifest: validManifest({ name: "看图" }) } } }, { text: "参考了图片" }]);
+	const pVision = await withProvider("主题显式视觉", visionMock, ["text", "image"]);
+	mkAgent("ta_explicit_vision", pVision.id);
+	resetThemeDraftInFlight();
+	const f1 = saveUpload("ta_explicit_vision", "ref.png", PNG_1X1);
+	try {
+		const r = await draftTheme({ turnId: "t1", prompt: "照图配色", agentId: "ta_explicit_vision", model: { provider: pVision.id, id: "theme-mock" }, images: [{ attachmentId: f1.id, mime: "image/png" }] });
+		assert.equal(r.ok, true, JSON.stringify(r));
+		if (!r.ok) return;
+		const content = [...(visionMock.seen[0].messages ?? [])].reverse().find((m: any) => m.role === "user")?.content;
+		assert.ok(Array.isArray(content) && content.some((x: any) => x.type === "image_url"), "显式视觉模型应收到 image block");
+		assert.equal(r.model.provider, pVision.id);
+	} finally {
+		visionMock.close();
+		await customProviders.remove(pVision.id);
+	}
+
+	const noVisionMock = await startThemeDraftMock([{ text: "不该被调用" }]);
+	const pNo = await withProvider("主题显式无视觉", noVisionMock, ["text"]);
+	mkAgent("ta_explicit_novision", null);
+	resetThemeDraftInFlight();
+	const f2 = saveUpload("ta_explicit_novision", "ref.png", PNG_1X1);
+	try {
+		const r = await draftTheme({ turnId: "t1", prompt: "看图", agentId: "ta_explicit_novision", model: { provider: pNo.id, id: "theme-mock" }, images: [{ attachmentId: f2.id, mime: "image/png" }] });
+		assert.equal(r.ok, false);
+		if (r.ok) return;
+		assert.equal(r.visionUnsupported, true);
+		assert.equal(r.model?.provider, pNo.id, "失败也带回目标模型");
+		assert.equal(noVisionMock.seen.length, 0, "不支持视觉时不发请求，也不偷偷换服务");
+	} finally {
+		noVisionMock.close();
+		await customProviders.remove(pNo.id);
+	}
+});
+
+test("显式选模型不改助理主模型 / 全局默认（仅这一次草稿生效）", async () => {
+	const mock = await startThemeDraftMock([{ toolCall: { name: "theme_draft", args: { manifest: validManifest({ name: "只这一轮" }) } } }, { text: "好" }]);
+	const p = await withProvider("主题不改主模型", mock);
+	mkAgent("ta_no_mutate", p.id);
+	const before = db.prepare("SELECT model_provider, model_id FROM agents WHERE id = ?").get("ta_no_mutate") as { model_provider: string | null; model_id: string | null };
+	resetThemeDraftInFlight();
+	try {
+		const r = await draftTheme({ turnId: "t1", prompt: "x", agentId: "ta_no_mutate", model: { provider: p.id, id: "theme-mock" } });
+		assert.equal(r.ok, true, JSON.stringify(r));
+	} finally {
+		mock.close();
+		await customProviders.remove(p.id);
+	}
+	const after = db.prepare("SELECT model_provider, model_id FROM agents WHERE id = ?").get("ta_no_mutate") as { model_provider: string | null; model_id: string | null };
+	assert.deepEqual(after, before, "主题设计选模型不能写回助理表");
+});
