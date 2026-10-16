@@ -114,3 +114,78 @@ test("参考图默认不导出：只有显式标为 background / decor 的素材
 	// 没有任何素材图时，导出完全不含 images
 	assert.equal(exportCustomTheme(manifest()).includes("images"), false);
 });
+
+// ------------------------------------------------------------------ 「使用模型」纯逻辑（beta.26 候选）
+import { buildThemeModelChoice, refVisionStatus, themeModelButtonText, themeModelLabel, isVisionModel } from "../apps/web/src/themes/model-choice.ts";
+
+const PROVIDERS = [
+	{ id: "alpha", name: "阿尔法" },
+	{ id: "beta", name: "贝塔" },
+];
+const MODELS = [
+	{ provider: "alpha", id: "gpt-x", name: "GPT-X", providerName: "阿尔法", input: ["text", "image"] },
+	{ provider: "beta", id: "gpt-x", name: "GPT-X", providerName: "贝塔", input: ["text"] },
+	{ provider: "alpha", id: "o-3", name: "O-3", providerName: "阿尔法", input: ["text"] },
+];
+
+test("跟随当前助理：助理显式选过 → source=agent，initial 就是助理的模型", () => {
+	const c = buildThemeModelChoice({ models: MODELS, providers: PROVIDERS, agentModel: { provider: "alpha", id: "gpt-x" }, agentExplicit: true, hasImages: false });
+	assert.equal(c.source, "agent");
+	assert.deepEqual(c.initial, { provider: "alpha", id: "gpt-x" });
+	assert.equal(themeModelButtonText(c.initial, c.options, { defaultPrefix: false }), "阿尔法 · GPT-X");
+});
+
+test("助理没显式选 → 跟随默认模型并明确标「默认模型 · xxx」，不默跑", () => {
+	const c = buildThemeModelChoice({ models: MODELS, providers: PROVIDERS, agentModel: { provider: "beta", id: "gpt-x" }, agentExplicit: false, hasImages: false });
+	assert.equal(c.source, "default");
+	assert.equal(themeModelButtonText(c.initial, c.options, { defaultPrefix: true }), "默认模型 · 贝塔 · GPT-X");
+});
+
+test("没有任何可用模型 → source=none，按钮显示未选择", () => {
+	const c = buildThemeModelChoice({ models: [], providers: PROVIDERS, agentModel: null, agentExplicit: false, hasImages: false });
+	assert.equal(c.source, "none");
+	assert.equal(c.initial, null);
+	assert.equal(themeModelButtonText(c.initial, c.options), "未选择模型");
+});
+
+test("同 id 不同 provider 按 canonical 区分：按钮文案和视觉判断都不串", () => {
+	// 同一个 id「gpt-x」在 alpha（支持视觉）和 beta（不支持）各有一条。
+	const alpha = MODELS[0];
+	const beta = MODELS[1];
+	assert.equal(themeModelLabel(alpha), "阿尔法 · GPT-X");
+	assert.equal(themeModelLabel(beta), "贝塔 · GPT-X");
+	const c = buildThemeModelChoice({ models: MODELS, providers: PROVIDERS, agentModel: { provider: "beta", id: "gpt-x" }, agentExplicit: true, hasImages: false });
+	assert.equal(refVisionStatus({ provider: "alpha", id: "gpt-x" }, c.options), true, "alpha 的 gpt-x 支持视觉");
+	assert.equal(refVisionStatus({ provider: "beta", id: "gpt-x" }, c.options), false, "beta 的 gpt-x 不支持视觉");
+	assert.equal(refVisionStatus({ provider: "gamma", id: "gpt-x" }, c.options), null, "不在已配置列表里 → 无法确认");
+});
+
+test("带参考图：菜单只给支持视觉的模型；当前模型不支持看图则被拦下（保留图片）", () => {
+	const withImg = buildThemeModelChoice({ models: MODELS, providers: PROVIDERS, agentModel: { provider: "beta", id: "gpt-x" }, agentExplicit: true, hasImages: true });
+	assert.deepEqual(
+		withImg.menuOptions.map((m) => `${m.provider}/${m.id}`),
+		["alpha/gpt-x"],
+		"带图时菜单只列支持视觉的聊天模型",
+	);
+	// 当前选中的 beta 不支持视觉 → 不许生成，但 initial（图片之外的选择）仍在，不清空。
+	assert.equal(refVisionStatus(withImg.initial, withImg.options), false);
+	// 用户改成 alpha 后就能生成
+	assert.equal(refVisionStatus({ provider: "alpha", id: "gpt-x" }, withImg.options), true);
+	// 不带图时不过滤
+	const noImg = buildThemeModelChoice({ models: MODELS, providers: PROVIDERS, agentModel: { provider: "beta", id: "gpt-x" }, agentExplicit: true, hasImages: false });
+	assert.equal(noImg.menuOptions.length, MODELS.length, "不带图时列出全部已配置聊天模型（不做视觉过滤）");
+});
+
+test("视觉判定以 input 为准，不猜模型名", () => {
+	assert.equal(isVisionModel({ input: ["text", "image"] }), true);
+	assert.equal(isVisionModel({ input: ["text"] }), false);
+	assert.equal(isVisionModel({}), false);
+	assert.equal(isVisionModel(null), false);
+	// 名字里带 vision 但没有 image 模态 → 仍算不支持
+	assert.equal(isVisionModel({ name: "vision-pro", input: ["text"] }), false);
+});
+
+test("按钮文案：ref 不在已配置列表时退回 provider/id，绝不借用别的模型的友好名", () => {
+	const c = buildThemeModelChoice({ models: MODELS, providers: PROVIDERS, agentModel: null, agentExplicit: false, hasImages: false });
+	assert.equal(themeModelButtonText({ provider: "gamma", id: "unknown" }, c.options), "gamma · unknown");
+});

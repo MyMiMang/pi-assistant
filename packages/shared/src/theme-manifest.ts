@@ -489,12 +489,35 @@ export interface ThemeDraftRequest {
 	previousManifest?: ThemeManifestV1;
 	/** 走哪个助理 / agent 的模型（后端按当前 agent 模型，不猜模型能力）。 */
 	agentId?: string;
+	/**
+	 * 面板里显式选定的模型（可选）。
+	 * 缺省 = 旧客户端语义：按 agentId 的当前助理模型（未设则默认模型）；
+	 * 传了就必须是**已配置、真实存在**的聊天模型，服务端会校验；
+	 * 无效 / 已删除 / 缺凭据一律明确报错，**不 fallback 到另一个收费模型**。
+	 * 只作用于这一次草稿请求，**不改**助理主模型 / 模型池 / 全局默认。
+	 */
+	model?: ThemeModelRef;
+}
+
+/**
+ * 主题设计这一轮实际使用的模型（provider + canonical id + 展示用短名）。
+ */
+export interface ThemeModelRef {
+	/** 模型服务 id（canonical，和模型 id 一起唯一定位；同一 id 在不同渠道是两条）。 */
+	provider: string;
+	id: string;
+	/** 展示用：服务短名（服务端 providerNames；前端只用它显示，不做选择依据）。 */
+	providerName?: string;
+	/** 展示用：模型友好名。 */
+	name?: string;
 }
 
 export type ThemeDraftResult =
 	| {
 			ok: true;
 			turnId: string;
+			/** 这一轮**实际使用**的模型（服务端解析结果，供前端核对 label 与真实 payload 一致）。 */
+			model: ThemeModelRef;
 			/** AI 产出的合法 manifest（已通过 validateThemeManifest）。 */
 			manifest: ThemeManifestV1;
 			/** 解释性文字（对话里给用户看）。 */
@@ -506,6 +529,8 @@ export type ThemeDraftResult =
 			turnId: string;
 			/** 结构化错误（manifest 校验失败 / 模型不支持视觉 / 其它）。 */
 			errors: ThemeError[];
+			/** 解析到的目标模型（失败时若已解析则带上，供 UI 显示真实来源；没解析到则为空）。 */
+			model?: ThemeModelRef;
 			/** 当前 agent 模型不支持视觉时为 true（UI 提示换模型或仅文字）。 */
 			visionUnsupported?: boolean;
 			text?: string;

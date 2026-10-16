@@ -1,9 +1,11 @@
 import { Loader2, Sparkles, Undo2, Upload, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { stripReferenceImages, validateThemeManifest, type ThemeDraftRequest, type ThemeDraftResult, type ThemeImageRef, type ThemeManifestV1 } from "@pi-assistant/shared";
+import { stripReferenceImages, validateThemeManifest, type ThemeDraftRequest, type ThemeDraftResult, type ThemeImageRef, type ThemeManifestV1, type ThemeModelRef } from "@pi-assistant/shared";
 import type { Attachment } from "../types";
 import { applyTheme, setAppearance, useStore } from "../store";
 import { customSkinId } from "../themes/manifest";
+import { buildThemeModelChoice, refVisionStatus, themeModelButtonText, themeModelLabel } from "../themes/model-choice";
+import { ModelPickerButton, useConfiguredModels, useModelPicks } from "./ModelPicker";
 import { exportCustomTheme, installCustomThemes, newThemeId, saveCustomTheme } from "../themes/custom-store";
 import { registerTheme, unregisterTheme } from "../themes/registry";
 import { cancelPreview, commitPreview, revisePreview, startPreview, undoPreview, type AppearanceSnapshot, type PreviewEffects, type PreviewSession } from "../themes/preview";
@@ -55,10 +57,12 @@ export interface ThemeDesignerProps {
 	uploadFn?: (f: File) => Promise<Attachment>;
 	/** 当前助理 id（后端按它选模型；不传则请求会缺少 agentId 被拒绝）。 */
 	agentId?: string;
+	/** 「没有可用模型」时跳到现有「设置 › 模型服务」页（不额外弹配置框）。 */
+	onOpenModels?: () => void;
 	onSaved?: (m: ThemeManifestV1) => void;
 }
 
-export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, agentId, onSaved }: ThemeDesignerProps) {
+export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, agentId, onOpenModels, onSaved }: ThemeDesignerProps) {
 	const connected = !!onThemeDraft;
 	const [prompt, setPrompt] = useState("");
 	const [images, setImages] = useState<ThemeImageRef[]>([]);
@@ -69,6 +73,8 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 	const [text, setText] = useState("");
 	const [visionHint, setVisionHint] = useState(false);
 	const [renamed, setRenamed] = useState(false);
+	const [picked, setPicked] = useState<ThemeModelRef | null>(null);
+	const [resolvedModel, setResolvedModel] = useState<ThemeModelRef | null>(null);
 	const fileRef = useRef<HTMLInputElement>(null);
 	// 在飞轮次：关闭面板 / 发新一轮 / 保存后真 abort；晚到的响应丢弃，不应用。
 	const turns = useRef(new DraftTurns());
@@ -84,6 +90,41 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 
 	const draft = session?.current ?? initial ?? null;
 
+	// 「使用模型」：默认跟随当前助理（助理未显式选=默认模型，明确标「默认模型 · xxx」）；
+	// 直接在面板里换只影响这一次草稿请求（请求带 canonical provider/id 快照），**不改**助理主模型 / 模型池 / 全局默认。
+	const { models: configuredModels, providers, error: modelsError, reload: reloadModels } = useConfiguredModels();
+	const { picks } = useModelPicks();
+	const agent = useStore((s) => s.agents.find((a) => a.id === agentId));
+	const agentModel = agent?.model ?? null;
+	const agentExplicit = !!(agent?.model_provider && agent?.model_id);
+	const choice = useMemo(
+		() =>
+			buildThemeModelChoice({
+				models: configuredModels.map((m) => ({ provider: m.provider, id: m.id, name: m.name, providerName: m.providerName, input: m.input })),
+				providers: providers.map((p) => ({ id: p.id, name: p.name })),
+				agentModel,
+				agentExplicit,
+				hasImages: images.length > 0,
+			}),
+		[configuredModels, providers, agentModel, agentExplicit, images.length],
+	);
+	const selected = picked ?? choice.initial;
+	const visionStatus = refVisionStatus(selected, choice.options);
+	const blockedByVision = images.length > 0 && visionStatus !== true;
+	const noModel = !selected;
+	const needsSetup = choice.options.length === 0;
+	const defaultPrefix = !picked && choice.source === "default";
+
+	// 打开面板时回到「跟随当前助理」（不保留上一次面板内的临时选择）。
+	useEffect(() => {
+		if (open) {
+			setPicked(null);
+			setResolvedModel(null);
+			setText("");
+			setRenamed(false);
+		}
+	}, [open]);
+
 	// 关闭时若还在预览且未保存 → 完整恢复进入前的外观
 	const closeAndRestore = () => {
 		abortDraft();
@@ -94,6 +135,7 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 		setWarnings([]);
 		setText("");
 		setVisionHint(false);
+		setResolvedModel(null);
 		onClose();
 	};
 
@@ -126,6 +168,8 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 		try {
 			const req: ThemeDraftRequest = { turnId, prompt: prompt.trim(), previousManifest: previous };
 			if (agentId) req.agentId = agentId;
+			// 生成时快照当前选定模型（运行中就算 UI 变了也不会混进本轮）。
+			if (selected) req.model = { provider: selected.provider, id: selected.id };
 			if (images.length) req.images = images;
 			const res = await onThemeDraft(req, { signal });
 			// 迟到的响应（用户已关面板 / 又发了新一轮）一律丢弃，不应用、不报错。
@@ -133,10 +177,12 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 			if (res.ok) {
 				setText(res.text);
 				setWarnings(res.warnings ?? []);
+				setResolvedModel(res.model ?? null);
 				setSession((prev) => (prev ? revisePreview(prev, res.manifest, liveEffects) : startPreview(res.manifest, snapshot, liveEffects)));
 			} else {
 				setErrors(res.errors.map((e) => (e.path ? `${e.path}：${e.message}` : e.message)));
 				setVisionHint(!!res.visionUnsupported);
+				setResolvedModel(res.model ?? null);
 				setText(res.text ?? "");
 				setWarnings(res.warnings ?? []);
 			}
@@ -205,6 +251,11 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 		setTimeout(() => URL.revokeObjectURL(url), 30_000);
 	};
 
+	const goToModels = () => {
+		closeAndRestore();
+		onOpenModels?.();
+	};
+
 	return (
 		<Modal open={open} onClose={closeAndRestore} wide fixed title={<span className="flex items-center gap-2">用 AI 设计主题{renamed && <span className="text-xs font-normal text-mut2">已另存为新主题</span>}</span>} testId="theme-designer">
 			<div className="flex h-full min-h-0 flex-col gap-3 p-5 sm:flex-row">
@@ -215,6 +266,54 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 							<span className="text-mut2">下面整块界面就是真实预览；取消会完整恢复原来的外观。</span>
 						</div>
 					)}
+					<div className="rounded-xl border border-line px-3 py-2" data-testid="theme-model-row">
+						<div className="flex flex-wrap items-center gap-2">
+							<span className="text-sm text-mut">使用模型</span>
+							<ModelPickerButton
+								testid="theme-model"
+								id="theme-model"
+								models={choice.menuOptions}
+								providers={providers}
+								value={selected}
+								picks={picks}
+								onPick={(m) => setPicked({ provider: m.provider, id: m.id })}
+								text={themeModelButtonText(selected, choice.options, { defaultPrefix })}
+								disabled={busy || !connected || needsSetup}
+								onOpen={reloadModels}
+								placement="down"
+								buttonClass="max-w-[260px]"
+								title="这次主题设计用哪个模型；不影响助理主模型"
+								ariaLabel={`主题设计使用模型：${themeModelButtonText(selected, choice.options, { defaultPrefix })}`}
+								header={() => (
+									<div className="mb-1 rounded-lg border border-line px-2.5 py-1.5 text-[11px] text-mut" data-testid="theme-model-note">
+										只影响这次主题设计，不改助理主模型 / 模型池 / 全局默认。带参考图时只能选支持看图的模型。
+									</div>
+								)}
+							/>
+							{needsSetup && (
+								<Button size="sm" onClick={goToModels} data-testid="theme-model-configure">
+									去「设置 › 模型服务」配置
+								</Button>
+							)}
+							{!needsSetup && defaultPrefix && <span className="text-[11px] text-mut2">（助理未显式选模型，跟随默认）</span>}
+						</div>
+						{needsSetup && (
+							<div className="mt-1 text-xs text-amber-700 dark:text-amber-300" data-testid="theme-model-empty">
+								{modelsError ? "模型列表加载失败。" : "还没有配置可用的聊天模型。"}去「设置 › 模型服务」登录 / 选一个默认模型后回来（不会偷偷用别的收费模型）。
+							</div>
+						)}
+						{!needsSetup && noModel && <div className="mt-1 text-xs text-mut">请先选一个这次要用的模型。</div>}
+						{blockedByVision && (
+							<div className="mt-1 text-xs text-amber-700 dark:text-amber-300" data-testid="theme-model-vision-block">
+								{selected ? `「${themeModelButtonText(selected, choice.options)}」不支持看图，已保留你选的参考图。` : ""}换一个支持视觉的聊天模型才能带图生成；也可以去掉图片只用文字描述。
+							</div>
+						)}
+						{resolvedModel && (
+							<div className="mt-1 text-[11px] text-mut2" data-testid="theme-resolved-model">
+								本轮实际使用：{themeModelLabel(resolvedModel)}
+							</div>
+						)}
+					</div>
 					<label className="block text-sm">
 						<span className="mb-1 block text-mut">想要什么样的主题？</span>
 						<textarea
@@ -235,7 +334,7 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 					)}
 					{visionHint && (
 						<div className="rounded-xl border border-line bg-hover px-3 py-2 text-xs text-mut">
-							当前助理模型不支持看图：可以换一个支持视觉的模型，或只用文字描述（不会偷偷换到别的视觉服务 / 收费模型）。
+							所选模型不支持看图：请在上方切换支持视觉的模型，或去掉参考图只用文字描述。
 						</div>
 					)}
 					{errors.length > 0 && (
@@ -255,7 +354,7 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 					{text && <p className="text-sm text-mut">{text}</p>}
 
 					<div className="flex flex-wrap gap-2">
-						<Button variant="primary" onClick={doGenerate} disabled={busy || !connected || !prompt.trim()} data-testid="theme-generate">
+						<Button variant="primary" onClick={doGenerate} disabled={busy || !connected || !prompt.trim() || noModel || blockedByVision} data-testid="theme-generate">
 							{busy ? <Loader2 size={15} className="animate-spin" /> : session ? <Wand2 size={15} /> : <Sparkles size={15} />}
 							{session ? "继续修改" : "生成主题"}
 						</Button>

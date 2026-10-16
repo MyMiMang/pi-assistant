@@ -1,6 +1,6 @@
 # 外观主题：默认暗夜、移除极简、可爱像素风与用户 DIY（设计）
 
-状态：**P1 已实现**（默认暗夜 + 移除极简 + 迁移 + 首屏预置）；**P2 像素风已实现**；**P3 DIY 的 schema / 引擎 / 库存 / 预览事务 / 管理 UI 已实现**，**AI 后端已接通**（`POST /api/themes/draft` + 临时专用 Pi 会话，见 §5.7）。入口只有「设置 → 外观 → 用 AI 设计主题」；用户已明确**取消** `/主题设计` slash 命令，不注册任何 slash、不注入 prompt、不加命令列表。
+状态：**P1 已实现**（默认暗夜 + 移除极简 + 迁移 + 首屏预置）；**P2 像素风已实现**；**P3 DIY 的 schema / 引擎 / 库存 / 预览事务 / 管理 UI 已实现**，**AI 后端已接通**（`POST /api/themes/draft` + 临时专用 Pi 会话，见 §5.7）；**面板可选本轮使用的模型**（显示实际使用模型 + 可换已配置聊天模型，仅本次草稿；beta.26 候选未发布，见 §5.7）。入口只有「设置 → 外观 → 用 AI 设计主题」；用户已明确**取消** `/主题设计` slash 命令，不注册任何 slash、不注入 prompt、不加命令列表。
 用户原话（2026-10-22）：『默认的这个外观替换成暗夜这个外观变成默认；极简删掉；再设计一套可爱一点像素风；外观开放给用户 DIY 让他们 AI 创造，你看怎么弄』。
 后续追加（同一轮）：DIY 保存后仍可编辑；图片素材作视觉参考（先定配色/风格/材质/布局），上传默认**不**嵌入主题、只有用户显式选「用作背景/装饰」才算素材；AI 后端复用当前 agent 模型（主会话另接）。
 主会话确认：**用户主动选择过的其他主题保留、不 reset**。
@@ -139,6 +139,11 @@
 
 - **入口**：`packages/server/src/themes/routes.ts` → `POST /api/themes/draft`（带 `/api/*` 鉴权中间件）。请求 / 响应就是冻结的 `ThemeDraftRequest` / `ThemeDraftResult`；客户端关面板 / 离开时 `fetch` abort，经 `c.req.raw.signal` 透传，后端**真 abort 模型请求**。
 - **模型**：`runtime(agentId).modelFor(agent)`（当前助理已选的模型，否则用户默认模型）。**未知 agent / 没有模型一律拒绝**，不猜、不取第一个模型、不建新助理。
+- **模型（beta.26 候选）**：面板顶部「使用模型」显示**实际会用**的模型（provider 短名 + 模型友好名）；打开默认跟随当前助理（`runtime(agentId).modelFor(agent)`：助理显式选择，否则用户默认模型），助理没显式选过时明确标「**默认模型 · xxx**」，不静默跑。面板里可直接换**已配置聊天模型**，只作用于这一次草稿请求：`ThemeDraftRequest.model`（可选 `{provider,id}`）在**生成时快照**并随请求发出；不传则保持旧客户端语义（按 `agentId` 的助理模型）。
+  - 服务端按 canonical `(provider,id)` 校验：模型必须**真实存在**、所属服务已配置；**无效 / 已删除 / 缺凭据一律明确报错、一次请求都不发、绝不 fallback 到另一个收费模型**。成功（及已解析的失败）结果带回本轮 `resolvedModel`，UI 显示的模型与真实 payload 一致。
+  - 面板换模型**不改**助理主模型 / 模型池 / 全局默认：选中的模型只进本次请求，不写回 agent 表的 `model_provider/model_id`，也不改全局 `defaultModel`；`agentId` 仍真授权、附件仍按 canonical owner 校验、临时会话仍只挂 `theme_draft`。
+  - 带参考图时菜单只列**支持视觉**的聊天模型（Pi 模型元数据 `input` 含 `image`）；当前模型不支持看图则禁止生成但**保留已选图片**，提示换模型或去图；绝不改用独立识图 / 生图 / 快速分类模型。
+  - 无模型 / 模型列表加载失败：给「去设置 › 模型服务」入口，不额外弹配置框。实现复用现有 `ModelPickerButton` / `modelMenu.ts`（canonical key、常用、搜索、按服务分组），不新建 picker / 原生 `select`。
 - **临时专用会话**（`packages/server/src/themes/index.ts` + `pi-adapter` 的 `CreateSessionOptions` 新选项）：
   - `inMemorySession: true` → 内存会话，**不落盘**、不动主聊天会话、不挪当前对话/场景、不写用户会话历史；
   - `minimalExtensions: true` → 不加载 MCP / codemode / tool-search；`extensions: []` → 不加载任何 `ext-*`（没有 bash / 主机 / 桌面 / 邮箱 / 审批 / 交付）；
@@ -167,8 +172,9 @@
 | `packages/server/src/themes/` | ✅ AI 创作后端：`index.ts`（`draftTheme`：模型解析 / 专用会话 / 去重 / 超时 / 取消 / 用量）、`tool.ts`（`theme_draft` + 设计系统提示）、`images.ts`（附件解析 + magic bytes）、`routes.ts`（`POST /api/themes/draft`） |
 | `packages/server/src/pi-adapter/index.ts` | ✅ `CreateSessionOptions` 新增 `tools` / `excludeTools` / `customTools` / `minimalExtensions` / `inMemorySession`（受限专用会话用，不改 SDK） |
 | `apps/web/src/themes/design-session.ts` | ✅ `DraftTurns`：主题设计请求的轮次管理（取消真 abort / 迟到响应丢弃），组件与单测共用 |
+| `apps/web/src/themes/model-choice.ts` | ✅（beta.26 候选）「使用模型」纯逻辑：默认跟随解析（agent / 默认 / 无）、canonical key 选择、`input` 视觉过滤、按钮文案，组件与单测共用 |
 | `packages/server/src/pi-adapter/mock-provider.ts` | ✅ Mock 模型支持 `theme_draft` 分支（e2e / 集成测试用） |
-| `apps/web/src/components/ThemeDesigner.tsx` `ThemeImagePicker.tsx` | ✅ 设计面板 + 图片素材选择（复用附件上传；`onThemeDraft` 接真实后端，支持取消 / 迟到响应丢弃） |
+| `apps/web/src/components/ThemeDesigner.tsx` `ThemeImagePicker.tsx` | ✅ 设计面板 + 图片素材选择（复用附件上传；`onThemeDraft` 接真实后端，支持取消 / 迟到响应丢弃）；beta.26 候选：面板顶部「使用模型」显示 / 选择（复用 `ModelPickerButton`，带图只列视觉模型，无模型跳模型设置） |
 | `apps/web/src/components/Settings.tsx` | ✅ 「用 AI 设计主题」主入口 + 内置/我的主题卡片（编辑/导出/删除/另存为） |
 | `apps/web/vite.config.ts` | ✅ brand 插件产物改写 `closeBundle`→`writeBundle`（Vite 8 下构建修复） |
 | `packages/server/test/theme-manifest.test.ts` `appearance-theme.test.ts` | ✅ 22/22 + 8/8（schema 注入拒绝、图片元数据、导出过滤、库存 CRUD、预览事务、像素 token、无 slash 残留） |
@@ -191,6 +197,7 @@
 2. 像素风：浅深双版；奶油 + 薄荷/桃粉/淡紫；像素只做装饰、正文系统字体、无远程素材。
 3. DIY：保存后仍可编辑；AI 继续修改；另存为新 UUID；导出/删除；预览未保存不可覆盖原主题；取消完整恢复。
 4. 图片：默认「仅作参考」（只参与本轮 AI 请求、不写主题、不导出）；只存附件引用与元数据。manifest v1 保留了 `background` / `decor` 素材位，但**主题引擎目前只用 enum 装饰、不会把素材图绘成背景**，所以选择器只提供「仅作参考」（不提供那两项）。
+5. 模型（beta.26 候选）：面板顶部显示并可选本轮使用的模型；跟随助理 / 未设时明确「默认模型 · xxx」；只在本次草稿生效，不改助理主模型；显式选择需真实存在且服务已配置，否则明确报错不 fallback；带参考图只给支持视觉的聊天模型。
 
 仍待用户决定 / 待接：
 
