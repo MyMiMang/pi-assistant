@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { acquireAsrLease, getVoiceSource, onVoiceSourceChanged, releaseAsrLease, transcribeAudio, type VoiceSource, type VoiceSourceOption } from "../api";
-import { VoiceInputController, voiceCapability, type VoiceError, type VoiceProgress, type VoiceResult, type VoiceSegment, type VoiceState } from "../voice-input";
+import { VoiceInputController, AsrLeaseManager, voiceCapability, type VoiceError, type VoiceProgress, type VoiceResult, type VoiceSegment, type VoiceState } from "../voice-input";
 
 const WORKLET_SRC = `class PiaCapture extends AudioWorkletProcessor {
 	process(inputs) {
@@ -133,41 +133,20 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 	const [asrModel, setAsrModel] = useState<VoiceSourceOption | null>(null);
 	const [capability, setCapability] = useState(() => voiceCapability({ mediaDevices: typeof navigator !== "undefined" ? navigator.mediaDevices : null, isSecureContext: typeof window !== "undefined" ? window.isSecureContext : true }));
 	const [level, setLevel] = useState(0);
-	const [progress, setProgress] = useState<VoiceProgress>({ pending: 0, inflight: 0, failed: 0, backlog: false });
+	const [progress, setProgress] = useState<VoiceProgress>({ pending: 0, inflight: 0, failed: 0, backlog: false, held: 0 });
 
 	const optsRef = useRef(opts);
 	optsRef.current = opts;
+	// 当前选中源（供重试时按需补租约；不在重试里切源 / 换模型）。
+	const asrModelRef = useRef<VoiceSourceOption | null>(null);
+	asrModelRef.current = asrModel;
 
-	// 录音租约（只对本地 ASR）：边录边加载期间持有，避免 idle 卸载把正在录的模型 kill 掉。
-	const leaseRef = useRef<{ id: string | null; cancelled: boolean }>({ id: null, cancelled: false });
-	const beginLease = (provider: string, model: string) => {
-		// 先取消 / 释放上一次租约：并发开始（极快的重复点击，或 start 在 preparing 期间被再次触发）时，
-		// 若只覆盖引用，前一个已拿到的 leaseId 会丢失、服务端租约一直不释放（本地模型无法 idle 卸载）。
-		const prev = leaseRef.current;
-		prev.cancelled = true;
-		if (prev.id) {
-			void releaseAsrLease(prev.id);
-			prev.id = null;
-		}
-		// 回调只读写本次创建的对象（不读 leaseRef.current，避免被后续 beginLease 覆盖串号）。
-		const entry = { id: null as string | null, cancelled: false };
-		leaseRef.current = entry;
-		void acquireAsrLease(provider, model).then((id) => {
-			if (entry.cancelled) {
-				if (id) void releaseAsrLease(id);
-				return;
-			}
-			entry.id = id;
-		});
-	};
-	const endLease = () => {
-		const cur = leaseRef.current;
-		cur.cancelled = true;
-		if (cur.id) {
-			void releaseAsrLease(cur.id);
-			cur.id = null;
-		}
-	};
+	// 录音租约（只对本地 ASR）：录音 + 重试期间持有，避免 idle 卸载把正在用的模型 kill 掉。
+	// 并发 begin / 重试复用同一管理器（逻辑与单测见 voice-input.ts AsrLeaseManager）。
+	const leaseRef = useRef<AsrLeaseManager | null>(null);
+	if (!leaseRef.current) leaseRef.current = new AsrLeaseManager({ acquire: acquireAsrLease, release: (id) => void releaseAsrLease(id) });
+	const beginLease = (provider: string, model: string) => leaseRef.current!.begin(provider, model);
+	const endLease = () => leaseRef.current!.end();
 
 	// 选源：只读后端 `GET /api/audio/asr/source` 的显式选择 + 归一化候选（availability 也来自后端）；未配置 = null。
 	useEffect(() => {
@@ -238,10 +217,12 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		return () => document.removeEventListener("visibilitychange", onHide);
 	}, [controller]);
 
-	// 语音来源被改（另一个页面 / 设置页保存）：正在录音就立即停轨道 + 取消，避免把旧来源的请求串到新会话。
+	// 语音来源被改（另一个页面 / 设置页保存）：录音 / 准备中，或正在重试转写时立即停轨道 + 取消，
+	// 避免把旧来源的请求串到新会话（取消会 abort 在途 attempt，不另切云 / 模型）。
 	useEffect(() => {
 		const off = onVoiceSourceChanged(() => {
-			if (controller.isActive()) {
+			const st = controller.getState();
+			if (controller.isActive() || st === "transcribing") {
 				controller.cancel();
 				endLease();
 			}
@@ -282,6 +263,12 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 	const dismissError = useCallback(() => setError(null), []);
 	const retryFailed = useCallback(() => {
 		setError(null);
+		// 停止后租约已释放：若超过本地 idle TTL（默认 90s）再点重试，模型可能已被卸载。
+		// 重试前按需补一次租约（复用同一管理器；只在本地源且确有失败段时拿），不切换来源 / 模型。
+		if (controller.progress().failed > 0) {
+			const m = asrModelRef.current;
+			if (m?.location === "local") beginLease(m.provider, m.model);
+		}
 		void controller.retryFailed();
 	}, [controller]);
 	const cancel = useCallback(() => {

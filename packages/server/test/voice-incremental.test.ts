@@ -15,7 +15,10 @@ import "./setup.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+	AsrLeaseManager,
 	computeLevel,
+	concatFloat32,
+	encodeWav16,
 	LevelMeter,
 	MAX_PENDING_SEGMENTS,
 	mapPositionThroughEdit,
@@ -29,10 +32,13 @@ import {
 	VoiceDraftAssembler,
 	VoiceInputController,
 	VOICE_SILENCE_RMS,
+	type SpeechSegmentRange,
 	type VoiceCaptureHandle,
 	type VoiceControllerDeps,
 	type VoiceSegment,
 } from "../../../apps/web/src/voice-input.ts";
+import { ASR_MAX_DURATION_MS } from "../src/voice/contract.ts";
+import { parseWav, validateAsrAudio } from "../src/voice/asr.ts";
 
 const RATE = 16_000;
 
@@ -222,6 +228,7 @@ interface IncCalls {
 	getUserMedia: number;
 	transcribe: number;
 	requestIds: string[];
+	providerModels: { provider: string; model: string }[];
 	concurrent: number;
 	maxConcurrent: number;
 	captureStop: number;
@@ -229,7 +236,7 @@ interface IncCalls {
 
 function incDeps(over: Partial<VoiceControllerDeps> & { sampleRate?: number; transcribeImpl?: (i: { requestId: string; signal: AbortSignal }) => Promise<{ text: string }> } = {}) {
 	const { stream, track } = fakeStream();
-	const calls: IncCalls = { getUserMedia: 0, transcribe: 0, requestIds: [], concurrent: 0, maxConcurrent: 0, captureStop: 0 };
+	const calls: IncCalls = { getUserMedia: 0, transcribe: 0, requestIds: [], providerModels: [], concurrent: 0, maxConcurrent: 0, captureStop: 0 };
 	let emit: ((c: Float32Array) => void) | null = null;
 	const d: VoiceControllerDeps = {
 		getUserMedia: async () => {
@@ -243,6 +250,7 @@ function incDeps(over: Partial<VoiceControllerDeps> & { sampleRate?: number; tra
 		transcribe: async (i) => {
 			calls.transcribe++;
 			calls.requestIds.push(i.requestId);
+			calls.providerModels.push({ provider: i.provider, model: i.model });
 			calls.concurrent++;
 			calls.maxConcurrent = Math.max(calls.maxConcurrent, calls.concurrent);
 			try {
@@ -479,4 +487,188 @@ test("批量（云端）控制器：整段转写中途取消 → 保持 idle、�
 	await tick();
 	assert.equal(c.getState(), "idle");
 	assert.deepEqual(errors, [], "取消不该产生错误提示");
+});
+
+// ---------------------------------------------------------------- F1 保序：失败段之后的成功段不提前进草稿
+test("增量控制器：前段失败时后段不提前进草稿；重试成功后按语音原序补上（F1）", async () => {
+	let n = 0;
+	const { d, calls, feed } = incDeps({
+		maxSegmentRetries: 0,
+		sleep: async () => {},
+		transcribeImpl: async () => {
+			n++;
+			if (n === 1) throw new Error("asr_upstream_error 服务返回 502"); // 段 0 失败
+			return { text: `文字${n}` }; // 段 1 成功（call2）、重试段 0 成功（call3）
+		},
+	});
+	const segs: VoiceSegment[] = [];
+	const c = new VoiceInputController(d, { onSegment: (s) => segs.push(s) });
+	await c.start({ provider: "p", model: "m", anchor: 0, incremental: true });
+	feed(speech(1000));
+	feed(silence(800)); // 段 0 → 失败
+	await tick(20);
+	feed(speech(1000));
+	feed(silence(800)); // 段 1 → 成功，但必须保序暂缓（不得变成「段1」先进草稿）
+	await tick(20);
+	assert.equal(segs.length, 0, "段 0 失败时，段 1 不得提前进草稿");
+	assert.equal(c.progress().failed, 1);
+	assert.equal(c.progress().held, 1, "段 1 应作为 held 等待按序补上");
+	await c.stop(); // 用户停止：失败段与 held 保留
+	assert.equal(segs.length, 0);
+	assert.equal(c.progress().held, 1);
+	await c.retryFailed(); // 重试段 0 → 成功后 段 0、段 1 按原序补上（不是「段1段0」）
+	assert.deepEqual(segs.map((s) => s.index), [0, 1]);
+	assert.deepEqual(segs.map((s) => s.text), ["文字3", "文字2"]);
+	assert.equal(c.progress().held, 0);
+	assert.equal(c.progress().failed, 0);
+	assert.equal(calls.maxConcurrent, 1);
+});
+
+test("增量控制器：多个空洞按 index 升序重试，held 一次按序补齐（F1）", async () => {
+	let n = 0;
+	const fail = new Set([1, 3]); // call1=段0失败、call3=段2失败
+	const { d, feed } = incDeps({
+		maxSegmentRetries: 0,
+		sleep: async () => {},
+		transcribeImpl: async () => {
+			n++;
+			if (fail.has(n)) throw new Error("asr_upstream_error x");
+			return { text: `t${n}` };
+		},
+	});
+	const segs: VoiceSegment[] = [];
+	const c = new VoiceInputController(d, { onSegment: (s) => segs.push(s) });
+	await c.start({ provider: "p", model: "m", anchor: 0, incremental: true });
+	feed(speech(1000));
+	feed(silence(800)); // 段 0 失败（call1）
+	await tick(20);
+	feed(speech(1000));
+	feed(silence(800)); // 段 1 成功（call2）→ held
+	await tick(20);
+	feed(speech(1000));
+	feed(silence(800)); // 段 2 失败（call3）
+	await tick(20);
+	assert.equal(segs.length, 0, "有空洞时后续段一律不进草稿");
+	assert.equal(c.progress().failed, 2);
+	assert.equal(c.progress().held, 1);
+	await c.stop();
+	await c.retryFailed(); // 重试 [0,2]：0 成功（call4）→ 补 0、1；2 成功（call5）
+	assert.deepEqual(segs.map((s) => s.index), [0, 1, 2]);
+	assert.deepEqual(segs.map((s) => s.text), ["t4", "t2", "t5"]);
+	assert.equal(c.progress().failed, 0);
+	assert.equal(c.progress().held, 0);
+});
+
+test("增量控制器：重试失败段仍用同一 provider / model（不另切云 / 模型）（F7）", async () => {
+	let n = 0;
+	const { d, calls, feed } = incDeps({
+		maxSegmentRetries: 0,
+		sleep: async () => {},
+		transcribeImpl: async () => {
+			n++;
+			if (n === 1) throw new Error("asr_upstream_error x");
+			return { text: "ok" };
+		},
+	});
+	const c = new VoiceInputController(d, {});
+	await c.start({ provider: "local-sensevoice", model: "sensevoice-small-int8", anchor: 0, incremental: true });
+	feed(speech(1000));
+	feed(silence(800));
+	await tick(20);
+	await c.stop();
+	await c.retryFailed();
+	assert.ok(calls.providerModels.length >= 2);
+	for (const pm of calls.providerModels) {
+		assert.deepEqual(pm, { provider: "local-sensevoice", model: "sensevoice-small-int8" }, "重试必须复用原来源，不切云 / 不换模型");
+	}
+});
+
+// ---------------------------------------------------------------- F6 积压硬上限 + 精准证明单段 WAV <= 服务端上限
+test("SpeechSegmenter：积压时也有硬上限，单段 WAV 时长 <= 服务端上限，且尾部不丢（F6）", () => {
+	const hardMs = 55_000;
+	const seg = new SpeechSegmenter(RATE, { hardMaxSegmentMs: hardMs });
+	seg.setBackpressure(true); // 全程积压：不合段，只能靠硬上限切
+	const chunks: Float32Array[] = [];
+	const ranges: SpeechSegmentRange[] = [];
+	for (let t = 0; t < 60_000; t += 1000) {
+		const c = speech(1000); // 全程有声，保证每段都有语音
+		chunks.push(c);
+		for (const r of seg.push(c)) ranges.push(r);
+	}
+	const tail = seg.flush();
+	if (tail) ranges.push(tail);
+
+	// 1) 段首尾相接、覆盖整段录音（不丢尾部）
+	assert.ok(ranges.length >= 2, `硬上限应至少切出 2 段，实际 ${ranges.length}`);
+	assert.equal(ranges[0].startIn, 0);
+	for (let i = 1; i < ranges.length; i++) assert.equal(ranges[i].startIn, ranges[i - 1].endIn, "段之间不得有 gap / 重叠");
+	const total = RATE * 60;
+	assert.equal(ranges[ranges.length - 1].endIn, total, "尾段必须覆盖到录音结束");
+	assert.equal(ranges.reduce((n, r) => n + (r.endIn - r.startIn), 0), total, "覆盖总采样 == 录音总采样（尾部不丢）");
+
+	// 2) 每段编码成 WAV 后，用服务端真实校验函数证明时长 <= ASR_MAX_DURATION_MS
+	const raw = concatFloat32(chunks);
+	for (const r of ranges) {
+		const pcm = segmentToPcm16(raw, RATE, r.startIn, r.endIn);
+		const wav = encodeWav16(pcm);
+		const info = parseWav(wav);
+		assert.ok(info, "段应能解析成合法 WAV");
+		assert.ok(info.durationMs <= ASR_MAX_DURATION_MS, `段 WAV 时长 ${info.durationMs}ms 必须 <= 服务端 ${ASR_MAX_DURATION_MS}ms`);
+		assert.ok((r.endIn - r.startIn) / RATE <= hardMs / 1000 + 0.05, "单段采样受硬上限约束");
+		const v = validateAsrAudio(wav);
+		assert.ok(v.ok, `服务端校验必须通过：${v.ok ? "" : v.message}`);
+	}
+});
+
+// ---------------------------------------------------------------- F4 / F7 录音租约管理器
+test("AsrLeaseManager：并发 begin 只保留最新租约，迟到 / 被覆盖的旧租约立即释放（F4）", async () => {
+	const acquired: string[] = [];
+	const released: string[] = [];
+	let resolveFirst: ((id: string) => void) | null = null;
+	const m = new AsrLeaseManager({
+		acquire: (_p, _model) => {
+			acquired.push(`${_p}/${_model}`);
+			if (acquired.length === 1) return new Promise<string>((r) => { resolveFirst = r; });
+			return Promise.resolve(`lease-${acquired.length}`);
+		},
+		release: (id) => { released.push(id); },
+	});
+	m.begin("local-sensevoice", "sensevoice-small-int8");
+	m.begin("local-sensevoice", "sensevoice-small-int8"); // 第二次 begin：第一个 entry 作废
+	resolveFirst!("lease-1"); // 第一个 acquire 迟到 resolve → 必须被回收，不能泄漏
+	await tick();
+	assert.deepEqual(released, ["lease-1"], "被覆盖 / 迟到的租约必须释放，否则服务端计数不归零");
+	assert.equal(m.id, "lease-2");
+	m.end();
+	assert.deepEqual(released, ["lease-1", "lease-2"]);
+	assert.equal(m.id, null);
+});
+
+test("AsrLeaseManager：end 后重试 begin 重新获取租约；end 后迟到的 acquire 也被回收（F7）", async () => {
+	const released: string[] = [];
+	let n = 0;
+	const m = new AsrLeaseManager({ acquire: async () => `lease-${++n}`, release: (id) => { released.push(id); } });
+	m.begin("p", "m");
+	await tick();
+	assert.equal(m.id, "lease-1");
+	m.end(); // 停止 / 取消：释放租约
+	await tick();
+	assert.deepEqual(released, ["lease-1"]);
+	// 停止后超过 idle TTL（默认 90s）再点重试：重新 begin 拿新租约，模型不会被 idle 卸载
+	m.begin("p", "m");
+	await tick();
+	assert.equal(m.id, "lease-2", "重试应重新拿到租约");
+	m.end();
+	assert.deepEqual(released, ["lease-1", "lease-2"]);
+
+	// acquire 还没 resolve 就 end → 迟到的 id 也要释放
+	const released2: string[] = [];
+	let resolveLate: ((id: string) => void) | null = null;
+	const m2 = new AsrLeaseManager({ acquire: () => new Promise<string>((r) => { resolveLate = r; }), release: (id) => { released2.push(id); } });
+	m2.begin("p", "m");
+	m2.end();
+	resolveLate!("lease-late");
+	await tick();
+	assert.deepEqual(released2, ["lease-late"]);
+	assert.equal(m2.id, null);
 });

@@ -152,19 +152,13 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 	const asrSetupCodes = new Set(["asr_not_configured", "asr_unavailable", "asr_not_installed", "asr_deleted"]);
 	const needSetup = !!voice.error && asrSetupCodes.has(voice.error.code) && !recording;
 	const failed = voice.progress.failed;
+	const held = voice.progress.held;
 	const pendingCount = voice.progress.pending + voice.progress.inflight;
+	const recHint = voice.progress.backlog ? "转写跟不上，仍在录音（不会丢音频）" : pendingCount > 0 ? `正在听…（${pendingCount} 段转写中）` : "正在听…（点停止）";
+	// 失败段：后续成功段按 index 保序暂缓显示，重试成功后按原序补上（notice 里已有失败原因）。
+	const failHint = `${notice || "有一段没转写成功"}${held > 0 ? `，后面 ${held} 段已识别、重试后按顺序补上` : ""}`;
 	// notice 只在「点过麦克风之后」才有值：其它错误也只在这时短暂提示，不常驻。
-	const hint =
-		notice ||
-		(recording
-			? voice.progress.backlog
-				? "转写跟不上，仍在录音（不会丢音频）"
-				: pendingCount > 0
-					? `正在听…（${pendingCount} 段转写中）`
-					: "正在听…（点停止）"
-			: busy
-				? "转写中…"
-				: "");
+	const hint = recording ? (failed > 0 ? `${recHint} · ${failHint}` : recHint) : failed > 0 ? failHint : busy ? "转写中…" : notice;
 	const showSettings = needSetup;
 	const showRetry = failed > 0 && !recording && !busy;
 

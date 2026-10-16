@@ -222,6 +222,8 @@ export interface SegmenterOptions {
 	silenceMs?: number;
 	/** 单段最长（默认 12s），避免模型一次吃太长 */
 	maxSegmentMs?: number;
+	/** 硬上限（默认 55s）：积压「不合段」时也不允许超过它，保证单段始终 ≤ 服务端 60s 时长上限；切段不丢音频 */
+	hardMaxSegmentMs?: number;
 	/** 一段至少多久才单独成段（默认 300ms），更短的并进下一段 */
 	minSegmentMs?: number;
 	/** 静音阈值（默认 VOICE_SILENCE_RMS） */
@@ -296,6 +298,16 @@ export class SpeechSegmenter {
 		}
 		if (this.segStart === null) return;
 		const length = this.pos - this.segStart;
+		// 硬上限：**即使积压也必须切段**。否则积压期间当前段可一路长到录音 60s 上限，
+		// 与 server `ASR_MAX_DURATION_MS`（60s，`> 60s` 才拒）擦边，一旦数据分片让 pos 略微越界，
+		// 整段请求会被 400 拒绝、尾段丢字。切段只是把余下语音放进下一段，**不丢音频**。
+		if (length >= this.samplesOf(this.opts.hardMaxSegmentMs ?? 55_000)) {
+			if (this.speechSeen) out.push({ startIn: this.segStart, endIn: this.pos, hasSpeech: true });
+			this.segStart = null;
+			this.speechSeen = false;
+			this.silenceSamples = 0;
+			return;
+		}
 		// 积压：把语音并进当前段（不合段），不丢音频
 		if (this.backpressure) return;
 		if (this.speechSeen && this.silenceSamples >= this.samplesOf(this.opts.silenceMs ?? 700) && length >= this.samplesOf(this.opts.minSegmentMs ?? 300)) {
@@ -444,6 +456,58 @@ export class VoiceDraftAssembler {
 	}
 }
 
+// ------------------------------------------------------------------ 录音租约（本地 ASR）
+export interface AsrLeaseDeps {
+	acquire: (provider: string, model: string) => Promise<string | null>;
+	release: (leaseId: string) => void | Promise<void>;
+}
+
+/**
+ * 本地 ASR 录音租约：录音 / 重试期间持有，避免本地模型被 idle（默认 90s）卸载。
+ *
+ *  - `begin` 并发调用（极快重复点击 / 重试与录音重叠）只保留**最新**一次，旧 id 立即释放，
+ *    否则旧 leaseId 丢失、服务端租约计数不归零，本地模型永远无法 idle 卸载；
+ *  - `acquire` 是异步的，回调只读写**本次创建**的 entry，不用「当前对象」引用，避免串号；
+ *  - `end` 幂等；已释放后 acquire 才 resolve 的 id 也会被回收。
+ */
+export class AsrLeaseManager {
+	private cur: { id: string | null; cancelled: boolean } = { id: null, cancelled: false };
+
+	constructor(private deps: AsrLeaseDeps) {}
+
+	begin(provider: string, model: string): void {
+		const prev = this.cur;
+		prev.cancelled = true;
+		if (prev.id) {
+			void this.deps.release(prev.id);
+			prev.id = null;
+		}
+		const entry = { id: null as string | null, cancelled: false };
+		this.cur = entry;
+		void this.deps.acquire(provider, model).then((id) => {
+			if (entry.cancelled || this.cur !== entry) {
+				if (id) void this.deps.release(id);
+				return;
+			}
+			entry.id = id;
+		});
+	}
+
+	end(): void {
+		const cur = this.cur;
+		cur.cancelled = true;
+		if (cur.id) {
+			void this.deps.release(cur.id);
+			cur.id = null;
+		}
+	}
+
+	/** 当前持有的租约 id（测试用）。 */
+	get id(): string | null {
+		return this.cur.id;
+	}
+}
+
 // ------------------------------------------------------------------ 控制器
 export interface VoiceStartOptions {
 	provider: string;
@@ -487,6 +551,8 @@ export interface VoiceProgress {
 	failed: number;
 	/** 是否因为转写跟不上而合段（继续录音、不丢音频） */
 	backlog: boolean;
+	/** 前面有失败段时，已成功但因**保序**暂缓显示、等重试成功后按原序补上的段数 */
+	held: number;
 }
 
 export interface VoiceCaptureHandle {
@@ -569,6 +635,10 @@ export class VoiceInputController {
 	private inflight: SegmentTask | null = null;
 	private failedTasks: SegmentTask[] = [];
 	private segIndex = 0;
+	/** 下一个应进入草稿的段 index（按语音原序发射）。 */
+	private nextEmitIndex = 0;
+	/** 已成功但因前面有失败段而暂缓发射的段（index → 结果）。 */
+	private held = new Map<number, VoiceSegment>();
 	private runAbort: AbortController | null = null;
 	private gen = 0;
 	private drainWaiters: (() => void)[] = [];
@@ -599,6 +669,7 @@ export class VoiceInputController {
 			inflight: this.inflight ? 1 : 0,
 			failed: this.failedTasks.length,
 			backlog: this.segmenter?.isBackpressured() ?? false,
+			held: this.held.size,
 		};
 	}
 
@@ -702,6 +773,24 @@ export class VoiceInputController {
 		return this.deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
 	}
 
+	/**
+	 * 按 index 保序发射：只有「下一个应发的段」才立刻进草稿；若前面有失败段，
+	 * 后续成功段先放进 held，等失败段重试成功后**按语音原序**一次补上（不乱序、不丢文本）。
+	 */
+	private emitOrdered(seg: VoiceSegment): void {
+		if (seg.index !== this.nextEmitIndex) {
+			this.held.set(seg.index, seg);
+			return;
+		}
+		this.events.onSegment?.(seg);
+		this.nextEmitIndex = seg.index + 1;
+		for (let next = this.held.get(this.nextEmitIndex); next; next = this.held.get(this.nextEmitIndex)) {
+			this.held.delete(this.nextEmitIndex);
+			this.events.onSegment?.(next);
+			this.nextEmitIndex++;
+		}
+	}
+
 	/** 单并发地转写等待队列；每段唯一 requestId，重试只针对本段。 */
 	private async pump(): Promise<void> {
 		if (this.inflight || this.waiting.length === 0 || !this.opts) return;
@@ -721,7 +810,7 @@ export class VoiceInputController {
 				if (gen !== this.gen) return;
 				this.inflight = null;
 				this.runAbort = null;
-				this.events.onSegment?.({ text: out.text, index: task.index, requestId: task.requestId, anchor: opts.anchor, agentId: opts.agentId, conversationId: opts.conversationId });
+				this.emitOrdered({ text: out.text, index: task.index, requestId: task.requestId, anchor: opts.anchor, agentId: opts.agentId, conversationId: opts.conversationId });
 				break;
 			} catch (e) {
 				if (gen !== this.gen || this.runAbort?.signal.aborted) {
@@ -742,7 +831,9 @@ export class VoiceInputController {
 				}
 				this.inflight = null;
 				this.failedTasks.push(task);
-				this.events.onError?.({ code: "asr_segment_failed", message: `有一段没转写成功（${err.message}），已保留可重试` });
+				// 后续成功段不会提前进草稿（保序）；提示里说明「后面 N 段已识别、重试后按顺序补上」。
+				const heldNote = this.held.size ? `，后面 ${this.held.size} 段已识别、重试后按顺序补上` : "，已保留可重试";
+				this.events.onError?.({ code: "asr_segment_failed", message: `有一段没转写成功（${err.message}）${heldNote}` });
 				break;
 			}
 		}
@@ -824,7 +915,9 @@ export class VoiceInputController {
 	/** 有界重试：只重发**失败的那几段**（已完成的绝不重传，避免重复计费）。 */
 	async retryFailed(): Promise<void> {
 		if (!this.failedTasks.length) return;
-		this.waiting.unshift(...this.failedTasks);
+		// 按 index 升序重试：先补前面的空洞，成功一个就顺带把 held 里连续的后续段按原序补上。
+		const retry = [...this.failedTasks].sort((a, b) => a.index - b.index);
+		this.waiting.unshift(...retry);
 		this.failedTasks = [];
 		this.set("transcribing");
 		this.syncBackpressure();
@@ -876,10 +969,15 @@ export class VoiceInputController {
 		this.pendingSeg = [];
 		this.waiting = [];
 		this.inflight = null;
-		if (!keepFailed) this.failedTasks = [];
+		if (!keepFailed) {
+			this.failedTasks = [];
+			// 保序状态随失败段一起清掉；保留失败段时必须保留 held / nextEmitIndex，重试才能按原序补上。
+			this.held.clear();
+			this.nextEmitIndex = 0;
+		}
 		this.segIndex = 0;
 		this.meter.reset();
-		this.events.onProgress?.({ pending: 0, inflight: 0, failed: this.failedTasks.length, backlog: false });
+		this.events.onProgress?.({ pending: 0, inflight: 0, failed: this.failedTasks.length, backlog: false, held: this.held.size });
 	}
 
 	private releaseStream(): void {
