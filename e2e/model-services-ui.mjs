@@ -144,6 +144,7 @@ try {
 		if (path === '/api/agents') return json(route, []);
 		if (path === '/api/rooms') return json(route, []);
 		if (path === '/api/downloads') return json(route, { items: [] });
+		if (path === '/api/host-control') return json(route, { settings: { enabled: false, agents: 'all', apps: [], workspaceFiles: false, tiers: {}, defaultTier: 'bounded' }, tiers: {}, status: { enabled: false, tiers: {}, paused: false, daemon: { state: 'off', detail: '' }, platform: 'darwin', installed: false, version: '' }, manifest: '', manifestHash: '', permissions: null, activity: { active: false, agent: null, summary: null } });
 		if (path.startsWith('/api/proactive/inbox')) return json(route, { items: [], count: 0, defaultLevel: 'normal' });
 		if (path === '/api/model-strengths') return json(route, { labels: [{ key: 'coding', label: '编码' }], models: [{ provider: 'openai', providerName: 'OpenAI', id: 'gpt-4o', name: 'GPT-4o', tags: [], tierLabel: '旗舰', userEdited: false }] });
 		if (path === '/api/models/providers') return json(route, official);
@@ -245,7 +246,6 @@ try {
 	await panel.waitFor();
 	const cards = () => page.locator('[data-testid=service-card]');
 	assert.equal(await cards().count(), 2, 'registry 里 2 个服务卡片（openai + custom-relay；local-laya 由管理卡展示，不重复）');
-	await page.getByTestId('local-laya-card').waitFor();
 	const SHOT = process.env.SHOT_DIR;
 	if (SHOT) await page.locator('[data-testid=model-services]').screenshot({ path: `${SHOT}/1-services-desktop.png` });
 
@@ -332,7 +332,9 @@ try {
 	assert.ok(!customProviders.some((p) => p.id === 'custom-1'), '删除后状态里不再有该服务');
 	assert.equal(await cards().count(), 2, '删除后卡片恢复为 2 个');
 
-	// 7) 本地 Laya 管理卡：运行态 + health 实际设备 + 已注册模型
+	// 7) 本地 Laya 管理卡：设置 › 电脑 › 操作这台电脑（不在模型服务页）
+	await page.goto(`${base}/?settings=host`);
+	await page.getByTestId('local-laya-card').waitFor();
 	const layaCard = page.getByTestId('local-laya-card');
 	assert.equal(await layaCard.getAttribute('data-source'), 'local');
 	assert.match(await page.getByTestId('laya-install-state').textContent(), /已安装/);
@@ -401,7 +403,10 @@ try {
 	assert.match(await page.getByTestId('laya-install-state').textContent(), /未安装/, '确认后卸载');
 	assert.ok(await page.getByTestId('laya-install').isVisible(), '卸载后显示一键安装');
 
-	// 11) Esc 关弹窗（键盘可达）
+	// 11) 回到模型页 → Esc 关弹窗（键盘可达）
+	await page.goto(`${base}/?settings=models`);
+	await page.getByTestId('settings-dialog').waitFor();
+	await panel.waitFor();
 	await page.getByTestId('add-service-open').click();
 	await page.getByTestId('add-service').waitFor();
 	await page.keyboard.press('Escape');
