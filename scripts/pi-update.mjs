@@ -11,6 +11,10 @@
 // 手动升级和 .github/workflows/pi-latest.yml 共用这一条路径，避免出现
 // 「代码升了、third-party.json / THIRD_PARTY_NOTICES.md 没升」的不一致。
 // 只改依赖与版本记录，不碰业务代码；Pi API 变化仍由 packages/server/src/pi-adapter 与各扩展适配。
+//
+// 版本用**精确 pin**（--save-exact），与上游 1.3.0 起对内部 Pi 依赖的精确 pin 政策一致
+// （上游 #10865：避免 fresh install 静默混入不兼容的小版本）。没有 lock 时 caret 会解析到下一个
+// minor，等于把没测过的版本装进来，所以这里不再写 `^`。
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -75,7 +79,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 		if (target === before && process.argv[3] !== "--force") {
 			console.log(`Pi 已经是 ${target}，只同步依赖记录`);
 		} else {
-			npm(["install", "--ignore-scripts", "--no-audit", "--no-fund", "-w", "@pi-assistant/server", ...PI_PACKAGES.map((p) => `${p}@${target}`)]);
+			npm(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact", "-w", "@pi-assistant/server", ...PI_PACKAGES.map((p) => `${p}@${target}`)]);
 		}
 		syncVersionRecords(target);
 		console.log(`Pi ${before} → ${target}；请接着跑 npm run typecheck、npm test、npm run check:pi，全通过后运行 \`node scripts/pi-update.mjs finalize\` 再提交。`);
