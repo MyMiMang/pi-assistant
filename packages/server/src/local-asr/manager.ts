@@ -292,7 +292,15 @@ export class LocalAsrManager {
 	async install(opts: AsrInstallOptions): Promise<AsrStatus> {
 		const pre = this.precheck(opts);
 		if (!pre.ok) throw new Error(pre.error);
-		const signal = opts.signal ?? (this.abort = new AbortController()).signal;
+		// 外部 signal（网 / 服务协调器）与本地 cancel 都汇到 self；manager.cancel() 才能取消外部受控的安装。
+		const self = new AbortController();
+		this.abort = self;
+		const ext = opts.signal;
+		if (ext) {
+			if (ext.aborted) self.abort();
+			else ext.addEventListener("abort", () => self.abort(), { once: true });
+		}
+		const signal = self.signal;
 		this.set("preflight", { state: "installing", error: null, received: 0, total: null, source: opts.source });
 		try {
 			this.set("uv");

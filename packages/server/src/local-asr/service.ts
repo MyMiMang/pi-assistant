@@ -111,6 +111,11 @@ const PHASE_LABELS: Record<AsrInstallPhase, string> = {
 	done: "完成",
 };
 
+/** 安装阶段中文名（界面 / 统一下载进度共用，避免多处映射漂移）。 */
+export function asrPhaseLabel(phase: AsrInstallPhase): string {
+	return PHASE_LABELS[phase] ?? phase;
+}
+
 interface Job {
 	jobId: string;
 	attempt: number;
@@ -193,7 +198,7 @@ export class LocalAsrService {
 		return {
 			state: st.install.state,
 			phase: st.install.state === "installing" || st.install.state === "failed" ? st.install.phase : null,
-			phaseLabel: st.install.state === "installing" ? PHASE_LABELS[st.install.phase] : null,
+			phaseLabel: st.install.state === "installing" ? asrPhaseLabel(st.install.phase) : null,
 			received: st.install.received,
 			total: st.install.total,
 			percent: pct,

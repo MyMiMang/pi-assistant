@@ -9,6 +9,7 @@ import { isAsrProtocol } from "./voice/asr.ts";
 import { readVoiceSource } from "./voice/source.ts";
 import { localAsrService, setAsrSelectionPort } from "./local-asr/index.ts";
 import { mountLocalAsrRoutes } from "./local-asr/routes.ts";
+import "./local-asr/download.ts";
 import { createRuntimeBenchmarkHost } from "./fast-computer/benchmark-runtime.ts";
 import { isStopCommand } from "./interject.ts";
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";

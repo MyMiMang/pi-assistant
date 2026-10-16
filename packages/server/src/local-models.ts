@@ -65,7 +65,9 @@ export function rememberLocalModelStatus(status: unknown, providerHint?: string,
 	const provider = reg?.provider ?? providerHint;
 	if (!provider) return;
 	// 已安装但从未启动时 registered 为 null 且无历史：用已知的默认模型 id 补齐，条目仍然出现。
-	const modelId = reg?.modelId ?? fallbackModelId;
+	// 停止事件不带 modelId 时，按 provider 沿用上一次的 model，保证卡片不消失。
+	const prevModelOfProvider = reg?.modelId ? undefined : [...cache.values()].find((h) => h.provider === provider)?.modelId;
+	const modelId = reg?.modelId ?? prevModelOfProvider ?? fallbackModelId;
 	if (!modelId) return;
 	const key = `${provider}::${modelId}`;
 	const prev = cache.get(key);
