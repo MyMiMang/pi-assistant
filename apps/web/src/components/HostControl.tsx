@@ -360,7 +360,7 @@ export function HostControlSettings() {
 			</section>
 
 			{!preview ? (
-				<div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-card/95 px-3 py-2 backdrop-blur">
+				<div className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-card px-3 py-2">
 					<Button variant="primary" disabled={busy || (anyBounded && !apps.length)} onClick={review} data-testid="host-review">
 						{busy && <Loader2 size={14} className="animate-spin" />} {on ? (dirty ? "保存更改并重新确认…" : "查看权限清单…") : "查看权限清单并开启…"}
 					</Button>
