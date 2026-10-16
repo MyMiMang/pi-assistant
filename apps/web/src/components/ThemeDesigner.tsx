@@ -1,6 +1,6 @@
 import { Loader2, Sparkles, Undo2, Upload, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { stripReferenceImages, validateThemeManifest, type ThemeDraftRequest, type ThemeDraftResult, type ThemeImageRef, type ThemeManifestV1, type ThemeModelRef } from "@pi-assistant/shared";
+import { stripReferenceImages, validateThemeManifest, type ThemeDraftRequest, type ThemeDraftResult, type ThemeImageRef, type ThemeManifestV1, type ThemeModelRef, type ThemeMotion } from "@pi-assistant/shared";
 import type { Attachment } from "../types";
 import { applyTheme, setAppearance, useStore } from "../store";
 import { customSkinId } from "../themes/manifest";
@@ -15,6 +15,29 @@ import { ThemePreview } from "./ThemePreview";
 import { Button, Help, Modal, cx } from "./ui";
 
 const PREVIEW_STYLE_ID = "pa-theme-preview";
+
+/* 「动效微调」：同页按需入口（不新造高级模式）。只写有界 typed 值，不写任意 CSS。 */
+const MOTION_DURATIONS = ["80ms", "120ms", "180ms", "260ms", "400ms", "600ms"] as const;
+const MOTION_EASES = ["linear", "ease", "ease-in", "ease-out", "ease-in-out", "standard", "emphasized", "spring-soft"] as const;
+const MOTION_GLOWS = ["none", "subtle", "normal", "strong"] as const;
+const MOTION_STYLE_OPTS = ["smooth", "steps"] as const;
+const MOTION_SCALES = ["0.8", "1", "1.2", "1.5"] as const;
+
+function MotionRow({ label, value, options, onChange, testid }: { label: string; value: string; options: readonly string[]; onChange: (v: string) => void; testid: string }) {
+	return (
+		<label className="flex items-center justify-between gap-2 text-xs">
+			<span className="text-mut">{label}</span>
+			<select value={value} onChange={(e) => onChange(e.target.value)} className="rounded-lg border border-line bg-card px-2 py-1 text-xs" data-testid={testid}>
+				<option value="">默认</option>
+				{options.map((o) => (
+					<option key={o} value={o}>
+						{o}
+					</option>
+				))}
+			</select>
+		</label>
+	);
+}
 
 function installPreviewStyle(css: string | null) {
 	let el = document.getElementById(PREVIEW_STYLE_ID) as HTMLStyleElement | null;
@@ -204,6 +227,23 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 
 	const doUndo = () => session && setSession(undoPreview(session, liveEffects));
 
+	/** 手动微调当前草稿（如动效）：立即走同一预览事务，未保存不覆盖原主题。 */
+	const applyDraftManifest = (next: ThemeManifestV1) => {
+		setSession((prev) => (prev ? revisePreview(prev, next, liveEffects) : startPreview(next, snapshot, liveEffects)));
+	};
+	const setMotion = (patch: Partial<ThemeMotion>) => {
+		if (!draft) return;
+		const m: ThemeMotion = { ...(draft.motion ?? {}) };
+		for (const [k, v] of Object.entries(patch)) {
+			if (v == null || v === "") delete (m as Record<string, unknown>)[k];
+			else (m as Record<string, unknown>)[k] = v;
+		}
+		const next: ThemeManifestV1 = { ...draft };
+		if (Object.keys(m).length) next.motion = m;
+		else delete next.motion;
+		applyDraftManifest(next);
+	};
+
 	const doSave = (asNew: boolean) => {
 		if (!draft) return;
 		abortDraft();
@@ -327,6 +367,29 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 					</label>
 					<ThemeImagePicker uploadFn={uploadFn} value={images} onChange={setImages} disabled={busy} />
 
+					{draft && (
+						<details className="rounded-xl border border-line px-3 py-2" data-testid="theme-motion">
+							<summary className="flex cursor-pointer items-center gap-2 text-sm text-mut">
+								动效微调（可选）
+							</summary>
+							<div className="mt-1 flex items-center gap-2 text-[11px] text-mut2">
+								<span>时长 / 缓动 / 光晕 / 过渡风格，只影响这套主题。</span>
+								<Help>系统「减弱动效」始终优先：开启后无论主题怎么写都会去掉位移 / 循环。像素风可选「离散成步（steps）」。留「默认」即用内置值。</Help>
+							</div>
+							<div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+								<MotionRow label="即时反馈时长" value={draft.motion?.durationFast ?? ""} options={MOTION_DURATIONS} onChange={(v) => setMotion({ durationFast: v || undefined })} testid="theme-motion-fast" />
+								<MotionRow label="常规时长" value={draft.motion?.duration ?? ""} options={MOTION_DURATIONS} onChange={(v) => setMotion({ duration: v || undefined })} testid="theme-motion-base" />
+								<MotionRow label="折叠 / 展开时长" value={draft.motion?.durationSlow ?? ""} options={MOTION_DURATIONS} onChange={(v) => setMotion({ durationSlow: v || undefined })} testid="theme-motion-slow" />
+								<MotionRow label="时长倍率" value={draft.motion?.scale != null ? String(draft.motion.scale) : ""} options={MOTION_SCALES} onChange={(v) => setMotion({ scale: v ? Number(v) : undefined })} testid="theme-motion-scale" />
+								<MotionRow label="通用缓出" value={draft.motion?.easeOut ?? ""} options={MOTION_EASES} onChange={(v) => setMotion({ easeOut: v || undefined })} testid="theme-motion-ease-out" />
+								<MotionRow label="展开缓动" value={draft.motion?.easeExpand ?? ""} options={MOTION_EASES} onChange={(v) => setMotion({ easeExpand: v || undefined })} testid="theme-motion-ease-expand" />
+								<MotionRow label="回弹缓动" value={draft.motion?.easeSpring ?? ""} options={MOTION_EASES} onChange={(v) => setMotion({ easeSpring: v || undefined })} testid="theme-motion-ease-spring" />
+								<MotionRow label="光晕强度" value={draft.motion?.glow ?? ""} options={MOTION_GLOWS} onChange={(v) => setMotion({ glow: (v || undefined) as ThemeMotion["glow"] })} testid="theme-motion-glow" />
+								<MotionRow label="过渡风格" value={draft.motion?.style ?? ""} options={MOTION_STYLE_OPTS} onChange={(v) => setMotion({ style: (v || undefined) as ThemeMotion["style"] })} testid="theme-motion-style" />
+							</div>
+						</details>
+					)}
+
 					{!connected && (
 						<div className="rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300" data-testid="theme-ai-offline">
 							AI 生成还没接通（开发阶段）：这里只提供入口与预览 / 导入导出，不会假装生成结果。接通后会复用当前助理的模型，无需新建助理或手写 JSON。
@@ -387,7 +450,7 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 							导出 JSON
 						</Button>
 						<Help>
-							导出的是主题的 JSON（颜色 / 圆角 / 装饰），默认**不含**你上传的参考图；只有你显式标成「用作背景 / 装饰素材」的图才会作为素材引用保留（首版导出还不打包图片 zip）。
+							导出的是主题的 JSON（颜色 / 圆角 / 字体 / 装饰 / 动效），默认**不含**你上传的参考图；只有你显式标成「用作背景 / 装饰素材」的图才会作为素材引用保留（首版导出还不打包图片 zip）。
 						</Help>
 					</div>
 				</div>
