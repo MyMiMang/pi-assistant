@@ -26,10 +26,11 @@
 3. **4 个 e2e 改走该入口**：`PIA_WORKSPACE=join(DATA,'workspace')`、注入内存凭据，并断言 `storeCalls > 0` 且 `security 调用 === 0`。
 4. **`e2e/launch-memory-safety.mjs`（新）**：故意继承「生产样」毒值 `PIA_WORKSPACE`（`tmp/fake-production-workspace-<pid>` sentinel，**不使用真实用户路径**），断言入口覆盖为 `<DATA>/workspace`、sentinel 目录保持为空，且 `storeCalls>0` / `security 0`。
 
-## session-fork-ui「3/5」的真正原因（作废旧「基线」说法）
+## session-fork-ui「3/5」的定位（确认测试隔离风险；作废旧「基线」说法）
 
 - 旧记法「候选树与合入前 `composer-send-shortcut` 树都 3/5，非本轮引入」**作废**：那是用**不安全的 launcher** 测出来的现象。
-- 真正原因：旧 e2e 继承真实 `PIA_WORKSPACE` 且未注入内存凭据，第 2 条消息发送时服务端仍走安全凭据后端（可能被钥匙串 / 真实工作区拖住），Mock 回复与 Pi settle 迟到 → 「第 2 条消息发送后等输入框清空」超时。并非 Pi 分支逻辑或 Enter 发送的 UI bug。
+- 已确认的事实：旧 e2e 继承真实 `PIA_WORKSPACE` 且未注入内存凭据，第 2 条消息发送时服务端仍走安全凭据后端（可能被钥匙串 / 真实工作区拖住），Mock 回复与 Pi settle 迟到 → 「第 2 条消息发送后等输入框清空」超时；安全改后稳定 **6/6**。
+- **未在旧不安全环境重现验证唯一因果**：没有证明「OS 钥匙串卡住」是唯一原因，只确认了测试隔离风险并把它修掉。结论表述为：**确认测试隔离风险，修正后稳定，未在旧不安全环境重现验证唯一因果**。并非 Pi 分支逻辑或 Enter 发送的 UI bug。
 - 修后 `e2e/session-fork-ui.mjs` 稳定 **6/6**（连跑 3 次）。为不再按 UI 计数猜抖动，用例新增**服务端证据断言**：服务端确实收到两条 user 消息（`你好第一轮` / `第二轮问题`）、Mock 有两条 `assistant.done`、实际 `POST /api/agents/*/messages ≥ 2`。
 - 未用 `a80b2cb` 独立 worktree 对照：修后已稳定通过，不需要伪基线；且**禁止**借候选 dist 或旧不安全 launcher 复现（会触钥匙串）。
 

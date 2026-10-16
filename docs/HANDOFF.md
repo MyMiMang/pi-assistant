@@ -4,6 +4,8 @@
 >
 > 本版包含 Pi 1.2.0、统一模型服务、技能分配、消息引用、记忆分层、语音、AI/像素主题及会话分支等，见 [发布说明](release-notes/v0.1.0-beta.24.md)。实施与验收索引见 `progress-snapshots/release-candidate-integration-final.md`、`progress-snapshots/release-prep-beta24.md`，Pi 适配见 `docs/design/pi-1.2-upgrade.md`。下文各分支的“候选 / 未发布 / 未 push”等为当时的实施快照，已随本版发布的项目以本段和发布说明为准；未验边界仍有效，CI 启动冒烟不代表真实麦克风、云模型、iPhone 或 Laya/SenseVoice 已实测。
 >
+> 下一版 **v0.1.0-beta.25 未发布候选**：发布准备已提交并推送 main/tag（见 `progress-snapshots/release-prep-beta25.md`），发布说明 [release-notes/v0.1.0-beta.25.md](release-notes/v0.1.0-beta.25.md)。含 Pi 1.3.0、设置按功能重排（17 项分 5 组）、**Enter 默认发送（可在设置 › 聊天与输入改）**、语音来源显式选择、Jev 自动识别、模型「常用」不搬目录、测试隔离加固等。**只有 release workflow 全部成功（构建 / 冒烟 / publish）后才把状态改成公开**，未公开前不写「已发布」。
+>
 > 接手先读 [AGENTS.md](../AGENTS.md)，再读本页、[ARCHITECTURE.md](ARCHITECTURE.md)、[DESIGN.md](DESIGN.md)。
 
 本轮 Pi 1.3 候选整合收口（2026-10-16，候选树 `release-candidate-validation`，HEAD `1ebcea7` 及其上；**未 push / 未 tag / 未打包**，beta.25 候选）：
@@ -16,7 +18,7 @@
 测试隔离安全收口 + session-fork 未明失败定位（2026-10-16，候选树 `release-candidate-validation`，基线 `002ed1f`；**未 push / 未 tag / 未打包**；详见 `progress-snapshots/release-candidate-security-fork-closeout.md`）：
 - **问题**：本轮新增的 4 个 e2e（`session-fork-ui` / `session-fork-http` / `voice-source-live` / `send-shortcut-ui`）直接 `spawn packages/server/src/main.ts`，只设 `PIA_DATA_DIR` 却**继承真实 `PIA_WORKSPACE`**、未注入内存 `CredentialStore`，会构造走 `security` / OS 钥匙串的安全凭据后端（违背测试隔离底线）。
 - **修法**：①`packages/server/test/launch-memory.ts` **最前面**加 guard（先于任何动态 import）：`PIA_DATA_DIR` 必须可信临时目录（`os.tmpdir()` / `/tmp` / `/private/tmp`，`path.relative` 精确判断 + `realpath` 处理 `/private/tmp` 符号链接），否则换新 `mkdtemp`；`PIA_WORKSPACE` 必须落在该临时数据目录内，否则覆盖为 `<DATA>/workspace`；**不 import `./setup.ts`**，不沿用户真实路径。②小 fixture `e2e/fixtures/safe-memory-server.mjs`（假 `security` PATH 探针 + `PIA_TEST_STARTUP_FILE` + 走测试入口启动）。③4 个 e2e 改走该入口并断言 `storeCalls>0` / `security 0`。④新 `e2e/launch-memory-safety.mjs` 用生产样毒值 `PIA_WORKSPACE`（tmp sentinel，非真实用户路径）验证被覆盖、sentinel 不被写。
-- **session-fork「3/5」真正原因**：旧不安全 launcher 继承真实工作区 + 走安全凭据后端，第 2 条消息发送时被拖住、Mock settle 迟到 → 等输入框清空超时；**不是**分支逻辑或 Enter 发送的 UI bug。修后 `session-fork-ui` **6/6（连跑 3 次稳定）**，并新增服务端证据断言（收到两条 user 消息 / 两条 Mock `done` / `POST /messages ≥ 2`），不再按 UI 计数猜抖动。
+- **session-fork「3/5」定位（确认测试隔离风险，未在旧不安全环境重现验证唯一因果）**：旧不安全 launcher 继承真实工作区 + 走安全凭据后端，第 2 条消息发送时被拖住、Mock settle 迟到 → 等输入框清空超时；**不是**分支逻辑或 Enter 发送的 UI bug。修后 `session-fork-ui` **6/6（连跑 3 次稳定）**，并新增服务端证据断言（收到两条 user 消息 / 两条 Mock `done` / `POST /messages ≥ 2`），不再按 UI 计数猜抖动。
 - **实跑**（Node 24.19.0，全 Mock + 临时数据/工作区 + 内存凭据）：`launch-memory-safety` 全过（`storeCalls>0`、`security=0`、sentinel 空）、`session-fork-ui` 6/6、`session-fork-http` 8/8、`send-shortcut-ui` 全过、`voice-source-live` 全过；server `tsc` exit 0；web `tsc --noEmit` exit 0 / `vite build` 通过。每例 `security` 探针计数 0。
 - **未验 / 边界**：只保证这 4 个新 e2e + safety 用例；另列 23 个仍直接 spawn 生产 `main.ts` 的旧 e2e/冒烟（同风险，本轮不做全 repo 大换）。真机 / 真实云 / 真麦 / 真实 IME / 全量 `e2e/run.mjs` / 全量 `npm test` 未跑；生产 `main.ts` 行为未改。
 
