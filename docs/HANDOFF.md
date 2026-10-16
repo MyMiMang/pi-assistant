@@ -1,8 +1,12 @@
 # 交接文档（HANDOFF）
 
-> beta.26 语音 UI 主审补验（未发布）：旧版 SenseVoice 导入收成按需展开（当前正在使用旧模型时展开），限定旧按钮只操作 SenseVoice，避免新模型主流程出现第二套来源按钮；模型内部 ID / 语言代码 / 冗长依赖说明进详情，内存明确为运行估算而非整机最低门槛。主会话独立通过前端逻辑 6/6、多模型 UI 全场景、设置功能回归、两端类型检查与 Web 构建。真实多模型安装具体依赖仍在后续修验，不能由这些 UI 结果宣称已真实转写。
+> **beta.26 候选整合（当前，未发布）**：候选树 `release-candidate-validation`，起点公开 beta.25 `dcce520`，**未 push / 未 tag / 未打包 / 未更新用户 App**。四块已 `--no-ff` 合入：① Laya 下载统一链路（`10317d0`，stage1 `1dbb652`）；② 本地语音多模型 UI + 后端（`55a09e7` / 后端 `18478d4`，stage1 `277ddfb`）+ 生产修复（`8f8d458`，本轮 `42f9613`）；③ 主题设计选本次草稿模型（`0781b9c`，stage1 `12370a5`）；④ Laya 测试隔离收口（`8e9a223`，本轮 `17a3da7`）。stage1 记录 `progress-snapshots/beta26-integration-stage1.md`，本轮整合与实跑见 `progress-snapshots/beta26-final-validation.md`。
 >
-> beta.26 主题设计主审补验（未发布）：空对象 / null / 非对象的显式模型引用一律拒绝，不能回退到默认模型；看图提示改为指向面板内所选模型；再次打开面板清除上轮生成 / 另存提示。主会话独立实跑后端 **19/19**、前端逻辑 **11/11**、安全测试服务 UI **6/6**，两端类型检查和 Web 构建通过。无真实云调用或用户数据，真实云生成质量未验。
+> **真实 ASR 结果已取代此前「具体 deps 仍待修」待办**：`8beea59`/`9ef4076`/`189fd99` 修复后按所选模型 repo/revision 直连 HF，真实跑通 Whisper base（160.6MB）+ Paraformer zh（243.4MB）从零下载 → 逐文件 SHA256 与 catalog pin 一致 → 起真实 sidecar → 真实转写（英语样例命中关键片段；中文样例 Whisper base 少字、Paraformer 末字官方期望「你」实测「嗯」，如实记录不夸质量）；换模型 worker pid 不同、停后回收，卸载一个不影响另一个；证据 `evidence/local-asr-real-smoke/`。本地语音「可一键装」现为「下载 / 校验 / 启动 / 转写链路对两族真实跑通」，但 **Whisper turbo / large-v3（1~2GB）未真下、跨平台（Win/Linux/Intel Mac）未实机**，性能与机器推荐不作结论。
+>
+> **测试隔离已修（取代旧「未修」）**：`packages/server/package.json` 测试入口预加载 `./test/setup.ts`、`local-laya-deps` 改第一条静态导入、`isTempDataDir` 用 realpath + 分隔符边界；本轮只用临时 `PIA_DATA_DIR`/`PIA_WORKSPACE`/`HOME`，未访问 / 未查看 / 未删除用户真实数据。**但 2026-10-15/16 自报把测试助理 / Laya runtime 写进真实目录的那次恢复，主会话仍未独立确认；本轮只证明「未来测试不再落真实目录」，不对用户真实数据做审计 / 恢复。**
+>
+> **未验边界**：三块的真实云模型质量 / 计费、Laya 真实 GB 权重端到端、真机 App、真麦克风、全量 `npm test`（757 ~25min）/ 全量 `e2e/run.mjs`（第 1 步向导为既有基线）本轮均未跑；SenseVoice 许可仍未决（`unresolved`，默认不下载、仅自行导入）。
 
 > 当前公开版本 **v0.1.0-beta.25**（Latest，仅 Apple 芯片 macOS arm64；上一版 beta.24）。tag 指向 `8afc3aa5d4383e37e14050617b6e1ede67b8f8c9`；[release run 38857423620](https://github.com/MyMiMang/pi-assistant/actions/runs/38857423620) 的 arm64 build、内置服务冒烟、Mac 安装启动冒烟、publish 均成功，2026-10-16 05:57:00 UTC 公开。主会话已独立核验非草稿 / 非 prerelease、四项公开资产、Latest 下载的 `latest.json` 版本 `0.1.0-beta.25`，平台仅 `darwin-aarch64` / `darwin-aarch64-app` 且签名非空。未在用户电脑安装或更新 App，beta.24 及已有 tag 未移动。
 >
@@ -12,7 +16,6 @@
 >
 > 接手先读 [AGENTS.md](../AGENTS.md)，再读本页、[ARCHITECTURE.md](ARCHITECTURE.md)、[DESIGN.md](DESIGN.md)。
 
-**beta.26 候选 · 第一阶段整合（2026-10-16，候选树 `release-candidate-validation`，起点 `dcce520`，HEAD `12370a5`；未 push / 未 tag / 未打包 / 未更新用户 App；详见 `progress-snapshots/beta26-integration-stage1.md`）**：把三个已 review 的固定 SHA 候选 `--no-ff` 合入本树——`1dbb652` 合 Laya 下载统一链路（`10317d0`）、`277ddfb` 合本地语音多模型（`55a09e7`，含后端 `18478d4`）、`12370a5` 合主题设计选本次草稿模型（`0781b9c`）。共享下载契约以 Laya 最新为准（`packages/server/src/downloads.ts`、`local-laya/*`、`managed-weights/verify.ts`、`docs/design/local-laya-api.md` 与 `10317d0` 逐文件一致），文档冲突手工收口（保留 beta.25 已公开状态与既有功能，三块各自分节，未 ours/theirs 一把覆盖）；未合任何 owner 的 WIP/dirty 树（含 `local-asr-multi-model` `8beea59` 及其后续、Laya 测试隔离 WIP）。实跑（Node v24.20.0；临时 `PIA_DATA_DIR`/`PIA_WORKSPACE`/`HOME` + `PIA_OFFLINE=1`，未读真实数据 / 凭据 / 钥匙串，未连云 / 麦 / 未下权重）：两端 `tsc` exit 0、web `vite build` 通过；服务端定向单测 **109/109**（含 `theme-ai` 单跑 19/19）、主题前端纯逻辑 11/11、ASR 前端纯逻辑 6/6、ASR 安全 UI 夹具全过、设置安全 UI 夹具全过、Laya 下载 UI 20/20、真实后端 catalog smoke 通过。**未验 / 不可宣称**：ASR 生产 deps/HTTP 下载修复（`8beea59` 及后续）与 Laya 测试隔离 P0 / 路径 resolver 仍由各自 owner 进行，本阶段未合，**本地语音「5 模型可一键安装」不写成 ready**；真实权重下载 / 安装 / 启动 / 转写 / 真实云模型 / 真机 / 全量 `npm test`（757）/ 全量 `e2e/run.mjs` 未跑；SenseVoice 许可仍未决（`unresolved`，仅自行导入）。
 
 本地语音「多模型选择」前端（2026-10-16，worktree `local-asr-model-choice-ui`，基 `release-candidate-validation`=`dcce520`，并已 merge 后端 `18478d4`（catalog / 许可分级 / 来源 version CAS）；**未 push / 未 tag / 未打包**，beta.26 候选）：用户要求「正式提供多种市面口碑好的识别模型，按轻量/均衡/高质量档位显示推荐、模型大小、硬件要求并允许选择；一键下载安装并配置到可用」的前端部分（后端由 backendowner `local-asr-multi-model` 实现）。
 - **对齐真实后端 DTO 而不是草案**：读 `local-asr-multi-model/packages/server/src/local-asr/{catalog,service,routes}.ts` 后按最终 `LocalAsrCatalog` / `LocalAsrModelView`（`tier` 单值 + `tags`、`capabilities`、嵌套 `source:{source,model}`、`installed/selected/running`、`install{phase,phaseLabel,total,percent,attempt,installedAt,jobId}`）实现 `apps/web/src/local-asr-api.ts` 的归一 adapter；catalog 清单全部由服务端返回，前端不 hardcode。

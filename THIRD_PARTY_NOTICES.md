@@ -118,8 +118,10 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 - [WSL](https://github.com/microsoft/WSL)：Windows 系统组件，由用户按需安装。
 - 测试用：hoodiecrow-imap、smtp-server（MIT），不随产品分发。
 
-## 本地语音识别（可选，用户自行导入 / 许可未闭环）
+## 本地语音识别（可选，按需下载 / 自行导入）
 
 - [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)（**Apache-2.0**）：本地 ASR 推理引擎，按需经 uv/pip 安装 `sherpa-onnx==1.13.8`（**不随产品分发**；轮子按平台 / CPython 版本分片，当前只 pin 版本号，未 pin 各轮子 SHA256）。
+- [Paraformer 中文](https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2023-09-14) 权重（**Apache-2.0**，上游 FunASR / ModelScope）：用户点「安装并使用」才经统一下载器下载，**不随产品分发、不镜像**。`csukuangfj/sherpa-onnx-paraformer-zh-2023-09-14` revision `def02708…`（pin SHA），每个文件另有大小 + SHA256，下载后校验通过才启用。署名 `Paraformer by FunASR / ModelScope (Apache-2.0)`。
+- [OpenAI Whisper](https://github.com/openai/whisper) base / small / turbo / large-v3 权重（**MIT**，sherpa-onnx 转换制品）：用户点「安装并使用」才经统一下载器下载，**不随产品分发、不镜像**。`csukuangfj/sherpa-onnx-whisper-{base,small,turbo,large-v3}`，各自 revision pin SHA（如 base `bb53ee20…`），每个文件另有大小 + SHA256，下载后校验通过才启用。署名 `Whisper by OpenAI (MIT)`。
 - [SenseVoiceSmall](https://github.com/FunAudioLLM/SenseVoice) 权重（**FunASR Model Open Source License Agreement v1.1，不是 Apache-2.0**）：**不随产品分发、不镜像**。许可适用范围未最终确认（官方 issue [#334](https://github.com/QwenAudio/SenseVoice/issues/334) 仍 open），因此安装入口默认关闭；用户可自行导入合法取得的权重。使用时须遵守 §2.2 署名与保留模型名要求（界面显示 `SenseVoiceSmall by FunASR / FunAudioLLM`）。复核记录见 `research/sensevoice-weight-license-review.md`。
 - 参考项目（未复制代码）：[Handy](https://github.com/cjpais/handy)（MIT）的「独立 worker + 可配置 idle 卸载 + 首按先开麦」思路、[OpenWhispr](https://github.com/OpenWhispr/openwhispr)（MIT）的组件级 idle 超时。
