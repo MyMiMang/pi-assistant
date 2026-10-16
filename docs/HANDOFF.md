@@ -18,6 +18,11 @@
 >
 > 接手先读 [AGENTS.md](../AGENTS.md)，再读本页、[ARCHITECTURE.md](ARCHITECTURE.md)、[DESIGN.md](DESIGN.md)。
 
+「操作这台电脑」底部操作条去掉 sticky 浮层（2026-10-16，worktree `beta26-settings-feedback-fix`，HEAD `476e73a` 起；**未 push / 未 tag / 未打包**，beta.27 候选）：用户 beta.26 反馈设置 › 操作这台电脑 页底部操作条（「查看权限清单…」「保存更改并重新确认…」「已保存草稿（未开启）」）固定在滚动容器底部，滚动时压住正文与提示、挡住下方内容。
+- **改动**：只改 `apps/web/src/components/HostControl.tsx` 第 363 行，`sticky bottom-0 z-10 … bg-card/95 backdrop-blur` → `flex … bg-card`，操作条回普通文档流。权限审阅（review）/ 未保存提示（dirty）/ 保存 / 关闭态自动保存（autosave）/ ack + 确认开启（host-enable）/ 系统权限引导等原有流程与档位语义不变；**不改产品权限档位、不动后端 / 本地模型列表 / 许可**。
+- **实跑**（Node v24.20.0，`tsx`，`mkdtemp` 临时 `HOME`/`PIA_DATA_DIR`/`PIA_WORKSPACE` + `npm_config_offline=true`，只读复用 `release-candidate-validation` 的 `node_modules`；静态 `apps/web/dist` + `page.route` 夹具，未碰真实 App / 桌面 / 配置 DB / 密钥 / `secrets.ts`）：`e2e/settings-usability-ui.mjs` **全部通过**——新增 F 段用**真实 DOM 滚动**在桌面 1440×900 与 390×844 断言操作条位移≈滚动量（非 sticky 固定）、不覆盖下方「macOS 权限」提示；保留 review→ack→确认开启与开启后提示不被遮挡；全流程无原生弹窗；390 不横向溢出。**负向对照**：把该行临时改回 sticky 重跑，F 段「随内容滚动」「不覆盖下方提示」如实失败（位移=0.0、与提示重叠），证明断言非空转。web + server `tsc --noEmit` exit 0；web `vite build` 通过。截图 `evidence/beta26-hostcontrol-flow/F-host-action-{desktop,390}.png`（已 `look_at_image` 核对：按钮在内容流、绿色「已开启」提示完整可见、无浮层遮挡）。
+- **未验**：真机 App、全量 `npm test`、全量 `e2e/run.mjs`。
+
 
 本地语音「多模型选择」前端（2026-10-16，worktree `local-asr-model-choice-ui`，基 `release-candidate-validation`=`dcce520`，并已 merge 后端 `18478d4`（catalog / 许可分级 / 来源 version CAS）；**未 push / 未 tag / 未打包**，beta.26 候选）：用户要求「正式提供多种市面口碑好的识别模型，按轻量/均衡/高质量档位显示推荐、模型大小、硬件要求并允许选择；一键下载安装并配置到可用」的前端部分（后端由 backendowner `local-asr-multi-model` 实现）。
 - **对齐真实后端 DTO 而不是草案**：读 `local-asr-multi-model/packages/server/src/local-asr/{catalog,service,routes}.ts` 后按最终 `LocalAsrCatalog` / `LocalAsrModelView`（`tier` 单值 + `tags`、`capabilities`、嵌套 `source:{source,model}`、`installed/selected/running`、`install{phase,phaseLabel,total,percent,attempt,installedAt,jobId}`）实现 `apps/web/src/local-asr-api.ts` 的归一 adapter；catalog 清单全部由服务端返回，前端不 hardcode。
