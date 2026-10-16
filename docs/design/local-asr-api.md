@@ -1,6 +1,13 @@
-# 本地 SenseVoice ASR：后端 API 契约（v1，后端先行稿）
+# 本地 ASR 后端 API 契约（v1）
 
-> 状态：**后端先行契约**（分支 `local-asr-sensevoice`，基 `unified-integration` = `ad3526f`）。UI 与语音输入主任务（voice agent）按此对接；
+> **当前状态（多模型，2026-10-16）**：分支 `local-asr-multi-model`（HEAD `189fd99`）。已在**真实链路 smoke** 中真机装好并跑通 Whisper base int8 与 Paraformer zh int8（真实下载 → 逐文件 SHA256 与 catalog pin 一致 → 起真实 sidecar → 真实转写；证据 `evidence/local-asr-real-smoke/`）。当前契约 = `GET /api/local-models/asr/catalog`、`/api/local-models/asr/models/:id/{install,cancel,select,start,stop,pause,resume,idle,update,status}` + `DELETE`；旧单例 `/api/local-models/asr/sensevoice/*` 作为兼容入口保留（同一实现）。
+> **具体 deps 已按所选模型贯通**：`downloadWeights(files, …, {repo,revision,modelId})` 逐文件经统一下载器 `downloadFile` 直连 HF `resolve/<pinned revision>/<file>`（repo / revision / 路径只来自受信 catalog，revision 必须 40 位十六进制，拒绝任意 URL / 绝对路径）；`verifyWeights` / `importWeights` 落到 `asrPaths(modelId).weightsStaging`。**不再用 Python `huggingface_hub`，也不需要 numpy**（`accept_waveform` 接受 `Sequence[SupportsFloat]`，list 输入实测可用）。共享 runtime（venv/uv/python）第二个模型复用、不重下 wheel；权重与 metadata 每模型隔离。
+> 引擎 = **sherpa-onnx 1.13.8 + sherpa-onnx-core 1.13.8**，按平台固定 wheel SHA256 走 `--require-hashes`。
+> **不声称性能承诺**：RTF / 峰值内存只采到单样本一次值；跨平台（Windows / Linux / Intel Mac）与 turbo / large-v3 未实机 / 未下载。
+>
+> —— **以下为最初的后端先行稿（单 SenseVoice）**，保留作历史与兼容入口说明 ——
+>
+> 状态（历史）：**后端先行契约**（分支 `local-asr-sensevoice`，基 `unified-integration` = `ad3526f`）。UI 与语音输入主任务（voice agent）按此对接；
 > **UI → Server 的上传契约（字段名 / 返回结构）由语音输入主任务最终确定**，本文件里标 ⚠️ 的部分可随主契约调整。
 > 依据：`research/sensevoice-local-asr-feasibility.md`、`research/sensevoice-weight-license-review.md`、`research/voice-input-project-comparison.md`。
 > **不声称任何性能数字**：本机未实测冷启动 / RTF / 峰值内存；**不把「已安装」当「能用」**。
@@ -12,7 +19,7 @@
 - **不伪造成 chat / classifier**：本地 ASR 在统一注册表里是 `type:"asr"`，带 `asrAdapter` 元数据；**不定义一整套 ChatProvider 鉴权**。
 - 引擎 = **sherpa-onnx 1.13.8（Apache-2.0，无 torch）**；权重 = SenseVoiceSmall int8 ONNX。
 - **只绑 `127.0.0.1`**；token 每次启动新生成，**只在进程内**（`/status`、日志、前端一律看不到）。
-- **未实测**：真实下载 / 安装 / 启动 / 转写质量与速度、Intel Mac / Windows / Linux 真机、GPU（本实现只用 CPU，未启用 MPS / CoreML）。
+- **实测边界**：Whisper base / Paraformer zh 的真实下载 → 逐文件 SHA256 校验 → 起 sidecar → 真实转写已在 Apple 芯片 macOS 跑通（见文件顶部与 `evidence/local-asr-real-smoke/`）；Intel Mac / Windows / Linux 真机、GPU（本实现只用 CPU，未启用 MPS / CoreML）与 turbo / large-v3 仍未实测。
 
 ## 1. 许可门槛（最重要，先读）
 

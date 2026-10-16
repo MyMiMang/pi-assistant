@@ -16,6 +16,7 @@
     "build": "npm run build -w @pi-assistant/web && npm run build -w @pi-assistant/rendezvous",
     "start": "npm run start -w @pi-assistant/server",
     "test": "npm test -w @pi-assistant/server",
+  "smoke:local-asr": "node --import tsx scripts/local-asr-real-smoke.mjs",
     "typecheck": "npm run typecheck -w @pi-assistant/server && tsc --noEmit -p apps/web",
     "e2e": "npm run build && node e2e/run.mjs",
     "check:pi": "node scripts/check-pi.mjs",
