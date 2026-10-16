@@ -73,7 +73,7 @@ try {
 	const send = async (text) => {
 		await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
 		await box.fill(text);
-		await box.press("Shift+Enter");
+		await box.press("Enter");
 		await page.waitForFunction(() => document.querySelector("main textarea:not(.pa-card textarea)")?.value === "", null, { timeout: 10_000 });
 	};
 	const settle = () => waitFor(async () => !(await page.locator("[data-testid=activity]").count()), 30_000);

@@ -195,7 +195,7 @@ try {
 	await ta.fill("");
 	await page.locator('[data-mid="a2m"] [data-testid="quote-btn"]').click();
 	await ta.fill("带引用的消息");
-	await ta.press("Shift+Enter");
+	await ta.press("Enter");
 	await page.waitForTimeout(300);
 	const last = state.sent.at(-1);
 	check("发送 payload 带 replyToId", last?.replyToId === "a2m", JSON.stringify(last));
@@ -206,7 +206,7 @@ try {
 	state.failSend = true;
 	await page.locator('[data-mid="a2m"] [data-testid="quote-btn"]').click();
 	await ta.fill("失败也要保留");
-	await ta.press("Shift+Enter");
+	await ta.press("Enter");
 	await page.locator('[data-testid="send-error"]').waitFor({ timeout: 5000 });
 	check("发送失败保留引用", (await page.locator('[data-testid="quote-bar"]').count()) === 1);
 	check("发送失败还原草稿文字", (await ta.inputValue()) === "失败也要保留");

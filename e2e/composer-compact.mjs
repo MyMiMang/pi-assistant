@@ -187,7 +187,7 @@ try {
 	const box = page.locator("[data-testid=main-conversation] textarea:visible:not(.pa-card textarea)");
 	await box.waitFor();
 	await box.fill(LONG);
-	await page.keyboard.press("Shift+Enter");
+	await page.keyboard.press("Enter");
 	// 子代理任务从 header 的「子代理」入口 → 任务概览 → 详情（聊天里不再显示指令卡）
 	await page.getByTestId("subagent-tasks").waitFor({ timeout: 30_000 });
 	await page.getByTestId("subagent-tasks").click();
@@ -205,8 +205,8 @@ try {
 	check("子代理 390：无溢出", sm.overflowX <= 1 && sm.docOverflow <= 1, JSON.stringify(sm));
 	await page.screenshot({ path: join(OUT, "07-subagent-390.png") });
 
-	// ---------------- 7) 原 WIP 不退：Shift+Enter 发送 / Enter 换行 / IME 不误发
-	console.log("\n[7] Shift+Enter / Enter / IME（原 WIP 回归）");
+	// ---------------- 7) 新默认：Enter 发送 / Shift+Enter 换行 / IME 不误发
+	console.log("\n[7] Enter 发送 / Shift+Enter 换行 / IME（默认偏好回归）");
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto(`${BASE}/?agent=${a.id}`);
 	const b2 = page.locator("[data-testid=main-conversation] textarea:visible:not(.pa-card textarea)");
@@ -214,19 +214,19 @@ try {
 	const before = (await j(`/api/agents/${a.id}/messages`)).filter((x) => x.role === "user").length;
 	await b2.fill("第一行");
 	await b2.evaluate((el) => el.setSelectionRange(el.value.length, el.value.length));
-	await page.keyboard.press("Enter");
-	check("Enter 换行", (await b2.inputValue()) === "第一行\n", await b2.inputValue());
+	await page.keyboard.press("Shift+Enter");
+	check("Shift+Enter 换行", (await b2.inputValue()) === "第一行\n", await b2.inputValue());
 	const cdp = await page.context().newCDPSession(page);
 	await b2.click();
 	await cdp.send("Input.imeSetComposition", { text: "zhong", selectionStart: 5, selectionEnd: 5 });
-	await page.keyboard.press("Shift+Enter");
+	await page.keyboard.press("Enter");
 	await page.waitForTimeout(250);
-	check("IME 组合期间 Shift+Enter 不发送", (await j(`/api/agents/${a.id}/messages`)).filter((x) => x.role === "user").length === before);
+	check("IME 组合期间 Enter 不发送", (await j(`/api/agents/${a.id}/messages`)).filter((x) => x.role === "user").length === before);
 	await cdp.send("Input.imeSetComposition", { text: "", selectionStart: 0, selectionEnd: 0 });
 	await b2.fill("紧凑验证发送");
-	await page.keyboard.press("Shift+Enter");
+	await page.keyboard.press("Enter");
 	await waitFor(async () => (await j(`/api/agents/${a.id}/messages`)).some((x) => x.role === "user" && x.content === "紧凑验证发送"));
-	check("Shift+Enter 发送", (await b2.inputValue()) === "");
+	check("Enter 发送", (await b2.inputValue()) === "");
 
 	// ---------------- 8) queued 子代理：状态文案「排队中」+ 可停止（固定数据，不依赖 mock 时序）
 	console.log("\n[8] queued 子代理显示 / 停止按钮");

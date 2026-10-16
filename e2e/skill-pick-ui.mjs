@@ -98,7 +98,7 @@ try {
 	console.log("\n[3] 发送 payload 只带 canonical id / 没选不带 skills，成功清 chip");
 	const box = composer.locator("textarea").first();
 	await box.fill("不带技能");
-	await page.keyboard.press("Shift+Enter");
+	await page.keyboard.press("Enter");
 	await waitFor(() => sends.length === 1);
 	check("没选技能时不带 skills", !("skills" in sends[0]), JSON.stringify(sends[0]));
 	await page.getByTestId("skill-picker").click();
@@ -106,7 +106,7 @@ try {
 	await page.keyboard.press("Escape");
 	await page.waitForTimeout(150);
 	await box.fill("用这个技能");
-	await page.keyboard.press("Shift+Enter");
+	await page.keyboard.press("Enter");
 	await waitFor(() => sends.length === 2);
 	check("payload.skills = [canonical id]", JSON.stringify(sends[1].skills) === JSON.stringify([pick.id]), JSON.stringify(sends[1]));
 	check("payload 不含路径 / 正文", !JSON.stringify(sends[1]).includes("SKILL.md") && !JSON.stringify(sends[1]).includes("按技能说明做"));
