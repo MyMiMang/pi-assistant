@@ -340,7 +340,7 @@ function AsrAdapterSection({ provider, onReload }: { provider: RegistryProvider;
 					))}
 				</div>
 			) : (
-				<div className="text-[11px] text-mut2">尚未声明语音模型。声明后，还要在「设置 › 语音配置」里选为当前来源才会生效。</div>
+				<div className="text-[11px] text-mut2">尚未添加语音模型</div>
 			)}
 			<div className="flex flex-wrap items-center gap-2">
 				{options.length ? (
@@ -353,7 +353,6 @@ function AsrAdapterSection({ provider, onReload }: { provider: RegistryProvider;
 					声明为语音识别
 				</Button>
 			</div>
-			<div className="text-[11px] text-mut2">声明只表示“这个模型能做语音转写”；真正在使用哪个去「设置 › 语音配置」选。</div>
 			{err && <div className="text-[11px] text-red-600">{err}</div>}
 		</div>
 	);
@@ -1263,11 +1262,12 @@ export function ModelServicesPanel() {
 			setErr(e instanceof Error ? e.message : String(e));
 		}
 	};
+	// 本地 Laya / 本地语音由各自管理卡展示，registry 里的条目不重复成卡片
+	const services = useMemo(() => registry.filter((s) => s.id !== "local-laya" && s.id !== "local-sensevoice"), [registry]);
 	const list = useMemo(() => {
-		// 本地 Laya 由管理卡统一展示，registry 里的 local-laya 条目不重复成卡片
-		const f = registry.filter((s) => s.id !== "local-laya" && s.id !== "local-sensevoice" && (!q || `${s.name} ${s.id}`.toLowerCase().includes(q.toLowerCase())));
+		const f = services.filter((s) => !q || `${s.name} ${s.id}`.toLowerCase().includes(q.toLowerCase()));
 		return [...f].sort((a, b) => Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name));
-	}, [registry, q]);
+	}, [services, q]);
 	if (phase === "loading") return <div className="rounded-xl border border-dashed border-line p-4 text-center text-xs text-mut" data-testid="model-services-loading">正在载入模型服务…</div>;
 	if (phase === "error")
 		return (
@@ -1278,16 +1278,16 @@ export function ModelServicesPanel() {
 				</Button>
 			</div>
 		);
-	const configured = registry.filter((s) => s.configured).length;
+	const configured = services.filter((s) => s.configured).length;
 	return (
-		<Fold testId="model-services" icon={Gauge} title="模型服务" count={registry.length + 1} hint={configured ? `已配置 ${configured}` : undefined} desc="一个服务 = 一份地址 + 一份凭据，可同时含对话 / 识图 / 生图 / 分类器模型（官方目录没有的，也能在这里填 Key 登录）。能力按 Pi 目录或对端元数据识别，猜的标「未确认」，可手动纠正；生图与快速操作模型都在这里选，不再单独配凭据。" open={expanded} onToggle={() => setExpanded((v) => !v)}>
+		<Fold testId="model-services" icon={Gauge} title="模型服务" count={services.length} hint={configured ? `已配置 ${configured}` : undefined} desc="一个服务 = 一份地址 + 一份凭据，可同时含对话 / 识图 / 生图 / 分类器模型（官方目录没有的，也能在这里填 Key 登录）。能力按 Pi 目录或对端元数据识别，猜的标「未确认」，可手动纠正；生图与快速操作模型都在这里选，不再单独配凭据。" open={expanded} onToggle={() => setExpanded((v) => !v)}>
 			<div className="space-y-3" data-testid="model-services-panel">
 				{confirmUi}
 				<DefaultImageModel images={images} onReload={reloadAll} />
 				<div className="flex flex-wrap items-center gap-2">
 					<div className="relative min-w-40 flex-1">
 						<Search size={15} className="absolute top-2.5 left-2.5 text-zinc-400" />
-						<Input placeholder={`搜索 ${registry.length} 个模型服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" data-testid="service-search" />
+						<Input placeholder={`搜索 ${services.length} 个模型服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" data-testid="service-search" />
 					</div>
 					<Button variant="primary" onClick={() => setAddOpen(true)} data-testid="add-service-open">
 						<Plus size={15} /> 添加服务
