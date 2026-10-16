@@ -253,6 +253,8 @@ export function DesktopSettings() {
 
 			{s.enabled && <SharedComputerSection />}
 
+			<SandboxComputerSettings />
+
 			<section className="space-y-2">
 				<div className="font-semibold">{t("空闲自动关机")}</div>
 				<div className="text-sm text-zinc-500">{t("闲置多久后关机，登录状态不丢。")} <Help>{t("没有工具调用、没人在看画面、没有任务占用超过这个时间，就自动关机释放内存；登录状态不会丢，下次用到时自动开机。")}</Help></div>
@@ -377,6 +379,33 @@ function SharedComputerSection() {
 					</div>
 				))}
 			</div>
+		</section>
+	);
+}
+
+/**
+ * 助理自己的电脑（Docker 桌面）：默认完全权限，不逐项审批。
+ * 属于「助理电脑」页（与操作用户自己的电脑分开），服务端 `sandboxComputer` 语义不变。
+ */
+function SandboxComputerSettings() {
+	const v = useStore((s) => s.hostVersion);
+	const [a, setA] = useState<"all" | "sensitive" | "none" | null>(null);
+	useEffect(() => void api("/api/sandbox-computer").then((r) => setA(r.approvals)), [v]);
+	if (!a) return null;
+	const set = (approvals: "all" | "sensitive" | "none") => api("/api/sandbox-computer", { method: "PUT", json: { approvals } }).then((r) => setA(r.approvals));
+	return (
+		<section className="space-y-2 rounded-xl bg-hover p-4 text-sm" data-testid="sandbox-approvals">
+			<div className="font-semibold">助理自己的电脑</div>
+			<p className="text-mut">助理自己的隔离电脑，默认完全权限。 <Help>如果它登录了你在意的账号（比如它的微信、邮箱），可以要求它在关键动作前先问你。一键暂停始终有效（在助理的「电脑」页）。</Help></p>
+			<label className="flex items-center gap-2">
+				<input type="radio" checked={a === "none"} onChange={() => set("none")} /> 完全权限，不用问我（默认）
+			</label>
+			<label className="flex items-center gap-2">
+				<input type="radio" checked={a === "sensitive"} onChange={() => set("sensitive")} /> 发送 / 付款 / 删除类动作先问我
+			</label>
+			<label className="flex items-center gap-2">
+				<input type="radio" checked={a === "all"} onChange={() => set("all")} /> 每个动作都先问我
+			</label>
 		</section>
 	);
 }

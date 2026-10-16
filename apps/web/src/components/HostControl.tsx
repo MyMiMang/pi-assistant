@@ -387,34 +387,7 @@ export function HostControlSettings() {
 				</section>
 			)}
 			{msg && <div className={cx("text-sm", msg.ok ? "text-green-600" : "text-red-600")} data-testid="host-msg">{msg.text}</div>}
-
-			<SandboxComputerSettings />
-
 		</div>
-	);
-}
-
-/** 助理自己的电脑（Docker 桌面）：默认完全权限，不逐项审批 */
-function SandboxComputerSettings() {
-	const v = useStore((s) => s.hostVersion);
-	const [a, setA] = useState<"all" | "sensitive" | "none" | null>(null);
-	useEffect(() => void api("/api/sandbox-computer").then((r) => setA(r.approvals)), [v]);
-	if (!a) return null;
-	const set = (approvals: "all" | "sensitive" | "none") => api("/api/sandbox-computer", { method: "PUT", json: { approvals } }).then((r) => setA(r.approvals));
-	return (
-		<section className="space-y-2 rounded-xl bg-hover p-4 text-sm" data-testid="sandbox-approvals">
-			<div className="font-semibold">助理自己的电脑</div>
-			<p className="text-mut">助理自己的隔离电脑，默认完全权限。 <Help>如果它登录了你在意的账号（比如它的微信、邮箱），可以要求它在关键动作前先问你。一键暂停始终有效（在助理的「电脑」页）。</Help></p>
-			<label className="flex items-center gap-2">
-				<input type="radio" checked={a === "none"} onChange={() => set("none")} /> 完全权限，不用问我（默认）
-			</label>
-			<label className="flex items-center gap-2">
-				<input type="radio" checked={a === "sensitive"} onChange={() => set("sensitive")} /> 发送 / 付款 / 删除类动作先问我
-			</label>
-			<label className="flex items-center gap-2">
-				<input type="radio" checked={a === "all"} onChange={() => set("all")} /> 每个动作都先问我
-			</label>
-		</section>
 	);
 }
 
