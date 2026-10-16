@@ -144,45 +144,38 @@ try {
 	await page.screenshot({ path: join(OUT, "03-unsupported-fixed.png") });
 	await j(`/api/agents/${agent.id}/subagent-thinking`, "PUT", { mode: "follow" });
 
-	// ---------------------------------------------------------------- 5) 390 窄屏菜单内部滚动
-	console.log("\n[5] 390 窄屏：菜单限高 + 内部滚动，底部 max 可达可点");
+	// ---------------------------------------------------------------- 5) 390 窄屏：离散滑块不溢出、7 档可达可点
+	console.log("\n[5] 390 窄屏：滑块不横向溢出、7 档刻度都在视口内、max 可达可点");
 	await setPool(agent.id, [{ provider: prov.id, id: "gpt-6.1-sol" }, { provider: prov.id, id: "my-private-model" }, { provider: prov.id, id: "plain-noreason" }]);
 	await page.setViewportSize({ width: 390, height: 480 });
 	await remountSettings(page);
 	await openMenu(page);
 	const m = await page.evaluate(() => {
 		const menuEl = document.querySelector('[data-testid="agent-subagent-thinking-menu"]');
-		const scroller = menuEl?.querySelector(".overflow-y-auto");
 		const doc = document.documentElement;
+		const ticks = [...document.querySelectorAll('[data-testid^="agent-subagent-thinking-"]')].filter((el) => el.getAttribute("data-testid") !== "agent-subagent-thinking-follow");
+		const mr = menuEl?.getBoundingClientRect();
+		const handle = menuEl?.querySelector('[role="slider"]');
 		return {
 			doc: doc.scrollWidth, vw: innerWidth,
 			menuMaxH: menuEl ? getComputedStyle(menuEl).maxHeight : "none",
-			menuClientH: menuEl?.clientHeight ?? 0,
-			scrollClientH: scroller?.clientHeight ?? 0,
-			scrollH: scroller?.scrollHeight ?? 0,
-			scrollerFound: !!scroller,
+			scrollerFound: !!menuEl?.querySelector(".overflow-y-auto"),
+			tickCount: ticks.length,
+			ticksInMenu: mr ? ticks.every((el) => { const r = el.getBoundingClientRect(); return r.left >= mr.left - 1 && r.right <= mr.right + 1; }) : false,
+			handleMax: handle?.getAttribute("aria-valuemax") ?? null,
 		};
 	});
 	check("390：页面不横向溢出", m.doc <= m.vw, JSON.stringify({ doc: m.doc, vw: m.vw }));
 	check("390：菜单有高度上限（maxHeight 限制）", m.menuMaxH !== "none" && m.menuMaxH !== "", JSON.stringify(m.menuMaxH));
 	check("390：菜单内有独立滚动容器", m.scrollerFound);
-	check("390：档位内容超出可视高度（确实需要内部滚动）", m.scrollH > m.scrollClientH && m.scrollClientH > 0, JSON.stringify({ scrollH: m.scrollH, clientH: m.scrollClientH }));
-	// 滚到底后底部 max 项应完整落在菜单可视区内（不被裁）
-	await page.getByTestId("agent-subagent-thinking-menu").locator(".overflow-y-auto").evaluate((el) => { el.scrollTop = el.scrollHeight; });
-	await page.waitForTimeout(150);
-	const bottom = await page.evaluate(() => {
-		const menuEl = document.querySelector('[data-testid="agent-subagent-thinking-menu"]');
-		const maxEl = document.querySelector('[data-testid="agent-subagent-thinking-max"]');
-		const mr = menuEl.getBoundingClientRect();
-		const br = maxEl.getBoundingClientRect();
-		return { menuTop: mr.top, menuBottom: mr.bottom, itemTop: br.top, itemBottom: br.bottom };
-	});
-	check("390：滚到底后 max 项完整可见（顶/底都在菜单内）", bottom.itemTop >= bottom.menuTop - 1 && bottom.itemBottom <= bottom.menuBottom + 1, JSON.stringify(bottom));
-	await page.screenshot({ path: join(OUT, "04-390-menu-scroll.png") });
+	check("390：7 档刻度全部渲染", m.tickCount === 7, JSON.stringify(m.tickCount));
+	check("390：每个档位刻度都落在弹层水平范围内（不溢出）", m.ticksInMenu);
+	check("390：滑块 aria-valuemax = 6（7 档）", m.handleMax === "6", String(m.handleMax));
+	await page.screenshot({ path: join(OUT, "04-390-slider.png") });
 	// 真能点到底部 max：点了之后后端应落库 fixed/max
 	await page.getByTestId("agent-subagent-thinking-max").click();
 	await waitFor(async () => (await j(`/api/agents/${agent.id}/subagent-thinking`)).mode === "fixed" && (await j(`/api/agents/${agent.id}/subagent-thinking`)).level === "max");
-	check("390：底部 max 可达且真能选中（后端已落库 fixed/max）", true);
+	check("390：max 档可达且真能选中（后端已落库 fixed/max）", true);
 
 	console.log(`\n${failed === 0 ? "全部通过" : `有 ${failed} 项失败`}`);
 } catch (e) {
