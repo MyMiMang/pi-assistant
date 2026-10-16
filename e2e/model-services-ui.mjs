@@ -337,15 +337,16 @@ try {
 	await page.getByTestId('local-laya-card').waitFor();
 	const layaCard = page.getByTestId('local-laya-card');
 	assert.equal(await layaCard.getAttribute('data-source'), 'local');
-	assert.match(await page.getByTestId('laya-install-state').textContent(), /已安装/);
-	assert.match(await page.getByTestId('laya-runtime-state').textContent(), /运行中/);
-	assert.match(await page.getByTestId('laya-device').textContent(), /mps/, 'health 实际设备应来自测量值');
+	// 单一状态：安装 + 运行合成一个 badge（不再同时出「未安装 / 未运行 / 分类器 / 未就绪」）
+	assert.match(await page.getByTestId('laya-state').textContent(), /可用/, '安装并运行时应是单状态「可用」');
 	await page.getByTestId('laya-details-toggle').click();
+	assert.match(await page.getByTestId('laya-device').textContent(), /mps/, 'health 实际设备应来自测量值');
 	assert.match(await page.getByTestId('laya-unverified-note').textContent(), /尚未在本机实机验证/, '需声明未实机验证');
 	assert.match(await page.getByTestId('laya-source').textContent(), /权重/, '来源 / 许可在详情里保留');
+	assert.equal(await page.getByTestId('laya-model-row').getAttribute('data-registered'), 'true');
 	await page.getByTestId('laya-details-toggle').click();
 	assert.equal(await page.getByTestId('laya-unverified-note').count(), 0, '收起详情后长声明不占屏');
-	assert.equal(await page.getByTestId('laya-model-row').getAttribute('data-registered'), 'true');
+	assert.equal(await page.getByTestId('laya-model-row').count(), 0, '协议 / 模型 id 行只在详情里，不占主界面');
 
 	// 8) 实际操作测试：provenance 按每次结果标明，不是永久硬文案
 	await page.getByTestId('benchmark-open-multilingual').click();
@@ -385,7 +386,8 @@ try {
 	// 9) Laya 停止：不删配置，模型显示未就绪
 	await page.getByTestId('laya-stop').click();
 	await page.waitForTimeout(80);
-	assert.match(await page.getByTestId('laya-runtime-state').textContent(), /未运行/);
+	assert.match(await page.getByTestId('laya-state').textContent(), /已停止/);
+	await page.getByTestId('laya-details-toggle').click();
 	assert.equal(await page.getByTestId('laya-model-row').getAttribute('data-registered'), 'false');
 	assert.match(await page.getByTestId('laya-model-row').textContent(), /未就绪/, '停止后模型显示未就绪，不删配置');
 	assert.ok(await page.getByTestId('laya-start').isVisible(), '停止后仍可启动');
@@ -396,11 +398,11 @@ try {
 	assert.match(await page.getByTestId('confirm-dialog').textContent(), /卸载本地 Laya/);
 	await page.getByTestId('confirm-cancel').click();
 	await page.waitForTimeout(60);
-	assert.match(await page.getByTestId('laya-install-state').textContent(), /已安装/, '取消卸载后状态不变');
+	assert.match(await page.getByTestId('laya-state').textContent(), /可用/, '取消卸载后状态不变');
 	await page.getByTestId('laya-uninstall').click();
 	await page.getByTestId('confirm-ok').click();
 	await page.waitForTimeout(80);
-	assert.match(await page.getByTestId('laya-install-state').textContent(), /未安装/, '确认后卸载');
+	assert.match(await page.getByTestId('laya-state').textContent(), /未安装/, '确认后卸载');
 	assert.ok(await page.getByTestId('laya-install').isVisible(), '卸载后显示一键安装');
 
 	// 11) 回到模型页 → Esc 关弹窗（键盘可达）

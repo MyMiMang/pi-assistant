@@ -661,23 +661,31 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 	const percent = st.install.total ? Math.round((st.install.received / st.install.total) * 100) : null;
 	const unsupported = p.support === "unsupported";
 	const model: RegistryModel = { provider: "local-laya", id: st.registered?.modelId ?? "multilingual", name: st.registered?.modelId ?? "multilingual", type: "classifier", capabilities: ["classifier"], protocol: st.registered?.protocol ?? "typesafe-system-one", confirmed: true, inferred: [], source: "pi-catalog", configured: true };
+	// 单一状态：安装态 + 运行态合成一个 badge（主界面不再同时出现「未安装 / 未运行 / 分类器 / 未就绪」）。
+	const [stateTone, stateText]: ["accent" | "green" | "amber" | "red" | "zinc", string] = installing
+		? ["amber", percent != null ? `安装中 ${percent}%` : "安装中"]
+		: st.install.state === "failed"
+			? ["red", "安装失败"]
+			: !installed
+				? ["zinc", unsupported ? "此平台不支持" : "未安装"]
+				: running
+					? ["green", "可用"]
+					: st.runtime.state === "starting"
+						? ["amber", "启动中"]
+						: st.runtime.state === "stopping"
+							? ["amber", "停止中"]
+							: st.runtime.state === "crashed"
+								? ["red", "已崩溃"]
+								: ["zinc", "已停止"];
 	return (
-		<div className="space-y-3 rounded-xl border border-line p-3" data-testid="local-laya-card" data-install-state={st.install.state} data-runtime-state={st.runtime.state} data-source="local">
+		<div className="space-y-3 rounded-xl border border-line p-3" data-testid="local-laya-card" data-install-state={st.install.state} data-runtime-state={st.runtime.state} data-state={stateText} data-source="local">
 			{dlg}
 			<div className="flex flex-wrap items-center gap-2 text-xs">
 				<ServiceIcon provider={{ id: "local-laya", name: "本地 Laya", kind: "local" }} />
 				<span className="text-sm font-medium">本地快速操作模型（Laya）</span>
-				<Badge tone="accent">本地</Badge>
-				<Help>在有限候选里挑控件的快速分类模型（不是语音识别）。这台电脑和助理电脑共用同一份安装；两边的「用不用、用哪个」分别设置。</Help>
-				<span data-testid="laya-install-state">
-					<Badge tone={installing ? "amber" : installed ? "green" : st.install.state === "failed" ? "red" : "zinc"}>
-						{st.install.state === "not_installed" ? "未安装" : installing ? "安装中" : installed ? "已安装" : "安装失败"}
-					</Badge>
-				</span>
-				<span data-testid="laya-runtime-state">
-					<Badge tone={running ? "green" : st.runtime.state === "crashed" ? "red" : "zinc"}>
-						{running ? "运行中" : st.runtime.state === "starting" ? "启动中" : st.runtime.state === "stopping" ? "停止中" : st.runtime.state === "crashed" ? "已崩溃" : "未运行"}
-					</Badge>
+				<Help>在有限候选里挑控件的快速分类模型（不是语音识别）。这台电脑和助理电脑共用同一份安装；两边的「用不用、用哪个」分别设置。安装不需要地址 / Key。</Help>
+				<span data-testid="laya-state">
+					<Badge tone={stateTone}>{stateText}</Badge>
 				</span>
 			</div>
 			{unsupported && (
@@ -698,39 +706,10 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 				</div>
 			)}
 			{st.install.state === "failed" && st.install.error && <div className="text-[11px] text-red-600" data-testid="laya-error">{st.install.error}</div>}
-			{installed && st.health && (
-				<div className="flex flex-wrap items-center gap-2 text-[11px] text-mut" data-testid="laya-health">
-					<span className="flex items-center gap-1" data-testid="laya-device">
-						<Gauge size={12} /> 实际设备：{st.health.device ?? "未知"}
-					</span>
-					{st.health.cpuFallbacks && st.health.cpuFallbacks.count > 0 && (
-						<span className="flex items-center gap-1 text-amber-600" data-testid="laya-cpu-fallback">
-							<AlertTriangle size={12} /> CPU 回退 {st.health.cpuFallbacks.count} 次{st.health.cpuFallbacks.lastReason ? `：${st.health.cpuFallbacks.lastReason}` : ""}
-						</span>
-					)}
-					{st.health.revisions && Object.keys(st.health.revisions).length > 0 && <span className="text-mut2">revision：{Object.values(st.health.revisions).join(", ").slice(0, 12)}</span>}
-				</div>
-			)}
-			{/* 分类器模型：注册进目录后可选 + 实际操作测试；未运行显示未就绪，而不是删掉配置 */}
-			<div className="rounded-lg border border-line" data-testid="laya-model-row" data-registered={String(!!st.registered)}>
-				<div className="flex flex-wrap items-center gap-2 px-2.5 py-1.5 text-xs">
-					<span className="rounded bg-hover px-1.5 py-0.5 text-[11px] text-mut">分类器</span>
-					<span className="min-w-0 flex-1 truncate font-mono">local-laya / {model.id}</span>
-					<CapabilityChips capabilities={["classifier"]} testId="laya-model-caps" />
-					{!st.registered && <span className="text-[11px] text-amber-600">未就绪（启动后自动注册，不删配置）</span>}
-				</div>
-				{st.registered && (
-					<div className="px-2.5 pb-2">
-						<Button size="sm" variant="outline" onClick={() => onBenchmark({ id: "local-laya", name: "本地 Laya", kind: "local", configured: true, protocols: [], models: [] }, model)} data-testid="benchmark-open-multilingual">
-							<Monitor size={13} /> 实际操作测试
-						</Button>
-					</div>
-				)}
-			</div>
 			<div className="flex flex-wrap gap-2">
-				{!installed && !installing && (
+				{!installed && !installing && st.install.state !== "failed" && (
 					<Button size="sm" variant="primary" disabled={busy !== null || unsupported} onClick={() => void post("/install")} data-testid="laya-install">
-						<Download size={14} /> 一键安装（自动地址，无需填 Key）
+						<Download size={14} /> 一键安装
 					</Button>
 				)}
 				{installing && (
@@ -743,7 +722,7 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 						<RotateCcw size={13} /> 重试安装
 					</Button>
 				)}
-				{installed && !running && (
+				{installed && !running && st.runtime.state !== "starting" && st.runtime.state !== "stopping" && (
 					<Button size="sm" variant="primary" disabled={busy !== null} onClick={() => void post("/start")} data-testid="laya-start">
 						<Play size={13} /> 启动
 					</Button>
@@ -753,15 +732,10 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 						<Square size={13} /> 停止
 					</Button>
 				)}
-				{installed && (
-					<>
-						<Button size="sm" variant="outline" onClick={() => void post("/update")} data-testid="laya-update">
-							<RefreshCw size={13} /> 更新
-						</Button>
-						<Button size="sm" variant="ghost" onClick={() => void uninstall()} data-testid="laya-uninstall">
-							<Trash2 size={13} /> 卸载
-						</Button>
-					</>
+				{st.registered && (
+					<Button size="sm" variant="outline" onClick={() => onBenchmark({ id: "local-laya", name: "本地 Laya", kind: "local", configured: true, protocols: [], models: [] }, model)} data-testid="benchmark-open-multilingual">
+						<Monitor size={13} /> 实际操作测试
+					</Button>
 				)}
 			</div>
 			{err && <div className="text-[11px] text-red-600" data-testid="laya-op-error">{err}</div>}
@@ -771,14 +745,41 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 					{showDetails ? "收起详情" : "详情"}
 				</button>
 				{showDetails && (
-					<div className="mt-1 space-y-0.5 text-mut2" data-testid="laya-details">
+					<div className="mt-1 space-y-1.5 text-mut2" data-testid="laya-details">
 						<div data-testid="laya-platform" data-support={p.support}>
 							平台：{p.os} / {p.arch} · {p.support === "supported" ? "支持" : p.support === "conditional" ? "有条件支持" : p.support === "experimental" ? "实验性" : "不支持"}（安装意图 {p.accelerator}）
+						</div>
+						{installed && st.health && (
+							<div className="space-y-0.5" data-testid="laya-health">
+								<span className="flex items-center gap-1" data-testid="laya-device">
+									<Gauge size={12} /> 实际设备：{st.health.device ?? "未知"}
+								</span>
+								{st.health.cpuFallbacks && st.health.cpuFallbacks.count > 0 && (
+									<span className="flex items-center gap-1 text-amber-600" data-testid="laya-cpu-fallback">
+										<AlertTriangle size={12} /> CPU 回退 {st.health.cpuFallbacks.count} 次{st.health.cpuFallbacks.lastReason ? `：${st.health.cpuFallbacks.lastReason}` : ""}
+									</span>
+								)}
+								{st.health.revisions && Object.keys(st.health.revisions).length > 0 && <span>revision：{Object.values(st.health.revisions).join(", ").slice(0, 12)}</span>}
+							</div>
+						)}
+						<div data-testid="laya-model-row" data-registered={String(!!st.registered)}>
+							分类器模型：local-laya / {model.id} · 协议 {model.protocol}
+							{!st.registered && <span className="text-amber-600">（未就绪，启动后自动注册，不删配置）</span>}
 						</div>
 						<div data-testid="laya-source">
 							来源：{st.source.project} {st.source.version} · 代码 {st.source.codeLicense} / 权重 {st.source.weightsLicense}
 						</div>
 						<div data-testid="laya-unverified-note">本地 Laya 的下载 / 启动尚未在本机实机验证（后端测试为 fake / 环回 HTTP，未真下载 venv、未启动 Laya、未跑 GPU）；状态以实际 health 为准。</div>
+						{installed && (
+							<div className="flex flex-wrap gap-2 pt-0.5">
+								<Button size="sm" variant="outline" onClick={() => void post("/update")} data-testid="laya-update">
+									<RefreshCw size={13} /> 更新
+								</Button>
+								<Button size="sm" variant="ghost" onClick={() => void uninstall()} data-testid="laya-uninstall">
+									<Trash2 size={13} /> 卸载
+								</Button>
+							</div>
+						)}
 					</div>
 				)}
 			</div>
