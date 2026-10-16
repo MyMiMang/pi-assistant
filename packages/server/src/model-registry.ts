@@ -290,22 +290,7 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 				input: m.input,
 			});
 		}
-		for (const cl of c.classifiers ?? []) {
-			put(p, {
-				provider: c.id,
-				id: cl.modelId,
-				name: cl.name || cl.modelId,
-				type: "classifier",
-				capabilities: ["classifier"],
-				protocol: cl.protocol,
-				confirmed: true,
-				inferred: [],
-				source: "custom",
-				configured: !!c.configured,
-				contextWindow: cl.contextWindow,
-			});
-		}
-		// 自动识别的 classifier（对端元数据 / Pi 官方同 id）：显式声明先写，自动后写不会覆盖同名条目。
+		// 自动识别的 classifier（对端元数据 / Pi 官方同 id）先写；显式声明后写，同一模型以声明为准。
 		for (const cl of c.discoveredClassifiers ?? []) {
 			put(p, {
 				provider: c.id,
@@ -317,6 +302,21 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 				confirmed: true,
 				inferred: [],
 				discovered: true,
+				source: "custom",
+				configured: !!c.configured,
+				contextWindow: cl.contextWindow,
+			});
+		}
+		for (const cl of c.classifiers ?? []) {
+			put(p, {
+				provider: c.id,
+				id: cl.modelId,
+				name: cl.name || cl.modelId,
+				type: "classifier",
+				capabilities: ["classifier"],
+				protocol: cl.protocol,
+				confirmed: true,
+				inferred: [],
 				source: "custom",
 				configured: !!c.configured,
 				contextWindow: cl.contextWindow,
