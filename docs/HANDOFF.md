@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> **beta.27 发布准备，尚未公开**：Laya 双层缓存校验及真实启动修复、权限操作条正常滚动、SenseVoice 保留原列表并支持一键下载安装，已全部合入。主会话独立通过两端类型/构建、87项服务端、6项前端逻辑、ASR与设置交互回归；已复核Laya真实启动分类和SenseVoice真实中文转写记录。详见 `progress-snapshots/beta27-final-validation.md` 与 `docs/release-notes/v0.1.0-beta.27.md`。按既有授权直接推送打包，仅arm64；公开后再更新状态。
+
 > **当前公开版本 v0.1.0-beta.26（Latest，仅 Apple 芯片 macOS arm64）**：tag 指向 `dd963a4da9f55b64912fb171ebc0271948d766d1`；[发布 run 38880524575](https://github.com/MyMiMang/pi-assistant/actions/runs/38880524575) 的 arm64 构建、内置服务、Mac 安装启动冒烟和 publish 均成功，2026-10-16 09:38:56 UTC 公开。主会话独立核验非草稿 / 非 prerelease、四项公开资产、公开 Latest 的 `latest.json` 为 `0.1.0-beta.26`，仅 `darwin-aarch64` / `darwin-aarch64-app` 且签名非空。未安装或更新用户 App，已有 tag 未移动。验收及未验边界见 [发布说明](release-notes/v0.1.0-beta.26.md)。
 >
 > **beta.26 已发布整合**：候选树 `release-candidate-validation`，起点公开 beta.25 `dcce520`。四块已 `--no-ff` 合入：① Laya 下载统一链路（`10317d0`，stage1 `1dbb652`）；② 本地语音多模型 UI + 后端（`55a09e7` / 后端 `18478d4`，stage1 `277ddfb`）+ 生产修复（`8f8d458`，本轮 `42f9613`）；③ 主题设计选本次草稿模型（`0781b9c`，stage1 `12370a5`）；④ Laya 测试隔离收口（`8e9a223`，本轮 `17a3da7`）。stage1 记录 `progress-snapshots/beta26-integration-stage1.md`，本轮整合与实跑见 `progress-snapshots/beta26-final-validation.md`。
