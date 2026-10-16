@@ -398,7 +398,7 @@ try {
 	assert.match(await page.getByTestId('confirm-dialog').textContent(), /卸载本地 Laya/);
 	await page.getByTestId('confirm-cancel').click();
 	await page.waitForTimeout(60);
-	assert.match(await page.getByTestId('laya-state').textContent(), /可用/, '取消卸载后状态不变');
+	assert.match(await page.getByTestId('laya-state').textContent(), /已停止/, '取消卸载后状态不变');
 	await page.getByTestId('laya-uninstall').click();
 	await page.getByTestId('confirm-ok').click();
 	await page.waitForTimeout(80);
