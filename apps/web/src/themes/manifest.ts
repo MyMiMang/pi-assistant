@@ -5,7 +5,7 @@
  * 内置中性默认。**不做 token 继承**（`basedOn` 仅作来源标注），避免「内置主题 token 在 CSS 里、引擎读不到」
  * 造成静默缺变量白屏。装饰只走 enum → 内置纯 CSS（渐变），不引入 url() / SVG / 远程资源。
  */
-import { OPTIONAL_COLOR_TOKENS, OPTIONAL_FONT_TOKENS, OPTIONAL_SIZE_TOKENS, REQUIRED_COLOR_TOKENS, validateThemeManifest, type ThemeDecor, type ThemeManifestV1 } from "@pi-assistant/shared";
+import { DEFAULT_THEME_MOTION, MOTION_EASE_CSS, MOTION_GLOW_VALUE, OPTIONAL_COLOR_TOKENS, OPTIONAL_FONT_TOKENS, OPTIONAL_SIZE_TOKENS, REQUIRED_COLOR_TOKENS, validateThemeManifest, type ThemeDecor, type ThemeManifestV1, type ThemeMotion } from "@pi-assistant/shared";
 import type { Mode, ThemeDef } from "./registry.ts";
 
 /** 自定义主题在 DOM / 注册表里的 skin id 前缀（与 manifest.id 一一对应，避免撞内置 id）。 */
@@ -45,6 +45,30 @@ const SHADOW: Record<Mode, Record<string, string>> = {
 		none: "none",
 	},
 };
+
+/**
+ * 动效 token：把 manifest.motion（可选）编译成公共控件已有的 `--pa-dur-*` / `--pa-ease-*`，
+ * 加上七档滑块等组件消费的 `--mo-scale` / `--mo-glow` / `--mo-style`。
+ * 全部缺省 → 内置默认（与 base.css 的 `html{}` 一致），老 v1 主题不破。
+ */
+export function motionTokens(manifest: ThemeManifestV1): Record<string, string> {
+	const m: ThemeMotion = manifest.motion ?? {};
+	const ease = (v: string | undefined, fallback: string): string => {
+		if (!v) return fallback;
+		return (MOTION_EASE_CSS as Record<string, string>)[v] ?? v; // 枚举名 → 内置 bezier；受限 bezier 原样
+	};
+	return {
+		"--pa-dur-fast": m.durationFast ?? DEFAULT_THEME_MOTION.durationFast,
+		"--pa-dur": m.duration ?? DEFAULT_THEME_MOTION.duration,
+		"--pa-dur-slow": m.durationSlow ?? DEFAULT_THEME_MOTION.durationSlow,
+		"--pa-ease-out": ease(m.easeOut, DEFAULT_THEME_MOTION.easeOut),
+		"--pa-ease-expand": ease(m.easeExpand, DEFAULT_THEME_MOTION.easeExpand),
+		"--pa-ease-spring": ease(m.easeSpring, DEFAULT_THEME_MOTION.easeSpring),
+		"--mo-scale": String(m.scale ?? DEFAULT_THEME_MOTION.scale),
+		"--mo-glow": MOTION_GLOW_VALUE[m.glow ?? DEFAULT_THEME_MOTION.glow],
+		"--mo-style": m.style ?? DEFAULT_THEME_MOTION.style,
+	};
+}
 
 /** 合并可选 token 默认值，产出一份「每个必需 / 可选 token 都有值」的完整 token 表。 */
 export function completeTokens(manifest: ThemeManifestV1, mode: Mode): Record<string, string> {
@@ -97,10 +121,13 @@ export function manifestToCss(manifest: ThemeManifestV1): string {
 	const skin = customSkinId(manifest.id);
 	const sel = `[data-skin="${skin}"]`;
 	const decor = manifest.decor;
-	const base = decls(completeTokens(manifest, "light"));
+	const base = decls({ ...completeTokens(manifest, "light"), ...motionTokens(manifest) });
 	const light = decls(completeTokens(manifest, "light"));
 	const dark = decls(completeTokens(manifest, "dark"));
 	const rules: string[] = [`${sel}{${base}}`, `${sel}[data-mode="light"]{${light}}`, `${sel}[data-mode="dark"]{${dark}}`];
+	// reduced-motion 安全网：主题自己的动效 token 不能绕开系统的减弱动效（同特异性下后写覆盖）。
+	// 组件侧仍应自查 matchMedia，这里只是兜底：把时长置零、倍率置 0，去掉位移 / 循环。
+	rules.push(`@media (prefers-reduced-motion: reduce){${sel}{--pa-dur-fast:0s;--pa-dur:0s;--pa-dur-slow:0s;--mo-scale:0}}`);
 	const tex = textureLayer(decor);
 	if (tex) {
 		const size = decor?.texture === "dots" ? "12px 12px" : "16px 16px";

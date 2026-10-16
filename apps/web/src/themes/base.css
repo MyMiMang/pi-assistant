@@ -4,6 +4,10 @@ html,.pa-app{height:100%}
    时长：fast=按下/悬停这类即时反馈；base=常规状态切换；slow=折叠 / 展开这类形变。
    弹窗 / 菜单 / 折叠 / 按钮统一从这里取值，reduced-motion 见 app.css。 */
 html{--pa-dur-fast:.12s;--pa-dur:.18s;--pa-dur-slow:.26s;--pa-ease-out:cubic-bezier(.2,.8,.2,1);--pa-ease-expand:cubic-bezier(.22,1,.36,1);--pa-ease-spring:cubic-bezier(.2,.9,.3,1.35)}
+/* 七档滑块等组件消费的动效旋钮默认值（内置主题用这些；DIY 主题在 [data-skin=custom-*] 里覆盖）。 */
+html{--mo-scale:1;--mo-glow:1;--mo-style:smooth}
+/* 减弱动效：内置主题也把动效 token 置零（DIY 主题自带同一段覆盖，见 themes/manifest.ts）。 */
+@media (prefers-reduced-motion: reduce){html{--pa-dur-fast:0s;--pa-dur:0s;--pa-dur-slow:0s;--mo-scale:0}}
 .pa-app{font-family:var(--font);background:var(--bg);color:var(--fg);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;overflow:hidden;transition:background .3s,color .3s}
 .pa-ic{width:16px;height:16px;flex:none}
 /* sidebar */
