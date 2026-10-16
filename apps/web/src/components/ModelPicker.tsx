@@ -27,6 +27,8 @@ export interface ModelEntry {
 	reasoning?: boolean;
 	thinking?: string[];
 	providerName?: string;
+	/** Pi 模型元数据里的输入模态（`input`）；含 `image` 才算能看图（主题设计等按它判视觉）。 */
+	input?: string[];
 	/** 菜单里模型名下面的一行说明（组队选模型的理由等） */
 	note?: string;
 	/** 模型名右侧的小标签（价格档等） */
@@ -41,15 +43,19 @@ export const THINKING_DESC: Record<string, string> = { off: "不思考，回答�
 export function useConfiguredModels() {
 	const v = useStore((s) => s.system);
 	const [d, setD] = useState<{ providers: Provider[]; models: ModelEntry[] }>({ providers: [], models: [] });
+	const [error, setError] = useState(false);
 	const reload = useCallback(() => {
-		void Promise.all([api("/api/models/providers"), api("/api/models")]).then(([p, m]) => {
-			const providers = (p.providers ?? p) as Provider[];
-			const ok = new Set(providers.filter((x) => x.configured).map((x) => x.id));
-			setD({ providers, models: (m as ModelEntry[]).filter((x) => ok.has(x.provider)) });
-		});
+		void Promise.all([api("/api/models/providers"), api("/api/models")])
+			.then(([p, m]) => {
+				const providers = (p.providers ?? p) as Provider[];
+				const ok = new Set(providers.filter((x) => x.configured).map((x) => x.id));
+				setD({ providers, models: (m as ModelEntry[]).filter((x) => ok.has(x.provider)) });
+				setError(false);
+			})
+			.catch(() => setError(true));
 	}, []);
 	useEffect(reload, [reload, v]);
-	return { ...d, reload };
+	return { ...d, error, reload };
 }
 
 /** 用户选过哪些模型：服务端持久化（电脑和手机共用），本地乐观更新让「常用」立刻变 */

@@ -705,7 +705,7 @@ function AppearanceTab() {
 					</Button>
 				</div>
 			</section>
-			<ThemeDesigner open={designer.open} initial={designer.initial} agentId={agentId} onThemeDraft={onThemeDraft} onClose={() => setDesigner({ open: false, initial: null })} uploadFn={uploadFn} onSaved={() => refresh()} />
+			<ThemeDesigner open={designer.open} initial={designer.initial} agentId={agentId} onThemeDraft={onThemeDraft} onOpenModels={() => useStore.getState().set({ settings: "models" })} onClose={() => setDesigner({ open: false, initial: null })} uploadFn={uploadFn} onSaved={() => refresh()} />
 		</div>
 	);
 }
