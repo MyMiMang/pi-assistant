@@ -52,6 +52,10 @@ export interface LayaPaths {
 	uvCache: string;
 	/** HuggingFace 缓存（权重，断点续传） */
 	hfHome: string;
+	/** 校验通过后物化的本地 checkpoint 生效目录（sidecar 直接从这里加载，不再读 HF 缓存 snapshot） */
+	weights: string;
+	/** 安装中的权重 staging（activate 前） */
+	weightsStaging: string;
 	/** 运行日志 */
 	logs: string;
 	/** 我们自己的 pid 文件（含安装时随机 token，用于确认「这个 pid 是我们的」） */
@@ -93,6 +97,10 @@ export interface LayaDeps {
 	rollback(paths: LayaPaths): Promise<void>;
 	/** 只删 own 目录（canonical 校验在实现里做，不得 purge 用户文件） */
 	uninstall(paths: LayaPaths): Promise<void>;
+	/** 已校验物化的本地 checkpoint 目录（存在才返回，否则 null）；sidecar 用它作为本地权重来源 */
+	checkpointSource?(paths: LayaPaths): string | null;
+	/** 依赖安装阶段（总量未知）的真实目录字节采样：返回停止函数。不提供时该阶段不报字节（仍是不定进度）。 */
+	watchBytes?(dirs: string[], onBytes: (received: number) => void): () => void;
 	randomToken(): string;
 	paths(): LayaPaths;
 	/** 注册/重注册 classifier provider（进程内注入 token；不落盘真实密钥） */
@@ -209,9 +217,15 @@ export class LocalLayaManager {
 			await this.step(signal, () => this.runOrThrow(this.deps.uvPath(), ["venv", "--python", this.deps.pythonVersion(), paths.envStaging], { env, signal }));
 			this.set("torch");
 			const pins = profile.pins;
-			await this.step(signal, () =>
-				this.runOrThrow(this.deps.uvPath(), ["pip", "install", "--python", this.envPython(paths.envStaging), "--torch-backend", torchBackendValue(profile), ...pins, `laya[serve]==${this.source.version}`], { env, signal }),
-			);
+			// 依赖阶段总量未知：用真实目录字节（uv 缓存 + staging venv）给 received，total 保持 null（界面不定进度）。
+			const stopBytes = this.deps.watchBytes?.([paths.uvCache, paths.envStaging], (received) => this.set("torch", { received, total: null }));
+			try {
+				await this.step(signal, () =>
+					this.runOrThrow(this.deps.uvPath(), ["pip", "install", "--python", this.envPython(paths.envStaging), "--torch-backend", torchBackendValue(profile), ...pins, `laya[serve]==${this.source.version}`], { env, signal }),
+				);
+			} finally {
+				stopBytes?.();
+			}
 			this.set("laya");
 			if (cp) {
 				this.set("weights");
@@ -257,7 +271,13 @@ export class LocalLayaManager {
 		this.onChange();
 		const port = await this.deps.findFreePort();
 		const token = this.deps.randomToken();
-		const env = { ...this.baseEnv(paths), LAYA_HOST: LAYA_BIND_HOST, LAYA_PORT: String(port), LAYA_API_KEY: token, LAYA_JEV_STRICT: "1", LAYA_THREADS: this.cpuThreads(), LAYA_IDLE_UNLOAD_SECONDS: "300" };
+		const env: Record<string, string> = { ...this.baseEnv(paths), LAYA_HOST: LAYA_BIND_HOST, LAYA_PORT: String(port), LAYA_API_KEY: token, LAYA_JEV_STRICT: "1", LAYA_THREADS: this.cpuThreads(), LAYA_IDLE_UNLOAD_SECONDS: "300" };
+		// 只加载我们安装的这一个 checkpoint（默认会预加载全部三个，另两个没装会去下载）。
+		env.LAYA_MODELS = LAYA_MODEL_ID;
+		// 把已校验物化的本地 checkpoint 目录直接交给 sidecar（Laya 公开配置 LAYA_EXTRA_MODELS：{名字: repo 或本地 checkpoint 目录}，
+		// 见 research/laya/docs/http-api.md）；目录不存在就不改 sidecar 默认来源。这样运行时读的就是**受校验的物化文件**，而不是 HF 缓存里的 snapshot。
+		const source = this.deps.checkpointSource?.(paths) ?? null;
+		if (source) env.LAYA_EXTRA_MODELS = JSON.stringify({ [LAYA_MODEL_ID]: source });
 		const child = this.deps.spawn(this.envBin(paths.env, "laya-serve"), [], { env });
 		this.runtime = { state: "running", pid: child.pid ?? null, port, token, child, health: null };
 		this.deps.recordPid(child.pid ?? null);

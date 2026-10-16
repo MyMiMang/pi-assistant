@@ -76,3 +76,78 @@ test("watchDir：别的进程往目录里写时，用目录大小当进度", asy
 	});
 	assert.ok(seen.includes(4096), JSON.stringify(seen));
 });
+
+test("status 投影：组件自己的 phase/received/error 驱动下载状态；总量未知 → percent null + canCancel", () => {
+	let phase: "installing" | "done" | "failed" = "installing";
+	let received = 0;
+	let total: number | null = null;
+	dl.registerDownload({
+		id: "proj1",
+		name: "投影组件",
+		group: "本地模型",
+		size: 800,
+		installed: () => phase === "done",
+		start: () => Promise.resolve(),
+		cancel: () => {
+			phase = "failed";
+		},
+		status: () => ({ state: phase === "done" ? "ready" : phase === "installing" ? "downloading" : "error", received, total, detail: "下载模型权重", error: phase === "failed" ? "手动取消" : null }),
+	});
+	const a = dl.downloadInfo("proj1")!;
+	assert.equal(a.state, "downloading");
+	assert.equal(a.percent, null, "总量未知不得编百分比");
+	assert.equal(a.detail, "下载模型权重");
+	assert.equal(a.canCancel, true, "登记了 cancel 就允许取消");
+	total = 800;
+	received = 200;
+	assert.equal(dl.downloadInfo("proj1")!.percent, 25);
+	phase = "done";
+	const c = dl.downloadInfo("proj1")!;
+	assert.equal(c.state, "ready");
+	assert.equal(c.percent, 100);
+});
+
+test("cancelDownload：调用 def.cancel；未登记 cancel 的报不支持", async () => {
+	let cancelled = false;
+	dl.registerDownload({ id: "cancel1", name: "可取消", group: "本地模型", installed: () => false, cancel: () => { cancelled = true; } });
+	assert.equal(dl.downloadInfo("cancel1")!.canCancel, true);
+	await dl.cancelDownload("cancel1");
+	assert.ok(cancelled);
+	dl.registerDownload({ id: "nocancel", name: "不可取消", group: "测试", installed: () => false });
+	assert.equal(dl.downloadInfo("nocancel")!.canCancel, false);
+	await assert.rejects(() => dl.cancelDownload("nocancel"), /不支持取消/);
+});
+
+test("followStatus：轮询组件状态驱动进度并自动结束；同一 id 只一个循环", async () => {
+	const total = 100;
+	let received = 0;
+	let active = true;
+	let polls = 0;
+	dl.registerDownload({
+		id: "follow1",
+		name: "跟踪",
+		group: "本地模型",
+		installed: () => !active,
+		status: () => ({ state: active ? "downloading" : "ready", received, total, detail: "阶段" }),
+	});
+	const states: string[] = [];
+	const off = bus.on((e) => {
+		const item = e.item as { id?: string; state?: string } | undefined;
+		if (e.type === "downloads.changed" && item?.id === "follow1" && item.state) states.push(item.state);
+	});
+	const read = () => {
+		polls++;
+		received = 50;
+		return { active, received, total };
+	};
+	dl.followStatus("follow1", read, 20);
+	dl.followStatus("follow1", read, 20); // 第二次同 id 不叠加
+	await new Promise((r) => setTimeout(r, 80));
+	assert.ok(states.includes("downloading"), JSON.stringify(states));
+	assert.equal(dl.downloadInfo("follow1")!.percent, 50);
+	active = false;
+	await new Promise((r) => setTimeout(r, 80));
+	off();
+	assert.ok(polls >= 1);
+	assert.equal(dl.downloadInfo("follow1")!.state, "ready");
+});

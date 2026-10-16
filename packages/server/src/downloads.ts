@@ -14,6 +14,14 @@ import { join } from "node:path";
 import { bus } from "./bus.ts";
 
 export type DownloadState = "missing" | "downloading" | "ready" | "error";
+/** 组件自己投影给统一登记的状态（本地安装管理器等）：无 trackDownload 时首屏也能显示真实阶段。 */
+export interface DownloadStatus {
+	state: DownloadState;
+	received?: number;
+	total?: number | null;
+	detail?: string | null;
+	error?: string | null;
+}
 export interface DownloadDef {
 	id: string;
 	name: string;
@@ -23,8 +31,12 @@ export interface DownloadDef {
 	size?: number;
 	/** 已经在本地了吗（文件存在等） */
 	installed: () => boolean;
-	/** 开始 / 重试下载（没有则界面不显示“下载”按钮，由使用它的功能自动触发） */
+	/** 开始 / 重试下载（没有则界面不显示"下载"按钮，由使用它的功能自动触发） */
 	start?: () => Promise<unknown>;
+	/** 取消进行中的下载（可选）。同一 job 的取消走这里，不另建 controller。 */
+	cancel?: () => Promise<unknown> | unknown;
+	/** 直接投影组件自身的状态（安装管理器的 phase/received/total/error），比内部计数权威；用于两个入口同状态 */
+	status?: () => DownloadStatus;
 	/** 不需要 / 不适用于这台电脑时隐藏 */
 	hidden?: () => boolean;
 }
@@ -40,6 +52,7 @@ export interface DownloadInfo {
 	detail: string | null;
 	error: string | null;
 	canStart: boolean;
+	canCancel: boolean;
 }
 export interface Progress {
 	/** 已收到 / 总字节（总数未知传 null） */
@@ -74,6 +87,17 @@ function emit(id: string, force = false) {
 	} else if (!timers.has(id)) timers.set(id, setTimeout(fire, 500));
 }
 
+/**
+ * 把组件**自己的状态变化**转发给统一下载面板（投影 → `downloads.changed`）。
+ *
+ * 用途：本地 Laya / 本地 ASR 这类有自己阶段状态机的组件，在自己的 bus 事件里调用它，
+ * 而不是每项再起一个永久 `setInterval` 轮询。`force=true` 用于首 / 终事件（立即推送，不走 500ms 节流）。
+ * 只读 `def.status()`，不复制组件状态、不构造组件。
+ */
+export function notifyDownload(id: string, force = false): void {
+	emit(id, force);
+}
+
 export function downloadInfo(id: string): DownloadInfo | null {
 	const d = defs.get(id);
 	if (!d) return null;
@@ -84,9 +108,16 @@ export function downloadInfo(id: string): DownloadInfo | null {
 	} catch {
 		/* 当作没装 */
 	}
-	const state: DownloadState = l?.state === "downloading" ? "downloading" : installed ? "ready" : l?.state === "error" ? "error" : "missing";
-	const total = l?.total ?? null;
-	const received = l?.received ?? 0;
+	// 组件投影（若有）比内部 trackDownload 计数权威：两个入口读同一个 job，状态一致。
+	const proj = d.status?.() ?? null;
+	const src: { state: DownloadState; received: number; total: number | null; detail: string | null; error: string | null } | null = proj
+		? { state: proj.state, received: proj.received ?? 0, total: proj.total ?? null, detail: proj.detail ?? null, error: proj.error ?? null }
+		: l
+			? { state: l.state, received: l.received, total: l.total, detail: l.detail, error: l.error }
+			: null;
+	const state: DownloadState = installed ? "ready" : (src?.state ?? "missing");
+	const total = src?.total ?? null;
+	const received = src?.received ?? 0;
 	return {
 		id,
 		name: d.name,
@@ -96,9 +127,10 @@ export function downloadInfo(id: string): DownloadInfo | null {
 		total,
 		percent: state === "ready" ? 100 : total ? Math.min(100, Math.floor((received / total) * 100)) : null,
 		size: d.size ?? null,
-		detail: state === "downloading" ? (l?.detail ?? null) : null,
-		error: state === "error" ? (l?.error ?? null) : null,
+		detail: state === "downloading" ? (src?.detail ?? null) : null,
+		error: state === "error" ? (src?.error ?? null) : null,
 		canStart: !!d.start,
+		canCancel: !!d.cancel,
 	};
 }
 
@@ -140,6 +172,56 @@ export async function startDownload(id: string) {
 	if (!d?.start) throw new Error("这个组件会在用到时自动下载");
 	void d.start().catch(() => {});
 	return downloadInfo(id);
+}
+
+/** 取消进行中的下载 / 安装（仅登记了 cancel 的条目） */
+export async function cancelDownload(id: string) {
+	const d = defs.get(id);
+	if (!d?.cancel) throw new Error("这个组件不支持取消");
+	await d.cancel();
+	return downloadInfo(id);
+}
+
+/**
+ * 把“带阶段状态的组件”（本地安装管理器等）接进统一下载进度（Laya / 本地 ASR 共用，勿另写循环）：
+ * 轮询 `read()`；`active` 时已知总字节→字节进度，未知→不定进度（界面 indeterminate）+ 阶段文字。
+ * 同一 id 只会有一个跟踪循环；结束（成功 / 失败 / 取消）自动停止。组件应同时提供 `def.status` 投影首屏状态。
+ */
+export interface StatusSnapshot {
+	/** 仍在进行（下载 / 安装中） */
+	active: boolean;
+	/** 阶段文字（用于界面 detail，不要求百分比） */
+	detail?: string | null;
+	received?: number;
+	total?: number | null;
+	error?: string | null;
+}
+const follows = new Set<string>();
+export function followStatus(id: string, read: () => StatusSnapshot, intervalMs = 500): void {
+	if (follows.has(id)) return;
+	follows.add(id);
+	void trackDownload(id, (p) =>
+		new Promise<void>((res, rej) => {
+			const tick = (): boolean => {
+				const s = read();
+				if (s.active) {
+					p.bytes(s.received ?? 0, s.total ?? null);
+					if (s.detail) p.detail(s.detail);
+					return true;
+				}
+				if (s.error) rej(new Error(s.error));
+				else res();
+				return false;
+			};
+			if (tick()) {
+				const t = setInterval(() => {
+					if (!tick()) clearInterval(t);
+				}, intervalMs);
+			}
+		}),
+	)
+		.catch(() => {})
+		.finally(() => follows.delete(id));
 }
 
 /** fetch 并按字节报告进度，返回完整内容（适合几百 MB 以内、需要校验 SHA256 的文件） */

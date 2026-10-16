@@ -20,6 +20,8 @@ function paths(dir: string): LayaPaths {
 		python: `${dir}/python`,
 		uvCache: `${dir}/uv-cache`,
 		hfHome: `${dir}/hf`,
+		weights: `${dir}/runtime/weights`,
+		weightsStaging: `${dir}/runtime/weights.new`,
 		logs: `${dir}/logs`,
 		pidFile: `${dir}/runtime/serve.pid`,
 		metaFile: `${dir}/runtime/meta.json`,
@@ -52,10 +54,12 @@ interface FakeOpts {
 	downloadHold?: boolean;
 	/** 让 verifyCheckpoint 报「校验失败」，验证失败时绝不 activate */
 	verifyFail?: boolean;
+	/** 模拟已校验物化的本地 checkpoint 目录存在（start 应把它交给 sidecar） */
+	weightsReady?: boolean;
 }
 
 function fakeDeps(dir: string, opts: FakeOpts = {}) {
-	const calls: { run: string[][]; spawned: string[]; phases: string[] } = { run: [], spawned: [], phases: [] };
+	const calls: { run: string[][]; spawned: string[]; spawnEnv: Record<string, string> | null; phases: string[] } = { run: [], spawned: [], spawnEnv: null, phases: [] };
 	const state = { installed: opts.installed ?? false, registered: null as null | { provider: string; modelId: string; protocol: string; baseUrl: string; token: string }, activated: false, rolledBack: false, uninstalled: false, aborted: false, pid: null as number | null, verifyCalls: 0 };
 	let child: FakeChild | null = null;
 	const deps: LayaDeps = {
@@ -69,8 +73,9 @@ function fakeDeps(dir: string, opts: FakeOpts = {}) {
 			if (opts.failRun && args.join(" ").includes(opts.failRun)) return { code: 1, stdout: "", stderr: "boom" };
 			return { code: 0, stdout: "", stderr: "" };
 		},
-		spawn: (_exe, args): LayaChild => {
+		spawn: (_exe, args, opts): LayaChild => {
 			calls.spawned.push(args.join(" "));
+			calls.spawnEnv = opts.env;
 			child = new FakeChild();
 			return child;
 		},
@@ -115,6 +120,8 @@ function fakeDeps(dir: string, opts: FakeOpts = {}) {
 			state.uninstalled = true;
 			state.installed = false;
 		},
+		// 与生产 deps 同语义：只有 weights 目录里存在必需文件才交出本地 checkpoint 路径。
+		checkpointSource: (p) => (opts.weightsReady ? p.weights : null),
 	};
 	return { deps, calls, state, child: () => child };
 }
@@ -202,6 +209,18 @@ test("install：失败 → failed + 脱敏错误 + 回滚；旧环境不被破�
 	assert.equal(state.installed, false);
 });
 
+test("install：并发第二个 install 被拒（单一 job，两个入口不会二次安装）", async () => {
+	const { deps, state } = fakeDeps(dir(), { downloadHold: true });
+	const m = new LocalLayaManager(deps, LAYA_SOURCE);
+	const p = m.install({ checkpoint: LAYA_CHECKPOINTS["laya-multilingual"] }).catch((e: unknown) => e);
+	await new Promise((r) => setTimeout(r, 10));
+	assert.equal(m.status().install.state, "installing");
+	await assert.rejects(() => m.install({ checkpoint: LAYA_CHECKPOINTS["laya-multilingual"] }), /安装已在进行中/);
+	assert.equal(state.verifyCalls, 0, "第二次不得重新开始安装");
+	m.cancel();
+	await p;
+});
+
 test("start/stop：running 时 token 不进 status；注册 loopback baseUrl；stop 只杀自己的子进程", async () => {
 	const { deps, state, child } = fakeDeps(dir(), { installed: true });
 	const m = new LocalLayaManager(deps, LAYA_SOURCE);
@@ -223,6 +242,23 @@ test("start/stop：running 时 token 不进 status；注册 loopback baseUrl；s
 	assert.equal(child()?.killed, "SIGTERM");
 	assert.equal(state.registered, null);
 	assert.equal(state.pid, null);
+});
+
+test("start：sidecar 只加载 multilingual；有已物化本地 checkpoint → LAYA_EXTRA_MODELS 指向受校验目录（不再读 HF 缓存）", async () => {
+	const { deps, calls } = fakeDeps(dir(), { installed: true, weightsReady: true });
+	const m = new LocalLayaManager(deps, LAYA_SOURCE);
+	await m.start();
+	assert.equal(calls.spawnEnv?.LAYA_MODELS, "multilingual", "默认会预加载全部三个，必须钉到我们装的那一个");
+	// Laya 公开配置：LAYA_EXTRA_MODELS 的 source 可以是本地 checkpoint 目录（research/laya/docs/http-api.md）。
+	assert.deepEqual(JSON.parse(calls.spawnEnv?.LAYA_EXTRA_MODELS ?? "{}"), { multilingual: `${dir()}/runtime/weights` });
+});
+
+test("start：本地权重目录缺失时不设 LAYA_EXTRA_MODELS（不把 sidecar 指向不存在的目录）", async () => {
+	const { deps, calls } = fakeDeps(dir(), { installed: true });
+	const m = new LocalLayaManager(deps, LAYA_SOURCE);
+	await m.start();
+	assert.equal(calls.spawnEnv?.LAYA_MODELS, "multilingual");
+	assert.equal(calls.spawnEnv?.LAYA_EXTRA_MODELS, undefined);
 });
 
 test("install 中途子进程崩溃 → crashed，且不再报 registered，并撤销 classifier 注册", async () => {

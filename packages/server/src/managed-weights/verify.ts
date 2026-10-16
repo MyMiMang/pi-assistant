@@ -6,18 +6,25 @@
  *
  * 设计约束（沿用 local-laya 原实现的验收）：
  *  - 只有清单里每个文件都存在、大小与 SHA256 都对，才算通过 → 才允许 activate；
- *  - 只读调用方给的目录；路径必须相对、不得越界；symlink 必须仍指向该目录内；
+ *  - 只读调用方给的目录与受信根；路径必须相对、不得越界；
+ *  - **symlink 的 realpath 必须落在受信根（trustRoot）内**：HuggingFace 缓存里
+ *    `snapshots/<rev>/<file>` 合法地指向同 cache 根下的 `../../blobs/<sha>`，所以受信根是
+ *    `models--org--repo/` 这一级，而不是 snapshot 目录本身（旧实现把根设成 snapshot 目录，
+ *    把自控 cache 的合法 blob 链接误判成「符号链接越界」）；跨到任意用户目录仍拒绝。
+ *  - `optional` 文件（README / .gitattributes 等辅助元数据）：缺失不算失败；存在则仍校验大小 / SHA256。
  *  - 纯文件系统操作，不执行任何脚本。
  */
 import { createHash } from "node:crypto";
-import { createReadStream, lstatSync, realpathSync, statSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { constants, copyFileSync, createReadStream, linkSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 export interface PinnedFile {
 	/** 相对根目录的路径（POSIX 分隔符） */
 	path: string;
 	size: number;
 	sha256: string;
+	/** 辅助文件：缺失不算失败（存在则仍要大小 / SHA256 一致） */
+	optional?: boolean;
 }
 
 export interface VerifyResult {
@@ -38,8 +45,8 @@ export function sha256File(path: string): Promise<string> {
 	});
 }
 
-/** 该路径（可能是 symlink）是否仍落在 root 内；越界 / 不存在返回 false。 */
-function staysInside(root: string, target: string): boolean {
+/** 该路径（可能是 symlink）realpath 后是否仍落在 root 内；越界 / 不存在返回 false。 */
+export function pathInsideRoot(root: string, target: string): boolean {
 	try {
 		const real = realpathSync(target);
 		const rootReal = realpathSync(root);
@@ -73,16 +80,23 @@ export function assertSafePinnedFiles(files: PinnedFile[]): string[] {
  * 校验目录是否符合固定清单。返回问题列表；`ok` 仅在零问题时为 true。
  * `assertManifest` 用于额外的清单自检（如 local-laya 要求 safetensors-only）。
  */
-export async function verifyPinnedFiles(
-	dir: string,
-	files: PinnedFile[],
-	opts: { hashFile?: (p: string) => Promise<string>; assertManifest?: (files: PinnedFile[]) => string[] } = {},
-): Promise<VerifyResult> {
+export interface VerifyOptions {
+	hashFile?: (p: string) => Promise<string>;
+	assertManifest?: (files: PinnedFile[]) => string[];
+	/**
+	 * 受信根：清单文件的 realpath 必须落在它里面。默认 = dir（快照目录本身）。
+	 * HuggingFace 缓存请传 `models--org--repo/`（snapshot 的 symlink 合法指向同根的 blobs）。
+	 */
+	trustRoot?: string;
+}
+
+export async function verifyPinnedFiles(dir: string, files: PinnedFile[], opts: VerifyOptions = {}): Promise<VerifyResult> {
 	const hash = opts.hashFile ?? sha256File;
 	const problems: string[] = [...(opts.assertManifest ? opts.assertManifest(files) : []), ...assertSafePinnedFiles(files)];
 	let checked = 0;
 	let bytes = 0;
 	const root = resolve(dir);
+	const trust = resolve(opts.trustRoot ?? dir);
 
 	for (const f of files) {
 		const rel = String(f.path).replace(/\\/g, "/");
@@ -92,12 +106,14 @@ export async function verifyPinnedFiles(
 		let st: ReturnType<typeof statSync>;
 		try {
 			const ls = lstatSync(full);
-			if (ls.isSymbolicLink() && !staysInside(root, full)) {
-				problems.push(`符号链接越界：${rel}`);
+			// realpath 必须落在受信根内（HF 快照 symlink → 同 cache 根的 blobs 合法；跨到用户目录拒绝）
+			if (!pathInsideRoot(trust, full)) {
+				problems.push(`${ls.isSymbolicLink() ? "符号链接" : "路径"}越界：${rel}`);
 				continue;
 			}
 			st = statSync(full); // 跟随 symlink 取真实大小
 		} catch {
+			if (f.optional) continue; // 辅助元数据缺失不算失败
 			problems.push(`缺少文件：${rel}`);
 			continue;
 		}
@@ -124,4 +140,89 @@ export async function verifyPinnedFiles(
 		bytes += f.size;
 	}
 	return { ok: problems.length === 0, checked, bytes, problems };
+}
+
+export interface MaterializeResult {
+	ok: boolean;
+	written: string[];
+	problems: string[];
+}
+
+/**
+ * 把已校验的清单文件**物化成 staging 里的普通文件**（优先硬链接到真实 blob，同一磁盘不占额外空间；
+ * 跨设备 / 不支持时退回复制）。这样激活后的权重不再依赖 symlink，随后可原子 rename 到生效目录。
+ * 只处理**必需文件**（optional 辅助文件跳过）；物化后再对普通文件算一次大小 / SHA256，任一不符即不 ok。
+ */
+export async function materializePinnedFiles(
+	srcDir: string,
+	destDir: string,
+	files: PinnedFile[],
+	opts: { trustRoot?: string; hashFile?: (p: string) => Promise<string> } = {},
+): Promise<MaterializeResult> {
+	const hash = opts.hashFile ?? sha256File;
+	const trust = resolve(opts.trustRoot ?? srcDir);
+	const root = resolve(srcDir);
+	const destRoot = resolve(destDir);
+	const problems: string[] = [];
+	const written: string[] = [];
+	for (const f of files) {
+		if (f.optional) continue;
+		const rel = String(f.path).replace(/\\/g, "/");
+		if (!rel || rel.startsWith("/") || rel.split("/").some((s) => s === "" || s === "." || s === "..")) {
+			problems.push(`不安全的相对路径：${f.path}`);
+			continue;
+		}
+		const src = join(root, rel);
+		const dest = join(destRoot, rel);
+		let real: string;
+		try {
+			if (!pathInsideRoot(trust, src)) {
+				problems.push(`路径越界：${rel}`);
+				continue;
+			}
+			real = realpathSync(src); // 跟到同 cache 根内的真实 blob，之后只链接普通文件，不再跟随 symlink
+		} catch {
+			problems.push(`缺少文件：${rel}`);
+			continue;
+		}
+		try {
+			mkdirSync(dirname(dest), { recursive: true });
+			rmSync(dest, { force: true });
+			try {
+				linkSync(real, dest);
+			} catch {
+				copyFileSync(real, dest, constants.COPYFILE_FICLONE); // 跨设备 / 不支持硬链接时：写普通文件副本
+			}
+		} catch {
+			problems.push(`物化失败：${rel}`);
+			continue;
+		}
+		// 物化后只认普通文件：大小 + SHA256 再核一次，任一不符即判失败。
+		let st: ReturnType<typeof statSync>;
+		try {
+			st = lstatSync(dest);
+		} catch {
+			problems.push(`物化文件不存在：${rel}`);
+			continue;
+		}
+		if (!st.isFile()) {
+			problems.push(`物化结果不是普通文件：${rel}`);
+			continue;
+		}
+		if (st.size !== f.size) {
+			problems.push(`物化后大小不符：${rel}`);
+			continue;
+		}
+		try {
+			if ((await hash(dest)).toLowerCase() !== f.sha256.toLowerCase()) {
+				problems.push(`物化后 SHA256 不符：${rel}`);
+				continue;
+			}
+		} catch {
+			problems.push(`物化后读取失败：${rel}`);
+			continue;
+		}
+		written.push(rel);
+	}
+	return { ok: problems.length === 0, written, problems };
 }

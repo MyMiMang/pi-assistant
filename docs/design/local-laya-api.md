@@ -104,7 +104,10 @@ interface LayaStatus {
   小文件（config / tokenizer_config / rl_agent_config）在**同一 reviewed revision** 下取回后本地算 SHA256。
   绝不用 `main` / `latest` 的哈希去套旧 revision；升级 revision 必须重算清单。
 - 校验方式：`verify.ts` 对每个文件**流式**算 SHA256 + 比对大小；缺文件 / 大小或哈希不符 → 抛错 → manager 回滚 staging、置 `failed`，**绝不产生半安装 ready**。
-- 路径安全：只读该 snapshot 目录，拒绝绝对路径 / `..` 越界；symlink 必须仍指向目录内（HF 缓存快照本身是 symlink → blob）。
+- 路径安全（2026-10-16 修正）：**受信根是同 cache 根的 `hub/models--org--repo/`**，不是 snapshot 目录本身。HF 缓存里 `snapshots/<rev>/<file>` 是指向同根下 `../../blobs/<sha>` 的 symlink，realpath 落在受信根内即合法；逃出 cache 根 / 绝对路径跳出仍拒绝。
+  （旧实现把受信根设成 snapshot 目录，把自控 cache 的合法 blob 链接误报「符号链接越界」——beta.25 用户实报失败，已修。）
+- 辅助元数据（`README.md` / `.gitattributes`）标 `optional`：缺失不算失败；存在仍校验大小 / SHA256。`encoder/config.json`、`model.safetensors`、`tokenizer/*` 仍逐个严格校验，**不是跳过 symlink 放弃校验**。
+- 校验通过后 `materializePinnedFiles` 把必需文件**物化成 staging 里的普通文件**（优先硬链接真实 blob，跨设备退回复制）并再核大小 / SHA256；`activate` 原子 rename 到生效目录。**不动 HF 缓存**，partial 保留。
 - 只按清单 `allow_patterns` 下载，**不执行 checkpoint 仓库里的任何脚本**（safetensors-only；清单出现 `.py` / `.bin` 等直接判不安全）。
 - 取消下载：保留 HF 缓存里的 partial（可续传恢复），但安装状态回到 `not_installed`，不会误判 ready。
 - 复核清单：`npx tsx scripts/laya-checkpoint-digests.ts`（只读 HF 元数据 + 小文件，不下载 GB 权重）。
@@ -119,3 +122,19 @@ Laya 启动后经 Pi 公开的 `registerClassifiers` 注册本地 provider，凭
 - registry 的 `source` 目前归入 `pi-catalog`（因为它经 Pi 运行时注册）；**界面可用 provider id `local-laya` 识别为本地条目**，无需后端另加来源字段。
 - 未启动 / 已停止时不会出现在 classifier 目录里（未就绪）；这是预期的 fail-closed 行为。UI 用 `configured`（已安装）与 `registered`（进程内已注册）区分：没在跑也不显示成「没配置」，停止不删配置。
 - 本模块**不新建 chat 模型**，也不自造 chat 模型入口。
+
+## 8. 统一下载登记（Laya ↔ ASR 共用契约）
+
+Laya **登记进统一「下载与组件」面板**（`packages/server/src/downloads.ts`，不新建 registry / controller）；
+电脑页 Laya 卡与「下载与组件」页读同一个 job，避免二次安装。适配器 `packages/server/src/local-laya/download.ts`
+只观察 manager 状态，不复制安装逻辑。通用契约（本地 ASR 直接复用，勿另写一套）：
+
+- `registerDownload({ id, name, group, size, installed, start, cancel?, status?, hidden? })`
+  - `installed()`：首屏「已下载 / 未安装」；`start()`：下载 / 重试；`cancel()`：取消（走各自 manager 的同一个 AbortController）；
+  - `status()`：组件自己的阶段状态投影，字段 `{ state, received?, total?, detail?, error? }`，比内部计数权威。
+- `followStatus(id, read, intervalMs?)`：轮询组件阶段 → Progress。**已知总字节 → 字节进度 / 百分比；未知 → 不定进度（界面 `pa-dl-bar indet`）+ 阶段文字，不编假百分比。**
+- `notifyDownload(id, force?)`（**推荐给有自己状态事件的组件**）：在自己的 bus 事件里把 `status()` 投影转发给 `downloads.changed`，不用每项再起一个永久 `setInterval`；`force=true` 用于首 / 终事件（立即推，不走 500ms 节流）。Laya 已改用它（订阅自身 `local-laya.changed`），**不再全局轮询**；`followStatus` 保留给无事件源的组件按需用。
+- 取消：`POST /api/downloads/:id/cancel`（服务端只调你登记的 `cancel()`）。
+- **每个模型一个 id**（如 `asr:sensevoice` / `asr:<model>`）：两个官方权重可同时各占一行，不要用一条唯一 ASR 行藏真实选项。
+- 复用既有 `downloadFile`（Range 续传 / sha 校验 / 原子改名）与 `watchDir`，不新下载引擎。
+- Laya 的投影：`installed→ready`、`installing→downloading`、`failed→error`、未安装→`missing`；**只有 `weights` 阶段带真实 `total`**，其余阶段 `total=null`（不定进度）。
