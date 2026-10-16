@@ -14,9 +14,10 @@ import { config } from "../config.ts";
 import { ensureUv as ensureUvPinned, uvPath as uvPinnedPath } from "../memory/hindsight/uv-bin.ts";
 import { watchDir } from "../downloads.ts";
 import { models } from "../models.ts";
+import { materializePinnedFiles } from "../managed-weights/verify.ts";
 import { PYTHON_VERSION } from "./manifest.ts";
 import { checkpointFiles } from "./checkpoint-files.ts";
-import { hfSnapshotDir } from "./hf-metadata.ts";
+import { hfRepoDir, hfSnapshotDir } from "./hf-metadata.ts";
 import { verifyCheckpointFiles } from "./verify.ts";
 import { platformProfile, type NvidiaProbe, type PlatformContext } from "./platform.ts";
 import { LAYA_BIND_HOST, LAYA_MODEL_ID, LAYA_PROVIDER_ID, type LayaChild, type LayaDeps, type LayaHealth, type LayaPaths, type LayaRunResult } from "./manager.ts";
@@ -142,9 +143,19 @@ export function createLayaDeps(): LayaDeps {
 			if (signal.aborted) throw new Error("已取消");
 			const files = checkpointFiles(cp.id);
 			if (!files.length) throw new Error(`没有 ${cp.id} 的固定文件清单，拒绝在未校验下激活`);
-			const dir = hfSnapshotDir(layaPaths().hfHome, cp.repo, cp.revision);
-			const res = await verifyCheckpointFiles(dir, files);
+			const paths = layaPaths();
+			const dir = hfSnapshotDir(paths.hfHome, cp.repo, cp.revision);
+			// 受信根是同 cache 根的 repo 目录：HF 快照文件合法地 symlink 到 `../../blobs/<sha>`；跨到用户目录仍拒。
+			const trustRoot = hfRepoDir(paths.hfHome, cp.repo);
+			const res = await verifyCheckpointFiles(dir, files, { trustRoot });
 			if (!res.ok) throw new Error(`权重校验未通过：${res.problems.slice(0, 3).join("；")}`);
+			if (signal.aborted) throw new Error("已取消");
+			// 校验通过后再把必需文件物化成 staging 里的**普通文件**（硬链接/副本，不再依赖 symlink）；
+			// activate 时原子切换生效。全程不动 HF 缓存，断点续传的 partial 保留可恢复。
+			const staging = weightsStaging(paths);
+			rmSync(staging, { recursive: true, force: true });
+			const mat = await materializePinnedFiles(dir, staging, files, { trustRoot });
+			if (!mat.ok) throw new Error(`权重物化失败：${mat.problems.slice(0, 3).join("；")}`);
 		},
 		findFreePort,
 		health: readHealth,
@@ -176,16 +187,23 @@ export function createLayaDeps(): LayaDeps {
 		isInstalled: () => existsSync(layaPaths().env) && existsSync(layaPaths().metaFile),
 		log: (line) => appendLog(layaPaths(), line),
 		activate: async (paths) => {
-			// 原子切换：旧 env → env.old，staging → env；写 meta。失败不留半成品。
+			// 原子切换：旧 env → env.old，staging → env；物化好的权重 staging → 生效目录；写 meta。失败不留半成品。
 			mkdirSync(join(paths.root, "runtime"), { recursive: true });
 			if (existsSync(paths.envPrev)) rmSync(paths.envPrev, { recursive: true, force: true });
 			if (existsSync(paths.env)) renameSync(paths.env, paths.envPrev);
 			renameSync(paths.envStaging, paths.env);
+			const wNew = weightsStaging(paths);
+			if (existsSync(wNew)) {
+				const w = weightsActive(paths);
+				if (existsSync(w)) rmSync(w, { recursive: true, force: true });
+				renameSync(wNew, w);
+			}
 			const cfg = join(paths.env, "pyvenv.cfg");
 			writeFileSync(paths.metaFile, JSON.stringify({ installedAt: Date.now(), version: existsSync(cfg) ? readFileSync(cfg, "utf8").slice(0, 200) : "" }, null, 2));
 		},
 		rollback: async (paths) => {
 			rmSync(paths.envStaging, { recursive: true, force: true });
+			rmSync(weightsStaging(paths), { recursive: true, force: true });
 			if (!existsSync(paths.env) && existsSync(paths.envPrev)) renameSync(paths.envPrev, paths.env);
 		},
 		uninstall: async (paths) => {
@@ -195,6 +213,14 @@ export function createLayaDeps(): LayaDeps {
 			if (existsSync(paths.root)) rmSync(paths.root, { recursive: true, force: true });
 		},
 	};
+}
+
+/** 校验通过后物化的权重 staging（activate 前）/ 生效目录（activate 后）。均为我们 own 的 root 下。 */
+function weightsStaging(paths: LayaPaths): string {
+	return join(paths.root, "runtime", "weights.new");
+}
+function weightsActive(paths: LayaPaths): string {
+	return join(paths.root, "runtime", "weights");
 }
 
 /** spawn 我们自己的 sidecar（只绑 127.0.0.1，日志写 own 目录）。 */

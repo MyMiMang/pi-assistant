@@ -87,7 +87,7 @@ interface LocalAsrInstallView {
 - 关面板 / 刷新：安装 job 在服务端继续，装完按同一规则写来源，**不留用户手配**（无需前端 pending 持久化）。
 - `PUT /api/audio/asr/source` 失败：前端重新拉取服务端实际来源回滚（`VoiceSettings` 既有逻辑），不留下假「使用中」。
 - 已安装但未选中 → 前端「使用这个模型」调 `POST /api/local-models/asr/models/:id/select`（后端内部同样走 `selection.write` 写来源 + 启停 worker，忙时拒绝）。**前端不另造写 source 的路径**（避免两处同时写 / 迟到覆盖）；状态一律以 catalog `selected` / `GET source` 为真。
-- 许可接受：MIT / Apache 等 `cleared` 许可**不额外弹「我同意」层，也不偷偷代传接受声明**；前端只在确需显式同意时原样回传 `acceptLicense=acceptValue`。⚠️ 当前后端 `installGate` 对 `cleared` 仍要求 `acceptLicense`，需 backendowner / 主改成「只对必要许可要求显式同意」，否则前者会 400（前端已按正确语义不传）。
+- 许可分级（后端 `18478d4`）：`license.agreementRequired`；MIT/Apache-2.0（Paraformer / 4 个 Whisper）为 `false` → 不弹「我同意」、**不传 `acceptLicense`**、正常展示署名与许可链接即可一键装；SenseVoice `unresolved` 为 `true` 但仍禁下载（仅自行导入，不洗白）。
 
 ## 4. 前端拆分（本树 ownership）
 

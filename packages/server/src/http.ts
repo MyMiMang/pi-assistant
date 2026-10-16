@@ -3,10 +3,13 @@ import { deleteAgentSubagentLimits } from "./subagents.ts";
 import { mountThemeRoutes } from "./themes/routes.ts";
 import { mountFastComputerRoutes } from "./fast-computer/routes.ts";
 import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
-import { mountAsrRoutes, registryAsrProviders, type AsrDeclaration } from "./voice/index.ts";
+import { mountAsrRoutes, registryAsrProviders, saveAsrSource, type AsrDeclaration } from "./voice/index.ts";
 import { ASR_PROTOCOLS } from "./voice/contract.ts";
 import { isAsrProtocol } from "./voice/asr.ts";
+import { readVoiceSource, readVoiceSourceVersion } from "./voice/source.ts";
+import { localAsrService, setAsrSelectionPort } from "./local-asr/index.ts";
 import { mountLocalAsrRoutes } from "./local-asr/routes.ts";
+import "./local-asr/download.ts";
 import { createRuntimeBenchmarkHost } from "./fast-computer/benchmark-runtime.ts";
 import { isStopCommand } from "./interject.ts";
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -50,6 +53,7 @@ import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop
 import { installWsl, wslInstalling } from "./desktop/wsl.ts";
 import { desktopSettings, updateDesktopSettings } from "./desktop/settings.ts";
 import "./desktop/image-download.ts";
+import "./local-laya/download.ts";
 import { ensureMcpPackage, syncMcpDownloads } from "./mcp-install.ts";
 import { agentBusy } from "./runtime.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
@@ -82,7 +86,7 @@ import { actOnItem, cancelFollowup, defaultLevel, type ItemRow, type Level, list
 import { cancelWait, listWaits, refreshWait } from "./task-waits.ts";
 import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { hostAgentsChanged, draftHostSettings, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
-import { downloadInfo, listDownloads, startDownload } from "./downloads.ts";
+import { downloadInfo, cancelDownload, listDownloads, startDownload } from "./downloads.ts";
 import { availableModels, confirmMemberProposal, confirmProposal, continueRoom, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, onAgentChanged, onAgentDeleted, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "./rooms/index.ts";
 import { copyAgentToUser } from "./rooms/copy.ts";
 import { getMessage, updateMessage as patchMessage } from "./messages.ts";
@@ -259,7 +263,9 @@ mountSubagentRoutes(app);
 mountThemeRoutes(app);
 mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null, desktopKind: () => desktopBackend().id }).host);
 mountLocalLayaRoutes(app, localOnly);
-mountLocalAsrRoutes(app, localOnly);
+// 本地 ASR 的来源读写直接接 voice 的 voiceSource（PUT /api/audio/asr/source 仍是唯一来源真相）。
+setAsrSelectionPort({ read: readVoiceSource, version: readVoiceSourceVersion, write: (s, opts) => saveAsrSource(s, opts) });
+mountLocalAsrRoutes(app, localOnly, undefined, { service: localAsrService });
 mountAsrRoutes(app);
 app.get("/api/models", (c) => {
 	const names = providerNames();
@@ -1472,6 +1478,13 @@ app.get("/api/downloads", (c) => c.json({ items: listDownloads() }));
 app.post("/api/downloads/:id/start", localOnly, async (c) => {
 	try {
 		return c.json({ ok: true, item: await startDownload(decodeURIComponent(c.req.param("id")!)) });
+	} catch (e) {
+		return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.post("/api/downloads/:id/cancel", localOnly, async (c) => {
+	try {
+		return c.json({ ok: true, item: await cancelDownload(decodeURIComponent(c.req.param("id")!)) });
 	} catch (e) {
 		return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
 	}

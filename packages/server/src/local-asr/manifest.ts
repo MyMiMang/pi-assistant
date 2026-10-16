@@ -59,7 +59,9 @@ export interface AsrLicenseMeta {
 	redistribution: boolean;
 	/** 必须展示的署名（§2.2 硬要求） */
 	attribution: string;
-	links: { modelCard: string; modelLicense: string; issue: string; engineLicense: string };
+	/** 是否必须显式接受条款（宽松许可 MIT / Apache-2.0 不需要；默认 false） */
+	requiresExplicitAgreement: boolean;
+	links: { modelCard: string; modelLicense: string; issue?: string; engineLicense: string };
 	/** 必须**默认可见**的限制摘要（不能靠一次点击遮盖） */
 	restrictions: string[];
 	/** 判定依据（中文，一句话） */
@@ -80,6 +82,8 @@ export const SENSEVOICE_LICENSE: AsrLicenseMeta = {
 	licenseName: "FunASR Model Open Source License Agreement v1.1",
 	redistribution: false,
 	attribution: "SenseVoiceSmall by FunASR / FunAudioLLM",
+	// FunASR 条款适用范围需用户确认，允许 override 的高级路径上要求显式接受
+	requiresExplicitAgreement: true,
 	links: {
 		modelCard: "https://huggingface.co/FunAudioLLM/SenseVoiceSmall",
 		modelLicense: "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
@@ -109,6 +113,10 @@ export interface AsrModelManifest {
 	repo: string;
 	revision: string;
 	files: AsrWeightFile[];
+	/** 运行族 id（见 runner.ts）：决定生成的 serve 脚本与权重校验规则 */
+	runner?: string;
+	/** 运行族需要的文件角色 → 清单内相对路径（如 `{ model: "model.int8.onnx", tokens: "tokens.txt" }`） */
+	fileRoles?: Record<string, string>;
 	/** 大约总大小（字节），界面显示用 */
 	bytes: number;
 	/** 采样率 / 声道（模型硬要求，不是建议） */
@@ -137,6 +145,8 @@ export const SENSEVOICE_MODEL: AsrModelManifest = {
 	channels: 1,
 	punctuation: true,
 	languages: ["zh", "yue", "en", "ja", "ko"],
+	runner: "sensevoice",
+	fileRoles: { model: "model.int8.onnx", tokens: "tokens.txt" },
 };
 
 /**

@@ -38,6 +38,8 @@ export const ASR_ERRORS = {
 	sourceChanged: "voice_source_changed",
 	/** PUT 来源的 JSON 形状不合法（未知字段 / 类型不对），不落库 */
 	invalidSource: "asr_invalid_source",
+	/** PUT 来源携带的 expectedVersion 与当前持久化版本不一致（另一个页面 / 客户端已改选） */
+	sourceConflict: "asr_source_conflict",
 } as const;
 export type AsrErrorCode = (typeof ASR_ERRORS)[keyof typeof ASR_ERRORS];
 
@@ -69,10 +71,12 @@ export interface AsrSourceOption {
 	selected: boolean;
 }
 
-/** 语音来源的完整视图：当前选择 + 归一化的候选列表。 */
+/** 语音来源的完整视图：当前选择 + 归一化的候选列表 + 持久化版本（跨客户端 CAS）。 */
 export interface AsrSourceView {
 	source: AsrSource | null;
 	options: AsrSourceOption[];
+	/** 每次写入递增；客户端 PUT 时可回传期望版本做 CAS，防 ABA / 跨客户端覆盖 */
+	version: number;
 }
 
 /** 客户端提交的转写请求（路由层解析 multipart 后得到；音频只在内存里）。 */

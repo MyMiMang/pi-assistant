@@ -202,6 +202,18 @@ test("install：失败 → failed + 脱敏错误 + 回滚；旧环境不被破�
 	assert.equal(state.installed, false);
 });
 
+test("install：并发第二个 install 被拒（单一 job，两个入口不会二次安装）", async () => {
+	const { deps, state } = fakeDeps(dir(), { downloadHold: true });
+	const m = new LocalLayaManager(deps, LAYA_SOURCE);
+	const p = m.install({ checkpoint: LAYA_CHECKPOINTS["laya-multilingual"] }).catch((e: unknown) => e);
+	await new Promise((r) => setTimeout(r, 10));
+	assert.equal(m.status().install.state, "installing");
+	await assert.rejects(() => m.install({ checkpoint: LAYA_CHECKPOINTS["laya-multilingual"] }), /安装已在进行中/);
+	assert.equal(state.verifyCalls, 0, "第二次不得重新开始安装");
+	m.cancel();
+	await p;
+});
+
 test("start/stop：running 时 token 不进 status；注册 loopback baseUrl；stop 只杀自己的子进程", async () => {
 	const { deps, state, child } = fakeDeps(dir(), { installed: true });
 	const m = new LocalLayaManager(deps, LAYA_SOURCE);

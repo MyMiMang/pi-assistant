@@ -18,13 +18,15 @@ export interface LayaCheckpointFile {
 	path: string;
 	size: number;
 	sha256: string;
+	/** 辅助元数据（README / .gitattributes）：缺失不算失败；存在仍校验。权重与配置必需，不可标 optional。 */
+	optional?: boolean;
 }
 
 /** 单个 checkpoint 的固定文件清单（顺序即校验顺序）。 */
 export const LAYA_CHECKPOINT_FILES: Record<string, LayaCheckpointFile[]> = {
 	"laya-multilingual": [
-		{ path: ".gitattributes", size: 1580, sha256: "caf3ca02d5e883f643e939cbed54f94237f94c171797f0dfea5e25c7e33315b3" },
-		{ path: "README.md", size: 9346, sha256: "e85d16c3fe35fe7094ef51a7cfa81144a5cc07558e5faddcff753a8153e38a0b" },
+		{ path: ".gitattributes", size: 1580, sha256: "caf3ca02d5e883f643e939cbed54f94237f94c171797f0dfea5e25c7e33315b3", optional: true },
+		{ path: "README.md", size: 9346, sha256: "e85d16c3fe35fe7094ef51a7cfa81144a5cc07558e5faddcff753a8153e38a0b", optional: true },
 		{ path: "encoder/config.json", size: 1938, sha256: "83f6916d13ef0f556ac461f28308dc2bffa7ebeadee8ec9e2db5812020ea5bb4" },
 		{ path: "model.safetensors", size: 643_835_514, sha256: "9d628fd971b700382ac6f65920a86f149777b2e748e0c955fb3b19695aa8f204" },
 		{ path: "rl_agent_config.json", size: 472, sha256: "25061739243b617ad88d1219ba6f8a9c86c5881ca28df024fa2d9b3b2fcc30c6" },
@@ -32,8 +34,8 @@ export const LAYA_CHECKPOINT_FILES: Record<string, LayaCheckpointFile[]> = {
 		{ path: "tokenizer/tokenizer_config.json", size: 502, sha256: "424b69444bf7b5809dc2cd2e36d0bd71b8055124dd24274d6db3c655d38205e7" },
 	],
 	"laya-typed-decisions": [
-		{ path: ".gitattributes", size: 1519, sha256: "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361" },
-		{ path: "README.md", size: 6343, sha256: "83e67a995a70a9a9ef6cc1f8c68da654f11eee081c9bb14de07c37b08fcc3113" },
+		{ path: ".gitattributes", size: 1519, sha256: "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361", optional: true },
+		{ path: "README.md", size: 6343, sha256: "83e67a995a70a9a9ef6cc1f8c68da654f11eee081c9bb14de07c37b08fcc3113", optional: true },
 		{ path: "encoder/config.json", size: 2084, sha256: "5268d24ad3b77c8151de5dcb0762ba4391619aad9ab0bda33e36fb083cfeae6d" },
 		{ path: "model.safetensors", size: 842_609_220, sha256: "4fa56de72383a9d3efa9cfa78955733c81b9fc8067a587ca4beb82c78107a24e" },
 		{ path: "rl_agent_config.json", size: 847, sha256: "ebf0cd524d92342a6be5e48e9fca3d7c2babfb5a56ccd79d2171ef5d8c7f7be8" },

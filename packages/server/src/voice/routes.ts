@@ -19,8 +19,11 @@ export interface VoiceSourceAccess {
 	read: () => AsrSource | null;
 	/** 归一化候选（含 availability / reason），只读元数据。 */
 	options: () => AsrSourceOption[];
-	/** 校验并写入；未知 / 未配置的 provider-model 抛带 code / status 的错误（不落库）。 */
-	write: (next: AsrSource | null) => void;
+	/** 当前持久化版本（每次写入递增）；客户端 PUT 可回传 expectedVersion 做 CAS。 */
+	version: () => number;
+	/** 校验并写入；未知 / 未配置的 provider-model 抛带 code / status 的错误（不落库）。
+	 *  opts.expectedVersion 提供时为 CAS：版本不符抛 conflict（另一个页面 / 客户端已改选）。 */
+	write: (next: AsrSource | null, opts?: { expectedVersion?: number }) => void;
 }
 
 export interface VoiceRouteDeps {
@@ -127,14 +130,14 @@ export function mountVoiceRoutes(app: AnyHono, deps: VoiceRouteDeps, service?: A
 
 	// 显式来源（用户要求：云 / 本地显式切换，不自动挑源；未配置就是 null）。只挂在注入 source 的生产装配上。
 	if (deps.source) {
-		const view = (c: Context) => c.json({ source: deps.source!.read(), options: deps.source!.options() });
+		const view = (c: Context) => c.json({ source: deps.source!.read(), options: deps.source!.options(), version: deps.source!.version() });
 		app.get("/api/audio/asr/source", (c) => view(c));
 		app.put("/api/audio/asr/source", async (c) => {
 			const body = await c.req.json<unknown>().catch(() => undefined);
 			const parsed = parseAsrSourceBody(body);
 			if (!parsed.ok) return c.json({ error: ASR_ERRORS.invalidSource, message: parsed.reason }, 400);
 			try {
-				deps.source!.write(parsed.source);
+				deps.source!.write(parsed.source, parsed.expectedVersion !== undefined ? { expectedVersion: parsed.expectedVersion } : undefined);
 			} catch (e) {
 				const err = asError(e);
 				return c.json({ error: err.code, message: err.message }, err.status as 400);

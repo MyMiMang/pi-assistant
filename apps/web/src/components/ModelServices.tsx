@@ -19,7 +19,7 @@ import { ImageProviderForm, type ImageModelsData, useImageModels } from "./Image
 import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
 import { ProviderSetup, useProviders } from "./Models";
 import { StrengthTags, useModelStrengths } from "./ModelStrengths";
-import { Badge, Button, cx, Fold, Help, Input, Modal, Select, useConfirm } from "./ui";
+import { Badge, Button, cx, fmtSize, Fold, Help, Input, Modal, Select, useConfirm } from "./ui";
 import { useStore } from "../store";
 
 const CAPS: ModelCapability[] = ["chat", "vision", "image", "classifier"];
@@ -694,13 +694,13 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 				</div>
 			)}
 			{installing && (
-				<div className="space-y-1.5 text-[11px]" data-testid="laya-progress">
+				<div className="space-y-1.5 text-[11px]" data-testid="laya-progress" data-known-total={String(st.install.total != null)}>
 					<div className="flex items-center gap-2">
-						<span className="w-14 shrink-0 text-mut">{PHASE_LABEL[st.install.phase] ?? st.install.phase}</span>
-						<div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-hover">
-							<div className="h-full rounded-full bg-accent transition-all" style={{ width: `${percent ?? 8}%` }} />
+						<span className="w-24 shrink-0 text-mut">{PHASE_LABEL[st.install.phase] ?? st.install.phase}</span>
+						<div className={cx("pa-dl-bar min-w-0 flex-1", percent == null && "indet")}>
+							<i style={{ width: `${percent ?? 0}%` }} />
 						</div>
-						<span className="w-24 shrink-0 text-right text-mut2">{percent != null ? `${percent}%` : "进行中"}</span>
+						<span className="w-20 shrink-0 text-right text-mut2">{percent != null ? `${percent}%` : st.install.received > 0 ? fmtSize(st.install.received) : "进行中"}</span>
 					</div>
 					{st.install.error && <div className="text-red-600">{st.install.error}</div>}
 				</div>
