@@ -6,11 +6,11 @@
 
 - Worktree：`release-candidate-validation`，分支 `release-candidate-validation`（**独占**）。
 - 基线：`decb8eb`（beta.24 已公开发布后的文档提交）。公开发布 tag `v0.1.0-beta.24 = 747c744`，**本轮未移动**。
-- HEAD（本记录时）：`0069d36`。提交链：
+- **代码 checkpoint HEAD**：`0069d36`。其后为本轮纯文档提交（本条所在文档提交是最后一个）。提交链：
   - `dc93fe4` 升级 Pi SDK 1.3.0：`--no-ff` 合入 `deps/pi-1.3.0`（`decb8eb` 仍是祖先，可整条回滚）。
   - `3bc1094` 测试：Pi 1.3 模型切换后旧 thinking 不进新 provider payload（loopback HTTP 实证）。
   - `0069d36` 修复语音入口克制：idle 不再常驻状态行 /「去设置」+ 前端 fixture 断言。
-- **未 push / 未 tag / 未打包 / 未做任何系统动作**；候选树 HEAD 不是发布点。
+- **未 push / 未 tag / 未打包 / 未做任何系统动作**；候选 HEAD 不是发布点。
 
 ## 1. 依赖（合入内容，源自 `deps/pi-1.3.0`）
 
@@ -57,5 +57,5 @@
 
 ## 6. 手接手约定
 
-- **设置 IA 正在由另一位 owner 整体重排**（模型页 / 语音配置页 / 在线服务统一模型服务 / Laya 归电脑操作）；本树**不重复大改 Settings / ModelServices**，也不自行新增任意 UI 按钮。新设计接本候选 HEAD（`0069d36`）。
+- **设置 IA 正在由另一位 owner 整体重排**（模型页 / 语音配置页 / 在线服务统一模型服务 / Laya 归电脑操作）；本树**不重复大改 Settings / ModelServices**，也不自行新增任意 UI 按钮。新设计接本候选代码 checkpoint `0069d36`（其后仅文档提交）。
 - **在设置重排验收前不 push / tag / release。**
