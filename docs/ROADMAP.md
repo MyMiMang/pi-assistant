@@ -1,9 +1,9 @@
 # 需求与计划（ROADMAP）
 
-> **本轮当前状态（beta.28 候选，2026-10-24）——接手先读这一段**
+> **本轮当前状态（beta.29 候选，2026-10-24）——接手先读这一段**
 >
-> - **公开版本**：`v0.1.0-beta.27`（Latest，2026-10-16T12:48:14Z 公开，tag `6d6c1ee`，Actions `38901767310` 成功，主核公开资产与 latest.json）。**beta.28 尚未发布**；下面的 beta.27 / beta.26 … 段落是**历史快照**，按当时范围写的，已被取代不代表现在的要求。
-> - **beta.28 候选树**：worktree `release-candidate-validation`。已 `--no-ff` 合入 6 组（`laya-benchmark-selection-fix` `9eb23c2`、`voice-incremental-input` `9f61f1f`、`mobile-chat-history-performance` `1f6f4b5`、`chat-content-overflow-fix` `d4c5899`、`subagent-composer-navigation` `17f0652`、`ui-consistency-motion` `e47bac8`）；合并检查点 `progress-snapshots/beta28-integration-merge-checkpoint.md`，验收结果与未验边界见 `progress-snapshots/beta28-final-validation.md`。
+> - **公开版本**：`v0.1.0-beta.28`（Latest，2026-10-16T19:19:11Z 公开，非草稿 / 非 prerelease；tag `11ce8f2` 未移动；Actions `38949928195` 六平台构建 + Windows/Mac 安装冒烟 + publish 全成功；公开 13 项资产，`latest.json` 版本 `0.1.0-beta.28`，darwin-aarch64 / darwin-x86_64 / windows-x86_64 各平台签名非空、URL 指向本 tag）。**beta.29 仍是候选**（七档滑块 + AI DIY 动效，未 push / 未 tag / 未打包）；下面的 beta.28 / beta.27 / beta.26 … 段落是**历史快照**，按当时范围写的，已被取代不代表现在的要求。
+> - **候选树**：worktree `release-candidate-validation`（**beta.29 候选**；beta.28 已以此树内容公开）。beta.28 的内容为已 `--no-ff` 合入的 6 组（`laya-benchmark-selection-fix` `9eb23c2`、`voice-incremental-input` `9f61f1f`、`mobile-chat-history-performance` `1f6f4b5`、`chat-content-overflow-fix` `d4c5899`、`subagent-composer-navigation` `17f0652`、`ui-consistency-motion` `e47bac8`）；beta.28 合并与验收见 `progress-snapshots/beta28-integration-merge-checkpoint.md`、`beta28-final-validation.md`；beta.29 新增七档滑块 + AI DIY 动效（见下）。
 > - **发布范围已改为全平台，含 Intel Mac**（2026-10-24 用户明确）：Mac arm64 + Intel Mac x64 + Windows x64 + Linux x64/arm64。由 `.github/release-scope.json` 的显式 `scope: "all-intel"` 决定（tag 触发也生效，不依赖仓库变量）；机制与影响见 [design/release-scope.md](design/release-scope.md)。**这条取代下面「Intel 暂缓」的历史决定**；旧 arm-only 描述只是当时事实，不是现行范围。
 > - **提问卡片（ask_user）改版**：选项由横向 chips 改为一行一个、整行可点、文案左对齐、长文案自然换行，选中勾固定右侧；桌面与手机同结构，已回答的历史卡片同 render。
 > - **思考强度 7 档滑块：生产实现已合入候选树**（合并 `b051a39`，源 `thinking-slider-implementation` `4e15158`，基候选 `11ce8f2`；beta.29 候选，未 push / 未 tag / 未打包）。设计稿 `docs/design/thinking-strength-slider.md` + `-prototype.html`。主会话 / 群聊 / 子代理 / 设置复用同一 `ThinkingSlider`（保留原 `onPick(level|null)` 与 testid），七档全定义，多模型取并集不吞 xhigh/max，服务端 clamp 不变；动效 token 已对齐 AI DIY 的 `--mo-scale/--mo-glow/--mo-ease/--mo-style`（`--mo-style=steps` 由组件读主题声明值映射成真实 data 属性）。纯逻辑 + 静态 DOM 夹具 **19/19**；浏览器 e2e / `vite build` / 真机**待测试槽**，见 `progress-snapshots/slider-token-contract.md` 与 HANDOFF。
@@ -15,7 +15,7 @@
 
 > **beta.27 候选已完成整合验收，准备发布**：修复Laya共享缓存链接与安装后启动，SenseVoice在原列表支持一键下载安装，权限清单按钮不再吸底遮挡。主审实跑与真实模型证据见 `progress-snapshots/beta27-final-validation.md`。未公开前仍以beta.26为公开版本；只构建Apple芯片版。
 >
-> **beta.28 候选（worktree `laya-benchmark-selection-fix`，基 `release-candidate-validation` HEAD `6d6c1ee`；未 push / 未 tag / 未发布）**：修用户 beta.27 实测「Laya 实际操作测试开始按钮灰掉、提示还没选定快速模型」——基准测试改为「点哪条测哪条」，不再依赖全局快速模型已开启；另修首次进入「快速操作模型」列表为空、退出重进才出现。详见下方表格与 HANDOFF。
+> **beta.28 已公开（worktree `laya-benchmark-selection-fix`，基 `release-candidate-validation` HEAD `6d6c1ee`；tag `11ce8f2`，Actions `38949928195` 六平台构建 + 安装冒烟 + publish 全成功）**：修用户 beta.27 实测「Laya 实际操作测试开始按钮灰掉、提示还没选定快速模型」——基准测试改为「点哪条测哪条」，不再依赖全局快速模型已开启；另修首次进入「快速操作模型」列表为空、退出重进才出现。详见下方表格与 HANDOFF。
 
 > **已完成并公开（beta.26）**：2026-10-16 17:38（Asia/Shanghai）公开为 Latest，仅 Apple 芯片 macOS arm64。tag `dd963a4`，Actions `38880524575` 构建、内置服务、Mac 安装启动冒烟及 publish 成功；主会话核验四项公开资产、Latest JSON 版本 / arm64 平台 / 非空签名。未自动更新用户 App。整合树 `release-candidate-validation`（起点公开 `dcce520`）。四块已 `--no-ff` 合入：Laya 下载统一链路（`10317d0`，stage1 `1dbb652`）、本地语音多模型 UI + 后端（`55a09e7` / 后端 `18478d4`，stage1 `277ddfb`）+ 生产修复（`8f8d458`，本轮 `42f9613`）、主题设计选本次草稿模型（`0781b9c`，stage1 `12370a5`）、Laya 测试隔离收口（`8e9a223`，本轮 `17a3da7`）。
 >
