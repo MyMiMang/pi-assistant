@@ -50,6 +50,7 @@ import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop
 import { installWsl, wslInstalling } from "./desktop/wsl.ts";
 import { desktopSettings, updateDesktopSettings } from "./desktop/settings.ts";
 import "./desktop/image-download.ts";
+import "./local-laya/download.ts";
 import { ensureMcpPackage, syncMcpDownloads } from "./mcp-install.ts";
 import { agentBusy } from "./runtime.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
@@ -82,7 +83,7 @@ import { actOnItem, cancelFollowup, defaultLevel, type ItemRow, type Level, list
 import { cancelWait, listWaits, refreshWait } from "./task-waits.ts";
 import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
 import { hostAgentsChanged, draftHostSettings, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
-import { downloadInfo, listDownloads, startDownload } from "./downloads.ts";
+import { downloadInfo, cancelDownload, listDownloads, startDownload } from "./downloads.ts";
 import { availableModels, confirmMemberProposal, confirmProposal, continueRoom, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, onAgentChanged, onAgentDeleted, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "./rooms/index.ts";
 import { copyAgentToUser } from "./rooms/copy.ts";
 import { getMessage, updateMessage as patchMessage } from "./messages.ts";
@@ -1472,6 +1473,13 @@ app.get("/api/downloads", (c) => c.json({ items: listDownloads() }));
 app.post("/api/downloads/:id/start", localOnly, async (c) => {
 	try {
 		return c.json({ ok: true, item: await startDownload(decodeURIComponent(c.req.param("id")!)) });
+	} catch (e) {
+		return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
+	}
+});
+app.post("/api/downloads/:id/cancel", localOnly, async (c) => {
+	try {
+		return c.json({ ok: true, item: await cancelDownload(decodeURIComponent(c.req.param("id")!)) });
 	} catch (e) {
 		return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
 	}
