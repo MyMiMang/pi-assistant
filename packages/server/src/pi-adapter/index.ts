@@ -630,7 +630,30 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 	installLimitLearning(session);
 	// 触发 session_start：MCP 扩展在此时连接服务器（如 cua-driver）
 	await session.bindExtensions({ onError: (e) => console.warn("[ext]", (e as { error?: unknown }).error ?? e) });
+	reconcileRestoredMcpTools(session, o);
 	return session;
+}
+
+/**
+ * Pi 1.3.0 起，resume 会带回转录里记录的 active tools（upstream #10785），并把我们传的
+ * `tools: ["+grep","+find","+ls"]`（全是修饰符）叠加其上，也就是 `usesDefaultTools = true`。
+ * 对「仍注册、但当前按配置不再直接声明」的 MCP 工具（exposure 从 direct 改成 deferred / codemode 后），
+ * 这会把它们直接复活成 active，绕过按需发现（hidden / 已移除的服务器因为不再注册仍会被正常丢弃）。
+ *
+ * 这里只做一次 reconcile，全程用公开 API，不碰 Pi 源码：
+ *  - `setActiveToolsByName([])` 按公开方法语义会“停用工具即丢弃已恢复但尚未注册的 pending”；
+ *  - 随即把当前 active 原样设回。
+ * direct 的 MCP 工具会在注册时重新 active；deferred / codemode 的保持未 active，但仍在注册表里，
+ * `tool_search` / `codemode` 照样能按需装载；不裁掉任何扩展工具。
+ * 只在「确实是 resume」且「存在非 direct 的 MCP 服务器」时执行，新建会话 / 无 MCP 会话是空操作。
+ */
+function reconcileRestoredMcpTools(session: AgentSession, o: CreateSessionOptions): void {
+	if (!(o.sessionFile || o.continueRecent)) return;
+	const hasOnDemand = (o.mcpServers ?? []).some((s) => String((s.config as { exposure?: string }).exposure ?? "direct") !== "direct");
+	if (!hasOnDemand) return;
+	const active = session.getActiveToolNames();
+	session.setActiveToolsByName([]);
+	session.setActiveToolsByName(active);
 }
 
 /** 供沙箱扩展覆盖内置 bash 工具（参考 Pi 官方 gondolin 示例）。 */
