@@ -8,7 +8,7 @@ import { useStore } from "../store";
 import type { Agent, Message, Room, RoomMember } from "../types";
 import { Activity, BotPart, type Part, SideToggle, SystemMsg, UserMsg } from "./Chat";
 import { Avatar, Button, Help, Modal, cx } from "./ui";
-import { isSendKey, SEND_HINT, COMPOSER_LABEL } from "../composer";
+import { useComposerKeys, COMPOSER_LABEL } from "../composer";
 import { VoiceInput } from "./VoiceInput";
 import { buildReplyRef, draftSignature, liveMentions, newClientId, replyDraftKey, resolveRoomReplyTarget, roomSendBody } from "../replies";
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
@@ -347,6 +347,17 @@ function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, o
 			setSending(false);
 		}
 	};
+	const keys = useComposerKeys(send, (e) => {
+		// @ 候选列表：上下选、Enter / Tab 确认只选人，不发送（必须排在发送判定之前）
+		if (q && !sheet && options.length) {
+			if (e.key === "ArrowDown") return (e.preventDefault(), setHi((hi + 1) % options.length), true);
+			if (e.key === "ArrowUp") return (e.preventDefault(), setHi((hi - 1 + options.length) % options.length), true);
+			if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey && !e.nativeEvent.isComposing) return (e.preventDefault(), choose(options[hi]), true);
+		}
+		if (e.key === "Escape" && q) return (setQ(null), setSheet(false), true);
+		if (e.key === "Escape" && quote) return (e.preventDefault(), clearReplyDraft(replyKey), true);
+		return false;
+	}, room.id);
 	const list = (
 		<div role="listbox" className="pa-mention-list" data-testid="mention-list">
 			{options.length === 0 && <div className="px-3 py-2 text-xs text-mut2">没有匹配的成员</div>}
@@ -383,20 +394,8 @@ function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, o
 					value={text}
 					data-testid="room-input"
 					onChange={(e) => (setText(e.target.value), detect(e.target.value, e.target.selectionStart ?? e.target.value.length))}
-					onKeyDown={(e) => {
-						if (q && !sheet && options.length) {
-							if (e.key === "ArrowDown") return void (e.preventDefault(), setHi((hi + 1) % options.length));
-							if (e.key === "ArrowUp") return void (e.preventDefault(), setHi((hi - 1 + options.length) % options.length));
-							if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey && !e.nativeEvent.isComposing) return void (e.preventDefault(), choose(options[hi]));
-						}
-						if (e.key === "Escape" && q) return void (setQ(null), setSheet(false));
-						if (e.key === "Escape" && quote) return void (e.preventDefault(), clearReplyDraft(replyKey));
-						if (isSendKey(e)) {
-							e.preventDefault();
-							void send();
-						}
-					}}
 					onPaste={(e) => pasteFiles(e, (fs) => void addFiles(fs))}
+					{...keys.handlers}
 					onBlur={() => !sheet && setTimeout(() => setQ(null), 120)}
 					placeholder={running ? "可以随时插话，说「停」全群停下" : `发到群里… 输入 @ 指定助理`}
 				/>
@@ -417,7 +416,7 @@ function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, o
 						</button>
 						<span className="pa-room-hint truncate @max-[660px]:hidden">不 @ 人时由管理者回答</span>
 						<Help>不 @ 人：只有管理者回答，需要时它会分配给其他成员。@ 某个助理：只有它回答。@所有人：每个成员依次回答。</Help>
-						<span className={cx("shrink-0 text-[11px] text-mut2", COMPOSER_LABEL)}>{SEND_HINT}</span>
+						<span className={cx("shrink-0 text-[11px] text-mut2", COMPOSER_LABEL)}>{keys.hint}</span>
 					</div>
 					{/* 麦克风固定贴在发送键左侧（同一行、不换行）；提示 / 「去设置」由组件渲染到独立 status 行，不挤右组 */}
 					<VoiceInput
@@ -442,7 +441,7 @@ function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, o
 							<Square size={13} fill="currentColor" />
 						</button>
 					) : (
-						<button className="pa-send" disabled={(!text.trim() && !files.length) || uploading > 0 || sending} onClick={send} aria-label="发送" title={SEND_HINT} aria-keyshortcuts="Shift+Enter" data-testid="room-send">
+						<button className="pa-send" disabled={(!text.trim() && !files.length) || uploading > 0 || sending} onClick={send} aria-label="发送" title={keys.hint} aria-keyshortcuts={keys.keyshortcuts} data-testid="room-send">
 							<ArrowUp className="pa-ic" />
 						</button>
 					)}
