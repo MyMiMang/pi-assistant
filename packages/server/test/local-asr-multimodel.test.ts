@@ -17,6 +17,8 @@ import { asrRunnerFamily, hasAsrRunnerFamily, type AsrRunnerFamily } from "../sr
 import { LocalAsrManager, type AsrDeps, type AsrPaths } from "../src/local-asr/manager.ts";
 import { LocalAsrService, asrPhaseLabel, type AsrSelectionPort } from "../src/local-asr/service.ts";
 import { projectAsrInstall, asrDownloadId } from "../src/local-asr/download.ts";
+import { bus } from "../src/bus.ts";
+import * as dl from "../src/downloads.ts";
 import { mountLocalAsrRoutes } from "../src/local-asr/routes.ts";
 import { senseVoicePlatform } from "../src/local-asr/platform.ts";
 
@@ -197,6 +199,44 @@ test("硬件档位按系统总 RAM 保守分档（8/16/32），不是跑分", ()
 
 // ------------------------------------------------------------------ 运行族
 
+test("catalog 全部真实清单能过各自运行族自检（Whisper 是 *-tokens.txt，不是 tokens.txt）", () => {
+	for (const spec of ASR_CATALOG) {
+		const fam = asrRunnerFamily(spec.family);
+		const problems = fam.assertWeights(spec.manifest.files.map((f) => ({ path: f.path, size: f.size, sha256: f.sha256 })));
+		assert.deepEqual(problems, [], `${spec.id} 的自检问题：${problems.join("；")}`);
+	}
+	assert.equal(asrModelSpec(WSMALL)?.manifest.fileRoles?.tokens, "small-tokens.txt");
+	const whisperFiles = ["small-tokens.txt", "e.onnx", "d.onnx"].map((p) => ({ path: p, size: 1, sha256: "a".repeat(64) }));
+	assert.deepEqual(asrRunnerFamily("whisper").assertWeights(whisperFiles), []);
+});
+
+test("sidecar 脚本按 ASR_WEIGHTS 取权重目录（多模型不能写死 ROOT/weights）", () => {
+	const sv = asrRunnerFamily("whisper").serveScript({ roles: { encoder: "e.onnx", decoder: "d.onnx", tokens: "t.txt" }, sampleRate: 16000, maxAudioBytes: 1024 });
+	assert.match(sv, /os\.environ\.get\("ASR_WEIGHTS"\) or os\.path\.join\(ROOT, "weights"\)/);
+	// /health 必须回报实际加载的 modelId（证明选对了模型，而不只是「有个 onnx」）。
+	assert.match(sv, /MODEL_ID = os\.environ\.get\("ASR_MODEL_ID", ""\)/);
+	assert.match(sv, /"modelId": MODEL_ID/);
+});
+
+test("local-asr.changed 事件驱动统一「下载与组件」状态（不靠每秒轮询）", () => {
+	const id = asrDownloadId(PARA);
+	const seen: string[] = [];
+	const off = bus.on((e) => {
+		const item = (e as { item?: { id?: string } }).item;
+		if (e.type === "downloads.changed" && item?.id === id) seen.push(item.id);
+	});
+	// 模拟 manager 的状态变化事件（仅验证转发，不真安装）。
+	bus.emit({
+		type: "local-asr.changed",
+		provider: "local-paraformer",
+		modelId: PARA,
+		status: { install: { state: "installing", phase: "weights", received: 5, total: 10, error: null } } as unknown as import("../src/local-asr/manager.ts").AsrStatus,
+	});
+	off();
+	assert.ok(seen.length >= 1, "local-asr.changed 应触发统一下载面板重读（notifyDownload）");
+	assert.ok(dl.downloadInfo(id), "登记的下载条目应存在");
+});
+
 test("运行族：三族生成真实构造参数；Whisper language 显式 \"\"（不回落引擎默认 en）；未知族 fail closed", () => {
 	const sv = asrRunnerFamily("sensevoice").serveScript({ roles: { model: "m.onnx", tokens: "t.txt" }, sampleRate: 16000, maxAudioBytes: 1024 });
 	assert.match(sv, /from_sense_voice/);
@@ -236,6 +276,43 @@ test("未注册运行族的模型：precheck 直接拒绝（不用假 runner 冒
 });
 
 // ------------------------------------------------------------------ 多模型生命周期
+
+test("共享 runtime 复用：引擎已装同一套时跳过 venv/引擎安装，不可复用则完整重建", async () => {
+	const spec = asrModelSpec(PARA)!;
+	const mk = (reuse: boolean) => {
+		const h = makeHarness();
+		let venvRuns = 0;
+		let engineInstalls = 0;
+		let engineReadyCalls = 0;
+		const deps: AsrDeps = {
+			...h.deps,
+			run: async (_cmd, args) => {
+				if (args[0] === "venv") venvRuns += 1;
+				return { code: 0, stdout: "", stderr: "" };
+			},
+			installEngine: async () => {
+				engineInstalls += 1;
+			},
+			engineReady: async () => {
+				engineReadyCalls += 1;
+				return reuse;
+			},
+		};
+		const mgr = new LocalAsrManager(deps, { source: spec.source, license: spec.license, model: spec.manifest, ids: { provider: spec.provider, modelId: spec.id, protocol: "local-asr-http" } });
+		return { h, mgr, counts: () => ({ venvRuns, engineInstalls, engineReadyCalls }) };
+	};
+
+	const reuse = mk(true);
+	await reuse.mgr.install({ source: "download", acceptLicense: "Apache-2.0" });
+	assert.deepEqual(reuse.counts(), { venvRuns: 0, engineInstalls: 0, engineReadyCalls: 1 });
+	assert.ok(reuse.h.inst.installed.has(PARA), "复用引擎时权重仍要按模型装好");
+	assert.equal(reuse.h.inst.downloads[0], PARA);
+
+	const rebuild = mk(false);
+	await rebuild.mgr.install({ source: "download", acceptLicense: "Apache-2.0" });
+	assert.deepEqual(rebuild.counts(), { venvRuns: 1, engineInstalls: 1, engineReadyCalls: 1 });
+	assert.ok(rebuild.h.inst.installed.has(PARA));
+});
 
 test("多模型：装两个 → 选择切换（旧 worker 停）→ 推理 child 指向对应模型脚本 → 卸载一个不影响另一个", async () => {
 	const h = makeHarness();

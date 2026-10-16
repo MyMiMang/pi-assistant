@@ -36,8 +36,10 @@ TOKEN = os.environ.get("ASR_TOKEN", "")
 THREADS = int(os.environ.get("ASR_THREADS", "4"))
 SAMPLE_RATE = ${opts.sampleRate}
 MAX_BYTES = int(os.environ.get("ASR_MAX_BYTES", str(${opts.maxAudioBytes})))
+MODEL_ID = os.environ.get("ASR_MODEL_ID", "")
 
-_WEIGHTS = os.path.join(ROOT, "weights")
+# 权重目录由 manager 传入（多模型：每个模型自己的 weights，不再是 ROOT/weights 写死）。
+_WEIGHTS = os.environ.get("ASR_WEIGHTS") or os.path.join(ROOT, "weights")
 
 import sherpa_onnx  # noqa: E402
 
@@ -75,7 +77,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             if not self._authed():
                 return self._json(401, {"error": "unauthorized"})
-            return self._json(200, {"status": "ok", "device": "cpu", "loaded": LOADED})
+            return self._json(200, {"status": "ok", "device": "cpu", "loaded": LOADED, "modelId": MODEL_ID})
         return self._json(404, {"error": "not_found"})
 
     def do_POST(self):

@@ -32,6 +32,8 @@ export interface AsrHealth {
 	device: string | null;
 	/** 已加载模型 id 列表 */
 	loaded: string[] | null;
+	/** sidecar 实际加载的模型 id（证明选对模型；旧脚本 / 未注册时为 null） */
+	modelId?: string | null;
 }
 
 export interface AsrPaths {
@@ -77,6 +79,11 @@ export interface AsrDeps {
 	pythonVersion(): string;
 	/** 按固定摘要安装引擎 wheel（`--require-hashes`）；平台无摘要时调用方已拒绝，这里不接受未校验的安装。 */
 	installEngine(pythonPath: string, requirements: string, opts: { env: Record<string, string>; signal?: AbortSignal }): Promise<void>;
+	/**
+	 * 共享 runtime 里是否已装好**同一套**引擎（依赖摘要一致 + 解释器在 + 能 `import sherpa_onnx`），
+	 * 可以安全复用而不用重建 venv / 重下 ~200MB wheel。不实现（或返回 false）则每次都重建，行为保守。
+	 */
+	engineReady?(paths: AsrPaths, requirements: string): Promise<boolean>;
 	run(cmd: string, args: string[], opts: { env: Record<string, string>; signal?: AbortSignal; timeoutMs?: number }): Promise<AsrRunResult>;
 	spawnServe(exe: string, args: string[], opts: { env: Record<string, string> }): AsrChild;
 	/** 从**官方源**按固定清单下载权重（清单外文件一律不取）；`pythonPath` = staging venv 解释器 */
@@ -87,7 +94,7 @@ export interface AsrDeps {
 	importWeights(sourceDir: string, files: AsrWeightFile[], signal: AbortSignal, modelId?: string): Promise<{ copied: number; bytes: number }>;
 	findFreePort(): Promise<number>;
 	health(port: number, token: string, signal?: AbortSignal): Promise<AsrHealth>;
-	activate(paths: AsrPaths, meta: { source: AsrInstallSource; engineVersion: string; revision: string; modelId: string; runner: string; fileRoles: Record<string, string>; sampleRate: number; maxAudioBytes: number }): Promise<void>;
+	activate(paths: AsrPaths, meta: { source: AsrInstallSource; engineVersion: string; revision: string; modelId: string; runner: string; fileRoles: Record<string, string>; sampleRate: number; maxAudioBytes: number; engineRequirements: string }): Promise<void>;
 	rollback(paths: AsrPaths): Promise<void>;
 	uninstall(paths: AsrPaths, modelId?: string): Promise<void>;
 	randomToken(): string;
@@ -140,6 +147,8 @@ export interface InferenceLease {
 
 const MAX_BACKOFF_MS = 30_000;
 const MAX_CONSECUTIVE_FAILURES = 5;
+/** 启动后等 sidecar 把模型 load 完的预算（大模型可达数十秒；子进程退出会提前返回）。 */
+const HEALTH_LOAD_BUDGET_MS = 90_000;
 
 interface RuntimeState {
 	state: AsrRuntimeState;
@@ -307,13 +316,17 @@ export class LocalAsrManager {
 			await this.deps.ensureUv();
 			const paths = this.deps.paths(this.model.id);
 			const env = this.baseEnv(paths);
-			this.set("venv");
-			await this.step(signal, () => this.runOrThrow(this.deps.uvPath(), ["venv", "--python", this.deps.pythonVersion(), paths.envStaging], { env, signal }));
-			this.set("engine");
 			// 只装 pinned 版本，且必须带官方 wheel SHA256（--require-hashes）；无固定摘要的平台 fail closed，不暗装。
 			const req = sherpaRequirements(this.platform.key);
 			if (!req.ok) throw new Error(req.reason);
-			await this.step(signal, () => this.deps.installEngine(this.envPython(paths.envStaging), req.content, { env, signal }));
+			// 共享 runtime：引擎已装同一套且能加载就复用，不每次重下 ~200MB；不可复用才重建 staging venv。
+			const reuseEngine = (await this.deps.engineReady?.(paths, req.content)) ?? false;
+			if (!reuseEngine) {
+				this.set("venv");
+				await this.step(signal, () => this.runOrThrow(this.deps.uvPath(), ["venv", "--python", this.deps.pythonVersion(), paths.envStaging], { env, signal }));
+				this.set("engine");
+				await this.step(signal, () => this.deps.installEngine(this.envPython(paths.envStaging), req.content, { env, signal }));
+			}
 			this.set("weights");
 			if (opts.source === "import") {
 				const res = await this.deps.importWeights(String(opts.importDir), this.model.files, signal, this.model.id);
@@ -342,6 +355,7 @@ export class LocalAsrManager {
 				fileRoles: this.model.fileRoles ?? {},
 				sampleRate: this.model.sampleRate,
 				maxAudioBytes: ASR_MAX_AUDIO_BYTES,
+				engineRequirements: req.content,
 			});
 			this.installInfo = { state: "installed", phase: "done", received: this.installInfo.received, total: this.installInfo.total, error: null, installedAt: this.deps.now(), source: opts.source };
 			this.onChange();
@@ -416,7 +430,7 @@ export class LocalAsrManager {
 		try {
 			const port = await this.deps.findFreePort();
 			const token = this.deps.randomToken();
-			const env = { ...this.baseEnv(paths), ASR_HOST: ASR_BIND_HOST, ASR_PORT: String(port), ASR_TOKEN: token, ASR_THREADS: String(this.threadCap), ASR_IDLE_SECONDS: String(this.idleSeconds) };
+			const env = { ...this.baseEnv(paths), ASR_HOST: ASR_BIND_HOST, ASR_PORT: String(port), ASR_TOKEN: token, ASR_THREADS: String(this.threadCap), ASR_IDLE_SECONDS: String(this.idleSeconds), ASR_WEIGHTS: paths.weights, ASR_MODEL_ID: this.model.id };
 			const child = this.deps.spawnServe(this.envBin(paths.env, "python"), [this.entryScript(paths)], { env });
 			this.runtime = { ...this.runtime, state: "running", pid: child.pid ?? null, port, token, child, health: null, lastError: null, failures: 0, nextStartAt: 0 };
 			this.deps.recordPid(child.pid ?? null);
@@ -437,7 +451,7 @@ export class LocalAsrManager {
 				this.runtime = { ...this.runtime, state: "crashed", pid: null, child: null, token: null, health: null, lastError: `sidecar 退出（code ${code ?? "null"}）` };
 				this.onChange();
 			});
-			this.runtime.health = await this.probeHealth(port, token);
+			this.runtime.health = await this.probeHealth(port, token, child);
 			if (!this.runtime.health.ok) {
 				this.runtime.failures += 1;
 				this.runtime.restarts += 1;
@@ -513,19 +527,24 @@ export class LocalAsrManager {
 		return this.status();
 	}
 
-	/** 启动后 /health 可能还没就绪：有限次重试（已就绪就不等）。 */
-	private async probeHealth(port: number, token: string, attempts = 10): Promise<AsrHealth> {
+	/**
+	 * 启动后 /health 要等模型真正 load 完（大模型可能几十秒）——按**截止时间**轮询，
+	 * 子进程一退出就提前返回，不用固定重试次数把「加载慢」误判成「不健康」。
+	 */
+	private async probeHealth(port: number, token: string, child: AsrChild, budgetMs = HEALTH_LOAD_BUDGET_MS): Promise<AsrHealth> {
 		let last: AsrHealth = { ok: false, device: null, loaded: null };
-		for (let i = 0; i < attempts; i++) {
+		const deadline = this.deps.now() + budgetMs;
+		for (;;) {
 			try {
 				last = await this.deps.health(port, token);
 				if (last.ok) return last;
 			} catch {
-				/* 继续重试 */
+				/* 还没起来：继续等 */
 			}
-			if (i < attempts - 1) await new Promise((r) => setTimeout(r, 100));
+			if (this.runtime.child !== child) return last; // sidecar 已退出，没有可等的
+			if (this.deps.now() >= deadline) return last;
+			await new Promise<void>((resolve) => this.deps.setTimer(() => resolve(), 250));
 		}
-		return last;
 	}
 
 	// ---------------------------------------------------- inference / idle

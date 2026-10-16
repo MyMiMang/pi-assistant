@@ -53,6 +53,7 @@ const paths: AsrPaths = {
 
 interface Harness {
 	manager: LocalAsrManager;
+	deps: AsrDeps;
 	clock: FakeClock;
 	calls: string[];
 	state: { pid: number | null; registered: { baseUrl: string; token: string; modelId: string } | null; kills: number[]; rollbacks: number; activates: number; installed: boolean; spawns: number };
@@ -144,7 +145,7 @@ function harness(opts: { license?: typeof SENSEVOICE_LICENSE; idleSeconds?: numb
 		{ source: SENSEVOICE_SOURCE, license: opts.license ?? SENSEVOICE_LICENSE, model: SENSEVOICE_MODEL, ids: { provider: ASR_PROVIDER_ID, modelId: ASR_MODEL_ID, protocol: ASR_PROTOCOL }, idleSeconds: opts.idleSeconds },
 		() => {},
 	);
-	return { manager, clock, calls, state, behavior };
+	return { manager, deps, clock, calls, state, behavior };
 }
 
 // ------------------------------------------------------------------ 许可
@@ -263,6 +264,31 @@ test("停止会明确中止进行中的推理（stop-active-abort）", async () 
 	await h.manager.stop("manual");
 	assert.equal(lease.signal.aborted, true);
 	lease.end();
+});
+
+test("慢加载：健康检查等到模型真正 load 完再判健康（不是固定几次就判不健康）", async () => {
+	const h = harness({ license: { ...SENSEVOICE_LICENSE, decision: "cleared" } });
+	await h.manager.install({ source: "download", acceptLicense: "1.1" });
+	let probes = 0;
+	// 模拟大模型还在 load：前 5 次未就绪，第 6 次才 ok。
+	h.deps.health = async () => {
+		probes += 1;
+		return { ok: probes >= 6, device: "cpu", loaded: probes >= 6 ? ["model.int8.onnx"] : null };
+	};
+	let done = false;
+	const p = h.manager.start().then((st) => {
+		done = true;
+		return st;
+	});
+	for (let i = 0; i < 30 && !done; i++) {
+		await new Promise((r) => setImmediate(r));
+		h.clock.advance(250);
+	}
+	assert.ok(done, "start 应在若干次重试后完成，而不是固定次数就放弃");
+	const st = await p;
+	assert.ok(probes >= 6);
+	assert.equal(st.health?.ok, true);
+	assert.deepEqual(st.health?.loaded, ["model.int8.onnx"]);
 });
 
 test("启动失败：有界退避，退避期内拒绝再次启动；连续失败后暂停自动重启", async () => {

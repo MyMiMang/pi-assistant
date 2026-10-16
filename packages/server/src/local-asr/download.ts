@@ -4,14 +4,15 @@
  * 用户要求：多个本地 ASR 模型可共存，但「组件页下载」与「语音页安装并使用」是**同一个 job**；
  * 取消走同一个 AbortController（manager.cancel），不另造下载链路。
  *
- * 做法（与 `local-laya/download.ts` 同构，但**事件驱动**，不装永久定时 loop）：
+ * 做法（与 `local-laya/download.ts` 同构，**事件驱动**，不装轮询 loop）：
  *  - 每个 catalog 模型登记一个稳定 downloadId = `asr:<modelId>`（catalog.install.jobId 用它）；
  *  - `status()` 直接把 manager 的 install 状态投影成统一下载状态（首屏真实阶段）；
- *  - 别的入口（语音页 POST /models/:id/install）触发的安装，经 `local-asr.changed` 事件同步进下载面板。
+ *  - 别的入口（语音页 POST /models/:id/install）触发的安装，经 `local-asr.changed` 事件同步进下载面板；
+ *  - 事件只负责 `notifyDownload(id, force)` 让统一下载面板重读投影，**不再每秒轮询** manager；
  *  - 只有许可 `cleared` 且平台支持的模型登记为可下载；SenseVoice 保持「自行导入」，不在下载面板放按钮。
  */
 import { bus } from "../bus.ts";
-import { followStatus, registerDownload } from "../downloads.ts";
+import { notifyDownload, registerDownload } from "../downloads.ts";
 import { ASR_CATALOG } from "./catalog.ts";
 import { localAsrService } from "./index.ts";
 import type { AsrStatus } from "./manager.ts";
@@ -54,14 +55,13 @@ function statusOf(modelId: string): AsrStatus {
 	return localAsrService().managerFor(modelId).status();
 }
 
-/** 组件页「下载」按钮：装但不换来源（intent = install）。 */
+/** 组件页「下载」按钮：装但不换来源（intent = install）。进度由事件驱动（见下），这里不另起轮询。 */
 export async function startAsrDownload(modelId: string): Promise<void> {
 	const svc = localAsrService();
 	if (svc.managerFor(modelId).status().install.state === "installing") return;
 	void svc
 		.install(modelId, { intent: "install" })
 		.catch(() => {});
-	followStatus(asrDownloadId(modelId), () => ({ active: svc.managerFor(modelId).status().install.state === "installing", ...projectAsrInstall(svc.managerFor(modelId).status().install) }));
 }
 
 /** 取消安装 / 下载：走 manager 同一个 AbortController（回滚 staging）。 */
@@ -90,15 +90,14 @@ export function registerAsrDownloads(): void {
 			hidden: () => spec.license.decision !== "cleared" || (spec.platforms.length > 0 && !spec.platforms.includes(platformKey())),
 		});
 	}
-	// 事件驱动：任何入口（下载页 / 语音页）触发的安装都同步到同一下载条目；不装每模型永久定时 loop。
+	// 进度**事件驱动**：任何入口（下载页 / 语音页）触发的安装，manager 每次状态变化都推 `local-asr.changed`，
+	// 这里把它转发给统一下载面板重读投影。首帧与终态立即发（force），常规进度沿用 downloads.ts 的 500ms 节流。
 	bus.on((e) => {
 		if (e.type !== "local-asr.changed") return;
 		const modelId = (e as { modelId?: string }).modelId;
 		const status = (e as { status?: AsrStatus }).status;
-		if (!modelId || !status || !status.install) return;
-		if (status.install.state === "installing") {
-			followStatus(asrDownloadId(modelId), () => ({ active: statusOf(modelId).install.state === "installing", ...projectAsrInstall(statusOf(modelId).install) }));
-		}
+		if (!modelId || !status?.install) return;
+		notifyDownload(asrDownloadId(modelId), status.install.state !== "installing");
 	});
 }
 
