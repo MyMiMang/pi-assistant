@@ -110,6 +110,8 @@ try {
 	await ensureGroupOpen(menu, single.id);
 	const both = menu.locator(`[data-testid=model-option][data-model="${single.id}/gpt-6.1-sol"]`);
 	assert.ok((await both.nth(0).isVisible()) && (await both.nth(1).isVisible()), "常用与原渠道两行都要可见");
+	await both.nth(1).scrollIntoViewIfNeeded();
+	await page.waitForTimeout(120);
 	await page.screenshot({ path: join(OUT, "02-single-provider-group-kept.png") });
 	ok("单模型渠道：选过之后分组仍在、原渠道行仍在（常用 + 原渠道各 1）");
 
@@ -125,6 +127,8 @@ try {
 	assert.ok(rows.includes(`${multi.id}/deepseek-v3`), `原渠道应仍有选过的模型：${rows}`);
 	assert.ok(rows.includes(`${multi.id}/gpt-6.1-sol`) && rows.includes(`${multi.id}/kimi-k2`), `其余模型不受影响：${rows}`);
 	assert.equal(new Set(rows).size, rows.length, `同一分组内不能重复渲染：${rows}`);
+	await menu.locator(`[data-testid=model-option][data-model="${multi.id}/kimi-k2"]`).scrollIntoViewIfNeeded().catch(() => {});
+	await page.waitForTimeout(120);
 	await page.screenshot({ path: join(OUT, "03-multi-provider-kept.png") });
 	ok("多模型渠道：选过的模型留在渠道里，同分组内不重复");
 
