@@ -190,6 +190,10 @@ html,.pa-app{height:100%}
 .pa-composer-tools{display:flex;align-items:center;gap:6px;flex:1;min-width:0;flex-wrap:wrap;row-gap:6px}
 /* 语音输入：麦克风 / 停止 / 取消固定贴在发送键左侧（同一行、不换行、不挤右组）；提示与「去设置」渲染到独立 status 行 */
 .pa-voice-ctl{display:flex;align-items:center;gap:4px;flex:none;align-self:flex-end}
+/* 真实音量：每格来自实际 PCM RMS（平滑 + 限频），静音近零，不做循环动画 */
+.pa-voice-level{display:inline-flex;align-items:flex-end;gap:1.5px;height:18px;flex:none}
+.pa-voice-level i{display:block;width:2px;min-height:2px;border-radius:1px;background:var(--acc,#2563eb);opacity:.85}
+@media (prefers-reduced-motion: reduce){.pa-voice-level i{transition:none}}
 .pa-voice-status{order:1;flex:0 0 100%;display:flex;align-items:center;gap:8px;min-width:0}
 
 /* 托盘悬浮条（/hostbar，置顶小窗） */
