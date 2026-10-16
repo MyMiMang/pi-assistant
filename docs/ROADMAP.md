@@ -1,6 +1,6 @@
 # 需求与计划（ROADMAP）
 
-> **beta.26 候选整合（当前，未发布）**：候选树 `release-candidate-validation`（起点公开 `dcce520`），**未 push / 未 tag / 未打包**。四块已 `--no-ff` 合入：Laya 下载统一链路（`10317d0`，stage1 `1dbb652`）、本地语音多模型 UI + 后端（`55a09e7` / 后端 `18478d4`，stage1 `277ddfb`）+ 生产修复（`8f8d458`，本轮 `42f9613`）、主题设计选本次草稿模型（`0781b9c`，stage1 `12370a5`）、Laya 测试隔离收口（`8e9a223`，本轮 `17a3da7`）。
+> **已完成并公开（beta.26）**：2026-10-16 17:38（Asia/Shanghai）公开为 Latest，仅 Apple 芯片 macOS arm64。tag `dd963a4`，Actions `38880524575` 构建、内置服务、Mac 安装启动冒烟及 publish 成功；主会话核验四项公开资产、Latest JSON 版本 / arm64 平台 / 非空签名。未自动更新用户 App。整合树 `release-candidate-validation`（起点公开 `dcce520`）。四块已 `--no-ff` 合入：Laya 下载统一链路（`10317d0`，stage1 `1dbb652`）、本地语音多模型 UI + 后端（`55a09e7` / 后端 `18478d4`，stage1 `277ddfb`）+ 生产修复（`8f8d458`，本轮 `42f9613`）、主题设计选本次草稿模型（`0781b9c`，stage1 `12370a5`）、Laya 测试隔离收口（`8e9a223`，本轮 `17a3da7`）。
 >
 > **真实 ASR 已取代旧「具体 deps 待修」待办**：`8beea59`/`9ef4076`/`189fd99` 按所选模型 repo/revision 直连 HF，真实跑通 Whisper base 160.6MB + Paraformer zh 243.4MB 下载 → 逐文件 SHA256 与 catalog pin 一致 → 起真实 sidecar → 真实转写（英语样例命中关键片段；中文样例 Whisper base 少字、Paraformer 末字官方期望「你」实测「嗯」，如实记录不夸质量）；证据 `evidence/local-asr-real-smoke/`。**Whisper turbo / large-v3（1~2GB）未真下、跨平台（Win/Linux/Intel Mac）未实机**，性能与机器推荐不作结论。**测试隔离已修**（`package.json` 预加载 `./test/setup.ts` + `local-laya-deps` 第一条静态导入 + `isTempDataDir` realpath 边界）取代旧「未修」；但 2026-10-15/16 自报写入真实目录的恢复主会话仍未独立确认。
 >

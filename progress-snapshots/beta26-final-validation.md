@@ -1,4 +1,10 @@
-# beta.26 最终整合验证 + 发布准备
+# beta.26 最终整合验证与公开发布
+
+## 公开核验（2026-10-16）
+
+`v0.1.0-beta.26` 指向 `dd963a4da9f55b64912fb171ebc0271948d766d1`，普通推送 main 后新建 tag；旧 tag 未移动。Actions `38880524575` 的 prepare / arm64 build / 内置服务冒烟 / mac-smoke / publish 全部成功，Linux / Windows 跳过。公开时间 `2026-10-16T09:38:56Z`，非 draft、非 prerelease、Latest 为 beta.26。
+
+主会话通过 GitHub API 和公开 HTTP 独立核验：`latest.json` 6301B、arm64 dmg 370159561B、app.tar.gz 217850410B、sig 440B；公开 `/releases/latest/download/latest.json` 版本 `0.1.0-beta.26`，平台仅 `darwin-aarch64` / `darwin-aarch64-app`，均指向 beta.26 更新包且签名非空。未在用户电脑安装或更新 App，CI 冒烟不等于真实麦克风 / 云模型 / Laya 大权重 / 高档 ASR 已验。以下准备阶段记录保留为历史。
 
 主会话最终复核（2026-10-16）：独立重跑两端类型检查通过，主题/ASR 前端逻辑 **17/17**；具体 ASR deps、多模型生命周期、Laya HF 布局、来源 CAS 与测试隔离子进程 **43/43**。全部显式使用临时 DATA/WORKSPACE/HOME，未读用户数据、未重新下载大权重。已核两份真实 ASR report JSON，发布说明修正缓存复用事实，并明确 small/turbo/large-v3 未做真实安装推理验证、真实 Safari/iPhone 输入法仍未验。按本轮既有发布授权准备普通推送及新 beta.26 tag，不再要求重复确认；公开状态在 Actions 与实际资产核验后记录。
 

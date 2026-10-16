@@ -1,6 +1,8 @@
 # 交接文档（HANDOFF）
 
-> **beta.26 候选整合（当前，未发布）**：候选树 `release-candidate-validation`，起点公开 beta.25 `dcce520`，**未 push / 未 tag / 未打包 / 未更新用户 App**。四块已 `--no-ff` 合入：① Laya 下载统一链路（`10317d0`，stage1 `1dbb652`）；② 本地语音多模型 UI + 后端（`55a09e7` / 后端 `18478d4`，stage1 `277ddfb`）+ 生产修复（`8f8d458`，本轮 `42f9613`）；③ 主题设计选本次草稿模型（`0781b9c`，stage1 `12370a5`）；④ Laya 测试隔离收口（`8e9a223`，本轮 `17a3da7`）。stage1 记录 `progress-snapshots/beta26-integration-stage1.md`，本轮整合与实跑见 `progress-snapshots/beta26-final-validation.md`。
+> **当前公开版本 v0.1.0-beta.26（Latest，仅 Apple 芯片 macOS arm64）**：tag 指向 `dd963a4da9f55b64912fb171ebc0271948d766d1`；[发布 run 38880524575](https://github.com/MyMiMang/pi-assistant/actions/runs/38880524575) 的 arm64 构建、内置服务、Mac 安装启动冒烟和 publish 均成功，2026-10-16 09:38:56 UTC 公开。主会话独立核验非草稿 / 非 prerelease、四项公开资产、公开 Latest 的 `latest.json` 为 `0.1.0-beta.26`，仅 `darwin-aarch64` / `darwin-aarch64-app` 且签名非空。未安装或更新用户 App，已有 tag 未移动。验收及未验边界见 [发布说明](release-notes/v0.1.0-beta.26.md)。
+>
+> **beta.26 已发布整合**：候选树 `release-candidate-validation`，起点公开 beta.25 `dcce520`。四块已 `--no-ff` 合入：① Laya 下载统一链路（`10317d0`，stage1 `1dbb652`）；② 本地语音多模型 UI + 后端（`55a09e7` / 后端 `18478d4`，stage1 `277ddfb`）+ 生产修复（`8f8d458`，本轮 `42f9613`）；③ 主题设计选本次草稿模型（`0781b9c`，stage1 `12370a5`）；④ Laya 测试隔离收口（`8e9a223`，本轮 `17a3da7`）。stage1 记录 `progress-snapshots/beta26-integration-stage1.md`，本轮整合与实跑见 `progress-snapshots/beta26-final-validation.md`。
 >
 > **真实 ASR 结果已取代此前「具体 deps 仍待修」待办**：`8beea59`/`9ef4076`/`189fd99` 修复后按所选模型 repo/revision 直连 HF，真实跑通 Whisper base（160.6MB）+ Paraformer zh（243.4MB）从零下载 → 逐文件 SHA256 与 catalog pin 一致 → 起真实 sidecar → 真实转写（英语样例命中关键片段；中文样例 Whisper base 少字、Paraformer 末字官方期望「你」实测「嗯」，如实记录不夸质量）；换模型 worker pid 不同、停后回收，卸载一个不影响另一个；证据 `evidence/local-asr-real-smoke/`。本地语音「可一键装」现为「下载 / 校验 / 启动 / 转写链路对两族真实跑通」，但 **Whisper turbo / large-v3（1~2GB）未真下、跨平台（Win/Linux/Intel Mac）未实机**，性能与机器推荐不作结论。
 >
@@ -8,7 +10,7 @@
 >
 > **未验边界**：三块的真实云模型质量 / 计费、Laya 真实 GB 权重端到端、真机 App、真麦克风、全量 `npm test`（757 ~25min）/ 全量 `e2e/run.mjs`（第 1 步向导为既有基线）本轮均未跑；SenseVoice 许可仍未决（`unresolved`，默认不下载、仅自行导入）。
 
-> 当前公开版本 **v0.1.0-beta.25**（Latest，仅 Apple 芯片 macOS arm64；上一版 beta.24）。tag 指向 `8afc3aa5d4383e37e14050617b6e1ede67b8f8c9`；[release run 38857423620](https://github.com/MyMiMang/pi-assistant/actions/runs/38857423620) 的 arm64 build、内置服务冒烟、Mac 安装启动冒烟、publish 均成功，2026-10-16 05:57:00 UTC 公开。主会话已独立核验非草稿 / 非 prerelease、四项公开资产、Latest 下载的 `latest.json` 版本 `0.1.0-beta.25`，平台仅 `darwin-aarch64` / `darwin-aarch64-app` 且签名非空。未在用户电脑安装或更新 App，beta.24 及已有 tag 未移动。
+> 历史公开版本 **v0.1.0-beta.25**（现已由 beta.26 接替 Latest，仅 Apple 芯片 macOS arm64；上一版 beta.24）。tag 指向 `8afc3aa5d4383e37e14050617b6e1ede67b8f8c9`；[release run 38857423620](https://github.com/MyMiMang/pi-assistant/actions/runs/38857423620) 的 arm64 build、内置服务冒烟、Mac 安装启动冒烟、publish 均成功，2026-10-16 05:57:00 UTC 公开。主会话已独立核验非草稿 / 非 prerelease、四项公开资产、Latest 下载的 `latest.json` 版本 `0.1.0-beta.25`，平台仅 `darwin-aarch64` / `darwin-aarch64-app` 且签名非空。未在用户电脑安装或更新 App，beta.24 及已有 tag 未移动。
 >
 > 上一版 beta.24 首次提供 Pi 1.2.0、统一模型服务、技能分配、消息引用、记忆分层、语音、AI/像素主题及会话分支等，本版继续保留，见 [beta.24 发布说明](release-notes/v0.1.0-beta.24.md)。实施与验收索引见 `progress-snapshots/release-candidate-integration-final.md`、`progress-snapshots/release-prep-beta24.md`，Pi 适配见 `docs/design/pi-1.2-upgrade.md`。下文各分支的“候选 / 未发布 / 未 push”等为当时的实施快照，已随本版发布的项目以本段和发布说明为准；未验边界仍有效，CI 启动冒烟不代表真实麦克风、云模型、iPhone 或 Laya/SenseVoice 已实测。
 >
