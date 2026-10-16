@@ -8,6 +8,10 @@
  *
  * 不启动服务、不连模型、不碰真实数据：DOM 部分是 React 服务端静态渲染（无浏览器、
  * 无 jsdom），验证结构与 aria；观感 / 真机 / 真持久化仍需在测试槽跑 e2e/ui 脚本。
+ *
+ * 另含两块「修完 A / C」的定向断言：
+ * - A：主题实时切换时 `--mo-style` 的订阅回读（假 DOM + 假 MutationObserver，验证「不重挂组件」）；
+ * - C：保存思考强度的「最后一次为准」代次守卫（迟到失败 / 切助理 / 新成功）。
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -30,6 +34,8 @@ import {
 	thinkingStars,
 } from "../apps/web/src/thinking-slider.ts";
 import { ThinkingSlider } from "../apps/web/src/components/ThinkingSlider.tsx";
+import { readMoStyle, watchMoStyle } from "../apps/web/src/themes/motion-signals.ts";
+import { LatestWrite } from "../apps/web/src/latest-write.ts";
 
 const ALL = [...THINKING_LEVEL_ORDER];
 const html = (props) => renderToStaticMarkup(createElement(ThinkingSlider, { onPick: () => {}, ...props }));
@@ -230,4 +236,141 @@ test("DOM：单档 / 无档不画滑块，给出准确说明", () => {
 test("DOM：服务端静态渲染不写死颜色（颜色只在主题 CSS，组件不加内联色值）", () => {
 	const m = html({ testid: "thinking", levels: ALL, current: "high" });
 	assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(m.replace(/data-ln="1"/g, "")), "组件 markup 不含硬编码色值");
+});
+
+// ---------------------------------------------------------------- A：主题实时切换的 --mo-style 订阅
+// 这组断言打在订阅原语上（假 DOM + 假 MutationObserver），验证「切主题 / DIY 预览 / 取消还原都不重挂组件」
+// 与「订阅范围有界、卸载即断开」；组件挂载层的观感（切主题后 computed transition / animation 真的变）
+// 仍需测试槽跑浏览器 e2e，本文件不声称已跑通它。
+
+class FakeMutationObserver {
+	static instances = [];
+	constructor(cb) {
+		this.cb = cb;
+		this.targets = [];
+		this.disposed = false;
+		FakeMutationObserver.instances.push(this);
+	}
+	observe(target, options) {
+		this.targets.push({ target, options });
+	}
+	disconnect() {
+		this.disposed = true;
+	}
+	/** 模拟一批 DOM 变化（真实 MutationObserver 也是批量回调） */
+	fire() {
+		if (!this.disposed) this.cb([], this);
+	}
+}
+
+/** 假 DOM 环境：只提供订阅原语用得到的 documentElement / head / 计算样式 / MutationObserver。 */
+function moEnv(initial) {
+	FakeMutationObserver.instances = [];
+	const state = { value: initial };
+	const env = {
+		documentElement: { nodeType: 1, tag: "html" },
+		head: { nodeType: 1, tag: "head" },
+		getStyle: () => ({ getPropertyValue: (k) => (k === "--mo-style" ? state.value : "") }),
+		MutationObserver: FakeMutationObserver,
+	};
+	return { state, el: { nodeType: 1, className: "pa-think" }, env, observers: FakeMutationObserver.instances };
+}
+
+test("A 读取 --mo-style：去空白、空值 → null", () => {
+	const a = moEnv(" smooth ");
+	assert.equal(readMoStyle(a.el, a.env), "smooth");
+	assert.equal(readMoStyle(a.el, { ...a.env, getStyle: () => ({ getPropertyValue: () => "steps" }) }), "steps");
+	assert.equal(readMoStyle(a.el, { ...a.env, getStyle: () => ({ getPropertyValue: () => "   " }) }), null);
+	assert.equal(readMoStyle(a.el, { ...a.env, getStyle: null, documentElement: null }), null, "没有计算样式时安全返回 null，不抛错");
+});
+
+test("A 主题实时切换：smooth → steps → 取消还原都会回读，不用重挂组件", () => {
+	const { state, el, env, observers } = moEnv("smooth");
+	const changes = [];
+	const stop = watchMoStyle(el, (v) => changes.push(v), env);
+	assert.deepEqual(changes, ["smooth"], "订阅开始时先读一次（打开弹层即正确）");
+	assert.equal(observers.length, 1);
+	const mo = observers[0];
+	// 订阅范围有界：只盯 <html> 的关键属性 + <head> 的样式表文本，不全页观察、不轮询
+	assert.deepEqual(mo.targets.map((t) => t.target), [env.documentElement, env.head]);
+	assert.deepEqual(mo.targets[0].options.attributeFilter, ["data-skin", "data-mode", "class", "style"]);
+	assert.equal(mo.targets[1].options.childList, true);
+	assert.equal(mo.targets[1].options.characterData, true);
+	assert.ok(!mo.targets[1].options.attributes, "样式表变化走 childList / characterData，不看属性");
+	// 切主题 / DIY 预览改了同一个 custom id 的 <style> 文本（data-skin 不变）：也必须回读
+	state.value = "steps";
+	mo.fire();
+	assert.deepEqual(changes, ["smooth", "steps"]);
+	// 值没变不重复回调（不造成无谓重渲染）
+	mo.fire();
+	assert.deepEqual(changes, ["smooth", "steps"]);
+	// 预览取消 → 变量回到原主题（未声明）
+	state.value = "";
+	mo.fire();
+	assert.deepEqual(changes, ["smooth", "steps", null]);
+	// 关闭弹层 / 卸载：断开订阅，之后不再回读
+	stop();
+	assert.equal(mo.disposed, true);
+	state.value = "steps";
+	mo.fire();
+	assert.deepEqual(changes, ["smooth", "steps", null], "断开后不再回调");
+});
+
+test("A 没有 MutationObserver（老环境 / 非浏览器）时只读一次且不抛错", () => {
+	const { el, env } = moEnv("steps");
+	const changes = [];
+	const stop = watchMoStyle(el, (v) => changes.push(v), { ...env, MutationObserver: null });
+	assert.deepEqual(changes, ["steps"], "降级为「挂载时读一次」，与修前行为一致，不抛错");
+	assert.equal(typeof stop, "function");
+	stop();
+});
+
+// ---------------------------------------------------------------- C：保存失败回滚的代次守卫
+// 组件里的接线（乐观置值 → PUT → 失败时按守卫回滚到服务端确认值并回读）由上面的 A/C 覆盖 + 测试槽的
+// 浏览器 e2e 复核；这里把「谁有权改界面」的判定单独钉死，防止再出现「旧失败抹掉新选择」。
+
+test("C 乐观写入：迟到的失败(A) 不抹掉用户后一次选择(B)", () => {
+	const w = new LatestWrite("medium"); // 进入页面时读到的服务端值
+	const a = w.begin(); // 用户选 A（界面乐观置 A）
+	const b = w.begin(); // 用户很快又选 B（界面乐观置 B）
+	assert.equal(w.fail(a).rollback, false, "A 已不是最新一次：不回滚，不覆盖 B");
+	assert.deepEqual(w.fail(b), { rollback: true, value: "medium" }, "B 是最新一次：仍按服务端真值回滚");
+});
+
+test("C 最新一次失败：回滚到服务端确认过的值，不用未确认的乐观值", () => {
+	const w = new LatestWrite();
+	assert.deepEqual(w.fail(w.begin()), { rollback: true, value: null }, "还没读到服务端值时不假装有值");
+	const first = w.begin();
+	assert.equal(w.confirm(first, "medium"), true);
+	const id = w.begin(); // 乐观改成 high
+	assert.deepEqual(w.fail(id), { rollback: true, value: "medium" });
+});
+
+test("C 乱序成功：旧请求的迟到成功不改确认值、也不盖新失败的回滚", () => {
+	const w = new LatestWrite("medium");
+	const a = w.begin();
+	const b = w.begin();
+	assert.deepEqual(w.fail(b), { rollback: true, value: "medium" });
+	assert.equal(w.confirm(a, "high"), false, "A 的迟到成功被代次挡住");
+	assert.deepEqual(w.fail(b), { rollback: true, value: "medium" }, "确认值没被旧成功改成 high");
+});
+
+test("C 新成功：确认值跟上最新一次，之后失败回滚到它（保服务端真值）", () => {
+	const w = new LatestWrite("medium");
+	const a = w.begin();
+	w.confirm(a, "high");
+	const b = w.begin();
+	w.confirm(b, "off");
+	assert.equal(w.isCurrent(b), true);
+	assert.deepEqual(w.fail(w.begin()), { rollback: true, value: "off" });
+});
+
+test("C 卸载 / 切到别的助理：invalidate 后在飞响应不落地", () => {
+	const w = new LatestWrite("medium");
+	const id = w.begin();
+	w.invalidate();
+	assert.equal(w.isCurrent(id), false);
+	assert.equal(w.fail(id).rollback, false, "卸载后迟到的失败不改界面");
+	assert.equal(w.confirm(id, "max"), false, "卸载后迟到的成功不写确认值");
+	assert.equal(w.isCurrent(w.begin()), true, "重新挂载 / 新一次写入照常工作");
 });

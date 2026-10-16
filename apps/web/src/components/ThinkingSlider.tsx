@@ -11,8 +11,9 @@
  * - 「跟随 X」是滑块外的 reset 动作（不是第 8 档）；0 档 / 1 档显示说明，不画滑块。
  * - 预览动效只播一次（320–700ms），播完即停；组件卸载清理计时器，最小化动态效果时完全不播。
  */
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { THINKING_DESC, THINKING_LABEL, THINKING_PREVIEW_MS, THINKING_SLIDER_SHORT, shouldCommitThinking, sliderIndexForKey, sliderIndexFromX, thinkingSliderView, thinkingStars } from "../thinking-slider";
+import { watchMoStyle } from "../themes/motion-signals";
 import { cx } from "./ui";
 
 /** 最小化动态效果：组件内是否播预览动画（CSS 也有一份，这里用来提前跳过计时器）。 */
@@ -26,6 +27,21 @@ function useReducedMotion(): boolean {
 		return () => mq.removeEventListener("change", h);
 	}, []);
 	return reduced;
+}
+
+/**
+ * 跟随主题声明的 `--mo-style`：挂载先读一次，之后主题 / DIY 预览真的改了变量再回读一次。
+ * 订阅只在组件挂载（弹层可见）期间存在，卸载 / 关闭即断开；值没变不重渲染。
+ * reduce 开关变化时同一套订阅重挂并回读（不另起一套监听），保证 reduce 分支下的 token 立即生效。
+ */
+function useMoStyle(ref: RefObject<HTMLElement | null>, reduceVersion: boolean): string | null {
+	const [moStyle, setMoStyle] = useState<string | null>(null);
+	useLayoutEffect(() => {
+		const el = ref.current;
+		if (!el) return;
+		return watchMoStyle(el, setMoStyle);
+	}, [ref, reduceVersion]);
+	return moStyle;
 }
 
 export interface ThinkingSliderProps {
@@ -53,12 +69,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	const rootRef = useRef<HTMLDivElement>(null);
 	// `--mo-style` 是主题声明的字符串（smooth / steps），不能直接当 animation-timing-function。
 	// 这里把主题定义里的值安全映射成真实 data 属性，CSS 再按属性走 steps 分支（不读硬编码调色板、不写 JS 颜色）。
-	const [moStyle, setMoStyle] = useState<string | null>(null);
-	useLayoutEffect(() => {
-		const el = rootRef.current;
-		if (!el || typeof getComputedStyle !== "function") return;
-		setMoStyle(getComputedStyle(el).getPropertyValue("--mo-style").trim() || null);
-	}, []);
+	const moStyle = useMoStyle(rootRef, reduced);
 	const handleRef = useRef<HTMLDivElement>(null);
 	const innerRef = useRef<HTMLDivElement>(null);
 	const dragging = useRef(false);

@@ -5,10 +5,11 @@
 import { ModelOptions, modelLabel } from "./ModelOptions";
 import { PROVIDER_ICONS } from "./provider-icons";
 import { Brain, CheckCircle2, ChevronDown, Copy, ExternalLink, KeyRound, Loader2, LogOut, Pencil, Plus, Search, Sparkles, XCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { ModelPickerButton, THINKING_LABEL, useConfiguredModels } from "./ModelPicker";
 import { StrengthTags, type StrengthModel, type StrengthTag } from "./ModelStrengths";
 import { api } from "../api";
+import { LatestWrite } from "../latest-write";
 import { useStore } from "../store";
 import type { ModelInfo, Provider } from "../types";
 import { Badge, Button, cx, Input } from "./ui";
@@ -396,11 +397,25 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 	const d = useConfiguredModels();
 	const [thinking, setThinking] = useState<string | null>(null);
 	const [test, setTest] = useState<{ ok: boolean; message: string } | "running" | null>(null);
-	useEffect(() => {
-		void api<{ thinking: string }>("/api/models/defaults")
-			.then((x) => setThinking(x.thinking))
-			.catch(() => {});
+	// 「最后一次为准」守卫：A→B 连点时 A 的迟到失败不把 B 的新选择回滚；卸载 / 切走时作废在飞响应。
+	const saves = useRef(new LatestWrite());
+	// 回读服务端真值：只有仍是最新一次才落地（失败回滚也落到它，不用未确认的乐观值当真相）。
+	const readThinking = useCallback(async () => {
+		const id = saves.current.begin();
+		try {
+			const x = await api<{ thinking: string }>("/api/models/defaults");
+			if (!saves.current.isCurrent(id)) return;
+			saves.current.confirm(id, x.thinking);
+			setThinking(x.thinking);
+		} catch {
+			// 读不到就维持现状（不改动界面），下次保存 / 进来再对齐
+		}
 	}, []);
+	useEffect(() => {
+		void readThinking();
+		const guard = saves.current;
+		return () => guard.invalidate();
+	}, [readThinking]);
 	const cur = system?.defaultModel ?? null;
 	const models = (d?.models ?? []).filter((m) => !providerId || m.provider === providerId);
 	const entry = models.find((m) => m.provider === cur?.provider && m.id === cur?.id);
@@ -413,13 +428,18 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 		onSaved?.();
 	};
 	const saveThinking = async (l: string) => {
-		const prev = thinking;
+		const id = saves.current.begin();
 		setThinking(l);
 		try {
 			await api("/api/models/default", { method: "PUT", json: { thinking: l } });
+			saves.current.confirm(id, l);
 		} catch {
-			// 保存失败：回滚到生效值，不留下假值（界面不假装已经改了）
-			setThinking(prev);
+			// 迟到的失败：用户已经又选了别的，不回滚、不覆盖新选择（旧 success 也不会盖新失败）
+			const r = saves.current.fail(id);
+			if (!r.rollback) return;
+			// 仍是最新一次：先回落到服务端确认过的值（不留假值），再回读一次服务端真值
+			setThinking(r.value);
+			await readThinking();
 		}
 	};
 	const text = `${entry ? modelLabel(entry) : cur ? `${cur.provider} / ${cur.id}` : "选择默认模型"}${levels.length > 1 ? ` · ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}`;
