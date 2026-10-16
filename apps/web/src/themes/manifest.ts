@@ -65,6 +65,8 @@ export function motionTokens(manifest: ThemeManifestV1): Record<string, string> 
 		"--pa-ease-expand": ease(m.easeExpand, DEFAULT_THEME_MOTION.easeExpand),
 		"--pa-ease-spring": ease(m.easeSpring, DEFAULT_THEME_MOTION.easeSpring),
 		"--mo-scale": String(m.scale ?? DEFAULT_THEME_MOTION.scale),
+		// 与七档滑块设计稿同名的缓动别名（= 通用缓出）；组件也可直接用 --pa-ease-out。
+		"--mo-ease": ease(m.easeOut, DEFAULT_THEME_MOTION.easeOut),
 		"--mo-glow": MOTION_GLOW_VALUE[m.glow ?? DEFAULT_THEME_MOTION.glow],
 		"--mo-style": m.style ?? DEFAULT_THEME_MOTION.style,
 	};

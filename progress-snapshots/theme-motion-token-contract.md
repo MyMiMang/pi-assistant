@@ -29,6 +29,7 @@
 | `motion.style` | `--mo-style` | `smooth` | 枚举 `smooth` / `steps` |
 
 - 缓动枚举名（引擎映射到内置 bezier，不引入外部资源）：`linear` `ease` `ease-in` `ease-out` `ease-in-out` `standard` `emphasized` `spring-soft`。
+- 另提供与滑块设计稿同名的 `--mo-ease`（= `motion.easeOut` / `--pa-ease-out` 的别名），组件可直接用 `--pa-ease-out` 或 `--mo-ease`，两者一致。
 - 受限 `cubic-bezier(a,b,c,d)`：`x1,x2 ∈ [0,1]`，`y1,y2 ∈ [-0.5,1.5]`；其余（含 `steps()`、`url()`、`;`、`{}`）一律 fail-closed。
 - 未知 `motion` 字段 → 报错（不静默丢弃）；坏值 → 拒绝整份 manifest，**不 reset 当前主题**。
 
@@ -37,7 +38,7 @@
 滑块组件**只读这些 token + 既有颜色 / 圆角 token**，颜色 / 动效**不得从 JS 写死**（否则覆盖不了用户 DIY 主题）：
 
 - 通用时长 / 缓动：`--pa-dur-fast` / `--pa-dur` / `--pa-dur-slow`、`--pa-ease-out` / `--pa-ease-expand` / `--pa-ease-spring`。
-- 滑块专用旋钮（**新增**）：`--mo-scale`（时长倍率，乘到档位切换时长上）、`--mo-glow`（光晕强度数字）、`--mo-style`（`smooth` 连续 / `steps` 离散，像素风用）。
+- 滑块专用旋钮（**新增**）：`--mo-scale`（时长倍率，乘到档位切换时长上）、`--mo-ease`（= 通用缓出 `--pa-ease-out`）、`--mo-glow`（光晕强度数字）、`--mo-style`（`smooth` 连续 / `steps` 离散，像素风用）。
 - 配色 / 形状 / 字体：`--acc` / `--acc2` / `--acc-soft` / `--line` / `--line-strong` / `--r` / `--font`（已在 DIY 白名单内，引擎已真正输出到 `[data-skin=custom-*]`，**不是"样式继承"糊弄**）。
 
 **明确不做**：不为 7 档各写一套 token（`--pa-thinking-off/…/max` 之类）。档位的**语义 / 键位 / snap / 继承**在任何主题下一致；

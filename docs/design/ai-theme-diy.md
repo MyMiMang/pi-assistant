@@ -23,12 +23,12 @@
 | 纹理 / 背景 | `decor.texture` = `none` / `dots` / `grid`、`decor.background` = `flat` / `glow` → 纯 CSS 渐变，无 `url()` / SVG / 远程资源 | ✅ |
 | 角形 | `decor.corner` = `round` / `step2` / `step4`（8bit 阶梯，只裁装饰元素） | ✅ |
 | 图片素材 | `images[]` + `THEME_IMAGE_USAGES = reference / background / decor`；默认 `reference` 不嵌入主题，只有用户显式选「用作背景 / 装饰」才成为素材 | ✅ |
-| **动效（时长 / 缓动 / 倍率 / 光晕 / 风格）** | `motion` 段（模式无关）：`durationFast/duration/durationSlow`（40..1200ms）、`easeOut/easeExpand/easeSpring`（枚举名或受限 `cubic-bezier()`）、`scale`（0.5..2）、`glow`（enum）、`style`（`smooth`/`steps`）→ 引擎编译 `--pa-dur-*` / `--pa-ease-*` / `--mo-scale` / `--mo-glow` / `--mo-style` | ✅（next 候选，预计 beta.29） |
+| **动效（时长 / 缓动 / 倍率 / 光晕 / 风格）** | `motion` 段（模式无关）：`durationFast/duration/durationSlow`（40..1200ms）、`easeOut/easeExpand/easeSpring`（枚举名或受限 `cubic-bezier()`）、`scale`（0.5..2）、`glow`（enum）、`style`（`smooth`/`steps`）→ 引擎编译 `--pa-dur-*` / `--pa-ease-*` / `--mo-scale` / `--mo-ease` / `--mo-glow` / `--mo-style` | ✅（next 候选，预计 beta.29） |
 | 生成 / 校验 / 预览 / 持久化 | AI 生成 JSON → `validateThemeManifest`（unknown_token / 格式 / 对比度 warning，坏值 fail-closed 不 reset 现用主题）→ 临时全 app 预览 → 取消恢复 / 应用持久化 | ✅ |
 
 ## 3. 边界与已收敛的缺口
 
-1. **动效参数已进 schema（next 候选）**：`ThemeManifestV1` 新增**可选**顶层 `motion` 段（模式无关），引擎在 `[data-skin=custom-<id>]` 作用域输出 `--pa-dur-fast/.--pa-dur/.--pa-dur-slow`、`--pa-ease-out/expand/spring` 与 `--mo-scale/--mo-glow/--mo-style`。仍是**有界 typed token**：时长限范围、缓动只允许枚举名或受限 `cubic-bezier()`（x∈[0,1]、y∈[-0.5,1.5]），其余 enum；**不升 manifest 版本**，旧 v1 主题缺 `motion` 仍合法，引擎补内置默认（不丢 / 不覆盖）。
+1. **动效参数已进 schema（next 候选）**：`ThemeManifestV1` 新增**可选**顶层 `motion` 段（模式无关），引擎在 `[data-skin=custom-<id>]` 作用域输出 `--pa-dur-fast/.--pa-dur/.--pa-dur-slow`、`--pa-ease-out/expand/spring` 与 `--mo-scale/--mo-ease/--mo-glow/--mo-style`。仍是**有界 typed token**：时长限范围、缓动只允许枚举名或受限 `cubic-bezier()`（x∈[0,1]、y∈[-0.5,1.5]），其余 enum；**不升 manifest 版本**，旧 v1 主题缺 `motion` 仍合法，引擎补内置默认（不丢 / 不覆盖）。
 2. **交互状态的形状 / 时长**：hover / pressed 的位移、缩放现在可由主题的 `motion` 影响（时长 / 缓动走 token）；**幅度本身**仍是组件固定值，不由主题任意放大（避免主题做出夸张位移）。
 3. **七档思考强度滑块与主题的联动**：滑块设计 §6 的 `--mo-scale` / `--mo-ease` / `--mo-glow` 旋钮**已在 schema / 引擎中存在**（`--mo-ease` 由 `--pa-ease-out` 承担）；滑块组件本身由在修树负责，**只消费 token，不写死颜色 / 时长**。**不为 7 档各写一套 token**：语义 / 键位 / snap / 继承在任何主题下一致，主题只改表现层。
 4. **组件质感级 DIY 的边界**：非颜色 token 仍限于白名单 enum / 尺寸 / 字体 / 动效；「任意组件质感」不会做（禁止任意 CSS / JS / 远程资源），只能通过新增受控 token 逐项开放。

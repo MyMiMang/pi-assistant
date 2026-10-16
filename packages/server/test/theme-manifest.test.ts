@@ -322,6 +322,7 @@ test("engine：motionTokens 枚举 → 内置 CSS；manifestToCss 输出 --pa-* 
 	assert.equal(toks["--mo-scale"], "1.5");
 	assert.equal(toks["--mo-glow"], "1.6");
 	assert.equal(toks["--mo-style"], "steps");
+	assert.equal(toks["--mo-ease"], toks["--pa-ease-out"], "--mo-ease 与通用缓出一致");
 	const css = manifestToCss(m);
 	assert.match(css, /--pa-dur:\.3s/);
 	assert.match(css, /--mo-scale:1\.5/);
