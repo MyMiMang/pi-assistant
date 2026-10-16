@@ -87,6 +87,17 @@ function emit(id: string, force = false) {
 	} else if (!timers.has(id)) timers.set(id, setTimeout(fire, 500));
 }
 
+/**
+ * 把组件**自己的状态变化**转发给统一下载面板（投影 → `downloads.changed`）。
+ *
+ * 用途：本地 Laya / 本地 ASR 这类有自己阶段状态机的组件，在自己的 bus 事件里调用它，
+ * 而不是每项再起一个永久 `setInterval` 轮询。`force=true` 用于首 / 终事件（立即推送，不走 500ms 节流）。
+ * 只读 `def.status()`，不复制组件状态、不构造组件。
+ */
+export function notifyDownload(id: string, force = false): void {
+	emit(id, force);
+}
+
 export function downloadInfo(id: string): DownloadInfo | null {
 	const d = defs.get(id);
 	if (!d) return null;

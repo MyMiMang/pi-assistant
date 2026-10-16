@@ -7,10 +7,11 @@
  *  - 进度分阶段：权重阶段按**真实字节**显示百分比；其余阶段总量未知 → 不定进度条 + 阶段文字（不显示假百分比）；
  *  - 取消走同一个 installAbortController（manager.cancel），原子回滚 staging，不动已生效环境。
  *
- * 只是用统一的 `status` 投影 + `followStatus` 观察 manager 状态，不复制安装逻辑，不另起下载链路。
- * 通用契约见 downloads.ts 的 `DownloadStatus` / `followStatus`（本地 ASR 可直接复用，勿另写一套）。
+ * 只是用统一的 `status` 投影把 manager 的 `local-laya.changed` 事件转发给统一下载面板，不复制安装逻辑、不另起下载链路、
+ * 不全局轮询。通用契约见 downloads.ts 的 `DownloadStatus` / `notifyDownload`（本地 ASR 可直接复用，勿另写一套）。
  */
-import { registerDownload, followStatus } from "../downloads.ts";
+import { bus } from "../bus.ts";
+import { notifyDownload, registerDownload } from "../downloads.ts";
 import { layaManager } from "./index.ts";
 import { DEFAULT_CHECKPOINT, LAYA_CHECKPOINTS } from "./manifest.ts";
 import type { LayaStatus } from "./manager.ts";
@@ -50,8 +51,8 @@ function project() {
 export function startLayaDownload(): Promise<void> {
 	const m = layaManager();
 	if (m.status().install.state === "installing") return Promise.resolve();
+	// 安装本身的进度由 manager 的 `local-laya.changed` 事件驱动（见下），这里不需要另起轮询。
 	void m.install({ checkpoint: LAYA_CHECKPOINTS[DEFAULT_CHECKPOINT] }).catch(() => {});
-	followStatus(LAYA_DOWNLOAD_ID, () => ({ active: layaManager().status().install.state === "installing", ...project() }));
 	return Promise.resolve();
 }
 
@@ -71,10 +72,14 @@ registerDownload({
 	status: () => project(),
 });
 
-// 别的入口（设置 › 电脑 的 Laya 卡直接 POST /install）也会被这里接上进度，保证两个入口同一个 job。
-const watcher = setInterval(() => {
-	if (layaManager().status().install.state === "installing") {
-		followStatus(LAYA_DOWNLOAD_ID, () => ({ active: layaManager().status().install.state === "installing", ...project() }));
-	}
-}, 1000);
-watcher.unref();
+// 进度**事件驱动**，不再全局每秒轮询 manager：
+// manager 每次状态变化（`set()` / onChange）都已推 `local-laya.changed`，这里把它投影转发给统一下载面板。
+// 首个事件与终态事件立即发（force），常规进度沿用 downloads.ts 的 500ms 节流；
+// 两个入口（电脑页 `/api/local-models/laya/install` 与下载页 `/api/downloads/local-laya/start`）共用同一 job。
+// 只用事件里的 status，不在这里 `layaManager()`（避免回调里懒构造 manager 造成循环）。
+bus.on((e) => {
+	if (e.type !== "local-laya.changed") return;
+	const status = (e as { status?: LayaStatus }).status;
+	if (!status) return;
+	notifyDownload(LAYA_DOWNLOAD_ID, status.install.state !== "installing");
+});
