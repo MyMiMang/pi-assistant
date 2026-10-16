@@ -163,6 +163,13 @@ async function installRoutes(context, state) {
 			state.transcribeCalls.push(req.postData() ?? "");
 			return json({ text: "这是转写出来的文字", provider: "openai", model: "whisper-1", durationMs: 500 });
 		}
+		if (p === "/api/audio/asr/source") {
+			if (req.method() === "PUT") {
+				state.source = JSON.parse(req.postData() ?? "{}").source ?? null;
+				return json({ source: state.source });
+			}
+			return json({ source: state.source ?? null });
+		}
 		if (p === "/api/audio/asr/lease" && req.method() === "POST") return json({ leaseId: "lease-1" });
 		if (p.startsWith("/api/audio/asr/lease/")) return json({ ok: true });
 		if (p === "/api/agents/a1/computer") return json({ separate: false, hasData: null, desktop: { enabled: false, state: "off" } });
@@ -189,7 +196,7 @@ try {
 		headless: true,
 		args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--autoplay-policy=no-user-gesture-required"],
 	});
-	const state = { sent: [], transcribeCalls: [], asr: false };
+	const state = { sent: [], transcribeCalls: [], asr: false, source: null };
 	const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN", permissions: ["microphone"] });
 	await installRoutes(ctx, state);
 	await countGum(ctx);
@@ -213,16 +220,19 @@ try {
 	check("点了未配置的麦克风才浮现短提示 + 「去设置」", (await page.locator('[data-testid="voice-status"]').isVisible()) && (await page.locator('[data-testid="voice-open-settings"]').isVisible()));
 	check("未配置点击不真开麦克风（0 次 getUserMedia）、不转写（0 次请求）", (await page.evaluate(() => window.__gum ?? 0)) === 0 && state.transcribeCalls.length === 0);
 	check("未配置给出明确错误提示", ((await page.locator('[data-testid="voice-hint"]').textContent()) ?? "").includes("配置语音识别模型"));
-	// 「去设置」打开模型设置，且临时提示随之清掉（不残留）
+	// 「去设置」打开「语音配置」，且临时提示随之清掉（不残留）
 	await page.locator('[data-testid="voice-open-settings"]').click();
-	await page.locator('[data-testid="local-sensevoice-card"]').waitFor({ timeout: 20_000 });
-	check("「去设置」打开设置 › 模型", await page.locator('[data-testid="local-sensevoice-card"]').isVisible());
+	await page.locator('[data-testid="voice-source-status"]').waitFor({ timeout: 20_000 });
+	check("「去设置」打开设置 › 语音配置", await page.locator('[data-testid="voice-source-status"]').isVisible());
+	check("点「去设置」后链接真的消失（hook error 已被清）", (await page.locator('[data-testid="voice-open-settings"]').count()) === 0 && (await page.locator('[data-testid="voice-status"]').count()) === 0);
 	await page.goto(`${base}/?agent=a1`);
 	await page.locator('[data-mid="a1m"]').waitFor({ timeout: 20_000 });
 	check("回到对话后不再有临时提示 / 「去设置」", (await page.locator('[data-testid="voice-status"]').count()) === 0 && (await page.locator('[data-testid="voice-open-settings"]').count()) === 0);
 
 	console.log("\n── 配置 ASR：录音 → 停止 → 转写插入（不自动发送） ──");
+	// 声明 ASR 还不够：语音来源必须显式选择（不再自动挑第一个已配置的）
 	state.asr = true;
+	state.source = { location: "cloud", provider: "openai", model: "whisper-1" };
 	await page.reload();
 	await page.locator('[data-mid="a1m"]').waitFor({ timeout: 20_000 });
 	await page.locator('[data-testid="voice-mic"]').waitFor({ timeout: 10_000 });
@@ -310,16 +320,26 @@ try {
 	}));
 	await p3.screenshot({ path: join(OUT, "short-window-voice.png") });
 
-	console.log("\n── 云 ASR 设置 + 本地 SenseVoice 许可卡 ──");
+	console.log("\n── 模型页 ASR 声明 + 语音配置里的本地 SenseVoice 许可卡 ──");
+	// 模型页只放「声明」
 	await page.goto(`${base}/?settings=models`);
-	await page.locator('[data-testid="local-sensevoice-card"]').waitFor({ timeout: 20_000 });
-	check("本地 SenseVoice 许可卡可见", await page.locator('[data-testid="local-sensevoice-card"]').isVisible());
+	await page.getByTestId("model-services").waitFor({ timeout: 20_000 });
 	await page.locator('[data-testid="service-toggle-openai"]').click();
 	await page.locator('[data-testid="asr-adapter-section-openai"]').waitFor({ timeout: 10_000 });
-	check("自定义服务里有「语音识别（ASR）」声明区块", await page.locator('[data-testid="asr-adapter-section-openai"]').isVisible());
+	check("自定义服务里有「语音识别（ASR）声明」区块", await page.locator('[data-testid="asr-adapter-section-openai"]').isVisible());
+	check("模型页不再有本地 Laya / SenseVoice 卡", (await page.locator('[data-testid="local-laya-card"]').count()) === 0 && (await page.locator('[data-testid="local-sensevoice-card"]').count()) === 0);
+	// SenseVoice 许可卡在「语音配置」页
+	await page.goto(`${base}/?settings=voice`);
+	await page.locator('[data-testid="voice-tab-local"]').click();
+	await page.locator('[data-testid="local-sensevoice-card"]').waitFor({ timeout: 20_000 });
+	check("本地 SenseVoice 许可卡可见", await page.locator('[data-testid="local-sensevoice-card"]').isVisible());
 	check("许可卡标注适用范围未最终确认", (await page.locator('[data-testid="local-sensevoice-card"]').getAttribute("data-license-decision")) === "unresolved");
 	const licText = (await page.locator('[data-testid="sensevoice-license"]').textContent()) ?? "";
-	check("许可限制默认可见（不折叠遮盖）", licText.includes("for reference and learning purposes only") || licText.includes("署名"));
+	check("许可摘要常驻可见（含「下载暂不可用」）", licText.includes("未最终确认") && licText.includes("下载暂不可用"));
+	await page.locator('[data-testid="sensevoice-terms-toggle"]').click();
+	await page.locator('[data-testid="sensevoice-license-detail"]').waitFor();
+	const detailText = (await page.locator('[data-testid="sensevoice-license-detail"]').textContent()) ?? "";
+	check("条款详情（折叠）含限制文案", detailText.includes("for reference and learning purposes only") || detailText.includes("署名"));
 	check("许可正文 / 来源链接可用", (await page.locator('[data-testid="sensevoice-link-license"]').getAttribute("href"))?.startsWith("https://") && (await page.locator('[data-testid="sensevoice-link-repo"]').getAttribute("href"))?.startsWith("https://"));
 	check("接受勾选在许可未确认时被禁用（不能绕过）", await page.locator('[data-testid="sensevoice-accept"]').isDisabled());
 	check("下载安装按钮在许可未确认时禁用", await page.locator('[data-testid="sensevoice-install"]').isDisabled());
