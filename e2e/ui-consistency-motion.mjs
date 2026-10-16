@@ -143,7 +143,8 @@ async function cssAnimationOf(page, className, extraClass) {
 		const d = document.createElement("div");
 		d.id = "fx-probe";
 		d.className = x ? `${c} ${x}` : c;
-		document.body.appendChild(d);
+		// 探针必须挂在 .pa-app 内，reduced-motion 规则是 `.pa-app *`（挂 body 上不会命中）
+		(document.querySelector(".pa-app") ?? document.body).appendChild(d);
 	}, [className, extraClass]);
 	return page.$eval("#fx-probe", (el) => getComputedStyle(el).animationName);
 }
@@ -292,7 +293,8 @@ try {
 		d.id = "fx-probe";
 		d.className = "pa-shimmer";
 		d.textContent = "正在思考";
-		document.body.appendChild(d);
+		// 同上：reduced-motion 的 `.pa-app *` 只对 .pa-app 内元素生效
+		(document.querySelector(".pa-app") ?? document.body).appendChild(d);
 	});
 	const shim = await rpage.$eval("#fx-probe", (el) => ({ anim: getComputedStyle(el).animationName, color: getComputedStyle(el).color }));
 	check("shimmer 停转", shim.anim === "none", shim.anim);

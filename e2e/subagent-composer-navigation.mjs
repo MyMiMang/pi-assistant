@@ -139,9 +139,11 @@ try {
 	await menu.waitFor({ state: "detached" });
 
 	// ---------------------------------------------------------------- 4a) 档位不超出模型支持范围
-	const detail = await j(`/api/subagents/${a.id}`);
+	// 详情接口返回 { subagent, messages }：档位 / 模型字段在 subagent 里（与界面读 d.subagent 一致）
+	const { subagent: detail } = await j(`/api/subagents/${a.id}`);
 	const models = await j("/api/models");
 	const entry = models.find((m) => m.provider === detail.model_provider && m.id === detail.model_id);
+	assert.ok(entry, `子代理模型 ${detail.model_provider}/${detail.model_id} 应在 /api/models 中`);
 	const supported = new Set(entry?.thinking ?? []);
 	await panel.getByTestId("subagent-thinking").click();
 	await menu.waitFor();
@@ -158,7 +160,7 @@ try {
 	await panel.getByTestId("subagent-thinking").click();
 	await menu.waitFor();
 	await menu.getByTestId(`subagent-thinking-${explicit}`).click();
-	await waitFor(async () => (await j(`/api/subagents/${a.id}`)).thinking === explicit);
+	await waitFor(async () => (await j(`/api/subagents/${a.id}`)).subagent.thinking === explicit);
 	await page.reload();
 	await openFromMain(a.id);
 	await waitFor(async () => /整理文件A/.test(await titleOf()));
@@ -167,7 +169,7 @@ try {
 	await panel.getByTestId("subagent-thinking").click();
 	await menu.waitFor();
 	await menu.getByTestId("subagent-thinking-follow").click();
-	await waitFor(async () => (await j(`/api/subagents/${a.id}`)).thinking === null);
+	await waitFor(async () => (await j(`/api/subagents/${a.id}`)).subagent.thinking === null);
 
 	// ---------------------------------------------------------------- 2) 直接切到 B，再回 A；3) 草稿不串
 	await childBox().fill("A 的草稿");
@@ -200,9 +202,15 @@ try {
 	await page.keyboard.press("Escape");
 
 	// ---------------------------------------------------------------- 回主会话：主会话草稿不丢
-	await box.fill("主会话草稿");
+	// 子代理面板打开时主会话是 display:none（App.tsx 的 .pa-chat），不能直接往隐藏输入框写；
+	// 所以先返回主会话写草稿，再进一次子代理、再返回，验证草稿跨子代理导航不丢。
 	await panel.getByLabel("返回主会话").click();
-	await waitFor(async () => (await page.getByTestId("subagent-detail").count()) === 0);
+	await waitFor(async () => (await panel.count()) === 0);
+	await box.fill("主会话草稿");
+	await openFromMain(a.id);
+	await panel.waitFor();
+	await panel.getByLabel("返回主会话").click();
+	await waitFor(async () => (await panel.count()) === 0);
 	assert.equal(await box.inputValue(), "主会话草稿", "回主会话应保留主会话草稿");
 
 	// ---------------------------------------------------------------- 390 窄屏不溢出
