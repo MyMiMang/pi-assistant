@@ -135,7 +135,6 @@ export interface AsrInstallOptions {
 	acceptLicense?: string | null;
 	/** source=import 时的用户目录（canonical 校验在 deps 内做） */
 	importDir?: string;
-	ctx?: { allowUnresolvedLicense?: boolean };
 	signal?: AbortSignal;
 }
 
@@ -279,7 +278,7 @@ export class LocalAsrManager {
 	 */
 	precheck(opts: AsrInstallOptions): { ok: true } | { ok: false; error: string } {
 		if (this.installInfo.state === "installing") return { ok: false, error: "安装已在进行中" };
-		const gate = opts.source === "import" ? importGate(this.license) : installGate(this.license, opts.acceptLicense, { allowUnresolved: opts.ctx?.allowUnresolvedLicense });
+		const gate = opts.source === "import" ? importGate(this.license) : installGate(this.license, opts.acceptLicense);
 		if (!gate.allowed) return { ok: false, error: gate.reason ?? "许可门槛未通过" };
 		if (opts.source === "import" && !opts.importDir) return { ok: false, error: "导入需要提供权重目录" };
 		if (this.platform.support === "unsupported") return { ok: false, error: this.platform.reason };
@@ -389,8 +388,8 @@ export class LocalAsrManager {
 	}
 
 	/** 更新：重跑安装到 staging 并原子切换（失败回滚旧环境）。 */
-	async update(opts: { acceptLicense?: string | null; ctx?: AsrInstallOptions["ctx"] } = {}): Promise<AsrStatus> {
-		return this.install({ source: "download", acceptLicense: opts.acceptLicense, ctx: opts.ctx });
+	async update(opts: { acceptLicense?: string | null } = {}): Promise<AsrStatus> {
+		return this.install({ source: "download", acceptLicense: opts.acceptLicense });
 	}
 
 	/**

@@ -135,8 +135,11 @@ try {
 	await page.getByTestId("voice-source-status").waitFor();
 	check("设置页显示「未配置」", ((await page.getByTestId("voice-source-status").textContent()) ?? "").includes("未配置"));
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("local-sensevoice-card").waitFor();
-	await page.getByTestId("voice-local-use").click();
+	await page.getByTestId("local-asr-models").waitFor();
+	// 新流程：本地来源由「安装并使用」写；这里直接走服务端 PUT 验证来源持久化（不触发真实下载）。
+	await j("/api/audio/asr/source", "PUT", { source: { location: "local", provider: "local-sensevoice", model: "sensevoice-small-int8" } });
+	await page.reload();
+	await page.getByTestId("voice-source-status").waitFor();
 	await wait(async () => ((await page.getByTestId("voice-source-status").textContent()) ?? "").includes("本地"));
 	src = (await j("/api/audio/asr/source")).body;
 	check("保存后服务端 source=local（真实 PUT）", src.source?.location === "local" && src.source?.provider === "local-sensevoice", JSON.stringify(src.source));
@@ -166,10 +169,14 @@ try {
 	check("「去设置」打开语音配置且链接消失", (await page.getByTestId("voice-open-settings").count()) === 0);
 	// 在同一个 app 里改来源（会广播 VoiceSourceChanged）→ 返回输入栏，提示应反映新 server pref
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("voice-local-use").click();
-	await wait(async () => ((await page.getByTestId("voice-source-status").textContent()) ?? "").includes("本地"));
+	await page.getByTestId("local-asr-models").waitFor();
+	// 与上一个流程一致：直接 PUT 写服务端偏好（不依赖已移除的旧卡按钮）
+	await j("/api/audio/asr/source", "PUT", { source: { location: "local", provider: "local-sensevoice", model: "sensevoice-small-int8" } });
 	await page.keyboard.press("Escape");
 	await page.getByTestId("settings-dialog").waitFor({ state: "detached" });
+	// 直接 PUT 不广播 VoiceSourceChanged：重新加载输入栏，让它按服务端偏好重新拉取
+	await page.goto(`${BASE}/?agent=${agent.id}`);
+	await page.getByTestId("voice-mic").waitFor();
 	await page.getByTestId("voice-mic").click();
 	await page.waitForFunction(() => (document.querySelector('[data-testid="voice-hint"]')?.getAttribute("title") ?? "").includes("本地语音识别未安装"), null, { timeout: 10_000 });
 	check("改源后提示按新服务端偏好刷新（本地未安装，不是旧的未配置）", true);

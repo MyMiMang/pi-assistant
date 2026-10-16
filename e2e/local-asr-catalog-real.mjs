@@ -70,10 +70,10 @@ try {
 	check("recommendedId 在清单里", !view.recommendedId || view.models.some((m) => m.id === view.recommendedId), String(view.recommendedId));
 	check("每个模型有 tier / 权重体积 / 许可名", view.models.every((m) => m.tier && m.weightsBytes > 0 && m.license.licenseName));
 	check("至少一个模型有真实权重 pin（source.revision + files）", view.models.some((m) => m.source.revision && m.source.files.length > 0));
-	check("SenseVoice 项许可 unresolved（正式入口关闭、可导入）", view.models.some((m) => m.id === "sensevoice-small-int8" && m.license.decision === "unresolved"));
+	check("SenseVoice 项：整体 unresolved，但本地自用下载放行（selfServe=true）", view.models.some((m) => m.id === "sensevoice-small-int8" && m.license.decision === "unresolved" && m.license.selfServe === true));
 	check("MIT/Apache 模型 agreementRequired=false（一键装、不传 acceptLicense）", view.models.filter((m) => m.license.decision === "cleared").every((m) => m.license.agreementRequired === false));
-	check("SenseVoice agreementRequired=true（仍禁下载）", view.models.some((m) => m.id === "sensevoice-small-int8" && m.license.agreementRequired === true));
-	for (const m of view.models) console.log(`    - ${m.id} · ${m.provider} · ${m.tier} · ${m.license.decision} · ${m.weightsBytes}B · selected=${m.selected}`);
+	check("SenseVoice agreementRequired=false（上游未要求点击同意，不额外强制勾选框）", view.models.some((m) => m.id === "sensevoice-small-int8" && m.license.agreementRequired === false));
+	for (const m of view.models) console.log(`    - ${m.id} · ${m.provider} · ${m.tier} · ${m.license.decision} · selfServe=${m.license.selfServe} · ${m.weightsBytes}B · selected=${m.selected}`);
 } catch (e) {
 	console.error("smoke 失败：", e);
 	failed++;

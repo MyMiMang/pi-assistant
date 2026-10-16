@@ -135,9 +135,9 @@ export function asrSourceOptions(): AsrSourceOption[] {
 					? "当前平台不支持该模型"
 					: installed
 						? "已安装但未运行（开始录音时会自动启动）"
-						: spec.license.decision === "cleared"
-							? "本地语音识别未安装"
-							: "该模型权重许可未最终确认，只能自行导入已合法取得的权重",
+							: spec.license.selfServe
+								? "本地语音识别未安装"
+								: "该模型未开放本地下载安装，只能自行导入已合法取得的权重",
 			selected: false,
 		});
 	}

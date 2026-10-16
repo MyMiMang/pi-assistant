@@ -9,7 +9,7 @@
  *  - `status()` 直接把 manager 的 install 状态投影成统一下载状态（首屏真实阶段）；
  *  - 别的入口（语音页 POST /models/:id/install）触发的安装，经 `local-asr.changed` 事件同步进下载面板；
  *  - 事件只负责 `notifyDownload(id, force)` 让统一下载面板重读投影，**不再每秒轮询** manager；
- *  - 只有许可 `cleared` 且平台支持的模型登记为可下载；SenseVoice 保持「自行导入」，不在下载面板放按钮。
+ *  - 本地按需下载放行的模型（`license.selfServe`）都登记为可下载（含 SenseVoice：个人自用；不随 App 分发 / 不镜像）。
  */
 import { bus } from "../bus.ts";
 import { notifyDownload, registerDownload } from "../downloads.ts";
@@ -86,8 +86,8 @@ export function registerAsrDownloads(): void {
 			start: () => startAsrDownload(spec.id),
 			cancel: () => cancelAsrDownload(spec.id),
 			status: () => projectAsrInstall(statusOf(spec.id).install),
-			// 许可未确认（SenseVoice）或平台不支持的不在下载面板放按钮（保留语音页「自行导入」）。
-			hidden: () => spec.license.decision !== "cleared" || (spec.platforms.length > 0 && !spec.platforms.includes(platformKey())),
+			// 本地自用下载未放行（selfServe=false）或平台不支持的模型不在下载面板放按钮。
+			hidden: () => !spec.license.selfServe || (spec.platforms.length > 0 && !spec.platforms.includes(platformKey())),
 		});
 	}
 	// 进度**事件驱动**：任何入口（下载页 / 语音页）触发的安装，manager 每次状态变化都推 `local-asr.changed`，

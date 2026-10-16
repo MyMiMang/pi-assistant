@@ -151,7 +151,7 @@ test("超时 / 中止：明确报错，且租约一定被释放", async () => {
 function fakeStatus(over: Partial<AsrStatus> = {}): AsrStatus {
 	const base: AsrStatus = {
 		platform: { key: "darwin-arm64", os: "darwin", arch: "arm64", support: "supported", accelerator: "cpu", wheelTag: "macosx_11_0_arm64", reason: "cpu" },
-		license: { licenseName: SENSEVOICE_LICENSE.licenseName, termsVersion: "1.1", decision: "unresolved", redistribution: false, attribution: SENSEVOICE_LICENSE.attribution, agreementRequired: true, links: SENSEVOICE_LICENSE.links, restrictions: [...SENSEVOICE_LICENSE.restrictions], reason: SENSEVOICE_LICENSE.reason, acceptValue: "1.1" },
+		license: { licenseName: SENSEVOICE_LICENSE.licenseName, termsVersion: "1.1", decision: "unresolved", selfServe: true, redistribution: false, attribution: SENSEVOICE_LICENSE.attribution, agreementRequired: false, links: SENSEVOICE_LICENSE.links, restrictions: [...SENSEVOICE_LICENSE.restrictions], reason: SENSEVOICE_LICENSE.reason, acceptValue: "1.1" },
 		install: { state: "installed", phase: "done", received: 0, total: null, error: null, installedAt: 1, source: "import" },
 		runtime: { state: "stopped", pid: null, port: null, host: "127.0.0.1", restarts: 0, lastError: null },
 		health: null,

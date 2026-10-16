@@ -42,6 +42,8 @@ export interface UseLocalAsrCatalog {
 	installUse: (m: LocalAsrModelView) => Promise<void>;
 	/** 已安装但没在用：调 `POST /models/:id/select` 设为来源（后端写 source + 启停 worker）。 */
 	use: (m: LocalAsrModelView) => Promise<void>;
+	/** 导入已合法取得的权重（`source:"import"`，只复制清单内文件，不走下载）。 */
+	importWeights: (m: LocalAsrModelView, dir: string) => Promise<void>;
 	/** 取消进行中的安装。 */
 	cancel: (m: LocalAsrModelView) => Promise<void>;
 	/** 启动 / 停止该模型的 sidecar（lazy，可选操作）。 */
@@ -193,6 +195,7 @@ export function useLocalAsrCatalog(): UseLocalAsrCatalog {
 		reload,
 		installUse,
 		use,
+		importWeights: (m, dir) => run(m, (id) => installLocalAsrModel(id, { source: "import", importDir: dir })),
 		cancel: (m) => run(m, cancelLocalAsrModel),
 		start: (m) => run(m, startLocalAsrModel),
 		stop: (m) => run(m, stopLocalAsrModel),

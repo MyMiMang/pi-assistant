@@ -5,14 +5,16 @@
  * 来源由服务端在装完且选择未变时写（selected）。模型名 + 推荐档位 + 权重大小 + 内存建议精简展示，一键安装；
  * runtime / weights / verify / 配置全在后台。档位与内存是**配置建议、未实测**，允许选更大的模型，不把某档位写成硬门槛。
  * 能力标签（标点 / 多语…）来自 catalog 的 capabilities（真实模型事实），不自己按研究报告臆断。
- * SenseVoice 等存量导入仍由下方旧卡（LocalSenseVoiceCard）保留，许可未确认不新增勾框绕过。
+ * 许可：按钮是否可用看 `license.selfServe`（本地按需下载安装是否放行），**不看 decision**——SenseVoice 整体仍
+ * unresolved（商用 / 再分发未确认），但本地自用可一键装；署名与用途提示默认可见，详文在「?」。
+ * 自行导入合法权重收进「详情」折叠，不再另开一套旧卡（避免重复操作流）。
  */
 import { AlertTriangle, CheckCircle2, Cpu, Download, HardDrive, Loader2, Play, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocalAsrCatalog } from "../hooks/useLocalAsrCatalog";
 import { formatBytes, installPercent, isIndeterminate, memoryAdvice, tierLabel } from "../local-asr-intent";
 import type { LocalAsrModelView } from "../local-asr-api";
-import { Badge, Button, Help, Select, cx } from "./ui";
+import { Badge, Button, Help, Input, Select, cx } from "./ui";
 
 function StatusBadge({ m }: { m: LocalAsrModelView }) {
 	const inst = m.install;
@@ -28,9 +30,11 @@ function StatusBadge({ m }: { m: LocalAsrModelView }) {
 }
 
 export function LocalAsrModels() {
-	const { catalog, loading, error, opError, busy, reload, installUse, use, cancel, start, stop, update, remove, clearOpError } = useLocalAsrCatalog();
+	const { catalog, loading, error, opError, busy, reload, installUse, use, importWeights, cancel, start, stop, update, remove, clearOpError } = useLocalAsrCatalog();
 	const [selectedId, setSelectedId] = useState("");
 	const [showDetails, setShowDetails] = useState(false);
+	const [showImport, setShowImport] = useState(false);
+	const [importDir, setImportDir] = useState("");
 
 	const models = catalog.models;
 	// 默认选中：后端推荐的 → 已安装的 → 第一个。用户选择优先，不覆盖。
@@ -66,7 +70,8 @@ export function LocalAsrModels() {
 	const pct = selected ? installPercent(selected.install.received, selected.install.total) : null;
 	const indeterminate = selected ? isIndeterminate(selected.install.total) : false;
 	const license = selected?.license;
-	const licenseBlocked = !!license && license.decision !== "cleared";
+	// 按钮可用性看「本地按需下载安装是否放行」（selfServe），不看 decision（整体 unresolved 只影响分发标注）。
+	const licenseBlocked = !!license && !license.selfServe;
 
 	return (
 		<div className="space-y-3 rounded-xl border border-line p-3" data-testid="local-asr-models" data-models={models.length}>
@@ -106,6 +111,8 @@ export function LocalAsrModels() {
 							onChange={(v) => {
 								setSelectedId(v);
 								setShowDetails(false);
+								setShowImport(false);
+								setImportDir("");
 								clearOpError();
 							}}
 						/>
@@ -151,9 +158,43 @@ export function LocalAsrModels() {
 							</div>
 
 							{license && (
-								<div className="text-[11px] text-mut2" data-testid="local-asr-license" data-decision={license.decision}>
-									许可：{license.decision === "cleared" ? `已确认（${license.licenseName}）` : license.decision === "prohibited" ? `禁止使用（${license.licenseName}）` : `${license.licenseName}·适用范围未最终确认`}
-									{licenseBlocked && license.reason && <span className="text-amber-600"> · {license.reason}</span>}
+								<div className="text-[11px] text-mut2" data-testid="local-asr-license" data-decision={license.decision} data-self-serve={String(license.selfServe)}>
+									许可：{license.decision === "cleared" ? `已确认（${license.licenseName}）` : license.decision === "prohibited" ? `禁止使用（${license.licenseName}）` : `${license.licenseName} · 本地自用可下载`}
+									<Help className="ml-1">
+										<div>
+											许可：{license.licenseName} v{license.termsVersion}（{license.decision === "cleared" ? "已确认" : license.decision === "prohibited" ? "禁止" : "商用 / 再分发未最终确认"}）。署名：{license.attribution}。
+										</div>
+										<ul className="list-disc space-y-0.5 pl-4">
+											{license.restrictions.map((r) => (
+												<li key={r}>{r}</li>
+											))}
+										</ul>
+										<div>{license.reason}</div>
+										<div className="flex flex-wrap gap-2 pt-0.5">
+											{license.links.modelLicense && (
+												<a className="underline" href={license.links.modelLicense} target="_blank" rel="noreferrer" data-testid="local-asr-license-link">
+													许可正文
+												</a>
+											)}
+											{license.links.modelCard && (
+												<a className="underline" href={license.links.modelCard} target="_blank" rel="noreferrer">
+													权重页
+												</a>
+											)}
+											{license.links.issue && (
+												<a className="underline" href={license.links.issue} target="_blank" rel="noreferrer">
+													适用范围澄清
+												</a>
+											)}
+											{license.links.engineLicense && (
+												<a className="underline" href={license.links.engineLicense} target="_blank" rel="noreferrer">
+													引擎许可
+												</a>
+											)}
+										</div>
+									</Help>
+									{license.selfServe && license.decision !== "cleared" && <span className="text-amber-600"> · 本地个人自用；不随 App 分发、商用未确认</span>}
+									{!license.selfServe && license.reason && <span className="text-amber-600"> · {license.reason}</span>}
 								</div>
 							)}
 
@@ -188,7 +229,7 @@ export function LocalAsrModels() {
 										{busy === selected.id ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} 安装并使用
 									</Button>
 									{!selected.available && <span className="text-[11px] text-amber-600" data-testid="local-asr-unavailable">{selected.unavailableReason ?? "此平台暂不支持"}</span>}
-									{licenseBlocked && <span className="text-[11px] text-amber-600" data-testid="local-asr-license-blocked">许可未确认，暂不提供下载</span>}
+									{licenseBlocked && <span className="text-[11px] text-amber-600" data-testid="local-asr-license-blocked">本地下载未开放</span>}
 								</div>
 							) : selected.selected ? (
 								<div className="flex items-center gap-2 text-[11px] text-emerald-600" data-testid="local-asr-in-use">
@@ -239,6 +280,23 @@ export function LocalAsrModels() {
 										</div>
 										{selected.install.jobId && <div data-testid="local-asr-job">下载组件 id：{selected.downloadId}{selected.install.attempt != null ? ` · 第 ${selected.install.attempt} 次尝试` : ""}</div>}
 										{selected.install.installedAt && <div>安装时间：{new Date(selected.install.installedAt).toLocaleString("zh-CN")}</div>}
+										{/* 自行导入已合法取得的权重（保留功能，但不再另开一套旧卡；不随 App 分发）。 */}
+										{!selected.installed && selected.install.state !== "installing" && (
+											<div className="space-y-1.5" data-testid="local-asr-import">
+												<button type="button" className="text-mut2 underline underline-offset-2" aria-expanded={showImport} onClick={() => setShowImport((v) => !v)} data-testid="local-asr-import-toggle">
+													{showImport ? "收起导入" : "导入已有权重"}
+												</button>
+												{showImport && (
+													<div className="flex flex-wrap items-center gap-2">
+														<Input placeholder="权重目录（含本模型清单内的文件）" value={importDir} onChange={(e) => setImportDir(e.target.value)} className="min-w-[220px]" data-testid="local-asr-import-dir" />
+														<Button size="sm" variant="outline" disabled={!!busy || !importDir.trim()} onClick={() => void importWeights(selected, importDir.trim())} data-testid="local-asr-import-btn">
+															导入
+														</Button>
+														<span className="text-mut2">自行合法取得，不随 App 分发</span>
+													</div>
+												)}
+											</div>
+										)}
 										{selected.installed && (
 											<div className="flex flex-wrap gap-2 pt-0.5">
 												{selected.runtime.state === "running" ? (

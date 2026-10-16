@@ -79,6 +79,61 @@ const SENSEVOICE_STATUS = {
 	model: { id: "sensevoice-small-int8", bytes: 239_549_735, sampleRate: 16000, channels: 1, languages: ["zh", "en"], punctuation: true },
 	notes: ["本机未实测：冷启动 / RTF / 峰值内存均无本机数据，不给性能承诺"],
 };
+/** 本地多模型 catalog（与后端 LocalAsrCatalog 同形）；settings 页只用它验证统一选择器渲染。 */
+const ASR_LICENSE = (over = {}) => ({ licenseName: "x", termsVersion: "x", decision: "cleared", selfServe: true, redistribution: true, attribution: "x", links: { modelCard: "https://x", modelLicense: "https://x", issue: "", engineLicense: "https://x" }, restrictions: [], reason: "", agreementRequired: false, acceptValue: "x", ...over });
+const mkAsrModel = (over) => ({
+	family: "paraformer",
+	variant: "int8",
+	nameEn: over.id,
+	languages: ["zh"],
+	note: "n",
+	tier: "light",
+	tags: ["light"],
+	recommended: false,
+	recommendationReason: "",
+	available: true,
+	unavailableReason: null,
+	weightsBytes: 243_446_974,
+	depsBytes: null,
+	depsNote: "另需运行环境",
+	suggestedMemoryBytes: 900 * 1024 ** 2,
+	memoryNote: "估算（非实测）",
+	capabilities: ["中文"],
+	multilingual: false,
+	license: ASR_LICENSE(),
+	source: { source: { project: "p", repoUrl: "https://x", weightsRepo: "x/y", weightsRevision: "a".repeat(40), weightsLicense: "x", engineLicense: "Apache-2.0", engineVersion: "1.13.8", note: "" }, model: { id: over.id, repo: "x/y", revision: "a".repeat(40), files: [{ path: "model.int8.onnx", size: 1, sha256: "a".repeat(64) }] } },
+	installed: false,
+	selected: false,
+	running: false,
+	install: { state: "not_installed", phase: null, phaseLabel: null, received: 0, total: null, percent: null, error: null, installedAt: null, source: null, jobId: null, attempt: null },
+	runtime: { state: "stopped", pid: null, port: null, host: "127.0.0.1", restarts: 0, lastError: null, healthOk: false, loaded: false },
+	...over,
+});
+const ASR_CATALOG_FIXTURE = {
+	hardware: { os: "darwin", arch: "arm64", cpuCores: 10, memoryBytes: 16 * 1024 ** 3, tier: "balanced", tierNote: "系统内存约 16.0GB，按 16GB 档保守估计（估算，未实测；未跑 benchmark）" },
+	runtime: { engine: "sherpa-onnx", version: "1.13.8", python: "3.12", depsBytes: null, depsNote: "共享运行环境估算约 0.2GB；未在本机实测" },
+	recommendedId: "paraformer-zh-2023-09-14-int8",
+	notes: ["内存 / 档位均为估算，未在本机跑 benchmark"],
+	models: [
+		mkAsrModel({ id: "paraformer-zh-2023-09-14-int8", provider: "local-paraformer", name: "Paraformer 中文（本地）", recommended: true, recommendationReason: "推荐", capabilities: ["中文", "无标点"] }),
+		mkAsrModel({
+			id: "sensevoice-small-int8",
+			provider: "local-sensevoice",
+			family: "sensevoice",
+			name: "SenseVoice Small（本地）",
+			languages: ["zh", "en", "ja", "ko", "yue"],
+			capabilities: ["标点", "中英粤日韩"],
+			multilingual: true,
+			tier: "balanced",
+			tags: ["balanced"],
+			weightsBytes: 239_549_735,
+			suggestedMemoryBytes: 1100 * 1024 ** 2,
+			note: "本地个人自用可从官方源一键下载安装",
+			license: ASR_LICENSE({ licenseName: "FunASR Model Open Source License Agreement v1.1", termsVersion: "1.1", decision: "unresolved", selfServe: true, redistribution: false, attribution: "SenseVoiceSmall by FunASR / FunAudioLLM", links: { modelCard: "https://huggingface.co/FunAudioLLM/SenseVoiceSmall", modelLicense: "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE", issue: "https://github.com/QwenAudio/SenseVoice/issues/334", engineLicense: "https://github.com/k2-fsa/sherpa-onnx/blob/master/LICENSE" }, restrictions: ["使用 / 复制 / 修改 / 分享须署名来源与作者并保留模型名（§2.2）", "本地按需下载仅限个人自用；不随 App 分发、不镜像、不代分发", "条款写「for reference and learning purposes only」（§3）；商用 / 再分发未由许可方最终确认（issue #334 仍 open）"], reason: "FunASR MODEL_LICENSE v1.1：本地个人自用可下载；不随 App 分发；商用未确认", acceptValue: "1.1" }),
+		}),
+	],
+};
+
 const LAYA_STATUS = { platform: { key: "darwin-arm64", os: "darwin", arch: "arm64", accelerator: "cpu", support: "supported", torchBackend: "cpu", pins: [], reason: "" }, install: { state: "not_installed", phase: "idle", received: 0, total: null, error: null, installedAt: null }, runtime: { state: "stopped", pid: null, port: null, host: "127.0.0.1" }, health: null, configured: false, registered: null, source: { project: "Laya", repoUrl: "https://github.com/", weightsOrg: "convaiinnovations", codeLicense: "Apache-2.0", weightsLicense: "Apache-2.0", version: "0.4.8", reviewedRevisions: {} } };
 
 let failed = 0;
@@ -144,6 +199,7 @@ async function installRoutes(context, state) {
 			}
 			return json({ source: state.source ?? null, options: opts });
 		}
+		if (p === "/api/local-models/asr/catalog") return json({ ...ASR_CATALOG_FIXTURE, models: ASR_CATALOG_FIXTURE.models.map((m) => ({ ...m, installed: false, selected: state.source?.location === "local" && state.source?.model === m.id, running: false })) });
 		if (p === "/api/local-models/asr/sensevoice/status") return json(SENSEVOICE_STATUS);
 		if (p === "/api/local-models/laya/status") return json(LAYA_STATUS);
 		if (p === "/api/agents/a1/computer" || p === "/api/agents/a2/computer") return json({ separate: false, hasData: null, desktop: { enabled: false, state: "off" } });
@@ -277,35 +333,35 @@ try {
 	check("点「添加在线服务」跳到模型服务页", (await page.getByTestId("settings-nav").locator("button[data-tab=models]").getAttribute("aria-current")) === "page");
 	state.cloudOption = true;
 
-	console.log("\n── 语音配置：本地许可一句 + 导入折叠 + 紧凑详情 ──");
+	console.log("\n── 语音配置：本地多模型（含 SenseVoice 一键） + 详情里的合法导入 ──");
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
 	await page.getByTestId("voice-tab-local").click();
-	check("旧版导入默认收起，不重复占据主流程", !(await page.getByTestId("local-sensevoice-card").isVisible()));
-	await page.getByTestId("voice-local-legacy-label").click();
-	await page.getByTestId("local-sensevoice-card").waitFor();
-	const licText = (await page.getByTestId("sensevoice-license").textContent()) ?? "";
-	check("许可摘要常驻一句「许可待确认，暂不提供下载」", licText.includes("许可待确认，暂不提供下载"), licText);
-	check("许可未确认时不显示永远不能勾选的同意复选框", (await page.getByTestId("sensevoice-accept").count()) === 0);
-	check("下载按钮禁用（短按钮 + title 说明原因）", (await page.getByTestId("sensevoice-install").isDisabled()) && !!(await page.getByTestId("sensevoice-install").getAttribute("title")));
-	check("导入入口默认收起（不占屏）", (await page.getByTestId("sensevoice-import").count()) === 0);
-	check("旧版已导入权重仍可设为来源", await page.getByTestId("voice-local-use").isVisible());
-	check("默认不出现长规格 / 详情", (await page.getByTestId("sensevoice-details").count()) === 0);
-	const cardIdle = (await page.getByTestId("local-sensevoice-card").textContent()) ?? "";
-	check("「未安装」只出现一次（不重复三处）", (cardIdle.match(/未安装/g) ?? []).length === 1, cardIdle);
+	await page.getByTestId("local-asr-models").waitFor();
+	check("本地段是统一多模型选择器（旧 SenseVoice 卡已移除）", (await page.getByTestId("local-asr-models").isVisible()) && (await page.getByTestId("local-sensevoice-card").count()) === 0);
+	check("不再有第二套「使用已导入的 SenseVoice」按钮", (await page.getByTestId("voice-local-use").count()) === 0);
+	// 选中 SenseVoice：许可标「本地自用可下载」、按钮可用、无强制勾选框
+	await page.getByTestId("local-asr-model-select").click();
+	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /SenseVoice/ }).click();
+	const licText = (await page.getByTestId("local-asr-license").textContent()) ?? "";
+	check("SenseVoice 许可标「本地自用可下载」（不是「暂不提供下载」）", licText.includes("本地自用可下载") && !licText.includes("暂不提供下载"), licText);
+	check("许可未确认时不显示永远不能勾选的同意复选框", (await page.getByTestId("local-asr-accept").count()) === 0);
+	check("SenseVoice 一键安装按钮可用", !(await page.getByTestId("local-asr-install-use").isDisabled()));
+	check("默认不出现长规格 / 详情", (await page.getByTestId("local-asr-details").count()) === 0);
 	// 默认（紧凑）状态截图：主看新图用这个
 	await page.screenshot({ path: join(OUT, "06-voice-local.png") });
-	await page.getByTestId("sensevoice-import-toggle").click();
-	check("展开折叠后目录输入 / 导入动作可访问", (await page.getByTestId("sensevoice-import-dir").isVisible()) && (await page.getByTestId("sensevoice-import").isVisible()));
-	await page.getByTestId("sensevoice-details-toggle").click();
-	const detail = (await page.getByTestId("sensevoice-details").textContent()) ?? "";
-	check("详情展开可看完整规格 / 采样率 / 未实测说明", detail.includes("16000") && detail.includes("sherpa-onnx") && (await page.getByTestId("sensevoice-note").count()) >= 1, detail);
+	// 详情里保留合法导入（不占主流程）
+	await page.getByTestId("local-asr-details-toggle").click();
+	await page.getByTestId("local-asr-import-toggle").click();
+	check("详情里目录输入 / 导入动作可访问（保留合法导入）", (await page.getByTestId("local-asr-import-dir").isVisible()) && (await page.getByTestId("local-asr-import-btn").isVisible()));
+	const detail = (await page.getByTestId("local-asr-details").textContent()) ?? "";
+	check("详情展开可看来源 / 引擎 / 未实测说明", detail.includes("sherpa-onnx") && detail.includes("未在本机实测"), detail);
 	await page.screenshot({ path: join(OUT, "06b-voice-local-expanded.png") });
 	// license 关键不可藏：完整条款与链接放在「?」里
-	await page.getByTestId("sensevoice-license-help").getByTestId("help").hover();
+	await page.getByTestId("local-asr-license").getByTestId("help").hover();
 	await page.getByTestId("help-pop").waitFor();
 	const popText = (await page.getByTestId("help-pop").textContent()) ?? "";
-	check("完整许可条款（限制 / 链接）在「?」里", popText.includes("署名") && popText.includes("FunASR") && (await page.getByTestId("help-pop").getByTestId("sensevoice-link-license").getAttribute("href"))?.startsWith("https://"), popText);
+	check("完整许可条款（署名 / 链接）在「?」里", popText.includes("署名") && popText.includes("FunASR") && ((await page.getByTestId("help-pop").getByTestId("local-asr-license-link").getAttribute("href")) ?? "").startsWith("https://"), popText);
 	await page.keyboard.press("Escape");
 	await page.waitForTimeout(100);
 

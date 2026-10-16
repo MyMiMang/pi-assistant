@@ -88,6 +88,9 @@ test("catalog 归一：对齐 backend DTO（tier / capabilities / 嵌套 source 
 	assert.equal(p.license.licenseName, "Apache License 2.0");
 	assert.equal(p.license.acceptValue, "Apache-2.0");
 	assert.equal(p.license.agreementRequired, false, "MIT/Apache 等 cleared 许可无需显式同意（不弹 checkbox / 不偷传 acceptLicense）");
+	assert.equal(p.license.selfServe, true, "本地自用下载放行（缺字段时按非 prohibited 兜底）");
+	assert.equal(normalizeLocalAsrModel({ id: "sv", license: { decision: "unresolved", selfServe: true, agreementRequired: false } }).license.selfServe, true, "SenseVoice 整体 unresolved 但本地自用可下载");
+	assert.equal(normalizeLocalAsrModel({ id: "denied", license: { decision: "prohibited" } }).license.selfServe, false, "prohibited 兜底为不放行");
 	assert.equal(normalizeLocalAsrModel({ id: "sv", license: { decision: "unresolved", agreementRequired: true, acceptValue: "1.1" } }).license.agreementRequired, true);
 	assert.equal(normalizeLocalAsrModel({ id: "old", license: { decision: "cleared" } }).license.agreementRequired, false, "旧 DTO 缺字段时按 decision 兜底");
 	// 嵌套 source 展平：revision 取 model.revision，files 保留
