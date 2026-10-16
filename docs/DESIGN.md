@@ -1,6 +1,6 @@
 # Pi Assistant · 基于 Pi 的本地私人助理 —— 设计文档 v0.5
 
-> **当前进度和待验证事项以 [HANDOFF.md](HANDOFF.md) 为准**（当前公开版本 v0.1.0-beta.24，Latest，仅 macOS arm64；release run 38794686456 的构建、Mac 启动冒烟与 publish 成功，公开更新清单已核验；下一版 v0.1.0-beta.25 候选已发布准备、未公开，见 [发布说明](release-notes/v0.1.0-beta.25.md)）。组件概览见 [ARCHITECTURE.md](ARCHITECTURE.md)。各节里的“实现状态 / 日期”为当时的设计记录，不代表所有真实设备与真实模型场景已验证。
+> **当前进度和待验证事项以 [HANDOFF.md](HANDOFF.md) 为准**（当前公开版本 v0.1.0-beta.25，Latest，仅 macOS arm64；release run 38857423620 的构建、Mac 安装启动冒烟与 publish 全部成功，公开更新清单的版本、arm64 平台和签名已主核；见 [发布说明](release-notes/v0.1.0-beta.25.md)）。组件概览见 [ARCHITECTURE.md](ARCHITECTURE.md)。各节里的“实现状态 / 日期”为当时的设计记录，不代表所有真实设备与真实模型场景已验证。
 
 > 状态：v0.5（2026-10-11）。**远程入口改为按用户自选**：不再内置任何默认域名，用户用自己的域名 + 自己的 Cloudflare Token 在 App 内一键部署（§5.13.2，已实现并实测）；新增密钥扫描（§9.1）；助理电脑与 ext-computer 已开始实现（§14.10）。v0.4：新增：§5.14.1 自定义模型服务（中转站/第三方/本地，已实现），§5.16 第三方集成通用规则，§14 Phase 3 国内优先方案（它自己的电脑、自己的账号、微信/企业微信/飞书/钉钉、Cua）。v0.3：Phase 1 的服务端 + Web UI 已实现并通过端到端测试（实现状态见 §13）。新增：§5.14 模型与凭据（不内置任何 Key，全部 Pi provider 动态支持），§5.15 模块边界与 Pi 升级维护流程。默认入口域名 `app.dengdengyun.shop`。
 > 参考：Pi 仓库 `earendil-works/pi`（本文基于 `@earendil-works/pi-coding-agent@1.2.0` 的源码和文档阅读结果，API 名称均来自实际代码）。

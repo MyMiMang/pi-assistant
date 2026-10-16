@@ -7,11 +7,11 @@
 
 2026-10-15 用户报告 beta.22 启动退出（`openJson → makeAdapter → restartChannel`，AES-GCM authentication failed），随后授权「打包」。已完成并发布 beta.23（仅 mac-arm64）：渠道解密错误不再退出后台，设置可打开、停用保留原密文、微信可重新扫码恢复；渠道相关单测 16/16、两端 typecheck、构建、Mac 安装包启动及公开更新清单核验通过。真实密钥失配原因与用户原数据恢复待验证，详见 HANDOFF「beta.22 启动崩溃」。
 
-当前公开版 **v0.1.0-beta.24（Latest，仅 Apple Silicon Mac）**：tag `747c744`，Actions [38794686456](https://github.com/MyMiMang/pi-assistant/actions/runs/38794686456) 构建 / 内置服务冒烟 / Mac 安装启动冒烟 / publish 成功；2026-10-15 19:43:48 UTC 公开。四项公开资产及 latest.json 的版本、仅 arm64 平台和非空更新签名已独立核验。上一版 beta.23。发布范围仍由 `.github/release-scope.json` 的 `mac-arm64` 固定，跳过 Intel、Windows、Linux；没有在用户电脑安装新版。
+上一公开版 **v0.1.0-beta.24（仅 Apple Silicon Mac）**：tag `747c744`，Actions [38794686456](https://github.com/MyMiMang/pi-assistant/actions/runs/38794686456) 构建 / 内置服务冒烟 / Mac 安装启动冒烟 / publish 成功；2026-10-15 19:43:48 UTC 公开。四项公开资产及 latest.json 的版本、仅 arm64 平台和非空更新签名已独立核验。上一版 beta.23。发布范围仍由 `.github/release-scope.json` 的 `mac-arm64` 固定，跳过 Intel、Windows、Linux；没有在用户电脑安装新版。
 
-**本版已发布范围**：Pi 1.2.0、统一模型服务、Skills 分配、消息引用与群路由、记忆草稿分层、语音输入、AI/像素/DIY 主题、单聊用户消息分支、整理重点与技能点选，以及手机/文件预览/下拉等修复，详见 [beta.24 发布说明](release-notes/v0.1.0-beta.24.md)。下表保留开发阶段的实现与验收快照，旧“未发布 / 开发中”不再代表上述已发布代码的当前状态；代码发布不等于真实模型、Laya/SenseVoice、iPhone、系统钥匙串根因等已验证。限制与未验项继续保留。
+**beta.24 已发布范围（本版继续保留）**：Pi 1.2.0、统一模型服务、Skills 分配、消息引用与群路由、记忆草稿分层、语音输入、AI/像素/DIY 主题、单聊用户消息分支、整理重点与技能点选，以及手机/文件预览/下拉等修复，详见 [beta.24 发布说明](release-notes/v0.1.0-beta.24.md)。下表保留开发阶段的实现与验收快照，旧“未发布 / 开发中”不再代表上述已发布代码的当前状态；代码发布不等于真实模型、Laya/SenseVoice、iPhone、系统钥匙串根因等已验证。限制与未验项继续保留。
 
-**下一版 v0.1.0-beta.25 候选（已发布准备、未公开）**：发布准备提交已推 main / tag，详细核查见 `progress-snapshots/release-prep-beta25.md`。含 Pi SDK 1.3.0（精确 pin，不改 Pi 本体 / `node_modules` / 不 fork）、设置按功能重排（17 项分 5 组，新增「语音配置」「聊天与输入」）、**默认 Enter 发送 + 输入法防误发**（设置 › 聊天与输入 可改）、语音来源显式选择（不默认云端、不静默计费）、配好 Jev 自动识别为快速操作模型、模型「常用」不与原渠道互斥、设置错误态 / Help 精简与测试隔离加固等；见 [beta.25 发布说明](release-notes/v0.1.0-beta.25.md)。**只有 release workflow（构建 / 冒烟 / publish）全部成功后才改成公开。**
+**当前公开版 v0.1.0-beta.25（Latest，仅 Apple Silicon Mac）**：发布 tag `8afc3aa`，Actions [38857423620](https://github.com/MyMiMang/pi-assistant/actions/runs/38857423620) 的构建、内置服务冒烟、Mac 安装启动冒烟及 publish 全部成功，2026-10-16 05:57:00 UTC 公开。四项公开资产、Latest 的 `latest.json` 版本 / 仅 arm64 两项平台 / 非空更新签名均已主会话独立核验。含 Pi SDK 1.3.0（官方精确版本、不改 Pi 本体）、设置按功能重排、默认 Enter 发送与可持久化切换、语音显式选源、Jev 自动识别、常用模型保留原渠道、Laya 简化和测试隔离等；见 [beta.25 发布说明](release-notes/v0.1.0-beta.25.md) 与 `progress-snapshots/release-prep-beta25.md`。下表保留开发快照，已发布代码以本段为准；未验边界仍有效，没有把真实输入法、麦克风、云模型、模型安装和钥匙串根因写成已验证。
 
 | 本轮剩余需求 | 当前状态 | 验收与限制 |
 |---|---|---|

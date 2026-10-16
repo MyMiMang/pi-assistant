@@ -2,7 +2,7 @@
 
 > 目标：把 beta.25 候选做成可发布状态——写用户可读发布说明、跑发布前静态核查、普通 ff 推 main + 新建 tag 触发 CI。
 > 树：`release-candidate-validation`（基线 `origin/main` = `decb8eb`，即 beta.24 已公开后的文档提交；候选 `8b1aedd` 之上 64 个提交 / 83 个改动文件）。发布范围 `.github/release-scope.json` = `mac-arm64`。
-> 状态：**发布准备已提交并推送 main / tag；release workflow 已触发，等 CI**。**CI 全部成功前不写「已发布」**，成功后由后续纯文档提交记录公开结果（同 beta.24 做法）。未在用户电脑安装 / 替换 App。
+> 状态：**v0.1.0-beta.25 已公开为 Latest**。tag `8afc3aa5d4383e37e14050617b6e1ede67b8f8c9`；[release run 38857423620](https://github.com/MyMiMang/pi-assistant/actions/runs/38857423620) 的 prepare / arm64 build / 内置服务冒烟 / mac-smoke / publish 均成功，2026-10-16 05:57:00 UTC 公开。主会话独立核验 Release 非草稿、非 prerelease，四项资产已上传；Latest 下载的 `latest.json` 为 `0.1.0-beta.25`，仅 `darwin-aarch64` / `darwin-aarch64-app` 且更新签名非空。只构建 arm64，未移动 beta.24 或任何旧 tag。未在用户电脑安装 / 替换 App。以下为发布前实施记录，未验边界保持不变。
 
 ## 0. 版本与边界
 

@@ -1,10 +1,10 @@
 # 交接文档（HANDOFF）
 
-> 当前公开版本 **v0.1.0-beta.24**（Latest，仅 Apple 芯片 macOS arm64；上一版 beta.23）。发布 tag 指向 `747c7442306bf7231d7981b40d97958282747751`；[release run 38794686456](https://github.com/MyMiMang/pi-assistant/actions/runs/38794686456) 的 build、内置服务冒烟、Mac 安装启动冒烟、publish 均成功，2026-10-15 19:43:48 UTC 公开。已独立核验四项资产、公开 `latest.json` 版本为 `0.1.0-beta.24`，平台仅 `darwin-aarch64` / `darwin-aarch64-app`，更新签名非空。未在用户电脑安装或更新 App。
+> 当前公开版本 **v0.1.0-beta.25**（Latest，仅 Apple 芯片 macOS arm64；上一版 beta.24）。tag 指向 `8afc3aa5d4383e37e14050617b6e1ede67b8f8c9`；[release run 38857423620](https://github.com/MyMiMang/pi-assistant/actions/runs/38857423620) 的 arm64 build、内置服务冒烟、Mac 安装启动冒烟、publish 均成功，2026-10-16 05:57:00 UTC 公开。主会话已独立核验非草稿 / 非 prerelease、四项公开资产、Latest 下载的 `latest.json` 版本 `0.1.0-beta.25`，平台仅 `darwin-aarch64` / `darwin-aarch64-app` 且签名非空。未在用户电脑安装或更新 App，beta.24 及已有 tag 未移动。
 >
-> 本版包含 Pi 1.2.0、统一模型服务、技能分配、消息引用、记忆分层、语音、AI/像素主题及会话分支等，见 [发布说明](release-notes/v0.1.0-beta.24.md)。实施与验收索引见 `progress-snapshots/release-candidate-integration-final.md`、`progress-snapshots/release-prep-beta24.md`，Pi 适配见 `docs/design/pi-1.2-upgrade.md`。下文各分支的“候选 / 未发布 / 未 push”等为当时的实施快照，已随本版发布的项目以本段和发布说明为准；未验边界仍有效，CI 启动冒烟不代表真实麦克风、云模型、iPhone 或 Laya/SenseVoice 已实测。
+> 上一版 beta.24 首次提供 Pi 1.2.0、统一模型服务、技能分配、消息引用、记忆分层、语音、AI/像素主题及会话分支等，本版继续保留，见 [beta.24 发布说明](release-notes/v0.1.0-beta.24.md)。实施与验收索引见 `progress-snapshots/release-candidate-integration-final.md`、`progress-snapshots/release-prep-beta24.md`，Pi 适配见 `docs/design/pi-1.2-upgrade.md`。下文各分支的“候选 / 未发布 / 未 push”等为当时的实施快照，已随本版发布的项目以本段和发布说明为准；未验边界仍有效，CI 启动冒烟不代表真实麦克风、云模型、iPhone 或 Laya/SenseVoice 已实测。
 >
-> 下一版 **v0.1.0-beta.25 未发布候选**：发布准备已提交并推送 main/tag（见 `progress-snapshots/release-prep-beta25.md`），发布说明 [release-notes/v0.1.0-beta.25.md](release-notes/v0.1.0-beta.25.md)。含 Pi 1.3.0、设置按功能重排（17 项分 5 组）、**Enter 默认发送（可在设置 › 聊天与输入改）**、语音来源显式选择、Jev 自动识别、模型「常用」不搬目录、测试隔离加固等。**只有 release workflow 全部成功（构建 / 冒烟 / publish）后才把状态改成公开**，未公开前不写「已发布」。
+> **beta.25 已公开**：含 Pi 1.3.0、设置按功能重排（17 项分 5 组）、**Enter 默认发送（可在设置 › 聊天与输入改）**、语音来源显式选择、Jev 自动识别、模型「常用」保留原渠道、Laya 与通用设置精简、测试隔离加固等；见 [发布说明](release-notes/v0.1.0-beta.25.md) 与 `progress-snapshots/release-prep-beta25.md`。后续历史段落中“候选 / 未 push / 未发布”等为当时快照，当前版本以页首为准。**CI 安装启动冒烟不等于真实 IME / Safari / iPhone / 麦克风 / 云 ASR 或 Jev / Laya 实装已验；系统钥匙串根因也未因此确诊。**
 >
 > 接手先读 [AGENTS.md](../AGENTS.md)，再读本页、[ARCHITECTURE.md](ARCHITECTURE.md)、[DESIGN.md](DESIGN.md)。
 
