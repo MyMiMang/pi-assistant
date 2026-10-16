@@ -14,7 +14,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { test } from "node:test";
-import { TEST_DATA_DIR } from "./setup.ts";
+import { TEST_DATA_DIR, isTempDataDir } from "./setup.ts";
+import { config } from "../src/config.ts";
 import { createAsrDeps, hfResolveUrl, type AsrDepsOverrides } from "../src/local-asr/deps.ts";
 import type { AsrWeightFile } from "../src/local-asr/manifest.ts";
 
@@ -116,6 +117,15 @@ function makeDeps(server: { base: string; requests: { url: string; range: string
 	};
 	return { deps: createAsrDeps(overrides), requested };
 }
+
+test("环境隔离 fail-closed：真实 deps 的读写目录必须落在本次进程的临时数据目录", () => {
+	assert.ok(isTempDataDir(config.dataDir), `必须在临时数据目录运行（当前 ${config.dataDir}），否则真实 createAsrDeps 会写到用户数据目录`);
+	const deps = createAsrDeps();
+	for (const id of [ID_A, ID_B]) {
+		assert.ok(deps.paths(id).weightsStaging.startsWith(TEST_DATA_DIR), `${id} staging 应落在临时数据目录`);
+		assert.ok(deps.paths(id).weights.startsWith(TEST_DATA_DIR), `${id} weights 应落在临时数据目录`);
+	}
+});
 
 test("hfResolveUrl：逐段编码；拒绝非法 revision / 仓库 / 越界路径", () => {
 	assert.equal(hfResolveUrl("https://huggingface.co", REPO_A, REV_A, "sub dir/mo del.onnx"), `https://huggingface.co/${REPO_A}/resolve/${REV_A}/sub%20dir/mo%20del.onnx`);
