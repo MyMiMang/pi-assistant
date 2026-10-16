@@ -8,6 +8,8 @@
 > **已对齐** [theme-motion-token-contract.md](../../theme-diy-motion-implementation/progress-snapshots/theme-motion-token-contract.md)
 > （另一工作树 `theme-diy-motion-implementation` 的接口契约，待主合并后在本树可见）。
 > 本文件只列**滑块实际 consume 的 token**，以及 `--mo-style` 的落地方式；不再另立一套。
+>
+> 候选树 `release-candidate-validation` 的后续轻量修复（A：`--mo-style` 跟随主题实时回读；C：默认思考强度保存的代次守卫）见 `beta29-integration-checkpoint.md` §六（已改 / **未跑**）。
 
 ## 1. 组件实际消费的 token（不是只输出）
 
@@ -39,7 +41,7 @@
 
 CSS 里 `--mo-style` 是字符串（`smooth` / `steps`），**不能**直接放进 `animation-timing-function`（会失效）。组件做法：
 
-1. 挂载时 `getComputedStyle(root).getPropertyValue("--mo-style")` 读**主题声明值**（不是读硬编码调色板）；
+1. `getComputedStyle(root).getPropertyValue("--mo-style")` 读**主题声明值**（不是读硬编码调色板）；挂载先读一次，之后由 `apps/web/src/themes/motion-signals.ts` 的 `watchMoStyle` 用一个有界 MutationObserver 盯 `<html>` 的 `data-skin` / `data-mode` / `class` / `style` 与 `<head>` 样式表文本，**值真的变了才回读**——所以切主题 / DIY 预览（同一 custom id 只改临时 `<style>` 文本、`data-skin` 不变）不重挂组件也会更新；订阅只在弹层挂载期间存在，关闭 / 卸载断开；
 2. 映射成真实属性 `data-pa-mo-style="steps"`（smooth 时不加或为 `smooth`，CSS 只针对 steps 分支）；
 3. CSS `[data-pa-mo-style=steps]`：手柄 / 填充 `transition: none`（离散瞬移）、星点 / 刻度方角、预览 `steps(3, end)`；
 4. 内置 pixel 也在 `[data-skin=pixel] .pa-think` 声明 `--mo-style: steps`，走同一条 data 属性分支（另有 `[data-skin=pixel]` 直接覆盖兜底，即使 JS 未跑到也成立）。
@@ -49,7 +51,7 @@ CSS 里 `--mo-style` 是字符串（`smooth` / `steps`），**不能**直接放�
 ## 4. reduced-motion 双保险
 
 - 引擎 / base.css 在 reduce 时把 `--pa-dur-*` 置 `0s`、`--mo-scale` 置 `0`（安全网）；
-- 组件同时 `matchMedia("(prefers-reduced-motion: reduce)")` 自查：reduce 时**不播预览动效、不启动计时器**；
+- 组件同时 `matchMedia("(prefers-reduced-motion: reduce)")` 自查：reduce 时**不播预览动效、不启动计时器**（`--mo-style` 的订阅随 reduce 开关重挂并回读，共用同一套监听）；
 - CSS `@media (prefers-reduced-motion: reduce)` 再强制 `animation: none` / `transition: none`、去光晕；
 - `off` 档基础时长 0、星点 0，任何情况下都不播。
 

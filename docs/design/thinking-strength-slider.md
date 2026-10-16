@@ -104,5 +104,6 @@ Pi 的思考档位是**枚举**（`ModelThinkingLevel = off | minimal | low | me
 
 - **已实现（beta.29 候选，未打包）**：`ThinkingButton` 弹层与模型菜单里的思考强度都换成离散滑块；主会话 / 群聊 / 子代理 / 设置复用同一组件；档位来自 `getSupportedThinkingLevels` / `thinkingLevelsUnion`，收敛仍由服务端 `clampThinkingLevel`。
 - 交互：拖动只预览、`pointerup` 提交；`pointercancel` / 窗口失焦 / Esc 关闭**不提交**半途预览；键盘 Arrow / Home / End / PageUp / PageDown 逐档提交；`role="slider"` + `aria-valuetext`；44px 命中；`--mo-scale` 缩放时长。
-- 主题：颜色 / 圆角 / 字体 / 动效只走 token（`--pa-*` / `--mo-*`），组件不写死颜色；`--mo-style=steps` 由组件读主题声明值映射成真实 data 属性。
+- 主题：颜色 / 圆角 / 字体 / 动效只走 token（`--pa-*` / `--mo-*`），组件不写死颜色；`--mo-style=steps` 由组件读主题声明值映射成真实 data 属性，并订阅 `<html>` 属性 / `<head>` 样式表变化（`apps/web/src/themes/motion-signals.ts`）在主题 / DIY 预览改变时回读，切主题不重挂组件也生效（订阅只在弹层挂载期间存在）。
 - **未验**：浏览器 e2e（`e2e/subagent-thinking-levels.mjs`、`model-ui.mjs`、`run.mjs` 相关步骤）、`vite build`、真机与真模型。**未做**：真实持久化 / 后端改动（沿用现有写入），未改 SDK / 服务端 clamp。
+- **候选树后续修复（2026-10-24）**：A 主题实时切换的 `--mo-style` 订阅回读、C 默认思考强度保存的回滚代次 —— 代码 + 断言已写、**未跑**，见 `progress-snapshots/beta29-integration-checkpoint.md` §六。
