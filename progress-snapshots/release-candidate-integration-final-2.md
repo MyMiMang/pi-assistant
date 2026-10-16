@@ -54,7 +54,7 @@
 | `e2e/skill-pick-ui.mjs` | 23/23 |
 | `e2e/voice-input-ui.mjs` | 全过（42 行） |
 | `e2e/message-replies-ui.mjs` | 37/37 |
-| `e2e/session-fork-ui.mjs` | **3/5**（未定位，见下） |
+| `e2e/session-fork-ui.mjs` | **6/6**（安全入口修复后；见下节） |
 
 ## 证据截图
 
@@ -67,5 +67,5 @@
 
 - 真机 App / 真麦克风 / 真实云 ASR 与云模型计费；真实 IME 与真 Safari（只有事件序列 + CDP 合成组合）。
 - 全量 `e2e/run.mjs`（第 1 步首次运行向导为既有基线失败）。
-- `e2e/session-fork-ui.mjs` 本机在候选树与合入前 `composer-send-shortcut` 树都只 3/5：第 2 条消息发送后等输入框清空的 Mock 时序超时。非本轮引入，未定位根因，**不声称已修**。
+- `e2e/session-fork-ui.mjs` 此前记成「候选树与合入前 `composer-send-shortcut` 树都只 3/5，非本轮引入、未定位」——**该结论已作废**。真正原因是旧 e2e 直接 `spawn packages/server/src/main.ts`，只设 `PIA_DATA_DIR` 却**继承真实 `PIA_WORKSPACE`**、未注入内存凭据后端；第 2 条消息发送时服务端仍会走安全凭据后端（可能触钥匙串 / 真实工作区），Mock 回复与 settle 被拖住，等输入框清空超时。改用测试入口 `test/launch-memory.ts`（内存 `CredentialStore`）+ `PIA_WORKSPACE=<临时 DATA>/workspace` 后稳定 **6/6**（连跑 3 次），并直接断言服务端收到两条 user 消息、Mock 两条 `done`、`POST /messages` ≥ 2（不再按 UI 计数猜抖动）。真实原因、修法与 0 钥匙串证据见 [release-candidate-security-fork-closeout.md](release-candidate-security-fork-closeout.md)。
 - 真实云 Jev 分类请求 / 真实官方目录登录后的自动识别链路（本轮为环回假 relay + 临时数据）。

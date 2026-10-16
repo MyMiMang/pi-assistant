@@ -10,7 +10,6 @@
  * 不做真下载 / 不启动真实模型 / 不用真实麦克风 / 不连云；本地「已安装」路径由后端 HTTP 单测覆盖。
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";

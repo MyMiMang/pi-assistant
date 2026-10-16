@@ -5,7 +5,6 @@
  * 要证（真实 HTTP 链路，含 /api/* 鉴权中间件）：POST /api/conversations/:cid/fork 能按 user 消息建分支对话、
  * 源对话保留、clientId 幂等、非 user 消息 fail-closed。
  */
-import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";

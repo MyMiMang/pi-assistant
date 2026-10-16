@@ -6,7 +6,6 @@
  * 点击后切到新对话、正文放回输入框（不自动发送）、历史是分支前缀；
  * 输入框草稿按对话分桶（切回去原文还在）；390 宽两个按钮不换行、右键菜单能触发分支。
  */
-import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -67,6 +66,10 @@ try {
 	await page.goto(BASE);
 	const box = page.locator("main textarea:not(.pa-card textarea)");
 	await box.waitFor();
+	const postBodies = [];
+	page.on("request", (r) => {
+		if (r.method() === "POST" && /\/api\/agents\/[^/]+\/messages$/.test(new URL(r.url()).pathname)) postBodies.push(r.postDataJSON());
+	});
 
 	const send = async (text) => {
 		await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
@@ -106,6 +109,13 @@ try {
 		await waitFor(() => page.locator(".pa-msg.bot .prose").count().then((n) => n > 1));
 		await settle();
 		if ((await userMsgs().count()) < 2) throw new Error("用户消息不足 2 条");
+		// 不只数 UI：直接看服务端收到了什么、Mock 是否真的回复完成
+		const serverMsgs = await (await fetch(`${BASE}/api/agents/${agent.id}/messages`)).json();
+		const contents = serverMsgs.filter((m) => m.role === "user").map((m) => m.content);
+		for (const text of ["你好第一轮", "第二轮问题"]) if (!contents.includes(text)) throw new Error(`服务端没有收到「${text}」：${JSON.stringify(contents)}`);
+		const done = serverMsgs.filter((m) => m.role === "assistant" && m.status === "done").length;
+		if (done < 2) throw new Error(`Mock 回复未完成（done=${done}）`);
+		if (postBodies.length < 2) throw new Error(`POST /messages 实际 ${postBodies.length} 次`);
 	});
 
 	await step("只有用户消息有「另开新对话」，引用按钮每条都有", async () => {

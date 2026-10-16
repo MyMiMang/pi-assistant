@@ -151,6 +151,12 @@
 | 更新后已配置还强制走 setup 环节 | 已改，待核验 | 根因：`/api/system.onboarded` 依赖 `defaultModel()` 解析，配置读取暂时失败 / 模型暂不可解析时返回 null → 已配置被误判为未配置。改为只看持久信号（向导标志 / `defaultModel` 设置 / 助理数量）并新增 `modelReady` 单列模型可用性；启动时幂等恢复丢失的向导标志；界面提示可恢复错误而不重走向导。新装仍引导，只助理或只模型都不算完成。新增 `onboarding.test.ts`（7 项）+ `onboarding-recovery.test.ts`（HTTP 级），连同 `custom-providers`/`channels`/`clawbot` 共 32/32 通过。 |
 | beta.23 渠道修复复核 | 已复核，无需再改 | `6cf31fe` 把 `makeAdapter` 纳入启动 try、解密失败转中文恢复提示、未重填保留密文；覆盖现场崩溃路径，未触碰 `secrets.ts` 与用户数据。本轮不重复改，也未把未解的钥匙串根因宣称已解决。 |
 
+## 测试隔离安全（2026-10-16，候选树 `release-candidate-validation`，**未 push / 未 tag / 未打包**）
+
+| 需求（用户原话大意） | 状态 | 说明 |
+|---|---|---|
+| 新 e2e 不得继承真实 `PIA_WORKSPACE`、不得构造 OS 钥匙串后端 | 已改，已验证 | `session-fork-ui` / `session-fork-http` / `voice-source-live` / `send-shortcut-ui` 原直接 spawn 生产 `main.ts`；改走 `test/launch-memory.ts`（内存凭据）+ 临时工作区。入口最前加 guard：`PIA_DATA_DIR` 非可信临时目录就换新 `mkdtemp`，`PIA_WORKSPACE` 越界就覆盖为 `<DATA>/workspace`，不 import `setup.ts`。新增假 `security` 探针 + `PIA_TEST_STARTUP_FILE`，断言 `storeCalls>0`、`security 0`。`session-fork-ui` 由「3/5」修为 **6/6（连跑 3 次）**，原因是旧不安全 launcher 拖住 Mock settle，**不是** UI / Enter bug；旧「既有基线」说法作废。详见 `progress-snapshots/release-candidate-security-fork-closeout.md`。 |
+
 ## 手机端 App shell / 输入框 viewport 修复（2026-10-15，`mobile-chat-viewport-fix` 树，基 `hotfix-integration` `b7d33d3` + `9554628`，**未 push / 未 tag**）
 
 | 需求（用户原话大意） | 状态 | 说明 |
