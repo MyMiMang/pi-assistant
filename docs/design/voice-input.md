@@ -151,11 +151,13 @@ idle ──start──▶ preparing ──(getUserMedia ok)──▶ recording �
 - **音量（真实 PCM，不假波形）**：`computeLevel`（RMS / peak）→ `normalizeLevel`（对数、静音严格 0）→ `LevelMeter`（指数平滑 + 80ms 限频）。UI 用 24 格滚动历史展示真实音量，静音归零；停止 / 取消 / 隐藏立即清空。无循环动画，`prefers-reduced-motion` 下无过渡；390 不换行、不挤发送键（复用 `.pa-voice-status` 独立行）。
 - **分段（停顿 VAD + 最长窗口）**：`SpeechSegmenter` 在**原始采样坐标**上判边界：连续静音 ≥700ms 且段内有语音 → 合一段；段长 ≥12s → 强制合一段；<300ms 的段并进下一段。**不重叠、不加滑窗上下文**，因此相邻段文本天然不重复（不做危险的 substring 去重）。
 - **连续重采样（不制造 gap）**：`resampleTo16kRange` 按**全局输出位置** `j * inputRate / targetRate` 取点，相邻段的输出区间首尾相接，拼起来等于整段一次重采样（单测断言逐采样一致）。
-- **有界并发与积压**：单并发（`pump`），等待队列上限 `MAX_PENDING_SEGMENTS = 2`；到上限时 `setBackpressure(true)` **不合新段**（把语音并进当前段，**不丢音频**），UI 显示「转写跟不上，仍在录音」。总时长仍由 60s 上限兜底，内存有界。
+- **有界并发与积压 + 硬上限**：单并发（`pump`），等待队列上限 `MAX_PENDING_SEGMENTS = 2`；到上限时 `setBackpressure(true)` **不合新段**（把语音并进当前段，**不丢音频**），UI 显示「转写跟不上，仍在录音」。积压时仍受 `hardMaxSegmentMs`（默认 55s）硬上限约束：到上限**强制切段**（余下语音进入下一段，不丢），保证单段 WAV 时长始终 ≤ 服务端 `ASR_MAX_DURATION_MS`（60s，`> 60s` 才拒），不会因擦边越界导致整段 400。总时长仍由 60s 上限兜底，内存有界。
+- **按语音原序出字（保序，不乱序）**：控制器按段 `index` 发射——维护 `nextEmitIndex` + `held` 缓冲，只有「下一个应发的段」才进草稿；**前段失败时后续成功段不提前进草稿**，仍照常转写（不静默 block），重试成功后**按原序一次补上**（不会出现「段1段0」）。UI 明确显示「有一段没转写成功…后面 N 段已识别、重试后按顺序补上」；取消保留已进草稿段、丢未应用段。
 - **停止 flush 尾段**：`stop()` 只等「在途 + 尾段」，**不整段重传**（增量模式不再发整段请求）；纯静音且过短才丢弃。
-- **每段唯一 requestId + 有界重试**：每段一个 requestId（服务端幂等只对 completed 生效）；失败按 `SEGMENT_RETRY_DELAYS` 退避重试（默认 3 次，只针对本段，避免副作用 / 费用无限）；最终失败**保留该段音频**，UI 给「重试这段」按钮，只重发失败段，已完成的绝不重传。
+- **每段唯一 requestId + 有界重试 + 租约**：每段一个 requestId（服务端幂等只对 completed 生效）；失败按 `SEGMENT_RETRY_DELAYS` 退避重试（默认 3 次，只针对本段，避免副作用 / 费用无限）；最终失败**保留该段音频**，UI 给「重试这段」按钮，只重发失败段，已完成的绝不重传。录音 + 重试期间持有 `AsrLeaseManager` 租约（并发 begin 只留最新、旧 / 迟到租约立即释放），停止后超过本地 idle TTL（默认 90s）再点重试会**重新拿一次租约**（不切云 / 不换模型）；来源变更立即中止重试。
 - **草稿合并（不覆盖用户编辑）**：`VoiceDraftAssembler` 按锚点顺序追加已确认段；用 `mapPositionThroughEdit`（公共前后缀 diff）在用户编辑后平移光标，段永远接在语音块末尾（不重复、不乱序）。IME 组合中推迟到 `compositionend`。切会话 / 换助理 / 隐藏 / 卸载 / **来源变更** 立即停轨道 + 取消；取消丢弃未应用结果，**已进输入框的文字保留、不自动发送**。单聊 / 群聊共用同一组件（子代理输入栏无麦克风）。
 - **云端保持整段批量**：`incremental` 只在来源 `location === "local"` 时开启；云端仍是一次整段请求——OpenAI 兼容转写按请求最小计费且无 partial，分段会**成倍增加调用与费用**，故**不擅自切云、不隐藏增加调用**（e2e 断言云录音期间 0 次请求、停止后 1 次）。
 - **服务端不改**：分段走既有 `POST /api/audio/transcriptions`（16k mono 16bit、≤60s、requestId 幂等、abort）；租约贯穿录音 + 全部段转写（状态回到 finish/error/idle 才释放）。
-- **测试**：`packages/server/test/voice-incremental.test.ts`（合成 PCM 音量、分段、连续重采样、队列 / 积压、stop flush、取消、有界重试、草稿装配、`mapPositionThroughEdit`）；`e2e/voice-incremental-ui.mjs`（合成 WAV 喂 Chromium 假麦克风：真实音量非零、停止清零、本地多段按序出字且 requestId 唯一、取消保留已出文字、云端 1 次整段）。
-- **未验（如实）**：真实麦克风 / 真机 App、真实本地模型端到端中文增量延迟与文本误差（未跑 owned 权重多段 smoke，见 HANDOFF）、云端真实计费差异未实测；分段时长 / 阈值（700ms / 12s / 300ms）为工程取值，非实测最优。
+- **测试**：`packages/server/test/voice-incremental.test.ts`（合成 PCM 音量、分段、连续重采样、队列 / 积压 / 硬上限、stop flush、取消、有界重试、**保序发射**、**租约**、草稿装配、`mapPositionThroughEdit`）；`e2e/voice-incremental-ui.mjs`（合成 WAV 喂 Chromium 假麦克风：真实音量非零、停止清零、本地多段按序出字且 requestId 唯一、取消保留已出文字、云端 1 次整段）。
+- **真实本地模型多段中文已验**（`scripts/voice-incremental-real-validation.mjs`，产品 controller → 真实 SenseVoice sidecar + 官方 zh.wav 多段组合）：首段录音未 stop 前可见、尾段 flush、段序 0/1/2、每段唯一 requestId、无整段重传、单段 WAV ≤ 服务端上限、worker 回收；实文「开饭时间早上9点至下午5点。」（未 ITN）。证据 `evidence/voice-incremental-real/`。
+- **未验（如实）**：真实麦克风 / 真机 App 的采集质量与时延、700ms / 12s / 300ms 阈值最优性、云端真实计费差异、跨平台（Win / Linux / Intel Mac）；单样本不作智能 / 准确率 / 性能结论。

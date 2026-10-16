@@ -1,6 +1,7 @@
-# 分段增量「真实本地模型多段中文」验证方案（候选，未执行 / 未 push）
+# 分段增量「真实本地模型多段中文」验证方案（**已执行，2026-10-18** / 未 push）
 
-- 状态：**方案（candidate）**，2026-10-18，worktree `voice-incremental-input`（基 `release-candidate-validation` `6d6c1ee`）。
+- 状态：**已执行**（脚本 `scripts/voice-incremental-real-validation.mjs`，证据 `evidence/voice-incremental-real/`）。worktree `voice-incremental-input`（基 `release-candidate-validation` `6d6c1ee`）。
+- 结论：**通过**。产品 `VoiceInputController` → 真实 SenseVoice sidecar（pid/port/`health.modelId` 证真，非 mock）→ 官方 `zh.wav` 多段组合，四项断言均满足（见文末「实际结果」）。
 - 目的：补上 §9 / HANDOFF 里如实标注的**未验**——「真实本地模型多段中文增量的延迟与文本误差」。
   现有证据只到「合成信号 + 假 provider 延迟」（单测）和「假音频喂 Chromium 假麦克风 + page.route 假转写」（e2e），
   **不能当作真实模型效果**。本方案用**产品 controller + 真实 worker + 官方样例多段组合**在 owned scratch 里真跑一次。
@@ -60,3 +61,16 @@
 
 - 不证明真实麦克风 / 真机 App 的采集质量与时延；不证明 700 ms / 12 s / 300 ms 阈值最优；不证明云端真实计费差异；不证明跨平台（Win / Linux / Intel Mac）。
 - 只用一次单样本，**不作智能 / 准确率 / 性能结论**。
+
+## 实际结果（2026-10-18，脚本一次跑通，35s）
+
+- 环境：Node 24；真实 sidecar `pid=3171` `port=62663`，`health={ok:true,device:"cpu",loaded:["model.int8.onnx"],modelId:"sensevoice-small-int8"}`（非 mock）；`physicalCores/logicalCores` 覆盖为 4 → sidecar `--num-threads` ≤ 4。
+- 音频：官方 `zh.wav`（178,988 B，sha256 `b77f1794…`）按 48k 升采样，组合 `[zh][静音1s][zh][静音1s][zh]` = **18.78s**，走真实 `resampleTo16kRange`。
+- 断言（全部 true）：`firstSegmentBeforeStop`、`segmentIndices=[0,1,2]`、`ordered`、`uniqueRequestIds`、`noWholeRetranscribe`、`tailFlushed`、`maxWavWithinServerBound`、`noError`、`trackStopped`、`captureStopped`、`stateAfterStop=idle`。
+- 时间口径（相对录音开始 / stop）：段 0 在 **+7.2s（stop 前）** 出字，段 1 在 **+14.7s（stop 前）**，段 2 在 **+21.2s（stop 后 flush）**。
+- 单段推理（真实 HTTP + token + 租约）：`wavMs=4500/4500/4876`，`inferenceMs=1074/1048/1906`，`audioSeconds=4.5/4.5/4.876`；3 次请求无整段重传。
+- 实文如实记录（**未做 ITN / 不做纠错**）：每段均为「开饭时间早上9点至下午5点。」——是**「开饭」不是「开放」**。
+- 整段一次基线（同一组合，18.776s，4.72s）：输出「开放时间早上9点至下午5点开放时间早9点至午5点开放时间早上9点至下午5点。」；关键词命中：分段拼接 `早上=3/下午=3/点=6`，基线 `早上=2/下午=2/点=6`。**单样本观察：分段未引入额外误差，反而更稳**（不作准确率结论）。
+- 回收：`leaseReleased=true`；`workerStop={pid:3171,state:"stopped",pidReleased:true}`（pid 已退出，无泄漏）。
+- 证据：`evidence/voice-incremental-real/report-2026-10-16T18-00-18.json` / `validation-2026-10-16T18-00-18.log`（时间戳为 UTC）。
+- 仍未证（照旧）：真实麦克风 / 真机 App、云端真实计费差异、跨平台；单样本不作智能 / 准确率 / 性能结论。

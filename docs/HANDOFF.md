@@ -2,6 +2,14 @@
 
 > **beta.27 发布准备，尚未公开**：Laya 双层缓存校验及真实启动修复、权限操作条正常滚动、SenseVoice 保留原列表并支持一键下载安装，已全部合入。主会话独立通过两端类型/构建、87项服务端、6项前端逻辑、ASR与设置交互回归；已复核Laya真实启动分类和SenseVoice真实中文转写记录。详见 `progress-snapshots/beta27-final-validation.md` 与 `docs/release-notes/v0.1.0-beta.27.md`。按既有授权直接推送打包，仅arm64；公开后再更新状态。
 
+2026-10-18 语音分段增量续作（worktree `voice-incremental-input`，基 `632435f`，本轮到 `HEAD` 见 `git log`；**beta.28 候选，未 push / 未 tag / 未打包**）：在既有进度上修完并跑通真实验收，不再留「未改需主拍板」。
+- **F1（原 P1 需产品决策）按用户指定的「按语音原序稳定出字」修复**：`VoiceInputController` 新增 `nextEmitIndex` + `held` 缓冲，按段 `index` 保序发射——前段失败时后续成功段**不提前进草稿**，重试成功后**按原序一次补上**（不再出现「段1段0」）；仍照常转写后段音频（不静默 block），UI 明确显示「有一段没转写成功…后面 N 段已识别、重试后按顺序补上」；取消保留已进草稿段、丢未应用段。
+- **F6 已修**：`SpeechSegmenter` 新增 `hardMaxSegmentMs`（默认 55s），积压「不合段」时也强制切段，保证单段 WAV 时长 ≤ 服务端 `ASR_MAX_DURATION_MS`（60s）且尾部不丢（切段只是把余下语音放进下一段）。
+- **F7 已修**：抽出可测的 `AsrLeaseManager`（并发 begin 只留最新、旧 / 迟到租约立即释放）；hook 停止后重试前**按需补一次租约**（不切云 / 不换模型），来源变更时中止 transcribing 重试（`gen` 校验）。
+- **F2/F3/F4 修复与新增测试本次真跑**：`voice-incremental.test.ts` **30/30**（含 F1 单 / 多空洞保序、F6 用服务端 `validateAsrAudio` 精准证明单段 WAV ≤ 上限、F4/F7 租约 3 项）；语音 / ASR 相关 **148/148**；两端 `tsc --noEmit` 通过；`npm run build -w @pi-assistant/web` 通过；`e2e/voice-incremental-ui.mjs` 全过（16 项断言）。
+- **真实本地模型多段中文验证已执行**（`docs/design/voice-incremental-real-validation.md`，脚本 `scripts/voice-incremental-real-validation.mjs`）：产品 `VoiceInputController` → 真实 SenseVoice sidecar（pid/port/`health.modelId` 证真，非 mock），喂「官方 zh.wav ×3 + 1s 静音 ×2」（18.78s，48k→真重采样 16k，sidecar `--num-threads` ≤4）。结果：段 0 在 stop 前 7.2s 出字、段 1 在 14.7s、段 2 在 stop 后 flush（21.2s）；段序 0/1/2、每段唯一 requestId、3 次请求无整段重传、单段 WAV 最大 4876ms（≤60s）、单段推理 1.05–1.91s、worker pid 停后退出、租约释放。实文如实记录：每段「开饭时间早上9点至下午5点。」（未 ITN，**是「开饭」不是「开放」**）；整段一次基线反而是「开放…早9点至午5点…」——分段未引入额外误差、反更稳。证据 `evidence/voice-incremental-real/`。**未验**：真实麦克风 / 真机 App、云端真实计费差异。
+- 环境：本树 `node_modules` 由共享 symlink（指主仓 1.1.0）改为**本树 1.3.0 lock 独立安装**（`npm ci --ignore-scripts`，固定 Node 24；`realpath` 确认 `@earendil-works` 1.3.0、`messageType` 存在），消除 1.1.0 污染导致的 `ext-memory`/`ext-skills` 假报错；**未改任何共享 symlink / SDK / node_modules**。
+
 > **当前公开版本 v0.1.0-beta.26（Latest，仅 Apple 芯片 macOS arm64）**：tag 指向 `dd963a4da9f55b64912fb171ebc0271948d766d1`；[发布 run 38880524575](https://github.com/MyMiMang/pi-assistant/actions/runs/38880524575) 的 arm64 构建、内置服务、Mac 安装启动冒烟和 publish 均成功，2026-10-16 09:38:56 UTC 公开。主会话独立核验非草稿 / 非 prerelease、四项公开资产、公开 Latest 的 `latest.json` 为 `0.1.0-beta.26`，仅 `darwin-aarch64` / `darwin-aarch64-app` 且签名非空。未安装或更新用户 App，已有 tag 未移动。验收及未验边界见 [发布说明](release-notes/v0.1.0-beta.26.md)。
 >
 > **beta.26 已发布整合**：候选树 `release-candidate-validation`，起点公开 beta.25 `dcce520`。四块已 `--no-ff` 合入：① Laya 下载统一链路（`10317d0`，stage1 `1dbb652`）；② 本地语音多模型 UI + 后端（`55a09e7` / 后端 `18478d4`，stage1 `277ddfb`）+ 生产修复（`8f8d458`，本轮 `42f9613`）；③ 主题设计选本次草稿模型（`0781b9c`，stage1 `12370a5`）；④ Laya 测试隔离收口（`8e9a223`，本轮 `17a3da7`）。stage1 记录 `progress-snapshots/beta26-integration-stage1.md`，本轮整合与实跑见 `progress-snapshots/beta26-final-validation.md`。
