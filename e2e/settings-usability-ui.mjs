@@ -12,6 +12,8 @@
  *  C) 模型服务折叠计数 = 实际可见服务卡数（不再是 registry.length+1）；ASR 小节「声明 ≠ 启用」只留标题 Help 一处。
  *  D) 关闭态自动保存文案为「已保存草稿（未开启）」；开启计划 → ack → 确认流程仍在。
  *  E) 下载来源两个技术输入默认收进单个 details；有自定义值 / 下载失败时默认展开；390 窄屏不溢出。
+ *  F) 「操作这台电脑」底部操作条不再 sticky 浮层：真实 DOM 滚动（桌面 / 390）下随内容移动、不覆盖下方提示，
+ *     且 review → ack → 确认开启后提示不被遮挡、无原生弹窗。
  */
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -27,6 +29,7 @@ if (!existsSync(join(dist, "index.html"))) {
 	process.exit(2);
 }
 const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/settings-usability-polish";
+const OUT_HOST = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/beta26-hostcontrol-flow";
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -357,6 +360,74 @@ try {
 		check("390 窄屏详情展开不横向溢出", ov.doc <= ov.vw && ov.c <= 1, JSON.stringify(ov));
 		await d.page.screenshot({ path: join(OUT, "E-download-source-390.png") });
 		await d.ctx.close();
+	}
+
+	console.log("\n── F 操作这台电脑：底部操作条回普通流（真实 DOM 滚动，桌面 / 390）──");
+	mkdirSync(OUT_HOST, { recursive: true });
+	const intersects = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+	for (const [tag, viewport] of [
+		["desktop", { width: 1440, height: 900 }],
+		["390", { width: 390, height: 844 }],
+	]) {
+		const state = { host: "ok" };
+		const { ctx, page } = await newPage(browser, state, viewport);
+		const dialogs = [];
+		page.on("dialog", (d) => {
+			dialogs.push(d.message());
+			void d.dismiss();
+		});
+		await open(page, "host");
+		await page.getByTestId("host-settings").waitFor();
+		const bar = page.getByTestId("host-review");
+		await bar.waitFor();
+		const content = page.getByTestId("settings-content");
+
+		// 1) 归零后滚动固定距离：按钮位移应等于滚动量（普通流），sticky 固定则位移≈0
+		await content.evaluate((el) => el.scrollTo({ top: 0, behavior: "instant" }));
+		await page.waitForTimeout(60);
+		const box0 = await bar.boundingBox();
+		const delta = 260;
+		await content.evaluate((el, d) => el.scrollTo({ top: d, behavior: "instant" }), delta);
+		await page.waitForTimeout(80);
+		const box1 = await bar.boundingBox();
+		const moved = box0 && box1 ? box0.y - box1.y : NaN;
+		check(`[${tag}] 底部操作条随内容滚动（非 sticky 固定）`, Math.abs(moved - delta) <= 4, `位移=${Number.isNaN(moved) ? "n/a" : moved.toFixed(1)}，期望≈${delta}`);
+
+		// 2) 把下方提示（macOS 权限）滚到底：操作条不得与其重叠
+		const hint = page.getByTestId("host-mac-perms");
+		await hint.evaluate((el) => el.scrollIntoView({ block: "end" }));
+		await page.waitForTimeout(80);
+		const hb = await hint.boundingBox();
+		const bb = await bar.boundingBox();
+		check(`[${tag}] 操作条不覆盖下方提示（macOS 权限）`, !(hb && bb && intersects(bb, hb)), `bar=${JSON.stringify(bb)} hint=${JSON.stringify(hb)}`);
+
+		// 3) 保留 review → ack → 确认开启交互；开启后提示不被操作条遮挡
+		// （初始 defaultTier=bounded 且未选应用时按钮按设计禁用，先切「信任」档解除，同 D 段）
+		await page.getByTestId("default-tier-trusted").click();
+		await page.getByTestId("host-autosave").waitFor();
+		await bar.click();
+		await page.getByTestId("host-manifest").waitFor();
+		check(`[${tag}] 仍走权限计划`, await page.getByTestId("host-manifest").isVisible());
+		await page.getByTestId("host-ack").check();
+		await page.getByTestId("host-enable").click();
+		await page.getByTestId("host-msg").waitFor();
+		check(`[${tag}] ack 后确认开启成功`, /已开启/.test(await page.getByTestId("host-msg").innerText()));
+		await content.evaluate((el) => el.scrollTo({ top: el.scrollHeight, behavior: "instant" }));
+		await page.waitForTimeout(80);
+		const msg = await page.getByTestId("host-msg").boundingBox();
+		const bar2 = await bar.boundingBox();
+		check(`[${tag}] 开启后提示不被操作条遮挡`, !(msg && bar2 && intersects(bar2, msg)), `bar=${JSON.stringify(bar2)} msg=${JSON.stringify(msg)}`);
+		check(`[${tag}] 全流程无原生弹窗`, dialogs.length === 0, dialogs.join(" | "));
+
+		if (tag === "390") {
+			const ov = await page.evaluate(() => {
+				const el = document.querySelector("[data-testid=settings-content]");
+				return { x: el.scrollWidth - el.clientWidth, doc: document.documentElement.scrollWidth - innerWidth };
+			});
+			check("[390] 不横向溢出", ov.x <= 1 && ov.doc <= 1, JSON.stringify(ov));
+		}
+		await page.screenshot({ path: join(OUT_HOST, `F-host-action-${tag}.png`) });
+		await ctx.close();
 	}
 
 	console.log("\n── 全部完成 ──");
