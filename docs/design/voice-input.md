@@ -73,7 +73,7 @@ idle ──start──▶ preparing ──(getUserMedia ok)──▶ recording �
 - 鉴权：走**正常 safe API 路径**（`/api/*` 中间件：本机或已配对设备）；owner 上下文（`agentId`/`conversationId`）只用于归属与审计，**不把普通麦克风录音做成每秒审批**。
 - 请求：`multipart/form-data`
   - `file`：音频（**PCM16 WAV**，或 provider 明确支持的格式）
-  - `provider`、`model`：必填，必须解析到 registry 里 `capabilities` 含 `asr` 且 `confirmed` 的模型
+  - `provider`、`model`：**必须与用户显式选择的来源（`voiceSource`）一致**；未配置来源 → 409 `asr_not_configured`，与来源不一致（旧 UI / 过期状态）→ 409 `voice_source_changed`（见 §4.5）
   - `requestId`：必填，幂等键
   - `language`（可选）、`agentId`/`conversationId`（可选，归属）
 - 校验（fail-closed）：
@@ -100,6 +100,14 @@ idle ──start──▶ preparing ──(getUserMedia ok)──▶ recording �
 因此前端在开始录音时 `POST /api/audio/asr/lease { provider, model }` 拿租约（同时**非阻塞**触发本地 sidecar 启动，边录边加载），
 停止 / 取消 / 出错 / 回到 idle 时 `DELETE /api/audio/asr/lease/:id` 释放。云端 ASR 不涉及租约。
 本地未安装时租约接口明确 `409`（不静默）；转写时端点未运行也明确 `409`。
+
+### 4.5 显式来源 `voiceSource`（云 / 本地不自动切换）
+
+- `settings.voiceSource = { location: "cloud"|"local", provider, model } | null`：单一全局用户偏好；`null` / 缺省 / 形状不合法 = **未配置**；**不凭客户端当前值自动挑源**，也不静默回落第一个云端（不静默计费）。
+- `GET /api/audio/asr/source`（只读元数据，不启动 / 不下载 / 不连云）→ `{ source, options[] }`；每条 option = `{location, provider, model, name, protocol, availability, reason, selected}`，`availability` ∈ `ready|not_configured|not_installed|not_running|deleted`（只有 `ready` 表示现在可用，其余必带中文 `reason`）；本地 SenseVoice **未安装也会出现**（允许先选「用本地」的意图）但如实标 `not_installed`；当前值失效（声明被删）时保原值并补一条 `deleted`。
+- `PUT /api/audio/asr/source` 严格只认 `{ source: null | {location,provider,model} }`（未知字段 / 形状不对 → 400 `asr_invalid_source`，不落库）；未知 / 未声明 → 400 `asr_not_declared`；云已声明但未配置 → 400 `asr_not_configured`；响应与 GET 同 DTO。
+- 转写与租约按来源授权：见 §4.2 / §4.4；`resolveAsrEndpoint()` 仍 fail-closed，不回落云端。
+- 完整契约 / 实现状态：`docs/design/settings-functional-backend.md`。
 
 ## 5. 前端模块边界（便于主合并）
 

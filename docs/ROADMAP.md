@@ -179,6 +179,13 @@
 
 麦克风位置修正（2026-10-16，本树本地未发布，用户调整）：`e2e/voice-input-ui.mjs` 加几何断言——`voice-mic` 与 `.pa-composer-bar .pa-send` 必须同一 composer-bar、DOM 在发送键之前、同一行（中心 y 差 ≤6px）、紧贴其左（间隙 ≤14px），且不在 `.pa-composer-tools` 里；单聊 / 群聊 / 390 / 1440×560 矮窗各验一遍，并断言录音时发送键 x 不位移（提示走独立 status 行）。实跑：该脚本全通过；`e2e/composer-compact.mjs`（单 / 群 / 子三入口 390 / 1280 / 1440）回归全通过；web `tsc --noEmit` + `vite build` 通过。未跑全量 e2e。
 
+## 设置按功能重排：后端（语音显式选源 + 助理级子代理上限）（本轮，worktree `settings-functional-backend`，基候选树 `release-candidate-validation` `a80b2cb`，**未 push / 未 tag / 未打包**）
+
+| 需求（用户原话大意） | 状态 | 说明 |
+|---|---|---|
+| 语音：在线服务 BaseURL+Key 留在模型服务；独立语音配置页要显式选「云 / 本地」并选 ASR，本地 SenseVoice 管理归语音页；**不自动 fallback cloud**，没选过就是未配置（不静默计费） | 后端已实现，前端待接（未发布） | 新键 `settings.voiceSource`；`GET/PUT /api/audio/asr/source`（严格入参、归一化 availability+reason、未安装本地可选但标 not_installed、失效来源标 deleted 不改存值）；转写 / 租约按来源授权（409 `asr_not_configured` / `voice_source_changed`）；契约 `docs/design/settings-functional-backend.md`。真实验证：`voice-source-http.test.ts` 8/8。**未验**：真实云 ASR 计费、真机麦克风、本地 SenseVoice 实装。 |
+| 子代理「子代理模型 / 思考 / 并发」归助理配置：并发 / 最长运行也要能按助理设置，而不是只有一份全局值，且不悄悄把全局改成每代理 | 后端已实现，前端待接（未发布） | 保旧全局 `subagentModels` 作继承默认；新 `settings.subagentLimits:<id>` 只存显式覆盖；`GET/PUT /api/agents/:id/subagents/settings`（patch，`null` 清覆盖继承）；`getSubagentSettings(agentId)` 集中有效值，pump / 超时 / 容量按 owner agentId，并发仍按助理分别计数；旧 `/api/subagents/settings` 兼容。真实验证：`subagent-limits-http` 3/3 + 进程内 `subagent-limits` 3/3。 |
+
 ## Pi 依赖升级 1.1.0 → 1.2.0（本轮，`deps/pi-1.2.0` 四提交已 `--no-ff` 合入候选 `release-candidate-validation`（合并提交 `bfd621a`），**未 push / 未 tag / 未打包**）
 
 | 需求（用户原话大意） | 状态 | 说明 |
