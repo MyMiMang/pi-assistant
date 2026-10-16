@@ -185,7 +185,7 @@
 |---|---|---|
 | 批准跟进 Pi 官方 1.1.0 → 1.2.0 升级；硬约束：不改 Pi 本体 / 不 fork / 不改 `node_modules` 源码 / 不 monkeypatch 私有接口，兼容逻辑只放自有 `pi-adapter` 与扩展、走公开 API；独立提交、模块化、便于以后继续升级 | 已合入候选 + 本地验证（未打包） | 三个 `@earendil-works` 包一致升到 `^1.2.0`（锁文件锁 1.2.0），锁差异只涉及 8 个 Pi 包（含上游不再依赖的 `@earendil-works/chord` 被移除）；唯一 breaking（`before_agent_start` 变 union）已在 ext-memory / ext-skills 按 `messageType` 收窄；版本记录（compat / third-party / NOTICES）同步，每周自动升级改为走 `scripts/pi-update.mjs`（`testedWith` 只在测试通过后 `finalize` 记录，bump 只写 target 预期）。新增本地验证：`pi-mcp-1.2` 3/3、`pi-1.2-custom-provider` 3/3、`pi-1.2-boot-context` 5/5。设计与验收见 `docs/design/pi-1.2-upgrade.md`，结果与未验边界见 HANDOFF 本轮条目。 |
 
-## Pi 依赖升级 1.2.0 → 1.3.0（本轮，分支 `deps/pi-1.3.0`（`bbd5940`）；**已 `--no-ff` 合入候选树** `release-candidate-validation`（合并 `dc93fe4`，候选代码 checkpoint `0069d36`，`decb8eb` 仍是祖先可回滚）；未 push / 未 tag / 未打包；不改已发布 beta.24（tag `747c744` 未移）；不改已发布 beta.24）
+## Pi 依赖升级 1.2.0 → 1.3.0（本轮，分支 `deps/pi-1.3.0`（`bbd5940`）；**已 `--no-ff` 合入候选树** `release-candidate-validation`（合并 `dc93fe4`，候选代码 checkpoint `0069d36`，`decb8eb` 仍是祖先可回滚）；未 push / 未 tag / 未打包；不改已发布 beta.24（tag `747c744` 未移））
 
 | 需求（用户原话大意） | 状态 | 说明 |
 |---|---|---|
