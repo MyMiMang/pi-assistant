@@ -121,8 +121,9 @@ export function asrSourceOptions(): AsrSourceOption[] {
 	return out;
 }
 
-/** 当前来源 + 归一化候选（UI 只读数据）。 */
+/** 当前来源 + 归一化候选（UI 只读数据；`selected` 只在 `withSelected` 里算，避免多处漂移）。 */
 export const asrSourceView = (): AsrSourceView => withSelected(readVoiceSource(), asrSourceOptions());
+const selectedSourceOptions = () => asrSourceView().options;
 
 /** 来源校验失败（路由层映射成 HTTP 错误；不落库）。 */
 export class AsrSourceError extends Error {
@@ -207,6 +208,6 @@ export function mountAsrRoutes(app: Hono<any>) {
 		resolve: resolveAsrEndpoint,
 		acquireLease: acquireAsrLease,
 		releaseLease: releaseAsrLease,
-		source: { read: readVoiceSource, options: asrSourceOptions, write: saveAsrSource },
+		source: { read: readVoiceSource, options: selectedSourceOptions, write: saveAsrSource },
 	});
 }
