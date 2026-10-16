@@ -30,7 +30,7 @@ function State({ r }: { r: Subagent }) {
 }
 /** 聊天里不再渲染子代理指令卡：任务统一走 header 的「子代理」入口 → 任务概览 → 详情。
  *  子代理的完成/失败回报仍由主会话的普通消息（“子代理回报：…”）承担，语义不变。 */
-export function SubagentChat({ id, visible }: { id: string; visible: boolean }) {
+export function SubagentChat({ id, visible, room }: { id: string; visible: boolean; room?: string }) {
 	const onClose = () => useStore.getState().set({ subagent: null });
 	const [d, setD] = useState<{ subagent: Subagent; messages: Message[] } | null>(null);
 	const [err, setErr] = useState("");
@@ -86,7 +86,8 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 				<button className="pa-chip" onClick={onClose} aria-label="返回主会话" title="返回主会话"><ArrowLeft className="pa-ic" /><span className="max-sm:hidden">主会话</span></button>
 				<Avatar agentId={avatar.id} text={avatar.avatar} color={avatar.color} size={32} />
 				<div className="min-w-0 flex-1"><b className="block truncate text-sm" title={d?.subagent.task}>任务：{d ? taskTitle(d.subagent.task) : "加载中…"}</b><div className="truncate text-xs">{d && <State r={d.subagent} />}<span className="ml-2 text-mut2">{d?.subagent.model_id}</span></div></div>
-				{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} title={clampNote} text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
+				{/* 同一主会话（同 agent + 父对话）的其他子代理：直接在这里切换，不用先返回主会话。复用主会话现成的列表/查询/弹层。 */}
+				{d && <SubagentTasks agentId={d.subagent.agent_id} conversation={d.subagent.conversation_id} room={room} current={id} testid="subagent-switch" overviewTestid="task-overview-switch" />}
 				{d && !stoppable && ["failed", "timeout", "lost", "stopped"].includes(d.subagent.status) && d.subagent.canResume && <button className="pa-chip" onClick={() => void action("resume")} title={d.subagent.needsVerify ? `先核验这些工具的实际结果再继续：${verifyNames(d.subagent)}` : d.subagent.resumeReason ?? "用原任务从断点继续"} data-testid="subagent-resume">继续</button>}
 				{d && !stoppable && ["failed", "timeout", "lost"].includes(d.subagent.status) && !d.subagent.canResume && <button className="pa-chip" onClick={() => void action("retry")} data-testid="subagent-retry">重新派</button>}
 			</header>
@@ -103,14 +104,21 @@ export function SubagentChat({ id, visible }: { id: string; visible: boolean }) 
 				{d?.subagent.needsVerify && <p className="mx-auto mb-2 max-w-[760px] text-xs text-amber-600" role="status" data-testid="subagent-needs-verify">续跑前先核验：{verifyNames(d.subagent)}（这些工具调用已派发但结果没落库，副作用未知，别直接重跑）</p>}
 				<div className="pa-composer">
 					<textarea ref={ta} rows={1} value={text} onChange={(e) => setText(e.target.value)} aria-label="给子代理发消息" placeholder={stoppable ? "补充要求，或说「停」" : "给子代理发消息…"} {...keys.handlers} />
-					<div className="pa-composer-bar"><span className="min-w-0 flex-1 truncate text-xs text-mut2">{queued ? "子代理排队中，说「停」可取消" : running ? "子代理正在工作" : "继续这个子代理会话"} · {keys.hint}</span>{stoppable && !text.trim() ? <button className="pa-send" onClick={() => void action("stop")} aria-label="停止子代理"><Square size={13} fill="currentColor" /></button> : <button className="pa-send" disabled={sending || !text.trim()} onClick={() => void send()} aria-label="发送给子代理" title={keys.hint} aria-keyshortcuts={keys.keyshortcuts}><ArrowUp className="pa-ic" /></button>}</div>
+					<div className="pa-composer-bar">
+					{/* 思考强度放在输入栏工具栏（与主会话一致），不再占 header；档位/跟随/持久化契约不变 */}
+					<div className="pa-composer-tools">
+						<span className="min-w-0 flex-1 truncate text-xs text-mut2">{queued ? "子代理排队中，说「停」可取消" : running ? "子代理正在工作" : "继续这个子代理会话"} · {keys.hint}</span>
+						{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} title={clampNote} placement="up" text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
+					</div>
+					{stoppable && !text.trim() ? <button className="pa-send" onClick={() => void action("stop")} aria-label="停止子代理"><Square size={13} fill="currentColor" /></button> : <button className="pa-send" disabled={sending || !text.trim()} onClick={() => void send()} aria-label="发送给子代理" title={keys.hint} aria-keyshortcuts={keys.keyshortcuts}><ArrowUp className="pa-ic" /></button>}
+				</div>
 				</div>
 				<div className="pa-foot-note">{agent?.name ?? "主会话"} 会收到子代理的完成回报 · {keys.hint}</div>
 			</div>
 	</section>;
 }
 /** 「子代理」入口 + 任务概览。 */
-export function SubagentTasks({ agentId, conversation, room }: { agentId?: string; conversation?: string; room?: string }) {
+export function SubagentTasks({ agentId, conversation, room, current, testid = "subagent-tasks", overviewTestid = "task-overview" }: { agentId?: string; conversation?: string; room?: string; current?: string; testid?: string; overviewTestid?: string }) {
 	const [rows, setRows] = useState<Subagent[]>([]);
 	const [open, setOpen] = useState(false);
 	useEffect(() => {
@@ -123,10 +131,10 @@ export function SubagentTasks({ agentId, conversation, room }: { agentId?: strin
 	const running = rows.filter((r) => taskLive(r.status));
 	const finished = rows.filter((r) => !taskLive(r.status));
 	const openTask = (r: Subagent) => { setOpen(false); useStore.getState().openSubagent(r); };
-	const row = (r: Subagent) => <TaskRow key={r.id} testId="subagent-row" id={r.id} title={taskTitle(r.task)} status={r.status} meta={`子代理 · ${r.model_id || "未指定模型"}`} time={r.last_activity_at} onClick={() => openTask(r)} />;
+	const row = (r: Subagent) => <TaskRow key={r.id} testId="subagent-row" id={r.id} active={r.id === current} title={taskTitle(r.task)} status={r.status} meta={`子代理 · ${r.model_id || "未指定模型"}`} time={r.last_activity_at} onClick={() => openTask(r)} />;
 	return <>
-		<button className="pa-chip" onClick={() => setOpen(true)} data-testid="subagent-tasks" aria-label="任务列表" title="任务"><Bot className="pa-ic" /><span className="max-sm:hidden">子代理</span><span>{running.length || rows.length}</span></button>
-		<Modal open={open} onClose={() => setOpen(false)} title="任务" testId="task-overview">
+		<button className="pa-chip" onClick={() => setOpen(true)} data-testid={testid} aria-label="任务列表" title="任务"><Bot className="pa-ic" /><span className="max-sm:hidden">子代理</span><span>{running.length || rows.length}</span></button>
+		<Modal open={open} onClose={() => setOpen(false)} title="任务" testId={overviewTestid}>
 			<div className="space-y-3 p-4" data-testid="task-list">
 				{running.length > 0 ? <div className="space-y-2">{running.map(row)}</div> : <p className="px-1 text-xs text-mut2">现在没有运行中的任务。</p>}
 				{finished.length > 0 && (
