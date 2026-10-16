@@ -1,5 +1,5 @@
 import { ExternalLink, ImageOff, Link2 } from "lucide-react";
-import { Children, isValidElement, memo, useState, type ReactElement, type ReactNode } from "react";
+import { Children, createElement, isValidElement, memo, useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -28,6 +28,37 @@ function LinkCard({ href }: { href: string }) {
 			<ExternalLink className="pa-ic text-mut2" />
 		</a>
 	);
+}
+
+/**
+ * 宽内容（表格 / 代码块）的局部横向滚动容器。
+ * 只在真的溢出时把它变成可聚焦的滚动区（键盘左右键能滚），不溢出时不留多余的 Tab 停靠点；
+ * 「能横向滚」的可见提示由 base.css 里常显的横向滚动条给出（macOS 覆盖式滚动条静止会隐藏）。
+ */
+function HScroll({ as = "div", className, label, children, ...rest }: { as?: "div" | "pre"; className: string; label: string; children?: ReactNode } & Record<string, unknown>) {
+	const ref = useRef<HTMLElement | null>(null);
+	const [over, setOver] = useState(false);
+	const measure = useCallback(() => {
+		const el = ref.current;
+		if (el) setOver(el.scrollWidth - el.clientWidth > 1);
+	}, []);
+	useEffect(() => {
+		measure();
+		const el = ref.current;
+		if (!el) return;
+		// 容器尺寸变化（拖侧栏 / 转屏）和内容变化（图片加载、字体就绪）都会改变是否溢出
+		const ro = new ResizeObserver(measure);
+		ro.observe(el);
+		const mo = new MutationObserver(measure);
+		mo.observe(el, { childList: true, subtree: true, characterData: true });
+		document.fonts?.ready.then(measure, () => {});
+		return () => { ro.disconnect(); mo.disconnect(); };
+	}, [measure]);
+	return createElement(as, {
+		ref, className, "data-overflow-x": over ? "1" : undefined,
+		...(over ? { tabIndex: 0, role: "region", "aria-label": label } : null),
+		...rest,
+	}, children);
 }
 
 /** 只放行 http/https/mailto 和页内锚点；javascript:/data:/file:/相对路径一律不渲染成链接。 */
@@ -82,11 +113,11 @@ export default memo(function Markdown({ text, blockRemoteImages }: { text: strin
 					},
 					// 宽表格 / 代码块自己横向滚动，不把整个聊天撑宽（手机上竖滑时整页左右晃）
 					table: ({ node: _n, ...p }) => (
-						<div className="pa-scroll-x" data-testid="md-table-wrap">
+						<HScroll className="pa-scroll-x" label="表格，可横向滚动" data-testid="md-table-wrap">
 							<table {...p} />
-						</div>
+						</HScroll>
 					),
-					pre: ({ node: _n, ...p }) => <pre {...p} className={`${p.className ?? ""} pa-pre-x`} />,
+					pre: ({ node: _n, className, ...p }) => <HScroll as="pre" className={`${className ?? ""} pa-pre-x`} label="代码块，可横向滚动" {...p} />,
 					img: ({ node: _n, src, alt, ...p }) => <MdImage {...p} src={src} alt={alt} blockRemote={blockRemoteImages} />,
 					p: ({ children, node: _n, ...rest }) => {
 						const kids = Children.toArray(children as ReactNode).filter((c) => !(typeof c === "string" && !c.trim()));
