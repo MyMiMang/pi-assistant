@@ -14,8 +14,9 @@ import type { RegistryAsrProvider } from "../model-registry.ts";
 import { ASR_ERRORS, ASR_PROTOCOLS, type AsrEndpoint, type AsrSource, type AsrSourceOption, type AsrSourceView } from "./contract.ts";
 import { mountVoiceRoutes } from "./routes.ts";
 import { isAsrProtocol, type AsrOutcome } from "./asr.ts";
+import { ASR_CATALOG, asrModelSpecByProvider } from "../local-asr/catalog.ts";
 import { asrEndpoint } from "../local-asr/adapter-registry.ts";
-import { ASR_MODEL_ID, ASR_PROVIDER_ID, asrManager } from "../local-asr/index.ts";
+import { ASR_MODEL_ID, ASR_PROVIDER_ID, localAsrService } from "../local-asr/index.ts";
 import { readVoiceSource, withSelected, writeVoiceSource } from "./source.ts";
 
 /** 用户在设置里显式声明的云 ASR 模型（统一注册表 `type:"asr"` 的云来源）。 */
@@ -44,6 +45,7 @@ export function registryAsrProviders(): RegistryAsrProvider[] {
 		out.push({
 			provider: h.provider,
 			modelId: h.modelId,
+			name: h.label,
 			protocol: isAsrProtocol(h.protocol) ? h.protocol : ASR_PROTOCOLS[0],
 			configured: h.running,
 			location: "local",
@@ -73,10 +75,10 @@ export async function resolveAsrEndpoint(provider: string, model: string): Promi
 		return { ok: true, value: { protocol, baseUrl, apiKey, location: "cloud" } };
 	}
 	// 2) 本地 runtime 上报的 ASR（loopback，音频不出设备）：端点（含进程内 token）只在 adapter-registry。
-	// 未安装 / 未运行时本地条目也要认得（按固定 id 判断），给「未安装 / 未运行」的明确 409，不回落云端。
-	const local = localModelHints().find((h) => h.type === "asr" && h.provider === provider && h.modelId === model) ?? (provider === ASR_PROVIDER_ID && model === ASR_MODEL_ID ? { installed: false, running: false } : undefined);
-	if (local) {
-		const ep = asrEndpoint(provider);
+	// 未安装 / 未运行时本地条目也要认得（按目录里的固定 (provider, model) 判断），给明确 409，不回落云端。
+	const localSpec = asrModelSpecByProvider(provider, model) ?? (provider === ASR_PROVIDER_ID ? asrModelSpecByProvider(provider, ASR_MODEL_ID) : null);
+	if (localSpec) {
+		const ep = asrEndpoint(localSpec.provider, localSpec.id) ?? asrEndpoint(localSpec.provider);
 		if (!ep) return { ok: false, code: ASR_ERRORS.notConfigured, status: 409, message: "本地语音识别未安装或未运行，请先在语音配置里安装 / 启动" };
 		return { ok: true, value: { protocol: "local-asr-http", baseUrl: ep.baseUrl, apiKey: ep.token, location: "local" } };
 	}
@@ -85,7 +87,7 @@ export async function resolveAsrEndpoint(provider: string, model: string): Promi
 
 /**
  * 语音来源的候选列表（只读元数据）：云端 = 已声明的 ASR（按 provider 的凭据状态给 availability）；
- * 本地 = SenseVoice（未安装也出现，但 availability 明确 not_ready）。**不启动 / 不下载 / 不连云。**
+ * 本地 = catalog 里的所有模型（未安装也出现，但 availability 明确 not_ready）。**不启动 / 不下载 / 不连云。**
  */
 export function asrSourceOptions(): AsrSourceOption[] {
 	const out: AsrSourceOption[] = [];
@@ -105,19 +107,40 @@ export function asrSourceOptions(): AsrSourceOption[] {
 			selected: false,
 		});
 	}
-	const hint = localModelHints().find((h) => h.type === "asr");
-	const installed = !!hint?.installed;
-	const running = !!hint?.running;
-	out.push({
-		location: "local",
-		provider: hint?.provider ?? ASR_PROVIDER_ID,
-		model: hint?.modelId ?? ASR_MODEL_ID,
-		name: hint?.label ?? "本地语音识别（SenseVoice）",
-		protocol: hint?.protocol ?? "local-asr-http",
-		availability: running ? "ready" : installed ? "not_running" : "not_installed",
-		reason: running ? null : installed ? "已安装但未运行（开始录音时会自动启动）" : "本地语音识别未安装",
-		selected: false,
-	});
+	// 本地：目录里的每个模型一项（pinned id），状态取该模型的实际 manager。
+	const hints = localModelHints();
+	for (const spec of ASR_CATALOG) {
+		let installed = false;
+		let running = false;
+		try {
+			const st = localAsrService().managerFor(spec.id).status();
+			installed = st.install.state === "installed";
+			running = st.runtime.state === "running" || st.runtime.state === "starting";
+		} catch {
+			const h = hints.find((x) => x.type === "asr" && x.provider === spec.provider && x.modelId === spec.id);
+			installed = !!h?.installed;
+			running = !!h?.running;
+		}
+		const unsupported = spec.platforms.length > 0 && !spec.platforms.includes(`${process.platform}-${process.arch}`);
+		out.push({
+			location: "local",
+			provider: spec.provider,
+			model: spec.id,
+			name: spec.name,
+			protocol: "local-asr-http",
+			availability: running ? "ready" : installed ? "not_running" : "not_installed",
+			reason: running
+				? null
+				: unsupported
+					? "当前平台不支持该模型"
+					: installed
+						? "已安装但未运行（开始录音时会自动启动）"
+						: spec.license.decision === "cleared"
+							? "本地语音识别未安装"
+							: "该模型权重许可未最终确认，只能自行导入已合法取得的权重",
+			selected: false,
+		});
+	}
 	return out;
 }
 
@@ -136,12 +159,9 @@ export class AsrSourceError extends Error {
 	}
 }
 
-/** 本地已知的 provider/model（运行时上报优先，否则固定清单 id）。 */
+/** 本地已知的 provider/model（来自 catalog；老配置 provider 也能解析）。 */
 function localAsrRefs(): { provider: string; model: string }[] {
-	const hint = localModelHints().find((h) => h.type === "asr");
-	const refs = hint ? [{ provider: hint.provider, model: hint.modelId }] : [];
-	if (!refs.some((r) => r.provider === ASR_PROVIDER_ID && r.model === ASR_MODEL_ID)) refs.push({ provider: ASR_PROVIDER_ID, model: ASR_MODEL_ID });
-	return refs;
+	return ASR_CATALOG.map((s) => ({ provider: s.provider, model: s.id }));
 }
 
 /** 云：只认**已配置**的声明（未登录的服务不能被选为生效来源）；本地：固定 id 即可选（未安装也能先选意图）。 */
@@ -183,13 +203,14 @@ const leases = new Map<string, { release: () => void }>();
 let leaseSeq = 0;
 
 async function acquireAsrLease(provider: string, model: string): Promise<{ ok: true; leaseId: string } | { ok: false; code: string; status: number; message: string }> {
-	const local = localModelHints().find((h) => h.type === "asr" && h.provider === provider && h.modelId === model);
-	if (!local) return { ok: false, code: ASR_ERRORS.notConfigured, status: 400, message: "只有本地语音识别需要录音租约" };
-	const st = asrManager().status();
+	const spec = asrModelSpecByProvider(provider, model) ?? (provider === ASR_PROVIDER_ID ? asrModelSpecByProvider(provider, ASR_MODEL_ID) : null);
+	if (!spec) return { ok: false, code: ASR_ERRORS.notConfigured, status: 400, message: "只有本地语音识别需要录音租约" };
+	const manager = localAsrService().managerFor(spec.id);
+	const st = manager.status();
 	if (st.install.state !== "installed") return { ok: false, code: ASR_ERRORS.notConfigured, status: 409, message: "本地语音识别未安装" };
 	// 边录边加载：不阻塞录音；启动失败由随后的转写返回 409，UI 再提示。
-	void asrManager().start().catch(() => {});
-	const lease = asrManager().acquireRecording();
+	void manager.start().catch(() => {});
+	const lease = manager.acquireRecording();
 	const leaseId = `asr-lease-${++leaseSeq}`;
 	leases.set(leaseId, lease);
 	return { ok: true, leaseId };

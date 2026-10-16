@@ -52,7 +52,7 @@ test("条款披露：限制摘要与链接默认可见，acceptValue 就是条�
 	assert.match(d.restrictions.join("\n"), /reference and learning purposes only/);
 	assert.match(d.restrictions.join("\n"), /单方改版/);
 	assert.ok(d.links.modelLicense.includes("MODEL_LICENSE"));
-	assert.ok(d.links.issue.includes("334"));
+	assert.ok((d.links.issue ?? "").includes("334"));
 	assert.equal(d.attribution, "SenseVoiceSmall by FunASR / FunAudioLLM", "§2.2 署名是硬要求");
 });
 

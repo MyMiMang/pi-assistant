@@ -3,9 +3,11 @@ import { deleteAgentSubagentLimits } from "./subagents.ts";
 import { mountThemeRoutes } from "./themes/routes.ts";
 import { mountFastComputerRoutes } from "./fast-computer/routes.ts";
 import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
-import { mountAsrRoutes, registryAsrProviders, type AsrDeclaration } from "./voice/index.ts";
+import { mountAsrRoutes, registryAsrProviders, saveAsrSource, type AsrDeclaration } from "./voice/index.ts";
 import { ASR_PROTOCOLS } from "./voice/contract.ts";
 import { isAsrProtocol } from "./voice/asr.ts";
+import { readVoiceSource } from "./voice/source.ts";
+import { localAsrService, setAsrSelectionPort } from "./local-asr/index.ts";
 import { mountLocalAsrRoutes } from "./local-asr/routes.ts";
 import { createRuntimeBenchmarkHost } from "./fast-computer/benchmark-runtime.ts";
 import { isStopCommand } from "./interject.ts";
@@ -259,7 +261,9 @@ mountSubagentRoutes(app);
 mountThemeRoutes(app);
 mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null, desktopKind: () => desktopBackend().id }).host);
 mountLocalLayaRoutes(app, localOnly);
-mountLocalAsrRoutes(app, localOnly);
+// 本地 ASR 的来源读写直接接 voice 的 voiceSource（PUT /api/audio/asr/source 仍是唯一来源真相）。
+setAsrSelectionPort({ read: readVoiceSource, write: (s) => saveAsrSource(s) });
+mountLocalAsrRoutes(app, localOnly, undefined, { service: localAsrService });
 mountAsrRoutes(app);
 app.get("/api/models", (c) => {
 	const names = providerNames();

@@ -15,8 +15,10 @@
 import type { AsrPlatformProfile } from "./platform.ts";
 import { capThreads } from "./platform.ts";
 import type { AsrLicenseMeta, AsrModelManifest, AsrSourceMeta, AsrWeightFile } from "./manifest.ts";
-import { ASR_BIND_HOST, ASR_DEFAULT_IDLE_SECONDS, ASR_MAX_IDLE_SECONDS, ASR_MIN_IDLE_SECONDS, sherpaRequirements } from "./manifest.ts";
+import { ASR_BIND_HOST, ASR_DEFAULT_IDLE_SECONDS, ASR_MAX_AUDIO_BYTES, ASR_MAX_IDLE_SECONDS, ASR_MIN_IDLE_SECONDS, sherpaRequirements } from "./manifest.ts";
+import type { PinnedFile } from "../managed-weights/verify.ts";
 import { importGate, installGate, licenseDisclosure, type LicenseDisclosure } from "./license.ts";
+import { asrRunnerFamily, runnerRolesOf } from "./runner.ts";
 
 export type AsrInstallState = "not_installed" | "installing" | "installed" | "failed";
 export type AsrInstallPhase = "idle" | "preflight" | "uv" | "venv" | "engine" | "weights" | "verify" | "activate" | "rollback" | "done";
@@ -45,6 +47,8 @@ export interface AsrPaths {
 	logs: string;
 	pidFile: string;
 	metaFile: string;
+	/** 生成的 sidecar 脚本路径（per-model）；旧测试可省略（回退 `root/serve.py`） */
+	serve?: string;
 }
 
 export interface AsrRunResult {
@@ -76,24 +80,24 @@ export interface AsrDeps {
 	run(cmd: string, args: string[], opts: { env: Record<string, string>; signal?: AbortSignal; timeoutMs?: number }): Promise<AsrRunResult>;
 	spawnServe(exe: string, args: string[], opts: { env: Record<string, string> }): AsrChild;
 	/** 从**官方源**按固定清单下载权重（清单外文件一律不取）；`pythonPath` = staging venv 解释器 */
-	downloadWeights(files: AsrWeightFile[], p: (received: number, total: number | null) => void, signal: AbortSignal, env: Record<string, string>, pythonPath: string): Promise<void>;
-	/** 下载完成后按固定清单校验（大小 + SHA256 + 路径安全），不通过绝不 activate */
-	verifyWeights(files: AsrWeightFile[], signal: AbortSignal): Promise<void>;
+	downloadWeights(files: AsrWeightFile[], p: (received: number, total: number | null) => void, signal: AbortSignal, env: Record<string, string>, pythonPath: string, opts: { repo: string; revision: string; modelId: string }): Promise<void>;
+	/** 下载完成后按固定清单校验（大小 + SHA256 + 路径安全 + 运行族规则），不通过绝不 activate */
+	verifyWeights(files: AsrWeightFile[], signal: AbortSignal, opts?: { assertManifest?: (files: PinnedFile[]) => string[]; modelId?: string }): Promise<void>;
 	/** 用户自行导入：canonical 校验 + 只从给定目录复制清单内文件到 staging（不读敏感文件） */
-	importWeights(sourceDir: string, files: AsrWeightFile[], signal: AbortSignal): Promise<{ copied: number; bytes: number }>;
+	importWeights(sourceDir: string, files: AsrWeightFile[], signal: AbortSignal, modelId?: string): Promise<{ copied: number; bytes: number }>;
 	findFreePort(): Promise<number>;
 	health(port: number, token: string, signal?: AbortSignal): Promise<AsrHealth>;
-	activate(paths: AsrPaths, meta: { source: AsrInstallSource; engineVersion: string; revision: string }): Promise<void>;
+	activate(paths: AsrPaths, meta: { source: AsrInstallSource; engineVersion: string; revision: string; modelId: string; runner: string; fileRoles: Record<string, string>; sampleRate: number; maxAudioBytes: number }): Promise<void>;
 	rollback(paths: AsrPaths): Promise<void>;
-	uninstall(paths: AsrPaths): Promise<void>;
+	uninstall(paths: AsrPaths, modelId?: string): Promise<void>;
 	randomToken(): string;
-	paths(): AsrPaths;
-	registerAsr(info: { provider: string; modelId: string; protocol: string; baseUrl: string; token: string; sampleRate: number }): void;
+	paths(modelId?: string): AsrPaths;
+		registerAsr(info: { provider: string; modelId: string; protocol: string; baseUrl: string; token: string; sampleRate: number; languages?: string[] }): void;
 	unregisterAsr(provider: string): void;
 	recordPid(pid: number | null): void;
 	now(): number;
 	setTimer(fn: () => void, ms: number): AsrTimer;
-	isInstalled(): boolean;
+	isInstalled(modelId?: string): boolean;
 	log(line: string): void;
 }
 
@@ -189,10 +193,15 @@ export class LocalAsrManager {
 		this.idleSeconds = clampIdle(cfg.idleSeconds ?? ASR_DEFAULT_IDLE_SECONDS);
 		this.platform = deps.profile();
 		this.threadCap = capThreads(deps.physicalCores(), { logicalCores: deps.logicalCores() });
-		this.installInfo = deps.isInstalled()
+		this.installInfo = deps.isInstalled(cfg.model.id)
 			? { state: "installed", phase: "done", received: 0, total: null, error: null, installedAt: deps.now(), source: null }
 			: { state: "not_installed", phase: "idle", received: 0, total: null, error: null, installedAt: null, source: null };
 		this.runtime = { state: "stopped", pid: null, port: null, token: null, child: null, health: null, restarts: 0, lastError: null, failures: 0, nextStartAt: 0 };
+	}
+
+	/** 该模型的数据目录（per-model 权重 / 共享 runtime）。 */
+	modelId(): string {
+		return this.model.id;
 	}
 
 	// ---------------------------------------------------------------- status
@@ -265,6 +274,14 @@ export class LocalAsrManager {
 		if (!gate.allowed) return { ok: false, error: gate.reason ?? "许可门槛未通过" };
 		if (opts.source === "import" && !opts.importDir) return { ok: false, error: "导入需要提供权重目录" };
 		if (this.platform.support === "unsupported") return { ok: false, error: this.platform.reason };
+		// 运行族必须已实现，且 fileRoles 齐全（fail closed，绝不用未实现的 runner 冒充）
+		try {
+			const family = asrRunnerFamily(this.model.runner ?? "sensevoice");
+			const roles = runnerRolesOf(this.model, family);
+			if (!roles.ok) return { ok: false, error: roles.reason };
+		} catch (e) {
+			return { ok: false, error: e instanceof Error ? e.message : String(e) };
+		}
 		return { ok: true };
 	}
 
@@ -280,7 +297,7 @@ export class LocalAsrManager {
 		try {
 			this.set("uv");
 			await this.deps.ensureUv();
-			const paths = this.deps.paths();
+			const paths = this.deps.paths(this.model.id);
 			const env = this.baseEnv(paths);
 			this.set("venv");
 			await this.step(signal, () => this.runOrThrow(this.deps.uvPath(), ["venv", "--python", this.deps.pythonVersion(), paths.envStaging], { env, signal }));
@@ -291,7 +308,7 @@ export class LocalAsrManager {
 			await this.step(signal, () => this.deps.installEngine(this.envPython(paths.envStaging), req.content, { env, signal }));
 			this.set("weights");
 			if (opts.source === "import") {
-				const res = await this.deps.importWeights(String(opts.importDir), this.model.files, signal);
+				const res = await this.deps.importWeights(String(opts.importDir), this.model.files, signal, this.model.id);
 				this.set("weights", { received: res.bytes, total: this.model.bytes });
 			} else {
 				await this.deps.downloadWeights(
@@ -300,19 +317,30 @@ export class LocalAsrManager {
 					signal,
 					env,
 					this.envPython(paths.envStaging),
+					{ repo: this.model.repo, revision: this.model.revision, modelId: this.model.id },
 				);
 			}
 			this.set("verify");
-			await this.step(signal, () => this.deps.verifyWeights(this.model.files, signal));
+			const runner = asrRunnerFamily(this.model.runner ?? "sensevoice");
+			await this.step(signal, () => this.deps.verifyWeights(this.model.files, signal, { assertManifest: runner.assertWeights, modelId: this.model.id }));
 			if (signal.aborted) throw new Error("已取消");
 			this.set("activate");
-			await this.deps.activate(paths, { source: opts.source, engineVersion: this.source.engineVersion, revision: this.model.revision });
+			await this.deps.activate(paths, {
+				source: opts.source,
+				engineVersion: this.source.engineVersion,
+				revision: this.model.revision,
+				modelId: this.model.id,
+				runner: this.model.runner ?? "sensevoice",
+				fileRoles: this.model.fileRoles ?? {},
+				sampleRate: this.model.sampleRate,
+				maxAudioBytes: ASR_MAX_AUDIO_BYTES,
+			});
 			this.installInfo = { state: "installed", phase: "done", received: this.installInfo.received, total: this.installInfo.total, error: null, installedAt: this.deps.now(), source: opts.source };
 			this.onChange();
 			return this.status();
 		} catch (e) {
 			const cancelled = signal.aborted;
-			await this.deps.rollback(this.deps.paths()).catch(() => {});
+			await this.deps.rollback(this.deps.paths(this.model.id)).catch(() => {});
 			this.installInfo = {
 				state: cancelled ? "not_installed" : "failed",
 				phase: cancelled ? "idle" : "rollback",
@@ -349,7 +377,7 @@ export class LocalAsrManager {
 	async uninstall(confirm: boolean): Promise<AsrStatus> {
 		if (!confirm) throw new Error("卸载需要显式确认");
 		if (this.runtime.state !== "stopped") await this.stop();
-		await this.deps.uninstall(this.deps.paths());
+		await this.deps.uninstall(this.deps.paths(this.model.id), this.model.id);
 		this.installInfo = { state: "not_installed", phase: "idle", received: 0, total: null, error: null, installedAt: null, source: null };
 		this.platform = this.deps.profile();
 		this.onChange();
@@ -374,7 +402,7 @@ export class LocalAsrManager {
 			const waitMs = this.runtime.nextStartAt - this.deps.now();
 			throw new Error(`启动退避中，请 ${Math.ceil(waitMs / 1000)} 秒后再试`);
 		}
-		const paths = this.deps.paths();
+		const paths = this.deps.paths(this.model.id);
 		this.runtime.state = "starting";
 		this.onChange();
 		try {
@@ -391,6 +419,7 @@ export class LocalAsrManager {
 				baseUrl: `http://${ASR_BIND_HOST}:${port}/v1/`,
 				token,
 				sampleRate: this.model.sampleRate,
+				languages: [...this.model.languages],
 			});
 			child.onExit((code) => {
 				if (this.runtime.child !== child) return;
@@ -622,7 +651,7 @@ export class LocalAsrManager {
 		return process.platform === "win32" ? `${env}\\Scripts\\${name}` : `${env}/bin/${name}`;
 	}
 	private entryScript(paths: AsrPaths): string {
-		return `${paths.root}/serve.py`;
+		return paths.serve ?? `${paths.root}/serve.py`;
 	}
 }
 
