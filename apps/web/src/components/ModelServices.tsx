@@ -612,6 +612,7 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 	const [st, setSt] = useState<LayaStatus | null>(null);
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState<string | null>(null);
+	const [showDetails, setShowDetails] = useState(false);
 	const [dlg, ask] = useConfirm();
 	const version = useStore((s) => s.localLayaVersion);
 	const load = () =>
@@ -667,6 +668,7 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 				<ServiceIcon provider={{ id: "local-laya", name: "本地 Laya", kind: "local" }} />
 				<span className="text-sm font-medium">本地快速操作模型（Laya）</span>
 				<Badge tone="accent">本地</Badge>
+				<Help>在有限候选里挑控件的快速分类模型（不是语音识别）。这台电脑和助理电脑共用同一份安装；两边的「用不用、用哪个」分别设置。</Help>
 				<span data-testid="laya-install-state">
 					<Badge tone={installing ? "amber" : installed ? "green" : st.install.state === "failed" ? "red" : "zinc"}>
 						{st.install.state === "not_installed" ? "未安装" : installing ? "安装中" : installed ? "已安装" : "安装失败"}
@@ -678,19 +680,11 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 					</Badge>
 				</span>
 			</div>
-			<div className="flex flex-wrap items-center gap-2 text-[11px] text-mut">
-				<span>在有限候选里挑控件的快速分类模型（不是语音识别）。这台电脑和助理电脑共用同一份安装；两边的「用不用、用哪个」分别设置。</span>
-			</div>
-			<div className="flex flex-wrap items-center gap-2 text-[11px] text-mut">
-				<span data-testid="laya-platform" data-support={p.support}>
-					平台：{p.os} / {p.arch} · {p.support === "supported" ? "支持" : p.support === "conditional" ? "有条件支持" : p.support === "experimental" ? "实验性" : "不支持"}（安装意图 {p.accelerator}）
-				</span>
-				{unsupported && (
-					<span className="flex items-center gap-1 text-amber-600" data-testid="laya-platform-reason">
-						<AlertTriangle size={12} /> {p.reason || "此平台暂不支持，不假装成功"}
-					</span>
-				)}
-			</div>
+			{unsupported && (
+				<div className="flex items-center gap-1 text-[11px] text-amber-600" data-testid="laya-platform-reason">
+					<AlertTriangle size={12} /> {p.reason || "此平台暂不支持，不假装成功"}
+				</div>
+			)}
 			{installing && (
 				<div className="space-y-1.5 text-[11px]" data-testid="laya-progress">
 					<div className="flex items-center gap-2">
@@ -717,9 +711,6 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 					{st.health.revisions && Object.keys(st.health.revisions).length > 0 && <span className="text-mut2">revision：{Object.values(st.health.revisions).join(", ").slice(0, 12)}</span>}
 				</div>
 			)}
-			<div className="flex flex-wrap items-center gap-2 text-[11px] text-mut2" data-testid="laya-source">
-				来源：{st.source.project} {st.source.version} · 代码 {st.source.codeLicense} / 权重 {st.source.weightsLicense}
-			</div>
 			{/* 分类器模型：注册进目录后可选 + 实际操作测试；未运行显示未就绪，而不是删掉配置 */}
 			<div className="rounded-lg border border-line" data-testid="laya-model-row" data-registered={String(!!st.registered)}>
 				<div className="flex flex-wrap items-center gap-2 px-2.5 py-1.5 text-xs">
@@ -774,8 +765,22 @@ export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: Registr
 				)}
 			</div>
 			{err && <div className="text-[11px] text-red-600" data-testid="laya-op-error">{err}</div>}
-			<div className="text-[11px] text-mut2" data-testid="laya-unverified-note">
-				本地 Laya 的下载 / 启动尚未在本机实机验证（后端测试为 fake / 环回 HTTP，未真下载 venv、未启动 Laya、未跑 GPU）；状态以实际 health 为准。
+			{/* 平台 / 来源 / 许可 / 未实测声明：全部保留，按需展开。 */}
+			<div className="text-[11px]">
+				<button type="button" className="text-mut2 underline underline-offset-2" aria-expanded={showDetails} onClick={() => setShowDetails((v) => !v)} data-testid="laya-details-toggle">
+					{showDetails ? "收起详情" : "详情"}
+				</button>
+				{showDetails && (
+					<div className="mt-1 space-y-0.5 text-mut2" data-testid="laya-details">
+						<div data-testid="laya-platform" data-support={p.support}>
+							平台：{p.os} / {p.arch} · {p.support === "supported" ? "支持" : p.support === "conditional" ? "有条件支持" : p.support === "experimental" ? "实验性" : "不支持"}（安装意图 {p.accelerator}）
+						</div>
+						<div data-testid="laya-source">
+							来源：{st.source.project} {st.source.version} · 代码 {st.source.codeLicense} / 权重 {st.source.weightsLicense}
+						</div>
+						<div data-testid="laya-unverified-note">本地 Laya 的下载 / 启动尚未在本机实机验证（后端测试为 fake / 环回 HTTP，未真下载 venv、未启动 Laya、未跑 GPU）；状态以实际 health 为准。</div>
+					</div>
+				)}
 			</div>
 		</div>
 	);
@@ -815,7 +820,8 @@ export function LocalSenseVoiceCard() {
 	const [busy, setBusy] = useState<string | null>(null);
 	const [accepted, setAccepted] = useState(false);
 	const [importDir, setImportDir] = useState("");
-	const [showTerms, setShowTerms] = useState(false);
+	const [showImport, setShowImport] = useState(false);
+	const [showDetails, setShowDetails] = useState(false);
 	const load = () =>
 		api<AsrStatusView>("/api/local-models/asr/sensevoice/status")
 			.then((s) => (setSt(s), setErr("")))
@@ -854,64 +860,138 @@ export function LocalSenseVoiceCard() {
 	const blocked = lic.decision !== "cleared";
 	const decisionLabel = lic.decision === "cleared" ? "已确认" : lic.decision === "unresolved" ? "适用范围未最终确认" : "禁止";
 	const percent = st.install.total ? Math.round((st.install.received / st.install.total) * 100) : null;
+	// 单一状态：把安装态 + 运行态合成一个 badge，屏上不再同时出现「未安装 / 未运行」等重复状态。
+	const [statusTone, statusText]: ["accent" | "green" | "amber" | "red" | "zinc", string] = installing
+		? ["amber", percent != null ? `安装中 ${percent}%` : "安装中"]
+		: st.install.state === "failed"
+			? ["red", "安装失败"]
+			: !installed
+				? ["zinc", "未安装"]
+				: running
+					? ["green", "运行中"]
+					: st.runtime.state === "starting"
+						? ["amber", "启动中"]
+						: st.runtime.state === "stopping"
+							? ["amber", "停止中"]
+							: st.runtime.state === "crashed"
+								? ["red", "已崩溃"]
+								: ["zinc", "已安装 · 未运行"];
+	const licenseLinks = (
+		<div className="flex flex-wrap gap-2 pt-0.5">
+			<a className="underline" href={st.source.repoUrl} target="_blank" rel="noreferrer" data-testid="sensevoice-link-repo">
+				源码仓库
+			</a>
+			<a className="underline" href={lic.links.modelLicense} target="_blank" rel="noreferrer" data-testid="sensevoice-link-license">
+				许可正文
+			</a>
+			<a className="underline" href={lic.links.modelCard} target="_blank" rel="noreferrer" data-testid="sensevoice-link-card">
+				权重页
+			</a>
+			<a className="underline" href={lic.links.issue} target="_blank" rel="noreferrer" data-testid="sensevoice-link-issue">
+				适用范围澄清（issue）
+			</a>
+		</div>
+	);
 	return (
-		<div className="space-y-3 rounded-xl border border-line p-3" data-testid="local-sensevoice-card" data-install-state={st.install.state} data-runtime-state={st.runtime.state} data-license-decision={lic.decision} data-source="local">
+		<div className="space-y-2.5 rounded-xl border border-line p-3" data-testid="local-sensevoice-card" data-install-state={st.install.state} data-runtime-state={st.runtime.state} data-license-decision={lic.decision} data-source="local">
 			<div className="flex flex-wrap items-center gap-2 text-xs">
 				<ServiceIcon provider={{ id: "local-sensevoice", name: "本地 SenseVoice", kind: "local" }} />
 				<span className="text-sm font-medium">本地语音识别（SenseVoice）</span>
 				<Badge tone="accent">本地</Badge>
-				<span data-testid="sensevoice-install-state">
-					<Badge tone={installing ? "amber" : installed ? "green" : st.install.state === "failed" ? "red" : "zinc"}>
-						{st.install.state === "not_installed" ? "未安装" : installing ? "安装中" : installed ? "已安装" : "安装失败"}
-					</Badge>
+				<span data-testid="sensevoice-state">
+					<Badge tone={statusTone}>{statusText}</Badge>
 				</span>
-				<span data-testid="sensevoice-runtime-state">
-					<Badge tone={running ? "green" : st.runtime.state === "crashed" ? "red" : "zinc"}>
-						{running ? "运行中" : st.runtime.state === "starting" ? "启动中" : st.runtime.state === "stopping" ? "停止中" : st.runtime.state === "crashed" ? "已崩溃" : "未运行"}
-					</Badge>
-				</span>
-			</div>
-			<div className="text-[11px] text-mut" data-testid="sensevoice-source">
-				来源：{st.source.project} · 引擎 sherpa-onnx（{st.source.weightsLicense}）· 权重 {st.model.id}（{(st.model.bytes / 1024 / 1024).toFixed(0)} MB，{st.model.sampleRate} Hz {st.model.channels}ch，{st.model.languages.join("/")}）
-			</div>
-			<div className="space-y-1.5" data-testid="sensevoice-license" data-license-decision={lic.decision}>
-				<div className="flex flex-wrap items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
-					<AlertTriangle size={12} className="shrink-0" />
-					<span className="font-medium">
-						许可：{lic.licenseName} v{lic.termsVersion}（{decisionLabel}）
-					</span>
-					{blocked && <span className="font-medium">— 下载暂不可用</span>}
-					<button type="button" className="text-mut underline underline-offset-2" onClick={() => setShowTerms((v) => !v)} aria-expanded={showTerms} data-testid="sensevoice-terms-toggle">
-						{showTerms ? "收起条款" : "条款与详情"}
-					</button>
+				<div className="ml-auto">
+					<Help>
+						项目：{st.source.project} · 引擎 sherpa-onnx（{st.source.weightsLicense}）· 权重 {st.model.id}：{(st.model.bytes / 1024 / 1024).toFixed(0)} MB，{st.model.sampleRate} Hz {st.model.channels}ch，{st.model.languages.join("/")}
+						{st.model.punctuation ? "，带标点" : ""} · 许可署名：{lic.attribution}
+						{st.notes.length > 0 && <div className="pt-0.5">{st.notes.join("；")}</div>}
+					</Help>
 				</div>
-				{showTerms && (
-					<div className="space-y-1 rounded-lg border border-amber-300/60 bg-amber-50/60 p-2.5 text-[11px] text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" data-testid="sensevoice-license-detail">
-						<ul className="list-disc space-y-0.5 pl-4">
-							{lic.restrictions.map((r) => (
-								<li key={r}>{r}</li>
-							))}
-						</ul>
-						<div className="flex flex-wrap gap-2 pt-0.5">
-							<a className="underline" href={st.source.repoUrl} target="_blank" rel="noreferrer" data-testid="sensevoice-link-repo">
-								源码仓库
-							</a>
-							<a className="underline" href={lic.links.modelLicense} target="_blank" rel="noreferrer" data-testid="sensevoice-link-license">
-								许可正文
-							</a>
-							<a className="underline" href={lic.links.modelCard} target="_blank" rel="noreferrer" data-testid="sensevoice-link-card">
-								权重页
-							</a>
-							<a className="underline" href={lic.links.issue} target="_blank" rel="noreferrer" data-testid="sensevoice-link-issue">
-								适用范围澄清（issue）
-							</a>
-						</div>
-						<div className="text-amber-800/80 dark:text-amber-300/80">
-							{lic.reason}。不随 App 分发 / 不镜像；{blocked ? "下载安装入口已关闭" : "接受条款后可安装"}，用户可自行导入已合法取得的权重。
-						</div>
-					</div>
+			</div>
+			{/* 许可摘要常驻可见（关键信息不藏，不折叠遮盖）：未确认时只剩一句 + 「?」看完整条款。 */}
+			<div className="flex flex-wrap items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300" data-testid="sensevoice-license" data-license-decision={lic.decision}>
+				<AlertTriangle size={12} className="shrink-0" />
+				{blocked ? (
+					<>
+						<span className="font-medium">许可待确认，暂不提供下载</span>
+						<span data-testid="sensevoice-license-help">
+							<Help>
+								许可：{lic.licenseName} v{lic.termsVersion}（{decisionLabel}）。
+								<ul className="list-disc space-y-0.5 pl-4">
+									{lic.restrictions.map((r) => (
+										<li key={r}>{r}</li>
+									))}
+								</ul>
+								{lic.reason}。不随 App 分发 / 不镜像；下载入口已关闭，可自行导入已合法取得的权重。
+								{licenseLinks}
+							</Help>
+						</span>
+					</>
+				) : (
+					<>
+						<span>许可 {lic.licenseName} v{lic.termsVersion}（{decisionLabel}）</span>
+						<span data-testid="sensevoice-license-help">
+							<Help>
+								<ul className="list-disc space-y-0.5 pl-4">
+									{lic.restrictions.map((r) => (
+										<li key={r}>{r}</li>
+									))}
+								</ul>
+								{licenseLinks}
+							</Help>
+						</span>
+					</>
 				)}
 			</div>
+			{/* 主操作：只保留当下真正能做的（下载 / 重试 / 启停）；未安装时「导入已有权重」收进可访问折叠。 */}
+			<div className="flex flex-wrap items-center gap-2 text-[11px]">
+				{!installed && !installing &&
+					(blocked ? (
+						<Button size="sm" variant="outline" disabled title={lic.reason} data-testid="sensevoice-install">
+							<Download size={13} /> 下载
+						</Button>
+					) : (
+						<>
+							<label className="flex items-center gap-1.5">
+								<input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} data-testid="sensevoice-accept" />
+								同意许可条款（v{lic.termsVersion}）
+							</label>
+							<Button size="sm" variant="primary" disabled={!!busy || !accepted} onClick={() => void post("/install", { acceptLicense: lic.acceptValue, source: "download" })} data-testid="sensevoice-install">
+								<Download size={13} /> 下载并安装
+							</Button>
+						</>
+					))}
+				{st.install.state === "failed" && (
+					<Button size="sm" variant="primary" disabled={!!busy || blocked} title={blocked ? lic.reason : undefined} onClick={() => void post("/install", { acceptLicense: lic.acceptValue, source: "download" })} data-testid="sensevoice-retry">
+						<RotateCcw size={13} /> 重试安装
+					</Button>
+				)}
+				{installed && (
+					<>
+						<Button size="sm" variant={running ? "ghost" : "primary"} disabled={!!busy} onClick={() => void post(running ? "/stop" : "/start")} data-testid="sensevoice-toggle">
+							{running ? "停止" : "启动"}
+						</Button>
+						<Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void post("/idle", { seconds: 0 })} data-testid="sensevoice-idle">
+							空闲立即释放
+						</Button>
+					</>
+				)}
+				{!installed && !installing && (
+					<button type="button" className="text-mut underline underline-offset-2" aria-expanded={showImport} onClick={() => setShowImport((v) => !v)} data-testid="sensevoice-import-toggle">
+						{showImport ? "收起" : "导入已有权重"}
+					</button>
+				)}
+			</div>
+			{showImport && !installed && !installing && (
+				<div className="flex flex-wrap items-center gap-2 text-[11px]" data-testid="sensevoice-import-panel">
+					<Input placeholder="权重目录（含 model.int8.onnx / tokens.txt）" value={importDir} onChange={(e) => setImportDir(e.target.value)} className="min-w-[220px]" data-testid="sensevoice-import-dir" />
+					<Button size="sm" variant="outline" disabled={!!busy || !importDir.trim() || lic.decision === "prohibited"} onClick={() => void post("/install", { source: "import", importDir: importDir.trim() })} data-testid="sensevoice-import">
+						导入
+					</Button>
+					<span className="text-mut2">自行合法取得，不随 App 分发</span>
+				</div>
+			)}
 			{installing && (
 				<div className="space-y-1.5 text-[11px]" data-testid="sensevoice-progress">
 					<div className="flex items-center gap-2">
@@ -919,7 +999,7 @@ export function LocalSenseVoiceCard() {
 						<div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-hover">
 							<div className="h-full rounded-full bg-accent transition-all" style={{ width: `${percent ?? 8}%` }} />
 						</div>
-						<span className="w-24 shrink-0 text-right text-mut2">{percent != null ? `${percent}%` : "进行中"}</span>
+						<span className="w-20 shrink-0 text-right text-mut2">{percent != null ? `${percent}%` : "进行中"}</span>
 					</div>
 					<Button size="sm" variant="ghost" onClick={() => void post("/cancel")} data-testid="sensevoice-cancel">
 						取消
@@ -931,33 +1011,28 @@ export function LocalSenseVoiceCard() {
 					{st.install.error}
 				</div>
 			)}
-			<div className="flex flex-wrap items-center gap-2 text-[11px]">
-				<label className="flex items-center gap-1.5" title={blocked ? "许可未确认，勾选不能绕过；请用下方「导入」" : undefined}>
-					<input type="checkbox" checked={accepted} disabled={blocked} onChange={(e) => setAccepted(e.target.checked)} data-testid="sensevoice-accept" />
-					我已阅读上述许可条款（v{lic.termsVersion}）
-				</label>
-				<Button size="sm" variant="outline" disabled={!!busy || installing || blocked || !accepted} title={blocked ? lic.reason : undefined} onClick={() => void post("/install", { acceptLicense: lic.acceptValue, source: "download" })} data-testid="sensevoice-install">
-					{blocked ? "下载安装（许可未确认，已关闭）" : "下载并安装"}
-				</Button>
-			</div>
-			<div className="flex flex-wrap items-center gap-2 text-[11px]">
-				<Input placeholder="已下载权重目录（含 model.int8.onnx / tokens.txt）" value={importDir} onChange={(e) => setImportDir(e.target.value)} className="min-w-[240px]" data-testid="sensevoice-import-dir" />
-				<Button size="sm" variant="outline" disabled={!!busy || installing || !importDir.trim() || lic.decision === "prohibited"} onClick={() => void post("/install", { source: "import", importDir: importDir.trim() })} data-testid="sensevoice-import">
-					导入已下载权重
-				</Button>
-			</div>
-			{installed && (
-				<div className="flex flex-wrap gap-2">
-					<Button size="sm" variant={running ? "ghost" : "primary"} disabled={!!busy} onClick={() => void post(running ? "/stop" : "/start")} data-testid="sensevoice-toggle">
-						{running ? "停止" : "启动"}
-					</Button>
-					<Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void post("/idle", { seconds: 0 })} data-testid="sensevoice-idle">
-						空闲立即释放
-					</Button>
-				</div>
-			)}
 			{err && <div className="text-[11px] text-red-600" data-testid="sensevoice-op-error">{err}</div>}
-			<div className="text-[11px] text-mut2">{st.notes[0]}</div>
+			{/* 详情折叠：规格 / 来源 / 版本 / 采样率 / 许可署名 / 未实测说明，全部保留，按需展开。 */}
+			<div className="text-[11px]">
+				<button type="button" className="text-mut2 underline underline-offset-2" aria-expanded={showDetails} onClick={() => setShowDetails((v) => !v)} data-testid="sensevoice-details-toggle">
+					{showDetails ? "收起详情" : "详情"}
+				</button>
+				{showDetails && (
+					<div className="mt-1 space-y-0.5 text-mut2" data-testid="sensevoice-details">
+						<div data-testid="sensevoice-source">
+							来源：{st.source.project} · 引擎 sherpa-onnx（{st.source.weightsLicense}）· 权重 {st.model.id}（{(st.model.bytes / 1024 / 1024).toFixed(0)} MB，{st.model.sampleRate} Hz {st.model.channels}ch，{st.model.languages.join("/")}{st.model.punctuation ? "，带标点" : ""}）
+						</div>
+						<div>
+							权重仓库：{st.source.weightsRepo}@{st.source.weightsRevision.slice(0, 12)} · 许可署名：{lic.attribution}
+						</div>
+						{st.notes.map((n) => (
+							<div key={n} data-testid="sensevoice-note">
+								{n}
+							</div>
+						))}
+					</div>
+				)}
+			</div>
 		</div>
 	);
 }
@@ -1204,7 +1279,7 @@ export function ModelServicesPanel() {
 		);
 	const configured = registry.filter((s) => s.configured).length;
 	return (
-		<Fold testId="model-services" icon={Gauge} title="模型服务" count={registry.length + 1} hint={configured ? `已配置 ${configured}` : undefined} desc="一个服务 = 一份地址 + 一份凭据，可同时含对话 / 识图 / 生图 / 分类器模型。能力按 Pi 目录或对端元数据识别，猜的标「未确认」，可手动纠正。" open={expanded} onToggle={() => setExpanded((v) => !v)}>
+		<Fold testId="model-services" icon={Gauge} title="模型服务" count={registry.length + 1} hint={configured ? `已配置 ${configured}` : undefined} desc="一个服务 = 一份地址 + 一份凭据，可同时含对话 / 识图 / 生图 / 分类器模型（官方目录没有的，也能在这里填 Key 登录）。能力按 Pi 目录或对端元数据识别，猜的标「未确认」，可手动纠正；生图与快速操作模型都在这里选，不再单独配凭据。" open={expanded} onToggle={() => setExpanded((v) => !v)}>
 			<div className="space-y-3" data-testid="model-services-panel">
 				{confirmUi}
 				<DefaultImageModel images={images} onReload={reloadAll} />
@@ -1235,10 +1310,6 @@ export function ModelServicesPanel() {
 							onDelete={() => deleteCustom(s)}
 						/>
 					))}
-				</div>
-				<div className="flex items-center gap-1.5 text-[11px] text-mut2">
-					<Help>官方服务来自 Pi 内置目录，未接入的也能在这里填 Key 登录；自定义 / 中转填地址与 Key。能力多标签：对话 / 识图 / 生图 / 分类器。生图与快速操作模型都从这里的能力里选，不再单独配凭据。</Help>
-					生图与快速操作模型统一在这里，不再有独立配置区。
 				</div>
 			</div>
 			<AddServiceDialog open={addOpen} onClose={() => setAddOpen(false)} official={official} custom={custom} images={images} onReload={reloadAll} />

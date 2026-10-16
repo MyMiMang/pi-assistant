@@ -391,7 +391,7 @@ export function ProviderSetup({ provider, onConfigured }: { provider: Provider; 
 }
 
 /** 默认使用：一个按钮同时设「默认模型」和「新助理的思考强度」，复用输入栏同一个模型菜单（搜索 / 常用 / 按渠道折叠） */
-export function DefaultModelPicker({ providerId, onSaved }: { providerId?: string; onSaved?: () => void }) {
+export function DefaultModelPicker({ providerId, onSaved, compact }: { providerId?: string; onSaved?: () => void; compact?: boolean }) {
 	const system = useStore((s) => s.system);
 	const d = useConfiguredModels();
 	const [thinking, setThinking] = useState<string | null>(null);
@@ -439,8 +439,8 @@ export function DefaultModelPicker({ providerId, onSaved }: { providerId?: strin
 					{test === "running" ? <Loader2 size={14} className="animate-spin" /> : null} 测试连接
 				</Button>
 			</div>
-			<div className="text-xs text-mut">{cur ? `当前：${modelLabel(cur)}${levels.length > 1 ? ` · 思考 ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}` : "还没有设置默认模型"}</div>
-			<div className="text-xs text-mut">模型不支持的思考档位会自动就近调整；每个助理可以在输入框下方单独切换。</div>
+			{!compact && <div className="text-xs text-mut">{cur ? `当前：${modelLabel(cur)}${levels.length > 1 ? ` · 思考 ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}` : "还没有设置默认模型"}</div>}
+			{!compact && <div className="text-xs text-mut">模型不支持的思考档位会自动就近调整；每个助理可以在输入框下方单独切换。</div>}
 			{test && test !== "running" && (
 				<div className={cx("flex items-start gap-2 rounded-lg p-2 text-sm", test.ok ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40" : "bg-red-50 text-red-700 dark:bg-red-950/40")}>
 					{test.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <XCircle size={16} className="mt-0.5 shrink-0" />}

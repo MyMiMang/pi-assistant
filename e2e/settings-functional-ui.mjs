@@ -209,6 +209,9 @@ try {
 	check("模型页不再有 SenseVoice 卡", (await page.getByTestId("local-sensevoice-card").count()) === 0);
 	check("模型页不再有子代理折叠区", (await page.getByTestId("subagent-section").count()) === 0 && (await page.getByTestId("subagent-concurrency").count()) === 0);
 	check("模型页不含每助理任务上限", (await page.getByTestId("agent-subagent-limits").count()) === 0);
+	const modelsText = (await page.getByTestId("settings-content").textContent()) ?? "";
+	check("模型页不再有「当前：」重复行", !modelsText.includes("当前："), modelsText.slice(0, 200));
+	check("模型页常规 footer 已收进 Help（不在正文）", !modelsText.includes("生图与快速操作模型统一在这里"));
 	await page.getByTestId("service-toggle-openai").click();
 	await page.getByTestId("asr-adapter-section-openai").waitFor();
 	const asrText = (await page.getByTestId("asr-adapter-section-openai").textContent()) ?? "";
@@ -267,17 +270,35 @@ try {
 	check("点「添加在线服务」跳到模型服务页", (await page.getByTestId("settings-nav").locator("button[data-tab=models]").getAttribute("aria-current")) === "page");
 	state.cloudOption = true;
 
-	console.log("\n── 语音配置：本地许可常驻「下载暂不可用」+ 导入可用 ──");
+	console.log("\n── 语音配置：本地许可一句 + 导入折叠 + 紧凑详情 ──");
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
 	await page.getByTestId("voice-tab-local").click();
 	await page.getByTestId("local-sensevoice-card").waitFor();
 	const licText = (await page.getByTestId("sensevoice-license").textContent()) ?? "";
-	check("许可摘要常驻含「下载暂不可用」", licText.includes("下载暂不可用") && licText.includes("未最终确认"), licText);
-	check("下载安装按钮被禁用", await page.getByTestId("sensevoice-install").isDisabled());
-	check("导入入口可用", await page.getByTestId("sensevoice-import").isVisible());
-	check("本地选择按钮（使用本地语音识别）可见", await page.getByTestId("voice-local-use").isVisible());
+	check("许可摘要常驻一句「许可待确认，暂不提供下载」", licText.includes("许可待确认，暂不提供下载"), licText);
+	check("许可未确认时不显示永远不能勾选的同意复选框", (await page.getByTestId("sensevoice-accept").count()) === 0);
+	check("下载按钮禁用（短按钮 + title 说明原因）", (await page.getByTestId("sensevoice-install").isDisabled()) && !!(await page.getByTestId("sensevoice-install").getAttribute("title")));
+	check("导入入口默认收起（不占屏）", (await page.getByTestId("sensevoice-import").count()) === 0);
+	check("本地选择按钮「设为语音来源」可见", await page.getByTestId("voice-local-use").isVisible());
+	check("默认不出现长规格 / 详情", (await page.getByTestId("sensevoice-details").count()) === 0);
+	const cardIdle = (await page.getByTestId("local-sensevoice-card").textContent()) ?? "";
+	check("「未安装」只出现一次（不重复三处）", (cardIdle.match(/未安装/g) ?? []).length === 1, cardIdle);
+	// 默认（紧凑）状态截图：主看新图用这个
 	await page.screenshot({ path: join(OUT, "06-voice-local.png") });
+	await page.getByTestId("sensevoice-import-toggle").click();
+	check("展开折叠后目录输入 / 导入动作可访问", (await page.getByTestId("sensevoice-import-dir").isVisible()) && (await page.getByTestId("sensevoice-import").isVisible()));
+	await page.getByTestId("sensevoice-details-toggle").click();
+	const detail = (await page.getByTestId("sensevoice-details").textContent()) ?? "";
+	check("详情展开可看完整规格 / 采样率 / 未实测说明", detail.includes("16000") && detail.includes("sherpa-onnx") && (await page.getByTestId("sensevoice-note").count()) >= 1, detail);
+	await page.screenshot({ path: join(OUT, "06b-voice-local-expanded.png") });
+	// license 关键不可藏：完整条款与链接放在「?」里
+	await page.getByTestId("sensevoice-license-help").getByTestId("help").hover();
+	await page.getByTestId("help-pop").waitFor();
+	const popText = (await page.getByTestId("help-pop").textContent()) ?? "";
+	check("完整许可条款（限制 / 链接）在「?」里", popText.includes("署名") && popText.includes("FunASR") && (await page.getByTestId("help-pop").getByTestId("sensevoice-link-license").getAttribute("href"))?.startsWith("https://"), popText);
+	await page.keyboard.press("Escape");
+	await page.waitForTimeout(100);
 
 	console.log("\n── Help：Tab 聚焦打开 / Escape 只关气泡 ──");
 	const help = page.locator('[data-testid="settings-content"] [data-testid="help"]').first();

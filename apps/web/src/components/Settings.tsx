@@ -128,8 +128,8 @@ function ModelsTab() {
 	return (
 		<div className="space-y-6">
 			<section>
-				<H desc="新助理默认用这个模型；已经建好的助理不受影响，它们各自的模型在「助理设置」里改。点按钮可同时改模型和思考强度。">新助理默认模型</H>
-				<DefaultModelPicker />
+				<H desc="新助理默认用这个模型；已经建好的助理不受影响，它们各自的模型在「助理设置」里改。点按钮可同时改模型和思考强度；模型不支持的思考档位会自动就近调整，每个助理也可以单独切换。">新助理默认模型</H>
+				<DefaultModelPicker compact />
 			</section>
 			{/* 统一模型服务：服务卡片 / 添加服务 / 官方登录 / 自定义 CRUD / 生图适配 / 实际操作测试，见 docs/design/model-settings-unified.md。
 			    子代理任务参数、本地 Laya / SenseVoice 不在这里。 */}

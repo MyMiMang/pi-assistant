@@ -146,13 +146,15 @@ export function VoiceSettings() {
 									</Button>
 								</div>
 								{picked && picked.availability !== "ready" && picked.reason && <p className="text-xs text-amber-600" data-testid="voice-cloud-reason">{picked.reason}</p>}
-								{source?.location !== "cloud" && <p className="text-xs text-mut2">音频会先到本机服务，再转发给该服务（<b>会离开本机</b>，按量计费）。模型来自「模型服务」的 ASR 声明。</p>}
-							</div>
-						)}
-						{/* 已选择云端时，隐私 / 费用提醒常驻可见 */}
-						{source?.location === "cloud" && !sourceUnavailable && (
-							<div className="rounded-lg border border-amber-300/60 bg-amber-50/60 p-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" data-testid="voice-cloud-privacy">
-								当前使用云端语音识别：录音音频会离开本机发送给该服务，可能产生费用；不用时可以把来源改成「本地」或保持未配置。
+								{source?.location === "cloud" && !sourceUnavailable ? (
+									<p className="text-xs text-amber-600" data-testid="voice-cloud-privacy">
+										云端语音识别：录音会离开本机发送给该服务、可能产生费用。
+									</p>
+								) : (
+									<p className="text-xs text-mut2" data-testid="voice-cloud-note">
+										录音会离开本机、按量计费；模型来自「模型服务」的 ASR 声明。
+									</p>
+								)}
 							</div>
 						)}
 					</div>
@@ -162,27 +164,22 @@ export function VoiceSettings() {
 					<div className="space-y-3" data-testid="voice-local-section">
 						<LocalSenseVoiceCard />
 						{localPick && (
-							<div className="space-y-1">
-								<div className="flex flex-wrap items-center gap-2">
-									<Button
-										variant="primary"
-										disabled={saving || !canSave(localPick) || (source?.location === "local" && source.provider === localPick.provider && source.model === localPick.model)}
-										onClick={() => void choose({ location: "local", provider: localPick.provider, model: localPick.model })}
-										data-testid="voice-local-use"
-									>
-										{saving && <Loader2 size={14} className="animate-spin" />} 使用本地语音识别（SenseVoice）
-									</Button>
-									{source?.location === "local" && <Badge tone={localPick.availability === "ready" ? "green" : "amber"}>{localPick.availability === "ready" ? "当前使用" : `${AVAIL_LABEL[localPick.availability] ?? localPick.availability}（已选，点麦克风会尝试加载）`}</Badge>}
-								</div>
-								{localPick.availability === "not_installed" && <p className="text-xs text-mut2">可以先把本地语音识别设为来源；未安装前点麦克风不会录音，装好后会自动用上。</p>}
-								{localPick.reason && localPick.availability !== "ready" && <p className="text-xs text-amber-600" data-testid="voice-local-reason">{localPick.reason}</p>}
+							<div className="flex flex-wrap items-center gap-2">
+								<Button
+									variant="primary"
+									disabled={saving || !canSave(localPick) || (source?.location === "local" && source.provider === localPick.provider && source.model === localPick.model)}
+									onClick={() => void choose({ location: "local", provider: localPick.provider, model: localPick.model })}
+									data-testid="voice-local-use"
+								>
+									{saving && <Loader2 size={14} className="animate-spin" />} 设为语音来源
+								</Button>
+								{source?.location === "local" && <Badge tone={localPick.availability === "ready" ? "green" : "amber"}>{localPick.availability === "ready" ? "当前使用" : `${AVAIL_LABEL[localPick.availability] ?? localPick.availability}（点麦克风会尝试加载）`}</Badge>}
 							</div>
 						)}
 					</div>
 				)}
 
 				{saveErr && <div className="text-xs text-red-600" data-testid="voice-save-error">保存失败，已回滚：{saveErr}</div>}
-				<p className="text-xs text-mut2">没有选择就是「未配置」：麦克风按钮会提示来「语音配置」，<b>不会自动改用云端</b>。</p>
 			</section>
 		</div>
 	);

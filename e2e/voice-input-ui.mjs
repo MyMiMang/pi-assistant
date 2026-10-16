@@ -336,15 +336,20 @@ try {
 	check("本地 SenseVoice 许可卡可见", await page.locator('[data-testid="local-sensevoice-card"]').isVisible());
 	check("许可卡标注适用范围未最终确认", (await page.locator('[data-testid="local-sensevoice-card"]').getAttribute("data-license-decision")) === "unresolved");
 	const licText = (await page.locator('[data-testid="sensevoice-license"]').textContent()) ?? "";
-	check("许可摘要常驻可见（含「下载暂不可用」）", licText.includes("未最终确认") && licText.includes("下载暂不可用"));
-	await page.locator('[data-testid="sensevoice-terms-toggle"]').click();
-	await page.locator('[data-testid="sensevoice-license-detail"]').waitFor();
-	const detailText = (await page.locator('[data-testid="sensevoice-license-detail"]').textContent()) ?? "";
-	check("条款详情（折叠）含限制文案", detailText.includes("for reference and learning purposes only") || detailText.includes("署名"));
+	check("许可摘要一句「许可待确认，暂不提供下载」", licText.includes("许可待确认，暂不提供下载"), licText);
+	// 完整条款在「?」里（关键信息不藏）
+	await page.locator('[data-testid="sensevoice-license-help"] [data-testid="help"]').hover();
+	await page.locator('[data-testid="help-pop"]').waitFor();
+	const detailText = (await page.locator('[data-testid="help-pop"]').textContent()) ?? "";
+	check("完整条款含限制文案", detailText.includes("for reference and learning purposes only") || detailText.includes("署名"), detailText);
 	check("许可正文 / 来源链接可用", (await page.locator('[data-testid="sensevoice-link-license"]').getAttribute("href"))?.startsWith("https://") && (await page.locator('[data-testid="sensevoice-link-repo"]').getAttribute("href"))?.startsWith("https://"));
-	check("接受勾选在许可未确认时被禁用（不能绕过）", await page.locator('[data-testid="sensevoice-accept"]').isDisabled());
-	check("下载安装按钮在许可未确认时禁用", await page.locator('[data-testid="sensevoice-install"]').isDisabled());
-	check("自行导入入口可用", await page.locator('[data-testid="sensevoice-import"]').isVisible());
+	await page.keyboard.press("Escape");
+	// 许可未确认：不再显示永远不能勾选的同意复选框
+	check("许可未确认时不显示冗余同意复选框", (await page.locator('[data-testid="sensevoice-accept"]').count()) === 0);
+	check("下载按钮短标签且禁用", (await page.locator('[data-testid="sensevoice-install"]').isDisabled()) && ((await page.locator('[data-testid="sensevoice-install"]').textContent()) ?? "").trim().length <= 6);
+	check("默认不出现导入目录输入（收进折叠）", (await page.locator('[data-testid="sensevoice-import-dir"]').count()) === 0);
+	await page.locator('[data-testid="sensevoice-import-toggle"]').click();
+	check("展开折叠后导入入口可用", await page.locator('[data-testid="sensevoice-import"]').isVisible());
 	await page.screenshot({ path: join(OUT, "settings-asr.png") });
 
 	console.log(`\n${failed === 0 ? "全部通过" : `${failed} 项失败`}`);

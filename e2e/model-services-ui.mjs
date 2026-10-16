@@ -338,7 +338,11 @@ try {
 	assert.match(await page.getByTestId('laya-install-state').textContent(), /已安装/);
 	assert.match(await page.getByTestId('laya-runtime-state').textContent(), /运行中/);
 	assert.match(await page.getByTestId('laya-device').textContent(), /mps/, 'health 实际设备应来自测量值');
+	await page.getByTestId('laya-details-toggle').click();
 	assert.match(await page.getByTestId('laya-unverified-note').textContent(), /尚未在本机实机验证/, '需声明未实机验证');
+	assert.match(await page.getByTestId('laya-source').textContent(), /权重/, '来源 / 许可在详情里保留');
+	await page.getByTestId('laya-details-toggle').click();
+	assert.equal(await page.getByTestId('laya-unverified-note').count(), 0, '收起详情后长声明不占屏');
 	assert.equal(await page.getByTestId('laya-model-row').getAttribute('data-registered'), 'true');
 
 	// 8) 实际操作测试：provenance 按每次结果标明，不是永久硬文案

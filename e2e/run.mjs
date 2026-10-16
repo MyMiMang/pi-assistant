@@ -1059,7 +1059,7 @@ await step("多个自定义服务（中文名）：各自独立 id；默认模�
 		if ((await dmenu.innerText()).includes("custom-")) throw new Error("默认模型菜单里出现了内部 id");
 		await dmenu.getByTestId("default-model-search").fill("relay-chat");
 		await dmenu.locator(`[data-testid="default-model-option"][data-model="${ids[1]}/relay-chat"]`).click();
-		await p.getByText("当前：另一家中转 / relay-chat").waitFor({ timeout: 10_000 });
+		await p.waitForFunction(() => (document.querySelector('[data-testid="default-model-picker"]')?.textContent ?? "").includes("另一家中转 / relay-chat"), null, { timeout: 10_000 });
 		await p.screenshot({ path: join(SHOTS, "70-custom-providers-names.png") });
 		await c.close();
 
