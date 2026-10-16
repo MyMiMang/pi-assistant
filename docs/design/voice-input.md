@@ -34,7 +34,7 @@ idle ──start──▶ preparing ──(getUserMedia ok)──▶ recording �
 - **不自动重试**：失败保留本地草稿与音频（内存 blob），只给用户手动「重试」，避免重复付费。
 - **切 agent / conversation / detach / 页面 hidden / 后台**：立即 `stop tracks` + 取消（**不发送**）。
 - **短按 toggle 默认；长按 optional 不需要首期**。
-- **IME / Shift+Enter / Enter 换行不被打断**：转写结果插入前若 `isComposing`，**推迟到 compositionend** 再插入，绝不打断候选。
+- **IME / 发送快捷键不被打断**：转写结果插入前若 `isComposing`，**推迟到 compositionend** 再插入，绝不打断候选；发送 / 换行键按用户偏好（默认 `Enter` 发送、`Shift+Enter` 换行，见 [chat-send-shortcut.md](chat-send-shortcut.md)），输入法确认回车不会发送。
 
 ## 3. 音频链路（前端）
 

@@ -27,7 +27,7 @@ try {
 	page.on("pageerror", console.error);
 	await page.goto(`${BASE}/?agent=${a.id}`);
 	const box = page.locator("[data-testid=main-conversation] textarea:visible:not(.pa-card textarea)");
-	const say = async (text) => { await box.fill(text); await box.press("Shift+Enter"); };
+	const say = async (text) => { await box.fill(text); await box.press("Enter"); };
 	const rows = () => j(`/api/subagents?agent=${a.id}`);
 	const launch = async (text) => { const n = (await rows()).length; await say(text); await waitFor(async () => (await rows()).length > n); return (await rows())[0]; };
 	const finished = async (id, status) => waitFor(async () => (await rows()).find((r) => r.id === id)?.status === status);

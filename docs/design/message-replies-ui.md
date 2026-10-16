@@ -66,7 +66,7 @@ interface ReplyRef {
 
 - 引用条在 `textarea` 上方（composer 内部），比原状态多一行。用 `ResizeObserver` 观察 composer 高度，同步 `.pa-scroll` 的 `padding-bottom = composerH + 24`，**最后一条消息不被遮**。
 - 仅在用户**本来就贴底**时（`stick`）跟随滚动；未贴底不抢滚动。`visualViewport` 的 `stickChatScrolls` 逻辑不变。
-- 输入法 `Enter` 换行 / `Shift+Enter` 发送语义不变（`composer.ts isSendKey`）；引用条 `Esc` 只取消引用，若菜单 / 弹窗开着由它们自己处理顶层 Esc。
+- 发送键与换行键由用户偏好决定（2026-10-16 起默认 `Enter` 发送 / `Shift+Enter` 换行，见 [chat-send-shortcut.md](chat-send-shortcut.md)；`composer.ts` 的 `useComposerKeys`，本页只保证引用条 `Esc` 只取消引用，若菜单 / 弹窗开着由它们自己处理顶层 Esc）。
 - 390 宽：引用条 `min-width:0` + 单/双行截断，不横向溢出、不挤正文与工具结果。
 
 ## 8. 夹具测试（纯前端，不启动 server）

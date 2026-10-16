@@ -13,7 +13,7 @@ import type { Agent, Attachment, Message } from "../types";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
 import { Avatar, Button, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
-import { COMPOSER_LABEL, isSendKey, SEND_HINT } from "../composer";
+import { COMPOSER_LABEL, useComposerKeys } from "../composer";
 import { VoiceInput } from "./VoiceInput";
 import { SkillChips, SkillPicker } from "./SkillPicker";
 import { clearSkillDraft, setSkillDraft, useSkillDrafts, EMPTY_SKILLS } from "../skillDrafts";
@@ -255,6 +255,16 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 			setSending(false);
 		}
 	};
+	// 按键统一走 composer.ts 的判定（发送快捷键偏好 + 输入法防误发）；这里只补页面自己的 Esc。
+	const keys = useComposerKeys(send, (e) => {
+		if (e.key === "Escape" && quote) {
+			// 只取消引用，不清空已输入文字（菜单 / 弹窗的 Esc 由它们自己处理顶层）
+			e.preventDefault();
+			clearReplyDraft(replyKey);
+			return true;
+		}
+		return false;
+	}, replyKey);
 	if (ref && typeof ref === "object") (ref as React.RefObject<{ addFiles: typeof addFiles } | null>).current = { addFiles };
 	return (
 		<div className="pa-composer-wrap" ref={wrapRef}>
@@ -270,18 +280,7 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 					value={text}
 					onChange={(e) => setText(e.target.value)}
 					onPaste={(e) => pasteFiles(e, (fs) => void addFiles(fs))}
-					onKeyDown={(e) => {
-						if (e.key === "Escape" && quote) {
-							// 只取消引用，不清空已输入文字（菜单 / 弹窗的 Esc 由它们自己处理顶层）
-							e.preventDefault();
-							clearReplyDraft(replyKey);
-							return;
-						}
-						if (isSendKey(e)) {
-							e.preventDefault();
-							void send();
-						}
-					}}
+					{...keys.handlers}
 					placeholder={running ? t("可以随时补充或改要求，说「停」就停下") : t("给 {name} 发消息…", { name })}
 				/>
 				<div className="pa-composer-bar">
@@ -317,7 +316,7 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 							<Square size={13} fill="currentColor" />
 						</button>
 					) : (
-						<button className="pa-send" disabled={sending || (!text.trim() && !files.length)} onClick={send} aria-label={t("发送")} title={SEND_HINT} aria-keyshortcuts="Shift+Enter">
+						<button className="pa-send" disabled={sending || (!text.trim() && !files.length)} onClick={send} aria-label={t("发送")} title={keys.hint} aria-keyshortcuts={keys.keyshortcuts}>
 							<ArrowUp className="pa-ic" />
 						</button>
 					)}
