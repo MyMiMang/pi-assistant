@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { createSecurityProbe, spawnMemoryServer, startupEvidence } from "./fixtures/safe-memory-server.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -49,11 +50,8 @@ const waitFor = async (fn, ms = 20_000) => {
 	return false;
 };
 
-const server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], {
-	cwd: ROOT,
-	env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT), PIA_HOST_CONTROL_DRY_RUN: "1" },
-	stdio: ["ignore", "pipe", "pipe"],
-});
+const probe = createSecurityProbe(DATA);
+const { child: server, startupFile } = spawnMemoryServer({ repoRoot: ROOT, dataDir: DATA, port: PORT, probe, env: { PIA_HOST_CONTROL_DRY_RUN: "1" } });
 server.stderr.on("data", (d) => process.env.FORK_UI_VERBOSE && process.stderr.write(d));
 
 let browser;
@@ -92,6 +90,12 @@ try {
 		}
 		throw new Error("一直 busy，没能另开分支");
 	};
+
+	await step("启动走测试入口：内存凭据被调用、0 次 security（不碰钥匙串）", async () => {
+		const ev = await startupEvidence(startupFile, probe);
+		if (!(ev.storeCalls > 0)) throw new Error(`内存凭据没被访问（storeCalls=${ev.storeCalls}）`);
+		if (ev.securityCalls !== 0) throw new Error(`调用了系统 security ${ev.securityCalls} 次`);
+	});
 
 	// 建两轮真实对话（Mock）
 	await step("发送两轮消息（Mock 回复完成）", async () => {

@@ -15,6 +15,7 @@ import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { createSecurityProbe, spawnMemoryServer, startupEvidence } from "./fixtures/safe-memory-server.mjs";
 
 const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const DATA = "/tmp/pia-e2e-voice-source-live";
@@ -22,6 +23,7 @@ const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/
 rmSync(DATA, { recursive: true, force: true });
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
+const probe = createSecurityProbe(DATA);
 
 const PORT = await new Promise((r) => {
 	const s = createServer().listen(0, "127.0.0.1", () => {
@@ -30,7 +32,7 @@ const PORT = await new Promise((r) => {
 	});
 });
 const BASE = `http://127.0.0.1:${PORT}`;
-const server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] });
+const { child: server, startupFile } = spawnMemoryServer({ repoRoot: ROOT, dataDir: DATA, port: PORT, probe });
 let serverLogs = "";
 server.stdout.on("data", (d) => (serverLogs += d));
 server.stderr.on("data", (d) => (serverLogs += d));
@@ -93,6 +95,9 @@ let browser;
 try {
 	const up = await wait(async () => (await fetch(`${BASE}/api/system`)).ok);
 	assert.ok(up, `server 未起来：${serverLogs.slice(-800)}`);
+	const ev = await startupEvidence(startupFile, probe);
+	check("启动走测试入口：内存凭据被调用（>0）", ev.storeCalls > 0, `storeCalls=${ev.storeCalls}`);
+	check("0 次系统 security（不碰钥匙串）", ev.securityCalls === 0, `security=${ev.securityCalls}`);
 	await j("/api/settings", "PUT", { onboarded: true });
 	const agent = (await j("/api/agents", "POST", { name: "语音闭环验证" })).body;
 

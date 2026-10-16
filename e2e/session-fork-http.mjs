@@ -11,6 +11,7 @@ import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createSecurityProbe, spawnMemoryServer, startupEvidence } from "./fixtures/safe-memory-server.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PORT = await new Promise((r) => {
@@ -51,15 +52,17 @@ const wait = async (fn, ms = 20_000) => {
 	return false;
 };
 
-const server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], {
-	cwd: ROOT,
-	env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT), PIA_HOST_CONTROL_DRY_RUN: "1" },
-	stdio: ["ignore", "pipe", "pipe"],
-});
+const probe = createSecurityProbe(DATA);
+const { child: server, startupFile } = spawnMemoryServer({ repoRoot: ROOT, dataDir: DATA, port: PORT, probe, env: { PIA_HOST_CONTROL_DRY_RUN: "1" } });
 server.stderr.on("data", (d) => process.env.FORK_SMOKE_VERBOSE && process.stderr.write(d));
 
 try {
 	if (!(await wait(async () => (await api("/api/system/public")).status === 200, 30_000))) throw new Error("server 没起来");
+
+	const ev = await startupEvidence(startupFile, probe);
+	if (!(ev.storeCalls > 0)) fail(`内存凭据没被访问（storeCalls=${ev.storeCalls}）`);
+	else if (ev.securityCalls !== 0) fail(`调用了系统 security ${ev.securityCalls} 次`);
+	else ok("启动走测试入口：内存凭据被调用、0 次 security（不碰钥匙串）");
 
 	const agent = (await api("/api/agents", { method: "POST", json: { name: "分支冒烟" } })).body;
 	const conv = (await api(`/api/agents/${agent.id}/conversations`)).body.current;

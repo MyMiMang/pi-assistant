@@ -6,11 +6,11 @@
  * 运行：node e2e/send-shortcut-ui.mjs
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { createSecurityProbe, spawnMemoryServer, startupEvidence } from "./fixtures/safe-memory-server.mjs";
 
 const ROOT = new URL("..", import.meta.url);
 const { fileURLToPath } = await import("node:url");
@@ -23,10 +23,11 @@ const PREF = "pia.chat.sendShortcut";
 rmSync(DATA, { recursive: true, force: true });
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
-let server, browser;
+const probe = createSecurityProbe(DATA);
+let server, startupFile, browser;
 const waitFor = async (fn, ms = 25_000) => { const end = Date.now() + ms; while (Date.now() < end) { try { if (await fn()) return; } catch {} await new Promise((r) => setTimeout(r, 100)); } throw new Error("timeout"); };
 const j = async (path, method = "GET", body) => { const r = await fetch(BASE + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); const data = await r.json(); if (!r.ok) throw new Error(`${path} ${JSON.stringify(data)}`); return data; };
-const start = async () => { server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: REPO, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] }); server.stdout.on("data", (d) => process.stdout.write(d)); server.stderr.on("data", (d) => process.stderr.write(d));
+const start = async () => { const r = spawnMemoryServer({ repoRoot: REPO, dataDir: DATA, port: PORT, probe }); server = r.child; startupFile = r.startupFile; server.stdout.on("data", (d) => process.stdout.write(d)); server.stderr.on("data", (d) => process.stderr.write(d));
 	server.on("exit", (code, sig) => console.error(`[server exited] code=${code} signal=${sig}`));
 	await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
 const stop = async () => { if (!server || server.exitCode !== null) return; const done = new Promise((r) => server.once("exit", r)); server.kill("SIGTERM"); await done; };
@@ -50,6 +51,9 @@ const synth = (page, sel, kind, opts = {}) => page.locator(sel).evaluate((el, [k
 
 try {
 	await start();
+	const ev = await startupEvidence(startupFile, probe);
+	check("启动走测试入口：内存凭据被调用（>0）", ev.storeCalls > 0, `storeCalls=${ev.storeCalls}`);
+	check("0 次系统 security（不碰钥匙串）", ev.securityCalls === 0, `security=${ev.securityCalls}`);
 	await j("/api/settings", "PUT", { onboarded: true });
 	const a = await j("/api/agents", "POST", { name: "快捷键验证" });
 	const room = await j("/api/rooms", "POST", { name: "快捷键群", purpose: "验证群聊输入栏", memberIds: [a.id], managerId: a.id });
