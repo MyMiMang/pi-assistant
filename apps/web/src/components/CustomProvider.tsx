@@ -360,11 +360,8 @@ export function CustomProviderForm({ initial, apis, classifierProtocols = [], on
 						<CheckCircle2 size={16} className="text-emerald-500" /> 已保存：{saved.name} <Badge>{saved.id}</Badge>
 					</div>
 					<div className="flex gap-2">
-						<select value={testModel} onChange={(e) => (setTestModel(e.target.value), setTest(null))} className="h-9 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900" aria-label="测试模型">
-							{saved.models.map((m) => (
-								<option key={m.id}>{m.id}</option>
-							))}
-						</select>
+						{/* 模型列表可能很长（自建渠道可上千个），用应用内 Select（原生 select 无法搜索 / 超 20 行体验差）；小枚举 API 类型仍用原生 select */}
+						<Select value={testModel} ariaLabel="测试模型" testId="custom-test-model" className="min-w-0 flex-1" options={saved.models.map((m) => ({ value: m.id, label: m.id }))} onChange={(v) => (setTestModel(v), setTest(null))} />
 						<Button variant="outline" disabled={busy === "test" || !testModel} onClick={runTest}>
 							{busy === "test" && <Loader2 size={14} className="animate-spin" />} 测试连接
 						</Button>

@@ -83,16 +83,23 @@ export function group(list: Message[]): Row[] {
 	return rows;
 }
 
-// ------------------------------------------------------------------ 步骤列表：进行中展开，完成后自动收起
+// ------------------------------------------------------------------ 步骤列表：进行中默认展开（用户可随时收起），完成后自动收起
 function Steps({ items, live, busy }: { items: Message[]; live: boolean; busy?: boolean }) {
 	const [open, setOpen] = useState(live);
 	const [detail, setDetail] = useState<string | null>(null);
+	// 记录用户是否手动开合过：手动收起运行中的步骤后，后续流式更新不能把它重新弹开；
+	// 用户手动展开后，完成时的自动收起也不再覆盖他的选择。
+	const userToggled = useRef(false);
 	const wasLive = useRef(live);
 	useEffect(() => {
-		if (live) setOpen(true);
-		else if (wasLive.current) setOpen(false); // 完成后自动收起
+		if (live && !wasLive.current && !userToggled.current) setOpen(true); // 新变成进行中：自动展开
+		else if (!live && wasLive.current && !userToggled.current) setOpen(false); // 完成后自动收起
 		wasLive.current = live;
 	}, [live]);
+	const toggle = () => {
+		userToggled.current = true;
+		setOpen((v) => !v);
+	};
 	const errors = items.filter((m) => m.status === "error").length;
 	const failed = items.filter((m) => m.status === "error").slice(-1)[0];
 	const took = Math.max(0, (items[items.length - 1].updated_at ?? 0) - items[0].created_at);
@@ -100,14 +107,16 @@ function Steps({ items, live, busy }: { items: Message[]; live: boolean; busy?: 
 	const head = live ? `正在进行 · 第 ${items.length} 步` : errors ? `${items.length} 个步骤 · ${items.length - errors} 成功 · ${errors} 失败` : `${items.length} 个步骤 · 全部成功`;
 	return (
 		<div className={cx("pa-steps", open && "open")} data-testid="steps">
-			<button className="pa-steps-head" onClick={() => setOpen(!open)}>
+			<button className="pa-steps-head" onClick={toggle} aria-expanded={open}>
 				{live ? <span className="pa-spinner" /> : errors ? <X className="pa-ic text-red-500" /> : <Check className="pa-ic ok" />}
 				<span>{head}</span>
 				{!live && failed && <small className="text-red-500" data-testid="steps-failed">· {TOOL_LABEL[failed.meta.toolName as string] ?? String(failed.meta.toolName ?? "")}失败{busy ? "（这一步失败，任务继续）" : ""}</small>}
 				{!live && <small>用时 {secs(took)}</small>}
 				<ChevronRight className="pa-ic pa-chev" />
 			</button>
-			<ol className="pa-steps-list">
+			{/* 折叠动画靠 grid 0fr↔1fr（外层单一子元素），展开时显示完整内容、不再用固定 max-height 截断 */}
+			<div className="pa-steps-list" data-testid="steps-list">
+				<ol>
 				{items.map((m) => {
 					const name = m.meta.toolName as string;
 					const running = m.status === "running";
@@ -126,7 +135,8 @@ function Steps({ items, live, busy }: { items: Message[]; live: boolean; busy?: 
 						</li>
 					);
 				})}
-			</ol>
+				</ol>
+			</div>
 		</div>
 	);
 }

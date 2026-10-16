@@ -226,7 +226,7 @@ export function Fold({ icon: Icon, title, count, hint, desc, open, onToggle, tes
 				</button>
 				{desc && <Help>{desc}</Help>}
 			</div>
-			{open && <div className="mt-3">{children}</div>}
+			{open && <div className="pa-fold-in mt-3">{children}</div>}
 		</section>
 	);
 }
@@ -470,7 +470,7 @@ export function Select({
 						aria-label={ariaLabel}
 						aria-activedescendant={options.length ? optId(active) : undefined}
 						data-testid={testId ? `${testId}-menu` : undefined}
-						className="fixed z-[60] max-h-[280px] max-w-[calc(100vw-16px)] overflow-auto rounded-xl border border-line bg-card p-1 shadow-xl"
+						className="pa-menu-in fixed z-[60] max-h-[280px] max-w-[calc(100vw-16px)] overflow-auto rounded-xl border border-line bg-card p-1 shadow-xl"
 						style={{ left: rect.left, top: rect.top, width: rect.width, maxHeight: rect.maxH, transform: rect.up ? "translateY(-100%)" : undefined }}
 					>
 						{options.map((o, i) => {
