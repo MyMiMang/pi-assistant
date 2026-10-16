@@ -1,8 +1,10 @@
 /**
  * 本地 Laya 生产依赖里可离线验证的部分（fake HTTP / 临时目录 / 不碰 GPU / 不下载）。
- * 数据目录由 test/setup.ts 强制临时。
+ * 数据目录由 test/setup.ts 强制临时：下面这行**必须是第一条 import**（ESM 按声明顺序求值），
+ * 排在会 import `../src/config.ts` 的模块之前；否则 config 在 setup 之前捕获真实数据目录
+ * （2026-10-16 曾因此把 rl_agent_config.json 写进真实 App 目录）。npm test 另用 --import 预加载兜底。
  */
-await import("./setup.ts");
+import "./setup.ts";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -48,6 +50,19 @@ test("uninstall：canonical 校验 —— 只删我们自己的 local-laya 目�
 	assert.equal(layaRoot().endsWith("local-laya"), true);
 	const outside = { ...deps.paths(), root: "/tmp/not-ours" };
 	await assert.rejects(() => deps.uninstall(outside), /已拒绝/);
+});
+
+test("物化目录必须提供 Laya 本地加载会读的入口（LAYA_EXTRA_MODELS 只指这样的目录）", async () => {
+	const { checkpointFiles } = await import("../src/local-laya/checkpoint-files.ts");
+	// Laya 0.4.8 `Agent(path)`（laya/agent.py:575/672/675、laya/common.py:707）在本地目录下依次读：
+	//   model_dir/rl_agent_config.json、model_dir/tokenizer/（tokenizer.json + tokenizer_config.json）、
+	//   model_dir/encoder/config.json、model_dir/model.safetensors
+	// 少了任一个就会回退去 HF 下载（cfg["encoder"]）或直接抛错，所以固定清单必须覆盖它们。
+	const required = ["rl_agent_config.json", "model.safetensors", "encoder/config.json", "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json"];
+	for (const id of ["laya-multilingual", "laya-typed-decisions"]) {
+		const paths = new Set(checkpointFiles(id).filter((f) => !f.optional).map((f) => f.path));
+		for (const req of required) assert.ok(paths.has(req), `${id} 固定清单缺少 Laya 本地加载必需文件：${req}`);
+	}
 });
 
 /** HF 缓存真实布局小夹具：blobs/<sha> 与 snapshots/<rev>/<path> → ../../blobs/<sha>。 */
