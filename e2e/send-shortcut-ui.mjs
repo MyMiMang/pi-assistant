@@ -293,6 +293,37 @@ try {
 	await page.evaluate((k) => localStorage.removeItem(k), PREF);
 	await page.screenshot({ path: join(OUT, "05-390.png") });
 
+	// ---------------- 9）设置 › 聊天与输入：导航第 17 项 + 页面渲染 + 偏好持久化 + 390 不溢出
+	console.log("\n[9] 设置「聊天与输入」页（主整合接入）");
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto(`${BASE}/?settings=chat`);
+	await page.getByTestId("settings-dialog").waitFor();
+	const chatTab = page.locator('[data-testid=settings-nav] [data-tab=chat]');
+	await chatTab.waitFor();
+	check("导航有「聊天与输入」", ((await chatTab.textContent()) ?? "").includes("聊天与输入"));
+	check("导航项总数为 17（旧 16 + 新增 chat）", (await page.locator('[data-testid=settings-nav] [data-tab]').count()) === 17, String(await page.locator('[data-testid=settings-nav] [data-tab]').count()));
+	check("「聊天与输入」属「偏好与系统」组", await chatTab.evaluate((el) => { let n = el.previousElementSibling; while (n && !n.hasAttribute("data-settings-group")) n = n.previousElementSibling; return n?.getAttribute("data-settings-group") === "偏好与系统"; }));
+	await page.getByTestId("chat-settings").waitFor();
+	check("页面渲染出发送快捷键", await page.getByTestId("send-shortcut").isVisible());
+	check("缺省选中 Enter 发送", (await page.getByTestId("send-shortcut-enter").getAttribute("aria-checked")) === "true");
+	await page.getByTestId("send-shortcut-shift-enter").click();
+	check("点选 Shift+Enter 即写入本机偏好", (await page.evaluate((k) => localStorage.getItem(k), PREF)) === "shift-enter");
+	await page.reload();
+	await page.getByTestId("chat-settings").waitFor();
+	check("刷新后设置页仍是 Shift+Enter", (await page.getByTestId("send-shortcut-shift-enter").getAttribute("aria-checked")) === "true");
+	await page.evaluate((k) => localStorage.removeItem(k), PREF);
+	// 390：设置导航横排不撑宽，聊天页内容不溢出
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.waitForTimeout(400);
+	const navDoc = await page.locator("[data-testid=settings-nav]").evaluate(() => document.documentElement.scrollWidth - innerWidth);
+	check("390 设置导航横排不撑宽", navDoc <= 1, String(navDoc));
+	check("390 聊天与输入页不横向溢出", (await page.getByTestId("chat-settings").evaluate((el) => el.scrollWidth - el.clientWidth)) <= 1);
+	await page.screenshot({ path: join(OUT, "06-chat-settings-390.png") });
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto(`${BASE}/?settings=chat`);
+	await page.getByTestId("chat-settings").waitFor();
+	await page.screenshot({ path: join(OUT, "07-chat-settings.png") });
+
 	console.log(`\n${failed === 0 ? "全部通过" : `失败 ${failed} 项`}（截图在 ${OUT}）`);
 	await ctx.close();
 } finally {
