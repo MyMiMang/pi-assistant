@@ -24,14 +24,15 @@ import { AppUpdate } from "./AppUpdate";
 import { PetSettings } from "./PetSettings";
 import { UsageTab } from "./Usage";
 import { VoiceSettings } from "./VoiceSettings";
+import { ChatSettings } from "./ChatSettings";
 
-/** 设置导航：16 项分 5 组（只加分组标题，仍是一层点击，不变二级树）。旧 key / 深链全部保留。 */
+/** 设置导航：17 项分 5 组（只加分组标题，仍是一层点击，不变二级树）。旧 key / 深链全部保留。 */
 const GROUPS: { title: string; items: readonly (readonly [string, string, typeof Monitor])[] }[] = [
 	{ title: "模型与语音", items: [["models", "模型服务", Monitor], ["voice", "语音配置", Mic]] },
 	{ title: "电脑", items: [["computer", "助理电脑", MonitorPlay], ["host", "操作这台电脑", Hand]] },
 	{ title: "助理能力", items: [["memory", "记忆", Brain], ["skills", "技能库", Puzzle], ["extensions", "扩展（MCP）", Plug]] },
 	{ title: "连接", items: [["channels", "渠道", MessagesSquare], ["email", "邮箱", Mail], ["remote", "远程访问与设备", Wifi], ["entry", "固定地址 / 入口", Globe]] },
-	{ title: "偏好与系统", items: [["appearance", "外观", Palette], ["pet", "桌宠", Cat], ["usage", "用量", BarChart3], ["downloads", "下载与组件", Download], ["about", "关于与更新", Info]] },
+	{ title: "偏好与系统", items: [["chat", "聊天与输入", MessagesSquare], ["appearance", "外观", Palette], ["pet", "桌宠", Cat], ["usage", "用量", BarChart3], ["downloads", "下载与组件", Download], ["about", "关于与更新", Info]] },
 ];
 /** 旧深链别名：`?settings=model` 仍指向模型服务页。 */
 const SETTINGS_ALIAS: Record<string, string> = { model: "models" };
@@ -66,6 +67,7 @@ export default function Settings() {
 				<div key={settings} data-testid="settings-content" className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-5 [scrollbar-gutter:stable]">
 					{settings === "models" && <ModelsTab />}
 					{settings === "voice" && <VoiceSettings />}
+					{settings === "chat" && <ChatSettings />}
 					{settings === "usage" && <UsageTab />}
 					{settings === "skills" && <SkillsTab />}
 					{settings === "extensions" && (
