@@ -197,6 +197,25 @@ test("硬件档位按系统总 RAM 保守分档（8/16/32），不是跑分", ()
 
 // ------------------------------------------------------------------ 运行族
 
+test("catalog 全部真实清单能过各自运行族自检（Whisper 是 *-tokens.txt，不是 tokens.txt）", () => {
+	for (const spec of ASR_CATALOG) {
+		const fam = asrRunnerFamily(spec.family);
+		const problems = fam.assertWeights(spec.manifest.files.map((f) => ({ path: f.path, size: f.size, sha256: f.sha256 })));
+		assert.deepEqual(problems, [], `${spec.id} 的自检问题：${problems.join("；")}`);
+	}
+	assert.equal(asrModelSpec(WSMALL)?.manifest.fileRoles?.tokens, "small-tokens.txt");
+	const whisperFiles = ["small-tokens.txt", "e.onnx", "d.onnx"].map((p) => ({ path: p, size: 1, sha256: "a".repeat(64) }));
+	assert.deepEqual(asrRunnerFamily("whisper").assertWeights(whisperFiles), []);
+});
+
+test("sidecar 脚本按 ASR_WEIGHTS 取权重目录（多模型不能写死 ROOT/weights）", () => {
+	const sv = asrRunnerFamily("whisper").serveScript({ roles: { encoder: "e.onnx", decoder: "d.onnx", tokens: "t.txt" }, sampleRate: 16000, maxAudioBytes: 1024 });
+	assert.match(sv, /os\.environ\.get\("ASR_WEIGHTS"\) or os\.path\.join\(ROOT, "weights"\)/);
+	// /health 必须回报实际加载的 modelId（证明选对了模型，而不只是「有个 onnx」）。
+	assert.match(sv, /MODEL_ID = os\.environ\.get\("ASR_MODEL_ID", ""\)/);
+	assert.match(sv, /"modelId": MODEL_ID/);
+});
+
 test("运行族：三族生成真实构造参数；Whisper language 显式 \"\"（不回落引擎默认 en）；未知族 fail closed", () => {
 	const sv = asrRunnerFamily("sensevoice").serveScript({ roles: { model: "m.onnx", tokens: "t.txt" }, sampleRate: 16000, maxAudioBytes: 1024 });
 	assert.match(sv, /from_sense_voice/);

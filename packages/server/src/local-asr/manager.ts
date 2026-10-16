@@ -32,6 +32,8 @@ export interface AsrHealth {
 	device: string | null;
 	/** 已加载模型 id 列表 */
 	loaded: string[] | null;
+	/** sidecar 实际加载的模型 id（证明选对模型；旧脚本 / 未注册时为 null） */
+	modelId?: string | null;
 }
 
 export interface AsrPaths {
@@ -145,6 +147,8 @@ export interface InferenceLease {
 
 const MAX_BACKOFF_MS = 30_000;
 const MAX_CONSECUTIVE_FAILURES = 5;
+/** 启动后等 sidecar 把模型 load 完的预算（大模型可达数十秒；子进程退出会提前返回）。 */
+const HEALTH_LOAD_BUDGET_MS = 90_000;
 
 interface RuntimeState {
 	state: AsrRuntimeState;
@@ -426,7 +430,7 @@ export class LocalAsrManager {
 		try {
 			const port = await this.deps.findFreePort();
 			const token = this.deps.randomToken();
-			const env = { ...this.baseEnv(paths), ASR_HOST: ASR_BIND_HOST, ASR_PORT: String(port), ASR_TOKEN: token, ASR_THREADS: String(this.threadCap), ASR_IDLE_SECONDS: String(this.idleSeconds) };
+			const env = { ...this.baseEnv(paths), ASR_HOST: ASR_BIND_HOST, ASR_PORT: String(port), ASR_TOKEN: token, ASR_THREADS: String(this.threadCap), ASR_IDLE_SECONDS: String(this.idleSeconds), ASR_WEIGHTS: paths.weights, ASR_MODEL_ID: this.model.id };
 			const child = this.deps.spawnServe(this.envBin(paths.env, "python"), [this.entryScript(paths)], { env });
 			this.runtime = { ...this.runtime, state: "running", pid: child.pid ?? null, port, token, child, health: null, lastError: null, failures: 0, nextStartAt: 0 };
 			this.deps.recordPid(child.pid ?? null);
@@ -447,7 +451,7 @@ export class LocalAsrManager {
 				this.runtime = { ...this.runtime, state: "crashed", pid: null, child: null, token: null, health: null, lastError: `sidecar 退出（code ${code ?? "null"}）` };
 				this.onChange();
 			});
-			this.runtime.health = await this.probeHealth(port, token);
+			this.runtime.health = await this.probeHealth(port, token, child);
 			if (!this.runtime.health.ok) {
 				this.runtime.failures += 1;
 				this.runtime.restarts += 1;
@@ -523,19 +527,24 @@ export class LocalAsrManager {
 		return this.status();
 	}
 
-	/** 启动后 /health 可能还没就绪：有限次重试（已就绪就不等）。 */
-	private async probeHealth(port: number, token: string, attempts = 10): Promise<AsrHealth> {
+	/**
+	 * 启动后 /health 要等模型真正 load 完（大模型可能几十秒）——按**截止时间**轮询，
+	 * 子进程一退出就提前返回，不用固定重试次数把「加载慢」误判成「不健康」。
+	 */
+	private async probeHealth(port: number, token: string, child: AsrChild, budgetMs = HEALTH_LOAD_BUDGET_MS): Promise<AsrHealth> {
 		let last: AsrHealth = { ok: false, device: null, loaded: null };
-		for (let i = 0; i < attempts; i++) {
+		const deadline = this.deps.now() + budgetMs;
+		for (;;) {
 			try {
 				last = await this.deps.health(port, token);
 				if (last.ok) return last;
 			} catch {
-				/* 继续重试 */
+				/* 还没起来：继续等 */
 			}
-			if (i < attempts - 1) await new Promise((r) => setTimeout(r, 100));
+			if (this.runtime.child !== child) return last; // sidecar 已退出，没有可等的
+			if (this.deps.now() >= deadline) return last;
+			await new Promise<void>((resolve) => this.deps.setTimer(() => resolve(), 250));
 		}
-		return last;
 	}
 
 	// ---------------------------------------------------- inference / idle

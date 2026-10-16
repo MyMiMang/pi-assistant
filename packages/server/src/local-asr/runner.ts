@@ -88,7 +88,7 @@ registerAsrRunnerFamily({
 		const problems = assertNoExecutableWeights(files);
 		const seen = new Set(files.map((f) => String(f.path).replace(/\\/g, "/")));
 		if (![...seen].some((p) => p.endsWith(".onnx"))) problems.push("缺少 onnx 模型文件");
-		if (![...seen].some((p) => /(^|\/)tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
+		if (![...seen].some((p) => /tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
 		return problems;
 	},
 });
@@ -106,7 +106,7 @@ registerAsrRunnerFamily({
 		const problems = assertNoExecutableWeights(files);
 		const seen = new Set(files.map((f) => String(f.path).replace(/\\/g, "/")));
 		if (![...seen].some((p) => p.endsWith(".onnx"))) problems.push("缺少 onnx 模型文件");
-		if (![...seen].some((p) => /(^|\/)tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
+		if (![...seen].some((p) => /tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
 		return problems;
 	},
 });
@@ -125,7 +125,7 @@ registerAsrRunnerFamily({
 		const problems = assertNoExecutableWeights(files);
 		const seen = files.map((f) => String(f.path).replace(/\\/g, "/"));
 		if (seen.filter((p) => p.endsWith(".onnx")).length < 2) problems.push("Whisper 需要 encoder + decoder 两个 onnx 文件");
-		if (!seen.some((p) => /(^|\/)tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
+		if (!seen.some((p) => /tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
 		return problems;
 	},
 });

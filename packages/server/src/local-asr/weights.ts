@@ -14,7 +14,7 @@ export function assertSafeAsrManifest(files: PinnedFile[]): string[] {
 	const problems = [...assertSafePinnedFiles(files), ...assertNoExecutableWeights(files)];
 	const seen = new Set(files.map((f) => String(f.path).replace(/\\/g, "/")));
 	if (![...seen].some((p) => p.endsWith(".onnx"))) problems.push("缺少 onnx 模型文件");
-	if (![...seen].some((p) => /(^|\/)tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
+	if (![...seen].some((p) => /tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
 	return problems;
 }
 

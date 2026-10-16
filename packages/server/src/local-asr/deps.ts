@@ -88,12 +88,13 @@ export async function findFreePort(): Promise<number> {
 /** 读 sidecar `/health`（Bearer token）。解析失败按不可用处理。 */
 export async function readHealth(port: number, token: string, signal?: AbortSignal): Promise<AsrHealth> {
 	const res = await fetch(`http://${ASR_BIND_HOST}:${port}/health`, { headers: { authorization: `Bearer ${token}` }, signal: signal ?? AbortSignal.timeout(5000) });
-	if (!res.ok) return { ok: false, device: null, loaded: null };
+	if (!res.ok) return { ok: false, device: null, loaded: null, modelId: null };
 	const j = (await res.json()) as Record<string, unknown>;
 	return {
 		ok: j.status === "ok" || res.ok,
 		device: typeof j.device === "string" ? j.device : "cpu",
 		loaded: Array.isArray(j.loaded) ? (j.loaded as string[]) : null,
+		modelId: typeof j.modelId === "string" ? j.modelId : null,
 	};
 }
 
