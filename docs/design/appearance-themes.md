@@ -1,6 +1,6 @@
 # 外观主题：默认暗夜、移除极简、可爱像素风与用户 DIY（设计）
 
-状态：**P1 已实现**（默认暗夜 + 移除极简 + 迁移 + 首屏预置）；**P2 像素风已实现**；**P3 DIY 的 schema / 引擎 / 库存 / 预览事务 / 管理 UI 已实现**，**AI 后端已接通**（`POST /api/themes/draft` + 临时专用 Pi 会话，见 §5.7）；**面板可选本轮使用的模型**（显示实际使用模型 + 可换已配置聊天模型，仅本次草稿；beta.26 候选未发布，见 §5.7）。入口只有「设置 → 外观 → 用 AI 设计主题」；用户已明确**取消** `/主题设计` slash 命令，不注册任何 slash、不注入 prompt、不加命令列表。
+状态：**P1 已实现**（默认暗夜 + 移除极简 + 迁移 + 首屏预置）；**P2 像素风已实现**；**P3 DIY 的 schema / 引擎 / 库存 / 预览事务 / 管理 UI 已实现**，**AI 后端已接通**（`POST /api/themes/draft` + 临时专用 Pi 会话，见 §5.7）；**面板可选本轮使用的模型**（显示实际使用模型 + 可换已配置聊天模型，仅本次草稿；beta.26 候选未发布，见 §5.7）；**动效 token（`motion` 段：时长 / 缓动 / 倍率 / 光晕 / 风格）已接通**（next 候选，预计 beta.29；`--pa-*` / `--mo-*` 由 DIY 主题控制，见 §5.6）。入口只有「设置 → 外观 → 用 AI 设计主题」；用户已明确**取消** `/主题设计` slash 命令，不注册任何 slash、不注入 prompt、不加命令列表。
 用户原话（2026-10-22）：『默认的这个外观替换成暗夜这个外观变成默认；极简删掉；再设计一套可爱一点像素风；外观开放给用户 DIY 让他们 AI 创造，你看怎么弄』。
 后续追加（同一轮）：DIY 保存后仍可编辑；图片素材作视觉参考（先定配色/风格/材质/布局），上传默认**不**嵌入主题、只有用户显式选「用作背景/装饰」才算素材；AI 后端复用当前 agent 模型（主会话另接）。
 主会话确认：**用户主动选择过的其他主题保留、不 reset**。
@@ -115,6 +115,8 @@
 
 必需颜色 token：`--bg --side --panel --card --fg --mut --mut2 --line --line-strong --hover --active --user-bg --user-fg --acc --acc-fg --acc-soft --ok --warn --z-light --z-dark`（每个 light/dark 都要有）。可选：`--acc2 --live`、`--r/--r-sm/--r-bubble/--r-tail/--r-comp/--r-btn/--r-chip/--r-logo/--r-av`（px/rem，限范围）、`--font/--display/--mono`（字体名列表）。装饰 enum：`texture: none|dots|grid`、`corner: round|step2|step4`、`shadow: soft|elevated|none`、`background: flat|glow`。
 
+动效 `motion`（可选，模式无关；不写就用内置默认）：`durationFast/duration/durationSlow`（时长 40..1200ms，如 `.12s` / `180ms`）；`easeOut/easeExpand/easeSpring`（缓动，枚举名 `linear|ease|ease-in|ease-out|ease-in-out|standard|emphasized|spring-soft` 或受限 `cubic-bezier(x1,y1,x2,y2)`，x∈0..1、y∈-0.5..1.5）；`scale`（0.5..2 时长倍率）；`glow: none|subtle|normal|strong`；`style: smooth|steps`。引擎编译成 `--pa-dur-fast/.--pa-dur/.--pa-dur-slow`、`--pa-ease-out/expand/spring`、`--mo-scale/--mo-glow/--mo-style`，**只作用于该 DIY 主题**，且自带 `prefers-reduced-motion` 覆盖（用户无法用动效 token 绕过减弱动效）。
+
 ```jsonc
 {
   "manifestVersion": 1,
@@ -165,8 +167,9 @@
 | `apps/web/src/themes/linear.css` / `index.css` / `app.css` | ✅ 删文件、去 import、清残留；`index.css` `@import pixel.css`、`app.css` 补 pixel 的 `--z-*` 锚点 |
 | `apps/web/public/theme-boot.js` / `index.html` / `public/sw.js` | ✅ 首屏预置（含 `custom-` 皮肤保留）、默认 theme-color、SW 预缓存 |
 | `apps/web/src/themes/pixel.css` | ✅ 像素风 token + 装饰（浅深双版） |
-| `packages/shared/src/theme-manifest.ts` | ✅ Typed ThemeManifest v1 + 白名单 + fail-closed 校验 + 图片引用 + AI 草稿 DTO（前后端共用） |
-| `apps/web/src/themes/manifest.ts` | ✅ manifest→CSS（`[data-skin=custom-*]` 作用域）/→ThemeDef；内置主题读真实 CSS 变量另存 |
+| `packages/shared/src/theme-manifest.ts` | ✅ Typed ThemeManifest v1 + 白名单 + fail-closed 校验 + 图片引用 + AI 草稿 DTO（前后端共用）；✅ next 候选：可选 `motion` 段（时长 / 缓动 / 倍率 / 光晕 / 风格）+ 校验 |
+| `apps/web/src/themes/manifest.ts` | ✅ manifest→CSS（`[data-skin=custom-*]` 作用域）/→ThemeDef；内置主题读真实 CSS 变量另存；✅ next 候选：`motionTokens()` 输出 `--pa-*` / `--mo-*` + reduced-motion 覆盖块 |
+| `apps/web/src/themes/base.css` | ✅ next 候选：`html{}` 补 `--mo-*` 默认 + reduce 安全网（不改既有 token 行为） |
 | `apps/web/src/themes/custom-store.ts` | ✅ 本地库存（保存/导入/导出/删除、内置只读保护、导入撞 id 换新、样式注入） |
 | `apps/web/src/themes/preview.ts` | ✅ 预览事务（继续改 / 上一版 / 应用并保存 / 取消恢复），DOM 走注入 effects 以便单测 |
 | `packages/server/src/themes/` | ✅ AI 创作后端：`index.ts`（`draftTheme`：模型解析 / 专用会话 / 去重 / 超时 / 取消 / 用量）、`tool.ts`（`theme_draft` + 设计系统提示）、`images.ts`（附件解析 + magic bytes）、`routes.ts`（`POST /api/themes/draft`） |
@@ -174,7 +177,7 @@
 | `apps/web/src/themes/design-session.ts` | ✅ `DraftTurns`：主题设计请求的轮次管理（取消真 abort / 迟到响应丢弃），组件与单测共用 |
 | `apps/web/src/themes/model-choice.ts` | ✅（beta.26 候选）「使用模型」纯逻辑：默认跟随解析（agent / 默认 / 无）、canonical key 选择、`input` 视觉过滤、按钮文案，组件与单测共用 |
 | `packages/server/src/pi-adapter/mock-provider.ts` | ✅ Mock 模型支持 `theme_draft` 分支（e2e / 集成测试用） |
-| `apps/web/src/components/ThemeDesigner.tsx` `ThemeImagePicker.tsx` | ✅ 设计面板 + 图片素材选择（复用附件上传；`onThemeDraft` 接真实后端，支持取消 / 迟到响应丢弃）；beta.26 候选：面板顶部「使用模型」显示 / 选择（复用 `ModelPickerButton`，带图只列视觉模型，无模型跳模型设置） |
+| `apps/web/src/components/ThemeDesigner.tsx` `ThemeImagePicker.tsx` | ✅ 设计面板 + 图片素材选择（复用附件上传；`onThemeDraft` 接真实后端，支持取消 / 迟到响应丢弃）；beta.26 候选：面板顶部「使用模型」显示 / 选择（复用 `ModelPickerButton`，带图只列视觉模型，无模型跳模型设置）；✅ next 候选：同页「动效微调（可选）」按需入口（编辑 `motion` 立即预览，不新造高级模式） |
 | `apps/web/src/components/Settings.tsx` | ✅ 「用 AI 设计主题」主入口 + 内置/我的主题卡片（编辑/导出/删除/另存为） |
 | `apps/web/vite.config.ts` | ✅ brand 插件产物改写 `closeBundle`→`writeBundle`（Vite 8 下构建修复） |
 | `packages/server/test/theme-manifest.test.ts` `appearance-theme.test.ts` | ✅ 22/22 + 8/8（schema 注入拒绝、图片元数据、导出过滤、库存 CRUD、预览事务、像素 token、无 slash 残留） |
@@ -202,6 +205,7 @@
 仍待用户决定 / 待接：
 
 1. AI 生成已接后端（复用当前 agent 模型，§5.7）；模型不支持视觉时明确提示换模型或仅文字，不偷偷换视觉服务。**未验**：真实云模型上的生成质量 / 参考图实际效果。
+1b. 动效 token 的**真实观感 / 性能**未验（next 候选待测试槽：schema 边界、旧主题兼容、保存刷新恢复、reduced-motion 覆盖、390 主题不溢出；真实云模型生成动效质量同样未验）。
 2. 「用作背景/装饰」：素材图真正绘成背景 / 装饰**未实现**（引擎只走 enum 纯 CSS），故 UI 不提供这两项；其 zip 导出（assets + manifest）也未实现。
 3. 自定义主题是否需要跨设备同步（若需要，复用现有 server 设置能力，不新建设置服务）。
 4. 主题是否开放对外分享 / 上架（当前只支持本地导出 JSON 文件）。
