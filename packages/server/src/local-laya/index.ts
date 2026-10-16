@@ -2,9 +2,8 @@
  * 本地 Laya 一键安装的进程内单例 + 事件推送。
  *
  * 只在真正用到时才构造（懒加载），避免测试 / 启动时触碰文件系统。
- * 说明：不进统一下载面板（`registerDownload`）——本模块有自己的分阶段状态接口（`/status` 的
- * install.phase/received/error），而统一下载面板只能显示 trackDownload 驱动的进度，容易误报「未下载」。
- * 安装入口统一走「模型服务 → 本地 Laya」页的按钮。
+ * 下载 / 安装进度经 `local-laya/download.ts` 接入统一「下载与组件」面板（同一个 job，两个入口同状态）；
+ * 安装入口统一走「电脑 › 操作这台电脑 → 本地快速操作模型（Laya）」或统一「下载与组件」页的同一条目。
  */
 import { bus } from "../bus.ts";
 import { createLayaDeps } from "./deps.ts";
