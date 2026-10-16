@@ -6,6 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { Hono } from "hono";
 import {
 	ASR_CATALOG,
 	asrModelSpec,
@@ -16,6 +17,7 @@ import { asrRunnerFamily, hasAsrRunnerFamily, type AsrRunnerFamily } from "../sr
 import { LocalAsrManager, type AsrDeps, type AsrPaths } from "../src/local-asr/manager.ts";
 import { LocalAsrService, asrPhaseLabel, type AsrSelectionPort } from "../src/local-asr/service.ts";
 import { projectAsrInstall, asrDownloadId } from "../src/local-asr/download.ts";
+import { mountLocalAsrRoutes } from "../src/local-asr/routes.ts";
 import { senseVoicePlatform } from "../src/local-asr/platform.ts";
 
 const PARA = "paraformer-zh-2023-09-14-int8";
@@ -355,4 +357,41 @@ test("Whisper 声明 punctuation 为原生输出（不照抄研究里不可靠�
 		assert.equal(asrModelSpec(id)?.manifest.punctuation, true, `${id} 原生输出含标点`);
 	}
 	assert.equal(asrModelSpec(PARA)?.manifest.punctuation, false, "Paraformer 确实无标点");
+});
+
+// ------------------------------------------------------------------ 路由
+
+test("路由：GET /catalog 返回聚合 DTO 且不启动 worker；按 id install 生效；未知模型 404", async () => {
+	const h = makeHarness();
+	const app = new Hono();
+	mountLocalAsrRoutes(app as never, async (_c, next) => next(), () => h.svc.managerFor("sensevoice-small-int8"), { service: () => h.svc });
+
+	const res = await app.request("/api/local-models/asr/catalog");
+	assert.equal(res.status, 200);
+	const body = (await res.json()) as { models: unknown[]; hardware: { tier: string }; recommendedId: string };
+	assert.equal(body.models.length, 6);
+	assert.equal(body.hardware.tier, "balanced");
+	assert.equal(body.recommendedId, WSMALL);
+	assert.equal(h.inst.spawned.length, 0, "GET catalog 不得启动 worker");
+	assert.equal(h.inst.downloads.length, 0, "GET catalog 不得触发下载");
+
+	const ins = await app.request(`/api/local-models/asr/models/${PARA}/install`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ acceptLicense: "Apache-2.0", intent: "install" }),
+	});
+	assert.equal(ins.status, 200);
+	await new Promise((r) => setTimeout(r, 20));
+	assert.equal(h.svc.managerFor(PARA).status().install.state, "installed");
+
+	// 许可门槛：cleared 模型未带 acceptLicense 的安装被拒
+	const bad = await app.request(`/api/local-models/asr/models/${WSMALL}/install`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ intent: "install" }),
+	});
+	assert.equal(bad.status, 400);
+
+	const nf = await app.request("/api/local-models/asr/models/nope/status");
+	assert.equal(nf.status, 404);
 });
