@@ -93,6 +93,11 @@ export function DesktopSettings() {
 	const [wslMsg, setWslMsg] = useState("");
 	const [confirmDlg, askConfirm] = useConfirm();
 	const purgeRef = useRef(false);
+	// 下载源（镜像加速）属于高级设置，默认收起；有自定义值 / 下载或保存失败时自动展开，方便发现
+	const [dlOpen, setDlOpen] = useState(false);
+	useEffect(() => {
+		if (g?.settings.mirror || g?.settings.fileMirror || g?.install.phase === "error" || err) setDlOpen(true);
+	}, [g?.settings.mirror, g?.settings.fileMirror, g?.install.phase, err]);
 	if (!g) {
 		if (loading) return <div className="text-sm text-zinc-500" data-testid="desktop-loading">{t("正在载入…")}</div>;
 		return (
@@ -282,25 +287,32 @@ export function DesktopSettings() {
 				</p>
 			</section>
 
-			<section className="space-y-2">
-				<div className="font-semibold">{t("镜像下载地址")}</div>
-				<div className="text-sm text-zinc-500">{t("国内下载慢时可以填加速地址（替换 ghcr.io），例如 ghcr.nju.edu.cn。下载内容按固定版本校验，换地址不影响安全。")}</div>
-				<div className="flex gap-2">
-					<Input value={mirror ?? s.mirror} placeholder="ghcr.io" onChange={(e) => setMirror(e.target.value)} data-testid="desktop-mirror" />
-					<Button variant="outline" disabled={mirror === null || mirror === s.mirror} onClick={() => void put({ mirror: mirror ?? "" }).then((r) => r && setMirror(null))}>{t("保存")}</Button>
+			<details className="rounded-xl border border-line" open={dlOpen} onToggle={(e) => setDlOpen(e.currentTarget.open)} data-testid="desktop-download-source">
+				<summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+					{t("下载来源")} <span className="ml-1 text-xs font-normal text-zinc-500">{t("国内下载慢时可改（高级）")}</span>
+				</summary>
+				<div className="space-y-4 px-3 pb-3">
+					<section className="space-y-2">
+						<div className="font-semibold">{t("镜像下载地址")}</div>
+						<div className="text-sm text-zinc-500">{t("国内下载慢时可以填加速地址（替换 ghcr.io），例如 ghcr.nju.edu.cn。下载内容按固定版本校验，换地址不影响安全。")}</div>
+						<div className="flex gap-2">
+							<Input value={mirror ?? s.mirror} placeholder="ghcr.io" onChange={(e) => setMirror(e.target.value)} data-testid="desktop-mirror" />
+							<Button variant="outline" disabled={mirror === null || mirror === s.mirror} onClick={() => void put({ mirror: mirror ?? "" }).then((r) => r && setMirror(null))}>{t("保存")}</Button>
+						</div>
+						<div className="break-all text-xs text-zinc-400">{g.image.ref}{g.image.custom ? `（${t("自定义镜像")}）` : ""}</div>
+					</section>
+					{(g.builtin.id === "lima" || g.builtin.id === "wsl") && (
+						<section className="space-y-2">
+							<div className="font-semibold">{t("虚拟机组件下载加速")}</div>
+							<div className="text-sm text-zinc-500">{t("从 GitHub 下载运行时组件慢时填加速前缀，例如 https://ghfast.top/ 。文件按固定摘要校验，加速失败会自动回到官方地址。")}</div>
+							<div className="flex gap-2">
+								<Input value={fileMirror ?? s.fileMirror} placeholder={t("留空 = 直连 GitHub")} onChange={(e) => setFileMirror(e.target.value)} data-testid="desktop-file-mirror" />
+								<Button variant="outline" disabled={fileMirror === null || fileMirror === s.fileMirror} onClick={() => void put({ fileMirror: fileMirror ?? "" }).then((r) => r && setFileMirror(null))}>{t("保存")}</Button>
+							</div>
+						</section>
+					)}
 				</div>
-				<div className="break-all text-xs text-zinc-400">{g.image.ref}{g.image.custom ? `（${t("自定义镜像")}）` : ""}</div>
-			</section>
-			{(g.builtin.id === "lima" || g.builtin.id === "wsl") && (
-				<section className="space-y-2">
-					<div className="font-semibold">{t("虚拟机组件下载加速")}</div>
-					<div className="text-sm text-zinc-500">{t("从 GitHub 下载运行时组件慢时填加速前缀，例如 https://ghfast.top/ 。文件按固定摘要校验，加速失败会自动回到官方地址。")}</div>
-					<div className="flex gap-2">
-						<Input value={fileMirror ?? s.fileMirror} placeholder={t("留空 = 直连 GitHub")} onChange={(e) => setFileMirror(e.target.value)} data-testid="desktop-file-mirror" />
-						<Button variant="outline" disabled={fileMirror === null || fileMirror === s.fileMirror} onClick={() => void put({ fileMirror: fileMirror ?? "" }).then((r) => r && setFileMirror(null))}>{t("保存")}</Button>
-					</div>
-				</section>
-			)}
+			</details>
 			{err && <div className="text-xs text-red-600">{err}</div>}
 		</div>
 	);
