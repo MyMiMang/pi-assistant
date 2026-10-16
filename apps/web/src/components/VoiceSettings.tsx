@@ -9,11 +9,12 @@
  * 关键取舍：没有选择就是「未配置」，绝不自动回落到云端；打开本页不安装 / 不启动 / 不取麦克风 / 不连云。
  */
 import { AlertTriangle, Cloud, HardDrive, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { getVoiceSource, setVoiceSource, type VoiceSource, type VoiceSourceOption, type VoiceSourceView } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { getVoiceSource, onVoiceSourceChanged, setVoiceSource, type VoiceSource, type VoiceSourceOption, type VoiceSourceView } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, Help, Select, cx } from "./ui";
 import { LocalSenseVoiceCard } from "./ModelServices";
+import { LocalAsrModels } from "./LocalAsrModels";
 
 const keyOf = (o: { provider: string; model: string }) => `${o.provider}::${o.model}`;
 const AVAIL_LABEL: Record<string, string> = { ready: "可用", not_configured: "未配置", not_installed: "未安装", not_running: "未运行", deleted: "已不可用" };
@@ -53,6 +54,10 @@ export function VoiceSettings() {
 	useEffect(() => {
 		void reload();
 	}, []);
+	// 来源可能在别处被改（例如本页下方「本地模型」的安装并使用 / 使用）：同步刷新状态徽标。
+	const reloadRef = useRef(reload);
+	reloadRef.current = reload;
+	useEffect(() => onVoiceSourceChanged(() => void reloadRef.current()), []);
 
 	const options = view?.options ?? [];
 	const cloud = options.filter((o) => o.location === "cloud");
@@ -162,6 +167,10 @@ export function VoiceSettings() {
 
 				{tab === "local" && (
 					<div className="space-y-3" data-testid="voice-local-section">
+						<LocalAsrModels />
+						<div className="text-[11px] text-mut2" data-testid="voice-local-legacy-label">
+							存量导入 / 旧版 SenseVoice（许可待确认，仅供已合法取得权重的用户导入）
+						</div>
 						<LocalSenseVoiceCard />
 						{localPick && (
 							<div className="flex flex-wrap items-center gap-2">

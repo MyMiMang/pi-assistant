@@ -1,131 +1,114 @@
-# 本地语音多模型：前端所需 catalog 契约（前端先行草案）
+# 本地语音多模型：前端消费契约（已按 backend DTO 对齐）
 
-> 状态：**前端先行草案**（分支 `local-asr-model-choice-ui`，基 `release-candidate-validation` = `dcce520`，beta.25 公开版）。
-> 本页只写**前端要消费的字段**，用来和 backendowner（`local-asr-multi-model`）冻结 DTO 对齐；**不是**新后端实现，也不定义下载服务。
-> 与既有冻结合同（`docs/design/local-asr-api.md`、`docs/design/settings-functional-backend.md`）兼容：旧 `/api/local-models/asr/sensevoice/*` 保留为存量导入入口。
+> 状态：**前端已实施**（分支 `local-asr-model-choice-ui`，基 `release-candidate-validation` = `dcce520`，beta.25 公开版；**未 push / 未 tag / 未打包**）。
+> 本文记录前端实际消费的**最终 DTO 行为**，已与 backendowner 的 `local-asr-multi-model`（`packages/server/src/local-asr/{routes,catalog,service}.ts`）对齐；不再是待确认草案。
+> 既有冻结合同 `docs/design/local-asr-api.md`（旧 `/api/local-models/asr/sensevoice/*`，保留为存量导入入口）继续有效。
 
 ## 0. 红线（沿用既有）
 
-- 不新建第二套下载服务：安装/下载走现 `downloads` 注册表与 `downloads.changed`，两个入口（组件页 / 语音页）**同一个 job**。
-- 硬件档位**由后端从 os metadata 算**（`process.platform` / `process.arch` / `os.totalmem()` / `os.cpus()`），前端**不用 UA 猜**，也**不要求用户先设 CPU/RAM/GPU**。
-- 不声称任何性能数字：内存门槛是**估算**，必须能标「未实测」。
-- 许可结论不模糊：风险与限制（含 SenseVoice 适用范围待确认）默认可见，不用「我已阅读同意」折叠遮盖。
-- 正式默认**优先已明确许可**的 catalog 项；SenseVoice 保留为可选项 + 存量导入，不隐藏既有功能，也不把手工导入当新主方案。
+- 不新建第二套下载服务：安装/下载走现 `downloads` 注册表与 `downloads.changed`；组件页 / 语音页两个入口**同一个 job**（stable id `asr:<modelId>`）。
+- 硬件档位**由后端从 os metadata 算**（`process.platform` / `process.arch` / `os.totalmem()` / `os.cpus()`），前端不猜、不要求用户先设 CPU/RAM/GPU。
+- 不声称任何性能数字：内存门槛是**估算**，必须标「未实测」；用户**可选比建议更大的档位**（不做硬门槛）。
+- 许可结论不模糊：`cleared` / `unresolved` / `prohibited` 默认可见；`unresolved`（SenseVoice）不新增同意勾框绕过，只保留既有「自行导入合法权重」。
+- 前端**不写死模型清单**：正式可选项全部来自 `GET /api/local-models/asr/catalog`。
 
 ## 1. 读：`GET /api/local-models/asr/catalog`
 
 ```ts
 interface LocalAsrCatalog {
-	hardware: {
-		os: string; // "darwin" | "win32" | "linux"
-		arch: string; // "arm64" | "x64" ...
-		cpuCores: number;
-		memoryBytes: number; // os.totalmem()
-		tier: "light" | "balanced" | "high" | "unknown";
-		tierNote: string; // 中文一句话，说明档位怎么来的 + 「估算，未实测」
-	};
-	runtime: LocalAsrRuntimeView; // 共享引擎（sherpa-onnx）安装态；权重之外另计
+	hardware: { os, arch, cpuCores, memoryBytes, tier: "light"|"balanced"|"high"|"unknown", tierNote };
+	runtime: { engine: "sherpa-onnx", version, python, depsBytes: number|null, depsNote };
 	recommendedId: string | null;
 	models: LocalAsrModelView[];
-	notes: string[]; // 平台/未实测边界声明
+	notes: string[];
 }
 
 interface LocalAsrModelView {
-	id: string; // 稳定 id，作为安装路由参数，如 "sensevoice-small-int8"
-	family: string; // 家族，如 "sensevoice" / "paraformer"
-	variant: string; // 变体，如 "int8" / "fp32"
-	name: string; // friendly 中文名（用户看得懂）
-	nameEn: string; // 英文原名（署名/对得上权重页）
-	languages: string[]; // ["zh","en",...]
-	note: string; // 中文多语说明（一两句，别塞技术细节）
-	tags: Array<"light" | "balanced" | "high">; // 轻量 / 均衡 / 高质量
-	recommended: boolean; // 由后端按 hardware.tier 算
-	recommendationReason: string; // 「你这台机器推荐它」的一句话
-	available: boolean; // 本平台能不能装（平台预检）
-	unavailableReason: string | null;
-	weightsBytes: number; // 权重体积（用于「下载 weights 体积」）
-	depsBytes: number | null; // 依赖/运行环境另计体积（未知就 null + depsNote）
-	depsNote: string; // 「另需下载运行环境…」
-	suggestedMemoryBytes: number; // 建议内存（估算）
-	memoryNote: string; // 「估算，非实测；只用 CPU」
-	license: LicenseDisclosure; // 同 /source 的 license 结构（name/termsVersion/decision/redistribution/attribution/links/restrictions/reason/acceptValue）
-	source: ModelSource; // 同 /source 的 source + model.files（repo/revision/sha256）
+	id: string;                 // 稳定 modelId（也是 voiceSource.model、权重目录名）
+	provider: string;           // voiceSource.provider（local-paraformer / local-whisper / local-sensevoice）
+	family: string; variant: string;
+	name: string; nameEn: string;
+	languages: string[];
+	note: string;
+	tier: "light"|"balanced"|"high";      // 推荐档位（单一值）
+	tags: ("light"|"balanced"|"high")[];  // 兼容数组
+	recommended: boolean; recommendationReason: string;
+	available: boolean; unavailableReason: string | null;
+	weightsBytes: number; depsBytes: number|null; depsNote: string;
+	suggestedMemoryBytes: number; memoryNote: string;
+	capabilities: string[];     // 真实模型事实（如「原生输出（含标点 / 大小写）」「无标点」），原样展示
+	multilingual: boolean;
+	license: LicenseDisclosure; // licenseName/termsVersion/decision/redistribution/attribution/links/restrictions/reason/acceptValue
+	source: { source: AsrSourceMeta; model: { id, repo, revision, files: {path,size,sha256}[] } };
 	installed: boolean;
-	install: LocalAsrInstallView; // 该模型自己的安装/下载态
-	runtime: LocalAsrRuntimeView; // 该模型 sidecar 运行态（lazy 启动，不常驻）
+	selected: boolean;          // 服务端算的「当前来源就是它」
+	running: boolean;
+	install: LocalAsrInstallView;
+	runtime: LocalAsrRuntimeView;
 }
 
 interface LocalAsrInstallView {
 	state: "not_installed" | "installing" | "installed" | "failed";
-	phase: string | null; // 稳定枚举：preflight|uv|venv|weights|verify|activate|rollback|done
-	phaseLabel: string | null; // 中文可读阶段名（后端给，前端不自己映射）
-	received: number;
-	total: number | null; // null = 总量未知 → 前端 indeterminate 进度条（不是没条）
-	percent: number | null;
-	error: string | null; // 可读失败原因（不是 generic badge）
-	installedAt: string | null;
+	phase: string | null;        // 稳定枚举：preflight|uv|venv|engine|weights|verify|activate|rollback|done
+	phaseLabel: string | null;   // 中文阶段名（后端给，前端不自己映射）
+	received: number; total: number | null; percent: number | null;
+	error: string | null;
+	installedAt: number | null;  // epoch ms
 	source: "download" | "import" | null;
-	jobId: string | null; // 与 downloads 注册表同一个 job id → 复用统一下载进度
-}
-
-interface LocalAsrRuntimeView {
-	state: "stopped" | "starting" | "running" | "stopping" | "crashed" | "paused";
-	pid: number | null;
-	port: number | null;
-	host: "127.0.0.1";
-	restarts: number;
-	lastError: string | null;
-	healthOk: boolean;
-	loaded: boolean;
+	jobId: string | null;        // = 统一下载注册表 stable id `asr:<id>`
+	attempt: number | null;
 }
 ```
 
 要点：
-- **一次请求拿全**：档位推荐、体积、依赖、内存估算、许可、来源、安装态、运行态都在 catalog 里，前端不额外请求 `/source`、`/status` 才能渲染选择器（旧 `/status` 仍返回同一 shape 供存量卡用）。
-- `install.total === null` 时前端画**不确定进度条**（phase 名 + 动画），不画 8% 假进度、不卡 99%。
-- `jobId` 让「组件页下载安装」和「语音页安装并使用」显示**同一个 job 的同一份进度**，无重复请求。
+- **一次请求拿全**：档位推荐、体积、依赖、内存估算、许可、来源、安装态、运行态、`selected` 都在 catalog；前端不额外请求 `/source`、`/status` 才能渲染选择器。
+- `install.total === null` → 前端画**不确定进度条**（`phaseLabel` + `.pa-dl-bar.indet` 动画），不画假百分比、不卡 99%。
+- backend 会把 `install` 投影进统一下载注册表（`asr:<id>`）；前端按 `downloadId`（默认 `asr:<id>`）合并 `downloads.changed` 的实时进度，两个入口同一份。
 
-## 2. 写：按模型 id 路由（catalog 替换旧的 sensevoice 单例路由）
+## 2. 写：按模型 id 路由
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| POST | `/api/local-models/asr/models/:id/install` | body `{ acceptLicense?, source?: "download"\|"import", importDir? }` → `{ ok, status }`（许可门槛同步 precheck 定状态码） |
-| POST | `/api/local-models/asr/models/:id/cancel` | 取消进行中的安装/下载，回滚 staging |
-| POST | `/api/local-models/asr/models/:id/start` / `stop` / `pause` / `resume` | 生命周期（lazy，idle TTL 沿用 90s） |
-| POST | `/api/local-models/asr/models/:id/idle` | `{ seconds }` |
-| POST | `/api/local-models/asr/models/:id/update` | 重装 + 原子切换 |
+| POST | `/api/local-models/asr/models/:id/install` | body `{ acceptLicense?, source?: "download"\|"import", importDir?, intent?: "install"\|"install_and_use" }` |
+| POST | `/api/local-models/asr/models/:id/cancel` | 取消进行中的安装 / 下载（有界回滚） |
+| POST | `/api/local-models/asr/models/:id/select` | 切到该模型（停旧 worker；忙时拒绝） |
+| POST | `/api/local-models/asr/models/:id/start` / `stop` / `pause` / `resume` / `idle` / `update` | 生命周期（lazy，idle TTL 沿用 90s） |
 | DELETE | `/api/local-models/asr/models/:id` | body `{ confirm: true }`，只删自己目录 |
 | GET | `/api/local-models/asr/models/:id/status` | 单模型 status（catalog 的子集，轮询用） |
 
-- 旧 `/api/local-models/asr/sensevoice/*` **保留**（存量导入 / 已装用户），可内部转发到 `models/sensevoice-small-int8/*`；不 silently 改语义。
-- `install` 只负责**装**：不改当前 ASR 来源。「装完就用」是前端在 PUT source 成功后自己做的**显式 intent**（见 §3），后端 PUT 仍是唯一来源真相。
-- 组件页（`ModelServices` 本地段）只调 install，不调 source PUT。
+- `install` 只负责**装**；来源写入见 §3。许可门槛在 `precheckInstall` 同步判定（HTTP 4xx）。
+- 旧 `/api/local-models/asr/sensevoice/*` **保留**，语义不变（存量导入 / 已装用户）。
 
-## 3. 来源 intent 与 stale 语义（前端实现约定，复用 `PUT /api/audio/asr/source`）
+## 3. 「安装并使用」的 intent 与 stale 语义（**服务端权威**）
 
-- 语音页「安装并使用」= `install` → 轮询/WS 到 `installed` → `PUT /api/audio/asr/source` **显式 intent**；PUT **成功返回后**才把该项标「使用中」。
-- PUT 失败：**回滚显示到服务端实际来源**（重新 GET source），清错误、可重试；不留下假「使用中」。
-- 用户中途改选云端 / 另一个模型：**后一次 PUT 必须生效**，先前的安装完成回调**不得 late 覆盖**（用 intent 序号 + 当前选择校验，过期回调丢弃）。
-- 云端安装/配置与本地无关；本地「已装但没选」不进「已装模型」以外的状态。
+- 语音页「安装并使用」= `POST install { intent: "install_and_use", acceptLicense }`。
+- 后端在**装完且选择自安装开始后未变**时写「用本地」来源（`selectionAtStart` 对比，防迟到 job 覆盖后来的 cloud 选择）。**前端不自己 late PUT**，只看 catalog 的 `selected` 显示「使用中」。
+- 用户在安装期间改选云端 / 另一个模型：改选通过既有 `PUT /api/audio/asr/source`（前端显式动作）写入；后端发现选择已变即**不写**，UI 因此 `selected=false`，不显示「使用中」。
+- 关面板 / 刷新：安装 job 在服务端继续，装完按同一规则写来源，**不留用户手配**（无需前端 pending 持久化）。
+- `PUT /api/audio/asr/source` 失败：前端重新拉取服务端实际来源回滚（`VoiceSettings` 既有逻辑），不留下假「使用中」。
+- 已安装但未选中 → 前端「使用这个模型」调 `POST /api/local-models/asr/models/:id/select`（后端内部同样走 `selection.write` 写来源 + 启停 worker，忙时拒绝）。**前端不另造写 source 的路径**（避免两处同时写 / 迟到覆盖）；状态一律以 catalog `selected` / `GET source` 为真。
+- 许可接受：MIT / Apache 等 `cleared` 许可**不额外弹「我同意」层，也不偷偷代传接受声明**；前端只在确需显式同意时原样回传 `acceptLicense=acceptValue`。⚠️ 当前后端 `installGate` 对 `cleared` 仍要求 `acceptLicense`，需 backendowner / 主改成「只对必要许可要求显式同意」，否则前者会 400（前端已按正确语义不传）。
 
 ## 4. 前端拆分（本树 ownership）
 
-- 新增 `apps/web/src/components/LocalAsrModels.tsx`：catalog 选择器 + 推荐标签 + 体积/依赖/内存/许可/来源 + 「安装并使用」/「使用」+ 进度/取消/重试。
-- 新增 `apps/web/src/hooks/useLocalAsrCatalog.ts`：拉 catalog、订阅 `local-asr.changed` / `downloads.changed`、安装态轮询（仅 installing 时）、intent 序号 & stale 防护。
-- `VoiceSettings.tsx`：「本地」tab 挂 `LocalAsrModels`，去掉手写 `LocalSenseVoiceCard` 直连（改为由新模块统一渲染），保留旧来源状态徽标逻辑。
-- `ModelServices.tsx`：**只把原 `LocalSenseVoiceCard` 段拆出 / re-export**，不动其余；Layaowner 的 Laya 段并行小改，commit 要小、易合。
-- 不碰 `Downloads.tsx` / HostControl / Desktop / 共享下载 API / backend types；统一进度条复用 `pa-dl-bar`（如需导出交 Layaowner 对接，别复制）。
-- 不用浏览器 native `<select>`：复用 `ui.tsx` 的 `Select`。
+- 新增 `apps/web/src/local-asr-api.ts`：catalog / 写接口 + `normalizeLocalAsrCatalog` 对齐层（字段名与后端一致时近恒等；缺字段给安全缺省；结构不对 → `ok=false`，UI 明确说不可用）。
+- 新增 `apps/web/src/local-asr-intent.ts`：显示格式化（十进制体积 / 档位标签 / 内存「估算，未实测」）+ 显式「使用」的 seq 守卫 + 统一下载进度合并（纯函数，可单测）。
+- 新增 `apps/web/src/hooks/useLocalAsrCatalog.ts`：拉 catalog、订阅 `downloads`、安装态 1s 轮询、`selected` 翻转时通知语音页刷新、install/use/cancel/start/stop/update/remove。
+- 新增 `apps/web/src/components/LocalAsrModels.tsx`：`Select`（不用原生 select）+ 推荐/体积/依赖/内存/许可 + 「安装并使用」/「使用」+ 进度/取消/重试 + 详情折叠（来源 / 运行态 / 启停 / 删除）。
+- `VoiceSettings.tsx`：「本地」tab 顶部挂 `LocalAsrModels`；`onVoiceSourceChanged` 时刷新状态徽标；旧 `LocalSenseVoiceCard` 保留在下方（存量导入 / 许可待确认），`voice-local-use` 行不动。
+- 复用 `ui.tsx` 的 `Select` / `Help` / `Button` / `Badge`；进度条复用 `.pa-dl-bar`。不改 `ModelServices.tsx`、`Downloads.tsx`、共享下载 API。
 
-## 5. 待 backendowner 确认（回主转达）
+## 5. 已确认（原「待确认」项结果）
 
-1. catalog 字段名/结构是否接受；`tier` 的分档阈值与 `recommendationReason` 由谁写。
-2. 是否按模型 id 路由（`models/:id/*`）而不是继续单例 sensevoice 前缀。
-3. `jobId` 是否就是 downloads 注册表 id；安装是否直接注册进同一个 registry（两个入口同一 job）。
-4. `phase` / `phaseLabel` 取值表；`total: null` 的 indeterminate 约定。
-5. 正式 catalog 首选哪几个「许可明确」的模型（research owner 的 3 档清单），以及各自 license 字段来源。
+1. catalog 字段接受；`tier` 单值 + `tags` 兼容数组；推荐由后端按硬件档位算。
+2. 按模型 id 路由 `models/:id/*`（旧 sensevoice 前缀保留为兼容入口）。
+3. `jobId` = 统一下载注册表 stable id `asr:<modelId>`；两个入口同一 job。
+4. `phase` 稳定枚举 + `phaseLabel` 中文名由后端给；`total: null` = 不确定进度条。
+5. 正式清单（本批 5 个，均 `cleared`）：`paraformer-zh-2023-09-14-int8`、`whisper-base-int8`、`whisper-small-int8`、`whisper-turbo-int8`、`whisper-large-v3-int8`；SenseVoice 保留但 `unresolved`（正式入口关闭，仅导入）。Qwen 未 pin SHA 不进目录。
 
-## 6. 未验证边界
+## 6. 验证与未验证边界
 
-- 本页是**前端先行草案**；backend DTO 落地前，UI 用**真实 API fixture**（`page.route` 拦 catalog）验证渲染与 intent，不把 UI label 当模型能力。
-- 未跑真机下载 / 启动 / 转写；不发虚构模型当真实部署。
+- **纯逻辑单测** `e2e/local-asr-models-frontend.test.mjs`（6/6）：catalog 归一（snake/camel、缺省、结构不对）、indeterminate 进度、intent seq 守卫、下载进度合并、十进制体积格式化。
+- **UI fixture** `e2e/local-asr-models-ui.mjs`（`page.route` 拦 `/api/**`）：真实前端代码渲染 5 个服务端模型；安装并使用（`intent=install_and_use`，cleared 不传 `acceptLicense`，不确定进度条）→ 装好 `selected` 显示使用中；改选云端后装完不 late 覆盖；已装未选中「使用这个模型」调 `/select`；取消；失败重试；390 不溢出。截图 `evidence/local-asr-models-ui/`。
+- **真实 API 契约 smoke**：临时起 backendowner 树的真实 server，`GET /api/local-models/asr/catalog` 返回真实 JSON（6 模型，含真实权重 pin），喂进前端 `normalizeLocalAsrCatalog` 全通过（`ok=true`、id/provider/tier/许可/`source.revision+files` 齐全）。合入后由 `e2e/local-asr-catalog-real.mjs` 在当前树复跑（路由不存在则跳过）。
+- **未验证（如实）**：真实下载 / 校验 / 启动 / 转写（不装大权重、不用真实麦克风 / GPU）；真机 App；全量 `e2e/run.mjs` / 全量 `npm test`。UI 里的模型 name / 说明是 fixture，**不代表真实权重已在本机跑过**；能力标签以 catalog 返回为准，不按研究报告臆断。
