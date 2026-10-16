@@ -1,7 +1,7 @@
 /**
  * 模型 UI 专项验证（只跑这一个脚本，不跑全量 e2e）：
  * 1) 长列表多服务：按 provider 分组折叠、搜索能找到折叠组里的模型
- * 2) 常用 5：按选择频次置顶、分组里不重复、刷新后仍在（服务端持久化）
+ * 2) 常用 5：按选择频次置顶、原渠道分组里仍保留同一模型（常用是快捷入口）、刷新后仍在（服务端持久化）
  * 3) 模型 + 思考强度合并在同一个菜单 / 同一个按钮
  * 4) 390 窄中栏：按钮只留图标、无横向溢出、上下文圆环独立
  * 5) 设置 › 模型：顶部紧凑（默认使用 / 识图模型都是合一的按钮）、整个「模型服务 / 渠道」（添加渠道 + 内置 + 我的渠道）
@@ -107,7 +107,7 @@ try {
 	ok("按服务折叠、用户命名、搜索能找到全部模型");
 
 	// ============================================================ 2) 常用 5
-	console.log("\n[2] 常用 5：按频次置顶、不与分组重复、刷新后仍在");
+	console.log("\n[2] 常用 5：按频次置顶、原渠道仍保留、刷新后仍在");
 	const pick = async (providerIdx, modelId) => {
 		await page.getByTestId("model-picker").click();
 		await page.getByTestId("model-menu").waitFor();
@@ -128,7 +128,19 @@ try {
 	};
 	let { freq, all } = await freqOf();
 	assert.deepEqual(freq, expectFreq, `常用应按频次/最近排序：${freq}`);
-	assert.equal(new Set(all).size, all.length, `常用与分组不应重复：${all}`);
+	assert.equal(new Set(freq).size, freq.length, `常用内不应重复：${freq}`);
+	// 常用是快捷入口：选过的模型在原渠道分组里必须还有 1 行（不能把条目从目录里搬走）
+	const freqMenu = page.getByTestId("model-menu");
+	const openGroup = async (providerId) => {
+		const g = freqMenu.getByTestId(`model-group-${providerId}`);
+		if ((await g.getAttribute("aria-expanded")) !== "true") await g.click();
+	};
+	await openGroup(providers[5].id);
+	const rows5 = await freqMenu.getByTestId(`model-group-${providers[5].id}`).locator("xpath=..").locator("[data-testid=model-option]").evaluateAll((els) => els.map((e) => e.dataset.model));
+	assert.ok(rows5.includes(`${providers[5].id}/m-6-6`), `常用里的模型必须仍在原渠道：${rows5}`);
+	assert.equal(new Set(rows5).size, rows5.length, `同一分组内不应重复：${rows5}`);
+	assert.equal(await freqMenu.locator(`[data-testid=model-option][data-model="${providers[5].id}/m-6-6"]`).count(), 2, "常用 1 行 + 原渠道 1 行");
+	assert.ok(all.length >= freq.length, "渲染的条目数至少要覆盖常用");
 	await page.screenshot({ path: join(OUT, "03-menu-frequent.png") });
 	await page.keyboard.press("Escape");
 	const picks = (await j("/api/models/picks")).picks;
@@ -138,7 +150,7 @@ try {
 	({ freq } = await freqOf());
 	assert.deepEqual(freq, expectFreq, `刷新后常用应保留：${freq}`);
 	await page.keyboard.press("Escape");
-	ok("常用 5 置顶、按频次 + 最近选择、分组不重复、刷新后保留");
+	ok("常用 5 置顶、按频次 + 最近选择、原渠道仍保留、刷新后保留");
 
 	// ============================================================ 3) 模型 + 思考强度统一
 	console.log("\n[3] 模型 + 思考强度合并在一个菜单 / 一个按钮");
