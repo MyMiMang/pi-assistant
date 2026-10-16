@@ -142,7 +142,7 @@ export default function App() {
 			)}
 			<main className="pa-chat">
 				<div className="pa-chat" style={{ display: subagent ? "none" : undefined }} data-testid="main-conversation">{room ? <RoomChat roomId={room} /> : current ? <Chat agentId={current} /> : null}</div>
-				{tabs.map((tab) => <div key={tab.id} className="pa-chat" style={{ display: subagent === tab.id ? undefined : "none" }}><SubagentChat id={tab.id} visible={subagent === tab.id} /></div>)}
+				{tabs.map((tab) => <div key={tab.id} className="pa-chat" style={{ display: subagent === tab.id ? undefined : "none" }}><SubagentChat id={tab.id} visible={subagent === tab.id} room={tab.roomId ?? undefined} /></div>)}
 			</main>
 			{info && paneId && (
 				<>

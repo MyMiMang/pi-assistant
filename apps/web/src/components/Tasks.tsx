@@ -98,13 +98,14 @@ export function TaskInstructions({ text, label = "查看任务说明" }: { text?
  * 任务列表行：短标题 + 状态 badge + 次要信息（执行者 / 当前活动 / 更新时间）。
  * 给任务概览（可点开详情）和信息面板后台任务（只读）共用。
  */
-export function TaskRow({ title, status, meta, time, onClick, testId, id, footer }: { title: string; status: string; meta?: ReactNode; time?: number; onClick?: () => void; testId?: string; id?: string; footer?: ReactNode }) {
+export function TaskRow({ title, status, meta, time, onClick, testId, id, footer, active }: { title: string; status: string; meta?: ReactNode; time?: number; onClick?: () => void; testId?: string; id?: string; footer?: ReactNode; active?: boolean }) {
 	const body = (
 		<>
 			<span className="flex min-w-0 flex-1 items-center gap-2">
 				<span className="min-w-0 flex-1 truncate text-sm text-fg" title={title}>
 					{title}
 				</span>
+				{active && <span className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[11px] text-accent" data-testid="task-current">当前</span>}
 			</span>
 			<TaskBadge status={status} />
 		</>
@@ -124,7 +125,7 @@ export function TaskRow({ title, status, meta, time, onClick, testId, id, footer
 			</div>
 		);
 	return (
-		<button type="button" className={cx("w-full min-w-0 rounded-xl border border-line bg-card px-3 py-2 text-left transition hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent")} onClick={onClick} data-testid={testId} data-id={id} data-state={status}>
+		<button type="button" className={cx("w-full min-w-0 rounded-xl border bg-card px-3 py-2 text-left transition hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent", active ? "border-accent" : "border-line")} onClick={onClick} data-testid={testId} data-id={id} data-state={status} data-current={active ? "true" : undefined}>
 			<div className="flex min-w-0 items-center gap-2">{body}</div>
 			{sub}
 			{footer}
