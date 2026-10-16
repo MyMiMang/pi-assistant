@@ -358,6 +358,10 @@ test("显式选模型：同 id 不同 provider 只走选中的那个，结果带
 		assert.ok(r.model.name, "结果带回模型友好名");
 		assert.ok(mockB.seen.length >= 1, "选中的 B 渠道应收到请求");
 		assert.equal(mockA.seen.length, 0, "没选的 A 渠道不能收到任何请求");
+		// 用量按**实际选中的** provider/model 记账（不按助理主模型）。
+		const used = db.prepare("SELECT provider, model FROM usage_calls WHERE agent_id = ? ORDER BY ts DESC LIMIT 1").get("ta_sameid") as { provider: string; model: string } | undefined;
+		assert.equal(used?.provider, pB.id, "用量应记在选中的服务上");
+		assert.equal(used?.model, "theme-mock");
 	} finally {
 		mockA.close();
 		mockB.close();
