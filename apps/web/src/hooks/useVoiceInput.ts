@@ -5,10 +5,10 @@
  *  - 优先 `AudioContext({ sampleRate: 16000 })` + `AudioWorkletNode`（无 worklet 时退回 `ScriptProcessorNode`）；
  *  - **校验实际 `ctx.sampleRate`**，不等于 16000 时由纯逻辑真重采样，绝不假装 16000；
  *  - 停止 / 取消 / 切后台立即 `track.stop()`（不偷录）；
- *  - 自动从统一注册表挑一个已配置的 ASR 模型（本地优先，音频不出设备）。
+ *  - 用哪一源**只读服务端持久化的显式选择**（`/api/audio/asr/source`），未配置就用不了，绝不自动挑第一个云。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { acquireAsrLease, listAsrModels, releaseAsrLease, transcribeAudio, type AsrModelOption } from "../api";
+import { acquireAsrLease, getVoiceSource, listAsrModels, onVoiceSourceChanged, releaseAsrLease, transcribeAudio, type AsrModelOption, type VoiceSource } from "../api";
 import { VoiceInputController, voiceCapability, type VoiceError, type VoiceResult, type VoiceState } from "../voice-input";
 
 const WORKLET_SRC = `class PiaCapture extends AudioWorkletProcessor {
@@ -80,9 +80,10 @@ async function startAudioCapture(stream: MediaStream, onData: (chunk: Float32Arr
 	};
 }
 
-/** 统一注册表里的 ASR 候选：本地优先（音频不出设备），其次云。 */
-export function pickAsrModel(models: AsrModelOption[]): AsrModelOption | undefined {
-	return models.find((m) => m.configured && m.location === "local") ?? models.find((m) => m.configured);
+/** 当前选中的 ASR 模型（由服务端显式选择 + 注册表选项换算；未配置为 null）。 */
+function resolveAsrModel(models: AsrModelOption[], source: VoiceSource | null): AsrModelOption | null {
+	if (!source) return null;
+	return models.find((m) => m.provider === source.provider && m.model === source.model) ?? null;
 }
 
 export interface UseVoiceInputOptions {
@@ -102,16 +103,26 @@ export interface UseVoiceInput {
 	unsupportedReason?: string;
 	/** 当前选中的 ASR 模型（未配置为 null）。 */
 	asrModel: AsrModelOption | null;
+	/** 服务端持久化的显式来源（null = 未配置）。 */
+	source: VoiceSource | null;
+	/** 来源读取失败（接口暂不可用）：按钮按未配置处理，但不伪造选择。 */
+	sourceUnavailable: boolean;
 	active: boolean;
 	toggle: () => void;
 	start: () => void;
 	stop: () => void;
 	cancel: () => void;
+	/** 清掉 hook 的 error（点「去设置」/取消后要让提示真的消失）。 */
+	dismissError: () => void;
+	/** 切会话 / 换助理：停止轨道 + 释放租约 + 清错误与临时提示。 */
+	resetContext: () => void;
 }
 
 export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 	const [state, setState] = useState<VoiceState>("idle");
 	const [error, setError] = useState<VoiceError | null>(null);
+	const [source, setSource] = useState<VoiceSource | null>(null);
+	const [sourceUnavailable, setSourceUnavailable] = useState(false);
 	const [asrModel, setAsrModel] = useState<AsrModelOption | null>(null);
 	const [capability, setCapability] = useState(() => voiceCapability({ mediaDevices: typeof navigator !== "undefined" ? navigator.mediaDevices : null, isSecureContext: typeof window !== "undefined" ? window.isSecureContext : true }));
 
@@ -139,14 +150,30 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		}
 	};
 
-	// 选源：注册表里挑一个已配置的 ASR（本地优先）；失败不报错，只是按钮提示未配置。
+	// 选源：只读服务端持久化的显式选择，再与注册表选项对应；未配置 = null，不自动挑（本地优先 / 第一个云都不选）。
 	useEffect(() => {
 		let alive = true;
-		void listAsrModels()
-			.then((models) => alive && setAsrModel(pickAsrModel(models) ?? null))
-			.catch(() => alive && setAsrModel(null));
+		const load = async () => {
+			try {
+				const [models, src] = await Promise.all([listAsrModels(), getVoiceSource()]);
+				if (!alive) return;
+				setSource(src.source);
+				setAsrModel(resolveAsrModel(models, src.source));
+				setSourceUnavailable(false);
+			} catch {
+				// 接口暂不可用：当作「未配置」，不伪造选择；界面用 title 说明。
+				if (!alive) return;
+				setSource(null);
+				setAsrModel(null);
+				setSourceUnavailable(true);
+			}
+		};
+		void load();
+		// 「语音配置」保存后刷新选中（同一页/同一会话内即时生效，不轮询）。
+		const off = onVoiceSourceChanged(() => void load());
 		return () => {
 			alive = false;
+			off();
 		};
 	}, []);
 
@@ -203,14 +230,31 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 			setError({ code: capability.reason ?? "no_mediadevices", message: capability.reason === "insecure_context" ? "当前不是安全上下文（请用 HTTPS 隧道或本机 127.0.0.1 打开）" : "当前浏览器不支持麦克风" });
 			return;
 		}
-		if (!asrModel) {
-			setError({ code: "asr_not_configured", message: "请先在设置 › 模型 里配置语音识别模型" });
+		if (!source || !asrModel) {
+			setError({ code: "asr_not_configured", message: sourceUnavailable ? "语音识别设置暂不可用，请稍后重试或在设置 › 语音配置 里检查" : "请先在设置 › 语音配置 里选择语音识别模型" });
+			return;
+		}
+		if (!asrModel.configured) {
+			setError({ code: "asr_unavailable", message: "当前选择的语音识别模型不可用，请到设置 › 语音配置 重新选择" });
 			return;
 		}
 		// 本地 ASR：先拿录音租约（边录边加载）；云端不需要。
 		if (asrModel.location === "local") beginLease(asrModel.provider, asrModel.model);
 		void controller.start({ provider: asrModel.provider, model: asrModel.model, language: asrModel.language, agentId: optsRef.current.agentId, conversationId: optsRef.current.conversationId, anchor: optsRef.current.getAnchor() });
-	}, [capability.available, capability.reason, asrModel, controller]);
+	}, [capability.available, capability.reason, source, asrModel, sourceUnavailable, controller]);
+
+	const dismissError = useCallback(() => setError(null), []);
+	const cancel = useCallback(() => {
+		controller.cancel();
+		endLease();
+		setError(null);
+	}, [controller]);
+	// 切会话 / 换助理：停轨道 + 释放租约 + 清错误（旧的麦克风提示不跟到新对话里）。
+	const resetContext = useCallback(() => {
+		controller.cancel();
+		endLease();
+		setError(null);
+	}, [controller]);
 
 	return {
 		state,
@@ -218,13 +262,14 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		supported: capability.available,
 		unsupportedReason: capability.reason,
 		asrModel,
+		source,
+		sourceUnavailable,
 		active: controller.isActive(),
 		toggle: () => (controller.isActive() ? void controller.stop() : start()),
 		start,
 		stop: () => void controller.stop(),
-		cancel: () => {
-			controller.cancel();
-			endLease();
-		},
+		cancel,
+		dismissError,
+		resetContext,
 	};
 }

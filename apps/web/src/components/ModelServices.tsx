@@ -323,8 +323,8 @@ function AsrAdapterSection({ provider, onReload }: { provider: RegistryProvider;
 	return (
 		<div className="space-y-1.5 rounded-lg border border-line p-2.5" data-testid={`asr-adapter-section-${provider.id}`} data-bound={String(mine.length > 0)}>
 			<div className="flex items-center gap-1.5 text-xs font-medium text-zinc-500">
-				语音识别（ASR）
-				<Help>把本服务的某个模型声明为语音转写：复用这里的地址和 Key，不新建第二套 Key。录音会先传到本机服务，再由本服务转发（音频会离开本机）。未声明时麦克风按钮会提示去设置。</Help>
+				语音识别（ASR）声明
+				<Help>只声明能力，不等于启用：真正用哪个在「设置 › 语音配置」里选。声明复用这里的地址和 Key，不新建第二套 Key。录音会先传到本机服务，再由本服务转发（音频会离开本机）。</Help>
 			</div>
 			{mine.length ? (
 				<div className="space-y-1">
@@ -340,7 +340,7 @@ function AsrAdapterSection({ provider, onReload }: { provider: RegistryProvider;
 					))}
 				</div>
 			) : (
-				<div className="text-[11px] text-mut2">未声明语音模型；麦克风会提示「未配置语音识别模型」。</div>
+				<div className="text-[11px] text-mut2">尚未声明语音模型。声明后，还要在「设置 › 语音配置」里选为当前来源才会生效。</div>
 			)}
 			<div className="flex flex-wrap items-center gap-2">
 				{options.length ? (
@@ -353,6 +353,7 @@ function AsrAdapterSection({ provider, onReload }: { provider: RegistryProvider;
 					声明为语音识别
 				</Button>
 			</div>
+			<div className="text-[11px] text-mut2">声明只表示“这个模型能做语音转写”；真正在使用哪个去「设置 › 语音配置」选。</div>
 			{err && <div className="text-[11px] text-red-600">{err}</div>}
 		</div>
 	);
@@ -531,7 +532,7 @@ function AddServiceDialog({ open, onClose, official, custom, images, onReload }:
 							{ value: "builtin", label: "官方服务（内置目录，填 Key 登录）" },
 							{ value: "custom", label: "自定义 / 中转（填 Base URL + Key）" },
 							{ value: "image", label: "生图服务（OpenAI / 百炼 / 方舟 / Gemini / xAI）" },
-							{ value: "local", label: "本地模型（Laya 一键安装）" },
+							{ value: "local", label: "本地快速操作模型（Laya，在「电脑」里安装）" },
 						]}
 						onChange={(v) => (setKind(v as typeof kind), setPicked(null))}
 					/>
@@ -585,11 +586,11 @@ function AddServiceDialog({ open, onClose, official, custom, images, onReload }:
 						<ImageProviderForm data={images} onDone={() => (onReload(), onClose())} onCancel={onClose} />
 					</div>
 				)}
-				{kind === "local" && (
-					<div className="rounded-lg border border-dashed border-line p-3 text-xs text-mut" data-testid="add-service-local-hint">
-						本地模型（Laya）在「模型服务」顶部的<b className="text-fg">本地 Laya</b> 卡里一键安装，不在这里添加。安装后自动注册地址与凭据，无需填 Key。
-					</div>
-				)}
+						{kind === "local" && (
+							<div className="rounded-lg border border-dashed border-line p-3 text-xs text-mut" data-testid="add-service-local-hint">
+								<b className="text-fg">本地快速操作模型（Laya）</b>不在模型服务里，到「电脑 › 操作这台电脑」里一键安装；它不是在线服务，也不需要地址 / Key。
+							</div>
+						)}
 				<div className="flex justify-end gap-2">
 					<Button variant="ghost" onClick={onClose}>
 						取消
@@ -605,8 +606,9 @@ function AddServiceDialog({ open, onClose, official, custom, images, onReload }:
 	);
 }
 
-/** 本地 Laya 安装管理卡：按 local-laya-runtime 冻结契约接线；始终可见（source=local），停进程也不删条目。 */
-function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: RegistryProvider, model: RegistryModel) => void }) {
+/** 本地 Laya 安装管理卡：按 local-laya-runtime 冻结契约接线；始终可见（source=local），停进程也不删条目。
+ *  位置：设置 › 电脑 › 操作这台电脑（不再放在「模型服务」里）。这里只导出，供 HostControl 用。 */
+export function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: RegistryProvider, model: RegistryModel) => void }) {
 	const [st, setSt] = useState<LayaStatus | null>(null);
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState<string | null>(null);
@@ -663,7 +665,7 @@ function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: RegistryProvid
 			{dlg}
 			<div className="flex flex-wrap items-center gap-2 text-xs">
 				<ServiceIcon provider={{ id: "local-laya", name: "本地 Laya", kind: "local" }} />
-				<span className="text-sm font-medium">本地 Laya</span>
+				<span className="text-sm font-medium">本地快速操作模型（Laya）</span>
 				<Badge tone="accent">本地</Badge>
 				<span data-testid="laya-install-state">
 					<Badge tone={installing ? "amber" : installed ? "green" : st.install.state === "failed" ? "red" : "zinc"}>
@@ -675,6 +677,9 @@ function LocalLayaCard({ onBenchmark }: { onBenchmark: (provider: RegistryProvid
 						{running ? "运行中" : st.runtime.state === "starting" ? "启动中" : st.runtime.state === "stopping" ? "停止中" : st.runtime.state === "crashed" ? "已崩溃" : "未运行"}
 					</Badge>
 				</span>
+			</div>
+			<div className="flex flex-wrap items-center gap-2 text-[11px] text-mut">
+				<span>在有限候选里挑控件的快速分类模型（不是语音识别）。这台电脑和助理电脑共用同一份安装；两边的「用不用、用哪个」分别设置。</span>
 			</div>
 			<div className="flex flex-wrap items-center gap-2 text-[11px] text-mut">
 				<span data-testid="laya-platform" data-support={p.support}>
@@ -804,12 +809,13 @@ interface AsrStatusView {
  * 许可限制**默认可见**（不折叠遮盖）；许可未确认（decision !== "cleared"）时下载安装入口默认关闭，
  * 接受勾选框**不能绕过**（仅允许用户自行导入已合法取得的权重）。
  */
-function LocalSenseVoiceCard() {
+export function LocalSenseVoiceCard() {
 	const [st, setSt] = useState<AsrStatusView | null>(null);
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState<string | null>(null);
 	const [accepted, setAccepted] = useState(false);
 	const [importDir, setImportDir] = useState("");
+	const [showTerms, setShowTerms] = useState(false);
 	const load = () =>
 		api<AsrStatusView>("/api/local-models/asr/sensevoice/status")
 			.then((s) => (setSt(s), setErr("")))
@@ -846,12 +852,13 @@ function LocalSenseVoiceCard() {
 	const installed = st.install.state === "installed";
 	const running = st.runtime.state === "running";
 	const blocked = lic.decision !== "cleared";
+	const decisionLabel = lic.decision === "cleared" ? "已确认" : lic.decision === "unresolved" ? "适用范围未最终确认" : "禁止";
 	const percent = st.install.total ? Math.round((st.install.received / st.install.total) * 100) : null;
 	return (
 		<div className="space-y-3 rounded-xl border border-line p-3" data-testid="local-sensevoice-card" data-install-state={st.install.state} data-runtime-state={st.runtime.state} data-license-decision={lic.decision} data-source="local">
 			<div className="flex flex-wrap items-center gap-2 text-xs">
 				<ServiceIcon provider={{ id: "local-sensevoice", name: "本地 SenseVoice", kind: "local" }} />
-				<span className="text-sm font-medium">本地 SenseVoice（语音识别）</span>
+				<span className="text-sm font-medium">本地语音识别（SenseVoice）</span>
 				<Badge tone="accent">本地</Badge>
 				<span data-testid="sensevoice-install-state">
 					<Badge tone={installing ? "amber" : installed ? "green" : st.install.state === "failed" ? "red" : "zinc"}>
@@ -867,32 +874,43 @@ function LocalSenseVoiceCard() {
 			<div className="text-[11px] text-mut" data-testid="sensevoice-source">
 				来源：{st.source.project} · 引擎 sherpa-onnx（{st.source.weightsLicense}）· 权重 {st.model.id}（{(st.model.bytes / 1024 / 1024).toFixed(0)} MB，{st.model.sampleRate} Hz {st.model.channels}ch，{st.model.languages.join("/")}）
 			</div>
-			<div className="space-y-1 rounded-lg border border-amber-300/60 bg-amber-50/60 p-2.5 text-[11px] text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" data-testid="sensevoice-license">
-				<div className="font-medium">
-					许可：{lic.licenseName} v{lic.termsVersion}（{lic.decision === "cleared" ? "已确认" : lic.decision === "unresolved" ? "适用范围未最终确认" : "禁止"}）
+			<div className="space-y-1.5" data-testid="sensevoice-license" data-license-decision={lic.decision}>
+				<div className="flex flex-wrap items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+					<AlertTriangle size={12} className="shrink-0" />
+					<span className="font-medium">
+						许可：{lic.licenseName} v{lic.termsVersion}（{decisionLabel}）
+					</span>
+					{blocked && <span className="font-medium">— 下载暂不可用</span>}
+					<button type="button" className="text-mut underline underline-offset-2" onClick={() => setShowTerms((v) => !v)} aria-expanded={showTerms} data-testid="sensevoice-terms-toggle">
+						{showTerms ? "收起条款" : "条款与详情"}
+					</button>
 				</div>
-				<ul className="list-disc space-y-0.5 pl-4">
-					{lic.restrictions.map((r) => (
-						<li key={r}>{r}</li>
-					))}
-				</ul>
-				<div className="flex flex-wrap gap-2 pt-0.5">
-					<a className="underline" href={st.source.repoUrl} target="_blank" rel="noreferrer" data-testid="sensevoice-link-repo">
-						源码仓库
-					</a>
-					<a className="underline" href={lic.links.modelLicense} target="_blank" rel="noreferrer" data-testid="sensevoice-link-license">
-						许可正文
-					</a>
-					<a className="underline" href={lic.links.modelCard} target="_blank" rel="noreferrer" data-testid="sensevoice-link-card">
-						权重页
-					</a>
-					<a className="underline" href={lic.links.issue} target="_blank" rel="noreferrer" data-testid="sensevoice-link-issue">
-						适用范围澄清（issue）
-					</a>
-				</div>
-				<div className="text-amber-800/80 dark:text-amber-300/80">
-					{lic.reason}。不随 App 分发 / 不镜像；{blocked ? "下载安装入口已关闭" : "接受条款后可安装"}，用户可自行导入已合法取得的权重。
-				</div>
+				{showTerms && (
+					<div className="space-y-1 rounded-lg border border-amber-300/60 bg-amber-50/60 p-2.5 text-[11px] text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" data-testid="sensevoice-license-detail">
+						<ul className="list-disc space-y-0.5 pl-4">
+							{lic.restrictions.map((r) => (
+								<li key={r}>{r}</li>
+							))}
+						</ul>
+						<div className="flex flex-wrap gap-2 pt-0.5">
+							<a className="underline" href={st.source.repoUrl} target="_blank" rel="noreferrer" data-testid="sensevoice-link-repo">
+								源码仓库
+							</a>
+							<a className="underline" href={lic.links.modelLicense} target="_blank" rel="noreferrer" data-testid="sensevoice-link-license">
+								许可正文
+							</a>
+							<a className="underline" href={lic.links.modelCard} target="_blank" rel="noreferrer" data-testid="sensevoice-link-card">
+								权重页
+							</a>
+							<a className="underline" href={lic.links.issue} target="_blank" rel="noreferrer" data-testid="sensevoice-link-issue">
+								适用范围澄清（issue）
+							</a>
+						</div>
+						<div className="text-amber-800/80 dark:text-amber-300/80">
+							{lic.reason}。不随 App 分发 / 不镜像；{blocked ? "下载安装入口已关闭" : "接受条款后可安装"}，用户可自行导入已合法取得的权重。
+						</div>
+					</div>
+				)}
 			</div>
 			{installing && (
 				<div className="space-y-1.5 text-[11px]" data-testid="sensevoice-progress">
@@ -1189,8 +1207,6 @@ export function ModelServicesPanel() {
 		<Fold testId="model-services" icon={Gauge} title="模型服务" count={registry.length + 1} hint={configured ? `已配置 ${configured}` : undefined} desc="一个服务 = 一份地址 + 一份凭据，可同时含对话 / 识图 / 生图 / 分类器模型。能力按 Pi 目录或对端元数据识别，猜的标「未确认」，可手动纠正。" open={expanded} onToggle={() => setExpanded((v) => !v)}>
 			<div className="space-y-3" data-testid="model-services-panel">
 				{confirmUi}
-				<LocalLayaCard onBenchmark={(p, m) => setBench({ provider: p, model: m })} />
-				<LocalSenseVoiceCard />
 				<DefaultImageModel images={images} onReload={reloadAll} />
 				<div className="flex flex-wrap items-center gap-2">
 					<div className="relative min-w-40 flex-1">
@@ -1228,5 +1244,19 @@ export function ModelServicesPanel() {
 			<AddServiceDialog open={addOpen} onClose={() => setAddOpen(false)} official={official} custom={custom} images={images} onReload={reloadAll} />
 			{bench && <BenchmarkDialog open onClose={() => setBench(null)} provider={bench.provider} model={bench.model} />}
 		</Fold>
+	);
+}
+
+/**
+ * 「电脑 › 操作这台电脑」用的本地快速操作模型（Laya）区块：卡片 + 实际操作测试弹窗（复用 BenchmarkDialog）。
+ * 本地 Laya 是电脑快速分类模型，不是语音识别；只在此处管理安装，助理电脑页只给跳转提示，不复制安装卡。
+ */
+export function LocalLayaSection() {
+	const [bench, setBench] = useState<{ provider: RegistryProvider; model: RegistryModel } | null>(null);
+	return (
+		<>
+			<LocalLayaCard onBenchmark={(p, m) => setBench({ provider: p, model: m })} />
+			{bench && <BenchmarkDialog open onClose={() => setBench(null)} provider={bench.provider} model={bench.model} />}
+		</>
 	);
 }

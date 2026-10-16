@@ -140,31 +140,69 @@ export function fmtTime(t: number) {
 /** 纯文本场景（下拉选项、标签）里的头像：图片头像不显示，只留 emoji/字母 */
 export const avatarText = (avatar: string) => (avatar.startsWith("img:") ? "" : avatar);
 
-/** 「?」帮助图标：电脑上鼠标悬停显示，手机上点一下显示（再点或点别处收起）。详细说明放这里，正文只留简短标签 */
+/** 「?」帮助图标：电脑上鼠标悬停显示，手机上点一下显示（再点或点别处收起）。详细说明放这里，正文只留简短标签。
+ *  可访问性：Tab 聚焦即打开、Escape 关闭、点外部关闭；Escape 只关这一层（不会连底层设置弹窗一起关），
+ *  关掉后焦点仍留在按钮上但不立刻重开（等下一次真正的聚焦 / 点击）。 */
 export function Help({ children, className }: { children: ReactNode; className?: string }) {
 	const [open, setOpen] = useState(false);
 	const [pos, setPos] = useState<{ x: number; y: number; up: boolean }>({ x: 0, y: 0, up: false });
 	const ref = useRef<HTMLButtonElement>(null);
+	const popId = useId();
+	// Escape 关闭后抑制「focus 立即重开」：保持焦点在按钮上但不弹，直到用户真的移开再回来（onBlur 复位）。
+	const suppressFocus = useRef(false);
 	const show = () => {
 		const r = ref.current?.getBoundingClientRect();
 		if (r) setPos({ x: Math.max(12, Math.min(r.left - 8, innerWidth - 312)), y: r.bottom + 6 > innerHeight - 160 ? r.top - 6 : r.bottom + 6, up: r.bottom + 6 > innerHeight - 160 });
 		setOpen(true);
 	};
+	const close = () => setOpen(false);
 	useEffect(() => {
 		if (!open) return;
-		const h = (e: Event) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
-		document.addEventListener("pointerdown", h);
-		addEventListener("scroll", h, true);
-		return () => (document.removeEventListener("pointerdown", h), removeEventListener("scroll", h, true));
-	}, [open]);
+		const outside = (e: Event) => {
+			const t = e.target as Node;
+			if (ref.current?.contains(t)) return;
+			if (document.getElementById(popId)?.contains(t)) return;
+			close();
+		};
+		// 捕获阶段拦下 Escape：只关气泡，不把底层设置弹窗一起关掉。
+		const esc = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			e.preventDefault();
+			e.stopPropagation();
+			suppressFocus.current = true;
+			close();
+		};
+		document.addEventListener("pointerdown", outside);
+		document.addEventListener("keydown", esc, true);
+		addEventListener("scroll", outside, true);
+		return () => (document.removeEventListener("pointerdown", outside), document.removeEventListener("keydown", esc, true), removeEventListener("scroll", outside, true));
+	}, [open, popId]);
 	return (
 		<span className={cx("pa-help", className)}>
-			<button type="button" ref={ref} aria-label="说明" aria-expanded={open} data-testid="help" onMouseEnter={show} onMouseLeave={() => setOpen(false)} onClick={(e) => (e.preventDefault(), e.stopPropagation(), open ? setOpen(false) : show())}>
+			<button
+				type="button"
+				ref={ref}
+				aria-label="说明"
+				aria-expanded={open}
+				aria-describedby={open ? popId : undefined}
+				data-testid="help"
+				onMouseEnter={show}
+				onMouseLeave={() => {
+					if (document.activeElement !== ref.current) close();
+				}}
+				onFocus={() => {
+					if (!suppressFocus.current) show();
+				}}
+				onBlur={() => {
+					suppressFocus.current = false;
+				}}
+				onClick={(e) => (e.preventDefault(), e.stopPropagation(), open ? close() : show())}
+			>
 				<CircleHelp size={14} />
 			</button>
 			{open &&
 				createPortal(
-					<div className="pa-help-pop" role="tooltip" data-testid="help-pop" style={{ left: pos.x, ...(pos.up ? { bottom: innerHeight - pos.y } : { top: pos.y }) }}>
+					<div id={popId} className="pa-help-pop" role="tooltip" data-testid="help-pop" style={{ left: pos.x, ...(pos.up ? { bottom: innerHeight - pos.y } : { top: pos.y }) }}>
 						{children}
 					</div>,
 					document.body,

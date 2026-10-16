@@ -164,7 +164,7 @@ export async function transcribeAudio(input: TranscribeInput): Promise<{ text: s
 	return api(`/api/audio/transcriptions`, { method: "POST", body: fd, signal: input.signal });
 }
 
-/** 注册表里可用的 ASR 模型（type:"asr" 且已配置）；用于语音输入自动选源。 */
+/** 注册表里可用的 ASR 模型（type:"asr"）；用于「语音配置」里给用户显式选择，不自动挑。 */
 export interface AsrModelOption {
 	provider: string;
 	model: string;
@@ -181,6 +181,57 @@ export async function listAsrModels(): Promise<AsrModelOption[]> {
 		out.push({ provider: p.id, model: m.id, name: m.name || m.id, location: m.asrAdapter?.location === "local" ? "local" : "cloud", configured: !!m.configured });
 	}
 	return out;
+}
+
+/** 语音识别来源（用户显式选择）：null = 未配置。后端 fail-closed，不会回落到第一个云。 */
+export interface VoiceSource {
+	location: "cloud" | "local";
+	provider: string;
+	model: string;
+}
+export interface VoiceSourceResponse {
+	source: VoiceSource | null;
+}
+
+/** 读取当前语音来源；接口不可用时抛出（调用方按「暂不可用」处理，不静默改默认）。 */
+export async function getVoiceSource(): Promise<VoiceSourceResponse> {
+	return api<VoiceSourceResponse>("/api/audio/asr/source");
+}
+
+// 「语音配置」保存成功后通知语音输入按钮刷新选中（前端事件，不做轮询）。
+type VoiceSourceListener = () => void;
+const voiceSourceListeners = new Set<VoiceSourceListener>();
+export function onVoiceSourceChanged(cb: VoiceSourceListener): () => void {
+	voiceSourceListeners.add(cb);
+	return () => voiceSourceListeners.delete(cb);
+}
+export function emitVoiceSourceChanged() {
+	for (const cb of [...voiceSourceListeners]) cb();
+}
+
+/** 写入语音来源（传 null = 改回未配置）；成功返回后端确认值，失败抛出让 UI 回滚。 */
+export async function setVoiceSource(source: VoiceSource | null): Promise<VoiceSourceResponse> {
+	const r = await api<VoiceSourceResponse>("/api/audio/asr/source", { method: "PUT", json: { source } });
+	emitVoiceSourceChanged();
+	return r;
+}
+
+/** 每个助理的子代理任务参数：settings = 生效值（override 优先，否则 defaults）；overrides 缺字段 = 继承。 */
+export interface SubagentSettings {
+	maxConcurrent: number;
+	maxMinutes: number;
+}
+export interface SubagentSettingsResponse {
+	settings: SubagentSettings;
+	overrides: Partial<SubagentSettings>;
+	defaults: SubagentSettings;
+}
+export async function getAgentSubagentSettings(agentId: string): Promise<SubagentSettingsResponse> {
+	return api<SubagentSettingsResponse>(`/api/agents/${encodeURIComponent(agentId)}/subagents/settings`);
+}
+/** patch 里字段传 null = 改回继承默认；不传 = 不动。 */
+export async function setAgentSubagentSettings(agentId: string, patch: { maxConcurrent?: number | null; maxMinutes?: number | null }): Promise<SubagentSettingsResponse> {
+	return api<SubagentSettingsResponse>(`/api/agents/${encodeURIComponent(agentId)}/subagents/settings`, { method: "PUT", json: patch });
 }
 
 /** 录音租约（只对本地 ASR 有意义）：录音期间持有，避免本地模型被 idle 卸载。失败不阻塞录音。 */

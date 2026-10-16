@@ -1,5 +1,5 @@
-import { BarChart3, Brain, Cat, ChevronDown, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Monitor, Moon, Palette, QrCode, Smartphone, Sparkles, Sun, Trash2, Wifi, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { BarChart3, Brain, Cat, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Mic, Monitor, Moon, Palette, QrCode, Smartphone, Sparkles, Sun, Trash2, Wifi, XCircle } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
 import { stripReferenceImages, type ThemeDraftRequest, type ThemeDraftResult, type ThemeManifestV1 } from "@pi-assistant/shared";
 import { api, upload } from "../api";
 import { getLang, setLang, t } from "../i18n";
@@ -23,45 +23,49 @@ import { Downloads } from "./Downloads";
 import { AppUpdate } from "./AppUpdate";
 import { PetSettings } from "./PetSettings";
 import { UsageTab } from "./Usage";
+import { VoiceSettings } from "./VoiceSettings";
 
-const TABS = [
-	["models", "模型", Monitor],
-	["usage", "用量", BarChart3],
-	["skills", "技能库", Puzzle],
-	["extensions", "扩展（MCP）", Plug],
-	["memory", "记忆", Brain],
-	["channels", "渠道", MessagesSquare],
-	["email", "邮箱", Mail],
-	["computer", "助理电脑", MonitorPlay],
-	["host", "操作这台电脑", Hand],
-	["remote", "远程访问与设备", Wifi],
-	["entry", "固定地址 / 入口", Globe],
-	["appearance", "外观", Palette],
-	["pet", "桌宠", Cat],
-	["downloads", "下载与组件", Download],
-	["about", "关于与更新", Info],
-] as const;
+/** 设置导航：16 项分 5 组（只加分组标题，仍是一层点击，不变二级树）。旧 key / 深链全部保留。 */
+const GROUPS: { title: string; items: readonly (readonly [string, string, typeof Monitor])[] }[] = [
+	{ title: "模型与语音", items: [["models", "模型服务", Monitor], ["voice", "语音配置", Mic]] },
+	{ title: "电脑", items: [["computer", "助理电脑", MonitorPlay], ["host", "操作这台电脑", Hand]] },
+	{ title: "助理能力", items: [["memory", "记忆", Brain], ["skills", "技能库", Puzzle], ["extensions", "扩展（MCP）", Plug]] },
+	{ title: "连接", items: [["channels", "渠道", MessagesSquare], ["email", "邮箱", Mail], ["remote", "远程访问与设备", Wifi], ["entry", "固定地址 / 入口", Globe]] },
+	{ title: "偏好与系统", items: [["appearance", "外观", Palette], ["pet", "桌宠", Cat], ["usage", "用量", BarChart3], ["downloads", "下载与组件", Download], ["about", "关于与更新", Info]] },
+];
+/** 旧深链别名：`?settings=model` 仍指向模型服务页。 */
+const SETTINGS_ALIAS: Record<string, string> = { model: "models" };
 
 export default function Settings() {
-	const { settings, set } = useStore();
+	const { settings: raw, set } = useStore();
+	const settings = raw ? (SETTINGS_ALIAS[raw] ?? raw) : raw;
 	return (
 		<Modal open={!!settings} onClose={() => set({ settings: null })} title={t("设置")} wide fixed testId="settings-dialog">
 			{/* 窗口固定尺寸；标签栏钉住不动，只有右侧（手机上是下方）内容区自己滚动，切换标签时不会跳位置 */}
 			<div className="flex h-full min-h-0 flex-col sm:flex-row">
-				<nav data-testid="settings-nav" className="flex shrink-0 gap-1 overflow-x-auto border-b border-line p-2 [scrollbar-width:none] sm:w-52 sm:flex-col sm:overflow-x-visible sm:overflow-y-auto sm:border-r sm:border-b-0">
-					{TABS.map(([k, label, Icon]) => (
-						<button key={k} aria-current={settings === k ? "page" : undefined} data-tab={k} onClick={() => set({ settings: k })} className={cx("flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-sm whitespace-nowrap", settings === k ? "bg-accent-soft font-medium text-accent" : "hover:bg-zinc-100 dark:hover:bg-zinc-800")}>
-							<Icon size={16} className="shrink-0" />
-							{/* 预留加粗后的宽度：选中时字变粗也不会把后面的标签挤动（手机上横排时） */}
-							<span className="grid">
-								<span aria-hidden className="invisible col-start-1 row-start-1 font-medium">{t(label)}</span>
-								<span className="col-start-1 row-start-1">{t(label)}</span>
-							</span>
-						</button>
+				<nav data-testid="settings-nav" className="flex shrink-0 gap-1 overflow-x-auto border-b border-line p-2 [scrollbar-width:none] sm:w-52 sm:flex-col sm:gap-0.5 sm:overflow-x-visible sm:overflow-y-auto sm:border-r sm:border-b-0">
+					{GROUPS.map((g) => (
+						<Fragment key={g.title}>
+							{/* 分组标题只在桌面侧栏显示；手机上保持横向滚动的单排，不造双重 nav */}
+							<div className="hidden px-3 pt-3 pb-1 text-[11px] font-medium text-mut2 sm:block" data-settings-group={g.title}>
+								{t(g.title)}
+							</div>
+							{g.items.map(([k, label, Icon]) => (
+								<button key={k} aria-current={settings === k ? "page" : undefined} data-tab={k} onClick={() => set({ settings: k })} className={cx("flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-sm whitespace-nowrap", settings === k ? "bg-accent-soft font-medium text-accent" : "hover:bg-zinc-100 dark:hover:bg-zinc-800")}>
+									<Icon size={16} className="shrink-0" />
+									{/* 预留加粗后的宽度：选中时字变粗也不会把后面的标签挤动（手机上横排时） */}
+									<span className="grid">
+										<span aria-hidden className="invisible col-start-1 row-start-1 font-medium">{t(label)}</span>
+										<span className="col-start-1 row-start-1">{t(label)}</span>
+									</span>
+								</button>
+							))}
+						</Fragment>
 					))}
 				</nav>
 				<div key={settings} data-testid="settings-content" className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-5 [scrollbar-gutter:stable]">
 					{settings === "models" && <ModelsTab />}
+					{settings === "voice" && <VoiceSettings />}
 					{settings === "usage" && <UsageTab />}
 					{settings === "skills" && <SkillsTab />}
 					{settings === "extensions" && (
@@ -120,78 +124,17 @@ const H = ({ children, desc }: { children: React.ReactNode; desc?: React.ReactNo
 	</div>
 );
 
-interface SubagentSettingsDto { maxMinutes: number; maxConcurrent: number }
-
-const SUBAGENT_LIMIT = { min: 1, max: 100 };
-/** 子代理任务侧设置：并发上限 + 最长运行时间（模型改由每个助理的候选池决定）。 */
-function SubagentTaskSettings() {
-	const [d, setD] = useState<SubagentSettingsDto | null>(null);
-	const [err, setErr] = useState("");
-	// 输入框草稿：接口拿到的是 { settings, models }，必须取 settings，否则读到 undefined 会显示空白
-	const [draft, setDraft] = useState<{ maxConcurrent: string; maxMinutes: string } | null>(null);
-	const sync = (s: SubagentSettingsDto) => { setD(s); setDraft({ maxConcurrent: String(s.maxConcurrent), maxMinutes: String(s.maxMinutes) }); };
-	useEffect(() => { void api<{ settings: SubagentSettingsDto }>("/api/subagents/settings").then((r) => sync(r.settings)).catch((e) => setErr(String(e))); }, []);
-	const save = async (patch: Partial<SubagentSettingsDto>) => {
-		try { sync(await api<SubagentSettingsDto>("/api/subagents/settings", { method: "PUT", json: { ...d, ...patch } })); setErr(""); }
-		catch (e) { setErr(String(e)); if (d) sync(d); } // 保存失败：显示错误并把输入框恢复成仍生效的值，不留下假值
-	};
-	// 失焦提交：合法且变了才保存；空 / 非法 / 越界一律恢复成当前生效值，不静默存 0
-	const commit = (key: "maxConcurrent" | "maxMinutes", raw: string) => {
-		if (!d) return;
-		const n = key === "maxConcurrent" ? Math.round(Number(raw)) : Number(raw);
-		const ok = raw.trim() !== "" && Number.isFinite(n) && n >= (key === "maxConcurrent" ? SUBAGENT_LIMIT.min : 1) && (key === "maxConcurrent" ? n <= SUBAGENT_LIMIT.max : true);
-		if (!ok) { setDraft((x) => (x ? { ...x, [key]: String(d[key]) } : x)); return; }
-		if (n !== d[key]) void save({ [key]: n } as Partial<SubagentSettingsDto>);
-		else setDraft((x) => (x ? { ...x, [key]: String(n) } : x));
-	};
-	// 加载中 / 加载失败：不渲染可编辑的空输入框，失败时把原因显示出来（不用默认值覆盖）
-	if (!d || !draft) return <section data-testid="subagent-concurrency" className="space-y-3">{err ? <p className="text-xs text-red-500">{err}</p> : null}</section>;
-	return (
-		<section data-testid="subagent-concurrency" className="space-y-3">
-			<div>
-				<H desc="按助理计算。同时运行的子代理达到上限后，新任务会自动排队，有空位就按先后顺序开始，不会丢。">子代理并发上限</H>
-				<label className="flex items-center gap-2 text-sm text-mut">最多同时<input className="pa-input !w-24" type="number" min={SUBAGENT_LIMIT.min} max={SUBAGENT_LIMIT.max} value={draft.maxConcurrent} aria-label="子代理并发上限" onChange={(e) => setDraft({ ...draft, maxConcurrent: e.target.value })} onBlur={(e) => commit("maxConcurrent", e.target.value)} />个子代理</label>
-			</div>
-			<div>
-				<H desc="子代理是给长任务用的；超过这个时间会被停下，并告诉你原因。">子代理最长运行</H>
-				<label className="flex items-center gap-2 text-sm text-mut">最长<input className="pa-input !w-24" type="number" min="1" value={draft.maxMinutes} aria-label="子代理最长运行分钟" onChange={(e) => setDraft({ ...draft, maxMinutes: e.target.value })} onBlur={(e) => commit("maxMinutes", e.target.value)} />分钟</label>
-			</div>
-			{err && <p className="text-xs text-red-500">{err}</p>}
-		</section>
-	);
-}
-
 function ModelsTab() {
 	return (
 		<div className="space-y-6">
 			<section>
-				<H desc="新助理默认用这个模型；点按钮可以同时改模型和思考强度。">默认使用</H>
+				<H desc="新助理默认用这个模型；已经建好的助理不受影响，它们各自的模型在「助理设置」里改。点按钮可同时改模型和思考强度。">新助理默认模型</H>
 				<DefaultModelPicker />
 			</section>
-			{/* 统一模型服务：服务卡片 / 添加服务 / 官方登录 / 自定义 CRUD / 生图适配 / 本地 Laya / 实际操作测试，见 docs/design/model-settings-unified.md */}
+			{/* 统一模型服务：服务卡片 / 添加服务 / 官方登录 / 自定义 CRUD / 生图适配 / 实际操作测试，见 docs/design/model-settings-unified.md。
+			    子代理任务参数、本地 Laya / SenseVoice 不在这里。 */}
 			<ModelServicesPanel />
-			<SubagentSection />
 		</div>
-	);
-}
-
-/** 子代理设置：独立短折叠，不跟渠道里的模型能力混在一起。模型在助理设置里按助理勾选候选池。 */
-function SubagentSection() {
-	const [open, setOpen] = useState(false);
-	return (
-		<section data-testid="subagent-section">
-			<button className="flex w-full items-center gap-2 text-left" onClick={() => setOpen(!open)} aria-expanded={open} data-testid="subagent-section-toggle">
-				<ChevronDown size={14} className={cx("shrink-0 text-mut transition-transform", !open && "-rotate-90")} />
-				<span className="font-semibold">子代理</span>
-				<span className="truncate text-xs text-mut">后台干活的并发和最长运行时间</span>
-			</button>
-			{open && (
-				<div className="mt-3 space-y-4 border-l border-line pl-3">
-					<p className="text-xs text-mut2">子代理用哪个模型，在「助理设置 › 子代理模型」里按助理勾选候选池；默认跟随主会话。</p>
-					<SubagentTaskSettings />
-				</div>
-			)}
-		</section>
 	);
 }
 
