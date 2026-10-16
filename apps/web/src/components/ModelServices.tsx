@@ -23,9 +23,9 @@ import { Badge, Button, cx, Fold, Help, Input, Modal, Select, useConfirm } from 
 import { useStore } from "../store";
 
 const CAPS: ModelCapability[] = ["chat", "vision", "image", "classifier"];
-const CAP_LABEL: Record<ModelCapability, string> = { chat: "对话", vision: "识图", image: "生图", classifier: "分类器" };
+const CAP_LABEL: Record<ModelCapability, string> = { chat: "对话", vision: "识图", image: "生图", classifier: "快速操作" };
 const CAP_TONE: Record<ModelCapability, "accent" | "green" | "amber" | "zinc"> = { chat: "accent", vision: "green", image: "amber", classifier: "zinc" };
-const TYPE_LABEL: Record<ModelType, string> = { chat: "对话", image: "生图", classifier: "分类器" };
+const TYPE_LABEL: Record<ModelType, string> = { chat: "对话", image: "生图", classifier: "快速操作" };
 const PHASE_LABEL: Record<string, string> = { preflight: "预检", uv: "环境", venv: "虚拟环境", torch: "框架", laya: "Laya", weights: "权重", verify: "校验", activate: "启用", rollback: "回滚", done: "完成" };
 const AVATAR_TONES = [
 	"bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
@@ -86,7 +86,7 @@ function CapabilityEditor({ model, onSave, onCancel }: { model: RegistryModel; o
 					</label>
 				))}
 			</div>
-			<div className="text-[11px] text-mut2">不确定时也可以不选：不影响保存，助理不会据此自动决策。保存后来源记为「你手动设置」，覆盖推断结果。</div>
+			<div className="text-[11px] text-mut2">不确定时也可以不选：不影响保存，助理不会据此自动决策。选「快速操作」后，只有能确定协议（官方目录同模型，或服务端给出协议）才会注册进快速操作目录；认不出会标「未确认」，不会乱调未知端点。</div>
 			<div className="flex gap-2">
 				<Button size="sm" variant="primary" onClick={() => onSave(picked)} data-testid="cap-save">
 					保存
@@ -109,6 +109,7 @@ function ModelRow({ model, strengths, onSave, onBenchmark }: { model: RegistryMo
 		<div className="px-2.5 py-1.5" data-testid="service-model" data-model={model.id} data-type={model.type}>
 			<div className="flex items-center gap-2 text-xs">
 				<span className="shrink-0 rounded bg-hover px-1.5 py-0.5 text-[11px] text-mut">{TYPE_LABEL[model.type]}</span>
+				{model.discovered && <span className="shrink-0 rounded bg-hover px-1.5 py-0.5 text-[11px] text-mut2" title="按官方目录同模型 / 服务端元数据自动识别">自动识别</span>}
 				<span className="min-w-0 flex-1 truncate font-mono" title={model.id}>
 					{model.id}
 				</span>
@@ -457,7 +458,7 @@ function ServiceCard({
 								<ModelRow key={`${m.type}:${m.id}`} model={m} strengths={strengths} onSave={(c) => onSaveCaps(m.id, c)} onBenchmark={onBenchmark} />
 							))}
 						</div>
-						<div className="text-[11px] text-mut2">能力来自 Pi 目录 / 用户显式配置 / 服务端 /models 元数据；靠 models.dev 或名字猜的标「未确认」。不会逐个模型做隐式付费探测。</div>
+						<div className="text-[11px] text-mut2">能力来自 Pi 目录 / 用户显式配置 / 服务端 /models 元数据；官方同模型或服务端给了协议会自动标为「快速操作」（标「自动识别」），靠名字猜的标「未确认」。不会逐个模型做隐式付费探测。</div>
 					</div>
 					<TestConnection providerId={provider.id} models={provider.models} />
 					<AsrAdapterSection provider={provider} onReload={onReload} />
@@ -1279,7 +1280,7 @@ export function ModelServicesPanel() {
 		);
 	const configured = registry.filter((s) => s.configured).length;
 	return (
-		<Fold testId="model-services" icon={Gauge} title="模型服务" count={registry.length + 1} hint={configured ? `已配置 ${configured}` : undefined} desc="一个服务 = 一份地址 + 一份凭据，可同时含对话 / 识图 / 生图 / 分类器模型（官方目录没有的，也能在这里填 Key 登录）。能力按 Pi 目录或对端元数据识别，猜的标「未确认」，可手动纠正；生图与快速操作模型都在这里选，不再单独配凭据。" open={expanded} onToggle={() => setExpanded((v) => !v)}>
+		<Fold testId="model-services" icon={Gauge} title="模型服务" count={registry.length + 1} hint={configured ? `已配置 ${configured}` : undefined} desc="一个服务 = 一份地址 + 一份凭据，可同时含对话 / 识图 / 生图 / 快速操作（Jev 分类器）模型（官方目录没有的，也能在这里填 Key 登录）。Jev / 官方同模型会自动识别为快速操作，猜的标「未确认」，可手动纠正；生图与快速操作模型都在这里选，不再单独配凭据。" open={expanded} onToggle={() => setExpanded((v) => !v)}>
 			<div className="space-y-3" data-testid="model-services-panel">
 				{confirmUi}
 				<DefaultImageModel images={images} onReload={reloadAll} />

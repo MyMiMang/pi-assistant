@@ -58,7 +58,7 @@ export function FastComputerSettingsSection({ scope }: { scope: "hostpc" | "comp
 	return (
 		<section className="space-y-3" data-testid={`fast-computer-${scope}`}>
 			<div className="flex items-center gap-2">
-				<Help>默认关闭。开启后主模型仍负责规划、授权和异常判断；快速模型只从程序给出的有限候选里挑一个控件，不能自由调工具、不接管会话。选中不等于授权，执行仍走原有权限与审批。每台电脑单独设置。</Help>
+				<Help>默认关闭。开启后主模型仍负责规划、授权和异常判断；快速模型只从程序给出的有限候选里挑一个控件，不能自由调工具、不接管会话。选中不等于授权，执行仍走原有权限与审批。每台电脑单独设置。模型列表自动包含配好的 Jev（含官方同名模型和自定义服务声明的分类器）。</Help>
 				<button type="button" className="text-xs text-mut hover:text-fg" onClick={() => void load()} data-testid={`fast-refresh-${scope}`}>
 					刷新列表
 				</button>
@@ -81,7 +81,7 @@ export function FastComputerSettingsSection({ scope }: { scope: "hostpc" | "comp
 						/>
 					</label>
 					<p className="text-xs text-mut2">
-						原生 Jev（System One 分类器，有校准概率）。只列出<b className="text-fg">已配置凭据</b>的分类器；鉴权由 Pi 按所选服务解析，不读全局环境变量 Key。
+						原生 Jev（System One 分类器，有校准概率）。只列出<b className="text-fg">已配置凭据</b>的分类器；在「模型服务」里配好 Jev（含官方同名模型）会自动识别进来，鉴权由 Pi 按所选服务解析，不读全局环境变量 Key。
 						{configured.length === 0 && " 目前没有已配置的分类器，请先在模型服务里配置 TypeSafe / OpenRouter，或声明 System One 分类器。"}
 					</p>
 					{settings.enabled && !value && <p className="flex items-center gap-1 text-xs text-amber-600"><AlertTriangle size={12} /> 还没有选模型，开启也不会生效。</p>}

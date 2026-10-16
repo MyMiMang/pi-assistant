@@ -52,6 +52,8 @@ export interface RegistryModel {
 	confirmed: boolean;
 	/** 靠 models.dev / 模型名等猜出来的能力，界面标“未确认”。 */
 	inferred: ModelCapability[];
+	/** 分类器条目是自动识别的（对端元数据 / Pi 官方目录同 id），不是用户显式声明。 */
+	discovered?: boolean;
 	source: RegistrySource;
 	/** 该 provider 是否已配置可用认证（只读状态，不暴露凭据）。本地服务仅在运行中为 true。 */
 	configured: boolean;
@@ -262,10 +264,14 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 		p.kind = "custom";
 		p.configured = p.configured || !!c.configured;
 		p.baseUrl ??= c.baseUrl;
+		// 真正注册进 Pi 的 classifier（显式声明 + 自动识别）；用户只标了能力但没注册的要标「未确认」。
+		const registeredClassifiers = new Set([...(c.classifiers ?? []), ...(c.discoveredClassifiers ?? [])].map((x) => x.modelId));
 		for (const m of c.models) {
 			// 显式声明能力优先；否则按 input 元数据推导。inputAuto 表示是从 models.dev 猜的 → 未确认。
 			const inferred: ModelCapability[] = m.inputAuto && m.input?.includes("image") ? ["vision"] : [];
 			const capabilities = m.capabilities?.length ? dedupe(m.capabilities) : chatCapabilities(m.input);
+			// 标了 classifier 但没真正注册进 Pi（协议无法确定 / 被用户改回 chat）→ 标未确认，不假装可调用。
+			if (capabilities.includes("classifier") && !registeredClassifiers.has(m.id)) inferred.push("classifier");
 			put(p, {
 				provider: c.id,
 				id: m.id,
@@ -294,6 +300,23 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 				protocol: cl.protocol,
 				confirmed: true,
 				inferred: [],
+				source: "custom",
+				configured: !!c.configured,
+				contextWindow: cl.contextWindow,
+			});
+		}
+		// 自动识别的 classifier（对端元数据 / Pi 官方同 id）：显式声明先写，自动后写不会覆盖同名条目。
+		for (const cl of c.discoveredClassifiers ?? []) {
+			put(p, {
+				provider: c.id,
+				id: cl.modelId,
+				name: cl.name || cl.modelId,
+				type: "classifier",
+				capabilities: ["classifier"],
+				protocol: cl.protocol,
+				confirmed: true,
+				inferred: [],
+				discovered: true,
 				source: "custom",
 				configured: !!c.configured,
 				contextWindow: cl.contextWindow,
