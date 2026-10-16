@@ -1,3 +1,4 @@
 {
-  "scope": "mac-arm64"
+  "scope": "all-intel",
+  "_comment": "发布范围：mac-arm64（仅 Apple 芯片 Mac）/ all（Mac arm64 + Windows + Linux x64/arm64）/ all-intel（再加 Intel Mac x64）。tag 触发也读这里；all-intel 不依赖仓库变量 BUILD_INTEL。Intel 构建较慢。"
 }

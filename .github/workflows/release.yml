@@ -1,6 +1,8 @@
 # 打 v* tag 时构建安装包并发布到 GitHub Releases：
-# tag / release-dryrun 的范围取 .github/release-scope.json（本轮 mac-arm64），手动 scope=all 可恢复多平台。
-# mac-arm64 强制跳过 Windows、Linux、Intel；publish 校验 latest.json 仅含实际构建的 arm64 更新项。
+# tag / release-dryrun 的范围取 .github/release-scope.json（本轮 `all-intel`：Mac arm64 + Intel Mac x64 + Windows x64 + Linux x64/arm64）。
+#   scope 取值：`mac-arm64` 仅 Apple 芯片 Mac；`all` Mac arm64 + Windows + Linux；`all-intel` 在 `all` 基础上加 Intel Mac x64。
+#   **Intel 是否进矩阵只由 scope 决定**（`all-intel` 就是进，tag 触发同样生效）；仓库变量 BUILD_INTEL / 手动输入 build_intel 只是旧的补充开关，不再必需。
+#   mac-arm64 强制跳过 Windows、Linux、Intel；publish 校验 latest.json 仅含实际构建平台的更新项。
 #   macOS arm64 / x64 → .dmg（hdiutil 打包，非 Tauri bundle_dmg.sh）（+ .app.tar.gz 更新包），Windows x64 → NSIS .exe（+ 更新包）
 # 安装包内容：Tauri 托盘程序 + 内置 Node 运行时（sidecar）+ app 目录（服务端 + Pi + 生产依赖 + 网页 + cloudflared/uv/cua-driver），
 # Linux 服务器版 x64 / arm64 → pi-assistant-<版本>-linux-<arch>.tar.gz（+ .sha256），deploy/linux/install.sh 安装。
@@ -8,9 +10,10 @@
 # 先发草稿、验证通过才公开：prepare 建草稿 → build / linux 把安装包和 latest.json 传进草稿 → windows-smoke（静默安装刚构建的 setup.exe 到中文路径，启动托盘查 /api）
 # 和 mac-smoke（挂载 dmg 启动 .app 查 /api）→ 都通过才 publish（取消草稿、标 Latest）。草稿里的 latest.json 对自动更新不可见，任一步失败 Release 留在草稿，用户收不到。
 # 演练：推送到 release-dryrun 分支（或手动运行）会用 v0.0.0-dryrun.<run> 走完整流程，但不公开，最后自动删掉草稿。
-# Intel Mac（x86_64）默认不构建：耗时很久且长期失败（见 docs/ROADMAP.md「暂缓」）。恢复方式二选一：
-#   1) 手动运行本 workflow 时勾选 build_intel；2) 设置仓库变量 BUILD_INTEL=true（Settings › Secrets and variables › Actions › Variables）。
-# 跳过 Intel 时 latest.json 不含 darwin-x86_64，Intel 老用户不会被错误引到 arm 包（只停更，不会装错）。
+# Intel Mac（x86_64）：用 `.github/release-scope.json` 的 `all-intel` 显式开启（tag 也生效，可审计）。
+#   旧的两条补充开关仍然有效，用于临时覆盖：1) 手动运行本 workflow 时勾选 build_intel；2) 仓库变量 BUILD_INTEL=true（Settings › Secrets and variables › Actions › Variables）。
+#   不开 Intel 时 latest.json 不含 darwin-x86_64，Intel 老用户不会被错误引到 arm 包（只停更，不会装错）。
+#   注意：Intel 构建（macos-15-intel）显著慢于 arm64，且历史上有过失败，见 docs/ROADMAP.md。
 # 自动更新签名：仓库 secrets 设置 TAURI_SIGNING_PRIVATE_KEY（+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD）后生成 latest.json 与 .sig；
 # 没设置时照常出安装包，只是不带自动更新文件。暂不做 Apple 公证 / Windows 代码签名（见 docs/INSTALL.md）。
 name: release
@@ -21,16 +24,17 @@ on:
       scope:
         description: 发布平台范围（tag 使用 .github/release-scope.json）
         type: choice
-        options: [mac-arm64, all]
+        options: [mac-arm64, all, all-intel]
         default: mac-arm64
       build_intel:
-        description: 同时构建 Intel Mac（x86_64，默认关闭）
+        description: 额外构建 Intel Mac（x86_64）；scope=all-intel 时本项可忽略
         type: boolean
         default: false
 permissions: { contents: write }
 env:
   REL_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v0.0.0-dryrun.{0}', github.run_number) }}
-  # Intel Mac 开关：手动触发看输入，其余触发看仓库变量 BUILD_INTEL（小写 true）。
+  # Intel Mac 补充开关：手动触发看输入，其余触发看仓库变量 BUILD_INTEL。
+  # 主路径是 release-scope.json 的 `all-intel`（见 scripts/release-scope.mjs），这里只是临时覆盖。
   BUILD_INTEL: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_intel) || vars.BUILD_INTEL == 'true' }}
 jobs:
   prepare:

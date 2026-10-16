@@ -14,6 +14,25 @@ test('Mac 范围强制只构建 arm64，即使 Intel 开关开启', () => {
   assert.equal(releasePlan('all', true).matrix.length, 3);
   assert.throws(() => releasePlan('typo'));
 });
+
+test('all-intel 显式开启 Intel（tag 也生效，不依赖 BUILD_INTEL 变量）', () => {
+  // 关键：传 intel=false 也必须进 Intel —— tag 触发不会带 BUILD_INTEL，只能靠 scope 自己说得清
+  const p = releasePlan('all-intel', false);
+  assert.deepEqual(p.matrix.map(x => x.target), ['aarch64-apple-darwin', 'x86_64-apple-darwin', 'x86_64-pc-windows-msvc']);
+  assert.equal(p.intel, true);
+  assert.equal(p.linux, true);
+  assert.equal(p.windows, true);
+  // 归一成 all：mac-arm64 专属校验不再误触发
+  assert.equal(p.scope, 'all');
+  // mac-arm64 仍然永远不带 Intel
+  assert.equal(releasePlan('mac-arm64', true).intel, false);
+});
+
+test('仓库配置的 scope 是显式可审计的取值', () => {
+  const cfg = JSON.parse(readFileSync('.github/release-scope.json', 'utf8'));
+  assert.ok(['mac-arm64', 'all', 'all-intel'].includes(cfg.scope), `未知 scope：${cfg.scope}`);
+  assert.equal(releasePlan(cfg.scope).matrix.some(x => x.target === 'x86_64-apple-darwin'), cfg.scope === 'all-intel');
+});
 const tag = 'v0.1.0-beta.19';
 const assets = ['Pi.Assistant_0.1.0-beta.19_aarch64.dmg', 'Pi.Assistant_aarch64.app.tar.gz', 'Pi.Assistant_aarch64.app.tar.gz.sig', 'latest.json'];
 const latest = () => ({ version: tag.slice(1), platforms: { 'darwin-aarch64': { signature: 'signed', url: 'https://github.com/MyMiMang/pi-assistant/releases/download/untagged-test/Pi.Assistant_aarch64.app.tar.gz' } } });
