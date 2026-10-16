@@ -1547,9 +1547,11 @@ cua-driver 0.35.4 自带 CDP 浏览器工具（get_browser_state、browser_prepa
 
 - **合并按钮**：输入栏由 `ModelPicker` 提供模型与思考强度的统一按钮，下拉里既选模型也设思考强度；按钮简短显示「模型 + 思考档位」，窄容器（容器查询）只留图标 + `aria-label`/tooltip；上下文圆环 `ContextRing` 保持独立，不再夹在两个模型按钮中间。
 - **常用 5**：服务端最小统计（选择频次 / 最近选择）持久化，模型多时把常用 5 个置顶；内置 / 自定义同名用用户命名，不靠模型 id 猜 provider。
+- **常用是快捷入口，不搬目录（未打包，beta.25 候选）**：常用项只在菜单顶部**再列一份**，**不从原服务分组里移除**（beta.20~beta.24 的实现把常用项从分组数据里整体过滤掉，渠道只有一个模型时整组消失、多模型渠道少一行）；去重按 canonical key（`provider/模型 id`）**只做在同一分组内**，跨渠道同名模型（例如两个中转都叫 `gpt-6.1-sol`）各自保留；搜索时不显示常用，只按分组过滤。分组 / 搜索 / 常用规则抽到纯模块 `apps/web/src/modelMenu.ts`，`ModelMenu`（聊天 / 群聊 / 默认模型）与子代理候选池 `ModelPoolMenu` 共用。
 - **渠道（provider）折叠**：设置 › 模型里自定义渠道多时按渠道折叠（默认收起、可展开看该服务支持的模型）；编辑 / 保存 / 删除沿用 `useConfirm`，不回归原生 `confirm`。
 - **统一入口**：单聊 / 群聊 / 子代理的模型入口复用同一组件（保留现有 `data-testid` 与排序语义）。
 - **验收**：`e2e/model-ui.mjs` 六组通过，覆盖分组搜索、常用五项持久化、模型与思考统一、390px、默认/识图/群聊/子代理入口；模型选择统计四项单测通过，两端 typecheck 与前端 build 通过。
+- **常用入口语义专项验收（未打包，beta.25 候选）**：`packages/server/test/model-menu-grouping.test.ts` 7/7（纯函数：canonical key、选过后原分组仍在、跨渠道同名不合并、组内去重、搜索、掉出常用不掉分组、删除渠道不 ghost）；`e2e/model-picker-favorites-ui.mjs` 7 组（真实浏览器复现「选过之后原渠道分组消失」并验证修好）；改前用同一 fixture 实测复现整组消失。
 
 **自定义服务推理档位（未打包，beta.21 候选）**：自定义服务模型只写 `reasoning`、不写 Pi 的 `thinkingLevelMap` 时，`getSupportedThinkingLevels` 只给 `off/minimal/low/medium/high`，`clampThinkingLevel` 还会把 `xhigh/max` 静默收敛回 `high`。现在按模型名从 **Pi 内置目录（SDK 元数据）** 照搬同一个模型的 `thinkingLevelMap`（含 `xhigh/max`），写进自定义模型元数据与 Pi 的 `models.json`，让界面档位、切换与 `reasoning_effort` 三者一致。
 

@@ -1,7 +1,8 @@
 /**
  * 模型选择（单聊输入栏 / 群聊成员 / 子代理共用同一套菜单）：
  * 一个按钮打开菜单，菜单里既能换模型，也能设思考强度。
- * 菜单结构：搜索 →（模型支持推理时）思考强度 → 常用（按用户选择频次，最多 5 个）→ 其余按模型服务（provider）分组折叠。
+ * 菜单结构：搜索 →（模型支持推理时）思考强度 → 常用（按用户选择频次，最多 5 个的快捷入口）→ 其余按模型服务（provider）分组折叠。
+ * 「常用」只是快捷入口：它**不会**把条目从原服务分组里移走（同一模型在常用与原渠道各 1 行；分组内按 provider/id 去重，跨分组不合并）。
  * 服务名一律用 provider 目录 / 用户给自定义服务起的名字，绝不按模型 id 猜。
  */
 import { Brain, Check, ChevronDown, Cpu, Search } from "lucide-react";
@@ -9,9 +10,15 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { createPortal } from "react-dom";
 import { api } from "../api";
 import { COMPOSER_LABEL } from "../composer";
+import { dedupeGroup, frequentModels, groupModelsByProvider, pickKey, rankPicks, searchModels, type MenuPick, type MenuPicks } from "../modelMenu";
 import { useStore } from "../store";
 import type { Provider } from "../types";
 import { cx } from "./ui";
+
+export { pickKey, rankPicks };
+/** 兼容旧名字：菜单选项的频次记录（定义在 ../modelMenu 的纯模块里） */
+export type ModelPick = MenuPick;
+export type ModelPicks = MenuPicks;
 
 export interface ModelEntry {
 	provider: string;
@@ -30,13 +37,6 @@ export interface ModelEntry {
 export const THINKING_LABEL: Record<string, string> = { off: "关闭", minimal: "极简", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最大" };
 export const THINKING_DESC: Record<string, string> = { off: "不思考，回答最快", minimal: "几乎不思考", low: "简单推理", medium: "平衡（默认）", high: "深入推理，更慢更贵", xhigh: "非常深入", max: "最大推理预算" };
 
-export const pickKey = (m: { provider: string; id: string }) => `${m.provider}/${m.id}`;
-export interface ModelPick {
-	count: number;
-	at: number;
-}
-export type ModelPicks = Record<string, ModelPick>;
-
 /** 已配置的服务的全部模型（含自定义）；每次打开菜单都会重新拉一次，新增渠道后不用刷新页面 */
 export function useConfiguredModels() {
 	const v = useStore((s) => s.system);
@@ -50,14 +50,6 @@ export function useConfiguredModels() {
 	}, []);
 	useEffect(reload, [reload, v]);
 	return { ...d, reload };
-}
-
-/** 常用排序：选择次数多的在前，次数相同看最近一次选择（服务端记录，见 server/src/model-picks.ts） */
-export function rankPicks(picks: ModelPicks, limit = 5): string[] {
-	return Object.entries(picks)
-		.sort((a, b) => b[1].count - a[1].count || b[1].at - a[1].at)
-		.slice(0, limit)
-		.map(([k]) => k);
 }
 
 /** 用户选过哪些模型：服务端持久化（电脑和手机共用），本地乐观更新让「常用」立刻变 */
@@ -255,20 +247,11 @@ export function ModelMenu({ id, models, providers, value, thinking, picks, onPic
 	const [q, setQ] = useState("");
 	const [openGroups, setOpenGroups] = useState<string[]>(() => (value?.provider ? [value.provider] : models[0] ? [models[0].provider] : []));
 	const nameOf = (p: string) => providers.find((x) => x.id === p)?.name ?? models.find((m) => m.provider === p)?.providerName ?? p;
-	const k = q.trim().toLowerCase();
-	const shown = models.filter((m) => !k || `${m.name} ${m.id} ${m.provider} ${nameOf(m.provider)}`.toLowerCase().includes(k));
-	// 搜索时不显示「常用」；不搜索时常用最多 5 个，且从下面的分组里去掉，避免同一个模型出现两次
-	const frequent = k ? [] : rankPicks(picks ?? {}, 5).map((key) => models.find((m) => pickKey(m) === key)).filter((m): m is ModelEntry => !!m);
-	const freqKeys = new Set(frequent.map(pickKey));
-	const rest = shown.filter((m) => !freqKeys.has(pickKey(m)));
-	const groups: { provider: string; name: string; models: ModelEntry[] }[] = [];
-	if (groupByProvider) {
-		const by = new Map<string, ModelEntry[]>();
-		for (const m of rest) by.set(m.provider, [...(by.get(m.provider) ?? []), m]);
-		const entries = [...by.entries()].sort((a, b) => Number(b[0] === value?.provider) - Number(a[0] === value?.provider) || nameOf(a[0]).localeCompare(nameOf(b[0]), "zh"));
-		for (const [provider, ms] of entries) groups.push({ provider, name: nameOf(provider), models: ms });
-	} else if (rest.length) groups.push({ provider: "", name: "", models: rest });
-	const isOpen = (p: string) => !groupByProvider || !!k || openGroups.includes(p);
+	const shown = searchModels(models, q, nameOf);
+	// 「常用」是快捷入口：只在顶部多列一份，不从下面的服务分组里摘掉（去重只在同一分组内做）
+	const frequent = frequentModels(models, picks, q, 5);
+	const groups = groupByProvider ? groupModelsByProvider(shown, nameOf, value?.provider) : shown.length ? [{ provider: "", name: "", models: dedupeGroup(shown) }] : [];
+	const isOpen = (p: string) => !groupByProvider || !!q.trim() || openGroups.includes(p);
 	return (
 		<div ref={panelRef} style={panelStyle} className="pa-pop flex w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${id}-menu`}>
 			<label className="mb-1 flex items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5">
@@ -428,17 +411,11 @@ export function ModelPoolMenu({ id, models, providers, value, picks, onToggle, p
 	const [openGroups, setOpenGroups] = useState<string[]>(() => (models[0] ? [models[0].provider] : []));
 	const nameOf = (p: string) => providers.find((x) => x.id === p)?.name ?? models.find((m) => m.provider === p)?.providerName ?? p;
 	const selKeys = new Set(value.map(pickKey));
-	const k = q.trim().toLowerCase();
-	const shown = models.filter((m) => !k || `${m.name} ${m.id} ${m.provider} ${nameOf(m.provider)}`.toLowerCase().includes(k));
-	const frequent = k ? [] : rankPicks(picks ?? {}, 5).map((key) => models.find((m) => pickKey(m) === key)).filter((m): m is ModelEntry => !!m);
-	const freqKeys = new Set(frequent.map(pickKey));
-	const rest = shown.filter((m) => !freqKeys.has(pickKey(m)));
-	const by = new Map<string, ModelEntry[]>();
-	for (const m of rest) by.set(m.provider, [...(by.get(m.provider) ?? []), m]);
-	const groups = [...by.entries()]
-		.map(([provider, ms]) => ({ provider, name: nameOf(provider), models: ms }))
-		.sort((a, b) => a.name.localeCompare(b.name, "zh"));
-	const isOpen = (p: string) => !!k || openGroups.includes(p);
+	const shown = searchModels(models, q, nameOf);
+	// 同 ModelMenu：常用只是快捷入口，候选池里选过的模型也要留在原服务分组
+	const frequent = frequentModels(models, picks, q, 5);
+	const groups = groupModelsByProvider(shown, nameOf);
+	const isOpen = (p: string) => !!q.trim() || openGroups.includes(p);
 	return (
 		<div ref={panelRef} style={panelStyle} className="pa-pop flex w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${id}-menu`}>
 			<label className="mb-1 flex items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5">
