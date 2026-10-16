@@ -404,8 +404,16 @@ export function Select({
 			}
 		};
 		const close = () => setOpen(false);
-		// capture 阶段会先收到菜单内部的 scroll；菜单自己滚不该把它关掉
-		const onScroll = (e: Event) => { if (!pop.current?.contains(e.target as Node)) setOpen(false); };
+		// capture 阶段会先收到菜单内部的 scroll；菜单自己滚不该把它关掉。
+		// 祖先滚动（含设置弹窗内容区）不直接关菜单，而是让它跟着触发器重新定位；
+		// 只有触发器真的滚出视口才关。否则点击 / 聚焦时浏览器先「把触发器滚进视口」的那个
+		// scroll 会在菜单刚打开后到达，把它立刻关掉（菜单开着却查不到选项）。
+		const onScroll = (e: Event) => {
+			if (pop.current?.contains(e.target as Node)) return;
+			const r = btn.current?.getBoundingClientRect();
+			if (!r || r.bottom < 0 || r.top > window.innerHeight) return setOpen(false);
+			place();
+		};
 		document.addEventListener("mousedown", onDoc);
 		document.addEventListener("keydown", onKey, true);
 		window.addEventListener("scroll", onScroll, true);
