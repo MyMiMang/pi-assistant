@@ -104,6 +104,14 @@ const SAMPLE = {
 		source: "官方仓 test_wavs/trans.txt",
 	},
 	"paraformer-zh-2023-09-14-int8": { ...CHINESE },
+	"sensevoice-small-int8": {
+		repo: "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+		revision: "2365baeacb507f821a0c8120fcee3d484dba7a07",
+		file: "test_wavs/zh.wav",
+		expect: "开放时间早上9点至下午5点。（官方 zh.wav 示例；未做 ITN 时为「开饭时间早上九点至下午五点」）",
+		keys: ["早上", "下午", "点"],
+		source: "官方 sherpa-onnx SenseVoice 文档 test_wavs/zh.wav 期望输出",
+	},
 };
 
 const targets = (process.env.PIA_SMOKE_MODELS ?? "whisper-base-int8,paraformer-zh-2023-09-14-int8").split(",").filter(Boolean);
@@ -302,7 +310,7 @@ if (withPid.length >= 2) {
 	if (!report.checks.switchDistinctPids) throw new Error("两个模型 worker pid 相同，切换没有真的换模型");
 }
 report.checks.engineReused = specs.length >= 2 && [...(phases.get(specs[1].id) ?? [])].length > 0 && [...(phases.get(specs[1].id) ?? [])].every((p) => p !== "venv" && p !== "engine");
-log(`共享引擎复用（第二个模型未重建 venv / 未重装 wheel）=${report.checks.engineReused}（第二个模型 phase 轨迹=${[...(phases.get(specs[1].id) ?? [])].join(">") || "空"}）`);
+log(`共享引擎复用（第二个模型未重建 venv / 未重装 wheel）=${report.checks.engineReused}（第二个模型 phase 轨迹=${specs[1] ? [...(phases.get(specs[1].id) ?? [])].join(">") || "空" : "不适用（单模型）"}）`);
 if (specs.length >= 2 && !report.checks.engineReused) throw new Error("第二个模型没有复用共享引擎（或没有拿到 phase 证据）");
 
 if (process.env.PIA_SMOKE_UNINSTALL !== "0" && specs.length >= 2) {

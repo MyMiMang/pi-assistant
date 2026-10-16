@@ -12,31 +12,36 @@ import { assertSafeAsrManifest } from "../src/local-asr/weights.ts";
 import { buildRegistry, modelsWithCapability } from "../src/model-registry.ts";
 
 const cleared = { ...SENSEVOICE_LICENSE, decision: "cleared" as const, redistribution: true };
-const prohibited = { ...SENSEVOICE_LICENSE, decision: "prohibited" as const };
+const strict = { ...cleared, requiresExplicitAgreement: true };
+const prohibited = { ...SENSEVOICE_LICENSE, decision: "prohibited" as const, selfServe: false };
 
-test("许可复核结论是 unresolved：不 bundle、不镜像；安装入口默认关闭，并给出可读原因", () => {
+test("许可分两维：SenseVoice 本地自用下载放行（selfServe），整体仍 unresolved、不 bundle / 不镜像", () => {
 	assert.equal(SENSEVOICE_LICENSE.decision, "unresolved");
+	assert.equal(SENSEVOICE_LICENSE.selfServe, true, "用户本人在自己电脑上可按需下载安装");
 	assert.equal(SENSEVOICE_LICENSE.redistribution, false);
 	assert.equal(bundleAllowed(SENSEVOICE_LICENSE), false, "unresolved 下绝不允许随 App 分发权重");
 	assert.equal(bundleAllowed(cleared), true);
 	assert.equal(bundleAllowed(prohibited), false);
 
-	const g = installGate(SENSEVOICE_LICENSE, "1.1");
-	assert.equal(g.allowed, false);
-	assert.match(String(g.reason), /未最终确认/);
-	assert.match(String(g.reason), /issue\/334|issues\/334/, "原因里必须带 issue 链接，便于用户自查");
-	// 即使显式传了正确版本，unresolved 默认也不放行
-	assert.equal(installGate(SENSEVOICE_LICENSE, "1.1", { allowUnresolved: true }).allowed, true, "显式 override 才放行（产品默认不传）");
+	// 上游未要求点击同意 → 不传 acceptLicense 也放行（不额外强制勾选框）
+	assert.equal(SENSEVOICE_LICENSE.requiresExplicitAgreement, false);
+	assert.equal(installGate(SENSEVOICE_LICENSE).allowed, true);
+	assert.equal(installGate(SENSEVOICE_LICENSE, "1.1").allowed, true);
+	// 真被禁止（selfServe=false / prohibited）才拒绝，并给可读原因
+	const denied = installGate({ ...SENSEVOICE_LICENSE, selfServe: false });
+	assert.equal(denied.allowed, false);
+	assert.match(String(denied.reason), /不允许本地下载安装/);
+	assert.equal(installGate(prohibited).allowed, false);
 });
 
-test("cleared 许可：install 仍要求 acceptLicense 与当前版本完全一致（不能跳过阅读）", () => {
-	assert.equal(installGate(cleared, null).allowed, false);
-	assert.match(String(installGate(cleared, null).reason), /必须接受/);
-	assert.equal(installGate(cleared, "1.0").allowed, false);
-	assert.match(String(installGate(cleared, "1.0").reason), /版本不匹配/);
-	assert.equal(installGate(cleared, "1.1").allowed, true);
-	// SenseVoice 确实需要显式确认（授权 override 路径）
-	assert.equal(licenseDisclosure(SENSEVOICE_LICENSE).agreementRequired, true);
+test("需要显式同意的许可：install 要求 acceptLicense 与当前版本完全一致（不能跳过阅读）", () => {
+	assert.equal(installGate(strict, null).allowed, false);
+	assert.match(String(installGate(strict, null).reason), /必须接受/);
+	assert.equal(installGate(strict, "1.0").allowed, false);
+	assert.match(String(installGate(strict, "1.0").reason), /版本不匹配/);
+	assert.equal(installGate(strict, "1.1").allowed, true);
+	// SenseVoice 上游没要求点击同意 → 不强制勾选框（agreementRequired=false）
+	assert.equal(licenseDisclosure(SENSEVOICE_LICENSE).agreementRequired, false);
 });
 
 test("宽松许可（MIT / Apache-2.0）：cleared 不强制 acceptLicense，一键装；只需展示署名与链接", () => {
@@ -47,8 +52,8 @@ test("宽松许可（MIT / Apache-2.0）：cleared 不强制 acceptLicense，一
 	assert.equal(d.agreementRequired, false, "宽松许可不需要用户勾同意");
 	assert.equal(d.attribution.length > 0, true, "仍必须展示署名");
 	assert.ok(d.links.modelLicense.startsWith("http"), "仍必须展示许可证链接");
-	// cleared 但需要确认的仍拦
-	assert.equal(installGate(cleared, null).allowed, false);
+	// 需要显式同意的（strict）仍拦
+	assert.equal(installGate(strict, null).allowed, false);
 });
 
 test("prohibited 许可：install 与 import 都关闭", () => {
@@ -58,9 +63,12 @@ test("prohibited 许可：install 与 import 都关闭", () => {
 	assert.equal(importGate(SENSEVOICE_LICENSE).allowed, true);
 });
 
-test("条款披露：限制摘要与链接默认可见，acceptValue 就是条款版本", () => {
+test("条款披露：限制摘要与链接默认可见，selfServe / agreementRequired 分开，acceptValue 就是条款版本", () => {
 	const d = licenseDisclosure(SENSEVOICE_LICENSE);
 	assert.equal(d.acceptValue, "1.1");
+	assert.equal(d.selfServe, true, "本地自用下载放行");
+	assert.equal(d.agreementRequired, false, "上游未要求点击同意，不强制勾选框");
+	assert.equal(d.redistribution, false, "不随 App 分发 / 不镜像");
 	assert.ok(d.restrictions.length >= 4, "限制摘要必须有多条，不能一句话遮盖");
 	assert.match(d.restrictions.join("\n"), /署名/);
 	assert.match(d.restrictions.join("\n"), /reference and learning purposes only/);

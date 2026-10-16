@@ -40,12 +40,14 @@ export interface LocalAsrLicense {
 	licenseName: string;
 	termsVersion: string;
 	decision: "cleared" | "unresolved" | "prohibited";
+	/** 本地按需下载安装（用户自用）是否放行；安装按钮 / 下载面板看它，不看 decision。 */
+	selfServe: boolean;
 	redistribution: boolean;
 	attribution: string;
 	links: { modelCard: string; modelLicense: string; issue: string; engineLicense: string };
 	restrictions: string[];
 	reason: string;
-	/** 是否需用户显式同意才可安装（MIT/Apache = false；SenseVoice unresolved = true）。 */
+	/** 是否需用户显式同意才可安装（上游没要求的为 false → 一键装）。 */
 	agreementRequired: boolean;
 	/** 安装时原样回传（= termsVersion），仅在 `agreementRequired` 时用。 */
 	acceptValue: string;
@@ -155,7 +157,7 @@ export const emptyRuntimeView = (): LocalAsrRuntimeView => ({ state: "stopped", 
 export const emptyInstallView = (): LocalAsrInstallView => ({ state: "not_installed", phase: null, phaseLabel: null, received: 0, total: null, percent: null, error: null, installedAt: null, source: null, jobId: null, attempt: null });
 export const emptyHardware = (): LocalAsrHardware => ({ os: "unknown", arch: "unknown", cpuCores: 0, memoryBytes: 0, tier: "unknown", tierNote: "未读到本机硬件档位（估算，未实测）" });
 const emptyRuntimeEnv = (): LocalAsrRuntimeEnvView => ({ engine: "sherpa-onnx", version: "", python: "", depsBytes: null, depsNote: "" });
-const emptyLicense = (): LocalAsrLicense => ({ licenseName: "", termsVersion: "", decision: "unresolved", redistribution: false, attribution: "", links: { modelCard: "", modelLicense: "", issue: "", engineLicense: "" }, restrictions: [], reason: "", agreementRequired: true, acceptValue: "" });
+const emptyLicense = (): LocalAsrLicense => ({ licenseName: "", termsVersion: "", decision: "unresolved", selfServe: false, redistribution: false, attribution: "", links: { modelCard: "", modelLicense: "", issue: "", engineLicense: "" }, restrictions: [], reason: "", agreementRequired: false, acceptValue: "" });
 const emptySourceView = (): LocalAsrSourceView => ({ project: "", repoUrl: "", weightsRepo: "", revision: "", weightsLicense: "", engineLicense: "", engineVersion: "", note: "", files: [] });
 
 function normalizeInstall(raw: unknown): LocalAsrInstallView {
@@ -205,13 +207,15 @@ function normalizeLicense(raw: unknown): LocalAsrLicense {
 		licenseName: asString(pick(o, ["licenseName", "license_name", "name"], "")),
 		termsVersion: asString(pick(o, ["termsVersion", "terms_version"], "")),
 		decision: ["cleared", "unresolved", "prohibited"].includes(decision) ? (decision as LocalAsrLicense["decision"]) : "unresolved",
+		// 本地自用下载放行是**独立维度**（后端 `selfServe`）；缺失时保守地按「非 prohibited」兼容旧后端。
+		selfServe: asBool(pick(o, ["selfServe", "self_serve"], decision !== "prohibited"), decision !== "prohibited"),
 		redistribution: asBool(o.redistribution, false),
 		attribution: asString(o.attribution, ""),
 		links: { modelCard: asString(links.modelCard), modelLicense: asString(links.modelLicense), issue: asString(links.issue), engineLicense: asString(links.engineLicense) },
 		restrictions: asStrArray(o.restrictions),
 		reason: asString(o.reason, ""),
-		// 后端新字段；缺失时按旧规则（非 cleared 才需显式同意）。
-		agreementRequired: asBool(pick(o, ["agreementRequired", "agreement_required"], decision !== "cleared"), decision !== "cleared"),
+		// 上游没要求点击同意的不要强制（后端显式给；缺失时默认 false）。
+		agreementRequired: asBool(pick(o, ["agreementRequired", "agreement_required"], false), false),
 		acceptValue: asString(pick(o, ["acceptValue", "accept_value"], ""), ""),
 	};
 }

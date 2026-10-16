@@ -75,7 +75,21 @@ const SENSEVOICE_STATUS = {
 	notes: [],
 };
 
-const CLEARED_LICENSE = (licenseName, termsVersion) => ({ licenseName, termsVersion, decision: "cleared", redistribution: true, attribution: "fixture", links: { modelCard: "https://x/card", modelLicense: "https://x/lic", issue: "", engineLicense: "https://x/engine" }, restrictions: [], reason: "", agreementRequired: false, acceptValue: termsVersion });
+const CLEARED_LICENSE = (licenseName, termsVersion) => ({ licenseName, termsVersion, decision: "cleared", selfServe: true, redistribution: true, attribution: "fixture", links: { modelCard: "https://x/card", modelLicense: "https://x/lic", issue: "", engineLicense: "https://x/engine" }, restrictions: [], reason: "", agreementRequired: false, acceptValue: termsVersion });
+/** SenseVoice：整体 unresolved（商用 / 再分发未确认），但**本地自用下载放行**（selfServe=true）；上游未要求点击同意。 */
+const SENSEVOICE_LICENSE_FIXTURE = {
+	licenseName: "FunASR Model Open Source License Agreement v1.1",
+	termsVersion: "1.1",
+	decision: "unresolved",
+	selfServe: true,
+	redistribution: false,
+	attribution: "SenseVoiceSmall by FunASR / FunAudioLLM",
+	links: { modelCard: "https://x/card", modelLicense: "https://x/lic", issue: "https://x/issue", engineLicense: "https://x/engine" },
+	restrictions: ["使用 / 复制 / 修改 / 分享须署名来源与作者并保留模型名（§2.2）", "本地按需下载仅限个人自用；不随 App 分发、不镜像、不代分发", "条款写「for reference and learning purposes only」（§3）；商用 / 再分发未由许可方最终确认（issue #334 仍 open）"],
+	reason: "FunASR MODEL_LICENSE v1.1：本地个人自用可下载；不随 App 分发；商用与再分发未确认",
+	agreementRequired: false,
+	acceptValue: "1.1",
+};
 
 /** 与 backend `LocalAsrModelView` 同形的 fixture；id / provider 用后端真实命名。 */
 const mkModel = (id, provider, name, tier, weights, mem, extra = {}) => ({
@@ -116,6 +130,7 @@ const initialModels = () => [
 	mkModel("whisper-small-int8", "local-whisper", "Whisper Small（本地）", "balanced", 375_485_327, 1500 * 1024 ** 2, { recommended: true, recommendationReason: "你这台机器推荐它：多语均衡档", capabilities: ["多语", "原生输出（含标点 / 大小写）"], languages: ["zh", "en", "ja"] }),
 	mkModel("whisper-turbo-int8", "local-whisper", "Whisper Turbo（本地）", "high", 1_036_613_791, 2000 * 1024 ** 2, { capabilities: ["多语", "原生输出（含标点 / 大小写）"], languages: ["zh", "en"] }),
 	mkModel("whisper-large-v3-int8", "local-whisper", "Whisper Large v3（本地）", "high", 1_775_753_918, 2800 * 1024 ** 2, { capabilities: ["多语", "原生输出（含标点 / 大小写）"], languages: ["zh", "en", "ja", "ko"] }),
+	mkModel("sensevoice-small-int8", "local-sensevoice", "SenseVoice Small（本地）", "balanced", 239_549_735, 1100 * 1024 ** 2, { family: "sensevoice", capabilities: ["标点", "中英粤日韩"], multilingual: true, languages: ["zh", "yue", "en", "ja", "ko"], note: "中英粤日韩；本地个人自用可从官方源一键下载安装，不随 App 分发", license: SENSEVOICE_LICENSE_FIXTURE }),
 ];
 
 let failed = 0;
@@ -246,9 +261,9 @@ try {
 	await page.getByTestId("voice-tab-local").click();
 	await page.getByTestId("local-asr-models").waitFor();
 	check("本地模型区已渲染", await page.getByTestId("local-asr-models").isVisible());
-	check("旧版 SenseVoice 导入默认收起，主流程没有第二套来源按钮", !(await page.getByTestId("local-sensevoice-card").isVisible()) && !(await page.getByTestId("voice-local-use").isVisible()));
+	check("旧版重复导入卡已移除，主流程只有一套来源按钮", (await page.getByTestId("local-sensevoice-card").count()) === 0 && (await page.getByTestId("voice-local-use").count()) === 0);
 	check("模型内部 ID 收进详情，不占主卡", !(await page.getByTestId("local-asr-detail").innerText()).includes("whisper-small-int8"));
-	check("列出 5 个服务端模型（非前端写死）", (await page.getByTestId("local-asr-models").getAttribute("data-models")) === "5");
+	check("列出 6 个服务端模型（含 SenseVoice，非前端写死）", (await page.getByTestId("local-asr-models").getAttribute("data-models")) === "6");
 	check("硬件档位可见 + 标「估算，未实测」", ((await page.getByTestId("local-asr-tier-note").textContent()) ?? "").includes("未实测"));
 	check("默认选中推荐项（whisper-small-int8）", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === "whisper-small-int8");
 	check("推荐理由来自 catalog", ((await page.getByTestId("local-asr-reason").textContent()) ?? "").includes("推荐它"));
@@ -360,6 +375,68 @@ try {
 	await page.getByTestId("local-asr-retry").click();
 	await page.waitForTimeout(300);
 	check("点重试重新发起 install", state.installLog.length > installBefore, JSON.stringify(state.installLog));
+
+	console.log("\n── 5b) SenseVoice：留在列表里、像其他模型一样一键下载安装（本地自用） ──");
+	state.source = null;
+	state.models.forEach((m) => {
+		m.install = { state: "not_installed", phase: null, phaseLabel: null, received: 0, total: null, percent: null, error: null, installedAt: null, source: null, jobId: null, attempt: null };
+	});
+	const putBeforeSense = state.putLog.length;
+	await page.goto(`${base}/?settings=voice`);
+	await page.getByTestId("voice-source-status").waitFor();
+	await page.getByTestId("voice-tab-local").click();
+	await page.getByTestId("local-asr-models").waitFor();
+	await page.getByTestId("local-asr-model-select").click();
+	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /SenseVoice Small/ }).click();
+	check("SenseVoice 仍在模型列表里（未被移出）", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === "sensevoice-small-int8");
+	check("本地自用下载放行（selfServe=true）", (await page.getByTestId("local-asr-license").getAttribute("data-self-serve")) === "true");
+	const svLic = (await page.getByTestId("local-asr-license").textContent()) ?? "";
+	check("许可说明标「本地自用可下载」，不写已确认商用", svLic.includes("本地自用可下载") && !svLic.includes("已确认"), svLic);
+	check("一键安装按钮可用（不再被许可禁用）", !(await page.getByTestId("local-asr-install-use").isDisabled()));
+	check("没有额外强制「我同意」复选框", (await page.getByTestId("local-asr-accept").count()) === 0);
+	// 保留合法导入（收进详情，不再另开一套旧卡）
+	await page.getByTestId("local-asr-details-toggle").click();
+	check("详情里有「导入已有权重」入口（保留合法导入）", await page.getByTestId("local-asr-import-toggle").isVisible());
+	await page.getByTestId("local-asr-import-toggle").click();
+	check("导入目录输入 / 导入按钮可访问", (await page.getByTestId("local-asr-import-dir").isVisible()) && (await page.getByTestId("local-asr-import-btn").isVisible()));
+	await page.getByTestId("local-asr-import-toggle").click();
+	await page.screenshot({ path: join(OUT, "05b-sensevoice-oneclick.png") });
+	// 一键安装并使用
+	const svInstalls = state.installLog.filter((x) => x.id === "sensevoice-small-int8").length;
+	await page.getByTestId("local-asr-install-use").click();
+	await page.getByTestId("local-asr-progress").waitFor();
+	const svReq = state.installLog.filter((x) => x.id === "sensevoice-small-int8").at(-1);
+	check("SenseVoice install 带 intent=install_and_use", svReq?.body.intent === "install_and_use", JSON.stringify(svReq));
+	check("SenseVoice 不偷传 acceptLicense（不伪造同意）", !!svReq && svReq.body.acceptLicense === undefined, JSON.stringify(svReq));
+	check("SenseVoice 安装有真实进度条", (await page.locator('[data-testid="local-asr-progress"] .pa-dl-bar').count()) === 1);
+	await page.screenshot({ path: join(OUT, "05c-sensevoice-installing.png") });
+	// 取消
+	await page.getByTestId("local-asr-cancel").click();
+	await page.waitForFunction(() => !document.querySelector('[data-testid="local-asr-progress"]'));
+	check("SenseVoice 取消发送到后端", state.cancelLog.some((x) => x.id === "sensevoice-small-int8"));
+	check("SenseVoice 取消后不写来源", state.source === null);
+	// 失败 + 重试
+	const svm = state.models.find((m) => m.id === "sensevoice-small-int8");
+	svm.install = { state: "failed", phase: "weights", phaseLabel: "下载 / 导入权重", received: 0, total: null, percent: null, error: "网络中断（权重下载失败）", installedAt: null, source: "download", jobId: "asr:sensevoice-small-int8", attempt: 1 };
+	await page.goto(`${base}/?settings=voice`);
+	await page.getByTestId("voice-source-status").waitFor();
+	await page.getByTestId("voice-tab-local").click();
+	await page.getByTestId("local-asr-models").waitFor();
+	await page.getByTestId("local-asr-model-select").click();
+	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /SenseVoice Small/ }).click();
+	await page.getByTestId("local-asr-install-error").waitFor();
+	check("SenseVoice 失败显示可读原因", ((await page.getByTestId("local-asr-install-error").textContent()) ?? "").includes("网络中断"));
+	await page.getByTestId("local-asr-retry").click();
+	await page.waitForTimeout(300);
+	check("SenseVoice 重试重新发起 install", state.installLog.filter((x) => x.id === "sensevoice-small-int8").length > svInstalls + 1);
+	// 装好并使用（服务端写来源 → selected）
+	svm.install = { state: "installed", phase: "done", phaseLabel: "完成", received: 239_549_735, total: 239_549_735, percent: 100, error: null, installedAt: Date.now(), source: "download", jobId: "asr:sensevoice-small-int8", attempt: 2 };
+	state.source = { location: "local", provider: "local-sensevoice", model: "sensevoice-small-int8" };
+	await page.getByTestId("local-asr-in-use").waitFor({ timeout: 10_000 });
+	check("SenseVoice 装好后显示使用中（selected 由服务端写）", await page.getByTestId("local-asr-in-use").isVisible());
+	check("语音来源状态同步到 SenseVoice", ((await page.getByTestId("voice-source-status").textContent()) ?? "").includes("SenseVoice"));
+	check("前端没有自己另写一套 source（不 late PUT）", state.putLog.length === putBeforeSense, JSON.stringify(state.putLog.slice(putBeforeSense)));
+	await page.screenshot({ path: join(OUT, "05d-sensevoice-in-use.png") });
 
 	console.log("\n── 6) 390 窄屏不横向溢出 ──");
 	await page.setViewportSize({ width: 390, height: 844 });

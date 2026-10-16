@@ -46,20 +46,32 @@ export const SENSEVOICE_SOURCE: AsrSourceMeta = {
 	note: "权重由官方 FunASR 权重转换而来；许可按 FunASR MODEL_LICENSE v1.1（不是 Apache-2.0）",
 };
 
-/** 许可判定的三种结果。 */
+/** 许可判定的三种结果（**整体结论 / 分发与商用维度**）。 */
 export type LicenseDecision = "cleared" | "unresolved" | "prohibited";
 
-/** 权重许可证元数据（**判定 + 条款可见性**，供门槛与 UI 用）。 */
+/**
+ * 权重许可证元数据（**判定 + 条款可见性**，供门槛与 UI 用）。
+ *
+ * 两个维度必须分开，不要用一个 `decision` 一刀切：
+ *  - `selfServe`：**本地按需下载安装**（用户本人发起、官方源、下到用户自己电脑、个人非商业自用）是否放行；
+ *  - `decision` + `redistribution`：**整体结论 / 是否允许随 App 分发、镜像**（以及商用解释状态）。
+ *
+ * 例：SenseVoice 的 `selfServe = true`（用户自用可一键下载安装），但 `decision = "unresolved"`、
+ * `redistribution = false`（商用 / 再分发未由许可方最终确认，不 bundle / 不镜像）——两者互不覆盖。
+ */
 export interface AsrLicenseMeta {
+	/** 整体结论（界面标签 / 分发与商用维度）：cleared | unresolved | prohibited */
 	decision: LicenseDecision;
-	/** 用户必须接受的条款版本；install 的 acceptLicense 必须等于它 */
+	/** 本地按需下载安装（用户自用）是否放行；安装门槛与目录 `available` 以它为准 */
+	selfServe: boolean;
+	/** 用户必须接受的条款版本；install 的 acceptLicense 必须等于它（仅 `requiresExplicitAgreement` 时） */
 	termsVersion: string;
 	licenseName: string;
-	/** 是否允许随 App bundle / 自建镜像再分发权重 */
+	/** 是否允许随 App bundle / 自建镜像再分发权重（与 `selfServe` 独立） */
 	redistribution: boolean;
 	/** 必须展示的署名（§2.2 硬要求） */
 	attribution: string;
-	/** 是否必须显式接受条款（宽松许可 MIT / Apache-2.0 不需要；默认 false） */
+	/** 上游是否要求用户显式接受条款（没有要求的不要额外强制勾选框；默认 false） */
 	requiresExplicitAgreement: boolean;
 	links: { modelCard: string; modelLicense: string; issue?: string; engineLicense: string };
 	/** 必须**默认可见**的限制摘要（不能靠一次点击遮盖） */
@@ -69,21 +81,28 @@ export interface AsrLicenseMeta {
 }
 
 /**
- * 2026-10-15 复核结论：`unresolved`。
+ * 2026-10-16 复核结论：**本地按需下载安装放行（个人自用）；整体 `unresolved`（分发 / 商用未最终确认）**。
  *
- * `MODEL_LICENSE` §2.1 字面允许 use/copy/modify/share（须 §2.2 署名并保留模型名），
- * 但 §3「reference and learning purposes only」+ §4.2 + §6 单方改版使适用范围不确定，
- * 且许可方对商用 / 再分发的最终确认仍未给出（issue #334 至今 OPEN）。
- * → 不 bundle、不镜像；安装入口默认 blocked；用户自行导入仍开放。
+ * 用户要求（原话大意）：SenseVoice 要留在列表里、像其他模型一样一键下载安装使用；
+ * 不能因为「许可适用范围有争议」就把用户自用入口一刀切关掉；同时不随 App 分发 / 不镜像、
+ * 不宣称已确认可商用。
+ *
+ * 依据：`MODEL_LICENSE` §2.1 字面允许 use / copy / modify / share（须 §2.2 署名并保留模型名）；
+ * §3「reference and learning purposes only」+ §4.2 + §6 单方改版使**商用 / 再分发**适用范围不确定
+ * （许可方最终确认仍未给出，issue #334 至今 OPEN）。
+ * → `selfServe: true`（用户本人在自己电脑上按需下载自用）；`redistribution: false`（不 bundle / 不镜像）；
+ *   `decision: "unresolved"` 如实标注商用 / 再分发未确认。上游未要求「点击同意」→ 不额外强制勾选框，
+ *   但署名（§2.2）与用途提示默认可见。
  */
 export const SENSEVOICE_LICENSE: AsrLicenseMeta = {
 	decision: "unresolved",
+	selfServe: true,
 	termsVersion: "1.1",
 	licenseName: "FunASR Model Open Source License Agreement v1.1",
 	redistribution: false,
 	attribution: "SenseVoiceSmall by FunASR / FunAudioLLM",
-	// FunASR 条款适用范围需用户确认，允许 override 的高级路径上要求显式接受
-	requiresExplicitAgreement: true,
+	// 上游条款未要求「点击同意」：不额外强制勾选框（署名 + 用途提示默认可见即可）。
+	requiresExplicitAgreement: false,
 	links: {
 		modelCard: "https://huggingface.co/FunAudioLLM/SenseVoiceSmall",
 		modelLicense: "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
@@ -92,12 +111,12 @@ export const SENSEVOICE_LICENSE: AsrLicenseMeta = {
 	},
 	restrictions: [
 		"使用 / 复制 / 修改 / 分享须署名来源与作者并保留模型名（§2.2）",
-		"条款写「for reference and learning purposes only」（§3），适用范围未由许可方最终确认",
+		"本地按需下载仅限个人自用；不随 App 分发、不镜像、不代分发",
+		"条款写「for reference and learning purposes only」（§3）；商用 / 再分发未由许可方最终确认（issue #334 仍 open）",
 		"禁止无端贬损，违反即自动丧失全部许可（§4.2）",
 		"许可方可单方改版并自动生效（§6）",
-		"商用 / 再分发澄清未最终确认：官方 issue #334 仍处于 open（2026-09-22 标注「not final license-owner confirmation」）",
 	],
-	reason: "权重许可为 FunASR MODEL_LICENSE v1.1（非 Apache）；适用范围未最终确认，故不随 App 分发、安装入口默认关闭",
+	reason: "FunASR MODEL_LICENSE v1.1（非 Apache）：本地个人自用可从官方源按需下载安装；不随 App 分发 / 不镜像；商用与再分发未由许可方最终确认",
 };
 
 /** 单个权重文件的固定清单项。 */

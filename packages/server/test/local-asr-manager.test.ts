@@ -150,14 +150,23 @@ function harness(opts: { license?: typeof SENSEVOICE_LICENSE; idleSeconds?: numb
 
 // ------------------------------------------------------------------ 许可
 
-test("unresolved 许可：download 安装被拒，且不执行任何安装步骤", async () => {
+test("SenseVoice 本地自用：download 安装放行，且不需要 acceptLicense（上游未要求点击同意）", async () => {
 	const h = harness();
-	await assert.rejects(() => h.manager.install({ source: "download", acceptLicense: "1.1" }), /未最终确认/);
+	const st = await h.manager.install({ source: "download" });
+	assert.equal(st.install.state, "installed");
+	assert.equal(st.install.source, "download");
+	assert.deepEqual(h.calls, ["ensureUv", "run:venv", "engine", "download", "verify"], "本地自用下载应真的走完安装步骤");
+});
+
+test("selfServe=false 的许可：download 安装被拒，且不执行任何安装步骤", async () => {
+	const denied = { ...SENSEVOICE_LICENSE, selfServe: false };
+	const h = harness({ license: denied });
+	await assert.rejects(() => h.manager.install({ source: "download" }), /不允许本地下载安装/);
 	assert.deepEqual(h.calls, [], "许可没过时不应该跑 uv / 下载");
 	assert.equal(h.manager.status().install.state, "not_installed");
 });
 
-test("unresolved 许可：用户自行导入仍可安装，且 activate 记录来源为 import", async () => {
+test("整体 unresolved 下：用户自行导入仍可安装，且 activate 记录来源为 import", async () => {
 	const h = harness();
 	const st = await h.manager.install({ source: "import", importDir: "/tmp/user-weights" });
 	assert.equal(st.install.state, "installed");
@@ -167,9 +176,9 @@ test("unresolved 许可：用户自行导入仍可安装，且 activate 记录�
 	assert.equal(h.state.activates, 1);
 });
 
-test("cleared 许可：download 需要正确版本的 acceptLicense；版本不符 / 缺失都拒绝", async () => {
-	const cleared = { ...SENSEVOICE_LICENSE, decision: "cleared" as const, redistribution: true };
-	const h = harness({ license: cleared });
+test("需要显式同意的许可：download 必须带正确版本的 acceptLicense；版本不符 / 缺失都拒绝", async () => {
+	const strict = { ...SENSEVOICE_LICENSE, decision: "cleared" as const, redistribution: true, requiresExplicitAgreement: true };
+	const h = harness({ license: strict });
 	await assert.rejects(() => h.manager.install({ source: "download" }), /必须接受/);
 	await assert.rejects(() => h.manager.install({ source: "download", acceptLicense: "1.0" }), /版本不匹配/);
 	const st = await h.manager.install({ source: "download", acceptLicense: "1.1" });

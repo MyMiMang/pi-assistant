@@ -4,8 +4,9 @@
  * 设计边界（用户要求）：
  *  - **数据驱动**：每个模型的权重 pin / 许可判定 / 来源 / 推荐档位都是数据；新增模型只改本文件。
  *  - **绝不编造 model hash / 版本**，也绝不为没有真实官方来源 / 未 pin 的模型放「空可下载按钮」。
- *  - **许可准确优先**：正式提供的模型必须许可清晰（MIT / Apache-2.0）；SenseVoice 许可未最终确认，
- *    保持 `unresolved`（安装入口关闭，仅保留「自行导入」，不新增 accept 勾框把它洗成允许）。
+ *  - **许可准确优先**：正式提供的模型必须许可清晰（MIT / Apache-2.0）；SenseVoice 整体许可 `unresolved`
+ *    （商用 / 再分发未最终确认），但**本地按需下载安装（用户个人自用）放行**——`license.selfServe = true`，
+ *    与 `decision` / `redistribution` 分开，不像以前那样一刀切关闭安装入口；不 bundle / 不镜像。
  *  - **性能是估算**：`recommend.ramMB` 是**模型进程内存估算**（非实测），`basis` 必须写明；
  *    整机内存建议见 `classifyAsrHardware()`（按系统总 RAM 8 / 16 / 32 保守分档，同样是估算）。
  *  - **老配置可读**：SenseVoice 保留原 provider（`local-sensevoice`）/ modelId / 权重 pin。
@@ -93,6 +94,7 @@ function rec(tier: AsrTier, ramMB: number, note: string, cpuCores = 4): AsrRecom
 
 const PARAFAFORMER_LICENSE: AsrLicenseMeta = {
 	decision: "cleared",
+	selfServe: true,
 	termsVersion: "Apache-2.0",
 	licenseName: "Apache License 2.0",
 	redistribution: true,
@@ -110,6 +112,7 @@ const PARAFAFORMER_LICENSE: AsrLicenseMeta = {
 
 const WHISPER_LICENSE: AsrLicenseMeta = {
 	decision: "cleared",
+	selfServe: true,
 	termsVersion: "MIT",
 	licenseName: "MIT License (OpenAI Whisper)",
 	redistribution: true,
@@ -305,7 +308,7 @@ export const ASR_CATALOG: AsrModelSpec[] = [
 		nameEn: "SenseVoiceSmall (sherpa-onnx)",
 		variant: "int8 ONNX",
 		tier: "balanced",
-		note: "中英粤日韩；许可未最终确认，只能自行导入已合法取得的权重",
+		note: "中英粤日韩；本地个人自用可从官方源一键下载安装，不随 App 分发",
 		capabilities: ["标点", "中英粤日韩"],
 		multilingual: true,
 		manifest: SENSEVOICE_MODEL,

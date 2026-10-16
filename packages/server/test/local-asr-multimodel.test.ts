@@ -433,13 +433,12 @@ test("全局串行：另一个模型安装进行中时，第二个 install 被�
 	await first.catch(() => {});
 });
 
-test("许可门槛：SenseVoice（unresolved）下载安装被拒；自行导入路径仍可用", async () => {
+test("许可门槛：SenseVoice 本地自用下载安装放行（不传 acceptLicense）；自行导入路径仍可用", async () => {
 	const h = makeHarness();
-	const pre = h.svc.precheckInstall("sensevoice-small-int8", { source: "download", acceptLicense: "1.1" });
-	assert.equal(pre.ok, false);
-	if (!pre.ok) assert.match(pre.error, /未最终确认/);
+	const pre = h.svc.precheckInstall("sensevoice-small-int8", { source: "download" });
+	assert.equal(pre.ok, true, "上游未要求点击同意 → 一键装，不额外强制勾选框");
 	const imp = h.svc.precheckInstall("sensevoice-small-int8", { source: "import", importDir: "/tmp/w" });
-	assert.equal(imp.ok, true, "unresolved 下用户自行导入仍开放");
+	assert.equal(imp.ok, true, "用户自行导入仍开放");
 });
 
 test("Whisper 声明 punctuation 为原生输出（不照抄研究里不可靠的 false）", () => {
@@ -481,14 +480,17 @@ test("路由：GET /catalog 返回聚合 DTO 且不启动 worker；按 id instal
 		body: JSON.stringify({ intent: "install" }),
 	});
 	assert.equal(oneClick.status, 200, "MIT 模型不应强要求每次勾同意");
+	await new Promise((r) => setTimeout(r, 30)); // 等这个假安装收尾，避免和下一个模型安装撞全局串行锁
 
-	// SenseVoice（unresolved）：下载安装 400，不偷放
-	const blocked = await app.request("/api/local-models/asr/models/sensevoice-small-int8/install", {
+	// SenseVoice（整体 unresolved，但本地自用 selfServe=true）：一键下载安装也放行，不偷换 / 不拒绝
+	const sense = await app.request("/api/local-models/asr/models/sensevoice-small-int8/install", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ acceptLicense: "1.1", intent: "install" }),
+		body: JSON.stringify({ intent: "install" }),
 	});
-	assert.equal(blocked.status, 400);
+	assert.equal(sense.status, 200, "SenseVoice 应与其他模型一样一键安装（不强制勾同意）");
+	await new Promise((r) => setTimeout(r, 20));
+	assert.equal(h.svc.managerFor("sensevoice-small-int8").status().install.state, "installed");
 
 	const nf = await app.request("/api/local-models/asr/models/nope/status");
 	assert.equal(nf.status, 404);

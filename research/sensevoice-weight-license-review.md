@@ -13,9 +13,9 @@
 
 因此产品判定：**「再分发权利范围不可靠」** →
 1. **不随 App bundle 权重、不 mirror / 不代分发**（绝不把 239 MB 权重打进安装包或自建镜像）；
-2. 安装入口**默认 blocked**，原因显式可见（不是灰按钮无理由）；
+2. 安装入口按 **`selfServe`** 分档（**2026-10-16 更新：本地按需下载安装放行**，见 §9；不再一律 blocked），原因显式可见（不是灰按钮无理由）；
 3. 允许**用户自行导入**自己合法取得的权重（canonical 路径 + 清单校验，不读敏感文件）；
-4. 「从官方源直接下载」这条路径**代码具备但受同一门槛控制**：必须展示完整条款 + 显式 `acceptLicense`（版本号匹配）才可能放行，且**条款正文必须可见、不能被一次点击遮盖**（企业商用等限制要看得见）。
+4. 「从官方源直接下载」这条路径（**2026-10-16 更新**）：**个人自用放行**，不额外强制勾同意（上游未要求点击同意）；完整条款 / 署名 / 链接 / 用途提示默认可见（详文在「?」），企业商用 / 再分发限制照旧可见（见 §9）。
 5. 门槛是**数据驱动**的：`manifest.ts` 里的 `licenseDecision` 一旦被上游最终确认改成 `cleared`，入口自动打开；不改产品逻辑。
 
 ---
@@ -118,7 +118,24 @@ revision = `2365baeacb507f821a0c8120fcee3d484dba7a07`（HF `/api/models/.../revi
 5. **VAD 未纳入 v1**：单句输入不需要 VAD；silero-vad 的哈希未 pin（如需再加）。
 6. **性能数字未实测**：`research/sensevoice-local-asr-feasibility.md` 的 20× 实时等均为**上游自测**，本实现**不承诺** RTF / 内存；`ready but untested`。
 
-## 8. 参考来源（2026-10-15 抓取）
+## 9. 2026-10-16 更新：许可拆成两个维度（本地自用放行 / 分发与商用未确认）
+
+用户明确要求：**SenseVoice 留在列表里、像其他模型一样一键下载安装使用**，不能因许可适用范围有争议就把用户自用入口一刀切关掉；同时不随 App 分发 / 不镜像、不宣称已确认商用。据此把许可判定拆成**两个独立维度**（实现：`packages/server/src/local-asr/{manifest,license}.ts`）：
+
+| 维度 | 含义 | SenseVoice 取值 |
+|---|---|---|
+| `selfServe` | 本地按需下载安装（用户本人发起、官方源、下到用户自己电脑、个人非商业自用）是否放行 | **true** |
+| `decision` | 整体结论（界面标签 / 分发与商用维度） | `unresolved` |
+| `redistribution` | 是否允许随 App bundle / 自建镜像再分发权重 | **false** |
+| `requiresExplicitAgreement` | 上游是否要求用户显式接受条款（要求点击同意） | **false**（上游未要求） |
+
+- 依据：`MODEL_LICENSE` §2.1 字面允许 use / copy / modify / share（§2.2 须署名并保留模型名）；§3 的张力与 §4.2、§6 影响的是**商用 / 再分发**，不改「个人自用拷贝」这一档。
+- 产品行为：安装门槛、目录 `available`、下载面板 `hidden`、来源候选原因、前端按钮一律看 `selfServe`，不再用 `decision !== "cleared"` 一刀切；`installGate` 删除 `allowUnresolved` 后门，只有 `selfServe=false` / `decision=prohibited` 才拒绝。
+- 界面：署名 `SenseVoiceSmall by FunASR / FunAudioLLM`、条款正文 / 链接 / 用途提示默认可见，主行短说明「本地自用可下载 / 不随 App 分发 / 商用未确认」，不写「已确认商用」。
+- 上游最终确认（issue #334）后，只改 `manifest.ts` 一处数据即可回滚（例如把 `decision` 改 `cleared`、`redistribution` 改 `true`）。
+- 真实 smoke（2026-10-16）：按此放行跑通 SenseVoice 权重下载→SHA256 校验→起 sidecar→官方 `zh.wav` 转写（`开饭时间早上9点至下午5点。`）；证据 `evidence/local-asr-real-smoke/`。
+
+## 10. 参考来源（2026-10-15 抓取）
 
 - FunASR `MODEL_LICENSE`（v1.1 正文，5 306 B）— https://raw.githubusercontent.com/modelscope/FunASR/main/MODEL_LICENSE
 - HF `FunAudioLLM/SenseVoiceSmall` 模型卡 front-matter（`license: other`）— https://huggingface.co/FunAudioLLM/SenseVoiceSmall/raw/main/README.md
