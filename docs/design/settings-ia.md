@@ -6,6 +6,13 @@
 > 3. 导航因此为 **5 组 / 16 项**（原 15 项 + 新增 `voice`）：模型与语音 / 电脑 / 助理能力 / 连接 / 偏好与系统；桌面显分组标题，手机保持横向滚动，不造双重 nav。
 > 4. 实施分支 `settings-functional-ui`（基 `a80b2cb`）：前端已完成，后端 `source` / per-agent `subagents/settings` 接口由后端 owner 独立树提供。
 
+### 实施结果（前端 `settings-functional-ui`，后端已合 `fa20815`）
+
+- 已改（apps/web）：`Settings.tsx`（16 项 / 5 组导航 + `voice` 页 + `model` 别名 + 移除模型页子代理区）、`VoiceSettings.tsx`★新、`ModelServices.tsx`（移除 Laya/SenseVoice 卡、ASR 改为「声明」文案、导出 `LocalLayaSection`）、`HostControl.tsx`（接入 Laya）、`DesktopSettings.tsx`（Laya 跳转提示）、`Subagents.tsx`（每助理任务上限）、`ui.tsx`（Help 键盘）、`useVoiceInput.ts`（显式来源 + `dismissError`/`resetContext`）、`VoiceInput.tsx`（去设置→voice 且真清 error）、`api.ts`（冻结 DTO；不再用 `listAsrModels`）。
+- 已实施要点：语音来源 `GET/PUT /api/audio/asr/source` 返回 `{source, options[]}`，`availability` 全由后端给（`ready/not_configured/not_installed/not_running/deleted`）；只有 `ready` 或本地 `not_running`（靠录音租赁按需加载）可录，未安装/已删除 0 录音、不回落云端；子代理 `GET/PUT /api/agents/:id/subagents/settings`，缺省/`null` 继承旧全局默认。
+- 已跑：web `tsc` + `vite build`；`e2e/settings-functional-ui.mjs`、`e2e/settings-subagent.mjs`（24 项）、`e2e/voice-input-ui.mjs` 全通过；server `tsc` + `voice-source-http` 8 + `subagent-limits-http` 3 + `subagent-limits` 3 = 14/14。
+- **未验**：真机麦克风 / 真实云 ASR 计费 / 本地 SenseVoice 实装 / 全量 e2e；截图见 `evidence/settings-functional-ui`、`evidence/settings-subagent`。
+
 - 基线：`release-candidate-validation` 候选树 **HEAD `a80b2cb`**（Pi 1.3 已合入；代码 checkpoint `0069d36`，其后 2 个纯文档提交）。**本方案不改任何业务代码**，只做审计 + 设计 + 文件范围。
 - 约束：不碰该树的 WIP/未提交改动；不改 `packages/server/src/secrets.ts`、SDK 凭据实现、真实 keys/DB/钥匙串/用户 session；不改 Pi SDK / node_modules / Pi 本体。
 - 用户原话要点（2026-10-16）：
