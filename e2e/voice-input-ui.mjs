@@ -1,7 +1,8 @@
 /**
  * 语音输入（浏览器侧）纯前端验证。
  *
- * 覆盖（用户点名）：麦克风按钮可见 / 未配置 ASR 给明确设置入口 / 录音→停止→转写插入草稿（不自动发送）/
+ * 覆盖（用户点名）：麦克风按钮可见 / **idle 未配置不常驻状态行与「去设置」、只有点了麦克风才提示去设置（0 getUserMedia / 0 转写）** /
+ * 录音→停止→转写插入草稿（不自动发送）/
  * 取消不误发（0 次转写、草稿与引用保持）/ 切后台停轨道不发送 / 390 无横向溢出；
  * 以及新增的「云 ASR 设置」与「本地 SenseVoice 许可卡」：ASR 声明区块可见、许可限制默认可见、
  * 许可未确认时下载安装按钮 disabled（接受勾选不能绕过）、导入入口可用。
@@ -113,6 +114,19 @@ async function voiceLayout(page) {
 
 const sendX = (page) => page.evaluate(() => Math.round(document.querySelector(".pa-composer-bar .pa-send").getBoundingClientRect().x));
 
+/** 包一层 getUserMedia 计数：验证「未配置时点麦克风不真开麦克风、不录音」。 */
+const countGum = (context) =>
+	context.addInitScript(() => {
+		window.__gum = 0;
+		const md = navigator.mediaDevices;
+		if (!md) return;
+		const orig = md.getUserMedia.bind(md);
+		md.getUserMedia = (...a) => {
+			window.__gum = (window.__gum ?? 0) + 1;
+			return orig(...a);
+		};
+	});
+
 async function installRoutes(context, state) {
 	await context.route("**/api/**", async (route) => {
 		const req = route.request();
@@ -178,32 +192,34 @@ try {
 	const state = { sent: [], transcribeCalls: [], asr: false };
 	const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN", permissions: ["microphone"] });
 	await installRoutes(ctx, state);
+	await countGum(ctx);
 	const page = await ctx.newPage();
 	page.on("pageerror", (e) => console.error("  ⚠️ pageerror", String(e.stack ?? e).slice(0, 800)));
 	await page.goto(`${base}/?agent=a1`);
 	await page.locator('[data-mid="a1m"]').waitFor({ timeout: 20_000 });
 	const ta = page.locator("main textarea").first();
 
-	console.log("\n── 未配置 ASR：明确设置入口，不自动 fallback ──");
+	console.log("\n── 未配置 ASR：idle 不常驻入口；点麦克风才提示去设置 ──");
 	await page.locator('[data-testid="voice-mic"]').waitFor({ timeout: 10_000 });
 	check("麦克风按钮可见", await page.locator('[data-testid="voice-mic"]').isVisible());
 	const lay0 = await voiceLayout(page);
 	check("麦克风紧贴发送键左侧（同一行、同一 composer-bar、不在附件工具列）", lay0.ok, JSON.stringify(lay0));
 	check("权限 / 模型选择器仍在输入栏（未被麦克风挤掉）", (await page.locator('[data-testid="host-tier-pill"]').isVisible()) && (await page.locator('[data-testid="model-picker"]').isVisible()));
-	check("未配置的「去设置」在独立 status 行，不占发送键右侧", await page.evaluate(() => {
-		const st = document.querySelector('[data-testid="voice-status"]');
-		const send = document.querySelector(".pa-composer-bar .pa-send");
-		if (!st || !send) return false;
-		const a = st.getBoundingClientRect();
-		const b = send.getBoundingClientRect();
-		return a.top >= b.bottom - 1 || a.left <= b.left;
-	}));
 	check("未配置时按钮提示「未配置语音识别模型」", ((await page.locator('[data-testid="voice-mic"]').getAttribute("aria-label")) ?? "").includes("未配置语音识别模型"));
-	check("给出明确的「去设置」入口", await page.locator('[data-testid="voice-open-settings"]').isVisible());
+	check("idle 未配置时不常驻状态行 / 「去设置」（只有麦克风图标）", (await page.locator('[data-testid="voice-status"]').count()) === 0 && (await page.locator('[data-testid="voice-open-settings"]').count()) === 0);
+	check("点麦克风前未调用 getUserMedia", (await page.evaluate(() => window.__gum ?? 0)) === 0);
 	await page.locator('[data-testid="voice-mic"]').click();
-	await page.waitForTimeout(300);
-	check("未配置点击不录音、不转写（0 次请求）", state.transcribeCalls.length === 0);
+	await page.locator('[data-testid="voice-open-settings"]').waitFor({ timeout: 5000 });
+	check("点了未配置的麦克风才浮现短提示 + 「去设置」", (await page.locator('[data-testid="voice-status"]').isVisible()) && (await page.locator('[data-testid="voice-open-settings"]').isVisible()));
+	check("未配置点击不真开麦克风（0 次 getUserMedia）、不转写（0 次请求）", (await page.evaluate(() => window.__gum ?? 0)) === 0 && state.transcribeCalls.length === 0);
 	check("未配置给出明确错误提示", ((await page.locator('[data-testid="voice-hint"]').textContent()) ?? "").includes("配置语音识别模型"));
+	// 「去设置」打开模型设置，且临时提示随之清掉（不残留）
+	await page.locator('[data-testid="voice-open-settings"]').click();
+	await page.locator('[data-testid="local-sensevoice-card"]').waitFor({ timeout: 20_000 });
+	check("「去设置」打开设置 › 模型", await page.locator('[data-testid="local-sensevoice-card"]').isVisible());
+	await page.goto(`${base}/?agent=a1`);
+	await page.locator('[data-mid="a1m"]').waitFor({ timeout: 20_000 });
+	check("回到对话后不再有临时提示 / 「去设置」", (await page.locator('[data-testid="voice-status"]').count()) === 0 && (await page.locator('[data-testid="voice-open-settings"]').count()) === 0);
 
 	console.log("\n── 配置 ASR：录音 → 停止 → 转写插入（不自动发送） ──");
 	state.asr = true;
@@ -211,6 +227,7 @@ try {
 	await page.locator('[data-mid="a1m"]').waitFor({ timeout: 20_000 });
 	await page.locator('[data-testid="voice-mic"]').waitFor({ timeout: 10_000 });
 	check("配置后按钮变为可用语音输入", ((await page.locator('[data-testid="voice-mic"]').getAttribute("aria-label")) ?? "").includes("语音输入"));
+	check("配置后 idle 也不常驻状态行 / 「去设置」", (await page.locator('[data-testid="voice-status"]').count()) === 0 && (await page.locator('[data-testid="voice-open-settings"]').count()) === 0);
 	await ta.fill("原有草稿 ");
 	await ta.press("End");
 	const sendXBefore = await sendX(page);

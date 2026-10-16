@@ -6,6 +6,10 @@
  *
  * 行为（docs/design/voice-input.md）：不自动发送、不自动重试；结果插到开始录制时的光标锚点并保留用户后续编辑；
  * IME 组合中推迟插入；取消只丢语音、不动草稿与引用；切对话 / 页面隐藏由 hook 停轨道取消。
+ *
+ * 入口克制（用户 UI 修正）：idle 只有紧贴发送键的麦克风图标，**不常驻状态行 / 「去设置」**；
+ * 没配 ASR 时把说明放在按钮 title。只有用户点了麦克风、hook 回 `asr_not_configured` 时，
+ * 才短暂浮现短说明 + 「去设置」；取消、切会话、点「去设置」后都清掉临时提示。
  */
 import { Loader2, Mic, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -79,14 +83,22 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 	}, [textareaRef]);
 
 	useEffect(() => {
-		if (voice.error) setNotice(voice.error.message);
+		setNotice(voice.error?.message ?? "");
 	}, [voice.error]);
+	// 切会话 / 换助理：临时提示不跟着走（旧的麦克风错误不留到新对话里）。
+	useEffect(() => {
+		setNotice("");
+	}, [agentId, conversationId]);
 
 	const recording = voice.state === "recording";
 	const busy = voice.state === "preparing" || voice.state === "transcribing";
 	const label = !voice.supported ? (voice.unsupportedReason === "insecure_context" ? "需要 HTTPS 或本机地址才能用麦克风" : "当前浏览器不支持麦克风") : !voice.asrModel ? "未配置语音识别模型" : recording ? "停止录音并转写" : "语音输入";
+	// 只有「用户点了麦克风、hook 回 asr_not_configured」才浮现设置入口；
+	// idle 不常驻状态行、不常驻「去设置」——没配 ASR 时的说明放在按钮 title 里。
+	const needSetup = voice.error?.code === "asr_not_configured" && !recording;
+	// notice 只在「点过麦克风之后」才有值：其它错误也只在这时短暂提示，不常驻。
 	const hint = notice || (recording ? "正在听…（点停止）" : busy ? "转写中…" : "");
-	const showSettings = voice.supported && !voice.asrModel && !recording;
+	const showSettings = needSetup;
 
 	// 结构约定（用户 UI 修正）：麦克风 / 停止 / 取消固定贴在发送键左侧，包在 .pa-voice-ctl 里不换行、不挤压右组；
 	// 提示文字与「去设置」放进 .pa-voice-status（CSS order:1 + flex-basis:100%），单独占一行，不动发送键。
@@ -121,7 +133,7 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 				<div className="pa-voice-status" data-testid="voice-status">
 					{hint && <span className="pa-voice-hint max-w-[180px] truncate text-[11px] text-mut2" data-testid="voice-hint" title={hint}>{hint}</span>}
 					{showSettings && (
-						<button type="button" className="shrink-0 text-[11px] text-accent underline" data-testid="voice-open-settings" onClick={() => openSettings({ settings: "models" })}>
+						<button type="button" className="shrink-0 text-[11px] text-accent underline" data-testid="voice-open-settings" onClick={() => { setNotice(""); openSettings({ settings: "models" }); }}>
 							去设置
 						</button>
 					)}
