@@ -153,7 +153,8 @@ try {
 	const m = await page.evaluate(() => {
 		const menuEl = document.querySelector('[data-testid="agent-subagent-thinking-menu"]');
 		const doc = document.documentElement;
-		const ticks = [...document.querySelectorAll('[data-testid^="agent-subagent-thinking-"]')].filter((el) => el.getAttribute("data-testid") !== "agent-subagent-thinking-follow");
+		// 只数滑块刻度按钮：`[data-testid^="agent-subagent-thinking-"]` 还会命中 -menu / -body / -follow
+		const ticks = [...(menuEl?.querySelectorAll(".pa-think-step") ?? [])];
 		const mr = menuEl?.getBoundingClientRect();
 		const handle = menuEl?.querySelector('[role="slider"]');
 		return {

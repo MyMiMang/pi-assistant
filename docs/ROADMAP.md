@@ -9,6 +9,7 @@
 > - **思考强度 7 档滑块：生产实现已合入候选树**（合并 `b051a39`，源 `thinking-slider-implementation` `4e15158`，基候选 `11ce8f2`；beta.29 候选，未 push / 未 tag / 未打包）。设计稿 `docs/design/thinking-strength-slider.md` + `-prototype.html`。主会话 / 群聊 / 子代理 / 设置复用同一 `ThinkingSlider`（保留原 `onPick(level|null)` 与 testid），七档全定义，多模型取并集不吞 xhigh/max，服务端 clamp 不变；动效 token 已对齐 AI DIY 的 `--mo-scale/--mo-glow/--mo-ease/--mo-style`（`--mo-style=steps` 由组件读主题声明值映射成真实 data 属性）。纯逻辑 + 静态 DOM 夹具 **19/19**；浏览器 e2e / `vite build` / 真机**待测试槽**，见 `progress-snapshots/slider-token-contract.md` 与 HANDOFF。
 > - **AI DIY 主题（组件 / 动效级）**：范围与当前缺口见 [design/ai-theme-diy.md](design/ai-theme-diy.md)。底座是「主题 token + 动效 token」，**不能把组件样式写死在 JS 里绕过 DIY**；动效已合入候选树（合并源 snapshot `ffbfb7f`：可选 `motion` 段 + 引擎 `--pa-*` / `--mo-*` + reduced-motion 覆盖 + 面板「动效微调」），契约见 `progress-snapshots/theme-motion-token-contract.md`；该树 owner 仍在验证、可能追加新 commit（届时增量合并）；未接通的不许宣称已实现。
 > - **本轮验证口径**：只跑受影响的定向单测 + 相关 e2e，不跑全量；机器资源要错峰，跑完清理进程与临时目录，见 `progress-snapshots/beta28-final-validation.md`「复现命令」与「资源与清理」。
+> - **beta.29 候选整合已完成合并（2026-10-24）**：`thinking-slider-implementation`（`4e15158`）+ `theme-diy-motion-implementation`（快照 `ffbfb7f`）已 `--no-ff` 合入候选树（`b051a39` / `43e7afb`），代码零冲突。本步**只合并 + 读代码 review、未跑测试/构建**；逐项 review 结论、必修项（主题实时切换后滑块 `--mo-style` 分支滞后、`Models.tsx` 回滚竞态）与待验清单见 `progress-snapshots/beta29-integration-checkpoint.md`。theme-DIY 树若有新 commit 需再走一次增量合并；未 push / 未 tag。
 
 > **已公开（beta.27）**：Laya 安装校验与启动、权限按钮滚动、SenseVoice 原列表一键安装三项已发布。Actions `38901767310` 成功，2026-10-16 20:48（上海）为 Latest，仅arm64；主核公开资产和更新清单。以下发布准备状态为历史，未自动安装用户App。
 
