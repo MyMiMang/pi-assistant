@@ -23,9 +23,9 @@ export function bundleAllowed(license: AsrLicenseMeta): boolean {
 /**
  * 安装（含从官方源直接下载）门槛。
  *  - `decision === "prohibited"`：一律拒绝；
- *  - `decision === "unresolved"`：默认关闭（除非调用方显式传 `allowUnresolved: true`，供「用户已自行了解条款」的高级路径，
- *    产品默认不传）；
- *  - `decision === "cleared"`：允许，但仍要求 `acceptLicense === termsVersion`，防止跳过阅读。
+ *  - `decision === "unresolved"`：默认关闭（除非调用方显式传 `allowUnresolved: true`，产品默认不传）；
+ *  - `decision === "cleared"`：**只有条款确实需要确认时才要求 `acceptLicense === termsVersion`**；
+ *    宽松许可（MIT / Apache-2.0）不强制勾同意，只要界面正常展示署名与许可证链接即可（一键装）。
  */
 export function installGate(license: AsrLicenseMeta, acceptLicense?: string | null, opts: { allowUnresolved?: boolean } = {}): GateResult {
 	if (license.decision === "prohibited") {
@@ -37,11 +37,11 @@ export function installGate(license: AsrLicenseMeta, acceptLicense?: string | nu
 			reason: `权重许可适用范围未最终确认（${license.licenseName}），安装入口已关闭；可改用「自行导入已合法取得的权重」。依据：${license.links.issue}`,
 		};
 	}
-	if (!acceptLicense) {
-		return { allowed: false, reason: `安装前必须接受许可条款 ${license.termsVersion}（acceptLicense 缺失）` };
-	}
-	if (acceptLicense !== license.termsVersion) {
-		return { allowed: false, reason: `许可条款版本不匹配（需要 ${license.termsVersion}，收到 ${acceptLicense}）` };
+	// 只有需要显式确认的模型（restrictive / unresolved 的 override 路径）才强制 accept；MIT / Apache 不拦。
+	const needsAgreement = license.requiresExplicitAgreement === true || license.decision === "unresolved";
+	if (needsAgreement) {
+		if (!acceptLicense) return { allowed: false, reason: `安装前必须接受许可条款 ${license.termsVersion}（acceptLicense 缺失）` };
+		if (acceptLicense !== license.termsVersion) return { allowed: false, reason: `许可条款版本不匹配（需要 ${license.termsVersion}，收到 ${acceptLicense}）` };
 	}
 	return { allowed: true };
 }
@@ -61,10 +61,12 @@ export interface LicenseDisclosure {
 	decision: AsrLicenseMeta["decision"];
 	redistribution: boolean;
 	attribution: string;
+	/** 是否必须显式确认条款（MIT / Apache-2.0 为 false → 一键装，只需展示署名与链接） */
+	agreementRequired: boolean;
 	links: AsrLicenseMeta["links"];
 	restrictions: string[];
 	reason: string;
-	/** 用户必须原样回传的接受值（安装时） */
+	/** 需要确认时用户必须原样回传的接受值（安装时）；不需要确认的模型可忽略 */
 	acceptValue: string;
 }
 
@@ -75,6 +77,7 @@ export function licenseDisclosure(license: AsrLicenseMeta): LicenseDisclosure {
 		decision: license.decision,
 		redistribution: license.redistribution,
 		attribution: license.attribution,
+		agreementRequired: license.requiresExplicitAgreement === true || license.decision === "unresolved",
 		links: { ...license.links },
 		restrictions: [...license.restrictions],
 		reason: license.reason,

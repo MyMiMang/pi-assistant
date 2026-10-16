@@ -129,11 +129,14 @@ function makeHarness() {
 		log: () => {},
 	};
 
-	const selection: { sel: { location: "cloud" | "local"; provider: string; model: string } | null } = { sel: null };
+	const selection: { sel: { location: "cloud" | "local"; provider: string; model: string } | null; ver: number } = { sel: null, ver: 0 };
 	const port: AsrSelectionPort = {
 		read: () => selection.sel,
-		write: (s) => {
+		version: () => selection.ver,
+		write: (s, opts) => {
+			if (opts?.expectedVersion !== undefined && opts.expectedVersion !== selection.ver) throw new Error("asr_source_conflict");
 			selection.sel = s;
+			selection.ver += 1;
 		},
 	};
 	const svc = new LocalAsrService({
@@ -317,6 +320,16 @@ test("install_and_use：选择自开始未变时才写「用本地」来源", as
 	assert.deepEqual(h.selection.sel, { location: "local", provider: "local-whisper", model: WSMALL });
 });
 
+test("install_and_use CAS：安装期间别的客户端写过来源（版本前进）→ 不覆盖，保持用户后来的选择", async () => {
+	const h = makeHarness();
+	// 安装下载中，另一个页面 / 客户端写了一次来源（版本前进），随后用户没再改
+	h.inst.onDownload = () => {
+		h.selection.ver += 1;
+	};
+	await h.svc.install(WSMALL, { acceptLicense: "MIT", intent: "install_and_use" });
+	assert.equal(h.selection.sel, null, "CAS 失败（版本已变）不得写「用本地」覆盖");
+});
+
 test("忙时切换：有录音租约时 select 明确拒绝，不把进行中的音频送给别的模型", async () => {
 	const h = makeHarness();
 	await h.svc.install(PARA, { acceptLicense: "Apache-2.0", intent: "install" });
@@ -384,13 +397,21 @@ test("路由：GET /catalog 返回聚合 DTO 且不启动 worker；按 id instal
 	await new Promise((r) => setTimeout(r, 20));
 	assert.equal(h.svc.managerFor(PARA).status().install.state, "installed");
 
-	// 许可门槛：cleared 模型未带 acceptLicense 的安装被拒
-	const bad = await app.request(`/api/local-models/asr/models/${WSMALL}/install`, {
+	// 宽松许可（Whisper MIT）：不带 acceptLicense 也能一键装
+	const oneClick = await app.request(`/api/local-models/asr/models/${WSMALL}/install`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ intent: "install" }),
 	});
-	assert.equal(bad.status, 400);
+	assert.equal(oneClick.status, 200, "MIT 模型不应强要求每次勾同意");
+
+	// SenseVoice（unresolved）：下载安装 400，不偷放
+	const blocked = await app.request("/api/local-models/asr/models/sensevoice-small-int8/install", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ acceptLicense: "1.1", intent: "install" }),
+	});
+	assert.equal(blocked.status, 400);
 
 	const nf = await app.request("/api/local-models/asr/models/nope/status");
 	assert.equal(nf.status, 404);

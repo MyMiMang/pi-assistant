@@ -180,6 +180,7 @@ interface LocalAsrModelView {
 ```
 
 - 一次请求拿全（硬件档位 / 体积 / 依赖 / 内存估算 / 许可 / 来源 / 安装态 / 运行态），GET **不下载、不启动 worker**。
+- **许可确认分级**：`license.agreementRequired` 为 `false` 时（MIT / Apache-2.0）**不强制每次点同意** —— 正常展示署名与许可证链接即可，`acceptLicense` 可不传（一键装）；为 `true` 时才要求 `acceptLicense === acceptValue`。SenseVoice（unresolved）仍**阻下载**、保留自行导入，不新增勾框将其洗成允许。
 - `install.total === null` → 前端画不定进度条（`phaseLabel` 给中文阶段），不编假百分比。
 - `jobId` = 统一下载注册表稳定 id `asr:<modelId>`（同一次安装 = 同一个 job）；`attempt` 是第几次安装尝试（generation 概念，不要求 jobId 唯一到 attempt）。
 - 不含 token：catalog / status 只有 provider / model / protocol。
@@ -201,6 +202,7 @@ interface LocalAsrModelView {
 - `intent:"install_and_use"`：安装成功后，**仅当**当前 `voiceSource` 与安装开始时完全一致才写「用本地该模型」；
   期间用户改选云端 / 别的模型 → 迟到的安装完成**不得覆盖**新选择（`LocalAsrService.install` 的 `selectionAtStart` 比对）。
 - 来源真相仍是 `PUT /api/audio/asr/source`（UI 也可在安装成功后自己 PUT，二者幂等）。
+- **跨客户端 stale（CAS）**：`GET /api/audio/asr/source` 额外返回 `version`（每次写入递增）；`PUT` 可带可选 `expectedVersion`（非负整数），与当前版本不一致时返回 `409` + `error:"asr_source_conflict"` 且**不写入**（旧客户端不带该字段照旧可用）。后端 `install_and_use` 在安装完成时用**安装开始捕获的版本**做 CAS：期间别的页面 / 客户端改选 cloud 或别的模型 → 写入失败则**不覆盖**（UI 提示「已装但未切来源」）。
 
 ## E. 统一下载（复用 `downloads.ts`，不另造 registry）
 

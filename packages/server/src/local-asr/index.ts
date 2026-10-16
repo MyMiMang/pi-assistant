@@ -38,7 +38,7 @@ export function localAsrService(): LocalAsrService {
 				return mgr;
 			},
 			// 默认空端口；生产在 http.ts 注入 voice 的来源读写（避免循环依赖）。
-			selection: { read: () => null, write: () => {} },
+			selection: { read: () => null, version: () => 0, write: () => {} },
 			onChange: (spec, status) => emit(spec, status),
 			hardware: () => ({ os: platform(), arch: arch(), cpuCores: cpus().length, memoryBytes: totalmem() }),
 		});

@@ -17,7 +17,7 @@ import { isAsrProtocol, type AsrOutcome } from "./asr.ts";
 import { ASR_CATALOG, asrModelSpecByProvider } from "../local-asr/catalog.ts";
 import { asrEndpoint } from "../local-asr/adapter-registry.ts";
 import { ASR_MODEL_ID, ASR_PROVIDER_ID, localAsrService } from "../local-asr/index.ts";
-import { readVoiceSource, withSelected, writeVoiceSource } from "./source.ts";
+import { readVoiceSource, readVoiceSourceVersion, withSelected, writeVoiceSource } from "./source.ts";
 
 /** 用户在设置里显式声明的云 ASR 模型（统一注册表 `type:"asr"` 的云来源）。 */
 export interface AsrDeclaration {
@@ -145,7 +145,7 @@ export function asrSourceOptions(): AsrSourceOption[] {
 }
 
 /** 当前来源 + 归一化候选（UI 只读数据；`selected` 只在 `withSelected` 里算，避免多处漂移）。 */
-export const asrSourceView = (): AsrSourceView => withSelected(readVoiceSource(), asrSourceOptions());
+export const asrSourceView = (): AsrSourceView => withSelected(readVoiceSource(), asrSourceOptions(), readVoiceSourceVersion());
 const selectedSourceOptions = () => asrSourceView().options;
 
 /** 来源校验失败（路由层映射成 HTTP 错误；不落库）。 */
@@ -170,14 +170,15 @@ function selectable(source: AsrSource): boolean {
 	return asrDeclarations().some((d) => d.provider === source.provider && d.model === source.model && isAsrProtocol(d.protocol || ASR_PROTOCOLS[0]) && providerConfigured(d.provider));
 }
 
-/** 保存显式来源；`null` = 清空（未配置）。未知 / 未配置的 provider-model 抛 `AsrSourceError`，不写库。 */
-export function saveAsrSource(next: AsrSource | null): void {
+/** 保存显式来源；`null` = 清空（未配置）。未知 / 未配置的 provider-model 抛 `AsrSourceError`，不写库。
+ * `opts.expectedVersion` 为跨客户端 CAS：版本不符（另一页面已改选）→ 抛 conflict，不覆盖。 */
+export function saveAsrSource(next: AsrSource | null, opts: { expectedVersion?: number } = {}): void {
 	if (!next) {
-		writeVoiceSource(null);
+		writeVoiceSource(null, opts);
 		return;
 	}
 	if (selectable(next)) {
-		writeVoiceSource(next);
+		writeVoiceSource(next, opts);
 		return;
 	}
 	const declared = next.location === "cloud" && asrDeclarations().some((d) => d.provider === next.provider && d.model === next.model);
@@ -229,6 +230,6 @@ export function mountAsrRoutes(app: Hono<any>) {
 		resolve: resolveAsrEndpoint,
 		acquireLease: acquireAsrLease,
 		releaseLease: releaseAsrLease,
-		source: { read: readVoiceSource, options: selectedSourceOptions, write: saveAsrSource },
+		source: { read: readVoiceSource, options: selectedSourceOptions, write: saveAsrSource, version: readVoiceSourceVersion },
 	});
 }

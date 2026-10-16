@@ -59,6 +59,8 @@ export interface AsrLicenseMeta {
 	redistribution: boolean;
 	/** 必须展示的署名（§2.2 硬要求） */
 	attribution: string;
+	/** 是否必须显式接受条款（宽松许可 MIT / Apache-2.0 不需要；默认 false） */
+	requiresExplicitAgreement: boolean;
 	links: { modelCard: string; modelLicense: string; issue?: string; engineLicense: string };
 	/** 必须**默认可见**的限制摘要（不能靠一次点击遮盖） */
 	restrictions: string[];
@@ -80,6 +82,8 @@ export const SENSEVOICE_LICENSE: AsrLicenseMeta = {
 	licenseName: "FunASR Model Open Source License Agreement v1.1",
 	redistribution: false,
 	attribution: "SenseVoiceSmall by FunASR / FunAudioLLM",
+	// FunASR 条款适用范围需用户确认，允许 override 的高级路径上要求显式接受
+	requiresExplicitAgreement: true,
 	links: {
 		modelCard: "https://huggingface.co/FunAudioLLM/SenseVoiceSmall",
 		modelLicense: "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",

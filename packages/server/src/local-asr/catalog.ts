@@ -97,6 +97,8 @@ const PARAFAFORMER_LICENSE: AsrLicenseMeta = {
 	licenseName: "Apache License 2.0",
 	redistribution: true,
 	attribution: "Paraformer by FunASR / ModelScope (Apache-2.0)",
+	// Apache-2.0：正常展示署名与许可证链接即可，不强制每次都勾同意（一键装）
+	requiresExplicitAgreement: false,
 	links: {
 		modelCard: "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2023-09-14",
 		modelLicense: "https://huggingface.co/funasr/paraformer-zh",
@@ -112,6 +114,8 @@ const WHISPER_LICENSE: AsrLicenseMeta = {
 	licenseName: "MIT License (OpenAI Whisper)",
 	redistribution: true,
 	attribution: "Whisper by OpenAI (MIT)",
+	// MIT：正常展示署名与许可证链接即可，不强制每次都勾同意（一键装）
+	requiresExplicitAgreement: false,
 	links: {
 		modelCard: "https://github.com/openai/whisper",
 		modelLicense: "https://github.com/openai/whisper/blob/main/LICENSE",

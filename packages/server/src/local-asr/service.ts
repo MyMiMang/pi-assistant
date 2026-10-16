@@ -21,7 +21,9 @@ import type { AsrSourceMeta } from "./manifest.ts";
 /** 来源读写端口（voice 模块实现；local-asr 不直接 import voice）。 */
 export interface AsrSelectionPort {
 	read(): { location: "cloud" | "local"; provider: string; model: string } | null;
-	write(next: { location: "cloud" | "local"; provider: string; model: string } | null): void;
+	/** 持久化版本（每次写入递增）；用于跨客户端 CAS。 */
+	version(): number;
+	write(next: { location: "cloud" | "local"; provider: string; model: string } | null, opts?: { expectedVersion?: number }): void;
 }
 
 export interface AsrModelInstallOptions {
@@ -121,6 +123,8 @@ interface Job {
 	attempt: number;
 	intent: "install" | "install_and_use";
 	selectionAtStart: { location: "cloud" | "local"; provider: string; model: string } | null;
+	/** 安装开始时的来源持久化版本（CAS：期间别的客户端改选则不覆盖） */
+	selectionVersionAtStart: number;
 	ctrl: AbortController;
 }
 
@@ -312,14 +316,20 @@ export class LocalAsrService {
 			attempt,
 			intent: opts.intent === "install_and_use" ? "install_and_use" : "install",
 			selectionAtStart: this.deps.selection.read(),
+			selectionVersionAtStart: this.deps.selection.version(),
 			ctrl,
 		};
 		this.jobs.set(id, job);
 		try {
 			const st = await m.install({ source: opts.source ?? "download", acceptLicense: opts.acceptLicense, importDir: opts.importDir, signal: ctrl.signal });
-			// stale 防护：只有「安装并使用」且选择自开始后**未变化**才写「用本地」来源。
+			// stale 防护：只有「安装并使用」且选择自开始后未变化才写「用本地」来源；
+			// CAS 用 expectedVersion 防 ABA / 跨客户端覆盖（别的页面后来改选 cloud 则这里失败，不覆盖）。
 			if (job.intent === "install_and_use" && sameSelection(this.deps.selection.read(), job.selectionAtStart)) {
-				this.deps.selection.write({ location: "local", provider: spec.provider, model: spec.id });
+				try {
+					this.deps.selection.write({ location: "local", provider: spec.provider, model: spec.id }, { expectedVersion: job.selectionVersionAtStart });
+				} catch {
+					/* 另一个页面 / 客户端已改选来源：保持用户后来的选择，不覆盖（UI 提示「已装但未切来源」） */
+				}
 			}
 			return st;
 		} finally {

@@ -6,7 +6,7 @@ import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
 import { mountAsrRoutes, registryAsrProviders, saveAsrSource, type AsrDeclaration } from "./voice/index.ts";
 import { ASR_PROTOCOLS } from "./voice/contract.ts";
 import { isAsrProtocol } from "./voice/asr.ts";
-import { readVoiceSource } from "./voice/source.ts";
+import { readVoiceSource, readVoiceSourceVersion } from "./voice/source.ts";
 import { localAsrService, setAsrSelectionPort } from "./local-asr/index.ts";
 import { mountLocalAsrRoutes } from "./local-asr/routes.ts";
 import "./local-asr/download.ts";
@@ -264,7 +264,7 @@ mountThemeRoutes(app);
 mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null, desktopKind: () => desktopBackend().id }).host);
 mountLocalLayaRoutes(app, localOnly);
 // 本地 ASR 的来源读写直接接 voice 的 voiceSource（PUT /api/audio/asr/source 仍是唯一来源真相）。
-setAsrSelectionPort({ read: readVoiceSource, write: (s) => saveAsrSource(s) });
+setAsrSelectionPort({ read: readVoiceSource, version: readVoiceSourceVersion, write: (s, opts) => saveAsrSource(s, opts) });
 mountLocalAsrRoutes(app, localOnly, undefined, { service: localAsrService });
 mountAsrRoutes(app);
 app.get("/api/models", (c) => {
