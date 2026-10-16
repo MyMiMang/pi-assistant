@@ -67,6 +67,80 @@ export type DecorCorner = (typeof DECOR_CORNERS)[number];
 export type DecorShadow = (typeof DECOR_SHADOWS)[number];
 export type DecorBackground = (typeof DECOR_BACKGROUNDS)[number];
 
+/* ------------------------------------------------------------------ *
+ * 动效 token（v1 增量，可选；模式无关：light / dark 共用一套）
+ *
+ * 设计原则：**有界 typed token**，不是任意 CSS。时长限范围、缓动只允许枚举名或受限
+ * cubic-bezier()，其余 enum；引擎把它们编译成 `--pa-dur-*` / `--pa-ease-*`（公共控件已有）
+ * 与 `--mo-scale` / `--mo-glow` / `--mo-style`（七档滑块等组件消费）。
+ * 老 v1 主题（没有 motion）继续合法：引擎补内置默认，不丢 / 不覆盖。
+ * ------------------------------------------------------------------ */
+
+/** 允许的时长范围（毫秒）。太短看不见、太长拖慢交互。 */
+export const MOTION_DURATION_MIN_MS = 40;
+export const MOTION_DURATION_MAX_MS = 1200;
+/** 时长倍率范围（`--mo-scale`）。 */
+export const MOTION_SCALE_MIN = 0.5;
+export const MOTION_SCALE_MAX = 2;
+
+/** 缓动枚举名 → 内置 CSS timing-function（不引入外部资源）。 */
+export const MOTION_EASE_NAMES = ["linear", "ease", "ease-in", "ease-out", "ease-in-out", "standard", "emphasized", "spring-soft"] as const;
+export type MotionEaseName = (typeof MOTION_EASE_NAMES)[number];
+
+/** 光晕强度枚举 → `--mo-glow` 数字。 */
+export const MOTION_GLOW_LEVELS = ["none", "subtle", "normal", "strong"] as const;
+export type MotionGlow = (typeof MOTION_GLOW_LEVELS)[number];
+
+/** 过渡风格：smooth 连续缓动 / steps 离散成步（像素风用）。 */
+export const MOTION_STYLES = ["smooth", "steps"] as const;
+export type MotionStyle = (typeof MOTION_STYLES)[number];
+
+/** 缓动枚举名 → CSS 值（引擎映射；cubic-bezier 只作内置常量，不接受任意字符串）。 */
+export const MOTION_EASE_CSS: Record<MotionEaseName, string> = {
+	linear: "linear",
+	ease: "ease",
+	"ease-in": "ease-in",
+	"ease-out": "ease-out",
+	"ease-in-out": "ease-in-out",
+	standard: "cubic-bezier(.2,.8,.2,1)",
+	emphasized: "cubic-bezier(.22,1,.36,1)",
+	"spring-soft": "cubic-bezier(.2,.9,.3,1.35)",
+};
+
+/** 光晕枚举 → `--mo-glow` 数字。 */
+export const MOTION_GLOW_VALUE: Record<MotionGlow, string> = { none: "0", subtle: ".5", normal: "1", strong: "1.6" };
+
+/** 主题动效段（顶层，模式无关）。全部可选；缺省由引擎补内置默认。 */
+export interface ThemeMotion {
+	/** 时长（`ms` / `s`，40..1200ms）：fast=即时反馈、base=常规、slow=折叠 / 展开。 */
+	durationFast?: string;
+	duration?: string;
+	durationSlow?: string;
+	/** 缓动：枚举名（`MOTION_EASE_NAMES`）或受限 `cubic-bezier(a,b,c,d)`。 */
+	easeOut?: string;
+	easeExpand?: string;
+	easeSpring?: string;
+	/** 时长倍率（0.5..2）→ `--mo-scale`，供七档滑块等按主题整体缩放。 */
+	scale?: number;
+	/** 光晕强度 → `--mo-glow`。 */
+	glow?: MotionGlow;
+	/** 过渡风格 → `--mo-style`。 */
+	style?: MotionStyle;
+}
+
+/** 引擎 / 文档使用的内置默认动效（与 `base.css` 的 `html{}` 默认值一致）。 */
+export const DEFAULT_THEME_MOTION: Required<ThemeMotion> = {
+	durationFast: ".12s",
+	duration: ".18s",
+	durationSlow: ".26s",
+	easeOut: "cubic-bezier(.2,.8,.2,1)",
+	easeExpand: "cubic-bezier(.22,1,.36,1)",
+	easeSpring: "cubic-bezier(.2,.9,.3,1.35)",
+	scale: 1,
+	glow: "normal",
+	style: "smooth",
+};
+
 /** 图片素材用途：reference 只作参考（默认导出不含）；background / decor 是用户显式选定的主题素材。 */
 export const THEME_IMAGE_USAGES = ["reference", "background", "decor"] as const;
 export type ThemeImageUsage = (typeof THEME_IMAGE_USAGES)[number];
@@ -117,6 +191,8 @@ export interface ThemeManifestV1 {
 	basedOn?: string;
 	modes: { light: ThemeTokenMap; dark: ThemeTokenMap };
 	decor?: ThemeDecor;
+	/** 动效 token（可选，模式无关；旧 v1 主题缺省即内置默认）。 */
+	motion?: ThemeMotion;
 	images?: ThemeImageRef[];
 	createdAt: string;
 	updatedAt: string;
@@ -145,6 +221,8 @@ const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const RGB_HSL = /^(?:rgba?|hsla?)\(\s*[0-9.]+%?(?:\s*[,/]\s*[0-9.]+%?){2,3}\s*\)$/i;
 const LENGTH = /^([0-9]+(?:\.[0-9]+)?)(px|rem|em)$/;
 const FONT_LIST = /^[A-Za-z0-9\u4e00-\u9fff\s,'"-]+$/;
+const DURATION = /^([0-9]*\.?[0-9]+)(ms|s)$/i;
+const CUBIC_BEZIER = /^cubic-bezier\(\s*(-?[0-9]*\.?[0-9]+)\s*,\s*(-?[0-9]*\.?[0-9]+)\s*,\s*(-?[0-9]*\.?[0-9]+)\s*,\s*(-?[0-9]*\.?[0-9]+)\s*\)$/i;
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 const MIME_IMAGE = /^image\/[a-z0-9.+-]+$/i;
 
@@ -168,6 +246,81 @@ function isFontList(v: string): boolean {
 
 function err(path: string, code: ThemeError["code"], message: string, expected?: string, actual?: string): ThemeError {
 	return { path, code, message, expected, actual };
+}
+
+/** 时长串 → 毫秒；非法返回 null。 */
+function durationMs(v: string): number | null {
+	const m = DURATION.exec(v);
+	if (!m) return null;
+	const n = Number(m[1]);
+	if (!Number.isFinite(n)) return null;
+	return m[2].toLowerCase() === "s" ? n * 1000 : n;
+}
+
+/** 缓动：枚举名或受限 cubic-bezier()（x∈[0,1]，y∈[-0.5,1.5]）。 */
+function isMotionEase(v: string): boolean {
+	if ((MOTION_EASE_NAMES as readonly string[]).includes(v)) return true;
+	const m = CUBIC_BEZIER.exec(v);
+	if (!m) return false;
+	const nums = [m[1], m[2], m[3], m[4]].map(Number);
+	if (nums.some((n) => !Number.isFinite(n))) return false;
+	const [x1, y1, x2, y2] = nums;
+	return x1 >= 0 && x1 <= 1 && x2 >= 0 && x2 <= 1 && y1 >= -0.5 && y1 <= 1.5 && y2 >= -0.5 && y2 <= 1.5;
+}
+
+/** 校验 `motion` 段：未知字段 fail-closed；坏值整份拒绝。 */
+function validateMotion(motion: unknown, errors: ThemeError[]): ThemeMotion | undefined {
+	if (motion == null) return undefined;
+	if (typeof motion !== "object" || Array.isArray(motion)) {
+		errors.push(err("motion", "type", "必须是对象", "object", Array.isArray(motion) ? "array" : typeof motion));
+		return undefined;
+	}
+	const m = motion as Record<string, unknown>;
+	const known = new Set(["durationFast", "duration", "durationSlow", "easeOut", "easeExpand", "easeSpring", "scale", "glow", "style"]);
+	for (const k of Object.keys(m)) {
+		if (!known.has(k)) errors.push(err(`motion.${k}`, "unknown_token", "不在动效白名单内，已拒绝", [...known].join(" / "), k));
+	}
+	const out: ThemeMotion = {};
+	for (const key of ["durationFast", "duration", "durationSlow"] as const) {
+		const v = m[key];
+		if (v == null) continue;
+		if (typeof v !== "string" || FORBIDDEN_IN_VALUE.test(v)) {
+			errors.push(err(`motion.${key}`, "value", "时长值非法", "如 .12s / 180ms", typeof v === "string" ? v.slice(0, 40) : typeof v));
+			continue;
+		}
+		const ms = durationMs(v.trim());
+		if (ms == null || ms < MOTION_DURATION_MIN_MS || ms > MOTION_DURATION_MAX_MS) {
+			errors.push(err(`motion.${key}`, "value", "时长超范围", `${MOTION_DURATION_MIN_MS}..${MOTION_DURATION_MAX_MS}ms`, v));
+			continue;
+		}
+		out[key] = v.trim();
+	}
+	for (const key of ["easeOut", "easeExpand", "easeSpring"] as const) {
+		const v = m[key];
+		if (v == null) continue;
+		if (typeof v !== "string" || FORBIDDEN_IN_VALUE.test(v) || !isMotionEase(v.trim())) {
+			errors.push(err(`motion.${key}`, "value", "缓动值非法（只允许枚举名或受限 cubic-bezier()）", MOTION_EASE_NAMES.join(" / ") + " / cubic-bezier(x1,y1,x2,y2)", typeof v === "string" ? v.slice(0, 60) : typeof v));
+			continue;
+		}
+		out[key] = v.trim();
+	}
+	if (m.scale != null) {
+		const v = m.scale;
+		if (typeof v !== "number" || !Number.isFinite(v) || v < MOTION_SCALE_MIN || v > MOTION_SCALE_MAX) {
+			errors.push(err("motion.scale", "value", "倍率超范围", `${MOTION_SCALE_MIN}..${MOTION_SCALE_MAX}`, String(v)));
+		} else out.scale = v;
+	}
+	if (m.glow != null) {
+		if (typeof m.glow !== "string" || !(MOTION_GLOW_LEVELS as readonly string[]).includes(m.glow)) {
+			errors.push(err("motion.glow", "value", "光晕枚举非法", MOTION_GLOW_LEVELS.join(" / "), String(m.glow)));
+		} else out.glow = m.glow as MotionGlow;
+	}
+	if (m.style != null) {
+		if (typeof m.style !== "string" || !(MOTION_STYLES as readonly string[]).includes(m.style)) {
+			errors.push(err("motion.style", "value", "过渡风格枚举非法", MOTION_STYLES.join(" / "), String(m.style)));
+		} else out.style = m.style as MotionStyle;
+	}
+	return Object.keys(out).length ? out : undefined;
 }
 
 function validateTokenMap(map: unknown, path: string, errors: ThemeError[], warnings: string[]) {
@@ -376,6 +529,7 @@ export function validateThemeManifest(input: unknown): ThemeManifestValidation {
 	}
 
 	const decor = validateDecor(raw.decor, errors);
+	const motion = validateMotion(raw.motion, errors);
 	const images = validateImages(raw.images, errors);
 
 	const now = new Date().toISOString();
@@ -395,6 +549,7 @@ export function validateThemeManifest(input: unknown): ThemeManifestValidation {
 	if (author) manifest.author = author;
 	if (basedOn) manifest.basedOn = basedOn;
 	if (decor) manifest.decor = decor;
+	if (motion) manifest.motion = motion;
 	if (images) manifest.images = images;
 
 	warnings.push(...manifestContrastWarnings(manifest));

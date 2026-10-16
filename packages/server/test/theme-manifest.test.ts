@@ -17,7 +17,7 @@ import {
 	type ThemeManifestV1,
 } from "../../../packages/shared/src/theme-manifest.ts";
 import { CUSTOM_THEMES_KEY, deleteCustomTheme, exportCustomTheme, importCustomTheme, loadCustomThemes, newThemeId, saveCustomTheme } from "../../../apps/web/src/themes/custom-store.ts";
-import { completeTokens, customSkinId, manifestToCss, themeDefFromManifest } from "../../../apps/web/src/themes/manifest.ts";
+import { completeTokens, customSkinId, manifestToCss, motionTokens, themeDefFromManifest } from "../../../apps/web/src/themes/manifest.ts";
 import { cancelPreview, commitPreview, revisePreview, startPreview, undoPreview, type AppearanceSnapshot, type PreviewEffects } from "../../../apps/web/src/themes/preview.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -286,6 +286,81 @@ test("preview：继续提意见 / 上一版 走历史栈；撤销回上一版", 
 	assert.equal(applied.at(-1)?.skin, customSkinId(v1.id));
 	// 已在第一版时撤销是 no-op
 	assert.equal(undoPreview(s2, effects), s2);
+});
+
+/* ---------------------------- 动效（v1 增量） ---------------------------- */
+
+test("schema：motion 合法值通过；越界时长 / 非法缓动 / 越界倍率 / 未知字段 fail-closed", () => {
+	const ok = validateThemeManifest(sample({ motion: { duration: ".24s", durationSlow: "400ms", easeOut: "standard", easeExpand: "cubic-bezier(.22,1,.36,1)", scale: 1.2, glow: "subtle", style: "steps" } }));
+	assert.equal(ok.ok, true, JSON.stringify(ok));
+	if (ok.ok) assert.equal(ok.manifest.motion?.duration, ".24s");
+
+	const bad = [
+		{ motion: { duration: "10ms" }, why: "时长过短" },
+		{ motion: { duration: "5s" }, why: "时长过长" },
+		{ motion: { duration: "fast" }, why: "不是时长" },
+		{ motion: { easeOut: "steps(4)" }, why: "steps 不允许" },
+		{ motion: { easeOut: "cubic-bezier(2,0,.5,1)" }, why: "x 超 1" },
+		{ motion: { easeOut: "url(evil)" }, why: "注入" },
+		{ motion: { scale: 3 }, why: "倍率超范围" },
+		{ motion: { glow: "max" }, why: "光晕枚举非法" },
+		{ motion: { style: "spring" }, why: "风格枚举非法" },
+		{ motion: { duration: ".2s", evil: "x" }, why: "未知字段" },
+	];
+	for (const { motion, why } of bad) {
+		const r = validateThemeManifest(sample({ motion: motion as never }));
+		assert.equal(r.ok, false, `应拒绝：${why}`);
+	}
+});
+
+test("engine：motionTokens 枚举 → 内置 CSS；manifestToCss 输出 --pa-* / --mo-* 并自带 reduced-motion 覆盖", () => {
+	const m = sample({ motion: { duration: ".3s", easeOut: "emphasized", scale: 1.5, glow: "strong", style: "steps" } });
+	const toks = motionTokens(m);
+	assert.equal(toks["--pa-dur"], ".3s");
+	assert.equal(toks["--pa-dur-fast"], ".12s", "未给 → 内置默认");
+	assert.equal(toks["--pa-ease-out"], "cubic-bezier(.22,1,.36,1)", "枚举名映射到内置 bezier");
+	assert.equal(toks["--mo-scale"], "1.5");
+	assert.equal(toks["--mo-glow"], "1.6");
+	assert.equal(toks["--mo-style"], "steps");
+	assert.equal(toks["--mo-ease"], toks["--pa-ease-out"], "--mo-ease 与通用缓出一致");
+	const css = manifestToCss(m);
+	assert.match(css, /--pa-dur:\.3s/);
+	assert.match(css, /--mo-scale:1\.5/);
+	assert.match(css, /--mo-style:steps/);
+	assert.match(css, /prefers-reduced-motion:\s*reduce/);
+	assert.match(css, /--pa-dur:0s/);
+	assert.match(css, /--mo-scale:0/);
+	assert.ok(!/url\s*\(/.test(css) && !/@import/.test(css));
+});
+
+test("engine：自定义 --acc / --r / --font 真正落到 [data-skin=custom-*] 输出（不是靠样式继承）", () => {
+	const m = sample({
+		modes: {
+			light: { ...LIGHT, "--acc": "#123456", "--r": "7px" },
+			dark: { ...DARK, "--acc": "#654321", "--r": "7px" },
+		},
+	});
+	m.modes.light["--font"] = '"Songti SC",serif';
+	const css = manifestToCss(m);
+	assert.match(css, /--acc:#123456/);
+	assert.match(css, /--r:7px/);
+	assert.match(css, /--font:"Songti SC",serif/);
+});
+
+test("兼容：旧 v1 主题（无 motion）仍合法且补默认；带 motion 保存 / 读取往返不丢（刷新恢复）", () => {
+	const legacy = sample();
+	const r = validateThemeManifest(legacy);
+	assert.equal(r.ok, true);
+	if (!r.ok) return;
+	assert.equal(r.manifest.motion, undefined, "旧主题不应被硬塞 motion");
+	assert.equal(motionTokens(r.manifest)["--pa-dur"], ".18s", "旧主题在引擎层补默认，不丢 / 不覆盖");
+
+	const withMotion = sample({ motion: { duration: ".42s", easeSpring: "spring-soft", glow: "none" } });
+	const st = fakeStorage();
+	assert.equal(saveCustomTheme(withMotion, st).ok, true);
+	const loaded = loadCustomThemes(st);
+	assert.equal(loaded.length, 1);
+	assert.deepEqual(loaded[0].motion, { duration: ".42s", easeSpring: "spring-soft", glow: "none" }, "动效设置应持久化并原样恢复");
 });
 
 /* ---------------------------- 无虚入口 ---------------------------- */

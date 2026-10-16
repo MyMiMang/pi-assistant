@@ -485,3 +485,49 @@ test("显式选模型不改助理主模型 / 全局默认（仅这一次草稿�
 	const after = db.prepare("SELECT model_provider, model_id FROM agents WHERE id = ?").get("ta_no_mutate") as { model_provider: string | null; model_id: string | null };
 	assert.deepEqual(after, before, "主题设计选模型不能写回助理表");
 });
+
+test("动效：motion 合法进 manifest 并原样返回；工具 schema / 系统提示都声明 motion", async () => {
+	const motion = { duration: ".24s", durationSlow: "400ms", easeOut: "standard", easeSpring: "spring-soft", scale: 1.2, glow: "subtle", style: "steps" };
+	const mock = await startThemeDraftMock([{ toolCall: { name: "theme_draft", args: { manifest: validManifest({ name: "有动效", motion }) } } }, { text: "已生成" }]);
+	const p = await withProvider("主题动效", mock);
+	mkAgent("ta_motion", p.id);
+	resetThemeDraftInFlight();
+	try {
+		const r = await draftTheme({ turnId: "t1", prompt: "动效轻一点，圆角小", agentId: "ta_motion" });
+		assert.equal(r.ok, true, JSON.stringify(r));
+		if (!r.ok) return;
+		assert.deepEqual(r.manifest.motion, motion, "motion 应经同一 shared 校验器收下并原样保留");
+		const first = mock.seen[0];
+		const schema = JSON.stringify(first.tools ?? []);
+		assert.match(schema, /motion/, "工具 schema 必须声明 motion（前后端同一套）");
+		assert.match(schema, /durationFast/);
+		const sys = (first.messages ?? []).filter((m: any) => m.role === "system").map((m: any) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content))).join("\n");
+		assert.match(sys, /动效/, "系统提示应告诉模型支持动效 token");
+		assert.match(sys, /cubic-bezier/);
+	} finally {
+		mock.close();
+		await customProviders.remove(p.id);
+	}
+});
+
+test("动效：非法 motion（超范围 / 未知字段）fail-closed，按错误修一次才收下", async () => {
+	const bad = validManifest({ name: "坏动效", motion: { duration: "9s", glow: "max", wat: "x" } });
+	const good = validManifest({ name: "修好了", motion: { duration: ".3s", glow: "strong" } });
+	const mock = await startThemeDraftMock([{ toolCall: { name: "theme_draft", args: { manifest: bad } } }, { toolCall: { name: "theme_draft", args: { manifest: good } } }, { text: "已修复" }]);
+	const p = await withProvider("主题动效修复", mock);
+	mkAgent("ta_motion_fix", p.id);
+	resetThemeDraftInFlight();
+	try {
+		const r = await draftTheme({ turnId: "t1", prompt: "x", agentId: "ta_motion_fix" });
+		assert.equal(r.ok, true, JSON.stringify(r));
+		if (!r.ok) return;
+		assert.equal(r.manifest.name, "修好了");
+		assert.deepEqual(r.manifest.motion, { duration: ".3s", glow: "strong" });
+		assert.equal(mock.seen.length >= 3, true, "第一次坏 → 回错误 → 第二次修好");
+		const repairText = JSON.stringify(mock.seen[1] ?? {});
+		assert.match(repairText, /motion/, "错误应指到 motion 字段（可读修复提示）");
+	} finally {
+		mock.close();
+		await customProviders.remove(p.id);
+	}
+});

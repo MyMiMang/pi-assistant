@@ -15,6 +15,13 @@ import {
 	DECOR_CORNERS,
 	DECOR_SHADOWS,
 	DECOR_TEXTURES,
+	MOTION_DURATION_MAX_MS,
+	MOTION_DURATION_MIN_MS,
+	MOTION_EASE_NAMES,
+	MOTION_GLOW_LEVELS,
+	MOTION_SCALE_MAX,
+	MOTION_SCALE_MIN,
+	MOTION_STYLES,
 	OPTIONAL_COLOR_TOKENS,
 	OPTIONAL_FONT_TOKENS,
 	OPTIONAL_SIZE_TOKENS,
@@ -50,6 +57,19 @@ const MANIFEST_PARAM = Type.Object({
 			background: Type.Optional(enumOf(DECOR_BACKGROUNDS)),
 		}),
 	),
+	motion: Type.Optional(
+		Type.Object({
+			durationFast: Type.Optional(Type.String({ description: `即时反馈时长（${MOTION_DURATION_MIN_MS}..${MOTION_DURATION_MAX_MS}ms，如 .12s / 120ms）` })),
+			duration: Type.Optional(Type.String({ description: "常规状态切换时长（同上范围，如 .18s）" })),
+			durationSlow: Type.Optional(Type.String({ description: "折叠 / 展开时长（同上范围，如 .26s）" })),
+			easeOut: Type.Optional(Type.String({ description: `通用缓出：枚举名 ${MOTION_EASE_NAMES.join(" / ")} 或受限 cubic-bezier(x1,y1,x2,y2)（x∈0..1，y∈-0.5..1.5）` })),
+			easeExpand: Type.Optional(Type.String({ description: "展开缓动（同上）" })),
+			easeSpring: Type.Optional(Type.String({ description: "轻微回弹缓动（同上；仅装饰用）" })),
+			scale: Type.Optional(Type.Number({ minimum: MOTION_SCALE_MIN, maximum: MOTION_SCALE_MAX, description: "整体时长倍率（0.5..2），供七档滑块等组件按主题缩放" })),
+			glow: Type.Optional(enumOf(MOTION_GLOW_LEVELS)),
+			style: Type.Optional(enumOf(MOTION_STYLES)),
+		}),
+	),
 });
 
 export interface ThemeDraftToolHost {
@@ -75,8 +95,8 @@ export function themeDraftTool(host: ThemeDraftToolHost): ToolDefinition {
 		name: "theme_draft",
 		label: "提交主题草稿",
 		description:
-			"提交一套外观主题（Typed ThemeManifest v1）。manifest 里必须给齐必需颜色 token 的 light / dark 两套；只允许白名单 CSS 变量，值只能是颜色 / 尺寸 / 字体名列表，装饰只允许 enum。校验失败会返回错误列表，你最多可以按错误修一次再提交。不要提交图片（图片由用户上传的参考图决定）。",
-		promptSnippet: "theme_draft: 提交一套主题（颜色 token + 装饰 enum），校验通过才会应用",
+			"提交一套外观主题（Typed ThemeManifest v1）。manifest 里必须给齐必需颜色 token 的 light / dark 两套；只允许白名单 CSS 变量，值只能是颜色 / 尺寸 / 字体名列表，装饰只允许 enum；动效（motion）可选，只能是有界的时长 / 缓动 / 倍率 / 光晕 / 风格。校验失败会返回错误列表，你最多可以按错误修一次再提交。不要提交图片（图片由用户上传的参考图决定）。",
+		promptSnippet: "theme_draft: 提交一套主题（颜色 token + 装饰 enum + 动效 token），校验通过才会应用",
 		parameters: Type.Object({
 			manifest: MANIFEST_PARAM,
 			text: Type.Optional(Type.String({ description: "给用户看的一两句话：这套主题的想法 / 配色说明（简体中文）" })),
@@ -124,6 +144,8 @@ export function themeDesignSystemPrompt(): string {
 		`可选 token：${OPTIONAL_COLOR_TOKENS.join(" ")}（颜色）、${OPTIONAL_SIZE_TOKENS.join(" ")}（px 0..64 或 rem/em 0..4）、${OPTIONAL_FONT_TOKENS.join(" ")}（字体名列表）。`,
 		"颜色只允许 #rgb / #rrggbb / #rrggbbaa、rgb()/rgba()/hsl()/hsla() 或 transparent；值里禁止 url()、@、;、{}、<>、\\。",
 		`装饰只允许 enum：texture ${DECOR_TEXTURES.join("/")}；corner ${DECOR_CORNERS.join("/")}；shadow ${DECOR_SHADOWS.join("/")}；background ${DECOR_BACKGROUNDS.join("/")}。`,
+		`可选动效（motion，模式无关；不写就用内置默认）：durationFast/duration/durationSlow 是时长（${MOTION_DURATION_MIN_MS}..${MOTION_DURATION_MAX_MS}ms，如 .12s / 180ms）；easeOut/easeExpand/easeSpring 是缓动，只能填枚举名 ${MOTION_EASE_NAMES.join("/")} 或受限 cubic-bezier(x1,y1,x2,y2)（x 在 0..1，y 在 -0.5..1.5）；scale 是 0.5..2 的时长倍率；glow 是 ${MOTION_GLOW_LEVELS.join("/")}；style 是 ${MOTION_STYLES.join("/")}。`,
+		"动效是有界的（时长 / 缓动 / 倍率 / 光晕 / 风格），不是任意 CSS：不要尝试写 @keyframes、url()、steps()、animation 简写或自定义属性。系统「减弱动效」始终优先，你的动效值不会绕过它。",
 		"颜色要保证正文可读（对比度低只提醒、不阻止，但请尽量让 --fg/--mut/--mut2 与 --bg 有足够对比）。",
 		"如果用户带了参考图，图片只是视觉参考（配色 / 风格 / 材质），不要描述图片里不该描述的内容；你无法读取任何本地文件。",
 		"不要臆造图片引用、不要输出 CSS 之外的内容；除 theme_draft 外你没有任何工具，也不能读写文件、执行命令或访问网络。",
