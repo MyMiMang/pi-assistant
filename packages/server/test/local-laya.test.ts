@@ -56,11 +56,13 @@ interface FakeOpts {
 	verifyFail?: boolean;
 	/** 模拟已校验物化的本地 checkpoint 目录存在（start 应把它交给 sidecar） */
 	weightsReady?: boolean;
+	/** 前 N 次 /health 返回未就绪，之后就绪（验证慢加载不被固定重试次数误判） */
+	healthFailFirst?: number;
 }
 
 function fakeDeps(dir: string, opts: FakeOpts = {}) {
 	const calls: { run: string[][]; spawned: string[]; spawnEnv: Record<string, string> | null; phases: string[] } = { run: [], spawned: [], spawnEnv: null, phases: [] };
-	const state = { installed: opts.installed ?? false, registered: null as null | { provider: string; modelId: string; protocol: string; baseUrl: string; token: string }, activated: false, rolledBack: false, uninstalled: false, aborted: false, pid: null as number | null, verifyCalls: 0 };
+	const state = { installed: opts.installed ?? false, registered: null as null | { provider: string; modelId: string; protocol: string; baseUrl: string; token: string }, activated: false, rolledBack: false, uninstalled: false, aborted: false, pid: null as number | null, verifyCalls: 0, healthCalls: 0 };
 	let child: FakeChild | null = null;
 	const deps: LayaDeps = {
 		profile: (ctx) => platformProfile(opts.platform ?? "darwin", opts.arch ?? "arm64", ctx),
@@ -94,7 +96,11 @@ function fakeDeps(dir: string, opts: FakeOpts = {}) {
 			if (opts.verifyFail) throw new Error("权重校验未通过：SHA256 不符：model.safetensors");
 		},
 		findFreePort: async () => 18080,
-		health: async () => opts.health ?? { ok: true, device: "mps", checkpointDevices: { multilingual: "mps" }, cpuFallbacks: { count: 0, lastReason: null }, revisions: { multilingual: LAYA_CHECKPOINTS["laya-multilingual"].revision }, loaded: ["multilingual"] },
+		health: async () => {
+			state.healthCalls += 1;
+			if (opts.healthFailFirst && state.healthCalls <= opts.healthFailFirst) return { ok: false, device: null, checkpointDevices: null, cpuFallbacks: null, revisions: null, loaded: null };
+			return opts.health ?? { ok: true, device: "mps", checkpointDevices: { multilingual: "mps" }, cpuFallbacks: { count: 0, lastReason: null }, revisions: { multilingual: LAYA_CHECKPOINTS["laya-multilingual"].revision }, loaded: ["multilingual"] };
+		},
 		randomToken: () => "deadbeefdeadbeefdeadbeefdeadbeef",
 		paths: () => paths(dir),
 		registerClassifier: (info) => {
@@ -107,6 +113,7 @@ function fakeDeps(dir: string, opts: FakeOpts = {}) {
 			state.pid = pid;
 		},
 		now: () => 1000,
+		setTimer: (cb) => void setTimeout(cb, 0),
 		isInstalled: () => state.installed,
 		log: () => {},
 		activate: async () => {
@@ -147,6 +154,9 @@ test("install：一次成功 → installed/done，走完 preflight→uv→venv�
 	// 安装命令里出现 pin 的版本与 torch 后端
 	assert.ok(calls.run.some((a) => a.some((x) => x.includes("laya[serve]==0.4.8"))));
 	assert.ok(calls.run.some((a) => a.includes("--torch-backend")));
+	// venv 必须 relocatable：staging env 随后会被原子 rename 成生效 env，普通 console script 的
+	// shebang 写死 env.new/bin/python，改名后 laya-serve 会 spawn ENOENT。
+	assert.ok(calls.run.some((a) => a[0] === "venv" && a.includes("--relocatable")), "uv venv 必须带 --relocatable，否则 activate 改名后 console script 失效");
 	// 下载后必须跑过固定清单校验，且在 activate 之前
 	assert.equal(state.verifyCalls, 1, "安装必须校验权重文件清单");
 });
@@ -259,6 +269,19 @@ test("start：本地权重目录缺失时不设 LAYA_EXTRA_MODELS（不把 sidec
 	await m.start();
 	assert.equal(calls.spawnEnv?.LAYA_MODELS, "multilingual");
 	assert.equal(calls.spawnEnv?.LAYA_EXTRA_MODELS, undefined);
+});
+
+test("start：health 慢加载（前几次未就绪）仍会等到就绪，不按固定重试次数误判不健康；不打印 token", async () => {
+	const { deps, state } = fakeDeps(dir(), { installed: true, healthFailFirst: 4 });
+	const m = new LocalLayaManager(deps, LAYA_SOURCE);
+	await m.start();
+	const st = m.status();
+	assert.equal(st.runtime.state, "running");
+	assert.equal(st.health?.ok, true, "慢加载应最终等到就绪");
+	assert.equal(st.health?.loaded?.includes("multilingual"), true);
+	assert.ok(state.healthCalls >= 5, `实际轮询 ${state.healthCalls} 次`);
+	// 每次新 token 只存在进程内：status 里不能出现原文
+	assert.ok(!JSON.stringify(st).includes("deadbeefdeadbeefdeadbeefdeadbeef"));
 });
 
 test("install 中途子进程崩溃 → crashed，且不再报 registered，并撤销 classifier 注册", async () => {

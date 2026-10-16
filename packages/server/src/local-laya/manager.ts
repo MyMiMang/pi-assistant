@@ -37,6 +37,12 @@ export interface LayaHealth {
 	loaded: string[] | null;
 }
 
+/**
+ * 启动后 /health 要等模型真正 load 完（Laya multilingual 644MB，MPS 冷加载可能几十秒）。
+ * 按**截止时间**轮询，子进程一退出就提前返回，不把「加载慢」误判成「不健康」（同 local-asr） 。
+ */
+const HEALTH_LOAD_BUDGET_MS = 180_000;
+
 export interface LayaPaths {
 	/** 数据目录/local-laya */
 	root: string;
@@ -109,6 +115,8 @@ export interface LayaDeps {
 	/** 记录我们自己的 sidecar pid（只写 pid + token 摘要，不写 token 原文）；null 表示清掉 */
 	recordPid(pid: number | null): void;
 	now(): number;
+	/** 可注入的定时器（测试用假定时器，避免真等加载）；不提供则用 setTimeout。 */
+	setTimer?(cb: () => void, ms: number): void;
 	/** 已安装判定（真实实现看 env 目录 + meta） */
 	isInstalled(): boolean;
 	log(line: string): void;
@@ -214,7 +222,10 @@ export class LocalLayaManager {
 			const paths = this.deps.paths();
 			const env = this.baseEnv(paths);
 			this.set("venv");
-			await this.step(signal, () => this.runOrThrow(this.deps.uvPath(), ["venv", "--python", this.deps.pythonVersion(), paths.envStaging], { env, signal }));
+			// `--relocatable`：staging venv 随后会被原子 rename 成生效 env；uv 的普通 console script 把
+			// 解释器绝对路径写进 shebang（指向 env.new），改名后失效（`laya-serve` spawn ENOENT）。
+			// relocatable 让脚本在运行时按相对位置解析 venv，改名后仍可用。
+			await this.step(signal, () => this.runOrThrow(this.deps.uvPath(), ["venv", "--python", this.deps.pythonVersion(), "--relocatable", paths.envStaging], { env, signal }));
 			this.set("torch");
 			const pins = profile.pins;
 			// 依赖阶段总量未知：用真实目录字节（uv 缓存 + staging venv）给 received，total 保持 null（界面不定进度）。
@@ -292,24 +303,30 @@ export class LocalLayaManager {
 		});
 		this.onChange();
 		// 自检：拿实际 device / cpu_fallbacks（重启前几次可能连不上，短暂重试；失败不阻止启动，health=ok:false）
-		this.runtime.health = await this.probeHealth(port, token);
+		this.runtime.health = await this.probeHealth(port, token, child);
 		this.onChange();
 		return this.status();
 	}
 
-	/** 启动后 /health 可能还没就绪：最多重试几次（已就绪就不等）。 */
-	private async probeHealth(port: number, token: string, attempts = 10): Promise<LayaHealth> {
+	/**
+	 * 启动后 /health 要等模型真正 load 完（大模型可能几十秒）——按**截止时间**轮询，
+	 * 子进程一退出就提前返回，不用固定重试次数把「加载慢」误判成「不健康」。
+	 */
+	private async probeHealth(port: number, token: string, child: LayaChild, budgetMs = HEALTH_LOAD_BUDGET_MS): Promise<LayaHealth> {
 		let last: LayaHealth = { ok: false, device: null, checkpointDevices: null, cpuFallbacks: null, revisions: null, loaded: null };
-		for (let i = 0; i < attempts; i++) {
+		const deadline = this.deps.now() + budgetMs;
+		const wait = this.deps.setTimer ?? ((cb: () => void, ms: number) => void setTimeout(cb, ms));
+		for (;;) {
 			try {
 				last = await this.deps.health(port, token);
 				if (last.ok) return last;
 			} catch {
-				/* 继续重试 */
+				/* 还没起来：继续等 */
 			}
-			if (i < attempts - 1) await new Promise((r) => setTimeout(r, 500));
+			if (this.runtime.child !== child) return last; // sidecar 已退出，没有可等的
+			if (this.deps.now() >= deadline) return last;
+			await new Promise<void>((resolve) => wait(() => resolve(), 500));
 		}
-		return last;
 	}
 
 	/** 停止 sidecar：只 kill 我们自己 spawn 的 child，绝不动任意 pid。 */

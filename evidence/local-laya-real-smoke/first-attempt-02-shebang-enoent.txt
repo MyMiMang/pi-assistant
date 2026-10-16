@@ -1,0 +1,37 @@
+11:14:54 scratch=/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-laya-smoke-amv7oy7ejb00
+11:14:54 checkpoint=laya-multilingual repo=convaiinnovations/laya-multilingual@e4e9ddf2 固定清单 7 文件 / 678.2MB
+11:14:55 HF 元数据核对：7 个文件大小 / LFS sha 与固定清单一致
+11:14:57 预算估算：权重 678.2MB + 运行时 419.4MB（含 torch 80.6MB）= 1097.6MB（预算 3221MB）
+11:14:59 已初始化 Pi 模型运行时（内存 CredentialStore，不碰钥匙串）
+11:14:59 
+=== 开始安装 Laya（真实 uv/pip/HF）===
+11:14:59   phase=preflight
+11:14:59   phase=uv
+11:14:59   phase=venv
+11:14:59   phase=torch
+11:15:01   phase=laya
+11:15:01   phase=weights
+11:15:02   phase=verify
+11:15:05   phase=activate
+11:15:05 安装完成 5.7s phases=preflight>uv>venv>torch>laya>weights>verify>activate
+11:15:06 权重目录 /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-laya-smoke-amv7oy7ejb00/data/local-laya/runtime/weights：5 个必需文件大小 / SHA256 与固定清单全部一致（678.2MB）
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error: spawn /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-laya-smoke-amv7oy7ejb00/data/local-laya/runtime/env/bin/laya-serve ENOENT
+    at ChildProcess._handle.onexit (node:internal/child_process:287:19)
+    at onErrorNT (node:internal/child_process:525:16)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+Emitted 'error' event on ChildProcess instance at:
+    at ChildProcess._handle.onexit (node:internal/child_process:293:12)
+    at onErrorNT (node:internal/child_process:525:16)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'spawn /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-laya-smoke-amv7oy7ejb00/data/local-laya/runtime/env/bin/laya-serve',
+  path: '/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-laya-smoke-amv7oy7ejb00/data/local-laya/runtime/env/bin/laya-serve',
+  spawnargs: []
+}
+
+Node.js v24.20.0

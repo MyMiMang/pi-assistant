@@ -252,3 +252,29 @@ test("checkpointProgressBytes：共享 blob 两层链接的 snapshot 仍能 stat
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("spawnServe：可执行文件不存在时经 onExit 报退出（不产生未捕获 'error' 把服务进程打挂）", async () => {
+	const { createLayaDeps } = await import("../src/local-laya/deps.ts");
+	const deps = createLayaDeps();
+	// 生产 sidecar 在 activate 改名后若 shebang 失效会 spawn ENOENT；这里直接用一个不存在的路径复现。
+	const child = deps.spawn("/definitely/not/a/real/laya-serve", [], { env: {} });
+	const code = await new Promise<number | null>((res, rej) => {
+		const t = setTimeout(() => rej(new Error("spawn 'error' 未转成 onExit")), 5000);
+		child.onExit((c) => {
+			clearTimeout(t);
+			res(c);
+		});
+	});
+	assert.equal(code, null);
+});
+
+test("spawnServe：sidecar 首次输出日志时不会因日志文件还不存在而抛异常 / 打挂进程", async () => {
+	const { createLayaDeps, readLayaLogs } = await import("../src/local-laya/deps.ts");
+	const deps = createLayaDeps();
+	// 用 node 自身作一个会立即输出 stdout 的假 sidecar（跨平台，无需真 Laya）。
+	const child = deps.spawn(process.execPath, ["-e", "console.log('sidecar-log-probe')"], { env: {} });
+	const code = await new Promise<number | null>((res) => child.onExit((c) => res(c)));
+	assert.equal(code, 0);
+	const lines = readLayaLogs(50);
+	assert.ok(lines.some((l) => l.includes("sidecar-log-probe")), "sidecar 输出应写入日志（不在首条输出时因日志文件缺失抛 ENOENT）");
+});

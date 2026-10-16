@@ -1,0 +1,25 @@
+11:12:24 scratch=/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-laya-smoke-amv7oy7ejb00
+11:12:24 checkpoint=laya-multilingual repo=convaiinnovations/laya-multilingual@e4e9ddf2 固定清单 7 文件 / 678.2MB
+11:12:25 HF 元数据核对：7 个文件大小 / LFS sha 与固定清单一致
+11:12:28 预算估算：权重 678.2MB + 运行时 419.4MB（含 torch 80.6MB）= 1097.6MB（预算 3221MB）
+11:12:30 已初始化 Pi 模型运行时（内存 CredentialStore，不碰钥匙串）
+11:12:30 
+=== 开始安装 Laya（真实 uv/pip/HF）===
+11:12:30   phase=preflight
+11:12:30   phase=uv
+11:12:35   phase=venv
+11:12:42   phase=torch
+11:13:13   phase=laya
+11:13:13   phase=weights
+11:13:56   phase=verify
+11:13:57   phase=idle
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/release-candidate-validation/packages/server/src/local-laya/manager.ts:258
+			if (cancelled) throw new Error("已取消");
+			                     ^
+
+Error: 已取消
+    at LocalLayaManager.install (/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/release-candidate-validation/packages/server/src/local-laya/manager.ts:258:25)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/release-candidate-validation/scripts/laya-real-smoke.mjs:273:2)
+
+Node.js v24.20.0

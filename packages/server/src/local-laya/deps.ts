@@ -305,8 +305,13 @@ function spawnServe(exe: string, args: string[], env: Record<string, string>): L
 	const logFile = join(layaRoot(), "logs", "serve.log");
 	const child = nodeSpawn(exe, args, { env: { ...process.env, ...env } as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
 	const out = () => {
-		const s = statSync(logFile).size;
-		if (s > 5_000_000) writeFileSync(logFile, "");
+		// 日志文件可能还没创建（首条输出前）：statSync 缺失文件会抛 ENOENT，
+		// 这里在 stdout/stderr 的 'data' 回调里运行，抛出去会变成未捕获异常打挂服务进程。
+		try {
+			if (existsSync(logFile) && statSync(logFile).size > 5_000_000) writeFileSync(logFile, "");
+		} catch {
+			/* 日志维护失败绝不影响主流程 */
+		}
 	};
 	child.stdout?.on("data", (b: Buffer) => {
 		out();
@@ -317,9 +322,14 @@ function spawnServe(exe: string, args: string[], env: Record<string, string>): L
 		writeFileSync(logFile, b.toString().replace(/\b[a-f0-9]{32,}\b/gi, "***"), { flag: "a" });
 	});
 	const exits: ((code: number | null) => void)[] = [];
-	child.on("exit", (code) => {
+	const emitExit = (code: number | null) => {
 		for (const cb of exits) cb(code);
-	});
+	};
+	child.on("exit", emitExit);
+	// spawn 失败（可执行文件缺失 / 权限 / ENOENT）只会触发 'error'，不会触发 'exit'；
+	// 不处理会变成未捕获的 'error' 事件把整个服务进程打挂。这里转成一次「退出」，
+	// 让 manager 把 runtime 置为 crashed（而不是进程崩溃）。
+	child.on("error", () => emitExit(null));
 	return {
 		pid: child.pid,
 		kill: (signal?: NodeJS.Signals) => child.kill(signal),

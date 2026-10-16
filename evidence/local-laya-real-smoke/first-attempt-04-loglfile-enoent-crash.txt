@@ -1,0 +1,37 @@
+11:22:07 scratch=/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-laya-smoke-amv7oy7ejb00
+11:22:07 checkpoint=laya-multilingual repo=convaiinnovations/laya-multilingual@e4e9ddf2 固定清单 7 文件 / 678.2MB
+11:22:08 HF 元数据核对：7 个文件大小 / LFS sha 与固定清单一致
+11:22:10 预算估算：权重 678.2MB + 运行时 419.4MB（含 torch 80.6MB）= 1097.6MB（预算 3221MB）
+11:22:13 已初始化 Pi 模型运行时（内存 CredentialStore，不碰钥匙串）
+11:22:13 
+=== 开始安装 Laya（真实 uv/pip/HF）===
+11:22:13   phase=preflight
+11:22:13   phase=uv
+11:22:13   phase=venv
+11:22:13   phase=torch
+11:22:15   phase=laya
+11:22:15   phase=weights
+11:22:16   phase=verify
+11:22:20   phase=activate
+11:22:20 安装完成 7.2s phases=preflight>uv>venv>torch>laya>weights>verify>activate
+11:22:21 权重目录 /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-laya-smoke-amv7oy7ejb00/data/local-laya/runtime/weights：5 个必需文件大小 / SHA256 与固定清单全部一致（678.2MB）
+node:fs:1795
+  const stats = binding.stat(
+                        ^
+
+Error: ENOENT: no such file or directory, stat '/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-laya-smoke-amv7oy7ejb00/data/local-laya/logs/serve.log'
+    at statSync (node:fs:1795:25)
+    at out (/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/release-candidate-validation/packages/server/src/local-laya/deps.ts:308:13)
+    at Socket.<anonymous> (/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/release-candidate-validation/packages/server/src/local-laya/deps.ts:316:3)
+    at Socket.emit (node:events:514:28)
+    at addChunk (node:internal/streams/readable:567:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:518:3)
+    at Readable.push (node:internal/streams/readable:398:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-laya-smoke-amv7oy7ejb00/data/local-laya/logs/serve.log'
+}
+
+Node.js v24.20.0
