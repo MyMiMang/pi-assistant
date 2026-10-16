@@ -57,7 +57,10 @@ function providerConfigured(id: string): boolean {
  *  - 不传（旧客户端语义）：按 `runtime(agentId).modelFor(agent)`（当前助理模型，未设则默认模型）。
  */
 function resolveThemeModel(agentId: string, agent: NonNullable<ReturnType<typeof getAgent>>, requested?: ThemeModelRef): { ref: { provider: string; id: string } | null; error?: ThemeError; info?: ThemeModelRef } {
-	if (requested && (requested.provider != null || requested.id != null)) {
+	if (requested !== undefined) {
+		if (!requested || typeof requested !== "object" || Array.isArray(requested)) {
+			return { ref: null, error: err("model", "required", "模型引用无效，请重新选择；不会自动改用别的模型") };
+		}
 		const provider = typeof requested.provider === "string" ? requested.provider.trim() : "";
 		const id = typeof requested.id === "string" ? requested.id.trim() : "";
 		if (!provider || !id) return { ref: null, error: err("model", "required", "模型引用不完整（需要 provider + id）") };
@@ -123,9 +126,9 @@ async function runDraft(o: {
 
 	// 3) 带图但当前模型不支持看图：如实返回 visionUnsupported，**不发请求**（不偷偷换视觉服务 / 收费模型）。
 	if (imgs.parts.length && !supportsVision(model)) {
-		return fail([err("images", "unsupported", "当前助理的模型不支持看图")], {
+		return fail([err("images", "unsupported", "所选模型不支持看图")], {
 			visionUnsupported: true,
-			text: "当前助理的模型不支持图片输入，我看不到参考图。可以换一个支持看图的模型（设置 › 模型），或去掉图片只用文字描述；我不会自动改用别的模型看图。",
+			text: "所选模型不支持图片输入。请在上方「使用模型」中切换支持看图的模型，或去掉参考图只用文字描述；不会自动改用别的模型。",
 		});
 	}
 

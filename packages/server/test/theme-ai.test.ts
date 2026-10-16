@@ -9,7 +9,7 @@ import "./setup.ts";
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { customProviders, initModels } from "../src/models.ts";
-import { db, now } from "../src/db.ts";
+import { db, getSetting, now, setSetting } from "../src/db.ts";
 import { saveUpload } from "../src/files.ts";
 import { draftTheme, resetThemeDraftInFlight, setThemeDraftTimeoutForTest } from "../src/themes/index.ts";
 import { sniffImage } from "../src/themes/images.ts";
@@ -294,10 +294,17 @@ test("未知 agent / 无模型：明确拒绝，不猜、不取第一个模型",
 	assert.equal(missingAgent.ok, false);
 	if (!missingAgent.ok) assert.ok(missingAgent.errors.some((e) => e.path === "agentId"));
 
-	mkAgent("ta_nomodel", null);
-	const noModel = await draftTheme({ turnId: "t1", prompt: "x", agentId: "ta_nomodel" });
-	assert.equal(noModel.ok, false);
-	if (!noModel.ok) assert.ok(noModel.errors.some((e) => e.code === "required"));
+	// PIA_MOCK 模式会预设默认模型，显式隔离本用例的「没有默认模型」前提。
+	const previousDefault = getSetting<unknown>("defaultModel", null);
+	setSetting("defaultModel", null);
+	try {
+		mkAgent("ta_nomodel", null);
+		const noModel = await draftTheme({ turnId: "t1", prompt: "x", agentId: "ta_nomodel" });
+		assert.equal(noModel.ok, false);
+		if (!noModel.ok) assert.ok(noModel.errors.some((e) => e.code === "required"));
+	} finally {
+		setSetting("defaultModel", previousDefault);
+	}
 });
 
 test("magic bytes 嗅探：认 png / gif / webp，拒 SVG 与伪装文件", () => {
@@ -382,6 +389,25 @@ test("显式选模型：已不存在 / 无效的模型明确报错，0 请求，
 		assert.ok(r.errors.some((e) => e.path === "model" && e.code === "value"), "应明确报「模型不存在」");
 		assert.match(r.errors.map((e) => e.message).join(" "), /不会自动改用别的模型/);
 		assert.equal(mock.seen.length, 0, "无效模型不能退到别的模型发请求");
+	} finally {
+		mock.close();
+		await customProviders.remove(p.id);
+	}
+});
+
+test("显式模型引用格式错误：空对象、null 或非对象不回退助理模型", async () => {
+	const mock = await startThemeDraftMock([{ text: "不该被调用" }]);
+	const p = await withProvider("主题模型引用格式", mock);
+	mkAgent("ta_model_shape", p.id);
+	resetThemeDraftInFlight();
+	try {
+		const invalid = [null, {}, [], "bad-model", 7, { provider: p.id }];
+		for (const [i, model] of invalid.entries()) {
+			const r = await draftTheme({ turnId: `shape-${i}`, prompt: "x", agentId: "ta_model_shape", model: model as never });
+			assert.equal(r.ok, false);
+			if (!r.ok) assert.ok(r.errors.some((e) => e.path === "model"));
+			assert.equal(mock.seen.length, 0, "格式错误的显式引用不得触发默认模型请求");
+		}
 	} finally {
 		mock.close();
 		await customProviders.remove(p.id);

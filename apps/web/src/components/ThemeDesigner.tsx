@@ -120,6 +120,8 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 		if (open) {
 			setPicked(null);
 			setResolvedModel(null);
+			setText("");
+			setRenamed(false);
 		}
 	}, [open]);
 
@@ -332,7 +334,7 @@ export function ThemeDesigner({ open, onClose, initial, onThemeDraft, uploadFn, 
 					)}
 					{visionHint && (
 						<div className="rounded-xl border border-line bg-hover px-3 py-2 text-xs text-mut">
-							当前助理模型不支持看图：可以换一个支持视觉的模型，或只用文字描述（不会偷偷换到别的视觉服务 / 收费模型）。
+							所选模型不支持看图：请在上方切换支持视觉的模型，或去掉参考图只用文字描述。
 						</div>
 					)}
 					{errors.length > 0 && (

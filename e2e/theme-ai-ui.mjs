@@ -184,6 +184,8 @@ try {
 		await page.getByTestId("open-theme-designer").click();
 		await page.getByTestId("theme-prompt").waitFor();
 		if (!(await page.getByTestId("theme-model-row").isVisible())) throw new Error("390 下「使用模型」行应可见");
+		const reopened = await page.getByTestId("theme-designer").innerText();
+		if (reopened.includes("正在预览") || reopened.includes("已另存为新主题")) throw new Error("重新打开不能残留上一轮的生成/另存提示");
 		const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 		if (overflow > 2) throw new Error(`390 横向溢出 ${overflow}px`);
 		await page.screenshot({ path: join(ROOT, "docs/screenshots/16e-theme-ai-390.png") });
