@@ -12,11 +12,11 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { config } from "../config.ts";
 import { ensureUv as ensureUvPinned, uvPath as uvPinnedPath } from "../memory/hindsight/uv-bin.ts";
-import { watchDir } from "../downloads.ts";
+import { dirSize } from "../downloads.ts";
 import { models } from "../models.ts";
 import { materializePinnedFiles } from "../managed-weights/verify.ts";
-import { PYTHON_VERSION } from "./manifest.ts";
-import { checkpointFiles } from "./checkpoint-files.ts";
+import { PYTHON_VERSION, type LayaCheckpoint } from "./manifest.ts";
+import { checkpointFiles, type LayaCheckpointFile } from "./checkpoint-files.ts";
 import { hfRepoDir, hfSnapshotDir } from "./hf-metadata.ts";
 import { verifyCheckpointFiles } from "./verify.ts";
 import { platformProfile, type NvidiaProbe, type PlatformContext } from "./platform.ts";
@@ -26,7 +26,6 @@ import { LAYA_BIND_HOST, LAYA_MODEL_ID, LAYA_PROVIDER_ID, type LayaChild, type L
 export function layaRoot(): string {
 	return join(config.dataDir, "local-laya");
 }
-
 export function layaPaths(): LayaPaths {
 	const root = layaRoot();
 	const runtime = join(root, "runtime");
@@ -38,10 +37,67 @@ export function layaPaths(): LayaPaths {
 		python: join(root, "python"),
 		uvCache: join(root, "uv-cache"),
 		hfHome: join(root, "hf"),
+		weights: join(runtime, "weights"),
+		weightsStaging: join(runtime, "weights.new"),
 		logs: join(root, "logs"),
 		pidFile: join(runtime, "serve.pid"),
 		metaFile: join(runtime, "meta.json"),
 	};
+}
+
+/**
+ * 已校验物化的本地 checkpoint 目录：只有必需文件（`rl_agent_config.json`）在才返回，否则 null。
+ * sidecar 据此决定是否用 `LAYA_EXTRA_MODELS` 指向本地目录（不指一个不存在的目录）。
+ */
+export function checkpointSourcePath(weightsDir: string): string | null {
+	return existsSync(join(weightsDir, "rl_agent_config.json")) ? weightsDir : null;
+}
+
+/**
+ * 依赖安装阶段（总量未知）的真实目录字节采样：从当前目录大小起算增量，每秒一次。
+ * 返回停止函数；调用方必须在 install 的 finally 里停掉（取消 / 失败 / 成功都不留永久 timer）。
+ */
+export function watchDirBytes(dirs: string[], onBytes: (received: number) => void, intervalMs = 1000): () => void {
+	const base = dirs.reduce((a, d) => a + dirSize(d), 0);
+	const t = setInterval(() => onBytes(Math.max(0, dirs.reduce((a, d) => a + dirSize(d), 0) - base)), intervalMs);
+	t.unref();
+	return () => clearInterval(t);
+}
+
+/**
+ * 权重阶段的 received：只统计**本 checkpoint 必需文件**对应的 HF blob 当前字节。
+ *
+ *  - 已在 snapshot 里且大小对 → 计满（已缓存 / 已完成的文件，progress 不从 0 起）；
+ *  - 否则按清单 sha256 找 `blobs/<sha256>`（LF 大文件 blob 名就是 LFS oid=sha256）或其 `.incomplete` 部分；
+ *  - **不**统计缓存里别的 repo / pip 目录，不会把别的字节算成本模型；
+ *  - 返回 <= 必需文件总字节（分母），不可能报假比例。
+ */
+export function checkpointProgressBytes(hfHome: string, cp: LayaCheckpoint, files: LayaCheckpointFile[]): number {
+	const snap = hfSnapshotDir(hfHome, cp.repo, cp.revision);
+	const blobs = join(hfRepoDir(hfHome, cp.repo), "blobs");
+	let n = 0;
+	for (const f of files) {
+		try {
+			if (statSync(join(snap, f.path)).size === f.size) {
+				n += f.size;
+				continue;
+			}
+		} catch {
+			/* 还没落 snapshot */
+		}
+		for (const cand of [join(blobs, f.sha256), join(blobs, `${f.sha256}.incomplete`)]) {
+			try {
+				const s = statSync(cand).size;
+				if (s > 0) {
+					n += Math.min(s, f.size);
+					break;
+				}
+			} catch {
+				/* 没有这个 blob */
+			}
+		}
+	}
+	return n;
 }
 
 /** 只检驱动，不自动安装系统驱动。拿不到就按「没有」处理，绝不假装支持 CUDA。 */
@@ -124,20 +180,31 @@ export function createLayaDeps(): LayaDeps {
 				child.on("error", rej);
 			}),
 		spawn: (exe, args, opts) => spawnServe(exe, args, opts.env),
-			downloadCheckpoint: async (cp, p, signal, env, pythonPath) => {
+		downloadCheckpoint: async (cp, p, signal, env, pythonPath) => {
 			const paths = layaPaths();
 			mkdirSync(paths.hfHome, { recursive: true });
 			const py = pythonPath;
+			const files = checkpointFiles(cp.id);
+			const total = cp.bytes || null;
+			// 进度只用**本 checkpoint 必需文件**对应的 HF blob（含 `.incomplete`）真实字节，不把缓存里别的 repo / pip 目录算进来。
+			const sample = () => p(checkpointProgressBytes(paths.hfHome, cp, files), total);
+			sample(); // 已缓存的部分立刻可见（不从 0 起，避免 0 → 100 的假闪）
+			const timer = setInterval(sample, 1000);
+			timer.unref();
 			// 只按固定清单取文件（allow_patterns），不下 repo 里的多余脚本；snapshot_download 自带续传（取消后 partial 保留可恢复）。
-			const allow = checkpointFiles(cp.id).map((f) => f.path);
+			const allow = files.map((f) => f.path);
 			const script =
 				"import sys; from huggingface_hub import snapshot_download; snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], allow_patterns=sys.argv[3].split(',') if sys.argv[3] else None, local_files_only=False)";
-			await watchDir([paths.hfHome], { bytes: (r, t) => p(r, t), detail: () => {} }, cp.bytes, () =>
-				new Promise<void>((res, rej) => {
+			try {
+				await new Promise<void>((res, rej) => {
 					const child = execFile(py, ["-c", script, cp.repo, cp.revision, allow.join(",")], { env: { ...process.env, ...env } as NodeJS.ProcessEnv, signal, timeout: 60 * 60_000 }, (err, _o, stderr) => (err ? rej(new Error(String(stderr || err.message).slice(0, 300))) : res()));
 					child.on("error", rej);
-				}),
-			);
+				});
+			} finally {
+				// 成功 / 失败 / 取消都停采样，不留永久 timer（取消时 execFile 的 signal 会结束子进程）。
+				clearInterval(timer);
+			}
+			sample();
 		},
 		verifyCheckpoint: async (cp, signal) => {
 			if (signal.aborted) throw new Error("已取消");
@@ -152,7 +219,7 @@ export function createLayaDeps(): LayaDeps {
 			if (signal.aborted) throw new Error("已取消");
 			// 校验通过后再把必需文件物化成 staging 里的**普通文件**（硬链接/副本，不再依赖 symlink）；
 			// activate 时原子切换生效。全程不动 HF 缓存，断点续传的 partial 保留可恢复。
-			const staging = weightsStaging(paths);
+			const staging = paths.weightsStaging;
 			rmSync(staging, { recursive: true, force: true });
 			const mat = await materializePinnedFiles(dir, staging, files, { trustRoot });
 			if (!mat.ok) throw new Error(`权重物化失败：${mat.problems.slice(0, 3).join("；")}`);
@@ -186,15 +253,19 @@ export function createLayaDeps(): LayaDeps {
 		now: () => Date.now(),
 		isInstalled: () => existsSync(layaPaths().env) && existsSync(layaPaths().metaFile),
 		log: (line) => appendLog(layaPaths(), line),
+		// sidecar 本地权重来源：已校验物化的目录（带必需文件）才交出去；否则返回 null，不改 sidecar 默认。
+		checkpointSource: (paths) => checkpointSourcePath(paths.weights),
+		// 依赖安装阶段（uv 缓存 + staging venv）真实目录字节；total 未知，由调用方保持 null（不定进度）。
+		watchBytes: (dirs, onBytes) => watchDirBytes(dirs, onBytes),
 		activate: async (paths) => {
 			// 原子切换：旧 env → env.old，staging → env；物化好的权重 staging → 生效目录；写 meta。失败不留半成品。
 			mkdirSync(join(paths.root, "runtime"), { recursive: true });
 			if (existsSync(paths.envPrev)) rmSync(paths.envPrev, { recursive: true, force: true });
 			if (existsSync(paths.env)) renameSync(paths.env, paths.envPrev);
 			renameSync(paths.envStaging, paths.env);
-			const wNew = weightsStaging(paths);
+			const wNew = paths.weightsStaging;
 			if (existsSync(wNew)) {
-				const w = weightsActive(paths);
+				const w = paths.weights;
 				if (existsSync(w)) rmSync(w, { recursive: true, force: true });
 				renameSync(wNew, w);
 			}
@@ -203,7 +274,7 @@ export function createLayaDeps(): LayaDeps {
 		},
 		rollback: async (paths) => {
 			rmSync(paths.envStaging, { recursive: true, force: true });
-			rmSync(weightsStaging(paths), { recursive: true, force: true });
+			rmSync(paths.weightsStaging, { recursive: true, force: true });
 			if (!existsSync(paths.env) && existsSync(paths.envPrev)) renameSync(paths.envPrev, paths.env);
 		},
 		uninstall: async (paths) => {
@@ -213,14 +284,6 @@ export function createLayaDeps(): LayaDeps {
 			if (existsSync(paths.root)) rmSync(paths.root, { recursive: true, force: true });
 		},
 	};
-}
-
-/** 校验通过后物化的权重 staging（activate 前）/ 生效目录（activate 后）。均为我们 own 的 root 下。 */
-function weightsStaging(paths: LayaPaths): string {
-	return join(paths.root, "runtime", "weights.new");
-}
-function weightsActive(paths: LayaPaths): string {
-	return join(paths.root, "runtime", "weights");
 }
 
 /** spawn 我们自己的 sidecar（只绑 127.0.0.1，日志写 own 目录）。 */

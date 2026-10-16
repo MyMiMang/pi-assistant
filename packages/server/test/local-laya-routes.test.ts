@@ -27,7 +27,7 @@ function stubStatus(): LayaStatus {
 
 function buildApp() {
 	const st = stubStatus();
-	const calls = { install: 0, start: 0, stop: 0, uninstall: [] as boolean[] };
+	const calls = { install: 0, start: 0, stop: 0, cancel: 0, uninstall: [] as boolean[] };
 	const fake = {
 		status: () => st,
 		install: async () => {
@@ -35,7 +35,10 @@ function buildApp() {
 			st.install.state = "installing";
 			return st;
 		},
-		cancel: () => ({ ok: true }),
+		cancel: () => {
+			calls.cancel++;
+			return { ok: true };
+		},
 		start: async () => {
 			calls.start++;
 			st.runtime.state = "running";
@@ -128,6 +131,15 @@ test("POST start/stop：转发到 manager", async () => {
 	assert.equal((await app.request("/api/local-models/laya/stop", { method: "POST" })).status, 200);
 	assert.equal(calls.start, 1);
 	assert.equal(calls.stop, 1);
+});
+
+test("POST cancel：电脑页与下载页的取消最终都调 manager 的同一个 cancel", async () => {
+	const { app, calls } = buildApp();
+	const res = await app.request("/api/local-models/laya/cancel", { method: "POST" });
+	assert.equal(res.status, 200);
+	const body = (await res.json()) as { ok: boolean };
+	assert.equal(body.ok, true);
+	assert.equal(calls.cancel, 1, "电脑页取消必须转发到 manager.cancel（与下载页同一 job）");
 });
 
 test("DELETE uninstall：未确认被拒绝（400），确认后转发 true", async () => {
