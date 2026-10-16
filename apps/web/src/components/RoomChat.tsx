@@ -14,7 +14,6 @@ import { buildReplyRef, draftSignature, liveMentions, newClientId, replyDraftKey
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
 import { locateRoomMessage } from "../replies-api";
 import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
-import { mergeMessages } from "../selection";
 
 // ------------------------------------------------------------------ 显示用的成员信息（助理已删除时用群里存的快照）
 export function memberOf(room: Room | undefined, agents: Agent[], agentId: string): { id: string; name: string; avatar: string; color: string; deleted: boolean } {
@@ -86,12 +85,31 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const rKey = replyDraftKey.room(roomId);
 	const quote = useReplyDrafts((s) => s.drafts[rKey] ?? null);
 	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: m.agent_id, name: memberOf(room, agents, m.agent_id).name }));
-	const onInsert = (msgs: Message[]) => {
-		// 跳进来的有界 context 窗口可能比当前列表更早：允许继续向上加载，不因一次 jump 断档
-		setOlder("idle");
-		useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: mergeMessages(msgs, s.roomMsgs[roomId]) } }));
+	const ensureLoaded = async (mid: string): Promise<boolean> => {
+		const has = () => (useStore.getState().roomMsgs[roomId] ?? []).some((m) => m.id === mid);
+		if (has()) return true;
+		// 有界：最多 20 页；全程连续向更早分页，不插入孤立窗口 → 前后无 gap。
+		for (let i = 0; i < 20; i++) {
+			const first = (useStore.getState().roomMsgs[roomId] ?? [])[0];
+			if (!first?.seq) return false;
+			let more: Message[];
+			try {
+				more = await api<Message[]>(`/api/rooms/${roomId}/messages?before=${first.seq}&limit=${ROOM_PAGE}`);
+			} catch {
+				setOlder("error");
+				return false;
+			}
+			if (!more.length) {
+				setOlder("end");
+				return has();
+			}
+			setOlder(more.length < ROOM_PAGE ? "end" : "idle");
+			useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: [...more, ...(s.roomMsgs[roomId] ?? [])] } }));
+			if (has()) return true;
+		}
+		return has();
 	};
-	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateRoomMessage(roomId, mid), onInsert);
+	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateRoomMessage(roomId, mid), ensureLoaded);
 	const replyCtx = useReplyContext(onQuote);
 	useComposerInset(scroller, composerWrap, stick);
 	useLayoutEffect(() => {
@@ -266,7 +284,7 @@ function RoomBotTurn({ row, room, agents, live, onAvatar, onQuote, onJump, inter
 
 // ------------------------------------------------------------------ 输入框：@ 选择（桌面弹出层，手机底部面板）
 const ALL = { agentId: "__all", name: "所有人" } as const;
-function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, onRetryJump, wrapRef }: { room: Room; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
+function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, onRetryJump, wrapRef }: { room: Room; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" | "far" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const clientRef = useRef<{ sig: string; id: string } | null>(null);

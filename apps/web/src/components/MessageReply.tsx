@@ -45,7 +45,7 @@ export function MessageActions({ m, onQuote, onFork, side = "left" }: { m: Messa
 }
 
 /** 输入框上方的引用条：作者 / 目标 + 1–2 行摘录 + 附件名 + 取消。 */
-export function ReplyBar({ reply, quoteLabel, mentionLabel, unavailable, onCancel, onJump, jump }: { reply: ReplyRef; quoteLabel: string | null; mentionLabel: string | null; unavailable?: boolean; onCancel: () => void; onJump: (messageId: string) => void; jump?: { s: "loading" | "notfound" | "error"; retry: () => void } | null }) {
+export function ReplyBar({ reply, quoteLabel, mentionLabel, unavailable, onCancel, onJump, jump }: { reply: ReplyRef; quoteLabel: string | null; mentionLabel: string | null; unavailable?: boolean; onCancel: () => void; onJump: (messageId: string) => void; jump?: { s: "loading" | "notfound" | "error" | "far"; retry: () => void } | null }) {
 	return (
 		<div className="pa-quote-bar" data-testid="quote-bar">
 			<Quote className="pa-ic pa-quote-bar-ic" />
@@ -106,10 +106,16 @@ export function QuotedMessage({ block, onJump, mine }: { block: QuotedBlock; onJ
 }
 
 /** 跳转提示：从已发送引用块跳转、没有 draft 引用条时单独显示 loading / 失败 + 重试。 */
-export function JumpHint({ s, onRetry }: { s: "loading" | "notfound" | "error"; onRetry: () => void }) {
+export function JumpHint({ s, onRetry }: { s: "loading" | "notfound" | "error" | "far"; onRetry: () => void }) {
 	return (
 		<div className="pa-jump-hint" role="status" data-testid="quote-jump-state" data-state={s}>
-			{s === "loading" ? "正在定位原消息…" : s === "notfound" ? "原消息不在当前会话或已删除" : "定位失败"}
+			{s === "loading"
+				? "正在定位原消息…"
+				: s === "notfound"
+					? "原消息不在当前会话或已删除"
+					: s === "far"
+						? "原消息较早，请先上滑加载更早的消息"
+						: "定位失败"}
 			{s !== "loading" && (
 				<button type="button" className="pa-quote-retry" onClick={onRetry} data-testid="quote-jump-retry">
 					<RotateCcw className="pa-ic" /> 重试
@@ -236,14 +242,17 @@ function flash(root: HTMLElement | null, mid: string) {
 
 export interface JumpState {
 	mid: string;
-	s: "loading" | "notfound" | "error";
+	s: "loading" | "notfound" | "error" | "far";
 }
 
 /**
- * 跳回原消息：已加载直接滚 + 高亮；未加载经后端 bounded locate 插入后再定位；
- * 失败给明确提示 + 重试，不白屏 / 不死 loading。
+ * 跳回原消息：已加载直接滚 + 高亮；未加载先向后端确认目标存在 / 同容器，
+ * 再从当前窗口**连续**向更早分页直到目标真正进入列表，然后定位。
+ *
+ * 不再插入一个和当前列表之间还留着空洞的孤立 context 窗口（那会让中间一段历史永远看不到）：
+ * 连续分页保证前后都无 gap。太久以前的引用（超过页数上限）不打洞，明确提示先上滑加载。
  */
-export function useMessageJump(scroller: RefObject<HTMLElement | null>, locate: (mid: string) => Promise<LocateResult>, onInsert: (msgs: Message[]) => void) {
+export function useMessageJump(scroller: RefObject<HTMLElement | null>, locate: (mid: string) => Promise<LocateResult>, ensure: (mid: string) => Promise<boolean>) {
 	const [jumpState, setJumpState] = useState<JumpState | null>(null);
 	const run = async (mid: string) => {
 		if (flash(scroller.current, mid)) {
@@ -251,13 +260,18 @@ export function useMessageJump(scroller: RefObject<HTMLElement | null>, locate: 
 			return;
 		}
 		setJumpState({ mid, s: "loading" });
+		// 先确认目标是否存在 / 在同一容器：删除或跨容器立即给明确结果，不盲翻到底。
 		const r = await locate(mid);
-		if (r.message) {
-			onInsert(r.context.length ? r.context : [r.message]);
-			requestAnimationFrame(() => requestAnimationFrame(() => (setJumpState(null), flash(scroller.current, mid))));
-		} else {
+		if (!r.message) {
 			setJumpState({ mid, s: r.retryable ? "error" : "notfound" });
+			return;
 		}
+		const found = await ensure(mid);
+		if (!found) {
+			setJumpState({ mid, s: "far" });
+			return;
+		}
+		requestAnimationFrame(() => requestAnimationFrame(() => (setJumpState(null), flash(scroller.current, mid))));
 	};
 	const jump = (mid: string) => void run(mid);
 	const retry = () => jumpState && void run(jumpState.mid);

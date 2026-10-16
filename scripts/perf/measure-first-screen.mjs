@@ -60,6 +60,15 @@ const page = await ctx.newPage();
 const cdp = await ctx.newCDPSession(page);
 // 模拟手机网络：200ms 延迟、1.5Mbps 下行、750kbps 上行 + 4x CPU 降速（非真实用户网络实测）
 await cdp.send("Network.enable");
+// 传输字节（encodedDataLength，含 gzip 后的大小），与 response.body() 的解压后字节分开记。
+const encodedByReq = new Map();
+cdp.on("Network.responseReceived", (e) => {
+	if (/\/api\/(agents|rooms)\/[^/]+\/messages/.test(e.response.url)) encodedByReq.set(e.requestId, { url: e.response.url, encodedDataLength: 0, fromDiskCache: !!e.response.fromDiskCache });
+});
+cdp.on("Network.loadingFinished", (e) => {
+	const m = encodedByReq.get(e.requestId);
+	if (m) m.encodedDataLength = e.encodedDataLength;
+});
 await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 200, downloadThroughput: (1.5 * 1024 * 1024) / 8, uploadThroughput: (0.75 * 1024 * 1024) / 8 });
 await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
 
@@ -75,6 +84,7 @@ page.on("response", (r) => {
 
 await page.goto(base, { waitUntil: "domcontentloaded" });
 const navAt = Date.now();
+const navMs = navAt - t0;
 
 const poll = async (ms) => {
 	const end = Date.now() + ms;
@@ -111,16 +121,37 @@ const metrics = await page.evaluate(() => ({
 	scrollerHeight: document.querySelector(".pa-scroll")?.scrollHeight ?? null,
 	devicePixelRatio: window.devicePixelRatio,
 }));
+// 分离「网络下载 / 聊天响应 / 首条可见」：资源计时里的脚本 / 样式各多少、多久；聊天 JSON 单独由 messageResponses 记。
+const resources = await page.evaluate(() =>
+	performance
+		.getEntriesByType("resource")
+		.filter((e) => e.name.startsWith(location.origin))
+		.map((e) => ({ name: new URL(e.name).pathname, initiatorType: e.initiatorType, transferSize: e.transferSize, encodedBodySize: e.encodedBodySize, durationMs: Math.round(e.duration), startMs: Math.round(e.startTime) })),
+);
 
 const result = {
 	seed: { count: seed.count, roomCount: seed.roomCount },
 	simulated: { latencyMs: 200, downloadMbps: 1.5, cpuThrottle: 4, viewport: "390x844" },
+	// 时钟口径（修掉之前只有 atMs 无法交叉核对的问题）：firstRowMs/settledMs 相对 domcontentloaded（navAt），
+	// messageResponses[].atMs 相对页面开始（t0）。navMs = navAt - t0。
+	clock: { originMs: "t0=页面开始(navigationStart)", firstRowMs: "相对 navAt=domcontentloaded", settledMs: "相对 navAt", "messageResponses[].atMs": "相对 t0" },
+	navMs,
 	firstRowMs,
+	firstRowFromStartMs: firstRowMs == null ? null : navMs + firstRowMs,
 	settledMs: settled.at - navAt,
+	settledFromStartMs: settled.at - t0,
 	settledRows: settled.n,
 	timedOut: !!settled.timedOut,
 	metrics,
-	messageResponses: msgsResp,
+	// bytes = 解压后的 JSON 字节；encodedBytes = 网线上实际传输（gzip 后）字节。
+	messageResponses: msgsResp.map((m) => {
+		const hit = [...encodedByReq.values()].find((e) => {
+			const u = new URL(e.url);
+			return u.pathname + u.search === m.url;
+		});
+		return { ...m, encodedBytes: hit?.encodedDataLength ?? null, fromDiskCache: hit?.fromDiskCache ?? null };
+	}),
+	resources,
 };
 const dest = join(dataDir, "measure-first-screen.json");
 writeFileSync(dest, JSON.stringify(result, null, 2));

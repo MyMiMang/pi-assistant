@@ -81,6 +81,11 @@ interface State {
 	retryMessages: (agentId: string) => Promise<void>;
 	/** 向上翻页加载更早的消息（不截断服务端模型会话） */
 	loadMoreMessages: (agentId: string) => Promise<void>;
+	/**
+	 * 引用 / 搜索跳转到一条未加载的旧消息：从当前窗口连续向更早分页，直到该消息真的进入列表。
+	 * 全程连续、不插入孤立窗口 → 不会在列表中间留分页空洞。返回是否已加载到。
+	 */
+	loadUntilMessage: (agentId: string, mid: string) => Promise<boolean>;
 	switchConversation: (agentId: string, convId: string) => Promise<void>;
 	newConversation: (agentId: string) => Promise<void>;
 	handle: (e: any) => void;
@@ -284,6 +289,23 @@ export const useStore = create<State>((set, get) => ({
 			if ((reqGen[agentId] ?? 0) !== gen) return;
 			set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: false, error: errText(e) } } }));
 		}
+	},
+	async loadUntilMessage(agentId, mid) {
+		const has = () => (get().messages[agentId] ?? []).some((m) => m.id === mid);
+		if (has()) return true;
+		// 有界：最多 20 页（≈1000 条）。真实引用多在近处；很久以前的引用让用户先上滑加载，
+		// 也比插入一个和当前列表之间还留着空洞的“定位窗口”更诚实。
+		for (let i = 0; i < 20; i++) {
+			const st = get().msgState[agentId];
+			if (!st?.hasMore) return has();
+			const oldest = () => (get().messages[agentId] ?? [])[0];
+			const before = oldest()?.id;
+			await get().loadMoreMessages(agentId);
+			if (has()) return true;
+			if (get().msgState[agentId]?.error) return false; // 网络失败：停下来可重试
+			if (oldest()?.id === before) return false; // 没有进展（空页 / 被守护），不死循环
+		}
+		return has();
 	},
 	async switchConversation(agentId, convId) {
 		set({ subagent: null });

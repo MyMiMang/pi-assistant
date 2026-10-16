@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { compress } from "hono/compress";
 import { Hono, type Context, type Next } from "hono";
 import QRCode from "qrcode";
 import { WebSocket, WebSocketServer } from "ws";
@@ -97,6 +98,14 @@ import { mountUsageRoutes } from "./usage/routes.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
+
+// 响应压缩：只压 JSON。
+//  - 作用范围限定在 /api 的 JSON（聊天 / 列表接口），不是全局盲压：文件下载（octet-stream / text 附件）、
+//    图片、SSE 都不在过滤范围内；LLM 流式走 llm-proxy 的原生 res（不进 Hono fetch），不受影响。
+//  - 静态资源压缩在构建期预生成 .gz 旁路（apps/web/vite.config.ts），由 serveStatic({ precompressed: true }) 直接发出，
+//    不经过这里现压。
+//  - Hono compress 自动跳过已有 Content-Encoding / 206 / HEAD / no-transform，并补 Vary: Accept-Encoding、去掉 Content-Length。
+app.use("*", compress({ encoding: "gzip", contentTypeFilter: /^application\/(?:json|[^;]*\+json)\b/i }));
 
 const remoteOf = (c: Context<Env>) => c.env.incoming.socket.remoteAddress;
 
@@ -1790,9 +1799,29 @@ app.post("/api/push/subscribe", async (c) => {
 
 // ---------------------------------------------------------------- PWA 静态文件
 if (existsSync(config.webDist)) {
-	app.use("/*", serveStatic({ root: config.webDist }));
+	/** 与构建期预压缩一致的文本类型；只有这些会有 .gz 旁路 / 需要按 Accept-Encoding 区分。 */
+	const STATIC_COMPRESSIBLE = /\.(?:js|mjs|cjs|css|html|svg|json|webmanifest|txt|map)$/i;
+	/** 静态资源缓存：内容哈希的 /assets/* 永久缓存；index.html / sw.js 每次校验（更新要及时）；其余静态 1 天。 */
+	const staticCache = (path: string): string => {
+		if (path === "/" || path === "/index.html" || path === "/sw.js") return "no-cache";
+		if (path.startsWith("/assets/")) return "public, max-age=31536000, immutable";
+		return "public, max-age=86400";
+	};
+	app.use(
+		"/*",
+		serveStatic({
+			root: config.webDist,
+			// 构建期已生成 .gz 旁路：Accept-Encoding 含 gzip 时直接发压缩件，不每次现压 1.3MB 的 JS。
+			precompressed: true,
+			onFound: (_file, c) => {
+				c.header("Cache-Control", staticCache(c.req.path));
+				// 同一 URL 会按 Accept-Encoding 返回压缩 / 原始两种表示：对可压缩文本始终声明 Vary，避免缓存串味。
+				if (STATIC_COMPRESSIBLE.test(c.req.path) && !c.res.headers.get("Vary")) c.header("Vary", "Accept-Encoding");
+			},
+		}),
+	);
 	const index = readFileSync(join(config.webDist, "index.html"), "utf8");
-	app.get("*", (c) => (c.req.path.startsWith("/api/") ? c.json({ error: "not_found" }, 404) : c.html(index)));
+	app.get("*", (c) => (c.req.path.startsWith("/api/") ? c.json({ error: "not_found" }, 404) : (c.header("Cache-Control", "no-cache"), c.html(index))));
 } else {
 	app.get("/", (c) => c.text("Web UI 尚未构建：npm run build -w apps/web"));
 }

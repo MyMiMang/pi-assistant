@@ -25,7 +25,6 @@ import { canFork, forkErrorMessage, forkFromMessage, newForkClientId } from "../
 import { setComposerDraft, useComposerDrafts } from "../composerDrafts";
 import { locateAgentMessage } from "../replies-api";
 import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
-import { mergeMessages } from "../selection";
 export { Activity, activityOf, Thinking, group, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
 // 聊天里不再显示子代理指令卡：任务统一从 header 的「子代理」入口 → 任务概览 → 详情查看。
 export function BotPart(props: { p: Part; live: boolean; busy?: boolean; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => any }) {
@@ -45,6 +44,8 @@ export default function Chat({ agentId }: { agentId: string }) {
 	const rows = useMemo(() => group(mainList), [mainList]);
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
+	/** 上一次「贴顶部自动加载」时的滚动位置：同一次停在顶部只自动加载一页（见 onScroll）。 */
+	const lastAutoTop = useRef<number | null>(null);
 	const [drag, setDrag] = useState(false);
 	const composer = useRef<{ addFiles: (f: FileList | File[]) => void }>(null);
 	const composerWrap = useRef<HTMLDivElement>(null);
@@ -53,14 +54,10 @@ export default function Chat({ agentId }: { agentId: string }) {
 	const rKey = replyDraftKey.agent(agentId, convId);
 	const quote = useReplyDrafts((s) => s.drafts[rKey] ?? null);
 	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: agentId, name: agent?.name ?? "助理" }));
-	// 引用/搜索 jump 到未加载的旧消息：用有界 context 窗口合并（不拉全量）。
-	// 跳进来的窗口可能比当前列表更早：把 hasMore 打开，保证还能继续向上加载，不会因为一次 jump 出现分页断档。
-	const onInsert = (msgs: Message[]) =>
-		useStore.setState((s) => ({
-			messages: { ...s.messages, [agentId]: mergeMessages(msgs, s.messages[agentId]) },
-			msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? { loading: false, error: null, loaded: true, conv: null, hasMore: false }), hasMore: true } },
-		}));
-	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), onInsert);
+	// 引用/搜索 jump 到未加载的旧消息：从当前窗口连续向更早分页直到目标进入列表（见 store.loadUntilMessage）。
+	// 不再插入孤立的 context 窗口：那会在当前列表和定位窗口之间留一段永远看不到的历史，滚动无法补上。
+	const ensureLoaded = (mid: string) => useStore.getState().loadUntilMessage(agentId, mid);
+	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), ensureLoaded);
 	const [forkNotice, setForkNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 	// 「从这条消息另开新对话」：用 Pi 公开 fork 在服务端建分支对话；切到新对话并把正文放回输入框（不自动发）。
 	const onFork = async (m: Message) => {
@@ -161,8 +158,17 @@ export default function Chat({ agentId }: { agentId: string }) {
 				onScroll={(e) => {
 					const el = e.currentTarget;
 					stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-					// 滑到接近顶部自动加载更早（有保护，不会重复发空请求）
-					if (el.scrollTop < 200 && el.scrollHeight > el.clientHeight + 400) void loadEarlier();
+					// 滑到接近顶部自动加载更早。
+					// 关键：同一次「停在顶部」只加载一页。内容插入上方后，浏览器滚动锚定会再次派发 scroll（位置几乎没变），
+					// 没有位置判断的话，用户停在顶部就会被一页页把整段历史自动拉完（几十万条的会话直接打爆手机内存 / DOM）。
+					if (el.scrollTop >= 200) {
+						lastAutoTop.current = null; // 离开顶部 = 重新武装；下一次滑到顶才再自动加载一页
+						return;
+					}
+					if (el.scrollHeight > el.clientHeight + 400 && (lastAutoTop.current === null || Math.abs(el.scrollTop - lastAutoTop.current) > 8)) {
+						lastAutoTop.current = el.scrollTop;
+						void loadEarlier();
+					}
 				}}
 			>
 				<div className="pa-thread-body">
@@ -237,7 +243,7 @@ function ThreadSkeleton() {
 }
 
 // ------------------------------------------------------------------ 悬浮输入框：拖拽文件 / 粘贴图片
-function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLabel, onJump, jumpState, onRetryJump, wrapRef }: { agentId: string; name: string; model?: string; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; replyLabel: string | null; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
+function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLabel, onJump, jumpState, onRetryJump, wrapRef }: { agentId: string; name: string; model?: string; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; replyLabel: string | null; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" | "far" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
 	const [sending, setSending] = useState(false);
 	const [sendErr, setSendErr] = useState("");
 	// 草稿按「助理 + 对话」分桶（replyKey 复用回复草稿的键）：切对话 / fork 切换不丢字、不串对话
