@@ -10,7 +10,7 @@
 - `packages/server/package.json`：`@earendil-works/pi-coding-agent` / `pi-ai` / `pi-mcp` 由 `^1.2.0` 改为**精确 `1.3.0`**（对齐上游 1.3.0 起对内部 Pi 依赖的精确 pin，#10865；避免无 lock 的 fresh install 静默混入下一个 minor）。
 - `scripts/pi-update.mjs`：`bump` 用 `npm install --save-exact`，以后升级都写精确版本；`testedWith` 仍只在 `finalize`（测试通过后）改写，bump 只写 `target`。
 - `package-lock.json` 差异**逐条审阅**：只涉及 7 个 `@earendil-works/*` 条目（`pi-agent-core` / `pi-ai` / `pi-codemode` / `pi-coding-agent` / `pi-mcp` / `pi-telemetry` / `pi-tui` 1.2.0→1.3.0）+ `packages/server` 的 3 条 spec 变精确；integrity 与 npm registry 值一致；**无新增其它依赖、无密钥文件**。上游 1.3.0 起把内部 Pi 依赖从 `^1.x` 改成精确 `1.3.0`（锁文件可见）。
-- `third-party.json` / `THIRD_PARTY_NOTICES.md` 由脚本同步到 1.3.0；`compat.json` 为 `{ "testedWith": "1.2.0", "target": "1.3.0" }`（只有测试全通过后才 `finalize` 提到 1.3.0）。`SessionManager.CURRENT_SESSION_VERSION` 仍为 3，会话 JSONL 无需迁移。
+- `third-party.json` / `THIRD_PARTY_NOTICES.md` 由脚本同步到 1.3.0；`compat.json` 先为 `{ "testedWith": "1.2.0", "target": "1.3.0" }`，本轮定向 + 全量验证通过后已由 `node scripts/pi-update.mjs finalize` 提升为 `{ "testedWith": "1.3.0" }`（`check:pi` = `Pi 已安装 1.3.0 · 兼容基线 1.3.0 · npm 最新 1.3.0`）。`SessionManager.CURRENT_SESSION_VERSION` 仍为 3，会话 JSONL 无需迁移。
 
 ## 2. 公开 API 面差异（对已安装包实测 `.d.ts`）
 
@@ -83,4 +83,4 @@ Node 24.19.0（`/Users/dengdeng/.local/node-v24.19.0/bin/node`，未系统升级
 - H6 的「切换模型后旧 thinking 不进 provider payload」未在 payload 层直接断言（属 `pi-ai` 内部；本轮只验证档位目录与既有测试无回归）。
 - H4 的「取消后 worker 实际退出」官方描述针对 Bun，Node 下由 SDK 计数保证；本轮验证了上限与错误可读性，未测取消后的额度回收时长。
 - 官方安全公告未取（GitHub API 限流）——**「未提到 CVE」不等于「无漏洞」**，升级不以「安全紧急」为由。
-- 未 push / 未 tag / 未打包；`compat.json` 的 `testedWith` 仍是 1.2.0，待本轮全量通过后 `finalize`（本轮全量已过，只剩已知基线 1 项，可由主会话决定是否 `finalize`）。
+- 未 push / 未 tag / 未打包；`compat.json` 已 `finalize` 为 `{ "testedWith": "1.3.0" }`（定向 + 全量通过后提升，完整 e2e / 真机仍属未验边界）。
