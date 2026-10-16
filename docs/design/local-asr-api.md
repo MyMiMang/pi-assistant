@@ -3,6 +3,7 @@
 > **当前状态（多模型，2026-10-16）**：分支 `local-asr-multi-model`（HEAD `189fd99`）。已在**真实链路 smoke** 中真机装好并跑通 Whisper base int8 与 Paraformer zh int8（真实下载 → 逐文件 SHA256 与 catalog pin 一致 → 起真实 sidecar → 真实转写；证据 `evidence/local-asr-real-smoke/`）。当前契约 = `GET /api/local-models/asr/catalog`、`/api/local-models/asr/models/:id/{install,cancel,select,start,stop,pause,resume,idle,update,status}` + `DELETE`；旧单例 `/api/local-models/asr/sensevoice/*` 作为兼容入口保留（同一实现）。
 > **具体 deps 已按所选模型贯通**：`downloadWeights(files, …, {repo,revision,modelId})` 逐文件经统一下载器 `downloadFile` 直连 HF `resolve/<pinned revision>/<file>`（repo / revision / 路径只来自受信 catalog，revision 必须 40 位十六进制，拒绝任意 URL / 绝对路径）；`verifyWeights` / `importWeights` 落到 `asrPaths(modelId).weightsStaging`。**不再用 Python `huggingface_hub`，也不需要 numpy**（`accept_waveform` 接受 `Sequence[SupportsFloat]`，list 输入实测可用）。共享 runtime（venv/uv/python）第二个模型复用、不重下 wheel；权重与 metadata 每模型隔离。
 > 引擎 = **sherpa-onnx 1.13.8 + sherpa-onnx-core 1.13.8**，按平台固定 wheel SHA256 走 `--require-hashes`。
+> **2026-10-16 许可拆分（worktree `sensevoice-oneclick-fix`）**：许可拆成 `selfServe`（本地按需下载安装是否放行）与 `decision`+`redistribution`（整体结论 / 能否分发）。SenseVoice `selfServe=true`、`decision=unresolved`、`redistribution=false`、`requiresExplicitAgreement=false` → **像其他模型一样一键下载安装（本地自用）**，不额外强制勾选框；整体仍 `unresolved`（不 bundle / 不镜像、商用未确认）；`installGate` 删除 `allowUnresolved` 后门。真实 smoke 已跑通 SenseVoice 权重下载→SHA256→sidecar→官方 `zh.wav` 转写。
 > **不声称性能承诺**：RTF / 峰值内存只采到单样本一次值；跨平台（Windows / Linux / Intel Mac）与 turbo / large-v3 未实机 / 未下载。
 >
 > —— **以下为最初的后端先行稿（单 SenseVoice）**，保留作历史与兼容入口说明 ——
@@ -15,7 +16,7 @@
 ## 0. 定位与红线
 
 - 这是**可选**的本地 ASR provider：CPU、离线、单句转写（**不是流式、不是通话**）。
-- **不随 App bundle 权重、不 mirror 再分发**：许可复核结论 `unresolved`（见下），所以安装入口**默认关闭**，只开放「用户自行导入合法取得的权重」。
+- **不随 App bundle 权重、不 mirror 再分发**：整体许可 `unresolved`、`redistribution=false`（不打包、不镜像）；但**本地按需下载安装（用户个人自用）放行**（`selfServe=true`），入口与其他模型一致，另保留「用户自行导入合法取得的权重」。
 - **不伪造成 chat / classifier**：本地 ASR 在统一注册表里是 `type:"asr"`，带 `asrAdapter` 元数据；**不定义一整套 ChatProvider 鉴权**。
 - 引擎 = **sherpa-onnx 1.13.8（Apache-2.0，无 torch）**；权重 = SenseVoiceSmall int8 ONNX。
 - **只绑 `127.0.0.1`**；token 每次启动新生成，**只在进程内**（`/status`、日志、前端一律看不到）。
@@ -26,14 +27,14 @@
 | 项 | 值 |
 |---|---|
 | 权重许可 | **FunASR Model Open Source License Agreement v1.1**（**不是 Apache-2.0**） |
-| 判定 | `decision: "unresolved"`（issue #334 仍 open；2026-09-22 标注「not final license-owner confirmation」） |
+| 整体结论 | `decision: "unresolved"`（issue #334 仍 open；2026-09-22 标注「not final license-owner confirmation」） |
+| 本地自用下载安装 | **放行**（`selfServe: true`）——一键装，不额外强制勾同意 |
 | 再分发 | `redistribution: false` → **不打包、不镜像** |
-| 安装入口 | **默认关闭**（`unresolved`） |
 | 自行导入 | **开放**（用户自己合法取得的权重） |
 
 行为规则（`license.ts` 纯函数）：
 
-- `installGate`：`prohibited` → 拒绝；`unresolved` → 拒绝（除非调用方显式 `allowUnresolved`，产品默认不传）；`cleared` → 允许，但**必须** `acceptLicense === termsVersion`。
+- `installGate`：`selfServe=false` 或 `decision=prohibited` → 拒绝；否则允许；仅 `requiresExplicitAgreement=true` 时才要求 `acceptLicense === termsVersion`（SenseVoice 为 false，不强制）。
 - `importGate`：只有 `prohibited` 才拒绝。
 - 任何情况 `bundleAllowed()` 在 `redistribution !== true` 时为 false。
 
@@ -68,7 +69,7 @@
 ```ts
 interface AsrStatus {
   platform: { key; os; arch; support: "supported"|"conditional"|"unsupported"; accelerator: "cpu"; wheelTag; reason };
-  license: { licenseName; termsVersion; decision; redistribution; attribution; links; restrictions; reason; acceptValue };
+  license: { licenseName; termsVersion; decision; selfServe; redistribution; attribution; links; restrictions; reason; acceptValue };
   install: { state: "not_installed"|"installing"|"installed"|"failed"; phase; received; total; error; installedAt; source: "download"|"import"|null };
   runtime: { state: "stopped"|"starting"|"running"|"stopping"|"crashed"|"paused"; pid; port; host: "127.0.0.1"; restarts; lastError };
   health: { ok; device; loaded } | null;
@@ -153,11 +154,11 @@ interface AsrStatus {
 | `whisper-small-int8` | whisper | 均衡 | 375,485,327 B | MIT（cleared） | 多语均衡（16GB 档推荐） |
 | `whisper-turbo-int8` | whisper | 高质量 | 1,036,613,791 B | MIT（cleared） | 高质量里的速度优先版 |
 | `whisper-large-v3-int8` | whisper | 高质量 | 1,775,753,918 B | MIT（cleared） | 最高精度档（32GB 档推荐） |
-| `sensevoice-small-int8` | sensevoice | 均衡 | 239,549,735 B | **unresolved** | 存量兼容：**只保留自行导入**，不进下载面板 |
+| `sensevoice-small-int8` | sensevoice | 均衡 | 239,549,735 B | **unresolved / selfServe=true** | 本地个人自用可一键下载安装；整体 `unresolved`（不随 App 分发、商用未确认）；另保留自行导入 |
 
 - **Whisper 输出为模型原生文本（含标点 / 大小写）**：研究 JSON 的 `punctuation:false` 字段不可靠，本实现按真实原生输出记为 `punctuation:true`，不做云端纠错。
 - **Qwen3-ASR 0.6B 暂不上目录**：sherpa 1.13.8 真实支持 `from_qwen3_asr`，但公开 tar 缺 per-file / tar SHA256 pin → 未 pin 前不放「空可下载按钮」；运行族扩展点保留（`runner.ts`）。
-- **许可准确**：正式项均为 MIT / Apache-2.0；SenseVoice 仍按 `unresolved`（issue #334 open），**不新增 accept 勾框把它洗成允许**，老 `provider=local-sensevoice` / modelId / 权重 pin 不变，历史 `voiceSource` 与已安装目录继续可读。
+- **许可准确**：正式项均为 MIT / Apache-2.0（`selfServe=true`）；SenseVoice 整体按 `unresolved`（issue #334 open）、`selfServe=true`（本地自用下载安装放行）、`redistribution=false`（不 bundle / 不镜像），老 `provider=local-sensevoice` / modelId / 权重 pin 不变，历史 `voiceSource` 与已安装目录继续可读。
 
 ## B. 读：`GET /api/local-models/asr/catalog`
 
@@ -187,7 +188,7 @@ interface LocalAsrModelView {
 ```
 
 - 一次请求拿全（硬件档位 / 体积 / 依赖 / 内存估算 / 许可 / 来源 / 安装态 / 运行态），GET **不下载、不启动 worker**。
-- **许可确认分级**：`license.agreementRequired` 为 `false` 时（MIT / Apache-2.0）**不强制每次点同意** —— 正常展示署名与许可证链接即可，`acceptLicense` 可不传（一键装）；为 `true` 时才要求 `acceptLicense === acceptValue`。SenseVoice（unresolved）仍**阻下载**、保留自行导入，不新增勾框将其洗成允许。
+- **许可确认分级**：`license.agreementRequired` 为 `false` 时（MIT / Apache-2.0，以及 SenseVoice）**不强制每次点同意** —— 正常展示署名与许可证链接即可，`acceptLicense` 可不传（一键装）；为 `true` 时才要求 `acceptLicense === acceptValue`。SenseVoice 本地自用下载安装放行（`selfServe=true`），整体 `unresolved` 如实标注，另保留自行导入。
 - `install.total === null` → 前端画不定进度条（`phaseLabel` 给中文阶段），不编假百分比。
 - `jobId` = 统一下载注册表稳定 id `asr:<modelId>`（同一次安装 = 同一个 job）；`attempt` 是第几次安装尝试（generation 概念，不要求 jobId 唯一到 attempt）。
 - 不含 token：catalog / status 只有 provider / model / protocol。
@@ -215,7 +216,7 @@ interface LocalAsrModelView {
 
 - 每个 cleared 且平台支持的模型登记稳定 downloadId `asr:<modelId>`（`local-asr/download.ts`）：
   `status()` 把 manager 的 install 状态投影成统一下载状态；`cancel()` 走同一个 manager AbortController；
-  `hidden()` 对 SenseVoice（unresolved）与不支持平台返回 true。
+  `hidden()` 对 `selfServe=false` 或不支持平台返回 true（SenseVoice `selfServe=true`，进下载面板）。
 - 「组件页下载」与「语音页安装并使用」是**同一个 job**：任何入口触发的安装经 `local-asr.changed` 事件（**事件驱动，不装永久定时 loop**）同步进下载面板。
 
 ## F. 运行族（有界扩展点）

@@ -9,7 +9,7 @@
 - 不新建第二套下载服务：安装/下载走现 `downloads` 注册表与 `downloads.changed`；组件页 / 语音页两个入口**同一个 job**（stable id `asr:<modelId>`）。
 - 硬件档位**由后端从 os metadata 算**（`process.platform` / `process.arch` / `os.totalmem()` / `os.cpus()`），前端不猜、不要求用户先设 CPU/RAM/GPU。
 - 不声称任何性能数字：内存门槛是**估算**，必须标「未实测」；用户**可选比建议更大的档位**（不做硬门槛）。
-- 许可结论不模糊：`cleared` / `unresolved` / `prohibited` 默认可见；`unresolved`（SenseVoice）不新增同意勾框绕过，只保留既有「自行导入合法权重」。
+- 许可结论不模糊：许可分**两个独立维度**，都默认可见——`selfServe`（本地按需下载安装是否放行）与 `decision` / `redistribution`（整体结论 / 能否随 App 分发、镜像）。SenseVoice `selfServe=true`（用户个人自用可一键下载安装）、`decision="unresolved"`、`redistribution=false`（不 bundle / 不镜像、商用未最终确认）；上游未要求点击同意就不加同意勾框（`agreementRequired=false`），署名与用途提示默认可见、详文在「?」。保留「自行导入合法权重」（收进详情）。
 - 前端**不写死模型清单**：正式可选项全部来自 `GET /api/local-models/asr/catalog`。
 
 ## 1. 读：`GET /api/local-models/asr/catalog`
@@ -87,7 +87,7 @@ interface LocalAsrInstallView {
 - 关面板 / 刷新：安装 job 在服务端继续，装完按同一规则写来源，**不留用户手配**（无需前端 pending 持久化）。
 - `PUT /api/audio/asr/source` 失败：前端重新拉取服务端实际来源回滚（`VoiceSettings` 既有逻辑），不留下假「使用中」。
 - 已安装但未选中 → 前端「使用这个模型」调 `POST /api/local-models/asr/models/:id/select`（后端内部同样走 `selection.write` 写来源 + 启停 worker，忙时拒绝）。**前端不另造写 source 的路径**（避免两处同时写 / 迟到覆盖）；状态一律以 catalog `selected` / `GET source` 为真。
-- 许可分级（后端 `18478d4`）：`license.agreementRequired`；MIT/Apache-2.0（Paraformer / 4 个 Whisper）为 `false` → 不弹「我同意」、**不传 `acceptLicense`**、正常展示署名与许可链接即可一键装；SenseVoice `unresolved` 为 `true` 但仍禁下载（仅自行导入，不洗白）。
+- 许可分级（后端 `5908f63`）：许可拆成两个维度——`license.selfServe`（本地按需下载安装是否放行）与 `decision`+`redistribution`（整体结论 / 能否随 App 分发）。前端按钮可用性、下载面板 `hidden`、目录 `available` 一律看 `selfServe`，不再用 `decision !== "cleared"` 一刀切；`agreementRequired` 由上游是否要求点击同意决定。MIT/Apache-2.0（Paraformer / 4 个 Whisper）与 SenseVoice 都是 `agreementRequired=false` → 不弹「我同意」、**不传 `acceptLicense`**、一键装；SenseVoice `decision` 仍 `unresolved`（界面如实标「本地自用可下载 / 不随 App 分发 / 商用未确认」）。
 
 ## 4. 前端拆分（本树 ownership）
 
@@ -104,11 +104,12 @@ interface LocalAsrInstallView {
 2. 按模型 id 路由 `models/:id/*`（旧 sensevoice 前缀保留为兼容入口）。
 3. `jobId` = 统一下载注册表 stable id `asr:<modelId>`；两个入口同一 job。
 4. `phase` 稳定枚举 + `phaseLabel` 中文名由后端给；`total: null` = 不确定进度条。
-5. 正式清单（本批 5 个，均 `cleared`）：`paraformer-zh-2023-09-14-int8`、`whisper-base-int8`、`whisper-small-int8`、`whisper-turbo-int8`、`whisper-large-v3-int8`；SenseVoice 保留但 `unresolved`（正式入口关闭，仅导入）。Qwen 未 pin SHA 不进目录。
+5. 正式清单（本批 6 个）：`paraformer-zh-2023-09-14-int8`、`whisper-base-int8`、`whisper-small-int8`、`whisper-turbo-int8`、`whisper-large-v3-int8`、`sensevoice-small-int8`（`selfServe=true` 一键装，整体 `unresolved`、不随 App 分发、商用未确认）。Qwen 未 pin SHA 不进目录。
 
 ## 6. 验证与未验证边界
 
 - **纯逻辑单测** `e2e/local-asr-models-frontend.test.mjs`（6/6）：catalog 归一（snake/camel、缺省、结构不对）、indeterminate 进度、intent seq 守卫、下载进度合并、十进制体积格式化。
-- **UI fixture** `e2e/local-asr-models-ui.mjs`（`page.route` 拦 `/api/**`）：真实前端代码渲染 5 个服务端模型；安装并使用（`intent=install_and_use`，cleared 不传 `acceptLicense`，不确定进度条）→ 装好 `selected` 显示使用中；改选云端后装完不 late 覆盖；已装未选中「使用这个模型」调 `/select`；取消；失败重试；390 不溢出。截图 `evidence/local-asr-models-ui/`。
-- **真实 API 契约 smoke** `e2e/local-asr-catalog-real.mjs`：用内存 launcher + tmp DATA/WORKSPACE 起本仓库真实 server，`GET /api/local-models/asr/catalog` 真实 JSON（6 模型，含真实权重 pin）喂进 `normalizeLocalAsrCatalog` 全过（`ok=true`、id/provider/tier/许可/`source.revision+files` 齐全、`agreementRequired` 真值正确）。本树已合并后端 `18478d4`，即真跑通过。
-- **未验证（如实）**：真实下载 / 校验 / 启动 / 转写（不装大权重、不用真实麦克风 / GPU）；真机 App；全量 `e2e/run.mjs` / 全量 `npm test`。UI 里的模型 name / 说明是 fixture，**不代表真实权重已在本机跑过**；能力标签以 catalog 返回为准，不按研究报告臆断。
+- **UI fixture** `e2e/local-asr-models-ui.mjs`（`page.route` 拦 `/api/**`）：真实前端代码渲染 6 个服务端模型；安装并使用（`intent=install_and_use`，全部模型不传 `acceptLicense`，不确定进度条）→ 装好 `selected` 显示使用中；改选云端后装完不 late 覆盖；已装未选中「使用这个模型」调 `/select`；取消；失败重试；**SenseVoice 一键安装 + 取消 + 失败重试 + 装好使用中 + 详情里的合法导入**；390 不溢出。截图 `evidence/local-asr-models-ui/`。
+- **真实 smoke（SenseVoice）** `scripts/local-asr-real-smoke.mjs`（`PIA_SMOKE_MODELS=sensevoice-small-int8`，复用带 owner 标记的 scratch 根）：权重 2 文件 SHA256 与 catalog pin 一致、`health.modelId=sensevoice-small-int8`、官方 `test_wavs/zh.wav` 推理命中「早上/下午/点」；证据 `evidence/local-asr-real-smoke/`。
+- **真实 API 契约 smoke** `e2e/local-asr-catalog-real.mjs`：用内存 launcher + tmp DATA/WORKSPACE 起本仓库真实 server，`GET /api/local-models/asr/catalog` 真实 JSON（6 模型，含真实权重 pin）喂进 `normalizeLocalAsrCatalog` 全过（`ok=true`、id/provider/tier/许可/`source.revision+files` 齐全、`selfServe` 与 `agreementRequired` 真值正确）。
+- **未验证（如实）**：真机 App；全量 `e2e/run.mjs` / 全量 `npm test`；跨平台（Windows / Linux / Intel Mac）未实机。UI 里的模型 name / 说明是 fixture，**不代表真实权重已在本机跑过**；能力标签以 catalog 返回为准，不按研究报告臆断。
