@@ -71,6 +71,8 @@ try {
 	check("每个模型有 tier / 权重体积 / 许可名", view.models.every((m) => m.tier && m.weightsBytes > 0 && m.license.licenseName));
 	check("至少一个模型有真实权重 pin（source.revision + files）", view.models.some((m) => m.source.revision && m.source.files.length > 0));
 	check("SenseVoice 项许可 unresolved（正式入口关闭、可导入）", view.models.some((m) => m.id === "sensevoice-small-int8" && m.license.decision === "unresolved"));
+	check("MIT/Apache 模型 agreementRequired=false（一键装、不传 acceptLicense）", view.models.filter((m) => m.license.decision === "cleared").every((m) => m.license.agreementRequired === false));
+	check("SenseVoice agreementRequired=true（仍禁下载）", view.models.some((m) => m.id === "sensevoice-small-int8" && m.license.agreementRequired === true));
 	for (const m of view.models) console.log(`    - ${m.id} · ${m.provider} · ${m.tier} · ${m.license.decision} · ${m.weightsBytes}B · selected=${m.selected}`);
 } catch (e) {
 	console.error("smoke 失败：", e);
