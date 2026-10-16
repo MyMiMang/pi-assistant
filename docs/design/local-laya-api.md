@@ -138,3 +138,42 @@ Laya **登记进统一「下载与组件」面板**（`packages/server/src/downl
 - **每个模型一个 id**（如 `asr:sensevoice` / `asr:<model>`）：两个官方权重可同时各占一行，不要用一条唯一 ASR 行藏真实选项。
 - 复用既有 `downloadFile`（Range 续传 / sha 校验 / 原子改名）与 `watchDir`，不新下载引擎。
 - Laya 的投影：`installed→ready`、`installing→downloading`、`failed→error`、未安装→`missing`；**只有 `weights` 阶段带真实 `total`**，其余阶段 `total=null`（不定进度）。
+
+## 9. 运行时的本地权重来源（`LAYA_EXTRA_MODELS`）——已对公开源码逐行核对
+
+`materializePinnedFiles` 物化出来的 `runtime/weights` 目录，`manager.start()` 用 Laya 的**公开环境变量**交给 sidecar
+（`packages/server/src/local-laya/manager.ts` `start()`）：
+
+```
+LAYA_MODELS        = "multilingual"                                   # 只预加载我们装的这一个（默认会预加载全部三个）
+LAYA_EXTRA_MODELS  = {"multilingual": "<dataDir>/local-laya/runtime/weights"}   # 把内置 multilingual 重指到本地物化目录
+```
+
+- `LAYA_EXTRA_MODELS` 缺失（没有物化目录）时不设，不改 sidecar 默认来源，避免指向空目录。
+
+**2026-10-16 核对（不装 Torch、不下权重）**：所 pin 的 PyPI `laya==0.4.8` wheel（`__version__ = "0.4.8"`）
+内公开源码：
+
+- `laya/serve.py:672 _extra_models_option()`：把 `LAYA_EXTRA_MODELS` 解析成 `{名字: 源}`，源允许**字符串**（Hub repo id
+  或**本地 checkpoint 目录**）或 `["repo","subfolder"]`；`:1124` 取用 → `:1131` `options["models"] = extra_models`
+  → `:1132 Router(**options)`。
+- `laya/router.py:791 register()` / `:881 _add()`：local path 源被接受（`:895` 会 `expanduser`，`:910` 存进 `models[key]`）；
+  名字命中内置 checkpoint（`multilingual`）时**重指该内置项**，不是新增别名。已用该 wheel 的纯 Python resolver 实测：
+  `Router(models={"multilingual": "/tmp/..."})` → `models["multilingual"] == "/tmp/..."`、`_split() == ("/tmp/...", None)`；
+  不设时 `multilingual` 仍解析为 `("convaiinnovations/laya","multilingual")`（走 HF）。
+- `laya/agent.py:575`：`model_dir` 存在时**不进** `snapshot_download`（`:581/:595` 只在路径不存在时下载 → 不会去 HF 其它 repo、
+  也不会退回默认三个模型）；`:596` 的 revision pin 同样只在下载分支用。
+- 本地目录读取的四个入口（**这就是固定清单必须覆盖它们的原因**，`test/local-laya-deps.test.ts` 有一条断言钉住）：
+  `:611` `model_dir/rl_agent_config.json`、`:623` `model_dir/model.safetensors`、`:672 _load_tokenizer(model_dir/tokenizer)`
+  （`:221`，目录存在则 `AutoTokenizer.from_pretrained(<本地目录>)`，否则才回落 `cfg["encoder"]`）、
+  `:675 build_model(encoder_dir=model_dir/encoder, pretrained=False)`（`laya/common.py:707` 用 `encoder_dir` 本地 config，
+  `from_config` 不下载权重）。
+- digest pin 同样对本地目录生效（`agent.py:607 verify_digests(model_dir, expected_sha256)`）。
+
+**结论**：这条本地链路是公开、真实存在的，**不是 unused mirror**，保留接线；同时也说明固定清单里的
+`encoder/config.json` / `tokenizer/*` / `rl_agent_config.json` 是运行时真正会读的文件，不能删。
+
+**未验（如实）**：没有真机装 Torch / 下 GB 权重 / 起真实 Laya，所以「0.4.8 在真机从该目录加载成功」仍未实测；
+另注 Laya 加载时可能改写 `tokenizer/tokenizer_config.json`（`agent.py:61 _fix_tokenizer_config`，仅当字段需修正），
+这会让该文件的字节与固定 SHA256 不再一致；当前 `checkpointSourcePath()` 只看 `rl_agent_config.json` 是否存在，
+启动不会因此失败，但「运行时文件字节永远等于清单哈希」这条更强的话不成立（与 HF 缓存路径同样）。
