@@ -179,7 +179,7 @@
 
 麦克风位置修正（2026-10-16，本树本地未发布，用户调整）：`e2e/voice-input-ui.mjs` 加几何断言——`voice-mic` 与 `.pa-composer-bar .pa-send` 必须同一 composer-bar、DOM 在发送键之前、同一行（中心 y 差 ≤6px）、紧贴其左（间隙 ≤14px），且不在 `.pa-composer-tools` 里；单聊 / 群聊 / 390 / 1440×560 矮窗各验一遍，并断言录音时发送键 x 不位移（提示走独立 status 行）。实跑：该脚本全通过；`e2e/composer-compact.mjs`（单 / 群 / 子三入口 390 / 1280 / 1440）回归全通过；web `tsc --noEmit` + `vite build` 通过。未跑全量 e2e。
 
-## 设置信息架构重排（2026-10-16，设计分支 `settings-information-architecture`（仅文档 `20e2b39`）；实施分支 `settings-functional-ui`（基 `a80b2cb`），后端 `settings-functional-backend` `fa20815` 已合入本树，**前端 + 后端已实施 / 未 push / 未 tag / 未打包**）
+## 设置信息架构重排（2026-10-16，设计分支 `settings-information-architecture`（仅文档 `20e2b39`）；实施分支 `settings-functional-ui`（基 `a80b2cb`，已 `--no-ff` 合入候选树 `release-candidate-validation`，合并 `6c892a0`），后端 `settings-functional-backend` `fa20815` 已合；第二轮视觉精简 `15e3d76`。**未 push / 未 tag / 未打包**）
 
 > 经主确认的最终方案与原设计偏差：**不新增「后台任务」页**（子代理并发 / 时限改为每助理覆盖）、**不合并 entry / downloads**（保留 16 项一层导航、只加 5 个分组标题）。已按此修正。
 
@@ -191,7 +191,8 @@
 | 新增独立**语音配置**页：云 / 本地切换，云只选模型页已声明的 ASR，本地 SenseVoice 安装 / 导入 / 启停 / idle / status / 选择都在此；**不自动 fallback cloud** | 前后端已实施（已联通） | 新键 `settings.voiceSource`；`GET/PUT /api/audio/asr/source` 返回 `{source, options[]}`（options 带 availability `ready/not_configured/not_installed/not_running/deleted`，只有 ready 表示当下可用）；前端 `VoiceSettings.tsx` 消费 options（不走 listAsrModels），删除 `pickAsrModel()` 自动选源。后端验证 `voice-source-http.test.ts` 8/8 |
 | Laya 是电脑快速**分类**模型、不是 ASR：本地 Laya 管理放**电脑操作**页；语音页只放真 ASR；标签用「中文功能名（模型名）」 | 前端已实施 | Laya 卡迁到「操作这台电脑」（`LocalLayaSection`），助理电脑页只给跳转提示；`fastComputer:hostpc` / `fastComputer:computer` **不合并** |
 | 子代理默认模型 / 思考 / 并发归**助理配置单一来源** | 前后端已实施（已联通） | 保旧 `settings.subagentModels` 作继承默认；新 `settings.subagentLimits:<id>` 只存显式覆盖；`GET/PUT /api/agents/:id/subagents/settings` 返回 `{settings, overrides, defaults}`；移除模型页 `SubagentSection`，**不新「后台任务」页**。后端验证 `subagent-limits-http` 3/3 + `subagent-limits` 3/3 |
-| 长说明统一用 `ui.tsx` 的 `<Help>`（悬停 / 点击 / touch / 键盘），主视图只留标题 / 简状态 / 主操作 / 必要 error；许可未解决的「下载不可用」、进度、音频出本机 / 计费等风险不得藏进 tooltip | 前端已实施 | `<Help>` 补 focus 打开 / Escape 只关气泡 / 点外部关闭 / `aria-describedby`；SenseVoice 许可摘要常驻（含「下载暂不可用」），条款 / 链接收进「条款与详情」折叠 |
+| 长说明统一用 `ui.tsx` 的 `<Help>`（悬停 / 点击 / touch / 键盘），主视图只留标题 / 简状态 / 主操作 / 必要 error；许可未解决的「下载不可用」、进度、音频出本机 / 计费等风险不得藏进 tooltip | 前端已实施 | `<Help>` 补 focus 打开 / Escape 只关气泡 / 点外部关闭 / `aria-describedby`；SenseVoice 许可被阻塞时主行只有一句「许可待确认，暂不提供下载」+「?」（完整条款 / 链接 / 署名在 Help 里） |
+| 「设置页还是满屏说明」主视觉复核：语音卡满屏来源 / 引擎 / 版本 / 采样率 / 整行英文许可 / 勾不上的 checkbox / 目录输入常驻 / 重复未安装；模型页重复「当前：…」+ 档位说明 + footer 灰字 | 已完成（候选树，`15e3d76`，未发布） | 语音本地卡收成「中文功能名 + 单一状态 + 一句许可 + 主操作」；导入收进折叠、规格 / 来源 / 许可署名 / 采样率 / 未实测进「详情」；许可完整条款在「?」里（不藏）；`DefaultModelPicker` 加 `compact`（去重复「当前：」与档位说明）、模型页 footer 收进 Help；Laya 卡平台 / 来源 / 未实测也进「详情」。验证：`settings-functional-ui`（含紧凑 DOM 断言）/`voice-input-ui`/`model-services-ui`（Laya 改到电脑操作页）全通过；真实 server 闭环 `voice-source-live.mjs` 全通过 |
 | 聊天语音入口修复只做了一半 | 前端已实施 | hook 新增 `dismissError()` / `resetContext()`；`showSettings` 绑定本次麦克风尝试 + 当前上下文；点「去设置」跳 `voice` 并真清 error；取消 / 切会话清提示且停轨道 |
 
 

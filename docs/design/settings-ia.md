@@ -13,6 +13,17 @@
 - 已跑：web `tsc` + `vite build`；`e2e/settings-functional-ui.mjs`、`e2e/settings-subagent.mjs`（24 项）、`e2e/voice-input-ui.mjs` 全通过；server `tsc` + `voice-source-http` 8 + `subagent-limits-http` 3 + `subagent-limits` 3 = 14/14。
 - **未验**：真机麦克风 / 真实云 ASR 计费 / 本地 SenseVoice 实装 / 全量 e2e；截图见 `evidence/settings-functional-ui`、`evidence/settings-subagent`。
 
+#### 视觉精简复核（2026-10-16 第二轮，用户对第一版截图说「还是密集说明」）
+
+用户明确「常规说明都进 Help，别满屏」。定稿（`release-candidate-validation` 候选树，合并前端 `settings-functional-ui` `f566226` 后小改）：
+
+- **语音本地卡**：标题「本地语音识别（SenseVoice） ?」+ `本地` badge + **单一状态 badge**（安装态与运行态合并，不再同时出现「未安装 / 未运行」）；许可被阻塞时主行只有一句 **「许可待确认，暂不提供下载」** + 「?」（完整条款 / 限制 / 链接 / 署名都在 Help 里，许可信息不藏、不折叠遮盖）；主操作按条件渲染（禁用短按钮「下载」+ title 原因；许可 `cleared` 时才显示同意 checkbox + 「下载并安装」——不可绕过的同意不省）；**「导入已有权重」收进可访问折叠**（目录输入与导入动作只在展开里，后端安全路径 API 不变）；规格 / 版本 / 容量 / 采样率 / 渠道 / 许可署名 / 未实测说明收进「详情」折叠；「设为语音来源」按钮从「使用本地语音识别（SenseVoice）」缩短。
+- **模型页**：`DefaultModelPicker` 加 `compact`（去掉与按钮文字重复的「当前：…」和不必要的档位说明行，说明并入标题 Help）；`ModelServicesPanel` 底部「生图与快速操作模型统一在这里…」灰字收进 `Fold.desc`（Help）。
+- **Laya 卡**：平台 / 来源 / 许可 / 未实测说明同样收进「详情」折叠；不支持原因常驻可见；状态与主操作保留。
+- **不新增导航项**（16 项 / 5 组不变）；不改后端契约、不隐式安装 / 启动。
+
+验证：`e2e/settings-functional-ui.mjs`（新增紧凑 DOM 断言：默认不出现长规格 / 目录输入 / 安全 checkbox；「未安装」卡内只出现一次；详情展开可看完整信息；模型页无「当前：」/ footer 正文）、`e2e/voice-input-ui.mjs`、`e2e/model-services-ui.mjs`（Laya 用例改到「操作这台电脑」页）全通过；真实 server 闭环 `e2e/voice-source-live.mjs` 全通过；server 相关 126/126。
+
 - 基线：`release-candidate-validation` 候选树 **HEAD `a80b2cb`**（Pi 1.3 已合入；代码 checkpoint `0069d36`，其后 2 个纯文档提交）。**本方案不改任何业务代码**，只做审计 + 设计 + 文件范围。
 - 约束：不碰该树的 WIP/未提交改动；不改 `packages/server/src/secrets.ts`、SDK 凭据实现、真实 keys/DB/钥匙串/用户 session；不改 Pi SDK / node_modules / Pi 本体。
 - 用户原话要点（2026-10-16）：
@@ -282,10 +293,11 @@ Three 已知「乱」的具体成因：
 2. 解释、背景、来源、许可、链路、系统路径、安装日志 → `<Help>` 或折叠「高级 / 详情」。
 3. **不能藏进 tooltip 的**（必须常驻可见）：
    - 真实不可用原因（未装 / 平台不支持 / 权限被拒 / 许可未解决）；
-   - **许可未解决的「下载不可用」**（不是「可下载但有个提示」）；
+   - **许可未解决的「下载不可用」**（一句「许可待确认，暂不提供下载」常驻；许可名 / 完整条款 / 限制 / 链接放同一行「?」，不算藏）；
    - 下载 / 安装进度；
-   - 涉及花钱 / 隐私的关键风险：音频会离开本机、云端按量计费、费用未知；
+   - 涉及花钱 / 隐私的关键风险：音频会离开本机、云端按量计费、费用未知（**一条短句可见**，不用大警告框多段）；
    - 保存失败的错误与回滚结果。
+   - 许可 `cleared` 之后的「同意条款」checkbox 只能在**真能下载**时出现；许可未解决时不显示永远勾不上的冗余 checkbox。
 4. **标签命名**：一律「中文功能名（模型名）」，如「本地快速模型（Laya）」「本地语音识别（SenseVoice）」「快速操作模型（原生 Jev / System One）」；不出现只有 `Laya` / `SenseVoice` / `Jev` 的裸名。
 5. `<Help>` 必须支持：鼠标悬停、点击 / 触摸切换、键盘 Tab 聚焦打开、**Escape 关闭**、点击外部关闭（见 §3.6，实施前先补 `ui.tsx`）。
 6. 同一件事只在一处写详细，别处链接过去（`Fold` 的 `desc` 已是这个模式）。
