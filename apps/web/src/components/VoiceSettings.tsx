@@ -146,7 +146,7 @@ export function VoiceSettings() {
 									</Button>
 								</div>
 								{picked && picked.availability !== "ready" && picked.reason && <p className="text-xs text-amber-600" data-testid="voice-cloud-reason">{picked.reason}</p>}
-								<p className="text-xs text-mut2">音频会先到本机服务，再转发给该服务（<b>会离开本机</b>，按量计费）。模型来自「模型服务」的 ASR 声明。</p>
+								{source?.location !== "cloud" && <p className="text-xs text-mut2">音频会先到本机服务，再转发给该服务（<b>会离开本机</b>，按量计费）。模型来自「模型服务」的 ASR 声明。</p>}
 							</div>
 						)}
 						{/* 已选择云端时，隐私 / 费用提醒常驻可见 */}

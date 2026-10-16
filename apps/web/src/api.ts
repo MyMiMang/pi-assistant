@@ -52,7 +52,8 @@ export async function api<T = any>(path: string, init: RequestInit & { json?: un
 		let data: unknown;
 		try {
 			const j = await res.json();
-			msg = (j as { error?: string }).error ?? msg;
+			// 新接口用 {error: code, message: 中文}；旧接口用 {error: 中文}。优先显示可读的中文说明。
+			msg = (j as { message?: string }).message ?? (j as { error?: string }).error ?? msg;
 			data = j;
 		} catch {
 			/* ignore */

@@ -215,6 +215,13 @@ try {
 	check("ASR 区块标明「声明」", asrText.includes("声明"));
 	await page.screenshot({ path: join(OUT, "03-model-slim.png") });
 
+	console.log("\n── 电脑 › 操作这台电脑：本地 Laya 只在这里管理 ──");
+	await page.goto(`${base}/?settings=host`);
+	await page.getByTestId("host-local-laya").waitFor();
+	check("操作这台电脑页有本地快速操作模型（Laya）卡", await page.getByTestId("local-laya-card").isVisible());
+	check("Laya 区块与「快速操作模型」并列（不整屏长文）", await page.getByTestId("host-fast-computer").isVisible());
+	await page.screenshot({ path: join(OUT, "03b-host-laya.png") });
+
 	console.log("\n── 语音配置：云空态 / 选择保存 / 失败回滚 / 无第二套 Key ──");
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
