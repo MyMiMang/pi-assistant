@@ -17,6 +17,8 @@ import { asrRunnerFamily, hasAsrRunnerFamily, type AsrRunnerFamily } from "../sr
 import { LocalAsrManager, type AsrDeps, type AsrPaths } from "../src/local-asr/manager.ts";
 import { LocalAsrService, asrPhaseLabel, type AsrSelectionPort } from "../src/local-asr/service.ts";
 import { projectAsrInstall, asrDownloadId } from "../src/local-asr/download.ts";
+import { bus } from "../src/bus.ts";
+import * as dl from "../src/downloads.ts";
 import { mountLocalAsrRoutes } from "../src/local-asr/routes.ts";
 import { senseVoicePlatform } from "../src/local-asr/platform.ts";
 
@@ -214,6 +216,25 @@ test("sidecar 脚本按 ASR_WEIGHTS 取权重目录（多模型不能写死 ROOT
 	// /health 必须回报实际加载的 modelId（证明选对了模型，而不只是「有个 onnx」）。
 	assert.match(sv, /MODEL_ID = os\.environ\.get\("ASR_MODEL_ID", ""\)/);
 	assert.match(sv, /"modelId": MODEL_ID/);
+});
+
+test("local-asr.changed 事件驱动统一「下载与组件」状态（不靠每秒轮询）", () => {
+	const id = asrDownloadId(PARA);
+	const seen: string[] = [];
+	const off = bus.on((e) => {
+		const item = (e as { item?: { id?: string } }).item;
+		if (e.type === "downloads.changed" && item?.id === id) seen.push(item.id);
+	});
+	// 模拟 manager 的状态变化事件（仅验证转发，不真安装）。
+	bus.emit({
+		type: "local-asr.changed",
+		provider: "local-paraformer",
+		modelId: PARA,
+		status: { install: { state: "installing", phase: "weights", received: 5, total: 10, error: null } } as unknown as import("../src/local-asr/manager.ts").AsrStatus,
+	});
+	off();
+	assert.ok(seen.length >= 1, "local-asr.changed 应触发统一下载面板重读（notifyDownload）");
+	assert.ok(dl.downloadInfo(id), "登记的下载条目应存在");
 });
 
 test("运行族：三族生成真实构造参数；Whisper language 显式 \"\"（不回落引擎默认 en）；未知族 fail closed", () => {
