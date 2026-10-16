@@ -8,9 +8,9 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 
 | 组件 | 版本 | 许可证 | 用途 |
 |---|---|---|---|
-| [@earendil-works/pi-coding-agent](https://github.com/earendil-works/pi) | 1.2.0 | MIT | 智能体运行时（只经 `packages/server/src/pi-adapter` 使用） |
-| [@earendil-works/pi-ai](https://github.com/earendil-works/pi) | 1.2.0 | MIT | 模型服务接入 |
-| [@earendil-works/pi-mcp](https://github.com/earendil-works/pi) | 1.2.0 | MIT | MCP 工具接入 |
+| [@earendil-works/pi-coding-agent](https://github.com/earendil-works/pi) | 1.3.0 | MIT | 智能体运行时（只经 `packages/server/src/pi-adapter` 使用） |
+| [@earendil-works/pi-ai](https://github.com/earendil-works/pi) | 1.3.0 | MIT | 模型服务接入 |
+| [@earendil-works/pi-mcp](https://github.com/earendil-works/pi) | 1.3.0 | MIT | MCP 工具接入 |
 | [Node.js](https://nodejs.org/) | 22.23.3 | MIT | 安装包内置运行时 |
 | [typebox](https://github.com/sinclairzx81/typebox) | 1.3.x | MIT | 工具参数模式 |
 | [models.dev](https://github.com/sst/models.dev) 数据 | 快照 2026-10-14，运行时每周刷新 | MIT（Copyright (c) 2025 models.dev） | 模型参数库：上下文 / 最大输出 / 识图 / 推理 / 工具调用 / 价格（`packages/server/model-db.json`，由 `scripts/gen-model-db.mjs` 精简生成） |
