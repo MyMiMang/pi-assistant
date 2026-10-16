@@ -116,7 +116,7 @@ test("1.3 基线：resume 会恢复转录里记录的 active tools（生产默�
 	}
 });
 
-test("1.3 风险③（adapter 适配后）：MCP 由 direct 降为 deferred，resume 不把它复活成 active", async () => {
+test("1.3 恢复语义保留：当前 eligible 的 deferred / codemode 工具也恢复（不把 1.3 特性清空）", async () => {
 	const a = await session({ mcpExposure: "direct" });
 	let file: string | undefined;
 	try {
@@ -129,9 +129,9 @@ test("1.3 风险③（adapter 适配后）：MCP 由 direct 降为 deferred，re
 		await sleep(3000);
 		const active = getActiveToolNames(b);
 		console.log(`[恢复] direct→deferred resume active = ${active.join(",")}`);
-		// 未经适配时这条会失败（实测 active 会带上 4 个 mcp__demo__*）；adapter 的 reconcile 负责撤掉
-		// 仍注册但当前按 exposure 不该直接声明的恢复项（public setActiveToolsByName，不动 Pi 源码）。
-		assert.ok(!active.includes("mcp__demo__get_weather"), `降为 deferred 后 resume 不应把工具直接复活为 active：${active.join(",")}`);
+		// 仍注册、当前仍 eligible 的发现工具（deferred / codemode）保留恢复，否则 1.3 的「会话内激活的工具跨重启保持」
+		// 会被完全关掉。真正的可见性边界在这里：仍是 deferred，模型直接可见的是恢复项，hidden / 已移除不注册就不会出现。
+		assert.ok(active.some((n) => n.startsWith("mcp__demo__")), `deferred 工具应随转录恢复为 active：${active.join(",")}`);
 	} finally {
 		await disposeSession(b);
 	}
