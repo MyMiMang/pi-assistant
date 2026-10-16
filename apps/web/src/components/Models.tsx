@@ -413,8 +413,14 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 		onSaved?.();
 	};
 	const saveThinking = async (l: string) => {
+		const prev = thinking;
 		setThinking(l);
-		await api("/api/models/default", { method: "PUT", json: { thinking: l } }).catch(() => {});
+		try {
+			await api("/api/models/default", { method: "PUT", json: { thinking: l } });
+		} catch {
+			// 保存失败：回滚到生效值，不留下假值（界面不假装已经改了）
+			setThinking(prev);
+		}
 	};
 	const text = `${entry ? modelLabel(entry) : cur ? `${cur.provider} / ${cur.id}` : "选择默认模型"}${levels.length > 1 ? ` · ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}`;
 	return (

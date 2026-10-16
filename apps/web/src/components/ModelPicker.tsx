@@ -11,9 +11,13 @@ import { createPortal } from "react-dom";
 import { api } from "../api";
 import { COMPOSER_LABEL } from "../composer";
 import { dedupeGroup, frequentModels, groupModelsByProvider, pickKey, rankPicks, searchModels, type MenuPick, type MenuPicks } from "../modelMenu";
+import { THINKING_DESC, THINKING_LABEL } from "../thinking-slider";
 import { useStore } from "../store";
 import type { Provider } from "../types";
 import { cx } from "./ui";
+import { ThinkingSlider } from "./ThinkingSlider";
+
+export { THINKING_DESC, THINKING_LABEL };
 
 export { pickKey, rankPicks };
 /** 兼容旧名字：菜单选项的频次记录（定义在 ../modelMenu 的纯模块里） */
@@ -36,8 +40,6 @@ export interface ModelEntry {
 	/** 推荐（组队排序里的 ★） */
 	star?: boolean;
 }
-export const THINKING_LABEL: Record<string, string> = { off: "关闭", minimal: "极简", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最大" };
-export const THINKING_DESC: Record<string, string> = { off: "不思考，回答最快", minimal: "几乎不思考", low: "简单推理", medium: "平衡（默认）", high: "深入推理，更慢更贵", xhigh: "非常深入", max: "最大推理预算" };
 
 /** 已配置的服务的全部模型（含自定义）；每次打开菜单都会重新拉一次，新增渠道后不用刷新页面 */
 export function useConfiguredModels() {
@@ -102,17 +104,20 @@ function popoverStyle(anchor: HTMLElement, panel: HTMLElement, placement: "up" |
 }
 
 /** 按钮 + 弹层的通用状态：open、触发器 ref、弹层 ref、弹层内联定位 style。 */
-export function usePopover(placement: "up" | "down" = "down") {
+export function usePopover(placement: "up" | "down" = "down", opts?: { onEscape?: () => void }) {
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const natural = useRef(0);
+	const onEscape = useRef(opts?.onEscape);
+	onEscape.current = opts?.onEscape;
 	const [style, setStyle] = useState<CSSProperties>({ position: "fixed", top: 0, left: 0, zIndex: 70, visibility: "hidden" });
 	useEffect(() => {
 		if (!open) return;
 		// 菜单 portal 到了 body，点击判断要同时看触发器和菜单本身
 		const inside = (t: EventTarget | null) => !!ref.current?.contains(t as Node) || !!menuRef.current?.contains(t as Node);
 		const h = (e: MouseEvent) => {
+			// 点外部关闭，但不抢走被点元素的焦点（编辑不中断）；只关闭本层
 			if (!inside(e.target)) setOpen(false);
 		};
 		// 捕获阶段吃掉 Escape：菜单开着时按 Esc 只关菜单，不把底下的设置弹窗一起关掉
@@ -120,6 +125,7 @@ export function usePopover(placement: "up" | "down" = "down") {
 			if (e.key !== "Escape") return;
 			e.stopPropagation();
 			setOpen(false);
+			onEscape.current?.();
 		};
 		document.addEventListener("mousedown", h);
 		document.addEventListener("keydown", k, true);
@@ -166,15 +172,20 @@ export interface ThinkingChoice {
 }
 
 /**
- * 独立的「思考强度」小按钮（复用同一套档位文案与样式）。
- * current = null 表示跟随默认；传 followLabel 时菜单里多一个「跟随…」选项（子代理用）。
+ * 独立的「思考强度」按钮（复用同一套档位文案与样式）。
+ * current = null 表示跟随默认；传 followLabel 时弹层里多一个「跟随…」的 reset 动作（子代理用）。
+ * 弹层内容是离散滑块（`ThinkingSlider`），保留原 `testid` 与 `onPick(level | null)` 口径。
+ * effective：跟随 / 降级时实际会运行的档位（子代理传 resolvedThinking）；modelName：弹层右上角短模型名。
  */
-export function ThinkingButton({ testid, levels, current, followLabel, onPick, text, title, ariaLabel, buttonClass, placement = "down" }: { testid: string; levels: string[]; current: string | null; followLabel?: string; onPick: (level: string | null) => void; text?: string; title?: string; ariaLabel?: string; buttonClass?: string; placement?: "up" | "down" }) {
-	const { open, setOpen, ref, menuRef, style } = usePopover(placement);
+export function ThinkingButton({ testid, levels, current, effective, followLabel, onPick, text, title, ariaLabel, buttonClass, placement = "down", modelName }: { testid: string; levels: string[]; current: string | null; effective?: string | null; followLabel?: string; onPick: (level: string | null) => void; text?: string; title?: string; ariaLabel?: string; buttonClass?: string; placement?: "up" | "down"; modelName?: string }) {
+	const btnRef = useRef<HTMLButtonElement>(null);
+	const openedByKeyboard = useRef(false);
+	// Esc 关闭后焦点回到芯片；点外部关闭不抢焦点
+	const { open, setOpen, ref, menuRef, style } = usePopover(placement, { onEscape: () => btnRef.current?.focus() });
 	const label = text ?? (current ? (THINKING_LABEL[current] ?? current) : (followLabel ?? "思考"));
 	return (
 		<div className="relative min-w-0" ref={ref}>
-			<button className={cx("pa-chip sm !shrink min-w-0", buttonClass)} onClick={() => setOpen(!open)} title={title ?? "思考强度"} aria-label={ariaLabel ?? `思考强度：${label}`} data-testid={testid}>
+			<button ref={btnRef} className={cx("pa-chip sm !shrink min-w-0", buttonClass)} onClick={(e) => { openedByKeyboard.current = e.detail === 0; setOpen(!open); }} title={title ?? "思考强度"} aria-label={ariaLabel ?? `思考强度：${label}`} data-testid={testid}>
 				<Brain className="pa-ic" />
 				<span className="truncate">
 					<span className="max-sm:hidden">思考·</span>
@@ -184,24 +195,10 @@ export function ThinkingButton({ testid, levels, current, followLabel, onPick, t
 			</button>
 			{open &&
 				createPortal(
-					<div ref={menuRef} style={style} className="pa-pop flex w-56 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${testid}-menu`}>
-						{followLabel && (
-						<button className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", current === null && "bg-hover")} onClick={() => (setOpen(false), onPick(null))} data-testid={`${testid}-follow`}>
-							<span className="flex-1 text-sm">{followLabel}</span>
-							{current === null && <Check size={14} className="text-accent" />}
-						</button>
-					)}
-						{/* 档位多 / 小屏（≤640 走底部弹窗）时自身可滚动，底部的 xhigh / max 不会被裁掉 */}
+					<div ref={menuRef} style={style} className="pa-pop pa-think-pop flex flex-col rounded-xl border border-line bg-card p-3 shadow-lg" data-testid={`${testid}-menu`}>
+						{/* 小屏（≤640 走底部弹窗）时自身可滚动，弹层不被裁 */}
 						<div className="min-h-0 flex-1 overflow-y-auto">
-							{levels.map((l) => (
-								<button key={l} className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", current === l && "bg-hover")} onClick={() => (setOpen(false), onPick(l))} data-testid={`${testid}-${l}`}>
-									<span className="flex-1">
-										<span className="text-sm">{THINKING_LABEL[l] ?? l}</span>
-										<span className="block text-xs text-mut">{THINKING_DESC[l] ?? ""}</span>
-									</span>
-									{current === l && <Check size={14} className="text-accent" />}
-								</button>
-							))}
+							<ThinkingSlider testid={testid} levels={levels} current={current} effective={effective} followLabel={followLabel} modelName={modelName} autoFocus={openedByKeyboard.current} onPick={(l) => { setOpen(false); onPick(l); }} />
 						</div>
 					</div>,
 					document.body,
@@ -270,13 +267,8 @@ export function ModelMenu({ id, models, providers, value, thinking, picks, onPic
 					<div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-mut uppercase">
 						<Brain size={12} /> 思考强度
 					</div>
-					<div className="flex flex-wrap gap-1">
-						{thinking.levels.map((l) => (
-							<button key={l} title={THINKING_DESC[l] ?? ""} onClick={() => thinking.onPick(l)} className={cx("rounded-full border px-2 py-0.5 text-[11px]", l === thinking.current ? "border-accent bg-accent-soft text-accent" : "border-line text-mut hover:text-fg")} data-testid={`thinking-${l}`}>
-								{THINKING_LABEL[l] ?? l}
-							</button>
-						))}
-					</div>
+					{/* 与输入栏 / 子代理同一个离散滑块；testid 仍为 thinking-<档位>，提交后按原行为关菜单 */}
+					<ThinkingSlider testid="thinking" showHead={false} levels={thinking.levels} current={thinking.current} onPick={(l) => { if (l) thinking.onPick(l); }} />
 				</div>
 			)}
 			<div className="min-h-0 flex-1 overflow-y-auto">

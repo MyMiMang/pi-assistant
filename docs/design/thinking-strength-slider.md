@@ -1,9 +1,11 @@
 # 思考强度滑块 · 交互设计稿
 
-> **状态：设计稿待确认，生产仍是原来的选择器（未合入、未替换）。** 本文件是从工作区设计稿复制的**受控正式文档**；配套单文件原型
+> **状态：生产实现已落地（beta.29 候选，未打包 / 未 push / 未 tag），浏览器 e2e / build / 真机待测试槽。** 本文件是交互设计稿（受控正式文档），配套单文件原型
 > `docs/design/thinking-strength-slider-prototype.html`（浏览器直接打开，纯模拟数据，不调用模型、不写设置）。
-> 设计稿**尚未确认**、生产未改；**不要**把它合进 `apps/web`、也不要自行发明档位。落地时按 [§7 实施方向](#7-实施方向复用不新造状态)。
-> 相关的主题 / DIY 约束见 [appearance-themes.md](appearance-themes.md) 与 [ai-theme-diy.md](ai-theme-diy.md)。
+> 实现见工作树 `thinking-slider-implementation`：`apps/web/src/thinking-slider.ts`（纯逻辑）+ `apps/web/src/components/ThinkingSlider.tsx`（公共组件）+
+> `apps/web/src/components/ModelPicker.tsx`（`ThinkingButton` / 模型菜单接入）+ `apps/web/src/themes/app.css`（`pa-think-*` 样式与主题 token）+
+> 测试 `e2e/thinking-slider-frontend.test.mjs`。落地遵循 [§7 实施方向](#7-实施方向复用不新造状态)，不新造状态、不改服务端 clamp。
+> 主题 / DIY 动效 token 见 `progress-snapshots/slider-token-contract.md`（与 AI DIY 的 `--mo-*` 契约对齐）。
 
 > 交互设计稿，**不调用模型、不写入设置、不改生产控件**。配套文件：
 > `design/thinking-strength-slider-prototype.html`（单文件自包含，浏览器直接打开）。
@@ -98,8 +100,9 @@ Pi 的思考档位是**枚举**（`ModelThinkingLevel = off | minimal | low | me
 - **不新增一套状态**：仍然是「助理的 `thinking`」「子代理覆盖 `thinking | null`」「助理级 `follow | fixed`」三处，滑块只是换一种编辑方式。
 - 文案复用 `THINKING_LABEL`；`THINKING_DESC` 里「最快 / 默认 / 更贵」这类绝对说法**不搬进设计**，统一成「较高强度通常更慢，并可能增加用量；具体取决于模型」。
 
-## 8. 本次未实现（明确边界）
+## 8. 落地状态与边界
 
-- **未改任何生产代码 / SDK / API / 现有模型选择控件**；设计稿与原型已复制进 `docs/design/`（受控文档，随仓库提交），但**未接入生产**。
-- 未做真实持久化、未接后端、未调用任何模型；原型 state 只在内存里。
-- 不决定是否自动替换生产控件——**设计稿待确认，生产仍用原来的选择器**。
+- **已实现（beta.29 候选，未打包）**：`ThinkingButton` 弹层与模型菜单里的思考强度都换成离散滑块；主会话 / 群聊 / 子代理 / 设置复用同一组件；档位来自 `getSupportedThinkingLevels` / `thinkingLevelsUnion`，收敛仍由服务端 `clampThinkingLevel`。
+- 交互：拖动只预览、`pointerup` 提交；`pointercancel` / 窗口失焦 / Esc 关闭**不提交**半途预览；键盘 Arrow / Home / End / PageUp / PageDown 逐档提交；`role="slider"` + `aria-valuetext`；44px 命中；`--mo-scale` 缩放时长。
+- 主题：颜色 / 圆角 / 字体 / 动效只走 token（`--pa-*` / `--mo-*`），组件不写死颜色；`--mo-style=steps` 由组件读主题声明值映射成真实 data 属性。
+- **未验**：浏览器 e2e（`e2e/subagent-thinking-levels.mjs`、`model-ui.mjs`、`run.mjs` 相关步骤）、`vite build`、真机与真模型。**未做**：真实持久化 / 后端改动（沿用现有写入），未改 SDK / 服务端 clamp。

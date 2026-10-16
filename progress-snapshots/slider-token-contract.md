@@ -1,0 +1,60 @@
+# 思考强度滑块 · 组件消费 token 清单（已对齐 theme-DIY 契约）
+
+> 状态：**beta.29 候选，未打包 / 未 push / 未 tag**。工作树 `thinking-slider-implementation`
+> （基 `release-candidate-validation` `11ce8f2`）。实现：`apps/web/src/components/ThinkingSlider.tsx`
+> + `apps/web/src/themes/app.css` 的「思考强度离散滑块」；纯逻辑 / 测试：
+> `apps/web/src/thinking-slider.ts` / `e2e/thinking-slider-frontend.test.mjs`。
+>
+> **已对齐** [theme-motion-token-contract.md](../../theme-diy-motion-implementation/progress-snapshots/theme-motion-token-contract.md)
+> （另一工作树 `theme-diy-motion-implementation` 的接口契约，待主合并后在本树可见）。
+> 本文件只列**滑块实际 consume 的 token**，以及 `--mo-style` 的落地方式；不再另立一套。
+
+## 1. 组件实际消费的 token（不是只输出）
+
+| token | 来源 | 组件里的 fallback | 用途 |
+| --- | --- | --- | --- |
+| `--pa-dur-fast` / `--pa-dur` / `--pa-dur-slow` | 主题 / DIY motion | base.css 默认 | 手柄位移、跟随按钮、填充过渡等常规切换 |
+| `--pa-ease-out` | 主题 / DIY motion | `cubic-bezier(.2,.8,.2,1)` | 通用缓出 |
+| `--mo-ease` | DIY motion（= easeOut 别名） | `var(--pa-ease-out)` | 预览动效缓动 |
+| `--mo-scale` | DIY motion（`0.5..2`，数字） | `1` | 时长倍率：预览时长 = 档位基础时长 × `--mo-scale`；手柄位移时长 = `--pa-dur` × `--mo-scale` |
+| `--mo-glow` | DIY motion（`none/subtle/normal/strong` → `0/.5/1/1.6`） | `1` | 手柄 / 星点光晕强度 |
+| `--mo-style` | DIY motion（`smooth` / `steps`） | `smooth` | 见 §3：组件读成真实 data 属性，不直接当缓动字符串 |
+| `--acc` / `--acc2` / `--acc-soft` / `--card` / `--line` / `--line-strong` / `--fg` / `--mut2` / `--r` / `--r-sm` / `--font` / `--mono` | 主题 / DIY | — | 配色 / 形状 / 字体 |
+
+滑块专用**颜色**可选覆盖（都有 fallback，不配也正常）：`--pa-think-rail`、`--pa-think-fill`、`--pa-think-tick`、`--pa-think-tick-on`、`--pa-think-handle-ring`、`--pa-think-handle-bg`、`--pa-think-star`、`--pa-think-star-2`。**组件不写死任何颜色**（有测试断言守护）。
+
+`--pa-think-dur` 是组件按档位**内联**写入的基础时长（0/320/400/480/560/620/700），不是主题 token；主题只通过 `--mo-scale` 缩放它。
+
+## 2. 内置主题的表现差异（仅表现层，`app.css` 里 `[data-skin=…]`）
+
+| 主题 | 覆盖 |
+| --- | --- |
+| glass | `--mo-glow: 1.6`、弹层毛玻璃 |
+| warm | `--mo-glow: .6` |
+| noir | `--mo-glow: 1.4`、描边 1px、弹层线条阴影 |
+| pixel | `--mo-glow: .4`、`--mo-style: steps`、方角手柄 / 刻度 / 星点、手柄瞬时到位、预览 `steps(3,end)` |
+| custom-*（DIY） | 不覆盖；直接用 DIY 引擎输出的 `--mo-*` + 颜色 token |
+
+## 3. `--mo-style: steps` 的落地（关键）
+
+CSS 里 `--mo-style` 是字符串（`smooth` / `steps`），**不能**直接放进 `animation-timing-function`（会失效）。组件做法：
+
+1. 挂载时 `getComputedStyle(root).getPropertyValue("--mo-style")` 读**主题声明值**（不是读硬编码调色板）；
+2. 映射成真实属性 `data-pa-mo-style="steps"`（smooth 时不加或为 `smooth`，CSS 只针对 steps 分支）；
+3. CSS `[data-pa-mo-style=steps]`：手柄 / 填充 `transition: none`（离散瞬移）、星点 / 刻度方角、预览 `steps(3, end)`；
+4. 内置 pixel 也在 `[data-skin=pixel] .pa-think` 声明 `--mo-style: steps`，走同一条 data 属性分支（另有 `[data-skin=pixel]` 直接覆盖兜底，即使 JS 未跑到也成立）。
+
+即：DIY 主题 `motion.style = steps` 时，读数 → data 属性 → 真实 steps 生效，**不依赖 `@container style()` 的浏览器支持，也不注入任意 CSS**。
+
+## 4. reduced-motion 双保险
+
+- 引擎 / base.css 在 reduce 时把 `--pa-dur-*` 置 `0s`、`--mo-scale` 置 `0`（安全网）；
+- 组件同时 `matchMedia("(prefers-reduced-motion: reduce)")` 自查：reduce 时**不播预览动效、不启动计时器**；
+- CSS `@media (prefers-reduced-motion: reduce)` 再强制 `animation: none` / `transition: none`、去光晕；
+- `off` 档基础时长 0、星点 0，任何情况下都不播。
+
+## 5. 边界（不变）
+
+- 固定语义（七档、键盘、snap、跟随 / 继承、reduce）**不可被主题覆盖**；主题只改表现层。
+- 不为 7 档各写一套 token；密度差异由组件按档位 + `--mo-scale` 推导，不进 schema。
+- 不通过非法 custom CSS / JS 绕过 allowlist；组件只读主题声明 token。
