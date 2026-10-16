@@ -60,7 +60,7 @@ export function installPercent(received: number, total: number | null | undefine
 /** 内存「配置建议」文案：明确标注估算、未实测，不把某档位写成硬门槛。 */
 export function memoryAdvice(bytes: number, note: string): string {
 	if (!bytes) return note || "未给出内存建议";
-	return `建议内存约 ${formatBytes(bytes)}${note ? `（${note}）` : ""} · 估算，未实测`;
+	return `运行内存约 ${formatBytes(bytes)}${note ? `（${note}）` : ""} · 估算，未实测`;
 }
 
 // ---------------------------------------------------------------- 统一下载注册表进度合并

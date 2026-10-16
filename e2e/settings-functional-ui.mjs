@@ -281,13 +281,15 @@ try {
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
 	await page.getByTestId("voice-tab-local").click();
+	check("旧版导入默认收起，不重复占据主流程", !(await page.getByTestId("local-sensevoice-card").isVisible()));
+	await page.getByTestId("voice-local-legacy-label").click();
 	await page.getByTestId("local-sensevoice-card").waitFor();
 	const licText = (await page.getByTestId("sensevoice-license").textContent()) ?? "";
 	check("许可摘要常驻一句「许可待确认，暂不提供下载」", licText.includes("许可待确认，暂不提供下载"), licText);
 	check("许可未确认时不显示永远不能勾选的同意复选框", (await page.getByTestId("sensevoice-accept").count()) === 0);
 	check("下载按钮禁用（短按钮 + title 说明原因）", (await page.getByTestId("sensevoice-install").isDisabled()) && !!(await page.getByTestId("sensevoice-install").getAttribute("title")));
 	check("导入入口默认收起（不占屏）", (await page.getByTestId("sensevoice-import").count()) === 0);
-	check("本地选择按钮「设为语音来源」可见", await page.getByTestId("voice-local-use").isVisible());
+	check("旧版已导入权重仍可设为来源", await page.getByTestId("voice-local-use").isVisible());
 	check("默认不出现长规格 / 详情", (await page.getByTestId("sensevoice-details").count()) === 0);
 	const cardIdle = (await page.getByTestId("local-sensevoice-card").textContent()) ?? "";
 	check("「未安装」只出现一次（不重复三处）", (cardIdle.match(/未安装/g) ?? []).length === 1, cardIdle);

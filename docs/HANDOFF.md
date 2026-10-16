@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> beta.26 语音 UI 主审补验（未发布）：旧版 SenseVoice 导入收成按需展开（当前正在使用旧模型时展开），限定旧按钮只操作 SenseVoice，避免新模型主流程出现第二套来源按钮；模型内部 ID / 语言代码 / 冗长依赖说明进详情，内存明确为运行估算而非整机最低门槛。主会话独立通过前端逻辑 6/6、多模型 UI 全场景、设置功能回归、两端类型检查与 Web 构建。真实多模型安装具体依赖仍在后续修验，不能由这些 UI 结果宣称已真实转写。
+
 > 当前公开版本 **v0.1.0-beta.25**（Latest，仅 Apple 芯片 macOS arm64；上一版 beta.24）。tag 指向 `8afc3aa5d4383e37e14050617b6e1ede67b8f8c9`；[release run 38857423620](https://github.com/MyMiMang/pi-assistant/actions/runs/38857423620) 的 arm64 build、内置服务冒烟、Mac 安装启动冒烟、publish 均成功，2026-10-16 05:57:00 UTC 公开。主会话已独立核验非草稿 / 非 prerelease、四项公开资产、Latest 下载的 `latest.json` 版本 `0.1.0-beta.25`，平台仅 `darwin-aarch64` / `darwin-aarch64-app` 且签名非空。未在用户电脑安装或更新 App，beta.24 及已有 tag 未移动。
 >
 > 上一版 beta.24 首次提供 Pi 1.2.0、统一模型服务、技能分配、消息引用、记忆分层、语音、AI/像素主题及会话分支等，本版继续保留，见 [beta.24 发布说明](release-notes/v0.1.0-beta.24.md)。实施与验收索引见 `progress-snapshots/release-candidate-integration-final.md`、`progress-snapshots/release-prep-beta24.md`，Pi 适配见 `docs/design/pi-1.2-upgrade.md`。下文各分支的“候选 / 未发布 / 未 push”等为当时的实施快照，已随本版发布的项目以本段和发布说明为准；未验边界仍有效，CI 启动冒烟不代表真实麦克风、云模型、iPhone 或 Laya/SenseVoice 已实测。

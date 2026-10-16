@@ -84,7 +84,7 @@ export function LocalAsrModels() {
 			</div>
 			{catalog.hardware.tierNote && (
 				<div className="text-[11px] text-mut2" data-testid="local-asr-tier-note">
-					{catalog.hardware.tierNote}（配置建议，未实测）
+					配置建议，未实测。<Help className="ml-1">{catalog.hardware.tierNote}</Help>
 				</div>
 			)}
 
@@ -115,7 +115,6 @@ export function LocalAsrModels() {
 						<div className="space-y-2.5 rounded-xl border border-line bg-hover/40 p-3" data-testid="local-asr-detail" data-model-id={selected.id} data-install-state={selected.install.state} data-installed={String(selected.installed)} data-selected={String(selected.selected)}>
 							<div className="flex flex-wrap items-center gap-2 text-xs">
 								<span className="text-sm font-medium">{selected.name}</span>
-								{selected.nameEn && <span className="text-mut2">{selected.nameEn}</span>}
 								<StatusBadge m={selected} />
 								{selected.recommended && (
 									<Badge tone="accent">
@@ -139,7 +138,6 @@ export function LocalAsrModels() {
 										{c}
 									</span>
 								))}
-								{selected.languages.length > 0 && <span className="text-mut2">{selected.languages.join(" / ")}</span>}
 							</div>
 
 							{selected.note && <div className="text-[11px] text-mut">{selected.note}</div>}
@@ -148,8 +146,8 @@ export function LocalAsrModels() {
 							<div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-mut" data-testid="local-asr-sizes">
 								<span data-testid="local-asr-weights">权重 {formatBytes(selected.weightsBytes)}</span>
 								{selected.depsBytes != null && <span>运行环境另计 {formatBytes(selected.depsBytes)}</span>}
-								{selected.depsBytes == null && selected.depsNote && <span>{selected.depsNote}</span>}
-								<span data-testid="local-asr-memory">{memoryAdvice(selected.suggestedMemoryBytes, selected.memoryNote)}</span>
+								{selected.depsBytes == null && selected.depsNote && <span>另需运行环境</span>}
+								<span data-testid="local-asr-memory">{memoryAdvice(selected.suggestedMemoryBytes, "")}<Help className="ml-1">{selected.memoryNote}</Help></span>
 							</div>
 
 							{license && (
@@ -217,6 +215,8 @@ export function LocalAsrModels() {
 								</button>
 								{showDetails && (
 									<div className="mt-1 space-y-1.5 text-mut2" data-testid="local-asr-details">
+										{selected.nameEn && <div>模型：{selected.nameEn}</div>}
+										{selected.languages.length > 0 && <div>语言：{selected.languages.join(" / ")}</div>}
 										{catalog.runtime.version && (
 											<div data-testid="local-asr-engine">
 												共享运行环境：{catalog.runtime.engine} {catalog.runtime.version}

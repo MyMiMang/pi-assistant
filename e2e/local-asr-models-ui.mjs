@@ -246,6 +246,8 @@ try {
 	await page.getByTestId("voice-tab-local").click();
 	await page.getByTestId("local-asr-models").waitFor();
 	check("本地模型区已渲染", await page.getByTestId("local-asr-models").isVisible());
+	check("旧版 SenseVoice 导入默认收起，主流程没有第二套来源按钮", !(await page.getByTestId("local-sensevoice-card").isVisible()) && !(await page.getByTestId("voice-local-use").isVisible()));
+	check("模型内部 ID 收进详情，不占主卡", !(await page.getByTestId("local-asr-detail").innerText()).includes("whisper-small-int8"));
 	check("列出 5 个服务端模型（非前端写死）", (await page.getByTestId("local-asr-models").getAttribute("data-models")) === "5");
 	check("硬件档位可见 + 标「估算，未实测」", ((await page.getByTestId("local-asr-tier-note").textContent()) ?? "").includes("未实测"));
 	check("默认选中推荐项（whisper-small-int8）", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === "whisper-small-int8");
