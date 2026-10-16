@@ -3,7 +3,7 @@
  * 空闲自动关机、镜像加速、下载进度；关掉后可关机或删除虚拟机和镜像释放空间。
  * 共用电脑（§15.4）：默认所有助理共用一台；列出每个助理用哪台电脑，可以单独开 / 关、把单独电脑合并进共用电脑。
  */
-import { Loader2, Power, Trash2 } from "lucide-react";
+import { Loader2, Power, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
@@ -40,10 +40,30 @@ const GB = (n: number) => `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1).replace(/\.0$/
 
 export function useDesktopGlobal() {
 	const [g, setG] = useState<DesktopGlobal | null>(null);
+	const [loadErr, setLoadErr] = useState("");
+	const [loading, setLoading] = useState(true);
 	const ver = useStore((s) => s.desktopVersion);
-	const load = () => api<DesktopGlobal>("/api/desktop").then(setG).catch(() => {});
+	// 只让最后一次请求落地：旧请求迟到 / 组件卸载后不再覆盖当前数据
+	const seq = useRef(0);
+	const load = async () => {
+		const my = ++seq.current;
+		try {
+			const r = await api<DesktopGlobal>("/api/desktop");
+			if (my !== seq.current) return;
+			setG(r);
+			setLoadErr("");
+		} catch (e) {
+			if (my !== seq.current) return;
+			setLoadErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			if (my === seq.current) setLoading(false);
+		}
+	};
 	useEffect(() => {
 		void load();
+		return () => {
+			seq.current++;
+		};
 	}, [ver]);
 	// 下载中每秒刷新进度
 	useEffect(() => {
@@ -51,7 +71,7 @@ export function useDesktopGlobal() {
 		const i = setInterval(() => void load(), 1000);
 		return () => clearInterval(i);
 	}, [g?.install.phase]);
-	return { g, setG, load };
+	return { g, setG, load, loadErr, loading };
 }
 
 /** 开关旁的说明：预计下载量 / 磁盘 / 内存（向导和设置共用） */
@@ -64,7 +84,7 @@ export function DesktopCost({ image }: { image?: DesktopGlobal["image"] }) {
 }
 
 export function DesktopSettings() {
-	const { g, setG } = useDesktopGlobal();
+	const { g, setG, load, loadErr, loading } = useDesktopGlobal();
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState("");
 	const [mirror, setMirror] = useState<string | null>(null);
@@ -73,7 +93,17 @@ export function DesktopSettings() {
 	const [wslMsg, setWslMsg] = useState("");
 	const [confirmDlg, askConfirm] = useConfirm();
 	const purgeRef = useRef(false);
-	if (!g) return null;
+	if (!g) {
+		if (loading) return <div className="text-sm text-zinc-500" data-testid="desktop-loading">{t("正在载入…")}</div>;
+		return (
+			<div className="space-y-2 text-sm" data-testid="desktop-load-error">
+				<div className="text-red-600">{t("载入失败：")}{loadErr || t("无法连接本机服务")}</div>
+				<Button size="sm" variant="outline" onClick={() => void load()} data-testid="desktop-retry">
+					<RefreshCw size={13} /> {t("重试")}
+				</Button>
+			</div>
+		);
+	}
 	/** Windows：一键安装 WSL（服务端用 UAC 提权执行 wsl --install --no-distribution） */
 	const installWsl = async () => {
 		setBusy("wsl");
@@ -130,6 +160,7 @@ export function DesktopSettings() {
 	return (
 		<div className="space-y-6" data-testid="desktop-settings">
 			{confirmDlg}
+			{loadErr && <div className="text-xs text-amber-600" data-testid="desktop-refresh-error">{t("刷新失败：{e}（下面显示的是上次的数据）", { e: loadErr })}</div>}
 			<section className="space-y-2">
 				<div className="mb-3">
 					<div className="font-semibold">{t("给助理安装电脑")}</div>
