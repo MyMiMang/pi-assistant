@@ -143,6 +143,25 @@ test("本地服务：来源可靠区分，已安装停止后卡片不消失（�
 	assert.equal(sm.confirmed, true, "本地服务的能力是已确认的");
 });
 
+test("自动识别的 classifier：以 type=classifier 出现（标 discovered），只标能力未注册的标未确认", () => {
+	const input = base();
+	const relay = input.custom[0];
+	relay.discoveredClassifiers = [{ protocol: "typesafe-system-one", modelId: "jev-auto" }];
+	relay.models.push({ id: "jev-auto" }, { id: "maybe-cls", capabilities: ["chat", "classifier"] });
+	const reg = buildRegistry(input);
+	const auto = findRegistryModel(reg, "custom-relay", "jev-auto", "classifier")!;
+	assert.equal(auto.discovered, true, "自动识别条目标 discovered");
+	assert.equal(auto.confirmed, true);
+	// 只在能力里标了 classifier、但没有真正注册进 Pi → 标未确认，不假装可调用
+	const maybe = findRegistryModel(reg, "custom-relay", "maybe-cls", "chat")!;
+	assert.ok(maybe.capabilities.includes("classifier"));
+	assert.ok(maybe.inferred.includes("classifier"));
+	assert.equal(maybe.confirmed, false);
+	// 真的注册了的模型，同 id 的 chat 行不错误标未确认
+	const registeredChat = reg.find((p) => p.id === "custom-relay")!.models.find((m) => m.id === "jev-auto" && m.type === "chat")!;
+	assert.ok(!registeredChat.inferred.includes("classifier"));
+});
+
 test("按能力筛选 + 同 id 同 type 去重（自定义覆盖内置）", () => {
 	const input = base();
 	input.chatModels.push({ provider: "custom-relay", id: "relay-chat", name: "旧名", reasoning: false, thinking: ["off"], api: "openai-completions", input: ["text"], contextWindow: 1, maxTokens: 1 });

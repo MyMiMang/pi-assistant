@@ -53,6 +53,19 @@
 
 硬约束：不按名字含 "Jev" 判协议；不做隐式付费 probe（`GET /models` 免费目录除外）；真实调用只发生在显式「测试连接 / 实际操作测试」。
 
+### 4.1 快速操作（classifier）自动识别（2026-10-22 用户纠正后）
+
+用户只需在「模型服务」里配好 Jev（官方登录或自定义中转地址 + Key），**无需**再手动声明分类器；快速操作模型列表自动出现它。
+
+可靠来源（任一即可，均不按名字猜）：
+1. 对端 `GET {base}/models` 明确给 `type/model_type/kind = classifier`，或 `api/protocol` 是我们的公开 classifier 协议，或 `capabilities` 含 classifier（`detectClassifierMetadata`）；
+2. 模型 id 与 Pi **官方目录**里 canonical classifier id **完全相同**（`jev-latest` / `~typesafe/jev-latest` / `@cf/cloudflare/clef` …），协议一并取自官方目录（`canonicalClassifierProtocols`，同名歧义丢弃）；
+3. 用户在「能力」里手动标 classifier。
+
+fail-closed：协议无法确定、或官方目录里的协议本层无公开实现（如 `openai-decisions`）→ **不注册**，界面标「未确认」（能力 chip 带 `?`），快速操作下拉不列出；不向未知端点乱发 `/systemone`，不伪造可调用。用户显式改回 chat（capabilities 非空且不含 classifier）时尊重纠正，不做 canonical 自动识别。
+
+存储与生命周期：`CustomProviderMeta.discoveredClassifiers`（只存公开元数据，含协议 + 模型 id）；与用户 `classifiers` 合并后注册（`effectiveClassifiers`）。保存 / 启动 `reapplyClassifiers` / 编辑 / 删除都按此同步；鉴权始终由 Pi 按同一 provider 在请求时解析，**不新增第二份 Key、不造第二个 provider 对象**。每台电脑的 `fastComputer:<scope>` 引用仍按 scope 独立。
+
 ## 5. Legacy 迁移（无损、可回退）
 
 迁移是**加法**：旧 settings key 一律保留（`customProviders` / `customHeaders:<id>` / `imageProviders` / `imageKey:<id>` / `defaultImageModel` / `visionModel` / `fastComputer` / `subagentModel:<agentId>` / `defaultModel` / `defaultThinking`）。统一 registry 是派生视图，不删、不重置。只经公开读取器（settings + 既有 `CustomProviders.readKey`）取数；**不读 `secrets.ts` / SDK 钥匙串实现 / 真实用户 key 明文**。

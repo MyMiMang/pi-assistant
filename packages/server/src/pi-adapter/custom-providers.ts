@@ -38,6 +38,10 @@ export interface CustomModel {
 	 * 不写就按 input 元数据推导。只存在我们的元数据里，不写进 Pi 的 models.json。
 	 */
 	capabilities?: ModelCapability[];
+	/** 对端 `/models` 明确标注的操作类型（目前只有 classifier）。只存在元数据里，不写进 models.json。 */
+	detectedType?: "classifier";
+	/** 该模型作为 classifier 的协议：来自对端元数据（api / protocol 字段）或 Pi 官方目录同 id 匹配。 */
+	classifierProtocol?: string;
 }
 export interface FetchedModel {
 	id: string;
@@ -45,6 +49,10 @@ export interface FetchedModel {
 	contextWindow: number;
 	maxTokens: number;
 	limitsSource: LimitsSource;
+	/** 对端 `/models` 明确标注为 classifier（可靠，不靠名字猜） */
+	detectedType?: "classifier";
+	/** 对端 `/models` 给出的 classifier 协议（可靠） */
+	classifierProtocol?: string;
 }
 export interface CustomProviderMeta {
 	id: string;
@@ -56,6 +64,8 @@ export interface CustomProviderMeta {
 	models: CustomModel[];
 	/** 该服务公开声明的 classifier（协议 + 模型 id）；只存元数据，凭据仍走 Pi 原 provider 的登录保存 */
 	classifiers?: ClassifierDeclaration[];
+	/** 保存 / 启动时按可靠来源自动识别的 classifier（对端元数据或 Pi 官方目录同 id）；与 classifiers 合并后注册 */
+	discoveredClassifiers?: ClassifierDeclaration[];
 	createdAt: number;
 }
 export interface CustomProviderInput {
@@ -95,6 +105,26 @@ export function detectInput(raw: Record<string, unknown>): ("text" | "image")[] 
 	const mods = (raw.modalities as { input?: unknown } | undefined)?.input ?? (raw.architecture as { input_modalities?: unknown } | undefined)?.input_modalities;
 	if (Array.isArray(mods) && mods.length) return mods.includes("image") ? ["text", "image"] : ["text"];
 	return undefined;
+}
+
+/** 用户显式声明 + 自动识别的有效 classifier（同一模型 id 以显式声明为准）。 */
+export function effectiveClassifiers(meta: Pick<CustomProviderMeta, "classifiers" | "discoveredClassifiers">): ClassifierDeclaration[] {
+	const declared = normalizeClassifiers(meta.classifiers);
+	const declaredIds = new Set(declared.map((c) => c.modelId));
+	return [...declared, ...normalizeClassifiers(meta.discoveredClassifiers).filter((c) => !declaredIds.has(c.modelId))];
+}
+
+/** 从服务端 `/models` 单条元数据里读可靠的 classifier 信息；读不到返回 {}（绝不按名字猜）。 */
+export function detectClassifierMetadata(raw: Record<string, unknown>): { detectedType?: "classifier"; classifierProtocol?: string } {
+	let detectedType: "classifier" | undefined;
+	for (const k of ["type", "model_type", "modelType", "kind"] as const) if (raw[k] === "classifier") detectedType = "classifier";
+	const proto = raw.api ?? raw.protocol ?? raw.protocol_type ?? raw.classifier_protocol;
+	const classifierProtocol = isClassifierProtocol(proto) ? proto : undefined;
+	if (classifierProtocol) detectedType = "classifier";
+	const caps = raw.capabilities;
+	if (Array.isArray(caps) && caps.includes("classifier")) detectedType = "classifier";
+	else if (caps && typeof caps === "object" && ((caps as { type?: unknown }).type === "classifier" || (caps as { classifier?: unknown }).classifier === true)) detectedType = "classifier";
+	return { ...(detectedType ? { detectedType } : {}), ...(classifierProtocol ? { classifierProtocol } : {}) };
 }
 
 export function normalizeClassifiers(list: ClassifierDeclaration[] | undefined): ClassifierDeclaration[] {
@@ -167,8 +197,58 @@ export class CustomProviders {
 		if (!meta) throw new Error("自定义服务不存在");
 		if (!meta.models.some((m) => m.id === modelId)) throw new Error("模型不存在");
 		const next: CustomProviderMeta = { ...meta, models: meta.models.map((m) => (m.id === modelId ? { ...m, capabilities } : m)) };
+		next.discoveredClassifiers = this.discoverClassifiers(next);
 		this.store.saveMeta(metas.map((m) => (m.id === id ? next : m)));
+		// 用户显式把模型标为 classifier 时，只要协议可确定就同步注册进 Pi（否则保持未确认，不伪造可调用）。
+		this.reapplyClassifiers();
 		return next;
+	}
+
+	/**
+	 * Pi 内置目录里的 classifier 模型 id → 协议（排除本项目注册的自定义 / 本地 provider，避免自污染）；
+	 * 同名模型在不同内置 provider 指向不同协议时视为歧义，丢弃（fail-closed，不猜）。
+	 */
+	canonicalClassifierProtocols(): Map<string, string> {
+		const own = new Set(this.store.loadMeta().map((m) => m.id));
+		const seen = new Map<string, string | null>();
+		for (const p of this.models.listProviders()) {
+			if (own.has(p.id) || localModelHint(p.id)) continue;
+			for (const m of this.models.listClassifierModels(p.id)) {
+				const cur = seen.get(m.id);
+				if (cur === undefined) seen.set(m.id, m.api);
+				else if (cur !== m.api) seen.set(m.id, null);
+			}
+		}
+		const out = new Map<string, string>();
+		for (const [id, proto] of seen) if (proto) out.set(id, proto);
+		return out;
+	}
+
+	/**
+	 * 按**可靠来源**自动识别一个服务的 classifier，不靠名字或付费探测：
+	 *  - 对端 `/models` 明确给出 type/api/capabilities=classifier（`detectedType` / `classifierProtocol`）；
+	 *  - 用户把模型显式标为 classifier 能力；
+	 *  - 模型 id 与 Pi 官方目录里的 canonical classifier **完全相同**（协议一并取自官方目录）。
+	 * 协议无法确定的一律不产出（宁可不注册，也不向未知端点乱发可调用请求）。
+	 */
+	discoverClassifiers(meta: Pick<CustomProviderMeta, "models" | "classifiers">): ClassifierDeclaration[] {
+		const canonical = this.canonicalClassifierProtocols();
+		const declaredIds = new Set(normalizeClassifiers(meta.classifiers).map((c) => c.modelId));
+		const out: ClassifierDeclaration[] = [];
+		for (const m of meta.models) {
+			if (declaredIds.has(m.id)) continue; // 用户显式声明优先
+			const explicitProto = isClassifierProtocol(m.classifierProtocol) ? m.classifierProtocol : undefined;
+			// 用户显式改过能力且不含 classifier（无其他可靠信号）→ 尊重用户纠正，不做 canonical 自动识别。
+			if (m.capabilities?.length && !m.capabilities.includes("classifier") && !explicitProto && m.detectedType !== "classifier") continue;
+			const canonicalProto = canonical.get(m.id);
+			const protocol = explicitProto ?? canonicalProto;
+			// 官方目录里的协议本层未必有公开实现（如 openai-decisions）：不支持就不注册，fail-closed。
+			if (!protocol || !isClassifierProtocol(protocol)) continue;
+			const explicit = m.detectedType === "classifier" || !!explicitProto || (m.capabilities ?? []).includes("classifier");
+			if (!canonicalProto && !explicit) continue;
+			out.push({ protocol, modelId: m.id, ...(m.name ? { name: m.name } : {}), ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}) });
+		}
+		return out;
 	}
 
 	/** 启动时把加密保存的请求头值注入本进程环境变量，供 models.json 插值。 */
@@ -244,6 +324,8 @@ export class CustomProviders {
 		this.store.saveHeaders(pid, headerNames.length ? headers : null);
 		headerNames.forEach((name, i) => (process.env[envName(pid, i)] = headers[name]));
 
+		const models = input.models.map((m) => this.withLimits({ ...m, id: m.id.trim() }, undefined, input.baseUrl, input.api));
+		const declared = normalizeClassifiers(input.classifiers === undefined ? existing?.classifiers : input.classifiers);
 		const meta: CustomProviderMeta = {
 			id: pid,
 			name: input.name.trim(),
@@ -251,9 +333,11 @@ export class CustomProviders {
 			baseUrl: input.baseUrl.trim().replace(/\/+$/, ""),
 			headerNames,
 			noKey: !!input.noKey,
-			models: input.models.map((m) => this.withLimits({ ...m, id: m.id.trim() }, undefined, input.baseUrl, input.api)),
+			models,
 			// 不传就保留原有 classifier（与 Key / 请求头一致的“留空不改”语义）；传 [] 清空。
-			classifiers: normalizeClassifiers(input.classifiers === undefined ? existing?.classifiers : input.classifiers),
+			classifiers: declared,
+			// 可靠来源自动识别的 classifier（对端元数据 / 官方同 id）；与 classifiers 合并后注册。
+			discoveredClassifiers: this.discoverClassifiers({ models, classifiers: declared }),
 			createdAt: existing?.createdAt ?? Date.now(),
 		};
 		// 写入 Pi 的 models.json（保留用户手写的其它 provider）
@@ -270,6 +354,9 @@ export class CustomProviders {
 		this.writeFile(cfg);
 		this.store.saveMeta([...metas.filter((m) => m.id !== pid), meta]);
 		await this.models.reloadConfig();
+		// Pi 的 refresh 与上一次注册触发的后台刷新可能竞态，刚写入的 provider 偶尔还没进目录；
+		// 登录前确认一次，避免「保存自定义服务偶发 Unknown provider」。
+		if (!this.models.listProviders().some((p) => p.id === pid)) await this.models.reloadConfig();
 		// reload 会用 models.json 重组 provider，扩展层里的 chat/classifier 要按最新元数据重建。
 		this.reapplyClassifiers();
 
@@ -308,7 +395,7 @@ export class CustomProviders {
 	reapplyClassifiers() {
 		const want = new Set<string>();
 		for (const meta of this.store.loadMeta()) {
-			const classifiers = normalizeClassifiers(meta.classifiers);
+			const classifiers = effectiveClassifiers(meta);
 			if (!classifiers.length) continue;
 			want.add(meta.id);
 			try {
@@ -434,8 +521,14 @@ export class CustomProviders {
 			const id = String(raw.id ?? raw.name ?? "").replace(/^models\//, "");
 			if (!id || seen.has(id)) continue;
 			const input = detectInput(raw);
-			const m = this.withLimits({ id, ...(typeof raw.reasoning === "boolean" ? { reasoning: raw.reasoning } : {}), ...(input ? { input } : {}) }, detectLimits(raw), base, o.api);
-			seen.set(id, { id, ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}), contextWindow: m.contextWindow!, maxTokens: m.maxTokens!, limitsSource: m.limitsSource! });
+			const cls = detectClassifierMetadata(raw);
+			const m = this.withLimits(
+				{ id, ...(typeof raw.reasoning === "boolean" ? { reasoning: raw.reasoning } : {}), ...(input ? { input } : {}), ...cls },
+				detectLimits(raw),
+				base,
+				o.api,
+			);
+			seen.set(id, { id, ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}), contextWindow: m.contextWindow!, maxTokens: m.maxTokens!, limitsSource: m.limitsSource!, ...(m.detectedType ? { detectedType: m.detectedType } : {}), ...(m.classifierProtocol ? { classifierProtocol: m.classifierProtocol } : {}) });
 		}
 		if (!seen.size) throw new Error("没有获取到模型，请手动填写");
 		return [...seen.values()].sort((a, b) => a.id.localeCompare(b.id));
@@ -449,6 +542,6 @@ function chatModelFromMeta(meta: CustomProviderMeta, m: CustomModel): Classifier
 
 /** 写进 Pi models.json 的模型条目：去掉我们自己的字段和空值 */
 function piModel(m: CustomModel) {
-	const { limitsSource: _s, inputAuto: _a, reasoningAuto: _r, thinkingLevelSource: _t, capabilities: _c, ...rest } = m;
+	const { limitsSource: _s, inputAuto: _a, reasoningAuto: _r, thinkingLevelSource: _t, capabilities: _c, detectedType: _d, classifierProtocol: _p, ...rest } = m;
 	return Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== ""));
 }

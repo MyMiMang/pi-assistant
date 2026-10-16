@@ -61,7 +61,7 @@ export function FastComputerSettingsSection({ scope }: { scope: "hostpc" | "comp
 				<Help>
 					默认关闭。开启后主模型仍负责规划、授权和异常判断；快速操作模型只从程序给出的有限候选里挑一个控件，不能自由调工具、不接管会话。选中不等于授权，执行仍走原有权限与审批。每台电脑单独设置。
 					<div className="pt-0.5">
-						只列出<b className="text-fg">已配置凭据</b>的原生 System One（Jev）分类器，有校准概率；鉴权由 Pi 按所选服务解析，不读全局环境变量 Key。
+						只列出<b className="text-fg">已配置凭据</b>的原生 System One（Jev）分类器，有校准概率；在「模型服务」里配好 Jev（含官方同名模型）会自动识别进来，鉴权由 Pi 按所选服务解析，不读全局环境变量 Key。
 					</div>
 				</Help>
 				<button type="button" className="text-xs text-mut hover:text-fg" onClick={() => void load()} data-testid={`fast-refresh-${scope}`}>
