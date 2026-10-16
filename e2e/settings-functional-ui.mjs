@@ -5,7 +5,7 @@
  * 新接口（`/api/audio/asr/source`、`/api/agents/:id/subagents/settings`）由后端 owner 实现，这里按契约用 fixture 模拟。
  *
  * 覆盖：
- *  1) 导航：16 项 / 5 个分组标题 / `?settings=model` 别名 / entry、downloads 仍可达 / 390 不横向溢出。
+ *  1) 导航：17 项 / 5 个分组标题 / `?settings=model` 别名 / entry、downloads 仍可达 / 390 不横向溢出。
  *  2) 模型页瘦身：不再有本地 Laya / SenseVoice 卡、没有子代理折叠区；ASR 只保留「声明」。
  *  3) 语音配置：云空态去模型服务 / 选云模型保存并持久化 / 保存失败回滚 / 本地许可「下载暂不可用」常驻 + 导入可用 / 无第二套 Key 输入。
  *  4) 语音入口：未配置 idle 干净；点麦克风才出现「去设置」；点它打开「语音配置」且链接真的消失；切助理清提示。
@@ -173,11 +173,11 @@ try {
 	page.on("pageerror", (e) => console.error("  ⚠️ pageerror", String(e.stack ?? e).slice(0, 600)));
 	page.setDefaultTimeout(15_000);
 
-	console.log("\n── 导航：16 项 / 5 组 / 别名 / entry + downloads 仍可达 ──");
+	console.log("\n── 导航：17 项 / 5 组 / 别名 / entry + downloads 仍可达 ──");
 	await page.goto(`${base}/?settings=models`);
 	await page.getByTestId("settings-nav").waitFor();
 	const tabs = await page.getByTestId("settings-nav").locator("button[data-tab]").evaluateAll((bs) => bs.map((b) => b.dataset.tab));
-	check(`导航 16 项且包含 voice`, tabs.length === 16 && tabs.includes("voice"), JSON.stringify(tabs));
+	check(`导航 17 项且包含 voice / chat`, tabs.length === 17 && tabs.includes("voice") && tabs.includes("chat"), JSON.stringify(tabs));
 	check("导航含 entry 与 downloads", tabs.includes("entry") && tabs.includes("downloads"));
 	const groups = await page.getByTestId("settings-nav").locator("[data-settings-group]").evaluateAll((bs) => bs.map((b) => b.dataset.settingsGroup));
 	check("5 个分组标题（模型与语音 / 电脑 / 助理能力 / 连接 / 偏好与系统）", groups.length === 5, JSON.stringify(groups));
