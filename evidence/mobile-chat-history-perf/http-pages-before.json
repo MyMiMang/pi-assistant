@@ -1,0 +1,80 @@
+{
+  "seed": {
+    "count": 1000,
+    "roomCount": 500
+  },
+  "firstPage": {
+    "agent-limit-500": {
+      "path": "/api/agents/a_perf/messages?limit=500&conversation=c_perf",
+      "status": 200,
+      "count": 500,
+      "bytes": 4590199,
+      "ms": 71.3
+    },
+    "agent-limit-300": {
+      "path": "/api/agents/a_perf/messages?limit=300&conversation=c_perf",
+      "status": 200,
+      "count": 300,
+      "bytes": 2746171,
+      "ms": 37
+    },
+    "agent-limit-200": {
+      "path": "/api/agents/a_perf/messages?limit=200&conversation=c_perf",
+      "status": 200,
+      "count": 200,
+      "bytes": 1844029,
+      "ms": 26.9
+    },
+    "agent-limit-100": {
+      "path": "/api/agents/a_perf/messages?limit=100&conversation=c_perf",
+      "status": 200,
+      "count": 100,
+      "bytes": 941887,
+      "ms": 12.6
+    },
+    "agent-limit-50": {
+      "path": "/api/agents/a_perf/messages?limit=50&conversation=c_perf",
+      "status": 200,
+      "count": 50,
+      "bytes": 470944,
+      "ms": 6.3
+    },
+    "room-limit-200": {
+      "path": "/api/rooms/r_perf/messages?limit=200",
+      "status": 200,
+      "count": 200,
+      "bytes": 1846229,
+      "ms": 22.5
+    },
+    "room-limit-100": {
+      "path": "/api/rooms/r_perf/messages?limit=100",
+      "status": 200,
+      "count": 100,
+      "bytes": 903243,
+      "ms": 12
+    },
+    "room-limit-50": {
+      "path": "/api/rooms/r_perf/messages?limit=50",
+      "status": 200,
+      "count": 50,
+      "bytes": 471494,
+      "ms": 8.3
+    }
+  },
+  "paging": {
+    "agentAll": {
+      "pages": 20,
+      "totalBytes": 9180198,
+      "totalMs": 171,
+      "unique": 1000
+    },
+    "roomAll": {
+      "pages": 5,
+      "totalBytes": 4595485,
+      "totalMs": 69,
+      "unique": 500
+    }
+  },
+  "expectedAgentTotal": 1000,
+  "expectedRoomTotal": 500
+}

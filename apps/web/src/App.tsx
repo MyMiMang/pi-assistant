@@ -36,6 +36,7 @@ export default function App() {
 
 	useEffect(() => {
 		let stop: (() => void) | undefined;
+		let firstOpen = true;
 		(async () => {
 			const c = getConn();
 			if (c && c.base && c.base !== location.origin) await refreshFromRendezvous();
@@ -50,6 +51,12 @@ export default function App() {
 			stop = connectWs(handle, (s) => {
 				set({ conn: s });
 				if (s === "open") {
+					// 首次连接：上面初始 loadSystem/loadAgents/loadRooms 已经拉过快照，不再重复拉一遍
+					// （否则首屏聊天 JSON 会被拉两次）。断线重连才需要重新同步。
+					if (firstOpen) {
+						firstOpen = false;
+						return;
+					}
 					// 重连后重新拉取快照，保证所有设备一致
 					void loadSystem();
 					void loadAgents().then(() => {

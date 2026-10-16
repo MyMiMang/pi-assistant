@@ -23,9 +23,8 @@ import { agentSendBody, buildReplyRef, draftSignature, newClientId, resolveAgent
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
 import { canFork, forkErrorMessage, forkFromMessage, newForkClientId } from "../fork-api";
 import { setComposerDraft, useComposerDrafts } from "../composerDrafts";
-import { locateAgentMessage } from "../replies-api";
+import { locateAgentMessage, type LocateResult } from "../replies-api";
 import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
-import { mergeMessages } from "../selection";
 export { Activity, activityOf, Thinking, group, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
 // 聊天里不再显示子代理指令卡：任务统一从 header 的「子代理」入口 → 任务概览 → 详情查看。
 export function BotPart(props: { p: Part; live: boolean; busy?: boolean; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => any }) {
@@ -45,6 +44,8 @@ export default function Chat({ agentId }: { agentId: string }) {
 	const rows = useMemo(() => group(mainList), [mainList]);
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
+	/** 上一次「贴顶部自动加载」时的滚动位置：同一次停在顶部只自动加载一页（见 onScroll）。 */
+	const lastAutoTop = useRef<number | null>(null);
 	const [drag, setDrag] = useState(false);
 	const composer = useRef<{ addFiles: (f: FileList | File[]) => void }>(null);
 	const composerWrap = useRef<HTMLDivElement>(null);
@@ -53,8 +54,15 @@ export default function Chat({ agentId }: { agentId: string }) {
 	const rKey = replyDraftKey.agent(agentId, convId);
 	const quote = useReplyDrafts((s) => s.drafts[rKey] ?? null);
 	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: agentId, name: agent?.name ?? "助理" }));
-	const onInsert = (msgs: Message[]) => useStore.setState((s) => ({ messages: { ...s.messages, [agentId]: mergeMessages(msgs, s.messages[agentId]) } }));
-	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), onInsert);
+	// 引用/搜索 jump 到未加载的旧消息：用服务端有界上下文窗口替换当前列表（窗口内连续无洞、不把沿途历史全加载），
+	// 再滚到目标。窗口外的新消息不跨 gap 合入，只计数提示（见 store.handle）。
+	const openWindow = (r: LocateResult) => {
+		if (!convId) return;
+		// 跳进历史窗口后不再自动贴底（新消息不拉到底，滚动交给 flash 定位目标）
+		stick.current = false;
+		useStore.getState().openHistoryWindow(agentId, convId, { messages: r.context, hasOlder: r.hasOlder, hasNewer: r.hasNewer });
+	};
+	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), openWindow);
 	const [forkNotice, setForkNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 	// 「从这条消息另开新对话」：用 Pi 公开 fork 在服务端建分支对话；切到新对话并把正文放回输入框（不自动发）。
 	const onFork = async (m: Message) => {
@@ -77,6 +85,17 @@ export default function Chat({ agentId }: { agentId: string }) {
 		const el = scroller.current;
 		if (el && stick.current) el.scrollTop = el.scrollHeight;
 	});
+	// 向上加载更早的消息：插入上方后按高度差回填滚动位置，保视觉锚点不跳；
+	// 正在往上翻时不因为加载而被拉到底（先解 stick）。失败保留错误提示，可重试。
+	const loadEarlier = async () => {
+		const cur = useStore.getState().msgState[agentId];
+		if (!cur?.hasMore || cur.loading) return;
+		const el = scroller.current;
+		const h = el?.scrollHeight ?? 0;
+		stick.current = false;
+		await useStore.getState().loadMoreMessages(agentId);
+		requestAnimationFrame(() => el && (el.scrollTop = el.scrollHeight - h));
+	};
 	useEffect(() => {
 		stick.current = true;
 	}, [agentId]);
@@ -144,13 +163,32 @@ export default function Chat({ agentId }: { agentId: string }) {
 				onScroll={(e) => {
 					const el = e.currentTarget;
 					stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+					// 滑到接近顶部自动加载更早。
+					// 关键：同一次「停在顶部」只加载一页。内容插入上方后，浏览器滚动锚定会再次派发 scroll（位置几乎没变），
+					// 没有位置判断的话，用户停在顶部就会被一页页把整段历史自动拉完（几十万条的会话直接打爆手机内存 / DOM）。
+					if (el.scrollTop >= 200) {
+						lastAutoTop.current = null; // 离开顶部 = 重新武装；下一次滑到顶才再自动加载一页
+						return;
+					}
+					if (el.scrollHeight > el.clientHeight + 400 && (lastAutoTop.current === null || Math.abs(el.scrollTop - lastAutoTop.current) > 8)) {
+						lastAutoTop.current = el.scrollTop;
+						void loadEarlier();
+					}
 				}}
 			>
 				<div className="pa-thread-body">
 					{st?.hasMore && (
-						<button className="mx-auto my-2 block rounded-lg border border-line px-3 py-1 text-xs text-mut hover:bg-hover disabled:opacity-60" disabled={st.loading} onClick={() => void useStore.getState().loadMoreMessages(agentId)} data-testid="load-more">
+						<button className="mx-auto my-2 block rounded-lg border border-line px-3 py-1 text-xs text-mut hover:bg-hover disabled:opacity-60" disabled={st.loading} onClick={() => void loadEarlier()} data-testid="load-more">
 							{st.loading ? "加载中…" : "加载更早的消息"}
 						</button>
+					)}
+					{list.length > 0 && st?.error && (
+						<div className="mx-auto my-2 flex items-center gap-2 text-xs text-mut" data-testid="thread-more-error">
+							<span>加载更早的消息失败：{st.error}</span>
+							<button className="rounded-lg border border-line px-2 py-0.5 hover:bg-hover" onClick={() => void loadEarlier()} data-testid="load-more-retry">
+								重试
+							</button>
+						</div>
 					)}
 					{!list.length && !st?.error && (st?.loading || !st?.loaded) && <ThreadSkeleton />}
 					{!list.length && st?.error && (
@@ -180,6 +218,21 @@ export default function Chat({ agentId }: { agentId: string }) {
 						),
 					)}
 					{pendingTurn && <BotTurn row={null} agent={agent} live />}
+					{st?.window && (
+						<div className="pa-history-window" data-testid="history-window">
+							<span className="pa-history-note">{st.window.newCount > 0 ? `有 ${st.window.newCount} 条新消息` : "正在查看历史消息"}</span>
+							<div className="pa-history-actions">
+								{st.window.hasNewer && (
+									<button className="pa-chip sm" onClick={() => void useStore.getState().loadNewerMessages(agentId)} disabled={st.loading} data-testid="history-load-newer">
+										{st.loading ? "加载中…" : "加载较新消息"}
+									</button>
+								)}
+								<button className="pa-chip sm" onClick={() => { stick.current = true; void useStore.getState().returnToLatest(agentId); }} data-testid="history-return-latest">
+									回到最新
+								</button>
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 			{replyCtx.menuEl}

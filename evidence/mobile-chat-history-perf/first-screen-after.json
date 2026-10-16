@@ -1,0 +1,34 @@
+{
+  "seed": {
+    "count": 1000,
+    "roomCount": 500
+  },
+  "simulated": {
+    "latencyMs": 200,
+    "downloadMbps": 1.5,
+    "cpuThrottle": 4,
+    "viewport": "390x844"
+  },
+  "firstRowMs": 10644,
+  "settledMs": 10768,
+  "settledRows": 45,
+  "timedOut": false,
+  "metrics": {
+    "domNodes": 2343,
+    "renderedRows": 45,
+    "userBubbles": 15,
+    "botTurns": 5,
+    "stepsBlocks": 5,
+    "markdownBlocks": 25,
+    "scrollerHeight": 38972,
+    "devicePixelRatio": 3
+  },
+  "messageResponses": [
+    {
+      "url": "/api/agents/a_perf/messages?limit=50&conversation=c_perf",
+      "status": 200,
+      "bytes": 471445,
+      "atMs": 18966
+    }
+  ]
+}

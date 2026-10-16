@@ -4,7 +4,7 @@ import { RoomCost } from "./Usage";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, uploadRoom } from "../api";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
-import { useStore } from "../store";
+import { useStore, ROOM_PAGE } from "../store";
 import type { Agent, Message, Room, RoomMember } from "../types";
 import { Activity, BotPart, type Part, SideToggle, SystemMsg, UserMsg } from "./Chat";
 import { Avatar, Button, Help, Modal, cx } from "./ui";
@@ -12,9 +12,8 @@ import { useComposerKeys, COMPOSER_LABEL } from "../composer";
 import { VoiceInput } from "./VoiceInput";
 import { buildReplyRef, draftSignature, liveMentions, newClientId, replyDraftKey, resolveRoomReplyTarget, roomSendBody } from "../replies";
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
-import { locateRoomMessage } from "../replies-api";
+import { locateRoomMessage, type LocateResult } from "../replies-api";
 import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
-import { mergeMessages } from "../selection";
 
 // ------------------------------------------------------------------ 显示用的成员信息（助理已删除时用群里存的快照）
 export function memberOf(room: Room | undefined, agents: Agent[], agentId: string): { id: string; name: string; avatar: string; color: string; deleted: boolean } {
@@ -71,14 +70,14 @@ function groupRoom(list: Message[]): RRow[] {
 const STATUS = (reason: string) => (reason === "followup" ? "总结中" : "思考中");
 
 export default function RoomChat({ roomId }: { roomId: string }) {
-	const { rooms, agents, roomMsgs, info, set } = useStore();
+	const { rooms, agents, roomMsgs, roomWindow, info, set } = useStore();
 	const room = rooms.find((r) => r.id === roomId);
 	const list = roomMsgs[roomId] ?? [];
 	const rows = useMemo(() => groupRoom(list), [list]);
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const [settings, setSettings] = useState(false);
-	const [older, setOlder] = useState<"idle" | "loading" | "end">("idle");
+	const [older, setOlder] = useState<"idle" | "loading" | "end" | "error">("idle");
 	const [drag, setDrag] = useState(false);
 	const composer = useRef<{ addFiles: (f: FileList | File[]) => void }>(null);
 	const composerWrap = useRef<HTMLDivElement>(null);
@@ -86,8 +85,19 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const rKey = replyDraftKey.room(roomId);
 	const quote = useReplyDrafts((s) => s.drafts[rKey] ?? null);
 	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: m.agent_id, name: memberOf(room, agents, m.agent_id).name }));
-	const onInsert = (msgs: Message[]) => useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: mergeMessages(msgs, s.roomMsgs[roomId]) } }));
-	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateRoomMessage(roomId, mid), onInsert);
+	const ensureLoaded = (r: LocateResult) => {
+		// 用服务端有界上下文窗口替换当前群列表：目标一定在窗口里、窗口内连续无洞；窗口外不预加载。
+		stick.current = false; // 跳进历史窗口后不自动贴底，滚动交给 flash 定位目标
+		useStore.getState().openRoomHistoryWindow(roomId, { messages: r.context, hasOlder: r.hasOlder, hasNewer: r.hasNewer });
+		setOlder(r.hasOlder === false ? "end" : "idle");
+	};
+	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateRoomMessage(roomId, mid), ensureLoaded);
+	// 从历史窗口回到最新：重新拉最近一页、清空窗口状态（不改数据、不删消息）
+	const returnLatest = async () => {
+		setOlder("idle");
+		stick.current = true; // 用户主动回最新：跟随到底
+		await useStore.getState().returnRoomToLatest(roomId);
+	};
 	const replyCtx = useReplyContext(onQuote);
 	useComposerInset(scroller, composerWrap, stick);
 	useLayoutEffect(() => {
@@ -109,17 +119,23 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const lastRow = rows[rows.length - 1];
 	const speaking = st.current?.agentId;
 	const lastPause = room.paused && !st.running ? [...list].reverse().find((m) => m.meta.action === "room-continue")?.id : undefined;
+	// 向上加载更早：稳定游标 before=rowid；插入上方后保视觉锚点（滚动位置按高度差回填），不往顶跳。
+	// 单次有 loading 保护，到顶（older=end）后不再发空请求；失败可点重试。
 	const loadOlder = async () => {
 		const first = list[0];
-		if (!first?.seq) return;
+		if (!first?.seq || older === "loading" || older === "end") return;
 		setOlder("loading");
 		const el = scroller.current;
 		const h = el?.scrollHeight ?? 0;
-		const more = await api<Message[]>(`/api/rooms/${roomId}/messages?before=${first.seq}&limit=100`);
-		stick.current = false;
-		useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: [...more, ...(s.roomMsgs[roomId] ?? [])] } }));
-		setOlder(more.length < 100 ? "end" : "idle");
-		requestAnimationFrame(() => el && (el.scrollTop = el.scrollHeight - h));
+		try {
+			const more = await api<Message[]>(`/api/rooms/${roomId}/messages?before=${first.seq}&limit=${ROOM_PAGE}`);
+			stick.current = false;
+			useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: [...more, ...(s.roomMsgs[roomId] ?? [])] } }));
+			setOlder(more.length < ROOM_PAGE ? "end" : "idle");
+			requestAnimationFrame(() => el && (el.scrollTop = el.scrollHeight - h));
+		} catch {
+			setOlder("error");
+		}
 	};
 	const openMember = (agentId: string) => {
 		if (!agents.some((a) => a.id === agentId)) return;
@@ -181,10 +197,10 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 				}}
 			>
 				<div className="pa-thread-body">
-					{list.length >= 200 && older !== "end" && (
+					{list.length >= ROOM_PAGE && older !== "end" && (
 						<div className="flex justify-center">
-							<button className="pa-chip sm" onClick={loadOlder} disabled={older === "loading"}>
-								{older === "loading" ? <Loader2 className="pa-ic animate-spin" /> : null} 更早的消息
+							<button className="pa-chip sm" onClick={loadOlder} disabled={older === "loading"} data-testid="room-load-older">
+								{older === "loading" ? <Loader2 className="pa-ic animate-spin" /> : null} {older === "error" ? "加载失败，重试" : "更早的消息"}
 							</button>
 						</div>
 					)}
@@ -200,6 +216,21 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 						),
 					)}
 					{speaking && (lastRow?.kind !== "bot" || lastRow.agentId !== speaking) && <RoomBotTurn row={{ kind: "bot", id: "pending", agentId: speaking, parts: [] }} room={room} agents={agents} live onAvatar={openMember} />}
+					{roomWindow[roomId] && (
+						<div className="pa-history-window" data-testid="history-window">
+							<span className="pa-history-note">{roomWindow[roomId]!.newCount > 0 ? `有 ${roomWindow[roomId]!.newCount} 条新消息` : "正在查看历史消息"}</span>
+							<div className="pa-history-actions">
+								{roomWindow[roomId]!.hasNewer && (
+									<button className="pa-chip sm" onClick={() => void useStore.getState().loadNewerRoomMessages(roomId)} data-testid="history-load-newer">
+										加载较新消息
+									</button>
+								)}
+								<button className="pa-chip sm" onClick={() => void returnLatest()} data-testid="history-return-latest">
+									回到最新
+								</button>
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 			{st.running && (

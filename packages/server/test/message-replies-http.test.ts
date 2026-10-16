@@ -172,6 +172,33 @@ test("单聊：GET /context 有界返回升序 Message[]，含 seq 且 limit 生
 	assert.equal((await req(`/api/messages/${oList[0].id}/context?conversationId=${conv}`)).status, 403);
 });
 
+test("单聊：GET /context?bounds=1 回窗口 + hasOlder/hasNewer，默认仍是旧数组契约", async () => {
+	const A = await mkAgent("HTTP甲3c");
+	const conv = A.conversation_id as string;
+	const ids: string[] = [];
+	for (let i = 0; i < 5; i++) ids.push((await req(`/api/agents/${A.id}/messages`, { method: "POST", body: { text: `边界${i}` } })).body.id);
+
+	// 中间：前后都还有（limit=3 → half=1）。用户消息之间/之后可能有 mock 助手回复，所以只断言确定的边界。
+	const mid = (await req(`/api/messages/${ids[2]}/context?limit=3&bounds=1&conversationId=${conv}`)).body as Json;
+	assert.ok(Array.isArray(mid.messages), "bounds=1 返回 { messages, hasOlder, hasNewer }");
+	assert.ok(mid.messages.length <= 3, `limit=3 应有界，实际 ${mid.messages.length}`);
+	assert.equal(mid.hasOlder, true, "中间窗口前还有更早的");
+	assert.equal(mid.hasNewer, true, "中间窗口后还有更新的");
+
+	// 第一条用户消息：它就是这个对话的第一条 → hasOlder=false（确定）；后面还有 ids[1..4] → hasNewer=true
+	const first = (await req(`/api/messages/${ids[0]}/context?limit=3&bounds=1&conversationId=${conv}`)).body as Json;
+	assert.equal(first.hasOlder, false, "最早一条之前没有更早的");
+	assert.equal(first.hasNewer, true);
+	// 最后一条用户消息：前面有 ids[0..3] → hasOlder=true（确定）；hasNewer 取决于是否已有助手回复，只断言是布尔值
+	const last = (await req(`/api/messages/${ids[4]}/context?limit=3&bounds=1&conversationId=${conv}`)).body as Json;
+	assert.equal(last.hasOlder, true);
+	assert.equal(typeof last.hasNewer, "boolean");
+
+	// 不传 bounds：旧数组契约不变（引用跳转的旧客户端 / 旧接口）
+	const legacy = (await req(`/api/messages/${ids[2]}/context?limit=3&conversationId=${conv}`)).body;
+	assert.ok(Array.isArray(legacy), "不传 bounds 仍返回数组");
+});
+
 test("群聊：真实服务写 room_turns —— 引用谁只叫谁、@ 优先于引用、clientId 重试不再排回合", async () => {
 	const A = await mkAgent("群甲");
 	const B = await mkAgent("群乙");

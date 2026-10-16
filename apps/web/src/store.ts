@@ -25,10 +25,22 @@ interface State {
 	room: string | null;
 	/** 群消息（按群） */
 	roomMsgs: Record<string, Message[]>;
+	/** 群聊历史窗口（引用跳远）：非空 = 当前群列表是围绕目标的连续窗口，不是实时末尾 */
+	roomWindow: Record<string, HistoryWindow | null>;
 	/** 群里点了成员头像：右侧面板显示这个助理 */
 	paneAgent: string | null;
 	loadRooms: () => Promise<void>;
 	selectRoom: (id: string) => Promise<void>;
+	/** 引用跳远：用服务端有界上下文窗口替换当前列表（目标一定在窗口里，窗口内连续无洞；窗口外不预加载） */
+	openHistoryWindow: (agentId: string, convId: string, r: { messages: Message[]; hasOlder: boolean | null; hasNewer: boolean | null }) => void;
+	/** 历史窗口内向前（更新方向）继续分页，直到实时末尾 */
+	loadNewerMessages: (agentId: string) => Promise<void>;
+	/** 从历史窗口回到最新：重新拉最近一页并清空窗口状态（不改数据、不删消息） */
+	returnToLatest: (agentId: string) => Promise<void>;
+	/** 群聊同上（复用同一窗口语义） */
+	openRoomHistoryWindow: (roomId: string, r: { messages: Message[]; hasOlder: boolean | null; hasNewer: boolean | null }) => void;
+	loadNewerRoomMessages: (roomId: string) => Promise<void>;
+	returnRoomToLatest: (roomId: string) => Promise<void>;
 	/** 当前对话的消息（按助理） */
 	messages: Record<string, Message[]>;
 	/** 每个助理的对话列表与当前对话 */
@@ -75,8 +87,8 @@ interface State {
 	selectAgent: (id: string) => Promise<void>;
 	loadTasks: (id: string) => Promise<void>;
 	loadConversations: (id: string) => Promise<{ current: string; items: Conversation[] }>;
-	/** 拉取某个对话的消息；req 用于并发保护（晚返回的旧请求不覆盖新目标） */
-	loadMessages: (agentId: string, convId: string, req?: Request) => Promise<void>;
+	/** 拉取某个对话的消息；req 用于并发保护（晚返回的旧请求不覆盖新目标）；replace=true 时直接替换（从历史窗口回到最新不合并） */
+	loadMessages: (agentId: string, convId: string, req?: Request, replace?: boolean) => Promise<void>;
 	/** 加载失败后重试当前目标 */
 	retryMessages: (agentId: string) => Promise<void>;
 	/** 向上翻页加载更早的消息（不截断服务端模型会话） */
@@ -86,6 +98,14 @@ interface State {
 	handle: (e: any) => void;
 }
 
+/** 引用跳远时的历史窗口状态：列表是围绕目标的连续有界窗口，不是实时末尾。 */
+export interface HistoryWindow {
+	/** 窗口外还有更新的消息：可「加载较新消息」/「回到最新」；false = 窗口已接到实时末尾 */
+	hasNewer: boolean;
+	/** 窗口外新到的消息数（不跨 gap 合并进列表，只提示） */
+	newCount: number;
+}
+
 /** 消息加载状态；conv = 当前这批消息属于哪个对话（用于判断能不能和迟到的 history 合并） */
 export interface MsgState {
 	loading: boolean;
@@ -93,10 +113,14 @@ export interface MsgState {
 	loaded: boolean;
 	conv: string | null;
 	hasMore: boolean;
+	/** 非空 = 当前显示的是引用跳转打开的历史窗口（不贴实时末尾，新消息只计数不合入） */
+	window: HistoryWindow | null;
 }
-const MSG_BASE: MsgState = { loading: false, error: null, loaded: false, conv: null, hasMore: false };
-/** 每页消息数（和服务端上限 500 之内一致） */
-const PAGE = 300;
+const MSG_BASE: MsgState = { loading: false, error: null, loaded: false, conv: null, hasMore: false, window: null };
+/** 每页消息数：首屏只拉最近一批（越小首屏越快），向上滚动再按需加载更早。服务端上限 500。 */
+export const PAGE = 50;
+/** 群聊首屏 / 每次向上加载的条数（与单聊一致）。 */
+export const ROOM_PAGE = 50;
 
 /** 每个助理的最新请求代号：晚返回的旧请求不能覆盖新目标 */
 const reqGen: Record<string, number> = {};
@@ -113,6 +137,24 @@ function newRequest(agentId: string): Request {
 	return { gen: (reqGen[agentId] = (reqGen[agentId] ?? 0) + 1), signal: c.signal };
 }
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/**
+ * 向更早分页的查询串：优先用服务端给的稳定游标 `(before=created_at, beforeSeq=rowid)`，
+ * 避免同一毫秒的多条消息在边界被跳过 / 重复；旧服务端没返回 seq 时退回 `before=created_at`。
+ */
+function olderParams(limit: number, conv: string, oldest: { created_at: number; seq?: number | null }): string {
+	const q = new URLSearchParams({ limit: String(limit), conversation: conv, before: String(oldest.created_at) });
+	if (typeof oldest.seq === "number") q.set("beforeSeq", String(oldest.seq));
+	return q.toString();
+}
+/**
+ * 向更新分页的查询串（历史窗口「加载较新消息」）：与 olderParams 对称的复合游标 `(after=created_at, afterSeq=rowid)`，
+ * 保证同一毫秒的多条消息在窗口前向分页时也不跳不重；旧服务端没返回 seq 时退回 `after=created_at`。
+ */
+function newerParams(limit: number, conv: string, newest: { created_at: number; seq?: number | null }): string {
+	const q = new URLSearchParams({ limit: String(limit), conversation: conv, after: String(newest.created_at) });
+	if (typeof newest.seq === "number") q.set("afterSeq", String(newest.seq));
+	return q.toString();
+}
 /** 只写公开 id；不存消息、不存 token / 凭据 */
 function persistSelection(key: string, patch: { agentId?: string | null; conv?: { agentId: string; convId: string } }) {
 	if (!key) return;
@@ -136,6 +178,7 @@ export const useStore = create<State>((set, get) => ({
 	rooms: [],
 	room: new URLSearchParams(location.search).get("room"),
 	roomMsgs: {},
+	roomWindow: {},
 	paneAgent: null,
 	messages: {},
 	convs: {},
@@ -203,7 +246,8 @@ export const useStore = create<State>((set, get) => ({
 	},
 	async selectRoom(id) {
 		set({ room: id, drawer: false, paneAgent: null, ...(get().room !== id ? { subagent: null } : {}) });
-		const msgs = await api<Message[]>(`/api/rooms/${id}/messages?limit=200`);
+		// 首屏只拉最近一批：群历史可能很长，一次性 200 条 + 大 meta 在手机网络上很慢。更早的消息由「更早的消息」按需加载。
+		const msgs = await api<Message[]>(`/api/rooms/${id}/messages?limit=${ROOM_PAGE}`);
 		set((s) => ({ roomMsgs: { ...s.roomMsgs, [id]: msgs }, rooms: s.rooms.map((r) => (r.id === id ? { ...r, unread: 0 } : r)) }));
 		void api(`/api/rooms/${id}/read`, { method: "POST" }).catch(() => {});
 	},
@@ -235,17 +279,18 @@ export const useStore = create<State>((set, get) => ({
 		set((s) => ({ convs: { ...s.convs, [id]: c } }));
 		return c;
 	},
-	async loadMessages(agentId, convId, req) {
+	async loadMessages(agentId, convId, req, replace) {
 		const r = req ?? newRequest(agentId);
 		set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...MSG_BASE, ...(s.msgState[agentId] ?? {}), loading: true, error: null, loaded: false } } }));
 		try {
 			const msgs = await api<Message[]>(`/api/agents/${agentId}/messages?limit=${PAGE}&conversation=${convId}`, { signal: r.signal });
 			if (reqGen[agentId] !== r.gen) return; // 晚返回的旧请求不覆盖新目标
 			set((s) => {
-				// 同一对话：并进本地还没落库的乐观 / 流式消息；换了对话：直接替换，不混
-				const sameConv = s.msgState[agentId]?.conv === convId;
+				// 同一对话：并进本地还没落库的乐观 / 流式消息；换了对话 / 从历史窗口回到最新（replace）：直接替换，不混
+				const prev = s.msgState[agentId];
+				const sameConv = !replace && prev?.conv === convId && !prev?.window;
 				const list = sameConv ? mergeMessages(msgs, s.messages[agentId]) : msgs;
-				return { messages: { ...s.messages, [agentId]: list }, msgState: { ...s.msgState, [agentId]: { loading: false, error: null, loaded: true, conv: convId, hasMore: msgs.length >= PAGE } } };
+				return { messages: { ...s.messages, [agentId]: list }, msgState: { ...s.msgState, [agentId]: { loading: false, error: null, loaded: true, conv: convId, hasMore: msgs.length >= PAGE, window: null } } };
 			});
 		} catch (e) {
 			if (reqGen[agentId] !== r.gen) return;
@@ -265,12 +310,86 @@ export const useStore = create<State>((set, get) => ({
 		const conv = st.conv;
 		set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: true, error: null } } }));
 		try {
-			const older = await api<Message[]>(`/api/agents/${agentId}/messages?limit=${PAGE}&conversation=${conv}&before=${list[0].created_at}`);
+			const older = await api<Message[]>(`/api/agents/${agentId}/messages?${olderParams(PAGE, conv, list[0])}`);
 			if ((reqGen[agentId] ?? 0) !== gen) return;
 			set((s) => ({ messages: { ...s.messages, [agentId]: mergeMessages(older, s.messages[agentId]) }, msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: false, error: null, loaded: true, conv, hasMore: older.length >= PAGE } } }));
 		} catch (e) {
 			if ((reqGen[agentId] ?? 0) !== gen) return;
 			set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: false, error: errText(e) } } }));
+		}
+	},
+	openHistoryWindow(agentId, convId, r) {
+		// 用服务端有界上下文窗口替换当前列表：目标一定在窗口里、窗口内连续无洞；窗口外不预加载。
+		// 旧服务端（bounds 未实现，仍回数组）→ hasOlder/hasNewer 为 null：退回旧的「并进列表」行为，不进窗口模式。
+		set((s) => {
+			const legacy = r.hasOlder === null && r.hasNewer === null;
+			return {
+				messages: { ...s.messages, [agentId]: legacy ? mergeMessages(r.messages, s.messages[agentId]) : r.messages },
+				msgState: { ...s.msgState, [agentId]: { loading: false, error: null, loaded: true, conv: convId, hasMore: legacy ? true : (r.hasOlder ?? r.messages.length > 0), window: legacy ? null : { hasNewer: r.hasNewer ?? true, newCount: 0 } } },
+			};
+		});
+	},
+	async loadNewerMessages(agentId) {
+		const st = get().msgState[agentId];
+		const list = get().messages[agentId] ?? [];
+		const w = st?.window;
+		if (!st || !w || st.loading || !w.hasNewer || !st.conv || !list.length) return;
+		const gen = reqGen[agentId] ?? 0;
+		const conv = st.conv;
+		const newest = list[list.length - 1];
+		set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: true, error: null } } }));
+		try {
+			const newer = await api<Message[]>(`/api/agents/${agentId}/messages?${newerParams(PAGE, conv, newest)}`);
+			if ((reqGen[agentId] ?? 0) !== gen) return;
+			set((s) => {
+				const cur = s.msgState[agentId] ?? MSG_BASE;
+				return {
+					messages: { ...s.messages, [agentId]: mergeMessages(newer, s.messages[agentId] ?? []) },
+					msgState: { ...s.msgState, [agentId]: { ...cur, loading: false, error: null, loaded: true, conv, window: cur.window ? { ...cur.window, hasNewer: newer.length >= PAGE } : null } },
+				};
+			});
+		} catch (e) {
+			if ((reqGen[agentId] ?? 0) !== gen) return;
+			set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: false, error: errText(e) } } }));
+		}
+	},
+	async returnToLatest(agentId) {
+		const conv = get().convs[agentId]?.current ?? get().msgState[agentId]?.conv;
+		if (!conv) return;
+		// replace=true：不把窗口里的消息和最近一页合并（否则会跨 gap 拼出中段不可达的列表）
+		await get().loadMessages(agentId, conv, undefined, true);
+	},
+	openRoomHistoryWindow(roomId, r) {
+		// 旧服务端（bounds 未实现）→ 退回旧的「并进群列表」行为，不进窗口模式。
+		set((s) => {
+			const legacy = r.hasOlder === null && r.hasNewer === null;
+			return {
+				roomMsgs: { ...s.roomMsgs, [roomId]: legacy ? mergeMessages(r.messages, s.roomMsgs[roomId]) : r.messages },
+				roomWindow: legacy ? { ...s.roomWindow, [roomId]: null } : { ...s.roomWindow, [roomId]: { hasNewer: r.hasNewer ?? true, newCount: 0 } },
+			};
+		});
+	},
+	async loadNewerRoomMessages(roomId) {
+		const w = get().roomWindow[roomId];
+		const list = get().roomMsgs[roomId] ?? [];
+		const newest = list[list.length - 1];
+		if (!w || !w.hasNewer || !newest?.seq) return;
+		try {
+			const newer = await api<Message[]>(`/api/rooms/${roomId}/messages?after=${newest.seq}&limit=${ROOM_PAGE}`);
+			set((s) => ({
+				roomMsgs: { ...s.roomMsgs, [roomId]: mergeMessages(newer, s.roomMsgs[roomId] ?? []) },
+				roomWindow: { ...s.roomWindow, [roomId]: { ...(s.roomWindow[roomId] ?? { newCount: 0 }), hasNewer: newer.length >= ROOM_PAGE } },
+			}));
+		} catch {
+			/* 保留窗口与按钮，用户可再点重试 */
+		}
+	},
+	async returnRoomToLatest(roomId) {
+		try {
+			const msgs = await api<Message[]>(`/api/rooms/${roomId}/messages?limit=${ROOM_PAGE}`);
+			set((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: msgs }, roomWindow: { ...s.roomWindow, [roomId]: null } }));
+		} catch {
+			/* 保留窗口与按钮，用户可再点重试 */
 		}
 	},
 	async switchConversation(agentId, convId) {
@@ -323,7 +442,12 @@ export const useStore = create<State>((set, get) => ({
 				if (m.subagent_id) break;
 				if (m.room_id) {
 					const rid = m.room_id;
-					if (get().roomMsgs[rid]) patchRooms((l) => (l.some((x) => x.id === m.id) ? l : [...l, m]), rid);
+					if (get().roomMsgs[rid]) {
+						// 历史窗口且窗口外还有更新的消息：不跨 gap 追加（会让中段历史不可达），只计数提示
+						const w = get().roomWindow[rid];
+						if (w?.hasNewer) set((s) => ({ roomWindow: { ...s.roomWindow, [rid]: { ...w, newCount: w.newCount + 1 } } }));
+						else patchRooms((l) => (l.some((x) => x.id === m.id) ? l : [...l, m]), rid);
+					}
 					const viewing = get().room === rid && isVisible();
 					set({ rooms: get().rooms.map((r) => (r.id === rid ? { ...r, unread: viewing ? 0 : r.unread + (m.role === "assistant" || m.role === "card" ? 1 : 0), last: (m.role === "user" || m.role === "assistant") && m.content ? { content: m.content, role: m.role, agent_id: m.agent_id, created_at: m.created_at } : r.last, updated_at: m.created_at } : r)) });
 					if (viewing) {
@@ -334,7 +458,12 @@ export const useStore = create<State>((set, get) => ({
 				}
 				if (m.task_id) break;
 				const cur = get().convs[m.agent_id]?.current;
-				if (!cur || !m.conversation_id || m.conversation_id === cur) patchMsgs(m.agent_id, (l) => (l.some((x) => x.id === m.id) ? l : [...l, m]));
+				if (!cur || !m.conversation_id || m.conversation_id === cur) {
+					// 历史窗口且窗口外还有更新的消息：不跨 gap 追加（会让中段历史不可达），只计数提示
+					const w = get().msgState[m.agent_id]?.window;
+					if (w?.hasNewer) set((s) => ({ msgState: { ...s.msgState, [m.agent_id]: { ...(s.msgState[m.agent_id] ?? MSG_BASE), window: { ...w, newCount: w.newCount + 1 } } } }));
+					else patchMsgs(m.agent_id, (l) => (l.some((x) => x.id === m.id) ? l : [...l, m]));
+				}
 				set({
 					agents: get().agents.map((a) =>
 						a.id === m.agent_id

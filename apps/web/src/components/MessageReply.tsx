@@ -240,10 +240,13 @@ export interface JumpState {
 }
 
 /**
- * 跳回原消息：已加载直接滚 + 高亮；未加载经后端 bounded locate 插入后再定位；
- * 失败给明确提示 + 重试，不白屏 / 不死 loading。
+ * 跳回原消息：已加载直接滚 + 高亮；未加载先向后端确认目标存在 / 同容器，
+ * 再用服务端返回的**有界上下文窗口**替换当前列表（onWindow），然后定位。
+ *
+ * 不再插入一个和当前列表之间还留着空洞的孤立窗口，也不为跳一条而把沿途上千条加载进 DOM：
+ * 上下文窗口本身连续无洞，窗口外可前后按需分页（UI 提供「加载较新消息 / 回到最新」）。
  */
-export function useMessageJump(scroller: RefObject<HTMLElement | null>, locate: (mid: string) => Promise<LocateResult>, onInsert: (msgs: Message[]) => void) {
+export function useMessageJump(scroller: RefObject<HTMLElement | null>, locate: (mid: string) => Promise<LocateResult>, onWindow: (r: LocateResult) => void) {
 	const [jumpState, setJumpState] = useState<JumpState | null>(null);
 	const run = async (mid: string) => {
 		if (flash(scroller.current, mid)) {
@@ -251,13 +254,15 @@ export function useMessageJump(scroller: RefObject<HTMLElement | null>, locate: 
 			return;
 		}
 		setJumpState({ mid, s: "loading" });
+		// 先确认目标是否存在 / 在同一容器：删除或跨容器立即给明确结果，不盲翻到底。
 		const r = await locate(mid);
-		if (r.message) {
-			onInsert(r.context.length ? r.context : [r.message]);
-			requestAnimationFrame(() => requestAnimationFrame(() => (setJumpState(null), flash(scroller.current, mid))));
-		} else {
+		if (!r.message) {
 			setJumpState({ mid, s: r.retryable ? "error" : "notfound" });
+			return;
 		}
+		// 不在当前列表：用有界上下文窗口替换列表（目标一定在窗口里），再滚到目标。
+		onWindow(r);
+		requestAnimationFrame(() => requestAnimationFrame(() => (setJumpState(null), flash(scroller.current, mid))));
 	};
 	const jump = (mid: string) => void run(mid);
 	const retry = () => jumpState && void run(jumpState.mid);

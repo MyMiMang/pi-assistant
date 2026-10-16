@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { compress } from "hono/compress";
 import { Hono, type Context, type Next } from "hono";
 import QRCode from "qrcode";
 import { WebSocket, WebSocketServer } from "ws";
@@ -97,6 +98,14 @@ import { mountUsageRoutes } from "./usage/routes.ts";
 
 type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
+
+// 响应压缩：只压 JSON。
+//  - 作用范围限定在 /api 的 JSON（聊天 / 列表接口），不是全局盲压：文件下载（octet-stream / text 附件）、
+//    图片、SSE 都不在过滤范围内；LLM 流式走 llm-proxy 的原生 res（不进 Hono fetch），不受影响。
+//  - 静态资源压缩在构建期预生成 .gz 旁路（apps/web/vite.config.ts），由 serveStatic({ precompressed: true }) 直接发出，
+//    不经过这里现压。
+//  - Hono compress 自动跳过已有 Content-Encoding / 206 / HEAD / no-transform，并补 Vary: Accept-Encoding、去掉 Content-Length。
+app.use("*", compress({ encoding: "gzip", contentTypeFilter: /^application\/(?:json|[^;]*\+json)\b/i }));
 
 const remoteOf = (c: Context<Env>) => c.env.incoming.socket.remoteAddress;
 
@@ -499,7 +508,21 @@ app.get("/api/agents/:id/avatar", (c) => {
 });
 app.get("/api/agents/:id/messages", (c) => {
 	const before = c.req.query("before");
-	return c.json(listMessages(c.req.param("id"), { conversationId: c.req.query("conversation") || undefined, before: before ? Number(before) : undefined, limit: Number(c.req.query("limit") ?? 200) }));
+	const beforeSeq = c.req.query("beforeSeq");
+	const after = c.req.query("after");
+	const afterSeq = c.req.query("afterSeq");
+	return c.json(
+		listMessages(c.req.param("id"), {
+			conversationId: c.req.query("conversation") || undefined,
+			before: before ? Number(before) : undefined,
+			// 稳定游标：同一毫秒的多条消息不会被分页边界跳过 / 重复；不传时保持旧行为
+			beforeSeq: beforeSeq ? Number(beforeSeq) : undefined,
+			// 前向分页（历史窗口「加载较新消息」）：与 before 对称的复合游标，不传时保持旧行为
+			after: after ? Number(after) : undefined,
+			afterSeq: afterSeq ? Number(afterSeq) : undefined,
+			limit: Number(c.req.query("limit") ?? 200),
+		}),
+	);
 });
 app.post("/api/agents/:id/messages", async (c) => {
 	const id = c.req.param("id");
@@ -583,7 +606,8 @@ app.delete("/api/rooms/:rid", async (c) => {
 });
 app.get("/api/rooms/:rid/messages", (c) => {
 	const before = c.req.query("before");
-	return c.json(listRoomMessages(c.req.param("rid"), { before: before ? Number(before) : undefined, limit: Number(c.req.query("limit") ?? 200) }));
+	const after = c.req.query("after");
+	return c.json(listRoomMessages(c.req.param("rid"), { before: before ? Number(before) : undefined, after: after ? Number(after) : undefined, limit: Number(c.req.query("limit") ?? 200) }));
 });
 app.post("/api/rooms/:rid/upload", async (c) => {
 	const rid = c.req.param("rid");
@@ -619,7 +643,9 @@ app.get("/api/messages/:mid", (c) => {
 	if (cid && (m.room_id || m.conversation_id !== cid)) return c.json({ error: "不在这个对话里", code: "reply_cross_scope" }, 403);
 	return c.json(m);
 });
-/** 目标消息的有界上下文窗口（前后各 ≤ limit/2），用于点击引用后定位，不拉全量历史。 */
+/** 目标消息的有界上下文窗口（前后各 ≤ limit/2），用于点击引用后定位，不拉全量历史。
+ *  默认返回升序 `Message[]`（旧契约）；`?bounds=1` 时返回 `{ messages, hasOlder, hasNewer }`，
+ *  告诉客户端这个连续窗口之外是否还有更早 / 更新的消息，供「加载较新消息 / 回到最新」使用。 */
 app.get("/api/messages/:mid/context", (c) => {
 	const mid = c.req.param("mid");
 	const m = getMessage(mid);
@@ -627,18 +653,26 @@ app.get("/api/messages/:mid/context", (c) => {
 	const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50) || 50, 1), 100);
 	const rid = c.req.query("roomId");
 	const cid = c.req.query("conversationId");
+	const bounds = c.req.query("bounds") === "1";
 	const half = Math.floor(limit / 2);
 	if (m.room_id) {
 		if (rid && m.room_id !== rid) return c.json({ error: "不在这个群里", code: "reply_cross_scope" }, 403);
 		const row = db.prepare("SELECT rowid AS seq FROM messages WHERE id = ?").get(mid) as { seq: number };
 		const rows = db.prepare("SELECT rowid AS seq, * FROM messages WHERE room_id = ? AND rowid >= ? AND rowid <= ? ORDER BY rowid").all(m.room_id, row.seq - half, row.seq + half) as unknown as (MessageRow & { seq: number })[];
-		return c.json(rows.map((r) => ({ ...toMessage(r), seq: r.seq })));
+		const msgs = rows.map((r) => ({ ...toMessage(r), seq: r.seq }));
+		if (!bounds) return c.json(msgs);
+		const ext = db.prepare("SELECT MIN(rowid) AS lo, MAX(rowid) AS hi FROM messages WHERE room_id = ?").get(m.room_id) as { lo: number | null; hi: number | null };
+		return c.json({ messages: msgs, hasOlder: msgs.length > 0 && msgs[0].seq > (ext.lo ?? 0), hasNewer: msgs.length > 0 && msgs[msgs.length - 1].seq < (ext.hi ?? 0) });
 	}
 	if (m.subagent_id || m.task_id || !m.conversation_id) return c.json({ error: "not_found" }, 404);
 	if (cid && m.conversation_id !== cid) return c.json({ error: "不在这个对话里", code: "reply_cross_scope" }, 403);
 	const row = db.prepare("SELECT rowid AS seq FROM messages WHERE id = ?").get(mid) as { seq: number };
 	const rows = db.prepare("SELECT rowid AS seq, * FROM messages WHERE conversation_id = ? AND task_id IS NULL AND subagent_id IS NULL AND rowid >= ? AND rowid <= ? ORDER BY rowid").all(m.conversation_id, row.seq - half, row.seq + half) as unknown as (MessageRow & { seq: number })[];
-	return c.json(rows.map((r) => ({ ...toMessage(r), seq: r.seq })));
+	const msgs = rows.map((r) => ({ ...toMessage(r), seq: r.seq }));
+	if (!bounds) return c.json(msgs);
+	// 边界与窗口同一过滤条件：否则子代理 / 任务消息会把 hasNewer 永远顶成 true（点「加载较新消息」返回空）。
+	const ext = db.prepare("SELECT MIN(rowid) AS lo, MAX(rowid) AS hi FROM messages WHERE conversation_id = ? AND task_id IS NULL AND subagent_id IS NULL").get(m.conversation_id) as { lo: number | null; hi: number | null };
+	return c.json({ messages: msgs, hasOlder: msgs.length > 0 && msgs[0].seq > (ext.lo ?? 0), hasNewer: msgs.length > 0 && msgs[msgs.length - 1].seq < (ext.hi ?? 0) });
 });
 app.post("/api/rooms/:rid/stop", async (c) => c.json({ ok: await stopRoom(c.req.param("rid")) }));
 app.post("/api/rooms/:rid/continue", (c) => {
@@ -1786,9 +1820,29 @@ app.post("/api/push/subscribe", async (c) => {
 
 // ---------------------------------------------------------------- PWA 静态文件
 if (existsSync(config.webDist)) {
-	app.use("/*", serveStatic({ root: config.webDist }));
+	/** 与构建期预压缩一致的文本类型；只有这些会有 .gz 旁路 / 需要按 Accept-Encoding 区分。 */
+	const STATIC_COMPRESSIBLE = /\.(?:js|mjs|cjs|css|html|svg|json|webmanifest|txt|map)$/i;
+	/** 静态资源缓存：内容哈希的 /assets/* 永久缓存；index.html / sw.js 每次校验（更新要及时）；其余静态 1 天。 */
+	const staticCache = (path: string): string => {
+		if (path === "/" || path === "/index.html" || path === "/sw.js") return "no-cache";
+		if (path.startsWith("/assets/")) return "public, max-age=31536000, immutable";
+		return "public, max-age=86400";
+	};
+	app.use(
+		"/*",
+		serveStatic({
+			root: config.webDist,
+			// 构建期已生成 .gz 旁路：Accept-Encoding 含 gzip 时直接发压缩件，不每次现压 1.3MB 的 JS。
+			precompressed: true,
+			onFound: (_file, c) => {
+				c.header("Cache-Control", staticCache(c.req.path));
+				// 同一 URL 会按 Accept-Encoding 返回压缩 / 原始两种表示：对可压缩文本始终声明 Vary，避免缓存串味。
+				if (STATIC_COMPRESSIBLE.test(c.req.path) && !c.res.headers.get("Vary")) c.header("Vary", "Accept-Encoding");
+			},
+		}),
+	);
 	const index = readFileSync(join(config.webDist, "index.html"), "utf8");
-	app.get("*", (c) => (c.req.path.startsWith("/api/") ? c.json({ error: "not_found" }, 404) : c.html(index)));
+	app.get("*", (c) => (c.req.path.startsWith("/api/") ? c.json({ error: "not_found" }, 404) : (c.header("Cache-Control", "no-cache"), c.html(index))));
 } else {
 	app.get("/", (c) => c.text("Web UI 尚未构建：npm run build -w apps/web"));
 }
