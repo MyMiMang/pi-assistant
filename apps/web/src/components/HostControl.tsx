@@ -365,8 +365,8 @@ export function HostControlSettings() {
 						{busy && <Loader2 size={14} className="animate-spin" />} {on ? (dirty ? "保存更改并重新确认…" : "查看权限清单…") : "查看权限清单并开启…"}
 					</Button>
 					{on && dirty && <span className="text-xs text-amber-600" data-testid="host-dirty">有未保存的更改</span>}
-					{!on && saveState === "saving" && <span className="flex items-center gap-1 text-xs text-mut"><Loader2 size={12} className="animate-spin" /> 正在保存…</span>}
-					{!on && saveState === "ok" && <span className="text-xs text-green-600" data-testid="host-autosave">已自动保存</span>}
+					{!on && saveState === "saving" && <span className="flex items-center gap-1 text-xs text-mut"><Loader2 size={12} className="animate-spin" /> 正在保存草稿…</span>}
+					{!on && saveState === "ok" && <span className="text-xs text-green-600" data-testid="host-autosave">已保存草稿（未开启）</span>}
 				</div>
 			) : (
 				<section className="space-y-2" data-testid="host-manifest">
