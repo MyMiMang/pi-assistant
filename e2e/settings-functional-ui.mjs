@@ -309,6 +309,33 @@ try {
 	await page.waitForTimeout(150);
 	check("Escape 关闭气泡", (await page.getByTestId("help-pop").count()) === 0);
 	check("Escape 不关闭设置弹窗", await page.getByTestId("settings-dialog").isVisible());
+	// Escape 后焦点仍在按钮上，但不立刻重开（要等下一次真正聚焦 / 悬停）
+	await page.waitForTimeout(250);
+	check("Escape 后不自动重开", (await page.getByTestId("help-pop").count()) === 0);
+	// 悬停打开
+	await help.hover();
+	await page.getByTestId("help-pop").waitFor();
+	check("悬停打开 Help", await page.getByTestId("help-pop").isVisible());
+	await page.keyboard.press("Escape");
+	// 触摸：390 手机上下文 tap 打开，气泡不越出视口（tooltip clamp）
+	const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, locale: "zh-CN" });
+	await installRoutes(mctx, state);
+	await countGum(mctx);
+	const mp = await mctx.newPage();
+	mp.setDefaultTimeout(15_000);
+	await mp.goto(`${base}/?settings=voice`);
+	await mp.getByTestId("settings-content").waitFor();
+	const mhelp = mp.locator('[data-testid="settings-content"] [data-testid="help"]').first();
+	// 触摸 / 点击路径：直接派发 click（touch 浏览器首点不会先 hover，避免鼠标 hover 与 click 互相抵消）
+	await mhelp.evaluate((el) => el.click());
+	await mp.getByTestId("help-pop").waitFor();
+	const box = await mp.getByTestId("help-pop").boundingBox();
+	check("触摸 tap 打开 Help", !!box && (await mp.getByTestId("help-pop").isVisible()));
+	check("390 窄屏 Help 不越出视口", !!box && box.x >= 0 && box.x + box.width <= 390 + 1, JSON.stringify(box));
+	await mp.keyboard.press("Escape");
+	await mp.waitForTimeout(150);
+	check("移动端 Escape 关气泡不关设置窗", (await mp.getByTestId("help-pop").count()) === 0 && (await mp.getByTestId("settings-dialog").isVisible()));
+	await mctx.close();
 
 	console.log("\n── 语音入口：idle 干净 / 去设置跳语音配置 / 切助理清提示 ──");
 	state.source = null;
