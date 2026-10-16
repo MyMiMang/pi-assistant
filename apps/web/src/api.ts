@@ -182,6 +182,16 @@ export interface VoiceSourceOption {
 	availability: VoiceSourceAvailability;
 	reason: string | null;
 	selected: boolean;
+	/**
+	 * 服务端模型能力：是否原生流式（sherpa `OnlineRecognizer`）。
+	 * **只在为 true 时前端才走流式路径**，不凭 provider / model 名字里带 online 猜；缺字段（旧后端 / 未接线）= 不启用。
+	 */
+	streaming?: boolean;
+}
+
+/** 该来源是否声明了原生流式能力（缺省 false = 走分段增量 / 整段批量，不伪流式）。 */
+export function isStreamingSource(o: VoiceSourceOption | null | undefined): boolean {
+	return o?.streaming === true;
 }
 /** `GET/PUT /api/audio/asr/source` 同一 DTO：当前选择 + 归一化候选列表。 */
 export interface VoiceSourceView {

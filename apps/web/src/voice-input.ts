@@ -53,6 +53,8 @@ export function voiceErrorFrom(err: unknown): VoiceError {
 	if (message.includes("asr_busy")) return { code: "asr_busy", message: "语音识别正忙，请稍后重试" };
 	if (message.includes("asr_timeout")) return { code: "asr_timeout", message: "语音转写超时，请重试" };
 	if (message.includes("asr_too_large")) return { code: "asr_too_large", message: "录音太长了，请短一点" };
+	if (message.includes("asr_stream_timeout")) return { code: "asr_stream_timeout", message: "本地流式识别启动超时，请重试" };
+	if (message.includes("asr_stream_unavailable")) return { code: "asr_stream_unavailable", message: "这个模型现在不能开始流式识别，请稍后重试或换一个语音模型" };
 	if (name === "ApiError" || /网络|fetch|Failed to fetch|NetworkError/i.test(message)) return { code: "network", message: "网络异常，请重试" };
 	return { code: "unknown", message: message || "语音输入失败，请重试" };
 }
@@ -553,6 +555,8 @@ export interface VoiceProgress {
 	backlog: boolean;
 	/** 前面有失败段时，已成功但因**保序**暂缓显示、等重试成功后按原序补上的段数 */
 	held: number;
+	/** 是否原生流式会话（`NativeVoiceController`）；缺省 false = 整段批量 / 分段增量。 */
+	stream?: boolean;
 }
 
 export interface VoiceCaptureHandle {

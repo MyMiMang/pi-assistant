@@ -154,7 +154,8 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 	const failed = voice.progress.failed;
 	const held = voice.progress.held;
 	const pendingCount = voice.progress.pending + voice.progress.inflight;
-	const recHint = voice.progress.backlog ? "转写跟不上，仍在录音（不会丢音频）" : pendingCount > 0 ? `正在听…（${pendingCount} 段转写中）` : "正在听…（点停止）";
+	// 原生流式：committed 段已进草稿（"边说边出字"），tentative 只在状态行就地预览、不写输入框。
+	const recHint = voice.progress.backlog ? "识别跟不上，仍在录音（不会丢音频）" : voice.streaming ? "正在听…（点停止）" : pendingCount > 0 ? `正在听…（${pendingCount} 段转写中）` : "正在听…（点停止）";
 	// 失败段：后续成功段按 index 保序暂缓显示，重试成功后按原序补上（notice 里已有失败原因）。
 	const failHint = `${notice || "有一段没转写成功"}${held > 0 ? `，后面 ${held} 段已识别、重试后按顺序补上` : ""}`;
 	// notice 只在「点过麦克风之后」才有值：其它错误也只在这时短暂提示，不常驻。
@@ -210,6 +211,12 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 						</span>
 					)}
 					{hint && <span className="pa-voice-hint max-w-[180px] truncate text-[11px] text-mut2" data-testid="voice-hint" title={hint}>{hint}</span>}
+					{/* 原生流式：未确认尾部就地预览（不等同已确认文本，不写进草稿，final 才 commit） */}
+					{recording && voice.tentative && (
+						<span className="pa-voice-partial" data-testid="voice-partial" title="识别中（未确认，停顿时会确认；也可继续说完）">
+							{voice.tentative}
+						</span>
+					)}
 					{showRetry && (
 						<button type="button" className="shrink-0 text-[11px] text-accent underline" data-testid="voice-retry" onClick={() => { setNotice(""); voice.retryFailed(); }}>
 							重试这段
