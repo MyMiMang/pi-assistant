@@ -237,6 +237,43 @@ test("未注册运行族的模型：precheck 直接拒绝（不用假 runner 冒
 
 // ------------------------------------------------------------------ 多模型生命周期
 
+test("共享 runtime 复用：引擎已装同一套时跳过 venv/引擎安装，不可复用则完整重建", async () => {
+	const spec = asrModelSpec(PARA)!;
+	const mk = (reuse: boolean) => {
+		const h = makeHarness();
+		let venvRuns = 0;
+		let engineInstalls = 0;
+		let engineReadyCalls = 0;
+		const deps: AsrDeps = {
+			...h.deps,
+			run: async (_cmd, args) => {
+				if (args[0] === "venv") venvRuns += 1;
+				return { code: 0, stdout: "", stderr: "" };
+			},
+			installEngine: async () => {
+				engineInstalls += 1;
+			},
+			engineReady: async () => {
+				engineReadyCalls += 1;
+				return reuse;
+			},
+		};
+		const mgr = new LocalAsrManager(deps, { source: spec.source, license: spec.license, model: spec.manifest, ids: { provider: spec.provider, modelId: spec.id, protocol: "local-asr-http" } });
+		return { h, mgr, counts: () => ({ venvRuns, engineInstalls, engineReadyCalls }) };
+	};
+
+	const reuse = mk(true);
+	await reuse.mgr.install({ source: "download", acceptLicense: "Apache-2.0" });
+	assert.deepEqual(reuse.counts(), { venvRuns: 0, engineInstalls: 0, engineReadyCalls: 1 });
+	assert.ok(reuse.h.inst.installed.has(PARA), "复用引擎时权重仍要按模型装好");
+	assert.equal(reuse.h.inst.downloads[0], PARA);
+
+	const rebuild = mk(false);
+	await rebuild.mgr.install({ source: "download", acceptLicense: "Apache-2.0" });
+	assert.deepEqual(rebuild.counts(), { venvRuns: 1, engineInstalls: 1, engineReadyCalls: 1 });
+	assert.ok(rebuild.h.inst.installed.has(PARA));
+});
+
 test("多模型：装两个 → 选择切换（旧 worker 停）→ 推理 child 指向对应模型脚本 → 卸载一个不影响另一个", async () => {
 	const h = makeHarness();
 	// 装 A（Paraformer, Apache-2.0）

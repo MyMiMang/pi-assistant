@@ -8,14 +8,14 @@
  *  - 「用户自行导入」只从给定目录复制**清单内**的文件，canonical 校验 + 不读敏感目录。
  */
 import { spawn as nodeSpawn, execFile, execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { cpus, homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { config } from "../config.ts";
 import { ensureUv as ensureUvPinned, uvPath as uvPinnedPath } from "../memory/hindsight/uv-bin.ts";
-import { watchDir } from "../downloads.ts";
+import { downloadFile } from "../downloads.ts";
 import { ASR_BIND_HOST, ASR_PROVIDER_ID, ASR_PYTHON_VERSION, SENSEVOICE_MODEL, type AsrWeightFile } from "./manifest.ts";
 import { registerAsrEndpoint, unregisterAsrEndpoint } from "./adapter-registry.ts";
 import { ASR_PROTOCOL } from "./adapter.ts";
@@ -187,7 +187,56 @@ export function detectPhysicalCores(): number | null {
 	return null;
 }
 
-export function createAsrDeps(): AsrDeps {
+// ------------------------------------------------------- 固定清单 → HF 直链
+
+/** HF 仓库名：只接受 `org/name` 形态（来自受信 catalog，绝不接受客户端 URL / 绝对路径）。 */
+const HF_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/** HF revision：只接受 40 位十六进制提交号（分支 / tag / 任意字符串一律拒绝）。 */
+const HF_REVISION_RE = /^[a-f0-9]{40}$/;
+
+/**
+ * 把固定清单里的一项拼成 HuggingFace `resolve` 直链。repo / revision / 路径都来自受信 catalog，
+ * 这里逐段 `encodeURIComponent`（不整串编码，避免把 `/` 也编码掉），并严格拒绝越界路径与非法 revision。
+ */
+export function hfResolveUrl(endpoint: string, repo: string, revision: string, filePath: string): string {
+	if (!HF_REPO_RE.test(repo)) throw new Error(`权重仓库名不合法（只接受 org/name）：${repo}`);
+	if (!HF_REVISION_RE.test(revision)) throw new Error(`权重 revision 必须是 40 位十六进制提交号：${revision}`);
+	const rel = String(filePath).replace(/\\/g, "/");
+	if (!rel || rel.startsWith("/") || /^[a-zA-Z]:/.test(rel) || rel.split("/").some((s) => s === "" || s === "." || s === "..")) {
+		throw new Error(`权重文件路径不合法：${filePath}`);
+	}
+	const base = endpoint.replace(/\/+$/, "");
+	const repoSeg = repo.split("/").map(encodeURIComponent).join("/");
+	const fileSeg = rel.split("/").map(encodeURIComponent).join("/");
+	return `${base}/${repoSeg}/resolve/${revision}/${fileSeg}`;
+}
+
+/** venv 内的解释器路径（与 manager 的 envPython 口径一致）。 */
+function envPythonOf(env: string): string {
+	return process.platform === "win32" ? join(env, "Scripts", "python.exe") : join(env, "bin", "python");
+}
+
+/** 引擎依赖内容的摘要：只作为「共享 runtime 是否还是同一套引擎」的标记，不是权重校验。 */
+function requirementsSha256(requirements: string): string {
+	return createHash("sha256").update(requirements, "utf8").digest("hex");
+}
+
+/** 共享 runtime 的引擎标记文件（`runtime/engine.json`）。 */
+function engineMarkerFile(root: string): string {
+	return join(root, "runtime", "engine.json");
+}
+
+/** 生产依赖的可注入点（只给测试 / 镜像用，不改默认行为）。 */
+export interface AsrDepsOverrides {
+	/** 注入 fetch（测试用本地 HTTP fixture / 镜像代理）；默认全局 fetch。 */
+	fetchImpl?: typeof fetch;
+	/** HuggingFace 端点（镜像）；默认 `HF_ENDPOINT` 环境变量或 `https://huggingface.co`。 */
+	hfEndpoint?: string;
+}
+
+export function createAsrDeps(overrides: AsrDepsOverrides = {}): AsrDeps {
+	const fetchImpl = overrides.fetchImpl ?? fetch;
+	const hfEndpoint = overrides.hfEndpoint ?? process.env.HF_ENDPOINT ?? "https://huggingface.co";
 	return {
 		profile: () => senseVoicePlatform(process.platform, process.arch),
 		physicalCores: detectPhysicalCores,
@@ -229,34 +278,55 @@ export function createAsrDeps(): AsrDeps {
 			});
 			if (r.code !== 0) throw new Error(`引擎安装失败（wheel 校验不通过或下载失败）：${r.stderr.slice(0, 300)}`);
 		},
-		spawnServe: (exe, args, opts) => spawnServe(exe, args, opts.env),		downloadWeights: async (files, p, signal, env, pythonPath) => {
-			const paths = asrPaths();
+		spawnServe: (exe, args, opts) => spawnServe(exe, args, opts.env),
+		/**
+		 * 按固定清单从**所选模型的** HF 仓库 / revision 逐文件流式下载到该模型的 staging 目录。
+		 * 复用统一下载器的 `downloadFile`（Range 续传 / `.part` / 摘要校验 / 原子改名 / 已有缓存跳过），
+		 * 不再经 Python `huggingface_hub`（不额外依赖、不跟随仓库里的 allow_patterns 语义、也不写共享 HF 缓存）。
+		 * repo / revision / 文件路径全部来自受信 catalog；多文件进度按已完成字节累加。
+		 */
+		downloadWeights: async (files, p, signal, env, pythonPath, opts) => {
+			void env;
+			void pythonPath;
+			const paths = asrPaths(opts.modelId);
 			mkdirSync(paths.weightsStaging, { recursive: true });
-			const allow = files.map((f) => f.path);
 			const total = files.reduce((n, f) => n + f.size, 0);
-			// 只按固定清单取文件（allow_patterns）；下到我们自己的 staging 目录（真实文件，不用共享 HF 缓存符号链接）。
-			const script =
-				"import sys; from huggingface_hub import snapshot_download; snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], allow_patterns=sys.argv[3].split(','), local_dir=sys.argv[4])";
-			await watchDir([paths.weightsStaging], { bytes: (r, t) => p(r, t), detail: () => {} }, total, () =>
-				new Promise<void>((res, rej) => {
-					const child = execFile(
-						pythonPath,
-						["-c", script, SENSEVOICE_MODEL.repo, SENSEVOICE_MODEL.revision, allow.join(","), paths.weightsStaging],
-						{ env: { ...process.env, ...env } as NodeJS.ProcessEnv, signal, timeout: 60 * 60_000 },
-						(err, _o, stderr) => (err ? rej(new Error(String(stderr || err.message).slice(0, 300))) : res()),
-					);
-					child.on("error", rej);
-				}),
-			);
+			let done = 0;
+			for (const f of files) {
+				if (signal.aborted) throw new Error("已取消");
+				const rel = String(f.path).replace(/\\/g, "/");
+				const dest = join(paths.weightsStaging, ...rel.split("/"));
+				await downloadFile(
+					{ urls: [hfResolveUrl(hfEndpoint, opts.repo, opts.revision, f.path)], dest, algo: "sha256", digest: f.sha256, size: f.size },
+					{ bytes: (got) => p(Math.min(total, done + got), total), detail: () => {} },
+					{ fetchImpl, signal },
+				);
+				done += f.size;
+				p(Math.min(total, done), total);
+			}
 		},
 		verifyWeights: async (files, signal, opts) => {
 			if (signal.aborted) throw new Error("已取消");
-			const res = await verifyAsrWeights(asrPaths().weightsStaging, files, { signal, assertManifest: opts?.assertManifest });
+			const paths = asrPaths(opts?.modelId);
+			const res = await verifyAsrWeights(paths.weightsStaging, files, { signal, assertManifest: opts?.assertManifest });
 			if (!res.ok) throw new Error(`权重校验未通过：${res.problems.slice(0, 3).join("；")}`);
 		},
-		importWeights: async (sourceDir, files, signal) => {
+		importWeights: async (sourceDir, files, signal, modelId) => {
 			const safe = assertSafeImportDir(sourceDir);
-			return copyManifestFiles(safe, asrPaths().weightsStaging, files, signal);
+			return copyManifestFiles(safe, asrPaths(modelId).weightsStaging, files, signal);
+		},
+		/** 共享 runtime 已装同一套引擎（依赖摘要一致 + 解释器在 + 真能 `import sherpa_onnx`）才复用。 */
+		engineReady: async (paths, requirements) => {
+			try {
+				if (!existsSync(paths.env) || !existsSync(envPythonOf(paths.env))) return false;
+				const rec = JSON.parse(readFileSync(engineMarkerFile(paths.root), "utf8")) as { requirementsSha256?: string; python?: string };
+				if (rec.requirementsSha256 !== requirementsSha256(requirements)) return false;
+				if (rec.python !== ASR_PYTHON_VERSION) return false;
+			} catch {
+				return false;
+			}
+			const res = await execFileQuiet(envPythonOf(paths.env), ["-c", "import sherpa_onnx"], 60_000);
+			return res.code === 0;
 		},
 		findFreePort,
 		health: readHealth,
@@ -302,10 +372,15 @@ export function createAsrDeps(): AsrDeps {
 			if (existsSync(weightsPrev)) rmSync(weightsPrev, { recursive: true, force: true });
 			if (existsSync(paths.weights)) renameSync(paths.weights, weightsPrev);
 			renameSync(paths.weightsStaging, paths.weights);
-			// venv：staging → env
-			if (existsSync(paths.envPrev)) rmSync(paths.envPrev, { recursive: true, force: true });
-			if (existsSync(paths.env)) renameSync(paths.env, paths.envPrev);
-			renameSync(paths.envStaging, paths.env);
+			// venv：staging → env。复用共享引擎时本次不重建 staging（engineReady），这里跳过切换，
+			// 否则会把已生效的共享 venv 换成一个不存在的目录（并连带影响其它模型）。
+			if (existsSync(paths.envStaging)) {
+				if (existsSync(paths.envPrev)) rmSync(paths.envPrev, { recursive: true, force: true });
+				if (existsSync(paths.env)) renameSync(paths.env, paths.envPrev);
+				renameSync(paths.envStaging, paths.env);
+			}
+			// 引擎标记：记录共享 venv 对应的依赖摘要，供下次安装安全复用（不是权重校验）。
+			writeFileSync(engineMarkerFile(paths.root), JSON.stringify({ requirementsSha256: requirementsSha256(meta.engineRequirements), python: ASR_PYTHON_VERSION, engineVersion: meta.engineVersion, installedAt: Date.now() }, null, 2));
 			writeFileSync(paths.metaFile, JSON.stringify({ installedAt: Date.now(), ...meta }, null, 2));
 			const family = asrRunnerFamily(meta.runner);
 			writeFileSync(paths.serve ?? join(paths.root, "serve.py"), family.serveScript({ roles: meta.fileRoles, sampleRate: meta.sampleRate, maxAudioBytes: meta.maxAudioBytes }));
