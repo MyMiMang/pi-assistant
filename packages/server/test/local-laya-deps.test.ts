@@ -4,15 +4,18 @@
  * 排在会 import `../src/config.ts` 的模块之前；否则 config 在 setup 之前捕获真实数据目录
  * （2026-10-16 曾因此把 rl_agent_config.json 写进真实 App 目录）。npm test 另用 --import 预加载兜底。
  */
-import "./setup.ts";
+import { isTempDataDir } from "./setup.ts";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
 import { findFreePort, layaRoot, readHealth } from "../src/local-laya/deps.ts";
-import { hfRepoDir, hfSnapshotDir } from "../src/local-laya/hf-metadata.ts";
+import { hfRepoDir, hfSharedBlobsDir, hfSnapshotDir } from "../src/local-laya/hf-metadata.ts";
+
+const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
 
 test("readHealth：带 Bearer 读 /health 详细字段；非 200 → ok:false（不抛）", async () => {
 	let gotAuth = "";
@@ -150,5 +153,102 @@ test("checkpointSourcePath / watchDirBytes：只认带必需文件的 weights �
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 		rmSync(weights, { recursive: true, force: true });
+	}
+});
+
+test("createLayaDeps（共享 blob 形态）：真实 verify + materialize + activate，运行时权重来源就是所验文件；重试复用缓存", async () => {
+	const { createLayaDeps, layaPaths } = await import("../src/local-laya/deps.ts");
+	const { LAYA_CHECKPOINTS } = await import("../src/local-laya/manifest.ts");
+	const paths = layaPaths();
+	rmSync(paths.root, { recursive: true, force: true });
+	mkdirSync(paths.root, { recursive: true });
+	// 测试只能写「被 setup 强制到临时目录」的数据目录；这里是兜底断言，防止再退回真实数据目录。
+	assert.equal(isTempDataDir(paths.root), true, "测试只能写临时数据目录");
+	const cp = LAYA_CHECKPOINTS["laya-multilingual"];
+	// 小清单：驱动**真实的** verify / materialize 代码，不下载 GB 权重、不起 sidecar。
+	const tiny = [
+		{ path: "model.safetensors", content: "laya-fake-weights-0123456789" },
+		{ path: "rl_agent_config.json", content: '{"k":1}' },
+		{ path: "encoder/config.json", content: '{"enc":1}' },
+		{ path: "tokenizer/tokenizer.json", content: '{"tok":1}' },
+	];
+	const files = tiny.map((t) => ({ path: t.path, size: Buffer.byteLength(t.content), sha256: sha(t.content) }));
+	try {
+		// 形态 B：snap → repo/blobs/<sha> → hub/blobs/<aa>/<hash>，全部在自有 HF hub 缓存内。
+		const hubBlobs = hfSharedBlobsDir(paths.hfHome);
+		const repoBlobs = join(hfRepoDir(paths.hfHome, cp.repo), "blobs");
+		const snap = hfSnapshotDir(paths.hfHome, cp.repo, cp.revision);
+		mkdirSync(repoBlobs, { recursive: true });
+		for (const t of tiny) {
+			const h = sha(t.content);
+			const blob = join(hubBlobs, h.slice(0, 2), h);
+			mkdirSync(dirname(blob), { recursive: true });
+			writeFileSync(blob, t.content);
+			const link = join(repoBlobs, h);
+			symlinkSync(relative(repoBlobs, blob), link);
+			const dest = join(snap, t.path);
+			mkdirSync(dirname(dest), { recursive: true });
+			symlinkSync(relative(dirname(dest), link), dest);
+		}
+		const deps = createLayaDeps({ checkpointFiles: () => files });
+		mkdirSync(paths.envStaging, { recursive: true });
+		writeFileSync(join(paths.envStaging, "pyvenv.cfg"), "home=/tmp\n");
+
+		await deps.verifyCheckpoint(cp, AbortSignal.timeout(30_000));
+		for (const t of tiny) {
+			const p = join(paths.weightsStaging, t.path);
+			assert.equal(lstatSync(p).isSymbolicLink(), false, `${t.path} 物化后必须是普通文件`);
+			assert.equal(sha(readFileSync(p)), sha(t.content));
+		}
+		assert.equal(deps.checkpointSource!(paths), null, "activate 之前不得对外提供权重目录");
+
+		await deps.activate(paths);
+		assert.equal(deps.checkpointSource!(paths), paths.weights, "运行时权重来源 = 本次生效目录");
+		const runtimeModel = join(paths.weights, "model.safetensors");
+		assert.equal(lstatSync(runtimeModel).isSymbolicLink(), false);
+		assert.equal(sha(readFileSync(runtimeModel)), sha("laya-fake-weights-0123456789"), "运行时要加载的就是校验过的那个文件");
+
+		// 缓存命中重试：同一份 HF 缓存上再校验 / 物化一次仍成功（复用缓存，不逼重下）。
+		await deps.verifyCheckpoint(cp, AbortSignal.timeout(30_000));
+		assert.equal(sha(readFileSync(join(paths.weightsStaging, "model.safetensors"))), sha("laya-fake-weights-0123456789"));
+
+		// 断链（缓存残缺）必须失败，且区分于「越界」。
+		const h = sha("laya-fake-weights-0123456789");
+		rmSync(join(hubBlobs, h.slice(0, 2), h));
+		await assert.rejects(() => deps.verifyCheckpoint(cp, AbortSignal.timeout(30_000)), /断链/);
+	} finally {
+		rmSync(paths.root, { recursive: true, force: true });
+	}
+});
+
+test("checkpointProgressBytes：共享 blob 两层链接的 snapshot 仍能 stat 跟随计满；断链不计也不抛", async () => {
+	const { checkpointProgressBytes } = await import("../src/local-laya/deps.ts");
+	const { LAYA_CHECKPOINTS } = await import("../src/local-laya/manifest.ts");
+	const cp = LAYA_CHECKPOINTS["laya-multilingual"];
+	const root = mkdtempSync(join(tmpdir(), "laya-prog-nested-"));
+	try {
+		const hfHome = join(root, "hf");
+		const hubBlobs = hfSharedBlobsDir(hfHome);
+		const repoDir = hfRepoDir(hfHome, cp.repo);
+		const snap = hfSnapshotDir(hfHome, cp.repo, cp.revision);
+		const repoBlobs = join(repoDir, "blobs");
+		mkdirSync(repoBlobs, { recursive: true });
+		const h = "f".repeat(64);
+		// 形态 B：共享 blob 普通文件 + repo/blobs/<sha> 与 snapshot 两层 symlink。
+		const blob = join(hubBlobs, h.slice(0, 2), h);
+		mkdirSync(dirname(blob), { recursive: true });
+		writeFileSync(blob, Buffer.alloc(1000));
+		const link = join(repoBlobs, h);
+		symlinkSync(relative(repoBlobs, blob), link);
+		mkdirSync(snap, { recursive: true });
+		symlinkSync(relative(snap, link), join(snap, "model.safetensors"));
+		const files = [{ path: "model.safetensors", size: 1000, sha256: h }];
+		// 进度不需要另造下载器 / 不自己解析缓存：statSync 跟随两层链接即可计满。
+		assert.equal(checkpointProgressBytes(hfHome, cp, files), 1000, "两层链接也要 stat 跟随到真实 blob 计满");
+		// 共享 blob 缺失（断链）→ 不计、不抛（绝不把残缺算成进度）。
+		rmSync(blob);
+		assert.equal(checkpointProgressBytes(hfHome, cp, files), 0, "断链不计入，且不抛");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
 	}
 });

@@ -47,6 +47,30 @@ export function hfRepoDir(hfHome: string, repo: string): string {
 	return joinPath(hfHome, "hub", `models--${repo.replace(/\//g, "--")}`);
 }
 
+/** 自有 HF 缓存的 `hub/` 根目录（`models--…/` 与共享 `blobs/` 的父目录）。 */
+export function hfHubDir(hfHome: string): string {
+	return joinPath(hfHome, "hub");
+}
+
+/**
+ * 自有 HF hub 缓存内的**共享 blob**目录。
+ *
+ * 本机已观察到的缓存形态：较大的 LFS 文件不是普通文件放在 `models--org--repo/blobs/<sha>`，
+ * 而是经一层 `repo/blobs/<sha>` symlink 指向 `hub/blobs/<xx>/<hash>` 的普通文件。
+ * 这里只把它登记成「自有 hub 缓存内的另一个受信根」——是否真的存在由校验阶段按目录判断。
+ */
+export function hfSharedBlobsDir(hfHome: string): string {
+	return joinPath(hfHubDir(hfHome), "blobs");
+}
+
+/**
+ * 自有 HF 缓存的受信根策略：repo 目录 + 共享 blobs 目录都在自有 `hub/` 缓存内。
+ * 直接展开成 `managed-weights/verify.ts` 的 `TrustRootOptions` 形状，调用方无需再拼路径。
+ */
+export function hfTrustRoots(hfHome: string, repo: string): { trustRoot: string; extraTrustRoots: string[]; trustRootBase: string } {
+	return { trustRoot: hfRepoDir(hfHome, repo), extraTrustRoots: [hfSharedBlobsDir(hfHome)], trustRootBase: hfHubDir(hfHome) };
+}
+
 /** HF 缓存里某个 revision 的 snapshot 目录（snapshot_download 落盘位置）。 */
 export function hfSnapshotDir(hfHome: string, repo: string, revision: string): string {
 	return joinPath(hfRepoDir(hfHome, repo), "snapshots", revision);
