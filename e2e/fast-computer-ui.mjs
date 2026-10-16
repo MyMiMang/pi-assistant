@@ -77,6 +77,13 @@ try {
 	await sec.getByTestId("fast-classifier-hostpc").click();
 	await page.getByTestId(`fast-classifier-hostpc-option-${provider.id}/jev-relay`).click();
 	await page.waitForFunction(async (b) => { const s = (await (await fetch(`${b}/api/fast-computer/settings?scope=hostpc`)).json()).settings; return s.kind === "systemone" && !!s.provider && s.id === "jev-relay"; }, base);
+	// 证据截图：快速操作模型只从「模型服务」里配好的 Jev 分类器里选（不重复配 Key）
+	{
+		const { mkdirSync } = await import("node:fs");
+		const out = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/fast-computer";
+		mkdirSync(out, { recursive: true });
+		await page.getByTestId("settings-dialog").screenshot({ path: `${out}/fast-computer-jev-selected.png` });
+	}
 
 	// 每台电脑各一份：hostpc 的配置不影响全局 / 助理电脑 scope
 	const computerScope = await api("/api/fast-computer/settings?scope=computer");
