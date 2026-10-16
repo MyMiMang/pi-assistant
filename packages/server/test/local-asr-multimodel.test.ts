@@ -17,6 +17,8 @@ import { asrRunnerFamily, hasAsrRunnerFamily, type AsrRunnerFamily } from "../sr
 import { LocalAsrManager, type AsrDeps, type AsrPaths } from "../src/local-asr/manager.ts";
 import { LocalAsrService, asrPhaseLabel, type AsrSelectionPort } from "../src/local-asr/service.ts";
 import { projectAsrInstall, asrDownloadId } from "../src/local-asr/download.ts";
+import { clearDefaultVoiceMarkers, writeDefaultInit, writeDefaultOptOut } from "../src/local-asr/default-voice-prep.ts";
+import { ONLINE_ZIPFORMER_MODEL_ID } from "../src/local-asr/manifest.ts";
 import { bus } from "../src/bus.ts";
 import * as dl from "../src/downloads.ts";
 import { mountLocalAsrRoutes } from "../src/local-asr/routes.ts";
@@ -24,6 +26,7 @@ import { senseVoicePlatform } from "../src/local-asr/platform.ts";
 
 const PARA = "paraformer-zh-2023-09-14-int8";
 const WSMALL = "whisper-small-int8";
+const DEF = ONLINE_ZIPFORMER_MODEL_ID;
 
 function pathsFor(modelId: string): AsrPaths {
 	const root = "/tmp/fake-asr";
@@ -131,14 +134,16 @@ function makeHarness() {
 		log: () => {},
 	};
 
-	const selection: { sel: { location: "cloud" | "local"; provider: string; model: string } | null; ver: number } = { sel: null, ver: 0 };
+	const selection: { sel: { location: "cloud" | "local"; provider: string; model: string } | null; ver: number; present: boolean } = { sel: null, ver: 0, present: false };
 	const port: AsrSelectionPort = {
 		read: () => selection.sel,
 		version: () => selection.ver,
+		present: () => selection.present,
 		write: (s, opts) => {
 			if (opts?.expectedVersion !== undefined && opts.expectedVersion !== selection.ver) throw new Error("asr_source_conflict");
 			selection.sel = s;
 			selection.ver += 1;
+			selection.present = true;
 		},
 	};
 	const svc = new LocalAsrService({
@@ -152,8 +157,8 @@ function makeHarness() {
 
 // ------------------------------------------------------------------ catalog
 
-test("catalog：6 个模型都有真实 pin / 许可 / 体积；官方模型许可 cleared，SenseVoice 保持 unresolved", () => {
-	assert.equal(ASR_CATALOG.length, 6);
+test("catalog：7 个模型都有真实 pin / 许可 / 体积；官方模型许可 cleared，SenseVoice 保持 unresolved", () => {
+	assert.equal(ASR_CATALOG.length, 7);
 	for (const spec of ASR_CATALOG) {
 		assert.ok(spec.manifest.files.length >= 2, `${spec.id} 至少两个权重文件`);
 		for (const f of spec.manifest.files) assert.match(f.sha256, /^[a-f0-9]{64}$/, `${spec.id} / ${f.path} SHA256 形状`);
@@ -171,7 +176,7 @@ test("catalog：6 个模型都有真实 pin / 许可 / 体积；官方模型许�
 test("catalog DTO：硬件档位 + 推荐 + 每模型状态/许可/来源，且绝不含 token", () => {
 	const h = makeHarness();
 	const view = h.svc.catalog();
-	assert.equal(view.models.length, 6);
+	assert.equal(view.models.length, 7);
 	assert.equal(view.hardware.tier, "balanced");
 	assert.equal(view.recommendedId, WSMALL);
 	assert.equal(view.runtime.engine, "sherpa-onnx");
@@ -458,7 +463,7 @@ test("路由：GET /catalog 返回聚合 DTO 且不启动 worker；按 id instal
 	const res = await app.request("/api/local-models/asr/catalog");
 	assert.equal(res.status, 200);
 	const body = (await res.json()) as { models: unknown[]; hardware: { tier: string }; recommendedId: string };
-	assert.equal(body.models.length, 6);
+	assert.equal(body.models.length, 7);
 	assert.equal(body.hardware.tier, "balanced");
 	assert.equal(body.recommendedId, WSMALL);
 	assert.equal(h.inst.spawned.length, 0, "GET catalog 不得启动 worker");
@@ -494,4 +499,77 @@ test("路由：GET /catalog 返回聚合 DTO 且不启动 worker；按 id instal
 
 	const nf = await app.request("/api/local-models/asr/models/nope/status");
 	assert.equal(nf.status, 404);
+});
+
+// ------------------------------------------------------------- 默认本地语音自动准备
+
+test("自动准备：新鲜用户（unset）→ 后台准备默认模型，完成后自动 selected & ready（CAS）", async () => {
+	const h = makeHarness();
+	clearDefaultVoiceMarkers();
+	h.selection.sel = null;
+	h.selection.present = false;
+	h.selection.ver = 0;
+	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, true);
+	await new Promise((r) => setTimeout(r, 40));
+	assert.equal(h.svc.managerFor(DEF).status().install.state, "installed");
+	assert.equal(h.selection.sel?.location, "local");
+	assert.equal(h.selection.sel?.model, DEF);
+	// 全局只启动一次：再调不重启
+	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
+});
+
+test("自动准备不覆盖：显式清空 / 已选来源 / 已取消过 / 已启动过 一律不启动", () => {
+	const h = makeHarness();
+	clearDefaultVoiceMarkers();
+	h.selection.sel = null;
+	h.selection.present = true; // 显式清空（key 存在）
+	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
+
+	clearDefaultVoiceMarkers();
+	h.selection.present = true;
+	h.selection.sel = { location: "cloud", provider: "p", model: "m" };
+	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
+
+	clearDefaultVoiceMarkers();
+	writeDefaultOptOut("user_cleared");
+	h.selection.sel = null;
+	h.selection.present = false;
+	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
+
+	clearDefaultVoiceMarkers();
+	writeDefaultInit({ at: "2026-10-17T00:00:00.000Z", modelId: DEF, sourceVersionAtStart: 0 });
+	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
+	clearDefaultVoiceMarkers();
+});
+
+test("自动准备视图：默认模型 / 实际状态 / 首次需联网（不假称断网可用）/ 不申请麦克风", () => {
+	const h = makeHarness();
+	clearDefaultVoiceMarkers();
+	h.selection.sel = null;
+	h.selection.present = false;
+	const view = h.svc.defaultVoicePrepView();
+	assert.equal(view.defaultModelId, DEF);
+	assert.equal(view.kind, "unconfigured");
+	assert.equal(view.prep.state, "not_prepared");
+	assert.equal(view.prep.jobId, `asr:${DEF}`);
+	assert.equal(view.firstRunNeedsNetwork, true);
+	assert.equal(view.offlineAfterReady, true);
+	assert.equal(view.requiresUserAction, false);
+	assert.equal(view.micPermissionRequested, false);
+	assert.ok((view.approxBytes ?? 0) >= 198_270_793, "首次准备量至少是权重体积");
+	assert.equal(JSON.stringify(view).includes("token"), false);
+});
+
+test("安装中途用户改选来源 → 安装完成不覆盖（CAS / stale intent）", async () => {
+	const h = makeHarness();
+	clearDefaultVoiceMarkers();
+	h.selection.sel = null;
+	h.selection.present = false;
+	h.selection.ver = 0;
+	h.svc.ensureDefaultVoiceAutoPrep(); // 捕获 selectionAtStart = null / ver 0
+	h.selection.sel = { location: "cloud", provider: "openai", model: "whisper-1" };
+	h.selection.ver = 1; // 用户中途改选
+	await new Promise((r) => setTimeout(r, 40));
+	assert.equal(h.selection.sel?.location, "cloud");
+	assert.equal(h.selection.sel?.model, "whisper-1");
 });

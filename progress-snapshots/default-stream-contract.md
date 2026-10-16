@@ -11,9 +11,10 @@
 
 - **不用** `browser streaming request` / `duplex: "half"`（Safari 不支持）→ **不使用浏览器原生流式上传**。
 - **用**：既有 **authenticated HTTP**（沿用现 host server 会话鉴权 + loopback sidecar Bearer）。浏览器 → host server（鉴权）→ loopback sidecar（每次启动新 Bearer token）。
+- **鉴权范围（重要）**：**只有 sidecar 绑 `127.0.0.1`**。host server 的 `/api/audio/asr/stream/*` 走**现 safe API 路径**（本机或已配对设备），**不加 `localOnly`**——手机 / 远程浏览器连到 host server 后照常可用，延续用户原本「手机用语音」的 scope。未配对请求由现全局鉴权中间件 401，不由本模块另造鉴权。
 - 会话模型：`start / append / end / cancel` 四步**有界会话**。`append` 为**帧批**（建议 **200–400 ms** 一帧，即 6 400–12 800 B），每次返回**本批产生的 JSON 事件**。
 - 这是**模型原生增量**（`accept_waveform → is_ready → decode → get_result`），**不是**「攒完整段再批量转写」。
-- 只绑 `127.0.0.1`；token 只在进程内，`/status`、日志、前端一律看不到。
+- 只绑 `127.0.0.1` 的是 sidecar；host server 的 token 只在进程内，`/status`、日志、前端一律看不到。
 
 ---
 
@@ -120,6 +121,24 @@ interface AsrAdapterCapability {
 
 前端**只在 `streaming === true && protocol === "asr-stream-v1"` 时**启用流式 UI；否则回落现有 batch（SenseVoice / Paraformer / Whisper）路径 —— 现有模型**不删、不改**。
 
+**这个能力必须从 `GET /api/audio/asr/source` 的 `options[]` 就能读到**（不能只在 RegistryModel 里），否则前端会错误 fallback：
+
+```ts
+// AsrSourceOption 新增两个字段（与 adapter capability 一致）：
+{
+  location: "local",
+  provider: "local-online-zipformer",
+  model: "streaming-zipformer-bilingual-zh-en-int8",
+  protocol: "asr-stream-v1",   // 流式模型就是流式协议；其余本地模型仍是 "local-asr-http"
+  streaming: true,             // 原生流式
+  streamProtocol: "asr-stream-v1",
+  availability: "ready" | "not_installed" | "not_running",
+  ...
+}
+```
+
+云端选项固定 `streaming: false`、`streamProtocol: null`。前端判断：`option.streaming === true && option.protocol === option.streamProtocol`。
+
 ---
 
 ## 2. 流式会话：start / append / end / cancel
@@ -195,14 +214,16 @@ type AsrStreamEvent =
   | { type:"error";      code:string; message:string; retryable:boolean; seq:number };
 ```
 
-语义（**关键，避免前端与后端各算一套**）：
+**语义（server-authoritative per-segment，前端不得两边各算 LCP）**：
 
 - `segmentId`：段号，`endpoint` 后 +1；新段的 partial 属于新 `segmentId`。
-- `tentative`：**同一 `segmentId` 内整体替换**（不是 substring、不做口语去重），前端直接以该段最新 tentative 覆盖显示。
-- `committed`：该段**稳定前缀**（只增、不回退），由服务端算；前端把 `committed + tentative` 拼接渲染，用户已编辑区仍按现有 `VoiceDraftAssembler` 规则冻结、不被覆盖。
-- `final`：`endpoint` 或 `end` 时冻结该段文本；之后该 `segmentId` 不再有事件。
+- **`committed` = 该段当前稳定前缀的「完整文本」（绝对量，不是 delta）**，只增不回退。
+- **`tentative` = 该段剩余部分的「完整文本」（绝对量，整体替换）**，不是 suffix 拼接；同一 `segmentId` 内每次整段覆盖。
+- 因此该段展示文本恒为 **`committed + tentative`**（前端只做一次拼接，**不做最长公共前缀**）。
+- `final`：`endpoint` 或 `end` 时冻结该段**完整文本**（绝对量）；之后该 `segmentId` 不再有事件。
 - `endpoint`：段边界通知（服务端已 `reset`，可继续听下一句）。
 - `error`：致命错误；会话终止，`retryable` 决定前端是否提示重试。
+- **前端职责**：只按 `segmentId` 维护「committed 文本 + tentative 文本 + 是否 final」，按事件顺序应用；用户已编辑区仍按现有 `VoiceDraftAssembler` 规则冻结、不被覆盖。原先多余的客户端 `StablePrefixTracker` **不作为 wire 算法**。
 
 ### 2.4 `POST /api/audio/asr/stream/:sessionId/end`（正常结束）
 
@@ -226,6 +247,9 @@ type AsrStreamEvent =
 ## 3. 鉴权范围、租约与来源变更
 
 - **鉴权链**：浏览器 → host server（现会话鉴权）→ loopback sidecar（**每次启动新随机 Bearer**）。**不**给 sidecar 开口暴露 plaintext、**不**接受任意 URL（无 SSRF）。
+- **会话绑定授权主体**：`create` 时记录调用者主体（本地 = `local`，远程 = 已配对设备 id，来自现全局鉴权中间件的 `caller`）+ `agentId` / `conversationId` + `sourceVersion`。
+  - **别的会话 / 设备拿 `sessionId` 不能 `append` / `end` / `cancel`** → `403 asr_stream_forbidden`（**不只靠随机 id 防猜**）。
+  - `agentId` / `conversationId` 在后续请求头（`x-asr-agent` / `x-asr-conversation`）与创建时不一致 → `409 asr_stream_scope_mismatch`。
 - **租约**：会话持有 `leaseId`，捕获 `modelId + version + sessionId`。活跃会话期间 **worker 不卸载**（沿用现有「录制中不卸载」）；`end` / `cancel` / `idleTimeout` / `maxSessionMs` 到点即释放。
 - **来源变更（跨 agent / conversation）**：会话绑定的 `sourceVersion` 与当前不一致时，下一次 `append` 返回 `409 asr_source_changed` 并**取消该会话**；**明确可取消、绝不 fallback 到别的模型**（不把进行中的音频送给别的模型）。前端提示「识别来源已变，请重新开始录音」。
 - **不静默计费**：`source === null` 时**绝不**悄悄回落云端。
@@ -244,6 +268,8 @@ type AsrStreamEvent =
 | `asr_stream_expired` | 409 | 超 `maxSessionMs` | 重开会话 |
 | `asr_stream_unknown` | 404 | sessionId 未知 / 已回收 | 重开会话 |
 | `asr_source_changed` | 409 | 会话期间来源被改选 | 取消并提示重开录音 |
+| `asr_stream_forbidden` | 403 | 会话属于其它客户端 / 设备 | 不重试，重新创建会话 |
+| `asr_stream_scope_mismatch` | 409 | agent / conversation 归属不一致 | 用创建时的归属重试 |
 | `asr_bad_format` | 400 | 采样率 / 声道 / 格式非法 | 修参数 |
 | `asr_frame_too_large` | 413 | 帧超 `maxChunkBytes` | 拆帧 |
 | `asr_source_conflict` | 409 | 来源 CAS 冲突（自动切来源失败，**不覆盖**） | 提示「已装但未切来源」 |
@@ -269,8 +295,8 @@ type AsrStreamEvent =
 1. 现有 `GET /api/audio/asr/source` 多读一个 `defaultVoice` 块；**不要**另开轮询，订阅现有下载 / 状态事件。
 2. 语音页默认项：`defaultModelId` 置顶 + 「默认」徽标；显示**实际**状态（未准备 / 准备中 x% / 可用 / 失败 + 重试）。
 3. 首次联网必须**明示**：`firstRunNeedsNetwork === true` → 写「**首次使用需联网自动准备约 `approxBytes`，之后可离线使用**」；**绝不写「首次断网可用」**。
-4. 流式：`streaming === true` 才走 `start/append/end/cancel`；否则走现有 batch。
-5. 渲染：`committed + tentative` 拼接；`tentative` 同 `segmentId` 整体替换；`final` 冻结；用户编辑区不覆盖。
+4. 流式能力从 `options[].streaming` / `options[].protocol` 读（见 §1.3），不要只看 RegistryModel；`streaming === true` 才走 `start/append/end/cancel`；否则走现有 batch。
+5. 渲染：**`committed + tentative`**（都是绝对文本，直接拼接）；`tentative` 同 `segmentId` 整体替换；`final` 冻结；**前端不做 LCP**；用户编辑区不覆盖。
 6. **麦克风权限只在用户点 mic 时申请**；准备 / 预热不碰麦克风。
 7. 已选来源（云 / 本地 / 显式清空）**不覆盖、不删除**；只提供显式「换成默认本地」按钮。
 

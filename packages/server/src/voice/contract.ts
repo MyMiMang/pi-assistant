@@ -6,6 +6,7 @@
  * 没有 audio/ASR，所以 ASR 是 Pi Assistant 自有的第四种 `type:"asr"`，经**薄 adapter** 调
  * OpenAI 兼容的 `/v1/audio/transcriptions`；**不修改 Pi SDK / node_modules / secret.ts**。
  */
+import type { DefaultVoicePrepView } from "../local-asr/default-voice-prep.ts";
 
 /** 认这两种 ASR 协议：云 = OpenAI 兼容 multipart `/v1/audio/transcriptions`；本地 = loopback sidecar raw WAV。 */
 export const ASR_PROTOCOLS = ["openai-audio-transcriptions", "local-asr-http"] as const;
@@ -64,6 +65,10 @@ export interface AsrSourceOption {
 	/** 界面显示名（「中文功能名（模型名）」口径） */
 	name: string;
 	protocol: string;
+	/** 是否原生流式（本地流式模型为 true；前端据此决定走 start/append/end 还是 batch） */
+	streaming?: boolean;
+	/** 流式协议（`streaming=true` 时为 `asr-stream-v1`；否则 null）。与 adapter capability 一致。 */
+	streamProtocol?: string | null;
 	availability: AsrSourceAvailability;
 	/** `availability !== "ready"` 时的中文原因；ready 时为 null */
 	reason: string | null;
@@ -77,6 +82,8 @@ export interface AsrSourceView {
 	options: AsrSourceOption[];
 	/** 每次写入递增；客户端 PUT 时可回传期望版本做 CAS，防 ABA / 跨客户端覆盖 */
 	version: number;
+	/** 默认本地语音的自动准备状态（可选；旧客户端忽略即可）。契约见 progress-snapshots/default-stream-contract.md §1.1。 */
+	defaultVoice?: DefaultVoicePrepView;
 }
 
 /** 客户端提交的转写请求（路由层解析 multipart 后得到；音频只在内存里）。 */

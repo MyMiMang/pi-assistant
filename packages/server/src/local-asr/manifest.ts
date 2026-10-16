@@ -126,6 +126,28 @@ export interface AsrWeightFile {
 	sha256: string;
 }
 
+/**
+ * 原生流式（`online-zipformer` 族）的适配器能力声明。
+ * 前端**只**在 `streaming === true && protocol === ASR_STREAM_PROTOCOL` 时启用流式 UI；
+ * 其余本地模型（SenseVoice / Paraformer / Whisper）继续走现有 batch 路径，不删不改。
+ */
+export interface AsrAdapterCapability {
+	/** 流式协议标识 */
+	protocol: typeof ASR_STREAM_PROTOCOL;
+	streaming: true;
+	sampleRate: number;
+	channels: number;
+	format: "s16le";
+	/** append 建议间隔（毫秒） */
+	partialIntervalHintMs: [number, number];
+	maxChunkBytes: number;
+	maxSessionMs: number;
+	idleTimeoutMs: number;
+	punctuation: boolean;
+	languages: string[];
+	requiresApiKey: false;
+}
+
 /** SenseVoice 权重（int8 ONNX，CPU）。 */
 export interface AsrModelManifest {
 	id: string;
@@ -145,6 +167,15 @@ export interface AsrModelManifest {
 	punctuation: boolean;
 	/** 语言范围（已发布 checkpoint） */
 	languages: string[];
+	/** 是否原生流式（只有 `online-zipformer` 族为 true）；默认 false（batch / 分段增量） */
+	streaming?: boolean;
+	/** 原生流式适配器能力（`streaming=true` 时给前端用） */
+	adapter?: AsrAdapterCapability;
+	/**
+	 * 哈希来源说明（诚实边界）：大文件 sha256 取自 HF 公开元数据 `lfs.oid`（**未下载大文件实测**），
+	 * 小文件（tokens.txt）为本地实测。不得把「元数据 pin」说成「已全量实测」。
+	 */
+	hashNote?: string;
 }
 
 export const SENSEVOICE_MODEL: AsrModelManifest = {
@@ -231,3 +262,114 @@ export const ASR_MAX_AUDIO_SECONDS = 120;
 export const ASR_DEFAULT_IDLE_SECONDS = 90;
 export const ASR_MIN_IDLE_SECONDS = 0;
 export const ASR_MAX_IDLE_SECONDS = 3600;
+
+// ------------------------------------------------------------------ 原生流式（默认本地语音）
+
+/** 流式会话协议标识（host server ↔ 浏览器；sidecar 走同一族）。 */
+export const ASR_STREAM_PROTOCOL = "asr-stream-v1";
+/** 单帧硬上限（16k mono s16le：32000 B = 1 s）。 */
+export const ASR_STREAM_MAX_CHUNK_BYTES = 32_000;
+/** 单会话硬上限（毫秒）。 */
+export const ASR_STREAM_MAX_SESSION_MS = 60_000;
+/** append 间隔超时（毫秒）：超时自动结束并释放租约。 */
+export const ASR_STREAM_IDLE_TIMEOUT_MS = 10_000;
+/** 建议 append 间隔（毫秒）。 */
+export const ASR_STREAM_PARTIAL_HINT_MS: [number, number] = [200, 400];
+
+/** 默认本地语音的 provider / model id（**只有 catalog 的 defaultVoice 标记决定默认是哪个**，这里只给 id）。 */
+export const ONLINE_ZIPFORMER_PROVIDER_ID = "local-online-zipformer";
+export const ONLINE_ZIPFORMER_MODEL_ID = "streaming-zipformer-bilingual-zh-en-int8";
+
+/**
+ * 默认本地语音权重来源（原生流式中英双语 zipformer）。
+ * 证据：HF 仓元数据 `cardData.license = "apache-2.0"`，但**权重仓本身没有 LICENSE 文件**；
+ * 真实 LICENSE 只在上游训练代码 icefall（Apache-2.0）。因此**不把「可随包分发 / 可商用」当已确认**。
+ */
+export const ONLINE_ZIPFORMER_SOURCE: AsrSourceMeta = {
+	project: "Streaming Zipformer bilingual zh-en · sherpa-onnx 转换",
+	repoUrl: "https://github.com/k2-fsa/icefall/tree/master/egs/librispeech/ASR/pruned_transducer_stateless7_streaming",
+	weightsRepo: "csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+	weightsRevision: "98590b7ed6443e77b714204da2757d75e1a642f4",
+	engineLicense: "Apache-2.0",
+	repoCodeLicense: "Apache-2.0",
+	weightsLicense: "Apache-2.0（HF card 声明；权重仓无 LICENSE 文件）",
+	engineVersion: SHERPA_ONNX_VERSION,
+	note: "权重由 icefall 训练的中英双语 zipformer 转换；HF card 标 apache-2.0，但权重仓无 LICENSE 文件，训练数据许可未核",
+};
+
+/**
+ * 默认本地语音许可：**本地按需下载（个人自用）放行；整体 unresolved；不随 App 分发 / 不镜像**。
+ *
+ * 依据（2026-10-17 复核）：两个权重仓只有 HF card `license: apache-2.0`，**都没有 LICENSE 文件**；
+ * 真实 LICENSE 只在训练代码 icefall（Apache-2.0）。按本轮规则「不用 HF tag 单独确认商用」→
+ * `selfServe: true`（用户本人在自己电脑上从官方源按需下载自用）、`redistribution: false`（不 bundle）、
+ * `decision: "unresolved"`（商用 / 再分发未确认）。**不假称 bundle 商用 clear。**
+ */
+export const ONLINE_ZIPFORMER_LICENSE: AsrLicenseMeta = {
+	decision: "unresolved",
+	selfServe: true,
+	termsVersion: "Apache-2.0",
+	licenseName: "Apache-2.0（HF card 声明；权重仓无 LICENSE 文件）",
+	redistribution: false,
+	attribution: "Streaming Zipformer bilingual zh-en by k2-fsa / icefall (Apache-2.0)",
+	requiresExplicitAgreement: false,
+	links: {
+		modelCard: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+		modelLicense: "https://github.com/k2-fsa/icefall/blob/master/LICENSE",
+		engineLicense: "https://github.com/k2-fsa/sherpa-onnx/blob/master/LICENSE",
+	},
+	restrictions: [
+		"本地按需下载仅限个人自用；不随 App 分发、不镜像、不代分发",
+		"权重仓无 LICENSE 文件，只有 HF card 声明 apache-2.0；真实 LICENSE 在上游训练代码 icefall",
+		"训练数据（AIShell-1 / WenetSpeech）自身许可未核，不据此宣称可商用",
+		"须署名并保留模型名（Apache-2.0 精神）",
+	],
+	reason: "HF card 声明 apache-2.0，但权重仓无 LICENSE 文件、训练数据许可未核 → 本地个人自用按需下载放行，随包分发 / 商用未确认",
+};
+
+/**
+ * 默认本地语音模型（原生流式中英双语 zipformer int8）。
+ *
+ * **哈希来源**：encoder / decoder / joiner 的 sha256 取自 HF 公开元数据 `lfs.oid`（**未下载大文件实测**）；
+ * `tokens.txt` 为本地实测。manifest **不声称 hash 已全量实测**（见 `hashNote`）。
+ */
+export const ONLINE_ZIPFORMER_MODEL: AsrModelManifest = {
+	id: ONLINE_ZIPFORMER_MODEL_ID,
+	repo: ONLINE_ZIPFORMER_SOURCE.weightsRepo,
+	revision: ONLINE_ZIPFORMER_SOURCE.weightsRevision,
+	files: [
+		{ path: "encoder-epoch-99-avg-1.int8.onnx", size: 181_895_032, sha256: "8fa764187a261844f859d7143ebaa563af5d10adfece4c18a8f414c88cba2a9b" },
+		{ path: "decoder-epoch-99-avg-1.int8.onnx", size: 13_091_040, sha256: "1a70c593d71e53f023f5f55b0b4cfff5055abb786ee3992e5f63dc2e273cc4fa" },
+		{ path: "joiner-epoch-99-avg-1.int8.onnx", size: 3_228_404, sha256: "1ed689c5ed19dbaa725d9d191bb4822b5f4855a39e1ffd28cbc1f340d25b2ee0" },
+		{ path: "tokens.txt", size: 56_317, sha256: "a8e0e4ec53810e433789b54a5c0134a7eaa2ffca595a6334d54c00da858841d3" },
+	],
+	bytes: 198_270_793,
+	sampleRate: 16_000,
+	channels: 1,
+	// transducer 原生输出**无标点**（要标点需另配标点模型，本轮不做）。
+	punctuation: false,
+	languages: ["zh", "en"],
+	runner: "online-zipformer",
+	fileRoles: {
+		encoder: "encoder-epoch-99-avg-1.int8.onnx",
+		decoder: "decoder-epoch-99-avg-1.int8.onnx",
+		joiner: "joiner-epoch-99-avg-1.int8.onnx",
+		tokens: "tokens.txt",
+	},
+	streaming: true,
+	adapter: {
+		protocol: ASR_STREAM_PROTOCOL,
+		streaming: true,
+		sampleRate: 16_000,
+		channels: 1,
+		format: "s16le",
+		partialIntervalHintMs: ASR_STREAM_PARTIAL_HINT_MS,
+		maxChunkBytes: ASR_STREAM_MAX_CHUNK_BYTES,
+		maxSessionMs: ASR_STREAM_MAX_SESSION_MS,
+		idleTimeoutMs: ASR_STREAM_IDLE_TIMEOUT_MS,
+		punctuation: false,
+		languages: ["zh", "en"],
+		requiresApiKey: false,
+	},
+	hashNote: "encoder/decoder/joiner 的 sha256 取自 HF 公开元数据 lfs.oid（未下载大文件实测）；tokens.txt 为本地实测",
+};

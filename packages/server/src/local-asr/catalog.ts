@@ -14,7 +14,7 @@
  * 事实来源：`local-asr-model-catalog-2026-10-16.json`（HF LFS oid + 实测 tokens SHA256 + sherpa 1.13.8
  * sdist 工厂签名）。Qwen3-ASR 0.6B 真实有 sherpa 支持，但公开 tar 缺 SHA256 pin → **本批不上目录**。
  */
-import { SENSEVOICE_LICENSE, SENSEVOICE_MODEL, SENSEVOICE_SOURCE, type AsrLicenseMeta, type AsrModelManifest, type AsrSourceMeta } from "./manifest.ts";
+import { ONLINE_ZIPFORMER_LICENSE, ONLINE_ZIPFORMER_MODEL, ONLINE_ZIPFORMER_SOURCE, SENSEVOICE_LICENSE, SENSEVOICE_MODEL, SENSEVOICE_SOURCE, type AsrAdapterCapability, type AsrLicenseMeta, type AsrModelManifest, type AsrSourceMeta } from "./manifest.ts";
 
 /** 性能档位（界面文案：轻量 / 均衡 / 高质量）。 */
 export type AsrTier = "light" | "balanced" | "high";
@@ -69,6 +69,12 @@ export interface AsrModelSpec {
 	capabilities: string[];
 	/** 多语种（界面用来区分「中文 / 多语」） */
 	multilingual: boolean;
+	/** 是否原生流式（默认本地语音的判据之一；与 manifest.streaming 一致） */
+	streaming?: boolean;
+	/** 是否是「默认本地语音」候选（全目录最多一个为 true；默认是哪个模型只由数据决定） */
+	defaultVoice?: boolean;
+	/** 原生流式适配器能力（`streaming=true` 时给前端用） */
+	adapter?: AsrAdapterCapability;
 	manifest: AsrModelManifest;
 	license: AsrLicenseMeta;
 	source: AsrSourceMeta;
@@ -241,6 +247,28 @@ const PARAFAFORMER_SPEC: AsrModelSpec = (() => {
 
 /** 目录里的模型清单（**只有经过研究确认来源 / pin / 许可的模型才能进来**）。 */
 export const ASR_CATALOG: AsrModelSpec[] = [
+	{
+		id: ONLINE_ZIPFORMER_MODEL.id,
+		provider: "local-online-zipformer",
+		family: "online-zipformer",
+		familyLabel: "Streaming Zipformer（sherpa-onnx 原生流式）",
+		name: "本地流式听写（中英双语）",
+		nameEn: "Streaming zipformer bilingual zh-en (sherpa-onnx)",
+		variant: "int8 · 2023-02-20",
+		tier: "light",
+		note: "原生流式（边说边出字），中英双语；输出无标点",
+		capabilities: ["中文", "英文", "原生流式", "无标点"],
+		multilingual: true,
+		streaming: true,
+		defaultVoice: true,
+		adapter: ONLINE_ZIPFORMER_MODEL.adapter,
+		manifest: ONLINE_ZIPFORMER_MODEL,
+		license: ONLINE_ZIPFORMER_LICENSE,
+		source: ONLINE_ZIPFORMER_SOURCE,
+		platforms: SHERPA_PLATFORMS,
+		runtimeDeps: RUNTIME_DEPS,
+		recommend: rec("light", 900, "按 int8 流式 zipformer 体积与运行时基线保守估算"),
+	},
 	PARAFAFORMER_SPEC,
 	whisperSpec({
 		id: "whisper-base-int8",
@@ -319,6 +347,23 @@ export const ASR_CATALOG: AsrModelSpec[] = [
 		recommend: rec("balanced", 1100, "按 int8 模型体积与运行时基线保守估算"),
 	},
 ];
+
+import { defaultVoiceView, resolveDefaultVoiceId, type DefaultVoiceCandidate, type DefaultVoiceView } from "./default-voice.ts";
+
+/** 默认本地语音的候选视图（给 UI / 路由用；数据驱动）。 */
+export function defaultVoiceCandidates(): DefaultVoiceCandidate[] {
+	return ASR_CATALOG.map((m) => ({ id: m.id, streaming: m.streaming ?? m.manifest.streaming ?? false, defaultVoice: m.defaultVoice === true, selfServe: m.license.selfServe }));
+}
+
+/** 从目录解析默认本地语音（fail closed，不猜）。 */
+export function resolveCatalogDefaultVoice() {
+	return resolveDefaultVoiceId(defaultVoiceCandidates());
+}
+
+/** 给界面的「谁在用」视图（不含「能不能用」——那是 install 状态的事）。 */
+export function catalogDefaultVoiceView(current: { location: "cloud" | "local"; provider: string; model: string } | null): DefaultVoiceView {
+	return defaultVoiceView({ current, resolved: resolveCatalogDefaultVoice() });
+}
 
 /** 按 modelId 取目录项；未知返回 null（调用方 fail-closed）。 */
 export function asrModelSpec(id: string | null | undefined): AsrModelSpec | null {

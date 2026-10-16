@@ -588,6 +588,14 @@ export class LocalAsrManager {
 		};
 	}
 
+	/**
+	 * 流式会话租约（原生流式录制期间持有）：语义与录音租约一致——
+	 * 会话期间 **worker 不被 idle 卸载**；`end` / `cancel` / 超时 / 来源变更必须 release。
+	 */
+	acquireStreamLease(): { release(): void } {
+		return this.acquireRecording();
+	}
+
 	/** 记录一次活动并重排 idle 定时器。TTL=0 时，等这次活动结束就立即释放（启动时不触发）。 */
 	noteActive(): void {
 		this.lastActiveAt = this.deps.now();

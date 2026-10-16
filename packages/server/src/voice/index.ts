@@ -12,11 +12,12 @@ import { credentialStore, customProviders, models } from "../models.ts";
 import { localModelHints } from "../local-models.ts";
 import type { RegistryAsrProvider } from "../model-registry.ts";
 import { ASR_ERRORS, ASR_PROTOCOLS, type AsrEndpoint, type AsrSource, type AsrSourceOption, type AsrSourceView } from "./contract.ts";
-import { mountVoiceRoutes } from "./routes.ts";
+import { mountAsrStreamRoutes, mountVoiceRoutes } from "./routes.ts";
 import { isAsrProtocol, type AsrOutcome } from "./asr.ts";
 import { ASR_CATALOG, asrModelSpecByProvider } from "../local-asr/catalog.ts";
 import { asrEndpoint } from "../local-asr/adapter-registry.ts";
 import { ASR_MODEL_ID, ASR_PROVIDER_ID, localAsrService } from "../local-asr/index.ts";
+import { localAsrStreamHub } from "../local-asr/stream-hub.ts";
 import { readVoiceSource, readVoiceSourceVersion, withSelected, writeVoiceSource } from "./source.ts";
 
 /** 用户在设置里显式声明的云 ASR 模型（统一注册表 `type:"asr"` 的云来源）。 */
@@ -102,6 +103,8 @@ export function asrSourceOptions(): AsrSourceOption[] {
 			model: d.model,
 			name: d.name || `${d.provider} / ${d.model}`,
 			protocol,
+			streaming: false,
+			streamProtocol: null,
 			availability: configured ? "ready" : "not_configured",
 			reason: configured ? null : "该服务尚未登录 / 缺少密钥，请先到模型服务配置",
 			selected: false,
@@ -127,7 +130,10 @@ export function asrSourceOptions(): AsrSourceOption[] {
 			provider: spec.provider,
 			model: spec.id,
 			name: spec.name,
-			protocol: "local-asr-http",
+			// 流式模型的 protocol 就是流式协议；其余本地模型仍是 batch（local-asr-http）。
+			protocol: spec.adapter?.protocol ?? "local-asr-http",
+			streaming: spec.streaming === true,
+			streamProtocol: spec.streaming === true ? (spec.adapter?.protocol ?? null) : null,
 			availability: running ? "ready" : installed ? "not_running" : "not_installed",
 			reason: running
 				? null
@@ -144,8 +150,12 @@ export function asrSourceOptions(): AsrSourceOption[] {
 	return out;
 }
 
-/** 当前来源 + 归一化候选（UI 只读数据；`selected` 只在 `withSelected` 里算，避免多处漂移）。 */
-export const asrSourceView = (): AsrSourceView => withSelected(readVoiceSource(), asrSourceOptions(), readVoiceSourceVersion());
+/** 当前来源 + 归一化候选（UI 只读数据；`selected` 只在 `withSelected` 里算，避免多处漂移）。
+ * 额外带出默认本地语音的**自动准备状态**（`defaultVoice`），前端在同一个 GET 里读，不另开轮询。 */
+export const asrSourceView = (): AsrSourceView => {
+	const base = withSelected(readVoiceSource(), asrSourceOptions(), readVoiceSourceVersion());
+	return { ...base, defaultVoice: localAsrService().defaultVoicePrepView() };
+};
 const selectedSourceOptions = () => asrSourceView().options;
 
 /** 来源校验失败（路由层映射成 HTTP 错误；不落库）。 */
@@ -232,4 +242,6 @@ export function mountAsrRoutes(app: Hono<any>) {
 		releaseLease: releaseAsrLease,
 		source: { read: readVoiceSource, options: selectedSourceOptions, write: saveAsrSource, version: readVoiceSourceVersion },
 	});
+	// 原生流式会话（start / append / end / cancel）：复用同一 host server 鉴权，不是 loopback-only。
+	mountAsrStreamRoutes(app, localAsrStreamHub());
 }
