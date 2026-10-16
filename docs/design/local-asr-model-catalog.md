@@ -110,5 +110,5 @@ interface LocalAsrInstallView {
 
 - **纯逻辑单测** `e2e/local-asr-models-frontend.test.mjs`（6/6）：catalog 归一（snake/camel、缺省、结构不对）、indeterminate 进度、intent seq 守卫、下载进度合并、十进制体积格式化。
 - **UI fixture** `e2e/local-asr-models-ui.mjs`（`page.route` 拦 `/api/**`）：真实前端代码渲染 5 个服务端模型；安装并使用（`intent=install_and_use`，cleared 不传 `acceptLicense`，不确定进度条）→ 装好 `selected` 显示使用中；改选云端后装完不 late 覆盖；已装未选中「使用这个模型」调 `/select`；取消；失败重试；390 不溢出。截图 `evidence/local-asr-models-ui/`。
-- **真实 API 契约 smoke**：临时起 backendowner 树的真实 server，`GET /api/local-models/asr/catalog` 返回真实 JSON（6 模型，含真实权重 pin），喂进前端 `normalizeLocalAsrCatalog` 全通过（`ok=true`、id/provider/tier/许可/`source.revision+files` 齐全）。合入后由 `e2e/local-asr-catalog-real.mjs` 在当前树复跑（路由不存在则跳过）。
+- **真实 API 契约 smoke** `e2e/local-asr-catalog-real.mjs`：用内存 launcher + tmp DATA/WORKSPACE 起本仓库真实 server，`GET /api/local-models/asr/catalog` 真实 JSON（6 模型，含真实权重 pin）喂进 `normalizeLocalAsrCatalog` 全过（`ok=true`、id/provider/tier/许可/`source.revision+files` 齐全、`agreementRequired` 真值正确）。本树已合并后端 `18478d4`，即真跑通过。
 - **未验证（如实）**：真实下载 / 校验 / 启动 / 转写（不装大权重、不用真实麦克风 / GPU）；真机 App；全量 `e2e/run.mjs` / 全量 `npm test`。UI 里的模型 name / 说明是 fixture，**不代表真实权重已在本机跑过**；能力标签以 catalog 返回为准，不按研究报告臆断。
