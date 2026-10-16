@@ -95,8 +95,10 @@ export interface MsgState {
 	hasMore: boolean;
 }
 const MSG_BASE: MsgState = { loading: false, error: null, loaded: false, conv: null, hasMore: false };
-/** 每页消息数（和服务端上限 500 之内一致） */
-const PAGE = 300;
+/** 每页消息数：首屏只拉最近一批（越小首屏越快），向上滚动再按需加载更早。服务端上限 500。 */
+export const PAGE = 50;
+/** 群聊首屏 / 每次向上加载的条数（与单聊一致）。 */
+export const ROOM_PAGE = 50;
 
 /** 每个助理的最新请求代号：晚返回的旧请求不能覆盖新目标 */
 const reqGen: Record<string, number> = {};
@@ -113,6 +115,15 @@ function newRequest(agentId: string): Request {
 	return { gen: (reqGen[agentId] = (reqGen[agentId] ?? 0) + 1), signal: c.signal };
 }
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/**
+ * 向更早分页的查询串：优先用服务端给的稳定游标 `(before=created_at, beforeSeq=rowid)`，
+ * 避免同一毫秒的多条消息在边界被跳过 / 重复；旧服务端没返回 seq 时退回 `before=created_at`。
+ */
+function olderParams(limit: number, conv: string, oldest: { created_at: number; seq?: number | null }): string {
+	const q = new URLSearchParams({ limit: String(limit), conversation: conv, before: String(oldest.created_at) });
+	if (typeof oldest.seq === "number") q.set("beforeSeq", String(oldest.seq));
+	return q.toString();
+}
 /** 只写公开 id；不存消息、不存 token / 凭据 */
 function persistSelection(key: string, patch: { agentId?: string | null; conv?: { agentId: string; convId: string } }) {
 	if (!key) return;
@@ -203,7 +214,8 @@ export const useStore = create<State>((set, get) => ({
 	},
 	async selectRoom(id) {
 		set({ room: id, drawer: false, paneAgent: null, ...(get().room !== id ? { subagent: null } : {}) });
-		const msgs = await api<Message[]>(`/api/rooms/${id}/messages?limit=200`);
+		// 首屏只拉最近一批：群历史可能很长，一次性 200 条 + 大 meta 在手机网络上很慢。更早的消息由「更早的消息」按需加载。
+		const msgs = await api<Message[]>(`/api/rooms/${id}/messages?limit=${ROOM_PAGE}`);
 		set((s) => ({ roomMsgs: { ...s.roomMsgs, [id]: msgs }, rooms: s.rooms.map((r) => (r.id === id ? { ...r, unread: 0 } : r)) }));
 		void api(`/api/rooms/${id}/read`, { method: "POST" }).catch(() => {});
 	},
@@ -265,7 +277,7 @@ export const useStore = create<State>((set, get) => ({
 		const conv = st.conv;
 		set((s) => ({ msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: true, error: null } } }));
 		try {
-			const older = await api<Message[]>(`/api/agents/${agentId}/messages?limit=${PAGE}&conversation=${conv}&before=${list[0].created_at}`);
+			const older = await api<Message[]>(`/api/agents/${agentId}/messages?${olderParams(PAGE, conv, list[0])}`);
 			if ((reqGen[agentId] ?? 0) !== gen) return;
 			set((s) => ({ messages: { ...s.messages, [agentId]: mergeMessages(older, s.messages[agentId]) }, msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? MSG_BASE), loading: false, error: null, loaded: true, conv, hasMore: older.length >= PAGE } } }));
 		} catch (e) {

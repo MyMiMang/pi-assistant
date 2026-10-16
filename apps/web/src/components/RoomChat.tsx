@@ -4,7 +4,7 @@ import { RoomCost } from "./Usage";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, uploadRoom } from "../api";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
-import { useStore } from "../store";
+import { useStore, ROOM_PAGE } from "../store";
 import type { Agent, Message, Room, RoomMember } from "../types";
 import { Activity, BotPart, type Part, SideToggle, SystemMsg, UserMsg } from "./Chat";
 import { Avatar, Button, Help, Modal, cx } from "./ui";
@@ -78,7 +78,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const [settings, setSettings] = useState(false);
-	const [older, setOlder] = useState<"idle" | "loading" | "end">("idle");
+	const [older, setOlder] = useState<"idle" | "loading" | "end" | "error">("idle");
 	const [drag, setDrag] = useState(false);
 	const composer = useRef<{ addFiles: (f: FileList | File[]) => void }>(null);
 	const composerWrap = useRef<HTMLDivElement>(null);
@@ -86,7 +86,11 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const rKey = replyDraftKey.room(roomId);
 	const quote = useReplyDrafts((s) => s.drafts[rKey] ?? null);
 	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: m.agent_id, name: memberOf(room, agents, m.agent_id).name }));
-	const onInsert = (msgs: Message[]) => useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: mergeMessages(msgs, s.roomMsgs[roomId]) } }));
+	const onInsert = (msgs: Message[]) => {
+		// 跳进来的有界 context 窗口可能比当前列表更早：允许继续向上加载，不因一次 jump 断档
+		setOlder("idle");
+		useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: mergeMessages(msgs, s.roomMsgs[roomId]) } }));
+	};
 	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateRoomMessage(roomId, mid), onInsert);
 	const replyCtx = useReplyContext(onQuote);
 	useComposerInset(scroller, composerWrap, stick);
@@ -109,17 +113,23 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const lastRow = rows[rows.length - 1];
 	const speaking = st.current?.agentId;
 	const lastPause = room.paused && !st.running ? [...list].reverse().find((m) => m.meta.action === "room-continue")?.id : undefined;
+	// 向上加载更早：稳定游标 before=rowid；插入上方后保视觉锚点（滚动位置按高度差回填），不往顶跳。
+	// 单次有 loading 保护，到顶（older=end）后不再发空请求；失败可点重试。
 	const loadOlder = async () => {
 		const first = list[0];
-		if (!first?.seq) return;
+		if (!first?.seq || older === "loading" || older === "end") return;
 		setOlder("loading");
 		const el = scroller.current;
 		const h = el?.scrollHeight ?? 0;
-		const more = await api<Message[]>(`/api/rooms/${roomId}/messages?before=${first.seq}&limit=100`);
-		stick.current = false;
-		useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: [...more, ...(s.roomMsgs[roomId] ?? [])] } }));
-		setOlder(more.length < 100 ? "end" : "idle");
-		requestAnimationFrame(() => el && (el.scrollTop = el.scrollHeight - h));
+		try {
+			const more = await api<Message[]>(`/api/rooms/${roomId}/messages?before=${first.seq}&limit=${ROOM_PAGE}`);
+			stick.current = false;
+			useStore.setState((s) => ({ roomMsgs: { ...s.roomMsgs, [roomId]: [...more, ...(s.roomMsgs[roomId] ?? [])] } }));
+			setOlder(more.length < ROOM_PAGE ? "end" : "idle");
+			requestAnimationFrame(() => el && (el.scrollTop = el.scrollHeight - h));
+		} catch {
+			setOlder("error");
+		}
 	};
 	const openMember = (agentId: string) => {
 		if (!agents.some((a) => a.id === agentId)) return;
@@ -181,10 +191,10 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 				}}
 			>
 				<div className="pa-thread-body">
-					{list.length >= 200 && older !== "end" && (
+					{list.length >= ROOM_PAGE && older !== "end" && (
 						<div className="flex justify-center">
-							<button className="pa-chip sm" onClick={loadOlder} disabled={older === "loading"}>
-								{older === "loading" ? <Loader2 className="pa-ic animate-spin" /> : null} 更早的消息
+							<button className="pa-chip sm" onClick={loadOlder} disabled={older === "loading"} data-testid="room-load-older">
+								{older === "loading" ? <Loader2 className="pa-ic animate-spin" /> : null} {older === "error" ? "加载失败，重试" : "更早的消息"}
 							</button>
 						</div>
 					)}

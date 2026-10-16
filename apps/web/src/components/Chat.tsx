@@ -53,7 +53,13 @@ export default function Chat({ agentId }: { agentId: string }) {
 	const rKey = replyDraftKey.agent(agentId, convId);
 	const quote = useReplyDrafts((s) => s.drafts[rKey] ?? null);
 	const onQuote = (m: Message) => setReplyDraft(rKey, buildReplyRef(m, m.role === "user" ? { id: "user", name: "我" } : { id: agentId, name: agent?.name ?? "助理" }));
-	const onInsert = (msgs: Message[]) => useStore.setState((s) => ({ messages: { ...s.messages, [agentId]: mergeMessages(msgs, s.messages[agentId]) } }));
+	// 引用/搜索 jump 到未加载的旧消息：用有界 context 窗口合并（不拉全量）。
+	// 跳进来的窗口可能比当前列表更早：把 hasMore 打开，保证还能继续向上加载，不会因为一次 jump 出现分页断档。
+	const onInsert = (msgs: Message[]) =>
+		useStore.setState((s) => ({
+			messages: { ...s.messages, [agentId]: mergeMessages(msgs, s.messages[agentId]) },
+			msgState: { ...s.msgState, [agentId]: { ...(s.msgState[agentId] ?? { loading: false, error: null, loaded: true, conv: null, hasMore: false }), hasMore: true } },
+		}));
 	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), onInsert);
 	const [forkNotice, setForkNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 	// 「从这条消息另开新对话」：用 Pi 公开 fork 在服务端建分支对话；切到新对话并把正文放回输入框（不自动发）。
@@ -77,6 +83,17 @@ export default function Chat({ agentId }: { agentId: string }) {
 		const el = scroller.current;
 		if (el && stick.current) el.scrollTop = el.scrollHeight;
 	});
+	// 向上加载更早的消息：插入上方后按高度差回填滚动位置，保视觉锚点不跳；
+	// 正在往上翻时不因为加载而被拉到底（先解 stick）。失败保留错误提示，可重试。
+	const loadEarlier = async () => {
+		const cur = useStore.getState().msgState[agentId];
+		if (!cur?.hasMore || cur.loading) return;
+		const el = scroller.current;
+		const h = el?.scrollHeight ?? 0;
+		stick.current = false;
+		await useStore.getState().loadMoreMessages(agentId);
+		requestAnimationFrame(() => el && (el.scrollTop = el.scrollHeight - h));
+	};
 	useEffect(() => {
 		stick.current = true;
 	}, [agentId]);
@@ -144,13 +161,23 @@ export default function Chat({ agentId }: { agentId: string }) {
 				onScroll={(e) => {
 					const el = e.currentTarget;
 					stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+					// 滑到接近顶部自动加载更早（有保护，不会重复发空请求）
+					if (el.scrollTop < 200 && el.scrollHeight > el.clientHeight + 400) void loadEarlier();
 				}}
 			>
 				<div className="pa-thread-body">
 					{st?.hasMore && (
-						<button className="mx-auto my-2 block rounded-lg border border-line px-3 py-1 text-xs text-mut hover:bg-hover disabled:opacity-60" disabled={st.loading} onClick={() => void useStore.getState().loadMoreMessages(agentId)} data-testid="load-more">
+						<button className="mx-auto my-2 block rounded-lg border border-line px-3 py-1 text-xs text-mut hover:bg-hover disabled:opacity-60" disabled={st.loading} onClick={() => void loadEarlier()} data-testid="load-more">
 							{st.loading ? "加载中…" : "加载更早的消息"}
 						</button>
+					)}
+					{list.length > 0 && st?.error && (
+						<div className="mx-auto my-2 flex items-center gap-2 text-xs text-mut" data-testid="thread-more-error">
+							<span>加载更早的消息失败：{st.error}</span>
+							<button className="rounded-lg border border-line px-2 py-0.5 hover:bg-hover" onClick={() => void loadEarlier()} data-testid="load-more-retry">
+								重试
+							</button>
+						</div>
 					)}
 					{!list.length && !st?.error && (st?.loading || !st?.loaded) && <ThreadSkeleton />}
 					{!list.length && st?.error && (
