@@ -42,9 +42,14 @@ export async function fetchHfSiblings(repo: string, revision: string, fetchImpl:
 	return parseHfSiblings(await res.json());
 }
 
+/** HF 缓存里某个 repo 的缓存根目录（`blobs/` 与 `snapshots/` 的父目录，也是 symlink 的合法受信根）。 */
+export function hfRepoDir(hfHome: string, repo: string): string {
+	return joinPath(hfHome, "hub", `models--${repo.replace(/\//g, "--")}`);
+}
+
 /** HF 缓存里某个 revision 的 snapshot 目录（snapshot_download 落盘位置）。 */
 export function hfSnapshotDir(hfHome: string, repo: string, revision: string): string {
-	return joinPath(hfHome, "hub", `models--${repo.replace(/\//g, "--")}`, "snapshots", revision);
+	return joinPath(hfRepoDir(hfHome, repo), "snapshots", revision);
 }
 
 function joinPath(...parts: string[]): string {
