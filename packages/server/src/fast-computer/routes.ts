@@ -3,6 +3,7 @@ import { models, providerNames } from "../models.ts";
 import { configuredModels } from "../rooms/model-pick.ts";
 import { fastComputerSettings, saveFastComputerSettings, type FastComputerScope, type FastComputerSettings } from "./index.ts";
 import { benchmarkStatus, cancelBenchmark, listBenchmarks, type BenchmarkAvailability, type FastBenchmarkResult } from "./benchmark.ts";
+import type { BenchmarkStartInput, BenchmarkTargetInput } from "./benchmark-host.ts";
 import { BenchmarkFixtureStateStore, isPrivateSource, renderBenchmarkFixtureHtml } from "./benchmark-fixture.ts";
 import { FIXTURE_GATEWAY_PREFIX, fixtureOriginAllowed } from "./benchmark-gateway.ts";
 
@@ -11,14 +12,15 @@ import { FIXTURE_GATEWAY_PREFIX, fixtureOriginAllowed } from "./benchmark-gatewa
  * 未注入或环境未就绪时一律 `blocked`——绝不静默降级成 mock 冒充真实 CUA 结果。
  */
 export interface BenchmarkHost {
-	availability(): BenchmarkAvailability;
+	/** 传 provider/model 就评估这条；不传按该目标电脑的快速操作设置。GET 只读，不开窗口。 */
+	availability(input?: BenchmarkTargetInput): BenchmarkAvailability;
 	/** 启动一次真实运行（调用方负责把真实 CUA deps 接进来）。未就绪时抛错。 */
-	start(input: { provider?: string; model?: string; maxTrials?: number; warmup?: number; target?: "hostpc" | "computer" }): Promise<FastBenchmarkResult>;
+	start(input: BenchmarkStartInput): Promise<FastBenchmarkResult>;
 }
 
 /** 默认宿主：环境未就绪，明确告诉 UI 为什么不能跑。 */
 const unavailableHost = (reason: string): BenchmarkHost => ({
-	availability: () => ({ cuaReady: false, modelReady: false, fixtureReady: false, reasons: [reason] }),
+	availability: () => ({ cuaReady: false, modelReady: false, fixtureReady: false, reasons: [reason], model: null }),
 	start: async () => {
 		throw new Error(reason);
 	},
@@ -79,6 +81,7 @@ export function mountFastComputerRoutes(app: Hono<any>, hostOrOpts?: BenchmarkHo
 	app.all(`${FIXTURE_GATEWAY_PREFIX}*`, (c) => c.json({ ok: false, reason: "fixture_gateway_only" }, 403));
 
 	const parseScope = (v: unknown): FastComputerScope | undefined => (v === "hostpc" || v === "computer" ? v : undefined);
+	const parseTarget = (v: unknown): "hostpc" | "computer" | undefined => (v === "hostpc" || v === "computer" ? v : undefined);
 	app.get("/api/fast-computer/settings", (c) =>
 		c.json({
 			settings: fastComputerSettings(parseScope(c.req.query("scope"))),
@@ -99,26 +102,33 @@ export function mountFastComputerRoutes(app: Hono<any>, hostOrOpts?: BenchmarkHo
 
 	// ------------------------------------------------------------ 真实操控基准测试
 	// 共享结果 DTO：FastBenchmarkResult（见 benchmark.ts），UI 直接渲染，不要再拆独立 config section。
+	// GET 只读：按查询里的 provider/model/target 评估（点哪条评估哪条），绝不开窗 / 不写设置。
 	app.get("/api/fast-computer/benchmark", (c) => {
 		const owner = ownerOf(c);
 		const runs = listBenchmarks().filter((r) => (runOwners.get(r.id) ?? owner) === owner);
-		return c.json({ availability: benchHost.availability(), runs });
+		const target = parseTarget(c.req.query("target"));
+		const provider = c.req.query("provider")?.trim() || undefined;
+		const model = c.req.query("model")?.trim() || undefined;
+		return c.json({ availability: benchHost.availability({ provider, model, target }), runs });
 	});
 	app.post("/api/fast-computer/benchmark", async (c) => {
 		const owner = ownerOf(c);
-		const avail = benchHost.availability();
+		let body: { provider?: string; model?: string; maxTrials?: number; warmup?: number; target?: "hostpc" | "computer" | string } = {};
+		try {
+			body = await c.req.json();
+		} catch {
+			/* 空 body 允许 */
+		}
+		const target = parseTarget(body.target);
+		const provider = String(body.provider ?? "").trim();
+		const model = String(body.model ?? "").trim();
+		// 先按本次请求的 provider/model/target 校验；未就绪直接 409，**不开窗、不产生模型调用**。
+		const avail = benchHost.availability({ provider: provider || undefined, model: model || undefined, target });
 		if (!avail.cuaReady || !avail.modelReady || !avail.fixtureReady) {
 			return c.json({ ok: false, blocked: true, availability: avail }, 409);
 		}
 		try {
-			let body: { provider?: string; model?: string; maxTrials?: number; warmup?: number; target?: "hostpc" | "computer" | string } = {};
-			try {
-				body = await c.req.json();
-			} catch {
-				/* 空 body 允许 */
-			}
-			const target = body.target === "hostpc" || body.target === "computer" ? body.target : undefined;
-			const run = await benchHost.start({ provider: String(body.provider ?? ""), model: String(body.model ?? ""), maxTrials: body.maxTrials, warmup: body.warmup, target });
+			const run = await benchHost.start({ provider: provider || undefined, model: model || undefined, maxTrials: body.maxTrials, warmup: body.warmup, target });
 			runOwners.set(run.id, owner);
 			return c.json({ ok: true, run });
 		} catch (e) {

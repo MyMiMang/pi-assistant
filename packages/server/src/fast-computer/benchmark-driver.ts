@@ -50,8 +50,8 @@ export interface InvokeDriverOptions {
 	windowKindOf?: (prefix: "hostpc" | "computer") => FixtureWindowKind | null;
 	/** 受限权限桥（暂停 / 档位）；不提供则不做额外拦截（测试 / 内部调用）。传入裸工具名。 */
 	guard?: (input: { prefix: "hostpc" | "computer"; tool: string }) => { ok: boolean; reason?: string };
-	/** 能力探测（由 runtime 缓存后注入）；不提供 = fail-closed，不默认 true。 */
-	capable?: () => { ok: boolean; reason?: string };
+	/** 能力探测（由 runtime 缓存后注入）；不提供 = fail-closed，不默认 true。传 requested 按点名的那台电脑判定。 */
+	capable?: (requested?: "hostpc" | "computer") => { ok: boolean; reason?: string };
 	/** 结束后关闭自有 fixture 窗口的可选实现；driver-isolated-browser 有内置实现（kill 自有 pid）。 */
 	closeOwn?: (handle: FixtureWindowHandle) => Promise<void>;
 }
@@ -146,7 +146,7 @@ export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): Benchmar
 
 	return {
 		target: (requested) => opts.target(requested),
-		capable: () => opts.capable?.() ?? { ok: false, reason: "未提供目标电脑能力探测（fail-closed，不默认可用）" },
+		capable: (requested) => opts.capable?.(requested) ?? { ok: false, reason: "未提供目标电脑能力探测（fail-closed，不默认可用）" },
 		// 经统一 computer backend（cua MCP）真实调用；来源标 cua，不是测试假驱动
 		provenance: () => "cua",
 		windowKind: (prefix) => windowKindOf(prefix),

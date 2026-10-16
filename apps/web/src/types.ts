@@ -183,6 +183,10 @@ export interface BenchmarkAvailability {
 	/** 元数据：目标电脑是否可准备一个隔离 fixture 窗口（GET 只报可准备，不开窗口）。 */
 	preparable?: boolean;
 	targetKind?: "driver-isolated-browser" | "sandbox-app";
+	/** 本次评估的模型（点哪条评估哪条）；null = 按该目标电脑的快速操作设置评估。 */
+	model?: { provider: string; id: string } | null;
+	/** 已安装但未运行、可按既有流程启动（本地 Laya）；只表示可启动，不等于已就绪。 */
+	modelStartable?: boolean;
 }
 export interface FastBenchmarkResult {
 	id: string;

@@ -11,7 +11,7 @@
  * 能力只按可靠来源；猜出来的标「未确认」。接口未就绪时显示加载 / 失败（不渲染 demo 数据）。
  */
 import { Activity, AlertTriangle, Check, CheckCircle2, ChevronDown, Download, Gauge, Loader2, Monitor, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Square, Trash2, XCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { PROVIDER_ICONS } from "./provider-icons";
 import type { BenchmarkAvailability, FastBenchmarkResult, LayaStatus, ModelCapability, ModelType, Provider, RegistryModel, RegistryProvider } from "../types";
@@ -795,18 +795,47 @@ function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; on
 	const [availability, setAvailability] = useState<BenchmarkAvailability | null>(null);
 	const [run, setRun] = useState<FastBenchmarkResult | null>(null);
 	const [running, setRunning] = useState(false);
+	const [startingLaya, setStartingLaya] = useState(false);
 	const [blocked, setBlocked] = useState<string[]>([]);
 	const cloud = provider.kind !== "local";
 	const costNote = cloud ? "云端分类器：这次测试会产生真实模型调用，可能少量计费。" : "本地运行，无额外费用。";
+	// 只让最后一次请求落地：切目标电脑 / 关弹窗后迟到的响应不覆盖当前状态。
+	const seq = useRef(0);
+	// 评估**点开的这条**模型（provider/model 一并带上），不再依赖全局快速模型是否开启；换目标电脑就重新评估。
+	const loadAvailability = useCallback(
+		(t: "hostpc" | "computer") => {
+			const my = ++seq.current;
+			const q = new URLSearchParams({ provider: provider.id, model: model.id, target: t });
+			return api<{ availability: BenchmarkAvailability; runs: FastBenchmarkResult[] }>(`/api/fast-computer/benchmark?${q}`)
+				.then((r) => {
+					if (my !== seq.current) return;
+					setAvailability(r.availability);
+					setRun(r.runs?.[0] ?? null);
+				})
+				.catch(() => {});
+		},
+		[provider.id, model.id],
+	);
 	useEffect(() => {
 		if (!open) return;
-		void api<{ availability: BenchmarkAvailability; runs: FastBenchmarkResult[] }>("/api/fast-computer/benchmark")
-			.then((r) => {
-				setAvailability(r.availability);
-				setRun(r.runs?.[0] ?? null);
-			})
-			.catch(() => {});
-	}, [open]);
+		void loadAvailability(target);
+		return () => {
+			seq.current++;
+		};
+	}, [open, target, loadAvailability]);
+	// 本地 Laya 已安装但未运行时：按既有 manager 流程启动（不在这里偷开，也不假装 ready）。
+	const startLocalLaya = async () => {
+		setStartingLaya(true);
+		setBlocked([]);
+		try {
+			await api("/api/local-models/laya/start", { method: "POST" });
+			await loadAvailability(target);
+		} catch (e) {
+			setBlocked([e instanceof Error ? e.message : "启动 Laya 失败"]);
+		} finally {
+			setStartingLaya(false);
+		}
+	};
 	const start = async () => {
 		setRunning(true);
 		setBlocked([]);
@@ -819,6 +848,8 @@ function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; on
 			};
 			setRun(await poll());
 		} catch (e) {
+			const data = e && typeof e === "object" ? ((e as { data?: { availability?: BenchmarkAvailability } }).data ?? null) : null;
+			if (data?.availability) setAvailability(data.availability);
 			if (e && typeof e === "object" && (e as { status?: number }).status === 409) setBlocked(["测试环境尚未就绪，先看下面的原因。"]);
 			else setBlocked([e instanceof Error ? e.message : "启动失败"]);
 		} finally {
@@ -850,8 +881,13 @@ function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; on
 					</div>
 					{availability && (
 						<div className="mt-1" data-testid="benchmark-availability">
-							就绪状态：CUA {availability.cuaReady ? "✓" : "✗"} · 模型 {availability.modelReady ? "✓" : "✗"} · 测试窗口 {availability.fixtureReady ? "✓" : "✗"}
-							{availability.targetKind === "driver-isolated-browser" ? "（点开始后创建驱动自有的隔离浏览器窗口）" : availability.targetKind === "sandbox-app" ? "（点开始后在助理电脑里开一个专用窗口）" : ""}
+							<div data-testid="benchmark-model" data-model={`${provider.id}/${model.id}`}>
+								本次测试：{provider.name || provider.id} · {model.name || model.id}
+							</div>
+							<div>
+								就绪状态：CUA {availability.cuaReady ? "✓" : "✗"} · 模型 {availability.modelReady ? "✓" : "✗"} · 测试窗口 {availability.fixtureReady ? "✓" : "✗"}
+								{availability.targetKind === "driver-isolated-browser" ? "（点开始后创建驱动自有的隔离浏览器窗口）" : availability.targetKind === "sandbox-app" ? "（点开始后在助理电脑里开一个专用窗口）" : ""}
+							</div>
 							{availability.reasons?.length ? <div className="text-amber-600">· {availability.reasons.join("；")}</div> : null}
 						</div>
 					)}
@@ -870,6 +906,14 @@ function BenchmarkDialog({ open, onClose, provider, model }: { open: boolean; on
 								]}
 								onChange={(v) => setTarget(v as "hostpc" | "computer")}
 							/>
+							{availability?.modelStartable && (
+								<div className="mt-1 flex items-center gap-2" data-testid="benchmark-model-action">
+									<Button size="sm" variant="outline" disabled={startingLaya} onClick={() => void startLocalLaya()} data-testid="benchmark-start-laya">
+										{startingLaya ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} 启动本地 Laya
+									</Button>
+									<span className="text-[11px] text-mut2">启动后这里会重新评估。</span>
+								</div>
+							)}
 						</div>
 						<label className="flex items-center gap-2 text-xs">
 							<input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} data-testid="actual-task-ack" />
