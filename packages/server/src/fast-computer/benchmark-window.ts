@@ -24,6 +24,7 @@
  *  - `fixtureUrlMatches`：fixture URL 必须同时带本次 fixtureId + nonce，防串扰。
  */
 import { BENCHMARK_FIXTURE_BASE } from "./benchmark-fixture.ts";
+import { parseBrowserSnapshotView, type BrowserBinding } from "./browser-snapshot.ts";
 
 /** fixture 窗口来源：驱动自有的隔离浏览器（hostpc）或沙箱里的应用窗口（助理电脑 VM）。 */
 export type FixtureWindowKind = "driver-isolated-browser" | "sandbox-app";
@@ -89,77 +90,21 @@ export function parsePreparedBrowser(structured: unknown): { preparedPid: number
 	return { preparedPid: pid };
 }
 
-export interface BrowserBinding {
-	ok: boolean;
-	reason?: string;
-	/** 驱动自有浏览器进程 pid（仅当能证明是本次 driver 拉起时非空，关闭只 kill 它）。 */
-	ownerPid?: number;
-	tabId?: string;
-	/** 导航 / snapshot 需要的绑定 target id（由 get_browser_state 绑定后给出）。 */
-	targetId?: string;
-	/** 页面快照 **pin**（真实字段 `snapshot.id`，如 `p1`；refs 前缀就取自它）。只有 snapshot 模式有。 */
-	token?: string;
-	url?: string;
-}
-
-/**
- * 校验 `get_browser_state` **绑定模式**（`pid`+`window_id`）的返回。
- * 官方约定（0.35.4 实测）：必须证明 `binding_quality:"exact"` + `mutation_allowed:true`，并给出 `target_id`；
- * **绑定阶段没有页面快照，因此不要求 `snapshot_id`**（这一条以前写错，导致隔离路径 100% fail-closed）。
- * 标签从 `tabs[]` 里取：唯一 `active:true`，否则只有唯一标签时用它；多标签且都无法证明活动 → fail-closed。
- */
-export function parseBrowserBind(structured: unknown): BrowserBinding {
-	const s = asObj(structured);
-	if (!s) return { ok: false, reason: "读不到隔离浏览器状态（fail-closed）" };
-	const status = firstString(s.status);
-	if (status && status !== "ok") return { ok: false, reason: "隔离浏览器绑定没有成功（fail-closed）" };
-	const quality = firstString(s.binding_quality, s.bindingQuality);
-	if (quality !== "exact") {
-		return { ok: false, reason: quality ? `隔离浏览器不是精确绑定（binding_quality=${quality}），fail-closed` : "隔离浏览器没有 binding_quality=exact 证据（fail-closed）" };
-	}
-	const mutation = s.mutation_allowed ?? s.mutationAllowed;
-	if (mutation !== true) {
-		return { ok: false, reason: mutation === false ? "隔离浏览器不可变更（mutation_allowed=false），fail-closed" : "隔离浏览器没有 mutation_allowed=true 证据（fail-closed）" };
-	}
-	const ownerPid = firstNumber(s.pid, s.owner_pid, s.ownerPid, asObj(s.browser)?.pid);
-	const targetId = firstString(s.target_id, s.targetId, asObj(s.target)?.id);
-	if (!targetId) return { ok: false, reason: "隔离浏览器绑定没有 target_id，无法导航（fail-closed）" };
-	const tabs = Array.isArray(s.tabs) ? s.tabs.map((t) => asObj(t)).filter((t): t is Record<string, unknown> => !!t) : [];
-	const activeTabs = tabs.filter((t) => t.active === true);
-	const chosen = activeTabs.length === 1 ? activeTabs[0] : tabs.length === 1 ? tabs[0] : null;
-	if (!chosen) {
-		return { ok: false, reason: tabs.length ? "隔离浏览器有多个标签且无法证明哪个是活动标签（fail-closed）" : "隔离浏览器绑定没有返回任何标签（fail-closed）" };
-	}
-	// 顶层 tab_id 只在部分版本 / 导航返回里出现；bind 以 tabs[] 为准。
-	const tabId = firstString(s.tab_id, s.tabId, chosen.tab_id, chosen.tabId);
-	if (!tabId) return { ok: false, reason: "隔离浏览器绑定没有 tab_id，无法快照页面（fail-closed）" };
-	const url = firstString(chosen.url, s.url, s.current_url, s.currentUrl);
-	return { ok: true, ...(ownerPid !== undefined ? { ownerPid } : {}), tabId, targetId, ...(url ? { url } : {}) };
-}
+export type { BrowserBinding } from "./browser-snapshot.ts";
+export { parseBrowserBind } from "./browser-snapshot.ts";
 
 /**
  * 校验 `get_browser_state` **快照模式**（`target_id`+`tab_id`）的返回，并取得可 pin 的快照身份。
- * 官方约定（0.35.4 实测）：`snapshot.id`（如 `p1`，refs 的 `p<n>:<i>` 前缀），页面 URL 在 `page.url`；
- * 兼容旧 `dom_refs_v1` 顶层 `snapshot_id` / `state_id`。**拿不到就 fail-closed**（绝不自己编 id）。
- * 传 `fixtureId`+`nonce` 时，额外要求当前页面 URL 是本次 fixture。
+ * 通用校验（status / pin / URL）在 `browser-snapshot.ts`（产品工具也用同一份）；
+ * 这里**额外**要求当前页面 URL 是本次 fixture（fixtureId + nonce），防别的页面 / 别的 run 串扰。
  */
 export function parseBrowserSnapshot(structured: unknown, input: { fixtureId?: string; nonce?: string; expectedOrigin?: string } = {}): BrowserBinding {
-	const s = asObj(structured);
-	if (!s) return { ok: false, reason: "读不到隔离浏览器的页面快照（fail-closed）" };
-	const status = firstString(s.status);
-	if (status && status !== "ok") return { ok: false, reason: "隔离浏览器页面快照没有成功（fail-closed）" };
-	const snap = asObj(s.snapshot);
-	const token = firstString(snap?.id, snap?.snapshot_id, s.snapshot_id, s.snapshotId, s.state_id, s.stateId);
-	if (!token) return { ok: false, reason: "隔离浏览器读不到可 pin 的快照 id（driver 约定 snapshot.id），fail-closed" };
-	const page = asObj(s.page);
-	const url = firstString(page?.url, s.url, s.current_url, s.currentUrl, asObj(s.tab)?.url);
-	if (input.fixtureId && input.nonce && (!url || !fixtureUrlMatches(url, input.fixtureId, input.nonce, input.expectedOrigin))) {
+	const view = parseBrowserSnapshotView(structured);
+	if (!view.ok) return view;
+	if (input.fixtureId && input.nonce && (!view.url || !fixtureUrlMatches(view.url, input.fixtureId, input.nonce, input.expectedOrigin))) {
 		return { ok: false, reason: "隔离浏览器当前 URL 不是本次 fixture（nonce 不符，fail-closed）" };
 	}
-	const ownerPid = firstNumber(s.pid, s.owner_pid, s.ownerPid, asObj(s.browser)?.pid);
-	const tabId = firstString(s.tab_id, s.tabId);
-	const targetId = firstString(s.target_id, s.targetId, asObj(s.target)?.id);
-	return { ok: true, ...(ownerPid !== undefined ? { ownerPid } : {}), ...(tabId ? { tabId } : {}), ...(targetId ? { targetId } : {}), token, ...(url ? { url } : {}) };
+	return view;
 }
 
 /**
@@ -180,10 +125,6 @@ export function fixtureUrlMatches(url: string, fixtureId: string, nonce: string,
 }
 
 const asObj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" ? (v as Record<string, unknown>) : null);
-const firstString = (...vals: unknown[]): string | undefined => {
-	for (const v of vals) if (typeof v === "string" && v) return v;
-	return undefined;
-};
 const firstNumber = (...vals: unknown[]): number | undefined => {
 	for (const v of vals) if (typeof v === "number" && Number.isFinite(v)) return v;
 	return undefined;

@@ -26,6 +26,7 @@ import type { BenchmarkDriver, FixtureWindowHandle } from "./benchmark-host.ts";
 import type { ObservedWindow } from "./benchmark.ts";
 import { benchmarkToolGuard, type BenchmarkGuardInput } from "./benchmark-guard.ts";
 import { fixtureUrlMatches, parseBrowserBind, parseBrowserSnapshot, parsePreparedBrowser, pickWindowForPid, type FixtureWindowKind } from "./benchmark-window.ts";
+import { browserSnapshotAsWindow } from "./browser-snapshot.ts";
 
 export interface InvokeResult {
 	isError: boolean;
@@ -335,41 +336,8 @@ function urlParts(url: string): { origin?: string; nonce?: string } {
 
 const originOf = (url: string): string | undefined => urlParts(url).origin;
 
-/**
- * 把页面快照（`refs[]`）归一成与原生窗口一致的 elements 形状，让候选收集 / 目标新鲜度 / 判分三层复用同一套逻辑。
- * `element_token` 就放 ref（如 `p3:7`）；真正派发时由 `executeInBrowserFixture` 换成 `ref`。
- */
-export function browserSnapshotAsWindow(structured: unknown): Record<string, unknown> {
-	const s = asObj(structured) ?? {};
-	// 页面里的 `role=status` 之类状态元素是**内容节点**（无动作），只在 `content_refs` 里；
-	// 独立 UI 证据要看到它们，所以两类 ref 都归一成 elements（去重），但候选收集只会取有动作的。
-	const actionRefs = Array.isArray(s.refs) ? s.refs : [];
-	const contentRefs = Array.isArray(s.content_refs) ? s.content_refs : [];
-	const seen = new Set<string>();
-	const elements: Record<string, unknown>[] = [];
-	for (const [kind, list] of [
-		["action", actionRefs],
-		["content", contentRefs],
-	] as const) {
-		for (const raw of list) {
-			const r = asObj(raw) ?? {};
-			const token = firstStringStatic(r.ref);
-			if (!token || seen.has(token)) continue;
-			seen.add(token);
-			elements.push({
-				element_index: elements.length,
-				element_token: token,
-				role: typeof r.role === "string" ? r.role : undefined,
-				label: typeof r.name === "string" ? r.name : undefined,
-				value: typeof r.value === "string" ? r.value : (r.value ?? undefined),
-				actions: kind === "action" && Array.isArray(r.actions) ? r.actions : [],
-				frame: r.frame,
-			});
-		}
-	}
-	const page = asObj(s.page) ?? {};
-	return { ...s, elements, snapshot_id: firstStringStatic(asObj(s.snapshot)?.id, s.snapshot_id), url: page.url, title: page.title };
-}
+/** 页面快照 → elements 的归一见 `browser-snapshot.ts`（产品 `fast_pick_action` 也用同一份，这里只为兼容旧引用）。 */
+export { browserSnapshotAsWindow } from "./browser-snapshot.ts";
 
 /** 浏览器 fixture 的派发适配：`click`→`browser_click{ref}`、程序侧 `scroll`→`browser_pointer{action:scroll}`。 */
 async function executeInBrowserFixture(

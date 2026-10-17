@@ -272,3 +272,48 @@ node scripts/laya-benchmark-supervisor.mjs --timeout-ms=720000 -- \
 **preflight 时已存在的遗留（非本次、未杀、已记录）**：旧 bench daemon `5245`（socket `/tmp/pia-laya-bench-2026-10-17T10-58-08-701Z/...`）、`laya-serve` `32630`（生产 env 路径）、`laya-serve` `31929`（旧 smoke 临时路径）。没有本次归属证明，按规则只报告不乱杀。
 
 **边界（不得宣称）**：① 4 个固定 synthetic 任务、单机 arm64、单一 checkpoint，**不是完整 production benchmark**；② 熔断 key 按任务分开（生产 `benchmark-host` 同一 key）；③ `pick-city` 的 `afterSelect` 是**程序固定下拉选择**、`scroll-target` 的滚动是**程序侧 `programAssist`**，都不算 Laya 能力；④ **主模型接管未执行**（harness 不跑会话主接管），fallback 链路只在单测里证到「工具返回回退」，真实主接管仍未验；⑤ 3 题未派发动作 → 无「误选执行」可观测，也不反推「本来选对」；⑥ 不宣称准确率（温度未拟合，`max(p)` 偏 over-confident）；⑦「钥匙串弹窗已修好」仍未证。
+
+### 9.11 产品路径的网页目标（`fast_pick_action` + `browser`，2026-10-17）
+
+> 背景（主审发现）：`fast_pick_action` 以前只读 `get_window_state` 的原生 AX；而 **Chrome 后台窗口不暴露网页 AX 子树**
+> （只看到工具栏，`tool.ts` 的注释也这么写）。浏览器链路（`clickCandidatesFromBrowserRefs` + `browser_click{ref}`）
+> 只长在 benchmark 里，所以 **benchmark 的浏览器结果不能当成产品 fast tool 支持网页**——真实网页 fallback 时工具收集不到候选。
+
+**接线（产品）**：`fast_pick_action` 新增可选 `browser`。
+
+| 入参 | 行为 |
+|---|---|
+| 不给 `browser` | 原生路径，完全不变（`get_window_state` + `element_token`）。 |
+| `browser:{target_id, tab_id}` | 用主模型自己 `get_browser_state` 绑定得到的精确身份；不额外 bind。 |
+| `browser:{}` | 用既有 `pid` + `window_id` 调一次 `get_browser_state` 做**绑定核对**：`binding_quality:"exact"` + `mutation_allowed:true` + `target_id` + `tabs[]` 唯一活动标签。**绝不** `browser_prepare` / attach。 |
+| 只给 `target_id` 或只给 `tab_id` | fail-closed（不猜另一个）。 |
+
+**派发与三条不变量**：
+
+1. **G1**：`session` 透传到 `get_browser_state` 与 `browser_click`，读 / 点同一个会话。
+2. **G2**：执行前重读**同一 target + tab** 的 `semantic_v2` 快照，用**最新 ref** 做语义唯一性 + role/value/actions 未变校验；快照报回的 `target_id` / `tab_id` 与请求不一致（换 target = 换权限面）直接中止。
+3. **G3**：执行后再读一次快照，按 `expected` 返回 `confirmed` / `unsatisfied` / `unknown`；没有 `expected` 只有 `unknown`。
+
+**派发参数**：候选表内部仍用 `element_token` 存 ref，好让新鲜度校验一条路径通用于原生与页面；真正派发时换成官方入参
+`browser_click{target_id, tab_id, ref}`（`element_token` **不**传给浏览器工具）。缺浏览器工具（`get_browser_state` / `browser_click`）、
+绑定证据不足、快照不可用，一律 fail-closed 并把「由你自己用电脑工具完成」交回主模型。
+
+**共享归一（不再复制一份）**：新增 `packages/server/src/fast-computer/browser-snapshot.ts`
+（`browserSnapshotAsWindow` / `parseBrowserBind` / `parseBrowserSnapshotView` / `browserSnapshotId`）。benchmark 侧的
+`benchmark-window.ts`（+ fixture URL/nonce 校验）与 `benchmark-driver.ts`（重新导出）改为复用同一份；tool **不** import
+benchmark 运行时，避免 `benchmark-host → tool → benchmark-driver` 循环，也避免把 fixture / 判分拖进产品路径。
+
+**候选能力语义（`refs[].actions`）**：`click` = 显式可点击；`pointer` = 可悬停 / 滚动 / 定位，**不等于** click；
+`content_refs`（无 `actions`）不是动作节点，永远不进点击候选。**pointer-only 的文本节点保留**：ref 点击落在元素中心，
+点「按钮里的文字」可能照样冒泡触发容器点击（label-click）——这一点**未在真实浏览器验证**，所以既不声称已证，也不凭猜删候选。
+严格映射（要不要按 capability 只留 `click`）留到真实浏览器那轮用证据定。
+
+**已知限制（不得当成结论）**：当前用的是通用多语种 checkpoint（`laya-multilingual`），不是浏览器专用训练。
+上游 `docs/finetune_browser_agent.md` 的结论（主审转述：typed-decisions 零样本浏览器选择接近随机、任务通过率 0%；本轮未独立读取该文件）、`cklxx/laya-browser`
+的 62% 是**第三方报告（fine-tuned 模型、非本机证据）**。所以「低 gate 是泛化能力不足」只能作为**待验证假设**，
+不能写成主因已证；也不据此调阈值、微调 prompt 或只测少数题过拟合。浏览器专用 checkpoint 的许可 / 中文 / 体积 / 一键安装
+是后续调研项，本轮不下载、不换用户模型。
+
+**本轮验证范围（如实）**：只有假 MCP ctx 的定向单测（`fast-computer-tool` 24/24、`fast-computer*` 118/118、
+server `tsc` exit 0）。**没有**起真实 Chrome / 驱动 / Laya，网页路径未在真实页面跑过；benchmark 与产品共用同一份归一
+≠ 已在真实网页验证。

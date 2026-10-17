@@ -9,6 +9,14 @@
  * 失败 / abstain / 低可信 / 超时 / 模型故障 / 目标已变化 / 无法核验 → 明确回主模型，不无限重试、不重复操作。
  * 绝不把「执行返回成功」当成任务成功；没有 expected 就只能报 unknown 交回主模型。
  *
+ * 两种目标：
+ *  - **原生窗口**（默认）：读 `get_window_state` 的原生 AX，用 `element_token` 派发；
+ *  - **网页**（可选 `browser: {target_id, tab_id}` 或 `browser: {}` 让本工具用 pid+window_id 做一次精确绑定核对）：
+ *    网页内容不在原生 AX 里（Chrome 后台窗口只暴露工具栏），所以读驱动 CDP 的 `get_browser_state` semantic_v2 refs，
+ *    派发走 `browser_click{target_id, tab_id, ref}`（官方入参是 `ref`，不是 `element_token`）。
+ *    只接受**精确绑定**（`binding_quality=exact` + `mutation_allowed`）；本工具**绝不**自己 `browser_prepare` / attach 浏览器，
+ *    也不接受驱动报回来的 target/tab 与请求不一致（换 target 就是换权限面）→ 一律 fail-closed 交回主模型。
+ *
  * 安全：快速模型看不到 tool/args；候选只允许电脑输入工具白名单；执行经 `ctx.executeTool`，
  * ext-computer 的 guard / 审批 / 暂停 / 凭据 deny 原样生效，不绕过。
  */
@@ -18,6 +26,7 @@ import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { models } from "../models.ts";
 import { recordUsage } from "../usage/index.ts";
 import { createChatChooser, createClassifierChooser, MAX_FAST_CANDIDATES } from "./choosers.ts";
+import { browserSnapshotAsWindow, parseBrowserBind, parseBrowserSnapshotView } from "./browser-snapshot.ts";
 import {
 	fastComputerSettings,
 	selectFastAction,
@@ -93,8 +102,14 @@ export interface FastBrowserTarget {
 /**
  * 从**页面快照**（`get_browser_state` semantic_v2；refs 形如 `p3:7`）收集点击候选。
  * 浏览器里的网页内容不走原生 AX（Chrome 后台窗口不暴露 web AX 子树，实测只能看到工具栏），
- * 所以走驱动自己的 `browser_click{target_id,tab_id,ref}`；`element_token` 仍用 ref，
- * 好让执行前的「目标新鲜度重校验」同一套逻辑生效，派发时再由 driver 适配层换成 `ref`。
+ * 所以走驱动自己的 `browser_click{target_id,tab_id,ref}`；候选里 `element_token` 仍存 ref，
+ * 好让执行前的「目标新鲜度重校验」同一套逻辑生效；派发时换成官方入参 `ref`（见 `dispatchArgs`）。
+ *
+ * 能力语义（`actions`）：`click` 才是「可直接点击」的显式能力；`pointer` 表示「可悬停 / 可滚动 / 可定位」，
+ * **不等于** click。内容节点（`content_refs`）没有动作能力，`actions` 为空，永远不进候选。
+ * `pointer`-only 的文本节点**没有删**：ref 点击落在元素中心，点「按钮里的文字」在真实页面上可能照样冒泡触发容器
+ * 的点击（label-click）；但这一点**未在真实浏览器验证过**，所以既不当成已证事实，也不凭猜删掉候选。
+ * 这个取舍在 `fast-computer-tool.test.ts` 里显式钉住语义（content 不进候选、pointer-only 保留）。
  */
 export function clickCandidatesFromBrowserRefs(prefix: string, target: FastBrowserTarget, structured: unknown): FastActionCandidate[] {
 	const elements = (structured as { elements?: CollectedElement[] } | null)?.elements ?? [];
@@ -131,7 +146,10 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 					"执行前程序会重新读取同一窗口状态，要求目标唯一且未变化，再用新 element_token 派发；目标变了就中止回你。" +
 					"执行后程序会用 expected 做独立核验，返回 confirmed / unsatisfied / unknown；没有 expected 只会返回 unknown，别把执行成功当成任务成功。" +
 					"快速模型看不到工具名 / 参数 / 坐标，也不能自由调工具；选中不等于授权，执行仍走原有权限与审批。" +
-					"没开启、模型不可用、拿不准、超时或目标已变化都会明确回到你自己完成，不会无限重试。",
+					"没开启、模型不可用、拿不准、超时或目标已变化都会明确回到你自己完成，不会无限重试。" +
+					"目标是网页（Chrome / Edge / Brave 页面）时传 browser：要么带上你自己刚 get_browser_state 绑定得到的 target_id + tab_id，" +
+					"要么给空对象 browser:{} 让本工具用 pid + window_id 做一次精确绑定核对（不会替你 attach / 拉起浏览器）；" +
+					"网页目标读驱动 CDP 的 semantic_v2 refs、执行用 browser_click{ref}；不传 browser 则仍读原生 AX。",
 				promptSnippet: "fast_pick_action: 用快速模型在有界候选里挑一个控件（默认关闭）",
 				parameters: Type.Object({
 					goal: Type.String({ description: "要达成的目标（一句话）" }),
@@ -139,6 +157,12 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 					window_id: Type.Integer({ description: "目标窗口 id" }),
 					prefix: Type.Optional(Type.Union([Type.Literal("hostpc"), Type.Literal("computer")], { description: "电脑目标：hostpc=用户电脑，computer=助理电脑；默认按可用工具判断" })),
 					session: Type.Optional(Type.String({ description: "cua session 标签（可选）；会透传到读取与执行，避免读错 / 点错会话" })),
+					browser: Type.Optional(
+						Type.Object({
+							target_id: Type.Optional(Type.String({ description: "浏览器页面目标的 target_id（来自你自己 get_browser_state 的精确绑定）" })),
+							tab_id: Type.Optional(Type.String({ description: "浏览器页面目标的 tab_id；与 target_id 同时给" })),
+						}, { description: "网页目标（可选）：给 target_id + tab_id 就直接用；给空对象 {} 就用 pid + window_id 做一次精确绑定核对。本工具不会自行 attach 浏览器。" }),
+					),
 					expected: Type.Optional(
 						Type.Object({
 							role: Type.Optional(Type.String({ description: "后置条件：目标元素的 role" })),
@@ -158,9 +182,19 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 					const windowId = Number(args.window_id);
 					if (!prefix) return text("没有可用的电脑工具（操作这台电脑 / 助理电脑都没开），无法收集候选。请自己完成。");
 					const session = typeof args.session === "string" && args.session ? args.session : undefined;
-					const target: FastTarget = { pid, window_id: windowId, session };
 
-					const collected = await collectCandidates(ctx, prefix, target);
+					// 目标：默认读原生 AX；传了 `browser` 就读驱动 CDP 的页面快照（网页内容不在原生 AX 里）。
+					// 浏览器目标只接受精确绑定证据：显式 target_id+tab_id，或本工具用既有 pid+window_id 做一次 bind 核对；
+					// **绝不**自己 browser_prepare / attach 浏览器，也不换 target。
+					const browserReq = parseBrowserRequest(args.browser);
+					let collectTarget: FastCollectTarget = { kind: "native", target: { pid, window_id: windowId, session } };
+					if (browserReq) {
+						const bound = await resolveBrowserTarget(ctx, prefix, browserReq, { pid, window_id: windowId, session });
+						if ("error" in bound) return text(`${bound.error} 请你自己用浏览器工具完成。`);
+						collectTarget = { kind: "browser", target: bound.target };
+					}
+
+					const collected = await collectCandidates(ctx, prefix, collectTarget);
 					if ("error" in collected) return text(`${collected.error} 请自己用电脑工具完成。`);
 					const bad = validateCandidates(collected.candidates);
 					if (bad) return text(`候选不可用（${bad}）。请自己用电脑工具完成。`);
@@ -168,7 +202,7 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 					const chooser = (opts.chooserFor ?? buildChooser)(s);
 					if (!chooser) return text(noChooserText(s));
 
-					const key = `${opts.agentId}:${prefix}:${pid}:${windowId}`;
+					const key = captureKey(opts.agentId, prefix, collectTarget);
 					const res = await selectFastAction({
 						key,
 						goal,
@@ -192,16 +226,17 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 					if (signal?.aborted) return text("已取消（用户停止）。未执行任何动作。请自己完成。");
 					if (!fastComputerSettings(scopeOfPrefix(prefix)).enabled) return text("快速操作模型在执行前已被关闭，未执行任何动作。请自己完成。");
 
-					// G2：独立重读同 session 同窗口，校验语义目标唯一且 role/value/actions 未变，用新 element_token 重构动作。
-					const fresh = await collectCandidates(ctx, prefix, target);
-					if ("error" in fresh) return text(`快速路径中止（执行前重读窗口状态失败：${fresh.error}）。请自己完成，不要重复调用本工具。`);
+					// G2：独立重读**同一个目标**（原生=同 session 同窗口；网页=同 target 同 tab）并取**最新**快照，
+					// 校验语义目标唯一且 role/value/actions 未变，再用新 element_token（网页是新的 ref）重构动作。
+					const fresh = await collectCandidates(ctx, prefix, collectTarget);
+					if ("error" in fresh) return text(`快速路径中止（执行前重读目标状态失败：${fresh.error}）。请自己完成，不要重复调用本工具。`);
 					const resolved = resolveFreshCandidate(res.candidate, fresh.structured);
 					if (!resolved.ok) return text(`快速路径中止（目标已变化：${freshReasonText(resolved.reason)}）。请自己重新读取窗口状态后再决定；不要重复调用本工具。`);
 
-					const out = await ctx.executeTool(resolved.candidate.tool, resolved.candidate.args, { signal });
+					const out = await ctx.executeTool(resolved.candidate.tool, dispatchArgs(collectTarget, resolved.candidate), { signal });
 
-					// G3：执行后独立核验（另取一次窗口状态），只返回 confirmed / unsatisfied / unknown。
-					const verify = await verifyPostcondition(ctx, prefix, target, args.expected);
+					// G3：执行后独立核验（另取一次快照），只返回 confirmed / unsatisfied / unknown。
+					const verify = await verifyPostcondition(ctx, prefix, collectTarget, args.expected);
 					const conf = res.uncalibrated ? "无原生校准概率，替代模型" : confidenceText(res);
 					const dispatchNote = out.isError ? "执行返回错误（未确认动作已生效）。" : "已派发。";
 					return text(
@@ -267,25 +302,119 @@ function resolvePrefix(ctx: ExtensionToolContext, requested: unknown): string | 
 	return null;
 }
 
+/** 收集目标：原生窗口（AX element_token）或网页（CDP target/tab + ref）。 */
+type FastCollectTarget = { kind: "native"; target: FastTarget } | { kind: "browser"; target: FastBrowserTarget };
+
+/** 浏览器能力最小集：读页面快照 + 按 ref 点击。缺一个就 fail-closed，不自行 attach。 */
+const BROWSER_TOOLS = ["get_browser_state", "browser_click"] as const;
+
+/** `browser` 参数：给 target_id+tab_id = 直接用它；给空对象 = 用 pid+window_id 做精确绑定核对。 */
+export interface FastBrowserRequest {
+	target_id?: string;
+	tab_id?: string;
+}
+
+/** 只认这两个字段（其它插值一律忽略）；`undefined`/非对象 = 不启用浏览器目标。 */
+function parseBrowserRequest(raw: unknown): FastBrowserRequest | null {
+	if (!raw || typeof raw !== "object") return null;
+	const o = raw as Record<string, unknown>;
+	const out: FastBrowserRequest = {};
+	if (typeof o.target_id === "string" && o.target_id.trim()) out.target_id = o.target_id.trim();
+	if (typeof o.tab_id === "string" && o.tab_id.trim()) out.tab_id = o.tab_id.trim();
+	return out;
+}
+
+/**
+ * 解析浏览器目标。**不自 attach**（绝不调用 `browser_prepare`）：
+ *  - 显式 target_id + tab_id → 直接用（主模型自己刚绑定的就是精确身份）；
+ *  - 都不给 → 用既有 pid+window_id 调一次 `get_browser_state` 做绑定核对，要求 `binding_quality=exact` +
+ *    `mutation_allowed`，再从 `tabs[]` 取唯一活动标签；
+ *  - 只给一半 / 工具缺失 / 绑定证据不足 → 明确失败，交回主模型。
+ */
+async function resolveBrowserTarget(
+	ctx: ExtensionToolContext,
+	prefix: string,
+	req: FastBrowserRequest,
+	window: FastTarget,
+): Promise<{ target: FastBrowserTarget } | { error: string }> {
+	const names = ctx.tools.map((t) => t.name);
+	const missing = BROWSER_TOOLS.filter((t) => !names.includes(`${prefix}${t}`));
+	if (missing.length) return { error: `这台电脑的浏览器工具不完整（缺 ${missing.join("、")}），快速路径不支持网页目标。` };
+	if (req.target_id && req.tab_id) return { target: { target_id: req.target_id, tab_id: req.tab_id, ...(window.session ? { session: window.session } : {}) } };
+	if (req.target_id || req.tab_id) return { error: "browser 目标要么同时给 target_id + tab_id，要么都不给（都不给时用 pid+window_id 做精确绑定核对）。" };
+
+	const r = await ctx.executeTool(`${prefix}get_browser_state`, { pid: window.pid, window_id: window.window_id, ...(window.session ? { session: window.session } : {}) });
+	if (r.isError) return { error: `浏览器精确绑定核对失败：${outcomeText(r).slice(0, 300)}` };
+	const binding = parseBrowserBind(r.result?.structuredContent);
+	if (!binding.ok || !binding.targetId || !binding.tabId) {
+		return { error: `浏览器精确绑定核对不通过：${binding.reason ?? "缺少 target_id / tab_id"}（本工具不会替你 attach / 拉起浏览器）。` };
+	}
+	return { target: { target_id: binding.targetId, tab_id: binding.tabId, ...(window.session ? { session: window.session } : {}) } };
+}
+
+/** 读原生窗口状态（`get_window_state {pid, window_id}`）。 */
 async function readWindowState(ctx: ExtensionToolContext, prefix: string, target: FastTarget): Promise<{ structured: unknown } | { error: string }> {
 	const r = await ctx.executeTool(`${prefix}get_window_state`, { pid: target.pid, window_id: target.window_id, ...(target.session ? { session: target.session } : {}), include_accessibility_tree: true, include_screenshot: false });
 	if (r.isError) return { error: `读取窗口状态失败：${outcomeText(r).slice(0, 300)}` };
 	return { structured: r.result?.structuredContent };
 }
 
-async function collectCandidates(ctx: ExtensionToolContext, prefix: string, target: FastTarget): Promise<{ candidates: FastActionCandidate[]; structured: unknown } | { error: string }> {
-	const read = await readWindowState(ctx, prefix, target);
+/**
+ * 读**网页**快照（`get_browser_state {target_id, tab_id, snapshot_format:"semantic_v2"}`）并归一成同一套 elements。
+ * fail-closed：读不到 / 没 pin / 驱动报回的 target 或 tab 与请求不一致（换 target = 换权限面）都中止。
+ */
+async function readBrowserState(ctx: ExtensionToolContext, prefix: string, target: FastBrowserTarget): Promise<{ structured: unknown } | { error: string }> {
+	const r = await ctx.executeTool(`${prefix}get_browser_state`, {
+		target_id: target.target_id,
+		tab_id: target.tab_id,
+		snapshot_format: "semantic_v2",
+		...(target.session ? { session: target.session } : {}),
+	});
+	if (r.isError) return { error: `读取页面快照失败：${outcomeText(r).slice(0, 300)}` };
+	const raw = r.result?.structuredContent;
+	const view = parseBrowserSnapshotView(raw);
+	if (!view.ok) return { error: `页面快照不可用：${view.reason ?? "fail-closed"}` };
+	if ((view.targetId && view.targetId !== target.target_id) || (view.tabId && view.tabId !== target.tab_id)) {
+		return { error: "页面快照报回的 target / tab 与请求不一致（拒绝换 target），已中止" };
+	}
+	return { structured: browserSnapshotAsWindow(raw) };
+}
+
+async function collectCandidates(ctx: ExtensionToolContext, prefix: string, t: FastCollectTarget): Promise<{ candidates: FastActionCandidate[]; structured: unknown } | { error: string }> {
+	if (t.kind === "browser") {
+		const read = await readBrowserState(ctx, prefix, t.target);
+		if ("error" in read) return read;
+		const candidates = clickCandidatesFromBrowserRefs(prefix, t.target, read.structured);
+		if (!candidates.length) return { error: "当前页面没有可点击的候选控件。" };
+		return { candidates, structured: read.structured };
+	}
+	const read = await readWindowState(ctx, prefix, t.target);
 	if ("error" in read) return read;
-	const candidates = clickCandidatesFromWindowState(prefix, target, read.structured);
+	const candidates = clickCandidatesFromWindowState(prefix, t.target, read.structured);
 	if (!candidates.length) return { error: "当前窗口没有可点击的候选控件。" };
 	return { candidates, structured: read.structured };
 }
 
-/** 执行后独立核验：另取一次窗口状态，按 expected 判定；没有 expected / 读不到 → unknown（绝不臆断成功）。 */
-async function verifyPostcondition(ctx: ExtensionToolContext, prefix: string, target: FastTarget, rawExpected: unknown): Promise<{ outcome: VerifyOutcome; detail: string }> {
+/** capture / 熔断作用域键：原生=同窗口；网页=同 target+tab（换标签就是换作用域，不拿旧熔断挡新页面）。 */
+function captureKey(agentId: string, prefix: string, t: FastCollectTarget): string {
+	return t.kind === "browser" ? `${agentId}:${prefix}:browser:${t.target.target_id}:${t.target.tab_id}` : `${agentId}:${prefix}:${t.target.pid}:${t.target.window_id}`;
+}
+
+/**
+ * 派发参数：原生窗口原样用 `element_token`；网页把新鲜 ref 换到 `browser_click` 的官方入参 `ref`
+ * （不把 `element_token` 这个名字塞给浏览器工具）。
+ */
+function dispatchArgs(t: FastCollectTarget, candidate: FastActionCandidate): Record<string, unknown> {
+	if (t.kind === "native") return candidate.args;
+	const { element_token, ...rest } = candidate.args as Record<string, unknown>;
+	return typeof element_token === "string" ? { ...rest, ref: element_token } : rest;
+}
+
+/** 执行后独立核验：另取一次**同一目标**的状态，按 expected 判定；没有 expected / 读不到 → unknown（绝不臆断成功）。 */
+async function verifyPostcondition(ctx: ExtensionToolContext, prefix: string, t: FastCollectTarget, rawExpected: unknown): Promise<{ outcome: VerifyOutcome; detail: string }> {
 	const expected = normalizeExpected(rawExpected);
 	if (!expected) return { outcome: "unknown", detail: "未提供可验证的后置条件 expected" };
-	const read = await readWindowState(ctx, prefix, target);
-	if ("error" in read) return { outcome: "unknown", detail: `核验读取窗口状态失败：${read.error.slice(0, 200)}` };
+	const read = t.kind === "browser" ? await readBrowserState(ctx, prefix, t.target) : await readWindowState(ctx, prefix, t.target);
+	if ("error" in read) return { outcome: "unknown", detail: `核验读取${t.kind === "browser" ? "页面快照" : "窗口状态"}失败：${read.error.slice(0, 200)}` };
 	return { outcome: verifyExpectation(expected, read.structured), detail: `expected ${JSON.stringify(expected)}` };
 }
