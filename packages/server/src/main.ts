@@ -1,7 +1,7 @@
 import { backend as desktopBackend } from "./desktop/backend.ts";
 import { closeAllBrowsers } from "./browser.ts";
 import { startChannels, stopChannels } from "./channels/index.ts";
-import { hostSettings, setHostEnv, startDaemon, stopDaemon } from "./host-control.ts";
+import { hostSettings, retryableDaemonFailure, setHostEnv, startDaemon, stopDaemon } from "./host-control.ts";
 import { config } from "./config.ts";
 import { getSetting } from "./db.ts";
 import { startHttp } from "./http.ts";
@@ -41,11 +41,29 @@ setChatDefault(defaultModel);
 if (hindsightInUse()) void sidecar.ensure();
 // 聊天渠道：飞书 / 钉钉建立长连接，企业微信等回调
 void startChannels();
-// 用户开启过“操作这台电脑”：随服务启动 bounded 守护进程（清单与开启时确认的一致才会启动）
+// 用户开启过“操作这台电脑”：随服务启动 Cua 守护进程（清单与开启时确认的一致才会启动）。
 setHostEnv({ workspaceOf, agentIds: () => listAgents().map((a) => a.id) });
 // 完全权限：降权 / 暂停后中止正在跑的主机命令（每次工具调用仍由 hostFileAccess 动态判定）
 initHostAccessWatch();
-if (hostSettings().enabled) void startDaemon().catch((e) => console.warn(`[host-control] ${e instanceof Error ? e.message : e}`));
+// 更新后重启时 Cua 偶尔来不及在 10 秒内就绪（下载 / 解压 / 上一个实例退出中），原来一次失败就再也不试，
+// 用户回来只看到“电脑操作不可用”、以为授权被重置。这里改成有限重试，但每次失败都单独判定原因：
+// 只有“还没就绪 / 下载中断”才重试；权限计划已变化或认不出的错误立即停下等用户（不改任何权限语义）。
+if (hostSettings().enabled)
+	void (async () => {
+		for (const [i, wait] of [0, 2_000, 5_000].entries()) {
+			if (wait) await new Promise((r) => setTimeout(r, wait));
+			try {
+				await startDaemon();
+				if (i) console.log(`[host-control] Cua Driver 第 ${i + 1} 次启动成功`);
+				return;
+			} catch (e) {
+				const msg = e instanceof Error ? e.message : String(e);
+				console.warn(`[host-control] 启动失败（第 ${i + 1} 次）：${msg}`);
+				// 每次失败都按当前错误重新判：第二次就算撞上真的权限变更，也不能再继续重试
+				if (!retryableDaemonFailure(e)) return;
+			}
+		}
+	})();
 
 for (const sig of ["SIGINT", "SIGTERM"] as const)
 	process.on(sig, () => {

@@ -870,6 +870,7 @@ npm run -w apps/tray tauri build       # 本机产出 .dmg 或 .exe
 - **两种目标**：
   - `sandbox`（默认）：在助理电脑容器里运行 `cua-driver mcp`（server 用 `docker exec -i` 作为 MCP 的 stdio 命令），操作 Linux 桌面上的微信、浏览器、任意应用。
   - `host`（可选，默认关闭）：在用户本机运行安装包内置的 `cua-driver mcp`；以 Cua 的 **`bounded` 权限模式 + 能力清单（manifest）** 启动，清单只列出用户勾选的应用/窗口；macOS 首次需要授予“辅助功能 + 屏幕录制”权限（托盘引导）。
+    - **更新后授权是否保留**（两条链路别混，且都只是“证据 / 风险”不是保证）：应用内的“已审阅并开启” + 各档位存在数据目录 `data.db`，计划哈希只盖能力与作用域（不含版本/构建/驱动版本），代码里也未见按版本重置的路径 → **设计上保留，尚待真实升级实测**；宿主扩展按“授权在不在”挂载（不看守护进程瞬时 `running`），未就绪时给结构化原因而不是整组丢工具。`CuaDriver.app` 是 Cua 官方 Developer ID 签名（`com.trycua.driver` + Team `YCK386LBJ7`），DR 与版本无关 → **降低了**辅助功能 / 屏幕录制跨驱动升级被重问的风险（责任进程 / 安装注册 / 系统版本仍可能影响，**不保证**）。但我们自己的 `Pi Assistant.app` 仍是 ad-hoc（DR 只有 cdhash）→ **缺乏跨构建稳定身份，存在系统重授权风险**（不写“每次必丢”：具体是哪条权限、哪个进程、是否每次都丢，仍需现场确认与升级复测）；根治要靠稳定签名身份（Developer ID 证书，用户侧提供），公证是 Gatekeeper 分发信任、不等于 TCC 持久性。系统权限探测只做只读 status 并缓存 15 秒，`unknown` 不当已授权，**后台永不 request/弹框**。详见 [design/host-permissions-upgrade.md](design/host-permissions-upgrade.md)。
 - **审批**：`ext-approval` 的 `tool_call` 钩子识别 `computer.*` 工具：截图/读取窗口 → 放行；在 sandbox 里点击/输入 → 放行（它自己的电脑），但涉及**发送消息、付款、删除、提交表单**的语义动作要求助理先 `ask_user`；host 目标上的**任何输入动作**都需审批（可按应用“本次会话内允许”）。
 - **一键暂停**：聊天顶部 / 托盘 / 手机通知上都有“暂停操作电脑”；按下后 `ext-computer` 立即拒绝所有 `computer.*` 调用并中止当前回合（`abort`），host 模式下同时结束 `cua-driver` 进程。
 - **分工**：网页任务优先 **Playwright**（`ext-browser`，在助理电脑的 Chromium 里，CDP 连接，稳定可断言）；桌面应用（微信、WPS、各种客户端）和本机操作用 **Cua**。
