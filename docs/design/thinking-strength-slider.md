@@ -106,4 +106,15 @@ Pi 的思考档位是**枚举**（`ModelThinkingLevel = off | minimal | low | me
 - 交互：拖动只预览、`pointerup` 提交；`pointercancel` / 窗口失焦 / Esc 关闭**不提交**半途预览；键盘 Arrow / Home / End / PageUp / PageDown 逐档提交；`role="slider"` + `aria-valuetext`；44px 命中；`--mo-scale` 缩放时长。
 - 主题：颜色 / 圆角 / 字体 / 动效只走 token（`--pa-*` / `--mo-*`），组件不写死颜色；`--mo-style=steps` 由组件读主题声明值映射成真实 data 属性，并订阅 `<html>` 属性 / `<head>` 样式表变化（`apps/web/src/themes/motion-signals.ts`）在主题 / DIY 预览改变时回读，切主题不重挂组件也生效（订阅只在弹层挂载期间存在）。
 - **未验**：浏览器 e2e（`e2e/subagent-thinking-levels.mjs`、`model-ui.mjs`、`run.mjs` 相关步骤）、`vite build`、真机与真模型。**未做**：真实持久化 / 后端改动（沿用现有写入），未改 SDK / 服务端 clamp。
-- **候选树后续修复（2026-10-24）**：A 主题实时切换的 `--mo-style` 订阅回读、C 默认思考强度保存的回滚代次 —— 代码 + 断言已写、**未跑**，见 `progress-snapshots/beta29-integration-checkpoint.md` §六。
+- **候选树后续修复（2026-10-17）**：A 主题实时切换的 `--mo-style` 订阅回读、C 默认思考强度保存的回滚代次 —— 代码 + 断言已写、**未跑**，见 `progress-snapshots/beta29-integration-checkpoint.md` §六。
+
+### 9. 模型目录加载态（2026-10-17，beta.29 候选）
+
+档位来自前端模型目录（`useConfiguredModels`）。以前目录还没回来时 `levels=[]`，弹层会显示「这个模型不支持调整思考强度」——把「还没加载」说成了「不支持」。现在分三态：
+
+- `loading`：还没拿到目录（刷新时保留旧数据、不清空）。弹层只显示「正在加载模型档位…」，**不画滑块、不说「不支持」**；加载中 Esc / 点外部照常关闭，已选档位原样显示、不写库（不会被改成 `off`）。
+- `error`：这次拉取失败（只有最新一次请求算数，迟到响应不覆盖）。弹层给一句「模型目录没加载出来」+「重试」（复用 `reload`），不冒充「不支持」。
+- `ready` 且 `levels` 为空：才是**真不支持**，仍走原 `unsupported` 说明。
+
+成功返回后**开着的弹层直接变成完整滑块**，不用退出再进。子代理会话与助理设置两处都传 `loading/error/onRetry`；模型菜单在目录未到时显示「正在加载模型…」，不误报「还没有配置模型服务」。定向 DOM：`e2e/subagent-thinking-loading.mjs`（真实服务端 + 真实构建 + Chromium，只拦截 `/api/models`）**18/18**。
+

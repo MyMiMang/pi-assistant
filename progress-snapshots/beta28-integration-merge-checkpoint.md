@@ -1,6 +1,6 @@
 # beta.28 候选整合：合并检查点（15 分钟）
 
-时间：2026-10-24（Asia/Shanghai）。worktree `release-candidate-validation`（本任务独占）。
+时间：2026-10-17（Asia/Shanghai）。worktree `release-candidate-validation`（本任务独占）。
 
 ## 起点与前置
 - 起点候选 HEAD `6d6c1ee`（= 已公开 tag `v0.1.0-beta.27`，2026-10-16T12:48:14Z 公开 Latest，Actions `38901767310` 成功）。tag **未移动**。

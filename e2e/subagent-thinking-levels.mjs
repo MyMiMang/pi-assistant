@@ -62,8 +62,8 @@ const remountSettings = async (page) => {
 const menu = (page) => page.getByTestId("agent-subagent-thinking-menu");
 /**
  * 打开思考强度弹层，并等「档位刻度真的渲染出来」。
- * 档位来自前端模型目录（`d.models`），首次打开时目录可能还在加载 → 弹层会短暂显示「不支持」；
- * 这里只重试等待目录到位（不是产品缺陷，避免夹具把加载时序当成档位缺失）。
+ * 档位来自前端模型目录（`d.models`），首次打开时目录可能还在加载 → 弹层显示「正在加载模型档位…」
+ * （已修：不再误报「不支持」）；这里等加载完成后再断言档位（避免夹具把加载时序当成档位缺失）。
  */
 const openMenu = async (page) => {
 	for (let i = 0; i < 10; i++) {
@@ -73,7 +73,7 @@ const openMenu = async (page) => {
 		}
 		const steps = await menu(page).locator(".pa-think-step").count();
 		const txt = await menu(page).innerText();
-		if (steps > 0 || !txt.includes("不支持")) return; // 有刻度；或本来就是单档 / 无档的准确说明
+		if (steps > 0 || (!txt.includes("不支持") && !txt.includes("正在加载"))) return; // 有刻度；或本来就是单档 / 无档的准确说明
 		await closeMenu(page);
 		await page.waitForTimeout(300);
 	}

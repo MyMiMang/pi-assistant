@@ -457,6 +457,7 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 					text={text}
 					placement="down"
 					onOpen={d.reload}
+					loading={d.loading}
 					buttonClass="max-w-full"
 					title="选择默认模型和新助理的思考强度"
 					ariaLabel={`默认使用：${text}`}

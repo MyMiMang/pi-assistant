@@ -130,10 +130,10 @@ platforms: SHERPA_PLATFORMS（6 项）
 
 ## 9. 验收方案（已跑 + 待跑）
 
-**已跑（2026-10-24，本机 Apple 芯片 macOS；见 HANDOFF）**
+**已跑（2026-10-17，本机 Apple 芯片 macOS；见 HANDOFF）**
 - 定向单测 **144/144**（含 catalog/manifest pin、runner 角色、流协议、默认语义、前端句段模型）；生产贯通 e2e **11/11**。
 - 真实权重 **198,270,793 B** 逐文件 SHA256 与 pin 一致 → 真 sidecar（`OnlineRecognizer.from_transducer`，threads 4）→ 官方 `test_wavs/0.wav`（**中英混说**）与 `1.wav`（**中文夹 ALWAYS**）按 200 ms 分帧、**不做实时 pacing**（decode 完就喂下一帧）：**协议上确实分帧增量返回**（调用 `end()` 之前就收到非空 tentative）、endpoint 3 次 reset、`seq` 重放拒绝、cancel 释放租约且 worker 存活；**离线请求拦截条件下**（只拦本进程 `fetch` 的非回环请求）复用权重 / runtime 复跑成功，外部请求 0 次。样例快速喂音频的吞吐 **RTF≈0.06（墙钟/音频）**、单次 append 往返 25–30 ms 量级——**只是 decode 吞吐，不是交互端到端延迟**。
-- 对照口径（**已修正，不要再说 CER 0 / 首字 3–6 ms**）：`1.wav` 的文本与**上游文档该模型的示例输出**逐字一致（`referenceKind=upstream-model-example`，固定 URL 见 `scripts/local-asr-real-smoke.mjs` 的 `STREAM_EXPECT_SOURCE`）；`0.wav` 的旧对照串**没有可公开核对的来源**（该模型官方文档页面没有 0.wav 示例输出，同页那句属于另一个模型且是 `THEY`），因此**不给一致度结论**。上游示例输出是**模型自动识别示例、不是人工转写真值**，两个样本也都不是纯中 / 纯英语料 → **不能称「中文 / 英文质量都验过」，也不能称准确率完美**。旧 json / log 不重写，限制见 `evidence/local-asr-real-smoke/REPORT-CAVEATS.md`。
+- 对照口径（**已修正，不要再说 CER 0 / 首字 3–6 ms**）：`1.wav` 的文本与**上游文档该模型的示例输出**逐字一致（`referenceKind=upstream-model-example`，固定 URL 见 `scripts/local-asr-real-smoke.mjs` 的 `STREAM_EXPECT_SOURCE`）；`0.wav` 的旧对照串**没有可公开核对的来源**（该模型官方文档页面没有 0.wav 示例输出，同页那句属于另一个模型且是 `THEY`），因此**不给一致度结论**。上游示例输出是**模型自动识别示例、不是人工转写真值**，两个样本也都不是纯中 / 纯英语料 → **不能称「中文 / 英文质量都验过」，也不能称准确率完美**。旧 json / log 不重写，限制见 `docs/research/local-streaming-asr-verification-caveats.md`。
 - 真实 smoke 修掉 3 个生产 bug：① sidecar 路径拼成 `/v1/v1/…`（manager 的 baseUrl 已含 `/v1/`）；② sherpa-onnx 1.13.8 `OnlineRecognizer.get_result()` 返回 `str`（不是 `.text` 对象）；③ start 未消费请求体，keep-alive 连接残留字节被当成下一个请求方法（后续 append 501）。
 
 **单测（合成信号 + 假 provider，不碰真麦）**
@@ -144,7 +144,7 @@ platforms: SHERPA_PLATFORMS（6 项）
 - 前端：最长公共前缀（中文不空格 / 英文空格）、用户编辑区不被覆盖、取消保留已冻结段。
 
 **真实 smoke（已跑；补齐待跑项）**
-- 真下 198.3 MB → 逐文件 SHA256 与 pin 一致 → 起真实 sidecar；已按上述口径跑通并记录限制（`REPORT-CAVEATS.md`）。
+- 真下 198.3 MB → 逐文件 SHA256 与 pin 一致 → 起真实 sidecar；已按上述口径跑通并记录限制（受控口径 `docs/research/local-streaming-asr-verification-caveats.md`）。
 - 断言：非空 partial 在调用 `end()` 前就返回；endpoint 触发 reset 后能连续出下一句；final 文本与段归属如实记录（**命中 / 漏字都如实写，不夸质量**）；本机 **decode 吞吐（RTF）** 实测，**不引用官方指标**。
 - **仍待跑（不许写成已验）**：独立英文语料、独立中文语料、真实麦克风、弱网 / 实时节奏（paced）下的首非空文本时延、系统级断网（现只做了进程内 `fetch` 边界）。
 - 断网口径：已准备完成后**产品目标**是可离线使用（runner 从已校验本地 ONNX 构造，运行期不下载权重——代码静态结论 + 进程内 fetch 边界验证，见 §「真实 smoke」）。未做物理断网实测，也不声称全平台离线已验。

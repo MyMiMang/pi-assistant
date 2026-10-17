@@ -41,23 +41,40 @@ export interface ModelEntry {
 	star?: boolean;
 }
 
+/** 模型目录的加载状态：`loading` 是这一次还没拿到目录（刷新时保留旧数据，不清空），`error` 是这一次拉取失败。 */
+export type ConfiguredModelsStatus = "loading" | "ready" | "error";
+
 /** 已配置的服务的全部模型（含自定义）；每次打开菜单都会重新拉一次，新增渠道后不用刷新页面 */
 export function useConfiguredModels() {
 	const v = useStore((s) => s.system);
 	const [d, setD] = useState<{ providers: Provider[]; models: ModelEntry[] }>({ providers: [], models: [] });
 	const [error, setError] = useState(false);
+	const [loading, setLoading] = useState(true);
+	// 请求代次：只认最后一次请求，迟到的旧响应不覆盖新数据；卸载后也不再 setState
+	const gen = useRef(0);
+	useEffect(() => () => { gen.current++; }, []);
 	const reload = useCallback(() => {
+		const token = ++gen.current;
+		setLoading(true);
 		void Promise.all([api("/api/models/providers"), api("/api/models")])
 			.then(([p, m]) => {
+				if (token !== gen.current) return;
 				const providers = (p.providers ?? p) as Provider[];
 				const ok = new Set(providers.filter((x) => x.configured).map((x) => x.id));
+				// 刷新时只有成功才替换数据：拉取失败保留上一次目录，不把已显示的档位清空
 				setD({ providers, models: (m as ModelEntry[]).filter((x) => ok.has(x.provider)) });
 				setError(false);
+				setLoading(false);
 			})
-			.catch(() => setError(true));
+			.catch(() => {
+				if (token !== gen.current) return;
+				setError(true);
+				setLoading(false);
+			});
 	}, []);
 	useEffect(reload, [reload, v]);
-	return { ...d, error, reload };
+	const status: ConfiguredModelsStatus = loading ? "loading" : error ? "error" : "ready";
+	return { ...d, error, loading, status, reload };
 }
 
 /** 用户选过哪些模型：服务端持久化（电脑和手机共用），本地乐观更新让「常用」立刻变 */
@@ -177,12 +194,14 @@ export interface ThinkingChoice {
  * 弹层内容是离散滑块（`ThinkingSlider`），保留原 `testid` 与 `onPick(level | null)` 口径。
  * effective：跟随 / 降级时实际会运行的档位（子代理传 resolvedThinking）；modelName：弹层右上角短模型名。
  */
-export function ThinkingButton({ testid, levels, current, effective, followLabel, onPick, text, title, ariaLabel, buttonClass, placement = "down", modelName }: { testid: string; levels: string[]; current: string | null; effective?: string | null; followLabel?: string; onPick: (level: string | null) => void; text?: string; title?: string; ariaLabel?: string; buttonClass?: string; placement?: "up" | "down"; modelName?: string }) {
+export function ThinkingButton({ testid, levels, current, effective, followLabel, onPick, text, title, ariaLabel, buttonClass, placement = "down", modelName, loading, error, onRetry }: { testid: string; levels: string[]; current: string | null; effective?: string | null; followLabel?: string; onPick: (level: string | null) => void; text?: string; title?: string; ariaLabel?: string; buttonClass?: string; placement?: "up" | "down"; modelName?: string; /** 模型目录正在加载（还没拿到目录时不要画「不支持」和假档位） */ loading?: boolean; /** 模型目录这一次加载失败（给一句短说明和重试，不冒充「不支持」） */ error?: boolean; /** 重试加载模型目录（复用 useConfiguredModels 的 reload） */ onRetry?: () => void }) {
 	const btnRef = useRef<HTMLButtonElement>(null);
 	const openedByKeyboard = useRef(false);
 	// Esc 关闭后焦点回到芯片；点外部关闭不抢焦点
 	const { open, setOpen, ref, menuRef, style } = usePopover(placement, { onEscape: () => btnRef.current?.focus() });
 	const label = text ?? (current ? (THINKING_LABEL[current] ?? current) : (followLabel ?? "思考"));
+	// 目录还没回来（且手上没有可用的旧档位）时只显示「正在加载 / 加载失败」，已成功且 levels 为空才是真不支持
+	const pending = (loading || error) && levels.length === 0;
 	return (
 		<div className="relative min-w-0" ref={ref}>
 			<button ref={btnRef} className={cx("pa-chip sm !shrink min-w-0", buttonClass)} onClick={(e) => { openedByKeyboard.current = e.detail === 0; setOpen(!open); }} title={title ?? "思考强度"} aria-label={ariaLabel ?? `思考强度：${label}`} data-testid={testid}>
@@ -198,7 +217,22 @@ export function ThinkingButton({ testid, levels, current, effective, followLabel
 					<div ref={menuRef} style={style} className="pa-pop pa-think-pop flex flex-col rounded-xl border border-line bg-card p-3 shadow-lg" data-testid={`${testid}-menu`}>
 						{/* 小屏（≤640 走底部弹窗）时自身可滚动，弹层不被裁 */}
 						<div className="min-h-0 flex-1 overflow-y-auto">
-							<ThinkingSlider testid={testid} levels={levels} current={current} effective={effective} followLabel={followLabel} modelName={modelName} autoFocus={openedByKeyboard.current} onPick={(l) => { setOpen(false); onPick(l); }} />
+							{pending ? (
+								<div className="pa-think flex flex-col gap-2" data-testid={`${testid}-model-state`}>
+									<div className="flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-mut uppercase"><Brain size={12} /> 思考强度</div>
+									{loading ? (
+										<p className="pa-think-empty" data-testid={`${testid}-loading`} role="status" aria-live="polite">正在加载模型档位…</p>
+									) : (
+										<p className="pa-think-empty" data-testid={`${testid}-error`} role="alert">
+											模型目录没加载出来。
+											{onRetry && <button type="button" className="pa-think-mini ml-2" data-testid={`${testid}-retry`} onClick={() => onRetry()}>重试</button>}
+										</p>
+									)}
+									<p className="pa-think-note">加载完会显示这个模型支持的档位。</p>
+								</div>
+							) : (
+								<ThinkingSlider testid={testid} levels={levels} current={current} effective={effective} followLabel={followLabel} modelName={modelName} autoFocus={openedByKeyboard.current} onPick={(l) => { setOpen(false); onPick(l); }} />
+							)}
 						</div>
 					</div>,
 					document.body,
@@ -244,9 +278,11 @@ export interface ModelMenuProps {
 	/** 弹层定位由 ModelPickerButton 的 usePopover 提供（portal 到 body + fixed 锚定触发器） */
 	panelRef?: RefObject<HTMLDivElement | null>;
 	panelStyle?: CSSProperties;
+	/** 目录第一次还没加载完：不要显示「还没有配置模型服务」这种误判 */
+	loading?: boolean;
 }
 
-export function ModelMenu({ id, models, providers, value, thinking, picks, onPick, groupByProvider = true, header, panelRef, panelStyle }: ModelMenuProps) {
+export function ModelMenu({ id, models, providers, value, thinking, picks, onPick, groupByProvider = true, header, panelRef, panelStyle, loading }: ModelMenuProps) {
 	const [q, setQ] = useState("");
 	const [openGroups, setOpenGroups] = useState<string[]>(() => (value?.provider ? [value.provider] : models[0] ? [models[0].provider] : []));
 	const nameOf = (p: string) => providers.find((x) => x.id === p)?.name ?? models.find((m) => m.provider === p)?.providerName ?? p;
@@ -272,7 +308,7 @@ export function ModelMenu({ id, models, providers, value, thinking, picks, onPic
 				</div>
 			)}
 			<div className="min-h-0 flex-1 overflow-y-auto">
-				{!models.length && <div className="p-3 text-sm text-mut">还没有配置模型服务：在 设置 › 模型 里添加</div>}
+				{!models.length && (loading ? <div className="p-3 text-sm text-mut" data-testid={`${id}-loading`} role="status">正在加载模型…</div> : <div className="p-3 text-sm text-mut">还没有配置模型服务：在 设置 › 模型 里添加</div>)}
 				{!!models.length && !shown.length && <div className="p-3 text-sm text-mut">没有匹配的模型</div>}
 				{frequent.length > 0 && (
 					<div className="py-1" data-testid={`${id}-frequent`}>
@@ -326,10 +362,12 @@ export interface ModelPickerButtonProps {
 	disabled?: boolean;
 	/** 打开菜单时调用（用于重新拉一次模型列表） */
 	onOpen?: () => void;
+	/** 模型目录第一次还没加载完（菜单里不误报「还没有配置模型服务」） */
+	loading?: boolean;
 }
 
 /** 共用的「模型按钮 + 菜单」；聊天 / 群聊成员 / 子代理都用它，避免各写一套 */
-export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen }: ModelPickerButtonProps) {
+export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen, loading }: ModelPickerButtonProps) {
 	const { open, setOpen, ref, menuRef, style } = usePopover(placement ?? "up");
 	return (
 		<div className="relative min-w-0" ref={ref}>
@@ -361,6 +399,7 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 						panelRef={menuRef}
 						panelStyle={style}
 						header={header?.(() => setOpen(false))}
+						loading={loading}
 						onPick={(m) => (setOpen(false), onPick(m))}
 					/>,
 					document.body,

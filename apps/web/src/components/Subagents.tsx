@@ -109,7 +109,7 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 					{/* 思考强度放在输入栏工具栏（与主会话一致），不再占 header；档位/跟随/持久化契约不变 */}
 					<div className="pa-composer-tools">
 						<span className="min-w-0 flex-1 truncate text-xs text-mut2">{queued ? "子代理排队中，说「停」可取消" : running ? "子代理正在工作" : "继续这个子代理会话"} · {keys.hint}</span>
-						{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} effective={d.subagent.resolvedThinking ?? null} modelName={d.subagent.model_id} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} title={clampNote} placement="up" text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
+						{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} effective={d.subagent.resolvedThinking ?? null} modelName={d.subagent.model_id} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} title={clampNote} placement="up" loading={dm.loading} error={dm.error} onRetry={dm.reload} text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
 					</div>
 					{stoppable && !text.trim() ? <button className="pa-send" onClick={() => void action("stop")} aria-label="停止子代理"><Square size={13} fill="currentColor" /></button> : <button className="pa-send" disabled={sending || !text.trim()} onClick={() => void send()} aria-label="发送给子代理" title={keys.hint} aria-keyshortcuts={keys.keyshortcuts}><ArrowUp className="pa-ic" /></button>}
 				</div>
@@ -203,7 +203,7 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 			onOpen={d.reload}
 		/>
 		{live.length > 0 && <div className="flex flex-wrap gap-1">{live.map((m) => <span key={key(m)} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-mut">{nameOf(m)}</span>)}</div>}
-		<div className="flex items-center gap-2"><span className="text-sm text-mut">思考强度</span><ThinkingButton testid="agent-subagent-thinking" levels={levels} current={thinking.mode === "fixed" ? thinking.level : null} effective={thinking.mode === "fixed" ? fitThinkingLevel(levels, thinking.level) : (agent?.thinking ?? null)} followLabel="跟随主会话" title={unsupportedFixed} onPick={(v) => void saveThinking(v)} /></div>
+		<div className="flex items-center gap-2"><span className="text-sm text-mut">思考强度</span><ThinkingButton testid="agent-subagent-thinking" levels={levels} current={thinking.mode === "fixed" ? thinking.level : null} effective={thinking.mode === "fixed" ? fitThinkingLevel(levels, thinking.level) : (agent?.thinking ?? null)} followLabel="跟随主会话" title={unsupportedFixed} onPick={(v) => void saveThinking(v)} loading={d.loading} error={d.error} onRetry={d.reload} /></div>
 		{unsupportedFixed && <p className="text-xs text-amber-600" data-testid="agent-subagent-thinking-note">{unsupportedFixed}</p>}
 		<AgentSubagentLimits agentId={agentId} />
 		{err && <p className="text-xs text-red-500">{err}</p>}

@@ -311,7 +311,7 @@ type AsrStreamEvent =
 
 ---
 
-## 8. 实现与真实验收（2026-10-24，覆盖上文「本轮未跑」的口径）
+## 8. 实现与真实验收（2026-10-17，覆盖上文「本轮未跑」的口径）
 
 - **实现状态**：后端 `faa2c2f`（自动准备 + 原生流式会话 + 流式 sidecar）与前端 `c4c9317`（真实 wire + server-authoritative 句段模型 + 准备状态 UI）已 `--no-ff` 合入候选树；随后补齐 §1.2 / §2 中此前只写在契约里的部分：
   - 取消 / 清空 / 改选别的模型 → 写 `voiceDefaultOptOut`（`cancelled` / `user_cleared` / `user_chose_other`），**不自动 restart**；显式重试才清。
@@ -322,6 +322,6 @@ type AsrStreamEvent =
   - 来源被改选 → **立即**释放租约 + 取消会话（`asr_source_changed`），不回退云；sidecar 卡住时有界超时（10 s）按 `asr_engine_error`，避免挂死会话留租约。
   - sidecar `committed` 必须是真的段稳定前缀；文本不再以 committed 开头时 `tentative` 给空，**不给假尾句**。
 - **真实模型验收（本机 Apple 芯片 macOS；scratch `pia-asr-smoke-amv7oy7ejb00`，threads 4，预算 600 MB）**：198,270,793 B / 4 文件 SHA256 与 pin 一致 → activate → 真 sidecar 健康（`modelId` / `loaded` 均对）→ 官方 `test_wavs/0.wav`（**中英混说**）与 `1.wav`（**中文夹 ALWAYS**）按 200 ms 分帧、**未做实时 pacing**（decode 完就喂下一帧）：调用 `end()` **之前**就收到非空 tentative（= 协议分帧增量返回）、endpoint 3 次、单次 append 往返 25–30 ms、RTF≈0.06（**仅 decode 吞吐，不是交互端到端延迟**）、`seq` 重放拒绝、cancel 释放租约且 worker 不杀、stop 后 pid 回收、**离线请求拦截条件下**复跑成功（只拦本进程 `fetch`，外部请求 0）。证据 `evidence/local-asr-real-smoke/`。
-- **对照口径已修正（旧写法作废）**：「CER 0 / 0」和「首字 3–6 ms」都不成立：`1.wav` 只是与**上游文档该模型的示例输出**逐字一致（固定 URL 见脚本 `STREAM_EXPECT_SOURCE`；上游示例是**模型自动识别示例、非人工真值**），`0.wav` 的旧对照串**无可公开核对来源**（该模型官方文档页面没有 0.wav 示例输出；同页「昨天是 MONDAY TODAY IS THEY…」属于另一个模型且是 `THEY`），故不给一致度结论；「首字 3–6 ms」取的是**空 tentative** 且喂音频是 unpaced，**不是实时（嘴到字）延迟**，实时节奏下的首非空文本时延**未测**。旧 json / log 不重写，限制见 `evidence/local-asr-real-smoke/REPORT-CAVEATS.md`（本轮同步修了 smoke 的证据结构：非空首字 + `pacing` 标识、append 期间的 final 也入 `finalBySegment`、真 p50 / p95、`referenceKind` / `agreementScore` 入 report、离线边界字段，**修了但未重跑**）。
+- **对照口径已修正（旧写法作废）**：「CER 0 / 0」和「首字 3–6 ms」都不成立：`1.wav` 只是与**上游文档该模型的示例输出**逐字一致（固定 URL 见脚本 `STREAM_EXPECT_SOURCE`；上游示例是**模型自动识别示例、非人工真值**），`0.wav` 的旧对照串**无可公开核对来源**（该模型官方文档页面没有 0.wav 示例输出；同页「昨天是 MONDAY TODAY IS THEY…」属于另一个模型且是 `THEY`），故不给一致度结论；「首字 3–6 ms」取的是**空 tentative** 且喂音频是 unpaced，**不是实时（嘴到字）延迟**，实时节奏下的首非空文本时延**未测**。旧 json / log 不重写，限制见 `docs/research/local-streaming-asr-verification-caveats.md`（本轮同步修了 smoke 的证据结构：非空首字 + `pacing` 标识、append 期间的 final 也入 `finalBySegment`、真 p50 / p95、`referenceKind` / `agreementScore` 入 report、离线边界字段，**修了但未重跑**）。
 - **真实 smoke 修掉的 3 个生产 bug**：① `baseUrl` 已含 `/v1/` 却再拼 `/v1/stream/*` → 404；② sherpa-onnx 1.13.8 `OnlineRecognizer.get_result()` 返回 `str`（脚本按 `.text` 取）→ AttributeError；③ `start` 未消费请求体 → keep-alive 残留字节被解析成下一个请求方法（append 501）。
 - **仍然如实不声称**：默认流式模型**输出无标点**；首次需联网自动准备（198 MB + 共享运行时），不随包内置；只在 Apple 芯片 macOS 本机验过；**未跑独立英文 / 中文语料、真麦克风、弱网 / 实时节奏、物理断网**，也不做质量 / 准确率结论。

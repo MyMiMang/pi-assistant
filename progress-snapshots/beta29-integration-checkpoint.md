@@ -1,6 +1,6 @@
 # beta.29 候选整合：合并 + 代码 review 检查点（15 分钟）
 
-时间：2026-10-24（Asia/Shanghai）。worktree `release-candidate-validation`（本任务独占）。
+时间：2026-10-17（Asia/Shanghai）。worktree `release-candidate-validation`（本任务独占）。
 > 合并检查点起点 HEAD `6babde5`（工作区干净、无 WIP 遗留）；同日后续轻量修复见 §六，HEAD 前移至 `997b3e4` + 本次文档提交。
 
 > 本文件只记**已发生的事实**：两次合并的 commit、逐项 review 结论、**未跑**的验证，以及接手后的轻量修复（§六，已改 / 未跑）。
@@ -76,7 +76,7 @@
 
 ## 六、本树轻量修复（A / C 必修项 + D 结论；**已改、未跑**）
 
-2026-10-24 续作（同一 worktree `release-candidate-validation`，从 `6babde5` 起）。本轮**只做 `read` / `edit` / `git` / 静态 node check**：未 `build`、未起服务 / 浏览器 / 模型、未跑测试、未 `npm ci`（重测试槽 `sa_mvbc7ddxqfkd4s` 仍在用）；未 push / 未 tag / 未装 App。
+2026-10-17 续作（同一 worktree `release-candidate-validation`，从 `6babde5` 起）。本轮**只做 `read` / `edit` / `git` / 静态 node check**：未 `build`、未起服务 / 浏览器 / 模型、未跑测试、未 `npm ci`（重测试槽 `sa_mvbc7ddxqfkd4s` 仍在用）；未 push / 未 tag / 未装 App。
 
 ### A `--mo-style` 主题实时切换（已修，代码 + 断言）
 - 新增 `apps/web/src/themes/motion-signals.ts`：`readMoStyle(el, env?)` 读一次计算样式里的 `--mo-style`（去空白，空值→`null`）；`watchMoStyle(el, onChange, env?)` 先读一次，再用**一个有界 MutationObserver** 订阅 `<html>` 的 `data-skin` / `data-mode` / `class` / `style` 与 `<head>` 样式表的增删 / 文本变化，**值真的变了**才回读；返回 `disconnect`（弹层关闭 / 组件卸载时调用）。`env` 可注入 → 不依赖浏览器就能单测。
@@ -100,7 +100,7 @@
 - **本树本轮实际只跑了**：`node --check e2e/thinking-slider-frontend.test.mjs`（语法 OK）、`tsc --noEmit -p apps/web`（exit 0，118 个 src 文件）。**未跑** `node --import tsx --test e2e/thinking-slider-frontend.test.mjs`、未跑浏览器 e2e、未 `vite build`——A 的观感（切主题 / 预览时滑块 computed `transition` / `animation` 真的变）仍需测试槽的浏览器 e2e；C 的组件接线仍需真 server 定向验证。
 - 涉及文件：`apps/web/src/themes/motion-signals.ts`（新）、`apps/web/src/latest-write.ts`（新）、`apps/web/src/components/ThinkingSlider.tsx`、`apps/web/src/components/Models.tsx`、`e2e/thinking-slider-frontend.test.mjs`；修复提交 `997b3e4`（文档为本提交）。未动 Pi SDK / `node_modules` / 生产配置 / 用户数据 / 凭据；未 push / 未 tag。
 
-## 七、最终验收（重测试槽，本树实跑；2026-10-24）
+## 七、最终验收（重测试槽，本树实跑；2026-10-17）
 
 前置：`--no-ff` 增量并入 theme-DIY 新 commit `2113648`（基 `ffbfb7f`，`a397f15`；docs 冲突（DESIGN/HANDOFF）逐段按当前实际状态手工合并，代码文件自动合并无冲突）。beta.28 已公开的事实同步进 HANDOFF/ROADMAP/发布说明（`b20ec81`，tag `11ce8f2` 未动、未重推、未改资产）。
 
