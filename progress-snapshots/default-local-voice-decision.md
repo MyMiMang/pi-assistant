@@ -2,6 +2,7 @@
 
 > **日期更正（2026-10-17）**：本文件此前标题写作 2026-10-24，与本轮真实日期不符；以工具 `date`（`Sat Oct 17 03:59:39 CST 2026`）为准，已改为 **2026-10-17**。
 > **主决策更新（本文件之后）**：默认口径已由「建议 P1」定案为 **P2 首次自动准备**（无需用户手动点下载；首次需联网并透明显示；准备后可离线；不随包分发许可未充分确认的权重；不假称首次断网可用）。自动准备与原生流式的接口契约见 `progress-snapshots/default-stream-contract.md`。
+> **后续实现 / 验收（2026-10-24，覆盖本文件的「阻塞 / 未实测」口径）**：流式 sidecar 与 `LocalAsrStreamHub` 已实现并合入候选树；真实 198 MB 模型已跑通（权重 SHA256 对 pin、`health`、调用 `end()` 前就收到非空 tentative、endpoint / seq / cancel 租约 / 离线请求拦截复跑）。**但仍未跑**：独立中 / 英语料、真麦克风、弱网与实时节奏的首字时延（RTF≈0.06 仅 decode 吞吐）、物理断网、跨平台。口径限制见 `evidence/local-asr-real-smoke/REPORT-CAVEATS.md`；本节 §三 第 2 / 第 4 条是**当时**状态，不代表现在。
 
 > 本树：worktree `default-local-voice`，分支 `default-local-voice`，**基 `release-candidate-validation` 已提交 HEAD `b20ec81`**（`b20ec81f730627b4493fcecaac1c4fa5f38d0782`，"文档：beta.28 已公开为 Latest"）。**未复制该树的 WIP**（`e2e/.dbg-settings.mjs`、`e2e/thinking-slider-ui.mjs` 属主是 candidate owner，本树未取）。
 > 本树首个提交：`a51c548`（分支 `default-local-voice`，基于 `b20ec81`）。**未 push / 未 tag。**

@@ -93,7 +93,7 @@ interface VoiceStreamTransport {
 - **已跑（本树，纯逻辑，无网络 / 无真实下载 / 无真麦）**：`node --import tsx --test test/voice-pref.test.ts test/voice-stream.test.ts` → **34/34 pass**。覆盖：契约事件归一（未知名 / 缺 segmentId 丢弃）、committed 绝对前缀只提交新增、tentative 整体替换、final 只提交剩余 + 重复 final 忽略、晚到 partial / 旧 seq 不回滚、冲突 final / committed 报 mismatch 不重复追加、分片 200 ms 与 flush 不丢尾、`splitInt16` 切帧、48 k→16 k 跨片连续输出长度、控制器串行 seq 单调 / 60 s 上限 / 取消 / 隐藏 / 打开与采集失败释放轨道 / 失败保已确认文本（不自动重发）/ 48 k 采集真重采样、准备状态归一化（`ok:false` 兜底 / 六状态 / jobId 回落 / 进度合并 / 取消重试条件 / 首次联网未知不说离线）。
 - **静态检查（已跑）**：用 app 自带 Node + 主仓 TypeScript（`tsc -p apps/web/tsconfig.json`，通过临时软链引用主仓 `node_modules`，**未改任何 node_modules**）——**本树改动文件 0 错**；剩余错误全部为环境固有（`@pi-assistant/shared` 解析到主仓旧版、个别 `implicit any`），与本次改动无关。
 - **未跑（等测试槽 / 主放行）**：真实后端联测（真 sidecar + 真权重 + 分片喂 PCM，验证首 partial 早于 stop、endpoint、final 文本）、浏览器 e2e（假 provider + 假麦：自动准备 → ready → 点麦克风建会话 → partial 预览 → committed 进草稿不发送 → stop/cancel → 切来源）、`vite build`、全量 `npm test`。
-- **不声称**：native 流式的真实质量 / RTF / 首字延迟；`< 300 MB`（约 300 MB）为**估算非实测**。
+- **不声称**：native 流式的真实识别质量、交互（嘴到字）延迟；已测的只有 unpaced 喂音频的 decode 吞吐（RTF≈0.06）；`< 300 MB`（约 300 MB）为**估算非实测**。
 
 ## 8. 未决 / 已知边界
 

@@ -114,18 +114,50 @@ const SAMPLE = {
 	},
 };
 
-/** 原生流式模型的官方示例（同一权重仓 test_wavs，<2MB）；0.wav 为中英混说，1.wav 中文口语。 */
+/**
+ * 原生流式模型的官方示例 wav（同一权重仓 test_wavs，<2MB）。
+ * **两个都不是纯英语 / 纯中文样本**：0.wav 是中英混说，1.wav 是中文夹 ALWAYS。
+ * 所以它们不能当「中文专项 / 英文专项」语料，下面的结果也不能说成 zh / en 分别测过。
+ */
 const STREAM_SAMPLES = {
 	zh: { file: "test_wavs/0.wav" },
 	en: { file: "test_wavs/1.wav" },
 };
 /**
- * 官方期望文本（sherpa-onnx 文档该模型一节的 test_wavs/0.wav / 1.wav 输出；不是本机编的参考）。
- * 只用于如实算 CER（忽略空白 / 标点），不据此宣称音质或泛化能力。
+ * 上游示例输出对照（**只用来核对「本机是否复现上游模型示例输出」，不是质量基准、不是人工真值**）。
+ *
+ * 来源核对（2026-10-24 公开 GET 原文读取，几 KB，不运行外部代码）：
+ * https://k2-fsa.github.io/sherpa/onnx/pretrained_models/online-transducer/zipformer-transducer-models.html
+ * #csukuangfj-sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20-bilingual-chinese-english
+ * 该页 int8 段对 `test_wavs/1.wav`（5.100s）给出的识别结果 = 下面 1.wav 的字符串（逐字一致）。
+ *
+ * 0.wav：**该模型的公开文档页面没有 0.wav 的示例输出**（全页只出现该模型的 1.wav 路径）。
+ * 同页那句「昨天是 MONDAY TODAY IS THEY AFTER TOMORROW是星期三」属于**另一个模型**
+ * `streaming-zipformer-small-bilingual-zh-en-2023-02-16`，而且是 "THEY" 不是 "LIBR"。
+ * → 历史 smoke 里 0.wav 用的对照串没有可公开核对的来源，这里标 `unverified-legacy-string`，
+ *   不参与任何「一致 / 准确」结论（旧 json / log 不重写，见 evidence/local-asr-real-smoke/REPORT-CAVEATS.md）。
+ *
+ * 归一化（去空白 / 标点、小写）只为了比字符串，不是评分口径。
  */
+const STREAM_EXPECT_SOURCE = {
+	url: "https://k2-fsa.github.io/sherpa/onnx/pretrained_models/online-transducer/zipformer-transducer-models.html#csukuangfj-sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20-bilingual-chinese-english",
+	retrievedAt: "2026-10-24",
+	kind: "upstream-model-example",
+	note: "上游文档里该模型的**模型自动识别示例输出**；不是人工转写真值（groundtruth），也不是质量 / 准确率基准",
+};
 const STREAM_EXPECT = {
-	"0.wav": "昨天是 MONDAY TODAY IS LIBR THE DAY AFTER TOMORROW是星期三",
-	"1.wav": "这是第一种第二种叫呃与 ALWAYS ALWAYS什么意思啊",
+	"1.wav": {
+		text: "这是第一种第二种叫呃与 ALWAYS ALWAYS什么意思啊",
+		referenceKind: "upstream-model-example",
+		referenceSource: STREAM_EXPECT_SOURCE.url,
+		verified: true,
+	},
+	"0.wav": {
+		text: "昨天是 MONDAY TODAY IS LIBR THE DAY AFTER TOMORROW是星期三",
+		referenceKind: "unverified-legacy-string",
+		referenceSource: null,
+		verified: false,
+	},
 };
 
 const targets = (process.env.PIA_SMOKE_MODELS ?? "whisper-base-int8,paraformer-zh-2023-09-14-int8").split(",").filter(Boolean);
@@ -263,6 +295,7 @@ async function fetchRepoFile(repo, revision, file) {
 	return readFileSync(dest);
 }
 
+/** 归一化：去掉空白 / 常见标点并小写——只为比字符串，不是评分口径，也不是「质量 CER」。 */
 const normText = (t) => String(t ?? "").replace(/[\s,，。.!?！？、"'“”‘’·-]/g, "").toLowerCase();
 function editDistance(a, b) {
 	const m = a.length;
@@ -275,9 +308,14 @@ function editDistance(a, b) {
 	}
 	return prev[n];
 }
-const cer = (ref, hyp) => {
+/**
+ * 与上游示例输出的一致度 = 1 - 归一化编辑距离 / 参考串长度。
+ * **只表示「本机是否复现上游模型示例输出」**：不是 CER、不是识别准确率、不是中英文质量结论。
+ */
+const agreementScore = (ref, hyp) => {
 	const r = normText(ref);
-	return r.length ? Number((editDistance(r, normText(hyp)) / r.length).toFixed(3)) : null;
+	if (!r.length) return null;
+	return Number((1 - editDistance(r, normText(hyp)) / r.length).toFixed(3));
 };
 
 /**
@@ -294,8 +332,9 @@ async function runStreamChecks({ spec, modelId, manager, ep, svc }) {
 	if (!zhBuf || !enBuf) throw new Error("官方示例 wav 下载失败（离线？）");
 	const zh = parseWav(zhBuf);
 	const en = parseWav(enBuf);
-	log(`  流式样本：zh ${STREAM_SAMPLES.zh.file} ${zh.seconds}s，en ${STREAM_SAMPLES.en.file} ${en.seconds}s（官方 test_wavs，scratch 缓存）`);
-	// 官方 trans.txt（尽力而为）：有就如实算 CER，没有就不编参考。
+	log(`  流式样本：0.wav ${zh.seconds}s（中英混说）/ 1.wav ${en.seconds}s（中文夹 ALWAYS）——都不是纯英语语料（上游 test_wavs，scratch 缓存）`);
+	// 权重仓的 test_wavs/trans.txt（尽力而为）：有就原样记进 report.reference 仅供追溯；
+	// **不再用它算 CER**（没有人工转写真值语料，CER 不当质量指标）。该流式权重仓实测没有这个文件（404）。
 	let ref = {};
 	const trans = await fetchRepoFile(repo, revision, "test_wavs/trans.txt").catch(() => null);
 	if (trans) {
@@ -323,10 +362,25 @@ async function runStreamChecks({ spec, modelId, manager, ep, svc }) {
 		});
 	const hub = makeHub();
 	const FRAME = 3200; // 200 ms
-	const stats = { frames: 0, audioMs: 0, appendMs: [], firstPartialMs: null, endpoint: 0, tentative: 0, committed: 0, final: 0 };
+	// 只喂音频、**不做实时 pacing**：每帧 decode 回来就喂下一帧，不等音频时长。
+	// 所以这里所有毫秒数都是这个前提下（unpaced）的量，**不是用户「嘴到字」的交互延迟**。
+	const PACING = "unpaced";
+	const stats = {
+		frames: 0,
+		audioMs: 0,
+		appendMs: [],
+		firstTentativeEventMs: null,
+		firstNonEmptyMs: null,
+		firstNonEmptyText: null,
+		firstNonEmptyAudioFedMs: null,
+		endpoint: 0,
+		tentative: 0,
+		committed: 0,
+		final: 0,
+	};
 	const events = [];
 	const finalsBySegment = new Map();
-	const feed = async (h, sid, seq, samples) => {
+	const feed = async (h, sid, seq, samples, segMap = finalsBySegment) => {
 		const t0 = Date.now();
 		for (let i = 0; i < samples.length; i += FRAME) {
 			const piece = samples.subarray(i, Math.min(samples.length, i + FRAME));
@@ -336,25 +390,52 @@ async function runStreamChecks({ spec, modelId, manager, ep, svc }) {
 			stats.appendMs.push(Date.now() - t);
 			stats.frames += 1;
 			stats.audioMs += (piece.length / 16000) * 1000;
+			const atMs = Date.now() - t0;
 			for (const e of r.events) {
-				events.push({ ...e, atMs: Date.now() - t0 });
+				events.push({ ...e, atMs });
 				if (e.type === "endpoint") stats.endpoint += 1;
-				if (e.type === "tentative" && stats.firstPartialMs === null) stats.firstPartialMs = Date.now() - t0;
-				if (e.type === "tentative") stats.tentative += 1;
+				if (e.type === "tentative") {
+					stats.tentative += 1;
+					// 任意 tentative（含空串）= 协议在回包；**只有 trim 后非空的才算「出字」**
+					// （旧样例的 92 条 tentative 里大量是空串，拿第一条空串算「首字 3ms」是错的）。
+					if (stats.firstTentativeEventMs === null) stats.firstTentativeEventMs = atMs;
+					const txt = String(e.text ?? "").trim();
+					if (txt && stats.firstNonEmptyMs === null) {
+						stats.firstNonEmptyMs = atMs;
+						stats.firstNonEmptyText = txt;
+						stats.firstNonEmptyAudioFedMs = stats.audioMs;
+					}
+				}
 				if (e.type === "committed") stats.committed += 1;
+				// final 也可能在 append 里回（端点后 / 前端点）：不能只收 end() 返回的 finals，
+				// 否则前面几段的 final 会丢（旧报告 finalBySegment 只有最后一段就是这么来的）。
+				if (e.type === "final") {
+					stats.final += 1;
+					if (e.text) segMap.set(String(e.segmentId), e.text);
+				}
 			}
 			seq += 1;
 			if (stats.frames === 1) log(`    首帧已接受（${bytes.byteLength}B），decode ${Date.now() - t}ms`);
 		}
 		return seq;
 	};
-	const p95 = (xs) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * 0.95))] ?? null;
+	/** 真 p 分位数（此前这里用的是 p95 估计算子却挂在 p50 字段上，已修）。 */
+	const quantile = (xs, p) => {
+		if (!xs.length) return null;
+		const s = [...xs].sort((a, b) => a - b);
+		return s[Math.min(s.length - 1, Math.max(0, Math.ceil(p * s.length) - 1))];
+	};
 
 	// —— 1) 正常会话：中文 → 静音（endpoint）→ 英文 → end(final)
 	const startedAt = Date.now();
 	const created = await hub.create({ principal: "local", agentId: "smoke", conversationId: "smoke" });
+	const zhFeedAt = Date.now();
 	let seq = await feed(hub, created.sessionId, 0, zh.samples);
-	const firstPartialBeforeStop = stats.firstPartialMs !== null && stats.firstPartialMs < zh.samples.length / 16;
+	const zhFeedWallMs = Date.now() - zhFeedAt;
+	// 协议事实：下面这几项是在我们**调用 end() 之前**就能观察到的；它不是人声延迟证据。
+	const firstNonEmptyBeforeEndCall = stats.firstNonEmptyMs !== null;
+	const firstNonEmptyBeforeSampleFed =
+		stats.firstNonEmptyMs !== null && stats.firstNonEmptyMs < zhFeedWallMs;
 	const zhEvents = [...events];
 	seq = await feed(hub, created.sessionId, seq, new Int16Array(16000 * 3)); // 3s 静音 → endpoint（rule2 1.2s 尾部静音）
 	seq = await feed(hub, created.sessionId, seq, en.samples);
@@ -364,46 +445,70 @@ async function runStreamChecks({ spec, modelId, manager, ep, svc }) {
 	const finalText = finals.join("");
 	const allText = [...zhEvents, ...events].filter((e) => e.type === "committed" || e.type === "tentative" || e.type === "final").map((e) => e.text);
 	const tailText = allText[allText.length - 1] ?? "";
-	log(`  流式结果：frames=${stats.frames} endpoint=${stats.endpoint} tentative=${stats.tentative} committed=${stats.committed} finals=${JSON.stringify(finals)}`);
-	log(`  首 tentative 距首帧 ${stats.firstPartialMs}ms；end 前就有 partial=${firstPartialBeforeStop}`);
+	log(`  流式结果：frames=${stats.frames} endpoint=${stats.endpoint} tentative=${stats.tentative} committed=${stats.committed} finalEvent=${stats.final} finals=${JSON.stringify(finals)}`);
+	log(`  首 tentative（含空串）=${stats.firstTentativeEventMs}ms；首**非空**文本=${stats.firstNonEmptyMs}ms（已喂音频 ${stats.firstNonEmptyAudioFedMs?.toFixed(0)}ms，文本 ${JSON.stringify(stats.firstNonEmptyText)}）pacing=${PACING}`);
+	log(`  首非空文本在调用 end() 前已返回=${firstNonEmptyBeforeEndCall}；该 wav 喂完用时 ${zhFeedWallMs}ms（wall）→ 首非空早于「该 wav 喂完」=${firstNonEmptyBeforeSampleFed}`);
+	log(`  ⚠ 以上毫秒均为 unpaced（解码完就喂下一帧）且含 HTTP 往返，只证明「分帧返回假设 + decode 吞吐」，**不是实时交互（嘴到字）延迟**。`);
 	const hasZh = /[\u4e00-\u9fff]/.test(finalText || allText.join(""));
 	const hasEn = /[A-Za-z]{2,}/.test(finalText || allText.join(""));
 	if (!stats.frames) throw new Error("没有任何帧被接受");
-	if (!firstPartialBeforeStop) throw new Error(`首 tentative 未在 stop 前出现（firstPartialMs=${stats.firstPartialMs}）`);
-	if (!finals.length) throw new Error("end 没有返回 final");
+	if (!firstNonEmptyBeforeEndCall) throw new Error("首非空文本没在 end 之前返回（分帧增量返回失败）");
+	if (!finals.length) throw new Error("没有任何 final");
 	if (!hasZh) throw new Error(`中文样本没出中文字符：${JSON.stringify(finals)}`);
 	if (!hasEn) throw new Error(`英文样本没出英文字母：${JSON.stringify(finals)}`);
-	// 真实时间口径：录音时长 vs 端到端墙钟（含 HTTP + 解码）；不据此宣称质量。
+	// 真实时间口径：录音时长 vs 墙钟（含 HTTP + 解码）；只描述吞吐，不据此宣称质量。
 	const wallMs = Date.now() - startedAt;
 	const audioMs = stats.audioMs;
 	const entry = {
 		samples: { zh: zh.seconds, en: en.seconds },
 		frames: stats.frames,
 		frameMs: 200,
-		firstPartialMs: stats.firstPartialMs,
-		firstPartialBeforeStop,
+		pacing: PACING,
+		pacingNote: "每帧 decode 回来就立即 append 下一帧，没有按音频时长节流；不是实时麦克风节奏",
+		firstTentativeEventMs: stats.firstTentativeEventMs,
+		firstNonEmptyMs: stats.firstNonEmptyMs,
+		firstNonEmptyText: stats.firstNonEmptyText,
+		firstNonEmptyAudioFedMs: stats.firstNonEmptyAudioFedMs === null ? null : Number(stats.firstNonEmptyAudioFedMs.toFixed(0)),
+		firstNonEmptyBeforeEndCall,
+		firstNonEmptyBeforeSampleFed,
+		latencyNote:
+			"以上毫秒均在本进程内（HTTP append + sidecar decode）且未做实时 pacing：「在 end() 之前就拿到非空增量假设」是协议事实，不等于实时（嘴到字）延迟；实时节奏下的首字时延本轮未测。",
 		endpoints: stats.endpoint,
 		finals,
 		finalBySegment: Object.fromEntries(finalsBySegment),
-		partialText: allText.slice(0, 40),
+		partialText: allText.slice(0, 60),
 		tailText,
 		audioSeconds: Number((audioMs / 1000).toFixed(2)),
 		wallSeconds: Number((wallMs / 1000).toFixed(2)),
 		rtfWall: Number((wallMs / audioMs).toFixed(3)),
-		decodeMs: { p50: p95(stats.appendMs), max: Math.max(...stats.appendMs) },
+		rtfNote:
+			"RTF = 喂完整段音频的墙钟 / 音频时长（含 HTTP）；是 unpaced 喂音频的 decode 吞吐，不是交互端到端延迟，也不是质量指标。",
+		decodeMs: {
+			unit: "ms",
+			what: "单次 append HTTP 往返（含 sidecar decode）",
+			p50: quantile(stats.appendMs, 0.5),
+			p95: quantile(stats.appendMs, 0.95),
+			min: stats.appendMs.length ? Math.min(...stats.appendMs) : null,
+			max: stats.appendMs.length ? Math.max(...stats.appendMs) : null,
+			count: stats.appendMs.length,
+			note: "旧报告的 decodeMs.p50 实际用了 p95 估计算子（脚本 bug，已修）；旧 json 不重写，见 REPORT-CAVEATS.md",
+		},
+		// 该权重仓没有 trans.txt（实测 404），确实没有可用参考；保字段仅为兼容旧结构。
 		reference: { zh: ref["0.wav"] ?? null, en: ref["1.wav"] ?? null },
-		cer: { zh: ref["0.wav"] ? cer(ref["0.wav"], finalText) : null, en: ref["1.wav"] ? cer(ref["1.wav"], finalText) : null },
+		// legacy 字段：不再用 CER 当质量指标（没有人工转写真值语料）。
+		qualityCer: { zh: null, en: null },
+		cer: { zh: null, en: null },
 	};
-	if (entry.cer.zh !== null) log(`  CER（对照官方 trans.txt，如实记录非质量承诺）：zh=${entry.cer.zh} en=${entry.cer.en}`);
 
 	// —— 1b) 每个官方 wav 单独一个会话：中 / 英文本各归属清楚（如实记录实际文本，不做质量承诺）
 	const oneShot = async (wav) => {
 		const before = events.length;
 		const s2 = await hub.create({ principal: "local" });
-		let q = await feed(hub, s2.sessionId, 0, wav.samples);
-		const e2 = await hub.end(s2.sessionId, { principal: "local" });
+		// 自己的段表：不能污染上面主会话的 finalsBySegment。
 		const seg = new Map();
-		for (const ev of events.slice(before)) if (ev.type === "final") seg.set(String(ev.segmentId), ev.text);
+		let q = await feed(hub, s2.sessionId, 0, wav.samples, seg);
+		const e2 = await hub.end(s2.sessionId, { principal: "local" });
+		for (const ev of events.slice(before)) if (ev.type === "final" && ev.text) seg.set(String(ev.segmentId), ev.text);
 		for (const f of e2.finals) if (f.text) seg.set(String(f.segmentId), f.text);
 		return { text: [...seg.values()].join(""), segments: Object.fromEntries(seg), events: events.slice(before) };
 	};
@@ -431,19 +536,49 @@ async function runStreamChecks({ spec, modelId, manager, ep, svc }) {
 	const enAlone = await oneShot(en);
 	const zhInv = prefixInvariants(zhAlone.events);
 	const enInv = prefixInvariants(enAlone.events);
-	log(`  单样本文本：0.wav（中英混说官方样例）=${JSON.stringify(zhAlone.text)}；1.wav=${JSON.stringify(enAlone.text)}`);
-	log(`  前缀自洽（committed 只增长 / final 以前缀开头）：zh=${zhInv.ok} en=${enInv.ok}`);
+	log(`  单样本文本：0.wav（中英混说，**不是纯中文**）=${JSON.stringify(zhAlone.text)}`);
+	log(`  单样本文本：1.wav（中文夹 ALWAYS，**不是纯英文**）=${JSON.stringify(enAlone.text)}`);
+	log(`  前缀自洽（committed 只增长 / final 以前缀开头）：0.wav=${zhInv.ok} 1.wav=${enInv.ok}`);
 	if (!zhAlone.text) throw new Error("0.wav 单独识别结果为空");
 	if (!enAlone.text) throw new Error("1.wav 单独识别结果为空");
-	const ref0 = STREAM_EXPECT["0.wav"];
-	const ref1 = STREAM_EXPECT["1.wav"];
-	const cer0 = cer(ref0, zhAlone.text);
-	const cer1 = cer(ref1, enAlone.text);
-	log(`  CER（对照官方文档期望文本，空白/标点不计）：0.wav=${cer0} 1.wav=${cer1}`);
-	if (cer0 === null || cer0 > 0.2) throw new Error(`0.wav CER 过高（${cer0}）：${zhAlone.text}`);
-	if (cer1 === null || cer1 > 0.2) throw new Error(`1.wav CER 过高（${cer1}）：${enAlone.text}`);
 	if (!zhInv.ok) throw new Error(`committed/tentative 前缀不自洽：${zhInv.issues.join(" | ")}`);
 	if (!enInv.ok) throw new Error(`committed/tentative 前缀不自洽：${enInv.issues.join(" | ")}`);
+
+	// 与**上游示例输出**的一致度（不是 CER、不是质量）。没源可核的样本不给结论。
+	const perSample = (key, wav, alone, inv) => {
+		const refDef = STREAM_EXPECT[key];
+		const score = refDef.verified ? agreementScore(refDef.text, alone.text) : null;
+		return {
+			file: STREAM_SAMPLES[key === "0.wav" ? "zh" : "en"].file,
+			audioSeconds: wav.seconds,
+			text: alone.text,
+			segments: alone.segments,
+			referenceText: refDef.text,
+			referenceKind: refDef.referenceKind,
+			referenceSource: refDef.referenceSource,
+			agreementScore: score,
+			agreementNote: refDef.verified
+				? "1 - 归一化编辑距离（去空白 / 标点）；只表示「是否复现上游示例输出」，不代表识别准确率 / 中英质量"
+				: "对照串无可公开核对来源（该模型官方文档页面没有 0.wav 示例输出），不给一致度结论；legacy cer 字段保 null",
+			qualityCer: null,
+			prefixInvariants: { ok: inv.ok, issues: inv.issues },
+		};
+	};
+	const reproduction = {
+		basis: STREAM_EXPECT_SOURCE.kind,
+		source: STREAM_EXPECT_SOURCE,
+		note:
+			"对照对象是上游文档里该模型的**示例输出**，不是人工转写真值（groundtruth）；0.wav 是中英混说、1.wav 是中文夹 ALWAYS，两者都不是纯英语语料，**不能当 zh / en 专项测试**。normText 归一化只为比字符串。",
+		samples: {
+			"0.wav": perSample("0.wav", zh, zhAlone, zhInv),
+			"1.wav": perSample("1.wav", en, enAlone, enInv),
+		},
+	};
+	for (const [k, s] of Object.entries(reproduction.samples)) {
+		log(`  ${k} 与上游示例输出的一致度=${s.agreementScore}（${s.referenceKind}；非准确率 / 非质量）`);
+	}
+	const reproEn = reproduction.samples["1.wav"].agreementScore;
+	if (reproEn !== null && reproEn < 0.8) throw new Error(`1.wav 与上游示例输出复现不一致（agreement=${reproEn}）：${enAlone.text}`);
 
 	// —— 2) seq 重复：明确拒绝且不重复喂（下一次正确 seq 仍工作，文本不因此翻倍）
 	const dup = await hub.create({ principal: "local" });
@@ -470,7 +605,10 @@ async function runStreamChecks({ spec, modelId, manager, ep, svc }) {
 	if (!aliveAfterCancel) throw new Error("cancel 不应杀掉 worker（应只释放租约）");
 	log(`  cancel：活跃会话 ${hub.activeCount()}，租约 ${leasesBefore}→${leasesAfter}，worker pid ${pidBefore} 存活=${aliveAfterCancel}`);
 
-	// —— 4) 禁网复跑：已有权重 + runtime，不得再联网
+	// —— 4) **离线请求拦截**下复跑：已有权重 + runtime 不再拉网
+	// 限定说明（重要）：这里只换掉**当前 Node 进程**的 globalThis.fetch，拦非回环 http(s)，
+	// 证明的是「这条 JS 边界没有发出外部请求」——不是系统级断网 / 路由阻断，也不审计
+	// Python sidecar 子进程自己的网络访问；所以结论只能写「离线请求拦截条件下本地复跑成功」。
 	const realFetch = globalThis.fetch;
 	let blockedFetches = 0;
 	globalThis.fetch = (url, init) => {
@@ -494,17 +632,31 @@ async function runStreamChecks({ spec, modelId, manager, ep, svc }) {
 		let q = await feed(hub2, s2.sessionId, 0, zh.samples.subarray(0, 16000 * 3));
 		const end2 = await hub2.end(s2.sessionId, { principal: "local" });
 		offlineText = (end2.finals.map((f) => f.text).join("") || "").trim();
-		log(`  禁网复跑：pid=${st.runtime.pid} final=${JSON.stringify(offlineText)} 被拦外部请求=${blockedFetches}`);
-		if (!offlineText) throw new Error("禁网复跑没有出文本（只有准备后才能离线）");
+		log(`  离线请求拦截条件下复跑：pid=${st.runtime.pid} final=${JSON.stringify(offlineText)} 本进程被拦外部请求=${blockedFetches}`);
+		if (!offlineText) throw new Error("离线复跑没有出文本（只有准备完才能离线）");
 	} catch (e) {
 		offlineError = e instanceof Error ? `${e.message}\n${e.stack ?? ""}` : String(e);
 	} finally {
 		globalThis.fetch = realFetch;
 	}
-	if (offlineError) throw new Error(`禁网复跑失败：${offlineError}`);
-	if (blockedFetches !== 0) throw new Error(`禁网复跑期间仍有 ${blockedFetches} 次外部网络请求（不应联网）`);
+	if (offlineError) throw new Error(`离线复跑失败：${offlineError}`);
+	if (blockedFetches !== 0) throw new Error(`离线复跑期间本进程仍有 ${blockedFetches} 次外部网络请求（不应联网）`);
 
-	return { ...entry, replayBlockedAs: replayCode, cancel: { active: 0, leasesAfter, workerAlive: aliveAfterCancel }, offline: { text: offlineText, blockedFetches } };
+	return {
+		...entry,
+		reproduction,
+		replayBlockedAs: replayCode,
+		cancel: { active: 0, leasesAfter, workerAlive: aliveAfterCancel },
+		offline: {
+			text: offlineText,
+			blockedFetches,
+			scope: "in-process-fetch-guard",
+			what: "只替换本 Node 进程的 globalThis.fetch，拦非回环 http(s)：证明「这条 JS 边界没有外部请求」",
+			notProven: "不是系统级 / 物理断网，也不审计 Python sidecar 子进程自身的网络访问；不能据此说「全平台离线已验证」",
+			runnerStaticNote:
+				"生产 runner 由已 SHA256 校验的本地 ONNX 构造（OnlineRecognizer.from_transducer 读本地文件），运行期不下载权重：这是代码静态结论 + 本边界验证，不是物理断网实测",
+		},
+	};
 }
 
 // ------------------------------------------------------------------ 主流程
