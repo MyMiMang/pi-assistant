@@ -128,8 +128,9 @@ function popoverStyle(anchor: HTMLElement, panel: HTMLElement, placement: "up" |
 }
 
 /** 按钮 + 弹层的通用状态：open、触发器 ref、弹层 ref、弹层内联定位 style。 */
-export function usePopover(placement: "up" | "down" = "down", opts?: { /** 返回 false = 只退一层，不关整个弹层 */ onEscape?: () => void | boolean }) {
+export function usePopover(placement: "up" | "down" = "down", opts?: { /** 返回 false = 只退一层，不关整个弹层 */ onEscape?: () => void | boolean; /** 层级 / 视图变化时重新量面板并贴回触发器（两层弹层切换时尺寸不同） */ layoutKey?: unknown }) {
 	const [open, setOpen] = useState(false);
+	const layoutKey = opts?.layoutKey;
 	const ref = useRef<HTMLDivElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const natural = useRef(0);
@@ -180,7 +181,7 @@ export function usePopover(placement: "up" | "down" = "down", opts?: { /** 返�
 			removeEventListener("resize", place);
 			document.removeEventListener("scroll", place, true);
 		};
-	}, [open, placement]);
+	}, [open, placement, layoutKey]);
 	return { open, setOpen, ref, menuRef, style };
 }
 
@@ -423,6 +424,7 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 		return n;
 	};
 	const { open, setOpen, ref, menuRef, style } = usePopover(placement ?? "up", {
+		layoutKey: layer,
 		onEscape: () => {
 			// 目录里 Esc 只退一层；紧凑层再按 Esc 才关闭；关闭后焦点回触发器
 			const n = applyPanel("escape");
