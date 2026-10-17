@@ -32,7 +32,7 @@ export interface FastActionCandidate {
 	semantic?: FastSemanticTarget;
 }
 
-/** 快速模型收到的请求（有界、无副作用） */
+/** 快速模型收到的请求（有界、无副作用）。`captureId` 只是程序内部的新鲜度/授权 pin，**不进模型输入**。 */
 export interface FastChoiceRequest {
 	goal: string;
 	captureId: string;
@@ -60,6 +60,9 @@ export type FastChoiceResult =
 			 * `(max(p) - 1/n) / (1 - 1/n)`（`laya/confidence.py:jev_confidence`、issue #302 的公开换算）。
 			 * 对 Jev 等价于它自己的 `confidence`；对 Laya 把熵换到阈值本来所在的标度。
 			 * 概率缺失 / 非法时为 undefined（此时退回 `confidence`，不合成）。
+			 *
+			 * 语义边界：这只修正「比较的标度」，**不等于已校准准确率**；Laya 的
+			 * `answer_confidence=max(p)` 未拟合温度（偏 over-confident），阈值不能读成概率正确率。
 			 */
 			decisionConfidence?: number;
 			probabilities?: Record<string, number>;

@@ -126,7 +126,16 @@ test("classifier 解析：选中 / 并列 / 非法概率 / 越界 / 缺置信度
 	const ids = ["a", "b"];
 	const base = { provider: "openrouter", model: "typesafe/jev-1.13", api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1 };
 	const ok = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8, probabilities: { a: 0.8, b: 0.2 } } }, usage: { input: 5, output: 1, totalTokens: 6 } }, ids);
-	assert.deepEqual(ok, { kind: "selected", candidateId: "a", confidence: 0.8, decisionConfidence: 0.6, probabilities: { a: 0.8, b: 0.2 }, usage: { input: 5, output: 1 }, model: "openrouter/typesafe/jev-1.13" });
+	assert.equal(ok.kind, "selected");
+	if (ok.kind === "selected") {
+		assert.equal(ok.candidateId, "a");
+		assert.equal(ok.confidence, 0.8);
+		// 不取整，所以 (0.8-0.5)/0.5 的浮点尾巴保留（0.6000000000000001）；展示层才取整。
+		assert.ok(Math.abs(ok.decisionConfidence! - 0.6) < 1e-12);
+		assert.deepEqual(ok.probabilities, { a: 0.8, b: 0.2 });
+		assert.deepEqual(ok.usage, { input: 5, output: 1 });
+		assert.equal(ok.model, "openrouter/typesafe/jev-1.13");
+	}
 	const tie = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.5, probabilities: { a: 0.5, b: 0.5 } } } }, ids);
 	assert.equal(tie.kind, "abstain");
 	const badProbs = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8, probabilities: { a: 1.4, b: -0.1 } } } }, ids);
@@ -330,6 +339,22 @@ test("阈值标度：概率按 Jev 公式换算，不用 Laya 的归一化熵", 
 	assert.equal(fc.jevChoiceConfidence({ a: 0.9 }, ["a", "b"]), undefined, "缺候选概率不部分信任");
 	assert.equal(fc.jevChoiceConfidence({ a: 0.9, b: Number.NaN }, ["a", "b"]), undefined);
 	assert.equal(fc.jevChoiceConfidence(undefined, ["a"]), undefined);
+	// 候选集合本身的边界：重复 / 空 id、少于 2 个候选、概率越界一律 undefined（不部分信任）。
+	assert.equal(fc.jevChoiceConfidence({ a: 0.9, b: 0.1 }, ["a", "a"]), undefined, "重复候选 id");
+	assert.equal(fc.jevChoiceConfidence({ a: 0.9, b: 0.1 }, ["a", ""]), undefined, "空候选 id");
+	assert.equal(fc.jevChoiceConfidence({ a: 0.9, b: 0.1 }, ["a"]), undefined, "单候选");
+	assert.equal(fc.jevChoiceConfidence({ a: 1.2, b: -0.2 }, ["a", "b"]), undefined, "概率越界");
+});
+
+test("阈值比较保原始精度：0.59996 不因四舍五入变成 0.6", async () => {
+	fc._resetFastComputerState();
+	const justBelow = fc.jevChoiceConfidence({ a: 0.79998, b: 0.20002 }, ["a", "b"])!;
+	assert.ok(Math.abs(justBelow - 0.59996) < 1e-12, `原始精度保留：${justBelow}`);
+	const r1 = await fc.selectFastAction({ key: "kprec1", goal: "g", candidates: [cand("a"), cand("b")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", decisionConfidence: justBelow })), settings: settings({ threshold: 0.6 }) });
+	assert.equal(r1.kind === "fallback" && r1.reason, "low_confidence", "0.59996 必须被 0.6 拒绝");
+	const justAbove = fc.jevChoiceConfidence({ a: 0.80002, b: 0.19998 }, ["a", "b"])!;
+	const r2 = await fc.selectFastAction({ key: "kprec2", goal: "g", candidates: [cand("a"), cand("b")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", decisionConfidence: justAbove })), settings: settings({ threshold: 0.6 }) });
+	assert.equal(r2.kind, "selected", "0.60004 必须通过 0.6");
 });
 
 test("classifier 解析：decisionConfidence 从概率换算，协议 confidence 原样保留", () => {
@@ -342,6 +367,16 @@ test("classifier 解析：decisionConfidence 从概率换算，协议 confidence
 		assert.equal(out.confidence, 0.41, "协议原值不改");
 		assert.ok(Math.abs(out.decisionConfidence! - (0.7 - 1 / 7) / (1 - 1 / 7)) < 1e-12);
 	}
+});
+
+test("classifier 解析：choice 必须是唯一最高概率，否则不可执行", () => {
+	const base = { provider: "local-laya", model: "multilingual", api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1 };
+	// wire 选了低概率的 b，但 a 才是 max(p) —— 不能拿 a 的概率给 b 放行。
+	const mismatch = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "b", confidence: 0.9, probabilities: { a: 0.9, b: 0.1 } } } }, ["a", "b"]);
+	assert.equal(mismatch.kind, "abstain");
+	if (mismatch.kind === "abstain") assert.match(mismatch.reason ?? "", /不是概率最高/);
+	const tied = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.9, probabilities: { a: 0.5, b: 0.5 } } } }, ["a", "b"]);
+	assert.equal(tied.kind, "abstain");
 });
 
 test("阈值按 decisionConfidence 判定：熵低但选项概率够 → 选中", async () => {
@@ -399,13 +434,54 @@ test("保存设置清掉熔断（换模型 / 改阈值后能再试）", async ()
 	assert.equal(calls, 4);
 });
 
-test("captureId 内容寻址：同窗口同候选稳定，候选变了才变（Laya 把 state 序列化进模型输入）", async () => {
+test("captureId 每次唯一，且不进模型输入：同 goal/候选的 classifier context 完全一致", async () => {
 	fc._resetFastComputerState();
+	const contexts: unknown[] = [];
+	const chooser = createClassifierChooser({
+		provider: "local-laya",
+		model: "multilingual",
+		classify: async (_p, _m, context) => {
+			contexts.push(context);
+			return { provider: "local-laya", model: "multilingual", api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1, answers: { pick: { type: "choice", choice: "a", confidence: 1, probabilities: { a: 0.9, b: 0.1 } } } };
+		},
+	});
+	const ids = [cand("a"), cand("b")];
+	await chooser.choose({ goal: "点提交", captureId: "cap-one", candidates: ids.map((c) => ({ id: c.id, label: c.label })) });
+	await chooser.choose({ goal: "点提交", captureId: "cap-two", candidates: ids.map((c) => ({ id: c.id, label: c.label })) });
+	assert.deepEqual(contexts[0], contexts[1], "captureId 不同但 goal/候选相同 → 模型输入必须完全一致");
+	assert.ok(!JSON.stringify(contexts[0]).includes("cap-"), "captureId 不得出现在模型输入里");
+
 	const seen: string[] = [];
-	const chooser = createMockChooser((req) => (seen.push(req.captureId), { kind: "abstain" }));
-	for (let i = 0; i < 2; i++) await fc.selectFastAction({ key: "kcap", goal: "g", candidates: [cand("a"), cand("b")], chooser, settings: settings() });
-	assert.equal(seen[0], seen[1], "同一窗口同一候选 → 同一个 captureId（同一份模型输入，不受随机 token 干扰）");
-	await fc.selectFastAction({ key: "kcap", goal: "g", candidates: [cand("a"), cand("c")], chooser, settings: settings() });
-	assert.notEqual(seen[2], seen[0], "候选变了 → captureId 变，旧 capture 失效");
+	const mock = createMockChooser((req) => (seen.push(req.captureId), { kind: "abstain" }));
+	await fc.selectFastAction({ key: "kcap", goal: "g", candidates: ids, chooser: mock, settings: settings() });
+	await fc.selectFastAction({ key: "kcap", goal: "g", candidates: ids, chooser: mock, settings: settings() });
+	assert.notEqual(seen[0], seen[1], "每次调用唯一 captureId（旧 capture 必须可区分地失效）");
 	assert.match(seen[0], /^cap-[0-9a-f]{16}$/);
+});
+
+test("并发同 key 同 id/label 但 args 已变：旧结果 capture_invalid，不会用新 capture 的参数", async () => {
+	fc._resetFastComputerState();
+	let release!: () => void;
+	const gate = new Promise<void>((r) => (release = r));
+	let calls = 0;
+	const chooser: FastActionChooser = {
+		id: "m",
+		label: "m",
+		nativeProbability: true,
+		async choose() {
+			calls++;
+			if (calls === 1) await gate;
+			return { kind: "selected", candidateId: "a" };
+		},
+	};
+	const oldCand: FastActionCandidate = { id: "a", label: "按钮：提交", tool: "click", args: { element_token: "old:1" } };
+	const newCand: FastActionCandidate = { ...oldCand, args: { element_token: "new:2" } };
+	const pOld = fc.selectFastAction({ key: "kaba", goal: "g", candidates: [oldCand], chooser, settings: settings() });
+	const pNew = fc.selectFastAction({ key: "kaba", goal: "g", candidates: [newCand], chooser, settings: settings() });
+	const nw = await pNew;
+	release();
+	const old = await pOld;
+	assert.equal(nw.kind, "selected");
+	if (nw.kind === "selected") assert.equal(nw.candidate.args.element_token, "new:2");
+	assert.equal(old.kind === "fallback" && old.reason, "capture_invalid", "旧 capture 被作废后必须拒绝，而不是落到新 capture 的 args");
 });

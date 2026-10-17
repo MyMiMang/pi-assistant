@@ -18,15 +18,15 @@
  *  6. 按相反顺序清理：只关自己打开的浏览器 → 断 MCP → 停自有 daemon（先证明 socket 归属）→
  *     停自有 Laya → 用**生产 HTTP API** 把用户的 Laya 恢复到原来的运行状态（并复核）。
  *
- * 当前状态（2026-10-17 主审后，**默认不可运行**）：
+ * 当前状态（2026-10-17 主审后，**只能经 supervisor 运行**）：
  *  - 隔离缺陷已改：服务进程改回**临时 HOME**，所有第三方 / 服务模块（hono / pi-mcp / TS 生产件）都在 env 设置之后
  *    动态 import；原生边界只从 `cloneNativeBaseEnv(process.env)` 快照计算，不要求本进程是原生 HOME。
  *    **这份改动没有在真实 daemon / 浏览器上跑过**（主审要求不再起 Chrome / driver）。
- *  - 清理只有**进程内**兜底（单次到点 abort + finally 路径 + unhandledRejection/uncaughtException），
- *    没有外部 watchdog：本进程被 SIGKILL / OOM / 掉电时，残留自有 daemon / 自有 Laya 或「生产 Laya 停着」
- *    都不受保证。上一版注释里「第二次到点强制落盘」是不实说法（单次 setTimeout 不会触发第二次），已删。
- *  - 因此入口 **fail-closed**：必须显式 `PIA_BENCH_HARNESS_ENABLE=1` 才跑；在此之前先按
- *    `progress-snapshots/laya-benchmark-isolated-real.md`「主审后修正」列出的边界完成受控重测。
+ *  - 清理有进程内兜底（到点 abort + finally + unhandledRejection/uncaughtException + SIGINT/SIGTERM），
+ *    但进程被 SIGKILL / OOM 时只能靠**外部 supervisor**：`scripts/laya-benchmark-supervisor.mjs`
+ *    负责超时、杀 worker 进程组、按 socket / 命令行证明归属收掉本次资源、再恢复生产 Laya。
+ *  - 入口 **fail-closed**：必须由 supervisor 通过 fd 3/4 握手启动；直接 `node` 运行（或只设
+ *    `PIA_BENCH_HARNESS_ENABLE=1`）一律拒绝——环境变量挡不住任何人。
  *
  * 诚实边界：
  *  - 本脚本不评估“泛化能力”：只跑固定的 4 个 synthetic 任务；
@@ -34,8 +34,9 @@
  *  - 不读生产 token / 凭据 / 生产 DB；Laya 权重只用本机已物化目录的只读副本（clonefile，不写回原目录）；
  *  - 若系统权限弹窗 / 授权需要本人处理，脚本按失败停下并如实报告，不循环重试。
  *
- * 用法（显式手动运行；不进默认 npm test；默认 fail-closed）：
- *   PIA_BENCH_HARNESS_ENABLE=1 node --import tsx scripts/laya-benchmark-isolated-harness.mjs
+ * 用法（不进默认 npm test；必须经 supervisor）：
+ *   node scripts/laya-benchmark-supervisor.mjs --timeout-ms=720000 -- \
+ *     node --import tsx scripts/laya-benchmark-isolated-harness.mjs
  *   PIA_BENCH_KEEP=1                保留 scratch 目录（默认保留日志、删权重副本）
  *   PIA_BENCH_APP_API=http://127.0.0.1:8787   生产 App 的本机 API（用于停 / 恢复 Laya；仅回环）
  *   PIA_BENCH_TIMEOUT_MS=4000       快速模型单次决策超时（生产默认 4000）
@@ -47,6 +48,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { acceptSupervisorHandshake } from "./laya-benchmark-supervisor-handshake.mjs";
 import {
 	SYNTHETIC_ROOT_MARKER,
 	cloneNativeBaseEnv,
@@ -66,22 +68,21 @@ const WATCHDOG_MS = Number(process.env.PIA_BENCH_WATCHDOG_MS ?? 9 * 60_000);
 const REAL_HOME = userInfo().homedir;
 const PROD_DATA = join(REAL_HOME, "Library", "Application Support", "Pi Assistant");
 
-// ---------------------------------------------------------------- 入口门禁（默认 fail-closed）
-// 原因见文件头「当前状态」：隔离修复未在真实链路上验证、清理没有外部 watchdog。
-// 不留一个「直接 node 就能跑」的手动入口：误跑会停 / 起用户生产 Laya，并可能留下自有 daemon。
-if (process.env.PIA_BENCH_HARNESS_ENABLE !== "1") {
+// ---------------------------------------------------------------- 入口门禁（必须由 supervisor 启动）
+// 外部监护在 scripts/laya-benchmark-supervisor.mjs：它用 fd 3/4 与 worker 握手（一次性随机 token，只在内存管道里）。
+// 直接 node 运行没有父进程管道证明 → 拒绝启动；不再用 PIA_BENCH_HARNESS_ENABLE=1 这种任何进程都能设的开关。
+const guard = await acceptSupervisorHandshake();
+if (!guard) {
 	console.error(
 		[
-			"[laya-benchmark] 维护中，入口默认关闭（fail-closed），本次没有启动任何进程。",
-			"待修 / 待验（详见 progress-snapshots/laya-benchmark-isolated-real.md「主审后修正」）：",
-			"  1) 服务进程临时 HOME / TMPDIR 版本没有在真实 daemon + 浏览器上跑过（只做了纯函数测试）；",
-			"  2) 清理只有进程内兜底，没有外部 watchdog（进程被 SIGKILL / OOM 时不保证停自有 daemon / 恢复生产 Laya）；",
-			"  3) 一次受控运行会停 / 恢复用户生产 Laya 一次（2026-10-17 的验收实际跑了两轮），需要主会话给出明确的测试槽。",
-			"确认要跑：PIA_BENCH_HARNESS_ENABLE=1 node --import tsx scripts/laya-benchmark-isolated-harness.mjs",
+			"[laya-benchmark] 拒绝直接运行：必须由外部 supervisor 启动（超时 / 独立清理 / 生产 Laya 恢复都靠它）。",
+			"  node scripts/laya-benchmark-supervisor.mjs --timeout-ms=720000 -- node --import tsx scripts/laya-benchmark-isolated-harness.mjs",
+			"本次没有启动任何进程。",
 		].join("\n"),
 	);
 	process.exit(3);
 }
+const notify = (msg) => guard.send(msg);
 
 const startedAt = new Date();
 const logLines = [];
@@ -218,7 +219,7 @@ let watchdogTimer = null;
 
 // 进程内兜底：任何未捕获异常 / 未处理的 Promise 拒绝（例如 client.connect、serve、中间步骤 throw）
 // 都走同一条幂等清理，不再留下「自有 daemon 在跑 / 生产 Laya 停着」的裸退出。
-// 注意：这只是进程内兜底，SIGKILL / OOM / 掉电不覆盖（没有外部 watchdog，见文件头）。
+// 注意：进程内兜底不覆盖 SIGKILL / OOM；那种情况由外部 supervisor 按 checkpoint 收尾（见文件头）。
 const fatal = (label, e) => {
 	fail(`${label}：${e instanceof Error ? e.message : String(e)}`);
 	state.aborted = true;
@@ -232,6 +233,15 @@ const fatal = (label, e) => {
 };
 process.on("uncaughtException", (e) => fatal("未捕获异常", e));
 process.on("unhandledRejection", (e) => fatal("未处理的 Promise 拒绝", e));
+// supervisor 发来的停止信号：走同一条清理（停自有资源 + 恢复生产 Laya），不是裸退出。
+for (const sig of ["SIGINT", "SIGTERM"]) {
+	process.on(sig, () => {
+		fail(`收到 ${sig}，中止并清理`);
+		state.aborted = true;
+		state.exitCode = 130;
+		void cleanup();
+	});
+}
 
 async function stopOwnDaemon() {
 	if (state.daemonStopped || !state.socket) return;
@@ -277,6 +287,7 @@ async function stopOwnDaemon() {
 		}
 	});
 	report.cleanup.socketExistsAfterStop = existsSync(state.socket);
+	notify({ type: "daemon_stopped", socket: state.socket, leftoverPids: report.cleanup.daemonLeftoverPids });
 	log("自有 daemon 已停", JSON.stringify(report.cleanup));
 }
 
@@ -298,6 +309,7 @@ async function restoreProductionLaya() {
 	if (!out.restored) out.failed = true;
 	report.cleanup.productionRestore = out;
 	report.laya.restored = out.restored ?? null;
+	notify({ type: "prod_restored", ok: !!out.restored });
 	log("生产 Laya 恢复", JSON.stringify(out));
 }
 
@@ -320,6 +332,7 @@ async function cleanup() {
 	if (state.laya && !state.layaStopped) {
 		state.layaStopped = true;
 		await state.laya.stop().catch((e) => (report.cleanup.layaStopError = String(e?.message ?? e).slice(0, 200)));
+		notify({ type: "laya_stopped" });
 	}
 	if (state.server) state.server.close();
 	await restoreProductionLaya();
@@ -330,6 +343,7 @@ async function cleanup() {
 
 function writeReportAndExit(code) {
 	if (watchdogTimer) clearTimeout(watchdogTimer);
+	notify({ type: "done", exitCode: code });
 	const dir = resolve("evidence/laya-benchmark-real");
 	mkdirSync(dir, { recursive: true });
 	const stamp = startedAt.toISOString().replace(/[:.]/g, "-");
@@ -363,6 +377,8 @@ if (socketPath.length > 100) {
 }
 state.socket = socketPath;
 state.exe = cuaPaths.exe;
+// 先只登记 socket 再启动：worker 在 daemon 启动过程中被杀时，supervisor 仍能按唯一 socket 找到并收掉它。
+notify({ type: "daemon", socket: socketPath, pid: null });
 const nativeBaseEnv = cloneNativeBaseEnv(process.env);
 const nativeRoots = [root, dataDir, workspaceDir, tempHome, tempTmp];
 // 原生边界：只用上面这份**显式 clone** 的 base env + OS 账户家目录，和本进程的 HOME 无关。
@@ -420,6 +436,7 @@ try {
 	state.daemonPid = pids[0];
 	report.isolation.daemon = { socket: socketPath, pid: state.daemonPid, status: statusText, serveArgs, envProfileRoot: profileRoot };
 	log("自有 daemon 就绪", JSON.stringify({ pid: state.daemonPid, socket: socketPath, status: statusText }));
+	notify({ type: "daemon", socket: socketPath, pid: state.daemonPid });
 } catch (e) {
 	fail(`启动本次独占 daemon 失败：${e instanceof Error ? e.message : String(e)}`);
 	await cleanup();
@@ -502,6 +519,7 @@ const baseline = await layaStatus().catch((e) => ({ error: String(e?.message ?? 
 report.laya.baseline = layaSummary(baseline);
 report.laya.baselineRaw = baseline?.error ? { error: baseline.error } : { install: baseline?.install?.state, configured: baseline?.configured };
 log("生产 Laya baseline", JSON.stringify(report.laya.baseline));
+notify({ type: "baseline", prodLayaRunning: baseline?.runtime?.state === "running", apiBase: APP_API });
 if (baseline?.runtime?.state !== "running") {
 	fail(`生产 Laya 不是 running（baseline=${JSON.stringify(report.laya.baseline)}），按设计不继续（无法证明“停原模型再恢复”）`);
 	await cleanup();
@@ -521,6 +539,7 @@ log("已用生产 API 停原 Laya", JSON.stringify(report.laya.stopped));
 		fail("生产 Laya 没有停下（不会同时热两个模型），中止");
 		await cleanup();
 	}
+	notify({ type: "prod_laya_stopped" });
 }
 
 const manager = new LocalLayaManager(createLayaDeps(), LAYA_SOURCE);
@@ -531,6 +550,7 @@ try {
 	report.laya.own = { ...layaSummary(st), tokenDigest: ownToken ? tokenDigest(ownToken) : null };
 	if (st?.runtime?.state !== "running" || !st?.health?.ok) throw new Error(`本次 Laya runtime 没起来（${JSON.stringify(layaSummary(st))}）`);
 	log("本次独占 Laya 已起", JSON.stringify({ pid: st.runtime.pid, port: st.runtime.port, health: layaSummary(st).health, tokenDigest: report.laya.own.tokenDigest }));
+	notify({ type: "laya", pid: st.runtime.pid, port: st.runtime.port });
 } catch (e) {
 	fail(`启动本次独占 Laya 失败：${e instanceof Error ? e.message : String(e)}`);
 	await cleanup();

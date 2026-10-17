@@ -5,7 +5,7 @@
 >
 > **2026-10-17 主审后修正**：结果表里 `pick-submit` 的置信度已改为真实 scored 值 `0.3816`（`0.3969` 是预热那条）；
 > 本轮实际跑了两轮（授权是一次），诊断不能当任务准确率——见文末「主审后修正与边界」。
-> 脚本已改回「服务进程临时 HOME」但**未在真实链路重跑**，入口现默认 fail-closed（`PIA_BENCH_HARNESS_ENABLE=1` 才跑）。
+> 脚本已改回「服务进程临时 HOME」但**未在真实链路重跑**，入口现必须由 supervisor 握手启动（直接运行 exit 3）。
 
 ## 做了什么
 
@@ -68,8 +68,8 @@
 4. **可复现性 / 计时边界**：harness 的熔断 key 是 `hostpc:<pid>:<window>:<taskId>`（**per-task**），生产 `benchmark-host` 是同一 key `hostpc:<pid>:<window>`——两者作用域不同。`task.retries=1` 是 runner 的“未选中”诊断计数，`task.fallbackCount=0` 是“基准不真的执行主模型回退”，summary `fallbacks=3` 是 `decision=fallback` 计数——三个不同计数器，不是矛盾。`latencyMs` / `p50` 只是每题**最后一次 chooser 调用**的决策延迟，不是任务总耗时（`wallMs` 105–2810ms），也不含诊断的额外请求。
 5. **不是完整 production benchmark**：主模型接管**没有执行**，所以没有接管速度 / 总耗时数据；只是 4 个固定 synthetic 任务的 attempt coverage，不是完整 UI / `benchmark-host` 验收，不给 Laya 整体能力结论。
 6. **隔离违规（本轮的）**：本轮服务进程跑在**原生 HOME**（脚本自己断言并要求 native HOME），与“服务 HOME / DATA / WORKSPACE / TMPDIR 用临时目录”的隔离要求相反。脚本已改（见下条），但**本轮证据不满足该隔离要求**，不能当隔离验收证据。
-7. **脚本修复状态（已改，未验证）**：临时 `HOME` / `TMPDIR` / `PIA_DATA_DIR` / `PIA_WORKSPACE` 现在在**任何第三方与服务模块（hono / pi-mcp / TS 生产件）动态 import 之前**设置；原生边界只从 `cloneNativeBaseEnv(process.env)` 显式快照经生产 `nativeLaunchEnv()` 计算，不要求本进程是原生 HOME；内存凭据保留、不读凭据、不改 SDK。纯函数测试 `node --test scripts/laya-benchmark-harness-env.test.mjs` **6/6**。但这条链路**没有在真实 daemon / 浏览器上跑过**，因此入口默认 **fail-closed**（`PIA_BENCH_HARNESS_ENABLE=1` 才跑），需在受控测试槽里重测后才算可用。
-8. **清理覆盖边界**：清理只有**进程内**兜底（正常 finally 路径 + 单次到点 abort + `unhandledRejection`/`uncaughtException` 走同一条幂等清理）；**没有外部 watchdog**。本进程被 SIGKILL / OOM / 掉电时，自有 daemon / 自有 Laya 可能残留、生产 Laya 可能停着——本轮没触发这些异常路径，所以不声称“这条路径已验证”。旧注释里“第二次到点强制落盘”是错的（单次 `setTimeout` 不会触发第二次），已删。浏览器侧：拿到 handle 时 `close()` 与 prepare 后失败的清理都走 driver 自己的 `releasePrepared()`（kill 前用 `list_windows` 复核归属，读源码确认），同样是进程内保证。
+7. **脚本修复状态（已改，未验证）**：临时 `HOME` / `TMPDIR` / `PIA_DATA_DIR` / `PIA_WORKSPACE` 现在在**任何第三方与服务模块（hono / pi-mcp / TS 生产件）动态 import 之前**设置；原生边界只从 `cloneNativeBaseEnv(process.env)` 显式快照经生产 `nativeLaunchEnv()` 计算，不要求本进程是原生 HOME；内存凭据保留、不读凭据、不改 SDK。纯函数测试 `node --test scripts/laya-benchmark-harness-env.test.mjs` **6/6**。但这条链路**没有在真实 daemon / 浏览器上跑过**，因此入口改为**必须经 supervisor 握手**（fd 3/4），直接运行 exit 3；需在受控测试槽里重测后才算可用。
+8. **清理覆盖边界（§9.7 那一轮）**：当时只有**进程内**兜底（正常 finally 路径 + 单次到点 abort + `unhandledRejection`/`uncaughtException` 走同一条幂等清理）；**没有外部 watchdog**，进程被 SIGKILL / OOM / 掉电时，自有 daemon / 自有 Laya 可能残留、生产 Laya 可能停着——本轮没触发这些异常路径，所以不声称“这条路径已验证”。旧注释里“第二次到点强制落盘”是错的（单次 `setTimeout` 不会触发第二次），已删。现在新增独立 supervisor（假 worker 测试 3/3，未在真实 daemon / 模型上重跑）：超时 / 信号后杀 worker 进程组，按 socket / 命令行证明归属收尾，≤200s 恢复生产 Laya。浏览器侧：拿到 handle 时 `close()` 与 prepare 后失败的清理都走 driver 自己的 `releasePrepared()`（kill 前用 `list_windows` 复核归属），同样是进程内保证。
 9. **e2e 复制版 helper 的 `diverged` 缺陷**：修复来源是 Fast `44047ea`（独立文件），本树**不重复改**、合入时以那份为准；本树本次也没用它（用的是生产 TS 模块），所以它不影响本轮结果。
 
 发布 / 引用时请连同这几条边界一起引用；不要把“1/4 + 诊断看起来对”写成“Laya 选得对只是没信心”，也不要写成“环境隔离已验收”。
@@ -91,22 +91,30 @@
 
 1. **阈值比错了量**。Laya 的 choice 答案 `confidence` 是**归一化 Shannon 熵** `1 - H/log(k)`（`laya/common.py:802 confidence_from_probs`，`laya/agent.py` choice 分支写入），文档自己写「not calibrated … 不能和 `max(p)` 用同一个阈值比较」，而且**随候选数 k 变化**；概率质量是 `answer_confidence = max(p)`（`laya/common.py:779`，也是 `laya/confidence.py:_gate_confidence` 优先用的量）。产品默认阈值 0.6 是 Jev 标度上的数字。
 2. **SDK 拿不到那个字段**：`pi-ai/dist/api/system-one-shared.js` 只解析 `choice` / `probabilities` / `confidence`，`answer_confidence` 被丢掉 → 只能从 `probabilities` 自己换算（Laya 公开提供 `jev_confidence`，#302：`(max(p)-1/n)/(1-1/n)`）。
-3. **纯数学后果**：k=32、`max(p)=0.6` 时熵 ≈ `0.41`（0.6 阈值必然拒），Jev 标度 ≈ `0.587`。候选一多，旧实现会必然把「概率 0.6 的选项」判成低可信。
-4. **同题浮动不是随机采样**：`captureId` 原来每次随机生成，而它进 `state`、被 Laya 整体 `json.dumps` 进模型输入（`serialize_state`）；模型 `eval()` + argmax、无采样 → 同一输入必然同一分布。因此「生产 0.3816 / 诊断 0.6277」最可能是**输入不同**（随机 capture id；其次页面状态本身），不能归因 dropout / train 模式 / 服务端随机。原报告已写的「不能读成选得对但没信心」不变。
+3. **纯数学的一条（只说明标度差异）**：在「k=32、`max(p)=0.6`、其余概率均分」这一种形状下，熵 ≈ `0.41`（会被 0.6 拒），Jev 标度 ≈ `0.587`（也在 0.6 以下）。熵不只由 `max(p)` 决定，随 k 与剩余质量分布变化，**不能**写成「候选越多必然被拒」；能确定的是旧实现拿熵比 0.6，与 Laya 文档「不能和 max(p) 用同一个阈值」冲突，且实际把 3 次答案判成低可信。
+4. **同题浮动的已知干扰源（不是已证主因）**：`captureId` 原来每次随机生成，而它进 `state`、被 Laya 整体 `json.dumps` 进模型输入（`serialize_state`）；模型 `eval()` + argmax、无采样，但这**不保证 MPS 跨进程逐位一致**，所以不能断言「同一输入必然同一分布」或「0.3816 / 0.6277 只能来自输入不同」。随机 capture 是**已证存在的干扰源**，页面状态本身也会变；量级没有测出来。原报告已写的「不能读成选得对但没信心」不变。
 5. **checkpoint 侧**：本机物化的 `laya-multilingual` `rl_agent_config.json` 是 `temperature=[1,1,1]`、无 `binning_map` → 它的 `answer_confidence` 就等于 `max(p)`；但温度未拟合（官方说 over-confident），所以任何阈值都不能读成准确率。
 
 ### 改了什么（adapter / 编排层；不碰 Pi / driver / node_modules）
 
-- `packages/server/src/fast-computer/choosers.ts`：新增 `jevChoiceConfidence()`（Jev 标度换算、四位小数、`n=1` 不合成）；`parseClassifierChoice` 多返回 `decisionConfidence`，协议 `confidence` 原样保留。
-- `index.ts`：阈值改比 `decisionConfidence`（缺失退回 `confidence`）；回退详情带「选项概率 / 协议 confidence / 比较值」；`selected` 结果多带 `decisionConfidence` / `probabilities`；`registerCapture` 改内容寻址（sha256 前 16 位）；用户取消不计熔断、保存设置清熔断、`circuit_open` 文案改成给出恢复条件。
-- `tool.ts`：`fast_pick_action` 分开显示两个数；回退提示改为「必要时先重读窗口状态」（该工具已重读过窗口，主模型手上的旧 `element_token` 会被作废）。
-- `scripts/laya-benchmark-isolated-harness.mjs`：只加记录字段 `decisionConfidence` / `probability`（`gate=` / `p=`），报告 schema 兼容；**没有重跑**，入口仍然 fail-closed。
+- `packages/server/src/fast-computer/choosers.ts`：新增 `jevChoiceConfidence()`（Jev 标度换算、**原始精度返回**、`n<2` / 重复空 id / 越界概率不合成）；`parseClassifierChoice` 多返回 `decisionConfidence`，协议 `confidence` 原样保留；wire `choice` 必须是**唯一最高概率**候选，否则 `abstain`（不拿别人的概率过门）。
+- `index.ts`：阈值改比 `decisionConfidence`（缺失退回 `confidence`）；回退详情带「选项概率 / 协议 confidence / 比较值」；`selected` 结果多带 `decisionConfidence` / `probabilities`；`registerCapture` 改**每次唯一**（只作程序内新鲜度 pin，**不进模型输入**；并发旧结果得到 `capture_invalid`，不会用新 capture 的 args）；用户取消不计熔断、保存设置清熔断、`circuit_open` 文案改为「只有保存设置 / 重启会清，重新读窗口不会」。
+- `tool.ts`：`fast_pick_action` 分开显示两个数（展示取 4 位小数，比较不取整）；回退提示明确由主模型在当前会话自己继续、必要时先重读窗口，程序不会另发模型请求。
+- `scripts/laya-benchmark-isolated-harness.mjs`：只加记录字段 `decisionConfidence` / `probability`（`gate=` / `p=`），报告 schema 兼容；入口改为**必须由 supervisor 握手启动**（fd 3/4，不再接受 `PIA_BENCH_HARNESS_ENABLE=1`）；资源创建即 checkpoint，SIGINT/SIGTERM 走同一条清理。
+- 新增 `scripts/laya-benchmark-supervisor.mjs` + `laya-benchmark-supervisor-handshake.mjs` + 假 worker 测试：独立进程负责超时、杀 worker 进程组、按 socket / 命令行证明归属收尾、≤200s 恢复生产 Laya（baseline stopped 不启动；自有资源未清则拒绝恢复）。
 
 ### 实跑（Node 24.20.0；外层临时 HOME / TMPDIR；无模型 / 浏览器 / daemon）
 
 - `fast-computer*.test.ts` + `fast-model-auto-discovery` + `fast-model-discovery-http`：**116/116**。
 - `packages/server` `tsc --noEmit`：exit 0。`node --check` harness：通过。
-- 新增用例：熵低但概率够 → 选中；概率不够 → 回退且详情带两个数；无概率退回协议值；单候选不合成；取消不熔断；保存设置清熔断；captureId 稳定 / 随候选变化。
+- 新增用例：熵低但概率够 → 选中；概率不够 → 回退且详情带两个数；无概率退回协议值；单候选不合成；取消不熔断；保存设置清熔断；captureId 每次唯一且不进模型输入（同 goal/候选 context 完全一致）；并发同 key 同 id/label 但 args 已变 → 旧结果 `capture_invalid`；`choice` 与唯一最高概率不一致 → 不可执行；`0.59996` 不因四舍五入越过 `0.6`。
+
+### supervisor 与入口（2026-10-17 收口；假 worker 测试，**未跑真实 daemon / 模型**）
+
+- 入口不再用 `PIA_BENCH_HARNESS_ENABLE=1`（任何进程都能设）。harness 必须由 `scripts/laya-benchmark-supervisor.mjs` 通过 fd 3/4 握手启动；直接运行 5s 内 exit 3、不启动任何进程（实测）。
+- supervisor 测试 `node --test scripts/laya-benchmark-supervisor.test.mjs` **3/3**：超时杀组 + 按 socket / 命令行证明归属收掉假 daemon / 假 Laya + 恢复生产 Laya（POST 一次）；baseline stopped 不启动；正常退出不重复恢复。`supervisor-state.json` 只含 socket / pid / baseline 布尔 / 回环 API base，不含 token / env。
+- 下次单次可执行验收（**未跑**，等主会话放行）：`node scripts/laya-benchmark-supervisor.mjs --timeout-ms=720000 -- node --import tsx scripts/laya-benchmark-isolated-harness.mjs`。清理证据看 state 的 `cleanup.daemon.stopped` / `cleanup.laya.stopped` / `cleanup.restore.ok`。
+- 源码版本边界：行号来自 `research/laya` 克隆 `v0.4.7-16-g432312b3`（`432312b36714d8889eba405507b37eda25257d9c`）；产品安装 pinned `laya==0.4.8` wheel，安装版源码**未**逐行核对与最新上游对等。
 
 ### 未验（不得宣称）
 

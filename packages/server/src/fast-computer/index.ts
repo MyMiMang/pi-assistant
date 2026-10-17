@@ -4,7 +4,7 @@
  * 这一层是纯逻辑：设置读取、capture 登记、候选校验、超时、熔断、结果校验、用量回调。
  * 它**从不执行任何动作**；执行由调用方（工具层）拿 `selected.candidate` 后经既有电脑工具钩子完成。
  */
-import { createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { getSetting, setSetting } from "../db.ts";
 import { INPUT_TOOLS } from "@pi-assistant/ext-computer";
 import { MAX_FAST_CANDIDATES } from "./choosers.ts";
@@ -105,18 +105,15 @@ const captures = new Map<string, Capture>();
 /**
  * 登记一次 capture；同一 key 的新 capture 作废旧 capture（模拟“快照更新后旧 capture 失效”）。返回 captureId。
  *
- * captureId 是**内容寻址**的（key + 候选 id/label 的摘要），不是每次调用都换的随机串。原因：
- * 它会进 classifier 的 `state`（`choosers.ts`），而 Laya 把 state 整体 `json.dumps` 进模型输入
- * （`laya/common.py:serialize_state`）—— 随机 id 会给同一个窗口的同一个问题加一段每次都不同的
- * 噪声 token，表现为「同题重跑置信度大幅浮动」（实测 0.3816 / 0.6277 这类差异就属于这一层，
- * 模型本身是 `eval()` + argmax，同一输入不会给出不同分布）。内容不变的重复登记得到同一个 id，
- * 语义仍是同一份候选；候选一变 id 就变，旧 id 照样失效。
+ * captureId 是**每次调用唯一**的进程内授权 / 新鲜度 pin（`cap-<随机>`），**不喂给模型**：
+ * classifier 的 context 只有 goal + 候选 id/label（见 choosers.ts），所以模型输入稳定；
+ * 同时旧结果必须能和新登记区分开 —— 内容寻址（key+候选摘要）会让「同一 key、同 id/label、
+ * 但 args/element_token 已变」的两次登记拿到同一个 id，旧结果就可能落到新 capture 的 args 上（ABA）。
+ * 唯一 id 下，旧 capture 被作废 → 旧结果 `capture_invalid`，绝不会用新 capture 的参数执行。
  */
 export function registerCapture(key: string, candidates: FastActionCandidate[]): string {
 	for (const [id, c] of captures) if (c.key === key) captures.delete(id);
-	const content = candidates.map((c) => `${c.id}\u0000${c.label}`).join("\u0001");
-	const digest = createHash("sha256").update(`${key}\u0002${content}`).digest("hex").slice(0, 16);
-	const id = `cap-${digest}`;
+	const id = `cap-${randomBytes(8).toString("hex")}`;
 	captures.set(id, { key, candidates: new Map(candidates.map((c) => [c.id, c])) });
 	return id;
 }
@@ -176,7 +173,7 @@ export async function selectFastAction(input: SelectFastActionInput): Promise<Fa
 	const bad = validateCandidates(input.candidates);
 	if (bad) return { kind: "fallback", reason: "invalid_candidates", detail: bad };
 	if (!input.chooser) return { kind: "fallback", reason: "no_chooser" };
-	if ((failures.get(input.key) ?? 0) >= CIRCUIT_LIMIT) return { kind: "fallback", reason: "circuit_open", detail: `同一窗口（${input.key}）已连续 ${CIRCUIT_LIMIT} 次回退，本次不再调用快速模型；重新读取窗口或改设置后可再试` };
+	if ((failures.get(input.key) ?? 0) >= CIRCUIT_LIMIT) return { kind: "fallback", reason: "circuit_open", detail: `同一窗口（${input.key}）已连续 ${CIRCUIT_LIMIT} 次回退，本次不再调用快速模型；只有保存设置（或重启应用）会清空熔断，重新读取窗口不会` };
 
 	const captureId = registerCapture(input.key, input.candidates);
 	const offered = input.candidates.map((c) => ({ id: c.id, label: c.label }));

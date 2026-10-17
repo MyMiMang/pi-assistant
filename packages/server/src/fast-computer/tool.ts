@@ -186,7 +186,7 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 					});
 
 					if (res.kind === "disabled") return text("快速操作模型没有开启。请自己完成。");
-					if (res.kind === "fallback") return text(`快速路径跳过（${res.reason}${res.detail ? `：${res.detail}` : ""}）。请自己用电脑工具完成（必要时先重新读取窗口状态，不要拿调用前的旧快照直接点击）。`);
+					if (res.kind === "fallback") return text(`快速路径跳过（${res.reason}${res.detail ? `：${res.detail}` : ""}）。由你在当前会话里自己用电脑工具完成（程序不会另发模型请求、也不会自动接管）；必要时先重新读取窗口状态，不要拿调用前的旧快照直接点击。`);
 
 					// 执行前重查：用户在异步等待快模型期间取消 / 动态关闭，一律不派发任何动作。
 					if (signal?.aborted) return text("已取消（用户停止）。未执行任何动作。请自己完成。");
@@ -226,12 +226,14 @@ const freshReasonText = (reason: "no_semantic" | "not_found" | "ambiguous" | "ch
 
 const verifyText = (o: VerifyOutcome) => (o === "confirmed" ? "confirmed" : o === "unsatisfied" ? "unsatisfied" : "unknown");
 
-/** 分开展示「阈值比较值」与协议原值：不同服务上这两个数不是一个量（Laya 的 confidence 是归一化熵）。 */
+/** 分开展示「阈值比较值」与协议原值：不同服务上这两个数不是一个量（Laya 的 confidence 是归一化熵）。
+ * 阈值比较用原始精度，这里只为展示取到 4 位小数（不把 0.59996 显示成 0.6 却实际已过 / 没过）。 */
 function confidenceText(res: { candidate?: { id: string }; confidence?: number; decisionConfidence?: number }): string {
 	const shown = res.decisionConfidence ?? res.confidence;
 	if (typeof shown !== "number") return "置信度 —";
-	if (typeof res.confidence !== "number" || res.confidence === shown) return `置信度 ${shown}`;
-	return `置信度 ${shown}（协议 confidence ${res.confidence}）`;
+	const fmt = (v: number) => String(Math.round(v * 1e4) / 1e4);
+	if (typeof res.confidence !== "number" || res.confidence === shown) return `置信度 ${fmt(shown)}`;
+	return `置信度 ${fmt(shown)}（协议 confidence ${fmt(res.confidence)}）`;
 }
 
 /** 只接受已知后置条件字段（不接受任意表达式）；空对象视为未提供。 */

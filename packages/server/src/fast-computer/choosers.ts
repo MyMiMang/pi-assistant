@@ -58,6 +58,9 @@ export function parseClassifierChoice(outcome: ClassifierOutcome, candidateIds: 
 		const top = Math.max(...Object.values(probs));
 		const tied = Object.entries(probs).filter(([, v]) => Math.abs(v - top) < 1e-9);
 		if (tied.length > 1) return { kind: "abstain", reason: "候选概率并列最高，不可执行", usage, model };
+		// choice 必须**唯一**最高：否则阈值会拿另一个候选的概率给这个答案放行（例如 wire 选了低概率的 b，
+		// 却用 a 的 max(p) 过门）。答案和概率不一致 = 不可执行，不猜哪个才是模型本意。
+		if (Math.abs(probs[choice] - top) >= 1e-9) return { kind: "abstain", reason: `选出的 id 不是概率最高（${choice}），不可执行`, usage, model };
 	}
 	// 阈值比较用 Jev 标度的换算值（概率缺失时 undefined → 调用方退回协议 confidence）。
 	const decisionConfidence = probs ? jevChoiceConfidence(probs, candidateIds) : undefined;
@@ -67,20 +70,26 @@ export function parseClassifierChoice(outcome: ClassifierOutcome, candidateIds: 
 /**
  * 把候选概率换算到阈值所在的标度（Jev 的 choice confidence，Laya 公开的 `jev_confidence` / #302）：
  * `(max(p) - 1/n) / (1 - 1/n)`，先按总和归一；总和为 0 视为均匀；只有一个候选时返回 undefined（不合成 1.0）。
+ * 返回**原始精度**：展示层再取整，阈值比较不取整（否则 0.59996 会被四舍五入成 0.6 越过门槛）。
  *
  * 为什么需要这层换算：产品阈值（默认 0.6）是 Jev 标度上的数字，而 Laya 在自己的 wire `confidence`
  * 里放的是**归一化 Shannon 熵**（`laya/common.py:confidence_from_probs`，自己的文档写「与 max(p)
  * 不是一个量、不能套同一个阈值」，且随选项数变化：32 个候选时 `max(p)=0.6` 的熵只有约 0.41）。
- * 直接拿熵比 0.6 会把「概率约 0.66 的正确选项」误判成低可信，且候选越多越容易必然被拒。
+ * 直接拿熵比 0.6 会把「概率约 0.66 的正确选项」误判成低可信；熵随候选数变化，候选越多越容易
+ * 落到阈值以下（具体取决于剩余概率分布，不是「必然」）。
  *
  * 概率必须覆盖全部候选且有限、0–1，否则返回 undefined（不部分信任、不合成）。
+ * 候选集合本身也要可信：至少 2 个、id 非空且不重复（重复会让 n 与 max(p) 同时失真）。
  */
 export function jevChoiceConfidence(probabilities: Record<string, number> | undefined, candidateIds: string[]): number | undefined {
-	if (!probabilities || candidateIds.length === 0) return undefined;
+	if (!Array.isArray(candidateIds) || candidateIds.length < 2) return undefined;
+	if (candidateIds.some((id) => typeof id !== "string" || !id)) return undefined;
+	if (new Set(candidateIds).size !== candidateIds.length) return undefined;
+	if (!probabilities || typeof probabilities !== "object") return undefined;
 	const values: number[] = [];
 	for (const id of candidateIds) {
 		const v = probabilities[id];
-		if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+		if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1) return undefined;
 		values.push(v);
 	}
 	const n = values.length;
@@ -90,8 +99,8 @@ export function jevChoiceConfidence(probabilities: Record<string, number> | unde
 	const total = values.reduce((a, b) => a + b, 0);
 	const p = total > 0 ? values.map((v) => v / total) : values.map(() => 1 / n);
 	const raw = (Math.max(...p) - 1 / n) / (1 - 1 / n);
-	// 四位小数（与 Laya 自己公布的值同精度），避免浮点尾巴让阈值比较 / 展示抖动
-	return Math.round(Math.min(1, Math.max(0, raw)) * 1e4) / 1e4;
+	// 只 clamp 到 0..1，不取整：取整会让 0.59996 变成 0.6 越过阈值（展示层单独取整）。
+	return Math.min(1, Math.max(0, raw));
 }
 
 /** 只保留候选集合内、有限且 0–1 的概率；有任何非法 / 缺失值就整体丢弃（不部分信任、不合成）。 */
@@ -108,7 +117,12 @@ function normalizeProbabilities(raw: unknown, candidateIds: string[]): Record<st
 
 const finite01 = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? v : undefined);
 
-/** 原生 Jev：只把候选 id + label 作为离散 choice 问题交给 classifier，答案必须是候选 id。 */
+/**
+ * 原生 Jev：只把 goal + 候选 id/label 作为离散 choice 问题交给 classifier，答案必须是候选 id。
+ *
+ * `captureId` 是**程序内部**的新鲜度 / 授权 pin（见 index.ts registerCapture），**不进模型输入**：
+ * 同一 goal + 候选在不同 capture 下必须得到完全相同的 context，否则每次调用的随机 token 会污染模型输入。
+ */
 export function createClassifierChooser(cfg: ClassifierChooserConfig): FastActionChooser {
 	return {
 		id: "systemone",
@@ -118,11 +132,11 @@ export function createClassifierChooser(cfg: ClassifierChooserConfig): FastActio
 			const criteria: Record<string, string> = {};
 			for (const c of req.candidates) criteria[c.id] = c.label;
 			const context: ClassifierContext = {
-				state: { goal: req.goal, capture_id: req.captureId, candidates: req.candidates.map((c) => ({ id: c.id, label: c.label })) },
+				state: { goal: req.goal, candidates: req.candidates.map((c) => ({ id: c.id, label: c.label })) },
 				questions: {
 					pick: {
 						type: "choice",
-						instructions: `从候选里选出最符合目标的一个 id，只能选候选集合里的 id（capture ${req.captureId}）。`,
+						instructions: "从候选里选出最符合目标的一个 id，只能选候选集合里的 id。",
 						criteria,
 					},
 				},
