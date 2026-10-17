@@ -72,4 +72,65 @@
 5. 文档新 top 段 + 本文件收口提交。
 6. 纯检查：`node --check` 改动脚本、纯逻辑单测（不连服务/浏览器/模型/DB），并确认新树 module 解析不是指回旧树。
 
-## 6. 进展（合并中补）
+## 6. 进展（已发生事实）
+
+### 6.1 合并结果
+
+| 顺序 | 来源 | frozen ref | 合并提交 | 冲突 |
+|---|---|---|---|---|
+| 1 | `thinking-slider-visual-refinement` | `8b8d836` | **`49b1dec`** | 无（自动合并全部成功） |
+| 2 | `fast-inference-mode-implementation` | `f7ef9b1` | **`57cd8d7`** | 无（滑块视觉已是其后代，代码零冲突） |
+| 3 | `laya-benchmark-snapshot-fix` | `3462f8e` | **`6344aba`** | 1 个：`e2e/fixtures/native-launch-env.mjs`（add/add） |
+
+- 合并前计划提交：`04f5b41`（本文件）。
+- 三个 ref 合并后 `git rev-list --count HEAD..<ref>` 均为 0（无遗漏）。
+- 全树 `2e87f51..HEAD`：**没有删除任何文件**，**没有修改任何既有 `evidence/` 文件**（Laya 的 6 份 report 都是新增，raw 证据原样保留）。
+- 未用 `-X ours/theirs` 整篇覆盖；docs 冲突逐段核对，全树无残留冲突标记。
+
+### 6.2 唯一代码冲突的解法（`e2e/fixtures/native-launch-env.mjs`）
+
+- 取 **Fast 版**（= `f7ef9b1` 里的内容，已核对逐字节一致）：`const diverged = …` 在 `if (realHome) env.HOME = realHome;` **之前**判定。
+- 不并入 Laya 拷贝的旧写法（先覆盖 HOME 再比较 → 恒为 `false` → 父进程本来就是合成 HOME/TMPDIR 时把合成 TMPDIR 漏给 Chrome）。
+- 生产 TS `packages/server/src/native-launch-env.ts` 本来就是正确顺序，所以这次没有把缺陷带进产品代码；两者现在语义一致。
+- 钉住它的用例：`e2e/native-launch-env-fixture.test.mjs` 的「合成父环境（隔离启动）」一条，**本树已跑过**（见 6.4）。
+
+### 6.3 重点 review（读代码 + 定向测试得出）
+
+1. **两层菜单 / Fast 独立性**：`ModelPicker.tsx` 是 Fast 版最终形态——聊天入口默认紧凑层（强度 / 当前模型名 / 闪电 / 滑块），点模型名才进目录；目录层不再重复摆滑块 / Fast；返回与 Esc 只退一层。`packages/server/src/pi-adapter/fast-mode.ts` 只操作 `service_tier`（`priority`），**全文没有碰 thinking**；关掉只「不附加」，不补 `auto/default`，已有别的 `service_tier` 不改写。
+2. **滑块语义没被 Fast 覆盖**：`ThinkingSlider.tsx` 仍是「`pointerup` 才提交 / `pointercancel`·失焦·Esc 不写 / 拖动只改预览头部与 `aria-valuetext` / `role="slider"` + `aria-valuetext`」；`useMoStyle` 走主题订阅回读（A 项修复在），白色实心无字圆钮与主题 token 都在 `app.css` 的 `pa-think-*`。
+3. **竞态修复都在**：`apps/web/src/latest-write.ts` 的 `LatestWrite` / `SerialWriteQueue`、`esc-layer.ts` 的分层关闭、`patchAgentFast` 按助理一份写入代次与「回滚取服务端真值」——`fast-mode-frontend.test.mjs` 的 3 条顺序断言 + `model-menu-two-level.test.mjs` 的 Esc 归属断言本树全过。
+4. **显式候选范围只收窄接口、不放宽权限**：`parseCandidateScope` 只接受 `{role?, label}`（2..32、label 1..120、role 1..80、重复 / 空 / 非数组 / 越界一律 `invalid`），**没有新增任何权限字段或档位语义**；匹配只在**本次已收集的有界候选**里做，`role` 给了就精确相等、label 走 `trim` 后的**完整可见 label**；执行前（G2）按 `matched[i]` 的 **selector 索引**在新一次重读里重新匹配并逐个比 `sameSemanticTarget`（role / value / actions），**派发用这次重读的新 `element_token` / `ref`，不复用旧 token**；候选 ID / 描述 / 收集顺序原样透传。
+5. **审批 / 权限语义零改动**：`2e87f51..3462f8e` 的 `fast-computer/**` 与 `ext-computer` 新增行里没有 `approval` / `permission` / `tier` / `hostFileAccess` / `scope:` 相关改动（grep 核对）；`host-control.test.ts` 的启动重试边界、系统授权三值、只读探测缓存仍全过。
+6. **原生启动环境**：`host-control.ts` 的 `driverEnv()` 只读探测 + 只记一条 warn、不因此拒绝启动；`hostMcpCommand()` 走自有启动器全量替换（argv 只放键名 / HOME 与固定开关，不把整份 env 写进 argv）；`browser.ts` 两处本机 Chrome 传同一份 env。**生产服务自己的合成 HOME / 数据目录 / 工作区隔离没被改动**。
+7. **研究脚本不进产品**：`scripts/laya-browser-input.ts` 只被自己的 `.test.ts` 引用，`packages/` 与 `apps/` 无任何 import（grep 核对）；未新增空卡片、未新增下载入口、未改 catalog / manifest / UI。
+8. **第三方许可口径**：`THIRD_PARTY_NOTICES.md` 新增条目只记来源 + revision + Apache-2.0 义务，并明写「本表只是来源记录，不是版权声明或证明已有完整许可证」「本仓当前没有核对 / 附带该许可证全文」，**没有伪造完整许可证**。
+
+### 6.4 本树实跑（纯检查；Node v24.19.0）
+
+新树 `node_modules` 是**本地未跟踪**的软链：第三方依赖指回 `release-candidate-validation` 已装好的那份（Pi SDK 1.3.0），但 `@pi-assistant/*` 单独建链指向**本树** `packages/*`。已核对解析：`@pi-assistant/shared` / `ext-computer` 的 `realpath` 落在本树，不是旧树 src。
+
+| 检查 | 结果 |
+|---|---|
+| `tsc --noEmit -p apps/web` | **exit 0** |
+| `tsc --noEmit -p packages/server` | **exit 0** |
+| `e2e/native-launch-env-fixture` + `fast-mode-frontend` + `model-menu-two-level` | **18/18** |
+| `e2e/thinking-slider-frontend.test.mjs` | **33/33** |
+| `test/fast-mode` + `native-launch-env` + `native-launch-env-stdio` | **28/28** |
+| `test/fast-computer-tool` + `host-control` | **61/61** |
+| `test/fast-computer-benchmark-window` + `fast-computer` + `fast-computer-benchmark` + `-host` | **90/90** |
+| `scripts/laya-benchmark-handoff` + `laya-stepwise-fixture` + `laya-benchmark-supervisor` + `laya-benchmark-harness-env` + `laya-browser-input` | **40/40** |
+| 改动过的 `.mjs` / `.js` 全部 `node --check` | 通过 |
+
+合计 **270 项通过 / 0 失败**。均为纯逻辑或定向单测（临时数据目录 / 假 MCP ctx / 假驱动），**没有**起服务、浏览器、CuaDriver、模型，**没有**下载，**没有**连真实数据目录。
+
+### 6.5 剩余验收清单（本轮未做，交给重测试槽）
+
+1. `vite build`（`npm run build -w @pi-assistant/web`）。
+2. 浏览器 e2e：`fast-mode-ui`、`model-menu-flow`、`thinking-slider-ui`、`thinking-slider-visual`、`model-ui`、`composer-compact`、`subagent-thinking-levels`、`subagent-thinking-loading`、`model-picker-favorites-ui`。
+3. 真机看：两层弹层 / 闪电 / 白色圆钮在各主题与 390 的观感，拖动取消不写库。
+4. 真实 CUA 任务与真实 Laya 质量（需单独授权）：**不重跑旧四题、不 stepwise 调词**；候选范围会让 k / 熵变化，旧成绩不可对照。
+5. 全量 `npm test` / 全量 `e2e/run.mjs`；真机 App 与打包（另需授权）。
+
+### 6.6 边界遵守
+
+未 push、未动 `main`、未打 tag、未打包、未装 App；未 `npm ci` / 未装依赖 / 未改系统 Node；未改 Pi SDK 与 `node_modules` 内容（只有本地未跟踪软链）；未动 stash、用户设置、凭据文件、日常 Chrome、系统权限。

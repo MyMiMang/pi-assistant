@@ -1,5 +1,21 @@
 # 需求与计划（ROADMAP）
 
+> **beta.30 候选整合（2026-10-17，worktree `beta30-followup-integration`，基 `2e87f51`；未发布 / 未 push / 未 tag / 未打包）**。当前公开版仍是 **beta.29（tag `ab8e0f3`）**；本段之下各条是三个来源的进度快照，保留作证据，不代表当前整合状态。
+>
+> | 事项 | 状态 | 说明 |
+> |---|---|---|
+> | 思考强度滑块最终视觉（粗胶囊轨 + 实心无字圆钮、主模型菜单头部、拖动预览） | 已合入候选（`49b1dec` ← `8b8d836`） | 只表现层，七档语义 / 档位来源 / `pointerup` 才提交 / 跟随与降级 / `--mo-style` 实时切换均未动 |
+> | 请求级 Fast（`service_tier:"priority"`）+ 两层紧凑弹层 + 闪电按钮 | 已合入候选（`57cd8d7` ← `f7ef9b1`） | Fast 与思考强度 / 模型选择彼此独立；关掉不附加、不补 `auto/default`；只有终止事件回显才可能算实际档位 |
+> | Laya 基准测试快照修复 + 显式候选范围 + 原生启动环境隔离 | 已合入候选（`6344aba` ← `3462f8e`） | 按 cua-driver 0.35.4 真实契约拆 bind/snapshot；候选范围 2..32 个精确 selector，执行前校验整个圈定范围未变 |
+>
+> **验收点（本树已做 / 未做）**：已做——两端 `tsc --noEmit` exit 0、纯逻辑与定向单测 **270 项全过 0 失败**（含 native helper fixture、Fast 两层 / 消息状态、滑块纯逻辑 + 静态 DOM、fast-mode / native-launch-env / fast-computer / host-control、laya 研究脚本）、改动 `.mjs`/`.js` 全部 `node --check`。未做——浏览器 e2e（Fast / 两层菜单 / 滑块 UI·视觉 / model-ui / composer-compact / subagent）、`vite build`、全量 `npm test` / 全量 e2e、真机 App、真实 CUA 与真实 Laya 质量。
+>
+> **两条口径不要写反**：① 原生 helper 冲突以 **Fast 的 `e2e/fixtures/native-launch-env.mjs`** 为机制基准（`diverged` 在覆盖 HOME 之前判定），**不并入** Laya 拷贝里“先覆盖 HOME 再比较、恒为 false”的旧缺陷；Laya 的生产 TS 机制照常并入。② Laya 的显式候选范围只是**接口边界**，候选变少会改变 k / 熵与 gate，**不是准确率提升**；旧四题成绩不迁移。通用 multilingual 出现过高分误选容器，**不推荐为默认**：保留原设置 / 可选项关闭 + 主模型 fallback。
+>
+> `scripts/laya-browser-input.ts` / `.test.ts` 仍是**研究用**：只被自己的测试引用，`packages/` 与 `apps/` 无任何 import（本轮 grep 核对）；未新增空卡片、未新增下载。
+>
+> 合并细节、逐项 review 与剩余验收清单见 [beta.30 整合检查点](../progress-snapshots/beta30-followup-integration.md)。
+
 > **显式候选范围 API（2026-10-17，未发布，`laya-benchmark-snapshot-fix`，基线 `a509f3e`）**：用户要求补上工具描述声称「主模型已收窄候选」而实际总是扫全页最多 32 个的**接口边界缺口**。`fast_pick_action` 新增可选 `candidates`：`{role?, label}` 的精确 selector **2..32 个**（role 给了就精确匹配；label 去掉首尾空白后按完整可见 label 精确匹配）。程序**只在本次收集到的有界候选（最多 32 个）里**匹配，每个 selector 必须恰好命中 1 个；缺 / 模糊 / 命中多个 / 不同 selector 指向同一控件 / 空数组 / 只给 1 项 / 超 32 / 字段超长 → fail-closed，**不调用快速模型、不执行、也不退回整页**。执行前重读**同一快照**校验**整个圈定范围**仍唯一存在且 role / value / actions 未变（不是只看选中项），否则中止；候选 ID / 描述 / 收集顺序原样透传，默认不传 `candidates` 时行为不变。**状态：已完成代码 + 定向单测**（`fast-computer-tool` 40/40、`fast-computer*` 相关 132/132、server `tsc --noEmit` exit 0）。**验收点（未做）**：真实浏览器 / 原生窗口 / Laya 真机未跑；**候选变少会改变 Laya 的置信度标度（k / 熵随候选数变化），不构成本页或整体准确率提升的证据**；不调阈值 / 概率换算 / classifier / chat 模板。详见 HANDOFF 顶条与设计 §9.16。
 
 > **CUA对齐后新页面真测（2026-10-17，未发布）**：单次导出设置页5次Laya调用只有1次达成本步目标，另1次高分误选、3次低信；主模型5次新快照接管后任务双证据完成，原模型恢复健康。说明动作描述补丁未使generic Laya可靠。已补主模型显式圈定语义候选集合的API（见上一段），真机未验、不以单选/变少候选伪装质量提升。详见[逐步真测](../progress-snapshots/laya-stepwise-real-2026-10-17.md)。
