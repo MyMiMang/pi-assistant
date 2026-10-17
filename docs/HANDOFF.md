@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> **Laya 候选输入去重已实测（2026-10-17 22:47）**：d9cc50e 主审37/37后单次真实四题仍 **1/4**；提交0.8109成功，城市0.0993、深度目标0.3936、动态0.1707均低可信，原模型已恢复健康、本次无残留。不再同四题调提示凑成绩，转查浏览器专项模型的源/许可/语言/输入契约可行性，不自动下载或换用户模型。已验证主接管3/3保留，不能算Laya独立成功。详见 [去重后测量](../progress-snapshots/laya-input-dedup-measure-2026-10-17.md)。主会话读到的上游文件在工作区研究克隆，子代理在项目树内未找到属于路径交接差异，已留 [可追溯原文摘录](research/laya-browser-input-source.md)。下文旧“去重待验”被覆盖。
+
 > **最新 Laya 状态（2026-10-17 22:38，覆盖下文旧“主接管未验”）**：真实注册 handler + 本地 Laya + 独占浏览器中，三个低置信任务由主会话本人接手 **3/3 完成**，共 5 次自主选择 ref 的 trusted 点击；机器与独立页面状态一致。Laya 本轮仍 0/3 自行派发，不代表模型能力已达标；上次四题独立完成率仍 1/4。原模型已恢复 running/health ok，本次进程清理完成。详细证据与时间定义见 [主接管验收](../progress-snapshots/laya-main-takeover-2026-10-17.md)，原始报告 `evidence/laya-benchmark-real/report-2026-10-17T14-34-57-077Z.json`。候选未发布、安装版 beta.29 未变；接下来自候选输入中去掉重复 state，改后质量须另验，不能复用本次成绩。
 
 > **当前公开版本：v0.1.0-beta.29（Latest，全平台）**。2026-10-17T04:36:44Z（上海 12:36）公开；不可移动的 tag 指向 `ab8e0f300a5ef5fce8632f99ccd22cf5c8ad12ad`。Actions `39001549625` 的 Mac arm64 / Intel Mac x64 / Windows x64 / Linux x64、arm64 构建、Mac 与 Windows 安装启动冒烟、publish 全成功。主会话独立核验非草稿、非 prerelease、13 项公开资产；公开 HTTP `latest.json` 为 `0.1.0-beta.29`，Mac 双架构和 Windows 六个更新项均有非空签名、对应架构 URL 指向本 tag。未自动安装用户 App。
