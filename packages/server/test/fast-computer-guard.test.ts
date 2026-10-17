@@ -17,13 +17,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxText, fauxProvider } from "@earendil-works/pi-ai/compat";
+import { fastComputerExtension } from "../src/fast-computer/tool.ts";
+import { saveFastComputerSettings } from "../src/fast-computer/index.ts";
 
 const agentDir = mkdtempSync(join(tmpdir(), "pia-fast-guard-"));
 const faux = fauxProvider() as unknown as { models: unknown[]; getModel?: (p: string, id: string) => unknown };
 const model = (faux.getModel?.("faux", "faux-1") ?? faux.models[0]) as never;
 
-async function makeSession(opts: { block: boolean }) {
-	const calls = { nested: 0 };
+async function makeSession(opts: { block: boolean; fast?: boolean }) {
+	const calls = { nested: 0, browser: 0, chooser: 0 };
 	const ext = {
 		name: "fast-guard-test",
 		factory: (pi: { registerTool: (t: unknown) => void; on: (e: string, h: unknown) => void }) => {
@@ -36,6 +38,13 @@ async function makeSession(opts: { block: boolean }) {
 					calls.nested++;
 					return { content: [{ type: "text", text: "clicked" }], details: undefined };
 				},
+			});
+			pi.registerTool({
+				name: "browser_click",
+				label: "mock browser click",
+				description: "counts direct browser invocations",
+				parameters: { type: "object", properties: { ref: { type: "string" } }, required: [] },
+				execute: async () => { calls.browser++; return { content: [{ type: "text", text: "clicked" }], details: undefined }; },
 			});
 			pi.on("tool_call", async (event: { toolName: string }) => {
 				if (opts.block && event.toolName === "mock_computer_click") return { block: true, reason: "guard says no" };
@@ -51,7 +60,7 @@ async function makeSession(opts: { block: boolean }) {
 		noPromptTemplates: true,
 		noThemes: true,
 		noContextFiles: true,
-		extensionFactories: [ext as never],
+		extensionFactories: [ext as never, ...(opts.fast ? [fastComputerExtension({ agentId: "routing-test", conversationId: null, taskId: null, chooserFor: () => { calls.chooser++; throw new Error("direct calls must not invoke fast chooser"); } })] : [])],
 	});
 	await loader.reload();
 	const { session } = await createAgentSession({
@@ -59,7 +68,7 @@ async function makeSession(opts: { block: boolean }) {
 		agentDir,
 		model,
 		noTools: "all",
-		tools: ["+mock_computer_click"],
+		tools: ["+mock_computer_click", "+browser_click", ...(opts.fast ? ["+fast_pick_action"] : [])],
 		resourceLoader: loader,
 		sessionManager: SessionManager.inMemory(),
 		settingsManager: SettingsManager.inMemory({} as never),
@@ -70,6 +79,22 @@ async function makeSession(opts: { block: boolean }) {
 	const ctx = session.extensionRunner.createToolContext("parent-1", undefined);
 	return { session, ctx, calls };
 }
+
+test("真实 Pi：快速模型已开启并注册，直接浏览器/桌面调用仍可执行，guard仍生效且不调用chooser", async () => {
+	saveFastComputerSettings({ enabled: true, provider: "routing-test", id: "not-requested" });
+	try {
+		for (const block of [false, true]) {
+			const { ctx, calls } = await makeSession({ block, fast: true });
+			const browser = await ctx.executeTool("browser_click", { ref: "e12" }, { signal: undefined });
+			const desktop = await ctx.executeTool("mock_computer_click", { element_token: "s1:9" }, { signal: undefined });
+			assert.equal(browser.isError, false);
+			assert.equal(calls.browser, 1);
+			assert.equal(desktop.isError, block);
+			assert.equal(calls.nested, block ? 0 : 1);
+			assert.equal(calls.chooser, 0, "开关不能把直接调用改成快速模型调用");
+		}
+	} finally { saveFastComputerSettings({ enabled: false }); }
+});
 
 test("真实 Pi 嵌套路径：guard 拒绝 → 底层工具零执行", async () => {
 	const { ctx, calls } = await makeSession({ block: true });

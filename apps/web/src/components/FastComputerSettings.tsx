@@ -79,9 +79,9 @@ export function FastComputerSettingsSection({ scope }: { scope: "hostpc" | "comp
 		<section className="space-y-3" data-testid={`fast-computer-${scope}`}>
 			<div className="flex items-center gap-2">
 				<Help>
-					默认关闭。开启后主模型仍负责规划、授权和异常判断；快速操作模型只从程序给出的有限候选里挑一个控件，不能自由调工具、不接管会话。选中不等于授权，执行仍走原有权限与审批。每台电脑单独设置。
+					默认关闭。开启只是允许按需使用，不是每步必用，也不保证一定更快。主模型会按任务选择方便、可靠、快捷的方式：已有合适的浏览器或系统接口、目标明确时直接操作；需要从多个候选中选择时才考虑快速模型。拿不准或不可用时由主模型接手，执行后仍核验结果。用户电脑与助理电脑都遵循这条规则，分别设置；尚未单独保存时沿用旧的共用设置。权限与审批规则不变。
 					<div className="pt-0.5">
-						只列出<b className="text-fg">已配置凭据</b>的原生 System One（Jev）分类器，有校准概率；在「模型服务」里配好 Jev（含官方同名模型）会自动识别进来，鉴权由 Pi 按所选服务解析，不读全局环境变量 Key。
+						只列出<b className="text-fg">已配置可用</b>的分类器（如 Jev、已安装并启动的 Laya）。在「模型服务」里配置；本地模型安装进度在「下载与组件」查看。模型分数不代表实际操作成功率。
 					</div>
 				</Help>
 				<button type="button" className="text-xs text-mut hover:text-fg" onClick={() => void load()} data-testid={`fast-refresh-${scope}`}>
@@ -90,7 +90,7 @@ export function FastComputerSettingsSection({ scope }: { scope: "hostpc" | "comp
 			</div>
 			<label className="flex items-center gap-2 text-sm">
 				<input type="checkbox" aria-label="开启快速操作模型" checked={settings.enabled} disabled={busy} onChange={(e) => void save({ enabled: e.target.checked })} data-testid={`fast-enabled-${scope}`} />
-				开启（关闭时完全沿用主模型）
+				开启（由主模型按需使用）
 			</label>
 			{settings.enabled && (
 				<div className="space-y-3 border-l border-line pl-3">
@@ -109,6 +109,9 @@ export function FastComputerSettingsSection({ scope }: { scope: "hostpc" | "comp
 						<p className="text-xs text-mut2" data-testid={`fast-empty-${scope}`}>还没有可用模型，请先在模型服务中添加或安装 Laya。</p>
 					) : (
 						!value && <p className="flex items-center gap-1 text-xs text-amber-600"><AlertTriangle size={12} /> 还没有选模型，开启也不会生效。</p>
+					)}
+					{value && !configured.some((m) => `${m.provider}/${m.id}` === value) && (
+						<p className="flex items-center gap-1 text-xs text-amber-600"><AlertTriangle size={12} /> 所选模型暂不可用，快速路径会跳过，由主模型继续；可在模型服务中检查或启动。</p>
 					)}
 					{busy && <p className="flex items-center gap-1 text-xs text-mut"><Loader2 size={12} className="animate-spin" /> 保存中…</p>}
 				</div>

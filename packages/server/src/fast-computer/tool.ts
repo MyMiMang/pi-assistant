@@ -236,15 +236,27 @@ export interface FastComputerToolOptions {
 	chooserFor?: (s: FastComputerSettings) => FastActionChooser | null;
 }
 
+/** 所有会话共用的按需选择规则；不拦截或重写任何直接工具调用。 */
+export const FAST_COMPUTER_PROMPT = `<fast-computer-routing>
+快速操作模型是可选能力：开启只表示允许使用，不要求每步调用；用户电脑和助理电脑都一样。由你按任务选择可靠、方便且总耗时更合适的方式，不承诺快速模型必然更快。
+- 已有合适的文件、命令、应用或浏览器工具时，直接使用；目标已经明确时直接操作，不必再让快速模型确认。权限与用户指定的目标不因换工具而改变，不能用命令绕过电脑操作限制。
+- 助理浏览器页面优先用 browser_*（Playwright）；用户自己的浏览器页面优先用 mcp__hostpc__ 的 CDP 工具。网页不必走桌面截图点击。原生应用优先使用系统控件、菜单及已知步骤的 run_steps；接口覆盖不到时再考虑截图坐标。
+- 只有当前一步有多个已观察到的候选、且值得增加一次选择调用时，才按需使用 fast_pick_action；单一明确目标直接 click。它只做局部点击选择，不负责完整任务规划、输入或多步循环。
+- 区分目标：prefix:"hostpc" 是用户电脑，prefix:"computer" 是助理电脑；两套工具同时存在时必须明确 prefix，不要换电脑重试。Playwright 的 e12/f1e3 与驱动 CDP 的 p<快照>:<序号> 不能混用；没有对应驱动页面能力就继续用已有 browser_*，不要只为快速模型另建连接。
+- 低可信、超时、不可用或目标变化时，你在当前会话重新观察并接手，不反复试快模型。直接操作与快速派发都要核验实际结果；工具派发成功或高置信度不等于任务完成，暂停、权限与审批规则始终有效。
+</fast-computer-routing>`;
+
 export function fastComputerExtension(opts: FastComputerToolOptions) {
 	return {
 		name: "pia-fast-computer",
 		factory: (pi: ExtensionAPI) => {
+			pi.on("before_agent_start", async (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${FAST_COMPUTER_PROMPT}` }));
 			pi.registerTool({
 				name: "fast_pick_action",
 				label: "快速操作模型",
 				description:
-					"当你已经把目标收窄成一组有界候选、但需要在当前窗口里挑一个最合适的控件时用：程序读当前窗口状态生成候选，" +
+					"可选的局部选择工具，开启不代表每步必须调用；用户电脑和助理电脑均按需使用。目标明确或已有方便的浏览器 / 系统接口时直接操作，不必增加模型调用。" +
+					"当你已经把目标收窄成一组有界候选、且值得增加一次选择调用时用：程序读当前窗口状态生成候选，" +
 					"由一个可选快速模型（默认关闭）只挑一个候选 id，然后由程序经既有电脑工具执行。" +
 					"执行前程序会重新读取同一窗口状态，要求目标唯一且未变化，再用新 element_token 派发；目标变了就中止回你。" +
 					"执行后程序会用 expected 做独立核验，返回 confirmed / unsatisfied / unknown；没有 expected 只会返回 unknown，别把执行成功当成任务成功。" +
@@ -262,7 +274,7 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 					goal: Type.String({ description: "本次一步点击的局部目标（一句话）。多步任务由你在每步重新读状态、重新调用；不要传整条多步任务当作一次点击的目标" }),
 					pid: Type.Integer({ description: "目标窗口所属进程 pid" }),
 					window_id: Type.Integer({ description: "目标窗口 id" }),
-					prefix: Type.Optional(Type.Union([Type.Literal("hostpc"), Type.Literal("computer")], { description: "电脑目标：hostpc=用户电脑，computer=助理电脑；默认按可用工具判断" })),
+					prefix: Type.Optional(Type.Union([Type.Literal("hostpc"), Type.Literal("computer")], { description: "电脑目标：hostpc=用户电脑，computer=助理电脑；只有一套可用工具时可省略，两套同时可用时必须指定" })),
 					session: Type.Optional(Type.String({ description: "cua session 标签（可选）；会透传到读取与执行，避免读错 / 点错会话" })),
 					browser: Type.Optional(
 						Type.Object({
@@ -291,12 +303,14 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 				}),
 				async execute(_id: string, args: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionToolContext) {
 					const prefix = resolvePrefix(ctx, args.prefix);
+					if (!prefix) return text(args.prefix === "hostpc" || args.prefix === "computer"
+						? `目标电脑通道不可用（${args.prefix}）。未读窗口、未调用快速模型、未执行动作；请检查目标电脑是否开启且已获授权，不要换电脑重试。`
+						: "无法确定目标电脑：请检查目标通道是否可用；用户电脑和助理电脑同时可用时必须指定 prefix（hostpc / computer）。未读窗口、未调用快速模型、未执行动作，不要换电脑重试。");
 					const s = fastComputerSettings(scopeOfPrefix(prefix));
 					if (!s.enabled) return text("快速操作模型没有开启（设置 › 电脑 › 快速操作模型）。请直接用电脑工具自己完成。");
 					const goal = String(args.goal ?? "").trim();
 					const pid = Number(args.pid);
 					const windowId = Number(args.window_id);
-					if (!prefix) return text("没有可用的电脑工具（操作这台电脑 / 助理电脑都没开），无法收集候选。请自己完成。");
 					const session = typeof args.session === "string" && args.session ? args.session : undefined;
 
 					// 主模型显式圈定的候选范围（可选）：先做纯校验，非法就 fail-closed，**绝不退回整页**。
@@ -447,9 +461,9 @@ function resolvePrefix(ctx: ExtensionToolContext, requested: unknown): string | 
 	const sandbox = "mcp__computer__";
 	if (requested === "hostpc") return names.some((n) => n.startsWith(host)) ? host : null;
 	if (requested === "computer") return names.some((n) => n.startsWith(sandbox)) ? sandbox : null;
-	if (names.some((n) => n.startsWith(host))) return host;
-	if (names.some((n) => n.startsWith(sandbox))) return sandbox;
-	return null;
+	const hasHost = names.some((n) => n.startsWith(host));
+	const hasSandbox = names.some((n) => n.startsWith(sandbox));
+	return hasHost === hasSandbox ? null : hasHost ? host : sandbox;
 }
 
 /** 收集目标：原生窗口（AX element_token）或网页（CDP target/tab + ref）。 */

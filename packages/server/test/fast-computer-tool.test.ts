@@ -43,6 +43,7 @@ async function runFastTool(input: {
 	expected?: unknown;
 	candidates?: unknown;
 	session?: string;
+	prefix?: "hostpc" | "computer";
 	signal?: AbortSignal;
 	tools?: string[];
 }): Promise<{ out: { content: { type: string; text?: string }[] }; calls: ToolCall[] }> {
@@ -78,7 +79,7 @@ async function runFastTool(input: {
 	const pi = { registerTool: (t: never) => (registered = t), on: () => {} };
 	fastComputerExtension({ agentId: "test", conversationId: null, taskId: null, chooserFor: () => (input.chooser as never) ?? createMockChooser(() => ({ kind: "selected", candidateId: "el-1" })) }).factory(pi as never);
 	assert.ok(registered, "工具应已注册");
-	const out = await registered!.execute("id", { goal: "点登录", pid: 9, window_id: 3, session: input.session, expected: input.expected, browser: input.browser, candidates: input.candidates }, input.signal, undefined, ctx);
+	const out = await registered!.execute("id", { goal: "点登录", pid: 9, window_id: 3, prefix: input.prefix, session: input.session, expected: input.expected, browser: input.browser, candidates: input.candidates }, input.signal, undefined, ctx);
 	saveFastComputerSettings({ enabled: false });
 	return { out, calls };
 }
@@ -87,6 +88,15 @@ const preState = { elements: [el(1, "button", "登录", "snap1:1")] };
 const reState = { elements: [el(1, "button", "登录", "snap2:1")] };
 const postState = { elements: [el(1, "button", "登录", "snap3:1", { value: "已登录" })] };
 const textOf = (o: { content: { type: string; text?: string }[] }) => o.content.map((c) => c.text ?? "").join("\n");
+
+test("运行时引导：公开 before_agent_start 注入按需规则，不挂 tool_call 拦截直调", async () => {
+	const hooks = new Map<string, (event: { systemPrompt: string }) => Promise<{ systemPrompt: string }>>();
+	fastComputerExtension({ agentId: "test", conversationId: null, taskId: null }).factory({ registerTool: () => {}, on: (name: string, handler: never) => hooks.set(name, handler) } as never);
+	assert.deepEqual([...hooks.keys()], ["before_agent_start"]);
+	const result = await hooks.get("before_agent_start")!({ systemPrompt: "原有规则" });
+	assert.ok(result.systemPrompt.startsWith("原有规则\n\n"), "保留其他扩展已有提示");
+	for (const rule of ["开启只表示允许使用", "目标已经明确时直接操作", 'prefix:"hostpc"', 'prefix:"computer"', "Playwright", "p<快照>", "重新观察并接手"]) assert.ok(result.systemPrompt.includes(rule), rule);
+});
 
 test("工具 schema：goal 是本次一步点击的局部目标，并写明只点已展示控件", () => {
 	let def: { description: string; parameters: { properties: Record<string, { description?: string }> } } | undefined;
@@ -97,6 +107,26 @@ test("工具 schema：goal 是本次一步点击的局部目标，并写明只�
 	assert.match(def!.description, /不支持填字/, "工具说明不谎称能填字 / 键盘输入");
 	assert.match(def!.description, /尚未展开的下拉项/);
 	assert.match(def!.description, /动作描述/);
+});
+
+test("双目标：省略 prefix 时拒绝猜电脑，显式目标各走自己的通道", async () => {
+	const tools = ["mcp__hostpc__get_window_state", "mcp__hostpc__click", "mcp__computer__get_window_state", "mcp__computer__click"];
+	let chooserCalls = 0;
+	const chooser = createMockChooser(() => { chooserCalls++; return { kind: "selected", candidateId: "el-1" }; });
+	const ambiguous = await runFastTool({ states: [preState, reState], tools, chooser });
+	assert.match(textOf(ambiguous.out), /必须指定 prefix/);
+	assert.equal(ambiguous.calls.length, 0, "歧义时不读取任一台电脑");
+	assert.equal(chooserCalls, 0);
+	for (const prefix of ["hostpc", "computer"] as const) {
+		const result = await runFastTool({ states: [preState, reState], tools, prefix, chooser });
+		assert.ok(result.calls.some((c) => c.name === `mcp__${prefix}__click`));
+		assert.ok(result.calls.every((c) => c.name.startsWith(`mcp__${prefix}__`)));
+	}
+	assert.equal(chooserCalls, 2);
+	const missing = await runFastTool({ states: [preState], tools: ["mcp__computer__get_window_state", "mcp__computer__click"], prefix: "hostpc", chooser });
+	assert.match(textOf(missing.out), /目标电脑通道不可用（hostpc）/);
+	assert.equal(missing.calls.length, 0);
+	assert.equal(chooserCalls, 2, "目标不可用不得转去另一台电脑");
 });
 
 test("G1：session 透传到 get_window_state 与 click 参数", async () => {
