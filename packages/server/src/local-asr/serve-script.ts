@@ -249,7 +249,13 @@ def _decode(sess):
     stream = sess["stream"]
     while recognizer.is_ready(stream):
         recognizer.decode_stream(stream)
-    return recognizer.get_result(stream).text or ""
+    result = recognizer.get_result(stream)
+    # sherpa-onnx 1.13.8 的 OnlineRecognizer.get_result() 直接返回 str（不是带 .text 的对象）；
+    # 兼容两种返回形状，避免 AttributeError 把整个请求线程打断。
+    if isinstance(result, str):
+        return result
+    text = getattr(result, "text", "")
+    return text or ""
 
 
 def _events(sess):
@@ -339,6 +345,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authed():
             return self._json(401, {"error": "unauthorized"})
         if path == "/v1/stream/start":
+            # 必须消费掉请求体：keep-alive 连接上残留的 body 字节会被当成下一行的请求方法 → 501。
+            self._body(65536)
             with _lock:
                 if len(_sessions) >= MAX_SESSIONS:
                     return self._json(429, {"error": "too_many_sessions"})

@@ -37,6 +37,12 @@ test("生成的流式 sidecar 用 OnlineRecognizer.from_transducer，且不含 O
 	assert.match(src, /\/v1\/stream\/end/);
 	assert.match(src, /\/v1\/stream\/cancel/);
 	assert.doesNotMatch(src, /OfflineRecognizer/);
+	// 真实 sherpa-onnx 1.13.8 的 OnlineRecognizer.get_result() 返回 str：脚本必须兼容两种形状，
+	// 否则 true 环境第一个 append 就打 AttributeError（本轮真实 smoke 抓到的生产 bug）。
+	assert.match(src, /isinstance\(result, str\)/);
+	assert.doesNotMatch(src, /get_result\(stream\)\.text/);
+	// keep-alive：start 必须把请求体读掉，否则残留字节会被解析成下一个请求方法 → 501（真实 smoke 抓到）。
+	assert.match(src, /\/v1\/stream\/start["']?:[\s\S]{0,400}_body\(65536\)/);
 });
 
 test("权重自检：三个 onnx + tokens；含脚本 / 非预期格式 → 拒绝", () => {

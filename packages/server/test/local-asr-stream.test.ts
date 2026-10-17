@@ -88,6 +88,9 @@ test("create → append（事件规范化 + seq）→ end（final + 释放租约
 	const created = await hub.create({ principal: "local" });
 	assert.equal(created.sessionId, "asr-stream-1");
 	assert.equal(created.protocol, "asr-stream-v1");
+	// 真实 URL 形状：manager 注册的 baseUrl 已以 `/v1/` 结尾，路径必须相对拼（不能拼出 /v1/v1/… 导致真 sidecar 404）。
+	const startUrl = sidecar.calls[0];
+	assert.equal(startUrl, "http://127.0.0.1:9/v1/stream/start", `start URL 不对：${startUrl}`);
 	assert.equal(created.nextSeq, 0);
 	assert.equal(hub.activeCount(), 1);
 
@@ -100,6 +103,7 @@ test("create → append（事件规范化 + seq）→ end（final + 释放租约
 
 	const ended = await hub.end(created.sessionId, { principal: "local" });
 	assert.equal(ended.state, "ended");
+	for (const u of sidecar.calls) assert.equal(u.includes("/v1/v1/"), false, `路径重复 /v1：${u}`);
 	assert.equal(ended.finals[0].text, "你好");
 	assert.equal(released.n, 1);
 	assert.equal(hub.activeCount(), 0);

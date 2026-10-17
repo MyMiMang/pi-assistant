@@ -185,7 +185,7 @@ export class LocalAsrStreamHub {
 		const cap = target.capability;
 		let sidecarSession: string;
 		try {
-			const started = await this.callSidecar(target, "/v1/stream/start", { method: "POST" });
+			const started = await this.callSidecar(target, "stream/start", { method: "POST" });
 			if (typeof started.sessionId !== "string" || !started.sessionId) throw new AsrStreamError(ASR_STREAM_ERRORS.engineError, 503, "本地流式识别引擎未返回会话 id");
 			sidecarSession = started.sessionId;
 		} catch (e) {
@@ -257,7 +257,7 @@ export class LocalAsrStreamHub {
 
 		s.busy = true;
 		try {
-			const raw = await this.fetchSidecar(s, "/v1/stream/append", { method: "POST", body: bytes as unknown as BodyInit, query: { session: s.sidecarSession } });
+			const raw = await this.fetchSidecar(s, "stream/append", { method: "POST", body: bytes as unknown as BodyInit, query: { session: s.sidecarSession } });
 			const events = this.normalizeEvents(raw, seq);
 			s.seq = seq + 1;
 			s.lastSeq = seq;
@@ -277,7 +277,7 @@ export class LocalAsrStreamHub {
 		if (s.ended) return { sessionId, state: "ended", modelId: s.modelId, sourceVersion: s.sourceVersion, finals: [] };
 		let events: AsrStreamEvent[] = [];
 		try {
-			const raw = await this.fetchSidecar(s, "/v1/stream/end", { method: "POST", body: JSON.stringify({ sessionId: s.sidecarSession }) as unknown as BodyInit });
+			const raw = await this.fetchSidecar(s, "stream/end", { method: "POST", body: JSON.stringify({ sessionId: s.sidecarSession }) as unknown as BodyInit });
 			events = this.normalizeEvents(raw, s.seq, Array.isArray(raw?.events) ? raw.events : undefined);
 		} catch {
 			/* sidecar 结束失败：仍然释放租约，不泄漏 */
@@ -297,7 +297,7 @@ export class LocalAsrStreamHub {
 		s.ended = true;
 		this.release(s);
 		try {
-			await this.fetchSidecar(s, "/v1/stream/cancel", { method: "POST", body: JSON.stringify({ sessionId: s.sidecarSession }) as unknown as BodyInit });
+			await this.fetchSidecar(s, "stream/cancel", { method: "POST", body: JSON.stringify({ sessionId: s.sidecarSession }) as unknown as BodyInit });
 		} catch {
 			/* 取消失败不影响释放 */
 		}
@@ -338,7 +338,7 @@ export class LocalAsrStreamHub {
 		if (this.deps.selectionVersion() === s.sourceVersion) return;
 		s.ended = true;
 		this.release(s);
-		void this.fetchSidecar(s, "/v1/stream/cancel", { method: "POST", body: JSON.stringify({ sessionId: s.sidecarSession }) as unknown as BodyInit }).catch(() => {});
+		void this.fetchSidecar(s, "stream/cancel", { method: "POST", body: JSON.stringify({ sessionId: s.sidecarSession }) as unknown as BodyInit }).catch(() => {});
 		throw new AsrStreamError(ASR_STREAM_ERRORS.sourceChanged, 409, "语音识别来源已被改选，请重新开始录音");
 	}
 
@@ -382,13 +382,13 @@ export class LocalAsrStreamHub {
 	}
 
 	private async callSidecar(target: AsrStreamTarget, path: string, _opts: { method: string }): Promise<{ sessionId?: unknown }> {
-		const res = await this.doFetch(`${target.baseUrl.replace(/\/+$/, "")}${path}`, { method: "POST", headers: this.authHeaders(target.token, "application/json"), body: "{}" });
+		const res = await this.doFetch(`${target.baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`, { method: "POST", headers: this.authHeaders(target.token, "application/json"), body: "{}" });
 		return (res ?? {}) as { sessionId?: unknown };
 	}
 
 	private async fetchSidecar(s: Session, path: string, opts: { method: string; body?: BodyInit; query?: Record<string, string> }): Promise<Record<string, unknown>> {
 		const q = opts.query ? `?${new URLSearchParams(opts.query).toString()}` : "";
-		const res = await this.doFetch(`${s.baseUrl.replace(/\/+$/, "")}${path}${q}`, {
+		const res = await this.doFetch(`${s.baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}${q}`, {
 			method: opts.method,
 			headers: this.authHeaders(s.token, opts.body instanceof Uint8Array ? "application/octet-stream" : "application/json"),
 			body: opts.body,
