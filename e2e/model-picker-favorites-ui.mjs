@@ -10,19 +10,21 @@
  *  5) 模型被挤出常用前 5 后，原渠道行仍在（取消常用 ≠ 从目录里消失）
  *  6) 删掉渠道后（ghost）常用与分组都不再显示
  *  7) 子代理候选池（ModelPoolMenu）与主菜单同一套规则
+ * 隔离：每次 mkdtemp 的临时 DATA / WORKSPACE / HOME / TMPDIR，服务走 `test/launch-memory.ts`
+ * （内存凭据，不构造生产后端）；原生 Chrome 用 `e2e/fixtures/native-launch-env.mjs` 的真实 HOME / TMPDIR。
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { closeModelPanel, openModelMenu } from "./model-menu-flow.mjs";
+import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
-const DATA = `/tmp/pia-e2e-model-favorites-${process.pid}`;
+// 本次运行独占的临时目录（DATA / WORKSPACE / HOME / TMPDIR）；finally 只删它自己
+const run = makeTempRun("pia-e2e-model-favorites-");
 const OUT = process.env.SHOT_DIR ?? "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/model-picker-favorites";
-rmSync(DATA, { recursive: true, force: true });
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 const PORT = await new Promise((r) => {
@@ -32,10 +34,7 @@ const PORT = await new Promise((r) => {
 	});
 });
 const BASE = `http://127.0.0.1:${PORT}`;
-const server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: decodeURIComponent(ROOT), env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] });
-let logs = "";
-server.stdout.on("data", (d) => (logs += d));
-server.stderr.on("data", (d) => (logs += d));
+const srv = startTempServer({ root: decodeURIComponent(ROOT), port: PORT, run });
 const j = async (path, method = "GET", body) => {
 	const r = await fetch(BASE + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 	const t = await r.text();
@@ -64,7 +63,7 @@ try {
 	const multi = await j("/api/models/custom", "POST", { name: "多模型渠道", api: "openai-completions", baseUrl: "http://127.0.0.1:1/v2", noKey: true, models: [{ id: "gpt-6.1-sol", contextWindow: 131072, maxTokens: 8192 }, { id: "deepseek-v3", contextWindow: 131072, maxTokens: 8192 }, { id: "kimi-k2", contextWindow: 131072, maxTokens: 8192 }] });
 	const third = await j("/api/models/custom", "POST", { name: "第三渠道", api: "openai-completions", baseUrl: "http://127.0.0.1:1/v3", noKey: true, models: [{ id: "claude-4.5-sonnet", contextWindow: 131072, maxTokens: 8192 }] });
 
-	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, env: browserEnv(run) });
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: "zh-CN" });
 	page.setDefaultTimeout(20_000);
 	page.on("pageerror", (e) => console.error("pageerror:", e));
@@ -242,12 +241,11 @@ try {
 	ok("子代理候选池：选过的模型留在原渠道分组");
 	console.log("\n全部通过");
 } catch (e) {
-	console.error(logs.slice(-4000));
+	console.error(srv.logs().slice(-4000));
 	console.error("异常：", e);
 	process.exitCode = 1;
 } finally {
 	await browser?.close();
-	server.kill("SIGTERM");
-	setTimeout(() => server.kill("SIGKILL"), 1500).unref();
-	rmSync(DATA, { recursive: true, force: true });
+	await srv.stop();
+	cleanupTempRun(run);
 }

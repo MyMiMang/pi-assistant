@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { closeModelPanel } from "./model-menu-flow.mjs";
+import { nativeLaunchBrowserEnv } from "./fixtures/native-launch-env.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DIST = join(ROOT, "apps/web/dist");
@@ -146,7 +147,8 @@ try {
 	if (full?.thinking?.length !== 7) throw new Error(`目录里 ${MAIN} 应支持七档：${JSON.stringify(full?.thinking)}`);
 	const agentBefore = (await j("/api/agents")).find((a) => a.id === agent.id);
 
-	browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"] });
+	// 原生 Chrome 必须拿真实 HOME / TMPDIR（服务进程那份临时目录不能传下去）；父进程若是合成环境也不会漏
+	browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"], env: nativeLaunchBrowserEnv({ syntheticRoots: [RUN_DIR] }) });
 	const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "zh-CN", colorScheme: "dark" });
 	// 种子：两个 DIY 主题进 localStorage（应用启动会用真实 installCustomThemes 读入并注入 CSS）
 	await ctx.addInitScript(([steps, smooth]) => {

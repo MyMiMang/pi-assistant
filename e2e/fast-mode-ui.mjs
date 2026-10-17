@@ -10,45 +10,26 @@
  *  6) 390 宽：紧凑层不横向溢出、不出屏；
  *  7) 协议不支持（anthropic-messages）：灯仍显示但 aria-disabled，点击不发请求，说明里写清原因。
  *
- * 不碰真实数据 / 真实 Key / 付费模型：临时 PIA_DATA_DIR + HOME + TMPDIR（mkdtemp，结束只删本次），
+ * 不碰真实数据 / 真实 Key / 付费模型：每次 mkdtemp 的 RUN_DIR（DATA / WORKSPACE / HOME / TMPDIR 全在里面），
+ * 服务走 `packages/server/test/launch-memory.ts`（公开注入点 = 内存凭据，不构造走 OS 钥匙串的生产后端），
  * `PIA_MOCK=1` + `PIA_OFFLINE=1`，模型渠道指向 127.0.0.1:1（连不通也不会发真实请求）。
  *
- * ⚠️ 浏览器环境统一走 `e2e/fixtures/native-launch-env.mjs`（`nativeLaunchBrowserEnv()`：原生进程用真实 HOME /
- * 真实 TMPDIR，服务进程仍用临时目录）。该 helper 还没合进本树（由 heavy 槽接线），**本脚本不自行跨树复制**：
- * helper 不在时明确退出码 2 并说明，不用真实 HOME 冒充也没接线地起 Chrome。
- * helper 落进本树后直接 `node e2e/fast-mode-ui.mjs` 即可（先 `npm run build -w @pi-assistant/web`）。
+ * 浏览器是**原生进程**：统一走 `e2e/fixtures/native-launch-env.mjs` 的 `nativeLaunchBrowserEnv()`
+ * （真实 HOME / 真实 TMPDIR；服务进程那份临时目录不受影响）。helper 来自 laya 树 `4b2c5ea`，已复制进本树。
+ * 运行：`node e2e/fast-mode-ui.mjs`（先 `npm run build -w @pi-assistant/web`）。
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 
-// 浏览器环境 helper（heavy 槽接线后落进本树）；没有就明确「没运行」，不拿真实 HOME 硬起 Chrome
-const HELPER = fileURLToPath(new URL("./fixtures/native-launch-env.mjs", import.meta.url));
-if (!existsSync(HELPER)) {
-	console.error(
-		[
-			"⏸  fast-mode-ui 未运行：e2e/fixtures/native-launch-env.mjs（native 浏览器环境 helper）还没合进本树。",
-			"   本脚本不跨树复制 helper，也不会用真实 HOME / 改过的 TMPDIR 硬起 Chrome。",
-			"   helper 落进本树后直接重跑；服务端仍然只用临时 HOME / DATA / WORKSPACE / TMPDIR。",
-		].join("\n"),
-	);
-	process.exit(2);
-}
-const { nativeLaunchBrowserEnv } = await import(pathToFileURL(HELPER).href);
 const { chromium } = await import("playwright-core");
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const RUN_DIR = mkdtempSync(join(tmpdir(), "pia-e2e-fast-mode-"));
-const DATA = join(RUN_DIR, "data");
-const FAKE_HOME = join(RUN_DIR, "home");
-const WORKSPACE = join(RUN_DIR, "workspace");
-const OUT = process.env.SHOT_DIR ?? join(RUN_DIR, "shots");
-mkdirSync(DATA, { recursive: true });
-mkdirSync(FAKE_HOME, { recursive: true });
-mkdirSync(WORKSPACE, { recursive: true });
+// 本次运行独占的临时目录；finally 只删这一个（KEEP=1 可保留看现场）
+const run = makeTempRun("pia-e2e-fast-mode-");
+const OUT = process.env.SHOT_DIR ?? join(run.runDir, "shots");
 mkdirSync(OUT, { recursive: true });
 const PORT = await new Promise((r) => {
 	const s = createServer().listen(0, "127.0.0.1", () => {
@@ -57,24 +38,7 @@ const PORT = await new Promise((r) => {
 	});
 });
 const BASE = `http://127.0.0.1:${PORT}`;
-const server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], {
-	cwd: ROOT,
-	env: {
-		...process.env,
-		PIA_DATA_DIR: DATA,
-		PIA_WORKSPACE_DIR: WORKSPACE,
-		HOME: FAKE_HOME,
-		TMPDIR: RUN_DIR,
-		PIA_MOCK: "1",
-		PIA_OFFLINE: "1",
-		PIA_PORT: String(PORT),
-	},
-	stdio: ["ignore", "pipe", "pipe"],
-	detached: true, // 独立进程组：结束时按组收，异常也不留孤儿
-});
-let logs = "";
-server.stdout.on("data", (d) => (logs += d));
-server.stderr.on("data", (d) => (logs += d));
+const srv = startTempServer({ root: ROOT, port: PORT, run });
 const j = async (path, method = "GET", body) => {
 	const r = await fetch(BASE + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 	const t = await r.text();
@@ -104,13 +68,8 @@ const stop = async () => {
 	try {
 		if (browser) await browser.close();
 	} catch {}
-	try {
-		process.kill(-server.pid, "SIGTERM");
-	} catch {}
-	await new Promise((r) => setTimeout(r, 500));
-	try {
-		process.kill(-server.pid, "SIGKILL");
-	} catch {}
+	// 有界收尾：整组 SIGTERM，5s 不退再 SIGKILL
+	await srv.stop();
 };
 
 try {
@@ -122,8 +81,8 @@ try {
 	await j(`/api/agents/${agent.id}`, "PATCH", { model: { provider: relay.id, id: "fast-model" } });
 
 	// 原生 Chromium 用 helper 给的那份环境（真实 HOME / 真实 TMPDIR）；服务进程那份临时目录不受影响
-	const browserEnv = nativeLaunchBrowserEnv({ syntheticRoots: [RUN_DIR, DATA, WORKSPACE, FAKE_HOME] });
-	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, args: ["--no-sandbox"], env: browserEnv });
+	const browserEnvironment = browserEnv(run);
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, args: ["--no-sandbox"], env: browserEnvironment });
 	const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "zh-CN" });
 	const page = await ctx.newPage();
 	page.setDefaultTimeout(20_000);
@@ -256,9 +215,9 @@ try {
 } catch (e) {
 	failed++;
 	console.error("❌ 脚本异常：", e);
-	console.error(logs.slice(-3000));
+	console.error(srv.logs().slice(-3000));
 } finally {
 	await stop();
-	if (!process.env.KEEP) rmSync(RUN_DIR, { recursive: true, force: true });
+	cleanupTempRun(run);
 }
 process.exit(failed ? 1 : 0);

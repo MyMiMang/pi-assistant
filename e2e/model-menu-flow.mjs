@@ -9,8 +9,8 @@
  *   const menu = await openModelMenu(page);              // 聊天输入栏 → 目录，返回 model-menu
  *   const compact = await openCompact(page);             // 只要紧凑层（Fast / 滑块 / 390 布局）
  *
- * 注意：这些脚本需要 Chrome 与浏览器环境（native env helper 接线后统一提供），
- * 接线前不要运行；脚本自身只用临时 PIA_DATA_DIR + PIA_MOCK + PIA_OFFLINE，不碰真实数据 / 付费模型。
+ * 注意：这些脚本需要 Chrome；原生浏览器环境统一走 `e2e/fixtures/native-launch-env.mjs`（真实 HOME / TMPDIR），
+ * 服务进程继续用临时数据目录，见 `e2e/fixtures/temp-server.mjs`。PIA_DATA_DIR + PIA_MOCK + PIA_OFFLINE，不碰真实数据 / 付费模型。
  */
 export const COMPACT_TESTID = (testid) => `${testid}-compact`;
 

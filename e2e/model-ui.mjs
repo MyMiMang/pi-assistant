@@ -8,19 +8,21 @@
  *    是一个带图标 / 数量 / 箭头的可折叠大分类、可一键全部关上；里面渠道按内置/我的分组成「带服务图标的卡片网格」，
  *    点卡片展开看该服务模型、模型行内改能力标签、编辑/删除沿用应用内确认框（无原生 confirm）
  * 6) 群聊成员与子代理的模型入口复用同一个菜单
+ * 隔离：每次 mkdtemp 的临时 DATA / WORKSPACE / HOME / TMPDIR，服务走 `test/launch-memory.ts`
+ * （内存凭据，不构造生产后端）；原生 Chrome 用 `e2e/fixtures/native-launch-env.mjs` 的真实 HOME / TMPDIR。
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { closeModelPanel, openCompact, openModelMenu } from "./model-menu-flow.mjs";
+import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 
-const ROOT = new URL("..", import.meta.url).pathname;
-const DATA = "/tmp/pia-e2e-model-ui";
-const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/model-ui";
-rmSync(DATA, { recursive: true, force: true });
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname);
+// 本次运行独占的临时目录（DATA / WORKSPACE / HOME / TMPDIR）；finally 只删它自己
+const run = makeTempRun("pia-e2e-model-ui-");
+const OUT = process.env.SHOT_DIR ?? "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/model-ui";
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 const PORT = await new Promise((r) => {
@@ -30,10 +32,7 @@ const PORT = await new Promise((r) => {
 	});
 });
 const BASE = `http://127.0.0.1:${PORT}`;
-const server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: decodeURIComponent(ROOT), env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] });
-let logs = "";
-server.stdout.on("data", (d) => (logs += d));
-server.stderr.on("data", (d) => (logs += d));
+const srv = startTempServer({ root: ROOT, port: PORT, run });
 const j = async (path, method = "GET", body) => {
 	const r = await fetch(BASE + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 	const t = await r.text();
@@ -66,7 +65,7 @@ try {
 	const allModels = await j("/api/models");
 	assert.ok(allModels.length >= 48, `模型数量应 ≥48，实际 ${allModels.length}`);
 
-	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, env: browserEnv(run) });
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: "zh-CN" });
 	page.setDefaultTimeout(20_000);
 	let nativeDialogs = 0;
@@ -397,10 +396,11 @@ try {
 	assert.equal(nativeDialogs, 0, "全程不应出现原生 confirm");
 	console.log("\n全部通过");
 } catch (e) {
-	console.error(logs.slice(-4000));
+	console.error(srv.logs().slice(-4000));
 	console.error("异常：", e);
 	process.exitCode = 1;
 } finally {
 	await browser?.close();
-	server.kill("SIGTERM");
+	await srv.stop();
+	cleanupTempRun(run);
 }

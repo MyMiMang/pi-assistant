@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { openCompact } from "./model-menu-flow.mjs";
+import { nativeLaunchBrowserEnv } from "./fixtures/native-launch-env.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const OUT = join(ROOT, "docs/screenshots");
@@ -109,7 +110,8 @@ try {
 	const full = catalog.find((m) => m.provider === prov.id && m.id === MAIN);
 	if (full?.thinking?.length !== 7) throw new Error(`目录里 ${MAIN} 应支持七档：${JSON.stringify(full?.thinking)}`);
 
-	browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"] });
+	// 原生 Chrome 拿真实 HOME / TMPDIR（服务进程仍用临时目录）
+	browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"], env: nativeLaunchBrowserEnv({ syntheticRoots: [RUN_DIR] }) });
 	const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 2, locale: "zh-CN", colorScheme: "dark" });
 	await ctx.addInitScript((manifest) => {
 		if (!localStorage.getItem("pia.customThemes")) localStorage.setItem("pia.customThemes", JSON.stringify([manifest]));

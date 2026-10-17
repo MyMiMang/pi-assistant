@@ -4,31 +4,33 @@
  * 断言：无横向溢出、按钮文字按容器宽度显隐、tooltip+aria-label 齐全、按钮可点击出菜单、
  *       右侧信息面板「电脑」tab 入口仍在、header 不再有「电脑」chip、composer 不再有「助理电脑」。
  * 只跑这一个脚本，不跑全量 e2e。
+ * 隔离：每次 mkdtemp 的临时 DATA / WORKSPACE / HOME / TMPDIR，服务走 `test/launch-memory.ts`
+ * （内存凭据，不构造生产后端）；原生 Chrome 用 `e2e/fixtures/native-launch-env.mjs` 的真实 HOME / TMPDIR。
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { openCompact } from "./model-menu-flow.mjs";
+import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 
 const ROOT = new URL("..", import.meta.url);
 const { fileURLToPath } = await import("node:url");
 const REPO = fileURLToPath(ROOT);
 const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/composer-compact";
-const DATA = "/tmp/pia-verify-composer";
+// 本次运行独占的临时目录（DATA / WORKSPACE / HOME / TMPDIR）；finally 只删它自己
+const run = makeTempRun("pia-e2e-composer-compact-");
 const PORT = await new Promise((resolve) => { const sv = createServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => resolve(p)); }); });
 const BASE = `http://127.0.0.1:${PORT}`;
 const LONG = "派个子代理 检查输入栏紧凑化，工作区仓库 /Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/pi-assistant";
-rmSync(DATA, { recursive: true, force: true });
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
-let server, browser;
+let srv, browser;
 const waitFor = async (fn, ms = 25_000) => { const end = Date.now() + ms; while (Date.now() < end) { try { if (await fn()) return; } catch {} await new Promise((r) => setTimeout(r, 100)); } throw new Error("timeout"); };
 const j = async (path, method = "GET", body) => { const r = await fetch(BASE + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); const data = await r.json(); if (!r.ok) throw new Error(`${path} ${JSON.stringify(data)}`); return data; };
-const start = async () => { server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: REPO, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] }); server.stdout.on("data", (d) => process.stdout.write(d)); server.stderr.on("data", (d) => process.stderr.write(d)); await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
-const stop = async () => { if (!server || server.exitCode !== null) return; const done = new Promise((r) => server.once("exit", r)); server.kill("SIGTERM"); await done; };
+const start = async () => { srv = startTempServer({ root: REPO, port: PORT, run, log: (d) => process.stdout.write(d) }); await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
+const stop = async () => { await srv?.stop(); };
 
 let failed = 0;
 const check = (name, cond, detail = "") => { if (cond) console.log(`  ✅ ${name}`); else { failed++; console.error(`  ❌ ${name} ${detail}`); } };
@@ -91,7 +93,7 @@ try {
 	await j("/api/settings", "PUT", { onboarded: true });
 	const a = await j("/api/agents", "POST", { name: "紧凑验证" });
 	const room = await j("/api/rooms", "POST", { name: "紧凑群", purpose: "验证群聊输入栏", memberIds: [a.id], managerId: a.id });
-	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, env: browserEnv(run) });
 	const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: "zh-CN" });
 	page.setDefaultTimeout(20_000);
 	page.on("pageerror", (e) => { console.error("pageerror:", e); failed++; });
@@ -262,6 +264,7 @@ try {
 } finally {
 	await browser?.close();
 	await stop();
+	cleanupTempRun(run);
 }
 console.log(failed ? `\n❌ ${failed} 项未通过` : "\n全部通过");
 process.exitCode = failed ? 1 : 0;

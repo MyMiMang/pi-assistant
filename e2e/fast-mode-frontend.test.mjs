@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fastStatusDetail, fastStatusText } from "../apps/web/src/fast-mode.ts";
+import { LatestWrite, SerialWriteQueue } from "../apps/web/src/latest-write.ts";
 
 const meta = (p) => ({ requested: true, status: "injected", capability: "requestable-unverified", api: "openai-completions", observed: null, observedKind: "unknown", ...p });
 
@@ -48,4 +49,55 @@ test("关闭但请求里本来就有服务配置的档位：如实标 externally
 	assert.equal(text, "Fast · 请求里已带服务配置的档位");
 	assert.ok(!text.includes("标准档"));
 	assert.match(fastStatusDetail(meta({ requested: false, status: "externally-configured" })), /关闭只停止本开关附加参数|以服务商账单为准/);
+});
+
+test("Fast 保存顺序：同一助理的写入串行，后一次不会越过前一次抵达服务端", async () => {
+	const queue = new SerialWriteQueue();
+	const sent = [];
+	let releaseFirst;
+	const first = queue.run(async () => {
+		sent.push("A");
+		await new Promise((r) => (releaseFirst = r));
+		return "A";
+	});
+	const second = queue.run(async () => {
+		sent.push("B");
+		return "B";
+	});
+	// 第一次还没完成：第二次必须还在排队（不能并发，否则服务端可能先处理后发的那个）
+	await Promise.resolve();
+	assert.deepEqual(sent, ["A"]);
+	releaseFirst();
+	assert.deepEqual(await Promise.all([first, second]), ["A", "B"]);
+	assert.deepEqual(sent, ["A", "B"]);
+});
+
+test("Fast 保存顺序：前一次失败不会卡住 / 吞掉后一次写入", async () => {
+	const queue = new SerialWriteQueue();
+	const sent = [];
+	const first = queue.run(async () => {
+		sent.push("A");
+		throw new Error("模拟第一次保存失败");
+	});
+	const second = queue.run(async () => {
+		sent.push("B");
+		return "B";
+	});
+	await assert.rejects(first, /第一次保存失败/);
+	assert.equal(await second, "B");
+	assert.deepEqual(sent, ["A", "B"]);
+});
+
+test("Fast 保存顺序：搭 LatestWrite 时，前一次迟到失败不回滚、不影响最新一次", async () => {
+	const queue = new SerialWriteQueue();
+	const w = new LatestWrite("1");
+	const firstGen = w.begin();
+	const secondGen = w.begin();
+	assert.equal(w.isCurrent(firstGen), false, "后一次点击后，前一次已不是最新");
+	await assert.rejects(queue.run(async () => Promise.reject(new Error("A 失败"))), /A 失败/);
+	assert.deepEqual(w.fail(firstGen), { rollback: false, value: null }, "迟到失败不回滚界面");
+	const second = await queue.run(async () => "B");
+	assert.equal(second, "B");
+	assert.equal(w.confirm(secondGen, "0"), true);
+	assert.deepEqual(w.fail(secondGen), { rollback: true, value: "0" }, "最新一次失败回滚到服务端确认值");
 });

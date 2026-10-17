@@ -19,7 +19,7 @@ import { dedupeGroup, frequentModels, groupModelsByProvider, pickerPanelNext, pi
 import { THINKING_DESC, THINKING_LABEL } from "../thinking-slider";
 import { useStore } from "../store";
 import type { Provider } from "../types";
-import { LatestWrite } from "../latest-write";
+import { LatestWrite, SerialWriteQueue } from "../latest-write";
 import { cx, useEscLayer } from "./ui";
 import { ThinkingSlider, type FastControl } from "./ThinkingSlider";
 
@@ -184,8 +184,10 @@ export function usePopover(placement: "up" | "down" = "down", opts?: { /** 返�
 }
 
 async function patchAgent(agentId: string, body: Record<string, unknown>) {
-	const a = await api(`/api/agents/${agentId}`, { method: "PATCH", json: body });
-	useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, ...a } : x)) }));
+	const a = await api<Record<string, unknown>>(`/api/agents/${agentId}`, { method: "PATCH", json: body });
+	// 只合并本次改的字段：同时间别的入口可能改了 fast（Fast 保存 / 外部设备），整份覆盖会把旧值写回
+	const changed = Object.fromEntries(Object.keys(body).map((k) => [k, a[k]]));
+	useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, ...changed } : x)) }));
 }
 
 /**
@@ -195,8 +197,13 @@ async function patchAgent(agentId: string, body: Record<string, unknown>) {
  * 同一个助理可能有多个入口同时在飞（单聊输入栏 / 另一个窗口 / 以后的设置页），所以每个助理共用一份
  * `LatestWrite`：只认最后一次写入的响应，迟到的成功不盖新开关，迟到的失败不把界面推回旧值，
  * 回滚也落在服务端确认值上（不把未确认的乐观值当真相）。每个助理一份，别的助理互不影响。
+ *
+ * 顺序：同一个助理的 PATCH 走 `SerialWriteQueue` 串行发出（服务端 PATCH 是同步原子 UPDATE，没有 await 到写库），
+ * 这样两次点击按顺序抵达；界面仍在点击时立即乐观更新（可随时表达新意图）。跨设备仍以服务端最后处理为准，
+ * 不假装有 CAS。
  */
 const fastWriters = new Map<string, LatestWrite>();
+const fastQueues = new Map<string, SerialWriteQueue>();
 function fastWriter(agentId: string, confirmed: boolean): LatestWrite {
 	const existing = fastWriters.get(agentId);
 	if (existing) return existing;
@@ -209,21 +216,37 @@ function fastWriter(agentId: string, confirmed: boolean): LatestWrite {
 async function patchAgentFast(agentId: string, next: boolean) {
 	const w = fastWriter(agentId, useStore.getState().agents.find((a) => a.id === agentId)?.fast === true);
 	const gen = w.begin();
+	// 乐观：界面立即跟手（可随时表达新意图），请求排进这个助理自己的串行队列
 	useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: next } : x)) }));
-	try {
-		const a = await api(`/api/agents/${agentId}`, { method: "PATCH", json: { fast: next } });
-		// 迟到的成功：用户已经又改了一次，这次结果不代表当前意图，不写确认值也不动界面
-		if (!w.isCurrent(gen)) return;
-		const confirmed = a.fast === true;
-		w.confirm(gen, confirmed ? "1" : "0");
-		// 只合并 fast：同一时间用户可能改了 thinking / 模型，整份覆盖会把那些更新的值写回旧的
-		useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: confirmed } : x)) }));
-	} catch (e) {
-		const r = w.fail(gen);
-		// 仍是最后一次才回滚，且只回滚 fast 字段（不碰 thinking / 模型 / 消息）
-		if (r.rollback) useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: r.value === "1" } : x)) }));
-		throw e;
-	}
+	let queue = fastQueues.get(agentId);
+	if (!queue) fastQueues.set(agentId, (queue = new SerialWriteQueue()));
+	return queue.run(async () => {
+		try {
+			const a = await api(`/api/agents/${agentId}`, { method: "PATCH", json: { fast: next } });
+			// 迟到的成功：用户已经又改了一次，这次结果不代表当前意图，不写确认值也不动界面
+			if (!w.isCurrent(gen)) return;
+			const confirmed = a.fast === true;
+			w.confirm(gen, confirmed ? "1" : "0");
+			// 只合并 fast：同一时间用户可能改了 thinking / 模型，整份覆盖会把那些更新的值写回旧的
+			useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: confirmed } : x)) }));
+		} catch (e) {
+			const r = w.fail(gen);
+			// 不是最后一次：这次失败已经被用户的新选择取代，不回滚也不报错（否则会误导成最新一次也失败）
+			if (!r.rollback) return;
+			// 回滚取服务端当前真值：别的设备 / WS 刷新可能已经让本地「确认值」过时，不能拿旧值盖回去。
+			// 读不到（网络 / 服务异常）时才退回本端上一次确认值。
+			let truth: boolean | null = null;
+			try {
+				const fresh = (await api<{ id: string; fast?: boolean }[]>("/api/agents")).find((x) => x.id === agentId);
+				if (fresh) truth = fresh.fast === true;
+			} catch {}
+			const value = truth ?? (r.value === "1");
+			if (truth !== null) w.confirm(gen, truth ? "1" : "0");
+			// 仍是最后一次才回滚，且只回滚 fast 字段（不碰 thinking / 模型 / 消息）
+			useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: value } : x)) }));
+			throw e;
+		}
+	});
 }
 
 // ------------------------------------------------------------------ 共用的下拉菜单

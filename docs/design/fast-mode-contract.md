@@ -37,7 +37,7 @@
 - 子代理覆盖：`subagents.fast`（`INTEGER NULL`）；`null` = 跟随所属助理，`1/0` = 独立开 / 关。与 `thinking` 完全独立的两列，互不修改。
 - 不新增「助理级子代理 Fast 默认」设置页：子代理默认就是跟随。
 - 路由：`PATCH /api/agents/:id { fast }` 只 `UPDATE agents.fast`；`PATCH /api/subagents/:id { fast }` 只 `UPDATE subagents.fast`；`GET /api/models` 每个模型附 `fast: { capability, reason? }`。`SUBAGENTS` 详情附 `resolvedFast`。
-- 前端各 context 用各自的值（助理 / 子代理），不共用全局 localStorage；保存中 `pending` 禁重复，失败只回滚 fast 字段并给原因（不覆盖同时修改的 thinking / 模型 / 消息）。同一助理的多入口共用一份「最后一次为准」写入（`LatestWrite`，确认值来自服务端响应），迟到成功 / 失败不落地、回滚只落到已确认值。**边界**：这是客户端顺序，不是服务端事务——两个请求乱序到达时仍以服务端最后处理的那次为准；没有新增版本号 / CAS，也不假装有。
+- 前端各 context 用各自的值（助理 / 子代理），不共用全局 localStorage；保存中 `pending` 禁重复，失败只回滚 fast 字段并给原因（不覆盖同时修改的 thinking / 模型 / 消息）。同一助理的多入口共用一份「最后一次为准」写入（`LatestWrite`，确认值来自服务端响应），迟到成功 / 失败不落地。**同端顺序**：同一个助理的 Fast PATCH 走 `SerialWriteQueue` 串行发出（服务端 `PATCH /api/agents/:id` 是读 body → 同步原子 `UPDATE` → 返回，没有 await 到写库，所以客户端串行就保住本端点击顺序），界面仍在点击时立即乐观更新，可随时表达新意图。**边界**：这是**本端**顺序，不是服务端事务——不同设备 / 另一个客户端并发写仍以服务端最后处理的那次为准；没有新增版本号 / CAS，也不假装有。失败回滚取**服务端当前真值**（`GET /api/agents` 重读；外部设备的 WS 刷新可能已让本地确认值过时），只有读不到时才退回本端上一次确认值。`patchAgent`（thinking / 模型）只合并本次请求改的字段，避免它的迟到响应把并发的 fast 写回旧值。
 
 ## 5. requested ≠ accepted ≠ observed（关键）
 
@@ -80,6 +80,8 @@
 
 - 主会话独立复核（`8a6b18b`，Node 24.19，外层临时 HOME / DATA / WORKSPACE / TMPDIR + `PIA_OFFLINE`）：上面 server 14 + 前端 43 = **57/57**，5.62s，exit 0。
 - 本轮 review 修复后（`8a6b18b` + 本次提交，Node 22.23.3 副本）：同样 14 + 44 = **58/58**（前端多出 1 条 Esc 归属测试）。两端 `tsc --noEmit` exit 0。
+- **e2e 启动隔离 + 保存顺序收口**（`7dd7279` + 本次，Node 24.20.0）：前端 **47/47**（`fast-mode-frontend` 8：原 5 + 3 条保存顺序 / 迟到失败；`thinking-slider-frontend` + `model-menu-two-level` 39）；`e2e/native-launch-env-fixture.test.mjs` **4/4**；`node --check` 覆盖改过的 11 个 `.mjs` 全过；`tsc --noEmit -p apps/web` exit 0。**服务端 14/14 未在本次重跑**（本次没改 server），主会话已在本树 `7dd7279` 用独立临时 HOME / DATA / WORKSPACE / TMPDIR 复跑 14 + 44 = 58/58（exit 0），不再重复记账。
+- **e2e 脚本已改好但一次都还没跑**（heavy 槽被 Laya 真实受控 socket 测试占用，本树不抢）：统一「服务 = `test/launch-memory.ts` 内存凭据 + 临时 HOME / TMPDIR / DATA / WORKSPACE；浏览器 = `e2e/fixtures/native-launch-env.mjs` 真实 HOME / TMPDIR；finally 有界 SIGTERM→SIGKILL + 只删本次目录」。原 `fast-mode-ui` 直接起 `src/main.ts`（会构造走 OS 钥匙串的生产凭据后端）且 `PIA_WORKSPACE_DIR` 拼错（真实变量 `PIA_WORKSPACE`）已修；`model-ui` / `model-picker-favorites-ui` / `composer-compact` 同类问题一并改走 `e2e/fixtures/temp-server.mjs`；`thinking-slider-ui` / `thinking-slider-visual` 服务端本来就合规，只补浏览器 env（父进程是合成 HOME / TMPDIR 时也不漏）。
 
 - `packages/server/test/fast-mode.test.ts` **14/14**：真实 `createPiSession` + 本机 fake OpenAI 兼容端点抓**最终请求体**，证明关不附加、开只多 `service_tier=priority`、`reasoning_effort` 基线是具体 `medium` 且不变、再关恢复；组合已有 `onPayload` / `onProviderStreamEvent`；已有 tier 不被覆盖；400 与 403 各只发一次带参数请求；终止 / 非终止回显分类；换模型按实际 `api` 守卫；助理独立 / 子代理跟随与覆盖。
 - `e2e/fast-mode-frontend.test.mjs` + `e2e/thinking-slider-frontend.test.mjs` + `e2e/model-menu-two-level.test.mjs` **44/44**：闪电真按钮 / aria / 不可用仍可聚焦、非推理模型仍有 Fast、模型名可点击入口与空态、加载 / 失败不误报、default 文案不称标准档、非终止回显来源未确认、两层状态（初次紧凑 / 点模型名进目录 / 返回 / 选完返回 / Esc / 非聊天入口保持原样）、Esc 归属（后打开的气泡先关、菜单不被顺手关）。**这些是纯逻辑 / 静态 DOM 断言，不冒充浏览器 DOM 行为**；真实浏览器里的 Esc / 焦点 / 悬停由下面 `e2e/fast-mode-ui.mjs` 覆盖（尚未运行）。
@@ -87,6 +89,6 @@
 **未跑 / 未验**：
 
 - 真实中转站（含 sub2api 部署）与真实付费请求；不同站点策略（filter / block / force_priority / free_openai_fast）、倍率与计费账单。
-- Chrome / 浏览器 / 真实构建 UI 贯通与截图、真机 App、手机 390 实际渲染。脚本已按两层弹层更新（`e2e/model-menu-flow.mjs` 共用打开 / 关闭流程；`model-ui` / `model-picker-favorites-ui` / `thinking-slider-ui` / `thinking-slider-visual` / `composer-compact` 改为先开紧凑层再点模型名），并新增 `e2e/fast-mode-ui.mjs`（悬停说明、Esc 只关说明、真实 PATCH 保存 / 刷新持久化、失败回滚原因、键盘焦点、390、不支持协议不发请求）。**均未运行**：浏览器环境要等 heavy 槽的 native env helper 接线（`fast-mode-ui` 未接线时直接以退出码 2 说明原因，不会用真实 HOME 起 Chrome）。
+- Chrome / 浏览器 / 真实构建 UI 贯通与截图、真机 App、手机 390 实际渲染。脚本已按两层弹层更新（`e2e/model-menu-flow.mjs` 共用打开 / 关闭流程；`model-ui` / `model-picker-favorites-ui` / `thinking-slider-ui` / `thinking-slider-visual` / `composer-compact` 改为先开紧凑层再点模型名），并新增 `e2e/fast-mode-ui.mjs`（悬停说明、Esc 只关说明、真实 PATCH 保存 / 刷新持久化、失败回滚原因、键盘焦点、390、不支持协议不发请求）。**均未运行**：启动隔离已就绪（上节），但本树不抢 heavy 槽；运行方式 `node e2e/fast-mode-ui.mjs`（先 `npm run build -w @pi-assistant/web`）。
 - 全量 `npm test` / 全量 e2e。
 - `supported` 态目前没有服务级声明可用；不声称任何服务「真支持」具体模型。
