@@ -43,6 +43,15 @@
 1. **unix socket 路径长度**：macOS `sun_path` ≈ 104 字节。默认 scratch 落在 `/var/folders/…/T/pia-laya-bench-<长 ISO 时间戳>/…` 时 socket 路径 135 字节 → daemon 直接 bind 失败，症状只是“20s 内不就绪”。改成短根 `/tmp/pia-lb-<owner>-<base36>` 并在启动前显式断言长度。
 2. **`pgrep -f "--socket …"` 被当成选项**：`--socket` 以 `--` 开头，pgrep 会按长选项解析 → 匹配 0 个进程，误报“无法证明归属”。改成 `pgrep -f -- "…"`。
 
+## 关于 e2e 复制版 helper 的 `diverged` 缺陷（Fast 44047ea 报告；本树核对结论）
+
+- **本次 harness 没有用它**：`scripts/laya-benchmark-isolated-harness.mjs` 只 import 生产 TS 模块 `packages/server/src/native-launch-env.ts`（`nativeLaunchEnvForChild` / `nativeLaunchEnvProblems`）。TS 版在覆盖 `HOME` **之前**算 `diverged`（`native-launch-env.ts:81` vs `:91`），逻辑正确；本次实测证据也一致：daemon env 白名单 `tmpdirUnderSyntheticRoot:false`、`nativeLaunchEnvProblems` 空、`strippedKeys:[]`（因为调用方本来就是原生 HOME）。
+- **缺陷真实存在**：`e2e/fixtures/native-launch-env.mjs` 把 `const diverged = … env.HOME !== realHome` 写在 `env.HOME = realHome` **之后** → 恒为 `false`。纯函数对照（不起 Chrome、无副作用）：
+  - 场景 A（调用方 HOME 已是合成值、`syntheticRoots` 未含该根）：e2e helper 输出 `TMPDIR="/tmp/synthetic-tmp"`（**漏删**）；TS 生产模块输出 `TMPDIR:null, diverged:true, stripped:["TMPDIR"]`（正确）。
+  - 场景 B（当前唯一调用方 `e2e/subagent-thinking-loading.mjs` 的真实用法：先取 env 再覆盖、传入全部合成根、TMPDIR 是真实 OS 临时目录）：两份实现**行为相同**（都保留真实 `/var/folders/x/T/`）。
+- **影响界限（如实）**：该缺陷**没有影响本次任何一次 daemon / 浏览器启动**（本 harness 不走它），对当前唯一调用方按现有调用顺序也**无行为差异**；它只会在“覆盖 HOME/TMPDIR 之后再调用、或漏传合成根”的未来调用里把合成 `TMPDIR` 带进原生浏览器。
+- **修复归属**：Fast 分支 `44047ea` 已把 `diverged` 移到赋值前并加 4 项回归；**本树不重复改**（避免同一文件重复修改 / 合入冲突），合入时以那份修正为准。本树未因它重跑任何浏览器测试。
+
 ## 边界（不得宣称）
 
 - 「钥匙串弹窗已修好」**仍未证**：本轮没有弹窗，但只有一次运行、没有系统弹窗日志，不能当永久修复结论。
