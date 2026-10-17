@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import { config } from "./config.ts";
 import { computerFor, desktopStatus, ensureDesktopBrowser, SHARED } from "./desktop.ts";
+import { envStrings, nativeLaunchEnvForChild } from "./native-launch-env.ts";
 
 /** 本机可用的 Chromium 系浏览器（PIA_CHROME 优先） */
 export function findChrome(): string | null {
@@ -63,6 +64,8 @@ async function open(agentId: string, opts: { headed?: boolean } = {}): Promise<S
 		locale: "zh-CN",
 		timezoneId: "Asia/Shanghai",
 		acceptDownloads: true,
+		// 本机 Chrome 是原生进程：给它 OS 账户家目录（隔离启动时服务的合成 HOME 不能传下去，见 native-launch-env.ts）。
+		env: envStrings(nativeLaunchEnvForChild(undefined, { syntheticRoots: [config.dataDir] }).env),
 		args: ["--no-first-run", "--no-default-browser-check", ...(process.platform === "linux" && process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
 	});
 	const s: Session = { mode: "host", ctx, headed: !!opts.headed };
@@ -100,7 +103,7 @@ export async function isolatedContext(agentId: string): Promise<BrowserContext> 
 	if (s.mode === "sandbox" && s.browser) return s.browser.newContext({ locale: "zh-CN", timezoneId: "Asia/Shanghai", viewport: null });
 	const exe = findChrome();
 	if (!exe) throw new Error("没有可用的浏览器");
-	const b = await chromium.launch({ executablePath: exe, headless: true, args: ["--no-first-run", "--no-default-browser-check", ...(process.platform === "linux" && process.getuid?.() === 0 ? ["--no-sandbox"] : [])] });
+	const b = await chromium.launch({ executablePath: exe, headless: true, env: envStrings(nativeLaunchEnvForChild(undefined, { syntheticRoots: [config.dataDir] }).env), args: ["--no-first-run", "--no-default-browser-check", ...(process.platform === "linux" && process.getuid?.() === 0 ? ["--no-sandbox"] : [])] });
 	const ctx = await b.newContext({ locale: "zh-CN", timezoneId: "Asia/Shanghai", viewport: { width: 1280, height: 860 }, acceptDownloads: true });
 	ctx.on("close", () => void b.close().catch(() => {}));
 	return ctx;

@@ -11,11 +11,20 @@
  *  - `planFixtureWindow`：只凭 tools/list 判断这台电脑有没有「驱动自有、与日常环境隔离」的窗口来源；
  *  - `parsePreparedBrowser` / `parseBrowserBinding`：把 `browser_prepare` / `get_browser_state` 的返回收紧成
  *    可 pin 的精确身份；任何缺失都 fail-closed。
- *    **字段以官方 cua-driver 为准**（0.35.4 实测）：隔离启动 `browser_prepare{allow_launch,profile.isolated_new}`
- *    只保证返回 `prepared_pid`（不是 `target_id`）；`target_id` / `tab_id` / `binding_quality` / `mutation_allowed` /
- *    `snapshot_id` 都要在 `get_browser_state` **绑定之后**才有。旧实现把 `target_id` 挂在 prepare 上会导致隔离路径永远 blocked。
+ *    **字段以官方 cua-driver 为准**（0.35.4 实测真实响应，本机 2026-10-17，见 docs/design/fast-model-benchmark.md「隔离浏览器 pin 契约」）：
+ *    隔离启动 `browser_prepare{allow_launch,profile.isolated_new}` 只返回 `prepared_pid`（没有 `target_id` / `window_id`）；
+ *    `get_browser_state` **两种模式返回不同字段**：
+ *      - bind（`pid`+`window_id`）：`{status:"ok",mode:"bind",binding_quality:"exact",mutation_allowed:true,target_id,
+ *        tabs:[{tab_id,url,title,active}],native_title,binding_route,…}` —— **只证明「窗口↔CDP target」，不开页面快照，
+ *        所以没有 `snapshot_id` / `snapshot` / 顶层 `url`**；标签 id 只在 `tabs[]` 里。
+ *      - snapshot（`target_id`+`tab_id`+`snapshot_format:"semantic_v2"`）：`{status:"ok",mode:"snapshot",target_id,tab_id,
+ *        page:{title,url},snapshot:{id:"p1",format:"semantic_v2",complete,…},outline,refs:[{ref:"p1:0"}],content_refs}`` ——
+ *        **pin 是 `snapshot.id`（refs 前缀 `p<n>` 就是它）**，页面 URL 在 `page.url`，顶层**没有** `binding_quality`。
+ *    旧实现要求 **bind 就返回 `snapshot_id`**，于是隔离路径每次都在「点开始」后立刻报 pin fail-closed（beta.29 实测 bug）。
  *  - `fixtureUrlMatches`：fixture URL 必须同时带本次 fixtureId + nonce，防串扰。
  */
+import { BENCHMARK_FIXTURE_BASE } from "./benchmark-fixture.ts";
+import { parseBrowserSnapshotView, type BrowserBinding } from "./browser-snapshot.ts";
 
 /** fixture 窗口来源：驱动自有的隔离浏览器（hostpc）或沙箱里的应用窗口（助理电脑 VM）。 */
 export type FixtureWindowKind = "driver-isolated-browser" | "sandbox-app";
@@ -81,57 +90,41 @@ export function parsePreparedBrowser(structured: unknown): { preparedPid: number
 	return { preparedPid: pid };
 }
 
-export interface BrowserBinding {
-	ok: boolean;
-	reason?: string;
-	/** 驱动自有浏览器进程 pid（仅当能证明是本次 driver 拉起时非空，关闭只 kill 它）。 */
-	ownerPid?: number;
-	tabId?: string;
-	/** 导航 / snapshot 需要的绑定 target id（由 get_browser_state 绑定后给出）。 */
-	targetId?: string;
-	token?: string;
-	url?: string;
+export type { BrowserBinding } from "./browser-snapshot.ts";
+export { parseBrowserBind } from "./browser-snapshot.ts";
+
+/**
+ * 校验 `get_browser_state` **快照模式**（`target_id`+`tab_id`）的返回，并取得可 pin 的快照身份。
+ * 通用校验（status / pin / URL）在 `browser-snapshot.ts`（产品工具也用同一份）；
+ * 这里**额外**要求当前页面 URL 是本次 fixture（fixtureId + nonce），防别的页面 / 别的 run 串扰。
+ */
+export function parseBrowserSnapshot(structured: unknown, input: { fixtureId?: string; nonce?: string; expectedOrigin?: string } = {}): BrowserBinding {
+	const view = parseBrowserSnapshotView(structured);
+	if (!view.ok) return view;
+	if (input.fixtureId && input.nonce && (!view.url || !fixtureUrlMatches(view.url, input.fixtureId, input.nonce, input.expectedOrigin))) {
+		return { ok: false, reason: "隔离浏览器当前 URL 不是本次 fixture（nonce 不符，fail-closed）" };
+	}
+	return view;
 }
 
 /**
- * 校验 `get_browser_state` 的绑定 / snapshot 返回。
- * 官方约定：绑定必须证明 `binding_quality:"exact"` + `mutation_allowed:true`，并有可 pin 的 `snapshot_id`；
- * 任一字段缺失都 fail-closed（不“大概是它”）。
- * 传入 `fixtureId` + `nonce` 时，额外要求当前 URL 是本次 fixture（绑定初始 URL 是空白，应只在导航后传）。
+ * fixture URL 必须是「同一个 origin + fixture 固定路径 + query 里 nonce 相等」，防别的 run / 别的页面串扰。
+ * 只做字符串包含判断不够：任意站点的 URL 里只要碰巧带了这两个字符串就会通过，所以这里解析 URL 再逐项比。
+ * `expectedOrigin` 由调用方给（本次真正导航到的 fixture 地址的 origin）；不给时只校 path + nonce。
  */
-export function parseBrowserBinding(structured: unknown, input: { fixtureId?: string; nonce?: string } = {}): BrowserBinding {
-	const s = asObj(structured);
-	if (!s) return { ok: false, reason: "读不到隔离浏览器状态（fail-closed）" };
-	const quality = firstString(s.binding_quality, s.bindingQuality);
-	if (quality !== "exact") {
-		return { ok: false, reason: quality ? `隔离浏览器不是精确绑定（binding_quality=${quality}），fail-closed` : "隔离浏览器没有 binding_quality=exact 证据（fail-closed）" };
+export function fixtureUrlMatches(url: string, fixtureId: string, nonce: string, expectedOrigin?: string): boolean {
+	let u: URL;
+	try {
+		u = new URL(url);
+	} catch {
+		return false;
 	}
-	const mutation = s.mutation_allowed ?? s.mutationAllowed;
-	if (mutation !== true) {
-		return { ok: false, reason: mutation === false ? "隔离浏览器不可变更（mutation_allowed=false），fail-closed" : "隔离浏览器没有 mutation_allowed=true 证据（fail-closed）" };
-	}
-	const url = firstString(s.url, s.current_url, s.currentUrl, asObj(s.tab)?.url);
-	const token = firstString(s.snapshot_id, s.snapshotId, s.state_id, s.stateId);
-	if (!token) return { ok: false, reason: "隔离浏览器读不到可 pin 的快照 id（fail-closed）" };
-	if (input.fixtureId && input.nonce && (!url || !fixtureUrlMatches(url, input.fixtureId, input.nonce))) {
-		return { ok: false, reason: "隔离浏览器当前 URL 不是本次 fixture（nonce 不符，fail-closed）" };
-	}
-	const ownerPid = firstNumber(s.pid, s.owner_pid, s.ownerPid, asObj(s.browser)?.pid);
-	const tabId = firstString(s.tab_id, s.tabId);
-	const targetId = firstString(s.target_id, s.targetId, asObj(s.target)?.id);
-	return { ok: true, ...(ownerPid !== undefined ? { ownerPid } : {}), ...(tabId ? { tabId } : {}), ...(targetId ? { targetId } : {}), token, ...(url ? { url } : {}) };
-}
-
-/** fixture URL 必须同时含本次 fixtureId + nonce（防别的 run / 别的页面串扰）。 */
-export function fixtureUrlMatches(url: string, fixtureId: string, nonce: string): boolean {
-	return url.includes(fixtureId) && url.includes(nonce);
+	if (expectedOrigin && u.origin !== expectedOrigin) return false;
+	if (u.pathname !== `${BENCHMARK_FIXTURE_BASE}/${encodeURIComponent(fixtureId)}`) return false;
+	return u.searchParams.get("nonce") === nonce;
 }
 
 const asObj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" ? (v as Record<string, unknown>) : null);
-const firstString = (...vals: unknown[]): string | undefined => {
-	for (const v of vals) if (typeof v === "string" && v) return v;
-	return undefined;
-};
 const firstNumber = (...vals: unknown[]): number | undefined => {
 	for (const v of vals) if (typeof v === "number" && Number.isFinite(v)) return v;
 	return undefined;

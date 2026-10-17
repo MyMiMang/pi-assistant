@@ -16,8 +16,11 @@ import type { FastSelectResult, VerifyOutcome } from "./index.ts";
 import { resolveFreshCandidate, verifyExpectation } from "./index.ts";
 import { WindowIdentityError, validateTrial, windowIdentityMismatch, type BenchmarkTrialRunner, type BenchmarkWindow, type FastBenchmarkTask, type ObservedWindow, type TrialMetrics } from "./benchmark.ts";
 
-/** 每次派发允许的模型动作（快速路径只点击）。 */
-export const BENCHMARK_ALLOWED_TOOLS = ["click"] as const;
+/** 每次派发允许的模型动作（快速路径只点击）：原生窗口是 `click`，驱动自有浏览器 fixture 是 `browser_click`（同一语义，走 CDP 精确 ref）。 */
+export const BENCHMARK_ALLOWED_TOOLS = ["click", "browser_click"] as const;
+/** 等 fixture 上报本轮机器证据的上界与轮询间隔（页面 POST 是异步的，不等就会把成功误判成「证据不足」）。 */
+export const MACHINE_EVIDENCE_WAIT_MS = 2500;
+export const MACHINE_EVIDENCE_POLL_MS = 120;
 /** 程序侧辅助动作（不计入模型操控能力）：目前只有按方向滚动。 */
 export const BENCHMARK_PROGRAM_TOOLS = ["scroll"] as const;
 
@@ -32,8 +35,8 @@ export interface CuaBenchmarkDeps {
 	collectCandidates(structured: unknown): FastActionCandidate[];
 	/** 快速模型选择（复用 selectFastAction / chooser 闭环）。 */
 	choose(goal: string, candidates: FastActionCandidate[], signal: AbortSignal): Promise<FastSelectResult>;
-	/** 派发一个动作（走既有电脑工具钩子，权限 / 审批 / 暂停原样生效）。 */
-	execute(tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ isError: boolean }>;
+	/** 派发一个动作（走既有电脑工具钩子，权限 / 审批 / 暂停原样生效）。失败时可带一行原因。 */
+	execute(tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ isError: boolean; error?: string }>;
 	/** 程序侧固定输入（type / 选择项由程序完成，不计模型能力）；可选。 */
 	afterSelect?(task: FastBenchmarkTask, selected: FastActionCandidate, signal: AbortSignal): Promise<void>;
 	/** fixture 页面的机器状态 reporter（独立证据 1）：状态 + 最后上报时间（freshness）。 */
@@ -72,7 +75,7 @@ export function createCuaTrialRunner(window: BenchmarkWindow, deps: CuaBenchmark
 			const observed = await deps.observe();
 			if ("error" in observed) return { correctness: "unknown", error: `观察失败：${observed.error}`, actions, programAssists, retries, fallbackCount, abstain };
 
-			// 3) 收集候选（模型只看 id/label）
+			// 3) 收集候选（模型只看 id/动作描述，执行仍用程序侧 tool+args）
 			const candidates = deps.collectCandidates(observed.structured);
 			if (!candidates.length) return { correctness: "unknown", error: "没有可点击候选", actions, programAssists, retries, fallbackCount, abstain };
 
@@ -98,8 +101,15 @@ export function createCuaTrialRunner(window: BenchmarkWindow, deps: CuaBenchmark
 				return { correctness: "unknown", error: `候选动作不在基准白名单：${result.candidate.tool}`, actions, programAssists, retries, fallbackCount, abstain };
 			}
 
-			// 6) 执行前用新快照重校验语义目标唯一且未变，再用新 element_token 派发
-			const fresh = resolveFreshCandidate(result.candidate, observed.structured);
+			// 6) 执行前用**新一次**观察重校验语义目标唯一且未变，再用新 element_token 派发。
+			//    不能用模型选择前的快照：模型推理期间页面可能已变（之前把它当「新快照」是错的）。
+			//    新快照会作废旧 ref，所以身份复核（readWindow）复用这次观察的 pin，不再额外取快照。
+			const freshObserved = await deps.observe();
+			if ("error" in freshObserved) {
+				retries++;
+				return { correctness: "unknown", error: `执行前重读窗口状态失败：${freshObserved.error}`, actions, programAssists, retries, fallbackCount, abstain };
+			}
+			const fresh = resolveFreshCandidate(result.candidate, freshObserved.structured);
 			if (!fresh.ok) {
 				retries++;
 				return { correctness: "unknown", error: `目标已变化（${fresh.reason}）`, actions, programAssists, retries, fallbackCount, abstain };
@@ -110,6 +120,8 @@ export function createCuaTrialRunner(window: BenchmarkWindow, deps: CuaBenchmark
 			const out = await deps.execute(fresh.candidate.tool, fresh.candidate.args, ctx.signal);
 			actions++;
 			if (out.isError) {
+				// 诊断用：默认不打；PIA_BENCH_DEBUG=1 时把驱动返回的一行原因写进服务日志（不含凭据 / token）。
+				if (process.env.PIA_BENCH_DEBUG === "1") console.warn(`[benchmark] 动作失败 ${fresh.candidate.tool}: ${String((out as { error?: string }).error ?? "").slice(0, 300)}`);
 				retries++;
 				return { correctness: "unknown", error: "执行返回错误", actions, programAssists, retries, fallbackCount, abstain };
 			}
@@ -117,7 +129,17 @@ export function createCuaTrialRunner(window: BenchmarkWindow, deps: CuaBenchmark
 		}
 
 		// 8) 双证据判分：机器状态 + 独立 UI 观测，模型自评不参与；机器状态还要求 fresh（本轮动作之后写）。
-		const machine = await deps.readMachineState(task);
+		//    页面上报是异步 fetch：动作返回不代表 POST 已到，所以**有界等待**本轮新证据（不是无界轮询，也不伪造）。
+		const evidenceDeadline = Date.now() + MACHINE_EVIDENCE_WAIT_MS;
+		let machine = await deps.readMachineState(task);
+		while (
+			(machine.updatedAt === null || machine.updatedAt === undefined || machine.updatedAt < trialStartedAt) &&
+			!ctx.signal.aborted &&
+			Date.now() < evidenceDeadline
+		) {
+			await new Promise((r) => setTimeout(r, MACHINE_EVIDENCE_POLL_MS));
+			machine = await deps.readMachineState(task);
+		}
 		const uiObserved = await deps.observe();
 		const ui = "error" in uiObserved ? null : uiObserved.structured;
 		const judged = validateTrial({ expect: task.expect, machine: machine.state, machineUpdatedAt: machine.updatedAt, machineFreshAfter: trialStartedAt, ui, verifyUi: (expected, state): VerifyOutcome => verifyExpectation(expected as never, state) });

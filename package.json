@@ -18,6 +18,7 @@
     "test": "npm test -w @pi-assistant/server",
   "smoke:local-asr": "node --import tsx scripts/local-asr-real-smoke.mjs",
   "smoke:local-laya": "node --import tsx scripts/laya-real-smoke.mjs",
+  "smoke:laya-benchmark": "node scripts/laya-benchmark-supervisor.mjs --timeout-ms=720000 -- node --import tsx scripts/laya-benchmark-isolated-harness.mjs",
     "typecheck": "npm run typecheck -w @pi-assistant/server && tsc --noEmit -p apps/web",
     "e2e": "npm run build && node e2e/run.mjs",
     "check:pi": "node scripts/check-pi.mjs",

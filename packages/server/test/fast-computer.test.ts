@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FastActionCandidate, FastActionChooser, FastComputerSettings } from "../src/fast-computer/index.ts";
 const fc = await import("../src/fast-computer/index.ts");
-const { createMockChooser, createClassifierChooser, parseChatChoice, parseClassifierChoice } = await import("../src/fast-computer/choosers.ts");
+const { createMockChooser, createClassifierChooser, createChatChooser, parseChatChoice, parseClassifierChoice } = await import("../src/fast-computer/choosers.ts");
 
 const cand = (id: string, tool = "click"): FastActionCandidate => ({ id, label: `候选 ${id}`, tool, args: { element_token: `${id}:1` } });
 const settings = (patch: Partial<FastComputerSettings> = {}): FastComputerSettings => ({ ...fc.FAST_COMPUTER_DEFAULT, enabled: true, ...patch });
@@ -126,21 +126,61 @@ test("classifier 解析：选中 / 并列 / 非法概率 / 越界 / 缺置信度
 	const ids = ["a", "b"];
 	const base = { provider: "openrouter", model: "typesafe/jev-1.13", api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1 };
 	const ok = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8, probabilities: { a: 0.8, b: 0.2 } } }, usage: { input: 5, output: 1, totalTokens: 6 } }, ids);
-	assert.deepEqual(ok, { kind: "selected", candidateId: "a", confidence: 0.8, probabilities: { a: 0.8, b: 0.2 }, usage: { input: 5, output: 1 }, model: "openrouter/typesafe/jev-1.13" });
+	assert.equal(ok.kind, "selected");
+	if (ok.kind === "selected") {
+		assert.equal(ok.candidateId, "a");
+		assert.equal(ok.confidence, 0.8);
+		// 不取整，所以 (0.8-0.5)/0.5 的浮点尾巴保留（0.6000000000000001）；展示层才取整。
+		assert.ok(Math.abs(ok.decisionConfidence! - 0.6) < 1e-12);
+		assert.deepEqual(ok.probabilities, { a: 0.8, b: 0.2 });
+		assert.deepEqual(ok.usage, { input: 5, output: 1 });
+		assert.equal(ok.model, "openrouter/typesafe/jev-1.13");
+	}
 	const tie = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.5, probabilities: { a: 0.5, b: 0.5 } } } }, ids);
 	assert.equal(tie.kind, "abstain");
 	const badProbs = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8, probabilities: { a: 1.4, b: -0.1 } } } }, ids);
 	assert.equal(badProbs.kind, "selected");
-	if (badProbs.kind === "selected") assert.equal(badProbs.probabilities, undefined, "非法概率整体丢弃，不部分信任");
+	if (badProbs.kind === "selected") {
+		assert.equal(badProbs.probabilities, undefined, "非法概率整体丢弃，不部分信任");
+		assert.equal(badProbs.decisionConfidence, undefined, "概率非法时不合成阈值比较值，退回协议 confidence");
+	}
 	const noConf = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", probabilities: { a: 0.8, b: 0.2 } } } as never }, ids);
 	assert.equal(noConf.kind, "abstain", "SDK 未给置信度一律 unknown，绝不合成");
 	const noProbs = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8 } } as never }, ids);
 	assert.equal(noProbs.kind, "selected");
-	if (noProbs.kind === "selected") assert.equal(noProbs.probabilities, undefined, "概率缺失 → unknown，不合成");
+	if (noProbs.kind === "selected") {
+		assert.equal(noProbs.probabilities, undefined, "概率缺失 → unknown，不合成");
+		assert.equal(noProbs.decisionConfidence, undefined, "概率缺失 → 不合成阈值比较值");
+	}
 	const outOfSet = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "z", confidence: 0.9, probabilities: { z: 1 } } } }, ids);
 	assert.equal(outOfSet.kind, "error");
 	const failed = parseClassifierChoice({ ...base, stopReason: "error", errorMessage: "System One API error (401)", answers: {} }, ids);
 	assert.equal(failed.kind, "error");
+});
+
+test("chat chooser：与 classifier 同一份受限描述，不漏 tool / args / token / raw value", async () => {
+	let prompt = "";
+	const chooser = createChatChooser({
+		provider: "p",
+		id: "m",
+		complete: async (_p, _m, req) => {
+			prompt = req.messages.map((x) => x.text).join("\n");
+			return { text: '{"id":"a"}' };
+		},
+	});
+	const r = await chooser.choose({
+		goal: "点登录",
+		captureId: "cap-chat",
+		candidates: [{ id: "a", label: "button：登录", description: "点击当前界面上的「登录」（button 控件）" }],
+	});
+	assert.equal(r.kind === "selected" && r.candidateId, "a");
+	assert.match(prompt, /点击当前界面上的「登录」（button 控件）/, "chat 也用动作描述");
+	assert.ok(!prompt.includes("button：登录"), "有描述时不再发 label 旧身份");
+	assert.match(prompt, /当前一步/, "目标限定为本次一步");
+	assert.ok(!/mcp__hostpc__|element_token|snap1:|cap-chat/.test(prompt), "不漏 tool / token / captureId");
+	// 旧 label-only 调用方兼容：没描述就发 label
+	await chooser.choose({ goal: "点登录", captureId: "cap-chat2", candidates: [{ id: "a", label: "button：登录" }] });
+	assert.match(prompt, /- a: button：登录/);
 });
 
 test("chat 解析：不合成 confidence", () => {
@@ -154,7 +194,7 @@ test("chat 解析：不合成 confidence", () => {
 });
 
 test("classifier chooser：只发离散 choice 问题、答案必须是候选 id（假 classify）", async () => {
-	let got: { provider: string; model: string; context: { questions: { pick: { type: string; criteria: Record<string, string> } } } } | undefined;
+	let got: { provider: string; model: string; context: { state: Record<string, unknown>; questions: { pick: { type: string; criteria: Record<string, string> } } } } | undefined;
 	const chooser = createClassifierChooser({
 		provider: "openrouter",
 		model: "typesafe/jev-1.13",
@@ -170,7 +210,40 @@ test("classifier chooser：只发离散 choice 问题、答案必须是候选 id
 	assert.equal(got?.model, "typesafe/jev-1.13");
 	assert.equal(got?.context.questions.pick.type, "choice");
 	assert.deepEqual(got?.context.questions.pick.criteria, { a: "按钮：登录", b: "按钮：取消" });
+	assert.deepEqual(got?.context.state, { goal: "点登录" }, "state 只放 goal（候选不重复进 state）");
 	assert.equal(r.kind === "selected" && r.candidateId, "a");
+});
+
+test("classifier chooser：候选只留在 criteria（state 去重），label 全量不丢不改，goal 不被额外提示污染", async () => {
+	const contexts: { state: Record<string, unknown>; questions: { pick: { criteria: Record<string, string>; instructions: string } } }[] = [];
+	const chooser = createClassifierChooser({
+		provider: "local-laya",
+		model: "multilingual",
+		classify: async (provider, model, context) => {
+			contexts.push(context as never);
+			return { provider, model, api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1, answers: { pick: { type: "choice", choice: "c2", confidence: 0.8, probabilities: { c1: 0.2, c2: 0.8 } } } };
+		},
+	});
+	const candidates = [
+		{ id: "c1", label: "按钮：保存草稿（⌘S）" },
+		{ id: "c2", label: "按钮：发布到全部渠道" },
+		{ id: "c3", label: "链接：查看帮助" },
+	];
+	const r = await chooser.choose({ goal: "把文章发布出去", captureId: "cap-dedup", candidates });
+	assert.equal(r.kind === "selected" && r.candidateId, "c2");
+	assert.equal(contexts.length, 1);
+	const ctx = contexts[0];
+	// 1) state 只剩 goal：不再重复一份候选表（token 省在这里，信息不在这里）。
+	assert.deepEqual(Object.keys(ctx.state), ["goal"], "state 只允许 goal 一个键");
+	assert.equal(ctx.state.goal, "把文章发布出去", "主 goal 原样传，不改写");
+	// 2) criteria 全量：每个候选 id 都在，label 逐字不变（不截断、不改写、不随机 token）。
+	assert.deepEqual(ctx.questions.pick.criteria, { c1: "按钮：保存草稿（⌘S）", c2: "按钮：发布到全部渠道", c3: "链接：查看帮助" });
+	assert.equal(Object.keys(ctx.questions.pick.criteria).length, candidates.length, "候选一个都不能少");
+	// 3) 不注入新的 goal 提示 / 答案：instructions 与 state 里都不出现候选 id 或额外提示。
+	const serialized = JSON.stringify(ctx);
+	assert.ok(!/按钮：/.test(ctx.questions.pick.instructions), "instructions 不夹带候选内容");
+	assert.ok(!JSON.stringify(ctx.state).includes("c1"), "state 里不出现候选 id");
+	assert.ok(!/answer|答案|正确选项|应该选/i.test(serialized), "不注入答案类提示");
 });
 
 test("classifier chooser：classify 抛错 / 中止 → error（超时归 timeout）", async () => {
@@ -183,7 +256,7 @@ test("classifier chooser：classify 抛错 / 中止 → error（超时归 timeou
 test("程序收集：从窗口状态生成点击候选（限上限、只取可点击）", async () => {
 	const { clickCandidatesFromWindowState } = await import("../src/fast-computer/tool.ts");
 	const elements = [
-		{ element_index: 1, role: "button", label: "登录", element_token: "s1:1", actions: ["press"] },
+		{ element_index: 1, role: "button", label: "登录", element_token: "s1:1", actions: ["press"], value: "secret-raw-value" },
 		{ element_index: 2, role: "statictext", label: "提示", element_token: "s1:2" },
 		{ element_index: 3, role: "textfield", label: "邮箱", element_token: "s1:3" },
 		{ element_index: 4, role: "button", label: "取消" },
@@ -193,7 +266,67 @@ test("程序收集：从窗口状态生成点击候选（限上限、只取可�
 	assert.equal(cands[0].tool, "mcp__hostpc__click");
 	assert.deepEqual(cands[0].args, { pid: 9, window_id: 3, element_token: "s1:1" });
 	assert.match(cands[0].label, /登录/);
+	// 动作描述：从已观察 role/label 生成、明确「点击 / 聚焦当前控件」，不承诺展开 / 提交成功等未知结果。
+	assert.equal(cands[0].description, "点击当前界面上的「登录」（button 控件）");
+	assert.ok(cands.every((c) => c.description?.startsWith("点击当前界面上的")), "每个候选都有点击语义描述");
+	assert.ok(!/展开|提交成功|成功后|将会/.test(cands[0].description ?? ""), "不得承诺未知后置结果");
+	assert.ok(!cands.some((c) => (c.description ?? "").includes("secret-raw-value")), "描述不带控件 raw value");
 	assert.ok(cands.every((c) => fc.validateCandidates([c]) === null));
+});
+
+test("候选动作描述沿原 index 交给选择器：id / 个数 / 顺序不变，执行仍用候选表里的完整动作", async () => {
+	fc._resetFastComputerState();
+	const seen: { id: string; label: string; description?: string }[][] = [];
+	const chooser = createMockChooser((req) => {
+		seen.push(req.candidates);
+		return { kind: "selected", candidateId: "b" };
+	});
+	const r = await fc.selectFastAction({
+		key: "kdesc",
+		goal: "点登录",
+		candidates: [
+			{ id: "a", label: "button：登录", description: "点击当前界面上的「登录」（button 控件）", tool: "click", args: { element_token: "s:1" } },
+			{ id: "b", label: "button：取消", tool: "click", args: { element_token: "s:2" } },
+		],
+		chooser,
+		settings: settings(),
+	});
+	assert.deepEqual(seen[0], [
+		{ id: "a", label: "button：登录", description: "点击当前界面上的「登录」（button 控件）" },
+		{ id: "b", label: "button：取消" },
+	], "按原顺序透传；没有描述的候选不加空字段");
+	assert.equal(r.kind, "selected");
+	if (r.kind === "selected") {
+		assert.equal(r.candidate.id, "b");
+		assert.deepEqual(r.candidate.args, { element_token: "s:2" }, "执行仍用程序侧参数，模型只看到描述");
+	}
+});
+
+test("classifier chooser：criteria 用动作描述（label 仍保留语义身份），旧 label-only 调用方退回 label", async () => {
+	const contexts: unknown[] = [];
+	const chooser = createClassifierChooser({
+		provider: "local-laya",
+		model: "multilingual",
+		classify: async (provider, model, context) => {
+			contexts.push(context);
+			return { provider, model, api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1, answers: { pick: { type: "choice", choice: "a", confidence: 0.9, probabilities: { a: 0.9, b: 0.1 } } } };
+		},
+	});
+	const r = await chooser.choose({
+		goal: "点登录",
+		captureId: "cap-desc",
+		candidates: [
+			{ id: "a", label: "button：登录", description: "点击当前界面上的「登录」（button 控件）" },
+			{ id: "b", label: "button：取消" },
+		],
+	});
+	assert.equal(r.kind === "selected" && r.candidateId, "a");
+	const ctx = contexts[0] as { state: Record<string, unknown>; questions: { pick: { criteria: Record<string, string>; instructions: string } } };
+	assert.deepEqual(ctx.questions.pick.criteria, { a: "点击当前界面上的「登录」（button 控件）", b: "button：取消" });
+	assert.deepEqual(ctx.state, { goal: "点登录" }, "state 仍只放 goal");
+	assert.match(ctx.questions.pick.instructions, /当前一步/, "问题语义限定为本次一步");
+	assert.ok(!/都要点击|全部都是点击/.test(ctx.questions.pick.instructions), "通用指令不谎称所有候选都是 click");
+	assert.ok(!JSON.stringify(ctx).includes("cap-desc"), "captureId 不进模型输入");
 });
 
 test("设置保存：边界收敛 + 未知 kind 回落", () => {
@@ -303,4 +436,170 @@ test("G4：systemone 从 classifier 目录选（provider+id）构建，不读全
 		if (oldB === undefined) delete process.env.OPENROUTER_API_KEY;
 		else process.env.OPENROUTER_API_KEY = oldB;
 	}
+});
+
+// ---------------------------------------------------------------- 阈值标度（Laya 归一化熵 vs 概率）
+
+test("阈值标度：概率按 Jev 公式换算，不用 Laya 的归一化熵", () => {
+	const ids = ["a", "b", "c", "d", "e", "f", "g"];
+	const probs = Object.fromEntries(ids.map((id, i) => [id, i === 0 ? 0.7 : 0.05]));
+	const gate = fc.jevChoiceConfidence(probs, ids);
+	assert.ok(typeof gate === "number");
+	assert.ok(Math.abs(gate! - (0.7 - 1 / 7) / (1 - 1 / 7)) < 1e-12, `7 候选 0.7 → ${gate}`);
+	// 同样的 0.6 选项概率在 32 个候选下仍接近阈值；归一化熵那套会掉到约 0.41，必然被拒。
+	const ids32 = Array.from({ length: 32 }, (_, i) => `c${i}`);
+	const probs32 = Object.fromEntries(ids32.map((id, i) => [id, i === 0 ? 0.6 : 0.4 / 31]));
+	const gate32 = fc.jevChoiceConfidence(probs32, ids32)!;
+	assert.ok(gate32 > 0.58 && gate32 < 0.6, `32 候选 0.6 → ${gate32}`);
+	assert.ok(Math.abs(fc.jevChoiceConfidence({ a: 0.9, b: 0.1 }, ["a", "b"])! - 0.8) < 1e-9);
+	assert.equal(fc.jevChoiceConfidence({ a: 0.4 }, ["a"]), undefined, "单候选不合成置信度，退回协议值");
+	assert.equal(fc.jevChoiceConfidence({ a: 0, b: 0 }, ["a", "b"]), 0, "总和 0 视为均匀 → 0");
+	assert.equal(fc.jevChoiceConfidence({ a: 0.9 }, ["a", "b"]), undefined, "缺候选概率不部分信任");
+	assert.equal(fc.jevChoiceConfidence({ a: 0.9, b: Number.NaN }, ["a", "b"]), undefined);
+	assert.equal(fc.jevChoiceConfidence(undefined, ["a"]), undefined);
+	// 候选集合本身的边界：重复 / 空 id、少于 2 个候选、概率越界一律 undefined（不部分信任）。
+	assert.equal(fc.jevChoiceConfidence({ a: 0.9, b: 0.1 }, ["a", "a"]), undefined, "重复候选 id");
+	assert.equal(fc.jevChoiceConfidence({ a: 0.9, b: 0.1 }, ["a", ""]), undefined, "空候选 id");
+	assert.equal(fc.jevChoiceConfidence({ a: 0.9, b: 0.1 }, ["a"]), undefined, "单候选");
+	assert.equal(fc.jevChoiceConfidence({ a: 1.2, b: -0.2 }, ["a", "b"]), undefined, "概率越界");
+});
+
+test("阈值比较保原始精度：0.59996 不因四舍五入变成 0.6", async () => {
+	fc._resetFastComputerState();
+	const justBelow = fc.jevChoiceConfidence({ a: 0.79998, b: 0.20002 }, ["a", "b"])!;
+	assert.ok(Math.abs(justBelow - 0.59996) < 1e-12, `原始精度保留：${justBelow}`);
+	const r1 = await fc.selectFastAction({ key: "kprec1", goal: "g", candidates: [cand("a"), cand("b")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", decisionConfidence: justBelow })), settings: settings({ threshold: 0.6 }) });
+	assert.equal(r1.kind === "fallback" && r1.reason, "low_confidence", "0.59996 必须被 0.6 拒绝");
+	const justAbove = fc.jevChoiceConfidence({ a: 0.80002, b: 0.19998 }, ["a", "b"])!;
+	const r2 = await fc.selectFastAction({ key: "kprec2", goal: "g", candidates: [cand("a"), cand("b")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", decisionConfidence: justAbove })), settings: settings({ threshold: 0.6 }) });
+	assert.equal(r2.kind, "selected", "0.60004 必须通过 0.6");
+});
+
+test("classifier 解析：decisionConfidence 从概率换算，协议 confidence 原样保留", () => {
+	const ids = ["a", "b", "c", "d", "e", "f", "g"];
+	const probabilities = Object.fromEntries(ids.map((id, i) => [id, i === 0 ? 0.7 : 0.05]));
+	const base = { provider: "local-laya", model: "multilingual", api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1 };
+	const out = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.41, probabilities } } }, ids);
+	assert.equal(out.kind, "selected");
+	if (out.kind === "selected") {
+		assert.equal(out.confidence, 0.41, "协议原值不改");
+		assert.ok(Math.abs(out.decisionConfidence! - (0.7 - 1 / 7) / (1 - 1 / 7)) < 1e-12);
+	}
+});
+
+test("classifier 解析：choice 必须是唯一最高概率，否则不可执行", () => {
+	const base = { provider: "local-laya", model: "multilingual", api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1 };
+	// wire 选了低概率的 b，但 a 才是 max(p) —— 不能拿 a 的概率给 b 放行。
+	const mismatch = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "b", confidence: 0.9, probabilities: { a: 0.9, b: 0.1 } } } }, ["a", "b"]);
+	assert.equal(mismatch.kind, "abstain");
+	if (mismatch.kind === "abstain") assert.match(mismatch.reason ?? "", /不是概率最高/);
+	const tied = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.9, probabilities: { a: 0.5, b: 0.5 } } } }, ["a", "b"]);
+	assert.equal(tied.kind, "abstain");
+});
+
+test("阈值按 decisionConfidence 判定：熵低但选项概率够 → 选中", async () => {
+	fc._resetFastComputerState();
+	const r = await fc.selectFastAction({ key: "kg1", goal: "g", candidates: [cand("a"), cand("b")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", confidence: 0.41, decisionConfidence: 0.65 })), settings: settings({ threshold: 0.6 }) });
+	assert.equal(r.kind, "selected");
+	if (r.kind === "selected") {
+		assert.equal(r.confidence, 0.41);
+		assert.equal(r.decisionConfidence, 0.65);
+	}
+});
+
+test("阈值按 decisionConfidence 判定：概率不够 → 回退，详情带上两个数", async () => {
+	fc._resetFastComputerState();
+	const r = await fc.selectFastAction({ key: "kg2", goal: "g", candidates: [cand("a"), cand("b")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", confidence: 0.9, decisionConfidence: 0.55, probabilities: { a: 0.7, b: 0.3 } })), settings: settings({ threshold: 0.6 }) });
+	assert.equal(r.kind === "fallback" && r.reason, "low_confidence");
+	if (r.kind === "fallback") {
+		assert.match(r.detail ?? "", /0\.55/);
+		assert.match(r.detail ?? "", /选项概率 0\.7/);
+		assert.match(r.detail ?? "", /协议 confidence 0\.9/);
+	}
+});
+
+test("没有概率时退回协议 confidence（不合成）", async () => {
+	fc._resetFastComputerState();
+	const r = await fc.selectFastAction({ key: "kg3", goal: "g", candidates: [cand("a")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", confidence: 0.7 })), settings: settings({ threshold: 0.6 }) });
+	assert.equal(r.kind, "selected");
+});
+
+// ---------------------------------------------------------------- 熔断 / capture 新鲜度
+
+test("用户取消（signal aborted）不计入熔断：可重试", async () => {
+	fc._resetFastComputerState();
+	let calls = 0;
+	const chooser = createMockChooser(() => (calls++, { kind: "error", error: "timeout" }));
+	for (let i = 0; i < 4; i++) {
+		const ac = new AbortController();
+		ac.abort();
+		const r = await fc.selectFastAction({ key: "kabort", goal: "g", candidates: [cand("a")], chooser, settings: settings(), signal: ac.signal });
+		assert.equal(r.kind === "fallback" && r.reason, "timeout");
+	}
+	assert.equal(calls, 4, "取消不该触发 circuit_open，用户可重试");
+});
+
+test("保存设置清掉熔断（换模型 / 改阈值后能再试）", async () => {
+	fc._resetFastComputerState();
+	let calls = 0;
+	const chooser = createMockChooser(() => (calls++, { kind: "abstain" }));
+	for (let i = 0; i < 3; i++) await fc.selectFastAction({ key: "kreset", goal: "g", candidates: [cand("a")], chooser, settings: settings() });
+	const blocked = await fc.selectFastAction({ key: "kreset", goal: "g", candidates: [cand("a")], chooser, settings: settings() });
+	assert.equal(blocked.kind === "fallback" && blocked.reason, "circuit_open");
+	fc.saveFastComputerSettings({ enabled: true, threshold: 0.5 });
+	const after = await fc.selectFastAction({ key: "kreset", goal: "g", candidates: [cand("a")], chooser, settings: fc.fastComputerSettings() });
+	assert.equal(after.kind === "fallback" && after.reason, "abstain");
+	assert.equal(calls, 4);
+});
+
+test("captureId 每次唯一，且不进模型输入：同 goal/候选的 classifier context 完全一致", async () => {
+	fc._resetFastComputerState();
+	const contexts: unknown[] = [];
+	const chooser = createClassifierChooser({
+		provider: "local-laya",
+		model: "multilingual",
+		classify: async (_p, _m, context) => {
+			contexts.push(context);
+			return { provider: "local-laya", model: "multilingual", api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1, answers: { pick: { type: "choice", choice: "a", confidence: 1, probabilities: { a: 0.9, b: 0.1 } } } };
+		},
+	});
+	const ids = [cand("a"), cand("b")];
+	await chooser.choose({ goal: "点提交", captureId: "cap-one", candidates: ids.map((c) => ({ id: c.id, label: c.label })) });
+	await chooser.choose({ goal: "点提交", captureId: "cap-two", candidates: ids.map((c) => ({ id: c.id, label: c.label })) });
+	assert.deepEqual(contexts[0], contexts[1], "captureId 不同但 goal/候选相同 → 模型输入必须完全一致");
+	assert.ok(!JSON.stringify(contexts[0]).includes("cap-"), "captureId 不得出现在模型输入里");
+
+	const seen: string[] = [];
+	const mock = createMockChooser((req) => (seen.push(req.captureId), { kind: "abstain" }));
+	await fc.selectFastAction({ key: "kcap", goal: "g", candidates: ids, chooser: mock, settings: settings() });
+	await fc.selectFastAction({ key: "kcap", goal: "g", candidates: ids, chooser: mock, settings: settings() });
+	assert.notEqual(seen[0], seen[1], "每次调用唯一 captureId（旧 capture 必须可区分地失效）");
+	assert.match(seen[0], /^cap-[0-9a-f]{16}$/);
+});
+
+test("并发同 key 同 id/label 但 args 已变：旧结果 capture_invalid，不会用新 capture 的参数", async () => {
+	fc._resetFastComputerState();
+	let release!: () => void;
+	const gate = new Promise<void>((r) => (release = r));
+	let calls = 0;
+	const chooser: FastActionChooser = {
+		id: "m",
+		label: "m",
+		nativeProbability: true,
+		async choose() {
+			calls++;
+			if (calls === 1) await gate;
+			return { kind: "selected", candidateId: "a" };
+		},
+	};
+	const oldCand: FastActionCandidate = { id: "a", label: "按钮：提交", tool: "click", args: { element_token: "old:1" } };
+	const newCand: FastActionCandidate = { ...oldCand, args: { element_token: "new:2" } };
+	const pOld = fc.selectFastAction({ key: "kaba", goal: "g", candidates: [oldCand], chooser, settings: settings() });
+	const pNew = fc.selectFastAction({ key: "kaba", goal: "g", candidates: [newCand], chooser, settings: settings() });
+	const nw = await pNew;
+	release();
+	const old = await pOld;
+	assert.equal(nw.kind, "selected");
+	if (nw.kind === "selected") assert.equal(nw.candidate.args.element_token, "new:2");
+	assert.equal(old.kind === "fallback" && old.reason, "capture_invalid", "旧 capture 被作废后必须拒绝，而不是落到新 capture 的 args");
 });

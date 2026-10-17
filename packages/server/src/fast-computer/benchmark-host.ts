@@ -12,7 +12,7 @@
  * 所有与真实世界交互都经注入的 `BenchmarkDriver`；测试注入假 driver，生产注入经统一 computer backend 的真实 driver。
  */
 import { selectFastAction, fastComputerSettings, type FastActionChooser, type FastComputerSettings } from "./index.ts";
-import { clickCandidatesFromWindowState, buildChooser, type FastTarget } from "./tool.ts";
+import { clickCandidatesFromBrowserRefs, clickCandidatesFromWindowState, buildChooser, type FastTarget } from "./tool.ts";
 import { createCuaTrialRunner } from "./benchmark-cua.ts";
 import {
 	onBenchmarkUpdate,
@@ -35,6 +35,9 @@ export interface FixtureWindowHandle {
 	windowToken: string;
 	fixtureId: string;
 	url: string;
+	/** 驱动自有浏览器 fixture：由 `get_browser_state` 绑定铸的会话级浏览器能力（页面观察/动作走它，不走原生 AX）。 */
+	targetId?: string;
+	tabId?: string;
 }
 
 /**
@@ -57,8 +60,8 @@ export interface BenchmarkDriver {
 	readWindow(handle: FixtureWindowHandle): Promise<ObservedWindow | null>;
 	/** 读取窗口状态（含 elements 与 element_token）。 */
 	observe(handle: FixtureWindowHandle): Promise<{ ok: true; structured: unknown } | { ok: false; error: string }>;
-	/** 派发动作；真实实现经统一 backend 的 guard / 审批 / 暂停。 */
-	execute(handle: FixtureWindowHandle, tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ isError: boolean }>;
+	/** 派发动作；真实实现经统一 backend 的 guard / 审批 / 暂停。失败时附一行可读原因（诊断用）。 */
+	execute(handle: FixtureWindowHandle, tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ isError: boolean; error?: string }>;
 }
 
 /** 一次基准评估的输入：显式点名的 provider/model（点哪条测哪条）+ 目标电脑。 */
@@ -192,6 +195,7 @@ export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 		const handle = opened.handle;
 		const prefixTool = handle.prefix === "hostpc" ? "mcp__hostpc__" : "mcp__computer__";
 		const fastTarget: FastTarget = { pid: handle.pid, window_id: handle.windowId, ...(handle.session ? { session: handle.session } : {}) };
+		const browserTarget = handle.targetId && handle.tabId ? { target_id: handle.targetId, tab_id: handle.tabId, ...(handle.session ? { session: handle.session } : {}) } : null;
 		const window: BenchmarkWindow = { prefix: handle.prefix, pid: handle.pid, windowId: handle.windowId, session: handle.session, windowToken: handle.windowToken, fixtureId };
 
 		const chooser = (opts.chooserFor ?? buildChooser)(settings);
@@ -201,19 +205,34 @@ export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 			throw new Error("没有可用的快速模型选择器（请检查快速操作模型设置）。");
 		}
 
+		const collect = (structured: unknown) =>
+			browserTarget ? clickCandidatesFromBrowserRefs(prefixTool, browserTarget, structured) : clickCandidatesFromWindowState(prefixTool, fastTarget, structured);
+
 		const runner = createCuaTrialRunner(window, {
 			readWindow: () => opts.driver.readWindow(handle),
 			observe: () => opts.driver.observe(handle),
-			collectCandidates: (structured) => clickCandidatesFromWindowState(prefixTool, fastTarget, structured),
+			collectCandidates: collect,
 			choose: (goal, candidates, signal) => selectFastAction({ key: `${handle.prefix}:${handle.pid}:${handle.windowId}`, goal, candidates, chooser, settings, signal }),
 			execute: (tool, args, signal) => opts.driver.execute(handle, tool, args, signal),
+			// 下拉选项是**程序侧固定输入**（不计入模型的点击/输入能力）：模型只负责点开下拉，
+			// 展开后由这里按任务声明的目标值点选项，再交给双证据判分。
+			afterSelect: async (task, _selected, signal) => {
+				const want = task.expect?.machine?.selected;
+				if (typeof want !== "string" || !want) return;
+				const observed = await opts.driver.observe(handle);
+				if (!observed.ok) return;
+				const option = collect(observed.structured).find((c) => c.label.includes(want));
+				if (!option) return;
+				await opts.driver.execute(handle, option.tool, option.args, signal);
+			},
 			readMachineState: async () => opts.store.getEvidence(fixtureId, nonce),
 		});
 
 		let started: FastBenchmarkResult;
 		try {
 			started = startBenchmark(
-				{ provider, model, provenance: opts.driver.provenance?.() ?? "unknown", window, tasks: opts.tasks ?? benchmarkFixtureTasks(), warmup: opts.warmup ?? 1, maxTrials: opts.maxTrials ?? 6, concurrency: 1 },
+				// 本次请求显式给的试次预算优先（用户点「测 4 题」就只跑 4 条），否则用宿主默认。
+				{ provider, model, provenance: opts.driver.provenance?.() ?? "unknown", window, tasks: opts.tasks ?? benchmarkFixtureTasks(), warmup: input.warmup ?? opts.warmup ?? 1, maxTrials: input.maxTrials ?? opts.maxTrials ?? 6, concurrency: 1 },
 				{
 					now: opts.now,
 					runTrial: async (task, ctx) => {

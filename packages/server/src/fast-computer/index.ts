@@ -4,13 +4,14 @@
  * 这一层是纯逻辑：设置读取、capture 登记、候选校验、超时、熔断、结果校验、用量回调。
  * 它**从不执行任何动作**；执行由调用方（工具层）拿 `selected.candidate` 后经既有电脑工具钩子完成。
  */
+import { randomBytes } from "node:crypto";
 import { getSetting, setSetting } from "../db.ts";
 import { INPUT_TOOLS } from "@pi-assistant/ext-computer";
 import { MAX_FAST_CANDIDATES } from "./choosers.ts";
 import type { FastActionCandidate, FastActionChooser, FastChoiceResult, FastSemanticTarget, FastUsage } from "./types.ts";
 
 export type { FastActionCandidate, FastActionChooser, FastChoiceRequest, FastChoiceResult, FastSemanticTarget, FastUsage } from "./types.ts";
-export { MAX_FAST_CANDIDATES, createChatChooser, createClassifierChooser, createMockChooser, parseChatChoice, parseClassifierChoice } from "./choosers.ts";
+export { MAX_FAST_CANDIDATES, createChatChooser, createClassifierChooser, createMockChooser, jevChoiceConfidence, parseChatChoice, parseClassifierChoice } from "./choosers.ts";
 
 // ---------------------------------------------------------------- 设置
 
@@ -63,11 +64,16 @@ export function fastComputerSettings(scope?: FastComputerScope): FastComputerSet
 
 const clamp = (v: unknown, min: number, max: number, dflt: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : dflt);
 
-/** 保存设置（只接受已知字段，做边界收敛）。默认关闭，不写就沿用默认。传 scope 只改这台电脑自己的设置。 */
+/** 保存设置（只接受已知字段，做边界收敛）。默认关闭，不写就沿用默认。传 scope 只改这台电脑自己的设置。
+ *
+ * 保存设置会清掉熔断计数：用户换模型 / 改阈值 / 关掉再打开，就是想重试，不该被同一窗口的历史失败
+ * 永久挡着（熔断原本只在选中成功时清零，进程不重启就一直是 circuit_open）。
+ */
 export function saveFastComputerSettings(patch: Partial<FastComputerSettings>, scope?: FastComputerScope): FastComputerSettings {
 	const cur = fastComputerSettings(scope);
 	const next: FastComputerSettings = { ...cur, ...patch };
 	setSetting(scope ? scopeKey(scope) : "fastComputer", next);
+	resetFastCircuit();
 	return fastComputerSettings(scope);
 }
 
@@ -95,12 +101,19 @@ interface Capture {
 	candidates: Map<string, FastActionCandidate>;
 }
 const captures = new Map<string, Capture>();
-let captureSeq = 0;
 
-/** 登记一次 capture；同一 key 的新 capture 作废旧 capture（模拟“快照更新后旧 capture 失效”）。返回 captureId。 */
+/**
+ * 登记一次 capture；同一 key 的新 capture 作废旧 capture（模拟“快照更新后旧 capture 失效”）。返回 captureId。
+ *
+ * captureId 是**每次调用唯一**的进程内授权 / 新鲜度 pin（`cap-<随机>`），**不喂给模型**：
+ * classifier 的 context 只有 goal + 候选 id/动作描述（见 choosers.ts），所以模型输入稳定；
+ * 同时旧结果必须能和新登记区分开 —— 内容寻址（key+候选摘要）会让「同一 key、同 id/label、
+ * 但 args/element_token 已变」的两次登记拿到同一个 id，旧结果就可能落到新 capture 的 args 上（ABA）。
+ * 唯一 id 下，旧 capture 被作废 → 旧结果 `capture_invalid`，绝不会用新 capture 的参数执行。
+ */
 export function registerCapture(key: string, candidates: FastActionCandidate[]): string {
 	for (const [id, c] of captures) if (c.key === key) captures.delete(id);
-	const id = `cap-${++captureSeq}-${Date.now().toString(36)}`;
+	const id = `cap-${randomBytes(8).toString("hex")}`;
 	captures.set(id, { key, candidates: new Map(candidates.map((c) => [c.id, c])) });
 	return id;
 }
@@ -110,7 +123,6 @@ export const getCapture = (id: string): Capture | undefined => captures.get(id);
 export function _resetFastComputerState() {
 	captures.clear();
 	failures.clear();
-	captureSeq = 0;
 }
 
 // ---------------------------------------------------------------- 熔断
@@ -137,7 +149,7 @@ export type FastFallbackReason =
 export type FastSelectResult =
 	| { kind: "disabled" }
 	| { kind: "fallback"; reason: FastFallbackReason; detail?: string }
-	| { kind: "selected"; candidate: FastActionCandidate; captureId: string; uncalibrated: boolean; confidence?: number; model?: string };
+	| { kind: "selected"; candidate: FastActionCandidate; captureId: string; uncalibrated: boolean; confidence?: number; decisionConfidence?: number; probabilities?: Record<string, number>; model?: string };
 
 export interface SelectFastActionInput {
 	/** capture / 熔断作用域键（如 `${session}:${pid}:${window_id}`） */
@@ -161,10 +173,11 @@ export async function selectFastAction(input: SelectFastActionInput): Promise<Fa
 	const bad = validateCandidates(input.candidates);
 	if (bad) return { kind: "fallback", reason: "invalid_candidates", detail: bad };
 	if (!input.chooser) return { kind: "fallback", reason: "no_chooser" };
-	if ((failures.get(input.key) ?? 0) >= CIRCUIT_LIMIT) return { kind: "fallback", reason: "circuit_open", detail: `同一目标连续 ${CIRCUIT_LIMIT} 次回退，本轮改用主模型` };
+	if ((failures.get(input.key) ?? 0) >= CIRCUIT_LIMIT) return { kind: "fallback", reason: "circuit_open", detail: `同一窗口（${input.key}）已连续 ${CIRCUIT_LIMIT} 次回退，本次不再调用快速模型；只有保存设置（或重启应用）会清空熔断，重新读取窗口不会` };
 
 	const captureId = registerCapture(input.key, input.candidates);
-	const offered = input.candidates.map((c) => ({ id: c.id, label: c.label }));
+	// 沿原 index 把 description 一起交给选择器：不改候选 ID / 个数 / 顺序，执行仍回候选表按 id 查回完整动作。
+	const offered = input.candidates.map((c) => ({ id: c.id, label: c.label, ...(c.description ? { description: c.description } : {}) }));
 	let result: FastChoiceResult;
 	try {
 		result = await input.chooser.choose({ goal: input.goal, captureId, candidates: offered }, input.signal);
@@ -177,15 +190,17 @@ export async function selectFastAction(input: SelectFastActionInput): Promise<Fa
 		input.onUsage?.({ provider: usageProvider(s), model: usageModel(s, result), input: result.usage.input, output: result.usage.output });
 	};
 
-	const fallback = (reason: FastFallbackReason, detail?: string): FastSelectResult => {
-		failures.set(input.key, (failures.get(input.key) ?? 0) + 1);
+	const fallback = (reason: FastFallbackReason, detail?: string, count = true): FastSelectResult => {
+		// 用户取消（signal aborted）不算失败：否则连按几次停止就会把快速路径永久熔断在这个窗口上。
+		if (count) failures.set(input.key, (failures.get(input.key) ?? 0) + 1);
 		record();
 		return { kind: "fallback", reason, detail };
 	};
 
 	if (result.kind === "error") {
 		const isTimeout = /timeout|abort/i.test(result.error);
-		return fallback(isTimeout ? "timeout" : "model_error", result.error);
+		const cancelled = input.signal?.aborted === true;
+		return fallback(isTimeout ? "timeout" : "model_error", result.error, !cancelled);
 	}
 	if (result.kind === "abstain") return fallback("abstain", result.reason);
 	if (result.kind === "reobserve") return fallback("reobserve", result.reason);
@@ -196,13 +211,25 @@ export async function selectFastAction(input: SelectFastActionInput): Promise<Fa
 	const candidate = cap.candidates.get(result.candidateId);
 	if (!candidate) return fallback("unknown_candidate", result.candidateId);
 
-	// 只有原生概率才应用阈值；chat 替代没有概率（uncalibrated），一律要求独立核验
-	if (input.chooser.nativeProbability && typeof result.confidence === "number") {
-		if (result.confidence < s.threshold) return fallback("low_confidence", `confidence ${result.confidence} < ${s.threshold}`);
+	// 只有原生概率才应用阈值；chat 替代没有概率（uncalibrated），一律要求独立核验。
+	// 比较的是 `decisionConfidence`（概率按 Jev 公式换算的标度），不是协议原样的 `confidence` ——
+	// Laya 的 `confidence` 是归一化熵，与本阈值不是一个量（见 types.ts / choosers.ts 的注释）。
+	const gate = result.decisionConfidence ?? result.confidence;
+	if (input.chooser.nativeProbability && typeof gate === "number") {
+		if (gate < s.threshold) return fallback("low_confidence", `置信度 ${gate} < ${s.threshold}${confidenceDetail(result, gate)}`);
 	}
 	failures.delete(input.key);
 	record();
-	return { kind: "selected", candidate, captureId, uncalibrated: !input.chooser.nativeProbability, confidence: result.confidence, model: result.model };
+	return { kind: "selected", candidate, captureId, uncalibrated: !input.chooser.nativeProbability, confidence: result.confidence, decisionConfidence: result.decisionConfidence, probabilities: result.probabilities, model: result.model };
+}
+
+/** 回退详情里把两个数都带上，好在一次运行里区分「熵低」与「概率低」。 */
+function confidenceDetail(r: { candidateId: string; confidence?: number; probabilities?: Record<string, number> }, gate: number): string {
+	const top = r.probabilities?.[r.candidateId];
+	const parts: string[] = [];
+	if (typeof top === "number") parts.push(`选项概率 ${top}`);
+	if (typeof r.confidence === "number") parts.push(`协议 confidence ${r.confidence}`);
+	return parts.length ? `（${parts.join("，")}；阈值比较值 ${gate}）` : "";
 }
 
 const usageProvider = (s: FastComputerSettings) => (s.kind === "systemone" ? s.provider || "jev" : s.provider || "fast");
@@ -222,6 +249,16 @@ interface StateElement extends FastSemanticTarget {
 
 const norm = (v: unknown) => (v === undefined || v === null ? "" : String(v));
 const sameActions = (a: string[] | undefined, b: string[] | undefined) => [...(a ?? [])].sort().join("\u0000") === [...(b ?? [])].sort().join("\u0000");
+
+/**
+ * 两个候选目标的语义身份是否一致：role / label / value 按 G2 的 `norm` 规则比较，actions 按集合比较。
+ * 显式候选范围（`fast_pick_action{candidates}`）执行前也要对**整组**候选做同一份校验，所以单独暴露，
+ * 不复制一套比较逻辑。缺任一语义身份 → false（不猜「没变」）。
+ */
+export function sameSemanticTarget(a: FastSemanticTarget | undefined, b: FastSemanticTarget | undefined): boolean {
+	if (!a || !b) return false;
+	return norm(a.role) === norm(b.role) && norm(a.label) === norm(b.label) && norm(a.value) === norm(b.value) && sameActions(a.actions, b.actions);
+}
 
 export type FreshCandidateResult = { ok: true; candidate: FastActionCandidate } | { ok: false; reason: "no_semantic" | "not_found" | "ambiguous" | "changed" };
 
@@ -244,7 +281,7 @@ export function resolveFreshCandidate(candidate: FastActionCandidate, structured
 	if (matches.length > 1) return { ok: false, reason: "ambiguous" };
 	const hit = matches[0];
 	if (!hit.element_token) return { ok: false, reason: "changed" };
-	if (norm(hit.value) !== norm(sem.value) || !sameActions(hit.actions, sem.actions)) return { ok: false, reason: "changed" };
+	if (!sameSemanticTarget({ role: hit.role, label: hit.label, value: hit.value, actions: hit.actions }, sem)) return { ok: false, reason: "changed" };
 	return { ok: true, candidate: { ...candidate, args: { ...candidate.args, element_token: hit.element_token } } };
 }
 

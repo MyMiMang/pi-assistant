@@ -105,7 +105,7 @@ function post(patch){
     });
   } catch (e) {}
 }
-function status(id, text){ var el=document.getElementById(id); if(el) el.textContent=text; }
+function status(id, text){ var el=document.getElementById(id); if(el){ el.textContent=text; el.setAttribute("aria-label", text); } }
 function h(html){ document.getElementById("app").innerHTML = html; }
 function main(){
   h(
@@ -113,10 +113,15 @@ function main(){
       '<button id="b-cancel">取消</button>' +
       '<button id="b-submit" data-hit>提交</button>' +
       '<button id="b-later">稍后再说</button>' +
-      '<select id="sel-city">' +
-        '<option value="">请选择城市</option><option>上海</option><option>北京</option><option>广州</option>' +
-      '</select>' +
+      '<button id="dd-city" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-label="城市">请选择城市</button>' +
       '<button id="b-next">下一步</button>' +
+    '</div>' +
+    // 自定义下拉（不用原生 <select>）：原生弹层是 OS 级窗口，后台拿不到 option 的可点 ref，
+    // 任务目标本来就是「点开下拉 → 在展开的选项里点北京」，所以用真实的按钮选项。
+    '<div id="menu-city" role="listbox" aria-label="城市选项" hidden>' +
+      '<button class="opt" role="option" data-city="上海">上海</button>' +
+      '<button class="opt" role="option" data-city="北京">北京</button>' +
+      '<button class="opt" role="option" data-city="广州">广州</button>' +
     '</div>' +
     '<div id="st-submit" role="status"></div>' +
     '<div id="st-city" role="status"></div>' +
@@ -128,14 +133,18 @@ function main(){
   var submit=document.getElementById("b-submit");
   var cancel=document.getElementById("b-cancel");
   var later=document.getElementById("b-later");
-  var city=document.getElementById("sel-city");
+  var dd=document.getElementById("dd-city");
+  var menu=document.getElementById("menu-city");
   var next=document.getElementById("b-next");
   var deep=document.getElementById("b-deep");
   cancel.onclick=function(){ post({ clicked: "cancel" }); };
   later.onclick=function(){ post({ clicked: "later" }); };
   submit.onclick=function(){ post({ clicked: "submit" }); status("st-submit","提交完成"); };
   deep.onclick=function(){ post({ clicked: "deep-target" }); status("st-deep","深度目标完成"); };
-  city.onchange=function(){ var v=city.value; if(v){ post({ selected: v }); status("st-city","已选择 "+v); } };
+  dd.onclick=function(){ var open=menu.hidden!==false; menu.hidden=!open; dd.setAttribute("aria-expanded", String(open)); };
+  Array.prototype.forEach.call(menu.querySelectorAll(".opt"), function(btn){
+    btn.onclick=function(){ var v=btn.getAttribute("data-city"); menu.hidden=true; dd.setAttribute("aria-expanded","false"); dd.textContent=v; post({ selected: v }); status("st-city","已选择 "+v); };
+  });
   next.onclick=function(){
     post({ step: 1 });
     // 动态布局：点「下一步」后出现第二步的「完成」按钮
