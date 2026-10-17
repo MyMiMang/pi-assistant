@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> **beta.31已推送、构建中（2026-10-18）**：新tag `v0.1.0-beta.31` 与源码main=`8b8260001ed283aca93e02b1ef59a433948d1ad8`，[Actions39060284276](https://github.com/MyMiMang/pi-assistant/actions/runs/39060284276)已启动。当前公开Latest仍beta.30；待各平台打包/安装启动/publish与最终资产清单核验，不自动安装。
+
 > **当前公开版 beta.30；beta.31 修复候选（2026-10-18，已获全部完成后推送打包授权）**：beta.30 [Actions39055072812](https://github.com/MyMiMang/pi-assistant/actions/runs/39055072812)五平台/Mac与Windows安装启动/publish均成功，2026-10-17T18:09:53Z公开Latest；主核13资产非零、6条manifest平台别名/URL版本及非空签名。下方“构建中/公开版beta.29”均为历史状态。
 >
 > beta.31候选修复空错误回复不显示、主题介绍越卡片、完整模型目录被压小；增加六档轻微真实色流/光晕/粒子、off静止与reduce停；暗夜排首且初始默认。两端tsc/build、59纯检查、24主题布局组合、四组合错误正文可见、目录真实尺寸、多时刻七档动效、Fast64通过，7关键截图主看。网络超时根因未确证，未调整超时或增加重试，不宣称连接问题已根治。详见[beta.31修复/测试/未验](../progress-snapshots/beta31-ui-hotfix.md)；[发布说明](release-notes/v0.1.0-beta.31.md)。候选未安装、未公开。
