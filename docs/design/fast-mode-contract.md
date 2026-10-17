@@ -91,7 +91,7 @@
 
 - 真实中转站（含 sub2api 部署）与真实付费请求；不同站点策略（filter / block / force_priority / free_openai_fast）、倍率与计费账单。
 - 真机 App、手机 390 真机；截图是 headless Chrome，不等于真机。
-- 群聊**没有输入栏模型层**（既有设计），Fast 按每个成员助理自己的 `agents.fast` 继承；本轮没有群聊 UI 的 Fast 入口可验收，不称「群聊 UI 完成」。子代理 Fast（`subagents.fast` null 跟随 / 1/0 覆盖）只有服务端 14/14 逻辑与路由覆盖，**未跑子代理会话的真实浏览器 UI**；子代理设置卡的 `patchSubagentFast` 也没有浏览器回归。
+- 群聊**没有输入栏模型层**（既有设计），Fast 按每个成员助理自己的 `agents.fast` 继承；本轮从 `runtime.ts` 复核：单聊 / 群成员会话都是 `attachFastMode(session, () => agentFast(this.id))`，后台任务 `agentFast(a.id)`，子代理 `resolveSubagentFast`。没有群聊 UI 的 Fast 入口可验收，不称「群聊 UI 完成」。子代理 Fast（`subagents.fast` null 跟随 / 1/0 覆盖）只有服务端 14/14 逻辑与路由覆盖，**未跑子代理会话的真实浏览器 UI**；子代理设置卡的 `patchSubagentFast` 也没有浏览器回归。
 - 消息 `meta.fast` 的真实 provider 回显（终止 / 非终止）只有 loopback 假 HTTP 与纯函数测试，**没有真实中转回显**；群里 / 后台 / 定时任务的 `Fast · …` 状态未在真实消息流里看过。
 - 全量 `npm test` / 全量 e2e。
 - `supported` 态目前没有服务级声明可用；不声称任何服务「真支持」具体模型。
