@@ -40,6 +40,12 @@
  *   PIA_BENCH_KEEP=1                保留 scratch 目录（默认保留日志、删权重副本）
  *   PIA_BENCH_APP_API=http://127.0.0.1:8787   生产 App 的本机 API（用于停 / 恢复 Laya；仅回环）
  *   PIA_BENCH_TIMEOUT_MS=4000       快速模型单次决策超时（生产默认 4000）
+ *   PIA_BENCH_HANDOFF=1             可选：不跑旧 4 题，跑**真实主模型接管**入口（见 scripts/laya-benchmark-handoff.mjs）
+ *     配合 12 分钟外部强超时：
+ *     PIA_BENCH_HANDOFF=1 node scripts/laya-benchmark-supervisor.mjs --timeout-ms=720000 -- \
+ *       node --import tsx scripts/laya-benchmark-isolated-harness.mjs
+ *     就绪后读本次 scratch 根的 handoff.json（origin / fixture / task / handler 文本 / 临时 nonce），
+ *     主模型用固定命令 observe / click / pointer / next / finish 自己接管，最后 finish 触发原清理 + 恢复生产 Laya。
  */
 // 只静态 import node 内置模块：hono / pi-mcp / TS 生产件**必须**在下面 env 设置之后动态 import
 // （静态 import 会被提升到模块体之前求值，那时 HOME / PIA_DATA_DIR 还是调用方的）。
@@ -64,7 +70,9 @@ const APP_API = process.env.PIA_BENCH_APP_API ?? "http://127.0.0.1:8787";
 const AGENT = process.env.PIA_BENCH_AGENT ?? "laya-bench-agent";
 const TIMEOUT_MS = Number(process.env.PIA_BENCH_TIMEOUT_MS ?? 4000);
 const KEEP = process.env.PIA_BENCH_KEEP === "1";
-const WATCHDOG_MS = Number(process.env.PIA_BENCH_WATCHDOG_MS ?? 9 * 60_000);
+// handoff 模式要等主模型自己操作：进程内兜底放宽到 11 分钟，让 supervisor 的 12 分钟强超时成为外层硬边界。
+const HANDOFF_MODE = process.env.PIA_BENCH_HANDOFF === "1";
+const WATCHDOG_MS = Number(process.env.PIA_BENCH_WATCHDOG_MS ?? (HANDOFF_MODE ? 11 * 60_000 : 9 * 60_000));
 const REAL_HOME = userInfo().homedir;
 const PROD_DATA = join(REAL_HOME, "Library", "Application Support", "Pi Assistant");
 
@@ -680,6 +688,178 @@ function runnerFor(taskLog) {
 	});
 }
 
+// ---------------------------------------------------------------- 6.5) 可选：真实主模型接管（PIA_BENCH_HANDOFF=1）
+// 不重跑旧 4 题：用**真实注册的** fastComputerExtension handler 跑一个真实 task 拿返回文本，
+// 再起一个仅 127.0.0.1 的小控制面，让主模型自己 observe / 挑 ref / 点（不选目标、不给坐标、不执行 JS）。
+// 同一个 MCP client、同一个 fixture、同一个自有 Laya；不新接 MCP / daemon，不建大框架。
+async function runHandoffMode() {
+	const { fastComputerExtension } = await import("../packages/server/src/fast-computer/tool.ts");
+	const { saveFastComputerSettings, fastComputerSettings } = await import("../packages/server/src/fast-computer/index.ts");
+	const { parseBrowserSnapshotView, browserSnapshotAsWindow } = await import("../packages/server/src/fast-computer/browser-snapshot.ts");
+	const handoffMod = await import("./laya-benchmark-handoff.mjs");
+
+	// 快速设置只写本次 scratch 数据目录；scope 与 handler 里的 `scopeOfPrefix("mcp__hostpc__")` 一致。
+	saveFastComputerSettings({ enabled: true, ...settings }, "hostpc");
+	const scoped = fastComputerSettings("hostpc");
+	report.handoff = { settings: { enabled: scoped.enabled, kind: scoped.kind, provider: scoped.provider, id: scoped.id, threshold: scoped.threshold, timeoutMs: scoped.timeoutMs, scope: "hostpc" }, chooser: "production buildChooser(默认，不 fake)", tasks: [] };
+
+	// 真实注册 handler：pi.registerTool 只做 stub 取 definition（不跑 pi 运行时）。
+	const ext = fastComputerExtension({ agentId: AGENT });
+	let definition = null;
+	ext.factory({ registerTool: (d) => { definition = d; } });
+	if (!definition?.execute) {
+		fail("拿不到 fast_pick_action 的真实 definition（注册失败）");
+		return;
+	}
+	const ctxTools = tools.map((n) => ({ name: `mcp__hostpc__${n}` }));
+	const ctx = {
+		tools: ctxTools,
+		executeTool: async (name, args) => {
+			const m = /^mcp__(hostpc|computer)__(.+)$/.exec(String(name));
+			if (!m) return { isError: true, result: { content: [{ type: "text", text: `未知工具：${name}` }] } };
+			const r = await invoke(m[1], m[2], args);
+			return { isError: r.isError, result: { structuredContent: r.structuredContent, content: [{ type: "text", text: r.contentText ?? "" }] } };
+		},
+	};
+
+	const handoffTasks = benchmarkFixtureTasks().filter((t) => handoffMod.HANDOFF_TASK_IDS.includes(t.id));
+	const expectedOf = (task) => {
+		const ui = task.expect?.ui ?? {};
+		const out = {};
+		if (typeof ui.role === "string") out.role = ui.role;
+		if (typeof ui.label_contains === "string") out.label_contains = ui.label_contains;
+		return Object.keys(out).length ? out : undefined;
+	};
+
+	const readSnapshot = async () => {
+		const r = await invoke("hostpc", "get_browser_state", { target_id: handle.targetId, tab_id: handle.tabId, snapshot_format: "semantic_v2", ...(handle.session ? { session: handle.session } : {}) });
+		if (r.isError) throw new Error(`读取页面快照失败：${String(r.contentText ?? "").slice(0, 300)}`);
+		const view = parseBrowserSnapshotView(r.structuredContent);
+		if (!view.ok) throw new Error(`页面快照不可用：${view.reason ?? "fail-closed"}`);
+		if ((view.targetId && view.targetId !== handle.targetId) || (view.tabId && view.tabId !== handle.tabId)) throw new Error("快照报回的 target / tab 与本次 fixture 不一致，拒绝继续");
+		const win = browserSnapshotAsWindow(r.structuredContent);
+		return { elements: win.elements ?? [], url: view.url, token: view.token };
+	};
+
+	const entries = [];
+	let current = null;
+	const newEntry = (task) => {
+		const e = { task: task.id, title: task.title, goal: task.goal, startedAt: Date.now(), commands: [], handlerText: null, handlerKind: null, handlerWallMs: null };
+		entries.push(e);
+		return e;
+	};
+	const finishEntry = async (e, task) => {
+		if (!e || e.finished) return e;
+		e.finished = true;
+		e.wallMs = Date.now() - e.startedAt;
+		const ev = store.getEvidence(fixtureId, nonce);
+		e.machine = { state: ev.state, updatedAt: ev.updatedAt };
+		e.ui = await uiEvidence().catch((err) => ({ ok: false, error: String(err?.message ?? err) }));
+		e.expected = task?.expect ?? null;
+		return e;
+	};
+
+	let handlerRuns = 0;
+	const runHandlerFor = async (task) => {
+		if (handlerRuns >= handoffMod.MAX_HANDLER_RUNS) throw new Error(`真实 handler 最多跑 ${handoffMod.MAX_HANDLER_RUNS} 次（本次已跑 ${handlerRuns}）`);
+		handlerRuns++;
+		store.reset(fixtureId, nonce);
+		await gotoFixture();
+		const t0 = Date.now();
+		const out = await definition.execute(`handoff-${task.id}`, { goal: task.goal, pid: handle.pid, window_id: handle.windowId, prefix: "hostpc", browser: { target_id: handle.targetId, tab_id: handle.tabId }, ...(expectedOf(task) ? { expected: expectedOf(task) } : {}) }, undefined, () => {}, ctx);
+		const text = (out?.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
+		const kind = /快速路径跳过/.test(text) ? "fallback" : /快速模型选了/.test(text) ? "selected" : "other";
+		return { text, wallMs: Date.now() - t0, kind };
+	};
+
+	let controlServer = null;
+	let finishResolve;
+	const finished = new Promise((r) => (finishResolve = r));
+	let currentTask = handoffTasks.find((t) => t.id === "pick-submit") ?? handoffTasks[0];
+	current = newEntry(currentTask);
+	try {
+		const first = await runHandlerFor(currentTask);
+		current.handlerText = first.text;
+		current.handlerKind = first.kind;
+		current.handlerWallMs = first.wallMs;
+		report.handoff.handlerRuns = handlerRuns;
+		log(`真实 handler（${currentTask.id}）kind=${first.kind} ${first.wallMs}ms`);
+	} catch (e) {
+		fail(`真实 handler 跑失败：${e instanceof Error ? e.message : String(e)}`);
+		return;
+	}
+
+	const control = handoffMod.createHandoffControl({
+		fixtureUrl,
+		fixtureId,
+		nonce,
+		invoke,
+		handle,
+		readSnapshot,
+		readMachine: async () => store.getEvidence(fixtureId, nonce),
+		taskOf: () => currentTask,
+		log,
+		onCommand: (entry) => current?.commands.push(entry),
+		onNext: async (taskId, runFast) => {
+			const task = handoffTasks.find((t) => t.id === taskId);
+			if (!task) throw new Error(`未知任务：${taskId}`);
+			await finishEntry(current, currentTask);
+			currentTask = task;
+			current = newEntry(task);
+			store.reset(fixtureId, nonce);
+			await gotoFixture();
+			if (runFast) {
+				const r = await runHandlerFor(task);
+				current.handlerText = r.text;
+				current.handlerKind = r.kind;
+				current.handlerWallMs = r.wallMs;
+				report.handoff.handlerRuns = handlerRuns;
+			}
+		},
+		onFinish: () => finishResolve(),
+	});
+	const listening = await control.listen();
+	controlServer = listening.server;
+	const origin = listening.origin;
+	report.handoff.control = { origin, path: "/command", nonceHeader: "x-pia-bench-nonce", methods: ["observe", "click", "pointer", "next", "finish"], loopbackOnly: true, bodyLimitBytes: 4096 };
+
+	// ready 文件：只写本次 scratch 根（不含 fixture store token；nonce 是本次内存态随机值，不是凭据）。
+	const ready = {
+		schema: "laya-benchmark-handoff/1",
+		origin,
+		path: "/command",
+		nonceHeader: "x-pia-bench-nonce",
+		controlNonce: nonce,
+		nonceNote: "ephemeral in-memory nonce for this run (not a credential / not a real key)",
+		fixture: { id: fixtureId, url: fixtureUrl, targetId: handle.targetId, tabId: handle.tabId, pid: handle.pid, windowId: handle.windowId, session: handle.session ?? null },
+		task: { id: currentTask.id, goal: currentTask.goal, expected: currentTask.expect ?? null, allowed: handoffMod.HANDOFF_TASK_IDS },
+		handler: { kind: current.handlerKind, text: current.handlerText, wallMs: current.handlerWallMs },
+		startedAt: new Date().toISOString(),
+	};
+	writeFileSync(join(root, "handoff.json"), JSON.stringify(ready, null, 2));
+	console.log("\n===== HANDOFF READY =====");
+	console.log(JSON.stringify(ready, null, 2));
+	log("handoff 控制面就绪", JSON.stringify({ origin, task: currentTask.id, handlerKind: current.handlerKind }));
+	notify({ type: "handoff_ready", origin, task: currentTask.id });
+
+	await finished;
+	if (controlServer) controlServer.close();
+	await finishEntry(current, currentTask);
+	report.handoff.tasks = handoffMod.summarizeHandoff(entries);
+	report.handoff.finishedAt = new Date().toISOString();
+	const tookOver = entries.filter((e) => e.handlerKind === "fallback" && (e.commands ?? []).some((c) => c.op === "click" && c.ok));
+	report.handoff.summary = {
+		entries: entries.length,
+		handlerRuns,
+		fallbacks: entries.filter((e) => e.handlerKind === "fallback").length,
+		selectedByFast: entries.filter((e) => e.handlerKind === "selected").length,
+		mainTakeoverClicked: tookOver.map((e) => e.task),
+		tasks: entries.map((e) => ({ task: e.task, handlerKind: e.handlerKind, commands: (e.commands ?? []).length, wallMs: e.wallMs ?? null, machine: e.machine?.state ?? null })),
+	};
+	state.exitCode = 0;
+}
+
+/** 读本次 scope 的快速设置（只读回显用，避免与 handler 内部 scope 解析不一致）。 */
 async function runTask(task, { scored }) {
 	const entry = { id: task.id, title: task.title, scored };
 	const ac = new AbortController();
@@ -707,6 +887,10 @@ async function runTask(task, { scored }) {
 }
 
 const tasks = benchmarkFixtureTasks();
+if (HANDOFF_MODE) {
+	await runHandoffMode();
+	await cleanup();
+}
 // 与生产 `startBenchmark` 一致的预热语义：先跑 1 条不计分，避免把冷启动当模型质量。
 await runTask(tasks[0], { scored: false });
 for (const task of tasks) {

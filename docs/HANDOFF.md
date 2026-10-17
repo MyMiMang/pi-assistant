@@ -6,6 +6,13 @@
 >
 > 接手时以本段、最新 `main` 和已发版 tag 为准。下面保留的“候选 / 未 push / 未 tag / 等测试槽”等是**发布前历史快照**，不再代表当前发布状态；不要重打旧 tag、重发旧资产或重复已完成测试。
 
+> **真实主模型接管入口（2026-10-17，`laya-benchmark-snapshot-fix` HEAD `3c06962` 之上；未 push / 未 tag / 未打包；本轮**没有**起 Chrome / driver / Laya / 模型）**
+>
+> - **新增** `scripts/laya-benchmark-handoff.mjs`（控制面 + 纯逻辑）+ `scripts/laya-benchmark-handoff.test.mjs`；`scripts/laya-benchmark-isolated-harness.mjs` 加 `PIA_BENCH_HANDOFF=1` 分支：不跑旧 4 题，用**真实注册的** `fastComputerExtension` definition 跑一个真实 task（`pick-submit` / `pick-city` / `dynamic-2step`，最多 3 次），拿到真实返回文本后起**仅 127.0.0.1** 的小控制面（`POST /command` + `x-pia-bench-nonce` + JSON + 4 KB body），固定命令 `observe / click / pointer / next / finish`；复用同一个 MCP client / fixture / 自有 Laya，不新接 daemon。
+> - **边界**：`click` 只接受主模型最近一次 `observe` 的 ref（快照更新即作废）；不传 target/tab/坐标、不执行 JS；`next` 只接受 3 个固定 task id；`expected` 只读给主模型判分、wrapper 不自动点击；trusted 报 `browser_input_trust_unavailable` 时同一回合先 observe 再 `dom_event`；`finish` 触发原清理 + 生产 Laya 恢复。ready 写本次 scratch 根 `handoff.json`（origin / fixture / task / handler 文本 / 临时内存态 nonce，不含 fixture token）。
+> - **顺带产品修补**：`packages/server/src/fast-computer/tool.ts` 的 `readWindowState` 补显式 `tree_format:"elements"`（driver 0.35 默认只回 markdown，没有 `element_token` → 原生候选会全空），`packages/server/test/fast-computer-tool.test.ts` 加断言。
+> - **实跑**：`node --test scripts/laya-benchmark-handoff.test.mjs` **9/9**；`test/fast-computer-tool.test.ts` **25/25**（含新断言）；`packages/server` `tsc --noEmit` exit 0。**未验**：真实 handler 接线与整条接管链路没在真实 daemon / 浏览器 / Laya 上跑过（本轮按主审要求不起），待主审后跑一次：`PIA_BENCH_HANDOFF=1 node scripts/laya-benchmark-supervisor.mjs --timeout-ms=720000 -- node --import tsx scripts/laya-benchmark-isolated-harness.mjs`。
+>
 > **产品 fast tool 补上网页目标（2026-10-17，`laya-benchmark-snapshot-fix`，HEAD `71494e0` 之上；未 push / 未 tag / 未打包；本轮**没有**起模型 / Chrome / driver）**
 >
 > **主审发现的真实产品差异**：`fast_pick_action` 以前只读 `get_window_state` 的原生 AX（`tool.ts` 自己的注释就写着「Chrome 后台窗口不暴露 web AX 子树，只能看到工具栏」），而网页链路 `clickCandidatesFromBrowserRefs` + `browser_click{ref}` 只长在 benchmark 里。所以 bench 的浏览器结果**不能**当成产品 fast tool 已支持网页；真实网页 fallback 时工具根本收集不到候选。

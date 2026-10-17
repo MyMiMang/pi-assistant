@@ -354,7 +354,8 @@ async function resolveBrowserTarget(
 
 /** 读原生窗口状态（`get_window_state {pid, window_id}`）。 */
 async function readWindowState(ctx: ExtensionToolContext, prefix: string, target: FastTarget): Promise<{ structured: unknown } | { error: string }> {
-	const r = await ctx.executeTool(`${prefix}get_window_state`, { pid: target.pid, window_id: target.window_id, ...(target.session ? { session: target.session } : {}), include_accessibility_tree: true, include_screenshot: false });
+	// 必须显式要 elements：driver 0.35 起默认只回精简 markdown（没有 element_token）→ 候选会全空。
+	const r = await ctx.executeTool(`${prefix}get_window_state`, { pid: target.pid, window_id: target.window_id, ...(target.session ? { session: target.session } : {}), tree_format: "elements", include_accessibility_tree: true, include_screenshot: false });
 	if (r.isError) return { error: `读取窗口状态失败：${outcomeText(r).slice(0, 300)}` };
 	return { structured: r.result?.structuredContent };
 }

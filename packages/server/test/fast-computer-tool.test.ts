@@ -96,6 +96,13 @@ test("G1：session 透传到 get_window_state 与 click 参数", async () => {
 	assert.equal(click!.args.session, "web", "执行 click 也要带 session");
 });
 
+test("G1：读原生窗口显式要 elements（driver 0.35 默认 markdown 没有 element_token）", async () => {
+	const { calls } = await runFastTool({ states: [preState, reState, postState] });
+	const gws = calls.filter((c) => c.name.endsWith("get_window_state"));
+	assert.ok(gws.length >= 2);
+	assert.ok(gws.every((c) => c.args.tree_format === "elements"), "每次读窗口都要显式 tree_format=elements");
+});
+
 test("G2：执行前重读并用新 element_token 派发（绝不复用旧 token）", async () => {
 	const { calls } = await runFastTool({ states: [preState, reState, postState] });
 	const click = calls.find((c) => c.name.endsWith("click"));

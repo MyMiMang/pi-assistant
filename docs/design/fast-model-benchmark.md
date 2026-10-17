@@ -317,3 +317,30 @@ benchmark 运行时，避免 `benchmark-host → tool → benchmark-driver` 循�
 **本轮验证范围（如实）**：只有假 MCP ctx 的定向单测（`fast-computer-tool` 24/24、`fast-computer*` 118/118、
 server `tsc` exit 0）。**没有**起真实 Chrome / 驱动 / Laya，网页路径未在真实页面跑过；benchmark 与产品共用同一份归一
 ≠ 已在真实网页验证。
+
+### 9.12 真实主模型接管入口（`PIA_BENCH_HANDOFF=1`，2026-10-17；**未在真实链路跑过**）
+
+> 目的：§9.10 只证到「工具返回 fallback」，**没证到主模型真能接手**。这一节给一个最小、可复核的接管入口，
+> 不重造 harness、不接第二个 MCP / daemon、不开新框架。
+
+- **复用**：`scripts/laya-benchmark-isolated-harness.mjs` 已准备好的自有 daemon + 自有 Laya + 驱动自有 fixture 浏览器 +
+  同一个 `McpClient`；`PIA_BENCH_HANDOFF=1` 时**不跑旧 4 题**。
+- **真实 handler**：`fastComputerExtension({agentId})` 的真实 definition（`pi.registerTool` 只做 stub 取 definition，
+  `ctx.executeTool` 经既有 `invoke` 走同一 MCP session），快速设置只写本次 scratch 数据目录（`saveFastComputerSettings(…, "hostpc")`，
+  与 `scopeOfPrefix("mcp__hostpc__")` 一致），chooser 用**生产 `buildChooser`**（不 fake）。一次运行最多注册 3 次（不额外 raw）。
+- **任务**：`pick-submit` / `pick-city` / `dynamic-2step` 之一（`scroll-target` 需要程序侧滚动协助，不算主模型能力）。
+  收到**真实 fallback 文本**后写 `handoff.json` 并起控制面；Laya 自己 selected 也照样记录并做独立 machine/UI 核验，主确认下一题，**不凑假 fallback**。
+- **控制面**：只 `127.0.0.1`、`POST /command`、`application/json`、body ≤ 4 KB、`x-pia-bench-nonce`（本次内存态随机值，不是凭据）。
+  命令固定 5 个：`observe` / `click{ref}` / `pointer{ref,action}` / `next{task,fast?}` / `finish`。
+  - `observe` 读 `semantic_v2`，返回 refs + 同快照的 UI（`role=status`）+ machine state + `expected`（判分可读，wrapper **不自动点击**）。
+  - `click` 只接受**最近一次 observe** 的 ref（快照更新即作废）；不传 target/tab/坐标、不执行 JS。
+  - trusted 报 `browser_input_trust_unavailable` 时，按工具规范**同一回合先 observe** 证明 ref 仍在，再 `input_route:"dom_event"`。
+  - `next` 只接受 3 个固定 task id，由 harness 做 `store.reset` + 重新导航；`finish` 触发原清理（停自有资源 + 恢复生产 Laya）。
+- **报告**：每题分开记「快模型自己做的（handler 文本 / decision）」与「主模型显式命令（ref / op / wall）」+ machine/UI 最终判断。
+- **运行（12 分钟外部强超时不变）**：
+  `PIA_BENCH_HANDOFF=1 node scripts/laya-benchmark-supervisor.mjs --timeout-ms=720000 -- node --import tsx scripts/laya-benchmark-isolated-harness.mjs`
+  就绪后读本次 scratch 根 `handoff.json`；进程内兜底在 handoff 模式放宽到 11 分钟，supervisor 仍是外层硬边界。
+- **已验 / 未验**：`scripts/laya-benchmark-handoff.test.mjs` 9/9（命令白名单 / ref 新鲜度 / fixture URL / HTTP 约束 / trusted→dom_event / next / finish 纯逻辑，假 invoke，不起 Chrome / driver / 模型）；
+  真实 handler 接线与整条链路**未在真实 daemon / 浏览器 / Laya 上跑过**，待主审后跑一次。
+- **顺带产品修补**：`tool.ts` 的 `readWindowState` 补显式 `tree_format:"elements"`（driver 0.35 起默认只回精简 markdown，没有 `element_token` → 原生候选会全空），
+  `fast-computer-tool.test.ts` 加断言钉住；不改 native 原行为、不宣称已验证 pid/window 绑定一致性。
