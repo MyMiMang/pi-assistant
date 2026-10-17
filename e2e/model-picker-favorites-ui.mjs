@@ -17,6 +17,7 @@ import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { closeModelPanel, openModelMenu } from "./model-menu-flow.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const DATA = `/tmp/pia-e2e-model-favorites-${process.pid}`;
@@ -70,12 +71,13 @@ try {
 	await page.goto(`${BASE}/?agent=${agent.id}`);
 	await page.getByTestId("model-picker").waitFor();
 
+	// 聊天入口是两层弹层：先紧凑层，点模型名才进目录；选完模型回到紧凑层（弹层不关），
+	// 所以关闭要按到底（Esc 先退一层），否则下一次「打开」实际是把它关掉。
 	const open = async () => {
-		await page.getByTestId("model-picker").click();
-		await page.getByTestId("model-menu").waitFor();
+		await openModelMenu(page);
 	};
 	const close = async () => {
-		await page.keyboard.press("Escape");
+		await closeModelPanel(page);
 		await page.waitForTimeout(60);
 	};
 	const ensureGroupOpen = async (menu, providerId) => {

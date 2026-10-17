@@ -2,6 +2,7 @@ import { Check, ChevronDown, CircleHelp, type LucideIcon, X } from "lucide-react
 import { type ButtonHTMLAttributes, type ReactNode, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchBlob } from "../api";
+import { escLayers } from "../esc-layer";
 
 export function cx(...c: (string | false | null | undefined)[]) {
 	return c.filter(Boolean).join(" ");
@@ -157,6 +158,30 @@ function Bubble({ id, pos, testid, children }: { id: string; pos: BubblePos; tes
 	);
 }
 /** 打开期间：点外部 / 滚动 / Escape 关闭。Escape 在捕获阶段只关这一层（不误关底层菜单 / 设置弹窗）。 */
+/**
+ * 叠加层的 Esc 归属：后打开的那一层（例如菜单里悬停出的 Fast 说明气泡）先处理这一下 Esc，
+ * 它关掉后这一下不再往下传 —— 所以「关说明」不会顺手把菜单一起关掉。见 `../esc-layer.ts`。
+ */
+export function useEscLayer(open: boolean, act: () => void) {
+	const fn = useRef(act);
+	fn.current = act;
+	useEffect(() => {
+		if (!open) return;
+		const layer = { consume: () => fn.current() };
+		const remove = escLayers.push(layer);
+		const esc = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			// 不是最上层（更晚打开的气泡 / 子弹层）就交回去，不抢先把下面这层关掉
+			if (!escLayers.isTop(layer)) return;
+			e.preventDefault();
+			e.stopPropagation();
+			fn.current();
+		};
+		document.addEventListener("keydown", esc, true);
+		return () => (document.removeEventListener("keydown", esc, true), remove());
+	}, [open]);
+}
+
 function useDismissBubble(open: boolean, anchor: RefObject<HTMLElement | null>, popId: string, close: () => void, onEscape?: () => void) {
 	useEffect(() => {
 		if (!open) return;
@@ -166,18 +191,15 @@ function useDismissBubble(open: boolean, anchor: RefObject<HTMLElement | null>, 
 			if (document.getElementById(popId)?.contains(t)) return;
 			close();
 		};
-		const esc = (e: KeyboardEvent) => {
-			if (e.key !== "Escape") return;
-			e.preventDefault();
-			e.stopPropagation();
-			onEscape?.();
-			close();
-		};
 		document.addEventListener("pointerdown", outside);
-		document.addEventListener("keydown", esc, true);
 		addEventListener("scroll", outside, true);
-		return () => (document.removeEventListener("pointerdown", outside), document.removeEventListener("keydown", esc, true), removeEventListener("scroll", outside, true));
-	}, [open, anchor, popId, close, onEscape]);
+		return () => (document.removeEventListener("pointerdown", outside), removeEventListener("scroll", outside, true));
+	}, [open, anchor, popId, close]);
+	// Esc 只关这一层气泡（最上层优先），不把底下的菜单 / 设置弹窗一起关掉
+	useEscLayer(open, () => {
+		onEscape?.();
+		close();
+	});
 }
 
 /**

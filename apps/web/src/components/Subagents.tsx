@@ -42,6 +42,8 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const ta = useRef<HTMLTextAreaElement>(null);
+	// Fast 保存中：1 秒一次的轮询拿到的还是旧值，不能让整份 setD 盖掉正在保存的开关
+	const fastSaving = useRef(false);
 	const agent = useStore((s) => s.agents.find((a) => a.id === d?.subagent.agent_id));
 	const dm = useConfiguredModels();
 	// 档位来源与实际选中的子代理模型一致（服务端也按这个模型 clamp）；用并集 helper，和主会话 / 助理默认同一套规则
@@ -53,7 +55,15 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 	useEffect(() => {
 		if (!visible) return;
 		let off = false;
-		const load = () => void api<NonNullable<typeof d>>(`/api/subagents/${id}`).then((v) => !off && setD(v)).catch((e) => !off && setErr(String(e)));
+		// 轮询只负责刷消息 / 状态：Fast 还在保存时只保留本地 fast 两个字段，不用轮询到的旧值盖掉用户刚点的开关
+		const load = () =>
+			void api<NonNullable<typeof d>>(`/api/subagents/${id}`)
+				.then((v) => {
+					if (off) return;
+					if (!fastSaving.current) return setD(v);
+					setD((x) => (x ? { ...v, subagent: { ...v.subagent, fast: x.subagent.fast, resolvedFast: x.subagent.resolvedFast } } : v));
+				})
+				.catch((e) => !off && setErr(String(e)));
 		load(); const t = setInterval(load, 1000);
 		return () => { off = true; clearInterval(t); };
 	}, [id, visible]);
@@ -74,6 +84,7 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 	useEffect(() => {
 		// 切到别的子代理：作废在飞响应，并清掉上一个子代理的保存中 / 错误提示，避免卡住新会话的开关
 		fastWrites.current.invalidate();
+		fastSaving.current = false;
 		setFastPending(false);
 		setFastErr("");
 		return () => fastWrites.current.invalidate();
@@ -84,6 +95,7 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 		const prevFast = d.subagent.fast ?? null;
 		const prevResolved = d.subagent.resolvedFast;
 		setFastErr(""); setFastPending(true);
+		fastSaving.current = true;
 		// 乐观：只改 fast 两个字段，保留同一时刻轮询 / 插话带来的消息与状态
 		setD((x) => (x ? { ...x, subagent: { ...x.subagent, fast: v === null ? null : v ? 1 : 0, resolvedFast: v === null ? agent?.fast === true : v } } : x));
 		try {
@@ -96,7 +108,10 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 			setD((x) => (x ? { ...x, subagent: { ...x.subagent, fast: prevFast, resolvedFast: prevResolved } } : x));
 			setFastErr("保存失败，已恢复原状态");
 		} finally {
-			if (fastWrites.current.isCurrent(gen)) setFastPending(false);
+			if (fastWrites.current.isCurrent(gen)) {
+				fastSaving.current = false;
+				setFastPending(false);
+			}
 		}
 	};
 	const send = async () => {

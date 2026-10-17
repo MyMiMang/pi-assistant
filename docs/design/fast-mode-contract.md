@@ -64,22 +64,29 @@
 ## 7. 界面
 
 - **左上角闪电是真按钮**（开 / 关），彻底替换原四角星；44px 透明命中区、20–22px 图标；`aria-pressed` 表示开关，不可用用 `aria-disabled`（仍可聚焦看原因，不用 native `disabled` 把 tooltip 也禁掉）；等待保存 `aria-busy` 且不响应重复点击；开启高亮、关闭低强调；颜色 / 圆角 / 动效走主题 token，覆盖 glass / warm / noir / pixel 与 DIY，reduced-motion 下无额外动画。
-- 悬停约 450ms 出短介绍（复用 `Help` 的气泡定位 / 样式 / 外部点击 / Esc 规则，新增极小的 `useHoverTip`）；focus 立即显示、Esc 只关气泡不误关菜单、触摸点按同时聚焦显示说明并切换；不使用 native `title` 作为唯一说明。
+- 悬停约 450ms 出短介绍（复用 `Help` 的气泡定位 / 样式 / 外部点击规则，新增极小的 `useHoverTip`）；focus 立即显示、触摸点按同时聚焦显示说明并切换；不使用 native `title` 作为唯一说明。
+- **Esc 按叠加顺序关**：菜单和气泡都监听 `document` 捕获阶段，同一节点上的监听器按注册顺序执行、`stopPropagation` 挡不住彼此，所以按「打开顺序」维护一个小栈（`apps/web/src/esc-layer.ts`）：只有最上层（例如菜单里悬停出的 Fast 说明）处理这一下 Esc，关掉后这一下不再往下传 —— 效果是「关说明不关菜单」，再按一次才关菜单，不把底层设置弹窗一起关。
 - 非推理 / 单档模型仍显示闪电（Fast 独立），不把 Fast 绑在「>1 档」上；协议不支持时显示原因，点击不产生请求。
-- **两层紧凑弹层**（聊天 / 输入栏入口）：默认只显示当前强度标题、可点击的当前模型名（带箭头）、Fast、滑块 / 必要重置；点模型名才进完整目录（搜索 / 服务分组 / 常用全部保留）；选完模型回紧凑层并更新头部；「返回」只退一层，不改模型 / 思考 / Fast；Esc 在目录里退一层、紧凑层才关闭；焦点回触发器 / 模型名；390 宽走底部弹层不溢出。管理型入口（默认模型设置页、组队成员编辑）仍直接打开完整目录，不砍模型管理功能。
+- **两层紧凑弹层**（聊天 / 输入栏入口）：默认只显示当前强度标题、可点击的当前模型名（带箭头）、Fast、滑块 / 必要重置；点模型名才进完整目录（搜索 / 服务分组 / 常用全部保留）；选完模型回紧凑层并更新头部；「返回」只退一层，不改模型 / 思考 / Fast；Esc 在目录里退一层、紧凑层才关闭；焦点回触发器 / 模型名（键盘 Enter 打开时直接落在模型名）；390 宽走底部弹层不溢出。**目录层只选模型**：强度滑块 / Fast 已在紧凑层，不在目录里重复一整套（管理型入口没有紧凑层，仍保留菜单里的强度块）。
+- 模型目录加载中 / 加载失败：紧凑层不冒充「不支持思考强度」，失败给「模型目录没加载出来 + 重试」（`error` + `onRetry` 复用 `useConfiguredModels().reload`），成功但无档位才是真不支持。
+- 管理型入口（默认模型设置页、组队成员编辑）仍直接打开完整目录，不砍模型管理功能。
+- **群聊没有输入栏模型层**（既有产品设计：群成员各自是一个助理，模型 / 思考 / Fast 都在该助理自己的输入栏设置）。所以群聊不做第二套紧凑弹层，Fast 取**每个成员助理自己的 `agents.fast`**（不是群级全局值），群消息的 `Fast · …` 状态用同一份 `meta.fast`；后台任务 / 定时任务同样用所属助理的值。不把「主会话有」写成「群聊也完成」。
 - 子代理会话复用同一 `ThinkingSlider` / 紧凑语义；其模型由候选池决定，头部只显示当前模型（不可从弹层换模型，不新增后端路由）。
-- 消息下方短状态（`Fast · …`）按第 5 节口径显示；回显 default / 冲突用可读提示，不隐藏。
+- 消息下方短状态（`Fast · …`）按第 5 节口径显示；回显 default / 冲突用可读提示，不隐藏；错误消息也显示（开着但因协议不支持 / 请求体异常没发出去时，用户要能看到「本次未请求」而不是只看到灯亮着）。
 
 ## 8. 测试与边界
 
-已跑（轻量，Node 24.19.0；临时数据目录 + 内存凭据 + loopback 假 HTTP，不连真实云、不发真实付费请求）：
+已跑（轻量；临时数据目录 + 内存凭据 + loopback 假 HTTP，不连真实云、不发真实付费请求）：
+
+- 主会话独立复核（`8a6b18b`，Node 24.19，外层临时 HOME / DATA / WORKSPACE / TMPDIR + `PIA_OFFLINE`）：上面 server 14 + 前端 43 = **57/57**，5.62s，exit 0。
+- 本轮 review 修复后（`8a6b18b` + 本次提交，Node 22.23.3 副本）：同样 14 + 44 = **58/58**（前端多出 1 条 Esc 归属测试）。两端 `tsc --noEmit` exit 0。
 
 - `packages/server/test/fast-mode.test.ts` **14/14**：真实 `createPiSession` + 本机 fake OpenAI 兼容端点抓**最终请求体**，证明关不附加、开只多 `service_tier=priority`、`reasoning_effort` 基线是具体 `medium` 且不变、再关恢复；组合已有 `onPayload` / `onProviderStreamEvent`；已有 tier 不被覆盖；400 与 403 各只发一次带参数请求；终止 / 非终止回显分类；换模型按实际 `api` 守卫；助理独立 / 子代理跟随与覆盖。
-- `e2e/fast-mode-frontend.test.mjs` + `e2e/thinking-slider-frontend.test.mjs` + `e2e/model-menu-two-level.test.mjs` **43/43**：闪电真按钮 / aria / 不可用仍可聚焦、非推理模型仍有 Fast、模型名可点击入口与空态、加载 / 失败不误报、default 文案不称标准档、非终止回显来源未确认、两层状态（初次紧凑 / 点模型名进目录 / 返回 / 选完返回 / Esc / 非聊天入口保持原样）。
+- `e2e/fast-mode-frontend.test.mjs` + `e2e/thinking-slider-frontend.test.mjs` + `e2e/model-menu-two-level.test.mjs` **44/44**：闪电真按钮 / aria / 不可用仍可聚焦、非推理模型仍有 Fast、模型名可点击入口与空态、加载 / 失败不误报、default 文案不称标准档、非终止回显来源未确认、两层状态（初次紧凑 / 点模型名进目录 / 返回 / 选完返回 / Esc / 非聊天入口保持原样）、Esc 归属（后打开的气泡先关、菜单不被顺手关）。**这些是纯逻辑 / 静态 DOM 断言，不冒充浏览器 DOM 行为**；真实浏览器里的 Esc / 焦点 / 悬停由下面 `e2e/fast-mode-ui.mjs` 覆盖（尚未运行）。
 
 **未跑 / 未验**：
 
 - 真实中转站（含 sub2api 部署）与真实付费请求；不同站点策略（filter / block / force_priority / free_openai_fast）、倍率与计费账单。
-- Chrome / 浏览器 / 真实构建 UI 贯通与截图、真机 App、手机 390 实际渲染（heavy 槽暂停，脚本未新增运行）。
+- Chrome / 浏览器 / 真实构建 UI 贯通与截图、真机 App、手机 390 实际渲染。脚本已按两层弹层更新（`e2e/model-menu-flow.mjs` 共用打开 / 关闭流程；`model-ui` / `model-picker-favorites-ui` / `thinking-slider-ui` / `thinking-slider-visual` / `composer-compact` 改为先开紧凑层再点模型名），并新增 `e2e/fast-mode-ui.mjs`（悬停说明、Esc 只关说明、真实 PATCH 保存 / 刷新持久化、失败回滚原因、键盘焦点、390、不支持协议不发请求）。**均未运行**：浏览器环境要等 heavy 槽的 native env helper 接线（`fast-mode-ui` 未接线时直接以退出码 2 说明原因，不会用真实 HOME 起 Chrome）。
 - 全量 `npm test` / 全量 e2e。
 - `supported` 态目前没有服务级声明可用；不声称任何服务「真支持」具体模型。

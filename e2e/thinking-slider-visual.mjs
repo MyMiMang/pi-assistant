@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { openCompact } from "./model-menu-flow.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const OUT = join(ROOT, "docs/screenshots");
@@ -281,19 +282,19 @@ try {
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto(`${BASE}/?agent=${agent.id}`);
 	await page.getByTestId("model-picker").waitFor();
-	await page.getByTestId("model-picker").click();
-	await page.getByTestId("model-menu").waitFor();
-	await page.locator('[data-testid="model-menu"] [data-testid="thinking-body"]').waitFor();
-	await page.locator('[data-testid="model-menu"]').screenshot({ path: join(OUT, "thinking-slider-composer-menu.png") });
+	// 两层弹层：滑块在紧凑层（第一层）；完整目录只选模型
+	const compact = await openCompact(page);
+	await compact.locator('[data-testid="thinking-body"]').waitFor();
+	await compact.screenshot({ path: join(OUT, "thinking-slider-composer-menu.png") });
 	console.log("  📷 docs/screenshots/thinking-slider-composer-menu.png");
 	// 主模型菜单的滑块头部必须是完整的：当前档中文 + 实际选中的模型名（不是写死的示例名）
-	const menuHead = await page.locator('[data-testid="model-menu"] .pa-think-head').evaluate((el) => ({ cur: el.querySelector(".pa-think-cur")?.textContent ?? "", model: el.querySelector(".pa-think-model")?.textContent ?? "" }));
+	const menuHead = await page.locator('[data-testid="model-picker-compact"] .pa-think-head').evaluate((el) => ({ cur: el.querySelector(".pa-think-cur")?.textContent ?? "", model: el.querySelector(".pa-think-model")?.textContent ?? "" }));
 	check(`主模型菜单：头部有当前档中文（${menuHead.cur}）`, ["关闭", "极简", "低", "中", "高", "超高", "最大"].includes(menuHead.cur), menuHead.cur);
 	check(`主模型菜单：头部是实际模型名（${menuHead.model}）`, menuHead.model === MAIN, menuHead.model);
 	// 连输入栏一起截一张：给用户看的是真实界面里的菜单，不是孤立的弹层
 	await page.screenshot({ path: join(OUT, "thinking-slider-composer-menu-context.png"), scale: "css" });
 	console.log("  📷 docs/screenshots/thinking-slider-composer-menu-context.png");
-	const menuShape = await page.locator('[data-testid="model-menu"] .pa-think-handle').evaluate((el) => {
+	const menuShape = await page.locator('[data-testid="model-picker-compact"] .pa-think-handle').evaluate((el) => {
 		const r = el.getBoundingClientRect();
 		return { w: r.width, h: r.height, text: el.textContent.trim(), bg: getComputedStyle(el).backgroundColor };
 	});

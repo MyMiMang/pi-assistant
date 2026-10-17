@@ -24,8 +24,24 @@
 
 3. **测试（轻量，已跑）**
    - `packages/server/test/fast-mode.test.ts` **14/14**（Node 24.19.0；真实 `createPiSession` → loopback fake OpenAI 抓最终 payload）：关无字段、开只多 priority、`reasoning_effort` 具体 `medium` 不变、再关恢复；组合 hook；已有 tier 不被覆盖；400 / 403 各只发一次；终止 / 非终止回显；换模型按实际 api；助理独立 / 子代理跟随覆盖。
-   - 前端纯逻辑 + 静态 DOM **43/43**：`e2e/fast-mode-frontend.test.mjs`（default 文案 / 来源未确认 / 已请求 / externally-configured）、`e2e/thinking-slider-frontend.test.mjs`（闪电 / aria / 非推理仍可用 / 空态 / 加载失败不误报）、`e2e/model-menu-two-level.test.mjs` 5/5（初次紧凑 / 点模型名 / 返回 / 选完 / Esc / 管理入口）。
+   - 前端纯逻辑 + 静态 DOM **43/43**（review 修复后 44/44）：`e2e/fast-mode-frontend.test.mjs`（default 文案 / 来源未确认 / 已请求 / externally-configured）、`e2e/thinking-slider-frontend.test.mjs`（闪电 / aria / 非推理仍可用 / 空态 / 加载失败不误报）、`e2e/model-menu-two-level.test.mjs` 5/5（初次紧凑 / 点模型名 / 返回 / 选完 / Esc / 管理入口）。
    - 两端 `tsc --noEmit` 0（server / web）。
+
+
+## review 修复（2026-10-17，同树，候选未发布）
+
+主会话复核 `8a6b18b`（独立复跑 14 + 43 = 57/57，Node 24.19）后指出 6 点，按实际代码逐条核对并修：
+
+1. **群聊入口**：`rg` 确认 `RoomChat` 没有 `ModelPickerButton` / Fast —— 这是既有产品设计（群成员各自是一个助理，模型 / 思考 / Fast 在该助理自己的输入栏设置），不是本功能的漏接。因此不另造群聊紧凑层；Fast 用**每个成员助理的 `agents.fast`**（主会话 / 后台 / 子代理 / 群成员对话在 `runtime.ts` 同一条会话路径），群消息的 `Fast · …` 与单聊共用 `BotTurn` 里的同一段。合同 §7 写明「不把主会话有写成群聊也完成」。
+2. **`patchAgentFast` 保存竞争**（`ModelPicker.tsx`）：改为**每个助理一份 `LatestWrite`**（复用 `latest-write.ts`）：只认最新一次，迟到成功不写确认值、迟到失败不回滚，回滚用服务端确认值；`ModelPicker` 加组件本地代次，切助理 / 卸载只清自己的 pending / error。没有新增 writer 或大框架。
+3. **子代理轮询盖 Fast**（`Subagents.tsx`）：`fastSaving` 期间轮询结果只保留本地 `fast` / `resolvedFast`，消息与状态继续刷新；`LatestWrite` 仍管代次；切子代理只清当前。
+4. **Esc 先后 + 目录重复**：核对出菜单与气泡都在 `document` 捕获阶段、同一节点 `stopPropagation` 挡不住彼此 → 旧实现按 Esc 连菜单一起关。新增 `apps/web/src/esc-layer.ts`（按打开顺序的小栈）+ `ui.tsx` 的 `useEscLayer`，气泡与 `usePopover` 共用；`ModelPickerButton` 在两层入口下不再给目录传整块强度 / Fast（管理型入口不变）；键盘 Enter 打开焦点落模型名。
+5. **加载 / 错误态**：`ModelPickerButton` 增 `error` / `onRetry`，`ThinkingSlider` 失败时给「模型目录没加载出来 + 重试」，不再显示成「不支持」。
+6. `packages/server/test/fast-mode.test.ts` 能力口径用例标题改成与断言一致（全部 `requestable-unverified`，官方 Responses 也不是 `supported`）。另：错误消息也显示 `Fast · …`。
+
+**本轮实跑**（Node 22.23.3 副本；临时 HOME / DATA / WORKSPACE / TMPDIR + 内存凭据 + loopback 假 HTTP）：`packages/server/test/fast-mode.test.ts` 14/14、`e2e/{fast-mode-frontend,model-menu-two-level,thinking-slider-frontend}.test.mjs` 44/44（合计 **58/58**，新增 1 条 Esc 归属测试）、`tsc --noEmit -p apps/web` exit 0。
+
+**e2e 脚本已准备好、未运行**：新增 `e2e/model-menu-flow.mjs`（打开紧凑层 / 点模型名进目录 / 关到底）、`e2e/fast-mode-ui.mjs`（悬停说明、Esc 只关说明、真实 PATCH 保存 + 刷新持久化、失败回滚与原因、键盘焦点、390、不支持协议不发请求）；`model-ui` / `model-picker-favorites-ui` / `thinking-slider-ui` / `thinking-slider-visual` / `composer-compact` 的打开路径改到紧凑层。浏览器环境等 heavy 槽的 native env helper 接线，`fast-mode-ui` 未接线时以退出码 2 说明（不会用真实 HOME 起 Chrome）。
 
 ## 未完成 / 未验（如实）
 

@@ -30,7 +30,7 @@ import { agentFast, resolveSubagentFast, setSubagentFastOverride } from "../src/
 import { memoryCredentialStore } from "./in-memory-credentials.ts";
 
 // ---------------------------------------------------------------- 纯函数
-test("能力口径：只认 OpenAI Responses / Chat Completions / Codex；官方 Responses 是 supported，其余 requestable-unverified", () => {
+test("能力口径：OpenAI Responses / Chat Completions / Codex 都只到 requestable-unverified（官方 OpenAI 也不冒充 supported），其它协议 unsupported", () => {
 	// 不按 provider 名字冒充「真支持」：官方 OpenAI 也只到 requestable-unverified（模型/账号仍可能拒绝或降级）
 	for (const [api, provider] of [["openai-responses", "openai"], ["openai-completions", "openai"], ["openai-codex-responses", "openai"], ["openai-completions", "my-relay"]]) {
 		assert.equal(fastCapability(api, provider).capability, "requestable-unverified", `${provider}:${api}`);

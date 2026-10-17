@@ -19,7 +19,8 @@ import { dedupeGroup, frequentModels, groupModelsByProvider, pickerPanelNext, pi
 import { THINKING_DESC, THINKING_LABEL } from "../thinking-slider";
 import { useStore } from "../store";
 import type { Provider } from "../types";
-import { cx } from "./ui";
+import { LatestWrite } from "../latest-write";
+import { cx, useEscLayer } from "./ui";
 import { ThinkingSlider, type FastControl } from "./ThinkingSlider";
 
 export { THINKING_DESC, THINKING_LABEL };
@@ -137,6 +138,12 @@ export function usePopover(placement: "up" | "down" = "down", opts?: { /** 返�
 	const onEscape = useRef(opts?.onEscape);
 	onEscape.current = opts?.onEscape;
 	const [style, setStyle] = useState<CSSProperties>({ position: "fixed", top: 0, left: 0, zIndex: 70, visibility: "hidden" });
+	// Esc 只关最上层（菜单里悬停出的说明气泡打开时，先关气泡、不误关菜单）；见 `ui.tsx` 的 useEscLayer
+	useEscLayer(open, () => {
+		// onEscape 返回 false = 只退一层（例如完整目录 → 紧凑弹层），不关整个弹层
+		const keepOpen = onEscape.current?.() === false;
+		if (!keepOpen) setOpen(false);
+	});
 	useEffect(() => {
 		if (!open) return;
 		// 菜单 portal 到了 body，点击判断要同时看触发器和菜单本身
@@ -145,17 +152,8 @@ export function usePopover(placement: "up" | "down" = "down", opts?: { /** 返�
 			// 点外部关闭，但不抢走被点元素的焦点（编辑不中断）；只关闭本层
 			if (!inside(e.target)) setOpen(false);
 		};
-		// 捕获阶段吃掉 Escape：菜单开着时按 Esc 只关菜单，不把底下的设置弹窗一起关掉
-		const k = (e: KeyboardEvent) => {
-			if (e.key !== "Escape") return;
-			e.stopPropagation();
-			// onEscape 返回 false = 只退一层（例如完整目录 → 紧凑弹层），不关整个弹层
-			const keepOpen = onEscape.current?.() === false;
-			if (!keepOpen) setOpen(false);
-		};
 		document.addEventListener("mousedown", h);
-		document.addEventListener("keydown", k, true);
-		return () => (document.removeEventListener("mousedown", h), document.removeEventListener("keydown", k, true));
+		return () => document.removeEventListener("mousedown", h);
 	}, [open]);
 	useLayoutEffect(() => {
 		if (!open) return;
@@ -191,19 +189,39 @@ async function patchAgent(agentId: string, body: Record<string, unknown>) {
 }
 
 /**
- * 只改助理的请求级 Fast：先乐观置值（界面立即反馈），失败回滚到原值并返回错误。
+ * 只改助理的请求级 Fast：先乐观置值（界面立即反馈），失败回滚到**服务端确认过的值**并返回错误。
  * 不碰 thinking / 模型字段（后端也是独立 UPDATE）。
+ *
+ * 同一个助理可能有多个入口同时在飞（单聊输入栏 / 另一个窗口 / 以后的设置页），所以每个助理共用一份
+ * `LatestWrite`：只认最后一次写入的响应，迟到的成功不盖新开关，迟到的失败不把界面推回旧值，
+ * 回滚也落在服务端确认值上（不把未确认的乐观值当真相）。每个助理一份，别的助理互不影响。
  */
+const fastWriters = new Map<string, LatestWrite>();
+function fastWriter(agentId: string, confirmed: boolean): LatestWrite {
+	const existing = fastWriters.get(agentId);
+	if (existing) return existing;
+	// 首次写入前，store 里的值来自服务端（`GET /api/agents`），可以当已确认的起点
+	const created = new LatestWrite(confirmed ? "1" : "0");
+	fastWriters.set(agentId, created);
+	return created;
+}
+
 async function patchAgentFast(agentId: string, next: boolean) {
-	const prev = useStore.getState().agents.find((a) => a.id === agentId)?.fast === true;
+	const w = fastWriter(agentId, useStore.getState().agents.find((a) => a.id === agentId)?.fast === true);
+	const gen = w.begin();
 	useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: next } : x)) }));
 	try {
 		const a = await api(`/api/agents/${agentId}`, { method: "PATCH", json: { fast: next } });
+		// 迟到的成功：用户已经又改了一次，这次结果不代表当前意图，不写确认值也不动界面
+		if (!w.isCurrent(gen)) return;
+		const confirmed = a.fast === true;
+		w.confirm(gen, confirmed ? "1" : "0");
 		// 只合并 fast：同一时间用户可能改了 thinking / 模型，整份覆盖会把那些更新的值写回旧的
-		useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: a.fast === true } : x)) }));
+		useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: confirmed } : x)) }));
 	} catch (e) {
-		// 只回滚 fast 字段，不碰别的字段
-		useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: prev } : x)) }));
+		const r = w.fail(gen);
+		// 仍是最后一次才回滚，且只回滚 fast 字段（不碰 thinking / 模型 / 消息）
+		if (r.rollback) useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: r.value === "1" } : x)) }));
 		throw e;
 	}
 }
@@ -309,11 +327,14 @@ export interface ModelMenuProps {
 	panelStyle?: CSSProperties;
 	/** 目录第一次还没加载完：不要显示「还没有配置模型服务」这种误判 */
 	loading?: boolean;
+	/** 目录这一次加载失败：给「没加载出来 + 重试」，不冒充「还没有配置模型服务」 */
+	error?: boolean;
+	onRetry?: () => void;
 	/** 从紧凑弹层进入完整目录时，给一个明确的返回动作（返回不改模型 / 思考 / Fast） */
 	onBack?: () => void;
 }
 
-export function ModelMenu({ id, models, providers, value, thinking, fast, picks, onPick, groupByProvider = true, header, panelRef, panelStyle, loading, onBack }: ModelMenuProps) {
+export function ModelMenu({ id, models, providers, value, thinking, fast, picks, onPick, groupByProvider = true, header, panelRef, panelStyle, loading, error, onRetry, onBack }: ModelMenuProps) {
 	const [q, setQ] = useState("");
 	const [openGroups, setOpenGroups] = useState<string[]>(() => (value?.provider ? [value.provider] : models[0] ? [models[0].provider] : []));
 	const nameOf = (p: string) => providers.find((x) => x.id === p)?.name ?? models.find((m) => m.provider === p)?.providerName ?? p;
@@ -344,7 +365,13 @@ export function ModelMenu({ id, models, providers, value, thinking, fast, picks,
 				</div>
 			)}
 			<div className="min-h-0 flex-1 overflow-y-auto">
-				{!models.length && (loading ? <div className="p-3 text-sm text-mut" data-testid={`${id}-loading`} role="status">正在加载模型…</div> : <div className="p-3 text-sm text-mut">还没有配置模型服务：在 设置 › 模型 里添加</div>)}
+				{!models.length &&
+					(loading ? <div className="p-3 text-sm text-mut" data-testid={`${id}-loading`} role="status">正在加载模型…</div> : error ? (
+						<div className="p-3 text-sm text-mut" data-testid={`${id}-error`} role="alert">
+							模型目录没加载出来。
+							{onRetry && <button type="button" className="pa-think-mini ml-2" data-testid={`${id}-retry`} onClick={() => onRetry()}>重试</button>}
+						</div>
+					) : <div className="p-3 text-sm text-mut">还没有配置模型服务：在 设置 › 模型 里添加</div>)}
 				{!!models.length && !shown.length && <div className="p-3 text-sm text-mut">没有匹配的模型</div>}
 				{frequent.length > 0 && (
 					<div className="py-1" data-testid={`${id}-frequent`}>
@@ -402,13 +429,19 @@ export interface ModelPickerButtonProps {
 	onOpen?: () => void;
 	/** 模型目录第一次还没加载完（菜单里不误报「还没有配置模型服务」） */
 	loading?: boolean;
+	/** 模型目录这一次加载失败：紧凑层给「加载失败 + 重试」，不冒充「不支持思考强度」 */
+	error?: boolean;
+	/** 重试拉模型目录（复用 useConfiguredModels 的 reload） */
+	onRetry?: () => void;
 	/** 输入栏 / 聊天入口：默认打开紧凑弹层（强度 + 模型名 + 闪电 + 滑块），点模型名才进完整目录 */
 	compact?: boolean;
 }
 
 /** 共用的「模型按钮 + 菜单」；聊天 / 群聊成员 / 子代理都用它，避免各写一套 */
-export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, fast, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen, loading, compact = false }: ModelPickerButtonProps) {
+export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, fast, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen, loading, error = false, onRetry, compact = false }: ModelPickerButtonProps) {
 	const btnRef = useRef<HTMLButtonElement>(null);
+	// 键盘（Enter / Space）打开时把焦点落进紧凑层的模型名，鼠标打开不抢焦点
+	const openedByKeyboard = useRef(false);
 	// 两层：compact = 默认紧凑弹层；list = 完整模型目录（搜索 / 服务分组 / 常用，全部保留）
 	const [layer, setLayer] = useState<"compact" | "list">("compact");
 	// 返回 / 选完模型后把焦点放回模型名（键盘不丢位置）；初次打开不抢焦点
@@ -444,14 +477,18 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 			models={models}
 			providers={providers}
 			value={value}
-			thinking={thinking ? { ...thinking, onPick: (l) => (applyPanel("close"), thinking.onPick(l)) } : null}
-			fast={fast}
+			// 两层入口的目录层只做「选模型」：思考强度 / Fast 已经在紧凑层，不在这里再摆一整套；
+			// 管理型入口（默认模型设置页 / 组队成员编辑）仍保留菜单里的强度块
+			thinking={twoLevel || !thinking ? null : { ...thinking, onPick: (l) => (applyPanel("close"), thinking.onPick(l)) }}
+			fast={twoLevel ? undefined : fast}
 			picks={picks}
 			groupByProvider={groupByProvider}
 			panelRef={menuRef}
 			panelStyle={style}
 			header={header?.(() => setOpen(false))}
 			loading={loading}
+			error={error}
+			onRetry={onRetry}
 			onBack={twoLevel ? () => applyPanel("back") : undefined}
 			onPick={(m) => {
 				// 选完模型回到紧凑层（展示新模型 / 真实档位 / Fast 状态）；不替调用方改别的值
@@ -466,9 +503,10 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 				ref={btnRef}
 				className={cx("pa-chip sm !shrink min-w-0", buttonClass)}
 				disabled={disabled}
-				onClick={() => {
+				onClick={(e) => {
 					if (open) applyPanel("close");
 					else {
+						openedByKeyboard.current = e.detail === 0;
 						onOpen?.();
 						applyPanel("open");
 					}
@@ -492,8 +530,11 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 								current={thinking.current}
 								modelName={value ? (models.find((m) => pickKey(m) === pickKey(value))?.name ?? value.id) : undefined}
 								onModelClick={() => applyPanel("openList")}
-								autoFocusModel={focusModel}
+								// 返回 / 选完模型后回模型名；键盘打开时也直接落在这里（鼠标打开不抢焦点）
+								autoFocusModel={focusModel || openedByKeyboard.current}
 								loading={loading}
+								error={error}
+								onRetry={onRetry}
 								fast={fast}
 								onPick={(l) => { if (l) { thinking.onPick(l); applyPanel("close"); } }}
 							/>
@@ -624,6 +665,14 @@ export function ModelPicker({ agentId }: { agentId: string }) {
 	// Fast 的保存态（乐观 / 失败回滚）；放在 early return 之前，保证 hook 顺序稳定
 	const [fastPending, setFastPending] = useState(false);
 	const [fastError, setFastError] = useState("");
+	// 组件本地的退化守卫：切到别的助理（或卸载）后，上一个助理的迟到失败 / 保存中不能落在新助理的界面上；
+	// 只清自己这个入口的状态，不动全局写入顺序（那是 patchAgentFast 里按助理一份的 LatestWrite）
+	const scope = useRef(0);
+	useEffect(() => {
+		scope.current += 1;
+		setFastPending(false);
+		setFastError("");
+	}, [agentId]);
 	if (!agent) return null;
 	const cur = agent.model;
 	const entry = d?.models.find((m) => m.provider === cur?.provider && m.id === cur?.id);
@@ -642,11 +691,12 @@ export function ModelPicker({ agentId }: { agentId: string }) {
 		error: fastError || undefined,
 		onToggle: () => {
 			if (fastPending) return;
+			const s = ++scope.current;
 			setFastError("");
 			setFastPending(true);
 			void patchAgentFast(agentId, !(agent.fast === true))
-				.catch(() => setFastError("保存失败，已恢复原状态"))
-				.finally(() => setFastPending(false));
+				.catch(() => { if (scope.current === s) setFastError("保存失败，已恢复原状态"); })
+				.finally(() => { if (scope.current === s) setFastPending(false); });
 		},
 	};
 	return (
@@ -666,6 +716,9 @@ export function ModelPicker({ agentId }: { agentId: string }) {
 			}}
 			text={text}
 			hideTextInNarrow
+			loading={d.loading}
+			error={d.error}
+			onRetry={d.reload}
 			onOpen={d.reload}
 			buttonClass="max-w-[220px] max-sm:max-w-[120px]"
 			title="选择这个助理用的模型和思考强度"

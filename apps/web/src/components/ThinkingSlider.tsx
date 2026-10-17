@@ -65,6 +65,8 @@ export interface ThinkingSliderProps {
 	/** 模型目录还没加载完 / 这次加载失败：不要误报「不支持思考强度」 */
 	loading?: boolean;
 	error?: boolean;
+	/** 目录加载失败时的重试动作（有就给一个真按钮；管理型入口靠已有的重试，这里不重复造） */
+	onRetry?: () => void;
 }
 
 /**
@@ -87,7 +89,7 @@ export interface FastControl {
 	onFollow?: () => void;
 }
 
-export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, autoFocus = false, fast, onModelClick, autoFocusModel = false, loading = false, error = false }: ThinkingSliderProps & { fast?: FastControl }) {
+export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, autoFocus = false, fast, onModelClick, autoFocusModel = false, loading = false, error = false, onRetry }: ThinkingSliderProps & { fast?: FastControl }) {
 	const view = thinkingSliderView({ levels, current, followLabel, effective });
 	const reduced = useReducedMotion();
 	const [idx, setIdx] = useState(view.index);
@@ -220,7 +222,10 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 				{loading ? (
 					<p className="pa-think-empty" data-testid={`${testid}-loading`} role="status" aria-live="polite">正在加载模型档位…</p>
 				) : error ? (
-					<p className="pa-think-empty" data-testid={`${testid}-error`} role="alert">模型目录没加载出来，点上面的模型名可以重试或换一个。</p>
+					<p className="pa-think-empty" data-testid={`${testid}-error`} role="alert">
+						模型目录没加载出来。
+						{onRetry && <button type="button" className="pa-think-mini ml-2" data-testid={`${testid}-retry`} onClick={() => onRetry()}>重试</button>}
+					</p>
 				) : !modelName && onModelClick ? (
 					<p className="pa-think-empty" data-testid={`${testid}-no-model`}>还没有选择模型，点上面的「选择模型」开始。</p>
 				) : (

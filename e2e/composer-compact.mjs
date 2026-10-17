@@ -11,6 +11,7 @@ import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { openCompact } from "./model-menu-flow.mjs";
 
 const ROOT = new URL("..", import.meta.url);
 const { fileURLToPath } = await import("node:url");
@@ -133,9 +134,8 @@ try {
 	check("1280-挤压：权限按钮可点开菜单", true);
 	await page.getByTestId("host-tier-pill").click();
 	await page.waitForTimeout(150);
-	await page.getByTestId("model-picker").click();
-	await page.getByTestId("model-menu").waitFor();
-	check("1280-挤压：模型按钮可点开菜单", true);
+	await openCompact(page);
+	check("1280-挤压：模型按钮可点开紧凑层", true);
 	await page.getByTestId("model-picker").click();
 	await page.waitForTimeout(150);
 

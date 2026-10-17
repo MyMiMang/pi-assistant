@@ -196,7 +196,7 @@ export function BotPart({ p, live, busy, renderSubagent, onQuote, onJump, intera
 			</div>
 			{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} /> : null}
 			{m.meta.usage && m.status === "done" ? <UsageLine u={m.meta.usage as MsgUsage} model={String(m.meta.model ?? "")} /> : null}
-			{m.meta.fast && m.status === "done" ? <FastLine meta={m.meta.fast as MessageFastMeta} /> : null}
+			{m.meta.fast && (m.status === "done" || m.status === "error") ? <FastLine meta={m.meta.fast as MessageFastMeta} /> : null}
 		</>
 	);
 }
