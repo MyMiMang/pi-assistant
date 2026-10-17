@@ -72,7 +72,7 @@ import {
 	subscribeSession,
 	INTERJECTION_PREFIX,
 } from "./pi-adapter/index.ts";
-import { attachFastMode, type FastSnapshot, type FastTracker } from "./pi-adapter/fast-mode.ts";
+import { attachFastMode, fastMetaOf, type FastTracker } from "./pi-adapter/fast-mode.ts";
 import { notify } from "./push.ts";
 import { requests } from "./requests.ts";
 import { dockerOperations, sandboxMode } from "./sandbox.ts";
@@ -165,17 +165,6 @@ export function setRoomHooks(h: RoomHooks) {
 	roomHooks = h;
 }
 
-/**
- * 消息 meta 里的 Fast 短对象：只在「真的请求了 / 服务回显了 / 请求里本来就有 tier」时记录，
- * 关着且什么都没发生就不写，避免每条消息都带一个恒定的 off。不存 raw payload / body / header。
- */
-function fastMeta(snap: FastSnapshot | undefined) {
-	if (!snap) return null;
-	const relevant = snap.requested || snap.observedKind !== "unknown" || snap.reportedKind !== "unknown" || snap.status === "conflict" || snap.status === "externally-configured";
-	if (!relevant) return null;
-	return { requested: snap.requested, status: snap.status, capability: snap.capability, api: snap.api, observed: snap.observed, observedKind: snap.observedKind, reported: snap.reported, reportedKind: snap.reportedKind, ...(snap.reason ? { reason: snap.reason } : {}) };
-}
-
 /** 把一个 Pi 会话的事件落盘并广播。 */
 function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void, subagentId?: string, pendingUserEntries?: string[], fastTracker?: FastTracker) {
 	const insert = (m: Parameters<typeof insertMessage>[0]) => insertMessage({ ...m, subagentId });
@@ -245,13 +234,13 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 						console.error("[usage] 记录用量失败", err);
 					}
 				}
-				if (e.error) updateMessage(cur.id, { content: e.text, status: "error", meta: { error: e.error } });
+				const fm = fastMetaOf(fastTracker?.snapshot());
+				if (e.error) updateMessage(cur.id, { content: e.text, status: "error", meta: { error: e.error, ...(fm ? { fast: fm } : {}) } });
 				else {
 					// 有些模型把思考写进正文（<think>…</think> / 只剩半截 “…</thinking>”）：正文只留回答，思考放进 meta.thinking（App 里折叠显示）
 					// App 里折叠显示；渠道出站另行剥离
 					const { text, thinking: inline } = splitThinking(e.text);
 					const thinking = [cur.thinking.trim(), inline].filter(Boolean).join("\n\n");
-					const fm = fastMeta(fastTracker?.snapshot());
 					if (!text.trim() && !thinking) deleteMessage(cur.id);
 					else updateMessage(cur.id, { content: text, status: "done", meta: { model: `${e.provider}/${e.model}`, ...(usage ? { usage } : {}), ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}), ...(fm ? { fast: fm } : {}) } });
 				}

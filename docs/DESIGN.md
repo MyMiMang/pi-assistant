@@ -1688,3 +1688,17 @@ task_wait({
 **前端**：`MessageActions` 在 user 消息上加「另开新对话」（引用按钮不动、每条仍在）；右键 / 长按菜单同项；点击 → 切到新对话 + 提示，正文放回输入框（**不自动发送**）。输入框文字改为按「助理 + 对话」分桶的 `composerDrafts` store，切对话 / fork 切换各留各的草稿，不丢字、不串对话。
 
 **验证**：见 HANDOFF 同日条目。
+
+## 32. 请求级 Fast（OpenAI `service_tier`，候选未发布）
+
+**需求**（用户原话大意）：「中转站也有 fast，传参数，和 Codex 一样」；「左上角星星改闪电，鼠标放上去一会介绍做什么」。用户明确作废早先误选的「降低思考强度来提速」。Fast 是**请求级参数**，与思考强度 / 模型选择 / 电脑快速操作模型（Jev / Laya）彼此独立；不得为了保 Fast 换模型或改档位。
+
+**接入**：只在 `session.agent.onPayload`（Pi 1.3.0 公开 hook，每次 provider 请求含工具循环 / 自动重试）里读当前开关与**本次实际 model.api**，允许时附加固定 `service_tier: "priority"`；`onProviderStreamEvent` 只读观察。组合已有 hook、不覆盖别的 instrumentation；关掉不附加、也不补 `auto/default`；不删除参数自动重试（400 / 403 原样、只发一次）。
+
+**状态**：`agents.fast`（主会话 / 群成员 / 后台 / 定时用所属助理）+ `subagents.fast`（null 跟随，1/0 覆盖）；两列与 thinking 独立。前端各 context 用各自值，保存中禁重复、失败只回滚 fast 字段。
+
+**能力 / 回显口径**：`supported / requestable-unverified / unsupported`；当前没有服务级声明，统一不冒充真支持，协议不支持写「当前接口暂未接入 Fast」（不写「Anthropic 没有 Fast」）。只有终止事件（`response.completed/done/incomplete/failed`）的 tier 才可能是实际档位；`response.created` / Chat Completions chunk 只算 reported。`default` 回显不等于标准计费、也不等于没走 Fast，界面只写「服务回显 default（实际加速未确认）」；`priority` 只写「服务回显 Fast」，不保证更快；无回显只写「已请求」。消息 `meta.fast` 存短对象，开着却没发 / 错误消息也保留状态。
+
+**界面**：左上角四角星彻底换成闪电真按钮（44px 命中区，`aria-pressed` / `aria-disabled`、延迟 ~450ms 气泡复用 Help 气泡规则）；非推理 / 单档模型仍有独立 Fast。聊天入口改成两层紧凑弹层：默认只显示强度 / 可点击模型名 / Fast / 滑块，点模型名才进完整模型目录，选完返回，返回 / Esc 只退一层且不改任何值；管理型入口保持直接目录。用户已批准的 8b8d836 滑块视觉（粗渐变轨、实心无字白圆、居中 strength、模型名次行）不变。
+
+**详细合同 / 测试证据 / 未验边界**：[design/fast-mode-contract.md](design/fast-mode-contract.md)。

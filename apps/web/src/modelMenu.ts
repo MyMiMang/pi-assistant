@@ -77,3 +77,40 @@ export function groupModelsByProvider<M extends MenuModel>(models: M[], nameOf: 
 		.sort((a, b) => Number(b[0] === first) - Number(a[0] === first) || nameOf(a[0]).localeCompare(nameOf(b[0]), "zh"))
 		.map(([provider, ms]) => ({ provider, name: nameOf(provider), models: dedupeGroup(ms) }));
 }
+
+
+/**
+ * 输入栏模型弹层的两层状态（纯函数，便于单测；不依赖 React / DOM）。
+ *
+ * - 默认打开紧凑层：只放当前强度 / 模型名 / Fast 闪电 / 滑块，不铺搜索框和完整目录；
+ * - 点模型名 → 完整目录（搜索 / 服务分组 / 常用照旧）；
+ * - 返回 / 选完模型 → 回到紧凑层，且**不改**模型 / 思考 / Fast（选模型由调用方 onPick 负责）；
+ * - Esc 在目录里只退一层（回紧凑层），在紧凑层才关闭整个弹层；关闭后状态复位。
+ * - 不做 compact 的入口（例如默认模型设置页）保持原来的「直接打开完整目录」。
+ */
+export type PickerLayer = "compact" | "list";
+export type PickerPanelEvent = "open" | "openList" | "back" | "pick" | "close" | "escape";
+export interface PickerPanelState {
+	open: boolean;
+	layer: PickerLayer;
+	/** 返回 / 选完模型后把焦点放回模型名（键盘不丢位置） */
+	focusModel: boolean;
+}
+
+export function pickerPanelNext(state: PickerPanelState, event: PickerPanelEvent, compact: boolean): PickerPanelState {
+	switch (event) {
+		case "open":
+			return { open: true, layer: compact ? "compact" : "list", focusModel: false };
+		case "openList":
+			return { ...state, open: true, layer: "list", focusModel: false };
+		case "back":
+			return { open: true, layer: compact ? "compact" : "list", focusModel: compact };
+		case "pick":
+			return compact ? { open: true, layer: "compact", focusModel: true } : { open: false, layer: "list", focusModel: false };
+		case "close":
+			return { open: false, layer: "compact", focusModel: false };
+		case "escape":
+			if (compact && state.layer === "list") return { open: true, layer: "compact", focusModel: true };
+			return { open: false, layer: "compact", focusModel: false };
+	}
+}

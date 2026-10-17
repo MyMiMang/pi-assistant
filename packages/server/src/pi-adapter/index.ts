@@ -958,5 +958,5 @@ export async function applyModelSettings(session: AgentSession, models: PiModels
 }
 
 // 请求级 Fast（OpenAI service_tier）：纯函数 + 公开 hook 组合，见 fast-mode.ts
-export { attachFastMode, classifyObservedTier, fastCapability, FAST_APIS, FAST_SERVICE_TIER, FAST_UNSUPPORTED_REASON, observedFastTier, planFastRequest, reportedFastTier } from "./fast-mode.ts";
+export { attachFastMode, classifyObservedTier, fastCapability, FAST_APIS, FAST_SERVICE_TIER, FAST_UNSUPPORTED_REASON, fastMetaOf, observedFastTier, planFastRequest, reportedFastTier } from "./fast-mode.ts";
 export type { FastCapability, FastCapabilityInfo, FastPlan, FastRequestStatus, FastSnapshot, FastTracker } from "./fast-mode.ts";

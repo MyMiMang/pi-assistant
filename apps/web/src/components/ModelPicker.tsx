@@ -1,16 +1,21 @@
 /**
- * 模型选择（单聊输入栏 / 群聊成员 / 子代理共用同一套菜单）：
- * 一个按钮打开菜单，菜单里既能换模型，也能设思考强度。
- * 菜单结构：搜索 →（模型支持推理时）思考强度 → 常用（按用户选择频次，最多 5 个的快捷入口）→ 其余按模型服务（provider）分组折叠。
- * 「常用」只是快捷入口：它**不会**把条目从原服务分组里移走（同一模型在常用与原渠道各 1 行；分组内按 provider/id 去重，跨分组不合并）。
+ * 模型选择（单聊输入栏 / 群聊成员 / 子代理共用同一套菜单与状态语义）。
+ *
+ * 聊天 / 输入栏入口是**两层紧凑弹层**（用户参考 Codex；纯逻辑 `modelMenu.ts` 的 `pickerPanelNext`）：
+ * 1) 默认只显示当前强度标题、当前模型名（可点击、带箭头）、Fast 闪电、滑块 / 必要重置；
+ * 2) 点模型名才进入完整目录：搜索 →（支持推理时）思考强度 → 常用（最多 5 个快捷入口）→ 按服务分组；
+ *    选完模型回到紧凑层并展示新模型 / 真实支持档位 / Fast 状态；「返回」只退一层，不改模型 / 思考 / Fast。
+ * 管理型入口（默认模型设置页、组队成员编辑）仍直接打开完整目录，不把模型管理功能藏掉。
+ * 「常用」只是快捷入口：不会把条目从原服务分组里移走（同一模型在常用与原渠道各 1 行；分组内按 provider/id 去重，跨分组不合并）。
  * 服务名一律用 provider 目录 / 用户给自定义服务起的名字，绝不按模型 id 猜。
+ * 各入口传自己的 Fast 状态（不共用全局 localStorage），Fast 与思考强度是两个独立字段。
  */
 import { Brain, Check, ChevronDown, Cpu, Search } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
 import { COMPOSER_LABEL } from "../composer";
-import { dedupeGroup, frequentModels, groupModelsByProvider, pickKey, rankPicks, searchModels, type MenuPick, type MenuPicks } from "../modelMenu";
+import { dedupeGroup, frequentModels, groupModelsByProvider, pickerPanelNext, pickKey, rankPicks, searchModels, type MenuPick, type MenuPicks, type PickerPanelEvent } from "../modelMenu";
 import { THINKING_DESC, THINKING_LABEL } from "../thinking-slider";
 import { useStore } from "../store";
 import type { Provider } from "../types";
@@ -123,7 +128,7 @@ function popoverStyle(anchor: HTMLElement, panel: HTMLElement, placement: "up" |
 }
 
 /** 按钮 + 弹层的通用状态：open、触发器 ref、弹层 ref、弹层内联定位 style。 */
-export function usePopover(placement: "up" | "down" = "down", opts?: { onEscape?: () => void }) {
+export function usePopover(placement: "up" | "down" = "down", opts?: { /** 返回 false = 只退一层，不关整个弹层 */ onEscape?: () => void | boolean }) {
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
@@ -143,8 +148,9 @@ export function usePopover(placement: "up" | "down" = "down", opts?: { onEscape?
 		const k = (e: KeyboardEvent) => {
 			if (e.key !== "Escape") return;
 			e.stopPropagation();
-			setOpen(false);
-			onEscape.current?.();
+			// onEscape 返回 false = 只退一层（例如完整目录 → 紧凑弹层），不关整个弹层
+			const keepOpen = onEscape.current?.() === false;
+			if (!keepOpen) setOpen(false);
 		};
 		document.addEventListener("mousedown", h);
 		document.addEventListener("keydown", k, true);
@@ -192,8 +198,10 @@ async function patchAgentFast(agentId: string, next: boolean) {
 	useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: next } : x)) }));
 	try {
 		const a = await api(`/api/agents/${agentId}`, { method: "PATCH", json: { fast: next } });
-		useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, ...a } : x)) }));
+		// 只合并 fast：同一时间用户可能改了 thinking / 模型，整份覆盖会把那些更新的值写回旧的
+		useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: a.fast === true } : x)) }));
 	} catch (e) {
+		// 只回滚 fast 字段，不碰别的字段
 		useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, fast: prev } : x)) }));
 		throw e;
 	}
@@ -300,9 +308,11 @@ export interface ModelMenuProps {
 	panelStyle?: CSSProperties;
 	/** 目录第一次还没加载完：不要显示「还没有配置模型服务」这种误判 */
 	loading?: boolean;
+	/** 从紧凑弹层进入完整目录时，给一个明确的返回动作（返回不改模型 / 思考 / Fast） */
+	onBack?: () => void;
 }
 
-export function ModelMenu({ id, models, providers, value, thinking, fast, picks, onPick, groupByProvider = true, header, panelRef, panelStyle, loading }: ModelMenuProps) {
+export function ModelMenu({ id, models, providers, value, thinking, fast, picks, onPick, groupByProvider = true, header, panelRef, panelStyle, loading, onBack }: ModelMenuProps) {
 	const [q, setQ] = useState("");
 	const [openGroups, setOpenGroups] = useState<string[]>(() => (value?.provider ? [value.provider] : models[0] ? [models[0].provider] : []));
 	const nameOf = (p: string) => providers.find((x) => x.id === p)?.name ?? models.find((m) => m.provider === p)?.providerName ?? p;
@@ -316,6 +326,11 @@ export function ModelMenu({ id, models, providers, value, thinking, fast, picks,
 	const isOpen = (p: string) => !groupByProvider || !!q.trim() || openGroups.includes(p);
 	return (
 		<div ref={panelRef} style={panelStyle} className="pa-pop flex w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${id}-menu`}>
+			{onBack && (
+				<button type="button" className="pa-menu-back" onClick={onBack} data-testid={`${id}-back`} aria-label="返回思考与模型">
+					‹ 返回
+				</button>
+			)}
 			<label className="mb-1 flex items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5">
 				<Search size={14} className="text-mut" />
 				<input autoFocus className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索模型或服务…" value={q} onChange={(e) => setQ(e.target.value)} data-testid={`${id}-search`} />
@@ -386,19 +401,75 @@ export interface ModelPickerButtonProps {
 	onOpen?: () => void;
 	/** 模型目录第一次还没加载完（菜单里不误报「还没有配置模型服务」） */
 	loading?: boolean;
+	/** 输入栏 / 聊天入口：默认打开紧凑弹层（强度 + 模型名 + 闪电 + 滑块），点模型名才进完整目录 */
+	compact?: boolean;
 }
 
 /** 共用的「模型按钮 + 菜单」；聊天 / 群聊成员 / 子代理都用它，避免各写一套 */
-export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, fast, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen, loading }: ModelPickerButtonProps) {
-	const { open, setOpen, ref, menuRef, style } = usePopover(placement ?? "up");
+export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, fast, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen, loading, compact = false }: ModelPickerButtonProps) {
+	const btnRef = useRef<HTMLButtonElement>(null);
+	// 两层：compact = 默认紧凑弹层；list = 完整模型目录（搜索 / 服务分组 / 常用，全部保留）
+	const [layer, setLayer] = useState<"compact" | "list">("compact");
+	// 返回 / 选完模型后把焦点放回模型名（键盘不丢位置）；初次打开不抢焦点
+	const [focusModel, setFocusModel] = useState(false);
+	// 没有 thinking 信息的入口（默认模型设置页等）不做两层，保持原来的「直接打开目录」
+	const twoLevel = compact && !!thinking;
+	// 所有层级切换都走同一个纯函数，避免各入口各写一套状态
+	const applyPanel = (event: PickerPanelEvent) => {
+		const n = pickerPanelNext({ open, layer, focusModel }, event, twoLevel);
+		setOpen(n.open);
+		setLayer(n.layer);
+		setFocusModel(n.focusModel);
+		return n;
+	};
+	const { open, setOpen, ref, menuRef, style } = usePopover(placement ?? "up", {
+		onEscape: () => {
+			// 目录里 Esc 只退一层；紧凑层再按 Esc 才关闭；关闭后焦点回触发器
+			const n = applyPanel("escape");
+			if (n.open) return false;
+			btnRef.current?.focus();
+		},
+	});
+	useEffect(() => {
+		if (!open) {
+			setLayer("compact");
+			setFocusModel(false);
+		}
+	}, [open]);
+	const list = (
+		<ModelMenu
+			id={id}
+			models={models}
+			providers={providers}
+			value={value}
+			thinking={thinking ? { ...thinking, onPick: (l) => (applyPanel("close"), thinking.onPick(l)) } : null}
+			fast={fast}
+			picks={picks}
+			groupByProvider={groupByProvider}
+			panelRef={menuRef}
+			panelStyle={style}
+			header={header?.(() => setOpen(false))}
+			loading={loading}
+			onBack={twoLevel ? () => applyPanel("back") : undefined}
+			onPick={(m) => {
+				// 选完模型回到紧凑层（展示新模型 / 真实档位 / Fast 状态）；不替调用方改别的值
+				applyPanel("pick");
+				onPick(m);
+			}}
+		/>
+	);
 	return (
 		<div className="relative min-w-0" ref={ref}>
 			<button
+				ref={btnRef}
 				className={cx("pa-chip sm !shrink min-w-0", buttonClass)}
 				disabled={disabled}
 				onClick={() => {
-					if (!open) onOpen?.();
-					setOpen(!open);
+					if (open) applyPanel("close");
+					else {
+						onOpen?.();
+						applyPanel("open");
+					}
 				}}
 				title={title}
 				aria-label={ariaLabel}
@@ -410,21 +481,24 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 			</button>
 			{open &&
 				createPortal(
-					<ModelMenu
-						id={id}
-						models={models}
-						providers={providers}
-						value={value}
-						thinking={thinking ? { ...thinking, onPick: (l) => (setOpen(false), thinking.onPick(l)) } : null}
-						fast={fast}
-						picks={picks}
-						groupByProvider={groupByProvider}
-						panelRef={menuRef}
-						panelStyle={style}
-						header={header?.(() => setOpen(false))}
-						loading={loading}
-						onPick={(m) => (setOpen(false), onPick(m))}
-					/>,
+					twoLevel && layer === "compact" ? (
+						<div ref={menuRef} style={style} className="pa-pop pa-compact-pop rounded-xl border border-line bg-card shadow-lg" data-testid={`${testid}-compact`}>
+							<ThinkingSlider
+								// 与旧菜单内的滑块保持同一 testid 契约（thinking-*），选用 / 档位 e2e 不因两层改造失效
+								testid="thinking"
+								levels={thinking.levels}
+								current={thinking.current}
+								modelName={value ? (models.find((m) => pickKey(m) === pickKey(value))?.name ?? value.id) : undefined}
+								onModelClick={() => applyPanel("openList")}
+								autoFocusModel={focusModel}
+								loading={loading}
+								fast={fast}
+								onPick={(l) => { if (l) { thinking.onPick(l); applyPanel("close"); } }}
+							/>
+						</div>
+					) : (
+						list
+					),
 					document.body,
 				)}
 		</div>
@@ -561,6 +635,7 @@ export function ModelPicker({ agentId }: { agentId: string }) {
 		on: agent.fast === true,
 		capability: fastCap.capability,
 		reason: fastCap.reason,
+		loading: d.loading,
 		pending: fastPending,
 		error: fastError || undefined,
 		onToggle: () => {
@@ -581,6 +656,7 @@ export function ModelPicker({ agentId }: { agentId: string }) {
 			value={cur ?? null}
 			thinking={{ levels, current: curThinking ?? "", onPick: (l) => void patchAgent(agentId, { thinking: l }) }}
 			fast={fast}
+			compact
 			picks={picks}
 			onPick={(m) => {
 				record(m);

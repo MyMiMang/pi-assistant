@@ -46,10 +46,14 @@ export const FAST_UNSUPPORTED_REASON = "当前接口暂未接入 Fast";
  */
 export function fastCapability(api: string | undefined, provider?: string): FastCapabilityInfo {
 	if (!api || !(FAST_APIS as readonly string[]).includes(api)) return { capability: "unsupported", reason: FAST_UNSUPPORTED_REASON };
-	// OpenAI 官方 Responses API 有公开文档；ChatGPT 登录（codex）与中转站是否接受未实测，不冒充 supported。
-	if (provider === "openai" && api === "openai-responses") return { capability: "supported" };
-	return { capability: "requestable-unverified", reason: "服务不一定支持 Fast，可能额外收费；实际档位以服务回显为准" };
+	// 只有「服务级明确声明」才用 supported。当前没有这种声明：官方 OpenAI 文档也只说明参数存在，
+	// 具体模型 / 账号仍可能拒绝或降级（ChatGPT 登录、自定义 endpoint 更未实测），所以不按 provider 名字猜。
+	if (provider && VERIFIED_FAST_SERVICES.has(`${provider}:${api}`)) return { capability: "supported" };
+	return { capability: "requestable-unverified", reason: "协议可以带这个参数，但服务 / 模型不一定支持、可能降级或额外收费；实际档位以服务回显为准" };
 }
+
+/** 未来拿到某服务「明确声明支持」的证据（文档 + 模型范围）才加进来；不按 provider 名或模型名猜。 */
+const VERIFIED_FAST_SERVICES = new Set<string>();
 
 /** 一次请求的注入结果（只描述这次请求，不跨请求复用）。 */
 export type FastRequestStatus =
@@ -236,4 +240,27 @@ export function attachFastMode(session: { agent: FastAgentLike }, resolveEnabled
 	};
 
 	return { snapshot: () => ({ ...state }) };
+}
+
+/**
+ * 消息 meta.fast 的短对象（runtime 落库用）：只在「开关开着 / 真的请求了 / 有回显 / 冲突 / 请求里本来就有 tier」时返回，
+ * 关着且什么都没发生返回 null，避免每条消息都带一个恒定的 off。
+ * 开着但协议不支持 / 请求体异常也返回（用户看到灯亮，必须能知道本次其实没发）。
+ */
+export function fastMetaOf(snap: FastSnapshot | undefined) {
+	if (!snap) return null;
+	const relevant = snap.enabled || snap.requested || snap.observedKind !== "unknown" || snap.reportedKind !== "unknown" || snap.status === "conflict" || snap.status === "externally-configured";
+	if (!relevant) return null;
+	return {
+		enabled: snap.enabled,
+		requested: snap.requested,
+		status: snap.status,
+		capability: snap.capability,
+		api: snap.api,
+		observed: snap.observed,
+		observedKind: snap.observedKind,
+		reported: snap.reported,
+		reportedKind: snap.reportedKind,
+		...(snap.reason ? { reason: snap.reason } : {}),
+	};
 }

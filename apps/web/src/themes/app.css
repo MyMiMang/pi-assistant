@@ -317,6 +317,17 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 .pa-think-norm { margin: 0; padding: 7px 9px; border: 1px solid var(--line-strong, var(--line)); border-left: 3px solid var(--acc); border-radius: var(--r-sm); background: var(--hover); font-size: 11.5px; line-height: 1.5; color: var(--mut); }
 .pa-think-norm b { color: var(--fg); }
 .pa-think-mini { display: inline-block; margin-top: 6px; padding: 4px 8px; border: 1px solid var(--acc); border-radius: var(--r-sm); background: var(--acc); color: var(--acc-fg, #fff); font-size: 11px; cursor: pointer; }
+/* 输入栏默认的紧凑弹层：只放强度 / 模型名 / 闪电 / 滑块，不直接铺搜索框和全模型目录 */
+.pa-compact-pop { --pop-w: 340px; width: 340px; padding: 12px; }
+@media (max-width: 640px) { .pa-compact-pop { width: auto; } }
+/* 完整模型目录顶部的「返回」：只退一层，不改模型 / 思考 / Fast */
+.pa-menu-back { align-self: flex-start; margin: 0 0 2px 2px; padding: 3px 6px; border: 0; border-radius: 7px; background: transparent; color: var(--mut2); font-size: 12px; cursor: pointer; }
+.pa-menu-back:hover { background: var(--hover); color: var(--fg); }
+/* 紧凑弹层里「当前模型名」是可点击入口：右侧箭头表示还能进目录 */
+.pa-think-model-btn { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 2px 5px; border: 0; border-radius: 7px; background: transparent; color: var(--mut2); cursor: pointer; }
+.pa-think-model-btn:hover { background: var(--hover); color: var(--fg); }
+.pa-think-model-btn .truncate { min-width: 0; }
+
 /* .pa-pop 默认 max-width: 20rem 会把宽度压回 320：这里同时抬高 --pop-w，真正给到 340。 */
 .pa-think-pop { --pop-w: 340px; width: 340px; }
 @media (max-width: 640px) { .pa-think-pop { width: auto; } }

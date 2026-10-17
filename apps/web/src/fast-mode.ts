@@ -14,6 +14,8 @@ export type FastObservedKind = "fast" | "standard" | "other" | "unknown";
 
 /** 服务端写进消息 meta.fast 的短对象（不存 raw payload / body / header）。 */
 export interface MessageFastMeta {
+	/** 这次请求时开关是否开着（开着但协议不支持 / 请求体异常时，界面要能说明「本次没发」） */
+	enabled?: boolean;
 	requested: boolean;
 	status: string;
 	capability: FastCapability;
@@ -36,6 +38,8 @@ export function fastStatusText(meta: MessageFastMeta | undefined | null): string
 	if (meta.reportedKind === "fast") return `Fast · 服务回显 ${meta.reported ?? "priority"}（来源未确认）`;
 	if (meta.reportedKind === "standard") return "Fast · 服务回显 default（实际加速未确认）";
 	if (meta.reportedKind === "other") return `Fast · 服务回显 ${meta.reported}（实际加速未确认）`;
+	if (meta.status === "unsupported-api") return "Fast · 本次未请求（当前接口暂未接入 Fast）";
+	if (meta.status === "bad-payload") return "Fast · 本次未请求（请求体异常）";
 	if (meta.status === "conflict") return "Fast · 请求里已有其他档位，本次未改写";
 	if (meta.status === "externally-configured") return meta.requested ? "Fast · 请求里已带 priority" : "Fast · 请求里已带服务配置的档位";
 	if (meta.requested) return "Fast · 已请求，服务未回显实际档位";
@@ -49,6 +53,8 @@ export function fastStatusDetail(meta: MessageFastMeta): string {
 	else if (meta.observedKind === "standard") lines.push("服务在终止事件里回显 default：这不等于按标准档计费，也不等于没走 Fast（部分账号/中转常见），实际加速未确认。");
 	else if (meta.observedKind === "other") lines.push(`服务在终止事件里回显 ${meta.observed ?? "未知档位"}，不是 priority / fast。`);
 	else if (meta.reportedKind && meta.reportedKind !== "unknown") lines.push("这是请求流里的非终止回显（可能是 requested），不能证明实际用了快档。");
+	else if (meta.status === "unsupported-api") lines.push("当前模型的接口协议没有这个参数，本次没有附加任何 tier；换成 OpenAI 兼容协议后再试。");
+	else if (meta.status === "bad-payload") lines.push("这次请求体不是普通对象，安全起见没有附加参数。");
 	else if (meta.requested) lines.push("我们已请求 priority，但服务没有回显实际档位：不能据此说已经加速。");
 	if (meta.reason) lines.push(meta.reason);
 	if (meta.capability === "requestable-unverified") lines.push("这个服务是否支持 Fast、是否额外收费未知。");

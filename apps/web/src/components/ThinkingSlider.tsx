@@ -12,7 +12,7 @@
  * - 预览动效只播一次（320–700ms），播完即停；组件卸载清理计时器，最小化动态效果时完全不播。
  */
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
-import { Zap } from "lucide-react";
+import { ChevronRight, Zap } from "lucide-react";
 import { THINKING_DESC, THINKING_LABEL, THINKING_PREVIEW_MS, shouldCommitThinking, sliderIndexForKey, sliderIndexFromX, thinkingSliderView, thinkingStars } from "../thinking-slider";
 import { watchMoStyle } from "../themes/motion-signals";
 import { Help, cx, useHoverTip } from "./ui";
@@ -58,6 +58,13 @@ export interface ThinkingSliderProps {
 	modelName?: string;
 	/** 键盘打开（Enter/Space）时把焦点落到手柄 */
 	autoFocus?: boolean;
+	/** 紧凑弹层：模型名是一行可点击入口（点它进完整模型目录） */
+	onModelClick?: () => void;
+	/** 从模型目录返回 / 选完模型后，把焦点放回模型名，键盘操作不丢位置 */
+	autoFocusModel?: boolean;
+	/** 模型目录还没加载完 / 这次加载失败：不要误报「不支持思考强度」 */
+	loading?: boolean;
+	error?: boolean;
 }
 
 /**
@@ -72,13 +79,15 @@ export interface FastControl {
 	capability: "supported" | "requestable-unverified" | "unsupported";
 	reason?: string;
 	mode?: "follow" | "override";
+	/** 模型目录正在加载：能力未知，但开关仍可切（服务端按本次实际模型决定是否发送） */
+	loading?: boolean;
 	pending?: boolean;
 	error?: string;
 	onToggle: () => void;
 	onFollow?: () => void;
 }
 
-export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, autoFocus = false, fast }: ThinkingSliderProps & { fast?: FastControl }) {
+export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, autoFocus = false, fast, onModelClick, autoFocusModel = false, loading = false, error = false }: ThinkingSliderProps & { fast?: FastControl }) {
 	const view = thinkingSliderView({ levels, current, followLabel, effective });
 	const reduced = useReducedMotion();
 	const [idx, setIdx] = useState(view.index);
@@ -88,6 +97,10 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	// 这里把主题定义里的值安全映射成真实 data 属性，CSS 再按属性走 steps 分支（不读硬编码调色板、不写 JS 颜色）。
 	const moStyle = useMoStyle(rootRef, reduced);
 	const handleRef = useRef<HTMLDivElement>(null);
+	const modelBtnRef = useRef<HTMLButtonElement>(null);
+	useLayoutEffect(() => {
+		if (autoFocusModel) modelBtnRef.current?.focus();
+	}, [autoFocusModel]);
 	const innerRef = useRef<HTMLDivElement>(null);
 	const dragging = useRef(false);
 	const idxRef = useRef(idx);
@@ -202,12 +215,20 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	if (view.kind === "unsupported") {
 		return (
 			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-				<Head testid={testid} current="不支持" modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} />
+				<Head testid={testid} current={loading ? "加载中" : error ? "加载失败" : "不支持"} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} onModelClick={onModelClick} modelBtnRef={modelBtnRef} />
 				<FastFollowNote fast={fast} />
-				<p className="pa-think-empty" data-testid={`${testid}-unsupported`}>
-					<b>{modelName ?? "这个模型"}</b> 不支持调整思考强度。
-				</p>
-				<p className="pa-think-note">这里不显示滑块，避免让用户以为能调。</p>
+				{loading ? (
+					<p className="pa-think-empty" data-testid={`${testid}-loading`} role="status" aria-live="polite">正在加载模型档位…</p>
+				) : error ? (
+					<p className="pa-think-empty" data-testid={`${testid}-error`} role="alert">模型目录没加载出来，点上面的模型名可以重试或换一个。</p>
+				) : !modelName && onModelClick ? (
+					<p className="pa-think-empty" data-testid={`${testid}-no-model`}>还没有选择模型，点上面的「选择模型」开始。</p>
+				) : (
+					<p className="pa-think-empty" data-testid={`${testid}-unsupported`}>
+						<b>{modelName ?? "这个模型"}</b> 不支持调整思考强度。
+					</p>
+				)}
+				<p className="pa-think-note">{loading || error ? "加载完会显示这个模型支持的档位。" : onModelClick && !modelName ? "选好模型后，这里会显示它支持的档位。" : "这里不显示滑块，避免让用户以为能调。"}</p>
 			</div>
 		);
 	}
@@ -215,7 +236,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	if (view.kind === "fixed") {
 		return (
 			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-				<Head testid={testid} current={label(view.level)} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} />
+				<Head testid={testid} current={label(view.level)} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} onModelClick={onModelClick} modelBtnRef={modelBtnRef} />
 				<FastFollowNote fast={fast} />
 				<p className="pa-think-empty" data-testid={`${testid}-fixed`}>
 					这个模型只有一档 <b>{label(view.level)}</b>，不需要调整。
@@ -234,7 +255,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 
 	return (
 		<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-			<Head testid={testid} current={curText} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} />
+			<Head testid={testid} current={curText} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} onModelClick={onModelClick} modelBtnRef={modelBtnRef} />
 
 			{view.unsupportedPick && (
 				<p className="pa-think-norm" role="note">
@@ -278,7 +299,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
  * 调用方给了 followLabel 时出现（主会话没有继承语义，不摆一个点了没用的按钮）。
  * 跟随状态用图标按钮的 aria-pressed + accent 底色表示，实际生效档位进 aria-label / title，不占一行。
  */
-function Head({ testid, current, modelName, followLabel, following, effective, onPick, fast }: { testid: string; current: string; modelName?: string; followLabel?: string; following?: boolean; effective?: string | null; onPick?: (level: string | null) => void; fast?: FastControl }) {
+function Head({ testid, current, modelName, followLabel, following, effective, onPick, fast, onModelClick, modelBtnRef }: { testid: string; current: string; modelName?: string; followLabel?: string; following?: boolean; effective?: string | null; onPick?: (level: string | null) => void; fast?: FastControl; onModelClick?: () => void; modelBtnRef?: RefObject<HTMLButtonElement | null> }) {
 	const actual = effective ? (THINKING_LABEL[effective] ?? effective) : "—";
 	const followText = followLabel ? `${followLabel} · 当前实际：${actual}` : "";
 	return (
@@ -286,7 +307,14 @@ function Head({ testid, current, modelName, followLabel, following, effective, o
 			<FastButton testid={testid} fast={fast} />
 			<span className="pa-think-titles">
 				<b className="pa-think-cur" data-testid={`${testid}-current`}>{current}</b>
-				{modelName ? <span className="pa-think-model" title={modelName}>{modelName}</span> : null}
+				{onModelClick ? (
+					<button ref={modelBtnRef} type="button" className="pa-think-model pa-think-model-btn" title={modelName ?? "选择模型"} aria-label={`当前模型：${modelName ?? "未选择"}，点按选择模型`} data-testid={`${testid}-model`} onClick={onModelClick}>
+						<span className="truncate">{modelName ?? "选择模型"}</span>
+						<ChevronRight size={13} className="shrink-0" aria-hidden="true" />
+					</button>
+				) : modelName ? (
+					<span className="pa-think-model" title={modelName}>{modelName}</span>
+				) : null}
 			</span>
 			{followLabel ? (
 				<button type="button" className={cx("pa-think-follow", following && "on")} aria-pressed={!!following} aria-label={followText} title={followText} data-testid={`${testid}-follow`} onClick={() => { if (!following) onPick?.(null); }}>
@@ -308,15 +336,18 @@ function Head({ testid, current, modelName, followLabel, following, effective, o
 function FastButton({ testid, fast }: { testid: string; fast?: FastControl }) {
 	const tip = useHoverTip(450);
 	const supported = !!fast && fast.capability !== "unsupported";
-	const disabled = !supported || !!fast?.pending;
+	// 加载中不按「不支持」禁掉：开关仍可切，请求时按本次实际模型判断；只在保存中 / 明确不支持时禁用
+	const disabled = !!fast?.pending || (!!fast && !supported && !fast.loading);
 	const on = !!fast?.on;
 	const stateText = !fast
 		? "Fast 按助理开关：在助理的模型菜单里设置"
-		: !supported
-			? `不可用：${fast.reason ?? "当前接口暂未接入 Fast"}`
-			: on
-				? "已开：请求 service_tier=priority"
-				: "已关：不附加任何参数，服务商默认档不变";
+		: fast.loading
+			? "模型能力加载中…（开关仍可切换，请求时按实际模型判断）"
+			: !supported
+				? `不可用：${fast.reason ?? "当前接口暂未接入 Fast"}`
+				: on
+					? "已开：请求 service_tier=priority"
+					: "已关：不附加任何参数，服务商默认档不变";
 	return (
 		<span className="pa-think-fastwrap">
 			<button

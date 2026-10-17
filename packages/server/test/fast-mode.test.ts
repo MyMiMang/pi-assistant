@@ -24,17 +24,17 @@ import { fauxAssistantMessage, fauxText, registerFauxProvider } from "@earendil-
 import { config } from "../src/config.ts";
 import { db, now, uid } from "../src/db.ts";
 import { customProviders, initModels, models } from "../src/models.ts";
-import { attachFastMode, classifyObservedTier, fastCapability, observedFastTier, planFastRequest, reportedFastTier } from "../src/pi-adapter/index.ts";
+import { attachFastMode, classifyObservedTier, fastCapability, fastMetaOf, observedFastTier, planFastRequest, reportedFastTier } from "../src/pi-adapter/index.ts";
 import { applyModelSettings, createPiSession, disposeSession, promptSession } from "../src/pi-adapter/index.ts";
 import { agentFast, resolveSubagentFast, setSubagentFastOverride } from "../src/subagents.ts";
 import { memoryCredentialStore } from "./in-memory-credentials.ts";
 
 // ---------------------------------------------------------------- 纯函数
 test("能力口径：只认 OpenAI Responses / Chat Completions / Codex；官方 Responses 是 supported，其余 requestable-unverified", () => {
-	assert.equal(fastCapability("openai-responses", "openai").capability, "supported");
-	assert.equal(fastCapability("openai-completions", "openai").capability, "requestable-unverified");
-	assert.equal(fastCapability("openai-codex-responses", "openai").capability, "requestable-unverified");
-	assert.equal(fastCapability("openai-completions", "my-relay").capability, "requestable-unverified");
+	// 不按 provider 名字冒充「真支持」：官方 OpenAI 也只到 requestable-unverified（模型/账号仍可能拒绝或降级）
+	for (const [api, provider] of [["openai-responses", "openai"], ["openai-completions", "openai"], ["openai-codex-responses", "openai"], ["openai-completions", "my-relay"]]) {
+		assert.equal(fastCapability(api, provider).capability, "requestable-unverified", `${provider}:${api}`);
+	}
 	for (const api of ["anthropic-messages", "azure-openai-responses", "google-generative-ai", "llama-cpp", undefined]) {
 		const c = fastCapability(api, "x");
 		assert.equal(c.capability, "unsupported");
@@ -122,6 +122,22 @@ test("tracker：终止事件 default 只标 standard（不推断标准计费）�
 	assert.equal(tracker.snapshot().observedKind, "fast");
 });
 
+test("消息 meta：关着且什么都没发生不写；开着但协议不支持 / 请求体异常也写（用户能看到本次没发）", () => {
+	const base = { requested: false, enabled: false, status: "off" as const, capability: "requestable-unverified" as const, api: "openai-completions", observed: null, observedKind: "unknown" as const, reported: null, reportedKind: "unknown" as const };
+	assert.equal(fastMetaOf(undefined), null);
+	assert.equal(fastMetaOf(base), null);
+	const unsupported = fastMetaOf({ ...base, enabled: true, status: "unsupported-api", capability: "unsupported", api: "anthropic-messages", reason: "当前接口暂未接入 Fast" });
+	assert.equal(unsupported?.status, "unsupported-api");
+	assert.equal(unsupported?.enabled, true);
+	assert.equal(unsupported?.reason, "当前接口暂未接入 Fast");
+	const bad = fastMetaOf({ ...base, enabled: true, status: "bad-payload" });
+	assert.equal(bad?.status, "bad-payload");
+	const observed = fastMetaOf({ ...base, enabled: true, requested: true, status: "injected", observed: "default", observedKind: "standard" });
+	assert.equal(observed?.observedKind, "standard");
+	// 不写 raw payload / header / body：只保留固定的短字段
+	assert.deepEqual(Object.keys(observed ?? {}).sort(), ["api", "capability", "enabled", "observed", "observedKind", "reported", "reportedKind", "requested", "status"]);
+});
+
 // ---------------------------------------------------------------- 真实 SDK 路径
 /** loopback「中转」：记录最终请求体；可配置回显 tier / 400 / 是否走流式。 */
 async function startRelay() {
@@ -196,6 +212,7 @@ test("真实 SDK：关→开→关，最终请求体证明只多 service_tier=pr
 		await settle(session);
 		const first = relay.seen.at(-1)!;
 		assert.equal("service_tier" in first, false, "关：不附加任何字段（也不补 auto/default）");
+		assert.equal(first.reasoning_effort, "medium", "基线是具体档位，不是 undefined 对 undefined 的空比较");
 		assert.equal(tracker.snapshot().status, "off");
 
 		enabled = true;

@@ -79,3 +79,7 @@ CSS 里 `--mo-style` 是字符串（`smooth` / `steps`），**不能**直接放�
 不变：`--mo-*` 的读取与映射（§3）、reduce 双保险（§4）、语义边界（§5）。
 
 生产入口一致：输入栏 / 设置的主模型菜单（`ModelMenu`）与独立「思考强度」弹层用同一个 `ThinkingSlider` **完整头部**，不再在外层重复一行「思考强度」；模型名按实际选中的 `value.provider/id` 从目录取（无值不编名）。拖动预览态头部跟着预览档走，静态态才写「跟随·当前生效」，后端值不受预览影响。
+
+## 7. Fast 闪电（请求级 service_tier，候选未发布）
+
+滑块头部的左侧改成**独立 Fast 按钮**（`Zap`，44px 命中区、图标 21px），不再是四角星；用户已批准的粗渐变轨 / 实心无字白圆 / 居中 strength / 模型名次行**不变**。Fast 与思考强度是两个独立请求语义：点闪电不改档位、换模型或改 `--mo-*`；关闭不附加 `service_tier`。颜色 / 背景只用 `--mut2 / --fg / --acc / --acc-soft / --hover`，glass 加光晕、pixel 去圆角，全部走主题 token；不可用用 `aria-disabled`（仍可聚焦看原因），等待保存 `aria-busy`。实现与口径见 [docs/design/fast-mode-contract.md](../docs/design/fast-mode-contract.md)、进度 [fast-mode-implementation.md](fast-mode-implementation.md)。

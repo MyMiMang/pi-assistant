@@ -10,6 +10,7 @@ import { useComposerKeys } from "../composer";
 import { useConfiguredModels, useModelPicks, ModelPoolButton, ThinkingButton, THINKING_LABEL } from "./ModelPicker";
 import type { FastControl } from "./ThinkingSlider";
 import { fitThinkingLevel } from "../thinking-slider";
+import { LatestWrite } from "../latest-write";
 import { thinkingLevelsFor } from "@pi-assistant/shared";
 import { TaskInstructions, TaskRow, taskLive, taskTitle } from "./Tasks";
 
@@ -68,18 +69,35 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 	// 改 Fast：单个子代理覆盖（null = 跟随所属助理）；只动 fast，不碰思考强度。保存中禁重复，失败回滚并给原因
 	const [fastPending, setFastPending] = useState(false);
 	const [fastErr, setFastErr] = useState("");
+	// 代次守卫：只回滚 / 落地 fast 字段；轮询或切到别的子代理后，迟到的响应不能污染当前会话
+	const fastWrites = useRef(new LatestWrite());
+	useEffect(() => {
+		// 切到别的子代理：作废在飞响应，并清掉上一个子代理的保存中 / 错误提示，避免卡住新会话的开关
+		fastWrites.current.invalidate();
+		setFastPending(false);
+		setFastErr("");
+		return () => fastWrites.current.invalidate();
+	}, [id]);
 	const setFast = async (v: boolean | null) => {
-		if (fastPending) return;
-		const prev = d;
-		setFastPending(true); setFastErr("");
-		if (d) setD({ ...d, subagent: { ...d.subagent, fast: v === null ? null : v ? 1 : 0, resolvedFast: v === null ? agent?.fast === true : v } });
+		if (fastPending || !d) return;
+		const gen = fastWrites.current.begin();
+		const prevFast = d.subagent.fast ?? null;
+		const prevResolved = d.subagent.resolvedFast;
+		setFastErr(""); setFastPending(true);
+		// 乐观：只改 fast 两个字段，保留同一时刻轮询 / 插话带来的消息与状态
+		setD((x) => (x ? { ...x, subagent: { ...x.subagent, fast: v === null ? null : v ? 1 : 0, resolvedFast: v === null ? agent?.fast === true : v } } : x));
 		try {
-			await api(`/api/subagents/${id}`, { method: "PATCH", json: { fast: v } });
-			setD(await api<NonNullable<typeof d>>(`/api/subagents/${id}`));
+			const res = await api<{ subagent: Subagent }>(`/api/subagents/${id}`, { method: "PATCH", json: { fast: v } });
+			if (!fastWrites.current.isCurrent(gen)) return;
+			setD((x) => (x ? { ...x, subagent: { ...x.subagent, fast: res.subagent.fast ?? null, resolvedFast: res.subagent.resolvedFast } } : x));
 		} catch {
-			if (prev) setD(prev);
+			if (!fastWrites.current.isCurrent(gen)) return;
+			// 只回滚 fast 字段（不整份替换，避免覆盖新消息 / 新状态）
+			setD((x) => (x ? { ...x, subagent: { ...x.subagent, fast: prevFast, resolvedFast: prevResolved } } : x));
 			setFastErr("保存失败，已恢复原状态");
-		} finally { setFastPending(false); }
+		} finally {
+			if (fastWrites.current.isCurrent(gen)) setFastPending(false);
+		}
 	};
 	const send = async () => {
 		if (!text.trim() || sending) return;
@@ -99,6 +117,7 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 				on: d.subagent.fast === 1 ? true : d.subagent.fast === 0 ? false : d.subagent.resolvedFast === true,
 				capability: fastCap.capability,
 				reason: fastCap.reason,
+				loading: dm.loading,
 				mode: d.subagent.fast === 1 || d.subagent.fast === 0 ? "override" : "follow",
 				pending: fastPending,
 				error: fastErr || undefined,
