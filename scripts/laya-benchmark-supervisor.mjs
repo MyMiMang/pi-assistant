@@ -66,6 +66,7 @@ const state = {
 	daemonPid: null,
 	baselineProdLayaRunning: null,
 	ownLayaPid: null,
+	prodLayaStopRequested: false,
 	prodLayaStopped: false,
 	daemonStopped: false,
 	layaStopped: false,
@@ -148,9 +149,7 @@ async function recover(reason) {
 		cleanup.daemon = { socket: null, stopped: true };
 	}
 	// 2) 本次自有 Laya：worker 已确认停就信 checkpoint，否则只在能证明归属时终止。
-	if (state.layaStopped) {
-		cleanup.laya = { pid: state.ownLayaPid, stopped: true, source: "worker-checkpoint" };
-	} else if (state.ownLayaPid && alive(state.ownLayaPid)) {
+	if (state.ownLayaPid && alive(state.ownLayaPid)) {
 		if (!ownedByThisRun(state.ownLayaPid)) {
 			cleanup.laya = { pid: state.ownLayaPid, stopped: false, source: "ownership-unproven" };
 			cleanup.failures.push("自有 Laya 存活但无法证明归属，未杀");
@@ -168,7 +167,7 @@ async function recover(reason) {
 		cleanup.laya = { pid: state.ownLayaPid, stopped: true, source: state.ownLayaPid ? "already-dead" : "never-started" };
 	}
 	// 3) 恢复生产 Laya：必须「baseline running + 确实停过 + 自有资源全停」才做；否则明确失败，不热第二个模型。
-	const needRestore = state.baselineProdLayaRunning === true && state.prodLayaStopped === true && state.prodRestored !== true;
+	const needRestore = state.baselineProdLayaRunning === true && (state.prodLayaStopRequested === true || state.prodLayaStopped === true) && state.prodRestored !== true;
 	if (!needRestore) {
 		cleanup.restore = { skipped: state.baselineProdLayaRunning === true ? "没有暂停过生产 Laya 或已恢复" : "baseline 不是 running，不擅自启动" };
 	} else if (!cleanup.daemon.stopped || !cleanup.laya.stopped) {
@@ -232,7 +231,7 @@ const token = randomBytes(24).toString("hex");
 child = spawn(workerCmd[0], workerCmd.slice(1), {
 	stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"],
 	detached: true, // 自成进程组，便于有界收掉它和它拉起的 daemon / Laya
-	env: { ...process.env, PIA_BENCH_DIR: root },
+	env: { ...process.env, PIA_BENCH_DIR: root, PIA_BENCH_APP_API: API_BASE },
 });
 state.workerPid = child.pid;
 save({ phase: "handshaking" });
@@ -247,6 +246,11 @@ try {
 
 let buf = "";
 let handshook = false;
+// 握手本身也必须有界；不能等到 ack 后才开始计算超时。
+timer = setTimeout(() => {
+	timedOut = true;
+	void finish(124, "handshake-timeout");
+}, 8_000);
 child.stdio[3].setEncoding("utf8");
 child.stdio[3].on("data", (chunk) => {
 	buf += chunk;
@@ -261,7 +265,8 @@ child.stdio[3].on("data", (chunk) => {
 			continue;
 		}
 		if (msg.type === "ack") {
-			if (msg.token === token && msg.pid === child.pid) {
+			if (!handshook && msg.token === token && msg.pid === child.pid) {
+				clearTimeout(timer);
 				handshook = true;
 				save({ phase: "running" });
 				timer = setTimeout(() => {
@@ -276,6 +281,7 @@ child.stdio[3].on("data", (chunk) => {
 		if (msg.type === "baseline") save({ baselineProdLayaRunning: msg.prodLayaRunning === true });
 		else if (msg.type === "daemon") save({ socket: typeof msg.socket === "string" ? msg.socket : null, daemonPid: msg.pid ?? null });
 		else if (msg.type === "daemon_stopped") save({ daemonStopped: true });
+		else if (msg.type === "prod_laya_stop_requested") save({ prodLayaStopRequested: true });
 		else if (msg.type === "prod_laya_stopped") save({ prodLayaStopped: true });
 		else if (msg.type === "laya") save({ ownLayaPid: msg.pid ?? null });
 		else if (msg.type === "laya_stopped") save({ layaStopped: true });

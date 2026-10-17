@@ -23,6 +23,11 @@ const sock = join(root, "fake-daemon.sock");
 const daemon = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)", "--socket", sock], { stdio: "ignore" });
 hs.send({ type: "baseline", prodLayaRunning: mode !== "baseline-stopped" });
 hs.send({ type: "daemon", socket: sock, pid: daemon.pid });
+if (mode === "stop-requested") {
+	// 模拟 stop HTTP 发出、服务已停，但 worker 来不及确认响应便退出。
+	hs.send({ type: "prod_laya_stop_requested" });
+	process.exit(1);
+}
 
 if (mode === "complete") {
 	// 正常路径：worker 自己停 daemon、自己恢复生产 Laya，然后正常退出。

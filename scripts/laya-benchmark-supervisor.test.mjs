@@ -97,6 +97,15 @@ test("baseline 本来是 stopped：绝不启动生产 Laya", async () => {
 	}
 });
 
+test("stop 请求发出后 worker 退出，未等到 stopped 确认仍恢复原模型", async () => {
+	const r = await run("stop-requested");
+	assert.equal(r.code, 1);
+	assert.equal(r.state.prodLayaStopRequested, true);
+	assert.equal(r.state.prodLayaStopped, false);
+	assert.equal(r.posts.length, 1);
+	assert.equal(r.state.cleanup.restore.ok, true);
+});
+
 test("正常退出：worker 自己恢复过 → supervisor 不重复恢复", async () => {
 	let r;
 	try {

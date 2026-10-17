@@ -6,6 +6,8 @@
 >
 > 接手时以本段、最新 `main` 和已发版 tag 为准。下面保留的“候选 / 未 push / 未 tag / 等测试槽”等是**发布前历史快照**，不再代表当前发布状态；不要重打旧 tag、重发旧资产或重复已完成测试。
 
+> **主审补充（2026-10-17）**：独立临时环境复跑适配/工具/harness-env/supervisor **59/59**。进一步补上 stop HTTP 请求发出前的恢复责任 checkpoint（覆盖响应前 worker 退出）、握手 8 秒上限、worker 与 supervisor 使用同一回环 API；不盲信 `laya_stopped` 通知，外监护重新检查 PID 存活；worker 停自有模型失败时不启动原模型。新增「stop 已请求但未确认」假 HTTP 恢复用例后，supervisor **4/4**。尚未真实运行，下一步仅一次受控测量。
+>
 > **Laya 为什么还是选不出来：置信度标度拿错了（2026-10-17，`laya-benchmark-snapshot-fix`，只读审计 + 小修；**没有跑模型 / 浏览器 / daemon**，未 push / 未 tag / 未打包）**
 >
 > §9.7 的 3 次 `low_confidence` 不等于「模型没把握」——产品把**归一化熵**当成概率去比 0.6 的阈值。公开源码已证：Laya 的 choice `confidence` 是 `1 - H/log(k)`（`laya/common.py:802`，文档明写「不能和 max(p) 用同一个阈值」且随候选数变化），概率质量在 `answer_confidence = max(p)`（`common.py:779`，也是它自己 `min_confidence` 门限用的量），但 Pi SDK 只解析 `choice`/`probabilities`/`confidence`，把这个字段丢掉了。**能确定的**是标度拿错、实际影响的是「能不能过阈值」这个接受比例；在「k=32、`max(p)=0.6`、其余概率均分」这一种形状下熵约 0.41 会被拒，但熵不只由 `max(p)` 决定，**不能**写成「候选越多必然被拒」，也**不能**反推「修后质量 / 准确率」。源码行号来自本机 `research/laya` 克隆 `v0.4.7-16-g432312b3`（`432312b36714d8889eba405507b37eda25257d9c`）；安装的 pinned `laya==0.4.8` wheel 未逐行核对与最新上游对等。

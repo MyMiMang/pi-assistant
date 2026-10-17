@@ -330,12 +330,17 @@ async function cleanup() {
 	}
 	await stopOwnDaemon();
 	if (state.laya && !state.layaStopped) {
-		state.layaStopped = true;
-		await state.laya.stop().catch((e) => (report.cleanup.layaStopError = String(e?.message ?? e).slice(0, 200)));
-		notify({ type: "laya_stopped" });
+		try {
+			await state.laya.stop();
+			state.layaStopped = true;
+			notify({ type: "laya_stopped" });
+		} catch (e) {
+			report.cleanup.layaStopError = String(e?.message ?? e).slice(0, 200);
+		}
 	}
 	if (state.server) state.server.close();
-	await restoreProductionLaya();
+	// 未证明自有模型已停止时交外部 supervisor 杀组并核验，再恢复生产模型，避免双热。
+	if (!state.laya || state.layaStopped) await restoreProductionLaya();
 	if (!KEEP) rmSync(join(scratchLayaRuntime, "weights"), { recursive: true, force: true });
 	report.finishedAt = new Date().toISOString();
 	writeReportAndExit(state.exitCode);
@@ -525,6 +530,8 @@ if (baseline?.runtime?.state !== "running") {
 	await cleanup();
 }
 
+// 在 HTTP 请求前登记恢复责任，覆盖服务已停而 worker 尚未收到响应就退出的窗口。
+notify({ type: "prod_laya_stop_requested" });
 const stopped = await appApi("/api/local-models/laya/stop", { method: "POST" }).catch((e) => ({ ok: false, body: { error: String(e?.message ?? e) } }));
 report.laya.stopped = { ok: stopped.ok, status: layaSummary(stopped.body?.status) };
 log("已用生产 API 停原 Laya", JSON.stringify(report.laya.stopped));
