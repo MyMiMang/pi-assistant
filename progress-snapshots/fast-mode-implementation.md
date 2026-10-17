@@ -6,6 +6,35 @@
 - 保留：`8b8d836` 用户已批准的粗渐变轨、实心无字白圆、居中 strength、模型名次行（未改视觉）
 - 合同：`docs/design/fast-mode-contract.md`；需求行：`docs/ROADMAP.md` 顶部；交接：`docs/HANDOFF.md`
 
+> **2026-10-17 21:18 真实浏览器复验（本文件当前结论；下方“已完成 / review 修复 / 未完成 / 下一步”保留为历史，其中“浏览器未跑 / 等 heavy 槽 / 截图已通过”均被本节取代）**
+>
+> **主审发现的截图问题（旧 43 项交互通过、但视觉证据不合格）**：`02-fast-on.png` 完全没有弹层（拍在进入动画 `opacity:0` 第一帧）；`04-fast-390.png` 半透明且文字和底部输入栏叠在一起（需判断是动画中途还是实际布局）；`01-fast-tip-esc.png` 名字是 tip 但拍在 Esc 之后，画面里没有说明气泡；且夹具只有 `fast-model` / `slow-model`（都只有 off 一档），无法验证最终批准的七档粗轨 + 实心白圆钮与 Fast 共存。**旧“截图逐张看过”不再作为视觉通过证据**；旧 43 项只保留为“交互断言曾通过”的历史，本轮重新跑并重新看图。
+>
+> **截图稳定性修法**：新增 `e2e/fixtures/stable-shot.mjs`：截图前等弹层 `visible` → `document.getAnimations()` 里有限动画 `finished` → 自身和祖先 `computed opacity >= 0.999` / `visibility:visible` → 连续 4 帧 `boundingBox` 不变；**不禁用动画、不强制 reduced-motion**，避免把动画期间的透明问题藏起来。所有截图改走 `stableShot()`。
+>
+> **真实夹具**：主模型 `anthropic.claude-sonnet-5`（真实 Pi 目录七档）、子集模型 `gpt-6.1-sol`（五档），都走本机自定义 `openai-completions` 假中转（`127.0.0.1:1`，无真实付费）；子代理 UI 用本树新增的 `e2e/fixtures/seed-subagent.mjs` 只往本次 mkdtemp 的 `data.db` 种一条真实 `subagents` 记录（真实表结构 + 真实路由，**不 spawn 子代理、不发模型请求、不碰真实数据**）。
+>
+> **本轮实跑**（2026-10-17，本树 HEAD `ec1c487` + 本轮 e2e/文档改动；Node 22.23.3 = App 自带、Chrome 155 headless、每次 mkdtemp 的 HOME / TMPDIR / DATA / `PIA_WORKSPACE` + `test/launch-memory.ts` 内存凭据 + `PIA_MOCK` / `PIA_OFFLINE`；产品代码未改，未重跑 build，沿用 21:02 的 dist）：`e2e/fast-mode-ui.mjs` **64 项全过，exit 0**。日志 `logs/fast-mode-ui-20261017.log`（本地 logs，gitignore）。
+>
+> **本轮截图（`docs/screenshots/fast-mode-ui/`，全部经 `look_at_image` 实际看清）**：
+> - `00-fast-off.png`：紧凑层不透明，七档粗轨 + 实心无字白圆钮 + 闪电 Fast 关闭；
+> - `01-fast-tip.png`：说明气泡真的在（含“可能增加用量 / 费用…约 2 倍或更高”），紧凑层同时可见；
+> - `02-fast-on.png`：紧凑层真的在，Fast 开启高亮；
+> - `03-fast-save-failed.png`：失败说明气泡 + 回滚状态；
+> - `04-fast-390.png`：390 宽底部弹层不透明、完整在视口内、无横向溢出；与底部输入栏是底部弹层的覆盖关系，不是动画半透明叠字；
+> - `05-model-directory.png`：第二层只有返回 / 搜索 / 服务分组 / 模型项，没有重复的滑块或 Fast；
+> - `06-model-selected.png`：切到 `gpt-6.1-sol` 后五档轨，不残缺；
+> - `07-fast-unsupported.png`：Fast 可见但 `aria-disabled`，说明写“不可用：当前接口暂未接入 Fast”，没有假开启；
+> - `08-subagent-fast-follow.png`：子代理对话面板，Fast 跟随所属助理为开、七档轨、没有“恢复跟随助理”；
+> - `09-subagent-fast-override.png`：子代理独立关后出现“Fast 已单独设置 / 恢复跟随助理”；
+> - `10-subagent-subset-levels.png`：子代理用五档子集模型时只显示五档，Fast 仍独立存在。
+>
+> **子代理真实 UI 补验（同一脚本 [9]）**：默认跟随所属助理（助理开 → 灯亮、无覆盖提示）；独立开关只 PATCH `{fast:false/true}`、不碰 `thinking`；PATCH 500 回滚到原状态并显示“保存失败，已恢复原状态”；PATCH 延迟 1.6s 跨过 1 秒轮询后，界面仍保持用户刚点的“开”（轮询未用旧值覆盖）；“恢复跟随助理”发 `fast:null` 并回到跟随；`gpt-6.1-sol` 子代理按已注册目录显示 5 档（不是无条件七档），选中 `max` 后落库。
+>
+> **仍未验（不因本轮升级为已验）**：真实中转 / sub2api 部署 / 真实付费请求与账单；真机 App、手机 390 真机（截图是 headless Chrome）；`meta.fast` 的真实 provider 终止 / 非终止回显；群聊没有输入栏 Fast 入口（既有设计，仍不称群聊 UI 完成）；全量 `npm test` / 全量 e2e。
+
+> **以下“已完成 / review 修复 / 未完成 / 下一步”是早前阶段记录，保留供追溯；其中“浏览器未跑 / 等 heavy 槽 / 旧 43 项截图已通过”已被上方本轮复验取代。**
+
 ## 已完成
 
 1. **服务端（公开 hook）**
@@ -43,10 +72,10 @@
 
 **e2e 脚本已准备好、未运行**：新增 `e2e/model-menu-flow.mjs`（打开紧凑层 / 点模型名进目录 / 关到底）、`e2e/fast-mode-ui.mjs`（悬停说明、Esc 只关说明、真实 PATCH 保存 + 刷新持久化、失败回滚与原因、键盘焦点、390、不支持协议不发请求）；`model-ui` / `model-picker-favorites-ui` / `thinking-slider-ui` / `thinking-slider-visual` / `composer-compact` 的打开路径改到紧凑层。浏览器环境等 heavy 槽的 native env helper 接线，`fast-mode-ui` 未接线时以退出码 2 说明（不会用真实 HOME 起 Chrome）。
 
-## 未完成 / 未验（如实）
+## 未完成 / 未验（历史；已被上方“2026-10-17 21:18 真实浏览器复验”取代）
 
-- **Chrome / 真实构建 UI 贯通与截图、390 实际渲染、真机 App**：按主会话要求暂时让出 heavy 槽，**没有跑**；相关 Playwright 断言未新增执行。两层弹层目前只有纯状态测试 + 静态 DOM，**不能声称浏览器实际交互已验收**。
-- 真实中转（含 sub2api 实际部署）与真实付费请求：**未发**；站点策略（filter / block / force_priority / free_openai_fast）、倍率、账单均未知。
+- ~~Chrome / 真实构建 UI 贯通与截图、390 实际渲染、真机 App：没有跑~~ → 已在本轮跑通并重新看图；真机 App / 手机 390 真机仍未验。
+- 真实中转（含 sub2api 实际部署）与真实付费请求：**未发**；站点策略、倍率、账单均未知。
 - 全量 `npm test` / 全量 e2e 未跑。
 - `supported` 三态目前无服务级声明可返回；不声称任何服务对具体模型真支持。
 
@@ -57,7 +86,7 @@
 - `5d1d7db` 修复组合 hook 吞替换结果；补 400/403、终止事件与 reported 口径测试
 - 本轮后续（两层弹层 / review 修复 / 文档）见 `git log --oneline`
 
-## 下一步（需要主会话安排 heavy 槽）
+## 下一步（历史；原“等 heavy 槽”已完成，保留供追溯）
 
-1. 真实构建 + Chromium 跑两层弹层 / 延迟提示 / 390 / Esc 焦点 / 回滚截图（建议新增 `e2e/fast-mode-ui.mjs`，届时再写）。
+1. ~~真实构建 + Chromium 跑两层弹层 / 延迟提示 / 390 / Esc 焦点 / 回滚截图~~ → 本轮已完成（64 项 + 11 张稳定截图）。
 2. 真机 App 验证 PATCH 持久化、WS 刷新、子代理跟随覆盖；真实中转文档与计费核对。
