@@ -176,7 +176,11 @@ try {
 	await page.reload();
 	await page.getByTestId("model-picker").waitFor();
 	const compactNoReason = await openCompact(page);
-	assert.equal(await compactNoReason.getByTestId("thinking-unsupported").count(), 1, "不支持推理的模型仍打开紧凑层，只说明没有滑块");
+	// 打开后模型目录可能还在加载（加载中不冒充「不支持」）；等目录落地再看空态。
+	// Pi 对不支持推理的模型只给一档 off，界面是「只有一档 / 不需要调整」（fixed），不是 unsupported。
+	await wait(async () => (await compactNoReason.getByTestId("thinking-fixed").count()) === 1);
+	assert.equal(await compactNoReason.getByTestId("thinking-fixed").count(), 1, "只有一档的模型仍打开紧凑层，并说明不需要调整");
+	assert.match(await compactNoReason.getByTestId("thinking-fixed").innerText(), /只有一档/, "说明是一档而不是假装有滑块");
 	assert.equal(await compactNoReason.getByTestId("thinking-body").locator('[role="slider"]').count(), 0, "不画滑块");
 	await closeModelPanel(page);
 	ok("一个按钮里同时换模型和设思考强度（两层：紧凑层调档、目录层只选模型）");

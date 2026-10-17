@@ -228,6 +228,8 @@ try {
 
 	await step("A1 七档全量：弹层里 7 个刻度、档位顺序 = Pi 顺序、aria 正确", async () => {
 		const root = await openComposerMenu();
+		// 打开瞬间模型目录可能还在加载（只显示加载态）；等刻度真的画出来再断言
+		await waitFor(async () => (await stepsOf(root).count()) === 7);
 		const n = await stepsOf(root).count();
 		if (n !== 7) throw new Error(`应有 7 个刻度：${n}`);
 		const ids = await stepsOf(root).evaluateAll((els) => els.map((e) => e.getAttribute("data-testid").replace("thinking-", "")));
@@ -243,19 +245,27 @@ try {
 		// 初始档位必须来自服务端真值（没有本地假默认）：未显式设过 → 最低支持档 off
 		const wantNow = agentBefore.thinking ? LEVELS.indexOf(agentBefore.thinking) : 0;
 		if (Number(aria.now) !== wantNow) throw new Error(`初始档位应来自服务端真值（${agentBefore.thinking ?? "null"}→${wantNow}）：${aria.now}`);
-		// 主模型菜单同样要“完整头部”（旧实现在这里只有一行「思考强度」小标题，没有当前档 / 模型名）：
-		// 当前档中文 + 实际选中模型名；外层不再重复一行小标题
-		const head = await page.getByTestId("model-thinking").evaluate((el) => ({
+		// 紧凑层同样要“完整头部”（旧实现在这里只有一行「思考强度」小标题，没有当前档 / 模型名）：
+		// 当前档中文 + 实际选中模型名；外层不再重复一行小标题。目录层只选模型，不再重复整块滑块。
+		const head = await root.evaluate((el) => ({
 			heads: el.querySelectorAll(".pa-think-head").length,
 			cur: el.querySelector(".pa-think-cur")?.textContent ?? "",
 			model: el.querySelector(".pa-think-model")?.textContent ?? "",
 			rows: el.children.length,
 			first: el.firstElementChild?.className ?? "",
 		}));
-		if (head.heads !== 1) throw new Error(`模型菜单里应有且只有一个滑块头部：${JSON.stringify(head)}`);
+		if (head.heads !== 1) throw new Error(`紧凑层应有且只有一个滑块头部：${JSON.stringify(head)}`);
 		if (head.cur !== LABEL[LEVELS[wantNow]]) throw new Error(`头部应显示当前档中文「${LABEL[LEVELS[wantNow]]}」：${JSON.stringify(head)}`);
 		if (head.model !== MAIN) throw new Error(`头部应显示实际选中的模型名「${MAIN}」（不是写死的示例名）：${JSON.stringify(head)}`);
-		if (head.rows !== 1 || !head.first.includes("pa-think")) throw new Error(`不该再有外层「思考强度」小标题（与头部重复）：${JSON.stringify(head)}`);
+		if (!head.first.includes("pa-think")) throw new Error(`头部应是滑块的第一行：${JSON.stringify(head)}`);
+		// 旧实现在滑块外还有一行「思考强度」小标题（与头部重复）；这里检查没有这段重复文字
+		const dupTitle = await root.evaluate((el) => [...el.children].filter((c) => c.textContent.trim() === "思考强度").length);
+		if (dupTitle) throw new Error(`不该再有外层「思考强度」小标题（与头部重复）：${JSON.stringify(head)}`);
+		await page.getByTestId(COMPACT).getByTestId("thinking-model").click();
+		await page.getByTestId("model-menu").waitFor();
+		if (await page.getByTestId("model-thinking").count()) throw new Error("目录层不应重复整块滑块");
+		await page.keyboard.press("Escape");
+		await page.getByTestId(COMPACT).waitFor();
 	});
 
 	await step("A1b 视觉：粗胶囊轨道 + 实心圆钮（无档位文字），min/max 不越出轨道", async () => {
@@ -398,6 +408,8 @@ try {
 		await page.reload();
 		await page.getByTestId("model-picker").waitFor();
 		const root = await openComposerMenu();
+		// 刷新后目录重新加载：等刻度出现（空 = 还在加载，不是这个模型没有档位）
+		await waitFor(async () => (await stepsOf(root).count()) > 0);
 		const ids = await stepsOf(root).evaluateAll((els) => els.map((e) => e.getAttribute("data-testid").replace("thinking-", "")));
 		const want = catalog.find((m) => m.provider === prov.id && m.id === SUBSET).thinking;
 		if (JSON.stringify(ids) !== JSON.stringify(want)) throw new Error(`子集应等于目录：${JSON.stringify({ ids, want })}`);
@@ -410,13 +422,17 @@ try {
 		await page.getByTestId("model-picker").waitFor();
 	};
 
-	await step("A7 非推理模型（只有 off）：紧凑层不画滑块、如实说明；目录层不重复强度块", async () => {
+	await step("A7 非推理模型（只有 off）：紧凑层不画滑块、如实说明只有一档；目录层不重复强度块", async () => {
 		await setModel("plain-noreason");
 		// 紧凑层仍打开（要能看 Fast / 换模型），只是不画滑块
 		await page.getByTestId("model-picker").click();
 		await page.getByTestId(COMPACT).waitFor();
+		// 目录加载中只显示加载态；等空态落地（Pi 对非推理模型只给一档 off → fixed，不是 unsupported）
+		await waitFor(async () => (await page.getByTestId("thinking-fixed").count()) === 1 || (await page.getByTestId("thinking-unsupported").count()) === 1);
 		if (await page.locator('[data-testid="model-picker-compact"] .pa-think-handle').count()) throw new Error("单档 / 非推理不应画滑块");
-		if (!(await page.getByTestId("thinking-unsupported").count())) throw new Error("应如实说明这个模型不支持调整思考强度");
+		if (await page.getByTestId("thinking-fixed").count()) {
+			if (!/只有一档/.test(await page.getByTestId("thinking-fixed").innerText())) throw new Error("应如实说明这个模型只有一档");
+		} else if (!(await page.getByTestId("thinking-unsupported").count())) throw new Error("应如实说明这个模型不支持调整思考强度");
 		// 目录层只选模型：同一套强度 / Fast 不再重复
 		await page.getByTestId(COMPACT).getByTestId("thinking-model").click();
 		await page.getByTestId("model-menu").waitFor();

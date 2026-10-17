@@ -16,8 +16,9 @@ export const COMPACT_TESTID = (testid) => `${testid}-compact`;
 
 /** 打开聊天输入栏的完整模型目录（先紧凑层，再点模型名）；返回 model-menu 的 locator */
 export async function openModelMenu(page, { testid = "model-picker", menu = "model-menu" } = {}) {
-	await page.getByTestId(testid).click();
 	const compact = page.getByTestId(COMPACT_TESTID(testid));
+	// 选完模型会回到紧凑层并**保持打开**（合同 §7）；这时再点触发器会把它关掉，所以只在都关着时才点
+	if (!(await compact.count()) && !(await page.getByTestId(menu).count())) await page.getByTestId(testid).click();
 	if (await compact.count()) await compact.getByTestId("thinking-model").click();
 	await page.getByTestId(menu).waitFor();
 	return page.getByTestId(menu);
