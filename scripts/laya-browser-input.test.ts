@@ -1,10 +1,11 @@
 /**
- * 浏览器专项 checkpoint 的输入契约（纯函数）：只验证构造 / 分块 / 合并 / 解释，
- * 不启动模型、不下载权重、不碰网络。
+ * 【研究 fixture】浏览器专项 checkpoint 的输入契约（纯函数）：只验证构造 / 分块 / 合并 / 解释，
+ * 不启动模型、不下载权重、不碰网络；不属于产品测试集。
  *
- * 对照上游 `cklxx/laya-browser` revision `645cf366` 的 `laya_browser.py`（Apache-2.0）。
+ * 跑法：`node --test --import tsx scripts/laya-browser-input.test.ts`
+ * 对照上游 `cklxx/laya-browser` revision `645cf366` 的 `laya_browser.py`（Apache-2.0，见 THIRD_PARTY_NOTICES）。
  */
-await import("./setup.ts");
+await import("../packages/server/test/setup.ts");
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -19,7 +20,7 @@ import {
 	secondPassQuestions,
 	splitWideChoices,
 	type BrowserAction,
-} from "../src/fast-computer/laya-browser-input.ts";
+} from "./laya-browser-input.ts";
 
 const actions = (): BrowserAction[] => [
 	{ id: "e1", kind: "fill", node: 1, label: "Search packages", role: "searchbox", value: "" },

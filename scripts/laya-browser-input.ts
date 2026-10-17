@@ -1,20 +1,17 @@
 /**
- * 浏览器专项 checkpoint `cklxx/laya-browser` 的**输入契约**（纯函数，无 I/O、无模型、无 SDK 依赖）。
+ * 【研究 fixture，不是产品代码】浏览器专项 checkpoint `cklxx/laya-browser` 的输入契约参考实现（纯函数，无 I/O、无模型）。
  *
- * 为什么单独一份：上游 laya 包（我们 pin 的 `laya==0.4.8`）只提供通用问题格式，
- * 而这个 checkpoint 是在**固定输入格式（v5）**上微调的，格式写在 HF 仓库的 `laya_browser.py`
- * （Apache-2.0，revision `645cf366a2ae35f1086e8c20eff48f909bb49206`）。这里只是把它里面的
- * `action_space` / `compact` / `fields_summary` / `build_request` / `predict_chunked` 的分块与合并
- * 逐条翻成 TS，好让 Pi 侧能用**现有** `/v1/systemone`（Pi SDK 会带 `model` 字段）把 v5 请求发过去，
- * 不需要执行仓库里的 .py，也不需要改 Pi SDK。
+ * 位置说明：这段是上游 `laya_browser.py`（Apache-2.0）里格式构造逻辑的逐条 TS 翻译，
+ * 用来**证明格式可复现、可单测**；它**没有被任何产品模块引用、没有进 `packages/server`、没有主审**，
+ * 因此**不得当产品能力**、也不得据此上线卡片。要接产品必须先主审（含许可 / 行为 / 安全边界）。
  *
- * 边界（重要）：
- *  - **本文件还没有接进产品链路**（没有 catalog 条目、没有 UI 卡片、没有 chooser 注册）：
- *    checkpoint 未下载、未在真机跑过、中文覆盖未验证，所以不做成“点一下就装但用不了”的空卡片。
- *  - 只做输入构造与答案解释；不判分、不设阈值、不合成置信度。
- *  - 上游没写进 `decide()` 的东西（例如 DONE 的判定阈值）这里也不发明。
+ * 上游：`cklxx/laya-browser` revision `645cf366a2ae35f1086e8c20eff48f909bb49206` 的 `laya_browser.py`，
+ * Apache-2.0；来源与保留义务见 `THIRD_PARTY_NOTICES.md`。
+ * 为什么需要它：我们 pin 的 `laya==0.4.8` 只提供通用问题格式，不读 `laya_fmt: v5`；
+ * 这个 checkpoint 是在 v5 上微调的，格式必须由调用方构造（上游那份也只是构造 state/questions 后调公开的 `agent.predict`）。
  *
- * 上游对照：`docs/research/laya-browser-checkpoint-review.md`。
+ * 边界：只做输入构造与答案解释；不判分、不设阈值、不合成置信度、不发明上游没写的判定规则。
+ * 对照与决策：`docs/research/laya-browser-checkpoint-review.md`。
  */
 
 /** 与上游 `laya_browser.py` 同名常量。 */

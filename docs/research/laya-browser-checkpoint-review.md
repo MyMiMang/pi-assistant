@@ -9,15 +9,16 @@
 
 | 问题 | 结论 | 依据 |
 |---|---|---|
-| 许可能否分发 / 商用 | **能**（Apache-2.0，逐层闭合） | 见 §2.2 |
+| 许可能否分发 / 商用 | **元数据层面无冲突**（本仓 Apache-2.0，上游逐层声明见 §2.2）；**不等于**训练数据全部义务已自动闭合 | §2.2 |
 | revision 能否固定 / 校验 | **能**（已取到 commit + 每个必需文件的 size/SHA256，无需下权重） | §2.3 |
-| 体积 / Apple 运行时 | **能跑，且与现 multilingual 同级**（同一 mmBERT-base 322M，643.8 MB） | §2.4 / §3 |
-| 输入契约能否用现有运行时实现 | **能**，v5 格式全部在客户端侧构造；laya 0.4.8 的 `/v1/systemone` 直接收 `state`+`questions`，`model` 字段选 checkpoint | §3 / §4 |
-| 中文覆盖 | **未验，且现有证据不支持**（训练数据全英文站点，card `language: en`） | §5 |
+| 体积 / Apple 运行时 | **体积已核**（643,835,524 B）；**Apple 能否真跑属源码/配置推断，未真实加载，不得说“能跑”** | §2.4 / §3 |
+| 输入契约能否用现有运行时实现 | **按源码推断可以**：v5 格式全在客户端构造，`/v1/systemone` 收 `state`+`questions`、`model` 选 checkpoint；**未真机验证** | §3 / §4 |
+| 中文覆盖 | **未验，且现有证据不支持**（训练与评测均为英文站点；card 的 `multilingual` 只是词表声明） | §5 |
 | 现在能否上线成卡片 | **不能**（中文未验 + 准确率未在本机测；不允许空卡片 / 未验标推荐） | §6 |
 
-因此本轮交付：**本决策文档 + 一段未接线的纯函数 input adapter + 单测**（`packages/server/src/fast-computer/laya-browser-input.ts`，
-`packages/server/test/laya-browser-input.test.ts`，8/8 通过，`tsc --noEmit` exit 0）。catalog / manifest / UI **一律没动**。
+因此本轮交付：**本决策文档 + 一段研究用纯函数 input adapter + 单测**，都放在 `scripts/`（不是产品代码）：
+`scripts/laya-browser-input.ts`、`scripts/laya-browser-input.test.ts`（8/8 通过，跑法 `node --test --import tsx scripts/laya-browser-input.test.ts`）。
+**catalog / manifest / UI / `packages/server` 一律没动**；adapter **未经主审不得上线**，也不得被产品模块 import。
 
 ## 2. HuggingFace 源核（公开 API，无需 Key，未下权重）
 
@@ -31,17 +32,24 @@
 - 参数规模：`model.safetensors` 643,835,524 B ÷ 2（fp16/bf16）≈ **322M**，与 card 的 `mmBERT-base 322M` 一致；
   421M 是另一个 backbone（对应 `convaiinnovations/laya-typed-decisions` 的 842,609,220 B），**不是本仓库**。
 
-### 2.2 许可链（全部按上游声明核对）
+### 2.2 许可元数据（只说明“查过上游声明”，不代替法务结论）
 
-| 层 | 声明 | 说明 |
+| 层 | 上游声明 | 说明 |
 |---|---|---|
-| `cklxx/laya-browser` | `license: apache-2.0`（card + tag） | README “License: Apache-2.0, same as laya” |
+| `cklxx/laya-browser` | `license: apache-2.0`（card frontmatter + `license:` tag） | README 另写 “License: Apache-2.0, same as laya” |
 | 基座 `convaiinnovations/laya` | `apache-2.0` | 我们已在 `THIRD_PARTY_NOTICES.md` / manifest 记录 |
-| encoder `jhu-clsp/mmBERT-base` | `mit` | 随权重分发需保留 MIT 声明 |
-| 训练数据 Mind2Web / WebChain | `cc-by-4.0` | 上游注明“training only”，权重分发不改变其署名义务 |
+| encoder `jhu-clsp/mmBERT-base` | `mit` | 分发时需保留 MIT 声明 |
+| 训练数据 Mind2Web / WebChain | `cc-by-4.0` | 上游注明 “training only”；**衍生权重的署名 / 使用义务没有逐条审过** |
 | 训练数据 NNetNav-live | `apache-2.0` | — |
 
-结论：**分发 + 商用许可上无阻塞**；真要上架需在 `THIRD_PARTY_NOTICES.md` 补一条（laya-browser + mmBERT-base MIT 声明）。
+结论（严格版）：**元数据层面没有互相冲突的声明**，分发与商用**看不到许可阻塞**；但这只是读上游 card 的结果，
+**不等于**训练数据（尤其 Mind2Web / WebChain 的 CC-BY 义务、以及各数据集 ToS）的义务已全部闭合。真要随产品分发，
+需要一次专门的许可复核（谁署名、NOTICE 放哪、是否要随包附数据集声明）。
+
+### 2.2b 我们的翻译代码必须保留来源（Apache-2.0 §4）
+
+`scripts/laya-browser-input.ts` 是上游 `laya_browser.py` 的逐条翻译，属 Apache-2.0 衍生：已在
+[`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md) 补一条，写明来源、revision、许可证与保留义务。
 
 ### 2.3 固定 revision 与文件清单（下载后校验用，未下载）
 
@@ -76,7 +84,9 @@
 `config.json` 是给 `transformers` + `trust_remote_code` 用的（`AutoModel`），我们**不需要**它；`encoder/config.json` 里
 `reference_compile: false` 已经关掉，所以上游 `laya_browser.py` 里那句 `encoder.config.reference_compile = False` 的补丁**也不需要**。
 
-## 3. 运行时兼容（本机已装 `laya==0.4.8`，逐行核对 site-packages）
+## 3. 运行时兼容（读本机已装 `laya==0.4.8` 源码得到的**推断**，未真实加载）
+
+下面每一条都是**源码/配置层面**的事实，组合起来的结论是“设计上能接”，**不是“已经在 Apple 上跑通”**。
 
 - `laya/agent.py:2083 load()`：接受本地 checkpoint 目录（目录里有 `rl_agent_config.json` 即可），`cfg` 里的
   `head_max_len=768` / `max_len=1024` 会被 `predict` 自动采用（`agent.py:1135`），**不需要**客户端再传。
@@ -104,7 +114,14 @@
 
 ## 5. 中文覆盖：未验，且现有证据不支持
 
-- card 的 `language` 是 `["en", "multilingual"]`，但 `multilingual` 是**基座词表**属性，不是任务能力证据。
+先统一原始证据（两处 card 字段，逐字）：
+
+- README 的 YAML frontmatter：`language:` 下两行 `- en`、`- multilingual`。
+- HF API 的 `cardData.language`：`["en", "multilingual"]`（与上面同一份 card 的解析结果，不是两套声明）。
+
+所以“card 写的是 en”这个说法**不准确**：它同时列了 `en` 和 `multilingual`。但 `multilingual` 是**基座词表/多语种声明**，
+不是“中文网页任务已训练”的证据：
+
 - 训练数据（README 逐条）：Mind2Web / NNetNav / WebChain + 421 个英文站点（Wikipedia / GitHub / HN / arXiv / HF / demo shops），
   goal 由本地 Qwen3-8B 反向生成；评测套件 A/B/C 全是英文站点。
 - 所以**中文网页 / 中文标签 / 中文目标**没有任何实测数据。这是**当前最大 blocker**，而且它决定产品是否该把它当“中文可用”。
@@ -145,8 +162,8 @@
 
 按“先 source 审、再小实现”的顺序，每一步都能单独回滚：
 
-- **P0（本轮已完成，纯函数、未接线）**：`laya-browser-input.ts` 实现 v5 的 `actionSpace / compact / fieldsSummary / buildRequest /
-  splitWideChoices / mergeChunkedAnswers / interpret`。只证明“格式可复现”，不碰运行时、不改任何阈值。
+- **P0（本轮已完成，研究 fixture、未接线）**：`scripts/laya-browser-input.ts` 实现 v5 的 `actionSpace / compact / fieldsSummary / buildRequest /
+  splitWideChoices / mergeChunkedAnswers / interpret`。只证明“格式可复现”，不碰运行时、不改任何阈值、**不进产品 src**、未主审不上线。
 - **P1（下一 patch，仍然不换默认模型）**：把候选语义从“label”扩成“**动作描述 + 前置条件**”（照 jev-use 的 `Candidate`），
   并给 chooser 一个**可选**的 `state` 扩展（`page` / `form` / `outline` / `history`）。默认路径（multilingual + 现模板）
   输入**保持不变**，只在显式选择浏览器 checkpoint 时启用；`reobserve` / `abstain` 作为**保留候选**加进去，
