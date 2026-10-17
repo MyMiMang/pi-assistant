@@ -128,10 +128,25 @@
 1. **派发前必须重新观察**：旧代码把 `choose` 之前那次 `observe` 的快照当成「新快照」传给 `resolveFreshCandidate`，模型推理期间页面若变了（按钮改名 / 消失 / 出现第二个同名目标）根本验不出来。现在 `choose` 之后**再 `observe()` 一次**（浏览器 fixture 会拿到新 `snapshot.id` + 新 refs；原生窗口拿到新 `element_token`），用这次的结果做新鲜度校验与派发；观察失败按 `unknown` 返回、不派发。**注意**：身份复核（`readWindow`）仍复用这次观察的 pin，不再额外取快照（否则作废即将点击的 ref，见 9.2 第 3 条）。
 2. **导航重试只认导航超时**：旧条件 `/navigate|timed out|timeout/i` 会把任何含 `navigate` 字样的错误（含权限桥拒绝、绑定失败、传输错误）也重试一次，等于把 fail-closed 变成猜。现在必须同时命中 `Page.navigate` 与 timeout 字样才重试一次；fixture 是幂等 GET，重放不改状态，成功与否仍以真实快照的 URL+nonce 复核为准。
 3. **owner 不一致在绑定阶段就失败**：驱动若在快照 / 绑定里报了一个**不等于本次 `prepared_pid`** 的 owner，说明无法证明这个页面属于本次启动的隔离浏览器 → 直接抛错，不再返回「能用但不关」的 handle。关闭与打开中途失败的清理走**同一条**路径，只针对本次 `prepared_pid`（不认后续快照里报的任何 pid）。**局限（如实）**：pid 在几秒内被系统复用给别的进程时这层无法区分（没有进程启动时间可比）。
-4. **原生进程环境与服务的合成 HOME 分离**：隔离启动时服务用临时 HOME（凭据 / 数据隔离），但守护进程与它拉起的系统 Chrome 必须拿到 OS 账户家目录，否则 Chrome 找不到默认钥匙串（见 `DESIGN.md` §5.19.3 与 `packages/server/src/native-launch-env.ts`）。`scripts/laya-benchmark-driver-smoke.mjs` 的 `cua-driver mcp` 也用同一份环境。
+4. **原生进程环境与服务的合成 HOME 分离**：隔离启动时服务用临时 HOME（凭据 / 数据隔离），但守护进程与它拉起的系统 Chrome 必须拿到 OS 账户家目录（见 `DESIGN.md` §5.19.3）。**已证**的是合成 HOME 会被传给原生进程（会把驱动缓存 / 家目录指到临时目录）；「Chrome 弹找不到钥匙串是因为这个」只有时间相关，macOS 因果未验。
+   - **MCP 通道必须全量替换环境**：Pi `StdioTransport` 默认 `{...process.env, ...env}`，只传“删过键”的 env 删不掉任何东西（`CFFIXED_USER_HOME` / 合成 `TMPDIR` 会从父进程回来）。所以走项目自有 `nativeLaunchCommand()` + `src/mcp-env-launcher.mjs`（argv 只带键名与非敏感 HOME，不把整份环境塞进 argv）。证据：`test/native-launch-env-stdio.test.ts` 用**真实 `StdioTransport`** 起只回显白名单的无害子进程，先复现红再证明绿。
+   - **清理前证明归属**：`releasePrepared()` 在 `kill_app` 前用当前 `list_windows(pid)` 复核「同一个 window_id 仍属于同一个 pid」（还没 pin 到窗口时要求该 pid 当下确实持有窗口），证明不了就**不杀**并 `console.warn` 留痕。不再按历史 pid 盲杀（PID 复用会误杀别人的进程）。
 
 **未验**：以上 1–3 只有假 invoke / 假 deps 的定向单测（`fast-computer-benchmark*` 37/37），**没有再跑真实隔离浏览器**（等主会话给测试槽许可 + 新鲜进程状态）；「钥匙串弹窗已修好」属未证。
 
 ### 9.5 已验收的证据（真实驱动，非 mock）
 
 `scripts/laya-benchmark-driver-smoke.mjs`（手动运行，不进默认 `npm test`）：真实 `cua-driver mcp --socket …` → `browser_prepare`（隔离 new）→ `list_windows` → bind → `browser_navigate` → 快照 pin → 真实 fixture HTTP 页 → 真实 `browser_click` → 双证据判分。**chooser 是脚本固定的（按 label 关键词选），所以它证明的是 driver / 隔离窗口 / fixture / 动作 / 判分链路真实可用，不评估 Laya 的选择质量**；模型质量要另跑真实 benchmark。2026-10-17 本机实测 4/4 任务 `correctness:"correct"`（pin 形如 `p4`）。该 smoke 的 chooser 固定、**只证链路**。
+
+### 9.6 环境污染验证的正确做法（计划，**未运行**，等主 review 授权）
+
+为什么不能拿现有 smoke 证明“环境已修”：
+
+1. `scripts/laya-benchmark-driver-smoke.mjs` 过去默认连**已安装 App 的守护进程 socket**（生产 Laya 用的那个）；而且**改 MCP 的 env 不会改已运行 daemon 的环境**——daemon 早就带着旧环境起来了。所以即使脚本跑绿，也不能说明 daemon 侧污染已解决。现在脚本**必须显式**给 `PIA_CUA_SOCKET`，否则直接退出（不再默认连生产 socket）。
+2. 正确验收（待授权，单独测试槽）：
+   - 起一个**本次独占**的 daemon：独立 `PIA_DATA_DIR`（socket 落在它下面）+ 本次专用 `CUA_DRIVER_BROWSER_PROFILE_ROOT`，环境明确是原生（`HOME` = OS 账户家目录、无 `CFFIXED_USER_HOME`、无合成 `TMPDIR`）；
+   - 用生产同一套 `hostMcpCommand()`（启动器 + 全量替换）连它，跑 §9.5 的链路；
+   - 只启**一个**自有浏览器；结束时 `finally` 关自有浏览器并 `stop` 自有 socket 的 daemon，**不碰生产 App 的 socket / Laya**；
+   - 证据：daemon 启动时的 env 断言（白名单：HOME / CFFIXED / TMPDIR 三个布尔与值）+ 驱动自报 pid + 真实动作双证据；不打印其它 env、不读 token / credentials。
+3. 真实 Laya 能力验收要走**生产的 `buildChooser` / `selectFastAction`**，不能用脚本关键词 chooser 冒充（那样只是链路 smoke，不是模型 4/4）。优先用本机回环桥接**已运行**的 Laya 服务；不得读 token / credentials；若只能自建 runtime，必须用正式 API 停掉原进程并外部 `finally` 恢复。
+4. 本分支当前**没有**跑任何真实浏览器 / 驱动 / 模型（测试闸门未通过）：§9.4 的 1–4 只有假 invoke / 假 deps 的定向单测。

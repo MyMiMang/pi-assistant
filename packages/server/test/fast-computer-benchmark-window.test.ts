@@ -202,8 +202,17 @@ test("driver：prepare 之后任一步失败，只清理本次 prepared_pid（�
 		windowKindOf: () => "driver-isolated-browser",
 		capable: () => ({ ok: true }),
 	});
-	await assert.rejects(() => driver.openFixtureWindow({ url: "/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", fixtureId: "fx-1", nonce: "n-1", target: "hostpc" }), /找不到驱动自有隔离浏览器的窗口/);
-	assert.deepEqual(killed, [8814], "只 kill 本次 browser_prepare 返回的 prepared_pid");
+	const warnings: string[] = [];
+	const warn = console.warn;
+	console.warn = (m) => void warnings.push(String(m));
+	try {
+		await assert.rejects(() => driver.openFixtureWindow({ url: "/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", fixtureId: "fx-1", nonce: "n-1", target: "hostpc" }), /找不到驱动自有隔离浏览器的窗口/);
+	} finally {
+		console.warn = warn;
+	}
+	// 清理前必须再证明一次归属：该 pid 当下没有窗口 → 不能按历史 pid 盲杀（PID 复用时可能杀到别人的进程）。
+	assert.deepEqual(killed, [], "证明不了归属就不 kill");
+	assert.match(warnings.join("\n"), /跳过关闭自有隔离浏览器 pid=8814/, "跳过清理必须留痕，不能静默");
 });
 
 test("driver：驱动报的 owner 与本次 prepared_pid 不一致 → 绑定阶段就 fail-closed（不返回可用 handle），清理仍只针对自有 pid", async () => {

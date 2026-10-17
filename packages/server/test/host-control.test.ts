@@ -459,12 +459,37 @@ test("系统权限只读探测：结果（包括 null）也进缓存，不每次
 	assert.equal(hc.hostPermissionsCache(at + 60_000), null, "过期后按未知处理，不冒充授权结果");
 });
 
-test("原生驱动环境：MCP 命令带 OS 账户家目录，不把服务的合成 HOME / CFFIXED_USER_HOME 传给原生进程", async () => {
+test("原生驱动环境：MCP 命令用自有启动器全量替换，HOME 是 OS 账户家目录，CFFIXED_USER_HOME 被删", async () => {
 	const { userInfo } = await import("node:os");
-	const cmd = hc.hostMcpCommand("some-agent");
-	assert.equal(cmd.env?.HOME, userInfo().homedir, "`cua-driver mcp` 是原生进程，HOME 必须来自 OS 账户信息");
-	assert.equal(cmd.env?.CFFIXED_USER_HOME, undefined, "CFFIXED_USER_HOME 会覆盖 HOME，必须剥掉");
-	assert.equal(cmd.env?.CUA_DRIVER_TELEMETRY, "0");
-	// 数据 / profile 隔离变量照旧保留（隔离靠它们，不靠改 HOME）。
-	assert.equal(cmd.env?.PIA_DATA_DIR, process.env.PIA_DATA_DIR);
+	// 模拟隔离启动的父进程 env（合成 HOME / CFFIXED / 合成 TMPDIR）——现实里就是这种环境才需要擦。
+	const saved = { HOME: process.env.HOME, CFFIXED_USER_HOME: process.env.CFFIXED_USER_HOME, TMPDIR: process.env.TMPDIR };
+	process.env.HOME = "/tmp/pia-hc/home";
+	process.env.CFFIXED_USER_HOME = "/tmp/pia-hc/home";
+	process.env.TMPDIR = "/tmp/pia-hc/tmp";
+	try {
+		const cmd = hc.hostMcpCommand("some-agent");
+		// 理由：StdioTransport 会 {...process.env, ...env}，只传缺键的 env 删不掉任何东西，所以用自有启动器全量替换。
+		assert.equal(cmd.command, process.execPath, "用自有启动器（由当前 node 跑）");
+		assert.equal(cmd.envReplaced, true);
+		assert.ok(cmd.args[0].endsWith("mcp-env-launcher.mjs"), "第一条参数是自有启动器");
+		assert.ok(cmd.args.includes(`--set=HOME=${userInfo().homedir}`), "`cua-driver mcp` 是原生进程，HOME 必须来自 OS 账户信息");
+		for (const k of ["CFFIXED_USER_HOME", "TMPDIR"]) assert.ok(cmd.args.includes(`--strip=${k}`), `${k} 必须由启动器删掉（argv 里只有键名）`);
+		assert.equal(cmd.env.CUA_DRIVER_TELEMETRY, "0");
+		// 扩展侧原本另塞的两个变量必须进 argv 的 --set，否则全量替换后会丢（run_script 会被重新放开）。
+		assert.equal(cmd.env.CUA_DRIVER_DISABLE_RUN_SCRIPT, "1");
+		assert.ok(cmd.args.includes("--set=CUA_DRIVER_DISABLE_RUN_SCRIPT=1"));
+		// 数据 / profile 隔离变量照旧保留（隔离靠它们，不靠改 HOME）。
+		assert.equal(cmd.env.PIA_DATA_DIR, process.env.PIA_DATA_DIR);
+		// 真正的 cua-driver 命令仍在启动器后面，socket 名称不变。
+		const tail = cmd.args.slice(-3);
+		assert.equal(tail[0], "mcp");
+		assert.equal(tail[1], "--socket");
+		assert.match(tail[2], /cua-bounded\.sock$/, "socket 名称不变");
+		assert.match(cmd.args[cmd.args.indexOf("--") + 1], /cua-driver$/, "`--` 之后才是真实的 cua-driver 命令");
+	} finally {
+		for (const [k, v] of Object.entries(saved)) {
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+	}
 });

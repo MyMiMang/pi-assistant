@@ -23,7 +23,7 @@ import { config } from "./config.ts";
 import { getSetting, setSetting } from "./db.ts";
 import { readZip } from "./memory/hindsight/zip.ts";
 import { fetchWithProgress, registerDownload, trackDownload } from "./downloads.ts";
-import { envStrings, nativeLaunchEnvForChild, nativeLaunchEnvProblems, osAccountHome } from "./native-launch-env.ts";
+import { nativeLaunchCommand, nativeLaunchEnvForChild, nativeLaunchEnvProblems, osAccountHome, type NativeLaunchCommand } from "./native-launch-env.ts";
 
 const run = promisify(execFile);
 
@@ -197,7 +197,16 @@ function driverEnv(why?: string): NodeJS.ProcessEnv {
 	if (nativeEnvNotice === null) {
 		const problems = nativeLaunchEnvProblems(r.env, { realHome: r.realHome, syntheticRoots: [config.dataDir] });
 		// 只记录、不拒绝启动：隔离问题不该变成“电脑操作打不开”。
-		nativeEnvNotice = r.diverged || r.stripped.length || problems.length ? `${r.diverged ? "服务的 HOME 不是登录用户家目录，" : ""}原生驱动改用 OS 账户家目录${r.stripped.length ? `，已剥离 ${r.stripped.join(" / ")}` : ""}${problems.length ? `；自检问题：${problems.join("；")}` : ""}` : "";
+		// 取不到 OS 账户家目录时必须说实话：HOME 没被改写，原生进程仍会看到服务自己的 HOME。
+		const unknown = r.homeSource === "unknown" ? "取不到 OS 账户家目录（os.userInfo 失败）：HOME 未改写，原生驱动仍会拿到服务自己的 HOME，隔离环境下的家目录问题**未解决**" : "";
+		nativeEnvNotice = [
+			r.diverged ? "服务的 HOME 不是登录用户家目录，原生驱动改用 OS 账户家目录" : "",
+			r.stripped.length ? `已剥离 ${r.stripped.join(" / ")}` : "",
+			problems.length ? `自检问题：${problems.join("；")}` : "",
+			unknown,
+		]
+			.filter(Boolean)
+			.join("，");
 		if (nativeEnvNotice) console.warn(`[host] ${nativeEnvNotice}${why ? `（${why}）` : ""}`);
 	}
 	return r.env;
@@ -363,8 +372,13 @@ async function spawnDaemon(kind: DaemonKind, exe: string) {
 	if (process.platform !== "win32") rmSync(socketPath(kind), { force: true });
 	const penv = driverEnv("启动守护进程");
 	if (isMac()) {
-		// macOS：经 LaunchServices 启动 CuaDriver.app，辅助功能/屏幕录制授权归属于它（而不是终端或我们的服务）
-		await run("open", ["-n", "-g", "-a", cuaPaths().app!, "--args", ...serveArgs(kind)], { env: penv });
+		// macOS：经 LaunchServices 启动 CuaDriver.app，辅助功能/屏幕录制授权归属于它（而不是终端或我们的服务）。
+		// 环境怎么过去：本机 `man open` 明说 “Opened applications inherit environment variables just as if you had
+		// launched the application directly through its full path”，并提供 `--env NAME=VALUE` 显式追加。
+		// 所以先给 `open` 本身一份已剥离好的 env（这是继承的原样），再把必要的 HOME 用 `--env` 写死一次，
+		// 不靠“继承一定发生”这一条假设（`--env` 只能加、不能删，所以删 `CFFIXED_USER_HOME` 只能靠前者）。
+		const args = ["-n", "-g", "-a", cuaPaths().app!, ...(penv.HOME ? ["--env", `HOME=${penv.HOME}`] : []), "--args", ...serveArgs(kind)];
+		await run("open", args, { env: penv });
 	} else {
 		const child = spawn(exe, serveArgs(kind), { env: penv, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 		daemons.set(kind, child);
@@ -407,9 +421,15 @@ export async function setHostPaused(v: boolean) {
 }
 
 /** MCP 命令：按助理档位连到对应的守护进程 */
-export function hostMcpCommand(agentId: string): { command: string; args: string[]; env?: Record<string, string> } {
-	// env 与守护进程同一份原生环境：`cua-driver mcp` 也是原生进程（Pi 侧 StdioTransport 会用 process.env 打底再覆盖）。
-	return { command: cuaPaths().exe, args: ["mcp", "--socket", socketPath(daemonKindOf(tierOf(agentId)))], env: envStrings(driverEnv()) };
+export function hostMcpCommand(agentId: string): NativeLaunchCommand {
+	// `cua-driver mcp` 也是原生进程，而且它是经 Pi 的 StdioTransport 起的：那条路会把 process.env 合并回来，
+	// 只传一份缺键的 env 删不掉 `CFFIXED_USER_HOME` / 合成 `TMPDIR`。所以用 `env -i` 把最终环境写进命令行。
+	// 扩展侧原本另塞的 `CUA_DRIVER_TELEMETRY` / `CUA_DRIVER_DISABLE_RUN_SCRIPT` 必须在这里（extra）一起带上，
+	// 否则会被 `env -i` 清掉（`nativeLaunchCommand().envReplaced === true` 时调用方额外传的 env 不生效）。
+	return nativeLaunchCommand(
+		{ command: cuaPaths().exe, args: ["mcp", "--socket", socketPath(daemonKindOf(tierOf(agentId)))] },
+		{ syntheticRoots: [config.dataDir], extra: { CUA_DRIVER_TELEMETRY: "0", CUA_DRIVER_DISABLE_RUN_SCRIPT: "1" } },
+	);
 }
 
 export function saveHostSettings(patch: Partial<HostControlSettings>) {

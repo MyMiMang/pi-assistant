@@ -24,8 +24,16 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { McpClient, StdioTransport } from "@earendil-works/pi-mcp";
 
-const SOCKET =
-	process.env.PIA_CUA_SOCKET ?? `${process.env.HOME}/Library/Application Support/Pi Assistant/host-control/cua-open.sock`;
+// **必须显式给 socket**：这里不再默认连已安装 App 的守护进程。
+//  1) 那条 socket 属于正在运行的 App（生产 Laya）；本脚本只读/驱动测试不该碰它。
+//  2) 就算只改 MCP 的 env，也不会改**已经跑起来的**守护进程的环境——拿它跑“修好了”证明不了环境污染已解决。
+// 要证明环境隔离，必须自己起一个本次独占 socket 的 daemon（env 与 profile root 明确为原生 / 本次独占），
+// 脚本结束时 stop 掉自己的 socket，生产 Laya 不受影响。见 docs/design/fast-model-benchmark.md §9.6。
+const SOCKET = process.env.PIA_CUA_SOCKET;
+if (!SOCKET) {
+	console.error("[smoke] 需要 PIA_CUA_SOCKET 指向**本次独占**的 daemon socket（不要用已安装 App 的生产 socket）");
+	process.exit(2);
+}
 const DRIVER =
 	process.env.PIA_CUA_DRIVER ??
 	"/Applications/Pi Assistant.app/Contents/Resources/app/bin-seed/cua-driver-0.35.4/cua-driver-rs-0.35.4-darwin-universal/cua-driver";
@@ -52,10 +60,13 @@ if (exitCode) process.exit(exitCode);
 // ---------------------------------------------------------------- 真实 MCP 连接（与生产同一命令 / 同一客户端）
 const client = new McpClient({ name: "pia-laya-bench-smoke", version: "1.0.0", requestTimeoutMs: 30_000 });
 // 原生驱动的 env 走生产同一层（OS 账户家目录 / 不继承合成 HOME），不在这里另写一套。
-const { envStrings, nativeLaunchEnvForChild } = await import("../packages/server/src/native-launch-env.ts");
-await client.connect(
-	new StdioTransport({ command: DRIVER, args: ["mcp", "--socket", SOCKET], env: envStrings(nativeLaunchEnvForChild({ CUA_DRIVER_TELEMETRY: "0" }).env), stderr: "pipe", onStderr: () => {} }),
+// 与生产同一条路：自有启动器把最终环境全量替换（Pi StdioTransport 会把 process.env 合并回来，只传缺键的 env 删不掉东西）。
+const { nativeLaunchCommand } = await import("../packages/server/src/native-launch-env.ts");
+const DRIVER_CMD = nativeLaunchCommand(
+	{ command: DRIVER, args: ["mcp", "--socket", SOCKET] },
+	{ syntheticRoots: [process.env.PIA_DATA_DIR], extra: { CUA_DRIVER_TELEMETRY: "0", CUA_DRIVER_DISABLE_RUN_SCRIPT: "1" } },
 );
+await client.connect(new StdioTransport({ command: DRIVER_CMD.command, args: DRIVER_CMD.args, env: DRIVER_CMD.env, inheritEnv: DRIVER_CMD.inheritEnv, stderr: "pipe", onStderr: () => {} }));
 
 const invoke = async (_prefix, tool, args) => {
 	try {

@@ -622,16 +622,20 @@ App 自己下载的东西都登记到同一个下载管理器，界面统一显�
 
 ### 5.19.3 原生子进程启动环境（`packages/server/src/native-launch-env.ts`，2026-10-17）
 
-隔离启动（测试 / 验收）会把**服务进程**的 HOME 指到临时目录，配合内存凭据不碰真实数据目录与钥匙串。但原生进程（CuaDriver 守护进程、`cua-driver mcp`、我们自己用 Playwright 起的本机 Chrome）按 HOME 解析用户级状态与**钥匙串搜索列表**：合成 HOME 传下去时 Chrome 会找不到默认钥匙串，弹「找不到用于储存“Chrome”的钥匙串」，驱动也会把 `~/Library/Caches/cua-driver` 之类写进临时目录。
+隔离启动（测试 / 验收）会把**服务进程**的 HOME 指到临时目录，配合内存凭据不碰真实数据目录与钥匙串。但原生进程（CuaDriver 守护进程、`cua-driver mcp`、我们自己用 Playwright 起的本机 Chrome）按 HOME 解析用户级状态：合成 HOME 传下去时，驱动会把 `~/Library/Caches/cua-driver` 之类写进临时目录，Chrome 也拿不到登录用户的家目录——**这是已证实的「环境传播」问题**。本机出现过的「找不到用于储存“Chrome”的钥匙串」弹窗与它只有**时间上的相关**，macOS 侧因果**未验**，本节不写成结论。
 
-边界因此划在“服务”和“原生子进程”之间：**服务的合成 HOME 保持不变**（凭据 / 数据 / 工作区隔离照旧），只给原生子进程一份 OS 账户语义的环境。
+边界：**服务的合成 HOME 保持不变**（凭据 / 数据 / 工作区隔离照旧），只给原生子进程一份 OS 账户语义的环境。
 
-- 规则（纯函数 `nativeLaunchEnv`，不读文件 / 凭据 / 数据库）：`HOME` 取 `os.userInfo().homedir`（不是 `$HOME`）；`CFFIXED_USER_HOME` 一律删除（它会覆盖 HOME）；服务 HOME 与 OS 家目录不一致时 `TMPDIR` / `TEMP` / `TMP` 一并剥离（交给 OS 默认临时目录），一致时只剥离落在已知合成根（数据目录）里的值；其余变量原样保留。
-- 取不到 OS 家目录时不改写 HOME、也不按 env 猜（`homeSource:"unknown"`），只做能证明的剥离。
-- 接线（同一份构造，避免只修一个调用）：`host-control.ts` 的 `driverEnv()` 用于守护进程 spawn（mac 走 `open`，env 同样下发）、`status` / `stop` / `revoke` / `permissions status` / `permissions grant`、以及 `hostMcpCommand()` 返回的 MCP stdio env（`benchmark-runtime` 的 `createMcpInvoke` 把它传给 `StdioTransport`；Pi 内置 MCP 扩展经 `ComputerHost.mcp.env` 收到同一份）；`browser.ts` 两处本机 Chrome 启动也带这份 env。
-- 数据隔离仍只靠 `PIA_DATA_DIR` / `PIA_WORKSPACE` / `CUA_DRIVER_BROWSER_PROFILE_ROOT`，**不靠改 HOME**；测试脚手架要隔离只许改这些（浏览器侧另给真实 HOME）。
+- 规则（纯函数 `nativeLaunchEnv`，不读文件 / 凭据 / 数据库）：`HOME` 取 `os.userInfo().homedir`（不是 `$HOME`）；`CFFIXED_USER_HOME` 一律删除（它会覆盖 HOME）；服务 HOME 与 OS 家目录不一致时 `TMPDIR` / `TEMP` / `TMP` 一并剥离，一致时只剥离落在已知合成根（数据目录）里的值；其余变量原样保留。生产默认是恒等变换，**例外**：生产进程里若有人设了 `CFFIXED_USER_HOME`，它会被清掉，所以不写「生产永远完全恒等」。
+- 取不到 OS 家目录时不改写 HOME、不按 env 猜（`homeSource:"unknown"`），`driverEnv()` 会为此打一条明确的 warn：「HOME 未改写，原生驱动仍会拿到服务自己的 HOME，隔离环境下的家目录问题**未解决**」——不让它静默当成已修。
+- **MCP 通道的环境必须全量替换**（2026-10-17 修的阻塞问题）：Pi 的 `StdioTransport` 默认 `{...process.env, ...options.env}`（`inheritEnv` 未关），而 Pi 内置 MCP 扩展构造 transport 时不传 `inheritEnv`。所以只传一份“删过键”的 env 对象**删不掉任何东西**：`CFFIXED_USER_HOME` / 合成 `TMPDIR` 会从父进程 env 重新长回来。修法是项目自有的 `nativeLaunchCommand()` + `src/mcp-env-launcher.mjs`：命令变成 `node mcp-env-launcher.mjs --strip=KEY… --set=HOME=… -- <真实命令> <参数>`，启动器在**进程内**继承父环境、删键、覆盖 HOME，再 `spawn(真实命令,{env})` 做全量替换。
+  - **argv 只放键名与非敏感值**（HOME 等路径 / 固定开关）；**绝不把整份环境（`env -i K=V …` / JSON / base64）写进 argv**——`ps`、操作历史、崩溃报告都能看到 argv，可能泄露 token / key。`nativeLaunchCommand()` 的 `extra` 因此只允许放常量开关（目前 `CUA_DRIVER_TELEMETRY=0`、`CUA_DRIVER_DISABLE_RUN_SCRIPT=1`，后者不带上会被全量替换清掉、等于重新放开 run_script）。
+  - 自己构造 `StdioTransport` 的地方（`benchmark-runtime` 的 `createMcpInvoke`、smoke 脚本）可以直接用返回的 `inheritEnv:false` + `env`，效果相同且少一个进程。
+- macOS 守护进程走 `open`：本机 `man open` 明确写 “Opened applications inherit environment variables just as if you had launched the application directly through its full path”，并提供 `--env NAME=VALUE`。所以 spawn `open` 时给它已剥离好的 env（继承部分），同时用 `--env HOME=<OS 家目录>` 显式再写一次，不把「一定继承」当唯一保证。`--env` 只能加不能删，删 `CFFIXED_USER_HOME` 仍靠前者。
+- 接线（同一份构造）：`host-control.ts` 的 `driverEnv()` 用于守护进程 spawn、`status` / `stop` / `revoke` / `permissions status|grant`；`hostMcpCommand()` 返回启动器命令（Pi 扩展与 `createMcpInvoke` 共用）；`browser.ts` 两处本机 Chrome 启动；`scripts/laya-benchmark-driver-smoke.mjs`。
+- 数据隔离仍只靠 `PIA_DATA_DIR` / `PIA_WORKSPACE` / `CUA_DRIVER_BROWSER_PROFILE_ROOT`，**不靠改 HOME**；测试脚手架要隔离只许改这些（浏览器 / 原生进程另给真实 HOME）。
 - 自检 `nativeLaunchEnvProblems()` 只记一条 warn，不因此拒绝启动（隔离问题不该变成“电脑操作打不开”）。
-- 测试：`test/native-launch-env.test.ts` 10/10（合成 HOME → 真实 HOME、`diverged`、`CFFIXED_USER_HOME` / 合成 `TMPDIR` 剥离、生产恒等、路径按段判断、未知家目录不猜、`extra` 覆盖、Windows `USERPROFILE`、校验函数、生产入口取 `os.userInfo()`）；`host-control.test.ts` 另有一条断言 `hostMcpCommand().env.HOME` 是 OS 账户家目录。**未验**：真机上再起一次隔离 Chrome 看是否还弹钥匙串（需测试槽许可）。
+- 测试：`test/native-launch-env.test.ts` 10/10（纯环境构造 / 校验）；`test/native-launch-env-stdio.test.ts` 4/4（**真实 `StdioTransport` + 只回显白名单 `node -e` 子进程**：先复现「合并会把删掉的键带回来」的红，再证明启动器命令在**默认合并**下子进程拿到干净环境、且 argv 不含任何环境变量值）；`host-control.test.ts` 另断言命令形状（启动器 / `--strip=` / `--set=HOME=` / `--set=CUA_DRIVER_DISABLE_RUN_SCRIPT=1`）与 socket 不变。**未验**：真机上再起一次隔离 Chrome / 守护进程看弹窗是否消失（需测试槽许可）。
 
 ### 5.20 MCP 服务器与 Pi 扩展包（P2，已实现）
 

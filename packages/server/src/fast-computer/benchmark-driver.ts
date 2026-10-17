@@ -115,14 +115,36 @@ export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): Benchmar
 		if (!prepared) throw new Error("驱动没有返回 prepared_pid，无法证明是本次自有的隔离浏览器（fail-closed）");
 		const preparedPid = prepared.preparedPid;
 		const expectedOrigin = originOf(absolute);
+		/** 已经 pin 住的自有窗口（pid + window_id）；清理前用它证明「这个 pid 还是本次那个窗口的主人」。 */
+		let pinned: { pid: number; windowId: number } | null = null;
 		/**
 		 * 只关**本次 browser_prepare** 拉起的进程：close 与「打开中途失败」的清理走**同一条**路径（同一份归属判断）。
 		 * 归属 = 本次调用自己拿到的 preparedPid（不认后续快照里报的任何 owner pid，那种才需要额外证明）；
 		 * 绑定阶段已要求驱动报的 owner（若有）必须等于它，对不上就 fail-closed，不会走到这里。
-		 * 如实说明局限：pid 在极短时间内被系统复用给别的进程时这层无法区分（没有进程启动时间可比），
-		 * 但只在 prepare → 失败 / close 这几秒内、且只针对我们自己拉起的那个 pid。
+		 *
+		 * **清理前必须再证明一次**（PID 复用防误杀）：kill 之前用 `list_windows(pid)` 重新读一次当前状态——
+		 * 已经 pin 住窗口时要求「同一个 window_id 仍属于同一个 pid」；还在 pin 之前就失败时要求该 pid 当下**确实**
+		 * 持有窗口。证明不了就不 kill（宁可留一个自有浏览器进程并 warn，也不按历史 pid 盲杀别人的进程）。
 		 */
 		const releasePrepared = async () => {
+			let reason: string | null = null;
+			try {
+				const listed = await call(prefix, "list_windows", { pid: preparedPid, ...s });
+				const windows = (asObj(listed.structuredContent)?.windows ?? asObj(listed.structuredContent)?.result ?? []) as unknown;
+				const list = Array.isArray(windows) ? windows : [];
+				const owned = list.filter((w) => Number(asObj(w)?.pid) === preparedPid);
+				if (pinned) {
+					const same = owned.some((w) => Number(asObj(w)?.window_id ?? asObj(w)?.windowId) === pinned!.windowId);
+					if (!same) reason = "本次 pin 的窗口已不在该 pid 名下（无法证明归属，可能是 PID 复用）";
+				} else if (!owned.length) reason = "该 pid 当下没有窗口（无法证明它是本次拉起的浏览器）";
+			} catch (e) {
+				reason = `清理前无法读取当前窗口状态（${shortError(e instanceof Error ? e.message : String(e))}）`;
+			}
+			if (reason) {
+				// 宁可留下一个自有进程，也不按历史 pid 盲杀；这条 warn 就是“有泄漏”的唯一线索，不能吞。
+				console.warn(`[benchmark] 跳过关闭自有隔离浏览器 pid=${preparedPid}：${reason}`);
+				return;
+			}
 			await call(prefix, "kill_app", { pid: preparedPid, ...s }).catch(() => {});
 		};
 		// prepare 之后任一步失败，调用方都拿不到 handle（没法 close），必须在这里只清理**本次 prepared_pid**，
@@ -138,6 +160,8 @@ export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): Benchmar
 			const bind = await call(prefix, "get_browser_state", { pid: win.pid, window_id: win.windowId, ...s });
 			if (bind.isError) throw new Error(`绑定隔离浏览器失败：${shortError(bind.contentText)}`);
 			const binding = parseBrowserBind(bind.structuredContent);
+			// 归属 pin：之后清理（含 close）都要靠它证明“同一个 pid 仍持有同一个窗口”。
+			pinned = { pid: win.pid, windowId: win.windowId };
 			if (!binding.ok) throw new Error(binding.reason ?? "隔离浏览器绑定校验失败（fail-closed）");
 			// 4) 在隔离浏览器里打开本次随机 nonce 的 fixture（用 bind 返回的 target_id + tabs[] 里的 tab_id）。
 			const navArgs: Record<string, unknown> = { target_id: binding.targetId, url: absolute, ...s };

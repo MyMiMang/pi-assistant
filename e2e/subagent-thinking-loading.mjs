@@ -11,18 +11,20 @@
  * 运行前先构建：`npm run build -w @pi-assistant/web`。
  * 隔离：mkdtemp 的 HOME / PIA_DATA_DIR / PIA_WORKSPACE / TMPDIR，PIA_MOCK + PIA_OFFLINE；
  * 通过 launch-memory 注入内存凭据后启动服务，不能用生产 main 或真实 HOME 绕过启动问题。
- * **浏览器例外**：Chromium 是原生进程，必须给它登录用户家目录 / 真实 TMPDIR（`browserEnv`），
- * 否则它会用合成 HOME 找不到默认钥匙串（「找不到用于储存 Chrome 的钥匙串」）。
+ * **浏览器例外**：Chromium 是原生进程，必须给它登录用户家目录 / 真实 TMPDIR（`nativeLaunchBrowserEnv`，
+ * 规则与 `packages/server/src/native-launch-env.ts` 一致）。合成 HOME 传给原生进程是已证实的环境传播问题；
+ * 本机那次「找不到用于储存 Chrome 的钥匙串」弹窗只有时间上的相关，macOS 因果未验。
  * finally 结束自建的 server 进程组。
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { nativeLaunchBrowserEnv } from "./fixtures/native-launch-env.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 // 隔离目录必须在起服务 / 起浏览器之前就位（HOME / 数据目录 / 工作区 / 临时目录都在这里）
@@ -32,13 +34,8 @@ const WORKSPACE = join(DATA, "workspace");
 const TMP = join(SCRATCH, "tmp");
 const HOME = join(SCRATCH, "home");
 for (const d of [DATA, WORKSPACE, TMP, HOME]) mkdirSync(d, { recursive: true });
-// 原生浏览器用的真实环境：覆盖 process.env 之前先记下来（家目录取 OS 账户信息，不用 $HOME 猜）。
-const REAL_HOME = userInfo().homedir;
-const REAL_TMPDIR = process.env.TMPDIR;
-const browserEnv = { ...process.env, HOME: REAL_HOME };
-if (REAL_TMPDIR) browserEnv.TMPDIR = REAL_TMPDIR;
-else delete browserEnv.TMPDIR;
-delete browserEnv.CFFIXED_USER_HOME;
+// 原生浏览器环境统一走 helper：家目录取 OS 账户信息，合成临时目录（包括本次自己的 SCRATCH/TMP）一律不带。
+const browserEnv = nativeLaunchBrowserEnv({ syntheticRoots: [SCRATCH, DATA, WORKSPACE, TMP, HOME] });
 process.env.TMPDIR = TMP;
 process.env.HOME = HOME;
 const OUT = join(SCRATCH, "shots");
