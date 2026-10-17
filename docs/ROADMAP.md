@@ -4,6 +4,8 @@
 >
 > **以下为发布前历史快照**：旧“beta.29 候选 / 未 push / 未打包 / 等 owner”等已被本段覆盖。接手请从当前公开状态、最新 `main` 和发布说明继续，不重复发布旧版本。
 
+> **beta.29 实测 bug：Laya「实际操作测试」点开始立刻失败（2026-10-25，候选已修待验收）**：用户在**已安装 beta.29** 的设置 › 电脑 › 本地 Laya 卡片点「实际操作测试」（目标=用户电脑、勾同意、Laya 可用、Cua Driver 0.35.4 运行），短暂 loading 后红字 `隔离浏览器读不到可 pin 的快照 id（fail-closed）`，状态仍「尚未运行」。**真实根因**（用真实驱动实测返回取证，不是猜测）：实现要求 `get_browser_state` 的 **bind 模式**返回 `snapshot_id`，而 0.35.4 的 bind 只证明「原生窗口 ↔ CDP target」，**页面 pin 只在 snapshot 模式的 `snapshot.id` 里**（形如 `p1`）。同一真实链路还连带查出并修掉 4 个必然失败：绑定阶段拿不到 `tab_id`（真实在 `tabs[]`）、动作前身份复核会再取快照把即将点击的 ref 作废、`get_window_state` 传了驱动不认识的 `require_complete`、浏览器窗口的原生 AX 看不到网页内容（须走 `refs`/`browser_click`）；另修机器证据异步竞态与下拉 `afterSelect` 未接线。契约与实测字段见 [design/fast-model-benchmark.md](design/fast-model-benchmark.md) §9。**证据**：真实驱动 owned 隔离浏览器 + 真实 fixture HTTP 页跑 `scripts/laya-benchmark-driver-smoke.mjs` **4/4 任务 `correctness:"correct"`**；`fast-computer*` 定向单测 **87/87**；server `tsc` 本树改动 0 新增错误。**边界**：chooser 是脚本固定的（只证链路，不评 Laya 选择质量）；**beta.29 安装包里的代码没有变，用户手上的 App 仍需下一个候选版本才能真正点通**；真实 Laya 模型 benchmark、真机安装验收尚未做。
+
 > **历史：发布前 beta.29 候选状态（2026-10-17）**
 >
 > - **公开版本**：`v0.1.0-beta.28`（Latest，2026-10-16T19:19:11Z 公开，非草稿 / 非 prerelease；tag `11ce8f2` 未移动；Actions `38949928195` 六平台构建 + Windows/Mac 安装冒烟 + publish 全成功；公开 13 项资产，`latest.json` 版本 `0.1.0-beta.28`，darwin-aarch64 / darwin-x86_64 / windows-x86_64 各平台签名非空、URL 指向本 tag）。**beta.29 仍是候选**（七档滑块 + AI DIY 动效，未 push / 未 tag / 未打包）；下面的 beta.28 / beta.27 / beta.26 … 段落是**历史快照**，按当时范围写的，已被取代不代表现在的要求。

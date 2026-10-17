@@ -16,8 +16,11 @@ import type { FastSelectResult, VerifyOutcome } from "./index.ts";
 import { resolveFreshCandidate, verifyExpectation } from "./index.ts";
 import { WindowIdentityError, validateTrial, windowIdentityMismatch, type BenchmarkTrialRunner, type BenchmarkWindow, type FastBenchmarkTask, type ObservedWindow, type TrialMetrics } from "./benchmark.ts";
 
-/** 每次派发允许的模型动作（快速路径只点击）。 */
-export const BENCHMARK_ALLOWED_TOOLS = ["click"] as const;
+/** 每次派发允许的模型动作（快速路径只点击）：原生窗口是 `click`，驱动自有浏览器 fixture 是 `browser_click`（同一语义，走 CDP 精确 ref）。 */
+export const BENCHMARK_ALLOWED_TOOLS = ["click", "browser_click"] as const;
+/** 等 fixture 上报本轮机器证据的上界与轮询间隔（页面 POST 是异步的，不等就会把成功误判成「证据不足」）。 */
+export const MACHINE_EVIDENCE_WAIT_MS = 2500;
+export const MACHINE_EVIDENCE_POLL_MS = 120;
 /** 程序侧辅助动作（不计入模型操控能力）：目前只有按方向滚动。 */
 export const BENCHMARK_PROGRAM_TOOLS = ["scroll"] as const;
 
@@ -117,7 +120,17 @@ export function createCuaTrialRunner(window: BenchmarkWindow, deps: CuaBenchmark
 		}
 
 		// 8) 双证据判分：机器状态 + 独立 UI 观测，模型自评不参与；机器状态还要求 fresh（本轮动作之后写）。
-		const machine = await deps.readMachineState(task);
+		//    页面上报是异步 fetch：动作返回不代表 POST 已到，所以**有界等待**本轮新证据（不是无界轮询，也不伪造）。
+		const evidenceDeadline = Date.now() + MACHINE_EVIDENCE_WAIT_MS;
+		let machine = await deps.readMachineState(task);
+		while (
+			(machine.updatedAt === null || machine.updatedAt === undefined || machine.updatedAt < trialStartedAt) &&
+			!ctx.signal.aborted &&
+			Date.now() < evidenceDeadline
+		) {
+			await new Promise((r) => setTimeout(r, MACHINE_EVIDENCE_POLL_MS));
+			machine = await deps.readMachineState(task);
+		}
 		const uiObserved = await deps.observe();
 		const ui = "error" in uiObserved ? null : uiObserved.structured;
 		const judged = validateTrial({ expect: task.expect, machine: machine.state, machineUpdatedAt: machine.updatedAt, machineFreshAfter: trialStartedAt, ui, verifyUi: (expected, state): VerifyOutcome => verifyExpectation(expected as never, state) });

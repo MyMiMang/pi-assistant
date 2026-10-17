@@ -12,7 +12,7 @@
  * 所有与真实世界交互都经注入的 `BenchmarkDriver`；测试注入假 driver，生产注入经统一 computer backend 的真实 driver。
  */
 import { selectFastAction, fastComputerSettings, type FastActionChooser, type FastComputerSettings } from "./index.ts";
-import { clickCandidatesFromWindowState, buildChooser, type FastTarget } from "./tool.ts";
+import { clickCandidatesFromBrowserRefs, clickCandidatesFromWindowState, buildChooser, type FastTarget } from "./tool.ts";
 import { createCuaTrialRunner } from "./benchmark-cua.ts";
 import {
 	onBenchmarkUpdate,
@@ -35,6 +35,9 @@ export interface FixtureWindowHandle {
 	windowToken: string;
 	fixtureId: string;
 	url: string;
+	/** 驱动自有浏览器 fixture：由 `get_browser_state` 绑定铸的会话级浏览器能力（页面观察/动作走它，不走原生 AX）。 */
+	targetId?: string;
+	tabId?: string;
 }
 
 /**
@@ -192,6 +195,7 @@ export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 		const handle = opened.handle;
 		const prefixTool = handle.prefix === "hostpc" ? "mcp__hostpc__" : "mcp__computer__";
 		const fastTarget: FastTarget = { pid: handle.pid, window_id: handle.windowId, ...(handle.session ? { session: handle.session } : {}) };
+		const browserTarget = handle.targetId && handle.tabId ? { target_id: handle.targetId, tab_id: handle.tabId, ...(handle.session ? { session: handle.session } : {}) } : null;
 		const window: BenchmarkWindow = { prefix: handle.prefix, pid: handle.pid, windowId: handle.windowId, session: handle.session, windowToken: handle.windowToken, fixtureId };
 
 		const chooser = (opts.chooserFor ?? buildChooser)(settings);
@@ -201,12 +205,26 @@ export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 			throw new Error("没有可用的快速模型选择器（请检查快速操作模型设置）。");
 		}
 
+		const collect = (structured: unknown) =>
+			browserTarget ? clickCandidatesFromBrowserRefs(prefixTool, browserTarget, structured) : clickCandidatesFromWindowState(prefixTool, fastTarget, structured);
+
 		const runner = createCuaTrialRunner(window, {
 			readWindow: () => opts.driver.readWindow(handle),
 			observe: () => opts.driver.observe(handle),
-			collectCandidates: (structured) => clickCandidatesFromWindowState(prefixTool, fastTarget, structured),
+			collectCandidates: collect,
 			choose: (goal, candidates, signal) => selectFastAction({ key: `${handle.prefix}:${handle.pid}:${handle.windowId}`, goal, candidates, chooser, settings, signal }),
 			execute: (tool, args, signal) => opts.driver.execute(handle, tool, args, signal),
+			// 下拉选项是**程序侧固定输入**（不计入模型的点击/输入能力）：模型只负责点开下拉，
+			// 展开后由这里按任务声明的目标值点选项，再交给双证据判分。
+			afterSelect: async (task, _selected, signal) => {
+				const want = task.expect?.machine?.selected;
+				if (typeof want !== "string" || !want) return;
+				const observed = await opts.driver.observe(handle);
+				if (!observed.ok) return;
+				const option = collect(observed.structured).find((c) => c.label.includes(want));
+				if (!option) return;
+				await opts.driver.execute(handle, option.tool, option.args, signal);
+			},
 			readMachineState: async () => opts.store.getEvidence(fixtureId, nonce),
 		});
 

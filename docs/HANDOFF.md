@@ -6,6 +6,8 @@
 >
 > 接手时以本段、最新 `main` 和已发版 tag 为准。下面保留的“候选 / 未 push / 未 tag / 等测试槽”等是**发布前历史快照**，不再代表当前发布状态；不要重打旧 tag、重发旧资产或重复已完成测试。
 
+> **新（2026-10-25）：beta.29 安装包的实际操作测试跑不通，候选已修但未打包**。用户现场：设置 › 电脑 › 本地 Laya（`local-laya` multilingual）卡片「实际操作测试」→ 目标选「用户电脑」+ 勾同意 → 点开始 → 短暂 loading 后红字 `隔离浏览器读不到可 pin 的快照 id（fail-closed）`，状态仍「尚未运行」；Laya 仍「可用」、Cua Driver 0.35.4 运行中、快速操作模型开关原样（未改用户配置，未多次点开始，未动真实 Chrome / 系统权限）。**根因是把 bind 阶段当成有页面快照**：0.35.4 的 `get_browser_state(pid,window_id)` 只给 `binding_quality/mutation_allowed/target_id/tabs[]`，pin 在 snapshot 模式的 `snapshot.id`（`p<n>`）。修复分支 `laya-benchmark-snapshot-fix`（基于 `release-candidate-validation` HEAD `2e87f51`）：bind/snapshot 两个契约拆开、pin 只取 `snapshot.id`、动作前不再重取快照（避免作废 ref）、浏览器 fixture 走 `refs`+`browser_click`、去掉驱动不认识的 `require_complete`、机器证据有界等待、下拉 `afterSelect` 接线、错误收敛一行。**证据**：真实驱动 owned 隔离浏览器真机 smoke 4/4 `correct`（`scripts/laya-benchmark-driver-smoke.mjs`，手动运行）；`fast-computer*` 单测 87/87；server tsc 本树 0 新增错误。**未完成 / 不得宣称**：候选未构建、未安装、未在用户机器上再点一次；真实 Laya 模型的完整 benchmark（含耗时/成功率）未跑（smoke 的 chooser 是脚本固定的，只证链路）；接手请以分支 HEAD 与 `docs/design/fast-model-benchmark.md` §9 契约继续。
+
 > **历史：发布前 beta.29 候选状态（2026-10-17）**
 >
 > **主会话发布前独立复核**：默认语音/流式/电脑授权 75/75、滑块 27/27、两端类型检查通过。新增加载态夹具原版直接启动生产 `main.ts` 并继承真实 HOME，不能据此证明凭据隔离；已改为临时 HOME/数据目录/工作区 + `test/launch-memory.ts` 内存凭据启动，并由主会话隔离复跑全部通过（约 7.7s），finally 回收自建服务及浏览器。没有以绕过隔离作为启动问题的解决办法；未审计原版对用户环境的历史访问，不宣称其已验证无影响。

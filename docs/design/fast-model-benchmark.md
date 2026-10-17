@@ -93,3 +93,36 @@
 - `packages/server/src/fast-computer/benchmark-runtime.ts`：运行时接线（目标探测 + MCP invoke），`http.ts` 实际注入。
 - `packages/server/src/fast-computer/routes.ts`：`GET/POST /api/fast-computer/benchmark`、`GET /:id`、`POST /:id/cancel` + fixture 页 / 状态上报 + owner 过滤。
 - `packages/server/test/fast-computer-benchmark.test.ts` + `fast-computer-benchmark-host.test.ts`：契约 13 项 + fixture/host/routes 7 项（假 driver 模拟真调用序列、0 真实付费 / 0 真实桌面）。
+
+## 9. 隔离浏览器 pin 契约（cua-driver 0.35.4 **实测**，2026-10-25）
+
+> 这一节替代此前「bind 就该给出 `snapshot_id`」的假设。beta.29 用户点「开始实际操作测试」后**必然**报
+> 「隔离浏览器读不到可 pin 的快照 id（fail-closed）」，根因就是那条假设不符合驱动的真实返回。
+
+### 9.1 两个模式返回的是**不同**字段
+
+| 模式 | 入参 | 真实返回（实测抓取） |
+|---|---|---|
+| bind | `pid` + `window_id`（可选 `session`） | `{status:"ok", mode:"bind", binding_quality:"exact", binding_route:"native_cdp_window", endpoint_transport, endpoint_access_class, mutation_allowed:true, native_title, target_id:"bt-…", tabs:[{active:true, tab_id:"tab-…", title, url}]}` — **没有 `snapshot_id` / `snapshot` / 顶层 `url`**（bind 只证明「原生窗口 ↔ CDP target」，不开页面快照） |
+| snapshot | `target_id` + `tab_id` + `snapshot_format:"semantic_v2"` | `{status:"ok", mode:"snapshot", target_id, tab_id, page:{title,url}, snapshot:{id:"p1", format:"semantic_v2", complete, omitted, continuation}, outline, refs:[{ref:"p1:0", role, name, actions}], content_refs:[…], oopif}` — **pin 是 `snapshot.id`（refs 前缀 `p<n>` 就是它）**，URL 在 `page.url`，**没有** `binding_quality` / `mutation_allowed` |
+
+`browser_prepare{allow_launch:true, profile:{mode:"isolated_new"}}` 只返回 `prepared_pid`（+ `side_effects` / `endpoint_ownership`），**没有 `target_id` / `window_id`**。
+
+### 9.2 适配层必须遵守的四条（已按此实现）
+
+1. **bind 不要求 pin**：只校 `binding_quality=exact` + `mutation_allowed=true` + `target_id` + `tabs[]`（唯一 `active:true`，否则只有一个标签时用它）。tab_id 来自 `tabs[]`，不是顶层。
+2. **pin 只从快照拿**：`snapshot.id`；兼容旧 `dom_refs_v1` 的顶层 `snapshot_id` / `state_id`。**拿不到就 fail-closed，绝不自己编 id**。
+3. **动作前复核不能再取快照**：驱动的新快照会作废旧 ref（官方「a newer snapshot stales the tokens」）。身份复核复用**刚刚观察到的那个 pin**，否则会把自己即将点击的目标弄成 stale（表现为：点击返回成功、页面毫无变化、机器证据为空）。
+4. **浏览器 fixture 的观察/动作走浏览器能力**：原生 AX **看不到网页内容**（Chrome 后台窗口只暴露工具栏），所以 `observe` 用 `get_browser_state` 的 `refs`/`content_refs` 归一成同一套 `elements`，动作走 `browser_click{target_id,tab_id,ref}`，程序侧滚动走 `browser_pointer{action:"scroll",delta_y}`（需 ref 或视口坐标）。
+
+### 9.3 其它实测坑（都已修）
+
+- `get_window_state` **没有** `require_complete` 参数，传了会被驱动整调用拒绝（`unknown argument require_complete`）；要结构化 token 用 `tree_format:"elements"`，并抬一个**有限**的 `max_elements`（默认 250 对大页会截断）。
+- 机器证据是页面**异步 POST**：动作返回 ≠ 上报已到，判分前要有界等待本轮新证据（2.5 s / 120 ms 轮询），否则把成功误判成「证据不足」。
+- fixture 的 `role=status` 容器在 CDP 里 `name` 为 null、文本落在子 `statictext` 上；状态节点要带 `aria-label` 才在两边都读得到（独立 UI 证据）。
+- 原生 `<select>` 的弹层是 OS 级窗口，后台拿不到 option 的可点 ref（`browser_ref_stale`）；fixture 的下拉改用自定义按钮选项。
+- 错误要收敛成一行可读原因（`shortError`），不把整段协议/AX payload 抛到设置页。
+
+### 9.4 已验收的证据（真实驱动，非 mock）
+
+`scripts/laya-benchmark-driver-smoke.mjs`（手动运行，不进默认 `npm test`）：真实 `cua-driver mcp --socket …` → `browser_prepare`（隔离 new）→ `list_windows` → bind → `browser_navigate` → 快照 pin → 真实 fixture HTTP 页 → 真实 `browser_click` → 双证据判分。**chooser 是脚本固定的（按 label 关键词选），所以它证明的是 driver / 隔离窗口 / fixture / 动作 / 判分链路真实可用，不评估 Laya 的选择质量**；模型质量要另跑真实 benchmark。2026-10-25 本机实测 4/4 任务 `correctness:"correct"`（pin 形如 `p4`）。

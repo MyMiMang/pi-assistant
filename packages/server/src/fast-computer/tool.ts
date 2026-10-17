@@ -83,6 +83,31 @@ export function clickCandidatesFromWindowState(prefix: string, target: FastTarge
 	}));
 }
 
+/** 浏览器 fixture 的会话级身份（driver `get_browser_state` 铸的 target/tab 能力，不是 pid/window）。 */
+export interface FastBrowserTarget {
+	target_id: string;
+	tab_id: string;
+	session?: string;
+}
+
+/**
+ * 从**页面快照**（`get_browser_state` semantic_v2；refs 形如 `p3:7`）收集点击候选。
+ * 浏览器里的网页内容不走原生 AX（Chrome 后台窗口不暴露 web AX 子树，实测只能看到工具栏），
+ * 所以走驱动自己的 `browser_click{target_id,tab_id,ref}`；`element_token` 仍用 ref，
+ * 好让执行前的「目标新鲜度重校验」同一套逻辑生效，派发时再由 driver 适配层换成 `ref`。
+ */
+export function clickCandidatesFromBrowserRefs(prefix: string, target: FastBrowserTarget, structured: unknown): FastActionCandidate[] {
+	const elements = (structured as { elements?: CollectedElement[] } | null)?.elements ?? [];
+	const clickable = elements.filter((e) => e.element_token && (!e.actions || e.actions.includes("click") || e.actions.includes("pointer")));
+	return clickable.slice(0, MAX_FAST_CANDIDATES).map((e, i) => ({
+		id: `ref-${i}`,
+		label: `${e.role ?? "元素"}${e.label ? `：${e.label}` : ""}`.slice(0, 120),
+		tool: `${prefix}browser_click`,
+		args: { target_id: target.target_id, tab_id: target.tab_id, ...(target.session ? { session: target.session } : {}), element_token: e.element_token },
+		semantic: { role: e.role, label: e.label, value: e.value, actions: e.actions },
+	}));
+}
+
 const outcomeText = (r: { result?: { content?: { type: string; text?: string }[] } }) => (r.result?.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
 
 export interface FastComputerToolOptions {
