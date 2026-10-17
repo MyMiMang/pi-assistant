@@ -1,5 +1,7 @@
 # 需求与计划（ROADMAP）
 
+> **逐步真实评估入口（stepwise，2026-10-17，未发布，`laya-benchmark-snapshot-fix`，HEAD `dbf7e51` 之上）**：目标是为**下一次可区分的新页面**真实评估做准备——不是再跑旧 4 题、不用同一批题调描述 / 阈值。旧控制面每题 reset + 重新导航，测不到「同一页面主模型逐步观察 → 给局部 goal → 快模型选一步 → 再观察」。本轮只加代码 + 纯测试：新本地页「导出设置」（CSV/JSON 格式、中文/English 语言、预览后确认 + 取消 / 恢复默认 / 关闭干扰），机器状态只复用 `selected` / `clicked` / `step`；`PIA_BENCH_SCENARIO=stepwise`（只配 `PIA_BENCH_HANDOFF=1`）换页面并新增可选 `fast{goal,expected?}` 控制命令，同一页面最多 6 次真实 handler、严格串行（并发 409）、不清熔断；每步报告单独记 goal / handler 文本 / 耗时 / 独立 observe 的 machine + UI，主接管点击另计。**状态：已完成代码 + 纯测试**（`laya-benchmark-handoff` + `laya-stepwise-fixture` 共 **22/22**，Node v24.20.0，无浏览器 / 模型 / driver）；默认旧 handoff 与 3 次上限不变，产品 store 键 / SDK / 用户设置 / 阈值未改。**验收点（未做）**：主审 review 后**一次**预声明 stepwise run，主模型自己每步选 goal（最多 6 次是上限不是配额，低信 / 连续 3 次回退后自行接管），核对 `selected=JSON:中文` / `step=2` / `clicked=confirmed` 与 UI 双证据；**不能把本轮测试当 runtime 证据**。详见 HANDOFF 顶条。
+
 > **快速模型候选的动作语义（2026-10-17，未发布，`laya-benchmark-snapshot-fix`）**：用户要求把「候选项只给 role+label」补成**准确动作描述**——明确这是「点击 / 聚焦当前这个控件」，**不承诺**未知的展开 / 提交成功；原生与网页（CDP）两个生产收集器、classifier 与 chat 选择器要走同一份语义。`goal` 明确是**本次一步点击的局部目标**，多步由主模型每步重新读状态、重新决策，不能把整条多步任务当一次点击目标（benchmark 因此不能把整 goal 请求判成全 task）。**状态：已完成代码 + 定向单测**（`fast-computer{,-tool}` 68/68、相关 benchmark/guard 52/52、server `tsc` 0）；候选 ID / 个数 / 概率换算 / 0.6 阈值 / G1·G2·G3 未动，没按 task 筛候选、没加请求级新抽象。**验收点（未做）**：真实网页 / 原生窗口里人工核描述措辞；主审独立 review 后再安排一次真实测量。详见 HANDOFF 顶条。
 
 

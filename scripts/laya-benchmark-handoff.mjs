@@ -10,12 +10,18 @@
  *  2. 起一个**仅 127.0.0.1** 的小 HTTP 控制面，让主模型自己用固定命令 `observe / click / pointer / next / finish`
  *     读真实快照、自己挑 ref、自己点。**不选目标、不给坐标、不执行 JS、不替主模型决策。**
  *
+ * stepwise 场景（`PIA_BENCH_SCENARIO=stepwise`，只与 `PIA_BENCH_HANDOFF=1` 同用）额外提供**可选**命令
+ * `fast{goal,expected?}`：主模型在**同一个页面**上给出**本步**局部目标，经真实注册的 definition 跑一次快模型选择
+ * （不 reset / 不导航 / 不清熔断 / 不额外 raw），返回真实 handler 文本并作废旧 ref。每轮最多 6 次，计数在 await 前。
+ *
  * 诚实边界：
  *  - 控制面只认本次 fixture（target/tab + 完整 fixture URL + nonce），换 target / 换页面一律拒绝；
  *  - `click` 只接受**主模型最近一次 observe** 返回的 ref（快照更新即作废旧 ref），不做「猜 ref」；
  *  - `next` 只接受 3 个固定 task id（`pick-submit` / `pick-city` / `dynamic-2step`），
- *    `scroll-target` 需要程序侧滚动协助，不属于主模型接管验收；
- *  - `expected` 只读给主模型判分，wrapper **不会**自动点击 / 自动完成；
+ *    `scroll-target` 需要程序侧滚动协助，不属于主模型接管验收；stepwise 只有一个页面，**不提供 next**；
+ *  - `expected` 只读给主模型判分，wrapper **不会**自动点击 / 自动完成；`fast` 的 expected 只交给产品工具做后置核验，
+ *    不进快模型输入，也不把机器状态 / 判分 oracle 回传给主模型；
+ *  - 控制面命令严格串行：同时来第二条返回 `409 busy`，客户端**不要重试**；
  *  - nonce 是本次测试的**临时随机值**（内存态，不是凭据 / 不是真实 key），只经 stdout / handoff.json 交给主模型。
  */
 import { createServer } from "node:http";
@@ -24,14 +30,39 @@ import { createServer } from "node:http";
 export const HANDOFF_TASK_IDS = ["pick-submit", "pick-city", "dynamic-2step"];
 /** 一次运行最多注册几次真实 handler（真实 Laya 调用上限，不额外 raw）。 */
 export const MAX_HANDLER_RUNS = 3;
+/** stepwise：主模型每步一次 `fast` 的真实 handler 调用上限（不是“必须用满”）。 */
+export const MAX_FAST_STEPS = 6;
+const MAX_FAST_GOAL_CHARS = 240;
 const MAX_BODY_BYTES = 4096;
 const NONCE_HEADER = "x-pia-bench-nonce";
 
 const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 
 /**
+ * `fast` 的 expected 只收有限字段：role / label_contains（非空字符串）+ exists 仅 `true`。
+ * 产品工具 schema 还有 value_equals / action_contains，但逐步评估不需要；本轮也**不采用** `exists:false`（缺席无法证明）。
+ */
+function parseFastExpected(raw) {
+	if (raw === undefined || raw === null) return {};
+	if (!isObj(raw)) return { error: "expected 必须是对象" };
+	const out = {};
+	for (const [k, v] of Object.entries(raw)) {
+		if (k === "exists") {
+			if (v !== true) return { error: "expected.exists 只接受 true（本轮不采用“不存在”后置条件）" };
+			out.exists = true;
+		} else if (k === "role" || k === "label_contains") {
+			if (typeof v !== "string" || !v.trim()) return { error: `expected.${k} 必须是非空字符串` };
+			out[k] = v.trim();
+		} else {
+			return { error: `expected 不支持的字段：${k}` };
+		}
+	}
+	return Object.keys(out).length ? { expected: out } : {};
+}
+
+/**
  * 纯校验：控制面命令白名单 + 形状。任何多余 / 未知字段都不透传到 MCP（只挑白名单字段）。
- * @returns {{op:string, ref?:string, action?:string, deltaY?:number, deltaX?:number, task?:string, fast?:boolean} | {error:string}}
+ * @returns {{op:string, ref?:string, inputRoute?:string, action?:string, deltaY?:number, deltaX?:number, task?:string, fast?:boolean, goal?:string, expected?:object} | {error:string}}
  */
 export function parseHandoffCommand(raw) {
 	if (!isObj(raw)) return { error: "命令必须是 JSON 对象" };
@@ -41,6 +72,16 @@ export function parseHandoffCommand(raw) {
 		case "observe":
 		case "finish":
 			return out;
+		case "fast": {
+			if (typeof raw.goal !== "string") return { error: "fast 需要 goal（本步的局部目标）" };
+			const goal = raw.goal.trim();
+			if (goal.length < 1 || goal.length > MAX_FAST_GOAL_CHARS) return { error: `goal 长度必须是 1..${MAX_FAST_GOAL_CHARS} 个字符` };
+			out.goal = goal;
+			const parsed = parseFastExpected(raw.expected);
+			if (parsed.error) return { error: parsed.error };
+			if (parsed.expected) out.expected = parsed.expected;
+			return out;
+		}
 		case "click": {
 			if (typeof raw.ref !== "string" || !raw.ref.trim()) return { error: "click 需要 ref" };
 			out.ref = raw.ref.trim();
@@ -108,8 +149,8 @@ export function isFixtureUrl(url, fixtureUrl) {
  * 所有能力都来自传入的 `invoke`（同一个 MCP client session），不新接 MCP / daemon。
  */
 export function createHandoffControl(options) {
-	const { fixtureUrl, fixtureId, nonce, invoke, handle, readSnapshot, readMachine, taskOf, log, onNext, onCommand, onFinish } = options;
-	const state = { refs: new Map(), snapshotToken: null, handlerRuns: 0, commands: [], closed: false, lastObserveAt: null };
+	const { fixtureUrl, fixtureId, nonce, invoke, handle, readSnapshot, readMachine, taskOf, log, onNext, onFast, onCommand, onFinish } = options;
+	const state = { refs: new Map(), snapshotToken: null, handlerRuns: 0, fastSteps: 0, busy: false, commands: [], closed: false, lastObserveAt: null };
 	const sessionArg = handle.session ? { session: handle.session } : {};
 	const target = { target_id: handle.targetId, tab_id: handle.tabId };
 
@@ -160,10 +201,32 @@ export function createHandoffControl(options) {
 			state.refs = new Map();
 			return { ok: !r.isError, error: r.isError ? String(r.contentText ?? "").slice(0, 400) : null };
 		}
+		if (op === "fast") {
+			if (!onFast) return { error: "本次运行没有启用 fast 逐步选择（只有 stepwise 场景提供）" };
+			if (state.fastSteps >= MAX_FAST_STEPS) return { error: `fast 最多 ${MAX_FAST_STEPS} 次（本次已用 ${state.fastSteps} 次），请改用 click 自己接管或 finish` };
+			// 计数在 await 之前：并发 / 异常都不会多跑。页面可能变化，旧 ref 立即作废（返回里也要求重新 observe）。
+			state.fastSteps++;
+			state.refs = new Map();
+			try {
+				const out = await onFast(cmd.goal, cmd.expected);
+				return {
+					fast: state.fastSteps,
+					remaining: Math.max(0, MAX_FAST_STEPS - state.fastSteps),
+					handlerKind: out?.kind ?? null,
+					handlerText: out?.text ?? null,
+					wallMs: out?.wallMs ?? null,
+					// 不回传机器状态 / 判分 oracle：主模型自己 observe 看真实页面与状态。
+					note: "refs 已作废：请先 observe 再决定下一步；expected 的后置核验已记录在报告里",
+				};
+			} finally {
+				state.refs = new Map();
+			}
+		}
 		if (op === "next") {
+			if (!onNext) return { error: "本次运行不支持切换任务（stepwise 只有一个页面）" };
 			// 新任务 = 新导航：旧 ref 全部作废，状态由调用方（harness）reset + navigate。
 			state.refs = new Map();
-			await onNext?.(cmd.task, cmd.fast === true);
+			await onNext(cmd.task, cmd.fast === true);
 			return { next: cmd.task, fast: cmd.fast === true };
 		}
 		if (op === "finish") {
@@ -203,19 +266,17 @@ export function createHandoffControl(options) {
 		}
 		const parsed = parseHandoffCommand(raw);
 		if (parsed.error) return send(400, { ok: false, error: parsed.error });
-		const entry = { op: parsed.op, ref: parsed.ref ?? null, action: parsed.action ?? null, task: parsed.task ?? null, fast: parsed.fast ?? null, at: new Date().toISOString() };
+		// 命令严格串行：in-flight 时第二条直接 409，不排队、不自动重试（避免同页并发 / 双算计数）。
+		if (state.busy) return send(409, { ok: false, busy: true, error: "busy：控制面一次只执行一条命令，请等上一条返回后再发（不要重试）" });
+		state.busy = true;
+		const entry = { op: parsed.op, ref: parsed.ref ?? null, action: parsed.action ?? null, task: parsed.task ?? null, fast: parsed.fast ?? null, goal: parsed.goal ?? null, at: new Date().toISOString() };
 		try {
 			const result = await run(parsed.op, parsed);
 			if (result?.error) entry.error = result.error;
 			else entry.ok = true;
 			state.commands.push(entry);
 			onCommand?.(entry);
-			log?.(`handoff ${parsed.op} ${parsed.ref ?? parsed.task ?? ""} → ${result?.error ? `error=${result.error}` : "ok"}`);
-			if (parsed.op === "next") {
-				// next 的实际导航由 harness 做（要 reset store + gotoFixture），响应里带上待执行动作。
-				send(200, { ok: true, op: parsed.op, ...result });
-				return;
-			}
+			log?.(`handoff ${parsed.op} ${parsed.ref ?? parsed.task ?? parsed.goal ?? ""} → ${result?.error ? `error=${result.error}` : "ok"}`);
 			send(200, { ok: !result?.error, op: parsed.op, ...result });
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
@@ -223,6 +284,8 @@ export function createHandoffControl(options) {
 			state.commands.push(entry);
 			onCommand?.(entry);
 			send(500, { ok: false, op: parsed.op, error: msg });
+		} finally {
+			state.busy = false;
 		}
 	}
 
@@ -250,6 +313,14 @@ export function summarizeHandoff(entries) {
 		task: e.task,
 		title: e.title ?? null,
 		handler: { kind: e.handlerKind ?? null, text: e.handlerText ?? null, wallMs: e.handlerWallMs ?? null },
+		// 逐步评估：每一步单独一条（目标 / 真实选择结果 / 后置独立观察的机器状态）；主模型接管点击另算。
+		fastSteps: (e.fastSteps ?? []).map((s) => ({
+			goal: s.goal,
+			expected: s.expected ?? null,
+			handler: { kind: s.handlerKind ?? null, text: s.handlerText ?? null, wallMs: s.handlerWallMs ?? null },
+			machine: s.machine ?? null,
+			ui: s.ui ?? null,
+		})),
 		fastAlone: e.handlerKind === "selected" ? { decision: e.handlerDecision ?? "selected", machine: e.machine ?? null, ui: e.ui ?? null } : null,
 		mainTakeover: { commands: e.commands ?? [], wallMs: e.wallMs ?? null, machine: e.machine ?? null, ui: e.ui ?? null },
 	}));

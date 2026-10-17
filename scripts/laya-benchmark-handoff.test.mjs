@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HANDOFF_TASK_IDS, createHandoffControl, describeRefs, isFixtureUrl, parseHandoffCommand, statusEvidence } from "./laya-benchmark-handoff.mjs";
+import { HANDOFF_TASK_IDS, MAX_FAST_STEPS, createHandoffControl, describeRefs, isFixtureUrl, parseHandoffCommand, statusEvidence, summarizeHandoff } from "./laya-benchmark-handoff.mjs";
 
 const els = [
 	{ element_token: "p1:1", role: "button", label: "提交", actions: ["click"] },
@@ -13,9 +13,11 @@ const els = [
 	{ role: "statictext", label: "没有 ref 的节点" },
 ];
 
-test("命令白名单：只认 observe / click / pointer / next / finish", () => {
+test("命令白名单：只认 observe / click / pointer / next / fast / finish", () => {
 	assert.deepEqual(parseHandoffCommand({ op: "observe" }), { op: "observe" });
-	assert.deepEqual(parseHandoffCommand({ op: "click", ref: "p1:1" }), { op: "click", ref: "p1:1" });
+	// click 默认把 input_route 显式化为 trusted（旧断言漏了这个字段，会误报失败）。
+	assert.deepEqual(parseHandoffCommand({ op: "click", ref: "p1:1" }), { op: "click", ref: "p1:1", inputRoute: "trusted" });
+	assert.deepEqual(parseHandoffCommand({ op: "click", ref: "p1:1", input_route: "dom_event" }), { op: "click", ref: "p1:1", inputRoute: "dom_event" });
 	assert.equal(parseHandoffCommand({ op: "click" }).error, "click 需要 ref");
 	assert.equal(parseHandoffCommand({ op: "pointer", ref: "p1:1", action: "click" }).error, "pointer 不支持的动作：click");
 	assert.equal(parseHandoffCommand({ op: "pointer", ref: "p1:1", action: "scroll" }).error, "scroll 需要非零 delta_x / delta_y");
@@ -25,6 +27,23 @@ test("命令白名单：只认 observe / click / pointer / next / finish", () =>
 	assert.equal(parseHandoffCommand({ op: "click", ref: "p1:1", x: 10, y: 10 }).x, undefined, "不把坐标 / 未知字段透传");
 	assert.equal(parseHandoffCommand({ op: "executeJS" }).error, "未知命令：executeJS");
 	assert.equal(parseHandoffCommand(null).error, "命令必须是 JSON 对象");
+});
+
+test("fast 命令：goal 1..240、expected 只收 role / label_contains / exists=true", () => {
+	assert.deepEqual(parseHandoffCommand({ op: "fast", goal: "  点开导出格式  " }), { op: "fast", goal: "点开导出格式" });
+	assert.equal(parseHandoffCommand({ op: "fast" }).error, "fast 需要 goal（本步的局部目标）");
+	assert.equal(parseHandoffCommand({ op: "fast", goal: "   " }).error, "goal 长度必须是 1..240 个字符");
+	assert.equal(parseHandoffCommand({ op: "fast", goal: "a".repeat(241) }).error, "goal 长度必须是 1..240 个字符");
+	assert.deepEqual(parseHandoffCommand({ op: "fast", goal: "确认", expected: { role: "status", label_contains: "预览已确认", exists: true } }), {
+		op: "fast",
+		goal: "确认",
+		expected: { role: "status", label_contains: "预览已确认", exists: true },
+	});
+	assert.equal(parseHandoffCommand({ op: "fast", goal: "x", expected: {} }).expected, undefined, "空 expected 视为未提供");
+	assert.match(parseHandoffCommand({ op: "fast", goal: "x", expected: { exists: false } }).error, /只接受 true/);
+	assert.match(parseHandoffCommand({ op: "fast", goal: "x", expected: { value_equals: "y" } }).error, /不支持的字段/);
+	assert.match(parseHandoffCommand({ op: "fast", goal: "x", expected: { role: "  " } }).error, /非空字符串/);
+	assert.match(parseHandoffCommand({ op: "fast", goal: "x", expected: "role" }).error, /必须是对象/);
 });
 
 test("refs 只读描述：没有 element_token 的节点不进列表，clickable 只描述能力", () => {
@@ -169,4 +188,96 @@ test("finish 触发清理回调", async () => {
 	assert.equal(r.body.ok, true);
 	await new Promise((res) => setTimeout(res, 10));
 	assert.equal(state.finish, 1);
+});
+
+test("fast：没有 onFast 时明确拒绝；有 onFast 时才执行并作废旧 ref、不回传机器状态", async () => {
+	const plain = harness();
+	const noFast = await call(plain.control, { op: "fast", goal: "点开导出格式" });
+	assert.equal(noFast.status, 200);
+	assert.equal(noFast.body.ok, false);
+	assert.match(noFast.body.error, /没有启用 fast/);
+
+	const seen = [];
+	const { control } = harness({
+		control: {
+			onFast: async (goal, expected) => {
+				seen.push({ goal, expected });
+				return { text: "快速路径跳过（低可信）", kind: "fallback", wallMs: 12 };
+			},
+		},
+	});
+	await call(control, { op: "observe" });
+	const r = await call(control, { op: "fast", goal: " 点开导出格式 ", expected: { role: "status", label_contains: "预览已生成" } });
+	assert.equal(r.body.ok, true);
+	assert.equal(r.body.handlerKind, "fallback");
+	assert.equal(r.body.handlerText, "快速路径跳过（低可信）");
+	assert.equal(r.body.wallMs, 12);
+	assert.equal(r.body.remaining, MAX_FAST_STEPS - 1);
+	assert.equal(r.body.machine, undefined, "不回传机器状态（oracle）");
+	assert.equal(r.body.expected, undefined, "不回传 expected");
+	assert.deepEqual(seen, [{ goal: "点开导出格式", expected: { role: "status", label_contains: "预览已生成" } }]);
+	const stale = await call(control, { op: "click", ref: "p1:1" });
+	assert.equal(stale.body.stale, true, "fast 后旧 ref 必须作废，强制主模型重新 observe");
+});
+
+test("fast：上限 6 次（await 前计数），超出不再调用真实 handler", async () => {
+	let runs = 0;
+	const { control } = harness({ control: { onFast: async () => { runs++; return { text: "快速模型选了", kind: "selected", wallMs: 1 }; } } });
+	for (let i = 0; i < MAX_FAST_STEPS; i++) {
+		const r = await call(control, { op: "fast", goal: `第 ${i + 1} 步` });
+		assert.equal(r.body.ok, true);
+		assert.equal(r.body.fast, i + 1);
+	}
+	const over = await call(control, { op: "fast", goal: "第七步" });
+	assert.equal(over.body.ok, false);
+	assert.match(over.body.error, /最多 6 次/);
+	assert.equal(runs, MAX_FAST_STEPS, "超限请求不得再碰真实 handler");
+	assert.equal(control.state.fastSteps, MAX_FAST_STEPS);
+});
+
+test("控制面串行：并发第二条命令返回 409 busy，且不触发第二个 handler", async () => {
+	let started = 0;
+	let release;
+	const gate = new Promise((r) => (release = r));
+	const { control } = harness({ control: { onFast: async () => { started++; await gate; return { text: "快速路径跳过", kind: "fallback", wallMs: 3 }; } } });
+	const { origin, server } = await control.listen();
+	const send = (body) => fetch(`${origin}/command`, { method: "POST", headers: { "content-type": "application/json", "x-pia-bench-nonce": "nonce-1" }, body: JSON.stringify(body) }).then(async (res) => ({ status: res.status, body: await res.json() }));
+	try {
+		const first = send({ op: "fast", goal: "第一步" });
+		await new Promise((r) => setTimeout(r, 20));
+		const second = await send({ op: "fast", goal: "第二步" });
+		assert.equal(second.status, 409);
+		assert.equal(second.body.busy, true);
+		assert.match(second.body.error, /不要重试/);
+		release();
+		const done = await first;
+		assert.equal(done.status, 200);
+		assert.equal(done.body.ok, true);
+		assert.equal(started, 1, "busy 请求不得再调用一次真实 handler");
+		assert.equal(control.state.fastSteps, 1);
+	} finally {
+		server.close();
+	}
+});
+
+test("stepwise 只有一个页面：没有 onNext 时 next 明确拒绝", async () => {
+	const { control } = harness({ control: { onNext: undefined } });
+	const r = await call(control, { op: "next", task: "pick-city" });
+	assert.equal(r.body.ok, false);
+	assert.match(r.body.error, /不支持切换任务/);
+});
+
+test("报告：fast 每步单独一条，主接管点击单独计数", () => {
+	const summarized = summarizeHandoff([
+		{
+			task: "export-settings",
+			handlerKind: null,
+			fastSteps: [{ goal: "点开导出格式", expected: { role: "status", label_contains: "已选择" }, handlerKind: "fallback", handlerText: "低可信", handlerWallMs: 9, machine: { state: { selected: "JSON:中文" }, updatedAt: 1 }, ui: { ok: true, statuses: [] } }],
+			commands: [{ op: "click", ref: "p1:1", ok: true }],
+		},
+	]);
+	assert.equal(summarized[0].fastSteps.length, 1);
+	assert.equal(summarized[0].fastSteps[0].handler.kind, "fallback");
+	assert.equal(summarized[0].fastSteps[0].machine.state.selected, "JSON:中文");
+	assert.deepEqual(summarized[0].mainTakeover.commands, [{ op: "click", ref: "p1:1", ok: true }]);
 });

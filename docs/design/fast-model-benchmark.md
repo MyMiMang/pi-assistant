@@ -371,3 +371,40 @@ server `tsc` exit 0）。**没有**起真实 Chrome / 驱动 / Laya，网页路�
   旧 label-only 候选的 criteria 逐字退回 label。
 - **未测 / 不得宣称**：描述是否提升 Laya / Jev 选择质量、能否让 4 题过阈值**都未测**（本轮没有模型推理，也没有调阈值凑过）；
   真实页面 / 原生窗口的描述措辞只由单测钉住，未在真机复核；benchmark 需要主审独立 review 后再安排一次真实测量。
+
+### 9.15 stepwise 逐步真实评估入口（`PIA_BENCH_SCENARIO=stepwise`，2026-10-17；**只有代码 + 纯测试，未真实运行**）
+
+> 目的：§9.13/§9.14 都是「一题一次点击 / 旧 4 题」或「主模型手动接管」，**没有**证过「主模型在同一个页面上
+> 逐步观察、每步自己给局部目标、快模型只选这一步」。本节只补这个入口，不换模型、不调描述 / 阈值 / 候选。
+
+- **新页面**：`scripts/laya-stepwise-fixture.mjs` 的 `renderStepwiseFixtureHtml()`（纯函数）渲染本地「导出设置」页：
+  「导出格式」CSV / JSON 与「报告语言」中文 / English 都是自定义下拉（按钮 + `role=option`），
+  「预览」后按钮**替换**为「确认导出」，另有取消 / 恢复默认 / 关闭三个干扰按钮；5 个独立 `role=status` 分别显示
+  格式 / 语言 / 选择 / 预览 / 确认。**无真正文件下载、无业务后果**，页面不预选答案，也不调模型。
+- **机器状态**：只复用产品白名单键 `selected` / `clicked` / `step`（`BENCHMARK_ALLOWED_STATE_KEYS` 不扩）：
+  两项都选中 → `selected="<格式>:<语言>"`；预览 → `step=1`；确认 → `step=2` + `clicked="confirmed"`；
+  取消 / 重置 / 关闭上报各自真实的 `clicked`。任务 `export-settings` 的预期是
+  `{ selected:"JSON:中文", step:2, clicked:"confirmed" }` + UI `role=status` 含「预览已确认」。
+- **注入**：`fixtureId / nonce / token` 经 `jsLiteral()`（JSON + 转义 `<` `>` U+2028 U+2029）写入内联脚本，
+  标题经 `escapeHtml()`；注入值不能闭合 `<script>`（纯测试钉住）。
+- **场景开关**：`PIA_BENCH_SCENARIO=stepwise` **只**与 `PIA_BENCH_HANDOFF=1` 同用；未知取值或不配 HANDOFF 直接
+  exit 3、不启动进程。harness 在 `mountFastComputerRoutes()` **之前**注册同一 fixture GET 路径（Hono 先注册先匹配），
+  只替换页面；旧 fixture、其它路由与默认 `MAX_HANDLER_RUNS=3` 完全照旧。
+- **控制面**：新增**可选** `fast{goal, expected?}`，只有 stepwise 传入 `onFast` 才可用；stepwise 的 `observe`
+  与 `handoff.json` **不回传任务级 expected**（只给自然目标，`expected` 仍写进 `report.json` 供复盘，避免主模型拿判分 oracle）。
+  `goal` 1..240 字符；`expected` 只收 `role` / `label_contains`（非空字符串）与 `exists:true`——本轮**不采用**
+  「元素不存在」后置条件（产品工具 schema 里的 `value_equals` / `action_contains` 也不开放给本入口）。
+  一次运行最多 **6** 次真实 handler，计数在 `await` 之前；**同一当前页**直接
+  `definition.execute(goal, expected)`，不 reset / 不导航 / 不清熔断 / 不额外 raw / 不换候选 / 不改 target / 模板 / 阈值 / 0.6。
+  返回真实 handler 文本 + `wallMs` + 剩余次数，**不回传** machine / expected oracle，并立即作废旧 refs 逼主模型重新 `observe`。
+  控制面严格串行：in-flight 时第二条 `409 busy`，客户端不要重试。stepwise 不提供 `next`。
+- **报告**：每步进 `tasks[].fastSteps[]`（goal / expected / handler kind+text+wall / 后置独立 `observe` 的 UI status
+  与同一 store 的 machine/updatedAt）；主模型自己的 `click` 另计 `mainTakeoverClicks`，summary 不把主接管完成算快模型完成。
+  主模型是 goal 的唯一决策者，wrapper 不选 goal、不自动点。每步只保留 handler 原文（含它自己给出的置信度 / gate 文本），
+  **不额外发 raw 诊断请求、不伪造校准概率**；连续低信由产品熔断自然保持，主模型随后接管。
+  本入口用于**一次**预声明 run，不用来调动作描述 / 阈值 / 候选；产品仍是单步候选选择语义，**不宣称**已对齐 CUA 的完整 task state / typed decision。
+- **已验 / 未验**：`node --test scripts/laya-benchmark-handoff.test.mjs scripts/laya-stepwise-fixture.test.mjs` **22/22**
+  （命令形状 / 6 次上限 / 409 串行 / 清 ref / 不回传 oracle / 页面渲染与注入 / 只白名单键 / 无下载）；
+  `node --check` 两个脚本通过。**未在真实 daemon / 浏览器 / Laya 上运行**，没有任何新的成功率 / 速度结论；
+  下一步由主审 review 后跑一次预声明的 stepwise run（6 次是上限不是配额，低信 / 连续 3 次回退后主模型自行接管，
+  不为多调用 reset 熔断），并单独核对每步 machine / UI 与主接管计数。

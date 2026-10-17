@@ -46,6 +46,8 @@
  *       node --import tsx scripts/laya-benchmark-isolated-harness.mjs
  *     就绪后读本次 scratch 根的 handoff.json（origin / fixture / task / handler 文本 / 临时 nonce），
  *     主模型用固定命令 observe / click / pointer / next / finish 自己接管，最后 finish 触发原清理 + 恢复生产 Laya。
+ *   PIA_BENCH_SCENARIO=stepwise    可选：只与 HANDOFF=1 同用；换新本地页（导出设置，格式 + 语言 + 预览确认），
+ *     控制面从 observe 开始，主模型每步用 fast{goal,expected?} 让真实 handler 在**同一页面**选局部动作（≤6 次）。
  */
 // 只静态 import node 内置模块：hono / pi-mcp / TS 生产件**必须**在下面 env 设置之后动态 import
 // （静态 import 会被提升到模块体之前求值，那时 HOME / PIA_DATA_DIR 还是调用方的）。
@@ -55,6 +57,7 @@ import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { acceptSupervisorHandshake } from "./laya-benchmark-supervisor-handshake.mjs";
+import { STEPWISE_TASK, renderStepwiseFixtureHtml } from "./laya-stepwise-fixture.mjs";
 import {
 	SYNTHETIC_ROOT_MARKER,
 	cloneNativeBaseEnv,
@@ -72,6 +75,9 @@ const TIMEOUT_MS = Number(process.env.PIA_BENCH_TIMEOUT_MS ?? 4000);
 const KEEP = process.env.PIA_BENCH_KEEP === "1";
 // handoff 模式要等主模型自己操作：进程内兜底放宽到 11 分钟，让 supervisor 的 12 分钟强超时成为外层硬边界。
 const HANDOFF_MODE = process.env.PIA_BENCH_HANDOFF === "1";
+// stepwise：同一个页面上的逐步真实评估（只在 HANDOFF 接管入口里可用）。
+const SCENARIO = process.env.PIA_BENCH_SCENARIO ?? "";
+const STEPWISE_MODE = SCENARIO === "stepwise";
 const WATCHDOG_MS = Number(process.env.PIA_BENCH_WATCHDOG_MS ?? (HANDOFF_MODE ? 11 * 60_000 : 9 * 60_000));
 const REAL_HOME = userInfo().homedir;
 const PROD_DATA = join(REAL_HOME, "Library", "Application Support", "Pi Assistant");
@@ -91,6 +97,16 @@ if (!guard) {
 	process.exit(3);
 }
 const notify = (msg) => guard.send(msg);
+
+// 只认两种取值：不设 = 旧逻辑；stepwise = 新页面逐步入口。未知值 / 不配 HANDOFF 一律拒绝，避免静默跑错场景。
+if (SCENARIO && !STEPWISE_MODE) {
+	console.error(`[laya-benchmark] 未知 PIA_BENCH_SCENARIO=${JSON.stringify(SCENARIO)}（只支持不设或 stepwise）。本次没有启动任何进程。`);
+	process.exit(3);
+}
+if (STEPWISE_MODE && !HANDOFF_MODE) {
+	console.error("[laya-benchmark] PIA_BENCH_SCENARIO=stepwise 只能与 PIA_BENCH_HANDOFF=1 一起用。本次没有启动任何进程。");
+	process.exit(3);
+}
 
 const startedAt = new Date();
 const logLines = [];
@@ -497,6 +513,15 @@ for (const need of ["browser_prepare", "browser_navigate", "get_browser_state", 
 
 const store = new BenchmarkFixtureStateStore();
 const app = new Hono();
+// stepwise 场景：同一个 fixture GET 路径的**优先**路由（Hono 先注册先匹配），其余路由与旧 fixture 完全照旧。
+if (STEPWISE_MODE) {
+	app.get("/api/fast-computer/benchmark/fixture/:fixtureId", (c) => {
+		const id = c.req.param("fixtureId");
+		const nonce = c.req.query("nonce") ?? "";
+		const token = store.tokenOf(id, nonce) ?? "";
+		return c.html(renderStepwiseFixtureHtml(id, nonce, token));
+	});
+}
 mountFastComputerRoutes(app, {
 	host: { availability: () => ({ cuaReady: true, modelReady: true, fixtureReady: true, reasons: [] }), start: async () => { throw new Error("harness 不走 host.start"); } },
 	store,
@@ -515,7 +540,7 @@ if (!port) {
 	fail("fixture 网关没起来");
 	await cleanup();
 }
-report.isolation.fixture = { origin: `http://127.0.0.1:${port}`, tasks: benchmarkFixtureTasks().map((t) => t.id) };
+report.isolation.fixture = { origin: `http://127.0.0.1:${port}`, scenario: STEPWISE_MODE ? "stepwise" : "default", tasks: (STEPWISE_MODE ? [STEPWISE_TASK] : benchmarkFixtureTasks()).map((t) => t.id) };
 
 const driver = createInvokeBenchmarkDriver({
 	target: () => ({ prefix: "hostpc" }),
@@ -691,6 +716,7 @@ function runnerFor(taskLog) {
 // ---------------------------------------------------------------- 6.5) 可选：真实主模型接管（PIA_BENCH_HANDOFF=1）
 // 不重跑旧 4 题：用**真实注册的** fastComputerExtension handler 跑一个真实 task 拿返回文本，
 // 再起一个仅 127.0.0.1 的小控制面，让主模型自己 observe / 挑 ref / 点（不选目标、不给坐标、不执行 JS）。
+// stepwise 子场景（PIA_BENCH_SCENARIO=stepwise）换新页面、不预跑 handler，每步由主模型自己 observe 后给局部 goal。
 // 同一个 MCP client、同一个 fixture、同一个自有 Laya；不新接 MCP / daemon，不建大框架。
 async function runHandoffMode() {
 	const { fastComputerExtension } = await import("../packages/server/src/fast-computer/tool.ts");
@@ -701,7 +727,7 @@ async function runHandoffMode() {
 	// 快速设置只写本次 scratch 数据目录；scope 与 handler 里的 `scopeOfPrefix("mcp__hostpc__")` 一致。
 	saveFastComputerSettings({ enabled: true, ...settings }, "hostpc");
 	const scoped = fastComputerSettings("hostpc");
-	report.handoff = { settings: { enabled: scoped.enabled, kind: scoped.kind, provider: scoped.provider, id: scoped.id, threshold: scoped.threshold, timeoutMs: scoped.timeoutMs, scope: "hostpc" }, chooser: "production buildChooser(默认，不 fake)", tasks: [] };
+	report.handoff = { settings: { enabled: scoped.enabled, kind: scoped.kind, provider: scoped.provider, id: scoped.id, threshold: scoped.threshold, timeoutMs: scoped.timeoutMs, scope: "hostpc" }, scenario: STEPWISE_MODE ? "stepwise" : "default", chooser: "production buildChooser(默认，不 fake)", tasks: [] };
 
 	// 真实注册 handler：pi.registerTool 只做 stub 取 definition（不跑 pi 运行时）。
 	const ext = fastComputerExtension({ agentId: AGENT });
@@ -722,7 +748,7 @@ async function runHandoffMode() {
 		},
 	};
 
-	const handoffTasks = benchmarkFixtureTasks().filter((t) => handoffMod.HANDOFF_TASK_IDS.includes(t.id));
+	const handoffTasks = STEPWISE_MODE ? [STEPWISE_TASK] : benchmarkFixtureTasks().filter((t) => handoffMod.HANDOFF_TASK_IDS.includes(t.id));
 	const expectedOf = (task) => {
 		const ui = task.expect?.ui ?? {};
 		const out = {};
@@ -744,7 +770,7 @@ async function runHandoffMode() {
 	const entries = [];
 	let current = null;
 	const newEntry = (task) => {
-		const e = { task: task.id, title: task.title, goal: task.goal, startedAt: Date.now(), commands: [], handlerText: null, handlerKind: null, handlerWallMs: null };
+		const e = { task: task.id, title: task.title, goal: task.goal, startedAt: Date.now(), commands: [], fastSteps: [], handlerText: null, handlerKind: null, handlerWallMs: null };
 		entries.push(e);
 		return e;
 	};
@@ -777,16 +803,51 @@ async function runHandoffMode() {
 	const finished = new Promise((r) => (finishResolve = r));
 	let currentTask = handoffTasks.find((t) => t.id === "pick-submit") ?? handoffTasks[0];
 	current = newEntry(currentTask);
-	try {
-		const first = await runHandlerFor(currentTask);
-		current.handlerText = first.text;
-		current.handlerKind = first.kind;
-		current.handlerWallMs = first.wallMs;
-		report.handoff.handlerRuns = handlerRuns;
-		log(`真实 handler（${currentTask.id}）kind=${first.kind} ${first.wallMs}ms`);
-	} catch (e) {
-		fail(`真实 handler 跑失败：${e instanceof Error ? e.message : String(e)}`);
-		return;
+
+	// stepwise：主模型每步自己观察后给一个局部 goal；每次都是一次真实 handler 调用。
+	// 不 reset、不重新导航、不清熔断、不额外 raw；同一 key 连续低信 → 熔断自然保持（主模型自己接管）。
+	let fastHandlerRuns = 0;
+	const runFastStep = async (goal, expected) => {
+		if (fastHandlerRuns >= handoffMod.MAX_FAST_STEPS) throw new Error(`fast 真实 handler 最多 ${handoffMod.MAX_FAST_STEPS} 次（本次已跑 ${fastHandlerRuns}）`);
+		fastHandlerRuns++;
+		const t0 = Date.now();
+		const args = { goal, pid: handle.pid, window_id: handle.windowId, prefix: "hostpc", browser: { target_id: handle.targetId, tab_id: handle.tabId }, ...(expected ? { expected } : {}) };
+		const out = await definition.execute(`handoff-fast-${fastHandlerRuns}`, args, undefined, () => {}, ctx);
+		const wallMs = Date.now() - t0;
+		const text = (out?.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
+		const kind = /快速路径跳过/.test(text) ? "fallback" : /快速模型选了/.test(text) ? "selected" : "other";
+		// 后置**独立**观察 + 复用同一 store 读机器状态：只进报告（给主审 / 复盘），**不回传主模型**。
+		const ev = store.getEvidence(fixtureId, nonce);
+		let refCount = null;
+		let ui = null;
+		try {
+			const observed = await readSnapshot();
+			refCount = observed.elements.length;
+			ui = { ok: true, statuses: handoffMod.statusEvidence(observed.elements) };
+		} catch (e) {
+			ui = { ok: false, error: String(e instanceof Error ? e.message : e).slice(0, 300) };
+		}
+		current.fastSteps.push({ goal, expected: expected ?? null, handlerKind: kind, handlerText: text, handlerWallMs: wallMs, machine: { state: ev.state, updatedAt: ev.updatedAt }, ui, refCount, at: new Date().toISOString() });
+		report.handoff.fastHandlerRuns = fastHandlerRuns;
+		log(`fast#${fastHandlerRuns} goal=${JSON.stringify(goal)} kind=${kind} ${wallMs}ms`);
+		return { text, kind, wallMs };
+	};
+
+	if (STEPWISE_MODE) {
+		// 新 mode 不自动跑第一次 handler：ready 后从 observe 开始，由主模型自己决定第一步 goal。
+		log(`stepwise 场景：不自动调用 handler，等主模型 observe 后逐步 fast（上限 ${handoffMod.MAX_FAST_STEPS} 次）`);
+	} else {
+		try {
+			const first = await runHandlerFor(currentTask);
+			current.handlerText = first.text;
+			current.handlerKind = first.kind;
+			current.handlerWallMs = first.wallMs;
+			report.handoff.handlerRuns = handlerRuns;
+			log(`真实 handler（${currentTask.id}）kind=${first.kind} ${first.wallMs}ms`);
+		} catch (e) {
+			fail(`真实 handler 跑失败：${e instanceof Error ? e.message : String(e)}`);
+			return;
+		}
 	}
 
 	const control = handoffMod.createHandoffControl({
@@ -797,42 +858,49 @@ async function runHandoffMode() {
 		handle,
 		readSnapshot,
 		readMachine: async () => store.getEvidence(fixtureId, nonce),
-		taskOf: () => currentTask,
+		taskOf: () => (STEPWISE_MODE ? { id: currentTask.id, title: currentTask.title, goal: currentTask.goal } : currentTask),
 		log,
 		onCommand: (entry) => current?.commands.push(entry),
-		onNext: async (taskId, runFast) => {
-			const task = handoffTasks.find((t) => t.id === taskId);
-			if (!task) throw new Error(`未知任务：${taskId}`);
-			await finishEntry(current, currentTask);
-			currentTask = task;
-			current = newEntry(task);
-			store.reset(fixtureId, nonce);
-			await gotoFixture();
-			if (runFast) {
-				const r = await runHandlerFor(task);
-				current.handlerText = r.text;
-				current.handlerKind = r.kind;
-				current.handlerWallMs = r.wallMs;
-				report.handoff.handlerRuns = handlerRuns;
-			}
-		},
+		onNext: STEPWISE_MODE
+			? undefined
+			: async (taskId, runFast) => {
+					const task = handoffTasks.find((t) => t.id === taskId);
+					if (!task) throw new Error(`未知任务：${taskId}`);
+					await finishEntry(current, currentTask);
+					currentTask = task;
+					current = newEntry(task);
+					store.reset(fixtureId, nonce);
+					await gotoFixture();
+					if (runFast) {
+						const r = await runHandlerFor(task);
+						current.handlerText = r.text;
+						current.handlerKind = r.kind;
+						current.handlerWallMs = r.wallMs;
+						report.handoff.handlerRuns = handlerRuns;
+					}
+				},
+		onFast: STEPWISE_MODE ? runFastStep : undefined,
 		onFinish: () => finishResolve(),
 	});
 	const listening = await control.listen();
 	controlServer = listening.server;
 	const origin = listening.origin;
-	report.handoff.control = { origin, path: "/command", nonceHeader: "x-pia-bench-nonce", methods: ["observe", "click", "pointer", "next", "finish"], loopbackOnly: true, bodyLimitBytes: 4096 };
+	const methods = STEPWISE_MODE ? ["observe", "click", "pointer", "fast", "finish"] : ["observe", "click", "pointer", "next", "finish"];
+	report.handoff.control = { origin, path: "/command", nonceHeader: "x-pia-bench-nonce", methods, loopbackOnly: true, bodyLimitBytes: 4096 };
 
 	// ready 文件：只写本次 scratch 根（不含 fixture store token；nonce 是本次内存态随机值，不是凭据）。
 	const ready = {
 		schema: "laya-benchmark-handoff/1",
+		scenario: STEPWISE_MODE ? "stepwise" : "default",
 		origin,
 		path: "/command",
 		nonceHeader: "x-pia-bench-nonce",
 		controlNonce: nonce,
 		nonceNote: "ephemeral in-memory nonce for this run (not a credential / not a real key)",
 		fixture: { id: fixtureId, url: fixtureUrl, targetId: handle.targetId, tabId: handle.tabId, pid: handle.pid, windowId: handle.windowId, session: handle.session ?? null },
-		task: { id: currentTask.id, goal: currentTask.goal, expected: currentTask.expect ?? null, allowed: handoffMod.HANDOFF_TASK_IDS },
+		control: { methods, serialized: true, busyStatus: 409 },
+		task: { id: currentTask.id, goal: currentTask.goal, expected: STEPWISE_MODE ? null : (currentTask.expect ?? null), allowed: handoffTasks.map((t) => t.id) },
+		...(STEPWISE_MODE ? { fast: { maxSteps: handoffMod.MAX_FAST_STEPS, goalChars: 240, expectedFields: ["role", "label_contains", "exists=true"], samePage: true, resetsCircuit: false, noOracleToModel: true } } : {}),
 		handler: { kind: current.handlerKind, text: current.handlerText, wallMs: current.handlerWallMs },
 		startedAt: new Date().toISOString(),
 	};
@@ -847,14 +915,24 @@ async function runHandoffMode() {
 	await finishEntry(current, currentTask);
 	report.handoff.tasks = handoffMod.summarizeHandoff(entries);
 	report.handoff.finishedAt = new Date().toISOString();
-	const tookOver = entries.filter((e) => e.handlerKind === "fallback" && (e.commands ?? []).some((c) => c.op === "click" && c.ok));
+	const fastSteps = entries.flatMap((e) => e.fastSteps ?? []);
+	const fastKinds = { selected: 0, fallback: 0, other: 0 };
+	for (const s of fastSteps) if (s.handlerKind in fastKinds) fastKinds[s.handlerKind]++;
+	const clickCommands = entries.flatMap((e) => (e.commands ?? []).filter((c) => c.op === "click" && c.ok));
+	const tookOver = STEPWISE_MODE ? entries.filter((e) => (e.commands ?? []).some((c) => c.op === "click" && c.ok)) : entries.filter((e) => e.handlerKind === "fallback" && (e.commands ?? []).some((c) => c.op === "click" && c.ok));
 	report.handoff.summary = {
+		scenario: STEPWISE_MODE ? "stepwise" : "default",
 		entries: entries.length,
 		handlerRuns,
+		fastHandlerRuns,
+		fastSteps: fastSteps.length,
+		fastStepKinds: fastKinds,
 		fallbacks: entries.filter((e) => e.handlerKind === "fallback").length,
 		selectedByFast: entries.filter((e) => e.handlerKind === "selected").length,
+		// 主接管是另一类计数：不把主模型自己点完的任务当成快模型完成。
+		mainTakeoverClicks: clickCommands.length,
 		mainTakeoverClicked: tookOver.map((e) => e.task),
-		tasks: entries.map((e) => ({ task: e.task, handlerKind: e.handlerKind, commands: (e.commands ?? []).length, wallMs: e.wallMs ?? null, machine: e.machine?.state ?? null })),
+		tasks: entries.map((e) => ({ task: e.task, handlerKind: e.handlerKind, fastSteps: (e.fastSteps ?? []).length, fastStepKinds: (e.fastSteps ?? []).map((s) => s.handlerKind), mainClicks: (e.commands ?? []).filter((c) => c.op === "click" && c.ok).length, commands: (e.commands ?? []).length, wallMs: e.wallMs ?? null, machine: e.machine?.state ?? null })),
 	};
 	state.exitCode = 0;
 }
