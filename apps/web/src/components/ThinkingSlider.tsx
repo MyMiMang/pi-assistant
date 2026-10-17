@@ -378,7 +378,7 @@ function FastButton({ testid, fast }: { testid: string; fast?: FastControl }) {
 					<b>Fast 快速模式</b>
 					<div className="pa-tip-line">优先处理请求、可能更快；不改思考强度，也不换模型。</div>
 					<div className="pa-tip-line" data-testid={`${testid}-fast-state`}>{stateText}</div>
-					<div className="pa-tip-line">只对下一次请求生效，已发出的请求不变。</div>
+					<div className="pa-tip-line">从下一次请求起持续生效，直到你更改设置；已发出的请求不变。</div>
 					{fast?.capability === "requestable-unverified" && <div className="pa-tip-line">服务不一定支持；可能增加用量 / 费用（部分站点约 2 倍或更高），以服务商账单为准。</div>}
 					{fast?.error && <div className="pa-tip-line pa-tip-error" role="alert">{fast.error}</div>}
 				</>,

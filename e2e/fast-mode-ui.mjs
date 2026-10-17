@@ -181,7 +181,7 @@ try {
 	check("悬停 250ms 还没出（不是一点就弹）", (await page.getByTestId("hover-tip").count()) === 0);
 	await page.getByTestId("hover-tip").waitFor({ timeout: 3000 }).catch(() => {});
 	check("悬停后出说明气泡", (await page.getByTestId("hover-tip").count()) === 1);
-	check("说明里写清只对下一次请求生效", /只对下一次请求生效/.test((await page.getByTestId("hover-tip").innerText().catch(() => "")) ?? ""));
+	check("说明里写清从下次请求起持续生效直到更改", /从下一次请求起持续生效，直到你更改设置/.test((await page.getByTestId("hover-tip").innerText().catch(() => "")) ?? ""));
 	check("说明里写明可能增加费用（不承诺通用倍率）", /可能增加用量 \/ 费用/.test((await page.getByTestId("hover-tip").innerText().catch(() => "")) ?? ""));
 	// 说明气泡还在的时候拍（旧图拍在 Esc 之后，名字叫 tip 但画面里没有 tip）
 	await stableShot(page, page.getByTestId("hover-tip"), join(OUT, "01-fast-tip.png"));
