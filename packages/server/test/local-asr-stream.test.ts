@@ -195,3 +195,23 @@ test("committed/tentative 语义：server-authoritative per-segment（committed=
 	assert.equal(tentativeText, "世界");
 	assert.equal(committed?.segmentId, tentative?.segmentId, "同一 segmentId 下 committed 是前缀、tentative 是剩余整体");
 });
+
+test("归属 scope：创建时绑定 agent/conversation，后续请求头不一致 → 409 scope_mismatch；缺头沿用会话归属", async () => {
+	const sidecar = fakeSidecar();
+	const { hub, released } = makeHub(sidecar);
+	const s = await hub.create({ principal: "local", agentId: "a1", conversationId: "c1" });
+	await assert.rejects(
+		() => hub.append(s.sessionId, 0, new Uint8Array(10), { principal: "local", agentId: "a2" }),
+		(e: unknown) => e instanceof AsrStreamError && e.code === ASR_STREAM_ERRORS.scopeMismatch && e.status === 409,
+	);
+	await assert.rejects(
+		() => hub.end(s.sessionId, { principal: "local", agentId: "a1", conversationId: "c2" }),
+		(e: unknown) => e instanceof AsrStreamError && e.code === ASR_STREAM_ERRORS.scopeMismatch,
+	);
+	// 缺头（旧客户端 / 语音从别处触发）不误拒：沿用会话创建时的归属。
+	const ok = await hub.append(s.sessionId, 0, new Uint8Array(10), { principal: "local" });
+	assert.equal(ok.nextSeq, 1);
+	const ended = await hub.end(s.sessionId, { principal: "local", agentId: "a1", conversationId: "c1" });
+	assert.equal(ended.state, "ended");
+	assert.equal(released.n, 1, "end 必须释放租约");
+});
