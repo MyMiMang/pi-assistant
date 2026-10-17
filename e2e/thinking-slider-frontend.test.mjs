@@ -258,6 +258,55 @@ test("DOM：服务端静态渲染不写死颜色（颜色只在主题 CSS，组�
 	assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(m.replace(/data-ln="1"/g, "")), "组件 markup 不含硬编码色值");
 });
 
+// ---------------------------------------------------------------- Fast（请求级 service_tier）
+test("DOM：左上角是闪电真按钮（不是星星）；开关 aria-pressed、不可用 aria-disabled 仍可聚焦看原因", () => {
+	const fast = (p) => ({ on: false, capability: "requestable-unverified", onToggle: () => {}, ...p });
+	const off = html({ testid: "thinking", levels: ALL, current: "medium", fast: fast({}) });
+	assert.ok(off.includes('data-testid="thinking-fast"'), "有真按钮 testid");
+	assert.ok(off.includes('aria-pressed="false"'));
+	assert.ok(off.includes('aria-label="快速模式（Fast）：已关：不附加任何参数，服务商默认档不变"'));
+	assert.ok(!off.includes("M8 2.2l1.3 3.4"), "原来的四角星路径已彻底移除");
+	assert.ok(count(off, "pa-think-glyph") <= 1, "左上角不再渲染星星；右侧最多一个空占位（无跟随语义时）");
+	assert.ok(off.includes("<svg"), "闪电 SVG 在按钮里");
+
+	const on = html({ testid: "thinking", levels: ALL, current: "medium", fast: fast({ on: true, capability: "supported" }) });
+	assert.ok(on.includes('aria-pressed="true"'));
+	assert.ok(on.includes('data-on="1"'), "开启有高亮状态标记");
+
+	const unsupported = html({ testid: "thinking", levels: ALL, current: "medium", fast: fast({ on: true, capability: "unsupported", reason: "当前接口暂未接入 Fast" }) });
+	assert.ok(unsupported.includes('aria-disabled="true"'), "不可用是 aria-disabled（不用 native disabled 禁掉 focus/tooltip）");
+	assert.ok(!/\sdisabled(=|>)/.test(unsupported), "没有 native disabled（aria-disabled 不算）");
+	assert.ok(unsupported.includes("不可用：当前接口暂未接入 Fast"));
+});
+
+test("DOM：非推理 / 固定档模型仍显示 Fast，不把 Fast 绑在 >1 档上", () => {
+	const fixed = html({ testid: "thinking", levels: ["medium"], current: "medium", fast: { on: true, capability: "requestable-unverified", onToggle: () => {} } });
+	assert.ok(!fixed.includes('role="slider"'), "固定档不画滑块");
+	assert.ok(fixed.includes('data-testid="thinking-fast"') && fixed.includes('aria-pressed="true"'), "Fast 仍可用");
+	const none = html({ testid: "thinking", levels: [], current: null, fast: { on: false, capability: "requestable-unverified", onToggle: () => {} } });
+	assert.ok(none.includes('data-testid="thinking-fast"'), "无思考档也保留 Fast");
+});
+
+test("DOM：紧凑弹层的模型名是带箭头的可点击入口；没有模型时显示「选择模型」而不是假模型名", () => {
+	const m = html({ testid: "thinking", levels: ALL, current: "medium", modelName: "真实模型名", onModelClick: () => {} });
+	assert.ok(m.includes('data-testid="thinking-model"'), "模型名是按钮");
+	assert.ok(m.includes('aria-label="当前模型：真实模型名，点按选择模型"'));
+	assert.ok(m.includes("选择模型"), "有箭头语义");
+	const empty = html({ testid: "thinking", levels: [], current: null, onModelClick: () => {} });
+	assert.ok(empty.includes('data-testid="thinking-model"'));
+	assert.ok(empty.includes(">选择模型<"));
+	assert.ok(empty.includes("还没有选择模型"), "空态不误报不支持思考强度");
+});
+
+test("DOM：模型目录加载中 / 失败时不冒充「不支持思考强度」", () => {
+	const loading = html({ testid: "thinking", levels: [], current: null, modelName: "m", loading: true });
+	assert.ok(loading.includes('data-testid="thinking-loading"'));
+	assert.ok(!loading.includes("不支持调整思考强度"));
+	const error = html({ testid: "thinking", levels: [], current: null, modelName: "m", error: true });
+	assert.ok(error.includes('data-testid="thinking-error"'));
+	assert.ok(!error.includes("不支持调整思考强度"));
+});
+
 // ---------------------------------------------------------------- A：主题实时切换的 --mo-style 订阅
 // 这组断言打在订阅原语上（假 DOM + 假 MutationObserver），验证「切主题 / DIY 预览 / 取消还原都不重挂组件」
 // 与「订阅范围有界、卸载即断开」；组件挂载层的观感（切主题后 computed transition / animation 真的变）

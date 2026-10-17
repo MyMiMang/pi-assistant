@@ -8,18 +8,21 @@
  *    是一个带图标 / 数量 / 箭头的可折叠大分类、可一键全部关上；里面渠道按内置/我的分组成「带服务图标的卡片网格」，
  *    点卡片展开看该服务模型、模型行内改能力标签、编辑/删除沿用应用内确认框（无原生 confirm）
  * 6) 群聊成员与子代理的模型入口复用同一个菜单
+ * 隔离：每次 mkdtemp 的临时 DATA / WORKSPACE / HOME / TMPDIR，服务走 `test/launch-memory.ts`
+ * （内存凭据，不构造生产后端）；原生 Chrome 用 `e2e/fixtures/native-launch-env.mjs` 的真实 HOME / TMPDIR。
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { closeModelPanel, openCompact, openModelMenu } from "./model-menu-flow.mjs";
+import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 
-const ROOT = new URL("..", import.meta.url).pathname;
-const DATA = "/tmp/pia-e2e-model-ui";
-const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/model-ui";
-rmSync(DATA, { recursive: true, force: true });
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname);
+// 本次运行独占的临时目录（DATA / WORKSPACE / HOME / TMPDIR）；finally 只删它自己
+const run = makeTempRun("pia-e2e-model-ui-");
+const OUT = process.env.SHOT_DIR ?? "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/model-ui";
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 const PORT = await new Promise((r) => {
@@ -29,10 +32,7 @@ const PORT = await new Promise((r) => {
 	});
 });
 const BASE = `http://127.0.0.1:${PORT}`;
-const server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: decodeURIComponent(ROOT), env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] });
-let logs = "";
-server.stdout.on("data", (d) => (logs += d));
-server.stderr.on("data", (d) => (logs += d));
+const srv = startTempServer({ root: ROOT, port: PORT, run });
 const j = async (path, method = "GET", body) => {
 	const r = await fetch(BASE + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 	const t = await r.text();
@@ -65,7 +65,7 @@ try {
 	const allModels = await j("/api/models");
 	assert.ok(allModels.length >= 48, `模型数量应 ≥48，实际 ${allModels.length}`);
 
-	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, env: browserEnv(run) });
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: "zh-CN" });
 	page.setDefaultTimeout(20_000);
 	let nativeDialogs = 0;
@@ -80,9 +80,8 @@ try {
 
 	// ============================================================ 1) 分组折叠 + 搜索
 	console.log("\n[1] 长列表多服务：分组折叠 + 搜索");
-	await page.getByTestId("model-picker").click();
-	const menu = page.getByTestId("model-menu");
-	await menu.waitFor();
+	// 聊天入口是两层弹层：先紧凑层，点模型名才进完整目录
+	const menu = await openModelMenu(page);
 	for (const p of providers) {
 		await menu.getByTestId(`model-group-${p.id}`).waitFor();
 		assert.equal(await menu.getByTestId(`model-group-${p.id}`).getAttribute("aria-expanded"), "false", `${p.name} 默认应收起`);
@@ -103,14 +102,13 @@ try {
 	assert.equal(await menu.getByTestId("model-frequent").count(), 0, "搜索时不显示常用分组");
 	await page.screenshot({ path: join(OUT, "02-menu-search.png") });
 	await menu.getByTestId("model-search").fill("");
-	await page.keyboard.press("Escape");
+	await closeModelPanel(page);
 	ok("按服务折叠、用户命名、搜索能找到全部模型");
 
 	// ============================================================ 2) 常用 5
 	console.log("\n[2] 常用 5：按频次置顶、原渠道仍保留、刷新后仍在");
 	const pick = async (providerIdx, modelId) => {
-		await page.getByTestId("model-picker").click();
-		await page.getByTestId("model-menu").waitFor();
+		await openModelMenu(page);
 		await page.getByTestId("model-search").fill(modelId);
 		await page.getByTestId("model-option").first().click();
 	};
@@ -120,7 +118,7 @@ try {
 	for (const [i, id] of [[2, "m-3-3"], [3, "m-4-4"], [4, "m-5-5"], [5, "m-6-6"]]) await pick(i, id);
 	const expectFreq = [`${providers[0].id}/m-1-1`, `${providers[5].id}/m-6-6`, `${providers[4].id}/m-5-5`, `${providers[3].id}/m-4-4`, `${providers[2].id}/m-3-3`];
 	const freqOf = async () => {
-		await page.getByTestId("model-picker").click();
+		await openModelMenu(page);
 		await page.getByTestId("model-frequent").waitFor();
 		const freq = await page.getByTestId("model-frequent").getByTestId("model-option").evaluateAll((els) => els.map((e) => e.dataset.model));
 		const all = await page.getByTestId("model-menu").getByTestId("model-option").evaluateAll((els) => els.map((e) => e.dataset.model));
@@ -142,14 +140,14 @@ try {
 	assert.equal(await freqMenu.locator(`[data-testid=model-option][data-model="${providers[5].id}/m-6-6"]`).count(), 2, "常用 1 行 + 原渠道 1 行");
 	assert.ok(all.length >= freq.length, "渲染的条目数至少要覆盖常用");
 	await page.screenshot({ path: join(OUT, "03-menu-frequent.png") });
-	await page.keyboard.press("Escape");
+	await closeModelPanel(page);
 	const picks = (await j("/api/models/picks")).picks;
 	assert.equal(picks[`${providers[0].id}/m-1-1`].count, 2, "服务端应记录频次");
 	await page.reload();
 	await page.getByTestId("model-picker").waitFor();
 	({ freq } = await freqOf());
 	assert.deepEqual(freq, expectFreq, `刷新后常用应保留：${freq}`);
-	await page.keyboard.press("Escape");
+	await closeModelPanel(page);
 	ok("常用 5 置顶、按频次 + 最近选择、原渠道仍保留、刷新后保留");
 
 	// ============================================================ 3) 模型 + 思考强度统一
@@ -157,22 +155,35 @@ try {
 	await j(`/api/agents/${agent.id}`, "PATCH", { model: { provider: "mock", id: "echo-think" } });
 	await page.reload();
 	await page.getByTestId("model-picker").waitFor();
-	await page.getByTestId("model-picker").click();
-	await page.getByTestId("model-thinking").waitFor();
-	await page.getByTestId("thinking-high").click();
+	// 紧凑层就带滑块，不用先进目录（用户参考 Codex 的两层结构）
+	const compact3 = await openCompact(page);
+	await compact3.getByTestId("thinking-body").waitFor();
+	await compact3.getByTestId("thinking-high").click();
 	await wait(async () => (await j("/api/agents")).find((x) => x.id === agent.id).thinking === "high");
 	await page.getByTestId("model-picker").getByText(/· 高/).waitFor();
-	await page.getByTestId("model-picker").click();
-	await page.getByTestId("model-thinking").waitFor();
+	await openCompact(page);
 	await page.screenshot({ path: join(OUT, "04-model-thinking.png") });
-	await page.keyboard.press("Escape");
+	// 目录层只选模型：同一套强度 / Fast 不在这里重复一遍
+	await page.getByTestId("model-picker-compact").getByTestId("thinking-model").click();
+	await page.getByTestId("model-menu").waitFor();
+	assert.equal(await page.getByTestId("model-menu").getByTestId("model-thinking").count(), 0, "目录层不再重复整块滑块");
+	assert.equal(await page.getByTestId("model-menu").getByTestId("thinking-fast").count(), 0, "目录层不再重复 Fast");
+	await page.getByTestId("model-back").click();
+	await page.getByTestId("model-picker-compact").waitFor();
+	assert.equal((await page.getByTestId("model-picker").getAttribute("aria-label"))?.includes("高"), true, "返回只退一层，不改已存档位");
+	await closeModelPanel(page);
 	await j(`/api/agents/${agent.id}`, "PATCH", { model: { provider: "mock", id: "echo" } });
 	await page.reload();
-	await page.getByTestId("model-picker").click();
-	await page.getByTestId("model-menu").waitFor();
-	assert.equal(await page.getByTestId("model-thinking").count(), 0, "不支持推理的模型不应显示思考强度");
-	await page.keyboard.press("Escape");
-	ok("一个按钮里同时换模型和设思考强度");
+	await page.getByTestId("model-picker").waitFor();
+	const compactNoReason = await openCompact(page);
+	// 打开后模型目录可能还在加载（加载中不冒充「不支持」）；等目录落地再看空态。
+	// Pi 对不支持推理的模型只给一档 off，界面是「只有一档 / 不需要调整」（fixed），不是 unsupported。
+	await wait(async () => (await compactNoReason.getByTestId("thinking-fixed").count()) === 1);
+	assert.equal(await compactNoReason.getByTestId("thinking-fixed").count(), 1, "只有一档的模型仍打开紧凑层，并说明不需要调整");
+	assert.match(await compactNoReason.getByTestId("thinking-fixed").innerText(), /只有一档/, "说明是一档而不是假装有滑块");
+	assert.equal(await compactNoReason.getByTestId("thinking-body").locator('[role="slider"]').count(), 0, "不画滑块");
+	await closeModelPanel(page);
+	ok("一个按钮里同时换模型和设思考强度（两层：紧凑层调档、目录层只选模型）");
 
 	// ============================================================ 4) 390 窄中栏
 	console.log("\n[4] 390 窄中栏：只留图标、无横向溢出");
@@ -195,13 +206,16 @@ try {
 	assert.ok(narrow.docOverflow <= 1, `整页不应横向溢出：${narrow.docOverflow}`);
 	assert.ok(narrow.toolsOverflow <= 1, `工具栏不应横向溢出：${narrow.toolsOverflow}`);
 	assert.equal(narrow.hasRing, true, "上下文圆环独立保留");
-	await page.getByTestId("model-picker").click();
+	const compact390 = await openCompact(page);
+	const cbox = await compact390.boundingBox();
+	assert.ok(cbox && cbox.x >= 0 && cbox.x + cbox.width <= 390 + 1, `390 下紧凑层应在屏幕内：${JSON.stringify(cbox)}`);
+	await compact390.getByTestId("thinking-model").click();
 	const mmenu = page.getByTestId("model-menu");
 	await mmenu.waitFor();
 	const box = await mmenu.boundingBox();
 	assert.ok(box && box.x >= 0 && box.x + box.width <= 390 + 1, `菜单应在屏幕内：${JSON.stringify(box)}`);
 	await page.screenshot({ path: join(OUT, "05-390-composer.png") });
-	await page.keyboard.press("Escape");
+	await closeModelPanel(page);
 	ok("390 窄中栏只留图标、无溢出、圆环独立");
 
 	// ============================================================ 5) 设置 › 模型：新版排版 + 折叠渠道 + 渠道内能力 + 编辑/删除
@@ -386,10 +400,11 @@ try {
 	assert.equal(nativeDialogs, 0, "全程不应出现原生 confirm");
 	console.log("\n全部通过");
 } catch (e) {
-	console.error(logs.slice(-4000));
+	console.error(srv.logs().slice(-4000));
 	console.error("异常：", e);
 	process.exitCode = 1;
 } finally {
 	await browser?.close();
-	server.kill("SIGTERM");
+	await srv.stop();
+	cleanupTempRun(run);
 }

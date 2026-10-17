@@ -49,3 +49,24 @@ export class LatestWrite {
 		this.seq += 1;
 	}
 }
+
+/**
+ * 同目标写入的**串行队列**（纯逻辑，便于单测）。
+ *
+ * 为什么需要：`LatestWrite` 只保证「界面认最后一次」，不保证请求抵达顺序。同一个助理的 Fast 开关有多个入口
+ * （单聊输入栏 / 另一个窗口 / 外部设备），两次 PATCH 并发时服务端可能先处理后发的那个，最终值就跟用户
+ * 最后一次点击不一致。服务端 PATCH 是「读 body → 同步原子 UPDATE → 返回」，没有 await 到写库，所以
+ * **同一个客户端按点击顺序串行发** 就足以保住本端顺序；不新增 DB 版本号 / CAS，跨设备仍以服务端最后处理为准。
+ *
+ * 语义：`run()` 前一次 settle（成功或失败）后才跑下一次；前一次失败不会卡住后续写入，错误仍返回给调用方。
+ */
+export class SerialWriteQueue {
+	private tail: Promise<unknown> = Promise.resolve();
+
+	run<T>(task: () => Promise<T>): Promise<T> {
+		// 前一次失败也要继续跑下一次（tail 已吞掉错误），但这次自己的错误照常抛给调用方
+		const result = this.tail.then(task, task);
+		this.tail = result.catch(() => {});
+		return result;
+	}
+}

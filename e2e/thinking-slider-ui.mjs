@@ -30,6 +30,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { closeModelPanel } from "./model-menu-flow.mjs";
+import { nativeLaunchBrowserEnv } from "./fixtures/native-launch-env.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DIST = join(ROOT, "apps/web/dist");
@@ -145,7 +147,8 @@ try {
 	if (full?.thinking?.length !== 7) throw new Error(`目录里 ${MAIN} 应支持七档：${JSON.stringify(full?.thinking)}`);
 	const agentBefore = (await j("/api/agents")).find((a) => a.id === agent.id);
 
-	browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"] });
+	// 原生 Chrome 必须拿真实 HOME / TMPDIR（服务进程那份临时目录不能传下去）；父进程若是合成环境也不会漏
+	browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"], env: nativeLaunchBrowserEnv({ syntheticRoots: [RUN_DIR] }) });
 	const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "zh-CN", colorScheme: "dark" });
 	// 种子：两个 DIY 主题进 localStorage（应用启动会用真实 installCustomThemes 读入并注入 CSS）
 	await ctx.addInitScript(([steps, smooth]) => {
@@ -184,23 +187,22 @@ try {
 	});
 
 	/* ------------------------------ 滑块辅助 ------------------------------ */
-	const popover = (menuTestid) => page.locator(`[data-testid="${menuTestid}"] [data-testid="thinking-body"]`);
+	// 两层弹层后，滑块在**紧凑层**（点开模型芯片的第一层）；完整目录只选模型，不再放滑块
+	const COMPACT = "model-picker-compact";
+	const popover = (menuTestid) => page.locator(`[data-testid="${menuTestid ?? COMPACT}"] [data-testid="thinking-body"]`);
 	const openComposerMenu = async () => {
 		// 弹层（placement=up）会盖住输入栏芯片，开着的时候真实点击点不到：先合法关掉再打开
-		if (await page.getByTestId("model-menu").count()) {
-			await page.keyboard.press("Escape");
-			await page.getByTestId("model-menu").waitFor({ state: "detached" });
-		}
+		await closeModelPanel(page);
 		await page.getByTestId("model-picker").click();
-		await page.getByTestId("model-menu").waitFor();
-		await popover("model-menu").waitFor();
-		return popover("model-menu");
+		await page.getByTestId(COMPACT).waitFor();
+		await popover().waitFor();
+		return popover();
 	};
 	/** 读当前已提交档位下标 */
-	const nowIndex = async () => Number(await popover("model-menu").locator(".pa-think-handle").getAttribute("aria-valuenow"));
+	const nowIndex = async () => Number(await popover().locator(".pa-think-handle").getAttribute("aria-valuenow"));
 	/** 拖到指定下标：按下先落在当前档（不触发新预览），再移到目标档（触发该档预览），不松手 */
 	const dragTo = async (target) => {
-		const root = popover("model-menu");
+		const root = popover();
 		const box = await root.locator(".pa-think-track-inner").boundingBox();
 		const now = Number(await root.locator(".pa-think-handle").getAttribute("aria-valuenow"));
 		await page.mouse.move(box.x + box.width * (now / 6), box.y + box.height / 2);
@@ -226,6 +228,8 @@ try {
 
 	await step("A1 七档全量：弹层里 7 个刻度、档位顺序 = Pi 顺序、aria 正确", async () => {
 		const root = await openComposerMenu();
+		// 打开瞬间模型目录可能还在加载（只显示加载态）；等刻度真的画出来再断言
+		await waitFor(async () => (await stepsOf(root).count()) === 7);
 		const n = await stepsOf(root).count();
 		if (n !== 7) throw new Error(`应有 7 个刻度：${n}`);
 		const ids = await stepsOf(root).evaluateAll((els) => els.map((e) => e.getAttribute("data-testid").replace("thinking-", "")));
@@ -241,25 +245,33 @@ try {
 		// 初始档位必须来自服务端真值（没有本地假默认）：未显式设过 → 最低支持档 off
 		const wantNow = agentBefore.thinking ? LEVELS.indexOf(agentBefore.thinking) : 0;
 		if (Number(aria.now) !== wantNow) throw new Error(`初始档位应来自服务端真值（${agentBefore.thinking ?? "null"}→${wantNow}）：${aria.now}`);
-		// 主模型菜单同样要“完整头部”（旧实现在这里只有一行「思考强度」小标题，没有当前档 / 模型名）：
-		// 当前档中文 + 实际选中模型名；外层不再重复一行小标题
-		const head = await page.getByTestId("model-thinking").evaluate((el) => ({
+		// 紧凑层同样要“完整头部”（旧实现在这里只有一行「思考强度」小标题，没有当前档 / 模型名）：
+		// 当前档中文 + 实际选中模型名；外层不再重复一行小标题。目录层只选模型，不再重复整块滑块。
+		const head = await root.evaluate((el) => ({
 			heads: el.querySelectorAll(".pa-think-head").length,
 			cur: el.querySelector(".pa-think-cur")?.textContent ?? "",
 			model: el.querySelector(".pa-think-model")?.textContent ?? "",
 			rows: el.children.length,
 			first: el.firstElementChild?.className ?? "",
 		}));
-		if (head.heads !== 1) throw new Error(`模型菜单里应有且只有一个滑块头部：${JSON.stringify(head)}`);
+		if (head.heads !== 1) throw new Error(`紧凑层应有且只有一个滑块头部：${JSON.stringify(head)}`);
 		if (head.cur !== LABEL[LEVELS[wantNow]]) throw new Error(`头部应显示当前档中文「${LABEL[LEVELS[wantNow]]}」：${JSON.stringify(head)}`);
 		if (head.model !== MAIN) throw new Error(`头部应显示实际选中的模型名「${MAIN}」（不是写死的示例名）：${JSON.stringify(head)}`);
-		if (head.rows !== 1 || !head.first.includes("pa-think")) throw new Error(`不该再有外层「思考强度」小标题（与头部重复）：${JSON.stringify(head)}`);
+		if (!head.first.includes("pa-think")) throw new Error(`头部应是滑块的第一行：${JSON.stringify(head)}`);
+		// 旧实现在滑块外还有一行「思考强度」小标题（与头部重复）；这里检查没有这段重复文字
+		const dupTitle = await root.evaluate((el) => [...el.children].filter((c) => c.textContent.trim() === "思考强度").length);
+		if (dupTitle) throw new Error(`不该再有外层「思考强度」小标题（与头部重复）：${JSON.stringify(head)}`);
+		await page.getByTestId(COMPACT).getByTestId("thinking-model").click();
+		await page.getByTestId("model-menu").waitFor();
+		if (await page.getByTestId("model-thinking").count()) throw new Error("目录层不应重复整块滑块");
+		await page.keyboard.press("Escape");
+		await page.getByTestId(COMPACT).waitFor();
 	});
 
 	await step("A1b 视觉：粗胶囊轨道 + 实心圆钮（无档位文字），min/max 不越出轨道", async () => {
 		const root = await openComposerMenu();
 		// 这里是输入栏的模型菜单（宽度由菜单自己定），独立思考弹层的 320–360 宽度在 thinking-slider-visual.mjs 验
-		const pw = (await page.getByTestId("model-menu").boundingBox()).width;
+		const pw = (await page.getByTestId(COMPACT).boundingBox()).width;
 		if (pw < 240 || pw > 380) throw new Error(`模型菜单宽度异常：${pw}`);
 		const rail = await root.locator(".pa-think-rail").boundingBox();
 		if (!(rail.height >= 32 && rail.height <= 42)) throw new Error(`轨道高度应在 32–42：${rail.height}`);
@@ -292,7 +304,7 @@ try {
 			if (patches.length) throw new Error(`拖动未松手时不应写库：${JSON.stringify(patches)}`);
 			await page.keyboard.press("Escape");
 			await page.mouse.up();
-			await page.getByTestId("model-menu").waitFor({ state: "detached" });
+			await page.getByTestId(COMPACT).waitFor({ state: "detached" });
 			await openComposerMenu();
 		}
 		// 取消后后端真值没变（max 只是预览，没被持久化）
@@ -305,12 +317,12 @@ try {
 		/** 打开弹层 → 聚焦手柄 → 按一个键 → 等这次提交落地（提交即关弹层，是既有行为） */
 		const keyCommit = async (key) => {
 			await openComposerMenu();
-			const root = popover("model-menu");
+			const root = popover();
 			await root.locator(".pa-think-handle").focus();
 			resetPatches();
 			await page.keyboard.press(key);
 			await waitFor(() => patches.length === 1);
-			await page.getByTestId("model-menu").waitFor({ state: "detached" });
+			await page.getByTestId(COMPACT).waitFor({ state: "detached" });
 			return patches[0].thinking;
 		};
 		if ((await keyCommit("End")) !== "max") throw new Error("End 应提交 max");
@@ -321,31 +333,31 @@ try {
 		// 手柄本身可被键盘聚焦并逐档提交（上面 keyCommit 已证），Esc 只关弹层、焦点回芯片
 		await page.getByTestId("model-picker").focus();
 		await page.keyboard.press("Enter");
-		await page.getByTestId("model-menu").waitFor();
-		const inMenu = await page.evaluate(() => !!document.activeElement?.closest('[data-testid="model-menu"]'));
+		await page.getByTestId(COMPACT).waitFor();
+		const inMenu = await page.evaluate(() => !!document.activeElement?.closest('[data-testid="model-picker-compact"]'));
 		if (!inMenu) throw new Error(`键盘打开后焦点应在弹层内：${await page.evaluate(() => document.activeElement?.outerHTML?.slice(0, 120))}`);
 		await page.keyboard.press("Escape");
-		await page.getByTestId("model-menu").waitFor({ state: "detached" });
+		await page.getByTestId(COMPACT).waitFor({ state: "detached" });
 		// 模型菜单（ModelPickerButton）的 Esc 只关弹层，不主动搬焦点（「Esc 后焦点回芯片」是 ThinkingButton 的行为，由子代理夹具覆盖）
-		const stuck = await page.evaluate(() => !!document.activeElement?.closest('[data-testid="model-menu"]'));
+		const stuck = await page.evaluate(() => !!document.activeElement?.closest('[data-testid="model-picker-compact"]'));
 		if (stuck) throw new Error("Esc 关闭后焦点不应还留在已移除的弹层里");
 	});
 
 	await step("A3 点同一档：不关弹层、也不多发请求（D 语义，与注释/设计稿一致）", async () => {
 		await openComposerMenu();
-		const root = popover("model-menu");
+		const root = popover();
 		const now = await root.locator(".pa-think-handle").getAttribute("aria-valuenow");
 		const same = LEVELS[Number(now)];
 		resetPatches();
 		await root.locator(`[data-testid="thinking-${same}"]`).click();
 		await page.waitForTimeout(400);
-		if (!(await page.getByTestId("model-menu").count())) throw new Error("点同一档不应关弹层");
+		if (!(await page.getByTestId(COMPACT).count())) throw new Error("点同一档不应关弹层");
 		if (patches.length) throw new Error(`点同一档不应写请求：${JSON.stringify(patches)}`);
 	});
 
 	await step("A4 拖动：拖动中不写，pointerup 才写一次（snap 到最近档）", async () => {
 		await openComposerMenu();
-		const root = popover("model-menu");
+		const root = popover();
 		const box = await root.locator(".pa-think-track-inner").boundingBox();
 		const now = Number(await root.locator(".pa-think-handle").getAttribute("aria-valuenow"));
 		const target = now === 6 ? 0 : 6; // 终点与当前不同（同档不写是另一条规则，A3 已覆盖）
@@ -359,12 +371,12 @@ try {
 		await page.mouse.up();
 		await waitFor(() => patches.length === 1);
 		if (patches[0].thinking !== LEVELS[target]) throw new Error(`pointerup 应提交 snap 后的 ${LEVELS[target]}：${JSON.stringify(patches)}`);
-		await page.getByTestId("model-menu").waitFor({ state: "detached" });
+		await page.getByTestId(COMPACT).waitFor({ state: "detached" });
 	});
 
 	await step("A5 拖动后窗口失焦 / Esc：都不写，且回到已提交档", async () => {
 		await openComposerMenu();
-		const root = popover("model-menu");
+		const root = popover();
 		const track = root.locator(".pa-think-track-inner");
 		const box = await track.boundingBox();
 		const before = await root.locator(".pa-think-handle").getAttribute("aria-valuenow");
@@ -388,7 +400,7 @@ try {
 		await page.mouse.up();
 		await page.waitForTimeout(300);
 		if (patches.length) throw new Error(`Esc 取消不应写：${JSON.stringify(patches)}`);
-		if (await page.getByTestId("model-menu").count()) throw new Error("Esc 应关闭弹层");
+		if (await page.getByTestId(COMPACT).count()) throw new Error("Esc 应关闭弹层");
 	});
 
 	await step("A6 子集：切到只支持 low..max 的模型 → 刻度只剩支持的档（不凭空补，也不吞）", async () => {
@@ -396,6 +408,8 @@ try {
 		await page.reload();
 		await page.getByTestId("model-picker").waitFor();
 		const root = await openComposerMenu();
+		// 刷新后目录重新加载：等刻度出现（空 = 还在加载，不是这个模型没有档位）
+		await waitFor(async () => (await stepsOf(root).count()) > 0);
 		const ids = await stepsOf(root).evaluateAll((els) => els.map((e) => e.getAttribute("data-testid").replace("thinking-", "")));
 		const want = catalog.find((m) => m.provider === prov.id && m.id === SUBSET).thinking;
 		if (JSON.stringify(ids) !== JSON.stringify(want)) throw new Error(`子集应等于目录：${JSON.stringify({ ids, want })}`);
@@ -408,14 +422,24 @@ try {
 		await page.getByTestId("model-picker").waitFor();
 	};
 
-	await step("A7 非推理模型（只有 off）：模型菜单不出现思考强度块（不画滑块、不给假档位）", async () => {
+	await step("A7 非推理模型（只有 off）：紧凑层不画滑块、如实说明只有一档；目录层不重复强度块", async () => {
 		await setModel("plain-noreason");
-		// 这里不能等 thinking-body（该模型本来就不渲染思考块）
+		// 紧凑层仍打开（要能看 Fast / 换模型），只是不画滑块
 		await page.getByTestId("model-picker").click();
+		await page.getByTestId(COMPACT).waitFor();
+		// 目录加载中只显示加载态；等空态落地（Pi 对非推理模型只给一档 off → fixed，不是 unsupported）
+		await waitFor(async () => (await page.getByTestId("thinking-fixed").count()) === 1 || (await page.getByTestId("thinking-unsupported").count()) === 1);
+		if (await page.locator('[data-testid="model-picker-compact"] .pa-think-handle').count()) throw new Error("单档 / 非推理不应画滑块");
+		if (await page.getByTestId("thinking-fixed").count()) {
+			if (!/只有一档/.test(await page.getByTestId("thinking-fixed").innerText())) throw new Error("应如实说明这个模型只有一档");
+		} else if (!(await page.getByTestId("thinking-unsupported").count())) throw new Error("应如实说明这个模型不支持调整思考强度");
+		// 目录层只选模型：同一套强度 / Fast 不再重复
+		await page.getByTestId(COMPACT).getByTestId("thinking-model").click();
 		await page.getByTestId("model-menu").waitFor();
-		if (await page.locator('[data-testid="model-menu"] .pa-think-handle').count()) throw new Error("单档 / 非推理不应画滑块");
-		if (await page.locator('[data-testid="model-menu-thinking"]').count()) throw new Error("单档不应渲染思考强度块（与原有「档位不足就不显示」一致）");
+		if (await page.locator('[data-testid="model-menu"] [data-testid="thinking-body"]').count()) throw new Error("目录层不应再重复滑块");
+		if (await page.locator('[data-testid="model-menu"] [data-testid="thinking-fast"]').count()) throw new Error("目录层不应再重复 Fast");
 		await page.keyboard.press("Escape");
+		await page.getByTestId(COMPACT).waitFor();
 	});
 
 	await step("A8 跟随语义只出现在子代理（助理级）：主会话没有「跟随」reset 项", async () => {
@@ -437,7 +461,7 @@ try {
 			await openComposerMenu();
 			const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 			if (overflow > 2) throw new Error(`${skin} 390 溢出 ${overflow}px`);
-			const root = popover("model-menu");
+			const root = popover();
 			const mo = await moStyleOf(root);
 			if (skin === "pixel") {
 				if (mo !== "steps") throw new Error(`pixel 应走 steps 分支：${mo}`);
@@ -456,7 +480,7 @@ try {
 		await page.keyboard.press("Escape");
 		await page.getByTestId("settings-dialog").waitFor({ state: "detached" });
 		await openComposerMenu();
-		const root = popover("model-menu");
+		const root = popover();
 		if ((await moStyleOf(root)) !== "steps") throw new Error("DIY steps 主题应映射成 data-pa-mo-style=steps");
 		const hs = await handleStyle(root);
 		if (hs.transitionDuration !== "0s") throw new Error(`steps 分支手柄 transition 应为 none(0s)：${JSON.stringify(hs)}`);
@@ -476,13 +500,13 @@ try {
 		const wantMs = PREVIEW_MS[target] * 1.2;
 		const gotMs = Number.parseFloat(star.dur) * (/ms$/.test(star.dur) ? 1 : 1000);
 		if (Math.abs(gotMs - wantMs) > 5) throw new Error(`${LEVELS[target]} 档预览时长应 = ${PREVIEW_MS[target]}ms × --mo-scale 1.2 = ${wantMs}ms，实际 ${star.dur}`);
-		await page.getByTestId("model-menu").waitFor({ state: "detached" });
+		await page.getByTestId(COMPACT).waitFor({ state: "detached" });
 	});
 
 	await step("B2 reduce：拖动预览完全不播（无 pa-think-pulse）、过渡被 CSS 关掉，提交仍可达", async () => {
 		await page.emulateMedia({ reducedMotion: "reduce" });
 		await openComposerMenu();
-		const root = popover("model-menu");
+		const root = popover();
 		if ((await handleStyle(root)).transitionDuration !== "0s") throw new Error("reduce 应关掉手柄过渡");
 		resetPatches();
 		const target = (await nowIndex()) === 0 ? 3 : 0; // 必须换到别的档，提交才发生（证明 reduce 下档位仍可达）
@@ -491,12 +515,12 @@ try {
 		if (await root.locator(".pa-think-pulse").count()) throw new Error("reduce 下不应用预览动效（不应出现 pa-think-pulse）");
 		await page.mouse.up();
 		await waitFor(() => patches.length === 1);
-		await page.getByTestId("model-menu").waitFor({ state: "detached" });
+		await page.getByTestId(COMPACT).waitFor({ state: "detached" });
 		await page.emulateMedia({ reducedMotion: "no-preference" });
 	});
 
 	await step("B3 主题实时切换 steps↔smooth：不重挂组件、焦点保持、computed 真的变（A 修复的核心）", async () => {
-		if (await page.getByTestId("model-menu").count()) await page.keyboard.press("Escape");
+		if (await page.getByTestId(COMPACT).count()) await page.keyboard.press("Escape");
 		// 真实打开主题设计面板（AI 草稿假响应：第一版 steps）
 		await page.goto(`${BASE}/?agent=${agent.id}&settings=appearance`);
 		await page.getByTestId("settings-dialog").waitFor();
@@ -508,7 +532,7 @@ try {
 		if ((await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--mo-style").trim())) !== "steps") throw new Error("预览应是 steps");
 		// 弹层用真实 chip 的自身 click 打开（不经鼠标命中：设计面板是模态，挡住了芯片）；之后不再有任何 mousedown
 		await page.evaluate(() => document.querySelector('[data-testid="model-picker"]').click());
-		const root = popover("model-menu");
+		const root = popover();
 		await root.waitFor();
 		if ((await moStyleOf(root)) !== "steps") throw new Error("预览 steps 应先映射到滑块");
 		const marked = await root.evaluate((el) => { el.dataset.e2eMark = "same-node"; return el.dataset.e2eMark; });
@@ -524,10 +548,10 @@ try {
 			return sel.value;
 		});
 		if (changed !== "smooth") throw new Error("下拉没切到 smooth");
-		await waitFor(async () => (await moStyleOf(popover("model-menu"))) === "smooth");
-		const after = popover("model-menu");
+		await waitFor(async () => (await moStyleOf(popover())) === "smooth");
+		const after = popover();
 		if ((await after.evaluate((el) => el.dataset.e2eMark)) !== "same-node" || marked !== "same-node") throw new Error("切主题后滑块被重挂了（DOM 标记丢失）");
-		if (!(await page.getByTestId("model-menu").count())) throw new Error("切主题把弹层关掉了（不该有 mousedown）");
+		if (!(await page.getByTestId(COMPACT).count())) throw new Error("切主题把弹层关掉了（不该有 mousedown）");
 		const focused = await page.evaluate(() => document.activeElement?.className || "");
 		if (!String(focused).includes("pa-think-handle")) throw new Error(`切主题不应丢焦点：${focused}`);
 		const hs = await handleStyle(after);
@@ -538,25 +562,25 @@ try {
 			sel.value = "steps";
 			sel.dispatchEvent(new Event("change", { bubbles: true }));
 		});
-		await waitFor(async () => (await moStyleOf(popover("model-menu"))) === "steps");
-		const back = popover("model-menu");
+		await waitFor(async () => (await moStyleOf(popover())) === "steps");
+		const back = popover();
 		if ((await back.evaluate((el) => el.dataset.e2eMark)) !== "same-node") throw new Error("切回 steps 重挂了");
 	});
 
 	await step("B4 preview 取消：完整还原外观、不留临时样式，滑块回到原主题分支（重新打开即为真值）", async () => {
 		// 真实用户点「取消」时鼠标事件本身就会关掉弹层（弹层在模态之上，会挡住按钮）——先关弹层再点取消
 		await page.keyboard.press("Escape");
-		await page.getByTestId("model-menu").waitFor({ state: "detached" });
+		await page.getByTestId(COMPACT).waitFor({ state: "detached" });
 		await page.getByTestId("theme-cancel").click();
 		await page.getByTestId("theme-designer").waitFor({ state: "detached" });
 		if (await page.locator("#pa-theme-preview").count()) throw new Error("取消后不应残留临时预览 <style>");
 		await waitFor(async () => (await page.evaluate(() => document.documentElement.dataset.skin)) === `custom-${STEPS_ID}`);
 		// 弹层已被合法关掉；设置模态还开着（外观页），先关掉它再点输入栏芯片
-		if (await page.getByTestId("model-menu").count()) await page.keyboard.press("Escape");
+		if (await page.getByTestId(COMPACT).count()) await page.keyboard.press("Escape");
 		await page.keyboard.press("Escape");
 		await page.getByTestId("settings-dialog").waitFor({ state: "detached" });
 		await openComposerMenu();
-		const root = popover("model-menu");
+		const root = popover();
 		if ((await moStyleOf(root)) !== "steps") throw new Error(`取消后应回到原主题 steps：${await moStyleOf(root)}`);
 		await page.keyboard.press("Escape");
 	});

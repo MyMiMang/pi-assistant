@@ -57,4 +57,8 @@
 /* 每条回复的用量：悬停显示；触屏常驻（淡） */
 .pa-usage { margin-top: 2px; font-size: 11px; color: var(--color-mut2, #9ca3af); opacity: 0; transition: opacity .15s; font-variant-numeric: tabular-nums; cursor: default; }
 .pa-bot-body:hover .pa-usage, .pa-usage:focus { opacity: 1; }
+/* Fast 状态要能直接看到（尤其「被降级为标准档」），不靠悬停才出现 */
+.pa-usage.pa-fast-line { opacity: .85; }
+.pa-bot-body:hover .pa-usage.pa-fast-line { opacity: 1; }
+.pa-fast-line.warn { color: var(--warn, #f59e0b); }
 @media (hover: none) { .pa-usage { opacity: .7; } }
