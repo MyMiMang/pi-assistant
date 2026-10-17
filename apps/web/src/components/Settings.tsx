@@ -602,7 +602,7 @@ function AppearanceTab() {
 		setTimeout(() => URL.revokeObjectURL(url), 30_000);
 	};
 
-	const cardCls = (active: boolean) => cx("group w-full rounded-2xl border p-2 text-left transition", active ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-zinc-400");
+	const cardCls = (active: boolean) => cx("group min-w-0 w-full whitespace-normal [overflow-wrap:anywhere] rounded-2xl border p-2 text-left transition", active ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-zinc-400");
 	const actions = "mt-1 flex flex-wrap gap-1 px-1";
 
 	return (
@@ -618,13 +618,13 @@ function AppearanceTab() {
 				<p className="mb-3 text-xs text-mut2">说一句想要的感觉，AI 会生成一套主题并在整个界面实时预览；不满意继续提意见或回上一版，满意再保存。也可以导入 / 导出 JSON。</p>
 				<div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="主题">
 					{THEMES.map((th) => (
-						<div key={th.id}>
+						<div key={th.id} className="min-w-0">
 							<button role="radio" aria-checked={th.id === skin} aria-label={th.name} data-theme-id={th.id} onClick={() => setAppearance({ skin: th.id })} className={cardCls(th.id === skin)}>
 								<ThemePreview theme={th} mode={mode} accent={th.id === skin ? accent || undefined : undefined} />
-								<div className="flex items-center gap-2 px-1.5 pt-2">
-									<span className="font-medium">{th.name}</span>
-									<span className="text-xs text-mut2">{th.id}</span>
-									{th.id === skin && <Check size={15} className="ml-auto text-accent" />}
+								<div className="flex min-w-0 items-center gap-2 px-1.5 pt-2">
+									<span className="min-w-0 font-medium">{th.name}</span>
+									<span className="shrink-0 text-xs text-mut2">{th.id}</span>
+									{th.id === skin && <Check size={15} className="ml-auto shrink-0 text-accent" />}
 								</div>
 								<div className="px-1.5 pb-1 text-xs text-mut">{th.tagline}</div>
 							</button>
@@ -639,13 +639,13 @@ function AppearanceTab() {
 						const sid = customSkinId(m.id);
 						const td = themeDefFromManifest(m);
 						return (
-							<div key={m.id}>
+							<div key={m.id} className="min-w-0">
 								<button role="radio" aria-checked={sid === skin} aria-label={m.name} data-theme-id={sid} onClick={() => setAppearance({ skin: sid, accent: "" })} className={cardCls(sid === skin)}>
 									<ThemePreview theme={td} mode={mode} accent={sid === skin ? accent || undefined : undefined} />
-									<div className="flex items-center gap-2 px-1.5 pt-2">
-										<span className="font-medium">{m.name}</span>
+									<div className="flex min-w-0 items-center gap-2 px-1.5 pt-2">
+										<span className="min-w-0 font-medium">{m.name}</span>
 										<Badge tone="accent">我的</Badge>
-										{sid === skin && <Check size={15} className="ml-auto text-accent" />}
+										{sid === skin && <Check size={15} className="ml-auto shrink-0 text-accent" />}
 									</div>
 									<div className="px-1.5 pb-1 text-xs text-mut">{td.tagline}</div>
 								</button>

@@ -5,3 +5,5 @@
 @import "./pixel.css";
 @import "./noir.css";
 @import "./app.css";
+/* 思考强度滑块的环境动效（胶囊内色流 / 光晕 / 粒子）：只含 .pa-think-* 选择器，晚于 app.css 导入 */
+@import "./thinking-slider-motion.css";

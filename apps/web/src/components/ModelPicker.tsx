@@ -108,7 +108,17 @@ export function useModelPicks() {
 const POP_GAP = 8;
 const POP_MARGIN = 8;
 
-/** 按触发器位置算弹层坐标：默认放在 placement 一侧，放不下且另一侧更宽裕就翻转；水平/垂直都收在视口内。 */
+/** 窄屏底部弹窗的 bottom 偏移（与 app.css 里 .pa-pop 的媒体查询一致：6rem） */
+const POP_SHEET_BOTTOM = 96;
+
+/**
+ * 按触发器位置算弹层坐标：默认放在 placement 一侧，放不下且另一侧更宽裕就翻转；水平/垂直都收在视口内。
+ *
+ * 高度上限只按「这一侧真正能用的空间」算，锚定也按这一侧锚（往上 = 锚 bottom，往下 = 锚 top），
+ * **不再用测出来的自然高度反推 top**：两层弹层切换时新面板会先带着上一层的 maxHeight 渲染一帧，
+ * 那时量到的自然高度是被裁过的（例：紧凑层 170 → 目录层量到 242 → 目录被永久限高在 314），
+ * 于是完整模型目录只剩「常用 4 条 + 一个服务标题」。自然高度现在只用来决定往上还是往下。
+ */
 function popoverStyle(anchor: HTMLElement, panel: HTMLElement, placement: "up" | "down", naturalHeight: number): CSSProperties {
 	const r = anchor.getBoundingClientRect();
 	const vw = document.documentElement.clientWidth;
@@ -119,13 +129,35 @@ function popoverStyle(anchor: HTMLElement, panel: HTMLElement, placement: "up" |
 	const roomAbove = r.top - POP_GAP - POP_MARGIN;
 	let below = placement !== "up";
 	if (placement === "up" ? h > roomAbove && roomBelow > roomAbove : h > roomBelow && roomAbove > roomBelow) below = !below;
-	const top = Math.max(POP_MARGIN, below ? r.bottom + POP_GAP : r.top - POP_GAP - h);
 	const left = Math.max(POP_MARGIN, Math.min(r.left, vw - POP_MARGIN - w));
 	// 窄屏：.pa-pop 的媒体查询会把菜单固定成底部弹窗（left/right 8px、bottom 6rem），
-	// 这时 top/left 会被 !important 覆盖，只需给个高度上限。
-	if (vw <= 640) return { position: "fixed", top, left, zIndex: 70, visibility: "visible", maxHeight: Math.round(vh * 0.6) };
+	// 这时 top/left/bottom 会被 !important 覆盖，只需给个高度上限；上限用弹窗上方真正剩下的空间。
+	if (vw <= 640) {
+		const top = Math.max(POP_MARGIN, below ? r.bottom + POP_GAP : r.top - POP_GAP - h);
+		return { position: "fixed", top, left, zIndex: 70, visibility: "visible", maxHeight: Math.max(200, Math.round(Math.min(vh * 0.72, vh - POP_SHEET_BOTTOM - POP_MARGIN))) };
+	}
 	// 宽屏：限高，超出视口的部分交给菜单内部滚动，弹层本身不被裁、也不出屏
-	return { position: "fixed", top, left, zIndex: 70, visibility: "visible", maxHeight: Math.max(120, vh - POP_MARGIN - top) };
+	const maxHeight = Math.max(120, below ? roomBelow : roomAbove);
+	return below
+		? { position: "fixed", top: r.bottom + POP_GAP, left, zIndex: 70, visibility: "visible", maxHeight }
+		: { position: "fixed", bottom: vh - r.top + POP_GAP, left, zIndex: 70, visibility: "visible", maxHeight };
+}
+
+/**
+ * 面板的自然高度（不受上一次定位留下的 maxHeight 限制）。
+ * 量之前临时去掉上限、量完立刻还原：同一个同步块里读一次布局，中间不会重绘。
+ */
+function naturalHeightOf(panel: HTMLElement): number {
+	const prev = panel.style.maxHeight;
+	panel.style.maxHeight = "none";
+	const h = panel.offsetHeight;
+	panel.style.maxHeight = prev;
+	return h;
+}
+
+/** 定位 style 是否没变（避免每次 ResizeObserver / resize 都 setState 触发重渲染） */
+function samePopStyle(a: CSSProperties, b: CSSProperties) {
+	return a.top === b.top && a.bottom === b.bottom && a.left === b.left && a.maxHeight === b.maxHeight && a.visibility === b.visibility;
 }
 
 /** 按钮 + 弹层的通用状态：open、触发器 ref、弹层 ref、弹层内联定位 style。 */
@@ -160,13 +192,13 @@ export function usePopover(placement: "up" | "down" = "down", opts?: { /** 返�
 		const anchor = ref.current;
 		const panel = menuRef.current;
 		if (!anchor || !panel) return;
-		natural.current = panel.offsetHeight; // 不受 maxHeight 限制的自然高度，用来决定往上还是往下
+		natural.current = naturalHeightOf(panel); // 自然高度只用来决定往上还是往下（高度上限按可用空间算）
 		const place = () => {
 			const a = ref.current;
 			const p = menuRef.current;
 			if (!a || !p) return;
 			const next = popoverStyle(a, p, placement, natural.current);
-			setStyle((prev) => (prev.top === next.top && prev.left === next.left && prev.maxHeight === next.maxHeight && prev.visibility === next.visibility ? prev : next));
+			setStyle((prev) => (samePopStyle(prev, next) ? prev : next));
 		};
 		place();
 		// 设置弹窗内容滚动、窗口缩放、菜单自己变高都要重新贴回触发器
@@ -311,9 +343,20 @@ export function ThinkingButton({ testid, levels, current, effective, followLabel
 	);
 }
 
+/**
+ * 完整模型目录的尺寸：桌面给足宽度（默认 420px，可被主题 `--pa-model-menu-w` 覆盖），窄屏交给 .pa-pop 的底部弹窗规则。
+ *
+ * 为什么必须内联：app.css 的 `.pa-pop { width: max-content; max-width: min(var(--pop-w, 20rem), calc(100vw - 16px)) }`
+ * 是未分层规则，会盖掉 Tailwind 的 `w-80`（utilities 层）——目录宽度因此跟着「最宽的那段文字」走，
+ * 而条目文字全是 truncate，实测只有 210–230px（即使长名字也顶到 320px 封顶）：长模型名互相挤压、只看得见半列。
+ * 紧凑层（.pa-compact-pop 340）是「只放当前模型 / 滑块 / Fast」的，不受这里影响。
+ */
+const MODEL_MENU_WIDTH = "min(var(--pa-model-menu-w, 420px), calc(100vw - 16px))";
+const modelMenuSize: CSSProperties = { width: MODEL_MENU_WIDTH, maxWidth: MODEL_MENU_WIDTH };
+
 function Option({ m, sel, id, onPick }: { m: ModelEntry; sel: boolean; id: string; onPick: (m: ModelEntry) => void }) {
 	return (
-		<button className={cx("flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover", sel && "bg-hover")} onClick={() => onPick(m)} data-testid={`${id}-option`} data-model={pickKey(m)}>
+		<button className={cx("flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover", sel && "bg-hover")} onClick={() => onPick(m)} data-testid={`${id}-option`} data-model={pickKey(m)} title={m.name}>
 			<span className="min-w-0 flex-1">
 				<span className="block truncate">
 					{m.star ? "★ " : ""}
@@ -372,7 +415,7 @@ export function ModelMenu({ id, models, providers, value, thinking, fast, picks,
 	const groups = groupByProvider ? groupModelsByProvider(shown, nameOf, value?.provider) : shown.length ? [{ provider: "", name: "", models: dedupeGroup(shown) }] : [];
 	const isOpen = (p: string) => !groupByProvider || !!q.trim() || openGroups.includes(p);
 	return (
-		<div ref={panelRef} style={panelStyle} className="pa-pop flex w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${id}-menu`}>
+		<div ref={panelRef} style={{ ...panelStyle, ...modelMenuSize }} className="pa-pop flex flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${id}-menu`}>
 			{onBack && (
 				<button type="button" className="pa-menu-back" onClick={onBack} data-testid={`${id}-back`} aria-label="返回思考与模型">
 					‹ 返回
@@ -619,7 +662,7 @@ export function ModelPoolMenu({ id, models, providers, value, picks, onToggle, p
 	const groups = groupModelsByProvider(shown, nameOf);
 	const isOpen = (p: string) => !!q.trim() || openGroups.includes(p);
 	return (
-		<div ref={panelRef} style={panelStyle} className="pa-pop flex w-80 flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${id}-menu`}>
+		<div ref={panelRef} style={{ ...panelStyle, ...modelMenuSize }} className="pa-pop flex flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${id}-menu`}>
 			<label className="mb-1 flex items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5">
 				<Search size={14} className="text-mut" />
 				<input autoFocus className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索模型或服务…" value={q} onChange={(e) => setQ(e.target.value)} data-testid={`${id}-search`} />

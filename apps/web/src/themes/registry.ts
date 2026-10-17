@@ -32,6 +32,15 @@ export interface ThemeDef {
 
 export const THEMES: ThemeDef[] = [
 	{
+		id: "noir",
+		name: "暗夜",
+		tagline: "深黑底、霓虹紫青渐变、流光与辉光动效",
+		accent: { light: "#6a57ff", dark: "#8b7bff" },
+		accents: ["#8b7bff", "#4fe3c1", "#ff7ab6", "#5b9dff", "#ffb547", "#f4f4f5"],
+		chrome: { light: "#f4f4f6", dark: "#09090b" },
+		defaultMode: "dark",
+	},
+	{
 		id: "glass",
 		name: "毛玻璃",
 		tagline: "半透明磨砂层叠、柔和光晕、圆润大圆角",
@@ -54,15 +63,6 @@ export const THEMES: ThemeDef[] = [
 		accent: { light: "#6fc7b2", dark: "#c3b6f0" },
 		accents: ["#6fc7b2", "#f2b8c6", "#c3b6f0", "#d9932f", "#5aa88f", "#8fd3c1"],
 		chrome: { light: "#fbf7ef", dark: "#181524" },
-	},
-	{
-		id: "noir",
-		name: "暗夜",
-		tagline: "深黑底、霓虹紫青渐变、流光与辉光动效",
-		accent: { light: "#6a57ff", dark: "#8b7bff" },
-		accents: ["#8b7bff", "#4fe3c1", "#ff7ab6", "#5b9dff", "#ffb547", "#f4f4f5"],
-		chrome: { light: "#f4f4f6", dark: "#09090b" },
-		defaultMode: "dark",
 	},
 ];
 /** 默认主题：暗夜。首次安装 / 清空存储 / 无效 id 都落到它。 */

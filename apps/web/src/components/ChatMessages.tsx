@@ -14,6 +14,7 @@ import { Avatar, cx } from "./ui";
 import { ProposalCard } from "./RoomCards";
 import { MessageActions, QuotedMessage, type MessageInteraction } from "./MessageReply";
 import { quotedBlock } from "../replies";
+import { botBodyView } from "../message-body";
 
 // ------------------------------------------------------------------ 工具 → 文案
 const TOOL_LABEL: Record<string, string> = {
@@ -178,18 +179,24 @@ export function BotPart({ p, live, busy, renderSubagent, onQuote, onJump, intera
 	const split = splitThinking(m.content);
 	const thinking = [String(m.meta.thinking ?? "").trim(), split.thinking].filter(Boolean).join("\n\n");
 	const body = split.text;
+	// 失败 / 中断即使没有正文也要有气泡把原因显示出来（否则界面上只剩「引用」，看起来像正文空白）
+	const view = botBodyView({ body, thinking: !!thinking, status: m.status, error: m.meta.error });
 	const quoted = onJump ? quotedBlock(m) : null;
 	return (
 		<>
 			{thinking && <Thinking text={thinking} live={m.status === "streaming" && !body} />}
 			<div className="pa-bot-msg" data-mid={m.id} {...(interaction ? interaction(m) : undefined)}>
 				{quoted && <QuotedMessage block={quoted} onJump={onJump!} />}
-				{(body || (m.status === "streaming" && !thinking)) && (
+				{view.showBubble && (
 					<div className={cx("pa-bubble prose-wrap", m.status === "error" && "error")}>
 						{body ? <Markdown text={body} /> : null}
 						{m.status === "streaming" && <span className="caret text-sm" />}
-						{m.status === "error" && <div className="mt-1 text-xs text-red-500">{String(m.meta.error ?? "出错了")}</div>}
-						{m.status === "interrupted" && <div className="mt-1 text-xs text-mut2">（已中断）</div>}
+						{view.showError && (
+							<div className={cx("text-xs text-red-500", body && "mt-1")} title={view.errorRaw || undefined} data-testid="msg-error">
+								{view.errorText}
+							</div>
+						)}
+						{view.showInterrupted && <div className={cx("text-xs text-mut2", body && "mt-1")} data-testid="msg-interrupted">（已中断）</div>}
 					</div>
 				)}
 				<MessageActions m={m} onQuote={onQuote} side="left" />

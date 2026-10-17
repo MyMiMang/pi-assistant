@@ -11,10 +11,14 @@
  *
  * 另含两块「修完 A / C」的定向断言：
  * - A：主题实时切换时 `--mo-style` 的订阅回读（假 DOM + 假 MutationObserver，验证「不重挂组件」）；
- * - C：保存思考强度的「最后一次为准」代次守卫（迟到失败 / 切助理 / 新成功）。
+ * - C：保存思考强度的「最后一次为准」代次守卫（迟到失败 / 切助理 / 新成功）；
+ * - D：胶囊内环境动效（色流 / 光晕 / 粒子）：档位属性、真实键帧、七档递进、steps 与 reduce、
+ *   只动 `.pa-think-*`、不写死颜色（读 `themes/thinking-slider-motion.css` 静态断言，不启浏览器）。
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import * as React from "react";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -442,4 +446,128 @@ test("C 卸载 / 切到别的助理：invalidate 后在飞响应不落地", () =
 	assert.equal(w.fail(id).rollback, false, "卸载后迟到的失败不改界面");
 	assert.equal(w.confirm(id, "max"), false, "卸载后迟到的成功不写确认值");
 	assert.equal(w.isCurrent(w.begin()), true, "重新挂载 / 新一次写入照常工作");
+});
+
+/* ============================ D) 胶囊内环境动效（静态断言，不启浏览器） ============================
+ * 用户 2026-10-18：胶囊内部轻微颜色流动 / 柔和发光 / 粒子移动，档位有差异，随主题与 DIY 动效、
+ * reduce 下静止，且**必须是真实在跑的动画而不是静态渐变**。
+ * 这里只验「文件被真正导入 + 选择器只碰滑块 + 键帧/参数/降级分支存在且递进」；
+ * 观感（动画是否肉眼可见、是否喧宾夺主）仍要在构建后的真实界面上验。 */
+const MOTION_CSS_FILE = fileURLToPath(new URL("../apps/web/src/themes/thinking-slider-motion.css", import.meta.url));
+const THEME_INDEX_CSS_FILE = fileURLToPath(new URL("../apps/web/src/themes/index.css", import.meta.url));
+const motionCssRaw = readFileSync(MOTION_CSS_FILE, "utf8");
+const motionCss = motionCssRaw.replace(/\/\*[\s\S]*?\*\//g, ""); // 去掉注释：断言只看真规则，不被说明文字骗过
+
+/** 收集所有规则的选择器（跳过 @keyframes 整块、递归进 @media；用于断言「只动滑块」）。 */
+function ruleSelectors(src) {
+	const out = [];
+	let i = 0;
+	while (i < src.length) {
+		const open = src.indexOf("{", i);
+		if (open < 0) break;
+		const prelude = src.slice(i, open).trim();
+		let depth = 1;
+		let j = open + 1;
+		while (j < src.length && depth > 0) {
+			if (src[j] === "{") depth += 1;
+			else if (src[j] === "}") depth -= 1;
+			j += 1;
+		}
+		const body = src.slice(open + 1, j - 1);
+		if (prelude.startsWith("@media")) out.push(...ruleSelectors(body));
+		else if (!prelude.startsWith("@")) out.push(prelude);
+		i = j;
+	}
+	return out;
+}
+
+const levelBlock = (level) => {
+	const at = motionCss.indexOf(`.pa-think[data-pa-think-level="${level}"]`);
+	assert.ok(at >= 0, `${level} 档应有参数块（新档位 / 改名都会在这里失败）`);
+	return motionCss.slice(at, motionCss.indexOf("}", at));
+};
+const numVar = (block, name) => Number.parseFloat(new RegExp(`${name}:\\s*(-?[\\d.]+)`).exec(block)?.[1] ?? "NaN");
+const secVar = (block, name) => Number.parseFloat(new RegExp(`${name}:\\s*([\\d.]+)s`).exec(block)?.[1] ?? "NaN");
+
+test("D 导入：环境动效文件被真正 @import，且晚于 app.css（能覆盖静止态默认值）", () => {
+	const indexCss = readFileSync(THEME_INDEX_CSS_FILE, "utf8");
+	assert.match(indexCss, /@import "\.\/thinking-slider-motion\.css";/, "index.css 应导入环境动效文件");
+	assert.ok(indexCss.indexOf('"./app.css"') < indexCss.indexOf('"./thinking-slider-motion.css"'), "必须晚于 app.css 导入");
+});
+
+test("D DOM ↔ CSS：滑块根部带 data-pa-think-level，换档就换值；0 档 / 1 档不画滑块就不带", () => {
+	for (const level of ALL) {
+		const m = html({ testid: "thinking", levels: ALL, current: level });
+		assert.ok(m.includes(`data-pa-think-level="${level}"`), `${level} 档应有 data-pa-think-level`);
+	}
+	assert.ok(!html({ testid: "thinking", levels: ["medium"], current: "medium" }).includes("data-pa-think-level"), "单档不画滑块");
+	assert.ok(!html({ testid: "thinking", levels: [], current: "medium" }).includes("data-pa-think-level"), "无档不画滑块");
+	// 名字必须与 CSS 一致：改一处而忘了另一处会在这里失败
+	assert.ok(motionCss.includes('.pa-think[data-pa-think-level="high"]'), "CSS 用同一个属性名");
+});
+
+test("D 真实在跑：粒子 / 色流 / 光晕都是 infinite 键帧，不是静态渐变", () => {
+	for (const name of ["pa-think-flow", "pa-think-glow", "pa-think-amb-breathe", "pa-think-amb-drift", "pa-think-amb-wave", "pa-think-amb-lift", "pa-think-amb-shimmer", "pa-think-amb-rich"]) {
+		assert.match(motionCss, new RegExp(`@keyframes ${name}\\s*\\{`), `${name} 键帧应存在`);
+	}
+	assert.match(motionCss, /\.pa-think-star\s*\{[^}]*animation-name:\s*var\(--pa-think-amb-name/, "星点动画名按档位取变量");
+	assert.match(motionCss, /\.pa-think-star\s*\{[^}]*animation-iteration-count:\s*infinite/, "粒子是持续动画（不是一次性 / 静态）");
+	assert.match(motionCss, /\.pa-think-fill::after\s*\{[^}]*animation:\s*pa-think-flow/, "填充里有色流层");
+	assert.match(motionCss, /\.pa-think-energy::before\s*\{[^}]*animation:\s*pa-think-glow/, "胶囊里有光晕层");
+	// 复用既有主题 / DIY 动效 token，不新造一套并行机制
+	for (const token of ["--mo-scale", "--mo-glow", "--mo-ease"]) assert.ok(motionCss.includes(token), `应复用 ${token}`);
+	// 时长口径必须统一：粒子 / 色流 / 光晕三层都乘 --mo-scale（曾漏过色流与光晕）
+	const scaled = [...motionCss.matchAll(/animation(?:-duration)?:\s*[^;]*--mo-scale/g)].length;
+	assert.ok(scaled >= 3, `粒子 / 色流 / 光晕的周期都应乘 --mo-scale，实际只有 ${scaled} 处`);
+	// off 不跑无意义的无限循环（不是「透明地跑」）
+	assert.match(motionCss, /\[data-pa-think-level="off"\][^{]*\{[^}]*animation:\s*none/, "off 档应直接停掉环境动效");
+});
+
+test("D 七档有差异且递进：off 全静止，档位越高周期越短、浓度越高，至少 3 种不同性格", () => {
+	const off = levelBlock("off");
+	assert.match(off, /--pa-think-amb-name:\s*none/, "off 不播环境动效");
+	assert.equal(numVar(off, "--pa-think-flow-alpha"), 0, "off 无光带");
+	assert.equal(numVar(off, "--pa-think-glow-alpha"), 0, "off 无光晕");
+	const rest = ALL.slice(1);
+	const durs = rest.map((l) => secVar(levelBlock(l), "--pa-think-amb-dur"));
+	assert.ok(durs.every((d) => d >= 3 && d <= 12), `每档周期应在 3–12s（够轻、但几秒内看得出在动）：${durs}`);
+	assert.deepEqual(durs, [...durs].sort((a, b) => b - a), `档位越高周期应越短（不能反向）：${durs}`);
+	for (const key of ["--pa-think-flow-alpha", "--pa-think-glow-alpha"]) {
+		const vals = rest.map((l) => numVar(levelBlock(l), key));
+		assert.deepEqual(vals, [...vals].sort((a, b) => a - b), `${key} 应随档位递增：${vals}`);
+	}
+	const names = new Set(rest.map((l) => /--pa-think-amb-name:\s*([\w-]+)/.exec(levelBlock(l))?.[1]));
+	assert.ok(names.size >= 3, `档位不能只改数字，应有不同动画性格：${[...names]}`);
+	// 颜色只走 token：不写死色值（否则会盖掉用户 DIY 主题）
+	assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(motionCss), "CSS 不应写死十六进制色值");
+	assert.ok(!/\brgba?\(/.test(motionCss), "CSS 不应写死 rgb 色值");
+	assert.ok(motionCss.includes("var(--acc") && motionCss.includes("var(--fg)"), "颜色来自主题 token");
+	assert.ok(motionCss.includes("--pa-think-flow-color") && motionCss.includes("--pa-think-glow-color"), "留出可覆盖的颜色入口");
+});
+
+test("D 降级分支：steps 主题成步、reduce 全停但仍可静态区分、一次性预览不被环境动效抢走", () => {
+	const stepsRule = motionCss.slice(motionCss.indexOf("[data-pa-mo-style=steps]"));
+	assert.match(stepsRule.slice(0, stepsRule.indexOf("}")), /steps\(/, "steps 主题下环境动效也离散成步");
+	const reduceAt = motionCss.indexOf("@media (prefers-reduced-motion: reduce)");
+	assert.ok(reduceAt > 0, "应有 reduce 块");
+	const reduce = motionCss.slice(reduceAt);
+	assert.match(reduce, /\.pa-think-star[\s\S]*animation:\s*none\s*!important/, "reduce 下粒子停");
+	assert.match(reduce, /\.pa-think-fill::after\s*\{[^}]*opacity:/, "reduce 下色流留静态可见");
+	// 切换 / 拖动的一次性预览：环境动效的循环与延迟必须被复位，否则预览会无限循环
+	const pulse = /\.pa-think-energy\.pa-think-pulse \.pa-think-star\s*\{([^}]*)\}/.exec(motionCss)?.[1] ?? "";
+	assert.match(pulse, /animation-iteration-count:\s*1/, "预览仍只播一次");
+	assert.match(pulse, /animation-delay:\s*0ms/, "预览从 0 开始，不继承环境动效相位");
+});
+
+test("D 边界：只动滑块（全部选择器带 .pa-think），不碰消息 / 通用容器动画", () => {
+	for (const forbidden of [".pa-msg", ".pa-app", ".pa-pop", ".pa-modal"]) {
+		assert.ok(!motionCss.includes(forbidden), `不应出现 ${forbidden} 相关选择器`);
+	}
+	const selectors = ruleSelectors(motionCss);
+	assert.ok(selectors.length > 5, `应解析到规则：${selectors.length}`);
+	for (const selector of selectors) {
+		for (const one of selector.split(",")) {
+			assert.ok(one.includes(".pa-think"), `非滑块选择器：${one.trim()}`);
+		}
+	}
 });

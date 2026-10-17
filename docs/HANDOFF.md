@@ -1,5 +1,9 @@
 # 交接文档（HANDOFF）
 
+> **当前公开版 beta.30；beta.31 修复候选（2026-10-18，已获全部完成后推送打包授权）**：beta.30 [Actions39055072812](https://github.com/MyMiMang/pi-assistant/actions/runs/39055072812)五平台/Mac与Windows安装启动/publish均成功，2026-10-17T18:09:53Z公开Latest；主核13资产非零、6条manifest平台别名/URL版本及非空签名。下方“构建中/公开版beta.29”均为历史状态。
+>
+> beta.31候选修复空错误回复不显示、主题介绍越卡片、完整模型目录被压小；增加六档轻微真实色流/光晕/粒子、off静止与reduce停；暗夜排首且初始默认。两端tsc/build、59纯检查、24主题布局组合、四组合错误正文可见、目录真实尺寸、多时刻七档动效、Fast64通过，7关键截图主看。网络超时根因未确证，未调整超时或增加重试，不宣称连接问题已根治。详见[beta.31修复/测试/未验](../progress-snapshots/beta31-ui-hotfix.md)；[发布说明](release-notes/v0.1.0-beta.31.md)。候选未安装、未公开。
+
 > **beta.30 已推送、构建中（2026-10-18；公开版仍beta.29）**：main与新tag `v0.1.0-beta.30` 已推至 `1f0b8c4eb63d340e874da0de6ee6923273cf1c11`；[Actions 39055072812](https://github.com/MyMiMang/pi-assistant/actions/runs/39055072812) prepare成功，五平台任务已启动，安装启动冒烟/公开发布尚待完成；用户未要求自动安装。
 >
 > **beta.30 最终发布准备（2026-10-18，用户已授权推送打包；公开版仍beta.29）**：本轮最终行为以[beta.30发布说明](release-notes/v0.1.0-beta.30.md)与[最终收口](../progress-snapshots/beta30-release-final.md)为准，覆盖下方快速模型“保留/按需使用”的历史中间决定。已撤产品选择器/Laya入口，保留主模型直接电脑操作和聊天请求Fast。最后修正Fast持续生效的费用预期文案。最终两端tsc/build、服务端64/64、纯检查23/23、Fast UI64/64及撤入口真实隔离服务UI通过，四图主审；无新发布阻塞。真实Fast账号加速/计费、完整实机任务、旧macOS兼容与TCC持久化仍未验。范围all-intel，构建/安装冒烟结果待workflow，不把准备写成已公开。

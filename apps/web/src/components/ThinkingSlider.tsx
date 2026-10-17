@@ -10,6 +10,8 @@
  * - 键盘 Arrow / Home / End / PageUp / PageDown 逐次提交，`role="slider"` + `aria-valuetext`。
  * - 「跟随 X」是滑块外的 reset 动作（不是第 8 档）；0 档 / 1 档显示说明，不画滑块。
  * - 预览动效只播一次（320–700ms），播完即停；组件卸载清理计时器，最小化动态效果时完全不播。
+ * - 静止时胶囊里有很轻的环境动效（色流 / 光晕 / 粒子，档位不同），纯 CSS 键帧、没有 rAF / timer，
+ *   样式在 `../themes/thinking-slider-motion.css`；`--mo-style: steps` 走离散成步，reduced-motion 下完全停下。
  */
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { ChevronRight, Zap } from "lucide-react";
@@ -259,7 +261,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	const curText = previewing ? label(level) : view.following ? `跟随·${label(view.effective)}` : view.unsupportedPick ? `${label(view.unsupportedPick)} → ${label(view.level)}` : label(level);
 
 	return (
-		<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
+		<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-pa-think-level={level} data-testid={`${testid}-body`}>
 			<Head testid={testid} current={curText} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} onModelClick={onModelClick} modelBtnRef={modelBtnRef} />
 
 			{view.unsupportedPick && (
@@ -281,10 +283,10 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 							<i className={cx("pa-think-tick", i === idx && "on")} style={{ "--pa-think-i": i, "--pa-think-n": count - 1 } as CSSProperties} aria-hidden="true" />
 						</Fragment>
 					))}
-					{/* 星点粒子铺在轨道里（不是手柄内），只在切换 / 拖动时播一次预览 */}
-					<span key={pulse?.key ?? 0} className={cx("pa-think-energy", pulse && `pa-think-pulse pa-think-a-${pulse.level}`)} style={{ "--pa-think-dur": THINKING_PREVIEW_MS[level] ?? 0 } as CSSProperties} aria-hidden="true">
+					{/* 星点粒子铺在轨道里（不是手柄内）：静止时轻微漂移（CSS 环境动效，档位不同），切换 / 拖动时再叠一次预览 */}
+					<span key={pulse?.key ?? 0} className={cx("pa-think-energy", pulse && `pa-think-pulse pa-think-a-${pulse.level}`)} style={{ "--pa-think-dur": THINKING_PREVIEW_MS[pulse?.level ?? level] ?? 0 } as CSSProperties} aria-hidden="true">
 						{stars.map((s, i) => (
-							<i key={i} className={cx("pa-think-star", s.far && "far")} data-ln={s.line ? "1" : undefined} style={{ "--x": s.x, "--y": s.y, "--s": s.size, "--o": s.opacity, "--dx": s.dx, "--dy": s.dy, "--d": s.delay } as CSSProperties} />
+							<i key={i} className={cx("pa-think-star", s.far && "far")} data-ln={s.line ? "1" : undefined} style={{ "--x": s.x, "--y": s.y, "--s": s.size, "--o": s.opacity, "--a": s.far ? 0.45 : 1, "--dx": s.dx, "--dy": s.dy, "--d": s.delay } as CSSProperties} />
 						))}
 					</span>
 					<div ref={handleRef} className={cx("pa-think-handle", view.following && "following")} role="slider" tabIndex={0} aria-label="思考强度" aria-orientation="horizontal" aria-valuemin={0} aria-valuemax={count - 1} aria-valuenow={idx} aria-valuetext={`思考强度：${curText}`} style={{ "--pa-think-pos": pos } as CSSProperties} onKeyDown={onKeyDown} />

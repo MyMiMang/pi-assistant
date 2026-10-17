@@ -378,7 +378,9 @@ try {
 	await waitFor(async () => (await sfast.getAttribute("aria-pressed")) === "false");
 	check("独立关已落库（服务端 fast=0）", (await j(`/api/subagents/${subFollow}`)).subagent.fast === 0);
 	check("出现「恢复跟随助理」（独立覆盖可撤回）", (await page.getByTestId("fast-follow-note").count()) === 1);
-	await page.keyboard.press("Escape"); // 只关刚 focus 出的说明，菜单还在
+	// 说明有悬停延时，不能在它尚未打开时按 Esc（那会按契约关闭菜单）。
+	await page.getByTestId("hover-tip").waitFor();
+	await page.keyboard.press("Escape"); // 只关说明，菜单还在
 	await stableShot(page, page.getByTestId("subagent-thinking-menu"), join(OUT, "09-subagent-fast-override.png"));
 
 	// 保存失败：回滚到独立关 + 原因，不假装成功

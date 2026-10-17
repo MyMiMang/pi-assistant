@@ -1,0 +1,205 @@
+/* ---------------------------------------------------------------- 思考强度滑块 · 胶囊内环境动效
+   用户 2026-10-18：「胶囊内部轻微颜色流动 / 柔和发光 / 粒子移动，不同档位的光线颜色粒子有不同变化」，
+   并要求动画**真实在跑**（不是静态渐变）、随主题与 AI DIY 动效、reduced-motion 下静止。
+
+   为什么单独一个文件（`index.css` 末尾 @import，晚于 app.css）：
+   别人的工作树同时在改 ModelPicker 与消息 / 设置样式，滑块的环境动效放这里，既不改 app.css 里
+   通用动画选择器、也不碰消息 CSS；本文件**只出现 .pa-think-* 选择器**（测试会断言这一点）。
+
+   边界（不动的部分）：
+   - 七档语义 / 档位来源 / 白色实心无字滑钮 / 键盘 / `pointerup` 才提交 / 跟随与降级 / Fast 与 thinking
+     请求参数：全部未动，这里只加表现层动画；
+   - 组件不新增 rAF / timer：动画全由 CSS 键帧驱动，弹层关闭即卸载，没有后台循环；
+   - 时长 / 缓动 / 光晕走既有 `--mo-scale` / `--mo-ease` / `--mo-glow`，颜色只走 `--acc*` / `--fg` /
+     `--pa-think-*`，不写死任何色值（DIY 主题照旧可覆盖）；
+   - `--mo-style: steps`（pixel / DIY）走离散成步分支（仍然在动，只是成步、不丝滑）；
+   - reduce 双保险：本文件末尾的 reduce 块 + app.css 的全局 reduce 块（完全停下）。
+
+   档位差异（只调参，不换组件）：off 完全静止 → minimal 单点慢呼吸 → low 稀疏漂移 →
+   medium 波浪 → high 抬升 → xhigh 细密微闪 → max 最丰富（幅度仍克制）。 */
+
+/* 星点：常驻轻微漂移（真实的 infinite 键帧，不是静态渐变）。
+   切换 / 拖动时 app.css 的 `.pa-think-pulse` 一次性预览仍然照旧覆盖：那边选择器更具体，
+   只覆盖 animation-name / duration / timing / fill-mode；这里补上循环与延迟的复位。 */
+.pa-think-star {
+	animation-name: var(--pa-think-amb-name, none);
+	/* --mo-scale 是 DIY 的时长倍率；reduce 下 base.css 会把它置 0，这里用 max() 兜底，
+	   避免「0s × infinite」这种无意义循环（真正的静止由下面的 reduce 块保证）。 */
+	animation-duration: calc(var(--pa-think-amb-dur, 9s) * max(var(--mo-scale, 1), .25));
+	animation-timing-function: var(--mo-ease, ease-in-out);
+	animation-iteration-count: infinite;
+	animation-direction: alternate;
+	/* 用星点自带的相位错开，避免整排粒子同步呼吸（--d 是既有布局里的确定性延迟值） */
+	animation-delay: calc(var(--d, 0) * -14ms);
+}
+
+/* 一次性预览期间：回到「播一次、从 0 开始」，不受环境动效的循环 / 延迟影响 */
+.pa-think-energy.pa-think-pulse .pa-think-star { animation-iteration-count: 1; animation-delay: 0ms; animation-direction: normal; }
+
+/* 颜色流动：铺在已填充的胶囊内部，一条柔和光带缓慢左右扫过（裁在胶囊圆角里） */
+.pa-think-fill { overflow: hidden; }
+.pa-think-fill::after {
+	content: "";
+	position: absolute;
+	inset: 0 -70%;
+	border-radius: inherit;
+	pointer-events: none;
+	background: linear-gradient(100deg,
+		transparent 30%,
+		var(--pa-think-flow-color, color-mix(in srgb, var(--acc2, var(--acc)) 55%, transparent)) 45%,
+		transparent 57%,
+		var(--pa-think-flow-color-2, color-mix(in srgb, var(--fg) 30%, transparent)) 68%,
+		transparent 82%);
+	opacity: calc(var(--pa-think-flow-alpha, .18) * var(--mo-glow, 1));
+	/* 与星点同一套时长口径：周期 × --mo-scale（DIY 倍率），max() 兑底避免 reduce 时 0s × infinite */
+	animation: pa-think-flow calc(var(--pa-think-flow-dur, 9s) * max(var(--mo-scale, 1), .25)) var(--mo-ease, ease-in-out) infinite alternate;
+}
+
+/* 柔和发光：整条胶囊内部的一团缓慢呼吸的色光（画在填充之上、星点之下） */
+.pa-think-energy { inset: 4px 0; }
+/* 滑钮始终在最上层：色流 / 光晕 / 粒子都从钮后面过，白色实心圆钮保持干净（不靠降低动效来迁就） */
+.pa-think-handle { z-index: 2; }
+.pa-think-energy::before {
+	content: "";
+	position: absolute;
+	inset: 0 -40%;
+	border-radius: inherit;
+	pointer-events: none;
+	background: radial-gradient(56% 130% at 42% 50%,
+		var(--pa-think-glow-color, color-mix(in srgb, var(--acc2, var(--acc)) 50%, transparent)),
+		transparent 72%);
+	opacity: calc(var(--pa-think-glow-alpha, .18) * var(--mo-glow, 1));
+	animation: pa-think-glow calc(var(--pa-think-glow-dur, 8s) * max(var(--mo-scale, 1), .25)) var(--mo-ease, ease-in-out) infinite alternate;
+}
+
+/* 档位参数（只调速度 / 幅度 / 颜色浓度；光晕强度再乘主题的 --mo-glow） */
+/* off：不跑任何环境动效（不是「透明地跑」——省掉无意义的无限循环）；
+   0 档本来也没有星点，这里连色流 / 光晕一起关掉。 */
+.pa-think[data-pa-think-level="off"] {
+	--pa-think-amb-name: none;
+	--pa-think-flow-alpha: 0;
+	--pa-think-glow-alpha: 0;
+}
+.pa-think[data-pa-think-level="off"] .pa-think-star,
+.pa-think[data-pa-think-level="off"] .pa-think-fill::after,
+.pa-think[data-pa-think-level="off"] .pa-think-energy::before { animation: none; }
+.pa-think[data-pa-think-level="minimal"] {
+	--pa-think-amb-name: pa-think-amb-breathe;
+	--pa-think-amb-dur: 9s;
+	--pa-think-amb-amp: .8;
+	--pa-think-flow-dur: 11s;
+	--pa-think-flow-alpha: .10;
+	--pa-think-glow-dur: 9.5s;
+	--pa-think-glow-alpha: .10;
+	--pa-think-flow-color: color-mix(in srgb, var(--fg) 60%, transparent);
+	--pa-think-glow-color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.pa-think[data-pa-think-level="low"] {
+	--pa-think-amb-name: pa-think-amb-drift;
+	--pa-think-amb-dur: 8s;
+	--pa-think-amb-amp: 1.1;
+	--pa-think-flow-dur: 10s;
+	--pa-think-flow-alpha: .13;
+	--pa-think-glow-dur: 8.5s;
+	--pa-think-glow-alpha: .13;
+	--pa-think-flow-color: color-mix(in srgb, var(--acc2, var(--acc)) 55%, transparent);
+	--pa-think-glow-color: color-mix(in srgb, var(--acc2, var(--acc)) 40%, transparent);
+}
+.pa-think[data-pa-think-level="medium"] {
+	--pa-think-amb-name: pa-think-amb-wave;
+	--pa-think-amb-dur: 7s;
+	--pa-think-amb-amp: 1.4;
+	--pa-think-flow-dur: 9s;
+	--pa-think-flow-alpha: .17;
+	--pa-think-glow-dur: 7.5s;
+	--pa-think-glow-alpha: .17;
+	--pa-think-flow-color: color-mix(in srgb, var(--acc2, var(--acc)) 65%, transparent);
+	--pa-think-glow-color: color-mix(in srgb, var(--acc2, var(--acc)) 50%, transparent);
+}
+.pa-think[data-pa-think-level="high"] {
+	--pa-think-amb-name: pa-think-amb-lift;
+	--pa-think-amb-dur: 6s;
+	--pa-think-amb-amp: 1.8;
+	--pa-think-flow-dur: 8s;
+	--pa-think-flow-alpha: .21;
+	--pa-think-glow-dur: 6.5s;
+	--pa-think-glow-alpha: .22;
+	--pa-think-flow-color: color-mix(in srgb, var(--acc) 60%, transparent);
+	--pa-think-glow-color: color-mix(in srgb, var(--acc) 45%, transparent);
+}
+.pa-think[data-pa-think-level="xhigh"] {
+	--pa-think-amb-name: pa-think-amb-shimmer;
+	--pa-think-amb-dur: 5s;
+	--pa-think-amb-amp: 2.2;
+	--pa-think-flow-dur: 7s;
+	--pa-think-flow-alpha: .25;
+	--pa-think-glow-dur: 5.5s;
+	--pa-think-glow-alpha: .28;
+	--pa-think-flow-color: color-mix(in srgb, var(--acc) 70%, transparent);
+	--pa-think-glow-color: color-mix(in srgb, var(--acc2, var(--acc)) 55%, transparent);
+}
+.pa-think[data-pa-think-level="max"] {
+	--pa-think-amb-name: pa-think-amb-rich;
+	--pa-think-amb-dur: 4s;
+	--pa-think-amb-amp: 2.6;
+	--pa-think-flow-dur: 6s;
+	--pa-think-flow-alpha: .29;
+	--pa-think-glow-dur: 4.5s;
+	--pa-think-glow-alpha: .34;
+	--pa-think-flow-color: color-mix(in srgb, var(--acc) 75%, transparent);
+	--pa-think-glow-color: color-mix(in srgb, var(--acc2, var(--acc)) 65%, transparent);
+}
+
+/* 颜色流动（配合 animation-direction: alternate 来回扫，不跳帧） */
+@keyframes pa-think-flow {
+	from { transform: translate3d(-26%, 0, 0); opacity: calc(var(--pa-think-flow-alpha, .18) * var(--mo-glow, 1) * .45); }
+	to { transform: translate3d(26%, 0, 0); opacity: calc(var(--pa-think-flow-alpha, .18) * var(--mo-glow, 1)); }
+}
+
+/* 柔和发光：轻微左右游走 + 极小幅缩放，呼吸感来自 opacity */
+@keyframes pa-think-glow {
+	from { transform: translate3d(-10%, 0, 0) scale(.98); opacity: calc(var(--pa-think-glow-alpha, .18) * var(--mo-glow, 1) * .5); }
+	to { transform: translate3d(10%, 0, 0) scale(1.04); opacity: calc(var(--pa-think-glow-alpha, .18) * var(--mo-glow, 1)); }
+}
+
+/* 星点的档位性格：幅度都乘 --pa-think-amb-amp，亮度乘星点自身的 --o / --a（景深层次不丢） */
+@keyframes pa-think-amb-breathe {
+	from { opacity: calc(var(--o, .8) * var(--a, 1) * .35); transform: scale(.82); }
+	to { opacity: calc(var(--o, .8) * var(--a, 1)); transform: scale(1.06); }
+}
+@keyframes pa-think-amb-drift {
+	from { opacity: calc(var(--o, .8) * var(--a, 1) * .5); transform: translate3d(0, 0, 0); }
+	to { opacity: calc(var(--o, .8) * var(--a, 1)); transform: translate3d(calc(var(--dx, 1) * var(--pa-think-amb-amp, 1) * 1px), calc(var(--dy, 1) * var(--pa-think-amb-amp, 1) * .5px), 0); }
+}
+@keyframes pa-think-amb-wave {
+	from { opacity: calc(var(--o, .8) * var(--a, 1) * .45); transform: translate3d(calc(var(--dx, 1) * -.6px), calc(var(--dy, 1) * .8px), 0) scale(.94); }
+	to { opacity: calc(var(--o, .8) * var(--a, 1)); transform: translate3d(calc(var(--dx, 1) * var(--pa-think-amb-amp, 1) * 1px), calc(var(--dy, 1) * var(--pa-think-amb-amp, 1) * -.7px), 0) scale(1.08); }
+}
+@keyframes pa-think-amb-lift {
+	from { opacity: calc(var(--o, .8) * var(--a, 1) * .4); transform: translate3d(0, calc(var(--pa-think-amb-amp, 1) * .8px), 0) scale(.9); }
+	to { opacity: calc(var(--o, .8) * var(--a, 1)); transform: translate3d(calc(var(--dx, 1) * var(--pa-think-amb-amp, 1) * .8px), calc(var(--pa-think-amb-amp, 1) * -1.4px), 0) scale(1.12); }
+}
+@keyframes pa-think-amb-shimmer {
+	from { opacity: calc(var(--o, .8) * var(--a, 1) * .3); transform: scale(.75); }
+	50% { opacity: calc(var(--o, .8) * var(--a, 1)); transform: scale(1.15); }
+	to { opacity: calc(var(--o, .8) * var(--a, 1) * .55); transform: scale(.92); }
+}
+@keyframes pa-think-amb-rich {
+	from { opacity: calc(var(--o, .8) * var(--a, 1) * .35); transform: translate3d(0, 0, 0) scale(.8); }
+	40% { opacity: calc(var(--o, .8) * var(--a, 1)); transform: translate3d(calc(var(--dx, 1) * var(--pa-think-amb-amp, 1) * .9px), calc(var(--dy, 1) * var(--pa-think-amb-amp, 1) * -.8px), 0) scale(1.14); }
+	to { opacity: calc(var(--o, .8) * var(--a, 1) * .6); transform: translate3d(calc(var(--dx, 1) * var(--pa-think-amb-amp, 1) * 1.5px), calc(var(--dy, 1) * var(--pa-think-amb-amp, 1) * .9px), 0) scale(.95); }
+}
+
+/* 离散主题（pixel 内置 + DIY motion.style=steps）：环境动效也成步，不做丝滑位移 */
+[data-pa-mo-style=steps] .pa-think-star,
+[data-pa-mo-style=steps] .pa-think-fill::after,
+[data-pa-mo-style=steps] .pa-think-energy::before { animation-timing-function: steps(4, end); }
+
+/* 减弱动效：环境动效全停，但保留静态色带 / 光斑，档位仍靠星点数量与顶部中文区分 */
+@media (prefers-reduced-motion: reduce) {
+	.pa-think-star,
+	.pa-think-fill::after,
+	.pa-think-energy::before { animation: none !important; }
+	.pa-think-fill::after { transform: none; opacity: calc(var(--pa-think-flow-alpha, .18) * var(--mo-glow, 1) * .6); }
+	.pa-think-energy::before { transform: none; opacity: calc(var(--pa-think-glow-alpha, .18) * var(--mo-glow, 1) * .7); }
+}
