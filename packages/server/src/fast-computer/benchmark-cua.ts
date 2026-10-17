@@ -75,7 +75,7 @@ export function createCuaTrialRunner(window: BenchmarkWindow, deps: CuaBenchmark
 			const observed = await deps.observe();
 			if ("error" in observed) return { correctness: "unknown", error: `观察失败：${observed.error}`, actions, programAssists, retries, fallbackCount, abstain };
 
-			// 3) 收集候选（模型只看 id/label）
+			// 3) 收集候选（模型只看 id/动作描述，执行仍用程序侧 tool+args）
 			const candidates = deps.collectCandidates(observed.structured);
 			if (!candidates.length) return { correctness: "unknown", error: "没有可点击候选", actions, programAssists, retries, fallbackCount, abstain };
 

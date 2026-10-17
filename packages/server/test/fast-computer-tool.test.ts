@@ -86,6 +86,17 @@ const reState = { elements: [el(1, "button", "登录", "snap2:1")] };
 const postState = { elements: [el(1, "button", "登录", "snap3:1", { value: "已登录" })] };
 const textOf = (o: { content: { type: string; text?: string }[] }) => o.content.map((c) => c.text ?? "").join("\n");
 
+test("工具 schema：goal 是本次一步点击的局部目标，并写明只点已展示控件", () => {
+	let def: { description: string; parameters: { properties: Record<string, { description?: string }> } } | undefined;
+	const pi = { registerTool: (t: never) => (def = t), on: () => {} };
+	fastComputerExtension({ agentId: "test", conversationId: null, taskId: null }).factory(pi as never);
+	assert.ok(def);
+	assert.match(def!.parameters.properties.goal.description ?? "", /本次一步/, "goal schema 限定为一步局部目标");
+	assert.match(def!.description, /不支持填字/, "工具说明不谎称能填字 / 键盘输入");
+	assert.match(def!.description, /尚未展开的下拉项/);
+	assert.match(def!.description, /动作描述/);
+});
+
 test("G1：session 透传到 get_window_state 与 click 参数", async () => {
 	const { calls } = await runFastTool({ states: [preState, reState, postState], session: "web" });
 	const gws = calls.filter((c) => c.name.endsWith("get_window_state"));
@@ -182,6 +193,40 @@ test("原生 Jev：选中候选 → 用新 element_token 派发一次 click", as
 	assert.ok(click, "高可信原生选择应派发");
 	assert.equal(click!.args.element_token, "snap2:1");
 	assert.match(textOf(out), /置信度 0\.9/);
+});
+
+test("工具层：classifier 收到完整动作描述，不含 token / tool 参数 / raw value，模型不被替换", async () => {
+	const contexts: unknown[] = [];
+	const models: string[] = [];
+	const chooser = createClassifierChooser({
+		provider: "local-laya",
+		model: "multilingual",
+		classify: async (provider, model, context) => {
+			models.push(`${provider}/${model}`);
+			contexts.push(context);
+			return { provider, model, api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1, answers: { pick: { type: "choice", choice: "el-1", confidence: 0.9, probabilities: { "el-1": 0.9 } } } };
+		},
+	});
+	const withSecret = { elements: [el(1, "button", "登录", "snap1:1", { value: "secret-raw-value" })] };
+	const freshSecret = { elements: [el(1, "button", "登录", "snap2:1", { value: "secret-raw-value" })] };
+	const { out, calls } = await runFastTool({ states: [withSecret, freshSecret, postState], chooser });
+	assert.ok(calls.find((c) => c.name.endsWith("click")), "高可信选择应派发");
+	const serialized = JSON.stringify(contexts[0]);
+	assert.match(serialized, /点击当前界面上的「登录」（button 控件）/, "模型收到完整动作描述");
+	assert.ok(!serialized.includes("snap1:1"), "描述不得漏 element_token");
+	assert.ok(!serialized.includes("snap2:1"), "描述不得漏 fresh token");
+	assert.ok(!serialized.includes("mcp__hostpc__click"), "不得漏 tool 名");
+	assert.ok(!serialized.includes("secret-raw-value"), "不得漏控件 raw value");
+	assert.ok(!/"args"|"element_token"/.test(serialized), "不得漏任何 args 形状");
+	assert.deepEqual(models, ["local-laya/multilingual"], "模型与配置一致，不被描述层换掉");
+	assert.match(textOf(out), /快速模型选了「button：登录」/);
+});
+
+test("G2 不受动作描述影响：同 role/label 但 value 已变 → 零派发", async () => {
+	const changed = { elements: [el(1, "button", "登录", "snap2:1", { value: "忙" })] };
+	const { out, calls } = await runFastTool({ states: [preState, changed], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "el-1" })) });
+	assert.equal(calls.filter((c) => c.name.endsWith("click")).length, 0, "语义已变则不得凭描述派发");
+	assert.match(textOf(out), /目标已变化/);
 });
 
 test("原生 Jev：低可信 → 回退，零执行", async () => {
@@ -357,4 +402,8 @@ test("浏览器候选能力语义：content 节点（无动作）不进候选，
 	});
 	const candidates = clickCandidatesFromBrowserRefs("mcp__hostpc__", { target_id: "bt-1", tab_id: "tab-1" }, normalized);
 	assert.deepEqual(candidates.map((c) => c.args.element_token), ["p3:1", "p3:2"], "内容节点不进候选；pointer-only 保留");
+	// 网页候选也带同一份点击语义描述（从 role/name 生成，不含 ref / 动作参数 / 内容文本）。
+	assert.deepEqual(candidates.map((c) => c.description), ["点击当前界面上的「提交」（button 控件）", "点击当前界面上的「请选择城市」（statictext 控件）"]);
+	assert.ok(candidates.every((c) => !(c.description ?? "").includes("p3:")), "描述不带 ref");
+	assert.ok(candidates.every((c) => !/展开|提交成功/.test(c.description ?? "")), "不承诺未知后置结果");
 });

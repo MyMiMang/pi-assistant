@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FastActionCandidate, FastActionChooser, FastComputerSettings } from "../src/fast-computer/index.ts";
 const fc = await import("../src/fast-computer/index.ts");
-const { createMockChooser, createClassifierChooser, parseChatChoice, parseClassifierChoice } = await import("../src/fast-computer/choosers.ts");
+const { createMockChooser, createClassifierChooser, createChatChooser, parseChatChoice, parseClassifierChoice } = await import("../src/fast-computer/choosers.ts");
 
 const cand = (id: string, tool = "click"): FastActionCandidate => ({ id, label: `候选 ${id}`, tool, args: { element_token: `${id}:1` } });
 const settings = (patch: Partial<FastComputerSettings> = {}): FastComputerSettings => ({ ...fc.FAST_COMPUTER_DEFAULT, enabled: true, ...patch });
@@ -158,6 +158,31 @@ test("classifier 解析：选中 / 并列 / 非法概率 / 越界 / 缺置信度
 	assert.equal(failed.kind, "error");
 });
 
+test("chat chooser：与 classifier 同一份受限描述，不漏 tool / args / token / raw value", async () => {
+	let prompt = "";
+	const chooser = createChatChooser({
+		provider: "p",
+		id: "m",
+		complete: async (_p, _m, req) => {
+			prompt = req.messages.map((x) => x.text).join("\n");
+			return { text: '{"id":"a"}' };
+		},
+	});
+	const r = await chooser.choose({
+		goal: "点登录",
+		captureId: "cap-chat",
+		candidates: [{ id: "a", label: "button：登录", description: "点击当前界面上的「登录」（button 控件）" }],
+	});
+	assert.equal(r.kind === "selected" && r.candidateId, "a");
+	assert.match(prompt, /点击当前界面上的「登录」（button 控件）/, "chat 也用动作描述");
+	assert.ok(!prompt.includes("button：登录"), "有描述时不再发 label 旧身份");
+	assert.match(prompt, /当前一步/, "目标限定为本次一步");
+	assert.ok(!/mcp__hostpc__|element_token|snap1:|cap-chat/.test(prompt), "不漏 tool / token / captureId");
+	// 旧 label-only 调用方兼容：没描述就发 label
+	await chooser.choose({ goal: "点登录", captureId: "cap-chat2", candidates: [{ id: "a", label: "button：登录" }] });
+	assert.match(prompt, /- a: button：登录/);
+});
+
 test("chat 解析：不合成 confidence", () => {
 	const ids = ["a", "b"];
 	const ok = parseChatChoice('{"id":"b"}', ids);
@@ -231,7 +256,7 @@ test("classifier chooser：classify 抛错 / 中止 → error（超时归 timeou
 test("程序收集：从窗口状态生成点击候选（限上限、只取可点击）", async () => {
 	const { clickCandidatesFromWindowState } = await import("../src/fast-computer/tool.ts");
 	const elements = [
-		{ element_index: 1, role: "button", label: "登录", element_token: "s1:1", actions: ["press"] },
+		{ element_index: 1, role: "button", label: "登录", element_token: "s1:1", actions: ["press"], value: "secret-raw-value" },
 		{ element_index: 2, role: "statictext", label: "提示", element_token: "s1:2" },
 		{ element_index: 3, role: "textfield", label: "邮箱", element_token: "s1:3" },
 		{ element_index: 4, role: "button", label: "取消" },
@@ -241,7 +266,67 @@ test("程序收集：从窗口状态生成点击候选（限上限、只取可�
 	assert.equal(cands[0].tool, "mcp__hostpc__click");
 	assert.deepEqual(cands[0].args, { pid: 9, window_id: 3, element_token: "s1:1" });
 	assert.match(cands[0].label, /登录/);
+	// 动作描述：从已观察 role/label 生成、明确「点击 / 聚焦当前控件」，不承诺展开 / 提交成功等未知结果。
+	assert.equal(cands[0].description, "点击当前界面上的「登录」（button 控件）");
+	assert.ok(cands.every((c) => c.description?.startsWith("点击当前界面上的")), "每个候选都有点击语义描述");
+	assert.ok(!/展开|提交成功|成功后|将会/.test(cands[0].description ?? ""), "不得承诺未知后置结果");
+	assert.ok(!cands.some((c) => (c.description ?? "").includes("secret-raw-value")), "描述不带控件 raw value");
 	assert.ok(cands.every((c) => fc.validateCandidates([c]) === null));
+});
+
+test("候选动作描述沿原 index 交给选择器：id / 个数 / 顺序不变，执行仍用候选表里的完整动作", async () => {
+	fc._resetFastComputerState();
+	const seen: { id: string; label: string; description?: string }[][] = [];
+	const chooser = createMockChooser((req) => {
+		seen.push(req.candidates);
+		return { kind: "selected", candidateId: "b" };
+	});
+	const r = await fc.selectFastAction({
+		key: "kdesc",
+		goal: "点登录",
+		candidates: [
+			{ id: "a", label: "button：登录", description: "点击当前界面上的「登录」（button 控件）", tool: "click", args: { element_token: "s:1" } },
+			{ id: "b", label: "button：取消", tool: "click", args: { element_token: "s:2" } },
+		],
+		chooser,
+		settings: settings(),
+	});
+	assert.deepEqual(seen[0], [
+		{ id: "a", label: "button：登录", description: "点击当前界面上的「登录」（button 控件）" },
+		{ id: "b", label: "button：取消" },
+	], "按原顺序透传；没有描述的候选不加空字段");
+	assert.equal(r.kind, "selected");
+	if (r.kind === "selected") {
+		assert.equal(r.candidate.id, "b");
+		assert.deepEqual(r.candidate.args, { element_token: "s:2" }, "执行仍用程序侧参数，模型只看到描述");
+	}
+});
+
+test("classifier chooser：criteria 用动作描述（label 仍保留语义身份），旧 label-only 调用方退回 label", async () => {
+	const contexts: unknown[] = [];
+	const chooser = createClassifierChooser({
+		provider: "local-laya",
+		model: "multilingual",
+		classify: async (provider, model, context) => {
+			contexts.push(context);
+			return { provider, model, api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1, answers: { pick: { type: "choice", choice: "a", confidence: 0.9, probabilities: { a: 0.9, b: 0.1 } } } };
+		},
+	});
+	const r = await chooser.choose({
+		goal: "点登录",
+		captureId: "cap-desc",
+		candidates: [
+			{ id: "a", label: "button：登录", description: "点击当前界面上的「登录」（button 控件）" },
+			{ id: "b", label: "button：取消" },
+		],
+	});
+	assert.equal(r.kind === "selected" && r.candidateId, "a");
+	const ctx = contexts[0] as { state: Record<string, unknown>; questions: { pick: { criteria: Record<string, string>; instructions: string } } };
+	assert.deepEqual(ctx.questions.pick.criteria, { a: "点击当前界面上的「登录」（button 控件）", b: "button：取消" });
+	assert.deepEqual(ctx.state, { goal: "点登录" }, "state 仍只放 goal");
+	assert.match(ctx.questions.pick.instructions, /当前一步/, "问题语义限定为本次一步");
+	assert.ok(!/都要点击|全部都是点击/.test(ctx.questions.pick.instructions), "通用指令不谎称所有候选都是 click");
+	assert.ok(!JSON.stringify(ctx).includes("cap-desc"), "captureId 不进模型输入");
 });
 
 test("设置保存：边界收敛 + 未知 kind 回落", () => {

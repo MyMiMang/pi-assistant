@@ -106,7 +106,7 @@ const captures = new Map<string, Capture>();
  * 登记一次 capture；同一 key 的新 capture 作废旧 capture（模拟“快照更新后旧 capture 失效”）。返回 captureId。
  *
  * captureId 是**每次调用唯一**的进程内授权 / 新鲜度 pin（`cap-<随机>`），**不喂给模型**：
- * classifier 的 context 只有 goal + 候选 id/label（见 choosers.ts），所以模型输入稳定；
+ * classifier 的 context 只有 goal + 候选 id/动作描述（见 choosers.ts），所以模型输入稳定；
  * 同时旧结果必须能和新登记区分开 —— 内容寻址（key+候选摘要）会让「同一 key、同 id/label、
  * 但 args/element_token 已变」的两次登记拿到同一个 id，旧结果就可能落到新 capture 的 args 上（ABA）。
  * 唯一 id 下，旧 capture 被作废 → 旧结果 `capture_invalid`，绝不会用新 capture 的参数执行。
@@ -176,7 +176,8 @@ export async function selectFastAction(input: SelectFastActionInput): Promise<Fa
 	if ((failures.get(input.key) ?? 0) >= CIRCUIT_LIMIT) return { kind: "fallback", reason: "circuit_open", detail: `同一窗口（${input.key}）已连续 ${CIRCUIT_LIMIT} 次回退，本次不再调用快速模型；只有保存设置（或重启应用）会清空熔断，重新读取窗口不会` };
 
 	const captureId = registerCapture(input.key, input.candidates);
-	const offered = input.candidates.map((c) => ({ id: c.id, label: c.label }));
+	// 沿原 index 把 description 一起交给选择器：不改候选 ID / 个数 / 顺序，执行仍回候选表按 id 查回完整动作。
+	const offered = input.candidates.map((c) => ({ id: c.id, label: c.label, ...(c.description ? { description: c.description } : {}) }));
 	let result: FastChoiceResult;
 	try {
 		result = await input.chooser.choose({ goal: input.goal, captureId, candidates: offered }, input.signal);

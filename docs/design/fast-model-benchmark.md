@@ -349,3 +349,25 @@ server `tsc` exit 0）。**没有**起真实 Chrome / 驱动 / Laya，网页路�
 ### 9.13 主会话真实接管已验收（2026-10-17）
 
 本节覆盖 §9.12 的待验状态。8c99210 上真实 handler 三次均返回 low_confidence；主会话亲自按新快照选择 ref，提交、选北京、动态两步 **3/3 完成**，5 次 trusted 点击，机器与页面状态一致。未用程序固定下拉，不自动选目标；原模型恢复健康，本次隔离进程清理。Laya 本轮 0/3 自行派发，接管成绩不能当其独立准确率。definition 取出后通过真实 MCP 运行，不是安装版会话运行器验收；仍需后续候选安装测试。完整证据、命令与含推理等待的 wall 定义见 [主接管验收](../../progress-snapshots/laya-main-takeover-2026-10-17.md)。后续候选输入去重尚未在本次模型调用里使用。
+
+### 9.14 候选动作语义 patch（2026-10-17；**未跑模型 / 浏览器 / driver，只是代码 + 单测**）
+
+主 CUA 源码对照的结论是：产品把「role+label」直接当候选，模型分不清「这一步要做什么」；同时 `goal` 容易被当成整条多步任务。
+本节跟踪随之而来、**不换模型也不改门槛**的最小 patch（旧 4 题成绩与 §9.13 的主接管报告都属**旧代码**，不能拿来评价本 patch）。
+
+- **行为**：`FastActionCandidate.description`（可选）由生产收集器从**已观察** role/label 生成（`clickCandidateDescription`），
+  固定语义是「点击当前界面上的『X』（role 控件）」——**不写**展开 / 提交 / 切换成功等未知后置结果，也不含 tool / args /
+  `element_token` / `ref` / 控件 raw value / 任何测试期望。`label` 保持原样（UI 身份 + G2 重校验的 role/label 不变）。
+  原生 `clickCandidatesFromWindowState` 与网页 `clickCandidatesFromBrowserRefs` 都带描述；`pointer`-only 候选照旧保留，不筛 task。
+- **模型输入**：`selectFastAction` 按原 index 透传 `description`（没有描述就不加字段，旧 label-only 调用方兼容）；
+  classifier `questions.pick.criteria = description ?? label`，`state` 仍只有 `{goal}`；instructions 是通用措辞
+  「选出符合当前一步目标、且现在可执行的一个 id」（不谎称所有候选都是 click）；chat 用同一份 `description ?? label`。
+- **明确不变**：候选 ID / 个数 / 顺序、概率换算与 0.6 阈值、`captureId` 不进模型输入、controller 与 G1·G2·G3 派发/核验。
+  没有加请求级 typed action scope：点击语义已由收集器逐候选写入描述，再加一层等于把同一信息重复进模型输入。
+- **测试（实跑，Node v24.19.0，临时 HOME/TMPDIR + 假 MCP ctx，不启模型 / Chrome / driver）**：
+  `fast-computer.test.ts` + `fast-computer-tool.test.ts` **68/68**；`fast-computer-benchmark{,-host,-window}` + `fast-computer-guard` **52/52**；
+  `packages/server` `tsc --noEmit` exit 0。新增断言包括：真实注册 handler → classifier spy 收到完整描述、无 token / tool 名 / args / raw value、
+  模型仍是配置的 `local-laya/multilingual`；G2 同 role/label 但 value 已变 → 零派发；chat 提示词用描述且不含 tool / token / captureId；
+  旧 label-only 候选的 criteria 逐字退回 label。
+- **未测 / 不得宣称**：描述是否提升 Laya / Jev 选择质量、能否让 4 题过阈值**都未测**（本轮没有模型推理，也没有调阈值凑过）；
+  真实页面 / 原生窗口的描述措辞只由单测钉住，未在真机复核；benchmark 需要主审独立 review 后再安排一次真实测量。

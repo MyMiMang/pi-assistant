@@ -118,12 +118,13 @@ function normalizeProbabilities(raw: unknown, candidateIds: string[]): Record<st
 const finite01 = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? v : undefined);
 
 /**
- * 原生 Jev：只把 goal + 候选 id/label 作为离散 choice 问题交给 classifier，答案必须是候选 id。
+ * 原生 Jev：只把 goal + 候选 id/动作描述作为离散 choice 问题交给 classifier，答案必须是候选 id。
+ * 动作描述由程序从已观察的 role/label 生成（明确「点击当前控件」），旧调用方没有描述时退回 label。
  *
  * `captureId` 是**程序内部**的新鲜度 / 授权 pin（见 index.ts registerCapture），**不进模型输入**：
  * 同一 goal + 候选在不同 capture 下必须得到完全相同的 context，否则每次调用的随机 token 会污染模型输入。
  *
- * `state` 只放 goal：候选的 id/label 已完整写在 `questions.pick.criteria` 里，同一份表再塞进 state 是重复输入
+ * `state` 只放 goal：候选的 id/动作描述已完整写在 `questions.pick.criteria` 里，同一份表再塞进 state 是重复输入
  * （上游 fine-tune 说明建议候选只留在 criteria）。这是**通用的去重**，不额外注入 goal 提示 / 答案 / 价值字段，
  * 也不改阈值、概率与 temperature；去重后模型表现是否变化**未测**，不宣称质量提升。
  */
@@ -134,14 +135,17 @@ export function createClassifierChooser(cfg: ClassifierChooserConfig): FastActio
 		nativeProbability: true,
 		async choose(req: FastChoiceRequest, signal?: AbortSignal): Promise<FastChoiceResult> {
 			const criteria: Record<string, string> = {};
-			for (const c of req.candidates) criteria[c.id] = c.label;
+			// criteria 用**动作描述**（程序从已观察 role/label 生成，明确「点击当前控件」）；
+			// 旧调用方只有 label 时退回 label，不因此改候选 ID / 个数。
+			for (const c of req.candidates) criteria[c.id] = c.description ?? c.label;
 			const context: ClassifierContext = {
-				// 只留 goal；候选不重复进 state（见上方注释：重复输入去重，不增删信息）。
+				// 只留 goal（本次一步的局部目标）；候选不重复进 state（见上方注释：重复输入去重，不增删信息）。
 				state: { goal: req.goal },
 				questions: {
 					pick: {
 						type: "choice",
-						instructions: "从候选里选出最符合目标的一个 id，只能选候选集合里的 id。",
+						// 通用措辞：不谎称所有候选都是 click（其他调用方的白名单里也可能有 type 等动作）。
+						instructions: "从候选中选出符合当前一步目标、且现在可执行的一个 id，只能选候选集合里的 id。",
 						criteria,
 					},
 				},
@@ -196,8 +200,10 @@ export function createChatChooser(cfg: ChatChooserConfig): FastActionChooser {
 		label: cfg.label ?? "快速模型（OpenAI 兼容替代，非 Jev）",
 		nativeProbability: false,
 		async choose(req: FastChoiceRequest, signal?: AbortSignal): Promise<FastChoiceResult> {
-			const list = req.candidates.map((c) => `- ${c.id}: ${c.label}`).join("\n");
-			const prompt = `目标：${req.goal}\n\n候选（只能选其中一个 id）：\n${list}\n\n只输出 JSON：{"id":"<候选id>"}；拿不准就输出 {"abstain":true,"reason":"..."}。不要输出任何概率或 confidence。`;
+			// 与 classifier 同一份受限输入：候选只给 id + 动作描述（缺描述退回 label），
+			// 不给 tool / args / element_token / ref / raw value。
+			const list = req.candidates.map((c) => `- ${c.id}: ${c.description ?? c.label}`).join("\n");
+			const prompt = `目标（当前一步）：${req.goal}\n\n候选（只能选其中一个 id）：\n${list}\n\n只输出 JSON：{"id":"<候选id>"}；拿不准就输出 {"abstain":true,"reason":"..."}。不要输出任何概率或 confidence。`;
 			const ac = new AbortController();
 			const timer = setTimeout(() => ac.abort(), cfg.timeoutMs ?? 4000);
 			signal?.addEventListener("abort", () => ac.abort(), { once: true });

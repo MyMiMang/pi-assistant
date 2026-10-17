@@ -5,7 +5,7 @@
  * （从程序预构建的动作 ID 里选一个），不自由访问工具、不接管主会话。
  *
  * 安全不变量（照 cua `decision-models.md`）：
- *  - 快速模型只看到 goal + capture_id + 候选的 id/label；看不到工具名 / 参数 / 坐标 / 截图 / 凭据；
+ *  - 快速模型只看到 goal + capture_id + 候选的 id/label/动作描述；看不到工具名 / 参数 / 坐标 / 截图 / 凭据；
  *  - `selected` 不是授权；程序必须回候选表查回 ID、重校验、只派发预构建且已授权的动作、独立核验结果；
  *  - abstain / reobserve / error / 超时 / 低可信 不派发任何动作；高分不等于授权。
  */
@@ -21,10 +21,17 @@ export interface FastSemanticTarget {
 	actions?: string[];
 }
 
-/** 一个预构建动作：由程序（或主模型作为规划者）给出，快速模型只看 id + label。 */
+/** 一个预构建动作：由程序（或主模型作为规划者）给出，快速模型只看 id + label（+ 可选动作描述）。 */
 export interface FastActionCandidate {
 	id: string;
+	/** 控件的语义 / UI 身份（如 `button：登录`）；执行前重校验也用这一对 role/label。 */
 	label: string;
+	/**
+	 * **动作语义描述**：由程序从**已观察到的** role/label 生成（不是模型猜、不是测试答案），明确这是「点击 / 聚焦
+	 * 当前这个控件」。只描述**本步动作**，不承诺点击后会展开 / 提交 / 切换成功等未知后置结果。
+	 * 不承载 tool / args / element_token / 控件 raw value，也不含任何测试期望。缺省时模型侧退回 label（旧调用方兼容）。
+	 */
+	description?: string;
 	/** 真正执行用的电脑工具名 + 参数；快速模型看不到（只在程序侧） */
 	tool: string;
 	args: Record<string, unknown>;
@@ -32,11 +39,16 @@ export interface FastActionCandidate {
 	semantic?: FastSemanticTarget;
 }
 
-/** 快速模型收到的请求（有界、无副作用）。`captureId` 只是程序内部的新鲜度/授权 pin，**不进模型输入**。 */
+/**
+ * 快速模型收到的请求（有界、无副作用）。`captureId` 只是程序内部的新鲜度/授权 pin，**不进模型输入**。
+ *
+ * `goal` 是**本次一步动作的局部目标**（如「点开城市下拉」），不是整条多步任务：多步由主模型每步重新收集候选、
+ * 重新决策。候选 `description` 可选（旧调用方只有 label）；两者都不含工具名 / 参数 / token / raw value。
+ */
 export interface FastChoiceRequest {
 	goal: string;
 	captureId: string;
-	candidates: { id: string; label: string }[];
+	candidates: { id: string; label: string; description?: string }[];
 }
 
 /** 快速模型返回的用量（有就记，没有记 0，不估） */

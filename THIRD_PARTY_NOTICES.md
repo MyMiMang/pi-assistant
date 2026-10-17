@@ -89,7 +89,7 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 | 微信 Linux 版（可选，用户主动开启才下载） | 4.1.13.23 | 腾讯专有软件 | 个人微信渠道 |
 | [Laya](https://github.com/NandhaKishorM/laya)（可选，用户点「一键安装」才装） | 0.4.8（PyPI `laya`） | Apache-2.0 | 本地判断模型（TypeSafe Jev `/v1/systemone` 分类器） |
 | [laya-multilingual / laya-typed-decisions 权重](https://huggingface.co/convaiinnovations)（可选，随本地 Laya 下载） | revision `e4e9ddf2…` / `1a793eb5…`（pin SHA）；每个文件另有大小 + SHA256（大文件取 HF LFS oid），下载后校验通过才启用 | Apache-2.0 | 本地判断模型权重 |
-| [laya-browser 的输入格式参考实现](https://huggingface.co/cklxx/laya-browser)（**仅研究用**：`scripts/laya-browser-input.ts` 是上游 `laya_browser.py` 的 TS 翻译，未被产品代码引用） | 上游 revision `645cf366a2ae35f1086e8c20eff48f909bb49206` 的 `laya_browser.py` | Apache-2.0（保留义务：本表即为来源、版权与许可证声明；若将来随产品分发，须一并附 Apache-2.0 许可证全文，并保留上游版权声明与修改说明） | 浏览器专项 checkpoint 的 v5 输入契约（state / questions / 宽选项分块） |
+| [laya-browser 的输入格式参考实现](https://huggingface.co/cklxx/laya-browser)（**仅研究用**：`scripts/laya-browser-input.ts` 是上游 `laya_browser.py` 的 TS 翻译，未被产品代码引用） | 上游 revision `645cf366a2ae35f1086e8c20eff48f909bb49206` 的 `laya_browser.py` | Apache-2.0（**本表只是来源记录，不是版权声明或证明已有完整许可证**；上游原版权声明与 Apache-2.0 完整义务不变：若将来随产品分发，须一并附许可证全文，并保留上游版权声明与修改说明；本仓当前**没有**核对 / 附带该许可证全文） | 浏览器专项 checkpoint 的 v5 输入契约（state / questions / 宽选项分块） |
 
 ## 助理电脑镜像（packages/sandbox-desktop，基于 debian:bookworm-slim）
 

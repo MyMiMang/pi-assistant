@@ -71,6 +71,19 @@ interface CollectedElement extends FastSemanticTarget {
 	element_token?: string;
 }
 
+/**
+ * 从**已观察到的** role/label 生成点击动作描述（模型只看这一句，不看 tool / args / token / raw value）。
+ * 只陈述「点击 / 聚焦当前这个控件」，不写展开／提交／选中成功等**未知后置结果**，也不带任何测试期望。
+ * label 本身保留 UI / 语义身份（如 `button：登录`），不用描述替掉它。
+ */
+export function clickCandidateDescription(role?: string, label?: string): string {
+	const r = typeof role === "string" ? role.trim() : "";
+	const l = typeof label === "string" ? label.trim() : "";
+	const kind = r ? `${r} 控件` : "控件";
+	const what = l ? `「${l}」（${kind}）` : ` ${kind}`;
+	return `点击当前界面上的${what}`.slice(0, 160);
+}
+
 /** 目标窗口标识（可选 cua session 标签；G1：必须透传到读取 / 执行，否则可能读到 / 点错会话）。 */
 export interface FastTarget {
 	pid: number;
@@ -85,6 +98,7 @@ export function clickCandidatesFromWindowState(prefix: string, target: FastTarge
 	return clickable.slice(0, MAX_FAST_CANDIDATES).map((e) => ({
 		id: `el-${e.element_index ?? 0}`,
 		label: `${e.role ?? "元素"}${e.label ? `：${e.label}` : ""}`.slice(0, 120),
+		description: clickCandidateDescription(e.role, e.label),
 		tool: `${prefix}click`,
 		args: { pid: target.pid, window_id: target.window_id, ...(target.session ? { session: target.session } : {}), element_token: e.element_token },
 		// 收集时的语义身份：执行前重读同窗口据此校验目标唯一且未变（G2）。
@@ -117,6 +131,7 @@ export function clickCandidatesFromBrowserRefs(prefix: string, target: FastBrows
 	return clickable.slice(0, MAX_FAST_CANDIDATES).map((e, i) => ({
 		id: `ref-${i}`,
 		label: `${e.role ?? "元素"}${e.label ? `：${e.label}` : ""}`.slice(0, 120),
+		description: clickCandidateDescription(e.role, e.label),
 		tool: `${prefix}browser_click`,
 		args: { target_id: target.target_id, tab_id: target.tab_id, ...(target.session ? { session: target.session } : {}), element_token: e.element_token },
 		semantic: { role: e.role, label: e.label, value: e.value, actions: e.actions },
@@ -145,14 +160,16 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 					"由一个可选快速模型（默认关闭）只挑一个候选 id，然后由程序经既有电脑工具执行。" +
 					"执行前程序会重新读取同一窗口状态，要求目标唯一且未变化，再用新 element_token 派发；目标变了就中止回你。" +
 					"执行后程序会用 expected 做独立核验，返回 confirmed / unsatisfied / unknown；没有 expected 只会返回 unknown，别把执行成功当成任务成功。" +
-					"快速模型看不到工具名 / 参数 / 坐标，也不能自由调工具；选中不等于授权，执行仍走原有权限与审批。" +
+					"快速模型看不到工具名 / 参数 / 坐标，也不能自由调工具；它看到的候选带有程序从已观察控件生成的动作描述（点击 / 聚焦当前控件），不含 raw value / 测试答案；选中不等于授权，执行仍走原有权限与审批。" +
+					"goal 请写**本次一步**的局部目标（如「点开城市下拉」），不要传整条多步任务：多步由你每步重读状态、重新调用。" +
+					"它只点当前界面**已展示**的控件：不支持填字 / 键盘输入 / 选择尚未展开的下拉项（这些请你自己完成，或先一步展开再由下一步点）。" +
 					"没开启、模型不可用、拿不准、超时或目标已变化都会明确回到你自己完成，不会无限重试。" +
 					"目标是网页（Chrome / Edge / Brave 页面）时传 browser：要么带上你自己刚 get_browser_state 绑定得到的 target_id + tab_id，" +
 					"要么给空对象 browser:{} 让本工具用 pid + window_id 做一次精确绑定核对（不会替你 attach / 拉起浏览器）；" +
 					"网页目标读驱动 CDP 的 semantic_v2 refs、执行用 browser_click{ref}；不传 browser 则仍读原生 AX。",
 				promptSnippet: "fast_pick_action: 用快速模型在有界候选里挑一个控件（默认关闭）",
 				parameters: Type.Object({
-					goal: Type.String({ description: "要达成的目标（一句话）" }),
+					goal: Type.String({ description: "本次一步点击的局部目标（一句话）。多步任务由你在每步重新读状态、重新调用；不要传整条多步任务当作一次点击的目标" }),
 					pid: Type.Integer({ description: "目标窗口所属进程 pid" }),
 					window_id: Type.Integer({ description: "目标窗口 id" }),
 					prefix: Type.Optional(Type.Union([Type.Literal("hostpc"), Type.Literal("computer")], { description: "电脑目标：hostpc=用户电脑，computer=助理电脑；默认按可用工具判断" })),
