@@ -1,10 +1,11 @@
 import { ImagePlus, Trash2 } from "lucide-react";
-import { ModelOptions } from "./ModelOptions";
+import { DraftModelSettings, useModelDefaults } from "./DraftModelSettings";
+import { useConfiguredModels } from "./ModelPicker";
 import { AgentComputer } from "./AgentComputer";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import type { Agent, ModelInfo } from "../types";
+import type { Agent } from "../types";
 import { Avatar, Button, cx, Input } from "./ui";
 
 export const AGENT_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#8b5cf6", "#64748b"];
@@ -19,7 +20,7 @@ const PRESETS: { label: string; description: string; persona: string }[] = [
 	{ label: "办公助手", description: "表格、文档、邮件、日程这些日常事务", persona: "你擅长处理 Excel/Word/PDF 和日常办公事务。产出直接可用的文件，并用一句话说明内容。" },
 ];
 
-type Draft = { name: string; avatar: string; color: string; description: string; persona: string; model: string };
+type Draft = { name: string; avatar: string; color: string; description: string; persona: string; model: string; thinking: string | null };
 
 /** 创建 / 编辑助理（首次向导、侧边栏“新建助理”、右侧“设置”页共用）。 */
 export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = true }: { agent?: Agent; onDone?: (a: Agent) => void; onCancel?: () => void; submitLabel?: string; showModel?: boolean }) {
@@ -30,25 +31,25 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 		description: a?.description ?? PRESETS[0].description,
 		persona: a?.persona ?? "",
 		model: a?.model_provider && a?.model_id ? `${a.model_provider}/${a.model_id}` : "",
+		thinking: a && "thinkingSetting" in a ? a.thinkingSetting ?? null : a?.thinking ?? null,
 	});
 	const [d, setD] = useState<Draft>(() => init(agent));
 	const [file, setFile] = useState<File | null>(null);
 	const [preview, setPreview] = useState<string | null>(null);
-	const [models, setModels] = useState<ModelInfo[]>([]);
+	const [modelDirty, setModelDirty] = useState(false);
+	const [thinkingDirty, setThinkingDirty] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const [saved, setSaved] = useState(false);
 	const [confirmDel, setConfirmDel] = useState(false);
 	const fileRef = useRef<HTMLInputElement>(null);
 	const set = (p: Partial<Draft>) => setD((x) => ({ ...x, ...p }));
-	useEffect(() => setD(init(agent)), [agent?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+	useEffect(() => { setD(init(agent)); setModelDirty(false); setThinkingDirty(false); }, [agent?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+	// 其他入口/设备改了模型设置时，未编辑的字段跟进真值；保留用户正在改的草稿。
 	useEffect(() => {
-		if (!showModel) return;
-		Promise.all([api<{ id: string; configured: boolean }[]>("/api/models/providers"), api<ModelInfo[]>("/api/models")]).then(([ps, ms]) => {
-			const ok = new Set(ps.filter((p) => p.configured).map((p) => p.id));
-			setModels(ms.filter((m) => ok.has(m.provider)));
-		});
-	}, [showModel]);
+		const next = init(agent);
+		setD((d) => ({ ...d, ...(!modelDirty ? { model: next.model } : {}), ...(!thinkingDirty ? { thinking: next.thinking } : {}) }));
+	}, [agent?.model_provider, agent?.model_id, agent?.thinkingSetting, agent?.thinking, modelDirty, thinkingDirty]);
 	const pickFile = (f: File | undefined) => {
 		if (!f) return;
 		if (f.size > 2 * 1024 * 1024) return setError("头像图片不能超过 2MB");
@@ -68,7 +69,8 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 				color: d.color,
 				description: d.description,
 				persona: d.persona,
-				...(showModel ? { model: d.model ? { provider, id: rest.join("/") } : null } : {}),
+				...(showModel && (!agent || modelDirty) ? { model: d.model ? { provider, id: rest.join("/") } : null } : {}),
+				...(showModel && (!agent || thinkingDirty) ? { thinking: d.thinking } : {}),
 			};
 			let a = await api<Agent>(agent ? `/api/agents/${agent.id}` : "/api/agents", { method: agent ? "PATCH" : "POST", json: body });
 			if (file) {
@@ -78,6 +80,9 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 				setFile(null);
 			}
 			await useStore.getState().loadAgents();
+			setD((d) => ({ ...d, model: a.model_provider && a.model_id ? `${a.model_provider}/${a.model_id}` : "", thinking: a.thinkingSetting ?? null }));
+			setModelDirty(false);
+			setThinkingDirty(false);
 			setSaved(true);
 			setTimeout(() => setSaved(false), 1500);
 			onDone?.(a);
@@ -177,13 +182,10 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 				/>
 			</label>
 			{showModel && (
-				<label className="block space-y-1.5">
-					<span className="text-xs font-medium text-zinc-500">模型</span>
-					<select value={d.model} onChange={(e) => set({ model: e.target.value })} className="h-10 w-full rounded-xl bg-zinc-100 px-3 outline-none dark:bg-zinc-800/80">
-						<option value="">跟随默认模型</option>
-						<ModelOptions models={models} />
-					</select>
-				</label>
+				<div className="space-y-1.5">
+					<div className="text-xs font-medium text-mut">模型与思考强度</div>
+					<AgentModelDraft model={d.model} thinking={d.thinking} disabled={busy} onModel={(model) => { set({ model }); setModelDirty(true); }} onThinking={(thinking) => { set({ thinking }); setThinkingDirty(true); }} />
+				</div>
 			)}
 			{agent && <AgentComputer agentId={agent.id} />}
 			{error && <div className="rounded-xl bg-red-50 px-3 py-2 text-red-600 dark:bg-red-950/40 dark:text-red-400">{error}</div>}
@@ -216,4 +218,11 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 			{confirmDel && <p className="text-xs text-zinc-500">聊天记录会清除，文件移进回收站。</p>}
 		</div>
 	);
+}
+
+function AgentModelDraft({ model, thinking, disabled, onModel, onThinking }: { model: string; thinking: string | null; disabled: boolean; onModel: (model: string) => void; onThinking: (level: string | null) => void }) {
+	const catalog = useConfiguredModels();
+	const defaults = useModelDefaults();
+	const [provider, ...rest] = model.split("/");
+	return <DraftModelSettings id="agent-draft" models={catalog.models} providers={catalog.providers} value={model ? { provider, id: rest.join("/") } : null} thinking={thinking} defaults={defaults} loading={catalog.loading} error={catalog.error} disabled={disabled} reload={catalog.reload} onModel={(m) => onModel(m ? `${m.provider}/${m.id}` : "")} onThinking={onThinking} />;
 }

@@ -109,6 +109,9 @@ html{--mo-scale:1;--mo-glow:1;--mo-style:smooth}
 .pa-approval,.pa-question{padding:14px 16px}
 .pa-card-top{display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .pa-card-top b{font-weight:600;min-width:0}
+/* 问题卡片的问题可能是多行（用途说明：做什么/什么时候用/能给你）：保留换行、顶部对齐，长句自然折行不越框 */
+.pa-question .pa-card-top{align-items:flex-start}
+.pa-question .pa-card-top b{white-space:pre-line;line-height:1.6;overflow-wrap:anywhere}
 .pa-ic.warn{color:var(--warn,#f59e0b)}
 .pa-ic.accent{color:var(--acc)}
 .pa-tag{margin-left:auto;flex:none;white-space:nowrap;font-size:11.5px;padding:2px 8px;border-radius:999px;background:var(--hover);color:var(--mut)}

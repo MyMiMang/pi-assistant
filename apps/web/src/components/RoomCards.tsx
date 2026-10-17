@@ -1,11 +1,12 @@
-import { Crown, Loader2, Plus, Trash2, Users, UserPlus, ChevronDown, Check } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Crown, Loader2, Plus, Trash2, Users, UserPlus, ChevronDown } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Message } from "../types";
 import { type LabeledModel, modelKey, modelLabel } from "./ModelOptions";
-import { ModelPickerButton } from "./ModelPicker";
-import { Avatar, Help, cx } from "./ui";
+import { useConfiguredModels, type ModelEntry } from "./ModelPicker";
+import { DraftModelSettings, useModelDefaults } from "./DraftModelSettings";
+import { Avatar, Help, Select, cx } from "./ui";
 
 export interface PMember {
 	agentId?: string;
@@ -14,6 +15,7 @@ export interface PMember {
 	persona?: string;
 	skills?: string[];
 	model?: { provider: string; id: string } | null;
+	thinking?: string | null;
 	modelReason?: string;
 	needs?: string[];
 	avatar?: string;
@@ -26,8 +28,7 @@ export interface Proposal {
 	members: PMember[];
 }
 
-let modelsCache: Promise<(LabeledModel & { reasoning?: boolean })[]> | null = null;
-/** 只列用户已配置的服务里的模型（提议里推荐的模型只能从这里选） */
+/** 角色推荐只改变组内顺序/星标，完整目录仍按用户配置的服务分组。 */
 interface RankedModel extends LabeledModel {
 	score: number;
 	tier: string;
@@ -36,41 +37,38 @@ interface RankedModel extends LabeledModel {
 	reasoning?: boolean;
 	excluded?: string;
 }
-const rankCache = new Map<string, Promise<RankedModel[]>>();
-/** 按角色需求排好序的可选模型（服务端打分：能力命中、价格、默认模型） */
+/** 刷新服务或重新打开时重算推荐，异步回包不能把旧角色结果盖回来。 */
 function useRankedModels(needs: string[] = [], manager = false) {
-	const key = `${[...needs].sort().join(",")}|${manager ? 1 : 0}`;
+	const key = [...needs].sort().join(",");
+	const system = useStore((s) => s.system);
+	const [version, setVersion] = useState(0);
 	const [list, setList] = useState<RankedModel[]>([]);
+	const [error, setError] = useState(false);
+	const reload = useCallback(() => setVersion((v) => v + 1), []);
 	useEffect(() => {
-		let p = rankCache.get(key);
-		if (!p) {
-			p = api<RankedModel[]>(`/api/proposals/models?needs=${encodeURIComponent(needs.join(","))}&manager=${manager ? 1 : 0}`).catch(() => (rankCache.delete(key), []));
-			rankCache.set(key, p);
-		}
 		let off = false;
-		void p.then((r) => !off && setList(r));
-		return () => void (off = true);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [key]);
-	return list;
+		void api<RankedModel[]>(`/api/proposals/models?needs=${encodeURIComponent(key)}&manager=${manager ? 1 : 0}`).then((r) => { if (!off) { setList(r); setError(false); } }).catch(() => { if (!off) { setList([]); setError(true); } });
+		return () => { off = true; };
+	}, [key, manager, system, version]);
+	return { list, error, reload };
 }
 const NEED_LABEL: Record<string, string> = { coding: "写代码", reasoning: "推理", writing_zh: "中文写作", writing: "写作", vision: "看图", long_context: "长文档", tool_use: "用工具", cheap: "便宜", fast: "快" };
 
-export function useAvailableModels() {
-	const [list, setList] = useState<(LabeledModel & { reasoning?: boolean })[]>([]);
-	useEffect(() => {
-		modelsCache ??= api("/api/proposals/models").catch(() => ((modelsCache = null), []));
-		void modelsCache.then(setList);
-	}, []);
-	return list;
-}
-
-function MemberEditor({ m, models, onChange, onRemove, manager, onManager, locked }: { m: PMember; models: LabeledModel[]; onChange: (m: PMember) => void; onRemove?: () => void; manager?: boolean; onManager?: () => void; locked: boolean }) {
+function MemberEditor({ m, catalog, defaults, onChange, onRemove, manager, onManager, locked }: { m: PMember; catalog: ReturnType<typeof useConfiguredModels>; defaults: ReturnType<typeof useModelDefaults>; onChange: (m: PMember) => void; onRemove?: () => void; manager?: boolean; onManager?: () => void; locked: boolean }) {
 	const agents = useStore((s) => s.agents);
 	const existing = m.agentId ? agents.find((a) => a.id === m.agentId) : null;
 	const [open, setOpen] = useState(false);
 	const ranked = useRankedModels(m.needs, !!manager);
-	const cur = m.model ? (ranked.find((x) => x.provider === m.model!.provider && x.id === m.model!.id) ?? models.find((x) => x.provider === m.model!.provider && x.id === m.model!.id)) : null;
+	const byKey = new Map(catalog.models.map((m) => [modelKey(m), m]));
+	const recommended = ranked.list.find((m) => !m.excluded && byKey.has(modelKey(m)));
+	const models: ModelEntry[] = ranked.list.flatMap<ModelEntry>((r) => {
+		const m = byKey.get(modelKey(r));
+		if (!m) return [];
+		byKey.delete(modelKey(r));
+		return [{ ...m, star: recommended === r, badge: r.tierLabel, note: r.excluded }];
+	}).concat([...byKey.values()]);
+	const cur = m.model ? models.find((x) => modelKey(x) === modelKey(m.model!)) : null;
+	const reload = () => { catalog.reload(); ranked.reload(); };
 	return (
 		<div className="pa-pm" data-testid="proposal-member">
 			<div className="flex min-w-0 items-center gap-2">
@@ -95,34 +93,26 @@ function MemberEditor({ m, models, onChange, onRemove, manager, onManager, locke
 				<>
 					<input className="pa-input mt-1.5 !h-8 !px-2 text-xs" placeholder="负责什么" value={m.role ?? ""} disabled={locked} onChange={(e) => onChange({ ...m, role: e.target.value })} aria-label="角色" />
 					<div className="mt-1.5 flex min-w-0 items-center gap-1.5">
-						<ModelPickerButton
-							testid="pm-model"
-							models={ranked.length
-								? ranked.map((x, i) => ({ provider: x.provider, id: x.id, name: x.name ?? x.id, providerName: x.providerName, reasoning: x.reasoning, star: i === 0 && !x.excluded, badge: x.tierLabel, note: x.excluded }))
-								: models.map((x) => ({ provider: x.provider, id: x.id, name: x.name ?? x.id, providerName: x.providerName }))}
-							providers={[]}
+						<DraftModelSettings
+							id="pm"
+							models={models}
+							providers={catalog.providers}
 							value={m.model ?? null}
-							groupByProvider={false}
-							placement="down"
+							thinking={m.thinking ?? null}
+							defaults={defaults}
 							disabled={locked}
-							buttonClass="max-w-full"
-							text={m.model ? (cur ? modelLabel(cur) : modelKey(m.model)) : "默认模型"}
-							title="按角色需要排序的模型（★ 推荐）"
-							ariaLabel={`模型：${m.model ? (cur ? modelLabel(cur) : modelKey(m.model)) : "默认模型"}`}
-							onPick={(x) => {
-								if (!x.id) return void onChange({ ...m, model: null, modelReason: undefined });
-								const r = ranked.find((y) => modelKey(y) === `${x.provider}/${x.id}`);
-								onChange({ ...m, model: { provider: x.provider, id: x.id }, modelReason: r ? `你选的：${r.reason}` : "你选的" });
+							loading={catalog.loading}
+							error={catalog.error}
+							reload={reload}
+							onModel={(model) => {
+								const r = model && ranked.list.find((y) => modelKey(y) === modelKey(model));
+								onChange({ ...m, model, modelReason: model ? r ? `你选的：${r.reason}` : "你选的" : undefined });
 							}}
-							header={(close) => (
-								<button type="button" className="mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover" data-testid="pm-model-default" onClick={() => (close(), onChange({ ...m, model: null, modelReason: undefined }))}>
-									<span className="min-w-0 flex-1 truncate">默认模型</span>
-									{!m.model && <Check size={14} className="shrink-0 text-accent" />}
-								</button>
-							)}
+							onThinking={(thinking) => onChange({ ...m, thinking })}
 						/>
-						{m.modelReason && <Help>{cur ? `${modelLabel(cur)}：` : ""}{m.modelReason}{m.needs?.length ? `。这个角色需要：${m.needs.map((n) => NEED_LABEL[n] ?? n).join("、")}` : ""}。下拉框按适合程度排序，★ 是推荐。</Help>}
+						{m.modelReason && <Help>{cur ? `${modelLabel(cur)}：` : ""}{m.modelReason}{m.needs?.length ? `。这个角色需要：${m.needs.map((n) => NEED_LABEL[n] ?? n).join("、")}` : ""}。按服务分组，组内按适合程度排序，★ 是推荐。</Help>}
 					</div>
+					{ranked.error && <p className="mt-1 text-xs text-mut" role="status">推荐没加载出来，仍可手动选择。<button type="button" className="ml-1 underline" disabled={locked} onClick={ranked.reload}>重试推荐</button></p>}
 					{m.modelReason && <div className="mt-1 truncate text-[11px] text-mut2" data-testid="pm-reason" title={m.modelReason}>{m.modelReason}</div>}
 					<button className="mt-1 flex items-center gap-1 text-[11px] text-mut2 hover:text-fg" onClick={() => setOpen(!open)}>
 						<ChevronDown size={12} className={cx("transition-transform", open && "rotate-180")} /> 人设
@@ -138,13 +128,13 @@ function MemberEditor({ m, models, onChange, onRemove, manager, onManager, locke
 export function ProposalCard({ m }: { m: Message }) {
 	const meta = m.meta;
 	const isRoom = meta.kind === "room-proposal";
-	const models = useAvailableModels();
+	const catalog = useConfiguredModels();
+	const defaults = useModelDefaults();
 	const agents = useStore((s) => s.agents);
 	const [p, setP] = useState<Proposal>(() => meta.proposal ?? { name: "", purpose: "", manager: 0, members: [] });
 	const [mem, setMem] = useState<PMember>(() => meta.member ?? {});
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
-	const [pick, setPick] = useState("");
 	const pending = meta.status === "pending";
 	const done = meta.status === "confirmed";
 	const confirm = async () => {
@@ -183,7 +173,7 @@ export function ProposalCard({ m }: { m: Message }) {
 					</div>
 					<div className="grid gap-2 sm:grid-cols-2">
 						{p.members.map((x, i) => (
-							<MemberEditor key={i} m={x} models={models} locked={!pending} manager={i === p.manager} onManager={() => setP({ ...p, manager: i })} onChange={(y) => setMember(i, y)} onRemove={p.members.length > 1 ? () => remove(i) : undefined} />
+							<MemberEditor key={i} m={x} catalog={catalog} defaults={defaults} locked={!pending || busy} manager={i === p.manager} onManager={() => setP({ ...p, manager: i })} onChange={(y) => setMember(i, y)} onRemove={p.members.length > 1 ? () => remove(i) : undefined} />
 						))}
 					</div>
 					{pending && (
@@ -192,12 +182,7 @@ export function ProposalCard({ m }: { m: Message }) {
 								<Plus className="pa-ic" /> 新成员
 							</button>
 							{userAgents.length > 0 && (
-								<select className="pa-input !h-8 !w-auto !px-2 text-xs" value={pick} onChange={(e) => (e.target.value && setP({ ...p, members: [...p.members, { agentId: e.target.value }] }), setPick(""))} aria-label="拉入已有助理">
-									<option value="">拉入已有助理…</option>
-									{userAgents.map((a) => (
-										<option key={a.id} value={a.id}>{a.name}</option>
-									))}
-								</select>
+								<Select value="" options={userAgents.map((a) => ({ value: a.id, label: a.name }))} placeholder="拉入已有助理…" ariaLabel="拉入已有助理" testId="proposal-existing" className="max-w-full !h-8 text-xs" disabled={busy} onChange={(agentId) => setP({ ...p, members: [...p.members, { agentId }] })} />
 							)}
 						</div>
 					)}
@@ -205,7 +190,7 @@ export function ProposalCard({ m }: { m: Message }) {
 			) : (
 				<div className="space-y-2">
 					{meta.reason && <p className="text-xs text-mut">{meta.reason}</p>}
-					<MemberEditor m={mem} models={models} locked={!pending} onChange={setMem} />
+					<MemberEditor m={mem} catalog={catalog} defaults={defaults} locked={!pending || busy} onChange={setMem} />
 				</div>
 			)}
 			{err && <p className="mt-2 text-xs text-red-600">{err}</p>}

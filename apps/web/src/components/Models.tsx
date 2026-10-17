@@ -452,7 +452,7 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 					models={models}
 					providers={d?.providers ?? []}
 					value={cur}
-					thinking={levels.length > 1 ? { levels, current: curThinking, onPick: (l) => void saveThinking(l) } : null}
+					thinking={levels.length > 1 ? { levels, current: curThinking, onPick: (l) => { if (l) void saveThinking(l); } } : null}
 					onPick={(m) => void saveModel(m)}
 					text={text}
 					placement="down"

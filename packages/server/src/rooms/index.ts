@@ -21,7 +21,7 @@ import { attachmentInputFor, deleteRoomFiles, type FileRow, fileInfo, getFile, m
 import { isStopCommand } from "../interject.ts";
 import { getMessage, getMessageByClientId, insertMessage, listRoomMessages, updateMessage, type Message, type ReplySnapshot } from "../messages.ts";
 import { buildReplySnapshot, formatQuotedContext, ReplyError, resolveReplyTarget } from "../replies.ts";
-import { models, defaultModel, defaultThinking } from "../models.ts";
+import { models, defaultModel, defaultThinking, isThinkingLevel } from "../models.ts";
 import { requests } from "../requests.ts";
 import { getAgent, listAgents, runtime, setRoomHooks } from "../runtime.ts";
 import { listSkills } from "../skills.ts";
@@ -658,6 +658,12 @@ export interface ProposalMember {
 	skills?: string[];
 	model?: { provider: string; id: string } | null;
 	modelReason?: string;
+	/**
+	 * 用户在这个成员卡片上选的思考强度（Pi 的档位）。null / 缺省 / 不认识的值 = 跟默认（defaultThinking），
+	 * 有值时由服务端按**这个成员实际用到的模型**收敛到合法档位（clampThinking），换模型同理。
+	 * 已有助理（只填 agentId）忽略这个字段：不改用户原来那个助理的配置。
+	 */
+	thinking?: string | null;
 	/** 这个角色需要的能力（建群时管理者填，服务端据此挑模型） */
 	needs?: Strength[];
 	avatar?: string;
@@ -671,6 +677,16 @@ export interface RoomProposal {
 	members: ProposalMember[];
 }
 const COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
+
+/**
+ * 提议里的思考强度 → 落库值：不认识的档位 / 缺省都回 null（新建成员走 defaultThinking）；
+ * 有合法档位就按实际模型 clamp 成它支持的档位（与运行时 thinkingFor 同一份 Pi 元数据）。
+ */
+export function clampProposalThinking(thinking: unknown, model: { provider: string; id: string } | null): string | null {
+	if (!isThinkingLevel(thinking)) return null;
+	if (!model || !models?.getModel(model.provider, model.id)) return thinking;
+	return models.clampThinking(model.provider, model.id, thinking);
+}
 
 /** 校验并补全提议（模型只能选已配置的；不认识的换成默认模型并说明） */
 /**
@@ -702,6 +718,7 @@ export function normalizeProposal(p: Partial<RoomProposal>, o: { auto?: boolean 
 			skills: (m.skills ?? []).filter((s) => skills.has(s)),
 			model,
 			modelReason,
+			thinking: clampProposalThinking(m.thinking, model),
 			...(needs.length ? { needs } : {}),
 			avatar: String(m.avatar ?? "").slice(0, 8) || undefined,
 			color: m.color && /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : COLORS[i % COLORS.length],
@@ -719,7 +736,8 @@ export function createRoomAgent(roomId: string | null, m: ProposalMember, sort =
 	db.prepare("INSERT INTO agents(id, name, avatar, color, persona, description, model_provider, model_id, sort, created_at, scope, room_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(
 		id, name, [...(m.avatar || name)].slice(0, 2).join(""), m.color ?? COLORS[0], persona, (m.role ?? "").slice(0, 200), m.model?.provider ?? null, m.model?.id ?? null, 1000 + sort, now(), "room", roomId,
 	);
-	db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(defaultThinking(), id);
+	// 提议里给了合法档位就用它（已按这个成员的实际模型 clamp 过），否则保持原来的默认档行为
+	db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(m.thinking ?? defaultThinking(), id);
 	// 群成员声明的 skills 落成真实的启用集合（canonical id），不只是写进 persona 说明
 	const ids = [...new Set((m.skills ?? []).map((n) => listSkills().find((s) => s.name === n)?.id).filter((x): x is string => !!x))];
 	if (ids.length) setAssignedSkillIds(id, ids);
@@ -755,6 +773,7 @@ const memberSchema = Type.Object({
 	role: Type.String({ description: "在群里负责什么（一句话）" }),
 	persona: Type.String({ description: "这个成员的人设与工作方式（系统提示，几句话）" }),
 	needs: Type.Optional(Type.Array(Type.Union(STRENGTHS.map((s) => Type.Literal(s))), { description: `这个角色最需要的能力（1~3 个）：${STRENGTHS.map((s) => `${s}=${STRENGTH_LABEL[s]}`).join("，")}。系统会据此从用户配置的模型里挑合适的` })),
+	thinking: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("minimal"), Type.Literal("low"), Type.Literal("medium"), Type.Literal("high"), Type.Literal("xhigh"), Type.Literal("max"), Type.Null()], { description: "这个成员的思考强度；不填或 null = 跟默认。超出模型能力的档位会被服务端降到合法档位" })),
 	skills: Type.Optional(Type.Array(Type.String(), { description: "适合用的技能名（只能是技能库里已有的）" })),
 	avatar: Type.Optional(Type.String({ description: "一个 emoji" })),
 });

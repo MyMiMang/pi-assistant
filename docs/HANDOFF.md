@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> **beta.32 候选已验收，待提交打包（2026-10-18；当前公开Latest仍beta.31）**：用户休息前授权自主推进，后明确「弄完就提交打包」。本轮群成员模型/思考配置（服务分组/实际档位/确认持久化/概览即改/设置草稿/已有助理不覆盖）、live保存顺序/失败及字段同步、技能具体用途卡与不阻塞等待已完成。两端类型/构建、服务端68、纯检查58、群完整UI、真实Pi Mock技能确认链与Fast UI64通过；关键六张图主看。源码/证据/夹具纠正/未验与后续优先级见[beta.32收口](../progress-snapshots/beta32-final-validation.md)，[发布说明](release-notes/v0.1.0-beta.32.md)。Rovai研究只参考交互，未引入依赖或运行。本机候选未安装；下方beta.31及更早描述为对应历史，不把已实现写成已公开。
+
 > **当前公开版 v0.1.0-beta.31，Latest（2026-10-18 03:25，Asia/Shanghai）**：tag源码=`8b8260001ed283aca93e02b1ef59a433948d1ad8`，[Actions39060284276](https://github.com/MyMiMang/pi-assistant/actions/runs/39060284276)五平台构建、Mac/Windows安装启动冒烟及publish全部成功。[Release](https://github.com/MyMiMang/pi-assistant/releases/tag/v0.1.0-beta.31)非草稿、非预发布；主核13个非零资产、六条更新平台别名的版本/URL及非空签名与已发布`.sig`一致，Linux两份checksum与GitHub资产摘要一致。未本地安装，不把发布冒烟当完整真机任务验收。网络超时具体原因仍未确证。详见[最终发布记录](../progress-snapshots/beta31-ui-hotfix.md#发布结果)；下方“候选/构建中/公开beta30”均为发布前历史状态。
 
 > **当前公开版 beta.30；beta.31 修复候选（2026-10-18，已获全部完成后推送打包授权）**：beta.30 [Actions39055072812](https://github.com/MyMiMang/pi-assistant/actions/runs/39055072812)五平台/Mac与Windows安装启动/publish均成功，2026-10-17T18:09:53Z公开Latest；主核13资产非零、6条manifest平台别名/URL版本及非空签名。下方“构建中/公开版beta.29”均为历史状态。

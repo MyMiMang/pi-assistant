@@ -4,6 +4,8 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 
 这里列的是直接依赖和随产品分发 / 下载的组件；npm 与 Cargo 的传递依赖以 lockfile 为准。
 
+设计研究另参考 [Rovai AI v0.4.12](https://github.com/murray17/rovai-ai/tree/80d11450bd042224a2b7de1405501925a27d7bbf)（MIT，Copyright (c) 2026 rovai-ai contributors）。仅只读评估交互与源码契约，未复制代码、未引入或分发其运行时；[评估与永久链接](docs/research/rovai-ai-group-design-review.md)。
+
 ## 助理核心
 
 | 组件 | 版本 | 许可证 | 用途 |

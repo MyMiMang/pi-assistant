@@ -32,7 +32,7 @@ import { NUDGE_TYPE, skillsExtension } from "@pi-assistant/ext-skills";
 import { conversationForkParent, currentConversation, getConversation, setConversationSession } from "./conversations.ts";
 import { memory, type MemoryActor } from "./memory/index.ts";
 import { computeNext, createRoutine, deleteRoutine, getRoutine, listRoutines, setRoutineSpawner, setRoutineStatus, updateRoutine, validateCron, webhookPath } from "./routines.ts";
-import { DUP_THRESHOLD, hasCreateGrant, observeTurn, recordSuggestion, resolveSuggestion, saveSkillVersioned, searchSkills, skillDiff, type Suggestion, suggestionPrompt } from "./skill-intel.ts";
+import { DUP_THRESHOLD, acceptedProposalPrompt, awaitProposalAnswer, beginProposal, expireProposal, expireStaleSuggestions, hasCreateGrant, observeTurn, proposalPrompt, recordSuggestion, resolveSuggestion, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, submitProposal, type Suggestion, suggestionPrompt } from "./skill-intel.ts";
 import { deleteSkill, getSkill, skillPaths, skillsVersion } from "./skills.ts";
 import { assignedSkillIds, assignmentsVersion, enableSkillForAgent, unassignSkillEverywhere } from "./skill-assignments.ts";
 import { enabledSkillsFor, skillFilterFor } from "./skill-scope.ts";
@@ -423,7 +423,33 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 					if (sg) (pendingUpdates.delete(conversationId ?? ""), resolveSuggestion(sg, ok ? "accepted" : "declined"));
 					return ok;
 				},
-				observe: taskId ? undefined : (turn) => void maybeSuggest(agentId, conversationId, turn).catch(() => {}),
+				observe: taskId
+					? undefined
+					: (turn) => void maybeSuggest(agentId, conversationId, turn).catch(() => {}),
+				// 提议工具只在普通聊天轮里提供：巡检/子代理任务没有候选，也不应该提技能
+				propose: taskId
+					? undefined
+					: async ({ suggestionId, purpose }) => {
+						const r = submitProposal({ agentId, conversationId, suggestionId, purpose });
+						if (!r.ok) return { status: "rejected" as const, error: r.error };
+						// 卡片留给用户稍后回答，工具立即返回；不让无人点卡片占住模型执行。
+						void awaitProposalAnswer({
+							suggestionId,
+							question: r.question,
+							ask: async (question, options) => {
+								const res = await requests.question(agentId, null, question, options, false, conversationId);
+								return (res as { answer?: string }).answer;
+							},
+						}).then(async ({ status }) => {
+							if (status === "accepted") await runtime(agentId, conversationId).nudge(acceptedProposalPrompt(r.topic, purpose));
+							else if (status === "muted") {
+								setSuggestSettings({ enabled: false });
+								insertMessage({ agentId, conversationId: conversationId ?? undefined, role: "system", content: "好的，不再主动建议做成技能。可以在「设置 › 技能库」里重新打开。" });
+							}
+						}).catch(() => {});
+						return { status: "pending" as const };
+					},
+
 			}),
 		},
 		{
@@ -875,9 +901,9 @@ class AgentRuntime {
 
 	/** 让助理在后台接着做一轮（指令对模型可见，聊天里不显示）。返回 false 表示这一轮没能触发（无会话/模型或 Pi 报错）——
 	 *  调用方（如任务等待唤醒）据此重试，而不是把“静默失败”当成已唤醒。 */
-	async nudge(text: string): Promise<boolean> {
+	async nudge(text: string, opts: { onlyIdle?: boolean } = {}): Promise<boolean> {
 		const s = await this.ensure();
-		if (!s) return false;
+		if (!s || (opts.onlyIdle && isSessionBusy(s))) return false;
 		setAgentStatus(this.id, "running");
 		try {
 			await triggerHidden(s, NUDGE_TYPE, text);
@@ -922,32 +948,40 @@ function openOnHost(url: string) {
 /** 对话 → 正在等 diff 审批的“更新技能”建议 */
 const pendingUpdates = new Map<string, string>();
 
-async function maybeSuggest(agentId: string, conversationId: string | null, turn: { userText: string; tools: string[]; usedSkills: string[] }) {
+async function maybeSuggest(agentId: string, conversationId: string | null, turn: { userText: string; tools: string[]; usedSkills: string[]; reply?: string; ok?: boolean }) {
 	const sg: Suggestion | null = observeTurn({ agentId, conversationId, ...turn });
 	if (!sg) return;
-	const id = recordSuggestion(agentId, conversationId, sg);
+	const rt = runtime(agentId, conversationId);
+	const sourceUserId = latestUserMessage(conversationId)?.id;
 	// 稍等：让这轮的回复先显示出来，再提建议
 	await new Promise((r) => setTimeout(r, 400));
+	// 用户已经开始下一轮时不排一条过时建议（即使新轮很快已结束）。
+	if (rt.busy || latestUserMessage(conversationId)?.id !== sourceUserId) return;
 	if (sg.kind === "update") {
 		// 更新已有技能：直接让助理起草修改，用户在 diff 审批卡片上决定（一张卡片，不重复打扰）
+		const id = recordSuggestion(agentId, conversationId, sg);
 		pendingUpdates.set(conversationId ?? "", id);
-		await runtime(agentId, conversationId).nudge(suggestionPrompt(sg, "update"));
+		try {
+			await rt.nudge(suggestionPrompt(sg), { onlyIdle: true });
+		} finally {
+			// 正常保存时confirmUpdate已处理；模型没有起草/调用失败也不留悬空更新。
+			if (pendingUpdates.get(conversationId ?? "") === id) {
+				pendingUpdates.delete(conversationId ?? "");
+				resolveSuggestion(id, "expired");
+			}
+		}
 		return;
 	}
-	const CREATE = "做成技能";
-	const LATER = "这次不用";
-	const MUTE = "别再提醒";
-	const r = await requests.question(agentId, null, `刚才「${sg.topic.slice(0, 40)}」这件事步骤比较多，以后可能还会用到。要不要把做法存成技能？下次遇到同类任务我会直接照着做。`, [CREATE, LATER, MUTE], false, conversationId);
-	const answer = (r as { answer?: string }).answer;
-	if (answer === CREATE) {
-		resolveSuggestion(id, "accepted");
-		await runtime(agentId, conversationId).nudge(suggestionPrompt(sg, "create"));
-	} else if (answer === MUTE) {
-		resolveSuggestion(id, "muted");
-		const { setSuggestSettings } = await import("./skill-intel.ts");
-		setSuggestSettings({ enabled: false });
-		insertMessage({ agentId, conversationId: conversationId ?? undefined, role: "system", content: "好的，不再主动建议做成技能。可以在「设置 › 技能库」里重新打开。" });
-	} else resolveSuggestion(id, answer ? "declined" : "expired");
+	// 新建：先记候选，再复用当前会话一次建议轮总结用途（不另设模型服务/不换模型）；
+	// 模型调用 skill_propose 才出卡片；nudge 结束仍未提交（或失败/中断）就作废，不留半条 pending。
+	const id = beginProposal(agentId, conversationId, sg);
+	try {
+		await rt.nudge(proposalPrompt(sg, id), { onlyIdle: true });
+	} catch {
+		/* nudge 自己会把失败返回 false；异常同样清理 */
+	} finally {
+		expireProposal(id);
+	}
 }
 
 /** 每个对话一个运行时（独立的 Pi 会话） */
@@ -1145,6 +1179,7 @@ export async function bootstrap() {
 	startWaitScheduler();
 	// 不再预置任何助理：首次运行向导里由用户创建并命名第一个助理
 	const expired = requests.expireStale();
+	expireStaleSuggestions();
 	db.prepare("UPDATE messages SET status = 'interrupted' WHERE status IN ('streaming', 'running')").run();
 	// 主会话：上次运行中被中断 → 自动续跑
 	for (const a of listAgents()) {

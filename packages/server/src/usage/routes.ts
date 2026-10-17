@@ -3,7 +3,7 @@ import type { Hono } from "hono";
 import { bus } from "../bus.ts";
 import { setSetting } from "../db.ts";
 import { STRENGTH_LABEL, STRENGTHS, TIER_LABEL, type Strength } from "../model-profile.ts";
-import { providerNames } from "../models.ts";
+import { providerNames, models } from "../models.ts";
 import { cleanNeeds, configuredModels, getStrengthOverrides, modelProfiles, rankModels } from "../rooms/model-pick.ts";
 import { listAgents } from "../runtime.ts";
 import { db } from "../db.ts";
@@ -40,7 +40,8 @@ export function mountUsageRoutes(app: Hono<any>) {
 		return c.json(
 			ranked.map((r) => {
 				const m = byKey.get(`${r.provider}/${r.id}`) as { name?: string; reasoning?: boolean } | undefined;
-				return { ...r, name: m?.name, reasoning: m?.reasoning, providerName: names.get(r.provider) ?? r.provider, tierLabel: TIER_LABEL[r.tier] };
+				// thinking 必须是这个模型真实的可用档位（与 /api/models 同一份 Pi 元数据），界面不自己造 7 档
+				return { ...r, name: m?.name, reasoning: m?.reasoning, thinking: models.supportedThinking(r.provider, r.id), providerName: names.get(r.provider) ?? r.provider, tierLabel: TIER_LABEL[r.tier] };
 			}),
 		);
 	});

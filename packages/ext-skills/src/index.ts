@@ -30,11 +30,61 @@ export interface SkillsHost {
 	confirmUpdate(input: { name: string; before: SkillInfo; after: { description: string; body: string } }): Promise<boolean>;
 	/** 删除前请求用户批准 */
 	confirm(summary: string): Promise<boolean>;
-	/** 一轮结束：本轮用户原话、调用过的工具、读取过的技能 */
-	observe?(turn: { userText: string; tools: string[]; usedSkills: string[] }): void;
+	/** 一轮结束：本轮用户原话、调用过的工具、读取过的技能，以及“这一轮是不是明显没做成”的判断 */
+	observe?(turn: ObserveTurn): void;
+	/** 候选成立后由模型总结用途并提交（宿主校验归属/一次性/TTL/字段质量，再出卡片问用户）；没有候选时返回 rejected */
+	propose?(input: { suggestionId: string; purpose: { subject: string; does: string; when: string; gives: string } }): Promise<{ status: "pending" | "accepted" | "declined" | "muted" | "expired" | "rejected"; error?: string }>;
 }
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
 export const NUDGE_TYPE = "pia_skill_nudge";
+
+export interface ObserveTurn {
+	userText: string;
+	tools: string[];
+	usedSkills: string[];
+	/** 最后一段助手回复（截断；只用来筛掉明确失败的轮次） */
+	reply: string;
+	/** 这一轮没有报错/中断；**不代表任务已完成**，不能据此写“这件事做完了” */
+	ok: boolean;
+}
+
+type TurnMessage = {
+	role: string;
+	customType?: string;
+	content?: unknown;
+	stopReason?: string;
+	errorMessage?: string;
+	isError?: boolean;
+};
+
+/** 从本轮消息里取证据：工具序列、读过的技能、最后一段回复、是否明显失败。
+ *  不推测“做完了”，也不从 toolCall 参数推断产出的文件（那只是调用，不是结果）。 */
+export function readTurnEvidence(msgs: TurnMessage[]) {
+	const tools: string[] = [];
+	const used = new Set<string>();
+	let reply = "";
+	for (const m of msgs) {
+		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+		for (const b of m.content as { type: string; name?: string; arguments?: Record<string, unknown>; text?: unknown }[]) {
+			if (b.type === "text" && typeof b.text === "string") {
+				const t = b.text.trim();
+				if (t) reply = t;
+				continue;
+			}
+			if (b.type !== "toolCall" || !b.name) continue;
+			tools.push(b.name);
+			const p = String(b.arguments?.path ?? b.arguments?.file_path ?? b.arguments?.filePath ?? "");
+			const hit = p.match(/skills[\\/]([a-z0-9-]+)[\\/]SKILL\.md$/);
+			if (hit) used.add(hit[1]);
+		}
+	}
+	const lastAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
+	const last = msgs[msgs.length - 1];
+	const aborted = !!lastAssistant && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted" || !!lastAssistant.errorMessage);
+	// 最后一条是报错的工具结果也算这一轮没做成；正常文字回复不等于任务完成，只说明没有明显失败
+	const failed = aborted || (!!last && last.role === "toolResult" && !!last.isError);
+	return { tools, usedSkills: [...used], reply: reply.slice(0, 300), ok: !failed };
+}
 
 export function skillsExtension(host: SkillsHost) {
 	return (pi: ExtensionAPI) => {
@@ -46,24 +96,12 @@ export function skillsExtension(host: SkillsHost) {
 		});
 		pi.on("agent_end", (e) => {
 			if (!host.observe) return;
-			const msgs = e.messages as unknown as { role: string; customType?: string; content?: unknown }[];
+			const msgs = e.messages as unknown as TurnMessage[];
 			if (msgs.some((m) => m.customType === NUDGE_TYPE) || !lastPrompt.trim()) return;
-			const tools: string[] = [];
-			const used = new Set<string>();
-			for (const m of msgs) {
-				if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
-				for (const b of m.content as { type: string; name?: string; arguments?: Record<string, unknown> }[]) {
-					if (b.type !== "toolCall" || !b.name) continue;
-					tools.push(b.name);
-					const p = String(b.arguments?.path ?? "");
-					const hit = p.match(/skills[\\/]([a-z0-9-]+)[\\/]SKILL\.md$/);
-					if (hit) used.add(hit[1]);
-				}
-			}
 			const userText = lastPrompt;
 			lastPrompt = "";
 			try {
-				host.observe({ userText, tools, usedSkills: [...used] });
+				host.observe({ userText, ...readTurnEvidence(msgs) });
 			} catch {
 				/* 建议只是锦上添花，出错不影响对话 */
 			}
@@ -82,6 +120,32 @@ export function skillsExtension(host: SkillsHost) {
 				return text(hits.map((h) => `- ${h.name}${h.builtin ? "（内置，只读）" : ""}  相似度 ${h.score.toFixed(2)}：${h.description}`).join("\n"));
 			},
 		});
+
+		if (host.propose)
+			pi.registerTool({
+				name: "skill_propose",
+				label: "提议存成技能",
+				description:
+					"（内部流程）把这一轮实际做的事总结成给用户看的用途（做什么/什么时候用/能给你什么），由系统校验后问用户要不要存成技能。只有系统在这一轮末尾给了 suggestionId 时才能调用；看不清或这一轮没做成就不要调用。",
+				promptSnippet: "skill_propose: 总结本轮可复用用途并问用户是否存成技能",
+				parameters: Type.Object({
+					suggestionId: Type.String({ description: "系统给的候选 id" }),
+					subject: Type.String({ description: "这件事的短名字，如“会议纪要整理”，不要写工具名" }),
+					does: Type.String({ description: "实际做了哪几步，说人话，如“从录音整理议题、决定和负责人”" }),
+					when: Type.String({ description: "以后什么时候用得上，如“下次整理会议录音”" }),
+					gives: Type.String({ description: "这一轮真的给出过什么，如“带待办清单的纪要”" }),
+				}),
+				annotations: { readOnlyHint: true },
+				async execute(_id, p) {
+					const r = await host.propose!({ suggestionId: p.suggestionId, purpose: { subject: p.subject, does: p.does, when: p.when, gives: p.gives } });
+					if (r.status === "pending") return text("用途卡片已展示，尚未得到用户同意。现在直接结束本轮，不输出正文，不调用其他工具，不保存技能；用户以后点同意时系统会安排继续。");
+					if (r.status === "accepted")
+						return text(`用户同意把「${p.subject}」存成技能。批准的用途是：做什么：${p.does}；什么时候用：${p.when}；能给你：${p.gives}。先用 skill_search 查有没有相似的技能，再调用 skill_save 保存（有相似的就同名更新，保留差异审批）。description 和步骤须对应这些用途，只写本轮实际做过的流程；完成后用一句话告诉用户技能名。`);
+					if (r.status === "rejected") return text(`这次不能提这个建议：${r.error}。不要向用户提技能建议，也不要调用 skill_save。`);
+					if (r.status === "muted") return text("用户不想再收到这类建议，已经关闭。不要提，也不要调用 skill_save。");
+					return text("用户没有同意，这次不要保存技能，也不要再提。");
+				},
+			});
 
 		pi.registerTool({
 			name: "skill_save",

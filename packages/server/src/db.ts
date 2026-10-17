@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS pi_packages (
   status TEXT NOT NULL, installed_path TEXT, resources TEXT, error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS skill_suggestions (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, kind TEXT NOT NULL, skill TEXT,
-  topic TEXT NOT NULL, status TEXT NOT NULL, request_id TEXT, created_at INTEGER NOT NULL, resolved_at INTEGER);
+  topic TEXT NOT NULL, purpose TEXT, status TEXT NOT NULL, request_id TEXT, created_at INTEGER NOT NULL, resolved_at INTEGER);
 CREATE TABLE IF NOT EXISTS rooms (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT '', manager_id TEXT, caps TEXT NOT NULL DEFAULT '{}',
   unread INTEGER NOT NULL DEFAULT 0, paused TEXT, sort INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -171,6 +171,7 @@ for (const [table, col, ddl] of [
 	["messages", "reply_snapshot", "TEXT"],
 	["messages", "client_id", "TEXT"],
 	["room_turns", "source_message_id", "TEXT"],
+	["skill_suggestions", "purpose", "TEXT"],
 	["requests", "room_id", "TEXT"],
 	["agents", "scope", "TEXT NOT NULL DEFAULT 'user'"],
 	["agents", "room_id", "TEXT"],

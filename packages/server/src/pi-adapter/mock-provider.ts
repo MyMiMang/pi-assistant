@@ -203,6 +203,18 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 		return fauxAssistantMessage("月度汇总做好了：三个月合计 361，三月最高（143）。");
 	}
 	if (/^（技能建议/.test(u)) {
+		// 自动建议先提交具体用途，宿主展示卡片；同意后才查重/保存。
+		if (u.startsWith("（技能建议的内部步骤")) {
+			if (last.role === "toolResult" && last.toolName === "skill_propose") {
+				if (!textOf(last).startsWith("用户同意")) return fauxAssistantMessage("");
+				return fauxAssistantMessage([fauxToolCall("skill_search", { query: "月度汇总 按月统计" })]);
+			}
+			if (last.role !== "toolResult") {
+				const suggestionId = u.match(/suggestionId 用 (sg_[a-z0-9]+)/)?.[1];
+				if (!suggestionId) return fauxAssistantMessage("");
+				return fauxAssistantMessage([fauxToolCall("skill_propose", { suggestionId, subject: "月度数据汇总", does: "汇总各月销售额，找出最高月份并统计记录数", when: "下次整理每月销售数据时", gives: "销售合计、最高月份和记录数的摘要" })]);
+			}
+		}
 		const update = u.match(/技能「([a-z0-9-]+)」/);
 		if (last.role === "toolResult" && last.toolName === "skill_save") return fauxAssistantMessage(/没有|不要/.test(textOf(last)) ? "好的，这次就不存了。" : `存好了 🧩 ${textOf(last)}`);
 		if (last.role === "toolResult" && last.toolName === "skill_search" && !update)

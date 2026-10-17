@@ -450,20 +450,17 @@ app.patch("/api/agents/:id", async (c) => {
 	if (!a) return c.json({ error: "not_found" }, 404);
 	const b = await c.req.json<AgentInput>();
 	if (b.model !== undefined && b.model && !models.getModel(b.model.provider, b.model.id)) return c.json({ error: "模型不存在" }, 400);
+	// 先校验整份输入，再写任何字段：失败时不能已经悄悄更改模型/资料。
+	if (b.thinking !== undefined && b.thinking !== null && !THINKING.includes(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
+	if (b.fast !== undefined && b.fast !== null && typeof b.fast !== "boolean") return c.json({ error: "Fast 开关不对" }, 400);
 	const name = b.name !== undefined ? b.name.trim().slice(0, 40) || a.name : a.name;
 	db.prepare("UPDATE agents SET name = ?, avatar = ?, color = ?, persona = ?, description = ?, model_provider = ?, model_id = ? WHERE id = ?").run(
 		name, b.avatar !== undefined ? cleanAvatar(b.avatar, name) : a.avatar, b.color ?? a.color, b.persona ?? a.persona, b.description ?? a.description,
 		b.model === undefined ? a.model_provider : (b.model?.provider ?? null), b.model === undefined ? a.model_id : (b.model?.id ?? null), a.id,
 	);
-	if (b.thinking !== undefined) {
-		if (b.thinking !== null && !THINKING.includes(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
-		db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(b.thinking, a.id);
-	}
+	if (b.thinking !== undefined) db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(b.thinking, a.id);
 	// Fast 与思考强度是两个独立字段：这里只改 fast，不动 thinking / 模型选择
-	if (b.fast !== undefined) {
-		if (b.fast !== null && typeof b.fast !== "boolean") return c.json({ error: "Fast 开关不对" }, 400);
-		db.prepare("UPDATE agents SET fast = ? WHERE id = ?").run(b.fast ? 1 : 0, a.id);
-	}
+	if (b.fast !== undefined) db.prepare("UPDATE agents SET fast = ? WHERE id = ?").run(b.fast ? 1 : 0, a.id);
 	onAgentChanged(a.id);
 	bus.emit({ type: "agents.changed" });
 	return c.json(agentJson(getAgent(a.id)!));

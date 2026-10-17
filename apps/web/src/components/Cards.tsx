@@ -68,7 +68,7 @@ export function QuestionCard({ m }: { m: Message }) {
 		<div className="pa-card pa-question w-full max-w-[560px]">
 			<div className="pa-card-top">
 				<Sparkles className="pa-ic accent" />
-				<b>{meta.question}</b>
+				<b className="whitespace-pre-line">{meta.question}</b>
 				{!pending && <span className="pa-tag">已回答</span>}
 			</div>
 			<div className="pa-opts">

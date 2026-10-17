@@ -12,6 +12,7 @@ import { AuthImage } from "./Attachments";
 import { openFilePreview } from "./FilePreview";
 import { openImageViewer } from "./ImageViewer";
 import { AgentEditor } from "./AgentEditor";
+import { ModelPicker } from "./ModelPicker";
 import { AgentImageModel } from "./ImageModels";
 import { MemoryTab } from "./MemoryTab";
 import { AgentExtensions } from "./AgentExtensions";
@@ -93,9 +94,10 @@ function Overview({ agentId }: { agentId: string }) {
 			</div>
 			<section className="pa-info">
 				<div className="pa-pane-label">设置</div>
-				<div className="pa-row">
-					<span>模型</span>
-					<b className="truncate">{agent.model ? agent.model.id : "未配置"}</b>
+				<div className="min-w-0 space-y-2" data-testid="member-model-settings">
+					<div className="text-xs text-mut">模型与思考强度</div>
+					<ModelPicker agentId={agentId} hideTextInNarrow={false} buttonClass="max-w-full" allowThinkingFollow />
+					<p className="text-xs text-mut2">立即保存，后续请求生效；同一助理的私聊和群聊共用。</p>
 				</div>
 				<div className="pa-row">
 					<span>沙箱</span>
@@ -232,7 +234,7 @@ function AgentSettings({ agentId }: { agentId: string }) {
 	if (!agent) return null;
 	return (
 		<div className="space-y-6">
-			<AgentEditor agent={agent} />
+			<AgentEditor key={agent.id} agent={agent} />
 			<AgentImageModel agentId={agentId} />
 			<SubagentModels agentId={agentId} />
 			<AgentExtensions agentId={agentId} />
