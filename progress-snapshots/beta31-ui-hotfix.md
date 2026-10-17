@@ -1,6 +1,16 @@
 # beta.31 UI 修复验收（2026-10-18）
 
-用户反馈beta.30主题介绍越框、助手回复只剩引用、完整模型目录太小；补充轻微思考胶囊动态、暗夜排首且默认，明确全部完成后提交打包。尚未安装候选App，不以源码测试冒充真机。
+用户反馈beta.30主题介绍越框、助手回复只剩引用、完整模型目录太小；补充轻微思考胶囊动态、暗夜排首且默认，明确全部完成后提交打包。beta.31现已公开Latest；未替用户本地安装，不以源码测试冒充真机。
+
+## 发布结果
+
+- 等待`tw_mvcregc0c14pyy`已核验收口，仅处理一次；tag `v0.1.0-beta.31`固定源码`8b8260001ed283aca93e02b1ef59a433948d1ad8`，未移动tag或替换已发布资产。
+- [Actions39060284276](https://github.com/MyMiMang/pi-assistant/actions/runs/39060284276)结论success：prepare、Mac arm64/Intel x64、Windows x64、Linux x64/arm64、Mac与Windows安装启动smoke、publish均success；cleanup-dry-run按正式发布预期skipped。
+- [Release](https://github.com/MyMiMang/pi-assistant/releases/tag/v0.1.0-beta.31)于`2026-10-17T19:25:00Z`（上海`2026-10-18 03:25`）公开，主会话fresh核验为Latest、非draft、非prerelease。
+- 13个非零资产齐全：两份Mac DMG、两份Mac app更新tar及sig、Windows installer及sig、Linux双架构tar及sha256、latest.json。
+- 更新清单版本`0.1.0-beta.31`；六条平台别名（darwin-aarch64/-app、darwin-x86_64/-app、windows-x86_64/-nsis）的URL均指向本release对应资产，非空signature逐条等于公开`.sig`文件。此处为一致性核验，未声称独立做了签名密码学验证。
+- 两份Linux sha256文件名称/64位摘要格式正确，且摘要与GitHub资产digest一致；未重新下载完整tar到本机重算。脱敏结构化证据：[published-verification.json](../evidence/beta31-release/published-verification.json)。
+- 没有自动安装/重启生产；完整真机任务、网络超时根因仍按下述限制保留。
 
 ## 最终实现
 
@@ -24,5 +34,5 @@
 ## 边界与后续
 
 - 网络错误没有被本次根治。SDK审计提示Pi请求deadline默认300s、底层连接超时可能约10s，但缺每次底层cause，不将时长相似写成TCP/代理/网关的确证；不调大timeout、不加重复重试、不静默换模型。Pi自动重试进度尚未接成App专门状态，后续可独立设计，不能静默删掉失败历史。
-- 独立只读复核未发现发布阻塞；极小窗口（高<约280px）最小高度、浏览器根字号非16px时窄屏6rem与96px换算仍有边界风险，未扩展为此次已验证范围。主审进程检查无本次测试/launch-memory残留。未跑全量测试/全量e2e/跨平台完整任务/真机WebKit候选；Chromium模拟手机不等于物理手机。发布按现有all-intel五平台及Mac/Windows安装启动smoke，结果待workflow。未自动安装。
-- beta.30 Actions39055072812已全部成功，2026-10-17T18:09:53Z公开Latest；主核13非零资产、6条更新平台别名/URL版本一致/签名非空。beta.31修复将用新tag，不移动beta.30。
+- 独立只读复核未发现发布阻塞；极小窗口（高<约280px）最小高度、浏览器根字号非16px时窄屏6rem与96px换算仍有边界风险，未扩展为此次已验证范围。主审进程检查无本次测试/launch-memory残留。未跑全量测试/全量e2e/跨平台完整任务/真机WebKit候选；Chromium模拟手机不等于物理手机。发布按现有all-intel五平台及Mac/Windows安装启动smoke全部通过，见发布结果；仍未自动安装。
+- beta.30 Actions39055072812已全部成功，2026-10-17T18:09:53Z公开Latest；主核13非零资产、6条更新平台别名/URL版本一致/签名非空。beta.31已用新tag发布，未移动beta.30。

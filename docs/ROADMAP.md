@@ -1,8 +1,8 @@
-> **2026-10-18 撤下电脑快速候选选择器（beta.30 候选，未发布）**：用户决定撤下「电脑设置 › 快速操作模型」的开关 / 选择入口、agent 的 `fast_pick_action` 与相关引导，以及依赖它的本地 Laya 安装卡 / 实际操作测试 / 下载入口；**保留**主模型直接 CUA / host CDP / 截图鼠键、通用 classifier 服务元数据与聊天请求级 Fast。状态：运行时注册 / HTTP 路由 / UI 入口已移除，研究源码、单测、scripts、evidence **保留为非产品**；不删用户已安装的 Laya 文件、不动在跑的生产 Laya。验收点：`fast_pick_action` 不再注册、两处电脑设置无入口、模型服务无 benchmark / Laya 死入口、两端 tsc + 定向单测 + web build 通过；真机与全量测试未跑。详见 HANDOFF 顶条。
+> **历史需求记录（已随beta.30发布）：撤下电脑快速候选选择器**：用户决定撤下「电脑设置 › 快速操作模型」的开关 / 选择入口、agent 的 `fast_pick_action` 与相关引导，以及依赖它的本地 Laya 安装卡 / 实际操作测试 / 下载入口；**保留**主模型直接 CUA / host CDP / 截图鼠键、通用 classifier 服务元数据与聊天请求级 Fast。状态：运行时注册 / HTTP 路由 / UI 入口已移除，研究源码、单测、scripts、evidence **保留为非产品**；不删用户已安装的 Laya 文件、不动在跑的生产 Laya。验收点：`fast_pick_action` 不再注册、两处电脑设置无入口、模型服务无 benchmark / Laya 死入口、两端 tsc + 定向单测 + web build 通过；真机与全量测试未跑。详见 HANDOFF 顶条。
 
 # 需求与计划（ROADMAP）
 
-> **beta.31已触发发布**：tag源码`8b82600`，[Actions39060284276](https://github.com/MyMiMang/pi-assistant/actions/runs/39060284276)构建中；当前Latest beta.30，最终构建/安装启动/发布资产签名仍待核验，不自动安装。以下“下一步新tag”是触发前历史记录。
+> **已发布 beta.31 / Latest（2026-10-18 03:25，Asia/Shanghai）**：tag源码`8b82600`，[Actions39060284276](https://github.com/MyMiMang/pi-assistant/actions/runs/39060284276)五平台构建、Mac/Windows安装启动及publish全部成功；主核13非零资产、六条更新平台URL/版本/非空签名文件一致、两份Linux checksum与GitHub摘要一致。五项UI改动已发布，详见[最终验证与发布记录](../progress-snapshots/beta31-ui-hotfix.md#发布结果)。未自动安装，网络超时具体原因未根治。以下“候选/构建中/下一步新tag”均为历史记录。
 
 > **2026-10-18 状态更新**：公开版已为beta.30（39055072812五平台/安装启动/公开成功，13资产/清单签名已核），下方beta.29与构建中为历史。beta.31五项UI反馈已实现并完成定向源码/Chromium验收，详见[修复与验证](../progress-snapshots/beta31-ui-hotfix.md)；用户已授权全部完成后提交打包，下一步新tag发布，未自动安装。网络超时具体原因未确证，Pi重试进度可视化列后续，不以错误可见冒充网络根治。
 
