@@ -807,11 +807,11 @@ async function runHandoffMode() {
 	// stepwise：主模型每步自己观察后给一个局部 goal；每次都是一次真实 handler 调用。
 	// 不 reset、不重新导航、不清熔断、不额外 raw；同一 key 连续低信 → 熔断自然保持（主模型自己接管）。
 	let fastHandlerRuns = 0;
-	const runFastStep = async (goal, expected) => {
+	const runFastStep = async (goal, expected, candidates) => {
 		if (fastHandlerRuns >= handoffMod.MAX_FAST_STEPS) throw new Error(`fast 真实 handler 最多 ${handoffMod.MAX_FAST_STEPS} 次（本次已跑 ${fastHandlerRuns}）`);
 		fastHandlerRuns++;
 		const t0 = Date.now();
-		const args = { goal, pid: handle.pid, window_id: handle.windowId, prefix: "hostpc", browser: { target_id: handle.targetId, tab_id: handle.tabId }, ...(expected ? { expected } : {}) };
+		const args = { goal, pid: handle.pid, window_id: handle.windowId, prefix: "hostpc", browser: { target_id: handle.targetId, tab_id: handle.tabId }, ...(expected ? { expected } : {}), ...(candidates ? { candidates } : {}) };
 		const out = await definition.execute(`handoff-fast-${fastHandlerRuns}`, args, undefined, () => {}, ctx);
 		const wallMs = Date.now() - t0;
 		const text = (out?.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
@@ -827,7 +827,7 @@ async function runHandoffMode() {
 		} catch (e) {
 			ui = { ok: false, error: String(e instanceof Error ? e.message : e).slice(0, 300) };
 		}
-		current.fastSteps.push({ goal, expected: expected ?? null, handlerKind: kind, handlerText: text, handlerWallMs: wallMs, machine: { state: ev.state, updatedAt: ev.updatedAt }, ui, refCount, at: new Date().toISOString() });
+		current.fastSteps.push({ goal, candidates: candidates ?? null, expected: expected ?? null, handlerKind: kind, handlerText: text, handlerWallMs: wallMs, machine: { state: ev.state, updatedAt: ev.updatedAt }, ui, refCount, at: new Date().toISOString() });
 		report.handoff.fastHandlerRuns = fastHandlerRuns;
 		log(`fast#${fastHandlerRuns} goal=${JSON.stringify(goal)} kind=${kind} ${wallMs}ms`);
 		return { text, kind, wallMs };

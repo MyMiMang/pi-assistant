@@ -11,7 +11,7 @@
  *     读真实快照、自己挑 ref、自己点。**不选目标、不给坐标、不执行 JS、不替主模型决策。**
  *
  * stepwise 场景（`PIA_BENCH_SCENARIO=stepwise`，只与 `PIA_BENCH_HANDOFF=1` 同用）额外提供**可选**命令
- * `fast{goal,expected?}`：主模型在**同一个页面**上给出**本步**局部目标，经真实注册的 definition 跑一次快模型选择
+ * `fast{goal,expected?,candidates?}`：主模型在**同一个页面**上给出**本步**局部目标，经真实注册的 definition 跑一次快模型选择
  * （不 reset / 不导航 / 不清熔断 / 不额外 raw），返回真实 handler 文本并作废旧 ref。每轮最多 6 次，计数在 await 前。
  *
  * 诚实边界：
@@ -62,7 +62,7 @@ function parseFastExpected(raw) {
 
 /**
  * 纯校验：控制面命令白名单 + 形状。任何多余 / 未知字段都不透传到 MCP（只挑白名单字段）。
- * @returns {{op:string, ref?:string, inputRoute?:string, action?:string, deltaY?:number, deltaX?:number, task?:string, fast?:boolean, goal?:string, expected?:object} | {error:string}}
+ * @returns {{op:string, ref?:string, inputRoute?:string, action?:string, deltaY?:number, deltaX?:number, task?:string, fast?:boolean, goal?:string, expected?:object, candidates?:Array<{role?:string,label:string}>} | {error:string}}
  */
 export function parseHandoffCommand(raw) {
 	if (!isObj(raw)) return { error: "命令必须是 JSON 对象" };
@@ -77,6 +77,15 @@ export function parseHandoffCommand(raw) {
 			const goal = raw.goal.trim();
 			if (goal.length < 1 || goal.length > MAX_FAST_GOAL_CHARS) return { error: `goal 长度必须是 1..${MAX_FAST_GOAL_CHARS} 个字符` };
 			out.goal = goal;
+			if (raw.candidates !== undefined) {
+				if (!Array.isArray(raw.candidates) || raw.candidates.length < 2 || raw.candidates.length > 32) return { error: "candidates 必须是 2..32 个精确 selector" };
+				out.candidates = [];
+				for (const item of raw.candidates) {
+					if (!isObj(item) || typeof item.label !== "string" || !item.label.trim() || item.label.length > 120) return { error: "candidate.label 必须是 1..120 字符" };
+					if (item.role !== undefined && (typeof item.role !== "string" || !item.role.trim() || item.role.length > 80)) return { error: "candidate.role 必须是 1..80 字符" };
+					out.candidates.push({ label: item.label.trim(), ...(item.role !== undefined ? { role: item.role.trim() } : {}) });
+				}
+			}
 			const parsed = parseFastExpected(raw.expected);
 			if (parsed.error) return { error: parsed.error };
 			if (parsed.expected) out.expected = parsed.expected;
@@ -208,7 +217,7 @@ export function createHandoffControl(options) {
 			state.fastSteps++;
 			state.refs = new Map();
 			try {
-				const out = await onFast(cmd.goal, cmd.expected);
+				const out = await onFast(cmd.goal, cmd.expected, cmd.candidates);
 				return {
 					fast: state.fastSteps,
 					remaining: Math.max(0, MAX_FAST_STEPS - state.fastSteps),
@@ -316,6 +325,7 @@ export function summarizeHandoff(entries) {
 		// 逐步评估：每一步单独一条（目标 / 真实选择结果 / 后置独立观察的机器状态）；主模型接管点击另算。
 		fastSteps: (e.fastSteps ?? []).map((s) => ({
 			goal: s.goal,
+			candidates: s.candidates ?? null,
 			expected: s.expected ?? null,
 			handler: { kind: s.handlerKind ?? null, text: s.handlerText ?? null, wallMs: s.handlerWallMs ?? null },
 			machine: s.machine ?? null,

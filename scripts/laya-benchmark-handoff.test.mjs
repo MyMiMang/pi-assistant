@@ -46,6 +46,19 @@ test("fast 命令：goal 1..240、expected 只收 role / label_contains / exists
 	assert.match(parseHandoffCommand({ op: "fast", goal: "x", expected: "role" }).error, /必须是对象/);
 });
 
+test("fast 显式范围：只透传 selector，不接自由工具参数；非法形状不调用", async () => {
+	const candidates = [{ role: "option", label: "JSON", args: { ref: "evil" } }, { role: "option", label: "CSV" }];
+	const parsed = parseHandoffCommand({ op: "fast", goal: "选择 JSON", candidates });
+	assert.deepEqual(parsed.candidates, [{ role: "option", label: "JSON" }, { role: "option", label: "CSV" }]);
+	assert.ok(parseHandoffCommand({ op: "fast", goal: "x", candidates: [{}] }).error);
+	assert.ok(parseHandoffCommand({ op: "fast", goal: "x", candidates: [{ label: "a" }, { label: "b", role: 3 }] }).error);
+	let received;
+	const { control } = harness({ control: { onFast: async (...args) => { received = args; return { kind: "fallback", text: "low_confidence" }; } } });
+	const result = await call(control, { op: "fast", goal: "选择 JSON", candidates });
+	assert.equal(result.body.handlerKind, "fallback");
+	assert.deepEqual(received, ["选择 JSON", undefined, parsed.candidates]);
+});
+
 test("refs 只读描述：没有 element_token 的节点不进列表，clickable 只描述能力", () => {
 	const refs = describeRefs(els);
 	assert.deepEqual(refs.map((r) => r.ref), ["p1:1", "p1:2", "p1:3"]);

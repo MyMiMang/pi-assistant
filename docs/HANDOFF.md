@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> **显式候选范围接口真验（2026-10-18，未发布）**：补齐测试 handoff 的 `candidates` 白名单透传与报告，产品代码未改，控制面16/16通过。一次已知页接口验收：2次真实选择，导出下拉正确、CSV/JSON二选一低可信回退；主会话5个新ref点击完成。不能算新页面质量基准或总体准确率提升。外监护exit0/cleanup.ok，独立确认生产模型running/health.ok/MPS。通用权重仍不推荐默认；下一步专项v19s约644MB下载与隔离新页实验待用户选择，未下载或切换模型。详见[接口真验与具体实验条件](../progress-snapshots/laya-explicit-scope-real-2026-10-18.md)。公开版仍beta.29。
+
 > **beta.30 候选整合（2026-10-17，worktree `beta30-followup-integration`，基 `release-candidate-validation` `2e87f51`；未 push / 未 tag / 未打包）**：本地 `--no-ff` 合入三棵 frozen 分支，**代码只有一处冲突**（`e2e/fixtures/native-launch-env.mjs`），已按「Fast 版为机制基准」解掉。当前公开版仍是 **beta.29（tag `ab8e0f3`）**，本段之下各条是三个来源各自的进度快照，作为证据保留、不再代表当前整合状态。
 > - **合并（local only）**：① `thinking-slider-visual-refinement` `8b8d836` → `49b1dec`；② `fast-inference-mode-implementation` `f7ef9b1` → `57cd8d7`；③ `laya-benchmark-snapshot-fix` `3462f8e` → `6344aba`。三者 merge-base **都是** `2e87f51`；`8b8d836` 本身是 `f7ef9b1` 的祖先，所以前两次合并无代码冲突（Fast 的 `ModelPicker` 改动已含滑块视觉最终形态）。
 > - **冲突与取舍**：`e2e/fixtures/native-launch-env.mjs` 是 add/add，取 **Fast 版**——`diverged` 在覆盖 HOME **之前**判定，与生产 TS 一致；**不并入** Laya 拷贝里「先覆盖 HOME 再比较、恒为 false → 父进程合成 TMPDIR 漏给 Chrome」的旧缺陷（fixture 的「合成父环境」用例正是钉这条）。Laya 的**生产**机制（`packages/server/src/native-launch-env.ts`、`mcp-env-launcher.mjs`、`host-control.ts` 的 `driverEnv()` / `nativeLaunchCommand()`、`browser.ts` 两处本机 Chrome）照常并入；`host-control.test.ts` 的启动重试边界 / 系统授权三值 / 只读探测缓存断言仍全过。`docs/DESIGN.md` 两段（§5.19.3 原生子进程启动环境、§32 请求级 Fast）都在，HANDOFF/ROADMAP 无残留冲突标记。
