@@ -132,13 +132,13 @@
    - **MCP 通道必须全量替换环境**：Pi `StdioTransport` 默认 `{...process.env, ...env}`，只传“删过键”的 env 删不掉任何东西（`CFFIXED_USER_HOME` / 合成 `TMPDIR` 会从父进程回来）。所以走项目自有 `nativeLaunchCommand()` + `src/mcp-env-launcher.mjs`（argv 只带键名与非敏感 HOME，不把整份环境塞进 argv）。证据：`test/native-launch-env-stdio.test.ts` 用**真实 `StdioTransport`** 起只回显白名单的无害子进程，先复现红再证明绿。
    - **清理前证明归属**：`releasePrepared()` 在 `kill_app` 前用当前 `list_windows(pid)` 复核「同一个 window_id 仍属于同一个 pid」（还没 pin 到窗口时要求该 pid 当下确实持有窗口），证明不了就**不杀**并 `console.warn` 留痕。不再按历史 pid 盲杀（PID 复用会误杀别人的进程）。
 
-**未验**：以上 1–3 只有假 invoke / 假 deps 的定向单测（`fast-computer-benchmark*` 37/37），**没有再跑真实隔离浏览器**（等主会话给测试槽许可 + 新鲜进程状态）；「钥匙串弹窗已修好」属未证。
+**当时的验证范围**：以上 1–3 先只有假 invoke / 假 deps 的定向单测（`fast-computer-benchmark*` 37/37）。**2026-10-17 已在真实隔离 daemon + 真实隔离浏览器上跑通**（§9.7）：1–3 的行为在真实链路上生效，4 个任务里没有出现 ref 作废 / owner 不符 / 绑定失败。「钥匙串弹窗已修好」仍属未证（见 §9.7 边界）。
 
 ### 9.5 已验收的证据（真实驱动，非 mock）
 
 `scripts/laya-benchmark-driver-smoke.mjs`（手动运行，不进默认 `npm test`）：真实 `cua-driver mcp --socket …` → `browser_prepare`（隔离 new）→ `list_windows` → bind → `browser_navigate` → 快照 pin → 真实 fixture HTTP 页 → 真实 `browser_click` → 双证据判分。**chooser 是脚本固定的（按 label 关键词选），所以它证明的是 driver / 隔离窗口 / fixture / 动作 / 判分链路真实可用，不评估 Laya 的选择质量**；模型质量要另跑真实 benchmark。2026-10-17 本机实测 4/4 任务 `correctness:"correct"`（pin 形如 `p4`）。该 smoke 的 chooser 固定、**只证链路**。
 
-### 9.6 环境污染验证的正确做法（计划，**未运行**，等主 review 授权）
+### 9.6 环境污染验证的正确做法（计划；**2026-10-17 已按此执行，结果见 §9.7**）
 
 为什么不能拿现有 smoke 证明“环境已修”：
 
@@ -149,4 +149,36 @@
    - 只启**一个**自有浏览器；结束时 `finally` 关自有浏览器并 `stop` 自有 socket 的 daemon，**不碰生产 App 的 socket / Laya**；
    - 证据：daemon 启动时的 env 断言（白名单：HOME / CFFIXED / TMPDIR 三个布尔与值）+ 驱动自报 pid + 真实动作双证据；不打印其它 env、不读 token / credentials。
 3. 真实 Laya 能力验收要走**生产的 `buildChooser` / `selectFastAction`**，不能用脚本关键词 chooser 冒充（那样只是链路 smoke，不是模型 4/4）。优先用本机回环桥接**已运行**的 Laya 服务；不得读 token / credentials；若只能自建 runtime，必须用正式 API 停掉原进程并外部 `finally` 恢复。
-4. 本分支当前**没有**跑任何真实浏览器 / 驱动 / 模型（测试闸门未通过）：§9.4 的 1–4 只有假 invoke / 假 deps 的定向单测。
+4. ~~本分支当前没有跑任何真实浏览器 / 驱动 / 模型~~：**2026-10-17 已按本节执行一次真实验收**（独占 socket daemon + 驱动自有隔离浏览器 + 真实本地 Laya），结果与限制见 §9.7。
+
+### 9.7 真实验收结果（2026-10-17，隔离 daemon + 真实 Laya 4 题）
+
+脚本 `scripts/laya-benchmark-isolated-harness.mjs`（手动运行，不进 `npm test`；`npm run smoke:laya-benchmark` 同一条）。它不是另一套实现，跑的都是生产件：`nativeLaunchEnvForChild` / `hostMcpCommand`（自有启动器，`inheritEnv:false`、环境全量替换）/ `cua-driver serve`（macOS LaunchServices 打开官方签名 `CuaDriver.app`）/ `createInvokeBenchmarkDriver`（`browser_prepare{isolated_new}` → `list_windows` → bind → `browser_navigate` → 快照 pin → `browser_click`）/ `LocalLayaManager` / `buildChooser` / `selectFastAction` / `createCuaTrialRunner` / fixture 双证据判分。
+
+**证据（repo 内）**：`evidence/laya-benchmark-real/report-2026-10-17T12-34-52-131Z.json`（含 raw chooser 诊断）与 `report-2026-10-17T12-33-19-290Z.json`（同一流程、无诊断），日志同目录 `run-*.log`。
+
+**隔离与环境（本次实测值）**
+- 宿主与 daemon 白名单三项均为原生：`HOME=/Users/dengdeng`（= OS 账户家目录）、`CFFIXED_USER_HOME` 不存在、`TMPDIR=/var/folders/…/T`（不在合成根内）；`nativeLaunchEnvProblems` 返回空；`strippedKeys:[]`、`diverged:false`。
+- 独占 daemon：`/tmp/pia-lb-…/data/host-control/cua-open.sock`，自报 pid `20158`（第二次 `24761`），`permission mode: unrestricted`，工具清单含 `browser_prepare/browser_navigate/get_browser_state/browser_click/browser_pointer`。**生产 App 的 daemon（pid 22313，`~/Library/Application Support/Pi Assistant/host-control/cua-open.sock`）全程未被停止 / 未被复用**。
+- MCP 走生产 `hostMcpCommand()`：`commandIsLauncher:true`、`inheritEnv:false`、`envReplaced:true`、socket 指向本次独占 daemon。
+- 隔离浏览器（驱动自有）：prepared pid `20461` / window `17463` / `target_id bt-238383f8-…` / `tab_id tab-e5420be6-…` / 快照 pin `p1`；URL 带本次 `fixtureId+nonce`。结束后该 pid 已退出，无残留。
+- 真实 Laya：baseline 生产 runtime `running pid 7991 port 60869`（health mps）→ 经生产 API `POST /api/local-models/laya/stop` 停下 → 本次独占 runtime（自有端口 + 自有 token，token 只记摘要 `05891f2f7bb5`，权重用本机已物化目录的 **clonefile 副本**，不写回原目录）→ 结束 `finally` 停自有 runtime 并 `POST /api/local-models/laya/start` 恢复，复核 `running pid 27010 port 50418, health ok, device mps, registered local-laya/multilingual`。
+
+**4 题结果（生产 `selectFastAction`，threshold 0.6 / timeout 4000ms，按任务分开熔断作用域）**
+
+| 任务 | 模型 decision | confidence | 决策延迟 | 结果（双证据） |
+|---|---|---|---|---|
+| pick-submit（点「提交」） | fallback `low_confidence` | 0.3969 | 105 ms | unknown（未派发） |
+| pick-city（下拉选「北京」） | fallback `low_confidence` | 0.1854 | 107 ms | unknown（未派发） |
+| scroll-target（滚动后点「深度目标」） | selected | 0.926 | 158 ms | **correct**（machine `clicked=deep-target` + UI「深度目标完成」） |
+| dynamic-2step（下一步→完成） | fallback `low_confidence` | 0.2593 | 167 ms | unknown（未派发） |
+
+预热 1 条（不计分）：`fallback low_confidence 0.4673`，929 ms（冷启动）。汇总：**1/4 correct、successRatio 0.25、fallback 3（全部 low_confidence）、timeout 0、abstain 0、p50 107 ms / p95 167 ms**；两次独立运行结论一致（第一次 conf 0.3693 / 0.1165 / 0.9597 / 0.3204，同样 1/4）。
+
+**诊断（不是生产决策路径）**：对 3 条被阈值拦下的任务，额外用**同一个生产 chooser** 再问一次「本来想选谁」（只记录、不执行、不计入上面的结果）：三条**都指向正确目标**（`提交` 0.6277、`城市` 0.1935、`下一步` 0.1813）。也就是说本地 Laya 在这些 synthetic 选择题上「选得对但没信心」，而 0.6 的校准阈值让它大多数时候按设计回退给主模型；同题两次调用置信度也会变（`提交` 0.3969 vs 0.6277）。这是**真实结果**，没有为了“通过”下调阈值或改用脚本 chooser。
+
+**结论（如实）**
+- 链路：修复后的原生启动环境 + 独占 daemon + 驱动自有隔离浏览器 + 真实 fixture 动作 + 双证据判分**在真实机器上跑通**，`browser_prepare → bind → snapshot pin → click` 全部有真实返回证据。
+- 模型：本机 `local-laya/multilingual` 在这 4 个固定任务上按产品默认阈值只完成 1 题（3 题低置信度回退），**不据此宣称 Laya 整体不可用**（只有 4 题、synthetic、单一 checkpoint / 机器）。
+- 未验 / 不得宣称：「钥匙串弹窗已修好」仍未证（本轮没弹窗，只有一次运行、无系统弹窗日志，不能当永久修复结论）；系统 TCC 授权、Intel / Windows / Linux、真实 GPU、其它 checkpoint、真实付费模型、全量 `npm test` / 全量 e2e 均未跑。
+

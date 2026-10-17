@@ -6,6 +6,16 @@
 >
 > 接手时以本段、最新 `main` 和已发版 tag 为准。下面保留的“候选 / 未 push / 未 tag / 等测试槽”等是**发布前历史快照**，不再代表当前发布状态；不要重打旧 tag、重发旧资产或重复已完成测试。
 
+> **真实 Laya 完整 benchmark 已跑通（2026-10-17，`laya-benchmark-snapshot-fix`，未 push / 未 tag / 未打包）**
+>
+> 按 `docs/design/fast-model-benchmark.md` §9.6 执行一次真实验收，新增脚本 `scripts/laya-benchmark-isolated-harness.mjs`（`npm run smoke:laya-benchmark`）。跑的全是生产件：`nativeLaunchEnvForChild` / `hostMcpCommand`（自有启动器，`inheritEnv:false`、环境全量替换）/ macOS LaunchServices 打开官方签名 `CuaDriver.app` 起**本次独占** socket 的 daemon / `createInvokeBenchmarkDriver`（`browser_prepare{isolated_new}` → `list_windows` → bind → `browser_navigate` → 快照 pin → `browser_click`）/ `LocalLayaManager` / `buildChooser` / `selectFastAction` / `createCuaTrialRunner` / fixture 双证据判分。
+>
+> - **环境与隔离（实测）**：宿主与 daemon 白名单 `HOME=/Users/dengdeng`（= OS 账户家目录）、无 `CFFIXED_USER_HOME`、`TMPDIR` 不在合成根内，`nativeLaunchEnvProblems` 空；独占 daemon pid `20158`（`unrestricted`），生产 App 的 daemon（pid `22313`）**未被停止 / 未被复用**；隔离浏览器 prepared pid `20461` / window `17463` / `target_id bt-238383f8-…` / pin `p1`；Laya 经生产 API 停原 runtime → 自有 runtime（自有端口 + token，只记摘要；权重用已物化目录的 clonefile 副本）→ `finally` 恢复为 `running pid 27010 port 50418, health ok, mps, registered local-laya/multilingual`；无本次遗留进程 / socket。
+> - **4 题结果（生产 `selectFastAction`，threshold 0.6 / timeout 4000ms）**：`pick-submit` fallback low_confidence 0.3969（105 ms）、`pick-city` fallback 0.1854（107 ms）、`scroll-target` **selected 0.926 → correct（双证据）**、`dynamic-2step` fallback 0.2593（167 ms）；预热 1 条不计分。汇总 **1/4 correct、3 次低置信度回退、0 超时、p50 107 ms / p95 167 ms**；两次独立运行一致。
+> - **诊断（非生产决策路径，只记录不执行）**：3 条被阈值拦下的题，同一个生产 chooser 的 raw pick 都指向**正确目标**（`提交` 0.6277、`城市` 0.1935、`下一步` 0.1813）→ 本地 Laya 在这批 synthetic 选择题上「选得对但没信心」，0.6 校准阈值让它按设计回退主模型；同题两次置信度会变。没有为“通过”下调阈值或改用脚本 chooser。
+> - **证据**：`evidence/laya-benchmark-real/report-2026-10-17T12-34-52-131Z.json`（含诊断）/ `report-2026-10-17T12-33-19-290Z.json` + `run-*.log`；细节 `progress-snapshots/laya-benchmark-isolated-real.md`；契约 `docs/design/fast-model-benchmark.md` §9.7。
+> - **未验 / 不得宣称**：「钥匙串弹窗已修好」仍未证（本轮无弹窗，但只有一次运行、无系统弹窗日志）；只有 4 个固定 synthetic 任务、单机 arm64、单一 checkpoint，不给 Laya 整体能力 / 准确率结论；系统 TCC、Intel / Windows / Linux、真实 GPU、其它 checkpoint、真实付费模型、全量 `npm test` / 全量 e2e 均未跑；`beta.29` 安装包里的代码未变，用户手上的 App 仍需下一个候选版本才能点通。
+
 > **新（2026-10-17）：beta.29 安装包的实际操作测试跑不通，候选已修但未打包**。用户现场：设置 › 电脑 › 本地 Laya（`local-laya` multilingual）卡片「实际操作测试」→ 目标选「用户电脑」+ 勾同意 → 点开始 → 短暂 loading 后红字 `隔离浏览器读不到可 pin 的快照 id（fail-closed）`，状态仍「尚未运行」；Laya 仍「可用」、Cua Driver 0.35.4 运行中、快速操作模型开关原样（未改用户配置，未多次点开始，未动真实 Chrome / 系统权限）。**根因是把 bind 阶段当成有页面快照**：0.35.4 的 `get_browser_state(pid,window_id)` 只给 `binding_quality/mutation_allowed/target_id/tabs[]`，pin 在 snapshot 模式的 `snapshot.id`（`p<n>`）。修复分支 `laya-benchmark-snapshot-fix`（基于 `release-candidate-validation` HEAD `2e87f51`）：bind/snapshot 两个契约拆开、pin 只取 `snapshot.id`、动作前不再重取快照（避免作废 ref）、浏览器 fixture 走 `refs`+`browser_click`、去掉驱动不认识的 `require_complete`、机器证据有界等待、下拉 `afterSelect` 接线、错误收敛一行。**证据**：真实驱动 owned 隔离浏览器真机 smoke 4/4 `correct`（`scripts/laya-benchmark-driver-smoke.mjs`，手动运行）；`fast-computer*` 单测 87/87；server tsc 本树 0 新增错误。**未完成 / 不得宣称**：候选未构建、未安装、未在用户机器上再点一次；真实 Laya 模型的完整 benchmark（含耗时/成功率）未跑（smoke 的 chooser 是脚本固定的，只证链路）；接手请以分支 HEAD 与 `docs/design/fast-model-benchmark.md` §9 契约继续。
 
 > **原生启动环境的真阻塞修复（2026-10-17，同分支 `laya-benchmark-snapshot-fix`，实现 `4b2c5ea`；未 push / 未 tag / 未打包）**
