@@ -115,18 +115,20 @@ Pi 的思考档位是**枚举**（`ModelThinkingLevel = off | minimal | low | me
 用户给了一张「Codex 风格 Ultra」截图并说「做成这样的」，这是**生产视觉授权**，不再猜设计：
 
 - **形态**：粗饱满渐变胶囊轨道（36px）+ 右侧实心高对比圆钮（40px，白/主题 fg，**钮内无字**），滑钮与轨道同高衔接、上下略露；最左 / 最右都完整落在轨道内，不越出弹层。
-- **顶部**：左「思考」标记（四角星，不是品牌 logo）+ 居中当前档中文（accent，17px）+ 次行模型名（小灰、长名 `truncate`）+ 右上「跟随 / 重置」图标（只有调用方给了 `followLabel` 才出现；**重置 ≠ off**，主会话没有继承语义就不摆这个按钮）。
+- **顶部**：左「思考」标记（四角星，不是品牌 logo）+ 居中当前档中文（accent，17px）+ 次行模型名（小灰、长名 `truncate`）+ 右上「跟随 / 重置」图标（只有调用方给了 `followLabel` 才出现；**重置 ≠ off**，主会话没有继承语义就不摆这个按钮）。模型名只在**有真实单一选中值**时显示：主模型菜单 / 默认模型按实际 `value.provider/id` 从目录取 `name`，每个子代理固定模型用它自己的模型 id；没有值（助理级「跟随主会话」/ 候选池多选）就不编一个模型名。主模型菜单原先用 `showHead={false}` 关掉了整个头部、外面只剩一行「思考强度」，已改回同一头部并删掉重复小标题。
+- **拖动预览**：手柄下标 ≠ 已生效下标时算预览态，头部 / `aria-valuetext` 显示正在预览的档（拖到 max 就写「最大」），不沿用「跟随·X」或旧的降级前缀；松手才提交，取消 / 失焦 / Esc 回到静态值（跟随态回「跟随·当前生效」）。前后端值一律不变。
 - **星点**：铺在轨道里（不是手柄内），`off` 无星点；切换 / 拖动才播一次 320–700ms 预览，静止无 RAF / 无循环。
 - **底部**：一行「较高强度可能更慢，并可能增加用量」+ 现成 `<Help>`，不再堆工程说明。
 - **主题**：全部走 token —— glass 通透渐变 / warm 暖色 / pixel 阶梯（滑钮切角、轨道方角）/ noir 高对比；DIY 的 `--acc` / `--acc2` / 圆角 / 字体 / `--mo-*` 真生效，**不在 JS 里写死紫色或 Ultra**。
 - **不变**：七档语义、档位来源（模型支持子集，不伪全 7）、`pointerup` 才提交、键盘 / Home / End、跟随 / 降级、`--mo-style` 实时切换、reduce 静态可辨，一律未动。
 
-改的文件：`apps/web/src/components/ThinkingSlider.tsx`（有限 markup：Head 重排 + 星点移进轨道 + 去掉手柄文字 / 标签行 + footer 用 `Help`）、
+改的文件：`apps/web/src/components/ThinkingSlider.tsx`（有限 markup：Head 重排 + 拖动预览头部 + 星点移进轨道 + 去掉手柄文字 / 标签行 + footer 用 `Help`；`showHead` 参数已删）、
+`apps/web/src/components/ModelPicker.tsx`（`ModelMenu` 接回滑块头部 + 按实际选中值传 `modelName` + 删外层重复小标题）、
 `apps/web/src/themes/app.css`（`pa-think-*` 一节与各主题覆盖）、`apps/web/src/thinking-slider.ts`（删 `THINKING_SLIDER_SHORT`）。
-证据：`e2e/thinking-slider-visual.mjs`（真实服务端 + 真实构建 + Chromium，**70/70**，截图写 `docs/screenshots/thinking-slider-*.png`）、
-`e2e/thinking-slider-ui.mjs` **18/18**（新增 A1b 视觉布局步；A1 的「一排小标签」断言改为 aria / tooltip，行为断言不变）、
+证据：`e2e/thinking-slider-visual.mjs`（真实服务端 + 真实构建 + Chromium，**77/77**，截图写 `docs/screenshots/thinking-slider-*.png`；含主模型菜单头部 / 拖动预览 / 取消回跟随 / 后端不写）、
+`e2e/thinking-slider-ui.mjs` **18/18**（A1 加「模型菜单单个头部 + 当前档中文 + 实际模型名」、A1b 加拖动预览头部与未写库；A1 的「一排小标签」断言改为 aria / tooltip，行为断言不变）、
 `e2e/thinking-slider-frontend.test.mjs` **29/29**；两端 `tsc --noEmit` 0、`vite build` 通过。
-**未验**：真机 App（需用户自己装）、真实云模型、Windows / Linux / 手机真机；`modelName` 次行只在「每个子代理」那一行出现（助理级默认档不传模型名，避免指错模型），截图里因此没有模型名行。
+**未验**：真机 App（需用户自己装）、真实云模型、Windows / Linux / 手机真机。
 
 ### 9. 模型目录加载态（2026-10-17，beta.29 候选）
 
