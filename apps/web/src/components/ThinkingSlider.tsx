@@ -12,9 +12,9 @@
  * - 预览动效只播一次（320–700ms），播完即停；组件卸载清理计时器，最小化动态效果时完全不播。
  */
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
-import { THINKING_DESC, THINKING_LABEL, THINKING_PREVIEW_MS, THINKING_SLIDER_SHORT, shouldCommitThinking, sliderIndexForKey, sliderIndexFromX, thinkingSliderView, thinkingStars } from "../thinking-slider";
+import { THINKING_DESC, THINKING_LABEL, THINKING_PREVIEW_MS, shouldCommitThinking, sliderIndexForKey, sliderIndexFromX, thinkingSliderView, thinkingStars } from "../thinking-slider";
 import { watchMoStyle } from "../themes/motion-signals";
-import { cx } from "./ui";
+import { Help, cx } from "./ui";
 
 /** 最小化动态效果：组件内是否播预览动画（CSS 也有一份，这里用来提前跳过计时器）。 */
 function useReducedMotion(): boolean {
@@ -55,13 +55,11 @@ export interface ThinkingSliderProps {
 	onPick: (level: string | null) => void;
 	/** 弹层右上角显示的短模型名（可选） */
 	modelName?: string;
-	/** 是否渲染「思考强度 / 当前档位」标题行（嵌在模型菜单里时由外层已有标题，传 false） */
-	showHead?: boolean;
 	/** 键盘打开（Enter/Space）时把焦点落到手柄 */
 	autoFocus?: boolean;
 }
 
-export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, showHead = true, autoFocus = false }: ThinkingSliderProps) {
+export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, autoFocus = false }: ThinkingSliderProps) {
 	const view = thinkingSliderView({ levels, current, followLabel, effective });
 	const reduced = useReducedMotion();
 	const [idx, setIdx] = useState(view.index);
@@ -185,8 +183,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	if (view.kind === "unsupported") {
 		return (
 			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-				{showHead && <Head title="思考强度" current="不支持" modelName={modelName} />}
-				{followLabel && <FollowRow testid={testid} label={followLabel} following={view.following} effective={view.effective} onPick={onPick} />}
+				<Head testid={testid} current="不支持" modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />
 				<p className="pa-think-empty" data-testid={`${testid}-unsupported`}>
 					<b>{modelName ?? "这个模型"}</b> 不支持调整思考强度。
 				</p>
@@ -198,8 +195,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	if (view.kind === "fixed") {
 		return (
 			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-				{showHead && <Head title="思考强度" current={label(view.level)} modelName={modelName} />}
-				{followLabel && <FollowRow testid={testid} label={followLabel} following={view.following} effective={view.effective} onPick={onPick} />}
+				<Head testid={testid} current={label(view.level)} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />
 				<p className="pa-think-empty" data-testid={`${testid}-fixed`}>
 					这个模型只有一档 <b>{label(view.level)}</b>，不需要调整。
 				</p>
@@ -210,12 +206,14 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	const level = view.levels[idx];
 	const pos = count > 1 ? idx / (count - 1) : 0;
 	const stars = thinkingStars(level, testid);
-	const curText = view.following ? `跟随·${label(view.effective)}` : view.unsupportedPick ? `${label(view.unsupportedPick)} → ${label(view.level)}` : label(level);
+	// 拖动 / 键盘预览态：手柄停在用户正在看的档位、还没提交（`idx` 与已生效下标不同）。
+	// 这时标题必须显示预览档，而不是「跟随·X」或旧的降级前缀，否则拖到最大还写着「跟随·中」。
+	const previewing = idx !== view.index;
+	const curText = previewing ? label(level) : view.following ? `跟随·${label(view.effective)}` : view.unsupportedPick ? `${label(view.unsupportedPick)} → ${label(view.level)}` : label(level);
 
 	return (
 		<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-			{showHead && <Head title="思考强度" current={curText} modelName={modelName} />}
-			{followLabel && <FollowRow testid={testid} label={followLabel} following={view.following} effective={view.effective} onPick={onPick} />}
+			<Head testid={testid} current={curText} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />
 
 			{view.unsupportedPick && (
 				<p className="pa-think-norm" role="note">
@@ -236,45 +234,65 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 							<i className={cx("pa-think-tick", i === idx && "on")} style={{ "--pa-think-i": i, "--pa-think-n": count - 1 } as CSSProperties} aria-hidden="true" />
 						</Fragment>
 					))}
-					<div ref={handleRef} className={cx("pa-think-handle", view.following && "following")} role="slider" tabIndex={0} aria-label="思考强度" aria-orientation="horizontal" aria-valuemin={0} aria-valuemax={count - 1} aria-valuenow={idx} aria-valuetext={`思考强度：${label(level)}`} style={{ "--pa-think-pos": pos } as CSSProperties} onKeyDown={onKeyDown}>
-						<span key={pulse?.key ?? 0} className={cx("pa-think-energy", pulse && `pa-think-pulse pa-think-a-${pulse.level}`)} style={{ "--pa-think-dur": THINKING_PREVIEW_MS[level] ?? 0 } as CSSProperties} aria-hidden="true">
-							{stars.map((s, i) => (
-								<i key={i} className={cx("pa-think-star", s.far && "far")} data-ln={s.line ? "1" : undefined} style={{ "--x": s.x, "--y": s.y, "--s": s.size, "--o": s.opacity, "--dx": s.dx, "--dy": s.dy, "--d": s.delay } as CSSProperties} />
-							))}
-						</span>
-						<span className="pa-think-handle-label">{THINKING_SLIDER_SHORT[level] ?? label(level)}</span>
-					</div>
+					{/* 星点粒子铺在轨道里（不是手柄内），只在切换 / 拖动时播一次预览 */}
+					<span key={pulse?.key ?? 0} className={cx("pa-think-energy", pulse && `pa-think-pulse pa-think-a-${pulse.level}`)} style={{ "--pa-think-dur": THINKING_PREVIEW_MS[level] ?? 0 } as CSSProperties} aria-hidden="true">
+						{stars.map((s, i) => (
+							<i key={i} className={cx("pa-think-star", s.far && "far")} data-ln={s.line ? "1" : undefined} style={{ "--x": s.x, "--y": s.y, "--s": s.size, "--o": s.opacity, "--dx": s.dx, "--dy": s.dy, "--d": s.delay } as CSSProperties} />
+						))}
+					</span>
+					<div ref={handleRef} className={cx("pa-think-handle", view.following && "following")} role="slider" tabIndex={0} aria-label="思考强度" aria-orientation="horizontal" aria-valuemin={0} aria-valuemax={count - 1} aria-valuenow={idx} aria-valuetext={`思考强度：${curText}`} style={{ "--pa-think-pos": pos } as CSSProperties} onKeyDown={onKeyDown} />
 				</div>
 			</div>
-			<div className="pa-think-labels" style={{ "--pa-think-n": count - 1 } as CSSProperties} aria-hidden="true">
-				{view.levels.map((l, i) => (
-					<span key={l} className={cx(i === idx && "on")} style={{ "--pa-think-i": i, "--pa-think-n": count - 1 } as CSSProperties}>
-						{label(l)}
-					</span>
-				))}
-			</div>
-			<p className="pa-think-note">这个模型支持 {count} 档（Pi 的 7 档里的子集）。较高强度通常更慢，并可能增加用量；具体取决于模型。</p>
+			<p className="pa-think-note">
+				较高强度可能更慢，并可能增加用量
+				<Help>这个模型支持 {count} 档（Pi 的 7 档里的子集）。档位含义、速度和用量都取决于模型。</Help>
+			</p>
 		</div>
 	);
 }
 
-function Head({ title, current, modelName }: { title: string; current: string; modelName?: string }) {
+/**
+ * 弹层顶部：左「思考」图标 + 居中当前档（accent 大字）+ 次行模型名；右上「跟随 / 重置」只在
+ * 调用方给了 followLabel 时出现（主会话没有继承语义，不摆一个点了没用的按钮）。
+ * 跟随状态用图标按钮的 aria-pressed + accent 底色表示，实际生效档位进 aria-label / title，不占一行。
+ */
+function Head({ testid, current, modelName, followLabel, following, effective, onPick }: { testid: string; current: string; modelName?: string; followLabel?: string; following?: boolean; effective?: string | null; onPick?: (level: string | null) => void }) {
+	const actual = effective ? (THINKING_LABEL[effective] ?? effective) : "—";
+	const followText = followLabel ? `${followLabel} · 当前实际：${actual}` : "";
 	return (
-		<div className="pa-think-head">
-			<span className="pa-think-title">{title}</span>
-			<span className="pa-think-sub">
-				<b className="pa-think-cur">{current}</b>
-				{modelName ? ` · ${modelName}` : ""}
+		<div className="pa-think-head" role="group" aria-label="思考强度">
+			<span className="pa-think-glyph" aria-hidden="true"><ThinkGlyph /></span>
+			<span className="pa-think-titles">
+				<b className="pa-think-cur" data-testid={`${testid}-current`}>{current}</b>
+				{modelName ? <span className="pa-think-model" title={modelName}>{modelName}</span> : null}
 			</span>
+			{followLabel ? (
+				<button type="button" className={cx("pa-think-follow", following && "on")} aria-pressed={!!following} aria-label={followText} title={followText} data-testid={`${testid}-follow`} onClick={() => { if (!following) onPick?.(null); }}>
+					<ResetGlyph />
+				</button>
+			) : (
+				<span className="pa-think-glyph" aria-hidden="true" />
+			)}
 		</div>
 	);
 }
 
-function FollowRow({ testid, label, following, effective, onPick }: { testid: string; label: string; following: boolean; effective: string | null; onPick: (level: string | null) => void }) {
+/** 轻量「思考」标记（不是品牌 logo）：四角星，颜色跟随 currentColor。 */
+function ThinkGlyph() {
 	return (
-		<button type="button" className={cx("pa-think-follow", following && "on")} aria-pressed={following} data-testid={`${testid}-follow`} onClick={() => { if (!following) onPick(null); }}>
-			<span className="pa-think-follow-label">{following ? "✓ " : ""}{label}</span>
-			<span className="pa-think-follow-badge">当前实际：{effective ? (THINKING_LABEL[effective] ?? effective) : "—"}</span>
-		</button>
+		<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">
+			<path d="M8 2.2l1.3 3.4 3.4 1.3-3.4 1.3L8 11.6 6.7 8.2 3.3 6.9l3.4-1.3z" />
+			<path d="M12.6 11.4l.6 1.5 1.5.6-1.5.6-.6 1.5-.6-1.5-1.5-.6 1.5-.6z" opacity=".7" />
+		</svg>
+	);
+}
+
+/** 跟随 / 重置：环形箭头，点了回到「跟随 X」，不等于把档位设成 off。 */
+function ResetGlyph() {
+	return (
+		<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+			<path d="M13 8a5 5 0 1 1-1.6-3.7" />
+			<path d="M13 2.6V5h-2.4" />
+		</svg>
 	);
 }

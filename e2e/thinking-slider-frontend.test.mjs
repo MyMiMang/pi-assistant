@@ -182,7 +182,7 @@ test("主会话 / 群聊 / 子代理同一组件：相同输入产生相同视�
 });
 
 // ---------------------------------------------------------------- 静态 DOM 夹具
-test("DOM：七档全量渲染 role=slider + aria，7 个刻度按钮、7 个标签", () => {
+test("DOM：七档全量渲染 role=slider + aria，7 个刻度按钮；档位中文名在 aria / tooltip 里可读（不挤一排小标签）", () => {
 	const m = html({ testid: "thinking", levels: ALL, current: "medium" });
 	assert.ok(m.includes('role="slider"'));
 	assert.ok(m.includes('aria-valuemin="0"'));
@@ -192,8 +192,28 @@ test("DOM：七档全量渲染 role=slider + aria，7 个刻度按钮、7 个标
 	for (const l of ALL) assert.ok(m.includes(`data-testid="thinking-${l}"`), `有 ${l} 刻度`);
 	assert.equal(count(m, "pa-think-step"), ALL.length);
 	assert.equal(count(m, "pa-think-tick"), ALL.length);
-	for (const label of ["关闭", "极简", "低", "中", "高", "超高", "最大"]) assert.ok(m.includes(`>${label}</span>`), `标签 ${label} 可读`);
-	assert.ok(m.includes("pa-think-track") && m.includes("pa-think-handle") && m.includes("pa-think-labels"));
+	for (const label of ["关闭", "极简", "低", "中", "高", "超高", "最大"]) assert.ok(m.includes(`aria-label="${label}"`), `刻度 ${label} 可读`);
+	assert.ok(m.includes("pa-think-track") && m.includes("pa-think-handle") && m.includes("pa-think-head"));
+	// 最终视觉：手柄里不再有档位文字、也没有一排 7 个小标签；当前档在顶部标题行
+	assert.ok(!m.includes("pa-think-handle-label"), "手柄内无文字");
+	assert.ok(!m.includes("pa-think-labels"), "不再挤一排小标签");
+	assert.ok(m.includes('class="pa-think-cur"') && m.includes(">中</b>"), "顶部显示当前档中文名");
+});
+
+test("DOM：星点在轨道里、手柄是空圆钮；模型名可截断且不伪全七档", () => {
+	const m = html({ testid: "thinking", levels: ["low", "medium", "high"], current: "medium", modelName: "一个很长很长很长的模型名字-that-should-truncate" });
+	const track = m.slice(m.indexOf("pa-think-track-inner"), m.indexOf("pa-think-handle"));
+	assert.ok(track.includes("pa-think-energy"), "星点铺在轨道里");
+	assert.ok(track.includes("pa-think-star"), "轨道里有星点");
+	assert.ok(m.includes('class="pa-think-model"') && m.includes("一个很长很长很长的模型名字"), "次行显示模型名");
+	assert.equal(count(m, "pa-think-step"), 3, "只画模型实际支持的 3 档");
+});
+
+test("DOM：跟随的 reset 不是 off，主会话无 reset", () => {
+	const follow = html({ testid: "subagent-thinking", levels: ALL, current: null, followLabel: "跟随主会话", effective: "high" });
+	assert.ok(!follow.includes(">关闭<"), "reset 不是「关闭」档");
+	const main = html({ testid: "thinking", levels: ALL, current: "medium" });
+	assert.ok(!main.includes('data-testid="thinking-follow"'), "主会话没有跟随语义就不摆 reset");
 });
 
 test("DOM：off 无星点、max 16 点；初始静止不播预览动画（无 pa-think-pulse）", () => {

@@ -233,11 +233,72 @@ try {
 		const aria = await root.locator(".pa-think-handle").evaluate((el) => ({ now: el.getAttribute("aria-valuenow"), text: el.getAttribute("aria-valuetext"), max: el.getAttribute("aria-valuemax"), role: el.getAttribute("role") }));
 		if (aria.role !== "slider" || aria.max !== "6") throw new Error(`aria 不对：${JSON.stringify(aria)}`);
 		for (const l of LEVELS) if (!(await root.locator(`[data-testid="thinking-${l}"]`).count())) throw new Error(`缺档位按钮 ${l}`);
-		const labels = await root.locator(".pa-think-labels span").allInnerTexts();
-		if (!labels.includes("关闭") || !labels.includes("最大")) throw new Error(`刻度文案不对：${JSON.stringify(labels)}`);
+		// 最终视觉去掉了「一排 7 个小标签」：档位中文名改由每个刻度的 aria-label / title 承载
+		const tips = await stepsOf(root).evaluateAll((els) => els.map((e) => ({ label: e.getAttribute("aria-label"), title: e.getAttribute("title") || "" })));
+		if (JSON.stringify(tips.map((t) => t.label)) !== JSON.stringify(LEVELS.map((l) => LABEL[l]))) throw new Error(`刻度中文名不对：${JSON.stringify(tips)}`);
+		for (const t of tips) if (!t.title) throw new Error(`刻度应有中文 tooltip：${JSON.stringify(t)}`);
+		if (await root.locator(".pa-think-labels").count()) throw new Error("不该再挤一排 7 个小标签");
 		// 初始档位必须来自服务端真值（没有本地假默认）：未显式设过 → 最低支持档 off
 		const wantNow = agentBefore.thinking ? LEVELS.indexOf(agentBefore.thinking) : 0;
 		if (Number(aria.now) !== wantNow) throw new Error(`初始档位应来自服务端真值（${agentBefore.thinking ?? "null"}→${wantNow}）：${aria.now}`);
+		// 主模型菜单同样要“完整头部”（旧实现在这里只有一行「思考强度」小标题，没有当前档 / 模型名）：
+		// 当前档中文 + 实际选中模型名；外层不再重复一行小标题
+		const head = await page.getByTestId("model-thinking").evaluate((el) => ({
+			heads: el.querySelectorAll(".pa-think-head").length,
+			cur: el.querySelector(".pa-think-cur")?.textContent ?? "",
+			model: el.querySelector(".pa-think-model")?.textContent ?? "",
+			rows: el.children.length,
+			first: el.firstElementChild?.className ?? "",
+		}));
+		if (head.heads !== 1) throw new Error(`模型菜单里应有且只有一个滑块头部：${JSON.stringify(head)}`);
+		if (head.cur !== LABEL[LEVELS[wantNow]]) throw new Error(`头部应显示当前档中文「${LABEL[LEVELS[wantNow]]}」：${JSON.stringify(head)}`);
+		if (head.model !== MAIN) throw new Error(`头部应显示实际选中的模型名「${MAIN}」（不是写死的示例名）：${JSON.stringify(head)}`);
+		if (head.rows !== 1 || !head.first.includes("pa-think")) throw new Error(`不该再有外层「思考强度」小标题（与头部重复）：${JSON.stringify(head)}`);
+	});
+
+	await step("A1b 视觉：粗胶囊轨道 + 实心圆钮（无档位文字），min/max 不越出轨道", async () => {
+		const root = await openComposerMenu();
+		// 这里是输入栏的模型菜单（宽度由菜单自己定），独立思考弹层的 320–360 宽度在 thinking-slider-visual.mjs 验
+		const pw = (await page.getByTestId("model-menu").boundingBox()).width;
+		if (pw < 240 || pw > 380) throw new Error(`模型菜单宽度异常：${pw}`);
+		const rail = await root.locator(".pa-think-rail").boundingBox();
+		if (!(rail.height >= 32 && rail.height <= 42)) throw new Error(`轨道高度应在 32–42：${rail.height}`);
+		const trackBox = await root.locator(".pa-think-track").boundingBox();
+		if (trackBox.height < 44) throw new Error(`轨道命中区应 ≥44：${trackBox.height}`);
+		const shape = await root.locator(".pa-think-handle").evaluate((el) => {
+			const s = getComputedStyle(el);
+			const r = el.getBoundingClientRect();
+			return { w: r.width, h: r.height, bg: s.backgroundColor, radius: s.borderRadius, text: el.textContent.trim() };
+		});
+		if (!(shape.w >= 40 && shape.w <= 48 && shape.h >= 40 && shape.h <= 48)) throw new Error(`滑钮应在 40–48：${JSON.stringify(shape)}`);
+		if (shape.text) throw new Error(`滑钮里不该有档位文字：${shape.text}`);
+		if (shape.bg === "rgba(0, 0, 0, 0)" || shape.bg === "transparent") throw new Error(`滑钮应是实心高对比：${shape.bg}`);
+		// 拖到最左 / 最右量边界（不松手 = 不提交），再 Esc 取消
+		resetPatches();
+		for (const [pos, name] of [[0, "off"], [1, "max"]]) {
+			const inner = await root.locator(".pa-think-track-inner").boundingBox();
+			const y = inner.y + inner.height / 2;
+			await page.mouse.move(inner.x + inner.width * 0.5, y);
+			await page.mouse.down();
+			await page.mouse.move(inner.x + inner.width * pos, y, { steps: 3 });
+			await page.waitForTimeout(100);
+			const hb = await root.locator(".pa-think-handle").boundingBox();
+			if (hb.x < inner.x - 1 || hb.x + hb.width > inner.x + inner.width + 1) throw new Error(`${name} 档滑钮越出轨道：${JSON.stringify({ hb, inner })}`);
+			// 拖动预览态：头部与 aria-valuetext 都要是正在预览的档，不能还停在已提交档
+			const draggingHead = await root.locator(".pa-think-cur").textContent();
+			const draggingVt = await root.locator(".pa-think-handle").getAttribute("aria-valuetext");
+			if (draggingHead !== LABEL[name]) throw new Error(`${name}：拖动未松手时头部应显示预览档「${LABEL[name]}」：${draggingHead}`);
+			if (draggingVt !== `思考强度：${LABEL[name]}`) throw new Error(`${name}：aria-valuetext 应与头部一致：${draggingVt}`);
+			if (patches.length) throw new Error(`拖动未松手时不应写库：${JSON.stringify(patches)}`);
+			await page.keyboard.press("Escape");
+			await page.mouse.up();
+			await page.getByTestId("model-menu").waitFor({ state: "detached" });
+			await openComposerMenu();
+		}
+		// 取消后后端真值没变（max 只是预览，没被持久化）
+		const afterDrag = (await j("/api/agents")).find((a) => a.id === agent.id)?.thinking ?? null;
+		if (afterDrag !== (agentBefore.thinking ?? null)) throw new Error(`取消拖动后 thinking 被改了：${JSON.stringify({ before: agentBefore.thinking ?? null, afterDrag })}`);
+		await page.keyboard.press("Escape");
 	});
 
 	await step("A2 键盘逐档提交（End/ArrowLeft/Home）每次只写一次；提交后弹层按原行为关闭；Esc 后焦点回芯片", async () => {

@@ -1,6 +1,6 @@
 # 思考强度滑块 · 组件消费 token 清单（已对齐 theme-DIY 契约）
 
-> 状态：**beta.29 候选，未打包 / 未 push / 未 tag**。工作树 `thinking-slider-implementation`
+> 状态：**beta.29 已公开；视觉重做为 beta.30 候选（未 push / 未 tag / 未打包）**，见 §6。原始实现工作树 `thinking-slider-implementation`
 > （基 `release-candidate-validation` `11ce8f2`）。实现：`apps/web/src/components/ThinkingSlider.tsx`
 > + `apps/web/src/themes/app.css` 的「思考强度离散滑块」；纯逻辑 / 测试：
 > `apps/web/src/thinking-slider.ts` / `e2e/thinking-slider-frontend.test.mjs`。
@@ -31,10 +31,10 @@
 
 | 主题 | 覆盖 |
 | --- | --- |
-| glass | `--mo-glow: 1.6`、弹层毛玻璃 |
-| warm | `--mo-glow: .6` |
-| noir | `--mo-glow: 1.4`、描边 1px、弹层线条阴影 |
-| pixel | `--mo-glow: .4`、`--mo-style: steps`、方角手柄 / 刻度 / 星点、手柄瞬时到位、预览 `steps(3,end)` |
+| glass | `--mo-glow: 1.6`、弹层毛玻璃、轨道 / 填充走半透明渐变 |
+| warm | `--mo-glow: .6`、滑钮阴影更软 |
+| noir | `--mo-glow: 1.4`、轨道内描边更亮、弹层线条阴影 |
+| pixel | `--mo-glow: .4`、`--mo-style: steps`、轨道 / 填充 / 星点方角 + 滑钮阶梯切角、滑钮瞬时到位、预览 `steps(3,end)` |
 | custom-*（DIY） | 不覆盖；直接用 DIY 引擎输出的 `--mo-*` + 颜色 token |
 
 ## 3. `--mo-style: steps` 的落地（关键）
@@ -60,3 +60,22 @@ CSS 里 `--mo-style` 是字符串（`smooth` / `steps`），**不能**直接放�
 - 固定语义（七档、键盘、snap、跟随 / 继承、reduce）**不可被主题覆盖**；主题只改表现层。
 - 不为 7 档各写一套 token；密度差异由组件按档位 + `--mo-scale` 推导，不进 schema。
 - 不通过非法 custom CSS / JS 绕过 allowlist；组件只读主题声明 token。
+
+## 6. 最终视觉（2026-10-17 用户参考图；beta.30 候选）
+
+形态改成「粗胶囊轨道 + 实心高对比圆钮（钮内无字）」，**token 契约不变**，只是默认 fallback 换成更贴参考图的值：
+
+| token | 现在的默认 fallback | 说明 |
+| --- | --- | --- |
+| `--pa-think-rail` | `color-mix(in srgb, var(--fg) 8%, transparent)` | 36px 胶囊底轨，内描边 `var(--line)` |
+| `--pa-think-fill` | `linear-gradient(90deg, color-mix(--acc 55%), var(--acc2))` | 宽度 = 档位比例；glass 用半透明版 |
+| `--pa-think-tick` / `-tick-on` | `color-mix(--fg 80%)` / `var(--fg)` | 3px 小点，静止 .35 透明度、hover / 拖动态更亮 |
+| `--pa-think-handle-bg` | `var(--fg)`（原来是 `var(--card)`） | 实心高对比圆钮 40px；**不再画 ring**（`--pa-think-handle-ring` 仍可覆盖描边） |
+| `--pa-think-star` / `-star-2` | `color-mix(--fg 88%)` / `var(--acc2)` | 星点铺在**轨道里**（不再在手柄内），`off` 仍为 0 |
+
+弹层宽度：`.pa-think-pop { --pop-w: 340px; width: 340px }`（`.pa-pop` 的 `max-width: 20rem` 会压回 320，所以两个都要给）。
+手柄位移：`left: calc(20px + pos * (100% - 40px))` —— 两端都完整落在轨道内，不再溢出到 padding。
+
+不变：`--mo-*` 的读取与映射（§3）、reduce 双保险（§4）、语义边界（§5）。
+
+生产入口一致：输入栏 / 设置的主模型菜单（`ModelMenu`）与独立「思考强度」弹层用同一个 `ThinkingSlider` **完整头部**，不再在外层重复一行「思考强度」；模型名按实际选中的 `value.provider/id` 从目录取（无值不编名）。拖动预览态头部跟着预览档走，静态态才写「跟随·当前生效」，后端值不受预览影响。
