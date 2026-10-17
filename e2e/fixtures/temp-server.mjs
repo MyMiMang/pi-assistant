@@ -70,6 +70,10 @@ const live = new Set();
 process.on("exit", () => {
 	for (const child of live) killTree(child, "SIGKILL");
 });
+// 父运行器超时一般先发 SIGTERM；显式退出才能触发上面的同步兜底。
+for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]]) {
+	process.once(signal, () => process.exit(code));
+}
 
 /**
  * 启动真实服务（`test/launch-memory.ts`，内存凭据 + Mock + 临时目录）。

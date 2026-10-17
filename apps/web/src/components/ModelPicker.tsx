@@ -240,6 +240,8 @@ async function patchAgentFast(agentId: string, next: boolean) {
 				const fresh = (await api<{ id: string; fast?: boolean }[]>("/api/agents")).find((x) => x.id === agentId);
 				if (fresh) truth = fresh.fast === true;
 			} catch {}
+			// 重读也会等待网络；这期间的新点击已作废本次失败，不能再覆盖最新乐观值。
+			if (!w.isCurrent(gen)) return;
 			const value = truth ?? (r.value === "1");
 			if (truth !== null) w.confirm(gen, truth ? "1" : "0");
 			// 仍是最后一次才回滚，且只回滚 fast 字段（不碰 thinking / 模型 / 消息）
