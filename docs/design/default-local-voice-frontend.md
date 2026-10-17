@@ -1,89 +1,104 @@
-# 默认本地语音（前端）：原生流式会话层 + 默认准备状态（前端）
+# 默认本地语音（前端）：原生流式会话层 + 默认准备状态（**已按冻结契约接线**）
 
-> 状态：**前端纯逻辑 + UI 准备已写，未跑测试 / 未接线真实契约**（worktree `default-local-voice-ui`，分支同名，基 `release-candidate-validation` 已提交 HEAD `b20ec81`；**未 push / 未 tag / 未打包 / 未装用户 App**）。
-> 后端选型 / 设计 / 阻塞：`default-local-voice` 树 `docs/design/default-local-voice.md`、`progress-snapshots/default-local-voice-decision.md`（默认 = 原生流式 sherpa-onnx `OnlineRecognizer` + 中英双语 streaming zipformer，int8 合计 198,270,793 B）。
-> 本文件只讲**前端**：字段级线协议（HTTP 路径 / 事件字段名 / seq-ack 语义）**等主与 backend owner 的契约**，本树不另造第二套协议。
+> 状态：**已按后端冻结契约完成生产接线（真实 wire），纯逻辑单测已跑 34/34 通过；未做真实后端联测 / 浏览器 e2e / 构建**（worktree `default-local-voice-ui`，分支同名，基 `release-candidate-validation` `b20ec81`；**未 push / 未 tag / 未打包 / 未装用户 App**）。
+> 后端契约（冻结，唯一事实来源）：`default-local-voice/progress-snapshots/default-stream-contract.md`（HEAD `faa2c2f`，含 CORS 允许自定义流式头）；后端实现见该树 `packages/server/src/local-asr/{stream,stream-hub,serve-script,default-voice-prep,service}.ts`、`voice/{routes,index,contract,source}.ts`。
+> 设计边界（用户要求）：装好就能用语音、**不让人手动找模型 / 点下载 / 配路径**；已有云 / 本地选择**不被默认覆盖或删除**；只做前端，不改 Pi SDK / node_modules / 后端。
 
 ## 1. 范围与边界
 
-**本树做了（纯逻辑，可单测，不碰浏览器 / 真麦 / 网络）**
-- `apps/web/src/voice-stream.ts`：稳定前缀、句段模型（committed / tentative）、有界分片器、原生流式控制器，以及**会话层接口**（`VoiceStreamOpen` / `VoiceStreamTransport`）作为唯一接线缝。
-- `apps/web/src/hooks/useVoiceInput.ts`：把流式控制器接进现有来源 / 租约 / 采集钩子；**缺 `openStream` 或服务端未声明流式能力时，一律回落既有分段增量 / 整段批量，行为不变**。
-- `apps/web/src/components/VoiceInput.tsx` + `themes/base.css`：录音状态行**就地预览未确认文本**（`.pa-voice-partial`，斜体 + 虚线，不写输入框）。
-- `apps/web/src/voice-pref.ts`：`GET voicepref` 新状态（default preparing / ready / fail / cancel）的**宽容归一化 + 展示选择器**（纯函数，未接线数据源）。
-- `apps/web/src/api.ts`：`VoiceSourceOption.streaming?`（服务端模型能力，缺省不启用）。
+**已完成（本树）**
+- `apps/web/src/api.ts`：**实现真实 wire 的 `openAsrStream`**（`POST /api/audio/asr/stream` → `append` 裸 s16le + `X-Asr-Seq` → `end` / `cancel`；复用 `api()` 的同一鉴权，`response.json()` 后交 `normalizeStreamEvents` 归一化；带 `x-asr-agent` / `x-asr-conversation`，每次请求独立 deadline `AbortController`）。
+- `apps/web/src/voice-stream.ts`：线协议事件归一化（committed / tentative / final / endpoint）、**server-authoritative 句段模型**（按 `segmentId` + `seq`，无客户端 LCP）、`StreamPacer`（200–400 ms）、`splitInt16`（按 `maxChunkBytes` 切帧）、`StreamResampler`（48 k → 16 k 跨片连续）、`NativeVoiceController`（会话先就绪、串行 ack、有界积压、stop 只 flush 尾、cancel / hidden abort、失败保已确认文本、60 s 上限、错误码中文映射）。
+- `apps/web/src/voice-pref.ts`：**按契约形状精确解析** `defaultVoice` 块（`prep.state` 必须是契约枚举，否则 `ok:false`）+ 合并统一下载进度 + 标签 / 色调 / 取消重试条件 / 首次联网文案。
+- `apps/web/src/hooks/useVoiceInput.ts`：两条路径共用来源 / 租约 / 采集；`openStream` 接线后**只有 `streaming + protocol + streamProtocol` 三项一致**才走流式；未配置来源时按准备状态给可解释提示（不逼手动配置）；暴露 `prep` / `cancelPrepare` / `retryPrepare`。
+- `apps/web/src/hooks/useDefaultVoicePrep.ts` + `components/DefaultVoicePrep.tsx`：准备状态 + 取消 / 重试（走统一下载组件 `asr:<modelId>` 同一 job）。
+- `apps/web/src/components/VoiceInput.tsx`：tentative 就地预览 + **输入附近一行准备状态 / 操作**。
+- `apps/web/src/components/VoiceSettings.tsx` / `LocalAsrModels.tsx`：默认本地语音准备状态 + 取消 / 重试；默认模型贴「默认」徽标。
 
-**本树没做（等契约 / 等测试槽）**
-- 没有实现任何 HTTP 线协议、没有新增端点、没有改后端；没有把 `openStream` 接到真实服务。
-- 没有把「默认准备状态」挂到 `VoiceSettings.tsx`（数据源路径未定）；归一化层已就绪，接线只差一次 `setView(normalizeVoicePrepareView(raw))`。
-- 没跑任何测试 / 构建（用户本轮口径：本树只 `read/edit/git/syntax`，重测试槽在 candidate owner，主放行后才跑）。
-- 没改 `VoiceInputController`（整段批量 + 分段增量）一行逻辑，**不回归**。
+**未做（等测试槽 / 主放行）**
+- 未跑真实后端联测（真 sidecar + 真权重 + 分片喂 PCM）、未跑浏览器 e2e（假麦 + 假 provider）、未 build、未 `npm ci`。
+- 未改 `VoiceInputController`（整段批量 + 分段增量）一行逻辑，**不回归**。
+- 不加「我同意」勾选、不新增默认开关、不自动切来源。
 
-## 2. 会话层接口（唯一的接线缝）
+## 2. 线协议与前端实现（对齐契约）
 
 ```ts
-// 归一化事件（由契约的线协议解析后喂进来；模型与 UI 只认它）
-type VoiceStreamUpdate = { kind: "partial" | "final"; index?: number; text: string; committed?: string };
-
-interface VoiceStreamTransport {
-  append(pcm: Int16Array, seq: number): Promise<void>; // 串行调用；resolve = 后端已 ack
-  finish(): Promise<void>;                              // flush 服务端尾 + 等 final；可被 abort
-  abort(reason?: string): void;                         // 断开、丢弃未 ack（不等待）
-}
-type VoiceStreamOpen = (opts: { provider; model; language?; agentId?; conversationId?; sampleRate;
-  onUpdate(u: VoiceStreamUpdate): void; onError(e: unknown): void }) => Promise<VoiceStreamTransport>;
+// 归一化事件（api.ts 解析 wire JSON 后喂给模型；与契约语义一一对应）
+type VoiceStreamUpdate =
+  | { kind:"committed"; segmentId:string; text:string; seq?:number }  // 该段**完整**稳定前缀（绝对量，只增不回退）
+  | { kind:"tentative"; segmentId:string; text:string; seq?:number }  // 该段**剩余部分完整文本**（绝对量整体替换）
+  | { kind:"final";     segmentId:string; text:string; seq?:number }  // 该段**完整文本**（绝对量）
+  | { kind:"endpoint";  segmentId:string; seq?:number };              // 段边界（不带文本）
 ```
 
-- 线协议（路径 / chunk 编码 / ack 形态）**不在本文件**：主给契约后，只需在 `api.ts` 实现一个 `openStream` 并在 `VoiceInput.tsx` 透传给 `useVoiceInput`，不碰模型层。
-- 事件既支持「服务端已算好 committed」也支持「只给整句 partial，客户端用最长公共前缀算 committed」（`StablePrefixTracker`）。两种都兼容，不赌字段形态。
-- **Safari 可用**：不用 `ReadableStream` request body / `duplex: "half"`；会话是有界 seq 追加 + ack 的普通 HTTP，具体形态由契约决定（后端也是 HTTP chunked，不引 WebSocket）。
+- 展示文本恒为 `committed + tentative`（前端只做一次拼接）；**不做最长公共前缀**（`longestCommonPrefix` 仅留作纯 helper，不参与 wire）。
+- `VoiceStreamModel` 按 `segmentId` 维护 `{committed, tentative, finalized, lastSeq}`：committed 只把**新增前缀**作为 `commits` 交给 `VoiceDraftAssembler`（不重复追加），`tentative` 整体替换，`final` 只提交未进草稿的剩余部分，重复 final / 晚到 partial / 旧 seq 一律忽略；「你好你好」不做 substring 去重。
+- 会话层接口（唯一接线缝，已被 `api.ts` 的 `openAsrStream` 实现）：
 
-## 3. 状态与生命周期（对齐后端设计 §3.3/§3.4）
+```ts
+interface VoiceStreamTransport {
+  append(pcm: Int16Array, seq: number): Promise<void>;  // 串行；resolve = 后端已 ack
+  finish(): Promise<void>;                              // end，等 final
+  abort(reason?: string): void;                         // 断开 + best-effort cancel（独立短 signal）
+  readonly limits?: VoiceStreamLimits;                  // 服务端 maxChunkBytes / maxSessionMs / idleTimeoutMs / 采样率
+}
+```
+
+- **不用** 浏览器原生流式上传（`duplex:"half"` Safari 不支持）；是普通有界 HTTP 会话，Safari 可用。
+- 鉴权：与其它请求同一 `api()`（带 `authorization` / 同源 Cookie），不另存 Bearer、不直连 sidecar；跨源时后端 CORS 已允许 `x-asr-seq` / `x-asr-agent` / `x-asr-conversation`。
+- 错误码按契约分支：`asr_stream_seq_replay` → 当作 ack（不重发音频）；`asr_stream_backpressure` → 按 `retryAfterMs` 有界退避（≤3 次）；`asr_source_changed` / `asr_stream_expired` / `asr_stream_unknown` / `asr_stream_forbidden` → 标记会话终结；中文文案见 `streamFailureInfo` / `streamOpenError`。
+
+## 3. 状态与生命周期
 
 - 状态机与既有控制器一致：`idle → preparing → recording → transcribing → finish/idle`（失败 `error`）。
-- **会话先就绪（`STREAM_OPEN_TIMEOUT_MS = 8s`）再开采集**：ready 失败尽早失败，不占麦克风；就绪前后任一步失败 / 取消 / 切来源 / 切会话 / 页面隐藏 / 卸载都 `track.stop()` + `abort()`（租约由 hook 统一释放）。
-- **停止只 flush 尾片 + `finish`**（不整段重识别）；`stop` 等 `finish`（含在途 append）但可被 `cancel` abort。
-- **有界并发**：`append` 串行（`maxInflight = 1`），慢后端只让分片器缓冲增长（受 60 s 录音上限约束），**不无限排队**；`progress().backlog` 反映积压。
-- **失败保留已确认文本**：committed 已进草稿的文本保留；tentative 清空并如实标注未确认；**不自动重发旧音频（重放会重复计费）、不自动发送**；原生流式没有「重试本段」（`retryFailed` 为 no-op），重试 = 用户重新录一段。
+- **会话先就绪（`STREAM_OPEN_TIMEOUT_MS = 8 s`）再开采集**：ready 失败尽早失败、不占麦克风（拿权限期间被取消 / 隐藏 / 切来源 → 立刻 `track.stop()` 并 abort 迟到就绪的会话）。
+- **停止只 flush 尾片 + `finish`**：先冲 `StreamResampler` 尾、再冲 `StreamPacer` 尾（按 `maxChunkBytes` 切帧），不整段重识别；`stop` 等 `finish`（含在途 append），可被 `cancel` abort。
+- **有界并发**：append 串行（`maxInflight = 1`），慢后端只让缓冲增长（受 60 s 录音上限约束），**不无限排队**；`progress().backlog` 反映积压。
+- **重采样**：`AudioContext({sampleRate:16000})` 失败退到原生采样率时，用 `StreamResampler` 真重采样 16 k（跨片按全局位置插值，无 gap / 重复 / 漂移），绝不把 48 k 当 16 k 发。
+- **失败保留已确认文本**：已进草稿的 committed 保留，tentative 清空；不自动重发旧音频、不自动发送；原生流式没有「重试本段」，重试 = 用户重新录一段。
 
-## 4. 文本 UX（用户要求）
+## 4. 文本 UX
 
-- 复用 `VoiceDraftAssembler`：committed 增补按语音原序追加到开始录制锚点之后，保留用户别处的编辑，**不自动发送**；单聊 / 群聊 / 引用 / IME 行为不变。
-- tentative 只在录音状态行预览；**同一句的 revision 覆盖 tentative**，绝不把 partial 误当 final 重复追加。
-- **不做 substring 去重**：重复口语「你好你好」原样保留。
-- **真实音量不变**：波形仍来自实际 PCM 的 `LevelMeter`；reduce motion 下 CSS 只关过渡，保实时数值与条高（`voice-stream.ts` 不产生任何假运动）。
+- committed 增补按语音原序追加到开始录制锚点之后，保留用户别处的编辑，**不自动发送**（复用 `VoiceDraftAssembler`）；单聊 / 群聊 / 引用 / IME 行为不变。
+- tentative 只在录音状态行就地预览（`.pa-voice-partial`，斜体 + 虚线），绝不写输入框。
+- 真实音量仍来自实际 PCM 的 `LevelMeter`；reduce motion 只关 CSS 过渡，不产生假运动。
 
 ## 5. 默认语义与准备状态（前端只读、不抢写）
 
-- **前端绝不 `PUT source` 抢占默认**：自动默认是服务端 `once CAS + optout` 管的；`resolveSelected` 仍只读后端 `selected`。
-- 归一化层 `voice-pref.ts`：认不出 / 缺字段 → `ok:false` / `state:"unknown"`（**UI 什么都不显示，不猜「已就绪」**）；进度可并入统一下载注册表（`asr:<modelId>`）；`canCancelPrepare` / `canRetryPrepare` 给取消 / 重试条件。
-- **首次联网如实分层**：权重再分发许可未充分确认 → **不随 app 捆绑**，因此**不把首次联网叫「首断网开箱」**；`firstUseNote()` 只在 `firstUseOnline === true` 时写「首次使用需联网自动准备（估算 < 300 MB，非实测），之后可离线」，`firstUseOnline === false` 才写「已内置，可离线」，**未知时什么都不写**。
-- **不删现有六个 ASR 选项**：默认只是新增一个「默认」候选，用户以后觉得好用再谈精简；当前严禁删 / 隐藏（业务决策不在本树）。
+- **前端绝不 `PUT source` 抢占默认**：自动采用默认由服务端 `once CAS + optout` 管；前端只读 `selected` / `defaultVoice`。
+- **精确解析契约**：`normalizeVoicePrepareView` 只认 `prep.state ∈ {not_applicable, not_prepared, preparing, ready, failed, cancelled}`；认不出 → `ok:false` / `state:"unknown"`，UI 什么都不显示，不猜「已就绪」。
+- **进度与操作复用统一模块**：同一稳定 id `asr:<modelId>`（= `prep.jobId`），进度订阅既有 `downloads` store（不轮询）；取消 / 重试走 `POST /api/downloads/:id/cancel|start`，**不另造下载链路**。
+- **首次联网如实分层**：`firstRunNeedsNetwork === true` → 「首次使用需联网自动准备（约 X MB，估算非实测），之后可离线使用」；`false` 才写「已内置，可离线」；`null`（未知）什么都不写，**绝不写「首次断网可用」**。
+- **不逼用户手动配置**：未配置来源且正在 / 待准备时，点麦克风给「正在自动准备（首次需联网）」而不是「先去设置选模型」；准备失败才指向设置重试。
+- 不删 / 不隐藏现有 ASR 选项；默认只是 catalog 里多一个「默认」候选 + 显式入口（`LocalAsrModels` 的「使用这个模型」经服务端 `select`）。
 
-## 6. 文件改动
+## 6. 文件改动（本树）
 
 | 文件 | 改动 |
 |---|---|
-| `apps/web/src/voice-stream.ts`（新） | 稳定前缀 / 句段模型 / 分片器 / `NativeVoiceController` / 会话接口 |
-| `apps/web/src/voice-pref.ts`（新） | `GET voicepref` 归一化 + 展示选择器（纯） |
-| `apps/web/src/hooks/useVoiceInput.ts` | 两条路径共用来源 / 租约 / 采集；`openStream` 可选接线；新增 `tentative` / `streaming` / `nativeCapable` |
-| `apps/web/src/components/VoiceInput.tsx` | 录音状态行就地预览 tentative（`data-testid="voice-partial"`） |
-| `apps/web/src/themes/base.css` | `.pa-voice-partial`（仅 voice 段，不动 slider / 公共 token） |
-| `apps/web/src/voice-input.ts` | `VoiceProgress.stream?`、两个流式错误码文案（既有控制器逻辑不动） |
-| `apps/web/src/api.ts` | `VoiceSourceOption.streaming?` + `isStreamingSource()` |
-| `packages/server/test/voice-stream.test.ts`（新） | 合成 PCM + 假 transport 单测（**已写未跑**） |
-| `packages/server/test/voice-pref.test.ts`（新） | 默认准备状态归一化单测（**已写未跑**） |
+| `apps/web/src/api.ts` | `openAsrStream`（真实 wire：create/append/end/cancel + deadline + 错误码归一）、`isStreamingSource`（三项判定）、`streamProtocol`、`AsrSourceView.defaultVoice`、统一下载起停 helper |
+| `apps/web/src/voice-stream.ts` | 事件归一化、server-authoritative 句段模型、`splitInt16`、`StreamResampler`、控制器（重采样 + 切帧 + limits）、错误码文案 |
+| `apps/web/src/voice-pref.ts` | 按契约精确解析 `defaultVoice` + 进度合并 + 展示 / 操作条件 |
+| `apps/web/src/hooks/useVoiceInput.ts` | 同一来源 / 租约 / 采集；三项流式判定；准备状态提示；暴露 `prep` / 取消 / 重试 |
+| `apps/web/src/hooks/useDefaultVoicePrep.ts`（新） | 准备状态 hook（读 `defaultVoice` + 合并下载进度 + 取消 / 重试） |
+| `apps/web/src/components/DefaultVoicePrep.tsx`（新） | 准备状态面板（设置页 / 本地模型详情） |
+| `apps/web/src/components/VoiceInput.tsx` | 传 `openStream`；tentative 预览；输入附近准备状态行 + 取消 / 重试 |
+| `apps/web/src/components/VoiceSettings.tsx` | 默认本地语音准备状态（顶部面板） |
+| `apps/web/src/components/LocalAsrModels.tsx` | 默认模型「默认」徽标 + 就地准备状态 |
+| `packages/server/test/voice-stream.test.ts` | 纯逻辑单测（**已跑 34/34**，见 §7） |
+| `packages/server/test/voice-pref.test.ts` | 准备状态归一化单测（**已跑**，含在上面 34 项内） |
 
-## 7. 验收方案（留给测试槽，本树不跑）
+## 7. 验收状态（如实）
 
-- **单测（已写、未跑）**：稳定前缀只增不减；partial 覆盖 tentative / final 只提交一次 / 重复 final 忽略 / 重复口语保留 / 晚到 partial 忽略 / final 不自洽不重复追加；分片 200–400 ms 与尾片不丢；控制器串行 ack、seq 单调、慢后端有界积压、stop flush 尾片 + finish、取消 / 隐藏 abort、打开 / 采集失败释放轨道、失败保已确认文本、60 s 上限、重试不重发；默认准备状态归一化（unknown → 不显示、首次联网未知不说离线、取消 / 重试条件）。
-- **静态检查（已跑）**：用 app 自带 Node + 主仓 TypeScript（`tsc -p` 临时配置，指向主仓 `node_modules`，**未改任何 node_modules**）检查 `apps/web/src` 与两个新测试文件；**我的改动文件 0 错**，剩余 19 条为环境固有（`@pi-assistant/shared` 未解析、CSS side-effect import）。
-- **真实 e2e（未跑，等测试槽）**：假 provider 服务 + 浏览器假麦（合成 PCM）验证「边说边出字 / tentative 就地预览不写输入框 / 停止 flush 尾 / 取消 / 失败保文本 / Safari 可跑」；**未跑不能宣称支持**。
+- **已跑（本树，纯逻辑，无网络 / 无真实下载 / 无真麦）**：`node --import tsx --test test/voice-pref.test.ts test/voice-stream.test.ts` → **34/34 pass**。覆盖：契约事件归一（未知名 / 缺 segmentId 丢弃）、committed 绝对前缀只提交新增、tentative 整体替换、final 只提交剩余 + 重复 final 忽略、晚到 partial / 旧 seq 不回滚、冲突 final / committed 报 mismatch 不重复追加、分片 200 ms 与 flush 不丢尾、`splitInt16` 切帧、48 k→16 k 跨片连续输出长度、控制器串行 seq 单调 / 60 s 上限 / 取消 / 隐藏 / 打开与采集失败释放轨道 / 失败保已确认文本（不自动重发）/ 48 k 采集真重采样、准备状态归一化（`ok:false` 兜底 / 六状态 / jobId 回落 / 进度合并 / 取消重试条件 / 首次联网未知不说离线）。
+- **静态检查（已跑）**：用 app 自带 Node + 主仓 TypeScript（`tsc -p apps/web/tsconfig.json`，通过临时软链引用主仓 `node_modules`，**未改任何 node_modules**）——**本树改动文件 0 错**；剩余错误全部为环境固有（`@pi-assistant/shared` 解析到主仓旧版、个别 `implicit any`），与本次改动无关。
+- **未跑（等测试槽 / 主放行）**：真实后端联测（真 sidecar + 真权重 + 分片喂 PCM，验证首 partial 早于 stop、endpoint、final 文本）、浏览器 e2e（假 provider + 假麦：自动准备 → ready → 点麦克风建会话 → partial 预览 → committed 进草稿不发送 → stop/cancel → 切来源）、`vite build`、全量 `npm test`。
+- **不声称**：native 流式的真实质量 / RTF / 首字延迟；`< 300 MB`（约 300 MB）为**估算非实测**。
 
-## 8. 未决 / 待办
+## 8. 未决 / 已知边界
 
-1. **线协议契约**：等主 / backend 给 `openStream` 的具体实现（路径 / 字段 / chunk / ack）；接线只改 `api.ts` + `VoiceInput.tsx`。
-2. **`streaming` 能力字段名**：本树按 `VoiceSourceOption.streaming === true` 读；若契约用别的名字（如嵌套 `capabilities`），只改 API 类型与 `useVoiceInput` 一处判断。
-3. **默认准备状态 UI 接线**：`VoiceSettings.tsx` 挂 `normalizeVoicePrepareView(await getVoicePref())` + 统一下载进度 / 取消 / 重试；**无强制 consent checkbox**。
-4. **模型 / 运行时准备量**：< 300 MB 是**估算非实测**；权重 198.3 MB 有 pin，runtime（CPython / wheel）未真跑。
-5. **真实质量 / RTF / 首字延迟**：未实测，不引用官方指标。
+1. **真实联测**：需要后端权重就绪 + 测试槽；本树只接线，不做真实识别质量结论。
+2. **`prep.state="cancelled"` 的可达性**：契约说「用户取消 → 写 `voiceDefaultOptOut`」；已核对后端源码，`writeDefaultOptOut` 目前**没有任何调用方**（`POST /api/downloads/:id/cancel` 只调 `manager.cancel`，安装态回 `not_installed`）——所以取消后后端可能回 `not_prepared` 而不是 `cancelled`。前端按契约解析、两种状态都能显示（都可用统一下载的「重试」），**是否补写 optout 待后端确认**。
+3. **`asr_not_ready` 的 409 body** 契约说带 `defaultVoice.prep`，实现目前只回 `{error, message}`；前端不依赖它（准备状态单独从 `GET source` 读），拿到 `asr_not_ready` 时给通用中文。
+4. **手机端取消 / 重试**：`/api/downloads/:id/start|cancel` 是 `localOnly`，远程（手机隧道）会失败；准备状态展示不受影响，操作建议在本机设置页做（失败会显示操作错误，不静默）。
+5. 主会话 / 群聊以外（子代理输入栏）不加麦克风，与既有决策一致。

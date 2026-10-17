@@ -11,7 +11,10 @@
  *    缺任一项都回落到既有分段增量 / 整段批量，行为不变。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { acquireAsrLease, getVoiceSource, onVoiceSourceChanged, releaseAsrLease, transcribeAudio, type VoiceSource, type VoiceSourceOption } from "../api";
+import { acquireAsrLease, cancelDownloadJob, getVoiceSource, isStreamingSource, onVoiceSourceChanged, releaseAsrLease, startDownloadJob, transcribeAudio, type VoiceSource, type VoiceSourceOption } from "../api";
+import type { LiveDownloadLike } from "../local-asr-intent";
+import { useStore } from "../store";
+import { mergePrepareDownload, normalizeVoicePrepareView, type VoicePrepareView } from "../voice-pref";
 import { VoiceInputController, AsrLeaseManager, voiceCapability, type VoiceError, type VoiceProgress, type VoiceResult, type VoiceSegment, type VoiceState } from "../voice-input";
 import { NativeVoiceController, type VoiceStreamOpen } from "../voice-stream";
 
@@ -126,6 +129,12 @@ export interface UseVoiceInput {
 	streaming: boolean;
 	/** 原生流式的未确认尾部预览（就地显示，不写进草稿）。 */
 	tentative: string;
+	/** 默认本地语音的准备状态（同一份 `GET source` 的 `defaultVoice`；无则 null）。 */
+	prep: VoicePrepareView | null;
+	/** 取消默认本地语音的准备（走统一下载组件同一 job）。 */
+	cancelPrepare: () => void;
+	/** 重试默认本地语音的准备（走统一下载组件同一 job）。 */
+	retryPrepare: () => void;
 	/** 真实音量（0..1，已平滑限频）。 */
 	level: number;
 	/** 分段 / 流式进度（等待 / 在途 / 失败 / 积压）。 */
@@ -152,13 +161,20 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 	const [level, setLevel] = useState(0);
 	const [tentative, setTentative] = useState("");
 	const [native, setNative] = useState(false);
+	const [prep, setPrep] = useState<VoicePrepareView | null>(null);
 	const [progress, setProgress] = useState<VoiceProgress>({ pending: 0, inflight: 0, failed: 0, backlog: false, held: 0 });
+	// 默认本地语音准备的实时进度（统一下载注册表，同一个 `asr:<modelId>` job）。
+	const downloads = useStore((s) => s.downloads) as Record<string, LiveDownloadLike> | undefined;
+	const prepView = useMemo(() => (prep ? mergePrepareDownload(prep, prep.jobId ? downloads?.[prep.jobId] : undefined) : null), [prep, downloads]);
 
 	const optsRef = useRef(opts);
 	optsRef.current = opts;
 	// 当前选中源（供重试时按需补租约；不在重试里切源 / 换模型）。
 	const asrModelRef = useRef<VoiceSourceOption | null>(null);
 	asrModelRef.current = asrModel;
+	// 默认本地语音准备状态（供取消 / 重试回调读最新值，避免闭包过期）。
+	const prepRef = useRef<VoicePrepareView | null>(null);
+	prepRef.current = prepView;
 	// 原生流式打开函数由契约接线；用 ref 让引擎始终读最新实现（切换不重建引擎）。
 	const openStreamRef = useRef(opts.openStream);
 	openStreamRef.current = opts.openStream;
@@ -171,31 +187,37 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 	const endLease = () => leaseRef.current!.end();
 
 	// 选源：只读后端 `GET /api/audio/asr/source` 的显式选择 + 归一化候选（availability 也来自后端）；未配置 = null。
+	// 同一次 GET 带出 `defaultVoice` 准备状态，不另开轮询（进度由统一下载事件驱动）。
+	const mountedRef = useRef(true);
 	useEffect(() => {
-		let alive = true;
-		const load = async () => {
-			try {
-				const view = await getVoiceSource();
-				if (!alive) return;
-				setSource(view.source);
-				setAsrModel(resolveSelected(view));
-				setSourceUnavailable(false);
-			} catch {
-				// 接口暂不可用：当作「未配置」，不伪造选择；界面用 title 说明。
-				if (!alive) return;
-				setSource(null);
-				setAsrModel(null);
-				setSourceUnavailable(true);
-			}
-		};
-		void load();
-		// 「语音配置」保存后刷新选中（同一页/同一会话内即时生效，不轮询）。
-		const off = onVoiceSourceChanged(() => void load());
+		mountedRef.current = true;
 		return () => {
-			alive = false;
-			off();
+			mountedRef.current = false;
 		};
 	}, []);
+	const loadSource = useCallback(async () => {
+		try {
+			const view = await getVoiceSource();
+			if (!mountedRef.current) return;
+			setSource(view.source);
+			setAsrModel(resolveSelected(view));
+			setPrep(view.defaultVoice ? normalizeVoicePrepareView(view.defaultVoice) : null);
+			setSourceUnavailable(false);
+		} catch {
+			// 接口暂不可用：当作「未配置」，不伪造选择；界面用 title 说明。
+			if (!mountedRef.current) return;
+			setSource(null);
+			setAsrModel(null);
+			setPrep(null);
+			setSourceUnavailable(true);
+		}
+	}, []);
+	useEffect(() => {
+		void loadSource();
+		// 「语音配置」保存后刷新选中（同一页/同一会话内即时生效，不轮询）。
+		const off = onVoiceSourceChanged(() => void loadSource());
+		return off;
+	}, [loadSource]);
 
 	useEffect(() => {
 		setCapability(voiceCapability({ mediaDevices: navigator.mediaDevices, isSecureContext: window.isSecureContext }));
@@ -307,6 +329,21 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 			return;
 		}
 		if (!source || !asrModel) {
+			// 未配置来源时：默认本地语音可能正在自动准备 / 准备失败——不逼用户手动找文件，先如实告知状态。
+			if (!source && prepView?.ok) {
+				if (prepView.state === "preparing") {
+					setError({ code: "asr_preparing", message: prepView.percent != null ? `默认本地语音正在自动准备（${prepView.percent}%），准备好后点麦克风即可` : "默认本地语音正在自动准备（首次需联网），准备好后点麦克风即可" });
+					return;
+				}
+				if (prepView.state === "not_prepared") {
+					setError({ code: "asr_preparing", message: "默认本地语音还没准备好（首次需联网自动准备），可在设置 › 语音配置 查看进度" });
+					return;
+				}
+				if (prepView.state === "failed") {
+					setError({ code: "asr_prepare_failed", message: prepView.error ? `默认本地语音准备失败：${prepView.error}（可在设置里重试）` : "默认本地语音准备失败，可在设置 › 语音配置 重试" });
+					return;
+				}
+			}
 			setError({ code: "asr_not_configured", message: sourceUnavailable ? "语音识别设置暂不可用，请稍后重试或在设置 › 语音配置 里检查" : "请先在设置 › 语音配置 里选择语音识别模型" });
 			return;
 		}
@@ -316,8 +353,8 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 			setError({ code: asrModel.availability === "not_installed" ? "asr_not_installed" : asrModel.availability === "deleted" ? "asr_deleted" : "asr_unavailable", message: asrModel.reason || "当前选择的语音识别模型不可用，请到设置 › 语音配置 重新选择" });
 			return;
 		}
-		// 原生流式：只在「服务端模型能力声明流式 + 契约已接线 openStream」时启用，缺任一项回落分段增量。
-		const useNative = asrModel.location === "local" && asrModel.streaming === true && !!openStreamRef.current;
+		// 原生流式：只在「服务端模型能力声明流式（streaming + protocol + streamProtocol 三项一致）+ 已接线 openStream」时启用，缺任一项回落分段增量。
+		const useNative = asrModel.location === "local" && isStreamingSource(asrModel) && !!openStreamRef.current;
 		// 本地 ASR：先拿录音租约（边录边加载）；云端不需要。
 		if (asrModel.location === "local") beginLease(asrModel.provider, asrModel.model);
 		const startOpts = { provider: asrModel.provider, model: asrModel.model, agentId: optsRef.current.agentId, conversationId: optsRef.current.conversationId, anchor: optsRef.current.getAnchor(), incremental: asrModel.location === "local" };
@@ -326,7 +363,7 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		setTentative("");
 		if (useNative) void nativeController.start(startOpts);
 		else void controller.start(startOpts);
-	}, [capability.available, capability.reason, source, asrModel, sourceUnavailable, controller, nativeController]);
+	}, [capability.available, capability.reason, source, asrModel, sourceUnavailable, prepView, controller, nativeController]);
 
 	const dismissError = useCallback(() => setError(null), []);
 	const retryFailed = useCallback(() => {
@@ -357,7 +394,19 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		setNative(false);
 	}, [controller, nativeController]);
 
-	const nativeCapable = !!opts.openStream && asrModel?.streaming === true && asrModel.location === "local";
+	const nativeCapable = !!opts.openStream && asrModel?.location === "local" && isStreamingSource(asrModel);
+
+	// 默认本地语音准备的取消 / 重试：走统一下载组件同一 job（`asr:<modelId>`），**不写 source**。
+	const cancelPrepare = useCallback(() => {
+		const id = prepRef.current?.jobId;
+		if (!id) return;
+		void cancelDownloadJob(id).then(() => void loadSource()).catch(() => {});
+	}, [loadSource]);
+	const retryPrepare = useCallback(() => {
+		const id = prepRef.current?.jobId;
+		if (!id) return;
+		void startDownloadJob(id).then(() => void loadSource()).catch(() => {});
+	}, [loadSource]);
 
 	return {
 		state,
@@ -371,6 +420,9 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 		nativeCapable,
 		streaming: native,
 		tentative,
+		prep: prepView,
+		cancelPrepare,
+		retryPrepare,
 		level,
 		progress,
 		retryFailed,
