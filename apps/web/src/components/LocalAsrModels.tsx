@@ -12,9 +12,11 @@
 import { AlertTriangle, CheckCircle2, Cpu, Download, HardDrive, Loader2, Play, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocalAsrCatalog } from "../hooks/useLocalAsrCatalog";
+import { useDefaultVoicePrep } from "../hooks/useDefaultVoicePrep";
 import { formatBytes, installPercent, isIndeterminate, memoryAdvice, tierLabel } from "../local-asr-intent";
 import type { LocalAsrModelView } from "../local-asr-api";
 import { Badge, Button, Help, Input, Select, cx } from "./ui";
+import { DefaultVoicePrepPanel } from "./DefaultVoicePrep";
 
 function StatusBadge({ m }: { m: LocalAsrModelView }) {
 	const inst = m.install;
@@ -31,6 +33,8 @@ function StatusBadge({ m }: { m: LocalAsrModelView }) {
 
 export function LocalAsrModels() {
 	const { catalog, loading, error, opError, busy, reload, installUse, use, importWeights, cancel, start, stop, update, remove, clearOpError } = useLocalAsrCatalog();
+	// 默认本地语音的准备状态（同一个 `asr:<modelId>` job；用于给默认模型贴「默认」徽标与就地状态）。
+	const { prep: defaultPrep } = useDefaultVoicePrep();
 	const [selectedId, setSelectedId] = useState("");
 	const [showDetails, setShowDetails] = useState(false);
 	const [showImport, setShowImport] = useState(false);
@@ -131,8 +135,12 @@ export function LocalAsrModels() {
 										</Help>
 									</Badge>
 								)}
+								{defaultPrep?.ok && defaultPrep.defaultModelId === selected.id && <Badge tone="accent">默认</Badge>}
 								{selected.selected && <Badge tone="green">当前使用中</Badge>}
 							</div>
+
+							{/* 默认模型未就绪时：就地显示准备状态 / 取消 / 重试（同一个统一下载 job） */}
+							{defaultPrep?.ok && defaultPrep.defaultModelId === selected.id && defaultPrep.state !== "ready" && <DefaultVoicePrepPanel variant="inline" />}
 
 							<div className="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="local-asr-tags">
 								{selected.tier !== "unknown" && (

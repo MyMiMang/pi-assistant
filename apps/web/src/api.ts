@@ -4,6 +4,7 @@
  *  - 从入口域名打开（PWA 外壳）：base = 当前隧道地址，通过 Rendezvous 查询并用配对时保存的服务公钥校验签名
  */
 import * as ed from "@noble/ed25519";
+import { AsrStreamError, normalizeStreamEvents, type VoiceStreamLimits, type VoiceStreamOpen } from "./voice-stream";
 
 export interface Conn {
 	serverId: string;
@@ -182,11 +183,33 @@ export interface VoiceSourceOption {
 	availability: VoiceSourceAvailability;
 	reason: string | null;
 	selected: boolean;
+	/**
+	 * 服务端模型能力：是否原生流式（sherpa `OnlineRecognizer`）。
+	 * **只在为 true 时前端才走流式路径**，不凭 provider / model 名字里带 online 猜；缺字段（旧后端 / 未接线）= 不启用。
+	 */
+	streaming?: boolean;
+	/** 流式协议（`streaming=true` 时为 `asr-stream-v1`；其余为 null）。 */
+	streamProtocol?: string | null;
+}
+
+/** 流式协议标识（与后端 `ASR_STREAM_PROTOCOL` 一致）。 */
+export const ASR_STREAM_PROTOCOL = "asr-stream-v1";
+
+/**
+ * 该来源是否声明了原生流式能力。**三项都要**：`streaming === true` 且 `protocol` / `streamProtocol` 都等于
+ * `asr-stream-v1`。只比较 `protocol === streamProtocol` 不够（两个 undefined 也“相等”）——旧后端会误判成流式。
+ */
+export function isStreamingSource(o: VoiceSourceOption | null | undefined): boolean {
+	return o?.streaming === true && o.protocol === ASR_STREAM_PROTOCOL && o.streamProtocol === ASR_STREAM_PROTOCOL;
 }
 /** `GET/PUT /api/audio/asr/source` 同一 DTO：当前选择 + 归一化候选列表。 */
 export interface VoiceSourceView {
 	source: VoiceSource | null;
 	options: VoiceSourceOption[];
+	/** 每次写入递增的 CAS 版本（跨客户端）。 */
+	version?: number;
+	/** 默认本地语音的自动准备状态（契约 §1.1；旧后端缺省 undefined → `voice-pref` 归一化后不显示）。 */
+	defaultVoice?: unknown;
 }
 
 /** 读取当前语音来源与候选（不启动 / 不下载 / 不连云 / 不读 Key）。接口不可用时抛出（调用方按「暂不可用」处理）。 */
@@ -246,6 +269,181 @@ export async function releaseAsrLease(leaseId: string): Promise<void> {
 		/* 释放失败不影响用户 */
 	}
 }
+
+// ---------------------------------------------------------------- 默认本地语音准备（复用统一下载组件）
+
+/**
+ * 统一「下载与组件」的起 / 停（默认本地语音的准备复用同一个 job：`asr:<modelId>`）。
+ * **不另造下载链路**；这两个端点是 localOnly（本机设置页用）。
+ */
+export async function startDownloadJob(id: string): Promise<void> {
+	await api(`/api/downloads/${encodeURIComponent(id)}/start`, { method: "POST" });
+}
+export async function cancelDownloadJob(id: string): Promise<void> {
+	await api(`/api/downloads/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+}
+
+// ---------------------------------------------------------------- 原生流式本地语音（start / append / end / cancel）
+
+/** `POST /api/audio/asr/stream` 响应（契约 §2.1，字段名与后端一致）。 */
+export interface AsrStreamSession {
+	sessionId: string;
+	modelId: string;
+	provider: string;
+	sourceVersion: number;
+	leaseId: string;
+	protocol: string;
+	sampleRate: number;
+	channels: number;
+	format: string;
+	maxChunkBytes: number;
+	partialIntervalHintMs: [number, number];
+	maxSessionMs: number;
+	idleTimeoutMs: number;
+	nextSeq: number;
+	state: string;
+}
+export interface AsrStreamAppendResponse {
+	seq: number;
+	accepted: number;
+	nextSeq: number;
+	state: string;
+	events: unknown[];
+	buffered: number;
+}
+export interface AsrStreamEndResponse {
+	sessionId: string;
+	state: string;
+	modelId: string;
+	sourceVersion: number;
+	finals: unknown[];
+}
+
+const STREAM_CREATE_DEADLINE_MS = 8_000;
+const STREAM_APPEND_DEADLINE_MS = 15_000;
+const STREAM_END_DEADLINE_MS = 15_000;
+const STREAM_CANCEL_DEADLINE_MS = 2_000;
+const STREAM_BACKPRESSURE_RETRIES = 3;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)));
+
+/** 单请求 deadline（防 append / end / cancel 无限挂）；`done()` 必须清掉定时器。 */
+function streamDeadline(ms: number): { signal: AbortSignal; done: () => void } {
+	const ctrl = new AbortController();
+	const t = setTimeout(() => ctrl.abort(Object.assign(new Error("asr_stream_timeout"), { name: "TimeoutError" })), ms);
+	return { signal: ctrl.signal, done: () => clearTimeout(t) };
+}
+
+/** 把 `api()` 抛出的 `ApiError` / abort 归一成带稳定 code 的 `AsrStreamError`（前端按 code 分支，不靠文案）。 */
+function asrStreamErrorFrom(e: unknown): AsrStreamError {
+	if (e instanceof AsrStreamError) return e;
+	if (e instanceof ApiError) {
+		const data = (e.data ?? {}) as { error?: unknown; retryAfterMs?: unknown };
+		const code = typeof data.error === "string" ? data.error : "";
+		return new AsrStreamError(code || "asr_engine_error", e.status, e.message || code, typeof data.retryAfterMs === "number" ? data.retryAfterMs : undefined);
+	}
+	const name = e && typeof e === "object" && "name" in e ? String((e as { name?: unknown }).name ?? "") : "";
+	if (name === "TimeoutError" || name === "AbortError") return new AsrStreamError("asr_stream_timeout", 0, "本地流式识别请求超时");
+	return new AsrStreamError("asr_stream_unavailable", 0, e instanceof Error ? e.message : String(e));
+}
+
+/**
+ * 打开原生流式会话（契约 §2）：`POST /stream` 建会话 → `append` 串行帧 → `end` / `cancel`。
+ *
+ * 走**现 safe API 鉴权**（`api()` 自动带 `authorization` / 同源 Cookie，移动端经隧道一致，不另存 Bearer、不直连 sidecar）；
+ * 每次 append / end / cancel 都带 `x-asr-agent` / `x-asr-conversation`（后端绑定 caller + scope，缺一可能 409）。
+ * 不使用浏览器原生流式上传（Safari 不支持）——这是普通有界 HTTP 会话。
+ */
+export const openAsrStream: VoiceStreamOpen = async (opts) => {
+	const scope: Record<string, string> = {};
+	if (opts.agentId) scope["x-asr-agent"] = opts.agentId;
+	if (opts.conversationId) scope["x-asr-conversation"] = opts.conversationId;
+
+	const create = streamDeadline(STREAM_CREATE_DEADLINE_MS);
+	let session: AsrStreamSession;
+	try {
+		session = await api<AsrStreamSession>("/api/audio/asr/stream", {
+			method: "POST",
+			json: { modelId: opts.model, sampleRate: 16_000, channels: 1, format: "s16le", ...(opts.agentId ? { agentId: opts.agentId } : {}), ...(opts.conversationId ? { conversationId: opts.conversationId } : {}) },
+			signal: create.signal,
+		});
+	} catch (e) {
+		throw asrStreamErrorFrom(e);
+	} finally {
+		create.done();
+	}
+	if (!session || typeof session.sessionId !== "string" || !session.sessionId) throw new AsrStreamError("asr_engine_error", 0, "本地流式会话未返回 sessionId");
+
+	const sessionId = session.sessionId;
+	const path = (suffix: string) => `/api/audio/asr/stream/${encodeURIComponent(sessionId)}${suffix}`;
+	const hint = session.partialIntervalHintMs;
+	const limits: VoiceStreamLimits = {
+		maxChunkBytes: typeof session.maxChunkBytes === "number" ? session.maxChunkBytes : 32_000,
+		maxSessionMs: typeof session.maxSessionMs === "number" ? session.maxSessionMs : 60_000,
+		idleTimeoutMs: typeof session.idleTimeoutMs === "number" ? session.idleTimeoutMs : 10_000,
+		partialIntervalHintMs: Array.isArray(hint) && hint.length === 2 ? [Number(hint[0]) || 200, Number(hint[1]) || 400] : [200, 400],
+		sampleRate: typeof session.sampleRate === "number" ? session.sampleRate : 16_000,
+	};
+	let dead = false;
+	const emit = (raw: unknown) => {
+		for (const u of normalizeStreamEvents(raw)) opts.onUpdate(u);
+	};
+
+	const append = async (pcm: Int16Array, seq: number): Promise<void> => {
+		if (dead) throw new AsrStreamError("asr_stream_unknown", 0, "流式会话已结束");
+		const body = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength) as unknown as BodyInit;
+		for (let attempt = 0; ; attempt++) {
+			const deadline = streamDeadline(STREAM_APPEND_DEADLINE_MS);
+			try {
+				const r = await api<AsrStreamAppendResponse>(path("/append"), {
+					method: "POST",
+					body,
+					headers: { "content-type": "application/octet-stream", "x-asr-seq": String(seq), ...scope },
+					signal: deadline.signal,
+				});
+				emit(r?.events);
+				return;
+			} catch (e) {
+				const err = asrStreamErrorFrom(e);
+				// 重复帧（响应丢失后的重发）：服务端已收到该 seq，**不重复喂音频** → 当 ack。
+				if (err.code === "asr_stream_seq_replay") return;
+				// 服务端积压：按 retryAfterMs 退避重发（有界，绝不无限排队）。
+				if (err.code === "asr_stream_backpressure" && attempt < STREAM_BACKPRESSURE_RETRIES) {
+					await sleep(Math.min(err.retryAfterMs ?? 250, 5_000));
+					continue;
+				}
+				if (err.code === "asr_source_changed" || err.code === "asr_stream_expired" || err.code === "asr_stream_unknown" || err.code === "asr_stream_forbidden") dead = true;
+				throw err;
+			} finally {
+				deadline.done();
+			}
+		}
+	};
+
+	const finish = async (): Promise<void> => {
+		if (dead) return;
+		dead = true;
+		const deadline = streamDeadline(STREAM_END_DEADLINE_MS);
+		try {
+			const r = await api<AsrStreamEndResponse>(path("/end"), { method: "POST", json: { reason: "stop" }, headers: scope, signal: deadline.signal });
+			emit(r?.finals);
+		} catch (e) {
+			throw asrStreamErrorFrom(e);
+		} finally {
+			deadline.done();
+		}
+	};
+
+	const abort = (reason?: string): void => {
+		dead = true;
+		// best-effort：独立短 signal（主请求的 signal 可能已 abort，但服务端仍需 close，否则留租约到 idle 超时）。
+		const deadline = streamDeadline(STREAM_CANCEL_DEADLINE_MS);
+		void api(path("/cancel"), { method: "POST", json: { reason: reason === "late" ? "client_late" : "client_cancel" }, headers: scope, signal: deadline.signal })
+			.catch(() => {})
+			.finally(() => deadline.done());
+	};
+
+	return { append, finish, abort, limits };
+};
 
 /** 从入口域名的 Rendezvous 查询服务当前地址，并校验签名。 */
 export async function refreshFromRendezvous(): Promise<boolean> {

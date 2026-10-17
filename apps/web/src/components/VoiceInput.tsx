@@ -17,8 +17,10 @@
  */
 import { Loader2, Mic, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { openAsrStream } from "../api";
 import { useVoiceInput } from "../hooks/useVoiceInput";
 import { useStore } from "../store";
+import { canCancelPrepare, canRetryPrepare, voicePrepareLabel } from "../voice-pref";
 import { insertAtAnchor, shouldInsert, VoiceDraftAssembler, type VoiceResult, type VoiceSegment } from "../voice-input";
 
 export interface VoiceInputProps {
@@ -93,7 +95,7 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 		appendSegments([s.text]);
 	};
 
-	const voice = useVoiceInput({ agentId, conversationId, getAnchor: () => textareaRef.current?.selectionStart ?? valueRef.current.length, onResult, onSegment });
+	const voice = useVoiceInput({ agentId, conversationId, getAnchor: () => textareaRef.current?.selectionStart ?? valueRef.current.length, onResult, onSegment, openStream: openAsrStream });
 	const openSettings = useStore((s) => s.set);
 
 	// 真实音量历史：只在录音时滚动更新；停止立即清零（不残留假波形）。
@@ -146,15 +148,32 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 
 	const recording = voice.state === "recording";
 	const busy = voice.state === "preparing" || voice.state === "transcribing";
-	const label = !voice.supported ? (voice.unsupportedReason === "insecure_context" ? "需要 HTTPS 或本机地址才能用麦克风" : "当前浏览器不支持麦克风") : !voice.asrModel ? "未配置语音识别模型（设置 › 语音配置）" : recording ? "停止录音并转写" : "语音输入";
-	// 只有「用户点了麦克风、hook 回了语音来源类错误」才浮现设置入口；
-	// idle 不常驻状态行、不常驻「去设置」——没配 ASR 时的说明放在按钮 title 里。
-	const asrSetupCodes = new Set(["asr_not_configured", "asr_unavailable", "asr_not_installed", "asr_deleted"]);
+	// 默认本地语音准备：未配置来源且已在（或需要）自动准备时，在输入附近给一行真实状态 / 操作，不逼用户手动找下载。
+	const prep = voice.prep;
+	const showPrep = !recording && !busy && !!prep?.ok && !voice.source && (prep.state === "preparing" || prep.state === "failed" || prep.state === "not_prepared");
+	const prepLabel = prep ? voicePrepareLabel(prep) : "";
+	const label = !voice.supported
+		? voice.unsupportedReason === "insecure_context"
+			? "需要 HTTPS 或本机地址才能用麦克风"
+			: "当前浏览器不支持麦克风"
+		: !voice.asrModel
+			? prep?.ok && prep.state === "preparing"
+				? "默认本地语音正在准备（首次需联网）"
+				: prep?.ok && prep.state === "not_prepared"
+					? "默认本地语音待准备（首次需联网）"
+					: "未配置语音识别模型（设置 › 语音配置）"
+			: recording
+				? "停止录音并转写"
+				: "语音输入";
+	// 只有「用户点了麦克风、hook 回了语音来源 / 准备类错误」才浮现设置入口；
+	// idle 不常驻状态行；「准备中」不给「去设置」（准备是自动的，用户不需要手动配置）。
+	const asrSetupCodes = new Set(["asr_not_configured", "asr_unavailable", "asr_not_installed", "asr_deleted", "asr_prepare_failed"]);
 	const needSetup = !!voice.error && asrSetupCodes.has(voice.error.code) && !recording;
 	const failed = voice.progress.failed;
 	const held = voice.progress.held;
 	const pendingCount = voice.progress.pending + voice.progress.inflight;
-	const recHint = voice.progress.backlog ? "转写跟不上，仍在录音（不会丢音频）" : pendingCount > 0 ? `正在听…（${pendingCount} 段转写中）` : "正在听…（点停止）";
+	// 原生流式：committed 段已进草稿（"边说边出字"），tentative 只在状态行就地预览、不写输入框。
+	const recHint = voice.progress.backlog ? "识别跟不上，仍在录音（不会丢音频）" : voice.streaming ? "正在听…（点停止）" : pendingCount > 0 ? `正在听…（${pendingCount} 段转写中）` : "正在听…（点停止）";
 	// 失败段：后续成功段按 index 保序暂缓显示，重试成功后按原序补上（notice 里已有失败原因）。
 	const failHint = `${notice || "有一段没转写成功"}${held > 0 ? `，后面 ${held} 段已识别、重试后按顺序补上` : ""}`;
 	// notice 只在「点过麦克风之后」才有值：其它错误也只在这时短暂提示，不常驻。
@@ -199,7 +218,7 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 					</button>
 				)}
 			</span>
-			{(hint || showSettings || showRetry || recording) && (
+			{(hint || showSettings || showRetry || recording || showPrep) && (
 				<div className="pa-voice-status" data-testid="voice-status">
 					{/* 真实音量（aria-hidden：状态由文字传达）；放在独立 status 行，不拖动发送键 */}
 					{recording && (
@@ -210,6 +229,28 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 						</span>
 					)}
 					{hint && <span className="pa-voice-hint max-w-[180px] truncate text-[11px] text-mut2" data-testid="voice-hint" title={hint}>{hint}</span>}
+					{/* 原生流式：未确认尾部就地预览（不等同已确认文本，不写进草稿，final 才 commit） */}
+					{recording && voice.tentative && (
+						<span className="pa-voice-partial" data-testid="voice-partial" title="识别中（未确认，停顿时会确认；也可继续说完）">
+							{voice.tentative}
+						</span>
+					)}
+					{/* 默认本地语音准备：就地一行真实状态 + 取消 / 重试（走统一下载组件同一 job） */}
+					{showPrep && prep && (
+						<span className="pa-voice-prep text-[11px] text-mut2" data-testid="voice-prep" data-state={prep.state}>
+							{prepLabel}
+							{canCancelPrepare(prep) && (
+								<button type="button" className="ml-1 text-accent underline" data-testid="voice-prep-cancel" onClick={() => { setNotice(""); voice.cancelPrepare(); }}>
+									取消
+								</button>
+							)}
+							{canRetryPrepare(prep) && (
+								<button type="button" className="ml-1 text-accent underline" data-testid="voice-prep-retry" onClick={() => { setNotice(""); voice.retryPrepare(); }}>
+									重试
+								</button>
+							)}
+						</span>
+					)}
 					{showRetry && (
 						<button type="button" className="shrink-0 text-[11px] text-accent underline" data-testid="voice-retry" onClick={() => { setNotice(""); voice.retryFailed(); }}>
 							重试这段

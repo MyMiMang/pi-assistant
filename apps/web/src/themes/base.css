@@ -214,6 +214,9 @@ html{--mo-scale:1;--mo-glow:1;--mo-style:smooth}
 .pa-voice-level i{display:block;width:2px;min-height:2px;border-radius:1px;background:var(--acc,#2563eb);opacity:.85}
 @media (prefers-reduced-motion: reduce){.pa-voice-level i{transition:none}}
 .pa-voice-status{order:1;flex:0 0 100%;display:flex;align-items:center;gap:8px;min-width:0}
+/* 原生流式：未确认尾部就地预览（斜体 + 虚线下边，区别于已确认文本；不写进输入框） */
+.pa-voice-partial{flex:0 1 auto;min-width:0;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;color:var(--mut2);border-bottom:1px dashed var(--line)}
+@media (prefers-reduced-motion: reduce){.pa-voice-partial{transition:none}}
 
 /* 托盘悬浮条（/hostbar，置顶小窗） */
 html.pa-floatbar-root, html.pa-floatbar-root body, html.pa-floatbar-root #root { background: transparent !important; overflow: hidden; }
