@@ -1,0 +1,846 @@
+{
+  "schema": "laya-benchmark-real/1",
+  "startedAt": "2026-10-17T15:32:09.068Z",
+  "env": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "node": "v24.19.0",
+    "realHome": "/Users/dengdeng",
+    "scratchRoot": "/tmp/pia-lb-amv7oy7ejb00-mvck1ppz",
+    "service": {
+      "home": "/tmp/pia-lb-amv7oy7ejb00-mvck1ppz/home",
+      "homeIsOsAccount": false,
+      "cffixedUserHomePresent": false,
+      "tmpdir": "/tmp/pia-lb-amv7oy7ejb00-mvck1ppz/tmp",
+      "tmpdirUnderSyntheticRoot": true,
+      "piaDataDir": "/tmp/pia-lb-amv7oy7ejb00-mvck1ppz/data",
+      "piaDataDirUnderSyntheticRoot": true,
+      "piaWorkspaceUnderSyntheticRoot": true
+    },
+    "daemon": {
+      "home": "/Users/dengdeng",
+      "homeIsOsAccount": true,
+      "cffixedUserHomePresent": false,
+      "tmpdir": null,
+      "tmpdirUnderSyntheticRoot": false,
+      "piaDataDir": "/tmp/pia-lb-amv7oy7ejb00-mvck1ppz/data",
+      "piaDataDirUnderSyntheticRoot": true,
+      "piaWorkspaceUnderSyntheticRoot": true,
+      "strippedKeys": [
+        "TMPDIR",
+        "TEMP",
+        "TMP"
+      ],
+      "diverged": true,
+      "problems": [],
+      "evidenceScope": "input-config-not-actual-child-process-env"
+    },
+    "mcp": {
+      "commandIsLauncher": true,
+      "socketMatchesOwnDaemon": true,
+      "inheritEnv": false,
+      "envReplaced": true,
+      "strippedKeys": [
+        "TMPDIR",
+        "TEMP",
+        "TMP"
+      ]
+    }
+  },
+  "isolation": {
+    "cuaBinary": {
+      "exe": "/tmp/pia-lb-amv7oy7ejb00-mvck1ppz/data/bin/cua-driver-0.35.4/cua-driver-rs-0.35.4-darwin-universal/CuaDriver.app/Contents/MacOS/cua-driver",
+      "app": "/tmp/pia-lb-amv7oy7ejb00-mvck1ppz/data/bin/cua-driver-0.35.4/cua-driver-rs-0.35.4-darwin-universal/CuaDriver.app",
+      "exists": true
+    },
+    "daemon": {
+      "socket": "/tmp/pia-lb-amv7oy7ejb00-mvck1ppz/data/host-control/cua-open.sock",
+      "pid": 55548,
+      "status": "Cua Driver daemon is running\n  socket: /tmp/pia-lb-amv7oy7ejb00-mvck1ppz/data/host-control/cua-open.sock\n  pid: 55548\n  permission mode: unrestricted (trusted_startup_configuration)\n  user policy: configured=false, active=false, valid=true\n  managed policy: configured=false, active=false, valid=true\n  authorization host: unavailable (unavailable)\n  capability manifest: configured=false, approved_a",
+      "serveArgs": [
+        "serve",
+        "--socket",
+        "/tmp/pia-lb-amv7oy7ejb00-mvck1ppz/data/host-control/cua-open.sock",
+        "--permission-mode",
+        "unrestricted",
+        "--dangerously-bypass-approvals",
+        "--no-permissions-gate"
+      ],
+      "envProfileRoot": "/tmp/pia-lb-amv7oy7ejb00-mvck1ppz/browser-profile",
+      "tools": [
+        "list_apps",
+        "list_windows",
+        "get_window_state",
+        "verify_state",
+        "launch_app",
+        "kill_app",
+        "bring_to_front",
+        "set_window_frame",
+        "invoke_menu",
+        "click",
+        "double_click",
+        "right_click",
+        "drag",
+        "type_text",
+        "press_key",
+        "hotkey",
+        "set_value",
+        "scroll",
+        "clipboard_read",
+        "clipboard_write",
+        "get_screen_size",
+        "get_desktop_state",
+        "get_cursor_position",
+        "move_cursor",
+        "set_agent_cursor_enabled",
+        "set_agent_cursor_motion",
+        "set_agent_cursor_theme",
+        "get_agent_cursor_state",
+        "check_permissions",
+        "health_report",
+        "get_config",
+        "set_config",
+        "get_accessibility_tree",
+        "zoom",
+        "page",
+        "get_browser_state",
+        "browser_prepare",
+        "browser_navigate",
+        "browser_click",
+        "browser_type",
+        "browser_dialog",
+        "browser_set_input_files",
+        "browser_download",
+        "browser_pointer",
+        "start_recording",
+        "stop_recording",
+        "get_recording_state",
+        "replay_trajectory",
+        "install_ffmpeg",
+        "start_session",
+        "escalate_session",
+        "get_session",
+        "list_sessions",
+        "get_session_state",
+        "end_session",
+        "run_steps",
+        "check_for_update",
+        "install_extension",
+        "parse_visual_regions"
+      ]
+    },
+    "fixture": {
+      "origin": "http://127.0.0.1:50978",
+      "scenario": "stepwise",
+      "tasks": [
+        "export-settings"
+      ]
+    },
+    "browser": {
+      "pid": 55583,
+      "windowId": 18013,
+      "targetId": "bt-3044fd55-0350-4714-8259-2791d3c9807b",
+      "tabId": "tab-74439c41-32cf-4fa6-ab49-58c4a545958f",
+      "windowToken": "p1",
+      "url": "http://127.0.0.1:50978/api/fast-computer/benchmark/fixture/bench-rmtvzf?nonce=9vu2p312v6"
+    }
+  },
+  "laya": {
+    "baseline": {
+      "runtime": {
+        "state": "running",
+        "pid": 99567,
+        "port": 54859
+      },
+      "health": {
+        "ok": true,
+        "device": "mps",
+        "loaded": [
+          "multilingual"
+        ]
+      },
+      "registered": {
+        "provider": "local-laya",
+        "modelId": "multilingual",
+        "protocol": "typesafe-system-one"
+      }
+    },
+    "baselineRaw": {
+      "install": "installed",
+      "configured": true
+    },
+    "stopped": {
+      "ok": true,
+      "status": {
+        "runtime": {
+          "state": "stopped",
+          "pid": null,
+          "port": null
+        },
+        "health": null,
+        "registered": null
+      },
+      "after": {
+        "runtime": {
+          "state": "stopped",
+          "pid": null,
+          "port": null
+        },
+        "health": null,
+        "registered": null
+      }
+    },
+    "own": {
+      "runtime": {
+        "state": "running",
+        "pid": 55558,
+        "port": 50980
+      },
+      "health": {
+        "ok": true,
+        "device": "mps",
+        "loaded": [
+          "multilingual"
+        ]
+      },
+      "registered": {
+        "provider": "local-laya",
+        "modelId": "multilingual",
+        "protocol": "typesafe-system-one"
+      },
+      "tokenDigest": "74be884ad57b"
+    },
+    "restored": {
+      "runtime": {
+        "state": "running",
+        "pid": 61659,
+        "port": 52153
+      },
+      "health": {
+        "ok": true,
+        "device": "mps",
+        "loaded": [
+          "multilingual"
+        ]
+      },
+      "registered": {
+        "provider": "local-laya",
+        "modelId": "multilingual",
+        "protocol": "typesafe-system-one"
+      }
+    }
+  },
+  "model": {
+    "provider": "local-laya",
+    "model": "multilingual",
+    "kind": "systemone",
+    "threshold": 0.6,
+    "timeoutMs": 4000,
+    "chooser": "production buildChooser(settings) + selectFastAction()",
+    "circuitKeyScope": "per-task",
+    "rawChooserDiagnostic": false
+  },
+  "tasks": [],
+  "summary": {},
+  "cleanup": {
+    "daemonStopped": true,
+    "daemonLeftoverPids": [],
+    "socketExistsAfterStop": false,
+    "productionRestore": {
+      "attempts": [
+        {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "status_summary": {
+            "runtime": {
+              "state": "running",
+              "pid": 61659,
+              "port": 52153
+            },
+            "health": {
+              "ok": true,
+              "device": "mps",
+              "loaded": [
+                "multilingual"
+              ]
+            },
+            "registered": {
+              "provider": "local-laya",
+              "modelId": "multilingual",
+              "protocol": "typesafe-system-one"
+            }
+          }
+        }
+      ],
+      "restored": {
+        "runtime": {
+          "state": "running",
+          "pid": 61659,
+          "port": 52153
+        },
+        "health": {
+          "ok": true,
+          "device": "mps",
+          "loaded": [
+            "multilingual"
+          ]
+        },
+        "registered": {
+          "provider": "local-laya",
+          "modelId": "multilingual",
+          "protocol": "typesafe-system-one"
+        }
+      }
+    }
+  },
+  "failures": [],
+  "handoff": {
+    "settings": {
+      "enabled": true,
+      "kind": "systemone",
+      "provider": "local-laya",
+      "id": "multilingual",
+      "threshold": 0.6,
+      "timeoutMs": 4000,
+      "scope": "hostpc"
+    },
+    "scenario": "stepwise",
+    "chooser": "production buildChooser(默认，不 fake)",
+    "tasks": [
+      {
+        "task": "export-settings",
+        "title": "导出设置：格式 + 语言 + 预览确认",
+        "handler": {
+          "kind": null,
+          "text": null,
+          "wallMs": null
+        },
+        "fastSteps": [
+          {
+            "goal": "点击导出格式下拉框",
+            "expected": null,
+            "handler": {
+              "kind": "selected",
+              "text": "快速模型选了「combobox：导出格式」（置信度 0.6322（协议 confidence 0.4191））。已派发。\n独立核验：unknown（未提供可验证的后置条件 expected）\n无法确认是否达成，请自己用独立来源核验后决定下一步。\nclicked (95, 92) in tab-74439c41-32cf-4fa6-ab49-58c4a545958f",
+              "wallMs": 2873
+            },
+            "machine": {
+              "state": {},
+              "updatedAt": null
+            },
+            "ui": {
+              "ok": true,
+              "statuses": [
+                {
+                  "role": "status",
+                  "label": "格式：未选择"
+                },
+                {
+                  "role": "status",
+                  "label": "语言：未选择"
+                },
+                {
+                  "role": "status",
+                  "label": "选择：未完成"
+                },
+                {
+                  "role": "status",
+                  "label": "预览：未生成"
+                },
+                {
+                  "role": "status",
+                  "label": "确认：未确认"
+                }
+              ]
+            }
+          },
+          {
+            "goal": "点击导出格式选项 JSON",
+            "expected": {
+              "role": "status",
+              "label_contains": "格式：JSON"
+            },
+            "handler": {
+              "kind": "selected",
+              "text": "快速模型选了「listbox：导出格式选项」（置信度 0.6374（协议 confidence 0.4834））。已派发。\n独立核验：unknown（expected {\"role\":\"status\",\"label_contains\":\"格式：JSON\"}）\n无法确认是否达成，请自己用独立来源核验后决定下一步。\nclicked (600, 136) in tab-74439c41-32cf-4fa6-ab49-58c4a545958f",
+              "wallMs": 3279
+            },
+            "machine": {
+              "state": {},
+              "updatedAt": null
+            },
+            "ui": {
+              "ok": true,
+              "statuses": [
+                {
+                  "role": "status",
+                  "label": "格式：未选择"
+                },
+                {
+                  "role": "status",
+                  "label": "语言：未选择"
+                },
+                {
+                  "role": "status",
+                  "label": "选择：未完成"
+                },
+                {
+                  "role": "status",
+                  "label": "预览：未生成"
+                },
+                {
+                  "role": "status",
+                  "label": "确认：未确认"
+                }
+              ]
+            }
+          },
+          {
+            "goal": "点击报告语言下拉框",
+            "expected": null,
+            "handler": {
+              "kind": "fallback",
+              "text": "快速路径跳过（low_confidence：置信度 0.5423314811376005 < 0.6（选项概率 0.5996，协议 confidence 0.349；阈值比较值 0.5423314811376005））。由你在当前会话里自己用电脑工具完成（程序不会另发模型请求、也不会自动接管）；必要时先重新读取窗口状态，不要拿调用前的旧快照直接点击。",
+              "wallMs": 637
+            },
+            "machine": {
+              "state": {
+                "step": 0
+              },
+              "updatedAt": 1792251210719
+            },
+            "ui": {
+              "ok": true,
+              "statuses": [
+                {
+                  "role": "status",
+                  "label": "格式：JSON"
+                },
+                {
+                  "role": "status",
+                  "label": "语言：未选择"
+                },
+                {
+                  "role": "status",
+                  "label": "选择：未完成"
+                },
+                {
+                  "role": "status",
+                  "label": "预览：未生成"
+                },
+                {
+                  "role": "status",
+                  "label": "确认：未确认"
+                }
+              ]
+            }
+          },
+          {
+            "goal": "点击中文选项",
+            "expected": {
+              "role": "status",
+              "label_contains": "语言：中文"
+            },
+            "handler": {
+              "kind": "fallback",
+              "text": "快速路径跳过（low_confidence：置信度 0.31113888611138885 < 0.6（选项概率 0.3738，协议 confidence 0.2165；阈值比较值 0.31113888611138885））。由你在当前会话里自己用电脑工具完成（程序不会另发模型请求、也不会自动接管）；必要时先重新读取窗口状态，不要拿调用前的旧快照直接点击。",
+              "wallMs": 763
+            },
+            "machine": {
+              "state": {
+                "step": 0
+              },
+              "updatedAt": 1792251210719
+            },
+            "ui": {
+              "ok": true,
+              "statuses": [
+                {
+                  "role": "status",
+                  "label": "格式：JSON"
+                },
+                {
+                  "role": "status",
+                  "label": "语言：未选择"
+                },
+                {
+                  "role": "status",
+                  "label": "选择：未完成"
+                },
+                {
+                  "role": "status",
+                  "label": "预览：未生成"
+                },
+                {
+                  "role": "status",
+                  "label": "确认：未确认"
+                }
+              ]
+            }
+          },
+          {
+            "goal": "点击预览按钮",
+            "expected": {
+              "role": "status",
+              "label_contains": "预览已生成"
+            },
+            "handler": {
+              "kind": "fallback",
+              "text": "快速路径跳过（low_confidence：置信度 0.47606189190347603 < 0.6（选项概率 0.5415，协议 confidence 0.2573；阈值比较值 0.47606189190347603））。由你在当前会话里自己用电脑工具完成（程序不会另发模型请求、也不会自动接管）；必要时先重新读取窗口状态，不要拿调用前的旧快照直接点击。",
+              "wallMs": 782
+            },
+            "machine": {
+              "state": {
+                "step": 0,
+                "selected": "JSON:中文"
+              },
+              "updatedAt": 1792251266135
+            },
+            "ui": {
+              "ok": true,
+              "statuses": [
+                {
+                  "role": "status",
+                  "label": "格式：JSON"
+                },
+                {
+                  "role": "status",
+                  "label": "语言：中文"
+                },
+                {
+                  "role": "status",
+                  "label": "已选择 JSON:中文"
+                },
+                {
+                  "role": "status",
+                  "label": "预览：未生成"
+                },
+                {
+                  "role": "status",
+                  "label": "确认：未确认"
+                }
+              ]
+            }
+          }
+        ],
+        "fastAlone": null,
+        "mainTakeover": {
+          "commands": [
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:32:48.896Z",
+              "ok": true
+            },
+            {
+              "op": "fast",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": "点击导出格式下拉框",
+              "at": "2026-10-17T15:32:56.713Z",
+              "ok": true
+            },
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:33:06.807Z",
+              "ok": true
+            },
+            {
+              "op": "fast",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": "点击导出格式选项 JSON",
+              "at": "2026-10-17T15:33:13.297Z",
+              "ok": true
+            },
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:33:21.716Z",
+              "ok": true
+            },
+            {
+              "op": "click",
+              "ref": "p11:7",
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:33:28.562Z",
+              "ok": true
+            },
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:33:38.038Z",
+              "ok": true
+            },
+            {
+              "op": "fast",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": "点击报告语言下拉框",
+              "at": "2026-10-17T15:33:46.299Z",
+              "ok": true
+            },
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:33:52.913Z",
+              "ok": true
+            },
+            {
+              "op": "click",
+              "ref": "p15:3",
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:34:00.631Z",
+              "ok": true
+            },
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:34:06.794Z",
+              "ok": true
+            },
+            {
+              "op": "fast",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": "点击中文选项",
+              "at": "2026-10-17T15:34:11.825Z",
+              "ok": true
+            },
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:34:17.331Z",
+              "ok": true
+            },
+            {
+              "op": "click",
+              "ref": "p19:6",
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:34:23.993Z",
+              "ok": true
+            },
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:34:31.801Z",
+              "ok": true
+            },
+            {
+              "op": "fast",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": "点击预览按钮",
+              "at": "2026-10-17T15:34:38.932Z",
+              "ok": true
+            },
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:34:44.754Z",
+              "ok": true
+            },
+            {
+              "op": "click",
+              "ref": "p23:5",
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:34:52.610Z",
+              "ok": true
+            },
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:35:03.882Z",
+              "ok": true
+            },
+            {
+              "op": "click",
+              "ref": "p24:5",
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:35:10.728Z",
+              "ok": true
+            },
+            {
+              "op": "observe",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:35:19.014Z",
+              "ok": true
+            },
+            {
+              "op": "finish",
+              "ref": null,
+              "action": null,
+              "task": null,
+              "fast": null,
+              "goal": null,
+              "at": "2026-10-17T15:35:26.027Z",
+              "ok": true
+            }
+          ],
+          "wallMs": 174569,
+          "machine": {
+            "state": {
+              "step": 2,
+              "selected": "JSON:中文",
+              "clicked": "confirmed"
+            },
+            "updatedAt": 1792251312396
+          },
+          "ui": {
+            "ok": true,
+            "statuses": [
+              {
+                "role": "status",
+                "label": "格式：JSON"
+              },
+              {
+                "role": "status",
+                "label": "语言：中文"
+              },
+              {
+                "role": "status",
+                "label": "已选择 JSON:中文"
+              },
+              {
+                "role": "status",
+                "label": "预览已确认：JSON:中文"
+              },
+              {
+                "role": "status",
+                "label": "预览已确认：JSON:中文"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "control": {
+      "origin": "http://127.0.0.1:51151",
+      "path": "/command",
+      "nonceHeader": "x-pia-bench-nonce",
+      "methods": [
+        "observe",
+        "click",
+        "pointer",
+        "fast",
+        "finish"
+      ],
+      "loopbackOnly": true,
+      "bodyLimitBytes": 4096
+    },
+    "fastHandlerRuns": 5,
+    "finishedAt": "2026-10-17T15:35:26.044Z",
+    "summary": {
+      "scenario": "stepwise",
+      "entries": 1,
+      "handlerRuns": 0,
+      "fastHandlerRuns": 5,
+      "fastSteps": 5,
+      "fastStepKinds": {
+        "selected": 2,
+        "fallback": 3,
+        "other": 0
+      },
+      "fallbacks": 0,
+      "selectedByFast": 0,
+      "mainTakeoverClicks": 5,
+      "mainTakeoverClicked": [
+        "export-settings"
+      ],
+      "tasks": [
+        {
+          "task": "export-settings",
+          "handlerKind": null,
+          "fastSteps": 5,
+          "fastStepKinds": [
+            "selected",
+            "selected",
+            "fallback",
+            "fallback",
+            "fallback"
+          ],
+          "mainClicks": 5,
+          "commands": 22,
+          "wallMs": 174569,
+          "machine": {
+            "step": 2,
+            "selected": "JSON:中文",
+            "clicked": "confirmed"
+          }
+        }
+      ]
+    }
+  },
+  "finishedAt": "2026-10-17T15:35:37.756Z"
+}
