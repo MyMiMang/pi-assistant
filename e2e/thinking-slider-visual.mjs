@@ -230,6 +230,10 @@ try {
 
 	/* ---------------------------------- 拖动到两端（不越界） ---------------------------------- */
 	{
+		// 跟随态（子代理默认跟随主会话）：静止头部 = 跟随·当前生效，拖到 max 未松手 = 预览「最大」
+		const thinkingBefore = (await j("/api/agents")).find((a) => a.id === agent.id)?.thinking ?? null;
+		const followHead = await popover().locator(".pa-think-cur").textContent();
+		check(`拖动前：跟随态头部 = 跟随·中（${followHead}）`, followHead === "跟随·中");
 		const inner = await popover().locator(".pa-think-track-inner").boundingBox();
 		const y = inner.y + inner.height / 2;
 		await page.mouse.move(inner.x + inner.width * 0.5, y);
@@ -238,6 +242,10 @@ try {
 		await page.waitForTimeout(120);
 		const g = await geometry();
 		check("max：滑钮完整落在轨道内（不越出右侧）", g.handle.x + g.handle.w <= g.inner.x + g.inner.w + 1, JSON.stringify({ h: g.handle, i: g.inner }));
+		const maxHead = await popover().locator(".pa-think-cur").textContent();
+		const maxVt = await popover().locator(".pa-think-handle").getAttribute("aria-valuetext");
+		check(`max：未松手时头部显示预览档「最大」（${maxHead}）`, maxHead === "最大", String(maxHead));
+		check(`max：头部与 aria-valuetext 一致（${maxVt}）`, maxVt === "思考强度：最大", String(maxVt));
 		check("max：拖动中有一次性星点预览", (await popover().locator(".pa-think-pulse").count()) === 1);
 		await shot("thinking-slider-drag-max.png");
 		await page.mouse.move(inner.x, y, { steps: 4 });
@@ -248,6 +256,13 @@ try {
 		await page.keyboard.press("Escape");
 		await page.mouse.up();
 		await popover().waitFor({ state: "detached" });
+		const thinkingAfter = (await j("/api/agents")).find((a) => a.id === agent.id)?.thinking ?? null;
+		check("拖到最大后取消：后端 thinking 没变（预览不持久化）", thinkingAfter === thinkingBefore, JSON.stringify({ thinkingBefore, thinkingAfter }));
+		// 重新打开：头部回到跟随态，不残留拖动预览
+		await openThinking();
+		const backHead = await popover().locator(".pa-think-cur").textContent();
+		check(`取消后头部回到跟随·中（${backHead}）`, backHead === "跟随·中", String(backHead));
+		await closeThinking();
 	}
 
 	/* -------------------------------------- 390 窄屏 -------------------------------------- */
@@ -271,6 +286,13 @@ try {
 	await page.locator('[data-testid="model-menu"] [data-testid="thinking-body"]').waitFor();
 	await page.locator('[data-testid="model-menu"]').screenshot({ path: join(OUT, "thinking-slider-composer-menu.png") });
 	console.log("  📷 docs/screenshots/thinking-slider-composer-menu.png");
+	// 主模型菜单的滑块头部必须是完整的：当前档中文 + 实际选中的模型名（不是写死的示例名）
+	const menuHead = await page.locator('[data-testid="model-menu"] .pa-think-head').evaluate((el) => ({ cur: el.querySelector(".pa-think-cur")?.textContent ?? "", model: el.querySelector(".pa-think-model")?.textContent ?? "" }));
+	check(`主模型菜单：头部有当前档中文（${menuHead.cur}）`, ["关闭", "极简", "低", "中", "高", "超高", "最大"].includes(menuHead.cur), menuHead.cur);
+	check(`主模型菜单：头部是实际模型名（${menuHead.model}）`, menuHead.model === MAIN, menuHead.model);
+	// 连输入栏一起截一张：给用户看的是真实界面里的菜单，不是孤立的弹层
+	await page.screenshot({ path: join(OUT, "thinking-slider-composer-menu-context.png"), scale: "css" });
+	console.log("  📷 docs/screenshots/thinking-slider-composer-menu-context.png");
 	const menuShape = await page.locator('[data-testid="model-menu"] .pa-think-handle').evaluate((el) => {
 		const r = el.getBoundingClientRect();
 		return { w: r.width, h: r.height, text: el.textContent.trim(), bg: getComputedStyle(el).backgroundColor };
