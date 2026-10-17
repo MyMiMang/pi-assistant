@@ -7,7 +7,7 @@
  *  - 只做加法：不删 / 不改写旧的 `asrProviders` 声明与本地安装数据；
  *  - 存储值被删 / 失效时，**不改写存的值**，而是在视图里标 `deleted` + 原因，让用户重新选。
  */
-import { getSetting, setSetting } from "../db.ts";
+import { db, getSetting, setSetting } from "../db.ts";
 import { ASR_ERRORS, type AsrSource, type AsrSourceOption, type AsrSourceView } from "./contract.ts";
 
 /** 存储 key（settings 表 key-value，非新表）。 */
@@ -44,6 +44,15 @@ export function normalizeAsrSource(v: unknown): AsrSource | null {
 
 /** 当前显式来源；`null` = 未配置。只读、无副作用。 */
 export const readVoiceSource = (): AsrSource | null => normalizeAsrSource(getSetting<unknown>(VOICE_SOURCE_KEY, null));
+
+/**
+ * `settings.voiceSource` key 是否**存在**：区分「从未设置（unset，key 不存在）」与「用户显式清空（key 存在且为 null）」。
+ * 自动准备只在 unset 时启动；显式清空写入 optout 标记后不再 restart。
+ */
+export function voiceSourceKeyPresent(): boolean {
+	const row = db.prepare("SELECT 1 AS present FROM settings WHERE key = ?").get(VOICE_SOURCE_KEY) as { present?: number } | undefined;
+	return !!row;
+}
 
 /** 写入显式来源；`null` = 清空（未配置）。调用方负责校验 provider / model 是否已知可选。
  * `opts.expectedVersion` 提供时是 CAS：版本不符（另一个客户端已改选）→ 抛 conflict，不写入。

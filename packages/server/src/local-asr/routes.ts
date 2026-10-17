@@ -172,6 +172,9 @@ export function mountLocalAsrRoutes(
 		return { spec, res: null };
 	};
 
+	// 默认本地语音的自动准备状态（与 `GET /api/audio/asr/source` 的 `defaultVoice` 同一份数据；headless / Linux server 用）。
+	app.get("/api/local-models/asr/default-voice", localOnly, (c) => c.json(svc().defaultVoicePrepView()));
+
 	app.get("/api/local-models/asr/catalog", localOnly, (c) => {
 		const view = svc().catalog();
 		// 顺带把每个模型的安全状态刷进本地模型 hints（重启后「已装未启动」也能出现）。

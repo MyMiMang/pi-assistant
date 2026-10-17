@@ -9,6 +9,7 @@ import type { Context, Hono, Next } from "hono";
 import { ASR_ERRORS, ASR_MAX_BYTES, ASR_MAX_DURATION_MS, type AsrEndpoint, type AsrRequest, type AsrSource, type AsrSourceOption } from "./contract.ts";
 import { createAsrService, validateAsrAudio, type AsrOutcome, type AsrService } from "./asr.ts";
 import { parseAsrSourceBody } from "./source.ts";
+import { ASR_STREAM_ERRORS, AsrStreamError, type LocalAsrStreamHub } from "../local-asr/stream.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: 与 http.ts 一致的挂载风格
 type AnyHono = Hono<any>;
@@ -148,6 +149,88 @@ export function mountVoiceRoutes(app: AnyHono, deps: VoiceRouteDeps, service?: A
 
 	// 契约常量给前端用（上限、协议），避免前端硬编码漂移。
 	app.get("/api/audio/asr/config", (c) => c.json({ maxDurationMs: ASR_MAX_DURATION_MS, maxBytes: ASR_MAX_BYTES, protocol: "openai-audio-transcriptions" }));
+}
+
+/** 把流式会话错误映射成 HTTP 响应（结构化 code，前端按 code 分支）。 */
+function streamErrorResponse(c: Context, e: unknown): Response {
+	if (e instanceof AsrStreamError) {
+		return c.json({ error: e.code, message: e.message, ...(e.retryAfterMs ? { retryAfterMs: e.retryAfterMs } : {}) }, e.status as 400);
+	}
+	return c.json({ error: ASR_STREAM_ERRORS.engineError, message: e instanceof Error ? e.message : String(e) }, 503);
+}
+
+/** 调用者授权主体：本地请求 = "local"，已配对设备 = 设备 id（别的会话拿 sessionId 不能操作）。 */
+function principalOf(c: Context): string {
+	const caller = (c as unknown as { get: (k: string) => { deviceId?: string | null; local?: boolean } | undefined }).get("caller");
+	if (!caller) return "local";
+	return caller.deviceId ?? (caller.local ? "local" : "unknown");
+}
+
+/** 后续会话操作的调用者上下文（主体 + 可选归属，从请求头取）。 */
+function streamCaller(c: Context) {
+	return {
+		principal: principalOf(c),
+		agentId: c.req.header("x-asr-agent") ?? undefined,
+		conversationId: c.req.header("x-asr-conversation") ?? undefined,
+	};
+}
+
+/**
+ * 原生流式会话路由（契约 `progress-snapshots/default-stream-contract.md` §2）。
+ *
+ * 走**正常 safe API 路径**（本机或已配对设备），不是 loopback-only：手机连到 host server 也能流式上传。
+ * 不使用浏览器原生流式上传（Safari 不支持）；用 start / append / end / cancel 的有界 HTTP 会话。
+ */
+export function mountAsrStreamRoutes(app: AnyHono, hub: LocalAsrStreamHub): void {
+	app.post("/api/audio/asr/stream", async (c) => {
+		const body = await c.req
+			.json<{ modelId?: string; sampleRate?: number; channels?: number; format?: string; clientId?: string; agentId?: string; conversationId?: string }>()
+			.catch(() => ({}) as { modelId?: string; sampleRate?: number; channels?: number; format?: string; clientId?: string; agentId?: string; conversationId?: string });
+		if (body.format !== undefined && body.format !== "s16le") return c.json({ error: ASR_STREAM_ERRORS.badFormat, message: "只支持 16k mono s16le PCM" }, 400);
+		if (body.sampleRate !== undefined && body.sampleRate !== 16000) return c.json({ error: ASR_STREAM_ERRORS.badFormat, message: "只支持 16000 Hz" }, 400);
+		if (body.channels !== undefined && body.channels !== 1) return c.json({ error: ASR_STREAM_ERRORS.badFormat, message: "只支持单声道" }, 400);
+		try {
+			return c.json(await hub.create({ modelId: body.modelId, clientId: body.clientId, principal: principalOf(c), agentId: body.agentId, conversationId: body.conversationId }));
+		} catch (e) {
+			return streamErrorResponse(c, e);
+		}
+	});
+
+	app.post("/api/audio/asr/stream/:id/append", async (c) => {
+		const rawSeq = c.req.header("x-asr-seq") ?? c.req.query("seq");
+		const seq = rawSeq === undefined || rawSeq === "" ? Number.NaN : Number(rawSeq);
+		try {
+			const bytes = new Uint8Array(await c.req.arrayBuffer());
+			return c.json(await hub.append(c.req.param("id"), seq, bytes, streamCaller(c)));
+		} catch (e) {
+			return streamErrorResponse(c, e);
+		}
+	});
+
+	app.post("/api/audio/asr/stream/:id/end", async (c) => {
+		const body = await c.req.json<{ reason?: "stop" | "finish" }>().catch(() => ({}) as { reason?: "stop" | "finish" });
+		try {
+			return c.json(await hub.end(c.req.param("id"), streamCaller(c), body.reason));
+		} catch (e) {
+			return streamErrorResponse(c, e);
+		}
+	});
+
+	app.post("/api/audio/asr/stream/:id/cancel", async (c) => {
+		try {
+			return c.json(await hub.cancel(c.req.param("id"), streamCaller(c)));
+		} catch (e) {
+			return streamErrorResponse(c, e);
+		}
+	});
+
+	app.get("/api/audio/asr/stream/:id", (c) => {
+		try {
+			return c.json(hub.get(c.req.param("id"), streamCaller(c)));
+		} catch (e) {
+			return streamErrorResponse(c, e);
+		}
+	});
 }
 
 /** 供 http.ts 以中间件风格挂载时复用（当前直接挂路由，不需要额外中间件）。 */

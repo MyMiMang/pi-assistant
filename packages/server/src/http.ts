@@ -6,8 +6,9 @@ import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
 import { mountAsrRoutes, registryAsrProviders, saveAsrSource, type AsrDeclaration } from "./voice/index.ts";
 import { ASR_PROTOCOLS } from "./voice/contract.ts";
 import { isAsrProtocol } from "./voice/asr.ts";
-import { readVoiceSource, readVoiceSourceVersion } from "./voice/source.ts";
+import { readVoiceSource, readVoiceSourceVersion, voiceSourceKeyPresent } from "./voice/source.ts";
 import { localAsrService, setAsrSelectionPort } from "./local-asr/index.ts";
+import { setAsrStreamSelectionVersion, setAsrStreamSourceReader } from "./local-asr/stream-hub.ts";
 import { mountLocalAsrRoutes } from "./local-asr/routes.ts";
 import "./local-asr/download.ts";
 import { createRuntimeBenchmarkHost } from "./fast-computer/benchmark-runtime.ts";
@@ -133,7 +134,7 @@ app.use("/api/*", async (c, next) => {
 	if (allowed) {
 		c.header("Access-Control-Allow-Origin", origin!);
 		c.header("Vary", "Origin");
-		c.header("Access-Control-Allow-Headers", "authorization, content-type");
+		c.header("Access-Control-Allow-Headers", "authorization, content-type, x-asr-seq, x-asr-agent, x-asr-conversation");
 		c.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
 	}
 	if (c.req.method === "OPTIONS") return c.body(null, 204);
@@ -278,7 +279,12 @@ mountThemeRoutes(app);
 mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null, desktopKind: () => desktopBackend().id }).host);
 mountLocalLayaRoutes(app, localOnly);
 // 本地 ASR 的来源读写直接接 voice 的 voiceSource（PUT /api/audio/asr/source 仍是唯一来源真相）。
-setAsrSelectionPort({ read: readVoiceSource, version: readVoiceSourceVersion, write: (s, opts) => saveAsrSource(s, opts) });
+// `present` 区分「从未设置（unset）」与「显式清空（null）」，供默认本地语音的自动准备判定。
+setAsrSelectionPort({ read: readVoiceSource, version: readVoiceSourceVersion, write: (s, opts) => saveAsrSource(s, opts), present: voiceSourceKeyPresent });
+// 流式会话绑定来源版本：期间来源被改选 → 明确取消，不 fallback 到别的模型。
+setAsrStreamSelectionVersion(readVoiceSourceVersion);
+// 省略 modelId 时优先用当前来源里的本地流式模型。
+setAsrStreamSourceReader(readVoiceSource);
 mountLocalAsrRoutes(app, localOnly, undefined, { service: localAsrService });
 mountAsrRoutes(app);
 app.get("/api/models", (c) => {
@@ -1875,6 +1881,15 @@ async function proxyDesktop(req: IncomingMessage, socket: import("node:stream").
 // ---------------------------------------------------------------- 启动 HTTP + WebSocket
 export function startHttp() {
 	const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host });
+	// 默认本地语音：新鲜用户（来源从未设置）首次启动时后台自动准备（全局只一次；失败不自动重试）。
+	// 测试 / dev（PIA_MOCK=1）不触发：避免在临时数据目录里真的联网下载权重 / 起 uv。
+	if (!config.mock) {
+		try {
+			localAsrService().ensureDefaultVoiceAutoPrep();
+		} catch {
+			/* 自动准备失败不影响服务启动；失败状态在语音设置 / 下载组件里可见 */
+		}
+	}
 	const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 	const clients = new Map<WebSocket, { deviceId: string | null; authed: boolean }>();
 	server.on("upgrade", (req, socket, head) => {

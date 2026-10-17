@@ -12,8 +12,9 @@
  *
  * 不 import 任何 voice 实现：来源读写经注入的 `AsrSelectionPort`（http.ts 装配，避免循环依赖）。
  */
-import { ASR_CATALOG, asrModelSpec, classifyAsrHardware, recommendAsrModelId, type AsrModelSpec, type AsrTier } from "./catalog.ts";
+import { ASR_CATALOG, asrModelSpec, catalogDefaultVoiceView, classifyAsrHardware, recommendAsrModelId, resolveCatalogDefaultVoice, type AsrModelSpec, type AsrTier } from "./catalog.ts";
 import { ASR_MODEL_ID, ASR_PROVIDER_ID, SENSEVOICE_MODEL, SHERPA_ONNX_VERSION, ASR_PYTHON_VERSION } from "./manifest.ts";
+import { readDefaultInit, readDefaultOptOut, writeDefaultInit, defaultVoiceEligible, type DefaultVoicePrepView } from "./default-voice-prep.ts";
 import { licenseDisclosure, type LicenseDisclosure } from "./license.ts";
 import type { AsrInstallPhase, AsrInstallSource, AsrInstallState, AsrRuntimeState, AsrStatus, LocalAsrManager } from "./manager.ts";
 import type { AsrSourceMeta } from "./manifest.ts";
@@ -24,6 +25,8 @@ export interface AsrSelectionPort {
 	/** 持久化版本（每次写入递增）；用于跨客户端 CAS。 */
 	version(): number;
 	write(next: { location: "cloud" | "local"; provider: string; model: string } | null, opts?: { expectedVersion?: number }): void;
+	/** `settings.voiceSource` key 是否存在（区分 unset 与显式 null）；不实现时保守按「已存在」处理（不自动准备）。 */
+	present?(): boolean;
 }
 
 export interface AsrModelInstallOptions {
@@ -112,6 +115,9 @@ const PHASE_LABELS: Record<AsrInstallPhase, string> = {
 	rollback: "回滚",
 	done: "完成",
 };
+
+/** 共享运行时的**估算**体积（sherpa-onnx wheels + venv/cache）；未在本机实测，仅用于「首次准备约 XXX MB」的粗略提示。 */
+export const ASR_SHARED_RUNTIME_ESTIMATE_BYTES = 95_000_000;
 
 /** 安装阶段中文名（界面 / 统一下载进度共用，避免多处映射漂移）。 */
 export function asrPhaseLabel(phase: AsrInstallPhase): string {
@@ -377,10 +383,98 @@ export class LocalAsrService {
 		this.deps.onChange?.(spec, out);
 		return out;
 	}
+
+	// ------------------------------------------------------- 默认本地语音（自动准备）
+
+	/** 目录解析出的默认本地语音 modelId（fail closed，不猜）。 */
+	defaultVoiceModelId(): string | null {
+		const r = resolveCatalogDefaultVoice();
+		return r.ok ? r.id : null;
+	}
+
+	/**
+	 * 自动准备资格 + 状态视图（契约 §1.1 的 `defaultVoice` 块）。
+	 * **不下载 / 不启动 worker**；只读现有状态与标记，供 `GET /api/audio/asr/source` 一次带出。
+	 */
+	defaultVoicePrepView(): DefaultVoicePrepView {
+		const defaultModelId = this.defaultVoiceModelId();
+		const selection = this.deps.selection.read();
+		const view = catalogDefaultVoiceView(selection);
+		const init = readDefaultInit();
+		const optout = readDefaultOptOut();
+		const spec = defaultModelId ? asrModelSpec(defaultModelId) : null;
+		const install = spec ? this.installView(spec) : null;
+		const state: DefaultVoicePrepView["prep"]["state"] = !defaultModelId
+			? "not_applicable"
+			: install?.state === "installed"
+				? "ready"
+				: install?.state === "installing"
+					? "preparing"
+					: install?.state === "failed"
+						? "failed"
+						: optout
+							? "cancelled"
+							: "not_prepared";
+		const finishedAt = install?.installedAt != null ? new Date(install.installedAt).toISOString() : null;
+		const approxBytes = spec ? spec.manifest.bytes + ASR_SHARED_RUNTIME_ESTIMATE_BYTES : null;
+		return {
+			defaultModelId,
+			kind: view.kind,
+			label: view.label,
+			prep: {
+				state,
+				jobId: install?.jobId ?? (defaultModelId ? `asr:${defaultModelId}` : null),
+				phase: install?.phase ?? null,
+				phaseLabel: install?.phaseLabel ?? null,
+				received: install?.received ?? null,
+				total: install?.total ?? null,
+				percent: install?.percent ?? null,
+				attempt: install?.attempt ?? null,
+				startedAt: null,
+				finishedAt,
+				error: install?.error ?? null,
+				errorCode: install?.error ? "asr_prepare_failed" : null,
+				retryable: state === "failed",
+			},
+			// P2 口径：首次需联网准备；若将来随包内置则改为 false。
+			firstRunNeedsNetwork: true,
+			approxBytes,
+			offlineAfterReady: true,
+			requiresUserAction: false,
+			micPermissionRequested: false,
+			notes: [
+				"首次使用需联网自动准备（权重 + 共享运行时），之后可离线使用；不随安装包分发该权重",
+				"准备过程不需要用户手动点下载 / 找文件；失败可在「下载与组件」重试",
+				`准备量估算约 ${approxBytes ? Math.round(approxBytes / 1024 / 1024) : "?"} MB（权重 + 共享运行时，估算非实测）`,
+				"默认流式模型输出无标点；麦克风权限只在用户点麦克风时申请",
+			],
+		};
+	}
+
+	/**
+	 * 新鲜用户自动准备（全局只启动一次，幂等）：资格满足时后台安装默认模型，
+	 * 成功后由 `install(intent:"install_and_use")` 的 CAS 自动把来源写为默认本地模型。
+	 * 失败**不自动重试**（可见 + 手动重试）；取消 / 清空后不 restart。
+	 */
+	ensureDefaultVoiceAutoPrep(): { started: boolean; reason: string } {
+		const defaultModelId = this.defaultVoiceModelId();
+		const elig = defaultVoiceEligible({
+			sourceKeyPresent: this.deps.selection.present?.() ?? true,
+			source: this.deps.selection.read(),
+			init: readDefaultInit(),
+			optout: readDefaultOptOut(),
+			defaultModelId,
+		});
+		if (!elig.eligible || !defaultModelId) return { started: false, reason: elig.reason };
+		if (this.anyInstalling()) return { started: false, reason: "已有安装正在进行中" };
+		// 先落 init 标记（全局唯一），即使失败也不再自动重试；重试走统一下载组件的显式动作。
+		writeDefaultInit({ at: new Date().toISOString(), modelId: defaultModelId, sourceVersionAtStart: this.deps.selection.version() });
+		void this.install(defaultModelId, { intent: "install_and_use" }).catch(() => {});
+		return { started: true, reason: elig.reason };
+	}
 }
 
-function recommendationReason(spec: AsrModelSpec, tier: AsrTier | "unknown"): string {
-	if (tier === "unknown") return `拿不到整机内存，按最保守估计推荐 ${spec.name}（估算，未实测）`;
+function recommendationReason(spec: AsrModelSpec, tier: AsrTier | "unknown"): string {	if (tier === "unknown") return `拿不到整机内存，按最保守估计推荐 ${spec.name}（估算，未实测）`;
 	return `按当前整机内存档位（${tier}）推荐 ${spec.name}（估算，未实测；可自行选择更大档位）`;
 }
 

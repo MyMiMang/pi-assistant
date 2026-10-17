@@ -11,7 +11,7 @@
  */
 import type { PinnedFile } from "../managed-weights/verify.ts";
 import type { AsrModelManifest } from "./manifest.ts";
-import { paraformerServeScript, senseVoiceServeScript, whisperServeScript } from "./serve-script.ts";
+import { onlineZipformerServeScript, paraformerServeScript, senseVoiceServeScript, whisperServeScript } from "./serve-script.ts";
 
 /** sidecar 生成上下文：只传运行族需要的文件路径（相对权重目录）。 */
 export interface AsrRunnerScriptContext {
@@ -107,6 +107,32 @@ registerAsrRunnerFamily({
 		const seen = new Set(files.map((f) => String(f.path).replace(/\\/g, "/")));
 		if (![...seen].some((p) => p.endsWith(".onnx"))) problems.push("缺少 onnx 模型文件");
 		if (![...seen].some((p) => /tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
+		return problems;
+	},
+});
+
+// ------------------------------------------------------------ online-zipformer（原生流式）
+
+const ONLINE_ZIPFORMER_REQUIRED_ROLES = ["encoder", "decoder", "joiner", "tokens"];
+
+registerAsrRunnerFamily({
+	id: "online-zipformer",
+	label: "Streaming Zipformer（sherpa-onnx 原生流式）",
+	requiredRoles: ONLINE_ZIPFORMER_REQUIRED_ROLES,
+	serveScript: (ctx) =>
+		onlineZipformerServeScript({
+			encoder: ctx.roles.encoder,
+			decoder: ctx.roles.decoder,
+			joiner: ctx.roles.joiner,
+			tokens: ctx.roles.tokens,
+			sampleRate: ctx.sampleRate,
+		}),
+	assertWeights: (files) => {
+		const problems = assertNoExecutableWeights(files);
+		const seen = files.map((f) => String(f.path).replace(/\\/g, "/"));
+		// 原生流式 transducer 必须三个 onnx（encoder / decoder / joiner）+ tokens；缺一 fail closed。
+		if (seen.filter((p) => p.endsWith(".onnx")).length < 3) problems.push("原生流式需要 encoder + decoder + joiner 三个 onnx 文件");
+		if (!seen.some((p) => /tokens\.txt$/.test(p))) problems.push("缺少 tokens.txt");
 		return problems;
 	},
 });
