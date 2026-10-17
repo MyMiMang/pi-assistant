@@ -200,7 +200,8 @@ const setState = (s: DaemonState, detail: string) => {
 
 export function hostStatus() {
 	const s = hostSettings();
-	return { enabled: s.enabled, tiers: Object.fromEntries(allowedAgents(s).map((a) => [a, tierOf(a, s)])), paused, daemon: state, platform: process.platform, installed: cuaInstalled(), version: cuaManifest().version };
+	// macPermissions 是最近一次只读探测的结果（没有探测过就是 null），绝不在这里触发系统授权弹窗
+	return { enabled: s.enabled, tiers: Object.fromEntries(allowedAgents(s).map((a) => [a, tierOf(a, s)])), paused, daemon: state, platform: process.platform, installed: cuaInstalled(), version: cuaManifest().version, macPermissions: hostPermissionsCache() };
 }
 export const hostPaused = () => paused;
 /** “正在操作你的电脑”：最近一次 host 动作还在进行，或结束不到 HOST_ACTIVE_MS。聊天顶部提示、托盘悬浮条共用这个判断 */
@@ -368,16 +369,38 @@ export function saveHostSettings(patch: Partial<HostControlSettings>) {
 }
 
 // ---------------------------------------------------------------- macOS 权限
-export async function macPermissions(): Promise<{ accessibility: string; screenRecording: string } | null> {
-	if (!isMac() || !cuaInstalled()) return null;
+/**
+ * 系统权限（辅助功能 / 屏幕录制）的**只读**探测与缓存。
+ * 设置页会轮询、系统提示也会引用，所以不能每次都起一个 `permissions status` 进程（最多 8 秒超时）；
+ * 但也不能因此去“请求”授权：这里只读状态，绝不弹系统框，弹框只由用户在 设置 › 操作这台电脑 主动点。
+ */
+const PERM_CACHE_MS = 15_000;
+type MacPermissions = { accessibility: string; screenRecording: string };
+let permCache: { at: number; value: MacPermissions | null } | null = null;
+/** 最近一次探测结果（过期或没探测过返回 null，调用方按“未知”处理，不额外起进程） */
+export function hostPermissionsCache(now = Date.now()): MacPermissions | null {
+	return permCache && now - permCache.at < PERM_CACHE_MS ? permCache.value : null;
+}
+export async function macPermissions(force = false): Promise<MacPermissions | null> {
+	if (!force) {
+		const hit = hostPermissionsCache();
+		if (hit) return hit;
+	}
+	if (!isMac() || !cuaInstalled()) {
+		permCache = { at: Date.now(), value: null };
+		return null;
+	}
+	let value: MacPermissions;
 	try {
 		const { stdout } = await run(cuaPaths().exe, ["permissions", "status", "--json", "--socket", socketPath()], { timeout: 8000 });
 		const j = JSON.parse(String(stdout)) as Record<string, unknown>;
 		const pick = (k: RegExp) => String(Object.entries(j).find(([x]) => k.test(x))?.[1] ?? "unknown");
-		return { accessibility: pick(/accessib/i), screenRecording: pick(/screen/i) };
+		value = { accessibility: pick(/accessib/i), screenRecording: pick(/screen/i) };
 	} catch {
-		return { accessibility: "unknown", screenRecording: "unknown" };
+		value = { accessibility: "unknown", screenRecording: "unknown" };
 	}
+	permCache = { at: Date.now(), value };
+	return value;
 }
 export async function macGrantPermissions() {
 	if (!isMac()) return;

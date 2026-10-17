@@ -17,7 +17,7 @@ import { visionExtension } from "./vision-ext.ts";
 import { computerExtension, computerLauncherExtension, isHostTool, trustedComputerTool, type ComputerHost } from "@pi-assistant/ext-computer";
 import { actionHistoryText, recordAction } from "./action-log.ts";
 import { guardContext } from "./guard.ts";
-import { describeHostAction, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostFileAccess, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
+import { describeHostAction, cuaInstalled, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostFileAccess, hostMcpCommand, hostPaused, hostSettings, hostStatus } from "./host-control.ts";
 import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
 import { emailExtension, isEmailTool, wechatExtension } from "@pi-assistant/ext-connectors";
 import { openWechat, WECHAT_PROMPT, wechatAllowed } from "./wechat.ts";
@@ -575,8 +575,11 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 	// 助理电脑已安装但关着机 → 先挂“开电脑”工具；调用后在同一轮里热注册电脑工具（不用等下一轮）
 	else if (desk?.available && desk.state !== "running")
 		exts.push({ name: "pia-computer-launcher", factory: computerLauncherExtension({ computer: sandboxComputer(), start: async () => void (await startDesktop(agentId), bus.emit({ type: "desktop.changed", agentId } as never)) }) });
-	// 用户开启了“操作这台电脑”且允许这个助理 → 挂上本机 Cua（bounded），每个动作逐项审批
-	if (hostAllowedFor(agentId) && ["running", "paused"].includes(hostStatus().daemon.state))
+	// 用户开启了“操作这台电脑”且允许这个助理 → 挂上本机 Cua（每个动作逐项审批）。
+	// 这里只看“授权在不在”，不看守护进程此刻是不是 running：更新后服务刚重启、Cua 还在 starting（或刚失败重试中）时，
+	// 如果按瞬时状态决定挂不挂，这个会话就整组没有电脑工具，用户会以为“授权被重置了，得去设置重新开一次”。
+	// 未就绪时由下面的 before 明确告诉他原因（结构化原因，不靠沉默）。
+	if (hostAllowedFor(agentId) && cuaInstalled())
 		exts.push({
 			name: "pia-hostpc",
 			factory: computerExtension({
@@ -591,6 +594,12 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				guard: guardContext("host"),
 				log: (e) => recordAction(agentId, taskId, e),
 				history: (o) => actionHistoryText(agentId, { target: "host", limit: o.limit }),
+				// 守护进程没就绪：说清楚是什么问题、要不要用户动手，不让任务在同一个动作上反复重试或无声卡住
+				before: async () => {
+					const { state: s, detail } = hostStatus().daemon;
+					if (s === "running" || s === "starting" || s === "paused") return null;
+					return `Cua Driver 现在没在运行（${detail}）。这不是你的权限被重置，先停下电脑操作，把原因告诉用户：如果是“权限设置已变化”，到 设置 › 操作这台电脑 确认更新即可；其他情况稍后重试一次，别连续重试同一个动作。`;
+				},
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
 					return { approved: !!res.approved, note: res.note, scope: res.scope };

@@ -41,11 +41,27 @@ setChatDefault(defaultModel);
 if (hindsightInUse()) void sidecar.ensure();
 // 聊天渠道：飞书 / 钉钉建立长连接，企业微信等回调
 void startChannels();
-// 用户开启过“操作这台电脑”：随服务启动 bounded 守护进程（清单与开启时确认的一致才会启动）
+// 用户开启过“操作这台电脑”：随服务启动 Cua 守护进程（清单与开启时确认的一致才会启动）。
 setHostEnv({ workspaceOf, agentIds: () => listAgents().map((a) => a.id) });
 // 完全权限：降权 / 暂停后中止正在跑的主机命令（每次工具调用仍由 hostFileAccess 动态判定）
 initHostAccessWatch();
-if (hostSettings().enabled) void startDaemon().catch((e) => console.warn(`[host-control] ${e instanceof Error ? e.message : e}`));
+// 更新后重启时 Cua 偶尔来不及在 10 秒内就绪（下载/解压/上一个实例退出中），原来一次失败就再也不试，
+// 用户回来只看到“电脑操作不可用”、以为授权被重置。这里改成有限重试（不改任何权限语义）。
+if (hostSettings().enabled)
+	void (async () => {
+		for (const [i, wait] of [0, 2_000, 5_000].entries()) {
+			if (wait) await new Promise((r) => setTimeout(r, wait));
+			try {
+				await startDaemon();
+				if (i) console.log(`[host-control] Cua Driver 第 ${i + 1} 次启动成功`);
+				return;
+			} catch (e) {
+				const msg = e instanceof Error ? e.message : String(e);
+				console.warn(`[host-control] 启动失败（第 ${i + 1} 次）：${msg}`);
+				if (!/就绪|10 秒/.test(msg) && i === 0) return; // 不是“还没起来”这类可重试的错误（比如权限计划已变），重试没意义
+			}
+		}
+	})();
 
 for (const sig of ["SIGINT", "SIGTERM"] as const)
 	process.on(sig, () => {

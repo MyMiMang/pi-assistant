@@ -390,3 +390,34 @@ test("草稿设置：改默认档位时现有助理固定成旧默认档位；�
 	assert.equal(hc.manifestHash(hc.hostPlan()), previewHash);
 	hc.saveHostSettings({ enabled: false, agents: "all", apps: [], tiers: {}, defaultTier: "bounded", fullAck: {} });
 });
+
+test("升级稳定性：应用内授权只看设置（档位 / 允许名单 / 已确认哈希），与守护进程瞬时状态无关", async () => {
+	hc.setHostEnv({ workspaceOf: (id) => `/ws/${id}`, agentIds: () => ["a1"] });
+	// 模拟“刚更新完、服务重启、Cua 还在启动中”：enabled 与 approvedHash 都是升级前那套 → 依然算已授权
+	hc.saveHostSettings({ enabled: true, approvedHash: "h", agents: "all", tiers: { a1: "full" }, defaultTier: "bounded", fullAck: {} });
+	assert.equal(hc.hostAllowedFor("a1"), true, "与 daemon.state 无关");
+	assert.equal(hc.hostFileAccess("a1"), true);
+	// 状态里带上（可能为空的）系统权限探测结果，后台据此判断“是不是缺系统授权”，不需要自己起进程探测
+	const st = hc.hostStatus();
+	assert.ok("macPermissions" in st);
+	assert.equal(st.macPermissions, hc.hostPermissionsCache());
+	// 非 macOS / 未安装 Cua：只读探测直接返回 null，不发任何系统授权请求
+	const perms = await hc.macPermissions();
+	assert.ok(perms === null || (typeof perms.accessibility === "string" && typeof perms.screenRecording === "string"));
+	// 缓存：同一时刻复用结果，不会每次轮询都起进程
+	if (perms) assert.equal(await hc.macPermissions(), perms);
+	hc.saveHostSettings({ enabled: false, approvedHash: undefined, agents: "all", tiers: {}, defaultTier: "bounded", fullAck: {} });
+});
+
+test("升级稳定性：计划哈希只覆盖能力与作用域，不含版本号 / 构建号 / 驱动版本", () => {
+	hc.setHostEnv({ workspaceOf: (id) => `/ws/${id}`, agentIds: () => ["a1"] });
+	hc.saveHostSettings({ enabled: false, agents: "all", apps: [{ name: "TextEdit", id: "/usr/bin/textedit" }], workspaceFiles: true, tiers: { a1: "bounded" }, defaultTier: "bounded", fullAck: {} });
+	const before = hc.manifestHash(hc.hostPlan());
+	// 计划里除了清单自身的 schema 版本（version: 3）不该带 App / 驱动 / 构建版本
+	assert.doesNotMatch(hc.hostPlan(), /^version: (?!3$)/m);
+	assert.equal(hc.manifestHash(hc.hostPlan()), before, "同一份设置的哈希稳定");
+	// 但新增作用域（多允许一个应用）必须变哈希 → 需要用户重新确认
+	hc.saveHostSettings({ apps: [{ name: "TextEdit", id: "/usr/bin/textedit" }, { name: "计算器", id: "/usr/bin/calc" }] });
+	assert.notEqual(hc.manifestHash(hc.hostPlan()), before, "新增能力 / 作用域必须重新确认");
+	hc.saveHostSettings({ enabled: false, agents: "all", apps: [], tiers: {}, defaultTier: "bounded", fullAck: {} });
+});
