@@ -240,3 +240,35 @@ node scripts/laya-benchmark-supervisor.mjs --timeout-ms=720000 -- \
 ```
 
 清理证据看 `supervisor-state.json` 的 `cleanup.daemon.stopped` / `cleanup.laya.stopped` / `cleanup.restore.ok`；harness 的 `evidence/laya-benchmark-real/report-*.json` 仍按原格式记录 `decisionConfidence` / `probability`。
+
+### 9.10 修后受控真实测量（2026-10-17，**唯一一次**，已跑完；结论：仍 1/4，3 题 `low_confidence`）
+
+**授权与执行**：主审放行**一次**真实测量。实际**只跑一次**（未因失败重跑）。树 `laya-benchmark-snapshot-fix` HEAD `26c5c51`（`git status` clean），Node `v24.19.0` 明确全路径、PATH 含其目录，`PIA_BENCH_WATCHDOG_MS=540000`，`PIA_BENCH_RAW` 未设（无额外诊断请求）：
+
+```bash
+node scripts/laya-benchmark-supervisor.mjs --timeout-ms=720000 -- \
+  node --import tsx scripts/laya-benchmark-isolated-harness.mjs
+```
+
+开始 `13:59:29Z` / 结束 `14:00:00.974Z`（wall ≈31.5 s）；supervisor `exit=1`（分数不满分），`cleanup.failures=[]`。原始证据 `evidence/laya-benchmark-real/report-2026-10-17T13-59-29-808Z.json`（tracked），supervisor 日志同目录（`*.log` gitignore，原样留盘）；细节见 `progress-snapshots/laya-benchmark-measure-2026-10-17.md`。
+
+**语义来源（安装版，不只 research HEAD）**：本机安装 wheel `laya==0.4.8`（`local-laya/runtime/env/lib/python3.12/site-packages/laya`）只读核对：`common.py:791 answer_confidence=max(p)`、`common.py:814 confidence_from_probs=1-H/log k`、`confidence.py:38 jev_confidence=(max(p)-1/n)/(1-1/n)`。与产品 `jevChoiceConfidence()` 公式一致（产品单候选不合成 1.0 是既有选择）。语义吻合后才执行。
+
+**隔离（本轮实测）**：服务进程临时 HOME / TMPDIR / DATA / WORKSPACE 全在 scratch 根内（`homeIsOsAccount=false`）；原生边界 `HOME=/Users/dengdeng`、无 `CFFIXED_USER_HOME`、`strippedKeys=[TMPDIR,TEMP,TMP]`、`diverged=true`、`problems=[]`（仍是**交给启动器的输入配置**，未读子进程实际环境）；MCP 走生产启动器 `inheritEnv=false / envReplaced=true`；独占 daemon `31328`、驱动自有浏览器 `31357`（window `17759`、pin `p1`）、自有 Laya `31340` port `57813`（token 摘要 `42b0c2bfcf88`）。生产 Laya baseline `27010` → API 停一次 → 恢复 `running pid 34607 port 58038, health ok mps, registered`；生产 daemon `22313` 未动。
+
+**结果（threshold 0.6 / timeout 4000ms，按任务分开熔断作用域）**
+
+| 任务 | decision | gate（Jev 标度） | 选项概率 p | 协议 confidence（熵） | 决策延迟 | 结果（双证据） |
+|---|---|---|---|---|---|---|
+| pick-submit | fallback `low_confidence` | **0.5302** | 0.5973 | 0.4862 | 112 ms | unknown（未派发） |
+| pick-city | fallback `low_confidence` | **0.4036** | 0.4888 | 0.2750 | 98 ms | unknown（未派发） |
+| scroll-target | selected | 0.8812 | 0.8981 | 0.7487 | 155 ms | **correct**（`clicked=deep-target` + UI「深度目标完成」） |
+| dynamic-2step | fallback `low_confidence` | **0.3558** | 0.4478 | 0.1972 | 149 ms | unknown（未派发） |
+
+预热 1 条（不计分）：`pick-submit` fallback，gate `0.5302` / p `0.5973`，1251 ms（冷启动）。汇总 **1/4 correct、fallback 3、timeout 0、abstain 0、p50 112 ms / p95 155 ms**。与 §9.7 的 0.3816 / 0.1854 / 0.2593（那些是**熵**）对照：换到 Jev 标度后 gate 明显升高（0.5302 / 0.4036 / 0.3558），但**仍全部低于 0.6** → 默认阈值下结论不变。**未下调阈值、未加模式、未额外发 raw 推理、未重跑。**
+
+**清理（按本次 socket / owned root 证明，不信历史 pid）**：`cleanup.daemon.stopped=true`（`found=[]`、`leftoverPids=[]`、socket 停后不存在）；`cleanup.laya={pid:31340, stopped:true, source:"already-dead"}`；worker 内已恢复生产 Laya，故 supervisor `restore.skipped="没有暂停过生产 Laya 或已恢复"`、`prodRestored=true`，**没有重复 stop / start**。fresh `pgrep`（按本次 socket / scratch 根）无结果，`browser-profile/` 为空，无本次 Chrome 残留。系统钥匙串 / 权限弹窗本轮未出现，未点任何按钮、未动 security / 系统权限。
+
+**preflight 时已存在的遗留（非本次、未杀、已记录）**：旧 bench daemon `5245`（socket `/tmp/pia-laya-bench-2026-10-17T10-58-08-701Z/...`）、`laya-serve` `32630`（生产 env 路径）、`laya-serve` `31929`（旧 smoke 临时路径）。没有本次归属证明，按规则只报告不乱杀。
+
+**边界（不得宣称）**：① 4 个固定 synthetic 任务、单机 arm64、单一 checkpoint，**不是完整 production benchmark**；② 熔断 key 按任务分开（生产 `benchmark-host` 同一 key）；③ `pick-city` 的 `afterSelect` 是**程序固定下拉选择**、`scroll-target` 的滚动是**程序侧 `programAssist`**，都不算 Laya 能力；④ **主模型接管未执行**（harness 不跑会话主接管），fallback 链路只在单测里证到「工具返回回退」，真实主接管仍未验；⑤ 3 题未派发动作 → 无「误选执行」可观测，也不反推「本来选对」；⑥ 不宣称准确率（温度未拟合，`max(p)` 偏 over-confident）；⑦「钥匙串弹窗已修好」仍未证。
