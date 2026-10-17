@@ -512,8 +512,9 @@ test("自动准备：新鲜用户（unset）→ 后台准备默认模型，完�
 	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, true);
 	await new Promise((r) => setTimeout(r, 40));
 	assert.equal(h.svc.managerFor(DEF).status().install.state, "installed");
-	assert.equal(h.selection.sel?.location, "local");
-	assert.equal(h.selection.sel?.model, DEF);
+	const sel = h.selection.sel as { location?: string; model?: string } | null;
+	assert.equal(sel?.location, "local");
+	assert.equal(sel?.model, DEF);
 	// 全局只启动一次：再调不重启
 	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
 });

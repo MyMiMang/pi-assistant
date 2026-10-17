@@ -14,7 +14,7 @@
  *  - 进度复用统一下载注册表（同一稳定 id `asr:<modelId>`），同一模型 = 同一 job；
  *  - **首次联网如实分层**：未知 (null) 时绝不声称可离线。
  */
-import type { LiveDownloadLike } from "./local-asr-intent";
+import type { LiveDownloadLike } from "./local-asr-intent.ts";
 
 /** 契约里的 prep.state 枚举 + 归一化兜底 `unknown`（认不出才用）。 */
 export type VoicePrepareState = "not_applicable" | "not_prepared" | "preparing" | "ready" | "failed" | "cancelled" | "unknown";

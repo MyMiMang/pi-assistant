@@ -35,7 +35,7 @@ import {
 	type VoiceSegment,
 	type VoiceStartOptions,
 	type VoiceState,
-} from "./voice-input";
+} from "./voice-input.ts";
 
 /** append 分片的目标时长：正常 200–400 ms（既不 100 ms 空转，也不攒成整段重发）。 */
 export const STREAM_MIN_CHUNK_MS = 200;

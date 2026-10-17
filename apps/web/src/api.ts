@@ -4,7 +4,7 @@
  *  - 从入口域名打开（PWA 外壳）：base = 当前隧道地址，通过 Rendezvous 查询并用配对时保存的服务公钥校验签名
  */
 import * as ed from "@noble/ed25519";
-import { AsrStreamError, normalizeStreamEvents, type VoiceStreamLimits, type VoiceStreamOpen } from "./voice-stream";
+import { AsrStreamError, normalizeStreamEvents, type VoiceStreamLimits, type VoiceStreamOpen } from "./voice-stream.ts";
 
 export interface Conn {
 	serverId: string;

@@ -191,7 +191,7 @@ export function onlineZipformerServeScript(opts: { encoder: string; decoder: str
 	const tokens = JSON.stringify(opts.tokens);
 	return `# -*- coding: utf-8 -*-
 # 由 Pi Assistant 生成**原生流式**本地 ASR sidecar；请勿手工修改（重装会覆盖）。
-# 只用 sherpa_onnx.OnlineRecognizer（from_transducer）；不改动 OfflineRecognizer 路径。
+# 只用 sherpa_onnx.OnlineRecognizer（from_transducer）；离线识别路径不受影响。
 import array, json, os, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 

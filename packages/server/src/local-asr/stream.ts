@@ -24,6 +24,9 @@ export type AsrStreamEvent =
 	| { type: "endpoint"; segmentId: string; seq: number }
 	| { type: "error"; code: string; message: string; retryable: boolean; seq: number };
 
+/** 冻结的段文本（`end` / `endpoint` 产出）。 */
+export type AsrFinalEvent = Extract<AsrStreamEvent, { type: "final" }>;
+
 /** 稳定错误码（与契约 §4 一致）。 */
 export const ASR_STREAM_ERRORS = {
 	notReady: "asr_not_ready",
@@ -47,6 +50,8 @@ export class AsrStreamError extends Error {
 		public status: number,
 		message: string,
 		public retryAfterMs?: number,
+		/** 附加结构化 body（如 `asr_not_ready` 带 `defaultVoice.prep`）；只放契约字段。 */
+		public body?: Record<string, unknown>,
 	) {
 		super(message);
 	}
@@ -69,6 +74,8 @@ export interface AsrStreamDeps {
 	resolveTarget(modelId?: string): Promise<{ ok: true; target: AsrStreamTarget } | { ok: false; error: AsrStreamError }>;
 	/** 当前来源持久化版本（会话创建时捕获，append 时校验）。 */
 	selectionVersion(): number;
+	/** 单次 sidecar 调用上限（默认 10 s；超时按引擎错误处理，不挂死会话）。 */
+	fetchTimeoutMs?: number;
 	now(): number;
 	fetchImpl?: typeof fetch;
 	setTimer(fn: () => void, ms: number): { cancel(): void };
@@ -238,7 +245,7 @@ export class LocalAsrStreamHub {
 		this.assertNotStale(s);
 		if (s.ended) throw new AsrStreamError(ASR_STREAM_ERRORS.expired, 409, "会话已结束，请重新开始录音");
 		if (this.deps.now() - s.createdAt > s.capability.maxSessionMs) {
-			await this.cancel(sessionId);
+			await this.cancel(sessionId, { principal: s.principal });
 			throw new AsrStreamError(ASR_STREAM_ERRORS.expired, 409, "单次流式会话已超时（60 秒），请重新开始录音");
 		}
 		if (s.busy) throw new AsrStreamError(ASR_STREAM_ERRORS.busy, 409, "上一帧仍在处理，请串行发送（不要并发 append）");
@@ -264,7 +271,7 @@ export class LocalAsrStreamHub {
 	}
 
 	/** 正常结束：喂尾部 silence + finish input → final；释放租约。幂等。 */
-	async end(sessionId: string, caller: AsrStreamCaller, _reason?: "stop" | "finish"): Promise<{ sessionId: string; state: "ended"; modelId: string; sourceVersion: number; finals: AsrStreamEvent[] }> {
+	async end(sessionId: string, caller: AsrStreamCaller, _reason?: "stop" | "finish"): Promise<{ sessionId: string; state: "ended"; modelId: string; sourceVersion: number; finals: AsrFinalEvent[] }> {
 		const s = this.require(sessionId);
 		this.assertOwner(s, caller);
 		if (s.ended) return { sessionId, state: "ended", modelId: s.modelId, sourceVersion: s.sourceVersion, finals: [] };
@@ -274,25 +281,26 @@ export class LocalAsrStreamHub {
 			events = this.normalizeEvents(raw, s.seq, Array.isArray(raw?.events) ? raw.events : undefined);
 		} catch {
 			/* sidecar 结束失败：仍然释放租约，不泄漏 */
+		} finally {
+			s.ended = true;
+			this.release(s);
 		}
-		s.ended = true;
-		this.release(s);
-		const finals = events.filter((e) => e.type === "final");
+		const finals = events.filter((e): e is AsrFinalEvent => e.type === "final");
 		return { sessionId, state: "ended", modelId: s.modelId, sourceVersion: s.sourceVersion, finals };
 	}
 
-	/** 取消：立即释放，不产 final。幂等。 */
+	/** 取消：**立即**释放租约（不等 sidecar，避免卡住留租约），再 best-effort 通知引擎。幂等。 */
 	async cancel(sessionId: string, caller: AsrStreamCaller): Promise<{ sessionId: string; state: "cancelled" }> {
 		const s = this.sessions.get(sessionId);
 		if (!s) return { sessionId, state: "cancelled" };
 		this.assertOwner(s, caller);
+		s.ended = true;
+		this.release(s);
 		try {
 			await this.fetchSidecar(s, "/v1/stream/cancel", { method: "POST", body: JSON.stringify({ sessionId: s.sidecarSession }) as unknown as BodyInit });
 		} catch {
 			/* 取消失败不影响释放 */
 		}
-		s.ended = true;
-		this.release(s);
 		return { sessionId, state: "cancelled" };
 	}
 
@@ -325,12 +333,13 @@ export class LocalAsrStreamHub {
 		return s;
 	}
 
-	/** 会话期间来源被改选 → 取消并明确报错，绝不 fallback 到别的模型。 */
+	/** 会话期间来源被改选 → **立即**释放租约并明确报错，绝不 fallback 到别的模型。 */
 	private assertNotStale(s: Session): void {
-		if (this.deps.selectionVersion() !== s.sourceVersion) {
-			void this.cancel(s.id, { principal: s.principal });
-			throw new AsrStreamError(ASR_STREAM_ERRORS.sourceChanged, 409, "语音识别来源已被改选，请重新开始录音");
-		}
+		if (this.deps.selectionVersion() === s.sourceVersion) return;
+		s.ended = true;
+		this.release(s);
+		void this.fetchSidecar(s, "/v1/stream/cancel", { method: "POST", body: JSON.stringify({ sessionId: s.sidecarSession }) as unknown as BodyInit }).catch(() => {});
+		throw new AsrStreamError(ASR_STREAM_ERRORS.sourceChanged, 409, "语音识别来源已被改选，请重新开始录音");
 	}
 
 	/** 授权主体校验：别的会话拿 sessionId 不能 append / end / cancel（不只靠随机 id 防猜）。 */
@@ -368,7 +377,7 @@ export class LocalAsrStreamHub {
 		if (s.timer) s.timer.cancel();
 		s.timer = this.deps.setTimer(() => {
 			if (this.sessions.get(s.id) !== s) return;
-			void this.cancel(s.id).catch(() => {});
+			void this.cancel(s.id, { principal: s.principal }).catch(() => {});
 		}, Math.min(s.capability.idleTimeoutMs, ASR_STREAM_IDLE_TIMEOUT_MS));
 	}
 
@@ -395,7 +404,8 @@ export class LocalAsrStreamHub {
 		const fetchImpl = this.deps.fetchImpl ?? fetch;
 		let res: Response;
 		try {
-			res = await fetchImpl(url, init);
+			// 有界：sidecar 卡住不能把 append / end / cancel 挂死（超时 → engineError，上层释放租约）。
+			res = await fetchImpl(url, { ...init, signal: init.signal ?? AbortSignal.timeout(this.deps.fetchTimeoutMs ?? 10_000) });
 		} catch (e) {
 			throw new AsrStreamError(ASR_STREAM_ERRORS.engineError, 503, `本地流式识别引擎调用失败：${e instanceof Error ? e.message : String(e)}`);
 		}
