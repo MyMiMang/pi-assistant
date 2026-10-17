@@ -125,6 +125,8 @@
 
 ### 6.5 剩余验收清单（本轮未做，交给重测试槽）
 
+> 2026-10-17 更新：第 1、2 项里的 `vite build`、`fast-mode-ui`、`thinking-slider-ui` 的 **A 组**已在本树一次性跑完（64/64、A 组 10/10 步），证据与 counts 见 [beta.30 有限 UI 验收](beta30-followup-ui-validation.md)（2026-10-17）。下面 2 项中其余脚本、B/C 组与 visual77 仍未跑。
+
 1. `vite build`（`npm run build -w @pi-assistant/web`）。
 2. 浏览器 e2e：`fast-mode-ui`、`model-menu-flow`、`thinking-slider-ui`、`thinking-slider-visual`、`model-ui`、`composer-compact`、`subagent-thinking-levels`、`subagent-thinking-loading`、`model-picker-favorites-ui`。
 3. 真机看：两层弹层 / 闪电 / 白色圆钮在各主题与 390 的观感，拖动取消不写库。
