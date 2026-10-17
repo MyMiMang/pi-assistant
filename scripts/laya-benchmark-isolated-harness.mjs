@@ -2,9 +2,11 @@
  * 快速操作模型 · **真实 Laya 完整 benchmark**（隔离 daemon + 驱动自有隔离浏览器 + 生产 chooser）。
  *
  * 这个脚本是 `docs/design/fast-model-benchmark.md` §9.6 的落地：
- *  1. 先断言**本进程**是原生环境（HOME = OS 账户家目录、无 CFFIXED_USER_HOME、TMPDIR 不在合成根里）；
+ *  1. 先把**本进程（服务侧）**切到合成隔离：HOME / TMPDIR / PIA_DATA_DIR / PIA_WORKSPACE 全在本次 scratch 根内
+ *     （内存凭据 + 临时数据目录，不碰用户真实数据目录 / 钥匙串），并做白名单自检；
  *  2. 起一个**本次独占**的 CuaDriver 守护进程：独立 socket / data dir / 浏览器 profile root，
- *     用生产同一套原生 env（`nativeLaunchEnvForChild`）+ macOS LaunchServices 官方签名 `CuaDriver.app`；
+ *     原生边界单独算——从**显式 clone 的 base env** 经生产 `nativeLaunchEnv()` 得到 OS 账户语义的环境
+ *     （HOME = OS 账户家目录、剥掉 CFFIXED_USER_HOME 与合成 TMPDIR），再经 LaunchServices 打开官方签名 `CuaDriver.app`；
  *     不共用、不停止生产 App 的守护进程；
  *  3. 用**生产同一套** `hostMcpCommand()`（自有启动器 + 环境全量替换）连它，
  *     经生产 `createInvokeBenchmarkDriver` 打开**驱动自有隔离浏览器**（`browser_prepare{isolated_new}`），
@@ -13,8 +15,18 @@
  *     起一个本次独占 sidecar（自己的端口 + 自己的 token，不读生产 token / 生产 DB），
  *     经生产 `buildChooser()`（systemone → `models.classify`）与 `selectFastAction()` 跑完整 4 个 fixture 任务；
  *  5. 每题记：模型 decision / confidence / latency / fallback、派发动作、双证据（fixture 机器状态 + 独立 UI 观测）；
- *  6. `finally` 里按相反顺序清理：只关自己打开的浏览器 → 断 MCP → 停自有 daemon（先证明 socket 归属）→
+ *  6. 按相反顺序清理：只关自己打开的浏览器 → 断 MCP → 停自有 daemon（先证明 socket 归属）→
  *     停自有 Laya → 用**生产 HTTP API** 把用户的 Laya 恢复到原来的运行状态（并复核）。
+ *
+ * 当前状态（2026-10-17 主审后，**默认不可运行**）：
+ *  - 隔离缺陷已改：服务进程改回**临时 HOME**，所有第三方 / 服务模块（hono / pi-mcp / TS 生产件）都在 env 设置之后
+ *    动态 import；原生边界只从 `cloneNativeBaseEnv(process.env)` 快照计算，不要求本进程是原生 HOME。
+ *    **这份改动没有在真实 daemon / 浏览器上跑过**（主审要求不再起 Chrome / driver）。
+ *  - 清理只有**进程内**兜底（单次到点 abort + finally 路径 + unhandledRejection/uncaughtException），
+ *    没有外部 watchdog：本进程被 SIGKILL / OOM / 掉电时，残留自有 daemon / 自有 Laya 或「生产 Laya 停着」
+ *    都不受保证。上一版注释里「第二次到点强制落盘」是不实说法（单次 setTimeout 不会触发第二次），已删。
+ *  - 因此入口 **fail-closed**：必须显式 `PIA_BENCH_HARNESS_ENABLE=1` 才跑；在此之前先按
+ *    `progress-snapshots/laya-benchmark-isolated-real.md`「主审后修正」列出的边界完成受控重测。
  *
  * 诚实边界：
  *  - 本脚本不评估“泛化能力”：只跑固定的 4 个 synthetic 任务；
@@ -22,20 +34,27 @@
  *  - 不读生产 token / 凭据 / 生产 DB；Laya 权重只用本机已物化目录的只读副本（clonefile，不写回原目录）；
  *  - 若系统权限弹窗 / 授权需要本人处理，脚本按失败停下并如实报告，不循环重试。
  *
- * 用法（显式手动运行；不进默认 npm test）：
- *   node --import tsx scripts/laya-benchmark-isolated-harness.mjs
+ * 用法（显式手动运行；不进默认 npm test；默认 fail-closed）：
+ *   PIA_BENCH_HARNESS_ENABLE=1 node --import tsx scripts/laya-benchmark-isolated-harness.mjs
  *   PIA_BENCH_KEEP=1                保留 scratch 目录（默认保留日志、删权重副本）
  *   PIA_BENCH_APP_API=http://127.0.0.1:8787   生产 App 的本机 API（用于停 / 恢复 Laya；仅回环）
  *   PIA_BENCH_TIMEOUT_MS=4000       快速模型单次决策超时（生产默认 4000）
  */
+// 只静态 import node 内置模块：hono / pi-mcp / TS 生产件**必须**在下面 env 设置之后动态 import
+// （静态 import 会被提升到模块体之前求值，那时 HOME / PIA_DATA_DIR 还是调用方的）。
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
-import { join, relative, resolve, isAbsolute } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { Hono } from "hono";
-import { serve } from "@hono/node-server";
-import { McpClient, StdioTransport } from "@earendil-works/pi-mcp";
+import {
+	SYNTHETIC_ROOT_MARKER,
+	cloneNativeBaseEnv,
+	envWhitelist,
+	planScratchDirs,
+	serviceIsolationEnv,
+	serviceIsolationProblems,
+} from "./laya-benchmark-harness-env.mjs";
 
 const exec = promisify(execFile);
 const OWNER = "amv7oy7ejb00";
@@ -46,6 +65,23 @@ const KEEP = process.env.PIA_BENCH_KEEP === "1";
 const WATCHDOG_MS = Number(process.env.PIA_BENCH_WATCHDOG_MS ?? 9 * 60_000);
 const REAL_HOME = userInfo().homedir;
 const PROD_DATA = join(REAL_HOME, "Library", "Application Support", "Pi Assistant");
+
+// ---------------------------------------------------------------- 入口门禁（默认 fail-closed）
+// 原因见文件头「当前状态」：隔离修复未在真实链路上验证、清理没有外部 watchdog。
+// 不留一个「直接 node 就能跑」的手动入口：误跑会停 / 起用户生产 Laya，并可能留下自有 daemon。
+if (process.env.PIA_BENCH_HARNESS_ENABLE !== "1") {
+	console.error(
+		[
+			"[laya-benchmark] 维护中，入口默认关闭（fail-closed），本次没有启动任何进程。",
+			"待修 / 待验（详见 progress-snapshots/laya-benchmark-isolated-real.md「主审后修正」）：",
+			"  1) 服务进程临时 HOME / TMPDIR 版本没有在真实 daemon + 浏览器上跑过（只做了纯函数测试）；",
+			"  2) 清理只有进程内兜底，没有外部 watchdog（进程被 SIGKILL / OOM 时不保证停自有 daemon / 恢复生产 Laya）；",
+			"  3) 一次受控运行会停 / 恢复用户生产 Laya 一次（2026-10-17 的验收实际跑了两轮），需要主会话给出明确的测试槽。",
+			"确认要跑：PIA_BENCH_HARNESS_ENABLE=1 node --import tsx scripts/laya-benchmark-isolated-harness.mjs",
+		].join("\n"),
+	);
+	process.exit(3);
+}
 
 const startedAt = new Date();
 const logLines = [];
@@ -63,7 +99,7 @@ const fail = (msg) => {
 // ---------------------------------------------------------------- scratch 根（owner guard，和 laya-real-smoke 同一套）
 
 function ownedRoot() {
-	const marker = ".pia-laya-bench-owner";
+	const marker = SYNTHETIC_ROOT_MARKER;
 	const explicit = process.env.PIA_BENCH_DIR;
 	const root = explicit ? resolve(explicit) : join("/tmp", `pia-lb-${OWNER}-${Date.now().toString(36)}`);
 	if (explicit) {
@@ -76,48 +112,27 @@ function ownedRoot() {
 }
 
 const root = ownedRoot();
-const dataDir = join(root, "data");
-const workspaceDir = join(root, "workspace");
-const profileRoot = join(root, "browser-profile");
-for (const d of [dataDir, workspaceDir, profileRoot, join(dataDir, "host-control")]) mkdirSync(d, { recursive: true });
+const dirs = planScratchDirs(root);
+const { home: tempHome, tmp: tempTmp, dataDir, workspaceDir, profileRoot } = dirs;
+for (const d of [dataDir, workspaceDir, profileRoot, tempHome, tempTmp, join(dataDir, "host-control")]) mkdirSync(d, { recursive: true });
 
-// 隔离启动：数据目录 / 工作区 / 浏览器 profile 都是本次独占的；HOME 保持 OS 账户家目录（原生环境）。
-process.env.PIA_DATA_DIR = dataDir;
-process.env.PIA_WORKSPACE = workspaceDir;
-process.env.PIA_OFFLINE = "1";
+// 隔离启动（服务侧）：HOME / TMPDIR / 数据目录 / 工作区**全部**落在本次 scratch 根内（合成 HOME → 内存凭据 + 临时数据），
+// 任何服务模块（含 hono / pi-mcp / TS 生产件）都在这一行之后才 import。
+// 原生边界不靠本进程 HOME：下面单独从 clone 的 base env 经 `nativeLaunchEnv()` 计算。
+Object.assign(process.env, serviceIsolationEnv({ baseEnv: process.env, dirs }));
 
-const within = (p, r) => {
-	try {
-		const rel = relative(resolve(r), resolve(p));
-		return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-	} catch {
-		return false;
-	}
-};
-
-/** 只读这三项（白名单）：HOME / CFFIXED_USER_HOME / TMPDIR 的存在与值，不打印其它环境变量。 */
-function envWhitelist() {
-	const tmp = process.env.TMPDIR ?? null;
-	return {
-		home: process.env.HOME ?? null,
-		homeIsOsAccount: process.env.HOME === REAL_HOME,
-		cffixedUserHomePresent: Object.prototype.hasOwnProperty.call(process.env, "CFFIXED_USER_HOME"),
-		tmpdir: tmp,
-		tmpdirUnderSyntheticRoot: tmp ? [root, dataDir].some((r) => within(tmp, r)) : false,
-	};
-}
-
-const hostEnv = envWhitelist();
-report.env = { platform: process.platform, arch: process.arch, node: process.version, realHome: REAL_HOME, host: hostEnv, scratchRoot: root };
-log("host env（白名单）", JSON.stringify(hostEnv));
-if (!hostEnv.homeIsOsAccount || hostEnv.cffixedUserHomePresent || hostEnv.tmpdirUnderSyntheticRoot) {
-	fail("本进程不是原生环境（HOME/CFFIXED_USER_HOME/TMPDIR 不在预期状态），按设计不启动 daemon / 浏览器");
+const serviceEnv = envWhitelist(process.env, { root, realHome: REAL_HOME });
+report.env = { platform: process.platform, arch: process.arch, node: process.version, realHome: REAL_HOME, scratchRoot: root, service: serviceEnv };
+log("服务进程 env（白名单）", JSON.stringify(serviceEnv));
+const serviceProblems = serviceIsolationProblems(process.env, { root, realHome: REAL_HOME });
+if (serviceProblems.length) {
+	fail(`服务进程不在合成隔离环境里：${serviceProblems.join("；")}`);
 	writeReportAndExit(2);
 }
 
-// ---------------------------------------------------------------- 生产模块（config 已在上面用隔离 data dir 初始化）
+// ---------------------------------------------------------------- 生产模块（env 已切到合成隔离，且都在此之后动态 import）
 
-const { nativeLaunchEnvForChild, nativeLaunchEnvProblems, osAccountHome } = await import("../packages/server/src/native-launch-env.ts");
+const { nativeLaunchEnv, nativeLaunchEnvProblems, osAccountHome } = await import("../packages/server/src/native-launch-env.ts");
 const { config } = await import("../packages/server/src/config.ts");
 const hostControl = await import("../packages/server/src/host-control.ts");
 const modelsMod = await import("../packages/server/src/models.ts");
@@ -138,6 +153,10 @@ const { mountFastComputerRoutes } = await import("../packages/server/src/fast-co
 const { clickCandidatesFromBrowserRefs, buildChooser } = await import("../packages/server/src/fast-computer/tool.ts");
 const { selectFastAction } = await import("../packages/server/src/fast-computer/index.ts");
 const { benchmarkToolGuard } = await import("../packages/server/src/fast-computer/benchmark-guard.ts");
+// 第三方依赖也在 env 设置之后才求值（旧版是静态 import，会在合成 HOME / PIA_DATA_DIR 生效前就执行）。
+const { Hono } = await import("hono");
+const { serve } = await import("@hono/node-server");
+const { McpClient, StdioTransport } = await import("@earendil-works/pi-mcp");
 
 // scratch data dir 里没有 bin / local-laya 运行时：用显式软链指到本机**官方签名**驱动与本机已物化的 Laya 运行时。
 //  - bin：只读使用（官方 CuaDriver.app；`cuaPaths()` 仍按 config.dataDir 解析，所以软链让它拿到同一个 App）；
@@ -147,17 +166,24 @@ const prodBin = join(PROD_DATA, "bin");
 const prodLaya = join(PROD_DATA, "local-laya", "runtime");
 const scratchBin = join(dataDir, "bin");
 const scratchLayaRuntime = join(dataDir, "local-laya", "runtime");
-if (!existsSync(prodBin)) throw new Error(`找不到本机已安装的 CuaDriver：${prodBin}`);
-if (!existsSync(join(prodLaya, "env", "bin", "laya-serve"))) throw new Error(`找不到本机已安装的 Laya 运行时：${join(prodLaya, "env")}`);
-if (!existsSync(join(prodLaya, "weights", "rl_agent_config.json"))) throw new Error(`找不到本机已物化的 Laya 权重：${join(prodLaya, "weights")}`);
-symlinkSync(prodBin, scratchBin);
-mkdirSync(scratchLayaRuntime, { recursive: true });
-symlinkSync(join(prodLaya, "env"), join(scratchLayaRuntime, "env"));
-await exec("cp", ["-c", "-R", join(prodLaya, "weights"), join(scratchLayaRuntime, "weights")]).catch(async () => {
-	// 文件系统不支持 clonefile 时退回普通复制（仍然是只读源，不写回生产目录）。
-	await exec("cp", ["-R", join(prodLaya, "weights"), join(scratchLayaRuntime, "weights")]);
-});
-writeFileSync(join(scratchLayaRuntime, "meta.json"), JSON.stringify({ installedAt: Date.now(), note: "isolated benchmark runtime (weights cloned from materialized dir)" }, null, 2));
+// 这一段会 throw（找不到本机驱动 / 运行时 / 权重，或 clonefile 失败）：此时还没启动任何进程，
+// 但要落一份可读的失败证据，而不是一个裸的 unhandled rejection 退出。
+try {
+	if (!existsSync(prodBin)) throw new Error(`找不到本机已安装的 CuaDriver：${prodBin}`);
+	if (!existsSync(join(prodLaya, "env", "bin", "laya-serve"))) throw new Error(`找不到本机已安装的 Laya 运行时：${join(prodLaya, "env")}`);
+	if (!existsSync(join(prodLaya, "weights", "rl_agent_config.json"))) throw new Error(`找不到本机已物化的 Laya 权重：${join(prodLaya, "weights")}`);
+	symlinkSync(prodBin, scratchBin);
+	mkdirSync(scratchLayaRuntime, { recursive: true });
+	symlinkSync(join(prodLaya, "env"), join(scratchLayaRuntime, "env"));
+	await exec("cp", ["-c", "-R", join(prodLaya, "weights"), join(scratchLayaRuntime, "weights")]).catch(async () => {
+		// 文件系统不支持 clonefile 时退回普通复制（仍然是只读源，不写回生产目录）。
+		await exec("cp", ["-R", join(prodLaya, "weights"), join(scratchLayaRuntime, "weights")]);
+	});
+	writeFileSync(join(scratchLayaRuntime, "meta.json"), JSON.stringify({ installedAt: Date.now(), note: "isolated benchmark runtime (weights cloned from materialized dir)" }, null, 2));
+} catch (e) {
+	fail(`准备本次 Laya 运行时失败（未启动任何进程）：${e instanceof Error ? e.message : String(e)}`);
+	writeReportAndExit(2);
+}
 
 const cuaPaths = hostControl.cuaPaths();
 report.isolation.cuaBinary = { exe: cuaPaths.exe, app: cuaPaths.app, exists: existsSync(cuaPaths.exe) };
@@ -187,11 +213,35 @@ const layaSummary = (st) => ({
 // ---------------------------------------------------------------- 状态 / 清理（幂等；watchdog 也会调用）
 
 const state = { daemonPid: null, socket: null, exe: null, browserClosed: false, mcpClosed: false, daemonStopped: false, laya: null, layaStopped: false, prodRestored: null, aborted: false, exitCode: 0, finished: false };
+// 单次到点定时器句柄（在 writeReportAndExit 里清掉；声明在这里避免前面的失败分支碰上 TDZ）。
+let watchdogTimer = null;
+
+// 进程内兜底：任何未捕获异常 / 未处理的 Promise 拒绝（例如 client.connect、serve、中间步骤 throw）
+// 都走同一条幂等清理，不再留下「自有 daemon 在跑 / 生产 Laya 停着」的裸退出。
+// 注意：这只是进程内兜底，SIGKILL / OOM / 掉电不覆盖（没有外部 watchdog，见文件头）。
+const fatal = (label, e) => {
+	fail(`${label}：${e instanceof Error ? e.message : String(e)}`);
+	state.aborted = true;
+	state.exitCode = 5;
+	// 清理已经开始过就不再重入（幂等）：直接落盘退出，避免第二次抛在清理里又逃逸。
+	if (state.finished) {
+		writeReportAndExit(5);
+		return;
+	}
+	void cleanup();
+};
+process.on("uncaughtException", (e) => fatal("未捕获异常", e));
+process.on("unhandledRejection", (e) => fatal("未处理的 Promise 拒绝", e));
 
 async function stopOwnDaemon() {
 	if (state.daemonStopped || !state.socket) return;
 	state.daemonStopped = true;
-	const env = nativeLaunchEnvForChild({ CUA_DRIVER_TELEMETRY: "0" }, { syntheticRoots: [config.dataDir] }).env;
+	const env = nativeLaunchEnv({
+		baseEnv: cloneNativeBaseEnv(process.env),
+		realHome: osAccountHome(),
+		syntheticRoots: [root, dataDir, workspaceDir, tempHome, tempTmp],
+		extra: { CUA_DRIVER_TELEMETRY: "0" },
+	}).env;
 	try {
 		await exec(state.exe, ["stop", "--socket", state.socket], { timeout: 8000, env });
 	} catch (e) {
@@ -252,6 +302,10 @@ async function restoreProductionLaya() {
 }
 
 async function cleanup() {
+	// 浏览器：拿到 handle 时 close() 走 driver 的 releasePrepared（kill 前用 list_windows 复核归属）；
+	// prepare 之后、拿到 handle 之前就失败时，driver 自己的 catch 已经调过同一条 releasePrepared
+	// （2026-10-17 读源码确认：packages/server/src/fast-computer/benchmark-driver.ts 的 openDriverBrowser catch）。
+	// 两者都是**进程内**保证；进程直接死亡同样不覆盖（见文件头）。
 	if (state.finished) return;
 	state.finished = true;
 	if (state.browser && !state.browserClosed) {
@@ -275,6 +329,7 @@ async function cleanup() {
 }
 
 function writeReportAndExit(code) {
+	if (watchdogTimer) clearTimeout(watchdogTimer);
 	const dir = resolve("evidence/laya-benchmark-real");
 	mkdirSync(dir, { recursive: true });
 	const stamp = startedAt.toISOString().replace(/[:.]/g, "-");
@@ -288,18 +343,15 @@ function writeReportAndExit(code) {
 
 const watchdog = setTimeout(() => {
 	report.watchdog = { firedAt: new Date().toISOString(), budgetMs: WATCHDOG_MS };
-	// 清理本身也可能卡住（例如恢复生产 Laya 的 HTTP 调用）：第二次到点就强制落盘退出，不无限挂。
-	if (state.finished) {
-		report.watchdog.forced = true;
-		fail("清理阶段再次超时，强制结束");
-		writeReportAndExit(4);
-	}
+	// 单次到点：只中止 + 走进程内清理。清理自己卡住时**没有**“第二次到点”可用（setTimeout 只触发一次），
+	// 也不靠它保命——进程被杀 / 清理卡死时，外部清理不在本脚本保证范围内（未实现外部 watchdog）。
 	fail(`整体超时（${Math.round(WATCHDOG_MS / 1000)}s）：中止并清理`);
 	state.aborted = true;
 	state.exitCode = 3;
 	void cleanup();
 }, WATCHDOG_MS);
-watchdog.unref?.();
+// 不 unref：让到点定时器在空闲时也真能触发一次（清理仍假设进程活着）。
+watchdogTimer = watchdog;
 
 // ---------------------------------------------------------------- 1) 本次独占 daemon（生产 env + LaunchServices 官方 App）
 
@@ -311,25 +363,30 @@ if (socketPath.length > 100) {
 }
 state.socket = socketPath;
 state.exe = cuaPaths.exe;
-const daemonEnv = nativeLaunchEnvForChild({ CUA_DRIVER_TELEMETRY: "0", CUA_DRIVER_DISABLE_RUN_SCRIPT: "1", CUA_DRIVER_BROWSER_PROFILE_ROOT: profileRoot }, { syntheticRoots: [dataDir] });
-const problems = nativeLaunchEnvProblems(daemonEnv.env, { realHome: daemonEnv.realHome, syntheticRoots: [dataDir] });
-const daemonEnvCheck = envWhitelistFrom(daemonEnv.env);
-report.env.daemon = { homeIsOsAccount: daemonEnvCheck.homeIsOsAccount, cffixedUserHomePresent: daemonEnvCheck.cffixedUserHomePresent, tmpdirUnderSyntheticRoot: daemonEnvCheck.tmpdirUnderSyntheticRoot, strippedKeys: daemonEnv.stripped, diverged: daemonEnv.diverged, problems };
-log("daemon env（白名单）", JSON.stringify(report.env.daemon));
+const nativeBaseEnv = cloneNativeBaseEnv(process.env);
+const nativeRoots = [root, dataDir, workspaceDir, tempHome, tempTmp];
+// 原生边界：只用上面这份**显式 clone** 的 base env + OS 账户家目录，和本进程的 HOME 无关。
+const daemonEnv = nativeLaunchEnv({
+	baseEnv: nativeBaseEnv,
+	realHome: osAccountHome(),
+	syntheticRoots: nativeRoots,
+	extra: { CUA_DRIVER_TELEMETRY: "0", CUA_DRIVER_DISABLE_RUN_SCRIPT: "1", CUA_DRIVER_BROWSER_PROFILE_ROOT: profileRoot },
+});
+const problems = nativeLaunchEnvProblems(daemonEnv.env, { realHome: daemonEnv.realHome, syntheticRoots: nativeRoots });
+const daemonEnvCheck = envWhitelist(daemonEnv.env, { root, realHome: REAL_HOME });
+report.env.daemon = {
+	...daemonEnvCheck,
+	strippedKeys: daemonEnv.stripped,
+	diverged: daemonEnv.diverged,
+	problems,
+	// 边界（如实）：这是**本进程算出来、交给启动器的 env 输入配置**；没有读取 daemon / Chrome 子进程的实际环境，
+	// 能证明“按这份配置启动且 daemon 起来了 / 链路真的打开过”，不能证明“子进程最终环境 ≡ 这份”。
+	evidenceScope: "input-config-not-actual-child-process-env",
+};
+log("daemon env（白名单；输入配置，不是子进程实际环境）", JSON.stringify(report.env.daemon));
 if (problems.length) {
 	fail(`给 daemon 的原生环境自检未通过：${problems.join("；")}`);
 	await cleanup();
-}
-
-function envWhitelistFrom(env) {
-	const tmp = env.TMPDIR ?? null;
-	return {
-		home: env.HOME ?? null,
-		homeIsOsAccount: env.HOME === REAL_HOME,
-		cffixedUserHomePresent: Object.prototype.hasOwnProperty.call(env, "CFFIXED_USER_HOME"),
-		tmpdir: tmp,
-		tmpdirUnderSyntheticRoot: tmp ? [root, dataDir].some((r) => within(tmp, r)) : false,
-	};
 }
 
 const serveArgs = ["serve", "--socket", socketPath, "--permission-mode", "unrestricted", "--dangerously-bypass-approvals", "--no-permissions-gate"];
@@ -377,7 +434,13 @@ if (!mcpCmd.args.some((a) => a.includes(socketPath))) {
 }
 const client = new McpClient({ name: "pia-laya-bench-isolated", version: "1.0.0", requestTimeoutMs: 60_000 });
 state.client = client;
-await client.connect(new StdioTransport({ command: mcpCmd.command, args: mcpCmd.args, env: mcpCmd.env, inheritEnv: mcpCmd.inheritEnv, stderr: "pipe", onStderr: () => {} }));
+try {
+	await client.connect(new StdioTransport({ command: mcpCmd.command, args: mcpCmd.args, env: mcpCmd.env, inheritEnv: mcpCmd.inheritEnv, stderr: "pipe", onStderr: () => {} }));
+} catch (e) {
+	fail(`连接本次独占 daemon 的 MCP 失败：${e instanceof Error ? e.message : String(e)}`);
+	state.exitCode = 2;
+	await cleanup();
+}
 report.env.mcp = { commandIsLauncher: /mcp-env-launcher\.mjs$/.test(mcpCmd.args[0] ?? ""), socketMatchesOwnDaemon: true, inheritEnv: mcpCmd.inheritEnv, envReplaced: mcpCmd.envReplaced, strippedKeys: mcpCmd.stripped };
 log("MCP 已连接（生产启动器）", JSON.stringify(report.env.mcp));
 
@@ -408,7 +471,13 @@ mountFastComputerRoutes(app, {
 	host: { availability: () => ({ cuaReady: true, modelReady: true, fixtureReady: true, reasons: [] }), start: async () => { throw new Error("harness 不走 host.start"); } },
 	store,
 });
-const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
+let server;
+try {
+	server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
+} catch (e) {
+	fail(`fixture 网关起不来：${e instanceof Error ? e.message : String(e)}`);
+	await cleanup();
+}
 state.server = server;
 await new Promise((r) => setTimeout(r, 80));
 const port = server.address()?.port;
