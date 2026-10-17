@@ -275,12 +275,12 @@ export function CustomProviderForm({ initial, apis, classifierProtocols = [], on
 						添加
 					</Button>
 				</form>
-				{/* classifier 声明（可选）：保存后由服务端在启动 / reload 时重新注册，供快速操作模型选用 */}
+				{/* classifier 声明（可选）：保存后由服务端在启动 / reload 时重新注册到通用分类器目录 */}
 			<div className="space-y-2" data-testid="custom-classifiers">
 				<div className="flex items-center justify-between">
 					<span className="flex items-center gap-1">
 						{label(`高级：手动指定分类器（一般不用填）${classifiers.length ? `（${classifiers.length}）` : ""}`)}
-						<Help>常见的 Jev / 官方同名模型（如 jev-latest）会在保存后**自动识别**为快速操作模型，不用在这里声明。只有当服务没有给出协议、你要手动告诉它是原生 System One 分类器时才填：选协议 + 对端模型 ID，鉴权沿用本渠道已保存的 Key，不会把 Key 发给别的地址。</Help>
+						<Help>常见的 Jev / 官方同名模型（如 jev-latest）会在保存后**自动识别**为分类器模型，不用在这里声明。只有当服务没有给出协议、你要手动告诉它是原生 System One 分类器时才填：选协议 + 对端模型 ID，鉴权沿用本渠道已保存的 Key，不会把 Key 发给别的地址。</Help>
 					</span>
 					<Button size="sm" variant="ghost" onClick={() => setClassifiers((l) => [...l, { protocol: classifierProtocols[0] ?? "typesafe-system-one", modelId: "" }])}>
 						<Plus size={14} /> 添加
@@ -297,7 +297,7 @@ export function CustomProviderForm({ initial, apis, classifierProtocols = [], on
 				))}
 				{(saved?.discoveredClassifiers?.length ?? 0) > 0 && (
 					<div className="text-[11px] text-mut2" data-testid="custom-auto-classifiers">
-						已自动识别 {saved!.discoveredClassifiers!.length} 个快速操作模型：{saved!.discoveredClassifiers!.map((c) => c.modelId).join("、")}（到「电脑」里选）
+						已自动识别 {saved!.discoveredClassifiers!.length} 个分类器模型：{saved!.discoveredClassifiers!.map((c) => c.modelId).join("、")}（在模型服务目录里查看）
 					</div>
 				)}
 			</div>

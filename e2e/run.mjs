@@ -1077,61 +1077,20 @@ await step("多个自定义服务（中文名）：各自独立 id；默认模�
 	}
 });
 
-await step("快速操作模型：自定义渠道声明 Jev 分类器 → 设置里用应用内 Select 选（非原生）；390 不溢出、Esc 只关菜单；删除后引用被清、失败 UI", async () => {
+await step("分类器元数据：自定义渠道声明 Jev 分类器 → 目录可见、非法协议被拒（电脑快速操作选择器已撤下，不再有设置入口）", async () => {
 	const relay = await startMockOpenAI({ key: "sk-fast" });
 	let id;
 	try {
 		const r = await fetch(`${BASE}/api/models/custom`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "快速中转", api: "openai-completions", baseUrl: relay.url, apiKey: "sk-fast", models: [{ id: "relay-chat" }], classifiers: [{ protocol: "typesafe-system-one", modelId: "jev-relay" }] }) });
 		if (!r.ok) throw new Error(`添加自定义渠道失败：${await r.text()}`);
 		id = (await r.json()).id;
-		let fs = await (await fetch(`${BASE}/api/fast-computer/settings`)).json();
-		const cls = fs.classifierModels.find((m) => m.provider === id && m.id === "jev-relay");
-		if (!cls?.configured) throw new Error("自定义 classifier 没进目录或未标 configured");
-		// 非法协议被拒
+		const reg = await (await fetch(`${BASE}/api/models/registry`)).json();
+		const prov = reg.providers.find((p) => p.id === id);
+		const cls = prov?.models?.find((m) => m.id === "jev-relay");
+		if (!cls || !cls.capabilities.includes("classifier")) throw new Error("自定义 classifier 没进统一目录或能力缺失");
+		// 非法协议被拒（通用分类器校验仍在，不因撤下选择器而放松）
 		const bad = await fetch(`${BASE}/api/models/custom/${id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "快速中转", api: "openai-completions", baseUrl: relay.url, models: [{ id: "relay-chat" }], classifiers: [{ protocol: "nope", modelId: "x" }] }) });
 		if (bad.status !== 400) throw new Error("非法 classifier 协议应 400");
-
-		const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
-		const p = await c.newPage();
-		await p.goto(`${BASE}/?settings=host`);
-		const sec = p.getByTestId("fast-computer-hostpc");
-		await sec.waitFor();
-		await sec.getByTestId("fast-refresh-hostpc").click();
-		await sec.getByLabel("开启快速操作模型").check();
-		if (await sec.locator("select").count()) throw new Error("快速操作模型仍在用原生 <select>");
-		if (await sec.getByTestId("fast-kind").count()) throw new Error("不应再有 chat 替代类型选择");
-		await sec.getByTestId("fast-classifier-hostpc").click();
-		await p.getByTestId(`fast-classifier-hostpc-option-${id}/jev-relay`).click();
-		await p.waitForFunction(async (b) => { const s = (await (await fetch(`${b}/api/fast-computer/settings?scope=hostpc`)).json()).settings; return s.kind === "systemone" && !!s.provider && s.id === "jev-relay"; }, BASE);
-		// 每台电脑各一份：助理电脑 scope 不受用户电脑设置影响
-		const computerScope = await (await fetch(`${BASE}/api/fast-computer/settings?scope=computer`)).json();
-		if (computerScope.settings.enabled) throw new Error("助理电脑 scope 不应被用户电脑设置影响");
-		// 390：下拉菜单在视口内，Esc 只关菜单不关设置弹窗
-		await p.setViewportSize({ width: 390, height: 844 });
-		await sec.getByTestId("fast-classifier-hostpc").click();
-		await p.getByTestId("fast-classifier-hostpc-menu").waitFor();
-		const box = await p.getByTestId("fast-classifier-hostpc-menu").boundingBox();
-		if (!box || box.x < -1 || box.x + box.width > 391) throw new Error(`390 下拉溢出：${JSON.stringify(box)}`);
-		await p.keyboard.press("Escape");
-		await p.getByTestId("fast-classifier-hostpc-menu").waitFor({ state: "detached" });
-		if (!(await p.getByTestId("settings-dialog").isVisible())) throw new Error("Esc 把设置弹窗一起关了");
-		await p.screenshot({ path: join(SHOTS, "71-fast-computer-select-390.png") });
-		await p.setViewportSize({ width: 1440, height: 900 });
-		// 删除渠道 → 引用被清 + 下拉里不再出现该 classifier
-		await fetch(`${BASE}/api/models/custom/${id}`, { method: "DELETE" });
-		const goneId = id;
-		id = undefined;
-		await sec.getByTestId("fast-refresh-hostpc").click();
-		await p.waitForTimeout(400);
-		fs = await (await fetch(`${BASE}/api/fast-computer/settings?scope=hostpc`)).json();
-		if (fs.settings.provider || fs.settings.id) throw new Error("删除渠道后快速操作模型引用没清");
-		await sec.getByTestId("fast-classifier-hostpc").click();
-		await p.getByTestId("fast-classifier-hostpc-menu").waitFor();
-		if (await p.getByTestId(`fast-classifier-hostpc-option-${goneId}/jev-relay`).count()) throw new Error("已删 classifier 不应还在下拉");
-		await p.keyboard.press("Escape");
-		await sec.getByLabel("开启快速操作模型").click();
-		await p.screenshot({ path: join(SHOTS, "71-fast-computer-select.png") });
-		await c.close();
 	} finally {
 		if (id) await fetch(`${BASE}/api/models/custom/${id}`, { method: "DELETE" }).catch(() => {});
 		relay.close();

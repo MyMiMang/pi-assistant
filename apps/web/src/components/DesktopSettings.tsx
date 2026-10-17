@@ -9,7 +9,6 @@ import { api } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
 import { AgentComputer } from "./AgentComputer";
-import { FastComputerSettingsSection } from "./FastComputerSettings";
 import { Avatar, avatarText, Badge, Button, Help, Input, Select, useConfirm } from "./ui";
 
 type ResourceNums = { cpus?: number; memoryGiB?: number; diskGiB?: number };
@@ -274,18 +273,6 @@ export function DesktopSettings() {
 			</section>
 
 			{s.enabled && <VmResources g={g} put={put} />}
-
-			<section className="space-y-2" data-testid="desktop-fast-computer">
-				<div className="font-semibold">{t("快速操作模型")}</div>
-				<div className="text-sm text-zinc-500">{t("助理操作这台电脑（虚拟机）时，可选让一个快速模型帮忙挑控件。只影响这台助理电脑。")}</div>
-				<FastComputerSettingsSection scope="computer" />
-				<p className="text-xs text-zinc-500">
-					本地快速操作模型（Laya）不是语音识别；安装只有一份、两台电脑共用，在「操作这台电脑」里管理。
-					<button type="button" className="ml-1 text-accent underline" onClick={() => useStore.getState().set({ settings: "host" })} data-testid="desktop-laya-link">
-						去安装 / 查看
-					</button>
-				</p>
-			</section>
 
 			<details className="rounded-xl border border-line" open={dlOpen} onToggle={(e) => setDlOpen(e.currentTarget.open)} data-testid="desktop-download-source">
 				<summary className="cursor-pointer px-3 py-2 text-sm font-semibold">

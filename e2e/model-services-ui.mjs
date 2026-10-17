@@ -12,7 +12,6 @@ import { chromium } from 'playwright-core';
 // 不是把 demo 数据直接塞进界面。覆盖：
 //   能力标签（含「未确认」）/ 能力纠正 PUT / 官方完整目录（未接入也能点开登录）/ 自定义服务新增保存（真实 POST）/
 //   编辑（PUT）/ 测试连接 / 删除确认（DELETE）/ 生图适配按 keyFrom 绑定同一个 provider /
-//   本地 Laya 管理卡（安装态·运行态·health·未就绪不删配置·卸载确认）/ 实际操作测试（availability、provenance、advisory）/
 //   Esc 关弹窗 / 390 宽 / 无原生 dialog。
 const root = decodeURIComponent(new URL('..', import.meta.url).pathname);
 const dist = join(root, 'apps/web/dist');
@@ -114,8 +113,6 @@ const registry = () => {
 		}
 		for (const m of ip.models) target.models.push({ provider: target.id, id: m, name: m, type: 'image', capabilities: ['image'], protocol: ip.kind, confirmed: true, inferred: [], source: 'imagegen', configured: true, edit: true, imageAdapter: { kind: ip.kind, baseUrl: ip.baseUrl, edit: true } });
 	}
-	// 本地 Laya 也出现在 registry（UI 用管理卡展示，不重复成卡片）
-	out.push({ id: 'local-laya', name: '本地 Laya', kind: 'local', configured: true, protocols: ['typesafe-system-one'], models: [{ provider: 'local-laya', id: 'multilingual', name: 'multilingual', type: 'classifier', capabilities: ['classifier'], protocol: 'typesafe-system-one', confirmed: true, inferred: [], source: 'local', configured: true }] });
 	return out;
 };
 const customJson = () => ({ providers: customProviders.map((p) => ({ ...p, references: { defaultModel: false, visionModel: false, agents: [], subagents: false, subagentAgents: [] } })), apis: [{ id: 'openai-completions', label: 'OpenAI 兼容' }], classifierProtocols: ['typesafe-system-one'] });
@@ -245,7 +242,7 @@ try {
 	const panel = page.getByTestId('model-services-panel');
 	await panel.waitFor();
 	const cards = () => page.locator('[data-testid=service-card]');
-	assert.equal(await cards().count(), 2, 'registry 里 2 个服务卡片（openai + custom-relay；local-laya 由管理卡展示，不重复）');
+	assert.equal(await cards().count(), 2, 'registry 里 2 个服务卡片（openai + custom-relay）');
 	const SHOT = process.env.SHOT_DIR;
 	if (SHOT) await page.locator('[data-testid=model-services]').screenshot({ path: `${SHOT}/1-services-desktop.png` });
 
@@ -332,79 +329,6 @@ try {
 	assert.ok(!customProviders.some((p) => p.id === 'custom-1'), '删除后状态里不再有该服务');
 	assert.equal(await cards().count(), 2, '删除后卡片恢复为 2 个');
 
-	// 7) 本地 Laya 管理卡：设置 › 电脑 › 操作这台电脑（不在模型服务页）
-	await page.goto(`${base}/?settings=host`);
-	await page.getByTestId('local-laya-card').waitFor();
-	const layaCard = page.getByTestId('local-laya-card');
-	assert.equal(await layaCard.getAttribute('data-source'), 'local');
-	// 单一状态：安装 + 运行合成一个 badge（不再同时出「未安装 / 未运行 / 分类器 / 未就绪」）
-	assert.match(await page.getByTestId('laya-state').textContent(), /可用/, '安装并运行时应是单状态「可用」');
-	await page.getByTestId('laya-details-toggle').click();
-	assert.match(await page.getByTestId('laya-device').textContent(), /mps/, 'health 实际设备应来自测量值');
-	assert.match(await page.getByTestId('laya-unverified-note').textContent(), /尚未在本机实机验证/, '需声明未实机验证');
-	assert.match(await page.getByTestId('laya-source').textContent(), /权重/, '来源 / 许可在详情里保留');
-	assert.equal(await page.getByTestId('laya-model-row').getAttribute('data-registered'), 'true');
-	await page.getByTestId('laya-details-toggle').click();
-	assert.equal(await page.getByTestId('laya-unverified-note').count(), 0, '收起详情后长声明不占屏');
-	assert.equal(await page.getByTestId('laya-model-row').count(), 0, '协议 / 模型 id 行只在详情里，不占主界面');
-
-	// 8) 实际操作测试：provenance 按每次结果标明，不是永久硬文案
-	await page.getByTestId('benchmark-open-multilingual').click();
-	await page.getByTestId('actual-task-test').waitFor();
-	assert.match(await page.getByTestId('actual-task-preflight').textContent(), /前置条件/);
-	assert.match(await page.getByTestId('actual-task-verdict').textContent(), /尚未运行/, '未跑过时显示尚未运行');
-	await page.getByTestId('actual-task-target').click();
-	await page.getByRole('option', { name: /助理电脑/ }).click();
-	await page.getByTestId('actual-task-ack').check();
-	await page.getByTestId('actual-task-start').click();
-	await page.waitForFunction(() => document.querySelector('[data-testid=actual-task-verdict]')?.textContent?.includes('偏慢'), null, { timeout: 5000 });
-	const resultText = await page.getByTestId('actual-task-result').textContent();
-	assert.match(resultText, /冷启动（单次）/, '需单列冷启动');
-	assert.match(resultText, /任务成功率/, '需显示任务成功率');
-	assert.match(resultText, /总用时/, '需显示总用时');
-	assert.match(resultText, /步骤延迟 p50（诊断）/, 'p50 应标为步骤诊断');
-	assert.match(resultText, /不代表整个 CUA 速度/, '需声明不代表整个 CUA 速度');
-	assert.match(resultText, /本轮不执行主模型回退/, '不得把 fallbackCount 当接管收益');
-	assert.match(await page.getByTestId('actual-task-provenance').textContent(), /真实 CUA 驱动/, 'provenance=cua 时应标明来自真实 CUA');
-	assert.equal(await page.getByTestId('actual-task-provenance').getAttribute('data-provenance'), 'cua');
-	assert.equal(benchPosts.length, 1, '应发出一次 benchmark POST');
-	assert.ok(['hostpc', 'computer'].includes(benchPosts[0].target), 'POST target 必须是 hostpc | computer');
-	if (SHOT) await page.getByTestId('actual-task-test').screenshot({ path: `${SHOT}/2-actual-task-test.png` });
-	await page.getByTestId('actual-task-use-anyway').click();
-
-	// 8b) 测试假驱动：provenance=fixture 时明确说明不是真实桌面
-	benchProvenance = 'fixture';
-	await page.getByTestId('benchmark-open-multilingual').click();
-	await page.getByTestId('actual-task-test').waitFor();
-	await page.getByTestId('actual-task-ack').check();
-	await page.getByTestId('actual-task-start').click();
-	await page.waitForFunction(() => document.querySelector('[data-testid=actual-task-verdict]')?.textContent?.includes('偏慢'), null, { timeout: 5000 });
-	assert.match(await page.getByTestId('actual-task-provenance').textContent(), /测试 \/ 假驱动/, 'provenance=fixture 时应标明不是真实桌面');
-	await page.getByTestId('actual-task-use-anyway').click();
-	benchProvenance = 'cua';
-
-	// 9) Laya 停止：不删配置，模型显示未就绪
-	await page.getByTestId('laya-stop').click();
-	await page.waitForTimeout(80);
-	assert.match(await page.getByTestId('laya-state').textContent(), /已停止/);
-	await page.getByTestId('laya-details-toggle').click();
-	assert.equal(await page.getByTestId('laya-model-row').getAttribute('data-registered'), 'false');
-	assert.match(await page.getByTestId('laya-model-row').textContent(), /未就绪/, '停止后模型显示未就绪，不删配置');
-	assert.ok(await page.getByTestId('laya-start').isVisible(), '停止后仍可启动');
-
-	// 10) Laya 卸载：自绘确认框（不是原生 confirm）；取消不变，确认后回到未安装
-	await page.getByTestId('laya-uninstall').click();
-	await page.getByTestId('confirm-dialog').waitFor();
-	assert.match(await page.getByTestId('confirm-dialog').textContent(), /卸载本地 Laya/);
-	await page.getByTestId('confirm-cancel').click();
-	await page.waitForTimeout(60);
-	assert.match(await page.getByTestId('laya-state').textContent(), /已停止/, '取消卸载后状态不变');
-	await page.getByTestId('laya-uninstall').click();
-	await page.getByTestId('confirm-ok').click();
-	await page.waitForTimeout(80);
-	assert.match(await page.getByTestId('laya-state').textContent(), /未安装/, '确认后卸载');
-	assert.ok(await page.getByTestId('laya-install').isVisible(), '卸载后显示一键安装');
-
 	// 11) 回到模型页 → Esc 关弹窗（键盘可达）
 	await page.goto(`${base}/?settings=models`);
 	await page.getByTestId('settings-dialog').waitFor();
@@ -426,7 +350,7 @@ try {
 
 	const nativeDialogs = await page.evaluate(() => window.__nativeDialogs ?? 0);
 	assert.equal(nativeDialogs, 0, '不得调用原生 confirm/alert/prompt');
-	console.log('通过：统一模型服务真实 CRUD（官方完整目录登录 / 自定义新增保存编辑删除 / 测试连接 / 生图 keyFrom 绑定）、能力纠正、Laya 管理卡、实际操作测试 provenance、Esc、390 宽、无原生 dialog。');
+	console.log('通过：统一模型服务真实 CRUD（官方完整目录登录 / 自定义新增保存编辑删除 / 测试连接 / 生图 keyFrom 绑定）、能力纠正、Esc、390 宽、无原生 dialog（电脑快速操作模型与 Laya 已撤下，不再有安装卡 / 实际操作测试入口）。');
 } finally {
 	await browser?.close();
 	web.close();

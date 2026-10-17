@@ -3,8 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { COMPOSER_LABEL } from "../composer";
 import { useStore } from "../store";
-import { FastComputerSettingsSection } from "./FastComputerSettings";
-import { LocalLayaSection } from "./ModelServices";
 import { Badge, Button, cx, Input, avatarText, Help, useConfirm } from "./ui";
 
 /** 启用“完全权限”前的确认框（不再要求输入确认语） */
@@ -239,16 +237,6 @@ export function HostControlSettings() {
 						</Button>
 					</div>
 				)}
-			</section>
-
-			<section className="space-y-2" data-testid="host-local-laya">
-				<LocalLayaSection />
-			</section>
-
-			<section className="space-y-2" data-testid="host-fast-computer">
-				<div className="font-semibold">快速操作模型</div>
-				<div className="text-xs text-mut">操作你自己的电脑时，可选让一个快速模型帮忙挑控件。只影响用户电脑，和助理电脑分开设置。</div>
-				<FastComputerSettingsSection scope="hostpc" />
 			</section>
 
 			<section className="space-y-2" data-testid="host-tiers">

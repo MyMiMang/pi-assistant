@@ -116,17 +116,13 @@ try {
 		if (path === '/api/models/custom' && method === 'GET') return json(route, customJson());
 		if (path === '/api/models/registry' && method === 'GET') return json(route, { providers: registry() });
 		if (path === '/api/image-models' && method === 'GET') return json(route, { kinds: [{ kind: 'openai', label: 'OpenAI 兼容', baseUrl: 'https://api.openai.com/v1', models: ['gpt-image-1'] }], providers: [], models: [], default: null, reusable: customProviders.map((p) => ({ id: p.id, name: p.name, baseUrl: p.baseUrl, api: p.api })) });
-		if (path === '/api/fast-computer/settings') return json(route, { settings: { enabled: false, kind: 'systemone', provider: '', id: '' }, models: [], classifierModels: [] });
 		if (path === '/api/subagents/settings') return json(route, { settings: { maxConcurrent: 10, maxMinutes: 10 }, models: [] });
-		if (path === '/api/local-models/laya/status') return json(route, layaUninstalled);
-		if (path === '/api/fast-computer/benchmark' && method === 'GET') return json(route, { availability: { cuaReady: false, modelReady: false, fixtureReady: false, reasons: ['示例数据'] }, runs: [] });
 		return json(route, {});
 	});
 
 	await page.goto(`${base}/?settings=models`);
 	await page.getByTestId('settings-dialog').waitFor();
 	await page.getByTestId('model-services-panel').waitFor();
-	await page.getByTestId('local-laya-card').waitFor();
 	// 明确标注：这是静态 mock 示例数据（角标要放进弹窗内部，否则元素截图会把它裁掉）
 	const labelInside = (testId, text, fontSize = 12) => page.evaluate(({ testId, text, fontSize }) => {
 		const host = document.querySelector(`[data-testid=${testId}]`);
@@ -168,22 +164,18 @@ try {
 	await page.keyboard.press('Escape');
 	await page.waitForTimeout(80);
 
-	// 390 手机：顶部 + 滚到 Laya
+	// 390 手机：顶部
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.reload();
 	await page.getByTestId('settings-dialog').waitFor();
 	await page.getByTestId('model-services-panel').waitFor();
-	await page.getByTestId('local-laya-card').waitFor();
 	await labelInside('settings-dialog', '测试示例数据（静态 fixture）', 11);
 	await page.waitForTimeout(200);
 	await shot('04-settings-models-390-top.png', page.getByTestId('settings-dialog'));
-	await page.getByTestId('local-laya-card').scrollIntoViewIfNeeded();
-	await page.waitForTimeout(150);
-	await shot('05-settings-models-390-laya-uninstalled.png', page.getByTestId('settings-dialog'));
 
 	// 记录来源：commit + dist build 摘要
 	const manifest = {
-		note: '静态前端 fixture 截图（非真实用户配置；Laya 为未安装态）',
+		note: '静态前端 fixture 截图（非真实用户配置）',
 		commit,
 		distIndexSha256: await sha(join(dist, 'index.html')),
 		distAssets: {},

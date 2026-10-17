@@ -275,18 +275,12 @@ try {
 	check("ASR 区块标明「声明」", asrText.includes("声明"));
 	await page.screenshot({ path: join(OUT, "03-model-slim.png") });
 
-	console.log("\n── 电脑 › 操作这台电脑：本地 Laya 只在这里管理 ──");
+	console.log("\n── 电脑 › 操作这台电脑：快速操作模型 / Laya 入口已撤下 ──");
 	await page.goto(`${base}/?settings=host`);
-	await page.getByTestId("host-local-laya").waitFor();
-	check("操作这台电脑页有本地快速操作模型（Laya）卡", await page.getByTestId("local-laya-card").isVisible());
-	check("Laya 区块与「快速操作模型」并列（不整屏长文）", await page.getByTestId("host-fast-computer").isVisible());
-	// 等快速操作设置真正 loaded（不要拿「正在载入…」的静态图当已加载）
-	await page.waitForFunction(() => {
-		const el = document.querySelector('[data-testid="fast-computer-hostpc"]');
-		return !!el && !(el.textContent ?? "").includes("正在载入");
-	});
-	check("快速操作设置已 loaded（不是载入中）", !((await page.getByTestId("fast-computer-hostpc").textContent()) ?? "").includes("正在载入"));
-	await page.screenshot({ path: join(OUT, "03b-host-laya.png") });
+	await page.getByTestId("settings-dialog").waitFor();
+	check("电脑设置里不再有本地 Laya 卡", (await page.getByTestId("host-local-laya").count()) === 0);
+	check("电脑设置里不再有快速操作模型区块", (await page.getByTestId("host-fast-computer").count()) === 0);
+	await page.screenshot({ path: join(OUT, "03b-host-no-fast.png") });
 
 	console.log("\n── 语音配置：云空态 / 选择保存 / 失败回滚 / 无第二套 Key ──");
 	await page.goto(`${base}/?settings=voice`);

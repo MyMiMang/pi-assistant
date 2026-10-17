@@ -1,8 +1,6 @@
 import { mountSubagentRoutes } from "./subagent-routes.ts";
 import { deleteAgentSubagentLimits } from "./subagents.ts";
 import { mountThemeRoutes } from "./themes/routes.ts";
-import { mountFastComputerRoutes } from "./fast-computer/routes.ts";
-import { mountLocalLayaRoutes } from "./local-laya/routes.ts";
 import { mountAsrRoutes, registryAsrProviders, saveAsrSource, type AsrDeclaration } from "./voice/index.ts";
 import { ASR_PROTOCOLS } from "./voice/contract.ts";
 import { isAsrProtocol } from "./voice/asr.ts";
@@ -11,7 +9,6 @@ import { localAsrService, setAsrSelectionPort } from "./local-asr/index.ts";
 import { setAsrStreamSelectionVersion, setAsrStreamSourceReader } from "./local-asr/stream-hub.ts";
 import { mountLocalAsrRoutes } from "./local-asr/routes.ts";
 import "./local-asr/download.ts";
-import { createRuntimeBenchmarkHost } from "./fast-computer/benchmark-runtime.ts";
 import { isStopCommand } from "./interject.ts";
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
@@ -56,7 +53,6 @@ import { cancelInstall, imagePresent, installState, pinnedInfo } from "./desktop
 import { installWsl, wslInstalling } from "./desktop/wsl.ts";
 import { desktopSettings, updateDesktopSettings } from "./desktop/settings.ts";
 import "./desktop/image-download.ts";
-import "./local-laya/download.ts";
 import { ensureMcpPackage, syncMcpDownloads } from "./mcp-install.ts";
 import { agentBusy } from "./runtime.ts";
 import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
@@ -277,8 +273,6 @@ mountPetRoutes(app, localOnly);
 mountUsageRoutes(app);
 mountSubagentRoutes(app);
 mountThemeRoutes(app);
-mountFastComputerRoutes(app, createRuntimeBenchmarkHost({ agentId: () => listAgents()[0]?.id ?? null, desktopKind: () => desktopBackend().id }).host);
-mountLocalLayaRoutes(app, localOnly);
 // 本地 ASR 的来源读写直接接 voice 的 voiceSource（PUT /api/audio/asr/source 仍是唯一来源真相）。
 // `present` 区分「从未设置（unset）」与「显式清空（null）」，供默认本地语音的自动准备判定。
 setAsrSelectionPort({ read: readVoiceSource, version: readVoiceSourceVersion, write: (s, opts) => saveAsrSource(s, opts), present: voiceSourceKeyPresent });
