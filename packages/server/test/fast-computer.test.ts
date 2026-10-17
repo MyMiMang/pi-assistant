@@ -126,17 +126,23 @@ test("classifier 解析：选中 / 并列 / 非法概率 / 越界 / 缺置信度
 	const ids = ["a", "b"];
 	const base = { provider: "openrouter", model: "typesafe/jev-1.13", api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1 };
 	const ok = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8, probabilities: { a: 0.8, b: 0.2 } } }, usage: { input: 5, output: 1, totalTokens: 6 } }, ids);
-	assert.deepEqual(ok, { kind: "selected", candidateId: "a", confidence: 0.8, probabilities: { a: 0.8, b: 0.2 }, usage: { input: 5, output: 1 }, model: "openrouter/typesafe/jev-1.13" });
+	assert.deepEqual(ok, { kind: "selected", candidateId: "a", confidence: 0.8, decisionConfidence: 0.6, probabilities: { a: 0.8, b: 0.2 }, usage: { input: 5, output: 1 }, model: "openrouter/typesafe/jev-1.13" });
 	const tie = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.5, probabilities: { a: 0.5, b: 0.5 } } } }, ids);
 	assert.equal(tie.kind, "abstain");
 	const badProbs = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8, probabilities: { a: 1.4, b: -0.1 } } } }, ids);
 	assert.equal(badProbs.kind, "selected");
-	if (badProbs.kind === "selected") assert.equal(badProbs.probabilities, undefined, "非法概率整体丢弃，不部分信任");
+	if (badProbs.kind === "selected") {
+		assert.equal(badProbs.probabilities, undefined, "非法概率整体丢弃，不部分信任");
+		assert.equal(badProbs.decisionConfidence, undefined, "概率非法时不合成阈值比较值，退回协议 confidence");
+	}
 	const noConf = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", probabilities: { a: 0.8, b: 0.2 } } } as never }, ids);
 	assert.equal(noConf.kind, "abstain", "SDK 未给置信度一律 unknown，绝不合成");
 	const noProbs = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.8 } } as never }, ids);
 	assert.equal(noProbs.kind, "selected");
-	if (noProbs.kind === "selected") assert.equal(noProbs.probabilities, undefined, "概率缺失 → unknown，不合成");
+	if (noProbs.kind === "selected") {
+		assert.equal(noProbs.probabilities, undefined, "概率缺失 → unknown，不合成");
+		assert.equal(noProbs.decisionConfidence, undefined, "概率缺失 → 不合成阈值比较值");
+	}
 	const outOfSet = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "z", confidence: 0.9, probabilities: { z: 1 } } } }, ids);
 	assert.equal(outOfSet.kind, "error");
 	const failed = parseClassifierChoice({ ...base, stopReason: "error", errorMessage: "System One API error (401)", answers: {} }, ids);
@@ -303,4 +309,103 @@ test("G4：systemone 从 classifier 目录选（provider+id）构建，不读全
 		if (oldB === undefined) delete process.env.OPENROUTER_API_KEY;
 		else process.env.OPENROUTER_API_KEY = oldB;
 	}
+});
+
+// ---------------------------------------------------------------- 阈值标度（Laya 归一化熵 vs 概率）
+
+test("阈值标度：概率按 Jev 公式换算，不用 Laya 的归一化熵", () => {
+	const ids = ["a", "b", "c", "d", "e", "f", "g"];
+	const probs = Object.fromEntries(ids.map((id, i) => [id, i === 0 ? 0.7 : 0.05]));
+	const gate = fc.jevChoiceConfidence(probs, ids);
+	assert.ok(typeof gate === "number");
+	assert.ok(Math.abs(gate! - (0.7 - 1 / 7) / (1 - 1 / 7)) < 1e-12, `7 候选 0.7 → ${gate}`);
+	// 同样的 0.6 选项概率在 32 个候选下仍接近阈值；归一化熵那套会掉到约 0.41，必然被拒。
+	const ids32 = Array.from({ length: 32 }, (_, i) => `c${i}`);
+	const probs32 = Object.fromEntries(ids32.map((id, i) => [id, i === 0 ? 0.6 : 0.4 / 31]));
+	const gate32 = fc.jevChoiceConfidence(probs32, ids32)!;
+	assert.ok(gate32 > 0.58 && gate32 < 0.6, `32 候选 0.6 → ${gate32}`);
+	assert.ok(Math.abs(fc.jevChoiceConfidence({ a: 0.9, b: 0.1 }, ["a", "b"])! - 0.8) < 1e-9);
+	assert.equal(fc.jevChoiceConfidence({ a: 0.4 }, ["a"]), undefined, "单候选不合成置信度，退回协议值");
+	assert.equal(fc.jevChoiceConfidence({ a: 0, b: 0 }, ["a", "b"]), 0, "总和 0 视为均匀 → 0");
+	assert.equal(fc.jevChoiceConfidence({ a: 0.9 }, ["a", "b"]), undefined, "缺候选概率不部分信任");
+	assert.equal(fc.jevChoiceConfidence({ a: 0.9, b: Number.NaN }, ["a", "b"]), undefined);
+	assert.equal(fc.jevChoiceConfidence(undefined, ["a"]), undefined);
+});
+
+test("classifier 解析：decisionConfidence 从概率换算，协议 confidence 原样保留", () => {
+	const ids = ["a", "b", "c", "d", "e", "f", "g"];
+	const probabilities = Object.fromEntries(ids.map((id, i) => [id, i === 0 ? 0.7 : 0.05]));
+	const base = { provider: "local-laya", model: "multilingual", api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1 };
+	const out = parseClassifierChoice({ ...base, answers: { pick: { type: "choice", choice: "a", confidence: 0.41, probabilities } } }, ids);
+	assert.equal(out.kind, "selected");
+	if (out.kind === "selected") {
+		assert.equal(out.confidence, 0.41, "协议原值不改");
+		assert.ok(Math.abs(out.decisionConfidence! - (0.7 - 1 / 7) / (1 - 1 / 7)) < 1e-12);
+	}
+});
+
+test("阈值按 decisionConfidence 判定：熵低但选项概率够 → 选中", async () => {
+	fc._resetFastComputerState();
+	const r = await fc.selectFastAction({ key: "kg1", goal: "g", candidates: [cand("a"), cand("b")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", confidence: 0.41, decisionConfidence: 0.65 })), settings: settings({ threshold: 0.6 }) });
+	assert.equal(r.kind, "selected");
+	if (r.kind === "selected") {
+		assert.equal(r.confidence, 0.41);
+		assert.equal(r.decisionConfidence, 0.65);
+	}
+});
+
+test("阈值按 decisionConfidence 判定：概率不够 → 回退，详情带上两个数", async () => {
+	fc._resetFastComputerState();
+	const r = await fc.selectFastAction({ key: "kg2", goal: "g", candidates: [cand("a"), cand("b")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", confidence: 0.9, decisionConfidence: 0.55, probabilities: { a: 0.7, b: 0.3 } })), settings: settings({ threshold: 0.6 }) });
+	assert.equal(r.kind === "fallback" && r.reason, "low_confidence");
+	if (r.kind === "fallback") {
+		assert.match(r.detail ?? "", /0\.55/);
+		assert.match(r.detail ?? "", /选项概率 0\.7/);
+		assert.match(r.detail ?? "", /协议 confidence 0\.9/);
+	}
+});
+
+test("没有概率时退回协议 confidence（不合成）", async () => {
+	fc._resetFastComputerState();
+	const r = await fc.selectFastAction({ key: "kg3", goal: "g", candidates: [cand("a")], chooser: createMockChooser(() => ({ kind: "selected", candidateId: "a", confidence: 0.7 })), settings: settings({ threshold: 0.6 }) });
+	assert.equal(r.kind, "selected");
+});
+
+// ---------------------------------------------------------------- 熔断 / capture 新鲜度
+
+test("用户取消（signal aborted）不计入熔断：可重试", async () => {
+	fc._resetFastComputerState();
+	let calls = 0;
+	const chooser = createMockChooser(() => (calls++, { kind: "error", error: "timeout" }));
+	for (let i = 0; i < 4; i++) {
+		const ac = new AbortController();
+		ac.abort();
+		const r = await fc.selectFastAction({ key: "kabort", goal: "g", candidates: [cand("a")], chooser, settings: settings(), signal: ac.signal });
+		assert.equal(r.kind === "fallback" && r.reason, "timeout");
+	}
+	assert.equal(calls, 4, "取消不该触发 circuit_open，用户可重试");
+});
+
+test("保存设置清掉熔断（换模型 / 改阈值后能再试）", async () => {
+	fc._resetFastComputerState();
+	let calls = 0;
+	const chooser = createMockChooser(() => (calls++, { kind: "abstain" }));
+	for (let i = 0; i < 3; i++) await fc.selectFastAction({ key: "kreset", goal: "g", candidates: [cand("a")], chooser, settings: settings() });
+	const blocked = await fc.selectFastAction({ key: "kreset", goal: "g", candidates: [cand("a")], chooser, settings: settings() });
+	assert.equal(blocked.kind === "fallback" && blocked.reason, "circuit_open");
+	fc.saveFastComputerSettings({ enabled: true, threshold: 0.5 });
+	const after = await fc.selectFastAction({ key: "kreset", goal: "g", candidates: [cand("a")], chooser, settings: fc.fastComputerSettings() });
+	assert.equal(after.kind === "fallback" && after.reason, "abstain");
+	assert.equal(calls, 4);
+});
+
+test("captureId 内容寻址：同窗口同候选稳定，候选变了才变（Laya 把 state 序列化进模型输入）", async () => {
+	fc._resetFastComputerState();
+	const seen: string[] = [];
+	const chooser = createMockChooser((req) => (seen.push(req.captureId), { kind: "abstain" }));
+	for (let i = 0; i < 2; i++) await fc.selectFastAction({ key: "kcap", goal: "g", candidates: [cand("a"), cand("b")], chooser, settings: settings() });
+	assert.equal(seen[0], seen[1], "同一窗口同一候选 → 同一个 captureId（同一份模型输入，不受随机 token 干扰）");
+	await fc.selectFastAction({ key: "kcap", goal: "g", candidates: [cand("a"), cand("c")], chooser, settings: settings() });
+	assert.notEqual(seen[2], seen[0], "候选变了 → captureId 变，旧 capture 失效");
+	assert.match(seen[0], /^cap-[0-9a-f]{16}$/);
 });

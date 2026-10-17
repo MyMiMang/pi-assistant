@@ -193,3 +193,28 @@
 - 模型：本机 `local-laya/multilingual` 在这 4 个固定任务上按产品默认阈值只完成 1 题（3 题低置信度回退），**不据此宣称 Laya 整体不可用**（只有 4 题、synthetic、单一 checkpoint / 机器）。
 - 未验 / 不得宣称：「钥匙串弹窗已修好」仍未证（两轮都没弹窗，但没有系统弹窗日志，不能当永久修复结论）；服务进程临时 HOME 版本未重跑（isolated 验收待做）；系统 TCC 授权、Intel / Windows / Linux、真实 GPU、其它 checkpoint、真实付费模型、全量 `npm test` / 全量 e2e 均未跑。
 
+
+### 9.8 置信度标度错误与同题浮动（2026-10-17 只读审计 + 代码修复；**本轮没有跑模型，未重测**）
+
+§9.7 那 4 题为什么「3 题低置信度」有两种完全不同的解释：模型真的没把握，或者**产品拿错了数字**。这一节把能只读证实的那部分定死，并修掉；量级留给下一次单次受控测量。
+
+**已证（公开源码，不需要跑模型）**
+
+- Laya 的 choice 答案里 `confidence` 是**归一化 Shannon 熵**，不是概率：
+  - `laya/agent.py` choice 分支：`"confidence": confidence_from_probs(p, k)`、`"answer_confidence": answer_confidence(p, k)`；
+  - `laya/common.py:802 confidence_from_probs` = `1 - H/log(k)`，自己的文档写「not calibrated … the two must **not** be compared against the same threshold」，并且**随选项数 k 变化**；
+  - `laya/common.py:779 answer_confidence` = `max(p)`，是「temperature scaling 拟合 / 所有 ECE 数字 / `min_confidence` 门限」用的那个量；`laya/confidence.py:_gate_confidence` 也优先用它。
+- Jev 标度上的换算是 Laya 公开提供的（`laya/confidence.py:jev_confidence`、issue #302）：`choice = (max(p) - 1/n) / (1 - 1/n)`；文档还写「a threshold carried over from Jev selects about twice as much on Laya」。
+- Pi SDK（`pi-ai/dist/api/system-one-shared.js`）只解析 `choice` / `probabilities` / `confidence`，**`answer_confidence` 被丢掉** → 产品只能由 `probabilities` 自己换算。
+- 本地已物化的 `laya-multilingual`（`local-laya/runtime/weights/rl_agent_config.json`）`temperature=[1,1,1]`、无 `binning_map` → 该 checkpoint 的 `answer_confidence` 就等于 `max(p)`；同时**温度未拟合 = 官方说的 over-confident**，所以任何阈值都不能读成「准确率」。
+- **纯数学就够的一条**：k=32、`max(p)=0.6` 时熵约 `0.41`（0.6 阈值必然拒），Jev 标度约 `0.587`。也就是说候选一多，旧实现会**必然**把「概率 0.6 的选项」判成低可信——这是设计错误，不是模型差。
+- 同题浮动：`captureId` 原来每个 capture 随机生成（`cap-<seq>-<time36>`），而它进 classifier 的 `state`；Laya 把 state 整体 `json.dumps` 进模型输入（`laya/common.py:serialize_state`），模型是 `eval()` + argmax、无采样（`agent.py:794/903`）→ **同一输入必然同一分布**。所以「同题两次 0.3816 / 0.6277」不能归因 dropout / 采样 / 服务端随机，最可能是输入不同（随机 capture id，其次页面状态本身）。
+
+**修法（adapter / 编排层，不碰 Pi / driver / node_modules；阈值与用户设置不动）**
+
+- `choosers.ts` 新增 `jevChoiceConfidence()`：由 `probabilities` 按上面那个 Jev 公式换算（总和归一、四位小数、单候选不合成），`parseClassifierChoice` 返回 `decisionConfidence`；协议 `confidence` 原样保留。
+- `selectFastAction` **比阈值用 `decisionConfidence`**，缺失时退回协议 `confidence`（不合成）；回退详情同时给「选项概率 / 协议 confidence / 比较值」，`fast_pick_action` 的文案同样分开显示。
+- `registerCapture` 改**内容寻址**（key + 候选 id/label 的 sha256 前 16 位）：同窗口同候选 → 同一个 id（同一份模型输入），候选变了才变（旧 capture 照样失效）。
+- 顺带修（同一批，见 HANDOFF）：熔断不再把「用户取消」算成失败、保存设置会清熔断（换模型 / 改阈值后可重试）、`circuit_open` 不再谎称「本轮」；`fast_pick_action` 回退提示改为「必要时先重读窗口」（该工具自己已经重读过窗口，主模型手上的旧 `element_token` 会被作废）。
+
+**未验（如实）**：本轮**没有**起模型 / 浏览器 / daemon，所以「把那 4 题的数字换到新标度后到底过不过阈值」仍是未知；也不宣称 Laya 准确率、不宣称修复后 4 题会通过。下一次**单次受控**验收（需主会话安排外部监护）看 harness 打印的 `gate=` / `p=`（报告字段 `decisionConfidence` / `probability`）就能区分「熵低」与「概率低」，不需要再开一轮研究。

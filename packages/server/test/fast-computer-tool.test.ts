@@ -155,7 +155,7 @@ test("原生 Jev：选中候选 → 用新 element_token 派发一次 click", as
 	const click = calls.find((c) => c.name.endsWith("click"));
 	assert.ok(click, "高可信原生选择应派发");
 	assert.equal(click!.args.element_token, "snap2:1");
-	assert.match(textOf(out), /原生 Jev|confidence 0\.9/);
+	assert.match(textOf(out), /置信度 0\.9/);
 });
 
 test("原生 Jev：低可信 → 回退，零执行", async () => {

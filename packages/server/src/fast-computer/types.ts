@@ -46,7 +46,27 @@ export interface FastUsage {
 }
 
 export type FastChoiceResult =
-	| { kind: "selected"; candidateId: string; confidence?: number; probabilities?: Record<string, number>; reason?: string; model?: string; usage?: FastUsage }
+	| {
+			kind: "selected";
+			candidateId: string;
+			/**
+			 * 协议**原样**返回的置信度。同一个字段名在不同服务上不是一个量：Jev 的是 Jev 公式，
+			 * Laya 的是归一化 Shannon 熵（`laya/common.py:confidence_from_probs`，Laya 文档明确
+			 * 「不可与 max(p) 用同一个阈值比较」、且随选项数变化）。只作诊断，不用来比阈值。
+			 */
+			confidence?: number;
+			/**
+			 * 阈值实际比较的置信度：由 `probabilities` 按 **Jev 的 choice 公式**换算
+			 * `(max(p) - 1/n) / (1 - 1/n)`（`laya/confidence.py:jev_confidence`、issue #302 的公开换算）。
+			 * 对 Jev 等价于它自己的 `confidence`；对 Laya 把熵换到阈值本来所在的标度。
+			 * 概率缺失 / 非法时为 undefined（此时退回 `confidence`，不合成）。
+			 */
+			decisionConfidence?: number;
+			probabilities?: Record<string, number>;
+			reason?: string;
+			model?: string;
+			usage?: FastUsage;
+		}
 	| { kind: "reobserve"; reason?: string; model?: string; usage?: FastUsage }
 	| { kind: "abstain"; reason?: string; model?: string; usage?: FastUsage }
 	| { kind: "error"; error: string; model?: string; usage?: FastUsage };

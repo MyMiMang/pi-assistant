@@ -6,6 +6,16 @@
 >
 > 接手时以本段、最新 `main` 和已发版 tag 为准。下面保留的“候选 / 未 push / 未 tag / 等测试槽”等是**发布前历史快照**，不再代表当前发布状态；不要重打旧 tag、重发旧资产或重复已完成测试。
 
+> **Laya 为什么还是选不出来：置信度标度拿错了（2026-10-17，`laya-benchmark-snapshot-fix`，只读审计 + 小修；**没有跑模型 / 浏览器 / daemon**，未 push / 未 tag / 未打包）**
+>
+> §9.7 的 3 次 `low_confidence` 不等于「模型没把握」——产品把**归一化熵**当成概率去比 0.6 的阈值。公开源码已证：Laya 的 choice `confidence` 是 `1 - H/log(k)`（`laya/common.py:802`，文档明写「不能和 max(p) 用同一个阈值」且随候选数变化），概率质量在 `answer_confidence = max(p)`（`common.py:779`，也是它自己 `min_confidence` 门限用的量），但 Pi SDK 只解析 `choice`/`probabilities`/`confidence`，把这个字段丢掉了。纯数学后果：候选 32 个、`max(p)=0.6` 时熵约 0.41 → **必然**被 0.6 拒。
+>
+> - **改了**：`fast-computer/choosers.ts` 新增 `jevChoiceConfidence()`（Laya 公开的 #302 换算 `(max(p)-1/n)/(1-1/n)`，`laya/confidence.py:jev_confidence`），`parseClassifierChoice` 返回 `decisionConfidence`；`index.ts` 阈值改比它（缺失退回协议 `confidence`，单候选不合成），回退详情同时给「选项概率 / 协议 confidence / 比较值」，`tool.ts` 文案分开显示。**阈值、用户设置、权限都没动**，没有下调阈值凑过。
+> - **同题浮动不是随机的**：`captureId` 原来每调用随机生成，而它进 `state`、被 Laya 整体 `json.dumps` 进模型输入；模型是 `eval()`+argmax 无采样 → 同一输入必然同一分布。所以 0.3816 vs 0.6277 只能是输入不同。`registerCapture` 改内容寻址（key+候选的 sha256 前 16 位）：同窗口同候选稳定、候选变了才失效。
+> - **顺带修（工具回退路径）**：用户取消（`signal.aborted`）不再计入熔断（否则连按停止 3 次就把快速路径永久锁死在该窗口）；保存设置清熔断（换模型 / 改阈值后可重试）；`circuit_open` 不再谎称「本轮」而给出恢复条件；`fast_pick_action` 回退文案改成「必要时先重读窗口」——该工具自己已重读过窗口，主模型手上的旧 `element_token` 会被驱动作废（§9.2 第 3 条），旧文案还禁止它重读。
+> - **实跑**（Node 24.20.0，外层临时 HOME/TMPDIR，`--import tsx --import ./test/setup.ts`，**未起任何模型 / 浏览器 / daemon**）：`fast-computer*` + `fast-model-auto-discovery` + `fast-model-discovery-http` **116/116**；`packages/server` `tsc --noEmit` exit 0；`node --check scripts/laya-benchmark-isolated-harness.mjs` 通过。新增定向用例：熵低但概率够 → 选中、概率不够 → 回退且详情带两个数、无概率退回协议值、单候选不合成、取消不熔断、保存设置清熔断、captureId 稳定/随候选变化。
+> - **未验 / 不得宣称**：本轮没跑模型，所以「那 4 题换到新标度后过不过阈值」未知；不宣称 Laya 准确率、不宣称 4 题会通过；`laya-multilingual` 温度未拟合（`temperature=[1,1,1]`、无 `binning_map`）→ `answer_confidence=max(p)` 也**偏 over-confident**，阈值不能读成准确率。下次**单次受控**验收看 harness 新增的 `gate=` / `p=` 两列即可分辨「熵低」还是「概率低」。契约 §9.8。
+
 > **真实 Laya 完整 benchmark 已跑通（2026-10-17，`laya-benchmark-snapshot-fix`，未 push / 未 tag / 未打包）**
 >
 > 按 `docs/design/fast-model-benchmark.md` §9.6 执行真实验收（授权是一次，**实际跑了两轮**，已记为偏差），新增脚本 `scripts/laya-benchmark-isolated-harness.mjs`（`npm run smoke:laya-benchmark`，**现默认 fail-closed**：`PIA_BENCH_HARNESS_ENABLE=1` 才跑）。跑的全是生产件：`nativeLaunchEnv`（原生边界）/ `hostMcpCommand`（自有启动器，`inheritEnv:false`、环境全量替换）/ macOS LaunchServices 打开官方签名 `CuaDriver.app` 起**本次独占** socket 的 daemon / `createInvokeBenchmarkDriver`（`browser_prepare{isolated_new}` → `list_windows` → bind → `browser_navigate` → 快照 pin → `browser_click`）/ `LocalLayaManager` / `buildChooser` / `selectFastAction` / `createCuaTrialRunner` / fixture 双证据判分。

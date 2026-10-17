@@ -615,6 +615,10 @@ function runnerFor(taskLog) {
 			if (result.kind === "selected") {
 				taskLog.selected = { id: result.candidate.id, label: result.candidate.label };
 				taskLog.confidence = result.confidence ?? null;
+				// 阈值比较值（概率按 Jev 公式换算）与选项概率分开记：Laya 的 `confidence` 是归一化熵，
+				// 两者不是一个量；记下来才能在**一次**运行里分清“熵低”还是“概率低”。
+				taskLog.decisionConfidence = result.decisionConfidence ?? null;
+				taskLog.probability = result.probabilities?.[result.candidate.id] ?? null;
 				taskLog.uncalibrated = result.uncalibrated;
 				taskLog.model = result.model ?? null;
 			} else if (result.kind === "fallback") {
@@ -627,7 +631,7 @@ function runnerFor(taskLog) {
 						const raw = await chooser.choose({ goal, captureId: `diag-${taskLog.id}`, candidates: candidates.map((c) => ({ id: c.id, label: c.label })) }, signal);
 						taskLog.rawChooser =
 							raw.kind === "selected"
-								? { kind: "selected", candidateId: raw.candidateId, label: candidates.find((c) => c.id === raw.candidateId)?.label ?? null, confidence: raw.confidence ?? null }
+								? { kind: "selected", candidateId: raw.candidateId, label: candidates.find((c) => c.id === raw.candidateId)?.label ?? null, confidence: raw.confidence ?? null, decisionConfidence: raw.decisionConfidence ?? null, probability: raw.probabilities?.[raw.candidateId] ?? null }
 								: { kind: raw.kind, reason: raw.reason ?? raw.error ?? null };
 					} catch (e) {
 						taskLog.rawChooser = { kind: "error", reason: e instanceof Error ? e.message : String(e) };
@@ -671,7 +675,7 @@ async function runTask(task, { scored }) {
 	}
 	if (scored) report.tasks.push(entry);
 	else report.warmup = entry;
-	log(`task ${task.id}${scored ? "" : "（预热，不计分）"} → ${entry.correctness} decision=${entry.decision ?? "-"} conf=${entry.confidence ?? "-"} latency=${entry.latencyMs ?? "-"}ms actions=${entry.actions ?? "-"} ${entry.error ? `err=${entry.error}` : ""}`);
+	log(`task ${task.id}${scored ? "" : "（预热，不计分）"} → ${entry.correctness} decision=${entry.decision ?? "-"} conf=${entry.confidence ?? "-"} gate=${entry.decisionConfidence ?? "-"} p=${entry.probability ?? "-"} latency=${entry.latencyMs ?? "-"}ms actions=${entry.actions ?? "-"} ${entry.error ? `err=${entry.error}` : ""}`);
 	return entry;
 }
 

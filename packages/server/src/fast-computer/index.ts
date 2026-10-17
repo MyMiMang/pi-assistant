@@ -4,13 +4,14 @@
  * 这一层是纯逻辑：设置读取、capture 登记、候选校验、超时、熔断、结果校验、用量回调。
  * 它**从不执行任何动作**；执行由调用方（工具层）拿 `selected.candidate` 后经既有电脑工具钩子完成。
  */
+import { createHash } from "node:crypto";
 import { getSetting, setSetting } from "../db.ts";
 import { INPUT_TOOLS } from "@pi-assistant/ext-computer";
 import { MAX_FAST_CANDIDATES } from "./choosers.ts";
 import type { FastActionCandidate, FastActionChooser, FastChoiceResult, FastSemanticTarget, FastUsage } from "./types.ts";
 
 export type { FastActionCandidate, FastActionChooser, FastChoiceRequest, FastChoiceResult, FastSemanticTarget, FastUsage } from "./types.ts";
-export { MAX_FAST_CANDIDATES, createChatChooser, createClassifierChooser, createMockChooser, parseChatChoice, parseClassifierChoice } from "./choosers.ts";
+export { MAX_FAST_CANDIDATES, createChatChooser, createClassifierChooser, createMockChooser, jevChoiceConfidence, parseChatChoice, parseClassifierChoice } from "./choosers.ts";
 
 // ---------------------------------------------------------------- 设置
 
@@ -63,11 +64,16 @@ export function fastComputerSettings(scope?: FastComputerScope): FastComputerSet
 
 const clamp = (v: unknown, min: number, max: number, dflt: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : dflt);
 
-/** 保存设置（只接受已知字段，做边界收敛）。默认关闭，不写就沿用默认。传 scope 只改这台电脑自己的设置。 */
+/** 保存设置（只接受已知字段，做边界收敛）。默认关闭，不写就沿用默认。传 scope 只改这台电脑自己的设置。
+ *
+ * 保存设置会清掉熔断计数：用户换模型 / 改阈值 / 关掉再打开，就是想重试，不该被同一窗口的历史失败
+ * 永久挡着（熔断原本只在选中成功时清零，进程不重启就一直是 circuit_open）。
+ */
 export function saveFastComputerSettings(patch: Partial<FastComputerSettings>, scope?: FastComputerScope): FastComputerSettings {
 	const cur = fastComputerSettings(scope);
 	const next: FastComputerSettings = { ...cur, ...patch };
 	setSetting(scope ? scopeKey(scope) : "fastComputer", next);
+	resetFastCircuit();
 	return fastComputerSettings(scope);
 }
 
@@ -95,12 +101,22 @@ interface Capture {
 	candidates: Map<string, FastActionCandidate>;
 }
 const captures = new Map<string, Capture>();
-let captureSeq = 0;
 
-/** 登记一次 capture；同一 key 的新 capture 作废旧 capture（模拟“快照更新后旧 capture 失效”）。返回 captureId。 */
+/**
+ * 登记一次 capture；同一 key 的新 capture 作废旧 capture（模拟“快照更新后旧 capture 失效”）。返回 captureId。
+ *
+ * captureId 是**内容寻址**的（key + 候选 id/label 的摘要），不是每次调用都换的随机串。原因：
+ * 它会进 classifier 的 `state`（`choosers.ts`），而 Laya 把 state 整体 `json.dumps` 进模型输入
+ * （`laya/common.py:serialize_state`）—— 随机 id 会给同一个窗口的同一个问题加一段每次都不同的
+ * 噪声 token，表现为「同题重跑置信度大幅浮动」（实测 0.3816 / 0.6277 这类差异就属于这一层，
+ * 模型本身是 `eval()` + argmax，同一输入不会给出不同分布）。内容不变的重复登记得到同一个 id，
+ * 语义仍是同一份候选；候选一变 id 就变，旧 id 照样失效。
+ */
 export function registerCapture(key: string, candidates: FastActionCandidate[]): string {
 	for (const [id, c] of captures) if (c.key === key) captures.delete(id);
-	const id = `cap-${++captureSeq}-${Date.now().toString(36)}`;
+	const content = candidates.map((c) => `${c.id}\u0000${c.label}`).join("\u0001");
+	const digest = createHash("sha256").update(`${key}\u0002${content}`).digest("hex").slice(0, 16);
+	const id = `cap-${digest}`;
 	captures.set(id, { key, candidates: new Map(candidates.map((c) => [c.id, c])) });
 	return id;
 }
@@ -110,7 +126,6 @@ export const getCapture = (id: string): Capture | undefined => captures.get(id);
 export function _resetFastComputerState() {
 	captures.clear();
 	failures.clear();
-	captureSeq = 0;
 }
 
 // ---------------------------------------------------------------- 熔断
@@ -137,7 +152,7 @@ export type FastFallbackReason =
 export type FastSelectResult =
 	| { kind: "disabled" }
 	| { kind: "fallback"; reason: FastFallbackReason; detail?: string }
-	| { kind: "selected"; candidate: FastActionCandidate; captureId: string; uncalibrated: boolean; confidence?: number; model?: string };
+	| { kind: "selected"; candidate: FastActionCandidate; captureId: string; uncalibrated: boolean; confidence?: number; decisionConfidence?: number; probabilities?: Record<string, number>; model?: string };
 
 export interface SelectFastActionInput {
 	/** capture / 熔断作用域键（如 `${session}:${pid}:${window_id}`） */
@@ -161,7 +176,7 @@ export async function selectFastAction(input: SelectFastActionInput): Promise<Fa
 	const bad = validateCandidates(input.candidates);
 	if (bad) return { kind: "fallback", reason: "invalid_candidates", detail: bad };
 	if (!input.chooser) return { kind: "fallback", reason: "no_chooser" };
-	if ((failures.get(input.key) ?? 0) >= CIRCUIT_LIMIT) return { kind: "fallback", reason: "circuit_open", detail: `同一目标连续 ${CIRCUIT_LIMIT} 次回退，本轮改用主模型` };
+	if ((failures.get(input.key) ?? 0) >= CIRCUIT_LIMIT) return { kind: "fallback", reason: "circuit_open", detail: `同一窗口（${input.key}）已连续 ${CIRCUIT_LIMIT} 次回退，本次不再调用快速模型；重新读取窗口或改设置后可再试` };
 
 	const captureId = registerCapture(input.key, input.candidates);
 	const offered = input.candidates.map((c) => ({ id: c.id, label: c.label }));
@@ -177,15 +192,17 @@ export async function selectFastAction(input: SelectFastActionInput): Promise<Fa
 		input.onUsage?.({ provider: usageProvider(s), model: usageModel(s, result), input: result.usage.input, output: result.usage.output });
 	};
 
-	const fallback = (reason: FastFallbackReason, detail?: string): FastSelectResult => {
-		failures.set(input.key, (failures.get(input.key) ?? 0) + 1);
+	const fallback = (reason: FastFallbackReason, detail?: string, count = true): FastSelectResult => {
+		// 用户取消（signal aborted）不算失败：否则连按几次停止就会把快速路径永久熔断在这个窗口上。
+		if (count) failures.set(input.key, (failures.get(input.key) ?? 0) + 1);
 		record();
 		return { kind: "fallback", reason, detail };
 	};
 
 	if (result.kind === "error") {
 		const isTimeout = /timeout|abort/i.test(result.error);
-		return fallback(isTimeout ? "timeout" : "model_error", result.error);
+		const cancelled = input.signal?.aborted === true;
+		return fallback(isTimeout ? "timeout" : "model_error", result.error, !cancelled);
 	}
 	if (result.kind === "abstain") return fallback("abstain", result.reason);
 	if (result.kind === "reobserve") return fallback("reobserve", result.reason);
@@ -196,13 +213,25 @@ export async function selectFastAction(input: SelectFastActionInput): Promise<Fa
 	const candidate = cap.candidates.get(result.candidateId);
 	if (!candidate) return fallback("unknown_candidate", result.candidateId);
 
-	// 只有原生概率才应用阈值；chat 替代没有概率（uncalibrated），一律要求独立核验
-	if (input.chooser.nativeProbability && typeof result.confidence === "number") {
-		if (result.confidence < s.threshold) return fallback("low_confidence", `confidence ${result.confidence} < ${s.threshold}`);
+	// 只有原生概率才应用阈值；chat 替代没有概率（uncalibrated），一律要求独立核验。
+	// 比较的是 `decisionConfidence`（概率按 Jev 公式换算的标度），不是协议原样的 `confidence` ——
+	// Laya 的 `confidence` 是归一化熵，与本阈值不是一个量（见 types.ts / choosers.ts 的注释）。
+	const gate = result.decisionConfidence ?? result.confidence;
+	if (input.chooser.nativeProbability && typeof gate === "number") {
+		if (gate < s.threshold) return fallback("low_confidence", `置信度 ${gate} < ${s.threshold}${confidenceDetail(result, gate)}`);
 	}
 	failures.delete(input.key);
 	record();
-	return { kind: "selected", candidate, captureId, uncalibrated: !input.chooser.nativeProbability, confidence: result.confidence, model: result.model };
+	return { kind: "selected", candidate, captureId, uncalibrated: !input.chooser.nativeProbability, confidence: result.confidence, decisionConfidence: result.decisionConfidence, probabilities: result.probabilities, model: result.model };
+}
+
+/** 回退详情里把两个数都带上，好在一次运行里区分「熵低」与「概率低」。 */
+function confidenceDetail(r: { candidateId: string; confidence?: number; probabilities?: Record<string, number> }, gate: number): string {
+	const top = r.probabilities?.[r.candidateId];
+	const parts: string[] = [];
+	if (typeof top === "number") parts.push(`选项概率 ${top}`);
+	if (typeof r.confidence === "number") parts.push(`协议 confidence ${r.confidence}`);
+	return parts.length ? `（${parts.join("，")}；阈值比较值 ${gate}）` : "";
 }
 
 const usageProvider = (s: FastComputerSettings) => (s.kind === "systemone" ? s.provider || "jev" : s.provider || "fast");

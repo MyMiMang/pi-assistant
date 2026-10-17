@@ -186,7 +186,7 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 					});
 
 					if (res.kind === "disabled") return text("快速操作模型没有开启。请自己完成。");
-					if (res.kind === "fallback") return text(`快速路径跳过（${res.reason}${res.detail ? `：${res.detail}` : ""}）。请自己用电脑工具完成，不要重复调用本工具。`);
+					if (res.kind === "fallback") return text(`快速路径跳过（${res.reason}${res.detail ? `：${res.detail}` : ""}）。请自己用电脑工具完成（必要时先重新读取窗口状态，不要拿调用前的旧快照直接点击）。`);
 
 					// 执行前重查：用户在异步等待快模型期间取消 / 动态关闭，一律不派发任何动作。
 					if (signal?.aborted) return text("已取消（用户停止）。未执行任何动作。请自己完成。");
@@ -202,7 +202,7 @@ export function fastComputerExtension(opts: FastComputerToolOptions) {
 
 					// G3：执行后独立核验（另取一次窗口状态），只返回 confirmed / unsatisfied / unknown。
 					const verify = await verifyPostcondition(ctx, prefix, target, args.expected);
-					const conf = res.uncalibrated ? "无原生校准概率，替代模型" : `confidence ${res.confidence ?? "—"}`;
+					const conf = res.uncalibrated ? "无原生校准概率，替代模型" : confidenceText(res);
 					const dispatchNote = out.isError ? "执行返回错误（未确认动作已生效）。" : "已派发。";
 					return text(
 						`快速模型选了「${res.candidate.label}」（${conf}）。${dispatchNote}` +
@@ -225,6 +225,14 @@ const freshReasonText = (reason: "no_semantic" | "not_found" | "ambiguous" | "ch
 	reason === "no_semantic" ? "候选缺少可校验的语义身份" : reason === "not_found" ? "原目标已找不到" : reason === "ambiguous" ? "同语义目标不唯一" : "目标的 role/value/actions 已变化";
 
 const verifyText = (o: VerifyOutcome) => (o === "confirmed" ? "confirmed" : o === "unsatisfied" ? "unsatisfied" : "unknown");
+
+/** 分开展示「阈值比较值」与协议原值：不同服务上这两个数不是一个量（Laya 的 confidence 是归一化熵）。 */
+function confidenceText(res: { candidate?: { id: string }; confidence?: number; decisionConfidence?: number }): string {
+	const shown = res.decisionConfidence ?? res.confidence;
+	if (typeof shown !== "number") return "置信度 —";
+	if (typeof res.confidence !== "number" || res.confidence === shown) return `置信度 ${shown}`;
+	return `置信度 ${shown}（协议 confidence ${res.confidence}）`;
+}
 
 /** 只接受已知后置条件字段（不接受任意表达式）；空对象视为未提供。 */
 function normalizeExpected(raw: unknown): FastExpectation | undefined {

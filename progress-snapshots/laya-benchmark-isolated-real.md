@@ -82,3 +82,34 @@
 - 与生产 `benchmark-host` 的实现差异（不止一处）：熔断作用域按任务分开（否则前几条 fallback 会把后面几条直接熔断成 `circuit_open`，扭曲每题结论）；诊断又额外发请求；runner 的 `retries` / `fallbackCount` 与 summary `fallbacks` 计数语义不同（见上节第 4 条）。report 的 `model.circuitKeyScope` 记为 `per-task`。
 - 本轮**不是**隔离验收：服务进程当时跑在原生 HOME（见上节第 6 条），修好的临时 HOME 版本尚未重跑。
 - 本轮**不是**完整 production benchmark：主模型接管未执行、延迟只覆盖最后一次 chooser 调用、只有 4 个固定任务。
+
+## 2026-10-17 补充：置信度标度错误（只读审计 + 小修，**未跑模型 / 浏览器 / daemon**）
+
+原始两轮报告与统计**保持原样**，不改数字。这一节只补「3 次 `low_confidence` 到底是什么」的只读根因，以及据此做的最小代码修复；**没有**为了通过而改阈值、也没有重跑模型。
+
+### 已证（公开源码 + 纯数学，不需要跑模型）
+
+1. **阈值比错了量**。Laya 的 choice 答案 `confidence` 是**归一化 Shannon 熵** `1 - H/log(k)`（`laya/common.py:802 confidence_from_probs`，`laya/agent.py` choice 分支写入），文档自己写「not calibrated … 不能和 `max(p)` 用同一个阈值比较」，而且**随候选数 k 变化**；概率质量是 `answer_confidence = max(p)`（`laya/common.py:779`，也是 `laya/confidence.py:_gate_confidence` 优先用的量）。产品默认阈值 0.6 是 Jev 标度上的数字。
+2. **SDK 拿不到那个字段**：`pi-ai/dist/api/system-one-shared.js` 只解析 `choice` / `probabilities` / `confidence`，`answer_confidence` 被丢掉 → 只能从 `probabilities` 自己换算（Laya 公开提供 `jev_confidence`，#302：`(max(p)-1/n)/(1-1/n)`）。
+3. **纯数学后果**：k=32、`max(p)=0.6` 时熵 ≈ `0.41`（0.6 阈值必然拒），Jev 标度 ≈ `0.587`。候选一多，旧实现会必然把「概率 0.6 的选项」判成低可信。
+4. **同题浮动不是随机采样**：`captureId` 原来每次随机生成，而它进 `state`、被 Laya 整体 `json.dumps` 进模型输入（`serialize_state`）；模型 `eval()` + argmax、无采样 → 同一输入必然同一分布。因此「生产 0.3816 / 诊断 0.6277」最可能是**输入不同**（随机 capture id；其次页面状态本身），不能归因 dropout / train 模式 / 服务端随机。原报告已写的「不能读成选得对但没信心」不变。
+5. **checkpoint 侧**：本机物化的 `laya-multilingual` `rl_agent_config.json` 是 `temperature=[1,1,1]`、无 `binning_map` → 它的 `answer_confidence` 就等于 `max(p)`；但温度未拟合（官方说 over-confident），所以任何阈值都不能读成准确率。
+
+### 改了什么（adapter / 编排层；不碰 Pi / driver / node_modules）
+
+- `packages/server/src/fast-computer/choosers.ts`：新增 `jevChoiceConfidence()`（Jev 标度换算、四位小数、`n=1` 不合成）；`parseClassifierChoice` 多返回 `decisionConfidence`，协议 `confidence` 原样保留。
+- `index.ts`：阈值改比 `decisionConfidence`（缺失退回 `confidence`）；回退详情带「选项概率 / 协议 confidence / 比较值」；`selected` 结果多带 `decisionConfidence` / `probabilities`；`registerCapture` 改内容寻址（sha256 前 16 位）；用户取消不计熔断、保存设置清熔断、`circuit_open` 文案改成给出恢复条件。
+- `tool.ts`：`fast_pick_action` 分开显示两个数；回退提示改为「必要时先重读窗口状态」（该工具已重读过窗口，主模型手上的旧 `element_token` 会被作废）。
+- `scripts/laya-benchmark-isolated-harness.mjs`：只加记录字段 `decisionConfidence` / `probability`（`gate=` / `p=`），报告 schema 兼容；**没有重跑**，入口仍然 fail-closed。
+
+### 实跑（Node 24.20.0；外层临时 HOME / TMPDIR；无模型 / 浏览器 / daemon）
+
+- `fast-computer*.test.ts` + `fast-model-auto-discovery` + `fast-model-discovery-http`：**116/116**。
+- `packages/server` `tsc --noEmit`：exit 0。`node --check` harness：通过。
+- 新增用例：熵低但概率够 → 选中；概率不够 → 回退且详情带两个数；无概率退回协议值；单候选不合成；取消不熔断；保存设置清熔断；captureId 稳定 / 随候选变化。
+
+### 未验（不得宣称）
+
+- 本轮**没有**运行 Laya（生产 runtime `27010:50418` 历史状态未动），所以「那 4 题换到新标度后过不过阈值」**未知**；不宣称 Laya 准确率、不宣称修完 4 题会通过。
+- 阈值语义变化对**真实 Jev** 的影响未实测（我们只从 `probabilities` 重算同一公式；真实 Jev 若与其 `confidence` 不一致，会略有差异）。
+- 没有重跑 harness 链路（临时 HOME 版仍未在真实链路验证）；清理仍只有进程内兜底，无外部 watchdog。

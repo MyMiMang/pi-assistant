@@ -59,7 +59,39 @@ export function parseClassifierChoice(outcome: ClassifierOutcome, candidateIds: 
 		const tied = Object.entries(probs).filter(([, v]) => Math.abs(v - top) < 1e-9);
 		if (tied.length > 1) return { kind: "abstain", reason: "候选概率并列最高，不可执行", usage, model };
 	}
-	return { kind: "selected", candidateId: choice, confidence, probabilities: probs, usage, model };
+	// 阈值比较用 Jev 标度的换算值（概率缺失时 undefined → 调用方退回协议 confidence）。
+	const decisionConfidence = probs ? jevChoiceConfidence(probs, candidateIds) : undefined;
+	return { kind: "selected", candidateId: choice, confidence, decisionConfidence, probabilities: probs, usage, model };
+}
+
+/**
+ * 把候选概率换算到阈值所在的标度（Jev 的 choice confidence，Laya 公开的 `jev_confidence` / #302）：
+ * `(max(p) - 1/n) / (1 - 1/n)`，先按总和归一；总和为 0 视为均匀；只有一个候选时返回 undefined（不合成 1.0）。
+ *
+ * 为什么需要这层换算：产品阈值（默认 0.6）是 Jev 标度上的数字，而 Laya 在自己的 wire `confidence`
+ * 里放的是**归一化 Shannon 熵**（`laya/common.py:confidence_from_probs`，自己的文档写「与 max(p)
+ * 不是一个量、不能套同一个阈值」，且随选项数变化：32 个候选时 `max(p)=0.6` 的熵只有约 0.41）。
+ * 直接拿熵比 0.6 会把「概率约 0.66 的正确选项」误判成低可信，且候选越多越容易必然被拒。
+ *
+ * 概率必须覆盖全部候选且有限、0–1，否则返回 undefined（不部分信任、不合成）。
+ */
+export function jevChoiceConfidence(probabilities: Record<string, number> | undefined, candidateIds: string[]): number | undefined {
+	if (!probabilities || candidateIds.length === 0) return undefined;
+	const values: number[] = [];
+	for (const id of candidateIds) {
+		const v = probabilities[id];
+		if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+		values.push(v);
+	}
+	const n = values.length;
+	// 只有一个候选时「概率」不携带任何选择信息（Jev / Laya 在这种形状上都报 1.0）——这里不合成 1.0，
+	// 返回 undefined 让调用方退回协议自己的 confidence：真实服务会报 1.0，伪造出来的低分也不会被放过。
+	if (n === 1) return undefined;
+	const total = values.reduce((a, b) => a + b, 0);
+	const p = total > 0 ? values.map((v) => v / total) : values.map(() => 1 / n);
+	const raw = (Math.max(...p) - 1 / n) / (1 - 1 / n);
+	// 四位小数（与 Laya 自己公布的值同精度），避免浮点尾巴让阈值比较 / 展示抖动
+	return Math.round(Math.min(1, Math.max(0, raw)) * 1e4) / 1e4;
 }
 
 /** 只保留候选集合内、有限且 0–1 的概率；有任何非法 / 缺失值就整体丢弃（不部分信任、不合成）。 */
