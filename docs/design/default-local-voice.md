@@ -1,6 +1,6 @@
 # 默认本地语音（开箱即用）设计
 
-> 状态：**设计（beta.30 候选，未实施）**。选型与事实证据见 `progress-snapshots/default-local-voice-decision.md`。
+> 状态：**已实施 + 真实模型验收通过（beta.29 候选，未发布 / 未 push / 未 tag）**。实现与验收事实见 §9、`progress-snapshots/default-stream-contract.md` §8、`evidence/local-asr-real-smoke/`。选型与事实证据见 `progress-snapshots/default-local-voice-decision.md`。
 > 用户目标（原话大意）：**装好应用就能用语音**——不让人手动找模型 / 点下载 / 配路径；设置里可以切换别的；已有的「云 / 本地」选择**不能被默认覆盖或删除**；不需要用户提供云 key，不加付费云隐藏调用。优先**真正本地流式**听写，中文 / 英文都要能实际用；模型不限现目录，学优秀成品实现但**不照搬 GPL 代码**。尽量**随安装包带合法小模型 + runtime** 满足 offline-first，体积 / 许可合理，不先随意下载 GB。**若首次必须联网，必须明示；不能把后台自动下载说成首次断网可用。**
 
 ## 1. 范围
@@ -130,6 +130,11 @@ platforms: SHERPA_PLATFORMS（6 项）
 
 ## 9. 验收方案（本树不许跑，留给测试槽）
 
+**已跑（2026-10-24，本机 Apple 芯片 macOS；见 HANDOFF）**
+- 定向单测 **144/144**（含 catalog/manifest pin、runner 角色、流协议、默认语义、前端句段模型）；生产贯通 e2e **11/11**。
+- 真实权重 **198,270,793 B** 逐文件 SHA256 与 pin 一致 → 真 sidecar（`OnlineRecognizer.from_transducer`，threads 4）→ 官方 `test_wavs/0.wav`（中英混说）与 `1.wav` 200 ms 分帧：首 tentative 3–6 ms（stop 前出字）、endpoint 3 次 reset、final 对照官方文档期望 **CER 0 / 0**、RTF 0.064、解码 p50 26 ms、seq 重放拒绝、cancel 释放租约且 worker 存活、**禁网复跑零外部请求**（权重 / runtime 复用）。
+- 真实 smoke 修掉 3 个生产 bug：① sidecar 路径拼成 `/v1/v1/…`（manager 的 baseUrl 已含 `/v1/`）；② sherpa-onnx 1.13.8 `OnlineRecognizer.get_result()` 返回 `str`（不是 `.text` 对象）；③ start 未消费请求体，keep-alive 连接残留字节被当成下一个请求方法（后续 append 501）。
+
 **单测（合成信号 + 假 provider，不碰真麦）**
 - catalog / manifest：`defaultVoice` 唯一、pin 齐全、`resolveDefaultVoiceModel` 数据驱动；
 - runner：`online-zipformer` roles 齐全 / 缺一 fail-closed；脚本里出现 `from_transducer` 且**不出现** `OfflineRecognizer`；
@@ -145,6 +150,7 @@ platforms: SHERPA_PLATFORMS（6 项）
 - 录制中不卸载、取消后 worker 释放、idle 回收、切模型与 lease 冲突。
 
 **明确不做的验收**：不跑全量 `npm test` / 全量 e2e（按用户「只跑受影响部分」要求）。
+**不做质量承诺**：CER 只对照官方样例文本（0.wav / 1.wav），不代表通用语料；未验 Windows / Linux / Intel Mac / 真手机 / 真麦克风；默认流式模型输出**无标点**。
 
 ## 10. 未决 / 阻塞（见决策文档 §三）
 

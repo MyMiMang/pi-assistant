@@ -1,6 +1,6 @@
 # 默认本地语音（前端）：原生流式会话层 + 默认准备状态（**已按冻结契约接线**）
 
-> 状态：**已按后端冻结契约完成生产接线（真实 wire），纯逻辑单测已跑 34/34 通过；未做真实后端联测 / 浏览器 e2e / 构建**（worktree `default-local-voice-ui`，分支同名，基 `release-candidate-validation` `b20ec81`；**未 push / 未 tag / 未打包 / 未装用户 App**）。
+> 状态：**已按冻结契约生产接线并合入候选树；DOM 生产贯通 e2e 11/11、后端真实模型验收通过（2026-10-24，未发布）**（worktree `default-local-voice-ui`，分支同名，基 `release-candidate-validation` `b20ec81`；**未 push / 未 tag / 未打包 / 未装用户 App**）。
 > 后端契约（冻结，唯一事实来源）：`default-local-voice/progress-snapshots/default-stream-contract.md`（HEAD `faa2c2f`，含 CORS 允许自定义流式头）；后端实现见该树 `packages/server/src/local-asr/{stream,stream-hub,serve-script,default-voice-prep,service}.ts`、`voice/{routes,index,contract,source}.ts`。
 > 设计边界（用户要求）：装好就能用语音、**不让人手动找模型 / 点下载 / 配路径**；已有云 / 本地选择**不被默认覆盖或删除**；只做前端，不改 Pi SDK / node_modules / 后端。
 
@@ -98,7 +98,7 @@ interface VoiceStreamTransport {
 ## 8. 未决 / 已知边界
 
 1. **真实联测**：需要后端权重就绪 + 测试槽；本树只接线，不做真实识别质量结论。
-2. **`prep.state="cancelled"` 的可达性**：契约说「用户取消 → 写 `voiceDefaultOptOut`」；已核对后端源码，`writeDefaultOptOut` 目前**没有任何调用方**（`POST /api/downloads/:id/cancel` 只调 `manager.cancel`，安装态回 `not_installed`）——所以取消后后端可能回 `not_prepared` 而不是 `cancelled`。前端按契约解析、两种状态都能显示（都可用统一下载的「重试」），**是否补写 optout 待后端确认**。
-3. **`asr_not_ready` 的 409 body** 契约说带 `defaultVoice.prep`，实现目前只回 `{error, message}`；前端不依赖它（准备状态单独从 `GET source` 读），拿到 `asr_not_ready` 时给通用中文。
-4. **手机端取消 / 重试**：`/api/downloads/:id/start|cancel` 是 `localOnly`，远程（手机隧道）会失败；准备状态展示不受影响，操作建议在本机设置页做（失败会显示操作错误，不静默）。
+2. **`prep.state="cancelled"` 已可达（已修）**：取消 / 清空 / 改选别的模型都会写 `voiceDefaultOptOut`（`cancelled` / `user_cleared` / `user_chose_other`），显式重试才清；取消后不会自动重启准备。前端按契约解析六态，`cancelled` 显示「已取消」并给重试。
+3. **`asr_not_ready` 的 409 body 已带 `defaultVoice.prep`（已修）**：前端仍不依赖它（准备状态从 `GET source` 读），但契约 body 已是真实的。
+4. **手机端取消 / 重试已可用（已修）**：默认语音走**窄接口** `POST /api/local-models/asr/default-voice/cancel|retry`（固定默认模型、同一 `asr:<modelId>` job、正常 safe API 鉴权），不再依赖 `localOnly` 的通用下载接口；不能借它操作任意组件。
 5. 主会话 / 群聊以外（子代理输入栏）不加麦克风，与既有决策一致。

@@ -308,3 +308,19 @@ type AsrStreamEvent =
 - 权重许可：**保持 `selfServe` 单独政策**，**不假 bundle 商用 clear**；元数据 `apache-2.0` 但权重仓无 LICENSE 文件 → **如实标注**（本地按需下载放行，随包分发等主口径）。**不影响 SenseVoice 原选项**。
 - 原「未下权重」仅 tokens.txt 核过 SHA（本地实测），**不是**大文件实测 → manifest **不声称 hash 已全实测**。
 - 平台 CI / 全链验收由主统一整合后进行（本树不 push / 不 tag）。
+
+---
+
+## 8. 实现与真实验收（2026-10-24，覆盖上文「本轮未跑」的口径）
+
+- **实现状态**：后端 `faa2c2f`（自动准备 + 原生流式会话 + 流式 sidecar）与前端 `c4c9317`（真实 wire + server-authoritative 句段模型 + 准备状态 UI）已 `--no-ff` 合入候选树；随后补齐 §1.2 / §2 中此前只写在契约里的部分：
+  - 取消 / 清空 / 改选别的模型 → 写 `voiceDefaultOptOut`（`cancelled` / `user_cleared` / `user_chose_other`），**不自动 restart**；显式重试才清。
+  - `install_and_use` 自动采用默认：安装开始与结束**都必须是 unset**（`voiceSource` key 不存在）+ 版本未变（CAS），显式 null 绝不覆盖。
+  - 新增窄接口 `POST /api/local-models/asr/default-voice/cancel|retry`：只动目录里唯一的默认模型、复用同一 `asr:<modelId>` job、走正常 safe API（手机已配对可用）；**不放开**通用 `localOnly` 的 `/api/downloads/:id/*`。
+  - `POST /api/audio/asr/stream` 严格 body（未知字段 400 `asr_bad_format`）；`agentId` / `conversationId` 在创建时绑定，append / end / cancel 用同名头校验，不一致 409 `asr_stream_scope_mismatch`；别的主体拿 sessionId 403。
+  - `asr_not_ready` 的 409 body 带 `defaultVoice.prep`；创建时若当前来源是**别的**模型（云 / 本地批量），明确拒绝而不是偷用默认流式模型。
+  - 来源被改选 → **立即**释放租约 + 取消会话（`asr_source_changed`），不回退云；sidecar 卡住时有界超时（10 s）按 `asr_engine_error`，避免挂死会话留租约。
+  - sidecar `committed` 必须是真的段稳定前缀；文本不再以 committed 开头时 `tentative` 给空，**不给假尾句**。
+- **真实模型验收（本机 Apple 芯片 macOS；scratch `pia-asr-smoke-amv7oy7ejb00`，threads 4，预算 600 MB）**：198,270,793 B / 4 文件 SHA256 与 pin 一致 → activate → 真 sidecar 健康（`modelId` 正确）→ 官方 `test_wavs/0.wav`（中英混说）与 `1.wav` 按 200 ms 分帧：首 tentative 3–6 ms（**stop 前出字**）、endpoint 3 次、final 对照官方文档期望文本 **CER 0 / 0**、RTF（墙钟/音频）0.064、单帧解码 p50 26 ms、seq 重放拒绝且不重喂、cancel 释放租约但 worker 不杀、**禁网复跑零外部请求**（final「昨天是 MONDAY」）。证据 `evidence/local-asr-real-smoke/`。
+- **真实 smoke 修掉的 3 个生产 bug**：① `baseUrl` 已含 `/v1/` 却再拼 `/v1/stream/*` → 404；② sherpa-onnx 1.13.8 `OnlineRecognizer.get_result()` 返回 `str`（脚本按 `.text` 取）→ AttributeError；③ `start` 未消费请求体 → keep-alive 残留字节被解析成下一个请求方法（append 501）。
+- **仍然如实不声称**：默认流式模型**输出无标点**；首次需联网自动准备（198 MB + 共享运行时），不随包内置；只在 Apple 芯片 macOS 本机验过；CER 只对照官方样例，不代表通用语料质量。
