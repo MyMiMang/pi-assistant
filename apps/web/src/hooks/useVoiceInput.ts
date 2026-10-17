@@ -11,7 +11,7 @@
  *    缺任一项都回落到既有分段增量 / 整段批量，行为不变。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { acquireAsrLease, cancelDownloadJob, getVoiceSource, isStreamingSource, onVoiceSourceChanged, releaseAsrLease, startDownloadJob, transcribeAudio, type VoiceSource, type VoiceSourceOption } from "../api";
+import { acquireAsrLease, cancelDefaultVoicePrepare, getVoiceSource, isStreamingSource, onVoiceSourceChanged, releaseAsrLease, retryDefaultVoicePrepare, transcribeAudio, type VoiceSource, type VoiceSourceOption } from "../api";
 import type { LiveDownloadLike } from "../local-asr-intent";
 import { useStore } from "../store";
 import { mergePrepareDownload, normalizeVoicePrepareView, type VoicePrepareView } from "../voice-pref";
@@ -398,14 +398,13 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 
 	// 默认本地语音准备的取消 / 重试：走统一下载组件同一 job（`asr:<modelId>`），**不写 source**。
 	const cancelPrepare = useCallback(() => {
-		const id = prepRef.current?.jobId;
-		if (!id) return;
-		void cancelDownloadJob(id).then(() => void loadSource()).catch(() => {});
+		if (!prepRef.current?.jobId) return;
+		// 窄接口：只取消目录里唯一的默认模型（手机也可用；不动通用下载）。
+		void cancelDefaultVoicePrepare().then(() => void loadSource()).catch(() => {});
 	}, [loadSource]);
 	const retryPrepare = useCallback(() => {
-		const id = prepRef.current?.jobId;
-		if (!id) return;
-		void startDownloadJob(id).then(() => void loadSource()).catch(() => {});
+		if (!prepRef.current?.jobId) return;
+		void retryDefaultVoicePrepare().then(() => void loadSource()).catch(() => {});
 	}, [loadSource]);
 
 	return {

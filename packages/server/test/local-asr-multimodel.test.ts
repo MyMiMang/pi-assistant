@@ -17,7 +17,7 @@ import { asrRunnerFamily, hasAsrRunnerFamily, type AsrRunnerFamily } from "../sr
 import { LocalAsrManager, type AsrDeps, type AsrPaths } from "../src/local-asr/manager.ts";
 import { LocalAsrService, asrPhaseLabel, type AsrSelectionPort } from "../src/local-asr/service.ts";
 import { projectAsrInstall, asrDownloadId } from "../src/local-asr/download.ts";
-import { clearDefaultVoiceMarkers, writeDefaultInit, writeDefaultOptOut } from "../src/local-asr/default-voice-prep.ts";
+import { clearDefaultVoiceMarkers, readDefaultOptOut, writeDefaultInit, writeDefaultOptOut } from "../src/local-asr/default-voice-prep.ts";
 import { ONLINE_ZIPFORMER_MODEL_ID } from "../src/local-asr/manifest.ts";
 import { bus } from "../src/bus.ts";
 import * as dl from "../src/downloads.ts";
@@ -573,4 +573,49 @@ test("安装中途用户改选来源 → 安装完成不覆盖（CAS / stale int
 	await new Promise((r) => setTimeout(r, 40));
 	assert.equal(h.selection.sel?.location, "cloud");
 	assert.equal(h.selection.sel?.model, "whisper-1");
+});
+
+test("取消默认准备写 optout（cancelled）→ 不自动 restart；显式重试才清 optout 并重装一次", async () => {
+	const h = makeHarness();
+	clearDefaultVoiceMarkers();
+	h.selection.sel = null;
+	h.selection.present = false;
+	h.selection.ver = 0;
+	h.inst.hangDownload = true;
+	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, true);
+	await new Promise((r) => setTimeout(r, 10));
+	assert.equal(h.svc.defaultVoicePrepView().prep.state, "preparing");
+
+	const cancelled = h.svc.cancelDefaultVoicePrepare();
+	assert.equal(cancelled.ok, true);
+	assert.equal(readDefaultOptOut()?.reason, "cancelled");
+	await new Promise((r) => setTimeout(r, 10));
+	assert.equal(h.svc.defaultVoicePrepView().prep.state, "cancelled");
+	// 取消后不自动重启（init 已存在 + optout 存在，两条都挡）。
+	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
+
+	// 显式重试：清 optout、固定默认模型、走同一 job；装完仍按 CAS 采用（这里来源仍 unset）。
+	h.inst.hangDownload = false;
+	const retry = h.svc.retryDefaultVoicePrepare();
+	assert.equal(retry.started, true);
+	assert.equal(readDefaultOptOut(), null);
+	await new Promise((r) => setTimeout(r, 40));
+	assert.equal(h.svc.managerFor(DEF).status().install.state, "installed");
+	assert.equal(h.svc.defaultVoicePrepView().prep.state, "ready");
+	const sel = h.selection.sel as { model?: string } | null;
+	assert.equal(sel?.model, DEF);
+	// 已装好后再点重试：不重复安装。
+	assert.equal(h.svc.retryDefaultVoicePrepare().started, false);
+});
+
+test("显式清空来源（key 存在且 null）时 install_and_use 完成也不自动改来源", async () => {
+	const h = makeHarness();
+	clearDefaultVoiceMarkers();
+	h.selection.sel = null;
+	h.selection.present = true; // 用户显式清空过
+	h.selection.ver = 3;
+	await h.svc.install(DEF, { intent: "install_and_use" });
+	assert.equal(h.selection.sel, null, "显式清空不得被自动采用覆盖");
+	assert.equal(h.selection.ver, 3, "也不应写来源版本");
+	assert.equal(h.svc.managerFor(DEF).status().install.state, "installed");
 });

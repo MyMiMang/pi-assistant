@@ -14,7 +14,7 @@
  */
 import { ASR_CATALOG, asrModelSpec, catalogDefaultVoiceView, classifyAsrHardware, recommendAsrModelId, resolveCatalogDefaultVoice, type AsrModelSpec, type AsrTier } from "./catalog.ts";
 import { ASR_MODEL_ID, ASR_PROVIDER_ID, SENSEVOICE_MODEL, SHERPA_ONNX_VERSION, ASR_PYTHON_VERSION } from "./manifest.ts";
-import { readDefaultInit, readDefaultOptOut, writeDefaultInit, defaultVoiceEligible, type DefaultVoicePrepView } from "./default-voice-prep.ts";
+import { readDefaultInit, readDefaultOptOut, writeDefaultInit, writeDefaultOptOut, clearDefaultOptOut, defaultVoiceEligible, type DefaultVoicePrepView } from "./default-voice-prep.ts";
 import { licenseDisclosure, type LicenseDisclosure } from "./license.ts";
 import type { AsrInstallPhase, AsrInstallSource, AsrInstallState, AsrRuntimeState, AsrStatus, LocalAsrManager } from "./manager.ts";
 import type { AsrSourceMeta } from "./manifest.ts";
@@ -131,6 +131,8 @@ interface Job {
 	selectionAtStart: { location: "cloud" | "local"; provider: string; model: string } | null;
 	/** 安装开始时的来源持久化版本（CAS：期间别的客户端改选则不覆盖） */
 	selectionVersionAtStart: number;
+	/** 安装开始时 `settings.voiceSource` key 是否存在（区分 unset 与显式 null；显式清空不自动采用） */
+	selectionPresentAtStart: boolean;
 	ctrl: AbortController;
 }
 
@@ -254,7 +256,8 @@ export class LocalAsrService {
 				languages: [...spec.manifest.languages],
 				note: spec.note,
 				tier: spec.tier,
-				tags: [spec.tier],				recommended,
+				tags: [spec.tier],
+				recommended,
 				recommendationReason: recommended ? recommendationReason(spec, cls.tier) : "",
 				available: platformSupported && spec.license.selfServe && spec.license.decision !== "prohibited",
 				unavailableReason: !platformSupported ? (st.platform.reason ?? "当前平台不支持") : !spec.license.selfServe || spec.license.decision === "prohibited" ? spec.license.reason : null,
@@ -323,6 +326,8 @@ export class LocalAsrService {
 			intent: opts.intent === "install_and_use" ? "install_and_use" : "install",
 			selectionAtStart: this.deps.selection.read(),
 			selectionVersionAtStart: this.deps.selection.version(),
+			// 区分「从未设置（unset）」与「显式清空（null）」：只有安装前后都**unset**才自动采用默认。
+			selectionPresentAtStart: this.deps.selection.present?.() ?? true,
 			ctrl,
 		};
 		this.jobs.set(id, job);
@@ -330,7 +335,9 @@ export class LocalAsrService {
 			const st = await m.install({ source: opts.source ?? "download", acceptLicense: opts.acceptLicense, importDir: opts.importDir, signal: ctrl.signal });
 			// stale 防护：只有「安装并使用」且选择自开始后未变化才写「用本地」来源；
 			// CAS 用 expectedVersion 防 ABA / 跨客户端覆盖（别的页面后来改选 cloud 则这里失败，不覆盖）。
-			if (job.intent === "install_and_use" && sameSelection(this.deps.selection.read(), job.selectionAtStart)) {
+			// 显式清空（key 存在且为 null）绝不自动改：安装前后都必须 unset。
+			const presentNow = this.deps.selection.present?.() ?? true;
+			if (job.intent === "install_and_use" && !job.selectionPresentAtStart && !presentNow && sameSelection(this.deps.selection.read(), job.selectionAtStart)) {
 				try {
 					this.deps.selection.write({ location: "local", provider: spec.provider, model: spec.id }, { expectedVersion: job.selectionVersionAtStart });
 				} catch {
@@ -347,6 +354,8 @@ export class LocalAsrService {
 	cancel(id: string): { ok: boolean } {
 		const job = this.jobs.get(id);
 		if (!job) return { ok: false };
+		// 取消默认本地语音的自动准备 = 用户意图「别自动装」：写 optout，下次启动不 restart（显式重试才清）。
+		if (id === this.defaultVoiceModelId()) writeDefaultOptOut("cancelled");
 		job.ctrl.abort();
 		return this.managerFor(id).cancel();
 	}
@@ -430,7 +439,7 @@ export class LocalAsrService {
 				total: install?.total ?? null,
 				percent: install?.percent ?? null,
 				attempt: install?.attempt ?? null,
-				startedAt: null,
+				startedAt: init?.at ?? null,
 				finishedAt,
 				error: install?.error ?? null,
 				errorCode: install?.error ? "asr_prepare_failed" : null,
@@ -472,9 +481,37 @@ export class LocalAsrService {
 		void this.install(defaultModelId, { intent: "install_and_use" }).catch(() => {});
 		return { started: true, reason: elig.reason };
 	}
+
+	/**
+	 * 取消默认本地语音的准备（窄接口：只动**目录里唯一的默认模型**，不接任意 modelId / downloadId）。
+	 * 写 `voiceDefaultOptOut`（reason=cancelled）：下次启动**不 restart**；用户显式重试才清掉。
+	 */
+	cancelDefaultVoicePrepare(): { ok: boolean; reason: string } {
+		const id = this.defaultVoiceModelId();
+		if (!id) return { ok: false, reason: "目录里没有默认本地语音模型" };
+		writeDefaultOptOut("cancelled");
+		return { ok: this.cancel(id).ok, reason: "已取消默认本地语音的自动准备，不会自动重启" };
+	}
+
+	/**
+	 * 显式重试默认本地语音的准备（窄接口：固定默认模型 + 统一安装 job + 统一进度）。
+	 * 清掉 optout（只在这里清，且**不**覆盖用户已选来源：采用仍走 install_and_use 的 CAS）。
+	 */
+	retryDefaultVoicePrepare(): { started: boolean; reason: string } {
+		const id = this.defaultVoiceModelId();
+		if (!id) return { started: false, reason: "目录里没有默认本地语音模型" };
+		const st = this.managerFor(id).status();
+		if (st.install.state === "installing") return { started: false, reason: "默认本地语音正在准备中" };
+		if (st.install.state === "installed") return { started: false, reason: "默认本地语音已准备完成" };
+		if (this.anyInstalling()) return { started: false, reason: "已有安装正在进行中，请先等待或取消" };
+		clearDefaultOptOut();
+		void this.install(id, { intent: "install_and_use" }).catch(() => {});
+		return { started: true, reason: "已重新开始准备默认本地语音" };
+	}
 }
 
-function recommendationReason(spec: AsrModelSpec, tier: AsrTier | "unknown"): string {	if (tier === "unknown") return `拿不到整机内存，按最保守估计推荐 ${spec.name}（估算，未实测）`;
+function recommendationReason(spec: AsrModelSpec, tier: AsrTier | "unknown"): string {
+	if (tier === "unknown") return `拿不到整机内存，按最保守估计推荐 ${spec.name}（估算，未实测）`;
 	return `按当前整机内存档位（${tier}）推荐 ${spec.name}（估算，未实测；可自行选择更大档位）`;
 }
 

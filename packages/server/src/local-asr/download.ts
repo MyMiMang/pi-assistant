@@ -14,6 +14,7 @@
 import { bus } from "../bus.ts";
 import { notifyDownload, registerDownload } from "../downloads.ts";
 import { ASR_CATALOG } from "./catalog.ts";
+import { clearDefaultOptOut } from "./default-voice-prep.ts";
 import { localAsrService } from "./index.ts";
 import type { AsrStatus } from "./manager.ts";
 import { asrPhaseLabel } from "./service.ts";
@@ -59,6 +60,8 @@ function statusOf(modelId: string): AsrStatus {
 export async function startAsrDownload(modelId: string): Promise<void> {
 	const svc = localAsrService();
 	if (svc.managerFor(modelId).status().install.state === "installing") return;
+	// 显式重试默认本地语音（模型维度）：清掉「不再自动装」标记；**不改**来源（采用仍走 install_and_use 的 CAS）。
+	if (modelId === svc.defaultVoiceModelId()) clearDefaultOptOut();
 	void svc
 		.install(modelId, { intent: "install" })
 		.catch(() => {});

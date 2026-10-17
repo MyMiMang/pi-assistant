@@ -108,6 +108,9 @@ export function withSelected(source: AsrSource | null, options: AsrSourceOption[
 			model: source.model,
 			name: `${source.provider} / ${source.model}`,
 			protocol: "",
+			// 形状与正常候选一致（前端不必为 deleted 分支写特例）：未知流式能力 → false / null。
+			streaming: false,
+			streamProtocol: null,
 			availability: "deleted",
 			reason: "当前选择的语音模型已删除或不再可用，请重新选择",
 			selected: true,

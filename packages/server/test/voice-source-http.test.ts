@@ -210,3 +210,68 @@ test("失效来源：声明被删后 source 保原值，视图补 deleted 条目
 	assert.equal(stale?.availability, "deleted");
 	assert.ok(typeof stale?.reason === "string" && stale.reason.length > 0);
 });
+
+// ------------------------------------------------- 默认本地语音：契约块 / 流式窄接口 / optout 可见
+
+const DEF = "streaming-zipformer-bilingual-zh-en-int8";
+
+test("GET /source 带契约 defaultVoice 块：实际状态 + 首次需联网 + 不需要用户手动下载 + 不申请麦克风", async () => {
+	// 显式选回默认本地模型 → 清掉前面用例留下的 optout，状态回到 not_prepared（还没准备）。
+	assert.equal((await api("/api/audio/asr/source", { method: "PUT", body: JSON.stringify({ source: { location: "local", provider: "local-online-zipformer", model: DEF } }) })).status, 200);
+	const r = await api("/api/audio/asr/source");
+	assert.equal(r.status, 200);
+	const dv = r.body.defaultVoice as Json;
+	assert.ok(dv, "旧客户端忽略即可，但契约要求真实存在");
+	assert.equal(dv.defaultModelId, DEF);
+	assert.equal(dv.prep.jobId, `asr:${DEF}`);
+	assert.equal(dv.prep.state, "not_prepared");
+	assert.equal(dv.firstRunNeedsNetwork, true, "P2 口径：首次需联网，不能写成断网可用");
+	assert.equal(dv.offlineAfterReady, true);
+	assert.equal(dv.requiresUserAction, false);
+	assert.equal(dv.micPermissionRequested, false);
+	assert.ok(Array.isArray(dv.notes) && dv.notes.length > 0);
+	// 流式能力必须能从 options 直接读到（不能只在 RegistryModel 里）
+	const opt = (r.body.options as Json[]).find((o) => o.model === DEF);
+	assert.equal(opt?.streaming, true);
+	assert.equal(opt?.protocol, "asr-stream-v1");
+	assert.equal(opt?.streamProtocol, "asr-stream-v1");
+});
+
+test("流式创建：未知 body 字段 400 asr_bad_format；未准备 409 asr_not_ready 且 body 带 defaultVoice.prep", async () => {
+	const bad = await api("/api/audio/asr/stream", { method: "POST", body: JSON.stringify({ modelId: DEF, sampleRate: 16000, channels: 1, format: "s16le", unknownField: 1 }) });
+	assert.equal(bad.status, 400);
+	assert.equal(bad.body.error, "asr_bad_format");
+
+	// 上一条用例已把来源显式选为默认模型（未准备）→ 创建会话必须给结构化 not_ready。
+	const notReady = await api("/api/audio/asr/stream", { method: "POST", body: JSON.stringify({ modelId: DEF, sampleRate: 16000, channels: 1, format: "s16le" }) });
+	assert.equal(notReady.status, 409);
+	assert.equal(notReady.body.error, "asr_not_ready");
+	const dv = notReady.body.defaultVoice as Json;
+	assert.ok(dv, "asr_not_ready 必须带结构化 defaultVoice（前端不依赖也要真实）");
+	assert.equal(dv.defaultModelId, DEF);
+	assert.equal(dv.prep.state, "not_prepared");
+
+	const wrongFormat = await api("/api/audio/asr/stream", { method: "POST", body: JSON.stringify({ sampleRate: 44100 }) });
+	assert.equal(wrongFormat.status, 400);
+	assert.equal(wrongFormat.body.error, "asr_bad_format");
+});
+
+test("清空来源写 optout：defaultVoice.prep 变 cancelled（不靠前端自觉），选别的模型也不自动重启准备", async () => {
+	assert.equal((await api("/api/audio/asr/source", { method: "PUT", body: JSON.stringify({ source: LOCAL }) })).status, 200);
+	const afterPick = (await api("/api/audio/asr/source")).body.defaultVoice as Json;
+	assert.equal(afterPick.prep.state, "cancelled", "选了别的模型 → 记 user_chose_other，准备状态不再显示 not_prepared");
+	assert.equal((await api("/api/audio/asr/source", { method: "PUT", body: JSON.stringify({ source: null }) })).status, 200);
+	const afterClear = (await api("/api/audio/asr/source")).body.defaultVoice as Json;
+	assert.equal(afterClear.prep.state, "cancelled", "显式清空 → 记 user_cleared，不自动重启准备");
+});
+
+test("默认语音窄接口：没有在进行的准备时 cancel 返回 409 + 原因（不误伤通用下载；不启动任何安装）", async () => {
+	const r = await api("/api/local-models/asr/default-voice/cancel", { method: "POST" });
+	assert.equal(r.status, 409);
+	assert.equal(r.body.ok, false);
+	assert.ok(typeof r.body.reason === "string" && r.body.reason.length > 0);
+	const dv = r.body.defaultVoice as Json;
+	assert.equal(dv.defaultModelId, DEF, "窄接口只回默认模型的状态，不接任意 id");
+	// 通用下载接口仍是 localOnly（手机不走它）；窄接口走正常 safe API（本机这里 200/409 语义一致）。
+	assert.equal((await api("/api/local-models/asr/default-voice")).status, 200);
+});

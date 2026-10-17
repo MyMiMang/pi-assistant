@@ -175,6 +175,19 @@ export function mountLocalAsrRoutes(
 	// 默认本地语音的自动准备状态（与 `GET /api/audio/asr/source` 的 `defaultVoice` 同一份数据；headless / Linux server 用）。
 	app.get("/api/local-models/asr/default-voice", localOnly, (c) => c.json(svc().defaultVoicePrepView()));
 
+	// 默认语音的取消 / 重试：**窄接口**，只动目录里唯一的默认模型（固定 defaultModelId），
+	// 不接受任意 modelId / downloadId，因此不会变成「借接口操作任意组件」。
+	// 不走 localOnly：手机（已配对）也能取消 / 重试，能力与它本来就能点的麦克风一致；
+	// 未配对请求由现有全局鉴权中间件 401，不在此另造鉴权。
+	app.post("/api/local-models/asr/default-voice/cancel", (c) => {
+		const out = svc().cancelDefaultVoicePrepare();
+		return c.json({ ok: out.ok, reason: out.reason, defaultVoice: svc().defaultVoicePrepView() }, out.ok ? 200 : 409);
+	});
+	app.post("/api/local-models/asr/default-voice/retry", (c) => {
+		const out = svc().retryDefaultVoicePrepare();
+		return c.json({ ok: out.started, reason: out.reason, defaultVoice: svc().defaultVoicePrepView() }, out.started ? 200 : 409);
+	});
+
 	app.get("/api/local-models/asr/catalog", localOnly, (c) => {
 		const view = svc().catalog();
 		// 顺带把每个模型的安全状态刷进本地模型 hints（重启后「已装未启动」也能出现）。

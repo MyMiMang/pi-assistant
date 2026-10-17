@@ -6,7 +6,7 @@
  * 幂等只在 completed 返回、错误脱敏。**不**接受远程 URL / 本地路径 / 任意 ffmpeg 输入。
  */
 import type { Context, Hono, Next } from "hono";
-import { ASR_ERRORS, ASR_MAX_BYTES, ASR_MAX_DURATION_MS, type AsrEndpoint, type AsrRequest, type AsrSource, type AsrSourceOption } from "./contract.ts";
+import { ASR_ERRORS, ASR_MAX_BYTES, ASR_MAX_DURATION_MS, type AsrEndpoint, type AsrRequest, type AsrSource, type AsrSourceOption, type AsrSourceView } from "./contract.ts";
 import { createAsrService, validateAsrAudio, type AsrOutcome, type AsrService } from "./asr.ts";
 import { parseAsrSourceBody } from "./source.ts";
 import { ASR_STREAM_ERRORS, AsrStreamError, type LocalAsrStreamHub } from "../local-asr/stream.ts";
@@ -25,6 +25,8 @@ export interface VoiceSourceAccess {
 	/** 校验并写入；未知 / 未配置的 provider-model 抛带 code / status 的错误（不落库）。
 	 *  opts.expectedVersion 提供时为 CAS：版本不符抛 conflict（另一个页面 / 客户端已改选）。 */
 	write: (next: AsrSource | null, opts?: { expectedVersion?: number }) => void;
+	/** 完整视图（含 `defaultVoice` 准备状态）；不传则用 read / options / version 拼（旧装配兼容）。 */
+	view?: () => AsrSourceView;
 }
 
 export interface VoiceRouteDeps {
@@ -131,7 +133,8 @@ export function mountVoiceRoutes(app: AnyHono, deps: VoiceRouteDeps, service?: A
 
 	// 显式来源（用户要求：云 / 本地显式切换，不自动挑源；未配置就是 null）。只挂在注入 source 的生产装配上。
 	if (deps.source) {
-		const view = (c: Context) => c.json({ source: deps.source!.read(), options: deps.source!.options(), version: deps.source!.version() });
+		const view = (c: Context) =>
+			c.json(deps.source!.view ? deps.source!.view() : ({ source: deps.source!.read(), options: deps.source!.options(), version: deps.source!.version() } satisfies AsrSourceView));
 		app.get("/api/audio/asr/source", (c) => view(c));
 		app.put("/api/audio/asr/source", async (c) => {
 			const body = await c.req.json<unknown>().catch(() => undefined);
@@ -151,10 +154,10 @@ export function mountVoiceRoutes(app: AnyHono, deps: VoiceRouteDeps, service?: A
 	app.get("/api/audio/asr/config", (c) => c.json({ maxDurationMs: ASR_MAX_DURATION_MS, maxBytes: ASR_MAX_BYTES, protocol: "openai-audio-transcriptions" }));
 }
 
-/** 把流式会话错误映射成 HTTP 响应（结构化 code，前端按 code 分支）。 */
+/** 把流式会话错误映射成 HTTP 响应（结构化 code + 契约 body，前端按 code 分支）。 */
 function streamErrorResponse(c: Context, e: unknown): Response {
 	if (e instanceof AsrStreamError) {
-		return c.json({ error: e.code, message: e.message, ...(e.retryAfterMs ? { retryAfterMs: e.retryAfterMs } : {}) }, e.status as 400);
+		return c.json({ error: e.code, message: e.message, ...(e.retryAfterMs ? { retryAfterMs: e.retryAfterMs } : {}), ...(e.body ?? {}) }, e.status as 400);
 	}
 	return c.json({ error: ASR_STREAM_ERRORS.engineError, message: e instanceof Error ? e.message : String(e) }, 503);
 }
@@ -175,6 +178,36 @@ function streamCaller(c: Context) {
 	};
 }
 
+/** `POST /stream` body 的**严格**形状（未知字段拒，不放宽所有 unknown；两端同一契约）。 */
+const STREAM_CREATE_KEYS = ["modelId", "sampleRate", "channels", "format", "clientId", "agentId", "conversationId"] as const;
+interface StreamCreateBody {
+	modelId?: string;
+	sampleRate?: number;
+	channels?: number;
+	format?: string;
+	clientId?: string;
+	agentId?: string;
+	conversationId?: string;
+}
+
+function parseStreamCreateBody(raw: unknown): { ok: true; body: StreamCreateBody } | { ok: false; reason: string } {
+	if (raw === undefined || raw === null) return { ok: true, body: {} };
+	if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: "请求体必须是 JSON 对象" };
+	const extra = Object.keys(raw as Record<string, unknown>).filter((k) => !(STREAM_CREATE_KEYS as readonly string[]).includes(k));
+	if (extra.length) return { ok: false, reason: `不认识的字段：${extra.join("、")}` };
+	const b = raw as Record<string, unknown>;
+	const str = (k: string) => (b[k] === undefined || b[k] === null ? undefined : typeof b[k] === "string" ? (b[k] as string) : null);
+	for (const k of ["modelId", "clientId", "agentId", "conversationId"]) {
+		if (str(k) === null) return { ok: false, reason: `${k} 必须是字符串` };
+	}
+	const num = (k: string) => (b[k] === undefined || b[k] === null ? undefined : typeof b[k] === "number" && Number.isFinite(b[k]) ? (b[k] as number) : null);
+	for (const k of ["sampleRate", "channels"]) {
+		if (num(k) === null) return { ok: false, reason: `${k} 必须是数字` };
+	}
+	if (b.format !== undefined && b.format !== null && typeof b.format !== "string") return { ok: false, reason: "format 必须是字符串" };
+	return { ok: true, body: b as StreamCreateBody };
+}
+
 /**
  * 原生流式会话路由（契约 `progress-snapshots/default-stream-contract.md` §2）。
  *
@@ -183,13 +216,15 @@ function streamCaller(c: Context) {
  */
 export function mountAsrStreamRoutes(app: AnyHono, hub: LocalAsrStreamHub): void {
 	app.post("/api/audio/asr/stream", async (c) => {
-		const body = await c.req
-			.json<{ modelId?: string; sampleRate?: number; channels?: number; format?: string; clientId?: string; agentId?: string; conversationId?: string }>()
-			.catch(() => ({}) as { modelId?: string; sampleRate?: number; channels?: number; format?: string; clientId?: string; agentId?: string; conversationId?: string });
+		const parsed = parseStreamCreateBody(await c.req.json<unknown>().catch(() => undefined));
+		if (!parsed.ok) return c.json({ error: ASR_STREAM_ERRORS.badFormat, message: parsed.reason }, 400);
+		const body = parsed.body;
 		if (body.format !== undefined && body.format !== "s16le") return c.json({ error: ASR_STREAM_ERRORS.badFormat, message: "只支持 16k mono s16le PCM" }, 400);
 		if (body.sampleRate !== undefined && body.sampleRate !== 16000) return c.json({ error: ASR_STREAM_ERRORS.badFormat, message: "只支持 16000 Hz" }, 400);
 		if (body.channels !== undefined && body.channels !== 1) return c.json({ error: ASR_STREAM_ERRORS.badFormat, message: "只支持单声道" }, 400);
 		try {
+			// 归属（agent / conversation）在**创建时**从 body 绑定；后续 append / end / cancel 用同名请求头校验，
+			// 两边不一致 → 409 asr_stream_scope_mismatch（同一契约，不靠随机 id 防猜）。
 			return c.json(await hub.create({ modelId: body.modelId, clientId: body.clientId, principal: principalOf(c), agentId: body.agentId, conversationId: body.conversationId }));
 		} catch (e) {
 			return streamErrorResponse(c, e);

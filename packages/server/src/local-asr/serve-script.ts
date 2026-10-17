@@ -264,7 +264,7 @@ def _events(sess):
         committed = text[:c]
         sess["committed"] = committed
         evs.append({"type": "committed", "text": committed, "segmentId": sess["segment"]})
-    tentative = text[len(committed):]
+    tentative = text[len(committed):] if text.startswith(committed) else ""
     evs.append({"type": "tentative", "text": tentative, "segmentId": sess["segment"]})
     sess["prev"] = text
     if recognizer.is_endpoint(sess["stream"]):

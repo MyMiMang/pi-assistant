@@ -6,7 +6,7 @@
  * **前端不写 source**：自动采用默认由服务端 CAS + opt-out 管（契约 §1.2）。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { cancelDownloadJob, getVoiceSource, onVoiceSourceChanged, startDownloadJob } from "../api";
+import { cancelDefaultVoicePrepare, getVoiceSource, onVoiceSourceChanged, retryDefaultVoicePrepare } from "../api";
 import type { LiveDownloadLike } from "../local-asr-intent";
 import { useStore } from "../store";
 import { mergePrepareDownload, normalizeVoicePrepareView, type VoicePrepareView } from "../voice-pref";
@@ -53,13 +53,13 @@ export function useDefaultVoicePrep(): UseDefaultVoicePrep {
 	const prep = useMemo(() => (raw ? mergePrepareDownload(raw, raw.jobId ? downloads?.[raw.jobId] : undefined) : null), [raw, downloads]);
 
 	const act = useCallback(
-		async (fn: (id: string) => Promise<void>) => {
+		async (fn: () => Promise<void>) => {
 			const id = prep?.jobId;
 			if (!id) return;
 			setBusy(true);
 			setError("");
 			try {
-				await fn(id);
+				await fn();
 				await reload();
 			} catch (e) {
 				setError(e instanceof Error ? e.message : String(e));
@@ -76,7 +76,7 @@ export function useDefaultVoicePrep(): UseDefaultVoicePrep {
 		busy,
 		error,
 		reload,
-		cancel: () => act(cancelDownloadJob),
-		retry: () => act(startDownloadJob),
+		cancel: () => act(cancelDefaultVoicePrepare),
+		retry: () => act(retryDefaultVoicePrepare),
 	};
 }
