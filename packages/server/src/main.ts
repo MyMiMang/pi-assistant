@@ -1,7 +1,7 @@
 import { backend as desktopBackend } from "./desktop/backend.ts";
 import { closeAllBrowsers } from "./browser.ts";
 import { startChannels, stopChannels } from "./channels/index.ts";
-import { hostSettings, setHostEnv, startDaemon, stopDaemon } from "./host-control.ts";
+import { hostSettings, retryableDaemonFailure, setHostEnv, startDaemon, stopDaemon } from "./host-control.ts";
 import { config } from "./config.ts";
 import { getSetting } from "./db.ts";
 import { startHttp } from "./http.ts";
@@ -45,8 +45,9 @@ void startChannels();
 setHostEnv({ workspaceOf, agentIds: () => listAgents().map((a) => a.id) });
 // 完全权限：降权 / 暂停后中止正在跑的主机命令（每次工具调用仍由 hostFileAccess 动态判定）
 initHostAccessWatch();
-// 更新后重启时 Cua 偶尔来不及在 10 秒内就绪（下载/解压/上一个实例退出中），原来一次失败就再也不试，
-// 用户回来只看到“电脑操作不可用”、以为授权被重置。这里改成有限重试（不改任何权限语义）。
+// 更新后重启时 Cua 偶尔来不及在 10 秒内就绪（下载 / 解压 / 上一个实例退出中），原来一次失败就再也不试，
+// 用户回来只看到“电脑操作不可用”、以为授权被重置。这里改成有限重试，但每次失败都单独判定原因：
+// 只有“还没就绪 / 下载中断”才重试；权限计划已变化或认不出的错误立即停下等用户（不改任何权限语义）。
 if (hostSettings().enabled)
 	void (async () => {
 		for (const [i, wait] of [0, 2_000, 5_000].entries()) {
@@ -58,7 +59,8 @@ if (hostSettings().enabled)
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);
 				console.warn(`[host-control] 启动失败（第 ${i + 1} 次）：${msg}`);
-				if (!/就绪|10 秒/.test(msg) && i === 0) return; // 不是“还没起来”这类可重试的错误（比如权限计划已变），重试没意义
+				// 每次失败都按当前错误重新判：第二次就算撞上真的权限变更，也不能再继续重试
+				if (!retryableDaemonFailure(e)) return;
 			}
 		}
 	})();

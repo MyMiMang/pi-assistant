@@ -190,6 +190,34 @@ export const socketPath = (kind: DaemonKind = "bounded") =>
 const manifestPath = () => join(hcDir(), "manifest.yaml");
 
 export type DaemonState = "off" | "starting" | "running" | "paused" | "error";
+/**
+ * 启动失败的原因分类：只有“还没起来 / 下载中断”这两类值得重试；
+ * 权限计划已变化、校验失败、以及任何没认出来的错误都必须立即停，等用户或人来看（不能靠“消息里出现某个词”猜）。
+ */
+export type DaemonFailReason = "permissions_changed" | "not_ready" | "download" | "other";
+export class HostDaemonError extends Error {
+	constructor(
+		message: string,
+		readonly reason: Exclude<DaemonFailReason, "other">,
+	) {
+		super(message);
+		this.name = "HostDaemonError";
+	}
+}
+export function daemonFailReason(e: unknown): DaemonFailReason {
+	if (e instanceof HostDaemonError) return e.reason;
+	const msg = e instanceof Error ? e.message : String(e);
+	// 兼容未带类型的历史抛出点：只认确切文案，不做“含权限 / 含失败”这类模糊匹配
+	if (msg.startsWith("权限设置已变化")) return "permissions_changed";
+	if (/没有在 10 秒内就绪$/.test(msg)) return "not_ready";
+	if (msg.startsWith("下载 Cua Driver 失败")) return "download";
+	return "other";
+}
+/** 是否值得（再一次性地）重试启动：每次失败都要重新判，不能沿用上一次的结论 */
+export function retryableDaemonFailure(e: unknown) {
+	const r = daemonFailReason(e);
+	return r === "not_ready" || r === "download";
+}
 const daemons = new Map<DaemonKind, ChildProcess>();
 let state: { state: DaemonState; detail: string } = { state: "off", detail: "未开启" };
 let paused = false;
@@ -291,7 +319,7 @@ export const serveArgs = (kind: DaemonKind) =>
  */
 export async function startDaemon(plan = hostPlan()) {
 	const s = hostSettings();
-	if (!s.enabled || s.approvedHash !== manifestHash(plan)) throw new Error("权限设置已变化，需要在设置里重新确认后才能开启");
+	if (!s.enabled || s.approvedHash !== manifestHash(plan)) throw new HostDaemonError("权限设置已变化，需要在设置里重新确认后才能开启", "permissions_changed");
 	setState("starting", "正在启动 Cua Driver…");
 	await stopDaemon(true);
 	// 端到端测试用：不下载、不启动 Cua，只走设置与审批流程
@@ -330,7 +358,7 @@ async function spawnDaemon(kind: DaemonKind, exe: string) {
 		if (await ping(exe, kind)) return;
 		await new Promise((r) => setTimeout(r, 250));
 	}
-	throw new Error(`Cua Driver（${kind}）没有在 10 秒内就绪`);
+	throw new HostDaemonError(`Cua Driver（${kind}）没有在 10 秒内就绪`, "not_ready");
 }
 async function ping(exe: string, kind: DaemonKind) {
 	try {
@@ -376,30 +404,54 @@ export function saveHostSettings(patch: Partial<HostControlSettings>) {
  */
 const PERM_CACHE_MS = 15_000;
 type MacPermissions = { accessibility: string; screenRecording: string };
-let permCache: { at: number; value: MacPermissions | null } | null = null;
-/** 最近一次探测结果（过期或没探测过返回 null，调用方按“未知”处理，不额外起进程） */
+let permCacheAt = 0;
+let permCacheValue: MacPermissions | null = null;
+let permProbe: Promise<MacPermissions | null> | null = null;
+const permCacheValid = (now = Date.now()) => permCacheAt > 0 && now - permCacheAt < PERM_CACHE_MS;
+/**
+ * 最近一次探测结果（过期或没探测过返回 null，调用方按“未知”处理，不额外起进程）。
+ * 注意：null 也是“有效结果”（例如非 macOS / 未安装 Cua），所以缓存时刻单独记，不能拿 null 当“没探过”。
+ */
 export function hostPermissionsCache(now = Date.now()): MacPermissions | null {
-	return permCache && now - permCache.at < PERM_CACHE_MS ? permCache.value : null;
+	return permCacheValid(now) ? permCacheValue : null;
+}
+/** 上次只读探测的时间（0 = 从未探测）；供状态提示 / 测试判断“有没有重复起进程” */
+export const lastMacPermissionProbeAt = () => permCacheAt;
+/**
+ * 系统授权状态只有三值：明确有、明确没有、未知。`unknown` / 空 / 认不出的值一律不得当“已授权”。
+ */
+export type MacPermissionState = "granted" | "denied" | "unknown";
+export function macPermissionState(v: string | null | undefined): MacPermissionState {
+	const s = String(v ?? "").trim().toLowerCase();
+	if (["granted", "true", "yes", "authorized", "allowed", "ok"].includes(s)) return "granted";
+	if (["denied", "false", "no", "not_granted", "not granted", "missing", "revoked"].includes(s)) return "denied";
+	return "unknown";
 }
 export async function macPermissions(force = false): Promise<MacPermissions | null> {
 	if (!force) {
-		const hit = hostPermissionsCache();
-		if (hit) return hit;
+		if (permCacheValid()) return permCacheValue;
+		if (permProbe) return permProbe; // 设置页轮询 / 状态查询同时来，合并成一次只读探测
 	}
+	permProbe = probeMacPermissions().finally(() => (permProbe = null));
+	return permProbe;
+}
+async function probeMacPermissions(): Promise<MacPermissions | null> {
+	let value: MacPermissions | null;
 	if (!isMac() || !cuaInstalled()) {
-		permCache = { at: Date.now(), value: null };
-		return null;
+		value = null;
+	} else {
+		try {
+			const { stdout } = await run(cuaPaths().exe, ["permissions", "status", "--json", "--socket", socketPath()], { timeout: 8000 });
+			const j = JSON.parse(String(stdout)) as Record<string, unknown>;
+			const pick = (k: RegExp) => String(Object.entries(j).find(([x]) => k.test(x))?.[1] ?? "unknown");
+			value = { accessibility: pick(/accessib/i), screenRecording: pick(/screen/i) };
+		} catch {
+			// 探测失败只是“不知道”，不是“没授权”，也不是“已授权”
+			value = { accessibility: "unknown", screenRecording: "unknown" };
+		}
 	}
-	let value: MacPermissions;
-	try {
-		const { stdout } = await run(cuaPaths().exe, ["permissions", "status", "--json", "--socket", socketPath()], { timeout: 8000 });
-		const j = JSON.parse(String(stdout)) as Record<string, unknown>;
-		const pick = (k: RegExp) => String(Object.entries(j).find(([x]) => k.test(x))?.[1] ?? "unknown");
-		value = { accessibility: pick(/accessib/i), screenRecording: pick(/screen/i) };
-	} catch {
-		value = { accessibility: "unknown", screenRecording: "unknown" };
-	}
-	permCache = { at: Date.now(), value };
+	permCacheAt = Date.now();
+	permCacheValue = value;
 	return value;
 }
 export async function macGrantPermissions() {

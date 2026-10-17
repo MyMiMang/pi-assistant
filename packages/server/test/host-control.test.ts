@@ -421,3 +421,40 @@ test("升级稳定性：计划哈希只覆盖能力与作用域，不含版本�
 	assert.notEqual(hc.manifestHash(hc.hostPlan()), before, "新增能力 / 作用域必须重新确认");
 	hc.saveHostSettings({ enabled: false, agents: "all", apps: [], tiers: {}, defaultTier: "bounded", fullAck: {} });
 });
+
+test("启动重试边界：只有“还没就绪 / 下载中断”可重试，权限计划变化与认不出的错误立即停", () => {
+	// 前两类是真实的瞬时原因
+	assert.equal(hc.retryableDaemonFailure(new hc.HostDaemonError("Cua Driver（bounded）没有在 10 秒内就绪", "not_ready")), true);
+	assert.equal(hc.retryableDaemonFailure(new Error("下载 Cua Driver 失败：network timeout")), true);
+	// 权限计划变化：必须等用户重新确认，重试没有意义（也不能因为第二次失败就继续）
+	const changed = new hc.HostDaemonError("权限设置已变化，需要在设置里重新确认后才能开启", "permissions_changed");
+	assert.equal(hc.daemonFailReason(changed), "permissions_changed");
+	assert.equal(hc.retryableDaemonFailure(changed), false);
+	// 详细错误文本里出现“权限”不等于权限计划变化
+	assert.equal(hc.retryableDaemonFailure(new Error("Cua Driver 启动失败：辅助功能权限不足")), false);
+	assert.equal(hc.retryableDaemonFailure(new Error("Cua Driver 校验失败（SHA256 与 third-party.json 不一致），已丢弃")), false);
+	assert.equal(hc.retryableDaemonFailure(new Error("Cua Driver 解压后找不到可执行文件")), false);
+	assert.equal(hc.retryableDaemonFailure("随便一个字符串"), false);
+});
+
+test("系统授权状态：unknown / 空值不得当已授权", () => {
+	assert.equal(hc.macPermissionState("granted"), "granted");
+	assert.equal(hc.macPermissionState("TRUE"), "granted");
+	assert.equal(hc.macPermissionState("denied"), "denied");
+	assert.equal(hc.macPermissionState(false as never), "denied");
+	for (const v of ["unknown", "", null, undefined, "maybe", "not_checked"])
+		assert.notEqual(hc.macPermissionState(v as never), "granted", `“${String(v)}”不能当已授权`);
+	// 探测失败时（未知）也不得显示成已授权：只有明确 denied 才提示用户去开授权
+	assert.equal(hc.macPermissionState("unknown"), "unknown");
+});
+
+test("系统权限只读探测：结果（包括 null）也进缓存，不每次轮询都重新起进程", async () => {
+	const before = hc.lastMacPermissionProbeAt();
+	await hc.macPermissions(true); // 强制探一次（非 macOS / 未安装 Cua 时结果是 null，同样要缓存）
+	const at = hc.lastMacPermissionProbeAt();
+	assert.ok(at > 0 && at >= before, "探测时间被记录");
+	const again = await hc.macPermissions(); // 非 force：命中缓存，不再探测
+	assert.equal(hc.lastMacPermissionProbeAt(), at, "null 结果同样命中缓存，没有重新起进程");
+	assert.equal(again, hc.hostPermissionsCache(), "缓存值就是状态里暴露的值");
+	assert.equal(hc.hostPermissionsCache(at + 60_000), null, "过期后按未知处理，不冒充授权结果");
+});
