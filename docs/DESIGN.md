@@ -620,6 +620,19 @@ App 自己下载的东西都登记到同一个下载管理器，界面统一显�
 - **助理电脑镜像 / 虚拟机**（`desktop/image.ts` 目前有自己的分层进度，显示在 设置 › 助理电脑；分支 `wip/assistant-computer-vm`）接入时：在它自己的模块里 `registerDownload({ id: "desktop-image", group: "助理电脑", … })`，下载 limactl / rootfs / 镜像时包 `trackDownload`，设置页放 `<Downloads group="助理电脑" />` 即可。
 - MCP 服务器（`npx` 首次运行时由 npm 自己下载）和 Playwright（只用系统 Chrome / Edge，不下载浏览器）不在列表里。
 
+### 5.19.3 原生子进程启动环境（`packages/server/src/native-launch-env.ts`，2026-10-17）
+
+隔离启动（测试 / 验收）会把**服务进程**的 HOME 指到临时目录，配合内存凭据不碰真实数据目录与钥匙串。但原生进程（CuaDriver 守护进程、`cua-driver mcp`、我们自己用 Playwright 起的本机 Chrome）按 HOME 解析用户级状态与**钥匙串搜索列表**：合成 HOME 传下去时 Chrome 会找不到默认钥匙串，弹「找不到用于储存“Chrome”的钥匙串」，驱动也会把 `~/Library/Caches/cua-driver` 之类写进临时目录。
+
+边界因此划在“服务”和“原生子进程”之间：**服务的合成 HOME 保持不变**（凭据 / 数据 / 工作区隔离照旧），只给原生子进程一份 OS 账户语义的环境。
+
+- 规则（纯函数 `nativeLaunchEnv`，不读文件 / 凭据 / 数据库）：`HOME` 取 `os.userInfo().homedir`（不是 `$HOME`）；`CFFIXED_USER_HOME` 一律删除（它会覆盖 HOME）；服务 HOME 与 OS 家目录不一致时 `TMPDIR` / `TEMP` / `TMP` 一并剥离（交给 OS 默认临时目录），一致时只剥离落在已知合成根（数据目录）里的值；其余变量原样保留。
+- 取不到 OS 家目录时不改写 HOME、也不按 env 猜（`homeSource:"unknown"`），只做能证明的剥离。
+- 接线（同一份构造，避免只修一个调用）：`host-control.ts` 的 `driverEnv()` 用于守护进程 spawn（mac 走 `open`，env 同样下发）、`status` / `stop` / `revoke` / `permissions status` / `permissions grant`、以及 `hostMcpCommand()` 返回的 MCP stdio env（`benchmark-runtime` 的 `createMcpInvoke` 把它传给 `StdioTransport`；Pi 内置 MCP 扩展经 `ComputerHost.mcp.env` 收到同一份）；`browser.ts` 两处本机 Chrome 启动也带这份 env。
+- 数据隔离仍只靠 `PIA_DATA_DIR` / `PIA_WORKSPACE` / `CUA_DRIVER_BROWSER_PROFILE_ROOT`，**不靠改 HOME**；测试脚手架要隔离只许改这些（浏览器侧另给真实 HOME）。
+- 自检 `nativeLaunchEnvProblems()` 只记一条 warn，不因此拒绝启动（隔离问题不该变成“电脑操作打不开”）。
+- 测试：`test/native-launch-env.test.ts` 10/10（合成 HOME → 真实 HOME、`diverged`、`CFFIXED_USER_HOME` / 合成 `TMPDIR` 剥离、生产恒等、路径按段判断、未知家目录不猜、`extra` 覆盖、Windows `USERPROFILE`、校验函数、生产入口取 `os.userInfo()`）；`host-control.test.ts` 另有一条断言 `hostMcpCommand().env.HOME` 是 OS 账户家目录。**未验**：真机上再起一次隔离 Chrome 看是否还弹钥匙串（需测试槽许可）。
+
 ### 5.20 MCP 服务器与 Pi 扩展包（P2，已实现）
 
 - **MCP**：设置 › 扩展（MCP）。本机命令（stdio：命令 + 参数 + 环境变量，可写 `${NAME}` 引用电脑上的环境变量）或远程 Streamable HTTP（地址 + 请求头，或 OAuth：自动注册 / 预注册 Client ID）。工具给模型的方式：直接（默认）/ 按需搜索（tool_search）/ 只在脚本里（codemode）。启用/停用、按助理启用（全部或指定助理；助理设置里也能逐个开关），测试连接显示状态与工具列表（只读工具标“免审批”）。

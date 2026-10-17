@@ -120,8 +120,14 @@ test("隔离浏览器：快照 pin 取官方 snapshot.id；非本次 fixture 的
 	assert.equal(parseBrowserSnapshot(REAL_SNAPSHOT, { fixtureId: "fx-1", nonce: "n-1" }).ok, true);
 	// 兼容旧 dom_refs_v1 顶层 snapshot_id（真实来源仍是驱动返回，绝不自己编）。
 	assert.equal(parseBrowserSnapshot({ status: "ok", snapshot_id: "s0000001e", url: REAL_SNAPSHOT.page.url }, { fixtureId: "fx-1", nonce: "n-1" }).token, "s0000001e");
-	assert.equal(fixtureUrlMatches("http://h/p/fx-1?nonce=n-1", "fx-1", "n-1"), true);
-	assert.equal(fixtureUrlMatches("http://h/p/fx-1?nonce=n-2", "fx-1", "n-1"), false);
+	assert.equal(fixtureUrlMatches("http://h/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", "fx-1", "n-1"), true);
+	assert.equal(fixtureUrlMatches("http://h/api/fast-computer/benchmark/fixture/fx-1?nonce=n-2", "fx-1", "n-1"), false);
+	// 不是「URL 里碰巧含两个字符串」就算：别的站 / 别的路径 / 同路径不同 origin 都要拒。
+	assert.equal(fixtureUrlMatches("http://h/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", "fx-1", "n-1", "http://other:9"), false);
+	assert.equal(fixtureUrlMatches("http://h/evil/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", "fx-1", "n-1"), false);
+	assert.equal(fixtureUrlMatches("http://h/api/fast-computer/benchmark/fixture/fx-1?x=fx-1&nonce=n-1", "fx-1", "n-1"), true, "fixtureId 在路径上，query 里多一个同名参数不影响");
+	assert.equal(fixtureUrlMatches("http://h/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1x", "fx-1", "n-1"), false);
+	assert.equal(fixtureUrlMatches("not a url", "fx-1", "n-1"), false);
 });
 
 // ---------------------------------------------------------------- 真实 driver：隔离浏览器 bootstrap 序列
@@ -178,6 +184,111 @@ test("driver：driver-isolated-browser 走 prepare(prepared_pid)→list_windows�
 	assert.equal(closedPid, 8814);
 });
 
+test("driver：prepare 之后任一步失败，只清理本次 prepared_pid（不泄漏自有浏览器、不 kill 未知 pid）", async () => {
+	const killed: number[] = [];
+	const driver = createInvokeBenchmarkDriver({
+		target: () => ({ prefix: "hostpc" as const }),
+		invoke: async (_p, tool, args) => {
+			if (tool === "browser_prepare") return { isError: false, structuredContent: REAL_PREPARED };
+			// 自有进程没有可 pin 的窗口 → 打开流程中途失败。
+			if (tool === "list_windows") return { isError: false, structuredContent: { windows: [{ pid: 4242, window_id: 1, title: "别的进程" }] } };
+			if (tool === "kill_app") {
+				killed.push(Number(args.pid));
+				return { isError: false };
+			}
+			return { isError: true, contentText: `unexpected ${tool}` };
+		},
+		fixtureUrl: (p) => `http://127.0.0.1:8787${p}`,
+		windowKindOf: () => "driver-isolated-browser",
+		capable: () => ({ ok: true }),
+	});
+	await assert.rejects(() => driver.openFixtureWindow({ url: "/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", fixtureId: "fx-1", nonce: "n-1", target: "hostpc" }), /找不到驱动自有隔离浏览器的窗口/);
+	assert.deepEqual(killed, [8814], "只 kill 本次 browser_prepare 返回的 prepared_pid");
+});
+
+test("driver：驱动报的 owner 与本次 prepared_pid 不一致 → 绑定阶段就 fail-closed（不返回可用 handle），清理仍只针对自有 pid", async () => {
+	const killed: number[] = [];
+	const invoke = async (_p: "hostpc" | "computer", tool: string, args: Record<string, unknown>): Promise<InvokeResult> => {
+		if (tool === "browser_prepare") return { isError: false, structuredContent: REAL_PREPARED };
+		if (tool === "list_windows") return { isError: false, structuredContent: { windows: [{ pid: 8814, window_id: 16821, title: "about:blank", url: "about:blank" }] } };
+		if (tool === "browser_navigate") return { isError: false, structuredContent: { status: "ok" } };
+		if (tool === "get_browser_state") {
+			if (args.pid !== undefined) return { isError: false, structuredContent: REAL_BIND };
+			// 快照里报了一个不属于本次 prepare 的 owner pid。
+			return { isError: false, structuredContent: { ...REAL_SNAPSHOT, pid: 999999 } };
+		}
+		if (tool === "kill_app") {
+			killed.push(Number(args.pid));
+			return { isError: false };
+		}
+		return { isError: true, contentText: `unexpected ${tool}` };
+	};
+	const driver = createInvokeBenchmarkDriver({ target: () => ({ prefix: "hostpc" as const }), invoke, fixtureUrl: (p) => `http://127.0.0.1:8787${p}`, windowKindOf: () => "driver-isolated-browser", capable: () => ({ ok: true }) });
+	// 归属对不上就不能把这个页面当本次 fixture：不返回 handle，直接失败（不是“能用但不关”）。
+	await assert.rejects(() => driver.openFixtureWindow({ url: "/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", fixtureId: "fx-1", nonce: "n-1", target: "hostpc" }), /属主/);
+	assert.deepEqual(killed, [8814], "清理只针对本次 prepare 的 pid，不杀快照里报的 999999");
+});
+
+test("driver：每次 observe 都重校当前 URL 仍是本次 fixture（缓存 pin 不能成为免检牌）", async () => {
+	let navigatedAway = false;
+	const invoke = async (_p: "hostpc" | "computer", tool: string, args: Record<string, unknown>): Promise<InvokeResult> => {
+		if (tool === "browser_prepare") return { isError: false, structuredContent: REAL_PREPARED };
+		if (tool === "list_windows") return { isError: false, structuredContent: { windows: [{ pid: 8814, window_id: 16821, title: "about:blank", url: "about:blank" }] } };
+		if (tool === "browser_navigate") return { isError: false, structuredContent: { status: "ok" } };
+		if (tool === "get_browser_state") {
+			if (args.pid !== undefined) return { isError: false, structuredContent: REAL_BIND };
+			// 页面被导航到别的地址（不同 path）后，快照 pin 依旧存在 —— 只信缓存就会拿别的页面判分。
+			if (navigatedAway) return { isError: false, structuredContent: { ...REAL_SNAPSHOT, page: { title: "evil", url: "http://127.0.0.1:8787/api/other?nonce=n-1" }, snapshot: { id: "p9" } } };
+			return { isError: false, structuredContent: REAL_SNAPSHOT };
+		}
+		return { isError: true, contentText: `unexpected ${tool}` };
+	};
+	const driver = createInvokeBenchmarkDriver({ target: () => ({ prefix: "hostpc" as const }), invoke, fixtureUrl: (p) => `http://127.0.0.1:8787${p}`, windowKindOf: () => "driver-isolated-browser", capable: () => ({ ok: true }) });
+	const { handle } = await driver.openFixtureWindow({ url: "/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", fixtureId: "fx-1", nonce: "n-1", target: "hostpc" });
+	assert.equal((await driver.observe(handle)).ok, true);
+	// 打开成功后页面被换掉：再 observe 必须失败，不能只靠首次 URL 校验 + 缓存 pin。
+	navigatedAway = true;
+	const after = await driver.observe(handle);
+	assert.equal(after.ok, false);
+	assert.match(after.ok ? "" : after.error, /fixture|URL/);
+});
+
+test("driver：隔离浏览器首次导航冷启动超时 → 只重试一次导航，仍用真实快照复核 URL+nonce", async () => {
+	let navCount = 0;
+	const invoke = async (_p: "hostpc" | "computer", tool: string, args: Record<string, unknown>): Promise<InvokeResult> => {
+		if (tool === "browser_prepare") return { isError: false, structuredContent: REAL_PREPARED };
+		if (tool === "list_windows") return { isError: false, structuredContent: { windows: [{ pid: 8814, window_id: 16821, url: "about:blank" }] } };
+		if (tool === "browser_navigate") {
+			navCount++;
+			// 第一次：驱动内部 CDP 20s 上界；第二次：真实成功。
+			return navCount === 1 ? { isError: true, contentText: "Page.navigate failed: CDP Page.navigate timed out after 20s" } : { isError: false, structuredContent: { status: "ok" } };
+		}
+		if (tool === "get_browser_state") return { isError: false, structuredContent: args.pid !== undefined ? REAL_BIND : REAL_SNAPSHOT };
+		return { isError: false };
+	};
+	const driver = createInvokeBenchmarkDriver({ target: () => ({ prefix: "hostpc" as const }), invoke, fixtureUrl: (p) => `http://127.0.0.1:8787${p}`, windowKindOf: () => "driver-isolated-browser", capable: () => ({ ok: true }) });
+	const { handle } = await driver.openFixtureWindow({ url: "/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", fixtureId: "fx-1", nonce: "n-1", target: "hostpc" });
+	assert.equal(navCount, 2, "只重试一次");
+	assert.equal(handle.windowToken, "p1");
+});
+
+test("driver：导航错误即使含 navigate 字样也不重试（权限 / 绑定 / 传输错误一律 fail-closed）", async () => {
+	let navCount = 0;
+	const invoke = async (_p: "hostpc" | "computer", tool: string, args: Record<string, unknown>): Promise<InvokeResult> => {
+		if (tool === "browser_prepare") return { isError: false, structuredContent: REAL_PREPARED };
+		if (tool === "list_windows") return { isError: false, structuredContent: { windows: [{ pid: 8814, window_id: 16821, url: "about:blank" }] } };
+		if (tool === "browser_navigate") {
+			navCount++;
+			return { isError: true, contentText: "browser_navigate 被权限桥拒绝：电脑已暂停" };
+		}
+		if (tool === "get_browser_state") return { isError: false, structuredContent: args.pid !== undefined ? REAL_BIND : REAL_SNAPSHOT };
+		return { isError: false };
+	};
+	const driver = createInvokeBenchmarkDriver({ target: () => ({ prefix: "hostpc" as const }), invoke, fixtureUrl: (p) => `http://127.0.0.1:8787${p}`, windowKindOf: () => "driver-isolated-browser", capable: () => ({ ok: true }) });
+	await assert.rejects(() => driver.openFixtureWindow({ url: "/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", fixtureId: "fx-1", nonce: "n-1", target: "hostpc" }), /权限桥/);
+	assert.equal(navCount, 1, "不是导航超时就不重试");
+});
+
 test("driver：驱动拒绝时给一行可读错误，不把整段内部 payload 披给用户", async () => {
 	const driver = createInvokeBenchmarkDriver({
 		target: () => ({ prefix: "hostpc" as const }),
@@ -190,7 +301,7 @@ test("driver：驱动拒绝时给一行可读错误，不把整段内部 payload
 		capable: () => ({ ok: true }),
 	});
 	await assert.rejects(
-		() => driver.openFixtureWindow({ url: "/fixture/f?nonce=n", fixtureId: "f", nonce: "n", target: "hostpc" }),
+		() => driver.openFixtureWindow({ url: "/api/fast-computer/benchmark/fixture/f?nonce=n", fixtureId: "f", nonce: "n", target: "hostpc" }),
 		(e: Error) => e.message.length < 120 && e.message.includes("browser requires setup") && !e.message.includes("elements"),
 	);
 });
@@ -205,7 +316,7 @@ test("driver：受限权限桥拦截时不派发（暂停 / 只看档位）", as
 		guard: () => ({ ok: false, reason: "电脑已暂停" }),
 		capable: () => ({ ok: true }),
 	});
-	await assert.rejects(() => driver.openFixtureWindow({ url: "/fixture/f?nonce=n", fixtureId: "f", nonce: "n", target: "hostpc" }), /暂停/);
+	await assert.rejects(() => driver.openFixtureWindow({ url: "/api/fast-computer/benchmark/fixture/f?nonce=n", fixtureId: "f", nonce: "n", target: "hostpc" }), /暂停/);
 	assert.equal(invoked, 0, "被权限桥拒绝时不派发任何 backend 调用");
 });
 
@@ -361,7 +472,7 @@ test("驱动：浏览器 fixture 动作前复核复用刚观察的 pin（不新�
 		windowKindOf: () => "driver-isolated-browser",
 		capable: () => ({ ok: true }),
 	});
-	const { handle } = await driver.openFixtureWindow({ url: "/f/fx-1?nonce=n-1", fixtureId: "fx-1", nonce: "n-1", target: "hostpc" });
+	const { handle } = await driver.openFixtureWindow({ url: "/api/fast-computer/benchmark/fixture/fx-1?nonce=n-1", fixtureId: "fx-1", nonce: "n-1", target: "hostpc" });
 	assert.equal(handle.targetId, REAL_BIND.target_id);
 	assert.equal(handle.tabId, REAL_BIND.tabs[0].tab_id);
 	const before = calls.filter((t) => t === "get_browser_state").length;

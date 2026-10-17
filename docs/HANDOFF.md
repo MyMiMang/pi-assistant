@@ -6,7 +6,21 @@
 >
 > 接手时以本段、最新 `main` 和已发版 tag 为准。下面保留的“候选 / 未 push / 未 tag / 等测试槽”等是**发布前历史快照**，不再代表当前发布状态；不要重打旧 tag、重发旧资产或重复已完成测试。
 
-> **新（2026-10-25）：beta.29 安装包的实际操作测试跑不通，候选已修但未打包**。用户现场：设置 › 电脑 › 本地 Laya（`local-laya` multilingual）卡片「实际操作测试」→ 目标选「用户电脑」+ 勾同意 → 点开始 → 短暂 loading 后红字 `隔离浏览器读不到可 pin 的快照 id（fail-closed）`，状态仍「尚未运行」；Laya 仍「可用」、Cua Driver 0.35.4 运行中、快速操作模型开关原样（未改用户配置，未多次点开始，未动真实 Chrome / 系统权限）。**根因是把 bind 阶段当成有页面快照**：0.35.4 的 `get_browser_state(pid,window_id)` 只给 `binding_quality/mutation_allowed/target_id/tabs[]`，pin 在 snapshot 模式的 `snapshot.id`（`p<n>`）。修复分支 `laya-benchmark-snapshot-fix`（基于 `release-candidate-validation` HEAD `2e87f51`）：bind/snapshot 两个契约拆开、pin 只取 `snapshot.id`、动作前不再重取快照（避免作废 ref）、浏览器 fixture 走 `refs`+`browser_click`、去掉驱动不认识的 `require_complete`、机器证据有界等待、下拉 `afterSelect` 接线、错误收敛一行。**证据**：真实驱动 owned 隔离浏览器真机 smoke 4/4 `correct`（`scripts/laya-benchmark-driver-smoke.mjs`，手动运行）；`fast-computer*` 单测 87/87；server tsc 本树 0 新增错误。**未完成 / 不得宣称**：候选未构建、未安装、未在用户机器上再点一次；真实 Laya 模型的完整 benchmark（含耗时/成功率）未跑（smoke 的 chooser 是脚本固定的，只证链路）；接手请以分支 HEAD 与 `docs/design/fast-model-benchmark.md` §9 契约继续。
+> **新（2026-10-17）：beta.29 安装包的实际操作测试跑不通，候选已修但未打包**。用户现场：设置 › 电脑 › 本地 Laya（`local-laya` multilingual）卡片「实际操作测试」→ 目标选「用户电脑」+ 勾同意 → 点开始 → 短暂 loading 后红字 `隔离浏览器读不到可 pin 的快照 id（fail-closed）`，状态仍「尚未运行」；Laya 仍「可用」、Cua Driver 0.35.4 运行中、快速操作模型开关原样（未改用户配置，未多次点开始，未动真实 Chrome / 系统权限）。**根因是把 bind 阶段当成有页面快照**：0.35.4 的 `get_browser_state(pid,window_id)` 只给 `binding_quality/mutation_allowed/target_id/tabs[]`，pin 在 snapshot 模式的 `snapshot.id`（`p<n>`）。修复分支 `laya-benchmark-snapshot-fix`（基于 `release-candidate-validation` HEAD `2e87f51`）：bind/snapshot 两个契约拆开、pin 只取 `snapshot.id`、动作前不再重取快照（避免作废 ref）、浏览器 fixture 走 `refs`+`browser_click`、去掉驱动不认识的 `require_complete`、机器证据有界等待、下拉 `afterSelect` 接线、错误收敛一行。**证据**：真实驱动 owned 隔离浏览器真机 smoke 4/4 `correct`（`scripts/laya-benchmark-driver-smoke.mjs`，手动运行）；`fast-computer*` 单测 87/87；server tsc 本树 0 新增错误。**未完成 / 不得宣称**：候选未构建、未安装、未在用户机器上再点一次；真实 Laya 模型的完整 benchmark（含耗时/成功率）未跑（smoke 的 chooser 是脚本固定的，只证链路）；接手请以分支 HEAD 与 `docs/design/fast-model-benchmark.md` §9 契约继续。
+
+> **原生驱动启动环境分离 + 快照链路第二轮收口（2026-10-17，`laya-benchmark-snapshot-fix`，未 push / 未 tag / 未打包；负责唯一重测试槽，**真实浏览器尚未重测**）**
+>
+> - **改了哪些文件 / 什么行为**
+>   - 新增 `packages/server/src/native-launch-env.ts`：纯函数 `nativeLaunchEnv` / `nativeLaunchEnvForChild` / `nativeLaunchEnvProblems` / `envStrings` / `osAccountHome`。原生子进程的 `HOME` 取 `os.userInfo().homedir`（不是 `$HOME`），删 `CFFIXED_USER_HOME`（它会覆盖 HOME），服务 HOME 与 OS 家目录不一致时剥离合成 `TMPDIR`/`TEMP`/`TMP`；**服务自己的合成 HOME / `PIA_DATA_DIR` / `PIA_WORKSPACE` / 内存凭据隔离全部保持不变**，数据隔离仍只靠 `PIA_*` 与 `CUA_DRIVER_BROWSER_PROFILE_ROOT`。取不到 OS 家目录时不改写也不猜。
+>   - `host-control.ts`：新增 `driverEnv()`（+ 一次性 warn 自检，不因此拒绝启动）用于守护进程 spawn（mac 的 `open --args` 同样下发）、`status` / `stop` / `revoke` / `permissions status` / `permissions grant`；`hostMcpCommand()` 返回 `env`（`cua-driver mcp` 是原生进程）；列应用改用 `osAccountHome()`，不再拿服务的合成 HOME 当用户目录。
+>   - `benchmark-runtime.ts`：`createMcpInvoke` 把 `cmd.env` 真的传给 `StdioTransport`（之前命令对象里的 env 被丢掉）；`browser.ts`：两处本机 Chrome（`launchPersistentContext` / `chromium.launch`）都带这份 env。
+>   - `benchmark-driver.ts`：导航重试只认明确的 `Page.navigate` 超时（旧条件含 `navigate` 就重试，会把权限 / 绑定 / 传输错误也重试）；驱动报的 owner 与本次 `prepared_pid` 不一致 → **绑定阶段 fail-closed**；打开失败清理与 close 走同一条 `releasePrepared()`，只针对本次 `prepared_pid`。
+>   - `benchmark-cua.ts`：`choose` 之后**重新 `observe()`** 再做 `resolveFreshCandidate`（旧代码拿模型选择前的快照当“新快照”，推理期间 UI 变化验不出来）；观察失败按 `unknown` 不派发。`PIA_BENCH_DEBUG=1` 才打一行动作失败原因（不含凭据）。
+>   - 测试脚手架：`e2e/subagent-thinking-loading.mjs` 给 Chromium 真实 `HOME`/`TMPDIR`（服务仍是临时 HOME，`browserEnv` 在覆盖前捕获）；`scripts/laya-benchmark-driver-smoke.mjs` 的 `cua-driver mcp` 用同一份原生环境。
+>   - 文档：`DESIGN.md` §5.19.3（新）、`design/fast-model-benchmark.md` §9.4（新）、ROADMAP 同一分支第二轮条目；把误写的 `2026-10-25` 按 `date` 改成 `2026-10-17`。
+> - **实际跑了什么**（本机 Node v24.19.0，`--import tsx --import ./test/setup.ts`，未起模型、未起浏览器）：`native-launch-env` **10/10**；`host-control` **21/21**；`fast-computer-benchmark` + `fast-computer-benchmark-window` **37/37**；`browser` + `browser-images` + `fast-computer` + `fast-computer-tool` + `benchmark-host` + `benchmark-model` **60/60**；`packages/server` `tsc --noEmit` exit 0。
+> - **未验 / 不得宣称**：没有再起真实隔离 Chrome（等主会话给测试槽许可 + 新鲜进程状态），**「钥匙串弹窗已修好」未证**；真实 Laya 完整 benchmark 未跑；`e2e/subagent-thinking-loading.mjs` 本轮没跑（只改了它的浏览器 env）；未跑全量 `npm test`。
+> - **WIP 状态**：原超时任务 `sa_mvc98kv5kj9koc` 的 6 个文件改动保留并已按 review 意见收紧（导航重试 / owner / 清理一致 / 新鲜候选），未覆盖重置；真实 Laya 模型验收仍是**未验**。
 
 > **历史：发布前 beta.29 候选状态（2026-10-17）**
 >

@@ -94,7 +94,7 @@
 - `packages/server/src/fast-computer/routes.ts`：`GET/POST /api/fast-computer/benchmark`、`GET /:id`、`POST /:id/cancel` + fixture 页 / 状态上报 + owner 过滤。
 - `packages/server/test/fast-computer-benchmark.test.ts` + `fast-computer-benchmark-host.test.ts`：契约 13 项 + fixture/host/routes 7 项（假 driver 模拟真调用序列、0 真实付费 / 0 真实桌面）。
 
-## 9. 隔离浏览器 pin 契约（cua-driver 0.35.4 **实测**，2026-10-25）
+## 9. 隔离浏览器 pin 契约（cua-driver 0.35.4 **实测**，2026-10-17）
 
 > 这一节替代此前「bind 就该给出 `snapshot_id`」的假设。beta.29 用户点「开始实际操作测试」后**必然**报
 > 「隔离浏览器读不到可 pin 的快照 id（fail-closed）」，根因就是那条假设不符合驱动的真实返回。
@@ -123,6 +123,15 @@
 - 原生 `<select>` 的弹层是 OS 级窗口，后台拿不到 option 的可点 ref（`browser_ref_stale`）；fixture 的下拉改用自定义按钮选项。
 - 错误要收敛成一行可读原因（`shortError`），不把整段协议/AX payload 抛到设置页。
 
-### 9.4 已验收的证据（真实驱动，非 mock）
+### 9.4 第二轮收口（2026-10-17，同分支；**未再起真实浏览器**）
 
-`scripts/laya-benchmark-driver-smoke.mjs`（手动运行，不进默认 `npm test`）：真实 `cua-driver mcp --socket …` → `browser_prepare`（隔离 new）→ `list_windows` → bind → `browser_navigate` → 快照 pin → 真实 fixture HTTP 页 → 真实 `browser_click` → 双证据判分。**chooser 是脚本固定的（按 label 关键词选），所以它证明的是 driver / 隔离窗口 / fixture / 动作 / 判分链路真实可用，不评估 Laya 的选择质量**；模型质量要另跑真实 benchmark。2026-10-25 本机实测 4/4 任务 `correctness:"correct"`（pin 形如 `p4`）。
+1. **派发前必须重新观察**：旧代码把 `choose` 之前那次 `observe` 的快照当成「新快照」传给 `resolveFreshCandidate`，模型推理期间页面若变了（按钮改名 / 消失 / 出现第二个同名目标）根本验不出来。现在 `choose` 之后**再 `observe()` 一次**（浏览器 fixture 会拿到新 `snapshot.id` + 新 refs；原生窗口拿到新 `element_token`），用这次的结果做新鲜度校验与派发；观察失败按 `unknown` 返回、不派发。**注意**：身份复核（`readWindow`）仍复用这次观察的 pin，不再额外取快照（否则作废即将点击的 ref，见 9.2 第 3 条）。
+2. **导航重试只认导航超时**：旧条件 `/navigate|timed out|timeout/i` 会把任何含 `navigate` 字样的错误（含权限桥拒绝、绑定失败、传输错误）也重试一次，等于把 fail-closed 变成猜。现在必须同时命中 `Page.navigate` 与 timeout 字样才重试一次；fixture 是幂等 GET，重放不改状态，成功与否仍以真实快照的 URL+nonce 复核为准。
+3. **owner 不一致在绑定阶段就失败**：驱动若在快照 / 绑定里报了一个**不等于本次 `prepared_pid`** 的 owner，说明无法证明这个页面属于本次启动的隔离浏览器 → 直接抛错，不再返回「能用但不关」的 handle。关闭与打开中途失败的清理走**同一条**路径，只针对本次 `prepared_pid`（不认后续快照里报的任何 pid）。**局限（如实）**：pid 在几秒内被系统复用给别的进程时这层无法区分（没有进程启动时间可比）。
+4. **原生进程环境与服务的合成 HOME 分离**：隔离启动时服务用临时 HOME（凭据 / 数据隔离），但守护进程与它拉起的系统 Chrome 必须拿到 OS 账户家目录，否则 Chrome 找不到默认钥匙串（见 `DESIGN.md` §5.19.3 与 `packages/server/src/native-launch-env.ts`）。`scripts/laya-benchmark-driver-smoke.mjs` 的 `cua-driver mcp` 也用同一份环境。
+
+**未验**：以上 1–3 只有假 invoke / 假 deps 的定向单测（`fast-computer-benchmark*` 37/37），**没有再跑真实隔离浏览器**（等主会话给测试槽许可 + 新鲜进程状态）；「钥匙串弹窗已修好」属未证。
+
+### 9.5 已验收的证据（真实驱动，非 mock）
+
+`scripts/laya-benchmark-driver-smoke.mjs`（手动运行，不进默认 `npm test`）：真实 `cua-driver mcp --socket …` → `browser_prepare`（隔离 new）→ `list_windows` → bind → `browser_navigate` → 快照 pin → 真实 fixture HTTP 页 → 真实 `browser_click` → 双证据判分。**chooser 是脚本固定的（按 label 关键词选），所以它证明的是 driver / 隔离窗口 / fixture / 动作 / 判分链路真实可用，不评估 Laya 的选择质量**；模型质量要另跑真实 benchmark。2026-10-17 本机实测 4/4 任务 `correctness:"correct"`（pin 形如 `p4`）。该 smoke 的 chooser 固定、**只证链路**。

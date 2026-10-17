@@ -11,7 +11,7 @@
  *  - `planFixtureWindow`：只凭 tools/list 判断这台电脑有没有「驱动自有、与日常环境隔离」的窗口来源；
  *  - `parsePreparedBrowser` / `parseBrowserBinding`：把 `browser_prepare` / `get_browser_state` 的返回收紧成
  *    可 pin 的精确身份；任何缺失都 fail-closed。
- *    **字段以官方 cua-driver 为准**（0.35.4 实测真实响应，见 docs/design/fast-model-benchmark.md「隔离浏览器 pin 契约」）：
+ *    **字段以官方 cua-driver 为准**（0.35.4 实测真实响应，本机 2026-10-17，见 docs/design/fast-model-benchmark.md「隔离浏览器 pin 契约」）：
  *    隔离启动 `browser_prepare{allow_launch,profile.isolated_new}` 只返回 `prepared_pid`（没有 `target_id` / `window_id`）；
  *    `get_browser_state` **两种模式返回不同字段**：
  *      - bind（`pid`+`window_id`）：`{status:"ok",mode:"bind",binding_quality:"exact",mutation_allowed:true,target_id,
@@ -23,6 +23,7 @@
  *    旧实现要求 **bind 就返回 `snapshot_id`**，于是隔离路径每次都在「点开始」后立刻报 pin fail-closed（beta.29 实测 bug）。
  *  - `fixtureUrlMatches`：fixture URL 必须同时带本次 fixtureId + nonce，防串扰。
  */
+import { BENCHMARK_FIXTURE_BASE } from "./benchmark-fixture.ts";
 
 /** fixture 窗口来源：驱动自有的隔离浏览器（hostpc）或沙箱里的应用窗口（助理电脑 VM）。 */
 export type FixtureWindowKind = "driver-isolated-browser" | "sandbox-app";
@@ -142,7 +143,7 @@ export function parseBrowserBind(structured: unknown): BrowserBinding {
  * 兼容旧 `dom_refs_v1` 顶层 `snapshot_id` / `state_id`。**拿不到就 fail-closed**（绝不自己编 id）。
  * 传 `fixtureId`+`nonce` 时，额外要求当前页面 URL 是本次 fixture。
  */
-export function parseBrowserSnapshot(structured: unknown, input: { fixtureId?: string; nonce?: string } = {}): BrowserBinding {
+export function parseBrowserSnapshot(structured: unknown, input: { fixtureId?: string; nonce?: string; expectedOrigin?: string } = {}): BrowserBinding {
 	const s = asObj(structured);
 	if (!s) return { ok: false, reason: "读不到隔离浏览器的页面快照（fail-closed）" };
 	const status = firstString(s.status);
@@ -152,7 +153,7 @@ export function parseBrowserSnapshot(structured: unknown, input: { fixtureId?: s
 	if (!token) return { ok: false, reason: "隔离浏览器读不到可 pin 的快照 id（driver 约定 snapshot.id），fail-closed" };
 	const page = asObj(s.page);
 	const url = firstString(page?.url, s.url, s.current_url, s.currentUrl, asObj(s.tab)?.url);
-	if (input.fixtureId && input.nonce && (!url || !fixtureUrlMatches(url, input.fixtureId, input.nonce))) {
+	if (input.fixtureId && input.nonce && (!url || !fixtureUrlMatches(url, input.fixtureId, input.nonce, input.expectedOrigin))) {
 		return { ok: false, reason: "隔离浏览器当前 URL 不是本次 fixture（nonce 不符，fail-closed）" };
 	}
 	const ownerPid = firstNumber(s.pid, s.owner_pid, s.ownerPid, asObj(s.browser)?.pid);
@@ -161,9 +162,21 @@ export function parseBrowserSnapshot(structured: unknown, input: { fixtureId?: s
 	return { ok: true, ...(ownerPid !== undefined ? { ownerPid } : {}), ...(tabId ? { tabId } : {}), ...(targetId ? { targetId } : {}), token, ...(url ? { url } : {}) };
 }
 
-/** fixture URL 必须同时含本次 fixtureId + nonce（防别的 run / 别的页面串扰）。 */
-export function fixtureUrlMatches(url: string, fixtureId: string, nonce: string): boolean {
-	return url.includes(fixtureId) && url.includes(nonce);
+/**
+ * fixture URL 必须是「同一个 origin + fixture 固定路径 + query 里 nonce 相等」，防别的 run / 别的页面串扰。
+ * 只做字符串包含判断不够：任意站点的 URL 里只要碰巧带了这两个字符串就会通过，所以这里解析 URL 再逐项比。
+ * `expectedOrigin` 由调用方给（本次真正导航到的 fixture 地址的 origin）；不给时只校 path + nonce。
+ */
+export function fixtureUrlMatches(url: string, fixtureId: string, nonce: string, expectedOrigin?: string): boolean {
+	let u: URL;
+	try {
+		u = new URL(url);
+	} catch {
+		return false;
+	}
+	if (expectedOrigin && u.origin !== expectedOrigin) return false;
+	if (u.pathname !== `${BENCHMARK_FIXTURE_BASE}/${encodeURIComponent(fixtureId)}`) return false;
+	return u.searchParams.get("nonce") === nonce;
 }
 
 const asObj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" ? (v as Record<string, unknown>) : null);

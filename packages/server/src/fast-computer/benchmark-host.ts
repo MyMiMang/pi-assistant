@@ -60,8 +60,8 @@ export interface BenchmarkDriver {
 	readWindow(handle: FixtureWindowHandle): Promise<ObservedWindow | null>;
 	/** 读取窗口状态（含 elements 与 element_token）。 */
 	observe(handle: FixtureWindowHandle): Promise<{ ok: true; structured: unknown } | { ok: false; error: string }>;
-	/** 派发动作；真实实现经统一 backend 的 guard / 审批 / 暂停。 */
-	execute(handle: FixtureWindowHandle, tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ isError: boolean }>;
+	/** 派发动作；真实实现经统一 backend 的 guard / 审批 / 暂停。失败时附一行可读原因（诊断用）。 */
+	execute(handle: FixtureWindowHandle, tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ isError: boolean; error?: string }>;
 }
 
 /** 一次基准评估的输入：显式点名的 provider/model（点哪条测哪条）+ 目标电脑。 */
@@ -231,7 +231,8 @@ export function createBenchmarkHost(opts: BenchmarkHostOptions): BenchmarkHost {
 		let started: FastBenchmarkResult;
 		try {
 			started = startBenchmark(
-				{ provider, model, provenance: opts.driver.provenance?.() ?? "unknown", window, tasks: opts.tasks ?? benchmarkFixtureTasks(), warmup: opts.warmup ?? 1, maxTrials: opts.maxTrials ?? 6, concurrency: 1 },
+				// 本次请求显式给的试次预算优先（用户点「测 4 题」就只跑 4 条），否则用宿主默认。
+				{ provider, model, provenance: opts.driver.provenance?.() ?? "unknown", window, tasks: opts.tasks ?? benchmarkFixtureTasks(), warmup: input.warmup ?? opts.warmup ?? 1, maxTrials: input.maxTrials ?? opts.maxTrials ?? 6, concurrency: 1 },
 				{
 					now: opts.now,
 					runTrial: async (task, ctx) => {

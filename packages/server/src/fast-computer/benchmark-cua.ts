@@ -35,8 +35,8 @@ export interface CuaBenchmarkDeps {
 	collectCandidates(structured: unknown): FastActionCandidate[];
 	/** 快速模型选择（复用 selectFastAction / chooser 闭环）。 */
 	choose(goal: string, candidates: FastActionCandidate[], signal: AbortSignal): Promise<FastSelectResult>;
-	/** 派发一个动作（走既有电脑工具钩子，权限 / 审批 / 暂停原样生效）。 */
-	execute(tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ isError: boolean }>;
+	/** 派发一个动作（走既有电脑工具钩子，权限 / 审批 / 暂停原样生效）。失败时可带一行原因。 */
+	execute(tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ isError: boolean; error?: string }>;
 	/** 程序侧固定输入（type / 选择项由程序完成，不计模型能力）；可选。 */
 	afterSelect?(task: FastBenchmarkTask, selected: FastActionCandidate, signal: AbortSignal): Promise<void>;
 	/** fixture 页面的机器状态 reporter（独立证据 1）：状态 + 最后上报时间（freshness）。 */
@@ -101,8 +101,15 @@ export function createCuaTrialRunner(window: BenchmarkWindow, deps: CuaBenchmark
 				return { correctness: "unknown", error: `候选动作不在基准白名单：${result.candidate.tool}`, actions, programAssists, retries, fallbackCount, abstain };
 			}
 
-			// 6) 执行前用新快照重校验语义目标唯一且未变，再用新 element_token 派发
-			const fresh = resolveFreshCandidate(result.candidate, observed.structured);
+			// 6) 执行前用**新一次**观察重校验语义目标唯一且未变，再用新 element_token 派发。
+			//    不能用模型选择前的快照：模型推理期间页面可能已变（之前把它当「新快照」是错的）。
+			//    新快照会作废旧 ref，所以身份复核（readWindow）复用这次观察的 pin，不再额外取快照。
+			const freshObserved = await deps.observe();
+			if ("error" in freshObserved) {
+				retries++;
+				return { correctness: "unknown", error: `执行前重读窗口状态失败：${freshObserved.error}`, actions, programAssists, retries, fallbackCount, abstain };
+			}
+			const fresh = resolveFreshCandidate(result.candidate, freshObserved.structured);
 			if (!fresh.ok) {
 				retries++;
 				return { correctness: "unknown", error: `目标已变化（${fresh.reason}）`, actions, programAssists, retries, fallbackCount, abstain };
@@ -113,6 +120,8 @@ export function createCuaTrialRunner(window: BenchmarkWindow, deps: CuaBenchmark
 			const out = await deps.execute(fresh.candidate.tool, fresh.candidate.args, ctx.signal);
 			actions++;
 			if (out.isError) {
+				// 诊断用：默认不打；PIA_BENCH_DEBUG=1 时把驱动返回的一行原因写进服务日志（不含凭据 / token）。
+				if (process.env.PIA_BENCH_DEBUG === "1") console.warn(`[benchmark] 动作失败 ${fresh.candidate.tool}: ${String((out as { error?: string }).error ?? "").slice(0, 300)}`);
 				retries++;
 				return { correctness: "unknown", error: "执行返回错误", actions, programAssists, retries, fallbackCount, abstain };
 			}

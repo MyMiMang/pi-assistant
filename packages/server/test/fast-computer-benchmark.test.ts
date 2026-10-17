@@ -218,6 +218,51 @@ test("CUA 执行器：真实闭环用双证据判 correct，只派发 click", as
 	assert.ok(BENCHMARK_ALLOWED_TOOLS.includes("click"));
 });
 
+test("CUA 执行器：派发前用**新一次**观察重校验（模型选择期间的旧 token 不作数）", async () => {
+	let observeCalls = 0;
+	const { deps, dispatched } = cuaHarness({
+		observe: async () => {
+			observeCalls++;
+			return { ok: true, structured: { elements: [{ role: "button", label: "提交", value: "v", actions: ["press"], element_token: observeCalls === 1 ? "tk-old" : "tk-new" }] } };
+		},
+	});
+	const r = await runOne(createCuaTrialRunner(win(), deps));
+	assert.equal(r.correctness, "correct");
+	assert.equal(dispatched[0]?.args.element_token, "tk-new", "必须用执行前重读的新 token，不能用选择前的快照");
+});
+
+test("CUA 执行器：执行前重读发现目标已消失 → 不派发（retries=1，不拿旧快照蒙过去）", async () => {
+	let observeCalls = 0;
+	const { deps, dispatched } = cuaHarness({
+		observe: async () => {
+			observeCalls++;
+			return observeCalls === 1
+				? { ok: true, structured: { elements: [{ role: "button", label: "提交", value: "v", actions: ["press"], element_token: "tk-1" }] } }
+				: { ok: true, structured: { elements: [{ role: "button", label: "已提交", value: "", actions: ["press"], element_token: "tk-2" }] } };
+		},
+	});
+	const r = await runOne(createCuaTrialRunner(win(), deps));
+	assert.equal(r.correctness, "unknown");
+	assert.equal(r.actions, 0);
+	assert.equal(dispatched.length, 0);
+	assert.equal(r.retries, 1);
+	assert.match(r.error ?? "", /目标已变化/);
+});
+
+test("CUA 执行器：执行前重读失败（观察报错）→ 不派发", async () => {
+	let observeCalls = 0;
+	const { deps, dispatched } = cuaHarness({
+		observe: async () => {
+			observeCalls++;
+			return observeCalls === 1 ? { ok: true, structured: { elements: [{ role: "button", label: "提交", value: "v", actions: ["press"], element_token: "tk-1" }] } } : { ok: false, error: "页面快照读不到" };
+		},
+	});
+	const r = await runOne(createCuaTrialRunner(win(), deps));
+	assert.equal(r.correctness, "unknown");
+	assert.equal(dispatched.length, 0);
+	assert.match(r.error ?? "", /执行前重读窗口状态失败/);
+});
+
 test("CUA 执行器：候选为非 click（type）不派发，计 unknown（不伪造 typing 能力）", async () => {
 	const { deps, dispatched } = cuaHarness({ choose: async (): Promise<FastSelectResult> => ({ kind: "selected", candidate: { id: "el-x", label: "输入框", tool: "mcp__computer__type_text", args: {}, semantic: { role: "textfield", label: "金额" } }, captureId: "cap-1", uncalibrated: true }) });
 	const r = await runOne(createCuaTrialRunner(win(), deps), task({ kind: "type" }));

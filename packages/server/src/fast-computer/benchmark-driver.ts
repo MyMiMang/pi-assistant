@@ -16,8 +16,11 @@
  *    （旧实现把 target_id 挂在 prepare 上、并在 bind 阶段要求 `snapshot_id`，两处都会让隔离路径永远 fail-closed。）
  *  - computer（助理电脑 VM）天然隔离，仍用 cua 原生 `launch_app({urls})` 打开 fixture 窗口（配合宿主网关）。
  *
- * **未验证声明**：本文件是真实 driver 路径的源码实现，但当前开发环境没有开启 hostpc、也没有跑助理电脑 VM，
- * 因此**没有在真实桌面上验证过**。CI / 无真实 CUA 环境一律走 blocked，不 mock 冒充 ready。
+ * 真实验证（2026-10-17 本机）：`scripts/laya-benchmark-driver-smoke.mjs` 用真实 `cua-driver` 0.35.4
+ * 走完 prepare(隔离 new)→list_windows→bind→navigate→snapshot pin→真实 fixture 页→browser_click→双证据判分，
+ * 4/4 任务 `correctness:"correct"`；该脚本的 chooser 是固定 label（只证明 driver / 窗口 / fixture / 动作 / 判分链路），
+ * **不评估 Laya 的选择质量**。完整 benchmark（真实 Laya 模型经生产 chooser 决策）另见
+ * docs/design/fast-model-benchmark.md「真实模型完整 benchmark」一节。CI / 无真实 CUA 环境仍走 blocked，不 mock 冒充 ready。
  */
 import type { BenchmarkDriver, FixtureWindowHandle } from "./benchmark-host.ts";
 import type { ObservedWindow } from "./benchmark.ts";
@@ -110,43 +113,68 @@ export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): Benchmar
 		if (prep.isError) throw new Error(`打开驱动自有隔离浏览器失败：${shortError(prep.contentText)}`);
 		const prepared = parsePreparedBrowser(prep.structuredContent);
 		if (!prepared) throw new Error("驱动没有返回 prepared_pid，无法证明是本次自有的隔离浏览器（fail-closed）");
-		// 2) 列该自有进程的窗口，pin 原生 pid/window_id（隔离浏览器刚启动一般是唯一 / 空白窗口）。
-		const listed = await call(prefix, "list_windows", { pid: prepared.preparedPid, ...s });
-		const windows = (asObj(listed.structuredContent)?.windows ?? asObj(listed.structuredContent)?.result ?? []) as unknown;
-		const win = pickWindowForPid(windows, prepared.preparedPid);
-		if (!win) throw new Error("找不到驱动自有隔离浏览器的窗口（fail-closed）");
-		// 3) bind：拿 target_id/tab_id + 精确绑定证据（此时 URL 还是空白，不传 fixture nonce）。
-		//    官方 bind 模式**不返回页面快照 id**（只有 snapshot 模式有 `snapshot.id`），这里只能校绑定证据 + 标签。
-		const bind = await call(prefix, "get_browser_state", { pid: win.pid, window_id: win.windowId, ...s });
-		if (bind.isError) throw new Error(`绑定隔离浏览器失败：${shortError(bind.contentText)}`);
-		const binding = parseBrowserBind(bind.structuredContent);
-		if (!binding.ok) throw new Error(binding.reason ?? "隔离浏览器绑定校验失败（fail-closed）");
-		// 4) 在隔离浏览器里打开本次随机 nonce 的 fixture（用 bind 返回的 target_id + tabs[] 里的 tab_id）。
-		const navArgs: Record<string, unknown> = { target_id: binding.targetId, url: absolute, ...s };
-		if (binding.tabId) navArgs.tab_id = binding.tabId;
-		const nav = await call(prefix, "browser_navigate", navArgs);
-		if (nav.isError) throw new Error(`在隔离浏览器里打开 fixture 失败：${shortError(nav.contentText)}`);
-		// 5) 复核：读真实页面快照，URL 必须带本次 fixtureId+nonce，pin 取官方 `snapshot.id`。
-		const stateArgs: Record<string, unknown> = { target_id: binding.targetId, snapshot_format: "semantic_v2", ...s };
-		if (binding.tabId) stateArgs.tab_id = binding.tabId;
-		const state = await call(prefix, "get_browser_state", stateArgs);
-		if (state.isError) throw new Error(`复核隔离浏览器状态失败：${shortError(state.contentText)}`);
-		const verified = parseBrowserSnapshot(state.structuredContent, { fixtureId, nonce });
-		if (!verified.ok) throw new Error(verified.reason ?? "隔离浏览器 fixture 校验失败（fail-closed）");
-		const ownerPid = verified.ownerPid ?? binding.ownerPid ?? prepared.preparedPid;
-		const handle: FixtureWindowHandle = { prefix, session, pid: win.pid, windowId: win.windowId, windowToken: verified.token!, fixtureId, url: absolute, targetId: binding.targetId, tabId: binding.tabId };
-		return {
-			handle,
-			close: async () => {
-				// 只关**驱动自有**的隔离浏览器进程（prepared_pid 由本次 browser_prepare 拉起）；拿不到就不关。
-				if (ownerPid === undefined) return;
-				if (opts.closeOwn) {
-					await opts.closeOwn(handle).catch(() => {});
-					return;
-				}
-				await call(prefix, "kill_app", { pid: ownerPid, ...s });
-			},
+		const preparedPid = prepared.preparedPid;
+		const expectedOrigin = originOf(absolute);
+		/**
+		 * 只关**本次 browser_prepare** 拉起的进程：close 与「打开中途失败」的清理走**同一条**路径（同一份归属判断）。
+		 * 归属 = 本次调用自己拿到的 preparedPid（不认后续快照里报的任何 owner pid，那种才需要额外证明）；
+		 * 绑定阶段已要求驱动报的 owner（若有）必须等于它，对不上就 fail-closed，不会走到这里。
+		 * 如实说明局限：pid 在极短时间内被系统复用给别的进程时这层无法区分（没有进程启动时间可比），
+		 * 但只在 prepare → 失败 / close 这几秒内、且只针对我们自己拉起的那个 pid。
+		 */
+		const releasePrepared = async () => {
+			await call(prefix, "kill_app", { pid: preparedPid, ...s }).catch(() => {});
 		};
+		// prepare 之后任一步失败，调用方都拿不到 handle（没法 close），必须在这里只清理**本次 prepared_pid**，
+		// 否则每次失败都会泄漏一个隔离浏览器进程（用户电脑上会越积越多）。绝不 kill 未知 / 用户进程。
+		try {
+			// 2) 列该自有进程的窗口，pin 原生 pid/window_id（隔离浏览器刚启动一般是唯一 / 空白窗口）。
+			const listed = await call(prefix, "list_windows", { pid: preparedPid, ...s });
+			const windows = (asObj(listed.structuredContent)?.windows ?? asObj(listed.structuredContent)?.result ?? []) as unknown;
+			const win = pickWindowForPid(windows, preparedPid);
+			if (!win) throw new Error("找不到驱动自有隔离浏览器的窗口（fail-closed）");
+			// 3) bind：拿 target_id/tab_id + 精确绑定证据（此时 URL 还是空白，不传 fixture nonce）。
+			//    官方 bind 模式**不返回页面快照 id**（只有 snapshot 模式有 `snapshot.id`），这里只能校绑定证据 + 标签。
+			const bind = await call(prefix, "get_browser_state", { pid: win.pid, window_id: win.windowId, ...s });
+			if (bind.isError) throw new Error(`绑定隔离浏览器失败：${shortError(bind.contentText)}`);
+			const binding = parseBrowserBind(bind.structuredContent);
+			if (!binding.ok) throw new Error(binding.reason ?? "隔离浏览器绑定校验失败（fail-closed）");
+			// 4) 在隔离浏览器里打开本次随机 nonce 的 fixture（用 bind 返回的 target_id + tabs[] 里的 tab_id）。
+			const navArgs: Record<string, unknown> = { target_id: binding.targetId, url: absolute, ...s };
+			if (binding.tabId) navArgs.tab_id = binding.tabId;
+			let nav = await call(prefix, "browser_navigate", navArgs);
+			// 刚拉起的隔离浏览器第一次导航要冷启动渲染 / 网络栈，实测会顶到驱动内部的 20s CDP 上界
+			// （第二次通常 <1s）。**只对明确的「导航超时」重试一次**：权限 / 身份 / 传输错误一律不重试
+			// （重试会把 fail-closed 变成猜）。fixture 是幂等 GET，同一 URL 重放不改状态；
+			// 成功与否仍以真实快照的 URL+nonce 复核为准，不伪造成功。
+			if (nav.isError && isNavigateTimeout(nav.contentText)) nav = await call(prefix, "browser_navigate", navArgs);
+			if (nav.isError) throw new Error(`在隔离浏览器里打开 fixture 失败：${shortError(nav.contentText)}`);
+			// 5) 复核：读真实页面快照，URL 必须带本次 fixtureId+nonce，pin 取官方 `snapshot.id`。
+			const stateArgs: Record<string, unknown> = { target_id: binding.targetId, snapshot_format: "semantic_v2", ...s };
+			if (binding.tabId) stateArgs.tab_id = binding.tabId;
+			const state = await call(prefix, "get_browser_state", stateArgs);
+			if (state.isError) throw new Error(`复核隔离浏览器状态失败：${shortError(state.contentText)}`);
+			const verified = parseBrowserSnapshot(state.structuredContent, { fixtureId, nonce, expectedOrigin });
+			if (!verified.ok) throw new Error(verified.reason ?? "隔离浏览器 fixture 校验失败（fail-closed）");
+			// 归属校验放在绑定阶段：驱动若报了一个**不一致**的 owner，说明无法证明这个页面属于本次 prepare 的进程，
+			// 就 fail-closed 抛错（不返回一个「能用但可能不是我们的」handle）；清理仍只针对本次 preparedPid。
+			const reportedOwner = verified.ownerPid ?? binding.ownerPid;
+			if (reportedOwner !== undefined && reportedOwner !== preparedPid) throw new Error("驱动报告的浏览器属主与本次启动的进程不一致（fail-closed）");
+			const handle: FixtureWindowHandle = { prefix, session, pid: win.pid, windowId: win.windowId, windowToken: verified.token!, fixtureId, url: absolute, targetId: binding.targetId, tabId: binding.tabId };
+			return {
+				handle,
+				close: async () => {
+					if (opts.closeOwn) {
+						await opts.closeOwn(handle).catch(() => {});
+						return;
+					}
+					await releasePrepared();
+				},
+			};
+		} catch (e) {
+			await releasePrepared();
+			throw e;
+		}
 	};
 
 	return {
@@ -203,14 +231,21 @@ export function createInvokeBenchmarkDriver(opts: InvokeDriverOptions): Benchmar
 
 		async execute(handle, tool, args, signal) {
 			if (signal.aborted) return { isError: true };
-			if (isBrowserFixture(handle)) return executeInBrowserFixture(call, handle, bareTool(tool), args);
-			return call(handle.prefix, bareTool(tool), args);
+			const r = isBrowserFixture(handle) ? await executeInBrowserFixture(call, handle, bareTool(tool), args) : await call(handle.prefix, bareTool(tool), args);
+			// 失败时带一行可读原因（诊断 / 日志用；不含凭据）。
+			return r.isError ? { isError: true, error: shortError(r.contentText) } : { isError: false };
 		},
 	};
 }
 
 /** 观察窗口时最多走多少个 AX 节点（驱动默认 250，对带页面的浏览器窗口偏小；上限保持有限，不无界拉 AX）。 */
 export const BENCHMARK_MAX_ELEMENTS = 600;
+
+/**
+ * 只认「导航本身超时」这一种可重试错误（实测文案形如 `Page.navigate failed: CDP Page.navigate timed out after 20s`）。
+ * 必须同时命中 `Page.navigate` 与 timeout 字样：权限 / 绑定 / 传输错误即使含 navigate 也不重试。
+ */
+const isNavigateTimeout = (text: string | undefined): boolean => /Page\.navigate/i.test(text ?? "") && /timed out|timeout/i.test(text ?? "");
 
 /** 从驱动错误里取一行可给用户看的摘要（不把整段内部/AX/协议细节披到 UI）。 */
 export function shortError(text: string | undefined): string {
@@ -254,10 +289,27 @@ async function readBrowserSnapshot(
 	});
 	if (r.isError) return { ok: false, error: shortError(r.contentText) || "读取页面快照失败" };
 	const s = asObj(r.structuredContent);
-	const token = firstStringStatic(asObj(s?.snapshot)?.id, s?.snapshot_id, s?.state_id);
-	if (!s || !token) return { ok: false, error: "页面快照没有可 pin 的快照 id（driver 约定 snapshot.id）" };
-	return { ok: true, token, structured: s };
+	if (!s) return { ok: false, error: "读不到隔离浏览器的页面快照（fail-closed）" };
+	// 每一次 observe / 身份复核都重新校「当前页面仍是本次 fixture」：不能只在打开时校一次，
+	// 之后缓存 pin 就永远相信（页面被导航到别处时缓存 pin 依旧存在，会拿别的页面当 fixture 判分）。
+	const parts = urlParts(handle.url);
+	if (!parts.nonce) return { ok: false, error: "fixture 地址缺少本次 nonce（fail-closed）" };
+	const verified = parseBrowserSnapshot(s, { fixtureId: handle.fixtureId, nonce: parts.nonce, expectedOrigin: parts.origin });
+	if (!verified.ok || !verified.token) return { ok: false, error: verified.reason ?? "隔离浏览器当前页面不是本次 fixture（fail-closed）" };
+	return { ok: true, token: verified.token, structured: s };
 }
+
+/** 从 fixture 地址里取 origin / nonce（解析失败就给空，调用方按 fail-closed 处理）。 */
+function urlParts(url: string): { origin?: string; nonce?: string } {
+	try {
+		const u = new URL(url);
+		return { origin: u.origin, nonce: u.searchParams.get("nonce") ?? undefined };
+	} catch {
+		return {};
+	}
+}
+
+const originOf = (url: string): string | undefined => urlParts(url).origin;
 
 /**
  * 把页面快照（`refs[]`）归一成与原生窗口一致的 elements 形状，让候选收集 / 目标新鲜度 / 判分三层复用同一套逻辑。
