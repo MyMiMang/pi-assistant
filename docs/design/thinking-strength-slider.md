@@ -1,6 +1,6 @@
 # 思考强度滑块 · 交互设计稿
 
-> **状态：生产实现已落地（beta.29 候选，未打包 / 未 push / 未 tag），浏览器 e2e / build / 真机待测试槽。** 本文件是交互设计稿（受控正式文档），配套单文件原型
+> **状态：生产实现已落地（beta.29 已公开）；视觉已按用户 2026-10-17 最终参考图重做（beta.30 候选，未 push / 未 tag / 未打包）。** 本文件是交互设计稿（受控正式文档），配套单文件原型
 > `docs/design/thinking-strength-slider-prototype.html`（浏览器直接打开，纯模拟数据，不调用模型、不写设置）。
 > 实现见工作树 `thinking-slider-implementation`：`apps/web/src/thinking-slider.ts`（纯逻辑）+ `apps/web/src/components/ThinkingSlider.tsx`（公共组件）+
 > `apps/web/src/components/ModelPicker.tsx`（`ThinkingButton` / 模型菜单接入）+ `apps/web/src/themes/app.css`（`pa-think-*` 样式与主题 token）+
@@ -13,11 +13,11 @@
 
 ## 1. 设计目标
 
-输入栏（composer）里现有 chip 打开一个约 320px 的弹层，把「思考强度」从下拉列表升级成**离散滑块**：
+输入栏（composer）里现有 chip 打开一个约 340px 的弹层，把「思考强度」从下拉列表升级成**离散滑块**：
 
-- 顶部一行：中文当前强度 + 短模型名。
-- 中间：44px 手柄，带 snap 刻度与「星点能量」渐变。
-- 底部：一句非承诺的速度/用量提示。
+- 顶部：左「思考」标记 + 居中当前档中文名（accent 大字）+ 次行短模型名（长名截断），右上「跟随 / 重置」。
+- 中间：36px 粗胶囊轨道（渐变填充）+ 40px 实心高对比圆钮（**钮内无字**，命中区仍是整条 44px 轨道），轨道里少量星点。
+- 底部：一句非承诺的速度/用量提示 + 「?」帮助（档位子集等细节放帮助里，不占正文）。
 
 不照搬 Codex 的 logo 或固定「Ultra」等级美化——档位、文案、颜色都来自本项目已有定义。
 
@@ -39,7 +39,7 @@ Pi 的思考档位是**枚举**（`ModelThinkingLevel = off | minimal | low | me
 | 提交时机 | **拖动中只预览，`pointerup` 才写原型 state**；键盘按一次即提交（keyboard commit）。均无真实持久化 / API |
 | 语义 | `role="slider"`，`aria-valuemin/max/now`，`aria-valuetext="思考强度：高"`（中文） |
 | 关闭 | 点击外部 / `Esc`；关闭后焦点回到 chip；`Esc` 不改变已提交值 |
-| 触摸 | 手柄 44px 命中区；弹层 320px 宽，390px 视口内不溢出（JS 再做一次边界收敛） |
+| 触摸 | 轨道 44px 命中区、滑钮 40px；弹层 340px 宽（≤640 走底部弹窗），390px 视口内不溢出（JS 再做一次边界收敛） |
 | 少档/无档 | 只有 1 档 → 说明「只有一档，不需要调整」；0 档 → 「这个模型不支持调整思考强度」，都不显示滑块 |
 | 位置 | 单聊 / 群聊成员 / 子代理**统一用 composer 里的同一入口** |
 
@@ -55,7 +55,8 @@ Pi 的思考档位是**枚举**（`ModelThinkingLevel = off | minimal | low | me
 
 ## 5. 不同档位的动效区别（表现层，不改语义）
 
-星点能量随档位在**密度 / 层次 / 幅度**上递进，**不表示「越快越聪明」**：
+星点能量随档位在**密度 / 层次 / 幅度**上递进，**不表示「越快越聪明」**；星点铺在**轨道里**（不在手柄内），
+静止很轻，只在切换 / 拖动时按档位播一次预览。滑钮里不再放中文短标（档位名在顶部 + 每个刻度的 aria / tooltip）：
 
 | 档位 | 星点 | 切换预览动效 |
 | --- | --- | --- |
@@ -72,7 +73,8 @@ Pi 的思考档位是**枚举**（`ModelThinkingLevel = off | minimal | low | me
 - 动效**只在拖动 / 切换时播放一次**（300–700ms），**播完即停**；弹层收起后**没有后台 RAF / timer / 无限粒子**。
 - 静止状态很轻或完全静态；不做「思考正在运行」的假象。
 - `prefers-reduced-motion`（或演示开关）：去掉位移与粒子，只保留静态对比差（手柄描边高亮），键盘 7 档仍全部可达。
-- 不靠颜色唯一区分：每格都有**中文刻度名**，当前档位另用高亮 + 手柄内中文短标。
+- 不靠颜色唯一区分：每个刻度都有**中文 aria-label / tooltip**，当前档位另用顶部大字 + 高亮刻度点；
+  不再挤一排 7 个小标签（`pa-think-labels` 已移除，`THINKING_SLIDER_SHORT` 一并删除）。
 
 ## 6. 主题差异：只换 token，不换组件
 
@@ -107,6 +109,24 @@ Pi 的思考档位是**枚举**（`ModelThinkingLevel = off | minimal | low | me
 - 主题：颜色 / 圆角 / 字体 / 动效只走 token（`--pa-*` / `--mo-*`），组件不写死颜色；`--mo-style=steps` 由组件读主题声明值映射成真实 data 属性，并订阅 `<html>` 属性 / `<head>` 样式表变化（`apps/web/src/themes/motion-signals.ts`）在主题 / DIY 预览改变时回读，切主题不重挂组件也生效（订阅只在弹层挂载期间存在）。
 - **未验**：浏览器 e2e（`e2e/subagent-thinking-levels.mjs`、`model-ui.mjs`、`run.mjs` 相关步骤）、`vite build`、真机与真模型。**未做**：真实持久化 / 后端改动（沿用现有写入），未改 SDK / 服务端 clamp。
 - **候选树后续修复（2026-10-17）**：A 主题实时切换的 `--mo-style` 订阅回读、C 默认思考强度保存的回滚代次 —— 代码 + 断言已写、**未跑**，见 `progress-snapshots/beta29-integration-checkpoint.md` §六。
+
+### 8.1 最终视觉（用户 2026-10-17 参考图；beta.30 候选）
+
+用户给了一张「Codex 风格 Ultra」截图并说「做成这样的」，这是**生产视觉授权**，不再猜设计：
+
+- **形态**：粗饱满渐变胶囊轨道（36px）+ 右侧实心高对比圆钮（40px，白/主题 fg，**钮内无字**），滑钮与轨道同高衔接、上下略露；最左 / 最右都完整落在轨道内，不越出弹层。
+- **顶部**：左「思考」标记（四角星，不是品牌 logo）+ 居中当前档中文（accent，17px）+ 次行模型名（小灰、长名 `truncate`）+ 右上「跟随 / 重置」图标（只有调用方给了 `followLabel` 才出现；**重置 ≠ off**，主会话没有继承语义就不摆这个按钮）。
+- **星点**：铺在轨道里（不是手柄内），`off` 无星点；切换 / 拖动才播一次 320–700ms 预览，静止无 RAF / 无循环。
+- **底部**：一行「较高强度可能更慢，并可能增加用量」+ 现成 `<Help>`，不再堆工程说明。
+- **主题**：全部走 token —— glass 通透渐变 / warm 暖色 / pixel 阶梯（滑钮切角、轨道方角）/ noir 高对比；DIY 的 `--acc` / `--acc2` / 圆角 / 字体 / `--mo-*` 真生效，**不在 JS 里写死紫色或 Ultra**。
+- **不变**：七档语义、档位来源（模型支持子集，不伪全 7）、`pointerup` 才提交、键盘 / Home / End、跟随 / 降级、`--mo-style` 实时切换、reduce 静态可辨，一律未动。
+
+改的文件：`apps/web/src/components/ThinkingSlider.tsx`（有限 markup：Head 重排 + 星点移进轨道 + 去掉手柄文字 / 标签行 + footer 用 `Help`）、
+`apps/web/src/themes/app.css`（`pa-think-*` 一节与各主题覆盖）、`apps/web/src/thinking-slider.ts`（删 `THINKING_SLIDER_SHORT`）。
+证据：`e2e/thinking-slider-visual.mjs`（真实服务端 + 真实构建 + Chromium，**70/70**，截图写 `docs/screenshots/thinking-slider-*.png`）、
+`e2e/thinking-slider-ui.mjs` **18/18**（新增 A1b 视觉布局步；A1 的「一排小标签」断言改为 aria / tooltip，行为断言不变）、
+`e2e/thinking-slider-frontend.test.mjs` **29/29**；两端 `tsc --noEmit` 0、`vite build` 通过。
+**未验**：真机 App（需用户自己装）、真实云模型、Windows / Linux / 手机真机；`modelName` 次行只在「每个子代理」那一行出现（助理级默认档不传模型名，避免指错模型），截图里因此没有模型名行。
 
 ### 9. 模型目录加载态（2026-10-17，beta.29 候选）
 

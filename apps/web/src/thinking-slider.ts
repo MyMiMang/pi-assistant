@@ -18,9 +18,6 @@ export const THINKING_LABEL: Record<string, string> = { off: "关闭", minimal: 
 /** 档位的一句话说明（只用于 title / 帮助，不写「最快 / 更贵」这类绝对说法）。 */
 export const THINKING_DESC: Record<string, string> = { off: "不思考，回答最快", minimal: "几乎不思考", low: "简单推理", medium: "平衡（默认）", high: "深入推理，更慢更贵", xhigh: "非常深入", max: "最大推理预算" };
 
-/** 手柄里的中文短标（弹层很窄，长标签放刻度行）。 */
-export const THINKING_SLIDER_SHORT: Record<string, string> = { off: "关", minimal: "极", low: "低", medium: "中", high: "高", xhigh: "超", max: "最" };
-
 /** 每档的星点数量：密度随档位递进，off 完全静态（0 点）。 */
 export const THINKING_STAR_COUNT: Record<string, number> = { off: 0, minimal: 1, low: 3, medium: 5, high: 8, xhigh: 12, max: 16 };
 

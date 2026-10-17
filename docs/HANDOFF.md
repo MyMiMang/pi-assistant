@@ -4,6 +4,13 @@
 >
 > **本版交付**：七档主题滑块、AI DIY 动效、默认本地原生流式语音（首次联网自动准备，已有选择保留，默认模型无标点）、模型目录加载态，以及电脑工具启动/状态反馈修复。**未解决的外部限制**：macOS 系统授权跨更新仍需稳定签名和真实升级验证，不能保证本版以后不再重授；语音识别准确率和实时嘴到字延迟未做独立语料测评。事实与限制见发布说明及 `docs/research/local-streaming-asr-verification-caveats.md`。
 >
+> **beta.30 候选（未 push / 未 tag / 未打包）：思考强度滑块视觉按用户最终参考图重做（2026-10-17，worktree `thinking-slider-visual-refinement`，基 `release-candidate-validation` `2e87f51`）**。用户贴出「Codex 风格 Ultra」截图并说「做成这样的」，视为**生产视觉授权**，不再给多版设计。
+> - **改了什么（只表现层）**：`ThinkingSlider.tsx` 顶部改为「左思考标记 + 居中当前档中文（accent）+ 次行模型名（truncate）+ 右上跟随 / 重置图标（仅 `followLabel` 有定义时出现，重置 ≠ off）」；轨道改 36px 粗胶囊 + 40px **实心高对比圆钮（钮内无字）**，两端都完整落在轨道内；星点从手柄里移到**轨道里**（`off` 无星点、仍只播一次 320–700ms 预览）；去掉一排 7 个小标签与手柄内短标（档位名走每个刻度的中文 aria / tooltip + 顶部大字），底部只留一行「较高强度可能更慢，并可能增加用量」+ 现成 `<Help>`；弹层 340px。文件：`apps/web/src/components/ThinkingSlider.tsx`、`apps/web/src/themes/app.css`（`pa-think-*` 与 glass / warm / noir / pixel 覆盖）、`apps/web/src/thinking-slider.ts`（删 `THINKING_SLIDER_SHORT`）。
+> - **没动**：七档语义、档位来源（模型支持子集，不伪全 7）、`pointerup` 才提交、键盘 / Home / End / pointercancel·blur·Esc 不写、跟随 / 降级、`--mo-style` 实时切换、reduce、查询持久化与租约；无服务端 / Pi SDK / node_modules 改动。
+> - **实跑（本树，Node 24 + 本树 `npm ci` 的合法锁依赖，Pi 1.3.0）**：`npm run typecheck`（server + web）exit 0、`npm run build -w @pi-assistant/web` 通过、`e2e/thinking-slider-frontend.test.mjs` **29/29**、`e2e/thinking-slider-ui.mjs` **18/18**（新增 A1b 视觉布局步；A1 的「一排小标签」断言改成 aria / tooltip，行为断言一条没弱化）、新增 `e2e/thinking-slider-visual.mjs` **70/70**（真实服务端 + 真实构建 + Chromium：弹层宽 320–360、轨道 32–42、滑钮 40–48 无内部文字且实心、min/max 不越界、四内置主题 + DIY 主题 token 真生效、390 不溢出、reduce 不播预览）。截图 `docs/screenshots/thinking-slider-popover-{noir,glass,warm,pixel,diy}.png`、`thinking-slider-drag-max.png`、`thinking-slider-popover-390.png`、`thinking-slider-composer-menu.png`、`thinking-slider-reduced.png`。
+> - **未验**：真机 App（要用户自己装）、真实云模型、Windows / Linux / 手机真机；`modelName` 次行只在「每个子代理」那行传（助理级默认档不传，避免指错模型），所以截图里没有模型名行。设计 / 契约已同步：`docs/design/thinking-strength-slider.md` §1 / §5 / §8.1、`progress-snapshots/slider-token-contract.md` §6。
+> - **状态**：只在独立 worktree 提交，**未 push、未 tag、未合 main**；beta.29 tag `ab8e0f3` 未移动。是否发 beta.30 由主会话核过截图后再定。
+>
 > 接手时以本段、最新 `main` 和已发版 tag 为准。下面保留的“候选 / 未 push / 未 tag / 等测试槽”等是**发布前历史快照**，不再代表当前发布状态；不要重打旧 tag、重发旧资产或重复已完成测试。
 
 > **历史：发布前 beta.29 候选状态（2026-10-17）**
