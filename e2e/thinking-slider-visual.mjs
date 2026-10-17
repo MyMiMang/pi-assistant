@@ -213,6 +213,11 @@ try {
 			check("glass：弹层通透（backdrop blur）", bf.includes("blur"), bf);
 		}
 		await shot(`thinking-slider-popover-${skin}.png`);
+		if (skin === "noir") {
+			// 上下文截图：真实页面里弹层贴在哪里、和输入栏 / 信息面板的关系（CSS 像素，不放大）
+			await page.screenshot({ path: join(OUT, "thinking-slider-in-context.png"), scale: "css" });
+			console.log("  📷 docs/screenshots/thinking-slider-in-context.png");
+		}
 		await closeThinking();
 	}
 
