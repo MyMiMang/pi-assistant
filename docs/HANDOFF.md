@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> **最新 Laya 状态（2026-10-17 22:38，覆盖下文旧“主接管未验”）**：真实注册 handler + 本地 Laya + 独占浏览器中，三个低置信任务由主会话本人接手 **3/3 完成**，共 5 次自主选择 ref 的 trusted 点击；机器与独立页面状态一致。Laya 本轮仍 0/3 自行派发，不代表模型能力已达标；上次四题独立完成率仍 1/4。原模型已恢复 running/health ok，本次进程清理完成。详细证据与时间定义见 [主接管验收](../progress-snapshots/laya-main-takeover-2026-10-17.md)，原始报告 `evidence/laya-benchmark-real/report-2026-10-17T14-34-57-077Z.json`。候选未发布、安装版 beta.29 未变；接下来自候选输入中去掉重复 state，改后质量须另验，不能复用本次成绩。
+
 > **当前公开版本：v0.1.0-beta.29（Latest，全平台）**。2026-10-17T04:36:44Z（上海 12:36）公开；不可移动的 tag 指向 `ab8e0f300a5ef5fce8632f99ccd22cf5c8ad12ad`。Actions `39001549625` 的 Mac arm64 / Intel Mac x64 / Windows x64 / Linux x64、arm64 构建、Mac 与 Windows 安装启动冒烟、publish 全成功。主会话独立核验非草稿、非 prerelease、13 项公开资产；公开 HTTP `latest.json` 为 `0.1.0-beta.29`，Mac 双架构和 Windows 六个更新项均有非空签名、对应架构 URL 指向本 tag。未自动安装用户 App。
 >
 > **本版交付**：七档主题滑块、AI DIY 动效、默认本地原生流式语音（首次联网自动准备，已有选择保留，默认模型无标点）、模型目录加载态，以及电脑工具启动/状态反馈修复。**未解决的外部限制**：macOS 系统授权跨更新仍需稳定签名和真实升级验证，不能保证本版以后不再重授；语音识别准确率和实时嘴到字延迟未做独立语料测评。事实与限制见发布说明及 `docs/research/local-streaming-asr-verification-caveats.md`。

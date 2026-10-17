@@ -344,3 +344,8 @@ server `tsc` exit 0）。**没有**起真实 Chrome / 驱动 / Laya，网页路�
   真实 handler 接线与整条链路**未在真实 daemon / 浏览器 / Laya 上跑过**，待主审后跑一次。
 - **顺带产品修补**：`tool.ts` 的 `readWindowState` 补显式 `tree_format:"elements"`（driver 0.35 起默认只回精简 markdown，没有 `element_token` → 原生候选会全空），
   `fast-computer-tool.test.ts` 加断言钉住；不改 native 原行为、不宣称已验证 pid/window 绑定一致性。
+
+
+### 9.13 主会话真实接管已验收（2026-10-17）
+
+本节覆盖 §9.12 的待验状态。8c99210 上真实 handler 三次均返回 low_confidence；主会话亲自按新快照选择 ref，提交、选北京、动态两步 **3/3 完成**，5 次 trusted 点击，机器与页面状态一致。未用程序固定下拉，不自动选目标；原模型恢复健康，本次隔离进程清理。Laya 本轮 0/3 自行派发，接管成绩不能当其独立准确率。definition 取出后通过真实 MCP 运行，不是安装版会话运行器验收；仍需后续候选安装测试。完整证据、命令与含推理等待的 wall 定义见 [主接管验收](../../progress-snapshots/laya-main-takeover-2026-10-17.md)。后续候选输入去重尚未在本次模型调用里使用。

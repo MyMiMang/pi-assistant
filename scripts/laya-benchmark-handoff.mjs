@@ -44,6 +44,8 @@ export function parseHandoffCommand(raw) {
 		case "click": {
 			if (typeof raw.ref !== "string" || !raw.ref.trim()) return { error: "click 需要 ref" };
 			out.ref = raw.ref.trim();
+			if (raw.input_route !== undefined && !["trusted", "dom_event"].includes(raw.input_route)) return { error: "不支持的 input_route" };
+			out.inputRoute = raw.input_route ?? "trusted";
 			return out;
 		}
 		case "pointer": {
@@ -138,9 +140,9 @@ export function createHandoffControl(options) {
 		if (op === "observe") return { ...(await observe()), machine: await machineEvidence(task), expected: task?.expect ?? null, task: task?.id ?? null, title: task?.title ?? null, goal: task?.goal ?? null };
 		if (op === "click") {
 			if (!state.refs.has(cmd.ref)) return { error: `ref ${cmd.ref} 不在主模型最近一次 observe 的结果里（快照已更新就作废，请先 observe）`, stale: true };
-			const args = { ...target, ...sessionArg, ref: cmd.ref };
+			const args = { ...target, ...sessionArg, ref: cmd.ref, ...(cmd.inputRoute === "dom_event" ? { input_route: "dom_event" } : {}) };
 			let r = await invoke("hostpc", "browser_click", args);
-			let route = "trusted";
+			let route = cmd.inputRoute ?? "trusted";
 			// 按工具规范：trusted 在 macOS 可能报 input trust 不可用 → 同一回合先 observe（拿新 ref 证明目标还在）再 dom_event。
 			if (r.isError && /input_trust|trust_unavailable|browser_input_trust/i.test(String(r.contentText ?? ""))) {
 				const fresh = await observe();
