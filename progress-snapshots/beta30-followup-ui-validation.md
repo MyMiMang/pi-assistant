@@ -1,6 +1,6 @@
 # beta.30 候选整合：一次有限 UI 验收（本树，未 push）
 
-时间：2026-10-17（上海 00:03–00:12 左右）。树：worktree `beta30-followup-integration`，起点 HEAD `5ab653f`（clean，与来源树 `f7ef9b1` 的 ModelPicker / ThinkingSlider / e2e helper、`3462f8e` 的 fast-computer / 原生 TS 逐字一致，本轮只读不重跑那 270 项纯检查）。
+时间：2026-10-18（Asia/Shanghai，跨午夜后；截图约 00:04，收口提交 00:07）。树：worktree `beta30-followup-integration`，起点 HEAD `5ab653f`（clean，与来源树 `f7ef9b1` 的 ModelPicker / ThinkingSlider / e2e helper、`3462f8e` 的 fast-computer / 原生 TS 逐字一致，本轮只读不重跑那 270 项纯检查）。
 
 > 本轮只做**一次**受限 UI 验收：本树 web build + `fast-mode-ui` + 一节 `thinking-slider-ui`(`ONLY='^A'`)。不跑全量 e2e / visual77 / model-ui / composer / subagent 大套餐，不碰真实模型 / 中转 / 下载 / 安装 / 系统权限 / 凭据 / 真实库 / 日常 Chrome。
 
@@ -88,7 +88,13 @@
 - 全程未出现钥匙串 / OS 人机验证 / 权限弹窗（服务用内存凭据，浏览器用 helper 给的 OS HOME），因此没有需要停止 native 的情形。
 - 本轮**未改产品代码**（零代码 fix），因此没有「小 fix 后只跑失败影响」的追跑；tree 除新增 `evidence/beta30-ui/`（截图）外无改动。
 
-## 7. 结论与口径
+## 7. 主会话核验
+
+主会话已直接读取本树 build / Fast / slider A 三份日志，确认上述结果；重新查看 `00-fast-off`、`01-fast-tip`、`04-fast-390`、`08-subagent-fast-follow` 四张图，确认弹层可见、费用说明存在、390 窄屏内容完整、子代理跟随与白色无字圆钮清晰。新鲜进程白名单检查无本次 UI 脚本或 launch-memory 服务残留。
+
+共生成11张截图；子代理实际识图6张，主会话复核其中4张。不得写成11张全部已识图。日期已按收口提交的 +08:00 时间纠正，未重跑任何检查。
+
+## 8. 结论与口径
 
 - **能说的**：整合后的 web 构建成功；Fast 两层紧凑弹层 / 闪电 / 保存与回滚 / 两层目录 / 子代理跟随与子集档位 / 390 / 非透明截图在本树真实 DOM 与真实服务端（内存凭据 + mock）上验证通过（64/64）；滑块 A 节 10/10 步（含拖动取消、390×四主题）通过 —— **整合未在这些面上回归**。
 - **不能说的**：不宣称 Fast 真实优先 / 真实加速 / 真实计费或回显（本轮无真实中转、无付费请求）；不宣称已安装 App / 真机 / 手机真机；不宣称 Laya 质量；不把本轮的 mock 模型当真实模型行为；未跑 B/C 组与 visual77，故不称「滑块视觉全量验收通过」。
