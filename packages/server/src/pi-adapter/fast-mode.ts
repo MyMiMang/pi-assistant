@@ -218,7 +218,10 @@ export function attachFastMode(session: { agent: FastAgentLike }, resolveEnabled
 		}
 		const plan = planFastRequest(effective, model as FastModelLike, enabled);
 		state = { requested: plan.requested, enabled, status: plan.status, capability: plan.capability, api: plan.api, observed: null, observedKind: "unknown", reported: null, reportedKind: "unknown", ...(plan.reason ? { reason: plan.reason } : {}) };
-		return plan.changed ? plan.payload : undefined;
+		// 组合契约：我们没改时，必须把**前一个 hook 的替换结果**继续返回；否则 Pi 会退回原始 payload，
+		// 等于把别的 instrumentation 的修改吞掉（例如模型服务自己配的 service_tier）。
+		if (plan.changed) return plan.payload;
+		return previous === undefined ? undefined : previous;
 	};
 
 	agent.onProviderStreamEvent = async (data, model) => {

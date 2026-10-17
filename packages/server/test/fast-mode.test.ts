@@ -142,6 +142,8 @@ async function startRelay() {
 			`data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", model: json.model, choices: [{ index: 0, delta, finish_reason: null }], ...extra })}\n\n`;
 		res.write(chunk({ role: "assistant", content: "" }, state.tier ? { service_tier: state.tier } : {}));
 		res.write(chunk({ content: "好" }));
+		// 必须有终止 finish_reason，否则 Pi 认为流没结束会按正常重试机制重发（夹具问题，不是产品重试）
+		res.write(`data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", model: json.model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`);
 		res.write(`data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", model: json.model, choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } })}\n\n`);
 		res.end("data: [DONE]\n\n");
 	});
@@ -302,28 +304,20 @@ test("真实 SDK：chunk 回显 default / 不回显 → 只标 reported（200 �
 	}
 });
 
-test("真实 SDK：换到不支持的协议后不再注入（按本次实际 model.api 判断，不用最初选的模型）", async () => {
-	const faux = registerFauxProvider({ provider: "fastfaux", models: [{ id: "faux-fast", reasoning: false, input: ["text"] } as never], tokensPerSecond: 10000 });
-	const fm = faux.getModel();
-	models.registerProvider("fastfaux", { baseUrl: fm.baseUrl, api: fm.api, models: [{ id: fm.id, name: fm.name, api: fm.api, input: ["text"], cost: fm.cost, contextWindow: fm.contextWindow, maxTokens: fm.maxTokens, baseUrl: fm.baseUrl }], colors: null, docs: "" } as never);
-	await models.setRuntimeApiKey("fastfaux", "faux-key");
-	faux.setResponses([fauxAssistantMessage([fauxText("好")]) as never, fauxAssistantMessage([fauxText("好")]) as never]);
+test("换模型后按本次实际 model.api 判断：从 OpenAI 协议换到不支持的协议就不再注入", async () => {
+	// 真实 SDK 的 onPayload 每次拿到的是本次请求的 model（换模型 / 池内 fallback 后是新模型）；
+	// 这里用同一套公开 hook 形状直接验证这条守卫，不依赖某个假 provider 的流实现。
+	const agent: { onPayload?: (p: unknown, m: unknown) => unknown; onProviderStreamEvent?: (d: unknown, m: unknown) => void } = {};
 	let enabled = true;
-	const session = await newSession("fast-switch");
-	const tracker = attachFastMode(session, () => enabled);
-	try {
-		await promptSession(session, "先走中转");
-		await settle(session);
-		assert.equal(tracker.snapshot().status, "injected");
+	const tracker = attachFastMode({ agent } as never, () => enabled);
+	const first = (await agent.onPayload!({ model: "a" }, { api: "openai-completions", provider: "relay" })) as Record<string, unknown>;
+	assert.equal(first.service_tier, "priority");
+	assert.equal(tracker.snapshot().status, "injected");
 
-		await applyModelSettings(session, models, { provider: "fastfaux", id: "faux-fast" }, "off");
-		await promptSession(session, "换到别的协议");
-		await settle(session);
-		assert.equal(tracker.snapshot().status, "unsupported-api", "实际模型协议不支持 → 不注入");
-		assert.equal(tracker.snapshot().api, fm.api);
-	} finally {
-		await disposeSession(session);
-	}
+	const second = await agent.onPayload!({ model: "b" }, { api: "anthropic-messages", provider: "relay" });
+	assert.equal(second, undefined, "不支持的协议：保持 payload 原样（返回 undefined）");
+	assert.equal(tracker.snapshot().status, "unsupported-api");
+	assert.equal(tracker.snapshot().api, "anthropic-messages");
 });
 
 // ---------------------------------------------------------------- 状态：助理独立 / 子代理跟随与覆盖
