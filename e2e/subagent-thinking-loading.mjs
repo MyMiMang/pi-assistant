@@ -9,10 +9,9 @@
  *  4) 请求失败 → 短失败说明 + 重试；点重试成功后又变成七档滑块。
  *
  * 运行前先构建：`npm run build -w @pi-assistant/web`。
- * 隔离：mkdtemp 的 PIA_DATA_DIR / PIA_WORKSPACE / TMPDIR，PIA_MOCK + PIA_OFFLINE，
- * 不碰真实 user db / 钥匙串 / 付费模型；finally 结束自建的 server 进程组。
- * 注：不覆盖 HOME——本机 App 自带的 node 在 HOME 指向临时目录时会在凭据 / 目录探测上卡住（实测），
- * 隔离靠显式的数据目录与工作区，已覆盖会写用户数据的路径。
+ * 隔离：mkdtemp 的 HOME / PIA_DATA_DIR / PIA_WORKSPACE / TMPDIR，PIA_MOCK + PIA_OFFLINE；
+ * 通过 launch-memory 注入内存凭据后启动服务，不能用生产 main 或真实 HOME 绕过启动问题。
+ * finally 结束自建的 server 进程组。
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -27,10 +26,12 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 // 隔离目录必须在起服务 / 起浏览器之前就位（HOME / 数据目录 / 工作区 / 临时目录都在这里）
 const SCRATCH = mkdtempSync(join(tmpdir(), "pia-e2e-thinking-loading-"));
 const DATA = join(SCRATCH, "data");
-const WORKSPACE = join(SCRATCH, "workspace");
+const WORKSPACE = join(DATA, "workspace");
 const TMP = join(SCRATCH, "tmp");
-for (const d of [DATA, WORKSPACE, TMP]) mkdirSync(d, { recursive: true });
+const HOME = join(SCRATCH, "home");
+for (const d of [DATA, WORKSPACE, TMP, HOME]) mkdirSync(d, { recursive: true });
 process.env.TMPDIR = TMP;
+process.env.HOME = HOME;
 const OUT = join(SCRATCH, "shots");
 mkdirSync(OUT, { recursive: true });
 
@@ -67,10 +68,10 @@ const check = (name, cond, detail = "") => {
 	}
 };
 const start = async () => {
-	server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], {
+	server = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], {
 		cwd: ROOT,
 		detached: true,
-		env: { ...process.env, TMPDIR: TMP, PIA_DATA_DIR: DATA, PIA_WORKSPACE: WORKSPACE, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) },
+		env: { ...process.env, HOME, TMPDIR: TMP, PIA_DATA_DIR: DATA, PIA_WORKSPACE: WORKSPACE, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) },
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	server.stdout.on("data", (d) => process.stdout.write(d));
