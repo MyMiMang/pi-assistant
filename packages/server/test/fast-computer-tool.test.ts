@@ -9,8 +9,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { fastComputerSettings, saveFastComputerSettings, _resetFastComputerState } from "../src/fast-computer/index.ts";
-import { fastComputerExtension } from "../src/fast-computer/tool.ts";
+import { fastComputerExtension, narrowCandidates } from "../src/fast-computer/tool.ts";
 import { createMockChooser, createClassifierChooser } from "../src/fast-computer/choosers.ts";
+import type { FastChoiceRequest } from "../src/fast-computer/types.ts";
 
 interface El {
 	element_index: number;
@@ -40,6 +41,7 @@ async function runFastTool(input: {
 	browser?: unknown;
 	chooser?: unknown;
 	expected?: unknown;
+	candidates?: unknown;
 	session?: string;
 	signal?: AbortSignal;
 	tools?: string[];
@@ -76,7 +78,7 @@ async function runFastTool(input: {
 	const pi = { registerTool: (t: never) => (registered = t), on: () => {} };
 	fastComputerExtension({ agentId: "test", conversationId: null, taskId: null, chooserFor: () => (input.chooser as never) ?? createMockChooser(() => ({ kind: "selected", candidateId: "el-1" })) }).factory(pi as never);
 	assert.ok(registered, "工具应已注册");
-	const out = await registered!.execute("id", { goal: "点登录", pid: 9, window_id: 3, session: input.session, expected: input.expected, browser: input.browser }, input.signal, undefined, ctx);
+	const out = await registered!.execute("id", { goal: "点登录", pid: 9, window_id: 3, session: input.session, expected: input.expected, browser: input.browser, candidates: input.candidates }, input.signal, undefined, ctx);
 	saveFastComputerSettings({ enabled: false });
 	return { out, calls };
 }
@@ -406,4 +408,184 @@ test("浏览器候选能力语义：content 节点（无动作）不进候选，
 	assert.deepEqual(candidates.map((c) => c.description), ["点击当前界面上的「提交」（button 控件）", "点击当前界面上的「请选择城市」（statictext 控件）"]);
 	assert.ok(candidates.every((c) => !(c.description ?? "").includes("p3:")), "描述不带 ref");
 	assert.ok(candidates.every((c) => !/展开|提交成功/.test(c.description ?? "")), "不承诺未知后置结果");
+});
+
+// ---------------------------------------------------------------- 显式候选范围（candidates：主模型圈定的精确 selector）
+// 用户要求：工具描述声称「主已收窄候选」，实际却总扫全页最多 32 个、无法表达范围。这里圈定 {role?, label} 2..32 个，
+// 程序只在**本次收集到的有界候选**里匹配，每个 selector 必须恰好命中 1 个；缺 / 模糊 / 重复 / 超界 / 重读后范围变化
+// 全部 fail-closed，**不调 chooser、不派发、也不退回整页**。
+
+/** 记录 chooser 实际收到的请求（用来证明“有没有调用快速模型 / 它看到了哪些候选”）。 */
+function recordingChooser(respondId: string) {
+	const seen: FastChoiceRequest[] = [];
+	const chooser = createMockChooser((req) => {
+		seen.push(req);
+		return { kind: "selected", candidateId: respondId };
+	});
+	return { chooser, seen };
+}
+
+const threeButtons = (pin: string) => ({ elements: [el(1, "button", "登录", `${pin}:1`), el(2, "button", "取消", `${pin}:2`), el(3, "button", "提交", `${pin}:3`)] });
+const clicks = (calls: ToolCall[]) => calls.filter((c) => c.name.endsWith("click"));
+
+test("显式候选范围：只透传圈定的子集，保持收集顺序 / ID / 描述；选中项由模型决定（不是整页第一个 / 不按 fixture 答案筛）", async () => {
+	const { chooser, seen } = recordingChooser("el-2");
+	const { calls } = await runFastTool({
+		states: [threeButtons("snap1"), threeButtons("snap2"), postState],
+		candidates: [{ role: "button", label: "提交" }, { role: "button", label: "取消" }],
+		chooser,
+	});
+	assert.equal(seen.length, 1, "范围成立时应调用一次快速模型");
+	assert.deepEqual(seen[0].candidates.map((c) => c.id), ["el-2", "el-3"], "保持程序收集顺序，不按 selector 排序");
+	assert.ok(!seen[0].candidates.some((c) => c.label.includes("登录")), "没圈定的候选不进模型输入");
+	assert.equal(seen[0].candidates[1].description, "点击当前界面上的「提交」（button 控件）", "描述原样透传");
+	const click = clicks(calls);
+	assert.equal(click.length, 1);
+	assert.equal(click[0].args.element_token, "snap2:2", "派发模型圈定并选中的那个控件，且用 fresh token");
+});
+
+test("显式候选范围：label 忽略首尾空白精确匹配；模糊子串不匹配 → 零 chooser / 零派发", async () => {
+	const { chooser, seen } = recordingChooser("el-1");
+	const trimmed = await runFastTool({ states: [threeButtons("snap1"), threeButtons("snap2"), postState], candidates: [{ label: " 登录 " }, { label: "取消" }], chooser });
+	assert.equal(seen.length, 1, "首尾空白不应影响精确匹配");
+	assert.equal(clicks(trimmed.calls)[0]?.args.element_token, "snap2:1");
+
+	const fuzzy = recordingChooser("el-1");
+	const rejected = await runFastTool({ states: [threeButtons("snap1")], candidates: [{ label: "登" }, { label: "取消" }], chooser: fuzzy.chooser });
+	assert.equal(fuzzy.seen.length, 0, "范围不成立不得调用快速模型");
+	assert.equal(clicks(rejected.calls).length, 0, "范围不成立不得派发");
+	assert.match(textOf(rejected.out), /找不到/);
+});
+
+test("显式候选范围：空 / 单项 / 非数组 / 超 32 / 重复 / 超长 / 越界字段 → 参数错误，零调用、不退回整页", async () => {
+	const cases: [string, unknown, RegExp][] = [
+		["空数组", [], /至少 2 个/],
+		["只有 1 项", [{ label: "登录" }], /至少 2 个/],
+		["不是数组", "登录", /必须是 selector 数组/],
+		["超过 32 项", Array.from({ length: 33 }, (_, i) => ({ label: `按钮${i}` })), /最多 32 个/],
+		["selector 重复", [{ label: "登录" }, { label: "登录" }], /重复/],
+		["空 label", [{ label: "   " }, { label: "取消" }], /缺少 label/],
+		["label 超长", [{ label: "x".repeat(121) }, { label: "取消" }], /超过 120/],
+		["role 超长", [{ role: "r".repeat(81), label: "登录" }, { label: "取消" }], /超过 80/],
+	];
+	for (const [name, candidates, pattern] of cases) {
+		const { chooser, seen } = recordingChooser("el-1");
+		const { out, calls } = await runFastTool({ states: [threeButtons("snap1")], candidates, chooser });
+		assert.equal(seen.length, 0, `${name}：不得调用快速模型`);
+		assert.equal(calls.length, 0, `${name}：参数非法时连窗口都不读（不拿整页候补）`);
+		assert.match(textOf(out), pattern, name);
+		assert.match(textOf(out), /没有退回整页候选/, `${name}：明确说明没有退回整页`);
+	}
+});
+
+test("显式候选范围：多个 selector 指向同一个控件 → 拒绝（不能重复圈同一个控件凑数量）", async () => {
+	const { chooser, seen } = recordingChooser("el-1");
+	const { out, calls } = await runFastTool({ states: [threeButtons("snap1")], candidates: [{ label: "登录" }, { role: "button", label: "登录" }], chooser });
+	assert.equal(seen.length, 0);
+	assert.equal(clicks(calls).length, 0);
+	assert.match(textOf(out), /指向同一个候选/);
+});
+
+test("显式候选范围：只匹配程序本次收集的有界候选（第 33 个控件不在候选里 → 诚实拒绝，不扫描整页）", async () => {
+	const many = { elements: Array.from({ length: 40 }, (_, i) => el(i + 1, "button", `其他${i + 1}`, `s1:${i + 1}`)) };
+	const { chooser, seen } = recordingChooser("el-1");
+	const { out, calls } = await runFastTool({ states: [many], candidates: [{ label: "其他1" }, { label: "其他40" }], chooser });
+	assert.equal(seen.length, 0, "未收集到的控件不能被当成可选项");
+	assert.equal(clicks(calls).length, 0);
+	assert.match(textOf(out), /最多 32 个/);
+	assert.match(textOf(out), /不扫描整页/);
+});
+
+test("显式候选范围：重读后**未选中**的候选语义变化也中止（模型可能在不同 choice set 里决定）", async () => {
+	const changed = { elements: [el(1, "button", "登录", "s2:1"), el(2, "button", "取消", "s2:2", { value: "已取消" })] };
+	const first = { elements: [el(1, "button", "登录", "s1:1"), el(2, "button", "取消", "s1:2")] };
+	const { chooser } = recordingChooser("el-1");
+	const { out, calls } = await runFastTool({ states: [first, changed], candidates: [{ label: "登录" }, { label: "取消" }], chooser });
+	assert.equal(clicks(calls).length, 0, "整个显式范围变了就不得派发（哪怕选中的那个没变）");
+	assert.match(textOf(out), /第 2 个 selector/);
+	assert.match(textOf(out), /role \/ value \/ actions 已变化/);
+});
+
+test("显式候选范围：重读后某个 selector 找不到 → 中止，零派发", async () => {
+	const fresh = { elements: [el(1, "button", "登录", "s2:1"), el(2, "button", "关闭", "s2:2")] };
+	const { chooser } = recordingChooser("el-1");
+	const { out, calls } = await runFastTool({ states: [threeButtons("snap1"), fresh], candidates: [{ label: "登录" }, { label: "取消" }], chooser });
+	assert.equal(clicks(calls).length, 0);
+	assert.match(textOf(out), /显式候选范围在重读后已变化/);
+});
+
+test("默认不传 candidates：仍收集整页有界候选（含容器），旧行为兼容", async () => {
+	const state = { elements: [el(1, "button", "登录", "s1:1"), el(2, "row", "第一行", "s1:2"), el(3, "textfield", "搜索", "s1:3")] };
+	const fresh = { elements: [el(1, "button", "登录", "s2:1"), el(2, "row", "第一行", "s2:2"), el(3, "textfield", "搜索", "s2:3")] };
+	const { chooser, seen } = recordingChooser("el-1");
+	const { calls } = await runFastTool({ states: [state, fresh, postState], chooser });
+	assert.deepEqual(seen[0]?.candidates.map((c) => c.id), ["el-1", "el-2", "el-3"], "默认候选范围与顺序不变");
+	assert.equal(clicks(calls)[0]?.args.element_token, "s2:1");
+});
+
+test("显式候选范围：模型输入只有圈定候选的描述，不含 raw value / token / tool，也不重复复制 selector", async () => {
+	const contexts: unknown[] = [];
+	const chooser = createClassifierChooser({
+		provider: "local-laya",
+		model: "multilingual",
+		classify: async (provider, model, context) => {
+			contexts.push(context);
+			return { provider, model, api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1, answers: { pick: { type: "choice", choice: "el-1", confidence: 0.9, probabilities: { "el-1": 0.9 } } } };
+		},
+	});
+	const withSecret = (pin: string) => ({ elements: [el(1, "button", "登录", `${pin}:1`, { value: "secret-raw-value" }), el(2, "button", "取消", `${pin}:2`), el(3, "button", "提交", `${pin}:3`)] });
+	const { calls } = await runFastTool({ states: [withSecret("s1"), withSecret("s2")], candidates: [{ label: "取消" }, { label: "登录" }], chooser });
+	assert.equal(clicks(calls)[0]?.args.element_token, "s2:1");
+	const ctx = contexts[0] as { state: unknown; questions: { pick: { criteria: Record<string, string> } } };
+	const serialized = JSON.stringify(ctx);
+	assert.match(serialized, /点击当前界面上的「登录」（button 控件）/, "圈定的候选仍带完整描述");
+	assert.deepEqual(Object.keys(ctx.questions.pick.criteria).sort(), ["el-1", "el-2"], "只有圈定的候选");
+	assert.ok(!serialized.includes("提交"), "没圈定的候选不进模型输入");
+	assert.ok(!serialized.includes("secret-raw-value"), "不得漏控件 raw value");
+	assert.ok(!serialized.includes("s1:1") && !serialized.includes("s2:1"), "不得漏 element_token");
+	assert.deepEqual(ctx.state, { goal: "点登录" }, "selector 不进 state，不重复复制");
+});
+
+test("浏览器目标 + 显式候选范围：只在圈定的 ref 里选，派发用 fresh ref", async () => {
+	const page = (pin: string) => ({ refs: [
+		{ ref: `${pin}:1`, role: "button", name: "登录", actions: ["click"] },
+		{ ref: `${pin}:2`, role: "button", name: "取消", actions: ["click"] },
+		{ ref: `${pin}:3`, role: "button", name: "提交", actions: ["click"] },
+	] });
+	const { chooser, seen } = recordingChooser("ref-2");
+	const { calls } = await runFastTool({
+		states: [],
+		tools: browserTools,
+		browser: { target_id: "bt-1", tab_id: "tab-1" },
+		chooser,
+		candidates: [{ label: "提交" }, { label: "登录" }],
+		snapshots: [snapshot("p1", page("p1").refs), snapshot("p2", page("p2").refs)],
+	});
+	assert.deepEqual(seen[0]?.candidates.map((c) => c.id), ["ref-0", "ref-2"], "保持 page 收集顺序，不是 selector 顺序");
+	const click = calls.find((c) => c.name.endsWith("browser_click"));
+	assert.equal(click?.args.ref, "p2:3", "用 fresh 快照里选中控件的 ref");
+});
+
+test("显式候选范围：按完整可见 label（semantic.label）匹配，不受 120 字展示截断影响", async () => {
+	const longLabel = "长".repeat(120);
+	const first = { elements: [el(1, "button", longLabel, "s1:1"), el(2, "button", "取消", "s1:2")] };
+	const fresh = { elements: [el(1, "button", longLabel, "s2:1"), el(2, "button", "取消", "s2:2")] };
+	const { chooser, seen } = recordingChooser("el-1");
+	const { calls } = await runFastTool({ states: [first, fresh, postState], candidates: [{ role: "button", label: longLabel }, { label: "取消" }], chooser });
+	assert.equal(seen.length, 1, "完整可见 label 即使被展示层截断也应能匹配");
+	assert.ok(seen[0].candidates[0].label.length <= 120, "展示 label 仍限 120 字，不影响精确匹配");
+	assert.equal(clicks(calls)[0]?.args.element_token, "s2:1");
+});
+
+test("narrowCandidates 纯函数：缺 / 模糊 / 重复都会拒，且返回子集保持收集顺序", () => {
+	const cands = [
+		{ id: "el-1", label: "button：登录", tool: "mcp__hostpc__click", args: {}, semantic: { role: "button", label: "登录", value: "", actions: ["press"] } },
+		{ id: "el-2", label: "button：取消", tool: "mcp__hostpc__click", args: {}, semantic: { role: "button", label: "取消", value: "", actions: ["press"] } },
+	];
+	const okSubset = narrowCandidates(cands, [{ label: "取消" }, { role: "button", label: "登录" }]);
+	assert.ok(okSubset.ok);
+	assert.deepEqual(okSubset.ok && okSubset.candidates.map((c) => c.id), ["el-1", "el-2"]);
+	assert.equal(narrowCandidates(cands, [{ label: "登" }, { label: "取消" }]).ok, false);
+	assert.equal(narrowCandidates(cands, [{ label: "登录" }]).ok, false, "1 项不算 bounded 选择");
+	assert.equal(narrowCandidates(cands, []).ok, false, "空 selector 数组拒绝");
 });

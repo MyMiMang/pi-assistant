@@ -250,6 +250,16 @@ interface StateElement extends FastSemanticTarget {
 const norm = (v: unknown) => (v === undefined || v === null ? "" : String(v));
 const sameActions = (a: string[] | undefined, b: string[] | undefined) => [...(a ?? [])].sort().join("\u0000") === [...(b ?? [])].sort().join("\u0000");
 
+/**
+ * 两个候选目标的语义身份是否一致：role / label / value 按 G2 的 `norm` 规则比较，actions 按集合比较。
+ * 显式候选范围（`fast_pick_action{candidates}`）执行前也要对**整组**候选做同一份校验，所以单独暴露，
+ * 不复制一套比较逻辑。缺任一语义身份 → false（不猜「没变」）。
+ */
+export function sameSemanticTarget(a: FastSemanticTarget | undefined, b: FastSemanticTarget | undefined): boolean {
+	if (!a || !b) return false;
+	return norm(a.role) === norm(b.role) && norm(a.label) === norm(b.label) && norm(a.value) === norm(b.value) && sameActions(a.actions, b.actions);
+}
+
 export type FreshCandidateResult = { ok: true; candidate: FastActionCandidate } | { ok: false; reason: "no_semantic" | "not_found" | "ambiguous" | "changed" };
 
 /**
@@ -271,7 +281,7 @@ export function resolveFreshCandidate(candidate: FastActionCandidate, structured
 	if (matches.length > 1) return { ok: false, reason: "ambiguous" };
 	const hit = matches[0];
 	if (!hit.element_token) return { ok: false, reason: "changed" };
-	if (norm(hit.value) !== norm(sem.value) || !sameActions(hit.actions, sem.actions)) return { ok: false, reason: "changed" };
+	if (!sameSemanticTarget({ role: hit.role, label: hit.label, value: hit.value, actions: hit.actions }, sem)) return { ok: false, reason: "changed" };
 	return { ok: true, candidate: { ...candidate, args: { ...candidate.args, element_token: hit.element_token } } };
 }
 

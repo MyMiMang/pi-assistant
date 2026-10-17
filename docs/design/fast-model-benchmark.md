@@ -408,3 +408,38 @@ server `tsc` exit 0）。**没有**起真实 Chrome / 驱动 / Laya，网页路�
   `node --check` 两个脚本通过。**未在真实 daemon / 浏览器 / Laya 上运行**，没有任何新的成功率 / 速度结论；
   下一步由主审 review 后跑一次预声明的 stepwise run（6 次是上限不是配额，低信 / 连续 3 次回退后主模型自行接管，
   不为多调用 reset 熔断），并单独核对每步 machine / UI 与主接管计数。
+
+> 后续补充：主模型现在可以用 `fast_pick_action{candidates}` 显式圈定 2..32 个精确 selector（接口边界见 §9.16）；
+> stepwise 控制面（`fast{goal,expected?}`）本身未改，重新测量另排，不拿候选变少当质量提升。
+
+### 9.16 显式候选范围（`fast_pick_action{candidates}`，2026-10-17；**只有代码 + 单测，未真机**）
+
+§9.14 的候选描述只补了「这一步做什么」，但没有解决**接口边界**：工具描述说「主模型已把目标收窄」，
+程序实际每次仍自己扫全页（最多 `MAX_FAST_CANDIDATES=32`），主模型无法表达「就在这几个控件里选」。
+本节只补这个边界，不换模型、不改阈值 / 概率换算 / classifier / chat 模板、不改 stepwise 控制面。
+
+- **入参**：可选 `candidates: {role?: string; label: string}[]`，**2..32 项**。`role` 给了就精确相等；
+  `label` 去首尾空白后，与元素**完整可见 label**（收集器保存在 `semantic.label`，不是截断到 120 的展示 `label`）
+  精确相等。只认这两个字段（不接受 tool / args / ref / 坐标 / 测试答案）。1 项直接拒：只圈一个控件时主模型自己
+  `click` 就行，不该用「必选一个」冒充快速模型判断。
+- **匹配范围**：只在**本次程序收集到的有界候选**（原生 AX / semantic_v2 refs，最多 32 个）里匹配，
+  不扫描整页 / 32 个之外的无限集合。每个 selector 必须**恰好命中 1 个**；缺失、命中多个、不同 selector
+  指向同一控件、空数组、非数组、超 32、label 不在 1..120、role 不在 1..80、selector 重复 →
+  **程序侧 fail-closed：不调用 chooser、不派发、也不退回整页**（参数错误甚至在读窗口之前就返回）。
+- **执行前（G2）**：仍只重读**一次**同一窗口 / 同 target+tab 快照（不重读两次作废旧 token / ref）。
+  显式范围下对**整个圈定集合**重新按 selector 匹配并逐个比较 `role / label / value / actions`
+  （`sameSemanticTarget`，与 `resolveFreshCandidate` 同一份规则）；任何一个候选变化 / 消失 / 变歧义都中止。
+  只看选中项不够：范围本身变了，就无法确认快速模型是在同一组 choice 里做的决定。
+  派发使用这次重读里的新 `element_token` / `ref`；候选 ID / 描述 / **收集顺序**原样透传（不按 selector 排序）。
+- **模型输入**：只有圈定后的候选 id + 程序生成的动作描述（与 §9.14 一致）。selector 数组不复制进 `state`、
+  不出现 raw value / token / tool / 测试答案；`captureId` 仍不进模型输入。
+- **默认兼容**：不传 `candidates` 时行为与旧实现相同（整页有界候选、含容器；G2 只校选中项）。
+- **置信度边界（重要）**：Laya / Jev 的 choice 概率与 k 有关，候选集合变小会改变熵、`max(p)` 与换算后的 gate；
+  因此「先收窄」**不等于**准确率或置信度提升，不能用本页上一轮 5 次调用结果对照。需要真实测量另排。
+- **测试（实跑，Node v24.19.0，临时 HOME/TMPDIR/DATA/WORKSPACE，假 MCP ctx，不启模型 / 浏览器 / driver）**：
+  `fast-computer-tool.test.ts` **40/40**（含 15 条新增：子集透传与选中不是整页第一个、空白精确 / 模糊拒、
+  空/单项/非数组/超 32/重复/超长零调用、重复指向同一控件、第 33 个控件诚实拒绝、**未选中项**变化零派发、
+  重读后 selector 消失零派发、默认兼容、classifier 输入无 raw / token 且不复制 selector、浏览器 ref 子集派发、
+  `narrowCandidates` 纯函数）；`fast-computer*` + benchmark 相关 **132/132**；server `tsc --noEmit` exit 0。
+- **未验 / 不得宣称**：真实浏览器 / 原生窗口 / Laya 均未跑；selector 措辞（主模型从快照文字写出来）在真实页面上
+  是否容易写错未测；旧 stepwise 报告仍是旧代码结果，读 `fastStepKinds` 而不是任务级 `fallbacks` / `selectedByFast`。
