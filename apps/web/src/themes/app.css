@@ -276,6 +276,22 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 .pa-think-follow:hover { background: var(--hover); color: var(--fg); }
 .pa-think-follow.on { color: var(--acc); background: var(--acc-soft); }
 
+/* 左上角闪电（请求级 Fast）：44px 透明命中区 + 20–22px 图标；开关用 aria-pressed，
+   不可用用 aria-disabled（仍可聚焦看原因，不用 native disabled 把 tooltip 也禁掉）。
+   颜色全走 token，主题 / DIY 只改表现层；开启高亮、关闭低强调。 */
+.pa-think-fastwrap { display: grid; place-items: center; width: 22px; height: 22px; }
+.pa-think-fast { display: grid; place-items: center; width: 44px; height: 44px; margin: -11px; padding: 0; border: 0; border-radius: 12px; background: transparent; color: var(--mut2); cursor: pointer; transition: color var(--pa-dur), background var(--pa-dur), opacity var(--pa-dur); }
+.pa-think-fast:hover { background: var(--hover); color: var(--fg); }
+.pa-think-fast.on { color: var(--acc); background: var(--acc-soft); }
+.pa-think-fast[aria-disabled="true"] { cursor: not-allowed; opacity: .5; }
+.pa-think-fast[aria-busy="true"] { cursor: progress; opacity: .7; }
+.pa-think-fast:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+/* 气泡里的短行（复用 .pa-help-pop 的气泡本体） */
+.pa-tip-line { margin-top: 4px; }
+[data-skin=glass] .pa-think-fast.on { box-shadow: 0 0 calc(12px * var(--mo-glow, 1)) color-mix(in srgb, var(--acc) 35%, transparent); }
+[data-skin=pixel] .pa-think-fast { border-radius: 0; }
+[data-skin=pixel] .pa-think-fast.on { box-shadow: 2px 2px 0 var(--acc-soft); }
+
 /* 轨道：粗胶囊（36px）+ 实心高对比圆钮（40px，命中区仍是整条 44px 高轨道）；
    滑钮在最左 / 最右都完整落在轨道内，不越出弹层。 */
 .pa-think-track { position: relative; height: 44px; padding: 0 20px; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }

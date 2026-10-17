@@ -9,6 +9,7 @@ import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
 import Markdown from "./Markdown";
 import { splitThinking } from "../thinking";
 import { fmtMoney, fmtTok, type MsgUsage, useFx } from "./usage-fmt";
+import { fastStatusDetail, fastStatusText, type MessageFastMeta } from "../fast-mode";
 import { Avatar, cx } from "./ui";
 import { ProposalCard } from "./RoomCards";
 import { MessageActions, QuotedMessage, type MessageInteraction } from "./MessageReply";
@@ -195,7 +196,20 @@ export function BotPart({ p, live, busy, renderSubagent, onQuote, onJump, intera
 			</div>
 			{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} /> : null}
 			{m.meta.usage && m.status === "done" ? <UsageLine u={m.meta.usage as MsgUsage} model={String(m.meta.model ?? "")} /> : null}
+			{m.meta.fast && m.status === "done" ? <FastLine meta={m.meta.fast as MessageFastMeta} /> : null}
 		</>
+	);
+}
+
+/** 每条回复的 Fast 状态：只在真的请求了 / 服务回显了时出现；回显 default 明确写「被降级」。 */
+function FastLine({ meta }: { meta: MessageFastMeta }) {
+	const text = fastStatusText(meta);
+	if (!text) return null;
+	const warn = meta.observedKind === "standard" || meta.status === "conflict";
+	return (
+		<div className={cx("pa-usage pa-fast-line", warn && "warn")} title={fastStatusDetail(meta)} data-testid="msg-fast">
+			{text}
+		</div>
 	);
 }
 

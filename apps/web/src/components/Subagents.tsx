@@ -8,12 +8,13 @@ import { Avatar } from "./ui";
 import { BotTurn, group, SystemMsg, UserMsg } from "./ChatMessages";
 import { useComposerKeys } from "../composer";
 import { useConfiguredModels, useModelPicks, ModelPoolButton, ThinkingButton, THINKING_LABEL } from "./ModelPicker";
+import type { FastControl } from "./ThinkingSlider";
 import { fitThinkingLevel } from "../thinking-slider";
 import { thinkingLevelsFor } from "@pi-assistant/shared";
 import { TaskInstructions, TaskRow, taskLive, taskTitle } from "./Tasks";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string; reasoning?: boolean };
-interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; thinking: string | null; resolvedThinking?: string; last_activity_at: number; error_reason: string | null; result_summary: string | null; attempt?: number; retry_at?: number | null; canResume?: boolean; resumeReason?: string; needsVerify?: boolean; pendingToolNames?: string[] }
+interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; thinking: string | null; resolvedThinking?: string; /** 请求级 Fast 覆盖：1 开 / 0 关 / null 跟随所属助理 */ fast?: number | null; resolvedFast?: boolean; last_activity_at: number; error_reason: string | null; result_summary: string | null; attempt?: number; retry_at?: number | null; canResume?: boolean; resumeReason?: string; needsVerify?: boolean; pendingToolNames?: string[] }
 const labels: Record<string, string> = { queued: "排队中", running: "运行中", stalled: "暂无进展", done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "重启中断" };
 /** 结果未知的工具名（needsVerify 时给用户看的危险名单；读不到会话时没有具体名字，给一句兜底）。 */
 const verifyNames = (r: Subagent) => r.pendingToolNames?.length ? r.pendingToolNames.join("、") : "有工具调用结果未落库";
@@ -64,6 +65,22 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 	const action = async (kind: "stop" | "retry" | "resume") => { try { await api(`/api/subagents/${id}/${kind}`, { method: "POST" }); if (kind === "retry") onClose(); else setD(await api<NonNullable<typeof d>>(`/api/subagents/${id}`)); } catch (e) { setErr(String(e)); } };
 	// 改思考强度：写单个子代理的覆盖值（null = 跟随助理默认）；运行中后端会立即切换（不动主会话）
 	const setThinking = async (v: string | null) => { try { await api(`/api/subagents/${id}`, { method: "PATCH", json: { thinking: v } }); setD(await api<NonNullable<typeof d>>(`/api/subagents/${id}`)); } catch (e) { setErr(String(e)); } };
+	// 改 Fast：单个子代理覆盖（null = 跟随所属助理）；只动 fast，不碰思考强度。保存中禁重复，失败回滚并给原因
+	const [fastPending, setFastPending] = useState(false);
+	const [fastErr, setFastErr] = useState("");
+	const setFast = async (v: boolean | null) => {
+		if (fastPending) return;
+		const prev = d;
+		setFastPending(true); setFastErr("");
+		if (d) setD({ ...d, subagent: { ...d.subagent, fast: v === null ? null : v ? 1 : 0, resolvedFast: v === null ? agent?.fast === true : v } });
+		try {
+			await api(`/api/subagents/${id}`, { method: "PATCH", json: { fast: v } });
+			setD(await api<NonNullable<typeof d>>(`/api/subagents/${id}`));
+		} catch {
+			if (prev) setD(prev);
+			setFastErr("保存失败，已恢复原状态");
+		} finally { setFastPending(false); }
+	};
 	const send = async () => {
 		if (!text.trim() || sending) return;
 		setSending(true); setErr("");
@@ -74,6 +91,21 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 		} catch (e) { setErr(String(e)); }
 		finally { setSending(false); }
 	};
+	// 左上角闪电：按子代理实际模型的协议能力；跟随态显示所属助理的值，点一下变成独立覆盖
+	const subModel = d ? dm.models.find((m) => m.provider === d.subagent.model_provider && m.id === d.subagent.model_id) : undefined;
+	const fastCap = subModel?.fast ?? { capability: "unsupported" as const, reason: "当前接口暂未接入 Fast" };
+	const fast: FastControl | undefined = d
+		? {
+				on: d.subagent.fast === 1 ? true : d.subagent.fast === 0 ? false : d.subagent.resolvedFast === true,
+				capability: fastCap.capability,
+				reason: fastCap.reason,
+				mode: d.subagent.fast === 1 || d.subagent.fast === 0 ? "override" : "follow",
+				pending: fastPending,
+				error: fastErr || undefined,
+				onToggle: () => void setFast(!(d.subagent.fast === 1 ? true : d.subagent.fast === 0 ? false : d.subagent.resolvedFast === true)),
+				onFollow: () => void setFast(null),
+			}
+		: undefined;
 	const rows = group(d?.messages ?? []);
 	// 按键统一走 composer.ts（发送快捷键偏好 + 输入法防误发），与单聊 / 群聊一致
 	const keys = useComposerKeys(send, undefined, id);
@@ -109,7 +141,7 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 					{/* 思考强度放在输入栏工具栏（与主会话一致），不再占 header；档位/跟随/持久化契约不变 */}
 					<div className="pa-composer-tools">
 						<span className="min-w-0 flex-1 truncate text-xs text-mut2">{queued ? "子代理排队中，说「停」可取消" : running ? "子代理正在工作" : "继续这个子代理会话"} · {keys.hint}</span>
-						{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} effective={d.subagent.resolvedThinking ?? null} modelName={d.subagent.model_id} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} title={clampNote} placement="up" loading={dm.loading} error={dm.error} onRetry={dm.reload} text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
+						{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} effective={d.subagent.resolvedThinking ?? null} modelName={d.subagent.model_id} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} title={clampNote} placement="up" loading={dm.loading} error={dm.error} onRetry={dm.reload} fast={fast} text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
 					</div>
 					{stoppable && !text.trim() ? <button className="pa-send" onClick={() => void action("stop")} aria-label="停止子代理"><Square size={13} fill="currentColor" /></button> : <button className="pa-send" disabled={sending || !text.trim()} onClick={() => void send()} aria-label="发送给子代理" title={keys.hint} aria-keyshortcuts={keys.keyshortcuts}><ArrowUp className="pa-ic" /></button>}
 				</div>

@@ -171,9 +171,9 @@ export function setRoomHooks(h: RoomHooks) {
  */
 function fastMeta(snap: FastSnapshot | undefined) {
 	if (!snap) return null;
-	const relevant = snap.requested || snap.observedKind !== "unknown" || snap.status === "conflict" || snap.status === "externally-configured";
+	const relevant = snap.requested || snap.observedKind !== "unknown" || snap.reportedKind !== "unknown" || snap.status === "conflict" || snap.status === "externally-configured";
 	if (!relevant) return null;
-	return { requested: snap.requested, status: snap.status, capability: snap.capability, api: snap.api, observed: snap.observed, observedKind: snap.observedKind, ...(snap.reason ? { reason: snap.reason } : {}) };
+	return { requested: snap.requested, status: snap.status, capability: snap.capability, api: snap.api, observed: snap.observed, observedKind: snap.observedKind, reported: snap.reported, reportedKind: snap.reportedKind, ...(snap.reason ? { reason: snap.reason } : {}) };
 }
 
 /** 把一个 Pi 会话的事件落盘并广播。 */

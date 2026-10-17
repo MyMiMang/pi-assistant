@@ -12,9 +12,10 @@
  * - 预览动效只播一次（320–700ms），播完即停；组件卸载清理计时器，最小化动态效果时完全不播。
  */
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { Zap } from "lucide-react";
 import { THINKING_DESC, THINKING_LABEL, THINKING_PREVIEW_MS, shouldCommitThinking, sliderIndexForKey, sliderIndexFromX, thinkingSliderView, thinkingStars } from "../thinking-slider";
 import { watchMoStyle } from "../themes/motion-signals";
-import { Help, cx } from "./ui";
+import { Help, cx, useHoverTip } from "./ui";
 
 /** 最小化动态效果：组件内是否播预览动画（CSS 也有一份，这里用来提前跳过计时器）。 */
 function useReducedMotion(): boolean {
@@ -59,7 +60,25 @@ export interface ThinkingSliderProps {
 	autoFocus?: boolean;
 }
 
-export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, autoFocus = false }: ThinkingSliderProps) {
+/**
+ * 左上角闪电（Fast）控件的状态。Fast 是**请求级参数**（OpenAI service_tier），与思考强度 / 模型 / 电脑快速操作模型都无关：
+ * - `on`：这个上下文实际会不会请求 Fast（子代理「跟随」时就是所属助理的值）；
+ * - `capability`：`supported` / `requestable-unverified` / `unsupported`（协议不支持 / 本地托管）；
+ * - `mode`：子代理「跟随 / 独立覆盖」，主会话不传；独立覆盖时给 `onFollow` 恢复跟随；
+ * - `pending`：保存中，禁用重复点击；`error`：保存失败已回滚的短说明。
+ */
+export interface FastControl {
+	on: boolean;
+	capability: "supported" | "requestable-unverified" | "unsupported";
+	reason?: string;
+	mode?: "follow" | "override";
+	pending?: boolean;
+	error?: string;
+	onToggle: () => void;
+	onFollow?: () => void;
+}
+
+export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, autoFocus = false, fast }: ThinkingSliderProps & { fast?: FastControl }) {
 	const view = thinkingSliderView({ levels, current, followLabel, effective });
 	const reduced = useReducedMotion();
 	const [idx, setIdx] = useState(view.index);
@@ -183,7 +202,8 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	if (view.kind === "unsupported") {
 		return (
 			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-				<Head testid={testid} current="不支持" modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />
+				<Head testid={testid} current="不支持" modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} />
+				<FastFollowNote fast={fast} />
 				<p className="pa-think-empty" data-testid={`${testid}-unsupported`}>
 					<b>{modelName ?? "这个模型"}</b> 不支持调整思考强度。
 				</p>
@@ -195,7 +215,8 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	if (view.kind === "fixed") {
 		return (
 			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-				<Head testid={testid} current={label(view.level)} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />
+				<Head testid={testid} current={label(view.level)} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} />
+				<FastFollowNote fast={fast} />
 				<p className="pa-think-empty" data-testid={`${testid}-fixed`}>
 					这个模型只有一档 <b>{label(view.level)}</b>，不需要调整。
 				</p>
@@ -213,7 +234,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 
 	return (
 		<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-			<Head testid={testid} current={curText} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />
+			<Head testid={testid} current={curText} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} />
 
 			{view.unsupportedPick && (
 				<p className="pa-think-norm" role="note">
@@ -247,6 +268,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 				较高强度可能更慢，并可能增加用量
 				<Help>这个模型支持 {count} 档（Pi 的 7 档里的子集）。档位含义、速度和用量都取决于模型。</Help>
 			</p>
+			<FastFollowNote fast={fast} />
 		</div>
 	);
 }
@@ -256,12 +278,12 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
  * 调用方给了 followLabel 时出现（主会话没有继承语义，不摆一个点了没用的按钮）。
  * 跟随状态用图标按钮的 aria-pressed + accent 底色表示，实际生效档位进 aria-label / title，不占一行。
  */
-function Head({ testid, current, modelName, followLabel, following, effective, onPick }: { testid: string; current: string; modelName?: string; followLabel?: string; following?: boolean; effective?: string | null; onPick?: (level: string | null) => void }) {
+function Head({ testid, current, modelName, followLabel, following, effective, onPick, fast }: { testid: string; current: string; modelName?: string; followLabel?: string; following?: boolean; effective?: string | null; onPick?: (level: string | null) => void; fast?: FastControl }) {
 	const actual = effective ? (THINKING_LABEL[effective] ?? effective) : "—";
 	const followText = followLabel ? `${followLabel} · 当前实际：${actual}` : "";
 	return (
 		<div className="pa-think-head" role="group" aria-label="思考强度">
-			<span className="pa-think-glyph" aria-hidden="true"><ThinkGlyph /></span>
+			<FastButton testid={testid} fast={fast} />
 			<span className="pa-think-titles">
 				<b className="pa-think-cur" data-testid={`${testid}-current`}>{current}</b>
 				{modelName ? <span className="pa-think-model" title={modelName}>{modelName}</span> : null}
@@ -277,13 +299,66 @@ function Head({ testid, current, modelName, followLabel, following, effective, o
 	);
 }
 
-/** 轻量「思考」标记（不是品牌 logo）：四角星，颜色跟随 currentColor。 */
-function ThinkGlyph() {
+/**
+ * 左上角闪电：**真按钮**（开 / 关），不是装饰图标；原来的四角星彻底移除。
+ * - 44px 透明命中区 + 20–22px 图标；`aria-pressed` 表示开关，`aria-disabled` 表示不可用（仍可聚焦看原因）；
+ * - 悬停约 450ms 才出短介绍（复用 Help 的气泡与关闭规则），focus 立即出；触摸点按会同时聚焦出说明并切换；
+ * - 保存中 `aria-busy` 且不响应重复点击；失败由调用方回滚并给 `error`。
+ */
+function FastButton({ testid, fast }: { testid: string; fast?: FastControl }) {
+	const tip = useHoverTip(450);
+	const supported = !!fast && fast.capability !== "unsupported";
+	const disabled = !supported || !!fast?.pending;
+	const on = !!fast?.on;
+	const stateText = !fast
+		? "Fast 按助理开关：在助理的模型菜单里设置"
+		: !supported
+			? `不可用：${fast.reason ?? "当前接口暂未接入 Fast"}`
+			: on
+				? "已开：请求 service_tier=priority"
+				: "已关：不附加任何参数，服务商默认档不变";
 	return (
-		<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">
-			<path d="M8 2.2l1.3 3.4 3.4 1.3-3.4 1.3L8 11.6 6.7 8.2 3.3 6.9l3.4-1.3z" />
-			<path d="M12.6 11.4l.6 1.5 1.5.6-1.5.6-.6 1.5-.6-1.5-1.5-.6 1.5-.6z" opacity=".7" />
-		</svg>
+		<span className="pa-think-fastwrap">
+			<button
+				type="button"
+				ref={tip.ref}
+				className={cx("pa-think-fast", on && supported && "on")}
+				aria-pressed={fast ? on : undefined}
+				aria-disabled={disabled || undefined}
+				aria-busy={fast?.pending || undefined}
+				aria-label={`快速模式（Fast）：${stateText}`}
+				data-testid={`${testid}-fast`}
+				data-on={on ? "1" : undefined}
+				onClick={() => {
+					if (disabled) return;
+					fast?.onToggle();
+				}}
+				{...tip.triggerProps}
+			>
+				<Zap size={21} strokeWidth={2} aria-hidden="true" />
+			</button>
+			{tip.renderTip(
+				<>
+					<b>Fast 快速模式</b>
+					<div className="pa-tip-line">优先处理请求、可能更快；不改思考强度，也不换模型。</div>
+					<div className="pa-tip-line" data-testid={`${testid}-fast-state`}>{stateText}</div>
+					<div className="pa-tip-line">只对下一次请求生效，已发出的请求不变。</div>
+					{fast?.capability === "requestable-unverified" && <div className="pa-tip-line">服务不一定支持；可能增加用量 / 费用（部分站点约 2 倍或更高），以服务商账单为准。</div>}
+					{fast?.error && <div className="pa-tip-line pa-tip-error" role="alert">{fast.error}</div>}
+				</>,
+			)}
+		</span>
+	);
+}
+
+/** 子代理独立设置 Fast 时的「恢复跟随」：只在有覆盖时出现，不占主界面。 */
+function FastFollowNote({ fast }: { fast?: FastControl }) {
+	if (!fast || fast.mode !== "override" || !fast.onFollow) return null;
+	return (
+		<p className="pa-think-note" data-testid="fast-follow-note">
+			Fast 已单独设置
+			<button type="button" className="pa-think-mini" onClick={() => fast.onFollow?.()}>恢复跟随助理</button>
+		</p>
 	);
 }
 

@@ -113,14 +113,40 @@ export function planFastRequest(payload: unknown, model: { api?: string; provide
 	return { ...base, payload: { ...payload, service_tier: FAST_SERVICE_TIER }, changed: true, status: "injected", requested: true };
 }
 
-/** 从 provider 原始事件里读实际档位（只读、只认公开响应字段）。 */
-export function observedFastTier(data: unknown): string | null {
+/** 从 provider 原始事件里读 tier 字段（只读、只认公开响应字段）。 */
+function tierOf(data: unknown): string | null {
 	if (!isPlainObject(data)) return null;
 	const direct = typeof data.service_tier === "string" ? data.service_tier : null;
 	if (direct) return direct;
 	const response = data.response;
 	if (isPlainObject(response) && typeof response.service_tier === "string") return response.service_tier;
 	return null;
+}
+
+/** Responses / Codex 的终止事件：只有它们的 response.service_tier 才可能是实际使用的档位。 */
+const TERMINAL_EVENT_TYPES = new Set(["response.completed", "response.done", "response.incomplete", "response.failed"]);
+
+/**
+ * 实际档位：**只取终止事件**（`response.completed/done/incomplete/failed`）。
+ * sub2api `upstream_response_model.go:78-90` 明确：非终止事件（如 `response.created`）回显的是**请求的** tier，
+ * 不能当作 accepted / actual；把它当「已加速」是误判。
+ */
+export function observedFastTier(data: unknown): string | null {
+	if (!isPlainObject(data)) return null;
+	const type = typeof data.type === "string" ? data.type : "";
+	if (!TERMINAL_EVENT_TYPES.has(type)) return null;
+	return tierOf(data);
+}
+
+/**
+ * 非终止回显（`response.created`、Chat Completions 流式 chunk 等）：只能算「服务回显了某个值」，
+ * 来源可能是 requested（中转桥接会把 Responses 的 created 回显搬进 chunk），**不证明实际加速**。
+ */
+export function reportedFastTier(data: unknown): string | null {
+	if (!isPlainObject(data)) return null;
+	const type = typeof data.type === "string" ? data.type : "";
+	if (TERMINAL_EVENT_TYPES.has(type)) return null;
+	return tierOf(data);
 }
 
 /** 把回显值收敛成界面语义：只有 priority/fast 才算观测到 Fast；default 是标准档。 */
@@ -141,9 +167,12 @@ export interface FastSnapshot {
 	status: FastRequestStatus;
 	capability: FastCapability;
 	api: string | null;
-	/** 服务回显的实际档位（原样短字符串，最多 32 字符；不存 body / header） */
+	/** 终止事件回显的档位（原样短字符串，最多 32 字符；不存 body / header） */
 	observed: string | null;
 	observedKind: "fast" | "standard" | "other" | "unknown";
+	/** 非终止回显（created / chunk）：来源可能是 requested，不能当实际档位 */
+	reported: string | null;
+	reportedKind: "fast" | "standard" | "other" | "unknown";
 	reason?: string;
 }
 
@@ -164,7 +193,7 @@ interface FastAgentLike {
 }
 type FastModelLike = { api?: string; provider?: string };
 
-const EMPTY: FastSnapshot = { requested: false, enabled: false, status: "off", capability: "unsupported", api: null, observed: null, observedKind: "unknown" };
+const EMPTY: FastSnapshot = { requested: false, enabled: false, status: "off", capability: "unsupported", api: null, observed: null, observedKind: "unknown", reported: null, reportedKind: "unknown" };
 
 /**
  * 挂到已有会话上（公开字段赋值，不改 SDK）：
@@ -188,15 +217,19 @@ export function attachFastMode(session: { agent: FastAgentLike }, resolveEnabled
 			enabled = false;
 		}
 		const plan = planFastRequest(effective, model as FastModelLike, enabled);
-		state = { requested: plan.requested, enabled, status: plan.status, capability: plan.capability, api: plan.api, observed: null, observedKind: "unknown", ...(plan.reason ? { reason: plan.reason } : {}) };
+		state = { requested: plan.requested, enabled, status: plan.status, capability: plan.capability, api: plan.api, observed: null, observedKind: "unknown", reported: null, reportedKind: "unknown", ...(plan.reason ? { reason: plan.reason } : {}) };
 		return plan.changed ? plan.payload : undefined;
 	};
 
 	agent.onProviderStreamEvent = async (data, model) => {
 		if (prevEvent) await prevEvent(data, model);
-		const tier = observedFastTier(data);
-		if (!tier) return;
-		state = { ...state, observed: tier.slice(0, 32), observedKind: classifyObservedTier(tier) };
+		const actual = observedFastTier(data);
+		if (actual) {
+			state = { ...state, observed: actual.slice(0, 32), observedKind: classifyObservedTier(actual) };
+			return;
+		}
+		const echoed = reportedFastTier(data);
+		if (echoed) state = { ...state, reported: echoed.slice(0, 32), reportedKind: classifyObservedTier(echoed) };
 	};
 
 	return { snapshot: () => ({ ...state }) };

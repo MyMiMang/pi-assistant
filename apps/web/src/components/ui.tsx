@@ -1,5 +1,5 @@
 import { Check, ChevronDown, CircleHelp, type LucideIcon, X } from "lucide-react";
-import { type ButtonHTMLAttributes, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ButtonHTMLAttributes, type ReactNode, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchBlob } from "../api";
 
@@ -140,43 +140,121 @@ export function fmtTime(t: number) {
 /** 纯文本场景（下拉选项、标签）里的头像：图片头像不显示，只留 emoji/字母 */
 export const avatarText = (avatar: string) => (avatar.startsWith("img:") ? "" : avatar);
 
-/** 「?」帮助图标：电脑上鼠标悬停显示，手机上点一下显示（再点或点别处收起）。详细说明放这里，正文只留简短标签。
- *  可访问性：Tab 聚焦即打开、Escape 关闭、点外部关闭；Escape 只关这一层（不会连底层设置弹窗一起关），
- *  关掉后焦点仍留在按钮上但不立刻重开（等下一次真正的聚焦 / 点击）。 */
-export function Help({ children, className }: { children: ReactNode; className?: string }) {
-	const [open, setOpen] = useState(false);
-	const [pos, setPos] = useState<{ x: number; y: number; up: boolean }>({ x: 0, y: 0, up: false });
-	const ref = useRef<HTMLButtonElement>(null);
-	const popId = useId();
-	// Escape 关闭后抑制「focus 立即重开」：保持焦点在按钮上但不弹，直到用户真的移开再回来（onBlur 复位）。
-	const suppressFocus = useRef(false);
-	const show = () => {
-		const r = ref.current?.getBoundingClientRect();
-		if (r) setPos({ x: Math.max(12, Math.min(r.left - 8, innerWidth - 312)), y: r.bottom + 6 > innerHeight - 160 ? r.top - 6 : r.bottom + 6, up: r.bottom + 6 > innerHeight - 160 });
-		setOpen(true);
-	};
-	const close = () => setOpen(false);
+/** 气泡锚点：优先在触发器下方，靠近视口底部时翻到上方；左右夹在视口内（与旧 Help 完全同一套数值）。 */
+type BubblePos = { x: number; y: number; up: boolean };
+function bubblePos(anchor: HTMLElement | null): BubblePos {
+	const r = anchor?.getBoundingClientRect();
+	if (!r) return { x: 0, y: 0, up: false };
+	return { x: Math.max(12, Math.min(r.left - 8, innerWidth - 312)), y: r.bottom + 6 > innerHeight - 160 ? r.top - 6 : r.bottom + 6, up: r.bottom + 6 > innerHeight - 160 };
+}
+/** 气泡本体（portal 到 body，避免被弹层裁切）。Help 与 HoverTip 共用，testid 保持旧契约。 */
+function Bubble({ id, pos, testid, children }: { id: string; pos: BubblePos; testid: string; children: ReactNode }) {
+	return createPortal(
+		<div id={id} className="pa-help-pop" role="tooltip" data-testid={testid} style={{ left: pos.x, ...(pos.up ? { bottom: innerHeight - pos.y } : { top: pos.y }) }}>
+			{children}
+		</div>,
+		document.body,
+	);
+}
+/** 打开期间：点外部 / 滚动 / Escape 关闭。Escape 在捕获阶段只关这一层（不误关底层菜单 / 设置弹窗）。 */
+function useDismissBubble(open: boolean, anchor: RefObject<HTMLElement | null>, popId: string, close: () => void, onEscape?: () => void) {
 	useEffect(() => {
 		if (!open) return;
 		const outside = (e: Event) => {
 			const t = e.target as Node;
-			if (ref.current?.contains(t)) return;
+			if (anchor.current?.contains(t)) return;
 			if (document.getElementById(popId)?.contains(t)) return;
 			close();
 		};
-		// 捕获阶段拦下 Escape：只关气泡，不把底层设置弹窗一起关掉。
 		const esc = (e: KeyboardEvent) => {
 			if (e.key !== "Escape") return;
 			e.preventDefault();
 			e.stopPropagation();
-			suppressFocus.current = true;
+			onEscape?.();
 			close();
 		};
 		document.addEventListener("pointerdown", outside);
 		document.addEventListener("keydown", esc, true);
 		addEventListener("scroll", outside, true);
 		return () => (document.removeEventListener("pointerdown", outside), document.removeEventListener("keydown", esc, true), removeEventListener("scroll", outside, true));
-	}, [open, popId]);
+	}, [open, anchor, popId, close, onEscape]);
+}
+
+/**
+ * 延迟悬停提示：给「本身就是一个按钮」的控件用（不再套一个 ? 图标，避免按钮套按钮）。
+ * 鼠标悬停 delayMs 后才显示；focus 立即显示（键盘 / 触摸都能看到说明）；移出 / 失焦关闭。
+ * 与 Help 共用同一套气泡定位、样式和 Escape / 外部点击规则。
+ */
+export function useHoverTip(delayMs = 450) {
+	const [open, setOpen] = useState(false);
+	const [pos, setPos] = useState<BubblePos>({ x: 0, y: 0, up: false });
+	const ref = useRef<HTMLButtonElement>(null);
+	const popId = useId();
+	const timer = useRef<number | null>(null);
+	const clear = useCallback(() => {
+		if (timer.current) {
+			window.clearTimeout(timer.current);
+			timer.current = null;
+		}
+	}, []);
+	const hide = useCallback(() => {
+		clear();
+		setOpen(false);
+	}, [clear]);
+	const show = useCallback(() => {
+		clear();
+		setPos(bubblePos(ref.current));
+		setOpen(true);
+	}, [clear]);
+	const schedule = useCallback(() => {
+		clear();
+		timer.current = window.setTimeout(() => {
+			timer.current = null;
+			setPos(bubblePos(ref.current));
+			setOpen(true);
+		}, delayMs);
+	}, [clear, delayMs]);
+	useEffect(() => clear, [clear]);
+	useDismissBubble(open, ref, popId, hide);
+	return {
+		ref,
+		open,
+		popId,
+		show,
+		hide,
+		schedule,
+		/** 挂到触发按钮上：悬停延迟、focus 立即、移出 / 失焦关闭 */
+		triggerProps: {
+			onMouseEnter: schedule,
+			onMouseLeave: hide,
+			onFocus: show,
+			onBlur: hide,
+			"aria-describedby": open ? popId : undefined,
+		},
+		/** 渲染气泡内容（只在打开时挂载）；内容由调用方给，样式 / 定位 / 关闭规则共用 */
+		renderTip: (children: ReactNode) => (open ? <Bubble id={popId} pos={pos} testid="hover-tip">{children}</Bubble> : null),
+	};
+}
+
+/** 「?」帮助图标：电脑上鼠标悬停显示，手机上点一下显示（再点或点别处收起）。详细说明放这里，正文只留简短标签。
+ *  可访问性：Tab 聚焦即打开、Escape 关闭、点外部关闭；Escape 只关这一层（不会连底层设置弹窗一起关），
+ *  关掉后焦点仍留在按钮上但不立刻重开（等下一次真正的聚焦 / 点击）。 */
+export function Help({ children, className }: { children: ReactNode; className?: string }) {
+	const [open, setOpen] = useState(false);
+	const [pos, setPos] = useState<BubblePos>({ x: 0, y: 0, up: false });
+	const ref = useRef<HTMLButtonElement>(null);
+	const popId = useId();
+	// Escape 关闭后抑制「focus 立即重开」：保持焦点在按钮上但不弹，直到用户真的移开再回来（onBlur 复位）。
+	const suppressFocus = useRef(false);
+	const show = () => {
+		setPos(bubblePos(ref.current));
+		setOpen(true);
+	};
+	const close = () => setOpen(false);
+	// 捕获阶段拦下 Escape：只关气泡，不把底层设置弹窗一起关掉；关掉后焦点留在按钮上但不立刻重开。
+	useDismissBubble(open, ref, popId, close, () => {
+		suppressFocus.current = true;
+	});
 	return (
 		<span className={cx("pa-help", className)}>
 			<button
@@ -200,13 +278,7 @@ export function Help({ children, className }: { children: ReactNode; className?:
 			>
 				<CircleHelp size={14} />
 			</button>
-			{open &&
-				createPortal(
-					<div id={popId} className="pa-help-pop" role="tooltip" data-testid="help-pop" style={{ left: pos.x, ...(pos.up ? { bottom: innerHeight - pos.y } : { top: pos.y }) }}>
-						{children}
-					</div>,
-					document.body,
-				)}
+			{open && <Bubble id={popId} pos={pos} testid="help-pop">{children}</Bubble>}
 		</span>
 	);
 }

@@ -24,7 +24,7 @@ export interface Agent {
 	id: string; name: string; avatar: string; color: string; persona: string; description: string; status: string; unread: number;
 	model: { provider: string; id: string } | null; model_provider: string | null; model_id: string | null; workspace: string;
 	last?: { content: string; role: string; created_at: number } | null;
-	conversation_id?: string; memory_provider?: string | null; thinking?: string; thinkingSetting?: string | null;
+	conversation_id?: string; memory_provider?: string | null; thinking?: string; thinkingSetting?: string | null; /** 请求级 Fast（OpenAI service_tier=priority）：独立于 thinking / 模型 */ fast?: boolean;
 	/** user = 我的助理；room = 群专属助理（不在侧边栏） */
 	scope?: "user" | "room"; room_id?: string | null;
 }
