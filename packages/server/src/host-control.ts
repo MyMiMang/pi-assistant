@@ -423,9 +423,8 @@ export async function setHostPaused(v: boolean) {
 /** MCP 命令：按助理档位连到对应的守护进程 */
 export function hostMcpCommand(agentId: string): NativeLaunchCommand {
 	// `cua-driver mcp` 也是原生进程，而且它是经 Pi 的 StdioTransport 起的：那条路会把 process.env 合并回来，
-	// 只传一份缺键的 env 删不掉 `CFFIXED_USER_HOME` / 合成 `TMPDIR`。所以用 `env -i` 把最终环境写进命令行。
-	// 扩展侧原本另塞的 `CUA_DRIVER_TELEMETRY` / `CUA_DRIVER_DISABLE_RUN_SCRIPT` 必须在这里（extra）一起带上，
-	// 否则会被 `env -i` 清掉（`nativeLaunchCommand().envReplaced === true` 时调用方额外传的 env 不生效）。
+	// 只传一份缺键的 env 删不掉 `CFFIXED_USER_HOME` / 合成 `TMPDIR`，因此由自有启动器在内存中删键后启动驱动。
+	// argv 只含待删键名、账户路径及下列固定开关，不包含整份环境；扩展侧开关在这里一起声明以保持一致。
 	return nativeLaunchCommand(
 		{ command: cuaPaths().exe, args: ["mcp", "--socket", socketPath(daemonKindOf(tierOf(agentId)))] },
 		{ syntheticRoots: [config.dataDir], extra: { CUA_DRIVER_TELEMETRY: "0", CUA_DRIVER_DISABLE_RUN_SCRIPT: "1" } },

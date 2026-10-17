@@ -181,9 +181,8 @@ export function createMcpInvoke(agentId: () => string | null): { invoke: Compute
 		if (!id) throw new Error("没有可用的助理实例，无法连接电脑后端");
 		const cmd: { command: string; args: string[]; env?: Record<string, string> } = prefix === "hostpc" ? hostMcpCommand(id) : cuaMcpCommand(id);
 		const client = new McpClient({ name: "pi-assistant-benchmark", version: "1.0.0", requestTimeoutMs: 30_000 });
-		// 原生驱动的 env 已经写在命令行里（`/usr/bin/env -i K=V … cua-driver mcp`，见 `nativeLaunchCommand`）：
-		// StdioTransport 默认会 `{...process.env, ...env}`，那条合并会让我们 delete 过的键（`CFFIXED_USER_HOME` /
-		// 合成 `TMPDIR`）从父进程重新长回来，所以最终环境不能靠这里的 env 对象。env 仍一起传，只作诊断。
+		// hostMcpCommand 使用自有启动器在内存中删除 CFFIXED_USER_HOME / 合成临时目录后启动驱动。
+		// StdioTransport 默认合并父环境，单靠缺键的 env 对象不能完成删除；启动器使这条公开 MCP 路径也生效。
 		await client.connect(new StdioTransport({ command: cmd.command, args: cmd.args, ...(cmd.env ? { env: cmd.env } : {}), stderr: "pipe", onStderr: () => {} }));
 		clients.set(prefix, client);
 		return client;

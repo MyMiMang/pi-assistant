@@ -150,16 +150,25 @@ test("我们自己的 StdioTransport：inheritEnv:false + env 也是全量替换
 });
 
 test("生产形态：HOME 本来就对时，最终环境保留真实 TMPDIR（不误剥）", async () => {
-	const realTmp = process.env.TMPDIR;
-	if (!realTmp) return; // 没有真实 TMPDIR 的环境（如某些 CI）跳过这条形态断言
-	const cmd = nativeLaunchCommand({ command: process.execPath, args: ["-e", ECHO_SCRIPT] }, { realHome: REAL_HOME, syntheticRoots: [SYNTH_DATA] });
-	assert.equal(cmd.stripped.length, 0);
-	const transport = new StdioTransport({ command: cmd.command, args: cmd.args, stderr: "pipe" });
+	// 显式构造生产形态，不能把测试运行器的合成 HOME / TMPDIR 当作生产输入。
+	// 路径只作环境哨兵，不访问其目录；finally 恢复测试进程的隔离环境。
+	const restore = polluteParentEnv();
+	const realTmp = "/var/tmp/pia-native-production-fixture";
+	process.env.HOME = REAL_HOME;
+	process.env.TMPDIR = realTmp;
+	for (const key of ["CFFIXED_USER_HOME", "TEMP", "TMP"]) delete process.env[key];
 	try {
-		const seen = await childEnvOf(transport);
-		assert.equal(seen.HOME, REAL_HOME);
-		assert.equal(seen.TMPDIR, realTmp);
+		const cmd = nativeLaunchCommand({ command: process.execPath, args: ["-e", ECHO_SCRIPT] }, { realHome: REAL_HOME, syntheticRoots: [SYNTH_DATA] });
+		assert.equal(cmd.stripped.length, 0);
+		const transport = new StdioTransport({ command: cmd.command, args: cmd.args, stderr: "pipe" });
+		try {
+			const seen = await childEnvOf(transport);
+			assert.equal(seen.HOME, REAL_HOME);
+			assert.equal(seen.TMPDIR, realTmp);
+		} finally {
+			await transport.close();
+		}
 	} finally {
-		await transport.close();
+		restore();
 	}
 });
