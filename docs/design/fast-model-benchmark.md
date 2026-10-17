@@ -144,41 +144,52 @@
 
 1. `scripts/laya-benchmark-driver-smoke.mjs` 过去默认连**已安装 App 的守护进程 socket**（生产 Laya 用的那个）；而且**改 MCP 的 env 不会改已运行 daemon 的环境**——daemon 早就带着旧环境起来了。所以即使脚本跑绿，也不能说明 daemon 侧污染已解决。现在脚本**必须显式**给 `PIA_CUA_SOCKET`，否则直接退出（不再默认连生产 socket）。
 2. 正确验收（待授权，单独测试槽）：
-   - 起一个**本次独占**的 daemon：独立 `PIA_DATA_DIR`（socket 落在它下面）+ 本次专用 `CUA_DRIVER_BROWSER_PROFILE_ROOT`，环境明确是原生（`HOME` = OS 账户家目录、无 `CFFIXED_USER_HOME`、无合成 `TMPDIR`）；
+   - 起一个**本次独占**的 daemon：独立 `PIA_DATA_DIR`（socket 落在它下面）+ 本次专用 `CUA_DRIVER_BROWSER_PROFILE_ROOT`，daemon 那一侧的环境明确是原生（`HOME` = OS 账户家目录、无 `CFFIXED_USER_HOME`、无合成 `TMPDIR`）——但**服务进程自己仍必须用临时 HOME / TMPDIR**（不得把“原生子进程需要真实 HOME”误推到服务进程上）；
    - 用生产同一套 `hostMcpCommand()`（启动器 + 全量替换）连它，跑 §9.5 的链路；
    - 只启**一个**自有浏览器；结束时 `finally` 关自有浏览器并 `stop` 自有 socket 的 daemon，**不碰生产 App 的 socket / Laya**；
-   - 证据：daemon 启动时的 env 断言（白名单：HOME / CFFIXED / TMPDIR 三个布尔与值）+ 驱动自报 pid + 真实动作双证据；不打印其它 env、不读 token / credentials。
-3. 真实 Laya 能力验收要走**生产的 `buildChooser` / `selectFastAction`**，不能用脚本关键词 chooser 冒充（那样只是链路 smoke，不是模型 4/4）。优先用本机回环桥接**已运行**的 Laya 服务；不得读 token / credentials；若只能自建 runtime，必须用正式 API 停掉原进程并外部 `finally` 恢复。
-4. ~~本分支当前没有跑任何真实浏览器 / 驱动 / 模型~~：**2026-10-17 已按本节执行一次真实验收**（独占 socket daemon + 驱动自有隔离浏览器 + 真实本地 Laya），结果与限制见 §9.7。
+   - 证据：daemon 启动时的 env 断言（白名单：HOME / CFFIXED / TMPDIR 三个布尔与值；这是**交给启动器的输入配置**，不是从子进程读回的实际环境）+ 驱动自报 pid + 真实动作双证据；不打印其它 env、不读 token / credentials。
+3. 真实 Laya 能力验收要走**生产的 `buildChooser` / `selectFastAction`**，不能用脚本关键词 chooser 冒充（那样只是链路 smoke，不是模型 4/4）。优先用本机回环桥接**已运行**的 Laya 服务；不得读 token / credentials；若只能自建 runtime，必须用正式 API 停掉原进程并恢复。**恢复的覆盖边界要写清**：进程内清理（finally 路径 + 到点 abort）不等于外部 watchdog，进程被 SIGKILL / OOM 时不保证恢复（2026-10-17 本轮就是只有进程内清理，不得写成“已覆盖”）。
+4. ~~本分支当前没有跑任何真实浏览器 / 驱动 / 模型~~：**2026-10-17 已按本节执行真实验收**（独占 socket daemon + 驱动自有隔离浏览器 + 真实本地 Laya）。实际执行了**两轮**（授权是一次，已记为偏差），结果与限制见 §9.7。
 
 ### 9.7 真实验收结果（2026-10-17，隔离 daemon + 真实 Laya 4 题）
 
-脚本 `scripts/laya-benchmark-isolated-harness.mjs`（手动运行，不进 `npm test`；`npm run smoke:laya-benchmark` 同一条）。它不是另一套实现，跑的都是生产件：`nativeLaunchEnvForChild` / `hostMcpCommand`（自有启动器，`inheritEnv:false`、环境全量替换）/ `cua-driver serve`（macOS LaunchServices 打开官方签名 `CuaDriver.app`）/ `createInvokeBenchmarkDriver`（`browser_prepare{isolated_new}` → `list_windows` → bind → `browser_navigate` → 快照 pin → `browser_click`）/ `LocalLayaManager` / `buildChooser` / `selectFastAction` / `createCuaTrialRunner` / fixture 双证据判分。
+脚本 `scripts/laya-benchmark-isolated-harness.mjs`（手动运行，不进 `npm test`；`npm run smoke:laya-benchmark` 同一条）。**主审后入口默认 fail-closed**（要 `PIA_BENCH_HARNESS_ENABLE=1`）：服务进程临时 HOME 版本的修复尚未在真实链路重跑，且清理没有外部 watchdog，见本节末尾「主审后边界」。它不是另一套实现，跑的都是生产件：`nativeLaunchEnv`（原生边界）/ `hostMcpCommand`（自有启动器，`inheritEnv:false`、环境全量替换）/ `cua-driver serve`（macOS LaunchServices 打开官方签名 `CuaDriver.app`）/ `createInvokeBenchmarkDriver`（`browser_prepare{isolated_new}` → `list_windows` → bind → `browser_navigate` → 快照 pin → `browser_click`）/ `LocalLayaManager` / `buildChooser` / `selectFastAction` / `createCuaTrialRunner` / fixture 双证据判分。
 
-**证据（repo 内）**：`evidence/laya-benchmark-real/report-2026-10-17T12-34-52-131Z.json`（含 raw chooser 诊断）与 `report-2026-10-17T12-33-19-290Z.json`（同一流程、无诊断），日志同目录 `run-*.log`。
+**证据（repo 内）**：`evidence/laya-benchmark-real/report-2026-10-17T12-34-52-131Z.json`（含 raw chooser 诊断）与 `report-2026-10-17T12-33-19-290Z.json`（同一流程、无诊断），日志同目录 `run-*.log`。**本轮实际跑了两轮（授权只给了一次）**，JSON 原始证据不改；表格只取第二轮 scored 数据，第一轮仅供参考。
 
 **隔离与环境（本次实测值）**
-- 宿主与 daemon 白名单三项均为原生：`HOME=/Users/dengdeng`（= OS 账户家目录）、`CFFIXED_USER_HOME` 不存在、`TMPDIR=/var/folders/…/T`（不在合成根内）；`nativeLaunchEnvProblems` 返回空；`strippedKeys:[]`、`diverged:false`。
+- 宿主与 daemon 白名单三项：`HOME=/Users/dengdeng`（= OS 账户家目录）、`CFFIXED_USER_HOME` 不存在、`TMPDIR=/var/folders/…/T`（不在合成根内）；`nativeLaunchEnvProblems` 返回空；`strippedKeys:[]`、`diverged:false`。**这里的 `env.daemon` 是算出来交给启动器的 env 输入配置，没有读取 daemon / Chrome 子进程的实际环境**（新脚本已把这个边界写进 `env.daemon.evidenceScope`）。另：当时**服务进程自己也是原生 HOME**，违反“服务 HOME 必须是临时目录”的隔离要求，已记为缺陷（见下节）。
 - 独占 daemon：`/tmp/pia-lb-…/data/host-control/cua-open.sock`，自报 pid `20158`（第二次 `24761`），`permission mode: unrestricted`，工具清单含 `browser_prepare/browser_navigate/get_browser_state/browser_click/browser_pointer`。**生产 App 的 daemon（pid 22313，`~/Library/Application Support/Pi Assistant/host-control/cua-open.sock`）全程未被停止 / 未被复用**。
 - MCP 走生产 `hostMcpCommand()`：`commandIsLauncher:true`、`inheritEnv:false`、`envReplaced:true`、socket 指向本次独占 daemon。
 - 隔离浏览器（驱动自有）：prepared pid `20461` / window `17463` / `target_id bt-238383f8-…` / `tab_id tab-e5420be6-…` / 快照 pin `p1`；URL 带本次 `fixtureId+nonce`。结束后该 pid 已退出，无残留。
-- 真实 Laya：baseline 生产 runtime `running pid 7991 port 60869`（health mps）→ 经生产 API `POST /api/local-models/laya/stop` 停下 → 本次独占 runtime（自有端口 + 自有 token，token 只记摘要 `05891f2f7bb5`，权重用本机已物化目录的 **clonefile 副本**，不写回原目录）→ 结束 `finally` 停自有 runtime 并 `POST /api/local-models/laya/start` 恢复，复核 `running pid 27010 port 50418, health ok, device mps, registered local-laya/multilingual`。
+- 真实 Laya：baseline 生产 runtime `running pid 7991 port 60869`（health mps）→ 经生产 API `POST /api/local-models/laya/stop` 停下 → 本次独占 runtime（自有端口 + 自有 token，token 只记摘要 `05891f2f7bb5`，权重用本机已物化目录的 **clonefile 副本**，不写回原目录）→ 清理路径停自有 runtime 并 `POST /api/local-models/laya/start` 恢复。**两轮各自停 / 起一次生产 runtime**：第一轮恢复为 `pid 22676 port 49806`，第二轮再停再恢复为 `running pid 27010 port 50418, health ok, device mps, registered local-laya/multilingual`（主审只读 GET 独立确认最后状态）。
 
 **4 题结果（生产 `selectFastAction`，threshold 0.6 / timeout 4000ms，按任务分开熔断作用域）**
 
 | 任务 | 模型 decision | confidence | 决策延迟 | 结果（双证据） |
 |---|---|---|---|---|
-| pick-submit（点「提交」） | fallback `low_confidence` | 0.3969 | 105 ms | unknown（未派发） |
+| pick-submit（点「提交」） | fallback `low_confidence` | **0.3816** | 105 ms | unknown（未派发） |
 | pick-city（下拉选「北京」） | fallback `low_confidence` | 0.1854 | 107 ms | unknown（未派发） |
 | scroll-target（滚动后点「深度目标」） | selected | 0.926 | 158 ms | **correct**（machine `clicked=deep-target` + UI「深度目标完成」） |
 | dynamic-2step（下一步→完成） | fallback `low_confidence` | 0.2593 | 167 ms | unknown（未派发） |
 
-预热 1 条（不计分）：`fallback low_confidence 0.4673`，929 ms（冷启动）。汇总：**1/4 correct、successRatio 0.25、fallback 3（全部 low_confidence）、timeout 0、abstain 0、p50 107 ms / p95 167 ms**；两次独立运行结论一致（第一次 conf 0.3693 / 0.1165 / 0.9597 / 0.3204，同样 1/4）。
+预热 1 条（不计分）：第二轮 `fallback low_confidence 0.3969`，929 ms（冷启动；第一轮预热 `0.4673` / 1136 ms）。汇总：**1/4 correct、successRatio 0.25、fallback 3（全部 low_confidence）、timeout 0、abstain 0、p50 107 ms / p95 167 ms**；两轮结论一致（第一轮 conf 0.3693 / 0.1165 / 0.9597 / 0.3204，同样 1/4）——但两轮本身偏离授权，只作对照。
 
-**诊断（不是生产决策路径）**：对 3 条被阈值拦下的任务，额外用**同一个生产 chooser** 再问一次「本来想选谁」（只记录、不执行、不计入上面的结果）：三条**都指向正确目标**（`提交` 0.6277、`城市` 0.1935、`下一步` 0.1813）。也就是说本地 Laya 在这些 synthetic 选择题上「选得对但没信心」，而 0.6 的校准阈值让它大多数时候按设计回退给主模型；同题两次调用置信度也会变（`提交` 0.3969 vs 0.6277）。这是**真实结果**，没有为了“通过”下调阈值或改用脚本 chooser。
+> **数字读法**：`pick-submit` 的 `0.3816` 来自 `tasks[0].fallbackDetail`（scored）；`0.3969` 是 `warmup.fallbackDetail`，旧表误填进结果列。`p50`/`p95` 只统计每题**最后一次 chooser 调用**的决策延迟，不是任务总耗时（`wallMs` 105–2810 ms），也不含诊断的额外请求。
+
+**诊断（不是生产决策路径）**：对 3 条被阈值拦下的任务，额外用**同一个生产 chooser** 再推理一次「本来想选谁」（只记录、不执行、不计入上面的结果）。**这是额外的模型请求**，本轮只能说明：那一次诊断的**首步候选**与期望目标一致（`提交` 0.6277、`城市` 0.1935、`下一步` 0.1813）；**没有**执行下拉展开、**没有**完成 2step，所以**不是任务准确率**，也不能反推“原始 decision 其实正确”。同题不同调用置信度会变（`pick-submit` 生产那次 `0.3816`、诊断那次 `0.6277` > 0.6），因此**不写**「选得对但没信心」「raw 3/3」。没有为了“通过”下调阈值或改用脚本 chooser。
+
+**主审后边界（2026-10-17，不改原 JSON、不重跑）**
+- **执行偏差**：授权是一次受控验证，实际跑了两轮（`12:33:19` / `12:34:52`），生产 Laya 因此被停 / 起两次；两轮不合并统计。
+- **隔离违规**：本轮服务进程跑在原生 HOME（脚本当时还把它当通过条件），违反“服务 HOME / DATA / WORKSPACE / TMPDIR 用临时目录”。脚本已改：临时 HOME/TMPDIR 在**任何第三方 / 服务模块动态 import 之前**设置，原生边界只从 `cloneNativeBaseEnv(process.env)` 快照经 `nativeLaunchEnv()` 计算；纯函数测试 6/6。但**这条链路没有在真实 daemon / 浏览器上重跑**，所以入口默认 fail-closed（`PIA_BENCH_HARNESS_ENABLE=1`），需受控重测。
+- **证据范围**：`env.daemon` 是交给启动器的 env **输入配置**，没有读取 daemon / Chrome 子进程实际环境；能证明的是“按这份配置启动且 daemon 起来了、链路真的打开过浏览器”。
+- **不是完整 production benchmark**：熔断 key 按任务分开（生产 `benchmark-host` 同一 key）+ runner 内部 retries（每题 1）+ 诊断额外请求；`p50` 只是每题最后一次 chooser 调用的决策延迟（不是任务总耗时）；主模型接管**未执行**，所以没有接管速度 / 总耗时数据；四个固定任务只是 attempt coverage，不是完整 UI / benchmark-host 验收。
+- **计数器语义**（不是矛盾）：`task.retries=1` = runner 的未选中诊断；`task.fallbackCount=0` = 基准不真的执行主模型回退；summary `fallbacks=3` = `decision=fallback` 计数。
+- **清理只覆盖进程内**：正常清理路径 + 单次到点 abort + `unhandledRejection`/`uncaughtException`；**没有外部 watchdog**，进程被 SIGKILL / OOM / 掉电时不保证停自有 daemon / 恢复生产 Laya。旧注释“第二次到点强制落盘”是错的，已删。
+- **e2e helper**：`diverged` 修复归 Fast `44047ea`（独立文件），本树不重复改、合入时以那份为准。
 
 **结论（如实）**
-- 链路：修复后的原生启动环境 + 独占 daemon + 驱动自有隔离浏览器 + 真实 fixture 动作 + 双证据判分**在真实机器上跑通**，`browser_prepare → bind → snapshot pin → click` 全部有真实返回证据。
+- 链路：修复后的原生启动环境 + 独占 daemon + 驱动自有隔离浏览器 + 真实 fixture 动作 + 双证据判分**在真实机器上跑通**，`browser_prepare → bind → snapshot pin → click` 全部有真实返回证据（但服务进程当时是原生 HOME，隔离验收要等重跑）。
 - 模型：本机 `local-laya/multilingual` 在这 4 个固定任务上按产品默认阈值只完成 1 题（3 题低置信度回退），**不据此宣称 Laya 整体不可用**（只有 4 题、synthetic、单一 checkpoint / 机器）。
-- 未验 / 不得宣称：「钥匙串弹窗已修好」仍未证（本轮没弹窗，只有一次运行、无系统弹窗日志，不能当永久修复结论）；系统 TCC 授权、Intel / Windows / Linux、真实 GPU、其它 checkpoint、真实付费模型、全量 `npm test` / 全量 e2e 均未跑。
+- 未验 / 不得宣称：「钥匙串弹窗已修好」仍未证（两轮都没弹窗，但没有系统弹窗日志，不能当永久修复结论）；服务进程临时 HOME 版本未重跑（isolated 验收待做）；系统 TCC 授权、Intel / Windows / Linux、真实 GPU、其它 checkpoint、真实付费模型、全量 `npm test` / 全量 e2e 均未跑。
 
