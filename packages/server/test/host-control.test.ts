@@ -458,3 +458,13 @@ test("系统权限只读探测：结果（包括 null）也进缓存，不每次
 	assert.equal(again, hc.hostPermissionsCache(), "缓存值就是状态里暴露的值");
 	assert.equal(hc.hostPermissionsCache(at + 60_000), null, "过期后按未知处理，不冒充授权结果");
 });
+
+test("原生驱动环境：MCP 命令带 OS 账户家目录，不把服务的合成 HOME / CFFIXED_USER_HOME 传给原生进程", async () => {
+	const { userInfo } = await import("node:os");
+	const cmd = hc.hostMcpCommand("some-agent");
+	assert.equal(cmd.env?.HOME, userInfo().homedir, "`cua-driver mcp` 是原生进程，HOME 必须来自 OS 账户信息");
+	assert.equal(cmd.env?.CFFIXED_USER_HOME, undefined, "CFFIXED_USER_HOME 会覆盖 HOME，必须剥掉");
+	assert.equal(cmd.env?.CUA_DRIVER_TELEMETRY, "0");
+	// 数据 / profile 隔离变量照旧保留（隔离靠它们，不靠改 HOME）。
+	assert.equal(cmd.env?.PIA_DATA_DIR, process.env.PIA_DATA_DIR);
+});

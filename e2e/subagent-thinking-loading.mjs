@@ -11,13 +11,15 @@
  * 运行前先构建：`npm run build -w @pi-assistant/web`。
  * 隔离：mkdtemp 的 HOME / PIA_DATA_DIR / PIA_WORKSPACE / TMPDIR，PIA_MOCK + PIA_OFFLINE；
  * 通过 launch-memory 注入内存凭据后启动服务，不能用生产 main 或真实 HOME 绕过启动问题。
+ * **浏览器例外**：Chromium 是原生进程，必须给它登录用户家目录 / 真实 TMPDIR（`browserEnv`），
+ * 否则它会用合成 HOME 找不到默认钥匙串（「找不到用于储存 Chrome 的钥匙串」）。
  * finally 结束自建的 server 进程组。
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -30,6 +32,13 @@ const WORKSPACE = join(DATA, "workspace");
 const TMP = join(SCRATCH, "tmp");
 const HOME = join(SCRATCH, "home");
 for (const d of [DATA, WORKSPACE, TMP, HOME]) mkdirSync(d, { recursive: true });
+// 原生浏览器用的真实环境：覆盖 process.env 之前先记下来（家目录取 OS 账户信息，不用 $HOME 猜）。
+const REAL_HOME = userInfo().homedir;
+const REAL_TMPDIR = process.env.TMPDIR;
+const browserEnv = { ...process.env, HOME: REAL_HOME };
+if (REAL_TMPDIR) browserEnv.TMPDIR = REAL_TMPDIR;
+else delete browserEnv.TMPDIR;
+delete browserEnv.CFFIXED_USER_HOME;
 process.env.TMPDIR = TMP;
 process.env.HOME = HOME;
 const OUT = join(SCRATCH, "shots");
@@ -144,7 +153,7 @@ try {
 	// 用户已选固定档位：加载中不许被改成 off / 默认
 	await j(`/api/agents/${agent.id}/subagent-thinking`, "PUT", { mode: "fixed", level: "xhigh" });
 
-	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, env: browserEnv });
 	const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, locale: "zh-CN" });
 	page.setDefaultTimeout(15_000);
 

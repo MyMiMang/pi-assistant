@@ -23,6 +23,7 @@ import { config } from "./config.ts";
 import { getSetting, setSetting } from "./db.ts";
 import { readZip } from "./memory/hindsight/zip.ts";
 import { fetchWithProgress, registerDownload, trackDownload } from "./downloads.ts";
+import { envStrings, nativeLaunchEnvForChild, nativeLaunchEnvProblems, osAccountHome } from "./native-launch-env.ts";
 
 const run = promisify(execFile);
 
@@ -185,6 +186,26 @@ export function ensureCua(onProgress?: (m: string) => void): Promise<string> {
 
 // ---------------------------------------------------------------- 守护进程（bounded）
 const hcDir = () => join(config.dataDir, "host-control");
+
+/**
+ * 原生驱动 / 浏览器用的环境：服务自己的合成 HOME（隔离启动时）**不传给原生进程**。
+ * 规则与理由见 `native-launch-env.ts`；这里只管“生产上取 OS 账户家目录 + 数据目录算合成根 + 只记一次日志”。
+ */
+let nativeEnvNotice: string | null = null;
+function driverEnv(why?: string): NodeJS.ProcessEnv {
+	const r = nativeLaunchEnvForChild({ CUA_DRIVER_TELEMETRY: "0" }, { syntheticRoots: [config.dataDir] });
+	if (nativeEnvNotice === null) {
+		const problems = nativeLaunchEnvProblems(r.env, { realHome: r.realHome, syntheticRoots: [config.dataDir] });
+		// 只记录、不拒绝启动：隔离问题不该变成“电脑操作打不开”。
+		nativeEnvNotice = r.diverged || r.stripped.length || problems.length ? `${r.diverged ? "服务的 HOME 不是登录用户家目录，" : ""}原生驱动改用 OS 账户家目录${r.stripped.length ? `，已剥离 ${r.stripped.join(" / ")}` : ""}${problems.length ? `；自检问题：${problems.join("；")}` : ""}` : "";
+		if (nativeEnvNotice) console.warn(`[host] ${nativeEnvNotice}${why ? `（${why}）` : ""}`);
+	}
+	return r.env;
+}
+
+/** 用户自己的家目录（列应用用）：取 OS 账户信息，不拿服务的合成 HOME 当用户目录。 */
+const userHomeDir = () => osAccountHome() ?? process.env.HOME;
+
 export const socketPath = (kind: DaemonKind = "bounded") =>
 	process.platform === "win32" ? `\\\\.\\pipe\\pia-cua-${kind}-${createHash("sha1").update(config.dataDir).digest("hex").slice(0, 8)}` : join(hcDir(), `cua-${kind}.sock`);
 const manifestPath = () => join(hcDir(), "manifest.yaml");
@@ -340,7 +361,7 @@ export async function startDaemon(plan = hostPlan()) {
 }
 async function spawnDaemon(kind: DaemonKind, exe: string) {
 	if (process.platform !== "win32") rmSync(socketPath(kind), { force: true });
-	const penv = { ...process.env, CUA_DRIVER_TELEMETRY: "0" };
+	const penv = driverEnv("启动守护进程");
 	if (isMac()) {
 		// macOS：经 LaunchServices 启动 CuaDriver.app，辅助功能/屏幕录制授权归属于它（而不是终端或我们的服务）
 		await run("open", ["-n", "-g", "-a", cuaPaths().app!, "--args", ...serveArgs(kind)], { env: penv });
@@ -362,14 +383,14 @@ async function spawnDaemon(kind: DaemonKind, exe: string) {
 }
 async function ping(exe: string, kind: DaemonKind) {
 	try {
-		await run(exe, ["status", "--socket", socketPath(kind)], { timeout: 3000 });
+		await run(exe, ["status", "--socket", socketPath(kind)], { timeout: 3000, env: driverEnv() });
 		return true;
 	} catch {
 		return false;
 	}
 }
 export async function stopDaemon(quiet = false) {
-	if (cuaInstalled()) for (const k of ["bounded", "open"] as DaemonKind[]) await run(cuaPaths().exe, ["stop", "--socket", socketPath(k)], { timeout: 5000 }).catch(() => {});
+	if (cuaInstalled()) for (const k of ["bounded", "open"] as DaemonKind[]) await run(cuaPaths().exe, ["stop", "--socket", socketPath(k)], { timeout: 5000, env: driverEnv() }).catch(() => {});
 	for (const c of daemons.values()) c.kill();
 	daemons.clear();
 	if (!quiet) setState("off", "未开启");
@@ -379,15 +400,16 @@ export async function stopDaemon(quiet = false) {
 export async function setHostPaused(v: boolean) {
 	paused = v;
 	if (v) {
-		if (cuaInstalled()) for (const k of ["bounded", "open"] as DaemonKind[]) await run(cuaPaths().exe, ["revoke", "--all", "--socket", socketPath(k)], { timeout: 5000 }).catch(() => {});
+		if (cuaInstalled()) for (const k of ["bounded", "open"] as DaemonKind[]) await run(cuaPaths().exe, ["revoke", "--all", "--socket", socketPath(k)], { timeout: 5000, env: driverEnv() }).catch(() => {});
 		setState(state.state === "off" ? "off" : "paused", "已暂停");
 	} else if (hostSettings().enabled) await startDaemon().catch(() => {});
 	else setState("off", "未开启");
 }
 
 /** MCP 命令：按助理档位连到对应的守护进程 */
-export function hostMcpCommand(agentId: string) {
-	return { command: cuaPaths().exe, args: ["mcp", "--socket", socketPath(daemonKindOf(tierOf(agentId)))] };
+export function hostMcpCommand(agentId: string): { command: string; args: string[]; env?: Record<string, string> } {
+	// env 与守护进程同一份原生环境：`cua-driver mcp` 也是原生进程（Pi 侧 StdioTransport 会用 process.env 打底再覆盖）。
+	return { command: cuaPaths().exe, args: ["mcp", "--socket", socketPath(daemonKindOf(tierOf(agentId)))], env: envStrings(driverEnv()) };
 }
 
 export function saveHostSettings(patch: Partial<HostControlSettings>) {
@@ -441,7 +463,7 @@ async function probeMacPermissions(): Promise<MacPermissions | null> {
 		value = null;
 	} else {
 		try {
-			const { stdout } = await run(cuaPaths().exe, ["permissions", "status", "--json", "--socket", socketPath()], { timeout: 8000 });
+			const { stdout } = await run(cuaPaths().exe, ["permissions", "status", "--json", "--socket", socketPath()], { timeout: 8000, env: driverEnv() });
 			const j = JSON.parse(String(stdout)) as Record<string, unknown>;
 			const pick = (k: RegExp) => String(Object.entries(j).find(([x]) => k.test(x))?.[1] ?? "unknown");
 			value = { accessibility: pick(/accessib/i), screenRecording: pick(/screen/i) };
@@ -457,7 +479,7 @@ async function probeMacPermissions(): Promise<MacPermissions | null> {
 export async function macGrantPermissions() {
 	if (!isMac()) return;
 	await ensureCua();
-	await run("open", ["-n", "-a", cuaPaths().app!, "--args", "permissions", "grant"]);
+	await run("open", ["-n", "-a", cuaPaths().app!, "--args", "permissions", "grant"], { env: driverEnv() });
 }
 
 // ---------------------------------------------------------------- 可选应用列表（帮用户勾选）
@@ -465,7 +487,7 @@ export async function suggestApps(): Promise<HostApp[]> {
 	const out: HostApp[] = [];
 	try {
 		if (isMac()) {
-			for (const root of ["/Applications", "/System/Applications", join(process.env.HOME ?? "", "Applications")]) {
+			for (const root of ["/Applications", "/System/Applications", join(userHomeDir() ?? "", "Applications")]) {
 				if (!existsSync(root)) continue;
 				for (const d of readdirSync(root).filter((x) => x.endsWith(".app")).slice(0, 300)) {
 					const plist = join(root, d, "Contents", "Info.plist");
@@ -485,7 +507,7 @@ export async function suggestApps(): Promise<HostApp[]> {
 			];
 			for (const [name, id] of known) if (existsSync(id) && !out.some((x) => x.id === id)) out.push({ name, id });
 		} else {
-			for (const dir of ["/usr/share/applications", join(process.env.HOME ?? "", ".local/share/applications")]) {
+			for (const dir of ["/usr/share/applications", join(userHomeDir() ?? "", ".local/share/applications")]) {
 				if (!existsSync(dir)) continue;
 				for (const f of readdirSync(dir).filter((x) => x.endsWith(".desktop")).slice(0, 300)) {
 					const t = readFileSync(join(dir, f), "utf8");

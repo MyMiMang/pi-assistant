@@ -51,7 +51,11 @@ if (exitCode) process.exit(exitCode);
 
 // ---------------------------------------------------------------- 真实 MCP 连接（与生产同一命令 / 同一客户端）
 const client = new McpClient({ name: "pia-laya-bench-smoke", version: "1.0.0", requestTimeoutMs: 30_000 });
-await client.connect(new StdioTransport({ command: DRIVER, args: ["mcp", "--socket", SOCKET], stderr: "pipe", onStderr: () => {} }));
+// 原生驱动的 env 走生产同一层（OS 账户家目录 / 不继承合成 HOME），不在这里另写一套。
+const { envStrings, nativeLaunchEnvForChild } = await import("../packages/server/src/native-launch-env.ts");
+await client.connect(
+	new StdioTransport({ command: DRIVER, args: ["mcp", "--socket", SOCKET], env: envStrings(nativeLaunchEnvForChild({ CUA_DRIVER_TELEMETRY: "0" }).env), stderr: "pipe", onStderr: () => {} }),
+);
 
 const invoke = async (_prefix, tool, args) => {
 	try {

@@ -179,9 +179,11 @@ export function createMcpInvoke(agentId: () => string | null): { invoke: Compute
 		if (existing) return existing;
 		const id = agentId();
 		if (!id) throw new Error("没有可用的助理实例，无法连接电脑后端");
-		const cmd = prefix === "hostpc" ? hostMcpCommand(id) : cuaMcpCommand(id);
-		const client = new McpClient({ name: "pi-assistant-benchmark", version: "1.0.0", requestTimeoutMs: 20_000 });
-		await client.connect(new StdioTransport({ command: cmd.command, args: cmd.args, stderr: "pipe", onStderr: () => {} }));
+		const cmd: { command: string; args: string[]; env?: Record<string, string> } = prefix === "hostpc" ? hostMcpCommand(id) : cuaMcpCommand(id);
+		const client = new McpClient({ name: "pi-assistant-benchmark", version: "1.0.0", requestTimeoutMs: 30_000 });
+		// 原生驱动的 env（OS 账户家目录 / 不继承合成 HOME）必须真的传给 stdio 子进程：
+		// StdioTransport 会先铺 process.env 再覆盖我们给的键，所以只传差异键也能生效，这里传完整一份更直观。
+		await client.connect(new StdioTransport({ command: cmd.command, args: cmd.args, ...(cmd.env ? { env: cmd.env } : {}), stderr: "pipe", onStderr: () => {} }));
 		clients.set(prefix, client);
 		return client;
 	};
