@@ -169,7 +169,7 @@ test("chat 解析：不合成 confidence", () => {
 });
 
 test("classifier chooser：只发离散 choice 问题、答案必须是候选 id（假 classify）", async () => {
-	let got: { provider: string; model: string; context: { questions: { pick: { type: string; criteria: Record<string, string> } } } } | undefined;
+	let got: { provider: string; model: string; context: { state: Record<string, unknown>; questions: { pick: { type: string; criteria: Record<string, string> } } } } | undefined;
 	const chooser = createClassifierChooser({
 		provider: "openrouter",
 		model: "typesafe/jev-1.13",
@@ -185,7 +185,40 @@ test("classifier chooser：只发离散 choice 问题、答案必须是候选 id
 	assert.equal(got?.model, "typesafe/jev-1.13");
 	assert.equal(got?.context.questions.pick.type, "choice");
 	assert.deepEqual(got?.context.questions.pick.criteria, { a: "按钮：登录", b: "按钮：取消" });
+	assert.deepEqual(got?.context.state, { goal: "点登录" }, "state 只放 goal（候选不重复进 state）");
 	assert.equal(r.kind === "selected" && r.candidateId, "a");
+});
+
+test("classifier chooser：候选只留在 criteria（state 去重），label 全量不丢不改，goal 不被额外提示污染", async () => {
+	const contexts: { state: Record<string, unknown>; questions: { pick: { criteria: Record<string, string>; instructions: string } } }[] = [];
+	const chooser = createClassifierChooser({
+		provider: "local-laya",
+		model: "multilingual",
+		classify: async (provider, model, context) => {
+			contexts.push(context as never);
+			return { provider, model, api: "typesafe-system-one", stopReason: "stop" as const, timestamp: 1, answers: { pick: { type: "choice", choice: "c2", confidence: 0.8, probabilities: { c1: 0.2, c2: 0.8 } } } };
+		},
+	});
+	const candidates = [
+		{ id: "c1", label: "按钮：保存草稿（⌘S）" },
+		{ id: "c2", label: "按钮：发布到全部渠道" },
+		{ id: "c3", label: "链接：查看帮助" },
+	];
+	const r = await chooser.choose({ goal: "把文章发布出去", captureId: "cap-dedup", candidates });
+	assert.equal(r.kind === "selected" && r.candidateId, "c2");
+	assert.equal(contexts.length, 1);
+	const ctx = contexts[0];
+	// 1) state 只剩 goal：不再重复一份候选表（token 省在这里，信息不在这里）。
+	assert.deepEqual(Object.keys(ctx.state), ["goal"], "state 只允许 goal 一个键");
+	assert.equal(ctx.state.goal, "把文章发布出去", "主 goal 原样传，不改写");
+	// 2) criteria 全量：每个候选 id 都在，label 逐字不变（不截断、不改写、不随机 token）。
+	assert.deepEqual(ctx.questions.pick.criteria, { c1: "按钮：保存草稿（⌘S）", c2: "按钮：发布到全部渠道", c3: "链接：查看帮助" });
+	assert.equal(Object.keys(ctx.questions.pick.criteria).length, candidates.length, "候选一个都不能少");
+	// 3) 不注入新的 goal 提示 / 答案：instructions 与 state 里都不出现候选 id 或额外提示。
+	const serialized = JSON.stringify(ctx);
+	assert.ok(!/按钮：/.test(ctx.questions.pick.instructions), "instructions 不夹带候选内容");
+	assert.ok(!JSON.stringify(ctx.state).includes("c1"), "state 里不出现候选 id");
+	assert.ok(!/answer|答案|正确选项|应该选/i.test(serialized), "不注入答案类提示");
 });
 
 test("classifier chooser：classify 抛错 / 中止 → error（超时归 timeout）", async () => {
