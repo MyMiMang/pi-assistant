@@ -99,3 +99,40 @@
 - `e2e/thinking-slider-frontend.test.mjs` 新增：A 组（`readMoStyle` 去空白 / 空值 / 无计算样式；`watchMoStyle` 只观察 `<html>` 属性 + `<head>` 样式文本、`smooth → steps → 取消还原` 都回读且不重挂组件、值没变不重复回调、断开后不再回读、无 MutationObserver 时降级为只读一次）；C 组（迟到失败不回滚新选择、最新失败回落到服务端确认值、乱序成功不改确认值也不盖新回滚、新成功更新落点、`invalidate` 后在飞响应不落地）。
 - **本树本轮实际只跑了**：`node --check e2e/thinking-slider-frontend.test.mjs`（语法 OK）、`tsc --noEmit -p apps/web`（exit 0，118 个 src 文件）。**未跑** `node --import tsx --test e2e/thinking-slider-frontend.test.mjs`、未跑浏览器 e2e、未 `vite build`——A 的观感（切主题 / 预览时滑块 computed `transition` / `animation` 真的变）仍需测试槽的浏览器 e2e；C 的组件接线仍需真 server 定向验证。
 - 涉及文件：`apps/web/src/themes/motion-signals.ts`（新）、`apps/web/src/latest-write.ts`（新）、`apps/web/src/components/ThinkingSlider.tsx`、`apps/web/src/components/Models.tsx`、`e2e/thinking-slider-frontend.test.mjs`；修复提交 `997b3e4`（文档为本提交）。未动 Pi SDK / `node_modules` / 生产配置 / 用户数据 / 凭据；未 push / 未 tag。
+
+## 七、最终验收（重测试槽，本树实跑；2026-10-24）
+
+前置：`--no-ff` 增量并入 theme-DIY 新 commit `2113648`（基 `ffbfb7f`，`a397f15`；docs 冲突（DESIGN/HANDOFF）逐段按当前实际状态手工合并，代码文件自动合并无冲突）。beta.28 已公开的事实同步进 HANDOFF/ROADMAP/发布说明（`b20ec81`，tag `11ce8f2` 未动、未重推、未改资产）。
+
+### 实跑结果（Node v24.20.0，全部 Mock / 临时 `PIA_DATA_DIR`+`PIA_WORKSPACE`+`HOME`，不碰真实 Key / 钥匙串 / 用户数据）
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| 类型（服务端） | `npx tsc --noEmit`（`packages/server`） | **exit 0** |
+| 类型（网页） | `tsc --noEmit -p apps/web` | **exit 0** |
+| 网页构建 | `npm run build -w @pi-assistant/web` | **通过**（2532 modules，含 tsc 前置） |
+| 滑块纯逻辑 + 静态 DOM（含新增 A/C 断言） | `node --import tsx --test e2e/thinking-slider-frontend.test.mjs` | **27/27**（原 19 + 新 8：A 订阅回读 3、C 代次 5） |
+| 主题 manifest / AI 草稿（shared 契约 + 真实 Pi 会话假模型） | `theme-manifest.test.ts` + `theme-ai.test.ts` | **40/40** |
+| **滑块生产贯通（新）** | `node e2e/thinking-slider-ui.mjs` | **17/17** |
+| 子代理档位 / 并集 / 固定档 / 390（legacy 定向） | `node e2e/subagent-thinking-levels.mjs` | **26/26** |
+| 模型菜单（legacy 定向） | `node e2e/model-ui.mjs` | **全部通过** |
+| 模型能力（legacy 定向） | `node e2e/model-capabilities.mjs` | **全部通过** |
+
+### 新增夹具 `e2e/thinking-slider-ui.mjs`（真实 server + 真实构建 + Chromium；AI 草稿用 `page.route` 注入合法 manifest）
+- **A 端到端滑块（9 条）**：七档全量（刻度顺序 = Pi 顺序、aria、初始档位来自服务端真值）/ 键盘 End·ArrowLeft·Home 逐档且每次只写一次、提交即关弹层 / 点同一档不关弹层也不发请求（D 语义）/ 拖动中不写、`pointerup` 才写一次且 snap / 窗口失焦与 Esc 取消不写并回到已提交档 / 子集模型只显示支持的档 / 非推理模型不渲染思考块 / 主会话无「跟随」/ **390 宽 × noir·glass·warm·pixel 不溢出、pixel 走 steps 分支**。
+- **B DIY 动效 → 滑块（4 条）**：保存的 DIY 主题（steps + scale 1.2）→ `data-pa-mo-style=steps`、手柄 `transition: none`、**拖动预览动效真实 `steps(3, end)` 且时长 = 480ms × 1.2 = 576ms**（读 computed style）/ reduce 下拖动完全不播预览（无 `pa-think-pulse`）且过渡被关掉、提交仍可达 / **主题实时切换 steps↔smooth：DOM 节点标记不变（未重挂）、焦点仍在手柄、computed `transition-duration` 真的变**（A 修复）/ preview 取消完整还原（无临时 `<style>`、skin 回到原主题、滑块分支回到 steps）。
+- **C 保存「最后一次为准」(4 条)**：迟到的失败(A) 不覆盖后一次选择(B)、服务端真值 = B / 最新一次失败回落到服务端确认值并回读真值 / 关设置（卸载）时在飞响应不落地、重开对齐服务端真值、助理 thinking 不被串 / 改默认不改助理、改助理不改默认。
+- 夹具自身的三处修正（都是**测试假设错**，不是产品缺陷；已写进注释）：① 模型菜单弹层会盖住输入栏芯片，重开前先合法关掉；② 提交即关弹层，所以「预览动效」只能在拖动/切换过程中读、且拖动终点必须与当前档不同；③ 设置模态里提交后弹层已关，此时再按 Esc 关的是**模态**，不能拿它当「关菜单」。
+
+### legacy 脚本的两处**断言修正**（只改断言、不弱化）
+- `e2e/subagent-thinking-levels.mjs`：① 只有 1 档（非推理）时新 UI 按设计**不画滑块**、给「只有一档」说明 → 断言从「菜单里有 off 项」改为「说明文字 + 无刻度」；② 档位来自前端模型目录，首次打开弹层时目录可能还在加载 → `openMenu` 加**有界重试**等刻度出现（最多 10 次 ×300ms），不再把加载时序当档位缺失。修后 26/26。
+
+### 本轮**未跑 / 未验**（如实）
+- 未跑 `e2e/theme-motion-ui.mjs`（该夹具由 theme-DIY 槽在其树跑过 9/9，本树未复跑；其覆盖面已被本树 B1–B4 的 computed style / 预览取消 / 390 / reduce 部分交叉）。
+- 未跑全量 `npm test`、全量 `e2e/run.mjs`、真机 App、真云模型 / 计费、Win/Linux/Intel 实机。
+- 观察（非本轮引入、未修）：助理设置里子代理「思考强度」的档位来自前端模型目录，**目录还没加载完时弹层会短暂显示「不支持调整思考强度」**（档位来源与合并前一致，滑块只是渲染层；夹具已用有界重试规避，产品侧未改）。
+
+### 环境与清理
+- 独占重测试槽；所有 e2e 串行、一条脚本一个浏览器；夹具用 `mkdtemp` 独占目录 + 显式 `HOME`/`TMPDIR` + `detached` 进程组，`finally` 只删本次 `mkdtemp` 目录并整组收掉 server；本轮结束后复核无本任务残留（唯一的孤儿 `launch-memory` pid 949 已回收；`/tmp/pia-e2e-thinking-slider*`、`/tmp/pia-dbg*`、`/tmp/pia-probe*` 已删除，未动他人目录）。
+- 未改 Pi SDK / `node_modules` / 生产配置 / 用户数据库 / 凭据；未 `npm ci`、未改共享依赖（候选取用 `node_modules` realpath 自查：`@earendil-works/pi-coding-agent` 1.3.0、`typescript` 7.0.2、`highlight.js` 10.7.3 均与 `package-lock.json` 一致；未从兄弟树借包）。
+- **未 push / 未 tag / 未打包**；tag `v0.1.0-beta.28`（`11ce8f2`）只读未动。

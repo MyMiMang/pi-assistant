@@ -60,7 +60,24 @@ const remountSettings = async (page) => {
 	await page.getByTestId("agent-subagent-model").waitFor();
 };
 const menu = (page) => page.getByTestId("agent-subagent-thinking-menu");
-const openMenu = async (page) => { await page.getByTestId("agent-subagent-thinking").click(); await menu(page).waitFor(); };
+/**
+ * 打开思考强度弹层，并等「档位刻度真的渲染出来」。
+ * 档位来自前端模型目录（`d.models`），首次打开时目录可能还在加载 → 弹层会短暂显示「不支持」；
+ * 这里只重试等待目录到位（不是产品缺陷，避免夹具把加载时序当成档位缺失）。
+ */
+const openMenu = async (page) => {
+	for (let i = 0; i < 10; i++) {
+		if (!(await menu(page).count())) {
+			await page.getByTestId("agent-subagent-thinking").click();
+			await menu(page).waitFor();
+		}
+		const steps = await menu(page).locator(".pa-think-step").count();
+		const txt = await menu(page).innerText();
+		if (steps > 0 || !txt.includes("不支持")) return; // 有刻度；或本来就是单档 / 无档的准确说明
+		await closeMenu(page);
+		await page.waitForTimeout(300);
+	}
+};
 const closeMenu = async (page) => { await page.keyboard.press("Escape"); await menu(page).waitFor({ state: "detached" }); };
 const hasLevel = (page, l) => menu(page).getByTestId(`agent-subagent-thinking-${l}`).count().then((n) => n > 0);
 const openLabels = async (page) => (await menu(page).locator("button[data-testid]").evaluateAll((els) => els.map((e) => e.getAttribute("data-testid").replace("agent-subagent-thinking-", ""))));
@@ -126,7 +143,10 @@ try {
 	await setPool(agent.id, [{ provider: prov.id, id: "plain-noreason" }]);
 	await remountSettings(page);
 	await openMenu(page);
-	check("非推理：菜单有 off", await hasLevel(page, "off"));
+	// 只有 1 档（off）：按设计**不画滑块**，给出「只有一档」说明（旧 chips 版才有 off 项）
+	const fixedText = (await menu(page).innerText()).replace(/\s+/g, "");
+	check("非推理：明确说明只有一档（不画滑块、不给假档位）", fixedText.includes("只有一档") && fixedText.includes("关闭"), fixedText.slice(0, 120));
+	check("非推理：没有滑块刻度", (await menu(page).locator(".pa-think-step").count()) === 0);
 	check("非推理：没有 high", !(await hasLevel(page, "high")));
 	check("非推理：没有 xhigh", !(await hasLevel(page, "xhigh")));
 	check("非推理：没有 max", !(await hasLevel(page, "max")));
