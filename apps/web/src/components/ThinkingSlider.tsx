@@ -55,13 +55,11 @@ export interface ThinkingSliderProps {
 	onPick: (level: string | null) => void;
 	/** 弹层右上角显示的短模型名（可选） */
 	modelName?: string;
-	/** 是否渲染「思考强度 / 当前档位」标题行（嵌在模型菜单里时由外层已有标题，传 false） */
-	showHead?: boolean;
 	/** 键盘打开（Enter/Space）时把焦点落到手柄 */
 	autoFocus?: boolean;
 }
 
-export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, showHead = true, autoFocus = false }: ThinkingSliderProps) {
+export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, autoFocus = false }: ThinkingSliderProps) {
 	const view = thinkingSliderView({ levels, current, followLabel, effective });
 	const reduced = useReducedMotion();
 	const [idx, setIdx] = useState(view.index);
@@ -185,7 +183,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	if (view.kind === "unsupported") {
 		return (
 			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-				{showHead && <Head testid={testid} current="不支持" modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />}
+				<Head testid={testid} current="不支持" modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />
 				<p className="pa-think-empty" data-testid={`${testid}-unsupported`}>
 					<b>{modelName ?? "这个模型"}</b> 不支持调整思考强度。
 				</p>
@@ -197,7 +195,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	if (view.kind === "fixed") {
 		return (
 			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-				{showHead && <Head testid={testid} current={label(view.level)} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />}
+				<Head testid={testid} current={label(view.level)} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />
 				<p className="pa-think-empty" data-testid={`${testid}-fixed`}>
 					这个模型只有一档 <b>{label(view.level)}</b>，不需要调整。
 				</p>
@@ -208,11 +206,14 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 	const level = view.levels[idx];
 	const pos = count > 1 ? idx / (count - 1) : 0;
 	const stars = thinkingStars(level, testid);
-	const curText = view.following ? `跟随·${label(view.effective)}` : view.unsupportedPick ? `${label(view.unsupportedPick)} → ${label(view.level)}` : label(level);
+	// 拖动 / 键盘预览态：手柄停在用户正在看的档位、还没提交（`idx` 与已生效下标不同）。
+	// 这时标题必须显示预览档，而不是「跟随·X」或旧的降级前缀，否则拖到最大还写着「跟随·中」。
+	const previewing = idx !== view.index;
+	const curText = previewing ? label(level) : view.following ? `跟随·${label(view.effective)}` : view.unsupportedPick ? `${label(view.unsupportedPick)} → ${label(view.level)}` : label(level);
 
 	return (
 		<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
-			{showHead && <Head testid={testid} current={curText} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />}
+			<Head testid={testid} current={curText} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} />
 
 			{view.unsupportedPick && (
 				<p className="pa-think-norm" role="note">
@@ -239,7 +240,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 							<i key={i} className={cx("pa-think-star", s.far && "far")} data-ln={s.line ? "1" : undefined} style={{ "--x": s.x, "--y": s.y, "--s": s.size, "--o": s.opacity, "--dx": s.dx, "--dy": s.dy, "--d": s.delay } as CSSProperties} />
 						))}
 					</span>
-					<div ref={handleRef} className={cx("pa-think-handle", view.following && "following")} role="slider" tabIndex={0} aria-label="思考强度" aria-orientation="horizontal" aria-valuemin={0} aria-valuemax={count - 1} aria-valuenow={idx} aria-valuetext={`思考强度：${label(level)}`} style={{ "--pa-think-pos": pos } as CSSProperties} onKeyDown={onKeyDown} />
+					<div ref={handleRef} className={cx("pa-think-handle", view.following && "following")} role="slider" tabIndex={0} aria-label="思考强度" aria-orientation="horizontal" aria-valuemin={0} aria-valuemax={count - 1} aria-valuenow={idx} aria-valuetext={`思考强度：${curText}`} style={{ "--pa-think-pos": pos } as CSSProperties} onKeyDown={onKeyDown} />
 				</div>
 			</div>
 			<p className="pa-think-note">

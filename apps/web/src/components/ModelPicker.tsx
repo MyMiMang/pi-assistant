@@ -286,6 +286,9 @@ export function ModelMenu({ id, models, providers, value, thinking, picks, onPic
 	const [q, setQ] = useState("");
 	const [openGroups, setOpenGroups] = useState<string[]>(() => (value?.provider ? [value.provider] : models[0] ? [models[0].provider] : []));
 	const nameOf = (p: string) => providers.find((x) => x.id === p)?.name ?? models.find((m) => m.provider === p)?.providerName ?? p;
+	// 来自实际选中值（不是候选池 / 搜索词）：只有真实单模型才把名字写进滑块头部，没有值就不伪一个模型名
+	const picked = value ? models.find((m) => m.provider === value.provider && m.id === value.id) : undefined;
+	const pickedName = picked?.name ?? value?.id;
 	const shown = searchModels(models, q, nameOf);
 	// 「常用」是快捷入口：只在顶部多列一份，不从下面的服务分组里摘掉（去重只在同一分组内做）
 	const frequent = frequentModels(models, picks, q, 5);
@@ -300,11 +303,8 @@ export function ModelMenu({ id, models, providers, value, thinking, picks, onPic
 			{header}
 			{thinking && thinking.levels.length > 1 && (
 				<div className="mb-1 rounded-lg border border-line px-2.5 py-1.5" data-testid={`${id}-thinking`}>
-					<div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-mut uppercase">
-						<Brain size={12} /> 思考强度
-					</div>
-					{/* 与输入栏 / 子代理同一个离散滑块；testid 仍为 thinking-<档位>，提交后按原行为关菜单 */}
-					<ThinkingSlider testid="thinking" showHead={false} levels={thinking.levels} current={thinking.current} onPick={(l) => { if (l) thinking.onPick(l); }} />
+					{/* 与输入栏 / 子代理同一个离散滑块；头部由滑块自己画（当前档 + 实际模型名），外面不再重复一行「思考强度」 */}
+					<ThinkingSlider testid="thinking" levels={thinking.levels} current={thinking.current} modelName={pickedName} onPick={(l) => { if (l) thinking.onPick(l); }} />
 				</div>
 			)}
 			<div className="min-h-0 flex-1 overflow-y-auto">
