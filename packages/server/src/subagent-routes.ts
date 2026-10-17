@@ -5,14 +5,15 @@ import { getAgent, runtime } from "./runtime.ts";
 import { toMessage, type MessageRow } from "./messages.ts";
 import { providerNames, defaultThinking } from "./models.ts";
 import { configuredModels } from "./rooms/model-pick.ts";
-import { agentSubagentPool, agentSubagentSettingsDto, agentSubagentThinking, applyLiveSubagentThinking, getSubagent, isLiveSubagent, listSubagents, resolveSubagentThinking, resumeSubagent, saveAgentSubagentPool, saveAgentSubagentChoice, saveAgentSubagentThinking, saveAgentSubagentLimits, saveSubagentSettings, sendSubagentMessage, setSubagentThinkingOverride, spawnSubagent, stopSubagent, subagentSettings, withResumeInfo, type SubagentThinking, type SubagentSettingsInput, type SubagentLimitsInput } from "./subagents.ts";
+import { agentSubagentPool, agentSubagentSettingsDto, agentSubagentThinking, applyLiveSubagentThinking, getSubagent, resolveSubagentFast, setSubagentFastOverride, isLiveSubagent, listSubagents, resolveSubagentThinking, resumeSubagent, saveAgentSubagentPool, saveAgentSubagentChoice, saveAgentSubagentThinking, saveAgentSubagentLimits, saveSubagentSettings, sendSubagentMessage, setSubagentThinkingOverride, spawnSubagent, stopSubagent, subagentSettings, withResumeInfo, type SubagentThinking, type SubagentSettingsInput, type SubagentLimitsInput } from "./subagents.ts";
 
 /** 子代理行 + 恢复摘要 + 实际生效的思考强度（已按模型收敛） */
 const withThinking = (r: ReturnType<typeof getSubagent>) => {
 	if (!r) return r;
 	const a = getAgent(r.agent_id);
 	const main = a?.thinking ?? defaultThinking();
-	return { ...withResumeInfo(r), resolvedThinking: resolveSubagentThinking(r.agent_id, { provider: r.model_provider, id: r.model_id }, main, r.thinking) };
+	// resolvedFast：实际会用到的请求级 Fast（子代理覆盖 > 所属助理；默认跟随），与思考强度分开
+	return { ...withResumeInfo(r), resolvedThinking: resolveSubagentThinking(r.agent_id, { provider: r.model_provider, id: r.model_id }, main, r.thinking), resolvedFast: resolveSubagentFast(r.agent_id, r.fast) };
 };
 
 // biome-ignore lint/suspicious/noExplicitAny: 同 http.ts
@@ -71,13 +72,15 @@ export function mountSubagentRoutes(app: Hono<any>) {
 		const r = getSubagent(id);
 		if (!r) return c.json({ error: "not_found" }, 404);
 		try {
-			const b = await c.req.json<{ thinking?: string | null }>();
+			const b = await c.req.json<{ thinking?: string | null; fast?: boolean | null }>();
 			if (b.thinking !== undefined) {
 				const row = setSubagentThinkingOverride(id, b.thinking ?? null);
 				const a = getAgent(r.agent_id);
 				const level = resolveSubagentThinking(row.agent_id, { provider: row.model_provider, id: row.model_id }, a?.thinking ?? defaultThinking(), row.thinking);
 				await applyLiveSubagentThinking(id, level);
 			}
+			// Fast 覆盖（null = 跟随所属助理）：只动 subagents.fast，不触发思考强度切换；下一次请求即生效
+			if (b.fast !== undefined) setSubagentFastOverride(id, b.fast ?? null);
 			return c.json({ subagent: withThinking(getSubagent(id)) });
 		} catch (e) { return c.json({ error: String(e) }, 400); }
 	});

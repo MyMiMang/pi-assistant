@@ -19,6 +19,8 @@ export interface Subagent {
 	task: string; context: string; model_provider: string; model_id: string; model_reason: string;
 	/** 单个子代理的思考强度覆盖（Pi 档位）；null = 继承助理的子代理默认设置 */
 	thinking: string | null;
+	/** 单个子代理的请求级 Fast 覆盖（1=开 / 0=关）；null = 跟随所属助理 */
+	fast: number | null;
 	status: SubagentStatus; last_activity_at: number; error_reason: string | null; notified_at: number | null;
 	result_summary: string | null; created_at: number; finished_at: number | null;
 	session_file: string | null; run_started_at: number | null; pending_input: string | null; resume: number | null;
@@ -70,7 +72,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS subagents (
  id TEXT PRIMARY KEY, subagent_id TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL, delivered_at INTEGER);
 `);
 const columns = db.prepare("PRAGMA table_info(subagents)").all() as { name: string }[];
-for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"], ["thinking", "TEXT"], ["attempt", "INTEGER DEFAULT 0"], ["retry_at", "INTEGER"]]) {
+for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"], ["thinking", "TEXT"], ["fast", "INTEGER"], ["attempt", "INTEGER DEFAULT 0"], ["retry_at", "INTEGER"]]) {
 	if (!columns.some((c) => c.name === name)) db.exec(`ALTER TABLE subagents ADD COLUMN ${name} ${type}`);
 }
 // 事件记录当时的终态代际：同一子代理续聊后多次结束时，用每一代自己的 finished_at 去重
@@ -217,6 +219,28 @@ export function resolveSubagentThinking(agentId: string, model: ModelRef, mainTh
 	const setting = agentSubagentThinking(agentId);
 	const wanted = override ?? (setting.mode === "fixed" ? setting.level : mainThinking);
 	return models.clampThinking(model.provider, model.id, wanted);
+}
+/** 助理级请求级 Fast（agents.fast 0/1）；主会话 / 群成员 / 后台任务 / 定时任务都用它。 */
+export function agentFast(agentId: string): boolean {
+	const row = db.prepare("SELECT fast FROM agents WHERE id = ?").get(agentId) as { fast?: number | null } | undefined;
+	return row?.fast === 1;
+}
+/**
+ * 子代理实际用的 Fast：单个子代理覆盖（1/0）> 所属助理的 fast；默认跟随，不另立「助理级子代理默认」设置页。
+ * 与思考强度同构，但**不共用字段**：改 Fast 不会动 thinking，反之亦然。
+ */
+export function resolveSubagentFast(agentId: string, override?: number | null): boolean {
+	if (override === 1 || override === 0) return override === 1;
+	return agentFast(agentId);
+}
+/** 改单个子代理的 Fast 覆盖（null = 跟随所属助理）；落库并广播。 */
+export function setSubagentFastOverride(id: string, fast: boolean | null): Subagent {
+	const r = getSubagent(id);
+	if (!r) throw new Error("子代理不存在");
+	if (fast !== null && typeof fast !== "boolean") throw new Error("Fast 开关不对");
+	db.prepare("UPDATE subagents SET fast = ? WHERE id = ?").run(fast === null ? null : fast ? 1 : 0, id);
+	changed(id);
+	return getSubagent(id)!;
 }
 /** 改单个子代理的思考覆盖（null = 跟随助理默认）；落库并广播。 */
 export function setSubagentThinkingOverride(id: string, thinking: string | null): Subagent {

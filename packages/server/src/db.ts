@@ -159,6 +159,8 @@ for (const [table, col, ddl] of [
 	["tasks", "routine_run_id", "TEXT"],
 	["requests", "conversation_id", "TEXT"],
 	["agents", "thinking", "TEXT"],
+	// 请求级 Fast（OpenAI service_tier=priority）：0/1，默认关；与 thinking 完全独立
+	["agents", "fast", "INTEGER NOT NULL DEFAULT 0"],
 	["agents", "proactivity", "TEXT"],
 	["agents", "proactive_cfg", "TEXT"],
 	["tasks", "kind", "TEXT"],

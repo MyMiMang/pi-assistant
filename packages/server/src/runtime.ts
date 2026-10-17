@@ -1,4 +1,4 @@
-import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, subagentNotifyText, resolveSubagentThinking, resumeSubagent, setSubagentRetryAt, withResumeInfo, type Subagent, type SubagentEvent } from "./subagents.ts";
+import { setSubagentDriver, spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, stopAgentSubagents, subagentActivity, isActiveSubagent, isLiveSubagent, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings, switchSubagentModel, planFallback, livePool, modelKey, subagentNotifyText, resolveSubagentThinking, resolveSubagentFast, agentFast, resumeSubagent, setSubagentRetryAt, withResumeInfo, type Subagent, type SubagentEvent } from "./subagents.ts";
 import { cancelWaitsForConversation, listWaits, parseDue, refreshWait, registerWait, cancelWait, setWaitWaker, setWaitNoteInjector, startWaitScheduler, WAIT_DEFAULT_INTERVAL_MS } from "./task-waits.ts";
 import { classifyModelError, isRecoverableModelError } from "./model-errors.ts";
 import { assessResumeSafety, shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY_PROMPT } from "./subagent-resume.ts";
@@ -72,6 +72,7 @@ import {
 	subscribeSession,
 	INTERJECTION_PREFIX,
 } from "./pi-adapter/index.ts";
+import { attachFastMode, type FastSnapshot, type FastTracker } from "./pi-adapter/fast-mode.ts";
 import { notify } from "./push.ts";
 import { requests } from "./requests.ts";
 import { dockerOperations, sandboxMode } from "./sandbox.ts";
@@ -89,6 +90,8 @@ export interface AgentRow {
 	model_provider: string | null;
 	model_id: string | null;
 	thinking: string | null;
+	/** 请求级 Fast（0/1）：主会话 / 群成员 / 后台 / 定时都用它，与 thinking 独立 */
+	fast: number | null;
 	status: string;
 	session_file: string | null;
 	unread: number;
@@ -162,8 +165,19 @@ export function setRoomHooks(h: RoomHooks) {
 	roomHooks = h;
 }
 
+/**
+ * 消息 meta 里的 Fast 短对象：只在「真的请求了 / 服务回显了 / 请求里本来就有 tier」时记录，
+ * 关着且什么都没发生就不写，避免每条消息都带一个恒定的 off。不存 raw payload / body / header。
+ */
+function fastMeta(snap: FastSnapshot | undefined) {
+	if (!snap) return null;
+	const relevant = snap.requested || snap.observedKind !== "unknown" || snap.status === "conflict" || snap.status === "externally-configured";
+	if (!relevant) return null;
+	return { requested: snap.requested, status: snap.status, capability: snap.capability, api: snap.api, observed: snap.observed, observedKind: snap.observedKind, ...(snap.reason ? { reason: snap.reason } : {}) };
+}
+
 /** 把一个 Pi 会话的事件落盘并广播。 */
-function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void, subagentId?: string, pendingUserEntries?: string[]) {
+function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void, subagentId?: string, pendingUserEntries?: string[], fastTracker?: FastTracker) {
 	const insert = (m: Parameters<typeof insertMessage>[0]) => insertMessage({ ...m, subagentId });
 	let cur: { id: string; text: string; thinking: string; flushAt: number } | null = null;
 	// app 消息 ↔ Pi entry 的映射：assistant 消息的 id（供紧随 message_end 的 entry_id 事件落 meta.piEntryId）
@@ -237,8 +251,9 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 					// App 里折叠显示；渠道出站另行剥离
 					const { text, thinking: inline } = splitThinking(e.text);
 					const thinking = [cur.thinking.trim(), inline].filter(Boolean).join("\n\n");
+					const fm = fastMeta(fastTracker?.snapshot());
 					if (!text.trim() && !thinking) deleteMessage(cur.id);
-					else updateMessage(cur.id, { content: text, status: "done", meta: { model: `${e.provider}/${e.model}`, ...(usage ? { usage } : {}), ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}) } });
+					else updateMessage(cur.id, { content: text, status: "done", meta: { model: `${e.provider}/${e.model}`, ...(usage ? { usage } : {}), ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}), ...(fm ? { fast: fm } : {}) } });
 				}
 				lastAssistantMid = cur.id;
 				cur = null;
@@ -700,6 +715,8 @@ class AgentRuntime {
 				skillFilter: skillFilterFor(this.id),
 				...integrationsFor(this.id, this.conversationId),
 			});
+			// 请求级 Fast：每次请求重新读这个助理的开关（公开 hook，不重建会话；与 thinking / 模型无关）
+			const fast = attachFastMode(session, () => agentFast(this.id));
 			const file = sessionFileOf(session);
 			if (file && file !== getConversation(this.conversationId)?.session_file) setConversationSession(this.conversationId, file);
 			const unUser = subscribeSession(session, (e) => {
@@ -713,7 +730,7 @@ class AgentRuntime {
 				settleAgent(this.id);
 				drainAdvances(this.id, this.conversationId);
 				for (const w of [...this.waiters]) w(aborted);
-			}, undefined, this.pendingUserEntries);
+			}, undefined, this.pendingUserEntries, fast);
 			this.unsub = () => (unUser(), unBind());
 			this.session = session;
 			this.modelKey = key;
@@ -1061,6 +1078,8 @@ export const tasks = {
 				skillFilter: skillFilterFor(a.id),
 				...integrationsFor(a.id, t.conversation_id),
 			});
+			// 后台任务用所属助理的 Fast 开关；每次请求重新读，运行中改开关对下一次请求生效
+			const fast = attachFastMode(session, () => agentFast(a.id));
 			live.set(t.id, session);
 			liveAgent.set(t.id, a.id);
 			const file = sessionFileOf(session);
@@ -1070,7 +1089,7 @@ export const tasks = {
 					if (isSessionBusy(session)) return;
 					unsub();
 					resolve(aborted);
-				});
+				}, undefined, undefined, fast);
 			});
 			await promptSession(session, resume ? "（系统通知）服务重启，上次执行被中断。请检查工作区里已有的进度，然后继续完成任务。" : t.instructions);
 			const aborted = await done;
@@ -1191,12 +1210,14 @@ setSubagentDriver({
 			}
 		}
 		if (!session) throw new Error("候选池里没有可用模型");
+		// 子代理 Fast：默认跟随所属助理，单个子代理可独立覆盖；每次请求重新读（运行中改也生效）
+		const fast = attachFastMode(session, () => resolveSubagentFast(r.agent_id, getSubagent(r.id)?.fast ?? r.fast));
 		db.prepare("UPDATE subagents SET session_file = ? WHERE id = ?").run(sessionFileOf(session) ?? null, r.id);
 		let error: string | undefined;
 		const routed: string[] = [];
 		let started = false;
 		const early: string[] = [];
-		const unBind = bindSession(session, a.id, r.conversation_id, null, () => {}, r.id);
+		const unBind = bindSession(session, a.id, r.conversation_id, null, () => {}, r.id, undefined, fast);
 		const unActivity = subscribeSession(session, (e) => {
 			if (e.type === "user_start" && !started) {
 				started = true;

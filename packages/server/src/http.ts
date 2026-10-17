@@ -35,6 +35,7 @@ import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
 import { getMessageByClientId, insertMessage, listMessages, toMessage, type MessageRow } from "./messages.ts";
 import { credentialBackend, customProviders, defaultModel, defaultThinking, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "./models.ts";
+import { fastCapability } from "./pi-adapter/fast-mode.ts";
 import { onboardingState } from "./onboarding.ts";
 import { getModelPicks, recordModelPick } from "./model-picks.ts";
 import { buildRegistry, type RegistryImageProvider, type RegistryProviderHint } from "./model-registry.ts";
@@ -289,7 +290,7 @@ mountLocalAsrRoutes(app, localOnly, undefined, { service: localAsrService });
 mountAsrRoutes(app);
 app.get("/api/models", (c) => {
 	const names = providerNames();
-	return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => withProviderName(m, names)));
+	return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => ({ ...withProviderName(m, names), fast: fastCapability(m.api, m.provider) })));
 });
 /** 统一模型服务注册表：一份带能力的元数据视图（内置 + 自定义 + 生图 + 本地；凭据仍由 Pi 按 provider 解析）。 */
 const registryJson = () => {
@@ -425,10 +426,10 @@ app.put("/api/models/default", async (c) => {
 // ---------------------------------------------------------------- 助理与聊天
 const agentJson = (a: NonNullable<ReturnType<typeof getAgent>>) => {
 	const last = db.prepare("SELECT content, role, created_at FROM messages WHERE agent_id = ? AND task_id IS NULL AND subagent_id IS NULL AND room_id IS NULL AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1").get(a.id);
-	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), thinking: runtime(a.id).thinkingFor(a), thinkingSetting: a.thinking, workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
+	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), thinking: runtime(a.id).thinkingFor(a), thinkingSetting: a.thinking, fast: a.fast === 1, workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
 };
 app.get("/api/agents", (c) => c.json(listAgents().map(agentJson)));
-type AgentInput = { name?: string; avatar?: string; color?: string; persona?: string; description?: string; model?: { provider: string; id: string } | null; thinking?: string | null };
+type AgentInput = { name?: string; avatar?: string; color?: string; persona?: string; description?: string; model?: { provider: string; id: string } | null; thinking?: string | null; /** 请求级 Fast：只动 agents.fast，不碰 thinking / 模型 */ fast?: boolean | null };
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const cleanAvatar = (v: string | undefined, name: string) => {
 	const t = (v ?? "").trim();
@@ -463,6 +464,11 @@ app.patch("/api/agents/:id", async (c) => {
 	if (b.thinking !== undefined) {
 		if (b.thinking !== null && !THINKING.includes(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
 		db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(b.thinking, a.id);
+	}
+	// Fast 与思考强度是两个独立字段：这里只改 fast，不动 thinking / 模型选择
+	if (b.fast !== undefined) {
+		if (b.fast !== null && typeof b.fast !== "boolean") return c.json({ error: "Fast 开关不对" }, 400);
+		db.prepare("UPDATE agents SET fast = ? WHERE id = ?").run(b.fast ? 1 : 0, a.id);
 	}
 	onAgentChanged(a.id);
 	bus.emit({ type: "agents.changed" });
