@@ -37,7 +37,7 @@
 - 子代理覆盖：`subagents.fast`（`INTEGER NULL`）；`null` = 跟随所属助理，`1/0` = 独立开 / 关。与 `thinking` 完全独立的两列，互不修改。
 - 不新增「助理级子代理 Fast 默认」设置页：子代理默认就是跟随。
 - 路由：`PATCH /api/agents/:id { fast }` 只 `UPDATE agents.fast`；`PATCH /api/subagents/:id { fast }` 只 `UPDATE subagents.fast`；`GET /api/models` 每个模型附 `fast: { capability, reason? }`。`SUBAGENTS` 详情附 `resolvedFast`。
-- 前端各 context 用各自的值（助理 / 子代理），不共用全局 localStorage；保存中 `pending` 禁重复，失败只回滚 fast 字段并给原因（不覆盖同时修改的 thinking / 模型 / 消息）。
+- 前端各 context 用各自的值（助理 / 子代理），不共用全局 localStorage；保存中 `pending` 禁重复，失败只回滚 fast 字段并给原因（不覆盖同时修改的 thinking / 模型 / 消息）。同一助理的多入口共用一份「最后一次为准」写入（`LatestWrite`，确认值来自服务端响应），迟到成功 / 失败不落地、回滚只落到已确认值。**边界**：这是客户端顺序，不是服务端事务——两个请求乱序到达时仍以服务端最后处理的那次为准；没有新增版本号 / CAS，也不假装有。
 
 ## 5. requested ≠ accepted ≠ observed（关键）
 

@@ -13,30 +13,32 @@
  * 不碰真实数据 / 真实 Key / 付费模型：临时 PIA_DATA_DIR + HOME + TMPDIR（mkdtemp，结束只删本次），
  * `PIA_MOCK=1` + `PIA_OFFLINE=1`，模型渠道指向 127.0.0.1:1（连不通也不会发真实请求）。
  *
- * ⚠️ 浏览器环境还没接线：heavy 槽正在修 StdioTransport 的 env merge，native env helper 由它统一提供。
- * 在 helper 接线前，本脚本 **不启动 Chrome**（会明确退出码 2，而不是拿真实 HOME 起浏览器）。
- * 接线后：用 helper 启动 Chrome、设 `PIA_E2E_BROWSER_ENV=native`，再 `node e2e/fast-mode-ui.mjs`。
- * 运行前先构建：npm run build -w @pi-assistant/web
+ * ⚠️ 浏览器环境统一走 `e2e/fixtures/native-launch-env.mjs`（`nativeLaunchBrowserEnv()`：原生进程用真实 HOME /
+ * 真实 TMPDIR，服务进程仍用临时目录）。该 helper 还没合进本树（由 heavy 槽接线），**本脚本不自行跨树复制**：
+ * helper 不在时明确退出码 2 并说明，不用真实 HOME 冒充也没接线地起 Chrome。
+ * helper 落进本树后直接 `node e2e/fast-mode-ui.mjs` 即可（先 `npm run build -w @pi-assistant/web`）。
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-if (process.env.PIA_E2E_BROWSER_ENV !== "native") {
+// 浏览器环境 helper（heavy 槽接线后落进本树）；没有就明确「没运行」，不拿真实 HOME 硬起 Chrome
+const HELPER = fileURLToPath(new URL("./fixtures/native-launch-env.mjs", import.meta.url));
+if (!existsSync(HELPER)) {
 	console.error(
 		[
-			"⏸  fast-mode-ui 未运行：浏览器环境还没接线（native env helper 由 heavy 槽统一提供）。",
-			"   不会用真实 HOME 启动 Chrome，也不会整进程改 HOME。",
-			"   接线后用 helper 启动浏览器并设 PIA_E2E_BROWSER_ENV=native 再跑；本脚本其余部分已就绪。",
+			"⏸  fast-mode-ui 未运行：e2e/fixtures/native-launch-env.mjs（native 浏览器环境 helper）还没合进本树。",
+			"   本脚本不跨树复制 helper，也不会用真实 HOME / 改过的 TMPDIR 硬起 Chrome。",
+			"   helper 落进本树后直接重跑；服务端仍然只用临时 HOME / DATA / WORKSPACE / TMPDIR。",
 		].join("\n"),
 	);
 	process.exit(2);
 }
-
+const { nativeLaunchBrowserEnv } = await import(pathToFileURL(HELPER).href);
 const { chromium } = await import("playwright-core");
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const RUN_DIR = mkdtempSync(join(tmpdir(), "pia-e2e-fast-mode-"));
@@ -119,7 +121,9 @@ try {
 	const relay = await j("/api/models/custom", "POST", { name: "本地假中转", api: "openai-completions", baseUrl: "http://127.0.0.1:1/v1", noKey: true, models: [{ id: "fast-model", contextWindow: 131072, maxTokens: 8192 }] });
 	await j(`/api/agents/${agent.id}`, "PATCH", { model: { provider: relay.id, id: "fast-model" } });
 
-	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, args: ["--no-sandbox"] });
+	// 原生 Chromium 用 helper 给的那份环境（真实 HOME / 真实 TMPDIR）；服务进程那份临时目录不受影响
+	const browserEnv = nativeLaunchBrowserEnv({ syntheticRoots: [RUN_DIR, DATA, WORKSPACE, FAKE_HOME] });
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, args: ["--no-sandbox"], env: browserEnv });
 	const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "zh-CN" });
 	const page = await ctx.newPage();
 	page.setDefaultTimeout(20_000);
