@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> **beta.30 已推送、构建中（2026-10-18；公开版仍beta.29）**：main与新tag `v0.1.0-beta.30` 已推至 `1f0b8c4eb63d340e874da0de6ee6923273cf1c11`；[Actions 39055072812](https://github.com/MyMiMang/pi-assistant/actions/runs/39055072812) prepare成功，五平台任务已启动，安装启动冒烟/公开发布尚待完成；用户未要求自动安装。
+>
 > **beta.30 最终发布准备（2026-10-18，用户已授权推送打包；公开版仍beta.29）**：本轮最终行为以[beta.30发布说明](release-notes/v0.1.0-beta.30.md)与[最终收口](../progress-snapshots/beta30-release-final.md)为准，覆盖下方快速模型“保留/按需使用”的历史中间决定。已撤产品选择器/Laya入口，保留主模型直接电脑操作和聊天请求Fast。最后修正Fast持续生效的费用预期文案。最终两端tsc/build、服务端64/64、纯检查23/23、Fast UI64/64及撤入口真实隔离服务UI通过，四图主审；无新发布阻塞。真实Fast账号加速/计费、完整实机任务、旧macOS兼容与TCC持久化仍未验。范围all-intel，构建/安装冒烟结果待workflow，不把准备写成已公开。
 
 > **2026-10-18 撤下电脑快速候选选择器（beta.30 候选，worktree `beta30-followup-integration`；未 push / 未 tag / 未打包；公开版仍是 beta.29）**：用户决定「撤下电脑设置里的快速开关/选择入口，不再给 agent `fast_pick_action` 与引导；保留直接浏览器 / 系统 / 批量操作、保留研究测试历史、通用 classifier 如别处用保留」。本轮只撤**电脑快速候选选择**这条产品链路，**主模型直接 CUA / host CDP / 截图鼠键等电脑能力原样保留**。
