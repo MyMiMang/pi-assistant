@@ -341,12 +341,12 @@ function AgentModels({ agentId }: { agentId: string }) {
 	);
 }
 
-/** 能力：技能与扩展同页两个区，各自保留搜索、启用数、全局管理与错误重试。 */
+/** 能力：技能是主体（已启用直接列出、其余折叠）；扩展收进「高级」，各自保留启用数、全局管理与错误重试。 */
 function Capabilities({ agentId }: { agentId: string }) {
 	return (
 		<div className="text-sm" data-testid="agent-capabilities-tab">
 			<AgentSkills agentId={agentId} />
-			<div className="mt-5 border-t border-line pt-4">
+			<div className="mt-3">
 				<AgentExtensions agentId={agentId} />
 			</div>
 		</div>

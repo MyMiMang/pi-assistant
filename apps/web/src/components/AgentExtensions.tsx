@@ -2,7 +2,7 @@ import { Loader2, Plug, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import { Button, ErrorBox } from "./ui";
+import { Button, ErrorBox, Help } from "./ui";
 
 type Item = { id: string; name: string; enabled: boolean; agents: string[] | null; kind: "mcp" | "pkg" };
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -63,12 +63,19 @@ export function AgentExtensions({ agentId }: { agentId: string }) {
 			void load();
 		}
 	};
+	// 开发者插件一般不用动：收进「高级」，摘要写数量；读失败时直接展开，让错误和重试可见
 	return (
+		<details className="pa-info-details" data-testid="agent-extensions-details" open={!!loadErr || undefined}>
+			<summary>
+				高级
+				<small>扩展 · {items ? (items.length ? `${items.filter(on).length} / ${items.length} 个已启用` : "还没有") : loading ? "读取中…" : "读取失败"} · 开发者插件，一般不用动</small>
+			</summary>
 		<section className="space-y-2" data-testid="agent-extensions">
 			<div className="pa-info-sechead">
 				<strong className="flex min-w-0 items-center gap-1.5">
 					<Plug size={13} /> 扩展
 					{loading && <Loader2 size={12} className="animate-spin text-mut" aria-hidden />}
+					<Help>MCP 服务和 Pi 扩展包给助理加额外工具；在这里勾选这个助理能用哪些，安装和全局开关在「管理服务」里。</Help>
 				</strong>
 				<Button size="sm" variant="outline" onClick={() => useStore.getState().set({ settings: "extensions" })} data-testid="agent-extensions-open-settings">
 					管理服务
@@ -92,7 +99,7 @@ export function AgentExtensions({ agentId }: { agentId: string }) {
 			) : items.length === 0 ? (
 				<div className="text-sm text-mut" data-testid="agent-extensions-empty">无扩展，基础工具默认提供。</div>
 			) : (
-				<ul className="space-y-1">
+				<ul className="max-h-80 space-y-1 overflow-y-auto">
 					{items.map((i) => (
 						<li key={i.id}>
 							<label className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-hover">
@@ -108,5 +115,6 @@ export function AgentExtensions({ agentId }: { agentId: string }) {
 				</ul>
 			)}
 		</section>
+		</details>
 	);
 }

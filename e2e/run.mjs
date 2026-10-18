@@ -885,6 +885,7 @@ await step("扩展：添加 MCP 服务（本机命令）→ 测试连接/工具�
 	// 能力页里按助理启用
 	const pane = page.locator("aside").last();
 	await infoTab("capabilities");
+	await expandDetails(pane, "agent-extensions-details");
 	await pane.locator("[data-testid=agent-extensions]").getByText("demo", { exact: true }).waitFor();
 });
 

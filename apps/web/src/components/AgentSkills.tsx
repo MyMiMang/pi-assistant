@@ -1,4 +1,4 @@
-import { Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
+import { ChevronRight, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
@@ -64,6 +64,24 @@ export function AgentSkills({ agentId }: { agentId: string }) {
 		const s = q.trim().toLowerCase();
 		return s && list ? list.filter((x) => x.name.toLowerCase().includes(s) || x.description.toLowerCase().includes(s)) : (list ?? []);
 	}, [list, q]);
+	// 没在搜索时：已启用的直接列出，其余收进「其他 N 个未启用」（默认收起、限高滚动）；搜索时平铺全部匹配。
+	const searching = !!q.trim();
+	const on = shown.filter((s) => enabledSet.has(s.id));
+	const off = shown.filter((s) => !enabledSet.has(s.id));
+	const row = (s: SkillMeta) => (
+		<li key={s.id}>
+			<label className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-hover">
+				<input type="checkbox" className="mt-1" checked={enabledSet.has(s.id)} onChange={(e) => void toggle(s.id, e.target.checked)} data-testid={`agent-skill-${s.name}`} />
+				<span className="min-w-0">
+					<span className="flex items-center gap-1.5">
+						<span className="font-mono text-[13px] break-all">{s.name}</span>
+						<Badge tone={s.builtin ? "zinc" : "green"}>{SRC[s.source]}</Badge>
+					</span>
+					<span className="line-clamp-2 text-xs text-mut">{s.description}</span>
+				</span>
+			</label>
+		</li>
+	);
 	return (
 		<section className="space-y-2" data-testid="agent-skills">
 			<div className="pa-info-sechead">
@@ -78,6 +96,7 @@ export function AgentSkills({ agentId }: { agentId: string }) {
 					</span>
 				)}
 			</div>
+			<p className="pa-info-lead">给助理装上做某类事的方法</p>
 			{loadErr && (
 				<div className="flex flex-wrap items-center gap-2">
 					<ErrorBox text={loadErr} className="min-w-0 flex-1" />
@@ -100,35 +119,34 @@ export function AgentSkills({ agentId }: { agentId: string }) {
 				</div>
 			) : (
 				<>
-					<div className="flex gap-1.5">
-						<div className="relative min-w-0 flex-1">
-							<Search size={13} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-mut" />
-							<Input className="!pl-7" placeholder="搜索技能" value={q} onChange={(e) => setQ(e.target.value)} data-testid="agent-skills-search" />
-						</div>
-						<Button size="sm" variant="outline" onClick={() => useStore.getState().set({ settings: "skills" })} data-testid="agent-skills-library">技能库</Button>
+					<div className="relative min-w-0">
+						<Search size={13} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-mut" />
+						<Input className="!pl-7" placeholder="搜索技能" value={q} onChange={(e) => setQ(e.target.value)} data-testid="agent-skills-search" />
 					</div>
-					{enabled.length === 0 && (
+					{enabled.length === 0 && !searching && (
 						<div className="rounded-lg bg-hover/60 px-3 py-2 text-xs text-mut" data-testid="agent-skills-empty">
 							未启用技能，基础工具仍可用。
 						</div>
 					)}
-					<ul className="space-y-1">
-						{shown.map((s) => (
-							<li key={s.id}>
-								<label className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-hover">
-									<input type="checkbox" className="mt-1" checked={enabledSet.has(s.id)} onChange={(e) => void toggle(s.id, e.target.checked)} data-testid={`agent-skill-${s.name}`} />
-									<span className="min-w-0">
-										<span className="flex items-center gap-1.5">
-											<span className="font-mono text-[13px] break-all">{s.name}</span>
-											<Badge tone={s.builtin ? "zinc" : "green"}>{SRC[s.source]}</Badge>
-										</span>
-										<span className="line-clamp-2 text-xs text-mut">{s.description}</span>
-									</span>
-								</label>
-							</li>
-						))}
-						{shown.length === 0 && <li className="px-2 py-1.5 text-xs text-mut">没有匹配的技能。</li>}
-					</ul>
+					{searching ? (
+						<ul className="max-h-80 space-y-1 overflow-y-auto">
+							{shown.map(row)}
+							{shown.length === 0 && <li className="px-2 py-1.5 text-xs text-mut">没有匹配的技能。</li>}
+						</ul>
+					) : (
+						<>
+							{on.length > 0 && <ul className="space-y-1" data-testid="agent-skills-enabled">{on.map(row)}</ul>}
+							{off.length > 0 && (
+								<details className="pa-info-details" data-testid="agent-skills-others">
+									<summary>其他 {off.length} 个未启用</summary>
+									<ul className="max-h-80 space-y-1 overflow-y-auto">{off.map(row)}</ul>
+								</details>
+							)}
+						</>
+					)}
+					<button type="button" className="flex items-center gap-0.5 text-xs text-accent" onClick={() => useStore.getState().set({ settings: "skills" })} data-testid="agent-skills-library">
+						打开技能库 <ChevronRight size={13} />
+					</button>
 				</>
 			)}
 		</section>

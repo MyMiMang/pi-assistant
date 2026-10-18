@@ -120,6 +120,8 @@ try {
 	await page.getByTestId(`agent-skill-${builtin.name}`).uncheck();
 	await waitFor(async () => (await ok(`/api/agents/${a}/skills`)).enabled.length === 0);
 	check("界面取消勾选已落库", (await ok(`/api/agents/${a}/skills`)).enabled.length === 0);
+	// 未启用的技能收在「其他 N 个未启用」里（默认收起）：真实点开再勾
+	await page.getByTestId("agent-skills-others").locator(":scope > summary").click();
 	await page.getByTestId(`agent-skill-${builtin.name}`).check();
 	await waitFor(async () => (await ok(`/api/agents/${a}/skills`)).enabled.includes(builtin.id));
 	check("界面勾选已落库", (await ok(`/api/agents/${a}/skills`)).enabled.includes(builtin.id));

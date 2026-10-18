@@ -147,7 +147,8 @@ try {
  assert.ok(savedImage.ok, "已保存头像可以从真实接口读取");
  assert.deepEqual(Buffer.from(await savedImage.arrayBuffer()), avatarPng, "后一次资料保存后真实头像文件仍是本次上传内容");
  console.log("PASS profile-avatar: real upload + newer text draft + next save preserve confirmed image; preview reflects persisted avatar");
- await select("capabilities"); await pane.getByTestId("agent-skills").waitFor(); await pane.getByTestId("agent-extensions").waitFor();
+ await select("capabilities"); await pane.getByTestId("agent-skills").waitFor(); await pane.getByTestId("agent-extensions").waitFor({ state: "attached" });
+ assert.equal(await pane.getByTestId("agent-extensions-details").evaluate((el) => el.open), false, "扩展默认收在「高级」里");
  await select("models");
  await expandAgentModelSection(page, "image"); await expandAgentModelSection(page, "subagents");
  await pane.getByTestId("agent-image-model").waitFor(); await pane.getByTestId("agent-subagent-model").waitFor();
@@ -235,7 +236,7 @@ try {
  await pane.getByTestId("agent-skills-count").waitFor();
  const rejectSkills = (route) => route.request().method() === "PUT" ? fulfill(route, { error: "技能保存失败探针" }, 503) : route.continue();
  await page.route(`**/api/agents/${a.id}/skills`, rejectSkills);
- const skill = pane.getByTestId("agent-skills").getByRole("checkbox").first(); const wasEnabled = await skill.isChecked();
+ const skill = pane.getByTestId("agent-skills").getByRole("checkbox").first(); await ensureDetailVisible(pane.getByTestId("agent-skills"), skill); const wasEnabled = await skill.isChecked();
  await skill.click();
  await pane.getByTestId("agent-skills").getByText(/技能保存失败探针/).waitFor();
  await wait(async () => (await skill.isChecked()) === wasEnabled);
