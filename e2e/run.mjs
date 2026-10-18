@@ -931,8 +931,13 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 		const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", locale: "zh-CN" });
 		const p = await c.newPage();
 		await p.goto(`${BASE}/?settings=models`);
-		await p.getByRole("button", { name: /添加自定义服务/ }).click();
+		// 当前 UI：模型服务页右上「添加服务」→ 类型选「自定义」→ 弹出自定义服务表单
+		await p.getByTestId("add-service-open").click();
+		await p.getByTestId("add-service").waitFor();
+		await p.getByTestId("add-service-kind").click();
+		await p.getByRole("option", { name: /自定义/ }).click();
 		const f = p.getByTestId("custom-provider-form");
+		await f.waitFor();
 		await f.getByPlaceholder("例如：我的中转站").fill("我的中转站");
 		await f.getByLabel("API 类型").selectOption("openai-completions");
 		await f.getByPlaceholder("https://api.example.com/v1").fill(relay.url);
@@ -946,42 +951,52 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 		await f.getByPlaceholder("手动输入模型 ID，回车添加").fill("relay-manual");
 		await f.getByPlaceholder("手动输入模型 ID，回车添加").press("Enter");
 		await f.getByRole("button", { name: "保存", exact: true }).click();
-		await f.getByText("已保存：我的中转站").waitFor();
-		// 每个模型显示上下文 / 最大输出和来源：relay-chat 由模型列表接口识别（64K），手动加的 relay-manual 用默认（128K / 8K）
-		await f.locator("[data-testid=custom-model-row][data-model=relay-chat] [data-testid=limits-source]").getByText("自动识别").waitFor();
-		const lt = async (id) => (await f.locator(`[data-testid=custom-model-row][data-model="${id}"] [data-testid=limits-text]`).textContent())?.trim();
-		if ((await lt("relay-chat")) !== "64K 上下文 · 4K 输出") throw new Error(`relay-chat 上下文没识别出来：${await lt("relay-chat")}`);
-		await f.locator("[data-testid=custom-model-row][data-model=relay-manual] [data-testid=limits-source]").getByText("自动（默认）").waitFor();
-		if (!(await lt("relay-manual"))?.startsWith("256K 上下文 · 128K 输出")) throw new Error(`默认不是 256K / 128K：${await lt("relay-manual")}`);
-		// 点数值展开编辑：预设 + 带单位输入（1m），来源变“手动”；恢复自动后回到默认
-		await f.getByRole("button", { name: "编辑 relay-manual 的上下文和输出长度" }).click();
-		const ed = f.locator("[data-testid=custom-model-row][data-model=relay-manual] [data-testid=custom-model-editor]");
+		// 保存后添加弹窗自动关闭，回到服务列表：新中转站以服务卡片出现，展开进详情
+		await p.getByTestId("add-service").waitFor({ state: "detached" });
+		const cid = (await (await fetch(`${BASE}/api/models/custom`)).json()).providers[0].id;
+		const card = p.locator(`[data-testid=service-card][data-service="${cid}"]`);
+		await card.getByText("我的中转站").first().waitFor();
+		await card.getByTestId(`service-toggle-${cid}`).click();
+		const det = card.getByTestId(`relay-detail-${cid}`);
+		await det.waitFor();
+		const row = (id) => det.locator(`[data-testid=service-model][data-model="${id}"]`);
+		// 每个模型显示上下文 / 最大输出：relay-chat 由模型列表接口识别（64K），手动加的 relay-manual 用默认（256K / 128K）
+		const lt = async (id) => (await row(id).getByTestId("relay-model-toggle").innerText()).replace(/\s+/g, " ");
+		await row("relay-chat").waitFor();
+		if (!(await lt("relay-chat")).includes("64K 上下文 · 4K 输出")) throw new Error(`relay-chat 上下文没识别出来：${await lt("relay-chat")}`);
+		if (!(await lt("relay-manual")).includes("256K 上下文 · 128K 输出")) throw new Error(`默认不是 256K / 128K：${await lt("relay-manual")}`);
+		// 展开模型编辑：带单位输入（1m）+ 预设（16K），保存后来源变“手动”
+		await row("relay-manual").getByTestId("relay-model-toggle").click();
+		const ed = row("relay-manual").getByTestId("relay-model-editor");
 		await ed.getByTestId("ctx-input").fill("1m");
 		await ed.getByTestId("ctx-input").press("Enter");
-		await ed.getByRole("button", { name: "16K", exact: true }).click();
-		if ((await lt("relay-manual")) !== "1M 上下文 · 16K 输出") throw new Error(`编辑没生效：${await lt("relay-manual")}`);
-		await f.locator("[data-testid=custom-model-row][data-model=relay-manual] [data-testid=limits-source]").getByText("手动").waitFor();
-		await ed.getByText("恢复自动").click();
-		await f.getByRole("button", { name: "测试连接" }).click();
-		await f.getByText(/连接成功：中转站回复/).waitFor();
+		await ed.getByTestId("out-input").locator("xpath=..").getByRole("button", { name: "16K", exact: true }).click();
+		await ed.getByTestId("relay-model-save").click();
+		await ed.waitFor({ state: "detached" });
+		await p.waitForFunction(async (u) => { const j = await (await fetch(u)).json(); const m = j.providers[0].models.find((x) => x.id === "relay-manual"); return m?.contextWindow >= 1_000_000 && m?.maxTokens === 16384; }, `${BASE}/api/models/custom`, { timeout: 10_000 }).catch(() => {});
+		if (!(await lt("relay-manual")).includes("1M 上下文 · 16K 输出")) throw new Error(`编辑没生效：${await lt("relay-manual")}`);
+		// 测试连接
+		await card.getByTestId(`service-test-run-${cid}`).click();
+		await card.getByTestId(`service-test-result-${cid}`).getByText(/连接成功/).waitFor();
 		// 很长的模型 ID 在各种宽度下：模型名一定看得见（截断而不是被挤没），整行不溢出
 		const longIds = ["deepseek-ai/DeepSeek-V4.1-Flash-Vision-Experimental-2026-10-01-extra-long-suffix", "accounts/fireworks/models/qwen3p8-2p4t-a95b-instruct-preview"];
+		await det.getByTestId("relay-add-open").click();
 		for (const id of longIds) {
-			await f.getByPlaceholder("手动输入模型 ID，回车添加").fill(id);
-			await f.getByPlaceholder("手动输入模型 ID，回车添加").press("Enter");
+			await det.getByTestId("relay-add-input").fill(id);
+			await det.getByTestId("relay-add-input").press("Enter");
+			await row(id).waitFor();
 		}
 		for (const w of [1440, 1024, 760, 390]) {
 			await p.setViewportSize({ width: w, height: 900 });
 			await p.waitForTimeout(250);
-			const bad = await f.locator("[data-testid=custom-models]").evaluate((list) => {
+			const bad = await det.getByTestId(`service-models-${cid}`).evaluate((list) => {
 				const lr = list.getBoundingClientRect();
 				const out = [];
 				if (list.scrollWidth > list.clientWidth + 1) out.push("列表横向溢出");
-				for (const row of list.querySelectorAll("[data-testid=custom-model-row]")) {
-					const n = row.querySelector("[data-testid=custom-model-name]").getBoundingClientRect();
-					const l = row.querySelector("[data-testid=custom-model-limits]").getBoundingClientRect();
-					if (n.width < 80 || n.height < 10) out.push(`${row.dataset.model} 名字宽 ${n.width}`);
-					if (n.right > lr.right + 1 || l.right > lr.right + 1) out.push(`${row.dataset.model} 超出`);
+				for (const r of list.querySelectorAll("[data-testid=service-model]")) {
+					const n = r.querySelector("[data-testid=relay-model-toggle] > span").getBoundingClientRect();
+					if (n.width < 60 || n.height < 10) out.push(`${r.dataset.model} 名字宽 ${n.width}`);
+					if (n.right > lr.right + 1 || r.getBoundingClientRect().right > lr.right + 1) out.push(`${r.dataset.model} 超出`);
 				}
 				return out;
 			});
@@ -990,16 +1005,16 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 			if (w === 390) await p.screenshot({ path: join(SHOTS, "17c-custom-models-390.png") });
 		}
 		await p.setViewportSize({ width: 1440, height: 900 });
-		for (const id of longIds) await f.getByRole("button", { name: `移除 ${id}` }).click();
+		for (const id of longIds) {
+			await row(id).getByTestId("relay-model-toggle").click();
+			await row(id).getByTestId("relay-model-remove").click();
+			await row(id).waitFor({ state: "detached" });
+		}
 		await p.waitForTimeout(300);
 		await p.screenshot({ path: join(SHOTS, "17-settings-custom-provider.png") });
 		const cfg = readFileSync(join(DATA, "models.json"), "utf8");
 		if (!cfg.includes("custom-") || cfg.includes("sk-relay-test") || cfg.includes('"e2e"')) throw new Error("models.json 内容不对（Key/请求头值不应明文出现）");
-		// 返回列表，自定义服务带“自定义”标记
-		await p.getByRole("button", { name: "← 返回列表" }).click();
-		await p.locator("button:has-text('我的中转站')").filter({ hasText: "自定义" }).first().waitFor();
 		// 设为默认模型并用它聊天（流式经过中转站）
-		const cid = (await (await fetch(`${BASE}/api/models/custom`)).json()).providers[0].id;
 		// 模型是按助理保存的（输入框工具栏的模型选择器做的就是这个 PATCH）
 		const r = await fetch(`${BASE}/api/agents/${AGENT}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: { provider: cid, id: "relay-chat" } }) });
 		if (!r.ok) throw new Error(`切换助理模型失败 ${r.status}`);
