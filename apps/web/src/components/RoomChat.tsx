@@ -1,3 +1,4 @@
+import { setComposerDraft, useComposerDrafts } from "../composerDrafts";
 import { SubagentTasks } from "./Subagents";
 import { WorkItemsButton } from "./WorkItems";
 import { ArrowUp, AtSign, Crown, Loader2, PanelRight, Plus, Settings2, Square, Trash2, Users } from "lucide-react";
@@ -290,7 +291,9 @@ function RoomBotTurn({ row, room, agents, live, onAvatar, onQuote, onJump, inter
 // ------------------------------------------------------------------ 输入框：@ 选择（桌面弹出层，手机底部面板）
 const ALL = { agentId: "__all", name: "所有人" } as const;
 function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, onRetryJump, wrapRef }: { room: Room; running: boolean; drag: boolean; ref: React.Ref<{ addFiles: (f: FileList | File[]) => void }>; replyKey: string; onJump: (id: string) => void; jumpState: { s: "loading" | "notfound" | "error" } | null; onRetryJump: () => void; wrapRef?: React.RefObject<HTMLDivElement | null> }) {
-	const [text, setText] = useState("");
+	// 草稿按群分桶（与 1:1 输入框同一份草稿 store）：切群不丢字、不串群
+	const text = useComposerDrafts((s) => s.drafts[replyKey] ?? "");
+	const setText = (v: string) => setComposerDraft(replyKey, v);
 	const [sending, setSending] = useState(false);
 	const clientRef = useRef<{ sig: string; id: string } | null>(null);
 	const quote = useReplyDrafts((s) => s.drafts[replyKey] ?? null);
