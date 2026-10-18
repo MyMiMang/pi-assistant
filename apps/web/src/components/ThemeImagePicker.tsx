@@ -56,7 +56,8 @@ export function ThemeImagePicker({ uploadFn, value, onChange, disabled }: ThemeI
 	return (
 		<div className="space-y-2" data-testid="theme-image-picker">
 			<div className="flex items-center gap-2">
-				{!disabled && <AttachButton onFiles={pick} label="加图片" />}
+				{/* 生成中只禁用不移除：按钮消失会让旁边的「?」挪到鼠标下、弹出说明挡住下面的操作 */}
+				<AttachButton onFiles={pick} label="加图片" disabled={disabled} />
 				<Help>
 					图片**仅作参考**：只用于你这次发起的 AI 生成请求，帮你定配色 / 风格 / 材质 / 布局，不会写进主题、也不随主题导出。
 					（把素材图真正绘成背景 / 装饰暂未支持，所以这里没有那两个选项；后续版本再说。）

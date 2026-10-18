@@ -235,12 +235,12 @@ function TrayThumb({ name, authPath, preview, busy, error, onOpen, onRemove }: {
 	);
 }
 
-export function AttachButton({ onFiles, label = "上传" }: { onFiles: (f: FileList) => void; label?: string }) {
+export function AttachButton({ onFiles, label = "上传", disabled }: { onFiles: (f: FileList) => void; label?: string; disabled?: boolean }) {
 	const input = useRef<HTMLInputElement>(null);
 	return (
 		<>
 			<input ref={input} type="file" multiple hidden data-testid="attach-input" onChange={(e) => (e.target.files && onFiles(e.target.files), (e.target.value = ""))} />
-			<button className="pa-icon-btn ghost" onClick={() => input.current?.click()} aria-label={label} title={ATTACH_HINT} data-testid="attach-btn">
+			<button className="pa-icon-btn ghost disabled:opacity-50" disabled={disabled} onClick={() => input.current?.click()} aria-label={label} title={ATTACH_HINT} data-testid="attach-btn">
 				<Paperclip className="pa-ic" />
 			</button>
 		</>
