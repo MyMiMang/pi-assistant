@@ -673,7 +673,7 @@ export function ModelServicesPanel() {
 					</Button>
 				</div>
 				{!list.length && <div className="rounded-xl border border-dashed border-line p-4 text-center text-xs text-mut">还没有其它模型服务。点「添加服务」选官方 / 自定义。</div>}
-				<div className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-testid="service-grid">
+				<div className="grid max-h-[60dvh] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2" data-testid="service-grid">
 					{list.map((s) => (
 						<ServiceCard
 							key={s.id}
