@@ -10,6 +10,8 @@ import { chromium } from "playwright-core";
 import { startMockOpenAI } from "./mock-openai.mjs";
 import { cspProblems, probeCsp } from "./fixtures/csp-probe.mjs";
 import { startMockImages } from "./mock-images.mjs";
+import { openModelMenu, openCompact, closeModelPanel } from "./model-menu-flow.mjs";
+import { menuOverflowProblems, roomHelpers } from "./fixtures/page-checks.mjs";
 import { infoTab as selectInfoTab, taskTab as selectTaskTab, agentProfileSave, expandDetails, expandAgentModelSection } from "./fixtures/info-pane.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 
@@ -63,7 +65,7 @@ async function step(name, fn) {
 	} catch (e) {
 		results.push(["❌", name, String(e).slice(0, 5000)]);
 		log("❌", name, e);
-		await page?.screenshot({ path: `/tmp/e2e-fail-${results.length}.png` }).catch(() => {});
+		await page?.screenshot({ path: join(SHOTS, `fail-${results.length}.png`) }).catch(() => {});
 		if (process.env.FAIL_FAST) process.exit(1);
 	}
 }
@@ -119,7 +121,8 @@ await step("首次运行向导（选择 provider → 登录 → 默认模型 →
 	await page.getByRole("button", { name: "测试连接" }).click();
 	await page.getByText(/连接成功/).waitFor();
 	await page.screenshot({ path: join(SHOTS, "03-onboarding-default-model.png") });
-	await page.getByRole("button", { name: "设为默认模型" }).click();
+	// 选模型即保存；已有默认模型时直接「下一步」
+	await page.getByRole("button", { name: "下一步" }).click();
 	// 不再有预置助理：引导用户创建并命名第一个助理
 	await page.getByText("创建你的第一个助理").waitFor();
 	await page.getByRole("button", { name: "Nova", exact: true }).click();
@@ -184,7 +187,8 @@ await step("发送消息并看到流式回复", async () => {
 
 await step("生成文件并从聊天里下载", async () => {
 	await send("帮我生成一个报告文件");
-	const card = page.locator("main button[title=下载]:has-text('report.md')").first();
+	// 附件卡片：点卡片主体是预览，右侧下载图标才是下载
+	const card = page.locator("main [data-testid=file-attachment]", { hasText: "report.md" }).last().getByTestId("file-download");
 	await card.waitFor({ timeout: 15_000 });
 	const [dl] = await Promise.all([page.waitForEvent("download"), card.click()]);
 	const p = await dl.path();
@@ -234,11 +238,13 @@ await step("后台任务", async () => {
 });
 
 await step("右侧信息面板：文件 / 电脑", async () => {
+	// 工作区文件在「文件」标签；「电脑」标签只管助理电脑 / 操作你的电脑
 	await infoTab("文件");
+	await page.locator("aside").last().getByText("report.md").first().waitFor();
 	await page.waitForTimeout(400);
 	await page.screenshot({ path: join(SHOTS, "07-info-files.png") });
 	await infoTab("电脑");
-	await page.locator("aside").last().getByText("report.md").waitFor();
+	await page.locator("aside").last().getByText("操作你的电脑").first().waitFor();
 });
 
 await step("右侧信息面板标签栏自适应：240/320/420/600 宽下每个标签都可达（可见或在「更多」里），不被裁切", async () => {
@@ -282,7 +288,7 @@ await step("右侧信息面板标签栏自适应：240/320/420/600 宽下每个�
 let pairUrl = "";
 await step("设置：模型页 + 配对二维码", async () => {
 	await page.getByRole("button", { name: "设置" }).first().click();
-	await page.getByText("模型服务").first().waitFor();
+	await page.getByRole("button", { name: "模型服务" }).first().waitFor();
 	await page.waitForTimeout(300);
 	await page.screenshot({ path: join(SHOTS, "08-settings-models.png") });
 	await page.getByRole("button", { name: "远程访问与设备" }).click();
@@ -397,6 +403,9 @@ await step("手机视口截图（单栏 + 抽屉）", async () => {
 	await mp.waitForTimeout(400);
 	await mp.screenshot({ path: join(SHOTS, "12-mobile-drawer.png") });
 	await mp.goto(`${BASE}/`);
+	// 等对话和草稿恢复完再输入，否则草稿恢复会把刚填的字清掉、发送键一直不可用
+	await mp.getByText("后台任务：统计工作区文件").first().waitFor();
+	await mp.waitForTimeout(300);
 	await mp.locator("main textarea").fill("帮我删除旧笔记");
 	await mp.getByLabel("发送").click();
 	await mp.getByRole("button", { name: "批准", exact: true }).waitFor({ timeout: 15_000 });
@@ -787,6 +796,8 @@ await step("Phase 2：技能（聊天里存成技能 → 设置 › 技能库）
 	await page.getByRole("button", { name: "设置" }).first().click();
 	await page.getByRole("button", { name: "技能库" }).click();
 	await page.locator("[data-testid=skills-tab]").getByText("daily-brief").waitFor();
+	// 内置技能默认折叠（会变多的列表默认收起），展开后再看
+	await expandDetails(page.locator("[data-testid=skills-tab]"), "skills-group-builtin");
 	await page.locator("[data-testid=skills-tab]").getByText("web-research").waitFor();
 	await page.waitForTimeout(300);
 	await page.screenshot({ path: join(SHOTS, "27-skills.png") });
@@ -826,8 +837,9 @@ await step("技能更新：diff 审批卡片 → 批准 → 版本历史 → 回
 	await hist.locator("[data-testid=diff] .add").first().waitFor();
 	await page.waitForTimeout(300);
 	await page.screenshot({ path: join(SHOTS, "31-skill-versions.png") });
-	page.once("dialog", (d) => d.accept());
 	await hist.getByRole("button", { name: /回滚到此版本/ }).first().click();
+	// 应用内确认框（不是浏览器原生 confirm）
+	await page.getByTestId("confirm-dialog").getByTestId("confirm-ok").click();
 	await hist.getByText("v3").waitFor();
 	const sk = await (await fetch(`${BASE}/api/skills/daily-brief`)).json();
 	if (sk.body.includes("五条以内")) throw new Error("回滚没生效");
@@ -892,7 +904,7 @@ await step("扩展：添加 MCP 服务（本机命令）→ 测试连接/工具�
 
 await step("Phase 2：多对话（新对话 → 切回旧对话历史仍在）", async () => {
 	await page.locator("[data-testid=conv-menu]").click();
-	await page.getByRole("button", { name: /新对话/ }).first().click();
+	await page.getByRole("button", { name: "新对话", exact: true }).first().click();
 	await page.locator("main").getByText("我喜欢简洁的回答").waitFor({ state: "detached" });
 	await send("你好");
 	await page.locator("main").getByText("可以试试这些关键词").last().waitFor({ timeout: 15_000 });
@@ -1081,12 +1093,11 @@ await step("多个自定义服务（中文名）：各自独立 id；默认模�
 		await c.close();
 
 		await page.goto(BASE);
-		await page.locator("[data-testid=model-picker]").click();
-		const menu = page.locator("[data-testid=model-menu]");
+		const menu = await openModelMenu(page);
 		await menu.getByText("灯灯国产", { exact: true }).waitFor();
 		await menu.getByText("另一家中转", { exact: true }).waitFor();
 		if ((await menu.innerText()).includes("custom-")) throw new Error("模型菜单里出现了内部 id");
-		await page.locator("[data-testid=model-picker]").click();
+		await closeModelPanel(page);
 	} finally {
 		await fetch(`${BASE}/api/models/default`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: before?.provider ?? "mock", model: before?.id ?? "echo" }) }).catch(() => {});
 		for (const id of ids) await fetch(`${BASE}/api/models/custom/${id}`, { method: "DELETE" });
@@ -1356,41 +1367,46 @@ await step("权限档位：助理设置 › 电脑 里切换本助理档位（�
 });
 
 await step("输入框工具栏：一个模型按钮里选模型 + 设思考强度（可搜索，思考强度只在支持推理的模型上出现）", async () => {
+	// 两层弹层（紧凑层调档、目录层只选模型）：复用 model-menu-flow.mjs 的公共操作
 	const mp = page.locator("[data-testid=model-picker]");
 	await mp.waitFor();
-	await mp.click();
-	if (await page.locator("[data-testid=model-thinking]").count()) throw new Error("不支持推理的模型不应显示思考强度");
-	await page.locator("[data-testid=model-search]").fill("推理");
-	const opt = page.locator("[data-testid=model-option]");
+	const noReason = await openCompact(page);
+	await noReason.getByTestId("thinking-fixed").waitFor({ timeout: 10_000 });
+	if (await noReason.getByTestId("thinking-body").locator('[role="slider"]').count()) throw new Error("不支持推理的模型不应显示思考强度滑块");
+	await closeModelPanel(page);
+	const menu = await openModelMenu(page);
+	await menu.getByTestId("model-search").fill("推理");
+	const opt = menu.getByTestId("model-option");
 	await opt.first().waitFor();
 	if ((await opt.count()) !== 1) throw new Error("搜索应只剩 1 个模型");
 	await page.waitForTimeout(200);
 	await page.screenshot({ path: join(SHOTS, "46-composer-model-picker.png") });
 	await opt.first().click();
 	await mp.getByText(/Mock 推理模型/).waitFor();
-	// 同一个菜单里设思考强度（按钮上直接显示模型 + 档位）
-	await mp.click();
-	await page.locator("[data-testid=model-thinking]").waitFor();
-	await page.locator("[data-testid=thinking-high]").click();
+	// 同一个按钮的紧凑层里设思考强度（按钮上直接显示模型 + 档位）
+	await closeModelPanel(page);
+	const compact = await openCompact(page);
+	await compact.getByTestId("thinking-high").click();
 	await mp.getByText(/· 高/).waitFor();
-	await mp.click();
-	await page.locator("[data-testid=model-menu]").waitFor();
+	await closeModelPanel(page);
+	await openCompact(page);
 	await page.waitForTimeout(200);
 	await page.screenshot({ path: join(SHOTS, "47-composer-thinking.png") });
-	await page.keyboard.press("Escape");
+	await closeModelPanel(page);
 	// 换模型后照常聊天（服务端原地切换 Pi 会话的模型 / 思考强度）
 	await send("你好");
 	await page.locator("main").getByText(/你好/).last().waitFor();
 	const before = await bubbleCount();
 	await page.waitForFunction((n) => document.querySelectorAll("main .prose").length > n, before - 1, { timeout: 20_000 });
-	// 换回不支持推理的模型：菜单里不再出现思考强度
-	await mp.click();
-	await page.locator("[data-testid=model-search]").fill("Mock 模型");
-	await page.locator("[data-testid=model-option]").first().click();
-	await mp.click();
-	await page.locator("[data-testid=model-menu]").waitFor();
-	if (await page.locator("[data-testid=model-thinking]").count()) throw new Error("换回不支持推理的模型后不应显示思考强度");
-	await page.keyboard.press("Escape");
+	// 换回不支持推理的模型：紧凑层只说明「只有一档」，不画滑块
+	const back = await openModelMenu(page);
+	await back.getByTestId("model-search").fill("Mock 模型");
+	await back.getByTestId("model-option").first().click();
+	await closeModelPanel(page);
+	const again = await openCompact(page);
+	await again.getByTestId("thinking-fixed").waitFor({ timeout: 10_000 });
+	if (await again.getByTestId("thinking-body").locator('[role="slider"]').count()) throw new Error("换回不支持推理的模型后不应显示思考强度滑块");
+	await closeModelPanel(page);
 });
 
 await step("Phase 3 渠道：飞书 / 钉钉 / 企业微信 添加表单 + 分步指引；个人微信需确认风险后开启", async () => {
@@ -1629,24 +1645,7 @@ await step("左侧助理列表：右键 → 编辑 / 删除助理（确认框）
 
 await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上下文菜单在 4 套主题、桌面和手机宽度下内容都在菜单内、菜单在屏幕内", async () => {
 	const vp0 = page.viewportSize();
-	const check = (el) => {
-		const r = el.getBoundingClientRect();
-		const bad = [];
-		if (r.left < -0.5 || r.right > innerWidth + 0.5 || r.top < -0.5) bad.push(`菜单超出屏幕 ${Math.round(r.left)}–${Math.round(r.right)} / ${innerWidth}`);
-		for (const c of el.querySelectorAll("*")) {
-			const cr = c.getBoundingClientRect();
-			if (!cr.width) continue;
-			const clip = c.closest("[class*=overflow-],.truncate");
-			if ((cr.right > r.right + 1 || cr.left < r.left - 1) && !(clip && clip !== c && el.contains(clip))) bad.push(`超出菜单：「${(c.textContent || "").trim().slice(0, 24)}」`);
-			const cs = getComputedStyle(c);
-			if (cs.overflowX === "visible" && c.clientWidth && c.scrollWidth > c.clientWidth + 1 && cs.display !== "inline") bad.push(`内容溢出：「${(c.textContent || "").trim().slice(0, 24)}」`);
-		}
-		return [...new Set(bad)].slice(0, 5);
-	};
-	const menus = [
-		["model-picker", "model-menu"],
-		["context-ring", "context-pop"],
-	];
+	const menus = [["model-picker", "model-menu"], ["context-ring", "context-pop"]];
 	const problems = [];
 	let checked = 0;
 	for (const vp of [{ width: 1280, height: 800 }, { width: 760, height: 800 }, { width: 390, height: 844 }]) {
@@ -1666,10 +1665,12 @@ await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上�
 			for (const [btn, menu] of menus) {
 				const b = page.locator(`main [data-testid=${btn}]`).first();
 				if (!(await b.isVisible().catch(() => false))) continue;
-				await b.click();
+				// 模型按钮是两层弹层：经公共 helper 进到目录层再检查
+				if (menu === "model-menu") await openModelMenu(page, { testid: btn, menu });
+				else await b.click();
 				const m = page.locator(`[data-testid=${menu}]`).first();
 				await m.waitFor({ timeout: 5000 });
-				const bad = await m.evaluate(check);
+				const bad = await m.evaluate(menuOverflowProblems);
 				if (bad.length) problems.push(`${vp.width}px ${skin} ${menu}: ${bad.join("；")}`);
 				checked++;
 				if (skin === "warm" && menu === "model-menu") await page.screenshot({ path: join(SHOTS, `69-popover-${vp.width}.png`) });
@@ -1679,12 +1680,13 @@ await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上�
 				});
 				if (!(await m.waitFor({ state: "detached", timeout: 2000 }).then(() => true).catch(() => false))) await b.click({ force: true });
 				await m.waitFor({ state: "detached", timeout: 5000 });
+				if (menu === "model-menu") await closeModelPanel(page, { testid: btn, menu });
 			}
 		}
 	}
 	await page.evaluate(() => (document.documentElement.dataset.skin = localStorage.getItem("pia.skin") || "noir"));
 	if (vp0) await page.setViewportSize(vp0);
-	if (checked < 30) throw new Error(`检查到的菜单太少（${checked}）`);
+	if (checked < menus.length * 4 * 2) throw new Error(`检查到的菜单太少（${checked}）`);
 	if (problems.length) throw new Error(problems.join("\n"));
 	log(`检查了 ${checked} 个菜单`);
 });
@@ -1852,15 +1854,7 @@ await step("Linux 服务器版：控制台设置码 → 网页首次设置成为
 // ---------------------------------------------------------------- 助理群聊
 const jpost = async (path, body, method = "POST") => (await fetch(`${BASE}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) })).json();
 let ROOM = "";
-const roomSay = async (text) => {
-	const box = page.getByTestId("room-input");
-	await box.waitFor();
-	await box.fill(text);
-	await box.press("Enter");
-	await page.waitForFunction(() => document.querySelector("[data-testid=room-input]")?.value === "", null, { timeout: 10_000 });
-};
-const roomIdle = () => page.waitForFunction(() => !document.querySelector("[data-testid=room-status]"), null, { timeout: 60_000 });
-const botsOf = (name) => page.locator(`[data-testid=room-bot][data-agent="${name}"]`);
+const { roomSay, roomIdle, botsOf } = roomHelpers(page);
 await step("群聊：新建群（A/B/C，管理者 A）→ @A 只有 A 回答 → 不 @ 只有管理者，它派活触发 B → B @C 不会叫醒 C → @ 自动补全", async () => {
 	for (const n of ["A", "B", "C"]) await jpost("/api/agents", { name: n });
 	await page.goto(BASE);
@@ -1931,8 +1925,12 @@ await step("群聊：成员干活时插话送达给它 → 它回应调整；说
 	await page.locator("[data-testid=delivery][data-state=delivered]").last().waitFor({ timeout: 15_000 });
 	await botsOf("C").getByText(/收到插话：.*换个方向/).last().waitFor({ timeout: 15_000 });
 	await roomIdle();
+	// 第二轮：等新的一条「好，我慢慢数。」（不是上一轮那条），趁它还在干活时说「停」
+	const countC = () => [...document.querySelectorAll('[data-testid=room-bot][data-agent="C"]')].filter((e) => e.textContent?.includes("好，我慢慢数。")).length;
+	const n0 = await page.evaluate(countC);
 	await roomSay("@C 慢慢数");
-	await botsOf("C").getByText("好，我慢慢数。").last().waitFor({ timeout: 20_000 });
+	await page.waitForFunction((n) => [...document.querySelectorAll('[data-testid=room-bot][data-agent="C"]')].filter((e) => e.textContent?.includes("好，我慢慢数。")).length > n, n0, { timeout: 20_000 });
+	await page.getByTestId("room-status").waitFor({ timeout: 5_000 });
 	await roomSay("停");
 	await page.locator("main").getByText("已停止").last().waitFor({ timeout: 10_000 });
 	await roomIdle();
@@ -2101,9 +2099,12 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 	await page.locator("main textarea:not(.pa-card textarea)").waitFor();
 	// 上一大步「提议建群」会在历史里留下提议卡，先关掉避免挡住发送
 	for (const btn of await page.getByTestId("proposal-dismiss").all()) await btn.click().catch(() => {});
+	// 历史里旧的提议卡（已处理、锁定）也叫 room-proposal：等新卡出现，别拿到旧卡
+	const oldCards = await page.getByTestId("room-proposal").count();
 	await send("帮我组个团队做个活动");
+	await page.waitForFunction((n) => document.querySelectorAll("[data-testid=room-proposal]").length > n, oldCards, { timeout: 30_000 });
 	const card = page.getByTestId("room-proposal").last();
-	await card.waitFor({ timeout: 30_000 });
+	await card.getByTestId("pm-model").first().and(page.locator(":enabled")).waitFor({ timeout: 15_000 });
 	// 管理者「统筹」需要推理 → 挑 mock 推理模型；理由显示在卡片上
 	await card.getByTestId("pm-model").nth(0).click();
 	const modelMenu = page.getByTestId("pm-model-menu");
@@ -2177,7 +2178,7 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 	await page.waitForFunction((w) => document.querySelector("[data-testid=strength-row] [data-testid=tag-coding]")?.getAttribute("aria-pressed") !== w, was);
 	await page.getByTestId("service-grid").scrollIntoViewIfNeeded();
 	await page.getByTestId("settings-dialog").screenshot({ path: join(SHOTS, "93-model-strengths.png") });
-	await r0.getByText("恢复默认").click();
+	await page.getByTestId("strength-row").first().getByText("恢复默认").click();
 	// 手机宽度：用量页不横向溢出
 	const m = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN" });
 	const p2 = await m.newPage();
@@ -2214,9 +2215,12 @@ await step("图片生成：设置里添加图片服务（自动获取识别图�
 		await f.getByTestId("image-test-ok").waitFor({ timeout: 20_000 });
 		await p.screenshot({ path: join(SHOTS, "90-image-provider.png") });
 		await f.getByTestId("image-save").click();
-		await p.getByTestId("default-image-model").waitFor();
-		const opt = await p.getByTestId("default-image-model").innerText();
-		if (!/画图中转 \/ gpt-image-1/.test(opt)) throw new Error(`默认图片模型显示不对：${opt}`);
+		// 外层行和里面的下拉按钮共用这个 testid：取外层整行（含当前选中项文字）
+		const defImg = p.getByTestId("default-image-model").first();
+		await defImg.waitFor();
+		const opt = await defImg.innerText();
+		// 默认取刚加的服务里识别出的图片模型（具体哪一个按目录排序，不在这里写死）
+		if (!/画图中转 \/ (gpt-image-1|flux-dev)/.test(opt)) throw new Error(`默认图片模型显示不对：${opt}`);
 		await c.close();
 		// 单聊：画图 → 图片附件（预览 + 下载）
 		// 用一个新助理（前面步骤的聊天里可能有带输入框的卡片）
