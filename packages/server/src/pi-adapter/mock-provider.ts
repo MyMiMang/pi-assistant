@@ -158,7 +158,8 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 	// 慢慢数：多步、每步都慢（测试工作途中插话 / 停止）
 	// 群聊注入里带着整段群聊记录：只看这一轮用户最新说的话（【用户】…），免得之前的“慢慢数”让后面每一轮都去数数
 	const roomSaid = u.startsWith("（群聊「") ? ([...u.matchAll(/【用户】([^\n]*)/g)].pop()?.[1] ?? "") : u;
-	if (/慢慢数/.test(roomSaid)) {
+	// 主动巡检的提示里会列出用户最近说过的话（可能含“慢慢数”）：那是巡检，不是让它数数
+	if (/慢慢数/.test(roomSaid) && !/这是(一次主动巡检|你约好的跟进|每日简报)/.test(u)) {
 		const since = messages.slice(messages.lastIndexOf(lastUser!) + 1).filter((m) => m.role === "toolResult").length;
 		if (since < 3) return fauxAssistantMessage([...(since ? [] : [fauxText("好，我慢慢数。")]), fauxToolCall("bash", { command: `sleep 2; echo 第${since + 1}步` })]);
 		return fauxAssistantMessage("数完了：1、2、3。");
@@ -433,6 +434,9 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 	const said = users[users.length - 1] ?? "";
 	const target = said.match(/派给([^\s，,。]+)/)?.[1];
 	const isFollowup = /成员都已/.test(u);
+	// 管理者跟进普通派活（没有待核验的长期任务）：「循环」再派一次，否则总结
+	const plainFollowup = () =>
+		/循环/.test(said) && target ? fauxAssistantMessage([fauxToolCall("room_assign", { assignments: [{ agent: target, task: "再做一遍" }] })]) : fauxAssistantMessage(`${me} 总结：大家都完成了。`);
 	const lastUserIdx = messages.lastIndexOf(lastUserMsg ?? last);
 	const since = messages.slice(lastUserIdx + 1);
 	const tools = since.filter((m) => m.role === "toolResult").map((m) => String(m.toolName ?? ""));
@@ -494,13 +498,15 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 		// 一次跟进最多：work_list → read 实际产物 → work_verify。用当前这步的 last.toolName 推进，
 		// 不复用上一轮 / 成员的旧列表，避免无限核验循环。经理核验必须读真实产物，不能只看自报。
 		if (last.toolName === "work_verify") return fauxAssistantMessage(`${me}：${textOf(last).slice(0, 200)}`);
+		if (last.toolName === "room_assign") return fauxAssistantMessage(`${me}：已安排 ${target ?? ""}。`);
 		if (last.toolName !== "work_list" && last.toolName !== "read") return fauxAssistantMessage([fauxToolCall("work_list", {})]);
 		const ctxId = u.match(/编号 (wi_[a-z0-9]+)/i)?.[1];
 		if (last.toolName === "work_list") {
 			const listed = textOf(last);
 			const pending = listed.split("\n").find((line) => /待核验/.test(line) && (!ctxId || line.includes(ctxId)));
 			const id = pending?.match(/wi_[a-z0-9]+/i)?.[0] ?? (pending ? ctxId : undefined);
-			if (!id) return fauxAssistantMessage(`${me} 总结：任务已经处理完。`);
+			// 没有待核验的长期任务：按普通派活收尾（「循环」再派一次，用来演示群里的上限暂停）
+			if (!id) return plainFollowup();
 			const path = paths[0];
 			if (!path) return fauxAssistantMessage([fauxToolCall("work_verify", { workItemId: id, verdict: "return", note: "没有拿到交付文件，无法核验；请成员把产物发到群里" })]);
 			return fauxAssistantMessage([fauxToolCall("read", { path })]);
@@ -508,7 +514,7 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 		const readOut = textOf(last);
 		const listMsg = [...messages].reverse().find((m) => m.role === "toolResult" && m.toolName === "work_list");
 		const id = ctxId ?? textOf(listMsg ?? last).match(/wi_[a-z0-9]+/i)?.[0] ?? "";
-		if (!id) return fauxAssistantMessage(`${me} 总结：任务已经处理完。`);
+		if (!id) return plainFollowup();
 		if (/第 3 行检查点/.test(readOut)) return fauxAssistantMessage([fauxToolCall("work_verify", { workItemId: id, verdict: "pass", note: `读了 ${paths[0] ?? "交付文件"}，第 3 行检查点存在，符合完成标准` })]);
 		return fauxAssistantMessage([fauxToolCall("work_verify", { workItemId: id, verdict: "return", note: "读了交付文件，没有找到第 3 行检查点，退回补上" })]);
 	}
@@ -530,7 +536,7 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 		if (last.toolName === "work_list") return fauxAssistantMessage(`${me}：任务状态我看过了。`);
 		return fauxAssistantMessage(/blocked|拒绝|denied|批准|停止/i.test(out) ? `${me}：没有获得批准，不执行。` : `${me}：已处理（${out.slice(0, 40)}）`);
 	}
-	if (/画一张/.test(said) && !/成员都已回复/.test(u)) return fauxAssistantMessage([fauxToolCall("generate_image", { prompt: said.replace(/^.*?画一张/, "").trim() || said })]);
+	if (/画一张/.test(said) && !isFollowup) return fauxAssistantMessage([fauxToolCall("generate_image", { prompt: said.replace(/^.*?画一张/, "").trim() || said })]);
 	if (/给你分配了任务/.test(u)) {
 		const task = u.match(/给你分配了任务：([^\n]*)/)?.[1] ?? "";
 		// 只匹配当前指派：群转录可能含另一项已取消的探针，不能让乙也去跑甲的延迟命令。
@@ -542,10 +548,7 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 		if (/做个图表/.test(task + said)) return fauxAssistantMessage([fauxToolCall("write", { path: "chart.svg", content: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#4a8"/></svg>' })]);
 		return fauxAssistantMessage(`${me} 完成了：${task.slice(0, 40)}${seen}${/提醒C|@C/.test(said) ? "。建议 @C 也看看" : ""}`);
 	}
-	if (/成员都已回复/.test(u)) {
-		if (/循环/.test(said) && target) return fauxAssistantMessage([fauxToolCall("room_assign", { assignments: [{ agent: target, task: "再做一遍" }] })]);
-		return fauxAssistantMessage(`${me} 总结：大家都完成了。`);
-	}
+	if (isFollowup) return plainFollowup();
 	if (/由你（管理者）负责/.test(u)) {
 		if (/加个成员/.test(said)) return fauxAssistantMessage([fauxToolCall("room_propose_member", { member: { name: "设计", role: "做海报", persona: "你负责设计。", needs: ["vision"] }, reason: "缺设计" })]);
 		const names = [...textOf(lastUserMsg ?? last).matchAll(/([^\s：、（]+) → room-files\//g)].map((x) => x[1]);
