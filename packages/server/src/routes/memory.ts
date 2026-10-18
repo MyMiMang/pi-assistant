@@ -78,11 +78,13 @@ export function mountMemoryRoutes(app: Hono<Env>) {
 		if (!m) return c.json({ ok: false, message: "还没有可用的模型，请先在「模型」里配置", steps: [] });
 		const steps = await memorySelfTest(m);
 		const bad = steps.filter((x) => !x.ok);
-		return c.json({ ok: !bad.length, steps, message: bad.length ? `${bad.map((x) => x.name).join("、")}没通过` : `${m.provider}/${m.id} 三项检查都通过` });
+		const skipped = steps.filter((x) => x.skipped);
+		return c.json({ ok: !bad.length, steps, message: bad.length ? `${bad.map((x) => x.name).join("、")}没通过` : skipped.length ? `${m.provider}/${m.id} 可用（${skipped.map((x) => x.name).join("、")}跳过）` : `${m.provider}/${m.id} 三项检查都通过` });
 	});
 }
 
-type Step = { name: string; ok: boolean; ms: number; detail: string };
+type Step = { name: string; ok: boolean; ms: number; detail: string; skipped?: boolean };
+const SKIP = "跳过：";
 const TEST_ALIAS = "memory-selftest";
 export async function memorySelfTest(m: { provider: string; id: string }): Promise<Step[]> {
 	const proxy = await llmProxy();
@@ -96,7 +98,8 @@ export async function memorySelfTest(m: { provider: string; id: string }): Promi
 	const step = async (name: string, run: () => Promise<string>): Promise<Step> => {
 		const t0 = Date.now();
 		try {
-			return { name, ok: true, ms: Date.now() - t0, detail: await run() };
+			const detail = await run();
+			return { name, ok: true, ms: Date.now() - t0, detail, ...(detail.startsWith(SKIP) ? { skipped: true } : {}) };
 		} catch (e) {
 			return { name, ok: false, ms: Date.now() - t0, detail: (e instanceof Error ? e.message : String(e)).slice(0, 300) };
 		}
@@ -127,6 +130,8 @@ export async function memorySelfTest(m: { provider: string; id: string }): Promi
 	);
 	out.push(
 		await step("真实召回", async () => {
+			// 还没启用 / 没在运行（比如刚在设置里选模型、还没保存）：只测模型，召回跳过并说明
+			if (!sidecar.ready) return `${SKIP}高级记忆服务还没运行，保存并启用后再测`;
 			const r = await probeRecall();
 			return `用户库召回 ${r.count} 条`;
 		}),

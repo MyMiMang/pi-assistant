@@ -27,7 +27,7 @@ type Health = {
 	ops: Partial<Record<"recall" | "reflect" | "boot" | "model" | "sidecar", { total: number; failed: number; slow: number; lastMs?: number; lastError?: string }>>;
 	model?: { active: string; primary: string };
 };
-type Step = { name: string; ok: boolean; ms: number; detail: string };
+type Step = { name: string; ok: boolean; ms: number; detail: string; skipped?: boolean };
 const OP_LABEL = { recall: "召回", reflect: "反思", boot: "读取整理好的记忆", model: "记忆模型", sidecar: "附属进程" } as const;
 const SCOPE_LABEL: Record<string, string> = { reflect: "反思", extract: "整理事实", text: "其他" };
 interface Data {
@@ -200,8 +200,8 @@ export function HindsightSettings() {
 					{steps && (
 						<ul className="space-y-0.5 text-xs" data-testid="hs-test-steps">
 							{steps.map((x) => (
-								<li key={x.name} className={cx("[overflow-wrap:anywhere]", x.ok ? "text-green-600" : "text-red-500")} data-ok={x.ok}>
-									{x.ok ? "✓" : "✗"} {x.name} <span className="text-mut">· {(x.ms / 1000).toFixed(1)} 秒</span>
+								<li key={x.name} className={cx("[overflow-wrap:anywhere]", x.skipped ? "text-mut" : x.ok ? "text-green-600" : "text-red-500")} data-ok={x.ok} data-skipped={x.skipped ? true : undefined}>
+									{x.skipped ? "–" : x.ok ? "✓" : "✗"} {x.name} {!x.skipped && <span className="text-mut">· {(x.ms / 1000).toFixed(1)} 秒</span>}
 									{x.detail && <span className="text-mut"> · {x.detail}</span>}
 								</li>
 							))}

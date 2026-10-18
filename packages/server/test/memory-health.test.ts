@@ -162,3 +162,16 @@ test("一轮结束：取最后一条有文字的助理回复；出错 / 中断�
 	assert.equal(finalReply([a("半句", { stopReason: "aborted" })] as never), "");
 	assert.equal(finalReply([a("x", { stopReason: "error", errorMessage: "502" })] as never), "");
 });
+
+test("测试按钮：高级记忆还没运行时，模型两步照测、召回跳过并说明；每步有真实耗时", async () => {
+	const { memorySelfTest } = await import("../src/routes/memory.ts");
+	const { stopLlmProxy } = await import("../src/llm-proxy.ts");
+	await (await import("../src/models.ts")).initModels();
+	try {
+		const steps = await memorySelfTest({ provider: "mock", id: "echo" });
+		assert.deepEqual(steps.map((x) => [x.name, x.ok, !!x.skipped]), [["多轮工具调用", true, false], ["JSON 输出", true, false], ["真实召回", true, true]]);
+		assert.match(steps[2].detail, /还没运行/);
+	} finally {
+		await stopLlmProxy();
+	}
+});

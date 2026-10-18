@@ -724,7 +724,7 @@ await step("高级记忆（Hindsight）：设置三个模型 → 连接（假的
 		await panel.getByTestId("hs-rr-off").click();
 		await panel.getByLabel("记忆用模型").selectOption("mock/echo");
 		await panel.getByRole("button", { name: "测试", exact: true }).click();
-		await panel.getByText(/mock\/echo 三项检查都通过/).waitFor();
+		await panel.getByText(/mock\/echo 可用（真实召回跳过）/).waitFor();
 		await panel.getByRole("button", { name: "保存", exact: true }).click();
 		await panel.getByTestId("hs-msg").getByText(/已保存/).waitFor();
 		await panel.scrollIntoViewIfNeeded();
