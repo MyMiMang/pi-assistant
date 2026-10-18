@@ -36,4 +36,6 @@
 
 ## 发布状态
 
-最终四项与截图均已主核通过，准备提交源码/文档/日志与单独截图提交，安全ff正式main、fresh远程核对、推新tag beta.32。发布成功或失败均在本节追记具体run与资产，不移动旧tag。
+最终四项与截图均已主核通过。源码/文档/日志提交 `610b50a`，截图单独提交 `a08e041`；正式main干净时先`pull --rebase`，再ff至 `a08e041b4f5d857afe1a62e7dc8b1faa05e0ef7b`，fresh远程仍`885ed08`且无beta.32 tag后，原子推送main与新annotated tag `v0.1.0-beta.32`成功。
+
+[Actions39109851436](https://github.com/MyMiMang/pi-assistant/actions/runs/39109851436)于2026-10-18T08:01:26Z开始，head确认 `a08e041b4f5d857afe1a62e7dc8b1faa05e0ef7b`。all-intel五平台构建、Mac/Windows安装启动、publish和公开资产核验待结果，当前Latest仍beta.31。保持既有门禁与旧tag不动，未自动安装或重启生产。

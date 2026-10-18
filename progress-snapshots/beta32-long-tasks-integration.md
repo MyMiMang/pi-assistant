@@ -2,9 +2,9 @@
 
 ## 当前交付状态
 
-- 公开Latest仍beta.31，最近fresh GitHub：非draft/non-prerelease，2026-10-17T19:25:00Z；远程main `885ed087cf12d32bb6a04ccf89b8367f22287ddd`，无beta.32 tag。正式main干净 `5850c11065dcf130d29b2cb52721be74065354da`，未push/tag/安装/生产重启。用户反复授权全部做完提交更新打包，发布scope all-intel。
+- 公开Latest仍beta.31；beta.32最终验收后已按授权提交源码`610b50a`/截图`a08e041`，正式main先pull再ff，原子push main与新tag `v0.1.0-beta.32`至 `a08e041b4f5d857afe1a62e7dc8b1faa05e0ef7b`。all-intel [Actions39109851436](https://github.com/MyMiMang/pi-assistant/actions/runs/39109851436)正在构建，尚未公开/安装/生产重启。发布状态集中见[最终收口](beta32-release-final.md)。
 - 整合HEAD `373373c`：前置群模型/技能用途 `5850c11`，任务 `bfc98f8`，监督/主动推进/Fast（源 `2de2470` cherry-pick）。只HANDOFF/ROADMAP顶部冲突，保留两方向，产品源码自动合并后已定向回归。
-- 后续未提交增量：群停止持久性/安全继续、按真实历史计重试、无start/空最终/后台失败可见、任务乱序分页与新UI断言。见[任务边界末审](work-items-final-boundaries.md)、[错误修复](beta32-error-reporting.md)。
+- `610b50a`收口增量：群停止持久性/安全继续、按真实历史计重试、无start/空最终/后台失败可见、任务乱序分页与新UI断言。见[任务边界末审](work-items-final-boundaries.md)、[错误修复](beta32-error-reporting.md)。
 
 ## 主会话审查后产品行为
 
