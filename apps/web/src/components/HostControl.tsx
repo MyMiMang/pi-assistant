@@ -249,7 +249,7 @@ export function HostControlSettings() {
 						</button>
 					))}
 				</div>
-				<p className="text-xs text-mut">只影响之后新建的助理。 <Help>每个助理的权限在输入框下方的 <ShieldCheck size={11} className="inline" /> 按钮里单独切换（调高需要确认）。</Help></p>
+				<p className="text-xs text-mut">只影响之后新建的助理。 <Help>每个助理的权限在输入框下方的 <ShieldCheck size={11} className="inline" /> 按钮里单独切换（调高需要确认）。“完全权限”以外的档位：受保护的操作都必须你明确批准；“完全权限”档位应用层不再弹审批（凭据/密钥文件仍然直接拒绝）。任何档位一键暂停都有效，所有动作都会记录。</Help></p>
 				{anyFull && (
 					<div className="space-y-1 rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm leading-relaxed text-red-800 dark:text-red-300" data-testid="host-full-warning">
 						<div className="flex items-center gap-2 font-semibold">
@@ -263,13 +263,12 @@ export function HostControlSettings() {
 						</ul>
 					</div>
 				)}
-				<p className="text-xs text-mut">“完全权限”以外的档位：受保护的操作都必须你明确批准；“完全权限”档位应用层不再弹审批（凭据/密钥文件仍然直接拒绝）。任何档位一键暂停都有效，所有动作都会记录。</p>
 			</section>
 
 			{mac && (
 				<section className="rounded-xl bg-hover p-3 text-sm" data-testid="host-mac-perms">
 					<div className="font-semibold">macOS 权限</div>
-					<p className="mt-1 text-mut">需要给 <b>CuaDriver</b> 打开“辅助功能”和“屏幕录制”：系统设置 › 隐私与安全性 › 辅助功能 / 屏幕与系统录音，打开 CuaDriver 的开关（授权归属于 CuaDriver.app，而不是终端或本应用）。点下面的按钮会弹出系统授权引导。</p>
+					<p className="mt-1 text-mut">给 <b>CuaDriver</b> 打开“辅助功能”和“屏幕录制”，助理才能看和点。 <Help>系统设置 › 隐私与安全性 › 辅助功能 / 屏幕与系统录音，打开 CuaDriver 的开关（授权归属于 CuaDriver.app，而不是终端或本应用）。点下面的按钮会弹出系统授权引导。</Help></p>
 					<div className="mt-2 flex items-center gap-3">
 						<Button size="sm" onClick={() => api("/api/host-control/permissions", { method: "POST" })}>
 							<ShieldCheck size={14} /> 打开授权引导
@@ -285,8 +284,8 @@ export function HostControlSettings() {
 			{win && <div className="rounded-xl bg-hover p-3 text-sm text-mut">Windows：无需额外授权。 <Help>若要操作“以管理员身份运行”的程序，本应用也需要以管理员身份运行（不推荐）。</Help></div>}
 
 			{anyBounded && <section>
-				<div className="mb-2 font-semibold">允许操作的应用（“限定”档位）</div>
-				<ul className="space-y-1" data-testid="host-apps">
+				<div className="mb-2 font-semibold">允许操作的应用（“限定”档位）{apps.length > 0 && <span className="ml-1 text-xs font-normal text-mut">{apps.length} 个</span>}</div>
+				<ul className="max-h-60 space-y-1 overflow-y-auto" data-testid="host-apps">
 					{apps.map((a) => (
 						<li key={a.id} className="flex items-center gap-2 rounded-lg bg-hover px-3 py-2 text-sm">
 							<b>{a.name}</b>
@@ -332,7 +331,7 @@ export function HostControlSettings() {
 					<input type="radio" checked={scope !== "all"} onChange={() => setScope([])} /> 只允许：
 				</label>
 				{scope !== "all" && (
-					<div className="flex flex-wrap gap-3 pl-6">
+					<div className="flex max-h-40 flex-wrap gap-3 overflow-y-auto pl-6">
 						{agents.map((a) => (
 							<label key={a.id} className="flex items-center gap-1.5">
 								<input type="checkbox" checked={scope.includes(a.id)} onChange={(e) => setScope(e.target.checked ? [...scope, a.id] : scope.filter((x) => x !== a.id))} /> {avatarText(a.avatar)} {a.name}
