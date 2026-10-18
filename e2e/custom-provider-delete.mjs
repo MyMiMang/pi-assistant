@@ -23,20 +23,20 @@ try {
   let nativeDialogs=0;page.on('dialog',d=>{nativeDialogs++;void d.dismiss()});
   await page.goto(base+'/?settings=models');
   await page.getByTestId(`service-toggle-${provider.id}`).click();
-  await page.getByTestId(`service-edit-${provider.id}`).click();
-  const form=page.getByTestId('custom-provider-form');
-  await form.getByRole('button',{name:'删除',exact:true}).click();
+  const form=page.getByTestId(`relay-detail-${provider.id}`);
+  const del=()=>page.getByTestId(`service-delete-${provider.id}`).click();
+  await del();
   await page.getByTestId('confirm-dialog').waitFor();
   assert.match(await page.getByTestId('confirm-dialog').textContent(),/删除验证助理/);
   await page.getByTestId('confirm-cancel').click();
   assert.ok((await api('/api/models/custom')).providers.some(p=>p.id===provider.id));
   // 返回服务端失败时展示具体错误，服务仍在，用户可重试。
   await page.route(`**/api/models/custom/${provider.id}`,route=>route.request().method()==='DELETE'?route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({error:'模拟删除失败'})}):route.continue());
-  await form.getByRole('button',{name:'删除',exact:true}).click();await page.getByTestId('confirm-ok').click();
+  await del();await page.getByTestId('confirm-ok').click();
   await form.getByText(/删除失败.*模拟删除失败/).waitFor();
   assert.ok((await api('/api/models/custom')).providers.some(p=>p.id===provider.id));
   await page.unroute(`**/api/models/custom/${provider.id}`);
-  await form.getByRole('button',{name:'删除',exact:true}).click();await page.getByTestId('confirm-ok').click();
+  await del();await page.getByTestId('confirm-ok').click();
   await form.waitFor({state:'detached'});
   assert.ok(!(await api('/api/models/custom')).providers.some(p=>p.id===provider.id));
   assert.equal((await api('/api/agents')).find(a=>a.id===agent.id).model.provider,'mock');

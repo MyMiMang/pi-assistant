@@ -250,15 +250,18 @@ try {
 	const relay = page.locator('[data-testid=service-card][data-service=custom-relay]');
 	await relay.getByTestId('service-toggle-custom-relay').click();
 	const mystery = page.locator('[data-testid=service-model][data-model=mystery-model]');
-	await mystery.getByTestId('model-capability-toggle').click();
-	await mystery.getByTestId('cap-image').check();
-	await mystery.getByTestId('cap-save').click();
+	await mystery.getByTestId('relay-model-toggle').click();
+	await mystery.getByTestId('relay-cap-image').check();
+	await mystery.getByTestId('relay-model-save').click();
 	await page.waitForTimeout(80);
 	assert.equal(capPuts.length, 1, '应发出一次能力纠正 PUT');
 	assert.ok(capPuts[0].body.capabilities.includes('image'), '纠正内容应含 image');
 	assert.match(await mystery.getByTestId('model-caps').textContent(), /生图/, '纠正后应显示生图标签');
+	assert.ok(customWrites.some((w) => w.method === 'PUT' && w.id === 'custom-relay' && w.body.models.find((m) => m.id === 'mystery-model')?.capabilities?.includes('image')), '能力随同一次模型保存写入');
+	customWrites = []; // 后面按新增服务计数
 
-	// 2) 生图适配：把 mystery-model 的生图能力绑定到同一个 provider（keyFrom），不新建第二套 Key
+	// 2) 生图适配（在「高级」里）：把 mystery-model 的生图能力绑定到同一个 provider（keyFrom），不新建第二套 Key
+	await relay.getByTestId('relay-advanced').locator('summary').click();
 	await relay.getByTestId('image-adapter-bind-custom-relay').click();
 	await page.waitForTimeout(80);
 	assert.equal(imageProviders.length, 1, '应创建一个生图适配');
@@ -309,9 +312,9 @@ try {
 	assert.match(await added.getByTestId('service-test-result-custom-1').textContent(), /连接成功/, '测试连接应显示成功');
 	assert.equal(testPosts.length, 1, '应发出一次测试连接请求');
 	await added.getByTestId('service-edit-custom-1').click();
-	const editForm = page.getByTestId('custom-provider-form');
-	await editForm.getByPlaceholder('例如：我的中转站').fill('新中转改名');
-	await editForm.getByRole('button', { name: /保存修改/ }).click();
+	const editForm = added.getByTestId('relay-connection-edit');
+	await editForm.getByLabel('服务名称').fill('新中转改名');
+	await editForm.getByTestId('relay-connection-save').click();
 	await page.waitForTimeout(120);
 	assert.equal(customWrites.filter((w) => w.method === 'PUT').length, 1, '应发出一次 PUT 编辑');
 	assert.ok(customProviders.some((p) => p.name === '新中转改名'), '编辑应改动状态');

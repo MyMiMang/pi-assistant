@@ -243,15 +243,17 @@ try {
 	await serviceCard.getByTestId(`service-toggle-${target.id}`).click();
 	const modelRow = serviceCard.getByTestId("service-model").first();
 	await modelRow.waitFor();
-	await modelRow.getByTestId("model-strength-toggle").click();
+	// 擅长标签在模型展开后的「更多」里
+	await modelRow.getByTestId("relay-model-toggle").click();
+	await modelRow.getByRole("button", { name: /更多/ }).click();
 	const tag = page.getByTestId("strength-row").first().getByTestId("tag-coding");
 	await tag.waitFor();
 	const was = await tag.getAttribute("aria-pressed");
 	await tag.click();
 	await wait(async () => (await page.getByTestId("strength-row").first().getByTestId("tag-coding").getAttribute("aria-pressed")) !== was);
-	// 编辑渠道：内嵌真实表单（保存 / 删除走公开 API），取消回列表
+	// 编辑连接：原地编辑（显式保存），取消回摘要
 	await serviceCard.getByTestId(`service-edit-${target.id}`).click();
-	const form = page.getByTestId("custom-provider-form");
+	const form = serviceCard.getByTestId("relay-connection-edit");
 	await form.waitFor();
 	await form.getByRole("button", { name: "取消" }).click();
 	// 删除：应用内确认框（不是原生 confirm）；取消后服务仍在

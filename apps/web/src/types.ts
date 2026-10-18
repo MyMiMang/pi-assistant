@@ -61,10 +61,10 @@ export interface SystemInfo {
 	app?: { version: string; builtAt?: string; launcher: string };
 }
 export interface Device { id: string; name: string; platform: string; status: string; created_at: number; last_seen_at: number | null; last_ip: string | null; owner?: number }
-export interface CustomModel { id: string; name?: string; reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number; limitsSource?: "detected" | "known" | "default" | "user" | "learned"; detectedType?: "classifier"; classifierProtocol?: string }
+export interface CustomModel { id: string; api?: string; apiEffective?: string; baseUrlEffective?: string; name?: string; reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number; limitsSource?: "detected" | "known" | "default" | "user" | "learned"; detectedType?: "classifier"; classifierProtocol?: string }
 /** 声明的 classifier（协议 + 对端模型 id）；保存后由服务端在启动/reload 时重新注册。 */
 export interface CustomClassifier { protocol: string; modelId: string; name?: string; contextWindow?: number }
-export interface CustomProviderMeta { id: string; name: string; api: string; baseUrl: string; headerNames: string[]; noKey: boolean; models: CustomModel[]; classifiers?: CustomClassifier[]; discoveredClassifiers?: CustomClassifier[]; configured: boolean; references?: ProviderReferences }
+export interface CustomProviderMeta { id: string; name: string; api: string; baseUrl: string; headerNames: string[]; noKey: boolean; models: CustomModel[]; classifiers?: CustomClassifier[]; discoveredClassifiers?: CustomClassifier[]; protocolUrls?: Record<string, string>; configured: boolean; references?: ProviderReferences }
 export interface ProviderReferences { defaultModel: boolean; visionModel: boolean; agents: string[]; subagents: boolean; subagentAgents: string[]; imageProviders?: string[] }
 
 // ---- 统一模型服务（对齐 registry agent 契约：packages/server/src/model-registry.ts）----

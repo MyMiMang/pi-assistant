@@ -12,9 +12,10 @@ import { Activity, AlertTriangle, Check, CheckCircle2, ChevronDown, Download, Ga
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { PROVIDER_ICONS } from "./provider-icons";
-import type { ModelCapability, ModelType, Provider, RegistryModel, RegistryProvider } from "../types";
+import type { CustomProviderMeta, ModelCapability, ModelType, Provider, RegistryModel, RegistryProvider } from "../types";
 import { ImageProviderForm, type ImageModelsData, useImageModels } from "./ImageModels";
-import { CustomProviderForm, useCustomProviders } from "./CustomProvider";
+import { CustomProviderForm, deleteImpact, useCustomProviders } from "./CustomProvider";
+import { RelayDetail } from "./RelayDetail";
 import { ProviderSetup, useProviders } from "./Models";
 import { StrengthTags, useModelStrengths } from "./ModelStrengths";
 import { Badge, Button, cx, fmtSize, Fold, Help, Input, Modal, Select, useConfirm } from "./ui";
@@ -397,9 +398,7 @@ function ServiceCard({
 	onReload: () => void;
 	onDelete: () => Promise<void>;
 }) {
-	const [editing, setEditing] = useState(false);
 	const [editImage, setEditImage] = useState(false);
-	const [deleteBusy, setDeleteBusy] = useState(false);
 	const customMeta = custom?.providers.find((c) => c.id === provider.id);
 	const caps = CAPS.filter((c) => provider.models.some((m) => m.capabilities.includes(c)));
 	return (
@@ -421,18 +420,23 @@ function ServiceCard({
 				</span>
 				<ChevronDown size={14} className={cx("shrink-0 text-mut transition-transform", !open && "-rotate-90")} />
 			</button>
-			{open && editing && custom && customMeta ? (
-				<div className="space-y-3 border-t border-line p-3">
-					<Button size="sm" variant="ghost" onClick={() => setEditing(false)} data-testid={`service-edit-back-${provider.id}`}>
-						← 返回
-					</Button>
-					<CustomProviderForm
-						initial={customMeta}
+			{open && provider.kind === "custom" && custom && customMeta ? (
+				<div className="border-t border-line p-4">
+					<RelayDetail
+						provider={provider}
+						meta={customMeta}
 						apis={custom.apis}
 						classifierProtocols={custom.classifierProtocols}
-						onSaved={() => (setEditing(false), onReload())}
-						onCancel={() => setEditing(false)}
-						onDeleted={() => (setEditing(false), onReload())}
+						strengthsSlot={(m) => {
+							const st = strengths.byModel.get(`${m.provider}/${m.id}`);
+							const labels = strengths.data?.labels ?? [];
+							return st && labels.length ? <StrengthTags labels={labels} model={st} onPut={(tags) => void strengths.put(m.provider, m.id, tags)} /> : null;
+						}}
+						imageSection={<ImageAdapterSection provider={provider} images={images} onReload={onReload} />}
+						asrSection={<AsrAdapterSection provider={provider} onReload={onReload} />}
+						onSaveCaps={onSaveCaps}
+						onReload={onReload}
+						onDelete={onDelete}
 					/>
 				</div>
 			) : open ? (
@@ -450,30 +454,6 @@ function ServiceCard({
 					<TestConnection providerId={provider.id} models={provider.models} />
 					<AsrAdapterSection provider={provider} onReload={onReload} />
 					<ImageAdapterSection provider={provider} images={images} onReload={onReload} />
-					{provider.kind === "custom" && customMeta && (
-						<div className="flex flex-wrap gap-2">
-							<Button size="sm" variant="outline" onClick={() => setEditing(true)} data-testid={`service-edit-${provider.id}`}>
-								<Pencil size={13} /> 编辑渠道（模型 / Key / 请求头）
-							</Button>
-							<Button
-								size="sm"
-								variant="ghost"
-								className="text-red-600"
-								disabled={deleteBusy}
-								onClick={async () => {
-									setDeleteBusy(true);
-									try {
-										await onDelete();
-									} finally {
-										setDeleteBusy(false);
-									}
-								}}
-								data-testid={`service-delete-${provider.id}`}
-							>
-								{deleteBusy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} 删除
-							</Button>
-						</div>
-					)}
 					{provider.kind === "builtin" && official && (
 						<div className="rounded-lg border border-line p-2.5" data-testid={`official-setup-${provider.id}`}>
 							<div className="mb-1 text-xs font-medium text-zinc-500">{official.configured ? "登录 / 凭据" : "接入官方服务"}</div>
@@ -626,20 +606,13 @@ export function ModelServicesPanel() {
 		void api(`/api/models/registry/${providerId}/models/${modelId}/capabilities`, { method: "PUT", json: { capabilities: caps } }).catch(() => {});
 	};
 	const deleteCustom = async (p: RegistryProvider) => {
-		const impact = custom.providers.find((c) => c.id === p.id)?.references;
-		const lines: string[] = [];
-		if (impact?.defaultModel) lines.push("默认模型会被清空，需要重新选一个");
-		if (impact?.visionModel) lines.push("识图模型会改回自动选择");
-		if (impact?.agents.length) lines.push(`${impact.agents.length} 个助理的模型会回落到默认模型`);
-		if (impact?.subagentAgents.length) lines.push(`${impact.subagentAgents.length} 个助理的子代理候选池里会去掉这个服务的模型`);
-		const ok = await askConfirm({ title: `删除「${p.name}」？`, body: `删除后不能恢复。${lines.length ? `\n\n会影响：${lines.join("；")}` : ""}`, ok: "删除", danger: true });
+		// 与编辑表单同一份影响说明（默认模型 / 识图 / 子代理 / 助理），只有一个删除流程
+		// 影响按当前最新引用算；失败抛给调用方在详情里显示，服务仍在可重试
+		const current = await api<{ providers: CustomProviderMeta[] }>("/api/models/custom").catch(() => custom);
+		const ok = await askConfirm({ title: `删除「${p.name}」？`, body: <div className="whitespace-pre-wrap">{`删除后不能恢复。${deleteImpact(current.providers.find((c) => c.id === p.id)?.references)}`}</div>, ok: "删除", danger: true });
 		if (!ok) return;
-		try {
-			await api(`/api/models/custom/${p.id}`, { method: "DELETE" });
-			reloadAll();
-		} catch (e) {
-			setErr(e instanceof Error ? e.message : String(e));
-		}
+		await api(`/api/models/custom/${p.id}`, { method: "DELETE" });
+		reloadAll();
 	};
 	// 本地语音由语音设置里的管理卡展示，registry 里的条目不重复成卡片
 	const services = useMemo(() => registry.filter((s) => s.id !== "local-sensevoice"), [registry]);
@@ -673,7 +646,7 @@ export function ModelServicesPanel() {
 					</Button>
 				</div>
 				{!list.length && <div className="rounded-xl border border-dashed border-line p-4 text-center text-xs text-mut">还没有其它模型服务。点「添加服务」选官方 / 自定义。</div>}
-				<div className="grid max-h-[60dvh] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2" data-testid="service-grid">
+				<div className={cx("grid grid-cols-1 gap-2 sm:grid-cols-2", !open.length && "max-h-[60dvh] overflow-y-auto pr-1")} data-testid="service-grid">
 					{list.map((s) => (
 						<ServiceCard
 							key={s.id}
