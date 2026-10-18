@@ -1,0 +1,20 @@
+PASS proposal: themed components, grouped services, seven/subset levels, saved clamp, existing agent unchanged
+PASS created member: overview is a summary that navigates to models; strength saves immediately and survives reload
+PASS profile: draft kept across top-level tabs, explicit save, failure keeps draft, profile-only save leaves model/strength/Fast untouched
+PASS save failures: visible live error keeps stored value, retry persists, follow resets strength to default
+PASS added member: grouped model and strength commit survive confirmation
+PASS 390px: cards/menu/strength have visible content, no page overflow or JS errors
+PASS loading/error/retry: unknown defaults do not invent levels; retry restores real metadata; plain model has fixed off
+[launch-memory] 越界/不可信的 PIA_WORKSPACE="/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-room-model-settings-SuekhF/workspace" → 覆盖为 /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-room-model-settings-SuekhF/data/workspace
+[pi-assistant] Pi 1.3.0（测试基线 1.3.0）
+[pi-assistant] 服务已启动：http://127.0.0.1:61472  数据目录：/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-room-model-settings-SuekhF/data  serverId=f36ecb22-2fe8-4254-8b18-6e17e481c772  [Mock 模型已启用]
+
+file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/agent-details-functional/e2e/room-member-model-settings-ui.mjs:19
+const wait = async (fn, ms = 15000) => { const until = Date.now() + ms; while (Date.now() < until) { if (await fn()) return; await new Promise((r) => setTimeout(r, 80)); } throw new Error("condition timed out"); };
+                                                                                                                                                                                  ^
+
+Error: condition timed out
+    at wait (file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/agent-details-functional/e2e/room-member-model-settings-ui.mjs:19:179)
+    at async file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/agent-details-functional/e2e/room-member-model-settings-ui.mjs:239:2
+
+Node.js v24.19.0

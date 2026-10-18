@@ -164,7 +164,7 @@ try {
 	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
 	await page.locator(".pa-pane-wrap").waitFor();
 	await page.getByTestId("info-tabs").waitFor();
-	await infoTab("设置");
+	await infoTab("模型");
 	const settings = page.getByTestId("agent-subagent-model");
 	await settings.waitFor();
 	await settings.getByTestId("subagent-model").click();

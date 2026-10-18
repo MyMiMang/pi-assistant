@@ -60,15 +60,15 @@ const openPane = async (page) => {
 	}
 	await page.locator(".pa-pane-wrap").waitFor();
 };
-/** 打开「助理设置 › 设置」tab（信息面板），返回任务上限区块 */
+/** 打开「助理 › 模型」页（信息面板），返回子代理任务上限区块 */
 const openLimits = async (page, agentId) => {
 	await page.goto(`${BASE}/?agent=${agentId}`);
 	await page.waitForTimeout(150);
 	await openPane(page);
 	const bar = page.getByTestId("info-tabs");
-	const tab = bar.getByRole("tab", { name: "设置", exact: true });
+	const tab = bar.getByRole("tab", { name: "模型", exact: true });
 	if (await tab.count()) await tab.click();
-	else { await page.getByTestId("info-tabs-more").click(); await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "设置", exact: true }).click(); }
+	else { await page.getByTestId("info-tabs-more").click(); await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "模型", exact: true }).click(); }
 	const sec = page.getByTestId("agent-subagent-limits");
 	await sec.waitFor();
 	return { sec, conc: page.getByLabel("子代理并发上限"), mins: page.getByLabel("子代理最长运行分钟") };

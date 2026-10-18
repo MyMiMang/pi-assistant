@@ -42,6 +42,7 @@ flowchart LR
 | 组件 | 位置 | 说明 |
 |---|---|---|
 | 本机服务 | `packages/server` | Node 22 + Hono。`main.ts` 启动，`http.ts` 放全部接口，`bus.ts` 推事件给前端（WS） |
+| 助理详情 | `InfoPane.tsx`、`ModelPicker.tsx` | 私聊/群成员同一功能分类；模型/思考/Fast复用原写入，资料草稿独立，能力/任务/电脑复用原组件（未打包，[契约](design/agent-details-functional.md)） |
 | Pi 集成 | `src/pi-adapter/` | 只有这个目录直接用 Pi SDK（§5.15）；`models.ts` / `model-db.ts` 管模型和 models.dev 参数 |
 | 助理运行时 | `src/runtime.ts` | 每个助理（每个对话）一个 Pi AgentSession，挂上扩展工具，把 Pi 事件写成消息（`messages.ts`） |
 | 扩展工具 | `packages/ext-*` | 审批闸门、工作区命令、电脑操作、浏览器、连接器、发文件 / 提问 / 后台任务、记忆、技能、定时、主动性 |

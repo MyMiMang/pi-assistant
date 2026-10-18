@@ -1,0 +1,23 @@
+{
+  "base": "9226d13c1edc35469f2a4fac225676056cb3b8a9",
+  "productFiles": [
+    "apps/web/src/App.tsx",
+    "apps/web/src/components/AgentEditor.tsx",
+    "apps/web/src/components/AgentExtensions.tsx",
+    "apps/web/src/components/AgentSkills.tsx",
+    "apps/web/src/components/HostControl.tsx",
+    "apps/web/src/components/InfoPane.tsx",
+    "apps/web/src/components/ModelPicker.tsx",
+    "apps/web/src/components/Proactive.tsx",
+    "apps/web/src/components/RoomCards.tsx",
+    "apps/web/src/components/Sidebar.tsx",
+    "apps/web/src/components/SkillPicker.tsx",
+    "apps/web/src/components/ThinkingSlider.tsx",
+    "apps/web/src/store.ts"
+  ],
+  "productContentHash": "684fca3bf3c9958cc42b8c676318fc3876fc0279f51e99477ef048a8c95a975f",
+  "bundle": "apps/web/dist/assets/index-D1Z1ng_m.js",
+  "bundleSha256": "30cd1c1294bf9bb2dda6046c7ee585733b875b5d65a6a54e010044d3267a7b86",
+  "check": "产品源码与最终类型和build一致；这里只核哈希，不重跑测试",
+  "sharedWorkspaceDependencies": "同基线task-responsibility-integration 9226d13；shared/ext无差异"
+}

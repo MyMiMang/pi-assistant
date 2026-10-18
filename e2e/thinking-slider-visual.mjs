@@ -122,7 +122,7 @@ try {
 	page.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 300)));
 
 	const popover = () => page.getByTestId("agent-subagent-thinking-menu");
-	/** 真实入口：信息面板 › 设置 tab › 子代理默认的「思考强度」按钮 */
+	/** 真实入口：信息面板 › 模型页 › 子代理默认的「思考强度」按钮 */
 	const openThinking = async () => {
 		await page.goto(`${BASE}/?agent=${agent.id}`);
 		await page.waitForSelector("button[aria-label='信息面板']");
@@ -130,11 +130,11 @@ try {
 		if (!(await page.locator(".pa-pane-wrap").isVisible().catch(() => false))) await page.getByRole("button", { name: "信息面板" }).click();
 		await page.locator(".pa-pane-wrap").waitFor({ state: "visible" });
 		const bar = page.getByTestId("info-tabs");
-		const tab = bar.getByRole("tab", { name: "设置", exact: true });
+		const tab = bar.getByRole("tab", { name: "模型", exact: true });
 		if (await tab.count()) await tab.click();
 		else {
 			await page.getByTestId("info-tabs-more").click();
-			await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "设置", exact: true }).click();
+			await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "模型", exact: true }).click();
 		}
 		await page.getByTestId("agent-subagent-thinking").click();
 		await popover().waitFor();

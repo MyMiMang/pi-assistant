@@ -234,8 +234,8 @@ export function RoomAgentActions({ agentId }: { agentId: string }) {
 	};
 	return (
 		<div className="mx-4 mb-3 rounded-xl border border-line p-3 text-sm" data-testid="room-agent-actions">
-			<div className="flex items-center gap-1 text-xs text-mut">
-				群专属助理{room ? ` · ${room.name}` : ""}
+			<div className="flex min-w-0 items-center gap-1 text-xs text-mut">
+				<span className="min-w-0 flex-1 whitespace-normal break-words">群专属助理{room ? ` · ${room.name}` : ""}</span>
 				<Help>只在这个群里出现，不在侧边栏。复制到我的助理后是一个独立的新助理，互不影响。</Help>
 			</div>
 			<div className="mt-2 flex flex-wrap gap-2">

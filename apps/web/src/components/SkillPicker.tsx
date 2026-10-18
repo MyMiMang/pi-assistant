@@ -67,7 +67,7 @@ export function SkillPicker({ agentId, draftKey }: { agentId: string; draftKey: 
 					{empty ? (
 						<div className="space-y-2 px-2.5 py-2" data-testid="skill-empty">
 							<p className="text-xs text-mut">还没有给这个助理启用技能。</p>
-							<button className="pa-btn sm" onClick={() => (setOpen(false), useStore.getState().set({ info: true, infoTab: "settings" }))} data-testid="skill-empty-goto">
+							<button className="pa-btn sm" onClick={() => (setOpen(false), useStore.getState().set({ info: true, infoTab: "capabilities" }))} data-testid="skill-empty-goto">
 								去启用技能
 							</button>
 						</div>

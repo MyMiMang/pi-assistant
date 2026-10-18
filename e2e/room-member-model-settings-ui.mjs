@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { stableShot } from "./fixtures/stable-shot.mjs";
+import { infoTab } from "./fixtures/info-pane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-room-model-settings-");
@@ -68,67 +69,93 @@ try {
  assert.equal(manager.thinking, supported.at(-1)); assert.equal(manager.thinkingSetting, supported.at(-1));
  assert.equal(agents.find((a) => a.id === existing.id).thinkingSetting, "low", "加入已有助理不改它的强度");
  console.log("PASS proposal: themed components, grouped services, seven/subset levels, saved clamp, existing agent unchanged");
- // 点击成员默认概览即可找到，不需要私聊或找设置标签。
+ // 点击成员默认概览只做摘要；模型/强度在「模型」页即时保存。
  await page.getByTestId("room-members").locator(`button[title^="${manager.name}"]`).click();
- const pane = page.locator(".pa-pane-wrap"); await pane.getByTestId("member-model-settings").waitFor();
- await pane.getByTestId("model-picker").click();
- await page.getByTestId("model-picker-compact").getByRole("slider").press("Home");
+ const pane = page.locator(".pa-pane-wrap");
+ /** 等模型目录真的给出档位再按滑块，避免把“加载中”为空当成不支持。 */
+ const setThinking = async (key) => {
+   await pane.getByTestId("agent-thinking").click();
+   const slider = page.getByTestId("agent-thinking-menu").getByRole("slider");
+   await slider.waitFor();
+   await slider.press(key);
+ };
+ await infoTab(page, "overview");
+ await pane.getByTestId("overview-model-settings").waitFor();
+ assert.equal(await pane.getByTestId("member-model-settings").count(), 0, "概览只做摘要，不直接铺开模型控件");
+ await pane.getByTestId("overview-model-settings").click();
+ await pane.getByTestId("member-model-settings").waitFor();
+ assert.equal(await pane.getByTestId("member-model-settings").locator("select").count(), 0, "模型/强度选择不是原生 select");
+ // 图片模型依赖两份异步配置；等区块完成加载再验证保留入口，不能拿刚挂载的 null 当功能丢失。
+ await pane.getByTestId("agent-image-model").waitFor();
+ await pane.getByTestId("agent-subagent-model").waitFor();
+ assert.ok(await pane.getByTestId("agent-image-model").isVisible(), "模型页仍管理图片模型");
+ assert.ok(await pane.getByTestId("agent-subagent-model").isVisible(), "模型页仍管理子代理模型");
+ await setThinking("Home");
  await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).thinking === supported[0]);
- await stableShot(page, pane, join(out, "03-member-overview-model.png"));
+ await stableShot(page, pane, join(out, "03-member-models-immediate.png"));
  await page.goto(`${base}/?room=${room.id}`); await page.getByTestId("room-members").locator(`button[title^="${manager.name}"]`).click();
- await pane.getByTestId("model-picker").click();
- assert.match(await page.getByTestId("thinking-current").innerText(), /关闭/);
- await page.keyboard.press("Escape");
- const tabs = page.getByTestId("info-tabs");
- if (await tabs.getByRole("tab", { name: "设置", exact: true }).count()) await tabs.getByRole("tab", { name: "设置", exact: true }).click();
- else { await page.getByTestId("info-tabs-more").click(); await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "设置", exact: true }).click(); }
- const draft = pane.getByTestId("agent-draft"); await draft.waitFor();
- assert.equal(await draft.locator("select").count(), 0, "成员编辑模型不再原生select");
- await draft.getByTestId("agent-draft-thinking").click();
- await page.getByTestId("agent-draft-thinking-menu").getByRole("slider").press("End");
- assert.equal((await j("/api/agents")).find((a) => a.id === manager.id).thinking, supported[0], "表单编辑只改草稿");
- await pane.getByRole("button", { name: "保存", exact: true }).first().click();
- await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).thinking === supported.at(-1));
- await stableShot(page, draft, join(out, "04-member-settings-draft.png"));
- console.log("PASS created member: overview direct change persists on reload; settings uses shared components, saves draft only on explicit save");
- // 保存失败保留草稿与存储值，再次保存才落库；未编辑模型/强度的资料保存不重发这些字段。
- await draft.getByTestId("agent-draft-thinking").click();
- await page.getByTestId("agent-draft-thinking-menu").getByRole("slider").press("Home");
+ await infoTab(page, "overview");
+ await pane.getByTestId("overview-model-settings").click();
+ await pane.getByTestId("member-model-settings").waitFor();
+ await wait(async () => /关闭/.test(await pane.getByTestId("agent-thinking").innerText()));
+ console.log("PASS created member: overview is a summary that navigates to models; strength saves immediately and survives reload");
+
+ // 资料页：显式保存、跨一级 tab 保留草稿、保存失败保留草稿、仅资料保存不重发模型/强度/Fast。
+ await infoTab(page, "profile");
+ const profile = pane.getByTestId("agent-profile"); await profile.waitFor();
+ assert.equal(await profile.getByTestId("agent-draft").count(), 0, "资料页不再有模型草稿区");
+ assert.equal(await profile.getByTestId("agent-computer").count(), 0, "电脑设置不再混在资料页");
+ const description = profile.getByPlaceholder("一句话介绍（显示在侧边栏和概览里）");
+ const saveProfile = async () => { const btn = profile.getByRole("button", { name: "保存", exact: true }); await btn.waitFor(); await btn.click(); };
+ const descriptionBefore = (await j("/api/agents")).find((a) => a.id === manager.id).description;
+ await description.fill("资料草稿：跑活动");
+ assert.equal((await j("/api/agents")).find((a) => a.id === manager.id).description, descriptionBefore, "资料保存前不落库");
+ await infoTab(page, "models");
+ assert.ok(await pane.isVisible(), "模型/资料切页不关闭信息面板");
+ await pane.getByTestId("member-model-settings").waitFor();
+ await infoTab(page, "profile");
+ assert.equal(await description.inputValue(), "资料草稿：跑活动", "跨一级 tab 保留未保存草稿");
  const failPatch = async (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "临时保存失败" }) });
  await page.route(`**/api/agents/${manager.id}`, failPatch);
- await pane.getByRole("button", { name: "保存", exact: true }).first().click();
- await pane.getByText("临时保存失败", { exact: true }).waitFor();
- assert.equal((await j("/api/agents")).find((a) => a.id === manager.id).thinking, supported.at(-1));
- assert.match(await draft.getByTestId("agent-draft-thinking").innerText(), /关闭/);
+ await saveProfile();
+ await profile.getByText("临时保存失败", { exact: true }).waitFor();
+ assert.equal((await j("/api/agents")).find((a) => a.id === manager.id).description, descriptionBefore, "保存失败不改库里的资料");
+ assert.equal(await description.inputValue(), "资料草稿：跑活动", "保存失败保留草稿");
  await page.unroute(`**/api/agents/${manager.id}`, failPatch);
- await pane.getByRole("button", { name: "保存", exact: true }).first().click();
- await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).thinking === supported[0]);
+ await saveProfile();
+ await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).description === "资料草稿：跑活动");
+ await stableShot(page, profile, join(out, "04-member-profile-save.png"));
+
+ // 仅保存资料：不重发模型/强度/Fast（它们由模型页即时保存）。
  const profilePatches = [];
  const inspectPatch = async (route) => { if (route.request().method() === "PATCH") profilePatches.push(route.request().postDataJSON()); await route.continue(); };
  await page.route(`**/api/agents/${manager.id}`, inspectPatch);
- await pane.getByRole("button", { name: "保存", exact: true }).first().click();
+ await saveProfile();
  await wait(() => profilePatches.length > 0);
  assert.equal("model" in profilePatches[0], false, "仅保存资料不覆盖模型");
  assert.equal("thinking" in profilePatches[0], false, "仅保存资料不覆盖强度");
+ assert.equal("fast" in profilePatches[0], false, "仅保存资料不覆盖 Fast");
  await page.unroute(`**/api/agents/${manager.id}`, inspectPatch);
- // 成员概览 live 入口：失败可见、保留原值，并可清回跟随默认。
- if (await tabs.getByRole("tab", { name: "概览", exact: true }).count()) await tabs.getByRole("tab", { name: "概览", exact: true }).click();
- else { await page.getByTestId("info-tabs-more").click(); await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "概览", exact: true }).click(); }
+ console.log("PASS profile: draft kept across top-level tabs, explicit save, failure keeps draft, profile-only save leaves model/strength/Fast untouched");
+
+ // 模型页 live 保存错误：失败可见、保留原值，并可清回跟随默认。
+ await infoTab(page, "models");
+ await wait(async () => /关闭/.test(await pane.getByTestId("agent-thinking").innerText()));
  await page.route(`**/api/agents/${manager.id}`, failPatch);
- await pane.getByTestId("model-picker").click();
- await page.getByTestId("model-picker-compact").getByRole("slider").press("End");
+ await setThinking("End");
  await pane.getByTestId("model-save-error").waitFor();
  assert.match(await pane.getByTestId("model-save-error").innerText(), /保存失败.*临时保存失败/);
  assert.equal((await j("/api/agents")).find((a) => a.id === manager.id).thinkingSetting, supported[0]);
  await stableShot(page, pane, join(out, "07-member-save-error.png"));
  await page.unroute(`**/api/agents/${manager.id}`, failPatch);
- await pane.getByTestId("model-picker").click();
- await page.getByTestId("thinking-follow").click();
+ await setThinking("End");
+ await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).thinkingSetting === supported.at(-1));
+ await pane.getByTestId("agent-thinking").click();
+ await page.getByTestId("agent-thinking-follow").click();
  await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).thinkingSetting === null);
- await pane.getByTestId("model-picker").click();
- assert.match(await page.getByTestId("thinking-current").innerText(), /跟随/);
- await page.keyboard.press("Escape");
- console.log("PASS save failures: visible live error, draft retained/retry, profile-only save preserves settings, overview can follow defaults");
+ await wait(async () => /跟随/.test(await pane.getByTestId("agent-thinking").innerText()));
+ console.log("PASS save failures: visible live error keeps stored value, retry persists, follow resets strength to default");
+
  // 管理者用mock执行加人卡片，再走确认加入。
  await pane.getByRole("button", { name: "关闭", exact: true }).first().click();
  await j(`/api/rooms/${room.id}/messages`, "POST", { text: "帮我加个成员" });
@@ -181,7 +208,7 @@ try {
  assert.equal(await thought.getByRole("slider").count(), 0);
  assert.deepEqual(errors, []);
  console.log("PASS loading/error/retry: unknown defaults do not invent levels; retry restores real metadata; plain model has fixed off");
- // 关闭WS补偿，独立确认PATCH同步存储字段/有效档位且不覆盖Fast。
+ // 关闭WS补偿：独立确认 PATCH 同步原始/有效档位，不改 Fast，迟到响应按序落库。
  const full = "anthropic.claude-sonnet-5", subset = "openai.gpt-5.4-mini";
  const isolated = await browser.newPage({ viewport: { width: 1280, height: 900 } }); isolated.setDefaultTimeout(7000);
  await isolated.routeWebSocket("**/ws*", () => {});
@@ -190,32 +217,34 @@ try {
  await isolated.goto(`${base}/?room=${room.id}`);
  await isolated.getByTestId("room-members").locator('button[title^="统筹"]').click();
  const directPane = isolated.locator(".pa-pane-wrap");
- const directTabs = directPane.getByTestId("info-tabs");
- const overview = async () => directTabs.getByRole("tab", { name: "概览", exact: true }).click();
- const settings = async () => {
-   if (await directTabs.getByRole("tab", { name: "设置", exact: true }).count()) await directTabs.getByRole("tab", { name: "设置", exact: true }).click();
-   else { await isolated.getByTestId("info-tabs-more").click(); await isolated.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "设置", exact: true }).click(); }
- };
+ const models = async () => { await infoTab(isolated, "models"); await directPane.getByTestId("member-model-settings").waitFor(); };
  const chooseLive = async (id) => {
-   await directPane.getByTestId("model-picker").click(); await isolated.getByTestId("thinking-model").click();
-   await isolated.getByTestId("model-search").fill(id); await isolated.locator(`[data-model="${svc.id}/${id}"]`).click();
+   await directPane.getByTestId("model-picker").click();
+   await isolated.getByTestId("model-menu").waitFor();
+   await isolated.getByTestId("model-search").fill(id);
+   // 常用与服务分组可各列同一语义模型；点击其第一份，不把正常重复展示当strict locator失败。
+   await isolated.locator(`[data-testid=model-option][data-model="${svc.id}/${id}"]`).first().click();
  };
+ await models();
  await chooseLive(subset);
  await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).model.id === subset);
- await isolated.getByTestId("model-picker-compact").waitFor();
- await isolated.keyboard.press("Escape");
- await wait(async () => /子集档位模型.*高/.test(await directPane.getByTestId("model-picker").innerText()));
- await settings();
- await wait(async () => /子集档位模型/.test(await directPane.getByTestId("agent-draft").innerText()));
- await wait(async () => /最大.*高/.test(await directPane.getByTestId("agent-draft-thinking").innerText()));
- await overview(); await directPane.getByTestId("model-picker").click();
- assert.equal(await isolated.getByTestId("thinking-fast").getAttribute("aria-pressed"), "true");
- await isolated.getByTestId("thinking-follow").click();
+ await wait(async () => /子集档位模型/.test(await directPane.getByTestId("model-picker").innerText()));
+ await wait(async () => /最大.*高/.test(await directPane.getByTestId("agent-thinking").innerText()));
+ const raw = (await j("/api/agents")).find((a) => a.id === manager.id);
+ assert.equal(raw.thinkingSetting, "max", "存储的原始档位保持 max");
+ assert.equal(raw.thinking, "high", "有效档位按模型目录降为 high");
+ assert.equal(await isolated.getByTestId("agent-model-fast").getAttribute("aria-pressed"), "true", "Fast 已开启");
+ await directPane.getByTestId("agent-thinking").click();
+ await isolated.getByTestId("agent-thinking-follow").click();
  await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).thinkingSetting === null);
- await wait(async () => !await directPane.getByTestId("model-picker").isDisabled());
- await settings(); await wait(async () => /默认/.test(await directPane.getByTestId("agent-draft-thinking").innerText()));
+ // 夹具全局默认是 medium；由 max 清回跟随后应显示「中」，不能沿用显式 max 降级时的 high。
+ await wait(async () => /跟随.*中/.test(await directPane.getByTestId("agent-thinking").innerText()));
+ const following = (await j("/api/agents")).find((a) => a.id === manager.id);
+ assert.equal(following.thinking, "medium", "跟随使用夹具设置的默认中档");
+ assert.equal(following.fast, true, "改强度/跟随不动 Fast");
+ assert.equal(await isolated.getByTestId("agent-model-fast").getAttribute("aria-pressed"), "true", "Fast 按钮保持开启");
+ await models();
  // A入口响应延迟时切换成员；重新进入同一助理再写B必须排队，最终UI与DB一致。
- await overview();
  let releaseFirst; const responseGate = new Promise((r) => { releaseFirst = r; });
  let seenFirst = false; let patchCount = 0;
  const delayed = async (route) => {
@@ -226,20 +255,28 @@ try {
  };
  await isolated.route(`**/api/agents/${manager.id}`, delayed);
  await chooseLive(full); await wait(() => seenFirst);
- await isolated.keyboard.press("Escape");
  await isolated.getByTestId("room-members").locator('button[title^="已有助理"]').click();
- assert.match(await directPane.getByTestId("model-picker").innerText(), /Mock 推理模型/);
+ await models();
+ await wait(async () => /Mock 推理模型/.test(await directPane.getByTestId("model-picker").innerText()));
  await isolated.getByTestId("room-members").locator('button[title^="统筹"]').click();
+ await models();
  await chooseLive(subset);
  assert.equal(patchCount, 1, "旧请求未确认前同一助理的下次写入排队");
  releaseFirst();
  await wait(async () => patchCount === 2 && (await j("/api/agents")).find((a) => a.id === manager.id).model.id === subset);
  await wait(async () => !await directPane.getByTestId("model-picker").isDisabled());
- await isolated.keyboard.press("Escape"); await settings();
- await wait(async () => /子集档位模型/.test(await directPane.getByTestId("agent-draft").innerText()));
+ await wait(async () => /子集档位模型/.test(await directPane.getByTestId("model-picker").innerText()));
  assert.equal((await j("/api/agents")).find((a) => a.id === manager.id).fast, true);
+ assert.equal(await isolated.getByTestId("agent-model-fast").getAttribute("aria-pressed"), "true");
  assert.deepEqual(directErrors, []);
  await isolated.close();
- console.log("PASS without WS: raw/effective metadata synchronized, follow retained, Fast preserved, late responses ordered across member switches");
-} catch (e) { console.error(server.logs().split("\n").filter((l) => !/apiKey|bearer|token/i.test(l)).slice(-14).join("\n")); throw e; }
+ console.log("PASS without WS: raw/effective metadata synchronized, follow retained, Fast independent, late responses ordered across member switches");
+} catch (e) {
+ let i = 0;
+ for (const context of browser?.contexts() ?? []) for (const page of context.pages()) {
+   await page.screenshot({ path: join(out, i++ === 0 ? "fixture-failed.png" : `fixture-failed-page-${i}.png`) }).catch(() => {});
+ }
+ console.error(server.logs().split("\n").filter((l) => !/apiKey|bearer|token/i.test(l)).slice(-14).join("\n"));
+ throw e;
+}
 finally { await browser?.close(); await server.stop(); cleanupTempRun(run); }

@@ -217,11 +217,11 @@ try {
 	await page.locator(".pa-pane-wrap").waitFor();
 	{
 		const bar = page.getByTestId("info-tabs");
-		const tab = bar.getByRole("tab", { name: "设置", exact: true });
+		const tab = bar.getByRole("tab", { name: "模型", exact: true });
 		if (await tab.count()) await tab.click();
 		else {
 			await page.getByTestId("info-tabs-more").click();
-			await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "设置", exact: true }).click();
+			await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "模型", exact: true }).click();
 		}
 	}
 	await page.getByTestId("subagent-model").click();

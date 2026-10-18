@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { COMPOSER_LABEL } from "../composer";
 import { useStore } from "../store";
-import { Badge, Button, cx, Input, avatarText, Help, useConfirm } from "./ui";
+import { Badge, Button, cx, ErrorBox, Input, avatarText, Help, useConfirm } from "./ui";
 
 /** 启用“完全权限”前的确认框（不再要求输入确认语） */
 const FULL_ASK = { title: "启用完全权限？", body: "助理几乎能做你在这台电脑上能做的任何事，包括使用已登录的账号和文件。这个档位下应用层不再弹审批：关机、删除、改系统设置这类受保护操作也会直接执行，随时可以一键暂停。仍然拦得住的只有凭据/密钥文件（直接拒绝）、暂停或调低档位、系统自己的权限弹窗和网站上的登录/验证码。", ok: "确定启用", danger: true };
@@ -468,20 +468,36 @@ export function HostTierPill({ agentId }: { agentId: string }) {
 	);
 }
 
-/** 助理设置页（次要入口）：同样的档位切换 */
+/** 助理设置页（次要入口）：同样的档位切换。加载中 / 读失败也给明确状态，不直接返回空。 */
 export function AgentHostTier({ agentId }: { agentId: string }) {
-	const { d, load } = useHostControl();
-	if (!d) return null;
-	const allowed = d.settings.agents === "all" || d.settings.agents.includes(agentId);
+	const { d, load, err, loading } = useHostControl();
+	const allowed = !!d && (d.settings.agents === "all" || d.settings.agents.includes(agentId));
+	const paused = !!d?.status.enabled && d.status.paused;
 	return (
-		<section className="space-y-2" data-testid="agent-host-tier">
-			<div className="flex items-center gap-2 text-sm font-semibold">
-				<Hand size={14} /> 操作你的电脑
-				{!d.status.enabled && <span className="text-xs font-normal text-mut">（未开启，在 设置 › 操作这台电脑 开启）</span>}
-				{d.status.enabled && !allowed && <span className="text-xs font-normal text-mut">（这个助理不在允许名单里）</span>}
+		<section className="min-w-0 space-y-2" data-testid="agent-host-tier">
+			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold">
+				<span className="flex items-center gap-2">
+					<Hand size={14} className="shrink-0" /> 操作你的电脑
+				</span>
+				{loading && !d && <span className="text-xs font-normal text-mut">正在读取…</span>}
+				{d && !d.status.enabled && <span className="min-w-0 text-xs font-normal break-words text-mut">（未开启，在 设置 › 操作这台电脑 开启）</span>}
+				{d?.status.enabled && !allowed && <span className="min-w-0 text-xs font-normal break-words text-mut">（这个助理不在允许名单里）</span>}
+				{paused && <Badge tone="amber">已暂停</Badge>}
 			</div>
-			<TierPicker agentId={agentId} d={d} load={load} />
-			<div className="text-xs text-mut">也可以在输入框下方的权限按钮里切换。</div>
+			{err && (
+				<div className="flex flex-wrap items-center gap-2">
+					<ErrorBox text={err} className="min-w-0 flex-1" />
+					<Button size="sm" variant="outline" onClick={() => void load()} disabled={loading} data-testid="agent-host-tier-retry">
+						<RefreshCw size={12} /> 重试
+					</Button>
+				</div>
+			)}
+			{d && (
+				<>
+					<TierPicker agentId={agentId} d={d} load={load} />
+					<div className="text-xs text-mut">也可以在输入框下方的权限按钮里切换。</div>
+				</>
+			)}
 		</section>
 	);
 }

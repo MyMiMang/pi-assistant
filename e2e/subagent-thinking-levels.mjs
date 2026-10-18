@@ -43,20 +43,20 @@ const openTab = async (page, name) => {
 	if (await tab.count()) await tab.click();
 	else { await page.getByTestId("info-tabs-more").click(); await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name, exact: true }).click(); }
 };
-/** 第一次打开「助理设置 › 子代理模型」区块（真实信息面板 + 设置 tab） */
+/** 第一次打开「助理 › 模型」页的子代理模型区块（真实信息面板） */
 const openAgentSettings = async (page, agentId) => {
 	await page.goto(`${BASE}/?agent=${agentId}`);
 	await page.waitForSelector(".pa-pane-wrap, button[aria-label='信息面板']");
 	await page.waitForTimeout(500); // 等 store 从 localStorage 恢复，避免和自动打开抢状态
 	if (!(await page.locator(".pa-pane-wrap").isVisible().catch(() => false))) await page.getByRole("button", { name: "信息面板" }).click();
 	await page.locator(".pa-pane-wrap").waitFor({ state: "visible" });
-	await openTab(page, "设置");
+	await openTab(page, "模型");
 	await page.getByTestId("agent-subagent-model").waitFor();
 };
-/** 池子改了以后重挂载设置面板（切到别的 tab 再切回来，不整页刷新，避免和持久化的面板状态抢） */
+/** 池子改了以后重挂载模型页（切到别的 tab 再切回来，不整页刷新，避免和持久化的面板状态抢） */
 const remountSettings = async (page) => {
 	await openTab(page, "概览");
-	await openTab(page, "设置");
+	await openTab(page, "模型");
 	await page.getByTestId("agent-subagent-model").waitFor();
 };
 const menu = (page) => page.getByTestId("agent-subagent-thinking-menu");

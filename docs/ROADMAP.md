@@ -2,6 +2,8 @@
 
 # 需求与计划（ROADMAP）
 
+> **2026-10-18 助理/群成员详情按功能分类（已实现并定向验收，未打包）**：用户反馈点击成员后的详情组织不合理，要求按功能分类、模型与思考强度明确可调。共用概览/模型/资料/能力/任务/记忆/文件/电脑，模型/思考/Fast分行即时保存，资料草稿与显式保存独立；功能和直达入口保留。两端类型、55/55纯检查、build、新分类UI6组及既有群成员UI8组通过，主核16图含390明暗主题/280与键盘。全量/真实App/跨平台/付费Fast未验，公开beta.32不含此项；[验收记录](../progress-snapshots/agent-details-functional.md)。
+
 > **已发布 beta.32 / Latest（2026-10-18 16:29:18，Asia/Shanghai）**：tag源码`a08e041`，[Actions39109851436](https://github.com/MyMiMang/pi-assistant/actions/runs/39109851436)五平台、Mac/Windows安装启动与publish全部成功；主核13非零资产、六条更新别名版本/URL/签名文件一致、两份Linux checksum与GitHub摘要一致及公开latest指针。未自动安装；[最终结果与未验](../progress-snapshots/beta32-release-final.md#发布状态)。下方旧版本/候选/待打包状态按时间保留，不覆盖当前发布。
 
 > **2026-10-18 失败只剩空“引用”（已完成，beta.32发布）**：程序直接展示明确额度/临时429/鉴权/上下文/网络/超时/服务/未知错误，保留部分输出；无start/空最终落库，后台模型错误记failed并直接原会话解释。服务没原因不猜额度，正常技能卡等待可静默且真实错误仍优先。定向服务端、前端、两端类型、静态四组合、真协议六轮→落库→刷新/390通过，最后新build与技能链均过，主核图。[证据与限制](../progress-snapshots/beta32-error-reporting.md)。

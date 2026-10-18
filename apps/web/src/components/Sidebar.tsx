@@ -153,7 +153,7 @@ export default function Sidebar() {
 				>
 					<button role="menuitem" className="flex w-full items-center gap-2 rounded px-3 py-2 text-left hover:bg-hover" onClick={() => {
 						void useStore.getState().selectAgent(menu.id);
-						set({ info: true, infoTab: "settings", drawer: false });
+						set({ info: true, infoTab: "profile", drawer: false });
 						setMenu(null);
 					}}>
 						<Pencil size={14} /> 编辑

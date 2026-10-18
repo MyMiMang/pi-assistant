@@ -149,7 +149,7 @@ export default function App() {
 					{!L.paneDocked && <div className="fixed inset-0 z-40 bg-black/40" onClick={() => set({ info: false })} />}
 					<div className="pa-pane-wrap">
 						<Resizer side="left" value={layout.paneW} onChange={(v) => setLayout({ paneW: clampPane(v) })} onReset={() => setLayout({ paneW: PANE.def })} onCollapse={() => set({ info: false })} label="调整信息面板宽度" />
-						<InfoPane agentId={paneId} />
+						<InfoPane key={paneId} agentId={paneId} />
 					</div>
 				</>
 			)}

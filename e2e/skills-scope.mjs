@@ -101,14 +101,14 @@ try {
 	await page.screenshot({ path: join(OUT, "01b-assign-modal.png") });
 	await page.keyboard.press("Escape");
 
-	// 助理设置 › 技能（打开右侧信息面板的「设置」页）
+	// 助理 › 能力（打开右侧信息面板的「能力」页）
 	await page.addInitScript(() => localStorage.setItem("pia.layout", JSON.stringify({ sideW: 264, paneW: 340, sideCollapsed: false, info: true })));
 	await page.goto(`${BASE}/?agent=${a}`);
 	await page.getByTestId("info-tabs").waitFor();
-	let settingTab = page.getByTestId("info-tabs").locator('[data-itab="settings"]');
+	let settingTab = page.getByTestId("info-tabs").locator('[data-itab="capabilities"]');
 	if ((await settingTab.count()) === 0) {
 		await page.getByTestId("info-tabs-more").click();
-		settingTab = page.getByTestId("info-tabs-menu").locator('[data-itab="settings"]');
+		settingTab = page.getByTestId("info-tabs-menu").locator('[data-itab="capabilities"]');
 	}
 	await settingTab.click();
 	await page.getByTestId("agent-skills").waitFor();

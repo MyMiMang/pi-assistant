@@ -315,7 +315,7 @@ try {
 		await page.getByTestId("settings-dialog").waitFor({ state: "detached" });
 	};
 	const mic = () => page.getByTestId("voice-mic");
-	const draft = () => page.locator("textarea").first().inputValue();
+	const draft = () => page.locator("main textarea:not(.pa-card textarea)").first().inputValue();
 
 	const ensureDefaultReady = async () => {
 		// 独立可跑：默认模型已准备 + 来源已由服务端 CAS 采用（不靠前端写）。

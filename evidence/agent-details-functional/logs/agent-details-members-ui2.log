@@ -1,0 +1,25 @@
+PASS proposal: themed components, grouped services, seven/subset levels, saved clamp, existing agent unchanged
+PASS created member: overview is a summary that navigates to models; strength saves immediately and survives reload
+PASS profile: draft kept across top-level tabs, explicit save, failure keeps draft, profile-only save leaves model/strength/Fast untouched
+[launch-memory] 越界/不可信的 PIA_WORKSPACE="/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-room-model-settings-XB6CVe/workspace" → 覆盖为 /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-room-model-settings-XB6CVe/data/workspace
+[pi-assistant] Pi 1.3.0（测试基线 1.3.0）
+[pi-assistant] 服务已启动：http://127.0.0.1:60982  数据目录：/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-room-model-settings-XB6CVe/data  serverId=a71ad72e-8f64-4356-82a6-52ab2562613e  [Mock 模型已启用]
+
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /跟随/. Input:
+
+'思考·高'
+
+    at file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/agent-details-functional/e2e/room-member-model-settings-ui.mjs:156:9 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: '思考·高',
+  expected: /跟随/,
+  operator: 'match',
+  diff: 'simple'
+}
+
+Node.js v24.19.0

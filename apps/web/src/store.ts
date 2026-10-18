@@ -73,6 +73,7 @@ interface State {
 	setLayout: (p: Partial<LayoutPrefs>) => void;
 	/** 右侧信息面板当前页 */
 	infoTab: string;
+	infoTaskTab: "background" | "routines" | "proactive";
 	settings: string | null;
 	/** 明暗：浅色 / 深色 / 跟随系统 */
 	theme: Theme;
@@ -206,6 +207,7 @@ export const useStore = create<State>((set, get) => ({
 	info: loadLayout().info,
 	layout: loadLayout(),
 	infoTab: "overview",
+	infoTaskTab: "background",
 	settings: new URLSearchParams(location.search).get("settings"),
 	theme: (localStorage.getItem("pia.theme") as Theme) || (getTheme(localStorage.getItem("pia.skin")).defaultMode ?? "system"),
 	skin: getTheme(localStorage.getItem("pia.skin")).id,

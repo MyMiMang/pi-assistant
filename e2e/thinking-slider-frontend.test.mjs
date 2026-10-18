@@ -281,6 +281,12 @@ test("DOM：左上角是闪电真按钮（不是星星）；开关 aria-pressed�
 	assert.ok(unsupported.includes('aria-disabled="true"'), "不可用是 aria-disabled（不用 native disabled 禁掉 focus/tooltip）");
 	assert.ok(!/\sdisabled(=|>)/.test(unsupported), "没有 native disabled（aria-disabled 不算）");
 	assert.ok(unsupported.includes("不可用：当前接口暂未接入 Fast"));
+
+	const unavailable = html({ testid: "thinking", levels: ALL, current: "medium", fast: fast({ on: true, unavailable: "模型目录没加载出来，请重试" }) });
+	assert.ok(unavailable.includes('aria-disabled="true"'));
+	assert.ok(unavailable.includes('aria-pressed="true"'), "目录失败仍保留原开关");
+	assert.ok(unavailable.includes("暂不可用：模型目录没加载出来，请重试"));
+	assert.ok(!unavailable.includes("当前接口暂未接入 Fast"), "读取失败不伪称协议不支持");
 });
 
 test("DOM：非推理 / 固定档模型仍显示 Fast，不把 Fast 绑在 >1 档上", () => {

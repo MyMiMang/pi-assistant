@@ -85,6 +85,8 @@ export interface FastControl {
 	mode?: "follow" | "override";
 	/** 模型目录正在加载：能力未知，但开关仍可切（服务端按本次实际模型决定是否发送） */
 	loading?: boolean;
+	/** 目录失败等暂不可用原因，不冒充模型协议明确不支持。 */
+	unavailable?: string;
 	pending?: boolean;
 	error?: string;
 	onToggle: () => void;
@@ -340,15 +342,17 @@ function Head({ testid, current, modelName, followLabel, following, effective, o
  * - 悬停约 450ms 才出短介绍（复用 Help 的气泡与关闭规则），focus 立即出；触摸点按会同时聚焦出说明并切换；
  * - 保存中 `aria-busy` 且不响应重复点击；失败由调用方回滚并给 `error`。
  */
-function FastButton({ testid, fast }: { testid: string; fast?: FastControl }) {
+export function FastButton({ testid, fast }: { testid: string; fast?: FastControl }) {
 	const tip = useHoverTip(450);
 	const supported = !!fast && fast.capability !== "unsupported";
 	// 加载中不按「不支持」禁掉：开关仍可切，请求时按本次实际模型判断；只在保存中 / 明确不支持时禁用
-	const disabled = !!fast?.pending || (!!fast && !supported && !fast.loading);
+	const disabled = !!fast?.pending || !!fast?.unavailable || (!!fast && !supported && !fast.loading);
 	const on = !!fast?.on;
 	const stateText = !fast
 		? "Fast 按助理开关：在助理的模型菜单里设置"
-		: fast.loading
+		: fast.unavailable
+			? `暂不可用：${fast.unavailable}`
+			: fast.loading
 			? "模型能力加载中…（开关仍可切换，请求时按实际模型判断）"
 			: !supported
 				? `不可用：${fast.reason ?? "当前接口暂未接入 Fast"}`

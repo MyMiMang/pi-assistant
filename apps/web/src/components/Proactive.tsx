@@ -98,7 +98,7 @@ export function ProactivityPicker({ agentId }: { agentId: string }) {
 						<span className="flex-1">
 							今天 {d.usedToday}/{d.budget} 条{d.nextHeartbeatAt ? ` · 下次 ${fmtTime(d.nextHeartbeatAt)}` : ""}
 						</span>
-						<button className="text-accent" onClick={() => (setOpen(false), useStore.getState().set({ info: true, infoTab: "proactive" }))}>
+						<button className="text-accent" onClick={() => (setOpen(false), useStore.getState().set({ info: true, infoTab: "tasks", infoTaskTab: "proactive" }))}>
 							更多设置
 						</button>
 					</div>

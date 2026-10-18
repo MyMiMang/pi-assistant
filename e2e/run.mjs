@@ -10,6 +10,7 @@ import { chromium } from "playwright-core";
 import { startMockOpenAI } from "./mock-openai.mjs";
 import { cspProblems, probeCsp } from "./fixtures/csp-probe.mjs";
 import { startMockImages } from "./mock-images.mjs";
+import { infoTab as selectInfoTab, taskTab as selectTaskTab } from "./fixtures/info-pane.mjs";
 
 // fileURLToPath 而不是 URL.pathname：路径含空格/中文时 pathname 会保留 %20，导致子进程 cwd 与文件读取都找不到。
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -46,6 +47,9 @@ async function waitFor(fn, ms = 15_000) {
 	}
 	throw new Error("timeout");
 }
+// 下面的步骤都作用在本轮的 page 上：保留 `infoTab("资料")` / `taskTab("routines")` 这种短写法。
+const infoTab = (name) => selectInfoTab(page, name);
+const taskTab = (name) => selectTaskTab(page, name);
 const results = [];
 let AGENT = "";
 async function step(name, fn) {
@@ -85,14 +89,6 @@ const send = async (text) => {
 	await page.waitForFunction(() => document.querySelector("main textarea:not(.pa-card textarea)")?.value === "", null, { timeout: 10_000 });
 };
 
-// 信息面板标签：可见就直接点，否则从「更多」菜单里选
-async function infoTab(name) {
-	const bar = page.getByTestId("info-tabs");
-	const tab = bar.getByRole("tab", { name, exact: true });
-	if (await tab.count()) return tab.click();
-	await page.getByTestId("info-tabs-more").click();
-	await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name, exact: true }).click();
-}
 await step("首次运行向导（选择 provider → 登录 → 默认模型 → 创建第一个助理）", async () => {
 	await page.goto(BASE);
 	await page.getByText("欢迎使用 Pi Assistant").waitFor();
@@ -246,7 +242,7 @@ await step("右侧信息面板：文件 / 电脑", async () => {
 
 await step("右侧信息面板标签栏自适应：240/320/420/600 宽下每个标签都可达（可见或在「更多」里），不被裁切", async () => {
 	const aside = page.locator(".pa-pane-wrap");
-	const want = ["overview", "memory", "routines", "proactive", "files", "computer", "settings"];
+	const want = ["overview", "models", "profile", "capabilities", "tasks", "memory", "files", "computer"];
 	for (const w of [240, 320, 420, 600]) {
 		await page.evaluate((w) => { const el = document.querySelector(".pa-pane-wrap"); el.style.width = `${w}px`; el.style.flex = `0 0 ${w}px`; }, w);
 		await page.waitForTimeout(250);
@@ -613,11 +609,13 @@ await step("多个助理：新建第二个助理 → 侧边栏列出 → 上传�
 	if (list.length !== 2) throw new Error(`应有 2 个助理，实际 ${list.length}`);
 	// 第三个助理（纯 API），让侧边栏更像真实使用
 	await fetch(`${BASE}/api/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "写作助手", avatar: "✍️", color: "#ec4899", description: "写文章、润色、翻译" }) });
-	// 编辑第二个助理：上传图片头像 + 改名
-	await infoTab("设置");
-	await page.locator("[data-testid=avatar-file]").setInputFiles(join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"));
-	await page.getByPlaceholder("给助理起个名字").fill("研究员 R");
-	await page.getByRole("button", { name: "保存", exact: true }).click();
+	// 编辑第二个助理：上传图片头像 + 改名（资料页显式保存；限定在可见的资料面板里，避免选到隐藏草稿）
+	await infoTab("profile");
+	const profilePane = page.locator(".pa-pane-wrap");
+	await profilePane.getByTestId("agent-profile").waitFor();
+	await profilePane.locator("[data-testid=avatar-file]").setInputFiles(join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"));
+	await profilePane.getByPlaceholder("给助理起个名字").fill("研究员 R");
+	await profilePane.getByRole("button", { name: "保存", exact: true }).click();
 	await page.getByRole("button", { name: "已保存" }).waitFor();
 	const r = (await (await fetch(`${BASE}/api/agents`)).json()).find((a) => a.name === "研究员 R");
 	if (!r?.avatar.startsWith("img:")) throw new Error("头像未保存为图片");
@@ -701,7 +699,7 @@ await step("Phase 2：记忆（聊天里记住 → 记忆页可见/编辑）", a
 	await infoTab("记忆");
 	await pane.getByText("我喜欢简洁的回答").waitFor();
 	await pane.getByRole("button", { name: "添加记忆" }).click();
-	await pane.locator("textarea").fill("我在上海，时区 Asia/Shanghai");
+	await pane.locator("textarea:visible").fill("我在上海，时区 Asia/Shanghai");
 	await pane.getByRole("button", { name: "保存", exact: true }).click();
 	await pane.getByText("我在上海，时区 Asia/Shanghai").waitFor();
 	await page.waitForTimeout(300);
@@ -764,7 +762,7 @@ await step("Phase 2：定时任务（助理创建需审批 → 定时任务页 �
 	await page.getByRole("button", { name: "批准", exact: true }).last().click();
 	await page.locator("main").getByText("定时任务设好了").last().waitFor({ timeout: 15_000 });
 	const pane = page.locator("aside").last();
-	await infoTab("定时任务");
+	await taskTab("routines");
 	const item = pane.locator("[data-testid=routine-item]").first();
 	await item.getByText("每日简报").waitFor();
 	await item.getByText("每天 08:00").waitFor();
@@ -882,9 +880,9 @@ await step("扩展：添加 MCP 服务（本机命令）→ 测试连接/工具�
 	await card.getByRole("button", { name: "拒绝" }).click();
 	await page.locator("main").getByText("没有获得批准，便签没有发送").last().waitFor({ timeout: 15_000 });
 
-	// 助理设置里按助理启用
+	// 能力页里按助理启用
 	const pane = page.locator("aside").last();
-	await infoTab("设置");
+	await infoTab("capabilities");
 	await pane.locator("[data-testid=agent-extensions]").getByText("demo", { exact: true }).waitFor();
 });
 
@@ -1487,6 +1485,9 @@ await step("主动性：输入框「主动」按钮切换等级 → 聊天里约
 	await page.getByText("到时我再看看").first().waitFor({ timeout: 20_000 });
 	await page.locator("[data-testid=proactive-picker]").click();
 	await page.getByRole("button", { name: "更多设置" }).click();
+	// 「更多设置」进入助理 › 任务 › 主动跟进，而不是只开一个临时弹层
+	await page.locator(".pa-pane-wrap").waitFor();
+	await page.locator("[data-testid=agent-task-tabs] [data-itab=proactive][aria-selected=true]").waitFor();
 	await page.locator("[data-testid=proactive-tab] [data-testid=followup]").first().waitFor();
 	await page.locator("[data-testid=proactive-run]").click();
 	await waitFor(async () => (await (await fetch(`${BASE}/api/proactive/inbox`)).json()).items.some((i) => i.status === "delivered"), 30_000).catch(async (e) => {
@@ -1567,6 +1568,9 @@ await step("左侧助理列表：右键 → 编辑 / 删除助理（确认框）
 	const item = (n) => page.locator("[data-testid=sidebar-agent]", { hasText: n });
 	await item("临时助理甲").click({ button: "right" });
 	await page.locator("[data-testid=agent-menu]").getByText("编辑").click();
+	// 侧边栏「编辑」直达该助理的资料页（资料面板可见，不是只切了个隐藏 tab）
+	await page.locator(".pa-pane-wrap").waitFor();
+	await page.getByTestId("agent-profile").waitFor();
 	await page.getByText("删除助理").last().waitFor();
 	await item("临时助理甲").click({ button: "right" });
 	await page.waitForTimeout(200);
@@ -2216,9 +2220,9 @@ await step("图片生成：设置里添加图片服务（自动获取识别图�
 		// 安全策略拦截
 		await send("画一张 违规内容");
 		await page.locator("main").getByText(/没画成.*安全策略/).last().waitFor({ timeout: 30_000 });
-		// 助理设置：图片模型选择（跟随默认 / 指定 / 不画图）
+		// 模型页：图片模型选择（跟随默认 / 指定 / 不画图）
 		if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
-		await infoTab("设置");
+		await infoTab("models");
 		await page.getByTestId("agent-image-select").selectOption("off");
 		await waitFor(async () => (await (await fetch(`${BASE}/api/agents/${painter}/image-model`)).json()).choice.mode === "off");
 		await page.getByTestId("agent-image-select").selectOption("default");

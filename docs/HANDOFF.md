@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> **2026-10-18 助理/群成员详情功能分类完成（未打包，公开版仍 beta.32）**：`InfoPane` 共用概览/模型/资料/能力/任务/记忆/文件/电脑；模型页分行显示模型、思考强度和Fast，仍即时保存；资料只保存资料，切分类保留草稿，换助理重建。技能/扩展归能力，后台/定时/主动归任务二级，权限/共用或单独助理电脑归电脑；快捷入口已调整。保留串行/迟到守卫、Fast独立、真实档位/跟随/降级、错误重试与更多菜单键盘。最终两端类型、55/55纯检查、Web build通过；新分类UI6组26.70s、既有群成员回归8组30.05s均exit0，主核最终16图含390明暗主题/280电脑。启动未复现超时与测试就绪/默认预期修正保留原日志；未改产品超时/重试/服务端/SDK。未做全量测试或真实App/跨平台/付费Fast验收；源码完成不等于已发布。[设计](design/agent-details-functional.md)、[最终证据与限制](../progress-snapshots/agent-details-functional.md)。
+
 > **当前公开版 v0.1.0-beta.32，Latest（2026-10-18 16:29:18，Asia/Shanghai）**：不可移动tag源码 `a08e041b4f5d857afe1a62e7dc8b1faa05e0ef7b`，[Actions39109851436](https://github.com/MyMiMang/pi-assistant/actions/runs/39109851436)五平台构建、Mac/Windows安装启动冒烟及publish全部成功。[Release](https://github.com/MyMiMang/pi-assistant/releases/tag/v0.1.0-beta.32)非草稿/非预发布；主核13个非零资产、六条更新别名的版本/URL/非空签名与已发布`.sig`一致，Linux两份checksum与GitHub资产digest一致，公开`releases/latest/download/latest.json`也为beta.32。未独立密码学验签或下载Linux归档重哈希，未自动安装/重启用户App。
 >
 > 本版交付群成员模型/强度、技能具体用途卡、长期群任务、子任务监督/主动推进/Fast显示，以及请求错误/空最终/后台假完成修复。192项服务端、76项纯检查与最后19项增量通过（有重叠不相加），两端类型、新build/任务纠正/技能链/真错误UI和边界隔离均过，主核桌面/390图。源码/失败修正/发布证据与未验见[最终收口](../progress-snapshots/beta32-release-final.md)、[整合记录](../progress-snapshots/beta32-long-tasks-integration.md)、[长期任务设计](design/durable-work-items.md)。真实模型自主规划/产物质量、原账号额度/超时根因、Fast实际计费加速、物理手机/WebKit/跨平台完整任务及TCC升级持久性未验。以下“公开beta.31/候选/构建中/runner待核”均为历史，以本条为准。

@@ -1,0 +1,6 @@
+PASS group: overview directs to models; separate model/thinking/Fast; seven real levels; independent persistence
+PASS profile: draft survives category switch and failure; explicit save preserves model/thinking/Fast
+PASS classification: models/profile/capabilities/tasks/memory/files/computer all reachable, old functions retained
+PASS empty/loading/error: skill/extension/host errors recover on retry; failed skill save rolls back while error remains visible
+PASS direct chat: same persisted member setting; skill/proactive shortcuts reach their functional categories
+PASS desktop/390: four skin/mode combinations, eight categories + more menu/keyboard, no overflow or JS errors

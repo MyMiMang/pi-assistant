@@ -115,12 +115,12 @@ const openAgentSettings = async (page, agentId) => {
 	await page.waitForTimeout(500);
 	if (!(await page.locator(".pa-pane-wrap").isVisible().catch(() => false))) await page.getByRole("button", { name: "信息面板" }).click();
 	await page.locator(".pa-pane-wrap").waitFor({ state: "visible" });
-	await openTab(page, "设置");
+	await openTab(page, "模型");
 	await page.getByTestId("agent-subagent-model").waitFor();
 };
 const remountSettings = async (page) => {
 	await openTab(page, "概览");
-	await openTab(page, "设置");
+	await openTab(page, "模型");
 	await page.getByTestId("agent-subagent-model").waitFor();
 };
 const menu = (page) => page.getByTestId("agent-subagent-thinking-menu");

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { taskTab } from './fixtures/info-pane.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const data = mkdtempSync(join(tmpdir(), 'pia-routines-'));
 const out = process.env.E2E_OUT ?? join(root, '../evidence/routines-ui'); mkdirSync(out, {recursive:true});
@@ -25,10 +26,9 @@ try {
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
  await page.goto(`${base}/?agent=${agent.id}`);
  await page.getByRole('button',{name:'信息面板',exact:true}).click();
- const routineTab=page.getByTestId('info-tabs').getByRole('tab',{name:'定时任务',exact:true});
- if(await routineTab.count()) await routineTab.click();
- else { await page.getByTestId('info-tabs-more').click();await page.getByTestId('info-tabs-menu').getByRole('menuitem',{name:'定时任务',exact:true}).click(); }
- const tab=page.getByTestId('routines-tab');await tab.getByText('特殊旧计划', {exact:true}).waitFor();
+ const tab=page.getByTestId('routines-tab');
+ await taskTab(page,'routines');
+ await tab.getByText('特殊旧计划', {exact:true}).waitFor();
  await tab.getByLabel('编辑',{exact:true}).click();
  assert.equal(await tab.getByLabel('执行频率').inputValue(),'advanced');
  assert.equal(await tab.getByLabel('cron 表达式').inputValue(),'0 8 1 * *');

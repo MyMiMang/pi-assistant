@@ -1,0 +1,36 @@
+# 临时服务冷启动诊断（一次性、有界）
+# worktree: /Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/agent-details-functional/
+# startedAt: 2026-10-18T09:37:29.527Z  finishedAt: 2026-10-18T09:37:33.923Z  wall=4.40s
+[0.01s] node=v24.19.0 execPath=/Users/dengdeng/.local/node-v24.19.0/bin/node
+[0.01s] root=/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/agent-details-functional/
+[0.01s] node_modules → /Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/node_modules
+[0.01s] resolve @pi-assistant/shared → file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/packages/shared/src/index.ts
+[0.01s] resolve @pi-assistant/ext-skills → file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/packages/ext-skills/src/index.ts
+[0.02s] resolve tsx → file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/node_modules/tsx/dist/loader.mjs
+[0.02s] dist/index.html 存在: true
+[0.02s] runDir=/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-startup-diag-VYnFYd (exists=true)
+[0.02s] port=56651
+[0.03s] child.pid=65444 ppid=65429 spawned=/Users/dengdeng/.local/node-v24.19.0/bin/node
+[0.03s] child 运行态: 65444 65429 65444 Rs   00:00 /Users/dengdeng/.local/node-v24.19.0/bin/node --import tsx packages/server/test/launch-memory.ts
+[+0.16s] [launch-memory] 越界/不可信的 PIA_WORKSPACE="/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-startup-diag-VYnFYd/workspace" → 覆盖为 /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-startup-diag-VYnFYd/data/workspace
+[+4.14s] [pi-assistant] Pi 1.3.0（测试基线 1.3.0）
+[+4.15s] [pi-assistant] 服务已启动：http://127.0.0.1:56651  数据目录：/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-startup-diag-VYnFYd/data  serverId=759cf844-8a83-4b89-a218-8a5d2cfce219  [Mock 模型已启用]
+[4.36s] READY /api/system ok，用时 4336ms
+[4.36s] stop 本次进程组…
+[4.38s] stop 后 pid 65444 仍存在: true
+[4.40s] cleanupTempRun 后 runDir 存在: false (/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-startup-diag-VYnFYd)
+
+## 收尾核验（诊断脚本结束后补记） 2026-10-18T09:38:02Z
+- 本次 child PID 65444 现在: （无输出）
+- 该进程组成员: 0 个（0 = 已清空）
+- pgrep -fl launch-memory.ts 结果: 无匹配（0 个）
+- runDir /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-startup-diag-VYnFYd 存在: no
+- 本次未产生 sample-*.txt / lsof-timeout.txt：ready 用时 < 15s，未触发采样分支
+
+## 对照：上一次失败日志（logs/agent-details-ui1.log）的时序事实
+- 第一行 launch-memory 警告后，直到 30s 超时都没有出现 [pi-assistant] Pi 兼容行；本次该行出现在启动后 4.14s。
+- 上次只证明在该日志之前尚未完成启动，可能包括 launch-memory 的 models 初始化、main.ts 的模块加载等；没有上次采样，不能缩成某个具体模块或断言仅为 tsx 转译。
+- 同时段有 logs/agent-details-build1.log（17:19:32 完成）和 pure1 测试（17:19:43 结束），UI约17:20:20超时。并发负载可能影响启动，但时序不能证明因果；本次4.34s未复现。后续统一串行检查，未改产品或夹具就绪上限。
+
+## 结构事实
+- node_modules 是指向 task-responsibility-integration/node_modules 的符号链接，@pi-assistant/shared、@pi-assistant/ext-*、tsx 实际解析到另一个 worktree（本次未改动链接）。

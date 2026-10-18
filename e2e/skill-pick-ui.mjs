@@ -180,7 +180,9 @@ try {
 	check("空态提示", ((await page.getByTestId("skill-empty").textContent()) ?? "").includes("还没有给这个助理启用技能"));
 	await page.getByTestId("skill-empty-goto").click();
 	await page.locator(".pa-pane-wrap").waitFor();
-	check("跳转该助理设置（技能区可见）", (await page.locator(".pa-pane-wrap").getByText("技能").count()) > 0);
+	// 空态跳到助理 › 能力页，技能区就在这一页
+	await page.getByTestId("agent-skills").waitFor();
+	check("跳转该助理能力页（技能区可见）", await page.getByTestId("agent-skills").isVisible());
 	await page.screenshot({ path: join(OUT, "06-empty-state.png") });
 
 	// ---------------- 8) 390 窄屏：不撑宽、麦克风 / 发送仍在
