@@ -10,11 +10,10 @@ import { setAsrStreamSelectionVersion, setAsrStreamSourceReader } from "./local-
 import { mountLocalAsrRoutes } from "./local-asr/routes.ts";
 import "./local-asr/download.ts";
 import { isStopCommand } from "./interject.ts";
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Readable } from "node:stream";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { compress } from "hono/compress";
@@ -63,7 +62,7 @@ import { buildReplySnapshot, formatQuotedContext, ReplyError, resolveReplyTarget
 import { mountImageRoutes } from "./image-gen/routes.ts";
 import { mountPetRoutes } from "./pet/routes.ts";
 import { mountUsageRoutes } from "./usage/routes.ts";
-import { by, isAdmin, localOnly, type Env } from "./routes/common.ts";
+import { by, isAdmin, localOnly, roomErr, sendFile, type Env } from "./routes/common.ts";
 import { mountModelRoutes } from "./routes/models.ts";
 import { mountWorkItemRoutes, workErr } from "./routes/work-items.ts";
 import { mountDesktopRoutes, deskChanged } from "./routes/desktop.ts";
@@ -401,10 +400,6 @@ app.post("/api/agents/:id/abort", async (c) => {
 });
 
 // ---------------------------------------------------------------- 群聊
-const roomErr = (c: Context, e: unknown) => {
-	if (e instanceof ReplyError) return c.json({ error: e.message, code: e.code }, e.status as 400 | 403 | 404);
-	return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-};
 app.get("/api/rooms", (c) => c.json(listRooms()));
 app.post("/api/rooms", async (c) => {
 	const b = await c.req.json<{ name?: string; purpose?: string; memberIds?: string[]; managerId?: string }>();
@@ -812,14 +807,6 @@ app.get("/api/usage", (c) =>
 	c.json(db.prepare("SELECT agent_id, day, provider, model, SUM(input + cache_read + cache_write) input, SUM(output) output, COALESCE(SUM(cost), 0) cost FROM usage_calls GROUP BY agent_id, day, provider, model ORDER BY day DESC LIMIT 200").all()),
 );
 
-function sendFile(c: Context<Env>, path: string, name: string, mime: string) {
-	const inline = c.req.query("inline") === "1" && /^(image\/(png|jpeg|gif|webp)|text\/plain)$/.test(mime);
-	c.header("Content-Type", inline ? mime : mime.startsWith("text/") ? `${mime}; charset=utf-8` : mime);
-	c.header("Content-Length", String(statSync(path).size));
-	c.header("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(name)}`);
-	c.header("Cache-Control", "private, max-age=3600");
-	return c.body(Readable.toWeb(createReadStream(path)) as ReadableStream);
-}
 // 渠道里发不了的文件：签名的公开下载链接（只在配置了固定地址时生成，7 天有效）
 app.get("/hooks/dl/:id/:exp/:sig", (c) => {
 	const id = c.req.param("id");
