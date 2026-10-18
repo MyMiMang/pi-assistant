@@ -366,10 +366,10 @@ function VmResources({ g, put }: { g: DesktopGlobal; put: (b: Partial<DesktopGlo
 	);
 }
 
-/** 共用电脑：一行说明 + 可折叠的「每个助理用哪台电脑」（助理多时默认收起，只显示计数） */
+/** 共用电脑：一行说明 + 可折叠的「每个助理用哪台电脑」（始终默认收起，标题一行带计数；展开后限高内部滚动） */
 function SharedComputerSection({ separate }: { separate: number }) {
 	const agents = useStore((st) => st.agents);
-	const [open, setOpen] = useState(agents.length <= 3);
+	const [open, setOpen] = useState(false);
 	return (
 		<section className="space-y-2" data-testid="desktop-shared">
 			<div className="font-semibold">{t("共用电脑")}</div>
@@ -381,7 +381,7 @@ function SharedComputerSection({ separate }: { separate: number }) {
 				<summary className="cursor-pointer px-3 py-2 text-sm font-medium">
 					{t("每个助理用哪台电脑")} <span className="ml-1 text-xs font-normal text-zinc-500">{t("{n} 个助理", { n: agents.length })}{separate ? t(" · {m} 个单独", { m: separate }) : t(" · 全部共用")}</span>
 				</summary>
-				<div className="max-h-80 divide-y divide-line overflow-y-auto border-t border-line">
+				<div className="max-h-64 divide-y divide-line overflow-y-auto border-t border-line">
 					{agents.map((a) => (
 						<div key={a.id} className="flex items-center gap-3 px-3 py-2" data-testid={`desktop-agent-${a.id}`}>
 							<Avatar agentId={a.id} text={avatarText(a.avatar)} color={a.color} size={22} />
