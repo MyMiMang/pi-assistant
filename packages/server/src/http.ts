@@ -42,7 +42,7 @@ import { classifierProtocols } from "./pi-adapter/index.ts";
 import { checkPiCompat, sessionStats } from "./pi-adapter/index.ts";
 import { pushLog, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
-import { describeRoutine, disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
+import { disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
 import { desktopPause, desktopStatus, ensureOwnScreen, forgetAgentComputer, hasSeparateData, issueTicket, mergeIntoShared, purgeAll, releaseScreen, resetAvailability, screenshotDesktop, setSeparateComputer, shutdownAll, startDesktop, startIdleWatcher, startInstall, stopDesktop, useTicket, viewerClose, viewerOpen, viewToken, vmResourceApplied, vmResourceDiskError, vmResourceInfo } from "./desktop.ts";
 import { backend as desktopBackend, builtinFor, dockerBackend } from "./desktop/backend.ts";
@@ -62,7 +62,7 @@ import { embeddingSignature, LOCAL_EMBEDDINGS, LOCAL_RERANKERS, pickMemoryModel,
 import { llmProxy } from "./llm-proxy.ts";
 import { assignedSkillIds, setAssignedSkillIds } from "./skill-assignments.ts";
 import { enabledSkillsFor, resolveSelectedSkills } from "./skill-scope.ts";
-import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRoutines, listRuns, type RoutineInput, type RoutineRow, runRoutine, setRoutineStatus, updateRoutine, verifyWebhook, webhookPath } from "./routines.ts";
+import { createRoutine, deleteAgentRoutines, listRoutines, type RoutineInput, runRoutine, verifyWebhook } from "./routines.ts";
 import { BRAND } from "@pi-assistant/shared";
 import { verifySigned } from "./channels/media.ts";
 import { startHousekeeping } from "./housekeeping.ts";
@@ -81,6 +81,7 @@ import { mountImageRoutes } from "./image-gen/routes.ts";
 import { mountPetRoutes } from "./pet/routes.ts";
 import { mountUsageRoutes } from "./usage/routes.ts";
 import { by, errJson, isAdmin, localOnly, type Env } from "./routes/common.ts";
+import { mountRoutineRoutes, routineJson } from "./routes/routines.ts";
 import { mountRemoteRoutes } from "./routes/remote.ts";
 import { mountChannelRoutes } from "./routes/channels.ts";
 import { mountHostControlRoutes } from "./routes/host-control.ts";
@@ -1013,20 +1014,8 @@ app.put("/api/agents/:id/skills", async (c) => {
 mountMcpRoutes(app);
 syncMcpDownloads();
 
-// ---------------------------------------------------------------- 定时与触发
-const routineJson = (r: RoutineRow) => {
-	const last = listRuns(r.id, 1)[0] ?? null;
-	return { ...r, webhook_secret: undefined, quiet: r.quiet ? JSON.parse(r.quiet) : null, webhookPath: webhookPath(r), lastRun: last };
-};
 app.get("/api/agents/:id/routines", (c) => c.json(listRoutines(c.req.param("id")).map(routineJson)));
-app.post("/api/routines/preview", async (c) => {
-	const b = await c.req.json<{ trigger: string; cron?: string; quietHours?: boolean }>();
-	try {
-		return c.json({ ok: true, text: describeRoutine(b) });
-	} catch (e) {
-		return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
-	}
-});
+mountRoutineRoutes(app);
 app.post("/api/agents/:id/routines", async (c) => {
 	const id = c.req.param("id");
 	if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
@@ -1037,22 +1026,6 @@ app.post("/api/agents/:id/routines", async (c) => {
 		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 	}
 });
-app.patch("/api/routines/:rid", async (c) => {
-	try {
-		return c.json(routineJson(updateRoutine(c.req.param("rid"), await c.req.json<Partial<RoutineInput>>())));
-	} catch (e) {
-		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-	}
-});
-app.post("/api/routines/:rid/:action{pause|resume|run}", (c) => {
-	const rid = c.req.param("rid");
-	if (!getRoutine(rid)) return c.json({ error: "not_found" }, 404);
-	const action = c.req.param("action");
-	if (action === "run") return c.json(runRoutine(rid, "manual"));
-	return c.json(routineJson(setRoutineStatus(rid, action === "pause" ? "paused" : "active")!));
-});
-app.delete("/api/routines/:rid", (c) => c.json({ ok: deleteRoutine(c.req.param("rid")) }));
-app.get("/api/routines/:rid/runs", (c) => c.json(listRuns(c.req.param("rid"), 50)));
 /** Webhook 触发（公开地址，凭 URL 里的密钥；请求体作为外部数据附在指令后） */
 app.post("/hooks/:rid/:secret", async (c) => {
 	const ip = c.get("caller").ip;
