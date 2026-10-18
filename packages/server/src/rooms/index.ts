@@ -30,7 +30,7 @@ import { setAssignedSkillIds } from "../skill-assignments.ts";
 import { STRENGTHS, STRENGTH_LABEL, type Strength } from "../model-profile.ts";
 import { cleanNeeds, configuredModels, modelProfiles, pickFor, roleNeeds } from "./model-pick.ts";
 import { buildTranscript, capCheck, normalizeCaps, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
-import { attachTurnToWork, buildWorkCorrectionContext, deleteRoomWorkItems, noteRoomTurnEnd, onRoomMemberRemoved, onRoomTurnsClosed, pauseRoomWorkOnStop, planPendingWorkTurn, queueAssignmentForWorkItem, resolveWorkReferences, setWorkSourceProvider, workItemTools } from "../work-items.ts";
+import { attachTurnToWork, buildWorkCorrectionContext, onRoomWorkEvent, planPendingWorkTurn, queueAssignmentForWorkItem, resolveWorkReferences, setRoomPort, setWorkSourceProvider, workItemTools } from "../work-items.ts";
 
 export interface RoomRow {
 	id: string;
@@ -156,7 +156,7 @@ export function updateRoom(id: string, p: { name?: string; purpose?: string; man
 		for (const x of removed) {
 			db.prepare("UPDATE room_members SET left_at = ? WHERE room_id = ? AND agent_id = ?").run(now(), id, x);
 			cancelQueuedFor(id, x);
-			onRoomMemberRemoved(id, x);
+			onRoomWorkEvent({ kind: "memberRemoved", roomId: id, agentId: x });
 		}
 		if (added.length) sys(id, `${added.join("、")} 加入了群聊`);
 		if (removed.length) sys(id, `${removed.map((x) => memberRow(id, x)?.name ?? x).join("、")} 已移出群聊`);
@@ -188,7 +188,7 @@ export async function deleteRoom(id: string, opts: { keepAgents?: string[] } = {
 		}
 	}
 	db.prepare("DELETE FROM messages WHERE room_id = ?").run(id);
-	deleteRoomWorkItems(id);
+	onRoomWorkEvent({ kind: "roomDeleted", roomId: id });
 	deleteRoomFiles(id);
 	db.prepare("DELETE FROM room_members WHERE room_id = ?").run(id);
 	db.prepare("DELETE FROM room_turns WHERE room_id = ?").run(id);
@@ -210,7 +210,7 @@ export function onAgentDeleted(agentId: string) {
 	for (const m of db.prepare("SELECT * FROM room_members WHERE agent_id = ? AND left_at IS NULL").all(agentId) as unknown as MemberRow[]) {
 		db.prepare("UPDATE room_members SET left_at = ?, deleted = 1, conversation_id = NULL WHERE room_id = ? AND agent_id = ?").run(now(), m.room_id, agentId);
 		cancelQueuedFor(m.room_id, agentId);
-		onRoomMemberRemoved(m.room_id, agentId);
+		onRoomWorkEvent({ kind: "memberRemoved", roomId: m.room_id, agentId });
 		const r = getRoom(m.room_id)!;
 		if (r.manager_id === agentId) {
 			const next = membersOf(m.room_id)[0]?.agent_id ?? null;
@@ -303,7 +303,7 @@ function cancelQueue(roomId: string, s: RoomState, agentId?: string) {
 	for (const id of dropped) db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE id = ?").run(now(), id);
 	s.queue = s.queue.filter((q) => !drop.includes(q));
 	// 同一批回合里绑着的长期任务执行也要同步撤回，否则看板一直排队中、continue 还会被“已有执行”挡住。
-	onRoomTurnsClosed(dropped, "cancelled");
+	onRoomWorkEvent({ kind: "turnsClosed", turnIds: dropped, status: "cancelled" });
 }
 function cancelQueuedFor(roomId: string, agentId: string) {
 	const s = states.get(roomId);
@@ -562,7 +562,7 @@ async function runTurn(roomId: string, s: RoomState, t: PlannedTurn & { turnId: 
 	}
 	s.counters.tokens += res.tokens;
 	db.prepare("UPDATE room_turns SET status = ?, error = ?, tokens = ?, finished_at = ? WHERE id = ?").run(res.aborted ? "cancelled" : res.error ? "error" : "done", res.error ?? null, res.tokens, now(), t.turnId);
-	noteRoomTurnEnd(t.turnId, res.aborted ? "cancelled" : res.error ? "error" : "done", res.text ?? "", res.error ?? null);
+	onRoomWorkEvent({ kind: "turnEnd", turnId: t.turnId, status: res.aborted ? "cancelled" : res.error ? "error" : "done", text: res.text ?? "", error: res.error ?? null });
 	const name = getAgent(t.agentId)?.name ?? "助理";
 	if (res.error && !res.aborted) sys(roomId, `${name} 出错了，已跳过：${res.error.slice(0, 200)}`, {}, "error");
 	s.current = null;
@@ -677,10 +677,10 @@ export async function stop(roomId: string, note = true) {
 	}
 	if (s) cancelQueue(roomId, s);
 	db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = COALESCE(finished_at, ?) WHERE room_id = ? AND status IN ('queued','running')").run(now(), roomId);
-	onRoomTurnsClosed(openTurns.map((t) => t.id), "cancelled");
+	onRoomWorkEvent({ kind: "turnsClosed", turnIds: openTurns.map((t) => t.id), status: "cancelled" });
 	markRoomStopped(roomId);
 	// 停止前正在负责的任务不跟着新一轮话题自动复活（改标 paused，只有用户明确继续才重新安排）。
-	pauseRoomWorkOnStop(roomId);
+	onRoomWorkEvent({ kind: "stopped", roomId });
 	requests.cancelForRoom(roomId);
 	for (const m of membersOf(roomId)) if (m.conversation_id) await stopConversationSubagents(m.agent_id, m.conversation_id).catch(() => {});
 	if (cur) {
@@ -752,7 +752,7 @@ export function bootstrapRooms() {
 	for (const [roomId, ts] of byRoom) {
 		db.prepare("UPDATE room_turns SET status = 'interrupted', finished_at = ? WHERE room_id = ? AND status IN ('running','queued')").run(now(), roomId);
 		// 关联的长期任务执行同步标中断（不自动重派，等用户继续）。
-		onRoomTurnsClosed(ts.map((t) => t.id), "interrupted");
+		onRoomWorkEvent({ kind: "turnsClosed", turnIds: ts.map((t) => t.id), status: "interrupted" });
 		if (!getRoom(roomId)) continue;
 		const pending = ts.map((t) => ({ agentId: t.agent_id, reason: t.status === "running" ? "resume" : t.reason, task: t.task ?? undefined, depth: t.depth, turnId: t.id, workItemId: t.work_item_id ?? undefined, workRunId: t.work_run_id ?? undefined }));
 		db.prepare("UPDATE rooms SET paused = ? WHERE id = ?").run(JSON.stringify({ pending, reason: "服务重启" }), roomId);
@@ -1053,3 +1053,6 @@ setRoomHooks({
 setWorkSourceProvider((roomId) => states.get(roomId)?.sourceMessageId ?? null);
 
 export { listRoomMessages, updateMessage };
+
+// 任务 → 群的接口（钩子②）
+setRoomPort({ enqueueWorkTurn, cancelWorkTurn, postUserMessage });

@@ -413,8 +413,7 @@ function createRun(item: WorkItemRow, owner: string, o: { task: string; execKind
  *  管理者自动改要求 / 自动重试则必须尊重群暂停与群预算，不能绕。
  */
 async function dispatchRun(item: WorkItemRow, run: WorkRunRow, opts: { explicit?: boolean } = {}) {
-	const { enqueueWorkTurn } = await import("./rooms/index.ts");
-	const turnId = enqueueWorkTurn(item.room_id!, run.owner_agent_id, run.task, run.id, item.id, opts);
+	const turnId = (await rooms()).enqueueWorkTurn(item.room_id!, run.owner_agent_id, run.task, run.id, item.id, opts);
 	db.prepare("UPDATE work_item_runs SET exec_id = ?, exec_kind = 'room_turn' WHERE id = ?").run(turnId, run.id);
 }
 function failRun(item: WorkItemRow, run: WorkRunRow, e: unknown) {
@@ -797,7 +796,7 @@ async function cancelWorkRuns(itemId: string, o: { abortCurrent: boolean }) {
 	// 先把业务执行记录落成 cancelled（同步），再做群回合取消 / 中止（异步）；调用方即使不 await 也不会留下假“运行中”。
 	for (const run of runs) db.prepare("UPDATE work_item_runs SET status = 'cancelled', finished_at = COALESCE(finished_at, ?) WHERE id = ? AND status IN ('queued','running')").run(now(), run.id);
 	if (!roomId) return; // 没有群的任务不可能有群回合
-	const { cancelWorkTurn } = await import("./rooms/index.ts");
+	const { cancelWorkTurn } = await rooms();
 	for (const run of runs) {
 		const turnId = run.exec_id ?? (db.prepare("SELECT id FROM room_turns WHERE work_run_id = ? AND room_id = ? AND status IN ('queued','running') ORDER BY created_at LIMIT 1").get(run.id, roomId) as { id: string } | undefined)?.id;
 		if (run.exec_kind === "room_turn" && turnId) await cancelWorkTurn(roomId, turnId, o.abortCurrent);
@@ -1052,8 +1051,36 @@ export async function postWorkFeedback(workItemId: string, text: string) {
 	if (!row) fail("任务不存在", "not_found");
 	const body = clip(text, 20_000);
 	if (!body) fail("写一句要补充或修改什么", "empty");
-	const { postUserMessage } = await import("./rooms/index.ts");
+	const { postUserMessage } = await rooms();
 	return postUserMessage(row.room_id!, body, { workItemId: row.id, from: { kind: "user" } });
+}
+
+// ---------------------------------------------------------------- 与群的两个接口
+/** 钩子①（群 → 任务）：群回合 / 成员 / 群生命周期事件统一从这里进来。 */
+export type RoomWorkEvent =
+	| { kind: "turnEnd"; turnId: string; status: "done" | "error" | "cancelled" | "interrupted"; text: string; error: string | null }
+	| { kind: "turnsClosed"; turnIds: string[]; status: "cancelled" | "interrupted" }
+	| { kind: "stopped"; roomId: string }
+	| { kind: "memberRemoved"; roomId: string; agentId: string }
+	| { kind: "roomDeleted"; roomId: string };
+export function onRoomWorkEvent(e: RoomWorkEvent) {
+	if (e.kind === "turnEnd") return noteRoomTurnEnd(e.turnId, e.status, e.text, e.error);
+	if (e.kind === "turnsClosed") return onRoomTurnsClosed(e.turnIds, e.status);
+	if (e.kind === "stopped") return pauseRoomWorkOnStop(e.roomId);
+	if (e.kind === "memberRemoved") return onRoomMemberRemoved(e.roomId, e.agentId);
+	return deleteRoomWorkItems(e.roomId);
+}
+/** 钩子②（任务 → 群）：群模块启动时注册；任务把执行排进来源群、撤回、发反馈都只经过它。 */
+export interface RoomPort {
+	enqueueWorkTurn: (roomId: string, agentId: string, task: string, workRunId: string, workItemId: string, opts?: { explicit?: boolean }) => string;
+	cancelWorkTurn: (roomId: string, turnId: string, abortCurrent: boolean) => Promise<boolean>;
+	postUserMessage: (roomId: string, text: string, opts: { workItemId?: string; from?: unknown }) => unknown;
+}
+let roomPort: RoomPort | null = null;
+export const setRoomPort = (p: RoomPort) => void (roomPort = p);
+async function rooms(): Promise<RoomPort> {
+	if (!roomPort) await import("./rooms/index.ts"); // 群模块加载时会注册
+	return roomPort!;
 }
 
 // ---------------------------------------------------------------- 工具（群里）
