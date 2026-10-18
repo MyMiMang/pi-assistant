@@ -185,6 +185,19 @@ function redactSecrets(text: string): string {
 		.replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[已隐藏]");
 }
 
+/** 只提取服务的可读错误字段；在落库/展示前脱敏，不把响应头或整份对象当错误显示。 */
+export function modelErrorMessage(error: unknown, fallback = "模型请求失败，服务未提供具体原因"): string {
+	const collect = (value: unknown, depth = 0): string[] => {
+		if (depth > 3 || value == null) return [];
+		if (typeof value === "string") return value.trim() ? [value.trim()] : [];
+		if (typeof value !== "object" || Array.isArray(value)) return [];
+		const e = value as { message?: unknown; errorMessage?: unknown; error?: unknown; code?: unknown; type?: unknown };
+		return [e.code, e.type, e.message, e.errorMessage, e.error].flatMap((field) => collect(field, depth + 1));
+	};
+	const text = [...new Set(collect(error))].join(" · ");
+	return redactSecrets(text || fallback).slice(0, 4000);
+}
+
 export type LoginPrompt =
 	| { type: "text" | "secret" | "manual_code"; message: string; placeholder?: string }
 	| { type: "select"; message: string; options: readonly { id: string; label: string; description?: string }[] };
@@ -735,6 +748,16 @@ export function lastAssistantText(session: AgentSession): string {
 	return session.getLastAssistantText() ?? "";
 }
 
+/** prompt()正常resolve不代表服务成功；从公开messages检查最终模型结果，不能把失败标成后台任务完成。 */
+export function lastAssistantError(session: AgentSession): string | undefined {
+	const message = [...session.messages].reverse().find((m) => m.role === "assistant");
+	if (!message || message.role !== "assistant") return "这次未收到回复，服务未提供具体原因";
+	if (message.stopReason === "aborted") return undefined;
+	if (message.stopReason === "error" || message.errorMessage) return modelErrorMessage(message.errorMessage);
+	if (!message.content.some((b) => b.type === "toolCall" || (b.type === "text" && b.text.trim()) || (b.type === "thinking" && b.thinking.trim()))) return "这次未收到回复，服务未提供具体原因";
+	return undefined;
+}
+
 /** 从 Pi 的 AgentMessage 中取纯文本。 */
 export function messageText(message: unknown): string {
 	const m = message as { content?: unknown };
@@ -754,6 +777,8 @@ export type AgentEvent =
 			type: "assistant_end";
 			text: string;
 			error?: string;
+			aborted?: boolean;
+			hasToolCalls?: boolean;
 			provider?: string;
 			model?: string;
 			usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number; cost: number };
@@ -820,7 +845,9 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 					fn({
 						type: "assistant_end",
 						text: messageText(m),
-						error: m.stopReason === "error" ? (m.errorMessage ?? "模型请求失败") : undefined,
+						error: m.stopReason === "aborted" ? undefined : m.stopReason === "error" || m.errorMessage ? modelErrorMessage(m.errorMessage) : undefined,
+						aborted: m.stopReason === "aborted",
+						hasToolCalls: Array.isArray(m.content) && m.content.some((b: { type?: string }) => b.type === "toolCall"),
 						provider: m.provider,
 						model: m.model,
 						usage: m.usage ? { input: m.usage.input ?? 0, output: m.usage.output ?? 0, cacheRead: m.usage.cacheRead ?? 0, cacheWrite: m.usage.cacheWrite ?? 0, reasoning: m.usage.reasoning ?? 0, cost: m.usage.cost?.total ?? 0 } : undefined,

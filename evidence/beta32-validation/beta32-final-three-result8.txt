@@ -1,0 +1,35 @@
+Validation only; source frozen. Sequential; first failure stops.
+cwd: /Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration
+node: v24.19.0
+1. 未跑 | timeout=180s | command=node e2e/work-items-ui.mjs
+2. 未跑 | timeout=90s | command=SHOT_DIR="$PWD/evidence/fast-message-status" node e2e/fast-message-status-ui.mjs
+3. 未跑 | timeout=120s | command=SHOT_DIR="$PWD/evidence/beta32-skill-purpose" node e2e/skill-proposal-purpose-ui.mjs
+
+START 1 2026-10-18T15:31:42.017339+08:00 | command=node e2e/work-items-ui.mjs | timeout=180s
+END 1 2026-10-18T15:32:36.037586+08:00 | exit=0 | elapsed=54.03s | log=/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/logs/beta32-task-ui-final8.log
+what PASS:
+PASS work-items: 首次任务/核验、看板反馈→同一任务重开+新修订+二次执行、失败可见+草稿、390 边界、持久化
+actual fresh screenshots (existing, changed in this step):
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/docs/screenshots/work-items/01-detail-done.png | mtime=2026-10-18T15:32:15.162798+08:00 | mtime_ns=1792308735162797911
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/docs/screenshots/work-items/02-detail-second-run.png | mtime=2026-10-18T15:32:21.594270+08:00 | mtime_ns=1792308741594269520
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/docs/screenshots/work-items/03-error-draft.png | mtime=2026-10-18T15:32:25.703231+08:00 | mtime_ns=1792308745703230911
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/docs/screenshots/work-items/04-board-390.png | mtime=2026-10-18T15:32:26.604175+08:00 | mtime_ns=1792308746604175287
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/docs/screenshots/work-items/05-detail-390.png | mtime=2026-10-18T15:32:27.412955+08:00 | mtime_ns=1792308747412954927
+
+START 2 2026-10-18T15:32:36.048692+08:00 | command=SHOT_DIR="$PWD/evidence/fast-message-status" node e2e/fast-message-status-ui.mjs | timeout=90s
+END 2 2026-10-18T15:32:58.084176+08:00 | exit=0 | elapsed=22.04s | log=/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/logs/beta32-fast-ui-final8.log
+what PASS:
+PASS Fast消息真链：关闭default不显示，刷新仍隐藏；开启保留不确定说明；再关不注入/不擦旧事实；390正文可见；3次请求无额外重试
+actual fresh screenshots (existing, changed in this step):
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/evidence/fast-message-status/01-fast-off-default-hidden.png | mtime=2026-10-18T15:32:50.169620+08:00 | mtime_ns=1792308770169620266
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/evidence/fast-message-status/02-fast-off-mobile.png | mtime=2026-10-18T15:32:52.502788+08:00 | mtime_ns=1792308772502787749
+
+START 3 2026-10-18T15:32:58.089391+08:00 | command=SHOT_DIR="$PWD/evidence/beta32-skill-purpose" node e2e/skill-proposal-purpose-ui.mjs | timeout=120s
+END 3 2026-10-18T15:33:20.428021+08:00 | exit=0 | elapsed=22.34s | log=/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/logs/beta32-skill-ui-final8.log
+what PASS:
+PASS automatic skill proposal: concrete purpose/use/output before consent, desktop/mobile boundaries, unanswered card leaves agent idle
+PASS consent chain: same Pi session proposes, idle while awaiting user, accepted continuation searches before save, persisted skill, no second create prompt
+actual fresh screenshots (existing, changed in this step):
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/evidence/beta32-skill-purpose/01-skill-purpose-desktop.png | mtime=2026-10-18T15:33:13.201041+08:00 | mtime_ns=1792308793201041233
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/evidence/beta32-skill-purpose/02-skill-purpose-mobile.png | mtime=2026-10-18T15:33:13.654888+08:00 | mtime_ns=1792308793654888091
+FINAL: ALL THREE PASS

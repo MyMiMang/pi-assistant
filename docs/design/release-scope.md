@@ -8,7 +8,7 @@
 | `scope` | 含义 | Mac 矩阵 | Windows | Linux | latest.json 必须含 |
 | --- | --- | --- | --- | --- | --- |
 | `mac-arm64` | 只发 Apple 芯片 Mac | `macos-14` / aarch64 | 否 | 否 | `darwin-aarch64*` |
-| `all` | Mac arm64 + Windows + Linux | arm64 | ✅ `windows-latest` | ✅ x64 + arm64 | 加 `windows-x86_64`、`linux-*` |
+| `all` | Mac arm64 + Windows + Linux | arm64 | ✅ `windows-latest` | ✅ x64 + arm64 | 加 `windows-x86_64*`；Linux 独立 tar.gz + sha256 |
 | `all-intel` | 上面的全部 **再加 Intel Mac** | arm64 + `macos-15-intel` / x86_64 | ✅ | ✅ | 加 `darwin-x86_64` |
 
 `all-intel` 在 `releasePlan()` 里归一成 `all` 再加 Intel（返回的 `scope` 字段是 `all`，所以「仅 Mac arm64」那套校验不会被误触发）。
@@ -39,6 +39,6 @@
 
 ## 5. 注意与未验
 
-- **Intel 构建慢**：`macos-15-intel` runner 显著慢于 arm64，历史上 `bundle_dmg.sh` 反复失败（已改用 `hdiutil`）。本轮**没有在本机跑全平台构建**（按用户要求由 CI 执行），也**没有真实跑过一次 `all-intel` 的 tag**；release 流程本身只在真实 tag 推送时才验证。
+- **Intel 构建慢**：`macos-15-intel` runner 显著慢于 arm64，历史上 `bundle_dmg.sh` 反复失败（已改用 `hdiutil`）。全平台构建由 CI 执行；`all-intel` 已在 beta.29–31 等真实 tag 通过五平台构建、Mac/Windows 安装启动及发布门禁，最近证据见 [beta.31 发布结果](../../progress-snapshots/beta31-ui-hotfix.md#发布结果)。新 tag 仍须重新通过，不沿用旧安装包验收。
 - 未构建的平台不会出现在公开的 `latest.json` 里，所以老用户只会「停更」，不会被错误引到别的架构的包（`validate` 也会拦住）。
 - 跳过平台时对应的 smoke / publish 条件用 `build_* == 'false' && result == 'skipped'` 放行，见 `scripts/release-scope.test.mjs` 的第三条用例。

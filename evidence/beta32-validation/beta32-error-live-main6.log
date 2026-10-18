@@ -1,0 +1,12 @@
+fixture diagnostics { requests: 0, serverExit: null, signal: null }
+[launch-memory] 越界/不可信的 PIA_WORKSPACE="/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-model-error-8ufGi7/workspace" → 覆盖为 /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-model-error-8ufGi7/data/workspace
+
+file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/e2e/model-error-live-ui.mjs:34
+const wait = async (fn, label) => { const end = Date.now() + 15000; while (Date.now() < end) { if (await fn().catch(() => false)) return; await new Promise(r => setTimeout(r, 50)); } throw new Error(`timeout: ${label}`); };
+                                                                                                                                                                                             ^
+
+Error: timeout: server
+    at wait (file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/e2e/model-error-live-ui.mjs:34:190)
+    at async file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/e2e/model-error-live-ui.mjs:36:2
+
+Node.js v24.19.0

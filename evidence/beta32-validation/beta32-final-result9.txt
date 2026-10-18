@@ -1,0 +1,46 @@
+Step 1 command: npm run build -w @pi-assistant/web
+exit: 0
+elapsed: 33.7s
+result: PASS (build exit 0)
+log: logs/beta32-build-final9.log
+Steps 2–4: 未跑
+
+Step 2 command: node e2e/work-items-ui.mjs
+exit: 0
+elapsed: 33.3s
+actual output:
+[1] 群里首次长期任务：记录 → 派活 → 提交 → 核验
+[2] 看板「在群里说」→ 管理者更新原任务 → 第二次执行 → 再核验
+[3] 操作失败可见、草稿保留
+[4] 390px 窄屏
+[5] 刷新后仍持久
+PASS work-items: 首次任务/核验、看板反馈→同一任务重开+新修订+二次执行、失败可见+草稿、390 边界、持久化
+
+Steps 3–4: 未跑
+
+Step 3 command: SHOT_DIR="$PWD/evidence/beta32-skill-purpose" node e2e/skill-proposal-purpose-ui.mjs
+exit: 0
+elapsed: 22.5s
+actual output:
+PASS automatic skill proposal: concrete purpose/use/output before consent, desktop/mobile boundaries, unanswered card leaves agent idle
+PASS consent chain: same Pi session proposes, idle while awaiting user, accepted continuation searches before save, persisted skill, no second create prompt
+
+Step 4: 未跑
+
+Step 4 command: node e2e/model-error-live-ui.mjs
+exit: 0
+elapsed: 25.9s
+actual output:
+PASS 服务错误真链6轮：额度/临时限流/鉴权/超时/未知/空最终 → error落库、刷新仍可见；额度详情可展开，390不越界；6请求，quota不重试，临时限流/超时按公开停止取消既有backoff后idle
+
+
+Final status: 4/4 PASS; 未跑: 192server/76pure/boundaries/Fast/static（按指令）
+Images path + mtime:
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/evidence/beta32-skill-purpose/01-skill-purpose-desktop.png | mtime=2026-10-18T15:39:30.046757+08:00
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/evidence/beta32-skill-purpose/02-skill-purpose-mobile.png | mtime=2026-10-18T15:39:30.507889+08:00
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/evidence/beta32-errors/02-quota-390.png | mtime=2026-10-18T15:39:59.581989+08:00
+/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/evidence/beta32-errors/01-quota-desktop.png | mtime=2026-10-18T15:39:59.047167+08:00
+
+Read-only ps verification:
+No matching e2e/launch-memory processes remain.
+No commit/push/tag/release/install performed.

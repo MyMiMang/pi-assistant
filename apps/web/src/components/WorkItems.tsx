@@ -371,7 +371,7 @@ function WorkDetailPane({ room, id, detail, error, onBack, onChanged, onSent }: 
 		}
 	};
 	if (!detail) {
-		return <div className="p-4"><button className="pa-chip" onClick={onBack}><ArrowLeft className="pa-ic" />返回</button>{error ? <p className="pa-work-error" role="alert">{error}</p> : <p className="pa-work-empty"><Loader2 className="pa-ic animate-spin" />正在加载…</p>}</div>;
+		return <div className="p-4"><button className="pa-chip" onClick={onBack} data-testid="work-detail-back"><ArrowLeft className="pa-ic" />返回</button>{error ? <p className="pa-work-error" role="alert">{error}</p> : <p className="pa-work-empty"><Loader2 className="pa-ic animate-spin" />正在加载…</p>}</div>;
 	}
 	const it = detail.item;
 	const canContinue = ["active", "blocked", "paused"].includes(it.status);
@@ -384,7 +384,7 @@ function WorkDetailPane({ room, id, detail, error, onBack, onChanged, onSent }: 
 					<small>{it.ownerName || "未安排负责人"} · 第 {it.revision} 次修订 · {RUN_LABEL[it.runState]} · {fmtTime(it.updatedAt)}</small>
 				</div>
 			</div>
-			{err ? <p className="pa-work-error" role="alert" data-testid="work-action-error">{err}</p> : null}
+			{err && !editing ? <p className="pa-work-error" role="alert" data-testid="work-action-error">{err}</p> : null}
 			<section className="pa-work-block"><h4>要做成什么</h4><p>{it.requirement || "（没有写）"}</p></section>
 			<section className="pa-work-block"><h4>完成标准</h4><p>{it.doneCriteria || "（没有写）"}</p></section>
 			<section className="pa-work-block"><h4>最近进度</h4><p>{it.latestProgress || "暂无"}</p>{it.blocker ? <p className="pa-work-warn"><AlertTriangle className="pa-ic" />受阻：{it.blocker}</p> : null}</section>
@@ -417,6 +417,7 @@ function WorkDetailPane({ room, id, detail, error, onBack, onChanged, onSent }: 
 					<label className="pa-work-field"><span>要做成什么</span><textarea className="pa-input min-h-20" value={draft.requirement} onChange={(e) => setDraft({ ...draft, requirement: e.target.value })} data-testid="work-edit-requirement" /></label>
 					<label className="pa-work-field"><span>完成标准</span><textarea className="pa-input min-h-16" value={draft.doneCriteria} onChange={(e) => setDraft({ ...draft, doneCriteria: e.target.value })} /></label>
 					<div className="pa-work-field"><span>负责人</span><Select value={owner} options={[{ value: "", label: "未安排" }, ...members.map((m) => ({ value: m.agentId, label: m.name, hint: m.agentId === room.managerId ? "管理者" : "" }))]} onChange={setOwner} ariaLabel="任务负责人" /></div>
+					{err ? <p className="pa-work-error" role="alert" data-testid="work-action-error">{err}</p> : null}
 					<div className="flex justify-end gap-2"><button className="pa-btn ghost sm" onClick={() => setEditing(false)}>取消</button><button className="pa-btn primary sm" disabled={!!busy} onClick={() => void patch({ ...draft, ownerAgentId: owner || null })} data-testid="work-edit-save">保存</button></div>
 				</section>
 			) : null}

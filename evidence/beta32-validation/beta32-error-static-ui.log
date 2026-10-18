@@ -1,0 +1,15 @@
+fixture pageerrors [ "Cannot read properties of undefined (reading 'attachments')" ]
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+locator.waitFor: Timeout 10000ms exceeded.
+Call log:
+  - waiting for getByTestId('msg-error').first() to be visible
+
+    at /Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/e2e/message-error-ui.mjs:67:51 {
+  log: [ "  - waiting for getByTestId('msg-error').first() to be visible" ],
+  name: 'TimeoutError'
+}
+
+Node.js v24.19.0

@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-skill-purpose-");
 const port = await new Promise((resolve) => { const s = createServer().listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 const base = `http://127.0.0.1:${port}`, server = startTempServer({ root, port, run });
-const out = process.env.SHOT_DIR ?? join(run.runDir, "shots"); mkdirSync(out, { recursive: true });
+const out = process.env.SHOT_DIR ?? join(root, "evidence/beta32-skill-purpose"); mkdirSync(out, { recursive: true });
 const j = async (path, method = "GET", body) => { const r = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); assert.ok(r.ok, `${method} ${path} ${r.status}`); return r.json(); };
 const wait = async (fn, ms = 20000) => { const until = Date.now() + ms; while (Date.now() < until) { if (await fn()) return; await new Promise((r) => setTimeout(r, 80)); } throw new Error("condition timed out"); };
 let browser;
@@ -37,6 +37,9 @@ try {
    return { x: b.x, right: b.right, width: innerWidth, overflow: el.scrollWidth > el.clientWidth + 1, preline: getComputedStyle(title).whiteSpace === "pre-line", h: title.getBoundingClientRect().height, font: parseFloat(getComputedStyle(title).lineHeight) };
  });
  let g = await geometry(); assert.equal(g.overflow, false); assert.ok(g.preline && g.h > g.font * 3);
+ await wait(async () => (await j("/api/agents")).find((x) => x.id === a.id).status === "idle");
+ assert.ok(!(await j(`/api/agents/${a.id}/messages?limit=100`)).some(m => m.role === "assistant" && m.status === "error"), "正常等待用途卡不能误报空回复故障");
+ assert.equal(await page.getByTestId("msg-error").count(), 0);
  await stableShot(page, card, join(out, "01-skill-purpose-desktop.png"));
  await page.setViewportSize({ width: 390, height: 844 }); await card.scrollIntoViewIfNeeded();
  g = await geometry(); assert.ok(g.x >= 0 && g.right <= g.width + 1 && !g.overflow);

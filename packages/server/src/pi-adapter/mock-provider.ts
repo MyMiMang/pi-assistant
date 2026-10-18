@@ -477,6 +477,18 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 		if (!title || !requirement || !done) return fauxAssistantMessage(`${me}：在记录任务前先确认一下：这件事的目标 / 范围和完成标准分别是什么？特别是怎样检查算做完。`);
 		return fauxAssistantMessage([fauxToolCall("work_create", { title, requirement, doneCriteria: done, owner: target, start: true })]);
 	}
+	// 边界验收专用：一次真实成员故障后，由管理者在原群查看状态、改派并继续；不增加产品runner。
+	if (isFollowup && u.includes("失败协调探针")) {
+		if (last.role !== "toolResult") return fauxAssistantMessage([fauxToolCall("work_list", {})]);
+		const listMsg = last.toolName === "work_list" ? last : [...messages].reverse().find((m) => m.role === "toolResult" && m.toolName === "work_list");
+		const blocked = textOf(listMsg ?? last).split("\n").find((line) => line.includes("失败协调探针") && line.includes("受阻"));
+		const id = blocked?.match(/wi_[a-z0-9]+/i)?.[0];
+		if (id && last.toolName === "work_list") return fauxAssistantMessage([fauxToolCall("work_update", { workItemId: id, action: "assign", owner: "乙" })]);
+		if (id && last.toolName === "work_update") {
+			if (/已改派/.test(textOf(last))) return fauxAssistantMessage([fauxToolCall("work_update", { workItemId: id, action: "continue" })]);
+			return fauxAssistantMessage(`${me}：已处理成员故障，改派乙继续原任务，交付后核验。`);
+		}
+	}
 	// 管理者跟进：成员提交后先看任务状态，再核验（真实两轮工具调用，不是直接假装完成）
 	if (isFollowup && (/已提交/.test(u) || /待核验/.test(u) || /长期任务/.test(said))) {
 		// 一次跟进最多：work_list → read 实际产物 → work_verify。用当前这步的 last.toolName 推进，
@@ -521,6 +533,9 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 	if (/画一张/.test(said) && !/成员都已回复/.test(u)) return fauxAssistantMessage([fauxToolCall("generate_image", { prompt: said.replace(/^.*?画一张/, "").trim() || said })]);
 	if (/给你分配了任务/.test(u)) {
 		const task = u.match(/给你分配了任务：([^\n]*)/)?.[1] ?? "";
+		// 只匹配当前指派：群转录可能含另一项已取消的探针，不能让乙也去跑甲的延迟命令。
+		if (/【长期任务】/.test(u) && task.includes("取消隔离探针")) return fauxAssistantMessage([fauxText(`${me}：开始延迟写入，等待取消验证。`), fauxToolCall("bash", { command: "sleep 20; printf unwanted > cancellation-probe.txt" })]);
+		if (/【长期任务】/.test(u) && task.includes("失败协调探针") && me === "甲") throw new Error("模拟成员执行失败（失败协调探针）");
 		if (/【长期任务】/.test(u)) return fauxAssistantMessage([fauxToolCall("write", { path: "out.txt", content: "# 季度报告\n\n数据来源：Q3 内部表\n\n第 3 行检查点：每个结论都有来源链接\n" })]);
 
 		if (/慢慢/.test(task + said)) return fauxAssistantMessage([fauxText(`${me}：开始做，比较慢。`), fauxToolCall("bash", { command: "sleep 20; echo done" })]);

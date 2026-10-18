@@ -464,3 +464,211 @@ test("删群按原语义清本群任务，其他群不受影响", async () => {
 	assert.equal((db.prepare("SELECT COUNT(*) AS n FROM work_item_events WHERE work_item_id = ?").get(id) as { n: number }).n, 0);
 	assert.equal((db.prepare("SELECT COUNT(*) AS n FROM work_items WHERE id = ?").get(other.id) as { n: number }).n, 1);
 });
+
+// ---------------------------------------------------------------- 阶段 2：群停止 scope / 安全继续 / 连续重试边界
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const capActor = (agentId: string, roomId: string): Actor => ({ kind: "agent", agentId, roomId });
+const runStatus = (id: string) => (db.prepare("SELECT status FROM work_item_runs WHERE id = ?").get(id) as { status: string }).status;
+
+/** 一条绑定到已存在 run 的排队 / 运行回合（test driver 代替 rooms.runTurn 的真实顺序）。 */
+function bindTurn(roomId: string, agentId: string, itemId: string, workRunId: string, status: "queued" | "running" = "queued") {
+	const turnId = uid("rt_bound");
+	db.prepare("INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, task, depth, status, created_at, work_item_id, work_run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(turnId, roomId, "rd_bound", agentId, "assign", "做任务", 0, status, now(), itemId, workRunId);
+	return turnId;
+}
+
+test("群停止：只停本群会话的子代理，同一助理在私聊 / 别群不受影响；持久停止挡住自动派活，本群任务标暂停", async () => {
+	const { createConversation } = await import("../src/conversations.ts");
+	const sRoom = rooms.createRoom({ name: "停止群", memberIds: ["wm", "wa"], managerId: "wm" });
+	const sOther = rooms.createRoom({ name: "停止群的隔壁群", memberIds: ["wm", "wa"], managerId: "wm" });
+	const convPrivate = createConversation("wa", "私聊", { makeCurrent: false });
+	const convRoom = createConversation("wa", "停止群里的会话", { makeCurrent: false });
+	const convOther = createConversation("wa", "隔壁群的会话", { makeCurrent: false });
+	db.prepare("UPDATE room_members SET conversation_id = ? WHERE room_id = ? AND agent_id = 'wa'").run(convRoom.id, sRoom.id);
+	db.prepare("UPDATE room_members SET conversation_id = ? WHERE room_id = ? AND agent_id = 'wa'").run(convOther.id, sOther.id);
+	const mkSub = (conv: string) => {
+		const id = uid("sa");
+		db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, task, model_provider, model_id, model_reason, status, last_activity_at, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(id, "wa", conv, "测试子代理", "mock", "mock", "test", "running", now(), now());
+		return id;
+	};
+	const subRoom = mkSub(convRoom.id);
+	const subOther = mkSub(convOther.id);
+	const subPrivate = mkSub(convPrivate.id);
+	const subStatus = (id: string) => (db.prepare("SELECT status FROM subagents WHERE id = ?").get(id) as { status: string }).status;
+
+	// 停止前这个群正在负责的任务
+	const id = W.createWorkItem({ roomId: sRoom.id, title: "停止前在跑的任务", requirement: "写", doneCriteria: "有结果", ownerAgentId: "wa", start: false }, user).item.id;
+	const run = W.queueAssignmentForWorkItem(sRoom.id, "wa", id);
+	const turnId = bindTurn(sRoom.id, "wa", id, run.id, "running");
+	assert.ok(W.attachTurnToWork(sRoom.id, "wa", turnId)?.includes("work_submit"));
+
+	await rooms.stop(sRoom.id);
+	// 作用域：只停本群这些成员对话上的子代理
+	assert.equal(subStatus(subRoom), "stopped", "本群会话上的子代理停了");
+	assert.equal(subStatus(subOther), "running", "同一助理在别群的子代理没被误停");
+	assert.equal(subStatus(subPrivate), "running", "同一助理在私聊的子代理没被误停");
+	// 持久停止事实 + 内存不留残回合
+	const paused = JSON.parse(rooms.getRoom(sRoom.id)!.paused ?? "null") as { stopped?: boolean; reason?: string };
+	assert.equal(paused?.stopped, true, "停止是持久事实，不是只删内存状态");
+	assert.match(paused?.reason ?? "", /停止/);
+	assert.deepEqual(rooms.stateOf(sRoom.id).queue, []);
+	// 停止前正在负责的任务改标 paused（不被无关新话题自动复活），关联执行不再挂着
+	assert.equal(row(id).status, "paused");
+	assert.equal(runStatus(run.id), "cancelled");
+	const runsAfterStop = runRows(id).length;
+	// 自动派活被持久停止挡住（重启 / 内存状态清掉也一样）
+	const otherId = W.createWorkItem({ roomId: sRoom.id, title: "停止后新任务", requirement: "写", doneCriteria: "有结果", ownerAgentId: "wa", start: false }, user).item.id;
+	const run2 = W.queueAssignmentForWorkItem(sRoom.id, "wa", otherId);
+	assert.throws(() => rooms.enqueueWorkTurn(sRoom.id, "wa", "自动重试", run2.id, otherId), /已停止/);
+	assert.equal(runStatus(run2.id), "queued", "被挡住的自动派活不会偷偷执行");
+	assert.equal(rooms.stateOf(sRoom.id).queue.length, 0, "被挡住的自动派活没有塞进群队列");
+	// 用户明确的新执行授权可以恢复这一轮（清掉停止事实），但不会把已暂停的任务一起复活
+	const t2 = rooms.enqueueWorkTurn(sRoom.id, "wa", "用户明确开始", run2.id, otherId, { explicit: true });
+	assert.ok(t2);
+	assert.equal(rooms.getRoom(sRoom.id)!.paused, null, "用户明确授权的执行清掉停止事实");
+	assert.equal(row(id).status, "paused", "停止前的任务仍然是暂停，不跟着复活");
+	assert.equal(runRows(id).length, runsAfterStop);
+	await wait(25); // 让离线回合（没有模型）收尾，不把异步错误留给后面的用例
+	await rooms.deleteRoom(sRoom.id);
+	await rooms.deleteRoom(sOther.id);
+});
+
+test("群继续：只重建确认没开始的排队执行（精确绑定新 run），不重放旧命令", async () => {
+	const cRoom = rooms.createRoom({ name: "安全继续群", memberIds: ["wm", "wa"], managerId: "wm" });
+	const id = W.createWorkItem({ roomId: cRoom.id, title: "安全继续任务", requirement: "写", doneCriteria: "有结果", ownerAgentId: "wa", start: false }, user).item.id;
+	const run = W.queueAssignmentForWorkItem(cRoom.id, "wa", id);
+	const turnId = bindTurn(cRoom.id, "wa", id, run.id, "queued");
+	// 到本轮上限时被撤回：回合和 run 都没 started_at（确认没开始）
+	db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE id = ?").run(now(), turnId);
+	W.onRoomTurnsClosed([turnId], "cancelled");
+	assert.equal(runStatus(run.id), "cancelled");
+	db.prepare("UPDATE rooms SET paused = ? WHERE id = ?").run(JSON.stringify({ pending: [{ agentId: "wa", reason: "assign", task: "做任务", depth: 0, turnId, workItemId: id, workRunId: run.id }], reason: "这一轮已经发言 1 次" }), cRoom.id);
+	assert.equal(rooms.continueRoom(cRoom.id), true);
+	const turn = db.prepare("SELECT * FROM room_turns WHERE room_id = ? AND agent_id = 'wa' ORDER BY rowid DESC LIMIT 1").get(cRoom.id) as { id: string; status: string; work_item_id: string | null; work_run_id: string | null };
+	assert.notEqual(turn.id, turnId, "不是把旧回合原地复活");
+	assert.equal(turn.work_item_id, id);
+	assert.ok(turn.work_run_id && turn.work_run_id !== run.id, "新执行精确绑定到这一轮");
+	assert.equal(runStatus(turn.work_run_id!), "running", "这一轮已真的认领新执行（不是只看 DB status）");
+	assert.equal(runStatus(run.id), "cancelled", "旧执行没被认领");
+	assert.equal((db.prepare("SELECT COUNT(*) AS n FROM work_item_runs WHERE work_item_id = ?").get(id) as { n: number }).n, 2, "只新建一次执行，不重复");
+	assert.equal((db.prepare("SELECT work_run_id FROM room_turns WHERE id = ?").get(turn.id) as { work_run_id: string }).work_run_id, turn.work_run_id);
+	await wait(25);
+	await rooms.deleteRoom(cRoom.id);
+});
+
+test("群继续：已经开始的旧执行交管理者 resume 检查（不重放）；已取消 / 已完成 / 已暂停任务不复活", async () => {
+	const cRoom = rooms.createRoom({ name: "已开始继续群", memberIds: ["wm", "wa"], managerId: "wm" });
+	const startedId = W.createWorkItem({ roomId: cRoom.id, title: "结果不明的任务", requirement: "写", doneCriteria: "有结果", ownerAgentId: "wa", start: false }, user).item.id;
+	const startedRun = W.queueAssignmentForWorkItem(cRoom.id, "wa", startedId);
+	const startedTurn = bindTurn(cRoom.id, "wa", startedId, startedRun.id, "queued");
+	assert.ok(W.attachTurnToWork(cRoom.id, "wa", startedTurn)?.includes("work_submit"), "回合开始认领执行");
+	db.prepare("UPDATE room_turns SET status = 'interrupted', started_at = ? WHERE id = ?").run(now(), startedTurn);
+	W.onRoomTurnsClosed([startedTurn], "interrupted");
+	const runsBefore = runRows(startedId).length;
+	// 已取消的任务也挂在 pending 里：不能被顺手复活
+	const cancelledId = W.createWorkItem({ roomId: cRoom.id, title: "已取消任务", requirement: "写", doneCriteria: "有结果", ownerAgentId: "wa", start: false }, user).item.id;
+	const cancelledRun = W.queueAssignmentForWorkItem(cRoom.id, "wa", cancelledId);
+	const cancelledTurn = bindTurn(cRoom.id, "wa", cancelledId, cancelledRun.id, "queued");
+	db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE id = ?").run(now(), cancelledTurn);
+	W.onRoomTurnsClosed([cancelledTurn], "cancelled");
+	await W.cancelWorkItem({ workItemId: cancelledId, actor: user });
+	const cancelledRuns = runRows(cancelledId).length;
+	db.prepare("UPDATE rooms SET paused = ? WHERE id = ?").run(JSON.stringify({ pending: [
+		{ agentId: "wa", reason: "assign", task: "做任务", depth: 0, turnId: startedTurn, workItemId: startedId, workRunId: startedRun.id },
+		{ agentId: "wa", reason: "assign", task: "旧任务", depth: 0, turnId: cancelledTurn, workItemId: cancelledId, workRunId: cancelledRun.id },
+	], reason: "服务重启" }), cRoom.id);
+	assert.equal(rooms.continueRoom(cRoom.id), true);
+	// 已开始的执行：没有新建 run，也没有 worker 回合被重放，只给管理者一个 resume 回合
+	assert.equal(runRows(startedId).length, runsBefore, "已开始的旧执行不新建 / 不重复");
+	const workerTurns = db.prepare("SELECT * FROM room_turns WHERE room_id = ? AND agent_id = 'wa' AND created_at >= ?").all(cRoom.id, 0) as { id: string; work_run_id: string | null }[];
+	assert.equal(workerTurns.filter((t) => t.work_run_id === startedRun.id && t.id !== startedTurn).length, 0, "没有重放旧命令");
+	assert.equal(runRows(cancelledId).length, cancelledRuns, "已取消任务没有自动复活");
+	assert.equal(row(startedId).status !== "done", true);
+	const mgrTurn = db.prepare("SELECT * FROM room_turns WHERE room_id = ? AND agent_id = 'wm' ORDER BY rowid DESC LIMIT 1").get(cRoom.id) as { reason: string } | undefined;
+	assert.equal(mgrTurn?.reason, "resume", "交给管理者 resume 回合检查进度");
+	const skipNotice = db.prepare("SELECT content FROM messages WHERE room_id = ? AND content LIKE ?").get(cRoom.id, "%没有自动重放%") as { content: string } | undefined;
+	assert.ok(skipNotice?.content.includes("已取消任务"), "不复活时在群里说清原因");
+	await wait(25);
+	await rooms.deleteRoom(cRoom.id);
+});
+
+test("连续退回 4 轮：同一链的初次执行+3次自动执行，edit不清计数，第4次退回blocked", async () => {
+	const capRoom = rooms.createRoom({ name: "连续退回群", memberIds: ["wm", "wa"], managerId: "wm" });
+	// 状态机单测：只替换应用自有runtime的公共turn方法为有界driver，不碰Pi SDK/私有API。
+	const { createConversation } = await import("../src/conversations.ts");
+	const { runtime } = await import("../src/runtime.ts");
+	const conv = createConversation("wa", "退回driver", { makeCurrent: false });
+	db.prepare("UPDATE room_members SET conversation_id = ? WHERE room_id = ? AND agent_id = 'wa'").run(conv.id, capRoom.id);
+	db.prepare("UPDATE rooms SET caps = ? WHERE id = ?").run(JSON.stringify({ maxTurns: 30, perAgent: 10, maxDepth: 3, tokenBudget: 0, followup: false }), capRoom.id);
+	const rt = runtime("wa", conv.id), original = rt.turn;
+	type Result = Awaited<ReturnType<typeof rt.turn>>;
+	let release: ((r: Result) => void) | null = null;
+	rt.turn = async () => await new Promise<Result>((resolve) => { release = resolve; });
+	const until = async (fn: () => boolean) => { for (let i = 0; i < 100; i++) { if (fn()) return; await wait(5); } assert.fail("driver未在500ms内到达预期状态"); };
+	const id = W.createWorkItem({ roomId: capRoom.id, title: "连续退回任务", requirement: "写", doneCriteria: "有检查点", ownerAgentId: "wa", start: false }, user).item.id;
+	try {
+		const first = W.queueAssignmentForWorkItem(capRoom.id, "wa", id);
+		const firstTurn = bindTurn(capRoom.id, "wa", id, first.id);
+		W.attachTurnToWork(capRoom.id, "wa", firstTurn);
+		db.prepare("UPDATE room_turns SET status = 'running', started_at = ? WHERE id = ?").run(now(), firstTurn);
+		for (let round = 1; round <= 4; round++) {
+			assert.equal(row(id).autoRetries, round - 1);
+			const current = runRows(id).find((r) => r.status === "running")!;
+			assert.ok(current, "后续回合必须用上一次return真正自动创建的run，不手工再建额外尝试");
+			assert.equal(W.submitWorkItem({ roomId: capRoom.id, actor: capActor("wa", capRoom.id), result: `第${round}版` }).applied, true);
+			if (round === 1) endTurn(firstTurn, "done", "第一版");
+			else {
+				assert.ok(release); const finish = release as (r: Result) => void; release = null;
+				finish({ ok: true, aborted: false, text: `第${round}版`, tokens: 0 });
+				await until(() => runStatus(current.id) === "done" && !rooms.stateOf(capRoom.id).running);
+			}
+			W.editWorkItem({ workItemId: id, actor: capActor("wm", capRoom.id), requirement: `第${round}次明确修正：补检查点` });
+			assert.equal(row(id).autoRetries, round - 1, "修改要求不能清零");
+			const before = runRows(id).length;
+			await W.verifyWorkItem({ workItemId: id, actor: capActor("wm", capRoom.id), verdict: "return", note: `第${round}次核验：缺检查点` });
+			if (round < 4) {
+				assert.equal(row(id).autoRetries, round);
+				assert.equal(runRows(id).length, before + 1);
+				await until(() => !!release && runRows(id).some((r) => r.status === "running"));
+			} else {
+				assert.equal(row(id).status, "blocked"); assert.match(row(id).blocker ?? "", /自动重试已达上限/);
+				assert.equal(runRows(id).length, before);
+			}
+		}
+		assert.equal(runRows(id).length, 4, "初次+3次自动重试，不能夹带另外3次手工重派");
+		await assert.rejects(() => W.continueWorkItem({ workItemId: id, actor: capActor("wm", capRoom.id) }), /自动重试已达上限/);
+		assert.throws(() => W.queueAssignmentForWorkItem(capRoom.id, "wa", id), /自动重试已达上限/);
+		await W.pauseWorkItem({ workItemId: id, actor: user });
+		await assert.rejects(() => W.continueWorkItem({ workItemId: id, actor: capActor("wm", capRoom.id) }), /自动重试已达上限/);
+		await W.cancelWorkItem({ workItemId: id, actor: user });
+		assert.throws(() => W.queueAssignmentForWorkItem(capRoom.id, "wa", id), /不能直接派活/);
+		assert.equal(runRows(id).length, 4);
+	} finally {
+		if (release) (release as (r: Result) => void)({ ok: false, aborted: true, text: "", tokens: 0 });
+		rt.turn = original;
+		await rooms.deleteRoom(capRoom.id);
+	}
+});
+
+test("改派把受阻变进行中也不能让room_assign漏记自动重试", async () => {
+	const r = rooms.createRoom({ name: "改派重试群", memberIds: ["wm", "wa", "wb"], managerId: "wm" });
+	const id = W.createWorkItem({ roomId: r.id, title: "改派边界", requirement: "写", doneCriteria: "有检查点", ownerAgentId: "wa", start: false }, user).item.id;
+	let owner = "wa";
+	for (let i = 0; i <= W.MAX_AUTO_RETRIES; i++) {
+		const run = W.queueAssignmentForWorkItem(r.id, owner, id);
+		const turn = bindTurn(r.id, owner, id, run.id);
+		W.attachTurnToWork(r.id, owner, turn);
+		db.prepare("UPDATE room_turns SET status = 'running', started_at = ? WHERE id = ?").run(now(), turn);
+		endTurn(turn, "error", "", "可恢复故障");
+		assert.equal(row(id).autoRetries, i);
+		owner = owner === "wa" ? "wb" : "wa";
+		W.editWorkItem({ workItemId: id, actor: capActor("wm", r.id), ownerAgentId: owner });
+	}
+	const count = runRows(id).length;
+	assert.equal(row(id).status, "active", "故意走改派后的active，而不是只测blocked");
+	assert.throws(() => W.queueAssignmentForWorkItem(r.id, owner, id), /自动重试已达上限/);
+	assert.equal(runRows(id).length, count);
+	await W.cancelWorkItem({ workItemId: id, actor: user });
+	await rooms.deleteRoom(r.id);
+});

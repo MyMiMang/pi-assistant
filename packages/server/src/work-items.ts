@@ -442,11 +442,46 @@ export function queueAssignmentForWorkItem(roomId: string, agentId: string, work
 		if (pending.revision === row.revision && pending.exec_id === null && pending.status === "queued") return pending;
 		fail("这个任务已有执行在进行，不能重复派活", "already_running");
 	}
-	if (row.status === "blocked") {
+	const retry = !!db.prepare("SELECT 1 FROM work_item_runs WHERE work_item_id = ? LIMIT 1").get(row.id);
+	if (retry) {
 		if (row.auto_retries >= MAX_AUTO_RETRIES) fail("自动重试已达上限，需用户明确新的执行授权", "retry_limit");
+		// 改派/改要求会把blocked变active，也不能借此让room_assign漏记重新执行。
 		db.prepare("UPDATE work_items SET auto_retries = auto_retries + 1 WHERE id = ?").run(row.id);
 	}
 	return createRun(itemRow(row.id)!, agentId, { task: workPrompt(itemRow(row.id)!) });
+}
+
+/**
+ * 群“继续 / 重启后继续”时决定一条被暂停的派活回合怎么落地（不新建 runner、不绕过上限）。
+ * - rebind：原执行确认没开始（run / turn 都没有 started_at，例如到上限时被撤回的排队回合）→
+ *   用同一个集中 createRun 给同一任务、同一修订新建一次执行，交给群队列精确绑定；
+ *   这不是额外一次自动重试（原来那次已经登记过、只是还没开始），所以不重复计数。
+ * - manager_check：旧执行已经开始（结果不明 / 可能已有副作用）→ 不重放旧命令，交管理者 resume 回合检查进度。
+ * - skip：任务已取消 / 完成 / 改派 / 修订变了 / 已有新执行 → 不自动复活。
+ */
+export type PendingWorkTurnPlan =
+	| { action: "rebind"; title: string; workItemId: string; workRunId: string; task: string }
+	| { action: "manager_check"; title: string; workItemId: string }
+	| { action: "skip"; title: string; reason: string };
+
+export function planPendingWorkTurn(o: { roomId: string; workItemId: string; workRunId: string; turnId?: string }): PendingWorkTurnPlan {
+	const item = itemRow(o.workItemId);
+	const run = db.prepare("SELECT * FROM work_item_runs WHERE id = ? AND work_item_id = ?").get(o.workRunId, o.workItemId) as WorkRunRow | undefined;
+	const title = item?.title ?? "任务";
+	if (!item || !run || item.room_id !== o.roomId) return { action: "skip", title, reason: "任务或这次执行已经不存在" };
+	if (!["active", "blocked"].includes(item.status)) return { action: "skip", title, reason: `任务当前是「${WORK_STATUS_LABEL[item.status]}」，需要用户明确继续` };
+	if (!item.owner_agent_id || item.owner_agent_id !== run.owner_agent_id) return { action: "skip", title, reason: "负责人已经变了，按新责任重新安排" };
+	if (!activeMember(o.roomId, item.owner_agent_id)) return { action: "skip", title, reason: "负责人已不在群里" };
+	if (run.revision !== item.revision) return { action: "skip", title, reason: "任务要求已经更新，旧执行不能直接接着跑" };
+	if (db.prepare("SELECT 1 FROM work_item_runs WHERE work_item_id = ? AND id != ? AND status IN ('queued','running') LIMIT 1").get(item.id, run.id)) return { action: "skip", title, reason: "任务已有新的执行在进行" };
+	const turn = o.turnId ? (db.prepare("SELECT started_at FROM room_turns WHERE id = ? AND room_id = ? AND work_run_id = ?").get(o.turnId, o.roomId, run.id) as { started_at: number | null } | undefined) : undefined;
+	if (o.turnId && !turn) return { action: "skip", title, reason: "旧回合与这次执行无法核实，不能重放" };
+	const started = !!run.started_at || !!turn?.started_at || ["running", "done", "error"].includes(run.status);
+	if (started) return { action: "manager_check", title, workItemId: item.id };
+	if (run.status !== "queued" && run.status !== "cancelled" && run.status !== "interrupted") return { action: "skip", title, reason: "这次执行已经结束" };
+	db.prepare("UPDATE work_item_runs SET status = 'cancelled', finished_at = COALESCE(finished_at, ?) WHERE id = ? AND status = 'queued'").run(now(), run.id);
+	const fresh = createRun(item, item.owner_agent_id, { task: run.task });
+	return { action: "rebind", title, workItemId: item.id, workRunId: fresh.id, task: run.task };
 }
 
 /**
@@ -797,6 +832,22 @@ export function onRoomTurnsClosed(turnIds: string[], status: "cancelled" | "inte
 		n++;
 	}
 	return n;
+}
+
+/**
+ * 用户停止整个群：把本群正在负责（进行中 / 受阻）的任务标成 paused，并推进修订。
+ * 这样“新一轮无关话题 / 自动重试 / 管理者顺手 continue”都不能把停止前的工作自动复活；
+ * 只有用户明确的继续（看板 / 群内明确说继续）才会重新安排。只动本群任务，不碰别的群。
+ */
+export function pauseRoomWorkOnStop(roomId: string) {
+	const rows = db.prepare("SELECT * FROM work_items WHERE room_id = ? AND status IN ('active','blocked')").all(roomId) as unknown as WorkItemRow[];
+	const t = now();
+	for (const row of rows) {
+		db.prepare("UPDATE work_items SET status = 'paused', revision = ?, latest_progress = ?, updated_at = ? WHERE id = ? AND revision = ?").run(row.revision + 1, "群聊已停止，等用户明确继续", t, row.id, row.revision);
+		event(row.id, "room.stopped", { kind: "user" }, row.revision + 1);
+	}
+	if (rows.length) emit(roomId);
+	return rows.length;
 }
 
 export async function pauseWorkItem(o: { workItemId: string; actor: WorkActor }) {

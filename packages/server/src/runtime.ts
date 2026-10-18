@@ -62,6 +62,8 @@ import {
 	injectContext,
 	isSessionBusy,
 	lastAssistantText,
+	lastAssistantError,
+	modelErrorMessage,
 	localBashOperations,
 	makeBashTool,
 	promptSession,
@@ -167,7 +169,7 @@ export function setRoomHooks(h: RoomHooks) {
 }
 
 /** 把一个 Pi 会话的事件落盘并广播。 */
-function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void, subagentId?: string, pendingUserEntries?: string[], fastTracker?: FastTracker) {
+export function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void, subagentId?: string, pendingUserEntries?: string[], fastTracker?: FastTracker, allowEmpty?: () => boolean) {
 	const insert = (m: Parameters<typeof insertMessage>[0]) => insertMessage({ ...m, subagentId });
 	let cur: { id: string; text: string; thinking: string; flushAt: number } | null = null;
 	// app 消息 ↔ Pi entry 的映射：assistant 消息的 id（供紧随 message_end 的 entry_id 事件落 meta.piEntryId）
@@ -225,7 +227,11 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 				}
 				break;
 			case "assistant_end": {
-				if (!cur) break;
+				// 服务可能直接结束而没有start；正文、失败或空最终结果也必须照常落库。
+				if (!cur) {
+					const m = insert({ agentId, conversationId, taskId, role: "assistant", content: "", status: "streaming" });
+					cur = { id: m.id, text: "", thinking: "", flushAt: Date.now() };
+				}
 				// 用量：每次调用记一行（按当时价格算费用），摘要放进消息 meta 供悬停查看
 				let usage: ReturnType<typeof recordUsage> | null = null;
 				if (e.usage && e.provider && e.model) {
@@ -236,16 +242,19 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 					}
 				}
 				const fm = fastMetaOf(fastTracker?.snapshot());
-				if (e.error) updateMessage(cur.id, { content: e.text, status: "error", meta: { error: e.error, ...(fm ? { fast: fm } : {}) } });
-				else {
-					// 有些模型把思考写进正文（<think>…</think> / 只剩半截 “…</thinking>”）：正文只留回答，思考放进 meta.thinking（App 里折叠显示）
-					// App 里折叠显示；渠道出站另行剥离
-					const { text, thinking: inline } = splitThinking(e.text);
-					const thinking = [cur.thinking.trim(), inline].filter(Boolean).join("\n\n");
-					if (!text.trim() && !thinking) deleteMessage(cur.id);
-					else updateMessage(cur.id, { content: text, status: "done", meta: { model: `${e.provider}/${e.model}`, ...(usage ? { usage } : {}), ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}), ...(fm ? { fast: fm } : {}) } });
-				}
+				// 失败时也保留已经收到的部分正文/思考；错误由程序显示，不再请求模型解释额度。
+				const { text, thinking: inline } = splitThinking(e.text);
+				const thinking = [cur.thinking.trim(), inline].filter(Boolean).join("\n\n");
+				const meta = { model: `${e.provider}/${e.model}`, ...(usage ? { usage } : {}), ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}), ...(fm ? { fast: fm } : {}) };
 				lastAssistantMid = cur.id;
+				if (e.aborted) updateMessage(cur.id, { content: text, status: "interrupted", meta });
+				else if (e.error) updateMessage(cur.id, { content: text, status: "error", meta: { ...meta, error: e.error } });
+				else if (!text.trim() && !thinking && (e.hasToolCalls || allowEmpty?.())) {
+					// 纯工具中间态、宿主明确允许无输出的技能用途内部轮不留空引用；服务错误仍优先显示。
+					deleteMessage(cur.id);
+					lastAssistantMid = null;
+				} else if (!text.trim() && !thinking) updateMessage(cur.id, { content: "", status: "error", meta: { ...meta, error: "这次未收到回复，服务未提供具体原因" } });
+				else updateMessage(cur.id, { content: text, status: "done", meta });
 				cur = null;
 				break;
 			}
@@ -264,6 +273,11 @@ function bindSession(session: AgentSession, agentId: string, conversationId: str
 				break;
 			}
 			case "settled":
+				if (cur) {
+					// 流意外收尾没发message_end也不能永远显示空回复/光标。
+					updateMessage(cur.id, { content: cur.text, status: e.aborted ? "interrupted" : "error", meta: { ...(cur.thinking ? { thinking: cur.thinking.slice(0, 20000) } : {}), ...(!e.aborted ? { error: "回复流意外结束，服务未提供具体原因" } : {}) } });
+					cur = null;
+				}
 				onSettled(e.aborted);
 				break;
 			case "compaction_end":
@@ -677,6 +691,8 @@ class AgentRuntime {
 	private modelKey = "";
 	private unsub: (() => void) | null = null;
 	private creating: Promise<AgentSession | null> | null = null;
+	/** 只有宿主发起的技能用途推断允许无输出结束，普通请求与真实错误照常可见。 */
+	private allowEmptyNudge = false;
 	constructor(
 		readonly id: string,
 		readonly conversationId: string,
@@ -734,6 +750,7 @@ class AgentRuntime {
 			const file = sessionFileOf(session);
 			if (file && file !== getConversation(this.conversationId)?.session_file) setConversationSession(this.conversationId, file);
 			const unUser = subscribeSession(session, (e) => {
+				if (e.type === "user_start") this.allowEmptyNudge = false;
 				if (e.type !== "user_start" || !e.text.startsWith(INTERJECTION_PREFIX) || e.text.includes("（子代理事件 ")) return;
 				const mid = this.steering.shift();
 				if (mid) updateMessage(mid, { meta: { delivery: "delivered", deliveredAt: Date.now() } });
@@ -745,7 +762,7 @@ class AgentRuntime {
 				if (aborted) cancelAdvances(this.id, this.conversationId);
 				else drainAdvances(this.id, this.conversationId);
 				for (const w of [...this.waiters]) w(aborted);
-			}, undefined, this.pendingUserEntries, fast);
+			}, undefined, this.pendingUserEntries, fast, () => this.allowEmptyNudge);
 			this.unsub = () => (unUser(), unBind());
 			this.session = session;
 			this.modelKey = key;
@@ -827,7 +844,8 @@ class AgentRuntime {
 				this.steering = this.steering.filter((x) => x !== opts.messageId);
 				this.pendingUserEntries = this.pendingUserEntries.filter((x) => x !== opts.messageId);
 			}
-			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `出错了：${e instanceof Error ? e.message : String(e)}`, status: "error" });
+			const error = modelErrorMessage(e);
+			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `出错了：${error}`, status: "error", meta: { kind: "model-error", error } });
 			if (!isSessionBusy(s)) settleAgent(this.id);
 		});
 		return steer ? "steered" : "started";
@@ -907,9 +925,10 @@ class AgentRuntime {
 
 	/** 让助理在后台接着做一轮（指令对模型可见，聊天里不显示）。返回 false 表示这一轮没能触发（无会话/模型或 Pi 报错）——
 	 *  调用方（如任务等待唤醒）据此重试，而不是把“静默失败”当成已唤醒。 */
-	async nudge(text: string, opts: { onlyIdle?: boolean } = {}): Promise<boolean> {
+	async nudge(text: string, opts: { onlyIdle?: boolean; allowEmpty?: boolean } = {}): Promise<boolean> {
 		const s = await this.ensure();
 		if (!s || (opts.onlyIdle && isSessionBusy(s))) return false;
+		this.allowEmptyNudge = !!opts.allowEmpty && !!opts.onlyIdle;
 		setAgentStatus(this.id, "running");
 		try {
 			await triggerHidden(s, NUDGE_TYPE, text);
@@ -917,6 +936,8 @@ class AgentRuntime {
 		} catch {
 			settleAgent(this.id);
 			return false;
+		} finally {
+			this.allowEmptyNudge = false;
 		}
 	}
 
@@ -982,7 +1003,7 @@ async function maybeSuggest(agentId: string, conversationId: string | null, turn
 	// 模型调用 skill_propose 才出卡片；nudge 结束仍未提交（或失败/中断）就作废，不留半条 pending。
 	const id = beginProposal(agentId, conversationId, sg);
 	try {
-		await rt.nudge(proposalPrompt(sg, id), { onlyIdle: true });
+		await rt.nudge(proposalPrompt(sg, id), { onlyIdle: true, allowEmpty: true });
 	} catch {
 		/* nudge 自己会把失败返回 false；异常同样清理 */
 	} finally {
@@ -1129,12 +1150,20 @@ export const tasks = {
 			await promptSession(session, resume ? "（系统通知）服务重启，上次执行被中断。请检查工作区里已有的进度，然后继续完成任务。" : t.instructions);
 			const aborted = await done;
 			const result = lastAssistantText(session);
+			const error = aborted ? undefined : lastAssistantError(session);
 			disposeSession(session);
 			live.delete(t.id);
 			liveAgent.delete(t.id);
 			if (getTask(t.id)?.status === "cancelled") return;
 			if (aborted) {
 				setTask(t.id, { status: "cancelled", finished_at: now() });
+			} else if (error) {
+				setTask(t.id, { status: "failed", error, finished_at: now() });
+				if (!t.routine_run_id && (t as TaskRow & { kind?: string | null }).kind !== "heartbeat") {
+					notify({ title: `后台任务失败：${t.title}`, body: error, tag: t.id });
+					// 报错直接可见；额度耗尽时不再花一次模型请求来解释失败。
+					insertMessage({ agentId: a.id, conversationId: t.conversation_id, role: "system", content: `后台任务「${t.title}」失败：${error}`, status: "error", meta: { kind: "task-error", taskTitle: t.title, error } });
+				}
 			} else {
 				setTask(t.id, { status: "done", result, finished_at: now() });
 				// 主动巡检：结果只记录；要告诉用户的已经通过 proactive_surface 走了防打扰规则
@@ -1146,8 +1175,12 @@ export const tasks = {
 		} catch (e) {
 			live.delete(t.id);
 			liveAgent.delete(t.id);
-			setTask(t.id, { status: "failed", error: e instanceof Error ? e.message : String(e), finished_at: now() });
-			if (!t.routine_run_id && (t as TaskRow & { kind?: string | null }).kind !== "heartbeat") notify({ title: `后台任务失败：${t.title}`, body: String(e), tag: t.id });
+			const error = modelErrorMessage(e);
+			setTask(t.id, { status: "failed", error, finished_at: now() });
+			if (!t.routine_run_id && (t as TaskRow & { kind?: string | null }).kind !== "heartbeat") {
+				notify({ title: `后台任务失败：${t.title}`, body: error, tag: t.id });
+				insertMessage({ agentId: a.id, conversationId: t.conversation_id, role: "system", content: `后台任务「${t.title}」失败：${error}`, status: "error", meta: { kind: "task-error", taskTitle: t.title, error } });
+			}
 		} finally {
 			tasks.pump();
 		}

@@ -15,7 +15,7 @@ import { Avatar, cx } from "./ui";
 import { ProposalCard } from "./RoomCards";
 import { MessageActions, QuotedMessage, type MessageInteraction } from "./MessageReply";
 import { quotedBlock } from "../replies";
-import { botBodyView } from "../message-body";
+import { assistantErrorDetail, assistantErrorKind, assistantErrorText, botBodyView } from "../message-body";
 
 // ------------------------------------------------------------------ 工具 → 文案
 const TOOL_LABEL: Record<string, string> = {
@@ -171,7 +171,7 @@ export function Thinking({ text, live }: { text: string; live: boolean }) {
 	);
 }
 
-export function BotPart({ p, live, busy, renderSubagent, onQuote, onJump, interaction }: { p: Part; live: boolean; busy?: boolean; renderSubagent?: (m: Message) => ReactNode; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => MessageInteraction }) {
+export function BotPart({ p, live, busy, toolOnly, renderSubagent, onQuote, onJump, interaction }: { p: Part; live: boolean; busy?: boolean; toolOnly?: boolean; renderSubagent?: (m: Message) => ReactNode; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => MessageInteraction }) {
 	if (p.kind === "steps") return <Steps items={p.items} live={live} busy={busy} />;
 	const m = p.m;
 	if (m.role === "card")
@@ -181,23 +181,34 @@ export function BotPart({ p, live, busy, renderSubagent, onQuote, onJump, intera
 	const thinking = [String(m.meta.thinking ?? "").trim(), split.thinking].filter(Boolean).join("\n\n");
 	const body = split.text;
 	// 失败 / 中断即使没有正文也要有气泡把原因显示出来（否则界面上只剩「引用」，看起来像正文空白）
-	const view = botBodyView({ body, thinking: !!thinking, status: m.status, error: m.meta.error });
+	// 工具步骤占位（同一轮只有步骤 / toolCall 占位）不算「空回复」，不插兜底文案
+	const toolPlaceholder = !!(m.meta.toolCallId ?? m.meta.toolName) || (Array.isArray(m.meta.toolCalls) && m.meta.toolCalls.length > 0);
+	const view = botBodyView({ body, thinking: !!thinking, status: m.status, error: m.meta.error, hasAttachments: !!m.meta.attachments?.length, toolOnly: !!toolOnly || m.role === "tool" || toolPlaceholder });
 	const quoted = onJump ? quotedBlock(m) : null;
+	if (toolOnly && !view.showBubble && !thinking && !m.meta.attachments?.length) return null;
 	return (
 		<>
 			{thinking && <Thinking text={thinking} live={m.status === "streaming" && !body} />}
 			<div className="pa-bot-msg" data-mid={m.id} {...(interaction ? interaction(m) : undefined)}>
 				{quoted && <QuotedMessage block={quoted} onJump={onJump!} />}
 				{view.showBubble && (
-					<div className={cx("pa-bubble prose-wrap", m.status === "error" && "error")}>
+					<div className={cx("pa-bubble prose-wrap", (m.status === "error" || view.showError) && "error")}>
 						{body ? <Markdown text={body} /> : null}
 						{m.status === "streaming" && <span className="caret text-sm" />}
 						{view.showError && (
-							<div className={cx("text-xs text-red-500", body && "mt-1")} title={view.errorRaw || undefined} data-testid="msg-error">
-								{view.errorText}
+							<div className={cx("text-xs text-red-500", body && "mt-1")} data-testid="msg-error" data-kind={view.errorKind}>
+								<div>{view.errorText}</div>
+								{/* 服务返回的原始信息放可展开详情：title 在手机上看不到，额度 / 限流的原因要能点开 */}
+								{view.errorDetail && (
+									<details className="mt-1" data-testid="msg-error-detail">
+										<summary className="cursor-pointer opacity-80">查看服务返回的信息</summary>
+										<pre className="pa-pre whitespace-pre-wrap text-[11px] leading-relaxed">{view.errorDetail}</pre>
+									</details>
+								)}
 							</div>
 						)}
-						{view.showInterrupted && <div className={cx("text-xs text-mut2", body && "mt-1")} data-testid="msg-interrupted">（已中断）</div>}
+						{view.showEmpty && <div className={cx("text-xs text-mut2", body && "mt-1")} data-testid="msg-empty">{view.emptyText}</div>}
+						{view.showInterrupted && <div className={cx("text-xs text-mut2", body && "mt-1")} data-testid="msg-interrupted">{view.interruptedText}</div>}
 					</div>
 				)}
 				<MessageActions m={m} onQuote={onQuote} side="left" />
@@ -249,7 +260,7 @@ export function BotTurn({ row, agent, live, renderSubagent, onQuote, onJump, int
 			</div>
 			<div className="pa-bot-body">
 				{parts.map((p, i) => (
-					<BotPart renderSubagent={renderSubagent} onQuote={onQuote} onJump={onJump} interaction={interaction} busy={live} key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} />
+					<BotPart renderSubagent={renderSubagent} onQuote={onQuote} onJump={onJump} interaction={interaction} busy={live} toolOnly={parts[i + 1]?.kind === "steps"} key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} />
 				))}
 				{live && !streaming && !waitingCard && <Activity tool={runningTool} />}
 			</div>
@@ -294,10 +305,18 @@ function Delivery({ state }: { state?: string }) {
 }
 
 export function SystemMsg({ m, canContinue = true }: { m: Message; canContinue?: boolean }) {
+	const modelFailure = m.status === "error" && (m.meta.kind === "task-error" || m.meta.kind === "model-error");
+	const detail = modelFailure ? assistantErrorDetail(m.meta.error) : "";
 	return (
-		<div className="flex justify-center py-1">
-			<div className={cx("max-w-md px-3 py-1 text-center text-xs", m.meta.kind === "compaction" ? "rounded-xl" : "rounded-full", m.status === "error" ? "bg-red-500/10 text-red-600" : "bg-hover text-mut")}>
-				{m.content}
+		<div className="flex min-w-0 justify-center py-1" data-mid={m.id}>
+			<div className={cx("max-w-md min-w-0 break-words px-3 py-1 text-center text-xs", m.meta.kind === "compaction" || modelFailure ? "rounded-xl" : "rounded-full", m.status === "error" ? "bg-red-500/10 text-red-600" : "bg-hover text-mut")}>
+				{modelFailure ? (
+					<div className="text-left" data-testid="system-model-error" data-kind={assistantErrorKind(m.meta.error)}>
+						{m.meta.kind === "task-error" && <div className="font-medium">后台任务「{String(m.meta.taskTitle ?? "")}」失败</div>}
+						<div>{assistantErrorText(m.meta.error)}</div>
+						{detail && <details className="mt-1"><summary className="cursor-pointer">查看服务返回的信息</summary><pre className="pa-pre whitespace-pre-wrap text-[11px] leading-relaxed">{detail}</pre></details>}
+					</div>
+				) : m.content}
 				{m.meta.kind === "compaction" && m.meta.summary && (
 					<details className="mt-1 text-left">
 						<summary className="cursor-pointer text-accent">查看摘要</summary>

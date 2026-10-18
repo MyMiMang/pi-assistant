@@ -1,4 +1,4 @@
-import { stopAgentSubagents } from "../subagents.ts";
+import { stopConversationSubagents } from "../subagents.ts";
 /**
  * 助理群聊：一个群 = 几个助理 + 用户。每个成员在群里有一个隐藏的 Pi 对话（runtime(agentId, conversationId)），
  * 所以人设、记忆、工具、权限、电脑都还是它自己的；群消息存在 messages（room_id），成员对话产生的消息自动归进群。
@@ -29,7 +29,7 @@ import { setAssignedSkillIds } from "../skill-assignments.ts";
 import { STRENGTHS, STRENGTH_LABEL, type Strength } from "../model-profile.ts";
 import { cleanNeeds, configuredModels, modelProfiles, pickFor, roleNeeds } from "./model-pick.ts";
 import { buildTranscript, capCheck, normalizeCaps, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
-import { attachTurnToWork, buildWorkCorrectionContext, deleteRoomWorkItems, noteRoomTurnEnd, onRoomMemberRemoved, onRoomTurnsClosed, queueAssignmentForWorkItem, resolveWorkReferences, setWorkSourceProvider, workItemTools } from "../work-items.ts";
+import { attachTurnToWork, buildWorkCorrectionContext, deleteRoomWorkItems, noteRoomTurnEnd, onRoomMemberRemoved, onRoomTurnsClosed, pauseRoomWorkOnStop, planPendingWorkTurn, queueAssignmentForWorkItem, resolveWorkReferences, setWorkSourceProvider, workItemTools } from "../work-items.ts";
 
 export interface RoomRow {
 	id: string;
@@ -500,8 +500,8 @@ async function pump(roomId: string) {
 			const caps = capsOf(r);
 			const why = capCheck(next, s.counters, caps);
 			if (why) {
-				// 到上限：把还没说的存起来，等用户点“继续”
-				const pending = s.queue.map(({ agentId, reason, task, depth }) => ({ agentId, reason, task, depth }));
+				// 到上限：把还没说的存起来（带上任务执行绑定，继续时才能安全重建 / 交给管理者检查），等用户点“继续”
+				const pending = s.queue.map(({ agentId, reason, task, depth, directed, turnId, workItemId, workRunId }) => ({ agentId, reason, task, depth, directed, turnId, workItemId, workRunId }));
 				cancelQueue(roomId, s);
 				db.prepare("UPDATE rooms SET paused = ? WHERE id = ?").run(JSON.stringify({ pending, reason: why }), roomId);
 				sys(roomId, `本轮已暂停（${why}），回复继续`, { kind: "room-paused", action: "room-continue" });
@@ -601,7 +601,17 @@ export function enqueueWorkTurn(roomId: string, agentId: string, task: string, w
 	if (!activeIds(roomId).includes(agentId)) throw new Error("负责人不在群里");
 	const existing = states.get(roomId);
 	if (existing?.stopped) throw new Error("群聊已停止，先不自动派活；需要时由用户继续");
-	if (r.paused && !opts.explicit) throw new Error("群聊本轮已暂停，任务先不自动派活；用户继续后再安排");
+	// 用户按过“停止”是持久事实（存 rooms.paused，重启 / 内存状态清掉后仍有效）：
+	// 自动派活（自动重试 / room_assign 关联）一律拒绝；只有用户明确的新执行授权才恢复本群这一轮。
+	let stopPaused = false;
+	try {
+		stopPaused = r.paused ? (JSON.parse(r.paused) as { stopped?: boolean }).stopped === true : false;
+	} catch {
+		stopPaused = false;
+	}
+	if (stopPaused && !opts.explicit) throw new Error("群聊已停止，先不自动派活；需要时由用户继续");
+	if (stopPaused) db.prepare("UPDATE rooms SET paused = NULL WHERE id = ?").run(roomId);
+	else if (r.paused && !opts.explicit) throw new Error("群聊本轮已暂停，任务先不自动派活；用户继续后再安排");
 	let s = existing;
 	if (!s || (!s.current && !s.queue.length)) {
 		s = fresh();
@@ -649,43 +659,80 @@ export async function cancelWorkTurn(roomId: string, turnId: string, abortCurren
 /** 运行中任务的收拢：只中止这个群成员对话，不跨群 / 不碰主会话。 */
 async function abortConversationTurn(agentId: string, conversationId: string) {
 	const rt = runtime(agentId, conversationId);
-	// 主会话会在 runtime.abort 上加 { scope: "conversation" }；当前树还没有这个参数，先按可选参数调用，合入后自动生效。
-	const abort = rt.abort as (opts?: { scope?: "conversation" }) => Promise<void>;
-	await abort.call(rt, { scope: "conversation" }).catch(() => {});
+	await rt.abort({ scope: "conversation" }).catch(() => {});
 }
 
-/** 停止：中止正在说话的，取消排队的，拒绝群里等待处理的请求 */
+/** 停止：中止正在说话的，取消排队的，拒绝群里等待处理的请求。
+ * 只停这个群：每个成员只停它在**本群会话**上的子代理（同一个助理在私聊 / 别群的工作不受影响）。
+ * 先同步落“停止”事实（内存 + 持久 + 取消排队 / 暂停本群任务），再做异步中止，避免 await 窗口里新派发。
+ */
 export async function stop(roomId: string, note = true) {
 	const s = states.get(roomId);
-	for (const m of membersOf(roomId)) await stopAgentSubagents(m.agent_id);
+	const cur = s?.current ?? null;
+	// 这个群里所有还没收尾的回合（内存队列 + 数据库里重启残留 / 未推进的排队）都要一起收掉。
+	const openTurns = db.prepare("SELECT id FROM room_turns WHERE room_id = ? AND status IN ('queued','running')").all(roomId) as { id: string }[];
+	const had = !!s || openTurns.length > 0;
+	if (s) {
+		s.stopped = true;
+		s.replan = null;
+	}
+	if (s) cancelQueue(roomId, s);
+	db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = COALESCE(finished_at, ?) WHERE room_id = ? AND status IN ('queued','running')").run(now(), roomId);
+	onRoomTurnsClosed(openTurns.map((t) => t.id), "cancelled");
+	markRoomStopped(roomId);
+	// 停止前正在负责的任务不跟着新一轮话题自动复活（改标 paused，只有用户明确继续才重新安排）。
+	pauseRoomWorkOnStop(roomId);
 	requests.cancelForRoom(roomId);
-	if (!s) return false;
-	s.stopped = true;
-	cancelQueue(roomId, s);
-	s.replan = null;
-	const cur = s.current;
-	if (cur) await runtime(cur.agentId, cur.conversationId).abort().catch(() => {});
-	states.delete(roomId);
+	for (const m of membersOf(roomId)) if (m.conversation_id) await stopConversationSubagents(m.agent_id, m.conversation_id).catch(() => {});
+	if (cur) {
+		s!.current = null;
+		await abortConversationTurn(cur.agentId, cur.conversationId);
+	}
+	if (s && states.get(roomId) === s) states.delete(roomId);
 	if (note && cur) sys(roomId, "已停止");
 	emitState(roomId);
-	return true;
+	changed(roomId);
+	return had;
 }
 
-/** 继续：接着跑上次暂停/中断时没说完的；没有就请管理者接着来 */
+/** 持久停止事实：重启 / 内存状态清掉后，自动派活仍被挡；用户明确的新消息或“继续”才会清掉。 */
+function markRoomStopped(roomId: string) {
+	if (!getRoom(roomId)) return;
+	db.prepare("UPDATE rooms SET paused = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ pending: [], reason: "群聊已停止", stopped: true }), now(), roomId);
+}
+
+/**
+ * 继续：接着跑上次暂停 / 中断时没说完的；没有就请管理者接着来。
+ * 长期任务只做两件事：确认没开始的排队执行 → 用集中的 createRun 给同一任务新建一次执行并精确绑定；
+ * 已经开始、结果不明的旧执行 → 不重放旧命令，交管理者 resume 回合检查进度。已取消 / 已完成 / 已改派的任务不自动复活。
+ */
 export function continueRoom(roomId: string) {
 	const r = getRoom(roomId);
 	if (!r) throw new Error("群不存在");
 	if (states.get(roomId)?.current || !r.paused) return false;
-	const p = r.paused ? (JSON.parse(r.paused) as { pending: PlannedTurn[] }) : null;
+	const p = r.paused ? (JSON.parse(r.paused) as { pending?: (PlannedTurn & { turnId?: string })[] }) : null;
 	db.prepare("UPDATE rooms SET paused = NULL WHERE id = ?").run(roomId);
 	const s = fresh();
 	states.set(roomId, s);
 	const act = activeIds(roomId);
-	const pending = (p?.pending ?? []).filter((x) => act.includes(x.agentId));
 	const mgr = r.manager_id && act.includes(r.manager_id) ? r.manager_id : act[0];
-	if (pending.length) {
-		s.batch = new Set(pending.filter((x) => x.reason === "assign").map((x) => x.agentId));
-		enqueue(roomId, s, pending.map((x) => ({ ...x, depth: 0 })));
+	const turns: PlannedTurn[] = [];
+	let checkWithManager = false;
+	for (const x of (p?.pending ?? []).filter((x) => act.includes(x.agentId))) {
+		if (!x.workItemId || !x.workRunId) {
+			turns.push({ agentId: x.agentId, reason: x.reason, task: x.task, depth: 0, directed: x.directed });
+			continue;
+		}
+		const plan = planPendingWorkTurn({ roomId, workItemId: x.workItemId, workRunId: x.workRunId, turnId: x.turnId });
+		if (plan.action === "rebind") turns.push({ agentId: x.agentId, reason: x.reason, task: plan.task, depth: 0, workItemId: plan.workItemId, workRunId: plan.workRunId });
+		else if (plan.action === "manager_check") checkWithManager = true;
+		else sys(roomId, `任务「${plan.title}」没有自动重放：${plan.reason}`, { kind: "work-not-resumed" });
+	}
+	// 已经开始的旧执行结果不明：不重放旧命令，交管理者一个 resume 回合检查进度（不新建执行）。
+	if (checkWithManager && mgr) turns.push({ agentId: mgr, reason: "resume", depth: 0 });
+	if (turns.length) {
+		s.batch = new Set(turns.filter((x) => x.reason === "assign").map((x) => x.agentId));
+		enqueue(roomId, s, turns);
 	} else if (mgr) enqueue(roomId, s, [{ agentId: mgr, reason: "resume", depth: 0 }]);
 	else return false;
 	void pump(roomId);
@@ -700,7 +747,7 @@ export function markRead(roomId: string) {
 
 /** 启动：上次运行中的群聊回合 → 标记中断，给“继续”按钮 */
 export function bootstrapRooms() {
-	const rows = db.prepare("SELECT * FROM room_turns WHERE status IN ('running','queued') ORDER BY created_at").all() as { id: string; room_id: string; agent_id: string; reason: string; task: string | null; depth: number; status: string }[];
+	const rows = db.prepare("SELECT * FROM room_turns WHERE status IN ('running','queued') ORDER BY created_at").all() as { id: string; room_id: string; agent_id: string; reason: string; task: string | null; depth: number; status: string; work_item_id: string | null; work_run_id: string | null }[];
 	const byRoom = new Map<string, typeof rows>();
 	for (const t of rows) byRoom.set(t.room_id, [...(byRoom.get(t.room_id) ?? []), t]);
 	for (const [roomId, ts] of byRoom) {
@@ -708,7 +755,7 @@ export function bootstrapRooms() {
 		// 关联的长期任务执行同步标中断（不自动重派，等用户继续）。
 		onRoomTurnsClosed(ts.map((t) => t.id), "interrupted");
 		if (!getRoom(roomId)) continue;
-		const pending = ts.map((t) => ({ agentId: t.agent_id, reason: t.status === "running" ? "resume" : t.reason, task: t.task ?? undefined, depth: t.depth }));
+		const pending = ts.map((t) => ({ agentId: t.agent_id, reason: t.status === "running" ? "resume" : t.reason, task: t.task ?? undefined, depth: t.depth, turnId: t.id, workItemId: t.work_item_id ?? undefined, workRunId: t.work_run_id ?? undefined }));
 		db.prepare("UPDATE rooms SET paused = ? WHERE id = ?").run(JSON.stringify({ pending, reason: "服务重启" }), roomId);
 		sys(roomId, "服务重启，群聊被中断了", { kind: "room-interrupted", action: "room-continue" });
 	}

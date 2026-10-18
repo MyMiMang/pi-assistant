@@ -1,0 +1,26 @@
+✔ Codex额度错误没有start也归一化出可见错误；错误对象只取可读字段并脱敏 (1.165417ms)
+✔ 停止保留aborted而非额度失败；合法tool-only携带标记；errorMessage不被非error stop吞掉 (0.175291ms)
+✖ 没有start的最终事件也持久可见：quota/空结果/正文/停止，纯工具中间不留空引用 (0.14125ms)
+✔ 额度失败与空最终回复在原对话落error，不吞成空done；部分正文保留，既有错误不会要求额外模型来解释 (373.435667ms)
+✔ 后台任务模型额度失败不再误标done/空完成通知，直接在原对话留失败原因 (31.045ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 4
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3853.983958
+
+✖ failing tests:
+
+test at packages/server/test/model-error-reporting.test.ts:1:3013
+✖ 没有start的最终事件也持久可见：quota/空结果/正文/停止，纯工具中间不留空引用 (0.14125ms)
+  ReferenceError: Cannot access 'AGENT' before initialization
+      at TestContext.<anonymous> (/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/packages/server/test/model-error-reporting.test.ts:44:34)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)

@@ -172,6 +172,8 @@ try {
 	await page.getByTestId("work-edit-save").click();
 	await page.getByTestId("work-action-error").waitFor();
 	assert.equal(await page.getByTestId("work-edit-requirement").inputValue(), "这是用户写到一半的新要求", "失败保留草稿");
+	assert.match(await page.getByTestId("work-action-error").innerText(), /模拟保存失败/);
+	await page.getByTestId("work-edit").scrollIntoViewIfNeeded();
 	await stableShot(page, page.getByTestId("work-items-overview"), join(out, "03-error-draft.png"));
 	await page.unroute(`**/api/work-items/${pendingId}`);
 	await page.getByTestId("work-edit-save").click();

@@ -1,0 +1,13 @@
+✔ Codex额度错误没有start也归一化出可见错误；错误对象只取可读字段并脱敏 (1.119958ms)
+✔ 停止保留aborted而非额度失败；合法tool-only携带标记；errorMessage不被非error stop吞掉 (0.168041ms)
+✔ 没有start的最终事件也持久可见：quota/空结果/正文/停止，纯工具中间不留空引用 (3.055125ms)
+✔ 额度失败与空最终回复在原对话落error，不吞成空done；部分正文保留，既有错误不会要求额外模型来解释 (371.370959ms)
+✔ 后台任务模型额度失败不再误标done/空完成通知，直接在原对话留失败原因 (31.594083ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3838.70125

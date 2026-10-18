@@ -1,0 +1,25 @@
+fixture diagnostics { requests: 3, serverExit: null, signal: null }
+[launch-memory] 越界/不可信的 PIA_WORKSPACE="/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-model-error-Lz0o9U/workspace" → 覆盖为 /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-model-error-Lz0o9U/data/workspace
+[pi-assistant] Pi 1.3.0（测试基线 1.3.0）
+[pi-assistant] 服务已启动：http://127.0.0.1:52882  数据目录：/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-model-error-Lz0o9U/data  serverId=9ecc200d-c383-46d1-8d6a-e36e39142e3a  [Mock 模型已启用]
+
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'auth'
+- 'rate_limit'
+
+    at file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/e2e/model-error-live-ui.mjs:48:10 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'auth',
+  expected: 'rate_limit',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0
