@@ -11,7 +11,7 @@ import { test } from "node:test";
 const mem = new Map();
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
 
-const { beginAsrIntent, emptyAsrIntent, invalidateAsrIntent, isCurrentAsrIntent, mergeLiveDownload, formatBytes, tierLabel, isIndeterminate, installPercent, memoryAdvice } = await import("../apps/web/src/local-asr-intent.ts");
+const { beginAsrIntent, emptyAsrIntent, invalidateAsrIntent, isCurrentAsrIntent, mergeLiveDownload, formatBytes, tierLabel, isIndeterminate, installPercent, memoryAdvice, localAsrPick } = await import("../apps/web/src/local-asr-intent.ts");
 const { normalizeLocalAsrCatalog, normalizeLocalAsrModel, emptyLocalAsrCatalog } = await import("../apps/web/src/local-asr-api.ts");
 
 /** 与 packages/server/src/local-asr/service.ts 的 LocalAsrCatalog 同形的 fixture。 */
@@ -156,4 +156,20 @@ test("展示格式化：GB 体积 / 档位标签 / 内存建议标未实测", ()
 	assert.equal(tierLabel("light"), "轻量");
 	assert.equal(tierLabel("high"), "高质量");
 	assert.match(memoryAdvice(2_000_000_000, "模型进程内存估算（非实测）"), /估算，未实测/);
+});
+
+test("下拉停在哪一项：已保存的优先于推荐；自己点过的保留；已保存的换了就跟过去", () => {
+	const ms = (sel) => [
+		{ id: "paraformer-streaming", selected: sel === "paraformer-streaming", installed: true },
+		{ id: "whisper-small", selected: sel === "whisper-small", installed: false },
+		{ id: "whisper-base", selected: sel === "whisper-base", installed: true },
+	];
+	// 回归：以前每次打开都回到推荐项，看不出存的是哪个
+	assert.equal(localAsrPick(ms("paraformer-streaming"), "whisper-small", ""), "paraformer-streaming");
+	assert.equal(localAsrPick(ms(null), "whisper-small", ""), "whisper-small", "没保存本地模型时才用推荐");
+	assert.equal(localAsrPick(ms(null), null, ""), "paraformer-streaming", "无推荐 → 已安装的");
+	assert.equal(localAsrPick(ms("paraformer-streaming"), "whisper-small", "whisper-base"), "whisper-base", "这次自己点过的保留");
+	assert.equal(localAsrPick(ms("whisper-base"), "whisper-small", "paraformer-streaming", true), "whisper-base", "别处改了已保存的来源 → 跟过去");
+	assert.equal(localAsrPick(ms("paraformer-streaming"), "whisper-small", "gone-model"), "paraformer-streaming", "点过的已不在目录 → 回到已保存的");
+	assert.equal(localAsrPick([], "whisper-small", ""), "");
 });

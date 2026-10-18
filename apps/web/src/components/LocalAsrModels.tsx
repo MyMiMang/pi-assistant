@@ -10,10 +10,10 @@
  * 自行导入合法权重收进「详情」折叠，不再另开一套旧卡（避免重复操作流）。
  */
 import { AlertTriangle, CheckCircle2, Cpu, Download, HardDrive, Loader2, Play, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocalAsrCatalog } from "../hooks/useLocalAsrCatalog";
 import { useDefaultVoicePrep } from "../hooks/useDefaultVoicePrep";
-import { formatBytes, installPercent, isIndeterminate, memoryAdvice, tierLabel } from "../local-asr-intent";
+import { formatBytes, installPercent, isIndeterminate, localAsrPick, memoryAdvice, tierLabel } from "../local-asr-intent";
 import type { LocalAsrModelView } from "../local-asr-api";
 import { Badge, Button, Help, Input, Select, cx } from "./ui";
 import { DefaultVoicePrepPanel } from "./DefaultVoicePrep";
@@ -41,12 +41,16 @@ export function LocalAsrModels() {
 	const [importDir, setImportDir] = useState("");
 
 	const models = catalog.models;
-	// 默认选中：后端推荐的 → 已安装的 → 第一个。用户选择优先，不覆盖。
+	// 下拉停在哪一项：已保存的（正在用的）→ 推荐 → 已安装 → 第一个；这次自己点过的保留，已保存的来源换了就跟过去。
+	// 以前只看推荐，每次重新打开这张卡都会跳回推荐项，看不出自己存的是哪个。
+	const savedId = models.find((m) => m.selected)?.id ?? "";
+	const lastSaved = useRef<string | null>(null);
 	useEffect(() => {
-		if (selectedId && models.some((m) => m.id === selectedId)) return;
-		const next = catalog.recommendedId && models.some((m) => m.id === catalog.recommendedId) ? catalog.recommendedId : (models.find((m) => m.installed)?.id ?? models[0]?.id ?? "");
-		setSelectedId(next);
-	}, [models, catalog.recommendedId, selectedId]);
+		const savedChanged = lastSaved.current !== null && lastSaved.current !== savedId;
+		lastSaved.current = savedId;
+		const next = localAsrPick(models, catalog.recommendedId, selectedId, savedChanged);
+		if (next !== selectedId) setSelectedId(next);
+	}, [models, catalog.recommendedId, selectedId, savedId]);
 
 	const selected = models.find((m) => m.id === selectedId) ?? null;
 

@@ -81,3 +81,16 @@ export function mergeLiveDownload<T extends { state: string; received: number; t
 	if (live.state === "error") return { ...install, state: "failed", error: live.error ?? install.error };
 	return install;
 }
+
+/**
+ * 本地模型下拉该停在哪一项。优先级：正在用的（服务端 `selected`，即已保存的来源）→ 推荐 → 已安装 → 第一个。
+ * `current` 是用户这次打开后自己点过的：只要还在目录里就保留；但已保存的来源换了（别处「使用」/ 装完切过去）就跟过去。
+ */
+export function localAsrPick(models: { id: string; selected: boolean; installed: boolean }[], recommendedId: string | null, current: string, savedChanged = false): string {
+	const saved = models.find((m) => m.selected)?.id;
+	if (savedChanged && saved) return saved;
+	if (current && models.some((m) => m.id === current)) return current;
+	if (saved) return saved;
+	if (recommendedId && models.some((m) => m.id === recommendedId)) return recommendedId;
+	return models.find((m) => m.installed)?.id ?? models[0]?.id ?? "";
+}

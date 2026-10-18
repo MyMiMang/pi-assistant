@@ -439,6 +439,34 @@ try {
 	check("前端没有自己另写一套 source（不 late PUT）", state.putLog.length === putBeforeSense, JSON.stringify(state.putLog.slice(putBeforeSense)));
 	await page.screenshot({ path: join(OUT, "05d-sensevoice-in-use.png") });
 
+	console.log("\n── 5e) 回归：已保存的本地模型（非推荐项）每次打开都停在它上面，不跳回推荐项 ──");
+	const savedPara = state.models.find((m) => m.id === "paraformer-zh-2023-09-14-int8");
+	savedPara.install = { state: "installed", phase: "done", phaseLabel: "完成", received: 243_446_974, total: 243_446_974, percent: 100, error: null, installedAt: Date.now(), source: "download", jobId: "asr:paraformer-zh-2023-09-14-int8", attempt: 1 };
+	state.source = { location: "local", provider: "local-paraformer", model: "paraformer-zh-2023-09-14-int8" };
+	const selText = async () => ((await page.getByTestId("local-asr-model-select").textContent()) ?? "").trim();
+	for (let round = 1; round <= 2; round++) {
+		await page.goto(`${base}/?settings=voice`);
+		await page.getByTestId("voice-source-status").waitFor();
+		await page.getByTestId("local-asr-models").waitFor(); // 来源是本地 → 直接落在「本地」页
+		await page.waitForFunction(() => document.querySelector("[data-testid=local-asr-detail]")?.getAttribute("data-selected") === "true", null, { timeout: 5000 }).catch(() => {});
+		check(`第 ${round} 次打开：下拉停在已保存的 Paraformer（不是推荐的 Whisper Small）`, (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === savedPara.id && /Paraformer/.test(await selText()), await selText());
+		check(`第 ${round} 次打开：详情标「当前使用中」`, await page.getByTestId("local-asr-in-use").isVisible());
+	}
+	// 切到云端再切回本地（卡片重新挂载）也一样
+	await page.getByTestId("voice-tab-cloud").click();
+	await page.getByTestId("voice-tab-local").click();
+	await page.getByTestId("local-asr-models").waitFor();
+	check("切走再切回：仍是已保存的 Paraformer", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === savedPara.id, await selText());
+	await page.screenshot({ path: join(OUT, "05e-saved-local-model-kept.png") });
+	// 这次自己点别的看看：只改浏览，不改已保存；刷新后回到已保存
+	await page.getByTestId("local-asr-model-select").click();
+	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /Whisper Base/ }).click();
+	check("自己点别的模型：下拉跟着变（不被强行拉回）", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === "whisper-base-int8");
+	await page.goto(`${base}/?settings=voice`);
+	await page.getByTestId("local-asr-models").waitFor();
+	await page.waitForFunction((id) => document.querySelector("[data-testid=local-asr-detail]")?.getAttribute("data-model-id") === id, savedPara.id, { timeout: 5000 }).catch(() => {});
+	check("没点「使用」就重开：回到已保存的 Paraformer", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === savedPara.id);
+
 	console.log("\n── 6) 390 窄屏不横向溢出 ──");
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(`${base}/?settings=voice`);
