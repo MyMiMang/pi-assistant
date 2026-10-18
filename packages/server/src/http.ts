@@ -18,12 +18,10 @@ import { Readable } from "node:stream";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { compress } from "hono/compress";
-import { Hono, type Context, type Next } from "hono";
+import { Hono, type Context } from "hono";
 import QRCode from "qrcode";
 import { WebSocket, WebSocketServer } from "ws";
-import {
-	approveDevice, hasOwner, isOwnerDevice, setOwner, type Caller, claimPairCode, clientIp, createPairCode, deviceForToken, isLocalRequest, listDevices, pairStatus, rateLimit, rejectDevice, revokeDevice, touchDevice,
-} from "./auth.ts";
+import { approveDevice, hasOwner, isOwnerDevice, setOwner, claimPairCode, clientIp, createPairCode, deviceForToken, isLocalRequest, listDevices, pairStatus, rateLimit, rejectDevice, revokeDevice, touchDevice } from "./auth.ts";
 import { bus } from "./bus.ts";
 import { config } from "./config.ts";
 import { db, getSetting, now, setSetting } from "./db.ts";
@@ -66,13 +64,10 @@ import { flush, hindsightMemory, resyncAll } from "./memory/hindsight/provider.t
 import { configuredModels, resetEmbeddingStore, resolveMemoryModel, sidecar } from "./memory/hindsight/sidecar.ts";
 import { embeddingSignature, LOCAL_EMBEDDINGS, LOCAL_RERANKERS, pickMemoryModel, publicSettings, saveHindsightSettings } from "./memory/hindsight/settings.ts";
 import { llmProxy } from "./llm-proxy.ts";
-import { deleteSkill, getSkill, listSkills } from "./skills.ts";
-import { agentsUsingSkill, assignedSkillIds, enableSkillForAgents, setAssignedSkillIds, unassignSkillEverywhere } from "./skill-assignments.ts";
-import { ImportConflict, importSkillFromPath, importSkillFromZip } from "./skill-import.ts";
+import { assignedSkillIds, setAssignedSkillIds } from "./skill-assignments.ts";
 import { enabledSkillsFor, resolveSelectedSkills } from "./skill-scope.ts";
 import { agentsOf, configOf, deleteMcp, getMcp, listMcp, type McpServerRow, redact, saveMcp, setMcpEnabled, testMcp } from "./mcp.ts";
 import { addPackage, install as installPackage, listPackages, type PiPackageRow, removePackage, setPackageEnabled } from "./pi-packages.ts";
-import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "./skill-intel.ts";
 import { createRoutine, deleteAgentRoutines, deleteRoutine, getRoutine, listRoutines, listRuns, type RoutineInput, type RoutineRow, runRoutine, setRoutineStatus, updateRoutine, verifyWebhook, webhookPath } from "./routines.ts";
 import { BRAND } from "@pi-assistant/shared";
 import { verifySigned } from "./channels/media.ts";
@@ -84,9 +79,9 @@ import { finishGoogle, googleClient, saveGoogleClient, startGoogle } from "./ema
 import { actOnItem, cancelFollowup, defaultLevel, type ItemRow, type Level, listItems, proactiveJson, runHeartbeat, saveProactive, setDefaultLevel, unseenCount } from "./proactive.ts";
 import { cancelWait, listWaits, refreshWait } from "./task-waits.ts";
 import { channelJson, clawbotCancel, clawbotLogin, clawbotStatus, clawbotVerify, deleteChannel, getChannel, listChannels, rotateBindCode, saveChannel, setPeerAllowed, testChannel, wecomCallback, type ChannelKind } from "./channels/index.ts";
-import { hostAgentsChanged, draftHostSettings, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, currentManifest, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
+import { hostAgentsChanged, draftHostSettings, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, saveSandboxComputerSettings, sandboxComputerSettings, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "./host-control.ts";
 import { downloadInfo, cancelDownload, listDownloads, startDownload } from "./downloads.ts";
-import { availableModels, confirmMemberProposal, confirmProposal, continueRoom, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, onAgentChanged, onAgentDeleted, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "./rooms/index.ts";
+import { confirmMemberProposal, confirmProposal, continueRoom, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, onAgentChanged, onAgentDeleted, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "./rooms/index.ts";
 import { WorkItemError, createWorkItem, editWorkItem, getWorkItemDetail, listWorkItems, postWorkFeedback, userAction } from "./work-items.ts";
 import { copyAgentToUser } from "./rooms/copy.ts";
 import { getMessage, updateMessage as patchMessage } from "./messages.ts";
@@ -94,8 +89,9 @@ import { buildReplySnapshot, formatQuotedContext, ReplyError, resolveReplyTarget
 import { mountImageRoutes } from "./image-gen/routes.ts";
 import { mountPetRoutes } from "./pet/routes.ts";
 import { mountUsageRoutes } from "./usage/routes.ts";
+import { by, errJson, isAdmin, localOnly, type Env } from "./routes/common.ts";
+import { mountSkillRoutes } from "./routes/skills.ts";
 
-type Env = { Bindings: { incoming: IncomingMessage }; Variables: { caller: Caller } };
 const app = new Hono<Env>();
 
 // 响应压缩：只压 JSON。
@@ -148,10 +144,6 @@ app.use("/api/*", async (c, next) => {
 	return next();
 });
 
-/** 管理类接口：本机，或主人设备（Linux 服务器版用设置码登录的第一台设备，DESIGN §15.3） */
-const isAdmin = (c: Context<Env>) => c.get("caller").local || !!c.get("caller").owner;
-const localOnly = async (c: Context<Env>, next: Next) => (isAdmin(c) ? next() : c.json({ error: "local_only" }, 403));
-const by = (c: Context<Env>) => c.get("caller").deviceId ?? "local";
 
 // ---------------------------------------------------------------- 系统
 app.get("/api/system/public", (c) => c.json({ serverId: identity().serverId, publicKey: identity().publicKey, name: BRAND.name, server: config.headless, setup: config.headless && !hasOwner() }));
@@ -230,7 +222,6 @@ app.get("/api/models/providers", (c) => {
 });
 // 自定义模型服务（中转站 / 第三方 / 本地），写入 Pi 的 models.json
 app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list().map((p) => ({ ...p, references: providerReferences(p.id) })), apis: supportedApis(), classifierProtocols: classifierProtocols() }));
-const customErr = (c: Context<Env>, e: unknown) => c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 app.post("/api/models/custom", async (c) => {
 	try {
 		const saved = await customProviders.save(null, await c.req.json<CustomProviderInput>());
@@ -238,7 +229,7 @@ app.post("/api/models/custom", async (c) => {
 		bus.emit({ type: "settings.changed" });
 		return c.json(saved);
 	} catch (e) {
-		return customErr(c, e);
+		return errJson(c, e);
 	}
 });
 app.put("/api/models/custom/:id", async (c) => {
@@ -247,7 +238,7 @@ app.put("/api/models/custom/:id", async (c) => {
 		bus.emit({ type: "settings.changed" });
 		return c.json(saved);
 	} catch (e) {
-		return customErr(c, e);
+		return errJson(c, e);
 	}
 });
 app.delete("/api/models/custom/:id", async (c) => {
@@ -258,14 +249,14 @@ app.delete("/api/models/custom/:id", async (c) => {
 		bus.emit({ type: "settings.changed" });
 		return c.json({ ok, cleared });
 	} catch (e) {
-		return customErr(c, e);
+		return errJson(c, e);
 	}
 });
 app.post("/api/models/custom/fetch-models", async (c) => {
 	try {
 		return c.json({ models: await customProviders.fetchModels(await c.req.json()) });
 	} catch (e) {
-		return customErr(c, e);
+		return errJson(c, e);
 	}
 });
 // 图片生成模型（image-gen/routes.ts）
@@ -1011,14 +1002,7 @@ app.put("/api/agents/:id/memory-provider", async (c) => {
 	return c.json({ ok: true });
 });
 
-// ---------------------------------------------------------------- 技能库（Pi 原生 Agent Skills）
-// 库存带 canonical id / 来源 / 启用了它的助理列表，供界面显示「启用数」与按 agent 配置。
-const skillJson = (s: ReturnType<typeof listSkills>[number]) => ({ id: s.id, name: s.name, description: s.description, source: s.source, builtin: s.builtin, size: s.body.length, enabledAgents: agentsUsingSkill(s.id) });
-app.get("/api/skills", (c) => c.json(listSkills().map(skillJson)));
-app.get("/api/skills/:name", (c) => {
-	const s = getSkill(c.req.param("name"));
-	return s ? c.json({ ...skillJson(s), body: s.body }) : c.json({ error: "not_found" }, 404);
-});
+mountSkillRoutes(app);
 // 某助理启用的技能：`enabled` 是 canonical id 列表；`enabledSkills` 只给已启用技能的元数据（composer 技能入口用，不下发未分配技能）。
 app.get("/api/agents/:id/skills", (c) => {
 	const id = c.req.param("id");
@@ -1031,77 +1015,9 @@ app.put("/api/agents/:id/skills", async (c) => {
 	setAssignedSkillIds(c.req.param("id"), b.ids as string[]);
 	return c.json({ enabled: assignedSkillIds(c.req.param("id")) });
 });
-// 批量给当前所有助理启用某技能（UI 的「给所有助理启用」）；不建立对未来新助理的继承。
-app.post("/api/skills/:name/enable-all", (c) => {
-	const s = getSkill(c.req.param("name"));
-	if (!s) return c.json({ error: "not_found" }, 404);
-	enableSkillForAgents(listAgents().map((a) => a.id), s.id);
-	return c.json({ ok: true, id: s.id, agents: agentsUsingSkill(s.id) });
-});
-// 外部导入：zip 文件或本机路径（目录 / 单个 SKILL.md）。先入库，可选只 enable 目标助理。
-// 同名内容不同返回 409 conflict，由界面让用户选 update / newName，绝不静默覆盖。
-app.post("/api/skills/import", async (c) => {
-	const body = await c.req.parseBody();
-	const mode = (typeof body.mode === "string" && ["conflict", "update", "rename"].includes(body.mode) ? body.mode : "conflict") as "conflict" | "update" | "rename";
-	const newName = typeof body.newName === "string" && body.newName.trim() ? body.newName.trim() : undefined;
-	const agentId = typeof body.agentId === "string" && body.agentId ? body.agentId : undefined;
-	try {
-		const file = body.file as { arrayBuffer?: () => Promise<ArrayBuffer> } | undefined;
-		const r = file?.arrayBuffer
-			? await importSkillFromZip(new Uint8Array(await file.arrayBuffer()), { mode, newName })
-			: typeof body.path === "string" && body.path.trim()
-				? importSkillFromPath(body.path.trim(), { mode, newName })
-				: null;
-		if (!r) return c.json({ error: "请上传 zip，或填写本机目录 / SKILL.md 路径" }, 400);
-		if (agentId && getAgent(agentId)) setAssignedSkillIds(agentId, [...new Set([...assignedSkillIds(agentId), r.id])]);
-		return c.json(r);
-	} catch (e) {
-		if (e instanceof ImportConflict) return c.json({ error: "conflict", existing: e.existing, incoming: e.incoming }, 409);
-		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-	}
-});
-app.post("/api/skills", async (c) => {
-	const b = await c.req.json<{ name: string; description: string; body: string; previousName?: string; agentId?: string }>();
-	if (getSkill(b.name)?.builtin) return c.json({ error: "内置技能不能覆盖，请换一个名字" }, 400);
-	try {
-		const s = saveSkillVersioned(b, "user");
-		// 模型给某个助理新建的技能：默认只启用给那个助理（没有 target 就是不给任何人启用）
-		if (b.agentId && getAgent(b.agentId)) setAssignedSkillIds(b.agentId, [...new Set([...assignedSkillIds(b.agentId), s.id])]);
-		return c.json({ ...s, path: undefined });
-	} catch (e) {
-		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-	}
-});
-// 删除物理库存：先提示影响哪些已启用它的助理；未确认（?force 缺失）且有助理在用则返回 409。
-app.delete("/api/skills/:name", (c) => {
-	const s = getSkill(c.req.param("name"));
-	if (!s) return c.json({ error: "not_found" }, 404);
-	const affected = agentsUsingSkill(s.id);
-	if (affected.length && c.req.query("force") !== "1") return c.json({ error: "in_use", agents: affected }, 409);
-	unassignSkillEverywhere(s.id);
-	return c.json({ ok: deleteSkill(s.name), agents: affected });
-});
-app.get("/api/skills-search", (c) => c.json(searchSkills(c.req.query("q") ?? "")));
-app.get("/api/skills/:name/versions", (c) => {
-	const vs = listVersions(c.req.param("name"));
-	// 每个版本附上相对上一版本的 diff
-	return c.json(vs.map((v, i) => ({ ...v, diff: skillDiff(v.name, vs[i + 1] ?? null, v) })));
-});
-app.post("/api/skills/:name/rollback", async (c) => {
-	const { version } = await c.req.json<{ version: number }>();
-	try {
-		return c.json({ ...rollbackSkill(c.req.param("name"), version), path: undefined });
-	} catch (e) {
-		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-	}
-});
-app.get("/api/skill-suggest", (c) => c.json(suggestSettings()));
-app.put("/api/skill-suggest", async (c) => (setSuggestSettings(await c.req.json()), c.json(suggestSettings())));
-
 // ---------------------------------------------------------------- MCP 服务器与 Pi 扩展包
 // 写操作只允许在这台电脑上做（stdio MCP 会在电脑上运行命令，扩展包会运行代码）
 const mcpJson = (r: McpServerRow) => ({ id: r.id, name: r.name, enabled: !!r.enabled, agents: agentsOf(r), config: redact(configOf(r)), status: r.status, tools: r.tools ? JSON.parse(r.tools) : null, error: r.error, checkedAt: r.checked_at });
-const errJson = (c: Context<Env>, e: unknown) => c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 app.get("/api/mcp", (c) => c.json(listMcp().map(mcpJson)));
 app.post("/api/mcp", localOnly, async (c) => {
 	try {
