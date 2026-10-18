@@ -6,17 +6,20 @@
   "timezone": "Asia/Shanghai",
   "packageRules": [
     {
+      "description": "Pi 不自动升级：开发时手动跑 scripts/pi-update.mjs（docs/decisions/0012）",
       "matchPackageNames": [
         "@earendil-works/{/,}**"
       ],
-      "groupName": "Pi",
-      "schedule": [
-        "at any time"
+      "enabled": false
+    },
+    {
+      "description": "Hindsight 不自动升级：开发时手动跑 scripts/hindsight-update.mjs（docs/decisions/0012）",
+      "matchPackageNames": [
+        "@vectorize-io/hindsight{/,}**",
+        "hindsight-embed",
+        "hindsight-api-slim"
       ],
-      "labels": [
-        "pi"
-      ],
-      "minimumReleaseAge": "1 day"
+      "enabled": false
     },
     {
       "matchPackageNames": [

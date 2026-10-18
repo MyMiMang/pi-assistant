@@ -27,9 +27,10 @@ Pi Assistant：基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 - 纯逻辑单独成文件（便于单测）；前端通用组件进 `ui.tsx`；跨端常量进 `packages/shared`。
 - 单个源码文件不超过 600 行；已有的大文件只许变短（`scripts/check/size-baseline.json`）。
 
-## 硬规则 3：不改上游本体，经适配层跟上游
-- **不修改 / 不 fork** Pi SDK、Hindsight、cua-driver、`node_modules`；不 monkeypatch 私有 API；不改依赖版本（升级走 Renovate、`pi-latest` 工作流的 PR）。
-- 上游的问题在我们的适配层里绕过，并记下「上游哪个版本修好后删掉」；上游修复 / 新功能靠升级版本直接用上。
+## 硬规则 3：不改上游本体，开发时手动升级
+- **不修改 / 不 fork** Pi SDK、Hindsight、cua-driver、`node_modules`；不 monkeypatch 私有 API；版本固定，不改依赖版本。
+- **不做任何自动升级**：App 里没有 Pi / Hindsight 的检查更新、提醒或后台升级，也没有自动升级的工作流 / Renovate。开发时看到上游新版，手动跑 `scripts/pi-update.mjs` / `scripts/hindsight-update.mjs` 升级、跑测试，再随 App 发布（App 自己的更新保留）。
+- 上游的问题在我们的适配层里绕过，并记下「上游哪个版本修好后删掉」；上游修复 / 新功能靠开发时手动升级版本用上，**永远不改上游代码**。
 - 技能只用 Pi 公开的 Agent Skills 规范与 `DefaultResourceLoader.skillsOverride` / `additionalSkillPaths`；每个助理一份显式启用清单（`settings.skillAssignments`，默认全不启用），主会话 / 后台任务 / 子代理共用 `skillFilterFor(agentId)`。
 - 用户消息在助理忙时走 Pi `steer`（插话），不要改回 `followUp`。
 - 有后果的操作统一走 ext-approval / `requests.ts`；完全权限按 `hostFileAccess` 在应用层免审批，其他档位维持审批，凭据 deny、暂停与系统权限弹窗不变。

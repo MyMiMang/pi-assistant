@@ -13,4 +13,4 @@ if (installed.split(".")[0] !== testedWith.split(".")[0]) {
 	console.error("❌ 已安装的 Pi 主版本与兼容基线不同，请运行 npm test 并更新 pi-adapter/compat.json");
 	process.exit(1);
 }
-if (latest !== "unknown" && latest !== installed) console.log(`ℹ️ 有新版 Pi ${latest}，pi-latest 工作流会自动尝试升级`);
+if (latest !== "unknown" && latest !== installed) console.log(`ℹ️ 有新版 Pi ${latest}，需要时开发者手动运行 node scripts/pi-update.mjs latest，跑完测试再 finalize（不自动升级）`);

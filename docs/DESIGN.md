@@ -516,7 +516,7 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 
 **4）兼容性测试**（`packages/server/test/pi-compat.test.ts`，只经适配层调用 Pi，用 Mock 模型、无需网络和 Key）：版本检查；provider 目录 ≥20 且含 API Key 与订阅登录；通用登录交互能把 Key 写进加密存储；完整会话流程（流式事件、扩展工具、`deliver_file`、审批拦截 `rm`）。另有 Playwright E2E（`e2e/run.mjs`，13 项）。
 
-**5）CI 自动跟进 Pi**：
+**5）Pi / Hindsight 升级（2026-10-19 起只手动，见 decisions/0012）**：已删除 `pi-latest.yml`、`hindsight-latest.yml` 和 Renovate 对它们的自动升级；开发时手动跑 `scripts/pi-update.mjs` / `scripts/hindsight-update.mjs`。下面是历史记录：
 - `ci.yml`：每次 push/PR 跑 `check:pi`、typecheck、单元+兼容测试、Worker 测试、构建、E2E（上传截图）。
 - `pi-latest.yml`：**每周一自动**把 Pi 升到 npm 最新版（走 `scripts/pi-update.mjs`）→ 跑全部测试 → **通过后才 `finalize` 记录 `compat.json` 的 `testedWith` 并自动开 PR**；失败则**自动开 issue** 附日志（`testedWith` 不前进），提示需要改 `pi-adapter`。
 - `renovate.json`：Pi 包单独分组、发布 1 天后即提 PR（与上面互为备份）。

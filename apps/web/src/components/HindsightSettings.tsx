@@ -243,7 +243,7 @@ export function HindsightSettings() {
 										{v.lastError ? `；最近错误：${v.lastError}` : ""}
 									</span>
 								))}
-							{d.status.version && <span className="block">Hindsight {d.status.version}（随 App 更新自动升级）</span>}
+							{d.status.version && <span className="block">Hindsight {d.status.version}（版本随安装包固定）</span>}
 						</Help>
 					</p>
 				</section>

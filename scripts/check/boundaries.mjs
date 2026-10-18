@@ -24,7 +24,7 @@ export function checkBoundaries(files, baseline) {
 				if (new RegExp(`^(export\\s+)?(function|const)\\s+${name}\\b`, "m").test(src)) errors.push(`${f}：又定义了一个 ${name}。基础组件只在 apps/web/src/components/ui.tsx，直接复用`);
 		}
 	}
-	// 5. node_modules 不能入库；Pi 版本必须与兼容基线一致（升级走 scripts/pi-update.mjs / pi-latest 工作流）
+	// 5. node_modules 不能入库；Pi 版本必须与兼容基线一致（开发时手动跑 scripts/pi-update.mjs 升级）
 	if (files.some((f) => f.startsWith("node_modules/") || f.includes("/node_modules/"))) errors.push("node_modules 里的文件进了仓库：不改、不提交 node_modules");
 	const compat = JSON.parse(read("packages/server/src/pi-adapter/compat.json"));
 	const ok = [compat.testedWith, compat.target].filter(Boolean);

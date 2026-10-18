@@ -15,7 +15,8 @@
 - [计划] 拆大文件：runtime.ts、work-items.ts、rooms/index.ts（随群聊协作一起做）
 - [计划] 群任务不受人数上限影响、群停止不暂停任务（随群聊协作）
 - [计划] 语音 / 本地语音挪成可选模块（下次「打包」时做）
-- [计划] Hindsight 上游跟踪工作流（每周查新版、测试、开 PR）（[0003](decisions/0003-hindsight-via-adapter.md)）
+- [已完成(未打包)] Pi / Hindsight 不自动升级：删除自动升级工作流与 Renovate 规则，开发时手动跑升级脚本（[0012](decisions/0012-no-auto-upstream-updates.md)）
+- [待用户决定] Hindsight 0.10.3 → 1.0.0（PyPI 已有，需开发时手动升级并测试）
 - [待用户决定] 中文关键词搜索是否换能切分中文的方案
 
 ## 待用户决定

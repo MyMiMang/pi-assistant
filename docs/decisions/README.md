@@ -16,8 +16,8 @@
 | 编号 | 决定 |
 |---|---|
 | [0001](0001-reuse-first.md) | 复用优先，先搜再写，禁止重复实现 |
-| [0002](0002-pi-via-adapter.md) | 不改 Pi 本体，只经 pi-adapter 接入并跟上游 |
-| [0003](0003-hindsight-via-adapter.md) | 不改 Hindsight 本体，只经适配层接入并跟上游 |
+| [0002](0002-pi-via-adapter.md) | 不改 Pi 本体，只经 pi-adapter 接入 |
+| [0003](0003-hindsight-via-adapter.md) | 不改 Hindsight 本体，只经适配层接入 |
 | [0004](0004-release-only-on-dabao.md) | 只有用户说「打包」才发布，不自动安装 |
 | [0005](0005-remove-laya.md) | 撤下 Laya 与电脑快速候选选择器 |
 | [0006](0006-group-collaboration.md) | 群聊：一个管理者 + 自主模式，只检测不设次数上限 |
@@ -26,3 +26,4 @@
 | [0009](0009-memory-reliability.md) | 记忆：先存基础再同步高级，故障必须让用户知道 |
 | [0010](0010-artifacts-not-committed.md) | 截图 / 证据不入库 |
 | [0011](0011-project-standards.md) | 项目规范化：AGENTS.md 唯一入口 + 自动检查 |
+| [0012](0012-no-auto-upstream-updates.md) | Pi / Hindsight 不自动升级，开发时手动升级 |

@@ -32,5 +32,5 @@
 - 中文全文检索：内置后端只支持欧洲语言分词；pgroonga / pg_search（jieba）需要外部 PostgreSQL，嵌入式 pg0 不行，且没有现成迁移（文档 multilingual 页、issue #1973）。决定：保持现状，中文靠向量那一路。
 - 思考回传：PR #1253 只在 `HINDSIGHT_API_LLM_PROVIDER=deepseek` 时生效；我们是 `openai` 指向本机网关，所以在网关里修（已做）。
 
-## 跟进上游
+## 跟进上游（2026-10-19 起只手动升级，不自动，见 decisions/0012）
 与 Pi 同一套（§5.15）：`scripts/hindsight-update.mjs`（`check` 看上游；`latest|<版本>` 一起升 Python 两包 + npm 两包、推 `exclude-newer`、同步 `third-party.json` / NOTICES）+ `.github/workflows/hindsight-latest.yml`（每周一：升级 → typecheck + 单测 + Hindsight 真机冒烟 → 通过开 PR、失败开 issue）。用户侧：App 更新后附属进程发现 pyproject 变了自动 `uv sync` 重装，界面 ? 里显示当前 Hindsight 版本。

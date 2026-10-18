@@ -4,11 +4,11 @@
 //                                              compat.json 只记 target（预期版本），不动 testedWith。
 //   node scripts/pi-update.mjs finalize        测试通过后，把 compat.json 的 testedWith 提升到已安装版本。
 //
-// 关键约定：compat.json 的 testedWith 是「已经跑过测试」的声明。只有 finalize（在 pi-latest 工作流里
+// 关键约定：compat.json 的 testedWith 是「已经跑过测试」的声明。只有 finalize（开发者手动
 // 排在「测试」步骤之后、且仅当测试通过时才执行）能改写它。升级脚本在刚下载完依赖时就改写 testedWith，
 // 等于没验证就宣称测过——所以 bump 阶段顶多写 target，真正的基线必须由 finalize 落。
 //
-// 手动升级和 .github/workflows/pi-latest.yml 共用这一条路径，避免出现
+// 升级只走这一条手动路径（不自动升级，见 docs/decisions/0012），避免出现
 // 「代码升了、third-party.json / THIRD_PARTY_NOTICES.md 没升」的不一致。
 // 只改依赖与版本记录，不碰业务代码；Pi API 变化仍由 packages/server/src/pi-adapter 与各扩展适配。
 //

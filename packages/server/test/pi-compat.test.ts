@@ -1,6 +1,6 @@
 /**
  * Pi 兼容性测试：只通过 pi-adapter 使用 Pi，验证我们依赖的 Pi 能力都还在。
- * CI 的 pi-latest 工作流会把 Pi 升到最新版后运行这些测试。
+ * 开发者手动用 scripts/pi-update.mjs 升级 Pi 后运行这些测试（不自动升级）。
  */
 import "./setup.ts";
 import assert from "node:assert/strict";
