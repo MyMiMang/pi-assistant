@@ -1,6 +1,6 @@
 # 架构概览
 
-简版说明，细节见 [DESIGN.md](DESIGN.md)（章节号写在括号里）。
+简版说明，细节见 [DESIGN.md](DESIGN.md)（章节号写在括号里）。每个文件负责什么、有哪些可复用的工具，见 [MODULES.md](MODULES.md)。
 
 ```mermaid
 flowchart LR
@@ -10,7 +10,7 @@ flowchart LR
     T["桌面程序 Tauri<br/>apps/tray：托盘·更新·悬浮条·桌宠"]
   end
   subgraph 本机服务 packages/server
-    H["http.ts / WS<br/>bus 事件"]
+    H["http.ts + routes/* / WS<br/>bus 事件"]
     R["runtime.ts<br/>每个助理的 Pi 会话"]
     PI["pi-adapter → Pi SDK<br/>模型 / models.dev 参数"]
     X["ext-* 扩展工具"]
@@ -41,7 +41,7 @@ flowchart LR
 ## 组件
 | 组件 | 位置 | 说明 |
 |---|---|---|
-| 本机服务 | `packages/server` | Node 22 + Hono。`main.ts` 启动，`http.ts` 放全部接口，`bus.ts` 推事件给前端（WS） |
+| 本机服务 | `packages/server` | Node 22 + Hono。`main.ts` 启动，`http.ts` 只做组装和中间件，接口在 `routes/*`，`bus.ts` 推事件给前端（WS） |
 | 助理详情 | `InfoPane.tsx`、`ModelPicker.tsx`、`AgentEditor.tsx` | 私聊/群成员共用八分类；64px头像/单行响应式标签，模型/思考/Fast复用原串行写入；资料独立草稿与版本保护、固定保存/滚动正文；画图/子代理单份状态供摘要与展开区使用，读取/保存/错误分开；能力/任务/记忆/文件/电脑复用原模块（未打包，[功能契约](design/agent-details-functional.md)、[批准视觉](design/agent-details-classic.md)） |
 | Pi 集成 | `src/pi-adapter/` | 只有这个目录直接用 Pi SDK（§5.15）；`models.ts` / `model-db.ts` 管模型和 models.dev 参数 |
 | 助理运行时 | `src/runtime.ts` | 每个助理（每个对话）一个 Pi AgentSession，挂上扩展工具，把 Pi 事件写成消息（`messages.ts`） |

@@ -31,24 +31,8 @@
 - 共用中转远程访问（Paseo 式）用户决定暂缓（§15.1）。
 
 
-## 代码地图（最常改的地方）
-
-- 服务端入口 `packages/server/src/main.ts`，HTTP 路由全部在 `http.ts`（`localOnly` = 只允许本机）。
-- Pi 只通过 `packages/server/src/pi-adapter/` 使用（升级 Pi 时只看这里）。
-- 统一下载：`packages/server/src/downloads.ts` + `apps/web/src/components/Downloads.tsx`。
-- 助理电脑：`desktop.ts`（开关机、端口、截图、共用电脑 / 屏幕 / 合并）、`desktop/computers.ts`（哪个助理用哪台电脑、主屏幕争用，纯逻辑）、`packages/sandbox-desktop/pia-screen`（容器里的屏幕管理）、`pia-cua-mcp`（cua 中继）、`desktop/backend.ts`（后端选择）、`desktop/lima.ts`（macOS 虚拟机：下载 / 配置 / 开关机 / 保护）、`desktop/names.ts`（容器名硬性保护）、`downloads.ts` 的 `downloadFile`（大文件断点续传 + 摘要校验）。
-- Hindsight：`packages/server/src/memory/hindsight/`（sidecar 安装/启动、provider 账本+同步队列、settings 三模型）。
-- 操作这台电脑：`host-control.ts`（服务端）、`HostControl.tsx`（设置 + 输入框旁档位按钮）、`HostFloatBar.tsx`（悬浮条页面）、`apps/tray/src-tauri/src/main.rs`（悬浮条窗口）。
-- 通用 UI 组件：`apps/web/src/components/ui.tsx`（Button / Modal / Badge / Input / **Help**「?」气泡 / **useConfirm** 确认框）；主题 `apps/web/src/themes/*.css`（勾选框、开关 `.pa-switch`、帮助气泡、下载条样式在 `app.css` 末尾）。
-- 助理群聊：`packages/server/src/rooms/logic.ts`（@ 解析、发言规则、上限、增量注入，纯逻辑）、`rooms/index.ts`（建群/成员/调度/停止/继续/重启恢复、群规则与 `room_assign` / `room_propose_member` / `propose_room` 工具）、`rooms/copy.ts`（复制到我的助理）；界面 `RoomChat.tsx`（群聊页、@ 补全、新建群、群设置、删群）、`RoomCards.tsx`（提议卡片、群专属助理操作）。Mock 模型里 `roomReply` 是 e2e 用的脚本（“派给X”“循环”“慢慢”“加个成员”“组个团队”）。设计见 DESIGN §17。
-- 桌宠：`packages/server/src/pet/`（状态、宠物包、孵化接口）、`apps/web/src/pet/`（`PetWindow.tsx` 是 /pet 页面，`hatch.ts` 负责去背景和拼图，`zip.ts`）、`components/PetSettings.tsx`、`apps/tray/src-tauri/src/pet.rs`（透明窗口、点击穿透、拖动、记住位置）。内置宠物改动后跑 `python3 scripts/pets/gen-presets.py --preview /tmp/pet-previews` 重新生成，自带格子校验。设计见 DESIGN §19。
-- 输入框工具栏：`Chat.tsx`（`ContextRing` 上下文圆环、模型与思考合一的 `ModelPicker`、`HostTierPill`）。
-- 附件：`files.ts`（上传、群附件 `saveRoomUpload` / `materializeFor`）、`attachments.ts`（图片 / 文档 → 模型输入）、`vision.ts` + `vision-ext.ts`（识图模型兜底、`look_at_image`）；界面 `Attachments.tsx`（`useAttachUploader` / `AttachTray` / `AttachButton`，单聊和群聊共用）。
-- 渠道：`channels/index.ts`（入站、镜像、审批卡片、群聊卡片转发 `forwardRoomCard`）、`channels/media.ts` / `caps.ts`（各渠道能力与原生图片 / 文件）、`thinking.ts`（拆出思考内容）。
-- 图片生成：`image-gen/`（providers / routes / extension），界面 `ImageModels.tsx`。
-- 后台子代理：`subagents.ts`（状态、模型选择、事件、看门狗）、`subagent-routes.ts`（接口及子窗口直聊）、`runtime.ts`（独立 Pi 会话 / 续聊与主会话通知）、`ext-delivery`（派活 / 补充 / 停止工具）；界面 `Subagents.tsx`、`App.tsx` / `store.ts`（会话分页）、`ChatMessages.tsx`（共用消息展示）；专项测试 `e2e/subagents.mjs`。
-- 用量与组队选模型：`usage/`（`prices.ts` 价格解析与费用计算、`index.ts` 记录 / 汇总 / 90 天滚动、`routes.ts` 接口）、`model-profile.ts`（擅长标签与打分，纯函数）、`rooms/model-pick.ts`；界面 `Usage.tsx`、`ModelStrengths.tsx`、`usage-fmt.ts`。改价格格式要同时改 `model-db.ts` 和 `scripts/gen-model-db.mjs`。
-
+## 代码地图
+见 [MODULES.md](MODULES.md)（每个文件负责什么 + 必须复用的共用工具清单）。
 
 ## 真机测试步骤
 见 [history/HANDOFF-2026-10-18.md](history/HANDOFF-2026-10-18.md) 第 8 节。
