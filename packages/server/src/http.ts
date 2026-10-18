@@ -66,7 +66,7 @@ import { wecomCallback } from "./channels/index.ts";
 import { hostAgentsChanged } from "./host-control.ts";
 import { cancelDownload, listDownloads, startDownload } from "./downloads.ts";
 import { confirmMemberProposal, confirmProposal, continueRoom, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, onAgentChanged, onAgentDeleted, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "./rooms/index.ts";
-import { WorkItemError, createWorkItem, editWorkItem, getWorkItemDetail, listWorkItems, postWorkFeedback, userAction } from "./work-items.ts";
+import { createWorkItem, listWorkItems } from "./work-items.ts";
 import { copyAgentToUser } from "./rooms/copy.ts";
 import { getMessage, updateMessage as patchMessage } from "./messages.ts";
 import { buildReplySnapshot, formatQuotedContext, ReplyError, resolveReplyTarget } from "./replies.ts";
@@ -74,6 +74,7 @@ import { mountImageRoutes } from "./image-gen/routes.ts";
 import { mountPetRoutes } from "./pet/routes.ts";
 import { mountUsageRoutes } from "./usage/routes.ts";
 import { by, errJson, isAdmin, localOnly, type Env } from "./routes/common.ts";
+import { mountWorkItemRoutes, workErr } from "./routes/work-items.ts";
 import { mountDesktopRoutes, deskChanged } from "./routes/desktop.ts";
 import { mountMemoryRoutes, syncSidecarWanted } from "./routes/memory.ts";
 import { mountRoutineRoutes, routineJson } from "./routes/routines.ts";
@@ -662,14 +663,6 @@ app.get("/api/messages/:mid/context", (c) => {
 	const ext = db.prepare("SELECT MIN(rowid) AS lo, MAX(rowid) AS hi FROM messages WHERE conversation_id = ? AND task_id IS NULL AND subagent_id IS NULL").get(m.conversation_id) as { lo: number | null; hi: number | null };
 	return c.json({ messages: msgs, hasOlder: msgs.length > 0 && msgs[0].seq > (ext.lo ?? 0), hasNewer: msgs.length > 0 && msgs[msgs.length - 1].seq < (ext.hi ?? 0) });
 });
-// ---------------------------------------------------------------- 长期任务（任务责任）与执行分离
-const workErr = (c: Context, e: unknown) => {
-	if (e instanceof WorkItemError) {
-		const status = e.code === "not_manager" || e.code === "not_owner" ? 403 : e.code === "not_found" || e.code === "room_not_found" ? 404 : e.code === "bad_status" || e.code === "already_running" ? 409 : 400;
-		return c.json({ error: e.message, code: e.code }, status);
-	}
-	return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-};
 app.get("/api/rooms/:rid/work-items", (c) => {
 	if (!getRoom(c.req.param("rid"))) return c.json({ error: "not_found" }, 404);
 	const status = c.req.query("status");
@@ -689,39 +682,7 @@ app.post("/api/rooms/:rid/work-items", async (c) => {
 		return workErr(c, e);
 	}
 });
-app.get("/api/work-items/:wid", (c) => {
-	try {
-		return c.json(getWorkItemDetail(c.req.param("wid")));
-	} catch (e) {
-		return workErr(c, e);
-	}
-});
-app.patch("/api/work-items/:wid", async (c) => {
-	const b = await c.req.json<{ title?: string; requirement?: string; doneCriteria?: string; ownerAgentId?: string | null }>();
-	try {
-		return c.json(editWorkItem({ workItemId: c.req.param("wid"), actor: { kind: "user" }, title: b.title, requirement: b.requirement, doneCriteria: b.doneCriteria, ...(b.ownerAgentId !== undefined ? { ownerAgentId: b.ownerAgentId } : {}) }));
-	} catch (e) {
-		return workErr(c, e);
-	}
-});
-/** 看板「在群里继续」：服务端把任务关联写进这条用户消息（前端不能伪造），再走正常群路由。 */
-app.post("/api/work-items/:wid/feedback", async (c) => {
-	const b = await c.req.json<{ text?: string }>().catch(() => ({}) as { text?: string });
-	try {
-		return c.json(await postWorkFeedback(c.req.param("wid"), String(b.text ?? "")));
-	} catch (e) {
-		return workErr(c, e);
-	}
-});
-app.post("/api/work-items/:wid/:action", async (c) => {
-	const action = c.req.param("action");
-	const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
-	try {
-		return c.json(await userAction(c.req.param("wid"), action, b));
-	} catch (e) {
-		return workErr(c, e);
-	}
-});
+mountWorkItemRoutes(app);
 app.post("/api/rooms/:rid/stop", async (c) => c.json({ ok: await stopRoom(c.req.param("rid")) }));
 app.post("/api/rooms/:rid/continue", (c) => {
 	try {
