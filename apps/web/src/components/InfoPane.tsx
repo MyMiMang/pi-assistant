@@ -1,5 +1,5 @@
 import { SubagentModels } from "./Subagents";
-import { TaskRow, taskStatus, taskTitle, timeAgo } from "./Tasks";
+import { TaskRow, taskTitle } from "./Tasks";
 import { DesktopView } from "./DesktopView";
 import { fmtMoney, useFx } from "./usage-fmt";
 import { ChevronLeft, ChevronRight, Download, File, Folder, HardDrive, Pause, Play, X } from "lucide-react";
@@ -89,9 +89,10 @@ export default function InfoPane({ agentId }: { agentId: string }) {
 	);
 }
 
-/** 概览：先看真实执行统计，再看配置摘要（点击去对应分类）和已有任务，不在这里再放一套模型编辑器。 */
+/** 概览：先看真实执行统计，再看三行配置摘要（大脑 / 操作你的电脑 / 任务），点哪行去哪个分类；不在这里再放一套编辑器。 */
 function Overview({ agentId }: { agentId: string }) {
 	const { agents, tasks } = useStore();
+	const routinesVersion = useStore((s) => s.routinesVersion);
 	const agent = agents.find((a) => a.id === agentId)!;
 	const list = tasks[agentId] ?? [];
 	const fx = useFx();
@@ -101,9 +102,9 @@ function Overview({ agentId }: { agentId: string }) {
 	const effective = agent.thinking ? THINKING_LABEL[agent.thinking] ?? agent.thinking : "待确认";
 	const thinking = !model
 		? catalog.loading ? "正在加载档位…" : catalog.error ? "档位加载失败" : "请重新选择模型"
-		: !model.thinking?.length ? "该模型无思考强度"
-		: agent.thinkingSetting == null ? `跟随默认 · ${effective}`
-		: agent.thinkingSetting !== agent.thinking ? `${THINKING_LABEL[agent.thinkingSetting] ?? agent.thinkingSetting} → ${effective}` : effective;
+		: !model.thinking?.length ? "无思考档位"
+		: agent.thinkingSetting == null ? `思考 跟随默认 · ${effective}`
+		: agent.thinkingSetting !== agent.thinking ? `思考 ${THINKING_LABEL[agent.thinkingSetting] ?? agent.thinkingSetting} → ${effective}` : `思考 ${effective}`;
 	const allowed = !!host.d && (host.d.settings.agents === "all" || host.d.settings.agents.includes(agentId));
 	const tier = (host.d?.tiers?.[agentId] ?? host.d?.settings.defaultTier ?? "bounded") as Tier;
 	const hostText = !host.d
@@ -113,11 +114,17 @@ function Overview({ agentId }: { agentId: string }) {
 				: host.d.status.paused ? "已暂停" : TIER_INFO[tier].label;
 	const done = list.filter((x) => x.status === "done").length;
 	const running = list.filter((x) => x.status === "running").length;
+	const [routines, setRoutines] = useState<number | null>(null);
+	useEffect(() => {
+		api<unknown[]>(`/api/agents/${agentId}/routines`).then((r) => setRoutines(r.length)).catch(() => setRoutines(null));
+	}, [agentId, routinesVersion]);
 	const [u, setU] = useState<{ calls: number; input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; unknownCalls: number }>({ calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, unknownCalls: 0 });
 	useEffect(() => {
 		api<{ totals: typeof u }>(`/api/usage/summary?range=all&agent=${encodeURIComponent(agentId)}`).then((r) => setU(r.totals)).catch(() => {});
 	}, [agentId]);
 	const go = (next: string) => useStore.getState().set({ infoTab: next });
+	const brain = [model?.name ?? agent.model?.id ?? "未选择模型", thinking, model?.providerName].filter(Boolean).join(" · ");
+	const taskText = [`${running} 个运行中`, `共 ${list.length} 个`, routines != null ? `${routines} 个定时` : null].filter(Boolean).join(" · ");
 	return (
 		<div className="text-sm" data-testid="agent-overview">
 			<div className="pa-stats">
@@ -131,44 +138,23 @@ function Overview({ agentId }: { agentId: string }) {
 				</div>
 				<div>
 					<b>{u.calls && u.unknownCalls < u.calls ? fmtMoney(u.cost, fx) : "—"}</b>
-					<small>花费</small>
+					<small>花费<Help>按服务商公布的单价估算，以服务商账单为准；有调用没有价格时显示「—」。</Help></small>
 				</div>
 			</div>
 			<h2 className="pa-info-h2">配置摘要</h2>
 			<button type="button" className="pa-info-row" data-testid="overview-model-settings" onClick={() => go("models")}>
-				<span className="pa-info-row-main"><strong>聊天模型</strong><small>{model?.name ?? agent.model?.id ?? "未选择模型"}{model?.providerName ? ` · ${model.providerName}` : ""}</small></span>
+				<span className="pa-info-row-main"><strong>大脑</strong><small>{brain}</small></span>
 				<ChevronRight size={16} className="pa-arrow" />
 			</button>
-			<button type="button" className="pa-info-row" onClick={() => go("models")}>
-				<span className="pa-info-row-main"><strong>思考强度</strong></span>
-				<span className="pa-info-row-value">{thinking}</span>
-				<ChevronRight size={16} className="pa-arrow" />
-			</button>
-			<button type="button" className="pa-info-row" onClick={() => go("computer")}>
-				<span className="pa-info-row-main"><strong>你的电脑</strong><small>本助理的操作权限与暂停状态</small></span>
+			<button type="button" className="pa-info-row" data-testid="overview-host" onClick={() => go("computer")}>
+				<span className="pa-info-row-main"><strong>操作你的电脑</strong><small>它能在你的电脑上做多少事</small></span>
 				<span className="pa-info-row-value">{hostText}</span>
 				<ChevronRight size={16} className="pa-arrow" />
 			</button>
-			<h2 className="pa-info-h2">后台任务</h2>
-			{list.length === 0 && <p className="text-xs text-mut2">还没有后台任务。执行结束后仍需核验结果是否达到原任务目标。</p>}
-			{list.slice(0, 2).map((x) => {
-				const st = taskStatus(x.status);
-				return (
-					<button key={x.id} type="button" className="pa-info-row" onClick={() => useStore.getState().set({ infoTab: "tasks", infoTaskTab: "background" })}>
-						<span className="pa-info-row-main">
-							<strong>{x.title || taskTitle(x.instructions)}</strong>
-							<small>{st.label}{x.finished_at ?? x.created_at ? ` · ${timeAgo(x.finished_at ?? x.created_at)}` : ""}</small>
-						</span>
-						<ChevronRight size={16} className="pa-arrow" />
-					</button>
-				);
-			})}
-			{list.length > 2 && (
-				<button type="button" className="pa-info-row" onClick={() => useStore.getState().set({ infoTab: "tasks", infoTaskTab: "background" })}>
-					<span className="pa-info-row-main"><strong>全部 {list.length} 个任务</strong><small>{running} 个运行中</small></span>
-					<ChevronRight size={16} className="pa-arrow" />
-				</button>
-			)}
+			<button type="button" className="pa-info-row" data-testid="overview-tasks" onClick={() => go("tasks")}>
+				<span className="pa-info-row-main"><strong>任务</strong><small>{taskText}</small></span>
+				<ChevronRight size={16} className="pa-arrow" />
+			</button>
 		</div>
 	);
 }
