@@ -19,9 +19,8 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { compress } from "hono/compress";
 import { Hono, type Context } from "hono";
-import QRCode from "qrcode";
 import { WebSocket, WebSocketServer } from "ws";
-import { approveDevice, hasOwner, isOwnerDevice, setOwner, claimPairCode, clientIp, createPairCode, deviceForToken, isLocalRequest, listDevices, pairStatus, rateLimit, rejectDevice, revokeDevice, touchDevice } from "./auth.ts";
+import { hasOwner, isOwnerDevice, clientIp, deviceForToken, isLocalRequest, rateLimit, touchDevice } from "./auth.ts";
 import { bus } from "./bus.ts";
 import { config } from "./config.ts";
 import { db, getSetting, now, setSetting } from "./db.ts";
@@ -41,7 +40,7 @@ import { supportedApis, MODEL_CAPABILITIES, type CustomProviderInput } from "./p
 import type { ModelCapability } from "./model-registry.ts";
 import { classifierProtocols } from "./pi-adapter/index.ts";
 import { checkPiCompat, sessionStats } from "./pi-adapter/index.ts";
-import { pushLog, subscribe, vapidPublicKey } from "./push.ts";
+import { pushLog, vapidPublicKey } from "./push.ts";
 import { requests } from "./requests.ts";
 import { describeRoutine, disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "./runtime.ts";
 import { dockerAvailable, sandboxMode } from "./sandbox.ts";
@@ -53,10 +52,7 @@ import { desktopSettings, updateDesktopSettings } from "./desktop/settings.ts";
 import "./desktop/image-download.ts";
 import { syncMcpDownloads } from "./mcp-install.ts";
 import { agentBusy } from "./runtime.ts";
-import { cfStatus, deployRendezvous, removeRendezvous } from "./cloudflare.ts";
-import { entryDomain, restartTunnel, retryTunnel, startTunnel, stopTunnel, tunnelStatus } from "./tunnel.ts";
-import { checkNamedPerms, namedConfig, removeNamedTunnel, setupNamedTunnel } from "./named-tunnel.ts";
-import { sealJson } from "./secrets.ts";
+import { entryDomain, startTunnel, stopTunnel, tunnelStatus } from "./tunnel.ts";
 import { createConversation, currentConversation, deleteConversation, getConversation, listConversations, renameConversation, setCurrentConversation } from "./conversations.ts";
 import { forkConversation, ForkError } from "./fork.ts";
 import { globalMemoryProviderId, hindsightInUse, listMemoryProviders, memory } from "./memory/index.ts";
@@ -85,6 +81,7 @@ import { mountImageRoutes } from "./image-gen/routes.ts";
 import { mountPetRoutes } from "./pet/routes.ts";
 import { mountUsageRoutes } from "./usage/routes.ts";
 import { by, errJson, isAdmin, localOnly, type Env } from "./routes/common.ts";
+import { mountRemoteRoutes } from "./routes/remote.ts";
 import { mountChannelRoutes } from "./routes/channels.ts";
 import { mountHostControlRoutes } from "./routes/host-control.ts";
 import { mountMcpRoutes } from "./routes/mcp.ts";
@@ -1378,116 +1375,7 @@ app.get("/api/agents/:id/desktop/screenshot", async (c) => {
 	}
 });
 
-// ---------------------------------------------------------------- 远程稳定入口：部署到用户自己的 Cloudflare（仅本机可操作）
-app.get("/api/remote/cloudflare", localOnly, (c) => c.json(cfStatus()));
-app.post("/api/remote/cloudflare/deploy", localOnly, async (c) => {
-	const b = await c.req.json<{ zone: string; subdomain: string; token?: string }>();
-	try {
-		return c.json({ ok: true, config: await deployRendezvous(b) });
-	} catch (e) {
-		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-	}
-});
-app.delete("/api/remote/cloudflare", localOnly, async (c) => {
-	await removeRendezvous();
-	return c.json({ ok: true });
-});
-
-// ---------------------------------------------------------------- 固定地址（命名隧道）与隧道控制（仅本机可操作）
-const namedJson = () => {
-	const n = namedConfig();
-	return { config: n && { zone: n.zone, subdomain: n.subdomain, hostname: n.hostname, tunnelId: n.tunnelId, tunnelName: n.tunnelName, createdAt: n.createdAt }, mode: getSetting("tunnelMode", "auto"), zone: getSetting<string | null>("namedZone", null) ?? cfStatus().config?.zone ?? null, subdomain: getSetting("namedSubdomain", "pi"), hasToken: cfStatus().hasToken };
-};
-const cleanZone = (z: string) => String(z ?? "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-app.get("/api/remote/named", localOnly, (c) => c.json(namedJson()));
-app.post("/api/remote/named/check", localOnly, async (c) => {
-	const b = await c.req.json<{ zone: string; token?: string }>();
-	try {
-		return c.json(await checkNamedPerms(cleanZone(b.zone), b.token?.trim() || undefined, { probeEdit: true }));
-	} catch (e) {
-		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-	}
-});
-app.post("/api/remote/named", localOnly, async (c) => {
-	const b = await c.req.json<{ zone: string; subdomain: string; token?: string }>();
-	const zone = cleanZone(b.zone);
-	if (b.token?.trim()) setSetting("cloudflareToken", sealJson(b.token.trim()));
-	setSetting("namedZone", zone);
-	setSetting("namedSubdomain", String(b.subdomain ?? "").trim().toLowerCase());
-	try {
-		const cfg = await setupNamedTunnel({ zone, subdomain: b.subdomain });
-		restartTunnel();
-		return c.json({ ok: true, hostname: cfg.hostname });
-	} catch (e) {
-		return c.json({ error: e instanceof Error ? e.message : String(e), missing: (e as { missing?: string[] }).missing }, 400);
-	}
-});
-app.delete("/api/remote/named", localOnly, async (c) => {
-	await removeNamedTunnel();
-	restartTunnel();
-	return c.json({ ok: true });
-});
-app.post("/api/remote/tunnel/retry", localOnly, (c) => (retryTunnel(), c.json(tunnelStatus())));
-app.post("/api/remote/tunnel/mode", localOnly, async (c) => {
-	const { mode } = await c.req.json<{ mode: "auto" | "quick" }>();
-	setSetting("tunnelMode", mode === "quick" ? "quick" : "auto");
-	return c.json(namedJson());
-});
-
-// ---------------------------------------------------------------- 配对与设备
-app.post("/api/pair/start", localOnly, async (c) => {
-	const b = await c.req.json<{ preApproved?: boolean }>().catch(() => ({}) as { preApproved?: boolean });
-	const { code, shortCode, expiresAt, preApproved } = createPairCode({ preApproved: b.preApproved === true });
-	const id = identity();
-	const t = tunnelStatus();
-	const reqOrigin = new URL(c.req.url).origin;
-	const direct = t.url ?? reqOrigin;
-	const params = new URLSearchParams({ sid: id.serverId, u: direct, pk: id.publicKey, c: code }).toString();
-	// 入口域名可用（已成功注册 Rendezvous）时，二维码指向固定入口；否则直连隧道/本机地址
-	const viaEntry = !!(t.url && entryDomain() && t.rendezvous.state === "ok");
-	const url = viaEntry ? `https://${entryDomain()}/pair#${params}` : `${direct}/pair#${params}`;
-	return c.json({ url, directUrl: `${direct}/pair#${params}`, shortCode, viaEntry, expiresAt, preApproved, qr: await QRCode.toDataURL(url, { margin: 1, width: 320 }), remote: !!t.url });
-});
-app.post("/api/pair/claim", async (c) => {
-	const ip = c.get("caller").ip;
-	if (!rateLimit(`pair:${ip}`, 0.5, 5)) return c.json({ error: "rate_limited" }, 429);
-	const b = await c.req.json<{ code: string; name: string; platform?: string }>();
-	const r = claimPairCode(String(b.code ?? ""), String(b.name ?? ""), String(b.platform ?? ""));
-	return r.ok ? c.json({ deviceId: r.deviceId, serverId: identity().serverId, publicKey: identity().publicKey, preApproved: !!r.preApproved }) : c.json({ error: r.error }, r.error === "too_many_attempts" ? 429 : 400);
-});
-app.get("/api/pair/status/:id", (c) => {
-	const ip = c.get("caller").ip;
-	if (!rateLimit(`pairpoll:${ip}`, 60)) return c.json({ error: "rate_limited" }, 429);
-	return c.json(pairStatus(c.req.param("id")));
-});
-app.get("/api/devices", (c) => c.json(listDevices()));
-app.post("/api/devices/:id/approve", localOnly, (c) => c.json({ ok: approveDevice(c.req.param("id")!) }));
-app.post("/api/devices/:id/reject", localOnly, (c) => (rejectDevice(c.req.param("id")!), c.json({ ok: true })));
-// 吊销：本机 / 主人可以吊销任何设备；其他设备只能退出自己
-app.delete("/api/devices/:id", (c) => {
-	const id = c.req.param("id");
-	if (!isAdmin(c) && c.get("caller").deviceId !== id) return c.json({ error: "local_only" }, 403);
-	revokeDevice(id);
-	return c.json({ ok: true });
-});
-app.post("/api/devices/:id/owner", localOnly, async (c) => {
-	const { owner } = await c.req.json<{ owner: boolean }>();
-	try {
-		return c.json({ ok: setOwner(c.req.param("id")!, owner === true) });
-	} catch (e) {
-		return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-	}
-});
-
-// ---------------------------------------------------------------- 推送
-app.get("/api/push/key", (c) => c.json({ publicKey: vapidPublicKey() }));
-app.post("/api/push/subscribe", async (c) => {
-	const sub = await c.req.json<{ endpoint: string }>();
-	if (!sub?.endpoint?.startsWith("https://")) return c.json({ error: "invalid" }, 400);
-	subscribe(sub, c.get("caller").deviceId);
-	return c.json({ ok: true });
-});
-
+mountRemoteRoutes(app);
 // ---------------------------------------------------------------- PWA 静态文件
 if (existsSync(config.webDist)) {
 	/** 与构建期预压缩一致的文本类型；只有这些会有 .gz 旁路 / 需要按 Accept-Encoding 区分。 */
