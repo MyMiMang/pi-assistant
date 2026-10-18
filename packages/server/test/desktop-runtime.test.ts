@@ -103,7 +103,11 @@ test("设置：默认关闭（不下载），空闲时间只能 5/10/30/从不",
 
 test("虚拟机资源：用户选择按范围校验，非法值直接拒", () => {
 	const before = desktopSettings().resources;
-	assert.deepEqual(updateDesktopSettings({ resources: { cpus: 6, memoryGiB: 8, diskGiB: 80 } }).resources, { cpus: 6, memoryGiB: 8, diskGiB: 80 });
+	// 合法值取自本机实际范围（CI 机器可能只有 3–4 核、7 GiB 内存），不写死
+	const b = resourceBounds();
+	const ok = { cpus: b.cpus.max, memoryGiB: b.memoryGiB.max, diskGiB: 80 };
+	assert.deepEqual(updateDesktopSettings({ resources: ok }).resources, ok);
+	assert.throws(() => updateDesktopSettings({ resources: { cpus: b.cpus.max + 1 } }), /CPU 核数/);
 	assert.throws(() => updateDesktopSettings({ resources: { cpus: 0 } }), /CPU 核数/);
 	assert.throws(() => updateDesktopSettings({ resources: { cpus: 2.5 } }), /整数/);
 	assert.throws(() => updateDesktopSettings({ resources: { memoryGiB: 1 } }), /内存/);
