@@ -5,7 +5,7 @@
 ## 当前状态（2026-10-18）
 - 公开版：**v0.1.0-beta.32**（Latest）。main 上之后的改动均**未打包**。
 - 未打包改动：助理/群成员详情经典布局（八分类、64px 居中头像、单行标签 + 更多）；群成员改名/改头像后群里即时刷新（`e2e/room-member-rename-ui.mjs`）；代码清理（见下）。
-- 进行中：按用户批准的清理计划做纯重构（拆 `http.ts` / `runtime.ts` / `work-items.ts` / `rooms`，简化 `Subagents.tsx`，Pi 边界去 `as never`，语音/Laya 挪出核心）。每步单独提交，提交信息即记录。
+- 清理进度：已完成 主题测试/档位统一、artifacts+精简文档、拆 http.ts（2004→277 行，routes/*）、Pi 边界去 as never、群聊上限与改名刷新修复。未做：Subagents.tsx 简化（会改失败提示行为，待用户确认）、语音/本地ASR/Laya 挪包（牵涉打包，待确认）、拆 runtime/work-items/rooms 与群任务钩子化（见 [群聊协作设计](design/group-collaboration.md)）。
 
 ## 交付标准（Definition of Done）
 1. `npm run typecheck` 通过。
