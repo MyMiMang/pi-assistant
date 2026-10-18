@@ -93,7 +93,6 @@ export function rememberLocalModelStatus(status: unknown, providerHint?: string,
 // 只认这两个已知事件名（来自本地服务自己的 status，安全元数据）；不改对方的文件。
 // local-asr 事件允许带顶层 provider / modelId（停止后 status.registered 为 null 时仍能定位）；缺省回退到已知 id。
 bus.on((e) => {
-	if (e.type === "local-laya.changed") rememberLocalModelStatus((e as { status?: unknown }).status, "local-laya", undefined, Date.now(), "classifier");
 	if (e.type === "local-asr.changed")
 		rememberLocalModelStatus(
 			(e as { status?: unknown }).status,

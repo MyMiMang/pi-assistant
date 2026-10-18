@@ -372,33 +372,6 @@
       "shim": "packages/openclaw-shim",
       "smoke": "packages/server/test/clawbot.test.ts",
       "note": "腾讯官方微信 ClawBot 插件：只复用协议层（api/cdn/media/send），OpenClaw SDK 由最小垫片提供"
-    },
-    {
-      "name": "laya",
-      "kind": "pypi",
-      "version": "0.4.8",
-      "license": "Apache-2.0",
-      "adapter": "packages/server/src/local-laya",
-      "smoke": "packages/server/test/local-laya.test.ts",
-      "$comment": "本地 Laya 一键安装（可选）：仅在用户显式点按钮后经 pinned uv 装进独立 venv（不装系统 Python、不强制 Docker/VM）；torch 由 Laya 依赖解析，Intel Mac 额外 pin torch==2.2.2/numpy<2/transformers==4.57.6"
-    },
-    {
-      "name": "laya-multilingual",
-      "kind": "huggingface",
-      "repo": "convaiinnovations/laya-multilingual",
-      "revision": "e4e9ddf21a7b1903b7acffd8814ad4307bf63a67",
-      "license": "Apache-2.0",
-      "adapter": "packages/server/src/local-laya/manifest.ts",
-      "$comment": "默认只下这一个 checkpoint；revision = Laya 审核快照 PINNED_REVISIONS。必需文件 + 大小 + SHA256（大文件取 HF LFS oid）见 packages/server/src/local-laya/checkpoint-files.ts，下载后流式校验通过才 activate；复核脚本 scripts/laya-checkpoint-digests.ts"
-    },
-    {
-      "name": "laya-typed-decisions",
-      "kind": "huggingface",
-      "repo": "convaiinnovations/laya-typed-decisions",
-      "revision": "1a793eb568e6718f15941d08f85432581df534e3",
-      "license": "Apache-2.0",
-      "adapter": "packages/server/src/local-laya/manifest.ts",
-      "$comment": "按需下载的 checkpoint；revision = Laya 审核快照 PINNED_REVISIONS。文件清单 / SHA256 同见 checkpoint-files.ts"
     }
   ],
   "licenseAllow": [
