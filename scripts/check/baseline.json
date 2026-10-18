@@ -1,0 +1,53 @@
+{
+	"说明": "只许变小：老大文件行数、原生 select 用法、重复代码数。用 npm run check:baseline 收紧，不要手动放宽。",
+	"size": {
+		"apps/web/src/components/ModelPicker.tsx": 831,
+		"apps/web/src/components/ModelServices.tsx": 670,
+		"apps/web/src/components/RoomChat.tsx": 728,
+		"apps/web/src/components/Settings.tsx": 747,
+		"apps/web/src/components/ui.tsx": 602,
+		"apps/web/src/store.ts": 639,
+		"apps/web/src/voice-input.ts": 991,
+		"apps/web/src/voice-stream.ts": 928,
+		"e2e/agent-details-classic-ui.mjs": 636,
+		"e2e/run.mjs": 2285,
+		"e2e/thinking-slider-ui.mjs": 744,
+		"packages/server/src/desktop.ts": 924,
+		"packages/server/src/local-asr/manager.ts": 708,
+		"packages/server/src/pi-adapter/index.ts": 990,
+		"packages/server/src/proactive.ts": 928,
+		"packages/server/src/rooms/index.ts": 1058,
+		"packages/server/src/runtime.ts": 1381,
+		"packages/server/src/subagents.ts": 711,
+		"packages/server/src/task-waits.ts": 634,
+		"packages/server/src/work-items.ts": 1251,
+		"packages/server/test/local-asr-multimodel.test.ts": 621,
+		"packages/server/test/subagents.test.ts": 927,
+		"packages/server/test/voice-incremental.test.ts": 674,
+		"packages/server/test/work-items.test.ts": 674,
+		"packages/shared/src/theme-manifest.ts": 693,
+		"scripts/local-asr-real-smoke.mjs": 813
+	},
+	"nativeSelect": {
+		"apps/web/src/components/Channels.tsx": 3,
+		"apps/web/src/components/CustomProvider.tsx": 1,
+		"apps/web/src/components/Email.tsx": 1,
+		"apps/web/src/components/ExtensionsTab.tsx": 1,
+		"apps/web/src/components/HindsightSettings.tsx": 2,
+		"apps/web/src/components/ImageModels.tsx": 2,
+		"apps/web/src/components/ModelOptions.tsx": 1,
+		"apps/web/src/components/PetSettings.tsx": 2,
+		"apps/web/src/components/Proactive.tsx": 4,
+		"apps/web/src/components/RoutinesTab.tsx": 3,
+		"apps/web/src/components/ThemeDesigner.tsx": 2,
+		"apps/web/src/components/Usage.tsx": 3
+	},
+	"piImportAllow": [
+		"packages/server/src/image-gen/extension.ts",
+		"packages/server/src/mcp.ts",
+		"packages/server/src/pi-packages.ts",
+		"packages/server/src/vision-ext.ts",
+		"packages/server/src/fast-computer/tool.ts"
+	],
+	"dupClones": 5
+}
