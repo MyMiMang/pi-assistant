@@ -52,6 +52,8 @@ export function HindsightSettings() {
 	const [s, setS] = useState<S | null>(null);
 	const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 	const [testing, setTesting] = useState(false);
+	// 高级（运行方式 / 模型 / 下载源）默认收起；远程模式需要填地址时自动展开
+	const [advOpen, setAdvOpen] = useState(false);
 	const load = () =>
 		api<Data>("/api/memory/hindsight").then((j) => {
 			setD(j);
@@ -103,10 +105,10 @@ export function HindsightSettings() {
 				<Help className="ml-1">在本机单独运行（自带 Python 环境、数据库和数据目录，不碰你电脑上已有的 Python / Hindsight）。首次启用会下载约 300–600 MB 运行环境和约 500 MB 模型，常驻内存约 1–1.5 GB。不可用时自动退回基础记忆，新记忆先排队，恢复后补写。</Help>
 			</p>
 			{s.mode === "local" && (
-				<section className="space-y-1" data-testid="hs-downloads">
-					<div className="text-xs font-medium text-mut">需要下载的内容</div>
+				<details className="space-y-1" data-testid="hs-downloads">
+					<summary className="cursor-pointer text-xs font-medium text-mut">需要下载的内容（首次启用自动下载）</summary>
 					<Downloads group="高级记忆" />
-				</section>
+				</details>
 			)}
 			<div className="min-w-0 space-y-1" data-testid="hindsight-detail">
 				{d.inUse && (d.status.state === "error" || d.status.state === "down") ? (
@@ -118,102 +120,110 @@ export function HindsightSettings() {
 				{d.status.lastError && d.status.pending > 0 && <ErrorBox text={`最近错误：${d.status.lastError}`} />}
 			</div>
 
-			<section className="space-y-2">
-				<div className="text-xs font-medium text-mut">运行方式</div>
-				<div className="flex flex-wrap gap-4">
-					{radio("hs-mode", s.mode === "local", () => setS({ ...s, mode: "local" }), "本机运行（推荐）")}
-					{radio("hs-mode", s.mode === "remote", () => setS({ ...s, mode: "remote" }), "连接远程 Hindsight")}
-				</div>
-				{s.mode === "remote" && (
-					<div className="grid gap-2 sm:grid-cols-2">
-						<Input placeholder="https://hindsight.example.com" value={s.remoteUrl ?? ""} onChange={(e) => setS({ ...s, remoteUrl: e.target.value })} />
-						<Input placeholder="API Key" type="password" value={s.remoteKey} onChange={(e) => setS({ ...s, remoteKey: e.target.value })} />
-					</div>
-				)}
-			</section>
-
-			<section className="space-y-2">
-				<div className="flex items-center gap-1 text-xs font-medium text-mut">
-					① 记忆用模型 <Help>整理、反思记忆时调用。建议选便宜快速的，与聊天模型分开。</Help>
-				</div>
-				<div className="flex gap-2">
-					<select className="pa-input" aria-label="记忆用模型" value={key(s.llm)} onChange={(e) => setS({ ...s, llm: e.target.value ? d.models.find((m) => key(m) === e.target.value) ?? null : null })}>
-						<option value="">自动（当前：{d.autoModel ? modelLabel(d.autoModel) : "无可用模型"}）</option>
-						<ModelOptions models={d.models} />
-					</select>
-					<Button variant="outline" disabled={testing} onClick={() => void test()}>
-						{testing ? "测试中…" : "测试"}
-					</Button>
-				</div>
-				<p className="text-xs text-mut">
-					已用 {d.usage.requests} 次，约 {d.usage.input + d.usage.output} tokens
-					<Help className="ml-1">经本机网关调用你在「模型」里配置的渠道，密钥不会交给 Hindsight。</Help>
-				</p>
-			</section>
-
-			<section className="space-y-2" data-testid="hs-embedding">
-				<div className="flex items-center gap-1 text-xs font-medium text-mut">
-					② 向量模型 <Help>决定“按意思找记忆”的效果。更换后会在后台用记忆原文重新生成全部向量，记忆不会丢。</Help>
-				</div>
-				{d.localEmbeddings.map((e) => radio("hs-emb", s.embedding.kind === "local" && s.embedding.model === e.id, () => setS({ ...s, embedding: { kind: "local", model: e.id } }), <>本地 · {e.name}</>))}
-				{radio("hs-emb", s.embedding.kind === "openai", () => setS({ ...s, embedding: { kind: "openai", baseUrl: EMB_PRESETS[0].baseUrl, model: EMB_PRESETS[0].model } }), "在线（OpenAI 兼容接口）")}
-				{s.embedding.kind === "openai" && (
-					<div className="space-y-2 pl-6">
-						<div className="flex flex-wrap gap-1">
-							{EMB_PRESETS.map((p) => (
-								<button key={p.name} className="pa-chip sm" onClick={() => setS({ ...s, embedding: { kind: "openai", baseUrl: p.baseUrl, model: p.model } })}>
-									{p.name}
-								</button>
-							))}
-						</div>
-						<div className="grid gap-2 sm:grid-cols-2">
-							<Input placeholder="接口地址" value={s.embedding.baseUrl} onChange={(e) => setS({ ...s, embedding: { ...(s.embedding as Emb & { kind: "openai" }), baseUrl: e.target.value } })} />
-							<Input placeholder="模型名" value={s.embedding.model} onChange={(e) => setS({ ...s, embedding: { ...(s.embedding as Emb & { kind: "openai" }), model: e.target.value } })} />
-							<Input placeholder="API Key" type="password" value={s.embeddingKey} onChange={(e) => setS({ ...s, embeddingKey: e.target.value })} />
-							<Input placeholder="维度（可选）" inputMode="numeric" value={s.embedding.dimensions ?? ""} onChange={(e) => setS({ ...s, embedding: { ...(s.embedding as Emb & { kind: "openai" }), dimensions: Number(e.target.value) || undefined } })} />
-						</div>
-					</div>
-				)}
-				{embChanged && <p className="text-xs text-amber-600">保存后会用新模型重建向量，记忆不会丢。</p>}
-			</section>
-
-			<section className="space-y-2" data-testid="hs-reranker">
-				<div className="flex items-center gap-1 text-xs font-medium text-mut">
-					③ 重排序 <Help>对找到的记忆再精排；关闭则只做多路融合。</Help>
-				</div>
-				<div className="flex flex-wrap gap-4">
-					{radio("hs-rr", s.reranker.kind === "local", () => setS({ ...s, reranker: { kind: "local", model: d.localRerankers[0].id } }), "本地")}
-					{radio("hs-rr", s.reranker.kind === "siliconflow", () => setS({ ...s, reranker: { kind: "siliconflow", model: "BAAI/bge-reranker-v2-m3" } }), "硅基流动")}
-					{radio("hs-rr", s.reranker.kind === "alibaba", () => setS({ ...s, reranker: { kind: "alibaba", model: "qwen3-rerank" } }), "阿里云百炼")}
-					{radio("hs-rr", s.reranker.kind === "off", () => setS({ ...s, reranker: { kind: "off" } }), "关闭", "hs-rr-off")}
-				</div>
-				{s.reranker.kind === "local" && (
-					<select className="pa-input" aria-label="本地重排序模型" value={s.reranker.model} onChange={(e) => setS({ ...s, reranker: { kind: "local", model: e.target.value } })}>
-						{d.localRerankers.map((r) => (
-							<option key={r.id} value={r.id}>
-								{r.name}
-							</option>
-						))}
-					</select>
-				)}
-				{(s.reranker.kind === "siliconflow" || s.reranker.kind === "alibaba") && (
-					<div className="grid gap-2 sm:grid-cols-2">
-						<Input placeholder="模型名" value={s.reranker.model} onChange={(e) => setS({ ...s, reranker: { ...(s.reranker as Rr & { model: string }), model: e.target.value } as Rr })} />
-						<Input placeholder="API Key" type="password" value={s.rerankerKey} onChange={(e) => setS({ ...s, rerankerKey: e.target.value })} />
-					</div>
-				)}
-			</section>
-
-			{s.mode === "local" && (
+			<details className="rounded-xl border border-line" open={advOpen || s.mode === "remote"} onToggle={(e) => setAdvOpen(e.currentTarget.open)} data-testid="hs-advanced">
+				<summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+					高级 <span className="ml-1 text-xs font-normal text-mut">运行方式、三个模型、下载源；默认值即可</span>
+				</summary>
+				<div className="space-y-4 px-3 pb-3">
 				<section className="space-y-2">
-					<div className="text-xs font-medium text-mut">下载源（Python 依赖、模型）</div>
+					<div className="text-xs font-medium text-mut">运行方式</div>
 					<div className="flex flex-wrap gap-4">
-						{radio("hs-mirror", s.mirror === "auto", () => setS({ ...s, mirror: "auto" }), "自动（官方源连不上就用国内镜像）")}
-						{radio("hs-mirror", s.mirror === "official", () => setS({ ...s, mirror: "official" }), "官方源")}
-						{radio("hs-mirror", s.mirror === "china", () => setS({ ...s, mirror: "china" }), "国内镜像（清华 PyPI / hf-mirror）")}
+						{radio("hs-mode", s.mode === "local", () => setS({ ...s, mode: "local" }), "本机运行（推荐）")}
+						{radio("hs-mode", s.mode === "remote", () => setS({ ...s, mode: "remote" }), "连接远程 Hindsight")}
 					</div>
+					{s.mode === "remote" && (
+						<div className="grid gap-2 sm:grid-cols-2">
+							<Input placeholder="https://hindsight.example.com" value={s.remoteUrl ?? ""} onChange={(e) => setS({ ...s, remoteUrl: e.target.value })} />
+							<Input placeholder="API Key" type="password" value={s.remoteKey} onChange={(e) => setS({ ...s, remoteKey: e.target.value })} />
+						</div>
+					)}
 				</section>
-			)}
+
+				<section className="space-y-2">
+					<div className="flex items-center gap-1 text-xs font-medium text-mut">
+						① 记忆用模型 <Help>整理、反思记忆时调用。建议选便宜快速的，与聊天模型分开。</Help>
+					</div>
+					<div className="flex gap-2">
+						<select className="pa-input" aria-label="记忆用模型" value={key(s.llm)} onChange={(e) => setS({ ...s, llm: e.target.value ? d.models.find((m) => key(m) === e.target.value) ?? null : null })}>
+							<option value="">自动（当前：{d.autoModel ? modelLabel(d.autoModel) : "无可用模型"}）</option>
+							<ModelOptions models={d.models} />
+						</select>
+						<Button variant="outline" disabled={testing} onClick={() => void test()}>
+							{testing ? "测试中…" : "测试"}
+						</Button>
+					</div>
+					<p className="text-xs text-mut">
+						已用 {d.usage.requests} 次，约 {d.usage.input + d.usage.output} tokens
+						<Help className="ml-1">经本机网关调用你在「模型」里配置的渠道，密钥不会交给 Hindsight。</Help>
+					</p>
+				</section>
+
+				<section className="space-y-2" data-testid="hs-embedding">
+					<div className="flex items-center gap-1 text-xs font-medium text-mut">
+						② 向量模型 <Help>决定“按意思找记忆”的效果。更换后会在后台用记忆原文重新生成全部向量，记忆不会丢。</Help>
+					</div>
+					{d.localEmbeddings.map((e) => radio("hs-emb", s.embedding.kind === "local" && s.embedding.model === e.id, () => setS({ ...s, embedding: { kind: "local", model: e.id } }), <>本地 · {e.name}</>))}
+					{radio("hs-emb", s.embedding.kind === "openai", () => setS({ ...s, embedding: { kind: "openai", baseUrl: EMB_PRESETS[0].baseUrl, model: EMB_PRESETS[0].model } }), "在线（OpenAI 兼容接口）")}
+					{s.embedding.kind === "openai" && (
+						<div className="space-y-2 pl-6">
+							<div className="flex flex-wrap gap-1">
+								{EMB_PRESETS.map((p) => (
+									<button key={p.name} className="pa-chip sm" onClick={() => setS({ ...s, embedding: { kind: "openai", baseUrl: p.baseUrl, model: p.model } })}>
+										{p.name}
+									</button>
+								))}
+							</div>
+							<div className="grid gap-2 sm:grid-cols-2">
+								<Input placeholder="接口地址" value={s.embedding.baseUrl} onChange={(e) => setS({ ...s, embedding: { ...(s.embedding as Emb & { kind: "openai" }), baseUrl: e.target.value } })} />
+								<Input placeholder="模型名" value={s.embedding.model} onChange={(e) => setS({ ...s, embedding: { ...(s.embedding as Emb & { kind: "openai" }), model: e.target.value } })} />
+								<Input placeholder="API Key" type="password" value={s.embeddingKey} onChange={(e) => setS({ ...s, embeddingKey: e.target.value })} />
+								<Input placeholder="维度（可选）" inputMode="numeric" value={s.embedding.dimensions ?? ""} onChange={(e) => setS({ ...s, embedding: { ...(s.embedding as Emb & { kind: "openai" }), dimensions: Number(e.target.value) || undefined } })} />
+							</div>
+						</div>
+					)}
+					{embChanged && <p className="text-xs text-amber-600">保存后会用新模型重建向量，记忆不会丢。</p>}
+				</section>
+
+				<section className="space-y-2" data-testid="hs-reranker">
+					<div className="flex items-center gap-1 text-xs font-medium text-mut">
+						③ 重排序 <Help>对找到的记忆再精排；关闭则只做多路融合。</Help>
+					</div>
+					<div className="flex flex-wrap gap-4">
+						{radio("hs-rr", s.reranker.kind === "local", () => setS({ ...s, reranker: { kind: "local", model: d.localRerankers[0].id } }), "本地")}
+						{radio("hs-rr", s.reranker.kind === "siliconflow", () => setS({ ...s, reranker: { kind: "siliconflow", model: "BAAI/bge-reranker-v2-m3" } }), "硅基流动")}
+						{radio("hs-rr", s.reranker.kind === "alibaba", () => setS({ ...s, reranker: { kind: "alibaba", model: "qwen3-rerank" } }), "阿里云百炼")}
+						{radio("hs-rr", s.reranker.kind === "off", () => setS({ ...s, reranker: { kind: "off" } }), "关闭", "hs-rr-off")}
+					</div>
+					{s.reranker.kind === "local" && (
+						<select className="pa-input" aria-label="本地重排序模型" value={s.reranker.model} onChange={(e) => setS({ ...s, reranker: { kind: "local", model: e.target.value } })}>
+							{d.localRerankers.map((r) => (
+								<option key={r.id} value={r.id}>
+									{r.name}
+								</option>
+							))}
+						</select>
+					)}
+					{(s.reranker.kind === "siliconflow" || s.reranker.kind === "alibaba") && (
+						<div className="grid gap-2 sm:grid-cols-2">
+							<Input placeholder="模型名" value={s.reranker.model} onChange={(e) => setS({ ...s, reranker: { ...(s.reranker as Rr & { model: string }), model: e.target.value } as Rr })} />
+							<Input placeholder="API Key" type="password" value={s.rerankerKey} onChange={(e) => setS({ ...s, rerankerKey: e.target.value })} />
+						</div>
+					)}
+				</section>
+
+				{s.mode === "local" && (
+					<section className="space-y-2">
+						<div className="text-xs font-medium text-mut">下载源（Python 依赖、模型）</div>
+						<div className="flex flex-wrap gap-4">
+							{radio("hs-mirror", s.mirror === "auto", () => setS({ ...s, mirror: "auto" }), "自动（官方源连不上就用国内镜像）")}
+							{radio("hs-mirror", s.mirror === "official", () => setS({ ...s, mirror: "official" }), "官方源")}
+							{radio("hs-mirror", s.mirror === "china", () => setS({ ...s, mirror: "china" }), "国内镜像（清华 PyPI / hf-mirror）")}
+						</div>
+					</section>
+				)}
+
+				</div>
+			</details>
 
 			<div className="flex items-center gap-3">
 				<Button disabled={!dirty} onClick={() => void save()}>

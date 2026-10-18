@@ -717,6 +717,7 @@ await step("高级记忆（Hindsight）：设置三个模型 → 连接（假的
 		await p.goto(`${BASE}/?settings=memory`);
 		const panel = p.getByTestId("hindsight-settings");
 		await panel.waitFor();
+		await panel.getByTestId("hs-advanced").evaluate((d) => (d.open = true));
 		await panel.getByText("连接远程 Hindsight").click();
 		await panel.getByPlaceholder("https://hindsight.example.com").fill(`http://127.0.0.1:${port}`);
 		await panel.getByPlaceholder("API Key").first().fill("hs-e2e-key");
