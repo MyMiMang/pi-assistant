@@ -83,9 +83,16 @@ try {
 	const killHelpOverlay = () => void page.addStyleTag({ content: '[data-testid="help-pop"]{pointer-events:none !important}' }).catch(() => {});
 	page.on("load", killHelpOverlay);
 	await killHelpOverlay();
+	// 「?」气泡由悬停 / 聚焦打开且是异步渲染：先移开鼠标、让说明按钮失焦，再等气泡真正消失，避免偶发挡住按钮
 	const dismissHelp = async () => {
-		if (await page.locator('[data-testid="help-pop"]').count()) await page.keyboard.press("Escape");
+		const pop = page.locator('[data-testid="help-pop"]');
 		await page.mouse.move(2, 2);
+		await page.evaluate(() => {
+			const el = document.activeElement;
+			if (el instanceof HTMLElement && el.dataset.testid === "help") el.blur();
+		});
+		if (await pop.count()) await page.keyboard.press("Escape");
+		await pop.waitFor({ state: "detached", timeout: 5000 });
 	};
 	mkdirSync(artifactDir("screenshots"), { recursive: true });
 
