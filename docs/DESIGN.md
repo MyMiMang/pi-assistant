@@ -518,6 +518,7 @@ Pi 的 API 变化只需要改这个目录；`runtime.ts`、`http.ts` 等只依�
 - `ci.yml`：每次 push/PR 跑 `check:pi`、typecheck、单元+兼容测试、Worker 测试、构建、E2E（上传截图）。
 - `pi-latest.yml`：**每周一自动**把 Pi 升到 npm 最新版（走 `scripts/pi-update.mjs`）→ 跑全部测试 → **通过后才 `finalize` 记录 `compat.json` 的 `testedWith` 并自动开 PR**；失败则**自动开 issue** 附日志（`testedWith` 不前进），提示需要改 `pi-adapter`。
 - `renovate.json`：Pi 包单独分组、发布 1 天后即提 PR（与上面互为备份）。
+- `hindsight-latest.yml`：高级记忆（Hindsight）同一套：每周一 `scripts/hindsight-update.mjs latest`（Python + npm 一起升、同步版本记录）→ typecheck + 单测 + Hindsight 真机冒烟 → 通过开 PR、失败开 issue；只改适配层（见 `design/memory-health.md`）。
 
 **6）发布与用户侧更新**：合并升级 PR → 打 tag `vX.Y.Z` → `release.yml` 构建 Mac/Windows 安装包（sidecar 内含新版 Pi）→ 托盘程序的 Tauri updater（签名校验）静默下载安装。用户数据（SQLite、Pi 会话 JSONL、加密凭据）与程序分离，升级不丢。
 
