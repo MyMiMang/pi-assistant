@@ -137,7 +137,9 @@ function popoverStyle(anchor: HTMLElement, panel: HTMLElement, placement: "up" |
 		return { position: "fixed", top, left, zIndex: 70, visibility: "visible", maxHeight: Math.max(200, Math.round(Math.min(vh * 0.72, vh - POP_SHEET_BOTTOM - POP_MARGIN))) };
 	}
 	// 宽屏：限高，超出视口的部分交给菜单内部滚动，弹层本身不被裁、也不出屏
-	const maxHeight = Math.max(120, below ? roomBelow : roomAbove);
+	// 上限就是这一侧真正剩下的空间：以前固定保底 120，矮视口里空间不到 120 时会把菜单顶出屏（例：按钮 top=129 → 菜单 top=-1）；
+	// 只在空间极小（<48）时才保底，避免变成一条缝
+	const maxHeight = Math.max(48, Math.floor(below ? roomBelow : roomAbove));
 	return below
 		? { position: "fixed", top: r.bottom + POP_GAP, left, zIndex: 70, visibility: "visible", maxHeight }
 		: { position: "fixed", bottom: vh - r.top + POP_GAP, left, zIndex: 70, visibility: "visible", maxHeight };

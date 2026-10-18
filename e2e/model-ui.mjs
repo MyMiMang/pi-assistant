@@ -332,7 +332,7 @@ try {
 	{
 		const g = await geom("default-model-picker", "default-model-menu");
 		assert.ok(g.btn && g.menu);
-		assert.ok(g.menu.y >= -0.5 && g.menu.y + g.menu.height <= 200 + 1, "矮视口菜单不能出屏");
+		assert.ok(g.menu.y >= -0.5 && g.menu.y + g.menu.height <= 200 + 1, `矮视口菜单不能出屏：${JSON.stringify(g)}`);
 		assert.ok(g.menu.y < g.btn.y, `下方放不下应翻到按钮上方：menuTop=${g.menu.y} btnTop=${g.btn.y}`);
 		assert.ok(Math.abs(g.menu.x - g.btn.x) <= 2, "翻转后水平仍锚定按钮");
 	}
