@@ -733,6 +733,7 @@ await step("高级记忆（Hindsight）：设置三个模型 → 连接（假的
 		await c.close();
 		// 这个助理单独改用高级记忆：之前在 basic 里记下的内容自动补写进 Hindsight
 		await infoTab("记忆");
+		await expandDetails(pane, "memory-options");
 		await pane.getByTestId("memory-provider").click();
 		await page.getByTestId("memory-provider-option-hindsight").click();
 		await pane.getByTestId("hindsight-status").getByText("高级记忆运行中").waitFor({ timeout: 20_000 });

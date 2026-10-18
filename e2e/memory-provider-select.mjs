@@ -123,6 +123,10 @@ const openMemory = async () => {
 		await page.getByTestId('info-tabs-more').click();
 		await page.locator('[data-testid=info-tabs-menu] [data-itab=memory]').click();
 	}
+	// 记忆服务收在「高级」里
+	const opts = page.getByTestId('memory-options');
+	await opts.waitFor();
+	if (!(await opts.evaluate((el) => el.open))) await opts.locator(':scope > summary').click();
 	await page.getByTestId('memory-provider').waitFor();
 };
 

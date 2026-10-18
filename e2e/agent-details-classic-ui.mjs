@@ -399,10 +399,10 @@ try {
 	assert.match(editedLabel, /共享·关于你/);
 	assert.match(editedLabel, /日志/);
 	// 「待核验」只筛 status=draft；本脚本没有草稿种子（没有现成 API），所以应为空。
-	await memoryTab.getByRole("button", { name: "待核验", exact: true }).click();
-	await waitFor(async () => (await memoryTab.locator(".pa-memory-item").count()) === 0, 5000, "待核验筛掉已核验条目");
-	await memoryTab.getByRole("button", { name: "待核验", exact: true }).click();
-	await waitFor(async () => (await memoryTab.locator(".pa-memory-item").count()) > 0, 5000, "取消待核验筛选");
+	await memoryTab.getByRole("button", { name: "待确认", exact: true }).click();
+	await waitFor(async () => (await memoryTab.locator(".pa-memory-item").count()) === 0, 5000, "待确认筛掉已确认条目");
+	await memoryTab.getByRole("button", { name: "待确认", exact: true }).click();
+	await waitFor(async () => (await memoryTab.locator(".pa-memory-item").count()) > 0, 5000, "取消待确认筛选");
 	await paneShot("04-memory-edited-460-pane.png");
 	console.log("PASS 记忆：同库编辑保留 id、跨库按响应 id 迁移无重复；共享/助理/对话作用域标签；待核验筛选按 status");
 

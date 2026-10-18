@@ -8,7 +8,9 @@ import { Badge, Button, cx, Help, Input, Select, useConfirm } from "./ui";
 const KIND: Record<MemoryEntry["kind"], string> = { fact: "事实", experience: "日志", note: "便签" };
 const SCOPE: Record<MemoryEntry["scope"], string> = { user: "共享·关于你", agent: "仅此助理", conversation: "仅当前对话", task: "任务草稿" };
 const SCOPE_TONE: Record<MemoryEntry["scope"], "accent" | "zinc" | "amber"> = { user: "accent", agent: "zinc", conversation: "amber", task: "amber" };
-const SOURCE_LABEL: Record<string, string> = { agent: "助理记下", user: "你添加", subagent: "子代理草稿", background: "后台草稿", group: "群聊", promotion: "核验晋升" };
+const SOURCE_LABEL: Record<string, string> = { agent: "助理记下", user: "你添加", subagent: "子代理草稿", background: "后台草稿", group: "群聊", promotion: "确认后保存" };
+/** 默认先露出最近几条，其余收进「其余 N 条」；搜索或筛选时全部平铺。 */
+const SHOWN = 6;
 
 /** 助理信息面板 › 记忆：查看 / 搜索 / 添加 / 编辑 / 删除 / 导出（与记忆后端无关） */
 export function MemoryTab({ agentId }: { agentId: string }) {
@@ -111,9 +113,33 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 			setDelBusy("");
 		}
 	};
+	const flat = !!q.trim() || !!filter || draftOnly;
+	const row = (m: MemoryEntry) => (
+		<li key={m.id} className="pa-memory-item" data-kind={m.kind}>
+			<div className="pa-memory-scope">
+				<Badge tone={SCOPE_TONE[m.scope]}>{SCOPE[m.scope]}</Badge>
+				<span>{KIND[m.kind]}</span>
+				{m.status === "draft" && <Badge tone="amber">待确认</Badge>}
+				<span>{new Date(m.createdAt).toLocaleDateString("zh-CN")}</span>
+				{m.expiresAt && <span>· {new Date(m.expiresAt).toLocaleDateString("zh-CN")} 到期</span>}
+				{m.source && <span>· {SOURCE_LABEL[m.source] ?? m.source}</span>}
+			</div>
+			<div className="pa-memory-text">{m.text}</div>
+			<div className="pa-memory-actions">
+				<Button size="sm" variant="ghost" onClick={() => setEdit({ id: m.id, text: m.text, kind: m.kind, scope: m.scope })} data-testid={`memory-edit-${m.id}`}>
+					<Pencil size={12} /> 编辑
+				</Button>
+				<Button size="sm" variant="ghost" className="text-red-600 dark:text-red-400" aria-label="删除记忆" disabled={delBusy === m.id} onClick={() => void del(m)} data-testid={`memory-delete-${m.id}`}>
+					<Trash2 size={12} /> 删除
+				</Button>
+				{m.status === "draft" && <Help>这条是小帮手或后台任务记下的，助理在原对话里确认后才会长期保存。</Help>}
+			</div>
+		</li>
+	);
 	return (
 		<div className="space-y-3" data-testid="memory-tab">
 			{confirmDlg}
+			<p className="pa-info-lead !mt-0">它记得的关于你和工作的事 <Help>在聊天里说“记住……”它就会记下；也可以点 + 手动添加。“共享·关于你”的记忆所有助理都能用。</Help></p>
 			{note && <div className="text-xs text-mut">{note}</div>}
 			{data?.provider.capabilities.reflect && (
 				<div className="pa-card space-y-2 !p-3">
@@ -147,8 +173,8 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 						{k ? KIND[k] : "全部"}
 					</button>
 				))}
-				<button className={cx("pa-chip sm", draftOnly && "!bg-hover !text-fg font-medium")} onClick={() => setDraftOnly((v) => !v)} title="只看子代理/后台写的待核验草稿">
-					待核验
+				<button className={cx("pa-chip sm", draftOnly && "!bg-hover !text-fg font-medium")} onClick={() => setDraftOnly((v) => !v)} title="只看小帮手或后台记下、还没确认的">
+					待确认
 				</button>
 			</div>
 			{edit && (
@@ -189,35 +215,16 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 					<div className="mt-1 text-xs">在聊天里说“记住……”，或点 + 手动添加</div>
 				</div>
 			)}
-			<ul>
-				{items.map((m) => (
-					<li key={m.id} className="pa-memory-item" data-kind={m.kind}>
-						<div className="pa-memory-scope">
-							<Badge tone={SCOPE_TONE[m.scope]}>{SCOPE[m.scope]}</Badge>
-							<span>{KIND[m.kind]}</span>
-							{m.status === "draft" && <Badge tone="amber">待核验</Badge>}
-							<span>{new Date(m.createdAt).toLocaleDateString("zh-CN")}</span>
-							{m.expiresAt && <span>· {new Date(m.expiresAt).toLocaleDateString("zh-CN")} 到期</span>}
-							{m.source && <span>· {SOURCE_LABEL[m.source] ?? m.source}</span>}
-						</div>
-						<div className="pa-memory-text">{m.text}</div>
-						<div className="pa-memory-actions">
-							<Button size="sm" variant="ghost" onClick={() => setEdit({ id: m.id, text: m.text, kind: m.kind, scope: m.scope })} data-testid={`memory-edit-${m.id}`}>
-								<Pencil size={12} /> 编辑
-							</Button>
-							<Button size="sm" variant="ghost" className="text-red-600 dark:text-red-400" aria-label="删除记忆" disabled={delBusy === m.id} onClick={() => void del(m)} data-testid={`memory-delete-${m.id}`}>
-								<Trash2 size={12} /> 删除
-							</Button>
-							{m.status === "draft" && <Help>这条内容来自子代理或后台任务。负责的助理需在原对话中核对，再决定是否保存为长期记忆。</Help>}
-						</div>
-					</li>
-				))}
-			</ul>
-			<div className="mt-3 space-y-2 border-t border-line pt-3" data-testid="memory-options">
-				<div className="pa-info-sechead">
-					<strong>记忆选项</strong>
-					<small>服务、导入导出与高级回想</small>
-				</div>
+			<ul data-testid="memory-list">{(flat ? items : items.slice(0, SHOWN)).map(row)}</ul>
+			{!flat && items.length > SHOWN && (
+				<details className="pa-info-details" data-testid="memory-more">
+					<summary>显示全部 {items.length} 条<small>其余 {items.length - SHOWN} 条</small></summary>
+					<ul className="max-h-96 overflow-y-auto">{items.slice(SHOWN).map(row)}</ul>
+				</details>
+			)}
+			<details className="pa-info-details" data-testid="memory-options" open={!!provErr || undefined}>
+				<summary>高级<small>记忆服务 · {data?.agentProvider ? (provs?.providers.find((p) => p.id === data.agentProvider)?.name ?? data.agentProvider) : "跟随全局"} · 导入 / 导出</small></summary>
+				<div className="pa-info-details-body space-y-2">
 				<div className="flex flex-wrap items-center gap-2 text-xs text-mut">
 					<Brain size={14} className="shrink-0" />
 					<Select
@@ -254,7 +261,8 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 						<span className="truncate">{hs.state === "ready" ? "高级记忆运行中" : hs.detail}{hs.pending ? ` · 待同步 ${hs.pending} 条` : ""}</span>
 					</div>
 				)}
-			</div>
+				</div>
+			</details>
 			{delErr && <div className="text-sm text-red-600" data-testid="memory-delete-error">{delErr}</div>}
 		</div>
 	);
