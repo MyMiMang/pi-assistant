@@ -1117,6 +1117,8 @@ await step("助理电脑开箱即用：向导没开启时什么都不下载；�
 	await ds.getByTestId("desktop-idle").click();
 	await page.getByTestId("desktop-idle-option-30").click();
 	await page.waitForFunction(async (b) => (await (await fetch(`${b}/api/desktop`)).json()).settings.idleMinutes === 30, BASE);
+	await ds.getByTestId("desktop-advanced").evaluate((d) => (d.open = true));
+	await ds.getByTestId("desktop-download-source").evaluate((d) => (d.open = true));
 	await ds.getByTestId("desktop-mirror").fill("https://ghcr.nju.edu.cn/");
 	await ds.getByRole("button", { name: "保存" }).click();
 	await ds.getByText("ghcr.nju.edu.cn/mymimang/pi-assistant-desktop", { exact: false }).waitFor();
@@ -1263,6 +1265,7 @@ await step("共用电脑：两个助理同一台电脑（界面显示共用）�
 		await page.getByTestId("settings-nav").locator("button[data-tab=computer]").click();
 		const sec = page.getByTestId("desktop-shared");
 		await sec.getByText("共用电脑", { exact: true }).waitFor();
+		await sec.getByTestId("desktop-agents").evaluate((d) => (d.open = true));
 		await sec.getByTestId(`desktop-agent-${two.id}`).getByTestId("agent-merge").waitFor();
 		await page.screenshot({ path: join(SHOTS, "68-settings-shared.png") });
 		await page.keyboard.press("Escape");

@@ -94,8 +94,10 @@ export function DesktopSettings() {
 	const purgeRef = useRef(false);
 	// 下载源（镜像加速）属于高级设置，默认收起；有自定义值 / 下载或保存失败时自动展开，方便发现
 	const [dlOpen, setDlOpen] = useState(false);
+	// 「高级」（运行方式 / 资源 / 下载来源）默认收起；下载来源需要展开时连同高级一起展开
+	const [advOpen, setAdvOpen] = useState(false);
 	useEffect(() => {
-		if (g?.settings.mirror || g?.settings.fileMirror || g?.install.phase === "error" || err) setDlOpen(true);
+		if (g?.settings.mirror || g?.settings.fileMirror || g?.install.phase === "error" || err) (setDlOpen(true), setAdvOpen(true));
 	}, [g?.settings.mirror, g?.settings.fileMirror, g?.install.phase, err]);
 	if (!g) {
 		if (loading) return <div className="text-sm text-zinc-500" data-testid="desktop-loading">{t("正在载入…")}</div>;
@@ -226,36 +228,7 @@ export function DesktopSettings() {
 				)}
 			</section>
 
-			<section className="space-y-2">
-				<div className="font-semibold">{t("运行方式")}</div>
-				<div className="space-y-1.5 text-sm">
-					<label className="flex items-start gap-2">
-						<input type="radio" name="desk-backend" className="mt-1" checked={s.backend === "auto"} onChange={() => void put({ backend: "auto" })} />
-						<span>
-							{t("自带运行时（推荐）")}
-							<span className="block text-xs text-zinc-500">
-								{g.builtin.ready ? g.builtin.label : t("{label}正在开发中，暂时使用本机已装的 Docker", { label: g.builtin.label })}
-							</span>
-						</span>
-					</label>
-					{g.vm && s.backend === "auto" && s.enabled && (
-						<div className="ml-6 text-xs text-zinc-500" data-testid="desktop-vm-state">
-							{t("虚拟机：")}
-							{g.vm.phase === "creating" || g.vm.phase === "booting" ? t(g.vm.detail ?? "正在启动") : g.vm.phase === "stopping" ? t("正在关机") : g.vm.running ? t("运行中") : t("已关机")}
-							{g.vm.phase === "error" && g.vm.detail ? ` · ${g.vm.detail}` : ""}
-						</div>
-					)}
-					<label className="flex items-start gap-2">
-						<input type="radio" name="desk-backend" className="mt-1" checked={s.backend === "docker"} onChange={() => void put({ backend: "docker" })} data-testid="desktop-backend-docker" />
-						<span>
-							{t("使用已安装的 Docker")}
-							<span className="block text-xs text-zinc-500">{g.dockerAvailable ? t("检测到本机 Docker / Podman") : t("没有检测到 Docker / Podman")}</span>
-						</span>
-					</label>
-				</div>
-			</section>
-
-			{s.enabled && <SharedComputerSection />}
+			{s.enabled && <SharedComputerSection separate={s.separate?.length ?? 0} />}
 
 			<SandboxComputerSettings />
 
@@ -272,32 +245,68 @@ export function DesktopSettings() {
 				/>
 			</section>
 
-			{s.enabled && <VmResources g={g} put={put} />}
-
-			<details className="rounded-xl border border-line" open={dlOpen} onToggle={(e) => setDlOpen(e.currentTarget.open)} data-testid="desktop-download-source">
+			<details className="rounded-xl border border-line" open={advOpen} onToggle={(e) => setAdvOpen(e.currentTarget.open)} data-testid="desktop-advanced">
 				<summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
-					{t("下载来源")} <span className="ml-1 text-xs font-normal text-zinc-500">{t("国内下载慢时可改（高级）")}</span>
+					{t("高级")} <span className="ml-1 text-xs font-normal text-zinc-500">{t("运行方式、资源、下载来源，一般不用改")}</span>
 				</summary>
-				<div className="space-y-4 px-3 pb-3">
+				<div className="space-y-6 px-3 pb-3">
 					<section className="space-y-2">
-						<div className="font-semibold">{t("镜像下载地址")}</div>
-						<div className="text-sm text-zinc-500">{t("国内下载慢时可以填加速地址（替换 ghcr.io），例如 ghcr.nju.edu.cn。下载内容按固定版本校验，换地址不影响安全。")}</div>
-						<div className="flex gap-2">
-							<Input value={mirror ?? s.mirror} placeholder="ghcr.io" onChange={(e) => setMirror(e.target.value)} data-testid="desktop-mirror" />
-							<Button variant="outline" disabled={mirror === null || mirror === s.mirror} onClick={() => void put({ mirror: mirror ?? "" }).then((r) => r && setMirror(null))}>{t("保存")}</Button>
+						<div className="font-semibold">{t("运行方式")}</div>
+						<div className="space-y-1.5 text-sm">
+							<label className="flex items-start gap-2">
+								<input type="radio" name="desk-backend" className="mt-1" checked={s.backend === "auto"} onChange={() => void put({ backend: "auto" })} />
+								<span>
+									{t("自带运行时（推荐）")}
+									<span className="block text-xs text-zinc-500">
+										{g.builtin.ready ? g.builtin.label : t("{label}正在开发中，暂时使用本机已装的 Docker", { label: g.builtin.label })}
+									</span>
+								</span>
+							</label>
+							{g.vm && s.backend === "auto" && s.enabled && (
+								<div className="ml-6 text-xs text-zinc-500" data-testid="desktop-vm-state">
+									{t("虚拟机：")}
+									{g.vm.phase === "creating" || g.vm.phase === "booting" ? t(g.vm.detail ?? "正在启动") : g.vm.phase === "stopping" ? t("正在关机") : g.vm.running ? t("运行中") : t("已关机")}
+									{g.vm.phase === "error" && g.vm.detail ? ` · ${g.vm.detail}` : ""}
+								</div>
+							)}
+							<label className="flex items-start gap-2">
+								<input type="radio" name="desk-backend" className="mt-1" checked={s.backend === "docker"} onChange={() => void put({ backend: "docker" })} data-testid="desktop-backend-docker" />
+								<span>
+									{t("使用已安装的 Docker")}
+									<span className="block text-xs text-zinc-500">{g.dockerAvailable ? t("检测到本机 Docker / Podman") : t("没有检测到 Docker / Podman")}</span>
+								</span>
+							</label>
 						</div>
-						<div className="break-all text-xs text-zinc-400">{g.image.ref}{g.image.custom ? `（${t("自定义镜像")}）` : ""}</div>
 					</section>
-					{(g.builtin.id === "lima" || g.builtin.id === "wsl") && (
-						<section className="space-y-2">
-							<div className="font-semibold">{t("虚拟机组件下载加速")}</div>
-							<div className="text-sm text-zinc-500">{t("从 GitHub 下载运行时组件慢时填加速前缀，例如 https://ghfast.top/ 。文件按固定摘要校验，加速失败会自动回到官方地址。")}</div>
-							<div className="flex gap-2">
-								<Input value={fileMirror ?? s.fileMirror} placeholder={t("留空 = 直连 GitHub")} onChange={(e) => setFileMirror(e.target.value)} data-testid="desktop-file-mirror" />
-								<Button variant="outline" disabled={fileMirror === null || fileMirror === s.fileMirror} onClick={() => void put({ fileMirror: fileMirror ?? "" }).then((r) => r && setFileMirror(null))}>{t("保存")}</Button>
-							</div>
-						</section>
-					)}
+
+					{s.enabled && <VmResources g={g} put={put} />}
+
+					<details className="rounded-xl border border-line" open={dlOpen} onToggle={(e) => setDlOpen(e.currentTarget.open)} data-testid="desktop-download-source">
+						<summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+							{t("下载来源")} <span className="ml-1 text-xs font-normal text-zinc-500">{t("国内下载慢时可改（高级）")}</span>
+						</summary>
+						<div className="space-y-4 px-3 pb-3">
+							<section className="space-y-2">
+								<div className="font-semibold">{t("镜像下载地址")}</div>
+								<div className="text-sm text-zinc-500">{t("国内下载慢时填加速地址。")} <Help>{t("替换 ghcr.io，例如 ghcr.nju.edu.cn。下载内容按固定版本校验，换地址不影响安全。")}</Help></div>
+								<div className="flex gap-2">
+									<Input value={mirror ?? s.mirror} placeholder="ghcr.io" onChange={(e) => setMirror(e.target.value)} data-testid="desktop-mirror" />
+									<Button variant="outline" disabled={mirror === null || mirror === s.mirror} onClick={() => void put({ mirror: mirror ?? "" }).then((r) => r && setMirror(null))}>{t("保存")}</Button>
+								</div>
+								<div className="break-all text-xs text-zinc-400">{g.image.ref}{g.image.custom ? `（${t("自定义镜像")}）` : ""}</div>
+							</section>
+							{(g.builtin.id === "lima" || g.builtin.id === "wsl") && (
+								<section className="space-y-2">
+									<div className="font-semibold">{t("虚拟机组件下载加速")}</div>
+									<div className="text-sm text-zinc-500">{t("从 GitHub 下载组件慢时填加速前缀。")} <Help>{t("例如 https://ghfast.top/ 。文件按固定摘要校验，加速失败会自动回到官方地址。")}</Help></div>
+									<div className="flex gap-2">
+										<Input value={fileMirror ?? s.fileMirror} placeholder={t("留空 = 直连 GitHub")} onChange={(e) => setFileMirror(e.target.value)} data-testid="desktop-file-mirror" />
+										<Button variant="outline" disabled={fileMirror === null || fileMirror === s.fileMirror} onClick={() => void put({ fileMirror: fileMirror ?? "" }).then((r) => r && setFileMirror(null))}>{t("保存")}</Button>
+									</div>
+								</section>
+							)}
+						</div>
+					</details>
 				</div>
 			</details>
 			{err && <div className="text-xs text-red-600">{err}</div>}
@@ -357,27 +366,31 @@ function VmResources({ g, put }: { g: DesktopGlobal; put: (b: Partial<DesktopGlo
 	);
 }
 
-/** 共用电脑：说明 + 每个助理用哪台电脑 */
-function SharedComputerSection() {
+/** 共用电脑：一行说明 + 可折叠的「每个助理用哪台电脑」（助理多时默认收起，只显示计数） */
+function SharedComputerSection({ separate }: { separate: number }) {
 	const agents = useStore((st) => st.agents);
+	const [open, setOpen] = useState(agents.length <= 3);
 	return (
 		<section className="space-y-2" data-testid="desktop-shared">
 			<div className="font-semibold">{t("共用电脑")}</div>
 			<div className="text-sm text-zinc-500">
-				{t("所有助理默认共用一台电脑：同样的文件、浏览器登录状态（在一个助理里登录过，其他助理也能用）和已装的应用。")}{" "}
-				<Help>{t("每个助理有自己的屏幕和浏览器标签页，同时干活不互相抢鼠标键盘；需要时助理会自己开一块屏幕，或者开一个不带登录状态的浏览器环境。需要长期分开账号的助理，可以给它开“单独的电脑”。")}</Help>
+				{t("助理们默认共用一台电脑，登录一次大家都能用。")}{" "}
+				<Help>{t("共用同样的文件、浏览器登录状态和已装的应用。每个助理有自己的屏幕和浏览器标签页，同时干活不互相抢鼠标键盘；需要长期分开账号的助理，可以给它开“单独的电脑”。")}</Help>
 			</div>
-			<div className="divide-y divide-line rounded-xl border border-line">
-				{agents.map((a) => (
-					<div key={a.id} className="flex items-start gap-3 p-3" data-testid={`desktop-agent-${a.id}`}>
-						<Avatar agentId={a.id} text={avatarText(a.avatar)} color={a.color} size={28} />
-						<div className="min-w-0 flex-1">
-							<div className="text-sm font-medium">{a.name}</div>
+			<details className="rounded-xl border border-line" open={open} onToggle={(e) => setOpen(e.currentTarget.open)} data-testid="desktop-agents">
+				<summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+					{t("每个助理用哪台电脑")} <span className="ml-1 text-xs font-normal text-zinc-500">{t("{n} 个助理", { n: agents.length })}{separate ? t(" · {m} 个单独", { m: separate }) : t(" · 全部共用")}</span>
+				</summary>
+				<div className="max-h-80 divide-y divide-line overflow-y-auto border-t border-line">
+					{agents.map((a) => (
+						<div key={a.id} className="flex items-center gap-3 px-3 py-2" data-testid={`desktop-agent-${a.id}`}>
+							<Avatar agentId={a.id} text={avatarText(a.avatar)} color={a.color} size={22} />
+							<div className="min-w-0 flex-1 truncate text-sm">{a.name}</div>
 							<AgentComputer agentId={a.id} compact />
 						</div>
-					</div>
-				))}
-			</div>
+					))}
+				</div>
+			</details>
 		</section>
 	);
 }

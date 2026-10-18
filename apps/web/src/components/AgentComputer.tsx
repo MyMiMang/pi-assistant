@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
-import { Button, cx, useConfirm } from "./ui";
+import { Button, cx, Help, useConfirm } from "./ui";
 
 type Info = { separate: boolean; hasData: boolean | null; desktop?: { enabled: boolean; state: string } };
 
@@ -58,21 +58,27 @@ export function AgentComputer({ agentId, compact }: { agentId: string; compact?:
 			await api(`/api/agents/${agentId}/computer/merge`, { method: "POST" });
 		});
 	return (
-		<div className={cx("space-y-1.5", !compact && "rounded-xl border border-line p-3")} data-testid="agent-computer">
+		<div className={cx(compact ? "flex shrink-0 items-center gap-2" : "space-y-1.5 rounded-xl border border-line p-3")} data-testid="agent-computer">
 			{dialog}
-			<label className="flex cursor-pointer items-start gap-2">
-				<input type="checkbox" className="mt-0.5" checked={info.separate} disabled={!!busy} onChange={toggle} data-testid="agent-separate" />
-				<span className="flex-1">
-					<span className="text-sm font-medium">{t("使用单独的电脑")}</span>
+			<label className={cx("flex cursor-pointer gap-2", compact ? "items-center justify-end" : "items-start")}>
+				<input type="checkbox" className={compact ? "" : "mt-0.5"} checked={info.separate} disabled={!!busy} onChange={toggle} data-testid="agent-separate" />
+				<span className={compact ? "" : "flex-1"}>
+					<span className="text-sm font-medium">{compact ? t("单独电脑") : t("使用单独的电脑")}</span>
 					{busy === "toggle" && <Loader2 size={12} className="ml-1 inline animate-spin" />}
-					<span className="block text-xs text-zinc-500">
-						{info.separate
-							? t("这个助理用自己的电脑：自己的文件和登录状态，和其他助理完全分开。")
-							: t("默认和其他助理共用一台电脑：同样的文件、浏览器登录状态和已装的应用；各自有自己的屏幕，不互相抢鼠标。需要长期分开账号时再打开。")}
-					</span>
+					{!compact && (
+						<span className="block text-xs text-zinc-500">
+							{info.separate ? t("用自己的文件和登录状态，和其他助理分开。") : t("现在和其他助理共用一台电脑。")}{" "}
+							<Help>{t("共用时：同样的文件、浏览器登录状态和已装的应用；各自有自己的屏幕，不互相抢鼠标。需要长期分开账号时再打开。")}</Help>
+						</span>
+					)}
 				</span>
 			</label>
-			{!info.separate && info.hasData && (
+			{compact && info.hasData && (
+				<Button size="sm" variant="ghost" disabled={!!busy} onClick={merge} title={t("它以前单独电脑里的数据还保留着，可以合并进共用电脑。")} data-testid="agent-merge">
+					{busy === "merge" ? <Loader2 size={14} className="animate-spin" /> : <Merge size={14} />} {t("合并")}
+				</Button>
+			)}
+			{!compact && !info.separate && info.hasData && (
 				<div className="flex items-center gap-2 rounded-lg bg-zinc-50 p-2 text-xs text-zinc-500 dark:bg-zinc-900" data-testid="agent-old-data">
 					<span className="flex-1">{t("它以前单独电脑里的数据（文件、登录状态）还保留着。")}</span>
 					<Button size="sm" variant="outline" disabled={!!busy} onClick={merge} data-testid="agent-merge">
@@ -80,7 +86,7 @@ export function AgentComputer({ agentId, compact }: { agentId: string; compact?:
 					</Button>
 				</div>
 			)}
-			{info.separate && info.hasData && (
+			{!compact && info.separate && info.hasData && (
 				<div className="flex items-center gap-2 text-xs text-zinc-500">
 					<span className="flex-1">{t("想让它和其他助理共用登录状态？可以把这台电脑的数据合并进共用电脑。")}</span>
 					<Button size="sm" variant="ghost" disabled={!!busy} onClick={merge} data-testid="agent-merge">

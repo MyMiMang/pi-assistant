@@ -55,6 +55,7 @@ const stop = async () => { if (!server || server.exitCode !== null) return; cons
 /** 打开设置 › 助理电脑 */
 const openSettings = async (page, agentId) => {
 	await page.goto(`${BASE}/?agent=${agentId}&settings=computer`);
+	await page.getByTestId("desktop-advanced").evaluate((d) => (d.open = true));
 	await page.getByTestId("desktop-resources").waitFor();
 };
 /** 打开某个下拉，返回菜单 rect 与触发器 rect */
