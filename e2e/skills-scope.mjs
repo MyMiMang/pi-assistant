@@ -92,6 +92,7 @@ try {
 	await ok(`/api/agents/${a}/skills`, "PUT", { ids: [builtin.id] });
 	await page.goto(`${BASE}/?settings=skills`);
 	await page.getByTestId("skills-tab").waitFor();
+	await page.getByTestId("skills-group-builtin").locator("summary").click();
 	await page.getByTestId(`skill-enabled-${builtin.name}`).waitFor();
 	check("技能库显示「已启用」计数", /1 个助理已启用/.test(await page.getByTestId(`skill-enabled-${builtin.name}`).innerText()), await page.getByTestId(`skill-enabled-${builtin.name}`).innerText());
 	await page.screenshot({ path: join(OUT, "01-inventory.png") });

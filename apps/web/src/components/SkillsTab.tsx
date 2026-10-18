@@ -236,10 +236,10 @@ export function SkillsTab() {
 			{(["我的技能", "内置技能"] as const).map((title) => {
 				const items = list.filter((s) => s.builtin === (title === "内置技能"));
 				return (
-					<section key={title}>
-						<div className="pa-sec-label mb-1.5">{title}</div>
+					<details key={title} open={title === "我的技能" || undefined} data-testid={`skills-group-${title === "内置技能" ? "builtin" : "mine"}`}>
+						<summary className="pa-sec-label mb-1.5 cursor-pointer">{title} <span className="font-normal">· {items.length} 个</span></summary>
 						{items.length === 0 && <div className="text-sm text-mut">还没有技能。 <Help>可以新建，或在聊天里让助理“把刚才的流程存成技能”。</Help></div>}
-						<ul className="grid gap-2 sm:grid-cols-2">
+						<ul className="grid max-h-[28rem] gap-2 overflow-y-auto sm:grid-cols-2">
 							{items.map((s) => (
 								<li key={s.id}>
 									<div className="pa-card flex h-full w-full items-start gap-2 !p-3 hover:border-accent">
@@ -261,7 +261,7 @@ export function SkillsTab() {
 								</li>
 							))}
 						</ul>
-					</section>
+					</details>
 				);
 			})}
 			{assign && <AssignModal skill={assign} agents={agents} onClose={() => setAssign(null)} onChanged={() => void load()} />}
