@@ -59,6 +59,15 @@ test("上限：总次数 / 每人次数 / token 预算", () => {
 	assert.match(capCheck(t, { turns: 1, perAgent: {}, tokens: 1200 }, caps)!, /tokens/);
 	assert.deepEqual(normalizeCaps({ maxTurns: 999, perAgent: -3 }), { ...DEFAULT_CAPS, maxTurns: 30, perAgent: 1 });
 });
+test("两波派活后管理者收尾不被每人次数上限挡住", () => {
+	const caps = normalizeCaps({ maxTurns: 8, perAgent: 2 });
+	// 管理者已发言 2 次（第一次派活 + 第二波派活），成员回报后它的收尾 followup 仍可进行
+	assert.equal(capCheck({ agentId: "mgr", reason: "followup", depth: 1 }, { turns: 5, perAgent: { mgr: 2 }, tokens: 0 }, caps), null);
+	// 普通派活/点名仍受每人上限
+	assert.match(capCheck({ agentId: "mgr", reason: "manager", depth: 0 }, { turns: 5, perAgent: { mgr: 2 }, tokens: 0 }, caps)!, /上限/);
+	// 总次数上限对收尾仍生效
+	assert.match(capCheck({ agentId: "mgr", reason: "followup", depth: 1 }, { turns: 8, perAgent: { mgr: 2 }, tokens: 0 }, caps)!, /8 次/);
+});
 test("增量注入：只有最终文字和卡片摘要，跳过自己的，超预算保留最近的", () => {
 	const items: TranscriptItem[] = [
 		{ seq: 1, role: "user", agentId: "", content: "大家好", meta: {}, status: "done" },

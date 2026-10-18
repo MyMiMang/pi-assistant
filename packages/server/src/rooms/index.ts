@@ -1,3 +1,4 @@
+import { THINKING_LEVEL_ORDER } from "@pi-assistant/shared";
 import { stopConversationSubagents } from "../subagents.ts";
 /**
  * 助理群聊：一个群 = 几个助理 + 用户。每个成员在群里有一个隐藏的 Pi 对话（runtime(agentId, conversationId)），
@@ -220,7 +221,8 @@ export function onAgentDeleted(agentId: string) {
 	}
 }
 export function onAgentChanged(agentId: string) {
-	for (const m of db.prepare("SELECT room_id FROM room_members WHERE agent_id = ?").all(agentId) as { room_id: string }[]) snapshot(m.room_id, agentId);
+	// 改名 / 改头像：更新兜底快照并通知这些群刷新（群快照的名字头像以助理表为准）
+	for (const m of db.prepare("SELECT room_id FROM room_members WHERE agent_id = ?").all(agentId) as { room_id: string }[]) (snapshot(m.room_id, agentId), changed(m.room_id));
 }
 
 // ---------------------------------------------------------------- 发言调度
@@ -300,7 +302,6 @@ function cancelQueue(roomId: string, s: RoomState) {
 	s.queue = [];
 	// 同一批回合里绑着的长期任务执行也要同步撤回，否则看板一直排队中、continue 还会被“已有执行”挡住。
 	onRoomTurnsClosed(dropped, "cancelled");
-	void roomId;
 }
 function cancelQueuedFor(roomId: string, agentId: string) {
 	const s = states.get(roomId);
@@ -921,7 +922,7 @@ const memberSchema = Type.Object({
 	role: Type.String({ description: "在群里负责什么（一句话）" }),
 	persona: Type.String({ description: "这个成员的人设与工作方式（系统提示，几句话）" }),
 	needs: Type.Optional(Type.Array(Type.Union(STRENGTHS.map((s) => Type.Literal(s))), { description: `这个角色最需要的能力（1~3 个）：${STRENGTHS.map((s) => `${s}=${STRENGTH_LABEL[s]}`).join("，")}。系统会据此从用户配置的模型里挑合适的` })),
-	thinking: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("minimal"), Type.Literal("low"), Type.Literal("medium"), Type.Literal("high"), Type.Literal("xhigh"), Type.Literal("max"), Type.Null()], { description: "这个成员的思考强度；不填或 null = 跟默认。超出模型能力的档位会被服务端降到合法档位" })),
+	thinking: Type.Optional(Type.Union([...THINKING_LEVEL_ORDER.map((l) => Type.Literal(l)), Type.Null()], { description: "这个成员的思考强度；不填或 null = 跟默认。超出模型能力的档位会被服务端降到合法档位" })),
 	skills: Type.Optional(Type.Array(Type.String(), { description: "适合用的技能名（只能是技能库里已有的）" })),
 	avatar: Type.Optional(Type.String({ description: "一个 emoji" })),
 });

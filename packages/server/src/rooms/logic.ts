@@ -169,7 +169,8 @@ export interface RoundCounters {
 /** 下一次发言能不能进行；不能时给出原因（写进“本轮已暂停”提示） */
 export function capCheck(next: PlannedTurn, c: RoundCounters, caps: RoomCaps): string | null {
 	if (c.turns >= caps.maxTurns) return `这一轮已经发言 ${c.turns} 次`;
-	if ((c.perAgent[next.agentId] ?? 0) >= caps.perAgent) return "同一个助理这一轮发言次数到上限了";
+	// 管理者收尾（成员回报后的 followup）不占「同一助理每轮次数」：否则两波派活后管理者没法做总结。总次数 / token 上限仍然生效。
+	if (next.reason !== "followup" && (c.perAgent[next.agentId] ?? 0) >= caps.perAgent) return "同一个助理这一轮发言次数到上限了";
 	if (caps.tokenBudget && c.tokens >= caps.tokenBudget) return `这一轮用掉了约 ${Math.round(c.tokens / 1000)}k tokens`;
 	return null;
 }

@@ -128,6 +128,7 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		mkdirSync(dir, { recursive: true });
 		writeFileSync(join(dir, `avatar.${f.type.split("/")[1]}`), Buffer.from(await f.arrayBuffer()));
 		db.prepare("UPDATE agents SET avatar = ? WHERE id = ?").run(`img:${Date.now().toString(36)}`, a.id);
+		onAgentChanged(a.id);
 		bus.emit({ type: "agents.changed" });
 		return c.json(agentJson(getAgent(a.id)!));
 	});
