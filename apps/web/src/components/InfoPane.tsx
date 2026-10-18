@@ -2,7 +2,7 @@ import { SubagentModels } from "./Subagents";
 import { TaskRow, taskTitle } from "./Tasks";
 import { DesktopView } from "./DesktopView";
 import { fmtMoney, useFx } from "./usage-fmt";
-import { ChevronLeft, ChevronRight, Download, File, Folder, HardDrive, Pause, Play, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, File, Folder, HardDrive, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, download } from "../api";
 import { t } from "../i18n";
@@ -160,6 +160,8 @@ function Overview({ agentId }: { agentId: string }) {
 }
 const fmtK = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
 
+const SHOWN_IMAGES = 4;
+const SHOWN_DOCS = 5;
 /** 文件：按「你上传 / 助理交付」分组，图片与文档都能真实预览、下载；长文件名换行可读。 */
 function Files({ agentId }: { agentId: string }) {
 	const fileVersion = useStore((s) => s.fileVersion);
@@ -174,25 +176,22 @@ function Files({ agentId }: { agentId: string }) {
 	const isImage = (f: Attachment) => f.mime.startsWith("image/") && f.mime !== "image/svg+xml";
 	return (
 		<div className="space-y-1" data-testid="agent-files">
-			{files.length === 0 && <p className="py-8 text-center text-sm text-mut">还没有文件。你上传的文件和助理交付的成果会显示在这里。</p>}
+			{files.length === 0 && <p className="py-6 text-center text-sm text-mut">还没有文件。你上传的文件和助理交付的成果会显示在这里。</p>}
 			{groups.map((g) => {
 				const items = files.filter((f) => (f.direction === "in" ? "in" : "out") === g.key);
 				if (!items.length) return null;
 				const images = items.filter(isImage);
 				const docs = items.filter((f) => !isImage(f));
-				return (
-					<section key={g.key}>
-						<h2 className="pa-info-h2">{g.label} · {items.length} 个</h2>
-						{images.length > 0 && (
+				const imageGrid = (list: Attachment[]) => list.length > 0 && (
 							<div className="mb-2 grid grid-cols-2 gap-2">
-								{images.map((f) => (
+								{list.map((f) => (
 									<button key={f.fileId} type="button" className="block w-full overflow-hidden rounded-lg border border-line" onClick={() => openImageViewer({ authPath: `/api/files/${f.fileId}?inline=1`, alt: f.name, name: f.name, downloadPath: `/api/files/${f.fileId}` })} aria-label={`预览 ${f.name}`}>
 										<AuthImage path={`/api/files/${f.fileId}?inline=1`} alt={f.name} className="aspect-[4/3] w-full cursor-zoom-in object-cover" />
 									</button>
 								))}
 							</div>
-						)}
-						{docs.map((f) => (
+						);
+				const docRow = (f: Attachment) => (
 							<div key={f.fileId} className="flex items-center gap-1 border-b border-line last:border-b-0">
 								<button
 									type="button"
@@ -219,107 +218,104 @@ function Files({ agentId }: { agentId: string }) {
 									<Download size={14} />
 								</button>
 							</div>
-						))}
+						);
+				// 默认露出几张图 / 几个文件，其余收进「全部 N 个」
+				const more = images.length > SHOWN_IMAGES || docs.length > SHOWN_DOCS;
+				return (
+					<section key={g.key} data-testid={`agent-files-${g.key}`}>
+						<h2 className="pa-info-h2">{g.label} · {items.length} 个</h2>
+						{imageGrid(images.slice(0, SHOWN_IMAGES))}
+						{docs.slice(0, SHOWN_DOCS).map(docRow)}
+						{more && (
+							<details className="pa-info-details" data-testid={`agent-files-${g.key}-more`}>
+								<summary>全部 {items.length} 个<small>其余 {items.length - Math.min(images.length, SHOWN_IMAGES) - Math.min(docs.length, SHOWN_DOCS)} 个</small></summary>
+								<div className="pa-info-details-body max-h-96 overflow-y-auto">
+									{imageGrid(images.slice(SHOWN_IMAGES))}
+									{docs.slice(SHOWN_DOCS).map(docRow)}
+								</div>
+							</details>
+						)}
 					</section>
 				);
 			})}
+			<WorkspaceFolder agentId={agentId} />
 		</div>
 	);
 }
 
-/** 电脑：你的电脑（真实档位 / 暂停 / 全局设置）与助理电脑（共用/单独、桌面、工作区）分开呈现。 */
-function Computer({ agentId }: { agentId: string }) {
+/** 文件 › 工作文件夹：助理干活的目录，可逐级浏览、点文件下载（默认折叠）。 */
+function WorkspaceFolder({ agentId }: { agentId: string }) {
 	const { system, agents, fileVersion } = useStore();
 	const agent = agents.find((a) => a.id === agentId)!;
-	const host = useHostControl();
-	const [pauseBusy, setPauseBusy] = useState(false);
-	const [pauseErr, setPauseErr] = useState("");
 	const [path, setPath] = useState("");
 	const [entries, setEntries] = useState<{ name: string; dir: boolean; size: number; mtime: number }[]>([]);
+	const [rootCount, setRootCount] = useState<number | null>(null);
 	useEffect(() => {
-		api(`/api/agents/${agentId}/workspace?path=${encodeURIComponent(path)}`).then(setEntries).catch(() => setEntries([]));
+		api(`/api/agents/${agentId}/workspace?path=${encodeURIComponent(path)}`)
+			.then((list) => {
+				setEntries(list);
+				if (!path) setRootCount(list.length);
+			})
+			.catch(() => setEntries([]));
 	}, [agentId, path, fileVersion]);
-	const paused = !!host.d?.status.enabled && host.d.status.paused;
-	const togglePause = async () => {
-		if (!host.d) return;
-		setPauseBusy(true);
-		setPauseErr("");
-		try {
-			await api("/api/host-control/pause", { method: "POST", json: { paused: !host.d.status.paused } });
-			await host.load();
-		} catch (e) {
-			setPauseErr(e instanceof Error ? e.message : String(e));
-		} finally {
-			setPauseBusy(false);
-		}
-	};
+	return (
+		<details className="pa-info-details" data-testid="agent-workspace-details">
+			<summary>
+				工作文件夹
+				<small>助理干活的目录{rootCount !== null ? ` · ${rootCount} 项` : ""}</small>
+			</summary>
+			<div className="pa-info-details-body">
+				<div className="flex items-center gap-1 text-xs text-mut2">
+					<HardDrive size={14} className="shrink-0" />
+					<code className="break-all">{agent.workspace}</code>
+					<Help>{system?.sandbox.mode === "docker" ? "助理在 Docker 容器里干活，和你的电脑隔离。" : "助理直接在这个文件夹里干活；碰到有风险的操作会先问你。"}点文件可以下载。</Help>
+				</div>
+				<div className="flex items-center gap-1 text-xs text-mut2">
+					{path && (
+						<button onClick={() => setPath(path.split("/").slice(0, -1).join("/"))} className="rounded p-1 hover:bg-hover" aria-label="返回上级">
+							<ChevronLeft size={14} />
+						</button>
+					)}
+					<span className="break-all">/{path}</span>
+				</div>
+				<div className="space-y-0.5">
+					{entries.length === 0 && <div className="text-xs text-mut2">空目录</div>}
+					{entries.map((e) => (
+						<button
+							key={e.name}
+							onClick={() => (e.dir ? setPath(path ? `${path}/${e.name}` : e.name) : download(`/api/agents/${agentId}/workspace/file?path=${encodeURIComponent(path ? `${path}/${e.name}` : e.name)}`, e.name))}
+							className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-hover"
+						>
+							{e.dir ? <Folder size={15} className="text-accent" /> : <File size={15} className="text-mut2" />}
+							<span className="min-w-0 flex-1 break-all">{e.name}</span>
+							{!e.dir && (
+								<>
+									<span className="shrink-0 text-xs text-mut2">{fmtSize(e.size)}</span>
+									<Download size={13} className="shrink-0 text-mut2" />
+								</>
+							)}
+							{e.dir && <span className="shrink-0 text-xs text-mut2">{fmtTime(e.mtime)}</span>}
+						</button>
+					))}
+				</div>
+			</div>
+		</details>
+	);
+}
+
+/** 电脑：先是助理自己的电脑（桌面、共用 / 单独），再是它能在你电脑上做多少事，最后是全局设置入口。 */
+function Computer({ agentId }: { agentId: string }) {
 	return (
 		<div className="text-sm" data-testid="agent-computer-tab">
-			<h2 className="pa-info-h2">你的电脑</h2>
-			<AgentHostTier agentId={agentId} />
-			<div className="pa-info-row">
-				<span className="pa-info-row-main">
-					<strong>{paused ? "已暂停操作你的电脑" : "一键暂停"}</strong>
-					<small>暂停对所有助理生效；系统权限弹窗与网站登录 / 验证码仍由你本人完成。</small>
-				</span>
-				{host.d?.status.enabled ? (
-					<Button size="sm" variant="outline" onClick={() => void togglePause()} disabled={pauseBusy} data-testid="agent-host-pause">
-						{paused ? <Play size={14} /> : <Pause size={14} />} {paused ? "继续" : "暂停"}
-					</Button>
-				) : (
-					<Button size="sm" variant="outline" onClick={() => useStore.getState().set({ settings: "host" })} data-testid="agent-host-open-settings">
-						去开启
-					</Button>
-				)}
-			</div>
-			{pauseErr && <p className="text-xs text-red-600" role="alert">{pauseErr}</p>}
-			<button type="button" className="pa-info-row" onClick={() => useStore.getState().set({ settings: "host" })}>
-				<span className="pa-info-row-main"><strong>全局电脑设置</strong><small>安装连接、系统授权与权限清单</small></span>
+			<h2 className="pa-info-h2 !mt-0">助理电脑 <Help>助理自己的一台电脑（浏览器、文件、登录状态都在里面），要用时自动开机，不碰你的电脑。</Help></h2>
+			<p className="pa-info-lead">助理自己的电脑，用时自动开机</p>
+			<DesktopView agentId={agentId} />
+			<div className="mt-2"><AgentComputer agentId={agentId} /></div>
+			<div className="mt-4"><AgentHostTier agentId={agentId} /></div>
+			<button type="button" className="pa-info-row" onClick={() => useStore.getState().set({ settings: "host" })} data-testid="agent-host-open-settings">
+				<span className="pa-info-row-main"><strong>全局电脑设置</strong><small>连接你的电脑、系统授权、暂停所有助理</small></span>
 				<ChevronRight size={16} className="pa-arrow" />
 			</button>
-			<h2 className="pa-info-h2">助理电脑</h2>
-			<AgentComputer agentId={agentId} />
-			<div className="mt-2"><DesktopView agentId={agentId} /></div>
-			<details className="pa-info-details" data-testid="agent-workspace-details" open>
-				<summary>
-					工作区与文件
-					<small>{system?.sandbox.mode === "docker" ? "Docker 容器（增强隔离）" : "工作区目录（基础模式，靠审批兜底）"} · {agent.workspace}</small>
-				</summary>
-				<div className="pa-info-details-body">
-					<div className="flex items-center gap-1 text-xs text-mut2">
-						<HardDrive size={14} />
-						<code className="break-all">{agent.workspace}</code>
-					</div>
-					<div className="flex items-center gap-1 text-xs text-mut2">
-						{path && (
-							<button onClick={() => setPath(path.split("/").slice(0, -1).join("/"))} className="rounded p-1 hover:bg-hover" aria-label="返回上级">
-								<ChevronLeft size={14} />
-							</button>
-						)}
-						<span className="break-all">/{path}</span>
-					</div>
-					<div className="space-y-0.5">
-						{entries.length === 0 && <div className="text-xs text-mut2">空目录</div>}
-						{entries.map((e) => (
-							<button
-								key={e.name}
-								onClick={() => (e.dir ? setPath(path ? `${path}/${e.name}` : e.name) : download(`/api/agents/${agentId}/workspace/file?path=${encodeURIComponent(path ? `${path}/${e.name}` : e.name)}`, e.name))}
-								className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-hover"
-							>
-								{e.dir ? <Folder size={15} className="text-accent" /> : <File size={15} className="text-mut2" />}
-								<span className="min-w-0 flex-1 break-all">{e.name}</span>
-								{!e.dir && (
-									<>
-										<span className="shrink-0 text-xs text-mut2">{fmtSize(e.size)}</span>
-										<Download size={13} className="shrink-0 text-mut2" />
-									</>
-								)}
-								{e.dir && <span className="shrink-0 text-xs text-mut2">{fmtTime(e.mtime)}</span>}
-							</button>
-						))}
-					</div>
-				</div>
-			</details>
 		</div>
 	);
 }

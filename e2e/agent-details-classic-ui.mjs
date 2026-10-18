@@ -428,7 +428,14 @@ try {
 	const [download] = await Promise.all([page.waitForEvent("download"), filesTab.getByTestId("info-file-download").first().click()]);
 	assert.equal(download.suggestedFilename(), DOC_LONG, "下载用真实文件名");
 	await download.delete().catch(() => {});
-	console.log("PASS 文件：真实上传 + 交付分组（只读 fixture）；长名换行、真实预览弹窗与下载");
+	// 工作文件夹从「电脑」搬到「文件」，默认折叠，展开能浏览
+	const ws = filesTab.getByTestId("agent-workspace-details");
+	assert.equal(await ws.evaluate((el) => el.open), false, "工作文件夹默认折叠");
+	assert.match(await ws.locator(":scope > summary").innerText(), /工作文件夹/);
+	await ws.locator(":scope > summary").click();
+	await waitFor(async () => await ws.evaluate((el) => el.open), 3000, "展开工作文件夹");
+	await ws.locator(":scope > summary").click();
+	console.log("PASS 文件：真实上传 + 交付分组（只读 fixture）；长名换行、真实预览弹窗与下载；工作文件夹折叠在文件页");
 
 	// ---- 5. 任务：三种状态（只读 fixture）与三个二级分类可达 --------------------------------
 	await selectTab("tasks");
@@ -463,15 +470,20 @@ try {
 	const idleAppearance = await hostTier.getByTestId("tier-bounded").evaluate((el) => getComputedStyle(el).backgroundColor);
 	assert.notEqual(selectedAppearance, idleAppearance, "信任档位应有可见的选中状态");
 	await page.getByText("全局电脑设置", { exact: true }).waitFor();
-	await page.getByTestId("agent-host-pause").click();
-	await waitFor(async () => pauseCalls.length === 1, 10000, "暂停请求");
-	assert.deepEqual(pauseCalls[0], { paused: true });
-	await page.getByText("已暂停操作你的电脑", { exact: true }).waitFor();
-	await page.getByTestId("agent-host-pause").click();
-	await waitFor(async () => pauseCalls.length === 2, 10000, "继续请求");
-	assert.deepEqual(pauseCalls[1], { paused: false });
-	await page.getByText("一键暂停", { exact: true }).waitFor();
-	console.log("PASS 电脑：信任档位选中、全局设置入口、暂停/继续只走 fixture 并核对请求体");
+	// 全局暂停只在 设置 › 电脑 里（对所有助理生效），助理页不再放
+	assert.equal(await page.getByTestId("agent-host-pause").count(), 0, "助理页不应再有全局暂停");
+	const order = await page.getByTestId("agent-computer-tab").evaluate((el) => {
+		const y = (sel) => el.querySelector(sel)?.getBoundingClientRect().top ?? -1;
+		return { desktop: y("[data-testid=desktop-view]"), tier: y("[data-testid=agent-host-tier]"), global: y("[data-testid=agent-host-open-settings]") };
+	});
+	assert.ok(order.desktop >= 0 && order.desktop < order.tier && order.tier < order.global, `助理电脑 → 操作你的电脑 → 全局设置入口：${JSON.stringify(order)}`);
+	assert.equal(await page.getByTestId("agent-workspace-details").count(), 0, "工作文件夹已移到「文件」");
+	await page.getByTestId("agent-host-open-settings").click();
+	await page.getByTestId("settings-content").waitFor({ timeout: 5000 });
+	await page.keyboard.press("Escape");
+	await page.getByTestId("settings-content").waitFor({ state: "hidden", timeout: 5000 });
+	assert.equal(pauseCalls.length, 0);
+	console.log("PASS 电脑：助理电脑在前、信任档位选中、全局设置入口；不再有全局暂停");
 
 	// ---- 7. 群专属助理：同一个面板结构 + 群信息框 -----------------------------------------
 	await page.goto(`${base}/?room=${room.id}`);

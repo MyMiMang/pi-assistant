@@ -160,8 +160,9 @@ try {
  await select("proactive", "agent-task-tabs"); await pane.getByTestId("proactive-tab").waitFor();
  await select("memory"); await pane.getByTestId("memory-tab").waitFor();
  await select("files"); await pane.getByTestId("agent-files").getByText(/还没有文件/).waitFor();
+ assert.match(await pane.getByTestId("agent-workspace-details").locator(":scope > summary").innerText(), /工作文件夹/, "工作文件夹在文件页");
  await select("computer"); await pane.getByTestId("agent-host-tier").waitFor(); await pane.getByText("操作你的电脑", { exact: true }).waitFor();
- assert.match(await pane.innerText(), /工作区/);
+ assert.equal(await pane.getByTestId("agent-workspace-details").count(), 0, "电脑页不再放工作文件夹");
  console.log("PASS classification: models/profile/capabilities/tasks/memory/files/computer all reachable, old functions retained");
  // 折叠 / 布局 / 入口：默认收起、真实 summary 展开、Fast 在面板内、头像与长文不重叠、标签单行、资料固定 footer。
  /** 元素是否整个落在信息面板可视区内（固定 footer 必须做到，仅 isVisible 不够）。 */

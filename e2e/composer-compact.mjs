@@ -113,8 +113,8 @@ try {
 	await page.locator('.pa-head-actions button[aria-label="信息面板"]').click();
 	await page.locator(".pa-pane-wrap").waitFor();
 	await openInfoTab(page, "computer");
-	await page.locator(".pa-pane-wrap").getByText("工作区").first().waitFor();
-	check("信息面板「电脑」tab 可打开且显示工作区", true);
+	await page.locator(".pa-pane-wrap [data-testid=agent-computer-tab]").waitFor();
+	check("信息面板「电脑」tab 可打开", true);
 	await page.screenshot({ path: join(OUT, "02-infopane-computer-tab.png") });
 
 	// ---------------- 3) 1280 + 左右栏挤压：聊天区≈676 → 容器窄 → 只留图标
