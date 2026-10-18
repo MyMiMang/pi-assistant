@@ -13,6 +13,7 @@ import { BRAND } from "@pi-assistant/shared";
 /** 首次运行向导：欢迎 → 选模型服务 → 登录 → 默认模型 → 创建第一个助理。已配置过模型（例如删光了助理）时直接进入最后一步。 */
 export default function Onboarding() {
 	const hasModel = useStore((s) => !!s.system?.modelSetupDone);
+	const hasDefault = useStore((s) => !!s.system?.defaultModel);
 	const [step, setStep] = useState(hasModel ? 4 : 0);
 	const [provider, setProvider] = useState<Provider | null>(null);
 	const { providers, reload } = useProviders();
@@ -27,6 +28,8 @@ export default function Onboarding() {
 		await st.selectAgent(agentId);
 		await st.loadSystem();
 	};
+	/** 默认模型这步完成：选了模型会自动进入下一步；已有默认模型时也可以直接点「下一步」 */
+	const toCreate = () => void api("/api/settings", { method: "PUT", json: { onboarded: true } }).then(() => setStep(4));
 	const current = provider ? (providers.find((p) => p.id === provider.id) ?? provider) : null;
 	const steps = ["欢迎", "选择模型服务", "登录", "默认模型", "创建助理"];
 	return (
@@ -88,7 +91,7 @@ export default function Onboarding() {
 						<div className="space-y-3">
 							<h2 className="text-lg font-semibold">选择默认模型</h2>
 							<p className="text-sm text-zinc-500">之后可以在「设置 → 模型」里随时更换，也可以给每个助理单独指定模型。</p>
-							<DefaultModelPicker providerId={current?.id} onSaved={() => void api("/api/settings", { method: "PUT", json: { onboarded: true } }).then(() => setStep(4))} />
+							<DefaultModelPicker providerId={current?.id} onSaved={toCreate} />
 						</div>
 					)}
 					{step === 4 && (
@@ -116,6 +119,11 @@ export default function Onboarding() {
 					)}
 					{step === 2 && (
 						<Button variant="primary" disabled={!current || (!current.configured && current.id !== "mock")} onClick={() => setStep(3)}>
+							下一步
+						</Button>
+					)}
+					{step === 3 && (
+						<Button variant="primary" disabled={!hasDefault} onClick={toCreate}>
 							下一步
 						</Button>
 					)}
