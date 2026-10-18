@@ -296,20 +296,19 @@ function enqueue(roomId: string, s: RoomState, turns: PlannedTurn[], sourceMessa
 		for (const t of turns) insert(t);
 	}
 }
-function cancelQueue(roomId: string, s: RoomState) {
-	const dropped = s.queue.map((q) => q.turnId);
+/** 撤回排队中的回合（可只撤某个成员的）：DB 标取消 + 同步撤回绑着的长期任务执行。 */
+function cancelQueue(roomId: string, s: RoomState, agentId?: string) {
+	const drop = s.queue.filter((q) => !agentId || q.agentId === agentId);
+	const dropped = drop.map((q) => q.turnId);
 	for (const id of dropped) db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE id = ?").run(now(), id);
-	s.queue = [];
+	s.queue = s.queue.filter((q) => !drop.includes(q));
 	// 同一批回合里绑着的长期任务执行也要同步撤回，否则看板一直排队中、continue 还会被“已有执行”挡住。
 	onRoomTurnsClosed(dropped, "cancelled");
 }
 function cancelQueuedFor(roomId: string, agentId: string) {
 	const s = states.get(roomId);
 	if (!s) return;
-	const dropped = s.queue.filter((x) => x.agentId === agentId).map((x) => x.turnId);
-	for (const id of dropped) db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE id = ?").run(now(), id);
-	s.queue = s.queue.filter((x) => x.agentId !== agentId);
-	onRoomTurnsClosed(dropped, "cancelled");
+	cancelQueue(roomId, s, agentId);
 	emitState(roomId);
 }
 
@@ -618,9 +617,8 @@ export function enqueueWorkTurn(roomId: string, agentId: string, task: string, w
 		s = fresh();
 		states.set(roomId, s);
 	}
-	const turnId = uid("rt");
-	db.prepare("INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, task, depth, status, created_at, work_item_id, work_run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(turnId, roomId, s.roundId, agentId, "assign", task, 0, "queued", now(), workItemId, workRunId);
-	s.queue.push({ agentId, reason: "assign", task, depth: 0, turnId, workItemId, workRunId });
+	enqueue(roomId, s, [{ agentId, reason: "assign", task, depth: 0, workItemId, workRunId }]);
+	const turnId = s.queue[s.queue.length - 1].turnId;
 	emitState(roomId);
 	changed(roomId);
 	void pump(roomId);
