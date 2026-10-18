@@ -37,6 +37,8 @@ import { classify as llamaCppClassify } from "@earendil-works/pi-ai/api/llama-cp
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import compat from "./compat.json" with { type: "json" };
+import { refreshResumedTools } from "./session-tools.ts";
+export { activateNewExtensionTools, loadedResources } from "./session-tools.ts";
 import { BRAND } from "@pi-assistant/shared";
 
 export { defineTool, Type };
@@ -655,6 +657,7 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 	installLimitLearning(session);
 	// 触发 session_start：MCP 扩展在此时连接服务器（如 cua-driver）
 	await session.bindExtensions({ onError: (e) => console.warn("[ext]", (e as { error?: unknown }).error ?? e) });
+	if (o.sessionFile) refreshResumedTools(session, o.tools);
 	return session;
 }
 
@@ -664,15 +667,6 @@ export function makeBashTool(
 	opts: { operations?: BashOperations; spawnHook?: (c: { command: string; cwd: string; env: NodeJS.ProcessEnv }) => { command: string; cwd: string; env: NodeJS.ProcessEnv } },
 ) {
 	return createBashTool(cwd, { operations: opts.operations, spawnHook: opts.spawnHook, exposeSessionEnvironment: false });
-}
-
-/** 会话实际加载的技能与扩展（用于隔离测试与诊断） */
-export function loadedResources(session: AgentSession) {
-	const rl = session.resourceLoader;
-	return {
-		skills: rl.getSkills().skills.map((s) => ({ name: s.name, path: (s as { filePath: string }).filePath })),
-		extensions: rl.getExtensions().extensions.map((e) => (e as { path?: string }).path ?? ""),
-	};
 }
 
 export function sessionFileOf(session: AgentSession): string | undefined {

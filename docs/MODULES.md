@@ -18,7 +18,7 @@
 | 服务端通用 | `bus.ts`（推事件）、`requests.ts`（审批与提问唯一入口）、`interject.ts`（插话/停止词）、`model-errors.ts`、`thinking.ts`（拆思考内容）、`native-launch-env.ts`（启动子进程环境）、`config.ts`（环境变量）、`db.ts` |
 | Pi 接入（唯一入口） | `pi-adapter/index.ts`、`custom-providers.ts`、`relay-protocols.ts`、`model-limits.ts`、`fast-mode.ts`、`mock-provider.ts`（e2e 脚本化回复） |
 | 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp） |
-| e2e 工具 | `e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
+| e2e 工具 | `e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
 
 ## 每类逻辑放在哪
 - HTTP 接口：`packages/server/src/routes/*`（`http.ts` 只做组装和中间件）。
@@ -77,7 +77,7 @@
 | `thinking.ts` | 拆出正文里的思考内容 |
 | `requests.ts` | 审批与提问（唯一入口） |
 | `guard.ts` | 硬性保护路径上下文 |
-| `pi-adapter/` | Pi SDK 唯一入口：index（会话/模型）、custom-providers（自定义中转）、relay-protocols（按模型识别协议与路径）、model-limits、fast-mode、mock-provider、compat.json（兼容基线） |
+| `pi-adapter/` | Pi SDK 唯一入口：index（会话/模型）、session-tools（续接对话时补新扩展工具、已加载资源）、custom-providers（自定义中转）、relay-protocols（按模型识别协议与路径）、model-limits、fast-mode、mock-provider、compat.json（兼容基线） |
 | `pi-packages.ts` | Pi 扩展包（npm/git/本地） |
 | `models.ts` | 统一凭据存储接口 |
 | `secrets.ts` | 本地凭据加密存储 |
@@ -268,6 +268,7 @@
 | `stable-shot.mjs` | 稳定截图 |
 | `artifacts.mjs` | 截图与日志写 artifacts/ |
 | `fake-hindsight.mjs` | 假 Hindsight |
+| `page-checks.mjs` | run.mjs 用：弹出菜单溢出检查、群聊发言 / 等空闲 / 按成员取消息 |
 | `safe-memory-server.mjs` | 安全记忆测试服务 |
 | `mock-mcp.mjs` | 假 MCP 服务 |
 | `info-pane.mjs` | 助理设置面板操作 helper |

@@ -59,7 +59,7 @@ async function waitForTool(session: AgentSession, name: string, ms = 12000) {
 }
 /** 有/无 MCP 服务器都能建的会话工厂；返回会话（调用方负责 dispose）。 */
 let seq = 0;
-async function session(opts: { sessionFile?: string; mcpExposure?: string | null; tools?: string[]; excludeTools?: string[]; inMemory?: boolean; customTools?: never[] }) {
+async function session(opts: { sessionFile?: string; mcpExposure?: string | null; tools?: string[]; excludeTools?: string[]; inMemory?: boolean; customTools?: never[]; extensions?: { name: string; factory: never }[] }) {
 	const name = `restore-${++seq}`;
 	const ws = join(config.workspaceRoot, name);
 	mkdirSync(ws, { recursive: true });
@@ -72,7 +72,7 @@ async function session(opts: { sessionFile?: string; mcpExposure?: string | null
 		sessionFile: opts.sessionFile,
 		model: { provider: PROVIDER, id: MODEL },
 		systemPromptAppend: ["你是恢复语义测试助理。"],
-		extensions: [],
+		extensions: opts.extensions ?? [],
 		mcpServers,
 		...(opts.tools ? { tools: opts.tools } : {}),
 		...(opts.excludeTools ? { excludeTools: opts.excludeTools } : {}),
@@ -241,5 +241,35 @@ test("1.3 缓解：主题设计专用会话（tools=[theme_draft] 纯名字 + in
 		assert.deepEqual(active, ["theme_draft"]);
 	} finally {
 		await disposeSession(s);
+	}
+});
+
+test("续接旧对话：重建会话时新挂上的扩展工具（如刚加的邮箱）要进 active，受限会话不受影响", async () => {
+	const probe = {
+		name: "pia-probe",
+		factory: ((pi: { registerTool: (t: unknown) => void }) =>
+			pi.registerTool({ name: "probe_new_tool", label: "探针", description: "续接后新加的工具", parameters: { type: "object", properties: {} }, execute: async () => ({ content: [{ type: "text", text: "ok" }], details: undefined }) })) as never,
+	};
+	const a = await session({ mcpExposure: null });
+	let file: string | undefined;
+	try {
+		file = await recordRun(a);
+	} finally {
+		await disposeSession(a);
+	}
+	const b = await session({ sessionFile: file, mcpExposure: null, extensions: [probe] });
+	try {
+		const active = getActiveToolNames(b);
+		assert.ok(active.includes("probe_new_tool"), `新扩展工具应 active：${active.join(",")}`);
+		assert.ok(!active.includes("tool_search"), "默认不启用的 tool_search 不被顺手打开");
+		assert.ok(active.includes("read") && active.includes("grep"), "原有工具保留");
+	} finally {
+		await disposeSession(b);
+	}
+	const c = await session({ sessionFile: file, mcpExposure: null, extensions: [probe], tools: ["read", "bash"] });
+	try {
+		assert.ok(!getActiveToolNames(c).includes("probe_new_tool"), "纯名字列表的受限会话只保留显式选择");
+	} finally {
+		await disposeSession(c);
 	}
 });
