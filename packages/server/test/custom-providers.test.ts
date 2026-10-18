@@ -188,3 +188,29 @@ test("快速操作模型引用本地服务（local-laya）时，classifier 暂�
 	setSetting("fastComputer", {});
 	resetLocalModelHints();
 });
+
+test("接口格式「自动」：每个模型按名字写自己的协议和地址，用户改的优先，单独地址生效", async () => {
+	assert.ok(supportedApis().some((a) => a.id === "auto"), "三种协议都在时提供「自动」");
+	const p = await customProviders.save(null, {
+		name: "多协议中转",
+		api: "auto",
+		baseUrl: relay.url,
+		apiKey: "sk-unit",
+		headers: [{ name: "x-team", value: "t1" }],
+		models: [{ id: "gpt-4.1" }, { id: "claude-sonnet-4" }, { id: "gemini-2.5-pro" }, { id: "claude-via-openai", api: "openai-completions" }],
+		protocolUrls: { "google-generative-ai": "https://g.example.com/v1beta/" },
+	});
+	const cfg = JSON.parse(readFileSync(join(config.dataDir, "models.json"), "utf8")).providers[p.id];
+	const by = Object.fromEntries(cfg.models.map((m: { id: string; api: string; baseUrl: string }) => [m.id, m]));
+	const root = relay.url.replace(/\/+$/, "").replace(/\/v1$/, "");
+	assert.deepEqual([by["gpt-4.1"].api, by["gpt-4.1"].baseUrl], ["openai-completions", `${root}/v1`]);
+	assert.deepEqual([by["claude-sonnet-4"].api, by["claude-sonnet-4"].baseUrl], ["anthropic-messages", root]);
+	assert.deepEqual([by["gemini-2.5-pro"].api, by["gemini-2.5-pro"].baseUrl], ["google-generative-ai", "https://g.example.com/v1beta"]);
+	assert.equal(by["claude-via-openai"].api, "openai-completions", "用户改过的协议优先");
+	assert.equal(cfg.api, "openai-completions");
+	const listed = models.listModels(p.id);
+	assert.equal(listed.find((m) => m.id === "claude-sonnet-4")?.api, "anthropic-messages", "Pi 按模型覆盖协议");
+	const t = await models.test(p.id, "gpt-4.1");
+	assert.ok(t.ok, `OpenAI 协议的模型照常可测：${t.message}`);
+	await customProviders.remove(p.id);
+});

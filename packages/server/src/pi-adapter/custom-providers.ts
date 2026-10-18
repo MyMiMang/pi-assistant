@@ -14,10 +14,13 @@ import { isClassifierProtocol } from "./index.ts";
 import type { ModelCapability } from "../model-registry.ts";
 import { localModelHint } from "../local-models.ts";
 import { modelDb } from "../model-db.ts";
+import { AUTO_API, effectiveApi, effectiveBaseUrl, protocolBaseUrl, RELAY_APIS } from "./relay-protocols.ts";
 import { detectLimits, knownReasoning, knownThinkingLevelMap, knownVision, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
 
 export interface CustomModel {
 	id: string;
+	/** 「接口格式：自动」时用户手动指定的协议；不填按模型名识别。非自动模式忽略 */
+	api?: string;
 	name?: string;
 	reasoning?: boolean;
 	/** 自动识别的推理能力，刷新参数库时可以重算。 */
@@ -66,6 +69,8 @@ export interface CustomProviderMeta {
 	classifiers?: ClassifierDeclaration[];
 	/** 保存 / 启动时按可靠来源自动识别的 classifier（对端元数据或 Pi 官方目录同 id）；与 classifiers 合并后注册 */
 	discoveredClassifiers?: ClassifierDeclaration[];
+	/** 「接口格式：自动」时某个协议单独的地址（高级）；不填从 baseUrl 按协议推 */
+	protocolUrls?: Record<string, string>;
 	createdAt: number;
 }
 export interface CustomProviderInput {
@@ -80,6 +85,8 @@ export interface CustomProviderInput {
 	models: CustomModel[];
 	/** 不传 = 保持原有 classifier 不变；传 [] 表示清空 */
 	classifiers?: ClassifierDeclaration[];
+	/** 不传 = 保持原值；自动模式下各协议单独的地址 */
+	protocolUrls?: Record<string, string>;
 }
 export interface CustomStorage {
 	loadMeta(): CustomProviderMeta[];
@@ -157,9 +164,11 @@ const HIDDEN_APIS = new Set(["openai-codex-responses", "pi-messages"]); // 需�
 export function supportedApis(): { id: string; label: string }[] {
 	const ids = getApiProviders().map((a) => (a as { api: string }).api).filter((a) => !HIDDEN_APIS.has(a));
 	const order = Object.keys(API_LABELS);
-	return [...new Set(ids)]
+	const list = [...new Set(ids)]
 		.sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99))
 		.map((id) => ({ id, label: API_LABELS[id] ?? id }));
+	// 自动：一个地址同时提供多种协议的中转，按模型名识别（需要三种协议都可用）
+	return RELAY_APIS.every((a) => ids.includes(a)) ? [{ id: AUTO_API, label: "自动（按模型识别协议：一个地址同时提供 OpenAI / Anthropic / Gemini）" }, ...list] : list;
 }
 
 const envName = (id: string, i: number) => `PIA_H_${createHash("sha256").update(id).digest("hex").slice(0, 10).toUpperCase()}_${i}`;
@@ -283,6 +292,11 @@ export class CustomProviders {
 	validate(input: CustomProviderInput): string | null {
 		if (!input.name?.trim()) return "请填写名称";
 		if (!supportedApis().some((a) => a.id === input.api)) return "不支持的 API 类型";
+		for (const m of input.models ?? []) if (m.api && !RELAY_APIS.includes(m.api as (typeof RELAY_APIS)[number])) return `不支持的模型接口格式：${m.api}`;
+		for (const [k, v] of Object.entries(input.protocolUrls ?? {})) {
+			if (!RELAY_APIS.includes(k as (typeof RELAY_APIS)[number])) return `不支持的协议：${k}`;
+			if (v.trim() && !/^https?:\/\//.test(v.trim())) return `${k} 的地址必须以 http:// 或 https:// 开头`;
+		}
 		try {
 			const u = new URL(input.baseUrl);
 			if (!/^https?:$/.test(u.protocol)) return "Base URL 必须以 http:// 或 https:// 开头";
@@ -324,7 +338,12 @@ export class CustomProviders {
 		this.store.saveHeaders(pid, headerNames.length ? headers : null);
 		headerNames.forEach((name, i) => (process.env[envName(pid, i)] = headers[name]));
 
-		const models = input.models.map((m) => this.withLimits({ ...m, id: m.id.trim() }, undefined, input.baseUrl, input.api));
+		const protocolUrls = Object.fromEntries(Object.entries(input.protocolUrls === undefined ? (existing?.protocolUrls ?? {}) : input.protocolUrls).map(([k, v]) => [k, v.trim().replace(/\/+$/, "")]).filter(([, v]) => v));
+		const models = input.models.map((m) => {
+			const x = { ...m, id: m.id.trim() };
+			if (input.api !== AUTO_API || !x.api) delete x.api;
+			return this.withLimits(x, undefined, input.baseUrl, effectiveApi(input, x));
+		});
 		const declared = normalizeClassifiers(input.classifiers === undefined ? existing?.classifiers : input.classifiers);
 		const meta: CustomProviderMeta = {
 			id: pid,
@@ -338,6 +357,7 @@ export class CustomProviders {
 			classifiers: declared,
 			// 可靠来源自动识别的 classifier（对端元数据 / 官方同 id）；与 classifiers 合并后注册。
 			discoveredClassifiers: this.discoverClassifiers({ models, classifiers: declared }),
+			...(input.api === AUTO_API && Object.keys(protocolUrls).length ? { protocolUrls } : {}),
 			createdAt: existing?.createdAt ?? Date.now(),
 		};
 		// 写入 Pi 的 models.json（保留用户手写的其它 provider）
@@ -345,11 +365,11 @@ export class CustomProviders {
 		cfg.providers = { ...(cfg.providers ?? {}) };
 		cfg.providers[pid] = {
 			name: meta.name,
-			baseUrl: meta.baseUrl,
-			api: meta.api,
+			baseUrl: meta.api === AUTO_API ? protocolBaseUrl(meta.baseUrl, "openai-completions", meta.protocolUrls) : meta.baseUrl,
+			api: meta.api === AUTO_API ? "openai-completions" : meta.api,
 			...(meta.noKey ? { apiKey: "not-needed" } : {}),
 			...(headerNames.length ? { headers: Object.fromEntries(headerNames.map((n, i) => [n, `\${${envName(pid, i)}}`])) } : {}),
-			models: meta.models.map(piModel),
+			models: piModels(meta),
 		};
 		this.writeFile(cfg);
 		this.store.saveMeta([...metas.filter((m) => m.id !== pid), meta]);
@@ -457,7 +477,7 @@ export class CustomProviders {
 		Object.assign(m, { contextWindow: l.contextWindow ?? m.contextWindow, maxTokens: l.maxTokens ?? m.maxTokens, limitsSource: "learned" as const });
 		const cfg = this.readFile();
 		const p = cfg.providers?.[meta.id];
-		if (p) (p as { models?: unknown }).models = meta.models.map(piModel);
+		if (p) (p as { models?: unknown }).models = piModels(meta);
 		this.store.saveMeta(metas);
 		this.writeFile(cfg);
 		await this.models.reloadConfig();
@@ -471,7 +491,7 @@ export class CustomProviders {
 		const next = metas.map((meta) => {
 			const models = meta.models.map((x) => {
 				const keep = x.contextWindow && x.maxTokens && (x.limitsSource === "user" || x.limitsSource === "detected" || x.limitsSource === "learned");
-				const y = keep ? { ...this.withLimits(x, undefined, meta.baseUrl, meta.api), contextWindow: x.contextWindow, maxTokens: x.maxTokens, limitsSource: x.limitsSource } : this.withLimits(x, undefined, meta.baseUrl, meta.api);
+				const y = keep ? { ...this.withLimits(x, undefined, meta.baseUrl, effectiveApi(meta, x)), contextWindow: x.contextWindow, maxTokens: x.maxTokens, limitsSource: x.limitsSource } : this.withLimits(x, undefined, meta.baseUrl, effectiveApi(meta, x));
 				if (y.contextWindow !== x.contextWindow || y.maxTokens !== x.maxTokens || y.limitsSource !== x.limitsSource || String(y.input) !== String(x.input) || y.reasoning !== x.reasoning || JSON.stringify(y.thinkingLevelMap ?? null) !== JSON.stringify(x.thinkingLevelMap ?? null) || (y.thinkingLevelSource ?? null) !== (x.thinkingLevelSource ?? null)) n++;
 				return y;
 			});
@@ -481,7 +501,7 @@ export class CustomProviders {
 		const cfg = this.readFile();
 		for (const meta of next) {
 			const p = cfg.providers?.[meta.id];
-			if (p) (p as { models?: unknown }).models = meta.models.map(piModel);
+			if (p) (p as { models?: unknown }).models = piModels(meta);
 		}
 		this.store.saveMeta(next);
 		this.writeFile(cfg);
@@ -491,6 +511,8 @@ export class CustomProviders {
 
 	/** 通过服务的模型列表接口自动获取模型（OpenAI / Anthropic / Gemini 风格），顺带识别上下文 / 输出长度。 */
 	async fetchModels(o: { id?: string; api: string; baseUrl: string; apiKey?: string; headers?: { name: string; value?: string }[] }): Promise<FetchedModel[]> {
+		// 自动模式：多协议中转的模型列表走 OpenAI 兼容的 /v1/models
+		if (o.api === AUTO_API) o = { ...o, api: "openai-completions", baseUrl: protocolBaseUrl(o.baseUrl, "openai-completions") };
 		const base = o.baseUrl.trim().replace(/\/+$/, "");
 		const key = o.apiKey?.trim() || (o.id ? await this.store.readKey(o.id) : undefined) || "";
 		const old = o.id ? this.store.loadHeaders(o.id) : {};
@@ -537,11 +559,16 @@ export class CustomProviders {
 
 /** 把持久化元数据里的 chat 模型映射成注册 classifier 时要一并重建的模型。 */
 function chatModelFromMeta(meta: CustomProviderMeta, m: CustomModel): ClassifierChatModel {
-	return { id: m.id, name: m.name, api: meta.api, baseUrl: meta.baseUrl, input: m.input, reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, thinkingLevelMap: m.thinkingLevelMap };
+	return { id: m.id, name: m.name, api: effectiveApi(meta, m), baseUrl: effectiveBaseUrl(meta, m), input: m.input, reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, thinkingLevelMap: m.thinkingLevelMap };
+}
+
+/** 写进 Pi models.json 的模型列表：自动模式下每个模型带上自己的协议和地址（Pi 支持按模型覆盖 api / baseUrl） */
+function piModels(meta: CustomProviderMeta) {
+	return meta.models.map((m) => (meta.api === AUTO_API ? { ...piModel(m), api: effectiveApi(meta, m), baseUrl: effectiveBaseUrl(meta, m) } : piModel(m)));
 }
 
 /** 写进 Pi models.json 的模型条目：去掉我们自己的字段和空值 */
 function piModel(m: CustomModel) {
-	const { limitsSource: _s, inputAuto: _a, reasoningAuto: _r, thinkingLevelSource: _t, capabilities: _c, detectedType: _d, classifierProtocol: _p, ...rest } = m;
+	const { api: _api, limitsSource: _s, inputAuto: _a, reasoningAuto: _r, thinkingLevelSource: _t, capabilities: _c, detectedType: _d, classifierProtocol: _p, ...rest } = m;
 	return Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== ""));
 }

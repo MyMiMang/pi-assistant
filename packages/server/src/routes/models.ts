@@ -1,4 +1,5 @@
 /** 从 http.ts 拆出的路由（行为不变）。 */
+import { effectiveApi, effectiveBaseUrl, guessFromUrl } from "../pi-adapter/relay-protocols.ts";
 import { registryAsrProviders } from "../voice/index.ts";
 import { Hono } from "hono";
 import { bus } from "../bus.ts";
@@ -41,7 +42,10 @@ export function mountModelRoutes(app: Hono<Env>) {
 		return c.json(models.listProviders().map((p) => ({ ...p, custom: custom.has(p.id), configured: p.configured || !!custom.get(p.id)?.configured })));
 	});
 	// 自定义模型服务（中转站 / 第三方 / 本地），写入 Pi 的 models.json
-	app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list().map((p) => ({ ...p, references: providerReferences(p.id) })), apis: supportedApis(), classifierProtocols: classifierProtocols() }));
+	// 每个模型附上实际协议 / 地址（自动模式按模型识别），界面直接显示，不在前端再猜一遍
+	app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list().map((p) => ({ ...p, models: p.models.map((m) => ({ ...m, apiEffective: effectiveApi(p, m), baseUrlEffective: effectiveBaseUrl(p, m) })), references: providerReferences(p.id) })), apis: supportedApis(), classifierProtocols: classifierProtocols() }));
+	// 新建时从地址猜接口格式和名称（只是预填）
+	app.get("/api/models/custom/guess", (c) => c.json(guessFromUrl(c.req.query("url") ?? "")));
 	app.post("/api/models/custom", async (c) => {
 		try {
 			const saved = await customProviders.save(null, await c.req.json<CustomProviderInput>());
