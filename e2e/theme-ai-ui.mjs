@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DIST = join(ROOT, "apps/web/dist");
@@ -86,7 +87,7 @@ try {
 		if (await page.locator('[data-testid="help-pop"]').count()) await page.keyboard.press("Escape");
 		await page.mouse.move(2, 2);
 	};
-	mkdirSync(join(ROOT, "docs/screenshots"), { recursive: true });
+	mkdirSync(artifactDir("screenshots"), { recursive: true });
 
 	await step("设置→外观有「用 AI 设计主题」入口，无 /主题设计 slash", async () => {
 		await page.goto(`${BASE}/?settings=appearance`);
@@ -109,7 +110,7 @@ try {
 		const opts = await page.getByTestId("theme-model-option").count();
 		if (opts < 1) throw new Error("模型菜单里应至少有一个已配置模型");
 		await page.keyboard.press("Escape");
-		await page.screenshot({ path: join(ROOT, "docs/screenshots/16f-theme-ai-model.png") });
+		await page.screenshot({ path: join(artifactDir("screenshots"), "16f-theme-ai-model.png") });
 		await page.getByTestId("theme-cancel").click();
 		await page.getByTestId("theme-designer").waitFor({ state: "detached" });
 		const agents = await (await fetch(`${BASE}/api/agents`)).json();
@@ -128,7 +129,7 @@ try {
 		const skin = await page.evaluate(() => document.documentElement.dataset.skin);
 		if (!skin.startsWith("custom-")) throw new Error(`AI 生成后应进入预览：${skin}`);
 		if ((await page.evaluate(() => localStorage.getItem("pia.skin"))) === skin) throw new Error("预览不应写 localStorage");
-		await page.screenshot({ path: join(ROOT, "docs/screenshots/16d-theme-ai-preview.png") });
+		await page.screenshot({ path: join(artifactDir("screenshots"), "16d-theme-ai-preview.png") });
 		// 继续修改
 		await dismissHelp();
 		await page.getByTestId("theme-generate").click();
@@ -188,10 +189,10 @@ try {
 		if (reopened.includes("正在预览") || reopened.includes("已另存为新主题")) throw new Error("重新打开不能残留上一轮的生成/另存提示");
 		const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 		if (overflow > 2) throw new Error(`390 横向溢出 ${overflow}px`);
-		await page.screenshot({ path: join(ROOT, "docs/screenshots/16e-theme-ai-390.png") });
+		await page.screenshot({ path: join(artifactDir("screenshots"), "16e-theme-ai-390.png") });
 		// 模型行在 390 下显示实际模型（默认模型）
 		const btn = await page.getByTestId("theme-model").innerText();
-		await page.screenshot({ path: join(ROOT, "docs/screenshots/16g-theme-ai-model-390.png") });
+		await page.screenshot({ path: join(artifactDir("screenshots"), "16g-theme-ai-model-390.png") });
 		if (!btn.trim()) throw new Error("390 下模型按钮应有模型名");
 	});
 } finally {

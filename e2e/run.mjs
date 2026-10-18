@@ -11,11 +11,12 @@ import { startMockOpenAI } from "./mock-openai.mjs";
 import { cspProblems, probeCsp } from "./fixtures/csp-probe.mjs";
 import { startMockImages } from "./mock-images.mjs";
 import { infoTab as selectInfoTab, taskTab as selectTaskTab, agentProfileSave, expandDetails, expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 // fileURLToPath 而不是 URL.pathname：路径含空格/中文时 pathname 会保留 %20，导致子进程 cwd 与文件读取都找不到。
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DATA = process.env.E2E_DATA ?? "/tmp/pia-e2e";
-const SHOTS = join(ROOT, "docs/screenshots");
+const SHOTS = artifactDir("screenshots");
 // 每次用一个空闲端口：上次没退干净的服务占着 8787 时，不会误连到旧进程（以前偶发整轮失败的原因）
 const PORT = Number(process.env.E2E_PORT) || (await new Promise((r) => { const sv = createNetServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => r(p)); }); }));
 const BASE = `http://127.0.0.1:${PORT}`;

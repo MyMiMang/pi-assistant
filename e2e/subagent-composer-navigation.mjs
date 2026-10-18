@@ -21,12 +21,13 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DATA = "/tmp/pia-e2e-subagent-composer-navigation";
 const WS = `${DATA}/workspace`;
 const HOME = `${DATA}/home`;
-const SHOTS = join(ROOT, "docs/screenshots");
+const SHOTS = artifactDir("screenshots");
 const PORT = await new Promise((resolve) => {
 	const sv = createServer().listen(0, "127.0.0.1", () => {
 		const p = sv.address().port;

@@ -11,11 +11,12 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { createSecurityProbe, spawnMemoryServer, startupEvidence } from "./fixtures/safe-memory-server.mjs";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = new URL("..", import.meta.url);
 const { fileURLToPath } = await import("node:url");
 const REPO = fileURLToPath(ROOT);
-const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/send-shortcut";
+const OUT = artifactDir("send-shortcut");
 const DATA = "/tmp/pia-verify-send-shortcut";
 const PORT = await new Promise((resolve) => { const sv = createServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => resolve(p)); }); });
 const BASE = `http://127.0.0.1:${PORT}`;

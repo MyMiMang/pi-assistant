@@ -16,10 +16,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { strToU8, zipSync } from "fflate";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DATA = "/tmp/pia-e2e-skills-scope";
-const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/skills-scope";
+const OUT = artifactDir("skills-scope");
 const PORT = await new Promise((resolve) => { const sv = createServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => resolve(p)); }); });
 const BASE = `http://127.0.0.1:${PORT}`;
 rmSync(DATA, { recursive: true, force: true });

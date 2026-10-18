@@ -15,6 +15,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { extname, join } from "node:path";
 import { chromium } from "playwright-core";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const dist = join(root, "apps/web/dist");
@@ -22,7 +23,7 @@ if (!existsSync(join(dist, "index.html"))) {
 	console.error("找不到 apps/web/dist/index.html；先跑 `npm run build -w @pi-assistant/web`");
 	process.exit(2);
 }
-const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/voice-input-ui";
+const OUT = artifactDir("voice-input-ui");
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 

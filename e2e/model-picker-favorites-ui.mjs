@@ -20,11 +20,12 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { closeModelPanel, openModelMenu } from "./model-menu-flow.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 // 本次运行独占的临时目录（DATA / WORKSPACE / HOME / TMPDIR）；finally 只删它自己
 const run = makeTempRun("pia-e2e-model-favorites-");
-const OUT = process.env.SHOT_DIR ?? "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/model-picker-favorites";
+const OUT = process.env.SHOT_DIR ?? artifactDir("model-picker-favorites");
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 const PORT = await new Promise((r) => {

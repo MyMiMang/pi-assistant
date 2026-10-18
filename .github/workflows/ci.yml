@@ -24,7 +24,7 @@ jobs:
           CHROME=$(node -e "console.log(require('playwright-core').chromium.executablePath())") node e2e/run.mjs
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: e2e-screenshots, path: docs/screenshots }
+        with: { name: e2e-screenshots, path: artifacts }
   # 固定在 desktop-image.json 里的助理电脑镜像：在 nerdctl + rootful containerd（同 Lima 虚拟机）下两种架构真实开机
   desktop-nerdctl:
     strategy:

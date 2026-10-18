@@ -20,10 +20,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DATA = "/tmp/pia-e2e-subagent-thinking-levels";
-const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/subagent-thinking-levels";
+const OUT = artifactDir("subagent-thinking-levels");
 const PORT = await new Promise((resolve) => { const sv = createServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => resolve(p)); }); });
 const BASE = `http://127.0.0.1:${PORT}`;
 rmSync(DATA, { recursive: true, force: true });

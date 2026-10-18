@@ -24,9 +24,10 @@ import { chromium } from "playwright-core";
 import { openCompact } from "./model-menu-flow.mjs";
 import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
 import { nativeLaunchBrowserEnv } from "./fixtures/native-launch-env.mjs";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const OUT = join(ROOT, "docs/screenshots");
+const OUT = artifactDir("screenshots");
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const RUN_DIR = mkdtempSync(join(tmpdir(), "pia-e2e-thinking-visual-"));
 const DATA = join(RUN_DIR, "data");

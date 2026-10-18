@@ -7,8 +7,9 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { stableShot } from "./fixtures/stable-shot.mjs";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 const root = fileURLToPath(new URL("..", import.meta.url)), run = makeTempRun("pia-model-error-");
-const out = process.env.SHOT_DIR ?? join(root, "evidence/beta32-errors"); mkdirSync(out, { recursive: true });
+const out = process.env.SHOT_DIR ?? artifactDir("beta32-errors"); mkdirSync(out, { recursive: true });
 const cases = [
  { key: "quota", error: { type: "usage_limit_reached", message: "You have hit your ChatGPT usage limit. Try again later." }, match: /额度已用完/ },
  { key: "rate_limit", error: { code: "rate_limit_exceeded", message: "429 Too many requests" }, match: /限流/ },

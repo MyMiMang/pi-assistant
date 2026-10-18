@@ -9,10 +9,11 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { PNG } from "pngjs";
 import { chromium } from "playwright-core";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const DATA = process.env.E2E_DATA ?? "/tmp/pia-e2e-pet";
-const SHOTS = join(ROOT, "docs/screenshots");
+const SHOTS = artifactDir("screenshots");
 const freePort = () => new Promise((r) => { const sv = createNetServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => r(p)); }); });
 const PORT = Number(process.env.E2E_PORT) || (await freePort());
 const BASE = `http://127.0.0.1:${PORT}`;

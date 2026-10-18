@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 const { fileURLToPath } = await import("node:url");
 const REPO = fileURLToPath(new URL("..", import.meta.url));
-const SHOTS = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence";
+const SHOTS = artifactDir("image-viewer");
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const TEST_IMG = join(REPO, "docs/screenshots/91-chat-generated-image.png");
 const NODE = process.execPath;
@@ -39,6 +39,7 @@ const server = spawn(NODE, ["--import", "tsx", "packages/server/src/main.ts"], {
 	stdio: ["ignore", "pipe", "pipe"],
 });
 import { appendFileSync, writeFileSync } from "node:fs";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 writeFileSync("/tmp/pia-iv-server.log", "");
 server.stdout.on("data", (d) => appendFileSync("/tmp/pia-iv-server.log", d));
 server.stderr.on("data", (d) => appendFileSync("/tmp/pia-iv-server.log", d));

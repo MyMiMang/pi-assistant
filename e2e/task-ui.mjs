@@ -13,11 +13,12 @@ import { createServer } from "node:net";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = new URL("..", import.meta.url);
 const { fileURLToPath } = await import("node:url");
 const REPO = fileURLToPath(ROOT);
-const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/task-ui";
+const OUT = artifactDir("task-ui");
 const DATA = "/tmp/pia-verify-task-ui";
 const PORT = await new Promise((resolve) => { const sv = createServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => resolve(p)); }); });
 const BASE = `http://127.0.0.1:${PORT}`;

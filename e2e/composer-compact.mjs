@@ -14,11 +14,12 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { openCompact } from "./model-menu-flow.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = new URL("..", import.meta.url);
 const { fileURLToPath } = await import("node:url");
 const REPO = fileURLToPath(ROOT);
-const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/composer-compact";
+const OUT = artifactDir("composer-compact");
 // 本次运行独占的临时目录（DATA / WORKSPACE / HOME / TMPDIR）；finally 只删它自己
 const run = makeTempRun("pia-e2e-composer-compact-");
 const PORT = await new Promise((resolve) => { const sv = createServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => resolve(p)); }); });

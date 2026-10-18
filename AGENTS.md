@@ -27,7 +27,7 @@ npm ci --ignore-scripts      # Node 22.19+
 npm run dev                  # Mock 模型，http://127.0.0.1:8787，不花钱
 npm run typecheck            # 服务端 + 网页
 npm test                     # 服务端单测（约 3 分钟）
-npm run e2e                  # 全量 e2e（需要 Chrome，CHROME=…；约 25 分钟；截图写 docs/screenshots）
+npm run e2e                  # 全量 e2e（需要 Chrome，CHROME=…；约 25 分钟；截图写 artifacts/，不入库）
 E2E_ONLY='正则' npm run e2e  # 只跑部分步骤
 node e2e/pet.mjs             # 桌宠 e2e
 ```
@@ -50,10 +50,13 @@ Mock 模型（`packages/server/src/pi-adapter/mock-provider.ts`）按关键词�
 - 用户消息在助理忙时走 Pi `steer`（插话），不要改回 `followUp`；停止词判断统一用 `packages/server/src/interject.ts`（DESIGN §20）。
 - 新功能要加单测和 e2e，交付前跑 typecheck、单测和相关 e2e。
 
-## 文档维护（交付标准）
-每步都要留痕，不能代码做完一堆、文档还停在旧状态。三条硬要求：
-1. **新需求 / 计划**：用户一提出，立刻写进 [docs/ROADMAP.md](docs/ROADMAP.md)，一行写清**原话大意 + 状态 + 验收点**；需求变了先改这一行，再改设计。
-2. **做完**：同步三处——ROADMAP 改状态（带上发布版本，如 `已完成（beta.19）`）、HANDOFF 加一条进度（**改了哪些文件 / 什么行为、实际跑了什么测试、剩余限制或待办**）；涉及设计的更新 [docs/DESIGN.md](docs/DESIGN.md) 对应章节，新能力写新章节、改动章节补一句，不整段重抄。
-3. **发布说明**：只有用户说「打包」才写 `docs/release-notes/v0.1.0-beta.N.md`；HANDOFF 顶部写清**当前公开版本**，正文里没发布的改动标注「未打包 / beta.N 候选」，**不把「已合 main」写成「已发布」**。
+## 复用优先（硬规则）
+- 写新代码前先 `rg` 搜现有的 helper / 组件 / 模块（如 `ui.tsx`、`latest-write.ts`、`e2e/fixtures/*`、`packages/shared`），**能复用就复用，禁止再写一份同功能实现**。
+- 发现重复实现，顺手合并成一份（同一提交里改完调用方并跑相关测试）。
+- 不为单一实现加抽象层、不加没人用的配置/开关；UI 状态保持最简单（一段一个加载状态 + 一个保存错误）。
 
-只写事实：验收以实际跑过的测试 / 真机结果为准，**不把子代理或自己的「已完成」自报当验收**；没跑就写「未验证 / 待真机」。风格：中文短句、一条一句话，一份事情只在一个地方写详细、别处链接过去，不重复全文、不搭大而全的文档框架。
+## 交付标准与文档（硬规则）
+- 交付标准见 [docs/HANDOFF.md](docs/HANDOFF.md)「交付标准」：typecheck + 相关单测（动服务端则 `npm test` 全绿）+ 相关 e2e。**不跑上百组的布局矩阵、不多轮重复验证。**
+- 截图、日志、证据写 `artifacts/`（gitignore），**不提交进仓库**；不新建 `progress-snapshots/`、`evidence/` 文件。
+- HANDOFF 只写当前状态（一两屏）；ROADMAP 一行一事。提交信息就是进度记录。只写实际跑过的结果，没跑写「未验证」。
+- 新需求立刻在 ROADMAP 记一行；只有用户说「打包」才写 `docs/release-notes/v0.1.0-beta.N.md`，不把「已合 main」写成「已发布」。

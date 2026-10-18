@@ -4,6 +4,7 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 /**
  * 记忆后端下拉的定向验证：把「此助理的记忆后端」从原生 <select> 换成应用内统一 Select。
@@ -22,7 +23,7 @@ if (!existsSync(join(dist, 'index.html'))) {
 	console.error('找不到 apps/web/dist/index.html；先跑 `npm run build -w @pi-assistant/web`');
 	process.exit(2);
 }
-const SHOTS = join(root, 'docs/screenshots');
+const SHOTS = artifactDir("screenshots");
 mkdirSync(SHOTS, { recursive: true });
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2', '.map': 'application/json' };

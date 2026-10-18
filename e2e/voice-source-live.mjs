@@ -15,10 +15,11 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { createSecurityProbe, spawnMemoryServer, startupEvidence } from "./fixtures/safe-memory-server.mjs";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const DATA = "/tmp/pia-e2e-voice-source-live";
-const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/voice-source-live";
+const OUT = artifactDir("voice-source-live");
 rmSync(DATA, { recursive: true, force: true });
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });

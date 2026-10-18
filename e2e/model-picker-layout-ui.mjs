@@ -34,6 +34,7 @@ import { nativeLaunchBrowserEnv } from "./fixtures/native-launch-env.mjs";
 import { stableShot } from "./fixtures/stable-shot.mjs";
 import { extname, join } from "node:path";
 import { chromium } from "playwright-core";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const dist = join(root, "apps/web/dist");
@@ -41,7 +42,7 @@ if (!existsSync(join(dist, "index.html"))) {
 	console.error("找不到 apps/web/dist/index.html；先跑 `npm run build -w @pi-assistant/web`");
 	process.exit(2);
 }
-const OUT = process.env.SHOT_DIR ?? join(root, "evidence/model-picker-layout");
+const OUT = process.env.SHOT_DIR ?? artifactDir("model-picker-layout");
 mkdirSync(OUT, { recursive: true });
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json", ".woff2": "font/woff2", ".map": "application/json" };

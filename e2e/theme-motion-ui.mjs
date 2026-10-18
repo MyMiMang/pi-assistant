@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DIST = join(ROOT, "apps/web/dist");
@@ -162,7 +163,7 @@ try {
 		if (await page.locator('[data-testid="help-pop"]').count()) await page.keyboard.press("Escape");
 		await page.mouse.move(2, 2);
 	};
-	mkdirSync(join(ROOT, "docs/screenshots"), { recursive: true });
+	mkdirSync(artifactDir("screenshots"), { recursive: true });
 	await page.goto(`${BASE}/?settings=appearance`);
 	await page.getByTestId("open-theme-designer").waitFor();
 	const baseSkin = await page.evaluate(() => document.documentElement.dataset.skin || "");
@@ -306,7 +307,7 @@ try {
 		await page.getByTestId("theme-motion-style").scrollIntoViewIfNeeded();
 		await page.mouse.move(2, 2);
 		await page.waitForTimeout(250);
-		await page.screenshot({ path: join(ROOT, "docs/screenshots/17-theme-motion-390.png") });
+		await page.screenshot({ path: join(artifactDir("screenshots"), "17-theme-motion-390.png") });
 	});
 } finally {
 	await browser?.close().catch(() => {});
