@@ -3,5 +3,6 @@ title = "pi-assistant gitleaks config"
 useDefault = true
 [allowlist]
 description = "测试用假 Key"
-regexes = ['''sk-(relay-test|unit|wrong)''']
-paths = ['''package-lock\.json''']
+regexes = ['''sk-(relay-test|unit|wrong)''', '''sk-(test-key|relay-key|relay-[ab]|auto|scope)-[a-z]{0,4}-?0123456789abcdef''']
+# evidence/ 下的测试结果 JSON 记录的是源码文件 sha256 指纹（已移出跟踪，仅历史中存在）
+paths = ['''package-lock\.json''', '''^evidence/.*-results\.json$''']
