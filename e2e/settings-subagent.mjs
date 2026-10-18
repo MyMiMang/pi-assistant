@@ -62,7 +62,7 @@ const openPane = async (page) => {
 	await page.locator(".pa-pane-wrap").waitFor();
 };
 /** 打开「助理 › 模型」页（信息面板），返回子代理任务上限区块 */
-const openLimits = async (page, agentId) => {
+const openLimits = async (page, agentId, testid = "agent-subagent-limits") => {
 	await page.goto(`${BASE}/?agent=${agentId}`);
 	await page.waitForTimeout(150);
 	await openPane(page);
@@ -71,7 +71,7 @@ const openLimits = async (page, agentId) => {
 	if (await tab.count()) await tab.click();
 	else { await page.getByTestId("info-tabs-more").click(); await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "模型", exact: true }).click(); }
 	await expandAgentModelSection(page, "subagents");
-	const sec = page.getByTestId("agent-subagent-limits");
+	const sec = page.getByTestId(testid);
 	await sec.waitFor();
 	return { sec, conc: page.getByLabel("子代理并发上限"), mins: page.getByLabel("子代理最长运行分钟") };
 };
@@ -175,8 +175,8 @@ try {
 	// ---------------------------------------------------------------- 6) 接口失败
 	console.log("\n[6] 接口失败：显示原因，不渲染空输入框");
 	fail = true;
-	({ sec, conc, mins } = await openLimits(page, a.id));
-	check("接口失败时不渲染可编辑输入框", (await sec.locator("input").count()) === 0, String(await sec.locator("input").count()));
+	({ sec, conc, mins } = await openLimits(page, a.id, "agent-subagent-load-error"));
+	check("接口失败时不渲染可编辑输入框", (await page.getByLabel("子代理并发上限").count()) === 0, String(await sec.locator("input").count()));
 	check("接口失败时显示错误原因", ((await sec.textContent()) ?? "").includes("模拟接口失败"), (await sec.textContent()) ?? "");
 	fail = false;
 	({ sec, conc, mins } = await openLimits(page, a.id));

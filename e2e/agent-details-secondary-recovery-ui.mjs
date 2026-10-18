@@ -370,57 +370,32 @@ try {
 	console.log("PASS image-catalog: 空目录/503 时两项仍可改；真实重试恢复目录后可选并真实保存具体模型");
 
 	// ---------------------------------------------------------------- 3) 候选池 / 思考强度 / 任务上限 GET 503
-	console.log("\n[3] 候选池 / 思考强度 / 任务上限读取失败：摘要不写假值，展开真实错误 + 重试");
+	console.log("\n[3] 子代理分工读取失败：摘要不写假值，一条读取错误 + 一个重试恢复全部");
 	net.poolGetFail = true;
 	net.thinkingGetFail = true;
 	net.limitsGetFail = true;
 	await remountModels();
 	await expandAgentModelSection(page, "subagents");
-	await pane.getByTestId("agent-subagent-pool-error").waitFor();
-	await pane.getByTestId("agent-subagent-thinking-load-error").waitFor();
-	await pane.getByTestId("agent-subagent-limits-error").waitFor();
+	await pane.getByTestId("agent-subagent-load-error").waitFor();
 	const degraded = await summaryText(sub());
-	assert.match(degraded, /候选池 读取失败/, degraded);
-	assert.match(degraded, /思考强度 读取失败/, degraded);
-	assert.match(degraded, /任务上限 读取失败/, degraded);
+	assert.match(degraded, /读取失败/, degraded);
 	assert.doesNotMatch(degraded, /保存失败/, "GET 读取失败只提示读取失败，不能额外标成保存失败");
-	assert.match(await pane.getByTestId("agent-subagent-limits-error").innerText(), /任务上限读取失败/);
-	assert.doesNotMatch(await pane.getByTestId("agent-subagent-limits-error").innerText(), /保存失败/);
+	assert.doesNotMatch(await pane.getByTestId("agent-subagent-load-error").innerText(), /保存失败/);
 	assert.doesNotMatch(degraded, /跟随主会话/, "读取失败不能假装「跟随主会话」");
 	assert.doesNotMatch(degraded, /同时 \d+ 个/, "读取失败不能写假的默认上限");
-	assert.equal(await pane.getByTestId("agent-subagent-limits").locator("input").count(), 0, "读取失败不画默认上限输入框");
+	assert.equal(await pane.getByLabel("子代理并发上限").count(), 0, "读取失败不画默认上限输入框");
 	assert.equal(await pane.getByTestId("agent-subagent-inherit-maxConcurrent").count(), 0);
 	await stableShot(page, pane, join(out, "02-subagent-degraded.png"));
-
-	assert.equal(await pane.getByTestId("agent-subagent-pool-retry").isVisible(), true, "候选池有自己的重试");
 	net.poolGetFail = false;
 	net.thinkingGetFail = false;
 	net.limitsGetFail = false;
-	// 三份读取各有自己的重试，且**只重读自己的字段**：必须逐个点，不能靠一份重试顺带重读全部。
-	const thinkingGets = net.thinkingGetSent;
-	await pane.getByTestId("agent-subagent-pool-retry").click();
+	await pane.getByTestId("agent-subagent-retry").click();
 	await pane.getByTestId("subagent-model").waitFor();
-	await wait(async () => /模型跟随聊天/.test(await summaryText(sub())), 10000, "候选池重试后是自己的空池");
-	assert.equal(net.thinkingGetSent, thinkingGets, "候选池重试不能顺带再读思考强度");
-	assert.ok(await pane.getByTestId("agent-subagent-thinking-load-error").isVisible(), "候选池恢复后思考强度仍是自己的读取失败");
-	assert.ok(await pane.getByTestId("agent-subagent-limits-error").isVisible(), "候选池恢复后任务上限仍是自己的读取失败");
-	await pane.getByTestId("agent-subagent-limits-retry").click();
 	const limitsNow = await j(`/api/agents/${A.id}/subagents/settings`);
 	await wait(async () => (await pane.getByLabel("子代理并发上限").inputValue()) === String(limitsNow.settings.maxConcurrent), 10000, "上限恢复真实值");
-	const poolGets = net.poolGetSent;
-	await pane.getByTestId("agent-subagent-thinking-load-error").getByRole("button", { name: "重试", exact: true }).click();
-	await wait(async () => /思考跟随主会话/.test(await summaryText(sub())), 10000, "思考强度恢复真实 follow");
-	assert.equal(net.poolGetSent, poolGets, "思考强度重试不能顺带再读候选池");
-	// 候选池自己的「重试」按钮也走真实恢复（只挂候选池这一份 GET）
-	net.poolGetFail = true;
-	await remountModels();
-	await expandAgentModelSection(page, "subagents");
-	await pane.getByTestId("agent-subagent-pool-error").waitFor();
-	net.poolGetFail = false;
-	await pane.getByTestId("agent-subagent-pool-retry").click();
-	await pane.getByTestId("subagent-model").waitFor();
-	await wait(async () => /模型跟随聊天/.test(await summaryText(sub())), 10000, "候选池重试后是自己的空池");
-	console.log("PASS subagent-loads: 三份 GET 失败不写假摘要；各自的重试只重读自己的字段（互不代劳）");
+	await wait(async () => /模型跟随聊天/.test(await summaryText(sub())) && /思考跟随主会话/.test(await summaryText(sub())), 10000, "重试后读回真实值");
+	assert.equal(await pane.getByTestId("agent-subagent-load-error").count(), 0);
+	console.log("PASS subagent-loads: GET 失败不写假摘要；一个重试真实恢复三份设置");
 
 	// ---------------------------------------------------------------- 3b) 候选池连续勾选：写入串行 + 迟到失败不抹第二次
 	console.log("\n[3b] 候选池连续勾选：第二次等第一次结束；迟到失败不抹掉第二次");
@@ -470,7 +445,7 @@ try {
 	await thinkingMenu.waitFor();
 	await thinkingMenu.getByRole("slider").press("End");
 	await pane.getByTestId("agent-subagent-save-error").waitFor();
-	assert.match(await pane.getByTestId("agent-subagent-save-error").innerText(), /思考强度没保存成功/);
+	assert.match(await pane.getByTestId("agent-subagent-save-error").innerText(), /思考强度保存失败/);
 	assert.equal((await j(`/api/agents/${A.id}/subagent-thinking`)).mode, "follow", "失败不能写库");
 	await wait(async () => /跟随主会话/.test(await pane.getByTestId("agent-subagent-thinking").innerText()), 10000, "失败回滚到已确认的 follow");
 	net.thinkingPutFail = false;
@@ -501,8 +476,8 @@ try {
 	assert.equal(await minutes.isDisabled(), true);
 	assert.match(await summaryText(sub()), /保存中/, "保存中写进摘要");
 	gates.release("limits-put");
-	await pane.getByTestId("agent-subagent-limits-error").waitFor();
-	assert.match(await pane.getByTestId("agent-subagent-limits-error").innerText(), /任务上限保存失败/);
+	await pane.getByTestId("agent-subagent-save-error").waitFor();
+	assert.match(await pane.getByTestId("agent-subagent-save-error").innerText(), /任务上限保存失败/);
 	assert.doesNotMatch(await summaryText(sub()), /读取失败/, "PUT 失败不能被写成读取失败");
 	await wait(async () => (await concurrent.inputValue()) === String(limitsBefore.settings.maxConcurrent), 10000, "失败回滚到生效值");
 	assert.equal(("maxConcurrent" in (await j(`/api/agents/${A.id}/subagents/settings`)).overrides), false, "失败不能写库");
@@ -513,7 +488,7 @@ try {
 	await wait(async () => (await j(`/api/agents/${A.id}/subagents/settings`)).overrides.maxConcurrent === 5, 10000, "成功写入真实覆盖值");
 	await wait(async () => (await concurrent.inputValue()) === "5", 10000, "成功后输入框与真实值一致");
 	await wait(async () => /同时 5 个/.test(await summaryText(sub())), 10000, "摘要与真实覆盖值一致");
-	assert.equal(await pane.getByTestId("agent-subagent-limits-error").count(), 0, "成功后错误消失");
+	assert.equal(await pane.getByTestId("agent-subagent-save-error").count(), 0, "成功后错误消失");
 	await pane.getByTestId("agent-subagent-inherit-maxConcurrent").click();
 	await wait(async () => !("maxConcurrent" in (await j(`/api/agents/${A.id}/subagents/settings`)).overrides), 10000, "继承默认清空覆盖");
 	const inherited = await j(`/api/agents/${A.id}/subagents/settings`);
@@ -522,230 +497,6 @@ try {
 	console.log("PASS subagent-limits: 挂起禁用、失败回滚+错误、成功一致、继承默认读回真实 GET");
 
 	// ---------------------------------------------------------------- 5) 切助理 / 离开模型页：迟到响应不污染
-	console.log("\n[5] 切助理 / 离开模型页：被挂起的旧 GET 迟到返回（含 503）不污染当前面板");
-	await j(`/api/agents/${A.id}/image-model`, "PUT", { mode: "off" });
-	await j(`/api/agents/${B.id}/image-model`, "PUT", { mode: "default" });
-	await j(`/api/agents/${A.id}/subagent-model`, "PUT", { pool: [{ provider: "mock", id: "echo" }] });
-	await j(`/api/agents/${B.id}/subagent-model`, "PUT", { pool: [] });
-	await page.goto(`${base}/?room=${room.id}`);
-	await page.getByTestId("room-members").waitFor();
-	await selectMember(A.name);
-	// 甲：画图选择挂起，放行时故意 503；候选池挂起后正常放行
-	gates.arm(`image:${A.id}`, { lateFail: true });
-	gates.arm(`pool:${A.id}`);
-	await openModels();
-	await wait(async () => gates.waiters.has(`image:${A.id}`) && gates.waiters.has(`pool:${A.id}`), 10000, "甲的本次读取被挂起");
-	await expandAgentModelSection(page, "image");
-	await expandAgentModelSection(page, "subagents");
-	assert.equal(await pane.getByTestId("agent-image-select").count(), 0, "甲：画图选择还没回来");
-	assert.match(await summaryText(sub()), /候选池 正在读取/, "甲：候选池读取中");
-	// 切到乙：乙自己的读取也挂起，方便观察甲的迟到响应落在谁的面板上
-	gates.arm(`image:${B.id}`);
-	gates.arm(`pool:${B.id}`);
-	await selectMember(B.name);
-	await openModels();
-	await wait(async () => gates.reached(`image:${B.id}`) && gates.reached(`pool:${B.id}`), 10000, "乙的读取被挂起");
-	await expandAgentModelSection(page, "image");
-	await expandAgentModelSection(page, "subagents");
-	// 只放行甲（画图 503 + 候选池成功），此时界面显示的是乙
-	gates.release(`image:${A.id}`);
-	gates.release(`pool:${A.id}`);
-	await settle(300);
-	assert.equal(await pane.getByTestId("agent-image-select").count(), 0, "乙仍在读取：不能显示甲的选择");
-	assert.equal(await pane.getByTestId("agent-image-load-error").count(), 0, "甲的迟到失败不能出现在乙的面板上");
-	assert.match(await summaryText(sub()), /候选池 正在读取/, "乙的候选池仍是读取中，没被甲的数据顶替");
-	// 放行乙：显示乙自己的真实值（画图 default；候选池空 = 跟随聊天）
-	gates.release(`image:${B.id}`);
-	gates.release(`pool:${B.id}`);
-	await pane.getByTestId("agent-image-select").waitFor();
-	await wait(async () => (await pane.getByTestId("agent-image-select").inputValue()) === "default", 10000, "乙显示自己的 default");
-	assert.equal(await pane.getByTestId("agent-image-load-error").count(), 0);
-	await wait(async () => /模型跟随聊天/.test(await summaryText(sub())), 10000, "乙的候选池是自己的空池（跟随聊天）");
-
-	// 离开模型页期间迟到的失败：回来后是新的一次读取，不能被旧失败贴成错误
-	gates.arm(`limits:${B.id}`, { lateFail: true });
-	await remountModels(); // 真实重挂一次，才会有这次新的上限 GET
-	await wait(() => gates.reached(`limits:${B.id}`), 10000, "乙的任务上限读取被挂起");
-	await infoTab(page, "overview");
-	gates.release(`limits:${B.id}`);
-	await settle(300);
-	await openModels();
-	await expandAgentModelSection(page, "subagents");
-	const limitsB = await j(`/api/agents/${B.id}/subagents/settings`);
-	await wait(async () => (await pane.getByLabel("子代理并发上限").inputValue()) === String(limitsB.settings.maxConcurrent), 10000, "回来后重新读到真实上限");
-	assert.equal(await pane.getByTestId("agent-subagent-limits-error").count(), 0, "离开期间迟到的 503 不能贴成当前错误");
-	console.log("PASS stale: 切助理/离开模型页后旧 GET 迟到返回不污染当前面板");
-
-	// ---------------------------------------------------------------- 6) 两份保存错误各归各的：可共存，同字段成功才消除
-	console.log("\n[6] 候选池 / 思考强度的保存错误可共存，只由同字段的成功写入消除");
-	await j(`/api/agents/${A.id}/subagent-model`, "PUT", { pool: [] });
-	await j(`/api/agents/${A.id}/subagent-thinking`, "PUT", { mode: "follow" });
-	await selectMember(A.name);
-	await openModels();
-	await expandAgentModelSection(page, "subagents");
-	await pane.getByTestId("subagent-model").waitFor();
-	await wait(async () => /思考跟随主会话/.test(await summaryText(sub())), 10000, "初始为真实 follow");
-	const thinkingMenu6 = page.getByTestId("agent-subagent-thinking-menu");
-	// 候选池 PUT 失败：只留候选池自己的错误
-	net.poolPutFail = 1;
-	await openPoolMenu();
-	await poolRow("mock/echo").locator("input").check();
-	await saveErrBox().waitFor();
-	assert.match(await saveErrBox().innerText(), /候选池没保存成功/, "外层错误写明是候选池");
-	await poolSaveErr().waitFor();
-	assert.equal(await thinkSaveErr().count(), 0, "候选池失败不顺带写思考强度的错误");
-	assert.equal((await j(`/api/agents/${A.id}/subagent-model`)).pool.length, 0, "失败不能写库");
-	await closePoolMenu();
-	// 另一字段正在保存时，摘要也必须继续提示既有失败；放行后仍走真实写入。
-	net.thinkingHoldPutContinue = true;
-	await pane.getByTestId("agent-subagent-thinking").click();
-	await thinkingMenu6.waitFor();
-	await thinkingMenu6.getByRole("slider").press("End");
-	await wait(() => gates.waiters.has("thinking-put-continue"), 10000, "思考强度真实 PUT 被挂起");
-	await wait(async () => /保存中/.test(await summaryText(sub())), 10000, "摘要显示另一字段仍在保存");
-	assert.match(await summaryText(sub()), /保存失败/, "另一字段保存中也不能遮住已存在的保存失败");
-	assert.match(await poolSaveErr().innerText(), /候选池没保存成功/);
-	gates.release("thinking-put-continue");
-	await wait(async () => {
-		const t = await j(`/api/agents/${A.id}/subagent-thinking`);
-		return t.mode === "fixed" && t.level === "max";
-	}, 10000, "思考强度真实写入 fixed/max");
-	await poolSaveErr().waitFor();
-	assert.equal(await thinkSaveErr().count(), 0, "思考成功不留思考错误");
-	assert.match(await summaryText(sub()), /保存失败/, "收起摘要仍提示有保存失败");
-	// 已确认的固定档位整行（后面用它证明「失败回滚到已确认值」，而不是乐观值刚好也叫固定）
-	await wait(async () => /思考 固定/.test(await summaryText(sub())), 10000, "摘要显示真实固定档位");
-	const fixedLine = (await summaryText(sub())).split("\n").find((l) => l.startsWith("思考 固定"));
-	assert.ok(fixedLine, `摘要应有固定档位行：${await summaryText(sub())}`);
-	// 思考强度 PUT 失败：两个错误同时存在
-	net.thinkingPutFail = true;
-	await pane.getByTestId("agent-subagent-thinking").click();
-	await thinkingMenu6.waitFor();
-	await thinkingMenu6.getByRole("slider").press("Home");
-	await thinkSaveErr().waitFor();
-	assert.match(await thinkSaveErr().innerText(), /思考强度没保存成功/);
-	assert.match(await poolSaveErr().innerText(), /候选池没保存成功/, "两个错误可共存");
-	assert.equal(await saveErrBox().count(), 1, "仍共用一个外层错误容器");
-	const bothErr = await saveErrBox().innerText();
-	assert.match(bothErr, /候选池/, `外层应包含候选池的失败：${bothErr}`);
-	assert.match(bothErr, /思考强度/, `外层应包含思考强度的失败：${bothErr}`);
-	await wait(async () => {
-		const t = await j(`/api/agents/${A.id}/subagent-thinking`);
-		return t.mode === "fixed" && t.level === "max";
-	}, 10000, "失败不能写库（仍是已确认的 max）");
-	await wait(async () => (await summaryText(sub())).includes(fixedLine), 10000, "失败回滚到已确认的固定档位");
-	// 思考强度自己成功：只消除思考强度那条
-	// （回滚后界面已是 fixed/max，再按 End 不算变更不会提交，所以按左一档当这次真实的新写入）
-	net.thinkingPutFail = false;
-	await pane.getByTestId("agent-subagent-thinking").click();
-	await thinkingMenu6.waitFor();
-	await thinkingMenu6.getByRole("slider").press("ArrowLeft");
-	await wait(async () => {
-		const t = await j(`/api/agents/${A.id}/subagent-thinking`);
-		return t.mode === "fixed" && !!t.level && t.level !== "max";
-	}, 10000, "思考强度重试真实写入新档位");
-	await wait(async () => (await thinkSaveErr().count()) === 0, 10000, "思考自己成功后只消除思考错误");
-	assert.match(await poolSaveErr().innerText(), /候选池没保存成功/, "思考成功不能清候选池的错误");
-	// 候选池自己成功：才消除候选池那条，外层容器随两个错误一起消失
-	await openPoolMenu();
-	await poolRow("mock/echo").locator("input").check();
-	await wait(async () => (await j(`/api/agents/${A.id}/subagent-model`)).pool.length === 1, 10000, "候选池真实保存成功");
-	await wait(async () => (await saveErrBox().count()) === 0, 10000, "同字段成功后错误消失");
-	assert.equal(await poolSaveErr().count(), 0);
-	assert.equal(await thinkSaveErr().count(), 0);
-	await closePoolMenu();
-	console.log("PASS save-errors: 两份保存错误可共存，只由同字段真实成功消除");
-
-	// ---------------------------------------------------------------- 7) 思考读取失败 + 候选池就绪：思考重试不重读 / 不抹池
-	console.log("\n[7] 思考强度读取失败而候选池就绪：思考重试不发候选池 GET，也不抹正在保存的池");
-	await j(`/api/agents/${A.id}/subagent-model`, "PUT", { pool: [] });
-	await j(`/api/agents/${A.id}/subagent-thinking`, "PUT", { mode: "follow" });
-	net.thinkingGetFail = true;
-	await remountModels();
-	await expandAgentModelSection(page, "subagents");
-	await pane.getByTestId("subagent-model").waitFor();
-	await pane.getByTestId("agent-subagent-thinking-load-error").waitFor();
-	const degraded7 = await summaryText(sub());
-	assert.match(degraded7, /模型跟随聊天/, `候选池是已经读到的真实空池：${degraded7}`);
-	assert.match(degraded7, /思考强度 读取失败/, `思考强度如实写读取失败：${degraded7}`);
-	// 挂起候选池 PUT：放行后 route.continue 走真实保存，不造成功数据。
-	// 主产品的读取用 queue.run(空) 当写入 barrier、随后在队列**外**发真实 GET：
-	// 所以思考重试会等这份慢的池 PUT 完成（允许，不能因此判超时），但它不会碰候选池。
-	net.poolPutSent = 0;
-	net.poolGetSent = 0;
-	net.poolHoldPutContinue = true;
-	await openPoolMenu();
-	await poolRow("mock/echo").locator("input").check();
-	await wait(() => gates.waiters.has("pool-put-continue"), 10000, "候选池 PUT 被挂起");
-	assert.equal(net.poolPutSent, 1);
-	await wait(async () => /候选池 1 个模型/.test(await summaryText(sub())), 10000, "乐观显示已勾选的 1 个");
-	const getsBeforeRetry = net.poolGetSent;
-	net.thinkingGetFail = false;
-	await pane.getByTestId("agent-subagent-thinking-load-error").getByRole("button", { name: "重试", exact: true }).click();
-	await settle(300);
-	assert.equal(net.poolGetSent, getsBeforeRetry, "思考重试不能顺带再读候选池（队列里也不发）");
-	assert.match(await summaryText(sub()), /候选池 1 个模型/, "思考重试不能抹掉正在保存的候选池");
-	assert.equal(net.poolPutSent, 1, "思考重试不能重发候选池 PUT");
-	gates.release("pool-put-continue");
-	await wait(async () => (await j(`/api/agents/${A.id}/subagent-model`)).pool.length === 1, 10000, "放行后候选池真实保存");
-	// 排队等 PUT 的思考 GET 也会在放行后拿到真实值（不允许用假值，只能等队列）
-	await wait(async () => /思考跟随主会话/.test(await summaryText(sub())), 10000, "放行后思考强度读回真实 follow");
-	assert.equal(net.poolPutSent, 1, "思考读取没有产生额外的候选池写入");
-	const poolMenu7 = await openPoolMenu();
-	assert.equal(await poolChecked("mock/echo"), true, "放行后上次的勾选保留");
-	// 随后再加模型：在保留上次选择的基础上真实保存
-	await poolRow("mock/echo-think").locator("input").check();
-	await wait(async () => (await j(`/api/agents/${A.id}/subagent-model`)).pool.length === 2, 10000, "再加一个模型真实保存");
-	assert.equal(await poolChecked("mock/echo"), true, "上次的勾选不能丢");
-	assert.equal(await poolChecked("mock/echo-think"), true);
-	assert.ok(await poolMenu7.isVisible(), "连续多选时菜单不关");
-	await closePoolMenu();
-	console.log("PASS thinking-retry: 思考重试不读不抹候选池；放行后真实保存并在原选择上加模型");
-
-	// ---------------------------------------------------------------- 8) 重进模型页：GET 等挂起 PUT，旧池不能先读出
-	console.log("\n[8] 同助理有挂起 PUT 时重进模型页：旧 GET 不能先读出旧池，第二次勾选等第一次结束");
-	await j(`/api/agents/${A.id}/subagent-model`, "PUT", { pool: [] });
-	await j(`/api/agents/${A.id}/subagent-thinking`, "PUT", { mode: "follow" });
-	await remountModels();
-	await expandAgentModelSection(page, "subagents");
-	await pane.getByTestId("subagent-model").waitFor();
-	net.poolPutSent = 0;
-	net.poolGetSent = 0;
-	net.poolLog = [];
-	net.poolHoldPutContinue = true;
-	await openPoolMenu();
-	await poolRow("mock/echo").locator("input").check();
-	await wait(() => gates.waiters.has("pool-put-continue"), 10000, "第一次候选池 PUT 被挂起");
-	assert.equal(net.poolPutSent, 1);
-	await poolRow("mock/echo-think").locator("input").check();
-	await settle();
-	assert.equal(net.poolPutSent, 1, "第一次 PUT 未结束时第二次不能发出（写入串行）");
-	await closePoolMenu();
-	// 切走再回来：新的读取必须等挂起的 PUT，不能先把旧的空池读出来
-	await infoTab(page, "overview");
-	await openModels();
-	await expandAgentModelSection(page, "subagents");
-	await wait(async () => /候选池 正在读取/.test(await summaryText(sub())), 10000, "重进后候选池在等队列");
-	await settle(300);
-	assert.equal(net.poolGetSent, 0, "挂起 PUT 结束前不发候选池 GET");
-	assert.doesNotMatch(await summaryText(sub()), /模型跟随聊天/, "重进时不能先显示上次读到的旧池");
-	const getsBeforeRelease = net.poolGetSent;
-	gates.release("pool-put-continue");
-	await wait(async () => net.poolGetSent > getsBeforeRelease, 10000, "PUT 结束后才发候选池 GET");
-	await wait(async () => (await j(`/api/agents/${A.id}/subagent-model`)).pool.length === 2, 10000, "两次选择都真实保存");
-	await wait(async () => /候选池 2 个模型/.test(await summaryText(sub())), 10000, "重进后读到真实池（不是旧空池）");
-	const poolLog = net.poolLog;
-	const released = poolLog.indexOf("put-released");
-	const puts = poolLog.reduce((n, e, i) => (e === "put" ? [...n, i] : n), []);
-	assert.ok(released >= 0, `应记录到放行时刻：${JSON.stringify(poolLog)}`);
-	assert.equal(puts.length, 2, `两次 PUT 都应发出：${JSON.stringify(poolLog)}`);
-	assert.ok(puts[1] > released, `第二次勾选必须在第一次 PUT 结束后才抵达：${JSON.stringify(poolLog)}`);
-	assert.ok(poolLog.lastIndexOf("get") > puts[1], `候选池 GET 必须在两次 PUT 之后：${JSON.stringify(poolLog)}`);
-	await openPoolMenu();
-	assert.equal(await poolChecked("mock/echo"), true);
-	assert.equal(await poolChecked("mock/echo-think"), true);
-	await closePoolMenu();
-	console.log("PASS remount-order: 重进不等旧值、GET 排在挂起 PUT 之后、第二次勾选在第一次结束后发出");
 
 	assert.deepEqual(errors, [], `页面不应有 JS 异常：${JSON.stringify(errors)}`);
 	console.log(`\n全部通过（截图/失败图目录：${out}）`);
