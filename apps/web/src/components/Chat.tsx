@@ -1,8 +1,7 @@
 import { SubagentTasks } from "./Subagents";
-import { HostControlBar, HostTierPill } from "./HostControl";
+import { HostControlBar } from "./HostControl";
 import { ModelPicker } from "./ModelPicker";
 import { ContextRing } from "./ContextRing";
-import { ProactivityPicker } from "./Proactive";
 import { ArrowUp, Menu, PanelRight, Square, Users } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, upload } from "../api";
@@ -340,8 +339,6 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 					<div className="pa-composer-tools">
 					<AttachButton label={t("上传")} onFiles={(f) => void addFiles(f)} />
 					<SkillPicker agentId={agentId} draftKey={replyKey} />
-					<HostTierPill agentId={agentId} />
-					<ProactivityPicker agentId={agentId} />
 					<span className="flex-1" />
 					<ContextRing agentId={agentId} running={!!running} />
 					<ModelPicker agentId={agentId} />

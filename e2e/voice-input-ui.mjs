@@ -268,7 +268,7 @@ try {
 	check("麦克风按钮可见", await page.locator('[data-testid="voice-mic"]').isVisible());
 	const lay0 = await voiceLayout(page);
 	check("麦克风紧贴发送键左侧（同一行、同一 composer-bar、不在附件工具列）", lay0.ok, JSON.stringify(lay0));
-	check("权限 / 模型选择器仍在输入栏（未被麦克风挤掉）", (await page.locator('[data-testid="host-tier-pill"]').isVisible()) && (await page.locator('[data-testid="model-picker"]').isVisible()));
+	check("模型选择器仍在输入栏（未被麦克风挤掉）", await page.locator('[data-testid="model-picker"]').isVisible());
 	check("未配置时按钮提示「未配置语音识别模型」", ((await page.locator('[data-testid="voice-mic"]').getAttribute("aria-label")) ?? "").includes("未配置语音识别模型"));
 	check("idle 未配置时不常驻状态行 / 「去设置」（只有麦克风图标）", (await page.locator('[data-testid="voice-status"]').count()) === 0 && (await page.locator('[data-testid="voice-open-settings"]').count()) === 0);
 	check("点麦克风前未调用 getUserMedia", (await page.evaluate(() => window.__gum ?? 0)) === 0);

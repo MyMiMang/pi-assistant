@@ -52,14 +52,10 @@ const probe = (loc) => loc.evaluate((el) => {
 		overflowX: el.scrollWidth - el.clientWidth,
 		toolsOverflowX: tools ? tools.scrollWidth - tools.clientWidth : null,
 		toolsRows: rows,
-		hostLabel: labelShown("host-tier-pill"),
 		modelLabel: labelShown("model-picker"),
-		proactiveLabel: labelShown("proactive-picker"),
-		hostAria: q("host-tier-pill")?.getAttribute("aria-label") ?? "",
-		hostTitle: q("host-tier-pill")?.getAttribute("title") ?? "",
 		modelAria: q("model-picker")?.getAttribute("aria-label") ?? "",
 		modelTitle: q("model-picker")?.getAttribute("title") ?? "",
-		proactiveAria: q("proactive-picker")?.getAttribute("aria-label") ?? "",
+		removedPills: ["host-tier-pill", "proactive-picker"].filter((t) => q(t)).length,
 		computerChip: [...el.querySelectorAll("button")].filter((b) => /助理电脑/.test(b.textContent)).length,
 		approvalFoot: [...el.closest(".pa-composer-wrap").querySelectorAll(".pa-foot-note")].filter((n) => /请你批准/.test(n.textContent)).length,
 	};
@@ -71,9 +67,8 @@ const assertClean = (tag, m) => {
 	check(`${tag}：工具栏无横向溢出`, (m.toolsOverflowX ?? 0) <= 1, `toolsOverflowX=${m.toolsOverflowX}`);
 	check(`${tag}：不再有「助理电脑」按钮`, m.computerChip === 0);
 	check(`${tag}：不再有「…都会先请你批准」footer`, m.approvalFoot === 0);
-	check(`${tag}：权限按钮 title+aria-label`, !!m.hostTitle && !!m.hostAria, `${m.hostTitle} / ${m.hostAria}`);
 	check(`${tag}：模型按钮 title+aria-label`, !!m.modelTitle && !!m.modelAria, `${m.modelTitle} / ${m.modelAria}`);
-	check(`${tag}：主动按钮 aria-label`, !m.proactiveAria ? m.proactiveLabel === null : !!m.proactiveAria);
+	check(`${tag}：输入栏不再有权限 / 主动按钮（在助理设置里改）`, m.removedPills === 0);
 };
 
 const openInfoTab = async (page, key) => {
@@ -110,7 +105,7 @@ try {
 	check("header 不再有「电脑」chip", !(await headActions.locator("button").allTextContents()).some((t) => t.trim() === "电脑"));
 	let m = await probe(composer);
 	assertClean("1440", m);
-	check("1440：文字标签显示", m.hostLabel === true && m.modelLabel === true, JSON.stringify({ h: m.hostLabel, mo: m.modelLabel, p: m.proactiveLabel }));
+	check("1440：文字标签显示", m.modelLabel === true, JSON.stringify({ mo: m.modelLabel }));
 	await page.screenshot({ path: join(OUT, "01-single-1440-wide.png") });
 
 	// ---------------- 2) 1440 打开信息面板 → 点「电脑」tab（保留的入口）
@@ -128,15 +123,10 @@ try {
 	await page.waitForTimeout(500);
 	m = await probe(composer);
 	assertClean("1280-挤压", m);
-	check("1280-挤压：文字标签隐藏（只留图标）", m.hostLabel === false && m.modelLabel === false, JSON.stringify({ w: m.width, c: m.content, h: m.hostLabel, mo: m.modelLabel, p: m.proactiveLabel }));
+	check("1280-挤压：文字标签隐藏（只留图标）", m.modelLabel === false, JSON.stringify({ w: m.width, c: m.content, mo: m.modelLabel }));
 	await page.screenshot({ path: join(OUT, "03-single-1280-squeezed.png") });
 
 	// 按钮仍可点击（图标态）
-	await page.getByTestId("host-tier-pill").click();
-	await page.getByTestId("host-tier-menu").waitFor();
-	check("1280-挤压：权限按钮可点开菜单", true);
-	await page.getByTestId("host-tier-pill").click();
-	await page.waitForTimeout(150);
 	await openCompact(page);
 	check("1280-挤压：模型按钮可点开紧凑层", true);
 	await page.getByTestId("model-picker").click();
@@ -149,7 +139,7 @@ try {
 	await page.waitForTimeout(500);
 	m = await probe(composer);
 	assertClean("390", m);
-	check("390：文字标签隐藏", m.hostLabel === false && m.modelLabel === false, JSON.stringify({ w: m.width, h: m.hostLabel, mo: m.modelLabel }));
+	check("390：文字标签隐藏", m.modelLabel === false, JSON.stringify({ w: m.width, mo: m.modelLabel }));
 	check("390：整页不被撑宽", (await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 1);
 	await page.screenshot({ path: join(OUT, "04-single-390.png") });
 

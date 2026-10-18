@@ -261,9 +261,8 @@ try {
  await pane.getByTestId("agent-skills").waitFor();
  assert.equal(await page.getByTestId("info-tabs").locator('[data-itab=capabilities]').getAttribute('aria-selected'), 'true');
  await pane.getByRole("button", { name: "关闭", exact: true }).first().click();
- await page.getByTestId("proactive-picker").click(); await page.getByTestId("proactive-menu").getByRole("button", { name: "更多设置", exact: true }).click();
- await pane.getByTestId("proactive-tab").waitFor();
- console.log("PASS direct chat: same persisted member setting; skill/proactive shortcuts reach their functional categories");
+ assert.equal(await page.getByTestId("proactive-picker").count(), 0, "输入框下不再有主动程度按钮");
+ console.log("PASS direct chat: same persisted member setting; skill shortcut reaches its functional category");
  for (const [skin, mode, width] of [["noir", "dark", 390], ["noir", "light", 390], ["pixel", "dark", 390], ["pixel", "light", 1440]]) {
   await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
   await page.evaluate(({ skin, mode }) => { localStorage.setItem('pia.skin', skin); localStorage.setItem('pia.theme', mode); localStorage.setItem('pia.layout', JSON.stringify({ sideCollapsed: true, info: false, paneW: 340 })); }, { skin, mode });

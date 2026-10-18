@@ -1,11 +1,10 @@
 /**
- * 主动性：输入框工具栏的「主动」按钮（关 / 低 / 中 / 高）、助理面板的「主动」页（节奏、免打扰、每日简报、跟进），
+ * 主动性：助理面板 › 任务 › 主动跟进（等级、节奏、每日简报、跟进），
  * 以及侧边栏的「提醒」收件箱（所有助理主动提出的事：有用 / 忽略 / 不再提这类 / 稍后提醒）。
  */
-import { Bell, BellOff, Check, ChevronDown, Clock, Sparkles, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Bell, Clock, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
-import { COMPOSER_LABEL } from "../composer";
 import { useStore } from "../store";
 import { Badge, Button, cx, fmtTime, Help, Input, Modal, avatarText } from "./ui";
 
@@ -63,51 +62,6 @@ function useProactive(agentId: string) {
 	return { d, save };
 }
 
-/** 输入框工具栏：主动等级 */
-export function ProactivityPicker({ agentId }: { agentId: string }) {
-	const { d, save } = useProactive(agentId);
-	const [open, setOpen] = useState(false);
-	const ref = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		if (!open) return;
-		const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
-		document.addEventListener("mousedown", h);
-		return () => document.removeEventListener("mousedown", h);
-	}, [open]);
-	if (!d) return null;
-	return (
-		<div className="relative" ref={ref}>
-			<button className="pa-chip sm" onClick={() => setOpen(!open)} title="主动性：助理会不会主动来找你" aria-label={`主动性：${LEVEL_LABEL[d.level]}`} data-testid="proactive-picker">
-				{d.level === "off" ? <BellOff className="pa-ic" /> : <Sparkles className="pa-ic" />}
-				<span className={COMPOSER_LABEL}>主动·{LEVEL_LABEL[d.level]}</span>
-				<ChevronDown size={12} />
-			</button>
-			{open && (
-				<div className="pa-pop absolute bottom-full left-0 z-30 mb-2 rounded-xl border border-line bg-card p-1.5 shadow-lg [--pop-w:20rem]" data-testid="proactive-menu">
-					<div className="px-2.5 pb-1 pt-0.5 text-xs text-mut">主动性 <Help>像同事一样偶尔主动来找你（跟进没做完的事、提醒你说过的事、重要邮件）。不会替你对外发消息。</Help></div>
-					{(["off", "low", "normal", "high"] as Level[]).map((l) => (
-						<button key={l} className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", l === d.level && "bg-hover")} onClick={() => (setOpen(false), void save({ level: l }))} data-testid={`proactive-${l}`}>
-							<span className="flex-1">
-								<span className="text-sm">{LEVEL_LABEL[l]}</span>
-								<span className="block text-xs text-mut">{LEVEL_DESC[l]}</span>
-							</span>
-							{l === d.level && <Check size={14} className="text-accent" />}
-						</button>
-					))}
-					<div className="mt-1 flex items-center gap-2 border-t border-line px-2.5 pt-1.5 text-xs text-mut">
-						<span className="flex-1">
-							今天 {d.usedToday}/{d.budget} 条{d.nextHeartbeatAt ? ` · 下次 ${fmtTime(d.nextHeartbeatAt)}` : ""}
-						</span>
-						<button className="text-accent" onClick={() => (setOpen(false), useStore.getState().set({ info: true, infoTab: "tasks", infoTaskTab: "proactive" }))}>
-							更多设置
-						</button>
-					</div>
-				</div>
-			)}
-		</div>
-	);
-}
-
 /** 助理面板 › 主动 */
 export function ProactiveTab({ agentId }: { agentId: string }) {
 	const { d, save } = useProactive(agentId);
@@ -123,7 +77,7 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 				<div className="font-medium">主动等级</div>
 				<div className="flex flex-wrap gap-1.5">
 					{(["off", "low", "normal", "high"] as Level[]).map((l) => (
-						<button key={l} className={cx("pa-chip sm", d.level === l && "!border-accent !text-accent")} onClick={() => void save({ level: l })}>
+						<button key={l} className={cx("pa-chip sm", d.level === l && "!border-accent !text-accent")} aria-pressed={d.level === l} onClick={() => void save({ level: l })} data-testid={`proactive-level-${l}`}>
 							{LEVEL_LABEL[l]}
 						</button>
 					))}

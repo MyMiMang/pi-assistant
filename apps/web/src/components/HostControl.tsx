@@ -1,7 +1,6 @@
-import { AlertTriangle, ChevronDown, Hand, Loader2, Pause, Play, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { AlertTriangle, Hand, Loader2, Pause, Play, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { COMPOSER_LABEL } from "../composer";
 import { useStore } from "../store";
 import { Badge, Button, cx, ErrorBox, Input, avatarText, Help, useConfirm } from "./ui";
 
@@ -249,7 +248,7 @@ export function HostControlSettings() {
 						</button>
 					))}
 				</div>
-				<p className="text-xs text-mut">只影响之后新建的助理。 <Help>每个助理的权限在输入框下方的 <ShieldCheck size={11} className="inline" /> 按钮里单独切换（调高需要确认）。“完全权限”以外的档位：受保护的操作都必须你明确批准；“完全权限”档位应用层不再弹审批（凭据/密钥文件仍然直接拒绝）。任何档位一键暂停都有效，所有动作都会记录。</Help></p>
+				<p className="text-xs text-mut">只影响之后新建的助理。 <Help>每个助理的权限在 助理设置 › 电脑 里单独切换（调高需要确认）。“完全权限”以外的档位：受保护的操作都必须你明确批准；“完全权限”档位应用层不再弹审批（凭据/密钥文件仍然直接拒绝）。任何档位一键暂停都有效，所有动作都会记录。</Help></p>
 				{anyFull && (
 					<div className="space-y-1 rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm leading-relaxed text-red-800 dark:text-red-300" data-testid="host-full-warning">
 						<div className="flex items-center gap-2 font-semibold">
@@ -379,7 +378,7 @@ export function HostControlSettings() {
 }
 
 /** 切换某个助理的档位：调低直接生效；调高弹确认框（完全权限是红色的“确定启用”） */
-function TierPicker({ agentId, d, load, onDone, compact }: { agentId: string; d: HostInfo; load: () => void; onDone?: () => void; compact?: boolean }) {
+function TierPicker({ agentId, d, load }: { agentId: string; d: HostInfo; load: () => void }) {
 	const [err, setErr] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [saved, setSaved] = useState(false);
@@ -395,7 +394,6 @@ function TierPicker({ agentId, d, load, onDone, compact }: { agentId: string; d:
 			if (r.ok === false) return setErr(r.error);
 			setSaved(true);
 			load();
-			onDone?.();
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
 		} finally {
@@ -403,66 +401,25 @@ function TierPicker({ agentId, d, load, onDone, compact }: { agentId: string; d:
 		}
 	};
 	const pick = async (t: Tier) => {
-		if (t === cur) return onDone?.();
+		if (t === cur) return;
 		if (rank(t) < rank(cur)) return apply(t, false);
 		const ok = await ask(t === "full" ? FULL_ASK : { title: `调到「${TIER_INFO[t].label}」？`, body: `${TIER_INFO[t].desc}。受保护的操作仍会先问你。`, ok: "确定" });
 		if (ok) await apply(t, true);
 	};
 	return (
-		<div className={cx("space-y-2", compact && "w-full")} data-testid="tier-picker">
-			<div className={cx(compact ? "flex flex-col" : "flex flex-wrap gap-1")}>
-				{TIER_ORDER.map((t) =>
-					compact ? (
-						<button key={t} className={cx("whitespace-normal rounded-lg px-2.5 py-1.5 text-left hover:bg-hover", cur === t && "bg-hover")} onClick={() => pick(t)} data-testid={`tier-${t}`}>
-							<div className={cx("text-sm font-medium", t === "full" && "text-red-600", t === "trusted" && "text-amber-600")}>
-								{TIER_INFO[t].label} {t === cur && <span className="text-xs text-mut">（当前）</span>}
-							</div>
-							<div className="text-xs text-mut">{TIER_INFO[t].desc}</div>
-						</button>
-					) : (
-						<button key={t} title={TIER_INFO[t].desc} className={cx("pa-chip", cur === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => pick(t)} data-testid={`tier-${t}`}>
-							{TIER_INFO[t].label}
-						</button>
-					),
-				)}
+		<div className="space-y-2" data-testid="tier-picker">
+			<div className="flex flex-wrap gap-1">
+				{TIER_ORDER.map((t) => (
+					<button key={t} title={TIER_INFO[t].desc} aria-pressed={cur === t} className={cx("pa-chip", cur === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => pick(t)} data-testid={`tier-${t}`}>
+						{TIER_INFO[t].label}
+					</button>
+				))}
 			</div>
-			{!compact && <div className="text-xs text-mut">{TIER_INFO[cur].desc}</div>}
+			<div className="text-xs text-mut">{TIER_INFO[cur].desc}</div>
 			{saving && <div className="flex items-center gap-1 text-xs text-mut"><Loader2 size={12} className="animate-spin" /> 正在保存…</div>}
 			{saved && !saving && <div className="text-xs text-green-600">已保存</div>}
 			{err && <div className="text-xs text-red-600">{err}</div>}
 			{dlg}
-		</div>
-	);
-}
-
-/** 输入框工具栏（「助理电脑」右边）：这个助理操作你电脑的档位（按钮 + 向上弹出的菜单） */
-export function HostTierPill({ agentId }: { agentId: string }) {
-	const { d, load } = useHostControl();
-	const [open, setOpen] = useState(false);
-	const ref = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		if (!open) return;
-		// 确认框是 portal 到 body 的：点它不算“点到菜单外面”
-		const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && !(e.target as Element).closest?.(".pa-modal") && setOpen(false);
-		document.addEventListener("mousedown", h);
-		return () => document.removeEventListener("mousedown", h);
-	}, [open]);
-	if (!d) return null;
-	if (d.settings.agents !== "all" && !d.settings.agents.includes(agentId)) return null;
-	const cur: Tier = d.tiers?.[agentId] ?? d.settings.defaultTier ?? "bounded";
-	return (
-		<div className="relative" ref={ref}>
-			<button className={cx("pa-chip sm", !d.status.enabled && "opacity-70", cur === "full" && "!border-red-500/50 !text-red-600", cur === "trusted" && "!text-amber-600")} onClick={() => setOpen(!open)} title={`操作你的电脑：${TIER_INFO[cur].desc}`} aria-label={`操作你的电脑：${TIER_INFO[cur].label}`} data-testid="host-tier-pill">
-				<ShieldCheck className="pa-ic" />
-				<span className={COMPOSER_LABEL}>{TIER_INFO[cur].label}</span>
-				<ChevronDown size={12} />
-			</button>
-			{open && (
-				<div className="pa-pop absolute bottom-full left-0 z-30 mb-2 rounded-xl border border-line bg-card p-1.5 shadow-lg [--pop-w:22rem]" data-testid="host-tier-menu">
-					<div className="px-2.5 pb-1 pt-0.5 text-xs text-mut">{d.status.enabled ? "这个助理操作你电脑的权限" : "这个助理操作你电脑的权限（未开启）"}</div>
-					<TierPicker agentId={agentId} d={d} load={load} onDone={() => setOpen(false)} compact />
-				</div>
-			)}
 		</div>
 	);
 }
@@ -494,7 +451,6 @@ export function AgentHostTier({ agentId }: { agentId: string }) {
 			{d && (
 				<>
 					<TierPicker agentId={agentId} d={d} load={load} />
-					<div className="text-xs text-mut">也可以在输入框下方的权限按钮里切换。</div>
 				</>
 			)}
 		</section>

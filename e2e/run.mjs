@@ -1297,7 +1297,7 @@ await step("Phase 3 操作这台电脑：设置页（默认关闭、风险提示
 	await page.keyboard.press("Escape");
 });
 
-await step("权限档位：输入框工具栏「助理电脑」旁的权限按钮切换本助理档位（调高弹确认框，完全权限只需确认启用）", async () => {
+await step("权限档位：助理设置 › 电脑 里切换本助理档位（调高弹确认框，完全权限只需确认启用）", async () => {
 	// 用 API 开启（演练模式，不启动 Cua）
 	const r = await page.evaluate(async () => {
 		const j = (u, m, b) => fetch(u, { method: m, headers: { "content-type": "application/json" }, body: b ? JSON.stringify(b) : undefined }).then((x) => x.json());
@@ -1306,36 +1306,34 @@ await step("权限档位：输入框工具栏「助理电脑」旁的权限按�
 		return j("/api/host-control", "PUT", { enabled: true, acknowledged: true, manifestHash: g.manifestHash });
 	});
 	if (!r.ok) throw new Error(JSON.stringify(r));
-	const pill = page.locator("[data-testid=host-tier-pill]");
-	await pill.waitFor({ timeout: 10_000 });
-	await pill.getByText("限定").waitFor();
-	await pill.click();
-	const menu = page.locator("[data-testid=host-tier-menu]");
-	await menu.locator("[data-testid=tier-trusted]").click();
+	if (await page.locator("[data-testid=host-tier-pill]").count()) throw new Error("输入框下不应再有权限按钮");
+	if (!(await page.locator(".pa-pane-wrap [data-testid=info-tabs]").isVisible().catch(() => false))) await page.locator('.pa-head-actions button[aria-label="信息面板"]').click();
+	await infoTab("电脑");
+	const picker = page.locator("[data-testid=agent-host-tier] [data-testid=tier-picker]");
+	const on = (t) => picker.locator(`[data-testid=tier-${t}][aria-pressed=true]`).waitFor({ timeout: 10_000 });
+	await on("bounded");
+	await picker.locator("[data-testid=tier-trusted]").click();
 	const dlg = page.locator("[data-testid=confirm-dialog]");
 	await dlg.waitFor();
 	await page.waitForTimeout(300);
 	await page.screenshot({ path: join(SHOTS, "44-chat-tier-menu.png") });
 	await dlg.locator("[data-testid=confirm-ok]").click();
-	await pill.getByText("信任").waitFor({ timeout: 10_000 });
+	await on("trusted");
 	// 完全权限：只弹确认框（不用再输入确认语）；取消不生效
-	await pill.click();
-	await menu.locator("[data-testid=tier-full]").click();
+	await picker.locator("[data-testid=tier-full]").click();
 	await dlg.getByText("启用完全权限？").waitFor();
 	await dlg.locator("[data-testid=confirm-cancel]").click();
 	await dlg.waitFor({ state: "detached" });
-	await pill.getByText("信任").waitFor();
-	// 取消后菜单仍开着，直接再选
-	await menu.locator("[data-testid=tier-full]").click();
+	await on("trusted");
+	await picker.locator("[data-testid=tier-full]").click();
 	await dlg.getByText("启用完全权限？").waitFor();
 	await page.waitForTimeout(300);
 	await page.screenshot({ path: join(SHOTS, "45-chat-tier-full-confirm.png") });
 	await dlg.getByRole("button", { name: "确定启用" }).click();
-	await pill.getByText("完全权限").waitFor({ timeout: 10_000 });
+	await on("full");
 	// 调低直接生效
-	await pill.click();
-	await menu.locator("[data-testid=tier-bounded]").click();
-	await pill.getByText("限定").waitFor({ timeout: 10_000 });
+	await picker.locator("[data-testid=tier-bounded]").click();
+	await on("bounded");
 	await page.evaluate(() => fetch("/api/host-control", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false }) }));
 	await page.waitForTimeout(300);
 });
@@ -1477,21 +1475,19 @@ await step("微信 ClawBot（模拟 iLink）：扫码连接 → 二维码 → �
 	await page.keyboard.press("Escape");
 });
 
-await step("主动性：输入框「主动」按钮切换等级 → 聊天里约好跟进 → 助理面板「主动」页 → 现在看看 → 提醒收件箱 → 标记有用", async () => {
-	await page.locator("[data-testid=proactive-picker]").click();
-	await page.locator("[data-testid=proactive-menu]").waitFor();
+await step("主动性：助理设置 › 任务 › 主动跟进 切换等级 → 聊天里约好跟进 → 现在看看 → 提醒收件箱 → 标记有用", async () => {
+	if (await page.locator("[data-testid=proactive-picker]").count()) throw new Error("输入框下不应再有主动程度按钮");
+	if (!(await page.locator(".pa-pane-wrap [data-testid=info-tabs]").isVisible().catch(() => false))) await page.locator('.pa-head-actions button[aria-label="信息面板"]').click();
+	await taskTab("proactive");
+	await page.locator("[data-testid=proactive-level-normal]").click();
+	await page.locator("[data-testid=proactive-level-normal][aria-pressed=true]").waitFor();
 	await page.screenshot({ path: join(SHOTS, "52-composer-proactive.png") });
-	await page.locator("[data-testid=proactive-normal]").click();
-	await page.locator("[data-testid=proactive-picker]").getByText("中").waitFor();
 	// e2e 可能在深夜跑：关掉免打扰，避免提醒被顺延
 	// 前面的步骤可能切到了别的助理：所有助理都关掉
 	for (const a of await (await fetch(`${BASE}/api/agents`)).json()) await fetch(`${BASE}/api/agents/${a.id}/proactive`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ cfg: { quiet: null } }) });
 	await send("这个方案晚点再看看");
 	await page.getByText("到时我再看看").first().waitFor({ timeout: 20_000 });
-	await page.locator("[data-testid=proactive-picker]").click();
-	await page.getByRole("button", { name: "更多设置" }).click();
-	// 「更多设置」进入助理 › 任务 › 主动跟进，而不是只开一个临时弹层
-	await page.locator(".pa-pane-wrap").waitFor();
+	await taskTab("proactive");
 	await page.locator("[data-testid=agent-task-tabs] [data-itab=proactive][aria-selected=true]").waitFor();
 	await page.locator("[data-testid=proactive-tab] [data-testid=followup]").first().waitFor();
 	await page.locator("[data-testid=proactive-run]").click();
@@ -1631,8 +1627,6 @@ await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上�
 		return [...new Set(bad)].slice(0, 5);
 	};
 	const menus = [
-		["host-tier-pill", "host-tier-menu"],
-		["proactive-picker", "proactive-menu"],
 		["model-picker", "model-menu"],
 		["context-ring", "context-pop"],
 	];
@@ -1661,7 +1655,7 @@ await step("弹出菜单不溢出：权限 / 主动性 / 模型 / 思考 / 上�
 				const bad = await m.evaluate(check);
 				if (bad.length) problems.push(`${vp.width}px ${skin} ${menu}: ${bad.join("；")}`);
 				checked++;
-				if (skin === "warm" && menu === "host-tier-menu") await page.screenshot({ path: join(SHOTS, `69-popover-${vp.width}.png`) });
+				if (skin === "warm" && menu === "model-menu") await page.screenshot({ path: join(SHOTS, `69-popover-${vp.width}.png`) });
 				// 关菜单：点菜单外面（手机上菜单固定在输入框上方，可能盖住按钮）
 				await page.evaluate(() => {
 					for (const t of ["pointerdown", "mousedown", "click"]) document.querySelector("main")?.dispatchEvent(new MouseEvent(t, { bubbles: true }));
