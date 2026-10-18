@@ -9,3 +9,9 @@ fi
 if git diff --cached --name-only | grep -E '(^|/)(\.env(\..+)?|\.dev\.vars|cloudflare\.env)$' | grep -v '\.env\.example$'; then
   echo "❌ 不允许提交环境变量/密钥文件"; exit 1
 fi
+# 规范检查（只查暂存区，几秒）：行数基线、依赖边界、模块登记、文档、仓库卫生。规则见 AGENTS.md
+if command -v node >/dev/null 2>&1; then
+  node scripts/check/index.mjs --staged || { echo "❌ 规范检查未通过，提交已阻止（先复用已有代码，见 docs/MODULES.md；不要放宽基线）"; exit 1; }
+else
+  echo "⚠️ 未找到 node，跳过规范检查（CI 仍会检查）"
+fi

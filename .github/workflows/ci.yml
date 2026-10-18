@@ -10,6 +10,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci --ignore-scripts
+      - name: 规范检查（行数、依赖边界、重复代码、文档、仓库卫生）
+        run: npm run check:static
       - name: Pi 版本兼容检查
         run: npm run check:pi
       - run: npm run typecheck
