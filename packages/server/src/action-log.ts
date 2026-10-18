@@ -65,7 +65,7 @@ export function recordAction(agentId: string, taskId: string | null, e: ActionLo
 			.catch(() => {});
 	return row.id;
 }
-const emit = (agentId: string, id: string) => bus.emit({ type: "action.logged", agentId, id } as never);
+const emit = (agentId: string, id: string) => bus.emit({ type: "action.logged", agentId, id });
 
 function prune(force = false) {
 	// 每条记录都触发，但最多每分钟真正清一次

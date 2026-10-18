@@ -125,7 +125,7 @@ export function claimPairCode(code: string, name: string, platform: string): { o
 		// 服务器版一次性设置码：认领即批准，并成为主人设备
 		db.prepare("UPDATE devices SET owner = 1 WHERE id = ?").run(id);
 		approveDevice(id);
-		bus.emit({ type: "setup.claimed", deviceId: id } as never);
+		bus.emit({ type: "setup.claimed", deviceId: id });
 		return { ok: true, deviceId: id, preApproved: true };
 	}
 	if (row.pre_approved) {

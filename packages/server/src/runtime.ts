@@ -220,7 +220,7 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 				// 原生思考：App 里实时显示在可折叠的「思考」里（不进正文、不发到外部渠道）
 				if (!cur) break;
 				cur.thinking += e.delta;
-				bus.emit({ type: "message.delta", id: cur.id, agentId, taskId, subagentId, delta: e.delta, thinking: true } as never);
+				bus.emit({ type: "message.delta", id: cur.id, agentId, taskId, subagentId, delta: e.delta, thinking: true });
 				if (Date.now() - cur.flushAt > 800) {
 					updateMessage(cur.id, { meta: { thinking: cur.thinking } }, false);
 					cur.flushAt = Date.now();
@@ -313,7 +313,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 	const approve = async (toolName: string, input: Record<string, unknown>, summary: string, risk = "medium") =>
 		!!(await requests.approval(agentId, taskId, toolName, input, summary, risk, conversationId)).approved;
 	const exts = [
-		{ name: "pia-sandbox", factory: sandboxExtension({ workspace, mode, readOnlyRoots: skillPaths(), makeBashTool: makeBashTool as never, dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined, localOperations: mode === "docker" ? localBashOperations() : undefined, hostAccess: () => hostFileAccess(agentId) }) },
+		{ name: "pia-sandbox", factory: sandboxExtension({ workspace, mode, readOnlyRoots: skillPaths(), makeBashTool: makeBashTool, dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined, localOperations: mode === "docker" ? localBashOperations() : undefined, hostAccess: () => hostFileAccess(agentId) }) },
 		{
 			name: "pia-approval",
 			factory: approvalExtension({
@@ -619,7 +619,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 	if (computerOn) exts.push({ name: "pia-computer", factory: computerExtension(sandboxComputer()) });
 	// 助理电脑已安装但关着机 → 先挂“开电脑”工具；调用后在同一轮里热注册电脑工具（不用等下一轮）
 	else if (desk?.available && desk.state !== "running")
-		exts.push({ name: "pia-computer-launcher", factory: computerLauncherExtension({ computer: sandboxComputer(), start: async () => void (await startDesktop(agentId), bus.emit({ type: "desktop.changed", agentId } as never)) }) });
+		exts.push({ name: "pia-computer-launcher", factory: computerLauncherExtension({ computer: sandboxComputer(), start: async () => void (await startDesktop(agentId), bus.emit({ type: "desktop.changed", agentId })) }) });
 	// 用户开启了“操作这台电脑”且允许这个助理 → 挂上本机 Cua（每个动作逐项审批）。
 	// 这里只看“授权在不在”，不看守护进程此刻是不是 running：更新后服务刚重启、Cua 还在 starting（或刚失败重试中）时，
 	// 如果按瞬时状态决定挂不挂，这个会话就整组没有电脑工具，用户会以为“授权被重置了，得去设置重新开一次”。

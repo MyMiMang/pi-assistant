@@ -94,7 +94,7 @@ export function mountHostControlRoutes(app: Hono<Env>) {
 				return c.json({ ok: false, error: e instanceof Error ? e.message : String(e), status: hostStatus() });
 			}
 		}
-		bus.emit({ type: "host.changed", status: hostStatus() } as never);
+		bus.emit({ type: "host.changed", status: hostStatus() });
 		return c.json({ ok: true, tier: b.tier, status: hostStatus() });
 	});
 	app.post("/api/host-control/bar/dismiss", localOnly, (c) => {

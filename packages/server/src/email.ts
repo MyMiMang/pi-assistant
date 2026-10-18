@@ -63,7 +63,7 @@ export interface DraftPayload {
 	references?: string;
 }
 
-const changed = () => bus.emit({ type: "email.changed" } as never);
+const changed = () => bus.emit({ type: "email.changed" });
 export const listAccounts = () => db.prepare("SELECT * FROM email_accounts ORDER BY created_at").all() as unknown as AccountRow[];
 export const getAccount = (id: string) => db.prepare("SELECT * FROM email_accounts WHERE id = ?").get(id) as unknown as AccountRow | undefined;
 export const accountsFor = (agentId: string) => listAccounts().filter((a) => !a.agent_id || a.agent_id === agentId);

@@ -28,7 +28,7 @@ export const packagesHome = () => join(config.dataDir, "pi-packages");
 export const packagesVersion = () => getSetting("piPackagesVersion", 0);
 function changed() {
 	setSetting("piPackagesVersion", packagesVersion() + 1);
-	bus.emit({ type: "packages.changed" } as never);
+	bus.emit({ type: "packages.changed" });
 }
 export const listPackages = () => db.prepare("SELECT * FROM pi_packages ORDER BY created_at").all() as unknown as PiPackageRow[];
 export const getPackage = (id: string) => db.prepare("SELECT * FROM pi_packages WHERE id = ?").get(id) as PiPackageRow | undefined;
@@ -91,7 +91,7 @@ export async function addPackage(source: string, agents: string[] | null = null)
 	const id = uid("pkg");
 	const t = now();
 	db.prepare("INSERT INTO pi_packages(id, source, enabled, agents, status, created_at, updated_at) VALUES(?,?,?,?, 'installing', ?, ?)").run(id, src, 1, agents ? JSON.stringify(agents) : null, t, t);
-	bus.emit({ type: "packages.changed" } as never);
+	bus.emit({ type: "packages.changed" });
 	void install(id);
 	return getPackage(id)!;
 }

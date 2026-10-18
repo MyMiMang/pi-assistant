@@ -69,7 +69,7 @@ export function deployRendezvous(input: { zone: string; subdomain: string; token
 }
 
 async function doDeploy(input: { zone: string; subdomain: string; token?: string }): Promise<CfConfig> {
-	const emit = (s: DeployStep) => bus.emit({ type: "cloudflare.progress", ...s } as never);
+	const emit = (s: DeployStep) => bus.emit({ type: "cloudflare.progress", ...s });
 	const step = async <T>(name: string, fn: () => Promise<T>, detail?: (r: T) => string): Promise<T> => {
 		emit({ step: name, state: "running" });
 		try {

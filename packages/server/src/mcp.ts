@@ -44,7 +44,7 @@ export const MCP_NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;
 export const mcpVersion = () => getSetting("mcpVersion", 0);
 function changed() {
 	setSetting("mcpVersion", mcpVersion() + 1);
-	bus.emit({ type: "mcp.changed" } as never);
+	bus.emit({ type: "mcp.changed" });
 }
 
 const SECRET_KEY = /token|key|secret|password|authorization|cookie/i;

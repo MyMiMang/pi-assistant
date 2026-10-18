@@ -11,7 +11,7 @@ import { saveSandboxComputerSettings, sandboxComputerSettings, hostStatus } from
 import { downloadInfo } from "../downloads.ts";
 import { localOnly, type Env } from "./common.ts";
 
-export const deskChanged = (agentId?: string) => bus.emit({ type: "desktop.changed", agentId } as never);
+export const deskChanged = (agentId?: string) => bus.emit({ type: "desktop.changed", agentId });
 
 /** 全局：安装开关、运行方式、空闲关机、镜像加速、下载进度 */
 const deskGlobal = async () => {
@@ -40,7 +40,7 @@ export function mountDesktopRoutes(app: Hono<Env>) {
 	app.put("/api/sandbox-computer", localOnly, async (c) => {
 		try {
 			const r = saveSandboxComputerSettings(await c.req.json());
-			bus.emit({ type: "host.changed", status: hostStatus() } as never);
+			bus.emit({ type: "host.changed", status: hostStatus() });
 			return c.json(r);
 		} catch (e) {
 			return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);

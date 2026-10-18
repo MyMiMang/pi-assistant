@@ -505,14 +505,14 @@ export function mountAgentRoutes(app: Hono<Env>) {
 	});
 	app.post("/api/agents/:id/desktop/stop", async (c) => {
 		await stopDesktop(c.req.param("id"));
-		bus.emit({ type: "desktop.changed", agentId: c.req.param("id") } as never);
+		bus.emit({ type: "desktop.changed", agentId: c.req.param("id") });
 		return c.json(await deskJson(c.req.param("id")));
 	});
 	app.post("/api/agents/:id/desktop/pause", async (c) => {
 		const { paused } = await c.req.json<{ paused: boolean }>();
 		desktopPause.set(c.req.param("id"), paused);
 		if (paused) await runtime(c.req.param("id")).abort();
-		bus.emit({ type: "desktop.changed", agentId: c.req.param("id") } as never);
+		bus.emit({ type: "desktop.changed", agentId: c.req.param("id") });
 		return c.json(await deskJson(c.req.param("id")));
 	});
 	/** 单独的电脑：开 / 关（关掉时数据保留）；hasData = 这个助理有单独电脑留下的数据（null = 虚拟机关着，不知道） */

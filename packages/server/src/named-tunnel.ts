@@ -106,7 +106,7 @@ export type SetupStep = { step: string; state: "running" | "ok" | "error"; detai
 
 /** 创建（或复用）命名隧道 + 远程 ingress 配置 + DNS 记录。失败时回滚本次新建的资源。 */
 export async function setupNamedTunnel(input: { zone: string; subdomain: string }): Promise<NamedTunnel> {
-	const emit = (s: SetupStep) => bus.emit({ type: "tunnel.setup", ...s } as never);
+	const emit = (s: SetupStep) => bus.emit({ type: "tunnel.setup", ...s });
 	const step = async <T>(name: string, fn: () => Promise<T>, detail?: (r: T) => string): Promise<T> => {
 		emit({ step: name, state: "running" });
 		try {

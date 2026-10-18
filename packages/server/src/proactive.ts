@@ -189,7 +189,7 @@ export function effective(a: AgentLite, t = now()) {
 /** 上次巡检（跟进、简报也算看过一次，重新计间隔） */
 const lastRun = (agentId: string) => (db.prepare("SELECT MAX(started_at) AS t FROM proactive_runs WHERE agent_id = ?").get(agentId) as { t: number | null }).t;
 const running = (agentId: string) => !!db.prepare("SELECT 1 FROM proactive_runs WHERE agent_id = ? AND status = 'running'").get(agentId);
-const changed = (agentId: string) => bus.emit({ type: "proactive.changed", agentId } as never);
+const changed = (agentId: string) => bus.emit({ type: "proactive.changed", agentId });
 
 export function nextHeartbeat(agentId: string, t = now()): number | null {
 	const a = agentOf(agentId);

@@ -34,7 +34,7 @@ export function saveWechatSettings(p: Partial<WechatSettings>) {
 	const next = { ...cur, ...p };
 	if (next.enabled && !next.acknowledgedAt) throw new Error("请先阅读并确认风险提示");
 	setSetting("wechat", next);
-	bus.emit({ type: "channels.changed" } as never);
+	bus.emit({ type: "channels.changed" });
 	return next;
 }
 export const wechatAllowed = (agentId: string) => {

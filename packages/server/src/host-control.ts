@@ -253,7 +253,7 @@ let state: { state: DaemonState; detail: string } = { state: "off", detail: "未
 let paused = false;
 const setState = (s: DaemonState, detail: string) => {
 	state = { state: s, detail };
-	bus.emit({ type: "host.changed", status: hostStatus() } as never);
+	bus.emit({ type: "host.changed", status: hostStatus() });
 };
 
 export function hostStatus() {

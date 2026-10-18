@@ -18,7 +18,7 @@ export function mountMcpRoutes(app: Hono<Env>) {
 	app.post("/api/mcp", localOnly, async (c) => {
 		try {
 			const r = saveMcp(await c.req.json());
-			void ensureMcpPackage(r.id).then(() => testMcp(r.id)).then(() => bus.emit({ type: "mcp.changed" } as never));
+			void ensureMcpPackage(r.id).then(() => testMcp(r.id)).then(() => bus.emit({ type: "mcp.changed" }));
 			return c.json(mcpJson(r));
 		} catch (e) {
 			return errJson(c, e);
@@ -27,7 +27,7 @@ export function mountMcpRoutes(app: Hono<Env>) {
 	app.put("/api/mcp/:id", localOnly, async (c) => {
 		try {
 			const r = saveMcp({ ...(await c.req.json()), id: (c.req.param("id") as string) });
-			void ensureMcpPackage(r.id).then(() => testMcp(r.id)).then(() => bus.emit({ type: "mcp.changed" } as never));
+			void ensureMcpPackage(r.id).then(() => testMcp(r.id)).then(() => bus.emit({ type: "mcp.changed" }));
 			return c.json(mcpJson(r));
 		} catch (e) {
 			return errJson(c, e);

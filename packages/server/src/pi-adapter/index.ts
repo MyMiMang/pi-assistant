@@ -35,6 +35,7 @@ import { classify as systemOneClassify } from "@earendil-works/pi-ai/api/typesaf
 import { classify as cloudflareSystemOneClassify } from "@earendil-works/pi-ai/api/cloudflare-workers-ai-system-one";
 import { classify as llamaCppClassify } from "@earendil-works/pi-ai/api/llama-cpp-classify";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
+import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import compat from "./compat.json" with { type: "json" };
 import { BRAND } from "@pi-assistant/shared";
 
@@ -59,7 +60,7 @@ export const classifierProtocols = (): string[] => Object.keys(CLASSIFIER_PROTOC
 export const isClassifierProtocol = (v: unknown): v is string => typeof v === "string" && Object.prototype.hasOwnProperty.call(CLASSIFIER_PROTOCOLS, v);
 
 /** Pi 元数据里某个模型支持的思考档位（唯一能力来源：模型目录、界面下拉、clamp 都用这一份）。 */
-const supportedThinkingLevels = (m: unknown): string[] => getSupportedThinkingLevels(m as never);
+const supportedThinkingLevels = (m: Model<Api>): string[] => getSupportedThinkingLevels(m);
 
 /** 一个自定义服务声明的 classifier：协议 + 对端模型 id（只含公开元数据，不含 baseUrl / 凭据）。 */
 export interface ClassifierDeclaration {
@@ -293,7 +294,7 @@ export class PiModels {
 	/** 把想要的思考强度收敛到模型支持的档位（Pi 的 clampThinkingLevel） */
 	clampThinking(providerId: string, modelId: string, level: string): string {
 		const m = this.runtime.getModel(providerId, modelId);
-		return m ? clampThinkingLevel(m as never, level as never) : "off";
+		return m ? clampThinkingLevel(m, level as ModelThinkingLevel) : "off";
 	}
 
 	/** 某个模型支持的思考档位（与模型目录同一份 Pi 元数据；模型不存在返回 []）。 */
@@ -307,7 +308,7 @@ export class PiModels {
 	}
 
 	login(providerId: string, type: "api_key" | "oauth", interaction: LoginInteraction) {
-		return this.runtime.login(providerId, type, interaction as never, { agentName: BRAND.name });
+		return this.runtime.login(providerId, type, interaction, { agentName: BRAND.name });
 	}
 
 	logout(providerId: string) {
@@ -334,8 +335,8 @@ export class PiModels {
 		try {
 			const res = await this.runtime.completeSimple(
 				model,
-				{ messages: [{ role: "user", content: "Reply with: OK", timestamp: Date.now() }] } as never,
-				{ maxTokens: 16 } as never,
+				{ messages: [{ role: "user", content: "Reply with: OK", timestamp: Date.now() }] },
+				{ maxTokens: 16 },
 			);
 			if (res.stopReason === "error" || res.stopReason === "aborted") return { ok: false, message: res.errorMessage ?? "请求失败" };
 			const text = res.content.map((c) => (c.type === "text" ? c.text : "")).join("").trim();
@@ -374,7 +375,7 @@ export class PiModels {
 			const res = await this.runtime.completeSimple(
 				model,
 				{ systemPrompt: req.systemPrompt, messages, tools: req.tools?.map((t) => ({ name: t.name, description: t.description ?? "", parameters: t.parameters ?? { type: "object", properties: {} } })) } as never,
-				{ maxTokens, temperature: req.temperature, signal: req.signal } as never,
+				{ maxTokens, temperature: req.temperature, signal: req.signal },
 			);
 			const text = res.content.map((c) => (c.type === "text" ? c.text : "")).join("");
 			const toolCalls = res.content.filter((c) => c.type === "toolCall").map((c) => ({ id: (c as { id: string }).id, name: (c as { name: string }).name, arguments: (c as { arguments: Record<string, unknown> }).arguments ?? {} }));
@@ -632,10 +633,10 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		agentDir: o.agentDir,
 		modelRuntime: o.models.runtime,
 		model,
-		thinkingLevel: (o.thinking ?? "off") as never,
+		thinkingLevel: (o.thinking ?? "off") as ModelThinkingLevel,
 		resourceLoader,
 		sessionManager,
-		settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 5 } } as never),
+		settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 5 } }),
 		tools: o.tools ?? ["+grep", "+find", "+ls"],
 		...(o.excludeTools?.length ? { excludeTools: o.excludeTools } : {}),
 		...(o.customTools?.length ? { customTools: o.customTools } : {}),
@@ -651,7 +652,7 @@ export function makeBashTool(
 	cwd: string,
 	opts: { operations?: BashOperations; spawnHook?: (c: { command: string; cwd: string; env: NodeJS.ProcessEnv }) => { command: string; cwd: string; env: NodeJS.ProcessEnv } },
 ) {
-	return createBashTool(cwd, { operations: opts.operations, spawnHook: opts.spawnHook as never, exposeSessionEnvironment: false });
+	return createBashTool(cwd, { operations: opts.operations, spawnHook: opts.spawnHook, exposeSessionEnvironment: false });
 }
 
 /** 会话实际加载的技能与扩展（用于隔离测试与诊断） */
@@ -950,7 +951,7 @@ export const abortSession = (s: AgentSession) => (clearQueued(s), s.abort());
 export async function disposeSession(s: AgentSession) {
 	try {
 		const runner = s.extensionRunner;
-		if (runner?.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" } as never);
+		if (runner?.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
 	} catch {
 		/* 关闭时的扩展错误不影响释放 */
 	}
@@ -973,12 +974,12 @@ export async function applyModelSettings(session: AgentSession, models: PiModels
 	if (cur?.provider !== model.provider || cur?.id !== model.id) {
 		const m = models.getModel(model.provider, model.id);
 		if (!m) throw new Error(`模型不存在：${model.provider}/${model.id}`);
-		await session.setModel(m as never);
+		await session.setModel(m);
 		changed = true;
 	}
 	const level = models.clampThinking(model.provider, model.id, thinking);
 	if (session.thinkingLevel !== level) {
-		session.setThinkingLevel(level as never);
+		session.setThinkingLevel(level as ModelThinkingLevel);
 		changed = true;
 	}
 	return changed;

@@ -73,7 +73,7 @@ const peers = (channelId: string) => db.prepare("SELECT * FROM channel_peers WHE
 const peer = (channelId: string, peerId: string) => db.prepare("SELECT * FROM channel_peers WHERE channel_id = ? AND peer_id = ?").get(channelId, peerId) as unknown as PeerRow | undefined;
 
 function changed() {
-	bus.emit({ type: "channels.changed" } as never);
+	bus.emit({ type: "channels.changed" });
 }
 
 function channelSecret(c: ChannelRow): Record<string, string> {
