@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { waitStable, stableShot } from "./fixtures/stable-shot.mjs";
-import { agentProfileSave } from "./fixtures/info-pane.mjs";
+import { agentProfileSave, openAgentModelPop } from "./fixtures/info-pane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-agent-details-classic-");
@@ -305,8 +305,8 @@ try {
 	await appShot("01-overview-460-full.png");
 	await selectTab("models");
 	await pane.getByTestId("agent-model-settings").waitFor();
-	await pane.getByTestId("agent-thinking").waitFor();
-	await pane.getByTestId("agent-model-fast").waitFor();
+	await (await openAgentModelPop(page)).getByTestId("thinking-fast").waitFor();
+	await page.keyboard.press("Escape");
 	await page.getByTestId("agent-image-details").waitFor({ state: "attached" });
 	await page.getByTestId("agent-subagent-details").waitFor({ state: "attached" });
 	await appShot("02-models-460-full.png");
@@ -586,30 +586,28 @@ try {
 	assert.equal(themeState.css, true, "DIY CSS 应由 #pa-custom-themes 注入");
 	await selectTab("models");
 	await pane.getByTestId("agent-model-settings").waitFor();
-	await pane.getByTestId("agent-model-fast").waitFor();
 	await contentCheck("diy/460/models", "agent-models-tab");
 	await layoutCheck("diy/460/models");
-	const normalMotion = await page.evaluate(() => {
-		const sw = document.querySelector(".pa-fast-switch");
+	// 模型页复用输入框的模型按钮（.pa-chip），它的过渡时长同样取主题动效 token。
+	const MODEL_BTN = "[data-testid=agent-models-tab] [data-testid=model-picker]";
+	const normalMotion = await page.evaluate((sel) => {
+		const sw = document.querySelector(sel);
 		return sw ? getComputedStyle(sw).transitionDuration : null;
-	});
-	assert.ok(normalMotion?.split(",").every((v) => v.trim() === "0.25s"), `非减少动效时开关过渡取 DIY 时长：${normalMotion}`);
+	}, MODEL_BTN);
+	assert.ok(normalMotion?.split(",").every((v) => v.trim() === "0.25s"), `非减少动效时按钮过渡取 DIY 时长：${normalMotion}`);
 	await page.emulateMedia({ reducedMotion: "reduce" });
-	const reducedMotion = await page.evaluate(() => {
-		const sw = document.querySelector(".pa-fast-switch");
+	const reducedMotion = await page.evaluate((sel) => {
+		const sw = document.querySelector(sel);
 		const cs = getComputedStyle(document.documentElement);
 		return {
 			dur: cs.getPropertyValue("--pa-dur").trim(),
 			scale: cs.getPropertyValue("--mo-scale").trim(),
 			sw: sw ? getComputedStyle(sw).transitionDuration : null,
-			after: sw ? getComputedStyle(sw, "::after").transitionDuration : null,
 		};
-	});
+	}, MODEL_BTN);
 	assert.equal(reducedMotion.dur, "0s", `减少动效时 DIY 主题也不能绕开：${reducedMotion.dur}`);
 	assert.equal(reducedMotion.scale, "0");
-	assert.ok(reducedMotion.sw?.split(",").every((v) => v.trim() === "0s"), `减少动效下开关过渡应为 0：${reducedMotion.sw}`);
-	// ::after 同时过渡 transform 与 background，计算值是逗号分隔的多个时长，逐个都必须为 0。
-	assert.ok((reducedMotion.after ?? "").split(",").every((v) => v.trim() === "0s"), `减少动效下开关圆点过渡应为 0：${reducedMotion.after}`);
+	assert.ok(reducedMotion.sw?.split(",").every((v) => v.trim() === "0s"), `减少动效下按钮过渡应为 0：${reducedMotion.sw}`);
 	await page.emulateMedia({ reducedMotion: "no-preference" });
 	await paneShot("09-diy-light-460-pane.png");
 	console.log("PASS DIY：manifest 编译注入 + 主模型/Fast 可用 + 减少动效过渡为 0");

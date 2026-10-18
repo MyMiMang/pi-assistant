@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { stableShot } from "./fixtures/stable-shot.mjs";
-import { infoTab, expandAgentModelSection, agentProfileSave } from "./fixtures/info-pane.mjs";
+import { infoTab, expandAgentModelSection, agentProfileSave, agentModelButton, openAgentModelPop } from "./fixtures/info-pane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-room-model-settings-");
@@ -74,8 +74,7 @@ try {
  const pane = page.locator(".pa-pane-wrap");
  /** 等模型目录真的给出档位再按滑块，避免把“加载中”为空当成不支持。 */
  const setThinking = async (key) => {
-   await pane.getByTestId("agent-thinking").click();
-   const slider = page.getByTestId("agent-thinking-menu").getByRole("slider");
+   const slider = (await openAgentModelPop(page)).getByRole("slider");
    await slider.waitFor();
    await slider.press(key);
  };
@@ -99,7 +98,7 @@ try {
  await infoTab(page, "overview");
  await pane.getByTestId("overview-model-settings").click();
  await pane.getByTestId("agent-model-settings").waitFor();
- await wait(async () => /关闭/.test(await pane.getByTestId("agent-thinking").innerText()));
+ await wait(async () => /关闭/.test(await agentModelButton(page).innerText()));
  console.log("PASS created member: overview is a summary that navigates to models; strength saves immediately and survives reload");
 
  // 资料页：显式保存、跨一级 tab 保留草稿、保存失败保留草稿、仅资料保存不重发模型/强度/Fast。
@@ -142,7 +141,7 @@ try {
 
  // 模型页 live 保存错误：失败可见、保留原值，并可清回跟随默认。
  await infoTab(page, "models");
- await wait(async () => /关闭/.test(await pane.getByTestId("agent-thinking").innerText()));
+ await wait(async () => /关闭/.test(await agentModelButton(page).innerText()));
  await page.route(`**/api/agents/${manager.id}`, failPatch);
  await setThinking("End");
  await pane.getByTestId("model-save-error").waitFor();
@@ -152,10 +151,10 @@ try {
  await page.unroute(`**/api/agents/${manager.id}`, failPatch);
  await setThinking("End");
  await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).thinkingSetting === supported.at(-1));
- await pane.getByTestId("agent-thinking").click();
- await page.getByTestId("agent-thinking-follow").click();
+ await (await openAgentModelPop(page)).getByTestId("thinking-follow").click();
  await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).thinkingSetting === null);
- await wait(async () => /跟随/.test(await pane.getByTestId("agent-thinking").innerText()));
+ assert.equal(await (await openAgentModelPop(page)).getByTestId("thinking-follow").getAttribute("aria-pressed"), "true", "清回跟随默认");
+ await page.keyboard.press("Escape");
  console.log("PASS save failures: visible live error keeps stored value, retry persists, follow resets strength to default");
 
  // 管理者用mock执行加人卡片，再走确认加入。
@@ -221,7 +220,7 @@ try {
  const directPane = isolated.locator(".pa-pane-wrap");
  const models = async () => { await infoTab(isolated, "models"); await directPane.getByTestId("agent-model-settings").waitFor(); };
  const chooseLive = async (id) => {
-   await directPane.getByTestId("model-picker").click();
+   await (await openAgentModelPop(isolated)).getByTestId("thinking-model").click();
    await isolated.getByTestId("model-menu").waitFor();
    await isolated.getByTestId("model-search").fill(id);
    // 常用与服务分组可各列同一语义模型；点击其第一份，不把正常重复展示当strict locator失败。
@@ -231,20 +230,21 @@ try {
  await chooseLive(subset);
  await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).model.id === subset);
  await wait(async () => /子集档位模型/.test(await directPane.getByTestId("model-picker").innerText()));
- await wait(async () => /最大.*高/.test(await directPane.getByTestId("agent-thinking").innerText()));
+ await wait(async () => /高/.test(await agentModelButton(isolated).innerText()));
  const raw = (await j("/api/agents")).find((a) => a.id === manager.id);
  assert.equal(raw.thinkingSetting, "max", "存储的原始档位保持 max");
  assert.equal(raw.thinking, "high", "有效档位按模型目录降为 high");
- assert.equal(await isolated.getByTestId("agent-model-fast").getAttribute("aria-pressed"), "true", "Fast 已开启");
- await directPane.getByTestId("agent-thinking").click();
- await isolated.getByTestId("agent-thinking-follow").click();
+ const pop = await openAgentModelPop(isolated);
+ assert.equal(await pop.getByTestId("thinking-fast").getAttribute("aria-pressed"), "true", "Fast 已开启");
+ await pop.getByTestId("thinking-follow").click();
  await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).thinkingSetting === null);
  // 夹具全局默认是 medium；由 max 清回跟随后应显示「中」，不能沿用显式 max 降级时的 high。
- await wait(async () => /跟随.*中/.test(await directPane.getByTestId("agent-thinking").innerText()));
+ await wait(async () => /中/.test(await agentModelButton(isolated).innerText()));
  const following = (await j("/api/agents")).find((a) => a.id === manager.id);
  assert.equal(following.thinking, "medium", "跟随使用夹具设置的默认中档");
  assert.equal(following.fast, true, "改强度/跟随不动 Fast");
- assert.equal(await isolated.getByTestId("agent-model-fast").getAttribute("aria-pressed"), "true", "Fast 按钮保持开启");
+ assert.equal(await (await openAgentModelPop(isolated)).getByTestId("thinking-fast").getAttribute("aria-pressed"), "true", "Fast 按钮保持开启");
+ await isolated.keyboard.press("Escape");
  await models();
  // A入口响应延迟时切换成员；重新进入同一助理再写B必须排队，最终UI与DB一致。
  let releaseFirst; const responseGate = new Promise((r) => { releaseFirst = r; });
@@ -269,7 +269,8 @@ try {
  await wait(async () => !await directPane.getByTestId("model-picker").isDisabled());
  await wait(async () => /子集档位模型/.test(await directPane.getByTestId("model-picker").innerText()));
  assert.equal((await j("/api/agents")).find((a) => a.id === manager.id).fast, true);
- assert.equal(await isolated.getByTestId("agent-model-fast").getAttribute("aria-pressed"), "true");
+ assert.equal(await (await openAgentModelPop(isolated)).getByTestId("thinking-fast").getAttribute("aria-pressed"), "true");
+ await isolated.keyboard.press("Escape");
  assert.deepEqual(directErrors, []);
  await isolated.close();
  console.log("PASS without WS: raw/effective metadata synchronized, follow retained, Fast independent, late responses ordered across member switches");

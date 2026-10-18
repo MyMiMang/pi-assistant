@@ -312,7 +312,7 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 		const before = limitsD;
 		save("任务上限", () => {}, () => setAgentSubagentSettings(agentId, patch), syncLimits, () => before && syncLimits(before));
 	};
-	// 失焦提交：清空 = 继承默认；非法值恢复成生效值，不静默写 0。
+	// 失焦提交：清空 = 恢复默认；非法值恢复成生效值，不静默写 0。
 	const commit = (k: "maxConcurrent" | "maxMinutes", raw: string) => {
 		if (!limitsD) return;
 		const trimmed = raw.trim();
@@ -336,24 +336,24 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 	const levels: string[] = thinkingLevelsFor(d.models, candidates);
 	const levelsOf = (m: Model) => d.models.find((x) => key(x) === key(m))?.thinking ?? [];
 	const fixedLevel = thinking?.mode === "fixed" ? thinking.level : null;
-	// 并集里有这一档 ≠ 每个候选模型都支持：逐个模型核对。摘要只说「运行时按实际模型收敛」，
+	// 并集里有这一档 ≠ 每个候选模型都支持：逐个模型核对。摘要只说「按实际模型自动调整」，
 	// 不声称所有候选模型的实际档位都等于这个值。
 	const fixedEverywhere = !!fixedLevel && candidates.length > 0 && candidates.every((m) => levelsOf(m).includes(fixedLevel));
 	const label = (l: string) => THINKING_LABEL[l] ?? l;
 	// 目录还在读 / 读失败时不冒充「不支持」或「都不支持」：那个状态交给 ThinkingButton 自己的 loading / error 说明
 	const catalogReady = !d.loading && !d.error;
 	// 用户已保存的固定档位若当前候选池里没有模型支持（比如换了池子），仍然显示出来并说明会被降级，不静默吞掉
-	const unsupportedFixed = fixedLevel && catalogReady && !levels.includes(fixedLevel) ? `当前候选池里没有模型支持「${label(fixedLevel)}」，运行时会被收敛到实际模型支持的档位` : undefined;
+	const unsupportedFixed = fixedLevel && catalogReady && !levels.includes(fixedLevel) ? `当前候选池里没有模型支持「${label(fixedLevel)}」，运行时会自动降到实际模型支持的档位` : undefined;
 	const summary: string[] = [];
 	if (phase === "loading") summary.push("正在读取…");
 	else if (phase === "error") summary.push("读取失败 · 展开重试");
 	else {
 		summary.push(pool.length ? `候选池 ${pool.length} 个模型 · 派活时按任务挑` : `模型跟随聊天${agent?.model ? ` · 当前 ${nameOf(agent.model)}` : ""}`);
 		if (thinking.mode === "fixed") {
-			const suffix = unsupportedFixed ? " · 当前池没有模型支持，运行时会收敛" : fixedEverywhere ? "" : " · 运行时按实际模型收敛";
+			const suffix = unsupportedFixed ? " · 当前池没有模型支持，运行时自动降档" : fixedEverywhere ? "" : " · 按实际模型自动调整";
 			summary.push(`思考 固定 ${label(thinking.level)}${suffix}`);
 		} else summary.push(`思考跟随主会话${agent?.thinking ? ` · 当前 ${label(agent.thinking)}` : ""}`);
-		if (limitsD) summary.push(`同时 ${limitsD.settings.maxConcurrent} 个 · 每次 ${limitsD.settings.maxMinutes} 分钟${limitsD.overrides.maxConcurrent === undefined && limitsD.overrides.maxMinutes === undefined ? " · 继承默认" : ""}`);
+		if (limitsD) summary.push(`同时 ${limitsD.settings.maxConcurrent} 个 · 每次 ${limitsD.settings.maxMinutes} 分钟${limitsD.overrides.maxConcurrent === undefined && limitsD.overrides.maxMinutes === undefined ? " · 用默认值" : ""}`);
 	}
 	if (saving > 0) summary.push("保存中…");
 	if (saveErr) summary.push("保存失败 · 展开查看原因");
@@ -361,13 +361,14 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 	const busy = saving > 0;
 	const d2 = limitsD;
 	const inherit = (k: "maxConcurrent" | "maxMinutes") => !!d2 && d2.overrides[k] === undefined;
-	const inheritHint = (k: "maxConcurrent" | "maxMinutes") => (inherit(k) ? <span className="text-[11px] text-mut2">默认 {d2?.defaults[k]}</span> : <button type="button" className="text-[11px] text-accent underline" disabled={busy} onClick={() => saveLimits({ [k]: null })} data-testid={`agent-subagent-inherit-${k}`}>继承默认</button>);
+	const inheritHint = (k: "maxConcurrent" | "maxMinutes") => (inherit(k) ? <span className="text-[11px] text-mut2">默认 {d2?.defaults[k]}</span> : <button type="button" className="text-[11px] text-accent underline" disabled={busy} onClick={() => saveLimits({ [k]: null })} data-testid={`agent-subagent-inherit-${k}`}>恢复默认</button>);
 	return (
 		<details className="pa-info-details" data-testid="agent-subagent-details">
 			<summary>
-				子代理分工
+				高级 · 子代理
 				<small>
-					{summary.map((line) => <span key={line} className="block">{line}</span>)}
+					<span className="block">助理把大活拆给小帮手时用的模型</span>
+					<span className="block">{summary.join(" · ")}</span>
 				</small>
 			</summary>
 			<div className="pa-info-details-body">
@@ -406,7 +407,7 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 								<section data-testid="agent-subagent-limits" className="space-y-2">
 									<div className="flex items-center gap-1 text-sm font-semibold">
 										任务上限
-										<Help>只对这个助理生效；留空或点「继承默认」就用整个安装的默认值（默认并发 {d2.defaults.maxConcurrent}、最长 {d2.defaults.maxMinutes} 分钟）。并发指这个助理同时运行的子代理最多几个，满了自动排队。运行中的任务在聊天顶部的「子代理」里看。</Help>
+										<Help>只对这个助理生效；留空或点「恢复默认」就用整个安装的默认值（默认并发 {d2.defaults.maxConcurrent}、最长 {d2.defaults.maxMinutes} 分钟）。并发指这个助理同时运行的子代理最多几个，满了自动排队。运行中的任务在聊天顶部的「子代理」里看。</Help>
 									</div>
 									<label className="flex flex-wrap items-center gap-2 text-sm text-mut">
 										最多同时

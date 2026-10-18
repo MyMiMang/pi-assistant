@@ -22,7 +22,7 @@ import { AgentHostTier, TIER_INFO, useHostControl, type Tier } from "./HostContr
 import { ResponsiveTabs } from "./ResponsiveTabs";
 import { RoutinesTab } from "./RoutinesTab";
 import { ProactiveTab } from "./Proactive";
-import { Avatar, Button, fmtSize, fmtTime } from "./ui";
+import { Avatar, Button, fmtSize, fmtTime, Help } from "./ui";
 import { RoomAgentActions } from "./RoomCards";
 
 const TABS = [
@@ -338,15 +338,15 @@ function Computer({ agentId }: { agentId: string }) {
 	);
 }
 
-/** 模型：聊天模型是第一区（主模型整行、思考单行、Fast 小开关），画图与子代理保留真实摘要 + 展开全部配置。 */
+/** 模型：聊天模型直接复用输入框下面那个模型按钮（模型 / 思考强度 / Fast 各自即时保存），画图和子代理各一个折叠区。 */
 function AgentModels({ agentId }: { agentId: string }) {
 	return (
 		<div className="text-sm" data-testid="agent-models-tab">
 			<div className="pa-info-sechead">
-				<strong>聊天模型</strong>
-				<small>修改后自动保存</small>
+				<strong>聊天模型<Help>和输入框下面的模型按钮是同一个设置：点开可以换模型、调思考强度、开关 Fast，改完立刻保存。思考强度选「跟随默认」时按全局默认档位走。</Help></strong>
 			</div>
-			<ModelPicker agentId={agentId} layout="settings" allowThinkingFollow />
+			<p className="pa-info-lead">这个助理平时用的大脑</p>
+			<ModelPicker agentId={agentId} allowThinkingFollow hideTextInNarrow={false} placement="down" buttonClass="max-w-full" />
 			<div className="mt-3">
 				<AgentImageModel agentId={agentId} />
 			</div>

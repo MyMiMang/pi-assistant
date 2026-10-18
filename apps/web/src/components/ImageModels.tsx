@@ -375,8 +375,8 @@ export function AgentImageModel({ agentId }: { agentId: string }) {
 	return (
 		<details className="pa-info-details" data-testid="agent-image-details">
 			<summary>
-				画图
-				<small>{shown}</small>
+				画图模型
+				<small>让它画图时用哪个模型 · {shown}</small>
 			</summary>
 			<div className="pa-info-details-body">
 				<section className="space-y-1.5" data-testid="agent-image-model">

@@ -63,8 +63,8 @@ export async function taskTab(page, keyOrName) {
  * `agent-details-functional-ui.mjs` 里单独验证，**不要**在这里顺手展开。
  */
 export const MODEL_SECTIONS = {
-	image: { details: "agent-image-details", content: "agent-image-model", title: "画图" },
-	subagents: { details: "agent-subagent-details", content: "agent-subagent-model", title: "子代理分工" },
+	image: { details: "agent-image-details", content: "agent-image-model", title: "画图模型" },
+	subagents: { details: "agent-subagent-details", content: "agent-subagent-model", title: "高级 · 子代理" },
 };
 
 /** 按 testid 展开一个原生 `<details>`：真实点 summary，已展开就跳过；结构缺失应直接报错。 */
@@ -114,4 +114,15 @@ export const BIO_PLACEHOLDER = "一句话介绍（显示在侧边栏和概览里
 /** 只定位资料页固定保存按钮；创建/其他设置的保存按钮不混进这个入口。 */
 export function agentProfileSave(scope) {
 	return scope.getByTestId("agent-profile-save");
+}
+
+/** 「模型」页的聊天模型按钮：与输入框下面是同一个 ModelPicker（只在模型页里取，不和输入框那颗混）。 */
+export const agentModelButton = (page) => page.getByTestId("agent-models-tab").getByTestId("model-picker");
+
+/** 打开「模型」页模型按钮的紧凑层（思考滑块 testid=thinking-*、Fast=thinking-fast、跟随=thinking-follow），已开就直接返回。 */
+export async function openAgentModelPop(page) {
+	const pop = page.getByTestId("model-picker-compact");
+	if (!(await pop.count())) await agentModelButton(page).click();
+	await pop.waitFor();
+	return pop;
 }

@@ -55,6 +55,14 @@ try {
 		await page.waitForTimeout(500);
 		await waitStable(page, pane);
 		await pane.screenshot({ path: join(out, `${process.env.SHOT_PREFIX ?? ""}${key}.png`) });
+		// 模型页复用输入框的模型按钮：再拍一张弹层打开的样子
+		if (key === "models" && (await pane.locator("[data-testid=agent-models-tab] [data-testid=model-picker]").count())) {
+			await pane.locator("[data-testid=agent-models-tab] [data-testid=model-picker]").click();
+			const pop = page.getByTestId("model-picker-compact");
+			await waitStable(page, pop);
+			await page.screenshot({ path: join(out, `${process.env.SHOT_PREFIX ?? ""}models-open.png`), clip: { x: 1280 - 420, y: 0, width: 420, height: 900 } });
+			await page.keyboard.press("Escape");
+		}
 	}
 	await page.locator(".pa-composer").screenshot({ path: join(out, `${process.env.SHOT_PREFIX ?? ""}composer.png`) });
 	console.log("截图写入", out);

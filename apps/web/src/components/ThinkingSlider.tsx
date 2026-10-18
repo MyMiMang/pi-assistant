@@ -268,7 +268,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 
 			{view.unsupportedPick && (
 				<p className="pa-think-norm" role="note">
-					换模型后，<b>{label(view.unsupportedPick)}</b> 不在当前模型支持的档位里；运行时按 <b>{label(view.effective)}</b> 收敛（合法降级，不静默假装保留）。
+					换模型后，<b>{label(view.unsupportedPick)}</b> 不在当前模型支持的档位里；运行时自动按 <b>{label(view.effective)}</b> 执行。
 					<button type="button" className="pa-think-mini" aria-label={`按${label(view.effective)}运行`} onClick={() => commit(count ? view.levels.indexOf(view.effective ?? "") : 0, true)}>
 						按「{label(view.effective)}」运行
 					</button>
@@ -359,7 +359,7 @@ export function fastStateText(fast?: FastControl): string {
 						: "已关：不附加任何参数，服务商默认档不变";
 }
 
-export function FastButton({ testid, fast, variant = "popover" }: { testid: string; fast?: FastControl; variant?: "popover" | "settings" }) {
+export function FastButton({ testid, fast }: { testid: string; fast?: FastControl }) {
 	const tip = useHoverTip(450);
 	const supported = !!fast && fast.capability !== "unsupported";
 	// 加载中不按「不支持」禁掉：开关仍可切，请求时按本次实际模型判断；只在保存中 / 明确不支持时禁用
@@ -367,13 +367,11 @@ export function FastButton({ testid, fast, variant = "popover" }: { testid: stri
 	const on = !!fast?.on;
 	const stateText = fastStateText(fast);
 	return (
-		<span className={variant === "settings" ? "pa-set-fastwrap" : "pa-think-fastwrap"}>
+		<span className="pa-think-fastwrap">
 			<button
 				type="button"
 				ref={tip.ref}
-				className={cx(variant === "settings" ? "pa-set-fast" : "pa-think-fast", on && supported && "on")}
-				role={variant === "settings" ? "switch" : undefined}
-				aria-checked={variant === "settings" ? on : undefined}
+				className={cx("pa-think-fast", on && supported && "on")}
 				aria-pressed={fast ? on : undefined}
 				aria-disabled={disabled || undefined}
 				aria-busy={fast?.pending || undefined}
@@ -386,7 +384,7 @@ export function FastButton({ testid, fast, variant = "popover" }: { testid: stri
 				}}
 				{...tip.triggerProps}
 			>
-				{variant === "settings" ? <span className="pa-fast-switch" aria-hidden="true" /> : <Zap size={21} strokeWidth={2} aria-hidden="true" />}
+				<Zap size={21} strokeWidth={2} aria-hidden="true" />
 			</button>
 			{tip.renderTip(
 				<>

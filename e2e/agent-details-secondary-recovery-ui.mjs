@@ -493,7 +493,7 @@ try {
 	await wait(async () => !("maxConcurrent" in (await j(`/api/agents/${A.id}/subagents/settings`)).overrides), 10000, "继承默认清空覆盖");
 	const inherited = await j(`/api/agents/${A.id}/subagents/settings`);
 	await wait(async () => (await concurrent.inputValue()) === String(inherited.settings.maxConcurrent), 10000, "继承后输入框显示安装默认");
-	assert.match(await summaryText(sub()), /继承默认/);
+	assert.match(await summaryText(sub()), /用默认值/);
 	console.log("PASS subagent-limits: 挂起禁用、失败回滚+错误、成功一致、继承默认读回真实 GET");
 
 	// ---------------------------------------------------------------- 5) 切助理 / 离开模型页：迟到响应不污染

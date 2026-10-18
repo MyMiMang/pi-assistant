@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { stableShot, waitStable } from "./fixtures/stable-shot.mjs";
-import { expandAgentModelSection, ensureDetailVisible, agentProfileSave, PERSONA_PLACEHOLDER } from "./fixtures/info-pane.mjs";
+import { expandAgentModelSection, ensureDetailVisible, agentProfileSave, PERSONA_PLACEHOLDER, agentModelButton, openAgentModelPop } from "./fixtures/info-pane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-agent-details-");
@@ -61,23 +61,18 @@ try {
  assert.equal(await pane.getByTestId("agent-model-settings").count(), 0, "概览只有摘要，未重复挂模型控件");
  await stableShot(page, pane, join(out, "01-overview-desktop.png"));
  await pane.getByTestId("overview-model-settings").click();
- await pane.getByTestId("agent-thinking").waitFor();
+ await agentModelButton(page).waitFor();
  assert.equal(await pane.getByTestId("agent-draft").count(), 0, "详情无第二份模型草稿");
- await pane.getByTestId("agent-thinking").click();
- const thinking = page.getByTestId("agent-thinking-menu"); await thinking.getByRole("slider").waitFor();
- assert.equal(await thinking.locator(".pa-think-step").count(), 7);
- await thinking.getByRole("slider").press("End");
+ assert.equal(await pane.getByTestId("agent-thinking").count(), 0, "模型页不再有另一套思考强度控件，复用输入框的模型按钮");
+ let pop = await openAgentModelPop(page);
+ assert.equal(await pop.locator(".pa-think-step").count(), 7);
+ await pop.getByRole("slider").press("End");
  await wait(async () => (await current()).thinkingSetting === "max");
- const settingsFast = pane.getByTestId("agent-model-fast");
- await settingsFast.focus();
- await page.getByTestId("hover-tip").getByText(/可能增加用量/).waitFor();
- await page.keyboard.press("Escape");
- assert.equal(await settingsFast.evaluate((el) => el === document.activeElement), true, "关闭说明后 Fast 仍保持键盘焦点");
- const fastTouch = await settingsFast.boundingBox();
- assert.ok(fastTouch && fastTouch.width >= 44 && fastTouch.height >= 44, "设置页 Fast 保留44px点击范围");
- await settingsFast.click();
+ pop = await openAgentModelPop(page);
+ await pop.getByTestId("thinking-fast").click();
  await wait(async () => (await current()).fast === true);
  assert.equal((await current()).thinkingSetting, "max", "Fast不改强度");
+ await page.keyboard.press("Escape");
  await pane.getByTestId('agent-info-heading').click();
  await stableShot(page, pane, join(out, "02-models-desktop.png"));
  console.log("PASS group: overview directs to models; separate model/thinking/Fast; seven real levels; independent persistence");
@@ -85,8 +80,7 @@ try {
  const profile = pane.getByTestId("agent-profile"); const persona = profile.getByPlaceholder(PERSONA_PLACEHOLDER);
  await ensureDetailVisible(profile, persona);
  await persona.fill("这是还没保存的人设草稿；切换功能分类必须保留。");
- await select("models"); await pane.getByTestId("agent-thinking").click();
- await thinking.getByRole("slider").press("Home"); await wait(async () => (await current()).thinkingSetting === "off");
+ await select("models"); await (await openAgentModelPop(page)).getByRole("slider").press("Home"); await wait(async () => (await current()).thinkingSetting === "off");
  await select("profile"); assert.match(await persona.inputValue(), /还没保存的人设草稿/);
  const patches = []; let reject = true;
  const profileRoute = async (route) => { if (route.request().method() !== "PATCH") return route.continue(); const body = route.request().postDataJSON(); patches.push(body); if (reject) return fulfill(route, { error: "资料保存失败，请重试" }, 503); return route.continue(); };
@@ -176,9 +170,9 @@ try {
  assert.equal(await pane.getByTestId("agent-image-model").isVisible(), true, "展开后画图可用");
  await expandAgentModelSection(page, "subagents");
  assert.equal(await pane.getByTestId("agent-subagent-model").isVisible(), true, "展开后子代理可用");
- const fastBtn = pane.getByTestId("agent-model-fast"); await fastBtn.waitFor();
- assert.ok(await withinPane(fastBtn), "Fast 开关在信息面板内");
+ const fastBtn = (await openAgentModelPop(page)).getByTestId("thinking-fast"); await fastBtn.waitFor();
  assert.equal(await fastBtn.getAttribute("aria-pressed"), "true", "Fast 保持已开启的独立状态");
+ await page.keyboard.press("Escape");
  // 折叠区块的摘要要跟着真实接口走：候选池 / 任务上限改了，重进模型页仍是同一份数据。
  const poolSaved = await j(`/api/agents/${a.id}/subagent-model`, "PUT", { pool: [{ provider: "mock", id: "echo-think" }] });
  assert.equal(poolSaved.pool.length, 1);
@@ -193,8 +187,7 @@ try {
  assert.equal(inherited.settings.maxConcurrent, inherited.defaults.maxConcurrent, "清空覆盖 = 继承安装默认，不写 0");
  await wait(async () => new RegExp(`默认 ${inherited.defaults.maxConcurrent}`).test(await pane.getByTestId("agent-subagent-limits").innerText()));
  // 跨分类摘要同步：模型页改强度，概览摘要立即是新档位（不是两份状态）。
- await pane.getByTestId("agent-thinking").click();
- await thinking.getByRole("slider").press("End");
+ await (await openAgentModelPop(page)).getByRole("slider").press("End");
  await wait(async () => (await current()).thinkingSetting === "max");
  await select("overview");
  await wait(async () => /最大/.test(await pane.getByTestId("agent-overview").innerText()));
@@ -250,10 +243,9 @@ try {
  const infoButton = page.getByRole("button", { name: "信息面板", exact: true });
  await infoButton.waitFor(); // 系统/助理快照先就绪，才判断持久化的面板是否已开。
  if (!await pane.isVisible()) await infoButton.click();
- await select("models"); await pane.getByTestId("agent-thinking").waitFor();
- await wait(async () => /最大/.test(await pane.getByTestId("agent-thinking").innerText()));
- await pane.getByTestId("agent-thinking").click();
- await thinking.getByRole("slider").press("Home");
+ await select("models"); await agentModelButton(page).waitFor();
+ await wait(async () => /最大/.test(await agentModelButton(page).innerText()));
+ await (await openAgentModelPop(page)).getByRole("slider").press("Home");
  await wait(async () => (await current()).thinkingSetting === "off");
  await pane.getByTestId("agent-info-heading").click();
  await pane.getByRole("button", { name: "关闭", exact: true }).first().click();
@@ -268,7 +260,7 @@ try {
   await page.evaluate(({ skin, mode }) => { localStorage.setItem('pia.skin', skin); localStorage.setItem('pia.theme', mode); localStorage.setItem('pia.layout', JSON.stringify({ sideCollapsed: true, info: false, paneW: 340 })); }, { skin, mode });
   await page.goto(`${base}/?room=${room.id}`); await page.getByTestId("room-members").locator(`button[title^="${a.name}"]`).click();
   await pane.getByTestId('overview-model-settings').click();
-  await wait(async () => /关闭/.test(await pane.getByTestId('agent-thinking').innerText()));
+  await wait(async () => /关闭/.test(await agentModelButton(page).innerText()));
   assert.deepEqual(await page.evaluate(() => [document.documentElement.dataset.skin, document.documentElement.dataset.mode]), [skin, mode]);
   await layout(); await stableShot(page, pane, join(out, `05-models-${skin}-${mode}-${width}.png`));
   await select('profile'); await layout();
