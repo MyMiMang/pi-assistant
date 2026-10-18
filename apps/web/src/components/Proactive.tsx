@@ -62,6 +62,30 @@ function useProactive(agentId: string) {
 	return { d, save };
 }
 
+const DEFAULT_QUIET = { start: "22:00", end: "08:00" };
+/** 助理面板 › 任务 › 免打扰：定时任务和主动跟进共用这一份（存在助理的主动设置里，服务端定时任务按它顺延）。 */
+export function QuietHours({ agentId }: { agentId: string }) {
+	const { d, save } = useProactive(agentId);
+	if (!d) return null;
+	const q = d.cfg.quiet;
+	return (
+		<section className="mb-4 text-sm" data-testid="agent-quiet-hours">
+			<h2 className="pa-info-h2">免打扰 <Help>时段内到点的定时任务会顺延到结束再跑；主动提醒先攒着，结束后再发。你约好的跟进照常。</Help></h2>
+			<p className="pa-info-lead">这段时间不运行、不提醒（定时任务和主动跟进共用）</p>
+			<div className="flex flex-wrap items-center gap-2">
+				<input type="checkbox" className="pa-switch" role="switch" aria-label="免打扰" checked={!!q} onChange={(e) => void save({ cfg: { quiet: e.target.checked ? DEFAULT_QUIET : null } })} data-testid="agent-quiet-toggle" />
+				{q ? (
+					<>
+						<Input className="!w-auto" type="time" aria-label="免打扰开始" value={q.start} onChange={(e) => e.target.value && void save({ cfg: { quiet: { ...q, start: e.target.value } } })} data-testid="agent-quiet-start" />
+						<span className="text-mut">到</span>
+						<Input className="!w-auto" type="time" aria-label="免打扰结束" value={q.end} onChange={(e) => e.target.value && void save({ cfg: { quiet: { ...q, end: e.target.value } } })} data-testid="agent-quiet-end" />
+					</>
+				) : <span className="text-xs text-mut">已关闭，全天照常</span>}
+			</div>
+		</section>
+	);
+}
+
 /** 助理面板 › 主动 */
 export function ProactiveTab({ agentId }: { agentId: string }) {
 	const { d, save } = useProactive(agentId);
@@ -98,17 +122,6 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 			</div>
 			{d.level !== "off" && (
 				<div className="space-y-3">
-					<label className="flex flex-wrap items-center gap-2">
-						<span className="w-24 shrink-0 text-mut">免打扰</span>
-						<input type="checkbox" checked={!!c.quiet} onChange={(e) => void save({ cfg: { quiet: e.target.checked ? { start: "22:00", end: "08:00" } : null } })} />
-						{c.quiet && (
-							<>
-								<Input className="!w-20" type="time" value={c.quiet.start} onChange={(e) => void save({ cfg: { quiet: { ...c.quiet!, start: e.target.value } } })} />
-								<span>到</span>
-								<Input className="!w-20" type="time" value={c.quiet.end} onChange={(e) => void save({ cfg: { quiet: { ...c.quiet!, end: e.target.value } } })} />
-							</>
-						)}
-					</label>
 					<label className="flex flex-wrap items-center gap-2">
 						<span className="w-24 shrink-0 text-mut">只在工作日</span>
 						<input type="checkbox" checked={c.weekdaysOnly} onChange={(e) => void save({ cfg: { weekdaysOnly: e.target.checked } })} />

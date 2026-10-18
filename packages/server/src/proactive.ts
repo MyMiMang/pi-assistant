@@ -80,6 +80,11 @@ const assertLevel = (l: string) => {
 };
 export const levelOf = (a: AgentLite): Level => (a.proactivity as Level) || defaultLevel();
 export const cfgOf = (a: AgentLite): ProactiveCfg => ({ ...DEFAULT_CFG, ...(a.proactive_cfg ? JSON.parse(a.proactive_cfg) : {}) });
+/** 助理的免打扰时段：主动跟进和定时任务共用这一份（null = 关闭）。 */
+export const agentQuiet = (agentId: string): ProactiveCfg["quiet"] => {
+	const a = agentOf(agentId);
+	return a ? cfgOf(a).quiet : null;
+};
 /** 巡检只给可回到的本人普通对话作推进目标，隐藏群会话由群调度负责。 */
 function relatedConversation(agentId: string, id: string | null | undefined): string | null {
 	return id && db.prepare("SELECT 1 FROM conversations WHERE id = ? AND agent_id = ? AND COALESCE(hidden,0) = 0").get(id, agentId) ? id : null;

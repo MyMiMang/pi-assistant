@@ -21,7 +21,7 @@ import { forkConversation, ForkError } from "../fork.ts";
 import { globalMemoryProviderId, listMemoryProviders, memory } from "../memory/index.ts";
 import { assignedSkillIds, setAssignedSkillIds } from "../skill-assignments.ts";
 import { enabledSkillsFor, resolveSelectedSkills } from "../skill-scope.ts";
-import { createRoutine, deleteAgentRoutines, listRoutines, type RoutineInput } from "../routines.ts";
+import { createRoutine, deleteAgentRoutines, listRoutines, rescheduleAgentRoutines, type RoutineInput } from "../routines.ts";
 import { actionShot, clearActions, listActions } from "../action-log.ts";
 import { cancelFollowup, proactiveJson, runHeartbeat, saveProactive } from "../proactive.ts";
 import { cancelWait, listWaits, refreshWait } from "../task-waits.ts";
@@ -470,7 +470,12 @@ export function mountAgentRoutes(app: Hono<Env>) {
 	});
 	app.put("/api/agents/:id/proactive", async (c) => {
 		try {
-			return c.json(saveProactive(c.req.param("id")!, await c.req.json()));
+			const id = c.req.param("id")!;
+			const body = await c.req.json<Parameters<typeof saveProactive>[1]>();
+			const res = saveProactive(id, body);
+			// 免打扰时段是助理级的一份：定时任务也按它顺延，改了就重算下次执行
+			if (body.cfg && "quiet" in body.cfg) rescheduleAgentRoutines(id);
+			return c.json(res);
 		} catch (e) {
 			return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 		}

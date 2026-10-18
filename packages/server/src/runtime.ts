@@ -27,12 +27,12 @@ import { deliveryExtension } from "@pi-assistant/ext-delivery";
 import { memoryExtension } from "@pi-assistant/ext-memory";
 import { routinesExtension } from "@pi-assistant/ext-routines";
 import { proactiveExtension } from "@pi-assistant/ext-proactive";
-import { advanceConversation, cancelAdvances, cancelFollowup, drainAdvances, fmt as fmtTime, hiddenConversation, isHeartbeatTask, listAdvances, listFollowups, parseWhen, resumeAdvances, runOfTask, scheduleFollowup, setAdvanceHooks, setProactiveSpawner, surface as proactiveSurface } from "./proactive.ts";
+import { advanceConversation, agentQuiet, cancelAdvances, cancelFollowup, drainAdvances, fmt as fmtTime, hiddenConversation, isHeartbeatTask, listAdvances, listFollowups, parseWhen, resumeAdvances, runOfTask, scheduleFollowup, setAdvanceHooks, setProactiveSpawner, surface as proactiveSurface } from "./proactive.ts";
 import { sandboxExtension } from "@pi-assistant/ext-sandbox";
 import { NUDGE_TYPE, skillsExtension } from "@pi-assistant/ext-skills";
 import { conversationForkParent, currentConversation, getConversation, setConversationSession } from "./conversations.ts";
 import { memory, type MemoryActor } from "./memory/index.ts";
-import { computeNext, createRoutine, deleteRoutine, getRoutine, listRoutines, setRoutineSpawner, setRoutineStatus, updateRoutine, validateCron, webhookPath } from "./routines.ts";
+import { computeNext, createRoutine, DEFAULT_QUIET, deleteRoutine, getRoutine, listRoutines, setRoutineSpawner, setRoutineStatus, updateRoutine, validateCron, webhookPath } from "./routines.ts";
 import { DUP_THRESHOLD, acceptedProposalPrompt, awaitProposalAnswer, beginProposal, expireProposal, expireStaleSuggestions, hasCreateGrant, observeTurn, proposalPrompt, recordSuggestion, resolveSuggestion, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, submitProposal, type Suggestion, suggestionPrompt } from "./skill-intel.ts";
 import { deleteSkill, getSkill, skillPaths, skillsVersion } from "./skills.ts";
 import { assignedSkillIds, assignmentsVersion, enableSkillForAgent, unassignSkillEverywhere } from "./skill-assignments.ts";
@@ -486,7 +486,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			name: "pia-routines",
 			factory: routinesExtension({
 				list: () => listRoutines(agentId).map((r) => ({ id: r.id, name: r.name, trigger: r.trigger, cron: r.cron, status: r.status, nextRunAt: r.next_run_at })),
-				describe: (spec) => describeRoutine(spec),
+				describe: (spec) => describeRoutine(spec, agentId),
 				confirm: (summary, input) => approve("routine_create", input, summary),
 				create: (spec) => {
 					const r = createRoutine(agentId, { name: spec.name, prompt: spec.prompt, trigger: spec.trigger, cron: spec.cron, quiet: spec.quietHours === false ? null : undefined, conversationId }, "agent");
@@ -494,7 +494,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 				},
 				update: (id, spec) => {
 					if (getRoutine(id)?.agent_id !== agentId) throw new Error("不是你的定时任务");
-					return updateRoutine(id, { ...spec, quiet: spec.quietHours === undefined ? undefined : spec.quietHours ? { start: "23:00", end: "07:00" } : null });
+					return updateRoutine(id, { ...spec, quiet: spec.quietHours === undefined ? undefined : spec.quietHours ? DEFAULT_QUIET : null });
 				},
 				setStatus: (id, st) => getRoutine(id)?.agent_id === agentId && !!setRoutineStatus(id, st),
 				remove: (id) => getRoutine(id)?.agent_id === agentId && deleteRoutine(id),
@@ -677,13 +677,15 @@ const hostKey = (agentId: string) =>
 	hostAllowedFor(agentId) ? `${hostSettings().approvedHash}:${tierOf(agentId)}:${hostPaused() ? "paused" : hostStatus().daemon.state === "off" || hostStatus().daemon.state === "error" ? "down" : "up"}` : "off";
 
 /** 定时任务的人类可读说明（同时校验 cron） */
-export function describeRoutine(spec: { trigger: string; cron?: string | null; quietHours?: boolean }) {
+export function describeRoutine(spec: { trigger: string; cron?: string | null; quietHours?: boolean }, agentId?: string) {
 	if (spec.trigger === "webhook") return "收到 Webhook 请求时执行";
 	if (!spec.cron) throw new Error("cron 触发需要提供 cron 表达式");
 	validateCron(spec.cron);
-	const quiet = spec.quietHours === false ? null : { start: "23:00", end: "07:00" };
-	const next = computeNext({ trigger: "cron", cron: spec.cron, tz: "Asia/Shanghai", quiet: quiet ? JSON.stringify(quiet) : null });
-	return `cron “${spec.cron}”（Asia/Shanghai${quiet ? "，免打扰 23:00–07:00 顺延" : ""}），下次执行 ${next ? new Date(next).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "—"}`;
+	// 免打扰按助理统一一份（和主动跟进共用）；没有助理上下文时按默认时段预览
+	const follows = spec.quietHours !== false;
+	const quiet = !follows ? null : agentId ? agentQuiet(agentId) : DEFAULT_QUIET;
+	const next = computeNext({ agent_id: agentId, trigger: "cron", cron: spec.cron, tz: "Asia/Shanghai", quiet: follows ? JSON.stringify(DEFAULT_QUIET) : null });
+	return `cron “${spec.cron}”（Asia/Shanghai${quiet ? `，免打扰 ${quiet.start}–${quiet.end} 顺延` : ""}），下次执行 ${next ? new Date(next).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "—"}`;
 }
 
 class AgentRuntime {

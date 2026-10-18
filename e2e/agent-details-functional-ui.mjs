@@ -153,7 +153,9 @@ try {
  await expandAgentModelSection(page, "image"); await expandAgentModelSection(page, "subagents");
  await pane.getByTestId("agent-image-model").waitFor(); await pane.getByTestId("agent-subagent-model").waitFor();
  assert.equal(await pane.getByTestId("agent-skills").count(), 0); assert.equal(await pane.getByTestId("agent-host-tier").count(), 0);
- await select("tasks"); await pane.getByTestId("agent-background-tasks").waitFor();
+ await select("tasks"); await pane.getByTestId("routines-tab").waitFor();
+ assert.deepEqual(await pane.getByTestId("agent-task-tabs").locator("[role=tab]").evaluateAll((els) => els.map((e) => e.textContent.trim())), ["定时任务", "执行记录", "主动跟进"]);
+ await select("background", "agent-task-tabs"); await pane.getByTestId("agent-background-tasks").waitFor();
  await select("routines", "agent-task-tabs"); await pane.getByTestId("routines-tab").waitFor();
  await select("proactive", "agent-task-tabs"); await pane.getByTestId("proactive-tab").waitFor();
  await select("memory"); await pane.getByTestId("memory-tab").waitFor();

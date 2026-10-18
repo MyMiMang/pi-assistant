@@ -13,7 +13,7 @@ import { db, now, uid } from "./db.ts";
 import { currentConversation } from "./conversations.ts";
 import { insertMessage } from "./messages.ts";
 import { bindMirrors } from "./mirror.ts";
-import { mirrorPref } from "./proactive.ts";
+import { agentQuiet, mirrorPref } from "./proactive.ts";
 import { notify } from "./push.ts";
 import { openJson, sealJson } from "./secrets.ts";
 
@@ -58,7 +58,7 @@ export interface RoutineInput {
 	trigger: "cron" | "webhook";
 	cron?: string | null;
 	tz?: string;
-	/** null = 关闭免打扰；省略 = 默认 23:00–07:00 */
+	/** null = 这条任务不受免打扰限制；省略 / 非空 = 遵守助理的免打扰时段（时段本身按助理统一设置） */
 	quiet?: Quiet;
 	conversationId?: string | null;
 }
@@ -74,7 +74,10 @@ export const listRoutines = (agentId?: string) =>
 	(agentId ? db.prepare("SELECT * FROM routines WHERE agent_id = ? ORDER BY created_at DESC").all(agentId) : db.prepare("SELECT * FROM routines ORDER BY created_at DESC").all()) as unknown as RoutineRow[];
 export const listRuns = (routineId: string, limit = 20) => db.prepare("SELECT * FROM routine_runs WHERE routine_id = ? ORDER BY started_at DESC LIMIT ?").all(routineId, limit) as unknown as RoutineRunRow[];
 
-const quietOf = (r: Pick<RoutineRow, "quiet">): Quiet => (r.quiet ? (JSON.parse(r.quiet) as Quiet) : null);
+/** 这条任务存的「遵守 / 不遵守」开关（非空 = 遵守）；旧数据里的时段值只作开关，不再单独生效。 */
+const rawQuiet = (r: Pick<RoutineRow, "quiet">): Quiet => (r.quiet ? (JSON.parse(r.quiet) as Quiet) : null);
+/** 实际生效的免打扰：遵守的任务用助理统一的时段（和主动跟进同一份）；没有助理上下文时（纯预览）退回默认时段。 */
+const quietOf = (r: Pick<RoutineRow, "quiet"> & { agent_id?: string }): Quiet => (!r.quiet ? null : r.agent_id ? agentQuiet(r.agent_id) : rawQuiet(r));
 const minutes = (hhmm: string) => {
 	const [h, m] = hhmm.split(":").map(Number);
 	return h * 60 + m;
@@ -112,7 +115,7 @@ export function validateCron(expr: string, tz = DEFAULT_TZ): Date[] {
 	return runs;
 }
 
-export function computeNext(r: Pick<RoutineRow, "trigger" | "cron" | "tz" | "quiet">, from = now()): number | null {
+export function computeNext(r: Pick<RoutineRow, "trigger" | "cron" | "tz" | "quiet"> & { agent_id?: string }, from = now()): number | null {
 	if (r.trigger !== "cron" || !r.cron) return null;
 	const next = new Cron(r.cron, { timezone: r.tz, paused: true }).nextRun(new Date(from));
 	return next ? deferQuiet(next.getTime(), quietOf(r), r.tz) : null;
@@ -136,6 +139,7 @@ export function createRoutine(agentId: string, input: RoutineInput, createdBy: s
 	const t = now();
 	const quiet = input.quiet === undefined ? DEFAULT_QUIET : input.quiet;
 	const row = {
+		agent_id: agentId,
 		trigger: input.trigger,
 		cron: input.trigger === "cron" ? input.cron!.trim() : null,
 		tz: input.tz ?? DEFAULT_TZ,
@@ -149,6 +153,13 @@ export function createRoutine(agentId: string, input: RoutineInput, createdBy: s
 	return getRoutine(id)!;
 }
 
+/** 助理的免打扰时段改了：重算它所有在跑的定时任务的下次执行时间（遵守免打扰的会顺延到新时段之外）。 */
+export function rescheduleAgentRoutines(agentId: string) {
+	const rows = db.prepare("SELECT * FROM routines WHERE agent_id = ? AND status = 'active' AND trigger = 'cron'").all(agentId) as unknown as RoutineRow[];
+	for (const r of rows) db.prepare("UPDATE routines SET next_run_at = ? WHERE id = ?").run(computeNext(r), r.id);
+	if (rows.length) changed(agentId);
+}
+
 export function updateRoutine(id: string, patch: Partial<RoutineInput>) {
 	const cur = getRoutine(id);
 	if (!cur) throw new Error("定时任务不存在");
@@ -158,10 +169,10 @@ export function updateRoutine(id: string, patch: Partial<RoutineInput>) {
 		trigger: patch.trigger ?? cur.trigger,
 		cron: patch.cron !== undefined ? patch.cron : cur.cron,
 		tz: patch.tz ?? cur.tz,
-		quiet: patch.quiet !== undefined ? patch.quiet : quietOf(cur),
+		quiet: patch.quiet !== undefined ? patch.quiet : rawQuiet(cur),
 	};
 	check(merged);
-	const row = { trigger: merged.trigger, cron: merged.trigger === "cron" ? merged.cron!.trim() : null, tz: merged.tz!, quiet: merged.quiet ? JSON.stringify(merged.quiet) : null };
+	const row = { agent_id: cur.agent_id, trigger: merged.trigger, cron: merged.trigger === "cron" ? merged.cron!.trim() : null, tz: merged.tz!, quiet: merged.quiet ? JSON.stringify(merged.quiet) : null };
 	const secret = merged.trigger === "webhook" ? (cur.webhook_secret ?? sealJson(randomBytes(24).toString("base64url"))) : null;
 	db.prepare("UPDATE routines SET name = ?, prompt = ?, trigger = ?, cron = ?, tz = ?, quiet = ?, webhook_secret = ?, next_run_at = ?, updated_at = ? WHERE id = ?").run(
 		merged.name.trim(),

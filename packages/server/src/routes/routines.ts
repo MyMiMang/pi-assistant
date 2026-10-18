@@ -12,9 +12,9 @@ export const routineJson = (r: RoutineRow) => {
 
 export function mountRoutineRoutes(app: Hono<Env>) {
 	app.post("/api/routines/preview", async (c) => {
-		const b = await c.req.json<{ trigger: string; cron?: string; quietHours?: boolean }>();
+		const b = await c.req.json<{ trigger: string; cron?: string; quietHours?: boolean; agentId?: string }>();
 		try {
-			return c.json({ ok: true, text: describeRoutine(b) });
+			return c.json({ ok: true, text: describeRoutine(b, b.agentId) });
 		} catch (e) {
 			return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
 		}

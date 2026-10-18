@@ -29,7 +29,7 @@ const SPEC = {
 	prompt: Type.String({ description: "到点时要执行的完整、自包含的指令（执行时看不到当前对话）" }),
 	trigger: Type.Union([Type.Literal("cron"), Type.Literal("webhook")]),
 	cron: Type.Optional(Type.String({ description: "5 段 cron（分 时 日 月 周），按用户时区 Asia/Shanghai，例如 每天 8 点 = \"0 8 * * *\"；间隔不得小于 5 分钟" })),
-	quietHours: Type.Optional(Type.Boolean({ description: "是否遵守免打扰时段（默认 23:00–07:00 顺延），默认 true" })),
+	quietHours: Type.Optional(Type.Boolean({ description: "是否遵守这个助理的免打扰时段（时段内的执行顺延到结束；时段由用户在助理设置里统一设置），默认 true" })),
 };
 
 export function routinesExtension(host: RoutinesHost) {

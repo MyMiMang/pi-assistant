@@ -95,6 +95,23 @@ test("定时：cron 最小间隔、免打扰顺延、时区", () => {
 	assert.ok(!routines.inQuiet(Date.parse("2026-10-11T12:00:00+08:00"), routines.DEFAULT_QUIET));
 });
 
+test("定时：免打扰按助理统一一份（和主动跟进共用），改时段后重算；单条可以不遵守", async () => {
+	const P = await import("../src/proactive.ts");
+	const hhmm = (t: number) => new Date(t).toLocaleTimeString("en-GB", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit" });
+	P.saveProactive("a2", { cfg: { quiet: { start: "06:00", end: "09:00" } } });
+	const r = routines.createRoutine("a2", { name: "早报", prompt: "整理早报", trigger: "cron", cron: "0 8 * * *" }, "local");
+	assert.equal(hhmm(r.next_run_at!), "09:00", "08:00 落在助理的 06:00–09:00 免打扰里，顺延到 09:00");
+	const free = routines.createRoutine("a2", { name: "不受限", prompt: "照常", trigger: "cron", cron: "0 8 * * *", quiet: null }, "local");
+	assert.equal(hhmm(free.next_run_at!), "08:00", "不遵守免打扰的任务照常");
+	P.saveProactive("a2", { cfg: { quiet: null } });
+	routines.rescheduleAgentRoutines("a2");
+	assert.equal(hhmm(routines.getRoutine(r.id)!.next_run_at!), "08:00", "关掉免打扰后重算回 08:00");
+	const kept = routines.updateRoutine(r.id, { name: "早报（改名）" });
+	assert.ok(kept.quiet, "改别的字段不丢「遵守免打扰」开关");
+	routines.deleteRoutine(r.id);
+	routines.deleteRoutine(free.id);
+});
+
 test("定时：到点执行（无客户端在线）、补跑、暂停、Webhook、结果回到聊天", () => {
 	const spawned: { title: string; instructions: string; runId: string }[] = [];
 	routines.setRoutineSpawner((agentId, title, instructions, opts) => {

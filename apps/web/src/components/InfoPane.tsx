@@ -21,7 +21,7 @@ import { AgentSkills } from "./AgentSkills";
 import { AgentHostTier, TIER_INFO, useHostControl, type Tier } from "./HostControl";
 import { ResponsiveTabs } from "./ResponsiveTabs";
 import { RoutinesTab } from "./RoutinesTab";
-import { ProactiveTab } from "./Proactive";
+import { ProactiveTab, QuietHours } from "./Proactive";
 import { Avatar, Button, fmtSize, fmtTime, Help } from "./ui";
 import { RoomAgentActions } from "./RoomCards";
 
@@ -35,7 +35,7 @@ const TABS = [
 	["files", "文件"],
 	["computer", "电脑"],
 ] as const;
-const TASK_TABS = [["background", "执行记录"], ["routines", "定时任务"], ["proactive", "主动跟进"]] as const;
+const TASK_TABS = [["routines", "定时任务"], ["background", "执行记录"], ["proactive", "主动跟进"]] as const;
 
 /**
  * 助理设置（classic）：居中 64px 头像 + 单行文字分类；单聊与群成员共用同一套结构。
@@ -359,13 +359,14 @@ function AgentTasks({ agentId, legacyTab }: { agentId: string; legacyTab: string
 	const list = useStore((s) => s.tasks[agentId]) ?? [];
 	return <div className="text-sm" data-testid="agent-tasks-tab">
 		<ResponsiveTabs tabs={TASK_TABS} value={tab} variant="tabs" className="pa-info-subtabs" testId="agent-task-tabs" onChange={(k) => useStore.getState().set({ infoTab: "tasks", infoTaskTab: k as typeof selected })} />
+		{tab !== "background" && <QuietHours agentId={agentId} />}
 		{tab === "routines" && <RoutinesTab agentId={agentId} />}
 		{tab === "proactive" && <ProactiveTab agentId={agentId} />}
 		{tab === "background" && <section className="space-y-2" data-testid="agent-background-tasks">
 			<h2 className="pa-info-h2">后台任务</h2>
 			{!list.length && <p className="text-sm text-mut">还没有后台任务。</p>}
 			{list.slice(0, 20).map((x) => <TaskRow key={x.id} title={x.title || taskTitle(x.instructions)} status={x.status} />)}
-			{!!list.length && <p className="text-xs text-mut2">执行结束只代表这次执行结束；是否达到原任务目标仍需核验。</p>}
+			{!!list.length && <p className="text-xs text-mut2">显示“完成”只代表这次跑完了，事情办没办成记得看一眼结果。</p>}
 		</section>}
 	</div>;
 }

@@ -207,7 +207,7 @@ export const useStore = create<State>((set, get) => ({
 	info: loadLayout().info,
 	layout: loadLayout(),
 	infoTab: "overview",
-	infoTaskTab: "background",
+	infoTaskTab: "routines",
 	settings: new URLSearchParams(location.search).get("settings"),
 	theme: (localStorage.getItem("pia.theme") as Theme) || (getTheme(localStorage.getItem("pia.skin")).defaultMode ?? "system"),
 	skin: getTheme(localStorage.getItem("pia.skin")).id,

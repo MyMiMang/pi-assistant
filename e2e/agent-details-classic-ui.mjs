@@ -432,8 +432,12 @@ try {
 
 	// ---- 5. 任务：三种状态（只读 fixture）与三个二级分类可达 --------------------------------
 	await selectTab("tasks");
+	await page.getByTestId("routines-tab").waitFor(); // 默认先看定时任务
+	await page.getByTestId("agent-quiet-hours").waitFor();
+	await selectTab("background", "agent-task-tabs");
 	const background = page.getByTestId("agent-background-tasks");
 	await background.waitFor();
+	assert.equal(await page.getByTestId("agent-quiet-hours").count(), 0, "执行记录页不显示免打扰");
 	const taskText = await background.innerText();
 	for (const label of ["运行中", "已完成", "失败"]) assert.match(taskText, new RegExp(label), `后台任务应显示 ${label}`);
 	await selectTab("routines", "agent-task-tabs");
@@ -441,6 +445,7 @@ try {
 	await page.getByTestId("routine-item").filter({ hasText: "每天早上 8 点整理待办" }).waitFor();
 	await selectTab("proactive", "agent-task-tabs");
 	await page.getByTestId("proactive-tab").waitFor();
+	await page.getByTestId("agent-quiet-hours").waitFor(); // 免打扰只有一份，两个子页共用
 	await selectTab("background", "agent-task-tabs");
 	await background.waitFor();
 	console.log("PASS 任务：执行记录（运行中/已完成/失败）、定时任务、主动跟进都可达（未启动任何模型任务）");
