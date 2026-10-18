@@ -1,7 +1,7 @@
 /**
  * 「默认本地语音」准备状态的**纯归一化层**（不 import React / 不发请求）。
  *
- * 数据来源（已冻结，见 `default-local-voice/progress-snapshots/default-stream-contract.md` §1.1）：
+ * 数据来源（已冻结，见 `docs/design/default-stream-contract.md` §1.1）：
  * `GET /api/audio/asr/source` 返回块 `defaultVoice: DefaultVoicePrepView`——
  * `{ defaultModelId, kind, label, prep:{ state, jobId, phase, phaseLabel, received, total, percent, attempt,
  *   startedAt, finishedAt, error, errorCode, retryable }, firstRunNeedsNetwork, approxBytes, offlineAfterReady,

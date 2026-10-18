@@ -2,7 +2,7 @@
  * 原生流式会话中枢（`LocalAsrStreamHub`）：start / append / end / cancel 的有界会话语义。
  *
  * 用**假 fetch**（可驱动的 sidecar 事件）+ 假时钟 + 假租约，绝不真正下载权重 / 起真实 sidecar / 碰麦克风。
- * 覆盖契约 `progress-snapshots/default-stream-contract.md` §2–§4：seq 单调 / 乱序拒绝、单流 busy、
+ * 覆盖契约 `docs/design/default-stream-contract.md` §2–§4：seq 单调 / 乱序拒绝、单流 busy、
  * 帧上限、来源变更明确取消不 fallback、idle 超时释放租约、引擎错误结构化。
  */
 import assert from "node:assert/strict";

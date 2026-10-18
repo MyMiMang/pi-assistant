@@ -82,7 +82,7 @@ export interface AsrSourceView {
 	options: AsrSourceOption[];
 	/** 每次写入递增；客户端 PUT 时可回传期望版本做 CAS，防 ABA / 跨客户端覆盖 */
 	version: number;
-	/** 默认本地语音的自动准备状态（可选；旧客户端忽略即可）。契约见 progress-snapshots/default-stream-contract.md §1.1。 */
+	/** 默认本地语音的自动准备状态（可选；旧客户端忽略即可）。契约见 docs/design/default-stream-contract.md §1.1。 */
 	defaultVoice?: DefaultVoicePrepView;
 }
 

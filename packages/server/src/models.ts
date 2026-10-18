@@ -15,7 +15,7 @@ export let credentialStore: CredentialStore | undefined;
 /** 显式注入过的凭据后端：同一进程内后续无参 initModels 复用它，不再重复构造会走 OS 钥匙串的后端。 */
 let injectedCredentials: CredentialStore | undefined;
 
-/** 快速操作模型设置可能存在的 storage key：旧的全局 + 每台电脑 scope（与 fast-computer/index.ts 的 scopeKey 一致）。 */
+/** 快速操作模型设置可能存在的 storage key：旧的全局 + 每台电脑 scope（旧版快速候选选择器留下的设置，该功能已删除，这里只用于清理）。 */
 const FAST_COMPUTER_KEYS = ["fastComputer", "fastComputer:hostpc", "fastComputer:computer"];
 
 export async function initModels(credentials?: CredentialStore) {

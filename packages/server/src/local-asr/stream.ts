@@ -1,7 +1,7 @@
 /**
  * 本地 ASR **原生流式会话中枢**（host server 侧）。
  *
- * 职责（契约见 `progress-snapshots/default-stream-contract.md`）：
+ * 职责（契约见 `docs/design/default-stream-contract.md`）：
  *  - `start / append / end / cancel` **有界会话**；append 为帧批（建议 200–400ms 一帧），返回本批事件；
  *  - 每会话持有一个**录制租约**（会话期间 worker 不被 idle 卸载），结束 / 取消 / 超时 / 来源变更**必须释放**；
  *  - **单流 busy**：同一模型同一时刻只允许一个活跃会话；append **串行**（上一帧未返回不接受下一帧）；

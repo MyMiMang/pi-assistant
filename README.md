@@ -14,8 +14,8 @@
 </div>
 
 <p align="center">
-  <img src="docs/screenshots/60-context-ring.png" width="62%" alt="聊天界面" />
-  <img src="docs/screenshots/13-mobile-approval.png" width="22%" alt="手机上审批" />
+  <img src="docs/assets/60-context-ring.png" width="62%" alt="聊天界面" />
+  <img src="docs/assets/13-mobile-approval.png" width="22%" alt="手机上审批" />
 </p>
 
 ## 主要功能
@@ -34,10 +34,9 @@
 - **助理群聊**：把几个助理拉进一个群，设一个管理者：不 @ 人时由它理解需求、分配给合适的成员，@ 谁就只有谁回答，省 token。也可以直接跟助理说目标，让它提议建一个团队（成员、分工、推荐模型），你改好确认后才创建。
 
 <p align="center">
-  <img src="docs/screenshots/66-shared-own-screen.png" width="80%" alt="助理电脑：查看和接管助理的屏幕" />
+  <img src="docs/assets/66-shared-own-screen.png" width="80%" alt="助理电脑：查看和接管助理的屏幕" />
 </p>
 
-更多截图见 [docs/screenshots](docs/screenshots)。
 
 ## 下载安装
 

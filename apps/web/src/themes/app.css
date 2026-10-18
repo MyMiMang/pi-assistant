@@ -262,7 +262,7 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 /* ---------------------------------------------------------------- 思考强度离散滑块
    主会话 / 群聊 / 子代理 / 设置同一个组件（apps/web/src/components/ThinkingSlider.tsx），
    颜色 / 圆角 / 字体 / 动效全部走主题 token，组件不写死颜色；DIY 主题可覆盖 --pa-think-*
-   系列（见 progress-snapshots/slider-token-contract.md），不要求另配多套。 */
+   系列（见 docs/design/slider-token-contract.md），不要求另配多套。 */
 .pa-think { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 
 /* 顶部：左「思考」标记 + 居中当前档（accent 大字）+ 次行模型名（长名截断）+ 右上跟随 / 重置。

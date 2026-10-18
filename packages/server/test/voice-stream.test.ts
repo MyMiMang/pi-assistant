@@ -1,7 +1,7 @@
 /**
  * 原生流式语音**纯逻辑单测**（不碰浏览器 / 真实麦克风 / 网络 / 真实数据 / 真实下载）。
  *
- * 对齐已冻结契约（`default-local-voice/progress-snapshots/default-stream-contract.md` §2.3）：
+ * 对齐已冻结契约（`docs/design/default-stream-contract.md` §2.3）：
  *  - `committed` = 该段**完整**稳定前缀（绝对量，只增不回退）；`tentative` = 该段**剩余部分完整文本**（绝对量整体替换）；
  *    展示 = `committed + tentative`；**前端不做最长公共前缀**（server-authoritative）；
  *  - 按 `segmentId` + `seq` 维护，重复 final 忽略、晚到 partial 不回滚、只 emit 新增稳定字符、重复口语保留；

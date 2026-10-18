@@ -5,7 +5,7 @@
 > 一句话：**AI 造主题的「颜色 + 圆角 + 字体 + 阴影 + 纹理 + 角形 + 装饰」已经接通并有真实入口；「动效参数（时长 / 缓动 / 倍率 / 光晕 / 风格）」已在 next 候选（预计 beta.29）接通：`ThemeManifestV1` 新增可选 `motion` 段，由同一套 fail-closed 校验器与引擎编译成 `--pa-dur-*` / `--pa-ease-*` / `--mo-*`；七档滑块消费 `--mo-*`，不再由 JS 写死。**（已发布版本仍是旧能力，勿把候选写成已发布。）
 >
 > 入口（唯一，用户已取消 `/主题设计` slash）：**设置 → 外观 → 用 AI 设计主题**；已保存 DIY 主题的「编辑 / 继续用 AI 修改」。保存前不覆盖原主题，可另存为新主题；面板内提供「动效微调（可选）」按需入口。
-> 详细能力盘点、数据流与安全边界见 [appearance-themes.md](appearance-themes.md)（本页只讲「组件 / 动效级 DIY」的范围与缺口，避免重复全文）；动效 token 协作契约见 `progress-snapshots/theme-motion-token-contract.md`。
+> 详细能力盘点、数据流与安全边界见 [appearance-themes.md](appearance-themes.md)（本页只讲「组件 / 动效级 DIY」的范围与缺口，避免重复全文）；动效 token 协作契约见 `docs/design/theme-motion-token-contract.md`。
 
 ## 1. 底座：CSS 变量，不是 JS 写死
 

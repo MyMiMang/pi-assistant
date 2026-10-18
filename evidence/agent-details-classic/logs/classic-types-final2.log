@@ -1,9 +1,0 @@
-$ npm run typecheck
-
-> pi-assistant@0.0.0 typecheck
-> npm run typecheck -w @pi-assistant/server && tsc --noEmit -p apps/web
-
-
-> @pi-assistant/server@0.1.0 typecheck
-> tsc --noEmit -p .
-

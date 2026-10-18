@@ -1,7 +1,7 @@
 # 默认本地语音（前端）：原生流式会话层 + 默认准备状态（**已按冻结契约接线**）
 
 > 状态：**已按冻结契约生产接线并合入候选树；DOM 生产贯通 e2e 11/11、后端真实模型验收通过（2026-10-17，未发布）**（worktree `default-local-voice-ui`，分支同名，基 `release-candidate-validation` `b20ec81`；**未 push / 未 tag / 未打包 / 未装用户 App**）。
-> 后端契约（冻结，唯一事实来源）：`default-local-voice/progress-snapshots/default-stream-contract.md`（HEAD `faa2c2f`，含 CORS 允许自定义流式头）；后端实现见该树 `packages/server/src/local-asr/{stream,stream-hub,serve-script,default-voice-prep,service}.ts`、`voice/{routes,index,contract,source}.ts`。
+> 后端契约（冻结，唯一事实来源）：`docs/design/default-stream-contract.md`（HEAD `faa2c2f`，含 CORS 允许自定义流式头）；后端实现见该树 `packages/server/src/local-asr/{stream,stream-hub,serve-script,default-voice-prep,service}.ts`、`voice/{routes,index,contract,source}.ts`。
 > 设计边界（用户要求）：装好就能用语音、**不让人手动找模型 / 点下载 / 配路径**；已有云 / 本地选择**不被默认覆盖或删除**；只做前端，不改 Pi SDK / node_modules / 后端。
 
 ## 1. 范围与边界

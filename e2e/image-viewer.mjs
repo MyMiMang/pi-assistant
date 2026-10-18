@@ -9,7 +9,7 @@ const { fileURLToPath } = await import("node:url");
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const SHOTS = artifactDir("image-viewer");
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const TEST_IMG = join(REPO, "docs/screenshots/91-chat-generated-image.png");
+const TEST_IMG = join(REPO, "e2e/fixtures/chat-generated-image.png");
 const NODE = process.execPath;
 
 const pw = await import(join(REPO, "node_modules/playwright-core/index.js"));

@@ -1,6 +1,6 @@
 # 默认本地语音（开箱即用）设计
 
-> 状态：**已实施 + 真实模型验收通过（beta.29 候选，未发布 / 未 push / 未 tag）**。实现与验收事实见 §9、`progress-snapshots/default-stream-contract.md` §8、`evidence/local-asr-real-smoke/`。选型与事实证据见 `progress-snapshots/default-local-voice-decision.md`。
+> 状态：**已实施 + 真实模型验收通过（beta.29 候选，未发布 / 未 push / 未 tag）**。实现与验收事实见 §9、`docs/design/default-stream-contract.md` §8、`evidence/local-asr-real-smoke/`。选型与事实证据见 `progress-snapshots/default-local-voice-decision.md`。
 > 用户目标（原话大意）：**装好应用就能用语音**——不让人手动找模型 / 点下载 / 配路径；设置里可以切换别的；已有的「云 / 本地」选择**不能被默认覆盖或删除**；不需要用户提供云 key，不加付费云隐藏调用。优先**真正本地流式**听写，中文 / 英文都要能实际用；模型不限现目录，学优秀成品实现但**不照搬 GPL 代码**。尽量**随安装包带合法小模型 + runtime** 满足 offline-first，体积 / 许可合理，不先随意下载 GB。**若首次必须联网，必须明示；不能把后台自动下载说成首次断网可用。**
 
 ## 1. 范围
@@ -60,7 +60,7 @@ platforms: SHERPA_PLATFORMS（6 项）
   ```
   端点规则取 sherpa 官方默认量级；**具体数值以真实 smoke 调**（不是拍脑袋当已验）。
 
-### 3.3 流式协议（已实现，契约以 `progress-snapshots/default-stream-contract.md` 为准）
+### 3.3 流式协议（已实现，契约以 `docs/design/default-stream-contract.md` 为准）
 
 **本小节为早期设计草稿，已被契约取代**：实现采用 `start / append / end / cancel` 四步**有界 HTTP 会话**（而非单个 chunked POST），以便手机 / 远程浏览器经 host server 既有鉴权使用、并支持取消 / 幂等 / 主体绑定。
 
@@ -156,7 +156,7 @@ platforms: SHERPA_PLATFORMS（6 项）
 ## 10. 未决 / 阻塞（见决策文档 §三）
 
 1. 权重**再分发**许可（bundle）口径未定 → 本轮按「本地按需下载 + 明示首次联网」落地。
-2. 流式协议 + manager 流生命周期**已实现并合入候选树**（`LocalAsrStreamHub` + 原生流式 sidecar；见 §9 与 `progress-snapshots/default-stream-contract.md`）。
+2. 流式协议 + manager 流生命周期**已实现并合入候选树**（`LocalAsrStreamHub` + 原生流式 sidecar；见 §9 与 `docs/design/default-stream-contract.md`）。
 3. 真 offline-first 需新增「内置 CPython」打包机制（未做）。
 4. **质量 / 延迟仍有未验项**：没有独立中 / 英语料、没有真麦克风；RTF 只有 unpaced decode 吞吐；实时节奏下的首非空文本时延未测；系统级断网未测。
 5. 默认流式模型**无标点**（如实标注，不假装有）。

@@ -5,7 +5,7 @@
 > 实现见工作树 `thinking-slider-implementation`：`apps/web/src/thinking-slider.ts`（纯逻辑）+ `apps/web/src/components/ThinkingSlider.tsx`（公共组件）+
 > `apps/web/src/components/ModelPicker.tsx`（`ThinkingButton` / 模型菜单接入）+ `apps/web/src/themes/app.css`（`pa-think-*` 样式与主题 token）+
 > 测试 `e2e/thinking-slider-frontend.test.mjs`。落地遵循 [§7 实施方向](#7-实施方向复用不新造状态)，不新造状态、不改服务端 clamp。
-> 主题 / DIY 动效 token 见 `progress-snapshots/slider-token-contract.md`（与 AI DIY 的 `--mo-*` 契约对齐）。
+> 主题 / DIY 动效 token 见 `docs/design/slider-token-contract.md`（与 AI DIY 的 `--mo-*` 契约对齐）。
 
 > 交互设计稿，**不调用模型、不写入设置、不改生产控件**。配套文件：
 > `design/thinking-strength-slider-prototype.html`（单文件自包含，浏览器直接打开）。

@@ -1,9 +1,0 @@
-$ node e2e/agent-details-functional-ui.mjs
-PASS group: overview directs to models; separate model/thinking/Fast; seven real levels; independent persistence
-PASS profile: draft survives category switch, failed and delayed saves; explicit save preserves model/thinking/Fast
-PASS profile-avatar: real upload + newer text draft + next save preserve confirmed image; preview reflects persisted avatar
-PASS classification: models/profile/capabilities/tasks/memory/files/computer all reachable, old functions retained
-PASS layout: collapsed model sections expand by real summary; 64px centered avatar; single-line tabs; sticky profile save; real pool/limits inherit; overview summary syncs
-PASS empty/loading/error: skill/extension/host errors recover on retry; failed skill save rolls back while error remains visible
-PASS direct chat: same persisted member setting; skill/proactive shortcuts reach their functional categories
-PASS desktop/390: four skin/mode combinations, eight categories + more menu/keyboard, no overflow or JS errors

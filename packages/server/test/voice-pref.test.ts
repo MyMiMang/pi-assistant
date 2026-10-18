@@ -1,7 +1,7 @@
 /**
  * 默认本地语音**准备状态归一化**单测（纯函数；不碰网络 / 真实下载 / 真实数据）。
  *
- * 形状以冻结契约为准（`default-local-voice/progress-snapshots/default-stream-contract.md` §1.1）：
+ * 形状以冻结契约为准（`docs/design/default-stream-contract.md` §1.1）：
  * `defaultVoice: DefaultVoicePrepView`。**认不出就是 ok:false**，绝不默认「已就绪」；
  * 首次联网未知（null）时绝不说可离线。
  */

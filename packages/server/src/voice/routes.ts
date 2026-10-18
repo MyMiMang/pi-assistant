@@ -209,7 +209,7 @@ function parseStreamCreateBody(raw: unknown): { ok: true; body: StreamCreateBody
 }
 
 /**
- * 原生流式会话路由（契约 `progress-snapshots/default-stream-contract.md` §2）。
+ * 原生流式会话路由（契约 `docs/design/default-stream-contract.md` §2）。
  *
  * 走**正常 safe API 路径**（本机或已配对设备），不是 loopback-only：手机连到 host server 也能流式上传。
  * 不使用浏览器原生流式上传（Safari 不支持）；用 start / append / end / cancel 的有界 HTTP 会话。

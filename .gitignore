@@ -29,3 +29,6 @@ logs/
 evidence/**/logs/
 evidence/
 docs/screenshots/
+
+# 进度快照不入库（见 docs/decisions/0010）
+progress-snapshots/

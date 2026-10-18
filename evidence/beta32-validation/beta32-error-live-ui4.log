@@ -1,9 +1,0 @@
-file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/e2e/model-error-live-ui.mjs:32
-const wait = async (fn, label) => { const end = Date.now() + 15000; while (Date.now() < end) { if (await fn().catch(() => false)) return; await new Promise(r => setTimeout(r, 50)); } throw new Error(`timeout: ${label}`); };
-                                                                                                                                                                                             ^
-
-Error: timeout: server
-    at wait (file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/e2e/model-error-live-ui.mjs:32:190)
-    at async file:///Users/dengdeng/Library/Application%20Support/Pi%20Assistant/workspace/amv7oy7ejb00/task-responsibility-integration/e2e/model-error-live-ui.mjs:34:2
-
-Node.js v24.19.0

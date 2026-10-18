@@ -9,7 +9,7 @@
  *  - 线协议的 HTTP 细节（路径 / 头 / chunked）在 `api.ts` 的 `openAsrStream` 实现；这里只定义
  *    **会话层接口**（`VoiceStreamOpen` / `VoiceStreamTransport`）与**纯归一化 / 模型**，便于单测。
  *
- * 契约（`default-local-voice/progress-snapshots/default-stream-contract.md`，已冻结）：
+ * 契约（`docs/design/default-stream-contract.md`，已冻结）：
  *  - **只有** `options[].streaming === true && options[].protocol === "asr-stream-v1" && options[].streamProtocol === "asr-stream-v1"`
  *    才走流式；否则回落既有 batch，**不凭名字猜**（判定在 `api.ts` 的 `isStreamingSource`）。
  *  - 事件语义（server-authoritative per-segment，**前端不得再算一套最长公共前缀**）：

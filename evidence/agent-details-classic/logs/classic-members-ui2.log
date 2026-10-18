@@ -1,9 +1,0 @@
-$ node e2e/room-member-model-settings-ui.mjs
-PASS proposal: themed components, grouped services, seven/subset levels, saved clamp, existing agent unchanged
-PASS created member: overview is a summary that navigates to models; strength saves immediately and survives reload
-PASS profile: draft kept across top-level tabs, explicit save, failure keeps draft, profile-only save leaves model/strength/Fast untouched
-PASS save failures: visible live error keeps stored value, retry persists, follow resets strength to default
-PASS added member: grouped model and strength commit survive confirmation
-PASS 390px: cards/menu/strength have visible content, no page overflow or JS errors
-PASS loading/error/retry: unknown defaults do not invent levels; retry restores real metadata; plain model has fixed off
-PASS without WS: raw/effective metadata synchronized, follow retained, Fast independent, late responses ordered across member switches

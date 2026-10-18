@@ -3,7 +3,7 @@
 > 状态：**beta.29 候选树的口径基线（2026-10-17，未发布 / 未 push / 未 tag）**。
 > 本文是**仓库内可读的受控版本**：其他 agent 拉到 repo、或在客户端看不到被忽略证据目录时，以这里为准。
 > 旧证据文件（`evidence/local-asr-real-smoke/report-2026-10-17T03-28-23.json`、`03-30-05.json`、`03-31-33.json` 与同名 `smoke-*.log`）**按原样保留、不重写**；引用它们时必须连带本文。
-> 相关设计：`docs/design/default-local-voice.md`；契约：`progress-snapshots/default-stream-contract.md`。
+> 相关设计：`docs/design/default-local-voice.md`；契约：`docs/design/default-stream-contract.md`。
 
 ## 1. 能证明什么（已验事实）
 

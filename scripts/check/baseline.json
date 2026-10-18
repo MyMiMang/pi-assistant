@@ -46,8 +46,7 @@
 		"packages/server/src/image-gen/extension.ts",
 		"packages/server/src/mcp.ts",
 		"packages/server/src/pi-packages.ts",
-		"packages/server/src/vision-ext.ts",
-		"packages/server/src/fast-computer/tool.ts"
+		"packages/server/src/vision-ext.ts"
 	],
 	"dupClones": 5
 }

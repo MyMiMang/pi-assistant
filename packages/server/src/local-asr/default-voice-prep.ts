@@ -11,7 +11,7 @@
  *  - `voiceDefaultInit` = 自动 job **全局只启动一次**（不反复重试、不「每次启动就下」）；
  *  - `voiceDefaultOptOut` = 用户取消 / 清空过 → 记 intent，**不 restart**。
  *
- * 设计见 `docs/design/default-local-voice.md`；契约见 `progress-snapshots/default-stream-contract.md` §1.2。
+ * 设计见 `docs/design/default-local-voice.md`；契约见 `docs/design/default-stream-contract.md` §1.2。
  */
 import { getSetting, setSetting } from "../db.ts";
 

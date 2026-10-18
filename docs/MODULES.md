@@ -142,7 +142,6 @@
 | `themes/` | 主题与 AI 设计主题 |
 | `pet/` | 桌宠状态、宠物包、孵化 |
 | `types/` | 第三方类型声明 |
-| `fast-computer/` | **遗留**（快速候选选择器已于 beta.30 撤下，无产品代码引用），待删 |
 
 ## `apps/web/src`
 
@@ -275,3 +274,4 @@
 | `native-launch-env.mjs` | 原生启动环境测试 helper |
 | `csp-probe.mjs` | CSP 探测 |
 | `demo-pi-package` | 示例 Pi 扩展包 |
+| `chat-generated-image.png` | 图片查看器测试用的示例图 |
