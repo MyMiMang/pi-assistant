@@ -42,3 +42,8 @@
 - **Intel 构建慢**：`macos-15-intel` runner 显著慢于 arm64，历史上 `bundle_dmg.sh` 反复失败（已改用 `hdiutil`）。全平台构建由 CI 执行；`all-intel` 已在 beta.29–31 等真实 tag 通过五平台构建、Mac/Windows 安装启动及发布门禁，最近证据见 [beta.31 发布结果](../../progress-snapshots/beta31-ui-hotfix.md#发布结果)。新 tag 仍须重新通过，不沿用旧安装包验收。
 - 未构建的平台不会出现在公开的 `latest.json` 里，所以老用户只会「停更」，不会被错误引到别的架构的包（`validate` 也会拦住）。
 - 跳过平台时对应的 smoke / publish 条件用 `build_* == 'false' && result == 'skipped'` 放行，见 `scripts/release-scope.test.mjs` 的第三条用例。
+
+## 操作注意（原 AGENTS.md 发布段）
+- 用户中途说停：tag 没推就不推；已推的要有 GitHub 登录才能取消运行。
+- 改发版流程先推 `release-dryrun` 分支演练，不直接在真实 tag 上试。
+- 版本号取自 tag，不需要手动改；改完 scope 跑 `node --test scripts/release-scope.test.mjs`（不进 `npm test`）。

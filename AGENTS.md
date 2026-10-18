@@ -1,62 +1,83 @@
-# AGENTS.md：给接手的 AI / 开发者
+# AGENTS.md：给接手的 AI / 开发者（唯一规则来源）
 
-先读这一页，再看 [docs/HANDOFF.md](docs/HANDOFF.md)（现状、进度、待验证、下一步）、[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)（组件与数据流）和 [docs/ROADMAP.md](docs/ROADMAP.md)（需求、计划、待用户决定的事）。完整设计在 [docs/DESIGN.md](docs/DESIGN.md)。
+本文件是项目**唯一**的规则来源。CLAUDE.md、GEMINI.md、`.cursor/rules/`、`.github/copilot-instructions.md` 都只是指向这里的指针，规则只在这里改。
+
+## 开工前必读（按顺序）
+1. 本文件。
+2. [docs/HANDOFF.md](docs/HANDOFF.md)：现在的状态、正在做的事、待用户决定的事。
+3. [docs/MODULES.md](docs/MODULES.md)：每个文件负责什么 + **必须复用的共用工具清单**。
+4. 与任务相关的 [docs/design/](docs/design/) 设计和 [docs/decisions/](docs/decisions/) 决策。已有决策不能自己推翻，想改先问用户。
+5. 数据流见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)；需求和计划见 [docs/ROADMAP.md](docs/ROADMAP.md)；`docs/DESIGN.md` 是冻结的总设计参考。
 
 ## 这是什么
-Pi Assistant：基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地私人助理。功能包括多个助理和助理群聊，每个助理有自己的“助理电脑”（虚拟机里的桌面），也可以按权限档位操作用户自己的电脑。还接入了微信、飞书、钉钉、企业微信、邮箱，支持记忆、技能、定时任务、MCP、图片生成、识图和桌宠。
-形态：本机服务（Node 22）+ React PWA（电脑和手机共用一套界面）+ Tauri 桌面程序（托盘、自动更新、悬浮条、桌宠）；另有 Linux 服务器版。界面是中文。
+Pi Assistant：基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地私人助理（多个助理、助理群聊、每个助理一台“助理电脑”、按权限操作用户电脑、微信/飞书/钉钉/企微/邮箱、记忆、技能、定时任务、MCP、图片生成、识图、桌宠）。
+形态：本机服务（Node 22.19+）+ React PWA（电脑和手机同一套界面）+ Tauri 桌面程序；另有 Linux 服务器版。界面是中文。
 
-## 仓库地图
-| 路径 | 内容 |
-|---|---|
-| `packages/server` | 本机服务：HTTP/WS（`src/http.ts`），Pi 只经 `src/pi-adapter/` 使用，`runtime.ts` 管助理会话 |
-| `packages/ext-*` | Pi 扩展（工具）：approval 审批、sandbox 工作区命令、computer 电脑操作（cua）、browser、connectors 邮箱等、delivery 发文件/提问/后台任务、memory、skills、routines、proactive |
-| `packages/sandbox-desktop` | 助理电脑镜像（Debian + Xfce + noVNC + cua-driver），GHCR `ghcr.io/mymimang/pi-assistant-desktop`，固定在 `packages/server/desktop-image.json` |
-| `packages/wsl-rootfs` | Windows 助理电脑用的 WSL2 发行版 |
-| `packages/shared` | 品牌名等共享常量 |
-| `apps/web` | 唯一的界面（PWA） |
-| `apps/tray` | Tauri 2 桌面程序（`src-tauri/src/main.rs`、`updater.rs`、`pet.rs`） |
-| `apps/rendezvous` | 可选的 Cloudflare Worker（稳定入口） |
-| `e2e/` | Playwright 端到端：`run.mjs`（主流程）、`pet.mjs`（桌宠） |
-| `deploy/` | Linux 安装脚本、Docker Compose |
-| `third-party.json` | 所有外部组件的版本 + SHA256（唯一事实来源） |
+## 硬规则 1：复用优先，先搜再写
+- 写任何新函数 / 组件 / 接口前：先按 MODULES.md 找到对应模块，再 `rg` 搜关键词。提交说明或交付说明里写一句「复用了 X」或「搜过 X、Y，没有可复用的」。
+- **禁止再写一份同功能实现。** 发现已有重复，在同一提交里合并成一份、改完所有调用方、跑相关测试。
+- 不为单一实现加抽象层，不加没人用的配置 / 开关；UI 状态保持最简单（一段一个加载状态 + 一个保存错误）。
+- 现成的例子：模型 / 思考强度 / Fast 一律用 `ModelPicker`；「?」说明用 `ui.tsx` 的 `<Help>`；折叠和「高级」区用 `<Fold>`；下拉用 `<Select>`（不用原生 select）；确认框 `useConfirm`；串行保存 `latest-write.ts`；下载 `downloads.ts`；审批和提问 `requests.ts`；停止词 `interject.ts`。
+- 实在需要新写的，放进 MODULES.md 规定的位置，并在 MODULES.md 登记一行。
 
-## 构建 / 测试
+## 硬规则 2：每类逻辑放在哪
+- HTTP 接口：`packages/server/src/routes/*`（`http.ts` 只组装）。
+- Pi：只经 `packages/server/src/pi-adapter/`；给模型用的工具放 `packages/ext-*`（用 Pi 公开扩展 API）。
+- Hindsight：只经 `packages/server/src/memory/hindsight/`。cua：只经 `host-control.ts` 和 `pia-cua-mcp`。
+- 纯逻辑单独成文件（便于单测）；前端通用组件进 `ui.tsx`；跨端常量进 `packages/shared`。
+- 单个源码文件不超过 600 行；已有的大文件只许变短（`scripts/check/size-baseline.json`）。
+
+## 硬规则 3：不改上游本体，经适配层跟上游
+- **不修改 / 不 fork** Pi SDK、Hindsight、cua-driver、`node_modules`；不 monkeypatch 私有 API；不改依赖版本（升级走 Renovate、`pi-latest` 工作流的 PR）。
+- 上游的问题在我们的适配层里绕过，并记下「上游哪个版本修好后删掉」；上游修复 / 新功能靠升级版本直接用上。
+- 技能只用 Pi 公开的 Agent Skills 规范与 `DefaultResourceLoader.skillsOverride` / `additionalSkillPaths`；每个助理一份显式启用清单（`settings.skillAssignments`，默认全不启用），主会话 / 后台任务 / 子代理共用 `skillFilterFor(agentId)`。
+- 用户消息在助理忙时走 Pi `steer`（插话），不要改回 `followUp`。
+- 有后果的操作统一走 ext-approval / `requests.ts`；完全权限按 `hostFileAccess` 在应用层免审批，其他档位维持审批，凭据 deny、暂停与系统权限弹窗不变。
+- 新用到的开源项目写进 `THIRD_PARTY_NOTICES.md`（版本 + 许可证）；下载的组件在 `third-party.json` 固定版本和 SHA256。
+
+## 硬规则 4：测试
+- 只用临时数据：`e2e/fixtures/temp-server.mjs` 的 `makeTempRun / startTempServer / browserEnv / cleanupTempRun`、内存凭据（`test/in-memory-credentials.ts`）、Mock 模型（`pi-adapter/mock-provider.ts`）。
+- **绝不**碰生产数据、真实付费模型、用户的 Chrome 配置、真实的电脑控制驱动。用户的电脑默认只读，要动先得到用户同意。
+- 构建和浏览器测试串行跑。改了 Mock 行为同步改 e2e。新功能加单测和相关 e2e。
 ```bash
 npm ci --ignore-scripts      # Node 22.19+
 npm run dev                  # Mock 模型，http://127.0.0.1:8787，不花钱
-npm run typecheck            # 服务端 + 网页
-npm test                     # 服务端单测（约 3 分钟）
-npm run e2e                  # 全量 e2e（需要 Chrome，CHROME=…；约 25 分钟；截图写 artifacts/，不入库）
+npm run check:static         # 规范检查（几秒）：行数、边界、重复代码、文档、仓库卫生
+npm run check                # check:static + typecheck + 服务端单测（推之前必须全过）
+npm run e2e                  # 全量 e2e（需要 Chrome；约 25 分钟；截图写 artifacts/）
 E2E_ONLY='正则' npm run e2e  # 只跑部分步骤
-node e2e/pet.mjs             # 桌宠 e2e
 ```
-Mock 模型（`packages/server/src/pi-adapter/mock-provider.ts`）按关键词脚本化回复，e2e 依赖它；改行为时同步改 e2e。
 
-## 发布流程（重要）
-- 用户**只通过装好的 App 自动更新**来测试，不跑源码。
-- 改动直接推到 `main`（先 `git pull --rebase`），**永远不要 force-push**。
-- **只有用户说「打包」时才打 tag**：`v0.1.0-beta.N`，同时写 `docs/release-notes/v0.1.0-beta.N.md`（中文，写给用户看）。
-- 当前发布范围以 `.github/release-scope.json` 为准：取值 `mac-arm64` / `all` / `all-intel`（**当前为 `all-intel`：Mac arm64 + Intel Mac x64 + Windows x64 + Linux x64/arm64**）。**Intel 由 scope 显式控制，tag 触发同样生效**，不依赖仓库变量 `BUILD_INTEL`（那个只作临时覆盖）；机制、矩阵、冒烟与校验细节见 [docs/design/release-scope.md](docs/design/release-scope.md)。改完改跑 `node --test scripts/release-scope.test.mjs`（不进 `npm test`）。tag 推上去后 `.github/workflows/release.yml` 按范围构建：`all` = Mac arm64 + Windows x64 + Linux x64/arm64（4 个任务），`all-intel` 再加 Intel Mac x64（5 个任务）；先传进草稿 Release，Windows / Mac 安装冒烟通过后才公开成 Latest（自动更新读 `latest.json`）。Intel Mac（x86_64）: 由 `.github/release-scope.json` 的 `scope: "all-intel"` 开启（tag 也生效、可审计）；也可手动勾 `build_intel` 或设仓库变量 `BUILD_INTEL=true` 临时覆盖。Intel（`macos-15-intel`）构建明显更慢，历史上有过 `bundle_dmg.sh` 失败（已改用 `hdiutil` 打包）。用户中途说停：tag 没推就不推；推了要有 GitHub 登录才能取消（box 上 gh 未登录，见 ROADMAP「工作规则」）。macOS 的 dmg 不用 Tauri 的 bundle_dmg.sh（Intel runner 上反复失败），而是 `--bundles app` 后用 hdiutil 单独打；改发版流程先推 release-dryrun 分支演练。
-- 版本号取自 tag，不需要手动改。
+## 硬规则 5：Git
+- 推之前 `git pull --rebase`；**永远不 force-push**，不改已推送的历史。改动直接进 `main`。
+- 提交信息：**一行中文**，写清做了什么、为什么。代码和截图分开；截图 / 日志 / 证据只写 `artifacts/`（gitignore），**不入库**，不新建 `progress-snapshots/`、`evidence/` 文件。
+- 不提交任何密钥（pre-commit 跑 gitleaks）。
 
-## 约定
-- 文档和代码同等重要：新需求马上记进 [docs/ROADMAP.md](docs/ROADMAP.md)，做完同步 ROADMAP / HANDOFF（必要时 DESIGN）——具体标准见文末「文档维护（交付标准）」。
-- 界面文字是中文，越短越好；需要解释的放进「?」帮助气泡（`apps/web/src/components/ui.tsx` 的 `<Help>`）或悬停提示里。
-- 用到开源项目要写进 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，写明版本和许可证。下载的组件还要在 `third-party.json` 里固定版本和摘要。
-- 提交信息用中文，一行写清楚做了什么、为什么；截图更新单独提交。
-- 有后果的操作统一走 ext-approval / requests.ts；完全权限按 hostFileAccess 在应用层免审批（含受保护操作），其他档位维持审批，凭据 deny、暂停与系统权限弹窗不变。
-- 技能作用域：**不修改 / 不 fork Pi SDK、不改 node_modules、不 monkeypatch 私有 API**；只用 Pi 公开的 Agent Skills 规范与 `DefaultResourceLoader.skillsOverride` / `additionalSkillPaths`。库存统一（builtin/user/external），**默认所有助理不启用任何技能（内置也不例外）**，每个助理一份显式启用清单（`settings.skillAssignments`，缺失/`[]` 都是 none，无全局默认）。运行时统一经 `pi-adapter`，主会话 / 后台任务 / 子代理共用同一 `skillFilterFor(agentId)`。详见 [docs/design/skill-scope-assignment.md](docs/design/skill-scope-assignment.md)。
-- 用户消息在助理忙时走 Pi `steer`（插话），不要改回 `followUp`；停止词判断统一用 `packages/server/src/interject.ts`（DESIGN §20）。
-- 新功能要加单测和 e2e，交付前跑 typecheck、单测和相关 e2e。
+## 硬规则 6：发布
+- **只有用户明确说「打包」**才打 tag `v0.1.0-beta.N` 并写 `docs/release-notes/v0.1.0-beta.N.md`（中文，写给用户）。不把「已合 main」说成「已发布」。
+- 不自动安装、不重启用户的 App；用户只通过装好的 App 自动更新来测试。
+- 发布范围、矩阵、冒烟、校验见 [docs/design/release-scope.md](docs/design/release-scope.md)。
 
-## 复用优先（硬规则）
-- 写新代码前先 `rg` 搜现有的 helper / 组件 / 模块（如 `ui.tsx`、`latest-write.ts`、`e2e/fixtures/*`、`packages/shared`），**能复用就复用，禁止再写一份同功能实现**。
-- 发现重复实现，顺手合并成一份（同一提交里改完调用方并跑相关测试）。
-- 不为单一实现加抽象层、不加没人用的配置/开关；UI 状态保持最简单（一段一个加载状态 + 一个保存错误）。
+## 硬规则 7：界面标准
+详见 [docs/design/ui-standard.md](docs/design/ui-standard.md)。要点：
+- 每一项 = 名称 + 一行大白话说明（让用户判断它是做什么的）；更深的解释放「?」。不要删成只剩开关。
+- 专业参数收进默认折叠的「高级」，给好默认值。
+- 会变多的列表默认折叠、显示数量、限高内部滚动。
+- 一页只有一个主要焦点。
+- 助理详情保持经典布局：64px 居中头像、单行文字标签（放不下进「更多」）、八个分类（概览/模型/资料/能力/任务/记忆/文件/电脑）。模型、思考、Fast 各自即时保存；资料显式保存，草稿切标签保留。
 
-## 交付标准与文档（硬规则）
-- 交付标准见 [docs/HANDOFF.md](docs/HANDOFF.md)「交付标准」：typecheck + 相关单测（动服务端则 `npm test` 全绿）+ 相关 e2e。**不跑上百组的布局矩阵、不多轮重复验证。**
-- 截图、日志、证据写 `artifacts/`（gitignore），**不提交进仓库**；不新建 `progress-snapshots/`、`evidence/` 文件。
-- HANDOFF 只写当前状态（一两屏）；ROADMAP 一行一事。提交信息就是进度记录。只写实际跑过的结果，没跑写「未验证」。
-- 新需求立刻在 ROADMAP 记一行；只有用户说「打包」才写 `docs/release-notes/v0.1.0-beta.N.md`，不把「已合 main」写成「已发布」。
+## 交付清单（Definition of Done）
+- [ ] 先搜过：按 MODULES.md 找过对应模块，说明里写了复用了什么
+- [ ] `npm run check` 通过（规范检查 + typecheck + 服务端单测）
+- [ ] 跑了与改动相关的 e2e（临时数据 + Mock，串行）；不跑全量矩阵、不重复多轮
+- [ ] 界面改动符合界面标准，前后截图在 `artifacts/` 发给用户，不入库
+- [ ] 新文件登记进 MODULES.md；新决定写进 `docs/decisions/`；设计文档状态已更新
+- [ ] HANDOFF 改一两行，ROADMAP 改状态
+- [ ] 一行中文提交信息，代码和截图分开；`git pull --rebase` 后推送，没有 force-push
+- [ ] 没改 Pi / Hindsight / node_modules / 依赖版本；没有密钥
+- [ ] 只写实际跑过的结果，没跑的写「未验证」；用户没说「打包」就不发布
+
+## 文档怎么维护
+- 新设计写 `docs/design/<主题>.md`，第一行写状态：`状态：草稿 / 已批准 / 已实现(commit) / 已废弃`。
+- 用户拍板的决定写 `docs/decisions/NNNN-标题.md`（模板见 [docs/decisions/README.md](docs/decisions/README.md)）。
+- 用户提的新需求立刻在 ROADMAP 记一行；HANDOFF 只写当前状态（不超过 120 行）；ROADMAP 一行一事；提交信息就是进度记录。
