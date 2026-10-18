@@ -180,14 +180,34 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 			}),
 		]);
 	}
-	// 主动性：巡检时看“用户最近说过的话”，有就提醒一件；用户说“晚点再看”就约跟进
+	// 主动性：巡检时先看有没有用户明确交代、能直接推进的事——有就在相关对话里真的做（不是只提醒一句“要不要我帮忙”）。
+	// 只靠 prompt 里的明确待办（带 [conv:...] 和具体动作）+ 工具存在才推进；否则仍然只是提醒，保持“宁缺毋滥”。
 	if (/这是(一次主动巡检|你约好的跟进|每日简报)/.test(u)) {
 		if (last.role === "toolResult") return fauxAssistantMessage(`巡检完成：${textOf(last)}`);
-		const said = u.split("## 用户最近 3 天说过的话")[1]?.split("\n").find((l) => l.startsWith("- "));
 		const brief = /这是每日简报/.test(u);
+		const target = !brief && tools.some((t) => t.name === "proactive_advance") ? mockAdvanceTarget(u) : null;
+		if (target) {
+			return fauxAssistantMessage([
+				fauxToolCall("proactive_advance", {
+					conversationId: target.conversationId,
+					kind: /你约好的跟进/.test(u) ? "followup" : "reminder",
+					title: target.what.slice(0, 40),
+					body: `用户之前已经明确交代：“${target.what}”。在原授权内继续做完，并把结果留在对话里。`,
+					importance: 3,
+					dedupeKey: `adv:${target.conversationId}:${target.what.slice(0, 30)}`,
+				}),
+			]);
+		}
+		const said = u.split("## 用户最近 3 天说过的话")[1]?.split("\n").find((l) => l.startsWith("- "));
 		if (!said && !brief) return fauxAssistantMessage("无");
-		const what = brief ? "今天没有紧急事项。" : said!.replace(/^- [^：]+：/, "");
-		return fauxAssistantMessage([fauxToolCall("proactive_surface", { kind: brief ? "brief" : "reminder", title: brief ? "今日简报" : `别忘了：${what.slice(0, 20)}`, body: brief ? what : `你之前提到“${what}”，需要我帮忙准备吗？`, importance: brief ? 2 : 3, ...(brief ? {} : { dedupeKey: `remind:${what.slice(0, 30)}` }) })]);
+		const what = brief ? "今天没有紧急事项。" : said!.replace(/^- \[conv:[^\]]+\] [^：]+：/, "");
+		return fauxAssistantMessage([fauxToolCall("proactive_surface", { kind: brief ? "brief" : "reminder", title: brief ? "今日简报" : `别忘了：${what.slice(0, 20)}`, body: brief ? what : `你之前提到“${what}”，需要的话我可以接着做。`, importance: brief ? 2 : 3, ...(brief ? {} : { dedupeKey: `remind:${what.slice(0, 30)}` }) })]);
+	}
+	// 主动推进：在相关对话里真的做一件无害、可核验的事，结果就留在原会话（不再回头问“要不要我帮忙”）
+	if (u.startsWith("（主动推进）")) {
+		if (last.role === "toolResult" && last.toolName === "write") return fauxAssistantMessage(`已按原授权完成：${textOf(last).split("\n")[0]} 产物：proactive-advance.md`);
+		const what = u.match(/要做的事：([^\n]*)/)?.[1] ?? "巡检发现的事";
+		return fauxAssistantMessage([fauxToolCall("write", { path: "proactive-advance.md", content: `# 季度报告核验清单\n\n事项：${what}\n\n- 数据核对\n- 来源链接\n- 结论检查\n` })]);
 	}
 	// 多步流程（用于“要不要做成技能？”建议）：月度汇总 = 5 步工具调用
 	if (/月度汇总/.test(u) && !/^（技能建议/.test(u)) {
@@ -378,6 +398,23 @@ export async function registerMockProvider(models: PiModels) {
 		],
 	});
 	await models.setRuntimeApiKey(MOCK_PROVIDER, "mock");
+}
+
+/** 巡检提示里有没有“用户明确交代、能直接做”的事：要求同时有可信对话 id 和具体动作（否则只提醒，不猜）。 */
+function mockAdvanceTarget(prompt: string): { conversationId: string; what: string } | null {
+	// 只看「明确待办」类的段落：未完成/失败的后台任务、到点的跟进、变化信号。
+	// “用户最近说过的话”只当线索（可能需要澄清），不拿它当授权直接推进。
+	const sections = prompt.split("\n## ").filter((sec) => /^(未完成或失败的后台任务|你约好的跟进|需要关注的信号)/.test(sec));
+	for (const sec of sections) {
+		for (const line of sec.split("\n")) {
+			const conv = line.match(/\[conv:([^\]]+)\]/)?.[1];
+			if (!conv) continue;
+			if (!/导出|汇总|整理|报告|报表|周报|生成|准备|核对|整理好|写/.test(line)) continue;
+			const what = line.replace(/^\s*-\s*/, "").replace(/^\[[^\]]+\]\s*/, "").split("（相关对话")[0].trim();
+			if (what) return { conversationId: conv, what: what.slice(0, 80) };
+		}
+	}
+	return null;
 }
 
 /** 群聊里的 Mock 行为（e2e 用）：管理者“派给X”就分配，“循环”时每次总结都再派一次；成员完成后回报 */

@@ -209,7 +209,7 @@ export function BotPart({ p, live, busy, renderSubagent, onQuote, onJump, intera
 	);
 }
 
-/** 每条回复的 Fast 状态：只在真的请求了 / 服务回显了时出现；回显 default 明确写「被降级」。 */
+/** 只显示本次确实尝试 Fast 或服务明确回显快档的情况；未开启的普通 default 回显不占位。 */
 function FastLine({ meta }: { meta: MessageFastMeta }) {
 	const text = fastStatusText(meta);
 	if (!text) return null;

@@ -21,7 +21,7 @@ export interface ProactiveHost {
 	/** 只有主动巡检任务里才有 */
 	surface?(i: SurfaceInput): { status: "delivered" | "inbox" | "held" | "rejected"; reason?: string };
 	/** 主动推进：在相关对话的主会话里继续做事（走正常权限，心跳本身没有额外权限）。只有主动巡检里才有。 */
-	advance?(i: { kind: SurfaceKind; title: string; body: string; importance: 1 | 2 | 3; dedupeKey?: string; conversationId: string }): Promise<{ status: "started" | "steered" | "queued" | "inbox" | "held" | "rejected"; reason?: string }>;
+	advance?(i: { kind: SurfaceKind; title: string; body: string; importance: 1 | 2 | 3; dedupeKey?: string; conversationId: string }): Promise<{ status: "started" | "steered" | "queued" | "inbox" | "held" | "rejected" | "cancelled"; reason?: string }>;
 	schedule(i: { dueAt: number; note: string }): { id: string; dueAt: number };
 	list(): { id: string; dueAt: number; note: string }[];
 	cancel(id: string): boolean;
@@ -37,7 +37,7 @@ export function proactiveExtension(host: ProactiveHost) {
 			name: "followup_schedule",
 			label: "约定稍后跟进",
 			description:
-				"约定稍后回来跟进一件事（例如你说了“我下午 5 点再帮你看看”）。到点时系统会在后台唤醒你，带上这条备注；你再判断要不要告诉用户。不需要用户批准，但要在回复里告诉用户你约了什么时间。不要用它代替定时任务（重复执行的用 routine_create）。",
+				"约定稍后回来跟进一件事（例如你说了“我下午 5 点再帮你看看”）。到点时系统会在后台唤醒你，带上这条备注。核实原对话：需求明确且仍在原授权内就实际推进并交付，不只发提醒；需求不清或新增有后果的范围先问，用户停止/权限/预算限制仍有效。不需要用户批准，但要在回复里告诉用户你约了什么时间。不要用它代替定时任务（重复执行的用 routine_create）。",
 			promptSnippet: "followup_schedule: 约定稍后跟进（说了“我晚点再看”就要真的约上）",
 			parameters: Type.Object({
 				when: Type.String({ description: "什么时候：ISO 时间，或 \"17:00\"（今天，已过则明天）、\"+90m\"、\"+2h\"、\"+1d\"、\"明天 9:00\"；用户时区 Asia/Shanghai；5 分钟到 30 天之内" }),
@@ -102,7 +102,7 @@ export function proactiveExtension(host: ProactiveHost) {
 			name: "proactive_advance",
 			label: "在对话里推进",
 			description:
-				"需要主动推进一件事（不只是提醒）时用它：在指定的相关对话里让主会话继续帮用户做事。会走用户平时的权限规则（完全权限免审批，其他档位审批），心跳任务本身没有额外权限；对话正忙时同一件事合并、不同的事排队。去重、免打扰、每日预算仍然生效。",
+				"需要主动推进一件用户已经明确交代、属于原授权范围的事时用它：在指定的相关对话里让主会话继续把事做完（不要只发提醒、也不要再问「要不要我做」）。会走用户平时的权限规则（完全权限免审批，其他档位审批），心跳任务本身没有额外权限；对话正忙时同一件事合并、不同的事排队，不把巡检摘要当用户插话。需求含糊、涉及新的对外承诺/支出/破坏性改动/权限变更时先问用户，不要猜；用户停止/取消或预算受限时不要继续。主动开关、去重/静音、停止和原有巡检调度仍有效；推进与推送条数分开，每助理每天最多12次自主推进、每对话最多3条排队。排队不等于已执行，执行一轮结束也不证明目标完成。",
 			parameters: Type.Object({
 				conversationId: Type.String({ description: "在哪个对话里推进（必须是这个助理自己的非隐藏对话 id）" }),
 				kind: Type.Union(["followup", "reminder", "email", "suggest_routine", "suggest_skill", "brief", "other"].map((k) => Type.Literal(k)) as never, { description: "同 proactive_surface" }),
@@ -114,7 +114,7 @@ export function proactiveExtension(host: ProactiveHost) {
 			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 			async execute(_id, p) {
 				const r = await advance(p as never);
-				const msg = { started: "已在相关对话里开始推进。", steered: "同一件事正在推进，已合并。", queued: "对话正忙，已排队。", inbox: "已放进收件箱（没有推进）。", held: "已放进收件箱，免打扰结束后再推送。", rejected: "没有推进。" }[r.status];
+				const msg = { started: "已在相关对话里开始推进。", steered: "同一件事正在推进，已合并。", queued: "对话正忙，已排队。", inbox: "已放进收件箱（没有推进）。", held: "已放进收件箱，免打扰结束后再推送。", rejected: "没有推进。", cancelled: "已取消，没有再推进。" }[r.status];
 				return text(`${msg}${r.reason ? `（${r.reason}）` : ""}`);
 			},
 		});

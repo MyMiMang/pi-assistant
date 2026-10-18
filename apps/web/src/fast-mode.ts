@@ -32,6 +32,16 @@ export interface MessageFastMeta {
 /** 消息下方的一行短状态；不相关（关着且什么都没发生）返回 null，不占位。 */
 export function fastStatusText(meta: MessageFastMeta | undefined | null): string | null {
 	if (!meta) return null;
+	// 普通响应也经常回显 default / auto；这不是用户开启 Fast，不该每条都画警告。
+	// 旧消息可能没有 enabled，用实际请求与状态保留当时确实尝试 Fast 的事实。
+	const engaged = meta.enabled === true || meta.requested || ["injected", "unsupported-api", "bad-payload", "conflict"].includes(meta.status);
+	if (!engaged) {
+		const off = meta.enabled === false ? "；Fast 开关未开启" : "";
+		if (meta.observedKind === "fast") return `服务档位 · 回显 ${meta.observed ?? "priority"}（实际加速未确认${off}）`;
+		if (meta.reportedKind === "fast") return `服务档位 · 回显 ${meta.reported ?? "priority"}（来源未确认${off}）`;
+		return null;
+	}
+	if (meta.enabled === false && meta.status === "externally-configured" && meta.requested) return "Fast · 服务配置已带 priority（本开关未开启）";
 	if (meta.observedKind === "fast") return `Fast · 服务回显 ${meta.observed ?? "Fast"}`;
 	if (meta.observedKind === "standard") return "Fast · 服务回显 default（实际加速未确认）";
 	if (meta.observedKind === "other") return `Fast · 服务回显 ${meta.observed}（实际加速未确认）`;
@@ -49,6 +59,7 @@ export function fastStatusText(meta: MessageFastMeta | undefined | null): string
 /** 悬停说明：把「为什么不是已加速」讲清楚，不把 200 当成功。 */
 export function fastStatusDetail(meta: MessageFastMeta): string {
 	const lines: string[] = [];
+	if (meta.enabled === false) lines.push("本次请求时 Fast 开关未开启；本开关没有附加 priority，服务配置或响应回显不代表你开启了它。");
 	if (meta.observedKind === "fast") lines.push("服务在终止事件里回显了 priority / fast；这不保证实际耗时一定更快。");
 	else if (meta.observedKind === "standard") lines.push("服务在终止事件里回显 default：这不等于按标准档计费，也不等于没走 Fast（部分账号/中转常见），实际加速未确认。");
 	else if (meta.observedKind === "other") lines.push(`服务在终止事件里回显 ${meta.observed ?? "未知档位"}，不是 priority / fast。`);

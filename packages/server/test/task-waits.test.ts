@@ -85,6 +85,22 @@ test("子代理结束事件：完成 / 失败各唤醒一次", () => {
 	assert.equal(W.getWait(b.id)!.status, "fired");
 });
 
+test("等待唤醒同样区分超时与明确停止：不让wait路径绕过监督/停止规则", () => {
+	reset();
+	const w = W.registerWait("tw-a", conv, { subagentId: "sa-supervision-wait", reason: "继续完成季度报告，不是只通知" });
+	for (const kind of ["failed", "timeout", "lost"]) {
+		const p = W.wakePrompt(w, "已结束", { state: "unknown", conclusion: kind, at: now() });
+		assert.match(p, /不是用户叫停/);
+		assert.match(p, /subagent_resume 原任务/);
+		assert.match(p, /无需等用户再次催促/);
+	}
+	const done = W.wakePrompt(w, "已完成", { state: "completed", at: now() });
+	assert.match(done, /自报完成不等于整体目标/);
+	const stopped = W.wakePrompt(w, "已停止", { state: "unknown", conclusion: "stopped", at: now() });
+	assert.match(stopped, /不自动恢复这项已停止的工作/);
+	assert.doesNotMatch(stopped, /无需等用户再次催促|subagent_resume 原任务/);
+});
+
 test("外部 provider：等待未变化只在程序里检查（不唤醒），状态变化才唤醒一次", async () => {
 	reset();
 	let calls = 0;

@@ -9,6 +9,7 @@ import { isRecoverableModelError } from "./model-errors.ts";
 import { isThinkingLevel, models } from "./models.ts";
 import { requests } from "./requests.ts";
 import { assessResumeSafety, classifyResume, type ResumeSafety } from "./subagent-resume.ts";
+import { subagentEventGuidance } from "./subagent-supervision.ts";
 import { readSessionFileMessages } from "./pi-adapter/index.ts";
 import { claimSubagentWake, markSubagentWakeDelivered, releaseSubagentWake, subagentWakeOwner, wakeClaimKey } from "./task-waits.ts";
 
@@ -403,7 +404,15 @@ function startQueued(id: string) {
 	return true;
 }
 /** 批量停止期间暂停这些助理的自动派发，避免「停 A → 释放名额 → 拉起 B → 再停 B」的短暂执行。 */
-const dispatchPaused = new Set<string>();
+const dispatchPaused = new Map<string, number>();
+const pauseDispatch = (agentId: string) => {
+	dispatchPaused.set(agentId, (dispatchPaused.get(agentId) ?? 0) + 1);
+	return () => {
+		const left = (dispatchPaused.get(agentId) ?? 1) - 1;
+		if (left > 0) dispatchPaused.set(agentId, left);
+		else dispatchPaused.delete(agentId);
+	};
+};
 /** 按每个助理的**有效**并发上限，把排队的子代理按先后顺序补上空位（各助理分别计数，不共用全局池）。 */
 export function pumpSubagents(agentId?: string) {
 	const agents = agentId ? [agentId] : (db.prepare("SELECT DISTINCT agent_id FROM subagents WHERE status = 'queued'").all() as { agent_id: string }[]).map((r) => r.agent_id);
@@ -459,7 +468,7 @@ export async function stopSubagent(id: string, status: "stopped" | "timeout" = "
 }
 export async function stopAgentSubagents(agentId: string) {
 	// 停整个助理时先暂停派发：否则每停一个都会释放名额、把排队的下一个拉起来（不该执行的任务被短暂启动）
-	dispatchPaused.add(agentId);
+	const release = pauseDispatch(agentId);
 	try {
 		for (;;) {
 			const rows = liveSubagents(agentId);
@@ -467,7 +476,17 @@ export async function stopAgentSubagents(agentId: string) {
 			for (const r of rows) await stopSubagent(r.id);
 		}
 	} finally {
-		dispatchPaused.delete(agentId);
+		release();
+	}
+}
+/** 只收拢一个会话的子代理：群任务暂停不能误停该助理在私聊/别群的工作。 */
+export async function stopConversationSubagents(agentId: string, conversationId: string) {
+	const release = pauseDispatch(agentId);
+	try {
+		for (const r of liveSubagents(agentId).filter((r) => r.conversation_id === conversationId)) await stopSubagent(r.id);
+	} finally {
+		release();
+		pumpSubagents(agentId);
 	}
 }
 /** 子代理行 + 恢复摘要：给 subagent_list / 接口用，供主模型判断「优先续跑而不是重派」。 */
@@ -611,7 +630,7 @@ export function subagentNotifyText(r: Subagent, event: SubagentEvent, artifacts:
 		`${marker}子代理「${title}」${kindLabel}${summary ? `：${summary}` : ""}`,
 		`子代理 ID：${r.id}。${clipped ? `上面摘要已截断到 ${SUBAGENT_SUMMARY_CLIP} 字；` : ""}需要完整任务说明或结果时，用 subagent_list 按子代理 ID 查全文（subagent_list{subagent_id:"${r.id}"}）。`,
 		`产出文件：\n${artifacts || "无"}`,
-		"请核验产出后向用户简短汇报结果；失败、停止或没进展也要说明原因和下一步。停止后只汇报状态，不继续原任务。",
+		subagentEventGuidance(event.kind),
 	].join("\n");
 }
 export async function deliverSubagentEvents() {

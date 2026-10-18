@@ -44,11 +44,32 @@ test("没有回显：只说已请求，实际未知；关闭且没有外部配�
 	assert.equal(fastStatusText(meta({ requested: false, status: "off" })), null);
 });
 
-test("关闭但请求里本来就有服务配置的档位：如实标 externally-configured，不说本次标准档", () => {
-	const text = fastStatusText(meta({ requested: false, status: "externally-configured", observed: null, observedKind: "unknown" }));
-	assert.equal(text, "Fast · 请求里已带服务配置的档位");
-	assert.ok(!text.includes("标准档"));
-	assert.match(fastStatusDetail(meta({ requested: false, status: "externally-configured" })), /关闭只停止本开关附加参数|以服务商账单为准/);
+test("未开启：普通 default/auto/flex 回显和外部普通档位不常驻显示 Fast；旧消息同样处理", () => {
+	for (const status of ["off", "externally-configured"]) {
+		for (const enabled of [false, undefined]) {
+			for (const [tier, kind] of [["default", "standard"], ["auto", "other"], ["flex", "other"]]) {
+				assert.equal(fastStatusText(meta({ enabled, requested: false, status, observed: tier, observedKind: kind })), null);
+				assert.equal(fastStatusText(meta({ enabled, requested: false, status, reported: tier, reportedKind: kind })), null);
+			}
+		}
+	}
+});
+
+test("未开启但服务配置请求了 priority 或服务明确回显快档：保留事实与风险，不冒充用户开启", () => {
+	const external = meta({ enabled: false, requested: true, status: "externally-configured", observed: "default", observedKind: "standard" });
+	assert.equal(fastStatusText(external), "Fast · 服务配置已带 priority（本开关未开启）");
+	assert.match(fastStatusDetail(external), /Fast 开关未开启/);
+	assert.match(fastStatusDetail(external), /以服务商账单为准/);
+	const off = meta({ enabled: false, requested: false, status: "off", observed: "priority", observedKind: "fast" });
+	assert.equal(fastStatusText(off), "服务档位 · 回显 priority（实际加速未确认；Fast 开关未开启）");
+	assert.match(fastStatusText(meta({ enabled: false, requested: false, status: "off", reported: "priority", reportedKind: "fast" })), /来源未确认；Fast 开关未开启/);
+});
+
+test("消息展示以本次请求快照为准：开着但未发仍说明原因，后来关灯也不擦掉旧 Fast 请求", () => {
+	assert.match(fastStatusText(meta({ enabled: true, requested: false, status: "unsupported-api" })), /本次未请求/);
+	assert.match(fastStatusText(meta({ enabled: true, requested: false, status: "bad-payload" })), /请求体异常/);
+	assert.match(fastStatusText(meta({ enabled: true, requested: false, status: "conflict" })), /已有其他档位/);
+	assert.equal(fastStatusText(meta({ enabled: true, observed: "default", observedKind: "standard" })), "Fast · 服务回显 default（实际加速未确认）");
 });
 
 test("Fast 保存顺序：同一助理的写入串行，后一次不会越过前一次抵达服务端", async () => {

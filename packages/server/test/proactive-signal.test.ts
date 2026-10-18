@@ -14,13 +14,13 @@ import { config } from "../src/config.ts";
 import { now } from "../src/db.ts";
 import { createPiSession, isSessionBusy, promptSession, subscribeSession, PiModels, type AgentEvent } from "../src/pi-adapter/index.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, mockStats, registerMockProvider, resetMockStats } from "../src/pi-adapter/mock-provider.ts";
-import { EncryptedCredentialStore } from "../src/secrets.ts";
+import { memoryCredentialStore } from "./in-memory-credentials.ts";
 import * as P from "../src/proactive.ts";
 
 const { db } = await import("../src/db.ts");
 db.prepare("INSERT OR REPLACE INTO agents(id, name, avatar, color, created_at) VALUES('ps','信号','S','#000',?)").run(now());
 
-const models = await PiModels.create({ credentials: new EncryptedCredentialStore(), modelsPath: null, allowNetwork: false });
+const models = await PiModels.create({ credentials: memoryCredentialStore(), modelsPath: null, allowNetwork: false });
 await registerMockProvider(models);
 
 const spawned: string[] = [];

@@ -311,6 +311,23 @@ test("批量停止：暂停派发，排队的任务不会被短暂启动", async
 	await cleanup();
 });
 
+test("会话范围停止只取消本会话子代理，不误伤同助理其他会话及其排队任务", async () => {
+	setSettings(2);
+	manualDriver();
+	const otherConv = createConversation("sub-test", "其他任务").id;
+	const mine = spawn();
+	const other = s.spawnSubagent("sub-test", otherConv, model, { task: "别的群仍需继续" });
+	const queued = s.spawnSubagent("sub-test", otherConv, model, { task: "别的群排队中" });
+	await tick();
+	assert.equal(status(queued.id), "queued");
+	await s.stopConversationSubagents("sub-test", conv);
+	await tick();
+	assert.equal(status(mine.id), "stopped");
+	assert.equal(status(other.id), "running");
+	assert.equal(status(queued.id), "running", "释放名额后别的会话照常派发，不被连带取消");
+	await cleanup();
+});
+
 test("排队不丢任务信息：instruction、parent、conversation、模型都保留", async () => {
 	setSettings(1);
 	manualDriver();
@@ -751,6 +768,28 @@ test("notify 文案：摘要截断到 300 字并给出按 id 查全文的入口�
 	assert.ok(clipped.includes("长".repeat(300)), "保留前 300 字");
 	assert.ok(!clipped.includes("长".repeat(301)), "超出部分被截断");
 	assert.match(clipped, /subagent_list\{subagent_id:"sa-notify"\}/);
+});
+
+test("notify 监督语义：失败/超时继续原授权任务，完成先核验，只有明确停止才不自动恢复", () => {
+	const row = { id: "sa-supervision", task: "完成报告", result_summary: null } as never;
+	const textFor = (kind: string) => s.subagentNotifyText(row, { id: `ev-${kind}`, kind, reason: "本轮结束" } as never, "无");
+	for (const kind of ["failed", "timeout", "lost"]) {
+		const t = textFor(kind);
+		assert.match(t, /不是用户叫停/);
+		assert.match(t, /subagent_list/);
+		assert.match(t, /subagent_resume 原任务/);
+		assert.match(t, /核验.*副作用/);
+		assert.match(t, /无需等用户再次催促/);
+		assert.match(t, /无限重试/);
+		assert.doesNotMatch(t, /停止后只汇报状态，不继续原任务/);
+	}
+	assert.match(textFor("done"), /子代理自报完成不等于整体目标/);
+	assert.match(textFor("done"), /剩余步骤.*继续推进/);
+	assert.match(textFor("stalled"), /仍在执行时不要重复派发或同时续跑/);
+	const stopped = textFor("stopped");
+	assert.match(stopped, /不自动恢复这项已停止的工作/);
+	assert.match(stopped, /只有后续明确继续授权才可恢复/);
+	assert.doesNotMatch(stopped, /无需等用户再次催促|subagent_resume 原任务/);
 });
 
 test("resumed 只更新卡片：不触发模型回合，事件直接标记已投递", async () => {

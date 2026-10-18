@@ -24,6 +24,7 @@
 import { bus } from "./bus.ts";
 import { db, now, uid } from "./db.ts";
 import { parseWhen } from "./proactive.ts";
+import { subagentEventGuidance } from "./subagent-supervision.ts";
 
 export type WaitTargetKind = "task" | "subagent" | "github_run" | "due";
 export type WaitStatus = "waiting" | "fired" | "cancelled";
@@ -499,7 +500,9 @@ export function wakePrompt(w: TaskWait, reason: string, o: Outcome): string {
 		`- 结果：${o.detail ?? o.conclusion ?? "（无更多信息）"}`,
 		...(o.url ? [`- 链接：${o.url}`] : []),
 		`- 你当初登记的目的：${w.reason}`,
-		"请只根据上面的增量信息继续（不要重新等待、也不要重复已完成的操作）；信息不明确时先核实再行动。",
+		w.target_kind === "subagent"
+			? subagentEventGuidance(o.state === "completed" ? "done" : o.conclusion ?? "unknown")
+			: "请根据上面的增量信息核验并推进原授权内的剩余工作，不要只汇报后等用户再催；不要重复已完成的操作，真正受阻才提出具体问题。信息不明确时先核实；需继续等外部结果时重新登记持久等待，不空转。用户停止/取消及预算/权限限制仍优先。",
 	];
 	return lines.join("\n");
 }
