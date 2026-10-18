@@ -455,8 +455,11 @@ app.patch("/api/agents/:id", async (c) => {
 	if (b.thinking !== undefined && b.thinking !== null && !THINKING.includes(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
 	if (b.fast !== undefined && b.fast !== null && typeof b.fast !== "boolean") return c.json({ error: "Fast 开关不对" }, 400);
 	const name = b.name !== undefined ? b.name.trim().slice(0, 40) || a.name : a.name;
+	// 默认头像是名字前两个字：改名时若头像仍是旧名字的默认头像，跟着新名字走，否则群成员条/列表还显示旧名
+	let avatar = b.avatar !== undefined ? cleanAvatar(b.avatar, name) : a.avatar;
+	if (name !== a.name && avatar === cleanAvatar("", a.name)) avatar = cleanAvatar("", name);
 	db.prepare("UPDATE agents SET name = ?, avatar = ?, color = ?, persona = ?, description = ?, model_provider = ?, model_id = ? WHERE id = ?").run(
-		name, b.avatar !== undefined ? cleanAvatar(b.avatar, name) : a.avatar, b.color ?? a.color, b.persona ?? a.persona, b.description ?? a.description,
+		name, avatar, b.color ?? a.color, b.persona ?? a.persona, b.description ?? a.description,
 		b.model === undefined ? a.model_provider : (b.model?.provider ?? null), b.model === undefined ? a.model_id : (b.model?.id ?? null), a.id,
 	);
 	if (b.thinking !== undefined) db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(b.thinking, a.id);

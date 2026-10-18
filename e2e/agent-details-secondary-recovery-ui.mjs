@@ -383,6 +383,9 @@ try {
 	assert.match(degraded, /候选池 读取失败/, degraded);
 	assert.match(degraded, /思考强度 读取失败/, degraded);
 	assert.match(degraded, /任务上限 读取失败/, degraded);
+	assert.doesNotMatch(degraded, /保存失败/, "GET 读取失败只提示读取失败，不能额外标成保存失败");
+	assert.match(await pane.getByTestId("agent-subagent-limits-error").innerText(), /任务上限读取失败/);
+	assert.doesNotMatch(await pane.getByTestId("agent-subagent-limits-error").innerText(), /保存失败/);
 	assert.doesNotMatch(degraded, /跟随主会话/, "读取失败不能假装「跟随主会话」");
 	assert.doesNotMatch(degraded, /同时 \d+ 个/, "读取失败不能写假的默认上限");
 	assert.equal(await pane.getByTestId("agent-subagent-limits").locator("input").count(), 0, "读取失败不画默认上限输入框");
@@ -500,6 +503,7 @@ try {
 	gates.release("limits-put");
 	await pane.getByTestId("agent-subagent-limits-error").waitFor();
 	assert.match(await pane.getByTestId("agent-subagent-limits-error").innerText(), /任务上限保存失败/);
+	assert.doesNotMatch(await summaryText(sub()), /读取失败/, "PUT 失败不能被写成读取失败");
 	await wait(async () => (await concurrent.inputValue()) === String(limitsBefore.settings.maxConcurrent), 10000, "失败回滚到生效值");
 	assert.equal(("maxConcurrent" in (await j(`/api/agents/${A.id}/subagents/settings`)).overrides), false, "失败不能写库");
 	await wait(async () => /保存失败/.test(await summaryText(sub())), 10000, "摘要显示保存失败");

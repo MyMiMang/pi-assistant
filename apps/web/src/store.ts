@@ -525,6 +525,8 @@ export const useStore = create<State>((set, get) => ({
 				break;
 			case "agents.changed":
 				void get().loadAgents();
+				// 群成员的名字/头像由服务端按助理表实时拼进群快照；助理改了要同步刷新群，否则群头、成员条和 @ 列表停在旧名字
+				void get().loadRooms();
 				break;
 			case "task.updated": {
 				const t = e.task;

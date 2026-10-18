@@ -32,3 +32,7 @@
 ## 未覆盖
 
 未跑全量 `npm test` / legacy全量E2E，未验物理手机/WebKit、安装App、跨平台真实电脑/系统TCC、真实模型任务/技能产物质量、付费Fast的加速和计费。没有改服务器/Pi SDK/依赖，也没有新tag、打包、安装或重启。
+
+
+## 接手重验（2026-10-18 23:30，Asia/Shanghai）
+在 box 隔离环境对最后一行源码重跑：typecheck、Web build、recovery 10组、functional 8组均 exit0（单次）。截图输出在临时目录，未提交新截图。详见 HANDOFF 顶条。
