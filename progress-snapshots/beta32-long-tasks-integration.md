@@ -2,13 +2,13 @@
 
 ## 当前交付状态
 
-- 公开Latest仍beta.31；beta.32最终验收后已按授权提交源码`610b50a`/截图`a08e041`，正式main先pull再ff，原子push main与新tag `v0.1.0-beta.32`至 `a08e041b4f5d857afe1a62e7dc8b1faa05e0ef7b`。all-intel [Actions39109851436](https://github.com/MyMiMang/pi-assistant/actions/runs/39109851436)正在构建，尚未公开/安装/生产重启。发布状态集中见[最终收口](beta32-release-final.md)。
+- **beta.32已公开为Latest，2026-10-18 16:29:18（Asia/Shanghai）**。按授权提交源码`610b50a`/截图`a08e041`，正式main先pull再ff，原子push main与新tag `v0.1.0-beta.32`至 `a08e041b4f5d857afe1a62e7dc8b1faa05e0ef7b`。all-intel [Actions39109851436](https://github.com/MyMiMang/pi-assistant/actions/runs/39109851436)五平台、Mac/Windows安装启动及publish成功；主核13资产、六更新别名/签名文件与Linux摘要一致。未自动安装/生产重启，精确证据与未验集中见[最终收口](beta32-release-final.md#发布状态)。
 - 整合HEAD `373373c`：前置群模型/技能用途 `5850c11`，任务 `bfc98f8`，监督/主动推进/Fast（源 `2de2470` cherry-pick）。只HANDOFF/ROADMAP顶部冲突，保留两方向，产品源码自动合并后已定向回归。
 - `610b50a`收口增量：群停止持久性/安全继续、按真实历史计重试、无start/空最终/后台失败可见、任务乱序分页与新UI断言。见[任务边界末审](work-items-final-boundaries.md)、[错误修复](beta32-error-reporting.md)。
 
 ## 主会话审查后产品行为
 
-任务责任与单次执行分开，不另建runner，保留现有群串行。actor绑定group+agent，派活/submit绑定room+owner+run+revision；取消用真实roomId及exact turn撤销内存/DB、scope abort。群stop同步持久停止并pause责任，旧async cleanup不能删新state；仅本群成员对话子代理受影响。继续只重建已证没开始且关联可核的旧queued/cancelled/interrupted执行，started未知交管理者检查，暂停/已验/已取消/改派/新修订不复活。最大3自动执行按实际run历史计数，continue/edit/room_assign/改派blocked→active不能绕；明确user新授权单列。
+任务责任与单次执行分开，不另建runner，保留现有群串行。actor绑定group+agent，派活/submit绑定room+owner+run+revision；取消用真实roomId及exact turn撤销内存/DB、scope abort。群stop同步持久停止并pause责任，旧async cleanup不能删新state；仅本群成员对话子代理受影响。继续只重建已证没开始且关联可核的旧queued/cancelled/interrupted执行，started未知交管理者检查，暂停/已验/已取消/改派/新修订不复活。初次执行后最多3次自动重试，按实际run历史计数，continue/edit/room_assign/改派blocked→active不能绕；明确user新授权单列。
 
 看板是同一责任记录的视图。详情/列表请求代次与room key防串台，详情清旧草稿并核ID/room；状态全量筛选；updated_at+id稳定cursor避免同毫秒翻页漏/重。原群用户纠正关联原责任并修订，不要求用户维护第二份任务。
 
@@ -28,7 +28,7 @@
 
 ## 发布前尚需
 
-最终结果和stable桌面/390/错误图已主核，日志/selected图随源码入版本库，失败记录与未验保留。发布进度集中在[最终收口](beta32-release-final.md)：提交源码与截图分开，正式main干净时ff并fresh远程核对/拉取重放，保留其他worktrees/WIP/stash；推main与新beta.32 tag，既有草稿→五平台→Mac/Windows安装启动→publish门禁。公开后核Latest/13资产/六别名签名及Linuxchecksum，不自动安装。
+最终结果和stable桌面/390/错误图已主核，源码/日志和截图分开提交；正式main干净时pull再ff，原子push新tag，既有草稿→五平台→Mac/Windows安装启动→publish门禁已通过，Latest/13资产/六别名签名文本及Linuxchecksum已核。发布结果集中在[最终收口](beta32-release-final.md#发布状态)。保留失败记录、未验及其他worktrees/WIP/stash，不自动安装，不重复已完成的验收/打包。
 
 ## 仍未验
 

@@ -1,0 +1,158 @@
+{
+  "verifiedAt": "2026-10-18T08:37:07.380Z",
+  "repo": "MyMiMang/pi-assistant",
+  "tag": "v0.1.0-beta.32",
+  "version": "0.1.0-beta.32",
+  "releaseUrl": "https://github.com/MyMiMang/pi-assistant/releases/tag/v0.1.0-beta.32",
+  "publishedAt": "2026-10-18T08:29:18Z",
+  "targetCommitish": "a08e041b4f5d857afe1a62e7dc8b1faa05e0ef7b",
+  "latest": true,
+  "draft": false,
+  "prerelease": false,
+  "assetCount": 13,
+  "assets": [
+    {
+      "name": "latest.json",
+      "size": 7430,
+      "digest": "sha256:ba2a9fafd797673f5ffe1d0a3e7356ccc7d0cd65283cd679d8f983f3083d6cf8",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/latest.json"
+    },
+    {
+      "name": "pi-assistant-0.1.0-beta.32-linux-arm64.tar.gz",
+      "size": 166816451,
+      "digest": "sha256:14f01870c9dbe904443a788314a35e1bf4a766ff687ea1f6d1ba1d842a16b63f",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/pi-assistant-0.1.0-beta.32-linux-arm64.tar.gz"
+    },
+    {
+      "name": "pi-assistant-0.1.0-beta.32-linux-arm64.tar.gz.sha256",
+      "size": 112,
+      "digest": "sha256:000728e96aabfc0676ea97b465779a0684849eae6821809aa76547be35a18be2",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/pi-assistant-0.1.0-beta.32-linux-arm64.tar.gz.sha256"
+    },
+    {
+      "name": "pi-assistant-0.1.0-beta.32-linux-x64.tar.gz",
+      "size": 170258846,
+      "digest": "sha256:2bb653748a12d0cb8162e22e29d6296623108df2e7ee3d0fa6a651ddc2ce339d",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/pi-assistant-0.1.0-beta.32-linux-x64.tar.gz"
+    },
+    {
+      "name": "pi-assistant-0.1.0-beta.32-linux-x64.tar.gz.sha256",
+      "size": 110,
+      "digest": "sha256:e7cfcd43487515a14ae40ad49172d580c650b550104738fec91fe10ee4d89411",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/pi-assistant-0.1.0-beta.32-linux-x64.tar.gz.sha256"
+    },
+    {
+      "name": "Pi.Assistant_0.1.0-beta.32_aarch64.dmg",
+      "size": 376709775,
+      "digest": "sha256:76be5fd276ea3875c3cd1914726db6dc0fd657f3097aa736def63b9171cf8f08",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_0.1.0-beta.32_aarch64.dmg"
+    },
+    {
+      "name": "Pi.Assistant_0.1.0-beta.32_x64-setup.exe",
+      "size": 102357124,
+      "digest": "sha256:390b716b86abe5236169a8d215ac0c81a3d1266888d26a253eee54366d74f1ef",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_0.1.0-beta.32_x64-setup.exe"
+    },
+    {
+      "name": "Pi.Assistant_0.1.0-beta.32_x64-setup.exe.sig",
+      "size": 464,
+      "digest": "sha256:5a938ccc0e499b9d17c4feea094cd0e21a56ae1677f3b750e0388fad7383f31b",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_0.1.0-beta.32_x64-setup.exe.sig"
+    },
+    {
+      "name": "Pi.Assistant_0.1.0-beta.32_x64.dmg",
+      "size": 376274447,
+      "digest": "sha256:9dcb1e03a6369ab94820190815e0cdfe94c32af6ad8f75774dc9b109fbd438a8",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_0.1.0-beta.32_x64.dmg"
+    },
+    {
+      "name": "Pi.Assistant_aarch64.app.tar.gz",
+      "size": 218631874,
+      "digest": "sha256:7ce3026e7c1b8ae1f6d62dd08d1c62e751575a4782fafdecb9b4fbeef47c1d64",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_aarch64.app.tar.gz"
+    },
+    {
+      "name": "Pi.Assistant_aarch64.app.tar.gz.sig",
+      "size": 440,
+      "digest": "sha256:57ec119ccee6017b96a27815bed441e4c3fc3f1aca99df3d6beb6a4bf7659afb",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_aarch64.app.tar.gz.sig"
+    },
+    {
+      "name": "Pi.Assistant_x64.app.tar.gz",
+      "size": 225418894,
+      "digest": "sha256:2e6d624c62ad3d3d43b81a55c8db76cea1ad79f72b433a2f28bd363370515e47",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_x64.app.tar.gz"
+    },
+    {
+      "name": "Pi.Assistant_x64.app.tar.gz.sig",
+      "size": 440,
+      "digest": "sha256:bb88a55f3f45e845b6739636868af80f6c818b66bf99432fd8b1136be3d561ce",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_x64.app.tar.gz.sig"
+    }
+  ],
+  "platforms": [
+    {
+      "alias": "darwin-aarch64",
+      "asset": "Pi.Assistant_aarch64.app.tar.gz",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_aarch64.app.tar.gz",
+      "signatureMatchesPublishedFile": true,
+      "size": 218631874
+    },
+    {
+      "alias": "darwin-aarch64-app",
+      "asset": "Pi.Assistant_aarch64.app.tar.gz",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_aarch64.app.tar.gz",
+      "signatureMatchesPublishedFile": true,
+      "size": 218631874
+    },
+    {
+      "alias": "darwin-x86_64",
+      "asset": "Pi.Assistant_x64.app.tar.gz",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_x64.app.tar.gz",
+      "signatureMatchesPublishedFile": true,
+      "size": 225418894
+    },
+    {
+      "alias": "darwin-x86_64-app",
+      "asset": "Pi.Assistant_x64.app.tar.gz",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_x64.app.tar.gz",
+      "signatureMatchesPublishedFile": true,
+      "size": 225418894
+    },
+    {
+      "alias": "windows-x86_64",
+      "asset": "Pi.Assistant_0.1.0-beta.32_x64-setup.exe",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_0.1.0-beta.32_x64-setup.exe",
+      "signatureMatchesPublishedFile": true,
+      "size": 102357124
+    },
+    {
+      "alias": "windows-x86_64-nsis",
+      "asset": "Pi.Assistant_0.1.0-beta.32_x64-setup.exe",
+      "url": "https://github.com/MyMiMang/pi-assistant/releases/download/v0.1.0-beta.32/Pi.Assistant_0.1.0-beta.32_x64-setup.exe",
+      "signatureMatchesPublishedFile": true,
+      "size": 102357124
+    }
+  ],
+  "linux": [
+    {
+      "arch": "x64",
+      "name": "pi-assistant-0.1.0-beta.32-linux-x64.tar.gz",
+      "sha256": "2bb653748a12d0cb8162e22e29d6296623108df2e7ee3d0fa6a651ddc2ce339d",
+      "matchesGitHubAssetDigest": true,
+      "size": 170258846
+    },
+    {
+      "arch": "arm64",
+      "name": "pi-assistant-0.1.0-beta.32-linux-arm64.tar.gz",
+      "sha256": "14f01870c9dbe904443a788314a35e1bf4a766ff687ea1f6d1ba1d842a16b63f",
+      "matchesGitHubAssetDigest": true,
+      "size": 166816451
+    }
+  ],
+  "limits": [
+    "签名只比较更新清单与已发布.sig文本，未独立做公钥密码学验证",
+    "Linux核对checksum文本与GitHub资产digest，未下载归档重新哈希",
+    "CI安装启动冒烟不代表完整多平台任务验收，未自动安装用户App"
+  ]
+}
