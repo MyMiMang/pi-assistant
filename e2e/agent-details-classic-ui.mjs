@@ -605,7 +605,17 @@ try {
 	await pane.getByTestId("agent-model-settings").waitFor();
 	await contentCheck("diy/460/models", "agent-models-tab");
 	await layoutCheck("diy/460/models");
-	// 模型页复用输入框的模型按钮（.pa-chip），它的过渡时长同样取主题动效 token。
+	// 地方够：同一套弹层内容就地铺开（思考 / Fast / 模型目录，目录限高内部滚动）
+	const modelBox = pane.getByTestId("agent-model-settings");
+	await waitFor(async () => (await modelBox.getAttribute("data-layout")) === "inline", 5000, "宽面板就地展开模型选择");
+	const inlineScroll = await pane.getByTestId("model-scroll").evaluate((el) => ({ max: getComputedStyle(el).maxHeight, oy: getComputedStyle(el).overflowY }));
+	assert.ok(inlineScroll.max !== "none" && inlineScroll.oy === "auto", `就地目录限高内部滚动：${JSON.stringify(inlineScroll)}`);
+	assert.equal(await pane.getByTestId("model-picker").count(), 0, "就地展开时不再有按钮");
+	// 窗口变矮：退回输入框同款按钮 + 弹层
+	await page.setViewportSize({ width: 1440, height: 620 });
+	await waitFor(async () => (await modelBox.getAttribute("data-layout")) === "button", 5000, "矮窗口退回按钮");
+	await pane.getByTestId("model-picker").waitFor();
+	// 模型页的按钮形态就是输入框的模型按钮（.pa-chip），它的过渡时长同样取主题动效 token。
 	const MODEL_BTN = "[data-testid=agent-models-tab] [data-testid=model-picker]";
 	const normalMotion = await page.evaluate((sel) => {
 		const sw = document.querySelector(sel);
@@ -626,6 +636,8 @@ try {
 	assert.equal(reducedMotion.scale, "0");
 	assert.ok(reducedMotion.sw?.split(",").every((v) => v.trim() === "0s"), `减少动效下按钮过渡应为 0：${reducedMotion.sw}`);
 	await page.emulateMedia({ reducedMotion: "no-preference" });
+	await page.setViewportSize({ width: 1440, height: 960 });
+	await waitFor(async () => (await modelBox.getAttribute("data-layout")) === "inline", 5000, "窗口恢复后重新就地展开");
 	await paneShot("09-diy-light-460-pane.png");
 	console.log("PASS DIY：manifest 编译注入 + 主模型/Fast 可用 + 减少动效过渡为 0");
 

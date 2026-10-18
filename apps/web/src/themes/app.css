@@ -319,6 +319,10 @@ input[type="checkbox"].pa-switch:checked::after { transform: translateX(14px); }
 .pa-think-mini { display: inline-block; margin-top: 6px; padding: 4px 8px; border: 1px solid var(--acc); border-radius: var(--r-sm); background: var(--acc); color: var(--acc-fg, #fff); font-size: 11px; cursor: pointer; }
 /* 输入栏默认的紧凑弹层：只放强度 / 模型名 / 闪电 / 滑块，不直接铺搜索框和全模型目录 */
 .pa-compact-pop { --pop-w: 340px; width: 340px; padding: 12px; }
+/* 助理设置 › 模型：同一套弹层内容就地铺开（滑块头 + 模型目录，目录限高内部滚动） */
+.pa-model-inline { border: 1px solid var(--line); border-radius: var(--r-md, 12px); background: var(--card); overflow: hidden; }
+.pa-model-inline-head { padding: 12px; border-bottom: 1px solid var(--line); }
+.pa-model-inline-list { padding: 6px; }
 @media (max-width: 640px) { .pa-compact-pop { width: auto; } }
 /* 完整模型目录顶部的「返回」：只退一层，不改模型 / 思考 / Fast */
 .pa-menu-back { align-self: flex-start; margin: 0 0 2px 2px; padding: 3px 6px; border: 0; border-radius: 7px; background: transparent; color: var(--mut2); font-size: 12px; cursor: pointer; }

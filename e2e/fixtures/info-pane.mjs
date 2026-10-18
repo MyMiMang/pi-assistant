@@ -117,12 +117,23 @@ export function agentProfileSave(scope) {
 }
 
 /** 「模型」页的聊天模型按钮：与输入框下面是同一个 ModelPicker（只在模型页里取，不和输入框那颗混）。 */
-export const agentModelButton = (page) => page.getByTestId("agent-models-tab").getByTestId("model-picker");
+/**
+ * 「模型」页当前值：地方够时是就地面板里的读屏摘要（model-picker-summary，文字与按钮同一份），
+ * 窄 / 矮时是输入框同款按钮（model-picker）。读 innerText 判断当前模型 / 档位两种形态都适用。
+ */
+export const agentModelButton = (page) => page.getByTestId("agent-models-tab").getByTestId(/^model-picker(-summary)?$/);
 
-/** 打开「模型」页模型按钮的紧凑层（思考滑块 testid=thinking-*、Fast=thinking-fast、跟随=thinking-follow），已开就直接返回。 */
+/**
+ * 拿到「模型」页的思考 / Fast / 模型目录（thinking-*、thinking-fast、thinking-follow、model-menu）：
+ * 就地面板直接返回它；按钮形态就打开紧凑层（已开直接返回）。
+ */
 export async function openAgentModelPop(page) {
+	const tab = page.getByTestId("agent-models-tab");
+	await tab.getByTestId("agent-model-settings").waitFor();
+	const inline = tab.getByTestId("model-picker-inline");
+	if (await inline.count()) return inline;
 	const pop = page.getByTestId("model-picker-compact");
-	if (!(await pop.count())) await agentModelButton(page).click();
+	if (!(await pop.count())) await tab.getByTestId("model-picker").click();
 	await pop.waitFor();
 	return pop;
 }

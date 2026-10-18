@@ -21,6 +21,7 @@ import { chromium } from "playwright-core";
 import { closeModelPanel, openModelMenu } from "./model-menu-flow.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
+import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 // 本次运行独占的临时目录（DATA / WORKSPACE / HOME / TMPDIR）；finally 只删它自己
@@ -225,6 +226,8 @@ try {
 			await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "模型", exact: true }).click();
 		}
 	}
+	// 子代理收在「高级 · 子代理」折叠区里
+	await expandAgentModelSection(page, "subagents");
 	await page.getByTestId("subagent-model").click();
 	const pool = page.getByTestId("subagent-model-menu");
 	await pool.waitFor();

@@ -412,9 +412,12 @@ export interface ModelMenuProps {
 	onRetry?: () => void;
 	/** 从紧凑弹层进入完整目录时，给一个明确的返回动作（返回不改模型 / 思考 / Fast） */
 	onBack?: () => void;
+	/** 就地铺在页面里（不是弹层）：不抢焦点、宽度跟容器、列表限高内部滚动 */
+	inline?: boolean;
+	searchRef?: RefObject<HTMLInputElement | null>;
 }
 
-export function ModelMenu({ id, models, providers, value, thinking, fast, picks, onPick, groupByProvider = true, header, panelRef, panelStyle, loading, error, onRetry, onBack }: ModelMenuProps) {
+export function ModelMenu({ id, models, providers, value, thinking, fast, picks, onPick, groupByProvider = true, header, panelRef, panelStyle, loading, error, onRetry, onBack, inline = false, searchRef }: ModelMenuProps) {
 	const [q, setQ] = useState("");
 	const [openGroups, setOpenGroups] = useState<string[]>(() => (value?.provider ? [value.provider] : models[0] ? [models[0].provider] : []));
 	const nameOf = (p: string) => providers.find((x) => x.id === p)?.name ?? models.find((m) => m.provider === p)?.providerName ?? p;
@@ -427,7 +430,7 @@ export function ModelMenu({ id, models, providers, value, thinking, fast, picks,
 	const groups = groupByProvider ? groupModelsByProvider(shown, nameOf, value?.provider) : shown.length ? [{ provider: "", name: "", models: dedupeGroup(shown) }] : [];
 	const isOpen = (p: string) => !groupByProvider || !!q.trim() || openGroups.includes(p);
 	return (
-		<div ref={panelRef} style={{ ...panelStyle, ...modelMenuSize }} className="pa-pop flex flex-col rounded-xl border border-line bg-card p-1.5 shadow-lg" data-testid={`${id}-menu`}>
+		<div ref={panelRef} style={inline ? undefined : { ...panelStyle, ...modelMenuSize }} className={cx("flex flex-col", inline ? "pa-model-inline-list min-w-0" : "pa-pop rounded-xl border border-line bg-card p-1.5 shadow-lg")} data-testid={`${id}-menu`}>
 			{onBack && (
 				<button type="button" className="pa-menu-back" onClick={onBack} data-testid={`${id}-back`} aria-label="返回思考与模型">
 					‹ 返回
@@ -435,7 +438,7 @@ export function ModelMenu({ id, models, providers, value, thinking, fast, picks,
 			)}
 			<label className="mb-1 flex items-center gap-2 rounded-lg bg-hover px-2.5 py-1.5">
 				<Search size={14} className="text-mut" />
-				<input autoFocus className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索模型或服务…" value={q} onChange={(e) => setQ(e.target.value)} data-testid={`${id}-search`} />
+				<input ref={searchRef} autoFocus={!inline} className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索模型或服务…" value={q} onChange={(e) => setQ(e.target.value)} data-testid={`${id}-search`} />
 			</label>
 			{header}
 			{thinking && (thinking.levels.length > 1 || !!fast) && (
@@ -444,7 +447,7 @@ export function ModelMenu({ id, models, providers, value, thinking, fast, picks,
 					<ThinkingSlider testid="thinking" levels={thinking.levels} current={thinking.current} effective={thinking.effective} followLabel={thinking.followLabel} modelName={pickedName} fast={fast} onPick={thinking.onPick} />
 				</div>
 			)}
-			<div className="min-h-0 flex-1 overflow-y-auto">
+			<div className={cx("min-h-0 flex-1 overflow-y-auto", inline && "max-h-72 overscroll-contain")} data-testid={inline ? `${id}-scroll` : undefined}>
 				{!models.length &&
 					(loading ? <div className="p-3 text-sm text-mut" data-testid={`${id}-loading`} role="status">正在加载模型…</div> : error ? (
 						<div className="p-3 text-sm text-mut" data-testid={`${id}-error`} role="alert">
@@ -515,10 +518,12 @@ export interface ModelPickerButtonProps {
 	onRetry?: () => void;
 	/** 输入栏 / 聊天入口：默认打开紧凑弹层（强度 + 模型名 + 闪电 + 滑块），点模型名才进完整目录 */
 	compact?: boolean;
+	/** compact 入口在地方够大时：不画按钮，把同一套弹层内容（滑块 + Fast + 模型目录）直接铺在页面里 */
+	inline?: boolean;
 }
 
 /** 共用的「模型按钮 + 菜单」；聊天 / 群聊成员 / 子代理都用它，避免各写一套 */
-export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, fast, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen, loading, error = false, onRetry, compact = false }: ModelPickerButtonProps) {
+export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, fast, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen, loading, error = false, onRetry, compact = false, inline = false }: ModelPickerButtonProps) {
 	const btnRef = useRef<HTMLButtonElement>(null);
 	// 键盘（Enter / Space）打开时把焦点落进紧凑层的模型名，鼠标打开不抢焦点
 	const openedByKeyboard = useRef(false);
@@ -551,6 +556,40 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 			setFocusModel(false);
 		}
 	}, [open]);
+	const searchRef = useRef<HTMLInputElement>(null);
+	const modelName = value ? (models.find((m) => pickKey(m) === pickKey(value))?.name ?? value.id) : undefined;
+	// 紧凑层和就地面板共用的滑块（同一 testid 契约 thinking-*）；只有「点模型名」「选完档位」的去向不同
+	const slider = (isInline: boolean) =>
+		thinking && (
+			<ThinkingSlider
+				// 与旧菜单内的滑块保持同一 testid 契约（thinking-*），选用 / 档位 e2e 不因两层改造失效
+				testid="thinking"
+				levels={thinking.levels}
+				current={thinking.current}
+				effective={thinking.effective}
+				followLabel={thinking.followLabel}
+				modelName={modelName}
+				// 弹层：进完整目录；就地面板：目录就在下面，直接把焦点放到搜索框
+				onModelClick={isInline ? () => searchRef.current?.focus() : () => applyPanel("openList")}
+				// 返回 / 选完模型后回模型名；键盘打开时也直接落在这里（鼠标打开不抢焦点）
+				autoFocusModel={!isInline && (focusModel || openedByKeyboard.current)}
+				loading={loading}
+				error={error}
+				onRetry={onRetry}
+				fast={fast}
+				onPick={(l) => { thinking.onPick(l); if (!isInline) applyPanel("close"); }}
+			/>
+		);
+	if (inline && twoLevel) {
+		return (
+			<div className="pa-model-inline" data-testid={`${testid}-inline`} aria-disabled={disabled || undefined}>
+				{/* 读屏 / 测试用的当前值（与按钮文字同一份），视觉上滑块头部已经写了 */}
+				<span className="sr-only" role="status" data-testid={`${testid}-summary`}>{text}</span>
+				<div className="pa-model-inline-head">{slider(true)}</div>
+				<ModelMenu id={id} models={models} providers={providers} value={value} picks={picks} groupByProvider={groupByProvider} header={header?.(() => {})} loading={loading} error={error} onRetry={onRetry} inline searchRef={searchRef} onPick={(m) => { if (!disabled) onPick(m); }} />
+			</div>
+		);
+	}
 	const list = (
 		<ModelMenu
 			id={id}
@@ -604,23 +643,7 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 				createPortal(
 					twoLevel && layer === "compact" ? (
 						<div ref={menuRef} style={style} className="pa-pop pa-compact-pop rounded-xl border border-line bg-card shadow-lg" data-testid={`${testid}-compact`}>
-							<ThinkingSlider
-								// 与旧菜单内的滑块保持同一 testid 契约（thinking-*），选用 / 档位 e2e 不因两层改造失效
-								testid="thinking"
-								levels={thinking.levels}
-								current={thinking.current}
-								effective={thinking.effective}
-								followLabel={thinking.followLabel}
-								modelName={value ? (models.find((m) => pickKey(m) === pickKey(value))?.name ?? value.id) : undefined}
-								onModelClick={() => applyPanel("openList")}
-								// 返回 / 选完模型后回模型名；键盘打开时也直接落在这里（鼠标打开不抢焦点）
-								autoFocusModel={focusModel || openedByKeyboard.current}
-								loading={loading}
-								error={error}
-								onRetry={onRetry}
-								fast={fast}
-								onPick={(l) => { thinking.onPick(l); applyPanel("close"); }}
-							/>
+							{slider(false)}
 						</div>
 					) : (
 						list
@@ -740,9 +763,37 @@ export function ModelPoolButton({ testid, id = testid, models, providers, value,
 	);
 }
 
+/** 就地面板至少要这么大（容器宽 × 所在滚动区高），不够就退回按钮 + 弹层 */
+const INLINE_MIN_W = 340;
+const INLINE_MIN_H = 560;
+/**
+ * 按**容器**（不是视口）判断地方够不够：观察自己的宽度和最近的滚动容器高度，拖窄面板 / 缩矮窗口即时切换。
+ * 切换只改内容不改这两个尺寸，不会来回抖。
+ */
+function useRoomy(ref: RefObject<HTMLElement | null>, enabled: boolean) {
+	const [roomy, setRoomy] = useState(false);
+	useLayoutEffect(() => {
+		const el = ref.current;
+		if (!enabled || !el) return setRoomy(false);
+		let box = el.parentElement;
+		while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+		const scroller = box ?? document.documentElement;
+		const check = () => setRoomy(el.clientWidth >= INLINE_MIN_W && scroller.clientHeight >= INLINE_MIN_H);
+		check();
+		const ro = new ResizeObserver(check);
+		ro.observe(el);
+		ro.observe(scroller);
+		return () => ro.disconnect();
+	}, [enabled, ref]);
+	return roomy;
+}
+
 // ------------------------------------------------------------------ 单聊输入栏：一个按钮同时管模型和思考强度
-export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, allowThinkingFollow = false, placement }: { agentId: string; hideTextInNarrow?: boolean; buttonClass?: string; allowThinkingFollow?: boolean; placement?: "up" | "down" }) {
+/** layout="auto"（助理设置 › 模型）：地方够就把弹层内容直接铺开，窄 / 矮时自动退回输入框同款按钮 */
+export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, allowThinkingFollow = false, placement, layout = "button" }: { agentId: string; hideTextInNarrow?: boolean; buttonClass?: string; allowThinkingFollow?: boolean; placement?: "up" | "down"; layout?: "button" | "auto" }) {
 	const agent = useStore((s) => s.agents.find((a) => a.id === agentId));
+	const boxRef = useRef<HTMLDivElement>(null);
+	const roomy = useRoomy(boxRef, layout === "auto" && !!agent);
 	const d = useConfiguredModels();
 	const { picks, record } = useModelPicks();
 	// Fast 的保存态（乐观 / 失败回滚）；放在 early return 之前，保证 hook 顺序稳定
@@ -800,8 +851,9 @@ export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, all
 	};
 	const thinking: ThinkingChoice = { levels, current: allowThinkingFollow ? agent.thinkingSetting ?? null : curThinking ?? "", effective: curThinking, followLabel: allowThinkingFollow ? "跟随默认" : undefined, onPick: (l) => saveModel({ thinking: l }) };
 	return (
-		<div className="min-w-0 space-y-2" data-testid="agent-model-settings" aria-busy={modelPending || undefined}>
+		<div ref={boxRef} className="min-w-0 space-y-2" data-testid="agent-model-settings" data-layout={roomy ? "inline" : "button"} aria-busy={modelPending || undefined}>
 		<ModelPickerButton
+			inline={roomy}
 			testid="model-picker"
 			id="model"
 			models={d?.models ?? []}

@@ -55,13 +55,22 @@ try {
 		await page.waitForTimeout(500);
 		await waitStable(page, pane);
 		await pane.screenshot({ path: join(out, `${process.env.SHOT_PREFIX ?? ""}${key}.png`) });
-		// 模型页复用输入框的模型按钮：再拍一张弹层打开的样子
-		if (key === "models" && (await pane.locator("[data-testid=agent-models-tab] [data-testid=model-picker]").count())) {
-			await pane.locator("[data-testid=agent-models-tab] [data-testid=model-picker]").click();
-			const pop = page.getByTestId("model-picker-compact");
-			await waitStable(page, pop);
-			await page.screenshot({ path: join(out, `${process.env.SHOT_PREFIX ?? ""}models-open.png`), clip: { x: 1280 - 420, y: 0, width: 420, height: 900 } });
+		// 模型页：宽 / 高够时就地展开（上面这张）；再把窗口压矮，拍退回按钮 + 打开弹层的样子
+		if (key === "models") {
+			const pre = process.env.SHOT_PREFIX ?? "";
+			const box = pane.getByTestId("agent-model-settings");
+			if ((await box.getAttribute("data-layout")) === "inline") await pane.screenshot({ path: join(out, `${pre}models-inline.png`) });
+			await page.setViewportSize({ width: 1280, height: 620 });
+			const btn = pane.locator("[data-testid=agent-models-tab] [data-testid=model-picker]");
+			await btn.waitFor();
+			await waitStable(page, pane);
+			await pane.screenshot({ path: join(out, `${pre}models-narrow.png`) });
+			await btn.click();
+			await waitStable(page, page.getByTestId("model-picker-compact"));
+			await page.screenshot({ path: join(out, `${pre}models-open.png`), clip: { x: 1280 - 420, y: 0, width: 420, height: 620 } });
 			await page.keyboard.press("Escape");
+			await page.setViewportSize({ width: 1280, height: 900 });
+			await page.waitForTimeout(300);
 		}
 	}
 	await page.locator(".pa-composer").screenshot({ path: join(out, `${process.env.SHOT_PREFIX ?? ""}composer.png`) });

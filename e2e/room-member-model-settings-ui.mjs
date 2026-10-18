@@ -229,7 +229,7 @@ try {
  await models();
  await chooseLive(subset);
  await wait(async () => (await j("/api/agents")).find((a) => a.id === manager.id).model.id === subset);
- await wait(async () => /子集档位模型/.test(await directPane.getByTestId("model-picker").innerText()));
+ await wait(async () => /子集档位模型/.test(await agentModelButton(isolated).innerText()));
  await wait(async () => /高/.test(await agentModelButton(isolated).innerText()));
  const raw = (await j("/api/agents")).find((a) => a.id === manager.id);
  assert.equal(raw.thinkingSetting, "max", "存储的原始档位保持 max");
@@ -259,15 +259,15 @@ try {
  await chooseLive(full); await wait(() => seenFirst);
  await isolated.getByTestId("room-members").locator('button[title^="已有助理"]').click();
  await models();
- await wait(async () => /Mock 推理模型/.test(await directPane.getByTestId("model-picker").innerText()));
+ await wait(async () => /Mock 推理模型/.test(await agentModelButton(isolated).innerText()));
  await isolated.getByTestId("room-members").locator('button[title^="统筹"]').click();
  await models();
  await chooseLive(subset);
  assert.equal(patchCount, 1, "旧请求未确认前同一助理的下次写入排队");
  releaseFirst();
  await wait(async () => patchCount === 2 && (await j("/api/agents")).find((a) => a.id === manager.id).model.id === subset);
- await wait(async () => !await directPane.getByTestId("model-picker").isDisabled());
- await wait(async () => /子集档位模型/.test(await directPane.getByTestId("model-picker").innerText()));
+ await wait(async () => !(await directPane.getByTestId("agent-model-settings").getAttribute("aria-busy")));
+ await wait(async () => /子集档位模型/.test(await agentModelButton(isolated).innerText()));
  assert.equal((await j("/api/agents")).find((a) => a.id === manager.id).fast, true);
  assert.equal(await (await openAgentModelPop(isolated)).getByTestId("thinking-fast").getAttribute("aria-pressed"), "true");
  await isolated.keyboard.press("Escape");
