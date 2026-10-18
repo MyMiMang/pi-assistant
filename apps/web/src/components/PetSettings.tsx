@@ -198,7 +198,11 @@ export function PetSettings() {
 			{agents.length > 1 && (
 				<section>
 					<H desc="每个助理可以有自己的宠物；桌宠跟着谁，就显示谁的宠物。">每个助理的宠物</H>
-					<div className="divide-y divide-line rounded-xl border border-line">
+					<details className="rounded-xl border border-line" data-testid="pet-per-agent">
+						<summary className="cursor-pointer px-3 py-2 text-sm">
+							{agents.length} 个助理 <span className="text-xs text-mut">· {agents.filter((a) => petOf[a.id] && petOf[a.id] !== s.defaultPet).length} 个用了别的宠物</span>
+						</summary>
+					<div className="max-h-64 divide-y divide-line overflow-y-auto border-t border-line">
 						{agents.map((a) => (
 							<div key={a.id} className="flex items-center gap-3 px-3 py-2 text-sm">
 								<span className="min-w-0 flex-1 truncate">{a.name}</span>
@@ -220,6 +224,7 @@ export function PetSettings() {
 							</div>
 						))}
 					</div>
+					</details>
 				</section>
 			)}
 		</div>
