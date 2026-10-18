@@ -1,5 +1,7 @@
 # 本地 Laya 一键安装：后端 API 契约（v1）
 
+状态：已废弃（Laya / 快速候选选择器已撤下，见 decisions/0005）
+
 > 状态：**契约冻结稿**（后端 local-laya-runtime 分支）。UI owner 按此对接；未经协商不要改路径与字段名。
 > 依据：`research/laya-one-click-cross-platform-feasibility.md`。**不声称任何性能数字，不把「已安装」当「能用 GPU」**。
 

@@ -1,5 +1,7 @@
 # 记忆作用域安全（memory-scope-safety）
 
+状态：已实现
+
 > 基：`unified-integration` HEAD `66ae16b`（2026-10-15）。依据：`docs/research/hindsight-integration-audit.md`。
 > 目标：**完整可用 + 分层权限**——不砍子代理记忆能力，但堵住「未验证结论污染共享 user 库 / 子代理删共享事实 / 无 provenance」。
 

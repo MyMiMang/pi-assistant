@@ -1,5 +1,7 @@
 # 快速操作模型 · 真实操控基准测试的「一键真实环境」
 
+状态：已废弃（快速候选选择器已撤下，见 decisions/0005）
+
 更新时间：2026-10-22（Asia/Shanghai）
 分支：`benchmark-environment-bootstrap`（worktree，基 `benchmark-production-fix` `437116f`，**本地提交，未 push / 未 tag / 未打包**）
 

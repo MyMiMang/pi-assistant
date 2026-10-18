@@ -1,5 +1,7 @@
 # 语音分段增量 静态 review 发现（候选，未 push）
 
+状态：参考（review 记录）
+
 > **2026-10-18 续作更新**：本 review 的 F1 / F6 / F7 已在本树后续提交中修复并**真跑验收**（F2 / F3 / F4 的修复与新增测试也已执行）。详见下方各节「后续」与 `docs/HANDOFF.md` 顶部条目；真实模型验证见 `docs/design/voice-incremental-real-validation.md`。
 
 - 日期：2026-10-18。范围：worktree `voice-incremental-input` HEAD `c286efd`，review `a7c3727` / `e5ca592` / `c286efd`。

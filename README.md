@@ -154,11 +154,13 @@ docs/               架构、设计、交接、安装文档、更新说明
 
 ## 文档
 
-- [AGENTS.md](AGENTS.md)：给接手的 AI / 开发者的入口：仓库地图、构建测试、发布规则、约定
-- [docs/HANDOFF.md](docs/HANDOFF.md)：进度（按版本）、已验证 / 待真机验证、已知问题、下一步
-- [docs/ROADMAP.md](docs/ROADMAP.md)：需求与计划、待用户决定的事、工作规则
+- [AGENTS.md](AGENTS.md)：给接手的 AI / 开发者的唯一规则入口（复用优先、测试、Git、发布、界面标准、交付清单）
+- [docs/HANDOFF.md](docs/HANDOFF.md)：当前状态、正在做的事、已知问题
+- [docs/MODULES.md](docs/MODULES.md)：模块地图与必须复用的共用工具
+- [docs/decisions](docs/decisions)：已定的决策记录
+- [docs/ROADMAP.md](docs/ROADMAP.md)：需求与计划、待用户决定的事（工作规则见 [AGENTS.md](AGENTS.md)）
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架构概览（组件图、数据流、存储）
-- [docs/DESIGN.md](docs/DESIGN.md)：完整设计
+- [docs/DESIGN.md](docs/DESIGN.md)：总设计（冻结参考，新设计写 [docs/design](docs/design)）
 - [docs/INSTALL.md](docs/INSTALL.md)：安装、未签名提示、Linux 服务器、Docker 部署
 - [docs/release-notes](docs/release-notes)：各版本更新说明
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)：第三方组件与许可证

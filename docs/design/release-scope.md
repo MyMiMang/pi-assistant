@@ -1,5 +1,7 @@
 # 发布范围（`release-scope`）：怎么决定 tag 时构建哪些平台
 
+状态：已实现
+
 > 事实来源：`.github/release-scope.json`（范围取值）+ `scripts/release-scope.mjs`（推导矩阵、发布前校验）+ `.github/workflows/release.yml`（组装 matrix、冒烟、publish）。
 > **当前范围：`all-intel` = Mac arm64 + Intel Mac x64 + Windows x64 + Linux x64/arm64**（2026-10-17 用户明确「全部平台，含 Intel Mac」）。
 

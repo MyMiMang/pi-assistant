@@ -2,18 +2,16 @@
 
 只写**当前状态**，保持一屏到两屏。历史进度在 [history/HANDOFF-2026-10-18.md](history/HANDOFF-2026-10-18.md)，不要再往这里追加长段落。
 
-## 当前状态（2026-10-18）
+## 当前版本（2026-10-19）
 - 公开版：**v0.1.0-beta.32**（Latest）。main 上之后的改动均**未打包**。
-- 未打包改动：助理/群成员详情经典布局（八分类、64px 居中头像、单行标签 + 更多）；群成员改名/改头像后群里即时刷新（`e2e/room-member-rename-ui.mjs`）；代码清理（见下）。
-- 高级记忆健康（未打包）：思考回传 / 关思考、重排序限 50 候选、健康角标 + 通知、备用记忆模型、三步测试、每轮自动写入、每周跟进 Hindsight 上游（`design/memory-health.md`）。待真机验证。
-- 清理进度：已完成 主题测试/档位统一、artifacts+精简文档、拆 http.ts（2004→277 行，routes/*）、Pi 边界去 as never、群聊上限与改名刷新修复。未做：Subagents.tsx 简化（会改失败提示行为，待用户确认）、语音/本地ASR/Laya 挪包（牵涉打包，待确认）、拆 runtime/work-items/rooms 与群任务钩子化（见 [群聊协作设计](design/group-collaboration.md)）。
+- 未打包改动：助理/群成员详情经典布局与八页改造；输入框下去掉权限和主动程度按钮；设置页按界面标准改造；中转服务详情单列（按模型自动识别协议）；群成员改名即时刷新；代码清理（http.ts 拆到 routes/*、删 Laya 废代码）；项目规范化（AGENTS.md / MODULES.md / decisions / `npm run check`）。
 
-## 交付标准（Definition of Done）
-1. `npm run typecheck` 通过。
-2. 改动涉及的单测通过；动了服务端就跑 `npm test`（全绿，偶发 `deserialize cloned data` 是测试运行器 IPC 抖动，单独重跑该文件确认）。
-3. 跑**与改动相关**的 e2e（`e2e/*.mjs`，用 `fixtures/temp-server.mjs` 的临时数据 + Mock）。不跑全量矩阵、不重复跑多轮。
-4. 截图/日志写 `artifacts/`（已 gitignore），不入库；需要给用户看的截图直接发给用户。
-5. 在本文件「当前状态」改一两行；ROADMAP 改状态。不写长篇进度记录、不新建 progress-snapshot / evidence 目录。
+## 正在做
+- 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
+- 未做：拆 runtime / work-items / rooms 大文件与群任务钩子化（随[群聊协作设计](design/group-collaboration.md)）、语音挪成可选模块（下次打包时）。
+
+## 交付标准
+见 [AGENTS.md](../AGENTS.md)「交付清单」。偶发 `deserialize cloned data` 是测试运行器 IPC 抖动，单独重跑该文件确认。
 
 ## 待真机 / 待用户
 - 真机：Mac Lima / Windows WSL2 助理电脑、用户电脑 cua 控制、渠道真实账号（飞书/钉钉/企业微信/ClawBot）、Web Push、真实模型 Fast/计费、物理手机 / WebKit。

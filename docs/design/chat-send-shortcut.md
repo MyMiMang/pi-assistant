@@ -1,5 +1,7 @@
 # 发送快捷键 + 输入法防误发（chat-send-shortcut）
 
+状态：已实现
+
 需求（2026-10-16，用户原话大意）：「现 Shift+Enter 发送，因为此前中文 IME 回车确认候选会误发送；能修的话改回 Enter 发送，并设置可选 Enter 发送 / Shift+Enter 发送」。
 历史：beta.19 起为了绕开中文输入法回车确认误发，把发送键改成了 Shift+Enter（见 [ROADMAP](../ROADMAP.md) 对应行，**默认值已被本条覆盖**，IME 防误发要求继续有效）。
 
