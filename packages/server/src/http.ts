@@ -31,7 +31,7 @@ import { attachmentInputFor, fileInfo, getFile, insideWorkspace, listFiles, list
 import { identity } from "./identity.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "./login-flows.ts";
 import { getMessageByClientId, insertMessage, listMessages, toMessage, type MessageRow } from "./messages.ts";
-import { credentialBackend, customProviders, defaultModel, defaultThinking, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "./models.ts";
+import { credentialBackend, customProviders, defaultModel, defaultThinking, isThinkingLevel, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "./models.ts";
 import { fastCapability } from "./pi-adapter/fast-mode.ts";
 import { onboardingState } from "./onboarding.ts";
 import { getModelPicks, recordModelPick } from "./model-picks.ts";
@@ -407,7 +407,7 @@ app.get("/api/models/defaults", (c) => c.json({ model: defaultModel(), thinking:
 app.put("/api/models/default", async (c) => {
 	const b = await c.req.json<{ provider?: string; model?: string; thinking?: string }>();
 	if (b.thinking !== undefined) {
-		if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
+		if (!isThinkingLevel(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
 		setSetting("defaultThinking", b.thinking);
 	}
 	if (b.provider && b.model) {
@@ -425,7 +425,6 @@ const agentJson = (a: NonNullable<ReturnType<typeof getAgent>>) => {
 };
 app.get("/api/agents", (c) => c.json(listAgents().map(agentJson)));
 type AgentInput = { name?: string; avatar?: string; color?: string; persona?: string; description?: string; model?: { provider: string; id: string } | null; thinking?: string | null; /** 请求级 Fast：只动 agents.fast，不碰 thinking / 模型 */ fast?: boolean | null };
-const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const cleanAvatar = (v: string | undefined, name: string) => {
 	const t = (v ?? "").trim();
 	if (t.startsWith("img:")) return t; // 上传的图片（img:<版本>）
@@ -441,7 +440,7 @@ app.post("/api/agents", async (c) => {
 		id, name, cleanAvatar(b.avatar, name), b.color || "#6366f1", (b.persona ?? "").slice(0, 8000), (b.description ?? "").slice(0, 200), model?.provider ?? null, model?.id ?? null, listAgents().length, now(),
 	);
 	void hostAgentsChanged();
-	db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(b.thinking && THINKING.includes(b.thinking) ? b.thinking : defaultThinking(), id);
+	db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(isThinkingLevel(b.thinking) ? b.thinking : defaultThinking(), id);
 	insertMessage({ agentId: id, role: "assistant", content: `你好，我是${name} 👋\n\n我有自己的电脑，可以写代码、处理文件、上网查资料、操作网页和桌面应用，也能把耗时的活放到后台去做。想让我做点什么？` });
 	bus.emit({ type: "agents.changed" });
 	return c.json(agentJson(getAgent(id)!));
@@ -452,7 +451,7 @@ app.patch("/api/agents/:id", async (c) => {
 	const b = await c.req.json<AgentInput>();
 	if (b.model !== undefined && b.model && !models.getModel(b.model.provider, b.model.id)) return c.json({ error: "模型不存在" }, 400);
 	// 先校验整份输入，再写任何字段：失败时不能已经悄悄更改模型/资料。
-	if (b.thinking !== undefined && b.thinking !== null && !THINKING.includes(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
+	if (b.thinking !== undefined && b.thinking !== null && !isThinkingLevel(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
 	if (b.fast !== undefined && b.fast !== null && typeof b.fast !== "boolean") return c.json({ error: "Fast 开关不对" }, 400);
 	const name = b.name !== undefined ? b.name.trim().slice(0, 40) || a.name : a.name;
 	// 默认头像是名字前两个字：改名时若头像仍是旧名字的默认头像，跟着新名字走，否则群成员条/列表还显示旧名

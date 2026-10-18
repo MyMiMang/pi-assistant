@@ -31,7 +31,7 @@ test("默认主题是暗夜，且内置极简（linear）已移除", () => {
 	assert.equal(THEMES.length, 4);
 	assert.deepEqual(
 		THEMES.map((t) => t.id),
-		["glass", "warm", "pixel", "noir"],
+		["noir", "glass", "warm", "pixel"],
 	);
 	assert.equal(existsSync(join(THEME_DIR, "linear.css")), false, "linear.css 应已删除");
 	assert.equal(read(join(THEME_DIR, "index.css")).includes("linear.css"), false, "index.css 不应再 @import linear");
