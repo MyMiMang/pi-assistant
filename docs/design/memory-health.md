@@ -1,5 +1,7 @@
 # 高级记忆健康与自动兜底（2026-10-19）
 
+状态：已实现（未打包，待真机），见 decisions/0009
+
 目标：高级记忆（Hindsight）一直可用，基础记忆只是最后兜底；出问题用户第一时间知道。**不改 Hindsight 本身**，只改我们的适配层（`packages/server/src/memory/hindsight/*`、`llm-proxy.ts`、`pi-adapter`），只用官方配置项。
 
 ## 根因（2026-10-13～16 用户 Mac 只读诊断）

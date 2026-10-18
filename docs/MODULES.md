@@ -236,6 +236,7 @@
 | `ModelStrengths.tsx` | 模型擅长标签 |
 | `ImageModels.tsx` | 图片生成模型 |
 | `HindsightSettings.tsx` | 高级记忆设置 |
+| `MemoryHealthDot.tsx` | 高级记忆健康角标（正常 / 慢 / 出错） |
 | `VoiceSettings.tsx` | 语音配置 |
 | `LocalAsrModels.tsx` | 本地语音模型 |
 | `DefaultVoicePrep.tsx` | 默认本地语音准备状态 |
