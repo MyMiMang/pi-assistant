@@ -24,7 +24,7 @@ export function useCustomProviders() {
 	return { ...data, reload };
 }
 
-const SOURCE: Record<string, string> = { detected: "自动识别", known: "已知模型", default: "自动（默认）", user: "手动", learned: "自动学习" };
+export const SOURCE: Record<string, string> = { detected: "自动识别", known: "已知模型", default: "自动（默认）", user: "手动", learned: "自动学习" };
 
 /** token 数 → 简短好读：1048576 → 1M，131072 → 128K，384000 → 384K，235929 → 236K */
 export function fmtTokens(n?: number): string {
@@ -43,11 +43,11 @@ export function parseTokens(s: string): number | undefined {
 	const n = u === "m" ? v * 1_000_000 : u === "k" || v < 10_000 ? v * 1000 : v;
 	return n >= 1000 ? Math.round(n) : undefined;
 }
-const CTX_PRESETS: [string, number][] = [["32K", 32_768], ["64K", 65_536], ["128K", 131_072], ["200K", 200_000], ["1M", 1_048_576]];
-const OUT_PRESETS: [string, number][] = [["4K", 4096], ["8K", 8192], ["16K", 16_384], ["32K", 32_768], ["64K", 65_536]];
+export const CTX_PRESETS: [string, number][] = [["32K", 32_768], ["64K", 65_536], ["128K", 131_072], ["200K", 200_000], ["1M", 1_048_576]];
+export const OUT_PRESETS: [string, number][] = [["4K", 4096], ["8K", 8192], ["16K", 16_384], ["32K", 32_768], ["64K", 65_536]];
 
 /** 删除前把“谁会受影响”拼成人话，避免用户删完才发现别处坏了 */
-function deleteImpact(r?: ProviderReferences): string {
+export function deleteImpact(r?: ProviderReferences): string {
 	if (!r) return "";
 	const lines: string[] = [];
 	if (r.defaultModel) lines.push("• 默认模型会被清空，需要重新选一个");
@@ -61,7 +61,7 @@ function deleteImpact(r?: ProviderReferences): string {
 	return lines.length ? `\n\n会影响：\n${lines.join("\n")}` : "";
 }
 
-function LimitField({ label, value, presets, onChange, testid }: { label: string; value?: number; presets: [string, number][]; onChange: (v: number) => void; testid: string }) {
+export function LimitField({ label, value, presets, onChange, testid }: { label: string; value?: number; presets: [string, number][]; onChange: (v: number) => void; testid: string }) {
 	const [text, setText] = useState(value ? fmtTokens(value) : "");
 	const [bad, setBad] = useState(false);
 	useEffect(() => setText(value ? fmtTokens(value) : ""), [value]);
@@ -141,7 +141,7 @@ function ModelRow({ m, onChange, onRemove }: { m: CustomModel; onChange: (p: Par
 export function CustomProviderForm({ initial, apis, classifierProtocols = [], onSaved, onCancel, onDeleted }: { initial?: CustomProviderMeta; apis: { id: string; label: string }[]; classifierProtocols?: string[]; onSaved: (m: CustomProviderMeta) => void; onCancel?: () => void; onDeleted?: () => void }) {
 	const [dialog, ask] = useConfirm();
 	const [name, setName] = useState(initial?.name ?? "");
-	const [apiType, setApiType] = useState(initial?.api ?? apis[0]?.id ?? "openai-completions");
+	const [apiType, setApiType] = useState(initial?.api ?? (apis.some((a) => a.id === "openai-completions") || !apis.length ? "openai-completions" : apis[0].id));
 	const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
 	const [apiKey, setApiKey] = useState("");
 	const [noKey, setNoKey] = useState(initial?.noKey ?? false);
@@ -154,6 +154,14 @@ export function CustomProviderForm({ initial, apis, classifierProtocols = [], on
 	const [err, setErr] = useState("");
 	const [saved, setSaved] = useState<CustomProviderMeta | null>(initial ?? null);
 	const [testModel, setTestModel] = useState(initial?.models[0]?.id ?? "");
+	const [apiTouched, setApiTouched] = useState(!!initial);
+	// 新建时从地址猜接口格式和名称（只预填：名称为空才填、格式没手动改过才改）
+	const guess = async (url: string) => {
+		if (initial || !url.trim()) return;
+		const g = await api<{ api?: string; name?: string }>(`/api/models/custom/guess?url=${encodeURIComponent(url)}`).catch(() => ({}) as { api?: string; name?: string });
+		if (g.api && !apiTouched && apis.some((a) => a.id === g.api)) setApiType(g.api);
+		if (g.name) setName((n) => n || g.name!);
+	};
 	const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null);
 	useEffect(() => {
 		if (!apiType && apis[0]) setApiType(apis[0].id);
@@ -213,7 +221,7 @@ export function CustomProviderForm({ initial, apis, classifierProtocols = [], on
 				</label>
 				<label className="block space-y-1">
 					{label("API 类型")}
-					<select value={apiType} onChange={(e) => setApiType(e.target.value)} className="h-9 w-full rounded-lg border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900" aria-label="API 类型">
+					<select value={apiType} onChange={(e) => (setApiType(e.target.value), setApiTouched(true))} className="h-9 w-full rounded-lg border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900" aria-label="API 类型">
 						{apis.map((a) => (
 							<option key={a.id} value={a.id}>
 								{a.label}
@@ -224,7 +232,7 @@ export function CustomProviderForm({ initial, apis, classifierProtocols = [], on
 			</div>
 			<label className="block space-y-1">
 				{label("Base URL")}
-				<Input placeholder={PLACEHOLDER[apiType] ?? "https://…"} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+				<Input placeholder={PLACEHOLDER[apiType] ?? "https://…"} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} onBlur={(e) => void guess(e.target.value)} data-testid="custom-base-url" />
 			</label>
 			<div className="space-y-1">
 				{label("API Key")}
