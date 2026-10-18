@@ -1082,7 +1082,7 @@ await step("多个自定义服务（中文名）：各自独立 id；默认模�
 		await p.goto(`${BASE}/?settings=models`);
 		await p.getByTestId("default-model-picker").click();
 		const dmenu = p.getByTestId("default-model-menu");
-		await dmenu.waitFor();
+		for (const name of ["灯灯国产", "另一家中转"]) await dmenu.locator('[data-testid^="default-model-group-"]', { hasText: name }).first().waitFor().catch(() => {}); // 模型列表异步刷新：等两个分组都渲染出来再读（CI 慢机器偶发读到空）
 		const groups = await dmenu.locator('[data-testid^="default-model-group-"]').allTextContents();
 		if (!groups.some((t) => t.includes("灯灯国产")) || !groups.some((t) => t.includes("另一家中转"))) throw new Error(`默认模型菜单没按服务分组：${groups}`);
 		if ((await dmenu.innerText()).includes("custom-")) throw new Error("默认模型菜单里出现了内部 id");
