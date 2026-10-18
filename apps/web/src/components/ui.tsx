@@ -148,10 +148,10 @@ function bubblePos(anchor: HTMLElement | null): BubblePos {
 	if (!r) return { x: 0, y: 0, up: false };
 	return { x: Math.max(12, Math.min(r.left - 8, innerWidth - 312)), y: r.bottom + 6 > innerHeight - 160 ? r.top - 6 : r.bottom + 6, up: r.bottom + 6 > innerHeight - 160 };
 }
-/** 气泡本体（portal 到 body，避免被弹层裁切）。Help 与 HoverTip 共用，testid 保持旧契约。 */
-function Bubble({ id, pos, testid, children }: { id: string; pos: BubblePos; testid: string; children: ReactNode }) {
+/** 气泡本体（portal 到 body，避免被弹层裁切）。Help 与 HoverTip 共用，testid 保持旧契约。passive＝只是悬停打开的，不接收点击、不挡住下面的按钮。 */
+function Bubble({ id, pos, testid, passive, children }: { id: string; pos: BubblePos; testid: string; passive?: boolean; children: ReactNode }) {
 	return createPortal(
-		<div id={id} className="pa-help-pop" role="tooltip" data-testid={testid} style={{ left: pos.x, ...(pos.up ? { bottom: innerHeight - pos.y } : { top: pos.y }) }}>
+		<div id={id} className={cx("pa-help-pop", passive && "passive")} role="tooltip" data-testid={testid} style={{ left: pos.x, ...(pos.up ? { bottom: innerHeight - pos.y } : { top: pos.y }) }}>
 			{children}
 		</div>,
 		document.body,
@@ -262,19 +262,17 @@ export function useHoverTip(delayMs = 450) {
  *  可访问性：Tab 聚焦即打开、Escape 关闭、点外部关闭；Escape 只关这一层（不会连底层设置弹窗一起关），
  *  关掉后焦点仍留在按钮上但不立刻重开（等下一次真正的聚焦 / 点击）。 */
 export function Help({ children, className }: { children: ReactNode; className?: string }) {
-	const [open, setOpen] = useState(false);
+	// "hover"：鼠标悬停打开（含布局变动把「?」挪到静止的鼠标下）→ 气泡只看不挡点击；点开 / 聚焦打开为 true，可点里面的链接
+	const [open, setOpen] = useState<false | "hover" | true>(false);
 	const [pos, setPos] = useState<BubblePos>({ x: 0, y: 0, up: false });
 	const ref = useRef<HTMLButtonElement>(null);
 	const popId = useId();
 	// Escape 关闭后抑制「focus 立即重开」：保持焦点在按钮上但不弹，直到用户真的移开再回来（onBlur 复位）。
 	const suppressFocus = useRef(false);
-	const show = () => {
-		setPos(bubblePos(ref.current));
-		setOpen(true);
-	};
+	const show = (how: "hover" | true = true) => (setPos(bubblePos(ref.current)), setOpen(how));
 	const close = () => setOpen(false);
 	// 捕获阶段拦下 Escape：只关气泡，不把底层设置弹窗一起关掉；关掉后焦点留在按钮上但不立刻重开。
-	useDismissBubble(open, ref, popId, close, () => {
+	useDismissBubble(!!open, ref, popId, close, () => {
 		suppressFocus.current = true;
 	});
 	return (
@@ -283,10 +281,10 @@ export function Help({ children, className }: { children: ReactNode; className?:
 				type="button"
 				ref={ref}
 				aria-label="说明"
-				aria-expanded={open}
+				aria-expanded={!!open}
 				aria-describedby={open ? popId : undefined}
 				data-testid="help"
-				onMouseEnter={show}
+				onMouseEnter={() => show("hover")}
 				onMouseLeave={() => {
 					if (document.activeElement !== ref.current) close();
 				}}
@@ -300,7 +298,7 @@ export function Help({ children, className }: { children: ReactNode; className?:
 			>
 				<CircleHelp size={14} />
 			</button>
-			{open && <Bubble id={popId} pos={pos} testid="help-pop">{children}</Bubble>}
+			{open && <Bubble id={popId} pos={pos} testid="help-pop" passive={open === "hover"}>{children}</Bubble>}
 		</span>
 	);
 }
