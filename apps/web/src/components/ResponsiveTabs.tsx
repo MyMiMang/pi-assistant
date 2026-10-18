@@ -7,8 +7,11 @@ import { cx } from "./ui";
  * 自适应标签栏：量出可用宽度，放不下的标签收进「更多」菜单（.pa-pop 样式）。
  * 当前选中的标签始终可见（若本应溢出，则替换掉最后一个可见标签）。
  * 键盘：标签间 ←/→/Home/End；「更多」按钮 Enter/↓ 打开菜单，菜单内 ↑/↓/Esc。
+ *
+ * variant：chips = 默认胶囊标签；plain = 助理设置的单行文字分类；tabs = 二级页签（下划线）。
+ * 测量行与可见标签用同一套排版类，保证「更多」的临界点和真实宽度一致。
  */
-export function ResponsiveTabs({ tabs, value, onChange, className, testId }: { tabs: readonly (readonly [string, string])[]; value: string; onChange: (k: string) => void; className?: string; testId?: string }) {
+export function ResponsiveTabs({ tabs, value, onChange, className, testId, variant = "chips" }: { tabs: readonly (readonly [string, string])[]; value: string; onChange: (k: string) => void; className?: string; testId?: string; variant?: "chips" | "plain" | "tabs" }) {
 	const wrap = useRef<HTMLDivElement>(null);
 	const measure = useRef<HTMLDivElement>(null);
 	const moreBtn = useRef<HTMLButtonElement>(null);
@@ -17,7 +20,7 @@ export function ResponsiveTabs({ tabs, value, onChange, className, testId }: { t
 	const [widths, setWidths] = useState<number[]>([]);
 	const [moreW, setMoreW] = useState(0);
 	const [open, setOpen] = useState(false);
-	const GAP = 4;
+	const GAP = variant === "chips" ? 4 : 0;
 
 	useLayoutEffect(() => {
 		const m = measure.current;
@@ -25,7 +28,7 @@ export function ResponsiveTabs({ tabs, value, onChange, className, testId }: { t
 		const bs = [...m.querySelectorAll<HTMLElement>("[data-measure]")];
 		setWidths(bs.map((b) => b.getBoundingClientRect().width));
 		setMoreW(m.querySelector<HTMLElement>("[data-measure-more]")?.getBoundingClientRect().width ?? 40);
-	}, [tabs]);
+	}, [tabs, variant]);
 	useLayoutEffect(() => {
 		const el = wrap.current;
 		if (!el) return;
@@ -89,15 +92,24 @@ export function ResponsiveTabs({ tabs, value, onChange, className, testId }: { t
 		const items = [...(menu.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
 		const i = items.indexOf(document.activeElement as HTMLElement);
 		if (e.key === "Escape") { e.preventDefault(); setOpen(false); moreBtn.current?.focus(); }
+		else if (e.key === "Home") { e.preventDefault(); items[0]?.focus(); }
+		else if (e.key === "End") { e.preventDefault(); items.at(-1)?.focus(); }
 		else if (e.key === "ArrowDown") { e.preventDefault(); items[(i + 1) % items.length]?.focus(); }
 		else if (e.key === "ArrowUp") { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
 		else if (e.key === "Tab") setOpen(false);
 	};
 
-	const chip = (k: string) => cx("pa-chip sm shrink-0 !border-transparent whitespace-nowrap", value === k ? "!bg-hover !text-fg font-medium" : "!bg-transparent");
+	const chip = (k: string) =>
+		variant === "plain"
+			? cx("pa-info-tab shrink-0", value === k && "font-medium")
+			: variant === "tabs"
+				? cx("pa-subtab")
+				: cx("pa-chip sm shrink-0 !border-transparent whitespace-nowrap", value === k ? "!bg-hover !text-fg font-medium" : "!bg-transparent");
+	const measureCls = variant === "plain" ? "pa-info-tab shrink-0 font-medium" : variant === "tabs" ? "pa-subtab !flex-none font-medium" : "pa-chip sm shrink-0 font-medium";
+	const moreCls = variant === "plain" ? "pa-info-tab" : variant === "tabs" ? "pa-subtab !flex-none" : "pa-chip sm shrink-0 !border-transparent !bg-transparent";
 	return (
-		<div className="relative">
-			<div ref={wrap} className={cx("flex gap-1 overflow-hidden", className)} role="tablist" data-testid={testId} onKeyDown={onTabKey}>
+		<div className="relative min-h-0 shrink-0">
+			<div ref={wrap} className={cx("flex overflow-hidden", variant === "chips" ? "gap-1" : "gap-0", className)} role="tablist" data-testid={testId} onKeyDown={onTabKey}>
 				{visible.map((i) => {
 					const [k, label] = tabs[i];
 					return (
@@ -108,14 +120,14 @@ export function ResponsiveTabs({ tabs, value, onChange, className, testId }: { t
 				})}
 				{overflow.length > 0 && (
 					<button ref={moreBtn} data-more type="button" aria-haspopup="menu" aria-expanded={open} aria-label={t("更多")} title={t("更多")} data-testid={testId ? `${testId}-more` : undefined}
-						onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); } }} className={cx("pa-chip sm shrink-0 !border-transparent !bg-transparent", open && "!bg-hover")}>
+						onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); } }} className={cx(moreCls, variant === "chips" && open && "!bg-hover")}>
 						{t("更多")}
 						<ChevronDown size={12} />
 					</button>
 				)}
 			</div>
 			{open && overflow.length > 0 && (
-				<div ref={menu} role="menu" onKeyDown={onMenuKey} className="pa-pop absolute top-full right-3 z-30 mt-1 rounded-xl border border-line bg-card p-1.5 shadow-lg [--pop-w:14rem]" data-testid={testId ? `${testId}-menu` : undefined}>
+				<div ref={menu} role="menu" onKeyDown={onMenuKey} className="pa-pop absolute top-full right-3 z-30 mt-1 max-h-[50vh] overflow-y-auto rounded-xl border border-line bg-card p-1.5 shadow-lg [--pop-w:14rem]" data-testid={testId ? `${testId}-menu` : undefined}>
 					{overflow.map((i) => {
 						const [k, label] = tabs[i];
 						return (
@@ -127,11 +139,11 @@ export function ResponsiveTabs({ tabs, value, onChange, className, testId }: { t
 				</div>
 			)}
 			{/* 隐藏测量行：所有标签按选中态（加粗）的宽度测量 */}
-			<div ref={measure} aria-hidden className="pointer-events-none invisible absolute top-0 left-0 flex gap-1 whitespace-nowrap" style={{ height: 0, overflow: "hidden" }}>
+			<div ref={measure} aria-hidden className={cx("pointer-events-none invisible absolute top-0 left-0 flex whitespace-nowrap", variant === "chips" ? "gap-1" : "gap-0")} style={{ height: 0, overflow: "hidden" }}>
 				{tabs.map(([k, label]) => (
-					<span key={k} data-measure className="pa-chip sm shrink-0 font-medium">{t(label)}</span>
+					<span key={k} data-measure className={measureCls}>{t(label)}</span>
 				))}
-				<span data-measure-more className="pa-chip sm shrink-0">{t("更多")}<ChevronDown size={12} /></span>
+				<span data-measure-more className={moreCls}>{t("更多")}<ChevronDown size={12} /></span>
 			</div>
 		</div>
 	);

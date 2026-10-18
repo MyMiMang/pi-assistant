@@ -1,0 +1,23 @@
+
+[1] 画图选择读取被延迟：目录先就绪也不能出现可写 select
+PASS image-choice: 延迟读取不出可写 select；失败回滚 + 双处错误；解除失败后真实读回 default
+
+[2] 空目录 / 图片目录 503：仍只有「跟随默认」「不画图」可改，重试目录恢复
+PASS image-catalog: 空目录/503 时两项仍可改；真实重试恢复目录后可选并真实保存具体模型
+
+[3] 候选池 / 思考强度 / 任务上限读取失败：摘要不写假值，展开真实错误 + 重试
+PASS subagent-loads: 三份 GET 失败不写假摘要，各自的真实重试后回到真实数据
+
+[3b] 候选池连续勾选：第二次等第一次结束；迟到失败不抹掉第二次
+PASS pool-race: 写入串行、菜单不关、迟到 500 不覆盖后一次选择，最终以真实 pool 为准
+
+[3c] 思考强度 PUT 失败：回滚已确认值并留错误，解除失败后重试成功
+PASS subagent-thinking: 失败回滚 follow 并留错误；解除失败后重试写入 fixed/max
+
+[4] 任务上限：保存中禁用输入，失败回滚并给错误，成功与「继承默认」走真实 GET
+PASS subagent-limits: 挂起禁用、失败回滚+错误、成功一致、继承默认读回真实 GET
+
+[5] 切助理 / 离开模型页：被挂起的旧 GET 迟到返回（含 503）不污染当前面板
+PASS stale: 切助理/离开模型页后旧 GET 迟到返回不污染当前面板
+
+全部通过（截图/失败图目录：/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/agent-details-visual-polish/evidence/agent-details-classic/recovery1）

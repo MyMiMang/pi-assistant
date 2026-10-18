@@ -30,7 +30,7 @@ export function Button({ variant = "default", size = "md", className, ...p }: Bu
 
 const avatarCache = new Map<string, Promise<string>>();
 /** 头像：emoji / 文字（彩色圆底）或上传的图片（avatar = "img:<版本>"，需带 agentId）。 */
-export function Avatar({ text, color, size = 36, running, agentId, src }: { text: string; color: string; size?: number; running?: boolean; agentId?: string; src?: string }) {
+export function Avatar({ text, color, size = 36, running, agentId, src, testId }: { text: string; color: string; size?: number; running?: boolean; agentId?: string; src?: string; testId?: string }) {
 	const isImg = text.startsWith("img:") && !!agentId;
 	const [url, setUrl] = useState<string | null>(src ?? null);
 	useEffect(() => {
@@ -45,7 +45,7 @@ export function Avatar({ text, color, size = 36, running, agentId, src }: { text
 	}, [isImg, agentId, text, src]);
 	const emojiOnly = /\p{Extended_Pictographic}/u.test(text);
 	return (
-		<div className="relative shrink-0" style={{ width: size, height: size }}>
+		<div className="relative shrink-0" style={{ width: size, height: size }} data-testid={testId}>
 			{url ? (
 				<img src={url} alt="" className="pa-avatar h-full w-full object-cover" />
 			) : (

@@ -211,7 +211,7 @@ export function ProposalCard({ m }: { m: Message }) {
 }
 
 /** 群专属助理（信息面板顶部）：私聊 /「复制到我的助理」 */
-export function RoomAgentActions({ agentId }: { agentId: string }) {
+export function RoomAgentActions({ agentId, variant }: { agentId: string; variant?: "pane" }) {
 	const agent = useStore((s) => s.agents.find((a) => a.id === agentId));
 	const room = useStore((s) => s.rooms.find((r) => r.id === agent?.room_id));
 	const [open, setOpen] = useState(false);
@@ -219,6 +219,7 @@ export function RoomAgentActions({ agentId }: { agentId: string }) {
 	const [busy, setBusy] = useState(false);
 	const [done, setDone] = useState("");
 	if (!agent || agent.scope !== "room") return null;
+	const pane = variant === "pane";
 	const copy = async () => {
 		setBusy(true);
 		try {
@@ -233,12 +234,12 @@ export function RoomAgentActions({ agentId }: { agentId: string }) {
 		}
 	};
 	return (
-		<div className="mx-4 mb-3 rounded-xl border border-line p-3 text-sm" data-testid="room-agent-actions">
-			<div className="flex min-w-0 items-center gap-1 text-xs text-mut">
+		<div className={cx("text-sm", pane ? "pa-group-box" : "mx-4 mb-3 rounded-xl border border-line p-3")} data-testid="room-agent-actions">
+			<div className={cx("flex min-w-0 items-center gap-1", pane ? "pa-group-context" : "text-xs text-mut")}>
 				<span className="min-w-0 flex-1 whitespace-normal break-words">群专属助理{room ? ` · ${room.name}` : ""}</span>
-				<Help>只在这个群里出现，不在侧边栏。复制到我的助理后是一个独立的新助理，互不影响。</Help>
+				<Help>只在这个群里出现，不在侧边栏。同一助理在私聊与所属群中共用这些设置。复制到我的助理后是一个独立的新助理，互不影响。</Help>
 			</div>
-			<div className="mt-2 flex flex-wrap gap-2">
+			<div className={cx("flex flex-wrap gap-2", pane ? "pa-group-chips" : "mt-2")}>
 				<button className="pa-chip sm" onClick={() => void useStore.getState().selectAgent(agentId)} data-testid="room-agent-chat">私聊</button>
 				<button className="pa-chip sm" onClick={() => setOpen(!open)} data-testid="copy-to-mine">复制到我的助理</button>
 			</div>

@@ -1,4 +1,4 @@
-import { Loader2, RefreshCw, Search, Settings2, Sparkles } from "lucide-react";
+import { Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
@@ -66,11 +66,14 @@ export function AgentSkills({ agentId }: { agentId: string }) {
 	}, [list, q]);
 	return (
 		<section className="space-y-2" data-testid="agent-skills">
-			<div className="pa-sec-label flex flex-wrap items-center gap-1">
-				<Sparkles size={13} /> 技能
-				{loading && <Loader2 size={12} className="animate-spin text-mut" aria-hidden />}
+			<div className="pa-info-sechead">
+				<strong className="flex min-w-0 items-center gap-1.5">
+					<Sparkles size={13} /> 技能
+					{loading && <Loader2 size={12} className="animate-spin text-mut" aria-hidden />}
+					<Help>技能是可复用的做事方法。默认一个都不启用（内置技能也不例外）；没启用的技能，助理连名字和描述都看不到。基础工具不受影响，始终可用。</Help>
+				</strong>
 				{list && (
-					<span className="ml-auto text-xs font-normal text-mut" data-testid="agent-skills-count">
+					<span className="text-xs font-normal text-mut" data-testid="agent-skills-count">
 						已启用 {enabled.length} / {list.length}
 					</span>
 				)}
@@ -97,15 +100,13 @@ export function AgentSkills({ agentId }: { agentId: string }) {
 				</div>
 			) : (
 				<>
-					<p className="text-xs text-mut">
-						这个助理能用哪些技能。 <Help>技能是可复用的做事方法。默认一个都不启用（内置技能也不例外）；没启用的技能，助理连名字和描述都看不到。基础工具不受影响，始终可用。</Help>
-					</p>
-					{list.length > 6 && (
-						<div className="relative">
-							<Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-mut" />
-							<Input className="pl-7" placeholder="搜索技能" value={q} onChange={(e) => setQ(e.target.value)} data-testid="agent-skills-search" />
+					<div className="flex gap-1.5">
+						<div className="relative min-w-0 flex-1">
+							<Search size={13} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-mut" />
+							<Input className="!pl-7" placeholder="搜索技能" value={q} onChange={(e) => setQ(e.target.value)} data-testid="agent-skills-search" />
 						</div>
-					)}
+						<Button size="sm" variant="outline" onClick={() => useStore.getState().set({ settings: "skills" })} data-testid="agent-skills-library">技能库</Button>
+					</div>
 					{enabled.length === 0 && (
 						<div className="rounded-lg bg-hover/60 px-3 py-2 text-xs text-mut" data-testid="agent-skills-empty">
 							未启用技能，基础工具仍可用。
@@ -118,7 +119,7 @@ export function AgentSkills({ agentId }: { agentId: string }) {
 									<input type="checkbox" className="mt-1" checked={enabledSet.has(s.id)} onChange={(e) => void toggle(s.id, e.target.checked)} data-testid={`agent-skill-${s.name}`} />
 									<span className="min-w-0">
 										<span className="flex items-center gap-1.5">
-											<span className="font-mono text-[13px]">{s.name}</span>
+											<span className="font-mono text-[13px] break-all">{s.name}</span>
 											<Badge tone={s.builtin ? "zinc" : "green"}>{SRC[s.source]}</Badge>
 										</span>
 										<span className="line-clamp-2 text-xs text-mut">{s.description}</span>

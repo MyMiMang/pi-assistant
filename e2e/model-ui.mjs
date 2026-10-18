@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { closeModelPanel, openCompact, openModelMenu } from "./model-menu-flow.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
+import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
 
 const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname);
 // 本次运行独占的临时目录（DATA / WORKSPACE / HOME / TMPDIR）；finally 只删它自己
@@ -385,6 +386,7 @@ try {
 		if (await tab.count()) await tab.click();
 		else { await page.getByTestId("info-tabs-more").click(); await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "模型", exact: true }).click(); }
 	}
+	await expandAgentModelSection(page, "subagents");
 	const sub = page.getByTestId("agent-subagent-model");
 	await sub.waitFor();
 	assert.equal(await sub.locator("select").count(), 0, "候选池不应是原生 select");

@@ -1,0 +1,16 @@
+
+> @pi-assistant/web@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v8.3.4 building client environment for production...
+transforming...
+✓ 2540 modules transformed.
+rendering chunks...
+precompress: 已为 dist 下文本资源生成 .gz
+computing gzip size...
+dist/index.html                     0.99 kB │ gzip:   0.45 kB
+dist/assets/index-DuOiyRFo.css    197.19 kB │ gzip:  35.33 kB
+dist/assets/rfb-CtGtw_KV.js       187.38 kB │ gzip:  56.52 kB
+dist/assets/index-DnDnHOoF.js   1,404.49 kB │ gzip: 426.19 kB
+
+✓ built in 718ms

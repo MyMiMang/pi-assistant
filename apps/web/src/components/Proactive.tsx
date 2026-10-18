@@ -118,7 +118,7 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 	if (!d) return null;
 	const c = d.cfg;
 	return (
-		<div className="space-y-5 text-sm" data-testid="proactive-tab">
+		<div className="min-w-0 space-y-5 text-sm" data-testid="proactive-tab">
 			<div className="space-y-2">
 				<div className="font-medium">主动等级</div>
 				<div className="flex flex-wrap gap-1.5">
@@ -143,8 +143,8 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 				)}
 			</div>
 			{d.level !== "off" && (
-				<div className="space-y-3 rounded-xl border border-line p-3">
-					<label className="flex items-center gap-2">
+				<div className="space-y-3">
+					<label className="flex flex-wrap items-center gap-2">
 						<span className="w-24 shrink-0 text-mut">免打扰</span>
 						<input type="checkbox" checked={!!c.quiet} onChange={(e) => void save({ cfg: { quiet: e.target.checked ? { start: "22:00", end: "08:00" } : null } })} />
 						{c.quiet && (
@@ -155,17 +155,20 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 							</>
 						)}
 					</label>
-					<label className="flex items-center gap-2">
+					<label className="flex flex-wrap items-center gap-2">
 						<span className="w-24 shrink-0 text-mut">只在工作日</span>
 						<input type="checkbox" checked={c.weekdaysOnly} onChange={(e) => void save({ cfg: { weekdaysOnly: e.target.checked } })} />
 						<span className="text-xs text-mut">周末不巡检（约好的跟进照常）</span>
 					</label>
-					<label className="flex items-center gap-2">
+					<label className="flex flex-wrap items-center gap-2">
 						<span className="w-24 shrink-0 text-mut">每日简报</span>
 						<input type="checkbox" checked={!!c.dailyBrief} onChange={(e) => void save({ cfg: { dailyBrief: e.target.checked ? "08:30" : null } })} data-testid="proactive-brief" />
 						{c.dailyBrief && <Input className="!w-24" type="time" value={c.dailyBrief} onChange={(e) => void save({ cfg: { dailyBrief: e.target.value } })} />}
 					</label>
-					<label className="flex items-center gap-2">
+					<details className="pa-info-details" data-testid="agent-proactive-cadence-details">
+						<summary>提醒节奏与渠道<small>{d.cadenceMin} 分钟 · 每天最多 {d.budget} 条 · {c.deliver === "app" ? "只在 App" : "App + 同步到渠道"}</small></summary>
+						<div className="pa-info-details-body">
+					<label className="flex flex-wrap items-center gap-2">
 						<span className="w-24 shrink-0 text-mut">巡检间隔</span>
 						<select className="pa-input !w-auto" value={c.cadenceMin ?? ""} onChange={(e) => void save({ cfg: { cadenceMin: e.target.value ? Number(e.target.value) : null } })}>
 							<option value="">按等级（{d.cadenceMin} 分钟）</option>
@@ -176,7 +179,7 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 							))}
 						</select>
 					</label>
-					<label className="flex items-center gap-2">
+					<label className="flex flex-wrap items-center gap-2">
 						<span className="w-24 shrink-0 text-mut">每天最多</span>
 						<select className="pa-input !w-auto" value={c.budget ?? ""} onChange={(e) => void save({ cfg: { budget: e.target.value === "" ? null : Number(e.target.value) } })}>
 							<option value="">按等级（{d.budget} 条）</option>
@@ -187,13 +190,15 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 							))}
 						</select>
 					</label>
-					<label className="flex items-center gap-2">
+					<label className="flex flex-wrap items-center gap-2">
 						<span className="w-24 shrink-0 text-mut">同步到渠道</span>
 						<select className="pa-input !w-auto max-w-full" title="消息总是先进 Pi Assistant（App 里的对话 + 推送）；选“同步到渠道”会再把副本发到已连接的微信 / 飞书 / 钉钉 / 企业微信单聊，定时任务结果也一样" value={c.deliver === "app" ? "app" : "auto"} onChange={(e) => void save({ cfg: { deliver: e.target.value } })}>
 							<option value="auto">App + 同步到渠道</option>
 							<option value="app">只在 App</option>
 						</select>
 					</label>
+						</div>
+					</details>
 					{Object.entries(c.muted).filter(([, u]) => u > Date.now()).length > 0 && (
 						<div className="flex flex-wrap items-center gap-1.5 text-xs text-mut">
 							暂不提醒：

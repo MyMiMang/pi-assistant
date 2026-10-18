@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { stableShot } from "./fixtures/stable-shot.mjs";
-import { infoTab } from "./fixtures/info-pane.mjs";
+import { infoTab, expandAgentModelSection, agentProfileSave } from "./fixtures/info-pane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-room-model-settings-");
@@ -81,11 +81,13 @@ try {
  };
  await infoTab(page, "overview");
  await pane.getByTestId("overview-model-settings").waitFor();
- assert.equal(await pane.getByTestId("member-model-settings").count(), 0, "概览只做摘要，不直接铺开模型控件");
+ assert.equal(await pane.getByTestId("agent-models-tab").count(), 0, "概览只做摘要，不直接铺开模型控件");
  await pane.getByTestId("overview-model-settings").click();
- await pane.getByTestId("member-model-settings").waitFor();
- assert.equal(await pane.getByTestId("member-model-settings").locator("select").count(), 0, "模型/强度选择不是原生 select");
- // 图片模型依赖两份异步配置；等区块完成加载再验证保留入口，不能拿刚挂载的 null 当功能丢失。
+ await pane.getByTestId("agent-model-settings").waitFor();
+ assert.equal(await pane.getByTestId("agent-model-settings").locator("select").count(), 0, "模型/强度选择不是原生 select");
+ // 图片模型 / 子代理默认折在 native details 里；这里真的点开再验证入口保留。
+ await expandAgentModelSection(page, "image");
+ await expandAgentModelSection(page, "subagents");
  await pane.getByTestId("agent-image-model").waitFor();
  await pane.getByTestId("agent-subagent-model").waitFor();
  assert.ok(await pane.getByTestId("agent-image-model").isVisible(), "模型页仍管理图片模型");
@@ -96,7 +98,7 @@ try {
  await page.goto(`${base}/?room=${room.id}`); await page.getByTestId("room-members").locator(`button[title^="${manager.name}"]`).click();
  await infoTab(page, "overview");
  await pane.getByTestId("overview-model-settings").click();
- await pane.getByTestId("member-model-settings").waitFor();
+ await pane.getByTestId("agent-model-settings").waitFor();
  await wait(async () => /关闭/.test(await pane.getByTestId("agent-thinking").innerText()));
  console.log("PASS created member: overview is a summary that navigates to models; strength saves immediately and survives reload");
 
@@ -106,13 +108,13 @@ try {
  assert.equal(await profile.getByTestId("agent-draft").count(), 0, "资料页不再有模型草稿区");
  assert.equal(await profile.getByTestId("agent-computer").count(), 0, "电脑设置不再混在资料页");
  const description = profile.getByPlaceholder("一句话介绍（显示在侧边栏和概览里）");
- const saveProfile = async () => { const btn = profile.getByRole("button", { name: "保存", exact: true }); await btn.waitFor(); await btn.click(); };
+ const saveProfile = async () => { const btn = agentProfileSave(pane); await btn.waitFor(); await btn.click(); };
  const descriptionBefore = (await j("/api/agents")).find((a) => a.id === manager.id).description;
  await description.fill("资料草稿：跑活动");
  assert.equal((await j("/api/agents")).find((a) => a.id === manager.id).description, descriptionBefore, "资料保存前不落库");
  await infoTab(page, "models");
  assert.ok(await pane.isVisible(), "模型/资料切页不关闭信息面板");
- await pane.getByTestId("member-model-settings").waitFor();
+ await pane.getByTestId("agent-model-settings").waitFor();
  await infoTab(page, "profile");
  assert.equal(await description.inputValue(), "资料草稿：跑活动", "跨一级 tab 保留未保存草稿");
  const failPatch = async (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "临时保存失败" }) });
@@ -217,7 +219,7 @@ try {
  await isolated.goto(`${base}/?room=${room.id}`);
  await isolated.getByTestId("room-members").locator('button[title^="统筹"]').click();
  const directPane = isolated.locator(".pa-pane-wrap");
- const models = async () => { await infoTab(isolated, "models"); await directPane.getByTestId("member-model-settings").waitFor(); };
+ const models = async () => { await infoTab(isolated, "models"); await directPane.getByTestId("agent-model-settings").waitFor(); };
  const chooseLive = async (id) => {
    await directPane.getByTestId("model-picker").click();
    await isolated.getByTestId("model-menu").waitFor();

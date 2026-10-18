@@ -513,10 +513,14 @@ export interface ModelPickerButtonProps {
 	onRetry?: () => void;
 	/** 输入栏 / 聊天入口：默认打开紧凑弹层（强度 + 模型名 + 闪电 + 滑块），点模型名才进完整目录 */
 	compact?: boolean;
+	/** 自定义按钮内容（设置页的整行模型选择器用：模型名 + 服务名），传了就不再用 text */
+	content?: ReactNode;
+	/** 不要默认的胶囊按钮样式（设置页整行选择器自带 .pa-set-model-btn） */
+	plainButton?: boolean;
 }
 
 /** 共用的「模型按钮 + 菜单」；聊天 / 群聊成员 / 子代理都用它，避免各写一套 */
-export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, fast, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen, loading, error = false, onRetry, compact = false }: ModelPickerButtonProps) {
+export function ModelPickerButton({ testid, id = testid, models, providers, value, thinking, fast, picks, onPick, text, icon, title, ariaLabel, buttonClass, hideTextInNarrow, groupByProvider, placement, header, disabled, onOpen, loading, error = false, onRetry, compact = false, content, plainButton = false }: ModelPickerButtonProps) {
 	const btnRef = useRef<HTMLButtonElement>(null);
 	// 键盘（Enter / Space）打开时把焦点落进紧凑层的模型名，鼠标打开不抢焦点
 	const openedByKeyboard = useRef(false);
@@ -580,7 +584,7 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 			<button
 				ref={btnRef}
 				type="button"
-				className={cx("pa-chip sm !shrink min-w-0", buttonClass)}
+				className={cx("min-w-0", !plainButton && "pa-chip sm !shrink", buttonClass)}
 				disabled={disabled}
 				onClick={(e) => {
 					if (open) applyPanel("close");
@@ -595,7 +599,7 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 				data-testid={testid}
 			>
 				{icon ?? <Cpu className="pa-ic" />}
-				{text ? <span className={cx("truncate", hideTextInNarrow && COMPOSER_LABEL)}>{text}</span> : null}
+				{content ?? (text ? <span className={cx("truncate", hideTextInNarrow && COMPOSER_LABEL)}>{text}</span> : null)}
 				<ChevronDown size={12} />
 			</button>
 			{open &&
@@ -797,42 +801,84 @@ export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, all
 		},
 	};
 	const thinking: ThinkingChoice = { levels, current: allowThinkingFollow ? agent.thinkingSetting ?? null : curThinking ?? "", effective: curThinking, followLabel: allowThinkingFollow ? "跟随默认" : undefined, onPick: (l) => saveModel({ thinking: l }) };
+	// 设置页的思考强度文案：真实支持档位 / 跟随来源 / 有效值；加载、失败、未选择、真无档位分开说
+	const thinkingText = !levels.length && d.loading ? "正在加载…" : !levels.length && d.error ? "加载失败" : !entry ? "待选择模型" : !levels.length ? "该模型无思考档位" : thinking.current === null ? `跟随默认${curThinking ? ` · ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}` : thinking.current !== curThinking && curThinking ? `${THINKING_LABEL[thinking.current] ?? thinking.current} → ${THINKING_LABEL[curThinking] ?? curThinking}` : THINKING_LABEL[curThinking] ?? curThinking ?? "待选择模型";
+	const providerName = d?.providers.find((p) => p.id === cur?.provider)?.name ?? entry?.providerName ?? cur?.provider ?? "";
+	const fastStatus = fast.unavailable ? "暂不可用，请重试模型目录" : d.loading ? "能力加载中" : fast.capability === "unsupported" ? "当前接口暂未接入 Fast" : fast.on ? "已开启" : "已关闭";
+	if (layout === "settings")
+		return (
+			<div className="min-w-0" data-testid="agent-model-settings" aria-busy={modelPending || undefined}>
+				<div className="pa-set-model">
+					<ModelPickerButton
+						testid="model-picker"
+						id="model"
+						models={d?.models ?? []}
+						providers={d?.providers ?? []}
+						value={cur ?? null}
+						picks={picks}
+						onPick={(m) => saveModel({ model: { provider: m.provider, id: m.id } }, m)}
+						hideTextInNarrow={false}
+						loading={d.loading}
+						error={d.error}
+						onRetry={d.reload}
+						onOpen={d.reload}
+						buttonClass="pa-set-model-btn"
+						plainButton
+						disabled={modelPending}
+						title="选择这个助理用的主模型"
+						ariaLabel={`主模型：${entry?.name ?? cur?.id ?? "未选择"}${providerName ? `（${providerName}）` : ""}`}
+						content={
+							<span className="pa-set-model-text">
+								<span className="pa-set-model-label">主模型</span>
+								<span className="pa-set-model-name">{entry?.name ?? cur?.id ?? "选择模型"}</span>
+								<span className="pa-set-model-svc">{providerName || (d.loading ? "正在读取服务…" : d.error ? "服务目录没加载出来" : "未选择服务")}</span>
+							</span>
+						}
+					/>
+				</div>
+				<div className="pa-info-row">
+					<span className="pa-info-row-main">
+						<strong>思考强度</strong>
+						<small>{levels.length ? `支持 ${levels.map((l) => THINKING_LABEL[l] ?? l).join(" / ")}` : d.loading ? "正在读取模型支持的档位" : d.error ? "档位目录没加载出来" : "这个模型不提供思考档位"}</small>
+					</span>
+					<ThinkingButton testid="agent-thinking" {...thinking} disabled={modelPending} modelName={entry?.name ?? cur?.id} buttonClass="max-w-full" loading={d.loading} error={d.error} onRetry={d.reload} text={thinkingText} />
+				</div>
+				<div className="pa-info-row">
+					<span className="pa-info-row-main">
+						<strong>Fast 快速模式</strong>
+						{fastStatus && <small>{fastStatus}</small>}
+					</span>
+					<FastButton testid="agent-model" fast={fast} variant="settings" />
+				</div>
+				{fastError && <p className="text-xs text-red-600 dark:text-red-400" role="alert">{fastError}</p>}
+				{modelPending && <span className="block text-xs text-mut" role="status">保存中…</span>}
+				{modelError && <p className="mt-1 max-w-[340px] whitespace-normal break-words text-xs text-red-600 dark:text-red-400" role="alert" data-testid="model-save-error">{modelError}</p>}
+			</div>
+		);
 	return (
 		<div className="min-w-0 space-y-2" data-testid="agent-model-settings" aria-busy={modelPending || undefined}>
-		{layout === "settings" && <div className="text-xs text-mut">主模型</div>}
 		<ModelPickerButton
 			testid="model-picker"
 			id="model"
 			models={d?.models ?? []}
 			providers={d?.providers ?? []}
 			value={cur ?? null}
-			thinking={layout === "settings" ? undefined : thinking}
-			fast={layout === "settings" ? undefined : fast}
-			compact={layout === "compact"}
+			thinking={thinking}
+			fast={fast}
+			compact
 			picks={picks}
 			onPick={(m) => saveModel({ model: { provider: m.provider, id: m.id } }, m)}
-			text={layout === "settings" ? entry?.name ?? cur?.id ?? "选择模型" : text}
-			hideTextInNarrow={layout === "compact" && hideTextInNarrow}
+			text={text}
+			hideTextInNarrow={hideTextInNarrow}
 			loading={d.loading}
 			error={d.error}
 			onRetry={d.reload}
 			onOpen={d.reload}
 			buttonClass={buttonClass ?? "max-w-[220px] max-sm:max-w-[120px]"}
 			disabled={modelPending}
-			title={layout === "settings" ? "选择这个助理用的主模型" : "选择这个助理用的模型和思考强度"}
-			ariaLabel={`模型：${entry?.name ?? cur?.id ?? "未选择"}${layout === "compact" && reasoning ? `，思考强度 ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}`}
+			title="选择这个助理用的模型和思考强度"
+			ariaLabel={`模型：${entry?.name ?? cur?.id ?? "未选择"}${reasoning ? `，思考强度 ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}`}
 		/>
-		{layout === "settings" && <>
-			<div className="flex flex-wrap items-center justify-between gap-2 pt-2">
-				<span className="text-sm text-mut">思考强度</span>
-				<ThinkingButton testid="agent-thinking" {...thinking} disabled={modelPending} modelName={entry?.name ?? cur?.id} buttonClass="max-w-full" loading={d.loading} error={d.error} onRetry={d.reload} text={!levels.length && d.loading ? "正在加载…" : !levels.length && d.error ? "加载失败" : !entry ? "待选择模型" : !levels.length ? "不可调" : thinking.current === null ? `跟随默认${curThinking ? ` · ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}` : thinking.current !== curThinking && curThinking ? `${THINKING_LABEL[thinking.current] ?? thinking.current} → ${THINKING_LABEL[curThinking] ?? curThinking}` : THINKING_LABEL[curThinking] ?? curThinking ?? "待选择模型"} />
-			</div>
-			<div className="flex items-center justify-between gap-2">
-				<div className="min-w-0 text-sm text-mut">Fast 快速模式<span className="ml-2 text-xs text-mut2">{d.loading ? "加载中" : d.error ? "暂不可用，请重试" : fastCap.capability === "unsupported" ? "暂不可用" : fast.on ? "已开启" : "已关闭"}</span></div>
-				<FastButton testid="agent-model" fast={fast} />
-			</div>
-			{fastError && <p className="text-xs text-red-600 dark:text-red-400" role="alert">{fastError}</p>}
-		</>}
 		{modelPending && <span className="block text-xs text-mut" role="status">保存中…</span>}
 		{modelError && <p className="mt-1 max-w-[340px] whitespace-normal break-words text-xs text-red-600 dark:text-red-400" role="alert" data-testid="model-save-error">{modelError}</p>}
 		</div>

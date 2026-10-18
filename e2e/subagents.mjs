@@ -6,6 +6,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DATA = "/tmp/pia-e2e-subagents";
 const PORT = await new Promise((resolve) => { const sv = createServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => resolve(p)); }); });
@@ -165,6 +166,7 @@ try {
 	await page.locator(".pa-pane-wrap").waitFor();
 	await page.getByTestId("info-tabs").waitFor();
 	await infoTab("模型");
+	await expandAgentModelSection(page, "subagents");
 	const settings = page.getByTestId("agent-subagent-model");
 	await settings.waitFor();
 	await settings.getByTestId("subagent-model").click();

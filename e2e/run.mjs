@@ -10,7 +10,7 @@ import { chromium } from "playwright-core";
 import { startMockOpenAI } from "./mock-openai.mjs";
 import { cspProblems, probeCsp } from "./fixtures/csp-probe.mjs";
 import { startMockImages } from "./mock-images.mjs";
-import { infoTab as selectInfoTab, taskTab as selectTaskTab } from "./fixtures/info-pane.mjs";
+import { infoTab as selectInfoTab, taskTab as selectTaskTab, agentProfileSave, expandDetails, expandAgentModelSection } from "./fixtures/info-pane.mjs";
 
 // fileURLToPath 而不是 URL.pathname：路径含空格/中文时 pathname 会保留 %20，导致子进程 cwd 与文件读取都找不到。
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -615,8 +615,8 @@ await step("多个助理：新建第二个助理 → 侧边栏列出 → 上传�
 	await profilePane.getByTestId("agent-profile").waitFor();
 	await profilePane.locator("[data-testid=avatar-file]").setInputFiles(join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"));
 	await profilePane.getByPlaceholder("给助理起个名字").fill("研究员 R");
-	await profilePane.getByRole("button", { name: "保存", exact: true }).click();
-	await page.getByRole("button", { name: "已保存" }).waitFor();
+	await agentProfileSave(profilePane).click();
+	await page.waitForFunction(() => document.querySelector('[data-testid="agent-profile-state"]')?.textContent?.trim() === "已保存");
 	const r = (await (await fetch(`${BASE}/api/agents`)).json()).find((a) => a.name === "研究员 R");
 	if (!r?.avatar.startsWith("img:")) throw new Error("头像未保存为图片");
 	if ((await fetch(`${BASE}/api/agents/${r.id}/avatar`)).status !== 200) throw new Error("头像图片取不到");
@@ -1571,6 +1571,8 @@ await step("左侧助理列表：右键 → 编辑 / 删除助理（确认框）
 	// 侧边栏「编辑」直达该助理的资料页（资料面板可见，不是只切了个隐藏 tab）
 	await page.locator(".pa-pane-wrap").waitFor();
 	await page.getByTestId("agent-profile").waitFor();
+	// 资料页把危险操作收进折叠区：真的点开再找「删除助理」，不假定默认展开。
+	await expandDetails(page.locator(".pa-pane-wrap"), "agent-danger-details");
 	await page.getByText("删除助理").last().waitFor();
 	await item("临时助理甲").click({ button: "right" });
 	await page.waitForTimeout(200);
@@ -2223,6 +2225,7 @@ await step("图片生成：设置里添加图片服务（自动获取识别图�
 		// 模型页：图片模型选择（跟随默认 / 指定 / 不画图）
 		if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
 		await infoTab("models");
+		await expandAgentModelSection(page, "image");
 		await page.getByTestId("agent-image-select").selectOption("off");
 		await waitFor(async () => (await (await fetch(`${BASE}/api/agents/${painter}/image-model`)).json()).choice.mode === "off");
 		await page.getByTestId("agent-image-select").selectOption("default");

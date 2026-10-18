@@ -19,6 +19,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DATA = "/tmp/pia-e2e-subagent-thinking-levels";
@@ -51,12 +52,14 @@ const openAgentSettings = async (page, agentId) => {
 	if (!(await page.locator(".pa-pane-wrap").isVisible().catch(() => false))) await page.getByRole("button", { name: "信息面板" }).click();
 	await page.locator(".pa-pane-wrap").waitFor({ state: "visible" });
 	await openTab(page, "模型");
+	await expandAgentModelSection(page, "subagents");
 	await page.getByTestId("agent-subagent-model").waitFor();
 };
 /** 池子改了以后重挂载模型页（切到别的 tab 再切回来，不整页刷新，避免和持久化的面板状态抢） */
 const remountSettings = async (page) => {
 	await openTab(page, "概览");
 	await openTab(page, "模型");
+	await expandAgentModelSection(page, "subagents");
 	await page.getByTestId("agent-subagent-model").waitFor();
 };
 const menu = (page) => page.getByTestId("agent-subagent-thinking-menu");

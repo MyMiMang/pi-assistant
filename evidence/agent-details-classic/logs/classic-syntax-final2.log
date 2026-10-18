@@ -1,0 +1,5 @@
+$ node --check e2e/agent-details-secondary-recovery-ui.mjs
+$ node --check e2e/agent-details-functional-ui.mjs
+$ node --check e2e/agent-details-classic-ui.mjs
+$ node --check e2e/settings-subagent.mjs
+$ git diff --check

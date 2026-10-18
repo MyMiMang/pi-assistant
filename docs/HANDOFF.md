@@ -1,5 +1,7 @@
 # 交接文档（HANDOFF）
 
+> **2026-10-18 原版大头像助理设置（已实现，按用户要求提交进度后暂停；未打包）**：八分类、64px居中头像、单行测量更多导航、独立模型即时保存、资料固定保存与草稿/头像版本保护已实现。final2 类型/55纯检查/构建、功能8组、布局155组、成员8组、limits夹具通过；修复摘要遮住已有错误后，final3 类型/构建与恢复10组通过；功能动画稳定等待后 final4 八组通过。最后审图修正 `Subagents.tsx` 将上限读取失败误列为保存失败的一行条件，**该最后源码改动尚未重新类型检查/构建/回归，现有dist早于它**。用户最新要求快速收尾提交并停止，故不继续跑矩阵或补图；接手先核验该项。历史失败、真实HTTP/夹具边界及指纹见[本轮记录](../progress-snapshots/agent-details-classic.md)与[证据索引](../evidence/agent-details-classic/README.md)。没有改服务器、PiSDK或依赖；当前公开版仍beta.32，未打新tag、打包、安装或重启。[批准设计](design/agent-details-classic.md)。
+
 > **2026-10-18 助理/群成员详情功能分类完成（未打包，公开版仍 beta.32）**：`InfoPane` 共用概览/模型/资料/能力/任务/记忆/文件/电脑；模型页分行显示模型、思考强度和Fast，仍即时保存；资料只保存资料，切分类保留草稿，换助理重建。技能/扩展归能力，后台/定时/主动归任务二级，权限/共用或单独助理电脑归电脑；快捷入口已调整。保留串行/迟到守卫、Fast独立、真实档位/跟随/降级、错误重试与更多菜单键盘。最终两端类型、55/55纯检查、Web build通过；新分类UI6组26.70s、既有群成员回归8组30.05s均exit0，主核最终16图含390明暗主题/280电脑。启动未复现超时与测试就绪/默认预期修正保留原日志；未改产品超时/重试/服务端/SDK。未做全量测试或真实App/跨平台/付费Fast验收；源码完成不等于已发布。[设计](design/agent-details-functional.md)、[最终证据与限制](../progress-snapshots/agent-details-functional.md)。
 
 > **当前公开版 v0.1.0-beta.32，Latest（2026-10-18 16:29:18，Asia/Shanghai）**：不可移动tag源码 `a08e041b4f5d857afe1a62e7dc8b1faa05e0ef7b`，[Actions39109851436](https://github.com/MyMiMang/pi-assistant/actions/runs/39109851436)五平台构建、Mac/Windows安装启动冒烟及publish全部成功。[Release](https://github.com/MyMiMang/pi-assistant/releases/tag/v0.1.0-beta.32)非草稿/非预发布；主核13个非零资产、六条更新别名的版本/URL/非空签名与已发布`.sig`一致，Linux两份checksum与GitHub资产digest一致，公开`releases/latest/download/latest.json`也为beta.32。未独立密码学验签或下载Linux归档重哈希，未自动安装/重启用户App。

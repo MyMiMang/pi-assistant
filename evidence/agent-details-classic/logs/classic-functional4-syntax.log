@@ -1,0 +1,3 @@
+$ node --check e2e/agent-details-functional-ui.mjs && git diff --check
+
+{"command": "node --check e2e/agent-details-functional-ui.mjs && git diff --check", "log": "logs/classic-functional4-syntax.log", "exit": 0, "duration_seconds": 0.201, "timeout": false, "timeout_seconds": 30}

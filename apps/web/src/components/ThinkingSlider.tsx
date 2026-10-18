@@ -342,29 +342,38 @@ function Head({ testid, current, modelName, followLabel, following, effective, o
  * - 悬停约 450ms 才出短介绍（复用 Help 的气泡与关闭规则），focus 立即出；触摸点按会同时聚焦出说明并切换；
  * - 保存中 `aria-busy` 且不响应重复点击；失败由调用方回滚并给 `error`。
  */
-export function FastButton({ testid, fast }: { testid: string; fast?: FastControl }) {
+/** Fast 状态文案（共享闪电按钮与设置页小开关共用同一口径，不各写一套）。 */
+export function fastStateText(fast?: FastControl): string {
+	const supported = !!fast && fast.capability !== "unsupported";
+	const on = !!fast?.on;
+	return !fast
+		? "Fast 按助理开关：在助理的模型菜单里设置"
+		: fast.unavailable
+			? `暂不可用：${fast.unavailable}`
+			: fast.loading
+				? "模型能力加载中…（开关仍可切换，请求时按实际模型判断）"
+				: !supported
+					? `不可用：${fast.reason ?? "当前接口暂未接入 Fast"}`
+					: on
+						? "已开：请求 service_tier=priority"
+						: "已关：不附加任何参数，服务商默认档不变";
+}
+
+export function FastButton({ testid, fast, variant = "popover" }: { testid: string; fast?: FastControl; variant?: "popover" | "settings" }) {
 	const tip = useHoverTip(450);
 	const supported = !!fast && fast.capability !== "unsupported";
 	// 加载中不按「不支持」禁掉：开关仍可切，请求时按本次实际模型判断；只在保存中 / 明确不支持时禁用
 	const disabled = !!fast?.pending || !!fast?.unavailable || (!!fast && !supported && !fast.loading);
 	const on = !!fast?.on;
-	const stateText = !fast
-		? "Fast 按助理开关：在助理的模型菜单里设置"
-		: fast.unavailable
-			? `暂不可用：${fast.unavailable}`
-			: fast.loading
-			? "模型能力加载中…（开关仍可切换，请求时按实际模型判断）"
-			: !supported
-				? `不可用：${fast.reason ?? "当前接口暂未接入 Fast"}`
-				: on
-					? "已开：请求 service_tier=priority"
-					: "已关：不附加任何参数，服务商默认档不变";
+	const stateText = fastStateText(fast);
 	return (
-		<span className="pa-think-fastwrap">
+		<span className={variant === "settings" ? "pa-set-fastwrap" : "pa-think-fastwrap"}>
 			<button
 				type="button"
 				ref={tip.ref}
-				className={cx("pa-think-fast", on && supported && "on")}
+				className={cx(variant === "settings" ? "pa-set-fast" : "pa-think-fast", on && supported && "on")}
+				role={variant === "settings" ? "switch" : undefined}
+				aria-checked={variant === "settings" ? on : undefined}
 				aria-pressed={fast ? on : undefined}
 				aria-disabled={disabled || undefined}
 				aria-busy={fast?.pending || undefined}
@@ -377,7 +386,7 @@ export function FastButton({ testid, fast }: { testid: string; fast?: FastContro
 				}}
 				{...tip.triggerProps}
 			>
-				<Zap size={21} strokeWidth={2} aria-hidden="true" />
+				{variant === "settings" ? <span className="pa-fast-switch" aria-hidden="true" /> : <Zap size={21} strokeWidth={2} aria-hidden="true" />}
 			</button>
 			{tip.renderTip(
 				<>

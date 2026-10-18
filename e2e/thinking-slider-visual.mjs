@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { openCompact } from "./model-menu-flow.mjs";
+import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
 import { nativeLaunchBrowserEnv } from "./fixtures/native-launch-env.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -136,6 +137,7 @@ try {
 			await page.getByTestId("info-tabs-more").click();
 			await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "模型", exact: true }).click();
 		}
+		await expandAgentModelSection(page, "subagents");
 		await page.getByTestId("agent-subagent-thinking").click();
 		await popover().waitFor();
 		await waitFor(async () => (await popover().locator(".pa-think-step").count()) > 0);

@@ -1,4 +1,4 @@
-import { Loader2, Plug, RefreshCw, Settings2 } from "lucide-react";
+import { Loader2, Plug, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
@@ -65,9 +65,14 @@ export function AgentExtensions({ agentId }: { agentId: string }) {
 	};
 	return (
 		<section className="space-y-2" data-testid="agent-extensions">
-			<div className="pa-sec-label flex flex-wrap items-center gap-1">
-				<Plug size={13} /> 扩展
-				{loading && <Loader2 size={12} className="animate-spin text-mut" aria-hidden />}
+			<div className="pa-info-sechead">
+				<strong className="flex min-w-0 items-center gap-1.5">
+					<Plug size={13} /> 扩展
+					{loading && <Loader2 size={12} className="animate-spin text-mut" aria-hidden />}
+				</strong>
+				<Button size="sm" variant="outline" onClick={() => useStore.getState().set({ settings: "extensions" })} data-testid="agent-extensions-open-settings">
+					管理服务
+				</Button>
 			</div>
 			{loadErr && (
 				<div className="flex flex-wrap items-center gap-2">
@@ -85,12 +90,7 @@ export function AgentExtensions({ agentId }: { agentId: string }) {
 					</div>
 				) : null
 			) : items.length === 0 ? (
-				<div className="space-y-2" data-testid="agent-extensions-empty">
-					<div className="text-sm text-mut">无扩展</div>
-					<Button size="sm" variant="outline" onClick={() => useStore.getState().set({ settings: "extensions" })} data-testid="agent-extensions-open-settings">
-						<Settings2 size={13} /> 打开扩展设置
-					</Button>
-				</div>
+				<div className="text-sm text-mut" data-testid="agent-extensions-empty">无扩展，基础工具默认提供。</div>
 			) : (
 				<ul className="space-y-1">
 					{items.map((i) => (

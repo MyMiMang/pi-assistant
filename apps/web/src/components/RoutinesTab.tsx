@@ -125,7 +125,7 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 			)}
 			<ul className="space-y-2">
 				{list.map((r) => (
-					<li key={r.id} className="pa-card !p-3 text-sm" data-testid="routine-item">
+					<li key={r.id} className="pa-info-routine text-sm" data-testid="routine-item">
 						<div className="flex items-start gap-2">
 							{r.trigger === "webhook" ? <Webhook size={16} className="mt-0.5 text-mut" /> : <AlarmClock size={16} className="mt-0.5 text-mut" />}
 							<div className="min-w-0 flex-1">
@@ -168,7 +168,7 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 								))}
 							</ul>
 						)}
-						<div className="mt-2 flex justify-end gap-0.5">
+						<div className="mt-2 flex flex-wrap justify-end gap-0.5">
 							<Button size="sm" variant="ghost" onClick={() => api(`/api/routines/${r.id}/run`, { method: "POST" }).then(load)} title="立即运行一次">
 								<RotateCw size={13} /> 运行
 							</Button>

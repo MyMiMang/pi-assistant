@@ -18,37 +18,38 @@
  * 运行前先构建：npm run build -w @pi-assistant/web
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { chromium } from "playwright-core";
+import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
+import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const DATA = "/tmp/pia-e2e-settings-subagent";
-const OUT = "/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/evidence/settings-subagent";
+// 本次运行独占的临时目录（临时 DATA / WORKSPACE / HOME）；不再用固定 /tmp 路径，也不 rm 任何预存路径。
+const run = makeTempRun("pia-settings-subagent-");
+const OUT = process.env.SHOT_DIR ?? join(run.runDir, "shots");
 const PORT = await new Promise((resolve) => { const sv = createServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => resolve(p)); }); });
 const BASE = `http://127.0.0.1:${PORT}`;
-rmSync(DATA, { recursive: true, force: true });
-mkdirSync(DATA, { recursive: true });
 mkdirSync(OUT, { recursive: true });
 
-// 预置旧版设置记录：只有 maxMinutes，缺 maxConcurrent（旧库 / 旧客户端写下的形状）
+// 预置旧版设置记录：只有 maxMinutes，缺 maxConcurrent（旧库 / 旧客户端写下的形状），写进本次临时 DATA。
 {
-	const seed = new DatabaseSync(join(DATA, "data.db"));
+	const seed = new DatabaseSync(join(run.data, "data.db"));
 	seed.exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
 	seed.prepare("INSERT INTO settings(key, value) VALUES(?, ?)").run("subagentModels", JSON.stringify({ maxMinutes: 42 }));
 	seed.close();
 }
 
+
 let server, browser, failed = 0;
 const waitFor = async (fn, ms = 20_000) => { const end = Date.now() + ms; while (Date.now() < end) { try { if (await fn()) return; } catch {} await new Promise((r) => setTimeout(r, 100)); } throw new Error("timeout"); };
 const j = async (path, method = "GET", body) => { const r = await fetch(BASE + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); const data = await r.json(); if (!r.ok) throw new Error(`${path} ${JSON.stringify(data)}`); return data; };
 const check = (name, cond, detail = "") => { if (cond) console.log(`  ✅ ${name}`); else { failed++; console.error(`  ❌ ${name} ${detail}`); } };
-const start = async () => { server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] }); server.stdout.on("data", (d) => process.stdout.write(d)); server.stderr.on("data", (d) => process.stdout.write(d)); await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
-const stop = async () => { if (!server || server.exitCode !== null) return; const done = new Promise((r) => server.once("exit", r)); server.kill("SIGTERM"); await done; };
+const start = async () => { server = startTempServer({ root: ROOT, port: PORT, run, log: (d) => process.stdout.write(String(d)) }); await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
+const stop = async () => { await server?.stop(); };
 
 /** 打开信息面板（`info` 会按设备持久化，reload 后可能自动开，所以按可见性收敛而不是盲点）。 */
 const openPane = async (page) => {
@@ -69,6 +70,7 @@ const openLimits = async (page, agentId) => {
 	const tab = bar.getByRole("tab", { name: "模型", exact: true });
 	if (await tab.count()) await tab.click();
 	else { await page.getByTestId("info-tabs-more").click(); await page.getByTestId("info-tabs-menu").getByRole("menuitem", { name: "模型", exact: true }).click(); }
+	await expandAgentModelSection(page, "subagents");
 	const sec = page.getByTestId("agent-subagent-limits");
 	await sec.waitFor();
 	return { sec, conc: page.getByLabel("子代理并发上限"), mins: page.getByLabel("子代理最长运行分钟") };
@@ -83,7 +85,7 @@ try {
 	const legacy = (await j("/api/subagents/settings")).settings;
 	const defaults = { maxConcurrent: legacy.maxConcurrent, maxMinutes: legacy.maxMinutes };
 
-	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, env: browserEnv(run) });
 	const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, locale: "zh-CN" });
 	page.setDefaultTimeout(15_000);
 
@@ -133,6 +135,8 @@ try {
 	await conc.blur();
 	await waitFor(() => overrides[a.id].maxConcurrent === undefined);
 	check("清空后 override 被删除（回继承）", overrides[a.id].maxConcurrent === undefined);
+	// fixture 已处理 PUT 不代表浏览器已消费响应；等实际输入值及 pending 一起落定再判结果。
+	await waitFor(async () => (await conc.inputValue()) === String(defaults.maxConcurrent) && !(await conc.isDisabled()));
 	check("清空后输入框回到默认 10", (await conc.inputValue()) === "10", await conc.inputValue());
 
 	// 重新设成 25 继续下面的用例
@@ -194,6 +198,7 @@ try {
 } finally {
 	if (browser) await browser.close().catch(() => {});
 	await stop();
+	cleanupTempRun(run);
 }
 console.log(failed ? `\n${failed} 项失败 ❌  截图：${OUT}` : `\n全部通过 ✅  截图：${OUT}`);
 process.exit(failed ? 1 : 0);

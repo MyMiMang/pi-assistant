@@ -1,0 +1,44 @@
+[launch-memory] 越界/不可信的 PIA_WORKSPACE="/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-settings-subagent-drK1Oq/workspace" → 覆盖为 /var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-settings-subagent-drK1Oq/data/workspace
+[pi-assistant] Pi 1.3.0（测试基线 1.3.0）
+[pi-assistant] 服务已启动：http://127.0.0.1:55320  数据目录：/var/folders/2l/fc6qxgld7tj5k67f5_jsr71c0000gn/T/pia-settings-subagent-drK1Oq/data  serverId=87239940-593d-494b-add8-b927b836da46  [Mock 模型已启用]
+
+[1] 打开默认：旧全局值作默认 + 显示「继承（默认 N）」
+  ✅ 旧记录缺 maxConcurrent：并发上限显示默认 10
+  ✅ 旧记录已配置的 maxMinutes 保留：最长运行显示 42
+  ✅ 未覆盖时显示「默认 10」= 继承
+
+[2] 改并发上限 → 失焦保存 → reload 后仍是新值
+  ✅ 失焦即保存到后端（per-agent override）
+  ✅ 刷新后并发上限仍是 25
+  ✅ 刷新后不再显示「默认 10」
+  ✅ 刷新后最长运行仍是 42
+
+[3] 清空 → 继承默认（PUT null）
+  ✅ 清空后 override 被删除（回继承）
+  ❌ 清空后输入框回到默认 10 
+
+[4] 清空 / 0 / 越界 → 失焦恢复，不静默存 0
+  ✅ 并发上限输入「0」后恢复成 25
+  ✅ 并发上限输入「999」后恢复成 25
+  ✅ 并发上限输入「-3」后恢复成 25
+  ✅ 非法输入没有写进后端（仍是 25）
+  ✅ 最长运行输入「0」后恢复成 42
+  ✅ 最长运行输入「-5」后恢复成 42
+  ✅ 最长运行没被写成 0
+
+[5] 助理 B 不受 A 的覆盖影响
+  ✅ 助理 B 并发上限是默认 10
+  ✅ 助理 B 最长运行是默认 42
+  ✅ 助理 B 改成 7 只写 B
+
+[6] 接口失败：显示原因，不渲染空输入框
+  ✅ 接口失败时不渲染可编辑输入框
+  ✅ 接口失败时显示错误原因
+  ✅ 接口恢复后回到生效值 25 / 42
+
+[7] 390 窄屏：不溢出、文字不被 spinner 挤掉
+  ✅ 390：页面不横向溢出
+  ✅ 390：任务上限区块不横向溢出
+  ✅ 390：两个输入框文字都放得下
+
+1 项失败 ❌  截图：/Users/dengdeng/Library/Application Support/Pi Assistant/workspace/amv7oy7ejb00/agent-details-visual-polish/evidence/agent-details-classic/limits1

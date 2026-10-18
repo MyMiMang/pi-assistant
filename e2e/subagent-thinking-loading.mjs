@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
 import { nativeLaunchBrowserEnv } from "./fixtures/native-launch-env.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -116,11 +117,13 @@ const openAgentSettings = async (page, agentId) => {
 	if (!(await page.locator(".pa-pane-wrap").isVisible().catch(() => false))) await page.getByRole("button", { name: "信息面板" }).click();
 	await page.locator(".pa-pane-wrap").waitFor({ state: "visible" });
 	await openTab(page, "模型");
+	await expandAgentModelSection(page, "subagents");
 	await page.getByTestId("agent-subagent-model").waitFor();
 };
 const remountSettings = async (page) => {
 	await openTab(page, "概览");
 	await openTab(page, "模型");
+	await expandAgentModelSection(page, "subagents");
 	await page.getByTestId("agent-subagent-model").waitFor();
 };
 const menu = (page) => page.getByTestId("agent-subagent-thinking-menu");

@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { api, getAgentSubagentSettings, setAgentSubagentSettings, type SubagentSettingsResponse } from "../api";
 import type { Message } from "../types";
-import { Help, Modal } from "./ui";
+import { Button, Help, Modal } from "./ui";
 import { ArrowLeft, ArrowUp, Bot, Square } from "lucide-react";
 import { useStore } from "../store";
 import { Avatar } from "./ui";
@@ -10,7 +10,7 @@ import { useComposerKeys } from "../composer";
 import { useConfiguredModels, useModelPicks, ModelPoolButton, ThinkingButton, THINKING_LABEL } from "./ModelPicker";
 import type { FastControl } from "./ThinkingSlider";
 import { fitThinkingLevel } from "../thinking-slider";
-import { LatestWrite } from "../latest-write";
+import { LatestWrite, SerialWriteQueue } from "../latest-write";
 import { thinkingLevelsFor } from "@pi-assistant/shared";
 import { TaskInstructions, TaskRow, taskLive, taskTitle } from "./Tasks";
 
@@ -220,93 +220,339 @@ export function SubagentTasks({ agentId, conversation, room, current, testid = "
  * 助理设置里的子代理模型：可搜索、按服务分组、多选的「候选池」。
  * 一个都不选 = 跟随主会话当前模型；选了就在池内按任务能力挑，失败只在池内换（详见 Help）。
  */
+/** 读取阶段：正在读 / 已按真实数据就绪 / 这一次读失败（不拿默认值冒充真实值）。 */
+type LoadPhase = "loading" | "ready" | "error";
+type SubagentThinkingState = { mode: "follow" } | { mode: "fixed"; level: string };
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+// 同一助理切分类后仍按本端选择顺序写入；重挂的读取也等这些写入落定再取真实值。
+const subagentQueues = new Map<string, SerialWriteQueue>();
+function subagentQueue(agentId: string) {
+	let queue = subagentQueues.get(agentId);
+	if (!queue) subagentQueues.set(agentId, (queue = new SerialWriteQueue()));
+	return queue;
+}
+
 export function SubagentModels({ agentId }: { agentId: string }) {
 	const d = useConfiguredModels();
 	const { picks, record } = useModelPicks();
-	const [pool, setPool] = useState<Model[]>([]);
-	const [thinking, setThinking] = useState<{ mode: "follow" } | { mode: "fixed"; level: string }>({ mode: "follow" });
-	const [err, setErr] = useState("");
 	const agent = useStore((s) => s.agents.find((a) => a.id === agentId));
-	useEffect(() => { void api<{ pool: Model[] }>(`/api/agents/${agentId}/subagent-model`).then((v) => setPool(v.pool ?? [])).catch((e) => setErr(String(e))); void api<typeof thinking>(`/api/agents/${agentId}/subagent-thinking`).then(setThinking).catch(() => {}); }, [agentId]);
+	// 候选池 / 思考强度各一份真实状态 + 各自的读取结果：读不到就说读不到，不拿默认值冒充「已跟随主会话」
+	const [pool, setPool] = useState<Model[]>([]);
+	const [poolPhase, setPoolPhase] = useState<LoadPhase>("loading");
+	const [poolErr, setPoolErr] = useState("");
+	const [thinking, setThinking] = useState<SubagentThinkingState | null>(null);
+	const [thinkingPhase, setThinkingPhase] = useState<LoadPhase>("loading");
+	const [thinkingErr, setThinkingErr] = useState("");
+	const [poolSaveErr, setPoolSaveErr] = useState("");
+	const [thinkingSaveErr, setThinkingSaveErr] = useState("");
+	const [savingUi, setSavingUi] = useState(false);
+	// 写入顺序：同一个助理的 PUT 串行发（勾选很快时不会乱序、把后一次选择抹掉）；界面只认最后一次，
+	// 失败回滚到「服务端确认过」的快照，不拿乐观值当真相。
+	const confirmedPool = useRef<Model[]>([]);
+	const confirmedThinking = useRef<SubagentThinkingState>({ mode: "follow" });
+	const poolWrites = useRef(new LatestWrite());
+	const thinkingWrites = useRef(new LatestWrite());
+	const queue = subagentQueue(agentId);
+	// 每项独立重试和代次：不能重读并覆盖另一个仍可编辑、正在保存的字段。
+	const life = useRef(0);
+	const poolReads = useRef(0);
+	const thinkingReads = useRef(0);
+	const inFlight = useRef(0);
+	const mark = (delta: number) => {
+		inFlight.current += delta;
+		setSavingUi(inFlight.current > 0);
+	};
+	const loadPool = useCallback(() => {
+		const gen = ++poolReads.current;
+		setPoolPhase("loading");
+		setPoolErr("");
+		void queue.run(() => Promise.resolve()).then(() => api<{ pool: Model[] }>(`/api/agents/${agentId}/subagent-model`))
+			.then((v) => {
+				if (gen !== poolReads.current) return;
+				const p = v?.pool ?? [];
+				confirmedPool.current = p;
+				setPool(p);
+				setPoolPhase("ready");
+			})
+			.catch((e) => {
+				if (gen !== poolReads.current) return;
+				setPoolErr(errText(e));
+				setPoolPhase("error");
+			});
+	}, [agentId, queue]);
+	const loadThinking = useCallback(() => {
+		const gen = ++thinkingReads.current;
+		setThinkingPhase("loading");
+		setThinkingErr("");
+		void queue.run(() => Promise.resolve()).then(() => api<SubagentThinkingState>(`/api/agents/${agentId}/subagent-thinking`))
+			.then((v) => {
+				if (gen !== thinkingReads.current) return;
+				const t: SubagentThinkingState = v?.mode === "fixed" && v.level ? { mode: "fixed", level: v.level } : { mode: "follow" };
+				confirmedThinking.current = t;
+				setThinking(t);
+				setThinkingPhase("ready");
+			})
+			.catch((e) => {
+				if (gen !== thinkingReads.current) return;
+				setThinkingErr(errText(e));
+				setThinkingPhase("error");
+			});
+	}, [agentId, queue]);
+	// 任务上限与摘要共用同一份 hook 状态（不复制服务器默认值）
+	const limits = useSubagentLimits(agentId);
+	useEffect(() => {
+		life.current++;
+		poolReads.current++;
+		thinkingReads.current++;
+		confirmedPool.current = [];
+		confirmedThinking.current = { mode: "follow" };
+		setPool([]);
+		setPoolPhase("loading");
+		setPoolErr("");
+		setThinking(null);
+		setThinkingPhase("loading");
+		setThinkingErr("");
+		setPoolSaveErr("");
+		setThinkingSaveErr("");
+		inFlight.current = 0;
+		setSavingUi(false);
+		loadPool();
+		loadThinking();
+		return () => {
+			life.current++;
+			poolReads.current++;
+			thinkingReads.current++;
+		};
+	}, [loadPool, loadThinking]);
 	const key = (m: Model) => `${m.provider}/${m.id}`;
-	const save = async (next: Model[]) => {
-		const prev = pool;
-		setPool(next);
-		try { await api(`/api/agents/${agentId}/subagent-model`, { method: "PUT", json: { pool: next } }); setErr(""); }
-		catch (e) { setPool(prev); setErr(String(e)); }
+	const nameOf = (m: Model) => d.models.find((x) => key(x) === key(m))?.name ?? m.id;
+	const savePool = (next: Model[]) => {
+		const lifeAt = life.current;
+		const gen = poolWrites.current.begin();
+		poolReads.current++;
+		setPool(next); // 乐观：真正是否保存成功以服务端返回为准
+		setPoolSaveErr("");
+		mark(1);
+		void queue
+			.run(() => api<{ pool: Model[] }>(`/api/agents/${agentId}/subagent-model`, { method: "PUT", json: { pool: next } }))
+			.then((res) => {
+				if (life.current !== lifeAt) return;
+				confirmedPool.current = res?.pool ?? next;
+				if (poolWrites.current.isCurrent(gen)) {
+					setPool(res?.pool ?? next);
+					setPoolPhase("ready");
+					setPoolSaveErr(""); // 只清这一项的失败；不掩盖思考强度的保存错误
+				}
+			})
+			.catch((e) => {
+				if (life.current !== lifeAt || !poolWrites.current.isCurrent(gen)) return;
+				setPool(confirmedPool.current);
+				setPoolSaveErr(`候选池没保存成功，已恢复为已保存的 ${confirmedPool.current.length} 个模型：${errText(e)}`);
+			})
+			.finally(() => {
+				if (life.current === lifeAt) mark(-1);
+			});
 	};
 	const toggle = (m: { provider: string; id: string }, checked: boolean) => {
 		record(m);
-		void save(checked ? [...pool.filter((x) => key(x) !== key(m)), { provider: m.provider, id: m.id }] : pool.filter((x) => key(x) !== key(m)));
+		const same = (x: Model) => key(x) === `${m.provider}/${m.id}`;
+		savePool(checked ? [...pool.filter((x) => !same(x)), { provider: m.provider, id: m.id }] : pool.filter((x) => !same(x)));
+	};
+	const saveThinking = (v: string | null) => {
+		const c: SubagentThinkingState = v ? { mode: "fixed", level: v } : { mode: "follow" };
+		const lifeAt = life.current;
+		const gen = thinkingWrites.current.begin();
+		thinkingReads.current++;
+		setThinking(c); // 乐观
+		setThinkingSaveErr("");
+		mark(1);
+		void queue
+			.run(() => api<SubagentThinkingState>(`/api/agents/${agentId}/subagent-thinking`, { method: "PUT", json: c }))
+			.then((res) => {
+				if (life.current !== lifeAt) return;
+				const real: SubagentThinkingState = res?.mode === "fixed" && res.level ? { mode: "fixed", level: res.level } : { mode: "follow" };
+				confirmedThinking.current = real;
+				if (thinkingWrites.current.isCurrent(gen)) {
+					setThinking(real);
+					setThinkingSaveErr("");
+				}
+			})
+			.catch((e) => {
+				if (life.current !== lifeAt || !thinkingWrites.current.isCurrent(gen)) return;
+				setThinking(confirmedThinking.current);
+				setThinkingSaveErr(`思考强度没保存成功，已恢复原设置：${errText(e)}`);
+			})
+			.finally(() => {
+				if (life.current === lifeAt) mark(-1);
+			});
 	};
 	const live = pool.filter((m) => d.models.some((x) => key(x) === key(m)));
-	const nameOf = (m: Model) => d.models.find((x) => key(x) === key(m))?.name ?? m.id;
 	// 这个助理的子代理实际会用哪些模型（候选池；空池则跟随主会话）→ 取它们支持档位的**并集**，
 	// 不取最低共同集合：候选池里只要有一个模型支持 xhigh/max 就保留，派到别的模型时由服务端 clamp。
 	const candidates: Model[] = pool.length ? pool : agent?.model ? [agent.model] : [];
 	const levels: string[] = thinkingLevelsFor(d.models, candidates);
+	const levelsOf = (m: Model) => d.models.find((x) => key(x) === key(m))?.thinking ?? [];
+	const fixedLevel = thinking?.mode === "fixed" ? thinking.level : null;
+	// 并集里有这一档 ≠ 每个候选模型都支持：逐个模型核对。摘要只说「运行时按实际模型收敛」，
+	// 不声称所有候选模型的实际档位都等于这个值。
+	const fixedEverywhere = !!fixedLevel && candidates.length > 0 && candidates.every((m) => levelsOf(m).includes(fixedLevel));
+	const label = (l: string) => THINKING_LABEL[l] ?? l;
+	// 目录还在读 / 读失败时不冒充「不支持」或「都不支持」：那个状态交给 ThinkingButton 自己的 loading / error 说明
+	const catalogReady = !d.loading && !d.error;
 	// 用户已保存的固定档位若当前候选池里没有模型支持（比如换了池子），仍然显示出来并说明会被降级，不静默吞掉
-	const unsupportedFixed = thinking.mode === "fixed" && !levels.includes(thinking.level) ? `当前候选池里没有模型支持「${THINKING_LABEL[thinking.level] ?? thinking.level}」，运行时会被收敛到实际模型支持的档位` : undefined;
-	const saveThinking = async (v: string | null) => {
-		const c: { mode: "follow" } | { mode: "fixed"; level: string } = v ? { mode: "fixed", level: v } : { mode: "follow" };
-		try { await api(`/api/agents/${agentId}/subagent-thinking`, { method: "PUT", json: c }); setThinking(c); setErr(""); } catch (e) { setErr(String(e)); }
-	};
+	const unsupportedFixed = fixedLevel && catalogReady && !levels.includes(fixedLevel) ? `当前候选池里没有模型支持「${label(fixedLevel)}」，运行时会被收敛到实际模型支持的档位` : undefined;
+	// 摘要每一项都来自同一份真实状态：正在读 / 读失败如实写，不写成「跟随」或默认值
+	const summary: string[] = [];
+	if (poolPhase === "loading") summary.push("候选池 正在读取…");
+	else if (poolPhase === "error") summary.push("候选池 读取失败 · 展开重试");
+	else summary.push(pool.length ? `候选池 ${pool.length} 个模型 · 派活时按任务挑` : `模型跟随聊天${agent?.model ? ` · 当前 ${nameOf(agent.model)}` : ""}`);
+	if (thinkingPhase === "loading") summary.push("思考强度 正在读取…");
+	else if (thinkingPhase === "error") summary.push("思考强度 读取失败 · 展开重试");
+	else if (thinking?.mode === "fixed") {
+		// 并集档位 ≠ 每个候选模型的实际档位：只承诺「运行时按实际模型收敛」，不声称所有模型 effective 同值
+		const suffix = unsupportedFixed ? " · 当前池没有模型支持，运行时会收敛" : fixedEverywhere ? "" : " · 运行时按实际模型收敛";
+		summary.push(`思考 固定 ${label(thinking.level)}${suffix}`);
+	}
+	else summary.push(`思考跟随主会话${agent?.thinking ? ` · 当前 ${label(agent.thinking)}` : ""}`);
+	if (limits.phase === "loading") summary.push("任务上限 正在读取…");
+	else if (limits.phase === "error") summary.push("任务上限 读取失败 · 展开重试");
+	else if (limits.d) summary.push(`同时 ${limits.d.settings.maxConcurrent} 个 · 每次 ${limits.d.settings.maxMinutes} 分钟${limits.d.overrides.maxConcurrent === undefined && limits.d.overrides.maxMinutes === undefined ? " · 继承默认" : ""}`);
+	if (savingUi || limits.saving) summary.push("保存中…");
+	if (poolSaveErr || thinkingSaveErr || (limits.phase === "ready" && limits.err)) summary.push("保存失败 · 展开查看原因");
 	const text = pool.length ? `候选池 · ${pool.length} 个` : "跟随主会话";
-	return <section className="space-y-2" data-testid="agent-subagent-model">
-		<div className="flex items-center gap-1 font-semibold">子代理模型<Help>不选 = 跟随主会话当前模型。勾选后，派活时在这个候选池内按任务能力挑一个；某个模型不可用（限流 / 服务不可用 / 模型不存在 / 鉴权失败等）时，只在池内自动换下一个，用尽就停下，不会用池外模型，也不会无限重试。最多同时跑几个由下面的「任务上限」按助理决定（未覆盖则用整个安装的默认值）。</Help></div>
-		<ModelPoolButton
-			testid="subagent-model"
-			models={d.models}
-			providers={d.providers}
-			value={pool}
-			picks={picks}
-			text={text}
-			placement="down"
-			buttonClass="max-w-full"
-			ariaLabel="子代理候选池"
-			title="勾选这个助理允许子代理用的模型"
-			onToggle={toggle}
-			onOpen={d.reload}
-		/>
-		{live.length > 0 && <div className="flex flex-wrap gap-1">{live.map((m) => <span key={key(m)} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-mut">{nameOf(m)}</span>)}</div>}
-		<div className="flex items-center gap-2"><span className="text-sm text-mut">思考强度</span><ThinkingButton testid="agent-subagent-thinking" levels={levels} current={thinking.mode === "fixed" ? thinking.level : null} effective={thinking.mode === "fixed" ? fitThinkingLevel(levels, thinking.level) : (agent?.thinking ?? null)} followLabel="跟随主会话" title={unsupportedFixed} onPick={(v) => void saveThinking(v)} loading={d.loading} error={d.error} onRetry={d.reload} /></div>
-		{unsupportedFixed && <p className="text-xs text-amber-600" data-testid="agent-subagent-thinking-note">{unsupportedFixed}</p>}
-		<AgentSubagentLimits agentId={agentId} />
-		{err && <p className="text-xs text-red-500">{err}</p>}
-	</section>;
+	return (
+		<details className="pa-info-details" data-testid="agent-subagent-details">
+			<summary>
+				子代理分工
+				<small>
+					{summary.map((line) => <span key={line} className="block">{line}</span>)}
+				</small>
+			</summary>
+			<div className="pa-info-details-body">
+				<section className="space-y-2" data-testid="agent-subagent-model">
+					<div className="flex items-center gap-1 font-semibold">子代理模型<Help>不选 = 跟随主会话当前模型。勾选后，派活时在这个候选池内按任务能力挑一个；某个模型不可用（限流 / 服务不可用 / 模型不存在 / 鉴权失败等）时，只在池内自动换下一个，用尽就停下，不会用池外模型，也不会无限重试。最多同时跑几个由下面的「任务上限」按助理决定（未覆盖则用整个安装的默认值）。</Help></div>
+					{poolPhase === "error" ? (
+						<div className="flex flex-wrap items-center gap-2 text-xs text-red-500" data-testid="agent-subagent-pool-error">
+							<span className="min-w-0 [overflow-wrap:anywhere]">候选池读取失败：{poolErr}</span>
+							<Button size="sm" variant="outline" onClick={loadPool} data-testid="agent-subagent-pool-retry">重试</Button>
+						</div>
+					) : poolPhase === "loading" ? (
+						<div className="text-xs text-mut" role="status" data-testid="agent-subagent-pool-loading">正在读取候选池…</div>
+					) : (
+						<ModelPoolButton
+							testid="subagent-model"
+							models={d.models}
+							providers={d.providers}
+							value={pool}
+							picks={picks}
+							text={text}
+							placement="down"
+							buttonClass="max-w-full"
+							ariaLabel="子代理候选池"
+							title="勾选这个助理允许子代理用的模型"
+							onToggle={toggle}
+							onOpen={d.reload}
+						/>
+					)}
+					{live.length > 0 && <div className="flex flex-wrap gap-1">{live.map((m) => <span key={key(m)} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-mut">{nameOf(m)}</span>)}</div>}
+					<div className="flex flex-wrap items-center gap-2">
+						<span className="text-sm text-mut">思考强度</span>
+						{thinkingPhase === "loading" ? (
+							<span className="text-xs text-mut" role="status" data-testid="agent-subagent-thinking-loading-state">正在读取…</span>
+						) : thinkingPhase === "error" ? (
+							<span className="flex flex-wrap items-center gap-2 text-xs text-red-500" data-testid="agent-subagent-thinking-load-error">
+								<span className="min-w-0 [overflow-wrap:anywhere]">读取失败：{thinkingErr}</span>
+								<Button size="sm" variant="outline" onClick={loadThinking}>重试</Button>
+							</span>
+						) : thinking ? (
+							<ThinkingButton testid="agent-subagent-thinking" levels={levels} current={thinking.mode === "fixed" ? thinking.level : null} effective={thinking.mode === "fixed" ? fitThinkingLevel(levels, thinking.level) : (agent?.thinking ?? null)} followLabel="跟随主会话" title={unsupportedFixed} onPick={(v) => void saveThinking(v)} loading={d.loading} error={d.error} onRetry={d.reload} />
+						) : null}
+					</div>
+					{unsupportedFixed && <p className="text-xs text-amber-600" data-testid="agent-subagent-thinking-note">{unsupportedFixed}</p>}
+					<AgentSubagentLimits state={limits} />
+					{(poolSaveErr || thinkingSaveErr) && <div className="space-y-1 text-xs text-red-500 [overflow-wrap:anywhere]" role="alert" data-testid="agent-subagent-save-error">
+						{poolSaveErr && <p data-testid="agent-subagent-pool-save-error">{poolSaveErr}</p>}
+						{thinkingSaveErr && <p data-testid="agent-subagent-thinking-save-error">{thinkingSaveErr}</p>}
+					</div>}
+				</section>
+			</div>
+		</details>
+	);
 }
 
 /**
  * 子代理的任务上限（并发 / 最长运行）：按助理设置，未覆盖 = 继承整个安装的默认值。
  * 旧版把这两个值当全局放在「模型」页，容易误读成每助理；改为这里显式覆盖，后端 defaults 兼容旧全局只读值。
  */
-function AgentSubagentLimits({ agentId }: { agentId: string }) {
+/** 子代理任务上限的数据与写入（同一个助理一份状态；摘要与展开区共用，不复制第二套）。 */
+function useSubagentLimits(agentId: string) {
 	const [d, setD] = useState<SubagentSettingsResponse | null>(null);
 	const [draft, setDraft] = useState<{ maxConcurrent: string; maxMinutes: string } | null>(null);
 	const [err, setErr] = useState("");
+	const [phase, setPhase] = useState<LoadPhase>("loading");
+	const [saving, setSaving] = useState(false);
+	const pending = useRef(false);
+	// 读取 / 写回代次：切助理或卸载后，迟到的响应不落到新助理的界面上
+	const gen = useRef(0);
 	const sync = (r: SubagentSettingsResponse) => {
 		setD(r);
 		setDraft({ maxConcurrent: String(r.settings.maxConcurrent), maxMinutes: String(r.settings.maxMinutes) });
 	};
+	const load = useCallback(() => {
+		const g = ++gen.current;
+		setPhase("loading");
+		setErr("");
+		void getAgentSubagentSettings(agentId)
+			.then((r) => {
+				if (g !== gen.current) return;
+				sync(r);
+				setPhase("ready");
+			})
+			.catch((e) => {
+				if (g !== gen.current) return;
+				setErr(errText(e));
+				setPhase("error");
+			});
+	}, [agentId]);
 	useEffect(() => {
 		setD(null);
 		setDraft(null);
 		setErr("");
-		void getAgentSubagentSettings(agentId)
-			.then(sync)
-			.catch((e) => setErr(String(e)));
-	}, [agentId]);
+		setPhase("loading");
+		pending.current = false;
+		setSaving(false);
+		load();
+		return () => {
+			gen.current++;
+		};
+	}, [load]);
 	const save = async (patch: { maxConcurrent?: number | null; maxMinutes?: number | null }) => {
+		if (pending.current || phase !== "ready") return;
+		const g = ++gen.current;
+		pending.current = true;
+		setSaving(true);
 		try {
-			sync(await setAgentSubagentSettings(agentId, patch));
+			const r = await setAgentSubagentSettings(agentId, patch);
+			if (g !== gen.current) return;
+			sync(r);
 			setErr("");
+			setPhase("ready");
 		} catch (e) {
+			if (g !== gen.current) return;
 			// 保存失败：重新拉取生效值回滚，不留下假值。
-			setErr(String(e));
+			setErr(errText(e));
 			try {
-				sync(await getAgentSubagentSettings(agentId));
+				const r = await getAgentSubagentSettings(agentId);
+				if (g !== gen.current) return;
+				sync(r);
+				setPhase("ready");
 			} catch {
-				/* 回滚也读不到：保持原草稿并显示错误 */
+				if (g === gen.current && d) sync(d);
+			}
+		} finally {
+			if (g === gen.current) {
+				pending.current = false;
+				setSaving(false);
 			}
 		}
 	};
@@ -327,31 +573,43 @@ function AgentSubagentLimits({ agentId }: { agentId: string }) {
 		if (n !== d.settings[key]) void save({ [key]: n });
 		else setDraft((x) => (x ? { ...x, [key]: String(n) } : x));
 	};
-	if (!d || !draft)
+	return { d, draft, setDraft, err, phase, saving, save, commit, retry: load };
+}
+
+function AgentSubagentLimits({ state }: { state: ReturnType<typeof useSubagentLimits> }) {
+	const { d, draft, setDraft, err, phase, saving, save, commit, retry } = state;
+	if (!d || !draft || phase !== "ready")
 		return (
 			<section data-testid="agent-subagent-limits" className="space-y-2">
-				{err ? <p className="text-xs text-red-500" data-testid="agent-subagent-limits-error">{err}</p> : null}
+				{phase === "loading" ? (
+					<div className="text-xs text-mut" role="status" data-testid="agent-subagent-limits-loading">正在读取任务上限…</div>
+				) : err ? (
+					<div className="flex flex-wrap items-center gap-2 text-xs text-red-500" data-testid="agent-subagent-limits-error">
+						<span className="min-w-0 [overflow-wrap:anywhere]">任务上限读取失败：{err}</span>
+						<Button size="sm" variant="outline" onClick={retry} data-testid="agent-subagent-limits-retry">重试</Button>
+					</div>
+				) : null}
 			</section>
 		);
 	const inherit = (k: "maxConcurrent" | "maxMinutes") => d.overrides[k] === undefined;
-	const inheritHint = (k: "maxConcurrent" | "maxMinutes") => (inherit(k) ? <span className="text-[11px] text-mut2">默认 {d.defaults[k]}</span> : <button type="button" className="text-[11px] text-accent underline" onClick={() => void save({ [k]: null })} data-testid={`agent-subagent-inherit-${k}`}>继承默认</button>);
+	const inheritHint = (k: "maxConcurrent" | "maxMinutes") => (inherit(k) ? <span className="text-[11px] text-mut2">默认 {d.defaults[k]}</span> : <button type="button" className="text-[11px] text-accent underline" disabled={saving} onClick={() => void save({ [k]: null })} data-testid={`agent-subagent-inherit-${k}`}>继承默认</button>);
 	return (
 		<section data-testid="agent-subagent-limits" className="space-y-2">
 			<div className="flex items-center gap-1 text-sm font-semibold">
-				任务上限
+				任务上限{saving && <span className="text-xs font-normal text-mut" role="status">保存中…</span>}
 				<Help>只对这个助理生效；留空或点「继承默认」就用整个安装的默认值（默认并发 {d.defaults.maxConcurrent}、最长 {d.defaults.maxMinutes} 分钟）。并发指这个助理同时运行的子代理最多几个，满了自动排队。运行中的任务在聊天顶部的「子代理」里看。</Help>
 			</div>
 			<label className="flex flex-wrap items-center gap-2 text-sm text-mut">
 				最多同时
-				<input className="pa-input !w-24" type="number" min={1} max={100} value={draft.maxConcurrent} aria-label="子代理并发上限" onChange={(e) => setDraft({ ...draft, maxConcurrent: e.target.value })} onBlur={(e) => commit("maxConcurrent", e.target.value)} />
+				<input className="pa-input !w-24" type="number" min={1} max={100} disabled={saving} value={draft.maxConcurrent} aria-label="子代理并发上限" onChange={(e) => setDraft({ ...draft, maxConcurrent: e.target.value })} onBlur={(e) => commit("maxConcurrent", e.target.value)} />
 				个子代理{inheritHint("maxConcurrent")}
 			</label>
 			<label className="flex flex-wrap items-center gap-2 text-sm text-mut">
 				最长
-				<input className="pa-input !w-24" type="number" min={1} value={draft.maxMinutes} aria-label="子代理最长运行分钟" onChange={(e) => setDraft({ ...draft, maxMinutes: e.target.value })} onBlur={(e) => commit("maxMinutes", e.target.value)} />
+				<input className="pa-input !w-24" type="number" min={1} disabled={saving} value={draft.maxMinutes} aria-label="子代理最长运行分钟" onChange={(e) => setDraft({ ...draft, maxMinutes: e.target.value })} onBlur={(e) => commit("maxMinutes", e.target.value)} />
 				分钟{inheritHint("maxMinutes")}
 			</label>
-			{err && <p className="text-xs text-red-500" data-testid="agent-subagent-limits-error">{err}</p>}
+			{err && <p className="text-xs text-red-500 [overflow-wrap:anywhere]" data-testid="agent-subagent-limits-error">{err}</p>}
 		</section>
 	);
 }

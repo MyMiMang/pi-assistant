@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, download } from "../api";
 import { useStore } from "../store";
 import type { MemoryEntry, MemoryProviderInfo } from "../types";
-import { Badge, Button, cx, Input, Select, useConfirm } from "./ui";
+import { Badge, Button, cx, Help, Input, Select, useConfirm } from "./ui";
 
 const KIND: Record<MemoryEntry["kind"], string> = { fact: "事实", experience: "日志", note: "便签" };
 const SCOPE: Record<MemoryEntry["scope"], string> = { user: "共享·关于你", agent: "仅此助理", conversation: "仅当前对话", task: "任务草稿" };
@@ -114,42 +114,6 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 	return (
 		<div className="space-y-3" data-testid="memory-tab">
 			{confirmDlg}
-			<div className="flex items-center gap-2 text-xs text-mut">
-				<Brain size={14} className="shrink-0" />
-				<Select
-					value={data?.agentProvider ?? ""}
-					ariaLabel="此助理的记忆后端"
-					testId="memory-provider"
-					placeholder="跟随全局"
-					menuMinWidth={260}
-					className="!h-7 !px-2 !text-xs"
-					disabled={provSaving}
-					options={[
-						{ value: "", label: `跟随全局（${provs?.providers.find((p) => p.id === provs.global)?.name ?? "…"}）` },
-						...(provs?.providers ?? []).map((p) => ({ value: p.id, label: p.name })),
-					]}
-					onChange={(v) => void setProvider(v || null)}
-				/>
-				{provSaving && <span className="shrink-0 text-mut">保存中…</span>}
-				<button className="ml-auto inline-flex items-center gap-1 hover:text-fg" onClick={() => fileRef.current?.click()} title="导入（本应用导出的记忆 JSON，可来自另一个后端或另一台电脑）">
-					<Upload size={13} /> 导入
-				</button>
-				<input ref={fileRef} type="file" accept="application/json,.json" className="hidden" data-testid="memory-import" onChange={(e) => e.target.files?.[0] && void doImport(e.target.files[0])} />
-				<button className="inline-flex items-center gap-1 hover:text-fg" onClick={() => download(`/api/agents/${agentId}/memory/export`, `memory-${agentId}.json`)} title="导出（JSON，可迁移到其他记忆后端）">
-					<Download size={13} /> 导出
-				</button>
-			</div>
-			{provErr && (
-				<div className="text-xs text-red-500" data-testid="memory-provider-error">
-					{provErr}
-				</div>
-			)}
-			{effective === "hindsight" && hs && (
-				<div className="flex items-center gap-2 text-xs text-mut" data-testid="hindsight-status">
-					<span className={cx("inline-block h-2 w-2 shrink-0 rounded-full", hs.state === "ready" ? "bg-green-500" : hs.state === "error" || hs.state === "down" ? "bg-red-500" : "animate-pulse bg-amber-500")} />
-					<span className="truncate">{hs.state === "ready" ? "高级记忆运行中" : hs.detail}{hs.pending ? ` · 待同步 ${hs.pending} 条` : ""}</span>
-				</div>
-			)}
 			{note && <div className="text-xs text-mut">{note}</div>}
 			{data?.provider.capabilities.reflect && (
 				<div className="pa-card space-y-2 !p-3">
@@ -169,7 +133,7 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 				</div>
 			)}
 			<div className="flex gap-2">
-				<div className="relative flex-1">
+				<div className="relative min-w-0 flex-1">
 					<Search size={14} className="absolute top-1/2 left-2.5 -translate-y-1/2 text-mut" />
 					<Input className="!pl-8" placeholder="搜索记忆" value={q} onChange={(e) => setQ(e.target.value)} />
 				</div>
@@ -177,7 +141,7 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 					<Plus size={16} />
 				</Button>
 			</div>
-			<div className="flex gap-1">
+			<div className="flex flex-wrap gap-1">
 				{(["", "fact", "experience", "note"] as const).map((k) => (
 					<button key={k} className={cx("pa-chip sm", filter === k && "!bg-hover !text-fg font-medium")} onClick={() => setFilter(k)}>
 						{k ? KIND[k] : "全部"}
@@ -225,35 +189,72 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 					<div className="mt-1 text-xs">在聊天里说“记住……”，或点 + 手动添加</div>
 				</div>
 			)}
-			<ul className="space-y-1.5">
+			<ul>
 				{items.map((m) => (
-					<li key={m.id} className="group rounded-xl bg-hover/60 px-3 py-2 text-sm">
-						<div className="whitespace-pre-wrap">{m.text}</div>
-						<div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-mut">
+					<li key={m.id} className="pa-memory-item" data-kind={m.kind}>
+						<div className="pa-memory-scope">
 							<Badge tone={SCOPE_TONE[m.scope]}>{SCOPE[m.scope]}</Badge>
-							{m.status === "draft" && <Badge tone="amber">待核验</Badge>}
 							<span>{KIND[m.kind]}</span>
+							{m.status === "draft" && <Badge tone="amber">待核验</Badge>}
 							<span>{new Date(m.createdAt).toLocaleDateString("zh-CN")}</span>
 							{m.expiresAt && <span>· {new Date(m.expiresAt).toLocaleDateString("zh-CN")} 到期</span>}
 							{m.source && <span>· {SOURCE_LABEL[m.source] ?? m.source}</span>}
-							<span className="ml-auto flex gap-0.5 opacity-0 group-hover:opacity-100 max-sm:opacity-100">
-								<button className="pa-icon-btn ghost !h-6 !w-6" aria-label="编辑" onClick={() => setEdit({ id: m.id, text: m.text, kind: m.kind, scope: m.scope })}>
-									<Pencil size={12} />
-								</button>
-								<button
-									className="pa-icon-btn ghost !h-6 !w-6"
-									aria-label="删除记忆"
-									disabled={delBusy === m.id}
-									onClick={() => void del(m)}
-									data-testid={`memory-delete-${m.id}`}
-								>
-									<Trash2 size={12} />
-								</button>
-							</span>
+						</div>
+						<div className="pa-memory-text">{m.text}</div>
+						<div className="pa-memory-actions">
+							<Button size="sm" variant="ghost" onClick={() => setEdit({ id: m.id, text: m.text, kind: m.kind, scope: m.scope })} data-testid={`memory-edit-${m.id}`}>
+								<Pencil size={12} /> 编辑
+							</Button>
+							<Button size="sm" variant="ghost" className="text-red-600 dark:text-red-400" aria-label="删除记忆" disabled={delBusy === m.id} onClick={() => void del(m)} data-testid={`memory-delete-${m.id}`}>
+								<Trash2 size={12} /> 删除
+							</Button>
+							{m.status === "draft" && <Help>这条内容来自子代理或后台任务。负责的助理需在原对话中核对，再决定是否保存为长期记忆。</Help>}
 						</div>
 					</li>
 				))}
 			</ul>
+			<div className="mt-3 space-y-2 border-t border-line pt-3" data-testid="memory-options">
+				<div className="pa-info-sechead">
+					<strong>记忆选项</strong>
+					<small>服务、导入导出与高级回想</small>
+				</div>
+				<div className="flex flex-wrap items-center gap-2 text-xs text-mut">
+					<Brain size={14} className="shrink-0" />
+					<Select
+						value={data?.agentProvider ?? ""}
+						ariaLabel="此助理的记忆后端"
+						testId="memory-provider"
+						placeholder="跟随全局"
+						menuMinWidth={260}
+						className="!h-8 min-w-0 max-w-full flex-1 !px-2 !text-xs"
+						disabled={provSaving}
+						options={[
+							{ value: "", label: `跟随全局（${provs?.providers.find((p) => p.id === provs.global)?.name ?? "…"}）` },
+							...(provs?.providers ?? []).map((p) => ({ value: p.id, label: p.name })),
+						]}
+						onChange={(v) => void setProvider(v || null)}
+					/>
+					{provSaving && <span className="shrink-0 text-mut">保存中…</span>}
+					<button className="inline-flex shrink-0 items-center gap-1 hover:text-fg" onClick={() => fileRef.current?.click()} title="导入（本应用导出的记忆 JSON，可来自另一个后端或另一台电脑）">
+						<Upload size={13} /> 导入
+					</button>
+					<input ref={fileRef} type="file" accept="application/json,.json" className="hidden" data-testid="memory-import" onChange={(e) => e.target.files?.[0] && void doImport(e.target.files[0])} />
+					<button className="inline-flex shrink-0 items-center gap-1 hover:text-fg" onClick={() => download(`/api/agents/${agentId}/memory/export`, `memory-${agentId}.json`)} title="导出（JSON，可迁移到其他记忆后端）">
+						<Download size={13} /> 导出
+					</button>
+				</div>
+				{provErr && (
+					<div className="text-xs text-red-500" data-testid="memory-provider-error">
+						{provErr}
+					</div>
+				)}
+				{effective === "hindsight" && hs && (
+					<div className="flex items-center gap-2 text-xs text-mut" data-testid="hindsight-status">
+						<span className={cx("inline-block h-2 w-2 shrink-0 rounded-full", hs.state === "ready" ? "bg-green-500" : hs.state === "error" || hs.state === "down" ? "bg-red-500" : "animate-pulse bg-amber-500")} />
+						<span className="truncate">{hs.state === "ready" ? "高级记忆运行中" : hs.detail}{hs.pending ? ` · 待同步 ${hs.pending} 条` : ""}</span>
+					</div>
+				)}
+			</div>
 			{delErr && <div className="text-sm text-red-600" data-testid="memory-delete-error">{delErr}</div>}
 		</div>
 	);
