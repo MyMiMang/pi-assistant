@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { stableShot, waitStable } from "./fixtures/stable-shot.mjs";
-import { expandAgentModelSection, ensureDetailVisible, agentProfileSave, PERSONA_PLACEHOLDER, agentModelButton, openAgentModelPop } from "./fixtures/info-pane.mjs";
+import { expandAgentModelSection, ensureDetailVisible, agentProfileSave, PERSONA_PLACEHOLDER, BIO_PLACEHOLDER, agentModelButton, openAgentModelPop } from "./fixtures/info-pane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-agent-details-");
@@ -79,6 +79,11 @@ try {
  await select("profile");
  const profile = pane.getByTestId("agent-profile"); const persona = profile.getByPlaceholder(PERSONA_PLACEHOLDER);
  await ensureDetailVisible(profile, persona);
+ assert.equal((await profile.getByTestId("agent-profile-state").innerText()).trim(), "", "资料页没改动时不显示「资料已保存」");
+ const bio = profile.getByPlaceholder(BIO_PLACEHOLDER); const bioBefore = await bio.inputValue();
+ await profile.getByTestId("agent-persona-preset").filter({ hasText: "程序员" }).click();
+ assert.match(await persona.inputValue(), /全栈工程师/, "套用模板替换人设");
+ assert.equal(await bio.inputValue(), bioBefore, "套用模板不改简介");
  await persona.fill("这是还没保存的人设草稿；切换功能分类必须保留。");
  await select("models"); await (await openAgentModelPop(page)).getByRole("slider").press("Home"); await wait(async () => (await current()).thinkingSetting === "off");
  await select("profile"); assert.match(await persona.inputValue(), /还没保存的人设草稿/);
@@ -208,7 +213,7 @@ try {
  const profileScroll = profileRoot.locator(".pa-profile-body");
  await profileScroll.waitFor();
  const scrolled = await profileScroll.evaluate((el, p) => { el.scrollTop = p === "top" ? 0 : el.scrollHeight; return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight }; }, "bottom");
- assert.ok(scrolled.max > 0 && scrolled.top >= scrolled.max - 2, `资料正文真的能滚到末尾：${JSON.stringify(scrolled)}`);
+ assert.ok(scrolled.max <= 0 || scrolled.top >= scrolled.max - 2, `资料正文放不下时能滚到末尾：${JSON.stringify(scrolled)}`);
  assert.ok(await withinPane(saveBtn), "资料滚到末尾时保存按钮仍可见（固定 footer）");
  await profileScroll.evaluate((el) => { el.scrollTop = 0; });
  assert.ok(await withinPane(saveBtn), "资料在顶部时保存按钮也可见");

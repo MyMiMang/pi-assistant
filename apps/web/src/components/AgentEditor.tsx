@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Agent } from "../types";
-import { Avatar, Button, cx, Input } from "./ui";
+import { Avatar, Button, cx, Help, Input } from "./ui";
 
 export const AGENT_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#8b5cf6", "#64748b"];
 const EMOJIS = ["🤖", "🦊", "🐼", "🐱", "🦉", "🐙", "🚀", "⚡️", "🌟", "🧠", "🛠️", "📚", "✍️", "🎨", "💼", "🔍"];
@@ -168,7 +168,7 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 			{error ? (
 				<span className="pa-info-footer-note text-red-600 dark:text-red-400" role="alert">{error}</span>
 			) : (
-				<span className="pa-info-footer-note" data-testid="agent-profile-state">{dirty ? "有未保存修改" : saved ? "已保存" : "资料已保存"}</span>
+				<span className="pa-info-footer-note" data-testid="agent-profile-state">{dirty ? "有未保存修改" : saved ? "已保存" : ""}</span>
 			)}
 			<Button variant="primary" size="sm" disabled={busy} onClick={submit} data-testid="agent-profile-save">
 				{busy ? "保存中…" : "保存资料"}
@@ -182,8 +182,8 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 				<div className="pa-profile-avatar">
 					<Avatar agentId={agent?.id} text={avatarText} color={d.color} size={44} src={preview ?? undefined} />
 					<div className="pa-profile-avatar-txt">
-						助理头像
-						<small>{preview || file ? "已选择新图片，保存后生效" : d.avatar.startsWith("img:") ? "当前使用上传的图片" : "表情或名字首字"}</small>
+						头像
+						<small>{preview || file ? "已选择新图片，保存后生效" : d.avatar.startsWith("img:") ? "当前使用上传的图片" : "表情、颜色或上传图片"}</small>
 					</div>
 					<Button size="sm" variant="outline" onClick={() => setPicker(!picker)} aria-expanded={picker} data-testid="agent-avatar-change">更换</Button>
 				</div>
@@ -240,7 +240,7 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 				)}
 				{profile ? (
 					<label className="block space-y-1.5">
-						<span className="text-xs font-medium text-zinc-500">简介</span>
+						<span className="text-xs font-medium text-zinc-500">一句话简介 · 显示在侧边栏和群里</span>
 						<textarea
 							value={d.description}
 							onChange={(e) => set({ description: e.target.value })}
@@ -255,19 +255,19 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 				)}
 			</div>
 			{profile ? (
-				<details className="pa-info-details" open data-testid="agent-persona-details">
-					<summary>
-						人设与偏好
-						<small>回答方式、专长与协作习惯</small>
-					</summary>
+				<section data-testid="agent-persona-details">
+					<h2 className="pa-info-h2 flex items-center">人设<Help>每次对话都会带上这段话。写清楚它该怎么做事、怎么称呼你、有什么习惯；套用模板只替换这里的人设，不改上面的简介。</Help></h2>
+					<p className="pa-info-lead">告诉它怎么做事、怎么称呼你</p>
 					<div className="pa-info-details-body">
-						<div className="flex flex-wrap gap-1.5">
-							{PRESETS.map((p) => (
+						<div className="flex flex-wrap items-center gap-1.5">
+							<span className="text-xs text-mut2">套用模板：</span>
+							{PRESETS.filter((p) => p.persona).map((p) => (
 								<button
 									key={p.label}
 									type="button"
-									onClick={() => set({ description: p.description, persona: p.persona })}
+									onClick={() => set({ persona: p.persona })}
 									className={cx("pa-chip sm", d.persona === p.persona && "!border-accent !text-accent")}
+									data-testid="agent-persona-preset"
 								>
 									{p.label}
 								</button>
@@ -280,7 +280,7 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 							placeholder="例如：回答要简洁；称呼我 deng；改代码前先说明计划"
 						/>
 					</div>
-				</details>
+				</section>
 			) : (
 				<label className="block space-y-1.5">
 					<span className="text-xs font-medium text-zinc-500">人设与偏好（可选）</span>
@@ -301,7 +301,7 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 			{!profile && error && <div className="rounded-xl bg-red-50 px-3 py-2 text-red-600 dark:bg-red-950/40 dark:text-red-400">{error}</div>}
 			{profile ? (
 				<details className="pa-info-details" data-testid="agent-danger-details">
-					<summary>更多操作</summary>
+					<summary>删除助理<small>聊天记录会清除，文件进回收站</small></summary>
 					<div className="pa-info-details-body">
 						{agent &&
 							(confirmDel ? (
@@ -318,7 +318,6 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 									<Trash2 size={14} /> 删除助理
 								</Button>
 							))}
-						{confirmDel && <p className="text-xs text-zinc-500">聊天记录会清除，文件移进回收站。</p>}
 					</div>
 				</details>
 			) : null}
