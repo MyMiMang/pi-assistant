@@ -60,6 +60,8 @@ interface State {
 	proactiveVersion: number;
 	inbox: boolean;
 	routinesVersion: number;
+	/** 长期任务看板版本：每次服务端 work.items 事件 +1，面板只按事件刷新，不轮询 */
+	workVersion: number;
 	skillsVersion: number;
 	extVersion: number;
 	tasks: Record<string, Task[]>;
@@ -191,6 +193,7 @@ export const useStore = create<State>((set, get) => ({
 	proactiveVersion: 0,
 	inbox: false,
 	routinesVersion: 0,
+	workVersion: 0,
 	skillsVersion: 0,
 	extVersion: 0,
 	tasks: {},
@@ -502,6 +505,9 @@ export const useStore = create<State>((set, get) => ({
 				break;
 			case "rooms.changed":
 				void get().loadRooms();
+				break;
+			case "work.items":
+				set({ workVersion: get().workVersion + 1 });
 				break;
 			case "room.state":
 				set({ rooms: get().rooms.map((r) => (r.id === e.roomId ? { ...r, state: e.state } : r)) });

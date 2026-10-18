@@ -395,17 +395,97 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 	const users = messages.filter((m) => m.role === "user").flatMap((m) => [...textOf(m).matchAll(/【用户】([^\n]*)/g)].map((x) => x[1]));
 	const said = users[users.length - 1] ?? "";
 	const target = said.match(/派给([^\s，,。]+)/)?.[1];
+	const isFollowup = /成员都已/.test(u);
+	const lastUserIdx = messages.lastIndexOf(lastUserMsg ?? last);
+	const since = messages.slice(lastUserIdx + 1);
+	const tools = since.filter((m) => m.role === "toolResult").map((m) => String(m.toolName ?? ""));
+	// 长期任务：群里指到具体任务（编号 / 任务名 / 引用结果卡）时，管理者接收纠正并更新原任务。
+	const workCtx = isFollowup ? "" : (u.match(/【关于长期任务】[\s\S]*?(?=\n——|$)/)?.[0] ?? "");
+	const workId = workCtx.match(/编号 (wi_[a-z0-9]+)/i)?.[1] ?? "";
+	const workStatus = workCtx.match(/当前(待安排|进行中|受阻|待核验|已完成|已暂停|已取消)/)?.[1] ?? "";
+	const feedback = /改|修改|调整|补充|修正|不对|有问题|错误|不符合|缺|漏|退回|重做|重来|不是这样/.test(said);
+	if (workCtx && /可能指到多个任务/.test(workCtx)) return fauxAssistantMessage(`${me}：你指的是哪一项？说任务名字或编号就行，我不会猜。`);
+	if (workCtx && workId && feedback && !isFollowup) {
+		// 按“工具实际成功做了什么”推进，而不是按调用次数：工具被拒 / 状态不对时不能假装下一步成功。
+		const results = since.filter((m) => m.role === "toolResult");
+		const outText = results.map((m) => textOf(m)).join("\n");
+		const failed = results.find((m) => /不能|没有明确|先不要|不存在|只有管理者|已暂停|已取消|已完成|失败/.test(textOf(m)) && !/已重开|已更新要求|已继续/.test(textOf(m)));
+		if (failed) return fauxAssistantMessage(`${me}：${textOf(failed).slice(0, 160)}`);
+		const did = (re: RegExp) => results.some((m) => ["work_update", "work_verify"].includes(String(m.toolName)) && re.test(textOf(m)));
+		const edit = () => fauxAssistantMessage([fauxToolCall("work_update", { workItemId: workId, action: "edit", requirement: `按用户最新反馈改：${said.slice(0, 200)}`, doneCriteria: `修改后满足：${said.slice(0, 160)}` })]);
+		const cont = () => fauxAssistantMessage([fauxToolCall("work_update", { workItemId: workId, action: "continue" })]);
+		if (/已完成|已取消/.test(workStatus)) {
+			if (!did(/已重开/)) return fauxAssistantMessage([fauxToolCall("work_update", { workItemId: workId, action: "reopen" })]);
+			if (!did(/已更新要求/)) return edit();
+			if (!did(/已继续/)) return cont();
+		} else if (workStatus === "待核验") {
+			if (!did(/已退回/)) return fauxAssistantMessage([fauxToolCall("work_verify", { workItemId: workId, verdict: "return", note: `用户指出问题：${said.slice(0, 160)}` })]);
+			if (!did(/已更新要求/)) return edit();
+			if (!did(/已继续/)) return cont();
+		} else if (workStatus === "已暂停") {
+			if (feedback && !did(/已更新要求/)) return edit();
+			if (!did(/已继续/)) return cont();
+		} else {
+			if (!did(/已更新要求/)) return edit();
+			if (!did(/已继续/)) return cont();
+		}
+		return fauxAssistantMessage(`${me}：已经按你指出的问题更新原任务，安排重新做，做完会先给你核验。`);
+	}
+	// 首次长期任务：管理者记录任务并派给成员（不是把每个临时问题都建成任务）
+	if (last.role !== "toolResult" && !isFollowup && u.includes("（管理者）") && /长期任务/.test(said) && /派给/.test(said) && target) {
+		// 目标 / 范围 / 完成标准不清时先问一个关键问题；不替用户编一个“按用户要求交付”的标准。
+		const title = said.match(/长期任务[：:]\s*([^，,。；;派]+)/)?.[1]?.trim() || "";
+		const requirement = said.match(/要求[：:]\s*([^；;。]*)/)?.[1]?.trim() ?? "";
+		const done = said.match(/完成标准[：:]\s*([^；;。]*)/)?.[1]?.trim() ?? "";
+		if (!title || !requirement || !done) return fauxAssistantMessage(`${me}：在记录任务前先确认一下：这件事的目标 / 范围和完成标准分别是什么？特别是怎样检查算做完。`);
+		return fauxAssistantMessage([fauxToolCall("work_create", { title, requirement, doneCriteria: done, owner: target, start: true })]);
+	}
+	// 管理者跟进：成员提交后先看任务状态，再核验（真实两轮工具调用，不是直接假装完成）
+	if (isFollowup && (/已提交/.test(u) || /待核验/.test(u) || /长期任务/.test(said))) {
+		// 一次跟进最多：work_list → read 实际产物 → work_verify。用当前这步的 last.toolName 推进，
+		// 不复用上一轮 / 成员的旧列表，避免无限核验循环。经理核验必须读真实产物，不能只看自报。
+		if (last.toolName === "work_verify") return fauxAssistantMessage(`${me}：${textOf(last).slice(0, 200)}`);
+		if (last.toolName !== "work_list" && last.toolName !== "read") return fauxAssistantMessage([fauxToolCall("work_list", {})]);
+		const ctxId = u.match(/编号 (wi_[a-z0-9]+)/i)?.[1];
+		if (last.toolName === "work_list") {
+			const listed = textOf(last);
+			const pending = listed.split("\n").find((line) => /待核验/.test(line) && (!ctxId || line.includes(ctxId)));
+			const id = pending?.match(/wi_[a-z0-9]+/i)?.[0] ?? (pending ? ctxId : undefined);
+			if (!id) return fauxAssistantMessage(`${me} 总结：任务已经处理完。`);
+			const path = paths[0];
+			if (!path) return fauxAssistantMessage([fauxToolCall("work_verify", { workItemId: id, verdict: "return", note: "没有拿到交付文件，无法核验；请成员把产物发到群里" })]);
+			return fauxAssistantMessage([fauxToolCall("read", { path })]);
+		}
+		const readOut = textOf(last);
+		const listMsg = [...messages].reverse().find((m) => m.role === "toolResult" && m.toolName === "work_list");
+		const id = ctxId ?? textOf(listMsg ?? last).match(/wi_[a-z0-9]+/i)?.[0] ?? "";
+		if (!id) return fauxAssistantMessage(`${me} 总结：任务已经处理完。`);
+		if (/第 3 行检查点/.test(readOut)) return fauxAssistantMessage([fauxToolCall("work_verify", { workItemId: id, verdict: "pass", note: `读了 ${paths[0] ?? "交付文件"}，第 3 行检查点存在，符合完成标准` })]);
+		return fauxAssistantMessage([fauxToolCall("work_verify", { workItemId: id, verdict: "return", note: "读了交付文件，没有找到第 3 行检查点，退回补上" })]);
+	}
 	if (last.role === "toolResult") {
 		const out = textOf(last);
 		if (last.toolName === "room_assign") return fauxAssistantMessage(`${me}：已安排 ${target ?? ""}。`);
+		if (last.toolName === "write" && /【长期任务】/.test(u)) return fauxAssistantMessage([fauxToolCall("deliver_file", { path: "out.txt", caption: `${me}：任务交付 out.txt` })]);
+		if (last.toolName === "deliver_file" && /【长期任务】/.test(u)) {
+			const id = u.match(/任务编号：(wi_[a-z0-9]+)/i)?.[1];
+			return fauxAssistantMessage([fauxToolCall("work_submit", { result: "已交付 out.txt（群附件），第 3 行写着检查点；来源链接在文件末尾", ...(id ? { workItemId: id } : {}) })]);
+		}
 		if (last.toolName === "write") return fauxAssistantMessage([fauxToolCall("deliver_file", { path: "chart.svg", caption: `${me}：图表做好了` })]);
 		if (last.toolName === "deliver_file") return fauxAssistantMessage(`${me}：文件已发到群里。`);
 		if (last.toolName === "room_propose_member") return fauxAssistantMessage(`${me}：我提议加一个成员，请确认。`);
+		if (last.toolName === "work_create") return fauxAssistantMessage(`${me}：长期任务已经记下，成员做完会提交，我到时候核验。`);
+		if (last.toolName === "work_submit") return fauxAssistantMessage(`${me}：已提交结果：out.txt（第 3 行检查点），等待核验。`);
+		if (last.toolName === "work_verify") return fauxAssistantMessage(`${me}：核验完成，${/退回/.test(out) ? "已退回修改并安排重做。" : "任务完成。"}`);
+		if (last.toolName === "work_update") return fauxAssistantMessage(`${me}：任务已经按用户的新要求更新并重新安排。`);
+		if (last.toolName === "work_list") return fauxAssistantMessage(`${me}：任务状态我看过了。`);
 		return fauxAssistantMessage(/blocked|拒绝|denied|批准|停止/i.test(out) ? `${me}：没有获得批准，不执行。` : `${me}：已处理（${out.slice(0, 40)}）`);
 	}
 	if (/画一张/.test(said) && !/成员都已回复/.test(u)) return fauxAssistantMessage([fauxToolCall("generate_image", { prompt: said.replace(/^.*?画一张/, "").trim() || said })]);
 	if (/给你分配了任务/.test(u)) {
 		const task = u.match(/给你分配了任务：([^\n]*)/)?.[1] ?? "";
+		if (/【长期任务】/.test(u)) return fauxAssistantMessage([fauxToolCall("write", { path: "out.txt", content: "# 季度报告\n\n数据来源：Q3 内部表\n\n第 3 行检查点：每个结论都有来源链接\n" })]);
+
 		if (/慢慢/.test(task + said)) return fauxAssistantMessage([fauxText(`${me}：开始做，比较慢。`), fauxToolCall("bash", { command: "sleep 20; echo done" })]);
 		if (/做个图表/.test(task + said)) return fauxAssistantMessage([fauxToolCall("write", { path: "chart.svg", content: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#4a8"/></svg>' })]);
 		return fauxAssistantMessage(`${me} 完成了：${task.slice(0, 40)}${seen}${/提醒C|@C/.test(said) ? "。建议 @C 也看看" : ""}`);

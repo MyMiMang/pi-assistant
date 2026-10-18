@@ -87,6 +87,9 @@ export interface PlannedTurn {
 	depth: number;
 	/** 用户引用定向的一轮：只回应引用，默认不自动扩派（见 docs/design/message-replies.md §5） */
 	directed?: boolean;
+	/** 这一轮要执行的长期任务执行记录（派发时就精确绑定，不在轮到时猜） */
+	workItemId?: string;
+	workRunId?: string;
 }
 
 /** 用户发言后谁来说：@ 了谁就是谁（按顺序）；没 @ = 只有管理者 */
@@ -142,7 +145,7 @@ export function planForUserWithQuote(o: {
  */
 export function planAfter(
 	turn: PlannedTurn,
-	o: { managerId: string | null; activeIds: string[]; assignments: { agentId: string; task?: string }[]; caps: RoomCaps; batchDone: boolean; anyWorkerRan: boolean },
+	o: { managerId: string | null; activeIds: string[]; assignments: { agentId: string; task?: string; workItemId?: string; workRunId?: string }[]; caps: RoomCaps; batchDone: boolean; anyWorkerRan: boolean },
 ): PlannedTurn[] {
 	const isMgr = turn.agentId === o.managerId;
 	if (isMgr) {
@@ -151,7 +154,7 @@ export function planAfter(
 		const seen = new Set<string>();
 		return o.assignments
 			.filter((a) => a.agentId !== o.managerId && o.activeIds.includes(a.agentId) && !seen.has(a.agentId) && (seen.add(a.agentId), true))
-			.map((a) => ({ agentId: a.agentId, reason: "assign" as const, task: a.task, depth }));
+			.map((a) => ({ agentId: a.agentId, reason: "assign" as const, task: a.task, depth, ...(a.workItemId ? { workItemId: a.workItemId, workRunId: a.workRunId } : {}) }));
 	}
 	if (turn.reason === "assign" && o.batchDone && o.anyWorkerRan && o.caps.followup && o.managerId && o.activeIds.includes(o.managerId))
 		return [{ agentId: o.managerId, reason: "followup", depth: turn.depth }];

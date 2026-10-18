@@ -200,7 +200,7 @@ export function SubagentTasks({ agentId, conversation, room, current, testid = "
 	const openTask = (r: Subagent) => { setOpen(false); useStore.getState().openSubagent(r); };
 	const row = (r: Subagent) => <TaskRow key={r.id} testId="subagent-row" id={r.id} active={r.id === current} title={taskTitle(r.task)} status={r.status} meta={`子代理 · ${r.model_id || "未指定模型"}`} time={r.last_activity_at} onClick={() => openTask(r)} />;
 	return <>
-		<button className="pa-chip" onClick={() => setOpen(true)} data-testid={testid} aria-label="任务列表" title="任务"><Bot className="pa-ic" /><span className="max-sm:hidden">子代理</span><span>{running.length || rows.length}</span></button>
+		<button className="pa-chip" onClick={() => setOpen(true)} data-testid={testid} aria-label="执行概览" title="执行概览：子代理与后台任务的运行情况"><Bot className="pa-ic" /><span className="max-sm:hidden">执行</span><span>{running.length || rows.length}</span></button>
 		<Modal open={open} onClose={() => setOpen(false)} title="任务" testId={overviewTestid}>
 			<div className="space-y-3 p-4" data-testid="task-list">
 				{running.length > 0 ? <div className="space-y-2">{running.map(row)}</div> : <p className="px-1 text-xs text-mut2">现在没有运行中的任务。</p>}

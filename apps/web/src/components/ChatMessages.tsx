@@ -6,6 +6,7 @@ import { useStore } from "../store";
 import type { Agent, Message } from "../types";
 import Attachments from "./Attachments";
 import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
+import { WorkResultCard } from "./WorkItems";
 import Markdown from "./Markdown";
 import { splitThinking } from "../thinking";
 import { fmtMoney, fmtTok, type MsgUsage, useFx } from "./usage-fmt";
@@ -174,7 +175,7 @@ export function BotPart({ p, live, busy, renderSubagent, onQuote, onJump, intera
 	if (p.kind === "steps") return <Steps items={p.items} live={live} busy={busy} />;
 	const m = p.m;
 	if (m.role === "card")
-		return m.meta.kind === "subagent" ? renderSubagent?.(m) ?? null : m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
+		return m.meta.kind === "subagent" ? renderSubagent?.(m) ?? null : m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : m.meta.kind === "work-result" ? <WorkResultCard meta={{ ...m.meta, roomId: (m.meta.roomId as string) ?? undefined }} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
 	// 思考：原生 reasoning（meta.thinking）+ 正文里的 <think>…</think>（旧消息 / 流式中），折叠显示，不当正文
 	const split = splitThinking(m.content);
 	const thinking = [String(m.meta.thinking ?? "").trim(), split.thinking].filter(Boolean).join("\n\n");
