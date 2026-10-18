@@ -392,6 +392,7 @@ async function extensionsFor(agentId: string, conversationId: string | null, tas
 			factory: memoryExtension({
 				context: (prompt) => memory.context(agentId, conversationId, prompt, 6000, { taskId: memTaskId, parent: memParent }),
 				remember: (i) => memory.remember(agentId, conversationId, { ...i, actor: memActor, taskId: memTaskId, subagentId: opts.subagentId, source: memParent ? "agent" : memActor }),
+				retainTurn: (t) => memory.retainTurn(agentId, conversationId, { ...t, actor: memActor, taskId: memTaskId }),
 				recall: async (q, limit) => (await memory.recall(agentId, conversationId, q, limit, { taskId: memTaskId, parent: memParent })).map((m) => ({ id: m.id, text: m.text, scope: m.scope, kind: m.kind, createdAt: m.createdAt, status: m.status })),
 				forget: (id) => memory.forget(agentId, id, { actor: memActor, taskId: memTaskId, subagentId: opts.subagentId }),
 				reflect: memory.capabilities(agentId).reflect ? (q) => memory.reflect(agentId, q, { actor: memActor, conversationId, taskId: memTaskId, parent: memParent }) : undefined,

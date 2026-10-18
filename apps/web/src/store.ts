@@ -593,9 +593,13 @@ export const useStore = create<State>((set, get) => ({
 				break;
 			}
 			case "memory.hindsight":
-			case "memory.sync":
-				set({ hindsightVersion: get().hindsightVersion + 1 });
+			case "memory.sync": {
+				// 健康变化顺手更新设置入口的小圆点（启动时由 /api/system 带上）
+				const h = (e as unknown as { health?: { level: "ok" | "slow" | "failing"; summary: string } }).health;
+				const sys = get().system;
+				set({ hindsightVersion: get().hindsightVersion + 1, ...(h && sys ? { system: { ...sys, memoryHealth: { level: h.level, summary: h.summary } } } : {}) });
 				break;
+			}
 			case "routines.changed":
 				set({ routinesVersion: get().routinesVersion + 1 });
 				break;

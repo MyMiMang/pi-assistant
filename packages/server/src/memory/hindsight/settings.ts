@@ -20,6 +20,8 @@ export interface HindsightSettings {
 	remoteUrl?: string;
 	/** null = 自动挑选 */
 	llm: { provider: string; id: string } | null;
+	/** 备用记忆模型（按顺序）：主模型连续失败时网关自动换用 */
+	llmFallbacks: { provider: string; id: string }[];
 	embedding: EmbeddingCfg;
 	reranker: RerankerCfg;
 	mirror: Mirror;
@@ -34,6 +36,7 @@ export interface HindsightSecrets {
 export const DEFAULTS: HindsightSettings = {
 	mode: "local",
 	llm: null,
+	llmFallbacks: [],
 	embedding: { kind: "local", model: "intfloat/multilingual-e5-small" },
 	reranker: { kind: "local", model: "ms-marco-MultiBERT-L-12" },
 	mirror: "auto",
@@ -80,6 +83,7 @@ export function saveHindsightSettings(input: Partial<HindsightSettings> & { embe
 		mode: input.mode ?? cur.mode,
 		remoteUrl: input.remoteUrl !== undefined ? input.remoteUrl.trim() || undefined : cur.remoteUrl,
 		llm: input.llm !== undefined ? input.llm : cur.llm,
+		llmFallbacks: (input.llmFallbacks ?? cur.llmFallbacks).filter((m) => m?.provider && m?.id).map((m) => ({ provider: m.provider, id: m.id })).slice(0, 3),
 		embedding: input.embedding ?? cur.embedding,
 		reranker: input.reranker ?? cur.reranker,
 		mirror: input.mirror ?? cur.mirror,

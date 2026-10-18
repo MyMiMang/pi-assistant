@@ -14,7 +14,8 @@ import { db } from "../../db.ts";
 import { basicMemory } from "../basic.ts";
 import type { BankId, MemoryItem, MemoryProvider, RememberInput } from "../types.ts";
 import { embeddingSignature, hindsightSettings } from "./settings.ts";
-import { sidecar } from "./sidecar.ts";
+import { memoryHealth, recordHealth, timed } from "./health.ts";
+import { hindsightVersion, sidecar } from "./sidecar.ts";
 
 const MENTAL_MODELS = [
 	{ id: "user-preferences", name: "用户偏好与习惯", query: "关于用户，有哪些已经确定的偏好、习惯、身份信息和长期约定？用简短条目列出。" },
@@ -24,6 +25,8 @@ const MENTAL_MODELS = [
 const client = () => new HindsightClient({ baseUrl: sidecar.baseUrl!, apiKey: sidecar.apiKey(), userAgent: "pi-assistant" } as never);
 /** recall/reflect 没有显式取消；用 AbortController 真正中止 fetch（不是只 race 掉 Promise），避免超时后请求还在跑 */
 const RECALL_TIMEOUT_MS = Number(process.env.PIA_MEMORY_TIMEOUT_MS ?? 20_000);
+/** 反思是多轮模型调用（正常 30–60 秒），不能用召回的 20 秒 */
+const REFLECT_TIMEOUT_MS = Number(process.env.PIA_MEMORY_REFLECT_TIMEOUT_MS ?? 120_000);
 function abortable<T>(run: (signal: AbortSignal) => Promise<T>, ms: number, what: string): Promise<T> {
 	const ac = new AbortController();
 	const t = setTimeout(() => ac.abort(new Error(`${what}超时（${ms}ms）`)), ms);
@@ -142,17 +145,37 @@ async function onReady() {
 
 // 恢复后自动补写；另外每分钟兜底一次
 bus.on((e) => {
-	if (e.type === "memory.hindsight" && (e.status as { state: string }).state === "ready") void onReady();
+	if (e.type === "memory.hindsight" && (e.status as { state: string } | undefined)?.state === "ready") void onReady();
 });
 setInterval(() => void flush(), 60_000).unref();
 
-const toItem = (bank: string, r: { id: string; text: string; type?: string | null; document_id?: string | null; mentioned_at?: string | null; occurred_start?: string | null }, score: number): MemoryItem | null => {
+/** 自动写入的对话回合的 documentId 前缀（不进账本：只给 Hindsight 抽取事实用，换向量模型重建时不会补写） */
+const TURN_DOC = "turn:";
+const turnMeta = (m: Record<string, string>) => ({
+	kind: "experience",
+	source: "turn",
+	...(m.conversationId ? { conversationId: m.conversationId } : {}),
+	...(m.taskId ? { taskId: m.taskId } : {}),
+	origin: { actor: m.actor ?? "main", assistantId: m.assistantId ?? "", taskId: m.taskId ?? null, conversationId: m.conversationId ?? null, createdAt: m.createdAt ?? "", status: m.status ?? "verified", source: "turn" },
+});
+
+const toItem = (bank: string, r: { id: string; text: string; type?: string | null; document_id?: string | null; mentioned_at?: string | null; occurred_start?: string | null; metadata?: Record<string, string> | null }, score: number): MemoryItem | null => {
 	const docId = r.document_id ?? undefined;
+	// 自动写入的对话回合（不在账本里）：作用域信息在 metadata 里，按经历返回
+	if (docId?.startsWith(TURN_DOC)) return { id: `hs_${r.id}`, text: r.text, createdAt: r.mentioned_at ?? new Date().toISOString(), occurredAt: r.occurred_start ?? undefined, score, meta: { ...turnMeta(r.metadata ?? {}), hindsightType: r.type } };
 	const src = docId ? row(docId) : undefined;
 	if (docId && (!src || src.bank !== bank)) return null; // 账本里已删除的，不再返回
 	const meta = src ? metaOf(src) : { kind: r.type === "observation" ? "fact" : "experience" };
 	return { id: docId ?? `hs_${r.id}`, text: r.text, kind: r.type === "observation" ? "observation" : undefined, createdAt: src?.created_at ?? r.mentioned_at ?? new Date().toISOString(), occurredAt: r.occurred_start ?? undefined, score, meta: { ...meta, hindsightType: r.type } };
 };
+
+/** 设置页「测试」：在用户库上真实召回一次（不退回基础记忆，出错直接抛出），结果也记进健康状态 */
+export async function probeRecall(query = "用户的偏好和习惯") {
+	if (!sidecar.ready) throw new Error(`高级记忆服务没在运行：${sidecar.status.detail}`);
+	if (!db.prepare("SELECT 1 FROM hindsight_banks WHERE bank = 'user'").get()) return { count: 0 };
+	const res = await timed("recall", () => abortable((signal) => client().recall("user", query, { maxTokens: 1024, budget: "mid", types: ["world", "experience", "observation"], signal } as never), RECALL_TIMEOUT_MS, "记忆召回"));
+	return { count: ((res as { results?: unknown[] }).results ?? []).length };
+}
 
 export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 	id: "hindsight",
@@ -166,7 +189,7 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 		const s = sidecar.status;
 		return { ok: s.state === "ready", detail: `${s.detail}${pendingCount() ? `；待同步 ${pendingCount()} 条` : ""}` };
 	},
-	status: () => ({ ...sidecar.status, pending: pendingCount(), lastError: lastSyncError() }),
+	status: () => ({ ...sidecar.status, pending: pendingCount(), lastError: lastSyncError(), health: memoryHealth(), version: hindsightVersion() }),
 
 	async ensureBank(bank, profile) {
 		profiles.set(bank, profile);
@@ -185,7 +208,7 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 		if (!sidecar.ready) return basicMemory.recall(bank, query, opts);
 		try {
 			if (!db.prepare("SELECT 1 FROM hindsight_banks WHERE bank = ?").get(bank)) await ensureRemoteBank(bank);
-			const res = await abortable((signal) => client().recall(bank, query, { maxTokens: opts.tokenBudget ?? 2048, budget: "mid", types: ["world", "experience", "observation"], signal } as never), RECALL_TIMEOUT_MS, "记忆召回");
+			const res = await timed("recall", () => abortable((signal) => client().recall(bank, query, { maxTokens: opts.tokenBudget ?? 2048, budget: "mid", types: ["world", "experience", "observation"], signal } as never), RECALL_TIMEOUT_MS, "记忆召回"));
 			const results = ((res as { results?: unknown[] }).results ?? []) as Parameters<typeof toItem>[1][];
 			const items = results.map((r, i) => toItem(bank, r, 1 / (1 + i))).filter(Boolean) as MemoryItem[];
 			const limit = opts.limit ?? 8;
@@ -208,9 +231,27 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 				: "tagGroups" in scope
 					? { tagGroups: scope.tagGroups }
 					: { tags: scope.tags, tagsMatch: scope.tagsMatch ?? "any" };
-		const r = await abortable((signal) => client().reflect(bank, query, { budget: "mid", includeFacts: true, ...filter, signal } as never), RECALL_TIMEOUT_MS, "记忆反思");
+		const r = await timed("reflect", () => abortable((signal) => client().reflect(bank, query, { budget: "mid", includeFacts: true, ...filter, signal } as never), REFLECT_TIMEOUT_MS, "记忆反思"));
 		const memories = ((r.based_on as { memories?: Parameters<typeof toItem>[1][] } | null)?.memories ?? []).map((m, i) => toItem(bank, m, 1 / (1 + i))).filter(Boolean) as MemoryItem[];
 		return { answer: r.text, citations: memories };
+	},
+
+	/**
+	 * 每轮结束自动写入这一轮对话（用户说的 + 助理答的），让 Hindsight 自己抽取事实和经历，不再只靠模型主动调 memory_remember。
+	 * 每轮一个文档（turn:<对话>:<时间>），只进助理自己的库；作用域/来源写进 tag 和 metadata（与账本条目同一套规则）。
+	 * 不进账本：Hindsight 没就绪时直接跳过（回合原文本来就在聊天记录里）。
+	 */
+	async retainTurn(bank, turn) {
+		if (!sidecar.ready) return;
+		await ensureRemoteBank(bank);
+		const scope = turn.taskId ? "task" : "agent";
+		const tags = [`kind:experience`, `scope:${scope}`, `status:${turn.status}`, `actor:${turn.actor}`, ...(turn.taskId ? [`task:${turn.taskId}`] : [])];
+		const createdAt = new Date().toISOString();
+		const metadata: Record<string, string> = { kind: "experience", source: "turn", actor: turn.actor, status: turn.status, assistantId: turn.assistantId, createdAt, ...(turn.taskId ? { taskId: turn.taskId } : {}) };
+		const content = `用户：${turn.user.slice(0, 4000)}\n助理：${turn.assistant.slice(0, 4000)}`;
+		await client()
+			.retain(bank, content, { documentId: `${TURN_DOC}${turn.conversationId ?? "-"}:${Date.now()}`, timestamp: createdAt, context: "对话回合", metadata, tags, async: true } as never)
+			.catch((e: unknown) => recordHealth("model", { ok: false, error: `自动写入对话失败：${e instanceof Error ? e.message : e}` }));
 	},
 
 	list: (bank, opts) => basicMemory.list(bank, opts),
@@ -237,7 +278,7 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 	async bootContext(bank) {
 		if (!sidecar.ready || !db.prepare("SELECT 1 FROM hindsight_banks WHERE bank = ?").get(bank)) return "";
 		try {
-			const list = await client().listMentalModels(bank, { detail: "content" } as never);
+			const list = await timed("boot", () => client().listMentalModels(bank, { detail: "content" } as never));
 			return ((list as { items?: { name: string; content?: string | null }[] }).items ?? [])
 				.filter((m) => m.content?.trim())
 				.map((m) => `- （${m.name}）${m.content!.trim().replace(/\n+/g, "；").slice(0, 600)}`)

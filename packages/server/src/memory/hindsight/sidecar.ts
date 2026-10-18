@@ -12,7 +12,7 @@
  */
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { fetchWithProgress, registerDownload, trackDownload, watchDir } from "../../downloads.ts";
 import { createServer } from "node:net";
 import { delimiter, dirname, join } from "node:path";
@@ -20,9 +20,10 @@ import { HindsightServer } from "@vectorize-io/hindsight-all";
 import { bus } from "../../bus.ts";
 import { config } from "../../config.ts";
 import { db } from "../../db.ts";
-import { llmProxy } from "../../llm-proxy.ts";
+import { llmProxy, type LlmProxy } from "../../llm-proxy.ts";
 import { ensureUv } from "./uv-bin.ts";
 import { readZip } from "./zip.ts";
+import { recordHealth, setActiveModel, setSidecarProblem } from "./health.ts";
 import { hindsightSecrets, hindsightSettings, LOCAL_EMBEDDINGS, LOCAL_RERANKERS, pickMemoryModel, type HindsightSecrets, type HindsightSettings, type Mirror } from "./settings.ts";
 
 export const PROFILE = "pia";
@@ -66,6 +67,9 @@ export async function resolveMirror(m: Mirror): Promise<"official" | "china"> {
 	const [pypi, hf] = await Promise.all([reachable("https://pypi.org/simple/uv/"), reachable("https://huggingface.co/api/models/intfloat/multilingual-e5-small")]);
 	return pypi && hf ? "official" : "china";
 }
+
+/** 本地重排序每次最多精排的条数（见 sidecarEnv） */
+export const LOCAL_RERANK_MAX_CANDIDATES = 50;
 
 /** 外部环境里会干扰我们 Python/uv 的变量：一律清空 */
 const SCRUB = /^(PYTHON[A-Z_]*|VIRTUAL_ENV|CONDA_[A-Z_]*|PIP_[A-Z_]*|UV_[A-Z_]*|HF_[A-Z_]*|HUGGINGFACE_[A-Z_]*|TRANSFORMERS_[A-Z_]*|HINDSIGHT_[A-Z_]*|OPENAI_[A-Z_]*|XDG_[A-Z_]*)$/;
@@ -126,7 +130,15 @@ export function sidecarEnv(o: { s: HindsightSettings; sec: HindsightSecrets; mir
 	}
 	const rr = o.s.reranker;
 	if (rr.kind === "off") e.HINDSIGHT_API_RERANKER_PROVIDER = "rrf";
-	else if (rr.kind === "local") Object.assign(e, { HINDSIGHT_API_RERANKER_PROVIDER: "flashrank", HINDSIGHT_API_RERANKER_FLASHRANK_MODEL: rr.model, HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR: p.flashrank });
+	else if (rr.kind === "local")
+		Object.assign(e, {
+			HINDSIGHT_API_RERANKER_PROVIDER: "flashrank",
+			HINDSIGHT_API_RERANKER_FLASHRANK_MODEL: rr.model,
+			HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR: p.flashrank,
+			// 本地交叉编码器在 CPU 上约 0.1 秒/条：默认最多精排 300 条，大一点的库一次召回要 15–30 秒、超过我们的超时。
+			// 官方开关：只精排 RRF 融合后的前 50 条（其余保持融合顺序），召回约 2 秒
+			HINDSIGHT_API_RERANKER_MAX_CANDIDATES: String(LOCAL_RERANK_MAX_CANDIDATES),
+		});
 	else if (rr.kind === "siliconflow") Object.assign(e, { HINDSIGHT_API_RERANKER_PROVIDER: "siliconflow", HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL: rr.model, HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY: o.sec.rerankerKey, HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL: rr.baseUrl });
 	else if (rr.kind === "alibaba") Object.assign(e, { HINDSIGHT_API_RERANKER_PROVIDER: "alibaba", HINDSIGHT_API_RERANKER_ALIBABA_MODEL: rr.model, HINDSIGHT_API_RERANKER_ALIBABA_API_KEY: o.sec.rerankerKey });
 	return e;
@@ -139,6 +151,13 @@ export async function configuredModels() {
 }
 let cachedModels: { provider: string; id: string; reasoning?: boolean }[] = [];
 let cachedAt = 0;
+/** 安装包里 pin 的 Hindsight 版本（界面显示；升级见 scripts/hindsight-update.mjs） */
+export const hindsightVersion = () => readFileSync(join(PROJECT_SRC, "pyproject.toml"), "utf8").match(/"hindsight-api-slim(?:\[[^\]]*\])?==([^"]+)"/)?.[1] ?? null;
+
+/** 记忆用模型 + 备用模型（网关按顺序尝试） */
+export function memoryModelChain(primary = resolveMemoryModel()): { provider: string; id: string }[] {
+	return [...(primary ? [primary] : []), ...hindsightSettings().llmFallbacks];
+}
 export function resolveMemoryModel(): { provider: string; id: string } | null {
 	const s = hindsightSettings();
 	if (s.llm) return s.llm;
@@ -191,6 +210,21 @@ function run(cmd: string, args: string[], env: Record<string, string | undefined
 	});
 }
 
+/** 网关每次调用记忆模型的结果 → 健康状态；主模型失败、备用模型顶上时记下“正在用备用模型” */
+let watched: LlmProxy | null = null;
+function watchProxy(proxy: LlmProxy) {
+	if (watched === proxy) return;
+	watched = proxy;
+	proxy.onResult = (r) => {
+		if (r.alias !== MEMORY_MODEL_ALIAS) return;
+		recordHealth("model", { ok: r.ok, ms: r.ms, error: r.error ? `${r.model}：${r.error}` : undefined });
+		if (!r.ok) return;
+		const primary = memoryModelChain()[0];
+		const p = primary ? `${primary.provider}/${primary.id}` : r.model;
+		setActiveModel(r.model === p ? null : { active: r.model, primary: p, reason: "主模型连续失败" });
+	};
+}
+
 const fileHash = (...files: string[]) => createHash("sha256").update(files.map((f) => (existsSync(f) ? readFileSync(f, "utf8") : "")).join("\0")).digest("hex").slice(0, 16);
 
 class Sidecar {
@@ -223,6 +257,7 @@ class Sidecar {
 	private set(state: SidecarState, detail: string, extra: Partial<SidecarStatus> = {}) {
 		const changed = state !== this.status.state;
 		this.status = { ...this.status, ...extra, state, detail, since: changed ? Date.now() : this.status.since };
+		if (changed) setSidecarProblem(state === "error" ? `高级记忆服务启动失败：${detail.slice(0, 120)}` : state === "down" ? "高级记忆服务没有响应，正在自动重启" : null);
 		// 状态变化立即推送；同一状态下的进度文字最多每秒推一次
 		const emit = () => {
 			this.lastEmit = Date.now();
@@ -268,7 +303,8 @@ class Sidecar {
 			this.set("installing", "正在准备运行环境…", { mirror, log: p.log });
 			const uv = await ensureUv({ pypiIndex: MIRRORS[mirror].pypi, onProgress: (m) => this.set("installing", m) });
 			const proxy = await llmProxy();
-			proxy.alias(MEMORY_MODEL_ALIAS, () => resolveMemoryModel());
+			proxy.alias(MEMORY_MODEL_ALIAS, () => memoryModelChain());
+			watchProxy(proxy);
 			const env = sidecarEnv({ s, sec, mirror, proxyUrl: proxy.baseUrl, proxyToken: proxy.token, uvDir: dirname(uv) });
 			await this.install(uv, env, mirror);
 			if (s.reranker.kind === "local") await this.ensureFlashrank(s.reranker.model, MIRRORS[mirror].hf);
@@ -438,7 +474,18 @@ const hfDir = (id: string) => `models--${id.replace(/\//g, "--")}`;
 export const onnxDir = (id: string) => join(paths().onnx, id.replace(/\//g, "--"));
 export const onnxModelFile = (id: string) => join(onnxDir(id), "onnx", "model.onnx");
 const onnxMarker = (id: string) => join(onnxDir(id), ".pia-complete");
-export const onnxReady = (id: string) => existsSync(onnxMarker(id)) && existsSync(onnxModelFile(id));
+/**
+ * 平铺模型是否可用：有完成标记，且 model.onnx（和外部权重 model.onnx_data，如果有）是同一目录下的真实文件。
+ * onnxruntime ≥1.20 遇到指向别处的符号链接会在启动时直接崩（External data path validation failed），
+ * 发现这种情况就当作没准备好，启动前重新整理一遍（ensureOnnxModel），不让 Hindsight 反复崩溃重启。
+ */
+export const onnxReady = (id: string) => {
+	if (!existsSync(onnxMarker(id)) || !existsSync(onnxModelFile(id))) return false;
+	const real = (f: string) => !existsSync(f) || !lstatSync(f).isSymbolicLink();
+	if (real(onnxModelFile(id)) && real(join(onnxDir(id), "onnx", "model.onnx_data"))) return true;
+	rmSync(onnxMarker(id), { force: true });
+	return false;
+};
 
 /** 旧版本下载到 HF 缓存里的 onnx 文件（snapshots/<rev>/onnx/，符号链接指向 blobs/），没有返回 null */
 export function cachedOnnx(id: string): string | null {
@@ -468,9 +515,22 @@ export async function ensureOnnxModel(id: string, uv: string | null, env: Record
 	if (onnxReady(id)) return onnxModelFile(id);
 	const dir = join(onnxDir(id), "onnx");
 	mkdirSync(dir, { recursive: true });
+	// 平铺目录里混进了符号链接（onnxruntime 会拒绝）：链接目标还在就换成真实文件，不重新下载
+	const { realpathSync } = await import("node:fs");
+	let repaired = false;
+	for (const f of ["model.onnx", "model.onnx_data"].map((n) => join(dir, n)))
+		if (existsSync(f) && lstatSync(f).isSymbolicLink()) {
+			const target = realpathSync(f);
+			rmSync(f, { force: true });
+			copyFileSync(target, f);
+			repaired = true;
+		}
+	if (repaired && existsSync(onnxModelFile(id)) && (statSync(onnxModelFile(id)).size >= 20e6 || existsSync(join(dir, "model.onnx_data")))) {
+		writeFileSync(onnxMarker(id), JSON.stringify({ from: "repair", at: Date.now() }));
+		return onnxModelFile(id);
+	}
 	const cached = cachedOnnx(id);
 	if (cached) {
-		const { realpathSync } = await import("node:fs");
 		const files = ["model.onnx", "model.onnx_data"].filter((f) => existsSync(join(cached, f)));
 		for (const f of files) copyFileSync(join(cached, f), join(dir, f));
 		writeFileSync(onnxMarker(id), JSON.stringify({ from: "hf-cache", at: Date.now() }));

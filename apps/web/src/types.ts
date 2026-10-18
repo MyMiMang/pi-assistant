@@ -59,6 +59,8 @@ export interface SystemInfo {
 	sandbox: { mode: string; preference: string; dockerAvailable: boolean }; entryDomain: string | null; tunnel: TunnelStatus;
 	workspaceRoot: string; push: { publicKey: string }; seq: number;
 	app?: { version: string; builtAt?: string; launcher: string };
+	/** 高级记忆健康；没人用高级记忆时为 null */
+	memoryHealth?: { level: "ok" | "slow" | "failing"; summary: string } | null;
 }
 export interface Device { id: string; name: string; platform: string; status: string; created_at: number; last_seen_at: number | null; last_ip: string | null; owner?: number }
 export interface CustomModel { id: string; api?: string; apiEffective?: string; baseUrlEffective?: string; name?: string; reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number; limitsSource?: "detected" | "known" | "default" | "user" | "learned"; detectedType?: "classifier"; classifierProtocol?: string }

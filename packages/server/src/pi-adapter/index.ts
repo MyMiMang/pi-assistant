@@ -360,7 +360,7 @@ export class PiModels {
 			if (m.role === "assistant")
 				return {
 					role: "assistant",
-					content: [...(m.text ? [{ type: "text", text: m.text }] : []), ...(m.toolCalls ?? []).map((c) => ({ type: "toolCall", id: c.id, name: c.name, arguments: c.arguments }))],
+					content: [...(m.thinking ?? []), ...(m.text ? [{ type: "text", text: m.text }] : []), ...(m.toolCalls ?? []).map((c) => ({ type: "toolCall", id: c.id, name: c.name, arguments: c.arguments }))],
 					api: model.api,
 					provider: model.provider,
 					model: model.id,
@@ -370,17 +370,23 @@ export class PiModels {
 				};
 			return { role: "toolResult", toolCallId: m.toolCallId, toolName: m.name, content: [{ type: "text", text: m.text }], isError: !!m.isError, timestamp: ts };
 		});
-		const maxTokens = Math.min(req.maxTokens ?? 4096, (model as { maxTokens?: number }).maxTokens ?? 32_000);
+		const levels = supportedThinkingLevels(model);
+		// 能关就不传（Pi 里不传 = off）；关不掉就用最低档
+		const reasoning = req.reasoning === "lowest" && levels.length && !levels.includes("off") ? levels[0] : undefined;
+		// 思考模型关不掉时思考也算在输出里：给调用方要的上限再留出思考的余量，免得正文被截断（OutputTooLong）
+		const headroom = model.reasoning && req.reasoning && req.maxTokens ? 8192 : 0;
+		const maxTokens = Math.min((req.maxTokens ?? 4096) + headroom, (model as { maxTokens?: number }).maxTokens ?? 32_000);
 		try {
 			const res = await this.runtime.completeSimple(
 				model,
 				{ systemPrompt: req.systemPrompt, messages, tools: req.tools?.map((t) => ({ name: t.name, description: t.description ?? "", parameters: t.parameters ?? { type: "object", properties: {} } })) } as never,
-				{ maxTokens, temperature: req.temperature, signal: req.signal },
+				{ maxTokens, temperature: req.temperature, signal: req.signal, ...(reasoning ? { reasoning: reasoning as Exclude<ModelThinkingLevel, "off"> } : {}) },
 			);
+			const thinking = res.content.filter((c) => c.type === "thinking");
 			const text = res.content.map((c) => (c.type === "text" ? c.text : "")).join("");
 			const toolCalls = res.content.filter((c) => c.type === "toolCall").map((c) => ({ id: (c as { id: string }).id, name: (c as { name: string }).name, arguments: (c as { arguments: Record<string, unknown> }).arguments ?? {} }));
 			const stop = res.stopReason === "toolUse" ? "toolUse" : res.stopReason === "length" ? "length" : res.stopReason === "error" || res.stopReason === "aborted" ? "error" : "stop";
-			return { text, toolCalls, stopReason: stop, error: stop === "error" ? (res.errorMessage ?? "请求失败") : undefined, usage: { input: res.usage?.input ?? 0, output: res.usage?.output ?? 0 } };
+			return { text, toolCalls, ...(thinking.length ? { thinking } : {}), stopReason: stop, error: stop === "error" ? (res.errorMessage ?? "请求失败") : undefined, usage: { input: res.usage?.input ?? 0, output: res.usage?.output ?? 0 } };
 		} catch (e) {
 			return { text: "", toolCalls: [], stopReason: "error", error: e instanceof Error ? e.message : String(e), usage: { input: 0, output: 0 } };
 		}
@@ -464,7 +470,8 @@ export class PiModels {
 
 export type ChatMessage =
 	| { role: "user"; text: string; images?: { data: string; mimeType: string }[] }
-	| { role: "assistant"; text: string; toolCalls?: { id: string; name: string; arguments: Record<string, unknown> }[] }
+	/** thinking：同一模型上一轮返回的思考块（原样回传；DeepSeek 等思考模式的多轮工具调用要求带回） */
+	| { role: "assistant"; text: string; toolCalls?: { id: string; name: string; arguments: Record<string, unknown> }[]; thinking?: unknown[] }
 	| { role: "tool"; toolCallId: string; name: string; text: string; isError?: boolean };
 export interface ChatRequest {
 	systemPrompt?: string;
@@ -473,10 +480,14 @@ export interface ChatRequest {
 	maxTokens?: number;
 	temperature?: number;
 	signal?: AbortSignal;
+	/** "lowest"：用模型支持的最低思考档位（能关就关），给记忆这类内部调用省 token、避免思考吃掉输出上限 */
+	reasoning?: "lowest";
 }
 export interface ChatResult {
 	text: string;
 	toolCalls: { id: string; name: string; arguments: Record<string, unknown> }[];
+	/** 模型返回的思考块（不透明，原样存着下一轮回传） */
+	thinking?: unknown[];
 	stopReason: "stop" | "length" | "toolUse" | "error";
 	error?: string;
 	usage: { input: number; output: number };

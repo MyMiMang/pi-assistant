@@ -9,6 +9,7 @@ import { builtinManifestFromComputed, customSkinId, themeDefFromManifest } from 
 import { exportCustomTheme, installCustomThemes, loadCustomThemes, removeCustomThemeEverywhere, saveCustomTheme } from "../themes/custom-store";
 import { ThemeDesigner } from "./ThemeDesigner";
 import { ThemePreview } from "./ThemePreview";
+import { MemoryHealthDot } from "./MemoryHealthDot";
 import { MemorySettings, SkillsTab } from "./SkillsTab";
 import { ExtensionsTab } from "./ExtensionsTab";
 import { HostControlSettings } from "./HostControl";
@@ -59,6 +60,7 @@ export default function Settings() {
 										<span aria-hidden className="invisible col-start-1 row-start-1 font-medium">{t(label)}</span>
 										<span className="col-start-1 row-start-1">{t(label)}</span>
 									</span>
+									{k === "memory" && <MemoryHealthDot />}
 								</button>
 							))}
 						</Fragment>

@@ -1,5 +1,7 @@
 /** 从 http.ts 拆出的路由（行为不变）。 */
 import { type AsrDeclaration } from "../voice/index.ts";
+import { memoryHealth } from "../memory/hindsight/health.ts";
+import { hindsightInUse } from "../memory/index.ts";
 import { ASR_PROTOCOLS } from "../voice/contract.ts";
 import { isAsrProtocol } from "../voice/asr.ts";
 import { readFileSync } from "node:fs";
@@ -79,6 +81,8 @@ export function mountSystemRoutes(app: Hono<Env>) {
 			tunnel: tunnelStatus(),
 			workspaceRoot: config.workspaceRoot,
 			push: { publicKey: vapidPublicKey(), recent: pushLog.slice(-5) },
+			// 高级记忆健康（设置入口的小红点 / 黄点）；没人用高级记忆时不显示
+			memoryHealth: hindsightInUse() ? { level: memoryHealth().level, summary: memoryHealth().summary } : null,
 			seq: bus.seq,
 		});
 	});

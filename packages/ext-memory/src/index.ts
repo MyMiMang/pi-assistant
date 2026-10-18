@@ -35,6 +35,21 @@ export interface MemoryHost {
 		reject(id: string): Promise<boolean>;
 	};
 	onChange?(): void;
+	/** 一轮结束：把这一轮（用户原话 + 助理最后的回复）交给宿主自动写入记忆（后端支持时） */
+	retainTurn?(turn: { user: string; assistant: string }): Promise<void>;
+}
+
+type EndMessage = { role: string; content?: unknown; stopReason?: string; errorMessage?: string };
+/** 本轮助理最后一段文字回复；报错/中断的轮次返回空（不写入半截内容） */
+export function finalReply(msgs: EndMessage[]): string {
+	const last = [...msgs].reverse().find((m) => m.role === "assistant");
+	if (!last || last.stopReason === "error" || last.stopReason === "aborted" || last.errorMessage) return "";
+	for (const m of [...msgs].reverse()) {
+		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+		const t = (m.content as { type: string; text?: unknown }[]).filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text as string).join("").trim();
+		if (t) return t;
+	}
+	return "";
 }
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
@@ -42,7 +57,17 @@ const line = (m: MemoryHit) => `- [${m.id}] (${m.scope}/${m.kind}${m.status === 
 
 export function memoryExtension(host: MemoryHost) {
 	return (pi: ExtensionAPI) => {
+		let turnPrompt = "";
+		pi.on("agent_end", (e) => {
+			const user = turnPrompt;
+			turnPrompt = "";
+			if (!host.retainTurn || !user.trim()) return;
+			const assistant = finalReply(e.messages as unknown as EndMessage[]);
+			if (assistant) void host.retainTurn({ user, assistant }).catch((err) => console.warn("[memory] retainTurn failed", err));
+		});
 		pi.on("before_agent_start", async (event) => {
+			// 只记用户发起的一轮（后台唤醒 / triggerTurn 没有 prompt）
+			turnPrompt = event.messageType === "user" ? event.prompt : "";
 			try {
 				// Pi 1.2.0 起本事件也会对扩展触发的 run（后台唤醒、triggerTurn）触发，那种事件没有 prompt。
 				// custom run 用空 query 走宿主 context：仍注入 bootContext / 已记事实，只是不做本轮召回；

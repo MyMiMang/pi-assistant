@@ -209,7 +209,37 @@ export function canMutate(hit: ScopedItem, ctx: WriteContext): boolean {
 	return ownedBy(hit, ctx);
 }
 
+/**
+ * 本轮召回用的查询：只取「这一轮真正要做的事」，不拿整段提示词的开头。
+ *  - 群聊：去掉「（群聊「…」里的新消息 · 你是 …）」头和派活/任务说明，取最后一条【用户】消息（没有就取最后一条消息）
+ *  - 后台子代理任务：取任务本身（去掉“必要上下文”）
+ *  - 其他：原样
+ * 最长 200 字（取末尾：最近的话最相关）。
+ */
+export function recallQuery(prompt: string, max = 200): string {
+	let t = (prompt ?? "").trim();
+	if (t.startsWith("（群聊「")) {
+		const body = t.split("\n").slice(1).join("\n").split(/\n——\n/)[0] ?? "";
+		const msgs = body.split("\n").filter((l) => /^【[^】]+】/.test(l));
+		const pick = [...msgs].reverse().find((l) => l.startsWith("【用户】")) ?? msgs.at(-1) ?? "";
+		t = pick.replace(/^【[^】]+】/, "").trim();
+	} else if (t.startsWith("（后台子代理任务）")) t = t.slice("（后台子代理任务）".length).split("\n\n必要上下文")[0].trim();
+	return t.length > max ? t.slice(-max) : t;
+}
+
 export const memory = {
+	/** 一轮结束：后端支持就自动写入这一轮（只进助理自己的库；非主会话来源记成草稿，与 remember 同一套分层） */
+	async retainTurn(agentId: string, conversationId: string | null, turn: { user: string; assistant: string; actor?: MemoryActor; taskId?: string | null }) {
+		const p = providerFor(agentId);
+		if (!p.retainTurn) return;
+		const user = recallQuery(turn.user, 4000);
+		if (!user || turn.assistant.trim().length < 2 || SECRET_RE.test(user) || SECRET_RE.test(turn.assistant)) return;
+		const actor = turn.actor ?? "main";
+		const bank = agentBank(agentId);
+		await ready(p, bank, agentId);
+		await p.retainTurn(bank, { user, assistant: turn.assistant, conversationId, taskId: turn.taskId ?? null, actor, status: privileged(actor) ? "verified" : "draft", assistantId: agentId });
+	},
+
 	async remember(agentId: string, conversationId: string | null, a: RememberArgs) {
 		if (SECRET_RE.test(a.content)) throw new Error("内容看起来包含密码或密钥，出于安全不写入记忆");
 		const actor: MemoryActor = a.actor ?? "main";
@@ -258,11 +288,14 @@ export const memory = {
 	async recall(agentId: string, conversationId: string | null, query: string, limit = 8, opts?: { taskId?: string | null; parent?: boolean }): Promise<ScopedItem[]> {
 		const p = providerFor(agentId);
 		const ctx = readCtx(conversationId, opts);
-		const out: ScopedItem[] = [];
-		for (const bank of [agentBank(agentId), USER_BANK]) {
-			await ready(p, bank, agentId);
-			out.push(...(await p.recall(bank, query, { limit: limit * 2 })).map((i) => scoped(i, bank)).filter((i) => memoryVisible(i, ctx)));
-		}
+		// 两个库同时查（以前一个接一个，慢的时候两段时间叠加）
+		const banksOut = await Promise.all(
+			[agentBank(agentId), USER_BANK].map(async (bank) => {
+				await ready(p, bank, agentId);
+				return (await p.recall(bank, query, { limit: limit * 2 })).map((i) => scoped(i, bank)).filter((i) => memoryVisible(i, ctx));
+			}),
+		);
+		const out = banksOut.flat();
 		return out.sort((x, y) => (y.score ?? 0) - (x.score ?? 0)).slice(0, limit);
 	},
 
@@ -302,7 +335,8 @@ export const memory = {
 		const notes = vis.filter((i) => i.kind === "note" && i.status !== "draft");
 		const logs = vis.filter((i) => i.kind === "experience" && i.status !== "draft" && Date.now() - Date.parse(i.createdAt) < 3 * DAY).slice(0, 15);
 		const seen = new Set([...facts, ...drafts, ...notes, ...logs].map((x) => x.id));
-		const related = prompt.trim() ? (await memory.recall(agentId, conversationId, prompt.slice(0, 200), 5, opts)).filter((i) => !seen.has(i.id)) : [];
+		const q = recallQuery(prompt);
+		const related = q ? (await memory.recall(agentId, conversationId, q, 5, opts)).filter((i) => !seen.has(i.id)) : [];
 		const day = (t: string | number) => new Date(t).toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
 		const line = (i: ScopedItem) => `- [${i.id}] (${i.scope}${i.status === "draft" ? "/草稿待核验" : ""}) ${i.text}`;
 		const parts: string[] = [];

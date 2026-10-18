@@ -46,3 +46,26 @@ test("启动环境变量：ONNX 模型路径指向平铺目录，分词器仍按
 	assert.equal(env.HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH, onnxModelFile("BAAI/bge-m3"));
 	assert.equal(env.HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH, "BAAI/bge-m3");
 });
+
+test("平铺目录里混进符号链接（onnxruntime 启动会崩）→ 不算就绪；启动前换成真实文件，不重新下载", async () => {
+	const id = "BAAI/bge-m3";
+	const f = onnxModelFile(id);
+	const dir = join(f, "..");
+	mkdirSync(dir, { recursive: true });
+	const elsewhere = join(paths().root, "elsewhere");
+	mkdirSync(elsewhere, { recursive: true });
+	writeFileSync(join(elsewhere, "g"), "graph2");
+	writeFileSync(join(elsewhere, "w"), "weights2");
+	for (const n of ["model.onnx", "model.onnx_data"]) {
+		try {
+			(await import("node:fs")).rmSync(join(dir, n), { force: true });
+		} catch {}
+	}
+	symlinkSync(join(elsewhere, "g"), f);
+	symlinkSync(join(elsewhere, "w"), join(dir, "model.onnx_data"));
+	assert.equal(onnxReady(id), false, "有符号链接 → 当作没准备好（完成标记被清掉）");
+	await ensureOnnxModel(id, null, {});
+	assert.ok(!lstatSync(f).isSymbolicLink() && !lstatSync(join(dir, "model.onnx_data")).isSymbolicLink());
+	assert.equal(readFileSync(join(dir, "model.onnx_data"), "utf8"), "weights2");
+	assert.ok(onnxReady(id));
+});

@@ -70,6 +70,8 @@ export interface MemoryProvider {
 	reflect?(bank: BankId, query: string, scope: ReflectScope): Promise<{ answer: string; citations?: MemoryItem[] }>;
 	list(bank: BankId, opts?: { cursor?: string; limit?: number; q?: string }): Promise<{ items: MemoryItem[]; cursor?: string }>;
 	forget(bank: BankId, target: { id?: string; documentId?: string; all?: boolean }): Promise<void>;
+	/** 每轮结束自动写入这一轮对话（让后端自己抽取事实）；没有实现的后端不自动写 */
+	retainTurn?(bank: BankId, turn: { user: string; assistant: string; conversationId: string | null; taskId: string | null; actor: string; status: "verified" | "draft"; assistantId: string }): Promise<void>;
 	/** 会话开始时注入的“已确定的认识” */
 	bootContext?(bank: BankId): Promise<string>;
 	export?(bank: BankId): Promise<MemoryExport>;

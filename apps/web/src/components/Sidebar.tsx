@@ -9,6 +9,7 @@ import { AgentEditor } from "./AgentEditor";
 import { NewRoom, StackedAvatars } from "./RoomChat";
 import { Avatar, Button, cx, fmtTime, Modal } from "./ui";
 import { BRAND } from "@pi-assistant/shared";
+import { MemoryHealthDot } from "./MemoryHealthDot";
 
 
 export default function Sidebar() {
@@ -137,8 +138,9 @@ export default function Sidebar() {
 					{conn === "open" ? "已连接" : "连接中…"}
 				</span>
 				<InboxButton />
-				<button className="pa-icon-btn ghost" title={t("设置")} aria-label={t("设置")} onClick={() => set({ settings: "models" })}>
+				<button className="pa-icon-btn ghost relative" title={t("设置")} aria-label={t("设置")} onClick={() => set({ settings: system?.memoryHealth && system.memoryHealth.level !== "ok" ? "memory" : "models" })}>
 					<Cog className="pa-ic" />
+					<MemoryHealthDot className="absolute top-1 right-1" />
 				</button>
 			</div>
 			<NewAgent open={creating} onClose={() => setCreating(false)} />

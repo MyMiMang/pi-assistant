@@ -12,6 +12,8 @@ interface S {
 	mode: "local" | "remote";
 	remoteUrl?: string;
 	llm: { provider: string; id: string } | null;
+	/** 备用记忆模型：主模型连续失败时网关按顺序换用（最多 3 个） */
+	llmFallbacks: { provider: string; id: string }[];
 	embedding: Emb;
 	reranker: Rr;
 	mirror: "auto" | "official" | "china";
@@ -19,16 +21,25 @@ interface S {
 	rerankerKey: string;
 	remoteKey: string;
 }
+type Health = {
+	level: "ok" | "slow" | "failing";
+	summary: string;
+	ops: Partial<Record<"recall" | "reflect" | "boot" | "model" | "sidecar", { total: number; failed: number; slow: number; lastMs?: number; lastError?: string }>>;
+	model?: { active: string; primary: string };
+};
+type Step = { name: string; ok: boolean; ms: number; detail: string };
+const OP_LABEL = { recall: "召回", reflect: "反思", boot: "读取整理好的记忆", model: "记忆模型", sidecar: "附属进程" } as const;
+const SCOPE_LABEL: Record<string, string> = { reflect: "反思", extract: "整理事实", text: "其他" };
 interface Data {
 	settings: S;
-	status: { state: string; detail: string; pending: number; lastError: string | null; restarts: number; mirror?: string; port?: number };
+	status: { state: string; detail: string; pending: number; lastError: string | null; restarts: number; mirror?: string; port?: number; health?: Health; version?: string | null };
 	inUse: boolean;
 	models: { provider: string; id: string; name: string }[];
 	autoModel: { provider: string; id: string } | null;
 	effectiveModel: { provider: string; id: string } | null;
 	localEmbeddings: { id: string; name: string }[];
 	localRerankers: { id: string; name: string }[];
-	usage: { requests: number; errors: number; input: number; output: number };
+	usage: { requests: number; errors: number; input: number; output: number; scopes?: Record<string, { requests: number; errors: number; lastError?: string }> };
 }
 const EMB_PRESETS = [
 	{ name: "硅基流动", baseUrl: "https://api.siliconflow.cn/v1", model: "BAAI/bge-m3" },
@@ -51,6 +62,7 @@ export function HindsightSettings() {
 	const [d, setD] = useState<Data | null>(null);
 	const [s, setS] = useState<S | null>(null);
 	const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+	const [steps, setSteps] = useState<Step[] | null>(null);
 	const [testing, setTesting] = useState(false);
 	// 高级（运行方式 / 模型 / 下载源）默认收起；远程模式需要填地址时自动展开
 	const [advOpen, setAdvOpen] = useState(false);
@@ -64,6 +76,10 @@ export function HindsightSettings() {
 	}, [version]);
 	if (!d || !s) return null;
 	const st = STATE[d.status.state] ?? STATE.off;
+	// 运行中但最近慢 / 出错：角标换成黄色「变慢」/ 红色「有问题」，下面一句话说清楚，细节放在 ? 里
+	const h = d.inUse && d.status.state === "ready" ? d.status.health : undefined;
+	const badge = h?.level === "failing" ? { label: "有问题", tone: "red" as const } : h?.level === "slow" ? { label: "变慢", tone: "amber" as const } : st;
+	const fallbacks = s.llmFallbacks ?? [];
 	const embChanged = JSON.stringify(s.embedding) !== JSON.stringify(d.settings.embedding);
 	const dirty = JSON.stringify(s) !== JSON.stringify(d.settings);
 	const save = async () => {
@@ -79,9 +95,17 @@ export function HindsightSettings() {
 	};
 	const test = async () => {
 		setTesting(true);
-		const r = await api("/api/memory/hindsight/test-model", { method: "POST", json: { llm: s.llm } });
-		setTesting(false);
-		setMsg({ ok: r.ok, text: r.message });
+		setSteps(null);
+		setMsg(null);
+		try {
+			const r = await api<{ ok: boolean; message: string; steps?: Step[] }>("/api/memory/hindsight/test-model", { method: "POST", json: { llm: s.llm } });
+			setSteps(r.steps ?? null);
+			setMsg({ ok: r.ok, text: r.message });
+		} catch (e) {
+			setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+		} finally {
+			setTesting(false);
+		}
 	};
 	const radio = (name: string, checked: boolean, onChange: () => void, label: React.ReactNode, testid?: string) => (
 		<label className="flex cursor-pointer items-center gap-2 text-sm" data-testid={testid}>
@@ -93,7 +117,9 @@ export function HindsightSettings() {
 		<div className="pa-card space-y-4 !p-4" data-testid="hindsight-settings">
 			<div className="flex items-center gap-2">
 				<b className="text-sm">高级记忆（Hindsight）</b>
-				<Badge tone={st.tone}>{st.label}</Badge>
+				<span data-testid="hs-badge" data-level={h?.level ?? (st.tone === "red" ? "failing" : "ok")}>
+					<Badge tone={badge.tone}>{badge.label}</Badge>
+				</span>
 				{d.status.state !== "off" && (
 					<button className="pa-icon-btn ghost ml-auto" title="重启 Hindsight" aria-label="重启 Hindsight" onClick={() => void api("/api/memory/hindsight/restart", { method: "POST" })}>
 						<RefreshCw className="pa-ic" />
@@ -115,6 +141,25 @@ export function HindsightSettings() {
 					<ErrorBox text={d.status.detail ?? "出错了"} />
 				) : (
 					<div className="text-xs text-mut [overflow-wrap:anywhere]">{d.inUse ? d.status.detail : "还没有助理在用高级记忆：在上面选“高级记忆”或在助理的「记忆」页单独选择后自动安装并启动。"}</div>
+				)}
+				{h && h.level !== "ok" && (
+					<div className={cx("flex items-start gap-1 text-xs [overflow-wrap:anywhere]", h.level === "failing" ? "text-red-500" : "text-amber-600")} data-testid="hs-health">
+						<span>{h.summary}</span>
+						<Help>
+							{(Object.keys(OP_LABEL) as (keyof typeof OP_LABEL)[]).filter((k) => h.ops[k]).map((k) => {
+								const o = h.ops[k]!;
+								return (
+									<span key={k} className="block">
+										{OP_LABEL[k]}：{o.total} 次，失败 {o.failed}
+										{o.slow ? `，慢 ${o.slow}` : ""}
+										{o.lastMs !== undefined ? `，上次 ${(o.lastMs / 1000).toFixed(1)} 秒` : ""}
+										{o.lastError ? `；最近错误：${o.lastError}` : ""}
+									</span>
+								);
+							})}
+							<span className="mt-1 block">召回失败或超时时这一轮自动用基础记忆；新记忆照常写，恢复后补写，不会丢。</span>
+						</Help>
+					</div>
 				)}
 				{d.status.pending > 0 && <div className="text-xs text-mut">待同步 {d.status.pending} 条</div>}
 				{d.status.lastError && d.status.pending > 0 && <ErrorBox text={`最近错误：${d.status.lastError}`} />}
@@ -152,9 +197,54 @@ export function HindsightSettings() {
 							{testing ? "测试中…" : "测试"}
 						</Button>
 					</div>
-					<p className="text-xs text-mut">
+					{steps && (
+						<ul className="space-y-0.5 text-xs" data-testid="hs-test-steps">
+							{steps.map((x) => (
+								<li key={x.name} className={cx("[overflow-wrap:anywhere]", x.ok ? "text-green-600" : "text-red-500")} data-ok={x.ok}>
+									{x.ok ? "✓" : "✗"} {x.name} <span className="text-mut">· {(x.ms / 1000).toFixed(1)} 秒</span>
+									{x.detail && <span className="text-mut"> · {x.detail}</span>}
+								</li>
+							))}
+						</ul>
+					)}
+					<div className="space-y-1" data-testid="hs-fallbacks">
+						<div className="flex items-center gap-1 text-xs text-mut">
+							备用模型 <Help>主模型连续失败时自动按顺序换用，并通知你；主模型恢复后自动换回。建议选不同渠道的模型。</Help>
+						</div>
+						{[...fallbacks, null].slice(0, 3).map((f, i) => (
+							<select
+								key={i}
+								className="pa-input"
+								aria-label={`备用模型 ${i + 1}`}
+								value={key(f)}
+								onChange={(e) => {
+									const m = d.models.find((x) => key(x) === e.target.value);
+									const next = [...fallbacks];
+									if (m) next[i] = { provider: m.provider, id: m.id };
+									else next.splice(i, 1);
+									setS({ ...s, llmFallbacks: next });
+								}}
+							>
+								<option value="">{f ? "不用这个备用模型" : "添加备用模型…"}</option>
+								<ModelOptions models={d.models} />
+							</select>
+						))}
+					</div>
+					<p className="text-xs text-mut" data-testid="hs-usage">
 						已用 {d.usage.requests} 次，约 {d.usage.input + d.usage.output} tokens
-						<Help className="ml-1">经本机网关调用你在「模型」里配置的渠道，密钥不会交给 Hindsight。</Help>
+						{d.usage.errors > 0 && <span className="text-red-500">，失败 {d.usage.errors} 次</span>}
+						{h?.model && h.model.active !== h.model.primary && <span className="text-amber-600">，当前用备用模型 {h.model.active}</span>}
+						<Help className="ml-1">
+							经本机网关调用你在「模型」里配置的渠道，密钥不会交给 Hindsight。
+							{d.usage.scopes &&
+								Object.entries(d.usage.scopes).map(([k, v]) => (
+									<span key={k} className="block">
+										{SCOPE_LABEL[k] ?? k}：{v.requests} 次，失败 {v.errors}
+										{v.lastError ? `；最近错误：${v.lastError}` : ""}
+									</span>
+								))}
+							{d.status.version && <span className="block">Hindsight {d.status.version}（随 App 更新自动升级）</span>}
+						</Help>
 					</p>
 				</section>
 
