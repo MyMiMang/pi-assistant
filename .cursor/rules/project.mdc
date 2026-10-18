@@ -1,0 +1,5 @@
+---
+description: Pi Assistant 项目规则入口
+alwaysApply: true
+---
+开工前先读并遵守仓库根目录的 AGENTS.md（唯一规则来源），再按其中顺序读 docs/HANDOFF.md、docs/MODULES.md。本文件只是指针，不要在这里加规则。
