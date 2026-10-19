@@ -105,7 +105,7 @@
 | `stuck.ts` | 卡住检测共用规则（没进展 `stallStep` / 反复卡在同一处 `fingerprint`+`repeatLevel` / 只聊不干活 `chatterStep`），群任务、群对话、单聊帮手共用 |
 | `subagent-stuck.ts` | 帮手卡住处理：先诊断（慢但在动不打断），真卡住由主会话按阶梯自己解决（带纠正重启 → 换做法 → 失败总结），同一原因第 3 次起拒绝原样续跑；只为批准 / 凭据等找用户 |
 | `subagent-models.ts` | 帮手的模型候选池、思考强度与 Fast 设置读写（从 subagents.ts 拆出） |
-| `helper-scope.ts` | 群里的帮手：角色范围说明（代表谁、职责、不归它管的角色，下一层继承）、执行详情可见性设置 `groupHelperDetail`（默认只给派它的助理和用户）、群里人人能看的帮手概况、上一层收下一层结果 |
+| `helper-scope.ts` | 群里的帮手：角色范围说明（代表谁、职责、不归它管的角色，下一层继承）、别的成员列帮手只给概况、点名查才给完整过程、群里人人能看的帮手概况、上一层收下一层结果 |
 | `subagent-resume-info.ts` | 帮手行 + 能否续跑的摘要（subagent_list / 接口用，从 subagents.ts 拆出） |
 | `task-waits.ts` | 任务等待调度 |
 | `work-items.ts` | 长期任务入口（只做 re-export） |
