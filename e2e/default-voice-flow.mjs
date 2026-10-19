@@ -2,9 +2,11 @@
  * 本地语音（**可选模块**，默认不安装，决策 0013）**生产贯通**验证：真实 server（临时数据目录 / Mock / 离线）+ 真实构建 + Chromium。
  *
  * 覆盖用户要求的主链路（不真下载权重、不真识别、不碰真实数据 / 麦克风硬件）：
- *  0. 没装：设置 › 语音 › 本地 显示「安装本地语音」+ 一行说明；输入栏不常驻安装提示；点麦克风引导去设置。
+ *  0. 没装：设置 › 语音 › 本地 模块卡**先选再装**——模型选择器（预选目录默认，每项一行适合什么 + 大约下载量，
+ *     共享运行环境只算一次）+「安装所选模型」；其他模型不再折叠；输入栏不常驻安装提示；点麦克风引导去设置。
  *  1. 设置 › 语音：安装进度（真实百分比 / 阶段）→ 取消 → **只调窄接口**（不调通用 `/api/downloads/:id/cancel`）
- *     → 回到未安装、出现安装按钮；安装 → 窄接口 → `preparing` → `ready`。
+ *     → 回到未安装、出现安装按钮；改选模型后安装 → 窄接口带所选 modelId → `preparing` → `ready` 且已作为来源；
+ *     失败：给原因 + 重试（不带 modelId，服务端重试失败的那个）。
  *  2. 准备完成 + 来源自动采用默认 → 点麦克风走**原生流式**：创建会话带 modelId / agentId；append 串行且 seq 单调；
  *     tentative 只就地预览（**不写输入框**）；committed 进草稿；end 后 final 文本进草稿，**不自动发送**（无 POST messages）。
  *  3. 取消录音 → 调 `/cancel`，草稿不变。
@@ -30,6 +32,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
+import { CLOUD, DEF, DEF_PROVIDER, NAMES, PARA, PARA_PROVIDER, createVoiceBackend, routeVoiceBackend } from "./fixtures/default-voice-backend.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DIST = join(ROOT, "apps/web/dist");
@@ -41,10 +44,6 @@ const WORKSPACE = join(RUN_DIR, "workspace");
 const FAKE_HOME = join(RUN_DIR, "home");
 mkdirSync(DATA, { recursive: true });
 mkdirSync(FAKE_HOME, { recursive: true });
-
-const DEF = "streaming-zipformer-bilingual-zh-en-int8";
-const DEF_PROVIDER = "local-online-zipformer";
-const CLOUD = { location: "cloud", provider: "openai", model: "whisper-1" };
 
 const PORT = await new Promise((r) => {
 	const s = createNetServer().listen(0, "127.0.0.1", () => {
@@ -108,72 +107,9 @@ const killServerTree = (sig = "SIGTERM") => {
 };
 process.on("exit", () => killServerTree("SIGKILL"));
 
-/* ------------------------------- 可控的语音后端状态（路由层注入，不下载任何权重） ------------------------------- */
-const state = {
-	version: 1,
-	source: null, // null | {location, provider, model}
-	prep: { state: "preparing", percent: 40, phase: "weights", error: null },
-	stream: { mode: "normal", creates: 0, appends: 0, ends: 0, cancels: 0, seqs: [], bytes: 0, aborted: 0 },
-	calls: { cancelPrepare: 0, installPrepare: 0, downloadsCancel: 0, downloadsStart: 0, messages: 0, transcriptions: 0 },
-};
-const prepView = () => ({
-	defaultModelId: DEF,
-	kind: state.source ? (state.source.model === DEF ? "default" : "user-chosen") : "unconfigured",
-	label: state.source?.model === DEF ? "正在使用默认本地流式听写" : "还没选语音识别来源；默认提供本地流式听写",
-	prep: {
-		state: state.prep.state,
-		jobId: `asr:${DEF}`,
-		phase: state.prep.phase,
-		phaseLabel: state.prep.phase === "weights" ? "下载权重" : null,
-		received: state.prep.state === "preparing" ? Math.round((198_270_793 * (state.prep.percent ?? 0)) / 100) : null,
-		total: state.prep.state === "preparing" ? 198_270_793 : null,
-		percent: state.prep.state === "preparing" ? state.prep.percent : null,
-		attempt: 1,
-		startedAt: "2026-10-17T00:00:00.000Z",
-		finishedAt: state.prep.state === "ready" ? "2026-10-17T00:02:00.000Z" : null,
-		error: state.prep.error,
-		errorCode: state.prep.error ? "asr_prepare_failed" : null,
-		retryable: state.prep.state === "failed",
-	},
-	firstRunNeedsNetwork: true,
-	approxBytes: 293_270_793,
-	offlineAfterReady: true,
-	requiresUserAction: true,
-	micPermissionRequested: false,
-	notes: ["可选模块：默认不安装，不随安装包分发；在 设置 › 语音 点「安装」才会下载", "默认流式模型输出无标点；麦克风权限只在用户点麦克风时申请"],
-});
-const sourceView = () => ({
-	source: state.source,
-	version: state.version,
-	options: [
-		{
-			location: "local",
-			provider: DEF_PROVIDER,
-			model: DEF,
-			name: "本地流式听写（中英双语）",
-			protocol: "asr-stream-v1",
-			streaming: true,
-			streamProtocol: "asr-stream-v1",
-			availability: state.prep.state === "ready" ? "ready" : "not_installed",
-			reason: state.prep.state === "ready" ? null : "本地语音识别未安装",
-			selected: state.source?.model === DEF,
-		},
-		{
-			location: "cloud",
-			provider: CLOUD.provider,
-			model: CLOUD.model,
-			name: "云端 whisper-1",
-			protocol: "openai-audio-transcriptions",
-			streaming: false,
-			streamProtocol: null,
-			availability: "ready",
-			reason: null,
-			selected: state.source?.location === "cloud",
-		},
-	],
-	defaultVoice: prepView(),
-});
-
+/* 可控的语音后端状态（路由层注入，不下载任何权重）：见 fixtures/default-voice-backend.mjs */
+const backend = createVoiceBackend();
+const { state } = backend;
 let browser;
 let page;
 const pageErrors = [];
@@ -198,114 +134,7 @@ try {
 		if (process.env.DEBUG_VOICE) console.log(`[page req] ${r.method()} ${u.pathname} ${r.postData()?.slice(0, 200) ?? ""}`);
 	});
 
-	await page.route("**/api/audio/asr/source", async (route) => {
-		if (route.request().method() === "PUT") {
-			const body = route.request().postDataJSON() ?? {};
-			state.source = body.source ?? null;
-			state.version += 1;
-			return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(sourceView()) });
-		}
-		return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(sourceView()) });
-	});
-	await page.route("**/api/local-models/asr/default-voice/cancel", async (route) => {
-		state.calls.cancelPrepare += 1;
-		state.prep = { state: "not_prepared", percent: null, phase: null, error: null };
-		return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, reason: "已取消", defaultVoice: prepView() }) });
-	});
-	await page.route("**/api/local-models/asr/default-voice/install", async (route) => {
-		state.calls.installPrepare += 1;
-		state.prep = { state: "preparing", percent: 10, phase: "weights", error: null };
-		return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, reason: "已重新开始", defaultVoice: prepView() }) });
-	});
-	await page.route("**/api/downloads/*/cancel", async (route) => {
-		state.calls.downloadsCancel += 1;
-		return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
-	});
-	await page.route("**/api/downloads/*/start", async (route) => {
-		state.calls.downloadsStart += 1;
-		return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
-	});
-	await page.route("**/api/downloads", async (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }));
-	await page.route(`**/api/agents/${agent.id}/messages`, async (route) => {
-		state.calls.messages += 1;
-		return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
-	});
-	await page.route("**/api/audio/transcriptions", async (route) => {
-		state.calls.transcriptions += 1;
-		return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ text: "云端结果", provider: "openai", model: "whisper-1", durationMs: 1 }) });
-	});
-
-	/* 流式会话：按 `state.stream.mode` 脚本化事件（真实 wire 形状：committed / tentative / final / endpoint） */
-	const sessions = new Map();
-	let sid = 0;
-	await page.route("**/api/audio/asr/stream**", async (route) => {
-		const req = route.request();
-		const u = new URL(req.url());
-		const parts = u.pathname.split("/").filter(Boolean); // api audio asr stream [id] [op]
-		const op = parts[5];
-		const json = (status, body) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
-		if (req.method() === "POST" && !op) {
-			state.stream.creates += 1;
-			const body = req.postDataJSON() ?? {};
-			if (state.stream.mode === "slowopen") await new Promise((r) => setTimeout(r, 1200));
-			const id = `asr-stream-${++sid}`;
-			sessions.set(id, { seq: 0, appends: 0, created: body });
-			return json(200, {
-				sessionId: id,
-				modelId: DEF,
-				provider: DEF_PROVIDER,
-				sourceVersion: state.version,
-				leaseId: `lease-${id}`,
-				protocol: "asr-stream-v1",
-				sampleRate: 16000,
-				channels: 1,
-				format: "s16le",
-				maxChunkBytes: 32000,
-				partialIntervalHintMs: [200, 400],
-				maxSessionMs: 60000,
-				idleTimeoutMs: 10000,
-				nextSeq: 0,
-				state: "ready",
-			});
-		}
-		const s = sessions.get(parts[4]);
-		if (!s) return json(404, { error: "asr_stream_unknown", message: "未知会话" });
-		if (op === "append") {
-			const seq = Number(req.headers()["x-asr-seq"]);
-			const bytes = (req.postDataBuffer() ?? Buffer.alloc(0)).length;
-			state.stream.appends += 1;
-			state.stream.seqs.push(seq);
-			state.stream.bytes += bytes;
-			if (state.stream.mode === "replay" && state.stream.appends === 1) return json(409, { error: "asr_stream_seq_replay", message: "重复帧" });
-			if (state.stream.mode === "sourcechange" && state.stream.appends === 1) return json(409, { error: "asr_source_changed", message: "语音识别来源已被改选，请重新开始录音" });
-			s.appends += 1;
-			s.seq = seq + 1;
-			const events =
-				s.appends === 1
-					? [{ type: "tentative", text: state.stream.mode === "replay" ? "重复帧不" : "你好世界", segmentId: "0", seq }]
-					: [
-							{ type: "committed", text: state.stream.mode === "replay" ? "重复帧" : "你好", segmentId: "0", seq },
-							{ type: "tentative", text: state.stream.mode === "replay" ? "" : "世界", segmentId: "0", seq },
-						];
-			return json(200, { seq, accepted: bytes, nextSeq: seq + 1, state: "listening", events, buffered: 0 });
-		}
-		if (op === "end") {
-			state.stream.ends += 1;
-			const text = state.stream.mode === "replay" ? "重复帧不重发" : "你好你好";
-			return json(200, {
-				sessionId: parts[4],
-				state: "ended",
-				modelId: DEF,
-				sourceVersion: state.version,
-				finals: [{ type: "final", text, segmentId: "0", seq: s.seq }],
-			});
-		}
-		if (op === "cancel") {
-			state.stream.cancels += 1;
-			return json(200, { sessionId: parts[4], state: "cancelled" });
-		}
-		return json(200, { sessionId: parts[4], state: "listening", nextSeq: s.seq });
-	});
+	await routeVoiceBackend(page, backend, agent.id);
 
 	const openVoiceSettings = async () => {
 		await page.locator('button[title="设置"]').first().click();
@@ -325,6 +154,7 @@ try {
 	const ensureDefaultReady = async () => {
 		// 独立可跑：默认模型已准备 + 来源已由服务端 CAS 采用（不靠前端写）。
 		state.prep = { state: "ready", percent: null, phase: null, error: null };
+		state.modelId = DEF;
 		state.source = { location: "local", provider: DEF_PROVIDER, model: DEF };
 		state.version += 1;
 		await page.reload();
@@ -335,8 +165,9 @@ try {
 	await waitFor(async () => (await page.getByTestId("voice-mic").count()) > 0, 20_000, "聊天输入栏");
 
 	/* ---------------------------------------------------------------- A0 没装：不自动下载、不打扰 */
-	await step("A0 没装本地语音：设置里给「安装本地语音」+ 一行说明；输入栏不常驻提示；点麦克风引导去设置", async () => {
+	await step("A0 没装本地语音：模块卡先选再装（预选默认、每项适合什么 + 大约下载量、运行环境只算一次）；其他模型不折叠；输入栏不常驻提示", async () => {
 		state.prep = { state: "not_prepared", percent: null, phase: null, error: null };
+		state.modelId = DEF;
 		state.source = null;
 		state.version += 1;
 		await page.reload();
@@ -351,13 +182,28 @@ try {
 		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "not_prepared", 10_000, "not_prepared 状态");
 		const card = await page.getByTestId("default-voice-prep").innerText();
 		if (!/可选模块/.test(card) || !/录音不出电脑/.test(card)) throw new Error(`模块卡应写清是可选模块 + 一行用途：${card}`);
-		const note = await page.getByTestId("default-voice-prep-note").innerText();
-		if (!/默认不安装/.test(note) || !/联网/.test(note)) throw new Error(`应写明默认不安装、安装需联网：${note}`);
+		const sel = page.getByTestId("default-voice-model-select");
+		await sel.waitFor();
+		if (!(await sel.innerText()).includes(NAMES[DEF])) throw new Error(`应预选目录默认：${await sel.innerText()}`);
+		const note = await page.getByTestId("default-voice-choice-note").innerText();
+		if (!/约 \d+ MB/.test(note) || !/共享运行环境约 95 MB，只下载一次/.test(note) || !/离线/.test(note)) throw new Error(`应写明大约下载量、运行环境只算一次：${note}`);
 		if (/断网可用/.test(note)) throw new Error(`不得声称断网可用：${note}`);
-		if (!(await page.getByTestId("default-voice-prep-install").count())) throw new Error("应有「安装本地语音」按钮");
-		if (await page.getByTestId("local-asr-models").count()) throw new Error("没装时其他模型列表应默认折叠");
-		if (!(await page.getByTestId("local-asr-others-toggle").count())) throw new Error("应有「其他本地模型」折叠入口");
+		const btn = await page.getByTestId("default-voice-prep-install").innerText();
+		if (!/安装所选模型/.test(btn)) throw new Error(`按钮应是「安装所选模型」：${btn}`);
+		if (!(await page.getByTestId("local-asr-models").isVisible())) throw new Error("其他模型不应再折叠");
+		if (await page.getByTestId("local-asr-others-toggle").count()) throw new Error("不应再有「其他本地模型」折叠");
+		if (await page.getByTestId("local-asr-model-select").count()) throw new Error("安装前只有一个下拉（在模块卡里）");
+		if (await page.getByTestId("local-asr-install-use").count()) throw new Error("安装前只有一个安装按钮（在模块卡里）");
 		await page.screenshot({ path: join(SHOTS, "voice-local-not-installed.png") });
+		await sel.click();
+		const menu = page.getByTestId("default-voice-model-select-menu");
+		await menu.waitFor();
+		const opts = await menu.getByRole("option").allInnerTexts();
+		if (opts.length < 3) throw new Error(`选择器应列出目录里的模型：${opts.length}`);
+		for (const o of opts) if (!/约 [\d.]+ (MB|GB)/.test(o) || o.split("\n").filter(Boolean).length < 3) throw new Error(`每项应有名字 + 一行适合什么 + 大约下载量：${JSON.stringify(o)}`);
+		await page.screenshot({ path: join(SHOTS, "voice-local-choose.png") });
+		await page.keyboard.press("Escape");
+		await menu.waitFor({ state: "detached" });
 		await page.getByTestId("voice-tab-cloud").click();
 		if (await page.getByTestId("default-voice-prep").count()) throw new Error("云端页不显示本地模块卡（云端不依赖它）");
 		await page.screenshot({ path: join(SHOTS, "voice-cloud.png") });
@@ -382,25 +228,60 @@ try {
 	});
 
 	/* ---------------------------------------------------------------- A2 安装 → ready */
-	await step("A2 安装只调窄接口 → preparing → ready（已作为语音来源）", async () => {
+	await step("A2 改选模型 → 「安装所选模型」只调窄接口且带所选 modelId → preparing → ready 且已作为语音来源", async () => {
 		state.prep = { state: "not_prepared", percent: null, phase: null, error: null };
+		state.modelId = DEF;
+		state.source = { ...CLOUD }; // 之前选过云端：亲手选定安装后仍应切到它（服务端 CAS）
+		state.version += 1;
 		await page.reload();
 		await page.getByTestId("voice-mic").waitFor();
 		await openVoiceSettings();
 		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "not_prepared", 10_000, "not_prepared 状态");
+		await page.getByTestId("default-voice-model-select").click();
+		await page.getByTestId(`default-voice-model-select-option-${PARA}`).click();
+		await waitFor(async () => (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === PARA, 10_000, "下方详情跟着所选");
+		const n0 = state.calls.installPrepare;
 		await page.getByTestId("default-voice-prep-install").click();
-		await waitFor(async () => state.calls.installPrepare === 1, 10_000, "窄安装接口");
-		if (state.calls.downloadsStart !== 0) throw new Error("不得借通用下载接口安装默认语音");
+		await waitFor(async () => state.calls.installPrepare === n0 + 1, 10_000, "窄安装接口");
+		if (state.installBodies.at(-1)?.modelId !== PARA) throw new Error(`应带所选 modelId：${JSON.stringify(state.installBodies.at(-1))}`);
+		if (state.calls.downloadsStart !== 0) throw new Error("不得借通用下载接口安装");
 		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "preparing", 10_000, "安装后 preparing");
+		if (!(await page.getByTestId("default-voice-prep-progress").innerText()).includes(NAMES[PARA])) throw new Error("进度里应写明在装哪个模型");
 		state.prep = { state: "ready", percent: null, phase: null, error: null };
-		state.source = { location: "local", provider: DEF_PROVIDER, model: DEF }; // 服务端 install_and_use 的 CAS 采用结果
+		state.source = { location: "local", provider: PARA_PROVIDER, model: PARA }; // 服务端 CAS 设为来源的结果
 		state.version += 1;
 		await page.reload();
 		await page.getByTestId("voice-mic").waitFor();
 		await openVoiceSettings();
 		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "ready", 10_000, "ready 状态");
 		await page.getByTestId("default-voice-in-use").waitFor();
+		if (!(await page.getByTestId("default-voice-prep").innerText()).includes(NAMES[PARA])) throw new Error("装好后应写明装的是哪个模型");
+		await page.getByTestId("local-asr-model-select").waitFor(); // 装好后下方恢复完整的切换 / 管理
 		await page.screenshot({ path: join(SHOTS, "voice-local-installed.png") });
+		await closeSettings();
+	});
+
+	await step("A2b 安装失败：给原因 + 「重试安装」（不带 modelId，重试失败的那个）；改选别的模型则变「安装所选模型」", async () => {
+		state.prep = { state: "failed", percent: null, phase: "weights", error: "网络中断（模拟）" };
+		state.modelId = PARA;
+		state.source = null;
+		state.version += 1;
+		await page.reload();
+		await page.getByTestId("voice-mic").waitFor();
+		await openVoiceSettings();
+		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "failed", 10_000, "failed 状态");
+		const err = await page.getByTestId("default-voice-prep-error").innerText();
+		if (!err.includes("网络中断") || !err.includes(NAMES[PARA])) throw new Error(`应写明哪个模型、什么原因：${err}`);
+		if (!(await page.getByTestId("default-voice-model-select").innerText()).includes(NAMES[PARA])) throw new Error("失败时选择器停在失败的那个");
+		await page.getByTestId("default-voice-model-select").click();
+		await page.getByTestId(`default-voice-model-select-option-${DEF}`).click();
+		if (!/安装所选模型/.test(await page.getByTestId("default-voice-prep-install").innerText())) throw new Error("改选后应是「安装所选模型」");
+		await page.getByTestId("default-voice-model-select").click();
+		await page.getByTestId(`default-voice-model-select-option-${PARA}`).click();
+		const n0 = state.calls.installPrepare;
+		await page.getByTestId("default-voice-prep-retry").click();
+		await waitFor(async () => state.calls.installPrepare === n0 + 1, 10_000, "窄重试接口");
+		if (state.installBodies.at(-1)?.modelId) throw new Error(`重试不带 modelId：${JSON.stringify(state.installBodies.at(-1))}`);
 		await closeSettings();
 	});
 
@@ -527,6 +408,7 @@ try {
 	/* ---------------------------------------------------------------- A11 390 手机 */
 	await step("A11 390 手机视口：安装状态取消 / 安装（窄接口）可用且不溢出", async () => {
 		state.prep = { state: "preparing", percent: 55, phase: "weights", error: null };
+		state.modelId = DEF;
 		await page.setViewportSize({ width: 1280, height: 900 });
 		await page.reload();
 		await page.getByTestId("voice-mic").waitFor();
@@ -539,6 +421,9 @@ try {
 		const before = state.calls.cancelPrepare;
 		await page.getByTestId("default-voice-prep-cancel").click();
 		await waitFor(async () => state.calls.cancelPrepare === before + 1, 10_000, "390 窄取消");
+		const sb = await page.getByTestId("default-voice-model-select").boundingBox();
+		if (!sb || sb.x < 0 || sb.x + sb.width > 390 + 1) throw new Error(`选择器溢出 390：${JSON.stringify(sb)}`);
+		await page.screenshot({ path: join(SHOTS, "voice-local-390-choose.png") });
 		await page.getByTestId("default-voice-prep-install").click();
 		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "preparing", 10_000, "390 窄安装");
 		await page.screenshot({ path: join(SHOTS, "voice-local-390.png") });

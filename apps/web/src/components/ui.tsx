@@ -403,8 +403,8 @@ export function ErrorBox({ text, className }: { text: string; className?: string
 export interface SelectOption {
 	value: string | number;
 	label: string;
-	/** 选项右侧的小字（单位等） */
-	hint?: string;
+	/** hint = 选项右侧的小字（单位等）；desc = 标签下一行说明（一句大白话） */
+	hint?: string; desc?: string;
 }
 export function Select({
 	value,
@@ -443,7 +443,7 @@ export function Select({
 		const r = btn.current?.getBoundingClientRect();
 		if (!r) return;
 		const GAP = 6;
-		const want = Math.min(280, options.length * 34 + 12);
+		const want = Math.min(280, options.length * (options.some((o) => o.desc) ? 50 : 34) + 12);
 		// 上下各留 8px 边距，按真正可用的空间限高（向上翻转时不能顶出屏幕）
 		const below = window.innerHeight - r.bottom - GAP - 8;
 		const above = r.top - GAP - 8;
@@ -587,7 +587,7 @@ export function Select({
 									className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover", (sel || hi) && "bg-hover", sel && "font-medium")}
 								>
 									<Check size={14} className={cx("shrink-0", sel ? "opacity-100" : "opacity-0")} />
-									<span className="min-w-0 flex-1 truncate">{o.label}</span>
+									<span className="min-w-0 flex-1"><span className="block truncate">{o.label}</span>{o.desc && <span className="block truncate text-[11px] font-normal text-mut">{o.desc}</span>}</span>
 									{o.hint && <span className="shrink-0 text-[11px] text-mut">{o.hint}</span>}
 								</button>
 							);

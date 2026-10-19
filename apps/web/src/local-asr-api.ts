@@ -34,6 +34,10 @@ export interface LocalAsrRuntimeEnvView {
 	python: string;
 	depsBytes: number | null;
 	depsNote: string;
+	/** 共享运行环境下载量估算（所有模型共用、只下一次）；旧后端没给 = null */
+	downloadBytes: number | null;
+	/** 已就位（装过任一模型）→ 再装别的模型不再计它 */
+	present: boolean;
 }
 
 export interface LocalAsrLicense {
@@ -107,6 +111,8 @@ export interface LocalAsrModelView {
 	nameEn: string;
 	languages: string[];
 	note: string;
+	/** 一句大白话：适合什么场景（旧后端没给 = 空串） */
+	suits: string;
 	tier: LocalAsrTier;
 	tags: LocalAsrModelTag[];
 	recommended: boolean;
@@ -156,7 +162,7 @@ const asStrArray = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x
 export const emptyRuntimeView = (): LocalAsrRuntimeView => ({ state: "stopped", pid: null, port: null, host: "127.0.0.1", restarts: 0, lastError: null, healthOk: false, loaded: false });
 export const emptyInstallView = (): LocalAsrInstallView => ({ state: "not_installed", phase: null, phaseLabel: null, received: 0, total: null, percent: null, error: null, installedAt: null, source: null, jobId: null, attempt: null });
 export const emptyHardware = (): LocalAsrHardware => ({ os: "unknown", arch: "unknown", cpuCores: 0, memoryBytes: 0, tier: "unknown", tierNote: "未读到本机硬件档位（估算，未实测）" });
-const emptyRuntimeEnv = (): LocalAsrRuntimeEnvView => ({ engine: "sherpa-onnx", version: "", python: "", depsBytes: null, depsNote: "" });
+const emptyRuntimeEnv = (): LocalAsrRuntimeEnvView => ({ engine: "sherpa-onnx", version: "", python: "", depsBytes: null, depsNote: "", downloadBytes: null, present: false });
 const emptyLicense = (): LocalAsrLicense => ({ licenseName: "", termsVersion: "", decision: "unresolved", selfServe: false, redistribution: false, attribution: "", links: { modelCard: "", modelLicense: "", issue: "", engineLicense: "" }, restrictions: [], reason: "", agreementRequired: false, acceptValue: "" });
 const emptySourceView = (): LocalAsrSourceView => ({ project: "", repoUrl: "", weightsRepo: "", revision: "", weightsLicense: "", engineLicense: "", engineVersion: "", note: "", files: [] });
 
@@ -257,6 +263,7 @@ export function normalizeLocalAsrModel(raw: unknown): LocalAsrModelView | null {
 		nameEn: asString(pick(o, ["nameEn", "name_en"], "")),
 		languages: asStrArray(o.languages),
 		note: asString(o.note, ""),
+		suits: asString(o.suits, ""),
 		tier: ["light", "balanced", "high", "unknown"].includes(tierRaw) ? tierRaw : "unknown",
 		tags: tags.length > 0 ? tags : (["light", "balanced", "high"] as string[]).includes(tierRaw) ? [tierRaw as LocalAsrModelTag] : [],
 		recommended: asBool(o.recommended, false),
@@ -302,7 +309,7 @@ export function normalizeLocalAsrCatalog(raw: unknown): LocalAsrCatalogView {
 				}
 			: emptyHardware(),
 		runtime: ok
-			? { engine: asString(rt.engine, "sherpa-onnx"), version: asString(rt.version, ""), python: asString(rt.python, ""), depsBytes: asNumOrNull(pick(rt, ["depsBytes", "deps_bytes"], null)), depsNote: asString(pick(rt, ["depsNote", "deps_note"], "")) }
+			? { engine: asString(rt.engine, "sherpa-onnx"), version: asString(rt.version, ""), python: asString(rt.python, ""), depsBytes: asNumOrNull(pick(rt, ["depsBytes", "deps_bytes"], null)), depsNote: asString(pick(rt, ["depsNote", "deps_note"], "")), downloadBytes: asNumOrNull(pick(rt, ["downloadBytes", "download_bytes"], null)), present: asBool(rt.present, false) }
 			: emptyRuntimeEnv(),
 		recommendedId: (pick(o, ["recommendedId", "recommended_id"], null) as string | null) ?? null,
 		models,

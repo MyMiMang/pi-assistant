@@ -84,6 +84,16 @@ test("normalizeVoicePrepareView：jobId 缺失时回落到 `asr:<modelId>`（与
 	assert.equal(v.jobId, "asr:streaming-zipformer-bilingual-zh-en-int8");
 });
 
+test("normalizeVoicePrepareView：模块对应模型（modelId / modelName）跟所选走；旧后端没给 → 回落默认，jobId 跟它", () => {
+	const v = normalizeVoicePrepareView(contractView({ modelId: "whisper-small-int8", modelName: "Whisper Small（本地）", prep: { jobId: null } }));
+	assert.equal(v.modelId, "whisper-small-int8");
+	assert.equal(v.modelName, "Whisper Small（本地）");
+	assert.equal(v.jobId, "asr:whisper-small-int8");
+	const old = normalizeVoicePrepareView(contractView({}));
+	assert.equal(old.modelId, "streaming-zipformer-bilingual-zh-en-int8");
+	assert.equal(old.modelName, null);
+});
+
 test("mergePrepareDownload：并入统一下载注册表实时进度（同一个 job）", () => {
 	const base = normalizeVoicePrepareView(contractView({ prep: { total: null, percent: null, received: null } }));
 	const live = mergePrepareDownload(base, { state: "downloading", received: 500, total: 2000, percent: null, error: null });

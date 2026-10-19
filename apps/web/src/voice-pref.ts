@@ -3,7 +3,7 @@
  *
  * 数据来源（已冻结，见 `docs/design/default-stream-contract.md` §1.1）：
  * `GET /api/audio/asr/source` 返回块 `defaultVoice: DefaultVoicePrepView`——
- * `{ defaultModelId, kind, label, prep:{ state, jobId, phase, phaseLabel, received, total, percent, attempt,
+ * `{ defaultModelId, modelId, modelName, kind, label, prep:{ state, jobId, phase, phaseLabel, received, total, percent, attempt,
  *   startedAt, finishedAt, error, errorCode, retryable }, firstRunNeedsNetwork, approxBytes, offlineAfterReady,
  *   requiresUserAction:true, micPermissionRequested:false, notes }`。
  * 本地语音是**可选模块**（决策 0013）：默认不安装，用户在 设置 › 语音 点「安装」才下载；`cancelled` 只为兼容旧后端。
@@ -31,6 +31,9 @@ export interface VoicePrepareView {
 	/** 后端给的一句话（可直接显示；可能为空）。 */
 	label: string;
 	defaultModelId: string | null;
+	/** 模块当前对应的模型（正在装 / 正在用 / 已装 / 装失败的那个；都没有 = 默认）；旧后端 = defaultModelId */
+	modelId: string | null;
+	modelName: string | null;
 	/** 统一下载注册表 stable id（= `prep.jobId`，`asr:<modelId>`）：与「下载与组件」同一个 job。 */
 	jobId: string | null;
 	phase: string | null;
@@ -67,6 +70,8 @@ export function emptyVoicePrepareView(): VoicePrepareView {
 		kind: null,
 		label: "",
 		defaultModelId: null,
+		modelId: null,
+		modelName: null,
 		jobId: null,
 		phase: null,
 		phaseLabel: null,
@@ -101,13 +106,16 @@ export function normalizeVoicePrepareView(raw: unknown): VoicePrepareView {
 	if (!(PREP_STATES as readonly string[]).includes(state)) return emptyVoicePrepareView();
 	const kindRaw = asString(dv.kind, "");
 	const defaultModelId = asStrOrNull(dv.defaultModelId);
-	const jobId = (asStrOrNull(prep.jobId) ?? (defaultModelId ? `asr:${defaultModelId}` : null));
+	const modelId = asStrOrNull(dv.modelId) ?? defaultModelId;
+	const jobId = asStrOrNull(prep.jobId) ?? (modelId ? `asr:${modelId}` : null);
 	return {
 		ok: true,
 		state: state as VoicePrepareState,
 		kind: (KINDS as readonly string[]).includes(kindRaw) ? (kindRaw as VoicePrepareView["kind"]) : null,
 		label: asString(dv.label, ""),
 		defaultModelId,
+		modelId,
+		modelName: asStrOrNull(dv.modelName),
 		jobId,
 		phase: asStrOrNull(prep.phase),
 		phaseLabel: asStrOrNull(prep.phaseLabel),

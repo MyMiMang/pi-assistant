@@ -32,11 +32,21 @@ export function roomHelpers(page) {
 	return { roomSay, roomIdle, botsOf };
 }
 
-/** 设置 › 语音 › 本地：本地语音是可选模块，没装任何本地模型时模型列表折叠在「其他本地模型」里；需要时展开再等列表出现。 */
+/** 设置 › 语音 › 本地：等本地模型区出现（先选再装后不再折叠；没装时选择器在上方模块卡里）。 */
 export async function openLocalAsrModels(page, timeout = 20_000) {
-	const models = page.getByTestId("local-asr-models");
-	const toggle = page.getByTestId("local-asr-others-toggle");
-	await models.or(toggle).first().waitFor({ timeout });
-	if (!(await models.isVisible()) && (await toggle.isVisible())) await toggle.click();
-	await models.waitFor({ timeout });
+	await page.getByTestId("local-asr-models").waitFor({ timeout });
+}
+
+/** 本地语音选模型：没装时在模块卡的选择器里选（先选再装），装过 / 旧后端时在模型卡的下拉里选。 */
+export async function pickLocalAsrModel(page, name) {
+	const chooser = page.getByTestId("default-voice-model-select");
+	const id = (await chooser.isVisible()) ? "default-voice-model-select" : "local-asr-model-select";
+	await page.getByTestId(id).click();
+	await page.getByTestId(`${id}-menu`).getByRole("option", { name }).click();
+}
+
+/** 当前可用的「安装」按钮：先选再装阶段是模块卡的「安装所选模型」，否则是模型卡的「安装并使用」。 */
+export async function localAsrInstallButton(page) {
+	const chooser = page.getByTestId("default-voice-prep-install");
+	return (await chooser.isVisible()) ? chooser : page.getByTestId("local-asr-install-use");
 }

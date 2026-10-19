@@ -65,6 +65,8 @@ export interface AsrModelSpec {
 	tier: AsrTier;
 	/** 中文一句话说明（多语 / 中文能力） */
 	note: string;
+	/** 一句大白话：适合什么场景（安装前的模型选择器里每项显示一行） */
+	suits: string;
 	/** 能力标签（标点 / 时间戳 / 中英混说…），语种以 manifest.languages 为准 */
 	capabilities: string[];
 	/** 多语种（界面用来区分「中文 / 多语」） */
@@ -146,6 +148,7 @@ function whisperSpec(m: {
 	variant: string;
 	tier: AsrTier;
 	note: string;
+	suits: string;
 	ramMB: number;
 	capabilities?: string[];
 }): AsrModelSpec {
@@ -175,6 +178,7 @@ function whisperSpec(m: {
 		variant: m.variant,
 		tier: m.tier,
 		note: m.note,
+		suits: m.suits,
 		capabilities: m.capabilities ?? ["多语", "原生输出（含标点 / 大小写）"],
 		multilingual: true,
 		manifest,
@@ -224,6 +228,7 @@ const PARAFAFORMER_SPEC: AsrModelSpec = (() => {
 		variant: "int8 · 2023-09-14",
 		tier: "light",
 		note: "中文主力，支持中英混说；输出无标点（另配标点模型才有）",
+		suits: "中文为主、整段说完再出字，比流式更准",
 		capabilities: ["中文", "中英混说", "无标点"],
 		multilingual: false,
 		manifest,
@@ -257,6 +262,7 @@ export const ASR_CATALOG: AsrModelSpec[] = [
 		variant: "int8 · 2023-02-20",
 		tier: "light",
 		note: "原生流式（边说边出字），中英双语；输出无标点",
+		suits: "日常听写，边说边出字，中英混说都行",
 		capabilities: ["中文", "英文", "原生流式", "无标点"],
 		multilingual: true,
 		streaming: true,
@@ -282,6 +288,7 @@ export const ASR_CATALOG: AsrModelSpec[] = [
 		variant: "int8",
 		tier: "light",
 		note: "多语；中文准确率低于同体积 Paraformer，适合短指令 / 英文主导",
+		suits: "英文为主的短指令，体积小",
 		ramMB: 900,
 	}),
 	whisperSpec({
@@ -296,6 +303,7 @@ export const ASR_CATALOG: AsrModelSpec[] = [
 		variant: "int8",
 		tier: "balanced",
 		note: "多语均衡档（多语默认推荐）；输出为模型原生文本（含标点），不做云端纠错",
+		suits: "多种语言、带标点，速度和准确度均衡",
 		ramMB: 1500,
 		capabilities: ["多语", "原生输出（含标点 / 大小写）"],
 	}),
@@ -311,6 +319,7 @@ export const ASR_CATALOG: AsrModelSpec[] = [
 		variant: "int8",
 		tier: "high",
 		note: "高质量档里的速度优先版（4 层解码器蒸馏，精度对 large-v3 有取舍）",
+		suits: "多种语言、要高质量又不想太慢，内存要够",
 		ramMB: 2000,
 	}),
 	whisperSpec({
@@ -325,6 +334,7 @@ export const ASR_CATALOG: AsrModelSpec[] = [
 		variant: "int8",
 		tier: "high",
 		note: "最高精度档；1.77GB 磁盘，16GB 机器可用但不宽裕",
+		suits: "最准的多语言识别，下载大、吃内存",
 		ramMB: 2800,
 	}),
 	{
@@ -337,6 +347,7 @@ export const ASR_CATALOG: AsrModelSpec[] = [
 		variant: "int8 ONNX",
 		tier: "balanced",
 		note: "中英粤日韩；本地个人自用可从官方源一键下载安装，不随 App 分发",
+		suits: "中英粤日韩、带标点，个人自用",
 		capabilities: ["标点", "中英粤日韩"],
 		multilingual: true,
 		manifest: SENSEVOICE_MODEL,

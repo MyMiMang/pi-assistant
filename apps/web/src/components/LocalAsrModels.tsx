@@ -8,8 +8,9 @@
  * 许可：按钮是否可用看 `license.selfServe`（本地按需下载安装是否放行），**不看 decision**——SenseVoice 整体仍
  * unresolved（商用 / 再分发未确认），但本地自用可一键装；署名与用途提示默认可见，详文在「?」。
  * 自行导入合法权重收进「详情」折叠，不再另开一套旧卡（避免重复操作流）。
- * 本地语音是**可选模块**（决策 0013）：顶部是模块卡（安装默认模型）；还没装任何本地模型时，
- * 其他模型的选择器默认折叠在「其他本地模型」里，一页只有一个主要动作。
+ * 本地语音是**可选模块**（决策 0013）：顶部是模块卡。还没装任何本地模型时**先选再装**：选择器在模块卡里
+ * （同一个下拉状态 / localAsrPick，预选目录默认），下面这张卡只显示所选模型的详情（许可、大小、导入），
+ * 不再有第二个下拉和安装按钮——一页只有一个主要动作；装好后这张卡恢复完整的切换 / 安装 / 管理。
  */
 import { AlertTriangle, CheckCircle2, Cpu, Download, HardDrive, Loader2, Play, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -17,7 +18,7 @@ import { useLocalAsrCatalog } from "../hooks/useLocalAsrCatalog";
 import { useDefaultVoicePrep } from "../hooks/useDefaultVoicePrep";
 import { formatBytes, installPercent, isIndeterminate, localAsrPick, memoryAdvice, tierLabel } from "../local-asr-intent";
 import type { LocalAsrModelView } from "../local-asr-api";
-import { Badge, Button, Fold, Help, Input, Select, cx } from "./ui";
+import { Badge, Button, Help, Input, Select, cx } from "./ui";
 import { DefaultVoicePrepPanel } from "./DefaultVoicePrep";
 
 function StatusBadge({ m }: { m: LocalAsrModelView }) {
@@ -41,19 +42,30 @@ export function LocalAsrModels() {
 	const [showDetails, setShowDetails] = useState(false);
 	const [showImport, setShowImport] = useState(false);
 	const [importDir, setImportDir] = useState("");
-	const [showOthers, setShowOthers] = useState(false);
 
 	const models = catalog.models;
 	// 下拉停在哪一项：已保存的（正在用的）→ 推荐 → 已安装 → 第一个；这次自己点过的保留，已保存的来源换了就跟过去。
 	// 以前只看推荐，每次重新打开这张卡都会跳回推荐项，看不出自己存的是哪个。
+	// 还没装任何本地模型（先选再装）时，「推荐」位换成模块当前对应的模型（正在装 / 装失败的，否则目录默认）。
 	const savedId = models.find((m) => m.selected)?.id ?? "";
+	// 先选再装：还没装任何本地模型、且模块卡在（后端给了 defaultVoice 块）时，选择 / 安装交给模块卡；
+	// 旧后端没有模块卡时这张卡保持完整（不把用户卡在没有按钮的页面）。
+	const chooser = !models.some((m) => m.installed) && !!defaultPrep?.ok && defaultPrep.state !== "not_applicable";
+	const preferredId = chooser ? (defaultPrep.modelId ?? defaultPrep.defaultModelId ?? catalog.recommendedId) : catalog.recommendedId;
 	const lastSaved = useRef<string | null>(null);
 	useEffect(() => {
 		const savedChanged = lastSaved.current !== null && lastSaved.current !== savedId;
 		lastSaved.current = savedId;
-		const next = localAsrPick(models, catalog.recommendedId, selectedId, savedChanged);
+		const next = localAsrPick(models, preferredId, selectedId, savedChanged);
 		if (next !== selectedId) setSelectedId(next);
-	}, [models, catalog.recommendedId, selectedId, savedId]);
+	}, [models, preferredId, selectedId, savedId]);
+	const pick = (v: string) => {
+		setSelectedId(v);
+		setShowDetails(false);
+		setShowImport(false);
+		setImportDir("");
+		clearOpError();
+	};
 
 	const selected = models.find((m) => m.id === selectedId) ?? null;
 
@@ -83,14 +95,12 @@ export function LocalAsrModels() {
 	const license = selected?.license;
 	// 按钮可用性看「本地按需下载安装是否放行」（selfServe），不看 decision（整体 unresolved 只影响分发标注）。
 	const licenseBlocked = !!license && !license.selfServe;
-	// 模块是否已经在用：装过 / 正在装 / 装失败过任意本地模型 → 直接展开模型列表；否则折叠，主动作是上面的「安装本地语音」。
-	const moduleTouched = models.some((m) => m.installed || m.install.state === "installing" || m.install.state === "failed");
 
 	const card = (
 		<div className="space-y-3 rounded-xl border border-line p-3" data-testid="local-asr-models" data-models={models.length}>
 			<div className="flex flex-wrap items-center gap-2 text-xs">
 				<HardDrive size={14} className="text-mut" />
-				<span className="text-sm font-medium">本地语音识别模型</span>
+				<span className="text-sm font-medium">{chooser ? "所选模型详情" : "本地语音识别模型"}</span>
 				<Help>
 					在本机离线转写，不上传录音、不按量计费。模型全部由服务端目录给出，体积 / 内存是<b>配置建议（估算，未实测）</b>；安装 runtime、权重、校验和配置都在后台完成。「安装并使用」装好后由服务端把语音来源切到它；期间你改选云端 / 另一个模型，先前安装完成不会反过来覆盖你的新选择。
 				</Help>
@@ -112,24 +122,20 @@ export function LocalAsrModels() {
 				</div>
 			) : (
 				<>
-					<div className="flex flex-wrap items-center gap-2">
-						<span className="text-sm text-mut">选择模型</span>
-						<Select
-							value={selectedId}
-							ariaLabel="本地语音识别模型"
-							testId="local-asr-model-select"
-							className="min-w-[240px]"
-							placeholder="选择模型…"
-							options={models.map((m) => ({ value: m.id, label: `${m.name}${m.tier !== "unknown" ? `（${tierLabel(m.tier)}）` : ""}`, hint: m.weightsBytes ? formatBytes(m.weightsBytes) : undefined }))}
-							onChange={(v) => {
-								setSelectedId(v);
-								setShowDetails(false);
-								setShowImport(false);
-								setImportDir("");
-								clearOpError();
-							}}
-						/>
-					</div>
+					{!chooser && (
+						<div className="flex flex-wrap items-center gap-2">
+							<span className="text-sm text-mut">选择模型</span>
+							<Select
+								value={selectedId}
+								ariaLabel="本地语音识别模型"
+								testId="local-asr-model-select"
+								className="min-w-[240px]"
+								placeholder="选择模型…"
+								options={models.map((m) => ({ value: m.id, label: `${m.name}${m.tier !== "unknown" ? `（${tierLabel(m.tier)}）` : ""}`, hint: m.weightsBytes ? formatBytes(m.weightsBytes) : undefined }))}
+								onChange={pick}
+							/>
+						</div>
+					)}
 
 					{selected && (
 						<div className="space-y-2.5 rounded-xl border border-line bg-hover/40 p-3" data-testid="local-asr-detail" data-model-id={selected.id} data-install-state={selected.install.state} data-installed={String(selected.installed)} data-selected={String(selected.selected)}>
@@ -212,8 +218,8 @@ export function LocalAsrModels() {
 								</div>
 							)}
 
-							{/* 安装 / 使用控制 */}
-							{selected.install.state === "installing" ? (
+							{/* 安装 / 使用控制（先选再装阶段由上面的模块卡负责，这里不重复） */}
+							{chooser ? null : selected.install.state === "installing" ? (
 								<div className="space-y-1.5 text-[11px]" data-testid="local-asr-progress">
 									<div className="flex flex-wrap items-center gap-2 text-mut">
 										<span>{selected.install.phaseLabel ?? selected.install.phase ?? "安装中"}</span>
@@ -349,14 +355,8 @@ export function LocalAsrModels() {
 
 	return (
 		<div className="space-y-3">
-			<DefaultVoicePrepPanel />
-			{moduleTouched ? (
-				card
-			) : (
-				<Fold title="其他本地模型" count={models.length} hint="更准 / 带标点的可选" open={showOthers} onToggle={() => setShowOthers((v) => !v)} testId="local-asr-others">
-					{card}
-				</Fold>
-			)}
+			<DefaultVoicePrepPanel choice={chooser ? { models, runtime: catalog.runtime, value: selectedId, onChange: pick } : undefined} />
+			{card}
 		</div>
 	);
 }

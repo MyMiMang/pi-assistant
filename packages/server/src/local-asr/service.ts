@@ -34,6 +34,11 @@ export interface AsrModelInstallOptions {
 	acceptLicense?: string | null;
 	importDir?: string;
 	intent?: "install" | "install_and_use";
+	/**
+	 * `install_and_use` 的采用条件放宽为「安装期间来源没被改过」（CAS），不要求来源从未设置。
+	 * 只给用户在模块卡上**亲手选定模型**后点的「安装所选模型」用；默认 / 自动场景不传。
+	 */
+	adoptIfUnchanged?: boolean;
 	signal?: AbortSignal;
 }
 
@@ -73,6 +78,8 @@ export interface LocalAsrModelView {
 	nameEn: string;
 	languages: string[];
 	note: string;
+	/** 一句大白话：适合什么场景 */
+	suits: string;
 	tier: AsrTier;
 	tags: AsrTier[];
 	recommended: boolean;
@@ -97,7 +104,17 @@ export interface LocalAsrModelView {
 
 export interface LocalAsrCatalog {
 	hardware: { os: string; arch: string; cpuCores: number; memoryBytes: number; tier: AsrTier | "unknown"; tierNote: string };
-	runtime: { engine: string; version: string; python: string; depsBytes: number | null; depsNote: string };
+	runtime: {
+		engine: string;
+		version: string;
+		python: string;
+		depsBytes: number | null;
+		depsNote: string;
+		/** 共享运行环境的下载量估算（所有模型共用、只下载一次；估算非实测） */
+		downloadBytes: number;
+		/** 共享运行环境是否已就位（装过任一模型即已就位，再装别的模型不再计它） */
+		present: boolean;
+	};
 	recommendedId: string | null;
 	models: LocalAsrModelView[];
 	notes: string[];
@@ -128,6 +145,7 @@ interface Job {
 	jobId: string;
 	attempt: number;
 	intent: "install" | "install_and_use";
+	adoptIfUnchanged: boolean;
 	selectionAtStart: { location: "cloud" | "local"; provider: string; model: string } | null;
 	/** 安装开始时的来源持久化版本（CAS：期间别的客户端改选则不覆盖） */
 	selectionVersionAtStart: number;
@@ -255,6 +273,7 @@ export class LocalAsrService {
 				nameEn: spec.nameEn,
 				languages: [...spec.manifest.languages],
 				note: spec.note,
+				suits: spec.suits,
 				tier: spec.tier,
 				tags: [spec.tier],
 				recommended,
@@ -282,7 +301,15 @@ export class LocalAsrService {
 		}
 		return {
 			hardware: { os: hw.os, arch: hw.arch, cpuCores: hw.cpuCores, memoryBytes: hw.memoryBytes, tier: cls.tier, tierNote: cls.note },
-			runtime: { engine: "sherpa-onnx", version: SHERPA_ONNX_VERSION, python: ASR_PYTHON_VERSION, depsBytes: null, depsNote: "共享运行环境（引擎 + venv/cache）估算约 0.2GB；未在本机实测" },
+			runtime: {
+				engine: "sherpa-onnx",
+				version: SHERPA_ONNX_VERSION,
+				python: ASR_PYTHON_VERSION,
+				depsBytes: null,
+				depsNote: "共享运行环境（引擎 + venv/cache）估算约 0.2GB；未在本机实测",
+				downloadBytes: ASR_SHARED_RUNTIME_ESTIMATE_BYTES,
+				present: models.some((m) => m.installed),
+			},
 			recommendedId,
 			models,
 			notes: [
@@ -324,6 +351,7 @@ export class LocalAsrService {
 			jobId: `asr:${id}`,
 			attempt,
 			intent: opts.intent === "install_and_use" ? "install_and_use" : "install",
+			adoptIfUnchanged: opts.adoptIfUnchanged === true,
 			selectionAtStart: this.deps.selection.read(),
 			selectionVersionAtStart: this.deps.selection.version(),
 			// 区分「从未设置（unset）」与「显式清空（null）」：只有安装前后都**unset**才自动采用默认。
@@ -336,8 +364,10 @@ export class LocalAsrService {
 			// stale 防护：只有「安装并使用」且选择自开始后未变化才写「用本地」来源；
 			// CAS 用 expectedVersion 防 ABA / 跨客户端覆盖（别的页面后来改选 cloud 则这里失败，不覆盖）。
 			// 显式清空（key 存在且为 null）绝不自动改：安装前后都必须 unset。
+			// 用户在模块卡上亲手选定模型安装（adoptIfUnchanged）：只要求期间没改选，CAS 照旧。
 			const presentNow = this.deps.selection.present?.() ?? true;
-			if (job.intent === "install_and_use" && !job.selectionPresentAtStart && !presentNow && sameSelection(this.deps.selection.read(), job.selectionAtStart)) {
+			const neverSet = !job.selectionPresentAtStart && !presentNow;
+			if (job.intent === "install_and_use" && (job.adoptIfUnchanged || neverSet) && sameSelection(this.deps.selection.read(), job.selectionAtStart)) {
 				try {
 					this.deps.selection.write({ location: "local", provider: spec.provider, model: spec.id }, { expectedVersion: job.selectionVersionAtStart });
 				} catch {
@@ -400,13 +430,34 @@ export class LocalAsrService {
 	}
 
 	/**
-	 * 默认本地语音的状态视图（契约 §1.1 的 `defaultVoice` 块）。
-	 * **不下载 / 不启动 worker**；只读安装状态，供 `GET /api/audio/asr/source` 一次带出。
+	 * 本地语音模块卡「当前说的是哪个模型」：正在装的 → 正在用的已装模型 → 任一已装 → 装失败的 → 目录默认。
+	 * 模块状态、窄接口的取消 / 省略 modelId 的安装（失败重试）都按它来，用户选了哪个就跟哪个。
+	 */
+	private moduleModelId(): string | null {
+		for (const id of this.jobs.keys()) return id;
+		const sel = this.deps.selection.read();
+		const installed = ASR_CATALOG.filter((s) => this.managerFor(s.id).status().install.state === "installed");
+		const inUse = installed.find((s) => sel?.location === "local" && sel.provider === s.provider && sel.model === s.id);
+		if (inUse) return inUse.id;
+		if (installed.length) return installed[0].id;
+		const failed = ASR_CATALOG.find((s) => this.managers.has(s.id) && this.managerFor(s.id).status().install.state === "failed");
+		return failed?.id ?? this.defaultVoiceModelId();
+	}
+
+	/** 共享运行环境是否已就位（装过任一模型）。 */
+	private runtimePresent(): boolean {
+		return ASR_CATALOG.some((s) => this.managerFor(s.id).status().install.state === "installed");
+	}
+
+	/**
+	 * 本地语音模块的状态视图（契约 §1.1 的 `defaultVoice` 块）。`modelId` 是模块当前对应的模型（见 `moduleModelId`），
+	 * `defaultModelId` 仍是目录默认（选择器预选它）。**不下载 / 不启动 worker**；只读安装状态，供 `GET /api/audio/asr/source` 一次带出。
 	 */
 	defaultVoicePrepView(): DefaultVoicePrepView {
 		const defaultModelId = this.defaultVoiceModelId();
+		const modelId = defaultModelId ? this.moduleModelId() : null;
 		const view = catalogDefaultVoiceView(this.deps.selection.read());
-		const spec = defaultModelId ? asrModelSpec(defaultModelId) : null;
+		const spec = modelId ? asrModelSpec(modelId) : null;
 		const install = spec ? this.installView(spec) : null;
 		const state: DefaultVoicePrepView["prep"]["state"] = !defaultModelId
 			? "not_applicable"
@@ -418,15 +469,18 @@ export class LocalAsrService {
 						? "failed"
 						: "not_prepared";
 		const finishedAt = install?.installedAt != null ? new Date(install.installedAt).toISOString() : null;
-		const approxBytes = spec ? spec.manifest.bytes + ASR_SHARED_RUNTIME_ESTIMATE_BYTES : null;
+		// 共享运行环境只算一次：已就位就只算权重。
+		const approxBytes = spec ? spec.manifest.bytes + (this.runtimePresent() ? 0 : ASR_SHARED_RUNTIME_ESTIMATE_BYTES) : null;
 		const mb = approxBytes ? Math.round(approxBytes / 1024 / 1024) : "?";
 		return {
 			defaultModelId,
+			modelId,
+			modelName: spec?.name ?? null,
 			kind: view.kind,
 			label: view.label,
 			prep: {
 				state,
-				jobId: install?.jobId ?? (defaultModelId ? `asr:${defaultModelId}` : null),
+				jobId: install?.jobId ?? (modelId ? `asr:${modelId}` : null),
 				phase: install?.phase ?? null,
 				phaseLabel: install?.phaseLabel ?? null,
 				received: install?.received ?? null,
@@ -446,34 +500,41 @@ export class LocalAsrService {
 			requiresUserAction: true,
 			micPermissionRequested: false,
 			notes: [
-				"可选模块：默认不安装，不随安装包分发；在 设置 › 语音 点「安装」才会下载",
-				`安装量估算约 ${mb} MB（运行环境 + 默认模型，估算非实测），装好后可离线使用`,
-				"默认流式模型输出无标点；麦克风权限只在用户点麦克风时申请",
+				"可选模块：默认不安装，不随安装包分发；在 设置 › 语音 选好模型点「安装所选模型」才会下载",
+				`安装量估算约 ${mb} MB（所选模型${this.runtimePresent() ? "" : " + 共享运行环境"}，估算非实测），装好后可离线使用`,
+				"麦克风权限只在用户点麦克风时申请",
 			],
 		};
 	}
 
-	/** 取消默认本地语音的安装（窄接口：只动**目录里唯一的默认模型**，不接任意 modelId / downloadId）。 */
-	cancelDefaultVoicePrepare(): { ok: boolean; reason: string } {
-		const id = this.defaultVoiceModelId();
+	/** 取消本地语音模块的安装（窄接口：省略 modelId = 模块当前对应的模型；只接目录里的 modelId，不接 downloadId）。 */
+	cancelDefaultVoicePrepare(modelId?: string): { ok: boolean; reason: string } {
+		const id = modelId ?? this.moduleModelId();
 		if (!id) return { ok: false, reason: "目录里没有默认本地语音模型" };
+		if (!asrModelSpec(id)) return { ok: false, reason: `未知的本地语音模型：${id}` };
 		const ok = this.cancel(id).ok;
 		return { ok, reason: ok ? "已取消安装本地语音" : "本地语音没有在安装" };
 	}
 
 	/**
-	 * 用户显式安装默认本地语音（窄接口：固定默认模型 + 统一安装 job + 统一进度；首次安装与失败重试共用）。
-	 * 采用仍走 `install_and_use` 的 CAS：**不**覆盖用户已选来源。
+	 * 用户显式安装本地语音（窄接口：统一安装 job + 统一进度；首次安装与失败重试共用）。
+	 * `modelId` 必须是目录里的、本平台可装且放行本地下载的模型；省略 = 模块当前对应的模型（失败重试 / 旧客户端 = 默认模型）。
+	 * 只装这一个模型（+ 首次的共享运行环境）。用户亲手选的（传了 modelId）装完即设为语音来源，除非期间改选过（CAS）；
+	 * 省略时仍走原来的「来源从未设置才采用」。
 	 */
-	installDefaultVoice(): { started: boolean; reason: string } {
-		const id = this.defaultVoiceModelId();
-		if (!id) return { started: false, reason: "目录里没有默认本地语音模型" };
+	installDefaultVoice(modelId?: string): { started: boolean; reason: string; status: 200 | 400 | 404 | 409 } {
+		const id = modelId ?? this.moduleModelId();
+		if (!id) return { started: false, reason: "目录里没有默认本地语音模型", status: 409 };
+		const spec = asrModelSpec(id);
+		if (!spec) return { started: false, reason: `未知的本地语音模型：${id}`, status: 404 };
+		const view = this.catalog().models.find((m) => m.id === id);
+		if (view && !view.available) return { started: false, reason: view.unavailableReason ?? "这台电脑上不能安装该模型", status: 400 };
 		const st = this.managerFor(id).status();
-		if (st.install.state === "installing") return { started: false, reason: "本地语音正在安装中" };
-		if (st.install.state === "installed") return { started: false, reason: "本地语音已安装" };
-		if (this.anyInstalling()) return { started: false, reason: "已有安装正在进行中，请先等待或取消" };
-		void this.install(id, { intent: "install_and_use" }).catch(() => {});
-		return { started: true, reason: "已开始安装本地语音" };
+		if (st.install.state === "installing") return { started: false, reason: "本地语音正在安装中", status: 409 };
+		if (st.install.state === "installed") return { started: false, reason: "该模型已安装", status: 409 };
+		if (this.anyInstalling()) return { started: false, reason: "已有安装正在进行中，请先等待或取消", status: 409 };
+		void this.install(id, { intent: "install_and_use", adoptIfUnchanged: modelId !== undefined }).catch(() => {});
+		return { started: true, reason: `已开始安装 ${spec.name}`, status: 200 };
 	}
 }
 

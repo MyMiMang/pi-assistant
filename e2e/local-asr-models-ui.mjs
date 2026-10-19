@@ -14,6 +14,9 @@
  *  5) 取消：进行中可取消，进度消失、不写来源。
  *  6) 失败：显示可读原因 + 「重试安装并使用」。
  *  7) 390 窄屏不横向溢出 + 截图。
+ *  0) 先选再装（后端给 defaultVoice 块、还没装任何模型）：选择器在模块卡里、预选目录默认、每项一行适合什么 +
+ *     大约下载量（运行环境只算一次）；「安装所选模型」走窄接口且只带所选 modelId；下方只有所选模型详情、不折叠。
+ *     1)～6) 是装过模型后 / 旧后端（没有模块卡）时模型卡的完整切换与安装。
  * 运行前先构建：npm run build -w @pi-assistant/web
  */
 import { createServer } from "node:http";
@@ -23,6 +26,8 @@ import { extname, join } from "node:path";
 import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 import { openLocalAsrModels } from "./fixtures/page-checks.mjs";
+
+const DEFAULT_ID = "paraformer-zh-2023-09-14-int8"; // fixture 里的「目录默认」
 
 const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const dist = join(root, "apps/web/dist");
@@ -103,6 +108,7 @@ const mkModel = (id, provider, name, tier, weights, mem, extra = {}) => ({
 	nameEn: id,
 	languages: ["zh", "en"],
 	note: "fixture 说明",
+	suits: `适合 ${name} 的场景`,
 	tier,
 	tags: [tier],
 	recommended: false,
@@ -144,7 +150,14 @@ const check = (name, cond, detail = "") => {
 	}
 };
 
-const state = { models: initialModels(), source: null, cloudOption: true, putLog: [], installLog: [], cancelLog: [], selectLog: [] };
+const state = { models: initialModels(), source: null, cloudOption: true, defaultVoice: false, narrowLog: [], putLog: [], installLog: [], cancelLog: [], selectLog: [] };
+const RUNTIME_BYTES = 95_000_000;
+/** 与 backend defaultVoicePrepView 同形：模块对应模型 = 正在装 → 已装 → 装失败 → 目录默认。 */
+const prepView = (st) => {
+	const m = st.models.find((x) => x.install.state === "installing") ?? st.models.find((x) => x.install.state === "installed") ?? st.models.find((x) => x.install.state === "failed") ?? st.models.find((x) => x.id === DEFAULT_ID);
+	const map = { installing: "preparing", installed: "ready", failed: "failed" };
+	return { defaultModelId: DEFAULT_ID, modelId: m.id, modelName: m.name, kind: st.source ? "user-chosen" : "unconfigured", label: "", prep: { state: map[m.install.state] ?? "not_prepared", jobId: `asr:${m.id}`, phase: m.install.phase, phaseLabel: m.install.phaseLabel, received: m.install.received, total: m.install.total, percent: m.install.percent, attempt: 1, startedAt: null, finishedAt: null, error: m.install.error, errorCode: null, retryable: m.install.state === "failed" }, firstRunNeedsNetwork: true, approxBytes: m.weightsBytes + RUNTIME_BYTES, offlineAfterReady: true, requiresUserAction: true, micPermissionRequested: false, notes: [] };
+};
 
 async function installRoutes(context, st) {
 	await context.route("**/api/**", async (route) => {
@@ -183,11 +196,19 @@ async function installRoutes(context, st) {
 			const sel = st.source;
 			return json({
 				hardware: { os: "darwin", arch: "arm64", cpuCores: 10, memoryBytes: 16 * 1024 ** 3, tier: "balanced", tierNote: "系统内存约 16.0GB，按 16GB 档保守估计（估算，未实测；未跑 benchmark）" },
-				runtime: { engine: "sherpa-onnx", version: "1.13.8", python: "3.11", depsBytes: null, depsNote: "共享运行环境估算约 0.2GB；未在本机实测" },
+				runtime: { engine: "sherpa-onnx", version: "1.13.8", python: "3.11", depsBytes: null, depsNote: "共享运行环境估算约 0.2GB；未在本机实测", downloadBytes: RUNTIME_BYTES, present: st.models.some((m) => m.install.state === "installed") },
 				recommendedId: "whisper-small-int8",
 				models: st.models.map((m) => ({ ...m, installed: m.install.state === "installed", selected: !!sel && sel.location === "local" && sel.provider === m.provider && sel.model === m.id, running: m.install.state === "installed" })),
 				notes: ["内存 / 档位均为估算，未在本机跑 benchmark", "一次只运行一个本地语音模型"],
 			});
+		}
+		if (p === "/api/local-models/asr/default-voice/install") {
+			const body = JSON.parse(req.postData() || "null");
+			st.narrowLog.push(body);
+			const m = st.models.find((x) => x.id === (body?.modelId ?? DEFAULT_ID));
+			if (!m) return json({ ok: false, reason: "未知模型" }, 404);
+			m.install = { state: "installing", phase: "weights", phaseLabel: "下载 / 导入权重", received: 0, total: null, percent: null, error: null, installedAt: null, source: "download", jobId: `asr:${m.id}`, attempt: 1 };
+			return json({ ok: true, defaultVoice: prepView(st) });
 		}
 		const installMatch = p.match(/^\/api\/local-models\/asr\/models\/([^/]+)\/install$/);
 		if (installMatch) {
@@ -235,7 +256,7 @@ async function installRoutes(context, st) {
 				st.source = JSON.parse(req.postData() ?? "{}").source ?? null;
 				st.putLog.push(st.source);
 			}
-			return json({ source: st.source ?? null, options: opts });
+			return json({ source: st.source ?? null, options: opts, ...(st.defaultVoice ? { defaultVoice: prepView(st) } : {}) });
 		}
 
 		if (p === "/api/agents/a1/computer") return json({ separate: false, hasData: null, desktop: { enabled: false, state: "off" } });
@@ -256,6 +277,35 @@ try {
 	const page = await ctx.newPage();
 	page.on("pageerror", (e) => console.error("  ⚠️ pageerror", String(e.stack ?? e).slice(0, 600)));
 	page.setDefaultTimeout(15_000);
+
+	console.log("\n── 0) 先选再装：模块卡里的选择器 → 安装所选模型（窄接口只带所选 modelId） ──");
+	state.defaultVoice = true;
+	await page.goto(`${base}/?settings=voice`);
+	await page.getByTestId("voice-source-status").waitFor();
+	await page.getByTestId("voice-tab-local").click();
+	const chooser = page.getByTestId("default-voice-model-select");
+	await chooser.waitFor();
+	check("模块卡里有模型选择器，预选目录默认", (await chooser.textContent())?.includes("Paraformer 中文") ?? false, await chooser.textContent());
+	check("下方模型区不折叠、也没有第二个下拉 / 安装按钮", (await page.getByTestId("local-asr-models").isVisible()) && (await page.getByTestId("local-asr-others-toggle").count()) === 0 && (await page.getByTestId("local-asr-model-select").count()) === 0 && (await page.getByTestId("local-asr-install-use").count()) === 0);
+	const note0 = (await page.getByTestId("default-voice-choice-note").textContent()) ?? "";
+	check("所选一行：适合什么 + 大约下载量（含运行环境、只下载一次）", note0.includes("适合 Paraformer") && note0.includes("约 338 MB") && note0.includes("只下载一次"), note0);
+	await chooser.click();
+	const optTexts = await page.getByTestId("default-voice-model-select-menu").getByRole("option").allInnerTexts();
+	check("每项：名字 + 一行适合什么 + 大约下载量", optTexts.length === 6 && optTexts.every((t) => /适合 /.test(t) && /约 [\d.]+ (MB|GB)/.test(t)), JSON.stringify(optTexts));
+	await page.screenshot({ path: join(OUT, "00-choose-then-install.png") });
+	await page.getByTestId("default-voice-model-select-menu").getByRole("option", { name: /Whisper Small/ }).click();
+	check("下方详情跟着所选", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === "whisper-small-int8");
+	check("按钮是「安装所选模型」", ((await page.getByTestId("default-voice-prep-install").textContent()) ?? "").includes("安装所选模型"));
+	await page.getByTestId("default-voice-prep-install").click();
+	await page.getByTestId("default-voice-prep-progress").waitFor();
+	check("窄接口只带所选 modelId", JSON.stringify(state.narrowLog) === JSON.stringify([{ modelId: "whisper-small-int8" }]), JSON.stringify(state.narrowLog));
+	check("没走通用按 id 安装接口", state.installLog.length === 0, JSON.stringify(state.installLog));
+	check("进度里写明在装哪个", ((await page.getByTestId("default-voice-prep-progress").textContent()) ?? "").includes("Whisper Small"));
+	check("只有这一个模型在装", state.models.filter((m) => m.install.state === "installing").map((m) => m.id).join() === "whisper-small-int8");
+	// 复位：后面 1)～6) 验证装过模型后 / 旧后端（没有模块卡）时模型卡的完整切换与安装
+	state.defaultVoice = false;
+	state.narrowLog = [];
+	state.models = initialModels();
 
 	console.log("\n── 1) 选择器：服务端返回的模型 / 推荐 / 体积 / 内存建议 / 许可 ──");
 	await page.goto(`${base}/?settings=voice`);

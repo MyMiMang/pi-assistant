@@ -2,8 +2,9 @@
  * 设置 › 语音：本地语音识别（**可选模块**，默认不安装）的状态（读 `GET /api/audio/asr/source` 的 `defaultVoice` 块）。
  *
  * 复用既有模块，不另造链路：进度来自统一下载注册表（同一个 `asr:<modelId>` job），
- * 安装 / 取消走默认语音窄接口（手机也能用）。装好后自动采用由服务端「安装并使用」的 CAS 管；
- * 来源已被用户设过时，`adopt()` 让用户显式把它设为语音来源（复用 `setVoiceSource`）。
+ * 安装 / 取消走本地语音窄接口（手机也能用）。`install(modelId)` 只装用户在模块卡上选的那个模型，装完由服务端
+ * CAS 设为语音来源（期间改选过就不覆盖）；没切成时 `adopt()` 让用户显式把它设为语音来源（复用 `setVoiceSource`）。
+ * 状态跟着「模块当前对应的模型」（`prep.modelId`：正在装 / 正在用 / 已装 / 装失败的那个）。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cancelDefaultVoicePrepare, getVoiceSource, installDefaultVoice, onVoiceSourceChanged, setVoiceSource, type VoiceSource } from "../api";
@@ -19,20 +20,20 @@ export interface UseDefaultVoicePrep {
 	busy: boolean;
 	/** 读取 / 操作失败说明（可重试）。 */
 	error: string;
-	/** 默认本地模型对应的来源（装好后用于「设为语音来源」）；目录里没有时为 null。 */
-	defaultSource: VoiceSource | null;
+	/** 模块当前模型对应的来源（装好后用于「设为语音来源」）；目录里没有时为 null。 */
+	moduleSource: VoiceSource | null;
 	/** 当前语音来源就是它。 */
 	inUse: boolean;
 	reload: () => Promise<void>;
 	cancel: () => Promise<void>;
-	/** 安装（未安装时）/ 重试（失败时）：同一个窄接口、同一个下载 job。 */
-	install: () => Promise<void>;
+	/** 安装所选模型（未安装时）/ 重试（失败时，省略 modelId）：同一个窄接口、同一个下载 job。 */
+	install: (modelId?: string) => Promise<void>;
 	adopt: () => Promise<void>;
 }
 
 export function useDefaultVoicePrep(): UseDefaultVoicePrep {
 	const [raw, setRaw] = useState<VoicePrepareView | null>(null);
-	const [defaultSource, setDefaultSource] = useState<VoiceSource | null>(null);
+	const [moduleSource, setModuleSource] = useState<VoiceSource | null>(null);
 	const [inUse, setInUse] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [busy, setBusy] = useState(false);
@@ -45,8 +46,8 @@ export function useDefaultVoicePrep(): UseDefaultVoicePrep {
 			const view = await getVoiceSource();
 			const norm = view.defaultVoice ? normalizeVoicePrepareView(view.defaultVoice) : null;
 			setRaw(norm);
-			const opt = norm?.defaultModelId ? view.options.find((o) => o.location === "local" && o.model === norm.defaultModelId) : undefined;
-			setDefaultSource(opt ? { location: "local", provider: opt.provider, model: opt.model } : null);
+			const opt = norm?.modelId ? view.options.find((o) => o.location === "local" && o.model === norm.modelId) : undefined;
+			setModuleSource(opt ? { location: "local", provider: opt.provider, model: opt.model } : null);
 			setInUse(!!opt?.selected);
 			setError("");
 		} catch (e) {
@@ -66,8 +67,7 @@ export function useDefaultVoicePrep(): UseDefaultVoicePrep {
 
 	const act = useCallback(
 		async (fn: () => Promise<unknown>) => {
-			const id = prep?.jobId;
-			if (!id) return;
+			if (!prep?.jobId) return;
 			setBusy(true);
 			setError("");
 			try {
@@ -87,11 +87,11 @@ export function useDefaultVoicePrep(): UseDefaultVoicePrep {
 		loading,
 		busy,
 		error,
-		defaultSource,
+		moduleSource,
 		inUse,
 		reload,
-		cancel: () => act(cancelDefaultVoicePrepare),
-		install: () => act(installDefaultVoice),
-		adopt: () => act(async () => defaultSource && setVoiceSource(defaultSource)),
+		cancel: () => act(() => cancelDefaultVoicePrepare(prep?.modelId ?? undefined)),
+		install: (modelId?: string) => act(() => installDefaultVoice(modelId)),
+		adopt: () => act(async () => moduleSource && setVoiceSource(moduleSource)),
 	};
 }

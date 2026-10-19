@@ -175,17 +175,28 @@ export function mountLocalAsrRoutes(
 	// 默认本地语音（可选模块）的安装状态（与 `GET /api/audio/asr/source` 的 `defaultVoice` 同一份数据；headless / Linux server 用）。
 	app.get("/api/local-models/asr/default-voice", localOnly, (c) => c.json(svc().defaultVoicePrepView()));
 
-	// 默认语音的安装 / 取消（安装与失败重试共用 install）：**窄接口**，只动目录里唯一的默认模型（固定 defaultModelId），
-	// 不接受任意 modelId / downloadId，因此不会变成「借接口操作任意组件」。
+	// 本地语音模块的安装 / 取消（安装与失败重试共用 install）：**窄接口**。body 可带 `modelId`（只认目录里的模型，
+	// 不认 downloadId / 任意组件；未知 404、本平台不可装 400、忙 409）；省略 = 模块当前对应的模型（旧客户端 / 失败重试）。
 	// 不走 localOnly：手机（已配对）也能安装 / 取消，能力与它本来就能点的麦克风一致；
 	// 未配对请求由现有全局鉴权中间件 401，不在此另造鉴权。
-	app.post("/api/local-models/asr/default-voice/cancel", (c) => {
-		const out = svc().cancelDefaultVoicePrepare();
+	const narrowModelId = async (c: Context): Promise<{ ok: true; id: string | undefined } | { ok: false }> => {
+		const body = await c.req.json<{ modelId?: unknown }>().catch(() => ({}) as { modelId?: unknown });
+		const raw = body && typeof body === "object" ? body.modelId : undefined;
+		if (raw === undefined || raw === null) return { ok: true, id: undefined };
+		return typeof raw === "string" && raw.trim() ? { ok: true, id: raw.trim() } : { ok: false };
+	};
+	const badModelId = (c: Context) => c.json({ ok: false, reason: "modelId 必须是目录里的模型 id", defaultVoice: svc().defaultVoicePrepView() }, 400);
+	app.post("/api/local-models/asr/default-voice/cancel", async (c) => {
+		const m = await narrowModelId(c);
+		if (!m.ok) return badModelId(c);
+		const out = svc().cancelDefaultVoicePrepare(m.id);
 		return c.json({ ok: out.ok, reason: out.reason, defaultVoice: svc().defaultVoicePrepView() }, out.ok ? 200 : 409);
 	});
-	app.post("/api/local-models/asr/default-voice/install", (c) => {
-		const out = svc().installDefaultVoice();
-		return c.json({ ok: out.started, reason: out.reason, defaultVoice: svc().defaultVoicePrepView() }, out.started ? 200 : 409);
+	app.post("/api/local-models/asr/default-voice/install", async (c) => {
+		const m = await narrowModelId(c);
+		if (!m.ok) return badModelId(c);
+		const out = svc().installDefaultVoice(m.id);
+		return c.json({ ok: out.started, reason: out.reason, defaultVoice: svc().defaultVoicePrepView() }, out.status);
 	});
 
 	app.get("/api/local-models/asr/catalog", localOnly, (c) => {

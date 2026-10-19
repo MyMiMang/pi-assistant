@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { extname, join } from "node:path";
 import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
-import { openLocalAsrModels } from "./fixtures/page-checks.mjs";
+import { localAsrInstallButton, openLocalAsrModels, pickLocalAsrModel } from "./fixtures/page-checks.mjs";
 
 const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const dist = join(root, "apps/web/dist");
@@ -337,12 +337,11 @@ try {
 	check("本地段是统一多模型选择器（旧 SenseVoice 卡已移除）", (await page.getByTestId("local-asr-models").isVisible()) && (await page.getByTestId("local-sensevoice-card").count()) === 0);
 	check("不再有第二套「使用已导入的 SenseVoice」按钮", (await page.getByTestId("voice-local-use").count()) === 0);
 	// 选中 SenseVoice：许可标「本地自用可下载」、按钮可用、无强制勾选框
-	await page.getByTestId("local-asr-model-select").click();
-	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /SenseVoice/ }).click();
+	await pickLocalAsrModel(page, /SenseVoice/);
 	const licText = (await page.getByTestId("local-asr-license").textContent()) ?? "";
 	check("SenseVoice 许可标「本地自用可下载」（不是「暂不提供下载」）", licText.includes("本地自用可下载") && !licText.includes("暂不提供下载"), licText);
 	check("许可未确认时不显示永远不能勾选的同意复选框", (await page.getByTestId("local-asr-accept").count()) === 0);
-	check("SenseVoice 一键安装按钮可用", !(await page.getByTestId("local-asr-install-use").isDisabled()));
+	check("SenseVoice 一键安装按钮可用", !(await (await localAsrInstallButton(page)).isDisabled()));
 	check("默认不出现长规格 / 详情", (await page.getByTestId("local-asr-details").count()) === 0);
 	// 默认（紧凑）状态截图：主看新图用这个
 	await page.screenshot({ path: join(OUT, "06-voice-local.png") });

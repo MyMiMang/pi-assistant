@@ -94,3 +94,14 @@ export function localAsrPick(models: { id: string; selected: boolean; installed:
 	if (recommendedId && models.some((m) => m.id === recommendedId)) return recommendedId;
 	return models.find((m) => m.installed)?.id ?? models[0]?.id ?? "";
 }
+
+/** 装这个模型大约要下载多少（估算）：权重 + 共享运行环境；运行环境所有模型共用、只算一次（已就位就不再计）。 */
+export function localVoiceDownloadBytes(m: { weightsBytes: number }, runtime: { downloadBytes: number | null; present: boolean }): number {
+	return m.weightsBytes + (runtime.present ? 0 : (runtime.downloadBytes ?? 0));
+}
+
+/** 安装前模型选择器的一项（复用 ui.tsx 的 Select）：名字 + 一行「适合什么」+ 右侧大约下载量。 */
+export function localVoiceOption(m: { id: string; name: string; suits: string; note: string; weightsBytes: number; available: boolean; unavailableReason: string | null }, runtime: { downloadBytes: number | null; present: boolean }) {
+	const desc = !m.available ? (m.unavailableReason ?? "这台电脑上不能安装") : m.suits || m.note;
+	return { value: m.id, label: m.name, desc, hint: `约 ${formatBytes(localVoiceDownloadBytes(m, runtime))}` };
+}

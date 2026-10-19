@@ -17,7 +17,7 @@
 | 共享常量 / 纯逻辑 | `packages/shared`：thinking-levels、hard-guard、shell-lex、theme-manifest、品牌名 |
 | 服务端通用 | `bus.ts`（推事件）、`requests.ts`（审批与提问唯一入口）、`interject.ts`（插话/停止词）、`model-errors.ts`、`thinking.ts`（拆思考内容）、`native-launch-env.ts`（启动子进程环境）、`config.ts`（环境变量）、`db.ts` |
 | Pi 接入（唯一入口） | `pi-adapter/index.ts`、`custom-providers.ts`、`relay-protocols.ts`、`model-limits.ts`、`fast-mode.ts`、`mock-provider.ts`（e2e 脚本化回复） |
-| 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp） |
+| 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`local-asr-harness.ts`（本地语音假环境 + 来源端口）、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp） |
 | e2e 工具 | `e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
 
 ## 每类逻辑放在哪
@@ -271,7 +271,8 @@
 | `stable-shot.mjs` | 稳定截图 |
 | `artifacts.mjs` | 截图与日志写 artifacts/ |
 | `fake-hindsight.mjs` | 假 Hindsight |
-| `page-checks.mjs` | 弹出菜单溢出检查、群聊发言 / 等空闲 / 按成员取消息、展开本地语音模型列表（openLocalAsrModels） |
+| `page-checks.mjs` | 弹出菜单溢出检查、群聊发言 / 等空闲 / 按成员取消息、等本地语音模型区（openLocalAsrModels）、选本地模型 / 取安装按钮（先选再装与装后两种界面通用：pickLocalAsrModel / localAsrInstallButton） |
+| `default-voice-backend.mjs` | default-voice-flow 的可控语音后端（来源视图、本地语音模块状态、窄接口安装 / 取消、目录补丁、流式会话脚本） |
 | `safe-memory-server.mjs` | 安全记忆测试服务 |
 | `mock-mcp.mjs` | 假 MCP 服务 |
 | `info-pane.mjs` | 助理设置面板操作 helper |

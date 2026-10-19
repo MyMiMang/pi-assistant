@@ -11,7 +11,7 @@ import { test } from "node:test";
 const mem = new Map();
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
 
-const { beginAsrIntent, emptyAsrIntent, invalidateAsrIntent, isCurrentAsrIntent, mergeLiveDownload, formatBytes, tierLabel, isIndeterminate, installPercent, memoryAdvice, localAsrPick } = await import("../apps/web/src/local-asr-intent.ts");
+const { beginAsrIntent, emptyAsrIntent, invalidateAsrIntent, isCurrentAsrIntent, mergeLiveDownload, formatBytes, tierLabel, isIndeterminate, installPercent, memoryAdvice, localAsrPick, localVoiceDownloadBytes, localVoiceOption } = await import("../apps/web/src/local-asr-intent.ts");
 const { normalizeLocalAsrCatalog, normalizeLocalAsrModel, emptyLocalAsrCatalog } = await import("../apps/web/src/local-asr-api.ts");
 
 /** 与 packages/server/src/local-asr/service.ts 的 LocalAsrCatalog 同形的 fixture。 */
@@ -172,4 +172,20 @@ test("下拉停在哪一项：已保存的优先于推荐；自己点过的保�
 	assert.equal(localAsrPick(ms("whisper-base"), "whisper-small", "paraformer-streaming", true), "whisper-base", "别处改了已保存的来源 → 跟过去");
 	assert.equal(localAsrPick(ms("paraformer-streaming"), "whisper-small", "gone-model"), "paraformer-streaming", "点过的已不在目录 → 回到已保存的");
 	assert.equal(localAsrPick([], "whisper-small", ""), "");
+});
+
+test("安装前选择器：每项一行「适合什么」+ 大约下载量；共享运行环境只算一次（已就位不再计）；不可装的说原因", () => {
+	const rt = { downloadBytes: 95_000_000, present: false };
+	const m = { id: "a", name: "A", suits: "日常听写", note: "长说明", weightsBytes: 200_000_000, available: true, unavailableReason: null };
+	assert.equal(localVoiceDownloadBytes(m, rt), 295_000_000);
+	assert.equal(localVoiceDownloadBytes(m, { ...rt, present: true }), 200_000_000);
+	assert.equal(localVoiceDownloadBytes(m, { downloadBytes: null, present: false }), 200_000_000, "旧后端没给运行环境估算 → 不编");
+	assert.deepEqual(localVoiceOption(m, rt), { value: "a", label: "A", desc: "日常听写", hint: "约 295 MB" });
+	assert.equal(localVoiceOption({ ...m, suits: "" }, rt).desc, "长说明", "旧后端没 suits → 用 note");
+	assert.equal(localVoiceOption({ ...m, available: false, unavailableReason: "暂不支持 linux-ia32" }, rt).desc, "暂不支持 linux-ia32");
+	const c = normalizeLocalAsrCatalog({ ...rawCatalog, runtime: { ...rawCatalog.runtime, downloadBytes: 95_000_000, present: true }, models: [{ ...rawCatalog.models[0], suits: "中文为主" }] });
+	assert.equal(c.runtime.downloadBytes, 95_000_000);
+	assert.equal(c.runtime.present, true);
+	assert.equal(c.models[0].suits, "中文为主");
+	assert.equal(normalizeLocalAsrCatalog(rawCatalog).runtime.downloadBytes, null);
 });

@@ -290,11 +290,12 @@ export async function cancelDownloadJob(id: string): Promise<void> {
  * 为何不用 `/api/downloads/:id/*`：那两个是 `localOnly`，手机（已配对）会失败；窄接口走正常 safe API，
  * 服务端只动目录里唯一的默认模型 + 同一下载 job，能力边界比通用下载接口更小。
  */
-export async function cancelDefaultVoicePrepare(): Promise<void> {
-	await api("/api/local-models/asr/default-voice/cancel", { method: "POST" });
+/** 本地语音模块窄接口：`modelId` 只认目录里的模型；省略 = 模块当前对应的模型（失败重试 / 默认）。 */
+export async function cancelDefaultVoicePrepare(modelId?: string): Promise<void> {
+	await api("/api/local-models/asr/default-voice/cancel", { method: "POST", json: modelId ? { modelId } : undefined });
 }
-export async function installDefaultVoice(): Promise<void> {
-	await api("/api/local-models/asr/default-voice/install", { method: "POST" });
+export async function installDefaultVoice(modelId?: string): Promise<void> {
+	await api("/api/local-models/asr/default-voice/install", { method: "POST", json: modelId ? { modelId } : undefined });
 }
 
 // ---------------------------------------------------------------- 原生流式本地语音（start / append / end / cancel）

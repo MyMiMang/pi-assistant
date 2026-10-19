@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { extname, join } from "node:path";
 import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
-import { openLocalAsrModels } from "./fixtures/page-checks.mjs";
+import { localAsrInstallButton, openLocalAsrModels, pickLocalAsrModel } from "./fixtures/page-checks.mjs";
 
 const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const dist = join(root, "apps/web/dist");
@@ -391,8 +391,7 @@ try {
 	await page.locator('[data-testid="voice-tab-local"]').click();
 	await openLocalAsrModels(page);
 	check("语音配置页有统一本地模型选择器", await page.locator('[data-testid="local-asr-models"]').isVisible());
-	await page.locator('[data-testid="local-asr-model-select"]').click();
-	await page.locator('[data-testid="local-asr-model-select-menu"]').getByRole("option", { name: /SenseVoice/ }).click();
+	await pickLocalAsrModel(page, /SenseVoice/);
 	check("SenseVoice 仍在列表里（未被移出）", (await page.locator('[data-testid="local-asr-detail"]').getAttribute("data-model-id")) === "sensevoice-small-int8");
 	check("许可标「本地自用可下载」（不是暂不提供）", (((await page.locator('[data-testid="local-asr-license"]').textContent()) ?? "").includes("本地自用可下载")));
 	// 完整条款在「?」里（关键信息不藏）
@@ -404,7 +403,7 @@ try {
 	await page.keyboard.press("Escape");
 	// 上游未要求点击同意 → 不显示冗余同意复选框；一键安装按钮可用
 	check("不显示冗余同意复选框", (await page.locator('[data-testid="local-asr-accept"]').count()) === 0);
-	check("SenseVoice 一键安装按钮可用", !(await page.locator('[data-testid="local-asr-install-use"]').isDisabled()));
+	check("SenseVoice 一键安装按钮可用", !(await (await localAsrInstallButton(page)).isDisabled()));
 	check("默认不出现导入目录输入（收进详情）", (await page.locator('[data-testid="local-asr-import-dir"]').count()) === 0);
 	await page.locator('[data-testid="local-asr-details-toggle"]').click();
 	await page.locator('[data-testid="local-asr-import-toggle"]').click();
