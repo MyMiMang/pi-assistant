@@ -17,9 +17,9 @@ export const STEP_LABEL: Record<string, string> = {
 	grep: "搜索内容",
 	deliver_file: "发送文件",
 	ask_user: "询问你",
-	spawn_subagent: "派子代理",
+	spawn_subagent: "派帮手",
 	subagent_message: "补充要求",
-	subagent_stop: "停止子代理",
+	subagent_stop: "停止帮手",
 	computer_screenshot: "查看屏幕",
 	request_handoff: "请你接手",
 	web_fetch: "打开网页",
@@ -29,7 +29,7 @@ export const STEP_LABEL: Record<string, string> = {
 export const stepLabel = (name?: string) => (name ? STEP_LABEL[name] ?? name : "");
 
 export type TaskTone = "zinc" | "green" | "amber" | "red" | "accent";
-/** 子代理（queued/running/stalled/done/failed/stopped/timeout/lost）和后台任务（含 cancelled、lost）共用一套状态词：卡片、概览、信息面板都从这里取 */
+/** 帮手（queued/running/stalled/done/failed/stopped/timeout/lost）和后台任务（含 cancelled、lost）共用一套状态词：卡片、概览、信息面板都从这里取 */
 const STATUS: Record<string, { label: string; tone: TaskTone }> = {
 	queued: { label: "排队中", tone: "zinc" },
 	running: { label: "运行中", tone: "accent" },
@@ -59,8 +59,8 @@ export function TaskBadge({ status }: { status: string }) {
 export function taskTitle(text: string | undefined, max = 42): string {
 	const raw = String(text ?? "").replace(/\s+/g, " ").trim();
 	if (!raw) return "任务";
-	// 去掉「子代理：」「（后台子代理任务）」这类前缀
-	const s = raw.replace(/^[（(【\[]?\s*(?:后台)?子代理(?:任务)?\s*[）)】\]]?\s*[:：]?\s*/, "").trim() || raw;
+	// 去掉「帮手：」「（后台子代理任务）」这类前缀（旧消息和服务端标记里是「子代理」，两个词都认）
+	const s = raw.replace(/^[（(【\[]?\s*(?:后台)?(?:子代理|帮手)(?:任务)?\s*[）)】\]]?\s*[:：]?\s*/, "").trim() || raw;
 	const cut = s.split(/[。！？；]|[.]\s/)[0].trim() || s;
 	if (cut.length <= max) return cut;
 	// 前半句里有冒号时，优先切在冒号，标题更像人话

@@ -99,7 +99,7 @@ try {
 		return (await rows()).find((r) => r.task.includes(text.replace("派个子代理", ""))) ?? (await rows())[0];
 	};
 	const panel = page.locator('[data-testid="subagent-detail"]:visible');
-	const childBox = () => panel.getByLabel("给子代理发消息");
+	const childBox = () => panel.getByLabel("给帮手发消息");
 	/** 主会话：从「子代理」入口打开某个任务详情 */
 	const openFromMain = async (id) => {
 		await page.getByTestId("subagent-tasks").click();

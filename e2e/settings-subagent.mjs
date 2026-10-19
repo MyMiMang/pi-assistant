@@ -73,7 +73,7 @@ const openLimits = async (page, agentId, testid = "agent-subagent-limits") => {
 	await expandAgentModelSection(page, "subagents");
 	const sec = page.getByTestId(testid);
 	await sec.waitFor();
-	return { sec, conc: page.getByLabel("子代理并发上限"), mins: page.getByLabel("子代理最长运行分钟") };
+	return { sec, conc: page.getByLabel("帮手并发上限"), mins: page.getByLabel("帮手最长运行分钟") };
 };
 
 try {
@@ -176,7 +176,7 @@ try {
 	console.log("\n[6] 接口失败：显示原因，不渲染空输入框");
 	fail = true;
 	({ sec, conc, mins } = await openLimits(page, a.id, "agent-subagent-load-error"));
-	check("接口失败时不渲染可编辑输入框", (await page.getByLabel("子代理并发上限").count()) === 0, String(await sec.locator("input").count()));
+	check("接口失败时不渲染可编辑输入框", (await page.getByLabel("帮手并发上限").count()) === 0, String(await sec.locator("input").count()));
 	check("接口失败时显示错误原因", ((await sec.textContent()) ?? "").includes("模拟接口失败"), (await sec.textContent()) ?? "");
 	fail = false;
 	({ sec, conc, mins } = await openLimits(page, a.id));

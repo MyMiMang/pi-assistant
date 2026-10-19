@@ -98,9 +98,9 @@ try {
 	await thinking.locator("summary").click();
 	await thinking.getByText("先确认子代理任务，再运行命令整理结果。", { exact: true }).waitFor();
 	assert.equal(await panel.locator(".pa-msg.user").count(), 1);
-	const childBox = panel.getByLabel("给子代理发消息");
+	const childBox = panel.getByLabel("给帮手发消息");
 	await childBox.fill("子代理暗号：青山");
-	await panel.getByRole("button", { name: "发送给子代理", exact: true }).click();
+	await panel.getByRole("button", { name: "发送给帮手", exact: true }).click();
 	await panel.getByText("子代理已按补充要求调整。收到：子代理暗号：青山", { exact: true }).waitFor();
 	await waitFor(async () => (await j(`/api/subagents/${first.id}`)).messages.some((m) => m.role === "user" && m.content === "子代理暗号：青山" && m.meta.delivery === "delivered"));
 	await page.setViewportSize({ width: 390, height: 844 });
@@ -122,7 +122,7 @@ try {
 	console.log("✅ 同款聊天详情、原生思考与工具步骤、直接插话、手机布局、主会话隔离");
 	await openTask(first.id);
 	await childBox.fill("刚才暗号是什么");
-	await panel.getByRole("button", { name: "发送给子代理", exact: true }).click();
+	await panel.getByRole("button", { name: "发送给帮手", exact: true }).click();
 	await panel.getByText("刚才的暗号是：青山", { exact: true }).waitFor();
 	await finished(first.id, "done");
 	await page.locator(`[data-testid="subagent-detail"]:visible`).getByLabel("返回主会话").click();
@@ -184,7 +184,7 @@ try {
 	console.log("✅ 重启打断进行中的工具 → 标中断待核验不自动重放 → 手动继续从断点续跑并回报");
 	await openTask(first.id);
 	await childBox.fill("刚才暗号再说一次");
-	await panel.getByRole("button", { name: "发送给子代理", exact: true }).click();
+	await panel.getByRole("button", { name: "发送给帮手", exact: true }).click();
 	await waitFor(async () => (await j(`/api/subagents/${first.id}`)).messages.filter((m) => m.content === "刚才的暗号是：青山").length === 2);
 	await page.locator(`[data-testid="subagent-detail"]:visible`).getByLabel("返回主会话").click();
 	console.log("✅ 服务重启后子代理续聊仍保留原上下文");

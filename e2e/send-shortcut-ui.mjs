@@ -253,7 +253,7 @@ try {
 	const subTa = detail.locator(".pa-composer textarea");
 	// 先填字：空草稿时可停止的子代理显示的是停止键，不是发送键
 	await subTa.fill("补充要求");
-	const subSend = detail.locator('.pa-composer .pa-send[aria-label="发送给子代理"]');
+	const subSend = detail.locator('.pa-composer .pa-send[aria-label="发送给帮手"]');
 	check("子代理发送按钮 title 同一偏好", (await subSend.getAttribute("title")) === "Enter 发送，Shift+Enter 换行", String(await subSend.getAttribute("title")));
 	check("子代理 aria-keyshortcuts 同一偏好", (await subSend.getAttribute("aria-keyshortcuts")) === "Enter");
 	await page.keyboard.press("Enter");

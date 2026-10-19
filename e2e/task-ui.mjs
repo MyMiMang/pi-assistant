@@ -94,7 +94,7 @@ try {
 	check("第一行是运行中的任务且带状态 badge", firstRow.includes("运行中"), firstRow);
 	check("短标题不含整段 prompt（截断到 1-2 行）", !firstRow.includes(TAIL_MARK), firstRow.slice(0, 80));
 	check("短标题长度有界（<=46 字）", firstRow.replace(/运行中|排队中|子代理 ·.*/g, "").trim().length <= 46, String(firstRow.length));
-	check("行里带执行者说明", firstRow.includes("子代理 · "), firstRow);
+	check("行里带执行者说明", firstRow.includes("帮手 · "), firstRow);
 	check("已结束任务默认折叠（可见行只有 2 条）", (await modal.locator('[data-testid=subagent-row]:visible').count()) === 2);
 	await modal.getByTestId("task-finished").locator("summary").click();
 	await modal.getByText("跟进 beta.16 打包与发布").waitFor();
@@ -130,7 +130,7 @@ try {
 	check("Steps 点名失败步骤，且说明任务继续", steps.includes("运行命令失败（这一步失败，任务继续）"), steps);
 	check("详情 header 不再有重复的停止按钮", (await detail.getByTestId("subagent-stop").count()) === 0);
 	check("详情左上保留返回「主会话」", (await detail.getByLabel("返回主会话").count()) === 1);
-	check("停止改由输入框按钮承担（运行/停滞/排队都可停）", (await detail.getByLabel("停止子代理").count()) === 1);
+	check("停止改由输入框按钮承担（运行/停滞/排队都可停）", (await detail.getByLabel("停止帮手").count()) === 1);
 	await page.screenshot({ path: join(OUT, "03-task-detail.png") });
 	await detail.getByLabel("返回主会话").click();
 	await page.waitForTimeout(300);

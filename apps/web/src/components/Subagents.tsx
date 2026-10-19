@@ -148,7 +148,7 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 	const queued = d?.subagent.status === "queued";
 	const last = rows[rows.length - 1];
 	const avatar = agent ?? { id: d?.subagent.agent_id ?? "", avatar: "🔧", color: "#888" };
-	return <section className="pa-chat" data-testid="subagent-detail" aria-label="子代理会话" role="tabpanel">
+	return <section className="pa-chat" data-testid="subagent-detail" aria-label="帮手会话" role="tabpanel">
 			<header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3">
 				<button className="pa-chip" onClick={onClose} aria-label="返回主会话" title="返回主会话"><ArrowLeft className="pa-ic" /><span className="max-sm:hidden">主会话</span></button>
 				<Avatar agentId={avatar.id} text={avatar.avatar} color={avatar.color} size={32} />
@@ -170,21 +170,21 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 				{err && <p className="mx-auto mb-2 max-w-[760px] text-xs text-red-500" role="alert">{err}</p>}
 				{d?.subagent.needsVerify && <p className="mx-auto mb-2 max-w-[760px] text-xs text-amber-600" role="status" data-testid="subagent-needs-verify">续跑前先核验：{verifyNames(d.subagent)}（这些工具调用已派发但结果没落库，副作用未知，别直接重跑）</p>}
 				<div className="pa-composer">
-					<textarea ref={ta} rows={1} value={text} onChange={(e) => setText(e.target.value)} aria-label="给子代理发消息" placeholder={stoppable ? "补充要求，或说「停」" : "给子代理发消息…"} {...keys.handlers} />
+					<textarea ref={ta} rows={1} value={text} onChange={(e) => setText(e.target.value)} aria-label="给帮手发消息" placeholder={stoppable ? "补充要求，或说「停」" : "给帮手发消息…"} {...keys.handlers} />
 					<div className="pa-composer-bar">
 					{/* 思考强度放在输入栏工具栏（与主会话一致），不再占 header；档位/跟随/持久化契约不变 */}
 					<div className="pa-composer-tools">
-						<span className="min-w-0 flex-1 truncate text-xs text-mut2">{queued ? "子代理排队中，说「停」可取消" : running ? "子代理正在工作" : "继续这个子代理会话"} · {keys.hint}</span>
+						<span className="min-w-0 flex-1 truncate text-xs text-mut2">{queued ? "帮手排队中，说「停」可取消" : running ? "帮手正在工作" : "继续这个帮手会话"} · {keys.hint}</span>
 						{d && <ThinkingButton testid="subagent-thinking" levels={levels} current={d.subagent.thinking ?? null} effective={d.subagent.resolvedThinking ?? null} modelName={d.subagent.model_id} followLabel="跟随助理默认" onPick={(v) => void setThinking(v)} title={clampNote} placement="up" loading={dm.loading} error={dm.error} onRetry={dm.reload} fast={fast} text={d.subagent.thinking ? undefined : `跟随·${THINKING_LABEL[d.subagent.resolvedThinking ?? ""] ?? d.subagent.resolvedThinking ?? "—"}`} />}
 					</div>
-					{stoppable && !text.trim() ? <button className="pa-send" onClick={() => void action("stop")} aria-label="停止子代理"><Square size={13} fill="currentColor" /></button> : <button className="pa-send" disabled={sending || !text.trim()} onClick={() => void send()} aria-label="发送给子代理" title={keys.hint} aria-keyshortcuts={keys.keyshortcuts}><ArrowUp className="pa-ic" /></button>}
+					{stoppable && !text.trim() ? <button className="pa-send" onClick={() => void action("stop")} aria-label="停止帮手"><Square size={13} fill="currentColor" /></button> : <button className="pa-send" disabled={sending || !text.trim()} onClick={() => void send()} aria-label="发送给帮手" title={keys.hint} aria-keyshortcuts={keys.keyshortcuts}><ArrowUp className="pa-ic" /></button>}
 				</div>
 				</div>
-				<div className="pa-foot-note">{agent?.name ?? "主会话"} 会收到子代理的完成回报 · {keys.hint}</div>
+				<div className="pa-foot-note">{agent?.name ?? "主会话"} 会收到帮手的完成回报 · {keys.hint}</div>
 			</div>
 	</section>;
 }
-/** 「子代理」入口 + 任务概览。 */
+/** 「执行」入口 + 帮手概览。 */
 export function SubagentTasks({ agentId, conversation, room, current, testid = "subagent-tasks", overviewTestid = "task-overview" }: { agentId?: string; conversation?: string; room?: string; current?: string; testid?: string; overviewTestid?: string }) {
 	const [rows, setRows] = useState<Subagent[]>([]);
 	const [open, setOpen] = useState(false);
@@ -198,9 +198,9 @@ export function SubagentTasks({ agentId, conversation, room, current, testid = "
 	const running = rows.filter((r) => taskLive(r.status));
 	const finished = rows.filter((r) => !taskLive(r.status));
 	const openTask = (r: Subagent) => { setOpen(false); useStore.getState().openSubagent(r); };
-	const row = (r: Subagent) => <TaskRow key={r.id} testId="subagent-row" id={r.id} active={r.id === current} title={taskTitle(r.title ?? r.task)} status={r.status} meta={`${r.parent_subagent_id ? "下一层帮手" : KIND_LABEL[r.kind ?? ""] ?? "子代理"} · ${r.model_id || "未指定模型"}`} time={r.last_activity_at} onClick={() => openTask(r)} />;
+	const row = (r: Subagent) => <TaskRow key={r.id} testId="subagent-row" id={r.id} active={r.id === current} title={taskTitle(r.title ?? r.task)} status={r.status} meta={`${r.parent_subagent_id ? "下一层帮手" : KIND_LABEL[r.kind ?? ""] ?? "帮手"} · ${r.model_id || "未指定模型"}`} time={r.last_activity_at} onClick={() => openTask(r)} />;
 	return <>
-		<button className="pa-chip" onClick={() => setOpen(true)} data-testid={testid} aria-label="执行概览" title="执行概览：子代理与后台任务的运行情况"><Bot className="pa-ic" /><span className="max-sm:hidden">执行</span><span>{running.length || rows.length}</span></button>
+		<button className="pa-chip" onClick={() => setOpen(true)} data-testid={testid} aria-label="执行概览" title="执行概览：所有帮手的运行情况（含后台、定时、巡检）"><Bot className="pa-ic" /><span className="max-sm:hidden">执行</span><span>{running.length || rows.length}</span></button>
 		<Modal open={open} onClose={() => setOpen(false)} title="任务" testId={overviewTestid}>
 			<div className="space-y-3 p-4" data-testid="task-list">
 				{running.length > 0 ? <div className="space-y-2">{running.map(row)}</div> : <p className="px-1 text-xs text-mut2">现在没有运行中的任务。</p>}
@@ -365,15 +365,15 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 	return (
 		<details className="pa-info-details" data-testid="agent-subagent-details">
 			<summary>
-				高级 · 子代理
+				高级 · 帮手
 				<small>
-					<span className="block">助理把大活拆给小帮手时用的模型</span>
+					<span className="block">助理把大活拆给帮手时用的模型</span>
 					<span className="block">{summary.join(" · ")}</span>
 				</small>
 			</summary>
 			<div className="pa-info-details-body">
 				<section className="space-y-2" data-testid="agent-subagent-model">
-					<div className="flex items-center gap-1 font-semibold">子代理模型<Help>不选 = 跟随主会话当前模型。勾选后，派活时在这个候选池内按任务能力挑一个；某个模型不可用（限流 / 服务不可用 / 模型不存在 / 鉴权失败等）时，只在池内自动换下一个，用尽就停下，不会用池外模型，也不会无限重试。最多同时跑几个由下面的「任务上限」按助理决定（未覆盖则用整个安装的默认值）。</Help></div>
+					<div className="flex items-center gap-1 font-semibold">帮手模型<Help>不选 = 跟随主会话当前模型。勾选后，派活时在这个候选池内按任务能力挑一个；某个模型不可用（限流 / 服务不可用 / 模型不存在 / 鉴权失败等）时，只在池内自动换下一个，用尽就停下，不会用池外模型，也不会无限重试。最多同时跑几个由下面的「任务上限」按助理决定（未覆盖则用整个安装的默认值）。</Help></div>
 					{phase === "loading" ? (
 						<div className="text-xs text-mut" role="status" data-testid="agent-subagent-loading">正在读取…</div>
 					) : phase === "error" ? (
@@ -392,8 +392,8 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 								text={text}
 								placement="down"
 								buttonClass="max-w-full"
-								ariaLabel="子代理候选池"
-								title="勾选这个助理允许子代理用的模型"
+								ariaLabel="帮手候选池"
+								title="勾选这个助理允许帮手用的模型"
 								onToggle={toggle}
 								onOpen={d.reload}
 							/>
@@ -407,16 +407,16 @@ export function SubagentModels({ agentId }: { agentId: string }) {
 								<section data-testid="agent-subagent-limits" className="space-y-2">
 									<div className="flex items-center gap-1 text-sm font-semibold">
 										任务上限
-										<Help>只对这个助理生效；留空或点「恢复默认」就用整个安装的默认值（默认并发 {d2.defaults.maxConcurrent}、最长 {d2.defaults.maxMinutes} 分钟）。并发指这个助理同时运行的子代理最多几个，满了自动排队。运行中的任务在聊天顶部的「子代理」里看。</Help>
+										<Help>只对这个助理生效；留空或点「恢复默认」就用整个安装的默认值（默认并发 {d2.defaults.maxConcurrent}、最长 {d2.defaults.maxMinutes} 分钟）。并发指这个助理同时运行的帮手最多几个，满了自动排队。运行中的帮手在聊天顶部的「执行」里看。</Help>
 									</div>
 									<label className="flex flex-wrap items-center gap-2 text-sm text-mut">
 										最多同时
-										<input className="pa-input !w-24" type="number" min={1} max={100} disabled={busy} value={draft.maxConcurrent} aria-label="子代理并发上限" onChange={(e) => setDraft({ ...draft, maxConcurrent: e.target.value })} onBlur={(e) => commit("maxConcurrent", e.target.value)} />
-										个子代理{inheritHint("maxConcurrent")}
+										<input className="pa-input !w-24" type="number" min={1} max={100} disabled={busy} value={draft.maxConcurrent} aria-label="帮手并发上限" onChange={(e) => setDraft({ ...draft, maxConcurrent: e.target.value })} onBlur={(e) => commit("maxConcurrent", e.target.value)} />
+										个帮手{inheritHint("maxConcurrent")}
 									</label>
 									<label className="flex flex-wrap items-center gap-2 text-sm text-mut">
 										最长
-										<input className="pa-input !w-24" type="number" min={1} disabled={busy} value={draft.maxMinutes} aria-label="子代理最长运行分钟" onChange={(e) => setDraft({ ...draft, maxMinutes: e.target.value })} onBlur={(e) => commit("maxMinutes", e.target.value)} />
+										<input className="pa-input !w-24" type="number" min={1} disabled={busy} value={draft.maxMinutes} aria-label="帮手最长运行分钟" onChange={(e) => setDraft({ ...draft, maxMinutes: e.target.value })} onBlur={(e) => commit("maxMinutes", e.target.value)} />
 										分钟{inheritHint("maxMinutes")}
 									</label>
 								</section>

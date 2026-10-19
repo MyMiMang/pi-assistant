@@ -26,7 +26,7 @@ export function ChatSettings() {
 						</Button>
 					))}
 				</div>
-				<p className="mt-2 text-xs text-mut2">单聊、群聊和子代理都用这个；发送按钮的提示会跟着变。</p>
+				<p className="mt-2 text-xs text-mut2">单聊、群聊和帮手都用这个；发送按钮的提示会跟着变。</p>
 			</section>
 		</div>
 	);

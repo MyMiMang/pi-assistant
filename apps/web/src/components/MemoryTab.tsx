@@ -8,7 +8,7 @@ import { Badge, Button, cx, Help, Input, Select, useConfirm } from "./ui";
 const KIND: Record<MemoryEntry["kind"], string> = { fact: "事实", experience: "日志", note: "便签" };
 const SCOPE: Record<MemoryEntry["scope"], string> = { user: "共享·关于你", agent: "仅此助理", conversation: "仅当前对话", task: "任务草稿" };
 const SCOPE_TONE: Record<MemoryEntry["scope"], "accent" | "zinc" | "amber"> = { user: "accent", agent: "zinc", conversation: "amber", task: "amber" };
-const SOURCE_LABEL: Record<string, string> = { agent: "助理记下", user: "你添加", subagent: "子代理草稿", background: "后台草稿", group: "群聊", promotion: "确认后保存" };
+const SOURCE_LABEL: Record<string, string> = { agent: "助理记下", user: "你添加", subagent: "帮手草稿", background: "后台草稿", group: "群聊", promotion: "确认后保存" };
 /** 默认先露出最近几条，其余收进「其余 N 条」；搜索或筛选时全部平铺。 */
 const SHOWN = 6;
 
@@ -132,7 +132,7 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 				<Button size="sm" variant="ghost" className="text-red-600 dark:text-red-400" aria-label="删除记忆" disabled={delBusy === m.id} onClick={() => void del(m)} data-testid={`memory-delete-${m.id}`}>
 					<Trash2 size={12} /> 删除
 				</Button>
-				{m.status === "draft" && <Help>这条是小帮手或后台任务记下的，助理在原对话里确认后才会长期保存。</Help>}
+				{m.status === "draft" && <Help>这条是帮手或后台任务记下的，助理在原对话里确认后才会长期保存。</Help>}
 			</div>
 		</li>
 	);
@@ -173,7 +173,7 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 						{k ? KIND[k] : "全部"}
 					</button>
 				))}
-				<button className={cx("pa-chip sm", draftOnly && "!bg-hover !text-fg font-medium")} onClick={() => setDraftOnly((v) => !v)} title="只看小帮手或后台记下、还没确认的">
+				<button className={cx("pa-chip sm", draftOnly && "!bg-hover !text-fg font-medium")} onClick={() => setDraftOnly((v) => !v)} title="只看帮手或后台记下、还没确认的">
 					待确认
 				</button>
 			</div>

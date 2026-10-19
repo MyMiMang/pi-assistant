@@ -64,7 +64,7 @@ export async function taskTab(page, keyOrName) {
  */
 export const MODEL_SECTIONS = {
 	image: { details: "agent-image-details", content: "agent-image-model", title: "画图模型" },
-	subagents: { details: "agent-subagent-details", content: "agent-subagent-model", title: "高级 · 子代理" },
+	subagents: { details: "agent-subagent-details", content: "agent-subagent-model", title: "高级 · 帮手" },
 };
 
 /** 按 testid 展开一个原生 `<details>`：真实点 summary，已展开就跳过；结构缺失应直接报错。 */

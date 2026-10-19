@@ -383,7 +383,7 @@ try {
 	assert.doesNotMatch(await pane.getByTestId("agent-subagent-load-error").innerText(), /保存失败/);
 	assert.doesNotMatch(degraded, /跟随主会话/, "读取失败不能假装「跟随主会话」");
 	assert.doesNotMatch(degraded, /同时 \d+ 个/, "读取失败不能写假的默认上限");
-	assert.equal(await pane.getByLabel("子代理并发上限").count(), 0, "读取失败不画默认上限输入框");
+	assert.equal(await pane.getByLabel("帮手并发上限").count(), 0, "读取失败不画默认上限输入框");
 	assert.equal(await pane.getByTestId("agent-subagent-inherit-maxConcurrent").count(), 0);
 	await stableShot(page, pane, join(out, "02-subagent-degraded.png"));
 	net.poolGetFail = false;
@@ -392,7 +392,7 @@ try {
 	await pane.getByTestId("agent-subagent-retry").click();
 	await pane.getByTestId("subagent-model").waitFor();
 	const limitsNow = await j(`/api/agents/${A.id}/subagents/settings`);
-	await wait(async () => (await pane.getByLabel("子代理并发上限").inputValue()) === String(limitsNow.settings.maxConcurrent), 10000, "上限恢复真实值");
+	await wait(async () => (await pane.getByLabel("帮手并发上限").inputValue()) === String(limitsNow.settings.maxConcurrent), 10000, "上限恢复真实值");
 	await wait(async () => /模型跟随聊天/.test(await summaryText(sub())) && /思考跟随主会话/.test(await summaryText(sub())), 10000, "重试后读回真实值");
 	assert.equal(await pane.getByTestId("agent-subagent-load-error").count(), 0);
 	console.log("PASS subagent-loads: GET 失败不写假摘要；一个重试真实恢复三份设置");
@@ -465,8 +465,8 @@ try {
 	const limitsBefore = await j(`/api/agents/${A.id}/subagents/settings`);
 	await remountModels();
 	await expandAgentModelSection(page, "subagents");
-	const concurrent = pane.getByLabel("子代理并发上限");
-	const minutes = pane.getByLabel("子代理最长运行分钟");
+	const concurrent = pane.getByLabel("帮手并发上限");
+	const minutes = pane.getByLabel("帮手最长运行分钟");
 	await wait(async () => (await concurrent.inputValue()) === String(limitsBefore.settings.maxConcurrent), 10000, "上限输入框是真实值");
 	net.limitsHoldFirstPut = true;
 	await concurrent.fill("4");

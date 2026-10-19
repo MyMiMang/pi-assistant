@@ -188,7 +188,7 @@ try {
  const overridden = await j(`/api/agents/${a.id}/subagents/settings`, "PUT", { maxConcurrent: 3 });
  assert.equal(overridden.settings.maxConcurrent, 3); assert.equal(overridden.overrides.maxConcurrent, 3);
  await select("overview"); await select("models"); await expandAgentModelSection(page, "subagents");
- await wait(async () => await pane.getByLabel("子代理并发上限").inputValue() === "3");
+ await wait(async () => await pane.getByLabel("帮手并发上限").inputValue() === "3");
  assert.match(await subDetails.locator(":scope > summary").innerText(), /同时 3 个/, "收起摘要显示真实覆盖值");
  await pane.getByTestId("agent-subagent-inherit-maxConcurrent").click();
  await wait(async () => !("maxConcurrent" in (await j(`/api/agents/${a.id}/subagents/settings`)).overrides));
