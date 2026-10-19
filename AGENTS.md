@@ -4,7 +4,7 @@
 
 ## 开工前必读（按顺序）
 1. 本文件。
-2. [docs/HANDOFF.md](docs/HANDOFF.md)：现在的状态、正在做的事、待用户决定的事。
+2. [docs/HANDOFF.md](docs/HANDOFF.md)：现在的状态、正在做的事、待用户决定的事；接手的 AI 先读其中「接手说明」。
 3. [docs/MODULES.md](docs/MODULES.md)：每个文件负责什么 + **必须复用的共用工具清单**。
 4. 与任务相关的 [docs/design/](docs/design/) 设计和 [docs/decisions/](docs/decisions/) 决策。已有决策不能自己推翻，想改先问用户。
 5. 数据流见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)；需求和计划见 [docs/ROADMAP.md](docs/ROADMAP.md)；`docs/DESIGN.md` 是冻结的总设计参考。
