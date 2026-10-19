@@ -16,9 +16,9 @@ process.env.PIA_MOCK = "1";
 const { db, now } = await import("../src/db.ts");
 const { initModels } = await import("../src/models.ts");
 await initModels(memoryCredentialStore());
-const { tasks, getTask } = await import("../src/runtime.ts"); // 接好帮手驱动
+await import("../src/runtime.ts"); // 接好帮手驱动
 const { migrateLegacyTasks } = await import("../src/agent-runtime/background-tasks.ts");
-const { recoverSubagents, getSubagent } = await import("../src/subagents.ts");
+const { recoverSubagents, getSubagent, listSubagents, resumeSubagent } = await import("../src/subagents.ts");
 const { createConversation } = await import("../src/conversations.ts");
 const { listMessages } = await import("../src/messages.ts");
 
@@ -40,8 +40,8 @@ function legacyTask(id: string, file: string | null, extra: { kind?: string; sta
 	db.prepare("INSERT INTO tasks(id, agent_id, conversation_id, title, instructions, status, kind, session_file, result, created_at, started_at, finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(id, "bt-test", conv, `任务${id}`, "整理文件", st, extra.kind ?? null, file, extra.result ?? null, now(), now(), st === "running" ? null : now());
 }
 const settle = async (id: string, want: string[]) => {
-	for (let i = 0; i < 200 && !want.includes(getTask(id)!.status); i++) await new Promise((r) => setTimeout(r, 25));
-	return getTask(id)!.status;
+	for (let i = 0; i < 200 && !want.includes(getSubagent(id)!.status); i++) await new Promise((r) => setTimeout(r, 25));
+	return getSubagent(id)!.status;
 };
 
 test("迁移：旧 tasks 行按同一个 id 变成帮手（带来源 / 标题），已结束的标为已通知，等待改成等帮手，重复迁移不重复写", () => {
@@ -60,39 +60,38 @@ test("迁移：旧 tasks 行按同一个 id 变成帮手（带来源 / 标题）
 	assert.equal(done.result_summary, "早就做完了");
 	assert.ok(done.notified_at);
 	assert.equal(getSubagent("t-hb")!.kind, "heartbeat");
-	assert.equal(getTask("t-old")!.status, "cancelled");
+	assert.equal(getSubagent("t-old")!.status, "stopped");
 	assert.equal((db.prepare("SELECT target_kind FROM task_waits WHERE id = 'tw-old'").get() as { target_kind: string }).target_kind, "subagent");
-	// 后台任务列表：不含巡检
-	assert.deepEqual(tasks.list("bt-test").map((t) => t.id).sort(), ["t-done", "t-nofile", "t-old", "t-safe", "t-unsafe"]);
+	// 来源：巡检以外都是后台任务（界面上「后台任务」列表按 kind 取）
+	assert.deepEqual(listSubagents("bt-test").filter((r) => r.kind === "task").map((r) => r.id).sort(), ["t-done", "t-nofile", "t-old", "t-safe", "t-unsafe"]);
 });
 
 test("重启：工具调用都有结果 → 自动续跑（续跑提示，不重发原任务）；结果未知 / 没有会话 → 中断待核验", async () => {
 	const before = listMessages("bt-test", { conversationId: conv }).length;
 	recoverSubagents();
-	const unsafe = getTask("t-unsafe")!;
+	const unsafe = getSubagent("t-unsafe")!;
 	assert.equal(unsafe.status, "lost");
-	assert.match(unsafe.error ?? "", /服务重启.*bash/);
-	assert.equal(getTask("t-nofile")!.status, "lost");
-	assert.equal(tasks.resume("t-nofile"), false);
+	assert.match(unsafe.error_reason ?? "", /服务重启.*bash/);
+	assert.equal(getSubagent("t-nofile")!.status, "lost");
+	assert.throws(() => resumeSubagent("t-nofile", { mode: "manual" }), "没有落库会话的不能续跑");
 	// 巡检的帮手中断只记录，不唤醒主会话、不在对话里插消息
 	assert.equal(getSubagent("t-hb")!.status, "lost");
 	await settle("t-safe", ["done", "failed"]);
-	assert.equal(getTask("t-safe")!.status, "done");
-	const sm = SessionManager.open(getTask("t-safe")!.session_file!);
+	assert.equal(getSubagent("t-safe")!.status, "done");
+	const sm = SessionManager.open(getSubagent("t-safe")!.session_file!);
 	const users = sm.getBranch().flatMap((e) => (e.type === "message" && e.message.role === "user" ? [JSON.stringify(e.message.content)] : []));
 	assert.match(users.at(-1)!, /服务刚刚重启/);
 	assert.ok(!listMessages("bt-test", { conversationId: conv }).slice(before).some((m) => /主动巡检|任务t-hb/.test(m.content ?? "")));
 });
 
 test("中断待核验后手动继续：在原会话里先核验再续（列出结果未知的工具），跑完回到已完成", async () => {
-	assert.equal(tasks.resume("t-unsafe"), true);
+	resumeSubagent("t-unsafe", { mode: "manual" });
 	assert.equal(await settle("t-unsafe", ["done", "failed"]), "done");
-	const t = getTask("t-unsafe")!;
-	assert.equal(t.error, null);
+	const t = getSubagent("t-unsafe")!;
 	const sm = SessionManager.open(t.session_file!);
 	const users = sm.getBranch().flatMap((e) => (e.type === "message" && e.message.role === "user" ? [JSON.stringify(e.message.content)] : []));
 	assert.match(users.at(-1)!, /先核实/);
 	assert.match(users.at(-1)!, /bash/);
 	// 已经在跑 / 跑完的任务不能再「继续」
-	assert.equal(tasks.resume("t-unsafe"), false);
+	assert.throws(() => resumeSubagent("t-unsafe", { mode: "manual" }));
 });

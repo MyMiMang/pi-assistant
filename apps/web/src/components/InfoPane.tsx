@@ -361,7 +361,7 @@ function AgentTasks({ agentId, legacyTab }: { agentId: string; legacyTab: string
 		{tab === "background" && <section className="space-y-2" data-testid="agent-background-tasks">
 			<h2 className="pa-info-h2">后台任务</h2>
 			{!list.length && <p className="text-sm text-mut">还没有后台任务。</p>}
-			{list.slice(0, 20).map((x) => <TaskRow key={x.id} title={x.title || taskTitle(x.instructions)} status={x.status} />)}
+			{list.slice(0, 20).map((x) => <TaskRow key={x.id} title={x.title || taskTitle(x.task)} status={x.status} />)}
 			{!!list.length && <p className="text-xs text-mut2">显示“完成”只代表这次跑完了，事情办没办成记得看一眼结果。</p>}
 		</section>}
 	</div>;

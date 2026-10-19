@@ -3,9 +3,10 @@ import { getTheme } from "./themes/registry";
 import { api } from "./api";
 import { loadLayout, type LayoutPrefs, saveLayout } from "./layout";
 import { loadSelection, mergeMessages, resolveInitialAgent, saveSelection, selectionKey, storedConversation, type Selection } from "./selection";
-import type { Agent, Conversation, Device, Message, Room, SystemInfo, Task } from "./types";
+import type { Agent, Conversation, Device, Helper, Message, Room, SystemInfo } from "./types";
 
 type Theme = "light" | "dark" | "system";
+const backgroundHelper = (r: Helper) => r.kind === "task" || r.kind === "routine"; // tasks 只放后台 / 定时任务的帮手（信息面板、侧栏运行数用）
 export interface SubagentTab { id: string; task: string; agent_id: string; conversation_id: string; roomId: string | null }
 interface State {
 	conn: "connecting" | "open" | "closed" | "unauthorized";
@@ -64,7 +65,7 @@ interface State {
 	workVersion: number;
 	skillsVersion: number;
 	extVersion: number;
-	tasks: Record<string, Task[]>;
+	tasks: Record<string, Helper[]>;
 	pendingDevices: Device[];
 	loginEvents: Record<string, any[]>;
 	drawer: boolean;
@@ -418,8 +419,8 @@ export const useStore = create<State>((set, get) => ({
 		void get().loadConversations(agentId);
 	},
 	async loadTasks(id) {
-		const tasks = await api<Task[]>(`/api/agents/${id}/tasks`);
-		set((s) => ({ tasks: { ...s.tasks, [id]: tasks } }));
+		const rows = await api<Helper[]>(`/api/subagents?agent=${encodeURIComponent(id)}`);
+		set((s) => ({ tasks: { ...s.tasks, [id]: rows.filter(backgroundHelper) } }));
 	},
 	handle(e) {
 		const s = get();
@@ -526,10 +527,9 @@ export const useStore = create<State>((set, get) => ({
 			case "agents.changed":
 				void get().loadAgents();
 				break;
-			case "task.updated": {
-				const t = e.task;
-				const list = get().tasks[t.agent_id] ?? [];
-				set({ tasks: { ...get().tasks, [t.agent_id]: list.some((x) => x.id === t.id) ? list.map((x) => (x.id === t.id ? t : x)) : [t, ...list] } });
+			case "subagent.updated": {
+				const t = e.subagent as Helper, list = get().tasks[t.agent_id] ?? [];
+				if (backgroundHelper(t)) set({ tasks: { ...get().tasks, [t.agent_id]: list.some((x) => x.id === t.id) ? list.map((x) => (x.id === t.id ? t : x)) : [t, ...list] } });
 				break;
 			}
 			case "file.created":

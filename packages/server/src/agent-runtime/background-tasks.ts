@@ -3,7 +3,7 @@
  * 决策 0014 第 4 步：后台任务、定时任务和主动巡检的每次运行都是一个「帮手」（subagents 表，kind 区分来源），
  * 执行、重启判定、卡住上报、停止、并发都走子代理那一套；这里只剩触发入口的适配、完成推送和旧 tasks 表的迁移。
  */
-import { listSubagents, stopAgentSubagents, isActiveSubagent, spawnSubagent, stopSubagent, resumeSubagent, getSubagent, type HelperKind, type Subagent } from "../subagents.ts";
+import { listSubagents, stopAgentSubagents, isActiveSubagent, spawnSubagent, type HelperKind, type Subagent } from "../subagents.ts";
 import { hostFileAccess } from "../host-control.ts";
 import { currentConversation } from "../conversations.ts";
 import { bus } from "../bus.ts";
@@ -50,7 +50,7 @@ export function agentBusy(agentId: string) {
 	return [...runtimes.values()].some((r) => r.id === agentId && r.busy) || listSubagents(agentId).some((r) => isActiveSubagent(r.status));
 }
 
-/** 帮手行 → 旧「后台任务」形状（/api/agents/:id/tasks、旧聊天卡片和定时 / 巡检记录沿用这些字段名） */
+/** 帮手行 → 旧「后台任务」形状（旧聊天卡片和定时 / 巡检记录沿用这些字段名；列表、停止、继续都直接走 /api/subagents） */
 export function taskView(r: Subagent): TaskRow {
 	return {
 		id: r.id, agent_id: r.agent_id, conversation_id: r.conversation_id, routine_run_id: r.routine_run_id ?? null, kind: r.kind ?? null,
@@ -72,17 +72,6 @@ export const tasks = {
 		if (kind !== "heartbeat") insertMessage({ agentId, conversationId: conv, role: "card", meta: { kind: "task", taskId: h.id, title, status: taskView(h).status, routineRunId: opts.routineRunId } });
 		return h;
 	},
-	cancel: (id: string) => stopSubagent(id),
-	/** 中断待核验 / 失败后在原会话继续（先核验、不重做）；规则同子代理的「继续」。 */
-	resume(id: string) {
-		try {
-			resumeSubagent(id, { mode: "manual" });
-			return true;
-		} catch {
-			return false;
-		}
-	},
-	list: (agentId: string) => listSubagents(agentId).filter((r) => r.kind === "task" || r.kind === "routine").map(taskView),
 };
 
 /**
@@ -137,9 +126,3 @@ export function migrateLegacyTasks() {
 	}
 	return rows.length;
 }
-
-/** 按 id 取一条后台任务（帮手）的旧形状；不是后台帮手返回 undefined。 */
-export const getTask = (id: string) => {
-	const r = getSubagent(id);
-	return r?.kind ? taskView(r) : undefined;
-};

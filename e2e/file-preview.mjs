@@ -153,7 +153,7 @@ async function installRoutes(context, state) {
 		if (p === "/api/settings") return json({});
 		if (p === "/api/agents/a1/messages") return json(msgs);
 		if (p === "/api/agents/a1/conversations" && req.method() === "GET") return json({ current: "c1", items: [{ id: "c1", agent_id: "a1", title: "第一段对话", created_at: now, updated_at: now, message_count: 1, last: "报告" }] });
-		if (p === "/api/agents/a1/tasks") return json([]);
+		if (p === "/api/subagents") return json([]);
 		if (p === "/api/agents/a1/computer") return json({ separate: false, hasData: null, desktop: { enabled: false, state: "off" } });
 		const fm = /^\/api\/files\/([^/]+)$/.exec(p);
 		if (fm) {

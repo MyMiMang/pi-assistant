@@ -23,7 +23,7 @@ export { setRoomHooks, type RoomHooks } from "./agent-runtime/room-hooks.ts";
 export { bindSession } from "./agent-runtime/bind-session.ts";
 export { describeRoutine } from "./agent-runtime/extensions.ts";
 export { disposeRuntime, disposeConversationRuntime, runtime } from "./agent-runtime/agent-runtime.ts";
-export { initHostAccessWatch, agentBusy, tasks, getTask } from "./agent-runtime/background-tasks.ts";
+export { initHostAccessWatch, agentBusy, tasks } from "./agent-runtime/background-tasks.ts";
 
 // ---------------------------------------------------------------- 启动接线与启动恢复
 

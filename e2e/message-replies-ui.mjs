@@ -129,8 +129,7 @@ async function installRoutes(context, state) {
 			return json({});
 		}
 		if (p.endsWith("/conversations/c2b/select")) return json({});
-		if (p === "/api/agents/a1/tasks" || p === "/api/agents/a2/tasks") return json([]);
-		if (p.startsWith("/api/subagents")) return json([]);
+				if (p.startsWith("/api/subagents")) return json([]);
 		if (p === "/api/rooms/r1/messages" && req.method() === "GET") return json(ROOMMSGS);
 		if (p === "/api/rooms/r1/messages" && req.method() === "POST") {
 			state.roomSent.push(JSON.parse(req.postData() ?? "{}"));

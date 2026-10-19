@@ -12,7 +12,7 @@ import { getMessageByClientId, insertMessage, listMessages, toMessage, type Mess
 import { defaultModel, defaultThinking, isThinkingLevel, models, withProviderName } from "../models.ts";
 import { sessionStats } from "../pi-adapter/index.ts";
 import { requests } from "../requests.ts";
-import { disposeConversationRuntime, disposeRuntime, getAgent, getTask, listAgents, runtime, tasks } from "../runtime.ts";
+import { disposeConversationRuntime, disposeRuntime, getAgent, listAgents, runtime } from "../runtime.ts";
 import { desktopPause, desktopStatus, ensureOwnScreen, forgetAgentComputer, hasSeparateData, issueTicket, mergeIntoShared, releaseScreen, screenshotDesktop, setSeparateComputer, startDesktop, stopDesktop } from "../desktop.ts";
 import { desktopSettings } from "../desktop/settings.ts";
 import { agentBusy } from "../runtime.ts";
@@ -434,13 +434,6 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		if (!abs || !existsSync(abs) || !statSync(abs).isFile()) return c.json({ error: "not_found" }, 404);
 		return sendFile(c, abs, abs.split(/[\\/]/).pop()!, mimeOf(abs));
 	});
-	app.get("/api/agents/:id/tasks", (c) => c.json(tasks.list(c.req.param("id"))));
-	app.get("/api/tasks/:id/messages", (c) => {
-		const t = getTask(c.req.param("id"));
-		return t ? c.json(listMessages(t.agent_id, { taskId: t.id })) : c.json({ error: "not_found" }, 404);
-	});
-	app.post("/api/tasks/:id/cancel", async (c) => c.json({ ok: await tasks.cancel(c.req.param("id")) }));
-	app.post("/api/tasks/:id/resume", (c) => c.json({ ok: tasks.resume(c.req.param("id")) }));
 	/** 任务等待：状态 + 最后检查时间可查询；手动刷新让用户问“现在怎么样了”立刻有结果 */
 	app.get("/api/agents/:id/task-waits", (c) => c.json(listWaits(c.req.param("id"))));
 	app.post("/api/task-waits/:id/refresh", async (c) => {

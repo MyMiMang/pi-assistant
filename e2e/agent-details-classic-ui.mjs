@@ -272,13 +272,13 @@ try {
 	await page.route("**/api/agents/*/desktop*", (r) => fulfill(r, { enabled: false, available: false, installed: false, state: "none", paused: false, reason: "测试不启用助理电脑", install: { phase: "idle", progress: 0 } }));
 	await page.route("**/api/agents/*/desktop/**", (r) => fulfill(r, { enabled: false, available: false, installed: false, state: "none", paused: false, reason: "测试不启用助理电脑", install: { phase: "idle", progress: 0 } }));
 	await page.route("**/api/agents/*/computer", (r) => fulfill(r, { separate: false, hasData: false, desktop: { enabled: false, state: "none" } }));
-	// 后台任务只有 GET，没有创建接口：用只读 fixture 展示三种状态，绝不启动模型任务。
+	// 后台任务（帮手）只读：用 fixture 展示三种状态，绝不启动模型任务。只接管信息面板那次按助理取的列表，聊天顶部按对话轮询的照常打真实接口。
 	const tasksFixture = [
-		{ id: "t-run", title: "整理本周会议纪要并核对到人", instructions: "整理本周会议纪要并核对到人", status: "running", created_at: Date.now() - 120000 },
-		{ id: "t-done", title: "核对发布清单的全部渠道", instructions: "核对发布清单的全部渠道", status: "done", created_at: Date.now() - 7200000, finished_at: Date.now() - 3600000 },
-		{ id: "t-fail", title: "抓取官网价格并对比（上游超时）", instructions: "抓取官网价格并对比", status: "failed", created_at: Date.now() - 86400000, finished_at: Date.now() - 80000000 },
+		{ id: "t-run", agent_id: agent.id, kind: "task", title: "整理本周会议纪要并核对到人", task: "整理本周会议纪要并核对到人", status: "running", result_summary: null, error_reason: null, created_at: Date.now() - 120000, finished_at: null },
+		{ id: "t-done", agent_id: agent.id, kind: "task", title: "核对发布清单的全部渠道", task: "核对发布清单的全部渠道", status: "done", result_summary: "已核对", error_reason: null, created_at: Date.now() - 7200000, finished_at: Date.now() - 3600000 },
+		{ id: "t-fail", agent_id: agent.id, kind: "task", title: "抓取官网价格并对比（上游超时）", task: "抓取官网价格并对比", status: "failed", result_summary: null, error_reason: "上游超时", created_at: Date.now() - 86400000, finished_at: Date.now() - 80000000 },
 	];
-	await page.route(`**/api/agents/${agent.id}/tasks`, (r) => fulfill(r, tasksFixture));
+	await page.route((u) => u.pathname === "/api/subagents" && [...u.searchParams.keys()].join() === "agent" && u.searchParams.get("agent") === agent.id, (r) => fulfill(r, tasksFixture));
 	// 助理交付方向没有 HTTP 接口：精确 route 文件列表，只把两个真实上传标成「助理交付」；
 	// 预览 / 下载仍然打真实 /api/files/:id（fileId 都是真实上传得到的）。
 	const realFiles = await json(`/api/agents/${agent.id}/files`);

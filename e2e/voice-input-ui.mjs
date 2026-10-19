@@ -239,8 +239,7 @@ async function installRoutes(context, state) {
 			return json(MSGS);
 		}
 		if (p === "/api/agents/a1/conversations" && req.method() === "GET") return json({ current: "c1", items: [{ id: "c1", agent_id: "a1", title: "对话", created_at: now, updated_at: now, message_count: 2, last: "好的" }] });
-		if (p === "/api/agents/a1/tasks") return json([]);
-		if (p.startsWith("/api/subagents")) return json([]);
+				if (p.startsWith("/api/subagents")) return json([]);
 		if (p.endsWith("/read")) return json({});
 		return json({});
 	});

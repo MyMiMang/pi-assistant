@@ -56,7 +56,7 @@ try{
   else if(p.startsWith('/api/proactive/inbox'))data={items:[],count:0,defaultLevel:'normal'};
   else if(p.endsWith('/computer'))data={separate:false,hasData:null,desktop:{enabled:false,state:'off'}};
   else if(p==='/api/models/picks')data={picks:{}};
-  else if(['/api/models','/api/rooms','/api/tasks','/api/agents/error-test/tasks','/api/skills','/api/devices'].includes(p))data=[];
+  else if(['/api/models','/api/rooms','/api/subagents','/api/skills','/api/devices'].includes(p))data=[];
   return r.fulfill({status:200,contentType:'application/json',body:JSON.stringify(data)});
  });
  const skins=['noir','pixel'],modes=['light','dark'];

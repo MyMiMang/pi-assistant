@@ -36,15 +36,15 @@ try {
 		await box.press("Enter");
 		await waitFor(() => said("后台慢任务"), 3000).catch(() => {});
 	}
-	const task = async () => (await j(`/api/agents/${a.id}/tasks`))[0];
+	const task = async () => (await j(`/api/subagents?agent=${a.id}`)).find((r) => r.kind === "task");
 	await waitFor(async () => (await task())?.status === "running");
 	const id = (await task()).id;
 	// 命令已经派发（工具步骤落了消息）再重启：结果未知
-	await waitFor(async () => (await j(`/api/tasks/${id}/messages`)).some((m) => m.role === "tool"), 20_000);
+	await waitFor(async () => (await j(`/api/subagents/${id}`)).messages.some((m) => m.role === "tool"), 20_000);
 	await server.stop();
 	await start();
 	await waitFor(async () => (await task()).status === "lost");
-	assert.match((await task()).error ?? "", /服务重启.*bash/, "原因里要说清哪个操作结果未知");
+	assert.match((await task()).error_reason ?? "", /服务重启.*bash/, "原因里要说清哪个操作结果未知");
 	console.log("✅ 重启时命令结果未知 → 标中断待核验，不自动重放");
 	await page.reload();
 	await page.getByText(/后台任务「慢慢核对工作区」中断待核验/).last().waitFor();
@@ -60,7 +60,7 @@ try {
 	await detail.getByTestId("subagent-needs-verify").waitFor();
 	await detail.getByTestId("subagent-resume").click();
 	await waitFor(async () => (await task()).status === "done", 90_000);
-	const msgs = await j(`/api/tasks/${id}/messages`);
+	const { messages: msgs } = await j(`/api/subagents/${id}`);
 	assert.ok(msgs.filter((m) => m.role === "tool").length >= 1);
 	await detail.getByText("已完成").first().waitFor();
 	await page.waitForTimeout(1000);

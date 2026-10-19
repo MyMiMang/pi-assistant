@@ -129,7 +129,7 @@ try {
 		if (p === '/api/settings') return json(route, {});
 		// agent 作用域
 		if (p === '/api/agents/a1/messages') return json(route, []);
-		if (p === '/api/agents/a1/tasks') return json(route, []);
+		if (p === '/api/subagents') return json(route, []);
 		if (p === '/api/agents/a1/routines') return json(route, []);
 		if (p === '/api/agents/a1/computer') return json(route, { separate: false, hasData: null, desktop: { enabled: true, state: 'running' } });
 		if (p === '/api/agents/a1/read') return json(route, {});

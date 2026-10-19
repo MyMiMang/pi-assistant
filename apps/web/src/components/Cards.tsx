@@ -106,12 +106,12 @@ export function TaskCard({ m }: { m: Message }) {
 				<b className="truncate">后台任务：{meta.title}</b>
 				<span className="pa-tag">{label}</span>
 				{(meta.status === "running" || meta.status === "queued") && (
-					<button className="pa-btn sm ghost" onClick={() => api(`/api/tasks/${meta.taskId}/cancel`, { method: "POST" })}>
+					<button className="pa-btn sm ghost" onClick={() => api(`/api/subagents/${meta.taskId}/stop`, { method: "POST" }).catch(() => {})}>
 						{t("取消")}
 					</button>
 				)}
 				{(meta.status === "lost" || meta.status === "failed") && (
-					<button className="pa-btn sm ghost" data-testid="task-resume" title="先核验已做到哪一步，再从断点继续，不重做" onClick={() => api(`/api/tasks/${meta.taskId}/resume`, { method: "POST" })}>
+					<button className="pa-btn sm ghost" data-testid="task-resume" title="先核验已做到哪一步，再从断点继续，不重做" onClick={() => api(`/api/subagents/${meta.taskId}/resume`, { method: "POST" }).catch(() => {})}>
 						{t("继续")}
 					</button>
 				)}

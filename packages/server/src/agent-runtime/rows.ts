@@ -49,9 +49,8 @@ export function setAgentStatus(id: string, status: string) {
 	db.prepare("UPDATE agents SET status = ? WHERE id = ?").run(status, id);
 	bus.emit({ type: "agent.status", agentId: id, status });
 }
-/** 后台任务（帮手）状态变了：通知界面，并同步旧聊天卡片（迁移前留下的 kind=task 卡片）上的状态。 */
+/** 后台任务（帮手）状态变了：同步聊天里 kind=task 卡片上的状态（界面列表直接听 subagent.updated）。 */
 export function syncTaskCard(t: TaskRow) {
-	bus.emit({ type: "task.updated", task: t });
 	const card = db.prepare("SELECT id FROM messages WHERE role = 'card' AND json_extract(meta, '$.taskId') = ? AND json_extract(meta, '$.kind') = 'task'").get(t.id) as { id: string } | undefined;
 	if (card) updateMessage(card.id, { meta: { status: t.status, result: t.result, error: t.error } });
 }

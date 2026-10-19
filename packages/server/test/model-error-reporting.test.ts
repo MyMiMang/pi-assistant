@@ -7,7 +7,8 @@ import { createConversation } from "../src/conversations.ts";
 import { db, now, setSetting } from "../src/db.ts";
 import { initModels, models } from "../src/models.ts";
 import { lastAssistantError, modelErrorMessage, subscribeSession, type AgentEvent, type AgentSession } from "../src/pi-adapter/index.ts";
-import { bindSession, disposeConversationRuntime, getTask, runtime, tasks } from "../src/runtime.ts";
+import { bindSession, disposeConversationRuntime, runtime, tasks } from "../src/runtime.ts";
+import { getSubagent } from "../src/subagents.ts";
 import { memoryCredentialStore } from "./in-memory-credentials.ts";
 
 function adapterEvents(message: Record<string, unknown>, start = true) {
@@ -125,10 +126,10 @@ test("后台任务模型额度失败不再误标done/空完成通知，直接在
 	const conv = createConversation(AGENT, "后台失败"); conversations.push(conv.id);
 	const before = requests;
 	const task = tasks.spawn(AGENT, "额度失败探针", "请整理验证结果", { conversationId: conv.id });
-	await until(() => ["failed", "done"].includes(getTask(task.id)?.status ?? ""));
-	assert.equal(getTask(task.id)?.status, "failed");
-	assert.match(getTask(task.id)?.error ?? "", /usage limit/);
-	assert.equal(getTask(task.id)?.result, null);
+	await until(() => ["failed", "done"].includes(getSubagent(task.id)?.status ?? ""));
+	assert.equal(getSubagent(task.id)?.status, "failed");
+	assert.match(getSubagent(task.id)?.error_reason ?? "", /usage limit/);
+	assert.ok(!getSubagent(task.id)?.result_summary);
 	const notice = db.prepare("SELECT content,meta FROM messages WHERE conversation_id = ? AND role = 'system' AND status = 'error'").all(conv.id) as { content: string; meta: string }[];
 	assert.ok(notice.some((m) => /后台任务.*失败.*usage limit/.test(m.content)));
 	const failure = JSON.parse(notice.at(-1)!.meta);

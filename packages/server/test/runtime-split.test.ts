@@ -22,7 +22,7 @@ test("先单独加载子模块（循环引用不在模块顶层求值）", async
 
 test("门面导出与拆分前一致，且与子模块是同一个对象", async () => {
 	const rt = await import("../src/runtime.ts");
-	const expected = ["agentBusy", "bindSession", "bootstrap", "describeRoutine", "disposeConversationRuntime", "disposeRuntime", "getAgent", "getTask", "initHostAccessWatch", "listAgents", "runtime", "setRoomHooks", "tasks"];
+	const expected = ["agentBusy", "bindSession", "bootstrap", "describeRoutine", "disposeConversationRuntime", "disposeRuntime", "getAgent", "initHostAccessWatch", "listAgents", "runtime", "setRoomHooks", "tasks"];
 	assert.deepEqual(Object.keys(rt).sort(), expected);
 	const ar = await import("../src/agent-runtime/agent-runtime.ts");
 	const bg = await import("../src/agent-runtime/background-tasks.ts");

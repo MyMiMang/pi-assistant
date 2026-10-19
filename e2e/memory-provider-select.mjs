@@ -103,7 +103,7 @@ await page.route('**/api/**', async (route) => {
 	}
 	if (p === '/api/agents/a1/conversations') return json({ current: null, items: [] });
 	if (p === '/api/agents/a1/messages') return json([]);
-	if (p === '/api/agents/a1/tasks') return json([]);
+	if (p === '/api/subagents') return json([]);
 	if (p === '/api/agents/a1/computer') return json({ separate: false, hasData: null, desktop: { enabled: false, state: 'off' } });
 	if (p === '/api/agents/a1/files') return json([]);
 	if (p === '/api/agents/a1/routines') return json([]);
