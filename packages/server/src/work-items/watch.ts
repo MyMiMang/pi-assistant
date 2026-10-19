@@ -8,7 +8,7 @@
 import { db, now } from "../db.ts";
 import { requests } from "../requests.ts";
 import { postWorkFeedback } from "./correction.ts";
-import { stallStep, type Escalation, type EscalationKind, type EscalationLevel } from "./guard.ts";
+import { stallStep, type Escalation, type EscalationKind, type EscalationLevel } from "../stuck.ts";
 import { port } from "./ports.ts";
 import { agentName, clip, emit, escalationOf, event, fail, getWorkItemDetail, itemRow, needsUserOf, roomNotice, type NeedsUser, type WorkActor, type WorkItemRow } from "./store.ts";
 
@@ -102,7 +102,7 @@ export async function checkStalls(at = now(), stallMs = STALL_MS()) {
 	let n = 0;
 	for (const item of rows) {
 		const last = lastActivity(item);
-		const level = stallStep({ status: item.status, needsUser: false, lastActivityAt: last, escalation: escalationOf(item), now: at, stallMs });
+		const level = stallStep({ active: true, needsUser: false, lastActivityAt: last, escalation: escalationOf(item), now: at, stallMs });
 		if (!level) continue;
 		const mins = Math.max(1, Math.round((at - last) / 60_000));
 		const who = item.status === "review" ? "管理者" : agentName(item.owner_agent_id) || "负责人";

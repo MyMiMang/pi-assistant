@@ -254,14 +254,3 @@ export function planPeerTurns(o: { fromAgentId: string; text: string; members: M
 	const peers = ids.filter((id) => id !== o.managerId && id !== o.fromAgentId);
 	return { turns: peers.map((agentId) => ({ agentId, reason: "peer" as const, depth: 0, task: o.text.slice(0, 2000), from: o.fromAgentId })), wakeManager: !!o.managerId && ids.includes(o.managerId) };
 }
-
-/**
- * 「只聊不干活」：成员之间连续来回（peer 回合）却没有任何任务进展，就累加；有进展清零。
- * 到阈值先叫管理者，到两倍阈值再请用户（并暂停成员互相叫醒，直到有进展或用户发话）。
- */
-export function chatterStep(streak: number, o: { progressed: boolean; threshold: number }): { streak: number; level: "manager" | "user" | null } {
-	if (o.progressed) return { streak: 0, level: null };
-	const next = streak + 1;
-	const t = Math.max(2, o.threshold);
-	return { streak: next, level: next === t ? "manager" : next === t * 2 ? "user" : null };
-}

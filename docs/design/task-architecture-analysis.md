@@ -212,3 +212,4 @@ flowchart LR
 |---|---|
 | 1 不改行为的整理 | 已完成：三处建会话合成 `agent-runtime/agent-session.ts` 的 `createAgentSession`；状态词前端只留 `Tasks.tsx` 一张表（任务卡片、帮手列表共用；lost 统一叫「中断待核验」） |
 | 2 后台任务重启安全判定 | 已完成：`tasks.recover()` 复用 `sessionResumeSafety`，不安全标 lost（中断待核验），卡片「继续」走 `verifyResumePrompt`；单测 `background-task-restart.test.ts`，e2e `task-restart-ui.mjs` |
+| 3 共用卡住检测 | 已完成：规则合成 `stuck.ts`（群任务 watch/exec、群对话 collab、单聊帮手共用）；单聊帮手新增两级上报 `subagent-stuck.ts`：没进展先叫醒主会话、主会话之后仍没动静问用户；同一原因第 2 次失败提示换方法、第 3 次问用户；用户回答「停止」直接停、「继续等」重新计时、其余交给主会话。单测 `stuck.test.ts`、`subagent-stuck.test.ts`，e2e `stuck-escalation-ui.mjs` |

@@ -9,7 +9,7 @@ import { isRecoverableModelError } from "./model-errors.ts";
 import { isThinkingLevel, models } from "./models.ts";
 import { requests } from "./requests.ts";
 import { classifyResume, RESTART_RESUME_PROMPT, sessionResumeSafety, verifyResumePrompt } from "./subagent-resume.ts";
-import { subagentEventGuidance } from "./subagent-supervision.ts";
+import { clearStallQuestion, SUBAGENT_STALL_MS, superviseFinish, superviseStall, type StuckHooks } from "./subagent-stuck.ts";
 import { claimSubagentWake, markSubagentWakeDelivered, releaseSubagentWake, subagentWakeOwner, wakeClaimKey } from "./task-waits.ts";
 
 export type ModelRef = { provider: string; id: string };
@@ -23,7 +23,7 @@ export interface Subagent {
 	fast: number | null;
 	status: SubagentStatus; last_activity_at: number; error_reason: string | null; notified_at: number | null;
 	result_summary: string | null; created_at: number; finished_at: number | null;
-	session_file: string | null; run_started_at: number | null; pending_input: string | null; resume: number | null;
+	session_file: string | null; run_started_at: number | null; pending_input: string | null; resume: number | null; /** 卡住上报（JSON，见 subagent-stuck.ts） */ escalation?: string | null;
 	/** 已经开始的轮次数（含每次原任务续跑）；工具摘要用 */
 	attempt: number;
 	/** 有界退避重试的下一次时间（毫秒），不在退避中为 null；工具摘要用 */
@@ -72,7 +72,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS subagents (
  id TEXT PRIMARY KEY, subagent_id TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL, delivered_at INTEGER);
 `);
 const columns = db.prepare("PRAGMA table_info(subagents)").all() as { name: string }[];
-for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"], ["thinking", "TEXT"], ["fast", "INTEGER"], ["attempt", "INTEGER DEFAULT 0"], ["retry_at", "INTEGER"]]) {
+for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"], ["thinking", "TEXT"], ["fast", "INTEGER"], ["attempt", "INTEGER DEFAULT 0"], ["retry_at", "INTEGER"], ["escalation", "TEXT"]]) {
 	if (!columns.some((c) => c.name === name)) db.exec(`ALTER TABLE subagents ADD COLUMN ${name} ${type}`);
 }
 // 事件记录当时的终态代际：同一子代理续聊后多次结束时，用每一代自己的 finished_at 去重
@@ -338,9 +338,11 @@ function addEvent(r: Subagent, kind: string, reason: string) {
 	const gen = (db.prepare("SELECT finished_at FROM subagents WHERE id = ?").get(r.id) as { finished_at: number | null } | undefined)?.finished_at ?? 0;
 	db.prepare("INSERT INTO subagent_events(id, subagent_id, kind, reason, created_at, generation) VALUES(?,?,?,?,?,?)").run(uid("se"), r.id, kind, reason, Date.now(), gen);
 }
+const hooks: StuckHooks = { event: addEvent, changed, stop: (id) => stopSubagent(id), deliver: () => deliverSubagentEvents() };
 /** 所有结束路径共享这一处；状态和待投递事件一起提交。 */
 export function finishSubagent(id: string, status: Exclude<SubagentStatus, "queued" | "running" | "stalled">, reason = "", summary = "") {
-	const agentId = getSubagent(id)?.agent_id;
+	const r0 = getSubagent(id), agentId = r0?.agent_id, sup = r0 && isLiveSubagent(r0.status) ? superviseFinish(r0, status, reason, hooks) : null;
+	if (sup) reason = sup.reason;
 	db.exec("BEGIN");
 	try {
 		const n = db.prepare(`UPDATE subagents SET status = ?, error_reason = ?, result_summary = ?, finished_at = ? WHERE id = ? AND status IN ${LIVE}`).run(status, status === "done" ? null : reason, summary, Date.now(), id).changes;
@@ -349,6 +351,7 @@ export function finishSubagent(id: string, status: Exclude<SubagentStatus, "queu
 		if (!n) return false;
 	} catch (e) { db.exec("ROLLBACK"); throw e; }
 	changed(id);
+	sup?.after();
 	void deliverSubagentEvents();
 	// 到终态就释放了一个并发名额：自动派发这个助理排队中的下一个
 	if (agentId) pumpSubagents(agentId);
@@ -561,7 +564,7 @@ export function subagentActivity(id: string, toolMs?: number) {
 	if (toolMs !== undefined && live.has(id)) live.get(id)!.toolUntil = toolMs ? ts + toolMs + 30_000 : 0;
 	if (r.status === "stalled") {
 		db.prepare("UPDATE subagents SET status = 'running', last_activity_at = ? WHERE id = ?").run(ts, id);
-		addEvent(r, "resumed", "子代理恢复活动了");
+		addEvent(r, "resumed", "子代理恢复活动了"); clearStallQuestion(r);
 		changed(id);
 	} else if (ts - r.last_activity_at >= 5000) {
 		db.prepare("UPDATE subagents SET last_activity_at = ? WHERE id = ?").run(ts, id);
@@ -574,43 +577,15 @@ export async function checkSubagents(ts = Date.now()) {
 	pumpSubagents();
 	for (const r of activeSubagents()) {
 		if (ts - (r.run_started_at ?? r.created_at) >= getSubagentSettings(r.agent_id).maxMinutes * 60_000) await stopSubagent(r.id, "timeout");
-		else if (r.status === "running" && ts - r.last_activity_at > 180_000 && ts > (live.get(r.id)?.toolUntil ?? 0) && !db.prepare("SELECT 1 FROM requests WHERE task_id = ? AND status = 'pending'").get(r.id)) {
-			db.prepare("UPDATE subagents SET status = 'stalled' WHERE id = ?").run(r.id);
-			addEvent(r, "stalled", "子代理已 3 分钟没有进展，请检查或重新派活");
-			changed(r.id);
-		}
+		else await superviseStall(r, ts, live.get(r.id)?.toolUntil ?? 0, hooks);
 	}
 	await deliverSubagentEvents();
 }
 const delivering = new Set<string>();
 /** 会触发一次模型回合的事件：终态 + 停滞告警。`resumed` 只更新卡片（changed 已做），不再单独唤醒。 */
-const WAKE_KINDS = new Set(["done", "failed", "stopped", "timeout", "lost", "stalled"]);
+const WAKE_KINDS = new Set(["done", "failed", "stopped", "timeout", "lost", "stalled", "decided"]);
 /** 终态：可能已由一条 task_wait 负责唤醒，需要跨机制去重。 */
 const TERMINAL_KINDS = new Set(["done", "failed", "stopped", "timeout", "lost"]);
-const clip = (s: string, n: number) => {
-	const v = (s ?? "").replace(/\s+/g, " ").trim();
-	return v.length > n ? `${v.slice(0, n)}…` : v;
-};
-/** notify 摘要的截断长度：完整内容用 subagent_list 按 id 查，不重复整段 task/结果（省 token）。 */
-export const SUBAGENT_SUMMARY_CLIP = 300;
-/**
- * 子代理事件通知的短文案（纯函数，便于单测）：标题 / 摘要都截断；
- * 摘要被截断时明确给出「按子代理 ID 查全文」的入口，避免模型以为已经看全。
- */
-export function subagentNotifyText(r: Subagent, event: SubagentEvent, artifacts: string): string {
-	const marker = `（子代理事件 ${event.id}）`;
-	const kindLabel = ({ done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "中断待核验", stalled: "停滞" } as Record<string, string>)[event.kind] ?? event.kind;
-	const title = clip(r.task, 60);
-	const raw = r.result_summary || event.reason || "";
-	const summary = clip(raw, SUBAGENT_SUMMARY_CLIP);
-	const clipped = raw.replace(/\s+/g, " ").trim().length > SUBAGENT_SUMMARY_CLIP;
-	return [
-		`${marker}子代理「${title}」${kindLabel}${summary ? `：${summary}` : ""}`,
-		`子代理 ID：${r.id}。${clipped ? `上面摘要已截断到 ${SUBAGENT_SUMMARY_CLIP} 字；` : ""}需要完整任务说明或结果时，用 subagent_list 按子代理 ID 查全文（subagent_list{subagent_id:"${r.id}"}）。`,
-		`产出文件：\n${artifacts || "无"}`,
-		subagentEventGuidance(event.kind),
-	].join("\n");
-}
 export async function deliverSubagentEvents() {
 	if (!driver) return;
 	const events = db.prepare("SELECT * FROM subagent_events WHERE delivered_at IS NULL ORDER BY created_at, rowid").all() as unknown as SubagentEvent[];
@@ -684,6 +659,6 @@ export function recoverSubagents() {
 	pumpSubagents();
 }
 export function startSubagentWatcher() {
-	const timer = setInterval(() => void checkSubagents().catch(console.error), 30_000);
+	const timer = setInterval(() => void checkSubagents().catch(console.error), Math.min(30_000, Math.max(1_000, SUBAGENT_STALL_MS() / 3)));
 	timer.unref();
 }

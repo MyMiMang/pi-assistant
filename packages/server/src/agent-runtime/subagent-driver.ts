@@ -1,6 +1,7 @@
 /** 子代理驱动：只替换会话身份，工作区、权限、技能与审批仍走同一套扩展。 */
 import { createAgentSession } from "./agent-session.ts";
-import { setSubagentDriver, getSubagent, subagentActivity, isActiveSubagent, switchSubagentModel, planFallback, livePool, modelKey, subagentNotifyText, resolveSubagentThinking, resolveSubagentFast, setSubagentRetryAt, type Subagent, type SubagentEvent } from "../subagents.ts";
+import { subagentNotifyText } from "../subagent-supervision.ts";
+import { setSubagentDriver, getSubagent, subagentActivity, isActiveSubagent, switchSubagentModel, planFallback, livePool, modelKey, resolveSubagentThinking, resolveSubagentFast, setSubagentRetryAt, type Subagent, type SubagentEvent } from "../subagents.ts";
 import { classifyModelError, isRecoverableModelError } from "../model-errors.ts";
 import { assessResumeSafety, shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY_PROMPT } from "../subagent-resume.ts";
 import { join } from "node:path";

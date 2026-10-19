@@ -376,7 +376,7 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 
 export async function registerMockProvider(models: PiModels) {
 	const faux = registerFauxProvider({ provider: MOCK_PROVIDER, models: [{ id: MOCK_MODEL, name: "Mock 模型（本地测试）", input: ["text", "image"] } as never, { id: MOCK_REASONING_MODEL, name: "Mock 推理模型（本地测试）", reasoning: true } as never], tokensPerSecond: 60 });
-	const step = (ctx: { messages: (Msg & { toolsAdded?: MockTool[] })[]; systemPrompt?: string }) => {
+	const step = (ctx: { messages: (Msg & { toolsAdded?: MockTool[] })[]; systemPrompt?: string }, opts?: { signal?: AbortSignal }) => {
 		mockStats.steps++;
 		faux.appendResponses([step as never]);
 		// Pi 把系统提示词和工具声明放在 transcript 的 system 消息里
@@ -386,6 +386,10 @@ export async function registerMockProvider(models: PiModels) {
 		const msgs = ctx.messages.filter((m) => m.role !== "system");
 		const lastUser = [...msgs].reverse().find((m) => m.role === "user");
 		if (lastUser) mockStats.lastUserText = textOf(lastUser);
+		// 卡住上报 e2e：子代理的模型请求一直不回（没有任何动静），直到被停止
+		const lastMsg = msgs[msgs.length - 1];
+		if (lastMsg?.role === "user" && /^（后台子代理任务）[\s\S]*卡住测试/.test(textOf(lastMsg)))
+			return new Promise((resolve) => { const done = () => resolve(fauxAssistantMessage("（停下了）")); if (opts?.signal?.aborted) return done(); opts?.signal?.addEventListener("abort", done, { once: true }); setTimeout(done, 600_000).unref?.(); });
 		const hs = hindsightReply(msgs, systemPrompt, tools);
 		if (hs !== null) return typeof hs === "string" ? fauxAssistantMessage(hs) : fauxAssistantMessage([fauxToolCall(hs.tool, hs.args as never)]);
 		return respond(msgs, systemPrompt, tools);

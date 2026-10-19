@@ -12,7 +12,7 @@ const { db, getSetting, setSetting } = await import("../src/db.ts");
 const { initModels } = await import("../src/models.ts");
 // 只用公开的内存 CredentialStore：绝不 new 默认安全后端 / 碰 OS 钥匙串（见 in-memory-credentials.ts）
 await initModels(memoryCredentialStore());
-const s = await import("../src/subagents.ts");
+const [s, sup] = await Promise.all([import("../src/subagents.ts"), import("../src/subagent-supervision.ts")]);
 const W = await import("../src/task-waits.ts"); // 建 task_waits 表：终态唤醒跨机制去重会查它
 const { createConversation } = await import("../src/conversations.ts");
 const { listMessages, insertMessage } = await import("../src/messages.ts");
@@ -758,12 +758,12 @@ test("终态去重按代际：续聊后新一代终态不被上一代已送达�
 test("notify 文案：摘要截断到 300 字并给出按 id 查全文的入口；未截断时不误导", () => {
 	const row = { id: "sa-notify", agent_id: "sub-test", conversation_id: conv, task: "整理报价表" } as never;
 	const ev = { id: "ev-notify", subagent_id: "sa-notify", kind: "done", reason: "", created_at: 0, delivered_at: null, generation: 1 } as never;
-	const short = s.subagentNotifyText({ ...(row as object), result_summary: "短结果" } as never, ev, "无");
+	const short = sup.subagentNotifyText({ ...(row as object), result_summary: "短结果" } as never, ev, "无");
 	assert.match(short, /短结果/);
 	assert.doesNotMatch(short, /已截断/);
 	assert.match(short, /subagent_list\{subagent_id:"sa-notify"\}/, "未截断也给全文查询入口");
 	const long = "长".repeat(400);
-	const clipped = s.subagentNotifyText({ ...(row as object), result_summary: long } as never, ev, "");
+	const clipped = sup.subagentNotifyText({ ...(row as object), result_summary: long } as never, ev, "");
 	assert.match(clipped, /上面摘要已截断到 300 字/);
 	assert.ok(clipped.includes("长".repeat(300)), "保留前 300 字");
 	assert.ok(!clipped.includes("长".repeat(301)), "超出部分被截断");
@@ -772,7 +772,7 @@ test("notify 文案：摘要截断到 300 字并给出按 id 查全文的入口�
 
 test("notify 监督语义：失败/超时继续原授权任务，完成先核验，只有明确停止才不自动恢复", () => {
 	const row = { id: "sa-supervision", task: "完成报告", result_summary: null } as never;
-	const textFor = (kind: string) => s.subagentNotifyText(row, { id: `ev-${kind}`, kind, reason: "本轮结束" } as never, "无");
+	const textFor = (kind: string) => sup.subagentNotifyText(row, { id: `ev-${kind}`, kind, reason: "本轮结束" } as never, "无");
 	for (const kind of ["failed", "timeout", "lost"]) {
 		const t = textFor(kind);
 		assert.match(t, /不是用户叫停/);

@@ -12,7 +12,8 @@
 import { bus } from "../bus.ts";
 import { db, now, uid } from "../db.ts";
 import { insertMessage } from "../messages.ts";
-import { BOARD_GROUPS, BOARD_LABEL, boardGroupOf, type BoardGroup, type Escalation } from "./guard.ts";
+import { BOARD_GROUPS, BOARD_LABEL, boardGroupOf, type BoardGroup } from "./guard.ts";
+import type { Escalation } from "../stuck.ts";
 
 export const WORK_STATUSES = ["pending", "active", "blocked", "review", "done", "paused", "cancelled"] as const;
 export type WorkStatus = (typeof WORK_STATUSES)[number];

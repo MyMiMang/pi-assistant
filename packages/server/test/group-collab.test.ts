@@ -52,29 +52,6 @@ test("看板分组：等你决定 > 卡住 > 进行中；暂停 / 取消 = 已�
 	assert.equal(W.boardGroupOf({ status: "cancelled", needsUser: false, escalation: null }), "stopped");
 });
 
-test("指纹：忽略数字 / 路径 / 编号 / 标点；太短的泛泛说法不算", () => {
-	assert.equal(W.fingerprint("连接 api 超时（第 3 次） /tmp/a.log wi_abc1"), W.fingerprint("连接 api 超时，第 7 次！ /var/b.log wi_zz9"));
-	assert.notEqual(W.fingerprint("连接 api 超时"), W.fingerprint("磁盘空间不足"));
-	assert.equal(W.fingerprint("失败"), "");
-	assert.equal(W.repeatLevel([], "abcd"), null);
-	assert.equal(W.repeatLevel(["abcd"], "abcd"), "manager");
-	assert.equal(W.repeatLevel(["abcd", "x", "abcd"], "abcd"), "user");
-	assert.equal(W.repeatLevel(["abcd"], ""), null);
-});
-
-test("卡住检测：超时先管理者，管理者介入后仍没动静再用户；有新动静重新计时", () => {
-	const base = { status: "active", needsUser: false, stallMs: 100 };
-	assert.equal(W.stallStep({ ...base, lastActivityAt: 0, escalation: null, now: 50 }), null);
-	assert.equal(W.stallStep({ ...base, lastActivityAt: 0, escalation: null, now: 100 }), "manager");
-	const esc = { kind: "stall" as const, level: "manager" as const, at: 100, note: "" };
-	assert.equal(W.stallStep({ ...base, lastActivityAt: 0, escalation: esc, now: 150 }), null, "刚叫过管理者，等它处理");
-	assert.equal(W.stallStep({ ...base, lastActivityAt: 0, escalation: esc, now: 200 }), "user");
-	assert.equal(W.stallStep({ ...base, lastActivityAt: 180, escalation: esc, now: 200 }), null, "管理者之后有动静：重新计时");
-	assert.equal(W.stallStep({ ...base, lastActivityAt: 0, escalation: { ...esc, level: "user" }, now: 999 }), null, "已经问过用户不重复");
-	assert.equal(W.stallStep({ ...base, status: "paused", lastActivityAt: 0, escalation: null, now: 999 }), null);
-	assert.equal(W.stallStep({ ...base, needsUser: true, lastActivityAt: 0, escalation: null, now: 999 }), null);
-});
-
 test("成员互相 @：只在自主推进中生效；@ 管理者改为唤醒管理者；不 @ 自己", () => {
 	const members = [{ id: "cm", name: "总管" }, { id: "ca", name: "小甲" }, { id: "cb", name: "小乙" }];
 	const off = logic.planPeerTurns({ fromAgentId: "ca", text: "@小乙 帮我看下", members, managerId: "cm", autonomous: false });
@@ -83,18 +60,6 @@ test("成员互相 @：只在自主推进中生效；@ 管理者改为唤醒管�
 	assert.deepEqual(on.turns.map((t) => [t.agentId, t.reason, t.from]), [["cb", "peer", "ca"]]);
 	assert.equal(on.wakeManager, true);
 	assert.deepEqual(logic.planPeerTurns({ fromAgentId: "cm", text: "@小乙", members, managerId: "cm", autonomous: true }).turns, [], "管理者的 @ 走派活规则");
-});
-
-test("只聊不干活：到阈值先管理者，两倍阈值再用户；有进展清零", () => {
-	let s = 0;
-	const levels: (string | null)[] = [];
-	for (let i = 0; i < 6; i++) {
-		const r = logic.chatterStep(s, { progressed: false, threshold: 3 });
-		s = r.streak;
-		levels.push(r.level);
-	}
-	assert.deepEqual(levels, [null, null, "manager", null, null, "user"]);
-	assert.deepEqual(logic.chatterStep(5, { progressed: true, threshold: 3 }), { streak: 0, level: null });
 });
 
 test("看板检查 / 成员互相 @ 不占每轮上限", () => {

@@ -101,7 +101,9 @@
 | `subagents.ts` | 子代理状态与通知 |
 | `subagent-routes.ts` | 子代理接口 |
 | `subagent-resume.ts` | 失败分类与续跑：重启安全判定 `sessionResumeSafety`、续跑提示 `RESTART_RESUME_PROMPT` / `verifyResumePrompt`（子代理与后台任务共用） |
-| `subagent-supervision.ts` | 子代理事件监督规则 |
+| `subagent-supervision.ts` | 子代理事件监督规则与回报文案 `subagentNotifyText` |
+| `stuck.ts` | 卡住检测共用规则（没进展 `stallStep` / 反复卡在同一处 `fingerprint`+`repeatLevel` / 只聊不干活 `chatterStep`），群任务、群对话、单聊帮手共用 |
+| `subagent-stuck.ts` | 单聊帮手卡住上报：先叫醒主会话，仍没进展或第 3 次卡在同一处再问用户（复用 stuck.ts、requests.question） |
 | `task-waits.ts` | 任务等待调度 |
 | `work-items.ts` | 长期任务入口（只做 re-export） |
 | `work-items/` | 长期任务：store（表/摘要/看板分组/boardDigest）、guard（看板分组、重复指纹等纯逻辑）、ports（RoomPort：群聊和任务之间唯一接口）、exec（在负责人自己的会话里执行、提交、重复卡点检测）、watch（停滞检测、上报管理者/用户、等你决定）、actions（新建/核验/改派/暂停/全部暂停等动作）、correction（群里纠正任务的上下文）、tools（管理者/成员/执行会话的 work_* 工具） |

@@ -9,7 +9,7 @@ import { createConversation } from "../conversations.ts";
 import { db, now, uid } from "../db.ts";
 import { insertMessage } from "../messages.ts";
 import { runtime } from "../runtime.ts";
-import { fingerprint, repeatLevel, type EscalationLevel } from "./guard.ts";
+import { fingerprint, repeatLevel, type EscalationLevel } from "../stuck.ts";
 import { port } from "./ports.ts";
 import {
 	agentName,

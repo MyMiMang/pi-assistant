@@ -9,7 +9,8 @@ import { db, now } from "../db.ts";
 import { notify } from "../push.ts";
 import { getAgent } from "../runtime.ts";
 import { boardDigest, setRoomPort, steerToLiveRun } from "../work-items.ts";
-import { chatterStep, planPeerTurns } from "./logic.ts";
+import { planPeerTurns } from "./logic.ts";
+import { chatterStep } from "../stuck.ts";
 import { postUserMessage, queuedFor, scheduleTurns, setTurnHooks } from "./scheduler.ts";
 import { activeIds, autonomyOf, changed, getRoom, memberConversation, memberRefs, stoppedFlag, sys, writeAutonomy, type Autonomy } from "./store.ts";
 
