@@ -1,5 +1,6 @@
 /** 每个会话挂哪些 Pi 扩展（工具）：沙箱、审批、投递、记忆、技能、主动性、定时、邮箱、浏览器、电脑、图片；以及 MCP / Pi 扩展包。 */
-import { spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, resumeSubagent, restartSubagent, withResumeInfo } from "../subagents.ts";
+import { spawnSubagent, listSubagents, getSubagent, hasSubagentCapacity, messageSubagent, stopSubagent, resumeSubagent, restartSubagent, withResumeInfo, type Subagent } from "../subagents.ts";
+import { helperRoomOf, helperScope, helperSteps, peerHelperView, roomHelpers, scopedContext } from "../helper-scope.ts";
 import { listWaits, parseDue, refreshWait, registerWait, cancelWait, WAIT_DEFAULT_INTERVAL_MS } from "../task-waits.ts";
 import { imageExtensions } from "../image-gen/extension.ts";
 import { join } from "node:path";
@@ -64,6 +65,9 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 	const heartbeat = isHeartbeatTask(taskId);
 	const approve = async (toolName: string, input: Record<string, unknown>, summary: string, risk = "medium") =>
 		!!(await requests.approval(agentId, taskId, toolName, input, summary, risk, conversationId)).approved;
+	// 本会话自己派的帮手；帮手会话里只认它自己派的下一层
+	const own = (r: Subagent) => r.agent_id === agentId && r.conversation_id === conversationId && (!opts.subagentId || r.parent_subagent_id === opts.subagentId);
+	const mustOwn = (id: string) => { const r = getSubagent(id); if (!r || !own(r)) throw new Error("不是本会话派的子代理"); };
 	const exts = [
 		{ name: "pia-sandbox", factory: sandboxExtension({ workspace, mode, readOnlyRoots: skillPaths(), makeBashTool: makeBashTool, dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined, localOperations: mode === "docker" ? localBashOperations() : undefined, hostAccess: () => hostFileAccess(agentId) }) },
 		{
@@ -85,44 +89,46 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 			factory: deliveryExtension({
 				deliverFile: async (path, caption) => {
 					const f = deliverFromWorkspace(agentId, path, hostFileAccess(agentId));
-					insertMessage({ agentId, conversationId, role: "assistant", content: caption ?? "", subagentId: opts.subagentId, meta: { attachments: [fileInfo(f)], fromTask: taskId } });
+					// 群任务执行的帮手交付的是任务结果：直接进群（群里人人能看结果），不留在执行详情里
+					const toRoom = !!opts.subagentId && getSubagent(opts.subagentId)?.kind === "work";
+					insertMessage({ agentId, conversationId, role: "assistant", content: caption ?? "", subagentId: toRoom ? null : opts.subagentId, meta: { attachments: [fileInfo(f)], fromTask: taskId, ...(toRoom ? { fromHelper: opts.subagentId } : {}) } });
 					return { fileId: f.id, name: f.name };
 				},
 				ask: async (question, options, allowFreeText) => (await requests.question(agentId, taskId, question, options, allowFreeText, conversationId)).answer ?? "",
-				spawnTask: opts.allowSpawn ? async (title, instructions) => ({ taskId: tasks.spawn(agentId, title, instructions, { conversationId }).id }) : undefined,
+				spawnTask: opts.allowSpawn && !opts.subagentId ? async (title, instructions) => ({ taskId: tasks.spawn(agentId, title, instructions, { conversationId }).id }) : undefined,
 				subagents: opts.allowSpawn ? {
 					spawn: async (input) => {
 						const a = getAgent(agentId)!;
 						const fallback = runtime(agentId, conversationId).modelFor(a);
 						if (!fallback) throw new Error("没有可用的模型");
 						const parent = latestUserMessage(conversationId);
-						return spawnSubagent(agentId, conversationId!, fallback, { ...input, parentMessageId: parent?.id });
+						// 帮手派下一层：继承上一层的角色范围（spawnSubagent 里继承），名额满了就自己做（上一层在等它，排队会互相卡住）
+						if (opts.subagentId && !hasSubagentCapacity(agentId)) throw new Error("帮手名额已满：这一块自己做，不要再派");
+						const scope = opts.subagentId ? getSubagent(opts.subagentId)?.scope ?? null : helperScope(agentId, conversationId);
+						const { done_criteria, ...rest } = input;
+						return spawnSubagent(agentId, conversationId!, fallback, { ...rest, context: scopedContext(scope, done_criteria, input.context), parentMessageId: parent?.id, parentSubagentId: opts.subagentId, scope });
 					},
-					list: () => listSubagents(agentId, conversationId ?? undefined).map(withResumeInfo),
+					// 自己派的：完整记录 + 最近的工具步骤；群里别的成员派的：默认只给概况（见 helper-scope.ts 的可见性设置）
+					list: () => {
+						const roomId = opts.subagentId ? null : helperRoomOf(conversationId);
+						const mine = listSubagents(agentId, conversationId ?? undefined).filter(own).map(withResumeInfo);
+						return roomId ? [...mine, ...roomHelpers(roomId, agentId).map((r) => peerHelperView(agentId, conversationId, r)).filter(Boolean)] : mine;
+					},
 					get: (id) => {
 						const r = getSubagent(id);
-						return r && r.agent_id === agentId && r.conversation_id === conversationId ? withResumeInfo(r) : null;
+						if (r && own(r)) return { ...withResumeInfo(r), steps: helperSteps(id) };
+						return opts.subagentId ? null : peerHelperView(agentId, conversationId, r);
 					},
 					message: async (id, text) => {
-						if (getSubagent(id)?.agent_id !== agentId || getSubagent(id)?.conversation_id !== conversationId) throw new Error("不是本会话的子代理");
-						const parent = latestUserMessage(conversationId);
-						await messageSubagent(id, text, parent?.id);
+						mustOwn(id);
+						await messageSubagent(id, text, latestUserMessage(conversationId)?.id);
 					},
-					resume: async (id) => {
-						if (getSubagent(id)?.agent_id !== agentId || getSubagent(id)?.conversation_id !== conversationId) throw new Error("不是本会话的子代理");
-						return withResumeInfo(resumeSubagent(id, { mode: "manual" }));
-					},
-					stop: async (id) => {
-						if (getSubagent(id)?.agent_id !== agentId || getSubagent(id)?.conversation_id !== conversationId) throw new Error("不是本会话的子代理");
-						return stopSubagent(id);
-					},
-					restart: async (id, note) => {
-						if (getSubagent(id)?.agent_id !== agentId || getSubagent(id)?.conversation_id !== conversationId) throw new Error("不是本会话的子代理");
-						return restartSubagent(id, note);
-					},
+					resume: async (id) => (mustOwn(id), withResumeInfo(resumeSubagent(id, { mode: "manual" }))),
+					stop: async (id) => (mustOwn(id), stopSubagent(id)),
+					restart: async (id, note) => (mustOwn(id), restartSubagent(id, note)),
 				} : undefined,
 				// 任务等待：登记一次持久等待，结束当前回合，由 scheduler 在有结果时做一次结构化增量唤醒
-				waits: opts.allowSpawn
+				waits: opts.allowSpawn && !opts.subagentId
 					? {
 						register: (i) => {
 							const checkIntervalMs = i.checkMinutes !== undefined ? Math.max(1, i.checkMinutes) * 60_000 : WAIT_DEFAULT_INTERVAL_MS;

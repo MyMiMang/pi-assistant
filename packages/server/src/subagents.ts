@@ -11,7 +11,7 @@ import { classifyResume, RESTART_RESUME_PROMPT, sessionResumeSafety, verifyResum
 import { repeatBlocked, stuckRestartPrompt, SUBAGENT_STALL_MS, superviseFinish, superviseStall, type StuckHooks } from "./subagent-stuck.ts";
 import { claimSubagentWake, markSubagentWakeDelivered, releaseSubagentWake, subagentWakeOwner, wakeClaimKey } from "./task-waits.ts";
 
-export type ModelRef = { provider: string; id: string }; export type HelperKind = "task" | "routine" | "heartbeat";
+export type ModelRef = { provider: string; id: string }; export type HelperKind = "task" | "routine" | "heartbeat" | "work";
 export type SubagentStatus = "queued" | "running" | "stalled" | "done" | "failed" | "stopped" | "timeout" | "lost";
 export interface Subagent {
 	id: string; agent_id: string; conversation_id: string; parent_message_id: string | null;
@@ -22,7 +22,7 @@ export interface Subagent {
 	fast: number | null;
 	status: SubagentStatus; last_activity_at: number; error_reason: string | null; notified_at: number | null;
 	result_summary: string | null; created_at: number; finished_at: number | null;
-	session_file: string | null; run_started_at: number | null; pending_input: string | null; resume: number | null; /** 卡住上报（JSON，见 subagent-stuck.ts） */ escalation?: string | null; /** 来源（决策 0014）：null = 主会话派的帮手；task 后台任务 / routine 定时任务 / heartbeat 主动巡检 */ kind?: HelperKind | null; title?: string | null; routine_run_id?: string | null;
+	session_file: string | null; run_started_at: number | null; pending_input: string | null; resume: number | null; /** 卡住上报（JSON，见 subagent-stuck.ts） */ escalation?: string | null; /** 来源（决策 0014）：null = 主会话派的帮手；task 后台任务 / routine 定时任务 / heartbeat 主动巡检 */ kind?: HelperKind | null; title?: string | null; routine_run_id?: string | null; /** 第 5 步：派它的上一层帮手（最多一层）/ 群里的角色范围（下一层继承）/ 群任务的这次执行 */ parent_subagent_id?: string | null; scope?: string | null; work_run_id?: string | null;
 	/** 已经开始的轮次数（含每次原任务续跑）；工具摘要用 */
 	attempt: number;
 	/** 有界退避重试的下一次时间（毫秒），不在退避中为 null；工具摘要用 */
@@ -71,7 +71,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS subagents (
  id TEXT PRIMARY KEY, subagent_id TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL, delivered_at INTEGER);
 `);
 const columns = db.prepare("PRAGMA table_info(subagents)").all() as { name: string }[];
-for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"], ["thinking", "TEXT"], ["fast", "INTEGER"], ["attempt", "INTEGER DEFAULT 0"], ["retry_at", "INTEGER"], ["escalation", "TEXT"], ["kind", "TEXT"], ["title", "TEXT"], ["routine_run_id", "TEXT"]]) {
+for (const [name, type] of [["session_file", "TEXT"], ["run_started_at", "INTEGER"], ["pending_input", "TEXT"], ["resume", "INTEGER"], ["model_pool", "TEXT"], ["thinking", "TEXT"], ["fast", "INTEGER"], ["attempt", "INTEGER DEFAULT 0"], ["retry_at", "INTEGER"], ["escalation", "TEXT"], ["kind", "TEXT"], ["title", "TEXT"], ["routine_run_id", "TEXT"], ["parent_subagent_id", "TEXT"], ["scope", "TEXT"], ["work_run_id", "TEXT"]]) {
 	if (!columns.some((c) => c.name === name)) db.exec(`ALTER TABLE subagents ADD COLUMN ${name} ${type}`);
 }
 // 事件记录当时的终态代际：同一子代理续聊后多次结束时，用每一代自己的 finished_at 去重
@@ -247,7 +247,6 @@ export function switchSubagentModel(id: string, next: ModelRef, reason: string) 
 	insertMessage({ agentId: r.agent_id, conversationId: r.conversation_id, subagentId: id, role: "system", content: `模型 ${from} 不可用，已切换到候选池内的 ${m.provider}/${m.id}：${reason}` });
 	changed(id);
 }
-
 interface Live { stop?: () => Promise<void>; message?: (text: string, messageId?: string) => Promise<void>; apply?: (model: ModelRef, thinking: string) => Promise<void>; pending: { text: string; messageId?: string }[]; toolUntil: number; /** 卡住重启：中断后带这条纠正重新排队 */ restart?: string }
 const live = new Map<string, Live>();
 interface Driver {
@@ -336,15 +335,16 @@ export function pumpSubagents(agentId?: string) {
 		for (const q of queued) startQueued(q.id);
 	}
 }
-export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef, input: { task: string; context?: string; needs?: string[]; model?: ModelRef; thinking?: string; parentMessageId?: string; kind?: HelperKind; title?: string; routineRunId?: string }): Subagent & { queuedAhead?: number } {
+export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef, input: { task: string; context?: string; needs?: string[]; model?: ModelRef; thinking?: string; parentMessageId?: string; kind?: HelperKind; title?: string; routineRunId?: string; parentSubagentId?: string; scope?: string | null; workRunId?: string }): Subagent & { queuedAhead?: number } {
 	if (!input.task?.trim()) throw new Error("请说明子代理任务");
+	const parent = input.parentSubagentId ? getSubagent(input.parentSubagentId) : undefined; if (parent?.parent_subagent_id) throw new Error("帮手最多再派一层：你是第二层帮手，不能再派，自己做");
 	if (input.thinking !== undefined && !isThinkingLevel(input.thinking)) throw new Error("思考强度不对");
 	const picked = chooseSubagentModel(agentId, fallback, input.task, input.needs, input.model);
 	const id = uid("sa"), ts = Date.now();
 	// 先把已有的排队任务补上空位，保证 FIFO；再决定新任务是否立即跑
 	pumpSubagents(agentId);
 	const status: SubagentStatus = hasSubagentCapacity(agentId) ? "running" : "queued";
-	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, parent_message_id, task, context, model_provider, model_id, model_reason, thinking, status, last_activity_at, created_at, model_pool, kind, title, routine_run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, input.parentMessageId ?? null, input.task, input.context ?? "", picked.model.provider, picked.model.id, picked.reason, input.thinking ?? null, status, ts, ts, JSON.stringify(picked.pool), input.kind ?? null, input.title ?? null, input.routineRunId ?? null);
+	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, parent_message_id, task, context, model_provider, model_id, model_reason, thinking, status, last_activity_at, created_at, model_pool, kind, title, routine_run_id, parent_subagent_id, scope, work_run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, input.parentMessageId ?? null, input.task, input.context ?? "", picked.model.provider, picked.model.id, picked.reason, input.thinking ?? null, status, ts, ts, JSON.stringify(picked.pool), input.kind ?? null, input.title ?? null, input.routineRunId ?? null, parent?.id ?? null, input.scope ?? parent?.scope ?? null, input.workRunId ?? null);
 	insertMessage({ agentId, conversationId: conv, role: "card", meta: { kind: "subagent", subagentId: id, subagent: getSubagent(id) } });
 	insertMessage({ agentId, conversationId: conv, subagentId: id, role: "user", content: input.task });
 	if (status === "running") { live.set(id, { pending: [], toolUntil: 0 }); queueMicrotask(() => void run(id)); }
@@ -530,7 +530,7 @@ export async function deliverSubagentEvents() {
 		const r = getSubagent(e.subagent_id);
 		if (!r || !db.prepare("SELECT 1 FROM conversations WHERE id = ?").get(r.conversation_id)) continue;
 		// resumed 只更新卡片，不再起一次模型回合：直接标记已投递，避免每 30 秒重试
-		if (!WAKE_KINDS.has(e.kind) || r.kind) {
+		if (!WAKE_KINDS.has(e.kind) || r.kind || r.parent_subagent_id) { // 下一层帮手的结果由上一层帮手收（subagent-driver）
 			markSubagentEventDelivered(e.id, r.id);
 			continue;
 		}

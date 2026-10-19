@@ -66,7 +66,11 @@ export const tasks = {
 		const model = a ? runtime(a.id).modelFor(a) : null;
 		if (!a || !model) throw new Error("没有可用的模型");
 		const kind = opts.kind ?? (opts.routineRunId ? "routine" : "task");
-		return spawnSubagent(agentId, opts.conversationId ?? currentConversation(agentId), model, { task: instructions, title, kind, routineRunId: opts.routineRunId });
+		const conv = opts.conversationId ?? currentConversation(agentId);
+		const h = spawnSubagent(agentId, conv, model, { task: instructions, title, kind, routineRunId: opts.routineRunId });
+		// 聊天里照旧留一张后台任务卡片（状态由 syncTaskCard 跟着帮手更新）；巡检保持安静
+		if (kind !== "heartbeat") insertMessage({ agentId, conversationId: conv, role: "card", meta: { kind: "task", taskId: h.id, title, status: taskView(h).status, routineRunId: opts.routineRunId } });
+		return h;
 	},
 	cancel: (id: string) => stopSubagent(id),
 	/** 中断待核验 / 失败后在原会话继续（先核验、不重做）；规则同子代理的「继续」。 */
@@ -78,7 +82,7 @@ export const tasks = {
 			return false;
 		}
 	},
-	list: (agentId: string) => listSubagents(agentId).filter((r) => r.kind && r.kind !== "heartbeat").map(taskView),
+	list: (agentId: string) => listSubagents(agentId).filter((r) => r.kind === "task" || r.kind === "routine").map(taskView),
 };
 
 /**

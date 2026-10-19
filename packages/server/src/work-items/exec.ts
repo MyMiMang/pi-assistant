@@ -1,14 +1,20 @@
 /**
- * 长期任务的执行：在负责人**自己的**隐藏任务会话里跑（它自己的记忆、权限、电脑），
- * 不进群的发言队列、不占群的每轮上限，群「停止」也不会停它（只能单个暂停 / 一键全停）。
+ * 长期任务的执行（决策 0014 第 5 步）：每次执行是负责人派的一个「帮手」（subagents kind=work），
+ * 挂在负责人**自己的**隐藏任务会话上（它自己的记忆、权限、电脑），不进群的发言队列、不占群的每轮上限，
+ * 群「停止」也不会停它（只能单个暂停 / 一键全停）。重启续跑、卡住处理、停止、并发上限都复用帮手那一套。
  *
- * 任务会话通过 work_exec_conversations 映射回来源群：成员在执行里说的话、发的文件、审批卡片都直接出现在群里，
- * 群聊仍是主入口；管理者只在关键事件被唤醒（提交、卡住、执行结束没提交、超时没进展、反复卡在同一处）。
+ * 任务会话通过 work_exec_conversations 映射回来源群：群里能看到帮手卡片（在做什么、做到哪一步、结果）、
+ * 审批卡片、提交的结果卡；工具步骤和命令输出留在帮手详情里（谁能看见 helper-scope.ts 的设置）。
+ * 管理者只在关键事件被唤醒（提交、卡住、执行结束没提交、超时没进展、反复卡在同一处）。
  */
 import { createConversation } from "../conversations.ts";
 import { db, now, uid } from "../db.ts";
 import { insertMessage } from "../messages.ts";
-import { runtime } from "../runtime.ts";
+import { bus } from "../bus.ts";
+import { helperScope } from "../helper-scope.ts";
+import { memory } from "../memory/index.ts";
+import { getAgent, runtime } from "../runtime.ts";
+import { getSubagent, isActiveSubagent, isLiveSubagent, messageSubagent, spawnSubagent, stopSubagent, type Subagent } from "../subagents.ts";
 import { fingerprint, repeatLevel, type EscalationLevel } from "../stuck.ts";
 import { port } from "./ports.ts";
 import {
@@ -74,7 +80,7 @@ function execPrompt(item: WorkItemRow, run: WorkRunRow) {
 		workPrompt(item),
 		run.task && run.task !== workPrompt(item) ? `派活说明：${run.task.slice(0, 2000)}` : "",
 		note && item.revision > 1 ? `最近一次意见：${note.slice(0, 1000)}` : "",
-		`这是第 ${run.revision} 次修订的执行，在你自己的任务会话里进行（用你自己的记忆、权限和电脑），不占群里的发言。你在这里说的话和发的文件会出现在群里。`,
+		`这是第 ${run.revision} 次修订的执行，由你的帮手在你自己的任务会话里进行（用你自己的记忆、权限和电脑），不占群里的发言。群里能看到你在做什么和结果，工具步骤留在详情里。`,
 		"做完用 work_submit 提交结果（产物在哪、怎么检查）；做不下去就用 work_submit 写清真实阻塞；中途有阶段性进展用 work_report。不要自行把任务标成完成，也不要只聊天不干活。",
 	].filter(Boolean).join("\n");
 }
@@ -91,31 +97,68 @@ export function recordProgress(item: Pick<WorkItemRow, "id" | "room_id">) {
 	if (item.room_id) port()?.noteProgress(item.room_id);
 }
 
-/** 派出一次执行：立刻在负责人的任务会话里开始（不排进群队列），结束后回到 finishRun。 */
+/** 派出一次执行：立刻派负责人的帮手开始（不排进群队列，帮手名额满了就排队），结束后回到 finishRun。 */
 export function dispatchRun(item: WorkItemRow, run: WorkRunRow) {
 	const conv = execConversation(item, run.owner_agent_id);
+	const a = getAgent(run.owner_agent_id);
+	const model = a ? runtime(run.owner_agent_id, conv).modelFor(a) : null;
+	if (!model) throw new Error("负责人没有可用的模型");
+	live.set(run.id, { itemId: item.id, agentId: run.owner_agent_id, conversationId: conv });
+	let h: Subagent;
+	try {
+		h = spawnSubagent(run.owner_agent_id, conv, model, { task: execPrompt(itemRow(item.id) ?? item, run), kind: "work", title: `任务：${item.title}`.slice(0, 60), workRunId: run.id, scope: helperScope(run.owner_agent_id, conv) });
+	} catch (e) {
+		live.delete(run.id);
+		throw e;
+	}
 	const t = now();
-	db.prepare("UPDATE work_item_runs SET status = 'running', started_at = ?, exec_kind = 'session' WHERE id = ? AND status = 'queued'").run(t, run.id);
+	db.prepare("UPDATE work_item_runs SET status = 'running', started_at = ?, exec_kind = 'helper', exec_id = ? WHERE id = ? AND status = 'queued'").run(t, h.id, run.id);
 	db.prepare("UPDATE work_items SET status = CASE WHEN status = 'blocked' THEN 'active' ELSE status END, updated_at = ? WHERE id = ? AND revision = ?").run(t, item.id, item.revision);
 	recordProgress(item);
-	event(item.id, "run.started", { kind: "agent", agentId: run.owner_agent_id }, run.revision, { runId: run.id, conversationId: conv });
-	live.set(run.id, { itemId: item.id, agentId: run.owner_agent_id, conversationId: conv });
+	event(item.id, "run.started", { kind: "agent", agentId: run.owner_agent_id }, run.revision, { runId: run.id, conversationId: conv, helperId: h.id });
 	emit(item.room_id);
-	const prompt = execPrompt(itemRow(item.id) ?? item, run);
-	void (async () => {
-		let res: { ok: boolean; aborted: boolean; error?: string; text: string };
-		try {
-			res = await runtime(run.owner_agent_id, conv).turn(prompt);
-		} catch (e) {
-			res = { ok: false, aborted: false, error: e instanceof Error ? e.message : String(e), text: "" };
+}
+
+/** 执行帮手到终态：映射成这次执行的结束（帮手续聊后再次结束不重复记）。 */
+function helperEnded(r: Subagent) {
+	const run = r.work_run_id ? runRow(r.work_run_id) : undefined;
+	if (!run || !["queued", "running"].includes(run.status) || run.exec_id !== r.id) return;
+	live.delete(run.id);
+	const status: WorkRunStatus = r.status === "done" ? "done" : r.status === "stopped" ? "cancelled" : r.status === "lost" ? "interrupted" : "error";
+	try {
+		finishRun(run.id, status, r.result_summary ?? "", status === "error" ? r.error_reason || "执行失败" : null);
+	} catch (e) {
+		console.warn(`[work] 收尾失败：${e instanceof Error ? e.message : e}`);
+	}
+}
+bus.on((e) => {
+	const r = (e as { type: string; subagent?: Subagent }).type === "subagent.updated" ? (e as { subagent?: Subagent }).subagent : undefined;
+	if (r?.kind === "work" && !isLiveSubagent(r.status)) helperEnded(r);
+});
+const helperOfRun = (runId: string) => {
+	const run = runRow(runId);
+	return run?.exec_kind === "helper" && run.exec_id ? getSubagent(run.exec_id) : undefined;
+};
+
+/**
+ * 核验通过后：这一修订的执行帮手（含它们派的下一层）写下的记忆草稿自动转正（决策 0014）。
+ * 没通过核验的修订、不属于任务的草稿都不动，仍等主会话确认。返回转正了几条。
+ */
+export async function promoteRunMemories(itemId: string, revision: number) {
+	const runs = db.prepare("SELECT exec_id, owner_agent_id FROM work_item_runs WHERE work_item_id = ? AND revision = ? AND exec_kind = 'helper' AND exec_id IS NOT NULL").all(itemId, revision) as { exec_id: string; owner_agent_id: string }[];
+	let n = 0;
+	for (const owner of new Set(runs.map((r) => r.owner_agent_id))) {
+		const top = runs.filter((r) => r.owner_agent_id === owner).map((r) => r.exec_id);
+		const kids = top.flatMap((id) => (db.prepare("SELECT id FROM subagents WHERE parent_subagent_id = ?").all(id) as { id: string }[]).map((k) => k.id));
+		const ids = new Set([...top, ...kids]);
+		for (const d of await memory.listDrafts(owner)) {
+			if (!d.taskId || !ids.has(d.taskId)) continue;
+			await memory.promote(owner, d.id, { actor: "main" });
+			n++;
 		}
-		live.delete(run.id);
-		try {
-			finishRun(run.id, res.aborted ? "cancelled" : res.error ? "error" : "done", res.text ?? "", res.error ?? null);
-		} catch (e) {
-			console.warn(`[work] 收尾失败：${e instanceof Error ? e.message : e}`);
-		}
-	})();
+	}
+	if (n) event(itemId, "memory.promoted", { kind: "user" }, revision, { count: n });
+	return n;
 }
 
 /** 派发本身失败（负责人不可用等）：执行记失败、任务明确受阻，不留假“进行中”。 */
@@ -247,30 +290,39 @@ export async function cancelWorkRuns(itemId: string, o: { abortCurrent: boolean 
 	for (const run of runs) db.prepare("UPDATE work_item_runs SET status = 'cancelled', finished_at = COALESCE(finished_at, ?) WHERE id = ? AND status IN ('queued','running')").run(now(), run.id);
 	if (!o.abortCurrent) return;
 	for (const run of runs) {
-		const l = live.get(run.id);
-		if (l) await runtime(l.agentId, l.conversationId).abort({ scope: "conversation" }).catch(() => {});
+		live.delete(run.id);
+		const h = run.exec_kind === "helper" && run.exec_id ? getSubagent(run.exec_id) : undefined;
+		if (h && isLiveSubagent(h.status)) await stopSubagent(h.id).catch(() => {});
 	}
 }
 
 /** 自主模式下同伴在群里回复了正在执行任务的成员：作为插话送进它的任务会话（下一个工具边界生效）。 */
 export function steerToLiveRun(roomId: string, agentId: string, text: string) {
-	for (const [, l] of live) {
+	for (const [runId, l] of live) {
 		if (l.agentId !== agentId || itemRow(l.itemId)?.room_id !== roomId) continue;
-		const rt = runtime(l.agentId, l.conversationId);
-		if (rt.busy) void rt.send(text).catch(() => {});
+		const h = helperOfRun(runId);
+		if (h && isActiveSubagent(h.status)) void messageSubagent(h.id, text).catch(() => {});
 		return true;
 	}
 	return false;
 }
 
 /**
- * 重启：把“发出去了但不知道结果”的执行标成中断，任务状态保持原样（不自动完成、不自动重派）。
+ * 重启：帮手执行交给帮手的重启判定（安全就续跑、不安全标中断待核验），这里只接回执行上下文；
+ * 旧版在会话里跑的执行（“发出去了但不知道结果”）标成中断，任务状态保持原样（不自动完成、不自动重派）。
  * 之后由「卡住没进展」的检测叫管理者来决定是否继续。
  */
 export function bootstrapWorkItems() {
 	const rows = db.prepare("SELECT * FROM work_item_runs WHERE status IN ('queued','running')").all() as unknown as WorkRunRow[];
 	let n = 0;
 	for (const run of rows) {
+		const h = helperOfRun(run.id);
+		if (h && isLiveSubagent(h.status)) {
+			const conv = h.conversation_id;
+			live.set(run.id, { itemId: run.work_item_id, agentId: run.owner_agent_id, conversationId: conv });
+			continue;
+		}
+		if (h) { helperEnded(h); n++; continue; }
 		db.prepare("UPDATE work_item_runs SET status = 'interrupted', finished_at = ? WHERE id = ? AND status IN ('queued','running')").run(now(), run.id);
 		const item = itemRow(run.work_item_id);
 		if (!item) continue;

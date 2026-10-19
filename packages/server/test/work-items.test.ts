@@ -1,42 +1,48 @@
 import "./setup.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { memoryCredentialStore } from "./in-memory-credentials.ts";
 
 /**
  * 长期任务（任务责任）与单次执行分离的定向测试。
  *
  * 边界：只读写本进程临时数据目录（test/setup.ts 强制），不起模型 / 浏览器 / 付费调用。
- * 执行在负责人自己的隐藏任务会话里跑（work-items/exec.ts）：这里把 AgentRuntime.turn 换成可控的假实现——
- * 任务会话的回合挂起等测试决定怎么结束（完成 / 出错 / 中止）；群会话的回合（管理者被唤醒）立即结束并记下来。
+ * 执行是负责人在自己的隐藏任务会话上派的帮手（work-items/exec.ts → spawnSubagent kind=work）：这里装一个可控的帮手 driver——
+ * 帮手的执行挂起等测试决定怎么结束（完成 / 出错 / 被停）；群会话的回合（管理者被唤醒）用假的 AgentRuntime.turn 立即结束并记下来。
  */
+process.env.PIA_MOCK = "1";
 const { db, now } = await import("../src/db.ts");
+const { initModels } = await import("../src/models.ts");
+await initModels(memoryCredentialStore()); // 只用内存凭据：帮手按 mock 模型登记，不调用任何真实模型
 const R = await import("../src/runtime.ts");
+const S = await import("../src/subagents.ts");
 const rooms = await import("../src/rooms/index.ts");
 const W = await import("../src/work-items.ts");
 const { requests } = await import("../src/requests.ts");
 const { roomOfConversation } = await import("../src/messages.ts");
 
 type Res = { ok: boolean; aborted: boolean; error?: string; text: string; tokens: number };
-type Call = { agentId: string; conv: string; prompt: string; finish: (r?: Partial<Res>) => void; done: boolean };
+type Call = { agentId: string; conv: string; prompt: string; helperId?: string; finish: (r?: Partial<Res>) => void; done: boolean };
 const calls: Call[] = [];
 const proto = Object.getPrototypeOf(R.runtime("wm", "conv_probe")) as Record<string, unknown>;
-const live = new Map<string, Call>();
 proto.turn = function (this: { id: string; conversationId: string }, prompt: string) {
-	return new Promise<Res>((resolve) => {
-		const c: Call = { agentId: this.id, conv: this.conversationId, prompt, done: false, finish: (r = {}) => {
+	calls.push({ agentId: this.id, conv: this.conversationId, prompt, done: true, finish: () => {} });
+	return Promise.resolve<Res>({ ok: true, aborted: false, text: "", tokens: 0 }); // 群会话：管理者被唤醒的回合直接结束
+};
+proto.modelFor = () => ({ provider: "mock", id: "echo" });
+S.setSubagentDriver({
+	run: (r, connect, input) => new Promise<string>((resolve, reject) => {
+		const c: Call = { agentId: r.agent_id, conv: r.conversation_id, prompt: input?.text ?? r.task, helperId: r.id, done: false, finish: (x = {}) => {
 			if (c.done) return;
 			c.done = true;
-			live.delete(this.conversationId);
-			resolve({ ok: !r.error && !r.aborted, aborted: false, text: "", tokens: 0, ...r });
+			if (x.error) reject(new Error(x.error));
+			else resolve(x.text ?? "");
 		} };
 		calls.push(c);
-		if (W.execOf(this.conversationId)) live.set(this.conversationId, c);
-		else c.finish({ text: "" }); // 群会话：管理者被唤醒的回合直接结束
-	});
-};
-proto.abort = async function (this: { conversationId: string }) {
-	live.get(this.conversationId)?.finish({ aborted: true });
-};
+		connect(async () => c.finish({ aborted: true }), async () => {});
+	}),
+	notify: async () => {},
+});
 
 const settle = async () => {
 	for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
@@ -93,7 +99,7 @@ test("执行在负责人自己的隐藏任务会话里跑，不占群回合；�
 	assert.match(c.prompt, /给你分配了任务/);
 	assert.match(c.prompt, new RegExp(`任务编号：${id}`));
 	assert.doesNotMatch(c.prompt, /（管理者）/);
-	assert.equal(runRows(id)[0].exec_kind, "session");
+	assert.equal(runRows(id)[0].exec_kind, "helper", "执行跑在负责人的帮手上");
 	assert.equal((db.prepare("SELECT COUNT(*) AS n FROM room_turns WHERE room_id = ? AND reason != 'check'").get(room.id) as { n: number }).n, turnsBefore, "不进群的发言队列");
 	// 结束但没提交：任务不完成，管理者被叫醒
 	const w0 = wakes(room.id);
@@ -356,11 +362,15 @@ test("工具分工：群里管理者有记录 / 核验 / 改 / 请用户决定�
 	assert.equal(row(item).status, "done");
 });
 
-test("重启：执行标中断、任务状态不变、绝不自动重派", async () => {
+test("重启：执行帮手走帮手的重启判定——还在跑的接回执行上下文；无法确认进度的标中断，任务状态不变、绝不自动重派", async () => {
 	const id = makeItem("wa", true);
 	const c = await started(id);
 	const before = runRows(id).length;
-	assert.ok(W.bootstrapWorkItems() >= 1);
+	assert.equal(W.bootstrapWorkItems(), 0, "帮手还在跑：只接回执行上下文，不标中断");
+	assert.equal(runRows(id)[0].status, "running");
+	S.recoverSubagents(); // 模拟重启：这个帮手还没落库会话，无法确认做到哪一步 → 中断待核验
+	await settle();
+	assert.equal(S.getSubagent(c.helperId!)!.status, "lost");
 	assert.equal(runRows(id).length, before, "重启不新建执行");
 	assert.equal(runRows(id)[0].status, "interrupted");
 	assert.equal(row(id).status, "active");

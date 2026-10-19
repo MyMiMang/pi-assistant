@@ -187,12 +187,21 @@ export interface TranscriptItem {
 	meta: Record<string, unknown>;
 	status: string;
 }
+/** 群里人人能看到的帮手概况：谁派的、在做什么、当前步骤、结果（工具步骤和命令输出不进群，见 helper-scope.ts）。 */
+const HELPER_ST: Record<string, string> = { queued: "排队中", running: "进行中", stalled: "暂无进展", done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "中断待核验" };
+function helperCardLine(who: string, m: Record<string, unknown>) {
+	const h = (m.subagent ?? {}) as { title?: string | null; task?: string; status?: string; result_summary?: string | null; error_reason?: string | null };
+	const one = (t: string | null | undefined, n: number) => { const x = String(t ?? "").replace(/\s+/g, " ").trim(); return x.length > n ? `${x.slice(0, n)}…` : x; };
+	const end = h.status === "done" ? one(h.result_summary, 300) : ["failed", "timeout", "lost"].includes(h.status ?? "") ? one(h.error_reason, 200) : "";
+	return `[${who} 的帮手] ${one(h.title || h.task, 60)}（${HELPER_ST[h.status ?? ""] ?? h.status ?? ""}${m.currentStep && !end ? `，当前步骤：${String(m.currentStep)}` : ""}${end ? `：${end}` : ""}）`;
+}
 const cardLine = (who: string, m: Record<string, unknown>) => {
 	const st = String(m.status ?? "");
 	const stTxt = ({ pending: "等待用户处理", approved: "用户已批准", rejected: "用户已拒绝", answered: "用户已回答", expired: "已过期", done: "已完成", failed: "失败", cancelled: "已取消", running: "进行中", queued: "排队中" } as Record<string, string>)[st] ?? st;
 	if (m.kind === "approval") return `[${who} 请求批准] ${String(m.summary ?? m.toolName ?? "")}（${stTxt}）`;
 	if (m.kind === "question") return `[${who} 提问] ${String(m.question ?? "")}（${stTxt}${m.answer ? `：${String(m.answer)}` : ""}）`;
 	if (m.kind === "task") return `[${who} 的后台任务] ${String(m.title ?? "")}（${stTxt}）`;
+	if (m.kind === "subagent") return helperCardLine(who, m);
 	return `[${who} 的卡片]`;
 };
 /**

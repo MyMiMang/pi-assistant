@@ -854,7 +854,7 @@ bus.on((e) => {
 const used = (agentId: string) => !!db.prepare("SELECT 1 FROM messages WHERE agent_id = ? AND role = 'user' LIMIT 1").get(agentId);
 /** 可能存在未闭环的事（未完成/失败的内部任务、待回应的请求、最近用户说过话）→ 低频兜底仍要覆盖，不为了省 token 砍掉主动性。 */
 function hasUnclosed(agentId: string, t: number) {
-	if (db.prepare("SELECT 1 FROM subagents WHERE agent_id = ? AND kind IS NOT NULL AND (status IN ('queued','running','stalled') OR (status IN ('failed','lost','timeout') AND finished_at >= ?)) LIMIT 1").get(agentId, t - 3 * 86400_000)) return true;
+	if (db.prepare("SELECT 1 FROM subagents WHERE agent_id = ? AND kind IN ('task','routine','heartbeat') AND (status IN ('queued','running','stalled') OR (status IN ('failed','lost','timeout') AND finished_at >= ?)) LIMIT 1").get(agentId, t - 3 * 86400_000)) return true;
 	if (db.prepare("SELECT 1 FROM requests WHERE agent_id = ? AND status = 'pending' LIMIT 1").get(agentId)) return true;
 	return !!db.prepare("SELECT 1 FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.agent_id = ? AND m.role = 'user' AND COALESCE(c.hidden,0) = 0 AND m.created_at >= ? LIMIT 1").get(agentId, t - 3 * 86400_000);
 }

@@ -2,6 +2,7 @@
 import { createAgentSession } from "./agent-session.ts";
 import { subagentNotifyText } from "../subagent-supervision.ts";
 import { toolExpectMs } from "../subagent-stuck.ts";
+import { awaitChildResults } from "../helper-scope.ts";
 import { setSubagentDriver, getSubagent, subagentActivity, isActiveSubagent, switchSubagentModel, planFallback, livePool, modelKey, resolveSubagentThinking, resolveSubagentFast, setSubagentRetryAt, type Subagent, type SubagentEvent } from "../subagents.ts";
 import { classifyModelError, isRecoverableModelError } from "../model-errors.ts";
 import { assessResumeSafety, shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY_PROMPT } from "../subagent-resume.ts";
@@ -24,6 +25,8 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 		const stored = ((): { provider: string; id: string }[] => {
 			try { const v = JSON.parse(r.model_pool ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
 		})();
+		// 帮手最多再派一层：第一层能派（巡检除外，保持安静便宜），第二层不能
+		const nest = !r.parent_subagent_id && r.kind !== "heartbeat";
 		const candidates = livePool([{ provider: r.model_provider, id: r.model_id }, ...stored.filter((m) => modelKey(m) !== `${r.model_provider}/${r.model_id}`)]);
 		if (!candidates.length) throw new Error("子代理模型已不可用，候选池里也没有其他可用模型");
 		let current = candidates[0];
@@ -36,8 +39,8 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 					sessionDir: join("subagents", r.id),
 					sessionFile: r.session_file,
 					model: { provider: candidates[i].provider, id: candidates[i].id }, thinking: agentThinking(candidates[i]),
-					rules: ["你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报：最后用几句话给出结果摘要（做了什么、产出在哪、还有什么没做），不要复述过程。你用 memory_remember 记下的是 task 草稿（默认不会写进共享的「关于用户」事实库），由主会话核验后才会晋升为长期事实。"],
-					conversationId: r.conversation_id, taskId: r.id, ext: { allowSpawn: false, subagentId: r.id, actor: "subagent" },
+					rules: [`你是后台子代理，执行分配的任务。${nest ? "可以再派最多一层帮手（spawn_subagent），只用于可并行或耗时的大块；你派的帮手不能再派。派了就由系统等它们结束、把结果交给你整合。" : "不能再派子代理；没有 spawn_subagent/spawn_task 工具。"}用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报：最后用几句话给出结果摘要（做了什么、产出在哪、还有什么没做），不要复述过程。你用 memory_remember 记下的是 task 草稿（默认不会写进共享的「关于用户」事实库），由主会话核验后才会晋升为长期事实；属于群任务的，任务通过核验后自动转正。`, ...(r.scope ? [r.scope] : [])],
+					conversationId: r.conversation_id, taskId: r.id, ext: { allowSpawn: nest, subagentId: r.id, actor: "subagent" },
 				});
 				current = candidates[i];
 			} catch (e) {
@@ -123,6 +126,14 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 				await promptSession(session, `（系统通知）上一个模型不可用，已切换到 ${next.provider}/${next.id}。请从断点继续完成这个任务：已经完成的步骤不要重做，也不要重复已经产生的副作用；某个操作状态不明的，先核实实际结果再决定。`);
 			}
 			if (error) throw new Error(error);
+			// 自己派的下一层帮手：等它们结束、把结果交给自己整合（有界：最多 5 轮）
+			const seen = new Set<string>();
+			for (let round = 0; nest && round < 5; round++) {
+				const note = await awaitChildResults(r.id, seen, () => isActiveSubagent(getSubagent(r.id)!.status));
+				if (!note || !isActiveSubagent(getSubagent(r.id)!.status)) break;
+				await promptSession(session, note);
+				if (error) throw new Error(error);
+			}
 			return lastAssistantText(session);
 		} finally {
 			for (const mid of routed) updateMessage(mid, { meta: { delivery: "stopped" } });

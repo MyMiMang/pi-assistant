@@ -123,7 +123,10 @@ try {
 	// 群里仍是主入口：成员真实产物、管理者核验结论可见；结果卡不重复刷屏
 	const roomMsgs = await j(`/api/rooms/${room.id}/messages`);
 	const texts = roomMsgs.map((m) => String(m.content ?? ""));
-	assert.ok(texts.some((t) => /已提交结果.*out\.txt/.test(t)), "成员在自己的回合把真实交付说在群里");
+	// 执行跑在成员的帮手上：群里看到帮手卡片（在做什么 / 结果）和交付的文件；工具步骤留在帮手详情
+	assert.ok(roomMsgs.some((m) => m.role === "card" && m.meta?.kind === "subagent" && m.meta?.subagent?.kind === "work" && /已提交结果.*out\.txt/.test(m.meta.subagent.result_summary ?? "")), "成员的执行帮手结果在群里可见");
+	assert.ok(roomMsgs.some((m) => (m.meta?.attachments ?? []).some((f) => f.name === "out.txt")), "交付的文件进了群");
+	assert.ok(!roomMsgs.some((m) => m.role === "tool" && m.agent_id === member.id && ["write", "deliver_file", "work_submit"].includes(m.meta?.toolName)), "成员执行帮手的工具步骤不进群");
 	assert.ok(texts.some((t) => /任务「季度报告」核验通过/.test(t)), "管理者核验结论回到原群");
 	assert.ok(texts.some((t) => /已退回修改|已重开/.test(t)), "退回修改 / 重开也在群里可见");
 	const cards = roomMsgs.filter((m) => m.role === "card" && m.meta?.kind === "work-result" && m.meta?.workItemId === first.id);

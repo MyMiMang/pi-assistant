@@ -8,8 +8,8 @@
 
 ## 正在做
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
-- 群聊协作已实现（未打包，[设计](design/group-collaboration.md)）：任务在负责人自己的会话里执行，管理者按事件唤醒，三种卡住检测，等你决定，停群不停任务；work-items / rooms 已拆到 600 行以下。单聊入口还没接（核心与来源无关，单聊只需在入口调 setWorkSourceProvider + workItemTools）。
-- 任务类机制合并（[决策 0014](decisions/0014-task-and-helper.md)，[设计](design/task-architecture-analysis.md) §7 看进度，未打包）：已做第 1–4 步：后台任务、定时任务、主动巡检的每次运行都是帮手（subagents 表 kind=task/routine/heartbeat，旧 tasks 表启动时同 id 迁过来），重启判定、卡住上报、停止、继续都走子代理那一套。卡住处理已按用户反馈改成主会话自己解决（先诊断、再按阶梯处理，只为批准 / 凭据等找用户，不再问「继续等 / 停止」）。
+- 群聊协作已实现（未打包，[设计](design/group-collaboration.md)）：任务由负责人派的帮手在它自己的任务会话里执行，管理者按事件唤醒，三种卡住检测，等你决定，停群不停任务；work-items / rooms 已拆到 600 行以下。单聊入口还没接（核心与来源无关，单聊只需在入口调 setWorkSourceProvider + workItemTools）。
+- 任务类机制合并（[决策 0014](decisions/0014-task-and-helper.md)，[设计](design/task-architecture-analysis.md) §7 看进度，未打包）：已做第 1–5 步：后台任务、定时任务、主动巡检的每次运行都是帮手（subagents 表 kind=task/routine/heartbeat，旧 tasks 表启动时同 id 迁过来），重启判定、卡住上报、停止、继续都走子代理那一套。卡住处理已按用户反馈改成主会话自己解决（先诊断、再按阶梯处理，只为批准 / 凭据等找用户，不再问「继续等 / 停止」）。第 5 步：群任务的每次执行是负责人的帮手（kind=work），帮手最多再派一层（继承角色范围，结果交回上一层），群成员派的帮手自动带角色范围（不替别的角色干活、不直接找成员 / 协调者）；群里人人看得到帮手概况和结果，完整步骤只给派它的助理和用户（设置 `groupHelperDetail`，默认 owner）；任务核验通过后执行记忆草稿自动转正。
 - 本地语音已改为可选模块（[设计](design/local-voice-optional.md)，未打包）。
 
 ## 交付标准

@@ -104,7 +104,9 @@ try {
 
 	console.log("[5] 停群不停任务；看板「全部暂停」才停");
 	const long = await create("取消隔离探针", worker.id, true);
-	const running = async () => (await messages()).some((m) => m.role === "tool" && m.status === "running" && String(m.meta?.args?.command).includes("cancellation-probe.txt"));
+	// 群任务执行跑在成员的帮手上：命令在帮手详情里（群里只看到帮手卡片）
+	const execSteps = async () => (await Promise.all((await j(`/api/subagents?agent=${worker.id}&room=${room.id}`)).filter((x) => x.kind === "work").map((h) => j(`/api/subagents/${h.id}`)))).flatMap((d) => d.messages);
+	const running = async () => (await execSteps()).some((m) => m.role === "tool" && m.status === "running" && String(m.meta?.args?.command).includes("cancellation-probe.txt"));
 	await wait(running, 20000, "work bash running");
 	await j(`/api/rooms/${room.id}/stop`, "POST", {});
 	await new Promise((r) => setTimeout(r, 1500));

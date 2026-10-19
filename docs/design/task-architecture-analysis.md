@@ -188,7 +188,7 @@ flowchart LR
 - **帮手再派帮手**：用户已定——允许，但最多一层（第二层不能再派）。
 - **记忆范围**：用户已定——执行中写的记忆先是草稿，所属任务通过核验后自动转正；没通过核验就保持草稿等主会话确认。
 - **并发语义**：全局 3 → 每助理 maxConcurrent；群任务从不限变成有限，群里可能出现排队。
-- **群可见性**：执行会话里的步骤目前不在群里显示，换成子代理后详情页可见，需确认群成员能否看。
+- **群可见性**：用户已定——群里人人看得到帮手概况和结果，完整步骤只给派它的助理和用户（一个设置，默认如此）。
 - **重启行为变化**：后台任务从“总是续跑”变成“不安全时标 lost 等人”，例行任务可能更常停下来等确认。
 - **数据迁移**：tasks 历史、routine_runs/proactive_runs 的外键、task_waits 里引用 task id 的等待、wake claims 去重。
 - **界面**：Tasks.tsx/Subagents.tsx/WorkItems 三处入口和 e2e（subagents.mjs、tasks 相关、群协作 e2e）都要改。
@@ -213,5 +213,5 @@ flowchart LR
 | 1 不改行为的整理 | 已完成：三处建会话合成 `agent-runtime/agent-session.ts` 的 `createAgentSession`；状态词前端只留 `Tasks.tsx` 一张表（任务卡片、帮手列表共用；lost 统一叫「中断待核验」） |
 | 2 后台任务重启安全判定 | 已完成：`tasks.recover()` 复用 `sessionResumeSafety`，不安全标 lost（中断待核验），卡片「继续」走 `verifyResumePrompt`；单测 `background-task-restart.test.ts`，e2e `task-restart-ui.mjs` |
 | 3 共用卡住检测 | 已完成，按用户反馈改过：规则合成 `stuck.ts`（群任务 watch/exec、群对话 collab 共用；单聊帮手复用指纹 / 反复判定）。单聊帮手 `subagent-stuck.ts`：先诊断（预计时长内的工具、仍在输出的命令（Pi 的工具输出更新转成 `tool_update`）、流式输出、工作区文件变化都不算卡住）；真卡住由主会话按阶梯自己处理（看记录 + `subagent_restart` 带纠正从检查点续跑 → 换做法 / 派新帮手 → 最后提醒 → 办法用尽失败并写明试过什么）；同一原因第 3 次起拒绝原样续跑；只有批准 / 凭据等用户才能给的东西才找用户。已删掉「继续等 / 停止这个帮手」提问卡片。单测 `subagent-stuck.test.ts`，e2e `stuck-escalation-ui.mjs`（慢但在动不报、真卡住自愈、只为审批找用户） |
-| 4 后台 / 定时 / 巡检跑在帮手上 + 历史迁移 | 已完成：`tasks.spawn` 改成 `spawnSubagent(kind=task/routine/heartbeat, title, routine_run_id)`，`tasks.recover/run/pump` 删除，重启只剩 `recoverSubagents`；旧 `tasks` 表启动时同 id 迁进 subagents（`migrateLegacyTasks`，幂等，已结束的标已通知；等待 task→subagent）；routines / proactive / task-waits / requests 改读 subagents 和 `subagent.updated`。后台任务结束仍是推送 + 对话里可见的报错 / 下一轮上下文（不额外唤醒模型）；带 kind 的帮手只有「用户已决定」会唤醒主会话；巡检卡住到问用户那一级直接停。单测 `background-task-restart.test.ts`（迁移 + 重启），e2e `task-restart-ui.mjs` 改走帮手详情 |
-| 5 群任务执行跑在帮手上 | 未开始：需要用户先决定群成员能否看到执行详情（见报告） |
+| 4 后台 / 定时 / 巡检跑在帮手上 + 历史迁移 | 已完成：`tasks.spawn` 改成 `spawnSubagent(kind=task/routine/heartbeat, title, routine_run_id)`，`tasks.recover/run/pump` 删除，重启只剩 `recoverSubagents`；旧 `tasks` 表启动时同 id 迁进 subagents（`migrateLegacyTasks`，幂等，已结束的标已通知；等待 task→subagent）；routines / proactive / task-waits / requests 改读 subagents 和 `subagent.updated`。后台任务结束仍是推送 + 对话里可见的报错 / 下一轮上下文（不额外唤醒模型）；带 kind 的帮手不唤醒主会话，卡住时系统重启一次、仍卡住就失败（按第 3 步修订后的规则）。单测 `background-task-restart.test.ts`（迁移 + 重启），e2e `task-restart-ui.mjs` 改走帮手详情 |
+| 5 群任务执行跑在帮手上 | 已完成：`dispatchRun` 改派负责人的帮手（`spawnSubagent(kind=work, work_run_id, scope)`，`work_item_runs.exec_kind=helper`），帮手到终态映射成 `finishRun`，暂停 / 取消停帮手，插话转给帮手，重启交给帮手的重启判定（`bootstrapWorkItems` 只接回上下文）；执行帮手有 `work_submit/work_report`，没有群发言工具；交付文件直接进群。帮手最多再派一层（`parent_subagent_id`，第二层拒绝；上一层在 driver 里等下一层结束并整合结果；下一层事件不唤醒主会话、卡住走系统阶梯）。角色范围 `helper-scope.ts` 的 `helperScope`（写进帮手系统规则，下一层继承；`spawn_subagent` 多了 `done_criteria`）。可见性设置 `groupHelperDetail`（默认 owner，接口 `/api/settings/group-helper-detail`）：别的成员用 `subagent_list` 只拿到概况，群转录里帮手卡片是「[某某 的帮手] 在做什么（状态 / 当前步骤 / 结果）」。核验通过 → `promoteRunMemories` 把这一修订执行帮手的草稿转正。单测 `group-helpers.test.ts`、`work-items.test.ts`（改用帮手 driver），e2e `group-helpers-ui.mjs`、`work-items-ui.mjs`、`work-items-boundaries.mjs`、`group-collab-ui.mjs` |

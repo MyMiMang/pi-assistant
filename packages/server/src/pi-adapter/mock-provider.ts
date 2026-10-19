@@ -129,6 +129,10 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 		if (id) return fauxAssistantMessage([fauxText("帮手卡住了，我看一下再带着纠正让它从检查点继续。"), fauxToolCall("subagent_restart", { id, note: "上一步的请求一直没返回，别再等它；直接检查已有结果，按更小的步骤继续" })]);
 	}
 	if (u.includes("（子代理事件 ")) return fauxAssistantMessage(`子代理回报：${u.replace(/^.*?）/, "").slice(0, 300)}`);
+	// 群里的帮手 e2e：第一层帮手把一块交给下一层（第二层没有 spawn_subagent），收到下一层结果后整合
+	if (u.startsWith("（系统通知：你派的下一层帮手都结束了）")) return fauxAssistantMessage(`整合了下一层帮手的结果：${u.split("\n")[1]?.slice(0, 120) ?? ""}`);
+	if (u.startsWith("（后台子代理任务）") && /分两块/.test(u) && last.role !== "toolResult" && tools.some((t) => t.name === "spawn_subagent")) return fauxAssistantMessage([fauxToolCall("spawn_subagent", { task: "第二块：核对台词格式", done_criteria: "三场台词格式统一" })]);
+	if (u.startsWith("（后台子代理任务）第二块") && last.role !== "toolResult") return fauxAssistantMessage([fauxToolCall("bash", { command: "echo 第二块完成：台词格式统一" })]);
 	if (u.startsWith("（后台子代理任务）")) {
 		// 模拟“可恢复的模型故障”：首次派活时报 429，让子代理在候选池内自动 fallback（续跑时会成功）
 		if (/限流测试/.test(u)) throw new Error("429 rate limit exceeded（模拟子代理模型限流）");

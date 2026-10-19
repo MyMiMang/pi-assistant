@@ -11,7 +11,7 @@
  */
 export * from "./work-items/store.ts";
 export * from "./work-items/guard.ts";
-export { bootstrapWorkItems, cancelWorkRuns, execConversationsOfRoom, execOf, finishRun, liveRunOf, reportProgress, steerToLiveRun, submitWorkItem, workPrompt } from "./work-items/exec.ts";
+export { bootstrapWorkItems, cancelWorkRuns, execConversationsOfRoom, execOf, finishRun, liveRunOf, promoteRunMemories, reportProgress, steerToLiveRun, submitWorkItem, workPrompt } from "./work-items/exec.ts";
 export * from "./work-items/actions.ts";
 export { answerDecision, askUserDecision, checkStalls, escalate, startWorkWatch } from "./work-items/watch.ts";
 export * from "./work-items/correction.ts";

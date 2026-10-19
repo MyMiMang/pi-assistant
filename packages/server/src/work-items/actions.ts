@@ -4,7 +4,7 @@
  * 群 → 任务的唯一入口是 onRoomWorkEvent；任务不跟群「停止」走（停群不停任务，只能单个暂停或一键全停）。
  */
 import { db, now, uid } from "../db.ts";
-import { cancelWorkRuns, createRun, dispatchRun, failRun, recordProgress, repeatOf, workPrompt } from "./exec.ts";
+import { cancelWorkRuns, createRun, dispatchRun, failRun, promoteRunMemories, recordProgress, repeatOf, workPrompt } from "./exec.ts";
 import {
 	activeMember,
 	actorKey,
@@ -127,6 +127,7 @@ export async function verifyWorkItem(o: { workItemId: string; actor: WorkActor; 
 		db.prepare("UPDATE work_items SET status = 'done', latest_progress = ?, blocker = NULL, verification = ?, completed_at = ?, auto_retries = 0, needs_user = NULL, escalation = NULL, updated_at = ? WHERE id = ? AND revision = ?").run(`已核验完成：${note.slice(0, 300)}`, verification, t, t, row.id, row.revision);
 		event(row.id, "verified.pass", o.actor, row.revision, { note: note.slice(0, 2000) });
 		roomNotice(row.room_id, `任务「${row.title}」核验通过：${note.slice(0, 300)}`, row.id);
+		await promoteRunMemories(row.id, row.revision).catch((e) => console.warn(`[work] 执行记忆转正失败：${e instanceof Error ? e.message : e}`));
 		emit(row.room_id);
 		return getWorkItemDetail(row.id);
 	}

@@ -28,6 +28,8 @@ try {
  const helper=await j("/api/agents","POST",{name:"乙",model:{provider:"mock",id:"echo"}});
  const mkRoom=(name)=>j("/api/rooms","POST",{name,memberIds:[manager.id,worker.id,helper.id],managerId:manager.id});
  a=await mkRoom("A任务群");b=await mkRoom("B独立工作群");c=await mkRoom("C故障协调群");
+ // 群任务执行跑在成员的帮手上：工具步骤在帮手详情里，不在群消息里
+ const execSteps=async(room)=>{const hs=(await j(`/api/subagents?agent=${worker.id}&room=${room.id}`)).filter(x=>x.kind==="work");return (await Promise.all(hs.map(h=>j(`/api/subagents/${h.id}`)))).flatMap(d=>d.messages);};
  const create=(room,title,owner=worker.id,start=false,extra={})=>j(`/api/rooms/${room.id}/work-items`,"POST",{title,requirement:"在原授权内整理可核验结果",doneCriteria:"结果有第 3 行检查点",ownerAgentId:owner,start,...extra});
  console.log("[1] 真实运行中的任务暂停：中止延迟写入，不停止B群同一助理的子代理");
  await j(`/api/rooms/${b.id}/messages`,"POST",{text:"@甲 派个子代理做一次隔离检查"});
@@ -35,7 +37,7 @@ try {
  await wait(async()=>{child=(await j(`/api/subagents?agent=${worker.id}&room=${b.id}`)).find(x=>x.status==="running");return !!child;},"B child running");
  const long = await create(a,"取消隔离探针",worker.id,true);
  const started=Date.now();
- await wait(async()=> (await messages(a)).some(m=>m.role==="tool"&&m.status==="running"&&m.meta?.toolName==="bash"&&String(m.meta?.args?.command).includes("cancellation-probe.txt")),"A bash actually running");
+ await wait(async()=> (await execSteps(a)).some(m=>m.role==="tool"&&m.status==="running"&&m.meta?.toolName==="bash"&&String(m.meta?.args?.command).includes("cancellation-probe.txt")),"A bash actually running");
  const other = await create(a,"同群其他任务",helper.id,true);
  const before=(await j(`/api/subagents/${child.id}`)).subagent;
  assert.equal(before.status,"running","暂停前B子代理确实仍在运行，不能用已经结束的任务假装隔离通过");
@@ -43,7 +45,7 @@ try {
  const after=(await j(`/api/subagents/${child.id}`)).subagent;
  assert.ok(["running","done"].includes(after.status),`B child未被连带停止: ${after.status}`);
  assert.equal((await detail(long.item.id)).item.status,"paused");
- await wait(async()=>!(await messages(a)).some(m=>m.role==="tool"&&m.status==="running"&&String(m.meta?.args?.command).includes("cancellation-probe.txt")),"A tool stopped");
+ await wait(async()=>!(await execSteps(a)).some(m=>m.role==="tool"&&m.status==="running"&&String(m.meta?.args?.command).includes("cancellation-probe.txt")),"A tool stopped");
  await wait(async()=> (await detail(other.item.id)).item.status==="done","other task continues",45000);
  assert.equal((await detail(long.item.id)).item.status,"paused","后续成员/管理者结束不能复活暂停项");
  console.log("[2] 真实成员故障 → 一次管理者协调 → 原任务改派乙继续 → 交付后核验");
@@ -56,7 +58,7 @@ try {
  assert.ok(fd.events.some(e=>e.kind==="reassigned")&&fd.events.some(e=>e.kind==="continued"));
  const fm=await messages(c);
  assert.ok(fm.some(m=>m.agent_id===manager.id&&m.role==="assistant"&&/改派乙/.test(m.content??"")),"管理者在原群说明下一步");
- assert.ok(fm.some(m=>m.agent_id===helper.id&&m.role==="assistant"&&/已提交结果/.test(m.content??"")));
+ assert.ok(fm.some(m=>m.agent_id===helper.id&&m.role==="card"&&m.meta?.kind==="subagent"&&/已提交结果/.test(m.meta?.subagent?.result_summary??"")),"乙的执行帮手结果在群里可见");
  assert.ok(fm.some(m=>m.role==="tool"&&m.meta?.toolName==="read"),"管理者实际读取交付，不仅自报完成");
 
  const x=await create(a,"乱序详情A"); const y=await create(a,"当前详情B");

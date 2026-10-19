@@ -6,7 +6,7 @@
  *  3. 同一原因反复失败：第 2 次提示换策略，第 3 次起拒绝原样续跑；
  *  4. 只有进展需要用户才能给的东西（批准 / 登录凭据 / 真正的决定 / 只有用户有的资源）才找用户，而且说清楚要什么——
  *     审批、提问本来就走 requests 卡片，等用户期间不算卡住。不再问用户「继续等 / 停止」。
- * 后台 / 定时 / 巡检的帮手没有主会话回合负责：系统自己走同一阶梯的机械部分（重启一次 → 失败并写明试过什么）。
+ * 后台 / 定时 / 巡检 / 群任务执行的帮手、下一层帮手没有主会话回合负责：系统自己走同一阶梯的机械部分（重启一次 → 失败并写明试过什么）。
  */
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -74,6 +74,7 @@ export function workspaceTouchedSince(dir: string, since: number): boolean {
  */
 export function diagnoseStall(r: Subagent, ts: number, toolUntil: number): string | null {
 	if (ts <= toolUntil) return null; // 工具还在预计时长内
+	if (db.prepare("SELECT 1 FROM subagents WHERE parent_subagent_id = ? AND status IN ('queued','running','stalled') LIMIT 1").get(r.id)) return null; // 在等自己派的下一层帮手
 	if (workspaceTouchedSince(workspaceOf(r.agent_id), r.last_activity_at)) return null; // 文件 / 日志还在变
 	const mins = Math.max(1, Math.round((ts - r.last_activity_at) / 60_000));
 	const tool = lastTool(r.id);
@@ -94,8 +95,8 @@ export async function superviseStall(r: Subagent, ts: number, toolUntil: number,
 	const rung = (l?.rung ?? 0) + 1, tried = l?.tried ?? [];
 	const next = (step: string): Ladder => ({ kind: "stall", rung, at: ts, tried: [...tried, step] });
 	const exhausted = () => h.fail(r.id, `一直卡住（${where}），${EXHAUSTED_MARK}：${[...tried].join("；") || "无"}`);
-	if (r.kind) {
-		// 没有主会话回合负责的帮手（后台 / 定时 / 巡检）：系统自己重启一次，仍卡住就失败并写明
+	if (r.kind || r.parent_subagent_id) {
+		// 没有主会话回合负责的帮手（后台 / 定时 / 巡检 / 群任务执行；下一层帮手的上一层在等它，结果由上一层收）：系统自己重启一次，仍卡住就失败并写明
 		if (rung > 1) return exhausted();
 		save(r.id, next("从最近检查点重启过一次"));
 		await h.restart(r.id, `系统发现你卡住了（${where}）。先确认卡在哪一步，换一种更稳的做法继续，不要原样重复刚才的操作。`);
