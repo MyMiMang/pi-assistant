@@ -263,7 +263,7 @@ export function dirSize(dir: string): number {
 		for (const e of list) {
 			const p = join(d, e.name);
 			if (e.isDirectory()) walk(p);
-			else if (e.isFile()) n += statSync(p).size;
+			else if (e.isFile()) try { n += statSync(p).size; } catch { /* 安装器的临时文件量到一半被删了：跳过 */ }
 		}
 	};
 	walk(dir);
