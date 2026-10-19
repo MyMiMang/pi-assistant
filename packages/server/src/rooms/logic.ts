@@ -77,7 +77,8 @@ export function normalizeCaps(c: Partial<RoomCaps> | null | undefined): RoomCaps
 	};
 }
 
-export type TurnReason = "mention" | "manager" | "assign" | "followup" | "resume";
+/** check = 关键事件唤醒管理者看看板；peer = 自主推进中成员 @ 了另一位成员 */
+export type TurnReason = "mention" | "manager" | "assign" | "followup" | "resume" | "check" | "peer";
 export interface PlannedTurn {
 	agentId: string;
 	reason: TurnReason;
@@ -87,9 +88,8 @@ export interface PlannedTurn {
 	depth: number;
 	/** 用户引用定向的一轮：只回应引用，默认不自动扩派（见 docs/design/message-replies.md §5） */
 	directed?: boolean;
-	/** 这一轮要执行的长期任务执行记录（派发时就精确绑定，不在轮到时猜） */
-	workItemId?: string;
-	workRunId?: string;
+	/** peer：是谁 @ 了它（回复会送回提问者正在跑的任务会话） */
+	from?: string;
 }
 
 /** 用户发言后谁来说：@ 了谁就是谁（按顺序）；没 @ = 只有管理者 */
@@ -145,7 +145,7 @@ export function planForUserWithQuote(o: {
  */
 export function planAfter(
 	turn: PlannedTurn,
-	o: { managerId: string | null; activeIds: string[]; assignments: { agentId: string; task?: string; workItemId?: string; workRunId?: string }[]; caps: RoomCaps; batchDone: boolean; anyWorkerRan: boolean },
+	o: { managerId: string | null; activeIds: string[]; assignments: { agentId: string; task?: string }[]; caps: RoomCaps; batchDone: boolean; anyWorkerRan: boolean },
 ): PlannedTurn[] {
 	const isMgr = turn.agentId === o.managerId;
 	if (isMgr) {
@@ -154,7 +154,7 @@ export function planAfter(
 		const seen = new Set<string>();
 		return o.assignments
 			.filter((a) => a.agentId !== o.managerId && o.activeIds.includes(a.agentId) && !seen.has(a.agentId) && (seen.add(a.agentId), true))
-			.map((a) => ({ agentId: a.agentId, reason: "assign" as const, task: a.task, depth, ...(a.workItemId ? { workItemId: a.workItemId, workRunId: a.workRunId } : {}) }));
+			.map((a) => ({ agentId: a.agentId, reason: "assign" as const, task: a.task, depth }));
 	}
 	if (turn.reason === "assign" && o.batchDone && o.anyWorkerRan && o.caps.followup && o.managerId && o.activeIds.includes(o.managerId))
 		return [{ agentId: o.managerId, reason: "followup", depth: turn.depth }];
@@ -168,6 +168,8 @@ export interface RoundCounters {
 }
 /** 下一次发言能不能进行；不能时给出原因（写进“本轮已暂停”提示） */
 export function capCheck(next: PlannedTurn, c: RoundCounters, caps: RoomCaps): string | null {
+	// 关键事件唤醒管理者、自主推进里的成员互相 @：不算“这一轮用户发言引出的回合”，不占每轮上限（防护靠卡住 / 空聊检测）。
+	if (next.reason === "check" || next.reason === "peer") return null;
 	if (c.turns >= caps.maxTurns) return `这一轮已经发言 ${c.turns} 次`;
 	// 管理者收尾（成员回报后的 followup）不占「同一助理每轮次数」：否则两波派活后管理者没法做总结。总次数 / token 上限仍然生效。
 	if (next.reason !== "followup" && (c.perAgent[next.agentId] ?? 0) >= caps.perAgent) return "同一个助理这一轮发言次数到上限了";
@@ -240,4 +242,26 @@ export function buildTranscript(
 	}
 	if (lines.length === 1 && lines[0].length > budgetChars) lines[0] = `${lines[0].slice(0, budgetChars)}…（已截断）`;
 	return { text: (omitted ? `（更早的 ${omitted} 条群消息已省略）\n` : "") + lines.join("\n"), lastSeq, omitted, files };
+}
+
+/**
+ * 自主推进中某位成员说完：它 @ 到的其他成员各叫醒一次（peer），@ 管理者则改为唤醒管理者看看板。
+ * 普通模式（没开自主推进）成员 @ 别人一律不触发，保持原来的规则。
+ */
+export function planPeerTurns(o: { fromAgentId: string; text: string; members: MemberRef[]; managerId: string | null; autonomous: boolean }): { turns: PlannedTurn[]; wakeManager: boolean } {
+	if (!o.autonomous || o.fromAgentId === o.managerId) return { turns: [], wakeManager: false };
+	const { ids } = parseMentions(o.text, o.members.filter((m) => m.id !== o.fromAgentId));
+	const peers = ids.filter((id) => id !== o.managerId && id !== o.fromAgentId);
+	return { turns: peers.map((agentId) => ({ agentId, reason: "peer" as const, depth: 0, task: o.text.slice(0, 2000), from: o.fromAgentId })), wakeManager: !!o.managerId && ids.includes(o.managerId) };
+}
+
+/**
+ * 「只聊不干活」：成员之间连续来回（peer 回合）却没有任何任务进展，就累加；有进展清零。
+ * 到阈值先叫管理者，到两倍阈值再请用户（并暂停成员互相叫醒，直到有进展或用户发话）。
+ */
+export function chatterStep(streak: number, o: { progressed: boolean; threshold: number }): { streak: number; level: "manager" | "user" | null } {
+	if (o.progressed) return { streak: 0, level: null };
+	const next = streak + 1;
+	const t = Math.max(2, o.threshold);
+	return { streak: next, level: next === t ? "manager" : next === t * 2 ? "user" : null };
 }

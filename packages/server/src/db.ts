@@ -131,6 +131,10 @@ CREATE TABLE IF NOT EXISTS room_turns (
   id TEXT PRIMARY KEY, room_id TEXT NOT NULL, round_id TEXT NOT NULL, agent_id TEXT NOT NULL, reason TEXT NOT NULL, task TEXT, depth INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL, error TEXT, tokens INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER);
 CREATE INDEX IF NOT EXISTS room_turns_r ON room_turns(room_id, created_at);
+-- 长期任务在负责人自己的隐藏会话里执行；这张表把会话映射回任务和来源群（消息归群、规则、工具都靠它）
+CREATE TABLE IF NOT EXISTS work_exec_conversations (
+  conversation_id TEXT PRIMARY KEY, work_item_id TEXT NOT NULL, agent_id TEXT NOT NULL, room_id TEXT, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS work_exec_item ON work_exec_conversations(work_item_id, agent_id);
 `);
 
 export function getSetting<T>(key: string, fallback: T): T {
@@ -176,6 +180,8 @@ for (const [table, col, ddl] of [
 	["agents", "scope", "TEXT NOT NULL DEFAULT 'user'"],
 	["agents", "room_id", "TEXT"],
 	["files", "room_id", "TEXT"],
+	// 群的自主推进：用户确认过的目标 + 完成标准（JSON；null = 普通聊天）
+	["rooms", "autonomy", "TEXT"],
 ] as const) {
 	const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
 	if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);

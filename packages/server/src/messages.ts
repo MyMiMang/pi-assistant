@@ -68,7 +68,11 @@ const roomOfConv = new Map<string, string | null>();
 export function roomOfConversation(conv: string | null | undefined): string | null {
 	if (!conv) return null;
 	if (roomOfConv.has(conv)) return roomOfConv.get(conv)!;
-	const r = (db.prepare("SELECT room_id FROM room_members WHERE conversation_id = ?").get(conv) as { room_id: string } | undefined)?.room_id ?? null;
+	// 群成员的群内会话，或长期任务在负责人自己会话里的执行（进展发回来源群）
+	const r =
+		(db.prepare("SELECT room_id FROM room_members WHERE conversation_id = ?").get(conv) as { room_id: string } | undefined)?.room_id ??
+		(db.prepare("SELECT room_id FROM work_exec_conversations WHERE conversation_id = ?").get(conv) as { room_id: string | null } | undefined)?.room_id ??
+		null;
 	if (r) roomOfConv.set(conv, r);
 	return r;
 }

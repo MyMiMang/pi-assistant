@@ -16,13 +16,10 @@
 		"packages/server/src/memory/hindsight/sidecar.ts": 602,
 		"packages/server/src/pi-adapter/index.ts": 995,
 		"packages/server/src/proactive.ts": 933,
-		"packages/server/src/rooms/index.ts": 1058,
 		"packages/server/src/subagents.ts": 711,
 		"packages/server/src/task-waits.ts": 634,
-		"packages/server/src/work-items.ts": 1251,
 		"packages/server/test/subagents.test.ts": 927,
 		"packages/server/test/voice-incremental.test.ts": 674,
-		"packages/server/test/work-items.test.ts": 674,
 		"packages/shared/src/theme-manifest.ts": 693,
 		"scripts/local-asr-real-smoke.mjs": 813
 	},

@@ -92,10 +92,15 @@ export const requests = {
 		}
 		return rows.length;
 	},
-	/** 群聊“停止”：这个群里还在等用户处理的请求一律按拒绝处理 */
-	cancelForRoom(roomId: string) {
-		const rows = db.prepare("SELECT id FROM requests WHERE status = 'pending' AND room_id = ?").all(roomId) as { id: string }[];
-		for (const r of rows) requests.resolve(r.id, { approved: false, answer: "（群聊已停止）", note: "用户停止了群聊" }, "system");
+	/**
+	 * 群聊“停止”：这个群里还在等用户处理的请求一律按拒绝处理。
+	 * except：长期任务的执行会话（停群不停任务）和「等你决定」的提问卡片保留。
+	 */
+	cancelForRoom(roomId: string, except: { exceptConversations?: string[]; exceptIds?: string[] } = {}) {
+		const rows = db.prepare("SELECT id, conversation_id FROM requests WHERE status = 'pending' AND room_id = ?").all(roomId) as { id: string; conversation_id: string | null }[];
+		const convs = new Set(except.exceptConversations ?? []);
+		const ids = new Set(except.exceptIds ?? []);
+		for (const r of rows) if (!ids.has(r.id) && !(r.conversation_id && convs.has(r.conversation_id))) requests.resolve(r.id, { approved: false, answer: "（群聊已停止）", note: "用户停止了群聊" }, "system");
 	},
 	cancelForTask(taskId: string) {
 		const rows = db.prepare("SELECT id FROM requests WHERE status = 'pending' AND task_id = ?").all(taskId) as { id: string }[];

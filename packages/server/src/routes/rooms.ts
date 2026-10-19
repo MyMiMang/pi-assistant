@@ -4,8 +4,8 @@ import { bus } from "../bus.ts";
 import { db } from "../db.ts";
 import { fileInfo, saveRoomUpload } from "../files.ts";
 import { getAgent } from "../runtime.ts";
-import { confirmMemberProposal, confirmProposal, continueRoom, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "../rooms/index.ts";
-import { createWorkItem, listWorkItems } from "../work-items.ts";
+import { confirmMemberProposal, confirmProposal, continueRoom, endAutonomy, setAutonomy, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "../rooms/index.ts";
+import { BOARD_GROUPS, createWorkItem, listWorkItems, pauseAllWorkItems, type BoardGroup } from "../work-items.ts";
 import { getMessage, updateMessage as patchMessage } from "../messages.ts";
 import { by, roomErr, type Env } from "./common.ts";
 import { agentJson, deleteAgentFully } from "./agents.ts";
@@ -77,6 +77,7 @@ export function mountRoomRoutes(app: Hono<Env>) {
 		const status = c.req.query("status");
 		return c.json(listWorkItems(c.req.param("rid"), {
 			status: status && ["pending", "active", "blocked", "review", "done", "paused", "cancelled", "open"].includes(status) ? (status as never) : undefined,
+			group: BOARD_GROUPS.includes(c.req.query("group") as BoardGroup) ? (c.req.query("group") as BoardGroup) : undefined,
 			limit: Number(c.req.query("limit") ?? 100),
 			before: c.req.query("before") ? Number(c.req.query("before")) : undefined,
 			beforeId: c.req.query("beforeId") || undefined,
@@ -90,6 +91,29 @@ export function mountRoomRoutes(app: Hono<Env>) {
 		} catch (e) {
 			return workErr(c, e);
 		}
+	});
+	/** 看板「全部暂停」：停群不停任务，要停这个群的全部任务用这里（只有用户）。 */
+	app.post("/api/rooms/:rid/work-items/pause-all", async (c) => {
+		try {
+			return c.json(await pauseAllWorkItems(c.req.param("rid")));
+		} catch (e) {
+			return workErr(c, e);
+		}
+	});
+	/** 自主推进：用户直接开启（目标 + 完成标准）/ 结束。 */
+	app.put("/api/rooms/:rid/autonomy", async (c) => {
+		const b = await c.req.json<{ goal?: string; doneCriteria?: string }>().catch(() => ({}) as { goal?: string; doneCriteria?: string });
+		try {
+			setAutonomy(c.req.param("rid"), b);
+			return c.json(roomJson(getRoom(c.req.param("rid"))!));
+		} catch (e) {
+			return roomErr(c, e);
+		}
+	});
+	app.delete("/api/rooms/:rid/autonomy", (c) => {
+		if (!getRoom(c.req.param("rid"))) return c.json({ error: "not_found" }, 404);
+		endAutonomy(c.req.param("rid"));
+		return c.json(roomJson(getRoom(c.req.param("rid"))!));
 	});
 	app.post("/api/rooms/:rid/stop", async (c) => c.json({ ok: await stopRoom(c.req.param("rid")) }));
 	app.post("/api/rooms/:rid/continue", (c) => {
@@ -121,10 +145,18 @@ export function mountRoomRoutes(app: Hono<Env>) {
 	/** 提议卡片（propose_room / room_propose_member）：用户在卡片上改完点确认才创建 */
 	app.post("/api/proposals/:mid/confirm", async (c) => {
 		const m = getMessage(c.req.param("mid"));
-		if (!m || m.role !== "card" || !["room-proposal", "member-proposal"].includes(String(m.meta.kind))) return c.json({ error: "not_found" }, 404);
+		if (!m || m.role !== "card" || !["room-proposal", "member-proposal", "room-goal"].includes(String(m.meta.kind))) return c.json({ error: "not_found" }, 404);
 		if (m.meta.status !== "pending") return c.json({ error: "这张卡片已经处理过了" }, 409);
-		const b = await c.req.json<{ proposal?: unknown; member?: unknown }>().catch(() => ({}) as { proposal?: unknown; member?: unknown });
+		const b = await c.req.json<{ proposal?: unknown; member?: unknown; goal?: string; doneCriteria?: string }>().catch(() => ({}) as { proposal?: unknown; member?: unknown; goal?: string; doneCriteria?: string });
 		try {
+			if (m.meta.kind === "room-goal") {
+				// 管理者提议的目标 + 完成标准：用户可在卡片上改，确认后开启自主推进
+				const roomId = String(m.meta.roomId);
+				if (!m.room_id || m.room_id !== roomId || !getRoom(roomId)) return c.json({ error: "not_found" }, 404);
+				const a = setAutonomy(roomId, { goal: b.goal ?? String(m.meta.goal ?? ""), doneCriteria: b.doneCriteria ?? String(m.meta.doneCriteria ?? "") });
+				patchMessage(m.id, { meta: { status: "confirmed", goal: a.goal, doneCriteria: a.doneCriteria } });
+				return c.json({ ok: true, room: roomJson(getRoom(roomId)!) });
+			}
 			if (m.meta.kind === "room-proposal") {
 				const p = normalizeProposal((b.proposal ?? m.meta.proposal) as never);
 				const room = await confirmProposal(p);

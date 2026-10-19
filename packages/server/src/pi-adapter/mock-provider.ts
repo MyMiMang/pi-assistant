@@ -433,7 +433,7 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 	const users = messages.filter((m) => m.role === "user").flatMap((m) => [...textOf(m).matchAll(/【用户】([^\n]*)/g)].map((x) => x[1]));
 	const said = users[users.length - 1] ?? "";
 	const target = said.match(/派给([^\s，,。]+)/)?.[1];
-	const isFollowup = /成员都已/.test(u);
+	const isFollowup = /成员都已|任务看板有变化/.test(u);
 	// 管理者跟进普通派活（没有待核验的长期任务）：「循环」再派一次，否则总结
 	const plainFollowup = () =>
 		/循环/.test(said) && target ? fauxAssistantMessage([fauxToolCall("room_assign", { assignments: [{ agent: target, task: "再做一遍" }] })]) : fauxAssistantMessage(`${me} 总结：大家都完成了。`);
@@ -480,6 +480,15 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 		const done = said.match(/完成标准[：:]\s*([^；;。]*)/)?.[1]?.trim() ?? "";
 		if (!title || !requirement || !done) return fauxAssistantMessage(`${me}：在记录任务前先确认一下：这件事的目标 / 范围和完成标准分别是什么？特别是怎样检查算做完。`);
 		return fauxAssistantMessage([fauxToolCall("work_create", { title, requirement, doneCriteria: done, owner: target, start: true })]);
+	}
+	// 群协作验收：用户让管理者「定个目标」→ room_goal 确认卡；看板唤醒时只对「需拍板」的卡住任务 work_ask_user
+	if (!isFollowup && u.includes("（管理者）") && /定个目标/.test(said) && last.role !== "toolResult") return fauxAssistantMessage([fauxToolCall("room_goal", { goal: said.replace(/^.*?定个目标[：:]?/, "").trim() || said, doneCriteria: "每项任务都有可核验的交付文件" })]);
+	if (last.toolName === "room_goal") return fauxAssistantMessage(`${me}：目标和完成标准发给你确认了，确认后大家自主推进。`);
+	if (isFollowup && /任务看板有变化/.test(u) && /需拍板/.test(u)) {
+		if (last.toolName === "work_ask_user") return fauxAssistantMessage(`${me}：有一件事需要你拍板，已放进「等你决定」。`);
+		const line = u.split("\n").find((x) => x.includes("需拍板") && /wi_/.test(x) && !x.includes("等你决定"));
+		const id = line?.match(/wi_[a-z0-9]+/i)?.[0];
+		if (id && last.role !== "toolResult") return fauxAssistantMessage([fauxToolCall("work_ask_user", { workItemId: id, question: "报表账号拿不到，先用公开数据还是等你开账号？", options: ["先用公开数据", "等我开账号"], reason: "成员没有报表权限" })]);
 	}
 	// 边界验收专用：一次真实成员故障后，由管理者在原群查看状态、改派并继续；不增加产品runner。
 	if (isFollowup && u.includes("失败协调探针")) {
@@ -541,6 +550,7 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 		const task = u.match(/给你分配了任务：([^\n]*)/)?.[1] ?? "";
 		// 只匹配当前指派：群转录可能含另一项已取消的探针，不能让乙也去跑甲的延迟命令。
 		if (/【长期任务】/.test(u) && task.includes("取消隔离探针")) return fauxAssistantMessage([fauxText(`${me}：开始延迟写入，等待取消验证。`), fauxToolCall("bash", { command: "sleep 20; printf unwanted > cancellation-probe.txt" })]);
+		if (/【长期任务】/.test(u) && task.includes("【卡点】") && last.toolName !== "work_submit") return fauxAssistantMessage([fauxToolCall("work_submit", { blocker: "缺少报表账号权限，拿不到数据" })]);
 		if (/【长期任务】/.test(u) && task.includes("失败协调探针") && me === "甲") throw new Error("模拟成员执行失败（失败协调探针）");
 		if (/【长期任务】/.test(u)) return fauxAssistantMessage([fauxToolCall("write", { path: "out.txt", content: "# 季度报告\n\n数据来源：Q3 内部表\n\n第 3 行检查点：每个结论都有来源链接\n" })]);
 

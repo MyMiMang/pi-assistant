@@ -6,7 +6,7 @@ import { type Env } from "./common.ts";
 // ---------------------------------------------------------------- 长期任务（任务责任）与执行分离
 export const workErr = (c: Context, e: unknown) => {
 	if (e instanceof WorkItemError) {
-		const status = e.code === "not_manager" || e.code === "not_owner" ? 403 : e.code === "not_found" || e.code === "room_not_found" ? 404 : e.code === "bad_status" || e.code === "already_running" ? 409 : 400;
+		const status = e.code === "not_manager" || e.code === "not_owner" ? 403 : e.code === "not_found" || e.code === "room_not_found" ? 404 : e.code === "bad_status" || e.code === "already_running" || e.code === "no_decision" ? 409 : 400;
 		return c.json({ error: e.message, code: e.code }, status);
 	}
 	return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
