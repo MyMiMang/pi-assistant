@@ -64,7 +64,7 @@ try {
  const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(10000);
  const errors=[];page.on("pageerror",e=>errors.push(e.message));
  await page.goto(`${base}/?room=${a.id}`);await page.getByTestId("room-work-items").waitFor();
- await page.getByTestId("room-work-items").click();await page.getByTestId("work-filter-pending").click();
+ await page.getByTestId("room-work-items").click();await page.getByTestId("work-filter-doing").click();
  console.log("[3] A详情迟到不得盖B，也不能看A却操作B");
  let release, seen;const held=new Promise(r=>release=r);const requested=new Promise(r=>seen=r);
  await page.route(`**/api/work-items/${x.item.id}`,async route=>{seen();await held;await route.continue();});
@@ -92,7 +92,7 @@ try {
  console.log("[5] 105条旧责任仍可达：筛选查全量，稳定游标追加不重不漏");
  for(let i=0;i<105;i++)await create(a,`历史责任${String(i).padStart(3,"0")}`);
  await page.getByTestId("sidebar-room").filter({hasText:"A任务群"}).click();
- await page.getByTestId("room-work-items").click();await page.getByTestId("work-filter-pending").click();
+ await page.getByTestId("room-work-items").click();await page.getByTestId("work-filter-doing").click();
  await wait(async()=>await page.getByTestId("work-item-row").count()===100,"first bounded page");
  await page.getByTestId("work-load-more").click();
  await wait(async()=>await page.getByTestId("work-item-row").count()===106,"remaining history accessible");
