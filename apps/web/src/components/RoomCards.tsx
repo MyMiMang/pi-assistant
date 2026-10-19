@@ -1,4 +1,4 @@
-import { Crown, Loader2, Plus, Trash2, Users, UserPlus, ChevronDown } from "lucide-react";
+import { Crown, Loader2, Plus, Trash2, Users, UserPlus, ChevronDown, Flag } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
@@ -254,6 +254,50 @@ export function RoomAgentActions({ agentId, variant }: { agentId: string; varian
 				</div>
 			)}
 			{done && <p className="mt-2 text-xs text-mut" data-testid="copy-done">{done}</p>}
+		</div>
+	);
+}
+
+/** 管理者提议的群目标（room_goal）：用户可改目标和完成标准，确认后群进入自主推进。 */
+export function RoomGoalCard({ m }: { m: Message }) {
+	const meta = m.meta;
+	const [goal, setGoal] = useState(String(meta.goal ?? ""));
+	const [doneCriteria, setDone] = useState(String(meta.doneCriteria ?? ""));
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	const pending = meta.status === "pending";
+	const done = meta.status === "confirmed";
+	const confirm = async () => {
+		setBusy(true);
+		setErr("");
+		try {
+			await api(`/api/proposals/${m.id}/confirm`, { method: "POST", json: { goal, doneCriteria } });
+			await useStore.getState().loadRooms();
+		} catch (e) {
+			setErr((e as Error).message);
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<div className={cx("pa-card w-full max-w-[560px]", done && "approved")} data-testid="room-goal">
+			<div className="pa-card-top">
+				<Flag className="pa-ic" />
+				<b>开启自主推进</b>
+				<span className="pa-tag">{done ? "已开启" : meta.status === "dismissed" ? "已取消" : "确认前不会开始"}</span>
+			</div>
+			<div className="space-y-2">
+				<label className="block text-xs text-mut">目标<textarea className="pa-input mt-1 !h-16 resize-y !p-2 text-sm" value={goal} disabled={!pending || busy} onChange={(e) => setGoal(e.target.value)} data-testid="room-goal-goal" /></label>
+				<label className="block text-xs text-mut">完成标准<textarea className="pa-input mt-1 !h-16 resize-y !p-2 text-sm" value={doneCriteria} disabled={!pending || busy} onChange={(e) => setDone(e.target.value)} data-testid="room-goal-done" /></label>
+				{pending && <p className="text-xs text-mut2">确认后成员可以互相 @ 协作，管理者在任务提交、卡住或定时检查时出来协调；只有需要你拍板的事才会问你。</p>}
+			</div>
+			{err && <p className="mt-2 text-xs text-red-600">{err}</p>}
+			{pending && (
+				<div className="pa-actions">
+					<button className="pa-btn ghost" disabled={busy} onClick={() => void api(`/api/proposals/${m.id}/dismiss`, { method: "POST" })} data-testid="room-goal-dismiss">先不用</button>
+					<button className="pa-btn primary" disabled={busy || !goal.trim() || !doneCriteria.trim()} onClick={confirm} data-testid="room-goal-confirm">{busy && <Loader2 className="pa-ic animate-spin" />} 确认开始</button>
+				</div>
+			)}
 		</div>
 	);
 }

@@ -31,7 +31,9 @@ export interface Agent {
 export interface RoomMember { agentId: string; name: string; avatar: string; color: string; left: boolean; deleted: boolean; scope: string; status: string }
 export interface RoomCaps { maxTurns: number; maxDepth: number; perAgent: number; tokenBudget: number; followup: boolean }
 export interface RoomState { running: boolean; current: { agentId: string; reason: string } | null; queue: string[] }
+export interface RoomAutonomy { goal: string; doneCriteria: string; startedAt: number }
 export interface Room {
+	autonomy?: RoomAutonomy | null;
 	id: string; name: string; purpose: string; managerId: string | null; caps: RoomCaps; unread: number; paused: { reason: string } | null;
 	members: RoomMember[]; last?: { content: string; role: string; agent_id: string; created_at: number } | null; created_at: number; updated_at: number; state: RoomState;
 }

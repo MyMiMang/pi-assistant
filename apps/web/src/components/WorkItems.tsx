@@ -1,71 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ClipboardList, Loader2, MessageSquare, Plus, Send } from "lucide-react";
+import { ClipboardList, Flag, Loader2, MessageSquare, Pause, Plus } from "lucide-react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Room } from "../types";
-import { Badge, Help, Modal, Select, cx, fmtTime } from "./ui";
+import { Fold, Modal, cx, fmtTime, useConfirm } from "./ui";
+import { CreateWorkItem, DecisionBox, RUN_LABEL, StatusPill, WorkDetailPane, type BoardGroup, type WorkDetail, type WorkSummary } from "./WorkItemDetail";
 
 /**
  * 群里的「任务」看板：和群聊是同一份任务责任记录，不是另一套项目管理系统。
- * 数据只来自 /api/rooms/:rid/work-items 与 /api/work-items/:id；打开时拉一次，动作后 / bus 事件再拉，
- * 不做不断轮询。桌面按状态分组，窄屏（390）用同一份纵向列表 + 状态筛选。
+ * 数据只来自 /api/rooms/:rid/work-items 与 /api/work-items/:id；打开时拉一次，动作后 / bus 事件再拉，不做不断轮询。
+ * 分组：等你决定（高亮置顶，直接回答）· 卡住 · 进行中 · 已完成 / 已停止（默认折叠）。窄屏（390）同一份纵向列表 + 筛选。
+ * 顶部是自主推进（目标 + 完成标准）与「全部暂停」：停群不停任务，要停全部任务用这里。
  */
-interface WorkSummary {
-	id: string;
-	roomId: string | null;
-	title: string;
-	status: string;
-	statusLabel: string;
-	ownerAgentId: string | null;
-	ownerName: string;
-	latestProgress: string;
-	blocker: string | null;
-	revision: number;
-	updatedAt: number;
-	createdAt: number;
-	runState: "none" | "queued" | "running" | "submitted" | "finished" | "failed" | "cancelled" | "interrupted";
-}
-interface WorkRun {
-	id: string;
-	revision: number;
-	ownerAgentId: string;
-	ownerName: string;
-	execKind: string;
-	execId: string | null;
-	status: string;
-	result: string | null;
-	blocker: string | null;
-	error: string | null;
-	createdAt: number;
-	startedAt: number | null;
-	finishedAt: number | null;
-	submittedAt: number | null;
-	stale: boolean;
-}
-interface WorkEvent { id: string; kind: string; actorName: string; revision: number; detail: Record<string, unknown>; createdAt: number }
-interface WorkDetail {
-	item: WorkSummary & { requirement: string; doneCriteria: string; verification: { verdict?: string; note?: string; byName?: string; at?: number } | null; completedAt: number | null; sourceMessageId: string | null };
-	runs: WorkRun[];
-	events: WorkEvent[];
-}
-const RUN_LABEL: Record<string, string> = { none: "还没执行", queued: "排队中", running: "执行中", submitted: "已提交", finished: "执行结束", failed: "执行失败", cancelled: "执行已取消", interrupted: "执行中断" };
-const STATUS_TONE: Record<string, "zinc" | "green" | "amber" | "red" | "accent"> = { pending: "zinc", active: "accent", blocked: "amber", review: "amber", done: "green", paused: "zinc", cancelled: "zinc" };
-const FILTERS: { value: string; label: string }[] = [
+const FILTERS: { value: "all" | BoardGroup; label: string }[] = [
 	{ value: "all", label: "全部" },
-	{ value: "active", label: "进行中" },
-	{ value: "review", label: "待核验" },
-	{ value: "blocked", label: "受阻" },
-	{ value: "pending", label: "待安排" },
-	{ value: "paused", label: "已暂停" },
+	{ value: "doing", label: "进行中" },
+	{ value: "stuck", label: "卡住" },
+	{ value: "decision", label: "等你决定" },
 	{ value: "done", label: "已完成" },
-	{ value: "cancelled", label: "已取消" },
+	{ value: "stopped", label: "已停止" },
 ];
-const OPEN = ["active", "review", "blocked", "pending", "paused"];
-const GROUP = ["active", "review", "blocked", "pending", "paused", "done", "cancelled"];
-
-function StatusPill({ s }: { s: WorkSummary }) {
-	return <Badge tone={STATUS_TONE[s.status] ?? "zinc"}>{s.statusLabel}</Badge>;
-}
+const ORDER: BoardGroup[] = ["decision", "stuck", "doing", "done", "stopped"];
+const LABEL: Record<BoardGroup, string> = { decision: "等你决定", stuck: "卡住", doing: "进行中", done: "已完成", stopped: "已停止" };
+const FOLDED: BoardGroup[] = ["done", "stopped"];
 
 /** 结果卡（成员提交时写进群里）：用户可以直接引用它指出问题，管理者据此定位同一个任务。 */
 export function WorkResultCard({ meta }: { meta: Record<string, any> }) {
@@ -87,35 +44,85 @@ export function WorkResultCard({ meta }: { meta: Record<string, any> }) {
 	);
 }
 
+/** 自主推进：确认目标和完成标准后，成员可以 @ 彼此，管理者只在关键事件被叫醒；只有要你拍板的事才问你。 */
+function AutonomyBar({ room }: { room: Room }) {
+	const [open, setOpen] = useState(false);
+	const [goal, setGoal] = useState("");
+	const [done, setDone] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	const [dlg, ask] = useConfirm();
+	const a = room.autonomy;
+	const save = async (method: "PUT" | "DELETE", json?: Record<string, string>) => {
+		setBusy(true);
+		setErr("");
+		try {
+			await api(`/api/rooms/${room.id}/autonomy`, { method, ...(json ? { json } : {}) });
+			await useStore.getState().loadRooms();
+			setOpen(false);
+		} catch (e) {
+			setErr(String(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+	if (a) {
+		return (
+			<div className="pa-work-autonomy on" data-testid="work-autonomy">
+				<Flag className="pa-ic accent" />
+				<div className="min-w-0 flex-1">
+					<b>自主推进中：{a.goal}</b>
+					<small>完成标准：{a.doneCriteria}</small>
+				</div>
+				<button className="pa-btn sm ghost shrink-0" disabled={busy} data-testid="work-autonomy-end" onClick={async () => (await ask({ title: "结束自主推进？", body: "成员回到只在被 @ 时发言；已经在做的任务不受影响。", ok: "结束" })) && void save("DELETE")}>结束</button>
+				{dlg}
+			</div>
+		);
+	}
+	return (
+		<Fold icon={Flag} title="开启自主推进" desc="写清目标和完成标准：成员可以 @ 彼此协作，管理者在任务提交、卡住或定时检查时出来协调，只有需要你拍板的事才问你。" open={open} onToggle={() => setOpen(!open)} testId="work-autonomy-fold">
+			<div className="space-y-2 p-1">
+				<label className="pa-work-field"><span>目标</span><input className="pa-input" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="例如：这周交一份竞品报告" data-testid="work-autonomy-goal" /></label>
+				<label className="pa-work-field"><span>完成标准</span><textarea className="pa-input min-h-16" value={done} onChange={(e) => setDone(e.target.value)} placeholder="怎样检查算达成" data-testid="work-autonomy-done" /></label>
+				{err ? <p className="pa-work-error" role="alert">{err}</p> : null}
+				<div className="flex justify-end"><button className="pa-btn sm primary" disabled={busy || !goal.trim() || !done.trim()} onClick={() => void save("PUT", { goal, doneCriteria: done })} data-testid="work-autonomy-start">开始自主推进</button></div>
+			</div>
+		</Fold>
+	);
+}
+
 export function WorkItemsButton({ room }: { room: Room }) {
 	const version = useStore((s) => (s as unknown as { workVersion?: number }).workVersion ?? 0);
 	const [open, setOpen] = useState(false);
 	const [items, setItems] = useState<WorkSummary[]>([]);
-	const [counts, setCounts] = useState<Record<string, number>>({});
+	const [groups, setGroups] = useState<Partial<Record<BoardGroup, number>>>({});
 	const [loading, setLoading] = useState(false);
 	const [err, setErr] = useState("");
-	const [filter, setFilter] = useState("all");
+	const [filter, setFilter] = useState<"all" | BoardGroup>("all");
 	const [detailId, setDetailId] = useState<string | null>(null);
 	const [detail, setDetail] = useState<WorkDetail | null>(null);
 	const [detailErr, setDetailErr] = useState("");
 	const [creating, setCreating] = useState(false);
 	const [more, setMore] = useState<{ before: number; id: string } | null>(null);
 	const [loadingMore, setLoadingMore] = useState(false);
+	const [dlg, ask] = useConfirm();
 	const listGeneration = useRef(0);
 	const detailGeneration = useRef(0);
-	type WorkPage = { items: WorkSummary[]; counts: Record<string, number>; hasMore: boolean; nextBefore: number | null };
-	const pageQuery = useCallback(() => new URLSearchParams({ limit: "100", ...(filter !== "all" ? { status: filter } : {}) }), [filter]);
+	type WorkPage = { items: WorkSummary[]; groups: Record<BoardGroup, number>; hasMore: boolean; nextBefore: number | null };
+	const pageQuery = useCallback(() => new URLSearchParams({ limit: "100", ...(filter !== "all" ? { group: filter } : {}) }), [filter]);
+	const apply = (r: WorkPage, append: boolean) => {
+		setItems((old) => (append ? [...old, ...r.items.filter((x) => !old.some((y) => y.id === x.id))] : r.items));
+		setGroups(r.groups ?? {});
+		setMore(r.hasMore && r.nextBefore !== null && r.items.length ? { before: r.nextBefore, id: r.items[r.items.length - 1].id } : null);
+		setErr("");
+	};
 	const refresh = useCallback(async () => {
 		const gen = ++listGeneration.current;
 		setLoading(true);
 		setLoadingMore(false);
 		try {
 			const r = await api<WorkPage>(`/api/rooms/${room.id}/work-items?${pageQuery()}`);
-			if (gen !== listGeneration.current) return;
-			setItems(r.items);
-			setCounts(r.counts);
-			setMore(r.hasMore && r.nextBefore !== null && r.items.length ? { before: r.nextBefore, id: r.items[r.items.length - 1].id } : null);
-			setErr("");
+			if (gen === listGeneration.current) apply(r, false);
 		} catch (e) {
 			if (gen === listGeneration.current) setErr(String(e));
 		} finally {
@@ -129,11 +136,7 @@ export function WorkItemsButton({ room }: { room: Room }) {
 		const query = pageQuery(); query.set("before", String(more.before)); query.set("beforeId", more.id);
 		try {
 			const r = await api<WorkPage>(`/api/rooms/${room.id}/work-items?${query}`);
-			if (gen !== listGeneration.current) return;
-			setItems((old) => [...old, ...r.items.filter((x) => !old.some((y) => y.id === x.id))]);
-			setCounts(r.counts);
-			setMore(r.hasMore && r.nextBefore !== null && r.items.length ? { before: r.nextBefore, id: r.items[r.items.length - 1].id } : null);
-			setErr("");
+			if (gen === listGeneration.current) apply(r, true);
 		} catch (e) {
 			if (gen === listGeneration.current) setErr(String(e));
 		} finally {
@@ -178,30 +181,42 @@ export function WorkItemsButton({ room }: { room: Room }) {
 			window.removeEventListener("pia:room-work-items", reset);
 		};
 	}, [room.id]);
-	const openCount = OPEN.reduce((n, st) => n + (counts[st] ?? 0), 0);
-	const shown = useMemo(() => (filter === "all" ? items : items.filter((x) => x.status === filter)), [items, filter]);
-	const groups = useMemo(() => GROUP.map((st) => ({ status: st, rows: shown.filter((x) => x.status === st) })).filter((g) => g.rows.length), [shown]);
-	// 默认「全部」时已完成 / 已取消折叠；用户明确筛选某个终态时直接展开，避免藏在 <details> 里点不到。
-	const closed = filter === "all" ? groups.filter((g) => !OPEN.includes(g.status)) : [];
-	const openGroups = groups.filter((g) => OPEN.includes(g.status) || (filter !== "all" && !OPEN.includes(g.status)));
+	const openCount = (groups.decision ?? 0) + (groups.stuck ?? 0) + (groups.doing ?? 0);
+	const sections = useMemo(() => ORDER.map((g) => ({ g, rows: items.filter((x) => x.board === g) })).filter((s) => s.rows.length), [items]);
+	// 默认「全部」时已完成 / 已停止折叠；用户明确筛选某个终态时直接展开，避免藏在折叠里点不到。
+	const folded = filter === "all" ? sections.filter((s) => FOLDED.includes(s.g)) : [];
+	const shown = sections.filter((s) => !folded.includes(s));
+	const pauseAll = async () => {
+		if (!(await ask({ title: "暂停这个群的全部任务？", body: `会中止 ${openCount} 个未完成任务正在进行的执行。之后可以在每个任务上点继续。停群不会停任务，要停任务用这里。`, ok: "全部暂停", danger: true }))) return;
+		try {
+			await api(`/api/rooms/${room.id}/work-items/pause-all`, { method: "POST" });
+			void refresh();
+		} catch (e) {
+			setErr(String(e));
+		}
+	};
 	const row = (x: WorkSummary) => (
-		<button key={x.id} className="pa-work-row" onClick={() => setDetailId(x.id)} data-testid="work-item-row" data-status={x.status}>
-			<span className="pa-work-row-main">
-				<b>{x.title}</b>
-				<small>
-					{x.ownerName || "未安排负责人"} · 修订 {x.revision} · {RUN_LABEL[x.runState]}
-				</small>
-				<span className="pa-work-progress">{x.latestProgress || "暂无进度"}</span>
-			</span>
-			<span className="pa-work-row-side">
-				<StatusPill s={x} />
-				<small>{fmtTime(x.updatedAt)}</small>
-			</span>
-		</button>
+		<div key={x.id} className={cx("pa-work-item", x.board === "decision" && "decision")}>
+			<button className="pa-work-row" onClick={() => setDetailId(x.id)} data-testid="work-item-row" data-status={x.status} data-board={x.board}>
+				<span className="pa-work-row-main">
+					<b>{x.title}</b>
+					<small>{x.ownerName || "未安排负责人"} · 修订 {x.revision} · {RUN_LABEL[x.runState]}</small>
+					<span className="pa-work-progress">{x.board === "stuck" && x.escalation ? x.escalation.note : x.blocker && x.board === "stuck" ? `受阻：${x.blocker}` : x.latestProgress || "暂无进度"}</span>
+				</span>
+				<span className="pa-work-row-side"><StatusPill s={x} /><small>{fmtTime(x.updatedAt)}</small></span>
+			</button>
+			{x.board === "decision" ? <DecisionBox item={x} onDone={() => void refresh()} compact /> : null}
+		</div>
+	);
+	const section = (s: { g: BoardGroup; rows: WorkSummary[] }) => (
+		<section key={s.g} className={cx("pa-work-group", s.g === "decision" && "decision")} data-testid={`work-group-${s.g}`}>
+			<h4>{LABEL[s.g]}<span>{groups[s.g] ?? s.rows.length}</span></h4>
+			<div className="pa-work-rows">{s.rows.map(row)}</div>
+		</section>
 	);
 	return (
 		<>
-			<button className="pa-chip" onClick={() => setOpen(true)} data-testid="room-work-items" aria-label="长期任务看板" title="任务：长期责任、核验与执行历史">
+			<button className={cx("pa-chip", (groups.decision ?? 0) > 0 && "pa-work-chip-alert")} onClick={() => setOpen(true)} data-testid="room-work-items" aria-label="长期任务看板" title="任务：长期责任、核验与执行历史">
 				<ClipboardList className="pa-ic" />
 				<span>任务</span>
 				{openCount > 0 && <span>{openCount}</span>}
@@ -228,225 +243,38 @@ export function WorkItemsButton({ room }: { room: Room }) {
 						/>
 					) : (
 						<>
+							<AutonomyBar room={room} />
 							<div className="pa-work-toolbar">
 								<div className="pa-work-filters" role="tablist" aria-label="按状态筛选">
 									{FILTERS.map((f) => (
-										<button key={f.value} role="tab" aria-selected={filter === f.value} className={cx("pa-chip sm", filter === f.value && "!bg-hover")} onClick={() => setFilter(f.value)} data-testid={`work-filter-${f.value}`}>
+										<button key={f.value} role="tab" aria-selected={filter === f.value} className={cx("pa-chip sm", filter === f.value && "!bg-hover", f.value === "decision" && (groups.decision ?? 0) > 0 && "pa-work-chip-alert")} onClick={() => setFilter(f.value)} data-testid={`work-filter-${f.value}`}>
 											{f.label}
-											{f.value !== "all" && counts[f.value] ? <span>{counts[f.value]}</span> : null}
+											{f.value !== "all" && groups[f.value] ? <span>{groups[f.value]}</span> : null}
 										</button>
 									))}
 								</div>
-								<button className="pa-btn sm primary shrink-0" onClick={() => setCreating(true)} data-testid="work-create-open">
-									<Plus className="pa-ic" />新建任务
-								</button>
+								<div className="flex shrink-0 gap-1">
+									{openCount > 0 ? <button className="pa-btn sm ghost" onClick={() => void pauseAll()} data-testid="work-pause-all"><Pause className="pa-ic" />全部暂停</button> : null}
+									<button className="pa-btn sm primary" onClick={() => setCreating(true)} data-testid="work-create-open"><Plus className="pa-ic" />新建任务</button>
+								</div>
 							</div>
 							{loading && !items.length ? <p className="pa-work-empty"><Loader2 className="pa-ic animate-spin" /> 正在加载…</p> : null}
 							{err ? <p className="pa-work-error" role="alert" data-testid="work-list-error">{err}<button className="underline" onClick={() => void refresh()}>重试</button></p> : null}
-							{!loading && !err && !groups.length ? <p className="pa-work-empty" data-testid="work-empty">还没有长期任务。临时问答不用建任务；需要长期负责的事可以在群里让管理者记录，或在这里新建。</p> : null}
-							{openGroups.map((g) => (
-								<section key={g.status} className="pa-work-group" data-testid={`work-group-${g.status}`}>
-									<h4>{items.find((x) => x.status === g.status)?.statusLabel ?? g.status}<span>{g.rows.length}</span></h4>
-									<div className="pa-work-rows">{g.rows.map(row)}</div>
-								</section>
-							))}
+							{!loading && !err && !sections.length ? <p className="pa-work-empty" data-testid="work-empty">还没有长期任务。临时问答不用建任务；需要长期负责的事可以在群里让管理者记录，或在这里新建。</p> : null}
+							{shown.map(section)}
 							{more && <button className="pa-btn ghost w-full" disabled={loadingMore || loading} onClick={() => void loadMore()} data-testid="work-load-more">{loadingMore ? "正在加载…" : "更早的任务"}</button>}
-							{closed.length > 0 && (
+							{folded.length > 0 && (
 								<details className="pa-work-closed" data-testid="work-closed">
-									<summary>已完成 / 已取消 {closed.reduce((n, g) => n + g.rows.length, 0)} 个</summary>
-									{closed.map((g) => (
-										<section key={g.status} className="pa-work-group">
-											<h4>{items.find((x) => x.status === g.status)?.statusLabel ?? g.status}<span>{g.rows.length}</span></h4>
-											<div className="pa-work-rows">{g.rows.map(row)}</div>
-										</section>
-									))}
+									<summary>已完成 / 已停止 {folded.reduce((n, s) => n + (groups[s.g] ?? s.rows.length), 0)} 个</summary>
+									{folded.map(section)}
 								</details>
 							)}
 						</>
 					)}
 				</div>
 			</Modal>
+			{dlg}
 			{creating && <CreateWorkItem room={room} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); setDetailId(id); void refresh(); }} />}
 		</>
-	);
-}
-
-function CreateWorkItem({ room, onClose, onCreated }: { room: Room; onClose: () => void; onCreated: (id: string) => void }) {
-	const [title, setTitle] = useState("");
-	const [requirement, setRequirement] = useState("");
-	const [done, setDone] = useState("");
-	const [owner, setOwner] = useState("");
-	const [start, setStart] = useState(true);
-	const [err, setErr] = useState("");
-	const [busy, setBusy] = useState(false);
-	const members = room.members.filter((m) => !m.left && !m.deleted);
-	const submit = async () => {
-		if (busy) return;
-		setBusy(true);
-		setErr("");
-		try {
-			const d = await api<WorkDetail>(`/api/rooms/${room.id}/work-items`, { method: "POST", json: { title, requirement, doneCriteria: done, ownerAgentId: owner || null, start } });
-			onCreated(d.item.id);
-		} catch (e) {
-			setErr(String(e));
-		} finally {
-			setBusy(false);
-		}
-	};
-	return (
-		<Modal open onClose={onClose} title="新建任务" testId="work-create">
-			<div className="space-y-3 p-4">
-				<label className="pa-work-field"><span>任务名字</span><input className="pa-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例如：完成这周的竞品报告" autoFocus data-testid="work-create-title" /></label>
-				<label className="pa-work-field"><span>要做成什么</span><textarea className="pa-input min-h-20" value={requirement} onChange={(e) => setRequirement(e.target.value)} placeholder="目标、范围、约束" data-testid="work-create-requirement" /></label>
-				<label className="pa-work-field"><span>完成标准</span><textarea className="pa-input min-h-16" value={done} onChange={(e) => setDone(e.target.value)} placeholder="怎么检查算做完" data-testid="work-create-done" /></label>
-				<div className="pa-work-field"><span>负责人</span>
-					<Select value={owner} options={[{ value: "", label: "先不指定（待安排）", hint: "" }, ...members.map((m) => ({ value: m.agentId, label: m.name, hint: m.agentId === room.managerId ? "管理者" : "" }))]} onChange={setOwner} ariaLabel="任务负责人" testId="work-create-owner" />
-				</div>
-				<label className="flex items-center gap-2 text-sm text-mut"><input type="checkbox" checked={start} onChange={(e) => setStart(e.target.checked)} data-testid="work-create-start" />创建后马上派给负责人开始</label>
-				<p className="text-xs text-mut2">只记录责任不会唤醒模型；勾选开始才会按群现有的串行调度派一次执行。执行结束也不会自动完成，要核验。</p>
-				{err ? <p className="pa-work-error" role="alert" data-testid="work-create-error">{err}</p> : null}
-				<div className="flex justify-end gap-2">
-					<button className="pa-btn ghost" onClick={onClose}>取消</button>
-					<button className="pa-btn primary" disabled={busy || !title.trim()} onClick={() => void submit()} data-testid="work-create-submit">{busy ? "保存中…" : "创建"}</button>
-				</div>
-			</div>
-		</Modal>
-	);
-}
-
-function WorkDetailPane({ room, id, detail, error, onBack, onChanged, onSent }: { room: Room; id: string; detail: WorkDetail | null; error: string; onBack: () => void; onChanged: () => void; onSent: () => void }) {
-	const [err, setErr] = useState("");
-	const [note, setNote] = useState("");
-	const [feedback, setFeedback] = useState("");
-	const [busy, setBusy] = useState("");
-	const [editing, setEditing] = useState(false);
-	const [draft, setDraft] = useState({ title: "", requirement: "", doneCriteria: "" });
-	const [owner, setOwner] = useState("");
-	const members = room.members.filter((m) => !m.left && !m.deleted);
-	useEffect(() => {
-		if (!detail) return;
-		setDraft({ title: detail.item.title, requirement: detail.item.requirement, doneCriteria: detail.item.doneCriteria });
-		setOwner(detail.item.ownerAgentId ?? "");
-	}, [detail?.item.id, detail?.item.revision]);
-	const act = async (action: string, extra: Record<string, unknown> = {}) => {
-		if (busy) return;
-		setBusy(action);
-		setErr("");
-		try {
-			await api(`/api/work-items/${id}/${action}`, { method: "POST", json: extra });
-			setNote("");
-			onChanged();
-		} catch (e) {
-			setErr(String(e));
-		} finally {
-			setBusy("");
-		}
-	};
-	const patch = async (body: Record<string, unknown>) => {
-		if (busy) return;
-		setBusy("edit");
-		setErr("");
-		try {
-			await api(`/api/work-items/${id}`, { method: "PATCH", json: body });
-			setEditing(false);
-			onChanged();
-		} catch (e) {
-			setErr(String(e)); // 失败保留草稿，不把用户写的内容清掉
-		} finally {
-			setBusy("");
-		}
-	};
-	const sendFeedback = async () => {
-		if (busy || !feedback.trim()) return;
-		setBusy("feedback");
-		setErr("");
-		try {
-			await api(`/api/work-items/${id}/feedback`, { method: "POST", json: { text: feedback } });
-			setFeedback("");
-			onSent();
-		} catch (e) {
-			setErr(String(e));
-		} finally {
-			setBusy("");
-		}
-	};
-	if (!detail) {
-		return <div className="p-4"><button className="pa-chip" onClick={onBack} data-testid="work-detail-back"><ArrowLeft className="pa-ic" />返回</button>{error ? <p className="pa-work-error" role="alert">{error}</p> : <p className="pa-work-empty"><Loader2 className="pa-ic animate-spin" />正在加载…</p>}</div>;
-	}
-	const it = detail.item;
-	const canContinue = ["active", "blocked", "paused"].includes(it.status);
-	return (
-		<div className="pa-work-detail" data-testid="work-detail">
-			<div className="pa-work-detail-head">
-				<button className="pa-chip sm" onClick={onBack} data-testid="work-detail-back"><ArrowLeft className="pa-ic" />返回</button>
-				<div className="min-w-0 flex-1">
-					<div className="flex flex-wrap items-center gap-2"><b className="min-w-0 break-words" data-testid="work-detail-title">{it.title}</b><StatusPill s={it} /></div>
-					<small>{it.ownerName || "未安排负责人"} · 第 {it.revision} 次修订 · {RUN_LABEL[it.runState]} · {fmtTime(it.updatedAt)}</small>
-				</div>
-			</div>
-			{err && !editing ? <p className="pa-work-error" role="alert" data-testid="work-action-error">{err}</p> : null}
-			<section className="pa-work-block"><h4>要做成什么</h4><p>{it.requirement || "（没有写）"}</p></section>
-			<section className="pa-work-block"><h4>完成标准</h4><p>{it.doneCriteria || "（没有写）"}</p></section>
-			<section className="pa-work-block"><h4>最近进度</h4><p>{it.latestProgress || "暂无"}</p>{it.blocker ? <p className="pa-work-warn"><AlertTriangle className="pa-ic" />受阻：{it.blocker}</p> : null}</section>
-			{it.verification && it.verification.verdict === "pass" ? <section className="pa-work-block"><h4>验收结论</h4><p>{it.verification.note}<br /><small>{it.verification.byName} · {it.verification.at ? fmtTime(it.verification.at) : ""}</small></p></section> : null}
-			<section className="pa-work-actions">
-				{it.status === "pending" && it.ownerAgentId ? <button className="pa-btn sm primary" disabled={!!busy} onClick={() => void act("start")} data-testid="work-action-start">开始</button> : null}
-				{canContinue ? <button className="pa-btn sm" disabled={!!busy} onClick={() => void act("continue")} data-testid="work-action-continue">继续 / 安排下一次执行</button> : null}
-				{!["done", "cancelled"].includes(it.status) ? <button className="pa-btn sm ghost" disabled={!!busy} onClick={() => void act("pause")} data-testid="work-action-pause">暂停</button> : null}
-				{!["done", "cancelled"].includes(it.status) ? <button className="pa-btn sm ghost" disabled={!!busy} onClick={() => void act("cancel")} data-testid="work-action-cancel">取消</button> : null}
-				<button className="pa-btn sm ghost" disabled={!!busy} onClick={() => setEditing(!editing)} data-testid="work-action-edit">编辑要求 / 改派</button>
-			</section>
-			{["done", "cancelled"].includes(it.status) ? (
-				<section className="pa-work-block"><h4>这个任务已经{it.status === "done" ? "完成" : "取消"}</h4>
-					<p className="text-sm text-mut">要在这个任务上继续改，请在下面「在群里说」里明确说“重开，改成……”；管理者会恢复原任务、保留原来的验收历史。随便发一条消息不会自动复活。</p>
-				</section>
-			) : null}
-			{it.status === "review" ? (
-				<section className="pa-work-block pa-work-verify"><h4>核验</h4>
-					<Help>核验必须写检查结论：你实际看到了什么、为什么通过或退回。普通文字回复不算验收；只有这里通过才完成。</Help>
-					<textarea className="pa-input min-h-20" value={note} onChange={(e) => setNote(e.target.value)} placeholder="检查结论：看到了哪个产物、哪一处符合 / 不符合完成标准" data-testid="work-verify-note" />
-					<div className="flex gap-2">
-						<button className="pa-btn sm primary" disabled={!!busy || !note.trim()} onClick={() => void act("verify", { verdict: "pass", note })} data-testid="work-verify-pass"><CheckCircle2 className="pa-ic" />通过，完成</button>
-						<button className="pa-btn sm" disabled={!!busy || !note.trim()} onClick={() => void act("verify", { verdict: "return", note })} data-testid="work-verify-return">退回修改</button>
-					</div>
-				</section>
-			) : null}
-			{editing ? (
-				<section className="pa-work-block" data-testid="work-edit">
-					<label className="pa-work-field"><span>任务名字</span><input className="pa-input" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label>
-					<label className="pa-work-field"><span>要做成什么</span><textarea className="pa-input min-h-20" value={draft.requirement} onChange={(e) => setDraft({ ...draft, requirement: e.target.value })} data-testid="work-edit-requirement" /></label>
-					<label className="pa-work-field"><span>完成标准</span><textarea className="pa-input min-h-16" value={draft.doneCriteria} onChange={(e) => setDraft({ ...draft, doneCriteria: e.target.value })} /></label>
-					<div className="pa-work-field"><span>负责人</span><Select value={owner} options={[{ value: "", label: "未安排" }, ...members.map((m) => ({ value: m.agentId, label: m.name, hint: m.agentId === room.managerId ? "管理者" : "" }))]} onChange={setOwner} ariaLabel="任务负责人" /></div>
-					{err ? <p className="pa-work-error" role="alert" data-testid="work-action-error">{err}</p> : null}
-					<div className="flex justify-end gap-2"><button className="pa-btn ghost sm" onClick={() => setEditing(false)}>取消</button><button className="pa-btn primary sm" disabled={!!busy} onClick={() => void patch({ ...draft, ownerAgentId: owner || null })} data-testid="work-edit-save">保存</button></div>
-				</section>
-			) : null}
-			<section className="pa-work-block pa-work-feedback">
-				<h4><MessageSquare className="pa-ic" />有问题？在群里说</h4>
-				<p className="text-xs text-mut2">会自动带上这个任务；管理者据此定位同一任务、更新要求并退回重做。不用先手动改看板状态。</p>
-				<textarea className="pa-input min-h-16" value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder="例如：这版缺少检查点，改成每条结论都附来源" data-testid="work-feedback-text" />
-				<button className="pa-btn sm primary self-end" disabled={!!busy || !feedback.trim()} onClick={() => void sendFeedback()} data-testid="work-feedback-send"><Send className="pa-ic" />在群里说</button>
-			</section>
-			<section className="pa-work-block">
-				<h4>执行历史</h4>
-				{detail.runs.length === 0 ? <p className="text-xs text-mut2">还没有执行。任务责任和单次执行是分开的。</p> : (
-					<div className="pa-work-runs">
-						{detail.runs.map((r) => (
-							<div key={r.id} className="pa-work-run" data-testid="work-run">
-								<div className="flex flex-wrap items-center gap-2"><b>第 {r.revision} 次修订</b><span className="pa-tag">{r.status}</span>{r.stale ? <span className="pa-tag warn">旧修订 · 仅历史</span> : null}<small>{r.ownerName} · {fmtTime(r.createdAt)}</small></div>
-								{r.result ? <p>{r.result.slice(0, 400)}</p> : null}
-								{r.blocker ? <p className="pa-work-warn">受阻：{r.blocker}</p> : null}
-								{r.error ? <p className="pa-work-error">{r.error}</p> : null}
-							</div>
-						))}
-					</div>
-				)}
-				{detail.events.length > 0 ? (
-					<details className="pa-work-events"><summary>变更记录 {detail.events.length}</summary>
-						<ul>{detail.events.slice(0, 20).map((e) => <li key={e.id}>{fmtTime(e.createdAt)} · {e.actorName} · {e.kind} · 第 {e.revision} 次修订</li>)}</ul>
-					</details>
-				) : null}
-			</section>
-		</div>
 	);
 }

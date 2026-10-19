@@ -81,6 +81,21 @@
 .pa-work-row-main small, .pa-work-row-side small { font-size: 11px; color: var(--mut2); }
 .pa-work-progress { font-size: 12px; color: var(--mut); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .pa-work-row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.pa-work-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pa-work-item.decision { border: 1px solid color-mix(in srgb, #f59e0b 55%, var(--line)); border-radius: var(--r-sm); background: color-mix(in srgb, #f59e0b 8%, transparent); padding: 6px; }
+.pa-work-item.decision .pa-work-row { border-color: transparent; background: transparent; padding: 3px 5px; }
+.pa-work-group.decision h4 { color: #b45309; }
+.pa-work-decision { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 0 5px 3px; font-size: 12px; }
+.pa-work-decision-q { display: flex; gap: 6px; align-items: flex-start; font-weight: 600; overflow-wrap: anywhere; }
+.pa-work-decision-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.pa-work-decision-free { display: flex; gap: 6px; min-width: 0; }
+.pa-work-decision-free input { min-width: 0; flex: 1; }
+.pa-work-warn { display: flex; gap: 6px; align-items: flex-start; border-radius: var(--r-sm); background: color-mix(in srgb, #f59e0b 12%, transparent); color: #92400e; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }
+.pa-work-autonomy { display: flex; align-items: flex-start; gap: 8px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 10px; font-size: 12px; min-width: 0; }
+.pa-work-autonomy.on { border-color: color-mix(in srgb, var(--acc) 45%, var(--line)); background: color-mix(in srgb, var(--acc) 7%, transparent); }
+.pa-work-autonomy b, .pa-work-autonomy small { display: block; overflow-wrap: anywhere; }
+.pa-work-autonomy small { color: var(--mut2); }
+.pa-work-chip-alert { border-color: color-mix(in srgb, #f59e0b 60%, var(--line)) !important; color: #b45309; }
 .pa-work-closed summary { cursor: pointer; padding: 6px 2px; font-size: 12px; color: var(--mut2); }
 .pa-work-detail { display: flex; min-width: 0; max-width: 100%; flex-direction: column; gap: 12px; padding: 14px 16px 24px; }
 .pa-work-detail-head { display: flex; align-items: flex-start; gap: 10px; }
