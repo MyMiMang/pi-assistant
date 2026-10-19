@@ -208,7 +208,7 @@ export interface VoiceSourceView {
 	options: VoiceSourceOption[];
 	/** 每次写入递增的 CAS 版本（跨客户端）。 */
 	version?: number;
-	/** 默认本地语音的自动准备状态（契约 §1.1；旧后端缺省 undefined → `voice-pref` 归一化后不显示）。 */
+	/** 本地语音（可选模块）的安装状态（契约 §1.1；旧后端缺省 undefined → `voice-pref` 归一化后不显示）。 */
 	defaultVoice?: unknown;
 }
 
@@ -270,7 +270,7 @@ export async function releaseAsrLease(leaseId: string): Promise<void> {
 	}
 }
 
-// ---------------------------------------------------------------- 默认本地语音准备（复用统一下载组件）
+// ---------------------------------------------------------------- 默认本地语音（可选模块，复用统一下载组件）
 
 /**
  * 统一「下载与组件」的起 / 停（默认本地语音的准备复用同一个 job：`asr:<modelId>`）。
@@ -284,7 +284,8 @@ export async function cancelDownloadJob(id: string): Promise<void> {
 }
 
 /**
- * 默认本地语音的**窄**取消 / 重试（固定默认模型，不接受任意 modelId / downloadId）。
+ * 默认本地语音（可选模块）的**窄**安装 / 取消（固定默认模型，不接受任意 modelId / downloadId）。
+ * 安装与失败重试共用 install。
  *
  * 为何不用 `/api/downloads/:id/*`：那两个是 `localOnly`，手机（已配对）会失败；窄接口走正常 safe API，
  * 服务端只动目录里唯一的默认模型 + 同一下载 job，能力边界比通用下载接口更小。
@@ -292,8 +293,8 @@ export async function cancelDownloadJob(id: string): Promise<void> {
 export async function cancelDefaultVoicePrepare(): Promise<void> {
 	await api("/api/local-models/asr/default-voice/cancel", { method: "POST" });
 }
-export async function retryDefaultVoicePrepare(): Promise<void> {
-	await api("/api/local-models/asr/default-voice/retry", { method: "POST" });
+export async function installDefaultVoice(): Promise<void> {
+	await api("/api/local-models/asr/default-voice/install", { method: "POST" });
 }
 
 // ---------------------------------------------------------------- 原生流式本地语音（start / append / end / cancel）

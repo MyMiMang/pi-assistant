@@ -7,13 +7,13 @@
  *  - 候选（含 availability/reason）全部来自后端，不在这里新建第二套 Key，也不自动挑第一个云。
  *
  * 关键取舍：没有选择就是「未配置」，绝不自动回落到云端；打开本页不安装 / 不启动 / 不取麦克风 / 不连云。
+ * 本地语音识别是可选模块（决策 0013）：默认不安装，在「本地」里点「安装本地语音」才下载；云端不依赖它。
  */
 import { AlertTriangle, Cloud, HardDrive, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getVoiceSource, onVoiceSourceChanged, setVoiceSource, type VoiceSource, type VoiceSourceOption, type VoiceSourceView } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, Help, Select, cx } from "./ui";
-import { DefaultVoicePrepPanel } from "./DefaultVoicePrep";
 import { LocalAsrModels } from "./LocalAsrModels";
 
 const keyOf = (o: { provider: string; model: string }) => `${o.provider}::${o.model}`;
@@ -118,9 +118,6 @@ export function VoiceSettings() {
 					)}
 				</div>
 				{sourceUnavailable && <div className="text-xs text-amber-600" data-testid="voice-source-error">无法读取语音来源设置（{loadErr || "接口暂不可用"}）。先按「未配置」处理，本地安装仍可在下方进行。</div>}
-
-				{/* 默认本地语音：准备状态 + 取消 / 重试（走统一下载组件同一 job；前端不写 source） */}
-				<DefaultVoicePrepPanel />
 
 				{/* 来源显式切换；切换只改显示，不会自动改当前来源 */}
 				<div className="inline-flex rounded-xl border border-line p-0.5" role="tablist" aria-label="语音来源">

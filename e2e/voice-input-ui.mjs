@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { extname, join } from "node:path";
 import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
+import { openLocalAsrModels } from "./fixtures/page-checks.mjs";
 
 const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const dist = join(root, "apps/web/dist");
@@ -269,14 +270,14 @@ try {
 	const lay0 = await voiceLayout(page);
 	check("麦克风紧贴发送键左侧（同一行、同一 composer-bar、不在附件工具列）", lay0.ok, JSON.stringify(lay0));
 	check("模型选择器仍在输入栏（未被麦克风挤掉）", await page.locator('[data-testid="model-picker"]').isVisible());
-	check("未配置时按钮提示「未配置语音识别模型」", ((await page.locator('[data-testid="voice-mic"]').getAttribute("aria-label")) ?? "").includes("未配置语音识别模型"));
+	check("未配置时按钮提示「未配置语音识别」（可选云端或安装本地语音）", /未配置语音识别.*云端.*安装本地语音/.test((await page.locator('[data-testid="voice-mic"]').getAttribute("aria-label")) ?? ""));
 	check("idle 未配置时不常驻状态行 / 「去设置」（只有麦克风图标）", (await page.locator('[data-testid="voice-status"]').count()) === 0 && (await page.locator('[data-testid="voice-open-settings"]').count()) === 0);
 	check("点麦克风前未调用 getUserMedia", (await page.evaluate(() => window.__gum ?? 0)) === 0);
 	await page.locator('[data-testid="voice-mic"]').click();
 	await page.locator('[data-testid="voice-open-settings"]').waitFor({ timeout: 5000 });
 	check("点了未配置的麦克风才浮现短提示 + 「去设置」", (await page.locator('[data-testid="voice-status"]').isVisible()) && (await page.locator('[data-testid="voice-open-settings"]').isVisible()));
 	check("未配置点击不真开麦克风（0 次 getUserMedia）、不转写（0 次请求）", (await page.evaluate(() => window.__gum ?? 0)) === 0 && state.transcribeCalls.length === 0);
-	check("未配置给出明确错误提示", ((await page.locator('[data-testid="voice-hint"]').textContent()) ?? "").includes("语音识别模型"));
+	check("未配置给出明确错误提示（选云端模型或安装本地语音）", /云端模型.*安装本地语音/.test((await page.locator('[data-testid="voice-hint"]').getAttribute("title")) ?? ""));
 	// 「去设置」打开「语音配置」，且临时提示随之清掉（不残留）
 	await page.locator('[data-testid="voice-open-settings"]').click();
 	await page.locator('[data-testid="voice-source-status"]').waitFor({ timeout: 20_000 });
@@ -388,7 +389,7 @@ try {
 	// 本地语音在「语音配置」页：统一多模型选择器（含 SenseVoice 一键）
 	await page.goto(`${base}/?settings=voice`);
 	await page.locator('[data-testid="voice-tab-local"]').click();
-	await page.locator('[data-testid="local-asr-models"]').waitFor({ timeout: 20_000 });
+	await openLocalAsrModels(page);
 	check("语音配置页有统一本地模型选择器", await page.locator('[data-testid="local-asr-models"]').isVisible());
 	await page.locator('[data-testid="local-asr-model-select"]').click();
 	await page.locator('[data-testid="local-asr-model-select-menu"]').getByRole("option", { name: /SenseVoice/ }).click();

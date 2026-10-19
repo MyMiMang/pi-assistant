@@ -1,5 +1,7 @@
 # 默认本地语音：自动准备 + 原生流式会话 —— 后端 API 契约 v1（冻结给前端）
 
+> **2026-10-19 更新**：§1.2「自动准备」已被 [0013](../decisions/0013-local-voice-optional.md) / [local-voice-optional.md](local-voice-optional.md) 取代——不再自动下载；`requiresUserAction` 现为 `true`；窄接口改为 `POST /api/local-models/asr/default-voice/install|cancel`（install 兼作失败重试），不再有 `cancelled` 状态与 optout 标记。§2 起的流式协议不变。
+
 > 状态：**契约冻结（前端按此对接，勿另造第二套）**。实现分支 `default-local-voice`，基线 `b20ec81`，本文件提交于 HEAD `607519d` 之后。
 > 决策来源：主决策 **P2 首次自动准备**（无需用户手动点下载 / 找文件；**首次需联网并透明显示**；准备完成后可离线；**不随包分发许可未充分确认的权重**；**不假称首次断网可用**）。选型见 `progress-snapshots/default-local-voice-decision.md`；设计见 `docs/design/default-local-voice.md`。
 > **本文件覆盖设计文档 §3.4 / §4 的旧措辞**：① committed/tentative 前缀由**服务端**给出（前端不自己算最长公共前缀）；② 新鲜用户（来源从未设置）准备完成且期间未被改选时，后端**自动把来源写为默认本地模型**（`自动 selected & ready`），仍严格 CAS，绝不覆盖用户中途的选择。

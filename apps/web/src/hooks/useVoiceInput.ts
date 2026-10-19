@@ -11,7 +11,7 @@
  *    缺任一项都回落到既有分段增量 / 整段批量，行为不变。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { acquireAsrLease, cancelDefaultVoicePrepare, getVoiceSource, isStreamingSource, onVoiceSourceChanged, releaseAsrLease, retryDefaultVoicePrepare, transcribeAudio, type VoiceSource, type VoiceSourceOption } from "../api";
+import { acquireAsrLease, cancelDefaultVoicePrepare, getVoiceSource, installDefaultVoice, isStreamingSource, onVoiceSourceChanged, releaseAsrLease, transcribeAudio, type VoiceSource, type VoiceSourceOption } from "../api";
 import type { LiveDownloadLike } from "../local-asr-intent";
 import { useStore } from "../store";
 import { mergePrepareDownload, normalizeVoicePrepareView, type VoicePrepareView } from "../voice-pref";
@@ -131,9 +131,9 @@ export interface UseVoiceInput {
 	tentative: string;
 	/** 默认本地语音的准备状态（同一份 `GET source` 的 `defaultVoice`；无则 null）。 */
 	prep: VoicePrepareView | null;
-	/** 取消默认本地语音的准备（走统一下载组件同一 job）。 */
+	/** 取消本地语音安装（走统一下载组件同一 job）。 */
 	cancelPrepare: () => void;
-	/** 重试默认本地语音的准备（走统一下载组件同一 job）。 */
+	/** 重试本地语音安装（走统一下载组件同一 job）。 */
 	retryPrepare: () => void;
 	/** 真实音量（0..1，已平滑限频）。 */
 	level: number;
@@ -329,22 +329,18 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 			return;
 		}
 		if (!source || !asrModel) {
-			// 未配置来源时：默认本地语音可能正在自动准备 / 准备失败——不逼用户手动找文件，先如实告知状态。
+			// 未配置来源时：本地语音（可选模块）可能正在安装 / 安装失败——如实告知状态；没装就引导去设置选云端或安装。
 			if (!source && prepView?.ok) {
 				if (prepView.state === "preparing") {
-					setError({ code: "asr_preparing", message: prepView.percent != null ? `默认本地语音正在自动准备（${prepView.percent}%），准备好后点麦克风即可` : "默认本地语音正在自动准备（首次需联网），准备好后点麦克风即可" });
-					return;
-				}
-				if (prepView.state === "not_prepared") {
-					setError({ code: "asr_preparing", message: "默认本地语音还没准备好（首次需联网自动准备），可在设置 › 语音配置 查看进度" });
+					setError({ code: "asr_preparing", message: prepView.percent != null ? `本地语音正在安装（${prepView.percent}%），装好后点麦克风即可` : "本地语音正在安装，装好后点麦克风即可" });
 					return;
 				}
 				if (prepView.state === "failed") {
-					setError({ code: "asr_prepare_failed", message: prepView.error ? `默认本地语音准备失败：${prepView.error}（可在设置里重试）` : "默认本地语音准备失败，可在设置 › 语音配置 重试" });
+					setError({ code: "asr_prepare_failed", message: prepView.error ? `本地语音安装失败：${prepView.error}（可在设置 › 语音 重试）` : "本地语音安装失败，可在设置 › 语音 重试" });
 					return;
 				}
 			}
-			setError({ code: "asr_not_configured", message: sourceUnavailable ? "语音识别设置暂不可用，请稍后重试或在设置 › 语音配置 里检查" : "请先在设置 › 语音配置 里选择语音识别模型" });
+			setError({ code: "asr_not_configured", message: sourceUnavailable ? "语音识别设置暂不可用，请稍后重试或在设置 › 语音 里检查" : "请先在设置 › 语音 里选一个云端模型，或安装本地语音" });
 			return;
 		}
 		// 只有 ready 表示当下可用；本地「已安装但未运行」（not_running）允许：录音租约会按需加载（不在这里起进程）。
@@ -396,7 +392,7 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 
 	const nativeCapable = !!opts.openStream && asrModel?.location === "local" && isStreamingSource(asrModel);
 
-	// 默认本地语音准备的取消 / 重试：走统一下载组件同一 job（`asr:<modelId>`），**不写 source**。
+	// 本地语音安装的取消 / 重试：走统一下载组件同一 job（`asr:<modelId>`），**不写 source**。
 	const cancelPrepare = useCallback(() => {
 		if (!prepRef.current?.jobId) return;
 		// 窄接口：只取消目录里唯一的默认模型（手机也可用；不动通用下载）。
@@ -404,7 +400,7 @@ export function useVoiceInput(opts: UseVoiceInputOptions): UseVoiceInput {
 	}, [loadSource]);
 	const retryPrepare = useCallback(() => {
 		if (!prepRef.current?.jobId) return;
-		void retryDefaultVoicePrepare().then(() => void loadSource()).catch(() => {});
+		void installDefaultVoice().then(() => void loadSource()).catch(() => {});
 	}, [loadSource]);
 
 	return {

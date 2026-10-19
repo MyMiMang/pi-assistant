@@ -27,3 +27,4 @@
 | [0010](0010-artifacts-not-committed.md) | 截图 / 证据不入库 |
 | [0011](0011-project-standards.md) | 项目规范化：AGENTS.md 唯一入口 + 自动检查 |
 | [0012](0012-no-auto-upstream-updates.md) | Pi / Hindsight 不自动升级，开发时手动升级 |
+| [0013](0013-local-voice-optional.md) | 本地语音识别是可选模块，默认不安装 |

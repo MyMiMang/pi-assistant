@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { extname, join } from "node:path";
 import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
+import { openLocalAsrModels } from "./fixtures/page-checks.mjs";
 
 const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const dist = join(root, "apps/web/dist");
@@ -332,7 +333,7 @@ try {
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("local-asr-models").waitFor();
+	await openLocalAsrModels(page);
 	check("本地段是统一多模型选择器（旧 SenseVoice 卡已移除）", (await page.getByTestId("local-asr-models").isVisible()) && (await page.getByTestId("local-sensevoice-card").count()) === 0);
 	check("不再有第二套「使用已导入的 SenseVoice」按钮", (await page.getByTestId("voice-local-use").count()) === 0);
 	// 选中 SenseVoice：许可标「本地自用可下载」、按钮可用、无强制勾选框

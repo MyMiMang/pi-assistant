@@ -31,3 +31,12 @@ export function roomHelpers(page) {
 	const botsOf = (name) => page.locator(`[data-testid=room-bot][data-agent="${name}"]`);
 	return { roomSay, roomIdle, botsOf };
 }
+
+/** 设置 › 语音 › 本地：本地语音是可选模块，没装任何本地模型时模型列表折叠在「其他本地模型」里；需要时展开再等列表出现。 */
+export async function openLocalAsrModels(page, timeout = 20_000) {
+	const models = page.getByTestId("local-asr-models");
+	const toggle = page.getByTestId("local-asr-others-toggle");
+	await models.or(toggle).first().waitFor({ timeout });
+	if (!(await models.isVisible()) && (await toggle.isVisible())) await toggle.click();
+	await models.waitFor({ timeout });
+}

@@ -5,12 +5,13 @@
  * `GET /api/audio/asr/source` 返回块 `defaultVoice: DefaultVoicePrepView`——
  * `{ defaultModelId, kind, label, prep:{ state, jobId, phase, phaseLabel, received, total, percent, attempt,
  *   startedAt, finishedAt, error, errorCode, retryable }, firstRunNeedsNetwork, approxBytes, offlineAfterReady,
- *   requiresUserAction:false, micPermissionRequested:false, notes }`。
+ *   requiresUserAction:true, micPermissionRequested:false, notes }`。
+ * 本地语音是**可选模块**（决策 0013）：默认不安装，用户在 设置 › 语音 点「安装」才下载；`cancelled` 只为兼容旧后端。
  *
  * 原则：
  *  - **精确按契约形状解析**（`prep.state` 必须是契约枚举之一）；结构不认识 → `ok:false` / `state:"unknown"`，
  *    UI 什么都不显示，**不猜、不默认「已就绪」**；
- *  - **不抢占用户选择**：这里只读展示，不写 `source`（自动默认由服务端 CAS + opt-out 管）；
+ *  - **不抢占用户选择**：这里只读展示，不写 `source`（「安装并使用」由服务端 CAS 管）；
  *  - 进度复用统一下载注册表（同一稳定 id `asr:<modelId>`），同一模型 = 同一 job；
  *  - **首次联网如实分层**：未知 (null) 时绝不声称可离线。
  */
@@ -145,16 +146,15 @@ export function voicePrepareLabel(v: VoicePrepareView): string {
 	switch (v.state) {
 		case "preparing": {
 			const parts = [v.phaseLabel, v.percent != null ? `${v.percent}%` : ""].filter(Boolean).join(" ");
-			return parts ? `正在准备默认本地语音（${parts}）` : "正在准备默认本地语音…";
+			return parts ? `正在安装本地语音（${parts}）` : "正在安装本地语音…";
 		}
 		case "ready":
-			return "默认本地语音已就绪";
+			return "本地语音已安装";
 		case "failed":
-			return "默认本地语音准备失败";
+			return "本地语音安装失败";
 		case "cancelled":
-			return "默认本地语音准备已取消";
 		case "not_prepared":
-			return "默认本地语音待准备（首次需联网）";
+			return "本地语音未安装";
 		default:
 			return "";
 	}
@@ -173,12 +173,12 @@ export function voicePrepareTone(v: VoicePrepareView): "green" | "amber" | "red"
 	}
 }
 
-/** 进行中可取消（preparing）；失败 / 取消可重试。都要求有统一下载 job id（同一个 job）。 */
+/** 进行中可取消（preparing）；未安装 / 失败可安装（失败即重试）。都要求有统一下载 job id（同一个 job）。 */
 export function canCancelPrepare(v: VoicePrepareView): boolean {
 	return v.ok && v.state === "preparing" && !!v.jobId;
 }
-export function canRetryPrepare(v: VoicePrepareView): boolean {
-	return v.ok && (v.state === "failed" || v.state === "cancelled") && !!v.jobId;
+export function canInstallPrepare(v: VoicePrepareView): boolean {
+	return v.ok && (v.state === "not_prepared" || v.state === "failed" || v.state === "cancelled") && !!v.jobId;
 }
 
 /** 进度条：total 未知时返回 null（画不定进度条，不编百分比）。 */
@@ -188,12 +188,12 @@ export function preparePercent(v: VoicePrepareView): number | null {
 	return null;
 }
 
-/** 首次联网提示（**绝不在未知时说可离线**）。 */
+/** 安装体积 / 联网提示（**绝不在未知时说可离线**）。 */
 export function firstUseNote(v: VoicePrepareView): string {
 	if (!v.ok) return "";
 	if (v.firstRunNeedsNetwork === true) {
-		const size = v.approxBytes ? `约 ${Math.round(v.approxBytes / 1e6)} MB` : "估算 < 300 MB";
-		return `首次使用需联网自动准备（${size}，估算非实测），准备好后即可离线使用。`;
+		const size = v.approxBytes ? `约 ${Math.round(v.approxBytes / 1e6)} MB` : "不到 300 MB";
+		return `默认不安装；安装需联网下载${size}（估算），装好后可离线使用。`;
 	}
 	if (v.firstRunNeedsNetwork === false) return "已随应用内置，可离线使用。";
 	return "";

@@ -17,7 +17,6 @@ import { asrRunnerFamily, hasAsrRunnerFamily, type AsrRunnerFamily } from "../sr
 import { LocalAsrManager, type AsrDeps, type AsrPaths } from "../src/local-asr/manager.ts";
 import { LocalAsrService, asrPhaseLabel, type AsrSelectionPort } from "../src/local-asr/service.ts";
 import { projectAsrInstall, asrDownloadId } from "../src/local-asr/download.ts";
-import { clearDefaultVoiceMarkers, readDefaultOptOut, writeDefaultInit, writeDefaultOptOut } from "../src/local-asr/default-voice-prep.ts";
 import { ONLINE_ZIPFORMER_MODEL_ID } from "../src/local-asr/manifest.ts";
 import { bus } from "../src/bus.ts";
 import * as dl from "../src/downloads.ts";
@@ -501,51 +500,28 @@ test("路由：GET /catalog 返回聚合 DTO 且不启动 worker；按 id instal
 	assert.equal(nf.status, 404);
 });
 
-// ------------------------------------------------------------- 默认本地语音自动准备
+// ------------------------------------------------------------- 默认本地语音（可选模块，显式安装）
 
-test("自动准备：新鲜用户（unset）→ 后台准备默认模型，完成后自动 selected & ready（CAS）", async () => {
+test("可选模块：没有启动时自动准备；新鲜用户点「安装」→ 装默认模型，完成后自动 selected & ready（CAS）", async () => {
 	const h = makeHarness();
-	clearDefaultVoiceMarkers();
 	h.selection.sel = null;
 	h.selection.present = false;
 	h.selection.ver = 0;
-	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, true);
+	assert.equal("ensureDefaultVoiceAutoPrep" in h.svc, false, "不再有启动时自动下载入口");
+	assert.equal(h.svc.defaultVoicePrepView().prep.state, "not_prepared", "未安装前只是待安装，不会自己开始");
+	assert.equal(h.svc.managerFor(DEF).status().install.state, "not_installed");
+	assert.equal(h.svc.installDefaultVoice().started, true);
 	await new Promise((r) => setTimeout(r, 40));
 	assert.equal(h.svc.managerFor(DEF).status().install.state, "installed");
 	const sel = h.selection.sel as { location?: string; model?: string } | null;
 	assert.equal(sel?.location, "local");
 	assert.equal(sel?.model, DEF);
-	// 全局只启动一次：再调不重启
-	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
+	// 已装好后再点安装：不重复安装。
+	assert.equal(h.svc.installDefaultVoice().started, false);
 });
 
-test("自动准备不覆盖：显式清空 / 已选来源 / 已取消过 / 已启动过 一律不启动", () => {
+test("可选模块视图：默认模型 / 实际状态 / 需用户显式安装 / 首次需联网（不假称断网可用）/ 不申请麦克风", () => {
 	const h = makeHarness();
-	clearDefaultVoiceMarkers();
-	h.selection.sel = null;
-	h.selection.present = true; // 显式清空（key 存在）
-	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
-
-	clearDefaultVoiceMarkers();
-	h.selection.present = true;
-	h.selection.sel = { location: "cloud", provider: "p", model: "m" };
-	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
-
-	clearDefaultVoiceMarkers();
-	writeDefaultOptOut("user_cleared");
-	h.selection.sel = null;
-	h.selection.present = false;
-	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
-
-	clearDefaultVoiceMarkers();
-	writeDefaultInit({ at: "2026-10-17T00:00:00.000Z", modelId: DEF, sourceVersionAtStart: 0 });
-	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
-	clearDefaultVoiceMarkers();
-});
-
-test("自动准备视图：默认模型 / 实际状态 / 首次需联网（不假称断网可用）/ 不申请麦克风", () => {
-	const h = makeHarness();
-	clearDefaultVoiceMarkers();
 	h.selection.sel = null;
 	h.selection.present = false;
 	const view = h.svc.defaultVoicePrepView();
@@ -555,19 +531,18 @@ test("自动准备视图：默认模型 / 实际状态 / 首次需联网（不�
 	assert.equal(view.prep.jobId, `asr:${DEF}`);
 	assert.equal(view.firstRunNeedsNetwork, true);
 	assert.equal(view.offlineAfterReady, true);
-	assert.equal(view.requiresUserAction, false);
+	assert.equal(view.requiresUserAction, true);
 	assert.equal(view.micPermissionRequested, false);
-	assert.ok((view.approxBytes ?? 0) >= 198_270_793, "首次准备量至少是权重体积");
+	assert.ok((view.approxBytes ?? 0) >= 198_270_793, "安装量至少是权重体积");
 	assert.equal(JSON.stringify(view).includes("token"), false);
 });
 
 test("安装中途用户改选来源 → 安装完成不覆盖（CAS / stale intent）", async () => {
 	const h = makeHarness();
-	clearDefaultVoiceMarkers();
 	h.selection.sel = null;
 	h.selection.present = false;
 	h.selection.ver = 0;
-	h.svc.ensureDefaultVoiceAutoPrep(); // 捕获 selectionAtStart = null / ver 0
+	h.svc.installDefaultVoice(); // 捕获 selectionAtStart = null / ver 0
 	h.selection.sel = { location: "cloud", provider: "openai", model: "whisper-1" };
 	h.selection.ver = 1; // 用户中途改选
 	await new Promise((r) => setTimeout(r, 40));
@@ -575,42 +550,30 @@ test("安装中途用户改选来源 → 安装完成不覆盖（CAS / stale int
 	assert.equal(h.selection.sel?.model, "whisper-1");
 });
 
-test("取消默认准备写 optout（cancelled）→ 不自动 restart；显式重试才清 optout 并重装一次", async () => {
+test("取消安装 → 回到未安装（不自动重启）；再点安装走同一个 job 装好", async () => {
 	const h = makeHarness();
-	clearDefaultVoiceMarkers();
 	h.selection.sel = null;
 	h.selection.present = false;
 	h.selection.ver = 0;
 	h.inst.hangDownload = true;
-	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, true);
+	assert.equal(h.svc.installDefaultVoice().started, true);
 	await new Promise((r) => setTimeout(r, 10));
 	assert.equal(h.svc.defaultVoicePrepView().prep.state, "preparing");
 
-	const cancelled = h.svc.cancelDefaultVoicePrepare();
-	assert.equal(cancelled.ok, true);
-	assert.equal(readDefaultOptOut()?.reason, "cancelled");
+	assert.equal(h.svc.cancelDefaultVoicePrepare().ok, true);
 	await new Promise((r) => setTimeout(r, 10));
-	assert.equal(h.svc.defaultVoicePrepView().prep.state, "cancelled");
-	// 取消后不自动重启（init 已存在 + optout 存在，两条都挡）。
-	assert.equal(h.svc.ensureDefaultVoiceAutoPrep().started, false);
+	assert.notEqual(h.svc.defaultVoicePrepView().prep.state, "preparing");
+	assert.equal(h.svc.cancelDefaultVoicePrepare().ok, false, "没在安装时取消返回 false");
 
-	// 显式重试：清 optout、固定默认模型、走同一 job；装完仍按 CAS 采用（这里来源仍 unset）。
 	h.inst.hangDownload = false;
-	const retry = h.svc.retryDefaultVoicePrepare();
-	assert.equal(retry.started, true);
-	assert.equal(readDefaultOptOut(), null);
+	assert.equal(h.svc.installDefaultVoice().started, true);
 	await new Promise((r) => setTimeout(r, 40));
-	assert.equal(h.svc.managerFor(DEF).status().install.state, "installed");
 	assert.equal(h.svc.defaultVoicePrepView().prep.state, "ready");
-	const sel = h.selection.sel as { model?: string } | null;
-	assert.equal(sel?.model, DEF);
-	// 已装好后再点重试：不重复安装。
-	assert.equal(h.svc.retryDefaultVoicePrepare().started, false);
+	assert.equal((h.selection.sel as { model?: string } | null)?.model, DEF);
 });
 
 test("显式清空来源（key 存在且 null）时 install_and_use 完成也不自动改来源", async () => {
 	const h = makeHarness();
-	clearDefaultVoiceMarkers();
 	h.selection.sel = null;
 	h.selection.present = true; // 用户显式清空过
 	h.selection.ver = 3;

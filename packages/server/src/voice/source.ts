@@ -47,7 +47,7 @@ export const readVoiceSource = (): AsrSource | null => normalizeAsrSource(getSet
 
 /**
  * `settings.voiceSource` key 是否**存在**：区分「从未设置（unset，key 不存在）」与「用户显式清空（key 存在且为 null）」。
- * 自动准备只在 unset 时启动；显式清空写入 optout 标记后不再 restart。
+ * 「安装并使用」只在安装前后都是 unset 时才自动采用本地默认；显式清空不被覆盖。
  */
 export function voiceSourceKeyPresent(): boolean {
 	const row = db.prepare("SELECT 1 AS present FROM settings WHERE key = ?").get(VOICE_SOURCE_KEY) as { present?: number } | undefined;

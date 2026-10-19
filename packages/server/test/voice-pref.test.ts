@@ -8,7 +8,7 @@
 import "./setup.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { canCancelPrepare, canRetryPrepare, emptyVoicePrepareView, firstUseNote, mergePrepareDownload, normalizeVoicePrepareView, preparePercent, voicePrepareLabel, voicePrepareTone } from "../../../apps/web/src/voice-pref.ts";
+import { canCancelPrepare, canInstallPrepare, emptyVoicePrepareView, firstUseNote, mergePrepareDownload, normalizeVoicePrepareView, preparePercent, voicePrepareLabel, voicePrepareTone } from "../../../apps/web/src/voice-pref.ts";
 
 /** 契约 §1.1 的完整形状（与后端 `defaultVoicePrepView()` 一致）。 */
 const contractView = (over: Record<string, unknown> = {}) => ({
@@ -34,7 +34,7 @@ const contractView = (over: Record<string, unknown> = {}) => ({
 	firstRunNeedsNetwork: true,
 	approxBytes: 300_000_000,
 	offlineAfterReady: true,
-	requiresUserAction: false,
+	requiresUserAction: true,
 	micPermissionRequested: false,
 	notes: ["首次需联网"],
 	...Object.fromEntries(Object.entries(over).filter(([k]) => k !== "prep")),
@@ -96,33 +96,37 @@ test("mergePrepareDownload：并入统一下载注册表实时进度（同一个
 	assert.deepEqual(unchanged, base);
 });
 
-test("取消 / 重试 / 百分比的可用条件", () => {
+test("安装 / 取消 / 重试 / 百分比的可用条件（可选模块：未安装可点安装）", () => {
 	const preparing = normalizeVoicePrepareView(contractView());
 	assert.equal(canCancelPrepare(preparing), true);
-	assert.equal(canRetryPrepare(preparing), false);
+	assert.equal(canInstallPrepare(preparing), false);
 	assert.equal(preparePercent(preparing), 25);
 	const failed = normalizeVoicePrepareView(contractView({ prep: { state: "failed", error: "下载失败", retryable: true, percent: null, total: null } }));
 	assert.equal(canCancelPrepare(failed), false);
-	assert.equal(canRetryPrepare(failed), true);
+	assert.equal(canInstallPrepare(failed), true);
 	assert.equal(preparePercent(failed), null);
 	const ready = normalizeVoicePrepareView(contractView({ prep: { state: "ready" } }));
 	assert.equal(canCancelPrepare(ready), false);
-	assert.equal(canRetryPrepare(ready), false);
+	assert.equal(canInstallPrepare(ready), false);
+	const notInstalled = normalizeVoicePrepareView(contractView({ prep: { state: "not_prepared", percent: null } }));
+	assert.equal(canInstallPrepare(notInstalled), true, "未安装：给「安装本地语音」");
+	assert.equal(canCancelPrepare(notInstalled), false);
 	// 没有 jobId 时不给操作入口
-	assert.equal(canRetryPrepare(normalizeVoicePrepareView(contractView({ defaultModelId: null, prep: { jobId: null, state: "failed" } }))), false);
+	assert.equal(canInstallPrepare(normalizeVoicePrepareView(contractView({ defaultModelId: null, prep: { jobId: null, state: "failed" } }))), false);
 });
 
 test("标签 / 色调：按状态给人话，简单直接", () => {
-	assert.match(voicePrepareLabel(normalizeVoicePrepareView(contractView())), /正在准备默认本地语音/);
-	assert.equal(voicePrepareLabel(normalizeVoicePrepareView(contractView({ prep: { state: "ready" } }))), "默认本地语音已就绪");
-	assert.equal(voicePrepareLabel(normalizeVoicePrepareView(contractView({ prep: { state: "failed" } }))), "默认本地语音准备失败");
+	assert.match(voicePrepareLabel(normalizeVoicePrepareView(contractView())), /正在安装本地语音/);
+	assert.equal(voicePrepareLabel(normalizeVoicePrepareView(contractView({ prep: { state: "ready" } }))), "本地语音已安装");
+	assert.equal(voicePrepareLabel(normalizeVoicePrepareView(contractView({ prep: { state: "failed" } }))), "本地语音安装失败");
+	assert.equal(voicePrepareLabel(normalizeVoicePrepareView(contractView({ prep: { state: "not_prepared" } }))), "本地语音未安装");
 	assert.equal(voicePrepareTone(normalizeVoicePrepareView(contractView())), "amber");
 	assert.equal(voicePrepareTone(normalizeVoicePrepareView(contractView({ prep: { state: "ready" } }))), "green");
 	assert.equal(voicePrepareTone(normalizeVoicePrepareView(contractView({ prep: { state: "failed" } }))), "red");
 });
 
 test("首次联网说明：未知时绝不说可离线（绝不写“首次断网可用”）", () => {
-	assert.match(firstUseNote(normalizeVoicePrepareView(contractView())), /首次使用需联网自动准备/);
+	assert.match(firstUseNote(normalizeVoicePrepareView(contractView())), /默认不安装；安装需联网下载约 \d+ MB/);
 	assert.equal(firstUseNote(normalizeVoicePrepareView(contractView({ firstRunNeedsNetwork: false }))), "已随应用内置，可离线使用。");
 	assert.equal(firstUseNote(normalizeVoicePrepareView(contractView({ firstRunNeedsNetwork: null }))), "");
 	assert.equal(firstUseNote(emptyVoicePrepareView()), "");

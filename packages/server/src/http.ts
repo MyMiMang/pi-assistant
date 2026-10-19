@@ -215,15 +215,7 @@ async function proxyDesktop(req: IncomingMessage, socket: import("node:stream").
 // ---------------------------------------------------------------- 启动 HTTP + WebSocket
 export function startHttp() {
 	const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host });
-	// 默认本地语音：新鲜用户（来源从未设置）首次启动时后台自动准备（全局只一次；失败不自动重试）。
-	// 测试 / dev（PIA_MOCK=1）不触发：避免在临时数据目录里真的联网下载权重 / 起 uv。
-	if (!config.mock) {
-		try {
-			localAsrService().ensureDefaultVoiceAutoPrep();
-		} catch {
-			/* 自动准备失败不影响服务启动；失败状态在语音设置 / 下载组件里可见 */
-		}
-	}
+	// 本地语音识别是可选模块（决策 0013）：启动时不自动下载，用户在 设置 › 语音 显式安装。
 	const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 	const clients = new Map<WebSocket, { deviceId: string | null; authed: boolean }>();
 	server.on("upgrade", (req, socket, head) => {

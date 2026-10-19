@@ -20,7 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import { openAsrStream } from "../api";
 import { useVoiceInput } from "../hooks/useVoiceInput";
 import { useStore } from "../store";
-import { canCancelPrepare, canRetryPrepare, voicePrepareLabel } from "../voice-pref";
+import { canCancelPrepare, canInstallPrepare, voicePrepareLabel } from "../voice-pref";
 import { insertAtAnchor, shouldInsert, VoiceDraftAssembler, type VoiceResult, type VoiceSegment } from "../voice-input";
 
 export interface VoiceInputProps {
@@ -148,9 +148,9 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 
 	const recording = voice.state === "recording";
 	const busy = voice.state === "preparing" || voice.state === "transcribing";
-	// 默认本地语音准备：未配置来源且已在（或需要）自动准备时，在输入附近给一行真实状态 / 操作，不逼用户手动找下载。
+	// 本地语音（可选模块）：只有用户已经点了安装（安装中 / 失败）才在输入附近给一行真实状态 / 操作；没装不打扰。
 	const prep = voice.prep;
-	const showPrep = !recording && !busy && !!prep?.ok && !voice.source && (prep.state === "preparing" || prep.state === "failed" || prep.state === "not_prepared");
+	const showPrep = !recording && !busy && !!prep?.ok && !voice.source && (prep.state === "preparing" || prep.state === "failed");
 	const prepLabel = prep ? voicePrepareLabel(prep) : "";
 	const label = !voice.supported
 		? voice.unsupportedReason === "insecure_context"
@@ -158,15 +158,13 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 			: "当前浏览器不支持麦克风"
 		: !voice.asrModel
 			? prep?.ok && prep.state === "preparing"
-				? "默认本地语音正在准备（首次需联网）"
-				: prep?.ok && prep.state === "not_prepared"
-					? "默认本地语音待准备（首次需联网）"
-					: "未配置语音识别模型（设置 › 语音配置）"
+				? "本地语音正在安装"
+				: "未配置语音识别（设置 › 语音：选云端或安装本地语音）"
 			: recording
 				? "停止录音并转写"
 				: "语音输入";
 	// 只有「用户点了麦克风、hook 回了语音来源 / 准备类错误」才浮现设置入口；
-	// idle 不常驻状态行；「准备中」不给「去设置」（准备是自动的，用户不需要手动配置）。
+	// idle 不常驻状态行；「安装中」不给「去设置」（已经在装，用户不需要再去配置）。
 	const asrSetupCodes = new Set(["asr_not_configured", "asr_unavailable", "asr_not_installed", "asr_deleted", "asr_prepare_failed"]);
 	const needSetup = !!voice.error && asrSetupCodes.has(voice.error.code) && !recording;
 	const failed = voice.progress.failed;
@@ -244,7 +242,7 @@ export function VoiceInput({ agentId, conversationId, textareaRef, value, onChan
 									取消
 								</button>
 							)}
-							{canRetryPrepare(prep) && (
+							{prep.state === "failed" && canInstallPrepare(prep) && (
 								<button type="button" className="ml-1 text-accent underline" data-testid="voice-prep-retry" onClick={() => { setNotice(""); voice.retryPrepare(); }}>
 									重试
 								</button>

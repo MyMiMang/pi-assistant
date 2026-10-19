@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { extname, join } from "node:path";
 import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
+import { openLocalAsrModels } from "./fixtures/page-checks.mjs";
 
 const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const dist = join(root, "apps/web/dist");
@@ -260,7 +261,7 @@ try {
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("local-asr-models").waitFor();
+	await openLocalAsrModels(page);
 	check("本地模型区已渲染", await page.getByTestId("local-asr-models").isVisible());
 	check("旧版重复导入卡已移除，主流程只有一套来源按钮", (await page.getByTestId("local-sensevoice-card").count()) === 0 && (await page.getByTestId("voice-local-use").count()) === 0);
 	check("模型内部 ID 收进详情，不占主卡", !(await page.getByTestId("local-asr-detail").innerText()).includes("whisper-small-int8"));
@@ -331,7 +332,7 @@ try {
 	// 「使用这个模型」（已装未选中）→ 走后端 /select（与 install_and_use 同一写来源路径，不前端另造 PUT source）
 	const putBeforeUse = state.putLog.length;
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("local-asr-models").waitFor();
+	await openLocalAsrModels(page);
 	await page.getByTestId("local-asr-model-select").click();
 	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /Whisper Base/ }).click();
 	await page.getByTestId("local-asr-use").click();
@@ -348,7 +349,7 @@ try {
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("local-asr-models").waitFor();
+	await openLocalAsrModels(page);
 	await page.getByTestId("local-asr-model-select").click();
 	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /Whisper Turbo/ }).click();
 	await page.getByTestId("local-asr-install-use").click();
@@ -365,7 +366,7 @@ try {
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("local-asr-models").waitFor();
+	await openLocalAsrModels(page);
 	await page.getByTestId("local-asr-model-select").click();
 	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /Whisper Base/ }).click();
 	await page.getByTestId("local-asr-install-error").waitFor();
@@ -386,7 +387,7 @@ try {
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("local-asr-models").waitFor();
+	await openLocalAsrModels(page);
 	await page.getByTestId("local-asr-model-select").click();
 	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /SenseVoice Small/ }).click();
 	check("SenseVoice 仍在模型列表里（未被移出）", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === "sensevoice-small-int8");
@@ -422,7 +423,7 @@ try {
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("local-asr-models").waitFor();
+	await openLocalAsrModels(page);
 	await page.getByTestId("local-asr-model-select").click();
 	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /SenseVoice Small/ }).click();
 	await page.getByTestId("local-asr-install-error").waitFor();
@@ -447,7 +448,7 @@ try {
 	for (let round = 1; round <= 2; round++) {
 		await page.goto(`${base}/?settings=voice`);
 		await page.getByTestId("voice-source-status").waitFor();
-		await page.getByTestId("local-asr-models").waitFor(); // 来源是本地 → 直接落在「本地」页
+		await openLocalAsrModels(page); // 来源是本地 → 直接落在「本地」页
 		await page.waitForFunction(() => document.querySelector("[data-testid=local-asr-detail]")?.getAttribute("data-selected") === "true", null, { timeout: 5000 }).catch(() => {});
 		check(`第 ${round} 次打开：下拉停在已保存的 Paraformer（不是推荐的 Whisper Small）`, (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === savedPara.id && /Paraformer/.test(await selText()), await selText());
 		check(`第 ${round} 次打开：详情标「当前使用中」`, await page.getByTestId("local-asr-in-use").isVisible());
@@ -455,7 +456,7 @@ try {
 	// 切到云端再切回本地（卡片重新挂载）也一样
 	await page.getByTestId("voice-tab-cloud").click();
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("local-asr-models").waitFor();
+	await openLocalAsrModels(page);
 	check("切走再切回：仍是已保存的 Paraformer", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === savedPara.id, await selText());
 	await page.screenshot({ path: join(OUT, "05e-saved-local-model-kept.png") });
 	// 这次自己点别的看看：只改浏览，不改已保存；刷新后回到已保存
@@ -463,7 +464,7 @@ try {
 	await page.getByTestId("local-asr-model-select-menu").getByRole("option", { name: /Whisper Base/ }).click();
 	check("自己点别的模型：下拉跟着变（不被强行拉回）", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === "whisper-base-int8");
 	await page.goto(`${base}/?settings=voice`);
-	await page.getByTestId("local-asr-models").waitFor();
+	await openLocalAsrModels(page);
 	await page.waitForFunction((id) => document.querySelector("[data-testid=local-asr-detail]")?.getAttribute("data-model-id") === id, savedPara.id, { timeout: 5000 }).catch(() => {});
 	check("没点「使用」就重开：回到已保存的 Paraformer", (await page.getByTestId("local-asr-detail").getAttribute("data-model-id")) === savedPara.id);
 
@@ -472,7 +473,7 @@ try {
 	await page.goto(`${base}/?settings=voice`);
 	await page.getByTestId("voice-source-status").waitFor();
 	await page.getByTestId("voice-tab-local").click();
-	await page.getByTestId("local-asr-models").waitFor();
+	await openLocalAsrModels(page);
 	const ov = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, vw: innerWidth, c: (() => { const c = document.querySelector("[data-testid=settings-content]"); return c ? c.scrollWidth - c.clientWidth : 0; })() }));
 	check("390：页面与内容区不横向溢出", ov.doc <= ov.vw && ov.c <= 1, JSON.stringify(ov));
 	await page.screenshot({ path: join(OUT, "06-390-local-models.png") });

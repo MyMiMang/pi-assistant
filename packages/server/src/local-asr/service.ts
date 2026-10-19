@@ -14,7 +14,7 @@
  */
 import { ASR_CATALOG, asrModelSpec, catalogDefaultVoiceView, classifyAsrHardware, recommendAsrModelId, resolveCatalogDefaultVoice, type AsrModelSpec, type AsrTier } from "./catalog.ts";
 import { ASR_MODEL_ID, ASR_PROVIDER_ID, SENSEVOICE_MODEL, SHERPA_ONNX_VERSION, ASR_PYTHON_VERSION } from "./manifest.ts";
-import { readDefaultInit, readDefaultOptOut, writeDefaultInit, writeDefaultOptOut, clearDefaultOptOut, defaultVoiceEligible, type DefaultVoicePrepView } from "./default-voice-prep.ts";
+import type { DefaultVoicePrepView } from "./default-voice-prep.ts";
 import { licenseDisclosure, type LicenseDisclosure } from "./license.ts";
 import type { AsrInstallPhase, AsrInstallSource, AsrInstallState, AsrRuntimeState, AsrStatus, LocalAsrManager } from "./manager.ts";
 import type { AsrSourceMeta } from "./manifest.ts";
@@ -354,8 +354,6 @@ export class LocalAsrService {
 	cancel(id: string): { ok: boolean } {
 		const job = this.jobs.get(id);
 		if (!job) return { ok: false };
-		// 取消默认本地语音的自动准备 = 用户意图「别自动装」：写 optout，下次启动不 restart（显式重试才清）。
-		if (id === this.defaultVoiceModelId()) writeDefaultOptOut("cancelled");
 		job.ctrl.abort();
 		return this.managerFor(id).cancel();
 	}
@@ -393,7 +391,7 @@ export class LocalAsrService {
 		return out;
 	}
 
-	// ------------------------------------------------------- 默认本地语音（自动准备）
+	// ------------------------------------------------------- 默认本地语音（可选模块：用户显式安装）
 
 	/** 目录解析出的默认本地语音 modelId（fail closed，不猜）。 */
 	defaultVoiceModelId(): string | null {
@@ -402,15 +400,12 @@ export class LocalAsrService {
 	}
 
 	/**
-	 * 自动准备资格 + 状态视图（契约 §1.1 的 `defaultVoice` 块）。
-	 * **不下载 / 不启动 worker**；只读现有状态与标记，供 `GET /api/audio/asr/source` 一次带出。
+	 * 默认本地语音的状态视图（契约 §1.1 的 `defaultVoice` 块）。
+	 * **不下载 / 不启动 worker**；只读安装状态，供 `GET /api/audio/asr/source` 一次带出。
 	 */
 	defaultVoicePrepView(): DefaultVoicePrepView {
 		const defaultModelId = this.defaultVoiceModelId();
-		const selection = this.deps.selection.read();
-		const view = catalogDefaultVoiceView(selection);
-		const init = readDefaultInit();
-		const optout = readDefaultOptOut();
+		const view = catalogDefaultVoiceView(this.deps.selection.read());
 		const spec = defaultModelId ? asrModelSpec(defaultModelId) : null;
 		const install = spec ? this.installView(spec) : null;
 		const state: DefaultVoicePrepView["prep"]["state"] = !defaultModelId
@@ -421,11 +416,10 @@ export class LocalAsrService {
 					? "preparing"
 					: install?.state === "failed"
 						? "failed"
-						: optout
-							? "cancelled"
-							: "not_prepared";
+						: "not_prepared";
 		const finishedAt = install?.installedAt != null ? new Date(install.installedAt).toISOString() : null;
 		const approxBytes = spec ? spec.manifest.bytes + ASR_SHARED_RUNTIME_ESTIMATE_BYTES : null;
+		const mb = approxBytes ? Math.round(approxBytes / 1024 / 1024) : "?";
 		return {
 			defaultModelId,
 			kind: view.kind,
@@ -439,74 +433,47 @@ export class LocalAsrService {
 				total: install?.total ?? null,
 				percent: install?.percent ?? null,
 				attempt: install?.attempt ?? null,
-				startedAt: init?.at ?? null,
+				startedAt: null,
 				finishedAt,
 				error: install?.error ?? null,
 				errorCode: install?.error ? "asr_prepare_failed" : null,
 				retryable: state === "failed",
 			},
-			// P2 口径：首次需联网准备；若将来随包内置则改为 false。
+			// 可选模块：不随安装包分发，安装时需联网；装好后可离线。
 			firstRunNeedsNetwork: true,
 			approxBytes,
 			offlineAfterReady: true,
-			requiresUserAction: false,
+			requiresUserAction: true,
 			micPermissionRequested: false,
 			notes: [
-				"首次使用需联网自动准备（权重 + 共享运行时），之后可离线使用；不随安装包分发该权重",
-				"准备过程不需要用户手动点下载 / 找文件；失败可在「下载与组件」重试",
-				`准备量估算约 ${approxBytes ? Math.round(approxBytes / 1024 / 1024) : "?"} MB（权重 + 共享运行时，估算非实测）`,
+				"可选模块：默认不安装，不随安装包分发；在 设置 › 语音 点「安装」才会下载",
+				`安装量估算约 ${mb} MB（运行环境 + 默认模型，估算非实测），装好后可离线使用`,
 				"默认流式模型输出无标点；麦克风权限只在用户点麦克风时申请",
 			],
 		};
 	}
 
-	/**
-	 * 新鲜用户自动准备（全局只启动一次，幂等）：资格满足时后台安装默认模型，
-	 * 成功后由 `install(intent:"install_and_use")` 的 CAS 自动把来源写为默认本地模型。
-	 * 失败**不自动重试**（可见 + 手动重试）；取消 / 清空后不 restart。
-	 */
-	ensureDefaultVoiceAutoPrep(): { started: boolean; reason: string } {
-		const defaultModelId = this.defaultVoiceModelId();
-		const elig = defaultVoiceEligible({
-			sourceKeyPresent: this.deps.selection.present?.() ?? true,
-			source: this.deps.selection.read(),
-			init: readDefaultInit(),
-			optout: readDefaultOptOut(),
-			defaultModelId,
-		});
-		if (!elig.eligible || !defaultModelId) return { started: false, reason: elig.reason };
-		if (this.anyInstalling()) return { started: false, reason: "已有安装正在进行中" };
-		// 先落 init 标记（全局唯一），即使失败也不再自动重试；重试走统一下载组件的显式动作。
-		writeDefaultInit({ at: new Date().toISOString(), modelId: defaultModelId, sourceVersionAtStart: this.deps.selection.version() });
-		void this.install(defaultModelId, { intent: "install_and_use" }).catch(() => {});
-		return { started: true, reason: elig.reason };
-	}
-
-	/**
-	 * 取消默认本地语音的准备（窄接口：只动**目录里唯一的默认模型**，不接任意 modelId / downloadId）。
-	 * 写 `voiceDefaultOptOut`（reason=cancelled）：下次启动**不 restart**；用户显式重试才清掉。
-	 */
+	/** 取消默认本地语音的安装（窄接口：只动**目录里唯一的默认模型**，不接任意 modelId / downloadId）。 */
 	cancelDefaultVoicePrepare(): { ok: boolean; reason: string } {
 		const id = this.defaultVoiceModelId();
 		if (!id) return { ok: false, reason: "目录里没有默认本地语音模型" };
-		writeDefaultOptOut("cancelled");
-		return { ok: this.cancel(id).ok, reason: "已取消默认本地语音的自动准备，不会自动重启" };
+		const ok = this.cancel(id).ok;
+		return { ok, reason: ok ? "已取消安装本地语音" : "本地语音没有在安装" };
 	}
 
 	/**
-	 * 显式重试默认本地语音的准备（窄接口：固定默认模型 + 统一安装 job + 统一进度）。
-	 * 清掉 optout（只在这里清，且**不**覆盖用户已选来源：采用仍走 install_and_use 的 CAS）。
+	 * 用户显式安装默认本地语音（窄接口：固定默认模型 + 统一安装 job + 统一进度；首次安装与失败重试共用）。
+	 * 采用仍走 `install_and_use` 的 CAS：**不**覆盖用户已选来源。
 	 */
-	retryDefaultVoicePrepare(): { started: boolean; reason: string } {
+	installDefaultVoice(): { started: boolean; reason: string } {
 		const id = this.defaultVoiceModelId();
 		if (!id) return { started: false, reason: "目录里没有默认本地语音模型" };
 		const st = this.managerFor(id).status();
-		if (st.install.state === "installing") return { started: false, reason: "默认本地语音正在准备中" };
-		if (st.install.state === "installed") return { started: false, reason: "默认本地语音已准备完成" };
+		if (st.install.state === "installing") return { started: false, reason: "本地语音正在安装中" };
+		if (st.install.state === "installed") return { started: false, reason: "本地语音已安装" };
 		if (this.anyInstalling()) return { started: false, reason: "已有安装正在进行中，请先等待或取消" };
-		clearDefaultOptOut();
 		void this.install(id, { intent: "install_and_use" }).catch(() => {});
-		return { started: true, reason: "已重新开始准备默认本地语音" };
+		return { started: true, reason: "已开始安装本地语音" };
 	}
 }
 

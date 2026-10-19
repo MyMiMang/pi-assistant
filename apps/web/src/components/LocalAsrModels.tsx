@@ -8,6 +8,8 @@
  * 许可：按钮是否可用看 `license.selfServe`（本地按需下载安装是否放行），**不看 decision**——SenseVoice 整体仍
  * unresolved（商用 / 再分发未确认），但本地自用可一键装；署名与用途提示默认可见，详文在「?」。
  * 自行导入合法权重收进「详情」折叠，不再另开一套旧卡（避免重复操作流）。
+ * 本地语音是**可选模块**（决策 0013）：顶部是模块卡（安装默认模型）；还没装任何本地模型时，
+ * 其他模型的选择器默认折叠在「其他本地模型」里，一页只有一个主要动作。
  */
 import { AlertTriangle, CheckCircle2, Cpu, Download, HardDrive, Loader2, Play, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -15,7 +17,7 @@ import { useLocalAsrCatalog } from "../hooks/useLocalAsrCatalog";
 import { useDefaultVoicePrep } from "../hooks/useDefaultVoicePrep";
 import { formatBytes, installPercent, isIndeterminate, localAsrPick, memoryAdvice, tierLabel } from "../local-asr-intent";
 import type { LocalAsrModelView } from "../local-asr-api";
-import { Badge, Button, Help, Input, Select, cx } from "./ui";
+import { Badge, Button, Fold, Help, Input, Select, cx } from "./ui";
 import { DefaultVoicePrepPanel } from "./DefaultVoicePrep";
 
 function StatusBadge({ m }: { m: LocalAsrModelView }) {
@@ -39,6 +41,7 @@ export function LocalAsrModels() {
 	const [showDetails, setShowDetails] = useState(false);
 	const [showImport, setShowImport] = useState(false);
 	const [importDir, setImportDir] = useState("");
+	const [showOthers, setShowOthers] = useState(false);
 
 	const models = catalog.models;
 	// 下拉停在哪一项：已保存的（正在用的）→ 推荐 → 已安装 → 第一个；这次自己点过的保留，已保存的来源换了就跟过去。
@@ -80,8 +83,10 @@ export function LocalAsrModels() {
 	const license = selected?.license;
 	// 按钮可用性看「本地按需下载安装是否放行」（selfServe），不看 decision（整体 unresolved 只影响分发标注）。
 	const licenseBlocked = !!license && !license.selfServe;
+	// 模块是否已经在用：装过 / 正在装 / 装失败过任意本地模型 → 直接展开模型列表；否则折叠，主动作是上面的「安装本地语音」。
+	const moduleTouched = models.some((m) => m.installed || m.install.state === "installing" || m.install.state === "failed");
 
-	return (
+	const card = (
 		<div className="space-y-3 rounded-xl border border-line p-3" data-testid="local-asr-models" data-models={models.length}>
 			<div className="flex flex-wrap items-center gap-2 text-xs">
 				<HardDrive size={14} className="text-mut" />
@@ -142,9 +147,6 @@ export function LocalAsrModels() {
 								{defaultPrep?.ok && defaultPrep.defaultModelId === selected.id && <Badge tone="accent">默认</Badge>}
 								{selected.selected && <Badge tone="green">当前使用中</Badge>}
 							</div>
-
-							{/* 默认模型未就绪时：就地显示准备状态 / 取消 / 重试（同一个统一下载 job） */}
-							{defaultPrep?.ok && defaultPrep.defaultModelId === selected.id && defaultPrep.state !== "ready" && <DefaultVoicePrepPanel variant="inline" />}
 
 							<div className="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="local-asr-tags">
 								{selected.tier !== "unknown" && (
@@ -341,6 +343,19 @@ export function LocalAsrModels() {
 						</div>
 					)}
 				</>
+			)}
+		</div>
+	);
+
+	return (
+		<div className="space-y-3">
+			<DefaultVoicePrepPanel />
+			{moduleTouched ? (
+				card
+			) : (
+				<Fold title="其他本地模型" count={models.length} hint="更准 / 带标点的可选" open={showOthers} onToggle={() => setShowOthers((v) => !v)} testId="local-asr-others">
+					{card}
+				</Fold>
 			)}
 		</div>
 	);

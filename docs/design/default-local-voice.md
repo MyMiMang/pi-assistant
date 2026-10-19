@@ -1,5 +1,7 @@
 # 默认本地语音（开箱即用）设计
 
+> **2026-10-19 更新**：「装好就自动准备」已被 [0013](../decisions/0013-local-voice-optional.md) 取代，本地语音改为可选模块、用户在设置里显式安装，见 [local-voice-optional.md](local-voice-optional.md)。下文 §4–§5 的自动准备语义仅作历史参考；目录、运行族、流式协议仍有效。
+
 > 状态：**已实施 + 真实模型验收通过（beta.29 候选，未发布 / 未 push / 未 tag）**。实现与验收事实见 §9、`docs/design/default-stream-contract.md` §8、`evidence/local-asr-real-smoke/`。选型与事实证据见 `progress-snapshots/default-local-voice-decision.md`。
 > 用户目标（原话大意）：**装好应用就能用语音**——不让人手动找模型 / 点下载 / 配路径；设置里可以切换别的；已有的「云 / 本地」选择**不能被默认覆盖或删除**；不需要用户提供云 key，不加付费云隐藏调用。优先**真正本地流式**听写，中文 / 英文都要能实际用；模型不限现目录，学优秀成品实现但**不照搬 GPL 代码**。尽量**随安装包带合法小模型 + runtime** 满足 offline-first，体积 / 许可合理，不先随意下载 GB。**若首次必须联网，必须明示；不能把后台自动下载说成首次断网可用。**
 

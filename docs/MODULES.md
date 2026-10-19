@@ -89,7 +89,7 @@
 | `llm-proxy.ts` | 给附属进程（如 Hindsight）用的本机 OpenAI 兼容网关 |
 | `local-models.ts` | 本地模型服务运行状态缓存 |
 | `managed-weights/` | 模型权重校验 |
-| `local-asr/` | 本地语音识别（目录、下载、运行、流式） |
+| `local-asr/` | 本地语音识别（可选模块，用户显式安装）：目录、下载、运行、流式 |
 | `voice/` | 语音识别来源与接口 |
 | `memory/` | 记忆：basic（SQLite + FTS）、index（选择后端）、types、`hindsight/`（sidecar 安装启动、provider 账本与同步队列、settings 三模型） |
 | `skills.ts` | 技能库（Pi Agent Skills） |
@@ -178,7 +178,7 @@
 | `routine-schedule.ts` | 定时计划可编辑识别 |
 | `voice-input.ts` | 语音输入纯逻辑 |
 | `voice-stream.ts` | 流式语音纯逻辑 |
-| `voice-pref.ts` | 默认本地语音状态归一化 |
+| `voice-pref.ts` | 本地语音模块状态归一化 |
 | `local-asr-api.ts` | 本地语音目录接口 |
 | `local-asr-intent.ts` | 本地语音 intent 守卫 |
 | `novnc.d.ts` | noVNC 类型 |
@@ -239,7 +239,7 @@
 | `MemoryHealthDot.tsx` | 高级记忆健康角标（正常 / 慢 / 出错） |
 | `VoiceSettings.tsx` | 语音配置 |
 | `LocalAsrModels.tsx` | 本地语音模型 |
-| `DefaultVoicePrep.tsx` | 默认本地语音准备状态 |
+| `DefaultVoicePrep.tsx` | 本地语音识别可选模块卡（安装 / 进度 / 取消 / 设为来源） |
 | `DesktopSettings.tsx` | 设置 › 助理电脑 |
 | `DesktopView.tsx` | 「电脑」标签画面 |
 | `HostControl.tsx` | 操作这台电脑（设置 + 档位） |
@@ -268,7 +268,7 @@
 | `stable-shot.mjs` | 稳定截图 |
 | `artifacts.mjs` | 截图与日志写 artifacts/ |
 | `fake-hindsight.mjs` | 假 Hindsight |
-| `page-checks.mjs` | run.mjs 用：弹出菜单溢出检查、群聊发言 / 等空闲 / 按成员取消息 |
+| `page-checks.mjs` | 弹出菜单溢出检查、群聊发言 / 等空闲 / 按成员取消息、展开本地语音模型列表（openLocalAsrModels） |
 | `safe-memory-server.mjs` | 安全记忆测试服务 |
 | `mock-mcp.mjs` | 假 MCP 服务 |
 | `info-pane.mjs` | 助理设置面板操作 helper |

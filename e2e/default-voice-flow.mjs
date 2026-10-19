@@ -1,9 +1,10 @@
 /**
- * 默认本地语音（开箱即用）**生产贯通**验证：真实 server（临时数据目录 / Mock / 离线）+ 真实构建 + Chromium。
+ * 本地语音（**可选模块**，默认不安装，决策 0013）**生产贯通**验证：真实 server（临时数据目录 / Mock / 离线）+ 真实构建 + Chromium。
  *
  * 覆盖用户要求的主链路（不真下载权重、不真识别、不碰真实数据 / 麦克风硬件）：
- *  1. 设置 › 语音：准备状态（真实百分比 / 阶段）→ 取消 → **只调窄接口**（不调通用 `/api/downloads/:id/cancel`）
- *     → 状态变 `cancelled` 且出现重试；重试 → 窄接口 → `preparing` → `ready`。
+ *  0. 没装：设置 › 语音 › 本地 显示「安装本地语音」+ 一行说明；输入栏不常驻安装提示；点麦克风引导去设置。
+ *  1. 设置 › 语音：安装进度（真实百分比 / 阶段）→ 取消 → **只调窄接口**（不调通用 `/api/downloads/:id/cancel`）
+ *     → 回到未安装、出现安装按钮；安装 → 窄接口 → `preparing` → `ready`。
  *  2. 准备完成 + 来源自动采用默认 → 点麦克风走**原生流式**：创建会话带 modelId / agentId；append 串行且 seq 单调；
  *     tentative 只就地预览（**不写输入框**）；committed 进草稿；end 后 final 文本进草稿，**不自动发送**（无 POST messages）。
  *  3. 取消录音 → 调 `/cancel`，草稿不变。
@@ -11,8 +12,8 @@
  *  5. 来源在录音中被改选（409 asr_source_changed）→ 会话取消、提示原因、不把该段写进草稿。
  *  6. 迟到就绪（取消后才 create 返回）→ 前端 abort 迟到会话（调 cancel），不留租约。
  *  7. 已选云端来源 → **不走流式**（不创建会话），回落既有批量路径。
- *  8. 显式清空 + 已取消准备 → 点麦克风给「还没准备好」的可解释提示，不创建会话。
- *  9. 390 手机视口：设置页准备状态的取消 / 重试（窄接口）同样可用，不溢出。
+ *  8. 显式清空 + 未安装 → 点麦克风给可解释提示，不创建会话。
+ *  9. 390 手机视口：设置页安装状态的取消 / 安装（窄接口）同样可用，不溢出。
  *
  * 运行前先构建：npm run build -w @pi-assistant/web
  * 运行：node e2e/default-voice-flow.mjs
@@ -28,10 +29,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DIST = join(ROOT, "apps/web/dist");
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const SHOTS = artifactDir("voice-optional");
 const RUN_DIR = mkdtempSync(join(tmpdir(), "pia-e2e-default-voice-"));
 const DATA = join(RUN_DIR, "data");
 const WORKSPACE = join(RUN_DIR, "workspace");
@@ -111,7 +114,7 @@ const state = {
 	source: null, // null | {location, provider, model}
 	prep: { state: "preparing", percent: 40, phase: "weights", error: null },
 	stream: { mode: "normal", creates: 0, appends: 0, ends: 0, cancels: 0, seqs: [], bytes: 0, aborted: 0 },
-	calls: { cancelPrepare: 0, retryPrepare: 0, downloadsCancel: 0, downloadsStart: 0, messages: 0, transcriptions: 0 },
+	calls: { cancelPrepare: 0, installPrepare: 0, downloadsCancel: 0, downloadsStart: 0, messages: 0, transcriptions: 0 },
 };
 const prepView = () => ({
 	defaultModelId: DEF,
@@ -135,9 +138,9 @@ const prepView = () => ({
 	firstRunNeedsNetwork: true,
 	approxBytes: 293_270_793,
 	offlineAfterReady: true,
-	requiresUserAction: false,
+	requiresUserAction: true,
 	micPermissionRequested: false,
-	notes: ["首次使用需联网自动准备（权重 + 共享运行时），之后可离线使用；不随安装包分发该权重", "默认流式模型输出无标点；麦克风权限只在用户点麦克风时申请"],
+	notes: ["可选模块：默认不安装，不随安装包分发；在 设置 › 语音 点「安装」才会下载", "默认流式模型输出无标点；麦克风权限只在用户点麦克风时申请"],
 });
 const sourceView = () => ({
 	source: state.source,
@@ -206,11 +209,11 @@ try {
 	});
 	await page.route("**/api/local-models/asr/default-voice/cancel", async (route) => {
 		state.calls.cancelPrepare += 1;
-		state.prep = { state: "cancelled", percent: null, phase: null, error: null };
+		state.prep = { state: "not_prepared", percent: null, phase: null, error: null };
 		return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, reason: "已取消", defaultVoice: prepView() }) });
 	});
-	await page.route("**/api/local-models/asr/default-voice/retry", async (route) => {
-		state.calls.retryPrepare += 1;
+	await page.route("**/api/local-models/asr/default-voice/install", async (route) => {
+		state.calls.installPrepare += 1;
 		state.prep = { state: "preparing", percent: 10, phase: "weights", error: null };
 		return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, reason: "已重新开始", defaultVoice: prepView() }) });
 	});
@@ -308,6 +311,8 @@ try {
 		await page.locator('button[title="设置"]').first().click();
 		await page.getByTestId("settings-dialog").waitFor();
 		await page.locator('[data-tab="voice"]').click();
+		// 本地语音模块卡只在「本地」页里（云端用户不被打扰）。
+		await page.getByTestId("voice-tab-local").click();
 		await page.getByTestId("default-voice-prep").waitFor();
 	};
 	const closeSettings = async () => {
@@ -329,44 +334,73 @@ try {
 	await page.goto(BASE + "/");
 	await waitFor(async () => (await page.getByTestId("voice-mic").count()) > 0, 20_000, "聊天输入栏");
 
-	/* ---------------------------------------------------------------- A1 准备状态 / 取消 */
-	await step("A1 准备中显示真实百分比 + 取消只调窄接口，状态转 cancelled", async () => {
-		state.prep = { state: "preparing", percent: 40, phase: "weights", error: null };
+	/* ---------------------------------------------------------------- A0 没装：不自动下载、不打扰 */
+	await step("A0 没装本地语音：设置里给「安装本地语音」+ 一行说明；输入栏不常驻提示；点麦克风引导去设置", async () => {
+		state.prep = { state: "not_prepared", percent: null, phase: null, error: null };
+		state.source = null;
+		state.version += 1;
+		await page.reload();
+		await page.getByTestId("voice-mic").waitFor();
+		if (await page.getByTestId("voice-prep").count()) throw new Error("没装时输入栏不应常驻安装提示");
+		const createsBefore = state.stream.creates;
+		await mic().click();
+		await waitFor(async () => /安装本地语音/.test(await page.getByTestId("voice-status").innerText()), 10_000, "引导提示");
+		if (state.stream.creates !== createsBefore) throw new Error("没装时不得创建会话");
+		if (state.calls.installPrepare !== 0) throw new Error("点麦克风不得自动开始安装");
 		await openVoiceSettings();
-		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "preparing", 10_000, "preparing 状态");
-		const text = await page.getByTestId("default-voice-prep-progress").innerText();
-		if (!/40%/.test(text)) throw new Error(`准备进度应显示 40%：${text}`);
-		await page.getByTestId("default-voice-prep-cancel").click();
-		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "cancelled", 10_000, "cancelled 状态");
-		if (state.calls.cancelPrepare !== 1) throw new Error(`应调用窄取消接口 1 次，实际 ${state.calls.cancelPrepare}`);
-		if (state.calls.downloadsCancel !== 0) throw new Error("不得借通用下载接口取消默认语音");
-		if (!(await page.getByTestId("default-voice-prep-retry").count())) throw new Error("取消后应出现重试");
+		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "not_prepared", 10_000, "not_prepared 状态");
+		const card = await page.getByTestId("default-voice-prep").innerText();
+		if (!/可选模块/.test(card) || !/录音不出电脑/.test(card)) throw new Error(`模块卡应写清是可选模块 + 一行用途：${card}`);
+		const note = await page.getByTestId("default-voice-prep-note").innerText();
+		if (!/默认不安装/.test(note) || !/联网/.test(note)) throw new Error(`应写明默认不安装、安装需联网：${note}`);
+		if (/断网可用/.test(note)) throw new Error(`不得声称断网可用：${note}`);
+		if (!(await page.getByTestId("default-voice-prep-install").count())) throw new Error("应有「安装本地语音」按钮");
+		if (await page.getByTestId("local-asr-models").count()) throw new Error("没装时其他模型列表应默认折叠");
+		if (!(await page.getByTestId("local-asr-others-toggle").count())) throw new Error("应有「其他本地模型」折叠入口");
+		await page.screenshot({ path: join(SHOTS, "voice-local-not-installed.png") });
+		await page.getByTestId("voice-tab-cloud").click();
+		if (await page.getByTestId("default-voice-prep").count()) throw new Error("云端页不显示本地模块卡（云端不依赖它）");
+		await page.screenshot({ path: join(SHOTS, "voice-cloud.png") });
+		await closeSettings();
 	});
 
-	/* ---------------------------------------------------------------- A2 重试 → ready */
-	await step("A2 重试只调窄接口 → preparing → ready，并如实写首次联网", async () => {
-		// 独立可跑：先把后端置为「已取消」，刷新让准备面板出现重试按钮。
-		state.prep = { state: "cancelled", percent: null, phase: null, error: null };
+	/* ---------------------------------------------------------------- A1 安装中 / 取消 */
+	await step("A1 安装中显示真实百分比 + 取消只调窄接口，回到未安装", async () => {
+		state.prep = { state: "preparing", percent: 40, phase: "weights", error: null };
 		await page.reload();
 		await page.getByTestId("voice-mic").waitFor();
 		await openVoiceSettings();
-		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "cancelled", 10_000, "cancelled 状态");
-		await page.getByTestId("default-voice-prep-retry").click();
-		if (state.calls.retryPrepare !== 1) throw new Error(`应调用窄重试接口 1 次，实际 ${state.calls.retryPrepare}`);
-		if (state.calls.downloadsStart !== 0) throw new Error("不得借通用下载接口重试默认语音");
-		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "preparing", 10_000, "重试后 preparing");
+		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "preparing", 10_000, "preparing 状态");
+		const text = await page.getByTestId("default-voice-prep-progress").innerText();
+		if (!/40%/.test(text)) throw new Error(`安装进度应显示 40%：${text}`);
+		await page.screenshot({ path: join(SHOTS, "voice-local-installing.png") });
+		await page.getByTestId("default-voice-prep-cancel").click();
+		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "not_prepared", 10_000, "取消后未安装");
+		if (state.calls.cancelPrepare !== 1) throw new Error(`应调用窄取消接口 1 次，实际 ${state.calls.cancelPrepare}`);
+		if (state.calls.downloadsCancel !== 0) throw new Error("不得借通用下载接口取消默认语音");
+		if (!(await page.getByTestId("default-voice-prep-install").count())) throw new Error("取消后应出现安装按钮");
+	});
+
+	/* ---------------------------------------------------------------- A2 安装 → ready */
+	await step("A2 安装只调窄接口 → preparing → ready（已作为语音来源）", async () => {
+		state.prep = { state: "not_prepared", percent: null, phase: null, error: null };
+		await page.reload();
+		await page.getByTestId("voice-mic").waitFor();
+		await openVoiceSettings();
+		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "not_prepared", 10_000, "not_prepared 状态");
+		await page.getByTestId("default-voice-prep-install").click();
+		await waitFor(async () => state.calls.installPrepare === 1, 10_000, "窄安装接口");
+		if (state.calls.downloadsStart !== 0) throw new Error("不得借通用下载接口安装默认语音");
+		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "preparing", 10_000, "安装后 preparing");
 		state.prep = { state: "ready", percent: null, phase: null, error: null };
 		state.source = { location: "local", provider: DEF_PROVIDER, model: DEF }; // 服务端 install_and_use 的 CAS 采用结果
 		state.version += 1;
-		await page.getByTestId("default-voice-prep-state").locator("..").isVisible(); // 触发一次读
-		await page.evaluate(() => window.dispatchEvent(new Event("focus")));
 		await page.reload();
 		await page.getByTestId("voice-mic").waitFor();
 		await openVoiceSettings();
 		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "ready", 10_000, "ready 状态");
-		const note = await page.getByTestId("default-voice-prep-note").innerText();
-		if (!/联网/.test(note)) throw new Error(`首次联网必须如实写明：${note}`);
-		if (/断网可用|离线可用/.test(note)) throw new Error(`不得声称首次断网可用：${note}`);
+		await page.getByTestId("default-voice-in-use").waitFor();
+		await page.screenshot({ path: join(SHOTS, "voice-local-installed.png") });
 		await closeSettings();
 	});
 
@@ -476,22 +510,22 @@ try {
 	});
 
 	/* ---------------------------------------------------------------- A10 显式清空 */
-	await step("A10 显式清空来源 + 已取消准备：点麦克风给可解释提示，不创建会话", async () => {
+	await step("A10 显式清空来源 + 未安装：点麦克风给可解释提示，不创建会话", async () => {
 		state.source = null;
-		state.prep = { state: "cancelled", percent: null, phase: null, error: null };
+		state.prep = { state: "not_prepared", percent: null, phase: null, error: null };
 		state.version += 1;
 		await page.reload();
 		await page.getByTestId("voice-mic").waitFor();
 		const createsBefore = state.stream.creates;
 		await mic().click();
-		await waitFor(async () => /准备|选择/.test(await page.getByTestId("voice-status").innerText()), 10_000, "未配置提示");
+		await waitFor(async () => /安装|选/.test(await page.getByTestId("voice-status").innerText()), 10_000, "未配置提示");
 		const status = await page.getByTestId("voice-status").innerText();
-		if (!/准备|选择/.test(status)) throw new Error(`应给可解释提示：${status}`);
-		if (state.stream.creates !== createsBefore) throw new Error("未配置 / 已取消准备时不得创建会话");
+		if (!/安装|选/.test(status)) throw new Error(`应给可解释提示：${status}`);
+		if (state.stream.creates !== createsBefore) throw new Error("未配置 / 未安装时不得创建会话");
 	});
 
 	/* ---------------------------------------------------------------- A11 390 手机 */
-	await step("A11 390 手机视口：准备状态取消 / 重试（窄接口）可用且不溢出", async () => {
+	await step("A11 390 手机视口：安装状态取消 / 安装（窄接口）可用且不溢出", async () => {
 		state.prep = { state: "preparing", percent: 55, phase: "weights", error: null };
 		await page.setViewportSize({ width: 1280, height: 900 });
 		await page.reload();
@@ -505,8 +539,9 @@ try {
 		const before = state.calls.cancelPrepare;
 		await page.getByTestId("default-voice-prep-cancel").click();
 		await waitFor(async () => state.calls.cancelPrepare === before + 1, 10_000, "390 窄取消");
-		await page.getByTestId("default-voice-prep-retry").click();
-		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "preparing", 10_000, "390 窄重试");
+		await page.getByTestId("default-voice-prep-install").click();
+		await waitFor(async () => (await page.getByTestId("default-voice-prep").getAttribute("data-state")) === "preparing", 10_000, "390 窄安装");
+		await page.screenshot({ path: join(SHOTS, "voice-local-390.png") });
 	});
 
 	if (pageErrors.length) throw new Error(`页面 JS 异常：${pageErrors.join(" | ")}`);

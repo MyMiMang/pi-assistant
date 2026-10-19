@@ -1,6 +1,7 @@
 // 把服务端打成“可直接运行的 app 目录”，供安装包（Tauri resources）使用：
 //   <out>/package.json, third-party.json, packages/**（源码，tsx 运行）, node_modules（仅生产依赖，工作区链接已解引用）,
 //   apps/web/dist, apps/rendezvous/dist, bin-seed/（cloudflared / uv / cua-driver，按 third-party.json 固定版本 + SHA256）
+//   不含本地语音识别的运行环境和权重（可选模块，用户在 设置 › 语音 安装；见决策 0013，下面有检查）
 // 用法：node scripts/stage-app.mjs <out> [--no-bins]
 // 在目标平台的 runner 上运行（node_modules 里的平台相关依赖、二进制都按当前平台取）。
 import { execFileSync } from "node:child_process";
@@ -65,6 +66,12 @@ derefCopy(tmp, out);
 rmSync(tmp, { recursive: true, force: true });
 if (existsSync(join(seed, "bin"))) cpSync(join(seed, "bin"), join(out, "bin-seed"), { recursive: true, verbatimSymlinks: true });
 rmSync(seed, { recursive: true, force: true });
+// 本地语音识别是可选模块（决策 0013）：运行环境（uv venv + sherpa-onnx）和权重只在用户点「安装」时下载到数据目录，
+// 绝不进安装包。这里兜底检查，发现就让打包失败（防止以后有人把权重 / venv 拷进来让安装包变大）。
+const asrLeaks = [];
+const walk = (p) => (lstatSync(p).isDirectory() ? readdirSync(p).forEach((f) => walk(join(p, f))) : /\.onnx$|[\\/]sherpa[-_]onnx/i.test(p) && asrLeaks.push(p));
+walk(out);
+if (asrLeaks.length) throw new Error(`安装包里不应有本地语音运行环境 / 权重（可选模块，按需安装）：\n${asrLeaks.slice(0, 5).join("\n")}`);
 // 托盘 / 前端用不到的工作区包在 node_modules 里也删掉
 for (const d of ["tray", "web"]) rmSync(join(out, "node_modules", "@pi-assistant", d), { recursive: true, force: true });
 const version = JSON.parse(readFileSync(join(root, "apps/tray/src-tauri/tauri.conf.json"), "utf8")).version;

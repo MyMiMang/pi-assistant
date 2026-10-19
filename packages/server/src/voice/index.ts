@@ -19,13 +19,6 @@ import { asrEndpoint } from "../local-asr/adapter-registry.ts";
 import { ASR_MODEL_ID, ASR_PROVIDER_ID, localAsrService } from "../local-asr/index.ts";
 import { localAsrStreamHub } from "../local-asr/stream-hub.ts";
 import { readVoiceSource, readVoiceSourceVersion, withSelected, writeVoiceSource } from "./source.ts";
-import { clearDefaultOptOut, writeDefaultOptOut } from "../local-asr/default-voice-prep.ts";
-
-/** 该来源是不是目录里唯一的默认本地语音（数据驱动，不写死 modelId）。 */
-function isDefaultVoiceRef(source: AsrSource): boolean {
-	const id = localAsrService().defaultVoiceModelId();
-	return !!id && source.location === "local" && source.model === id;
-}
 
 /** 用户在设置里显式声明的云 ASR 模型（统一注册表 `type:"asr"` 的云来源）。 */
 export interface AsrDeclaration {
@@ -191,15 +184,10 @@ function selectable(source: AsrSource): boolean {
  * `opts.expectedVersion` 为跨客户端 CAS：版本不符（另一页面已改选）→ 抛 conflict，不覆盖。 */
 export function saveAsrSource(next: AsrSource | null, opts: { expectedVersion?: number } = {}): void {
 	if (!next) {
-		// 显式清空 = 用户意图「别自动选默认」：记 optout，下次启动不 restart（不靠前端自觉）。
-		writeDefaultOptOut("user_cleared");
 		writeVoiceSource(null, opts);
 		return;
 	}
 	if (selectable(next)) {
-		// 显式选回默认本地模型 → 清掉「别自动装 / 别自动选」标记；选别的模型 → 记 user_chose_other（不自动重启准备）。
-		if (isDefaultVoiceRef(next)) clearDefaultOptOut();
-		else writeDefaultOptOut("user_chose_other");
 		writeVoiceSource(next, opts);
 		return;
 	}

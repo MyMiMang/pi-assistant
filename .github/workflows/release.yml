@@ -5,6 +5,7 @@
 #   mac-arm64 强制跳过 Windows、Linux、Intel；publish 校验 latest.json 仅含实际构建平台的更新项。
 #   macOS arm64 / x64 → .dmg（hdiutil 打包，非 Tauri bundle_dmg.sh）（+ .app.tar.gz 更新包），Windows x64 → NSIS .exe（+ 更新包）
 # 安装包内容：Tauri 托盘程序 + 内置 Node 运行时（sidecar）+ app 目录（服务端 + Pi + 生产依赖 + 网页 + cloudflared/uv/cua-driver），
+# 不含本地语音识别的运行环境和权重：它是可选模块，用户在 设置 › 语音 安装（决策 0013；stage-app.mjs 会检查）。
 # Linux 服务器版 x64 / arm64 → pi-assistant-<版本>-linux-<arch>.tar.gz（+ .sha256），deploy/linux/install.sh 安装。
 # 版本与 SHA256 全部以 third-party.json 为准。所有 v* tag（包括 v0.2.0-beta.1 这类测试版）都发布为正式的 latest 版本：Tauri 自动更新读 releases/latest/download/latest.json，pre-release 不算 latest，会导致更新失效。
 # 先发草稿、验证通过才公开：prepare 建草稿 → build / linux 把安装包和 latest.json 传进草稿 → windows-smoke（静默安装刚构建的 setup.exe 到中文路径，启动托盘查 /api）
