@@ -168,6 +168,8 @@ for (const [table, col, ddl] of [
 	["agents", "proactivity", "TEXT"],
 	["agents", "proactive_cfg", "TEXT"],
 	["tasks", "kind", "TEXT"],
+	// 续跑方式（和 subagents.resume 同义）：0 新跑 / 1 重启安全续跑 / 2 中断后手动继续
+	["tasks", "resume", "INTEGER NOT NULL DEFAULT 0"],
 	["conversations", "hidden", "INTEGER NOT NULL DEFAULT 0"],
 	["channel_peers", "is_group", "INTEGER NOT NULL DEFAULT 0"],
 	["messages", "room_id", "TEXT"],

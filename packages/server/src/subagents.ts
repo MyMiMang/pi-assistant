@@ -8,9 +8,8 @@ import { inferNeeds, pickModel } from "./model-profile.ts";
 import { isRecoverableModelError } from "./model-errors.ts";
 import { isThinkingLevel, models } from "./models.ts";
 import { requests } from "./requests.ts";
-import { assessResumeSafety, classifyResume, type ResumeSafety } from "./subagent-resume.ts";
+import { classifyResume, RESTART_RESUME_PROMPT, sessionResumeSafety, verifyResumePrompt } from "./subagent-resume.ts";
 import { subagentEventGuidance } from "./subagent-supervision.ts";
-import { readSessionFileMessages } from "./pi-adapter/index.ts";
 import { claimSubagentWake, markSubagentWakeDelivered, releaseSubagentWake, subagentWakeOwner, wakeClaimKey } from "./task-waits.ts";
 
 export type ModelRef = { provider: string; id: string };
@@ -368,27 +367,6 @@ const queuedAhead = (id: string, agentId: string) => {
 	if (!row) return 0;
 	return (db.prepare(`SELECT COUNT(*) n FROM subagents WHERE agent_id = ? AND status = 'queued' AND rowid < ?`).get(agentId, row.rowid) as { n: number }).n;
 };
-/** 重启后恢复任务的续跑提示：先核验进度，不从头重做、不重复副作用。 */
-const SUBAGENT_RESUME_PROMPT = "（系统通知）服务刚刚重启，上一轮子代理执行被中断了。请先检查工作区里已经完成的进度和产出，确认哪些步骤已经做完、哪些没做完，然后从断点继续完成剩余任务。已经完成的步骤不要重做，也不要重复已经产生的副作用；某个操作在重启时状态不明（可能已执行也可能没执行）的，先核实实际结果再决定，不要盲目重跑。完成后简要总结结果。";
-/**
- * 失败后续跑的提示：按失败分类给出中文原因，统一要求「先核验、不重做、不重复副作用」。
- * 不承诺 exactly-once——工具在中断时可能已执行也可能没执行。
- * 传入 safety 时把「已派发、结果未落库」的工具名显式列出来，让主模型/用户先核验这几个副作用。
- */
-export function subagentResumePrompt(r: Subagent, safety?: ResumeSafety): string {
-	const info = classifyResume(r.error_reason ?? r.result_summary ?? "");
-	const why = (r.error_reason ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
-	const pending = safety && !safety.safe ? `另外，会话历史里有 ${safety.pendingToolCalls.length} 个工具调用已派发但没看到结果（${[...new Set(safety.pendingToolCalls.map((p) => p.name))].join("、")}），这些操作的实际结果未知，务必先核实（读日志、看文件、查外部状态）再决定，绝不能直接重跑。` : "";
-	return `（系统通知）上一轮执行因为${info.label}中断了${why ? `（原因：${why}）` : ""}。请先检查工作区里已经完成的进度和产出，确认哪些步骤已经做完、哪些没做完，然后从断点继续完成剩余任务。已经完成的步骤不要重做，也不要重复已经产生的副作用；某个操作在中断时状态不明（可能已执行也可能没执行）的，先核实实际结果再决定，不要盲目重跑。${pending}完成后简要总结结果。`;
-}
-
-/** 只读落库会话判断「自动续跑是否安全」：读不到会话一律按不安全处理。 */
-function resumeSafetyOf(r: Subagent): ResumeSafety {
-	if (!r.session_file) return { safe: false, pendingToolCalls: [], reason: "没有落库会话，无法核验已执行到哪一步" };
-	const messages = readSessionFileMessages(r.session_file);
-	if (!messages) return { safe: false, pendingToolCalls: [], reason: "落库会话读不出来，无法核验已执行的副作用" };
-	return assessResumeSafety(messages);
-}
 /** 把一条排队的子代理切到 running 并开始执行；只对仍是 queued 的行生效，避免重复派发。 */
 function startQueued(id: string) {
 	const r = getSubagent(id);
@@ -397,7 +375,7 @@ function startQueued(id: string) {
 	const n = db.prepare("UPDATE subagents SET status = 'running', last_activity_at = ?, run_started_at = ?, resume = 0, pending_input = NULL WHERE id = ? AND status = 'queued'").run(ts, ts, id).changes;
 	if (!n) return false;
 	// 重启恢复（resume=1）/ 失败续跑（resume=2）：有落库 session 就从断点续跑（无 session 的已拒绝恢复）
-	const input = r.resume === 2 ? { text: subagentResumePrompt(r, resumeSafetyOf(r)) } : r.resume ? { text: SUBAGENT_RESUME_PROMPT } : parsePendingInput(r.pending_input);
+	const input = r.resume === 2 ? { text: verifyResumePrompt(r.error_reason ?? r.result_summary, r.error_reason, sessionResumeSafety(r.session_file)) } : r.resume ? { text: RESTART_RESUME_PROMPT } : parsePendingInput(r.pending_input);
 	live.set(id, { pending: [], toolUntil: 0 });
 	changed(id);
 	queueMicrotask(() => void run(id, input));
@@ -494,7 +472,7 @@ export function withResumeInfo(r: Subagent): SubagentSummary {
 	const info = classifyResume(r.error_reason ?? r.result_summary ?? "");
 	const terminal = !isLiveSubagent(r.status);
 	// 只有终态、且装了会话的行才需要读文件核验副作用（读不到按不安全处理，不自动续跑）
-	const safety = terminal && r.status !== "done" && r.session_file ? resumeSafetyOf(r) : undefined;
+	const safety = terminal && r.status !== "done" && r.session_file ? sessionResumeSafety(r.session_file) : undefined;
 	return {
 		...r,
 		retryable: info.auto,
@@ -521,7 +499,7 @@ export function resumeSubagent(id: string, opts: { mode?: "auto" | "manual" } = 
 	if (opts.mode === "auto" && !info.auto) throw new Error(`这个失败不能自动继续：${info.label}`);
 	if (!r.session_file) throw new Error("没有落库会话，无法确认执行到哪一步；请先核验工作区再重新派活");
 	// 自动重试前必须证明没有「已派发、结果未落库」的工具调用；结果未知就不自动重放，交人工/主模型核验
-	const safety = resumeSafetyOf(r);
+	const safety = sessionResumeSafety(r.session_file);
 	if (opts.mode === "auto" && !safety.safe) throw new Error(`不能自动继续：${safety.reason}`);
 	// 原子占用：状态仍非 live 才置为 queued（resume=2 表示失败续跑），attempt 计数 +1
 	const ts = Date.now();
@@ -690,7 +668,7 @@ export function recoverSubagents() {
 		recovered.add(r.id);
 		if (r.session_file) {
 			// 重启打断时工具可能已派发、结果未落库：结果未知就不能自动续跑，标 lost 要求核验
-			const safety = resumeSafetyOf(r);
+			const safety = sessionResumeSafety(r.session_file);
 			if (!safety.safe) {
 				finishSubagent(r.id, "lost", `服务重启，且${safety.reason}`);
 				continue;

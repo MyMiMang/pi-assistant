@@ -100,7 +100,7 @@
 | `skill-intel.ts` | 技能提议等智能逻辑 |
 | `subagents.ts` | 子代理状态与通知 |
 | `subagent-routes.ts` | 子代理接口 |
-| `subagent-resume.ts` | 子代理失败分类与续跑 |
+| `subagent-resume.ts` | 失败分类与续跑：重启安全判定 `sessionResumeSafety`、续跑提示 `RESTART_RESUME_PROMPT` / `verifyResumePrompt`（子代理与后台任务共用） |
 | `subagent-supervision.ts` | 子代理事件监督规则 |
 | `task-waits.ts` | 任务等待调度 |
 | `work-items.ts` | 长期任务入口（只做 re-export） |

@@ -344,6 +344,9 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 		);
 	if (/演示思考/.test(u)) return fauxAssistantMessage("<think>先想一想：用户想看思考过程怎么显示。\n第二步：给出简短回答。</think>这是回答：思考过程收在上面的「思考」里。");
 	if (/服务刚刚重启/.test(u)) return fauxAssistantMessage("我检查了一下进度：服务重启时上一轮命令被中断了。工作区里的文件都还在，需要的话再说一声我就重新执行。");
+	// 重启安全 e2e：一个会跑很久的后台任务（重启时 bash 已派发、结果未落库）
+	if (/后台慢任务/.test(u)) return fauxAssistantMessage([fauxToolCall("spawn_task", { title: "慢慢核对工作区", instructions: "慢慢核对工作区：逐个检查文件，做完给出总结。" })]);
+	if (/^慢慢核对工作区/.test(u)) return fauxAssistantMessage([fauxText("开始逐个核对，比较慢。"), fauxToolCall("bash", { command: "sleep 60; echo 核对完成" })]);
 	if (/后台/.test(u) && !/统计工作区/.test(u))
 		return fauxAssistantMessage([fauxToolCall("spawn_task", { title: "统计工作区文件", instructions: "统计工作区文件：列出工作区所有文件并统计数量，给出简短总结。" })]);
 	if (/统计工作区/.test(u)) return fauxAssistantMessage([fauxText("好，我先统计一下工作区。"), fauxToolCall("bash", { command: "sleep 2; echo 文件数: $(find . -type f | wc -l); ls -la" })]);

@@ -21,6 +21,7 @@ import { SYSTEM_RULES } from "./system-rules.ts";
 import { bindSession } from "./bind-session.ts";
 import { extensionsFor, integrationsFor } from "./extensions.ts";
 import { runtimes, runtime } from "./agent-runtime.ts";
+import { RESTART_RESUME_PROMPT, sessionResumeSafety, verifyResumePrompt } from "../subagent-resume.ts";
 
 // ---------------------------------------------------------------- 完全权限：降权 / 暂停立即生效
 
@@ -79,16 +80,40 @@ export const tasks = {
 		const slots = MAX_CONCURRENT - running;
 		if (slots <= 0) return;
 		const queued = db.prepare("SELECT * FROM tasks WHERE status = 'queued' ORDER BY created_at LIMIT ?").all(slots) as unknown as TaskRow[];
-		for (const t of queued) void tasks.run(t, false);
+		for (const t of queued) void tasks.run(t);
 	},
-	async run(t: TaskRow, resume: boolean) {
+	/**
+	 * 服务重启后处理被打断的后台任务（含定时 / 巡检），和子代理同一套判定（复用 subagent-resume.ts）：
+	 * 会话里没有「已派发、结果未落库」的工具调用 → 排队从断点续跑；否则标「中断待核验」(lost)，不自动重放，等人核验后点继续。
+	 */
+	recover() {
+		for (const t of db.prepare("SELECT * FROM tasks WHERE status = 'running'").all() as unknown as TaskRow[]) {
+			const safety = sessionResumeSafety(t.session_file);
+			if (safety.safe) setTask(t.id, { status: "queued", resume: 1 });
+			else {
+				const error = `服务重启，且${safety.reason}`;
+				setTask(t.id, { status: "lost", error, finished_at: now() });
+				reportStop(t, `后台任务「${t.title}」中断待核验：${error}。核验后可以在任务卡片上点「继续」。`, `后台任务中断待核验：${t.title}`, error, "task-lost");
+			}
+		}
+		tasks.pump();
+	},
+	/** 中断待核验 / 失败的任务在原会话里继续（先核验、不重做）；没有落库会话的无法继续，需要重新派活。 */
+	resume(id: string) {
+		const t = getTask(id);
+		if (!t || !["lost", "failed"].includes(t.status) || !t.session_file) return false;
+		setTask(id, { status: "queued", resume: 2, finished_at: null });
+		tasks.pump();
+		return true;
+	},
+	async run(t: TaskRow) {
 		const a = getAgent(t.agent_id);
 		const model = a ? runtime(a.id).modelFor(a) : null;
 		if (!a || !model) {
 			setTask(t.id, { status: "failed", error: "没有可用的模型", finished_at: now() });
 			return;
 		}
-		setTask(t.id, { status: "running", started_at: t.started_at ?? now() });
+		setTask(t.id, { status: "running", started_at: t.started_at ?? now(), resume: 0 });
 		try {
 			const workspace = workspaceOf(a.id);
 			const session = await createPiSession({
@@ -117,7 +142,7 @@ export const tasks = {
 					resolve(aborted);
 				}, undefined, undefined, fast);
 			});
-			await promptSession(session, resume ? "（系统通知）服务重启，上次执行被中断。请检查工作区里已有的进度，然后继续完成任务。" : t.instructions);
+			await promptSession(session, t.resume === 2 ? verifyResumePrompt(t.error, t.error, sessionResumeSafety(t.session_file)) : t.resume ? RESTART_RESUME_PROMPT : t.instructions);
 			const aborted = await done;
 			const result = lastAssistantText(session);
 			const error = aborted ? undefined : lastAssistantError(session);
@@ -129,15 +154,11 @@ export const tasks = {
 				setTask(t.id, { status: "cancelled", finished_at: now() });
 			} else if (error) {
 				setTask(t.id, { status: "failed", error, finished_at: now() });
-				if (!t.routine_run_id && (t as TaskRow & { kind?: string | null }).kind !== "heartbeat") {
-					notify({ title: `后台任务失败：${t.title}`, body: error, tag: t.id });
-					// 报错直接可见；额度耗尽时不再花一次模型请求来解释失败。
-					insertMessage({ agentId: a.id, conversationId: t.conversation_id, role: "system", content: `后台任务「${t.title}」失败：${error}`, status: "error", meta: { kind: "task-error", taskTitle: t.title, error } });
-				}
+				reportStop(t, `后台任务「${t.title}」失败：${error}`, `后台任务失败：${t.title}`, error);
 			} else {
-				setTask(t.id, { status: "done", result, finished_at: now() });
+				setTask(t.id, { status: "done", result, error: null, finished_at: now() });
 				// 主动巡检：结果只记录；要告诉用户的已经通过 proactive_surface 走了防打扰规则
-				if ((t as TaskRow & { kind?: string | null }).kind === "heartbeat") return;
+				if (t.kind === "heartbeat") return;
 				// 定时任务的结果由 routines.ts 发聊天消息与推送（遵守免打扰）
 				if (!t.routine_run_id) notify({ title: `后台任务完成：${t.title}`, body: result, tag: t.id, url: `/?agent=${a.id}` });
 				await runtime(a.id, t.conversation_id).inject(`${t.routine_run_id ? "定时" : "后台"}任务「${t.title}」已完成。结果：\n${result}`);
@@ -147,10 +168,7 @@ export const tasks = {
 			liveAgent.delete(t.id);
 			const error = modelErrorMessage(e);
 			setTask(t.id, { status: "failed", error, finished_at: now() });
-			if (!t.routine_run_id && (t as TaskRow & { kind?: string | null }).kind !== "heartbeat") {
-				notify({ title: `后台任务失败：${t.title}`, body: error, tag: t.id });
-				insertMessage({ agentId: a.id, conversationId: t.conversation_id, role: "system", content: `后台任务「${t.title}」失败：${error}`, status: "error", meta: { kind: "task-error", taskTitle: t.title, error } });
-			}
+			reportStop(t, `后台任务「${t.title}」失败：${error}`, `后台任务失败：${t.title}`, error);
 		} finally {
 			tasks.pump();
 		}
@@ -168,3 +186,13 @@ export const tasks = {
 		return db.prepare("SELECT * FROM tasks WHERE agent_id = ? ORDER BY created_at DESC LIMIT 100").all(agentId) as unknown as TaskRow[];
 	},
 };
+
+/**
+ * 失败 / 中断待核验的统一回报：报错直接可见（额度耗尽时不再花一次模型请求来解释失败）。
+ * 定时任务由 routines.ts 发消息与推送（遵守免打扰）；主动巡检静默，只记录。
+ */
+function reportStop(t: TaskRow, content: string, title: string, error: string, kind: "task-error" | "task-lost" = "task-error") {
+	if (t.routine_run_id || t.kind === "heartbeat") return;
+	notify({ title, body: error, tag: t.id });
+	insertMessage({ agentId: t.agent_id, conversationId: t.conversation_id, role: "system", content, status: "error", meta: { kind, taskTitle: t.title, error } });
+}

@@ -13,7 +13,10 @@
  * - 未识别的错误 → **不自动重试**（不做全量白名单，避免盲目重放）；可由用户核验后手动继续。
  *
  * 绝不承诺 exactly-once：恢复时工具可能已执行也可能没执行，提示词要求先核实实际结果。
+ *
+ * 子代理和后台任务（含定时 / 巡检）的重启续跑共用这里的判定与提示（决策 0014），不各写一份。
  */
+import { readSessionFileMessages } from "./pi-adapter/index.ts";
 
 export type ResumeClass = "transport" | "transient" | "config" | "context" | "session" | "blocked" | "unknown";
 
@@ -144,3 +147,25 @@ export function shouldAutoRetry(message: string | null | undefined, attempt: num
  * 不重做、不重复副作用」的指令。注意：这不承诺 exactly-once，工具结果未知时要求先核实。
  */
 export const TRANSPORT_RETRY_PROMPT = "（系统通知）上一次模型请求因为网络/连接问题中断了，这一轮不算完成。请只从断点继续：先检查工作区里已经完成的进度和产出，确认哪些步骤已经做完、哪些没做完（工具在中断时可能已经执行、也可能没有执行）；已经完成的步骤不要重做，也不要重复已经产生的副作用。某个操作状态不明时，先核实实际结果再决定，不要盲目重跑。完成后简要总结结果。";
+
+/** 重启打断后、判定安全时的续跑提示（子代理与后台任务共用）：先核验进度，不从头重做、不重复副作用。 */
+export const RESTART_RESUME_PROMPT = "（系统通知）服务刚刚重启，上一轮执行被中断了。请先检查工作区里已经完成的进度和产出，确认哪些步骤已经做完、哪些没做完，然后从断点继续完成剩余任务。已经完成的步骤不要重做，也不要重复已经产生的副作用；某个操作在重启时状态不明（可能已执行也可能没执行）的，先核实实际结果再决定，不要盲目重跑。完成后简要总结结果。";
+
+/** 只读落库会话判断「自动续跑是否安全」：没有会话或读不出来一律按不安全处理。 */
+export function sessionResumeSafety(file: string | null | undefined): ResumeSafety {
+	if (!file) return { safe: false, pendingToolCalls: [], reason: "没有落库会话，无法核验已执行到哪一步" };
+	const messages = readSessionFileMessages(file);
+	if (!messages) return { safe: false, pendingToolCalls: [], reason: "落库会话读不出来，无法核验已执行的副作用" };
+	return assessResumeSafety(messages);
+}
+
+/**
+ * 中断 / 失败后手动继续的提示：按失败分类给出中文原因，统一要求「先核验、不重做、不重复副作用」。
+ * cause 用来分类，why 是给模型看的原因原文；safety 不安全时把结果未知的工具名显式列出来要求先核实。
+ */
+export function verifyResumePrompt(cause: string | null | undefined, why: string | null | undefined, safety?: ResumeSafety): string {
+	const info = classifyResume(cause ?? "");
+	const w = (why ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+	const pending = safety && !safety.safe ? `另外，会话历史里有 ${safety.pendingToolCalls.length} 个工具调用已派发但没看到结果（${[...new Set(safety.pendingToolCalls.map((p) => p.name))].join("、")}），这些操作的实际结果未知，务必先核实（读日志、看文件、查外部状态）再决定，绝不能直接重跑。` : "";
+	return `（系统通知）上一轮执行因为${info.label}中断了${w ? `（原因：${w}）` : ""}。请先检查工作区里已经完成的进度和产出，确认哪些步骤已经做完、哪些没做完，然后从断点继续完成剩余任务。已经完成的步骤不要重做，也不要重复已经产生的副作用；某个操作在中断时状态不明（可能已执行也可能没执行）的，先核实实际结果再决定，不要盲目重跑。${pending}完成后简要总结结果。`;
+}

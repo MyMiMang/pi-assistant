@@ -210,4 +210,4 @@ flowchart LR
 
 | 步骤 | 状态 |
 |---|---|
-| 2 后台任务重启安全判定 | 进行中 |
+| 2 后台任务重启安全判定 | 已完成：`tasks.recover()` 复用 `sessionResumeSafety`，不安全标 lost（中断待核验），卡片「继续」走 `verifyResumePrompt`；单测 `background-task-restart.test.ts`，e2e `task-restart-ui.mjs` |

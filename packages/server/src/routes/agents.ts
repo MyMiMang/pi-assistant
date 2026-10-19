@@ -440,6 +440,7 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		return t ? c.json(listMessages(t.agent_id, { taskId: t.id })) : c.json({ error: "not_found" }, 404);
 	});
 	app.post("/api/tasks/:id/cancel", async (c) => c.json({ ok: await tasks.cancel(c.req.param("id")) }));
+	app.post("/api/tasks/:id/resume", (c) => c.json({ ok: tasks.resume(c.req.param("id")) }));
 	/** 任务等待：状态 + 最后检查时间可查询；手动刷新让用户问“现在怎么样了”立刻有结果 */
 	app.get("/api/agents/:id/task-waits", (c) => c.json(listWaits(c.req.param("id"))));
 	app.post("/api/task-waits/:id/refresh", async (c) => {

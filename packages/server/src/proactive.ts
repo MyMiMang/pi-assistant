@@ -613,9 +613,9 @@ export function listAdvances(opts: { agentId?: string; conversationId?: string; 
 // 后台任务失败目前只有推送通知、不会唤醒模型，是真正的缺口，记一条信号交给变化驱动的巡检。
 bus.on((e) => {
 	const ev = e as unknown as { type: string; task?: { id: string; agent_id: string; conversation_id: string | null; title: string; status: string; error?: string | null; kind?: string | null } };
-	if (ev.type === "task.updated" && ev.task && ev.task.kind !== "heartbeat" && ev.task.status === "failed") {
+	if (ev.type === "task.updated" && ev.task && ev.task.kind !== "heartbeat" && ["failed", "lost"].includes(ev.task.status)) {
 		const t = ev.task;
-		recordSignal(t.agent_id, { kind: "task_failed", conversationId: t.conversation_id, title: `后台任务失败：${t.title}`, detail: t.error ?? "", importance: 3, dedupeKey: `task:${t.id}:failed` });
+		recordSignal(t.agent_id, { kind: "task_failed", conversationId: t.conversation_id, title: `${t.status === "lost" ? "后台任务中断待核验" : "后台任务失败"}：${t.title}`, detail: t.error ?? "", importance: 3, dedupeKey: `task:${t.id}:${t.status}` });
 	}
 });
 
@@ -787,7 +787,7 @@ export function situation(agentId: string, reason: string, extra?: { followup?: 
 			: [];
 		sec("你约好的跟进（现在到点了）", [`- 备注：${f.note}${target ? `（相关对话 [conv:${target}]）` : ""}`, `- 约定于：${fmt(f.createdAt)}`, ...(conv.length ? ["- 当时的对话（最近几条）：", ...conv.map((m) => `  - ${m.role === "user" ? "用户" : "你"}：${clip(m.content, 200)}`)] : [])]);
 	}
-	const tasks = db.prepare("SELECT id, title, status, error, conversation_id, created_at FROM tasks WHERE agent_id = ? AND COALESCE(kind,'') != 'heartbeat' AND (status IN ('queued','running') OR (status = 'failed' AND finished_at >= ?)) ORDER BY created_at DESC LIMIT 8").all(agentId, t - 3 * 86400_000) as { id: string; title: string; status: string; error: string | null; conversation_id: string | null }[];
+	const tasks = db.prepare("SELECT id, title, status, error, conversation_id, created_at FROM tasks WHERE agent_id = ? AND COALESCE(kind,'') != 'heartbeat' AND (status IN ('queued','running') OR (status IN ('failed','lost') AND finished_at >= ?)) ORDER BY created_at DESC LIMIT 8").all(agentId, t - 3 * 86400_000) as { id: string; title: string; status: string; error: string | null; conversation_id: string | null }[];
 	sec("未完成或失败的后台任务", tasks.map((x) => `- [task:${x.id}] ${x.title} · ${x.status}${x.error ? ` · ${clip(x.error, 80)}` : ""}${relatedConversation(agentId, x.conversation_id) ? `（相关对话 [conv:${x.conversation_id}]）` : ""}`));
 	const reqs = db.prepare("SELECT id, kind, payload, created_at FROM requests WHERE agent_id = ? AND status = 'pending' AND created_at <= ? ORDER BY created_at LIMIT 5").all(agentId, t - 2 * 3600_000) as { id: string; kind: string; payload: string; created_at: number }[];
 	sec("用户还没回应的审批 / 提问（超过 2 小时）", reqs.map((r) => {
@@ -842,7 +842,7 @@ export function runHeartbeat(agentId: string, reason: "heartbeat" | "followup" |
 
 bus.on((e) => {
 	const ev = e as unknown as { type: string; task?: { id: string; status: string } };
-	if (ev.type !== "task.updated" || !ev.task || !["done", "failed", "cancelled"].includes(ev.task.status)) return;
+	if (ev.type !== "task.updated" || !ev.task || !["done", "failed", "cancelled", "lost"].includes(ev.task.status)) return;
 	const r = db.prepare("SELECT id, agent_id FROM proactive_runs WHERE task_id = ? AND status = 'running'").get(ev.task.id) as { id: string; agent_id: string } | undefined;
 	if (!r) return;
 	db.prepare("UPDATE proactive_runs SET status = ?, finished_at = ? WHERE id = ?").run(ev.task.status, now(), r.id);

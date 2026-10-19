@@ -62,10 +62,8 @@ export async function bootstrap() {
 			await runtime(a.id).send("（系统通知）服务刚刚重启，上一轮工作可能被中断。请检查进度并继续完成我最后的请求；如果已经完成，简短告诉我即可。");
 		}
 	}
-	// 后台任务：运行中的从会话文件续跑，排队的继续排队
-	const running = db.prepare("SELECT * FROM tasks WHERE status = 'running'").all() as unknown as TaskRow[];
-	for (const t of running) void tasks.run(t, true);
-	tasks.pump();
+	// 后台任务（含定时 / 巡检）：和子代理同一套重启判定——安全的排队续跑，结果未知的标中断待核验
+	tasks.recover();
 	// 只恢复未发出的推进；已发出而结果未知的不重放。空闲对话现在就送，不等用户再说话。
 	resumeAdvances(undefined, { dispatch: true });
 }

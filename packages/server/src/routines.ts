@@ -256,9 +256,10 @@ bus.on((e) => {
 	const ev = e as unknown as { type: string; task?: { id: string; status: string; result: string | null; error: string | null; routine_run_id?: string | null; conversation_id?: string | null } };
 	if (ev.type !== "task.updated" || !ev.task?.routine_run_id) return;
 	const t = ev.task;
-	if (!["done", "failed", "cancelled"].includes(t.status)) return;
+	if (!["done", "failed", "cancelled", "lost"].includes(t.status)) return;
 	const run = db.prepare("SELECT * FROM routine_runs WHERE id = ?").get(t.routine_run_id as string) as RoutineRunRow | undefined;
-	if (!run || run.status !== "running") return;
+	// lost（重启中断待核验）的运行在用户点继续后还会再结束一次，结果照样回报
+	if (!run || !["running", "lost"].includes(run.status)) return;
 	db.prepare("UPDATE routine_runs SET status = ?, result = ?, error = ?, finished_at = ? WHERE id = ?").run(t.status, t.result, t.error, now(), run.id);
 	const r = getRoutine(run.routine_id);
 	if (!r) return;
@@ -272,10 +273,10 @@ bus.on((e) => {
 		agentId: r.agent_id,
 		conversationId: conv,
 		role: "assistant",
-		content: ok ? `⏰ **定时任务「${r.name}」完成**\n\n${t.result ?? ""}` : `⏰ 定时任务「${r.name}」${t.status === "cancelled" ? "已取消" : `失败：${t.error ?? ""}`}`,
+		content: ok ? `⏰ **定时任务「${r.name}」完成**\n\n${t.result ?? ""}` : `⏰ 定时任务「${r.name}」${t.status === "cancelled" ? "已取消" : t.status === "lost" ? `中断待核验：${t.error ?? ""}。核验后可以在任务卡片上点「继续」。` : `失败：${t.error ?? ""}`}`,
 		meta: { routineId: r.id, routineRunId: run.id, ...(pref === "app" ? { noMirror: true } : {}) },
 	});
-	if (!quiet) notify({ title: `${ok ? "定时任务完成" : "定时任务失败"}：${r.name}`, body: (ok ? t.result : t.error) ?? "", tag: run.id, url: `/?agent=${r.agent_id}` });
+	if (!quiet) notify({ title: `${ok ? "定时任务完成" : t.status === "lost" ? "定时任务中断待核验" : "定时任务失败"}：${r.name}`, body: (ok ? t.result : t.error) ?? "", tag: run.id, url: `/?agent=${r.agent_id}` });
 	changed(r.agent_id);
 });
 

@@ -38,6 +38,9 @@ export interface TaskRow {
 	finished_at: number | null;
 	conversation_id: string | null;
 	routine_run_id: string | null;
+	kind?: string | null;
+	/** 0 = 按任务说明开跑；1 = 重启后安全续跑；2 = 中断 / 失败后手动继续（先核验） */
+	resume?: number;
 }
 
 export const getAgent = (id: string) => db.prepare("SELECT * FROM agents WHERE id = ?").get(id) as AgentRow | undefined;

@@ -9,6 +9,7 @@
 ## 正在做
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
 - 群聊协作已实现（未打包，[设计](design/group-collaboration.md)）：任务在负责人自己的会话里执行，管理者按事件唤醒，三种卡住检测，等你决定，停群不停任务；work-items / rooms 已拆到 600 行以下。单聊入口还没接（核心与来源无关，单聊只需在入口调 setWorkSourceProvider + workItemTools）。
+- 任务类机制合并（[决策 0014](decisions/0014-task-and-helper.md)，[设计](design/task-architecture-analysis.md) §7 看进度，未打包）：后台任务（含定时 / 巡检）重启已和子代理同一套判定，结果未知的标「中断待核验」等人点继续。
 - 本地语音已改为可选模块（[设计](design/local-voice-optional.md)，未打包）。
 
 ## 交付标准

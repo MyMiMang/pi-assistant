@@ -96,8 +96,8 @@ export function TaskCard({ m }: { m: Message }) {
 	const meta = m.meta;
 	const [open, setOpen] = useState(false);
 	const icon =
-		meta.status === "done" ? <CheckCircle2 className="pa-ic ok" /> : meta.status === "failed" ? <XCircle className="pa-ic text-red-500" /> : meta.status === "cancelled" ? <XCircle className="pa-ic text-mut2" /> : meta.status === "queued" ? <Clock className="pa-ic text-mut2" /> : <Loader2 className="pa-ic animate-spin text-accent" />;
-	const label = { queued: "排队中", running: "进行中", done: "已完成", failed: "失败", cancelled: "已取消" }[meta.status as string] ?? meta.status;
+		meta.status === "done" ? <CheckCircle2 className="pa-ic ok" /> : meta.status === "failed" || meta.status === "lost" ? <XCircle className="pa-ic text-red-500" /> : meta.status === "cancelled" ? <XCircle className="pa-ic text-mut2" /> : meta.status === "queued" ? <Clock className="pa-ic text-mut2" /> : <Loader2 className="pa-ic animate-spin text-accent" />;
+	const label = { queued: "排队中", running: "进行中", done: "已完成", failed: "失败", cancelled: "已取消", lost: "中断待核验" }[meta.status as string] ?? meta.status;
 	return (
 		<div className="pa-card pa-question w-full max-w-[560px]">
 			<div className="pa-card-top !mb-0">
@@ -107,6 +107,11 @@ export function TaskCard({ m }: { m: Message }) {
 				{(meta.status === "running" || meta.status === "queued") && (
 					<button className="pa-btn sm ghost" onClick={() => api(`/api/tasks/${meta.taskId}/cancel`, { method: "POST" })}>
 						{t("取消")}
+					</button>
+				)}
+				{(meta.status === "lost" || meta.status === "failed") && (
+					<button className="pa-btn sm ghost" data-testid="task-resume" title="先核验已做到哪一步，再从断点继续，不重做" onClick={() => api(`/api/tasks/${meta.taskId}/resume`, { method: "POST" })}>
+						{t("继续")}
 					</button>
 				)}
 			</div>

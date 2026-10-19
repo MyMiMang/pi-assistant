@@ -80,7 +80,7 @@ const DEFAULT_DUE_MS: Record<WaitTargetKind, number> = {
 };
 
 const SUBAGENT_TERMINAL = new Set(["done", "failed", "stopped", "timeout", "lost"]);
-const TASK_TERMINAL = new Set(["done", "failed", "cancelled"]);
+const TASK_TERMINAL = new Set(["done", "failed", "cancelled", "lost"]);
 
 db.exec(`CREATE TABLE IF NOT EXISTS task_waits (
  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT,
@@ -365,7 +365,7 @@ function taskOutcome(id: string): Outcome | null {
 	if (!t) return { state: "unknown", detail: `任务 ${id} 不存在（可能已被删除）`, at: now() };
 	if (!TASK_TERMINAL.has(t.status)) return null;
 	if (t.status === "done") return { state: "completed", detail: (t.result ?? "").slice(0, 1500) || "任务完成", at: now() };
-	return { state: "unknown", conclusion: t.status, detail: t.error ?? (t.status === "cancelled" ? "任务已取消" : "任务失败"), at: now() };
+	return { state: "unknown", conclusion: t.status, detail: t.error ?? (t.status === "cancelled" ? "任务已取消" : t.status === "lost" ? "任务中断待核验" : "任务失败"), at: now() };
 }
 function subagentOutcome(id: string): Outcome | null {
 	const r = db.prepare("SELECT status, result_summary, error_reason FROM subagents WHERE id = ?").get(id) as { status: string; result_summary: string | null; error_reason: string | null } | undefined;
