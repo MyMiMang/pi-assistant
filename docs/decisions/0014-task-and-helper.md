@@ -1,0 +1,11 @@
+# 0014 「任务」与「帮手」：任务类机制合并
+- 日期：2026-10-19
+- 状态：有效
+- 决定：
+  - 界面上只用两个词：**任务**（有负责人、完成标准、核验，要负责到底的事）和 **帮手**（一次后台执行；界面上取代「子代理」这个词，后台任务、定时任务和主动巡检的每次运行都显示为帮手）。例行（定时）任务和主动巡检只是「什么时候自动开一个帮手」的触发设置。
+  - 帮手可以再派帮手，但**最多一层**（主会话 → 帮手 → 帮手，第二层不能再派）。
+  - 执行中写的记忆先是草稿；所属任务**通过核验后自动转正**，没通过核验（或不属于任务）就保持草稿，等主会话确认。
+  - 按 [design/task-architecture-analysis.md](../design/task-architecture-analysis.md) §5.5 的步骤分步迁移，每步单独可发布；第一步是给后台任务的重启加安全判定（安全就续跑，不安全标「中断待核验」等人继续），复用子代理的判定逻辑。
+- 原因：后台任务 / 子代理 / 群任务执行三套容器重复实现了会话、重启、卡住检测、回报和界面，安全性不一致（后台任务重启不判定直接续跑）。用户批准了合并方案。
+- 不做什么：不在单聊另建一套群任务执行；帮手不能无限嵌套派生；未核验的执行记忆不自动转正。
+- 影响：agent-runtime/background-tasks.ts、subagents.ts、subagent-driver.ts、subagent-resume.ts、work-items/*、routines.ts、proactive.ts、requests.ts、Tasks.tsx / Subagents.tsx / WorkItems.tsx；设计 design/task-architecture-analysis.md。
