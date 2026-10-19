@@ -665,10 +665,10 @@ export function saveProactive(agentId: string, patch: { level?: Level | null; cf
 	changed(agentId);
 	return proactiveJson(agentId);
 }
-export function proactiveJson(agentId: string) {
+export function proactiveJson(agentId: string, t = now()) {
 	const a = agentOf(agentId);
 	if (!a) throw new Error("助理不存在");
-	const e = effective(a);
+	const e = effective(a, t);
 	return {
 		level: e.level,
 		levelSetting: a.proactivity,
@@ -677,7 +677,7 @@ export function proactiveJson(agentId: string) {
 		cfg: e.cfg,
 		cadenceMin: e.cadenceMin,
 		budget: e.budget,
-		usedToday: deliveredToday(agentId),
+		usedToday: deliveredToday(agentId, t),
 		nextHeartbeatAt: nextHeartbeat(agentId),
 		lastHeartbeatAt: lastRun(agentId),
 		followups: listFollowups(agentId),

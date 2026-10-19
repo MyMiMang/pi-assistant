@@ -100,7 +100,7 @@ test("忽略：被忽略的事永不再提；忽略并静音这一类 → 14 天
 	assert.match(P.surface("pa", { kind: "suggest_skill", title: "另一个技能", body: "b", importance: 3 }, MON10 + 86400_000).reason!, /暂时不想/);
 	const c = P.surface("pa", { kind: "other", title: "第三件", body: "b", importance: 2 }, MON10);
 	P.actOnItem(c.id!, "dismiss");
-	const j = P.proactiveJson("pa");
+	const j = P.proactiveJson("pa", MON10);
 	assert.equal(j.throttled, true);
 	assert.equal(j.effectiveLevel, "normal");
 });
