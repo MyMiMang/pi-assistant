@@ -17,6 +17,8 @@ export interface DeliveryHost {
 		get?(id: string): unknown;
 		message(id: string, text: string): Promise<void>;
 		resume?(id: string): Promise<{ id: string; status?: string }>;
+		/** 卡住时中断这一轮，带纠正从最近检查点续跑（同一个子代理） */
+		restart?(id: string, note: string): Promise<boolean>;
 		stop(id: string): Promise<boolean>;
 	};
 	waits?: {
@@ -41,6 +43,7 @@ export function deliveryExtension(host: DeliveryHost) {
 			pi.registerTool({ name: "subagent_list", label: "查看子代理", description: "查看当前会话的子代理和状态；给 subagent_id 时返回这一个子代理的完整记录（含未截断的结果）。失败/超时的任务会带 canResume、resumeReason、attempt：要接着做**优先用 subagent_resume 原任务续跑**（复用原会话与已完成步骤），不要用 spawn_subagent 重派。", annotations: { readOnlyHint: true }, parameters: Type.Object({ subagent_id: Type.Optional(Type.String({ description: "按 ID 查看这一个子代理的完整任务说明与结果" })) }), async execute(_id, p) { if (p.subagent_id) { const one = h.get?.(p.subagent_id); return text(one ? JSON.stringify(one) : "没有找到这个子代理。"); } return text(JSON.stringify(h.list())); } });
 			pi.registerTool({ name: "subagent_resume", label: "继续子代理", description: "用原 subagent_id 从中断处继续：复用原 Pi 会话、原任务与已完成的步骤，不新开子代理、不重复副作用。子代理失败/超时后先用 subagent_list 核验进度与副作用，原授权内安全可继续时优先用它，不必等用户再催；明确停止的工作只有获得继续授权后才能恢复。不要用 spawn_subagent 重派或无限续跑。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String({ description: "要继续的子代理 ID" }) }), async execute(_id, p) { if (!h.resume) return text("当前环境不支持继续子代理。"); const r = await h.resume(p.id); return text(`已用原任务继续：${r.id}。现在继续回复用户，不要等待。`); } });
 			pi.registerTool({ name: "subagent_message", label: "补充子代理要求", description: "把用户的补充或改方向要求送给子代理，在下一个工具边界生效。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String(), text: Type.String() }), async execute(_id, p) { await h.message(p.id, p.text); return text("已转交子代理。"); } });
+			pi.registerTool({ name: "subagent_restart", label: "重启卡住的子代理", description: "子代理真卡住时（系统已诊断：不是慢慢跑的长命令）用：中断它这一轮，把你针对卡点的纠正（换什么做法、避开哪一步）带给它，从最近检查点续跑；结果未知的操作它会先核验，不会盲目重跑。先用 subagent_list 看记录和最后的错误再写纠正。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String(), note: Type.String({ description: "给子代理的具体纠正" }) }), async execute(_id, p) { if (!h.restart) return text("当前环境不支持重启子代理。"); return text(await h.restart(p.id, p.note) ? "已中断并带着纠正从检查点续跑。现在继续回复用户，不要等待。" : "它已经不在运行（可能刚恢复或已结束），用 subagent_list 看最新状态。"); } });
 			pi.registerTool({ name: "subagent_stop", label: "停止子代理", description: "停止指定子代理。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String() }), async execute(_id, p) { return text(await h.stop(p.id) ? "已停止。" : "已结束。"); } });
 		}
 		pi.registerTool({

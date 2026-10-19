@@ -791,6 +791,7 @@ export type AgentEvent =
 	  }
 	| { type: "tool_start"; id: string; name: string; args: Record<string, unknown> }
 	| { type: "tool_end"; id: string; name: string; isError: boolean; resultText: string }
+	| { type: "tool_update"; id: string; name: string } /** 工具还在跑又有新输出（长命令持续打印）：只当「有动静」，内容不转发 */
 	| { type: "settled"; aborted: boolean }
 	/** 一条用户消息真正进入了模型上下文（插话在下一个工具边界送达时触发） */
 	| { type: "user_start"; text: string }
@@ -864,18 +865,15 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 			case "tool_execution_start":
 				fn({ type: "tool_start", id: ev.toolCallId, name: ev.toolName, args: ev.args ?? {} });
 				break;
+			case "tool_execution_update": fn({ type: "tool_update", id: ev.toolCallId, name: ev.toolName }); break;
 			case "tool_execution_end": {
 				const r = ev.result as { content?: { type: string; text?: string }[] } | undefined;
 				const resultText = Array.isArray(r?.content) ? r!.content.map((c) => (c.type === "text" ? (c.text ?? "") : `[${c.type}]`)).join("\n") : String(r ?? "");
 				fn({ type: "tool_end", id: ev.toolCallId, name: ev.toolName, isError: !!ev.isError, resultText });
 				break;
 			}
-			case "agent_settled":
-				fn({ type: "settled", aborted: !!ev.aborted });
-				break;
-			case "compaction_start":
-				fn({ type: "compaction_start", reason: ev.reason });
-				break;
+			case "agent_settled": fn({ type: "settled", aborted: !!ev.aborted }); break;
+			case "compaction_start": fn({ type: "compaction_start", reason: ev.reason }); break;
 			case "compaction_end":
 				fn({ type: "compaction_end", reason: ev.reason, ok: !!ev.result && !ev.aborted, aborted: !!ev.aborted, error: ev.errorMessage, tokensBefore: ev.result?.tokensBefore, summary: ev.result?.summary });
 				break;

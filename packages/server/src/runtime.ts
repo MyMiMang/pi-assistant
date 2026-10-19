@@ -12,7 +12,7 @@ import { expireStaleSuggestions } from "./skill-intel.ts";
 import { db } from "./db.ts";
 import { insertMessage } from "./messages.ts";
 import { requests } from "./requests.ts";
-import { listAgents, type TaskRow } from "./agent-runtime/rows.ts";
+import { listAgents } from "./agent-runtime/rows.ts";
 import { roomHooks } from "./agent-runtime/room-hooks.ts";
 import { runtime } from "./agent-runtime/agent-runtime.ts";
 import { migrateLegacyTasks, tasks } from "./agent-runtime/background-tasks.ts";

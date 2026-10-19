@@ -3,13 +3,12 @@ import { bus } from "./bus.ts";
 import { db, getSetting, setSetting, uid } from "./db.ts";
 import { insertMessage, updateMessage } from "./messages.ts";
 import { isStopCommand } from "./interject.ts";
-import { configuredModels, modelProfiles } from "./rooms/model-pick.ts";
+import { modelProfiles } from "./rooms/model-pick.ts";
 import { inferNeeds, pickModel } from "./model-profile.ts";
-import { isRecoverableModelError } from "./model-errors.ts";
-import { isThinkingLevel, models } from "./models.ts";
+import { isThinkingLevel } from "./models.ts";
 import { requests } from "./requests.ts";
 import { classifyResume, RESTART_RESUME_PROMPT, sessionResumeSafety, verifyResumePrompt } from "./subagent-resume.ts";
-import { clearStallQuestion, SUBAGENT_STALL_MS, superviseFinish, superviseStall, type StuckHooks } from "./subagent-stuck.ts";
+import { repeatBlocked, stuckRestartPrompt, SUBAGENT_STALL_MS, superviseFinish, superviseStall, type StuckHooks } from "./subagent-stuck.ts";
 import { claimSubagentWake, markSubagentWakeDelivered, releaseSubagentWake, subagentWakeOwner, wakeClaimKey } from "./task-waits.ts";
 
 export type ModelRef = { provider: string; id: string }; export type HelperKind = "task" | "routine" | "heartbeat";
@@ -150,35 +149,8 @@ export function saveAgentSubagentLimits(agentId: string, input: SubagentLimitsIn
 }
 /** 助理被删时清掉它的覆盖键（不碰全局默认）。 */
 export const deleteAgentSubagentLimits = (agentId: string) => db.prepare("DELETE FROM settings WHERE key = ?").run(`subagentLimits:${agentId}`);
-export const modelKey = (m: ModelRef) => `${m.provider}/${m.id}`;
-/**
- * 池内 fallback 决策（纯函数，便于单测）：只有明确可恢复的模型故障才换，且只换还没试过的候选。
- * 工具 / 命令失败、权限拒绝、未知错误都不是模型故障 → 返回 null（不换模型）。用尽候选也返回 null。
- */
-export function planFallback(candidates: ModelRef[], tried: Iterable<string>, error?: string | null): ModelRef | null {
-	if (!isRecoverableModelError(error)) return null;
-	const t = new Set(tried);
-	return candidates.find((m) => !t.has(modelKey(m))) ?? null;
-}
-const asRefs = (x: unknown): ModelRef[] =>
-	Array.isArray(x)
-		? x.flatMap((m) => (m && typeof m === "object" && "provider" in m && "id" in m ? [{ provider: String((m as ModelRef).provider), id: String((m as ModelRef).id) }] : []))
-		: [];
-/** 把库里的旧格式 / 新格式统一读成候选池：新格式 `{pool}`；旧「固定一个模型」= 单项池；旧「跟随」= 空池。 */
-export function normalizeAgentPool(v: unknown): ModelRef[] {
-	if (!v || typeof v !== "object") return [];
-	const o = v as { pool?: unknown; mode?: string; model?: unknown };
-	if (Array.isArray(o.pool)) return asRefs(o.pool);
-	if (o.mode === "fixed") return asRefs([o.model]);
-	return [];
-}
-export const agentSubagentPool = (id: string): ModelRef[] => normalizeAgentPool(getSetting<unknown>(`subagentModel:${id}`, null));
-function requireModel(m: ModelRef | undefined) {
-	if (!m || !configuredModels().some((x) => x.provider === m.provider && x.id === m.id)) throw new Error("模型尚未配置");
-	return { provider: m.provider, id: m.id };
-}
-/** 只保留当前仍然配置着的模型（服务被删 / 模型下线后，池里的悬空项不参与挑选与 fallback）。 */
-export const livePool = (pool: ModelRef[]): ModelRef[] => pool.filter((m) => configuredModels().some((x) => x.provider === m.provider && x.id === m.id)).map((m) => ({ provider: m.provider, id: m.id }));
+export * from "./subagent-models.ts";
+import { agentSubagentPool, asRefs, livePool, modelKey, normalizeAgentPool, requireModel } from "./subagent-models.ts";
 export function saveSubagentSettings(input: SubagentSettingsInput) {
 	const cur = subagentSettings();
 	const maxMinutes = Number(input?.maxMinutes ?? cur.maxMinutes);
@@ -190,48 +162,6 @@ export function saveSubagentSettings(input: SubagentSettingsInput) {
 	setSetting("subagentModels", s);
 	pumpSubagents();
 	return s;
-}
-/** 保存助理的候选池；空池 = 跟随主会话当前模型。 */
-export function saveAgentSubagentPool(id: string, input: { pool?: ModelRef[] }): AgentSubagentPool {
-	const pool = (input?.pool ?? []).map(requireModel);
-	const c: AgentSubagentPool = { pool };
-	setSetting(`subagentModel:${id}`, c);
-	return c;
-}
-/** @deprecated 兼容旧客户端：旧的 follow/fixed 形状转成候选池。 */
-export function saveAgentSubagentChoice(id: string, choice: AgentSubagentChoice) {
-	return saveAgentSubagentPool(id, { pool: choice?.mode === "fixed" && choice.model ? [choice.model] : [] });
-}
-/** 这个助理的子代理默认思考强度（默认跟随主会话） */
-export const agentSubagentThinking = (id: string): SubagentThinking => getSetting<SubagentThinking>(`subagentThinking:${id}`, { mode: "follow" });
-export function saveAgentSubagentThinking(id: string, input: SubagentThinking): SubagentThinking {
-	if (input?.mode !== "follow" && input?.mode !== "fixed") throw new Error("思考强度方式不对");
-	if (input.mode === "fixed" && !isThinkingLevel(input.level)) throw new Error("思考强度不对");
-	const c: SubagentThinking = input.mode === "fixed" ? { mode: "fixed", level: input.level } : { mode: "follow" };
-	setSetting(`subagentThinking:${id}`, c);
-	return c;
-}
-/**
- * 子代理实际用的思考强度：单个子代理覆盖 > 助理默认（fixed 档位 / 跟随主会话）> 传入的 mainThinking（runtime 的 a.thinking ?? 全局默认），
- * 最后一律按实际使用的模型收敛（clampThinkingLevel），不支持推理的模型不会得到 xhigh/max。
- */
-export function resolveSubagentThinking(agentId: string, model: ModelRef, mainThinking: string, override?: string | null): string {
-	const setting = agentSubagentThinking(agentId);
-	const wanted = override ?? (setting.mode === "fixed" ? setting.level : mainThinking);
-	return models.clampThinking(model.provider, model.id, wanted);
-}
-/** 助理级请求级 Fast（agents.fast 0/1）；主会话 / 群成员 / 后台任务 / 定时任务都用它。 */
-export function agentFast(agentId: string): boolean {
-	const row = db.prepare("SELECT fast FROM agents WHERE id = ?").get(agentId) as { fast?: number | null } | undefined;
-	return row?.fast === 1;
-}
-/**
- * 子代理实际用的 Fast：单个子代理覆盖（1/0）> 所属助理的 fast；默认跟随，不另立「助理级子代理默认」设置页。
- * 与思考强度同构，但**不共用字段**：改 Fast 不会动 thinking，反之亦然。
- */
-export function resolveSubagentFast(agentId: string, override?: number | null): boolean {
-	if (override === 1 || override === 0) return override === 1;
-	return agentFast(agentId);
 }
 /** 改单个子代理的 Fast 覆盖（null = 跟随所属助理）；落库并广播。 */
 export function setSubagentFastOverride(id: string, fast: boolean | null): Subagent {
@@ -318,7 +248,7 @@ export function switchSubagentModel(id: string, next: ModelRef, reason: string) 
 	changed(id);
 }
 
-interface Live { stop?: () => Promise<void>; message?: (text: string, messageId?: string) => Promise<void>; apply?: (model: ModelRef, thinking: string) => Promise<void>; pending: { text: string; messageId?: string }[]; toolUntil: number }
+interface Live { stop?: () => Promise<void>; message?: (text: string, messageId?: string) => Promise<void>; apply?: (model: ModelRef, thinking: string) => Promise<void>; pending: { text: string; messageId?: string }[]; toolUntil: number; /** 卡住重启：中断后带这条纠正重新排队 */ restart?: string }
 const live = new Map<string, Live>();
 interface Driver {
 	run(r: Subagent, connect: (stop: () => Promise<void>, message: Live["message"], apply?: Live["apply"]) => void, input?: { text: string; messageId?: string }): Promise<string>;
@@ -338,10 +268,10 @@ function addEvent(r: Subagent, kind: string, reason: string) {
 	const gen = (db.prepare("SELECT finished_at FROM subagents WHERE id = ?").get(r.id) as { finished_at: number | null } | undefined)?.finished_at ?? 0;
 	db.prepare("INSERT INTO subagent_events(id, subagent_id, kind, reason, created_at, generation) VALUES(?,?,?,?,?,?)").run(uid("se"), r.id, kind, reason, Date.now(), gen);
 }
-const hooks: StuckHooks = { event: addEvent, changed, stop: (id) => stopSubagent(id), deliver: () => deliverSubagentEvents() };
+const hooks: StuckHooks = { event: addEvent, changed, restart: (id, note) => restartSubagent(id, note), fail: (id, reason) => void finishSubagent(id, "failed", reason) };
 /** 所有结束路径共享这一处；状态和待投递事件一起提交。 */
 export function finishSubagent(id: string, status: Exclude<SubagentStatus, "queued" | "running" | "stalled">, reason = "", summary = "") {
-	const r0 = getSubagent(id), agentId = r0?.agent_id, sup = r0 && isLiveSubagent(r0.status) ? superviseFinish(r0, status, reason, hooks) : null;
+	const r0 = getSubagent(id), agentId = r0?.agent_id, sup = r0 && isLiveSubagent(r0.status) ? superviseFinish(r0, status, reason) : null;
 	if (sup) reason = sup.reason;
 	db.exec("BEGIN");
 	try {
@@ -422,6 +352,7 @@ export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef,
 	return status === "queued" ? { ...row, queuedAhead: queuedAhead(id, agentId) } : row;
 }
 async function run(id: string, input?: { text: string; messageId?: string }) {
+	const finish = (st: "done" | "failed", reason = "", summary = "") => live.get(id)?.restart === undefined && finishSubagent(id, st, reason, summary);
 	try {
 		const result = await driver.run(getSubagent(id)!, (stop, message, apply) => {
 			const l = live.get(id)!;
@@ -429,12 +360,30 @@ async function run(id: string, input?: { text: string; messageId?: string }) {
 			if (!isActiveSubagent(getSubagent(id)!.status)) void stop();
 			else queueMicrotask(() => { for (const p of l.pending.splice(0)) void message?.(p.text, p.messageId); });
 		}, input);
-		finishSubagent(id, "done", "", result);
-	} catch (e) { finishSubagent(id, "failed", e instanceof Error ? e.message : String(e)); }
+		finish("done", "", result);
+	} catch (e) { finish("failed", e instanceof Error ? e.message : String(e)); }
 	finally {
-		finishSubagent(id, "failed", "子代理执行意外结束");
+		finish("failed", "子代理执行意外结束");
+		const note = live.get(id)?.restart;
 		live.delete(id);
+		if (note !== undefined) requeueStuck(id, note);
 	}
+}
+/** 卡住时由主会话（subagent_restart）或系统调用：中断这一轮，同一个帮手带纠正从最近检查点续跑，不算结束。 */
+export async function restartSubagent(id: string, note: string) {
+	const l = live.get(id);
+	if (!l?.stop || !isActiveSubagent(getSubagent(id)?.status ?? "")) return false;
+	l.restart = note;
+	await l.stop();
+	return true;
+}
+function requeueStuck(id: string, note: string) {
+	const r = getSubagent(id);
+	if (!r) return;
+	const text = stuckRestartPrompt(note, sessionResumeSafety(r.session_file)); // 中断后会话已落盘：结果未知的工具会列出来先核验
+	db.prepare(`UPDATE subagents SET status = 'queued', resume = 0, pending_input = ?, attempt = COALESCE(attempt, 0) + 1, last_activity_at = ? WHERE id = ? AND status IN ${LIVE}`).run(JSON.stringify({ text }), Date.now(), id);
+	changed(id);
+	pumpSubagents(r.agent_id);
 }
 export async function stopSubagent(id: string, status: "stopped" | "timeout" = "stopped") {
 	const r = getSubagent(id);
@@ -470,22 +419,7 @@ export async function stopConversationSubagents(agentId: string, conversationId:
 		pumpSubagents(agentId);
 	}
 }
-/** 子代理行 + 恢复摘要：给 subagent_list / 接口用，供主模型判断「优先续跑而不是重派」。 */
-export function withResumeInfo(r: Subagent): SubagentSummary {
-	const info = classifyResume(r.error_reason ?? r.result_summary ?? "");
-	const terminal = !isLiveSubagent(r.status);
-	// 只有终态、且装了会话的行才需要读文件核验副作用（读不到按不安全处理，不自动续跑）
-	const safety = terminal && r.status !== "done" && r.session_file ? sessionResumeSafety(r.session_file) : undefined;
-	return {
-		...r,
-		retryable: info.auto,
-		resumeReason: info.label,
-		canResume: terminal && r.status !== "done" && info.manual && !!r.session_file,
-		waitingRetry: r.retry_at != null,
-		...(safety && !safety.safe ? { needsVerify: true, pendingToolNames: [...new Set(safety.pendingToolCalls.map((p) => p.name))] } : {}),
-	};
-}
-export const listSubagentSummaries = (agentId?: string, conv?: string) => listSubagents(agentId, conv).map(withResumeInfo);
+export { withResumeInfo, listSubagentSummaries } from "./subagent-resume-info.ts";
 /**
  * 用**原子代理 id**继续：不新开子代理、不新建任务，复用落库的 Pi session 从断点续跑。
  * - 只对已到终态、非 done、且落库了 session 的行生效；重复调用只生效一次（原子占用，状态一变为 queued 就拒绝第二次）。
@@ -499,6 +433,8 @@ export function resumeSubagent(id: string, opts: { mode?: "auto" | "manual" } = 
 	if (r.status === "done") throw new Error("子代理已完成，无需继续");
 	const info = classifyResume(r.error_reason ?? r.result_summary ?? "");
 	if (!info.manual) throw new Error(`这个失败不能继续：${info.label}`);
+	const blocked = repeatBlocked(r);
+	if (blocked) throw new Error(blocked);
 	if (opts.mode === "auto" && !info.auto) throw new Error(`这个失败不能自动继续：${info.label}`);
 	if (!r.session_file) throw new Error("没有落库会话，无法确认执行到哪一步；请先核验工作区再重新派活");
 	// 自动重试前必须证明没有「已派发、结果未落库」的工具调用；结果未知就不自动重放，交人工/主模型核验
@@ -561,12 +497,12 @@ export function subagentActivity(id: string, toolMs?: number) {
 	const r = getSubagent(id);
 	if (!r || !isActiveSubagent(r.status)) return;
 	const ts = Date.now();
-	if (toolMs !== undefined && live.has(id)) live.get(id)!.toolUntil = toolMs ? ts + toolMs + 30_000 : 0;
+	if (toolMs !== undefined && live.has(id)) live.get(id)!.toolUntil = toolMs ? ts + toolMs + Math.min(30_000, SUBAGENT_STALL_MS()) : 0;
 	if (r.status === "stalled") {
 		db.prepare("UPDATE subagents SET status = 'running', last_activity_at = ? WHERE id = ?").run(ts, id);
-		addEvent(r, "resumed", "子代理恢复活动了"); clearStallQuestion(r);
+		addEvent(r, "resumed", "子代理恢复活动了");
 		changed(id);
-	} else if (ts - r.last_activity_at >= 5000) {
+	} else if (ts - r.last_activity_at >= Math.min(5000, SUBAGENT_STALL_MS() / 3)) {
 		db.prepare("UPDATE subagents SET last_activity_at = ? WHERE id = ?").run(ts, id);
 		changed(id);
 	}
@@ -583,7 +519,7 @@ export async function checkSubagents(ts = Date.now()) {
 }
 const delivering = new Set<string>();
 /** 会触发一次模型回合的事件：终态 + 停滞告警。`resumed` 只更新卡片（changed 已做），不再单独唤醒。 */
-const WAKE_KINDS = new Set(["done", "failed", "stopped", "timeout", "lost", "stalled", "decided"]);
+const WAKE_KINDS = new Set(["done", "failed", "stopped", "timeout", "lost", "stalled"]);
 /** 终态：可能已由一条 task_wait 负责唤醒，需要跨机制去重。 */
 const TERMINAL_KINDS = new Set(["done", "failed", "stopped", "timeout", "lost"]);
 export async function deliverSubagentEvents() {
@@ -594,7 +530,7 @@ export async function deliverSubagentEvents() {
 		const r = getSubagent(e.subagent_id);
 		if (!r || !db.prepare("SELECT 1 FROM conversations WHERE id = ?").get(r.conversation_id)) continue;
 		// resumed 只更新卡片，不再起一次模型回合：直接标记已投递，避免每 30 秒重试
-		if (!WAKE_KINDS.has(e.kind) || (r.kind && e.kind !== "decided")) {
+		if (!WAKE_KINDS.has(e.kind) || r.kind) {
 			markSubagentEventDelivered(e.id, r.id);
 			continue;
 		}

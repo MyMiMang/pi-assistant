@@ -212,6 +212,6 @@ flowchart LR
 |---|---|
 | 1 不改行为的整理 | 已完成：三处建会话合成 `agent-runtime/agent-session.ts` 的 `createAgentSession`；状态词前端只留 `Tasks.tsx` 一张表（任务卡片、帮手列表共用；lost 统一叫「中断待核验」） |
 | 2 后台任务重启安全判定 | 已完成：`tasks.recover()` 复用 `sessionResumeSafety`，不安全标 lost（中断待核验），卡片「继续」走 `verifyResumePrompt`；单测 `background-task-restart.test.ts`，e2e `task-restart-ui.mjs` |
-| 3 共用卡住检测 | 已完成：规则合成 `stuck.ts`（群任务 watch/exec、群对话 collab、单聊帮手共用）；单聊帮手新增两级上报 `subagent-stuck.ts`：没进展先叫醒主会话、主会话之后仍没动静问用户；同一原因第 2 次失败提示换方法、第 3 次问用户；用户回答「停止」直接停、「继续等」重新计时、其余交给主会话。单测 `stuck.test.ts`、`subagent-stuck.test.ts`，e2e `stuck-escalation-ui.mjs` |
+| 3 共用卡住检测 | 已完成，按用户反馈改过：规则合成 `stuck.ts`（群任务 watch/exec、群对话 collab 共用；单聊帮手复用指纹 / 反复判定）。单聊帮手 `subagent-stuck.ts`：先诊断（预计时长内的工具、仍在输出的命令（Pi 的工具输出更新转成 `tool_update`）、流式输出、工作区文件变化都不算卡住）；真卡住由主会话按阶梯自己处理（看记录 + `subagent_restart` 带纠正从检查点续跑 → 换做法 / 派新帮手 → 最后提醒 → 办法用尽失败并写明试过什么）；同一原因第 3 次起拒绝原样续跑；只有批准 / 凭据等用户才能给的东西才找用户。已删掉「继续等 / 停止这个帮手」提问卡片。单测 `subagent-stuck.test.ts`，e2e `stuck-escalation-ui.mjs`（慢但在动不报、真卡住自愈、只为审批找用户） |
 | 4 后台 / 定时 / 巡检跑在帮手上 + 历史迁移 | 已完成：`tasks.spawn` 改成 `spawnSubagent(kind=task/routine/heartbeat, title, routine_run_id)`，`tasks.recover/run/pump` 删除，重启只剩 `recoverSubagents`；旧 `tasks` 表启动时同 id 迁进 subagents（`migrateLegacyTasks`，幂等，已结束的标已通知；等待 task→subagent）；routines / proactive / task-waits / requests 改读 subagents 和 `subagent.updated`。后台任务结束仍是推送 + 对话里可见的报错 / 下一轮上下文（不额外唤醒模型）；带 kind 的帮手只有「用户已决定」会唤醒主会话；巡检卡住到问用户那一级直接停。单测 `background-task-restart.test.ts`（迁移 + 重启），e2e `task-restart-ui.mjs` 改走帮手详情 |
 | 5 群任务执行跑在帮手上 | 未开始：需要用户先决定群成员能否看到执行详情（见报告） |

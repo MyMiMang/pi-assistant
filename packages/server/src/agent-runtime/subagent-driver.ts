@@ -1,6 +1,7 @@
 /** 子代理驱动：只替换会话身份，工作区、权限、技能与审批仍走同一套扩展。 */
 import { createAgentSession } from "./agent-session.ts";
 import { subagentNotifyText } from "../subagent-supervision.ts";
+import { toolExpectMs } from "../subagent-stuck.ts";
 import { setSubagentDriver, getSubagent, subagentActivity, isActiveSubagent, switchSubagentModel, planFallback, livePool, modelKey, resolveSubagentThinking, resolveSubagentFast, setSubagentRetryAt, type Subagent, type SubagentEvent } from "../subagents.ts";
 import { classifyModelError, isRecoverableModelError } from "../model-errors.ts";
 import { assessResumeSafety, shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY_PROMPT } from "../subagent-resume.ts";
@@ -35,7 +36,7 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 					sessionDir: join("subagents", r.id),
 					sessionFile: r.session_file,
 					model: { provider: candidates[i].provider, id: candidates[i].id }, thinking: agentThinking(candidates[i]),
-					rules: ["你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报。你用 memory_remember 记下的是 task 草稿（默认不会写进共享的「关于用户」事实库），由主会话核验后才会晋升为长期事实。"],
+					rules: ["你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报：最后用几句话给出结果摘要（做了什么、产出在哪、还有什么没做），不要复述过程。你用 memory_remember 记下的是 task 草稿（默认不会写进共享的「关于用户」事实库），由主会话核验后才会晋升为长期事实。"],
 					conversationId: r.conversation_id, taskId: r.id, ext: { allowSpawn: false, subagentId: r.id, actor: "subagent" },
 				});
 				current = candidates[i];
@@ -66,7 +67,7 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 				const mid = routed.shift();
 				if (mid) updateMessage(mid, { meta: { delivery: "delivered", routedTo: r.id } });
 			}
-			const toolMs = e.type === "tool_start" ? (Number(e.args.timeout ?? e.args.timeoutMs ?? 120) * (e.args.timeoutMs ? 1 : 1000)) : e.type === "tool_end" ? 0 : undefined;
+			const toolMs = e.type === "tool_start" ? toolExpectMs(e.args) : e.type === "tool_end" ? 0 : undefined;
 			subagentActivity(r.id, toolMs);
 		});
 		connect(() => abortSession(session), async (text, mid) => {

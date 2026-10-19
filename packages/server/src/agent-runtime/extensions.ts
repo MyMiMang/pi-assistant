@@ -1,5 +1,5 @@
 /** 每个会话挂哪些 Pi 扩展（工具）：沙箱、审批、投递、记忆、技能、主动性、定时、邮箱、浏览器、电脑、图片；以及 MCP / Pi 扩展包。 */
-import { spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, resumeSubagent, withResumeInfo } from "../subagents.ts";
+import { spawnSubagent, listSubagents, getSubagent, messageSubagent, stopSubagent, resumeSubagent, restartSubagent, withResumeInfo } from "../subagents.ts";
 import { listWaits, parseDue, refreshWait, registerWait, cancelWait, WAIT_DEFAULT_INTERVAL_MS } from "../task-waits.ts";
 import { imageExtensions } from "../image-gen/extension.ts";
 import { join } from "node:path";
@@ -115,6 +115,10 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 					stop: async (id) => {
 						if (getSubagent(id)?.agent_id !== agentId || getSubagent(id)?.conversation_id !== conversationId) throw new Error("不是本会话的子代理");
 						return stopSubagent(id);
+					},
+					restart: async (id, note) => {
+						if (getSubagent(id)?.agent_id !== agentId || getSubagent(id)?.conversation_id !== conversationId) throw new Error("不是本会话的子代理");
+						return restartSubagent(id, note);
 					},
 				} : undefined,
 				// 任务等待：登记一次持久等待，结束当前回合，由 scheduler 在有结果时做一次结构化增量唤醒

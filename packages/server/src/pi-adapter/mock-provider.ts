@@ -123,6 +123,11 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 	}
 
 	// 子代理测试：事件由主会话汇报，执行步骤只留在子会话。
+	// 卡住处理 e2e：主会话按建议自己处理——带纠正 subagent_restart，不去问用户
+	if (u.includes("（子代理事件 ") && /卡住了/.test(u) && /subagent_restart/.test(u) && last.role !== "toolResult") {
+		const id = u.match(/子代理 ID：([\w-]+)/)?.[1];
+		if (id) return fauxAssistantMessage([fauxText("帮手卡住了，我看一下再带着纠正让它从检查点继续。"), fauxToolCall("subagent_restart", { id, note: "上一步的请求一直没返回，别再等它；直接检查已有结果，按更小的步骤继续" })]);
+	}
 	if (u.includes("（子代理事件 ")) return fauxAssistantMessage(`子代理回报：${u.replace(/^.*?）/, "").slice(0, 300)}`);
 	if (u.startsWith("（后台子代理任务）")) {
 		// 模拟“可恢复的模型故障”：首次派活时报 429，让子代理在候选池内自动 fallback（续跑时会成功）
@@ -135,6 +140,8 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 		}
 		if (last.role === "toolResult") return fauxAssistantMessage(`子代理结果：${textOf(last)}`);
 		if (/审批/.test(u)) return fauxAssistantMessage([fauxToolCall("bash", { command: "rm -f subagent-old.txt; echo 子代理审批完成" })]);
+		// 慢但在动：命令跑得比预计久，但一直在输出（卡住检测不该打断它）
+		if (/长命令测试/.test(u)) return fauxAssistantMessage([fauxToolCall("bash", { command: "for i in 1 2 3 4 5 6 7 8 9 10; do echo 进度 $i; sleep 1; done" })]);
 		return fauxAssistantMessage([fauxThinking("先确认子代理任务，再运行命令整理结果。"), fauxToolCall("bash", { command: "sleep 8; echo 子代理工作完成" })]);
 	}
 	if (messages.some((m) => m.role === "user" && textOf(m).startsWith("（后台子代理任务）"))) {

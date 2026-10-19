@@ -2,7 +2,6 @@
 import { bus } from "../bus.ts";
 import { db } from "../db.ts";
 import { updateMessage } from "../messages.ts";
-import { tasks } from "./background-tasks.ts";
 
 export interface AgentRow {
 	id: string;
