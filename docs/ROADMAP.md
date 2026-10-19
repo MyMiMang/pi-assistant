@@ -11,6 +11,7 @@
 - [已完成(未打包)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
+- [已完成(未打包)] 任务类机制合并：界面只用「任务 / 帮手」两个词，后台 / 定时 / 巡检 / 群任务执行都跑在帮手上，旧 `/api/tasks` 下线（[0014](decisions/0014-task-and-helper.md)、[设计](design/task-architecture-analysis.md)）
 - [已完成(未打包)] 群聊协作：管理者 + 自主模式 + 任务看板 + 三种卡住检测；单聊入口未接（[设计](design/group-collaboration.md)、[0006](decisions/0006-group-collaboration.md)）
 - [已完成(未打包)] 拆大文件：work-items.ts、rooms/index.ts（runtime.ts 已另行拆分）
 - [已完成(未打包)] 群任务不受人数上限影响、群停止不暂停任务

@@ -4,12 +4,12 @@
 
 ## 当前版本（2026-10-19）
 - 公开版：**v0.1.0-beta.32**（Latest）。main 上之后的改动均**未打包**。
-- 未打包改动：助理/群成员详情经典布局与八页改造；输入框下去掉权限和主动程度按钮；设置页按界面标准改造；中转服务详情单列（按模型自动识别协议）；群成员改名即时刷新；代码清理（http.ts 拆到 routes/*、删 Laya 废代码）；项目规范化（AGENTS.md / MODULES.md / decisions / `npm run check`）。
+- 未打包改动：助理/群成员详情经典布局与八页改造；输入框下去掉权限和主动程度按钮；设置页按界面标准改造；中转服务详情单列（按模型自动识别协议）；群成员改名即时刷新；代码清理（http.ts 拆到 routes/*、删 Laya 废代码）；项目规范化（AGENTS.md / MODULES.md / decisions / `npm run check`）；任务类机制合并（后台 / 定时 / 巡检 / 群任务执行都跑在帮手上，界面上「子代理」改叫「帮手」，旧 `/api/tasks` 接口下线）。
 
 ## 正在做
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
 - 群聊协作已实现（未打包，[设计](design/group-collaboration.md)）：任务由负责人派的帮手在它自己的任务会话里执行，管理者按事件唤醒，三种卡住检测，等你决定，停群不停任务；work-items / rooms 已拆到 600 行以下。单聊入口还没接（核心与来源无关，单聊只需在入口调 setWorkSourceProvider + workItemTools）。
-- 任务类机制合并（[决策 0014](decisions/0014-task-and-helper.md)，[设计](design/task-architecture-analysis.md) §5.5 / §7，未打包）：6 步里做完 1–5 步，**第 6 步没做**。见下面「接手说明」。
+- 任务类机制合并（[决策 0014](decisions/0014-task-and-helper.md)，[设计](design/task-architecture-analysis.md) §5.5 / §7，未打包）：6 步全部做完（第 6 步：界面改名 + 旧 `/api/tasks` 下线）。剩余事项见下面「接手说明」。
 - 本地语音已改为可选模块（[设计](design/local-voice-optional.md)，未打包）。
 
 ## 接手说明（2026-10-19，给接手的 AI）
@@ -21,12 +21,13 @@
 - `9643651` 第 3 步按用户反馈重做：卡住由主会话自己解决（先诊断、按阶梯处理），只为批准 / 凭据找用户，删掉「继续等 / 停止」卡片；加派帮手成本规则。
 - `31cee03` 修 `downloads.ts` 统计时临时文件被删导致的偶发崩溃（CI 里 uvx MCP 测试）。
 - `7350689` 第 5 步：群任务执行跑在负责人的帮手上（kind=work）；帮手最多再派一层（上一层等下一层并整合）；群角色范围自动写进帮手规则（`helper-scope.ts`）；可见性设置 `groupHelperDetail`（默认 owner = 派它的助理 + 用户能看完整步骤，群里只看概况和结果）；核验通过后执行记忆草稿自动转正。顺带恢复了后台任务的聊天卡片（第 4 步后丢了）。
+- 第 6 步（两个提交）：① 界面上「子代理」改叫「帮手」（帮手详情、执行概览、帮手模型 / 候选池 / 任务上限、工具步骤名、记忆来源、删除服务提示），`taskTitle` 去前缀两个词都认，e2e 选择器同步。② 旧兼容层下线：删 `GET /api/agents/:id/tasks`、`/api/tasks/:id/{messages,cancel,resume}`、`tasks.list/cancel/resume`、`getTask` 和 `task.updated` 事件；前端「后台任务」列表改读 `/api/subagents?agent=` 并听 `subagent.updated`（只取 kind=task/routine），聊天里后台任务卡片的取消 / 继续改调 `/api/subagents/:id/stop|resume`（旧任务迁移时 id 没变，老卡片照样能用）。
 
-**CI**：`fb63378`、`9643651` 的 ci 失败：单测里的 uvx 偶发（已由 `31cee03` 修）和 `e2e/run.mjs`「后台任务」那步等不到「后台任务：统计工作区文件」卡片（`7350689` 已在 `tasks.spawn` 补回卡片，**本地没跑完 run.mjs 验证**，先看 `7350689` 的 CI）。`npm run check` 本地 981 过 / 0 失败。
+**CI**：`7350689` 的 ci 只有 Intel Mac 的 Lima 测试下载失败（`fetch failed`，网络偶发）；紧接着的 `420fe5b`（只改文档）ci 全绿，含 `e2e/run.mjs` 后台任务那步。
 
 **还要做**
-1. 第 6 步：界面上「子代理」改叫「帮手」（`apps/web/src` 约 70 处，大多在 `Subagents.tsx`、`Tasks.tsx`、`ChatMessages.tsx`、`MemoryTab.tsx`、`CustomProvider.tsx`）。注意 `Tasks.tsx` 里剥服务端前缀「（后台子代理任务）」的正则要同时认两个词；改完跑 `e2e/subagents.mjs` 等相关 e2e、截图。旧路由兼容层下线也在这一步。
-2. 确认 `7350689` CI 全绿（尤其 `e2e/run.mjs`）。
+1. 待用户决定：给模型看的提示词和工具说明（`ext-delivery` 的 spawn_subagent 等、`system-rules.ts`、`subagent-supervision.ts`）里仍叫「子代理」，真实模型跟你说话时可能还说「子代理」。内部标记「（子代理事件 」「（后台子代理任务）」用来解析历史消息和 Mock，不能直接改名。要不要让模型对用户统一说「帮手」。
+2. main 上原来就失败的 e2e（干净 main 上复现过，和第 6 步无关）：`send-shortcut-ui.mjs` 第 3 步等不到主会话发送键；`subagent-composer-navigation.mjs` 档位菜单里多出 `fast`，断言不认。`file-preview.mjs` 手机 390 宽时预览框量到 388.8（像进场动画没走完），「铺满可视宽度」不过。
 3. 待用户决定：群看板「等你决定」仍会在反复退回 / 长时间没进展时问用户「换个方法 / 改派 / 暂停」，和第 3 步「只为用户才能给的东西找用户」的原则不一致，要不要改由用户定。
 4. 可见性设置目前只有接口 `/api/settings/group-helper-detail`，没有界面。
 5. 没在真机验证过：Web Push（真手机）、真实模型下的帮手嵌套 / 角色范围效果、Mac 上的整套行为。
@@ -41,7 +42,8 @@
 - 只用中文回复用户。改架构前先画清楚现状和方案，等用户批准再动手。
 
 **怎么跑**
-- `export PATH=~/.nvm/versions/node/v22.23.3/bin:$PATH`（Node 22），`export CHROME=/usr/bin/google-chrome`。
+- Linux 开发机：`export PATH=~/.nvm/versions/node/v22.23.3/bin:$PATH`（Node 22），`export CHROME=/usr/bin/google-chrome`。
+- 用户的 Mac（`~/Documents/AI/pi-assistant`）：用已装的 Homebrew Node 24（`export PATH=/opt/homebrew/opt/node@24/bin:$PATH`），e2e 默认用 /Applications 里的 Chrome（无头、临时配置），跑时加 `HOME=$(mktemp -d)`；Mac 没有 `timeout` 命令。用户装的 App 占着 8787，e2e 都用随机端口。
 - 全量：`npm run check`；只做静态检查：`npm run check:static`。
 - 单个单测（在 `packages/server` 里）：`node --import tsx --import ./test/setup.ts --test test/X.test.ts`。
 - e2e：先 `npm run build -w @pi-assistant/web`，再 `node e2e/X.mjs`（整套：`npm run e2e`）。
