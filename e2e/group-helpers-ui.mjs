@@ -35,7 +35,6 @@ try {
 	const writer = await mk("小编", "你在群里的角色：编剧\n负责写剧本和台词");
 	const artist = await mk("小美", "你在群里的角色：美术\n负责画分镜图");
 	const room = await j("/api/rooms", "POST", { name: "短片组", memberIds: [director.id, writer.id, artist.id], managerId: director.id });
-	assert.equal((await j("/api/settings/group-helper-detail")).value, "owner", "默认：完整详情只有派它的助理和用户能看");
 
 	console.log("[1] 编剧派帮手：自动带角色范围；帮手再派一层，结果交回上一层");
 	await j(`/api/rooms/${room.id}/messages`, "POST", { text: "@小编 派个子代理分两块写剧本" });

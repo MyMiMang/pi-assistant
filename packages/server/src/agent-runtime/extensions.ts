@@ -108,7 +108,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 						const { done_criteria, ...rest } = input;
 						return spawnSubagent(agentId, conversationId!, fallback, { ...rest, context: scopedContext(scope, done_criteria, input.context), parentMessageId: parent?.id, parentSubagentId: opts.subagentId, scope });
 					},
-					// 自己派的：完整记录 + 最近的工具步骤；群里别的成员派的：默认只给概况（见 helper-scope.ts 的可见性设置）
+					// 自己派的：完整记录 + 最近的工具步骤；群里别的成员派的：列表只给概况，点名查给完整过程（helper-scope.ts）
 					list: () => {
 						const roomId = opts.subagentId ? null : helperRoomOf(conversationId);
 						const mine = listSubagents(agentId, conversationId ?? undefined).filter(own).map(withResumeInfo);
@@ -117,7 +117,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 					get: (id) => {
 						const r = getSubagent(id);
 						if (r && own(r)) return { ...withResumeInfo(r), steps: helperSteps(id) };
-						return opts.subagentId ? null : peerHelperView(agentId, conversationId, r);
+						return opts.subagentId ? null : peerHelperView(agentId, conversationId, r, true);
 					},
 					message: async (id, text) => {
 						mustOwn(id);

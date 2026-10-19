@@ -94,28 +94,26 @@ test("帮手没有群发言工具；群任务执行的帮手只多 work_submit /
 	await S.stopSubagent(h.id);
 });
 
-test("可见性：群里别的成员默认只看到帮手概况（谁派的、在做什么、当前步骤、结果），完整步骤只有派它的助理和用户能看；一个设置可改", async () => {
+test("可见性：群里别的成员列帮手只看到概况（谁派的、在做什么、当前步骤、结果），点名查某一个帮手才给完整步骤；没有开关", async () => {
 	const conv = convOf("gw");
 	const h = S.spawnSubagent("gw", conv, model, { task: "写第三场的台词", title: "第三场台词" });
 	await settle();
 	insertMessage({ agentId: "gw", conversationId: conv, subagentId: h.id, role: "tool", content: "$ cat secret-draft.md\n很长的命令输出", meta: { toolName: "bash", status: "done" } });
 	insertMessage({ agentId: "gw", conversationId: conv, subagentId: h.id, role: "assistant", content: "台词写到一半了" });
-	assert.equal(H.groupHelperDetail(), "owner", "默认：只有派它的助理和用户");
 	const peer = H.peerHelperView("ga", convOf("ga"), S.getSubagent(h.id)) as Record<string, unknown>;
 	assert.equal(peer.spawnedBy, "小编");
 	assert.equal(peer.title, "第三场台词");
 	assert.equal(peer.status, "running");
 	assert.equal(peer.currentStep, "bash");
 	assert.equal(peer.progress, "台词写到一半了");
-	assert.ok(!("steps" in peer) && !JSON.stringify(peer).includes("secret-draft"), "没有工具步骤 / 命令输出");
+	assert.ok(!("steps" in peer) && !JSON.stringify(peer).includes("secret-draft"), "列表里只有概况：没有工具步骤 / 命令输出");
+	assert.match(String(peer.detail), new RegExp(`subagent_id:"${h.id}"`), "概况里告诉它怎么点名查完整过程");
 	assert.equal(H.peerHelperView("gw", convOf("gw"), S.getSubagent(h.id)), null, "自己派的走完整记录，不走概况");
 	assert.equal(H.peerHelperView("ga", createConversation("ga").id, S.getSubagent(h.id)), null, "不在同一个群看不到");
 	assert.ok(H.roomHelpers(room.id, "ga").some((r) => r.id === h.id), "群里能列出别人派的帮手");
 	assert.match(JSON.stringify(H.helperSteps(h.id)), /secret-draft/, "完整步骤（派它的助理 / 用户详情页）");
-	H.setGroupHelperDetail("group");
-	assert.match(JSON.stringify(H.peerHelperView("ga", convOf("ga"), S.getSubagent(h.id))), /secret-draft/, "改成 group 后群成员也能看完整详情");
-	H.setGroupHelperDetail("owner");
-	assert.throws(() => H.setGroupHelperDetail("all"), /owner|group/);
+	assert.match(JSON.stringify(H.peerHelperView("ga", convOf("ga"), S.getSubagent(h.id), true)), /secret-draft/, "点名查（full）就给完整过程，不用开关");
+	assert.equal(H.peerHelperView("ga", createConversation("ga").id, S.getSubagent(h.id), true), null, "不在同一个群，点名查也看不到");
 	runs.get(h.id)!({ text: "第三场台词完成" });
 	await settle();
 	assert.equal((H.peerHelperView("ga", convOf("ga"), S.getSubagent(h.id)) as { result: string }).result, "第三场台词完成");

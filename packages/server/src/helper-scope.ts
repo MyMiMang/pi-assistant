@@ -3,23 +3,13 @@
  *  - 角色范围：群成员（比如被分配成「编剧」的助理）派帮手时，帮手的说明自动带上它代表谁、这个角色的职责、
  *    子任务、完成标准和不归它管的事（其他成员的角色）；帮手不替别的角色干活、不直接找群成员或协调者，
  *    超出范围的交回派它的助理，由那个助理决定或上报协调者。下一层帮手继承同样的范围（spawnSubagent 里继承 scope）。
- *  - 执行详情可见性：一个设置 `groupHelperDetail`，默认 owner——群里人人能看到每个帮手是谁派的、在做什么、
- *    做到哪一步、结果；完整执行详情（工具步骤、命令输出）只有派它的助理和用户能看。改成 group 时群成员都能看完整详情。
+ *  - 执行详情（2026-10-20 用户定，没有开关）：群里别的成员列帮手时只看概况（谁派的、在做什么、做到哪一步、结果）；
+ *    需要时点名查某一个帮手（subagent_list 带 subagent_id）就给完整记录和工具步骤。用户在界面里随时能看全部。
  */
 import { bus } from "./bus.ts";
-import { db, getSetting, setSetting } from "./db.ts";
+import { db } from "./db.ts";
 import { roomOfConversation } from "./messages.ts";
 import { isLiveSubagent, stopSubagent, type Subagent } from "./subagents.ts";
-
-export type HelperDetailVisibility = "owner" | "group";
-const KEY = "groupHelperDetail";
-/** 群里帮手的完整执行详情给谁看：owner = 派它的助理 + 用户（默认）；group = 群成员都能看。 */
-export const groupHelperDetail = (): HelperDetailVisibility => (getSetting<string>(KEY, "owner") === "group" ? "group" : "owner");
-export function setGroupHelperDetail(v: unknown): HelperDetailVisibility {
-	if (v !== "owner" && v !== "group") throw new Error("只能是 owner（派它的助理和用户）或 group（群成员都能看）");
-	setSetting(KEY, v);
-	return v;
-}
 
 const clip = (s: string | null | undefined, n: number) => {
 	const t = String(s ?? "").replace(/\s+/g, " ").trim();
@@ -93,18 +83,18 @@ export function helperSummary(r: Subagent) {
 		currentStep: steps[0]?.tool || null,
 		progress: isLiveSubagent(r.status) ? clip(said?.content, 200) || null : null,
 		result: isLiveSubagent(r.status) ? null : clip(r.result_summary || r.error_reason, 600) || null,
-		detail: "完整执行详情只有派它的助理和用户能看",
+		detail: `要看完整过程，用 subagent_list 带上 subagent_id:"${r.id}" 查`,
 	};
 }
 /** 同一个群里别的成员派的帮手（成员看群里的帮手用）。 */
 export function roomHelpers(roomId: string, exceptAgentId: string): Subagent[] {
 	return db.prepare("SELECT * FROM subagents WHERE agent_id != ? AND (conversation_id IN (SELECT conversation_id FROM room_members WHERE room_id = ?) OR conversation_id IN (SELECT conversation_id FROM work_exec_conversations WHERE room_id = ?)) ORDER BY created_at DESC LIMIT 30").all(exceptAgentId, roomId, roomId) as unknown as Subagent[];
 }
-/** 别的成员查看一个帮手：默认只给概况；设置成 group 才给完整记录和工具步骤。不在同一个群返回 null。 */
-export function peerHelperView(viewerAgentId: string, conversationId: string | null | undefined, r: Subagent | undefined) {
+/** 别的成员查看一个帮手：列表里只给概况；点名查（full）给完整记录和工具步骤。不在同一个群返回 null。 */
+export function peerHelperView(viewerAgentId: string, conversationId: string | null | undefined, r: Subagent | undefined, full = false) {
 	const roomId = helperRoomOf(conversationId);
 	if (!r || !roomId || r.agent_id === viewerAgentId || helperRoomOf(r.conversation_id) !== roomId) return null;
-	return groupHelperDetail() === "group" ? { ...r, steps: helperSteps(r.id) } : helperSummary(r);
+	return full ? { ...r, steps: helperSteps(r.id) } : helperSummary(r);
 }
 
 /** 下一层帮手（只有一层）。 */

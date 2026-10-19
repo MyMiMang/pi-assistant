@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import { getConversation } from "./conversations.ts";
 import { db } from "./db.ts";
-import { groupHelperDetail, helperRoomOf, setGroupHelperDetail } from "./helper-scope.ts";
+import { helperRoomOf } from "./helper-scope.ts";
 import { getAgent, runtime } from "./runtime.ts";
 import { toMessage, type MessageRow } from "./messages.ts";
 import { providerNames, defaultThinking } from "./models.ts";
@@ -20,12 +20,6 @@ const withThinking = (r: ReturnType<typeof getSubagent>) => {
 // biome-ignore lint/suspicious/noExplicitAny: 同 http.ts
 export function mountSubagentRoutes(app: Hono<any>) {
 	app.get("/api/subagents/settings", (c) => c.json({ settings: subagentSettings(), models: configuredModels().map((m) => ({ provider: m.provider, id: m.id, name: m.name, reasoning: !!m.reasoning, providerName: providerNames().get(m.provider) ?? m.provider, thinking: m.thinking ?? ["off"] })) }));
-	// 群里帮手的完整执行详情给谁看（owner = 派它的助理和用户，默认；group = 群成员都能看）
-	app.get("/api/settings/group-helper-detail", (c) => c.json({ value: groupHelperDetail() }));
-	app.put("/api/settings/group-helper-detail", async (c) => {
-		try { return c.json({ value: setGroupHelperDetail((await c.req.json<{ value?: unknown }>()).value) }); }
-		catch (e) { return c.json({ error: e instanceof Error ? e.message : String(e) }, 400); }
-	});
 	app.put("/api/subagents/settings", async (c) => {
 		try { return c.json(saveSubagentSettings(await c.req.json<SubagentSettingsInput>())); }
 		catch (e) { return c.json({ error: String(e) }, 400); }
