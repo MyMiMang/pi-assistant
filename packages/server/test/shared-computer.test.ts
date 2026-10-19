@@ -63,7 +63,9 @@ test("设置：separate 列表增删", () => {
 	setSeparate("zz", false);
 	assert.ok(!desktopSettings().separate.includes("zz"));
 });
-test("合并脚本：语法正确；浏览器目录 共用里没有就搬、有了放进 旧电脑-名字；其他文件不覆盖", () => {
+// 合并脚本在助理电脑（Debian，GNU tar）里跑，用了 --skip-old-files；macOS 自带的 bsdtar 没有这个参数，本机测不了就跳过（CI 在 Linux 上照跑）
+const gnuTar = (() => { try { return /GNU tar/.test(execFileSync("tar", ["--version"], { encoding: "utf8" })); } catch { return false; } })();
+test("合并脚本：语法正确；浏览器目录 共用里没有就搬、有了放进 旧电脑-名字；其他文件不覆盖", { skip: !gnuTar && "本机 tar 不是 GNU tar" }, () => {
 	execFileSync("bash", ["-n", "-c", D.MERGE_SCRIPT]);
 	const t = mkdtempSync(join(tmpdir(), "pia-merge-"));
 	const from = join(t, "from"), to = join(t, "to");
