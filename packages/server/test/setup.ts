@@ -14,14 +14,20 @@
  * 必须用 `=` 覆盖，不能用 `??=`：`??=` 会沿用外部环境里的 PIA_DATA_DIR（例如为了调试真实数据 export 过），
  * 单测于是直接读写用户真实数据目录。同理 PIA_WORKSPACE 也要一起固定，避免工作区落到别处。
  */
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { delimiter, join, resolve, sep } from "node:path";
 
 const dataDir = mkdtempSync(join(tmpdir(), "pia-test-"));
 process.env.PIA_DATA_DIR = dataDir;
 process.env.PIA_WORKSPACE = join(dataDir, "workspace");
 process.env.PIA_OFFLINE = "1";
+// 单测绝不碰真实钥匙串：PATH 最前面放一个假的 security（一律「没有这一项」，写入也失败 → 主密钥落在临时数据目录的 master.key）。
+// 子进程继承 PATH，所以测试里直接起的服务也一样。2026-10-19 在 Mac 上发现 secrets / server-setup 测试会读到真实 App 的主密钥。
+const fakeBin = join(dataDir, "fake-bin");
+mkdirSync(fakeBin, { recursive: true });
+writeFileSync(join(fakeBin, "security"), "#!/bin/sh\nexit 44\n", { mode: 0o755 });
+process.env.PATH = `${fakeBin}${delimiter}${process.env.PATH ?? ""}`;
 
 /** 供测试断言：单测的数据目录必须是临时目录（fail-closed，防止以后再退回真实数据目录）。 */
 export const TEST_DATA_DIR = resolve(dataDir);
