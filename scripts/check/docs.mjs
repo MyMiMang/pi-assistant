@@ -16,7 +16,7 @@ export function checkDocs() {
 	const handoff = read("docs/HANDOFF.md").split("\n").length;
 	if (handoff > 120) errors.push(`docs/HANDOFF.md：${handoff} 行，超过 120 行。只写当前状态，历史移到 docs/history/`);
 	const modules = read("docs/MODULES.md");
-	const tops = new Set(readdirSync(join(ROOT, "packages")).concat(readdirSync(join(ROOT, "apps"))));
+	const tops = new Set(readdirSync(join(ROOT, "packages")).concat(readdirSync(join(ROOT, "apps"))).filter((n) => !n.startsWith(".")));
 	for (const t of tops) if (!modules.includes(`\`${t}\``)) errors.push(`docs/MODULES.md 没登记 packages/apps 下的「${t}」`);
 	for (const dir of MAPPED) {
 		const m = modules.split(/^## /m).find((sec) => sec.startsWith(`\`${dir}\``));
