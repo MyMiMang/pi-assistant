@@ -197,7 +197,10 @@ pub fn open_ui(app: &AppHandle, path: &str) {
         .inner_size(1280.0, 820.0)
         .min_inner_size(380.0, 560.0)
         .center()
-        .focused(true);
+        .focused(true)
+        // 把拖进窗口的文件交给网页：Tauri 默认自己截走拖放（转成 tauri://drag-drop 事件），网页的 drop 就收不到文件，
+        // 拖到聊天框不会像点「上传」那样加附件（apps/web/src/components/Chat.tsx / RoomChat.tsx 的 onDrop）。App 里没有用 Tauri 拖放事件的地方。
+        .disable_drag_drop_handler();
     // macOS：标题栏改成透明覆盖式（红黄绿按钮仍由系统绘制、位置和行为都不变），并隐藏窗口标题文字，
     // 页面顶部背景就能一直顶到窗口边，不再有一条独立的深灰标题栏。
     // 同时给页面注入 .macos-tauri 标记：只有 macOS 桌面窗口有，普通浏览器 / Windows / Linux 都没有，
