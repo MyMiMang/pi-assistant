@@ -16,7 +16,7 @@
 		"packages/server/src/memory/hindsight/sidecar.ts": 602,
 		"packages/server/src/pi-adapter/index.ts": 995,
 		"packages/server/src/proactive.ts": 933,
-		"packages/server/src/subagents.ts": 711,
+		"packages/server/src/subagents.ts": 689,
 		"packages/server/src/task-waits.ts": 634,
 		"packages/server/test/subagents.test.ts": 927,
 		"packages/server/test/voice-incremental.test.ts": 674,

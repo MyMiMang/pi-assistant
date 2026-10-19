@@ -210,4 +210,5 @@ flowchart LR
 
 | 步骤 | 状态 |
 |---|---|
+| 1 不改行为的整理 | 已完成：三处建会话合成 `agent-runtime/agent-session.ts` 的 `createAgentSession`；状态词前端只留 `Tasks.tsx` 一张表（任务卡片、帮手列表共用；lost 统一叫「中断待核验」） |
 | 2 后台任务重启安全判定 | 已完成：`tasks.recover()` 复用 `sessionResumeSafety`，不安全标 lost（中断待核验），卡片「继续」走 `verifyResumePrompt`；单测 `background-task-restart.test.ts`，e2e `task-restart-ui.mjs` |

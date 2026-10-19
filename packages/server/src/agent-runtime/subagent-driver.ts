@@ -1,30 +1,22 @@
 /** 子代理驱动：只替换会话身份，工作区、权限、技能与审批仍走同一套扩展。 */
+import { createAgentSession } from "./agent-session.ts";
 import { setSubagentDriver, getSubagent, subagentActivity, isActiveSubagent, switchSubagentModel, planFallback, livePool, modelKey, subagentNotifyText, resolveSubagentThinking, resolveSubagentFast, setSubagentRetryAt, type Subagent, type SubagentEvent } from "../subagents.ts";
 import { classifyModelError, isRecoverableModelError } from "../model-errors.ts";
 import { assessResumeSafety, shouldAutoRetry, transportBackoffMs, TRANSPORT_RETRY_PROMPT } from "../subagent-resume.ts";
 import { join } from "node:path";
-import { hostFileAccess } from "../host-control.ts";
-import { skillPaths } from "../skills.ts";
-import { skillFilterFor } from "../skill-scope.ts";
-import { config } from "../config.ts";
 import { db } from "../db.ts";
-import { workspaceOf } from "../files.ts";
 import { updateMessage } from "../messages.ts";
 import { defaultThinking, models } from "../models.ts";
-import { abortSession, type AgentSession, applyModelSettings, createPiSession, disposeSession, lastAssistantText, promptSession, sessionFileOf, branchMessagesOf, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
+import { abortSession, type AgentSession, applyModelSettings, disposeSession, lastAssistantText, promptSession, sessionFileOf, branchMessagesOf, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
 import { attachFastMode } from "../pi-adapter/fast-mode.ts";
-import { notify } from "../push.ts";
 import { getAgent, setAgentStatus } from "./rows.ts";
-import { SYSTEM_RULES } from "./system-rules.ts";
 import { bindSession } from "./bind-session.ts";
-import { extensionsFor, integrationsFor } from "./extensions.ts";
 import { runtime } from "./agent-runtime.ts";
 
 export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 	async run(r, connect, input) {
 		const a = getAgent(r.agent_id);
 		if (!a) throw new Error("所属助理已删除");
-		const workspace = workspaceOf(a.id);
 		const agentThinking = (m: { provider: string; id: string }) => resolveSubagentThinking(r.agent_id, m, a.thinking ?? defaultThinking(), getSubagent(r.id)?.thinking ?? r.thinking);
 		// 派活时定好的候选顺序（第一项就是实际用的）；模型可能后来被删，先过滤成当前配置着的
 		const stored = ((): { provider: string; id: string }[] => {
@@ -38,12 +30,12 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 		const tried = new Set<string>();
 		for (let i = 0; i < candidates.length && !session; i++) {
 			try {
-				session = await createPiSession({
-					models, cwd: workspace, agentDir: join(config.agentsDir, a.id), sessionDir: join(config.agentsDir, a.id, "subagents", r.id),
-					sessionFile: r.session_file ?? undefined,
+				session = await createAgentSession(a, {
+					sessionDir: join("subagents", r.id),
+					sessionFile: r.session_file,
 					model: { provider: candidates[i].provider, id: candidates[i].id }, thinking: agentThinking(candidates[i]),
-					systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), "你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报。你用 memory_remember 记下的是 task 草稿（默认不会写进共享的「关于用户」事实库），由主会话核验后才会晋升为长期事实。"],
-					extensions: await extensionsFor(a.id, r.conversation_id, r.id, { allowSpawn: false, subagentId: r.id, actor: "subagent" }), skillPaths: skillPaths(), skillFilter: skillFilterFor(a.id), ...integrationsFor(a.id, r.conversation_id),
+					rules: ["你是后台子代理，执行分配的任务。不能再派子代理；没有 spawn_subagent/spawn_task 工具。用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报。你用 memory_remember 记下的是 task 草稿（默认不会写进共享的「关于用户」事实库），由主会话核验后才会晋升为长期事实。"],
+					conversationId: r.conversation_id, taskId: r.id, ext: { allowSpawn: false, subagentId: r.id, actor: "subagent" },
 				});
 				current = candidates[i];
 			} catch (e) {

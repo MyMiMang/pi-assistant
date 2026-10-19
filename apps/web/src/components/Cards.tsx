@@ -4,6 +4,7 @@ import { api } from "../api";
 import { t } from "../i18n";
 import type { Message } from "../types";
 import Markdown from "./Markdown";
+import { taskStatus } from "./Tasks";
 import { cx } from "./ui";
 
 /** 结果卡片：审批 / 选项提问 / 后台任务（样式来自主题的 .pa-card 系列） */
@@ -97,7 +98,7 @@ export function TaskCard({ m }: { m: Message }) {
 	const [open, setOpen] = useState(false);
 	const icon =
 		meta.status === "done" ? <CheckCircle2 className="pa-ic ok" /> : meta.status === "failed" || meta.status === "lost" ? <XCircle className="pa-ic text-red-500" /> : meta.status === "cancelled" ? <XCircle className="pa-ic text-mut2" /> : meta.status === "queued" ? <Clock className="pa-ic text-mut2" /> : <Loader2 className="pa-ic animate-spin text-accent" />;
-	const label = { queued: "排队中", running: "进行中", done: "已完成", failed: "失败", cancelled: "已取消", lost: "中断待核验" }[meta.status as string] ?? meta.status;
+	const label = taskStatus(String(meta.status)).label;
 	return (
 		<div className="pa-card pa-question w-full max-w-[560px]">
 			<div className="pa-card-top !mb-0">

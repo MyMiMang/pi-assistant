@@ -69,7 +69,7 @@
 | `db.ts` | SQLite 基础表与轻量迁移 |
 | `cli.ts` | 服务器版命令行 |
 | `runtime.ts` | 运行时门面：对外导出（调用方只 import 它）、启动接线、启动恢复（bootstrap） |
-| `agent-runtime/` | 运行时实现：`rows` 助理/任务表读写，`system-rules` 系统提示，`room-hooks` 群聊挂钩，`bind-session` Pi 事件写成消息，`extensions` 每个会话挂的扩展/工具与 MCP，`skill-suggest` 技能建议，`agent-runtime` 每个对话的会话（发消息/插话/停止/整理），`background-tasks` 后台任务与降权即停，`subagent-driver` 子代理会话 |
+| `agent-runtime/` | 运行时实现：`rows` 助理/任务表读写，`system-rules` 系统提示，`room-hooks` 群聊挂钩，`bind-session` Pi 事件写成消息，`extensions` 每个会话挂的扩展/工具与 MCP，`skill-suggest` 技能建议，`agent-runtime` 每个对话的会话（发消息/插话/停止/整理），`background-tasks` 后台任务与降权即停，`subagent-driver` 子代理会话，`agent-session` 建助理会话（主会话 / 后台任务 / 子代理共用 `createAgentSession`） |
 | `messages.ts` | 消息落库与引用快照 |
 | `conversations.ts` | 一个助理多个对话 |
 | `fork.ts` | 从消息另开会话分支 |

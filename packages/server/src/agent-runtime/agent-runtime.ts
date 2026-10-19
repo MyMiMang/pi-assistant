@@ -1,37 +1,32 @@
 /** 每个对话一个运行时（独立的 Pi 会话）：发消息 / 插话 / 停止 / 群聊回合 / 整理上下文 / 隐藏触发。 */
-import { listSubagents, stopAgentSubagents, stopConversationSubagents, isLiveSubagent, modelKey, agentFast } from "../subagents.ts";
+import { createAgentSession } from "./agent-session.ts";
+import { listSubagents, stopAgentSubagents, stopConversationSubagents, isLiveSubagent, agentFast } from "../subagents.ts";
 import { cancelWaitsForConversation } from "../task-waits.ts";
 import { imageKey } from "../image-gen/index.ts";
-import { join } from "node:path";
-import { tierOf, hostAllowedFor, hostFileAccess, hostPaused, hostSettings, hostStatus } from "../host-control.ts";
+import { tierOf, hostAllowedFor, hostPaused, hostSettings, hostStatus } from "../host-control.ts";
 import { wechatAllowed } from "../wechat.ts";
 import { accountsFor } from "../email.ts";
 import { cancelAdvances, drainAdvances, hiddenConversation, listAdvances } from "../proactive.ts";
 import { NUDGE_TYPE } from "@pi-assistant/ext-skills";
 import { conversationForkParent, currentConversation, getConversation, setConversationSession } from "../conversations.ts";
-import { skillPaths, skillsVersion } from "../skills.ts";
+import { skillsVersion } from "../skills.ts";
 import { assignmentsVersion } from "../skill-assignments.ts";
-import { skillFilterFor } from "../skill-scope.ts";
 import { mcpVersion } from "../mcp.ts";
 import { packagesVersion } from "../pi-packages.ts";
-import { config } from "../config.ts";
 import { db } from "../db.ts";
 import { type AttachmentInput, prepareAttachments } from "../attachments.ts";
 import { supportsVision } from "../vision.ts";
-import { workspaceOf } from "../files.ts";
 import { isStopCommand } from "../interject.ts";
 import { insertMessage, updateMessage } from "../messages.ts";
 import { defaultModel, defaultThinking, models } from "../models.ts";
 import { composeQuotedInput } from "../replies.ts";
-import { abortSession, type AgentSession, type SkillInvocationInput, compactSession, triggerHidden, applyModelSettings, createPiSession, disposeSession, injectContext, isSessionBusy, lastAssistantText, modelErrorMessage, promptSession, skillCommand, sessionFileOf, sessionStats, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
+import { abortSession, type AgentSession, type SkillInvocationInput, compactSession, triggerHidden, applyModelSettings, disposeSession, injectContext, isSessionBusy, lastAssistantText, modelErrorMessage, promptSession, skillCommand, sessionFileOf, sessionStats, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
 import { attachFastMode } from "../pi-adapter/fast-mode.ts";
 import { requests } from "../requests.ts";
 import { computerFor, desktopStatus } from "../desktop.ts";
 import { type AgentRow, getAgent, setAgentStatus } from "./rows.ts";
-import { SYSTEM_RULES } from "./system-rules.ts";
 import { roomHooks } from "./room-hooks.ts";
 import { bindSession } from "./bind-session.ts";
-import { extensionsFor, integrationsFor } from "./extensions.ts";
 
 /** 会话缓存键里的“本机操作”部分：开关、清单、档位、暂停、守护进程状态变化都会重建会话（权限本身仍每次调用动态求值） */
 const hostKey = (agentId: string) =>
@@ -79,22 +74,17 @@ export class AgentRuntime {
 		this.creating = (async () => {
 			this.unsub?.();
 			if (this.session) disposeSession(this.session);
-			const workspace = workspaceOf(this.id);
-			const session = await createPiSession({
-				models,
-				cwd: workspace,
-				agentDir: join(config.agentsDir, this.id),
-				sessionDir: join(config.agentsDir, this.id, "sessions"),
-				sessionFile: getConversation(this.conversationId)?.session_file ?? undefined,
+			const session = await createAgentSession(a, {
+				sessionDir: "sessions",
+				sessionFile: getConversation(this.conversationId)?.session_file,
 				// 从消息另开、且分支点在首条消息之前：新会话只记父关系，等首条消息落盘（官方 newSession({ parentSession }) 语义）
 				parentSession: conversationForkParent(this.conversationId),
 				model,
 				thinking,
-				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), ...(room?.rules ?? [])],
-				extensions: await extensionsFor(this.id, this.conversationId, null, { allowSpawn: true, actor: room ? "group" : this.conversationId === hiddenConversation(this.id) ? "background" : "main" }),
-				skillPaths: skillPaths(),
-				skillFilter: skillFilterFor(this.id),
-				...integrationsFor(this.id, this.conversationId),
+				rules: room?.rules,
+				conversationId: this.conversationId,
+				taskId: null,
+				ext: { allowSpawn: true, actor: room ? "group" : this.conversationId === hiddenConversation(this.id) ? "background" : "main" },
 			});
 			// 请求级 Fast：每次请求重新读这个助理的开关（公开 hook，不重建会话；与 thinking / 模型无关）
 			const fast = attachFastMode(session, () => agentFast(this.id));

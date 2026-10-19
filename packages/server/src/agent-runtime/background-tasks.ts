@@ -1,25 +1,17 @@
 /** 后台任务（含定时 / 巡检）与「完全权限」降权时立即停下主机工作。 */
+import { createAgentSession } from "./agent-session.ts";
 import { listSubagents, stopAgentSubagents, isActiveSubagent, agentFast } from "../subagents.ts";
-import { join } from "node:path";
-import { spawn } from "node:child_process";
 import { hostFileAccess } from "../host-control.ts";
 import { currentConversation } from "../conversations.ts";
-import { skillPaths } from "../skills.ts";
-import { skillFilterFor } from "../skill-scope.ts";
 import { bus } from "../bus.ts";
-import { config } from "../config.ts";
 import { db, now, uid } from "../db.ts";
-import { workspaceOf } from "../files.ts";
 import { insertMessage } from "../messages.ts";
-import { models } from "../models.ts";
-import { abortSession, type AgentSession, createPiSession, disposeSession, isSessionBusy, lastAssistantText, lastAssistantError, modelErrorMessage, promptSession, sessionFileOf } from "../pi-adapter/index.ts";
+import { abortSession, type AgentSession, disposeSession, isSessionBusy, lastAssistantText, lastAssistantError, modelErrorMessage, promptSession, sessionFileOf } from "../pi-adapter/index.ts";
 import { attachFastMode } from "../pi-adapter/fast-mode.ts";
 import { notify } from "../push.ts";
 import { requests } from "../requests.ts";
 import { type TaskRow, getAgent, listAgents, getTask, setTask } from "./rows.ts";
-import { SYSTEM_RULES } from "./system-rules.ts";
 import { bindSession } from "./bind-session.ts";
-import { extensionsFor, integrationsFor } from "./extensions.ts";
 import { runtimes, runtime } from "./agent-runtime.ts";
 import { RESTART_RESUME_PROMPT, sessionResumeSafety, verifyResumePrompt } from "../subagent-resume.ts";
 
@@ -115,19 +107,14 @@ export const tasks = {
 		}
 		setTask(t.id, { status: "running", started_at: t.started_at ?? now(), resume: 0 });
 		try {
-			const workspace = workspaceOf(a.id);
-			const session = await createPiSession({
-				models,
-				cwd: workspace,
-				agentDir: join(config.agentsDir, a.id),
-				sessionDir: join(config.agentsDir, a.id, "tasks"),
-				sessionFile: t.session_file ?? undefined,
+			const session = await createAgentSession(a, {
+				sessionDir: "tasks",
+				sessionFile: t.session_file,
 				model,
-				systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), "你正在执行一个后台任务。完成后用几句话总结结果作为最终回复。"],
-				extensions: await extensionsFor(a.id, t.conversation_id, t.id, { allowSpawn: false, actor: "background" }),
-				skillPaths: skillPaths(),
-				skillFilter: skillFilterFor(a.id),
-				...integrationsFor(a.id, t.conversation_id),
+				rules: ["你正在执行一个后台任务。完成后用几句话总结结果作为最终回复。"],
+				conversationId: t.conversation_id,
+				taskId: t.id,
+				ext: { allowSpawn: false, actor: "background" },
 			});
 			// 后台任务用所属助理的 Fast 开关；每次请求重新读，运行中改开关对下一次请求生效
 			const fast = attachFastMode(session, () => agentFast(a.id));

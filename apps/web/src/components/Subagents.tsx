@@ -12,11 +12,10 @@ import type { FastControl } from "./ThinkingSlider";
 import { fitThinkingLevel } from "../thinking-slider";
 import { LatestWrite, SerialWriteQueue } from "../latest-write";
 import { thinkingLevelsFor } from "@pi-assistant/shared";
-import { TaskInstructions, TaskRow, taskLive, taskTitle } from "./Tasks";
+import { TaskInstructions, TaskRow, taskLive, taskStatus, taskTitle } from "./Tasks";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string; reasoning?: boolean };
 interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; thinking: string | null; resolvedThinking?: string; /** 请求级 Fast 覆盖：1 开 / 0 关 / null 跟随所属助理 */ fast?: number | null; resolvedFast?: boolean; last_activity_at: number; error_reason: string | null; result_summary: string | null; attempt?: number; retry_at?: number | null; canResume?: boolean; resumeReason?: string; needsVerify?: boolean; pendingToolNames?: string[] }
-const labels: Record<string, string> = { queued: "排队中", running: "运行中", stalled: "暂无进展", done: "已完成", failed: "失败", stopped: "已停止", timeout: "超时", lost: "重启中断" };
 /** 结果未知的工具名（needsVerify 时给用户看的危险名单；读不到会话时没有具体名字，给一句兜底）。 */
 const verifyNames = (r: Subagent) => r.pendingToolNames?.length ? r.pendingToolNames.join("、") : "有工具调用结果未落库";
 /** 有实时活动（显示“最后活动 N 秒前”） */
@@ -29,7 +28,7 @@ function State({ r }: { r: Subagent }) {
 	const seconds = Math.max(0, Math.round((ts - r.last_activity_at) / 1000));
 	// 有界退避重试的等待时间：显示「等待重试 N 秒」，不空转、不误导成已停止
 	const retryIn = r.retry_at ? Math.max(0, Math.ceil((r.retry_at - ts) / 1000)) : 0;
-	return <span className={r.status === "stalled" ? "text-amber-600" : ["failed", "timeout", "lost"].includes(r.status) ? "text-red-500" : "text-mut"} data-testid="subagent-state">{labels[r.status]}{active(r) ? (retryIn > 0 ? ` · 等待重试 ${retryIn} 秒后` : ` · 最后活动 ${seconds} 秒前`) : ""}</span>;
+	return <span className={r.status === "stalled" ? "text-amber-600" : ["failed", "timeout", "lost"].includes(r.status) ? "text-red-500" : "text-mut"} data-testid="subagent-state">{taskStatus(r.status).label}{active(r) ? (retryIn > 0 ? ` · 等待重试 ${retryIn} 秒后` : ` · 最后活动 ${seconds} 秒前`) : ""}</span>;
 }
 /** 聊天里不再渲染子代理指令卡：任务统一走 header 的「子代理」入口 → 任务概览 → 详情。
  *  子代理的完成/失败回报仍由主会话的普通消息（“子代理回报：…”）承担，语义不变。 */

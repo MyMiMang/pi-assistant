@@ -29,7 +29,7 @@ export const STEP_LABEL: Record<string, string> = {
 export const stepLabel = (name?: string) => (name ? STEP_LABEL[name] ?? name : "");
 
 export type TaskTone = "zinc" | "green" | "amber" | "red" | "accent";
-/** 子代理（queued/running/stalled/done/failed/stopped/timeout/lost）和后台任务（cancelled）共用一套状态词 */
+/** 子代理（queued/running/stalled/done/failed/stopped/timeout/lost）和后台任务（含 cancelled、lost）共用一套状态词：卡片、概览、信息面板都从这里取 */
 const STATUS: Record<string, { label: string; tone: TaskTone }> = {
 	queued: { label: "排队中", tone: "zinc" },
 	running: { label: "运行中", tone: "accent" },
@@ -38,7 +38,7 @@ const STATUS: Record<string, { label: string; tone: TaskTone }> = {
 	failed: { label: "失败", tone: "red" },
 	stopped: { label: "已停止", tone: "zinc" },
 	timeout: { label: "超时", tone: "red" },
-	lost: { label: "中断", tone: "red" },
+	lost: { label: "中断待核验", tone: "red" },
 	cancelled: { label: "已取消", tone: "zinc" },
 };
 export function taskStatus(status: string): { label: string; tone: TaskTone } {
