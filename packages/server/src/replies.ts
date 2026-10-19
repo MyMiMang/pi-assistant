@@ -54,7 +54,7 @@ export function resolveReplyTarget(o: { scope: ReplyScope; messageId: string }):
 	} else {
 		if (target.room_id) throw new ReplyError("reply_cross_scope", "群聊消息不能在单聊里引用", 403);
 		if (target.conversation_id !== o.scope.id) throw new ReplyError("reply_cross_scope", "只能引用同一个对话里的消息", 403);
-		if (target.task_id || target.subagent_id) throw new ReplyError("reply_cross_scope", "后台任务 / 子代理的消息不能引用", 403);
+		if (target.task_id || target.subagent_id) throw new ReplyError("reply_cross_scope", "后台任务 / 帮手的消息不能引用", 403);
 	}
 	if (target.role !== "user" && target.role !== "assistant") throw new ReplyError("reply_not_quotable", "这条消息不能引用", 403);
 	return target;

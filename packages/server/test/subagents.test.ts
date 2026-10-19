@@ -783,7 +783,7 @@ test("notify 监督语义：失败/超时继续原授权任务，完成先核验
 		assert.match(t, /无限重试/);
 		assert.doesNotMatch(t, /停止后只汇报状态，不继续原任务/);
 	}
-	assert.match(textFor("done"), /子代理自报完成不等于整体目标/);
+	assert.match(textFor("done"), /帮手自报完成不等于整体目标/);
 	assert.match(textFor("done"), /剩余步骤.*继续推进/);
 	assert.match(textFor("stalled"), /不是在慢慢跑的长命令[\s\S]*subagent_restart[\s\S]*不要问用户要不要继续等或停止/);
 	const stopped = textFor("stopped");

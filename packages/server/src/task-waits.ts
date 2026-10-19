@@ -361,10 +361,10 @@ export function cancelWaitsForConversation(conversationId: string, reason = "用
 type Outcome = ProviderState & { at: number };
 function subagentOutcome(id: string): Outcome | null {
 	const r = db.prepare("SELECT status, result_summary, error_reason FROM subagents WHERE id = ?").get(id) as { status: string; result_summary: string | null; error_reason: string | null } | undefined;
-	if (!r) return { state: "unknown", detail: `子代理 ${id} 不存在`, at: now() };
+	if (!r) return { state: "unknown", detail: `帮手 ${id} 不存在`, at: now() };
 	if (!SUBAGENT_TERMINAL.has(r.status)) return null;
-	if (r.status === "done") return { state: "completed", detail: (r.result_summary ?? "").slice(0, 1500) || "子代理完成", at: now() };
-	return { state: "unknown", conclusion: r.status, detail: r.error_reason ?? `子代理已结束（${r.status}）`, at: now() };
+	if (r.status === "done") return { state: "completed", detail: (r.result_summary ?? "").slice(0, 1500) || "帮手完成", at: now() };
+	return { state: "unknown", conclusion: r.status, detail: r.error_reason ?? `帮手已结束（${r.status}）`, at: now() };
 }
 function githubRef(w: TaskWait): GithubRunRef | null {
 	try { const r = JSON.parse(w.target_ref ?? "{}") as { repo?: string; runId?: number | null; branch?: string | null }; return r.repo ? { repo: r.repo, runId: r.runId ?? undefined, branch: r.branch ?? undefined } : null; } catch { return null; }
@@ -442,10 +442,10 @@ function markDeliveryFailed(id: string, agentId: string, attempts: number, err: 
 /** 终态唤醒已由子代理完成通知送达：这条等待不再唤醒模型（避免双回合），但把「当初登记的目的」留到下一轮注入。 */
 function resolveWaitCoveredByNotify(w: TaskWait, reason: string, claimKey: string | null = null) {
 	const t = now();
-	db.prepare("UPDATE task_waits SET status = 'fired', fired_reason = ?, delivery_status = 'delivered', delivered_at = ?, last_delivery_error = NULL, wake_key = COALESCE(?, wake_key), updated_at = ? WHERE id = ? AND status IN ('waiting','fired')").run(`已完成（已由子代理完成通知送达，未重复唤醒）：${reason}`, t, claimKey, t, w.id);
+	db.prepare("UPDATE task_waits SET status = 'fired', fired_reason = ?, delivery_status = 'delivered', delivered_at = ?, last_delivery_error = NULL, wake_key = COALESCE(?, wake_key), updated_at = ? WHERE id = ? AND status IN ('waiting','fired')").run(`已完成（已由帮手完成通知送达，未重复唤醒）：${reason}`, t, claimKey, t, w.id);
 	changed(w.agent_id);
 	if (!noteInjector) return;
-	const text = `（系统通知：等待目的转入下一轮）你登记的等待 ${w.id} 等的是子代理 ${w.target_ref}。它的完成通知已经由系统送达，这次不再重复唤醒你；你当初登记的目的是：${w.reason}。如果这件事还没做，请按这个目的继续。`;
+	const text = `（系统通知：等待目的转入下一轮）你登记的等待 ${w.id} 等的是帮手 ${w.target_ref}。它的完成通知已经由系统送达，这次不再重复唤醒你；你当初登记的目的是：${w.reason}。如果这件事还没做，请按这个目的继续。`;
 	try { void Promise.resolve(noteInjector(w.agent_id, w.conversation_id, text)).catch(() => {}); } catch { /* 注入失败不影响去重 */ }
 }
 

@@ -223,7 +223,7 @@ export function recallQuery(prompt: string, max = 200): string {
 		const msgs = body.split("\n").filter((l) => /^【[^】]+】/.test(l));
 		const pick = [...msgs].reverse().find((l) => l.startsWith("【用户】")) ?? msgs.at(-1) ?? "";
 		t = pick.replace(/^【[^】]+】/, "").trim();
-	} else if (t.startsWith("（后台子代理任务）")) t = t.slice("（后台子代理任务）".length).split("\n\n必要上下文")[0].trim();
+	} else if (/^（后台(?:子代理|帮手)任务）/.test(t)) t = t.replace(/^（后台(?:子代理|帮手)任务）/, "").split("\n\n必要上下文")[0].trim(); // 旧消息里是「子代理」
 	return t.length > max ? t.slice(-max) : t;
 }
 
@@ -355,7 +355,7 @@ export const memory = {
 		// 父视角只给草稿入口/计数，不把草稿全文塞进每轮 prompt；子代理视角可读自己的任务草稿
 		if (ctx.parent) {
 			const pending = drafts.length;
-			if (pending) add("待核验的任务草稿", [`- 有 ${pending} 条子代理/后台草稿待核验（用 memory_review 查看并晋升，不要直接当成事实）`]);
+			if (pending) add("待核验的任务草稿", [`- 有 ${pending} 条帮手/后台草稿待核验（用 memory_review 查看并晋升，不要直接当成事实）`]);
 		} else {
 			add("本任务草稿（未核验）", drafts.map(line));
 		}

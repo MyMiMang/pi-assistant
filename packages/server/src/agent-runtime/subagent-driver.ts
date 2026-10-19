@@ -28,7 +28,7 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 		// 帮手最多再派一层：第一层能派（巡检除外，保持安静便宜），第二层不能
 		const nest = !r.parent_subagent_id && r.kind !== "heartbeat";
 		const candidates = livePool([{ provider: r.model_provider, id: r.model_id }, ...stored.filter((m) => modelKey(m) !== `${r.model_provider}/${r.model_id}`)]);
-		if (!candidates.length) throw new Error("子代理模型已不可用，候选池里也没有其他可用模型");
+		if (!candidates.length) throw new Error("帮手模型已不可用，候选池里也没有其他可用模型");
 		let current = candidates[0];
 		let session: AgentSession | null = null;
 		// 每候选最多试一次：初始化阶段失败的候选也要记进 tried，避免请求阶段 fallback 又绕回它。
@@ -39,7 +39,7 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 					sessionDir: join("subagents", r.id),
 					sessionFile: r.session_file,
 					model: { provider: candidates[i].provider, id: candidates[i].id }, thinking: agentThinking(candidates[i]),
-					rules: [`你是后台子代理，执行分配的任务。${nest ? "可以再派最多一层帮手（spawn_subagent），只用于可并行或耗时的大块；你派的帮手不能再派。派了就由系统等它们结束、把结果交给你整合。" : "不能再派子代理；没有 spawn_subagent/spawn_task 工具。"}用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报：最后用几句话给出结果摘要（做了什么、产出在哪、还有什么没做），不要复述过程。你用 memory_remember 记下的是 task 草稿（默认不会写进共享的「关于用户」事实库），由主会话核验后才会晋升为长期事实；属于群任务的，任务通过核验后自动转正。`, ...(r.scope ? [r.scope] : [])],
+					rules: [`你是后台帮手，执行分配的任务。${nest ? "可以再派最多一层帮手（spawn_subagent），只用于可并行或耗时的大块；你派的帮手不能再派。派了就由系统等它们结束、把结果交给你整合。" : "不能再派帮手；没有 spawn_subagent/spawn_task 工具。"}用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报：最后用几句话给出结果摘要（做了什么、产出在哪、还有什么没做），不要复述过程。你用 memory_remember 记下的是 task 草稿（默认不会写进共享的「关于用户」事实库），由主会话核验后才会晋升为长期事实；属于群任务的，任务通过核验后自动转正。`, ...(r.scope ? [r.scope] : [])],
 					conversationId: r.conversation_id, taskId: r.id, ext: { allowSpawn: nest, subagentId: r.id, actor: "subagent" },
 				});
 				current = candidates[i];
@@ -87,7 +87,7 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 			if (!isActiveSubagent(getSubagent(r.id)!.status)) return "";
 			if (input?.messageId) updateMessage(input.messageId, { meta: { delivery: "delivered" } });
 			// 后台任务 / 定时 / 巡检的帮手：任务说明本身就是完整指令（触发方已经写好），不再套派活前缀
-			const firstPrompt = input?.text ?? (r.kind ? r.task : `（后台子代理任务）${r.task}\n\n必要上下文：\n${r.context}`);
+			const firstPrompt = input?.text ?? (r.kind ? r.task : `（后台帮手任务）${r.task}\n\n必要上下文：\n${r.context}`);
 			await promptSession(session, firstPrompt);
 			// 连接类 / 服务临时不可用：同一会话有界退避重试。退避期间只等时钟、不发模型请求（不忙轮询），可被停止打断。
 			for (let attempt = 1; shouldAutoRetry(error, attempt) && isActiveSubagent(getSubagent(r.id)!.status); attempt++) {
@@ -144,7 +144,7 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 		const parent = runtime(r.agent_id, r.conversation_id);
 		const session = await parent.ensure();
 		if (!session) throw new Error("主会话没有可用模型");
-		const marker = `（子代理事件 ${event.id}）`;
+		const marker = `（帮手事件 ${event.id}）`;
 		const files = db.prepare("SELECT meta FROM messages WHERE (subagent_id = ? OR task_id = ?) AND json_array_length(meta, '$.attachments') > 0").all(r.id, r.id) as { meta: string }[];
 		const artifacts = files.flatMap((m) => (JSON.parse(m.meta).attachments ?? [])).map((f: { name: string; workspacePath?: string }) => `${f.name}：${f.workspacePath ?? "工作区内"}`).join("\n");
 		// 只发短标题 + 结果摘要：完整任务说明与最新结果可用 subagent_list 按 id 查（摘要截断时会明确给出查询入口），不重复整段 task（省 token）。

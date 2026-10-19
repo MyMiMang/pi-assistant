@@ -124,16 +124,16 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 
 	// 子代理测试：事件由主会话汇报，执行步骤只留在子会话。
 	// 卡住处理 e2e：主会话按建议自己处理——带纠正 subagent_restart，不去问用户
-	if (u.includes("（子代理事件 ") && /卡住了/.test(u) && /subagent_restart/.test(u) && last.role !== "toolResult") {
-		const id = u.match(/子代理 ID：([\w-]+)/)?.[1];
+	if (u.includes("（帮手事件 ") && /卡住了/.test(u) && /subagent_restart/.test(u) && last.role !== "toolResult") {
+		const id = u.match(/帮手 ID：([\w-]+)/)?.[1];
 		if (id) return fauxAssistantMessage([fauxText("帮手卡住了，我看一下再带着纠正让它从检查点继续。"), fauxToolCall("subagent_restart", { id, note: "上一步的请求一直没返回，别再等它；直接检查已有结果，按更小的步骤继续" })]);
 	}
-	if (u.includes("（子代理事件 ")) return fauxAssistantMessage(`子代理回报：${u.replace(/^.*?）/, "").slice(0, 300)}`);
+	if (u.includes("（帮手事件 ")) return fauxAssistantMessage(`子代理回报：${u.replace(/^.*?）/, "").slice(0, 300)}`);
 	// 群里的帮手 e2e：第一层帮手把一块交给下一层（第二层没有 spawn_subagent），收到下一层结果后整合
 	if (u.startsWith("（系统通知：你派的下一层帮手都结束了）")) return fauxAssistantMessage(`整合了下一层帮手的结果：${u.split("\n")[1]?.slice(0, 120) ?? ""}`);
-	if (u.startsWith("（后台子代理任务）") && /分两块/.test(u) && last.role !== "toolResult" && tools.some((t) => t.name === "spawn_subagent")) return fauxAssistantMessage([fauxToolCall("spawn_subagent", { task: "第二块：核对台词格式", done_criteria: "三场台词格式统一" })]);
-	if (u.startsWith("（后台子代理任务）第二块") && last.role !== "toolResult") return fauxAssistantMessage([fauxToolCall("bash", { command: "echo 第二块完成：台词格式统一" })]);
-	if (u.startsWith("（后台子代理任务）")) {
+	if (u.startsWith("（后台帮手任务）") && /分两块/.test(u) && last.role !== "toolResult" && tools.some((t) => t.name === "spawn_subagent")) return fauxAssistantMessage([fauxToolCall("spawn_subagent", { task: "第二块：核对台词格式", done_criteria: "三场台词格式统一" })]);
+	if (u.startsWith("（后台帮手任务）第二块") && last.role !== "toolResult") return fauxAssistantMessage([fauxToolCall("bash", { command: "echo 第二块完成：台词格式统一" })]);
+	if (u.startsWith("（后台帮手任务）")) {
 		// 模拟“可恢复的模型故障”：首次派活时报 429，让子代理在候选池内自动 fallback（续跑时会成功）
 		if (/限流测试/.test(u)) throw new Error("429 rate limit exceeded（模拟子代理模型限流）");
 		if (/报错/.test(u)) throw new Error("模拟子代理模型报错");
@@ -148,7 +148,7 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 		if (/长命令测试/.test(u)) return fauxAssistantMessage([fauxToolCall("bash", { command: "for i in 1 2 3 4 5 6 7 8 9 10; do echo 进度 $i; sleep 1; done" })]);
 		return fauxAssistantMessage([fauxThinking("先确认子代理任务，再运行命令整理结果。"), fauxToolCall("bash", { command: "sleep 8; echo 子代理工作完成" })]);
 	}
-	if (messages.some((m) => m.role === "user" && textOf(m).startsWith("（后台子代理任务）"))) {
+	if (messages.some((m) => m.role === "user" && textOf(m).startsWith("（后台帮手任务）"))) {
 		const secret = messages.filter((m) => m.role === "user").map(textOf).join("\n").match(/子代理暗号：([^\n]+)/)?.[1];
 		return fauxAssistantMessage([fauxThinking("结合这个子代理会话的上下文处理新消息。"), fauxText(/刚才暗号/.test(u) ? `刚才的暗号是：${secret ?? "不知道"}` : `子代理已按补充要求调整。收到：${u}`)]);
 	}
@@ -399,7 +399,7 @@ export async function registerMockProvider(models: PiModels) {
 		if (lastUser) mockStats.lastUserText = textOf(lastUser);
 		// 卡住上报 e2e：子代理的模型请求一直不回（没有任何动静），直到被停止
 		const lastMsg = msgs[msgs.length - 1];
-		if (lastMsg?.role === "user" && /^（后台子代理任务）[\s\S]*卡住测试/.test(textOf(lastMsg)))
+		if (lastMsg?.role === "user" && /^（后台帮手任务）[\s\S]*卡住测试/.test(textOf(lastMsg)))
 			return new Promise((resolve) => { const done = () => resolve(fauxAssistantMessage("（停下了）")); if (opts?.signal?.aborted) return done(); opts?.signal?.addEventListener("abort", done, { once: true }); setTimeout(done, 600_000).unref?.(); });
 		const hs = hindsightReply(msgs, systemPrompt, tools);
 		if (hs !== null) return typeof hs === "string" ? fauxAssistantMessage(hs) : fauxAssistantMessage([fauxToolCall(hs.tool, hs.args as never)]);

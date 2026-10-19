@@ -36,15 +36,15 @@ export function deliveryExtension(host: DeliveryHost) {
 		if (host.subagents) {
 			const h = host.subagents;
 			pi.registerTool({
-				name: "spawn_subagent", label: "派子代理", description: "把多步骤、耗时或可并行的任务交给独立子代理，立即返回；一两步的小事自己直接做。系统会送来结果供你核验汇报。在群里派时会自动带上你的角色范围（只做你这个角色的事，超出范围交回给你）。", annotations: { readOnlyHint: true },
-				parameters: Type.Object({ task: Type.String(), context: Type.Optional(Type.String()), done_criteria: Type.Optional(Type.String({ description: "这个子任务做到什么程度算完成（可检查的标准）" })), needs: Type.Optional(Type.Array(Type.String())), model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String() })), thinking: Type.Optional(Type.String({ description: "思考强度：off/minimal/low/medium/high/xhigh/max；不传则用这个助理的子代理默认设置。" })) }),
-				async execute(_id, p) { const r = await h.spawn(p); return text(r.status === "queued" ? `子代理已排队：${r.id}（前面还有 ${r.queuedAhead ?? 0} 个），有空位会自动开始。现在继续回复用户，不要等待。` : `子代理已开始：${r.id}。现在继续回复用户，不要等待。`); },
+				name: "spawn_subagent", label: "派帮手", description: "把多步骤、耗时或可并行的任务交给独立帮手，立即返回；一两步的小事自己直接做。系统会送来结果供你核验汇报。在群里派时会自动带上你的角色范围（只做你这个角色的事，超出范围交回给你）。", annotations: { readOnlyHint: true },
+				parameters: Type.Object({ task: Type.String(), context: Type.Optional(Type.String()), done_criteria: Type.Optional(Type.String({ description: "这个子任务做到什么程度算完成（可检查的标准）" })), needs: Type.Optional(Type.Array(Type.String())), model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String() })), thinking: Type.Optional(Type.String({ description: "思考强度：off/minimal/low/medium/high/xhigh/max；不传则用这个助理的帮手默认设置。" })) }),
+				async execute(_id, p) { const r = await h.spawn(p); return text(r.status === "queued" ? `帮手已排队：${r.id}（前面还有 ${r.queuedAhead ?? 0} 个），有空位会自动开始。现在继续回复用户，不要等待。` : `帮手已开始：${r.id}。现在继续回复用户，不要等待。`); },
 			});
-			pi.registerTool({ name: "subagent_list", label: "查看子代理", description: "查看当前会话的子代理和状态；给 subagent_id 时返回这一个子代理的完整记录（含未截断的结果）。失败/超时的任务会带 canResume、resumeReason、attempt：要接着做**优先用 subagent_resume 原任务续跑**（复用原会话与已完成步骤），不要用 spawn_subagent 重派。", annotations: { readOnlyHint: true }, parameters: Type.Object({ subagent_id: Type.Optional(Type.String({ description: "按 ID 查看这一个子代理的完整任务说明与结果" })) }), async execute(_id, p) { if (p.subagent_id) { const one = h.get?.(p.subagent_id); return text(one ? JSON.stringify(one) : "没有找到这个子代理。"); } return text(JSON.stringify(h.list())); } });
-			pi.registerTool({ name: "subagent_resume", label: "继续子代理", description: "用原 subagent_id 从中断处继续：复用原 Pi 会话、原任务与已完成的步骤，不新开子代理、不重复副作用。子代理失败/超时后先用 subagent_list 核验进度与副作用，原授权内安全可继续时优先用它，不必等用户再催；明确停止的工作只有获得继续授权后才能恢复。不要用 spawn_subagent 重派或无限续跑。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String({ description: "要继续的子代理 ID" }) }), async execute(_id, p) { if (!h.resume) return text("当前环境不支持继续子代理。"); const r = await h.resume(p.id); return text(`已用原任务继续：${r.id}。现在继续回复用户，不要等待。`); } });
-			pi.registerTool({ name: "subagent_message", label: "补充子代理要求", description: "把用户的补充或改方向要求送给子代理，在下一个工具边界生效。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String(), text: Type.String() }), async execute(_id, p) { await h.message(p.id, p.text); return text("已转交子代理。"); } });
-			pi.registerTool({ name: "subagent_restart", label: "重启卡住的子代理", description: "子代理真卡住时（系统已诊断：不是慢慢跑的长命令）用：中断它这一轮，把你针对卡点的纠正（换什么做法、避开哪一步）带给它，从最近检查点续跑；结果未知的操作它会先核验，不会盲目重跑。先用 subagent_list 看记录和最后的错误再写纠正。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String(), note: Type.String({ description: "给子代理的具体纠正" }) }), async execute(_id, p) { if (!h.restart) return text("当前环境不支持重启子代理。"); return text(await h.restart(p.id, p.note) ? "已中断并带着纠正从检查点续跑。现在继续回复用户，不要等待。" : "它已经不在运行（可能刚恢复或已结束），用 subagent_list 看最新状态。"); } });
-			pi.registerTool({ name: "subagent_stop", label: "停止子代理", description: "停止指定子代理。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String() }), async execute(_id, p) { return text(await h.stop(p.id) ? "已停止。" : "已结束。"); } });
+			pi.registerTool({ name: "subagent_list", label: "查看帮手", description: "查看当前会话的帮手和状态；给 subagent_id 时返回这一个帮手的完整记录（含未截断的结果）。失败/超时的任务会带 canResume、resumeReason、attempt：要接着做**优先用 subagent_resume 原任务续跑**（复用原会话与已完成步骤），不要用 spawn_subagent 重派。", annotations: { readOnlyHint: true }, parameters: Type.Object({ subagent_id: Type.Optional(Type.String({ description: "按 ID 查看这一个帮手的完整任务说明与结果" })) }), async execute(_id, p) { if (p.subagent_id) { const one = h.get?.(p.subagent_id); return text(one ? JSON.stringify(one) : "没有找到这个帮手。"); } return text(JSON.stringify(h.list())); } });
+			pi.registerTool({ name: "subagent_resume", label: "继续帮手", description: "用原 subagent_id 从中断处继续：复用原 Pi 会话、原任务与已完成的步骤，不新开帮手、不重复副作用。帮手失败/超时后先用 subagent_list 核验进度与副作用，原授权内安全可继续时优先用它，不必等用户再催；明确停止的工作只有获得继续授权后才能恢复。不要用 spawn_subagent 重派或无限续跑。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String({ description: "要继续的帮手 ID" }) }), async execute(_id, p) { if (!h.resume) return text("当前环境不支持继续帮手。"); const r = await h.resume(p.id); return text(`已用原任务继续：${r.id}。现在继续回复用户，不要等待。`); } });
+			pi.registerTool({ name: "subagent_message", label: "补充帮手要求", description: "把用户的补充或改方向要求送给帮手，在下一个工具边界生效。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String(), text: Type.String() }), async execute(_id, p) { await h.message(p.id, p.text); return text("已转交帮手。"); } });
+			pi.registerTool({ name: "subagent_restart", label: "重启卡住的帮手", description: "帮手真卡住时（系统已诊断：不是慢慢跑的长命令）用：中断它这一轮，把你针对卡点的纠正（换什么做法、避开哪一步）带给它，从最近检查点续跑；结果未知的操作它会先核验，不会盲目重跑。先用 subagent_list 看记录和最后的错误再写纠正。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String(), note: Type.String({ description: "给帮手的具体纠正" }) }), async execute(_id, p) { if (!h.restart) return text("当前环境不支持重启帮手。"); return text(await h.restart(p.id, p.note) ? "已中断并带着纠正从检查点续跑。现在继续回复用户，不要等待。" : "它已经不在运行（可能刚恢复或已结束），用 subagent_list 看最新状态。"); } });
+			pi.registerTool({ name: "subagent_stop", label: "停止帮手", description: "停止指定帮手。", annotations: { readOnlyHint: true }, parameters: Type.Object({ id: Type.String() }), async execute(_id, p) { return text(await h.stop(p.id) ? "已停止。" : "已结束。"); } });
 		}
 		pi.registerTool({
 			name: "deliver_file",
@@ -84,12 +84,12 @@ export function deliveryExtension(host: DeliveryHost) {
 				name: "task_wait",
 				label: "登记任务等待",
 				description:
-					"登记一次持久等待，然后结束这一轮、别再用 sleep / 反复轮询去盯任务：内部后台任务完成/失败、子代理结束、GitHub Actions run 结束、或到点时间，系统都会自动唤醒你（只在你登记的那件事有结果时调用一次模型）。等待期间不会消耗 token。登记后请在回复里告诉用户你在等什么、大概什么时候有结果，然后停止输出，不要再调用任何工具。",
-				promptSnippet: "task_wait: 登记等待（任务/子代理/GitHub run/到点），之后系统会唤醒你，不要 sleep 轮询",
+					"登记一次持久等待，然后结束这一轮、别再用 sleep / 反复轮询去盯任务：内部后台任务完成/失败、帮手结束、GitHub Actions run 结束、或到点时间，系统都会自动唤醒你（只在你登记的那件事有结果时调用一次模型）。等待期间不会消耗 token。登记后请在回复里告诉用户你在等什么、大概什么时候有结果，然后停止输出，不要再调用任何工具。",
+				promptSnippet: "task_wait: 登记等待（任务/帮手/GitHub run/到点），之后系统会唤醒你，不要 sleep 轮询",
 				parameters: Type.Object({
 					reason: Type.String({ description: "在等什么、唤醒后要做什么（到点时你看不到当前对话，写清楚上下文）" }),
 					task_id: Type.Optional(Type.String({ description: "等待这个后台任务（spawn_task 返回的 id）完成" })),
-					subagent_id: Type.Optional(Type.String({ description: "等待这个子代理完成" })),
+					subagent_id: Type.Optional(Type.String({ description: "等待这个帮手完成" })),
 					repo: Type.Optional(Type.String({ description: "等 GitHub Actions：仓库 owner/repo" })),
 					run_id: Type.Optional(Type.Number({ description: "等 GitHub Actions：run id（不填就等该分支最新一次 run）" })),
 					branch: Type.Optional(Type.String({ description: "等 GitHub Actions：分支（不填 run_id 时用）" })),

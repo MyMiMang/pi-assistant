@@ -110,7 +110,7 @@ export function mountSubagentRoutes(app: Hono<any>) {
 	app.post("/api/subagents/:id/retry", (c) => {
 		const r = getSubagent(c.req.param("id"));
 		if (!r) return c.json({ error: "not_found" }, 404);
-		if (isLiveSubagent(r.status)) return c.json({ error: r.status === "queued" ? "子代理正在排队，请先等它开始或停止" : "子代理仍在运行" }, 400);
+		if (isLiveSubagent(r.status)) return c.json({ error: r.status === "queued" ? "帮手正在排队，请先等它开始或停止" : "帮手仍在运行" }, 400);
 		const a = getAgent(r.agent_id), conv = getConversation(r.conversation_id);
 		if (!a || !conv) return c.json({ error: "会话已删除" }, 404);
 		const fallback = runtime(a.id, conv.id).modelFor(a);

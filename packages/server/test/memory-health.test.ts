@@ -152,6 +152,7 @@ test("召回查询：群聊取最后一条用户消息（不带群聊头和群�
 	assert.equal(recallQuery(room), "周六去杭州要带什么");
 	assert.equal(recallQuery("（群聊「x」）\n【小美】只有助理说话\n——\n说明"), "只有助理说话");
 	assert.equal(recallQuery("（后台子代理任务）整理下周的会议\n\n必要上下文：……很长"), "整理下周的会议");
+	assert.equal(recallQuery("（后台帮手任务）整理下周的会议\n\n必要上下文：……很长"), "整理下周的会议", "新标记「帮手」同样去前缀");
 	assert.equal(recallQuery("普通提问"), "普通提问");
 	assert.equal(recallQuery("长".repeat(300)).length, 200);
 });

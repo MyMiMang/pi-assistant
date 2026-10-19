@@ -67,7 +67,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 		!!(await requests.approval(agentId, taskId, toolName, input, summary, risk, conversationId)).approved;
 	// 本会话自己派的帮手；帮手会话里只认它自己派的下一层
 	const own = (r: Subagent) => r.agent_id === agentId && r.conversation_id === conversationId && (!opts.subagentId || r.parent_subagent_id === opts.subagentId);
-	const mustOwn = (id: string) => { const r = getSubagent(id); if (!r || !own(r)) throw new Error("不是本会话派的子代理"); };
+	const mustOwn = (id: string) => { const r = getSubagent(id); if (!r || !own(r)) throw new Error("不是本会话派的帮手"); };
 	const exts = [
 		{ name: "pia-sandbox", factory: sandboxExtension({ workspace, mode, readOnlyRoots: skillPaths(), makeBashTool: makeBashTool, dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined, localOperations: mode === "docker" ? localBashOperations() : undefined, hostAccess: () => hostFileAccess(agentId) }) },
 		{

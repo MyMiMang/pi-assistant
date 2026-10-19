@@ -86,7 +86,7 @@ export function memoryExtension(host: MemoryHost) {
 			name: "memory_remember",
 			label: "记住",
 			description:
-				"把值得长期记住的信息写进记忆库：用户的名字、偏好、习惯、重要决定、长期目标（kind=fact）；发生过的事、做过的决定（kind=log，按日期记录）；只在短期内有用的提醒（kind=note，默认 7 天后过期）。scope：user=关于用户本人、所有助理共享（fact 默认）；agent=只和你有关；conversation=只在当前对话有效。子代理/后台写入的是 task 草稿，需主会话核验后才会成为长期事实。不要记录密码、密钥等敏感信息。",
+				"把值得长期记住的信息写进记忆库：用户的名字、偏好、习惯、重要决定、长期目标（kind=fact）；发生过的事、做过的决定（kind=log，按日期记录）；只在短期内有用的提醒（kind=note，默认 7 天后过期）。scope：user=关于用户本人、所有助理共享（fact 默认）；agent=只和你有关；conversation=只在当前对话有效。帮手/后台写入的是 task 草稿，需主会话核验后才会成为长期事实。不要记录密码、密钥等敏感信息。",
 			promptSnippet: "memory_remember: 记住用户的偏好/事实/决定",
 			parameters: Type.Object({
 				content: Type.String({ description: "一句完整、独立可读的陈述，例如“用户叫邓邓，在上海，喜欢简洁的回答”" }),
@@ -157,8 +157,8 @@ export function memoryExtension(host: MemoryHost) {
 				name: "memory_review",
 				label: "核验草稿",
 				description:
-					"核验子代理/后台写下的 task 草稿：action=list 列出待核验草稿；action=promote（带 id、scope=user|agent）把草稿晋升为长期事实（去重、幂等）；action=reject（带 id）驳回。只有主会话/用户能晋升。",
-				promptSnippet: "memory_review: 核验并晋升子代理草稿",
+					"核验帮手/后台写下的 task 草稿：action=list 列出待核验草稿；action=promote（带 id、scope=user|agent）把草稿晋升为长期事实（去重、幂等）；action=reject（带 id）驳回。只有主会话/用户能晋升。",
+				promptSnippet: "memory_review: 核验并晋升帮手草稿",
 				parameters: Type.Object({
 					action: Type.Union([Type.Literal("list"), Type.Literal("promote"), Type.Literal("reject")]),
 					id: Type.Optional(Type.String({ description: "草稿 id（promote/reject 时必填）" })),

@@ -161,8 +161,10 @@ try {
 	console.log("✅ 主会话空闲时说停也停止子代理");
 	const bad = await launch("派个子代理测试报错");
 	await finished(bad.id, "failed");
-	// 通知文案这轮改成中文（子代理「…」失败：<原因>），断言跟着改；顺带确认原因真的带上了
-	const failText = await page.getByText(/子代理回报：.*失败/).last().textContent();
+	// 通知文案：帮手「…」失败：<原因>；回复是流式输出，等原因整句出来再读，别读到一半
+	const failLine = page.getByText(/子代理回报：.*失败/).last();
+	await waitFor(async () => /模拟子代理模型报错/.test((await failLine.textContent()) ?? ""));
+	const failText = await failLine.textContent();
 	assert.match(failText ?? "", /子代理回报：.*失败/);
 	assert.match(failText ?? "", /模拟子代理模型报错/, "回报里要带失败原因");
 	console.log("✅ 模型报错落终态，主会话收到原因");

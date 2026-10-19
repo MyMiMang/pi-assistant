@@ -92,7 +92,7 @@ export class AgentRuntime {
 			if (file && file !== getConversation(this.conversationId)?.session_file) setConversationSession(this.conversationId, file);
 			const unUser = subscribeSession(session, (e) => {
 				if (e.type === "user_start") this.allowEmptyNudge = false;
-				if (e.type !== "user_start" || !e.text.startsWith(INTERJECTION_PREFIX) || e.text.includes("（子代理事件 ")) return;
+				if (e.type !== "user_start" || !e.text.startsWith(INTERJECTION_PREFIX) || /（(?:子代理|帮手)事件 /.test(e.text)) return;
 				const mid = this.steering.shift();
 				if (mid) updateMessage(mid, { meta: { delivery: "delivered", deliveredAt: Date.now() } });
 			});
