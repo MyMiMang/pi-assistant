@@ -8,7 +8,8 @@
 
 ## 正在做
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
-- 未做：拆 runtime / work-items / rooms 大文件与群任务钩子化（随[群聊协作设计](design/group-collaboration.md)）。本地语音已改为可选模块（[设计](design/local-voice-optional.md)，未打包）。
+- 群聊协作已实现（未打包，[设计](design/group-collaboration.md)）：任务在负责人自己的会话里执行，管理者按事件唤醒，三种卡住检测，等你决定，停群不停任务；work-items / rooms 已拆到 600 行以下。单聊入口还没接（核心与来源无关，单聊只需在入口调 setWorkSourceProvider + workItemTools）。
+- 本地语音已改为可选模块（[设计](design/local-voice-optional.md)，未打包）。
 
 ## 交付标准
 见 [AGENTS.md](../AGENTS.md)「交付清单」。偶发 `deserialize cloned data` 是测试运行器 IPC 抖动，单独重跑该文件确认。

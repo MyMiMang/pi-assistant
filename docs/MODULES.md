@@ -103,10 +103,11 @@
 | `subagent-resume.ts` | 子代理失败分类与续跑 |
 | `subagent-supervision.ts` | 子代理事件监督规则 |
 | `task-waits.ts` | 任务等待调度 |
-| `work-items.ts` | 长期任务（责任/执行/事件） |
+| `work-items.ts` | 长期任务入口（只做 re-export） |
+| `work-items/` | 长期任务：store（表/摘要/看板分组/boardDigest）、guard（看板分组、重复指纹等纯逻辑）、ports（RoomPort：群聊和任务之间唯一接口）、exec（在负责人自己的会话里执行、提交、重复卡点检测）、watch（停滞检测、上报管理者/用户、等你决定）、actions（新建/核验/改派/暂停/全部暂停等动作）、correction（群里纠正任务的上下文）、tools（管理者/成员/执行会话的 work_* 工具） |
 | `proactive.ts` | 主动性引擎 |
 | `routines.ts` | 定时与 Webhook 触发 |
-| `rooms/` | 群聊：logic（@ 解析、发言规则，纯逻辑）、index（建群/调度/停止/恢复/工具）、copy、model-pick、permissions |
+| `rooms/` | 群聊：logic（@ 解析、发言规则、只聊不干活检测，纯逻辑）、store（群/成员读写、自主模式字段）、scheduler（排队/调度/停止/恢复）、collab（自主推进、唤醒管理者、定时巡检、成员互相 @）、crud（建群/改群/删群）、proposals（建群/加成员提议）、tools（room_* 工具）、index（入口、群规则、钩子）、copy、model-pick、permissions |
 | `channels/` | 渠道：index（入站、镜像、卡片转发）、media、caps、types、飞书/钉钉/企微/ClawBot 各自实现 |
 | `mirror.ts` | 助理主动消息选哪些渠道镜像 |
 | `wechat.ts` | 个人微信（实验） |
@@ -197,8 +198,9 @@
 | `Chat.tsx` | 单聊页与输入框工具栏 |
 | `ChatMessages.tsx` | 共用消息展示 |
 | `RoomChat.tsx` | 群聊页 |
-| `RoomCards.tsx` | 群提议卡片 |
-| `WorkItems.tsx` | 群任务看板 |
+| `RoomCards.tsx` | 群提议卡片、群目标确认卡（room-goal） |
+| `WorkItems.tsx` | 群任务看板（等你决定/卡住/进行中/已完成·已停止、自主推进、全部暂停） |
+| `WorkItemDetail.tsx` | 任务详情、新建任务、等你决定回答框 |
 | `Sidebar.tsx` | 侧边栏 |
 | `Conversations.tsx` | 对话菜单 |
 | `CompactDialog.tsx` | 整理上下文弹窗 |

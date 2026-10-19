@@ -11,9 +11,9 @@
 - [已完成(未打包)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
-- [设计中] 群聊协作：管理者 + 自主模式 + 任务看板 + 三种卡住检测（[设计](design/group-collaboration.md)、[0006](decisions/0006-group-collaboration.md)）
-- [计划] 拆大文件：runtime.ts、work-items.ts、rooms/index.ts（随群聊协作一起做）
-- [计划] 群任务不受人数上限影响、群停止不暂停任务（随群聊协作）
+- [已完成(未打包)] 群聊协作：管理者 + 自主模式 + 任务看板 + 三种卡住检测；单聊入口未接（[设计](design/group-collaboration.md)、[0006](decisions/0006-group-collaboration.md)）
+- [已完成(未打包)] 拆大文件：work-items.ts、rooms/index.ts（runtime.ts 已另行拆分）
+- [已完成(未打包)] 群任务不受人数上限影响、群停止不暂停任务
 - [已完成(未打包)] 本地语音识别改为可选模块：默认不装、启动不自动下载，设置 › 语音 里安装（[设计](design/local-voice-optional.md)、[0013](decisions/0013-local-voice-optional.md)）
 - [已完成(未打包)] Pi / Hindsight 不自动升级：删除自动升级工作流与 Renovate 规则，开发时手动跑升级脚本（[0012](decisions/0012-no-auto-upstream-updates.md)）
 - [待用户决定] Hindsight 0.10.3 → 1.0.0（PyPI 已有，需开发时手动升级并测试）
