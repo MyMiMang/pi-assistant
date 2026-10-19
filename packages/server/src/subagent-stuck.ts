@@ -86,6 +86,7 @@ export function clearStallQuestion(r: Subagent) {
 }
 
 function askUser(r: Subagent, kind: EscalationKind, note: string, options: string[], h: StuckHooks) {
+	if (r.kind === "heartbeat") return void h.stop(r.id).catch(() => {}); // 巡检不打扰用户：卡住就停下，下次巡检再看
 	const question = `帮手「${titleOf(r)}」${note}。下一步怎么办？`;
 	const pending = requests.question(r.agent_id, r.id, question, options, true, r.conversation_id);
 	// create() 同步落库：按插入顺序取刚建的这张

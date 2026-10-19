@@ -15,15 +15,15 @@ import { requests } from "./requests.ts";
 import { listAgents, type TaskRow } from "./agent-runtime/rows.ts";
 import { roomHooks } from "./agent-runtime/room-hooks.ts";
 import { runtime } from "./agent-runtime/agent-runtime.ts";
-import { tasks } from "./agent-runtime/background-tasks.ts";
+import { migrateLegacyTasks, tasks } from "./agent-runtime/background-tasks.ts";
 import { subagentDriver } from "./agent-runtime/subagent-driver.ts";
 
-export { getAgent, listAgents, getTask, type AgentRow, type TaskRow } from "./agent-runtime/rows.ts";
+export { getAgent, listAgents, type AgentRow, type TaskRow } from "./agent-runtime/rows.ts";
 export { setRoomHooks, type RoomHooks } from "./agent-runtime/room-hooks.ts";
 export { bindSession } from "./agent-runtime/bind-session.ts";
 export { describeRoutine } from "./agent-runtime/extensions.ts";
 export { disposeRuntime, disposeConversationRuntime, runtime } from "./agent-runtime/agent-runtime.ts";
-export { initHostAccessWatch, agentBusy, tasks } from "./agent-runtime/background-tasks.ts";
+export { initHostAccessWatch, agentBusy, tasks, getTask } from "./agent-runtime/background-tasks.ts";
 
 // ---------------------------------------------------------------- 启动接线与启动恢复
 
@@ -48,6 +48,8 @@ setAdvanceHooks({
 
 export async function bootstrap() {
 	migrateSubagentModelSettings();
+	// 旧 tasks 表迁到帮手（同 id），再统一做重启判定：后台 / 定时 / 巡检和子代理同一套（安全的续跑，结果未知的标中断待核验）
+	migrateLegacyTasks();
 	recoverSubagents();
 	startSubagentWatcher();
 	startWaitScheduler();
@@ -62,8 +64,6 @@ export async function bootstrap() {
 			await runtime(a.id).send("（系统通知）服务刚刚重启，上一轮工作可能被中断。请检查进度并继续完成我最后的请求；如果已经完成，简短告诉我即可。");
 		}
 	}
-	// 后台任务（含定时 / 巡检）：和子代理同一套重启判定——安全的排队续跑，结果未知的标中断待核验
-	tasks.recover();
 	// 只恢复未发出的推进；已发出而结果未知的不重放。空闲对话现在就送，不等用户再说话。
 	resumeAdvances(undefined, { dispatch: true });
 }

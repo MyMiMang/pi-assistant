@@ -82,7 +82,8 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 		try {
 			if (!isActiveSubagent(getSubagent(r.id)!.status)) return "";
 			if (input?.messageId) updateMessage(input.messageId, { meta: { delivery: "delivered" } });
-			const firstPrompt = input?.text ?? `（后台子代理任务）${r.task}\n\n必要上下文：\n${r.context}`;
+			// 后台任务 / 定时 / 巡检的帮手：任务说明本身就是完整指令（触发方已经写好），不再套派活前缀
+			const firstPrompt = input?.text ?? (r.kind ? r.task : `（后台子代理任务）${r.task}\n\n必要上下文：\n${r.context}`);
 			await promptSession(session, firstPrompt);
 			// 连接类 / 服务临时不可用：同一会话有界退避重试。退避期间只等时钟、不发模型请求（不忙轮询），可被停止打断。
 			for (let attempt = 1; shouldAutoRetry(error, attempt) && isActiveSubagent(getSubagent(r.id)!.status); attempt++) {

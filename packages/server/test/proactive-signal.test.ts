@@ -18,6 +18,7 @@ import { memoryCredentialStore } from "./in-memory-credentials.ts";
 import * as P from "../src/proactive.ts";
 
 const { db } = await import("../src/db.ts");
+await import("../src/subagents.ts"); // 建 subagents 表（巡检运行 = 帮手）
 db.prepare("INSERT OR REPLACE INTO agents(id, name, avatar, color, created_at) VALUES('ps','信号','S','#000',?)").run(now());
 
 const models = await PiModels.create({ credentials: memoryCredentialStore(), modelsPath: null, allowNetwork: false });
@@ -26,7 +27,7 @@ await registerMockProvider(models);
 const spawned: string[] = [];
 P.setProactiveSpawner((agentId, title, instructions) => {
 	const id = `t${spawned.length + 1}`;
-	db.prepare("INSERT INTO tasks(id, agent_id, conversation_id, title, instructions, status, kind, created_at) VALUES(?,?,?,?,?,?,?,?)").run(id, agentId, P.hiddenConversation(agentId), title, instructions, "running", "heartbeat", now());
+	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, title, task, context, model_provider, model_id, model_reason, status, last_activity_at, created_at, kind) VALUES(?,?,?,?,?,'','mock','echo','','running',?,?,'heartbeat')").run(id, agentId, P.hiddenConversation(agentId), title, instructions, now(), now());
 	spawned.push(instructions);
 	return { id };
 });

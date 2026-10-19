@@ -80,6 +80,7 @@ test("技能：内置技能、保存/解析/删除、名称校验、内置不可
 });
 
 const routines = await import("../src/routines.ts");
+await import("../src/subagents.ts"); // 建 subagents 表（定时任务的运行 = 帮手）
 const { bus } = await import("../src/bus.ts");
 test("定时：cron 最小间隔、免打扰顺延、时区", () => {
 	assert.throws(() => routines.validateCron("* * * * *"), /5 分钟/);
@@ -116,7 +117,8 @@ test("定时：到点执行（无客户端在线）、补跑、暂停、Webhook�
 	const spawned: { title: string; instructions: string; runId: string }[] = [];
 	routines.setRoutineSpawner((agentId, title, instructions, opts) => {
 		const id = `t_${spawned.length}`;
-		db.prepare("INSERT INTO tasks(id, agent_id, conversation_id, routine_run_id, title, instructions, status, created_at) VALUES(?,?,?,?,?,?,?,?)").run(id, agentId, opts.conversationId ?? null, opts.routineRunId, title, instructions, "running", now());
+		// 定时任务的每次运行是一个 routine 帮手（决策 0014）
+		db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, routine_run_id, title, task, context, model_provider, model_id, model_reason, status, last_activity_at, created_at, kind) VALUES(?,?,?,?,?,?,'','mock','echo','','running',?,?,'routine')").run(id, agentId, opts.conversationId ?? "", opts.routineRunId, title, instructions, now(), now());
 		spawned.push({ title, instructions, runId: opts.routineRunId });
 		return { id };
 	});
@@ -131,8 +133,8 @@ test("定时：到点执行（无客户端在线）、补跑、暂停、Webhook�
 	// 上一次还没结束 → 本次跳过
 	assert.equal(routines.runRoutine(r.id, "manual").status, "skipped");
 	// 任务完成 → 运行记录更新 + 聊天消息
-	const t = db.prepare("SELECT * FROM tasks WHERE id = 't_0'").get() as Record<string, unknown>;
-	bus.emit({ type: "task.updated", task: { ...t, status: "done", result: "今天有 3 件事" } } as never);
+	const t = db.prepare("SELECT * FROM subagents WHERE id = 't_0'").get() as Record<string, unknown>;
+	bus.emit({ type: "subagent.updated", subagent: { ...t, conversation_id: null, status: "done", result_summary: "今天有 3 件事" } } as never);
 	const run = routines.listRuns(r.id).find((x) => x.task_id === "t_0")!;
 	assert.equal(run.status, "done");
 	assert.ok(listMessages("a1", {}).some((m) => m.content.includes("每日简报") && m.content.includes("今天有 3 件事")));

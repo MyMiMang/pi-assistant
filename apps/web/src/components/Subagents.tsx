@@ -15,7 +15,8 @@ import { thinkingLevelsFor } from "@pi-assistant/shared";
 import { TaskInstructions, TaskRow, taskLive, taskStatus, taskTitle } from "./Tasks";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string; reasoning?: boolean };
-interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; thinking: string | null; resolvedThinking?: string; /** 请求级 Fast 覆盖：1 开 / 0 关 / null 跟随所属助理 */ fast?: number | null; resolvedFast?: boolean; last_activity_at: number; error_reason: string | null; result_summary: string | null; attempt?: number; retry_at?: number | null; canResume?: boolean; resumeReason?: string; needsVerify?: boolean; pendingToolNames?: string[] }
+const KIND_LABEL: Record<string, string> = { task: "后台任务", routine: "定时任务", heartbeat: "主动巡检" };
+interface Subagent { id: string; agent_id: string; conversation_id: string; task: string; status: string; model_provider: string; model_id: string; model_reason: string; thinking: string | null; resolvedThinking?: string; /** 请求级 Fast 覆盖：1 开 / 0 关 / null 跟随所属助理 */ fast?: number | null; resolvedFast?: boolean; last_activity_at: number; error_reason: string | null; result_summary: string | null; attempt?: number; retry_at?: number | null; canResume?: boolean; resumeReason?: string; needsVerify?: boolean; pendingToolNames?: string[]; /** 来源（决策 0014）：后台任务 / 定时任务 / 主动巡检；空 = 主会话派的 */ kind?: "task" | "routine" | "heartbeat" | null; title?: string | null }
 /** 结果未知的工具名（needsVerify 时给用户看的危险名单；读不到会话时没有具体名字，给一句兜底）。 */
 const verifyNames = (r: Subagent) => r.pendingToolNames?.length ? r.pendingToolNames.join("、") : "有工具调用结果未落库";
 /** 有实时活动（显示“最后活动 N 秒前”） */
@@ -197,7 +198,7 @@ export function SubagentTasks({ agentId, conversation, room, current, testid = "
 	const running = rows.filter((r) => taskLive(r.status));
 	const finished = rows.filter((r) => !taskLive(r.status));
 	const openTask = (r: Subagent) => { setOpen(false); useStore.getState().openSubagent(r); };
-	const row = (r: Subagent) => <TaskRow key={r.id} testId="subagent-row" id={r.id} active={r.id === current} title={taskTitle(r.task)} status={r.status} meta={`子代理 · ${r.model_id || "未指定模型"}`} time={r.last_activity_at} onClick={() => openTask(r)} />;
+	const row = (r: Subagent) => <TaskRow key={r.id} testId="subagent-row" id={r.id} active={r.id === current} title={taskTitle(r.title ?? r.task)} status={r.status} meta={`${KIND_LABEL[r.kind ?? ""] ?? "子代理"} · ${r.model_id || "未指定模型"}`} time={r.last_activity_at} onClick={() => openTask(r)} />;
 	return <>
 		<button className="pa-chip" onClick={() => setOpen(true)} data-testid={testid} aria-label="执行概览" title="执行概览：子代理与后台任务的运行情况"><Bot className="pa-ic" /><span className="max-sm:hidden">执行</span><span>{running.length || rows.length}</span></button>
 		<Modal open={open} onClose={() => setOpen(false)} title="任务" testId={overviewTestid}>

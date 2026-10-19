@@ -1,5 +1,6 @@
-// 后台任务重启安全（决策 0014 第 2 步）：真实浏览器 + 临时数据 + Mock 模型。
-// 重启时后台任务的命令已派发、结果没落库 → 标「中断待核验」不自动重放；卡片上点「继续」→ 在原会话先核验再续跑 → 已完成。
+// 后台任务重启安全（决策 0014 第 2、4 步）：真实浏览器 + 临时数据 + Mock 模型。
+// 后台任务就是帮手：重启时命令已派发、结果没落库 → 标「中断待核验」不自动重放；
+// 在「任务」列表里打开这个帮手点「继续」→ 在原会话先核验再续跑 → 已完成。
 // 先构建 apps/web：npm run build -w @pi-assistant/web。截图写 artifacts/screenshots。
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
@@ -47,18 +48,24 @@ try {
 	console.log("✅ 重启时命令结果未知 → 标中断待核验，不自动重放");
 	await page.reload();
 	await page.getByText(/后台任务「慢慢核对工作区」中断待核验/).last().waitFor();
-	const card = page.locator(".pa-card", { hasText: "后台任务：慢慢核对工作区" }).last();
-	await card.getByText("中断待核验").waitFor();
+	await page.getByTestId("subagent-tasks").click();
+	await page.getByTestId("task-overview").waitFor();
+	const row = page.locator(`[data-testid=subagent-row][data-id="${id}"]`);
+	if (!(await row.isVisible().catch(() => false))) await page.getByTestId("task-finished").locator("summary").click();
+	await row.getByText("后台任务", { exact: false }).first().waitFor();
 	await page.waitForTimeout(1000); // 等进场动画结束再截图
 	await page.screenshot({ path: join(SHOTS, "task-restart-lost.png") });
-	await card.getByTestId("task-resume").click();
+	await row.click();
+	const detail = page.locator('[data-testid="subagent-detail"]:visible');
+	await detail.getByTestId("subagent-needs-verify").waitFor();
+	await detail.getByTestId("subagent-resume").click();
 	await waitFor(async () => (await task()).status === "done", 90_000);
 	const msgs = await j(`/api/tasks/${id}/messages`);
 	assert.ok(msgs.filter((m) => m.role === "tool").length >= 1);
-	await card.getByText("已完成").waitFor();
+	await detail.getByText("已完成").first().waitFor();
 	await page.waitForTimeout(1000);
 	await page.screenshot({ path: join(SHOTS, "task-restart-resumed.png") });
-	console.log("✅ 卡片上点继续 → 原会话先核验再续跑 → 已完成");
+	console.log("✅ 帮手详情里点继续 → 原会话先核验再续跑 → 已完成");
 } finally {
 	await browser?.close().catch(() => {});
 	await server?.stop().catch(() => {});

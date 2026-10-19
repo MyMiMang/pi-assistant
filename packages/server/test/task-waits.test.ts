@@ -27,9 +27,11 @@ const conv = createConversation("tw-a").id;
 const wakes: { id: string; prompt: string; outcome: unknown }[] = [];
 W.setWaitWaker((w) => { wakes.push({ id: w.wait.id, prompt: w.prompt, outcome: w.outcome }); });
 
+/** 后台任务就是 kind=task 的帮手（决策 0014） */
 function makeTask(id: string, status: string, result: string | null = null, error: string | null = null) {
-	db.prepare("INSERT OR REPLACE INTO tasks(id, agent_id, conversation_id, title, instructions, status, result, error, created_at) VALUES(?,?,?,?,?,?,?,?,?)").run(id, "tw-a", conv, "标题", "指令", status, result, error, now());
+	db.prepare("INSERT OR REPLACE INTO subagents(id, agent_id, conversation_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, result_summary, error_reason, created_at, kind, title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'task','标题')").run(id, "tw-a", conv, "指令", "", "mock", "echo", "", status === "cancelled" ? "stopped" : status, now(), result, error, now());
 }
+const taskEvent = (id: string, status: string) => bus.emit({ type: "subagent.updated", subagent: { id, status: status === "cancelled" ? "stopped" : status, kind: "task" } } as never);
 function makeSubagent(id: string, status: string, summary: string | null = null, error: string | null = null) {
 	db.prepare("INSERT OR REPLACE INTO subagents(id, agent_id, conversation_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, result_summary, error_reason, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, "tw-a", conv, "子任务", "", "mock", "echo", "", status, now(), summary, error, now());
 }
@@ -53,14 +55,14 @@ test("登记校验：一次只等一件事；仓库格式；必须有目标或�
 test("任务完成：事件只唤醒一次，重复事件去重；等待期间不唤醒", () => {
 	reset();
 	const w = W.registerWait("tw-a", conv, { taskId: "t1", reason: "等构建完成后把产物发给用户" });
-	assert.equal(w.target_kind, "task");
+	assert.equal(w.target_kind, "subagent");
 	assert.equal(w.status, "waiting");
 	assert.equal(wakes.length, 0, "登记本身不唤醒");
 	makeTask("t1", "done", "构建成功，产物在 dist/");
-	bus.emit({ type: "task.updated", task: { id: "t1", status: "done" } });
+	taskEvent("t1", "done");
 	assert.equal(wakes.length, 1);
-	bus.emit({ type: "task.updated", task: { id: "t1", status: "done" } });
-	bus.emit({ type: "task.updated", task: { id: "t1", status: "failed" } });
+	taskEvent("t1", "done");
+	taskEvent("t1", "failed");
 	assert.equal(wakes.length, 1, "同一等待只唤醒一次");
 	assert.equal(W.getWait(w.id)!.status, "fired");
 	const p = wakes[0].prompt;
@@ -175,7 +177,7 @@ test("取消与停止：取消后的等待不再被事件或 tick 唤醒；停�
 	assert.equal(W.cancelWait(w1.id), true);
 	assert.equal(W.cancelWait(w1.id), false);
 	makeTask("t4", "done", "x");
-	bus.emit({ type: "task.updated", task: { id: "t4", status: "done" } });
+	taskEvent("t4", "done");
 	await W.tickWaits(now() + 10 * 60_000);
 	assert.equal(wakes.length, 0, "已取消的等待不再唤醒");
 	// 用户说“停”：这个会话的等待全部取消
@@ -212,7 +214,7 @@ test("任务被取消：连带取消等它的等待，不唤醒模型", async ()
 	makeTask("t7", "running");
 	const w = W.registerWait("tw-a", conv, { taskId: "t7", reason: "等这个后台任务，完成后汇总" });
 	makeTask("t7", "cancelled");
-	bus.emit({ type: "task.updated", task: { id: "t7", status: "cancelled" } });
+	taskEvent("t7", "cancelled");
 	assert.equal(wakes.length, 0, "任务被取消不唤醒（连带取消等待）");
 	assert.equal(W.getWait(w.id)!.status, "cancelled");
 	// 取消后更晚的 tick 也不再唤醒
@@ -250,7 +252,7 @@ test("唤醒投递成功：标记 delivered，唤醒词带等待 id 幂等线索
 	reset();
 	const w = W.registerWait("tw-a", conv, { taskId: "td1", reason: "等构建" });
 	makeTask("td1", "done", "产物好了");
-	bus.emit({ type: "task.updated", task: { id: "td1", status: "done" } });
+	taskEvent("td1", "done");
 	assert.equal(wakes.length, 1);
 	await flush();
 	const row = W.getWait(w.id)!;
@@ -271,7 +273,7 @@ test("唤醒投递失败：有限重试并留痕，成功后不再重复，不�
 	W.setWaitWaker(() => { attempts++; if (attempts < 3) throw new Error("nudge 未送达"); });
 	const w = W.registerWait("tw-a", conv, { taskId: "td2", reason: "等构建" });
 	makeTask("td2", "done", "产物好了");
-	bus.emit({ type: "task.updated", task: { id: "td2", status: "done" } });
+	taskEvent("td2", "done");
 	await flush();
 	let row = W.getWait(w.id)!;
 	assert.equal(row.status, "fired");
@@ -305,7 +307,7 @@ test("唤醒投递失败达上限：记为 failed，不再无限重试", async (
 	W.setWaitWaker(() => { attempts++; throw new Error("nudge 未送达"); });
 	const w = W.registerWait("tw-a", conv, { taskId: "td3", reason: "等构建" });
 	makeTask("td3", "done", "产物好了");
-	bus.emit({ type: "task.updated", task: { id: "td3", status: "done" } });
+	taskEvent("td3", "done");
 	await flush();
 	for (let i = 1; i < W.MAX_DELIVERY_ATTEMPTS; i++) {
 		db.prepare("UPDATE task_waits SET next_delivery_at = 0 WHERE id = ?").run(w.id);
@@ -346,7 +348,7 @@ test("取消与投递竞态：fired 后取消是 no-op，不会二次投递", as
 	reset();
 	const w = W.registerWait("tw-a", conv, { taskId: "td4", reason: "等构建" });
 	makeTask("td4", "done", "好了");
-	bus.emit({ type: "task.updated", task: { id: "td4", status: "done" } });
+	taskEvent("td4", "done");
 	await flush();
 	assert.equal(W.getWait(w.id)!.delivery_status, "delivered");
 	assert.equal(W.cancelWait(w.id), false, "已 fired 的等待不能再取消");

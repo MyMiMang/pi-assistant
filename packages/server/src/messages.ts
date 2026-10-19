@@ -225,7 +225,7 @@ export function listMessages(agentId: string, opts: { taskId?: string | null; co
 	const conv = opts.conversationId ?? currentConversation(agentId);
 	const limit = Math.min(opts.limit ?? 200, 500);
 	if (opts.taskId) {
-		const rows = db.prepare("SELECT rowid AS seq, * FROM messages WHERE task_id = ? AND created_at < ? ORDER BY created_at DESC, rowid DESC LIMIT ?").all(opts.taskId, opts.before ?? Number.MAX_SAFE_INTEGER, limit) as unknown as (MessageRow & { seq: number })[];
+		const rows = db.prepare("SELECT rowid AS seq, * FROM messages WHERE (task_id = ? OR subagent_id = ?) AND created_at < ? ORDER BY created_at DESC, rowid DESC LIMIT ?").all(opts.taskId, opts.taskId, opts.before ?? Number.MAX_SAFE_INTEGER, limit) as unknown as (MessageRow & { seq: number })[];
 		return rows.reverse().map((r) => ({ ...toMessage(r), seq: r.seq }));
 	}
 	if (opts.after !== undefined || opts.afterSeq !== undefined) {

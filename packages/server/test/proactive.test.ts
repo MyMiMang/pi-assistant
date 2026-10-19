@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 const { db, now } = await import("../src/db.ts");
 const P = await import("../src/proactive.ts");
+await import("../src/subagents.ts"); // 建 subagents 表（巡检运行 = 帮手）
 const { requests } = await import("../src/requests.ts");
 
 // 2026-10-12 是星期一。本地时间（Asia/Shanghai, UTC+8）
@@ -15,9 +16,12 @@ const MON10 = T(12, 10);
 db.prepare("INSERT INTO agents(id, name, avatar, color, created_at) VALUES(?,?,?,?,?)").run("pa", "小主动", "P", "#000", now());
 let seq = 0;
 const spawned: { agentId: string; title: string; instructions: string; kind: string }[] = [];
+/** 后台任务 / 巡检的每次运行都是帮手（决策 0014） */
+const helper = (id: string, agentId: string, conv: string | null, title: string, status: string, kind: string, at = now()) =>
+	db.prepare("INSERT OR REPLACE INTO subagents(id, agent_id, conversation_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, created_at, finished_at, kind, title) VALUES(?,?,?,'x','','mock','echo','',?,?,?,?,?,?)").run(id, agentId, conv ?? "", status, at, at, status === "running" ? null : at, kind, title);
 P.setProactiveSpawner((agentId, title, instructions, opts) => {
 	const id = `t${++seq}`;
-	db.prepare("INSERT INTO tasks(id, agent_id, conversation_id, title, instructions, status, kind, created_at) VALUES(?,?,?,?,?,?,?,?)").run(id, agentId, opts.conversationId, title, instructions, "running", opts.kind, now());
+	helper(id, agentId, opts.conversationId, title, "running", opts.kind);
 	spawned.push({ agentId, title, instructions, kind: opts.kind });
 	return { id };
 });
@@ -166,7 +170,7 @@ test("跟进：到点唤醒并带上备注与当时的对话；免打扰顺延�
 });
 
 test("主动 ≠ 自主：巡检任务里的审批一律拒绝、不弹卡片；也不能提问", async () => {
-	db.prepare("INSERT INTO tasks(id, agent_id, title, instructions, status, kind, created_at) VALUES('hb1','pa','巡检','x','running','heartbeat',?)").run(now());
+	helper("hb1", "pa", null, "巡检", "running", "heartbeat");
 	const before = (db.prepare("SELECT COUNT(*) AS n FROM messages WHERE role = 'card'").get() as { n: number }).n;
 	const r = await requests.approval("pa", "hb1", "email_send", {}, "给客户发邮件", "high");
 	assert.equal(r.approved, false);
@@ -227,7 +231,7 @@ test("巡检提示：普通 / 跟进 / 信号都要求在授权内直接推进�
 	db.prepare("INSERT OR REPLACE INTO messages(id, agent_id, conversation_id, role, content, status, created_at, updated_at) VALUES('m-foreign','other','c-foreign-hidden','user','别的助理的隐藏内容','done',?,?)").run(now(), now());
 	// 用户明确交代的待办（普通巡检的来源）
 	db.prepare("INSERT OR REPLACE INTO messages(id, agent_id, conversation_id, role, content, status, created_at, updated_at) VALUES('m-user','pa','c-user','user','帮我把季度报告导出成 PDF','done',?,?)").run(MON10 - 3600_000, MON10 - 3600_000);
-	db.prepare("INSERT OR REPLACE INTO tasks(id, agent_id, conversation_id, title, instructions, status, created_at, kind) VALUES('t-export','pa','c-user','导出季度报告','x','failed',?,NULL)").run(MON10 - 1800_000);
+	helper("t-export", "pa", "c-user", "导出季度报告", "failed", "task", MON10 - 1800_000);
 	P.runHeartbeat("pa", "heartbeat", undefined, MON10);
 	const normal = spawned.at(-1)!.instructions;
 	assert.match(normal, /proactive_advance/);
@@ -284,19 +288,20 @@ test("变化驱动：无信号不空巡；有信号才唤醒一次并只带差�
 	assert.deepEqual(P.tickProactive(MON10 + P.SIGNAL_MIN_GAP_MS + 60_000), []);
 });
 
-test("bus 信号：后台任务失败记信号；正常完成 / 心跳任务 / 子代理事件不记（避免与 notify 双唤醒）", async () => {
+test("bus 信号：定时任务的帮手失败记信号；正常完成 / 巡检 / 后台任务和主会话帮手不记（它们已会唤醒主会话，避免双唤醒）", async () => {
 	reset();
 	const { bus } = await import("../src/bus.ts");
-	db.prepare("INSERT INTO tasks(id, agent_id, conversation_id, title, instructions, status, created_at, kind) VALUES('t-bus','pa','cwx','导出','x','running',?,NULL)").run(now());
-	bus.emit({ type: "task.updated", task: { id: "t-bus", agent_id: "pa", conversation_id: "cwx", title: "导出", status: "failed", error: "磁盘满了", kind: null } as never });
+	const ev = (id: string, status: string, kind: string | null) => bus.emit({ type: "subagent.updated", subagent: { id, agent_id: "pa", conversation_id: "cwx", task: "导出", title: "导出", status, error_reason: "磁盘满了", kind } as never });
+	ev("t-bus", "failed", "routine");
 	assert.equal(P.listSignals("pa").length, 1);
-	assert.match(P.listSignals("pa")[0].title, /失败/);
-	bus.emit({ type: "task.updated", task: { id: "t-bus2", agent_id: "pa", conversation_id: "cwx", title: "统计", status: "done", kind: null } as never });
-	assert.equal(P.listSignals("pa").length, 1, "正常完成不产生信号（已有 notify + 下一轮注入）");
-	bus.emit({ type: "task.updated", task: { id: "t-hb", agent_id: "pa", conversation_id: "cwx", title: "主动巡检", status: "failed", kind: "heartbeat" } as never });
-	assert.equal(P.listSignals("pa").length, 1, "心跳任务本身不产生信号");
-	bus.emit({ type: "subagent.updated", subagent: { id: "sa-x", agent_id: "pa", conversation_id: "cwx", task: "整理报价", status: "failed", error_reason: "模型报错" } as never });
-	assert.equal(P.listSignals("pa").length, 1, "子代理终态已有 notify 唤醒，不重复记信号");
+	assert.match(P.listSignals("pa")[0].title, /定时任务失败/);
+	ev("t-bus2", "done", "routine");
+	assert.equal(P.listSignals("pa").length, 1, "正常完成不产生信号");
+	ev("t-hb", "failed", "heartbeat");
+	assert.equal(P.listSignals("pa").length, 1, "巡检本身不产生信号");
+	ev("t-task", "failed", "task");
+	ev("sa-x", "failed", null);
+	assert.equal(P.listSignals("pa").length, 1, "后台任务 / 主会话帮手的终态已有 notify 唤醒，不重复记信号");
 });
 
 test("相关对话绑定：surface 指定对话必须属于这个助理；不属于则拒绝，不会投到别的对话", () => {

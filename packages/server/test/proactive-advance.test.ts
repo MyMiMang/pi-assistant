@@ -82,7 +82,7 @@ test("真实 Mock 链：跟进巡检发现明确待办 → proactive_advance →
 	// 普通巡检也要推进（不只是跟进）：后台任务失败 = 明确的待办，带着可信 conversation id
 	const conv3 = createConversation(AGENT, "失败任务对话");
 	insertMessage({ agentId: AGENT, conversationId: conv3.id, role: "user", content: note });
-	db.prepare("INSERT INTO tasks(id, agent_id, conversation_id, title, instructions, status, error, created_at, finished_at, kind) VALUES('t-checklist','pv',?,'整理季度报告核验清单','写入proactive-advance.md，含数据核对、来源链接、结论检查','failed','模拟本地执行中断',?,?,NULL)").run(conv3.id, now() - 60_000, now() - 60_000);
+	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, title, task, context, model_provider, model_id, model_reason, status, error_reason, last_activity_at, created_at, finished_at, kind) VALUES('t-checklist','pv',?,'整理季度报告核验清单','写入proactive-advance.md，含数据核对、来源链接、结论检查','','mock','echo','','failed','模拟本地执行中断',?,?,?,'task')").run(conv3.id, now() - 60_000, now() - 60_000, now() - 60_000);
 	await waitFor(() => !db.prepare("SELECT 1 FROM proactive_runs WHERE agent_id = ? AND status = 'running'").get(AGENT));
 	assert.ok(P.runHeartbeat(AGENT, "heartbeat"), "普通巡检应该唤醒一次");
 	assert.ok(await waitFor(() => P.listAdvances({ agentId: AGENT, conversationId: conv3.id }).length === 1), "普通巡检没有推进明确待办");

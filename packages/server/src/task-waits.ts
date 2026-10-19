@@ -13,8 +13,8 @@
  * 作为幂等线索，模型据此避免重复已完成的操作。
  *
  * 复用现有链路，不新造大调度框架：
- *  - 状态落 SQLite（tasks / subagents 已有各自的表，这里只加一张 task_waits 记录「在等什么」）；
- *  - 事件来源：bus 的 `task.updated` / `subagent.updated` 快速通道；
+ *  - 状态落 SQLite（后台任务现在就是帮手，在 subagents 表；这里只加一张 task_waits 记录「在等什么」）；
+ *  - 事件来源：bus 的 `subagent.updated` 快速通道；
  *  - 兜底：cron 式的本地 timer（tickWaits），事件丢了也能到点/按间隔重查；
  *  - 唤醒：复用 runtime().nudge()（和 followup / routine 同一套隐藏触发）。
  *
@@ -80,7 +80,6 @@ const DEFAULT_DUE_MS: Record<WaitTargetKind, number> = {
 };
 
 const SUBAGENT_TERMINAL = new Set(["done", "failed", "stopped", "timeout", "lost"]);
-const TASK_TERMINAL = new Set(["done", "failed", "cancelled", "lost"]);
 
 db.exec(`CREATE TABLE IF NOT EXISTS task_waits (
  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT,
@@ -318,14 +317,14 @@ export function registerWait(agentId: string, conversationId: string | null, inp
 	const reason = (input.reason ?? "").trim();
 	if (!reason) throw new Error("请说明在等什么、唤醒后要做什么");
 	const targets: WaitTargetKind[] = [];
-	if (input.taskId) targets.push("task");
-	if (input.subagentId) targets.push("subagent");
+	// 后台任务现在就是帮手（决策 0014），task_id 和 subagent_id 等的是同一张表
+	if (input.taskId || input.subagentId) targets.push("subagent");
 	if (input.githubRun) targets.push("github_run");
-	if (targets.length > 1) throw new Error("一次只等一件事：task_id / subagent_id / github_run 只能给一个");
+	if (targets.length > 1 || (input.taskId && input.subagentId)) throw new Error("一次只等一件事：task_id / subagent_id / github_run 只能给一个");
 	if (!targets.length && input.dueAt === undefined) throw new Error("请指定要等的东西（task_id / subagent_id / github_run）或到点时间");
 	if (input.githubRun && !isSafeRepo(input.githubRun.repo)) throw new Error("仓库格式应为 owner/repo");
 	const kind: WaitTargetKind = targets[0] ?? "due";
-	const ref = kind === "task" ? input.taskId! : kind === "subagent" ? input.subagentId! : kind === "github_run" ? JSON.stringify({ repo: input.githubRun!.repo, runId: input.githubRun!.runId ?? null, branch: input.githubRun!.branch ?? null }) : null;
+	const ref = kind === "subagent" ? (input.subagentId ?? input.taskId)! : kind === "github_run" ? JSON.stringify({ repo: input.githubRun!.repo, runId: input.githubRun!.runId ?? null, branch: input.githubRun!.branch ?? null }) : null;
 	const interval = Math.max(WAIT_MIN_INTERVAL_MS, Math.round(input.checkIntervalMs ?? WAIT_DEFAULT_INTERVAL_MS));
 	const t = now();
 	const dueAt = input.dueAt ?? t + DEFAULT_DUE_MS[kind];
@@ -352,7 +351,7 @@ export function cancelWait(id: string, reason = "已取消"): boolean {
 }
 /** 任务被取消 / 会话被停止：连带取消它的等待，不再唤醒。 */
 export function cancelWaitsForTask(taskId: string, reason = "任务已取消"): number {
-	return Number(db.prepare("UPDATE task_waits SET status = 'cancelled', fired_reason = ?, updated_at = ? WHERE status = 'waiting' AND target_kind = 'task' AND target_ref = ?").run(reason, now(), taskId).changes);
+	return Number(db.prepare("UPDATE task_waits SET status = 'cancelled', fired_reason = ?, updated_at = ? WHERE status = 'waiting' AND target_kind = 'subagent' AND target_ref = ?").run(reason, now(), taskId).changes);
 }
 export function cancelWaitsForConversation(conversationId: string, reason = "用户停止了任务"): number {
 	return Number(db.prepare("UPDATE task_waits SET status = 'cancelled', fired_reason = ?, updated_at = ? WHERE status = 'waiting' AND conversation_id = ?").run(reason, now(), conversationId).changes);
@@ -360,13 +359,6 @@ export function cancelWaitsForConversation(conversationId: string, reason = "用
 
 // ---------------------------------------------------------------- 状态读取
 type Outcome = ProviderState & { at: number };
-function taskOutcome(id: string): Outcome | null {
-	const t = db.prepare("SELECT status, result, error, finished_at FROM tasks WHERE id = ?").get(id) as { status: string; result: string | null; error: string | null } | undefined;
-	if (!t) return { state: "unknown", detail: `任务 ${id} 不存在（可能已被删除）`, at: now() };
-	if (!TASK_TERMINAL.has(t.status)) return null;
-	if (t.status === "done") return { state: "completed", detail: (t.result ?? "").slice(0, 1500) || "任务完成", at: now() };
-	return { state: "unknown", conclusion: t.status, detail: t.error ?? (t.status === "cancelled" ? "任务已取消" : t.status === "lost" ? "任务中断待核验" : "任务失败"), at: now() };
-}
 function subagentOutcome(id: string): Outcome | null {
 	const r = db.prepare("SELECT status, result_summary, error_reason FROM subagents WHERE id = ?").get(id) as { status: string; result_summary: string | null; error_reason: string | null } | undefined;
 	if (!r) return { state: "unknown", detail: `子代理 ${id} 不存在`, at: now() };
@@ -380,7 +372,6 @@ function githubRef(w: TaskWait): GithubRunRef | null {
 
 /** 现在这个等待对应目标的即时状态：null = 还没结束（继续等）。 */
 export async function currentOutcome(w: TaskWait): Promise<Outcome | null> {
-	if (w.target_kind === "task") return taskOutcome(w.target_ref!);
 	if (w.target_kind === "subagent") return subagentOutcome(w.target_ref!);
 	if (w.target_kind === "github_run") {
 		const ref = githubRef(w);
@@ -491,7 +482,7 @@ export function dispatchWake(id: string): Promise<void> {
 /** 结构化增量唤醒词：只在这一个目标的结果之外加一句说明，不重载会话历史
  *  （这是发在**已有会话**里的一条用户不可见消息，会话历史照常存在，只是不再叠加一份重复历史）。 */
 export function wakePrompt(w: TaskWait, reason: string, o: Outcome): string {
-	const target = w.target_kind === "task" ? `后台任务 ${w.target_ref}` : w.target_kind === "subagent" ? `子代理 ${w.target_ref}` : w.target_kind === "github_run" ? `GitHub Actions（${w.target_ref}）` : `到点`;
+	const target = w.target_kind === "subagent" ? `帮手 ${w.target_ref}` : w.target_kind === "github_run" ? `GitHub Actions（${w.target_ref}）` : `到点`;
 	const lines = [
 		"（系统通知：你之前登记的任务等待有结果了）",
 		`- 等待 id：${w.id}（同一 id 可能因重试/重启补投重复送达，请以它为准去重，不要重复已完成的操作）`,
@@ -553,8 +544,8 @@ export async function tickWaits(at = now()): Promise<string[]> {
 			const dueCheck = w.next_check_at === null || w.next_check_at <= at;
 			if (!dueCheck) continue;
 			// 2) 任务 / 子代理：事件丢了就在这里兜底重查
-			if (w.target_kind === "task" || w.target_kind === "subagent") {
-				const o = w.target_kind === "task" ? taskOutcome(w.target_ref!) : subagentOutcome(w.target_ref!);
+			if (w.target_kind === "subagent") {
+				const o = subagentOutcome(w.target_ref!);
 				if (o && o.state !== "pending") {
 					const reason = o.state === "completed" ? "已完成" : `已结束（${o.conclusion ?? "未知"}）`;
 					if (fireWait(w.id, reason, o)) fired.push(w.id);
@@ -586,18 +577,11 @@ export async function tickWaits(at = now()): Promise<string[]> {
 
 // ---------------------------------------------------------------- 事件快速通道
 bus.on((e) => {
-	const ev = e as unknown as { type: string; task?: { id: string; status: string; result?: string | null; error?: string | null }; subagent?: { id: string; status: string; result_summary?: string | null; error_reason?: string | null } };
-		if (ev.type === "task.updated" && ev.task && TASK_TERMINAL.has(ev.task.status)) {
-		// 任务被用户取消：连带取消等它的等待，不再唤醒（其它终态才唤醒）
-		if (ev.task.status === "cancelled") {
-			cancelWaitsForTask(ev.task.id, "任务已取消");
-			return;
-		}
-		for (const w of listWaits(undefined, { status: "waiting" })) {
-			if (w.target_kind !== "task" || w.target_ref !== ev.task.id) continue;
-			const o = taskOutcome(ev.task.id);
-			if (o) fireWait(w.id, o.state === "completed" ? "已完成" : `已结束（${o.conclusion ?? "未知"}）`, o);
-		}
+	const ev = e as unknown as { type: string; subagent?: { id: string; status: string; kind?: string | null } };
+	// 后台任务被用户停止：连带取消等它的等待，不再唤醒（和以前取消后台任务一样；其它终态才唤醒）
+	if (ev.type === "subagent.updated" && ev.subagent?.kind === "task" && ev.subagent.status === "stopped") {
+		cancelWaitsForTask(ev.subagent.id, "任务已取消");
+		return;
 	}
 	if (ev.type === "subagent.updated" && ev.subagent && SUBAGENT_TERMINAL.has(ev.subagent.status)) {
 		for (const w of listWaits(undefined, { status: "waiting" })) {

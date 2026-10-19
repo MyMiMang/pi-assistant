@@ -178,11 +178,14 @@ test("完全权限：应用层审批入口 requests.approval 直接放行、不�
 	requests.resolve((db.prepare("SELECT id FROM requests WHERE agent_id = ?").get("ta") as { id: string }).id, { approved: true }, "test");
 	assert.equal((await p).approved, true);
 	// 主 / 子 / 后台都用所属助理的当前档位：后台任务的审批同样直接放行
-	db.prepare("INSERT INTO tasks(id, agent_id, title, instructions, status, created_at, kind) VALUES(?,?,?,?,?,?,?)").run("bg1", "fa", "后台任务", "x", "running", now(), "task");
+	await import("../src/subagents.ts");
+	// 后台任务 / 巡检都是帮手（决策 0014）
+	const helperRow = (id: string, kind: string) => db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, task, context, model_provider, model_id, model_reason, status, last_activity_at, created_at, kind) VALUES(?,'fa','c','x','','mock','echo','','running',?,?,?)").run(id, now(), now(), kind);
+	helperRow("bg1", "task");
 	assert.equal((await requests.approval("fa", "bg1", "email_send", {}, "后台发邮件", "high")).approved, true, "后台任务用父助理档位：直接放行");
 	assert.equal(count("fa"), 0, "后台任务也不写卡片");
 	// 例外：主动巡检（心跳）仍然不自主执行需要批准的操作（主动 ≠ 自主），但不弹卡片
-	db.prepare("INSERT INTO tasks(id, agent_id, title, instructions, status, created_at, kind) VALUES(?,?,?,?,?,?,?)").run("hb1", "fa", "巡检", "x", "running", now(), "heartbeat");
+	helperRow("hb1", "heartbeat");
 	const hb = await requests.approval("fa", "hb1", "email_send", {}, "巡检发邮件", "high");
 	assert.equal(hb.approved, false, "心跳任务仍不自主执行需批准的操作");
 	assert.equal(count("fa"), 0, "心跳只在内存里拒绝，不写卡片");

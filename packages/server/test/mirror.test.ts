@@ -114,7 +114,7 @@ test("定时任务结果：先写进 App 对话，再镜像到渠道", async () 
 	const t = now();
 	db.prepare("INSERT INTO routines(id, agent_id, name, prompt, trigger, cron, created_at, updated_at) VALUES('rt1','ma','早报','x','cron','0 8 * * *',?,?)").run(t, t);
 	db.prepare("INSERT INTO routine_runs(id, routine_id, trigger, status, started_at) VALUES('rr1','rt1','cron','running',?)").run(t);
-	bus.emit({ type: "task.updated", task: { id: "tk1", status: "done", result: "今天晴，25 度", error: null, routine_run_id: "rr1", conversation_id: null } } as never);
+	bus.emit({ type: "subagent.updated", subagent: { id: "tk1", kind: "routine", status: "done", result_summary: "今天晴，25 度", error_reason: null, routine_run_id: "rr1", conversation_id: null } } as never);
 	await wait(() => sent.filter((s) => /今天晴/.test(s.text)).length >= 2);
 	assert.ok(sent.every((s) => s.inApp));
 	assert.ok(pushed(/定时任务完成：早报/));

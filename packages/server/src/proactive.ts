@@ -608,15 +608,12 @@ export function listAdvances(opts: { agentId?: string; conversationId?: string; 
 	return db.prepare(`SELECT * FROM proactive_advances ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC LIMIT 200`).all(...args) as unknown as { id: string; agent_id: string; conversation_id: string; item_id: string | null; dedupe_key: string; text: string; status: string; reason: string | null; created_at: number; updated_at: number }[];
 }
 
-// 变化信号来源：复用现有 bus 事件。只记「已经有专用唤醒」以外的真正卡点：
-// 子代理失败/停滞已有 notify 会唤醒主会话，不再记信号（避免同一件事多花一次模型回合）；
-// 后台任务失败目前只有推送通知、不会唤醒模型，是真正的缺口，记一条信号交给变化驱动的巡检。
+// 变化信号：帮手（含后台任务）失败/停滞已会唤醒主会话，不重复记；定时任务的帮手失败不唤醒模型，记一条信号交给巡检。
 bus.on((e) => {
-	const ev = e as unknown as { type: string; task?: { id: string; agent_id: string; conversation_id: string | null; title: string; status: string; error?: string | null; kind?: string | null } };
-	if (ev.type === "task.updated" && ev.task && ev.task.kind !== "heartbeat" && ["failed", "lost"].includes(ev.task.status)) {
-		const t = ev.task;
-		recordSignal(t.agent_id, { kind: "task_failed", conversationId: t.conversation_id, title: `${t.status === "lost" ? "后台任务中断待核验" : "后台任务失败"}：${t.title}`, detail: t.error ?? "", importance: 3, dedupeKey: `task:${t.id}:${t.status}` });
-	}
+	const ev = e as unknown as { type: string; subagent?: { id: string; agent_id: string; conversation_id: string; title: string | null; task: string; status: string; error_reason?: string | null; kind?: string | null } };
+	const r = ev.subagent;
+	if (ev.type === "subagent.updated" && r?.kind === "routine" && ["failed", "lost", "timeout"].includes(r.status))
+		recordSignal(r.agent_id, { kind: "task_failed", conversationId: r.conversation_id, title: `${r.status === "lost" ? "定时任务中断待核验" : "定时任务失败"}：${r.title ?? r.task.slice(0, 40)}`, detail: r.error_reason ?? "", importance: 3, dedupeKey: `task:${r.id}:${r.status}` });
 });
 
 export function listItems(opts: { agentId?: string; all?: boolean } = {}) {
@@ -736,7 +733,7 @@ export function hiddenConversation(agentId: string) {
 	setSetting(heartbeatConvKey(agentId), id);
 	return id;
 }
-export const isHeartbeatTask = (taskId: string | null | undefined) => !!taskId && (db.prepare("SELECT kind FROM tasks WHERE id = ?").get(taskId) as { kind: string | null } | undefined)?.kind === "heartbeat";
+export const isHeartbeatTask = (taskId: string | null | undefined) => !!taskId && (db.prepare("SELECT kind FROM subagents WHERE id = ?").get(taskId) as { kind: string | null } | undefined)?.kind === "heartbeat";
 export const runOfTask = (taskId: string) => (db.prepare("SELECT id FROM proactive_runs WHERE task_id = ?").get(taskId) as { id: string } | undefined)?.id ?? null;
 
 const clip = (s: string | null | undefined, n = 160) => {
@@ -787,7 +784,7 @@ export function situation(agentId: string, reason: string, extra?: { followup?: 
 			: [];
 		sec("你约好的跟进（现在到点了）", [`- 备注：${f.note}${target ? `（相关对话 [conv:${target}]）` : ""}`, `- 约定于：${fmt(f.createdAt)}`, ...(conv.length ? ["- 当时的对话（最近几条）：", ...conv.map((m) => `  - ${m.role === "user" ? "用户" : "你"}：${clip(m.content, 200)}`)] : [])]);
 	}
-	const tasks = db.prepare("SELECT id, title, status, error, conversation_id, created_at FROM tasks WHERE agent_id = ? AND COALESCE(kind,'') != 'heartbeat' AND (status IN ('queued','running') OR (status IN ('failed','lost') AND finished_at >= ?)) ORDER BY created_at DESC LIMIT 8").all(agentId, t - 3 * 86400_000) as { id: string; title: string; status: string; error: string | null; conversation_id: string | null }[];
+	const tasks = db.prepare("SELECT id, COALESCE(title, substr(task, 1, 60)) AS title, status, error_reason AS error, conversation_id, created_at FROM subagents WHERE agent_id = ? AND kind IN ('task','routine') AND (status IN ('queued','running','stalled') OR (status IN ('failed','lost','timeout') AND finished_at >= ?)) ORDER BY created_at DESC LIMIT 8").all(agentId, t - 3 * 86400_000) as { id: string; title: string; status: string; error: string | null; conversation_id: string | null }[];
 	sec("未完成或失败的后台任务", tasks.map((x) => `- [task:${x.id}] ${x.title} · ${x.status}${x.error ? ` · ${clip(x.error, 80)}` : ""}${relatedConversation(agentId, x.conversation_id) ? `（相关对话 [conv:${x.conversation_id}]）` : ""}`));
 	const reqs = db.prepare("SELECT id, kind, payload, created_at FROM requests WHERE agent_id = ? AND status = 'pending' AND created_at <= ? ORDER BY created_at LIMIT 5").all(agentId, t - 2 * 3600_000) as { id: string; kind: string; payload: string; created_at: number }[];
 	sec("用户还没回应的审批 / 提问（超过 2 小时）", reqs.map((r) => {
@@ -834,18 +831,21 @@ export function runHeartbeat(agentId: string, reason: "heartbeat" | "followup" |
 	const runId = uid("pr");
 	db.prepare("INSERT INTO proactive_runs(id, agent_id, reason, status, started_at) VALUES(?,?,?,?,?)").run(runId, agentId, reason === "manual" ? "heartbeat" : reason, "running", t);
 	const title = { heartbeat: "主动巡检", manual: "主动巡检", followup: "跟进", brief: "每日简报", signal: "主动巡检" }[reason];
-	const task = spawner(agentId, title, situation(agentId, reason, extra, t), { conversationId: hiddenConversation(agentId), kind: "heartbeat" });
-	db.prepare("UPDATE proactive_runs SET task_id = ? WHERE id = ?").run(task.id, runId);
+	let task: { id: string } | null = null;
+	try { task = spawner(agentId, title, situation(agentId, reason, extra, t), { conversationId: hiddenConversation(agentId), kind: "heartbeat" }); } catch { /* 派不出帮手（如没有模型）：下面记这次运行失败 */ }
+	if (task) db.prepare("UPDATE proactive_runs SET task_id = ? WHERE id = ?").run(task.id, runId);
+	else db.prepare("UPDATE proactive_runs SET status = 'failed', finished_at = ? WHERE id = ?").run(now(), runId);
 	changed(agentId);
-	return runId;
+	return task ? runId : null;
 }
 
 bus.on((e) => {
-	const ev = e as unknown as { type: string; task?: { id: string; status: string } };
-	if (ev.type !== "task.updated" || !ev.task || !["done", "failed", "cancelled", "lost"].includes(ev.task.status)) return;
-	const r = db.prepare("SELECT id, agent_id FROM proactive_runs WHERE task_id = ? AND status = 'running'").get(ev.task.id) as { id: string; agent_id: string } | undefined;
+	// 巡检的每次运行是一个 heartbeat 帮手：结束时记下（停止记作 cancelled，和旧记录同一套词）
+	const ev = e as unknown as { type: string; subagent?: { id: string; status: string; kind?: string | null } };
+	if (ev.type !== "subagent.updated" || ev.subagent?.kind !== "heartbeat" || !["done", "failed", "stopped", "timeout", "lost"].includes(ev.subagent.status)) return;
+	const r = db.prepare("SELECT id, agent_id FROM proactive_runs WHERE task_id = ? AND status = 'running'").get(ev.subagent.id) as { id: string; agent_id: string } | undefined;
 	if (!r) return;
-	db.prepare("UPDATE proactive_runs SET status = ?, finished_at = ? WHERE id = ?").run(ev.task.status, now(), r.id);
+	db.prepare("UPDATE proactive_runs SET status = ?, finished_at = ? WHERE id = ?").run(ev.subagent.status === "stopped" ? "cancelled" : ev.subagent.status, now(), r.id);
 	changed(r.agent_id);
 });
 
@@ -854,7 +854,7 @@ bus.on((e) => {
 const used = (agentId: string) => !!db.prepare("SELECT 1 FROM messages WHERE agent_id = ? AND role = 'user' LIMIT 1").get(agentId);
 /** 可能存在未闭环的事（未完成/失败的内部任务、待回应的请求、最近用户说过话）→ 低频兜底仍要覆盖，不为了省 token 砍掉主动性。 */
 function hasUnclosed(agentId: string, t: number) {
-	if (db.prepare("SELECT 1 FROM tasks WHERE agent_id = ? AND (status IN ('queued','running') OR (status = 'failed' AND finished_at >= ?)) LIMIT 1").get(agentId, t - 3 * 86400_000)) return true;
+	if (db.prepare("SELECT 1 FROM subagents WHERE agent_id = ? AND kind IS NOT NULL AND (status IN ('queued','running','stalled') OR (status IN ('failed','lost','timeout') AND finished_at >= ?)) LIMIT 1").get(agentId, t - 3 * 86400_000)) return true;
 	if (db.prepare("SELECT 1 FROM requests WHERE agent_id = ? AND status = 'pending' LIMIT 1").get(agentId)) return true;
 	return !!db.prepare("SELECT 1 FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.agent_id = ? AND m.role = 'user' AND COALESCE(c.hidden,0) = 0 AND m.created_at >= ? LIMIT 1").get(agentId, t - 3 * 86400_000);
 }
