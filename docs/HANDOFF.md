@@ -27,7 +27,7 @@
 
 **还要做**
 1. 待用户决定：给模型看的提示词和工具说明（`ext-delivery` 的 spawn_subagent 等、`system-rules.ts`、`subagent-supervision.ts`）里仍叫「子代理」，真实模型跟你说话时可能还说「子代理」。内部标记「（子代理事件 」「（后台子代理任务）」用来解析历史消息和 Mock，不能直接改名。要不要让模型对用户统一说「帮手」。
-2. 测试不再碰 Mac 钥匙串：直接启动 `src/main.ts` 的 13 个 e2e、`server-setup.test.ts` 和 3 个 smoke 改走 `test/launch-memory.ts`（之前在 Mac 上会用真实 App 的钥匙串主密钥，曾差点用 `-U` 覆盖，已拦下，条目未改）。待做：规范检查加一条「测试禁止直接启动 src/main.ts」；待用户决定：`secrets.ts` 读钥匙串失败时用 `-U` 覆盖旧主密钥，会让已存凭据解不开。
+2. 测试不再碰 Mac 钥匙串：直接启动 `src/main.ts` 的 13 个 e2e、`server-setup.test.ts` 和 3 个 smoke 改走 `test/launch-memory.ts`（之前在 Mac 上会用真实 App 的钥匙串主密钥，曾差点用 `-U` 覆盖，已拦下，条目未改）。待做：规范检查加一条「测试禁止直接启动 src/main.ts」；主密钥读不到时停下、不覆盖已按用户决定做完（[0015](decisions/0015-master-key-never-overwrite.md)；单测 + 假 `security` 实启 `main.ts` 演练过，真机 Mac / Windows 未验证）；单测 `setup.ts` 在 PATH 上放假的 `security`。
 2b. main 上原来就失败的 e2e（干净 main 上复现过，和第 6 步无关）：`send-shortcut-ui.mjs` 第 3 步等不到主会话发送键；`subagent-composer-navigation.mjs` 档位菜单里多出 `fast`，断言不认。`file-preview.mjs` 手机 390 宽时预览框量到 388.8（像进场动画没走完），「铺满可视宽度」不过。
 3. 拖文件到聊天框：`main.rs` 那一行没在本地编译过（Mac 没装 Rust，CI 不编译桌面程序），下次打包时 release 构建才会编译；装好新版后要在 Mac / Windows 上真拖一次确认。
 4. 待用户决定：群看板「等你决定」仍会在反复退回 / 长时间没进展时问用户「换个方法 / 改派 / 暂停」，和第 3 步「只为用户才能给的东西找用户」的原则不一致，要不要改由用户定。
