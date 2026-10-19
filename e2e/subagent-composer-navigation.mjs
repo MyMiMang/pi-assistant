@@ -57,7 +57,7 @@ const j = async (path, method = "GET", body) => {
 	return data;
 };
 const start = async () => {
-	server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], {
+	server = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], {
 		cwd: ROOT,
 		env: { ...process.env, PIA_DATA_DIR: DATA, PIA_WORKSPACE: WS, HOME, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_HOST_CONTROL_DRY_RUN: "1", PIA_PORT: String(PORT) },
 		stdio: ["ignore", "pipe", "pipe"],
@@ -148,7 +148,8 @@ try {
 	const supported = new Set(entry?.thinking ?? []);
 	await panel.getByTestId("subagent-thinking").click();
 	await menu.waitFor();
-	const menuLevels = await menu.locator("button[data-testid]").evaluateAll((els) => els.map((e) => e.getAttribute("data-testid")).filter((t) => t !== "subagent-thinking-follow"));
+	// 只取档位刻度（pa-think-step）：同一弹层里还有「跟随」和 Fast 开关，它们不是档位
+	const menuLevels = await menu.locator("button.pa-think-step[data-testid]").evaluateAll((els) => els.map((e) => e.getAttribute("data-testid")).filter((t) => t !== "subagent-thinking-follow"));
 	await page.keyboard.press("Escape");
 	await menu.waitFor({ state: "detached" });
 	for (const t of menuLevels) {

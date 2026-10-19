@@ -20,7 +20,7 @@ const relay = httpServer((req, res) => {
 }).listen(0, "127.0.0.1");
 await new Promise((r) => relay.once("listening", r));
 const relayBase = `http://127.0.0.1:${relay.address().port}/v1`;
-const server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_PORT: String(PORT), PIA_MOCK: "1", PIA_OFFLINE: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+const server = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_PORT: String(PORT), PIA_MOCK: "1", PIA_OFFLINE: "1" }, stdio: ["ignore", "pipe", "pipe"] });
 server.stderr.on("data", (d) => process.stdout.write(d));
 const wait = async (fn) => { for (let i = 0; i < 150; i++) { try { if (await fn()) return; } catch {} await new Promise((r) => setTimeout(r, 100)); } throw new Error("timeout"); };
 const j = async (path, method = "GET", body) => { const r = await fetch(BASE + path, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) }); assert.ok(r.ok, await r.clone().text()); return r.json(); };

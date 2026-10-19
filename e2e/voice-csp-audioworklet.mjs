@@ -27,7 +27,7 @@ const PORT = Number(process.env.PIA_E2E_PORT ?? 0) || 18000 + Math.floor(Math.ra
 const DATA = mkdtempSync(join(tmpdir(), "pia-csp-"));
 const BASE = `http://127.0.0.1:${PORT}`;
 
-const server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], {
+const server = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], {
 	cwd: ROOT,
 	env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT), PIA_HOST_CONTROL_DRY_RUN: "1" },
 	stdio: ["ignore", "pipe", "pipe"],

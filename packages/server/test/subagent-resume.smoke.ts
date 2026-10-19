@@ -39,7 +39,7 @@ const j = async <T>(path: string, method = "GET", body?: unknown): Promise<T> =>
 };
 const start = async (port: number) => {
 	BASE = `http://127.0.0.1:${port}`;
-	server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(port) }, stdio: ["ignore", "pipe", "pipe"] });
+	server = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(port) }, stdio: ["ignore", "pipe", "pipe"] });
 	server.stdout?.on("data", (d) => process.stdout.write(`[server] ${d}`));
 	server.stderr?.on("data", (d) => process.stderr.write(`[server] ${d}`));
 	await waitFor(async () => ((await fetch(`${BASE}/api/system`)).ok ? true : undefined));

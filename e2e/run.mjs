@@ -31,7 +31,7 @@ let page;
 process.on("exit", () => server?.kill("SIGKILL"));
 const log = (...a) => console.log("[e2e]", ...a);
 function startServer() {
-	server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_HOST_CONTROL_DRY_RUN: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] });
+	server = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_HOST_CONTROL_DRY_RUN: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] });
 	server.stdout.on("data", (d) => process.stdout.write(`[server] ${d}`));
 	server.stderr.on("data", (d) => !String(d).includes("ExperimentalWarning") && process.stdout.write(`[server!] ${d}`));
 	return waitFor(async () => (await fetch(`${BASE}/api/system`)).ok, 30_000);
@@ -1796,7 +1796,7 @@ await step("Linux 服务器版：控制台设置码 → 网页首次设置成为
 	const SDATA = `${DATA}-server`;
 	rmSync(SDATA, { recursive: true, force: true });
 	let out = "";
-	const srv = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: SDATA, PIA_MOCK: "1", PIA_PORT: String(SP), PIA_HEADLESS: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+	const srv = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: SDATA, PIA_MOCK: "1", PIA_PORT: String(SP), PIA_HEADLESS: "1" }, stdio: ["ignore", "pipe", "pipe"] });
 	srv.stdout.on("data", (d) => (out += d));
 	try {
 		await waitFor(() => /设置码：[A-Z0-9]{4}-[A-Z0-9]{4}/.test(out), 30_000);

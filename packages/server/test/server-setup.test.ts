@@ -16,7 +16,7 @@ const data = mkdtempSync(join(tmpdir(), "pia-server-"));
 const port = 19000 + Math.floor(Math.random() * 900);
 const env = { ...process.env, PIA_DATA_DIR: data, PIA_PORT: String(port), PIA_HOST: "127.0.0.1", PIA_HEADLESS: "1", PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_SETUP_CHECK_MS: "500" };
 let out = "";
-const srv = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "--import", "tsx", "src/main.ts"], { cwd: join(import.meta.dirname, ".."), env, stdio: ["ignore", "pipe", "pipe"] });
+const srv = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "--import", "tsx", "test/launch-memory.ts"], { cwd: join(import.meta.dirname, ".."), env, stdio: ["ignore", "pipe", "pipe"] });
 srv.stdout.on("data", (b) => (out += b));
 srv.stderr.on("data", (b) => (out += b));
 after(() => srv.kill());

@@ -8,7 +8,7 @@ const root = new URL('..', import.meta.url).pathname;
 const data = mkdtempSync(`${tmpdir()}/pia-delete-`);
 const port = await new Promise(resolve => { const s = createServer().listen(0, '127.0.0.1', () => { const p=s.address().port; s.close(()=>resolve(p)); }); });
 const base = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ['--import','tsx','packages/server/src/main.ts'], { cwd: decodeURIComponent(root), env:{...process.env,PIA_DATA_DIR:data,PIA_MOCK:'1',PIA_OFFLINE:'1',PIA_PORT:String(port)},stdio:['ignore','pipe','pipe'] });
+const server = spawn(process.execPath, ['--import','tsx','packages/server/test/launch-memory.ts'], { cwd: decodeURIComponent(root), env:{...process.env,PIA_DATA_DIR:data,PIA_MOCK:'1',PIA_OFFLINE:'1',PIA_PORT:String(port)},stdio:['ignore','pipe','pipe'] });
 let logs='';server.stdout.on('data',d=>logs+=d);server.stderr.on('data',d=>logs+=d);
 const api=async(path,method='GET',body)=>{const r=await fetch(base+path,{method,headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});assert.ok(r.ok,await r.clone().text());return r.json()};
 let browser;

@@ -33,7 +33,7 @@ const check = (name, ok, detail = "") => {
 	log(ok ? "✅" : "❌", name, ok ? "" : detail);
 };
 
-const server = spawn(NODE, ["--import", "tsx", "packages/server/src/main.ts"], {
+const server = spawn(NODE, ["--import", "tsx", "packages/server/test/launch-memory.ts"], {
 	cwd: REPO,
 	env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_HOST_CONTROL_DRY_RUN: "1", PIA_PORT: String(PORT) },
 	stdio: ["ignore", "pipe", "pipe"],
