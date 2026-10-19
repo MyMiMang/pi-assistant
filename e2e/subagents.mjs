@@ -1,35 +1,53 @@
 // 只验证后台子代理，不运行主流程全量 e2e。先构建 apps/web。
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
+import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const DATA = "/tmp/pia-e2e-subagents";
+// 临时 HOME / DATA / WORKSPACE + 内存凭据（test/launch-memory.ts），不碰真实钥匙串和用户数据；重启复用同一个 run 目录
+const run = makeTempRun("pia-e2e-subagents-");
 const PORT = await new Promise((resolve) => { const sv = createServer().listen(0, "127.0.0.1", () => { const p = sv.address().port; sv.close(() => resolve(p)); }); });
 const BASE = `http://127.0.0.1:${PORT}`;
 const SHOTS = artifactDir("screenshots");
-rmSync(DATA, { recursive: true, force: true }); mkdirSync(SHOTS, { recursive: true });
+mkdirSync(SHOTS, { recursive: true });
 let server, browser;
 const waitFor = async (fn, ms = 20_000) => { const end = Date.now() + ms; while (Date.now() < end) { try { if (await fn()) return; } catch {} await new Promise((r) => setTimeout(r, 100)); } throw new Error("timeout"); };
 const j = async (path, method = "GET", body) => { const r = await fetch(BASE + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); const data = await r.json(); if (!r.ok) throw new Error(JSON.stringify(data)); return data; };
-const start = async () => { server = spawn(process.execPath, ["--import", "tsx", "packages/server/src/main.ts"], { cwd: ROOT, env: { ...process.env, PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] }); server.stdout.on("data", (d) => process.stdout.write(d)); server.stderr.on("data", (d) => process.stdout.write(d)); await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
-const stop = async () => { if (!server || server.exitCode !== null) return; const done = new Promise((r) => server.once("exit", r)); server.kill("SIGTERM"); await done; };
+const start = async () => { server = startTempServer({ root: ROOT, port: PORT, run, log: (d) => process.stdout.write(d) }); await waitFor(async () => (await fetch(BASE + "/api/system")).ok, 30_000); };
+const stop = async () => { await server?.stop(); };
 try {
 	await start();
 	await j("/api/settings", "PUT", { onboarded: true });
+	await j("/api/models/default", "PUT", { provider: "mock", model: "echo" }).catch(() => {});
 	const a = await j("/api/agents", "POST", { name: "子代理测试" });
-	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, env: browserEnv(run) });
 	const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, locale: "zh-CN" });
 	page.setDefaultTimeout(15_000);
 	page.on("pageerror", console.error);
 	await page.goto(`${BASE}/?agent=${a.id}`);
 	const box = page.locator("[data-testid=main-conversation] textarea:visible:not(.pa-card textarea)");
-	const say = async (text) => { await box.fill(text); await box.press("Enter"); };
+	// 打开对话后输入框还会按草稿 / 当前对话再水合一次：刚 fill 的字可能被清掉、回车什么也不发。
+	// 以服务端真的收到这条用户消息为准，没收到才重填重发（不靠固定等待）。
+	let msgUrl = `/api/agents/${a.id}/messages`; // 进群后改成群消息
+	const userCount = async (text) => (await j(msgUrl)).filter((m) => m.role === "user" && m.content === text).length;
+	const say = async (text) => {
+		const before = await userCount(text);
+		for (let i = 0; i < 5; i++) {
+			await box.fill(text);
+			await box.press("Enter");
+			try {
+				return await waitFor(async () => (await userCount(text)) > before, 3000);
+			} catch {
+				if ((await box.inputValue()) === text) continue;
+			}
+		}
+		throw new Error(`消息没有发出去：${text}`);
+	};
 	const rows = () => j(`/api/subagents?agent=${a.id}`);
 	const launch = async (text) => { const n = (await rows()).length; await say(text); await waitFor(async () => (await rows()).length > n); return (await rows())[0]; };
 	const finished = async (id, status) => waitFor(async () => (await rows()).find((r) => r.id === id)?.status === status);
@@ -151,11 +169,19 @@ try {
 	const pending = await launch("派个子代理重启测试");
 	await waitFor(async () => (await j(`/api/subagents/${pending.id}`)).messages.some((m) => m.role === "tool"));
 	await stop(); await start();
-	// 重启后从断点续跑（不再是 lost）：复用落库 session，跑完回报主会话
-	await finished(pending.id, "done");
+	// 重启时工具已派发、结果没落库：副作用未知，按设计（815fbdd）不自动重放，标「重启中断」并要求先核验；
+	// 用户核验后在详情里点「继续」，用原子代理的落库会话从断点续跑，跑完回报主会话。
+	await finished(pending.id, "lost");
+	const lostRow = (await rows()).find((r) => r.id === pending.id);
+	assert.ok(lostRow.needsVerify && lostRow.canResume, `重启中断要标需核验且可手动继续：${JSON.stringify({ needsVerify: lostRow.needsVerify, canResume: lostRow.canResume, reason: lostRow.error_reason })}`);
 	await page.reload();
+	await page.getByText(/子代理回报：.*中断待核验/).last().waitFor();
+	await openTask(pending.id);
+	await page.locator('[data-testid="subagent-detail"]:visible').getByTestId("subagent-resume").click();
+	await finished(pending.id, "done");
+	await page.locator(`[data-testid="subagent-detail"]:visible`).getByLabel("返回主会话").click();
 	await page.getByText(/子代理回报：.*已完成/).last().waitFor();
-	console.log("✅ 重启后从中断处续跑并回报");
+	console.log("✅ 重启打断进行中的工具 → 标中断待核验不自动重放 → 手动继续从断点续跑并回报");
 	await openTask(first.id);
 	await childBox.fill("刚才暗号再说一次");
 	await panel.getByRole("button", { name: "发送给子代理", exact: true }).click();
@@ -186,6 +212,7 @@ try {
 	const room = await j("/api/rooms", "POST", { name: "子代理群", memberIds: [a.id], managerId: a.id });
 	await page.setViewportSize({ width: 1280, height: 860 });
 	await page.goto(`${BASE}/?room=${room.id}`);
+	msgUrl = `/api/rooms/${room.id}/messages`;
 	const group = await launch("派个子代理群聊测试");
 	await finished(group.id, "done");
 	await page.getByText(/子代理回报：.*已完成/).last().waitFor();
@@ -194,4 +221,4 @@ try {
 	console.log("✅ 群成员派子代理，结果回群，步骤留在详情");
 	}
 	console.log("子代理相关 e2e 通过");
-} finally { await browser?.close(); await stop(); }
+} finally { await browser?.close(); await stop(); cleanupTempRun(run); }
