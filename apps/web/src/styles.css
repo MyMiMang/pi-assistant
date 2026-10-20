@@ -116,8 +116,11 @@
 .pa-work-events { margin-top: 8px; }
 .pa-work-events summary { cursor: pointer; font-size: 12px; color: var(--mut2); }
 .pa-work-events ul { margin: 6px 0 0; padding-left: 16px; font-size: 11px; color: var(--mut2); }
-.pa-work-result { display: flex; flex-direction: column; gap: 6px; }
-.pa-work-result-text { font-size: 13px; color: var(--mut); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.pa-work-result { display: block; flex-shrink: 0; padding: 14px 16px; }
+.pa-work-result .pa-card-top { margin-bottom: 8px; }
+.pa-work-result .pa-actions { margin-top: 14px; flex-wrap: wrap; }
+.pa-work-result-text { font-size: 13px; color: var(--mut); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; max-height: calc(1.55em * 4); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; margin: 0; }
+.pa-chip.pa-chip-on { border-color: color-mix(in srgb, var(--acc) 55%, var(--line)); color: var(--acc); background: color-mix(in srgb, var(--acc) 8%, var(--card)); }
 @media (max-width: 640px) {
   .pa-work-board { padding: 10px 10px 18px; }
   .pa-work-toolbar { align-items: stretch; flex-direction: column; }

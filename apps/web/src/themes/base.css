@@ -104,8 +104,8 @@ html{--mo-scale:1;--mo-glow:1;--mo-style:smooth}
 .pa-file-ic .pa-ic{width:20px;height:20px}
 .pa-file-ic em{position:absolute;bottom:-5px;font-style:normal;font-size:8.5px;font-weight:700;letter-spacing:.05em;padding:0 4px;border-radius:4px;background:var(--acc);color:var(--acc-fg)}
 .pa-file-txt{display:flex;flex-direction:column;flex:1;min-width:0}
-.pa-file-txt b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pa-file-txt small{color:var(--mut2);font-size:12px}
+.pa-file-txt b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.pa-file-txt small{color:var(--mut2);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .pa-approval,.pa-question{padding:14px 16px}
 .pa-card-top{display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .pa-card-top b{font-weight:600;min-width:0}

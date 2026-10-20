@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardList, Flag, Loader2, MessageSquare, Pause, Plus } from "lucide-react";
+import { ClipboardList, Loader2, MessageSquare, Pause, Plus } from "lucide-react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Room } from "../types";
-import { Fold, Modal, cx, fmtTime, useConfirm } from "./ui";
+import { Modal, cx, fmtTime, useConfirm } from "./ui";
 import { CreateWorkItem, DecisionBox, RUN_LABEL, StatusPill, WorkDetailPane, type BoardGroup, type WorkDetail, type WorkSummary } from "./WorkItemDetail";
 
 /**
  * 群里的「任务」看板：和群聊是同一份任务责任记录，不是另一套项目管理系统。
  * 数据只来自 /api/rooms/:rid/work-items 与 /api/work-items/:id；打开时拉一次，动作后 / bus 事件再拉，不做不断轮询。
  * 分组：等你决定（高亮置顶，直接回答）· 卡住 · 进行中 · 已完成 / 已停止（默认折叠）。窄屏（390）同一份纵向列表 + 筛选。
- * 顶部是自主推进（目标 + 完成标准）与「全部暂停」：停群不停任务，要停全部任务用这里。
+ * 顶部有「全部暂停」（自主推进的入口在群聊顶部，见 Autonomy.tsx）：停群不停任务，要停全部任务用这里。
  */
 const FILTERS: { value: "all" | BoardGroup; label: string }[] = [
 	{ value: "all", label: "全部" },
@@ -36,58 +36,11 @@ export function WorkResultCard({ meta }: { meta: Record<string, any> }) {
 				<span className="pa-tag">{status === "blocked" ? "受阻" : "待核验"}</span>
 			</div>
 			{meta.summary ? <p className="pa-work-result-text">{String(meta.summary)}</p> : null}
-			<div className="pa-actions !mt-2">
+			<div className="pa-actions">
 				<button className="pa-btn sm ghost" onClick={open} data-testid="work-result-open">查看任务</button>
 				<button className="pa-btn sm" onClick={open} data-testid="work-result-feedback"><MessageSquare className="pa-ic" />有问题，在群里说</button>
 			</div>
 		</div>
-	);
-}
-
-/** 自主推进：确认目标和完成标准后，成员可以 @ 彼此，管理者只在关键事件被叫醒；只有要你拍板的事才问你。 */
-function AutonomyBar({ room }: { room: Room }) {
-	const [open, setOpen] = useState(false);
-	const [goal, setGoal] = useState("");
-	const [done, setDone] = useState("");
-	const [busy, setBusy] = useState(false);
-	const [err, setErr] = useState("");
-	const [dlg, ask] = useConfirm();
-	const a = room.autonomy;
-	const save = async (method: "PUT" | "DELETE", json?: Record<string, string>) => {
-		setBusy(true);
-		setErr("");
-		try {
-			await api(`/api/rooms/${room.id}/autonomy`, { method, ...(json ? { json } : {}) });
-			await useStore.getState().loadRooms();
-			setOpen(false);
-		} catch (e) {
-			setErr(String(e));
-		} finally {
-			setBusy(false);
-		}
-	};
-	if (a) {
-		return (
-			<div className="pa-work-autonomy on" data-testid="work-autonomy">
-				<Flag className="pa-ic accent" />
-				<div className="min-w-0 flex-1">
-					<b>自主推进中：{a.goal}</b>
-					<small>完成标准：{a.doneCriteria}</small>
-				</div>
-				<button className="pa-btn sm ghost shrink-0" disabled={busy} data-testid="work-autonomy-end" onClick={async () => (await ask({ title: "结束自主推进？", body: "成员回到只在被 @ 时发言；已经在做的任务不受影响。", ok: "结束" })) && void save("DELETE")}>结束</button>
-				{dlg}
-			</div>
-		);
-	}
-	return (
-		<Fold icon={Flag} title="开启自主推进" desc="写清目标和完成标准：成员可以 @ 彼此协作，管理者在任务提交、卡住或定时检查时出来协调，只有需要你拍板的事才问你。" open={open} onToggle={() => setOpen(!open)} testId="work-autonomy-fold">
-			<div className="space-y-2 p-1">
-				<label className="pa-work-field"><span>目标</span><input className="pa-input" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="例如：这周交一份竞品报告" data-testid="work-autonomy-goal" /></label>
-				<label className="pa-work-field"><span>完成标准</span><textarea className="pa-input min-h-16" value={done} onChange={(e) => setDone(e.target.value)} placeholder="怎样检查算达成" data-testid="work-autonomy-done" /></label>
-				{err ? <p className="pa-work-error" role="alert">{err}</p> : null}
-				<div className="flex justify-end"><button className="pa-btn sm primary" disabled={busy || !goal.trim() || !done.trim()} onClick={() => void save("PUT", { goal, doneCriteria: done })} data-testid="work-autonomy-start">开始自主推进</button></div>
-			</div>
-		</Fold>
 	);
 }
 
@@ -243,7 +196,6 @@ export function WorkItemsButton({ room }: { room: Room }) {
 						/>
 					) : (
 						<>
-							<AutonomyBar room={room} />
 							<div className="pa-work-toolbar">
 								<div className="pa-work-filters" role="tablist" aria-label="按状态筛选">
 									{FILTERS.map((f) => (

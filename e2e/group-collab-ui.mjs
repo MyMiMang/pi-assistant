@@ -75,9 +75,11 @@ try {
 	assert.equal((await detail(stuck.item.id)).item.board, "stuck", "管理者没有把每个卡点都甩给用户");
 
 	console.log("[3] 看板四组 + 等你决定高亮置顶 + 390px");
+	await page.getByTestId("room-autonomy-chip").click();
+	await page.getByTestId("work-autonomy").getByText("本周交一份竞品报告").waitFor();
+	await page.keyboard.press("Escape");
 	await page.getByTestId("room-work-items").click();
 	await page.getByTestId("work-group-decision").waitFor();
-	await page.getByTestId("work-autonomy").getByText("本周交一份竞品报告").waitFor();
 	const order = await page.locator("[data-testid^=work-group-]").evaluateAll((els) => els.map((e) => e.getAttribute("data-testid")));
 	assert.deepEqual(order.slice(0, 3), ["work-group-decision", "work-group-stuck", "work-group-doing"]);
 	assert.equal(await page.getByTestId("work-closed").evaluate((e) => e.open), false, "已完成 / 已停止默认折叠");

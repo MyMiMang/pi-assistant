@@ -1,6 +1,6 @@
 import { setComposerDraft, useComposerDrafts } from "../composerDrafts";
 import { SubagentTasks } from "./Subagents";
-import { WorkItemsButton } from "./WorkItems";
+import { RoomWorkButtons } from "./Autonomy";
 import { ArrowUp, AtSign, Crown, Loader2, PanelRight, Plus, Settings2, Square, Trash2, Users } from "lucide-react";
 import { RoomCost } from "./Usage";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -169,7 +169,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					</small>
 				</div>
 				<div className="pa-head-actions">
-					<WorkItemsButton key={room.id} room={room} />
+					<RoomWorkButtons key={room.id} room={room} />
 					<SubagentTasks room={room.id} />
 					<button className="pa-chip" onClick={() => setSettings(true)} data-testid="room-settings-btn" title="群设置">
 						<Settings2 className="pa-ic" />

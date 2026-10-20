@@ -56,8 +56,8 @@ export default function Attachments({ items, mine }: { items: Attachment[]; mine
 								<em>{(f.name.split(".").pop() ?? "").slice(0, 4).toUpperCase()}</em>
 							</span>
 							<span className="pa-file-txt">
-								<b>{f.name}</b>
-								<small>{fmtSize(f.size)}{f.workspacePath ? ` · ${f.workspacePath}` : ""}</small>
+								<b title={f.name}>{f.name}</b>
+								<small title={f.workspacePath || undefined}>{fmtSize(f.size)}{f.workspacePath ? ` · ${f.workspacePath}` : ""}</small>
 							</span>
 						</button>
 						<button
