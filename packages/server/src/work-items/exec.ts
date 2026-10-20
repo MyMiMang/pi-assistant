@@ -33,7 +33,7 @@ import {
 	type WorkRunRow,
 	type WorkRunStatus,
 } from "./store.ts";
-import { escalate } from "./watch.ts";
+import { askNeed, escalate, HANDLE_HINT } from "./watch.ts";
 
 const runRow = (id: string) => db.prepare("SELECT * FROM work_item_runs WHERE id = ?").get(id) as WorkRunRow | undefined;
 
@@ -177,10 +177,14 @@ export function repeatOf(itemId: string, text: string): { fp: string; level: Esc
 	return { fp, level: repeatLevel(prev, fp) };
 }
 
-/** 卡住时：重复的按「反复卡在同一处」上报；第一次只是叫管理者来帮忙。 */
+/**
+ * 卡住时：原因是只有用户能给的东西（批准 / 登录凭据）就直接问用户要这个；
+ * 否则重复的按「反复卡在同一处」走阶梯（第 2 次第 1 级、第 3 次起升级）；第一次只是叫管理者自己处理。
+ */
 function stuck(item: WorkItemRow, what: string, rep: { level: EscalationLevel | null }) {
-	if (rep.level) void escalate(item.id, "repeat", rep.level, `反复卡在同一处：${what.slice(0, 160)}`);
-	else if (item.room_id) port()?.wakeManager(item.room_id, `${agentName(item.owner_agent_id)} 在任务「${item.title}」上卡住了：${what.slice(0, 200)}`, item.id);
+	if (askNeed(item.id, what)) return;
+	if (rep.level) escalate(item.id, "repeat", rep.level, `反复卡在同一处：${what.slice(0, 160)}`);
+	else if (item.room_id) port()?.wakeManager(item.room_id, `${agentName(item.owner_agent_id)} 在任务「${item.title}」上卡住了：${what.slice(0, 200)}。${HANDLE_HINT}`, item.id);
 }
 
 /** 一次执行结束（成功 / 失败 / 取消）：只记录执行，绝不自动把任务标成完成或待核验。 */

@@ -10,7 +10,7 @@ import { roundAllows } from "./correction.ts";
 import { reportProgress, submitWorkItem } from "./exec.ts";
 import { currentSource } from "./ports.ts";
 import { emit, isManager, itemRow, listWorkItems, WORK_STATUSES, type WorkActor, type WorkStatus } from "./store.ts";
-import { askUserDecision } from "./watch.ts";
+import { askUserDecision, EXHAUSTED_MARK, SWITCH_HINT } from "./watch.ts";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
 const errText = (e: unknown) => text(e instanceof Error ? e.message : String(e));
@@ -89,6 +89,10 @@ export function workItemTools(roomId: string, agentId: string) {
 				try {
 					const r = await verifyWorkItem({ workItemId: p.workItemId, actor, verdict: p.verdict, note: p.note });
 					emit(roomId);
+					if (p.verdict === "return" && r.item.status === "blocked") {
+						const exhausted = r.item.blocker?.startsWith(EXHAUSTED_MARK);
+						return text(`已退回：${r.item.title}。${exhausted ? `这个任务${EXHAUSTED_MARK}：请你在群里跟用户说清楚问题是什么、需要用户帮什么或哪个决定你无权拍板。` : `这个任务已反复退回，任务标为受阻，没有再自动重做。${SWITCH_HINT}`}`);
+					}
 					return text(`已${p.verdict === "pass" ? "核验通过，任务完成" : "退回修改，任务保持进行中"}：${r.item.title}`);
 				} catch (e) {
 					return errText(e);
@@ -133,7 +137,7 @@ export function workItemTools(roomId: string, agentId: string) {
 		pi.registerTool({
 			name: "work_ask_user",
 			label: "请用户决定",
-			description: "（管理者）只在需要用户拍板时用：方向 / 取舍 / 授权 / 反复卡住换不换方法。任务进入「等你决定」，用户会收到提问卡片和推送；能自己判断的不要问。给 2–4 个具体选项。",
+			description: "（管理者）大部分决定按群目标自己分析、自己推进，不要问。只在两种情况用：需要用户才能给的帮助（批准 / 授权、登录凭据、只有用户有的资源），或者决定超出了群目标、你无权拍板。卡住、反复退回由你自己换方法或改派。任务进入「等你决定」，用户会收到提问卡片和推送。问的时候说清问题是什么、需要用户做什么，给 2–4 个具体选项。",
 			parameters: Type.Object({
 				workItemId: Type.String({ description: "任务编号" }),
 				question: Type.String({ description: "要用户决定的一件事（一句话）" }),

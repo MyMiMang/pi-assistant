@@ -209,7 +209,7 @@ export function WorkDetailPane({ room, id, detail, error, onBack, onChanged, onS
 			</div>
 			{err && !editing ? <p className="pa-work-error" role="alert" data-testid="work-action-error">{err}</p> : null}
 			{it.needsUser ? <section className="pa-work-block"><h4>等你决定</h4><DecisionBox item={it} onDone={onChanged} /></section> : null}
-			{it.escalation && !it.needsUser ? <p className="pa-work-warn" data-testid="work-escalation"><AlertTriangle className="pa-ic" />{it.escalation.note}（已请{it.escalation.level === "manager" ? "管理者" : "你"}处理）</p> : null}
+			{it.escalation && !it.needsUser ? <p className="pa-work-warn" data-testid="work-escalation"><AlertTriangle className="pa-ic" />{it.escalation.note}（{it.escalation.level === "manager" ? "已请管理者处理" : "已向你报告"}）</p> : null}
 			<section className="pa-work-block"><h4>要做成什么</h4><p>{it.requirement || "（没有写）"}</p></section>
 			<section className="pa-work-block"><h4>完成标准</h4><p>{it.doneCriteria || "（没有写）"}</p></section>
 			<section className="pa-work-block"><h4>最近进度</h4><p>{it.latestProgress || "暂无"}</p>{it.blocker ? <p className="pa-work-warn"><AlertTriangle className="pa-ic" />受阻：{it.blocker}</p> : null}</section>

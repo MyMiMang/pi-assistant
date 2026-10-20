@@ -14,7 +14,7 @@ test("指纹：忽略数字 / 路径 / 编号 / 标点；太短的泛泛说法�
 	assert.equal(S.repeatLevel(["abcd"], ""), null);
 });
 
-test("卡住检测：超时先管理者，管理者介入后仍没动静再用户；有新动静重新计时", () => {
+test("卡住检测：超时先叫管理者，管理者介入后仍没动静升下一级；有新动静重新计时", () => {
 	const base = { active: true, needsUser: false, stallMs: 100 };
 	assert.equal(S.stallStep({ ...base, lastActivityAt: 0, escalation: null, now: 50 }), null);
 	assert.equal(S.stallStep({ ...base, lastActivityAt: 0, escalation: null, now: 100 }), "manager");
@@ -22,9 +22,21 @@ test("卡住检测：超时先管理者，管理者介入后仍没动静再用�
 	assert.equal(S.stallStep({ ...base, lastActivityAt: 0, escalation: esc, now: 150 }), null, "刚叫过管理者，等它处理");
 	assert.equal(S.stallStep({ ...base, lastActivityAt: 0, escalation: esc, now: 200 }), "user");
 	assert.equal(S.stallStep({ ...base, lastActivityAt: 180, escalation: esc, now: 200 }), null, "管理者之后有动静：重新计时");
-	assert.equal(S.stallStep({ ...base, lastActivityAt: 0, escalation: { ...esc, level: "user" }, now: 999 }), null, "已经问过用户不重复");
+	assert.equal(S.stallStep({ ...base, lastActivityAt: 0, escalation: { ...esc, level: "user" }, now: 999 }), null, "已经向用户报告（办法用尽）不重复");
 	assert.equal(S.stallStep({ ...base, active: false, lastActivityAt: 0, escalation: null, now: 999 }), null);
 	assert.equal(S.stallStep({ ...base, needsUser: true, lastActivityAt: 0, escalation: null, now: 999 }), null);
+});
+
+test("阶梯级数：manager = 第 1 级；user 在已有上报上升一级；最后提醒每个任务只给一次，给过就直接已用尽办法", () => {
+	const esc = (rung?: 1 | 2 | 3) => ({ kind: "stall" as const, level: "manager" as const, at: 1, note: "", rung });
+	assert.equal(S.nextRung({ level: "manager", escalation: null, finalWarned: false }), 1);
+	assert.equal(S.nextRung({ level: "manager", escalation: null, finalWarned: true }), 1, "给过最后提醒后，新一轮卡住仍从叫管理者开始");
+	assert.equal(S.nextRung({ level: "user", escalation: null, finalWarned: false }), 2, "同一处第 3 次：没有旧上报也是最后提醒");
+	assert.equal(S.nextRung({ level: "user", escalation: esc(1), finalWarned: false }), 2);
+	assert.equal(S.nextRung({ level: "user", escalation: esc(), finalWarned: false }), 2, "旧数据没有 rung，按第 1 级算");
+	assert.equal(S.nextRung({ level: "user", escalation: esc(2), finalWarned: true }), 3);
+	assert.equal(S.nextRung({ level: "user", escalation: esc(1), finalWarned: true }), 3, "最后提醒只给一次：换人 / 有进展之后再撞到第 2 级直接用尽");
+	assert.equal(S.nextRung({ level: "user", escalation: esc(3), finalWarned: true }), 3, "有界：不会超过第 3 级");
 });
 
 test("只聊不干活：到阈值先管理者，两倍阈值再用户；有进展清零", () => {

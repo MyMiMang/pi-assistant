@@ -28,7 +28,7 @@ import {
 	type WorkItemRow,
 	type WorkRunRow,
 } from "./store.ts";
-import { answerDecision, askUserDecision, escalate } from "./watch.ts";
+import { answerDecision, escalate, EXHAUSTED_MARK, REPORT_HINT, SWITCH_HINT } from "./watch.ts";
 
 export interface CreateWorkItemInput {
 	roomId: string;
@@ -53,10 +53,15 @@ function launch(item: WorkItemRow, run: WorkRunRow, rethrow = false) {
 	}
 }
 
-/** 反复重做仍不通过：不再让管理者自己接着重派，放进「等你决定」（不是费用 / 次数上限，只是卡在同一处）。 */
+/**
+ * 反复重做仍不通过：管理者不能再原样重派，也不去问用户（不是费用 / 次数上限，只是卡在同一处）。
+ * 第一次给「最后提醒」（报错里写清怎么换做法）；给过之后同一个任务再撞到就标「已用尽办法」向用户报告失败总结。
+ * 换人（改派给不同成员）会让新负责人有完整的重做次数，但最后提醒不会再给第二次。
+ */
 function retryLimitReached(row: WorkItemRow): never {
-	if (!row.needs_user) void askUserDecision(row.id, { question: `任务「${row.title}」已经重做 ${MAX_AUTO_RETRIES} 次仍未通过，下一步怎么办？`, options: ["换个方法继续", "改派给其他成员", "先暂停这个任务"], reason: "反复卡在同一处" }).catch(() => {});
-	fail(`这个任务已经反复重做 ${MAX_AUTO_RETRIES} 次，已放进「等你决定」请用户定下一步`, "retry_limit");
+	const rung = escalate(row.id, "retry", "user", `已经重做 ${MAX_AUTO_RETRIES} 次仍未通过`, { wake: false });
+	if (rung === null) fail("这个任务正在等用户决定，先不要再派活", "retry_limit");
+	fail(rung === 3 ? `这个任务${EXHAUSTED_MARK}（已重做 ${MAX_AUTO_RETRIES} 次仍未通过，最后提醒后仍没换做法）。${REPORT_HINT}` : `这个任务已经反复重做 ${MAX_AUTO_RETRIES} 次仍未通过，${SWITCH_HINT}`, "retry_limit");
 }
 
 export function createWorkItem(input: CreateWorkItemInput, actor: WorkActor) {
@@ -144,13 +149,14 @@ export async function verifyWorkItem(o: { workItemId: string; actor: WorkActor; 
 		db.prepare("UPDATE work_items SET status = 'blocked', latest_progress = ?, blocker = ?, updated_at = ? WHERE id = ? AND revision = ?").run("退回后负责人已不在群里，待改派", "负责人不可用", now(), fresh.id, fresh.revision);
 		roomNotice(fresh.room_id, `任务「${fresh.title}」退回后负责人不在群里，已标为待改派。`, fresh.id);
 	} else if (fresh.auto_retries >= MAX_AUTO_RETRIES || rep.level === "user") {
-		db.prepare("UPDATE work_items SET status = 'blocked', latest_progress = ?, blocker = ?, updated_at = ? WHERE id = ? AND revision = ?").run(`已重做 ${fresh.auto_retries} 次仍在退回，先停下等你决定`, "反复卡在同一处", now(), fresh.id, fresh.revision);
-		await askUserDecision(fresh.id, { question: `任务「${fresh.title}」反复退回仍未通过（最近：${note.slice(0, 120)}），下一步怎么办？`, options: ["换个方法继续", "改派给其他成员", "先暂停这个任务"], reason: "反复卡在同一处" });
+		// 反复退回：不再原样重做，也不问用户——管理者换做法（最后提醒，唤醒只在用户核验时需要；管理者自己核验的结果直接在工具返回里）；给过之后再撞就是已用尽办法
+		const rung = escalate(fresh.id, "retry", "user", `反复退回仍未通过（最近：${note.slice(0, 120)}）`, { wake: o.actor.kind === "user" });
+		if (rung !== 3) db.prepare("UPDATE work_items SET status = 'blocked', latest_progress = ?, blocker = ?, updated_at = ? WHERE id = ? AND revision = ?").run(`已重做 ${fresh.auto_retries} 次仍在退回，原样重做已停用`, "原样重做已停用，等管理者换做法（改派 / 拆小 / 自己接手）", now(), fresh.id, fresh.revision);
 	} else {
 		db.prepare("UPDATE work_items SET auto_retries = auto_retries + 1, updated_at = ? WHERE id = ? AND revision = ?").run(now(), fresh.id, fresh.revision);
 		event(fresh.id, "auto_retry", o.actor, fresh.revision, { retry: fresh.auto_retries + 1 });
 		launch(itemRow(fresh.id)!, createRun(fresh, fresh.owner_agent_id!, { task: workPrompt(fresh) }));
-		if (rep.level === "manager" && o.actor.kind === "user") void escalate(fresh.id, "repeat", "manager", `又因同样的问题被退回：${note.slice(0, 120)}`);
+		if (rep.level === "manager" && o.actor.kind === "user") escalate(fresh.id, "repeat", "manager", `又因同样的问题被退回：${note.slice(0, 120)}`);
 	}
 	emit(row.room_id);
 	return getWorkItemDetail(row.id);
@@ -185,7 +191,9 @@ export function editWorkItem(o: { workItemId: string; actor: WorkActor; title?: 
 		owner = o.ownerAgentId;
 		revision++;
 		const status = owner ? (row.status === "pending" ? "pending" : "active") : "pending";
+		// 改派 = 换做法：新负责人有完整的重做次数；但「最后提醒」每个任务只给一次（按事件算，见 watch.ts），换人后再撞到就是已用尽办法
 		fields.push("owner_agent_id = ?", "revision = ?", "status = ?", "latest_progress = ?", "blocker = NULL");
+		if (owner) fields.push("auto_retries = 0");
 		args.push(owner, revision, status, owner ? `已改派给 ${agentName(owner)}，等待新的执行` : "已取消负责人，等待重新安排");
 	}
 	if (fields.length === 0) return getWorkItemDetail(row.id);

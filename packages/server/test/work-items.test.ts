@@ -1,81 +1,7 @@
-import "./setup.ts";
+import "./work-items-harness.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { memoryCredentialStore } from "./in-memory-credentials.ts";
-
-/**
- * 长期任务（任务责任）与单次执行分离的定向测试。
- *
- * 边界：只读写本进程临时数据目录（test/setup.ts 强制），不起模型 / 浏览器 / 付费调用。
- * 执行是负责人在自己的隐藏任务会话上派的帮手（work-items/exec.ts → spawnSubagent kind=work）：这里装一个可控的帮手 driver——
- * 帮手的执行挂起等测试决定怎么结束（完成 / 出错 / 被停）；群会话的回合（管理者被唤醒）用假的 AgentRuntime.turn 立即结束并记下来。
- */
-process.env.PIA_MOCK = "1";
-const { db, now } = await import("../src/db.ts");
-const { initModels } = await import("../src/models.ts");
-await initModels(memoryCredentialStore()); // 只用内存凭据：帮手按 mock 模型登记，不调用任何真实模型
-const R = await import("../src/runtime.ts");
-const S = await import("../src/subagents.ts");
-const rooms = await import("../src/rooms/index.ts");
-const W = await import("../src/work-items.ts");
-const { requests } = await import("../src/requests.ts");
-const { roomOfConversation } = await import("../src/messages.ts");
-
-type Res = { ok: boolean; aborted: boolean; error?: string; text: string; tokens: number };
-type Call = { agentId: string; conv: string; prompt: string; helperId?: string; finish: (r?: Partial<Res>) => void; done: boolean };
-const calls: Call[] = [];
-const proto = Object.getPrototypeOf(R.runtime("wm", "conv_probe")) as Record<string, unknown>;
-proto.turn = function (this: { id: string; conversationId: string }, prompt: string) {
-	calls.push({ agentId: this.id, conv: this.conversationId, prompt, done: true, finish: () => {} });
-	return Promise.resolve<Res>({ ok: true, aborted: false, text: "", tokens: 0 }); // 群会话：管理者被唤醒的回合直接结束
-};
-proto.modelFor = () => ({ provider: "mock", id: "echo" });
-S.setSubagentDriver({
-	run: (r, connect, input) => new Promise<string>((resolve, reject) => {
-		const c: Call = { agentId: r.agent_id, conv: r.conversation_id, prompt: input?.text ?? r.task, helperId: r.id, done: false, finish: (x = {}) => {
-			if (c.done) return;
-			c.done = true;
-			if (x.error) reject(new Error(x.error));
-			else resolve(x.text ?? "");
-		} };
-		calls.push(c);
-		connect(async () => c.finish({ aborted: true }), async () => {});
-	}),
-	notify: async () => {},
-});
-
-const settle = async () => {
-	for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
-};
-const mkAgent = (id: string, name: string) => db.prepare("INSERT INTO agents(id, name, avatar, color, created_at) VALUES(?,?,?,?,?)").run(id, name, "A", "#111", now());
-mkAgent("wm", "经理");
-mkAgent("wa", "甲");
-mkAgent("wb", "乙");
-mkAgent("wc", "丙");
-
-const room = rooms.createRoom({ name: "长期任务群", memberIds: ["wm", "wa", "wb"], managerId: "wm" });
-const otherRoom = rooms.createRoom({ name: "另一个群", memberIds: ["wm", "wc"], managerId: "wm" });
-type Actor = { kind: "user" } | { kind: "agent"; agentId: string; roomId?: string };
-const user: Actor = { kind: "user" };
-const mgr: Actor = { kind: "agent", agentId: "wm", roomId: room.id };
-const a: Actor = { kind: "agent", agentId: "wa" };
-const b: Actor = { kind: "agent", agentId: "wb" };
-
-function makeItem(owner = "wa", start = false, roomId = room.id) {
-	return W.createWorkItem({ roomId, title: `任务${Math.random().toString(36).slice(2, 6)}`, requirement: "写一份可检查的结果", doneCriteria: "结果里能看到检查点", ownerAgentId: owner, start }, user).item.id;
-}
-const row = (id: string) => W.getWorkItemDetail(id).item;
-const runRows = (itemId: string) => db.prepare("SELECT * FROM work_item_runs WHERE work_item_id = ? ORDER BY created_at, rowid").all(itemId) as unknown as { id: string; revision: number; status: string; result: string | null; submitted_at: number | null; exec_kind: string }[];
-const lastExec = (itemId: string) => [...calls].reverse().find((c) => W.execOf(c.conv)?.work_item_id === itemId);
-const wakes = (roomId: string) => (db.prepare("SELECT COUNT(*) AS n FROM room_turns WHERE room_id = ? AND reason = 'check'").get(roomId) as { n: number }).n;
-const checkPrompts = () => calls.filter((c) => /任务看板有变化/.test(c.prompt)).map((c) => c.prompt);
-async function started(itemId: string) {
-	await settle();
-	const c = lastExec(itemId);
-	assert.ok(c && !c.done, "执行已经在负责人的任务会话里开始");
-	return c!;
-}
-const submit = (c: Call, p: { result?: string; blocker?: string }, actor: Actor = { kind: "agent", agentId: c.agentId }) => W.submitWorkItem({ workItemId: W.execOf(c.conv)!.work_item_id, conversationId: c.conv, actor, ...p });
+import { W, calls, db, mgr, otherRoom, room, roomOfConversation, requests, rooms, row, runRows, S, settle, started, submit, user, a, b, checkPrompts, lastExec, makeItem, wakes } from "./work-items-harness.ts";
 
 test("创建只记责任不偷偷调用模型；来源消息必须真实属于本群用户消息", () => {
 	const before = calls.length;
@@ -166,95 +92,28 @@ test("退回修改推进修订并自动安排下一次执行；改派后旧执�
 	assert.equal(c3.done, true, "取消会中止它的任务会话");
 });
 
-test("反复退回仍不通过：不再自动重做，放进「等你决定」，管理者不能自己再派；用户决定后交回管理者", async () => {
+test("管理者主动 work_ask_user 仍进「等你决定」：群里一张提问卡片，用户回答后清掉、交回管理者", async () => {
 	const id = makeItem("wa", true);
-	const notes = ["缺检查点", "来源链接不对", "格式不统一", "第三节漏了图表"];
-	for (let i = 0; i < 4; i++) {
-		const c = await started(id);
-		submit(c, { result: `第 ${i + 1} 版` });
-		c.finish();
-		await settle();
-		await W.verifyWorkItem({ workItemId: id, actor: mgr, verdict: "return", note: notes[i] });
-	}
-	await settle();
+	await started(id);
+	const defs = new Map<string, { execute: (id: string, p: Record<string, unknown>) => Promise<{ content: { text: string }[] }> }>();
+	W.workItemTools(room.id, "wm")({ registerTool: (d: unknown) => defs.set((d as { name: string }).name, d as never) });
+	assert.match((await defs.get("work_ask_user")!.execute("t", { workItemId: id, question: "先用公开数据还是等你开账号？", options: ["先用公开数据", "等我开账号"], reason: "成员没有报表权限" })).content[0].text, /等你决定/);
 	const d = row(id);
-	assert.equal(d.status, "blocked");
 	assert.equal(d.board, "decision");
 	assert.equal(d.boardLabel, "等你决定");
 	assert.ok(d.needsUser?.requestId, "管理者在群里发了提问卡片");
 	const req = db.prepare("SELECT status, room_id, kind FROM requests WHERE id = ?").get(d.needsUser!.requestId!) as { status: string; room_id: string; kind: string };
 	assert.deepEqual([req.status, req.room_id, req.kind], ["pending", room.id, "question"]);
-	assert.equal(runRows(id).filter((r) => r.status === "running").length, 0, "没有偷偷再跑");
-	await assert.rejects(() => W.continueWorkItem({ workItemId: id, actor: mgr }), /等你决定/);
 	// 用户在看板上回答：清掉等待、重置计数，并把决定作为用户消息交给管理者
-	await W.userAction(id, "decide", { answer: "换个方法继续" });
+	await W.userAction(id, "decide", { answer: "先用公开数据" });
 	const after = row(id);
 	assert.equal(after.needsUser, null);
 	assert.equal(after.autoRetries, 0);
 	assert.equal((db.prepare("SELECT status FROM requests WHERE id = ?").get(d.needsUser!.requestId!) as { status: string }).status, "answered", "群里那张卡片一起收掉");
 	const msg = db.prepare("SELECT content, meta FROM messages WHERE room_id = ? AND role = 'user' ORDER BY rowid DESC LIMIT 1").get(room.id) as { content: string; meta: string };
-	assert.match(msg.content, /我的决定：换个方法继续/);
+	assert.match(msg.content, /我的决定：先用公开数据/);
 	assert.equal(JSON.parse(msg.meta).workItemId, id);
 	await assert.rejects(() => W.userAction(id, "decide", { answer: "再答一次" }), /不需要你决定/);
-	await W.cancelWorkItem({ workItemId: id, actor: user });
-});
-
-test("同样的退回理由出现第三次：算反复卡在同一处，直接请用户决定", async () => {
-	const id = makeItem("wa", true);
-	for (let i = 0; i < 3; i++) {
-		const c = await started(id);
-		submit(c, { result: `第 ${i + 1} 版` });
-		c.finish();
-		await settle();
-		await W.verifyWorkItem({ workItemId: id, actor: mgr, verdict: "return", note: `第 ${i + 1} 次：还是缺第 3 行检查点` });
-	}
-	await settle();
-	assert.equal(row(id).board, "decision");
-	assert.match(row(id).needsUser?.question ?? "", /反复退回/);
-	await W.cancelWorkItem({ workItemId: id, actor: user });
-});
-
-test("执行失败：明确受阻并叫管理者；同样的失败反复出现 → 先上报管理者，再请用户决定", async () => {
-	const id = makeItem("wa", true);
-	const fails = async () => {
-		const c = await started(id);
-		c.finish({ error: "连接 api.example.com 超时（第 3 次）" });
-		await settle();
-	};
-	const w0 = wakes(room.id);
-	await fails();
-	assert.equal(row(id).status, "blocked");
-	assert.equal(row(id).board, "stuck");
-	assert.ok(wakes(room.id) > w0);
-	assert.ok(db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND role = 'system' AND content LIKE '%这次执行失败了%'").get(room.id));
-	await W.continueWorkItem({ workItemId: id, actor: user });
-	await fails();
-	assert.equal(row(id).escalation?.kind, "repeat");
-	assert.equal(row(id).escalation?.level, "manager");
-	await W.continueWorkItem({ workItemId: id, actor: user });
-	await fails();
-	await settle();
-	assert.equal(row(id).board, "decision", "第三次同样卡住 → 等你决定");
-	await W.cancelWorkItem({ workItemId: id, actor: user });
-});
-
-test("卡住没进展：超时先上报管理者，仍没动静再问用户；汇报进展清掉上报", async () => {
-	const id = makeItem("wa", true);
-	const c = await started(id);
-	const t0 = now();
-	assert.equal(await W.checkStalls(t0 + 1000, 60_000), 0, "没到时间不打扰");
-	const n1 = await W.checkStalls(t0 + 61_000, 60_000);
-	assert.ok(n1 >= 1);
-	assert.equal(row(id).escalation?.kind, "stall");
-	assert.equal(row(id).board, "stuck");
-	W.reportProgress({ workItemId: id, conversationId: c.conv, actor: a, note: "数据拉完了，开始写" });
-	assert.equal(row(id).escalation, null, "有进展就清掉上报");
-	assert.equal(row(id).latestProgress, "数据拉完了，开始写");
-	const t1 = now();
-	await W.checkStalls(t1 + 61_000, 60_000);
-	await W.checkStalls(t1 + 122_000, 60_000);
-	await settle();
-	assert.equal(row(id).board, "decision", "管理者介入后仍没进展 → 问用户");
 	await W.cancelWorkItem({ workItemId: id, actor: user });
 });
 
