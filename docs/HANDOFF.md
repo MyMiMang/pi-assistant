@@ -5,7 +5,7 @@
 ## 当前版本（2026-10-20）
 - 公开版：**v0.1.0-beta.35**（Latest，2026-10-20 19:04 北京时间）。五平台构建、Mac/Windows 安装冒烟通过，13 项资产和 latest.json（darwin-aarch64 / darwin-x86_64 / windows-x86_64）已核对。说明见 [release-notes/v0.1.0-beta.35.md](release-notes/v0.1.0-beta.35.md)；上一版 beta.34（同日 08:20）。
 - 发布小坑：Intel Mac 那一路偶尔在上传时和别的平台并发撞车（`Not Found - delete-a-release-asset`），构建本身成功；`gh run rerun <id> --failed` 只重跑这一路即可（beta.34 遇到过，beta.35 没遇到）。
-- main 上 beta.35 之后没有未打包的改动。
+- beta.35 之后未打包：群聊去掉每轮 token 预算、暂停不挡唤醒、自主推进开关放到群聊顶部并且开着时导演会接着推进（兜底叫醒有界）、派活附件真的放进负责人工作区、文件卡片和任务提交卡片样式（[决策 0017](decisions/0017-room-no-token-budget-autonomy.md)）。
 
 ## 正在做
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
@@ -29,11 +29,12 @@
 **还要做**
 1. 模型对用户也说「帮手」已按用户决定做完（决策 0014 补充）：给模型看的文字全改，事件标记新旧都认；Mock 的假台词和触发词（「派个子代理」「子代理回报」）没改，e2e 依赖它们。
 2. 测试不再碰 Mac 钥匙串：直接启动 `src/main.ts` 的 13 个 e2e、`server-setup.test.ts` 和 3 个 smoke 改走 `test/launch-memory.ts`（之前在 Mac 上会用真实 App 的钥匙串主密钥，曾差点用 `-U` 覆盖，已拦下，条目未改）。待做：规范检查加一条「测试禁止直接启动 src/main.ts」；主密钥读不到时停下、不覆盖已按用户决定做完（[0015](decisions/0015-master-key-never-overwrite.md)；单测 + 假 `security` 实启 `main.ts` 演练过，真机 Mac / Windows 未验证）；单测 `setup.ts` 在 PATH 上放假的 `security`。
-2b. 原来就失败的 e2e：`subagent-composer-navigation.mjs` 已修（只取档位刻度，Fast 开关不是档位）；`send-shortcut-ui.mjs` 第 3 步偶发等不到主会话发送键，复跑两次都过，原因未查明；`file-preview.mjs` 手机 390 宽时预览框量到 388.8（像进场动画没走完），待查。
+2b. 原来就失败的 e2e：`subagent-composer-navigation.mjs` 已修（只取档位刻度，Fast 开关不是档位）；`send-shortcut-ui.mjs` 第 3 步偶发等不到主会话发送键，复跑两次都过，原因未查明；`file-preview.mjs` 手机 390 宽时预览框量到 388.8（像进场动画没走完），待查。`voice-input-ui.mjs`「配置 ASR：录音 → 停止」偶发等不到停止键（2026-10-20 子代理连跑两次失败，主会话在同一份代码上连跑两次都过，改动前也过，判为时机偶发）；`run.mjs`「首次运行向导」在 Mac 上等不到密码输入框，还没在改动前的代码上对照，待查。
 3. 拖文件到聊天框：`main.rs` 那一行没在本地编译过（Mac 没装 Rust，CI 不编译桌面程序），下次打包时 release 构建才会编译；装好新版后要在 Mac / Windows 上真拖一次确认。
 4. 群任务卡住 / 反复退回改由管理者自己处理已按用户决定做完（[0016](decisions/0016-group-stuck-manager-handles.md)，已发布 beta.35）；真实模型下管理者会不会按规则换做法、向用户说明得清不清楚，待真机。
 5. 群里帮手查看方式已按用户决定改完：没有开关，别的成员列表只看概况、点名查看完整过程（决策 0014 补充）。
-6. 没在真机验证过：Web Push（真手机）、真实模型下的帮手嵌套 / 角色范围效果、Mac 上的整套行为。
+6. 群成员每次调用读入 20–37 万 token（2026-10-20 只读查看用户真实数据：导演当天 213 次调用、平均 23.5 万，靠缓存命中压着花费），会话历史越攒越长，要单独查清给方案；那个群里两个分镜任务的负责人都是导演自己，没交给「分镜」成员，原因待看；同一次派活在 work_item_runs 里出现 3 条相同 run（服务端子代理在测试里看到），待查。
+7. 没在真机验证过：Web Push（真手机）、真实模型下的帮手嵌套 / 角色范围效果、Mac 上的整套行为。
 
 **规矩（必须遵守）**
 - 只在用户说「打包」时打包 / 发版；绝不在用户的 Mac 上安装或重启任何东西（只读）。
