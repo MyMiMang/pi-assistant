@@ -6,7 +6,7 @@
 - 公开版：**v0.1.0-beta.34**（Latest，2026-10-20 08:20 北京时间）。五平台构建、Mac/Windows 安装冒烟通过，13 项资产和 latest.json（darwin-aarch64 / darwin-x86_64 / windows-x86_64）已核对。说明见 [release-notes/v0.1.0-beta.34.md](release-notes/v0.1.0-beta.34.md)。
 - 这次 Intel Mac 那一路第一次失败在上传：tauri-action 删旧资产时和别的平台并发撞车（`Not Found - delete-a-release-asset`），构建本身成功；`gh run rerun <id> --failed` 只重跑这一路后全部通过。以后再遇到同样报错先重跑。
 - beta.33（2026-10-19 04:07）之前已发布；之前这里写的「公开版 beta.32」是过时的。
-- main 上 beta.34 之后没有未打包的改动。
+- beta.34 之后未打包：群任务卡住由管理者自己处理（决策 0016）。
 
 ## 正在做
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
@@ -32,7 +32,7 @@
 2. 测试不再碰 Mac 钥匙串：直接启动 `src/main.ts` 的 13 个 e2e、`server-setup.test.ts` 和 3 个 smoke 改走 `test/launch-memory.ts`（之前在 Mac 上会用真实 App 的钥匙串主密钥，曾差点用 `-U` 覆盖，已拦下，条目未改）。待做：规范检查加一条「测试禁止直接启动 src/main.ts」；主密钥读不到时停下、不覆盖已按用户决定做完（[0015](decisions/0015-master-key-never-overwrite.md)；单测 + 假 `security` 实启 `main.ts` 演练过，真机 Mac / Windows 未验证）；单测 `setup.ts` 在 PATH 上放假的 `security`。
 2b. 原来就失败的 e2e：`subagent-composer-navigation.mjs` 已修（只取档位刻度，Fast 开关不是档位）；`send-shortcut-ui.mjs` 第 3 步偶发等不到主会话发送键，复跑两次都过，原因未查明；`file-preview.mjs` 手机 390 宽时预览框量到 388.8（像进场动画没走完），待查。
 3. 拖文件到聊天框：`main.rs` 那一行没在本地编译过（Mac 没装 Rust，CI 不编译桌面程序），下次打包时 release 构建才会编译；装好新版后要在 Mac / Windows 上真拖一次确认。
-4. 待用户决定：群看板「等你决定」仍会在反复退回 / 长时间没进展时问用户「换个方法 / 改派 / 暂停」，和第 3 步「只为用户才能给的东西找用户」的原则不一致，要不要改由用户定。
+4. 群任务卡住 / 反复退回改由管理者自己处理已按用户决定做完（[0016](decisions/0016-group-stuck-manager-handles.md)，未打包）；真实模型下管理者会不会按规则换做法、向用户说明得清不清楚，待真机。
 5. 群里帮手查看方式已按用户决定改完：没有开关，别的成员列表只看概况、点名查看完整过程（决策 0014 补充）。
 6. 没在真机验证过：Web Push（真手机）、真实模型下的帮手嵌套 / 角色范围效果、Mac 上的整套行为。
 
