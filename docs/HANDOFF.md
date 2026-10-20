@@ -3,9 +3,9 @@
 只写**当前状态**，保持一屏到两屏。历史进度在 [history/HANDOFF-2026-10-18.md](history/HANDOFF-2026-10-18.md)，不要再往这里追加长段落。
 
 ## 当前版本（2026-10-20）
-- 公开版：**v0.1.0-beta.35**（Latest，2026-10-20 19:04 北京时间）。五平台构建、Mac/Windows 安装冒烟通过，13 项资产和 latest.json（darwin-aarch64 / darwin-x86_64 / windows-x86_64）已核对。说明见 [release-notes/v0.1.0-beta.35.md](release-notes/v0.1.0-beta.35.md)；上一版 beta.34（同日 08:20）。
+- 公开版：**v0.1.0-beta.36**（Latest，2026-10-21 00:09 北京时间）。五平台构建、Mac/Windows 安装冒烟一次通过，13 项资产和 latest.json 已核对。说明见 [release-notes/v0.1.0-beta.36.md](release-notes/v0.1.0-beta.36.md)；之前 beta.35（10-20 19:04）、beta.34（10-20 08:20）。
 - 发布小坑：Intel Mac 那一路偶尔在上传时和别的平台并发撞车（`Not Found - delete-a-release-asset`），构建本身成功；`gh run rerun <id> --failed` 只重跑这一路即可（beta.34 遇到过，beta.35 没遇到）。
-- beta.35 之后未打包：群聊去掉每轮 token 预算、暂停不挡唤醒、自主推进开关放到群聊顶部并且开着时导演会接着推进（兜底叫醒有界）、派活附件真的放进负责人工作区、文件卡片和任务提交卡片样式（[决策 0017](decisions/0017-room-no-token-budget-autonomy.md)）。
+- main 上 beta.36 之后没有未打包的改动（群聊自主推进、去掉每轮 token 预算等已随 beta.36 发布，见决策 0017）。
 
 ## 正在做
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
