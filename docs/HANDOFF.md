@@ -2,9 +2,11 @@
 
 只写**当前状态**，保持一屏到两屏。历史进度在 [history/HANDOFF-2026-10-18.md](history/HANDOFF-2026-10-18.md)，不要再往这里追加长段落。
 
-## 当前版本（2026-10-19）
-- 公开版：**v0.1.0-beta.32**（Latest）。main 上之后的改动均**未打包**。
-- 未打包改动：助理/群成员详情经典布局与八页改造；输入框下去掉权限和主动程度按钮；设置页按界面标准改造；中转服务详情单列（按模型自动识别协议）；群成员改名即时刷新；代码清理（http.ts 拆到 routes/*、删 Laya 废代码）；项目规范化（AGENTS.md / MODULES.md / decisions / `npm run check`）；任务类机制合并（后台 / 定时 / 巡检 / 群任务执行都跑在帮手上，界面上「子代理」改叫「帮手」，旧 `/api/tasks` 接口下线）；桌面 App 里文件可以直接拖到聊天框（主窗口 `disable_drag_drop_handler`）。
+## 当前版本（2026-10-20）
+- 公开版：**v0.1.0-beta.34**（Latest，2026-10-20 08:20 北京时间）。五平台构建、Mac/Windows 安装冒烟通过，13 项资产和 latest.json（darwin-aarch64 / darwin-x86_64 / windows-x86_64）已核对。说明见 [release-notes/v0.1.0-beta.34.md](release-notes/v0.1.0-beta.34.md)。
+- 这次 Intel Mac 那一路第一次失败在上传：tauri-action 删旧资产时和别的平台并发撞车（`Not Found - delete-a-release-asset`），构建本身成功；`gh run rerun <id> --failed` 只重跑这一路后全部通过。以后再遇到同样报错先重跑。
+- beta.33（2026-10-19 04:07）之前已发布；之前这里写的「公开版 beta.32」是过时的。
+- main 上 beta.34 之后没有未打包的改动。
 
 ## 正在做
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
