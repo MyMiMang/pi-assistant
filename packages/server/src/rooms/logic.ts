@@ -2,7 +2,7 @@
  * 助理群聊的纯逻辑（不碰数据库/模型，便于单测）：
  *  - @ 解析（中文名、无空格、重名、@所有人）
  *  - 发言规则（用户 @ 谁谁说；没 @ = 只有管理者说；普通成员 @ 别人不触发）
- *  - 每轮上限（总发言数、管理者派活深度、每人次数、token 预算）
+ *  - 每轮上限（总发言数、管理者派活深度、每人次数；不设 token 预算：缓存命中的读取量会让它几乎每轮都撞线）
  *  - 增量注入：把群里“这个成员还没看过”的消息整理成一段文字
  */
 
@@ -60,21 +60,34 @@ export interface RoomCaps {
 	maxDepth: number;
 	/** 每个助理每轮最多发言次数 */
 	perAgent: number;
-	/** 每轮 token 预算（输入+输出），0 = 不限 */
-	tokenBudget: number;
 	/** 成员做完后管理者再总结一次 */
 	followup: boolean;
 }
-export const DEFAULT_CAPS: RoomCaps = { maxTurns: 8, maxDepth: 3, perAgent: 2, tokenBudget: 400_000, followup: true };
+export const DEFAULT_CAPS: RoomCaps = { maxTurns: 8, maxDepth: 3, perAgent: 2, followup: true };
 export function normalizeCaps(c: Partial<RoomCaps> | null | undefined): RoomCaps {
 	const n = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : d);
 	return {
 		maxTurns: n(c?.maxTurns, 1, 30, DEFAULT_CAPS.maxTurns),
 		maxDepth: n(c?.maxDepth, 0, 10, DEFAULT_CAPS.maxDepth),
 		perAgent: n(c?.perAgent, 1, 10, DEFAULT_CAPS.perAgent),
-		tokenBudget: n(c?.tokenBudget, 0, 10_000_000, DEFAULT_CAPS.tokenBudget),
 		followup: typeof c?.followup === "boolean" ? c.followup : DEFAULT_CAPS.followup,
 	};
+}
+
+/** 自主推进中给管理者的「接着推进」规则（唤醒文案、群规则共用一份）。 */
+export const AUTONOMY_NEXT_STEP =
+	"群开着自主推进：成果核验通过、或手上没有在做的任务而目标还没达成时，就在这一轮里按目标规划下一步，直接用 work_create 建任务派出去，不要只汇报一句然后等用户；目标已经达成（对照完成标准逐条满足）就调用 room_goal_done 结束自主推进并向用户汇报结果。";
+/** 开着自主推进的唤醒原因：管理者回合结束后手上没活、目标还没结束（兜底），或定时检查时没有未完成任务 */
+export const AUTONOMY_IDLE_WAKE = "目标还没完成，手上没有在做的任务：按目标规划下一步并派出去；已经达成就结束自主推进";
+
+/**
+ * 自主推进兜底：管理者一个回合正常结束后，目标没结束、没有进行中 / 待核验的任务、队列里也没有排着的回合 → 再叫醒它一次。
+ * 有界：连续两次兜底之间看板没有任何新进展（sig 没变）就不再叫醒，改为提示用户一次（hint）；用户发话会重置（调用方清掉 lastSig / hinted）。
+ */
+export function idleWakeStep(o: { autonomous: boolean; inFlight: boolean; queued: boolean; lastSig: string | null; sig: string; hinted: boolean }): "wake" | "hint" | "none" {
+	if (!o.autonomous || o.inFlight || o.queued) return "none";
+	if (o.lastSig === null || o.lastSig !== o.sig) return "wake";
+	return o.hinted ? "none" : "hint";
 }
 
 /** check = 关键事件唤醒管理者看看板；peer = 自主推进中成员 @ 了另一位成员 */
@@ -164,16 +177,14 @@ export function planAfter(
 export interface RoundCounters {
 	turns: number;
 	perAgent: Record<string, number>;
-	tokens: number;
 }
 /** 下一次发言能不能进行；不能时给出原因（写进“本轮已暂停”提示） */
 export function capCheck(next: PlannedTurn, c: RoundCounters, caps: RoomCaps): string | null {
 	// 关键事件唤醒管理者、自主推进里的成员互相 @：不算“这一轮用户发言引出的回合”，不占每轮上限（防护靠卡住 / 空聊检测）。
 	if (next.reason === "check" || next.reason === "peer") return null;
 	if (c.turns >= caps.maxTurns) return `这一轮已经发言 ${c.turns} 次`;
-	// 管理者收尾（成员回报后的 followup）不占「同一助理每轮次数」：否则两波派活后管理者没法做总结。总次数 / token 上限仍然生效。
+	// 管理者收尾（成员回报后的 followup）不占「同一助理每轮次数」：否则两波派活后管理者没法做总结。总次数上限仍然生效。
 	if (next.reason !== "followup" && (c.perAgent[next.agentId] ?? 0) >= caps.perAgent) return "同一个助理这一轮发言次数到上限了";
-	if (caps.tokenBudget && c.tokens >= caps.tokenBudget) return `这一轮用掉了约 ${Math.round(c.tokens / 1000)}k tokens`;
 	return null;
 }
 

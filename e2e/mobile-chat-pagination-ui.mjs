@@ -80,7 +80,7 @@ const N = 120;
 const ROOMN = 80;
 const BIG_N = 10000;
 const msg = (id, agentId, convId, content, i, extra = {}) => ({ id, agent_id: agentId, conversation_id: convId, task_id: null, role: 'user', content, meta: {}, status: 'done', created_at: 1000 + i, updated_at: 1000 + i, seq: i, ...extra });
-const ROOM_CAPS = { maxTurns: 6, maxDepth: 1, perAgent: 3, tokenBudget: 0, followup: true };
+const ROOM_CAPS = { maxTurns: 6, maxDepth: 1, perAgent: 3, followup: true };
 const ROOM_OBJ = { id: 'room1', name: '群一', purpose: '', managerId: 'a1', unread: 0, paused: null, caps: ROOM_CAPS, state: { running: false, current: null, queue: [] }, members: [{ agentId: 'a1', conversationId: 'c1', name: '甲', avatar: '甲', color: '#888', sort: 0 }] };
 
 const replyTo = (source, target, excerpt) => ({ messageId: target, author: { id: '', name: '我', role: 'user' }, source, excerpt, truncated: false, edited: false, createdAt: 1001 });

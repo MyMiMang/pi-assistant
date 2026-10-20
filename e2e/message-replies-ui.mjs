@@ -64,7 +64,7 @@ const A3 = mkMsg({ id: "a3m", content: "这是引用一条更早消息的回复�
 const A4 = mkMsg({ id: "a4m", content: "这条引用的消息已删除。", replyToId: "m-gone", reply: { messageId: "m-gone", author: { id: "a1", name: "测试助理", role: "assistant" }, source: { kind: "conversation", id: "c1" }, excerpt: "", truncated: false, edited: false, attachments: [], createdAt: now - 70000, unavailable: true }, created_at: now - 1000, updated_at: now - 1000 });
 const MOLD = mkMsg({ id: "m-old", content: "这是更早之前的一条消息。", created_at: now - 60000, updated_at: now - 60000 });
 
-const ROOM = { id: "r1", name: "测试群", purpose: "", managerId: "a1", caps: { maxTurns: 6, maxDepth: 2, perAgent: 2, tokenBudget: 0, followup: true }, unread: 0, paused: null, members: [{ agentId: "a1", name: "测试助理", avatar: "测", color: "#3b82f6", left: false, deleted: false, scope: "user", status: "idle" }], last: null, created_at: now, updated_at: now, state: { running: false, current: null, queue: [] } };
+const ROOM = { id: "r1", name: "测试群", purpose: "", managerId: "a1", caps: { maxTurns: 6, maxDepth: 2, perAgent: 2, followup: true }, unread: 0, paused: null, members: [{ agentId: "a1", name: "测试助理", avatar: "测", color: "#3b82f6", left: false, deleted: false, scope: "user", status: "idle" }], last: null, created_at: now, updated_at: now, state: { running: false, current: null, queue: [] } };
 const ROOMMSGS = [mkMsg({ id: "ru1", agent_id: "", room_id: "r1", role: "user", content: "大家看下", seq: 1, created_at: now - 1000, updated_at: now - 1000 }), mkMsg({ id: "ra1", room_id: "r1", role: "assistant", content: "收到", seq: 2, created_at: now, updated_at: now })];
 
 let failed = 0;

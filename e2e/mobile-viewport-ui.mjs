@@ -64,7 +64,7 @@ const msgs = [
 	{ id: "m2", agent_id: "a1", task_id: null, role: "assistant", content: LONG, meta: { attachments: [] }, status: "done", created_at: now - 30_000, updated_at: now - 30_000, conversation_id: "c1" },
 ];
 const ROOM = {
-	id: "r1", name: "测试群", purpose: "验证群聊共用同一套 shell", managerId: "a1", caps: { maxTurns: 3, maxDepth: 2, perAgent: 4, tokenBudget: 100000, followup: true }, unread: 0, paused: null,
+	id: "r1", name: "测试群", purpose: "验证群聊共用同一套 shell", managerId: "a1", caps: { maxTurns: 3, maxDepth: 2, perAgent: 4, followup: true }, unread: 0, paused: null,
 	members: [{ agentId: "a1", name: "测试助理", avatar: "测", color: "#3b82f6", left: false, deleted: false, scope: "user", status: "idle" }],
 	last: { content: "群里的最后一条", role: "assistant", agent_id: "a1", created_at: now }, created_at: now, updated_at: now,
 	state: { running: false, current: null, queue: [] },

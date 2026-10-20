@@ -58,7 +58,7 @@ const system = () => ({
 const hostInfo = { settings: { enabled: false, agents: "all", apps: [], workspaceFiles: false, tiers: {}, defaultTier: "bounded" }, tiers: {}, status: { enabled: false, tiers: {}, paused: false, daemon: { state: "off", detail: "" }, platform: "darwin", installed: false, version: "" }, manifest: "", manifestHash: "", permissions: null, activity: { active: false, agent: null, summary: null } };
 const mkMsg = (over) => ({ id: "x", agent_id: "a1", role: "assistant", content: "", meta: {}, status: "done", created_at: now, updated_at: now, conversation_id: "c1", ...over });
 const MSGS = [mkMsg({ id: "u1", role: "user", content: "先前的对话", created_at: now - 4000, updated_at: now - 4000 }), mkMsg({ id: "a1m", content: "好的。", created_at: now - 3000, updated_at: now - 3000 })];
-const ROOM = { id: "r1", name: "测试群", purpose: "验证群聊麦克风位置", managerId: "a1", caps: { maxTurns: 12, maxDepth: 2, perAgent: 3, tokenBudget: 0, followup: true }, unread: 0, paused: null, members: [{ agentId: "a1", name: "测试助理", avatar: "测", color: "#3b82f6", left: false, deleted: false, scope: "user", status: "idle" }], last: null, created_at: now, updated_at: now, state: { running: false, current: null, queue: [] } };
+const ROOM = { id: "r1", name: "测试群", purpose: "验证群聊麦克风位置", managerId: "a1", caps: { maxTurns: 12, maxDepth: 2, perAgent: 3, followup: true }, unread: 0, paused: null, members: [{ agentId: "a1", name: "测试助理", avatar: "测", color: "#3b82f6", left: false, deleted: false, scope: "user", status: "idle" }], last: null, created_at: now, updated_at: now, state: { running: false, current: null, queue: [] } };
 
 const ASR_PROVIDER = {
 	id: "openai", name: "OpenAI", kind: "custom", configured: true, baseUrl: "https://api.openai.com/v1",

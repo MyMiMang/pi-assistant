@@ -29,7 +29,7 @@ export interface Agent {
 	scope?: "user" | "room"; room_id?: string | null;
 }
 export interface RoomMember { agentId: string; name: string; avatar: string; color: string; left: boolean; deleted: boolean; scope: string; status: string }
-export interface RoomCaps { maxTurns: number; maxDepth: number; perAgent: number; tokenBudget: number; followup: boolean }
+export interface RoomCaps { maxTurns: number; maxDepth: number; perAgent: number; followup: boolean }
 export interface RoomState { running: boolean; current: { agentId: string; reason: string } | null; queue: string[] }
 export interface RoomAutonomy { goal: string; doneCriteria: string; startedAt: number }
 export interface Room {

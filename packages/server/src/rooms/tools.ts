@@ -1,11 +1,44 @@
-/** 群会话里的群工具：派活、提议加成员、提议自主推进（目标 + 完成标准）。 */
+/** 群会话里的群工具：派活、提议加成员、提议自主推进（目标 + 完成标准）、宣布目标达成。 */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Type } from "typebox";
+import { type FileRow, materializeFor, workspaceOf } from "../files.ts";
 import { insertMessage } from "../messages.ts";
 import { listAgents } from "../runtime.ts";
 import { dispatchFromRoom } from "../work-items.ts";
+import { endAutonomy, getAutonomy } from "./collab.ts";
 import { memberSchema, modelsHint, normalizeProposal, text, type ProposalMember } from "./proposals.ts";
-import { states } from "./scheduler.ts";
+import { roomFiles, states } from "./scheduler.ts";
 import { getRoom, memberRefs, memberRow } from "./store.ts";
+
+/**
+ * 按名字在群附件里找一个文件：文件名精确匹配；只给了路径（deliverables/x.md、room-files/群/abc123-x.md）就取最后一段再匹配；同名多个取最新。
+ */
+export function findRoomFile(files: FileRow[], ref: string): FileRow | undefined {
+	const raw = String(ref ?? "").trim();
+	const last = raw.split(/[\\/]/).filter(Boolean).pop() ?? "";
+	const newest = (xs: FileRow[]) => xs.sort((a, b) => b.created_at - a.created_at)[0];
+	return (raw && newest(files.filter((f) => f.name === raw))) || (last && (newest(files.filter((f) => f.name === last)) || newest(files.filter((f) => `${f.id.slice(-6)}-${f.name}` === last)))) || undefined;
+}
+/** 把要交给负责人的群附件真的放进它的工作区；返回工作区相对路径，找不到的文件名单独列出（有一个找不到就不该派出这条）。 */
+export function handOverFiles(roomId: string, assigneeId: string, refs: string[]): { paths: string[]; missing: string[] } {
+	const files = roomFiles(roomId);
+	const paths: string[] = [];
+	const missing: string[] = [];
+	for (const ref of refs.map((x) => String(x ?? "").trim()).filter(Boolean)) {
+		const f = findRoomFile(files, ref);
+		try {
+			if (!f) throw new Error("not found");
+			const rel = materializeFor(assigneeId, f, roomId);
+			// 原文件已被删掉时 materializeFor 不会复制：确认真的到了负责人的工作区，否则也算找不到
+			if (!existsSync(join(workspaceOf(assigneeId), rel))) throw new Error("not copied");
+			paths.push(rel);
+		} catch {
+			missing.push(ref);
+		}
+	}
+	return { paths, missing };
+}
 
 export function roomTools(roomId: string, agentId: string) {
 	return (pi: { registerTool: (t: unknown) => void }) => {
@@ -18,7 +51,7 @@ export function roomTools(roomId: string, agentId: string) {
 					Type.Object({
 						agent: Type.String({ description: "成员名字" }),
 						task: Type.String({ description: "具体要做什么" }),
-						files: Type.Optional(Type.Array(Type.String(), { description: "要交给这个成员的群附件文件名（会把文件放进它的工作区并发给它）" })),
+						files: Type.Optional(Type.Array(Type.String(), { description: "要交给这个成员的群附件文件名（按名字在群附件里找，会把文件放进它的工作区并把路径写进任务；找不到这条就不派出，要先让产出者把文件发到群里）" })),
 						workItemId: Type.Optional(Type.String({ description: "可选：这次派活属于哪个长期任务（负责人必须已经是这个成员；用 work_create 记录任务）" })),
 					}),
 				),
@@ -31,6 +64,7 @@ export function roomTools(roomId: string, agentId: string) {
 				const refs = memberRefs(roomId);
 				const ok: string[] = [];
 				const bad: string[] = [];
+				const failed: string[] = [];
 				const queued: string[] = [];
 				for (const a of p.assignments ?? []) {
 					const name = String(a.agent ?? "").replace(/^[@＠]/, "").trim();
@@ -39,13 +73,19 @@ export function roomTools(roomId: string, agentId: string) {
 						bad.push(name || "（空）");
 						continue;
 					}
-					const taskText = String(a.task ?? "") + (a.files?.length ? `\n相关附件：${a.files.map(String).join("、")}` : "");
+					// 附件：真的放进负责人的工作区，任务文字里写工作区路径；有一个找不到就不派出这一条（不能报成功又什么都没给它）。
+					const given = a.files?.length ? handOverFiles(roomId, m.id, a.files) : { paths: [], missing: [] };
+					if (given.missing.length) {
+						failed.push(`${m.name}：${given.missing.map((x) => `找不到附件 ${x}（群里没有这个文件，先让产出者把文件发到群里）`).join("；")}，这条没有派出`);
+						continue;
+					}
+					const taskText = String(a.task ?? "") + (given.paths.length ? `\n相关附件（已放进你的工作区）：${given.paths.join("、")}` : "");
 					if (a.workItemId) {
 						// 长期任务：校验后直接在负责人自己的任务会话里开跑（不进群的发言队列、不占每轮上限），提交或卡住时你会被叫醒。
 						try {
 							dispatchFromRoom(roomId, m.id, String(a.workItemId), taskText);
 						} catch (e) {
-							bad.push(`${name}（长期任务无法派出：${e instanceof Error ? e.message : String(e)}）`);
+							failed.push(`${m.name}：长期任务无法派出：${e instanceof Error ? e.message : String(e)}`);
 							continue;
 						}
 						ok.push(`${m.name}（长期任务，已在它的任务会话里开始）`);
@@ -55,7 +95,7 @@ export function roomTools(roomId: string, agentId: string) {
 					queued.push(m.name);
 					ok.push(m.name);
 				}
-				return text([ok.length ? `已分配给：${ok.join("、")}。${queued.length ? "你说完后群里的派活会依次开始。" : ""}` : "", bad.length ? `这些不是群成员（或是你自己）：${bad.join("、")}。成员有：${refs.filter((x) => x.id !== agentId).map((x) => x.name).join("、")}` : ""].filter(Boolean).join("\n"));
+				return text([ok.length ? `已分配给：${ok.join("、")}。${queued.length ? "你说完后群里的派活会依次开始。" : ""}` : "", failed.length ? `这些没有派出：\n${failed.map((x) => `- ${x}`).join("\n")}` : "", bad.length ? `这些不是群成员（或是你自己）：${bad.join("、")}。成员有：${refs.filter((x) => x.id !== agentId).map((x) => x.name).join("、")}` : ""].filter(Boolean).join("\n"));
 			},
 		});
 		pi.registerTool({
@@ -77,7 +117,7 @@ export function roomTools(roomId: string, agentId: string) {
 		pi.registerTool({
 			name: "room_goal",
 			label: "提议自主推进",
-			description: "（管理者）用户给了一个需要大家长期协作的目标时，先把目标和可检查的完成标准写清楚，发一张确认卡片给用户。用户确认后群进入自主推进：成员可以 @ 彼此，你在任务提交、卡住、定时检查时被叫醒。目标或完成标准不清楚时先问用户，不要替用户编。",
+			description: "（管理者）用户交代的是一件需要多步、多人长期协作的事（比如「做一集短剧」「写一份完整的调研报告」），而群还没开自主推进时，主动先用这个工具：把目标和可检查的完成标准写清楚，发一张确认卡片给用户，不要等用户来要求。用户确认后群进入自主推进：成员可以 @ 彼此，你在任务提交、卡住、定时检查时被叫醒，并自己按目标一步步规划、派活。普通一问一答、一两步就能做完的事不要发。目标或完成标准不清楚时先问用户，不要替用户编。",
 			parameters: Type.Object({ goal: Type.String({ description: "要达成的目标（一两句话）" }), doneCriteria: Type.String({ description: "怎样检查算达成（具体、可检查）" }) }),
 			async execute(_id: string, p: { goal: string; doneCriteria: string }) {
 				const r = getRoom(roomId);
@@ -88,6 +128,21 @@ export function roomTools(roomId: string, agentId: string) {
 				const conv = memberRow(roomId, agentId)?.conversation_id;
 				insertMessage({ agentId, conversationId: conv ?? undefined, role: "card", meta: { kind: "room-goal", roomId, goal: goalText, doneCriteria, status: "pending" } });
 				return text("确认卡片已发给用户。用户确认（可以先修改）后才会开启自主推进，在那之前照常工作。");
+			},
+		});
+		pi.registerTool({
+			name: "room_goal_done",
+			label: "宣布目标已达成",
+			description: "（管理者）自主推进中，你核验过成果、确认完成标准都满足、目标已经达成时调用：结束自主推进并在群里向用户汇报结果。目标还没达成就不要调用，而是按目标规划下一步、用 work_create 建任务派出去。",
+			parameters: Type.Object({ summary: Type.String({ description: "结果总结：做成了什么、交付物在哪里、对照完成标准怎么满足的（简短）" }) }),
+			async execute(_id: string, p: { summary: string }) {
+				const r = getRoom(roomId);
+				if (!r || r.manager_id !== agentId) return text("只有管理者能宣布目标达成。");
+				if (!getAutonomy(roomId)) return text("这个群现在没有开着自主推进，不需要结束。");
+				const summary = String(p.summary ?? "").trim().slice(0, 2000);
+				if (!summary) return text("请写一句结果总结：做成了什么、交付物在哪里。");
+				endAutonomy(roomId, { achieved: summary });
+				return text("已结束自主推进，结果总结已发到群里。");
 			},
 		});
 	};

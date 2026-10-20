@@ -50,23 +50,24 @@ test("派活：管理者派的才触发；成员 @ 别人不触发；成员都�
 	assert.deepEqual(planAfter({ agentId: "b", reason: "mention", depth: 0 }, { ...base, assignments: [], batchDone: true, anyWorkerRan: true }), [], "用户 @ 的成员说完不叫管理者");
 	assert.deepEqual(planAfter({ agentId: "a", reason: "followup", depth: 3 }, { ...base, assignments: [{ agentId: "b" }] }), [], "派活深度上限");
 });
-test("上限：总次数 / 每人次数 / token 预算", () => {
-	const caps = normalizeCaps({ maxTurns: 3, perAgent: 2, tokenBudget: 1000 });
+test("上限：总次数 / 每人次数（没有 token 预算，旧数据里的 tokenBudget 被忽略）", () => {
+	const caps = normalizeCaps({ maxTurns: 3, perAgent: 2, tokenBudget: 1000 } as never);
 	const t = { agentId: "a", reason: "assign" as const, depth: 1 };
-	assert.equal(capCheck(t, { turns: 0, perAgent: {}, tokens: 0 }, caps), null);
-	assert.match(capCheck(t, { turns: 3, perAgent: {}, tokens: 0 }, caps)!, /3 次/);
-	assert.match(capCheck(t, { turns: 1, perAgent: { a: 2 }, tokens: 0 }, caps)!, /上限/);
-	assert.match(capCheck(t, { turns: 1, perAgent: {}, tokens: 1200 }, caps)!, /tokens/);
+	assert.equal(capCheck(t, { turns: 0, perAgent: {} }, caps), null);
+	assert.match(capCheck(t, { turns: 3, perAgent: {} }, caps)!, /3 次/);
+	assert.match(capCheck(t, { turns: 1, perAgent: { a: 2 } }, caps)!, /上限/);
+	assert.equal(capCheck(t, { turns: 1, perAgent: {}, tokens: 9_999_999 } as never, caps), null, "token 用量再大也不挡");
+	assert.equal("tokenBudget" in normalizeCaps({ tokenBudget: 1000 } as never), false);
 	assert.deepEqual(normalizeCaps({ maxTurns: 999, perAgent: -3 }), { ...DEFAULT_CAPS, maxTurns: 30, perAgent: 1 });
 });
 test("两波派活后管理者收尾不被每人次数上限挡住", () => {
 	const caps = normalizeCaps({ maxTurns: 8, perAgent: 2 });
 	// 管理者已发言 2 次（第一次派活 + 第二波派活），成员回报后它的收尾 followup 仍可进行
-	assert.equal(capCheck({ agentId: "mgr", reason: "followup", depth: 1 }, { turns: 5, perAgent: { mgr: 2 }, tokens: 0 }, caps), null);
+	assert.equal(capCheck({ agentId: "mgr", reason: "followup", depth: 1 }, { turns: 5, perAgent: { mgr: 2 } }, caps), null);
 	// 普通派活/点名仍受每人上限
-	assert.match(capCheck({ agentId: "mgr", reason: "manager", depth: 0 }, { turns: 5, perAgent: { mgr: 2 }, tokens: 0 }, caps)!, /上限/);
+	assert.match(capCheck({ agentId: "mgr", reason: "manager", depth: 0 }, { turns: 5, perAgent: { mgr: 2 } }, caps)!, /上限/);
 	// 总次数上限对收尾仍生效
-	assert.match(capCheck({ agentId: "mgr", reason: "followup", depth: 1 }, { turns: 8, perAgent: { mgr: 2 }, tokens: 0 }, caps)!, /8 次/);
+	assert.match(capCheck({ agentId: "mgr", reason: "followup", depth: 1 }, { turns: 8, perAgent: { mgr: 2 } }, caps)!, /8 次/);
 });
 test("增量注入：只有最终文字和卡片摘要，跳过自己的，超预算保留最近的", () => {
 	const items: TranscriptItem[] = [
