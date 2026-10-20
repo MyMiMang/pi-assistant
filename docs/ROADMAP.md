@@ -11,7 +11,7 @@
 - [已完成(未打包)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
-- [已完成(未打包)] 群任务卡住 / 反复退回由管理者自己处理，办法用尽才向用户说明需要什么帮助（[0016](decisions/0016-group-stuck-manager-handles.md)）
+- [已发布(beta.35)] 群任务卡住 / 反复退回由管理者自己处理，办法用尽才向用户说明需要什么帮助（[0016](decisions/0016-group-stuck-manager-handles.md)）
 - [已完成(未打包)] 主密钥读不到（钥匙串拒绝 / 锁着、DPAPI 解不开）时服务停下并说明原因，不再另造密钥覆盖（[0015](decisions/0015-master-key-never-overwrite.md)）
 - [已完成(未打包)，待真机] 桌面 App 里把文件拖到聊天框 = 点「上传」：主窗口关掉 Tauri 自带的拖放拦截，交给网页现有的拖放（e2e `chat-file-drop.mjs`）
 - [已完成(未打包)] 任务类机制合并：界面只用「任务 / 帮手」两个词，后台 / 定时 / 巡检 / 群任务执行都跑在帮手上，旧 `/api/tasks` 下线（[0014](decisions/0014-task-and-helper.md)、[设计](design/task-architecture-analysis.md)）
