@@ -1,6 +1,6 @@
 import { setComposerDraft, useComposerDrafts } from "../composerDrafts";
 import { SubagentTasks } from "./Subagents";
-import { RoomWorkButtons } from "./Autonomy";
+import { RoomWorkButtons } from "./RoomWork";
 import { ArrowUp, AtSign, Crown, Loader2, PanelRight, Plus, Settings2, Square, Trash2, Users } from "lucide-react";
 import { RoomCost } from "./Usage";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";

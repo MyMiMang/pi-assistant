@@ -40,6 +40,8 @@ export interface CreateWorkItemInput {
 	start?: boolean;
 	sourceMessageId?: string | null;
 	taskText?: string;
+	/** 属于群里的哪个项目（调用方校验过是本群进行中的项目） */
+	projectId?: string | null;
 }
 
 /** 立刻在负责人的任务会话里开跑；派发本身失败就明确标受阻。 */
@@ -79,8 +81,8 @@ export function createWorkItem(input: CreateWorkItemInput, actor: WorkActor) {
 	const ready = !!owner && !!requirement && !!doneCriteria;
 	const status = ready && input.start !== false ? "active" : "pending";
 	db.prepare(
-		"INSERT INTO work_items(id, scope_kind, room_id, title, requirement, done_criteria, owner_agent_id, status, revision, latest_progress, created_by, source_message_id, last_progress_at, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-	).run(id, "room", room.id, title, requirement, doneCriteria, owner, status, 1, status === "active" ? "进行中" : owner ? "已记录任务，等待补齐信息 / 开始" : "已记录任务，等待安排", actorKey(actor), trustedSource(room.id, input.sourceMessageId), t, t, t);
+		"INSERT INTO work_items(id, scope_kind, room_id, title, requirement, done_criteria, owner_agent_id, status, revision, latest_progress, created_by, source_message_id, project_id, last_progress_at, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+	).run(id, "room", room.id, title, requirement, doneCriteria, owner, status, 1, status === "active" ? "进行中" : owner ? "已记录任务，等待补齐信息 / 开始" : "已记录任务，等待安排", actorKey(actor), trustedSource(room.id, input.sourceMessageId), input.projectId ?? null, t, t, t);
 	event(id, "created", actor, 1, { title, ownerAgentId: owner });
 	const row = itemRow(id)!;
 	if (owner && input.start !== false && !ready) {

@@ -31,9 +31,21 @@ export interface Agent {
 export interface RoomMember { agentId: string; name: string; avatar: string; color: string; left: boolean; deleted: boolean; scope: string; status: string }
 export interface RoomCaps { maxTurns: number; maxDepth: number; perAgent: number; followup: boolean }
 export interface RoomState { running: boolean; current: { agentId: string; reason: string } | null; queue: string[] }
-export interface RoomAutonomy { goal: string; doneCriteria: string; startedAt: number }
+/** 项目方案（镜像服务端 rooms/plan.ts 的 ProjectPlan）：方案卡和项目面板共用。 */
+export interface ProjectPlan {
+	goal: string; doneCriteria: string; assumptions: string[];
+	roles: { member: string; agentId?: string; does: string }[];
+	stages: { name: string; output: string }[];
+	checkpoints: string[]; deliverables: string; needs: string; scale: string;
+}
+export type ProjectStatus = "proposed" | "active" | "done" | "stopped" | "dismissed";
+export interface RoomProject {
+	id: string; roomId: string; title: string; status: ProjectStatus; plan: ProjectPlan; draft: ProjectPlan | null;
+	cardMessageId: string | null; summary: string | null; createdAt: number; confirmedAt: number | null; endedAt: number | null;
+}
 export interface Room {
-	autonomy?: RoomAutonomy | null;
+	/** 只含待确认 / 进行中的项目（按创建时间升序）；已结束的走 /api/rooms/:rid/projects?all=1 */
+	projects?: RoomProject[];
 	id: string; name: string; purpose: string; managerId: string | null; caps: RoomCaps; unread: number; paused: { reason: string } | null;
 	members: RoomMember[]; last?: { content: string; role: string; agent_id: string; created_at: number } | null; created_at: number; updated_at: number; state: RoomState;
 }

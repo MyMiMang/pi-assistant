@@ -61,6 +61,8 @@ export interface WorkItemRow {
 	last_progress_at: number | null;
 	created_by: string;
 	source_message_id: string | null;
+	/** 属于群里的哪个项目（rooms/projects.ts；没有就是平时的任务） */
+	project_id: string | null;
 	created_at: number;
 	updated_at: number;
 	completed_at: number | null;
@@ -121,6 +123,7 @@ for (const [col, ddl] of [
 	["needs_user", "TEXT"],
 	["escalation", "TEXT"],
 	["last_progress_at", "INTEGER"],
+	["project_id", "TEXT"],
 ] as const) {
 	if (!(db.prepare("PRAGMA table_info(work_items)").all() as { name: string }[]).some((c) => c.name === col)) db.exec(`ALTER TABLE work_items ADD COLUMN ${col} ${ddl}`);
 }
@@ -214,6 +217,7 @@ export function canAct(status: WorkStatus, action: "start" | "continue" | "pause
 export interface WorkItemSummary {
 	id: string;
 	roomId: string | null;
+	projectId: string | null;
 	title: string;
 	status: WorkStatus;
 	statusLabel: string;
@@ -252,6 +256,7 @@ export function summary(row: WorkItemRow): WorkItemSummary {
 	return {
 		id: row.id,
 		roomId: row.room_id,
+		projectId: row.project_id ?? null,
 		title: row.title,
 		status: row.status,
 		statusLabel: WORK_STATUS_LABEL[row.status] ?? row.status,
@@ -376,9 +381,9 @@ export function trustedSource(roomId: string, messageId: string | null | undefin
 
 /**
  * 给管理者的看板摘要：被唤醒时只读这一段 + 最近进展，不读全量历史。
- * 等你决定 / 卡住的排在前面；已完成只给数量。
+ * 等你决定 / 卡住的排在前面；已完成只给数量。projectTitle：按项目编号取项目名（群模块传入），任务后面标上所属项目。
  */
-export function boardDigest(roomId: string, max = 20): string {
+export function boardDigest(roomId: string, max = 20, projectTitle?: (projectId: string) => string | undefined): string {
 	const rows = db.prepare("SELECT * FROM work_items WHERE room_id = ? AND status NOT IN ('done','cancelled') ORDER BY updated_at DESC LIMIT ?").all(roomId, max) as unknown as WorkItemRow[];
 	const done = (db.prepare("SELECT COUNT(*) AS n FROM work_items WHERE room_id = ? AND status = 'done'").get(roomId) as { n: number }).n;
 	const order: BoardGroup[] = ["decision", "stuck", "doing", "stopped"];
@@ -386,6 +391,6 @@ export function boardDigest(roomId: string, max = 20): string {
 	if (!items.length) return done ? `任务看板：没有未完成的任务（已完成 ${done} 个）。` : "任务看板：还没有长期任务。";
 	return [
 		`任务看板（未完成 ${items.length} 个${done ? `，已完成 ${done} 个` : ""}）：`,
-		...items.map((x) => `- 【${x.boardLabel}】${x.title}（编号 ${x.id}，${x.statusLabel}，负责人 ${x.ownerName || "未安排"}）${x.needsUser ? `等用户决定：${x.needsUser.question}` : x.escalation ? `上报：${x.escalation.note}` : x.latestProgress || "暂无进度"}`),
+		...items.map((x) => `- 【${x.boardLabel}】${x.title}（编号 ${x.id}，${x.statusLabel}，负责人 ${x.ownerName || "未安排"}${x.projectId && projectTitle?.(x.projectId) ? `，项目「${projectTitle(x.projectId)}」` : ""}）${x.needsUser ? `等用户决定：${x.needsUser.question}` : x.escalation ? `上报：${x.escalation.note}` : x.latestProgress || "暂无进度"}`),
 	].join("\n");
 }

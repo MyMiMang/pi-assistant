@@ -91,10 +91,27 @@
 .pa-work-decision-free { display: flex; gap: 6px; min-width: 0; }
 .pa-work-decision-free input { min-width: 0; flex: 1; }
 .pa-work-warn { display: flex; gap: 6px; align-items: flex-start; border-radius: var(--r-sm); background: color-mix(in srgb, #f59e0b 12%, transparent); color: #92400e; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }
-.pa-work-autonomy { display: flex; align-items: flex-start; gap: 8px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 10px; font-size: 12px; min-width: 0; }
-.pa-work-autonomy.on { border-color: color-mix(in srgb, var(--acc) 45%, var(--line)); background: color-mix(in srgb, var(--acc) 7%, transparent); }
-.pa-work-autonomy b, .pa-work-autonomy small { display: block; overflow-wrap: anywhere; }
-.pa-work-autonomy small { color: var(--mut2); }
+/* 方案卡 / 项目面板：卡片留足内边距，长文字（路径、链接）折行不越框 */
+.pa-plan { display: block; min-width: 0; padding: 14px 16px; overflow-wrap: anywhere; word-break: break-word; }
+.pa-plan .pa-card-top { align-items: flex-start; }
+.pa-plan .pa-card-top b { line-height: 1.5; overflow-wrap: anywhere; }
+.pa-plan.settled { opacity: .92; }
+.pa-plan-body { display: flex; min-width: 0; flex-direction: column; gap: 10px; font-size: 13px; line-height: 1.55; }
+.pa-plan-body h4 { display: flex; align-items: center; gap: 5px; margin: 0 0 3px; font-size: 12px; font-weight: 600; color: var(--mut); }
+.pa-plan-body p { margin: 0; white-space: pre-wrap; }
+.pa-plan-body ul, .pa-plan-body ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.pa-plan-body ul { list-style: disc; }
+.pa-plan-body ol { list-style: decimal; }
+.pa-plan-body li b { font-weight: 600; }
+.pa-plan-assume { border: 1px solid color-mix(in srgb, var(--acc) 40%, var(--line)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--acc) 7%, transparent); padding: 9px 12px; }
+.pa-plan-assume h4 { color: var(--fg); }
+.pa-plan-assume section { margin-top: 6px; font-size: 12px; }
+.pa-plan-hint { margin: 12px 0 0; font-size: 12px; color: var(--mut2); }
+.pa-project { display: flex; min-width: 0; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px 14px; overflow-wrap: anywhere; }
+.pa-project-head { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.pa-project-head b { min-width: 0; flex: 1; font-size: 14px; line-height: 1.5; }
+.pa-project-ended { display: flex; flex-direction: column; gap: 2px; border-top: 1px dashed var(--line); padding: 8px 2px; font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
+.pa-project-ended small { color: var(--mut2); }
 .pa-work-chip-alert { border-color: color-mix(in srgb, #f59e0b 60%, var(--line)) !important; color: #b45309; }
 .pa-work-closed summary { cursor: pointer; padding: 6px 2px; font-size: 12px; color: var(--mut2); }
 .pa-work-detail { display: flex; min-width: 0; max-width: 100%; flex-direction: column; gap: 12px; padding: 14px 16px 24px; }

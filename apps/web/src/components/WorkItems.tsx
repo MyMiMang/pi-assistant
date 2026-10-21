@@ -10,7 +10,7 @@ import { CreateWorkItem, DecisionBox, RUN_LABEL, StatusPill, WorkDetailPane, typ
  * 群里的「任务」看板：和群聊是同一份任务责任记录，不是另一套项目管理系统。
  * 数据只来自 /api/rooms/:rid/work-items 与 /api/work-items/:id；打开时拉一次，动作后 / bus 事件再拉，不做不断轮询。
  * 分组：等你决定（高亮置顶，直接回答）· 卡住 · 进行中 · 已完成 / 已停止（默认折叠）。窄屏（390）同一份纵向列表 + 筛选。
- * 顶部有「全部暂停」（自主推进的入口在群聊顶部，见 Autonomy.tsx）：停群不停任务，要停全部任务用这里。
+ * 顶部有「全部暂停」（项目入口在群聊顶部，见 RoomWork.tsx）：停群不停任务，要停全部任务用这里。
  */
 const FILTERS: { value: "all" | BoardGroup; label: string }[] = [
 	{ value: "all", label: "全部" },

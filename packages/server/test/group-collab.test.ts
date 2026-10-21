@@ -5,13 +5,16 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * 群聊协作（docs/design/group-collaboration.md）：纯逻辑 + 真实群调度。
+ * 群聊协作（docs/design/group-collaboration.md、docs/design/group-team.md）：纯逻辑 + 真实群调度。
  * 模型回合用可控的假 turn（不起模型、不付费）：每个成员的回复由测试按 agentId 指定，只读写临时数据目录。
+ * 方案卡 / room_plan / room_project_start 等工具层面的覆盖见 test/room-projects.test.ts；这里只管协作调度机制。
  */
 const { db, now } = await import("../src/db.ts");
 const R = await import("../src/runtime.ts");
 const rooms = await import("../src/rooms/index.ts");
 const logic = await import("../src/rooms/logic.ts");
+const projects = await import("../src/rooms/projects.ts");
+const plan = await import("../src/rooms/plan.ts");
 const W = await import("../src/work-items.ts");
 
 const replies = new Map<string, (prompt: string) => string>();
@@ -40,6 +43,12 @@ mkAgent("cm", "总管");
 mkAgent("ca", "小甲");
 mkAgent("cb", "小乙");
 
+/** 测试用：跳过方案卡的字段校验，直接开一个 active 项目（相当于「用户确认了方案」）；by="user" 会唤醒管理者，"manager" 不会。 */
+function openProject(roomId: string, goal: string, doneCriteria: string, by: "user" | "manager" = "user") {
+	const managerId = rooms.getRoom(roomId)!.manager_id!;
+	const { project } = projects.proposePlan({ roomId, managerId, title: goal.slice(0, 40), plan: plan.goalOnlyPlan(goal, doneCriteria) });
+	return projects.confirmProject(roomId, project.id, by);
+}
 // ---------------------------------------------------------------- 纯逻辑
 
 test("看板分组：等你决定 > 卡住 > 进行中；暂停 / 取消 = 已停止", () => {
@@ -54,14 +63,14 @@ test("看板分组：等你决定 > 卡住 > 进行中；暂停 / 取消 = 已�
 	assert.equal(W.boardGroupOf({ status: "cancelled", needsUser: false, escalation: null }), "stopped");
 });
 
-test("成员互相 @：只在自主推进中生效；@ 管理者改为唤醒管理者；不 @ 自己", () => {
+test("成员互相 @：只在项目进行中生效；@ 管理者改为唤醒管理者；不 @ 自己", () => {
 	const members = [{ id: "cm", name: "总管" }, { id: "ca", name: "小甲" }, { id: "cb", name: "小乙" }];
-	const off = logic.planPeerTurns({ fromAgentId: "ca", text: "@小乙 帮我看下", members, managerId: "cm", autonomous: false });
+	const off = logic.planPeerTurns({ fromAgentId: "ca", text: "@小乙 帮我看下", members, managerId: "cm", projectActive: false });
 	assert.deepEqual(off, { turns: [], wakeManager: false });
-	const on = logic.planPeerTurns({ fromAgentId: "ca", text: "@小乙 帮我看下 @小甲 @总管", members, managerId: "cm", autonomous: true });
+	const on = logic.planPeerTurns({ fromAgentId: "ca", text: "@小乙 帮我看下 @小甲 @总管", members, managerId: "cm", projectActive: true });
 	assert.deepEqual(on.turns.map((t) => [t.agentId, t.reason, t.from]), [["cb", "peer", "ca"]]);
 	assert.equal(on.wakeManager, true);
-	assert.deepEqual(logic.planPeerTurns({ fromAgentId: "cm", text: "@小乙", members, managerId: "cm", autonomous: true }).turns, [], "管理者的 @ 走派活规则");
+	assert.deepEqual(logic.planPeerTurns({ fromAgentId: "cm", text: "@小乙", members, managerId: "cm", projectActive: true }).turns, [], "管理者的 @ 走派活规则");
 });
 
 test("看板检查 / 成员互相 @ 不占每轮上限", () => {
@@ -74,33 +83,35 @@ test("看板检查 / 成员互相 @ 不占每轮上限", () => {
 
 // ---------------------------------------------------------------- 真实群调度
 
-test("开启自主推进：群里有说明、roomJson 带目标、管理者被唤醒读看板；结束后回到普通模式", async () => {
-	const room = rooms.createRoom({ name: "自主群", memberIds: ["cm", "ca", "cb"], managerId: "cm" });
-	assert.throws(() => rooms.setAutonomy(room.id, { goal: "做报告" }), /完成标准/);
-	rooms.setAutonomy(room.id, { goal: "做季度报告", doneCriteria: "三节齐全、每个结论有来源" });
-	assert.deepEqual(
-		{ goal: rooms.roomJson(rooms.getRoom(room.id)!).autonomy?.goal, done: rooms.roomJson(rooms.getRoom(room.id)!).autonomy?.doneCriteria },
-		{ goal: "做季度报告", done: "三节齐全、每个结论有来源" },
-	);
+test("项目开始：群里有说明、roomJson 带项目、管理者被唤醒读看板；完成后回到平时", async () => {
+	const room = rooms.createRoom({ name: "项目群", memberIds: ["cm", "ca", "cb"], managerId: "cm" });
+	openProject(room.id, "做季度报告", "三节齐全、每个结论有来源");
+	const rj = rooms.roomJson(rooms.getRoom(room.id)!);
+	assert.equal(rj.projects.length, 1);
+	assert.equal(rj.projects[0].status, "active");
+	assert.equal(rj.projects[0].plan.goal, "做季度报告");
+	assert.equal(rj.projects[0].plan.doneCriteria, "三节齐全、每个结论有来源");
 	await until(() => turnsOf(room.id, "check").some((t) => t.status === "done"), "管理者被唤醒");
 	const p = prompts.filter((x) => x.agentId === "cm").pop()!.prompt;
 	assert.match(p, /任务看板有变化/);
-	assert.match(p, /自主推进目标：做季度报告/);
+	assert.match(p, /进行中的项目：[\s\S]*做季度报告/);
 	assert.match(p, /任务看板：还没有长期任务/);
-	assert.ok(db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND content LIKE '已开启自主推进%'").get(room.id));
-	assert.equal(rooms.endAutonomy(room.id), true);
-	assert.equal(rooms.roomJson(rooms.getRoom(room.id)!).autonomy, null);
+	assert.ok(db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND content LIKE '方案已确认，项目%开始了%'").get(room.id));
+	const pid = projects.activeProjects(room.id)[0].id;
+	projects.finishProject(room.id, pid, "三节都写完了");
+	assert.equal(rooms.roomJson(rooms.getRoom(room.id)!).projects.length, 0);
+	assert.ok(db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND content LIKE '项目%已完成。结果：三节都写完了%'").get(room.id));
 	await rooms.deleteRoom(room.id);
 });
 
-test("自主推进中成员 @ 别的成员：被 @ 的醒来回复；普通模式下不触发", async () => {
+test("项目进行中成员 @ 别的成员：被 @ 的醒来回复；平时不触发", async () => {
 	const room = rooms.createRoom({ name: "互相@群", memberIds: ["cm", "ca", "cb"], managerId: "cm" });
 	replies.set("ca", () => "我做完第一节了，@小乙 你帮我核一下数据");
 	replies.set("cb", () => "好的，数据没问题");
 	rooms.postUserMessage(room.id, "@小甲 写第一节", { mentions: ["ca"] });
-	await until(() => idle(room.id) && turnsOf(room.id).length >= 1, "普通模式回合");
-	assert.equal(turnsOf(room.id, "peer").length, 0, "普通模式成员 @ 不叫醒别人");
-	rooms.setAutonomy(room.id, { goal: "写报告", doneCriteria: "三节齐全" });
+	await until(() => idle(room.id) && turnsOf(room.id).length >= 1, "平时的回合");
+	assert.equal(turnsOf(room.id, "peer").length, 0, "平时成员 @ 不叫醒别人");
+	openProject(room.id, "写报告", "三节齐全", "manager");
 	await until(() => idle(room.id), "唤醒结束");
 	rooms.postUserMessage(room.id, "@小甲 再写第二节", { mentions: ["ca"] });
 	await until(() => turnsOf(room.id, "peer").some((t) => t.agent_id === "cb" && t.status === "done"), "小乙被叫醒");
@@ -114,7 +125,7 @@ test("自主推进中成员 @ 别的成员：被 @ 的醒来回复；普通模�
 test("只聊不干活：成员来回 @ 没进展 → 先叫管理者，再提醒用户并暂停互相叫醒；用户发话后恢复", async () => {
 	process.env.PIA_ROOM_CHATTER = "2";
 	const room = rooms.createRoom({ name: "空聊群", memberIds: ["cm", "ca", "cb"], managerId: "cm" });
-	rooms.setAutonomy(room.id, { goal: "写报告", doneCriteria: "三节齐全" });
+	openProject(room.id, "写报告", "三节齐全", "manager");
 	await until(() => idle(room.id), "唤醒结束");
 	replies.set("ca", () => "@小乙 你觉得呢");
 	replies.set("cb", () => "@小甲 我觉得都行");
@@ -124,6 +135,7 @@ test("只聊不干活：成员来回 @ 没进展 → 先叫管理者，再提醒
 	const peers = turnsOf(room.id, "peer").length;
 	assert.equal(peers, 4, "两倍阈值后不再互相叫醒");
 	assert.ok(prompts.some((x) => x.agentId === "cm" && /只聊不干活/.test(x.prompt)), "先叫过管理者");
+	assert.ok(db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND content LIKE '%或者停下这个项目%'").get(room.id));
 	replies.clear();
 	delete process.env.PIA_ROOM_CHATTER;
 	await rooms.deleteRoom(room.id);
@@ -156,60 +168,18 @@ test("唤醒管理者：群已停止不唤醒；未轮到的唤醒合并成一�
 	await rooms.deleteRoom(empty.id);
 });
 
-test("room_goal：管理者直接开启自主推进（群里发告知、不插确认卡、不额外唤醒管理者）；再次调用 = 更新目标；成员没有这个能力；用户从顶部开启仍唤醒管理者", async () => {
-	const room = rooms.createRoom({ name: "目标群", memberIds: ["cm", "ca"], managerId: "cm" });
-	const { roomTools } = await import("../src/rooms/tools.ts");
-	const toolsOf = (agentId: string) => {
-		const defs = new Map<string, { execute: (id: string, p: Record<string, unknown>) => Promise<{ content: { text: string }[] }> }>();
-		roomTools(room.id, agentId)({ registerTool: (d: unknown) => defs.set((d as { name: string }).name, d as never) });
-		return defs;
-	};
-	const goal = (agentId: string, p: Record<string, unknown>) => toolsOf(agentId).get("room_goal")!.execute("t", p).then((r) => r.content[0].text);
-	const notices = () => db.prepare("SELECT content, meta FROM messages WHERE room_id = ? AND role = 'system' AND meta LIKE '%room-autonomy%' ORDER BY rowid").all(room.id) as { content: string; meta: string }[];
-	const cards = () => (db.prepare("SELECT COUNT(*) AS n FROM messages WHERE room_id = ? AND role = 'card'").get(room.id) as { n: number }).n;
-	rooms.memberConversation(room.id, "cm");
-	replies.set("cm", () => "收到");
-	assert.match(await goal("ca", { goal: "x", doneCriteria: "y" }), /只有管理者/);
-	assert.match(await goal("cm", { goal: "做报告", doneCriteria: "" }), /都要写清楚/);
-	assert.equal(rooms.getAutonomy(room.id), null, "参数缺失不开启");
-	// 管理者直接开启
-	assert.match(await goal("cm", { goal: "做报告", doneCriteria: "三节齐全" }), /已开始自主推进[\s\S]*这一轮/);
-	assert.deepEqual({ ...rooms.getAutonomy(room.id)!, startedAt: 0 }, { goal: "做报告", doneCriteria: "三节齐全", startedAt: 0 });
-	assert.equal(notices().length, 1, "群里有一条告知");
-	assert.match(notices()[0].content, /管理者理解的目标是：做报告；做到「三节齐全」算完成。现在开始自主推进/);
-	assert.equal(JSON.parse(notices()[0].meta).by, "manager");
-	assert.equal(cards(), 0, "不再插确认卡片");
-	await sleep(200);
-	assert.equal(turnsOf(room.id, "check").length, 0, "管理者自己开的，不额外唤醒管理者");
-	// 已经开着：再调用 = 更新目标和完成标准
-	assert.match(await goal("cm", { goal: "做报告和幻灯片", doneCriteria: "三节齐全且有幻灯片" }), /已更新/);
-	assert.equal(rooms.getAutonomy(room.id)!.goal, "做报告和幻灯片");
-	assert.equal(rooms.getAutonomy(room.id)!.doneCriteria, "三节齐全且有幻灯片");
-	assert.equal(notices().length, 2);
-	assert.match(notices()[1].content, /管理者更新了目标：做报告和幻灯片；做到「三节齐全且有幻灯片」算完成/);
-	assert.equal(cards(), 0);
-	await sleep(200);
-	assert.equal(turnsOf(room.id, "check").length, 0);
-	// 用户从顶部按钮 / API 开启：仍唤醒管理者按目标拆任务
-	rooms.endAutonomy(room.id);
-	rooms.setAutonomy(room.id, { goal: "写报告", doneCriteria: "三节齐全" });
-	await until(() => roomDone(room.id, "check", 1) && idle(room.id), "用户开启后唤醒管理者");
-	assert.ok(prompts.some((x) => x.agentId === "cm" && x.prompt.includes("用户确认了目标和完成标准")), "唤醒原因写清楚");
-	rooms.endAutonomy(room.id);
-	replies.clear();
-	await rooms.deleteRoom(room.id);
-});
-
-test("管理者规则文字：目标清楚直接 room_goal、模糊先问、小事不开；达成先交付再 room_goal_done", async () => {
-	assert.match(logic.ROOM_GOAL_RULE, /目标清楚[\s\S]*直接用 room_goal[\s\S]*同一轮里[\s\S]*目标模糊[\s\S]*先在群里问用户一两个关键问题[\s\S]*小事、闲聊 → 不开启/);
-	assert.match(logic.AUTONOMY_NEXT_STEP, /先把最终交付物发到群里[\s\S]*再调用 room_goal_done/);
+test("管理者规则文字：永远带来意判断规则（立项 / 确认 / 改方案）；有项目进行中时成员才带「接着推进」规则", async () => {
+	assert.match(logic.INTENT_PLAN_RULE, /先判断来意[\s\S]*想做成一件需要多步、多人配合的事[\s\S]*room_plan 出方案卡[\s\S]*room_project_start 开始/);
+	assert.match(logic.PROJECT_NEXT_STEP, /先把最终交付物发到群里[\s\S]*再用 room_project_done 结束这个项目/);
 	const room = rooms.createRoom({ name: "规则群", memberIds: ["cm", "ca"], managerId: "cm" });
-	assert.ok(rooms.roomRules(room.id, "cm").join("\n").includes(logic.ROOM_GOAL_RULE), "没开自主推进时管理者规则带上开启条件");
-	assert.ok(!rooms.roomRules(room.id, "ca").join("\n").includes(logic.ROOM_GOAL_RULE), "成员没有");
+	assert.ok(rooms.roomRules(room.id, "cm").join("\n").includes(logic.INTENT_PLAN_RULE), "管理者永远带来意判断规则");
+	assert.ok(!rooms.roomRules(room.id, "ca").join("\n").includes(logic.INTENT_PLAN_RULE), "成员没有");
+	openProject(room.id, "写报告", "三节齐全", "manager");
+	assert.ok(rooms.roomRules(room.id, "cm").join("\n").includes(logic.PROJECT_NEXT_STEP), "项目进行中管理者带接着推进规则");
 	await rooms.deleteRoom(room.id);
 });
 
-// ---------------------------------------------------------------- 暂停不挡唤醒 / 自主推进接着推进
+// ---------------------------------------------------------------- 暂停不挡唤醒 / 项目进行中接着推进
 
 const roomDone = (roomId: string, reason: string, n: number) => turnsOf(roomId, reason).filter((t) => t.status === "done").length >= n;
 const idleHints = (roomId: string) => (db.prepare("SELECT COUNT(*) AS n FROM messages WHERE room_id = ? AND meta LIKE '%room-idle%'").get(roomId) as { n: number }).n;
@@ -230,20 +200,20 @@ test("本轮已暂停时唤醒管理者照常进行，暂停时存下的待发�
 	await rooms.deleteRoom(room.id);
 });
 
-test("自主推进兜底：管理者回合结束手上没活 → 再叫醒一次；两次之间看板没进展就不再叫，只提示用户；有进展 / 用户发话后恢复", async () => {
+test("项目兜底：管理者回合结束手上没活 → 再叫醒一次；两次之间看板没进展就不再叫，只提示用户；有进展 / 用户发话后恢复", async () => {
 	const room = rooms.createRoom({ name: "兜底群", memberIds: ["cm", "ca"], managerId: "cm" });
 	replies.set("cm", () => "目标还差第二节");
-	rooms.setAutonomy(room.id, { goal: "写报告", doneCriteria: "三节齐全" });
+	openProject(room.id, "写报告", "三节齐全");
 	await until(() => roomDone(room.id, "check", 1) && idle(room.id) && idleHints(room.id) === 1, "开启时的唤醒后提示用户（没有第二次兜底）");
 	assert.equal(turnsOf(room.id, "check").length, 1, "开启时那次唤醒算第一次兜底");
 	const first = prompts.filter((x) => x.agentId === "cm").pop()!.prompt;
-	assert.match(first, /群开着自主推进[\s\S]*work_create[\s\S]*room_goal_done/, "唤醒文案要求接着规划下一步 / 达成就结束");
+	assert.match(first, /有项目在进行[\s\S]*work_create[\s\S]*room_project_done/, "唤醒文案要求接着规划下一步 / 完成就结束");
 	// 有进展（任务状态变了）：下一次管理者回合结束可以再兜底一次
 	const wi = W.createWorkItem({ roomId: room.id, title: "第一节", requirement: "写", doneCriteria: "有结果", ownerAgentId: "ca", start: false }, { kind: "user" }).item.id;
 	db.prepare("UPDATE work_items SET status = 'done' WHERE id = ?").run(wi);
 	rooms.wakeManager(room.id, "成员提交了");
 	await until(() => roomDone(room.id, "check", 3) && idle(room.id) && idleHints(room.id) === 2, "有进展 → 兜底再叫醒一次，之后无进展 → 再提示");
-	assert.ok(prompts.some((x) => x.agentId === "cm" && x.prompt.includes("目标还没完成，手上没有在做的任务")), "兜底唤醒原因写清楚");
+	assert.ok(prompts.some((x) => x.agentId === "cm" && x.prompt.includes("项目还没完成，手上没有在做的任务")), "兜底唤醒原因写清楚");
 	// 有进行中的任务：不兜底
 	const doing = W.createWorkItem({ roomId: room.id, title: "第二节", requirement: "写", doneCriteria: "有结果", ownerAgentId: "ca", start: false }, { kind: "user" }).item.id;
 	db.prepare("UPDATE work_items SET status = 'active' WHERE id = ?").run(doing);
@@ -254,20 +224,21 @@ test("自主推进兜底：管理者回合结束手上没活 → 再叫醒一次
 	db.prepare("UPDATE work_items SET status = 'cancelled' WHERE id = ?").run(doing);
 	rooms.postUserMessage(room.id, "继续推进");
 	await until(() => roomDone(room.id, "check", 5) && idle(room.id), "用户发话后兜底恢复");
-	// 管理者宣布目标达成后不再兜底
-	assert.equal(rooms.endAutonomy(room.id, { achieved: "三节都写完了" }), true);
+	// 管理者宣布项目完成后不再兜底
+	const pid = projects.activeProjects(room.id)[0].id;
+	projects.finishProject(room.id, pid, "三节都写完了");
 	rooms.wakeManager(room.id, "收尾");
-	await until(() => roomDone(room.id, "check", 6) && idle(room.id), "达成后的最后一次唤醒");
-	assert.equal(turnsOf(room.id, "check").length, 6, "结束自主推进后不兜底");
-	assert.ok(db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND content LIKE '目标已达成%三节都写完了%'").get(room.id));
+	await until(() => roomDone(room.id, "check", 6) && idle(room.id), "完成后的最后一次唤醒");
+	assert.equal(turnsOf(room.id, "check").length, 6, "项目结束后不兜底");
+	assert.ok(db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND content LIKE '项目%已完成。结果：三节都写完了%'").get(room.id));
 	replies.clear();
 	await rooms.deleteRoom(room.id);
 });
 
-test("定时检查：开着自主推进的群没有未完成任务也纳入", async () => {
-	const room = rooms.createRoom({ name: "定时自主群", memberIds: ["cm"], managerId: "cm" });
+test("定时检查：有进行中项目的群没有未完成任务也纳入", async () => {
+	const room = rooms.createRoom({ name: "定时项目群", memberIds: ["cm"], managerId: "cm" });
 	replies.set("cm", () => "收到");
-	rooms.setAutonomy(room.id, { goal: "写报告", doneCriteria: "三节齐全" });
+	openProject(room.id, "写报告", "三节齐全");
 	await until(() => roomDone(room.id, "check", 1) && idle(room.id) && idleHints(room.id) === 1, "开启时的唤醒，没进展 → 提示过用户");
 	rooms.runRoomChecks(now() + 10 * 60 * 60_000, 60_000);
 	await new Promise((r) => setTimeout(r, 300));
@@ -277,43 +248,23 @@ test("定时检查：开着自主推进的群没有未完成任务也纳入", as
 	db.prepare("UPDATE work_items SET status = 'done' WHERE id = ?").run(wi);
 	assert.ok(rooms.runRoomChecks(now() + 20 * 60 * 60_000, 60_000) >= 1);
 	await until(() => roomDone(room.id, "check", 2) && idle(room.id), "定时检查跑完");
-	assert.ok(prompts.some((x) => x.agentId === "cm" && /定时检查：目标还没完成/.test(x.prompt)), "定时检查的唤醒原因写清目标还没完成");
+	assert.ok(prompts.some((x) => x.agentId === "cm" && /定时检查：项目还没完成/.test(x.prompt)), "定时检查的唤醒原因写清项目还没完成");
 	await until(() => idle(room.id), "之后的兜底（看板有了新进展）也跑完");
-	rooms.endAutonomy(room.id);
+	const pid = projects.activeProjects(room.id)[0].id;
+	await projects.stopProject(room.id, pid);
 	replies.clear();
 	await rooms.deleteRoom(room.id);
 });
 
-test("idleWakeStep：只有自主推进开着、手上没活、队列空才兜底；同一个看板指纹不再叫醒，只提示一次", () => {
-	const base = { autonomous: true, inFlight: false, queued: false, lastSig: null, sig: "a", hinted: false };
+test("idleWakeStep：只有有进行中项目、手上没活、队列空才兜底；同一个看板指纹不再叫醒，只提示一次", () => {
+	const base = { projectActive: true, inFlight: false, queued: false, lastSig: null, sig: "a", hinted: false };
 	assert.equal(logic.idleWakeStep(base), "wake");
-	assert.equal(logic.idleWakeStep({ ...base, autonomous: false }), "none");
+	assert.equal(logic.idleWakeStep({ ...base, projectActive: false }), "none");
 	assert.equal(logic.idleWakeStep({ ...base, inFlight: true }), "none");
 	assert.equal(logic.idleWakeStep({ ...base, queued: true }), "none");
 	assert.equal(logic.idleWakeStep({ ...base, lastSig: "b" }), "wake", "有新进展");
 	assert.equal(logic.idleWakeStep({ ...base, lastSig: "a" }), "hint", "没有新进展：提示用户");
 	assert.equal(logic.idleWakeStep({ ...base, lastSig: "a", hinted: true }), "none", "提示过不再重复");
-});
-
-test("room_goal_done：只有管理者在自主推进中能宣布目标达成，结束自主推进并把总结发到群里", async () => {
-	const room = rooms.createRoom({ name: "达成群", memberIds: ["cm", "ca"], managerId: "cm" });
-	const { roomTools } = await import("../src/rooms/tools.ts");
-	const toolsOf = (agentId: string) => {
-		const defs = new Map<string, { execute: (id: string, p: Record<string, unknown>) => Promise<{ content: { text: string }[] }> }>();
-		roomTools(room.id, agentId)({ registerTool: (d: unknown) => defs.set((d as { name: string }).name, d as never) });
-		return defs;
-	};
-	const done = (agentId: string, summary: string) => toolsOf(agentId).get("room_goal_done")!.execute("t", { summary }).then((r) => r.content[0].text);
-	assert.match(await done("ca", "完成了"), /只有管理者/);
-	assert.match(await done("cm", "完成了"), /没有开着自主推进/);
-	rooms.setAutonomy(room.id, { goal: "写报告", doneCriteria: "三节齐全" });
-	assert.match(await done("cm", " "), /结果总结/);
-	assert.equal(rooms.getAutonomy(room.id)?.goal, "写报告");
-	assert.match(await done("cm", "三节都写完了，在 report.md"), /已结束自主推进/);
-	assert.equal(rooms.getAutonomy(room.id), null);
-	assert.ok(db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND content LIKE '目标已达成%三节都写完了，在 report.md%'").get(room.id));
-	await until(() => idle(room.id), "开启时的唤醒结束");
-	await rooms.deleteRoom(room.id);
 });
 
 // ---------------------------------------------------------------- room_assign 的附件真的交给负责人

@@ -5,7 +5,7 @@
 ## 当前版本（2026-10-20）
 - 公开版：**v0.1.0-beta.36**（Latest，2026-10-21 00:09 北京时间）。五平台构建、Mac/Windows 安装冒烟一次通过，13 项资产和 latest.json 已核对。说明见 [release-notes/v0.1.0-beta.36.md](release-notes/v0.1.0-beta.36.md)；之前 beta.35（10-20 19:04）、beta.34（10-20 08:20）。
 - 发布小坑：Intel Mac 那一路偶尔在上传时和别的平台并发撞车（`Not Found - delete-a-release-asset`），构建本身成功；`gh run rerun <id> --failed` 只重跑这一路即可（beta.34 遇到过，beta.35 没遇到）。
-- beta.36 之后未打包：目标清楚时导演自己开启自主推进（room_goal 直接开、群里告知，不再插确认卡）、模糊先问、达成先交付再结束（[决策 0018](decisions/0018-manager-starts-autonomy.md)）。真实模型下会不会照做，待真机。
+- beta.36 之后未打包：群聊按「AI 团队」重做第 1 步「项目与方案」（[决策 0019](decisions/0019-group-as-team.md)，取代决策 0018 的「自主推进」开关）：管理者先立项出方案卡（room_plan），用户确认（按钮或群里说「可以」→ room_project_start）后项目才开始，进行中可改方案、完成用 room_project_done、用户可随时停下；服务端 + 界面都已实现。真实模型下方案质量 / 按方案推进得怎样，待真机。
 
 ## 正在做
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
@@ -29,7 +29,7 @@
 **还要做**
 1. 模型对用户也说「帮手」已按用户决定做完（决策 0014 补充）：给模型看的文字全改，事件标记新旧都认；Mock 的假台词和触发词（「派个子代理」「子代理回报」）没改，e2e 依赖它们。
 2. 测试不再碰 Mac 钥匙串：直接启动 `src/main.ts` 的 13 个 e2e、`server-setup.test.ts` 和 3 个 smoke 改走 `test/launch-memory.ts`（之前在 Mac 上会用真实 App 的钥匙串主密钥，曾差点用 `-U` 覆盖，已拦下，条目未改）。待做：规范检查加一条「测试禁止直接启动 src/main.ts」；主密钥读不到时停下、不覆盖已按用户决定做完（[0015](decisions/0015-master-key-never-overwrite.md)；单测 + 假 `security` 实启 `main.ts` 演练过，真机 Mac / Windows 未验证）；单测 `setup.ts` 在 PATH 上放假的 `security`。
-2b. 原来就失败的 e2e：`subagent-composer-navigation.mjs` 已修（只取档位刻度，Fast 开关不是档位）；`send-shortcut-ui.mjs` 第 3 步偶发等不到主会话发送键，复跑两次都过，原因未查明；`file-preview.mjs` 手机 390 宽时预览框量到 388.8（像进场动画没走完），待查。`voice-input-ui.mjs`「配置 ASR：录音 → 停止」偶发等不到停止键（2026-10-20 子代理连跑两次失败，主会话在同一份代码上连跑两次都过，改动前也过，判为时机偶发）；`run.mjs`「首次运行向导」在 Mac 上等不到密码输入框，还没在改动前的代码上对照，待查。
+2b. 原来就失败的 e2e：`subagent-composer-navigation.mjs` 已修（只取档位刻度，Fast 开关不是档位）；`send-shortcut-ui.mjs` 第 3 步偶发等不到主会话发送键，复跑两次都过，原因未查明；`file-preview.mjs` 手机 390 宽时预览框量到 388.8（像进场动画没走完），待查。`voice-input-ui.mjs`「配置 ASR：录音 → 停止」偶发等不到停止键（2026-10-20 子代理连跑两次失败，主会话在同一份代码上连跑两次都过，改动前也过，判为时机偶发）；`run.mjs`「首次运行向导」在 Mac 上等不到密码输入框，还没在改动前的代码上对照，待查。`room-member-model-settings-ui.mjs`「按两个已配置服务分组」断言失败，在第 1 步改动前的代码上同样失败（2026-10-22 对照过），待查。
 3. 拖文件到聊天框：`main.rs` 那一行没在本地编译过（Mac 没装 Rust，CI 不编译桌面程序），下次打包时 release 构建才会编译；装好新版后要在 Mac / Windows 上真拖一次确认。
 4. 群任务卡住 / 反复退回改由管理者自己处理已按用户决定做完（[0016](decisions/0016-group-stuck-manager-handles.md)，已发布 beta.35）；真实模型下管理者会不会按规则换做法、向用户说明得清不清楚，待真机。
 5. 群里帮手查看方式已按用户决定改完：没有开关，别的成员列表只看概况、点名查看完整过程（决策 0014 补充）。

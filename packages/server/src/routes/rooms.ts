@@ -4,14 +4,15 @@ import { bus } from "../bus.ts";
 import { db } from "../db.ts";
 import { fileInfo, saveRoomUpload } from "../files.ts";
 import { getAgent } from "../runtime.ts";
-import { confirmMemberProposal, confirmProposal, continueRoom, endAutonomy, setAutonomy, createRoom, deleteRoom, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, postUserMessage, roomJson, listRooms, stop as stopRoom, updateRoom, createRoomAgent } from "../rooms/index.ts";
+import { confirmMemberProposal, confirmProject, confirmProposal, continueRoom, createRoom, deleteRoom, dismissProject, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, postUserMessage, ProjectError, projectJson, projectsOf, roomJson, listRooms, startGoalProject, stop as stopRoom, stopProject, updateRoom, createRoomAgent } from "../rooms/index.ts";
 import { BOARD_GROUPS, createWorkItem, listWorkItems, pauseAllWorkItems, type BoardGroup } from "../work-items.ts";
 import { getMessage, updateMessage as patchMessage } from "../messages.ts";
 import { by, roomErr, type Env } from "./common.ts";
 import { agentJson, deleteAgentFully } from "./agents.ts";
 import { workErr } from "./work-items.ts";
 
-
+/** 项目接口的错误：ProjectError 带 404 / 409，其余按 roomErr 的 400 兜底。 */
+const projectErr = (c: Parameters<typeof roomErr>[0], e: unknown) => (e instanceof ProjectError ? c.json({ error: e.message }, e.status) : roomErr(c, e));
 
 export function mountRoomRoutes(app: Hono<Env>) {
 	// ---------------------------------------------------------------- 群聊
@@ -100,20 +101,35 @@ export function mountRoomRoutes(app: Hono<Env>) {
 			return workErr(c, e);
 		}
 	});
-	/** 自主推进：用户直接开启（目标 + 完成标准）/ 结束。 */
-	app.put("/api/rooms/:rid/autonomy", async (c) => {
-		const b = await c.req.json<{ goal?: string; doneCriteria?: string }>().catch(() => ({}) as { goal?: string; doneCriteria?: string });
+	/** 项目（docs/design/group-team.md §1–3）：列项目、用户按钮确认 / 先不做 / 停下。立项本身由管理者在群里用 room_plan 出方案卡。 */
+	app.get("/api/rooms/:rid/projects", (c) => {
+		const rid = c.req.param("rid");
+		if (!getRoom(rid)) return c.json({ error: "not_found" }, 404);
+		return c.json({ projects: projectsOf(rid, c.req.query("all") === "1").map(projectJson) });
+	});
+	app.post("/api/rooms/:rid/projects/:pid/confirm", (c) => {
 		try {
-			setAutonomy(c.req.param("rid"), b);
-			return c.json(roomJson(getRoom(c.req.param("rid"))!));
+			confirmProject(c.req.param("rid"), c.req.param("pid"), "user");
+			return c.json({ ok: true, room: roomJson(getRoom(c.req.param("rid"))!) });
 		} catch (e) {
-			return roomErr(c, e);
+			return projectErr(c, e);
 		}
 	});
-	app.delete("/api/rooms/:rid/autonomy", (c) => {
-		if (!getRoom(c.req.param("rid"))) return c.json({ error: "not_found" }, 404);
-		endAutonomy(c.req.param("rid"));
-		return c.json(roomJson(getRoom(c.req.param("rid"))!));
+	app.post("/api/rooms/:rid/projects/:pid/dismiss", (c) => {
+		try {
+			dismissProject(c.req.param("rid"), c.req.param("pid"));
+			return c.json({ ok: true, room: roomJson(getRoom(c.req.param("rid"))!) });
+		} catch (e) {
+			return projectErr(c, e);
+		}
+	});
+	app.post("/api/rooms/:rid/projects/:pid/stop", async (c) => {
+		try {
+			await stopProject(c.req.param("rid"), c.req.param("pid"));
+			return c.json({ ok: true, room: roomJson(getRoom(c.req.param("rid"))!) });
+		} catch (e) {
+			return projectErr(c, e);
+		}
 	});
 	app.post("/api/rooms/:rid/stop", async (c) => c.json({ ok: await stopRoom(c.req.param("rid")) }));
 	app.post("/api/rooms/:rid/continue", (c) => {
@@ -150,11 +166,13 @@ export function mountRoomRoutes(app: Hono<Env>) {
 		const b = await c.req.json<{ proposal?: unknown; member?: unknown; goal?: string; doneCriteria?: string }>().catch(() => ({}) as { proposal?: unknown; member?: unknown; goal?: string; doneCriteria?: string });
 		try {
 			if (m.meta.kind === "room-goal") {
-				// 管理者提议的目标 + 完成标准：用户可在卡片上改，确认后开启自主推进
+				// 旧版管理者提议的目标 + 完成标准（不再产生新卡）：用户可在卡片上改，确认后建一个 active 项目
 				const roomId = String(m.meta.roomId);
 				if (!m.room_id || m.room_id !== roomId || !getRoom(roomId)) return c.json({ error: "not_found" }, 404);
-				const a = setAutonomy(roomId, { goal: b.goal ?? String(m.meta.goal ?? ""), doneCriteria: b.doneCriteria ?? String(m.meta.doneCriteria ?? "") });
-				patchMessage(m.id, { meta: { status: "confirmed", goal: a.goal, doneCriteria: a.doneCriteria } });
+				const goal = b.goal ?? String(m.meta.goal ?? "");
+				const doneCriteria = b.doneCriteria ?? String(m.meta.doneCriteria ?? "");
+				startGoalProject(roomId, m.agent_id || getRoom(roomId)!.manager_id || "unknown", goal, doneCriteria);
+				patchMessage(m.id, { meta: { status: "confirmed", goal, doneCriteria } });
 				return c.json({ ok: true, room: roomJson(getRoom(roomId)!) });
 			}
 			if (m.meta.kind === "room-proposal") {

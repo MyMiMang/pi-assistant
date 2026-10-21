@@ -1,12 +1,12 @@
-import { Crown, Loader2, Plus, Trash2, Users, UserPlus, ChevronDown, Flag } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { Crown, Loader2, Plus, Trash2, Users, UserPlus, ChevronDown, Flag, ClipboardCheck, Lightbulb } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
-import type { Message } from "../types";
+import type { Message, ProjectPlan, ProjectStatus } from "../types";
 import { type LabeledModel, modelKey, modelLabel } from "./ModelOptions";
 import { useConfiguredModels, type ModelEntry } from "./ModelPicker";
 import { DraftModelSettings, useModelDefaults } from "./DraftModelSettings";
-import { Avatar, Help, Select, cx } from "./ui";
+import { Avatar, Fold, Help, Select, cx } from "./ui";
 
 export interface PMember {
 	agentId?: string;
@@ -258,7 +258,7 @@ export function RoomAgentActions({ agentId, variant }: { agentId: string; varian
 	);
 }
 
-/** 旧版管理者提议的群目标确认卡（现在 room_goal 直接开启，不再产生新卡；历史里的卡照常显示、可确认）：用户可改目标和完成标准，确认后群进入自主推进。 */
+/** 旧版群目标确认卡（不再产生新卡；历史里的卡照常显示、可确认）：用户可改目标和完成标准，确认后服务端建一个进行中的项目。 */
 export function RoomGoalCard({ m }: { m: Message }) {
 	const meta = m.meta;
 	const [goal, setGoal] = useState(String(meta.goal ?? ""));
@@ -280,16 +280,16 @@ export function RoomGoalCard({ m }: { m: Message }) {
 		}
 	};
 	return (
-		<div className={cx("pa-card w-full max-w-[560px]", done && "approved")} data-testid="room-goal">
+		<div className={cx("pa-card pa-plan w-full max-w-[560px]", done && "approved")} data-testid="room-goal">
 			<div className="pa-card-top">
 				<Flag className="pa-ic" />
-				<b>开启自主推进</b>
-				<span className="pa-tag">{done ? "已开启" : meta.status === "dismissed" ? "已取消" : "确认前不会开始"}</span>
+				<b>开始项目</b>
+				<span className="pa-tag">{done ? "已开始" : meta.status === "dismissed" ? "已取消" : "确认前不会开始"}</span>
 			</div>
 			<div className="space-y-2">
 				<label className="block text-xs text-mut">目标<textarea className="pa-input mt-1 !h-16 resize-y !p-2 text-sm" value={goal} disabled={!pending || busy} onChange={(e) => setGoal(e.target.value)} data-testid="room-goal-goal" /></label>
 				<label className="block text-xs text-mut">完成标准<textarea className="pa-input mt-1 !h-16 resize-y !p-2 text-sm" value={doneCriteria} disabled={!pending || busy} onChange={(e) => setDone(e.target.value)} data-testid="room-goal-done" /></label>
-				{pending && <p className="text-xs text-mut2">确认后成员可以互相 @ 协作，管理者在任务提交、卡住或定时检查时出来协调；只有需要你拍板的事才会问你。</p>}
+				{pending && <p className="text-xs text-mut2">确认后项目开始：成员之间可以直接配合，管理者在任务提交、卡住或定时检查时出来协调；只有需要你拍板的事才会问你。</p>}
 			</div>
 			{err && <p className="mt-2 text-xs text-red-600">{err}</p>}
 			{pending && (
@@ -297,6 +297,83 @@ export function RoomGoalCard({ m }: { m: Message }) {
 					<button className="pa-btn ghost" disabled={busy} onClick={() => void api(`/api/proposals/${m.id}/dismiss`, { method: "POST" })} data-testid="room-goal-dismiss">先不用</button>
 					<button className="pa-btn primary" disabled={busy || !goal.trim() || !doneCriteria.trim()} onClick={confirm} data-testid="room-goal-confirm">{busy && <Loader2 className="pa-ic animate-spin" />} 确认开始</button>
 				</div>
+			)}
+		</div>
+	);
+}
+
+export const PROJECT_STATUS: Record<ProjectStatus, string> = { proposed: "待确认", active: "进行中", done: "已完成", stopped: "已停下", dismissed: "先不做" };
+const PLAN_CARD_STATUS: Record<string, string> = { pending: "待你确认", confirmed: "已确认", dismissed: "先不做", superseded: "已被新方案取代" };
+
+/** 一份方案的正文（方案卡和项目面板共用）：大白话小标题，每行一条；full 时带上假设 / 需要你提供 / 规模。 */
+export function PlanBody({ plan, full }: { plan: ProjectPlan; full?: boolean }) {
+	const [more, setMore] = useState(false);
+	const assumptions = (plan.assumptions ?? []).filter(Boolean);
+	const rows = (title: string, items: ReactNode[]) => (items.length ? <PlanSection title={title}><ul>{items.map((x, i) => <li key={i}>{x}</li>)}</ul></PlanSection> : null);
+	return (
+		<div className="pa-plan-body">
+			{plan.goal && <PlanSection title="要做成什么"><p>{plan.goal}</p></PlanSection>}
+			{plan.doneCriteria && <PlanSection title="怎样算完成"><p>{plan.doneCriteria}</p></PlanSection>}
+			{full && assumptions.length > 0 && (
+				<div className="pa-plan-assume" data-testid="room-plan-assumptions">
+					<h4><Lightbulb className="pa-ic accent" />我们的理解<Help>管理者按常理替你定下的细节。哪条不对，直接在群里说，管理者会改了再给你看。</Help></h4>
+					<ol>{assumptions.slice(0, 3).map((x, i) => <li key={i}>{x}</li>)}</ol>
+					{assumptions.length > 3 && (
+						<Fold title="其余几条" count={assumptions.length - 3} open={more} onToggle={() => setMore(!more)}>
+							<ol start={4}>{assumptions.slice(3).map((x, i) => <li key={i}>{x}</li>)}</ol>
+						</Fold>
+					)}
+				</div>
+			)}
+			{rows("分工", (plan.roles ?? []).map((r) => <><b>{r.member}</b>：{r.does}</>))}
+			{rows("分几步", (plan.stages ?? []).map((s, i) => <><b>{i + 1}. {s.name}</b>{s.output ? `：交出${s.output}` : ""}</>))}
+			{rows("会请你看一眼的地方", (plan.checkpoints ?? []).filter(Boolean))}
+			{plan.deliverables && <PlanSection title="最后交给你"><p>{plan.deliverables}</p></PlanSection>}
+			{full && plan.needs && <PlanSection title="需要你提供"><p>{plan.needs}</p></PlanSection>}
+			{full && plan.scale && <PlanSection title="规模"><p>{plan.scale}</p></PlanSection>}
+		</div>
+	);
+}
+function PlanSection({ title, children }: { title: string; children: ReactNode }) {
+	return <section><h4>{title}</h4>{children}</section>;
+}
+
+/** 方案卡（管理者 room_plan 发出）：用户点「就这么干」开始项目、「先不做」放下；想改直接在群里说。 */
+export function RoomPlanCard({ m }: { m: Message }) {
+	const meta = m.meta;
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	const status = String(meta.status ?? "pending");
+	const pending = status === "pending";
+	const act = async (what: "confirm" | "dismiss") => {
+		setBusy(true);
+		setErr("");
+		try {
+			await api(`/api/rooms/${meta.roomId}/projects/${meta.projectId}/${what}`, { method: "POST" });
+			await useStore.getState().loadRooms();
+		} catch (e) {
+			setErr((e as Error).message);
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<div className={cx("pa-card pa-plan w-full max-w-[560px]", !pending && "settled")} data-testid="room-plan" data-status={status} data-project={meta.projectId}>
+			<div className="pa-card-top">
+				<ClipboardCheck className="pa-ic accent" />
+				<b>{meta.revision ? "改过的方案" : "方案"}：{String(meta.title ?? "")}</b>
+				<span className="pa-tag" data-testid="room-plan-status">{PLAN_CARD_STATUS[status] ?? status}</span>
+			</div>
+			{meta.plan && <PlanBody plan={meta.plan as ProjectPlan} full />}
+			{err && <p className="mt-2 text-xs text-red-600" role="alert">{err}</p>}
+			{pending && (
+				<>
+					<p className="pa-plan-hint">想改哪里，直接在群里说；管理者改好会再给你看。</p>
+					<div className="pa-actions">
+						<button className="pa-btn ghost" disabled={busy} onClick={() => void act("dismiss")} data-testid="room-plan-dismiss">先不做</button>
+						<button className="pa-btn primary" disabled={busy} onClick={() => void act("confirm")} data-testid="room-plan-confirm">{busy && <Loader2 className="pa-ic animate-spin" />} 就这么干</button>
+					</div>
+				</>
 			)}
 		</div>
 	);

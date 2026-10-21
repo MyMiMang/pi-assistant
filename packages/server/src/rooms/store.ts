@@ -1,7 +1,7 @@
-/** 群的数据层：行类型、读取、成员、系统消息、自主推进设置。不含调度。 */
+/** 群的数据层：行类型、读取、成员、系统消息。不含调度。 */
 import { bus } from "../bus.ts";
 import { createConversation } from "../conversations.ts";
-import { db, now } from "../db.ts";
+import { db } from "../db.ts";
 import { insertMessage } from "../messages.ts";
 import { getAgent } from "../runtime.ts";
 import { normalizeCaps, type RoomCaps } from "./logic.ts";
@@ -32,13 +32,6 @@ export interface MemberRow {
 	left_at: number | null;
 	deleted: number;
 }
-/** 自主推进：用户写了目标和完成标准、或目标清楚时管理者自己开启；成员可以 @ 彼此，管理者只在关键事件被叫醒。 */
-export interface Autonomy {
-	goal: string;
-	doneCriteria: string;
-	startedAt: number;
-}
-
 export const getRoom = (id: string) => db.prepare("SELECT * FROM rooms WHERE id = ?").get(id) as RoomRow | undefined;
 export const membersOf = (roomId: string, all = false) =>
 	db.prepare(`SELECT * FROM room_members WHERE room_id = ? ${all ? "" : "AND left_at IS NULL"} ORDER BY sort, joined_at`).all(roomId) as unknown as MemberRow[];
@@ -78,17 +71,4 @@ export function stoppedFlag(r: RoomRow | undefined) {
 	} catch {
 		return false;
 	}
-}
-
-export function autonomyOf(r: RoomRow | undefined): Autonomy | null {
-	if (!r?.autonomy) return null;
-	try {
-		const a = JSON.parse(r.autonomy) as Autonomy;
-		return a && typeof a.goal === "string" && a.goal ? a : null;
-	} catch {
-		return null;
-	}
-}
-export function writeAutonomy(roomId: string, a: Autonomy | null) {
-	db.prepare("UPDATE rooms SET autonomy = ?, updated_at = ? WHERE id = ?").run(a ? JSON.stringify(a) : null, now(), roomId);
 }

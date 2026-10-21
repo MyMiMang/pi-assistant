@@ -74,26 +74,36 @@ export function normalizeCaps(c: Partial<RoomCaps> | null | undefined): RoomCaps
 	};
 }
 
-/** 管理者什么时候用 room_goal 自己开启自主推进（群规则、管理者唤醒文案共用一份；已经开着自主推进时不用）。 */
-export const ROOM_GOAL_RULE =
-	"用户交代的事目标清楚、有明确的交付物（比如「把这份报告写完」「做一个小程序的原型」「把这个 logo 设计完」）→ 直接用 room_goal 写清目标和可检查的完成标准开启自主推进（不用等用户确认），并在同一轮里用 work_create / room_assign 拆任务派出去（按成员的角色分工，谁的职责最对口就派给谁；你负责拆解、协调、核验、整合和对用户沟通，只有没有对口成员、或纯协调类小事才自己做）；目标模糊（不知道要交付什么、怎样算完成）→ 先在群里问用户一两个关键问题，问清楚再开启，不要替用户编；一问一答的小事、闲聊 → 不开启。";
-/** 自主推进中给管理者的「接着推进」规则（唤醒文案、群规则共用一份）。 */
-export const AUTONOMY_NEXT_STEP =
-	"群开着自主推进：成果核验通过、或手上没有在做的任务而目标还没达成时，就在这一轮里按目标规划下一步，按成员的角色分工、直接用 work_create 建任务派给最对口的成员（别都揽到自己身上），不要只汇报一句然后等用户；目标已经达成（对照完成标准逐条满足）时，先把最终交付物发到群里（文件用 deliver_file，并说明做了什么、交付了哪些、还有什么没做），再调用 room_goal_done 结束自主推进。";
-/** 开着自主推进的唤醒原因：管理者回合结束后手上没活、目标还没结束（兜底），或定时检查时没有未完成任务 */
-export const AUTONOMY_IDLE_WAKE = "目标还没完成，手上没有在做的任务：按目标规划下一步并派出去；已经达成就结束自主推进";
+/** 管理者判断用户来意、立项出方案的规则（群规则里管理者永远带上；docs/design/group-team.md §2–3）。 */
+export const INTENT_PLAN_RULE = "用户说话时，先判断来意：\n- 聊天、问问题、一两步就能做完的小事 → 直接回答，或点名对口成员回答，不立项。\n- 想做成一件需要多步、多人配合的事 → 立项，按这个顺序：① 先想清楚要做成什么、做到什么程度算完成、哪些地方不确定；② 能按常理定的细节用你的专业判断补上，写成「我们的理解 / 假设」，用户已经说得很清楚的就直接整理；③ 需要专业意见时，先用 room_assign 请对口成员简短出个主意（只出主意，不开工）；④ 只把真正没法替用户决定、又会影响结果的事问用户（比如给谁用、预算、个人偏好），一次最多问两个，每个都给出你建议的选项，答完还不清楚就接着问；⑤ 想清楚了就用 room_plan 出方案卡，分工里写上你自己负责的部分，然后等用户确认——确认前不要建任务、不要派活开工。\n- 用户看了方案明确同意（「可以」「就这么干」）→ 用 room_project_start 开始；说哪里要改 → 改好后用 room_plan（带 projectId）重新出卡；说先不做 → 不开始，回到平时。\n- 项目进行中用户补充要求：小调整直接纳入、照常推进；影响目标、范围或交付物的大改动，用 room_plan（带 projectId）出改过的方案请用户重新确认。\n- 项目进行中用户问进度：两三句话说清做到哪了、接下来做什么、需不需要用户做什么。\n- 同时有几个项目时，先判断用户这句话属于哪个项目、还是一件新事；拿不准就用一句话问用户。";
+/** 有项目进行中时给管理者的「接着推进」规则（唤醒文案、群规则共用一份）。 */
+export const PROJECT_NEXT_STEP = "有项目在进行：成果核验通过、或手上没有在做的任务而项目还没完成时，就在这一轮里按方案规划下一步，按成员的角色分工用 work_create（带 projectId）建任务派给最对口的成员（属于你自己职责的你自己做），不要只汇报一句然后等用户；项目完成（对照完成标准逐条满足）时，先把最终交付物发到群里（文件用 deliver_file，并说明做了什么、交付了哪些、还有什么没做或建议下一步），再用 room_project_done 结束这个项目。";
+/** 项目进行中的唤醒原因：管理者回合结束后手上没活、项目还没结束（兜底），或定时检查时没有未完成任务 */
+export const PROJECT_IDLE_WAKE = "项目还没完成，手上没有在做的任务：按方案规划下一步并派出去；已经完成就交付并结束项目";
 
 /**
- * 自主推进兜底：管理者一个回合正常结束后，目标没结束、没有进行中 / 待核验的任务、队列里也没有排着的回合 → 再叫醒它一次。
+ * 看板指纹（给 idleWakeStep 判断「两次兜底之间有没有新进展」用）：项目进行中只认 work_items 的状态变化算进展——
+ * 管理者反复用 room_assign 派同样的活（没建 work_item）不能让它一直觉得「有进展」而无限叫醒自己（boardSig 若把这类
+ * 普通派活的完成次数也算进去，每叫醒一次管理者再派一次活，指纹就又变了，兜底永远判定有进展 → 无限循环）。
+ * 没有项目进行中时 idleWakeStep 根本不会走到这一步（见上），这里仍把 plainAssignsDone 算进去只是让这个纯函数在
+ * 两种输入下都有确定、可测的行为。
+ */
+export function boardSig(o: { items: { id: string; status: string }[]; plainAssignsDone: number; projectActive: boolean }): string {
+	const itemsPart = o.items.map((x) => `${x.id}:${x.status}`).join(",");
+	return o.projectActive ? itemsPart : `${itemsPart}|${o.plainAssignsDone}`;
+}
+
+/**
+ * 项目进行中的兜底：管理者一个回合正常结束后，项目没结束、没有进行中 / 待核验的任务、队列里也没有排着的回合 → 再叫醒它一次。
  * 有界：连续两次兜底之间看板没有任何新进展（sig 没变）就不再叫醒，改为提示用户一次（hint）；用户发话会重置（调用方清掉 lastSig / hinted）。
  */
-export function idleWakeStep(o: { autonomous: boolean; inFlight: boolean; queued: boolean; lastSig: string | null; sig: string; hinted: boolean }): "wake" | "hint" | "none" {
-	if (!o.autonomous || o.inFlight || o.queued) return "none";
+export function idleWakeStep(o: { projectActive: boolean; inFlight: boolean; queued: boolean; lastSig: string | null; sig: string; hinted: boolean }): "wake" | "hint" | "none" {
+	if (!o.projectActive || o.inFlight || o.queued) return "none";
 	if (o.lastSig === null || o.lastSig !== o.sig) return "wake";
 	return o.hinted ? "none" : "hint";
 }
 
-/** check = 关键事件唤醒管理者看看板；peer = 自主推进中成员 @ 了另一位成员 */
+/** check = 关键事件唤醒管理者看看板；peer = 项目进行中成员 @ 了另一位成员 */
 export type TurnReason = "mention" | "manager" | "assign" | "followup" | "resume" | "check" | "peer";
 export interface PlannedTurn {
 	agentId: string;
@@ -183,7 +193,7 @@ export interface RoundCounters {
 }
 /** 下一次发言能不能进行；不能时给出原因（写进“本轮已暂停”提示） */
 export function capCheck(next: PlannedTurn, c: RoundCounters, caps: RoomCaps): string | null {
-	// 关键事件唤醒管理者、自主推进里的成员互相 @：不算“这一轮用户发言引出的回合”，不占每轮上限（防护靠卡住 / 空聊检测）。
+	// 关键事件唤醒管理者、项目进行中的成员互相 @：不算“这一轮用户发言引出的回合”，不占每轮上限（防护靠卡住 / 空聊检测）。
 	if (next.reason === "check" || next.reason === "peer") return null;
 	if (c.turns >= caps.maxTurns) return `这一轮已经发言 ${c.turns} 次`;
 	// 管理者收尾（成员回报后的 followup）不占「同一助理每轮次数」：否则两波派活后管理者没法做总结。总次数上限仍然生效。
@@ -216,6 +226,7 @@ const cardLine = (who: string, m: Record<string, unknown>) => {
 	if (m.kind === "question") return `[${who} 提问] ${String(m.question ?? "")}（${stTxt}${m.answer ? `：${String(m.answer)}` : ""}）`;
 	if (m.kind === "task") return `[${who} 的后台任务] ${String(m.title ?? "")}（${stTxt}）`;
 	if (m.kind === "subagent") return helperCardLine(who, m);
+	if (m.kind === "room-plan") return `[${who} 的${m.revision ? "改过的" : ""}方案] ${String(m.title ?? "")}（项目编号 ${String(m.projectId ?? "")}，${({ pending: "等用户确认", confirmed: "用户已确认", dismissed: "用户选了先不做", superseded: "已被新方案取代" } as Record<string, string>)[st] ?? st}）`;
 	return `[${who} 的卡片]`;
 };
 /**
@@ -268,11 +279,11 @@ export function buildTranscript(
 }
 
 /**
- * 自主推进中某位成员说完：它 @ 到的其他成员各叫醒一次（peer），@ 管理者则改为唤醒管理者看看板。
- * 普通模式（没开自主推进）成员 @ 别人一律不触发，保持原来的规则。
+ * 项目进行中某位成员说完：它 @ 到的其他成员各叫醒一次（peer），@ 管理者则改为唤醒管理者看看板。
+ * 平时（没有进行中的项目）成员 @ 别人一律不触发，保持原来的规则。
  */
-export function planPeerTurns(o: { fromAgentId: string; text: string; members: MemberRef[]; managerId: string | null; autonomous: boolean }): { turns: PlannedTurn[]; wakeManager: boolean } {
-	if (!o.autonomous || o.fromAgentId === o.managerId) return { turns: [], wakeManager: false };
+export function planPeerTurns(o: { fromAgentId: string; text: string; members: MemberRef[]; managerId: string | null; projectActive: boolean }): { turns: PlannedTurn[]; wakeManager: boolean } {
+	if (!o.projectActive || o.fromAgentId === o.managerId) return { turns: [], wakeManager: false };
 	const { ids } = parseMentions(o.text, o.members.filter((m) => m.id !== o.fromAgentId));
 	const peers = ids.filter((id) => id !== o.managerId && id !== o.fromAgentId);
 	return { turns: peers.map((agentId) => ({ agentId, reason: "peer" as const, depth: 0, task: o.text.slice(0, 2000), from: o.fromAgentId })), wakeManager: !!o.managerId && ids.includes(o.managerId) };

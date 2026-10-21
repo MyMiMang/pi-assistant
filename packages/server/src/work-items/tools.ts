@@ -8,7 +8,7 @@ import { db } from "../db.ts";
 import { cancelWorkItem, continueWorkItem, createWorkItem, editWorkItem, pauseWorkItem, reopenWorkItem, verifyWorkItem } from "./actions.ts";
 import { roundAllows } from "./correction.ts";
 import { reportProgress, submitWorkItem } from "./exec.ts";
-import { currentSource } from "./ports.ts";
+import { currentSource, port } from "./ports.ts";
 import { roleOf } from "../helper-scope.ts";
 import { emit, event, isManager, itemRow, listWorkItems, WORK_STATUSES, type WorkActor, type WorkStatus } from "./store.ts";
 import { askUserDecision, EXHAUSTED_MARK, SWITCH_HINT } from "./watch.ts";
@@ -71,8 +71,12 @@ export function workItemTools(roomId: string, agentId: string) {
 				owner: Type.Optional(Type.String({ description: "负责人名字（群成员）；按角色选最对口的成员" })),
 				selfReason: Type.Optional(Type.String(SELF_REASON)),
 				start: Type.Optional(Type.Boolean({ description: "是否马上派给负责人开始，默认是；只记录责任时传 false" })),
+				projectId: Type.Optional(Type.String({ description: "这个任务属于哪个进行中的项目（项目编号）；群里只有一个进行中的项目时可以不填，默认挂到它上面" })),
 			}),
-			async execute(_id: string, p: { title: string; requirement?: string; doneCriteria?: string; owner?: string; selfReason?: string; start?: boolean }) {
+			async execute(_id: string, p: { title: string; requirement?: string; doneCriteria?: string; owner?: string; selfReason?: string; start?: boolean; projectId?: string }) {
+				const projects = port()?.activeProjects(roomId) ?? [];
+				const projectId = p.projectId?.trim() ? p.projectId.trim() : projects.length === 1 ? projects[0].id : null;
+				if (projectId && !projects.some((x) => x.id === projectId)) return text(`「${p.projectId}」不是这个群进行中的项目。${projects.length ? `进行中的项目：${projects.map((x) => `「${x.title}」（项目编号 ${x.id}）`).join("、")}` : "现在没有进行中的项目，不属于项目的任务不用填 projectId。"}`);
 				const owner = p.owner ? memberByName(roomId, p.owner) : null;
 				if (p.owner && !owner) return text(`找不到成员「${p.owner}」，可用成员：${memberNames(roomId)}`);
 				const blocked = selfAssignBlock(roomId, agentId, owner?.id, p.selfReason);
@@ -80,7 +84,7 @@ export function workItemTools(roomId: string, agentId: string) {
 				if (!String(p.requirement ?? "").trim() || !String(p.doneCriteria ?? "").trim()) return text("先别记录执行：目标 / 范围或完成标准还不清楚。先问用户一个关键问题（怎样检查算做完），得到明确回答后再用 work_create；方法和技术细节可以自己定。");
 				try {
 					const { item } = createWorkItem(
-						{ roomId, title: p.title, requirement: p.requirement, doneCriteria: p.doneCriteria, ownerAgentId: owner?.id ?? null, start: p.start !== false && !!owner, sourceMessageId: currentSource(roomId), taskText: [p.title, p.requirement, p.doneCriteria].filter(Boolean).join("\n") },
+						{ roomId, title: p.title, requirement: p.requirement, doneCriteria: p.doneCriteria, ownerAgentId: owner?.id ?? null, start: p.start !== false && !!owner, sourceMessageId: currentSource(roomId), projectId, taskText: [p.title, p.requirement, p.doneCriteria].filter(Boolean).join("\n") },
 						actor,
 					);
 					if (owner?.id === agentId && p.selfReason?.trim()) event(item.id, "self_owner_reason", actor, item.revision, { reason: p.selfReason.trim().slice(0, 200) });

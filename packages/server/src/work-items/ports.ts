@@ -1,7 +1,7 @@
 /**
  * 任务与群之间只有两个窄接口（docs/design/group-collaboration.md「架构」）：
  *  ① 群 → 任务：onRoomWorkEvent（actions.ts）—— 群里的派活、成员移出、删群从这里进来；
- *  ② 任务 → 群：RoomPort —— 进展 / 上报发回来源群、在关键事件唤醒管理者、自主模式下的成员互相 @。
+ *  ② 任务 → 群：RoomPort —— 进展 / 上报发回来源群、在关键事件唤醒管理者、项目进行中的成员互相 @、进行中的项目（任务挂到哪个项目）。
  * 群模块启动时注册 RoomPort；任务模块不 import 群模块本体（避免循环、也方便以后接单聊）。
  */
 export interface RoomPort {
@@ -11,10 +11,12 @@ export interface RoomPort {
 	wakeManager: (roomId: string, reason: string, workItemId?: string) => void;
 	/** 任务有真实进展：清掉群里「只聊不干活」的计数 */
 	noteProgress: (roomId: string) => void;
-	/** 执行结束时的回复里 @ 了其他成员：自主模式下叫醒他们（普通模式下什么都不做） */
+	/** 执行结束时的回复里 @ 了其他成员：项目进行中叫醒他们（平时什么都不做） */
 	peerMentions: (roomId: string, fromAgentId: string, text: string) => void;
 	/** 管理者在这个群里的会话（把「等你决定」的提问卡片放进群里） */
 	managerConversation: (roomId: string) => { agentId: string; conversationId: string } | null;
+	/** 这个群进行中的项目（work_create 挂项目、默认挂到唯一的那个） */
+	activeProjects: (roomId: string) => { id: string; title: string }[];
 }
 let roomPort: RoomPort | null = null;
 export const setRoomPort = (p: RoomPort) => void (roomPort = p);

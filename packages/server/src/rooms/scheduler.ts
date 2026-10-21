@@ -17,8 +17,9 @@ import { requests } from "../requests.ts";
 import { getAgent, listAgents, runtime } from "../runtime.ts";
 import { stopConversationSubagents } from "../subagents.ts";
 import { buildWorkCorrectionContext, execConversationsOfRoom, resolveWorkReferences } from "../work-items.ts";
-import { AUTONOMY_NEXT_STEP, ROOM_GOAL_RULE, buildTranscript, capCheck, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
-import { activeIds, autonomyOf, capsOf, changed, getRoom, memberConversation, memberRefs, memberRow, membersOf, snapshot, sys } from "./store.ts";
+import { INTENT_PLAN_RULE, PROJECT_NEXT_STEP, buildTranscript, capCheck, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
+import { hasActiveProject } from "./projects.ts";
+import { activeIds, capsOf, changed, getRoom, memberConversation, memberRefs, memberRow, membersOf, snapshot, sys } from "./store.ts";
 
 /** 已解析的引用：快照（给模型/UI）+ 纯逻辑路由目标 */
 type QuoteInfo = { snapshot: ReplySnapshot; target: QuoteTarget };
@@ -251,15 +252,15 @@ function startRound(roomId: string, plan: PlannedTurn[], quote: QuoteInfo | null
 	void pump(roomId);
 }
 
-const REASON_LINE = (t: PlannedTurn, managerName: string, depthLeft: number, autonomous = false) =>
+const REASON_LINE = (t: PlannedTurn, managerName: string, depthLeft: number, projectActive = false) =>
 	({
 		mention: "用户在群里 @ 了你。请直接回应用户最新的消息（只做用户让你做的，别替其他成员回答）。",
 		manager:
-			"用户没有 @ 任何人，由你（管理者）负责：先理解用户要什么。简单的事你自己直接回答；需要其他成员做的，调用 room_assign 分配（每个人写清楚具体任务），并在回复里用一两句话说明分工。不需要别人时不要分配。需要长期负责、可检查的工作用 work_create 记成任务，成员会在自己的任务会话里去做。群还没开自主推进时：" + ROOM_GOAL_RULE,
+			"用户没有 @ 任何人，由你（管理者）负责：先理解用户要什么。简单的事你自己直接回答；需要其他成员做的，调用 room_assign 分配（每个人写清楚具体任务），并在回复里用一两句话说明分工。不需要别人时不要分配。需要长期负责、可检查的工作用 work_create 记成任务，成员会在自己的任务会话里去做。\n" + INTENT_PLAN_RULE,
 		assign: `管理者 ${managerName} 给你分配了任务：${t.task?.trim() || "（见管理者上面的消息）"}\n完成后在群里简洁汇报结果。`,
-		followup: `你分配的成员都已结束（有失败、受阻或待核验的也在上面）。请先核验 / 处理这些结果，再给用户一个简短的总结，不要重复成员说过的细节；还需要继续时可以再用 room_assign 分配${depthLeft > 0 ? `（还能再派 ${depthLeft} 次）` : "（这一轮已不能再派活）"}。${autonomous ? AUTONOMY_NEXT_STEP : ""}`,
+		followup: `你分配的成员都已结束（有失败、受阻或待核验的也在上面）。请先核验 / 处理这些结果，再给用户一个简短的总结，不要重复成员说过的细节；还需要继续时可以再用 room_assign 分配${depthLeft > 0 ? `（还能再派 ${depthLeft} 次）` : "（这一轮已不能再派活）"}。${projectActive ? PROJECT_NEXT_STEP : ""}`,
 		resume: "（系统通知）服务重启或用户让你继续：上一次发言可能被中断了。请检查进度，接着完成你在群里的任务；已经完成就简短说明。",
-		check: `任务看板有变化，需要你（管理者）看一下。下面是唤醒原因和看板摘要：核验已提交的结果（work_verify，先读真实产物）。大部分决定按群目标自己分析、自己推进。卡住或反复退回由你自己处理：看负责人的执行记录找原因，带纠正重派或拆小，改派给别的成员或自己接手（work_update）；只有需要用户才能给的帮助（批准、登录凭据、资源）或超出群目标、你无权拍板的决定才用 work_ask_user；办法用尽时在群里跟用户说清问题是什么、需要用户帮什么。处理完在群里用一两句话说明；没什么要做就简短说一句。${autonomous ? AUTONOMY_NEXT_STEP : ''}`,
+		check: `任务看板有变化，需要你（管理者）看一下。下面是唤醒原因和看板摘要：核验已提交的结果（work_verify，先读真实产物）。大部分决定按群目标自己分析、自己推进。卡住或反复退回由你自己处理：看负责人的执行记录找原因，带纠正重派或拆小，改派给别的成员或自己接手（work_update）；只有需要用户才能给的帮助（批准、登录凭据、资源）或超出群目标、你无权拍板的决定才用 work_ask_user；办法用尽时在群里跟用户说清问题是什么、需要用户帮什么。处理完在群里用一两句话说明；没什么要做就简短说一句。${projectActive ? PROJECT_NEXT_STEP : ''}`,
 		peer: `${getAgent(t.from ?? "")?.name ?? "一位成员"} 在群里 @ 了你：${t.task?.trim().slice(0, 1500) || "（见上面的消息）"}\n直接在群里简短回复它；需要你动手的就做。不要替管理者分配任务，也不要只客套。`,
 	})[t.reason];
 
@@ -321,7 +322,8 @@ async function pump(roomId: string) {
 			const r = getRoom(roomId);
 			if (!r) break;
 			const caps = capsOf(r);
-			const why = capCheck(next, s.counters, caps);
+			// 项目进行中不按「每轮发言次数」暂停（那是平时防刷屏的；项目进行中靠卡住 / 空聊检测）。
+			const why = hasActiveProject(roomId) ? null : capCheck(next, s.counters, caps);
 			if (why) {
 				// 到上限：把还没说的存起来，等用户点“继续”
 				const pending = s.queue.map(({ agentId, reason, task, depth, directed, turnId, from }) => ({ agentId, reason, task, depth, directed, turnId, from }));
@@ -367,7 +369,7 @@ async function runTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
 	const directedLine = t.directed && t.agentId === r.manager_id ? "用户引用了你的消息，只回应用户引用的这条；除非用户明确要求你分工，否则不要 room_assign、不要 @ 其他成员。" : "";
 	const taskCtx = s.workCtx && t.agentId === r.manager_id && t.reason !== "check" ? s.workCtx : "";
 	const checkCtx = t.reason === "check" ? (hooks.checkContext?.(roomId) ?? "") : "";
-	const prompt = [`（群聊「${r.name}」里的新消息 · 你是 ${selfName}${t.agentId === r.manager_id ? "（管理者）" : ""}）`, ...(quoteBlock ? [quoteBlock, "——"] : []), tr.text || "（没有新消息）", "——", REASON_LINE(t, managerName, caps.maxDepth - t.depth - 1, !!autonomyOf(r)), ...(directedLine ? [directedLine] : []), ...(taskCtx ? ["——", taskCtx] : []), ...(checkCtx ? ["——", checkCtx] : [])].join("\n");
+	const prompt = [`（群聊「${r.name}」里的新消息 · 你是 ${selfName}${t.agentId === r.manager_id ? "（管理者）" : ""}）`, ...(quoteBlock ? [quoteBlock, "——"] : []), tr.text || "（没有新消息）", "——", REASON_LINE(t, managerName, caps.maxDepth - t.depth - 1, hasActiveProject(r.id)), ...(directedLine ? [directedLine] : []), ...(taskCtx ? ["——", taskCtx] : []), ...(checkCtx ? ["——", checkCtx] : [])].join("\n");
 	db.prepare("UPDATE room_members SET cursor = ? WHERE room_id = ? AND agent_id = ?").run(tr.lastSeq || memberRow(roomId, t.agentId)?.cursor || 0, roomId, t.agentId);
 	s.current = { agentId: t.agentId, turnId: t.turnId, conversationId: conv, reason: t.reason };
 	s.assignments = [];
