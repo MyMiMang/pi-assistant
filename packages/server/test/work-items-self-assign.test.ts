@@ -19,7 +19,7 @@ test("管理者把任务派给自己且群里有其他成员：不创建，提�
 	db.prepare("UPDATE agents SET persona = ? WHERE id = 'wa'").run("你在群里的角色：写手\n负责写报告");
 	const before = count(room.id);
 	const msg = await say(t.get("work_create"), { title: "自揽", ...base, owner: "经理", start: false });
-	assert.match(msg, /先别派给自己/);
+	assert.match(msg, /属于谁的职责[\s\S]*你自己也有角色[\s\S]*不要把别人的活揽过来/);
 	assert.match(msg, /甲：写手/);
 	assert.match(msg, /乙/);
 	assert.match(msg, /selfReason/);
@@ -44,7 +44,7 @@ test("改派给管理者自己：同样规则", async () => {
 	const made = await say(t.get("work_create"), { title: "改派用", ...base, owner: "乙", start: false });
 	const id = /编号 (wi_\w+)/.exec(made)![1]!;
 	const msg = await say(t.get("work_update"), { workItemId: id, action: "assign", owner: "经理" });
-	assert.match(msg, /先别派给自己/);
+	assert.match(msg, /属于谁的职责[\s\S]*你自己也有角色[\s\S]*不要把别人的活揽过来/);
 	assert.equal(row(id).ownerName, "乙", "负责人没变");
 	const ok = await say(t.get("work_update"), { workItemId: id, action: "assign", owner: "经理", selfReason: "乙已经掉线且无人接手" });
 	assert.match(ok, /已改派/);

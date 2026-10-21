@@ -25,9 +25,11 @@ function selfAssignBlock(roomId: string, managerId: string, ownerId: string | un
 	if (ownerId !== managerId || String(selfReason ?? "").trim()) return null;
 	const others = db.prepare("SELECT rm.agent_id AS id, COALESCE(a.name, rm.name) AS name, a.persona FROM room_members rm LEFT JOIN agents a ON a.id = rm.agent_id WHERE rm.room_id = ? AND rm.left_at IS NULL AND rm.deleted = 0 AND rm.agent_id != ? ORDER BY rm.sort, rm.joined_at").all(roomId, managerId) as { id: string; name: string; persona: string | null }[];
 	if (!others.length) return null;
-	return `先别派给自己：群聊是分工合作，先按成员的角色派给最对口的成员；你负责拆解、协调、核验、整合和跟用户沟通。现在的成员：\n${others.map((m) => `- ${m.name}：${roleOf(m.persona, m.name).role}`).join("\n")}\n确实没有对口成员时，再带上 selfReason（为什么群里没有对口的成员、必须你自己做）派给自己。`;
+	const me = db.prepare("SELECT name, persona FROM agents WHERE id = ?").get(managerId) as { name: string; persona: string | null } | undefined;
+	const mine = me ? roleOf(me.persona, me.name).role : "管理者";
+	return `先想清楚这件事属于谁的职责：你自己也有角色（${mine}），属于你自己职责的活，带上 selfReason 写一句「这是我的职责：…」就能派给自己；属于其他成员职责的，派给最对口的成员，不要把别人的活揽过来。现在的其他成员：\n${others.map((m) => `- ${m.name}：${roleOf(m.persona, m.name).role}`).join("\n")}`;
 }
-const SELF_REASON = { description: "只有负责人是你自己、且群里还有别的成员时才需要：为什么没有对口的成员、必须你自己做（一句话）" };
+const SELF_REASON = { description: "负责人是你自己、且群里还有别的成员时需要：一句话说明这件事为什么属于你自己的角色职责（或群里没有对口的成员）" };
 const memberNames = (roomId: string) => members(roomId).map((m) => m.name).join("、");
 function memberByName(roomId: string, name: string) {
 	const want = name.replace(/^[@＠]/, "").trim();
@@ -60,7 +62,7 @@ export function workItemTools(roomId: string, agentId: string) {
 			name: "work_create",
 			label: "记录长期任务",
 			description:
-				"（管理者）把需要长期负责、可能多次执行或交接的工作记录成任务，并（默认）马上派给一位成员开始。群聊是分工合作：按成员的角色派给最对口的成员，你负责拆解、协调、核验、整合和跟用户沟通；只有没有对口成员（或纯协调类小事）才派给自己，并写 selfReason——它会在自己的任务会话里用自己的记忆、权限和电脑去做，不占群里的发言。临时问答、一次工具步骤不要建任务；普通文字回复也不能当验收。目标 / 范围 / 关键约束 / 完成标准不清楚时，先用一句话问清最必要的问题，不要替用户编造需求或笼统的完成标准。\n" +
+				"（管理者）把需要长期负责、可能多次执行或交接的工作记录成任务，并（默认）马上派给一位成员开始。群聊是分工合作：你自己也有角色，属于你自己职责的活你自己做（负责人填你自己，并写 selfReason 说明这是你的职责），属于其他成员职责的派给最对口的成员，不要把别人的活揽过来；你同时负责拆解、协调、核验、整合和跟用户沟通。负责人会在自己的任务会话里用自己的记忆、权限和电脑去做，不占群里的发言。临时问答、一次工具步骤不要建任务；普通文字回复也不能当验收。目标 / 范围 / 关键约束 / 完成标准不清楚时，先用一句话问清最必要的问题，不要替用户编造需求或笼统的完成标准。\n" +
 				"任务与单次执行分开：改派 / 退回 / 继续都会保留历史，执行结束不会自动完成。",
 			parameters: Type.Object({
 				title: Type.String({ description: "任务名字（简短具体）" }),
