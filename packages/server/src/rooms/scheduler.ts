@@ -17,7 +17,7 @@ import { requests } from "../requests.ts";
 import { getAgent, listAgents, runtime } from "../runtime.ts";
 import { stopConversationSubagents } from "../subagents.ts";
 import { buildWorkCorrectionContext, execConversationsOfRoom, resolveWorkReferences } from "../work-items.ts";
-import { AUTONOMY_NEXT_STEP, buildTranscript, capCheck, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
+import { AUTONOMY_NEXT_STEP, ROOM_GOAL_RULE, buildTranscript, capCheck, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
 import { activeIds, autonomyOf, capsOf, changed, getRoom, memberConversation, memberRefs, memberRow, membersOf, snapshot, sys } from "./store.ts";
 
 /** 已解析的引用：快照（给模型/UI）+ 纯逻辑路由目标 */
@@ -255,7 +255,7 @@ const REASON_LINE = (t: PlannedTurn, managerName: string, depthLeft: number, aut
 	({
 		mention: "用户在群里 @ 了你。请直接回应用户最新的消息（只做用户让你做的，别替其他成员回答）。",
 		manager:
-			"用户没有 @ 任何人，由你（管理者）负责：先理解用户要什么。简单的事你自己直接回答；需要其他成员做的，调用 room_assign 分配（每个人写清楚具体任务），并在回复里用一两句话说明分工。不需要别人时不要分配。需要长期负责、可检查的工作用 work_create 记成任务，成员会在自己的任务会话里去做。用户交代的是需要多步、多人长期协作的大事而群还没开自主推进时，先用 room_goal 把目标和完成标准发给用户确认；一问一答的小事不要发。",
+			"用户没有 @ 任何人，由你（管理者）负责：先理解用户要什么。简单的事你自己直接回答；需要其他成员做的，调用 room_assign 分配（每个人写清楚具体任务），并在回复里用一两句话说明分工。不需要别人时不要分配。需要长期负责、可检查的工作用 work_create 记成任务，成员会在自己的任务会话里去做。群还没开自主推进时：" + ROOM_GOAL_RULE,
 		assign: `管理者 ${managerName} 给你分配了任务：${t.task?.trim() || "（见管理者上面的消息）"}\n完成后在群里简洁汇报结果。`,
 		followup: `你分配的成员都已结束（有失败、受阻或待核验的也在上面）。请先核验 / 处理这些结果，再给用户一个简短的总结，不要重复成员说过的细节；还需要继续时可以再用 room_assign 分配${depthLeft > 0 ? `（还能再派 ${depthLeft} 次）` : "（这一轮已不能再派活）"}。${autonomous ? AUTONOMY_NEXT_STEP : ""}`,
 		resume: "（系统通知）服务重启或用户让你继续：上一次发言可能被中断了。请检查进度，接着完成你在群里的任务；已经完成就简短说明。",

@@ -12,7 +12,7 @@ import { listRoomMessages, updateMessage } from "../messages.ts";
 import { getAgent, setRoomHooks } from "../runtime.ts";
 import { execOf, workExecTools, workItemTools, workPrompt, itemRow, setWorkSourceProvider } from "../work-items.ts";
 import "./collab.ts";
-import { AUTONOMY_NEXT_STEP } from "./logic.ts";
+import { AUTONOMY_NEXT_STEP, ROOM_GOAL_RULE } from "./logic.ts";
 import { proposeRoomExt } from "./proposals.ts";
 import { stateOf, states } from "./scheduler.ts";
 import { autonomyOf, capsOf, getRoom, membersOf, roomOfConv, type RoomRow } from "./store.ts";
@@ -55,7 +55,7 @@ export function roomRules(roomId: string, agentId: string) {
 		...(auto ? [`自主推进中。目标：${auto.goal}\n完成标准：${auto.doneCriteria}\n成员可以 @ 彼此直接协作（被 @ 的成员会醒来回复），只在需要时 @；只聊不干活会被提醒。需要用户拍板的事由管理者用 work_ask_user 问，别的不要打扰用户。${isMgr ? `\n${AUTONOMY_NEXT_STEP}` : ""}`] : []),
 		"隐私：不要在群里透露你和用户其他对话里的私密内容，除非用户在群里要求或明显相关且无害。",
 		isMgr
-			? "你是这个群的管理者：用户没 @ 人时只有你会收到消息。理解用户要什么；自己能答就直接答；需要别人做的用 room_assign 分配（也可以在回复里 @名字，但工具更可靠）。成员做完后你会再收到一次，负责总结与协调。需要群里没有的角色时，用 room_propose_member 向用户提议加人。" + (auto ? "" : "用户交代的是需要多步、多人长期协作的大事（比如「做一集短剧」「写一份完整的调研报告」）时，不要只零散派活：先用 room_goal 把目标和可检查的完成标准发给用户确认，确认后群进入自主推进、你按目标一步步规划派活；普通一问一答、一两步能做完的小事不要发。")
+			? "你是这个群的管理者：用户没 @ 人时只有你会收到消息。理解用户要什么；自己能答就直接答；需要别人做的用 room_assign 分配（也可以在回复里 @名字，但工具更可靠）。成员做完后你会再收到一次，负责总结与协调。需要群里没有的角色时，用 room_propose_member 向用户提议加人。" + (auto ? "" : ROOM_GOAL_RULE)
 			: auto
 				? "你是群里的成员：被用户、管理者或其他成员 @ 时会轮到你。需要别的成员帮忙时可以 @ 它；卡住了 @ 管理者。"
 				: "你是群里的普通成员：只有被用户或管理者 @ 时才会轮到你。你 @ 其他成员不会叫醒他们，只能作为建议，由管理者决定。",

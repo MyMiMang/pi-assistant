@@ -1,6 +1,6 @@
 /**
  * 群聊协作（docs/design/group-collaboration.md）：
- *  - 自主推进：用户确认目标 + 完成标准后开启；成员可以 @ 彼此（被 @ 的成员醒来回复，回复会送进提问者正在跑的任务会话）。
+ *  - 自主推进：用户点顶部按钮、或目标清楚时由管理者自己用 room_goal 开启（目标 + 完成标准）；成员可以 @ 彼此（被 @ 的成员醒来回复，回复会送进提问者正在跑的任务会话）。
  *  - 管理者只在关键事件被唤醒（任务提交 / 卡住 / 用户消息或 @ / 定时检查 / 卡住检测），醒来只读看板摘要 + 少量新消息。
  *  - 开着自主推进时管理者回合结束后手上没活、目标没结束 → 兜底再叫醒它一次（idleWake；两次之间没有新进展就不再叫，提示用户）。
  *  - 防护只做检测：只聊不干活 → 先管理者、再用户；卡住与反复卡住在 work-items/watch.ts。不设固定次数 / 费用上限。
@@ -27,18 +27,34 @@ const clip = (s: unknown, n: number) => String(s ?? "").trim().slice(0, n);
 
 export const getAutonomy = (roomId: string) => autonomyOf(getRoom(roomId));
 
-export function setAutonomy(roomId: string, a: { goal?: string; doneCriteria?: string }): Autonomy {
+/**
+ * 开启（或更新）自主推进。by = 谁开的：
+ *  - "user"（默认，顶部按钮 / API）：群里发告知，并唤醒管理者按目标拆任务；
+ *  - "manager"（管理者自己用 room_goal，正处在它的回合里）：发告知，但不再额外唤醒它，它接着在这一轮里拆任务派活。
+ * 已经开着时再调用 = 更新目标和完成标准。
+ */
+export function setAutonomy(roomId: string, a: { goal?: string; doneCriteria?: string }, o: { by?: "user" | "manager" } = {}): Autonomy {
 	if (!getRoom(roomId)) throw new Error("群不存在");
 	const goal = clip(a.goal, 1000);
 	const doneCriteria = clip(a.doneCriteria, 2000);
 	if (!goal || !doneCriteria) throw new Error("目标和完成标准都要写清楚");
+	const updating = !!getAutonomy(roomId);
 	const next = { goal, doneCriteria, startedAt: now() };
 	writeAutonomy(roomId, next);
 	chatter.delete(roomId);
-	idle.set(roomId, { sig: boardSig(roomId), hinted: false }); // 开启时的这次唤醒算第一次兜底
-	sys(roomId, `已开启自主推进。目标：${goal}；完成标准：${doneCriteria}。成员可以 @ 彼此协作，管理者在任务提交、卡住或定时检查时出来协调；只有需要你拍板的事才会问你。`, { kind: "room-autonomy", on: true });
+	const byManager = o.by === "manager";
+	// 用户开启时会唤醒管理者，这次算第一次兜底；管理者自己开启时没有额外唤醒，它这一轮没派出活的话兜底还能叫它一次
+	if (byManager) idle.delete(roomId);
+	else idle.set(roomId, { sig: boardSig(roomId), hinted: false });
+	sys(
+		roomId,
+		byManager
+			? `${updating ? "管理者更新了目标" : "管理者理解的目标是"}：${goal}；做到「${doneCriteria}」算完成。${updating ? "按新的目标继续推进" : "现在开始自主推进"}，成员可以 @ 彼此协作，只有需要你拍板的事才会问你；要改目标或停下，随时在群里说或点顶部「推进中」。`
+			: `已开启自主推进。目标：${goal}；完成标准：${doneCriteria}。成员可以 @ 彼此协作，管理者在任务提交、卡住或定时检查时出来协调；只有需要你拍板的事才会问你。`,
+		{ kind: "room-autonomy", on: true, ...(byManager ? { by: "manager", ...(updating ? { updated: true } : {}) } : {}) },
+	);
 	changed(roomId);
-	wakeManager(roomId, "用户确认了目标和完成标准：按目标拆成具体任务（work_create，写清要求和完成标准）派给合适的成员，开始自主推进");
+	if (!byManager) wakeManager(roomId, "用户确认了目标和完成标准：按目标拆成具体任务（work_create，写清要求和完成标准）派给合适的成员，开始自主推进");
 	return next;
 }
 

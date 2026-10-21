@@ -499,9 +499,9 @@ function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) 
 		if (!title || !requirement || !done) return fauxAssistantMessage(`${me}：在记录任务前先确认一下：这件事的目标 / 范围和完成标准分别是什么？特别是怎样检查算做完。`);
 		return fauxAssistantMessage([fauxToolCall("work_create", { title, requirement, doneCriteria: done, owner: target, start: true })]);
 	}
-	// 群协作验收：用户让管理者「定个目标」→ room_goal 确认卡；看板唤醒时只对「需拍板」的卡住任务 work_ask_user
+	// 群协作验收：用户让管理者「定个目标」→ room_goal 直接开启自主推进；看板唤醒时只对「需拍板」的卡住任务 work_ask_user
 	if (!isFollowup && u.includes("（管理者）") && /定个目标/.test(said) && last.role !== "toolResult") return fauxAssistantMessage([fauxToolCall("room_goal", { goal: said.replace(/^.*?定个目标[：:]?/, "").trim() || said, doneCriteria: "每项任务都有可核验的交付文件" })]);
-	if (last.toolName === "room_goal") return fauxAssistantMessage(`${me}：目标和完成标准发给你确认了，确认后大家自主推进。`);
+	if (last.toolName === "room_goal") return fauxAssistantMessage(`${me}：目标定好了，开始推进。`);
 	if (isFollowup && /任务看板有变化/.test(u) && /需拍板/.test(u)) {
 		if (last.toolName === "work_ask_user") return fauxAssistantMessage(`${me}：有一件事需要你拍板，已放进「等你决定」。`);
 		const line = u.split("\n").find((x) => x.includes("需拍板") && /wi_/.test(x) && !x.includes("等你决定"));

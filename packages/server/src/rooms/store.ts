@@ -32,7 +32,7 @@ export interface MemberRow {
 	left_at: number | null;
 	deleted: number;
 }
-/** 自主推进：用户确认了目标和完成标准后开启；成员可以 @ 彼此，管理者只在关键事件被叫醒。 */
+/** 自主推进：用户写了目标和完成标准、或目标清楚时管理者自己开启；成员可以 @ 彼此，管理者只在关键事件被叫醒。 */
 export interface Autonomy {
 	goal: string;
 	doneCriteria: string;

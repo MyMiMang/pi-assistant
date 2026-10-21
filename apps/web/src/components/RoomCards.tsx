@@ -258,7 +258,7 @@ export function RoomAgentActions({ agentId, variant }: { agentId: string; varian
 	);
 }
 
-/** 管理者提议的群目标（room_goal）：用户可改目标和完成标准，确认后群进入自主推进。 */
+/** 旧版管理者提议的群目标确认卡（现在 room_goal 直接开启，不再产生新卡；历史里的卡照常显示、可确认）：用户可改目标和完成标准，确认后群进入自主推进。 */
 export function RoomGoalCard({ m }: { m: Message }) {
 	const meta = m.meta;
 	const [goal, setGoal] = useState(String(meta.goal ?? ""));

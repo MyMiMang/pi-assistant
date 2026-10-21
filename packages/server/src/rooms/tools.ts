@@ -1,4 +1,4 @@
-/** 群会话里的群工具：派活、提议加成员、提议自主推进（目标 + 完成标准）、宣布目标达成。 */
+/** 群会话里的群工具：派活、提议加成员、开启自主推进（目标 + 完成标准）、宣布目标达成。 */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "typebox";
@@ -6,7 +6,7 @@ import { type FileRow, materializeFor, workspaceOf } from "../files.ts";
 import { insertMessage } from "../messages.ts";
 import { listAgents } from "../runtime.ts";
 import { dispatchFromRoom } from "../work-items.ts";
-import { endAutonomy, getAutonomy } from "./collab.ts";
+import { endAutonomy, getAutonomy, setAutonomy } from "./collab.ts";
 import { memberSchema, modelsHint, normalizeProposal, text, type ProposalMember } from "./proposals.ts";
 import { roomFiles, states } from "./scheduler.ts";
 import { getRoom, memberRefs, memberRow } from "./store.ts";
@@ -116,24 +116,24 @@ export function roomTools(roomId: string, agentId: string) {
 		});
 		pi.registerTool({
 			name: "room_goal",
-			label: "提议自主推进",
-			description: "（管理者）用户交代的是一件需要多步、多人长期协作的事（比如「做一集短剧」「写一份完整的调研报告」），而群还没开自主推进时，主动先用这个工具：把目标和可检查的完成标准写清楚，发一张确认卡片给用户，不要等用户来要求。用户确认后群进入自主推进：成员可以 @ 彼此，你在任务提交、卡住、定时检查时被叫醒，并自己按目标一步步规划、派活。普通一问一答、一两步就能做完的事不要发。目标或完成标准不清楚时先问用户，不要替用户编。",
+			label: "开启自主推进",
+			description: "（管理者）用户交代的事目标清楚、有明确的交付物（比如「把首集剧本写完」「做一集短剧的分镜」「接着把首集做完」），需要多步、多人协作时，直接用这个工具开启自主推进：写清目标和可检查的完成标准，群里会发一条告知，不用等用户确认；开启后在同一轮里用 work_create / room_assign 把任务拆开派出去。开启后成员可以 @ 彼此，你在任务提交、卡住、定时检查时被叫醒，按目标一步步规划派活，干完把结果交付给用户。目标模糊（不知道要交付什么、怎样算完成）时不要开，先在群里问用户一两个关键问题，问清楚再开，不要替用户编；一问一答、一两步就能做完的小事、闲聊也不要开。已经在自主推进时再调用 = 更新目标和完成标准。",
 			parameters: Type.Object({ goal: Type.String({ description: "要达成的目标（一两句话）" }), doneCriteria: Type.String({ description: "怎样检查算达成（具体、可检查）" }) }),
 			async execute(_id: string, p: { goal: string; doneCriteria: string }) {
 				const r = getRoom(roomId);
-				if (!r || r.manager_id !== agentId) return text("只有管理者能提议自主推进。");
-				const goalText = String(p.goal ?? "").trim().slice(0, 1000);
-				const doneCriteria = String(p.doneCriteria ?? "").trim().slice(0, 2000);
-				if (!goalText || !doneCriteria) return text("目标和完成标准都要写清楚；不清楚就先问用户一个关键问题。");
-				const conv = memberRow(roomId, agentId)?.conversation_id;
-				insertMessage({ agentId, conversationId: conv ?? undefined, role: "card", meta: { kind: "room-goal", roomId, goal: goalText, doneCriteria, status: "pending" } });
-				return text("确认卡片已发给用户。用户确认（可以先修改）后才会开启自主推进，在那之前照常工作。");
+				if (!r || r.manager_id !== agentId) return text("只有管理者能开启自主推进。");
+				const goalText = String(p.goal ?? "").trim();
+				const doneCriteria = String(p.doneCriteria ?? "").trim();
+				if (!goalText || !doneCriteria) return text("目标和完成标准都要写清楚；不清楚就先问用户一两个关键问题。");
+				const updating = !!getAutonomy(roomId);
+				setAutonomy(roomId, { goal: goalText, doneCriteria }, { by: "manager" }); // 你正处在自己的回合里，不会再额外叫醒你
+				return text(updating ? "已更新自主推进的目标和完成标准，群里已告知。接着按新目标在这一轮里调整任务。" : "已开始自主推进，群里已告知用户。接着在这一轮里把任务拆开、用 work_create / room_assign 派出去；目标达成时先把最终交付物发到群里，再用 room_goal_done 结束。");
 			},
 		});
 		pi.registerTool({
 			name: "room_goal_done",
 			label: "宣布目标已达成",
-			description: "（管理者）自主推进中，你核验过成果、确认完成标准都满足、目标已经达成时调用：结束自主推进并在群里向用户汇报结果。目标还没达成就不要调用，而是按目标规划下一步、用 work_create 建任务派出去。",
+			description: "（管理者）自主推进中，你核验过成果、确认完成标准都满足、目标已经达成时调用：结束自主推进并在群里向用户汇报结果。先交付结果再结束：调用前先把最终交付物发到群里（文件用 deliver_file，并说明做了什么、交付了哪些、还有什么没做），再调用本工具，summary 写简短的结果总结。目标还没达成就不要调用，而是按目标规划下一步、用 work_create 建任务派出去。",
 			parameters: Type.Object({ summary: Type.String({ description: "结果总结：做成了什么、交付物在哪里、对照完成标准怎么满足的（简短）" }) }),
 			async execute(_id: string, p: { summary: string }) {
 				const r = getRoom(roomId);

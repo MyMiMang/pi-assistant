@@ -156,7 +156,7 @@ test("唤醒管理者：群已停止不唤醒；未轮到的唤醒合并成一�
 	await rooms.deleteRoom(empty.id);
 });
 
-test("room_goal：管理者提议目标 + 完成标准，发确认卡片；成员没有这个能力", async () => {
+test("room_goal：管理者直接开启自主推进（群里发告知、不插确认卡、不额外唤醒管理者）；再次调用 = 更新目标；成员没有这个能力；用户从顶部开启仍唤醒管理者", async () => {
 	const room = rooms.createRoom({ name: "目标群", memberIds: ["cm", "ca"], managerId: "cm" });
 	const { roomTools } = await import("../src/rooms/tools.ts");
 	const toolsOf = (agentId: string) => {
@@ -164,14 +164,48 @@ test("room_goal：管理者提议目标 + 完成标准，发确认卡片；成�
 		roomTools(room.id, agentId)({ registerTool: (d: unknown) => defs.set((d as { name: string }).name, d as never) });
 		return defs;
 	};
+	const goal = (agentId: string, p: Record<string, unknown>) => toolsOf(agentId).get("room_goal")!.execute("t", p).then((r) => r.content[0].text);
+	const notices = () => db.prepare("SELECT content, meta FROM messages WHERE room_id = ? AND role = 'system' AND meta LIKE '%room-autonomy%' ORDER BY rowid").all(room.id) as { content: string; meta: string }[];
+	const cards = () => (db.prepare("SELECT COUNT(*) AS n FROM messages WHERE room_id = ? AND role = 'card'").get(room.id) as { n: number }).n;
 	rooms.memberConversation(room.id, "cm");
-	assert.match((await toolsOf("ca").get("room_goal")!.execute("t", { goal: "x", doneCriteria: "y" })).content[0].text, /只有管理者/);
-	assert.match((await toolsOf("cm").get("room_goal")!.execute("t", { goal: "做报告", doneCriteria: "" })).content[0].text, /都要写清楚/);
-	assert.match((await toolsOf("cm").get("room_goal")!.execute("t", { goal: "做报告", doneCriteria: "三节齐全" })).content[0].text, /确认卡片/);
-	const card = db.prepare("SELECT meta, room_id FROM messages WHERE room_id = ? AND role = 'card' ORDER BY rowid DESC LIMIT 1").get(room.id) as { meta: string; room_id: string };
-	assert.equal(JSON.parse(card.meta).kind, "room-goal");
-	assert.equal(JSON.parse(card.meta).status, "pending");
-	assert.equal(rooms.getAutonomy(room.id), null, "确认前不开启");
+	replies.set("cm", () => "收到");
+	assert.match(await goal("ca", { goal: "x", doneCriteria: "y" }), /只有管理者/);
+	assert.match(await goal("cm", { goal: "做报告", doneCriteria: "" }), /都要写清楚/);
+	assert.equal(rooms.getAutonomy(room.id), null, "参数缺失不开启");
+	// 管理者直接开启
+	assert.match(await goal("cm", { goal: "做报告", doneCriteria: "三节齐全" }), /已开始自主推进[\s\S]*这一轮/);
+	assert.deepEqual({ ...rooms.getAutonomy(room.id)!, startedAt: 0 }, { goal: "做报告", doneCriteria: "三节齐全", startedAt: 0 });
+	assert.equal(notices().length, 1, "群里有一条告知");
+	assert.match(notices()[0].content, /管理者理解的目标是：做报告；做到「三节齐全」算完成。现在开始自主推进/);
+	assert.equal(JSON.parse(notices()[0].meta).by, "manager");
+	assert.equal(cards(), 0, "不再插确认卡片");
+	await sleep(200);
+	assert.equal(turnsOf(room.id, "check").length, 0, "管理者自己开的，不额外唤醒管理者");
+	// 已经开着：再调用 = 更新目标和完成标准
+	assert.match(await goal("cm", { goal: "做报告和幻灯片", doneCriteria: "三节齐全且有幻灯片" }), /已更新/);
+	assert.equal(rooms.getAutonomy(room.id)!.goal, "做报告和幻灯片");
+	assert.equal(rooms.getAutonomy(room.id)!.doneCriteria, "三节齐全且有幻灯片");
+	assert.equal(notices().length, 2);
+	assert.match(notices()[1].content, /管理者更新了目标：做报告和幻灯片；做到「三节齐全且有幻灯片」算完成/);
+	assert.equal(cards(), 0);
+	await sleep(200);
+	assert.equal(turnsOf(room.id, "check").length, 0);
+	// 用户从顶部按钮 / API 开启：仍唤醒管理者按目标拆任务
+	rooms.endAutonomy(room.id);
+	rooms.setAutonomy(room.id, { goal: "写报告", doneCriteria: "三节齐全" });
+	await until(() => roomDone(room.id, "check", 1) && idle(room.id), "用户开启后唤醒管理者");
+	assert.ok(prompts.some((x) => x.agentId === "cm" && x.prompt.includes("用户确认了目标和完成标准")), "唤醒原因写清楚");
+	rooms.endAutonomy(room.id);
+	replies.clear();
+	await rooms.deleteRoom(room.id);
+});
+
+test("管理者规则文字：目标清楚直接 room_goal、模糊先问、小事不开；达成先交付再 room_goal_done", async () => {
+	assert.match(logic.ROOM_GOAL_RULE, /目标清楚[\s\S]*直接用 room_goal[\s\S]*同一轮里[\s\S]*目标模糊[\s\S]*先在群里问用户一两个关键问题[\s\S]*小事、闲聊 → 不开启/);
+	assert.match(logic.AUTONOMY_NEXT_STEP, /先把最终交付物发到群里[\s\S]*再调用 room_goal_done/);
+	const room = rooms.createRoom({ name: "规则群", memberIds: ["cm", "ca"], managerId: "cm" });
+	assert.ok(rooms.roomRules(room.id, "cm").join("\n").includes(logic.ROOM_GOAL_RULE), "没开自主推进时管理者规则带上开启条件");
+	assert.ok(!rooms.roomRules(room.id, "ca").join("\n").includes(logic.ROOM_GOAL_RULE), "成员没有");
 	await rooms.deleteRoom(room.id);
 });
 

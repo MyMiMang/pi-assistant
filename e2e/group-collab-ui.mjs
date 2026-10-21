@@ -2,7 +2,7 @@
  * 群协作（decision 0006）：真实服务 / 真实 PiMock / 真实构建页面。
  *
  * 覆盖：
- *  1) 管理者 room_goal → 用户在确认卡上改完成标准 → 群进入自主推进（看板顶部显示目标）；
+ *  1) 用户让管理者定目标 → 管理者 room_goal 直接开启自主推进（群里有告知、不再出确认卡，顶部显示「推进中」和目标）；
  *  2) 任务在负责人自己的会话里执行：正常任务提交 → 管理者被唤醒核验完成；成员报卡点 → 「卡住」；
  *     管理者判断需要用户拍板 → 「等你决定」高亮置顶，用户在看板上直接回答，决定发回群里；
  *  3) 看板四组（等你决定 / 卡住 / 进行中 / 已完成·已停止折叠）+ 390px；
@@ -49,16 +49,17 @@ try {
 	await page.goto(`${base}/?room=${room.id}`);
 	await page.getByTestId("room-work-items").waitFor();
 
-	console.log("[1] 管理者提议目标 → 用户改完成标准后确认 → 自主推进");
+	console.log("[1] 用户让管理者定目标 → 管理者 room_goal 直接开启自主推进（告知，不出确认卡）");
 	await j(`/api/rooms/${room.id}/messages`, "POST", { text: "定个目标：本周交一份竞品报告" });
-	const card = page.getByTestId("room-goal");
-	await card.waitFor();
-	assert.match(await page.getByTestId("room-goal-goal").inputValue(), /本周交一份竞品报告/);
-	await page.getByTestId("room-goal-done").fill("三家竞品各有一页，结论都有来源");
-	await stableShot(page, card, join(out, "01-goal-card.png"));
-	await page.getByTestId("room-goal-confirm").click();
-	await wait(async () => (await j("/api/rooms")).find((r) => r.id === room.id)?.autonomy?.doneCriteria === "三家竞品各有一页，结论都有来源", 10000, "autonomy on");
-	await card.getByText("已开启").waitFor();
+	await wait(async () => (await j("/api/rooms")).find((r) => r.id === room.id)?.autonomy?.doneCriteria === "每项任务都有可核验的交付文件", 15000, "autonomy on");
+	assert.match((await j("/api/rooms")).find((r) => r.id === room.id).autonomy.goal, /本周交一份竞品报告/);
+	const chip = page.getByTestId("room-autonomy-chip");
+	await chip.getByText("推进中").waitFor();
+	const notice = page.getByText(/管理者理解的目标是：本周交一份竞品报告/);
+	await notice.waitFor();
+	assert.equal(await page.getByTestId("room-goal").count(), 0, "不再出确认卡");
+	assert.ok((await messages()).every((m) => m.meta?.kind !== "room-goal"), "群里没有 room-goal 卡片");
+	await stableShot(page, notice, join(out, "01-goal-started.png"));
 
 	console.log("[2] 任务在负责人会话里执行：完成 / 卡住 / 等你决定 / 进行中 / 已停止");
 	const ok = await create("整理竞品报告", worker.id, true);
@@ -121,7 +122,7 @@ try {
 	await wait(async () => (await detail(long.item.id)).item.status === "paused", 10000, "pause-all paused");
 	await wait(async () => !(await running()), 10000, "bash stopped");
 	assert.equal(errors.length, 0, errors.join(" | "));
-	console.log("PASS group-collab: 目标卡确认→自主推进、负责人会话执行+管理者唤醒核验、卡住/等你决定/直接拍板、四组看板+390、停群不停任务+全部暂停");
+	console.log("PASS group-collab: 管理者 room_goal 直接开启自主推进（告知、无确认卡）、负责人会话执行+管理者唤醒核验、卡住/等你决定/直接拍板、四组看板+390、停群不停任务+全部暂停");
 } catch (e) {
 	console.error("GROUP COLLAB FAIL", e.message);
 	if (room) console.error("messages", JSON.stringify((await j(`/api/rooms/${room.id}/messages`).catch(() => [])).slice(-10).map((m) => [m.role, m.agent_id, m.meta?.kind ?? m.meta?.toolName, String(m.content ?? "").slice(0, 160)])));
