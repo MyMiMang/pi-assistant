@@ -9,7 +9,8 @@ import { cancelWorkItem, continueWorkItem, createWorkItem, editWorkItem, pauseWo
 import { roundAllows } from "./correction.ts";
 import { reportProgress, submitWorkItem } from "./exec.ts";
 import { currentSource } from "./ports.ts";
-import { emit, isManager, itemRow, listWorkItems, WORK_STATUSES, type WorkActor, type WorkStatus } from "./store.ts";
+import { roleOf } from "../helper-scope.ts";
+import { emit, event, isManager, itemRow, listWorkItems, WORK_STATUSES, type WorkActor, type WorkStatus } from "./store.ts";
 import { askUserDecision, EXHAUSTED_MARK, SWITCH_HINT } from "./watch.ts";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
@@ -19,6 +20,14 @@ type Pi = { registerTool: (t: unknown) => void };
 function members(roomId: string) {
 	return db.prepare("SELECT rm.agent_id AS id, COALESCE(a.name, rm.name) AS name FROM room_members rm LEFT JOIN agents a ON a.id = rm.agent_id WHERE rm.room_id = ? AND rm.left_at IS NULL AND rm.deleted = 0").all(roomId) as { id: string; name: string }[];
 }
+/** 管理者要把任务派给自己、而群里还有别的成员：没写 selfReason 就不让派，返回提示（列出成员名 + 角色）；放行返回 null。 */
+function selfAssignBlock(roomId: string, managerId: string, ownerId: string | undefined, selfReason: string | undefined) {
+	if (ownerId !== managerId || String(selfReason ?? "").trim()) return null;
+	const others = db.prepare("SELECT rm.agent_id AS id, COALESCE(a.name, rm.name) AS name, a.persona FROM room_members rm LEFT JOIN agents a ON a.id = rm.agent_id WHERE rm.room_id = ? AND rm.left_at IS NULL AND rm.deleted = 0 AND rm.agent_id != ? ORDER BY rm.sort, rm.joined_at").all(roomId, managerId) as { id: string; name: string; persona: string | null }[];
+	if (!others.length) return null;
+	return `先别派给自己：群聊是分工合作，先按成员的角色派给最对口的成员；你负责拆解、协调、核验、整合和跟用户沟通。现在的成员：\n${others.map((m) => `- ${m.name}：${roleOf(m.persona, m.name).role}`).join("\n")}\n确实没有对口成员时，再带上 selfReason（为什么群里没有对口的成员、必须你自己做）派给自己。`;
+}
+const SELF_REASON = { description: "只有负责人是你自己、且群里还有别的成员时才需要：为什么没有对口的成员、必须你自己做（一句话）" };
 const memberNames = (roomId: string) => members(roomId).map((m) => m.name).join("、");
 function memberByName(roomId: string, name: string) {
 	const want = name.replace(/^[@＠]/, "").trim();
@@ -51,24 +60,28 @@ export function workItemTools(roomId: string, agentId: string) {
 			name: "work_create",
 			label: "记录长期任务",
 			description:
-				"（管理者）把需要长期负责、可能多次执行或交接的工作记录成任务，并（默认）马上派给一位成员开始——它会在自己的任务会话里用自己的记忆、权限和电脑去做，不占群里的发言。临时问答、一次工具步骤不要建任务；普通文字回复也不能当验收。目标 / 范围 / 关键约束 / 完成标准不清楚时，先用一句话问清最必要的问题，不要替用户编造需求或笼统的完成标准。\n" +
+				"（管理者）把需要长期负责、可能多次执行或交接的工作记录成任务，并（默认）马上派给一位成员开始。群聊是分工合作：按成员的角色派给最对口的成员，你负责拆解、协调、核验、整合和跟用户沟通；只有没有对口成员（或纯协调类小事）才派给自己，并写 selfReason——它会在自己的任务会话里用自己的记忆、权限和电脑去做，不占群里的发言。临时问答、一次工具步骤不要建任务；普通文字回复也不能当验收。目标 / 范围 / 关键约束 / 完成标准不清楚时，先用一句话问清最必要的问题，不要替用户编造需求或笼统的完成标准。\n" +
 				"任务与单次执行分开：改派 / 退回 / 继续都会保留历史，执行结束不会自动完成。",
 			parameters: Type.Object({
 				title: Type.String({ description: "任务名字（简短具体）" }),
 				requirement: Type.Optional(Type.String({ description: "要做成什么、背景和约束" })),
 				doneCriteria: Type.Optional(Type.String({ description: "完成标准：怎样才算做成（可检查）" })),
-				owner: Type.Optional(Type.String({ description: "负责人名字（群成员）" })),
+				owner: Type.Optional(Type.String({ description: "负责人名字（群成员）；按角色选最对口的成员" })),
+				selfReason: Type.Optional(Type.String(SELF_REASON)),
 				start: Type.Optional(Type.Boolean({ description: "是否马上派给负责人开始，默认是；只记录责任时传 false" })),
 			}),
-			async execute(_id: string, p: { title: string; requirement?: string; doneCriteria?: string; owner?: string; start?: boolean }) {
+			async execute(_id: string, p: { title: string; requirement?: string; doneCriteria?: string; owner?: string; selfReason?: string; start?: boolean }) {
 				const owner = p.owner ? memberByName(roomId, p.owner) : null;
 				if (p.owner && !owner) return text(`找不到成员「${p.owner}」，可用成员：${memberNames(roomId)}`);
+				const blocked = selfAssignBlock(roomId, agentId, owner?.id, p.selfReason);
+				if (blocked) return text(blocked);
 				if (!String(p.requirement ?? "").trim() || !String(p.doneCriteria ?? "").trim()) return text("先别记录执行：目标 / 范围或完成标准还不清楚。先问用户一个关键问题（怎样检查算做完），得到明确回答后再用 work_create；方法和技术细节可以自己定。");
 				try {
 					const { item } = createWorkItem(
 						{ roomId, title: p.title, requirement: p.requirement, doneCriteria: p.doneCriteria, ownerAgentId: owner?.id ?? null, start: p.start !== false && !!owner, sourceMessageId: currentSource(roomId), taskText: [p.title, p.requirement, p.doneCriteria].filter(Boolean).join("\n") },
 						actor,
 					);
+					if (owner?.id === agentId && p.selfReason?.trim()) event(item.id, "self_owner_reason", actor, item.revision, { reason: p.selfReason.trim().slice(0, 200) });
 					emit(roomId);
 					return text(`已记录任务「${item.title}」（编号 ${item.id}，${item.statusLabel}${owner ? `，负责人 ${owner.name}` : ""}${owner && p.start !== false ? "，已在它自己的任务会话里开始执行" : ""}）。它提交或卡住时你会被叫醒；核验时用 work_verify 写清检查结论。`);
 				} catch (e) {
@@ -106,17 +119,20 @@ export function workItemTools(roomId: string, agentId: string) {
 			parameters: Type.Object({
 				workItemId: Type.String({ description: "任务编号" }),
 				action: Type.Union([Type.Literal("assign"), Type.Literal("edit"), Type.Literal("continue"), Type.Literal("pause"), Type.Literal("cancel"), Type.Literal("reopen")]),
-				owner: Type.Optional(Type.String({ description: "改派时的负责人名字" })),
+				owner: Type.Optional(Type.String({ description: "改派时的负责人名字；按角色选最对口的成员" })),
+				selfReason: Type.Optional(Type.String(SELF_REASON)),
 				title: Type.Optional(Type.String()),
 				requirement: Type.Optional(Type.String()),
 				doneCriteria: Type.Optional(Type.String()),
 			}),
-			async execute(_id: string, p: { workItemId: string; action: "assign" | "edit" | "continue" | "pause" | "cancel" | "reopen"; owner?: string; title?: string; requirement?: string; doneCriteria?: string }) {
+			async execute(_id: string, p: { workItemId: string; action: "assign" | "edit" | "continue" | "pause" | "cancel" | "reopen"; owner?: string; selfReason?: string; title?: string; requirement?: string; doneCriteria?: string }) {
 				try {
 					let d;
 					if (p.action === "assign" || p.action === "edit") {
 						const owner = p.owner ? memberByName(roomId, p.owner) : undefined;
 						if (p.owner && !owner) return text(`找不到成员「${p.owner}」`);
+						const blocked = p.action === "assign" ? selfAssignBlock(roomId, agentId, owner?.id, p.selfReason) : null;
+						if (blocked) return text(blocked);
 						d = editWorkItem({ workItemId: p.workItemId, actor, title: p.title, requirement: p.requirement, doneCriteria: p.doneCriteria, ...(p.action === "assign" ? { ownerAgentId: owner?.id ?? null } : {}) });
 					} else if (p.action === "pause") d = await pauseWorkItem({ workItemId: p.workItemId, actor });
 					else if (p.action === "cancel") d = await cancelWorkItem({ workItemId: p.workItemId, actor });
@@ -127,6 +143,7 @@ export function workItemTools(roomId: string, agentId: string) {
 						if (!roundAllows(roomId, p.workItemId, "continue") && itemRow(p.workItemId)?.status === "paused") return text("任务已暂停。用户没有明确说继续，先不要自动恢复执行。");
 						d = await continueWorkItem({ workItemId: p.workItemId, actor });
 					}
+					if (p.action === "assign" && d.item.ownerAgentId === agentId && p.selfReason?.trim()) event(p.workItemId, "self_owner_reason", actor, d.item.revision, { reason: p.selfReason.trim().slice(0, 200) });
 					const label = { assign: "改派", edit: "更新要求", continue: "继续", pause: "暂停", cancel: "取消", reopen: "重开" }[p.action];
 					return text(`已${label}「${d.item.title}」：${d.item.statusLabel}${d.item.ownerName ? `，负责人 ${d.item.ownerName}` : ""}。`);
 				} catch (e) {
