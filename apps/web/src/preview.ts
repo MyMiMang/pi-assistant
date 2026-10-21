@@ -7,7 +7,7 @@
  * - 文本有上限，超限只提示 + 下载，不把大文件塞进 DOM。
  */
 
-export type PreviewKind = "image" | "pdf" | "markdown" | "csv" | "code" | "text" | "unsupported";
+export type PreviewKind = "image" | "video" | "audio" | "pdf" | "markdown" | "csv" | "code" | "text" | "unsupported";
 
 /** 文本类预览的字节上限（超过只提示 + 下载）。 */
 export const MAX_TEXT_BYTES = 1024 * 1024;
@@ -25,6 +25,8 @@ const CODE_EXT = new Set([
 ]);
 const TEXT_EXT = new Set(["txt", "log", "text", "out", "err", "diff", "patch", "rtf"]);
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "avif"]);
+const VIDEO_EXT = new Set(["mp4", "m4v", "mov", "webm", "ogv"]);
+const AUDIO_EXT = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac", "weba"]);
 const SHEET_EXT = new Set(["xls", "xlsx", "xlsm", "ods", "numbers"]);
 
 const extOf = (name: string) => {
@@ -45,6 +47,9 @@ export function previewKind(name: string, mime?: string): PreviewKind {
 	if (SHEET_EXT.has(ext) || /spreadsheetml|ms-excel|opendocument\.spreadsheet/.test(m)) return "unsupported";
 	if (["doc", "docx", "odt", "pages", "ppt", "pptx", "odp", "key"].includes(ext)) return "unsupported";
 	if (["zip", "tar", "gz", "7z", "rar", "dmg", "exe", "app", "bin", "iso"].includes(ext)) return "unsupported";
+	// 视频 / 音频（旧记录的 MIME 可能是 octet-stream，所以扩展名也认）
+	if (m.startsWith("video/") || VIDEO_EXT.has(ext)) return "video";
+	if (m.startsWith("audio/") || AUDIO_EXT.has(ext)) return "audio";
 	// 图片
 	if (m.startsWith("image/") || IMAGE_EXT.has(ext)) return "image";
 	// PDF

@@ -106,7 +106,7 @@ export default {
 		const h = new Headers(res.headers);
 		h.set("X-Content-Type-Options", "nosniff");
 		h.set("Referrer-Policy", "no-referrer");
-		h.set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:; script-src 'self'; frame-ancestors 'none'; base-uri 'none'");
+		h.set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; media-src 'self' https:; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:; script-src 'self'; frame-ancestors 'none'; base-uri 'none'");
 		return new Response(res.body, { status: res.status, headers: h });
 	},
 } satisfies ExportedHandler<Env>;

@@ -121,6 +121,15 @@ export async function fetchBlobLimited(path: string, maxBytes: number, signal?: 
 	return { blob: new Blob(chunks as BlobPart[]), oversized: false };
 }
 
+/**
+ * 视频 / 音频播放地址：<video src> 带不了 Authorization 头（也不能为了拖进度条把大文件整个拉成 blob），
+ * 所以用登录凭证向服务端换一条短时有效、只针对这一个文件的签名链接（服务端 GET <path>/play-link）。
+ */
+export async function mediaUrl(path: string): Promise<string> {
+	const { url } = await api<{ url: string }>(`${path}/play-link`);
+	return base() + url;
+}
+
 export async function download(path: string, name: string) {
 	const blob = await fetchBlob(path);
 	const url = URL.createObjectURL(blob);

@@ -100,6 +100,10 @@ const FILES = {
 	"f-pdf": { name: "report.pdf", mime: "application/pdf", body: Buffer.from("%PDF-1.4\n% fixture\n%%EOF\n") },
 	"f-zip": { name: "archive.zip", mime: "application/zip", body: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x01, 0x02, 0x03]) },
 	"f-img": { name: "photo.png", mime: "image/png", body: PNG_1PX },
+	// 视频 / 音频：字节不是真正可解码的媒体流（够不上体积限制、不提交大二进制），只用来验证播放器元素
+	// 挂载、src 指向签名播放链接、以及解码失败时的「没法在这里播放」提示（真实 mp4/mp3 由服务端真实单测覆盖）。
+	"f-mp4": { name: "clip.mp4", mime: "video/mp4", body: Buffer.from([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 0, 0]) },
+	"f-mp3": { name: "voice.mp3", mime: "audio/mpeg", body: Buffer.from([0x49, 0x44, 0x33, 0x03, 0, 0, 0, 0, 0, 0]) },
 };
 
 const attachments = [
@@ -113,9 +117,16 @@ const attachments = [
 	{ fileId: "f-missing", name: "missing.txt", mime: "text/plain", size: 10, direction: "out" },
 	{ fileId: "f-img", name: "photo.png", mime: "image/png", size: PNG_1PX.length, direction: "out" },
 ];
+const mediaAttachments = [
+	{ fileId: "f-mp4", name: "clip.mp4", mime: "video/mp4", size: FILES["f-mp4"].body.length, direction: "out" },
+	{ fileId: "f-mp3", name: "voice.mp3", mime: "audio/mpeg", size: FILES["f-mp3"].body.length, direction: "out" },
+];
 const msgs = [
 	{ id: "m1", agent_id: "a1", task_id: null, role: "assistant", content: "语音输入与双向通话可行性调研，报告已附上。", meta: { attachments }, status: "done", created_at: now - 60_000, updated_at: now - 60_000, conversation_id: "c1" },
+	{ id: "m2", agent_id: "a1", task_id: null, role: "assistant", content: "录屏和语音备忘也发你。", meta: { attachments: mediaAttachments }, status: "done", created_at: now - 30_000, updated_at: now - 30_000, conversation_id: "c1" },
 ];
+// 「文件」信息面板用同一批文件（含视频 / 音频），验证预览弹窗里也能播放
+const infoFiles = [...attachments, ...mediaAttachments].filter((f) => f.fileId !== "f-huge" && f.fileId !== "f-missing");
 
 let failed = 0;
 const check = (name, cond, detail = "") => {
@@ -155,6 +166,12 @@ async function installRoutes(context, state) {
 		if (p === "/api/agents/a1/conversations" && req.method() === "GET") return json({ current: "c1", items: [{ id: "c1", agent_id: "a1", title: "第一段对话", created_at: now, updated_at: now, message_count: 1, last: "报告" }] });
 		if (p === "/api/subagents") return json([]);
 		if (p === "/api/agents/a1/computer") return json({ separate: false, hasData: null, desktop: { enabled: false, state: "off" } });
+		if (p === "/api/agents/a1/files") return json(infoFiles);
+		// 视频 / 音频播放链接：真实服务端是另起一条短时签名地址（见 packages/server/src/http.ts 的 /play-link +
+		// channels/media.ts 的 signedPath），这里为简化直接换回同一个带 inline=1 的授权地址——测试只关心播放器
+		// 元素挂载、src 非空，不重复验证签名机制（签名链接的单测在 packages/server/test/media-range-http.test.ts）。
+		const pl = /^\/api\/files\/([^/]+)\/play-link$/.exec(p);
+		if (pl) return json({ url: `/api/files/${pl[1]}?inline=1` });
 		const fm = /^\/api\/files\/([^/]+)$/.exec(p);
 		if (fm) {
 			const id = fm[1];
@@ -163,7 +180,8 @@ async function installRoutes(context, state) {
 			const f = FILES[id];
 			if (!f) return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "not_found" }) });
 			const body = Buffer.isBuffer(f.body) ? f.body : Buffer.from(f.body, "utf8");
-			return route.fulfill({ status: 200, headers: { "content-type": f.mime, "content-length": String(body.length), "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}` }, body });
+			const inline = new URL(req.url()).searchParams.get("inline") === "1" && /^(image\/|text\/plain|(video|audio)\/)/.test(f.mime);
+			return route.fulfill({ status: 200, headers: { "content-type": f.mime, "content-length": String(body.length), "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(f.name)}` }, body });
 		}
 		return json({});
 	});
@@ -309,6 +327,32 @@ try {
 		await page.locator("[data-testid=image-viewer]").waitFor({ timeout: 10_000 });
 		check("图片附件仍打开 ImageViewer（未换成文件预览）", (await page.locator("[data-testid=image-viewer]").isVisible()) && (await page.locator("[data-testid=file-preview]").count()) === 0);
 		await page.keyboard.press("Escape");
+
+		// ---- 视频 / 音频：聊天附件直接内嵌播放器 ----
+		await page.locator("[data-testid=video-attachment] video").first().waitFor({ timeout: 10_000 });
+		check("视频附件：内嵌 <video> 且 src 指向签名播放链接", (await page.locator("[data-testid=video-attachment] video").getAttribute("src"))?.includes("/api/files/f-mp4"));
+		check("视频附件：有文件名 + 下载按钮", (await page.locator("[data-testid=video-attachment]").textContent())?.includes("clip.mp4") && (await page.locator("[data-testid=video-attachment] [data-testid=file-download]").count()) === 1);
+		await page.locator("[data-testid=audio-attachment] audio").first().waitFor({ timeout: 10_000 });
+		check("音频附件：内嵌 <audio> 且 src 指向签名播放链接", (await page.locator("[data-testid=audio-attachment] audio").getAttribute("src"))?.includes("/api/files/f-mp3"));
+		check("音频附件：有文件名 + 下载按钮", (await page.locator("[data-testid=audio-attachment]").textContent())?.includes("voice.mp3") && (await page.locator("[data-testid=audio-attachment] [data-testid=file-download]").count()) === 1);
+		// fixture 里的 mp4/mp3 字节不是真能解码的媒体流：等浏览器探测格式失败，应回落到「没法在这里播放」提示，且下载仍在
+		await page.locator("[data-testid=video-attachment] [data-testid=media-error]").waitFor({ timeout: 15_000 });
+		check("视频解码失败：显示友好提示并保留下载", /没法在这里播放/.test((await page.locator("[data-testid=video-attachment] [data-testid=media-error]").textContent()) ?? "") && (await page.locator("[data-testid=video-attachment] [data-testid=file-download]").isVisible()));
+		await page.screenshot({ path: join(OUT, "desktop-media-attachments.png") });
+
+		// ---- 视频 / 音频：文件预览弹窗（信息面板「文件」） ----
+		await page.getByRole("button", { name: "信息面板", exact: true }).click();
+		await page.locator('[data-testid=info-tabs] [role=tab][data-itab="files"]').click();
+		await page.locator("[data-testid=agent-files]").waitFor({ timeout: 10_000 });
+		await page.locator('[data-testid=info-file-open]').filter({ hasText: "clip.mp4" }).first().click();
+		await page.locator("[data-testid=file-preview-video]").waitFor({ timeout: 10_000 });
+		check("预览弹窗：视频用同一个播放器组件（<video data-testid=media-video>）", (await page.locator("[data-testid=file-preview-video] video[data-testid=media-video]").count()) === 1);
+		await page.keyboard.press("Escape");
+		await page.locator('[data-testid=info-file-open]').filter({ hasText: "voice.mp3" }).first().click();
+		await page.locator("[data-testid=file-preview-audio]").waitFor({ timeout: 10_000 });
+		check("预览弹窗：音频用同一个播放器组件（<audio data-testid=media-audio>）", (await page.locator("[data-testid=file-preview-audio] audio[data-testid=media-audio]").count()) === 1);
+		await page.keyboard.press("Escape");
+		await page.getByRole("button", { name: "信息面板", exact: true }).click();
 
 		check("桌面无控制台报错", errors.length === 0, errors.slice(0, 3).join(" | "));
 		await ctx.close();

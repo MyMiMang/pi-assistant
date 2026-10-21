@@ -9,6 +9,8 @@ const MIME: Record<string, string> = {
 	".pdf": "application/pdf", ".md": "text/markdown", ".txt": "text/plain", ".csv": "text/csv", ".json": "application/json",
 	".html": "text/html", ".py": "text/x-python", ".ts": "text/plain", ".js": "text/javascript", ".zip": "application/zip",
 	".heic": "image/heic", ".heif": "image/heif", ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation", ".tsv": "text/tab-separated-values", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm", ".ogv": "video/ogg",
+	".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".aac": "audio/aac", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg", ".flac": "audio/flac",
 };
 export const mimeOf = (name: string) => MIME[extname(name).toLowerCase()] ?? "application/octet-stream";
 

@@ -1,10 +1,12 @@
-import { AlertCircle, Download, File as FileIc, FileArchive, FileCode, FileImage, FileSpreadsheet, FileText, Loader2, Paperclip, Presentation, X } from "lucide-react";
+import { AlertCircle, Download, File as FileIc, FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileText, FileVideo, Loader2, Paperclip, Presentation, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { download, fetchBlob } from "../api";
 import type { Attachment } from "../types";
 import { openFilePreview } from "./FilePreview";
 import { cx, fmtSize } from "./ui";
 import { openImageViewer } from "./ImageViewer";
+import { MediaAttachment } from "./MediaPlayer";
+import { previewKind } from "../preview";
 
 export function AuthImage({ path, alt, className, onClick }: { path: string; alt: string; className?: string; onClick?: () => void }) {
 	const [src, setSrc] = useState<string>();
@@ -40,6 +42,8 @@ export default function Attachments({ items, mine }: { items: Attachment[]; mine
 							<Download size={14} />
 						</button>
 					</div>
+				) : ["video", "audio"].includes(previewKind(f.name, f.mime)) ? (
+					<MediaAttachment key={f.fileId} f={f} />
 				) : (
 					// 非图片：点卡片主体 / 文件名 = 应用内预览；右侧下载图标是独立按钮（stopPropagation，不会误触预览）
 					<div key={f.fileId} className="pa-card pa-file-card w-full" data-testid="file-attachment">
@@ -87,9 +91,11 @@ export type Pending = { key: string; name: string; size: number; preview?: strin
 export const ATTACH_HINT =
 	"添加图片或文件（也可以拖进来、直接粘贴截图）。单个文件不超过 100MB。\n助理能看到什么：图片会直接给支持看图的模型（不支持看图的模型只知道文件路径）；PDF、Word、Excel、PPT、文本会自动提取文字（最多约 2 万 token，扫描版 PDF 没有文字）；完整文件放在助理的工作区里，它可以用工具打开。";
 
-export function fileKind(name: string): "image" | "pdf" | "doc" | "sheet" | "slide" | "code" | "archive" | "other" {
+export function fileKind(name: string): "image" | "video" | "audio" | "pdf" | "doc" | "sheet" | "slide" | "code" | "archive" | "other" {
 	const ext = (name.split(".").pop() ?? "").toLowerCase();
 	if (["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "svg", "bmp"].includes(ext)) return "image";
+	if (previewKind(name) === "video") return "video";
+	if (previewKind(name) === "audio") return "audio";
 	if (ext === "pdf") return "pdf";
 	if (["doc", "docx", "txt", "md", "rtf", "odt", "pages"].includes(ext)) return "doc";
 	if (["xls", "xlsx", "csv", "tsv", "numbers", "ods"].includes(ext)) return "sheet";
@@ -100,11 +106,13 @@ export function fileKind(name: string): "image" | "pdf" | "doc" | "sheet" | "sli
 }
 export function FileKindIcon({ name, className, size }: { name: string; className?: string; size?: number }) {
 	const k = fileKind(name);
-	const I = { image: FileImage, pdf: FileText, doc: FileText, sheet: FileSpreadsheet, slide: Presentation, code: FileCode, archive: FileArchive, other: FileIc }[k];
+	const I = { image: FileImage, video: FileVideo, audio: FileAudio, pdf: FileText, doc: FileText, sheet: FileSpreadsheet, slide: Presentation, code: FileCode, archive: FileArchive, other: FileIc }[k];
 	return <I className={className} size={size} data-kind={k} />;
 }
 const SEES: Record<ReturnType<typeof fileKind>, string> = {
 	image: "图片：支持看图的模型会直接看到",
+	video: "视频：助理会拿到文件路径，可以用工具打开",
+	audio: "音频：助理会拿到文件路径，可以用工具打开",
 	pdf: "PDF：会提取文字给助理（扫描版没有文字）",
 	doc: "文档：会提取文字给助理",
 	sheet: "表格：会提取单元格内容给助理",

@@ -218,6 +218,7 @@
 | `VoiceInput.tsx` | 语音输入按钮 |
 | `Attachments.tsx` | 附件上传与托盘 |
 | `FilePreview.tsx` | 文件预览 |
+| `MediaPlayer.tsx` | 视频 / 音频播放器（聊天附件 + 文件预览共用，签名播放链接） |
 | `ImageViewer.tsx` | 图片查看器 |
 | `Markdown.tsx` | Markdown 渲染 |
 | `MessageReply.tsx` | 引用 UI |

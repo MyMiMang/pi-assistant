@@ -25,7 +25,7 @@ import { syncMcpDownloads } from "./mcp-install.ts";
 import { agentBusy } from "./runtime.ts";
 import { entryDomain } from "./tunnel.ts";
 import { runRoutine, verifyWebhook } from "./routines.ts";
-import { verifySigned } from "./channels/media.ts";
+import { signedPath, verifySigned } from "./channels/media.ts";
 import { startHousekeeping } from "./housekeeping.ts";
 import { wecomCallback } from "./channels/index.ts";
 import { mountImageRoutes } from "./image-gen/routes.ts";
@@ -47,6 +47,7 @@ import { mountMcpRoutes } from "./routes/mcp.ts";
 import { mountSkillRoutes } from "./routes/skills.ts";
 
 const app = new Hono<Env>();
+const PLAY_LINK_TTL = 4 * 3600_000;
 
 // 响应压缩：只压 JSON。
 //  - 作用范围限定在 /api 的 JSON（聊天 / 列表接口），不是全局盲压：文件下载（octet-stream / text 附件）、
@@ -143,6 +144,15 @@ app.get("/hooks/dl/:id/:exp/:sig", (c) => {
 	const f = getFile(id);
 	if (!f || !existsSync(f.stored_path)) return c.json({ error: "not_found" }, 404);
 	return sendFile(c, f.stored_path, f.name, f.mime);
+});
+/**
+ * 视频 / 音频播放链接：<video src> 带不了 Authorization 头，所以登录后换一条只针对这一个文件的签名链接
+ * （复用上面 /hooks/dl 的签名和路由，只是有效期缩到 4 小时；?inline=1 让它在页面里播放而不是下载）。
+ */
+app.get("/api/files/:id/play-link", (c) => {
+	const f = getFile(c.req.param("id"));
+	if (!f || !existsSync(f.stored_path)) return c.json({ error: "not_found" }, 404);
+	return c.json({ url: `${signedPath(f.id, PLAY_LINK_TTL)}?inline=1` });
 });
 mountChannelRoutes(app);
 /** 企业微信回调（公网经隧道访问；用 Token + EncodingAESKey 验签解密，不走设备登录） */

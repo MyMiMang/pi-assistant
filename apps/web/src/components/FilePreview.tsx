@@ -5,13 +5,14 @@ import { ApiError, download as downloadFile, fetchBlob, fetchBlobLimited } from 
 import { MAX_CSV_COLS, MAX_CSV_ROWS, MAX_TEXT_BYTES, MAX_TEXT_LINES, isTextKind, looksBinary, parseCsv, previewKind, stripBom, type PreviewKind } from "../preview";
 import { FileKindIcon } from "./Attachments";
 import Markdown from "./Markdown";
+import { MediaPlayer } from "./MediaPlayer";
 import { Modal, cx, fmtSize } from "./ui";
 
 /**
  * 聊天 / 交付 / 信息面板 / 子代理附件共用的应用内文件预览。
  *
  * 只读、安全：
- * - 只通过授权资源地址（/api/files/:id）带登录凭证拉取，不读本机任意路径 / URL，不绕权限；
+ * - 只通过授权资源地址（/api/files/:id）带登录凭证拉取，不读本机任意路径 / URL，不绕权限（视频 / 音频改用该文件的短时签名链接流式播放）；
  * - HTML / SVG / Office / 压缩包等一律不 inline、不执行，只给下载；
  * - 文本先做二进制嗅探，乱码不硬解；超过上限只提示 + 下载；
  * - Markdown 复用现有 react-markdown，但外链图片默认不自动加载，链接只放行 http/https/mailto。
@@ -38,6 +39,8 @@ export function openFilePreview(item: FilePreviewItem) {
 
 const KIND_LABEL: Record<PreviewKind, string> = {
 	image: "图片",
+	video: "视频",
+	audio: "音频",
 	pdf: "PDF",
 	markdown: "Markdown",
 	csv: "表格",
@@ -202,6 +205,14 @@ function Body({ item, kind, onRetry, onClose }: { item: FilePreviewItem; kind: P
 	}
 	if (kind === "unsupported") {
 		return <Notice icon={<FileQuestion size={22} />} title="暂不支持这种文件预览" body="为保证安全（不执行 HTML / SVG / Office 宏），这类文件只在应用外打开。用右上角「下载」保存后查看。" testId="file-preview-unsupported" />;
+	}
+	if (kind === "video" || kind === "audio") {
+		// 不拉成 blob：播放器自己用短时签名链接流式加载（能拖进度条）
+		return (
+			<div className="flex h-full items-center justify-center overflow-hidden p-3" data-testid={`file-preview-${kind}`}>
+				<MediaPlayer kind={kind} path={item.url} name={item.name} className={kind === "video" ? "max-h-full max-w-full rounded-lg bg-black shadow" : "w-full max-w-md"} />
+			</div>
+		);
 	}
 	if (kind === "markdown") return <MarkdownScroll text={text} />;
 	if (kind === "csv") return <CsvView text={text} tsv={item.mime === "text/tab-separated-values" || /\.tsv$/i.test(item.name)} />;
