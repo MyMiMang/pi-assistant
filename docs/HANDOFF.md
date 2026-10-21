@@ -5,7 +5,7 @@
 ## 当前版本（2026-10-20）
 - 公开版：**v0.1.0-beta.36**（Latest，2026-10-21 00:09 北京时间）。五平台构建、Mac/Windows 安装冒烟一次通过，13 项资产和 latest.json 已核对。说明见 [release-notes/v0.1.0-beta.36.md](release-notes/v0.1.0-beta.36.md)；之前 beta.35（10-20 19:04）、beta.34（10-20 08:20）。
 - 发布小坑：Intel Mac 那一路偶尔在上传时和别的平台并发撞车（`Not Found - delete-a-release-asset`），构建本身成功；`gh run rerun <id> --failed` 只重跑这一路即可（beta.34 遇到过，beta.35 没遇到）。
-- main 上 beta.36 之后没有未打包的改动（群聊自主推进、去掉每轮 token 预算等已随 beta.36 发布，见决策 0017）。
+- beta.36 之后未打包：目标清楚时导演自己开启自主推进（room_goal 直接开、群里告知，不再插确认卡）、模糊先问、达成先交付再结束（[决策 0018](decisions/0018-manager-starts-autonomy.md)）。真实模型下会不会照做，待真机。
 
 ## 正在做
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。

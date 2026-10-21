@@ -11,6 +11,7 @@
 - [已完成(未打包)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
+- [已完成(未打包)] 目标清楚由导演自己开启推进、模糊先问、干完交付结果，不再要用户手动开或点确认卡（[0018](decisions/0018-manager-starts-autonomy.md)）
 - [已发布(beta.36)] 群聊去掉每轮 token 预算、暂停不挡唤醒、自主推进开关放顶部且真能自己推进、派活附件真的交给负责人（[0017](decisions/0017-room-no-token-budget-autonomy.md)）
 - [已发布(beta.36)] 文件卡片路径超出、「任务提交」卡片贴边并和系统提示叠在一起
 - [计划] 群成员每次调用读入 20–37 万 token：会话历史越攒越长，查清后单独给方案
