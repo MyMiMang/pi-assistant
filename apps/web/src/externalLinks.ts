@@ -27,6 +27,8 @@ const tauriInternals = (): { invoke?: Invoke } | undefined =>
 
 /** 当前是否在 Tauri 桌面窗口里（有可用的 invoke 才算）。 */
 export const inTauri = (): boolean => typeof tauriInternals()?.invoke === "function";
+/** 桌面窗口里的 invoke（不在桌面程序里为 null）；其他桌面窗口能力（如窗口明暗）共用这一个入口。 */
+export const tauriInvoke = (): Invoke | null => (inTauri() ? tauriInternals()!.invoke! : null);
 
 /** 交给系统浏览器的协议白名单：http/https/mailto。其余协议（javascript:/data:/file:/blob:/tel:）不接管。 */
 const EXTERNAL_SCHEME = /^(https?|mailto):/i;

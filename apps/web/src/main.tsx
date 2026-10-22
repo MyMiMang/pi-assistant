@@ -8,6 +8,7 @@ import PetWindow from "./pet/PetWindow";
 import "./styles.css";
 import "./themes/macos-titlebar.css";
 import { installExternalLinkHandling } from "./externalLinks";
+import { installDesktopChrome } from "./desktopChrome";
 import { installMacWindowChrome } from "./macosWindow";
 import { applyTheme, useStore } from "./store";
 import { installViewportHeight } from "./viewport";
@@ -24,6 +25,8 @@ if (location.pathname !== "/pet") installExternalLinkHandling();
 
 const { theme, accent, skin } = useStore.getState();
 applyTheme(theme, accent, skin);
+// Windows / Linux 桌面：滚动条统一成细样式、窗口标题栏跟 App 明暗走（Mac 不受影响）
+if (location.pathname !== "/pet") installDesktopChrome();
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
 	const s = useStore.getState();
 	applyTheme(s.theme, s.accent, s.skin);
