@@ -94,6 +94,14 @@ export function boardSig(o: { items: { id: string; status: string }[]; plainAssi
 }
 
 /**
+ * 降成本（§8「少读」）：管理者被叫醒时看板摘要和上一次完全一样，就不再整段重复，只写一行提示。
+ * `digest` 是这次算出来的看板摘要全文，`lastDigest` 是上一次发给管理者的那份（没有就是 null，照常全量）。
+ */
+export function boardDigestOrUnchanged(digest: string, lastDigest: string | null): string {
+	return lastDigest !== null && lastDigest === digest ? "任务看板和上次一样，没有变化。" : digest;
+}
+
+/**
  * 项目进行中的兜底：管理者一个回合正常结束后，项目没结束、没有进行中 / 待核验的任务、队列里也没有排着的回合 → 再叫醒它一次。
  * 有界：连续两次兜底之间看板没有任何新进展（sig 没变）就不再叫醒，改为提示用户一次（hint）；用户发话会重置（调用方清掉 lastSig / hinted）。
  */

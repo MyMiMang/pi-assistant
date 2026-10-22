@@ -267,6 +267,35 @@ test("idleWakeStep：只有有进行中项目、手上没活、队列空才兜�
 	assert.equal(logic.idleWakeStep({ ...base, lastSig: "a", hinted: true }), "none", "提示过不再重复");
 });
 
+test("boardDigestOrUnchanged：和上次完全一样只提示没变化，不整段重复；没有上次 / 有变化就照常全量", () => {
+	assert.equal(logic.boardDigestOrUnchanged("任务看板：A", null), "任务看板：A", "没有上次：全量");
+	assert.equal(logic.boardDigestOrUnchanged("任务看板：A", "任务看板：A"), "任务看板和上次一样，没有变化。");
+	assert.equal(logic.boardDigestOrUnchanged("任务看板：B", "任务看板：A"), "任务看板：B", "有变化：全量");
+});
+
+test("唤醒管理者：看板摘要和上次一样只提示没变化，不整段重复；看板变化后恢复全量", async () => {
+	const room = rooms.createRoom({ name: "看板去重群", memberIds: ["cm", "ca"], managerId: "cm" });
+	const item = W.createWorkItem({ roomId: room.id, title: "写报告", requirement: "写", doneCriteria: "有结果", ownerAgentId: "ca", start: false }, { kind: "user" }).item.id;
+	db.prepare("UPDATE work_items SET status = 'active' WHERE id = ?").run(item);
+	replies.set("cm", () => "收到");
+	rooms.wakeManager(room.id, "第一次");
+	await until(() => roomDone(room.id, "check", 1) && idle(room.id), "第一次唤醒");
+	const first = prompts.filter((x) => x.agentId === "cm").pop()!.prompt;
+	assert.match(first, /任务看板（未完成/, "第一次：看板全量");
+	rooms.wakeManager(room.id, "第二次");
+	await until(() => roomDone(room.id, "check", 2) && idle(room.id), "第二次唤醒");
+	const second = prompts.filter((x) => x.agentId === "cm").pop()!.prompt;
+	assert.match(second, /任务看板和上次一样，没有变化。/, "看板没变：只提示没变化");
+	assert.doesNotMatch(second, /任务看板（未完成/, "没有整段重复看板");
+	db.prepare("UPDATE work_items SET status = 'done' WHERE id = ?").run(item);
+	rooms.wakeManager(room.id, "第三次");
+	await until(() => roomDone(room.id, "check", 3) && idle(room.id), "第三次唤醒");
+	const third = prompts.filter((x) => x.agentId === "cm").pop()!.prompt;
+	assert.match(third, /任务看板：没有未完成的任务/, "看板变化后恢复全量");
+	replies.clear();
+	await rooms.deleteRoom(room.id);
+});
+
 // ---------------------------------------------------------------- room_assign 的附件真的交给负责人
 
 test("room_assign 附件：按文件名（也接受路径、同名取最新）找到并放进负责人工作区，任务文字带路径；找不到就不派出", async () => {

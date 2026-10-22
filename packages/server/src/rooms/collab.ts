@@ -10,7 +10,7 @@ import { db, now } from "../db.ts";
 import { notify } from "../push.ts";
 import { getAgent } from "../runtime.ts";
 import { boardDigest, setRoomPort, steerToLiveRun } from "../work-items.ts";
-import { boardSig as projectBoardSig, PROJECT_IDLE_WAKE, idleWakeStep, planPeerTurns } from "./logic.ts";
+import { boardDigestOrUnchanged, boardSig as projectBoardSig, PROJECT_IDLE_WAKE, idleWakeStep, planPeerTurns } from "./logic.ts";
 import { planText } from "./plan.ts";
 import { activeProjects, getProject, hasActiveProject, projectView } from "./projects.ts";
 import { chatterStep } from "../stuck.ts";
@@ -60,14 +60,20 @@ export function wakeManager(roomId: string, reason: string, _workItemId?: string
 	return scheduleTurns(roomId, [{ agentId: r.manager_id, reason: "check", depth: 0 }]);
 }
 
+/** 降成本：每个群上次发给管理者的看板摘要（内存即可，重启后第一次照常全量）。 */
+const lastBoardDigest = new Map<string, string>();
+
 function checkContext(roomId: string) {
 	const reasons = wakeReasons.get(roomId) ?? [];
 	wakeReasons.delete(roomId);
 	const projects = activeProjects(roomId);
+	const digest = boardDigest(roomId, 20, (id) => getProject(id)?.title);
+	const boardLine = boardDigestOrUnchanged(digest, lastBoardDigest.get(roomId) ?? null);
+	lastBoardDigest.set(roomId, digest);
 	return [
 		projects.length ? `进行中的项目：\n${projects.map((p) => planText(projectView(p))).join("\n\n")}` : "",
 		reasons.length ? `唤醒原因：\n${reasons.map((x) => `- ${x}`).join("\n")}` : "唤醒原因：定时检查",
-		boardDigest(roomId, 20, (id) => getProject(id)?.title),
+		boardLine,
 	].filter(Boolean).join("\n");
 }
 
