@@ -66,6 +66,8 @@ const fresh = (): RoomState => ({ roundId: uid("rd"), queue: [], current: null, 
 export interface TurnHooks {
 	/** 回合正常结束后（没停、没中止）：自主推进的成员互相 @、空聊检测、回复送回提问者 */
 	after?: (roomId: string, t: Turn, res: { text: string; error?: string }) => void;
+	/** 回合结束后（没停、没中止，成功与否都算）：管理者回合结束放行暂缓的任务 */
+	ended?: (roomId: string, t: Turn) => void;
 	/** check 回合的上下文：唤醒原因 + 看板摘要（读过的原因会清掉） */
 	checkContext?: (roomId: string) => string;
 	/** 用户在群里发话（空聊计数清零、恢复成员互相叫醒） */
@@ -147,7 +149,8 @@ export const hasQueuedTurns = (roomId: string) => {
 	const s = states.get(roomId);
 	return !!s && (!!s.current || s.queue.length > 0);
 };
-export const queuedFor = (roomId: string, reason: PlannedTurn["reason"], agentId?: string) => !!states.get(roomId)?.queue.some((q) => q.reason === reason && (!agentId || q.agentId === agentId));
+/** 群里排着的回合（reason 为 null = 不限原因）。 */
+export const queuedFor = (roomId: string, reason: PlannedTurn["reason"] | null, agentId?: string) => !!states.get(roomId)?.queue.some((q) => (!reason || q.reason === reason) && (!agentId || q.agentId === agentId));
 
 /** 用户在群里发言：先落库，再按可信持久化源消息路由（幂等，见 routeUserMessage）。 */
 export function postUserMessage(roomId: string, text: string, opts: { mentions?: string[]; from?: unknown; attachments?: string[]; replyToId?: string; clientId?: string; workItemId?: string } = {}) {
@@ -395,6 +398,7 @@ async function runTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
 	if (res.error && !res.aborted) sys(roomId, `${name} 出错了，已跳过：${res.error.slice(0, 200)}`, {}, "error");
 	s.current = null;
 	if (s.stopped || res.aborted) return;
+	hooks.ended?.(roomId, t);
 	const rr = getRoom(roomId);
 	if (!rr) return;
 	const isMgr = t.agentId === rr.manager_id;

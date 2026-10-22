@@ -5,27 +5,18 @@
  * 任务模块不 import 群模块：由 RoomPort.stageMaybeDone 调进来。
  */
 import { db } from "../db.ts";
-import { itemsOfProject } from "../work-items.ts";
+import { itemsOfProject, parseStringArray } from "../work-items.ts";
 import { wakeManager } from "./collab.ts";
 import { getProject, projectView } from "./projects.ts";
 import { ALL_DONE_MARK, newlyDoneStages, projectProgress, stageDoneReason } from "./progress.ts";
-
-const parseNames = (s: string | null): string[] => {
-	try {
-		const v = JSON.parse(s ?? "[]");
-		return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-	} catch {
-		return [];
-	}
-};
 
 export function stageMaybeDone(projectId: string) {
 	const p = getProject(projectId);
 	if (!p || p.status !== "active") return;
 	const plan = projectView(p).plan;
-	const notified = parseNames(p.stages_done);
+	const notified = parseStringArray(p.stages_done);
 	const { names, allDone } = newlyDoneStages(projectProgress(plan, itemsOfProject(p.id)), notified);
 	if (!names.length && !allDone) return;
 	db.prepare("UPDATE room_projects SET stages_done = ? WHERE id = ?").run(JSON.stringify([...notified, ...names, ...(allDone ? [ALL_DONE_MARK] : [])]), p.id);
-	wakeManager(p.room_id, stageDoneReason({ title: p.title, projectId: p.id, names, allDone, checkpoints: plan.checkpoints }));
+	wakeManager(p.room_id, stageDoneReason({ title: p.title, projectId: p.id, names, allDone, checkpoints: plan.checkpoints, held: parseStringArray(p.held).length > 0 }));
 }

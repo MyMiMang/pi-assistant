@@ -381,13 +381,13 @@ try {
 	console.log("[G2] 含「关键点」「交付卡」的立项：第一阶段完成后出关键点卡片（chip 等你看一眼、面板琥珀框），点「可以，继续」后继续，最后出交付卡");
 	const p5 = await proposeNew("立项：整理对外说明，要有关键点和交付卡");
 	await card(p5.id).getByTestId("room-plan-confirm").click();
-	// 关键点不拦下游任务（Mock 里第二阶段会自己接着做完并交付、顺手收掉卡片），所以把受这个关键点影响的第二阶段先暂停住，等用户答复后再放开
-	let held;
-	await wait(async () => (held = (await j(`/api/rooms/${room.id}/work-items`)).items.find((x) => x.projectId === p5.id && x.stage === "完成")), 60000, "第二阶段任务建出来");
-	await j(`/api/work-items/${held.id}/pause`, "POST", {});
+	// 方案有关键点：第一阶段完成后，第二阶段任务先暂缓（pending），等用户答复后管理者回合结束才自动开始
+	const stageTwo = async () => (await j(`/api/rooms/${room.id}/work-items`)).items.find((x) => x.projectId === p5.id && x.stage === "完成");
+	await wait(stageTwo, 60000, "第二阶段任务建出来");
 	let cpWait;
 	await wait(async () => (cpWait = (await roomNow()).projects?.find((p) => p.id === p5.id)?.waiting), 120000, "项目出现 waiting（关键点）");
 	assert.ok(cpWait.checkpoint && cpWait.message, "waiting 带关键点和说明");
+	assert.equal((await stageTwo()).status, "pending", "关键点卡片出现时第二阶段任务没有开始（暂缓）");
 	assert.deepEqual(cpWait.options, ["可以，继续", "要改"]);
 	const cpMsg = (await messages()).find((m) => m.role === "card" && m.meta?.kind === "question" && m.meta.checkpoint);
 	assert.equal(cpMsg?.meta.projectId, p5.id, "关键点卡片带 projectId");
@@ -409,9 +409,9 @@ try {
 	assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= 391), "390 页面没有横向溢出");
 	await page.setViewportSize({ width: 1440, height: 1000 });
 	await cpCard.getByRole("button", { name: "可以，继续" }).click();
-	await j(`/api/work-items/${held.id}/continue`, "POST", {});
 	await wait(async () => !(await roomNow()).projects?.find((p) => p.id === p5.id)?.waiting, 10000, "答复后 waiting 清掉");
 	assert.ok((await messages()).some((m) => m.role === "user" && /关于关键点「.*」：可以，继续/.test(m.content)), "答复以用户身份发到群里");
+	await wait(async () => (await stageTwo()).status !== "pending", 60000, "答复后第二阶段任务自动开始");
 	const deliv = page.locator(`[data-testid=project-delivery][data-project="${p5.id}"]`);
 	let dm;
 	await wait(async () => (dm = (await messages()).find((m) => m.meta?.kind === "project-delivery" && m.meta.projectId === p5.id)), 120000, "交付卡消息");

@@ -32,6 +32,8 @@ for (const [col, ddl] of [
 	// 已经通知过用户的阶段名（JSON 数组，stages.ts）；在等用户看的关键点（JSON，checkpoint.ts）
 	["stages_done", "TEXT"],
 	["waiting", "TEXT"],
+	// 关键点前暂缓的下游任务编号（JSON 数组，hold.ts）
+	["held", "TEXT"],
 ] as const) {
 	if (!(db.prepare("PRAGMA table_info(room_projects)").all() as { name: string }[]).some((c) => c.name === col)) db.exec(`ALTER TABLE room_projects ADD COLUMN ${col} ${ddl}`);
 }
@@ -58,6 +60,7 @@ export interface ProjectRow {
 	replans: number;
 	stages_done: string | null;
 	waiting: string | null;
+	held: string | null;
 }
 export interface ProjectJson {
 	id: string;
@@ -210,7 +213,7 @@ export async function stopProject(roomId: string, projectId: string) {
 	const p = requireProject(roomId, projectId);
 	if (p.status !== "active") throw new ProjectError(p.status === "proposed" ? "这个项目还没开始，不用停；不想做就在方案卡上点「先不做」" : "这个项目已经结束了");
 	const t = now();
-	db.prepare("UPDATE room_projects SET status = 'stopped', draft = NULL, summary = ?, ended_at = ?, updated_at = ? WHERE id = ?").run("用户停下了这个项目，进度保留", t, t, p.id);
+	db.prepare("UPDATE room_projects SET status = 'stopped', draft = NULL, held = NULL, summary = ?, ended_at = ?, updated_at = ? WHERE id = ?").run("用户停下了这个项目，进度保留", t, t, p.id);
 	settleCard(p, "superseded");
 	dropWaiting(p.id);
 	projectEnded(roomId);
@@ -283,7 +286,7 @@ export function finishProject(roomId: string, projectId: string, summary: string
 	const p = requireProject(roomId, projectId);
 	if (p.status !== "active") throw new ProjectError(p.status === "proposed" ? "这个项目还没开始（方案还在等用户确认）" : "这个项目已经结束了");
 	const t = now();
-	db.prepare("UPDATE room_projects SET status = 'done', draft = NULL, summary = ?, ended_at = ?, updated_at = ? WHERE id = ?").run(summary, t, t, p.id);
+	db.prepare("UPDATE room_projects SET status = 'done', draft = NULL, held = NULL, summary = ?, ended_at = ?, updated_at = ? WHERE id = ?").run(summary, t, t, p.id);
 	settleCard(p, "superseded");
 	dropWaiting(p.id);
 	projectEnded(roomId);

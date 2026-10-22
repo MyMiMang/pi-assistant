@@ -21,6 +21,7 @@ import {
 	getWorkItemDetail,
 	itemRow,
 	MAX_AUTO_RETRIES,
+	parseDepends,
 	requireManagerOrUser,
 	requireRoom,
 	roomNotice,
@@ -155,27 +156,48 @@ export function dispatchFromRoom(roomId: string, agentId: string, workItemId: st
 }
 
 /**
- * 一个任务核验通过后，所有依赖它、状态 pending、且全部前置都已完成的下游任务自动开始（不绕过 createRun + launch
- * 这条现有的开始路径）；负责人不在群里就标受阻待改派并叫醒管理者。
+ * 开始一个前置都已完成的 pending 任务（不绕过 createRun + launch 这条现有的开始路径）；负责人不在群里就标受阻待改派并叫醒管理者。
+ * upstream = 刚核验通过的前置任务（放行暂缓任务时没有）。advanceDependents 和 startReleased 共用。
+ */
+function startDependent(dep: WorkItemRow, upstream: WorkItemRow | null) {
+	const revision = dep.revision + 1;
+	if (!dep.owner_agent_id || !dep.room_id || !activeMember(dep.room_id, dep.owner_agent_id)) {
+		db.prepare("UPDATE work_items SET status = 'blocked', revision = ?, latest_progress = ?, blocker = ?, updated_at = ? WHERE id = ? AND revision = ?").run(revision, "前置任务已完成，但负责人不可用，待改派", "负责人不可用，待改派", now(), dep.id, dep.revision);
+		event(dep.id, "owner.unavailable", SYSTEM, revision, { upstream: upstream?.id });
+		roomNotice(dep.room_id, `任务「${dep.title}」的前置任务${upstream ? `「${upstream.title}」` : ""}已完成，但负责人不在群里，已标为待改派。`, dep.id);
+		if (dep.room_id) port()?.wakeManager(dep.room_id, `任务「${dep.title}」的负责人不可用，待改派`, dep.id);
+		emit(dep.room_id);
+		return;
+	}
+	db.prepare("UPDATE work_items SET status = 'active', revision = ?, latest_progress = '前置任务已完成，自动开始', blocker = NULL, updated_at = ? WHERE id = ? AND revision = ?").run(revision, now(), dep.id, dep.revision);
+	event(dep.id, "started", SYSTEM, revision, { auto: true, upstream: upstream?.id });
+	roomNotice(dep.room_id, upstream ? `「${upstream.title}」已完成，「${dep.title}」自动开始，交给 ${agentName(dep.owner_agent_id)}。` : `「${dep.title}」的前置任务都已完成，自动开始，交给 ${agentName(dep.owner_agent_id)}。`, dep.id);
+	const cur = itemRow(dep.id)!;
+	launch(cur, createRun(cur, cur.owner_agent_id!, { task: workPrompt(cur) }));
+	emit(dep.room_id);
+}
+
+/**
+ * 一个任务核验通过后，所有依赖它、状态 pending、且全部前置都已完成的下游任务自动开始。
+ * 项目方案里有关键点、且这次核验让这个任务所在的阶段刚完成时，别的阶段的下游先暂缓（RoomPort.holdForCheckpoint，由群模块决定并记下），等管理者确认后由 startReleased 放行。
  */
 function advanceDependents(item: WorkItemRow) {
 	for (const dep of readyDependents(item.id)) {
-		const revision = dep.revision + 1;
-		if (!dep.owner_agent_id || !dep.room_id || !activeMember(dep.room_id, dep.owner_agent_id)) {
-			db.prepare("UPDATE work_items SET status = 'blocked', revision = ?, latest_progress = ?, blocker = ?, updated_at = ? WHERE id = ? AND revision = ?").run(revision, "前置任务已完成，但负责人不可用，待改派", "负责人不可用，待改派", now(), dep.id, dep.revision);
-			event(dep.id, "owner.unavailable", SYSTEM, revision, { upstream: item.id });
-			roomNotice(dep.room_id, `任务「${dep.title}」的前置任务「${item.title}」已完成，但负责人不在群里，已标为待改派。`, dep.id);
-			if (dep.room_id) port()?.wakeManager(dep.room_id, `任务「${dep.title}」的负责人不可用，待改派`, dep.id);
+		if (item.project_id && dep.project_id === item.project_id && port()?.holdForCheckpoint(item.project_id, item.id, dep.id)) {
+			db.prepare("UPDATE work_items SET latest_progress = ?, updated_at = ? WHERE id = ? AND revision = ?").run("等管理者确认下一阶段（方案里有要请你看的关键点）", now(), dep.id, dep.revision);
 			emit(dep.room_id);
 			continue;
 		}
-		db.prepare("UPDATE work_items SET status = 'active', revision = ?, latest_progress = '前置任务已完成，自动开始', blocker = NULL, updated_at = ? WHERE id = ? AND revision = ?").run(revision, now(), dep.id, dep.revision);
-		event(dep.id, "started", SYSTEM, revision, { auto: true, upstream: item.id });
-		roomNotice(dep.room_id, `「${item.title}」已完成，「${dep.title}」自动开始，交给 ${agentName(dep.owner_agent_id)}。`, dep.id);
-		const cur = itemRow(dep.id)!;
-		launch(cur, createRun(cur, cur.owner_agent_id!, { task: workPrompt(cur) }));
-		emit(dep.room_id);
+		startDependent(dep, item);
 	}
+}
+
+/** 放行暂缓的任务：还是 pending 且前置都已完成才开始（被管理者改派 / 取消 / 编辑过的按新状态，不是 pending 就不动）；开始了返回 true。 */
+export function startReleased(itemId: string): boolean {
+	const dep = itemRow(itemId);
+	if (!dep || dep.status !== "pending" || pendingDeps(parseDepends(dep.depends_on)).length) return false;
+	startDependent(dep, null);
+	return true;
 }
 
 /** 核验：只有管理者 / 用户；必须有检查结论；通过才算完成，退回则开一个新修订继续，走不通就标受阻并交给管理者改计划。 */

@@ -17,6 +17,7 @@ import { getAsk } from "./asks.ts";
 import { planText } from "./plan.ts";
 import { activeProjects, checkProjectStall, getProject, hasActiveProject, projectView } from "./projects.ts";
 import { projectProgress, renderProgress } from "./progress.ts";
+import { holdForCheckpoint, releaseAfterManagerTurn } from "./hold.ts";
 import { stageMaybeDone } from "./stages.ts";
 import { chatterStep } from "../stuck.ts";
 import { hasQueuedTurns, postUserMessage, queuedFor, scheduleTurns, setTurnHooks } from "./scheduler.ts";
@@ -172,6 +173,7 @@ setTurnHooks({
 		if (t.agentId === r.manager_id) idleWake(roomId);
 		if (t.agentId !== r.manager_id && res.text) peerMentions(roomId, t.agentId, res.text, t.reason === "peer" && t.from ? [t.from].filter((id) => steeredLive(roomId, id)) : []);
 	},
+	ended: (roomId, t) => releaseAfterManagerTurn(roomId, t.agentId),
 	checkContext,
 	onUserMessage(roomId) {
 		resetChatter(roomId);
@@ -220,6 +222,7 @@ setRoomPort({
 	},
 	roster: rosterText,
 	stageMaybeDone,
+	holdForCheckpoint,
 	managerConversation(roomId) {
 		const r = getRoom(roomId);
 		if (!r?.manager_id || !activeIds(roomId).includes(r.manager_id)) return null;

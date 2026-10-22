@@ -21,6 +21,8 @@ export interface RoomPort {
 	projectStages: (projectId: string) => string[] | null;
 	/** 任务核验通过后：这个项目的阶段可能完成了——群模块判断是否「刚完成」，是就叫醒管理者通知用户（只通知一次） */
 	stageMaybeDone: (projectId: string) => void;
+	/** 核验通过的任务让阶段刚完成、且方案有关键点时，别的阶段的下游任务先暂缓：群模块判断并记下（返回 true = 暂缓，任务模块不开始它），之后由群模块用 startReleased 放行 */
+	holdForCheckpoint: (projectId: string, upstreamItemId: string, dependentItemId: string) => boolean;
 	/** 群成员名单（任务执行说明里给负责人看，找同事时知道该叫谁） */
 	roster: (roomId: string, agentId: string) => string;
 }

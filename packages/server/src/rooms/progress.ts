@@ -93,9 +93,10 @@ export function newlyDoneStages(p: ProjectProgress, notified: string[]): { names
 }
 
 /** 阶段（或全部阶段）完成时叫醒管理者的原因：通知用户进度，不是提问；有关键点的先走关键点确认。 */
-export function stageDoneReason(o: { title: string; projectId: string; names: string[]; allDone: boolean; checkpoints: string[] }): string {
+export function stageDoneReason(o: { title: string; projectId: string; names: string[]; allDone: boolean; checkpoints: string[]; held?: boolean }): string {
 	const who = `项目「${o.title}」（项目编号 ${o.projectId}）`;
 	if (o.allDone) return `${who}所有阶段都完成了：对照完成标准逐条核对，整合成果后用 room_project_done 交付（summary 写做成了什么；deliverables 填最终要交给用户的文件；howToUse 写怎么用 / 去哪看；还没做的和建议的下一步写进 notDone）`;
 	const cp = o.checkpoints.length ? `如果方案里有在这个阶段之后的关键点（${o.checkpoints.join("；")}），先走关键点确认（room_checkpoint）。` : "";
-	return `${who}的阶段「${o.names.join("、")}」完成了：用两三句话告诉用户做到哪了、接下来做什么、需不需要用户做什么（这是通知，不是提问）。${cp}`;
+	const held = o.held ? "下一阶段的任务先暂缓了：需要用户看的用 room_checkpoint 发给用户（用户答复后会自动继续）；不需要的话你这一轮结束后会自动开始。" : "";
+	return `${who}的阶段「${o.names.join("、")}」完成了：用两三句话告诉用户做到哪了、接下来做什么、需不需要用户做什么（这是通知，不是提问）。${cp}${held}`;
 }
