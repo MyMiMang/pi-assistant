@@ -38,11 +38,13 @@ Pi Assistant：基于 [Pi](https://github.com/earendil-works/pi) SDK 的本地�
 
 ## 硬规则 4：测试
 - 只用临时数据：`e2e/fixtures/temp-server.mjs` 的 `makeTempRun / startTempServer / browserEnv / cleanupTempRun`、内存凭据（`test/in-memory-credentials.ts`）、Mock 模型（`pi-adapter/mock-provider.ts`）。
-- **绝不**碰生产数据、真实付费模型、用户的 Chrome 配置、真实的电脑控制驱动。用户的电脑默认只读，要动先得到用户同意。
+- 自动化测试（单测、e2e、`npm run check`）**绝不**碰生产数据、真实付费模型、用户的 Chrome 配置、真实的电脑控制驱动。用户的电脑默认只读，要动先得到用户同意。
+- 真实模型实测只在「开发实测环境」`npm run dev:live`（`~/.pi-assistant-dev`，端口 8788，模型渠道由用户自己登录）里做，只用新建的测试助理和测试群；**不在用户装好的 App 里用用户的助理 / 群 / 对话测试**（[0021](docs/decisions/0021-dev-live-testing.md)）。
 - 构建和浏览器测试串行跑。改了 Mock 行为同步改 e2e。新功能加单测和相关 e2e。
 ```bash
 npm ci --ignore-scripts      # Node 22.19+
 npm run dev                  # Mock 模型，http://127.0.0.1:8787，不花钱
+npm run dev:live             # 开发实测：真实模型渠道，http://127.0.0.1:8788，数据在 ~/.pi-assistant-dev
 npm run check:static         # 规范检查（几秒）：行数、边界、重复代码、文档、仓库卫生
 npm run check                # check:static + typecheck + 服务端单测（推之前必须全过）
 npm run e2e                  # 全量 e2e（需要 Chrome；约 25 分钟；截图写 artifacts/）

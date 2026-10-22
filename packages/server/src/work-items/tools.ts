@@ -100,7 +100,7 @@ export function workItemTools(roomId: string, agentId: string) {
 			name: "work_verify",
 			label: "核验任务",
 			description:
-				"（管理者）核验成员提交的任务，读真实产物。note 必须写检查结论。三种结论：pass = 对照完成标准都满足，任务完成；return = 没达到但这条路走得通，写清怎么改，任务保持进行中并自动安排下一次执行；impossible = 这条路走不通（不是没做好，是方法 / 方向本身行不通），不会再自动重做，直接交给你换做法或改方案，别再原样退回重做。核验完要在群里用一两句话说明结论和交付在哪里；失败或阻塞也要在原群说清楚（不要只更新看板，也不要逐个工具细节刷屏）。",
+				"（管理者）核验成员提交的任务，读真实产物。你自己负责、已经直接做完的任务也用它收尾（verdict=pass，note 写清产物在哪、怎么核对过）。note 必须写检查结论。三种结论：pass = 对照完成标准都满足，任务完成；return = 没达到但这条路走得通，写清怎么改，任务保持进行中并自动安排下一次执行；impossible = 这条路走不通（不是没做好，是方法 / 方向本身行不通），不会再自动重做，直接交给你换做法或改方案，别再原样退回重做。核验完要在群里用一两句话说明结论和交付在哪里；失败或阻塞也要在原群说清楚（不要只更新看板，也不要逐个工具细节刷屏）。",
 			parameters: Type.Object({
 				workItemId: Type.String({ description: "任务编号" }),
 				verdict: Type.Union([Type.Literal("pass"), Type.Literal("return"), Type.Literal("impossible")], { description: "pass = 通过完成；return = 退回修改（这条路走得通）；impossible = 这条路走不通，要换做法或改方案" }),

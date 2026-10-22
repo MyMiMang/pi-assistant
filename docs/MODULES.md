@@ -32,6 +32,7 @@
 - 改价格格式要同时改 `model-db.ts` 和 `scripts/gen-model-db.mjs`。
 - 内置宠物改动后跑 `python3 scripts/pets/gen-presets.py --preview /tmp/pet-previews`。
 - `provider-icons.ts` 由 `node scripts/gen-provider-icons.mjs` 生成。
+- 开发实测环境（真实模型）：`npm run dev:live` → `scripts/dev-live.mjs`（数据 `~/.pi-assistant-dev`、端口 8788、`PIA_SECRETS=file` 不碰钥匙串）。
 - 升级 cua-driver 要重新核对 BROWSER.md、WORKFLOW.md 和工具参数格式。
 
 ## 仓库顶层 `packages/`、`apps/`
@@ -163,6 +164,7 @@
 | `i18n.ts` | 极简多语言 |
 | `latest-write.ts` | 「最后一次为准」写入守卫（必须复用） |
 | `composer.ts` | 输入栏按钮标签规则 |
+| `slowStep.ts` | 一步跑太久时的提示文字（可能在等系统权限弹窗） |
 | `composerDrafts.ts` | 输入框草稿 |
 | `replyDrafts.ts` | 引用草稿 |
 | `replies.ts` | 引用回复纯逻辑 |

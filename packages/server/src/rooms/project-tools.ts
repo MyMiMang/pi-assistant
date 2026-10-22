@@ -10,6 +10,7 @@ import { checkPlan, normalizePlan } from "./plan.ts";
 import { PLAN_FIELDS } from "./plan-schema.ts";
 import { confirmProject, finishProject, getProject, proposePlan, replanProject, resumeProject, userRepliedAfterStop, userRepliedToCard } from "./projects.ts";
 import { getRoom, memberRefs } from "./store.ts";
+import { itemsOfProject } from "../work-items.ts";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
 type Pi = { registerTool: (t: unknown) => void };
@@ -140,6 +141,8 @@ export function projectTools(roomId: string, agentId: string) {
 				if (!proj || proj.room_id !== roomId) return text("项目不存在。");
 				// 先确认项目状态再登记文件，免得状态不对时白白登记
 				if (proj.status !== "active") return text(proj.status === "proposed" ? "这个项目还没开始（方案还在等用户确认）。" : "这个项目已经结束了。");
+				const open = itemsOfProject(p.projectId).filter((w) => w.status !== "done" && w.status !== "cancelled");
+				if (open.length) return text(`没有结束项目：还有任务没收尾——${open.map((w) => `「${w.title}」（${w.statusLabel}${w.ownerName ? `，负责人 ${w.ownerName}` : ""}）`).join("、")}。成员提交的先用 work_verify 核验；你自己负责、已经直接做完的，用 work_verify pass 写清产物在哪；不需要了的用 work_update cancel。都收尾后再交付。`);
 				const { files, missing } = resolveFiles(roomId, agentId, p.deliverables);
 				if (missing.length) return text(`没有结束项目：${MISSING_HINT(missing)}。`);
 				try {

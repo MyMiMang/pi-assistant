@@ -15,7 +15,9 @@ export async function verifyWorkItem(o: { workItemId: string; actor: WorkActor; 
 	const row = itemRow(o.workItemId);
 	if (!row) fail("任务不存在", "not_found");
 	requireManagerOrUser(row, o.actor);
-	if (!canAct(row.status, "verify")) fail(`任务现在是「${WORK_STATUS_LABEL[row.status]}」，还不能核验`, "bad_status");
+	// 管理者自己负责、没走任务会话、直接在群里做完的任务：允许它用「通过」收尾（写清产物在哪），否则这种任务永远停在待安排
+	const selfDone = o.verdict === "pass" && o.actor.kind === "agent" && row.owner_agent_id === o.actor.agentId && (row.status === "pending" || row.status === "active");
+	if (!selfDone && !canAct(row.status, "verify")) fail(`任务现在是「${WORK_STATUS_LABEL[row.status]}」，还不能核验`, "bad_status");
 	const note = clip(o.note, 4000);
 	if (!note) fail("核验要写检查结论（看到了什么、为什么通过、退回还是走不通）", "needs_conclusion");
 	if (o.verdict !== "pass" && o.verdict !== "return" && o.verdict !== "impossible") fail("核验结论只会是通过、退回或这条路走不通", "bad_verdict");

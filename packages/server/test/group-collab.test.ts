@@ -170,7 +170,7 @@ test("唤醒管理者：群已停止不唤醒；未轮到的唤醒合并成一�
 
 test("管理者规则文字：永远带来意判断规则（立项 / 确认 / 改方案）；有项目进行中时成员才带「接着推进」规则", async () => {
 	assert.match(logic.INTENT_PLAN_RULE, /先判断来意[\s\S]*想做成一件需要多步、多人配合的事[\s\S]*room_plan 出方案卡[\s\S]*room_project_start 开始/);
-	assert.match(logic.PROJECT_NEXT_STEP, /先把最终交付物发到群里[\s\S]*再用 room_project_done 结束这个项目/);
+	assert.match(logic.PROJECT_NEXT_STEP, /直接用 room_project_done 结束这个项目[\s\S]*不要再用 deliver_file 把同样的文件逐个发一遍/, "交付文件只随交付卡发一次");
 	const room = rooms.createRoom({ name: "规则群", memberIds: ["cm", "ca"], managerId: "cm" });
 	assert.ok(rooms.roomRules(room.id, "cm").join("\n").includes(logic.INTENT_PLAN_RULE), "管理者永远带来意判断规则");
 	assert.ok(!rooms.roomRules(room.id, "ca").join("\n").includes(logic.INTENT_PLAN_RULE), "成员没有");
@@ -271,6 +271,12 @@ test("boardDigestOrUnchanged：和上次完全一样只提示没变化，不整�
 	assert.equal(logic.boardDigestOrUnchanged("任务看板：A", null), "任务看板：A", "没有上次：全量");
 	assert.equal(logic.boardDigestOrUnchanged("任务看板：A", "任务看板：A"), "任务看板和上次一样，没有变化。");
 	assert.equal(logic.boardDigestOrUnchanged("任务看板：B", "任务看板：A"), "任务看板：B", "有变化：全量");
+});
+
+test("freshWakeReasons：属于已结束项目的唤醒原因作废，没项目的原因照常保留", () => {
+	const list = [{ text: "阶段完成", projectId: "p1" }, { text: "成员 @ 了你" }, { text: "另一个项目的任务提交了", projectId: "p2" }];
+	assert.deepEqual(logic.freshWakeReasons(list, (id) => id === "p2"), ["成员 @ 了你", "另一个项目的任务提交了"]);
+	assert.deepEqual(logic.freshWakeReasons([{ text: "全部完成", projectId: "p1" }], () => false), [], "项目已交付：原因全部作废");
 });
 
 test("唤醒管理者：看板摘要和上次一样只提示没变化，不整段重复；看板变化后恢复全量", async () => {

@@ -9,6 +9,7 @@ import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
 import { WorkResultCard } from "./WorkItems";
 import Markdown from "./Markdown";
 import { splitThinking } from "../thinking";
+import { slowStepHint } from "../slowStep";
 import { fmtMoney, fmtTok, type MsgUsage, useFx } from "./usage-fmt";
 import { fastStatusDetail, fastStatusText, type MessageFastMeta } from "../fast-mode";
 import { Avatar, cx } from "./ui";
@@ -148,15 +149,26 @@ function Steps({ items, live, busy }: { items: Message[]; live: boolean; busy?: 
 
 export function Activity({ tool }: { tool?: Message }) {
 	const a = activityOf(tool?.meta.toolName, tool?.meta.args);
+	const [now, setNow] = useState(() => Date.now());
+	const startedAt = tool?.status === "running" ? tool.created_at : undefined;
+	useEffect(() => {
+		if (!startedAt) return;
+		const id = setInterval(() => setNow(Date.now()), 15_000);
+		return () => clearInterval(id);
+	}, [startedAt]);
+	const slow = slowStepHint(startedAt, now);
 	return (
-		<div className="pa-activity" data-testid="activity">
-			<span className="pa-spinner" />
-			{a.icon}
-			<span className="pa-act-txt">
-				<span className="pa-shimmer">{a.text}</span>
-			</span>
-			{a.detail && <span className="pa-act-url truncate">{a.detail}</span>}
-		</div>
+		<>
+			<div className="pa-activity" data-testid="activity">
+				<span className="pa-spinner" />
+				{a.icon}
+				<span className="pa-act-txt">
+					<span className="pa-shimmer">{a.text}</span>
+				</span>
+				{a.detail && <span className="pa-act-url truncate">{a.detail}</span>}
+			</div>
+			{slow && <p className="mt-1 text-xs text-mut" data-testid="activity-slow">{slow}</p>}
+		</>
 	);
 }
 

@@ -261,11 +261,11 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 
 function RoomBotTurn({ row, room, agents, list, live, onAvatar, onQuote, onJump, interaction }: { row: Extract<RRow, { kind: "bot" }>; room: Room; agents: Agent[]; list: Message[]; live: boolean; onAvatar: (id: string) => void; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => any }) {
 	const who = memberOf(room, agents, row.agentId);
-	const parts = row.parts;
+	const parts = row.parts.filter((p) => !(p.kind === "msg" && p.m.role === "card" && p.m.meta.kind === "subagent")); // 群里不展开帮手执行卡，免得只剩一行名字
 	const last = parts[parts.length - 1];
 	const runningTool = parts.flatMap((p) => (p.kind === "steps" ? p.items : [])).find((m) => m.status === "running");
-	const streaming = last?.kind === "msg" && last.m.status === "streaming";
-	const waitingCard = last?.kind === "msg" && last.m.role === "card" && last.m.meta.status === "pending";
+	const streaming = last?.kind === "msg" && last.m.status === "streaming", waitingCard = last?.kind === "msg" && last.m.role === "card" && last.m.meta.status === "pending";
+	if (!parts.length && !live) return null;
 	return (
 		<div className="pa-msg bot" data-testid="room-bot" data-agent={who.name}>
 			<button className="pa-av-col shrink-0 self-start" onClick={() => onAvatar(row.agentId)} aria-label={who.name}>

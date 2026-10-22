@@ -183,6 +183,32 @@ test("room_project_done：只有管理者、项目要在进行中才能结束；
 	await rooms.deleteRoom(room.id);
 });
 
+test("room_project_done：项目下还有没收尾的任务就不让结束；管理者自己负责、直接做完的任务能用核验通过收尾", async () => {
+	const room = rooms.createRoom({ name: "收尾群", memberIds: ["pm", "pa"], managerId: "pm" });
+	replies.set("pm", () => "好的");
+	await callProj(room.id, "pm", "room_plan", fullPlan());
+	const pid = projects.projectsOf(room.id)[0].id;
+	projects.confirmProject(room.id, pid, "manager");
+	await until(() => idle(room.id), "开始后的唤醒跑完");
+	// 管理者给自己记了一个任务、没开始，后来直接在群里做完了
+	const mine = W.createWorkItem({ roomId: room.id, title: "写方案和文案", requirement: "写", doneCriteria: "两份文件", ownerAgentId: "pm", start: false, projectId: pid }, { kind: "user" }).item.id;
+	const theirs = W.createWorkItem({ roomId: room.id, title: "做报名表", requirement: "做", doneCriteria: "一份表", ownerAgentId: "pa", start: false, projectId: pid }, { kind: "user" }).item.id;
+	const blocked = await callProj(room.id, "pm", "room_project_done", { projectId: pid, summary: "都做完了" });
+	assert.match(blocked, /没有结束项目：还有任务没收尾[\s\S]*「写方案和文案」（待安排，负责人 /);
+	assert.match(blocked, /work_verify pass/);
+	assert.equal(projects.getProject(pid)!.status, "active");
+	// 自己的任务：核验通过直接收尾
+	await W.verifyWorkItem({ workItemId: mine, actor: { kind: "agent", agentId: "pm", roomId: room.id }, verdict: "pass", note: "方案和文案在 读书会/ 下，读过一遍" });
+	assert.equal(W.itemRow(mine)!.status, "done");
+	// 别人的、还没提交的任务不能这样收尾
+	await assert.rejects(W.verifyWorkItem({ workItemId: theirs, actor: { kind: "agent", agentId: "pm", roomId: room.id }, verdict: "pass", note: "看起来好了" }), /还不能核验/);
+	await W.cancelWorkItem({ workItemId: theirs, actor: { kind: "user" } });
+	assert.match(await callProj(room.id, "pm", "room_project_done", { projectId: pid, summary: "都做完了" }), /已结束/);
+	replies.clear();
+	await until(() => idle(room.id), "跑完");
+	await rooms.deleteRoom(room.id);
+});
+
 test("stop：active → stopped，暂停这个项目下进行中的任务，保留进度", async () => {
 	const room = rooms.createRoom({ name: "停下群", memberIds: ["pm", "pa"], managerId: "pm" });
 	replies.set("pm", () => "好的");

@@ -77,7 +77,7 @@ export function normalizeCaps(c: Partial<RoomCaps> | null | undefined): RoomCaps
 /** 管理者判断用户来意、立项出方案的规则（群规则里管理者永远带上；docs/design/group-team.md §2–3）。 */
 export const INTENT_PLAN_RULE = "用户说话时，先判断来意：\n- 聊天、问问题、一两步就能做完的小事 → 直接回答，或点名对口成员回答，不立项。\n- 想做成一件需要多步、多人配合的事 → 立项，按这个顺序：① 先想清楚要做成什么、做到什么程度算完成、哪些地方不确定；② 能按常理定的细节用你的专业判断补上，写成「我们的理解 / 假设」，用户已经说得很清楚的就直接整理；③ 需要专业意见时，先用 room_assign 请对口成员简短出个主意（只出主意，不开工）；④ 只把真正没法替用户决定、又会影响结果的事问用户（比如给谁用、预算、个人偏好），一次最多问两个，每个都给出你建议的选项，答完还不清楚就接着问；⑤ 想清楚了就用 room_plan 出方案卡，分工里写上你自己负责的部分，然后等用户确认——确认前不要建任务、不要派活开工。\n- 用户看了方案明确同意（「可以」「就这么干」）→ 用 room_project_start 开始；说哪里要改 → 改好后用 room_plan（带 projectId）重新出卡；说先不做 → 不开始，回到平时。\n- 项目进行中用户补充要求：小调整直接纳入、照常推进；影响目标、范围或交付物的大改动，用 room_plan（带 projectId）出改过的方案请用户重新确认。\n- 项目进行中用户问进度：两三句话说清做到哪了、接下来做什么、需不需要用户做什么。\n- 同时有几个项目时，先判断用户这句话属于哪个项目、还是一件新事；拿不准就用一句话问用户。";
 /** 有项目进行中时给管理者的「接着推进」规则（唤醒文案、群规则共用一份）。 */
-export const PROJECT_NEXT_STEP = "有项目在进行：成果核验通过、或手上没有在做的任务而项目还没完成时，就在这一轮里按方案规划下一步，按成员的角色分工用 work_create（带 projectId）建任务派给最对口的成员（属于你自己职责的你自己做），不要只汇报一句然后等用户；方案里写的关键点到了，用 room_checkpoint 请用户看一眼，其余进度只通知不提问；项目完成（对照完成标准逐条核对、都满足）时，先把最终交付物发到群里（文件用 deliver_file，并说明做了什么、交付了哪些、还有什么没做或建议下一步），再用 room_project_done 结束这个项目（deliverables 填最终文件，howToUse 写怎么用，notDone 写还没做的）。";
+export const PROJECT_NEXT_STEP = "有项目在进行：成果核验通过、或手上没有在做的任务而项目还没完成时，就在这一轮里按方案规划下一步，按成员的角色分工用 work_create（带 projectId）建任务派给最对口的成员（属于你自己职责的你自己做），不要只汇报一句然后等用户；方案里写的关键点到了，用 room_checkpoint 请用户看一眼，其余进度只通知不提问；项目完成（对照完成标准逐条核对、都满足，项目下的任务都已收尾）时，直接用 room_project_done 结束这个项目：summary 写做成了什么，deliverables 填最终文件，howToUse 写怎么用，notDone 写还没做的。交付卡会把文件一起发给用户，交付前不要再用 deliver_file 把同样的文件逐个发一遍，交付后也不用再补一句「已经发给你了」。";
 /** 项目进行中的唤醒原因：管理者回合结束后手上没活、项目还没结束（兜底），或定时检查时没有未完成任务 */
 export const PROJECT_IDLE_WAKE = "项目还没完成，手上没有在做的任务：按方案规划下一步并派出去；已经完成就交付并结束项目";
 
@@ -295,4 +295,10 @@ export function planPeerTurns(o: { fromAgentId: string; text: string; members: M
 	const { ids } = parseMentions(o.text, o.members.filter((m) => m.id !== o.fromAgentId));
 	const peers = ids.filter((id) => id !== o.managerId && id !== o.fromAgentId);
 	return { turns: peers.map((agentId) => ({ agentId, reason: "peer" as const, depth: 0, task: o.text.slice(0, 2000), from: o.fromAgentId })), wakeManager: !!o.managerId && ids.includes(o.managerId) };
+}
+
+export type WakeReason = { text: string; projectId?: string };
+/** 叫醒管理者时排着的原因里，去掉属于已结束项目的（项目已交付，「阶段完成 / 全部完成」之类的提醒就过时了）。 */
+export function freshWakeReasons(list: WakeReason[], projectActive: (projectId: string) => boolean): string[] {
+	return list.filter((x) => !x.projectId || projectActive(x.projectId)).map((x) => x.text);
 }

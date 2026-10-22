@@ -10,7 +10,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CredentialStore } from "./pi-adapter/index.ts";
 import { BRAND, LEGACY } from "@pi-assistant/shared";
-import { config } from "./config.ts";
+import { config, env } from "./config.ts";
 
 type Cred = Awaited<ReturnType<CredentialStore["read"]>>;
 
@@ -86,7 +86,8 @@ export function windowsMasterKey(ps: (script: string) => string, keyFile: string
 
 function loadMasterKey(): MasterKey {
 	const keyFile = join(config.dataDir, "master.key");
-	const os = process.platform === "darwin" ? macMasterKey(runSecurity, keyFile)
+	// PIA_SECRETS=file：主密钥只放数据目录里的文件（开发实测环境用，不碰系统钥匙串、不和装好的 App 共用一把钥匙）
+	const os = env("SECRETS") === "file" ? null : process.platform === "darwin" ? macMasterKey(runSecurity, keyFile)
 		: process.platform === "win32" ? windowsMasterKey((s) => execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", s], { encoding: "utf8" }).trim(), keyFile)
 		: null;
 	if (os) return os;

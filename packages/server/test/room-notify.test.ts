@@ -237,9 +237,13 @@ test("room_checkpoint：项目停下时清掉 waiting 并收掉卡片；系统�
 });
 
 test("room_project_done：交付卡带做成了什么 / 文件 / 怎么用 / 还没做的；群里已有的文件不重复登记；找不到文件就不结束；系统通知精简成一句，不提花费", async () => {
-	const { room, pid, call } = await setup("交付群");
+	const { room, pid, call, wi1, wi2 } = await setup("交付群");
 	writeFileSync(join(workspaceOf("nm"), "report.md"), "# 报告\n");
 	assert.match(await toolsOf(room.id, "na")("room_project_done", { projectId: pid, summary: "x" }), /只有管理者/);
+	assert.match(await call("room_project_done", { projectId: pid, summary: "做完了" }), /还有任务没收尾——.*「写初稿」（待核验/, "任务没收尾不让交付（两个任务先后顺序不固定）");
+	await pass(wi1);
+	await pass(wi2);
+	await until(() => idle(room.id), "阶段通知跑完");
 	assert.match(await call("room_project_done", { projectId: pid, summary: "做完了", deliverables: ["没有这个.md"] }), /没有结束项目：找不到这些文件：没有这个\.md/);
 	assert.equal(projects.getProject(pid)!.status, "active", "文件找不到就不结束项目");
 	// 先把文件发到群里（检查点附件），交付时按名字找到，不再登记第二份

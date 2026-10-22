@@ -45,8 +45,8 @@ export interface TurnHooks {
 	after?: (roomId: string, t: Turn, res: { text: string; error?: string }) => void;
 	/** 回合结束后（没停、没中止，成功与否都算）：管理者回合结束放行暂缓的任务 */
 	ended?: (roomId: string, t: Turn) => void;
-	/** check 回合的上下文：唤醒原因 + 看板摘要（读过的原因会清掉） */
-	checkContext?: (roomId: string) => string;
+	/** check 回合的上下文：唤醒原因 + 看板摘要（读过的原因会清掉）；null = 原因都过时了，这一轮不跑 */
+	checkContext?: (roomId: string) => string | null;
 	/** 用户在群里发话（空聊计数清零、恢复成员互相叫醒） */
 	onUserMessage?: (roomId: string) => void;
 }
@@ -244,7 +244,8 @@ async function runTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
 	const quoteBlock = s.quote && t.reason !== "check" && t.reason !== "peer" ? formatQuotedContext(s.quote) : "";
 	const directedLine = t.directed && t.agentId === r.manager_id ? "用户引用了你的消息，只回应用户引用的这条；除非用户明确要求你分工，否则不要 room_assign、不要 @ 其他成员。" : "";
 	const taskCtx = s.workCtx && t.agentId === r.manager_id && t.reason !== "check" ? s.workCtx : "";
-	const checkCtx = t.reason === "check" ? (hooks.checkContext?.(roomId) ?? "") : "";
+	const checkCtx = t.reason === "check" && hooks.checkContext ? hooks.checkContext(roomId) : "";
+	if (checkCtx === null) return void db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE id = ?").run(now(), t.turnId);
 	const prompt = [`（群聊「${r.name}」里的新消息 · 你是 ${selfName}${t.agentId === r.manager_id ? "（管理者）" : ""}）`, ...(quoteBlock ? [quoteBlock, "——"] : []), tr.text || "（没有新消息）", "——", REASON_LINE(t, managerName, caps.maxDepth - t.depth - 1, hasActiveProject(r.id)), ...(directedLine ? [directedLine] : []), ...(taskCtx ? ["——", taskCtx] : []), ...(checkCtx ? ["——", checkCtx] : [])].join("\n");
 	db.prepare("UPDATE room_members SET cursor = ? WHERE room_id = ? AND agent_id = ?").run(tr.lastSeq || memberRow(roomId, t.agentId)?.cursor || 0, roomId, t.agentId);
 	s.current = { agentId: t.agentId, turnId: t.turnId, conversationId: conv, reason: t.reason };

@@ -10,7 +10,7 @@ import { db, now } from "../db.ts";
 import { notify } from "../push.ts";
 import { getAgent } from "../runtime.ts";
 import { boardDigest, itemsOfProject, setRoomPort, steerToLiveRun } from "../work-items.ts";
-import { boardDigestOrUnchanged, boardSig as projectBoardSig, PROJECT_IDLE_WAKE, idleWakeStep, planPeerTurns } from "./logic.ts";
+import { boardDigestOrUnchanged, boardSig as projectBoardSig, freshWakeReasons, PROJECT_IDLE_WAKE, idleWakeStep, planPeerTurns, type WakeReason } from "./logic.ts";
 import { askIdOf } from "./ask-logic.ts";
 import { answerAsk, checkAskTimeouts, dropAnsweredTail } from "./ask-flow.ts";
 import { getAsk } from "./asks.ts";
@@ -25,7 +25,8 @@ import { activeIds, getRoom, memberConversation, memberRefs, rosterText, stopped
 
 const CHATTER = () => Number(process.env.PIA_ROOM_CHATTER) || 6;
 export const CHECK_MS = () => Number(process.env.PIA_WORK_CHECK_MS) || 30 * 60_000;
-const wakeReasons = new Map<string, string[]>();
+/** 唤醒原因带上所属项目：项目先结束了，排着的原因就作废（免得交付后管理者又被「阶段完成」叫醒、再收尾一遍）。 */
+const wakeReasons = new Map<string, WakeReason[]>();
 const lastWake = new Map<string, number>();
 const chatter = new Map<string, { streak: number; blocked: boolean }>();
 /** 项目进行中的兜底唤醒：上一次兜底时的看板指纹；同指纹再来就不再叫醒（提示过用户后 hinted） */
@@ -54,12 +55,13 @@ export function projectEnded(roomId: string) {
  * 「本轮已暂停」（发言次数到上限、服务重启）不挡：check 回合不占每轮上限，暂停时存下的待发言队列也不会被放出来（仍等用户点继续）。
  * 同一个群还没轮到的唤醒合并成一次，原因一起交给它。
  */
-export function wakeManager(roomId: string, reason: string, _workItemId?: string) {
+export function wakeManager(roomId: string, reason: string, workItemId?: string, projectId?: string) {
 	const r = getRoom(roomId);
 	if (!r?.manager_id || stoppedFlag(r) || !activeIds(roomId).includes(r.manager_id)) return false;
 	const list = wakeReasons.get(roomId) ?? [];
 	const why = clip(reason, 800);
-	if (why && !list.includes(why)) list.push(why);
+	const pid = projectId ?? (workItemId ? (db.prepare("SELECT project_id FROM work_items WHERE id = ?").get(workItemId) as { project_id: string | null } | undefined)?.project_id : null) ?? undefined;
+	if (why && !list.some((x) => x.text === why)) list.push({ text: why, projectId: pid });
 	wakeReasons.set(roomId, list.slice(-12));
 	lastWake.set(roomId, now());
 	if (queuedFor(roomId, "check", r.manager_id)) return true;
@@ -74,9 +76,11 @@ const REPLAN_HINT = "这个项目连续几次没有进展。先用一两句话�
 const EXHAUSTED_HINT = "这个项目反复卡住，换过的办法都没能解决，已经向用户报告了。请你在群里直接跟用户说清楚卡在哪、需要用户帮什么。";
 
 function checkContext(roomId: string) {
-	const reasons = wakeReasons.get(roomId) ?? [];
+	const queued = wakeReasons.get(roomId) ?? [];
 	wakeReasons.delete(roomId);
 	const projects = activeProjects(roomId);
+	const reasons = freshWakeReasons(queued, (id) => getProject(id)?.status === "active");
+	if (queued.length && !reasons.length && !projects.length) return null; // 原因全属于已结束的项目：这次不用醒
 	const digest = boardDigest(roomId, 20, (id) => getProject(id)?.title);
 	const boardLine = boardDigestOrUnchanged(digest, lastBoardDigest.get(roomId) ?? null);
 	lastBoardDigest.set(roomId, digest);

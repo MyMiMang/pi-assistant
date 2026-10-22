@@ -18,5 +18,5 @@ export function stageMaybeDone(projectId: string) {
 	const { names, allDone } = newlyDoneStages(projectProgress(plan, itemsOfProject(p.id)), notified);
 	if (!names.length && !allDone) return;
 	db.prepare("UPDATE room_projects SET stages_done = ? WHERE id = ?").run(JSON.stringify([...notified, ...names, ...(allDone ? [ALL_DONE_MARK] : [])]), p.id);
-	wakeManager(p.room_id, stageDoneReason({ title: p.title, projectId: p.id, names, allDone, checkpoints: plan.checkpoints, held: parseStringArray(p.held).length > 0 }));
+	wakeManager(p.room_id, stageDoneReason({ title: p.title, projectId: p.id, names, allDone, checkpoints: plan.checkpoints, held: parseStringArray(p.held).length > 0 }), undefined, p.id);
 }
