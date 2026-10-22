@@ -12,6 +12,7 @@ import type { Agent, Attachment, Message } from "../types";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
 import { Avatar, Button, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
+import { ChatProjectsButton } from "./ChatProjects";
 import { COMPOSER_LABEL, useComposerKeys } from "../composer";
 import { VoiceInput } from "./VoiceInput";
 import { SkillChips, SkillPicker } from "./SkillPicker";
@@ -147,6 +148,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 							<span className="max-sm:hidden">回到群聊</span>
 						</button>
 					)}
+					<ChatProjectsButton conversationId={convId} version={`${list.length}:${list[list.length - 1]?.id ?? ""}:${list[list.length - 1]?.updated_at ?? 0}`} />
 					<SubagentTasks agentId={agent.id} conversation={useStore.getState().convs[agent.id]?.current} />
 					<ConversationMenu agentId={agent.id} />
 					{/* 「电脑」入口在右侧信息面板的电脑 tab 里，这里不再重复放一个 */}

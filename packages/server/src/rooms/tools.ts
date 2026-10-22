@@ -6,19 +6,13 @@ import { type FileRow, materializeFor, workspaceOf } from "../files.ts";
 import { insertMessage } from "../messages.ts";
 import { listAgents } from "../runtime.ts";
 import { dispatchFromRoom } from "../work-items.ts";
+import { findRoomFile } from "./file-refs.ts";
 import { memberSchema, modelsHint, normalizeProposal, text, type ProposalMember } from "./proposals.ts";
 import { roomFiles, states } from "./scheduler.ts";
 import { getRoom, memberRefs, memberRow } from "./store.ts";
 
-/**
- * 按名字在群附件里找一个文件：文件名精确匹配；只给了路径（deliverables/x.md、room-files/群/abc123-x.md）就取最后一段再匹配；同名多个取最新。
- */
-export function findRoomFile(files: FileRow[], ref: string): FileRow | undefined {
-	const raw = String(ref ?? "").trim();
-	const last = raw.split(/[\\/]/).filter(Boolean).pop() ?? "";
-	const newest = (xs: FileRow[]) => xs.sort((a, b) => b.created_at - a.created_at)[0];
-	return (raw && newest(files.filter((f) => f.name === raw))) || (last && (newest(files.filter((f) => f.name === last)) || newest(files.filter((f) => `${f.id.slice(-6)}-${f.name}` === last)))) || undefined;
-}
+export { findRoomFile };
+
 /** 把要交给负责人的群附件真的放进它的工作区；返回工作区相对路径，找不到的文件名单独列出（有一个找不到就不该派出这条）。 */
 export function handOverFiles(roomId: string, assigneeId: string, refs: string[]): { paths: string[]; missing: string[] } {
 	const files = roomFiles(roomId);

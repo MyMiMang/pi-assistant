@@ -61,6 +61,7 @@ export async function deleteAgentFully(id: string) {
 	// 群里的消息保留（标“已删除”），其余一并删除
 	db.prepare("DELETE FROM messages WHERE agent_id = ? AND room_id IS NULL").run(a.id);
 	for (const t of ["tasks", "requests", "files", "conversations"]) db.prepare(`DELETE FROM ${t} WHERE agent_id = ?`).run(a.id);
+	if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chat_projects'").get()) db.prepare("DELETE FROM chat_projects WHERE agent_id = ?").run(a.id);
 	db.prepare("DELETE FROM agents WHERE id = ?").run(a.id);
 	void hostAgentsChanged();
 	// 工作区与会话移到回收站（不直接删除，误删可找回）

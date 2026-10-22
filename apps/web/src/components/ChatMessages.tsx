@@ -23,6 +23,7 @@ const TOOL_LABEL: Record<string, string> = {
 	bash: "运行命令", read: "读取文件", write: "写入文件", edit: "修改文件", ls: "查看目录", find: "查找文件", grep: "搜索内容",
 	deliver_file: "发送文件", ask_user: "询问你", spawn_task: "创建后台任务", spawn_subagent: "派帮手", subagent_message: "补充帮手要求", subagent_stop: "停止帮手", computer_screenshot: "查看屏幕", request_handoff: "请你接手",
 	web_fetch: "打开网页", web_search: "搜索网页", browser: "操作浏览器",
+	chat_plan: "出方案卡", chat_project_start: "开始项目", chat_stage_done: "标记阶段完成", chat_project_done: "交付项目",
 };
 /** 进行中的活动文案（来自 Pi tool_execution 事件 → 工具步骤消息） */
 export function activityOf(name: string | undefined, args: Record<string, any> = {}): { text: string; icon: ReactNode; detail?: string } {

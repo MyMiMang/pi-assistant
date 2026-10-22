@@ -4,7 +4,7 @@
  * 问题和回答都发在群里（全部可见），回答直接送回提问者手上，来回有上限、没人答有超时。
  */
 import { db, now } from "../db.ts";
-import { insertMessage } from "../messages.ts";
+import { deleteMessage, insertMessage } from "../messages.ts";
 import { getAgent } from "../runtime.ts";
 import { findByName, itemRow, parseDepends, type WorkItemRow, resolveRefs, resumeWithNote, steerToLiveRun } from "../work-items.ts";
 import { ASK_TIMEOUT_MS, askIntro, askStep, threadSummary } from "./ask-logic.ts";
@@ -100,6 +100,21 @@ export function answerAsk(o: { roomId: string; by: string; askId: string; text: 
 	if (steerToLiveRun(o.roomId, ask.from_agent, msg)) return { ok: true, ask: next, text: "已回答，已经送到对方手上。" };
 	if (ask.from_item && resumeWithNote(ask.from_item, ask.from_agent, `${msg}\n你之前问了这个问题，现在有答案了，接着按答案把任务做完并提交。`)) return { ok: true, ask: next, text: "已回答，对方当时没在执行，已经让它带着回答重新开始。" };
 	return { ok: true, ask: next, text: "已回答，已发在群里。" };
+}
+
+/**
+ * 提问回合里成员已经用工具回答 / 重做过（answer_colleague、work_rework 都会把回答发在群里）：回合结尾那句短话（「已回答。」「已重开任务」）不再留在群里。
+ * 只在这一回合里真的回答过时才删；回合文字当回答的兜底（answerAsk post=false）不走这里，最后一条不是普通回复（卡片 / 提问回答）也不动。
+ */
+export function dropAnsweredTail(o: { roomId: string; agentId: string; turnId: string; askId: string }): boolean {
+	const ask = getAsk(o.askId);
+	const last = ask ? threadOf(ask).at(-1) : undefined;
+	const startedAt = (db.prepare("SELECT started_at FROM room_turns WHERE id = ?").get(o.turnId) as { started_at: number | null } | undefined)?.started_at ?? 0;
+	if (!ask || ask.status !== "answered" || !last || last.by !== o.agentId || last.at < startedAt) return false;
+	const tail = db.prepare("SELECT id, meta FROM messages WHERE room_id = ? AND agent_id = ? AND role = 'assistant' ORDER BY rowid DESC LIMIT 1").get(o.roomId, o.agentId) as { id: string; meta: string } | undefined;
+	if (!tail || JSON.parse(tail.meta).kind) return false;
+	deleteMessage(tail.id);
+	return true;
 }
 
 /** 群会话里的成员没带自己的任务编号时：它负责的、依赖这个前置任务的、还没结束的那个任务。 */

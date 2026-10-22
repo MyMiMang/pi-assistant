@@ -8,6 +8,8 @@ import { test } from "node:test";
 import { ASK_TIMEOUT_MS, MAX_ASK_ROUNDS, askIdOf, askStep } from "../src/rooms/ask-logic.ts";
 import { findByName } from "../src/work-items/store.ts";
 import { askTools } from "../src/rooms/ask-tools.ts";
+import { dropAnsweredTail } from "../src/rooms/ask-flow.ts";
+import { insertMessage } from "../src/messages.ts";
 import { getAsk, asksOfItem } from "../src/rooms/asks.ts";
 import { type Call, R, S, W, calls, db, mgr, now, room, rooms, row, runRows, settle, submit, user } from "./work-items-harness.ts";
 
@@ -23,9 +25,12 @@ S.setSubagentDriver({
 	notify: async () => {},
 });
 const replies = new Map<string, string>();
-(Object.getPrototypeOf(R.runtime("wm", "conv_probe")) as Record<string, unknown>).turn = function (this: { id: string; conversationId: string }, prompt: string) {
+/** 假回合里要做的事（像真实回合那样：先调工具、再把结尾那句话写进群）；没登记就只返回 replies 里的文字。 */
+const turnScripts = new Map<string, (prompt: string, conv: string) => Promise<void>>();
+(Object.getPrototypeOf(R.runtime("wm", "conv_probe")) as Record<string, unknown>).turn = async function (this: { id: string; conversationId: string }, prompt: string) {
 	calls.push({ agentId: this.id, conv: this.conversationId, prompt, done: true, finish: () => {} });
-	return Promise.resolve({ ok: true, aborted: false, text: replies.get(this.id) ?? "", tokens: 0 });
+	await turnScripts.get(this.id)?.(prompt, this.conversationId);
+	return { ok: true, aborted: false, text: replies.get(this.id) ?? "", tokens: 0 };
 };
 
 type Tools = Map<string, { execute: (id: string, p: Record<string, unknown>) => Promise<{ content: { text: string }[] }> }>;
@@ -193,6 +198,52 @@ test("被问的人只在回合里说了话没调 answer_colleague：这段话就
 	execCall(item)?.finish();
 	await W.cancelWorkItem({ workItemId: item, actor: user });
 });
+
+const tailsOf = (agentId: string, content: string) => (db.prepare("SELECT id FROM messages WHERE room_id = ? AND agent_id = ? AND role = 'assistant' AND content = ?").all(room.id, agentId, content) as { id: string }[]).length;
+
+test("提问回合里成员已经用工具回答过：回合结尾那句短话不再发群；回答本身仍在群里", async () => {
+	const item = await startItem("wa", "回答完不多嘴的任务");
+	let said = false;
+	replies.set("wb", "已回答。");
+	turnScripts.set("wb", async (prompt, conv) => {
+		await call(toolsFor("wb"), "answer_colleague", { askId: askIdOf(prompt)!, answer: "按第二版口径" });
+		insertMessage({ agentId: "wb", conversationId: conv, roomId: room.id, role: "assistant", content: "已回答。" }); // 真实回合里模型回答完会再说的那句
+		said = true;
+	});
+	try {
+		await call(toolsFor("wa", item), "ask_colleague", { to: "乙", question: "口径按哪版？" });
+		const ask = (db.prepare("SELECT id FROM room_asks WHERE from_item = ?").get(item) as { id: string }).id;
+		await until(() => said && getAsk(ask)!.status === "answered" && tailsOf("wb", "已回答。") === 0, "结尾短话被撤掉", 5000);
+		assert.ok(msgs("peer-answer").some((m) => m.meta.askId === ask && m.content === "按第二版口径"), "回答本身还在群里");
+	} finally {
+		replies.delete("wb");
+		turnScripts.delete("wb");
+	}
+	execCall(item)?.finish();
+	await W.cancelWorkItem({ workItemId: item, actor: user });
+});
+
+test("dropAnsweredTail 只在这个成员这一回合里回答过时才撤：没回答 / 别人答的 / 结尾是卡片或回答本身都不动", async () => {
+	const item = await startItem("wa", "撤结尾短话的边界");
+	await call(toolsFor("wa", item), "ask_colleague", { to: "乙", question: "边界问题" });
+	const ask = (db.prepare("SELECT id FROM room_asks WHERE from_item = ?").get(item) as { id: string }).id;
+	const tail = (agentId: string, content = "收到。") => insertMessage({ agentId, conversationId: null, roomId: room.id, role: "assistant", content }).id;
+	const o = (agentId: string) => ({ roomId: room.id, agentId, turnId: "rt_none", askId: ask });
+	const t1 = tail("wb");
+	assert.equal(dropAnsweredTail(o("wb")), false, "还没回答：不撤");
+	assert.ok(getMessageRow(t1));
+	await call(toolsFor("wb"), "answer_colleague", { askId: ask, answer: "答案" });
+	assert.equal(dropAnsweredTail(o("wm")), false, "不是回答的人：不撤");
+	assert.equal(dropAnsweredTail(o("wb")), false, "最后一条是回答本身（有 kind）：不动");
+	assert.ok(getMessageRow(t1));
+	const t2 = tail("wb");
+	assert.equal(dropAnsweredTail(o("wb")), true, "回答之后的结尾短话：撤掉");
+	assert.equal(getMessageRow(t2), undefined);
+	assert.ok(getMessageRow(t1), "更早的普通消息不动");
+	execCall(item)?.finish();
+	await W.cancelWorkItem({ workItemId: item, actor: user });
+});
+const getMessageRow = (id: string) => db.prepare("SELECT id FROM messages WHERE id = ?").get(id);
 
 test("问管理者：用唤醒管理者的方式带问题和编号", async () => {
 	const w0 = calls.length;

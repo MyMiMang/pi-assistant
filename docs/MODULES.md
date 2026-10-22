@@ -16,7 +16,7 @@
 | 下载进度 | 服务端 `downloads.ts` + 界面 `Downloads.tsx` |
 | 共享常量 / 纯逻辑 | `packages/shared`：thinking-levels、hard-guard、shell-lex、theme-manifest、品牌名 |
 | 服务端通用 | `bus.ts`（推事件）、`requests.ts`（审批与提问唯一入口）、`interject.ts`（插话/停止词）、`model-errors.ts`、`thinking.ts`（拆思考内容）、`native-launch-env.ts`（启动子进程环境）、`config.ts`（环境变量）、`db.ts` |
-| Pi 接入（唯一入口） | `pi-adapter/index.ts`、`custom-providers.ts`、`relay-protocols.ts`、`model-limits.ts`、`fast-mode.ts`、`mock-provider.ts`（e2e 脚本化回复）、`mock-room-provider.ts`（群聊部分的 Mock，从 mock-provider.ts 拆出来控制单文件行数）、`mock-collab-provider.ts`（成员直接协作的 Mock：任务要求含「先问一下」「上游有问题」，或看到提问编号时接管） |
+| Pi 接入（唯一入口） | `pi-adapter/index.ts`、`custom-providers.ts`、`relay-protocols.ts`、`model-limits.ts`、`fast-mode.ts`、`mock-provider.ts`（e2e 脚本化回复）、`mock-room-provider.ts`（群聊部分的 Mock，从 mock-provider.ts 拆出来控制单文件行数）、`mock-collab-provider.ts`（成员直接协作的 Mock：任务要求含「先问一下」「上游有问题」，或看到提问编号时接管）、`mock-chat-plan-provider.ts`（单聊「大事走方案」的 Mock：用户消息含「做个大事」→ chat_plan 两阶段方案卡；用户说「可以」/ 点按钮确认后依次写文件、chat_stage_done ×2、chat_project_done；带「慢」的方案先 sleep 一下留出进行中的窗口；只在有 chat_plan 工具的单聊里接管） |
 | 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`local-asr-harness.ts`（本地语音假环境 + 来源端口）、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp） |
 | e2e 工具 | `e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
 
@@ -63,7 +63,7 @@
 |---|---|
 | `main.ts` | 启动入口 |
 | `http.ts` | 组装路由、中间件、压缩（具体接口在 `routes/`） |
-| `routes/` | 全部 HTTP 接口：agents、channels、common（共用 helper）、desktop、host-control、mcp、memory、models、remote、rooms、routines、skills、system、work-items |
+| `routes/` | 全部 HTTP 接口：agents、channels、chat-projects（单聊项目：列项目 / 确认 / 先不做 / 停下，写法照 rooms 的项目路由）、common（共用 helper）、desktop、host-control、mcp、memory、models、remote、rooms、routines、skills、system、work-items |
 | `bus.ts` | 实时事件总线（WS） |
 | `config.ts` | 环境变量（PIA_ 前缀） |
 | `db.ts` | SQLite 基础表与轻量迁移 |
@@ -109,10 +109,11 @@
 | `subagent-resume-info.ts` | 帮手行 + 能否续跑的摘要（subagent_list / 接口用，从 subagents.ts 拆出） |
 | `task-waits.ts` | 任务等待调度 |
 | `work-items.ts` | 长期任务入口（只做 re-export） |
-| `work-items/` | 长期任务：store（表/摘要/看板分组/boardDigest）、guard（看板分组、重复指纹等纯逻辑）、deps（任务依赖：解析 after/编号或名字、防环 wouldCycle、哪些下游可以自动开始 readyDependents、取消时标受阻的下游）、ports（RoomPort：群聊和任务之间唯一接口）、exec（在负责人自己的会话里执行、提交、重复卡点检测、交接单+文件拼进下游执行提示）、watch（停滞检测、上报管理者/用户、等你决定）、actions（新建/核验（含 impossible）/编辑（含 after/stage）/改派/暂停/全部暂停等动作、核验通过后自动推进依赖；launch 开始一次执行、reopenWorkItem 负责人被点名时可重开自己的任务）、rework（resumeWithNote 带着回答接着做、reworkByOwner 负责人重做自己的成果）、upstream（上游重新通过核验后把新版本交给下游：在跑的插话、已完成的叫醒管理者）、correction（群里纠正任务的上下文）、tools（管理者/成员/执行会话的 work_* 工具） |
+| `work-items/` | 长期任务：store（表/摘要/看板分组/boardDigest）、guard（看板分组、重复指纹等纯逻辑）、deps（任务依赖：解析 after/编号或名字、防环 wouldCycle、哪些下游可以自动开始 readyDependents、取消时标受阻的下游）、ports（RoomPort：群聊和任务之间唯一接口）、exec（在负责人自己的会话里执行、提交、重复卡点检测、交接单+文件拼进下游执行提示）、watch（停滞检测、上报管理者/用户、等你决定）、actions（新建/编辑（含 after/stage）/改派/暂停/全部暂停等动作、reopenWorkItem 负责人被点名时可重开自己的任务）、launch（launch 开始一次执行、retryLimitReached、前置核验通过后下游自动开始 advanceDependents / 放行暂缓的 startReleased）、verify（核验：通过 / 退回 / 这条路走不通）、lifecycle（成员移出 / 删群时任务的衔接 onRoomWorkEvent）、rework（resumeWithNote 带着回答接着做、reworkByOwner 负责人重做自己的成果）、upstream（上游重新通过核验后把新版本交给下游：在跑的插话、已完成的叫醒管理者）、correction（群里纠正任务的上下文）、tools（管理者/成员/执行会话的 work_* 工具） |
 | `proactive.ts` | 主动性引擎 |
 | `routines.ts` | 定时与 Webhook 触发 |
-| `rooms/` | 群聊：ask-logic（可追踪提问的纯逻辑：askStep / MAX_ASK_ROUNDS / ASK_TIMEOUT_MS / findByName / askIntro）、asks（表 room_asks、asksOfItem 给任务详情）、ask-flow（发问 / 追问 / 回答 / 上游有问题 / 交给管理者 / 超时检查）、ask-tools（ask_colleague / answer_colleague / report_upstream / work_rework，任务会话和群会话共用）、logic（@ 解析、发言规则、只聊不干活检测，纯逻辑；INTENT_PLAN_RULE / PROJECT_NEXT_STEP / PROJECT_IDLE_WAKE）、plan（ProjectPlan 规范化 / 校验 checkPlan / 渲染 planText，纯逻辑）、progress（项目进度清单纯逻辑：projectProgress 按阶段分组 / renderProgress 渲染文字 / projectSig 进展指纹 / projectStallStep 卡住阶梯 / newlyDoneStages 刚完成的阶段 / stageDoneReason 阶段通知原因）、stages（阶段完成通知：任务核验通过后 stageMaybeDone，每阶段只通知一次）、checkpoint（关键点确认：room_checkpoint 复用提问卡，项目表 waiting；用户答复发回群里）、hold-logic（关键点前暂缓的纯逻辑：shouldHold 阶段刚完成且方案有关键点时别的阶段下游暂缓 / splitHeld 放行时分出该开始的）、hold（暂缓的落地：RoomPort.holdForCheckpoint 记 room_projects.held、管理者回合结束 / 服务重启后放行，调 work-items 的 startReleased）、deliver（resolveFiles 把文件引用解析成文件、postFiles 发到群里，关键点和交付卡共用）、projects（表 room_projects：propose / confirm / dismiss / stop / resume / finish / replan，项目级卡住计数 checkProjectStall，迁移旧 rooms.autonomy）、store（群/成员读写）、scheduler（排队/调度/停止/恢复；有 active 项目时不按每轮发言次数暂停）、collab（唤醒管理者（暂停中也唤醒）、项目兜底唤醒 idleWake、项目级进度检查、定时巡检、成员互相 @）、crud（建群/改群/删群）、proposals（建群/加成员提议）、tools（room_assign 含附件交给负责人 findRoomFile / handOverFiles、room_propose_member）、project-tools（room_plan / room_project_start / room_project_resume / room_project_replan / room_checkpoint / room_project_done 发交付卡）、index（入口、群规则、钩子）、copy、model-pick、permissions |
+| `chat-projects/` | 单聊也走方案流程（docs/design/group-team.md §13）：store（表 chat_projects，字段和 room_projects 对齐、用 conversation_id；propose / confirm / dismiss / stop / 标阶段完成 / 交付，方案卡沿用 room-plan + conversationId、交付卡沿用 project-delivery）、progress（纯逻辑：已完成阶段名 → 和群聊同形状的 ProjectProgress、findStage、阶段进度文字）、rules（CHAT_PLAN_RULE 大事门槛与流程 + 这个对话里的方案 / 进度，agent-runtime 建单聊会话时拼进系统提示；confirmWakeText 点按钮确认后叫醒助理）、tools（chat_plan / chat_project_start / chat_stage_done / chat_project_done，只挂在用户可见的单聊主会话，免审批） |
+| `rooms/` | 群聊：ask-logic（可追踪提问的纯逻辑：askStep / MAX_ASK_ROUNDS / ASK_TIMEOUT_MS / findByName / askIntro）、asks（表 room_asks、asksOfItem 给任务详情）、ask-flow（发问 / 追问 / 回答 / 上游有问题 / 交给管理者 / 超时检查 / 提问回合里用工具回答过就不再把结尾短话发群 dropAnsweredTail）、ask-tools（ask_colleague / answer_colleague / report_upstream / work_rework，任务会话和群会话共用）、logic（@ 解析、发言规则、只聊不干活检测，纯逻辑；INTENT_PLAN_RULE / PROJECT_NEXT_STEP / PROJECT_IDLE_WAKE）、plan（ProjectPlan 规范化 / 校验 checkPlan（solo = 单聊，分工可不写）/ 渲染 planText、ProjectError，纯逻辑；单聊项目共用）、plan-schema（出方案卡的工具参数 PLAN_FIELDS，room_plan / chat_plan 共用）、file-refs（文件引用解析 resolveFileRefs / findRoomFile，群聊关键点 / 交付卡和单聊交付卡共用）、progress（项目进度清单纯逻辑：projectProgress 按阶段分组 / renderProgress 渲染文字 / projectSig 进展指纹 / projectStallStep 卡住阶梯 / newlyDoneStages 刚完成的阶段 / stageDoneReason 阶段通知原因）、stages（阶段完成通知：任务核验通过后 stageMaybeDone，每阶段只通知一次）、checkpoint（关键点确认：room_checkpoint 复用提问卡，项目表 waiting；用户答复发回群里）、hold-logic（关键点前暂缓的纯逻辑：shouldHold 阶段刚完成且方案有关键点时别的阶段下游暂缓 / splitHeld 放行时分出该开始的）、hold（暂缓的落地：RoomPort.holdForCheckpoint 记 room_projects.held、管理者回合结束 / 服务重启后放行，调 work-items 的 startReleased）、deliver（resolveFiles 在群附件里找、找不到按管理者工作区路径登记（实现在 file-refs.ts），postFiles 发到群里，关键点和交付卡共用）、projects（表 room_projects：propose / confirm / dismiss / stop / resume / finish / replan，项目级卡住计数 checkProjectStall，迁移旧 rooms.autonomy）、store（群/成员读写）、scheduler（调度/停止/恢复；有 active 项目时不按每轮发言次数暂停）、queue（发言队列与状态：RoomState / states / enqueue 去重认领 / 撤回排队）、turn-prompt（群回合给模型的提示：按原因的说明 REASON_LINE、群附件 roomFiles、没看过的群消息转录）、collab（唤醒管理者（暂停中也唤醒）、项目兜底唤醒 idleWake、项目级进度检查、定时巡检、成员互相 @）、crud（建群/改群/删群）、proposals（建群/加成员提议）、tools（room_assign 含附件交给负责人 findRoomFile / handOverFiles、room_propose_member）、project-tools（room_plan / room_project_start / room_project_resume / room_project_replan / room_checkpoint / room_project_done 发交付卡）、index（入口、群规则、钩子）、copy、model-pick、permissions |
 | `channels/` | 渠道：index（入站、镜像、卡片转发）、media、caps、types、飞书/钉钉/企微/ClawBot 各自实现 |
 | `mirror.ts` | 助理主动消息选哪些渠道镜像 |
 | `wechat.ts` | 个人微信（实验） |
@@ -204,12 +205,13 @@
 | `Chat.tsx` | 单聊页与输入框工具栏 |
 | `ChatMessages.tsx` | 共用消息展示 |
 | `RoomChat.tsx` | 群聊页 |
-| `RoomCards.tsx` | 群提议卡片、方案卡 `RoomPlanCard`（room-plan：就这么干 / 先不做）、方案正文 `PlanBody`（方案卡和项目面板共用）、项目状态文字 `PROJECT_STATUS`、旧版群目标确认卡（room-goal，新的不再产生，历史卡片照常显示） |
+| `RoomCards.tsx` | 群提议卡片、方案卡 `RoomPlanCard`（room-plan：就这么干 / 先不做；带 conversationId 的是单聊方案卡，按钮走单聊接口）、方案正文 `PlanBody`（方案卡和项目面板共用）、项目状态文字 `PROJECT_STATUS`、旧版群目标确认卡（room-goal，新的不再产生，历史卡片只读显示目标和完成标准，没有输入框和按钮） |
+| `ChatProjects.tsx` | 单聊顶部的项目入口 `ChatProjectsButton`：取 /api/conversations/:cid/projects，复用 `RoomWork` 的 `ProjectsPanel`（solo）；消息一变就重新取（只认最后一次请求），不另开推送事件 |
 | `RoomDelivery.tsx` | 交付卡 `ProjectDeliveryCard`（群消息 meta.kind=project-delivery）：做成了什么 / 交付的文件（复用 `Attachments` 预览下载）/ 怎么用 / 还没做的；长文字超 6 行折叠；不显示花费 |
 | `RoomProjectFilter.tsx` | 群里 ≥2 个进行中项目时的「按项目看」：顶部筛选 `ProjectFilter`（复用 `Select`，按群记在 localStorage）、`useProjectRows` / `filterByProject`（只留该项目消息 + 用户自己的消息）、`ProjectTagged`（气泡上的项目名小标签） |
 | `RoomPeer.tsx` | 成员之间的提问 / 回答（群消息 peer-ask / peer-answer）：`PeerWrap` 加「提问 / 回答 · 第 n 轮」标签、「问 @对方」、回答回指提问（点了跳过去，复用 `.pa-quoted`）；`WorkAsks`：任务详情的「在等同事回答」 |
 | `WorkItems.tsx` | 群任务看板（等你决定/卡住/进行中/已完成·已停止、全部暂停）、任务提交卡 |
-| `RoomWork.tsx` | 群聊顶部干活入口 `RoomWorkButtons`（任务看板 + 项目筛选 + 项目）；项目有 waiting 时 chip 标「等你看一眼」、面板里 `WaitingBlock` 显示关键点；`ProjectsButton`：待确认 / 进行中项目的 chip + 面板（看方案、停下项目、展开已结束的项目） |
+| `RoomWork.tsx` | 群聊顶部干活入口 `RoomWorkButtons`（任务看板 + 项目筛选 + 项目）；项目有 waiting 时 chip 标「等你看一眼」、面板里 `WaitingBlock` 显示关键点；`ProjectsPanel`：待确认 / 进行中项目的 chip + 面板（看方案、停下项目、展开已结束的项目），群聊 `ProjectsButton` 和单聊 `ChatProjectsButton` 共用（solo = 单聊：说话对象是「我」，没有关键点等待 / 任务清单 / 接着做） |
 | `WorkItemDetail.tsx` | 任务详情、新建任务、等你决定回答框 |
 | `Sidebar.tsx` | 侧边栏 |
 | `Conversations.tsx` | 对话菜单 |
@@ -278,7 +280,7 @@
 
 | 文件 | 负责 |
 |---|---|
-| `temp-server.mjs` | 临时数据 + Mock 的测试服务（makeTempRun / startTempServer / browserEnv / cleanupTempRun） |
+| `temp-server.mjs` | 临时数据 + Mock 的测试服务（makeTempRun / startTempServer / browserEnv / cleanupTempRun；服务进程不继承 *_API_KEY / *_TOKEN / ANTHROPIC_* 等真实服务商凭据环境变量） |
 | `stable-shot.mjs` | 稳定截图 |
 | `artifacts.mjs` | 截图与日志写 artifacts/ |
 | `fake-hindsight.mjs` | 假 Hindsight |

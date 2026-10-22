@@ -29,7 +29,7 @@ export { createRoom, deleteRoom, onAgentChanged, onAgentDeleted, updateRoom } fr
 export { availableModels, clampProposalThinking, confirmMemberProposal, confirmProposal, createRoomAgent, normalizeProposal, type ProposalMember, type RoomProposal } from "./proposals.ts";
 export { releaseAllHeld } from "./hold.ts";
 export { runRoomChecks, startRoomChecks, wakeManager } from "./collab.ts";
-export { confirmProject, dismissProject, finishProject, getProject, migrateAutonomy, projectJson, projectsOf, ProjectError, replanProject, resumeProject, startGoalProject, stopProject, userRepliedAfterStop, type ProjectJson } from "./projects.ts";
+export { confirmProject, dismissProject, finishProject, getProject, migrateAutonomy, projectJson, projectsOf, ProjectError, replanProject, resumeProject, stopProject, userRepliedAfterStop, type ProjectJson } from "./projects.ts";
 export { checkPlan, normalizePlan, type ProjectPlan } from "./plan.ts";
 
 export function roomJson(r: RoomRow) {

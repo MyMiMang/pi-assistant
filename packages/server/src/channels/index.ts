@@ -5,6 +5,7 @@
  *  - 助理的回复、审批卡片、提问都会发回渠道；在渠道里回复「批准」/「拒绝」/「都允许」或选项序号即可处理。
  *  - 凭据加密保存在本机（sealJson），只发给对应平台的官方接口。
  */
+import { chatCardText } from "../chat-projects/rules.ts";
 import { isStopCommand } from "../interject.ts";
 import { randomInt } from "node:crypto";
 import { bus } from "../bus.ts";
@@ -441,7 +442,7 @@ export async function handleInbound(channelId: string, m: Inbound) {
 		return;
 	}
 	// 有待处理的审批 / 提问 → 这条回复就是答案（本对话的，或转发到这里的群聊卡片）
-	const card = (db.prepare("SELECT meta FROM messages WHERE conversation_id = ? AND role = 'card' AND json_extract(meta, '$.status') = 'pending' ORDER BY created_at DESC LIMIT 1").get(conv) ??
+	const card = (db.prepare("SELECT meta FROM messages WHERE conversation_id = ? AND role = 'card' AND json_extract(meta, '$.status') = 'pending' AND json_extract(meta, '$.requestId') IS NOT NULL ORDER BY created_at DESC LIMIT 1").get(conv) ??
 		db
 			.prepare(
 				"SELECT m.meta FROM channel_room_cards r JOIN messages m ON m.role = 'card' AND json_extract(m.meta, '$.requestId') = r.request_id WHERE r.channel_id = ? AND r.peer_id = ? AND json_extract(m.meta, '$.status') = 'pending' ORDER BY r.created_at DESC LIMIT 1",
@@ -527,6 +528,8 @@ const forwarded = new Set<string>();
 function format(msg: MessageRow): string | null {
 	const meta = (typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as Record<string, unknown>;
 	if (msg.role === "card") {
+		// 单聊的方案卡 / 交付卡（没有 requestId，不是审批也不是提问）：渠道里没有按钮，发一段文字，用户回「可以」即可（chat-projects/rules.ts）
+		if (meta.kind === "room-plan" || meta.kind === "project-delivery") return chatCardText(meta);
 		if (meta.status !== "pending") return null;
 		if (meta.kind === "approval") return `**需要你批准**\n${String(meta.summary ?? meta.toolName ?? "")}\n\n回复「批准」或「拒绝」${meta.allowTask ? "，或「都允许」（本任务内同类操作不再询问）" : ""}`;
 		const opts = (meta.options as string[] | undefined) ?? [];
@@ -558,7 +561,7 @@ bus.on((e) => {
 		sent = true;
 		const meta = msg.role === "card" ? ((typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as Record<string, unknown>) : null;
 		const mm = (typeof msg.meta === "string" ? JSON.parse(msg.meta || "{}") : (msg.meta ?? {})) as { attachments?: OutFile[] };
-		const files = msg.role === "assistant" ? (mm.attachments ?? []) : [];
+		const files = msg.role === "assistant" ? (mm.attachments ?? []) : meta?.kind === "project-delivery" ? ((meta.files as OutFile[] | undefined) ?? []) : [];
 		void reply(p.channel_id, p.ctx ? JSON.parse(p.ctx) : {}, text, (meta && cardFor(meta)) || undefined, files, p.peer_id);
 	}
 	if (!sent) return;

@@ -65,7 +65,10 @@ try {
 	const allProjects = async () => (await j(`/api/rooms/${room.id}/projects?all=1`)).projects;
 	const chip = page.getByTestId("room-projects-chip");
 	const card = (pid) => page.locator(`[data-testid=room-plan][data-project="${pid}"]`);
+	// 群里还有管理者在说话（比如上一个项目刚交付、兜底唤醒）时用户发话会被当成插话塞进那一回合，Mock 不认插话就不会出方案卡：发话前先等群安静。
+	const quiet = (ms = 30000) => wait(async () => !(await roomNow()).state?.running, ms, "room quiet").catch(() => {});
 	const proposeNew = async (text) => {
+		await quiet();
 		const before = new Set((await allProjects()).map((p) => p.id));
 		await j(`/api/rooms/${room.id}/messages`, "POST", { text });
 		let p;
@@ -187,9 +190,11 @@ try {
 	await wait(async () => (await c3.getAttribute("data-status")) === "confirmed", 20000, "card confirmed by chat");
 	await wait(async () => (await roomNow()).projects.find((p) => p.id === p3.id)?.status === "active", 10000, "project active by chat");
 	await wait(() => started(p3.id), 10000, "started notice by chat");
-	// 「可以」这条确认路径通常不会像按钮确认那样自动建任务，但管理者上下文里已经有过一次按方案建任务的例子时偶尔也会建：
-	// chip 里只要出现这个项目、状态不是「待确认」就算确认成功，不强求具体是「进行中」还是已经带上了「阶段 n/m」。
-	await chip.filter({ hasText: p3.title }).filter({ hasText: /进行中|阶段 \d+\/\d+|已完成 \d+\/\d+/ }).waitFor();
+	// 打字「可以」和点按钮一样：管理者在同一回合里确认项目、按方案把两个阶段的任务都建出来（Mock 不再依赖系统提示里有没有阶段行，见 mock-room-provider.ts），
+	// chip 显示「阶段 n/2」，两个阶段都建出来；以前这里放宽成「进行中 / 阶段 n/m / 已完成」三选一，就是因为 Mock 偶尔只建 0 或 1 个。
+	await chip.filter({ hasText: p3.title }).filter({ hasText: "阶段 2/2" }).waitFor({ timeout: 30000 });
+	const p3Items = (await j(`/api/rooms/${room.id}/work-items`)).items.filter((x) => x.projectId === p3.id);
+	assert.deepEqual(p3Items.map((x) => x.stage).sort(), ["准备", "完成"].sort(), "打字确认也把方案两个阶段的任务都建出来");
 	await chip.click();
 	await page.getByTestId("room-projects-ended-toggle").click();
 	await panel.getByText(p1.title).first().waitFor();
@@ -275,6 +280,8 @@ try {
 	await ansBox.waitFor();
 	assert.equal((await askBox.getByTestId("peer-tag").textContent()).trim(), "提问 · 第 1 轮");
 	assert.equal((await askBox.getByTestId("peer-to").textContent()).trim(), "问 @乙");
+	assert.equal(((await askBox.innerText()).match(/@乙/g) ?? []).length, 1, "提问气泡里「@乙」只出现一次：上面的「问 @乙」已经写了，正文开头不再重复");
+	assert.ok(askMsg.content.startsWith("@乙"), "存储的消息不变，只是显示时去掉开头的 @乙");
 	assert.equal((await ansBox.getByTestId("peer-tag").textContent()).trim(), "回答 · 第 1 轮");
 	await ansBox.getByTestId("peer-ref").getByText("回复 甲 的提问").waitFor();
 	await ansBox.scrollIntoViewIfNeeded();
@@ -284,6 +291,9 @@ try {
 		return !!b && b.y >= 0 && b.y + b.height <= 1000;
 	}, 10000, "点回答里的回指后提问在可视范围内");
 	assert.equal(await page.getByTestId("quote-jump-state").count(), 0, "定位成功不留失败提示");
+	// 被问的人用 answer_colleague 回答之后，回合结尾那句「已回答。」不再发到群里
+	await new Promise((r) => setTimeout(r, 1500));
+	assert.equal((await messages()).filter((m) => m.agent_id === helper.id && m.role === "assistant" && /^已回答。?$/.test((m.content ?? "").trim())).length, 0, "回答完不再多发一句「已回答。」");
 	await stableShot(page, askBox, join(out, "11-peer-ask.png"));
 	await stableShot(page, ansBox, join(out, "11-peer-answer.png"));
 	await wait(async () => (await detail(askItem.item.id)).item.status === "done", 60000, "提问者拿到回答后提交、管理者核验完成");
@@ -360,6 +370,7 @@ try {
 	assert.equal(upAsk.agent_id, helper.id, "反馈的是下游负责人");
 	assert.equal(upAsk.meta.to, worker.id, "反馈给上游负责人");
 	await page.locator(`[data-testid=peer-msg][data-peer=ask][data-ask-id="${upAsk.meta.askId}"]`).waitFor();
+	assert.ok(upAsk.content.startsWith("@甲"), "上游反馈同样先写 @甲（存储不变）");
 	await wait(async () => {
 		upAns = (await messages()).find((m) => m.meta?.kind === "peer-answer" && m.meta.askId === upAsk.meta.askId);
 		return !!upAns || (await detail(up.id)).item.revision >= 2;
@@ -369,6 +380,7 @@ try {
 		return u.item.revision >= 2 && u.item.status === "done" && u.events.filter((e) => e.kind === "verified.pass").length >= 2;
 	}, 90000, "上游重做后重新通过核验");
 	await wait(async () => (await detail(down.id)).item.status === "done", 90000, "下游拿到新版本后提交并通过");
+	assert.equal((await messages()).filter((m) => m.agent_id === worker.id && m.role === "assistant" && /已重开任务，马上重做/.test(m.content ?? "")).length, 0, "上游用 work_rework 重做之后，回合结尾那句「已重开任务，马上重做」不再发到群里");
 	const downDone = await detail(down.id);
 	assert.ok(JSON.stringify(downDone.runs).includes("已按上游的新版本更新"), "下游提交结果里带着“用了上游新版本”");
 	await page.locator(`[data-testid=peer-msg][data-ask-id="${upAsk.meta.askId}"]`).first().scrollIntoViewIfNeeded();
@@ -459,8 +471,16 @@ try {
 	await page.setViewportSize({ width: 390, height: 844 });
 	assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= 391), "390 页面没有横向溢出");
 	const head = page.locator("header.pa-chat-head");
+	// 缩到 390 后侧边栏收起、顶部重新排版要一点时间：等筛选进屏再量，量不到就带上排版数据报错
+	await wait(async () => { const b = await filter.boundingBox(); return b && b.x >= 0 && b.x + b.width <= 391; }, 5000, "390 排版稳定").catch(() => {});
 	const fb = await filter.boundingBox();
-	assert.ok(fb.x >= 0 && fb.x + fb.width <= 391, "筛选在 390 屏内");
+	const headLayout = () => head.evaluate((h) => [...h.querySelectorAll(":scope > *, .pa-head-actions > *")].map((e) => `${e.className || e.tagName}:${Math.round(e.getBoundingClientRect().x)}+${Math.round(e.getBoundingClientRect().width)}`).join(" | "));
+	assert.ok(fb.width >= 48, `390 下筛选没被挤扁：${JSON.stringify(fb)}`);
+	assert.ok(fb.x >= 0 && fb.x + fb.width <= 391, `筛选在 390 屏内：${JSON.stringify(fb)} ${await headLayout()}`);
+	assert.ok((await page.getByTestId("room-title").boundingBox()).width >= 40, "390 下群名仍看得到");
+	// 顶部可能还在重新渲染（元素会被换掉），滑动和量位置都重试
+	await wait(async () => { const b = page.getByTestId("room-settings-btn"); await b.scrollIntoViewIfNeeded({ timeout: 1000 }); const sb = await b.boundingBox(); return sb && sb.x >= 0 && sb.x + sb.width <= 391; }, 8000, "按钮多时群设置能滑到屏内");
+	await page.locator(".pa-head-actions").evaluate((el) => el.scrollTo(0, 0));
 	await stableShot(page, head, join(out, "23b-project-filter-390.png"));
 	await page.setViewportSize({ width: 1440, height: 1000 });
 	await filter.click();

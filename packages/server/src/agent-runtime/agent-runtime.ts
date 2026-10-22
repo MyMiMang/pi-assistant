@@ -27,6 +27,7 @@ import { computerFor, desktopStatus } from "../desktop.ts";
 import { type AgentRow, getAgent, setAgentStatus } from "./rows.ts";
 import { roomHooks } from "./room-hooks.ts";
 import { bindSession } from "./bind-session.ts";
+import { chatPlanRules } from "../chat-projects/rules.ts";
 
 /** 会话缓存键里的“本机操作”部分：开关、清单、档位、暂停、守护进程状态变化都会重建会话（权限本身仍每次调用动态求值） */
 const hostKey = (agentId: string) =>
@@ -65,7 +66,9 @@ export class AgentRuntime {
 		const thinking = this.thinkingFor(a);
 		// 模型 / 思考强度不在 key 里：用 session.setModel / setThinkingLevel 原地切换，不重建会话
 		const room = roomHooks?.info(this.id, this.conversationId) ?? null;
-		const key = `${a.name}|${a.persona}|room:${room?.key ?? "-"}|desk:${desk}|pc:${computerFor(this.id)}|skills:${skillsVersion()}|assign:${assignmentsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}|img:${imageKey(this.id)}`;
+		// 单聊：大事走方案的规则 + 这个对话里的项目方案 / 进度（群聊对话没有这一段）
+		const chat = room ? null : chatPlanRules(this.conversationId);
+		const key = `${a.name}|${a.persona}|room:${room?.key ?? "-"}|plan:${chat?.key ?? "-"}|desk:${desk}|pc:${computerFor(this.id)}|skills:${skillsVersion()}|assign:${assignmentsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}|img:${imageKey(this.id)}`;
 		if (this.session && this.modelKey === key) {
 			if (!isSessionBusy(this.session)) await applyModelSettings(this.session, models, model, thinking).catch((e) => console.warn(`[model] ${e instanceof Error ? e.message : e}`));
 			return this.session;
@@ -81,7 +84,7 @@ export class AgentRuntime {
 				parentSession: conversationForkParent(this.conversationId),
 				model,
 				thinking,
-				rules: room?.rules,
+				rules: room?.rules ?? chat?.rules,
 				conversationId: this.conversationId,
 				taskId: null,
 				ext: { allowSpawn: true, actor: room ? "group" : this.conversationId === hiddenConversation(this.id) ? "background" : "main" },

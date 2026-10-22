@@ -182,7 +182,7 @@ for (const [table, col, ddl] of [
 	["agents", "scope", "TEXT NOT NULL DEFAULT 'user'"],
 	["agents", "room_id", "TEXT"],
 	["files", "room_id", "TEXT"],
-	// 群的自主推进：用户确认过的目标 + 完成标准（JSON；null = 普通聊天）
+	// 旧版「自主推进」留下的列：只给启动时的 migrateAutonomy 读（老库升级成进行中的项目），新数据不再写
 	["rooms", "autonomy", "TEXT"],
 ] as const) {
 	const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);

@@ -9,6 +9,14 @@ import { ProjectTagged } from "./RoomProjectFilter";
 /** 成员之间的提问 / 回答（群消息 meta.kind 为 peer-ask / peer-answer）：气泡上加小标签，同一 askId 的问答看得出是一组。 */
 export const isPeerMsg = (m: Message) => m.meta.kind === "peer-ask" || m.meta.kind === "peer-answer";
 
+/** 提问正文开头的「@X 」上面的「问 @X」已经写了，显示时去掉（只改显示，不改存储）。 */
+export function askBody(m: Message): string {
+	const toName = m.meta.kind === "peer-ask" && m.meta.toName ? String(m.meta.toName) : "";
+	if (!toName || !m.content.startsWith(`@${toName}`)) return m.content;
+	return m.content.slice(toName.length + 1).replace(/^\s+/, "") || m.content;
+}
+export const peerAskDisplay = (p: Part): Part => (p.kind === "msg" && askBody(p.m) !== p.m.content ? { ...p, m: { ...p.m, content: askBody(p.m) } } : p);
+
 function PeerHead({ m, room, agents, list, onJump }: { m: Message; room: Room; agents: Agent[]; list: Message[]; onJump?: (id: string) => void }) {
 	const isAsk = m.meta.kind === "peer-ask";
 	const n = Number(m.meta.rounds) || 0;
@@ -24,7 +32,7 @@ function PeerHead({ m, room, agents, list, onJump }: { m: Message; room: Room; a
 			{ask && onJump ? (
 				<button type="button" className="pa-quoted" onClick={() => onJump(ask.id)} title="跳到这条提问" data-testid="peer-ref">
 					<span className="pa-quoted-author">回复 {askerName} 的提问</span>
-					<span className="pa-quoted-excerpt">{ask.content}</span>
+					<span className="pa-quoted-excerpt">{askBody(ask)}</span>
 				</button>
 			) : null}
 		</div>

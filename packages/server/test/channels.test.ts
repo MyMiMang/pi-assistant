@@ -167,6 +167,15 @@ test("企业微信：回调验签 → 未绑定提示 → 绑定码 → 消息�
 	assert.equal(await ch.handleAction(c.id, { userId: "zhangsan", action: rk, ctx: {} }), "已选择：B");
 	assert.equal((await rq).answer, "B");
 	assert.equal(db.prepare("SELECT COUNT(*) n FROM channel_room_cards WHERE channel_id = ?").get(c.id)!.n, 2);
+	// 单聊的方案卡（没有 requestId，不是审批 / 提问）：渠道里发成一段文字；用户回「可以」是普通一句话，不会被当成对卡片的回答吞掉
+	const { proposeChatPlan } = await import("../src/chat-projects/store.ts");
+	const { normalizePlan } = await import("../src/rooms/plan.ts");
+	const planSends = sends().length;
+	proposeChatPlan({ agentId: "ca", conversationId: conv, title: "整理小结", plan: normalizePlan({ goal: "整理一份小结", doneCriteria: "有要点", stages: [{ name: "梳理要点", output: "要点清单" }], deliverables: "summary.md" }) });
+	await wait(() => sends().length === planSends + 1);
+	assert.match(String((sends().at(-1)!.body.markdown as { content: string }).content), /方案：整理小结[\s\S]*要做成什么：整理一份小结[\s\S]*回复「可以」就开始/);
+	post("zhangsan", "可以", "m6p");
+	await wait(() => !!db.prepare("SELECT 1 FROM messages WHERE conversation_id = ? AND role = 'user' AND content = '可以' AND json_extract(meta, '$.answer') IS NULL").get(conv));
 	// 新对话
 	post("zhangsan", "新对话", "m7");
 	await wait(() => ch.channelJson(ch.getChannel(c.id)!).users.length === 1);

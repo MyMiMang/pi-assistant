@@ -4,9 +4,10 @@
  */
 import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import type { PiModels } from "./index.ts";
+import { chatPlanReply } from "./mock-chat-plan-provider.ts";
 import { collabReply } from "./mock-collab-provider.ts";
 import { teamReply } from "./mock-team-provider.ts";
-import { imageCount, roomReply } from "./mock-room-provider.ts";
+import { imageCount, roomReply, roomSteerPrompt } from "./mock-room-provider.ts";
 
 export const MOCK_PROVIDER = "mock";
 export const MOCK_MODEL = "echo";
@@ -186,8 +187,13 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 	if (team) return team;
 	const collab = collabReply(messages, u, last, systemPrompt);
 	if (collab) return collab;
+	// 单聊「大事走方案」：用户说「做个大事」→ 出方案卡；确认后依次标阶段、交付
+	const chatPlan = chatPlanReply(u, last, messages, tools);
+	if (chatPlan) return chatPlan;
 	// 群聊（rooms）：按群消息里的提示脚本化地扮演管理者 / 成员
 	if (u.startsWith("（群聊「")) return roomReply(u, systemPrompt, last, messages);
+	const steered = roomSteerPrompt(u, systemPrompt, messages);
+	if (steered) return roomReply(steered, systemPrompt, last, messages);
 	// 提议建群：用户说“组个团队/建个群…”
 	if (/组个团队|建个群/.test(u)) {
 		if (last.role === "toolResult") return fauxAssistantMessage("我按你的目标设计了一个小团队，看看卡片，改好了点“确认创建”。");

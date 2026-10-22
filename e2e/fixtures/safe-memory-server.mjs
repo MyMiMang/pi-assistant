@@ -10,6 +10,7 @@
  *
  * 不复制生产启动逻辑，不读 / 不改用户真实配置；只发给 e2e。
  */
+import { withoutCredentials } from "./temp-server.mjs";
 import { spawn } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -42,7 +43,7 @@ export function spawnMemoryServer({ repoRoot, dataDir, port, env = {}, probe }) 
 	const child = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], {
 		cwd: repoRoot,
 		env: {
-			...process.env,
+			...withoutCredentials(process.env), // 不继承开发机的模型凭据（见 temp-server.mjs）
 			...env,
 			PIA_DATA_DIR: dataDir,
 			PIA_WORKSPACE: join(dataDir, "workspace"),

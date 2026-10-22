@@ -57,6 +57,8 @@ html{--mo-scale:1;--mo-glow:1;--mo-style:smooth}
 .pa-pulse{width:6px;height:6px;border-radius:50%;background:var(--ok,#22c55e);animation:pa-pulse 2s infinite}
 @keyframes pa-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok,#22c55e) 60%,transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
 .pa-head-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
+/* 手机宽度：顶部按钮多时（任务、筛选、项目、执行、设置）按钮收紧；还放不下就在按钮区里横向滑动，不挤出屏幕，标题留最小宽度 */
+@media (max-width:639px){.pa-chat-head{gap:8px;padding-left:12px;padding-right:12px}.pa-head-txt{flex:1 0 3.5rem}.pa-head-actions{min-width:0;gap:4px;overflow-x:auto;scrollbar-width:none}.pa-head-actions::-webkit-scrollbar{display:none}.pa-head-actions>*{flex-shrink:0}.pa-head-actions .pa-chip{padding:0 9px}}
 .pa-chip{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex-shrink:0;height:32px;padding:0 12px;border-radius:var(--r-chip,999px);border:1px solid var(--line);background:var(--card);color:var(--mut);font-size:13px;transition:color var(--pa-dur),border-color var(--pa-dur),background var(--pa-dur)}
 .pa-chip:hover{color:var(--fg);border-color:var(--line-strong,var(--mut2))}
 .pa-chip.sm{height:28px;padding:0 10px;font-size:12.5px}

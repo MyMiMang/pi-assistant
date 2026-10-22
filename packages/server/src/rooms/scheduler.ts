@@ -2,30 +2,31 @@
  * 群的发言调度（用户决定的“管理者”模式）：
  *  1. 用户 @ 了谁，就只有谁回答（按 @ 的顺序依次说，后说的能看到前面的）；@所有人 = 全部成员
  *  2. 用户没 @ 人：只有管理者回答——它理解需求，自己答或用 room_assign / @名字 派活
- *  3. 普通成员只有被用户或管理者 @ 才会说话；开了自主推进后成员可以 @ 彼此（collab.ts）
+ *  3. 普通成员只有被用户或管理者 @ 才会说话；项目进行中成员可以 @ 彼此（collab.ts）
  *  4. 派出去的成员都做完后管理者再总结一次（可关），还可以继续派（有深度上限）
  * 每轮上限：发言次数、派活深度、每人次数；到上限写“本轮已暂停”，用户点继续。
  * 长期任务的执行不在这里：它们在负责人自己的任务会话里跑（work-items/exec.ts），不占群的回合和上限。
  */
 import { bus } from "../bus.ts";
 import { db, now, uid } from "../db.ts";
-import { attachmentInputFor, type FileRow, fileInfo, getFile, materializeFor } from "../files.ts";
+import { attachmentInputFor, type FileRow, fileInfo, getFile } from "../files.ts";
 import { isStopCommand } from "../interject.ts";
-import { getMessage, getMessageByClientId, insertMessage, updateMessage, type Message, type ReplySnapshot } from "../messages.ts";
+import { getMessage, getMessageByClientId, insertMessage, updateMessage, type Message } from "../messages.ts";
 import { buildReplySnapshot, formatQuotedContext, resolveReplyTarget } from "../replies.ts";
 import { requests } from "../requests.ts";
 import { getAgent, listAgents, runtime } from "../runtime.ts";
 import { stopConversationSubagents } from "../subagents.ts";
 import { buildWorkCorrectionContext, execConversationsOfRoom, resolveWorkReferences } from "../work-items.ts";
-import { INTENT_PLAN_RULE, PROJECT_NEXT_STEP, buildTranscript, capCheck, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
-import { askIdOf } from "./ask-logic.ts";
+import { capCheck, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps } from "./logic.ts";
 import { waitingRequestIds } from "./checkpoint.ts";
 import { hasActiveProject } from "./projects.ts";
+import { cancelQueue, emitState, enqueue, fresh, states, type QuoteInfo, type RoomState, type Turn } from "./queue.ts";
 import { activeIds, capsOf, changed, getRoom, memberConversation, memberRefs, memberRow, membersOf, snapshot, sys } from "./store.ts";
+import { REASON_LINE, roomFiles, transcriptFor } from "./turn-prompt.ts";
 
-/** 已解析的引用：快照（给模型/UI）+ 纯逻辑路由目标 */
-type QuoteInfo = { snapshot: ReplySnapshot; target: QuoteTarget };
-type Turn = PlannedTurn & { turnId: string };
+// 队列状态和 roomFiles 拆到了 queue.ts / turn-prompt.ts；外面照旧从这里取。
+export { cancelQueuedFor, hasQueuedTurns, queuedFor, stateOf, states, type RoomState } from "./queue.ts";
+export { roomFiles } from "./turn-prompt.ts";
 
 /** 从群内可信消息行算引用路由目标（作者是否仍是可用成员）。 */
 function quoteTargetOf(roomId: string, target: Message): QuoteTarget {
@@ -38,33 +39,9 @@ function quoteTargetOf(roomId: string, target: Message): QuoteTarget {
 	return { quotable: false, role: "system", authorAgentId: null, authorActive: false };
 }
 
-export interface RoomState {
-	roundId: string;
-	queue: Turn[];
-	current: { agentId: string; turnId: string; conversationId: string; reason: string } | null;
-	counters: RoundCounters;
-	/** 管理者这一轮派活：派出去还没做完的成员 */
-	batch: Set<string>;
-	batchRan: boolean;
-	/** 正在进行的管理者回合里收集到的派活（长期任务的派活不在这里：直接进负责人的任务会话） */
-	assignments: { agentId: string; task?: string }[];
-	/** 运行中用户又发了消息：当前发言结束后重新安排 */
-	replan: { mentions: string[]; quote: QuoteInfo | null; sourceMessageId: string; workCtx: string | null } | null;
-	/** 本轮用户消息带来的引用快照（模型上下文），无引用为 null */
-	quote: ReplySnapshot | null;
-	/** 触发这一轮的用户消息 id（可信持久化来源；幂等键，见 routeUserMessage） */
-	sourceMessageId: string | null;
-	/** 这条用户消息指到某个长期任务时，给管理者的任务上下文（不指任务时为 null） */
-	workCtx: string | null;
-	stopped: boolean;
-	running: boolean;
-}
-export const states = new Map<string, RoomState>();
-const fresh = (): RoomState => ({ roundId: uid("rd"), queue: [], current: null, counters: { turns: 0, perAgent: {} }, batch: new Set(), batchRan: false, assignments: [], replan: null, quote: null, sourceMessageId: null, workCtx: null, stopped: false, running: false });
-
 /** 协作层（collab.ts）挂进来的钩子：避免调度和协作互相 import。 */
 export interface TurnHooks {
-	/** 回合正常结束后（没停、没中止）：自主推进的成员互相 @、空聊检测、回复送回提问者 */
+	/** 回合正常结束后（没停、没中止）：项目进行中成员互相 @、空聊检测、回复送回提问者 */
 	after?: (roomId: string, t: Turn, res: { text: string; error?: string }) => void;
 	/** 回合结束后（没停、没中止，成功与否都算）：管理者回合结束放行暂缓的任务 */
 	ended?: (roomId: string, t: Turn) => void;
@@ -75,60 +52,6 @@ export interface TurnHooks {
 }
 let hooks: TurnHooks = {};
 export const setTurnHooks = (h: TurnHooks) => void (hooks = h);
-
-export function stateOf(roomId: string) {
-	const s = states.get(roomId);
-	if (!s || (!s.current && !s.queue.length)) return { running: false, current: null, queue: [] as string[] };
-	return { running: true, current: s.current ? { agentId: s.current.agentId, reason: s.current.reason } : null, queue: s.queue.map((q) => q.agentId) };
-}
-const emitState = (roomId: string) => bus.emit({ type: "room.state", roomId, state: stateOf(roomId) });
-
-/**
- * 入队。`sourceMessageId` 记录触发本轮的用户消息（可信持久化 id）。
- * `dedup=true` 时原子认领：同一来源消息的同一「收件人 + 用途」已有未取消回合 → 跳过，
- * 使重复路由事件 / 客户端重试 / 服务重启不重复唤醒；真正分工出的不同收件人 / 用途照常入队（见 docs/design/message-replies.md §7）。
- */
-function enqueue(roomId: string, s: RoomState, turns: PlannedTurn[], sourceMessageId: string | null = null, dedup = false) {
-	const insert = (t: PlannedTurn) => {
-		const turnId = uid("rt");
-		if (dedup && sourceMessageId) {
-			const res = db.prepare(
-				`INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, task, depth, status, created_at, source_message_id)
-				 SELECT ?,?,?,?,?,?,?,?,?,?
-				 WHERE NOT EXISTS (SELECT 1 FROM room_turns WHERE room_id = ? AND source_message_id = ? AND agent_id = ? AND reason = ? AND status != 'cancelled')`,
-			).run(turnId, roomId, s.roundId, t.agentId, t.reason, t.task ?? null, t.depth, "queued", now(), sourceMessageId, roomId, sourceMessageId, t.agentId, t.reason);
-			if (!res.changes) return;
-		} else {
-			db.prepare("INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, task, depth, status, created_at, source_message_id) VALUES(?,?,?,?,?,?,?,?,?,?)").run(turnId, roomId, s.roundId, t.agentId, t.reason, t.task ?? null, t.depth, "queued", now(), sourceMessageId);
-		}
-		s.queue.push({ ...t, turnId });
-	};
-	// 去重批次整体事务化：@所有人 等多收件人组要么全认领、要么全不认领。
-	if (dedup && sourceMessageId && turns.length > 1) {
-		db.exec("BEGIN");
-		try {
-			for (const t of turns) insert(t);
-			db.exec("COMMIT");
-		} catch (e) {
-			db.exec("ROLLBACK");
-			throw e;
-		}
-	} else {
-		for (const t of turns) insert(t);
-	}
-}
-/** 撤回排队中的回合（可只撤某个成员的；keep 里的保留，例如用户插话时不丢掉管理者的看板检查）。 */
-function cancelQueue(s: RoomState, o: { agentId?: string; keep?: (q: Turn) => boolean } = {}) {
-	const drop = s.queue.filter((q) => (!o.agentId || q.agentId === o.agentId) && !o.keep?.(q));
-	for (const q of drop) db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE id = ?").run(now(), q.turnId);
-	s.queue = s.queue.filter((q) => !drop.includes(q));
-}
-export function cancelQueuedFor(roomId: string, agentId: string) {
-	const s = states.get(roomId);
-	if (!s) return;
-	cancelQueue(s, { agentId });
-	emitState(roomId);
-}
 
 /** 协作层追加回合（唤醒管理者 / 成员互相 @）：群空闲就开一轮，正在跑就排在后面。群已停止返回 false。 */
 export function scheduleTurns(roomId: string, turns: PlannedTurn[]) {
@@ -144,13 +67,6 @@ export function scheduleTurns(roomId: string, turns: PlannedTurn[]) {
 	void pump(roomId);
 	return true;
 }
-/** 群里有没有排着的回合（含正在跑的） */
-export const hasQueuedTurns = (roomId: string) => {
-	const s = states.get(roomId);
-	return !!s && (!!s.current || s.queue.length > 0);
-};
-/** 群里排着的回合（reason 为 null = 不限原因）。 */
-export const queuedFor = (roomId: string, reason: PlannedTurn["reason"] | null, agentId?: string) => !!states.get(roomId)?.queue.some((q) => (!reason || q.reason === reason) && (!agentId || q.agentId === agentId));
 
 /** 用户在群里发言：先落库，再按可信持久化源消息路由（幂等，见 routeUserMessage）。 */
 export function postUserMessage(roomId: string, text: string, opts: { mentions?: string[]; from?: unknown; attachments?: string[]; replyToId?: string; clientId?: string; workItemId?: string } = {}) {
@@ -257,53 +173,6 @@ function startRound(roomId: string, plan: PlannedTurn[], quote: QuoteInfo | null
 	void pump(roomId);
 }
 
-const REASON_LINE = (t: PlannedTurn, managerName: string, depthLeft: number, projectActive = false) =>
-	({
-		mention: "用户在群里 @ 了你。请直接回应用户最新的消息（只做用户让你做的，别替其他成员回答）。",
-		manager:
-			"用户没有 @ 任何人，由你（管理者）负责：先理解用户要什么。简单的事你自己直接回答；需要其他成员做的，调用 room_assign 分配（每个人写清楚具体任务），并在回复里用一两句话说明分工。不需要别人时不要分配。需要长期负责、可检查的工作用 work_create 记成任务，成员会在自己的任务会话里去做。\n" + INTENT_PLAN_RULE,
-		assign: `管理者 ${managerName} 给你分配了任务：${t.task?.trim() || "（见管理者上面的消息）"}\n完成后在群里简洁汇报结果。`,
-		followup: `你分配的成员都已结束（有失败、受阻或待核验的也在上面）。请先核验 / 处理这些结果，再给用户一个简短的总结，不要重复成员说过的细节；还需要继续时可以再用 room_assign 分配${depthLeft > 0 ? `（还能再派 ${depthLeft} 次）` : "（这一轮已不能再派活）"}。${projectActive ? PROJECT_NEXT_STEP : ""}`,
-		resume: "（系统通知）服务重启或用户让你继续：上一次发言可能被中断了。请检查进度，接着完成你在群里的任务；已经完成就简短说明。",
-		check: `任务看板有变化，需要你（管理者）看一下。下面是唤醒原因和看板摘要：核验已提交的结果（work_verify，先读真实产物）。大部分决定按群目标自己分析、自己推进。卡住或反复退回由你自己处理：看负责人的执行记录找原因，带纠正重派或拆小，改派给别的成员或自己接手（work_update）；只有需要用户才能给的帮助（批准、登录凭据、资源）或超出群目标、你无权拍板的决定才用 work_ask_user；办法用尽时在群里跟用户说清问题是什么、需要用户帮什么。处理完在群里用一两句话说明；没什么要做就简短说一句。${projectActive ? PROJECT_NEXT_STEP : ''}`,
-		peer: askIdOf(t.task)
-			? `${t.task!.trim().slice(0, 2500)}\n这是一个可追踪的提问：按上面说的用工具处理，回答只送给提问的人，不用再在群里重复一遍。`
-			: `${getAgent(t.from ?? "")?.name ?? "一位成员"} 在群里 @ 了你：${t.task?.trim().slice(0, 1500) || "（见上面的消息）"}\n直接在群里简短回复它；需要你动手的就做。不要替管理者分配任务，也不要只客套。`,
-	})[t.reason];
-
-/** 群里出现过的全部附件（用户上传 + 成员发出的） */
-export function roomFiles(roomId: string): FileRow[] {
-	const ids = new Set<string>();
-	for (const m of db.prepare("SELECT meta FROM messages WHERE room_id = ? AND meta LIKE '%fileId%'").all(roomId) as { meta: string }[])
-		for (const f of (JSON.parse(m.meta).attachments as { fileId?: string }[] | undefined) ?? []) if (f.fileId) ids.add(f.fileId);
-	return [...ids].map(getFile).filter((f): f is FileRow => !!f);
-}
-
-function transcriptFor(roomId: string, agentId: string, budget = 16_000) {
-	const m = memberRow(roomId, agentId)!;
-	const rows = (
-		m.cursor == null
-			? db.prepare("SELECT rowid AS seq, * FROM messages WHERE room_id = ? AND role IN ('user','assistant','system','card') ORDER BY rowid DESC LIMIT 300").all(roomId).reverse()
-			: db.prepare("SELECT rowid AS seq, * FROM messages WHERE room_id = ? AND rowid > ? AND role IN ('user','assistant','system','card') ORDER BY rowid LIMIT 500").all(roomId, m.cursor)
-	) as { seq: number; role: TranscriptItem["role"]; agent_id: string; content: string; meta: string; status: string }[];
-	const items: TranscriptItem[] = rows.map((x) => ({ seq: x.seq, role: x.role, agentId: x.agent_id, content: x.content, meta: JSON.parse(x.meta), status: x.status }));
-	const names = new Map(membersOf(roomId, true).map((x) => [x.agent_id, getAgent(x.agent_id)?.name ?? x.name]));
-	const paths = new Map<string, string>();
-	const pathOf = (tf: { fileId: string }) => {
-		if (!paths.has(tf.fileId)) {
-			const f = getFile(tf.fileId);
-			if (f) {
-				try {
-					paths.set(tf.fileId, materializeFor(agentId, f, roomId));
-				} catch {
-					/* 文件丢了：只写名字 */
-				}
-			}
-		}
-		return paths.get(tf.fileId);
-	};
-	return buildTranscript(items, agentId, (id) => names.get(id) ?? "助理", budget, pathOf);
-}
 
 async function pump(roomId: string) {
 	const s = states.get(roomId);

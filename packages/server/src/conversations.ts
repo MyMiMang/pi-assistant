@@ -93,6 +93,8 @@ export function deleteConversation(id: string) {
 	if (!c) return null;
 	db.prepare("DELETE FROM messages WHERE conversation_id = ?").run(id);
 	db.prepare("DELETE FROM conversations WHERE id = ?").run(id);
+	// 这个对话的单聊项目（表由 chat-projects/store.ts 建；没加载过就没有这张表）
+	if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chat_projects'").get()) db.prepare("DELETE FROM chat_projects WHERE conversation_id = ?").run(id);
 	const cur = db.prepare("SELECT conversation_id FROM agents WHERE id = ?").get(c.agent_id) as { conversation_id: string | null };
 	if (cur?.conversation_id === id) db.prepare("UPDATE agents SET conversation_id = NULL WHERE id = ?").run(c.agent_id);
 	const next = currentConversation(c.agent_id);

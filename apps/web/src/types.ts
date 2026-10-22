@@ -59,6 +59,8 @@ export interface RoomProject {
 	/** 管理者请用户看一眼的关键点；服务端还没有这个字段时为 undefined（当作没有）。 */
 	waiting?: ProjectWaiting | null;
 }
+/** 单聊里的项目（服务端 chat-projects/store.ts 的 ChatProjectJson）：和群聊项目同一形状，只是挂在对话上、没有 waiting。 */
+export type ChatProject = Omit<RoomProject, "roomId"> & { conversationId: string };
 export interface Room {
 	/** 只含待确认 / 进行中的项目（按创建时间升序）；已结束的走 /api/rooms/:rid/projects?all=1 */
 	projects?: RoomProject[];

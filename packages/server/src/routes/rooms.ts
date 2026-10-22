@@ -4,7 +4,7 @@ import { bus } from "../bus.ts";
 import { db } from "../db.ts";
 import { fileInfo, saveRoomUpload } from "../files.ts";
 import { getAgent } from "../runtime.ts";
-import { confirmMemberProposal, confirmProject, confirmProposal, continueRoom, createRoom, deleteRoom, dismissProject, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, postUserMessage, ProjectError, projectJson, projectsOf, resumeProject, roomJson, listRooms, startGoalProject, stop as stopRoom, stopProject, updateRoom, createRoomAgent } from "../rooms/index.ts";
+import { confirmMemberProposal, confirmProject, confirmProposal, continueRoom, createRoom, deleteRoom, dismissProject, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, postUserMessage, ProjectError, projectJson, projectsOf, resumeProject, roomJson, listRooms, stop as stopRoom, stopProject, updateRoom, createRoomAgent } from "../rooms/index.ts";
 import { BOARD_GROUPS, createWorkItem, listWorkItems, pauseAllWorkItems, type BoardGroup } from "../work-items.ts";
 import { getMessage, updateMessage as patchMessage } from "../messages.ts";
 import { by, roomErr, type Env } from "./common.ts";
@@ -170,20 +170,10 @@ export function mountRoomRoutes(app: Hono<Env>) {
 	/** 提议卡片（propose_room / room_propose_member）：用户在卡片上改完点确认才创建 */
 	app.post("/api/proposals/:mid/confirm", async (c) => {
 		const m = getMessage(c.req.param("mid"));
-		if (!m || m.role !== "card" || !["room-proposal", "member-proposal", "room-goal"].includes(String(m.meta.kind))) return c.json({ error: "not_found" }, 404);
+		if (!m || m.role !== "card" || !["room-proposal", "member-proposal"].includes(String(m.meta.kind))) return c.json({ error: "not_found" }, 404);
 		if (m.meta.status !== "pending") return c.json({ error: "这张卡片已经处理过了" }, 409);
-		const b = await c.req.json<{ proposal?: unknown; member?: unknown; goal?: string; doneCriteria?: string }>().catch(() => ({}) as { proposal?: unknown; member?: unknown; goal?: string; doneCriteria?: string });
+		const b = await c.req.json<{ proposal?: unknown; member?: unknown }>().catch(() => ({}) as { proposal?: unknown; member?: unknown });
 		try {
-			if (m.meta.kind === "room-goal") {
-				// 旧版管理者提议的目标 + 完成标准（不再产生新卡）：用户可在卡片上改，确认后建一个 active 项目
-				const roomId = String(m.meta.roomId);
-				if (!m.room_id || m.room_id !== roomId || !getRoom(roomId)) return c.json({ error: "not_found" }, 404);
-				const goal = b.goal ?? String(m.meta.goal ?? "");
-				const doneCriteria = b.doneCriteria ?? String(m.meta.doneCriteria ?? "");
-				startGoalProject(roomId, m.agent_id || getRoom(roomId)!.manager_id || "unknown", goal, doneCriteria);
-				patchMessage(m.id, { meta: { status: "confirmed", goal, doneCriteria } });
-				return c.json({ ok: true, room: roomJson(getRoom(roomId)!) });
-			}
 			if (m.meta.kind === "room-proposal") {
 				const p = normalizeProposal((b.proposal ?? m.meta.proposal) as never);
 				const room = await confirmProposal(p);

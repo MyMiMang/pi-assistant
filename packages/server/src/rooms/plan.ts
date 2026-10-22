@@ -24,6 +24,15 @@ export interface ProjectPlan {
 	scale: string;
 }
 
+/** 给 HTTP 用的错误（群聊和单聊的项目共用）：status 404 = 项目不存在（message 固定 "not_found"），409 = 状态不对（message 是给用户看的一句话）。 */
+export class ProjectError extends Error {
+	status: 404 | 409;
+	constructor(message: string, status: 404 | 409 = 409) {
+		super(message);
+		this.status = status;
+	}
+}
+
 const str = (v: unknown, n: number) => String(v ?? "").trim().slice(0, n);
 const list = (v: unknown, max: number, n: number) => (Array.isArray(v) ? v.map((x) => str(x, n)).filter(Boolean).slice(0, max) : []);
 const objs = (v: unknown, max: number) => (Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === "object").slice(0, max) : []);
@@ -57,18 +66,20 @@ export const goalOnlyPlan = (goal: string, doneCriteria: string) => normalizePla
 /**
  * 出方案前的检查：目标、完成标准、交付物不能空；分工至少一条且名字都是群成员（含管理者）；至少一个阶段。
  * 通过时给分工补上 agentId（按名字解析，忽略大小写和开头的 @）。
+ * solo = 单聊（只有助理和它的帮手）：分工可以不写，写了也不按成员名单校验（「我」「帮手」都行）。
  */
-export function checkPlan(plan: ProjectPlan, members: { id: string; name: string }[]): { plan: ProjectPlan; error?: undefined } | { error: string; plan?: undefined } {
-	const missing = [!plan.goal && "goal（要做成什么）", !plan.doneCriteria && "doneCriteria（怎样算完成）", !plan.deliverables && "deliverables（最后交给用户什么）", !plan.roles.length && "roles（分工，至少一条）", !plan.stages.length && "stages（阶段，至少一个）"].filter(Boolean);
+export function checkPlan(plan: ProjectPlan, members: { id: string; name: string }[], opts: { solo?: boolean } = {}): { plan: ProjectPlan; error?: undefined } | { error: string; plan?: undefined } {
+	const missing = [!plan.goal && "goal（要做成什么）", !plan.doneCriteria && "doneCriteria（怎样算完成）", !plan.deliverables && "deliverables（最后交给用户什么）", !opts.solo && !plan.roles.length && "roles（分工，至少一条）", !plan.stages.length && "stages（阶段，至少一个）"].filter(Boolean);
 	if (missing.length) return { error: `方案还不完整，缺：${missing.join("、")}。补齐后再出方案卡。` };
+	if (opts.solo) return { plan };
 	const find = (name: string) => members.find((m) => m.name === name) ?? members.find((m) => m.name.toLowerCase() === name.toLowerCase());
 	const bad = plan.roles.filter((r) => !find(r.member)).map((r) => r.member);
 	if (bad.length) return { error: `分工里这些不是群成员：${bad.join("、")}。分工只能写群里的成员（含你自己）：${members.map((m) => m.name).join("、")}。` };
 	return { plan: { ...plan, roles: plan.roles.map((r) => { const m = find(r.member)!; return { member: m.name, agentId: m.id, does: r.does }; }) } };
 }
 
-/** 给模型看的方案摘要：项目名 / 编号 / 目标 / 完成标准 / 分工 / 阶段（群规则、管理者被唤醒时共用）。 */
-export function planText(p: { id: string; title: string; plan: ProjectPlan }) {
+/** 给模型看的方案摘要：项目名 / 编号 / 目标 / 完成标准 / 分工 / 阶段（群规则、管理者被唤醒、单聊规则共用；checkpointTool 是到关键点时用哪个工具请用户看）。 */
+export function planText(p: { id: string; title: string; plan: ProjectPlan }, checkpointTool = "room_checkpoint") {
 	const { plan } = p;
 	return [
 		`项目「${p.title}」（项目编号 ${p.id}）`,
@@ -77,6 +88,6 @@ export function planText(p: { id: string; title: string; plan: ProjectPlan }) {
 		...(plan.roles.length ? [`分工：${plan.roles.map((r) => `${r.member}：${r.does || "（未写）"}`).join("；")}`] : []),
 		...(plan.stages.length ? [`阶段：${plan.stages.map((s, i) => `${i + 1}. ${s.name}${s.output ? ` → ${s.output}` : ""}`).join("；")}`] : []),
 		...(plan.deliverables ? [`交付物：${plan.deliverables}`] : []),
-		...(plan.checkpoints.length ? [`关键点（到了请用户看一眼，用 room_checkpoint）：${plan.checkpoints.join("；")}`] : []),
+		...(plan.checkpoints.length ? [`关键点（到了请用户看一眼，用 ${checkpointTool}）：${plan.checkpoints.join("；")}`] : []),
 	].join("\n");
 }

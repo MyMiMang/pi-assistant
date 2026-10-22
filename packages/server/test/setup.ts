@@ -22,6 +22,8 @@ const dataDir = mkdtempSync(join(tmpdir(), "pia-test-"));
 process.env.PIA_DATA_DIR = dataDir;
 process.env.PIA_WORKSPACE = join(dataDir, "workspace");
 process.env.PIA_OFFLINE = "1";
+// 不带开发机的模型服务商凭据：Pi 会把设了这些变量的服务商算作「已配置」，测试结果跟着开发机变，也不能有误碰真实付费模型的可能（和 e2e/fixtures/temp-server.mjs 的 withoutCredentials 同一口径）。
+for (const k of Object.keys(process.env)) if (/(_API_KEY|_TOKEN|_SECRET_ACCESS_KEY)$|^(ANTHROPIC|AWS|AZURE|GOOGLE|GCLOUD)_/.test(k)) delete process.env[k];
 // 单测绝不碰真实钥匙串：PATH 最前面放一个假的 security（一律「没有这一项」，写入也失败 → 主密钥落在临时数据目录的 master.key）。
 // 子进程继承 PATH，所以测试里直接起的服务也一样。2026-10-19 在 Mac 上发现 secrets / server-setup 测试会读到真实 App 的主密钥。
 const fakeBin = join(dataDir, "fake-bin");

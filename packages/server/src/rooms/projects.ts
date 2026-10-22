@@ -13,7 +13,7 @@ import { notify } from "../push.ts";
 import { continueWorkItem, itemsOfProject, pauseWorkItem } from "../work-items.ts";
 import { projectEnded, projectStarted, wakeManager } from "./collab.ts";
 import { dropWaiting, waitingOf, type Waiting } from "./checkpoint.ts";
-import { clipTitle, goalOnlyPlan, normalizePlan, type ProjectPlan } from "./plan.ts";
+import { clipTitle, goalOnlyPlan, normalizePlan, ProjectError, type ProjectPlan } from "./plan.ts";
 import { projectProgress, projectSig, projectStallStep, type ProjectProgress } from "./progress.ts";
 import { changed, memberConversation, sys } from "./store.ts";
 
@@ -40,6 +40,7 @@ for (const [col, ddl] of [
 /** 换过办法仍连续卡住 3 次，不再让管理者自己处理，系统直接向用户报告（和单任务阶梯的「已用尽办法」同一思路）。 */
 const REPLAN_EXHAUSTED = 2;
 
+export { ProjectError };
 export type ProjectStatus = "proposed" | "active" | "done" | "stopped" | "dismissed";
 export interface ProjectRow {
 	id: string;
@@ -77,15 +78,6 @@ export interface ProjectJson {
 	progress: ProjectProgress;
 	/** 在等用户看的关键点（room_checkpoint）；没有就是 null */
 	waiting: Waiting | null;
-}
-
-/** 给 HTTP 用的错误：status 404 = 项目不存在（message 固定 "not_found"），409 = 状态不对（message 是给用户看的一句话）。 */
-export class ProjectError extends Error {
-	status: 404 | 409;
-	constructor(message: string, status: 404 | 409 = 409) {
-		super(message);
-		this.status = status;
-	}
 }
 
 const parsePlan = (s: string | null) => {
@@ -294,16 +286,6 @@ export function finishProject(roomId: string, projectId: string, summary: string
 	if (delivery) insertMessage({ agentId: delivery.managerId, conversationId: memberConversation(roomId, delivery.managerId), role: "card", meta: { kind: "project-delivery", projectId: p.id, title: p.title, summary, files: delivery.files, howToUse: delivery.howToUse, notDone: delivery.notDone } });
 	changed(roomId);
 	return getProject(p.id)!;
-}
-
-/** 旧的 room-goal 卡片确认：直接建一个 active 项目（方案只有目标和完成标准）。 */
-export function startGoalProject(roomId: string, by: string, goal: string, doneCriteria: string) {
-	const plan = goalOnlyPlan(goal, doneCriteria);
-	if (!plan.goal || !plan.doneCriteria) throw new Error("目标和完成标准都要写清楚");
-	const id = uid("pj");
-	const t = now();
-	db.prepare("INSERT INTO room_projects(id, room_id, title, status, plan, created_by, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)").run(id, roomId, clipTitle("", plan.goal), "proposed", JSON.stringify(plan), by, t, t);
-	return confirmProject(roomId, id, "user");
 }
 
 /** 迁移旧的自主推进（服务启动时跑，幂等）：rooms.autonomy → 一个 active 项目；进行中的任务挂上它；autonomy 清空。 */

@@ -1,17 +1,17 @@
 /**
- * 长期任务的状态动作：创建、派活、核验、编辑、开始 / 继续 / 暂停 / 取消，以及群生命周期的衔接。
+ * 长期任务的状态动作：创建、派活、编辑、重开、开始 / 继续 / 暂停 / 取消。
  * 执行本身在 exec.ts（负责人自己的任务会话）；这里只改“责任”。
- * 群 → 任务的唯一入口是 onRoomWorkEvent；任务不跟群「停止」走（停群不停任务，只能单个暂停或一键全停）。
+ * 拆出去的：launch.ts（开始一次执行、自动放行下游）、verify.ts（核验）、lifecycle.ts（群生命周期衔接）。
+ * 任务不跟群「停止」走（停群不停任务，只能单个暂停或一键全停）。
  */
 import { db, now, uid } from "../db.ts";
-import { availableTasksText, pendingDependentsOf, pendingDeps, readyDependents, resolveRefs, wouldCycle, dependencyEdges } from "./deps.ts";
-import { cancelWorkRuns, createRun, dispatchRun, failRun, promoteRunMemories, recordProgress, repeatOf, workPrompt } from "./exec.ts";
+import { availableTasksText, dependencyEdges, pendingDependentsOf, pendingDeps, resolveRefs, wouldCycle } from "./deps.ts";
+import { cancelWorkRuns, createRun, recordProgress, workPrompt } from "./exec.ts";
+import { launch, retryLimitReached } from "./launch.ts";
 import { port } from "./ports.ts";
-import { deliverNewVersion, passedBefore } from "./upstream.ts";
 import {
 	activeMember,
 	actorKey,
-	actorName,
 	agentName,
 	canAct,
 	clip,
@@ -21,22 +21,17 @@ import {
 	getWorkItemDetail,
 	itemRow,
 	MAX_AUTO_RETRIES,
-	parseDepends,
 	requireManagerOrUser,
 	requireRoom,
 	roomNotice,
 	stringifyDepends,
 	trustedSource,
 	WORK_STATUS_LABEL,
-	WorkItemError,
 	type WorkActor,
 	type WorkItemRow,
-	type WorkRunRow,
 } from "./store.ts";
-import { answerDecision, escalate, EXHAUSTED_MARK, REPORT_HINT, SWITCH_HINT } from "./watch.ts";
-
-/** 系统自己推进（不是哪个用户/助理的动作）时用的 actor；和 watch.ts 的 SYSTEM 同一用法。 */
-const SYSTEM: WorkActor = { kind: "user" };
+import { verifyWorkItem } from "./verify.ts";
+import { answerDecision } from "./watch.ts";
 
 export interface CreateWorkItemInput {
 	roomId: string;
@@ -54,28 +49,6 @@ export interface CreateWorkItemInput {
 	after?: string[];
 	/** 属于方案里的哪个阶段（项目有阶段时按名字匹配） */
 	stage?: string;
-}
-
-/** 立刻在负责人的任务会话里开跑；派发本身失败就明确标受阻。 */
-export function launch(item: WorkItemRow, run: WorkRunRow, rethrow = false) {
-	try {
-		dispatchRun(item, run);
-	} catch (e) {
-		failRun(item, run, e);
-		emit(item.room_id);
-		if (rethrow) throw e instanceof WorkItemError ? e : new WorkItemError(e instanceof Error ? e.message : String(e), "dispatch_failed");
-	}
-}
-
-/**
- * 反复重做仍不通过：管理者不能再原样重派，也不去问用户（不是费用 / 次数上限，只是卡在同一处）。
- * 第一次给「最后提醒」（报错里写清怎么换做法）；给过之后同一个任务再撞到就标「已用尽办法」向用户报告失败总结。
- * 换人（改派给不同成员）会让新负责人有完整的重做次数，但最后提醒不会再给第二次。
- */
-function retryLimitReached(row: WorkItemRow): never {
-	const rung = escalate(row.id, "retry", "user", `已经重做 ${MAX_AUTO_RETRIES} 次仍未通过`, { wake: false });
-	if (rung === null) fail("这个任务正在等用户决定，先不要再派活", "retry_limit");
-	fail(rung === 3 ? `这个任务${EXHAUSTED_MARK}（已重做 ${MAX_AUTO_RETRIES} 次仍未通过，最后提醒后仍没换做法）。${REPORT_HINT}` : `这个任务已经反复重做 ${MAX_AUTO_RETRIES} 次仍未通过，${SWITCH_HINT}`, "retry_limit");
 }
 
 export function createWorkItem(input: CreateWorkItemInput, actor: WorkActor) {
@@ -155,111 +128,6 @@ export function dispatchFromRoom(roomId: string, agentId: string, workItemId: st
 	return run;
 }
 
-/**
- * 开始一个前置都已完成的 pending 任务（不绕过 createRun + launch 这条现有的开始路径）；负责人不在群里就标受阻待改派并叫醒管理者。
- * upstream = 刚核验通过的前置任务（放行暂缓任务时没有）。advanceDependents 和 startReleased 共用。
- */
-function startDependent(dep: WorkItemRow, upstream: WorkItemRow | null) {
-	const revision = dep.revision + 1;
-	if (!dep.owner_agent_id || !dep.room_id || !activeMember(dep.room_id, dep.owner_agent_id)) {
-		db.prepare("UPDATE work_items SET status = 'blocked', revision = ?, latest_progress = ?, blocker = ?, updated_at = ? WHERE id = ? AND revision = ?").run(revision, "前置任务已完成，但负责人不可用，待改派", "负责人不可用，待改派", now(), dep.id, dep.revision);
-		event(dep.id, "owner.unavailable", SYSTEM, revision, { upstream: upstream?.id });
-		roomNotice(dep.room_id, `任务「${dep.title}」的前置任务${upstream ? `「${upstream.title}」` : ""}已完成，但负责人不在群里，已标为待改派。`, dep.id);
-		if (dep.room_id) port()?.wakeManager(dep.room_id, `任务「${dep.title}」的负责人不可用，待改派`, dep.id);
-		emit(dep.room_id);
-		return;
-	}
-	db.prepare("UPDATE work_items SET status = 'active', revision = ?, latest_progress = '前置任务已完成，自动开始', blocker = NULL, updated_at = ? WHERE id = ? AND revision = ?").run(revision, now(), dep.id, dep.revision);
-	event(dep.id, "started", SYSTEM, revision, { auto: true, upstream: upstream?.id });
-	roomNotice(dep.room_id, upstream ? `「${upstream.title}」已完成，「${dep.title}」自动开始，交给 ${agentName(dep.owner_agent_id)}。` : `「${dep.title}」的前置任务都已完成，自动开始，交给 ${agentName(dep.owner_agent_id)}。`, dep.id);
-	const cur = itemRow(dep.id)!;
-	launch(cur, createRun(cur, cur.owner_agent_id!, { task: workPrompt(cur) }));
-	emit(dep.room_id);
-}
-
-/**
- * 一个任务核验通过后，所有依赖它、状态 pending、且全部前置都已完成的下游任务自动开始。
- * 项目方案里有关键点、且这次核验让这个任务所在的阶段刚完成时，别的阶段的下游先暂缓（RoomPort.holdForCheckpoint，由群模块决定并记下），等管理者确认后由 startReleased 放行。
- */
-function advanceDependents(item: WorkItemRow) {
-	for (const dep of readyDependents(item.id)) {
-		if (item.project_id && dep.project_id === item.project_id && port()?.holdForCheckpoint(item.project_id, item.id, dep.id)) {
-			db.prepare("UPDATE work_items SET latest_progress = ?, updated_at = ? WHERE id = ? AND revision = ?").run("等管理者确认下一阶段（方案里有要请你看的关键点）", now(), dep.id, dep.revision);
-			emit(dep.room_id);
-			continue;
-		}
-		startDependent(dep, item);
-	}
-}
-
-/** 放行暂缓的任务：还是 pending 且前置都已完成才开始（被管理者改派 / 取消 / 编辑过的按新状态，不是 pending 就不动）；开始了返回 true。 */
-export function startReleased(itemId: string): boolean {
-	const dep = itemRow(itemId);
-	if (!dep || dep.status !== "pending" || pendingDeps(parseDepends(dep.depends_on)).length) return false;
-	startDependent(dep, null);
-	return true;
-}
-
-/** 核验：只有管理者 / 用户；必须有检查结论；通过才算完成，退回则开一个新修订继续，走不通就标受阻并交给管理者改计划。 */
-export async function verifyWorkItem(o: { workItemId: string; actor: WorkActor; verdict: "pass" | "return" | "impossible"; note: string }) {
-	const row = itemRow(o.workItemId);
-	if (!row) fail("任务不存在", "not_found");
-	requireManagerOrUser(row, o.actor);
-	if (!canAct(row.status, "verify")) fail(`任务现在是「${WORK_STATUS_LABEL[row.status]}」，还不能核验`, "bad_status");
-	const note = clip(o.note, 4000);
-	if (!note) fail("核验要写检查结论（看到了什么、为什么通过、退回还是走不通）", "needs_conclusion");
-	if (o.verdict !== "pass" && o.verdict !== "return" && o.verdict !== "impossible") fail("核验结论只会是通过、退回或这条路走不通", "bad_verdict");
-	const t = now();
-	recordProgress(row);
-	if (o.verdict === "pass") {
-		const again = passedBefore(row.id); // 之前已经通过过一次：这次是新版本
-		const verification = JSON.stringify({ verdict: "pass", note, by: actorKey(o.actor), byName: actorName(o.actor), at: t, revision: row.revision });
-		db.prepare("UPDATE work_items SET status = 'done', latest_progress = ?, blocker = NULL, verification = ?, completed_at = ?, auto_retries = 0, needs_user = NULL, escalation = NULL, updated_at = ? WHERE id = ? AND revision = ?").run(`已核验完成：${note.slice(0, 300)}`, verification, t, t, row.id, row.revision);
-		event(row.id, "verified.pass", o.actor, row.revision, { note: note.slice(0, 2000) });
-		roomNotice(row.room_id, `任务「${row.title}」核验通过：${note.slice(0, 300)}`, row.id);
-		await promoteRunMemories(row.id, row.revision).catch((e) => console.warn(`[work] 执行记忆转正失败：${e instanceof Error ? e.message : e}`));
-		advanceDependents(row);
-		if (row.project_id) port()?.stageMaybeDone(row.project_id);
-		if (again) deliverNewVersion(itemRow(row.id)!);
-		emit(row.room_id);
-		return getWorkItemDetail(row.id);
-	}
-	if (o.verdict === "impossible") {
-		// 不自动重做、不算 auto_retries：这不是「没做好」，是「这条路走不通」，直接交给管理者换做法或改方案（见 room_project_replan）。
-		const verification = JSON.stringify({ verdict: "impossible", note, by: actorKey(o.actor), byName: actorName(o.actor), at: t, revision: row.revision });
-		db.prepare("UPDATE work_items SET status = 'blocked', latest_progress = ?, blocker = ?, verification = ?, updated_at = ? WHERE id = ? AND revision = ?").run(`这条路走不通：${note.slice(0, 300)}`, `这条路走不通：${note.slice(0, 500)}`, verification, t, row.id, row.revision);
-		event(row.id, "verified.impossible", o.actor, row.revision, { note: note.slice(0, 2000) });
-		roomNotice(row.room_id, `任务「${row.title}」这条路走不通：${note.slice(0, 300)}。不会自动重做，已交给管理者换办法或改方案。`, row.id);
-		emit(row.room_id);
-		return getWorkItemDetail(row.id);
-	}
-	const rep = repeatOf(row.id, note);
-	const revision = row.revision + 1;
-	db.prepare("UPDATE work_items SET status = 'active', revision = ?, latest_progress = ?, blocker = NULL, updated_at = ? WHERE id = ? AND revision = ?").run(revision, `已退回修改：${note.slice(0, 300)}`, t, row.id, row.revision);
-	event(row.id, "verified.return", o.actor, revision, { note: note.slice(0, 2000), fromRevision: row.revision, ...(rep.fp ? { fp: rep.fp } : {}) });
-	// 退回本身就是明确的改进要求 + 原授权仍有效：直接安排原任务下一次执行，不用用户再催「继续」。
-	// 任务执行不占群的发言 / 上限，群本轮暂停也不挡它；只在负责人不在、或反复退回时停下。
-	const fresh = itemRow(row.id)!;
-	const ownerOk = !!fresh.owner_agent_id && !!fresh.room_id && activeMember(fresh.room_id, fresh.owner_agent_id);
-	const repeated = fresh.auto_retries >= MAX_AUTO_RETRIES || rep.level === "user";
-	// 群里说清为什么退回、接下来谁做什么（负责人不在群里时下面另有一条说明）
-	roomNotice(row.room_id, `任务「${row.title}」退回修改：${note.slice(0, 300)}${!ownerOk ? "" : repeated ? "。已经反复退回，不再原样重做，由管理者换做法。" : `。${agentName(fresh.owner_agent_id)} 会按这个意见自动重做。`}`, row.id);
-	if (!ownerOk) {
-		db.prepare("UPDATE work_items SET status = 'blocked', latest_progress = ?, blocker = ?, updated_at = ? WHERE id = ? AND revision = ?").run("退回后负责人已不在群里，待改派", "负责人不可用", now(), fresh.id, fresh.revision);
-		roomNotice(fresh.room_id, `任务「${fresh.title}」退回后负责人不在群里，已标为待改派。`, fresh.id);
-	} else if (repeated) {
-		// 反复退回：不再原样重做，也不问用户——管理者换做法（最后提醒，唤醒只在用户核验时需要；管理者自己核验的结果直接在工具返回里）；给过之后再撞就是已用尽办法
-		const rung = escalate(fresh.id, "retry", "user", `反复退回仍未通过（最近：${note.slice(0, 120)}）`, { wake: o.actor.kind === "user" });
-		if (rung !== 3) db.prepare("UPDATE work_items SET status = 'blocked', latest_progress = ?, blocker = ?, updated_at = ? WHERE id = ? AND revision = ?").run(`已重做 ${fresh.auto_retries} 次仍在退回，原样重做已停用`, "原样重做已停用，等管理者换做法（改派 / 拆小 / 自己接手）", now(), fresh.id, fresh.revision);
-	} else {
-		db.prepare("UPDATE work_items SET auto_retries = auto_retries + 1, updated_at = ? WHERE id = ? AND revision = ?").run(now(), fresh.id, fresh.revision);
-		event(fresh.id, "auto_retry", o.actor, fresh.revision, { retry: fresh.auto_retries + 1 });
-		launch(itemRow(fresh.id)!, createRun(fresh, fresh.owner_agent_id!, { task: workPrompt(fresh) }));
-		if (rep.level === "manager" && o.actor.kind === "user") escalate(fresh.id, "repeat", "manager", `又因同样的问题被退回：${note.slice(0, 120)}`);
-	}
-	emit(row.room_id);
-	return getWorkItemDetail(row.id);
-}
 
 export function editWorkItem(o: { workItemId: string; actor: WorkActor; title?: string; requirement?: string; doneCriteria?: string; ownerAgentId?: string | null; after?: string[]; stage?: string | null }) {
 	const row = itemRow(o.workItemId);
@@ -448,37 +316,6 @@ export async function pauseAllWorkItems(roomId: string) {
 	return { paused: rows.length };
 }
 
-// ---------------------------------------------------------------- 与群生命周期的衔接（钩子①）
-
-/** 移出成员：标受阻待改派，不自动转给管理者，也不继续调度。 */
-function onRoomMemberRemoved(roomId: string, agentId: string) {
-	const rows = db.prepare("SELECT * FROM work_items WHERE room_id = ? AND owner_agent_id = ? AND status IN ('pending','active','blocked','review')").all(roomId, agentId) as unknown as WorkItemRow[];
-	for (const row of rows) {
-		db.prepare("UPDATE work_items SET status = 'blocked', revision = revision + 1, latest_progress = ?, blocker = ?, updated_at = ? WHERE id = ? AND revision = ?").run(`负责人 ${agentName(agentId)} 已移出群聊，待改派`, "负责人已移出群聊", now(), row.id, row.revision);
-		event(row.id, "owner.left", { kind: "user" }, row.revision + 1, { agentId });
-		cancelWorkRuns(row.id, { abortCurrent: true }).catch(() => {});
-	}
-	if (rows.length) emit(roomId);
-}
-
-/** 删群：中止本群任务的执行，并按原删除语义清掉本群的任务与关联（成员自己的任务会话保留为它的记忆）。 */
-function deleteRoomWorkItems(roomId: string) {
-	const ids = (db.prepare("SELECT id FROM work_items WHERE room_id = ?").all(roomId) as { id: string }[]).map((r) => r.id);
-	for (const id of ids) {
-		void cancelWorkRuns(id, { abortCurrent: true }).catch(() => {});
-		db.prepare("DELETE FROM work_item_events WHERE work_item_id = ?").run(id);
-		db.prepare("DELETE FROM work_item_runs WHERE work_item_id = ?").run(id);
-	}
-	db.prepare("DELETE FROM work_exec_conversations WHERE room_id = ?").run(roomId);
-	db.prepare("DELETE FROM work_items WHERE room_id = ?").run(roomId);
-}
-
-/** 钩子①（群 → 任务）：成员移出、删群从这里进来。群「停止」不在这里——停群不停任务。 */
-export type RoomWorkEvent = { kind: "memberRemoved"; roomId: string; agentId: string } | { kind: "roomDeleted"; roomId: string };
-export function onRoomWorkEvent(e: RoomWorkEvent) {
-	if (e.kind === "memberRemoved") return onRoomMemberRemoved(e.roomId, e.agentId);
-	return deleteRoomWorkItems(e.roomId);
-}
 
 /** HTTP 用户动作的入口：统一按用户 actor 执行，忽略请求体里的任何身份字段。 */
 export async function userAction(workItemId: string, action: string, body: Record<string, unknown>) {

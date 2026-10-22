@@ -15,7 +15,7 @@ import { VoiceInput } from "./VoiceInput";
 import { buildReplyRef, draftSignature, liveMentions, newClientId, replyDraftKey, resolveRoomReplyTarget, roomSendBody } from "../replies";
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
 import { locateRoomMessage, type LocateResult } from "../replies-api";
-import { PeerWrap } from "./RoomPeer";
+import { peerAskDisplay, PeerWrap } from "./RoomPeer";
 import { ProjectTagged, useProjectRows } from "./RoomProjectFilter";
 import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
 
@@ -281,7 +281,7 @@ function RoomBotTurn({ row, room, agents, list, live, onAvatar, onQuote, onJump,
 					{row.agentId === room.managerId && <span className="pa-room-badge">管理者</span>}
 					{who.deleted && <span className="pa-room-badge muted">已删除</span>}
 				</div>
-				{parts.map((p, i) => <PeerWrap key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} room={room} agents={agents} list={list} onJump={onJump}><BotPart p={p} live={live && i === parts.length - 1 && p.kind === "steps"} onQuote={onQuote} onJump={onJump} interaction={interaction} /></PeerWrap>)}
+				{parts.map((p, i) => <PeerWrap key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} room={room} agents={agents} list={list} onJump={onJump}><BotPart p={peerAskDisplay(p)} live={live && i === parts.length - 1 && p.kind === "steps"} onQuote={onQuote} onJump={onJump} interaction={interaction} /></PeerWrap>)}
 				{live && !streaming && !waitingCard && <Activity tool={runningTool} />}
 			</div>
 		</div>

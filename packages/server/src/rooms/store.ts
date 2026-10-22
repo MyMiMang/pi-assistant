@@ -14,7 +14,6 @@ export interface RoomRow {
 	caps: string;
 	unread: number;
 	paused: string | null;
-	autonomy: string | null;
 	sort: number;
 	created_at: number;
 	updated_at: number;

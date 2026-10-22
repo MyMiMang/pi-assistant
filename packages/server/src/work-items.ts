@@ -4,7 +4,8 @@
  *  guard   纯逻辑：看板分组、卡住 / 反复卡住判断
  *  deps    任务依赖：解析 / 防环 / 哪些下游可以自动开始
  *  exec    在负责人自己的任务会话里执行、提交、汇报进展
- *  actions 创建 / 派活 / 核验 / 编辑 / 开始 / 继续 / 暂停 / 取消 + 群生命周期钩子
+ *  actions 创建 / 派活 / 编辑 / 重开 / 开始 / 继续 / 暂停 / 取消
+ *  launch / verify / lifecycle  开始一次执行与自动放行下游、核验、群生命周期钩子
  *  rework / upstream  负责人重做、带着回答接着做；上游出新版本交给下游（决策 0019 第 4 步）
  *  watch   卡住检测、上报、「等你决定」
  *  correction 群里自然语言纠正：任务识别与本轮许可
@@ -16,6 +17,9 @@ export * from "./work-items/guard.ts";
 export * from "./work-items/deps.ts";
 export { ALIGN_RULE, bootstrapWorkItems, cancelWorkRuns, execConversationsOfRoom, execOf, finishRun, liveRunOf, promoteRunMemories, reportProgress, steerToLiveRun, submitWorkItem, workPrompt } from "./work-items/exec.ts";
 export * from "./work-items/actions.ts";
+export { launch, startReleased } from "./work-items/launch.ts";
+export { verifyWorkItem } from "./work-items/verify.ts";
+export { onRoomWorkEvent, type RoomWorkEvent } from "./work-items/lifecycle.ts";
 export { resumeWithNote, reworkByOwner } from "./work-items/rework.ts";
 export { deliverNewVersion, passedBefore } from "./work-items/upstream.ts";
 export { answerDecision, askUserDecision, checkStalls, escalate, startWorkWatch } from "./work-items/watch.ts";

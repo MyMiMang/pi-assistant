@@ -33,10 +33,18 @@ export function makeTempRun(prefix) {
 	return run;
 }
 
+/**
+ * 真实模型服务商的凭据环境变量（*_API_KEY / *_TOKEN、ANTHROPIC_* / AWS_* / AZURE_* / GOOGLE_* 等）。
+ * 临时服务不继承：Pi 会把设了这些变量的服务商算作「已配置」，模型分组数就跟着开发机变
+ * （room-member-model-settings-ui 的「按两个已配置服务分组」就这样挂过），也不能有误碰真实付费模型的可能。
+ */
+const CREDENTIAL_ENV = /(_API_KEY|_TOKEN|_SECRET_ACCESS_KEY)$|^(ANTHROPIC|AWS|AZURE|GOOGLE|GCLOUD)_/;
+export const withoutCredentials = (env) => Object.fromEntries(Object.entries(env).filter(([k]) => !CREDENTIAL_ENV.test(k)));
+
 /** 给**服务进程**的 env：临时 HOME / TMPDIR / DATA / WORKSPACE（浏览器不要用这份）。 */
 export function serverEnv(run, extra = {}) {
 	return {
-		...process.env,
+		...withoutCredentials(process.env),
 		HOME: run.home,
 		TMPDIR: run.runDir,
 		PIA_DATA_DIR: run.data,

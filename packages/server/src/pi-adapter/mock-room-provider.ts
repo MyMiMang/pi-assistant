@@ -11,6 +11,26 @@ const textOf = (m: Msg) =>
 export function imageCount(m: Msg | undefined) {
 	return m && Array.isArray(m.content) ? (m.content as { type?: string }[]).filter((b) => b.type === "image").length : 0;
 }
+/** 管理者最近一次 room_plan 调用里填的阶段（历史里的 toolCall）。 */
+function planStagesFromHistory(messages: Msg[]) {
+	for (const m of [...messages].reverse()) {
+		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+		for (const b of [...(m.content as { type?: string; name?: string; arguments?: { stages?: { name?: string; output?: string }[] } }[])].reverse()) {
+			if (b.type === "toolCall" && b.name === "room_plan") return (b.arguments?.stages ?? []).map((x) => ({ name: String(x.name ?? "").trim(), output: String(x.output ?? "").trim() })).filter((x) => x.name);
+		}
+	}
+	return [];
+}
+/**
+ * 管理者正忙时用户在群里说的话会以「（用户在群里说）…」插话进来（scheduler 的 steer），不带群消息的抬头。
+ * 群会话（系统提示的名单里有「（你）」）里把它换成「上一条群消息的抬头 + 【用户】…」交给 roomReply；不是群会话返回 null。
+ */
+export function roomSteerPrompt(u: string, systemPrompt: string, messages: Msg[]) {
+	const body = u.match(/^(?:（你工作时用户发来的新消息）\n?)?（用户在群里说）([^\n]*)/)?.[1];
+	if (body === undefined || !/^- [^\n]*（你）/m.test(systemPrompt)) return null;
+	const head = messages.map(textOf).reverse().find((t) => t.startsWith("（群聊「"))?.split("\n")[0];
+	return head ? `${head}\n【用户】${body}` : null;
+}
 export function roomReply(u: string, systemPrompt: string, last: Msg, messages: Msg[]) {
 	const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
 	const paths = [...textOf(lastUserMsg ?? last).matchAll(/ → (room-files\/\S+?)[、）\n]/g)].map((x) => x[1]);
@@ -18,7 +38,10 @@ export function roomReply(u: string, systemPrompt: string, last: Msg, messages: 
 	const seen = paths.length || imgs ? `（看到附件：${paths.join("、") || "无路径"}；图片 ${imgs} 张）` : "";
 	const me = u.match(/· 你是 ([^（）\n]+)/)?.[1]?.trim() ?? "我";
 	// 用户最近说的话：从整段会话里找（管理者总结时这一轮注入里可能没有用户的话）
-	const users = messages.filter((m) => m.role === "user").flatMap((m) => [...textOf(m).matchAll(/【用户】([^\n]*)/g)].map((x) => x[1]));
+	const users = messages.filter((m) => m.role === "user").flatMap((m) => {
+		const steer = textOf(m).match(/^(?:（你工作时用户发来的新消息）\n?)?（用户在群里说）([^\n]*)/);
+		return steer ? [steer[1]] : [...textOf(m).matchAll(/【用户】([^\n]*)/g)].map((x) => x[1]);
+	});
 	const said = users[users.length - 1] ?? "";
 	const target = said.match(/派给([^\s，,。]+)/)?.[1];
 	const isFollowup = /成员都已|任务看板有变化/.test(u);
@@ -100,9 +123,14 @@ export function roomReply(u: string, systemPrompt: string, last: Msg, messages: 
 	if (last.toolName === "room_plan") return fauxAssistantMessage(`${me}：好的。`);
 	// 项目确认后的那次唤醒（决策 0019 第 3 步）：按方案阶段建任务，一个阶段一个任务，stage 填阶段名，第二个起 after 前一个；
 	// 建完就不再重复（createdIds.length >= stages.length），兼容「可以」确认同一轮直接继续、也兼容用户点按钮确认后另一次唤醒。
-	if (last.toolName === "room_project_start" || /把第一批任务派给对口成员|按新方案调整任务/.test(u)) {
+	// 这一回合里项目是刚被管理者确认开始的（用户在群里说「可以」，工具返回「开始了」）也要把阶段都建完：不能只看 last 是不是 room_project_start，
+	// 否则建出第一个任务后条件就不成立了；工具报错（项目早就在进行，比如用户答复关键点时说的「可以，继续」）不算，免得重复建任务。
+	// 阶段取自这一轮用的方案（系统提示里的阶段行只在项目已开始的会话里才有，会话没重建时读不到，所以回头看管理者自己出方案时填的阶段）。
+	const startedNow = since.some((m) => m.role === "toolResult" && m.toolName === "room_project_start" && /开始了/.test(textOf(m)));
+	if (startedNow || /把第一批任务派给对口成员|按新方案调整任务/.test(u)) {
 		const stageLine = systemPrompt.match(/阶段：([^\n]+)/)?.[1] ?? "";
-		const stages = [...stageLine.matchAll(/\d+\.\s*([^→；]+?)(?:\s*→\s*([^；]+))?(?=；|$)/g)].map((m) => ({ name: m[1].trim(), output: (m[2] ?? "").trim() }));
+		const fromPrompt = [...stageLine.matchAll(/\d+\.\s*([^→；]+?)(?:\s*→\s*([^；]+))?(?=；|$)/g)].map((m) => ({ name: m[1].trim(), output: (m[2] ?? "").trim() }));
+		const stages = fromPrompt.length ? fromPrompt : planStagesFromHistory(messages);
 		if (stages.length) {
 			const rosterBlock = systemPrompt.match(/这些助理：\n([\s\S]*?)\n成员的名字一律以这份名单为准/)?.[1] ?? "";
 			const roster = [...rosterBlock.matchAll(/^- ([^（：\n]+)/gm)].map((x) => x[1].trim());

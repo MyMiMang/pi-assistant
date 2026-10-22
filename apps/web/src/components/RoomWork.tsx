@@ -10,8 +10,8 @@ import { WorkItemsButton } from "./WorkItems";
 
 const STAGE_STATE: Record<string, string> = { todo: "没开始", doing: "进行中", done: "已完成" };
 
-/** 项目面板里方案下面的进度清单：阶段 + 任务（名字 / 负责人 / 状态 / 等谁），没写阶段的任务放「其他任务」。 */
-function ProjectProgressView({ progress }: { progress: ProjectProgress }) {
+/** 项目面板里方案下面的进度清单：阶段 + 任务（名字 / 负责人 / 状态 / 等谁），没写阶段的任务放「其他任务」。noTasks = 单聊项目：只有阶段、没有任务清单。 */
+export function ProjectProgressView({ progress, noTasks }: { progress: ProjectProgress; noTasks?: boolean }) {
 	const groups = [
 		...progress.stages.map((s) => ({ key: s.name, label: s.name, state: s.state as string | null, items: s.items })),
 		...(progress.other.length ? [{ key: "__other", label: "其他任务", state: null, items: progress.other }] : []),
@@ -27,8 +27,8 @@ function ProjectProgressView({ progress }: { progress: ProjectProgress }) {
 							<b className="text-sm">{g.label}</b>
 							{g.state ? <Badge tone={g.state === "done" ? "green" : g.state === "doing" ? "accent" : "zinc"}>{STAGE_STATE[g.state]}</Badge> : null}
 						</div>
-						<div className="mt-1 space-y-1">
-							{g.items.length ? g.items.map((it) => (
+						<div className={noTasks ? undefined : "mt-1 space-y-1"}>
+							{noTasks ? null : g.items.length ? g.items.map((it) => (
 								<div key={it.id} className="flex flex-wrap items-baseline gap-1 text-xs" data-testid="room-progress-item">
 									<span className="min-w-0 truncate">{it.title}</span>
 									<small className="text-mut2">{it.ownerName || "未安排负责人"} · {it.statusLabel}{it.waitingFor.length ? ` · 等：${it.waitingFor.join("、")}` : ""}</small>
@@ -63,22 +63,30 @@ export function RoomWorkButtons({ room }: { room: Room }) {
  * 一个项目显示名称 + 状态，多个显示「项目 N」；点开看方案、停下项目、翻已结束的项目。
  * 立项不在这里：用户在群里跟管理者说要做的事，管理者出方案卡，用户确认后项目开始。
  */
-export function ProjectsButton({ room }: { room: Room }) {
+export const ProjectsButton = ({ room }: { room: Room }) => <ProjectsPanel base={`/api/rooms/${room.id}`} projects={room.projects ?? []} refresh={() => useStore.getState().loadRooms()} />;
+
+/** 面板里要用的项目字段（群聊项目和单聊项目共有的部分）。 */
+export type PanelProject = Omit<RoomProject, "roomId">;
+
+/**
+ * 项目入口 + 面板（群聊和单聊共用）：base 是接口前缀（/api/rooms/:id 或 /api/conversations/:id），refresh 在停下 / 恢复后重新取项目；
+ * solo = 单聊：说话对象是「我」（助理自己）而不是管理者，没有关键点等待和任务清单，也没有「接着做」。
+ */
+export function ProjectsPanel({ base, projects, refresh, solo }: { base: string; projects: PanelProject[]; refresh: () => Promise<unknown> | void; solo?: boolean }) {
 	const [open, setOpen] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
-	const [ended, setEnded] = useState<RoomProject[] | null>(null);
+	const [ended, setEnded] = useState<PanelProject[] | null>(null);
 	const [showEnded, setShowEnded] = useState(false);
 	const [dlg, ask] = useConfirm();
-	const projects = room.projects ?? [];
-	// 项目都结束后入口隐藏，面板也要关掉：否则下次出新方案时会带着旧的打开状态自己弹出来
+		// 项目都结束后入口隐藏，面板也要关掉：否则下次出新方案时会带着旧的打开状态自己弹出来
 	useEffect(() => { if (!projects.length) setOpen(false); }, [projects.length]);
 	if (!projects.length) return null;
 	const one = projects.length === 1 ? projects[0] : null;
 	const active = projects.some((p) => p.status === "active");
 	const waiting = projects.some((p) => p.status === "active" && p.waiting);
 	// 进行中项目显示阶段进度；没有阶段信息（旧数据或字段还没来）就退回原来的状态文字
-	const chipLabel = (p: RoomProject) => {
+	const chipLabel = (p: PanelProject) => {
 		const prog = p.progress;
 		if (p.status === "active" && p.waiting) return "等你看一眼";
 		if (p.status === "active" && prog) {
@@ -90,19 +98,19 @@ export function ProjectsButton({ room }: { room: Room }) {
 	const loadEnded = async () => {
 		setErr("");
 		try {
-			const r = await api<{ projects: RoomProject[] }>(`/api/rooms/${room.id}/projects?all=1`);
+			const r = await api<{ projects: PanelProject[] }>(`${base}/projects?all=1`);
 			setEnded(r.projects.filter((p) => p.status !== "proposed" && p.status !== "active"));
 		} catch (e) {
 			setErr((e as Error).message);
 		}
 	};
-	const stop = async (p: RoomProject) => {
-		if (!(await ask({ title: `停下项目「${p.title}」？`, body: "这个项目下正在做的任务会暂停，进度保留；想继续就在群里跟管理者说。", ok: "停下", danger: true }))) return;
+	const stop = async (p: PanelProject) => {
+		if (!(await ask({ title: `停下项目「${p.title}」？`, body: solo ? "我手上正在做的活会停下，进度保留。" : "这个项目下正在做的任务会暂停，进度保留；想继续就在群里跟管理者说。", ok: "停下", danger: true }))) return;
 		setBusy(true);
 		setErr("");
 		try {
-			await api(`/api/rooms/${room.id}/projects/${p.id}/stop`, { method: "POST" });
-			await useStore.getState().loadRooms();
+			await api(`${base}/projects/${p.id}/stop`, { method: "POST" });
+			await refresh();
 			if (ended) void loadEnded();
 		} catch (e) {
 			setErr((e as Error).message);
@@ -110,12 +118,12 @@ export function ProjectsButton({ room }: { room: Room }) {
 			setBusy(false);
 		}
 	};
-	const resume = async (p: RoomProject) => {
+	const resume = async (p: PanelProject) => {
 		setBusy(true);
 		setErr("");
 		try {
-			await api(`/api/rooms/${room.id}/projects/${p.id}/resume`, { method: "POST" });
-			await useStore.getState().loadRooms();
+			await api(`${base}/projects/${p.id}/resume`, { method: "POST" });
+			await refresh();
 			if (ended) void loadEnded();
 		} catch (e) {
 			setErr((e as Error).message);
@@ -140,8 +148,8 @@ export function ProjectsButton({ room }: { room: Room }) {
 			<Modal open={open} onClose={() => setOpen(false)} title="项目" testId="room-projects-panel">
 				<div className="space-y-3 p-4">
 					<p className="flex items-center gap-1 text-xs text-mut2">
-						管理者按方案分工推进，只有需要你看一眼或拍板的事才找你。
-						<Help>想做一件新事，直接在群里跟管理者说；管理者会先出一份方案卡，你确认后项目才开始。想改方案也直接在群里说。</Help>
+						{solo ? "我按方案一步步推进，只有需要你看一眼或拍板的事才找你。" : "管理者按方案分工推进，只有需要你看一眼或拍板的事才找你。"}
+						<Help>{solo ? "遇到多步骤的大事，我会先出一份方案卡，你确认后项目才开始。想改方案直接跟我说。" : "想做一件新事，直接在群里跟管理者说；管理者会先出一份方案卡，你确认后项目才开始。想改方案也直接在群里说。"}</Help>
 					</p>
 					{projects.map((p) => (
 						<div key={p.id} className="pa-project" data-testid="room-project-item" data-status={p.status}>
@@ -150,10 +158,10 @@ export function ProjectsButton({ room }: { room: Room }) {
 								<span className="pa-tag">{PROJECT_STATUS[p.status]}</span>
 							</div>
 							{p.status === "active" && p.waiting ? <WaitingBlock w={p.waiting} /> : null}
-							<PlanBody plan={p.plan} />
-							{p.status === "proposed" && <p className="text-xs text-mut2">方案卡在群里，确认后开始。</p>}
-							{p.draft && <p className="text-xs text-mut2">有一份改过的方案在群里等你确认；确认前按原方案继续。</p>}
-							{p.status === "active" && p.progress ? <ProjectProgressView progress={p.progress} /> : null}
+							<PlanBody plan={p.plan} solo={solo} />
+							{p.status === "proposed" && <p className="text-xs text-mut2">方案卡在{solo ? "聊天" : "群"}里，确认后开始。</p>}
+							{p.draft && <p className="text-xs text-mut2">有一份改过的方案在{solo ? "聊天" : "群"}里等你确认；确认前按原方案继续。</p>}
+							{p.status === "active" && p.progress ? <ProjectProgressView progress={p.progress} noTasks={solo} /> : null}
 							{p.status === "active" && (
 								<div className="flex justify-end">
 									<button className="pa-btn sm" disabled={busy} onClick={() => void stop(p)} data-testid="room-project-stop">停下这个项目</button>
@@ -173,10 +181,10 @@ export function ProjectsButton({ room }: { room: Room }) {
 									<div key={p.id} className="pa-project-ended" data-testid="room-project-ended-item" data-status={p.status}>
 										<div className="flex items-start justify-between gap-2">
 											<b>{p.title}<small className="ml-1.5 font-normal">{PROJECT_STATUS[p.status]}{p.endedAt ? ` · ${fmtTime(p.endedAt)}` : ""}</small></b>
-											{p.status === "stopped" ? <button className="pa-btn sm ghost shrink-0" disabled={busy} onClick={() => void resume(p)} data-testid="room-project-resume">接着做</button> : null}
+											{p.status === "stopped" && !solo ? <button className="pa-btn sm ghost shrink-0" disabled={busy} onClick={() => void resume(p)} data-testid="room-project-resume">接着做</button> : null}
 										</div>
 										{p.summary && <span className="text-mut">{p.summary}</span>}
-										{p.status === "stopped" && p.progress ? <ProjectProgressView progress={p.progress} /> : null}
+										{p.status === "stopped" && p.progress ? <ProjectProgressView progress={p.progress} noTasks={solo} /> : null}
 									</div>
 								))}
 							</div>

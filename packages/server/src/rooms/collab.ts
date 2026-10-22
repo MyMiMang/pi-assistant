@@ -12,7 +12,7 @@ import { getAgent } from "../runtime.ts";
 import { boardDigest, itemsOfProject, setRoomPort, steerToLiveRun } from "../work-items.ts";
 import { boardDigestOrUnchanged, boardSig as projectBoardSig, PROJECT_IDLE_WAKE, idleWakeStep, planPeerTurns } from "./logic.ts";
 import { askIdOf } from "./ask-logic.ts";
-import { answerAsk, checkAskTimeouts } from "./ask-flow.ts";
+import { answerAsk, checkAskTimeouts, dropAnsweredTail } from "./ask-flow.ts";
 import { getAsk } from "./asks.ts";
 import { planText } from "./plan.ts";
 import { activeProjects, checkProjectStall, getProject, hasActiveProject, projectView } from "./projects.ts";
@@ -166,6 +166,7 @@ setTurnHooks({
 		if (askId) {
 			// 可追踪的提问：被问的人没调 answer_colleague、只在回合里说了话 → 这段话就是回答（已经发在群里，不再重复发），照样送回提问者
 			if (res.text && getAsk(askId)?.status === "open") answerAsk({ roomId, by: t.agentId, askId, text: res.text, post: false });
+			else if (res.text) dropAnsweredTail({ roomId, agentId: t.agentId, turnId: t.turnId, askId }); // 这一回合已经用工具回答 / 重做过：结尾那句短话不再发群
 		} else if (t.reason === "peer") {
 			notePeerTurn(roomId);
 			if (t.from && res.text) steerToLiveRun(roomId, t.from, `（${nameOf(t.agentId)} 在群里回复你）${res.text.slice(0, 4000)}`);

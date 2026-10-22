@@ -4,7 +4,8 @@
  *  - reworkByOwner：负责人把自己已完成的任务重开成新修订重做（只有被上游提问点名时才允许，调用方在 rooms/ask-tools.ts 校验）。
  */
 import { db } from "../db.ts";
-import { launch, reopenWorkItem } from "./actions.ts";
+import { reopenWorkItem } from "./actions.ts";
+import { launch } from "./launch.ts";
 import { createRun } from "./exec.ts";
 import { activeMember, clip, emit, fail, itemRow, WORK_STATUS_LABEL } from "./store.ts";
 

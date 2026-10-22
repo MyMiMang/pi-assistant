@@ -5,7 +5,8 @@
  */
 import { Type } from "typebox";
 import { db } from "../db.ts";
-import { cancelWorkItem, continueWorkItem, createWorkItem, editWorkItem, pauseWorkItem, reopenWorkItem, verifyWorkItem } from "./actions.ts";
+import { cancelWorkItem, continueWorkItem, createWorkItem, editWorkItem, pauseWorkItem, reopenWorkItem } from "./actions.ts";
+import { verifyWorkItem } from "./verify.ts";
 import { roundAllows } from "./correction.ts";
 import { hasDependents } from "./deps.ts";
 import { reportProgress, submitWorkItem } from "./exec.ts";

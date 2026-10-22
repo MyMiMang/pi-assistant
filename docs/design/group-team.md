@@ -132,7 +132,7 @@
 3. **任务依赖与自动交接**（已实现，未打包：`work-items/deps.ts`、`rooms/progress.ts`、`room_project_replan` / `room_project_resume`）：任务加依赖，验收通过后自动开始后续任务，带交接单；并行；项目进度清单；验收三种结果（「走不通」直接改做法）；项目级进度检查与改计划；停下后接着做。
 4. **成员直接协作**（已实现，未打包：`rooms/ask-*.ts`、`rooms/asks.ts`、`work-items/rework.ts`、`work-items/upstream.ts`；工具 ask_colleague / answer_colleague / report_upstream / work_rework）：「找同事」能力、回答回送、一个问题来回 3 轮没解决交给管理者、上游返工与重新验收、拿不准就对齐、互相等待超时交给管理者。
 5. **进度通知、关键点确认与交付卡**（已实现，未打包：`rooms/stages.ts`、`rooms/checkpoint.ts`、`rooms/deliver.ts`；工具 room_checkpoint、room_project_done 带交付信息）；失败说清楚；群里消息标明项目、可按项目筛选、长执行过程折叠。
-6. **单聊也走方案流程；清理**：旧开关、旧确认卡兼容、文档与决策更新。
+6. **单聊也走方案流程；清理**（已实现，未打包：`chat-projects/`、单聊方案卡 / 交付卡 / 顶部项目入口；拆 `work-items/{launch,verify,lifecycle}.ts`、`rooms/{queue,turn-prompt}.ts`；删旧自主推进路径，保留 `migrateAutonomy`；旧 room-goal 卡片只读显示）。成员文字里的 @ 没有并进可追踪提问（两套防空聊仍并存），风险是改变群里日常 @ 人的行为，留待真机看过再定。
 
 **第 1、2 步做完先打包，在真实群里实测**（看管理者的来意判断、方案质量），再决定后面怎么调。每一步都用临时数据 + Mock 跑单测和 e2e。
 
@@ -151,6 +151,8 @@
 ## 13. 单聊也走同一套（用户定）
 
 单聊的助理遇到多步骤的大事，同样：判断来意 → 想清楚、专业补全、只问必须问的 → 出方案（含关键确认点）→ 用户确认 → 自己带帮手推进 → 交付。小事和闲聊照常直接做。和群聊共用同一套「来意判断 / 方案卡 / 项目状态 / 交付卡」，只是执行者从「团队成员」换成「助理和它的帮手」。
+
+实现（第 6 步）：服务端 `packages/server/src/chat-projects/`（表 chat_projects、阶段进度、规则 `CHAT_PLAN_RULE`、工具 chat_plan / chat_project_start / chat_stage_done / chat_project_done）+ `routes/chat-projects.ts`（`/api/conversations/:cid/projects`）；方案卡复用 `room-plan`（带 conversationId）、交付卡复用 `project-delivery`，界面用 `RoomCards.tsx` 的 `PlanBody` / `RoomPlanCard`、`RoomDelivery.tsx`、`RoomWork.tsx` 的 `ProjectsPanel`（单聊顶部入口 `ChatProjects.tsx`）。单聊没有任务清单：阶段完成由助理用 chat_stage_done 标记。门槛比群聊高：只有真正多步骤的大事才出方案，小事和闲聊直接做。e2e：`e2e/chat-plan-ui.mjs`。
 
 ## 14. 参考了谁、学了什么（2026-10-21 调研 15 个同类产品，只看公开资料）
 

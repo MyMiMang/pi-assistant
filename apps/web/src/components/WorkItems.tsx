@@ -171,7 +171,7 @@ export function WorkItemsButton({ room }: { room: Room }) {
 		<>
 			<button className={cx("pa-chip", (groups.decision ?? 0) > 0 && "pa-work-chip-alert")} onClick={() => setOpen(true)} data-testid="room-work-items" aria-label="长期任务看板" title="任务：长期责任、核验与执行历史">
 				<ClipboardList className="pa-ic" />
-				<span>任务</span>
+				<span className="max-sm:hidden">任务</span>
 				{openCount > 0 && <span>{openCount}</span>}
 			</button>
 			<Modal open={open} onClose={() => setOpen(false)} title={detail ? "任务详情" : "任务"} wide fixed testId="work-items-overview">

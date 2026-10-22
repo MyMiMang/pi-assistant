@@ -44,6 +44,7 @@ import { beforeComputerAction, cuaMcpCommand, desktopPause, desktopStatus, scree
 import { mkdirSync, writeFileSync } from "node:fs";
 import { BRAND } from "@pi-assistant/shared";
 import { getAgent } from "./rows.ts";
+import { chatProjectTools } from "../chat-projects/tools.ts";
 import { roomHooks } from "./room-hooks.ts";
 import { pendingUpdates, maybeSuggest } from "./skill-suggest.ts";
 import { runtime } from "./agent-runtime.ts";
@@ -76,7 +77,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 				workspace,
 				guard: guardContext("host"),
 				// 电脑工具（sandbox 目标）和浏览器工具由各自的扩展把关（提交/付款/发送/上传才审批）
-				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n) || isHostTool(n) || isEmailTool(n) || n === "wechat_open" || n === "room_assign" || n === "room_propose_member" || n === "propose_room" || n === "work_create" || n === "work_submit" || n === "work_verify" || n === "work_list" || n === "work_update" || n === "work_report" || n === "work_ask_user" || n === "room_plan" || n === "room_project_start" || n === "room_project_done" || n === "room_checkpoint" || n === "room_project_replan" || n === "room_project_resume" || n === "ask_colleague" || n === "answer_colleague" || n === "report_upstream" || n === "work_rework",
+				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n) || isHostTool(n) || isEmailTool(n) || n === "wechat_open" || n === "room_assign" || n === "room_propose_member" || n === "propose_room" || n === "work_create" || n === "work_submit" || n === "work_verify" || n === "work_list" || n === "work_update" || n === "work_report" || n === "work_ask_user" || n === "room_plan" || n === "room_project_start" || n === "room_project_done" || n === "room_checkpoint" || n === "room_project_replan" || n === "room_project_resume" || n === "chat_plan" || n === "chat_project_start" || n === "chat_stage_done" || n === "chat_project_done" || n === "ask_colleague" || n === "answer_colleague" || n === "report_upstream" || n === "work_rework",
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId);
 					return { approved: !!res.approved, note: res.note };
@@ -265,6 +266,8 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 		},
 	];
 	if (roomHooks) exts.push(...(roomHooks.extensions(agentId, conversationId, taskId) as never[]));
+	// 单聊的「大事走方案」工具：只给用户可见单聊的主会话（群会话 / 帮手 / 后台任务不挂，工具内部再按对话判断一次）
+	if (!taskId && !opts.subagentId && opts.actor !== "group") exts.push({ name: "pia-chat-project", factory: chatProjectTools(agentId, conversationId) as never });
 	/** 请用户接管：截图进聊天 + 推送到手机，等用户点“已完成” */
 	const handoff = async (reason: string, png: Buffer, where: string) => {
 		const dir = join(workspace, ".screens");
