@@ -65,7 +65,7 @@ try {
  assert.equal(await pane.getByTestId("agent-draft").count(), 0, "详情无第二份模型草稿");
  assert.equal(await pane.getByTestId("agent-thinking").count(), 0, "模型页不再有另一套思考强度控件，复用输入框的模型按钮");
  let pop = await openAgentModelPop(page);
- assert.equal(await pop.locator(".pa-think-step").count(), 7);
+ await wait(async () => (await pop.locator(".pa-think-step").count()) === 7); // 档位列表异步加载，等它出来再数
  await pop.getByRole("slider").press("End");
  await wait(async () => (await current()).thinkingSetting === "max");
  pop = await openAgentModelPop(page);
@@ -258,10 +258,7 @@ try {
  await wait(async () => (await current()).thinkingSetting === "off");
  await pane.getByTestId("agent-info-heading").click();
  await pane.getByRole("button", { name: "关闭", exact: true }).first().click();
- await page.getByTestId("skill-picker").click(); await page.getByTestId("skill-empty-goto").click();
- await pane.getByTestId("agent-skills").waitFor();
- assert.equal(await page.getByTestId("info-tabs").locator('[data-itab=capabilities]').getAttribute('aria-selected'), 'true');
- await pane.getByRole("button", { name: "关闭", exact: true }).first().click();
+ assert.equal(await page.getByTestId("skill-picker").count(), 0, "输入栏不再有技能按钮（换成了权限按钮）"); await page.getByTestId("host-tier-button").waitFor();
  assert.equal(await page.getByTestId("proactive-picker").count(), 0, "输入框下不再有主动程度按钮");
  console.log("PASS direct chat: same persisted member setting; skill shortcut reaches its functional category");
  for (const [skin, mode, width] of [["noir", "dark", 390], ["noir", "light", 390], ["pixel", "dark", 390], ["pixel", "light", 1440]]) {

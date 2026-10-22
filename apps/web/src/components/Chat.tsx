@@ -1,5 +1,5 @@
 import { SubagentTasks } from "./Subagents";
-import { HostControlBar } from "./HostControl";
+import { HostControlBar, HostTierButton } from "./HostControl";
 import { ModelPicker } from "./ModelPicker";
 import { ContextRing } from "./ContextRing";
 import { ArrowUp, Menu, PanelRight, Square, Users } from "lucide-react";
@@ -15,8 +15,6 @@ import { ConversationMenu } from "./Conversations";
 import { ChatProjectsButton } from "./ChatProjects";
 import { COMPOSER_LABEL, useComposerKeys } from "../composer";
 import { VoiceInput } from "./VoiceInput";
-import { SkillChips, SkillPicker } from "./SkillPicker";
-import { clearSkillDraft, setSkillDraft, useSkillDrafts, EMPTY_SKILLS } from "../skillDrafts";
 
 import { group, BotTurn as SharedBotTurn, BotPart as SharedBotPart, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
 import { agentSendBody, buildReplyRef, draftSignature, newClientId, resolveAgentReplyTarget, replyDraftKey, type ReplyRef } from "../replies";
@@ -275,7 +273,6 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 	const clientRef = useRef<{ sig: string; id: string } | null>(null);
 	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f) => upload(agentId, f));
 	const quote = useReplyDrafts((s) => s.drafts[replyKey] ?? null);
-	const skills = useSkillDrafts((s) => s.drafts[replyKey] ?? EMPTY_SKILLS);
 	const ta = useRef<HTMLTextAreaElement>(null);
 	useLayoutEffect(() => {
 		const el = ta.current;
@@ -287,23 +284,21 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 		if (sending || (!text.trim() && !files.length)) return;
 		setSending(true);
 		setSendErr("");
-		// 幂等：同一份草稿（文字 + 附件 + 引用 + 技能）重试复用同一 clientId，避免重复唤醒；草稿一变就换新的
-		const sig = draftSignature({ text, attachmentIds: files.map((f) => f.fileId), replyToId: quote?.messageId, skills });
+		// 幂等：同一份草稿（文字 + 附件 + 引用）重试复用同一 clientId，避免重复唤醒；草稿一变就换新的
+		const sig = draftSignature({ text, attachmentIds: files.map((f) => f.fileId), replyToId: quote?.messageId });
 		if (!clientRef.current || clientRef.current.sig !== sig) clientRef.current = { sig, id: newClientId() };
-		const body = agentSendBody(text, files.map((f) => f.fileId), useStore.getState().convs[agentId]?.current, quote?.messageId, clientRef.current.id, skills);
-		const snapshot = { text, files, skills };
+		const body = agentSendBody(text, files.map((f) => f.fileId), useStore.getState().convs[agentId]?.current, quote?.messageId, clientRef.current.id);
+		const snapshot = { text, files };
 		setText("");
 		clear();
-		clearSkillDraft(replyKey); // 先乐观清技能 chip
 		try {
 			await api(`/api/agents/${agentId}/messages`, { method: "POST", json: body });
 			clearReplyDraft(replyKey); // 发送成功才清引用
 			clientRef.current = null; // 下次是一份新草稿
 		} catch (e) {
-			// 网络失败：还原文字 / 附件 / 技能，且**保留引用**
+			// 网络失败：还原文字 / 附件，且**保留引用**
 			setText(snapshot.text);
 			setFiles(snapshot.files);
-			setSkillDraft(replyKey, snapshot.skills);
 			setSendErr((e as Error).message);
 		} finally {
 			setSending(false);
@@ -326,7 +321,6 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 				{drag && <div className="pointer-events-none pb-2 text-center text-sm text-accent">松开即可把文件发给 {name}</div>}
 				{quote && <ReplyBar reply={quote} quoteLabel={replyLabel} mentionLabel={null} onCancel={() => clearReplyDraft(replyKey)} onJump={onJump} jump={jumpState ? { s: jumpState.s, retry: onRetryJump } : null} />}
 				{sendErr && <div className="pb-2 text-xs text-red-600" data-testid="send-error">{sendErr}</div>}
-				<SkillChips draftKey={replyKey} />
 				<AttachTray files={files} pending={pending} uploading={uploading} error={upErr} onRemove={(id) => setFiles((x) => x.filter((y) => y.fileId !== id))} onRemovePending={removePending} />
 				<textarea
 					ref={ta}
@@ -340,7 +334,7 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 				<div className="pa-composer-bar">
 					<div className="pa-composer-tools">
 					<AttachButton label={t("上传")} onFiles={(f) => void addFiles(f)} />
-					<SkillPicker agentId={agentId} draftKey={replyKey} />
+					<HostTierButton agentId={agentId} labelClass={COMPOSER_LABEL} />
 					<span className="flex-1" />
 					<ContextRing agentId={agentId} running={!!running} />
 					<ModelPicker agentId={agentId} />

@@ -10,7 +10,7 @@
 |---|---|
 | 前端基础组件 | `apps/web/src/components/ui.tsx`：Button、Modal、Badge、Input、Select（不用原生 select）、Avatar、Help（「?」说明气泡）、Fold（折叠/「高级」区）、ErrorBox、useConfirm、useEscLayer、useHoverTip、fmtSize、fmtTime、errorSummary、cleanLog |
 | 模型 / 思考 / Fast 选择 | `ModelPicker.tsx`（输入框那一套，助理模型页、群成员、子代理、默认模型都复用）、`modelMenu.ts`（分组规则）、`ThinkingSlider.tsx` + `thinking-slider.ts`、`ModelOptions.tsx`（模型显示名） |
-| 保存与草稿 | `latest-write.ts`（「最后一次为准」串行写入）、`composerDrafts.ts`、`replyDrafts.ts`、`skillDrafts.ts`、`DraftModelSettings.tsx` |
+| 保存与草稿 | `latest-write.ts`（「最后一次为准」串行写入）、`composerDrafts.ts`、`replyDrafts.ts`、`DraftModelSettings.tsx` |
 | 自适应标签 / 更多 | `ResponsiveTabs.tsx` |
 | 附件与预览 | `Attachments.tsx`（单聊/群聊共用）、`FilePreview.tsx`、`ImageViewer.tsx`；服务端 `files.ts`、`attachments.ts` |
 | 下载进度 | 服务端 `downloads.ts` + 界面 `Downloads.tsx` |
@@ -165,7 +165,6 @@
 | `composer.ts` | 输入栏按钮标签规则 |
 | `composerDrafts.ts` | 输入框草稿 |
 | `replyDrafts.ts` | 引用草稿 |
-| `skillDrafts.ts` | 本次选用技能草稿 |
 | `replies.ts` | 引用回复纯逻辑 |
 | `replies-api.ts` | 引用回复接口 |
 | `fork-api.ts` | 会话分支接口 |
@@ -220,7 +219,6 @@
 | `ModelPicker.tsx` | 模型 + 思考 + Fast 选择（全应用唯一一套） |
 | `ModelOptions.tsx` | 模型显示名 |
 | `ThinkingSlider.tsx` | 思考强度滑块 |
-| `SkillPicker.tsx` | 输入栏技能入口 |
 | `VoiceInput.tsx` | 语音输入按钮 |
 | `Attachments.tsx` | 附件上传与托盘 |
 | `FilePreview.tsx` | 文件预览 |
@@ -258,7 +256,7 @@
 | `DefaultVoicePrep.tsx` | 本地语音识别可选模块卡（安装 / 进度 / 取消 / 设为来源） |
 | `DesktopSettings.tsx` | 设置 › 助理电脑 |
 | `DesktopView.tsx` | 「电脑」标签画面 |
-| `HostControl.tsx` | 操作这台电脑（设置 + 档位） |
+| `HostControl.tsx` | 操作这台电脑（设置 + 档位）；输入栏「权限」按钮 `HostTierButton`（复用助理档位那块内容） |
 | `HostFloatBar.tsx` | 托盘悬浮条 |
 | `Channels.tsx` | 渠道设置 |
 | `Email.tsx` | 邮箱设置 |

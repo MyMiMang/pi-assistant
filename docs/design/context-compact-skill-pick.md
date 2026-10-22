@@ -1,6 +1,6 @@
 # 整理上下文「指定重点」与本次选用技能（context compact + skill pick）
 
-状态：已实现（已合入候选 `release-candidate-validation`，未打包；分支 `pi-context-skill-actions`，基 `deps/pi-1.2.0@2948a05`）。
+状态：部分废弃（2026-10-22 用户定，[决策 0020](../decisions/0020-composer-permission-button.md)）：输入栏「本次选用技能」入口已去掉，换成「权限」按钮；整理上下文「指定重点」仍有效。原状态：已实现（已合入候选 `release-candidate-validation`，未打包；分支 `pi-context-skill-actions`，基 `deps/pi-1.2.0@2948a05`）。
 两项小增强，共享一条「用户主动、服务端可信校验」的原则：
 
 1. **整理上下文时可指定重点**：手动 compaction 允许附一段「希望保留什么」的自定义指令，默认空 = 原行为。

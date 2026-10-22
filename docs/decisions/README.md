@@ -29,3 +29,4 @@
 | [0012](0012-no-auto-upstream-updates.md) | Pi / Hindsight 不自动升级，开发时手动升级 |
 | [0013](0013-local-voice-optional.md) | 本地语音识别是可选模块，默认不安装 |
 | [0014](0014-task-and-helper.md) | 「任务」与「帮手」：任务类机制合并，帮手最多再派一层，核验通过记忆自动转正 |
+| [0020](0020-composer-permission-button.md) | 输入栏「技能」按钮换成「权限」按钮 |

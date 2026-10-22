@@ -7,7 +7,6 @@
  *  - withSkillInvocations 用 Pi 公开技能块语法展开选中的**已加载**技能，输出可被 Pi 公开 parseSkillBlock 解析，
  *    正文来自 filePath 而不是客户端自填，且不进 system prompt；
  *  - resolveSelectedSkills 只接受该助理已启用 + 库存存在的 canonical id，fail closed（同名不同来源不误启）；
- *  - 前端纯逻辑：草稿签名纳入技能、发送 payload 只在有技能时带 skills、技能 draft 按对话分桶不串。
  */
 process.env.PIA_MOCK = "1";
 await import("./setup.ts");
@@ -23,7 +22,6 @@ const { compactSession, createPiSession, disposeSession, skillCommand } = await 
 const { saveSkill, skillPaths } = await import("../src/skills.ts");
 const sa = await import("../src/skill-assignments.ts");
 const { resolveSelectedSkills, skillFilterFor } = await import("../src/skill-scope.ts");
-const { clearSkillDraft, getSkillDraft, setSkillDraft, skillNameOf } = await import("../../../apps/web/src/skillDrafts.ts");
 
 await modelsMod.initModels(memoryCredentialStore());
 
@@ -91,15 +89,4 @@ test("resolveSelectedSkills：只接受已启用 + 库存存在的 canonical id"
 	assert.equal(resolveSelectedSkills("pick-scope-agent", [`builtin/${skill.name}`]), null);
 	// 去重
 	assert.equal(resolveSelectedSkills("pick-scope-agent", [skill.id, skill.id])?.length, 1);
-});
-
-test("前端纯逻辑：技能名解析 + draft 按对话分桶", () => {
-	assert.equal(skillNameOf("builtin/web-research"), "web-research");
-	setSkillDraft("a:1:2", ["user/a"]);
-	setSkillDraft("a:1:3", ["user/b"]);
-	assert.deepEqual(getSkillDraft("a:1:2"), ["user/a"]);
-	assert.deepEqual(getSkillDraft("a:1:3"), ["user/b"]);
-	clearSkillDraft("a:1:2");
-	assert.deepEqual(getSkillDraft("a:1:2"), [], "取消后为空");
-	assert.deepEqual(getSkillDraft("a:1:3"), ["user/b"], "切对话不串");
 });

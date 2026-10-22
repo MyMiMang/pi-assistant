@@ -426,7 +426,55 @@ function TierPicker({ agentId, d, load }: { agentId: string; d: HostInfo; load: 
 
 /** 助理设置页（次要入口）：同样的档位切换。加载中 / 读失败也给明确状态，不直接返回空。 */
 export function AgentHostTier({ agentId }: { agentId: string }) {
-	const { d, load, err, loading } = useHostControl();
+	return <AgentHostTierView agentId={agentId} host={useHostControl()} />;
+}
+
+/** 这个助理现在的档位；没开「操作这台电脑」或不在允许名单里返回 null。 */
+const tierFor = (d: HostInfo | null, agentId: string): Tier | null =>
+	d?.status.enabled && (d.settings.agents === "all" || d.settings.agents.includes(agentId)) ? d.tiers?.[agentId] ?? d.settings.defaultTier ?? "bounded" : null;
+
+/**
+ * 输入栏的「权限」入口：按钮上显示这个助理操作你电脑的档位，点开就地切换（和 助理设置 › 电脑 是同一块内容），
+ * 底部可去全局电脑设置。
+ */
+export function HostTierButton({ agentId, labelClass }: { agentId: string; labelClass?: string }) {
+	const host = useHostControl();
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		if (!open) return;
+		// 调高档位的确认框是传送门渲染在外面的：它开着时点它 / 按 Esc 只处理确认框，不关这个弹层
+		const confirming = () => !!document.querySelector("[data-testid=confirm-dialog]");
+		const h = (e: PointerEvent) => ref.current && !ref.current.contains(e.target as Node) && !confirming() && setOpen(false);
+		const k = (e: KeyboardEvent) => e.key === "Escape" && !confirming() && setOpen(false);
+		document.addEventListener("pointerdown", h);
+		addEventListener("keydown", k);
+		return () => {
+			document.removeEventListener("pointerdown", h);
+			removeEventListener("keydown", k);
+		};
+	}, [open]);
+	const tier = tierFor(host.d, agentId);
+	return (
+		<div className="relative" ref={ref}>
+			<button className={cx("pa-chip sm", tier === "full" && "!border-red-500/50 !text-red-600")} onClick={() => setOpen(!open)} title={tier ? `操作你的电脑：${TIER_INFO[tier].label}（${TIER_INFO[tier].desc}）` : "操作你的电脑：未开启"} aria-label={`权限：${tier ? TIER_INFO[tier].label : "未开启"}`} aria-expanded={open} data-testid="host-tier-button" data-tier={tier ?? "off"}>
+				<Hand className="pa-ic" />
+				<span className={labelClass}>权限·{tier ? TIER_INFO[tier].label : "未开启"}</span>
+			</button>
+			{open && (
+				<div className="pa-pop absolute bottom-full left-0 z-30 mb-2 space-y-3 rounded-xl border border-line bg-card p-3 shadow-lg [--pop-w:22rem]" data-testid="host-tier-menu">
+					<AgentHostTierView agentId={agentId} host={host} />
+					<button className="pa-btn sm" onClick={() => (setOpen(false), useStore.getState().set({ settings: "host" }))} data-testid="host-tier-open-settings">
+						全局电脑设置
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}
+
+function AgentHostTierView({ agentId, host }: { agentId: string; host: ReturnType<typeof useHostControl> }) {
+	const { d, load, err, loading } = host;
 	const allowed = !!d && (d.settings.agents === "all" || d.settings.agents.includes(agentId));
 	const paused = !!d?.status.enabled && d.status.paused;
 	return (
