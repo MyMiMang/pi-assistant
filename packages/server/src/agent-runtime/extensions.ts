@@ -76,7 +76,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 				workspace,
 				guard: guardContext("host"),
 				// 电脑工具（sandbox 目标）和浏览器工具由各自的扩展把关（提交/付款/发送/上传才审批）
-				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n) || isHostTool(n) || isEmailTool(n) || n === "wechat_open" || n === "room_assign" || n === "room_propose_member" || n === "propose_room" || n === "work_create" || n === "work_submit" || n === "work_verify" || n === "work_list" || n === "work_update" || n === "work_report" || n === "work_ask_user" || n === "room_plan" || n === "room_project_start" || n === "room_project_done" || n === "room_project_replan" || n === "room_project_resume" || n === "ask_colleague" || n === "answer_colleague" || n === "report_upstream" || n === "work_rework",
+				trusted: (n) => trustedComputerTool("sandbox")(n) || isBrowserTool(n) || isHostTool(n) || isEmailTool(n) || n === "wechat_open" || n === "room_assign" || n === "room_propose_member" || n === "propose_room" || n === "work_create" || n === "work_submit" || n === "work_verify" || n === "work_list" || n === "work_update" || n === "work_report" || n === "work_ask_user" || n === "room_plan" || n === "room_project_start" || n === "room_project_done" || n === "room_checkpoint" || n === "room_project_replan" || n === "room_project_resume" || n === "ask_colleague" || n === "answer_colleague" || n === "report_upstream" || n === "work_rework",
 				request: async (r) => {
 					const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId);
 					return { approved: !!res.approved, note: res.note };

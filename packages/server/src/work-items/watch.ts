@@ -109,10 +109,8 @@ export async function askUserDecision(itemId: string, o: { question: string; opt
 	const nu: NeedsUser = { question, options, reason: clip(o.reason, 300), requestId: null, at: now() };
 	const mc = item.room_id ? port()?.managerConversation(item.room_id) : null;
 	if (mc) {
-		const pending = requests.question(mc.agentId, null, question, options, true, mc.conversationId);
-		// create() 同步落库：按插入顺序取刚建的这张（同一毫秒里可能还有别的提问，不能只按时间取）
-		const r = db.prepare("SELECT id FROM requests WHERE conversation_id = ? AND status = 'pending' AND kind = 'question' AND json_extract(payload, '$.question') = ? ORDER BY rowid DESC LIMIT 1").get(mc.conversationId, question) as { id: string } | undefined;
-		nu.requestId = r?.id ?? null;
+		const pending = requests.question(mc.agentId, null, question, options, true, mc.conversationId, item.project_id ? { projectId: item.project_id } : {});
+		nu.requestId = requests.pendingQuestionId(mc.conversationId, question);
 		const requestId = nu.requestId;
 		void pending
 			.then((ans) => {

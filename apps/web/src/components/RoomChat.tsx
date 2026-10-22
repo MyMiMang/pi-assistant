@@ -16,6 +16,7 @@ import { buildReplyRef, draftSignature, liveMentions, newClientId, replyDraftKey
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
 import { locateRoomMessage, type LocateResult } from "../replies-api";
 import { PeerWrap } from "./RoomPeer";
+import { ProjectTagged, useProjectRows } from "./RoomProjectFilter";
 import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
 
 // ------------------------------------------------------------------ 显示用的成员信息（助理已删除时用群里存的快照）
@@ -76,7 +77,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const { rooms, agents, roomMsgs, roomWindow, info, set } = useStore();
 	const room = rooms.find((r) => r.id === roomId);
 	const list = roomMsgs[roomId] ?? [];
-	const rows = useMemo(() => groupRoom(list), [list]);
+	const rows = useProjectRows(roomId, list, groupRoom);
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const [settings, setSettings] = useState(false);
@@ -214,7 +215,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 						) : r.kind === "user" ? (
 							<UserMsg key={r.m.id} m={r.m} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf(r.m)} />
 						) : r.kind === "system" ? (
-							<SystemMsg key={r.m.id} m={r.m} canContinue={r.m.id === lastPause} />
+							<ProjectTagged key={r.m.id} m={r.m} room={room} center><SystemMsg m={r.m} canContinue={r.m.id === lastPause} /></ProjectTagged>
 						) : (
 							<RoomBotTurn key={r.id} row={r} room={room} agents={agents} list={list} live={speaking === r.agentId && r === lastRow} onAvatar={openMember} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf} />
 						),

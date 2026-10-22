@@ -7,10 +7,12 @@
  * 方案的规范化 / 渲染是纯逻辑，在 plan.ts。
  */
 import { db, now, uid } from "../db.ts";
+import type { fileInfo } from "../files.ts";
 import { getMessage, insertMessage, updateMessage } from "../messages.ts";
 import { notify } from "../push.ts";
 import { continueWorkItem, itemsOfProject, pauseWorkItem } from "../work-items.ts";
 import { projectEnded, projectStarted, wakeManager } from "./collab.ts";
+import { dropWaiting, waitingOf, type Waiting } from "./checkpoint.ts";
 import { clipTitle, goalOnlyPlan, normalizePlan, type ProjectPlan } from "./plan.ts";
 import { projectProgress, projectSig, projectStallStep, type ProjectProgress } from "./progress.ts";
 import { changed, memberConversation, sys } from "./store.ts";
@@ -27,6 +29,9 @@ for (const [col, ddl] of [
 	["stalls", "INTEGER NOT NULL DEFAULT 0"],
 	["progress_sig", "TEXT"],
 	["replans", "INTEGER NOT NULL DEFAULT 0"],
+	// 已经通知过用户的阶段名（JSON 数组，stages.ts）；在等用户看的关键点（JSON，checkpoint.ts）
+	["stages_done", "TEXT"],
+	["waiting", "TEXT"],
 ] as const) {
 	if (!(db.prepare("PRAGMA table_info(room_projects)").all() as { name: string }[]).some((c) => c.name === col)) db.exec(`ALTER TABLE room_projects ADD COLUMN ${col} ${ddl}`);
 }
@@ -51,6 +56,8 @@ export interface ProjectRow {
 	stalls: number;
 	progress_sig: string | null;
 	replans: number;
+	stages_done: string | null;
+	waiting: string | null;
 }
 export interface ProjectJson {
 	id: string;
@@ -65,6 +72,8 @@ export interface ProjectJson {
 	confirmedAt: number | null;
 	endedAt: number | null;
 	progress: ProjectProgress;
+	/** 在等用户看的关键点（room_checkpoint）；没有就是 null */
+	waiting: Waiting | null;
 }
 
 /** 给 HTTP 用的错误：status 404 = 项目不存在（message 固定 "not_found"），409 = 状态不对（message 是给用户看的一句话）。 */
@@ -98,6 +107,7 @@ export function projectJson(r: ProjectRow): ProjectJson {
 		id: r.id, roomId: r.room_id, title: r.title, status: r.status, plan: parsePlan(r.plan)!, draft: parsePlan(r.draft), cardMessageId: r.card_message_id, summary: r.summary,
 		createdAt: r.created_at, confirmedAt: r.confirmed_at, endedAt: r.ended_at,
 		progress: projectProgress(parsePlan(r.plan)!, itemsOfProject(r.id)),
+		waiting: waitingOf(r.waiting),
 	};
 }
 
@@ -202,6 +212,7 @@ export async function stopProject(roomId: string, projectId: string) {
 	const t = now();
 	db.prepare("UPDATE room_projects SET status = 'stopped', draft = NULL, summary = ?, ended_at = ?, updated_at = ? WHERE id = ?").run("用户停下了这个项目，进度保留", t, t, p.id);
 	settleCard(p, "superseded");
+	dropWaiting(p.id);
 	projectEnded(roomId);
 	const items = db.prepare("SELECT id FROM work_items WHERE project_id = ? AND status IN ('pending','active','blocked','review')").all(p.id) as { id: string }[];
 	for (const it of items) await pauseWorkItem({ workItemId: it.id, actor: { kind: "user" } }).catch(() => {});
@@ -264,15 +275,20 @@ export function replanProject(roomId: string, projectId: string, o: { why: strin
 	return getProject(p.id)!;
 }
 
-/** 管理者交付后结束项目（room_project_done）：active → done，结果总结发到群里。 */
-export function finishProject(roomId: string, projectId: string, summary: string) {
+/**
+ * 管理者交付后结束项目（room_project_done）：active → done。
+ * 带交付信息（delivery）时群里发一张交付卡（做成了什么 / 文件 / 怎么用 / 还没做的），系统通知精简成一句；不带就沿用把总结写进通知。不汇报花费。
+ */
+export function finishProject(roomId: string, projectId: string, summary: string, delivery?: { files: ReturnType<typeof fileInfo>[]; howToUse: string; notDone: string; managerId: string }) {
 	const p = requireProject(roomId, projectId);
 	if (p.status !== "active") throw new ProjectError(p.status === "proposed" ? "这个项目还没开始（方案还在等用户确认）" : "这个项目已经结束了");
 	const t = now();
 	db.prepare("UPDATE room_projects SET status = 'done', draft = NULL, summary = ?, ended_at = ?, updated_at = ? WHERE id = ?").run(summary, t, t, p.id);
 	settleCard(p, "superseded");
+	dropWaiting(p.id);
 	projectEnded(roomId);
-	notice(p, `项目「${p.title}」已完成。结果：${summary}`, "done");
+	notice(p, delivery ? `项目「${p.title}」已完成，成果见下面的交付卡。` : `项目「${p.title}」已完成。结果：${summary}`, "done");
+	if (delivery) insertMessage({ agentId: delivery.managerId, conversationId: memberConversation(roomId, delivery.managerId), role: "card", meta: { kind: "project-delivery", projectId: p.id, title: p.title, summary, files: delivery.files, howToUse: delivery.howToUse, notDone: delivery.notDone } });
 	changed(roomId);
 	return getProject(p.id)!;
 }

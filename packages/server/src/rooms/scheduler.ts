@@ -19,6 +19,7 @@ import { stopConversationSubagents } from "../subagents.ts";
 import { buildWorkCorrectionContext, execConversationsOfRoom, resolveWorkReferences } from "../work-items.ts";
 import { INTENT_PLAN_RULE, PROJECT_NEXT_STEP, buildTranscript, capCheck, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, type RoundCounters, type TranscriptItem } from "./logic.ts";
 import { askIdOf } from "./ask-logic.ts";
+import { waitingRequestIds } from "./checkpoint.ts";
 import { hasActiveProject } from "./projects.ts";
 import { activeIds, capsOf, changed, getRoom, memberConversation, memberRefs, memberRow, membersOf, snapshot, sys } from "./store.ts";
 
@@ -439,7 +440,7 @@ export async function stop(roomId: string, note = true) {
 	db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = COALESCE(finished_at, ?) WHERE room_id = ? AND status IN ('queued','running')").run(now(), roomId);
 	markRoomStopped(roomId);
 	const decisions = (db.prepare("SELECT json_extract(needs_user, '$.requestId') AS id FROM work_items WHERE room_id = ? AND needs_user IS NOT NULL").all(roomId) as { id: string | null }[]).map((x) => x.id).filter((x): x is string => !!x);
-	requests.cancelForRoom(roomId, { exceptConversations: execConversationsOfRoom(roomId), exceptIds: decisions });
+	requests.cancelForRoom(roomId, { exceptConversations: execConversationsOfRoom(roomId), exceptIds: [...decisions, ...waitingRequestIds(roomId)] });
 	for (const m of membersOf(roomId)) if (m.conversation_id) await stopConversationSubagents(m.agent_id, m.conversation_id).catch(() => {});
 	if (cur) {
 		s!.current = null;

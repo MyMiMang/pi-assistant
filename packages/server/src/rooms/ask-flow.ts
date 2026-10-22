@@ -20,7 +20,8 @@ type R = { ok: true; ask: AskRow; text: string } | { ok: false; error: string };
 
 /** 以某位成员的身份往群里发一条消息（提问 / 回答），和它平时在群里说话一样可见。 */
 function post(roomId: string, agentId: string, content: string, meta: Record<string, unknown>) {
-	insertMessage({ agentId, conversationId: memberConversation(roomId, agentId), roomId, role: "assistant", content, meta });
+	const projectId = typeof meta.askId === "string" ? getAsk(meta.askId)?.project_id : null; // 标明属于哪个项目（界面按项目筛选）
+	insertMessage({ agentId, conversationId: memberConversation(roomId, agentId), roomId, role: "assistant", content, meta: { ...meta, ...(projectId ? { projectId } : {}) } });
 }
 
 /** 送到被问的人手上：它有正在跑的任务执行 → 插话递进去不打断；管理者 → 唤醒；否则排一个 peer 回合叫醒它。 */
@@ -35,7 +36,7 @@ function deliver(ask: AskRow, intro: string) {
 /** 交给管理者：状态改 escalated、群里一条系统通知、唤醒管理者并带上对话摘要。 */
 export function escalateAsk(ask: AskRow, headline: string) {
 	const cur = updateAsk(ask.id, { status: "escalated" }) ?? ask;
-	sys(cur.room_id, `${headline}，已交给管理者`, { kind: "peer-ask-escalated", askId: cur.id });
+	sys(cur.room_id, `${headline}，已交给管理者`, { kind: "peer-ask-escalated", askId: cur.id, ...(cur.project_id ? { projectId: cur.project_id } : {}) });
 	wakeManager(cur.room_id, `${headline}。提问编号 ${cur.id}（${nameOf(cur.from_agent)} 问 ${nameOf(cur.to_agent)}），对话：${threadSummary(threadOf(cur), nameOf)}。影响方案的你拍板（必要时问用户），其余直接用 answer_colleague（askId 填 ${cur.id}）代答或安排；回答会送回提问者手上`);
 }
 const topicOf = (a: AskRow) => clip(threadOf(a)[0]?.text.replace(/\s+/g, " ") ?? "", 30);

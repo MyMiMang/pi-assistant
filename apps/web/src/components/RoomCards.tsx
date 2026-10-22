@@ -334,7 +334,7 @@ export function PlanBody({ plan, full }: { plan: ProjectPlan; full?: boolean }) 
 		</div>
 	);
 }
-function PlanSection({ title, children }: { title: string; children: ReactNode }) {
+export function PlanSection({ title, children }: { title: string; children: ReactNode }) {
 	return <section><h4>{title}</h4>{children}</section>;
 }
 

@@ -13,6 +13,7 @@ import { fmtMoney, fmtTok, type MsgUsage, useFx } from "./usage-fmt";
 import { fastStatusDetail, fastStatusText, type MessageFastMeta } from "../fast-mode";
 import { Avatar, cx } from "./ui";
 import { ProposalCard, RoomGoalCard, RoomPlanCard } from "./RoomCards";
+import { ProjectDeliveryCard } from "./RoomDelivery";
 import { MessageActions, QuotedMessage, type MessageInteraction } from "./MessageReply";
 import { quotedBlock } from "../replies";
 import { assistantErrorDetail, assistantErrorKind, assistantErrorText, botBodyView } from "../message-body";
@@ -175,7 +176,7 @@ export function BotPart({ p, live, busy, toolOnly, renderSubagent, onQuote, onJu
 	if (p.kind === "steps") return <Steps items={p.items} live={live} busy={busy} />;
 	const m = p.m;
 	if (m.role === "card")
-		return m.meta.kind === "subagent" ? renderSubagent?.(m) ?? null : m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : m.meta.kind === "work-result" ? <WorkResultCard meta={{ ...m.meta, roomId: (m.meta.roomId as string) ?? undefined }} /> : m.meta.kind === "room-plan" ? <RoomPlanCard m={m} /> : m.meta.kind === "room-goal" ? <RoomGoalCard m={m} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
+		return m.meta.kind === "subagent" ? renderSubagent?.(m) ?? null : m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : m.meta.kind === "work-result" ? <WorkResultCard meta={{ ...m.meta, roomId: (m.meta.roomId as string) ?? undefined }} /> : m.meta.kind === "room-plan" ? <RoomPlanCard m={m} /> : m.meta.kind === "project-delivery" ? <ProjectDeliveryCard m={m} /> : m.meta.kind === "room-goal" ? <RoomGoalCard m={m} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
 	// 思考：原生 reasoning（meta.thinking）+ 正文里的 <think>…</think>（旧消息 / 流式中），折叠显示，不当正文
 	const split = splitThinking(m.content);
 	const thinking = [String(m.meta.thinking ?? "").trim(), split.thinking].filter(Boolean).join("\n\n");

@@ -176,7 +176,8 @@ test("room_project_done：只有管理者、项目要在进行中才能结束；
 	assert.match(await callProj(room.id, "pm", "room_project_done", { projectId: pid, summary: "" }), /请写一句结果总结/);
 	assert.match(await callProj(room.id, "pm", "room_project_done", { projectId: pid, summary: "报告在 report.md，三节齐全" }), /项目「写一份报告」已结束/);
 	assert.equal(projects.getProject(pid)!.status, "done");
-	assert.match(noticesOf(room.id).pop()!.content, /项目「写一份报告」已完成。结果：报告在 report\.md，三节齐全/);
+	assert.match(noticesOf(room.id).pop()!.content, /项目「写一份报告」已完成，成果见下面的交付卡/);
+	assert.equal((JSON.parse((db.prepare("SELECT meta FROM messages WHERE room_id = ? AND role = 'card' ORDER BY rowid DESC LIMIT 1").get(room.id) as { meta: string }).meta) as { summary: string }).summary, "报告在 report.md，三节齐全");
 	replies.clear();
 	await until(() => idle(room.id), "跑完");
 	await rooms.deleteRoom(room.id);

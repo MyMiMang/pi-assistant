@@ -4,6 +4,7 @@ import type { Agent, Message, Room, WorkAsk } from "../types";
 import { memberOf } from "./RoomChat";
 import type { Part } from "./Chat";
 import { Badge } from "./ui";
+import { ProjectTagged } from "./RoomProjectFilter";
 
 /** 成员之间的提问 / 回答（群消息 meta.kind 为 peer-ask / peer-answer）：气泡上加小标签，同一 askId 的问答看得出是一组。 */
 export const isPeerMsg = (m: Message) => m.meta.kind === "peer-ask" || m.meta.kind === "peer-answer";
@@ -32,11 +33,12 @@ function PeerHead({ m, room, agents, list, onJump }: { m: Message; room: Room; a
 
 /** 包住一条群消息：不是成员互问就原样输出；是的话加标签行并标出分组（data-ask-id）。 */
 export function PeerWrap({ p, room, agents, list, onJump, children }: { p: Part; room: Room; agents: Agent[]; list: Message[]; onJump?: (id: string) => void; children: ReactNode }) {
-	if (p.kind !== "msg" || !isPeerMsg(p.m)) return <>{children}</>;
+	if (p.kind !== "msg") return <>{children}</>;
+	if (!isPeerMsg(p.m)) return <ProjectTagged m={p.m} room={room}>{children}</ProjectTagged>;
 	return (
 		<div className="pa-peer" data-testid="peer-msg" data-peer={p.m.meta.kind === "peer-ask" ? "ask" : "answer"} data-ask-id={String(p.m.meta.askId ?? "")}>
 			<PeerHead m={p.m} room={room} agents={agents} list={list} onJump={onJump} />
-			{children}
+			<ProjectTagged m={p.m} room={room}>{children}</ProjectTagged>
 		</div>
 	);
 }

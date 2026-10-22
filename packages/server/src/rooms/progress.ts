@@ -79,3 +79,23 @@ export function projectStallStep(o: { stalls: number; lastSig: string | null; si
 	if (o.impossible) stalls += 1;
 	return stalls;
 }
+
+/**
+ * 阶段完成通知（docs/design/group-team.md §6，决策 0019 第 5 步）：哪些阶段「刚刚」从没完成变成了完成。
+ * notified = 已经通知过的阶段名（持久化在 room_projects.stages_done）；每个阶段只通知一次，之后任务被重开也不再重复。
+ * allDone：方案的所有阶段都完成了，并且没有挂在方案之外还没做完的任务（有阶段才算）；「全部完成」也只通知一次（notified 里记 ALL_DONE_MARK）。
+ */
+export const ALL_DONE_MARK = "*全部完成*";
+export function newlyDoneStages(p: ProjectProgress, notified: string[]): { names: string[]; allDone: boolean } {
+	const names = p.stages.filter((s) => s.state === "done" && !notified.includes(s.name)).map((s) => s.name);
+	const allDone = p.stages.length > 0 && p.stages.every((s) => s.state === "done") && p.other.every((i) => i.status === "done") && !notified.includes(ALL_DONE_MARK);
+	return { names, allDone };
+}
+
+/** 阶段（或全部阶段）完成时叫醒管理者的原因：通知用户进度，不是提问；有关键点的先走关键点确认。 */
+export function stageDoneReason(o: { title: string; projectId: string; names: string[]; allDone: boolean; checkpoints: string[] }): string {
+	const who = `项目「${o.title}」（项目编号 ${o.projectId}）`;
+	if (o.allDone) return `${who}所有阶段都完成了：对照完成标准逐条核对，整合成果后用 room_project_done 交付（summary 写做成了什么；deliverables 填最终要交给用户的文件；howToUse 写怎么用 / 去哪看；还没做的和建议的下一步写进 notDone）`;
+	const cp = o.checkpoints.length ? `如果方案里有在这个阶段之后的关键点（${o.checkpoints.join("；")}），先走关键点确认（room_checkpoint）。` : "";
+	return `${who}的阶段「${o.names.join("、")}」完成了：用两三句话告诉用户做到哪了、接下来做什么、需不需要用户做什么（这是通知，不是提问）。${cp}`;
+}

@@ -62,8 +62,14 @@ export const requests = {
 	approval(agentId: string, taskId: string | null, toolName: string, input: Record<string, unknown>, summary: string, risk: string, conversationId?: string | null, opts: { allowTask?: boolean } = {}) {
 		return create("approval", agentId, taskId, toolName, { input, summary, risk, ...(opts.allowTask ? { allowTask: true } : {}) }, "需要你批准一个操作", conversationId);
 	},
-	question(agentId: string, taskId: string | null, question: string, options: string[], allowFreeText: boolean, conversationId?: string | null) {
-		return create("question", agentId, taskId, null, { question, options, allowFreeText }, "助理有个问题想问你", conversationId);
+	/** extra：卡片上多带的字段（比如群里项目的 projectId，界面按项目筛选用） */
+	question(agentId: string, taskId: string | null, question: string, options: string[], allowFreeText: boolean, conversationId?: string | null, extra: Record<string, unknown> = {}) {
+		return create("question", agentId, taskId, null, { ...extra, question, options, allowFreeText }, "助理有个问题想问你", conversationId);
+	},
+	/** 刚用 question() 建的那张卡的编号：create() 同步落库，按插入顺序取最新一张（同一毫秒里可能还有别的提问，不能只按时间取）。 */
+	pendingQuestionId(conversationId: string, question: string): string | null {
+		const r = db.prepare("SELECT id FROM requests WHERE conversation_id = ? AND status = 'pending' AND kind = 'question' AND json_extract(payload, '$.question') = ? ORDER BY rowid DESC LIMIT 1").get(conversationId, question) as { id: string } | undefined;
+		return r?.id ?? null;
 	},
 	resolve(id: string, r: { approved?: boolean; answer?: string; note?: string; scope?: "task" }, by: string) {
 		const row = db.prepare("SELECT * FROM requests WHERE id = ?").get(id) as RequestRow | undefined;

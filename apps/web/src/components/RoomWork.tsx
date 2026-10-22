@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Archive, Flag } from "lucide-react";
+import { Archive, Eye, Flag } from "lucide-react";
 import { api } from "../api";
 import { useStore } from "../store";
-import type { ProjectProgress, Room, RoomProject } from "../types";
+import type { ProjectProgress, ProjectWaiting, Room, RoomProject } from "../types";
 import { PROJECT_STATUS, PlanBody } from "./RoomCards";
 import { Badge, Fold, Help, Modal, cx, fmtTime, useConfirm } from "./ui";
+import { ProjectFilter } from "./RoomProjectFilter";
 import { WorkItemsButton } from "./WorkItems";
 
 const STAGE_STATE: Record<string, string> = { todo: "没开始", doing: "进行中", done: "已完成" };
@@ -41,9 +42,20 @@ function ProjectProgressView({ progress }: { progress: ProjectProgress }) {
 	);
 }
 
+/** 管理者请用户看一眼的关键点（项目有 waiting 才显示）：说清看什么、为什么现在看；答复在群里的提问卡上。 */
+function WaitingBlock({ w }: { w: ProjectWaiting }) {
+	return (
+		<div className="pa-work-block !border-amber-500/50 !bg-amber-500/5" data-testid="room-project-waiting">
+			<h4 className="!text-amber-700 dark:!text-amber-400"><Eye className="pa-ic" />等你看一眼：{w.checkpoint}</h4>
+			{w.message ? <p>{w.message}</p> : null}
+			<small>问题卡在群里，你答复后就接着往下做；不受影响的部分照常在做。</small>
+		</div>
+	);
+}
+
 /** 群聊顶部和干活相关的入口：任务看板、项目（RoomChat 只引这一个，换群时一起重挂）。 */
 export function RoomWorkButtons({ room }: { room: Room }) {
-	return <><WorkItemsButton room={room} /><ProjectsButton room={room} /></>;
+	return <><WorkItemsButton room={room} /><ProjectFilter room={room} /><ProjectsButton room={room} /></>;
 }
 
 /**
@@ -64,9 +76,11 @@ export function ProjectsButton({ room }: { room: Room }) {
 	if (!projects.length) return null;
 	const one = projects.length === 1 ? projects[0] : null;
 	const active = projects.some((p) => p.status === "active");
+	const waiting = projects.some((p) => p.status === "active" && p.waiting);
 	// 进行中项目显示阶段进度；没有阶段信息（旧数据或字段还没来）就退回原来的状态文字
 	const chipLabel = (p: RoomProject) => {
 		const prog = p.progress;
+		if (p.status === "active" && p.waiting) return "等你看一眼";
 		if (p.status === "active" && prog) {
 			if (prog.stages.length > 0) return `阶段 ${(prog.currentStage ?? prog.stages.length - 1) + 1}/${prog.stages.length}`;
 			return `已完成 ${prog.done}/${prog.total}`;
@@ -111,7 +125,7 @@ export function ProjectsButton({ room }: { room: Room }) {
 	};
 	return (
 		<>
-			<button className={cx("pa-chip", active && "pa-chip-on")} onClick={() => setOpen(true)} data-testid="room-projects-chip" aria-label="项目" title={projects.map((p) => `${p.title}（${PROJECT_STATUS[p.status]}）`).join("\n")}>
+			<button className={cx("pa-chip", active && "pa-chip-on", waiting && "!border-amber-500/60 !bg-amber-500/10 !text-amber-700 dark:!text-amber-400")} data-waiting={waiting ? "1" : undefined} onClick={() => setOpen(true)} data-testid="room-projects-chip" aria-label="项目" title={projects.map((p) => `${p.title}（${PROJECT_STATUS[p.status]}）`).join("\n")}>
 				<Flag className="pa-ic" />
 				{one ? (
 					<span className="flex min-w-0 items-center gap-1 max-sm:hidden">
@@ -119,8 +133,9 @@ export function ProjectsButton({ room }: { room: Room }) {
 						<small className="shrink-0 text-[11px] opacity-80">· {chipLabel(one)}</small>
 					</span>
 				) : (
-					<span className="max-sm:hidden">项目 {projects.length}</span>
+					<span className="max-sm:hidden">项目 {projects.length}{waiting ? " · 等你看一眼" : ""}</span>
 				)}
+				{waiting ? <i className="h-2 w-2 shrink-0 rounded-full bg-amber-500 sm:hidden" aria-hidden /> : null}
 			</button>
 			<Modal open={open} onClose={() => setOpen(false)} title="项目" testId="room-projects-panel">
 				<div className="space-y-3 p-4">
@@ -134,6 +149,7 @@ export function ProjectsButton({ room }: { room: Room }) {
 								<b>{p.title}</b>
 								<span className="pa-tag">{PROJECT_STATUS[p.status]}</span>
 							</div>
+							{p.status === "active" && p.waiting ? <WaitingBlock w={p.waiting} /> : null}
 							<PlanBody plan={p.plan} />
 							{p.status === "proposed" && <p className="text-xs text-mut2">方案卡在群里，确认后开始。</p>}
 							{p.draft && <p className="text-xs text-mut2">有一份改过的方案在群里等你确认；确认前按原方案继续。</p>}

@@ -130,7 +130,7 @@
 2. **去重复**（已缩小，2026-10-22 用户指出不能为省钱降质量）：只做「看板没变不重复发」；提前整理上下文、截断大段输出、限制帮手列表这些会让成员少看东西的做法都不做。
 3. **任务依赖与自动交接**（已实现，未打包：`work-items/deps.ts`、`rooms/progress.ts`、`room_project_replan` / `room_project_resume`）：任务加依赖，验收通过后自动开始后续任务，带交接单；并行；项目进度清单；验收三种结果（「走不通」直接改做法）；项目级进度检查与改计划；停下后接着做。
 4. **成员直接协作**（已实现，未打包：`rooms/ask-*.ts`、`rooms/asks.ts`、`work-items/rework.ts`、`work-items/upstream.ts`；工具 ask_colleague / answer_colleague / report_upstream / work_rework）：「找同事」能力、回答回送、一个问题来回 3 轮没解决交给管理者、上游返工与重新验收、拿不准就对齐、互相等待超时交给管理者。
-5. **进度通知、关键点确认与交付卡**；失败说清楚；群里消息标明项目、可按项目筛选、长执行过程折叠。
+5. **进度通知、关键点确认与交付卡**（已实现，未打包：`rooms/stages.ts`、`rooms/checkpoint.ts`、`rooms/deliver.ts`；工具 room_checkpoint、room_project_done 带交付信息）；失败说清楚；群里消息标明项目、可按项目筛选、长执行过程折叠。
 6. **单聊也走方案流程；清理**：旧开关、旧确认卡兼容、文档与决策更新。
 
 **第 1、2 步做完先打包，在真实群里实测**（看管理者的来意判断、方案质量），再决定后面怎么调。每一步都用临时数据 + Mock 跑单测和 e2e。

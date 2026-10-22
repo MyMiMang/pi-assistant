@@ -49,11 +49,15 @@ export interface ProjectProgress {
 	total: number;
 	currentStage: number | null;
 }
+/** 项目在等用户看一眼的关键点（镜像服务端项目的 waiting）：没有就是 null / 缺省。 */
+export interface ProjectWaiting { checkpoint: string; message: string; options?: string[]; requestId?: string; at?: number }
 export interface RoomProject {
 	id: string; roomId: string; title: string; status: ProjectStatus; plan: ProjectPlan; draft: ProjectPlan | null;
 	cardMessageId: string | null; summary: string | null; createdAt: number; confirmedAt: number | null; endedAt: number | null;
 	/** 服务端还没有这个字段时为 undefined：界面按「没有进度清单」处理，不报错。 */
 	progress?: ProjectProgress | null;
+	/** 管理者请用户看一眼的关键点；服务端还没有这个字段时为 undefined（当作没有）。 */
+	waiting?: ProjectWaiting | null;
 }
 export interface Room {
 	/** 只含待确认 / 进行中的项目（按创建时间升序）；已结束的走 /api/rooms/:rid/projects?all=1 */

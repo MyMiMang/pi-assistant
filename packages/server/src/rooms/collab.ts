@@ -17,6 +17,7 @@ import { getAsk } from "./asks.ts";
 import { planText } from "./plan.ts";
 import { activeProjects, checkProjectStall, getProject, hasActiveProject, projectView } from "./projects.ts";
 import { projectProgress, renderProgress } from "./progress.ts";
+import { stageMaybeDone } from "./stages.ts";
 import { chatterStep } from "../stuck.ts";
 import { hasQueuedTurns, postUserMessage, queuedFor, scheduleTurns, setTurnHooks } from "./scheduler.ts";
 import { activeIds, getRoom, memberConversation, memberRefs, rosterText, stoppedFlag, sys } from "./store.ts";
@@ -218,6 +219,7 @@ setRoomPort({
 		return names.length ? names : null;
 	},
 	roster: rosterText,
+	stageMaybeDone,
 	managerConversation(roomId) {
 		const r = getRoom(roomId);
 		if (!r?.manager_id || !activeIds(roomId).includes(r.manager_id)) return null;

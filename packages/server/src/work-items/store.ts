@@ -195,7 +195,9 @@ export const stringifyDepends = (ids: string[]) => JSON.stringify([...new Set(id
 export function roomNotice(roomId: string | null, text: string, workItemId: string) {
 	if (!roomId) return;
 	try {
-		insertMessage({ agentId: "", roomId, role: "system", content: text.slice(0, 600), meta: { kind: "work-event", workItemId } });
+		// 任务属于哪个项目就带上 projectId（群里同时有几个项目时，界面按项目筛选 / 标项目名）
+		const projectId = workItemId ? (db.prepare("SELECT project_id FROM work_items WHERE id = ?").get(workItemId) as { project_id: string | null } | undefined)?.project_id : null;
+		insertMessage({ agentId: "", roomId, role: "system", content: text.slice(0, 600), meta: { kind: "work-event", workItemId, ...(projectId ? { projectId } : {}) } });
 	} catch {
 		/* 群已删：忽略 */
 	}

@@ -3,6 +3,9 @@
  * 按钮确认 / 取消走 HTTP（routes/rooms.ts → projects.ts），这里是管理者在对话里主动调用的三个工具。
  */
 import { Type } from "typebox";
+import { fileInfo } from "../files.ts";
+import { askCheckpoint } from "./checkpoint.ts";
+import { MISSING_HINT, resolveFiles } from "./deliver.ts";
 import { checkPlan, normalizePlan } from "./plan.ts";
 import { confirmProject, finishProject, getProject, proposePlan, replanProject, resumeProject, userRepliedAfterStop, userRepliedToCard } from "./projects.ts";
 import { getRoom, memberRefs } from "./store.ts";
@@ -111,18 +114,48 @@ export function projectTools(roomId: string, agentId: string) {
 			},
 		});
 		pi.registerTool({
+			name: "room_checkpoint",
+			label: "请用户看关键点",
+			description: "（只有管理者可用）方案里写的关键点到了，请用户看一眼：群里出一张确认卡片（可以给几个选项让用户挑，也可以附上要看的文件），用户答复后会以用户的话发回群里，你再按答复继续。其余进度只通知，不要用它提问；不受这个关键点影响的任务照常推进，受影响的等用户答复后再做。",
+			parameters: Type.Object({
+				projectId: Type.String(),
+				checkpoint: Type.String({ description: "方案里的哪个关键点（尽量照方案里的写法）" }),
+				message: Type.String({ description: "要用户看什么、为什么现在看（两三句话）" }),
+				options: Type.Optional(Type.Array(Type.String(), { description: "可选：2–4 个选项（比如几个方向让用户挑）；不给就是「可以，继续」「要改」" })),
+				files: Type.Optional(Type.Array(Type.String(), { description: "可选：要给用户看的文件（群里已有的文件名，或你工作区里的路径）" })),
+			}),
+			async execute(_id: string, p: { projectId: string; checkpoint: string; message: string; options?: string[]; files?: string[] }) {
+				const r = getRoom(roomId);
+				if (!r || r.manager_id !== agentId) return text("只有管理者能请用户确认关键点。");
+				const res = askCheckpoint({ roomId, managerId: agentId, projectId: p.projectId, checkpoint: p.checkpoint, message: p.message, options: p.options, files: p.files });
+				return text(res.ok ? res.text : res.error);
+			},
+		});
+		pi.registerTool({
 			name: "room_project_done",
 			label: "宣布项目完成",
-			description: "（只有管理者可用）核验过成果、确认完成标准都满足时调用：结束项目并把结果总结发到群里。调用前先把最终交付物发到群里（文件用 deliver_file）。",
-			parameters: Type.Object({ projectId: Type.String(), summary: Type.String({ description: "结果总结：做成了什么、交付物在哪里、对照完成标准怎么满足的（简短）" }) }),
-			async execute(_id: string, p: { projectId: string; summary: string }) {
+			description: "（只有管理者可用）对照完成标准逐条核对过、确认都满足时调用：结束项目，群里发一张交付卡（做成了什么、交付文件、怎么用、还没做的）。最终要交给用户的文件放进 deliverables（群里已有的文件名，或你工作区里的路径）。",
+			parameters: Type.Object({
+				projectId: Type.String(),
+				summary: Type.String({ description: "做成了什么：对照完成标准怎么满足的（简短）" }),
+				deliverables: Type.Optional(Type.Array(Type.String(), { description: "交付文件：群里已有的文件名，或你工作区里的路径" })),
+				howToUse: Type.Optional(Type.String({ description: "怎么用 / 去哪看" })),
+				notDone: Type.Optional(Type.String({ description: "还没做的、建议的下一步（没有就不写）" })),
+			}),
+			async execute(_id: string, p: { projectId: string; summary: string; deliverables?: string[]; howToUse?: string; notDone?: string }) {
 				const r = getRoom(roomId);
 				if (!r || r.manager_id !== agentId) return text("只有管理者能宣布项目完成。");
 				const summary = String(p.summary ?? "").trim().slice(0, 2000);
 				if (!summary) return text("请写一句结果总结：做成了什么、交付物在哪里。");
+				const proj = getProject(p.projectId);
+				if (!proj || proj.room_id !== roomId) return text("项目不存在。");
+				// 先确认项目状态再登记文件，免得状态不对时白白登记
+				if (proj.status !== "active") return text(proj.status === "proposed" ? "这个项目还没开始（方案还在等用户确认）。" : "这个项目已经结束了。");
+				const { files, missing } = resolveFiles(roomId, agentId, p.deliverables);
+				if (missing.length) return text(`没有结束项目：${MISSING_HINT(missing)}。`);
 				try {
-					const proj = finishProject(roomId, p.projectId, summary);
-					return text(`项目「${proj.title}」已结束，结果总结已发到群里。`);
+					finishProject(roomId, p.projectId, summary, { files: files.map(fileInfo), howToUse: String(p.howToUse ?? "").trim().slice(0, 1000), notDone: String(p.notDone ?? "").trim().slice(0, 1000), managerId: agentId });
+					return text(`项目「${proj.title}」已结束，交付卡已发到群里。`);
 				} catch (e) {
 					return text(e instanceof Error ? e.message : String(e));
 				}

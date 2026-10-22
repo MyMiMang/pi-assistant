@@ -28,7 +28,7 @@
 - 前端通用组件进 `ui.tsx`；跨端共用常量进 `packages/shared`。
 
 ## 改动时要连带改的地方
-- Mock 模型（`pi-adapter/mock-provider.ts`）按关键词脚本化回复，e2e 依赖它；群聊脚本 `roomReply`（`mock-room-provider.ts`：“派给X”“循环”“慢慢”“加个成员”“组个团队”“定个目标/立项”→ room_plan、“可以/就这么干”→ room_project_start）。改行为时同步改 e2e。
+- Mock 模型（`pi-adapter/mock-provider.ts`）按关键词脚本化回复，e2e 依赖它；群聊脚本 `roomReply`（`mock-room-provider.ts`：“派给X”“循环”“慢慢”“加个成员”“组个团队”“定个目标/立项”→ room_plan、“可以/就这么干”→ room_project_start；`mock-team-provider.ts`：阶段完成通知回进度、目标含「关键点」时第一阶段完成后 room_checkpoint、目标含「交付卡」时全部完成后 room_project_done）。改行为时同步改 e2e。
 - 改价格格式要同时改 `model-db.ts` 和 `scripts/gen-model-db.mjs`。
 - 内置宠物改动后跑 `python3 scripts/pets/gen-presets.py --preview /tmp/pet-previews`。
 - `provider-icons.ts` 由 `node scripts/gen-provider-icons.mjs` 生成。
@@ -112,7 +112,7 @@
 | `work-items/` | 长期任务：store（表/摘要/看板分组/boardDigest）、guard（看板分组、重复指纹等纯逻辑）、deps（任务依赖：解析 after/编号或名字、防环 wouldCycle、哪些下游可以自动开始 readyDependents、取消时标受阻的下游）、ports（RoomPort：群聊和任务之间唯一接口）、exec（在负责人自己的会话里执行、提交、重复卡点检测、交接单+文件拼进下游执行提示）、watch（停滞检测、上报管理者/用户、等你决定）、actions（新建/核验（含 impossible）/编辑（含 after/stage）/改派/暂停/全部暂停等动作、核验通过后自动推进依赖；launch 开始一次执行、reopenWorkItem 负责人被点名时可重开自己的任务）、rework（resumeWithNote 带着回答接着做、reworkByOwner 负责人重做自己的成果）、upstream（上游重新通过核验后把新版本交给下游：在跑的插话、已完成的叫醒管理者）、correction（群里纠正任务的上下文）、tools（管理者/成员/执行会话的 work_* 工具） |
 | `proactive.ts` | 主动性引擎 |
 | `routines.ts` | 定时与 Webhook 触发 |
-| `rooms/` | 群聊：ask-logic（可追踪提问的纯逻辑：askStep / MAX_ASK_ROUNDS / ASK_TIMEOUT_MS / findByName / askIntro）、asks（表 room_asks、asksOfItem 给任务详情）、ask-flow（发问 / 追问 / 回答 / 上游有问题 / 交给管理者 / 超时检查）、ask-tools（ask_colleague / answer_colleague / report_upstream / work_rework，任务会话和群会话共用）、logic（@ 解析、发言规则、只聊不干活检测，纯逻辑；INTENT_PLAN_RULE / PROJECT_NEXT_STEP / PROJECT_IDLE_WAKE）、plan（ProjectPlan 规范化 / 校验 checkPlan / 渲染 planText，纯逻辑）、progress（项目进度清单纯逻辑：projectProgress 按阶段分组 / renderProgress 渲染文字 / projectSig 进展指纹 / projectStallStep 卡住阶梯）、projects（表 room_projects：propose / confirm / dismiss / stop / resume / finish / replan，项目级卡住计数 checkProjectStall，迁移旧 rooms.autonomy）、store（群/成员读写）、scheduler（排队/调度/停止/恢复；有 active 项目时不按每轮发言次数暂停）、collab（唤醒管理者（暂停中也唤醒）、项目兜底唤醒 idleWake、项目级进度检查、定时巡检、成员互相 @）、crud（建群/改群/删群）、proposals（建群/加成员提议）、tools（room_assign 含附件交给负责人 findRoomFile / handOverFiles、room_propose_member）、project-tools（room_plan / room_project_start / room_project_resume / room_project_replan / room_project_done）、index（入口、群规则、钩子）、copy、model-pick、permissions |
+| `rooms/` | 群聊：ask-logic（可追踪提问的纯逻辑：askStep / MAX_ASK_ROUNDS / ASK_TIMEOUT_MS / findByName / askIntro）、asks（表 room_asks、asksOfItem 给任务详情）、ask-flow（发问 / 追问 / 回答 / 上游有问题 / 交给管理者 / 超时检查）、ask-tools（ask_colleague / answer_colleague / report_upstream / work_rework，任务会话和群会话共用）、logic（@ 解析、发言规则、只聊不干活检测，纯逻辑；INTENT_PLAN_RULE / PROJECT_NEXT_STEP / PROJECT_IDLE_WAKE）、plan（ProjectPlan 规范化 / 校验 checkPlan / 渲染 planText，纯逻辑）、progress（项目进度清单纯逻辑：projectProgress 按阶段分组 / renderProgress 渲染文字 / projectSig 进展指纹 / projectStallStep 卡住阶梯 / newlyDoneStages 刚完成的阶段 / stageDoneReason 阶段通知原因）、stages（阶段完成通知：任务核验通过后 stageMaybeDone，每阶段只通知一次）、checkpoint（关键点确认：room_checkpoint 复用提问卡，项目表 waiting；用户答复发回群里）、deliver（resolveFiles 把文件引用解析成文件、postFiles 发到群里，关键点和交付卡共用）、projects（表 room_projects：propose / confirm / dismiss / stop / resume / finish / replan，项目级卡住计数 checkProjectStall，迁移旧 rooms.autonomy）、store（群/成员读写）、scheduler（排队/调度/停止/恢复；有 active 项目时不按每轮发言次数暂停）、collab（唤醒管理者（暂停中也唤醒）、项目兜底唤醒 idleWake、项目级进度检查、定时巡检、成员互相 @）、crud（建群/改群/删群）、proposals（建群/加成员提议）、tools（room_assign 含附件交给负责人 findRoomFile / handOverFiles、room_propose_member）、project-tools（room_plan / room_project_start / room_project_resume / room_project_replan / room_checkpoint / room_project_done 发交付卡）、index（入口、群规则、钩子）、copy、model-pick、permissions |
 | `channels/` | 渠道：index（入站、镜像、卡片转发）、media、caps、types、飞书/钉钉/企微/ClawBot 各自实现 |
 | `mirror.ts` | 助理主动消息选哪些渠道镜像 |
 | `wechat.ts` | 个人微信（实验） |
@@ -179,6 +179,7 @@
 | `esc-layer.ts` | Esc 关闭顺序 |
 | `externalLinks.ts` | 外链交给系统浏览器 |
 | `macosWindow.ts` | macOS 标题栏 |
+| `desktopChrome.ts` | Windows / Linux 桌面：所有滚动区域统一细滚动条（.pa-classic-sb）、窗口标题栏跟 App 明暗走（set_theme） |
 | `migrate.ts` | 旧存储键迁移 |
 | `appearance-migration.ts` | 外观存储迁移 |
 | `preview.ts` | 文件预览纯逻辑 |
@@ -204,9 +205,11 @@
 | `ChatMessages.tsx` | 共用消息展示 |
 | `RoomChat.tsx` | 群聊页 |
 | `RoomCards.tsx` | 群提议卡片、方案卡 `RoomPlanCard`（room-plan：就这么干 / 先不做）、方案正文 `PlanBody`（方案卡和项目面板共用）、项目状态文字 `PROJECT_STATUS`、旧版群目标确认卡（room-goal，新的不再产生，历史卡片照常显示） |
+| `RoomDelivery.tsx` | 交付卡 `ProjectDeliveryCard`（群消息 meta.kind=project-delivery）：做成了什么 / 交付的文件（复用 `Attachments` 预览下载）/ 怎么用 / 还没做的；长文字超 6 行折叠；不显示花费 |
+| `RoomProjectFilter.tsx` | 群里 ≥2 个进行中项目时的「按项目看」：顶部筛选 `ProjectFilter`（复用 `Select`，按群记在 localStorage）、`useProjectRows` / `filterByProject`（只留该项目消息 + 用户自己的消息）、`ProjectTagged`（气泡上的项目名小标签） |
 | `RoomPeer.tsx` | 成员之间的提问 / 回答（群消息 peer-ask / peer-answer）：`PeerWrap` 加「提问 / 回答 · 第 n 轮」标签、「问 @对方」、回答回指提问（点了跳过去，复用 `.pa-quoted`）；`WorkAsks`：任务详情的「在等同事回答」 |
 | `WorkItems.tsx` | 群任务看板（等你决定/卡住/进行中/已完成·已停止、全部暂停）、任务提交卡 |
-| `RoomWork.tsx` | 群聊顶部干活入口 `RoomWorkButtons`（任务看板 + 项目）；`ProjectsButton`：待确认 / 进行中项目的 chip + 面板（看方案、停下项目、展开已结束的项目） |
+| `RoomWork.tsx` | 群聊顶部干活入口 `RoomWorkButtons`（任务看板 + 项目筛选 + 项目）；项目有 waiting 时 chip 标「等你看一眼」、面板里 `WaitingBlock` 显示关键点；`ProjectsButton`：待确认 / 进行中项目的 chip + 面板（看方案、停下项目、展开已结束的项目） |
 | `WorkItemDetail.tsx` | 任务详情、新建任务、等你决定回答框 |
 | `Sidebar.tsx` | 侧边栏 |
 | `Conversations.tsx` | 对话菜单 |

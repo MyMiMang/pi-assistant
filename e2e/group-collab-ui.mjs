@@ -13,6 +13,7 @@
  *  6) 停群不停任务：停群后正在执行的任务继续跑，看板「全部暂停」才停；
  *  7) 看板上用户直接核验「这条路走不通」→ 任务受阻，不自动重做；
  *  8) 成员直接协作（决策 0019 第 4 步）：干活中途问同事（群里「提问」「回答」成组、可跳回）、任务详情「在等同事回答」、上游有问题 → 上游重做 → 下游拿新版本。
+ *  9) 第 5 步：阶段完成通知、关键点卡片（chip 等你看一眼 + 面板琥珀框 + 点选项继续）、交付卡（文件可预览，390 不溢出）、两个进行中项目时的按项目筛选和项目标签。
  *
  * 全程临时 DATA/WORKSPACE/HOME/TMPDIR + 内存凭据 + loopback Mock，不碰生产库 / 凭据 / 付费模型。
  *
@@ -372,6 +373,100 @@ try {
 	assert.ok(JSON.stringify(downDone.runs).includes("已按上游的新版本更新"), "下游提交结果里带着“用了上游新版本”");
 	await page.locator(`[data-testid=peer-msg][data-ask-id="${upAsk.meta.askId}"]`).first().scrollIntoViewIfNeeded();
 	await stableShot(page, page.locator(`[data-testid=peer-msg][data-peer=ask][data-ask-id="${upAsk.meta.askId}"]`), join(out, "13-upstream-ask.png"));
+
+	console.log("[G1] 阶段完成通知：没带关键点的项目（p1）第一阶段做完后，管理者在群里说进度");
+	const stageNotice = (await messages()).find((m) => m.agent_id === manager.id && /阶段「准备」做完了/.test(m.content ?? ""));
+	assert.ok(stageNotice, "管理者发了阶段完成的进度通知");
+
+	console.log("[G2] 含「关键点」「交付卡」的立项：第一阶段完成后出关键点卡片（chip 等你看一眼、面板琥珀框），点「可以，继续」后继续，最后出交付卡");
+	const p5 = await proposeNew("立项：整理对外说明，要有关键点和交付卡");
+	await card(p5.id).getByTestId("room-plan-confirm").click();
+	// 关键点不拦下游任务（Mock 里第二阶段会自己接着做完并交付、顺手收掉卡片），所以把受这个关键点影响的第二阶段先暂停住，等用户答复后再放开
+	let held;
+	await wait(async () => (held = (await j(`/api/rooms/${room.id}/work-items`)).items.find((x) => x.projectId === p5.id && x.stage === "完成")), 60000, "第二阶段任务建出来");
+	await j(`/api/work-items/${held.id}/pause`, "POST", {});
+	let cpWait;
+	await wait(async () => (cpWait = (await roomNow()).projects?.find((p) => p.id === p5.id)?.waiting), 120000, "项目出现 waiting（关键点）");
+	assert.ok(cpWait.checkpoint && cpWait.message, "waiting 带关键点和说明");
+	assert.deepEqual(cpWait.options, ["可以，继续", "要改"]);
+	const cpMsg = (await messages()).find((m) => m.role === "card" && m.meta?.kind === "question" && m.meta.checkpoint);
+	assert.equal(cpMsg?.meta.projectId, p5.id, "关键点卡片带 projectId");
+	await chip.filter({ hasText: "等你看一眼" }).waitFor();
+	assert.equal(await chip.getAttribute("data-waiting"), "1");
+	const cpCard = page.locator(".pa-question").filter({ hasText: "关键点：" }).last();
+	await cpCard.scrollIntoViewIfNeeded();
+	await stableShot(page, cpCard, join(out, "20-checkpoint-card.png"));
+	await chip.click();
+	const waitBox = page.getByTestId("room-project-waiting");
+	await waitBox.waitFor();
+	await waitBox.getByText(cpWait.checkpoint).first().waitFor();
+	assert.ok((await waitBox.textContent()).includes(cpWait.message), "面板里显示关键点说明");
+	await waitBox.scrollIntoViewIfNeeded();
+	await stableShot(page, waitBox.locator("xpath=ancestor::*[@data-testid='room-project-item'][1]"), join(out, "21-project-waiting-panel.png"));
+	await page.keyboard.press("Escape");
+	await page.setViewportSize({ width: 390, height: 844 });
+	assert.ok(await chip.isVisible(), "390 下 chip 还在（只留图标和小圆点）");
+	assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= 391), "390 页面没有横向溢出");
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	await cpCard.getByRole("button", { name: "可以，继续" }).click();
+	await j(`/api/work-items/${held.id}/continue`, "POST", {});
+	await wait(async () => !(await roomNow()).projects?.find((p) => p.id === p5.id)?.waiting, 10000, "答复后 waiting 清掉");
+	assert.ok((await messages()).some((m) => m.role === "user" && /关于关键点「.*」：可以，继续/.test(m.content)), "答复以用户身份发到群里");
+	const deliv = page.locator(`[data-testid=project-delivery][data-project="${p5.id}"]`);
+	let dm;
+	await wait(async () => (dm = (await messages()).find((m) => m.meta?.kind === "project-delivery" && m.meta.projectId === p5.id)), 120000, "交付卡消息");
+	assert.ok(dm.meta.summary && dm.meta.howToUse && dm.meta.notDone, "交付卡有做成了什么 / 怎么用 / 还没做的");
+	assert.ok(dm.meta.files.some((f) => f.name === "out.txt" && f.fileId), "交付卡带上 out.txt");
+	await deliv.waitFor();
+	await deliv.scrollIntoViewIfNeeded();
+	assert.ok((await deliv.getByText("交付：").first().textContent()).includes(p5.title), "标题是交付：项目名");
+	assert.ok(!/花费|费用|¥|\$/.test(await deliv.textContent()), "交付卡不谈花费");
+	await noOverflow(deliv, "交付卡");
+	await deliv.getByTestId("delivery-howto").waitFor();
+	await deliv.getByTestId("delivery-notdone").waitFor();
+	await stableShot(page, deliv, join(out, "22-delivery-card.png"));
+	await deliv.getByTestId("file-preview-open").first().click();
+	await page.getByTestId("file-preview-name").filter({ hasText: "out.txt" }).waitFor();
+	await page.getByTestId("file-preview-close").click();
+	await page.setViewportSize({ width: 390, height: 844 });
+	await deliv.scrollIntoViewIfNeeded();
+	const db = await deliv.boundingBox();
+	assert.ok(db.x >= -1 && db.x + db.width <= 391, "交付卡 390 不越框");
+	await noOverflow(deliv, "交付卡 390");
+	await stableShot(page, deliv, join(out, "22b-delivery-card-390.png"));
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	await wait(async () => (await allProjects()).find((p) => p.id === p5.id)?.status === "done", 10000, "项目交付后结束");
+
+	console.log("[G3] 同时有两个进行中项目：顶部出现筛选，选一个项目后只剩它的消息（加用户消息）；气泡带项目名小标签");
+	const pa = await proposeNew("立项：整理甲方案");
+	const pb = await proposeNew("立项：整理乙方案");
+	await card(pa.id).getByTestId("room-plan-confirm").click();
+	await card(pb.id).getByTestId("room-plan-confirm").click();
+	await wait(async () => (await roomNow()).projects.filter((p) => p.status === "active").length >= 2, 10000, "两个进行中项目");
+	const filter = page.getByTestId("room-project-filter");
+	await filter.waitFor();
+	await wait(() => started(pa.id).then((a) => a && started(pb.id)), 20000, "两个项目都开始了");
+	await page.getByTestId("project-tag").filter({ hasText: pa.title }).first().waitFor();
+	await card(pa.id).waitFor();
+	await card(pb.id).waitFor();
+	await filter.click();
+	await page.getByRole("option", { name: pa.title }).click();
+	await wait(async () => (await card(pb.id).count()) === 0, 10000, "筛选后看不到另一个项目的消息");
+	assert.equal(await card(pa.id).count(), 1, "选中项目的方案卡还在");
+	await page.getByText("立项：整理乙方案").first().waitFor();
+	assert.equal(await page.locator(`[data-testid=project-tag]`).filter({ hasText: pb.title }).count(), 0, "另一个项目的标签不出现");
+	await stableShot(page, page.getByTestId("room-chat"), join(out, "23-project-filter.png"));
+	await page.setViewportSize({ width: 390, height: 844 });
+	assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= 391), "390 页面没有横向溢出");
+	const head = page.locator("header.pa-chat-head");
+	const fb = await filter.boundingBox();
+	assert.ok(fb.x >= 0 && fb.x + fb.width <= 391, "筛选在 390 屏内");
+	await stableShot(page, head, join(out, "23b-project-filter-390.png"));
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	await filter.click();
+	await page.getByRole("option", { name: "全部项目" }).click();
+	await card(pb.id).waitFor();
+	await card(pa.id).waitFor();
 
 	console.log("[9] 停群不停任务；看板「全部暂停」才停");
 	const long = await create("取消隔离探针", worker.id, true);

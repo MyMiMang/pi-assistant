@@ -77,5 +77,6 @@ export function planText(p: { id: string; title: string; plan: ProjectPlan }) {
 		...(plan.roles.length ? [`分工：${plan.roles.map((r) => `${r.member}：${r.does || "（未写）"}`).join("；")}`] : []),
 		...(plan.stages.length ? [`阶段：${plan.stages.map((s, i) => `${i + 1}. ${s.name}${s.output ? ` → ${s.output}` : ""}`).join("；")}`] : []),
 		...(plan.deliverables ? [`交付物：${plan.deliverables}`] : []),
+		...(plan.checkpoints.length ? [`关键点（到了请用户看一眼，用 room_checkpoint）：${plan.checkpoints.join("；")}`] : []),
 	].join("\n");
 }

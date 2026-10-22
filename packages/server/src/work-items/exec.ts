@@ -241,7 +241,7 @@ export function finishRun(runId: string, status: WorkRunStatus, text: string, er
 	}
 	event(item.id, "run.finished", { kind: "agent", agentId: run.owner_agent_id }, run.revision, { runId: run.id, status, ...(rep.fp ? { fp: rep.fp } : {}) });
 	if (status === "error") {
-		roomNotice(item.room_id, `任务「${item.title}」这次执行失败了：${(error ?? "").slice(0, 200)}。还在原任务上，已请管理者处理。`, item.id);
+		roomNotice(item.room_id, `任务「${item.title}」这次执行失败了：${(error ?? "").slice(0, 200)}。任务还在，不会丢；已请管理者看原因，决定重做、换人还是拆小。`, item.id);
 		stuck(item, `执行失败：${error ?? ""}`, rep);
 	} else if (status === "interrupted") roomNotice(item.room_id, `任务「${item.title}」执行中断（服务重启），可继续。`, item.id);
 	else if (status === "done" && !submitted && ["active", "blocked"].includes(item.status) && item.room_id) {
@@ -299,11 +299,11 @@ export function submitWorkItem(o: { workItemId: string; conversationId: string; 
 		agentId: actor.agentId,
 		roomId: row.room_id,
 		role: "card",
-		meta: { kind: "work-result", workItemId: row.id, roomId: row.room_id, runId: run.id, title: row.title, ownerAgentId: actor.agentId, status: blocker ? "blocked" : "review", summary: (blocker || result).slice(0, 1000), revision: row.revision },
+		meta: { kind: "work-result", workItemId: row.id, roomId: row.room_id, ...(row.project_id ? { projectId: row.project_id } : {}), runId: run.id, title: row.title, ownerAgentId: actor.agentId, status: blocker ? "blocked" : "review", summary: (blocker || result).slice(0, 1000), revision: row.revision },
 	});
 	event(row.id, blocker ? "submitted.blocked" : "submitted", actor, row.revision, { runId: run.id, result: result.slice(0, 1000), blocker: blocker.slice(0, 500), ...(rep.fp ? { fp: rep.fp } : {}) });
 	if (blocker) {
-		roomNotice(row.room_id, `任务「${row.title}」被 ${agentName(actor.agentId)} 标为受阻：${blocker.slice(0, 200)}。原任务保持，已请管理者处理。`, row.id);
+		roomNotice(row.room_id, `任务「${row.title}」被 ${agentName(actor.agentId)} 标为受阻：${blocker.slice(0, 200)}。任务保持原样，已请管理者想办法解决，需要你帮忙时会来问你。`, row.id);
 		stuck(row, blocker, rep);
 	} else if (row.room_id) port()?.wakeManager(row.room_id, `${agentName(actor.agentId)} 提交了任务「${row.title}」的结果，等你核验`, row.id);
 	emit(row.room_id);
