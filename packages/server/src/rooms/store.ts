@@ -72,3 +72,13 @@ export function stoppedFlag(r: RoomRow | undefined) {
 		return false;
 	}
 }
+
+/** 群成员名单（群规则和任务执行说明共用）：每人一行，标出管理者和「你」，带上成员说明；名字以这份名单为准。 */
+export function rosterText(roomId: string, agentId: string) {
+	const managerId = (db.prepare("SELECT manager_id FROM rooms WHERE id = ?").get(roomId) as { manager_id: string | null } | undefined)?.manager_id ?? null;
+	const lines = membersOf(roomId).map((m) => {
+		const a = getAgent(m.agent_id);
+		return `- ${a?.name ?? m.name}${m.agent_id === managerId ? "（管理者）" : ""}${m.agent_id === agentId ? "（你）" : ""}${a?.description ? `：${a.description}` : ""}`;
+	});
+	return `这些助理：\n${lines.join("\n")}\n成员的名字一律以这份名单为准；历史消息里出现的其他称呼（比如改名前的旧名字）都不算，称呼时统一用名单里的名字。`;
+}

@@ -1,5 +1,6 @@
 /** 从 http.ts 拆出的路由（行为不变）。 */
 import { Hono, type Context } from "hono";
+import { asksOfItem } from "../rooms/asks.ts";
 import { WorkItemError, editWorkItem, getWorkItemDetail, postWorkFeedback, userAction } from "../work-items.ts";
 import { type Env } from "./common.ts";
 
@@ -15,7 +16,8 @@ export const workErr = (c: Context, e: unknown) => {
 export function mountWorkItemRoutes(app: Hono<Env>) {
 	app.get("/api/work-items/:wid", (c) => {
 		try {
-			return c.json(getWorkItemDetail(c.req.param("wid")));
+			const wid = c.req.param("wid");
+			return c.json({ ...getWorkItemDetail(wid), asks: asksOfItem(wid) }); // 和这个任务有关的同事提问（任务详情的「在等同事回答」）
 		} catch (e) {
 			return workErr(c, e);
 		}

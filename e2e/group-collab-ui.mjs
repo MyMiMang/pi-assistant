@@ -11,7 +11,8 @@
  *     管理者判断需要用户拍板 → 「等你决定」高亮置顶，用户在看板上直接回答，决定发回群里；
  *  5) 看板四组（等你决定 / 卡住 / 进行中 / 已完成·已停止折叠）+ 390px；
  *  6) 停群不停任务：停群后正在执行的任务继续跑，看板「全部暂停」才停；
- *  7) 看板上用户直接核验「这条路走不通」→ 任务受阻，不自动重做。
+ *  7) 看板上用户直接核验「这条路走不通」→ 任务受阻，不自动重做；
+ *  8) 成员直接协作（决策 0019 第 4 步）：干活中途问同事（群里「提问」「回答」成组、可跳回）、任务详情「在等同事回答」、上游有问题 → 上游重做 → 下游拿新版本。
  *
  * 全程临时 DATA/WORKSPACE/HOME/TMPDIR + 内存凭据 + loopback Mock，不碰生产库 / 凭据 / 付费模型。
  *
@@ -248,6 +249,130 @@ try {
 	await wait(async () => (await messages()).some((m) => m.role === "user" && /账号权限【卡点】需拍板」，我的决定：先用公开数据/.test(m.content ?? "")), 10000, "decision posted to room");
 	await page.keyboard.press("Escape");
 
+	console.log("[8b] 成员干活中途问同事：群里出现「提问」「回答」两条，看得出是一组，回答点了回到提问；提问者拿到回答后提交");
+	// 前面留下的卡住 / 拍板任务会让 Mock 管理者每次被叫醒都先处理它们；这一步只看成员互问，先把它们收掉
+	for (const x of [stuck, ask]) await j(`/api/work-items/${x.item.id}/cancel`, "POST", {});
+	const MOCK_ANSWER = "按第一版口径来，数据以内部表为准";
+	const askItem = await j(`/api/rooms/${room.id}/work-items`, "POST", { title: "整理口径说明", requirement: "整理可核验的结果，动手前先问一下同事口径", doneCriteria: "结果有第 3 行检查点", ownerAgentId: worker.id, start: true });
+	let askMsg, ansMsg;
+	await wait(async () => {
+		const ms = await messages();
+		askMsg = ms.find((m) => m.meta?.kind === "peer-ask");
+		ansMsg = askMsg && ms.find((m) => m.meta?.kind === "peer-answer" && m.meta.askId === askMsg.meta.askId);
+		return !!ansMsg;
+	}, 45000, "peer ask + answer in room");
+	assert.equal(askMsg.agent_id, worker.id, "提问者是干活的成员");
+	assert.equal(askMsg.meta.to, helper.id, "问的是管理者以外的另一位成员");
+	assert.equal(askMsg.meta.toName, "乙");
+	assert.equal(askMsg.meta.rounds, 1);
+	assert.equal(ansMsg.agent_id, helper.id, "回答者是被问的成员");
+	assert.equal(ansMsg.meta.rounds, 1, "问和答同一轮同一个数");
+	assert.ok(ansMsg.content.includes(MOCK_ANSWER));
+	const askBox = page.locator(`[data-testid=peer-msg][data-peer=ask][data-ask-id="${askMsg.meta.askId}"]`);
+	const ansBox = page.locator(`[data-testid=peer-msg][data-peer=answer][data-ask-id="${askMsg.meta.askId}"]`);
+	await askBox.waitFor();
+	await ansBox.waitFor();
+	assert.equal((await askBox.getByTestId("peer-tag").textContent()).trim(), "提问 · 第 1 轮");
+	assert.equal((await askBox.getByTestId("peer-to").textContent()).trim(), "问 @乙");
+	assert.equal((await ansBox.getByTestId("peer-tag").textContent()).trim(), "回答 · 第 1 轮");
+	await ansBox.getByTestId("peer-ref").getByText("回复 甲 的提问").waitFor();
+	await ansBox.scrollIntoViewIfNeeded();
+	await ansBox.getByTestId("peer-ref").click();
+	await wait(async () => {
+		const b = await page.locator(`[data-mid="${askMsg.id}"]`).first().boundingBox();
+		return !!b && b.y >= 0 && b.y + b.height <= 1000;
+	}, 10000, "点回答里的回指后提问在可视范围内");
+	assert.equal(await page.getByTestId("quote-jump-state").count(), 0, "定位成功不留失败提示");
+	await stableShot(page, askBox, join(out, "11-peer-ask.png"));
+	await stableShot(page, ansBox, join(out, "11-peer-answer.png"));
+	await wait(async () => (await detail(askItem.item.id)).item.status === "done", 60000, "提问者拿到回答后提交、管理者核验完成");
+	const askDone = await detail(askItem.item.id);
+	assert.ok(JSON.stringify(askDone.runs).includes(MOCK_ANSWER), "提交结果里带回了同事的回答");
+	assert.equal((askDone.asks ?? []).filter((a) => a.status === "open").length, 0, "回答后没有还在等的提问");
+	// 手机宽度：两条互问消息不溢出
+	await page.setViewportSize({ width: 390, height: 844 });
+	await ansBox.scrollIntoViewIfNeeded();
+	for (const loc of [askBox, ansBox]) {
+		const b = await loc.boundingBox();
+		assert.ok(b.x >= -1 && b.x + b.width <= 391, "互问消息 390 不越框");
+	}
+	assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "390 页面没有横向滚动");
+	await stableShot(page, ansBox, join(out, "11b-peer-answer-390.png"));
+
+	console.log("[8c] 任务详情「在等同事回答」：真实数据里提问已答完所以不显示；用一份带未答提问的响应检查它的样子（桌面 + 390）");
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	const openAsk = { id: "ask_e2e", to: helper.id, toName: "乙", from: worker.id, fromName: "甲", kind: "question", status: "open", rounds: 1, question: "这份交付的数据口径按哪个版本来？", updatedAt: Date.now() };
+	const openWork = async () => {
+		await page.getByTestId("room-work-items").click();
+		const toggle = page.getByTestId("work-closed");
+		await toggle.waitFor({ timeout: 10000 }).catch(() => {});
+		if (await toggle.count() && !(await toggle.evaluate((e) => e.open))) await toggle.locator("summary").click();
+		await page.getByTestId("work-item-row").filter({ hasText: "整理口径说明" }).click();
+		await page.getByTestId("work-detail").waitFor();
+	};
+	await openWork();
+	assert.equal(await page.getByTestId("work-asks").count(), 0, "提问都答完了，不显示「在等同事回答」");
+	await page.getByTestId("work-detail-back").click();
+	await page.keyboard.press("Escape");
+	const injectAsks = (asks) => page.route(`**/api/work-items/${askItem.item.id}`, async (route) => {
+		if (route.request().method() !== "GET") return route.fallback();
+		const res = await route.fetch();
+		await route.fulfill({ response: res, json: { ...(await res.json()), asks } });
+	});
+	await injectAsks([openAsk, { ...openAsk, id: "ask_e2e2", kind: "upstream", status: "escalated", rounds: 3, question: "上游的第 3 行检查点没有来源" }]);
+	await openWork();
+	const waiting = page.getByTestId("work-asks");
+	await waiting.waitFor();
+	assert.equal(await waiting.getByTestId("work-ask").count(), 2);
+	await waiting.getByText("甲 在等 乙 回答").waitFor();
+	await waiting.getByText("已交给管理者").waitFor();
+	await stableShot(page, page.getByTestId("work-detail"), join(out, "12-work-asks.png"));
+	await page.setViewportSize({ width: 390, height: 844 });
+	const wb = await waiting.boundingBox();
+	assert.ok(wb.x >= -1 && wb.x + wb.width <= 391, "「在等同事回答」390 不越框");
+	await stableShot(page, waiting, join(out, "12b-work-asks-390.png"));
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	await page.unroute(`**/api/work-items/${askItem.item.id}`);
+	await page.getByTestId("work-detail-back").click();
+	await page.keyboard.press("Escape");
+
+	console.log("[8d] 上游有问题：下游成员反馈前置任务 → 群里看到上游提问 → 上游重做后重新通过 → 下游拿到新版本并提交");
+	const seen = new Set((await j(`/api/rooms/${room.id}/work-items`)).items.map((x) => x.id));
+	const p4 = await proposeNew("立项：整理一份对账说明");
+	await card(p4.id).getByTestId("room-plan-confirm").click();
+	let up, down;
+	await wait(async () => {
+		const items = (await j(`/api/rooms/${room.id}/work-items`)).items.filter((x) => !seen.has(x.id));
+		up = items.find((x) => x.stage === "准备");
+		down = items.find((x) => x.stage === "完成");
+		return !!up && !!down;
+	}, 30000, "方案两阶段任务建出来");
+	assert.equal(down.status, "pending", "第二阶段还在等前置，这时改它的要求和负责人");
+	assert.equal(up.ownerAgentId, worker.id, "第一阶段交给甲");
+	await j(`/api/work-items/${down.id}`, "PATCH", { requirement: "明确最终交付物。上游有问题", ownerAgentId: helper.id });
+	let upAsk, upAns;
+	await wait(async () => {
+		const ms = await messages();
+		upAsk = ms.find((m) => m.meta?.kind === "peer-ask" && m.meta.upstream);
+		return !!upAsk;
+	}, 90000, "下游向上游反馈");
+	assert.equal(upAsk.agent_id, helper.id, "反馈的是下游负责人");
+	assert.equal(upAsk.meta.to, worker.id, "反馈给上游负责人");
+	await page.locator(`[data-testid=peer-msg][data-peer=ask][data-ask-id="${upAsk.meta.askId}"]`).waitFor();
+	await wait(async () => {
+		upAns = (await messages()).find((m) => m.meta?.kind === "peer-answer" && m.meta.askId === upAsk.meta.askId);
+		return !!upAns || (await detail(up.id)).item.revision >= 2;
+	}, 60000, "上游负责人处理（重做）");
+	await wait(async () => {
+		const u = await detail(up.id);
+		return u.item.revision >= 2 && u.item.status === "done" && u.events.filter((e) => e.kind === "verified.pass").length >= 2;
+	}, 90000, "上游重做后重新通过核验");
+	await wait(async () => (await detail(down.id)).item.status === "done", 90000, "下游拿到新版本后提交并通过");
+	const downDone = await detail(down.id);
+	assert.ok(JSON.stringify(downDone.runs).includes("已按上游的新版本更新"), "下游提交结果里带着“用了上游新版本”");
+	await page.locator(`[data-testid=peer-msg][data-ask-id="${upAsk.meta.askId}"]`).first().scrollIntoViewIfNeeded();
+	await stableShot(page, page.locator(`[data-testid=peer-msg][data-peer=ask][data-ask-id="${upAsk.meta.askId}"]`), join(out, "13-upstream-ask.png"));
+
 	console.log("[9] 停群不停任务；看板「全部暂停」才停");
 	const long = await create("取消隔离探针", worker.id, true);
 	// 群任务执行跑在成员的帮手上：命令在帮手详情里（群里只看到帮手卡片）
@@ -282,7 +407,7 @@ try {
 	await page.getByTestId("work-detail-back").click();
 
 	assert.equal(errors.length, 0, errors.join(" | "));
-	console.log("PASS group-collab: 立项出方案卡、按钮确认 / 先不做 / 群里说「可以」确认、项目 chip 与面板（看方案、停下、恢复、已结束）、两阶段进度清单+自动交接+chip 阶段、负责人会话执行+管理者唤醒核验、卡住/等你决定/直接拍板、四组看板+390、停群不停任务+全部暂停、看板「这条路走不通」");
+	console.log("PASS group-collab: 立项出方案卡、按钮确认 / 先不做 / 群里说「可以」确认、项目 chip 与面板（看方案、停下、恢复、已结束）、两阶段进度清单+自动交接+chip 阶段、负责人会话执行+管理者唤醒核验、卡住/等你决定/直接拍板、四组看板+390、停群不停任务+全部暂停、看板「这条路走不通」、成员互问（提问/回答成组可跳回、在等同事回答、上游有问题→重做→下游新版本）");
 } catch (e) {
 	console.error("GROUP COLLAB FAIL", e.message);
 	if (room) console.error("messages", JSON.stringify((await j(`/api/rooms/${room.id}/messages`).catch(() => [])).slice(-10).map((m) => [m.role, m.agent_id, m.meta?.kind ?? m.meta?.toolName, String(m.content ?? "").slice(0, 160)])));

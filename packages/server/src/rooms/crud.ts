@@ -92,6 +92,7 @@ export async function deleteRoom(id: string, opts: { keepAgents?: string[] } = {
 	deleteRoomFiles(id);
 	db.prepare("DELETE FROM room_members WHERE room_id = ?").run(id);
 	db.prepare("DELETE FROM room_turns WHERE room_id = ?").run(id);
+	db.prepare("DELETE FROM room_asks WHERE room_id = ?").run(id);
 	db.prepare("DELETE FROM rooms WHERE id = ?").run(id);
 	const scoped = db.prepare("SELECT id FROM agents WHERE scope = 'room' AND room_id = ?").all(id) as { id: string }[];
 	const toDelete: string[] = [];

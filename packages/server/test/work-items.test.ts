@@ -24,7 +24,8 @@ test("执行在负责人自己的隐藏任务会话里跑，不占群回合；�
 	assert.equal(roomOfConversation(c.conv), room.id, "任务会话的消息归进来源群");
 	assert.match(c.prompt, /给你分配了任务/);
 	assert.match(c.prompt, new RegExp(`任务编号：${id}`));
-	assert.doesNotMatch(c.prompt, /（管理者）/);
+	assert.doesNotMatch(c.prompt, /唤醒原因|任务看板（未完成/, "不是管理者看看板的群上下文");
+	assert.match(c.prompt, /群里的同事[\s\S]*- 乙/, "带群成员名单，找同事时知道叫谁");
 	assert.equal(runRows(id)[0].exec_kind, "helper", "执行跑在负责人的帮手上");
 	assert.equal((db.prepare("SELECT COUNT(*) AS n FROM room_turns WHERE room_id = ? AND reason != 'check'").get(room.id) as { n: number }).n, turnsBefore, "不进群的发言队列");
 	// 结束但没提交：任务不完成，管理者被叫醒

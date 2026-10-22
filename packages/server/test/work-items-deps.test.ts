@@ -61,7 +61,7 @@ test("前置任务核验通过后依赖它的 pending 任务自动开始，执�
 	assert.ok(W.getWorkItemDetail(down.id).events.some((e) => e.kind === "started" && (e.detail as { auto?: boolean }).auto));
 	const c2 = await started(down.id);
 	assert.match(c2.prompt, /前置任务交给你的东西：/);
-	assert.match(c2.prompt, /前置任务「写初稿」（负责人 甲）已完成/);
+	assert.match(c2.prompt, /前置任务「写初稿」（编号 wi_\w+，负责人 甲）已完成/);
 	assert.match(c2.prompt, /交接说明：初稿在 draft\.md，还没配图/);
 	const path = c2.prompt.match(/相关文件（已放进你的工作区）：(\S+)/)?.[1];
 	assert.ok(path, "执行提示里带着文件路径");

@@ -158,6 +158,12 @@ export const isManager = (roomId: string, agentId: string) => roomRow(roomId)?.m
 export const actorKey = (a: WorkActor) => (a.kind === "user" ? "user" : a.agentId);
 export const actorName = (a: WorkActor) => (a.kind === "user" ? "用户" : agentName(a.agentId));
 export const clip = (s: unknown, n: number) => String(s ?? "").trim().slice(0, n);
+/** 按名字找成员（精确优先，其次忽略大小写；可带 @）：派活、改派、找同事共用这一份。 */
+export function findByName<T extends { name: string }>(members: T[], name: string): T | undefined {
+	const want = String(name ?? "").replace(/^[@＠]/, "").trim();
+	if (!want) return undefined;
+	return members.find((m) => m.name === want) ?? members.find((m) => m.name.toLowerCase() === want.toLowerCase());
+}
 export const emit = (roomId: string | null) => {
 	bus.emit({ type: "work.items", roomId });
 	bus.emit({ type: "rooms.changed", roomId });

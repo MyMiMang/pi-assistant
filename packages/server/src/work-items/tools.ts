@@ -11,7 +11,7 @@ import { hasDependents } from "./deps.ts";
 import { reportProgress, submitWorkItem } from "./exec.ts";
 import { currentSource, port } from "./ports.ts";
 import { roleOf } from "../helper-scope.ts";
-import { emit, event, isManager, itemRow, listWorkItems, WORK_STATUSES, type WorkActor, type WorkStatus } from "./store.ts";
+import { emit, event, findByName, isManager, itemRow, listWorkItems, WORK_STATUSES, type WorkActor, type WorkStatus } from "./store.ts";
 import { askUserDecision, EXHAUSTED_MARK, SWITCH_HINT } from "./watch.ts";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
@@ -32,11 +32,7 @@ function selfAssignBlock(roomId: string, managerId: string, ownerId: string | un
 }
 const SELF_REASON = { description: "负责人是你自己、且群里还有别的成员时需要：一句话说明这件事为什么属于你自己的角色职责（或群里没有对口的成员）" };
 const memberNames = (roomId: string) => members(roomId).map((m) => m.name).join("、");
-function memberByName(roomId: string, name: string) {
-	const want = name.replace(/^[@＠]/, "").trim();
-	const rows = members(roomId);
-	return rows.find((m) => m.name === want) ?? rows.find((m) => m.name.toLowerCase() === want.toLowerCase()) ?? null;
-}
+const memberByName = (roomId: string, name: string) => findByName(members(roomId), name) ?? null;
 
 function listTool(pi: Pi, roomId: string, description: string) {
 	pi.registerTool({

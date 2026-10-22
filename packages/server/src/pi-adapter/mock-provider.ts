@@ -4,6 +4,7 @@
  */
 import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import type { PiModels } from "./index.ts";
+import { collabReply } from "./mock-collab-provider.ts";
 import { imageCount, roomReply } from "./mock-room-provider.ts";
 
 export const MOCK_PROVIDER = "mock";
@@ -179,6 +180,9 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 		if (since < 3) return fauxAssistantMessage([...(since ? [] : [fauxText("好，我慢慢数。")]), fauxToolCall("bash", { command: `sleep 2; echo 第${since + 1}步` })]);
 		return fauxAssistantMessage("数完了：1、2、3。");
 	}
+	// 成员直接协作（提问 / 回答 / 上游有问题 / 重做）：只在任务要求带「先问一下」「上游有问题」或看到提问编号时接管
+	const collab = collabReply(messages, u, last, systemPrompt);
+	if (collab) return collab;
 	// 群聊（rooms）：按群消息里的提示脚本化地扮演管理者 / 成员
 	if (u.startsWith("（群聊「")) return roomReply(u, systemPrompt, last, messages);
 	// 提议建群：用户说“组个团队/建个群…”

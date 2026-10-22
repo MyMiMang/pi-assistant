@@ -7,6 +7,7 @@ import { db, now, uid } from "../db.ts";
 import { availableTasksText, pendingDependentsOf, pendingDeps, readyDependents, resolveRefs, wouldCycle, dependencyEdges } from "./deps.ts";
 import { cancelWorkRuns, createRun, dispatchRun, failRun, promoteRunMemories, recordProgress, repeatOf, workPrompt } from "./exec.ts";
 import { port } from "./ports.ts";
+import { deliverNewVersion, passedBefore } from "./upstream.ts";
 import {
 	activeMember,
 	actorKey,
@@ -55,7 +56,7 @@ export interface CreateWorkItemInput {
 }
 
 /** 立刻在负责人的任务会话里开跑；派发本身失败就明确标受阻。 */
-function launch(item: WorkItemRow, run: WorkRunRow, rethrow = false) {
+export function launch(item: WorkItemRow, run: WorkRunRow, rethrow = false) {
 	try {
 		dispatchRun(item, run);
 	} catch (e) {
@@ -189,12 +190,14 @@ export async function verifyWorkItem(o: { workItemId: string; actor: WorkActor; 
 	const t = now();
 	recordProgress(row);
 	if (o.verdict === "pass") {
+		const again = passedBefore(row.id); // 之前已经通过过一次：这次是新版本
 		const verification = JSON.stringify({ verdict: "pass", note, by: actorKey(o.actor), byName: actorName(o.actor), at: t, revision: row.revision });
 		db.prepare("UPDATE work_items SET status = 'done', latest_progress = ?, blocker = NULL, verification = ?, completed_at = ?, auto_retries = 0, needs_user = NULL, escalation = NULL, updated_at = ? WHERE id = ? AND revision = ?").run(`已核验完成：${note.slice(0, 300)}`, verification, t, t, row.id, row.revision);
 		event(row.id, "verified.pass", o.actor, row.revision, { note: note.slice(0, 2000) });
 		roomNotice(row.room_id, `任务「${row.title}」核验通过：${note.slice(0, 300)}`, row.id);
 		await promoteRunMemories(row.id, row.revision).catch((e) => console.warn(`[work] 执行记忆转正失败：${e instanceof Error ? e.message : e}`));
 		advanceDependents(row);
+		if (again) deliverNewVersion(itemRow(row.id)!);
 		emit(row.room_id);
 		return getWorkItemDetail(row.id);
 	}
@@ -304,10 +307,12 @@ export function editWorkItem(o: { workItemId: string; actor: WorkActor; title?: 
 }
 
 /** 重开：已完成 / 已取消的任务在用户明确要求修改时恢复为原任务（保留原验收历史，不新建副本）。 */
-export function reopenWorkItem(o: { workItemId: string; actor: WorkActor; note?: string }) {
+export function reopenWorkItem(o: { workItemId: string; actor: WorkActor; note?: string; ownerRework?: boolean }) {
 	const row = itemRow(o.workItemId);
 	if (!row) fail("任务不存在", "not_found");
-	requireManagerOrUser(row, o.actor);
+	// 负责人重做自己的成果（被上游提问点名，调用方已校验）：本群里的负责人本人也可以重开；其余只有管理者 / 用户
+	const ownerSelf = !!o.ownerRework && o.actor.kind === "agent" && o.actor.agentId === row.owner_agent_id && (!o.actor.roomId || o.actor.roomId === row.room_id);
+	if (!ownerSelf) requireManagerOrUser(row, o.actor);
 	if (!["done", "cancelled"].includes(row.status)) fail("只有已完成或已取消的任务需要重开", "bad_status");
 	if (!row.owner_agent_id || !activeMember(row.room_id!, row.owner_agent_id)) fail("原负责人已不在群里，请先改派再重开", "owner_left");
 	const revision = row.revision + 1;

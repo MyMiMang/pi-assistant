@@ -15,6 +15,7 @@ import { VoiceInput } from "./VoiceInput";
 import { buildReplyRef, draftSignature, liveMentions, newClientId, replyDraftKey, resolveRoomReplyTarget, roomSendBody } from "../replies";
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
 import { locateRoomMessage, type LocateResult } from "../replies-api";
+import { PeerWrap } from "./RoomPeer";
 import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
 
 // ------------------------------------------------------------------ 显示用的成员信息（助理已删除时用群里存的快照）
@@ -215,10 +216,10 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 						) : r.kind === "system" ? (
 							<SystemMsg key={r.m.id} m={r.m} canContinue={r.m.id === lastPause} />
 						) : (
-							<RoomBotTurn key={r.id} row={r} room={room} agents={agents} live={speaking === r.agentId && r === lastRow} onAvatar={openMember} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf} />
+							<RoomBotTurn key={r.id} row={r} room={room} agents={agents} list={list} live={speaking === r.agentId && r === lastRow} onAvatar={openMember} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf} />
 						),
 					)}
-					{speaking && (lastRow?.kind !== "bot" || lastRow.agentId !== speaking) && <RoomBotTurn row={{ kind: "bot", id: "pending", agentId: speaking, parts: [] }} room={room} agents={agents} live onAvatar={openMember} />}
+					{speaking && (lastRow?.kind !== "bot" || lastRow.agentId !== speaking) && <RoomBotTurn row={{ kind: "bot", id: "pending", agentId: speaking, parts: [] }} room={room} agents={agents} list={list} live onAvatar={openMember} />}
 					{roomWindow[roomId] && (
 						<div className="pa-history-window" data-testid="history-window">
 							<span className="pa-history-note">{roomWindow[roomId]!.newCount > 0 ? `有 ${roomWindow[roomId]!.newCount} 条新消息` : "正在查看历史消息"}</span>
@@ -257,7 +258,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	);
 }
 
-function RoomBotTurn({ row, room, agents, live, onAvatar, onQuote, onJump, interaction }: { row: Extract<RRow, { kind: "bot" }>; room: Room; agents: Agent[]; live: boolean; onAvatar: (id: string) => void; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => any }) {
+function RoomBotTurn({ row, room, agents, list, live, onAvatar, onQuote, onJump, interaction }: { row: Extract<RRow, { kind: "bot" }>; room: Room; agents: Agent[]; list: Message[]; live: boolean; onAvatar: (id: string) => void; onQuote?: (m: Message) => void; onJump?: (id: string) => void; interaction?: (m: Message) => any }) {
 	const who = memberOf(room, agents, row.agentId);
 	const parts = row.parts;
 	const last = parts[parts.length - 1];
@@ -279,9 +280,7 @@ function RoomBotTurn({ row, room, agents, live, onAvatar, onQuote, onJump, inter
 					{row.agentId === room.managerId && <span className="pa-room-badge">管理者</span>}
 					{who.deleted && <span className="pa-room-badge muted">已删除</span>}
 				</div>
-				{parts.map((p, i) => (
-					<BotPart key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} live={live && i === parts.length - 1 && p.kind === "steps"} onQuote={onQuote} onJump={onJump} interaction={interaction} />
-				))}
+				{parts.map((p, i) => <PeerWrap key={p.kind === "msg" ? p.m.id : p.items[0].id} p={p} room={room} agents={agents} list={list} onJump={onJump}><BotPart p={p} live={live && i === parts.length - 1 && p.kind === "steps"} onQuote={onQuote} onJump={onJump} interaction={interaction} /></PeerWrap>)}
 				{live && !streaming && !waitingCard && <Activity tool={runningTool} />}
 			</div>
 		</div>

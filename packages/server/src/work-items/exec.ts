@@ -75,7 +75,7 @@ export function workPrompt(item: WorkItemRow) {
 }
 
 /** 前置任务交给负责人的东西：标题 / 负责人 / 核验结论、最后一次提交摘要（≤1500 字）、交接说明、文件在它工作区的路径。不给前置任务的聊天记录。 */
-function handoffFrom(upstream: WorkItemRow, newOwnerId: string, roomId: string | null): string {
+export function handoffFrom(upstream: WorkItemRow, newOwnerId: string, roomId: string | null): string {
 	const run = db.prepare("SELECT * FROM work_item_runs WHERE work_item_id = ? AND revision = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(upstream.id, upstream.revision) as WorkRunRow | undefined;
 	const verification = upstream.verification ? (JSON.parse(upstream.verification) as { note?: string }) : null;
 	const paths = (run ? parseStringArray(run.files) : [])
@@ -84,12 +84,15 @@ function handoffFrom(upstream: WorkItemRow, newOwnerId: string, roomId: string |
 		.map((f) => (roomId ? materializeFor(newOwnerId, f, roomId) : null))
 		.filter((p): p is string => !!p);
 	return [
-		`前置任务「${upstream.title}」（负责人 ${agentName(upstream.owner_agent_id)}）已完成，核验结论：${clip(verification?.note, 300) || "（无）"}`,
+		`前置任务「${upstream.title}」（编号 ${upstream.id}，负责人 ${agentName(upstream.owner_agent_id)}）已完成，核验结论：${clip(verification?.note, 300) || "（无）"}`,
 		run?.result ? `最后一次提交：${clip(run.result, 1500)}` : "",
 		run?.handoff ? `交接说明：${clip(run.handoff, 1500)}` : "",
 		paths.length ? `相关文件（已放进你的工作区）：${paths.join("、")}` : "",
 	].filter(Boolean).join("\n");
 }
+
+/** 拿不准就先对齐（任务执行提示和成员的群规则共用，决策 0019 第 4 步）。 */
+export const ALIGN_RULE = "资料不够、理解拿不准、结果没把握时先问清楚，不要硬猜着往下做：问同事用 ask_colleague；涉及目标 / 范围 / 分工的问管理者（也是 ask_colleague）；只有用户才能定的事写进 work_submit 的 blocker 交给管理者。前置任务的成果有问题用 report_upstream 告诉上游负责人，不要直接改别人的成果、也不替别人做决定。问完先做不依赖答案的部分，回答会直接送到你这里。";
 
 function execPrompt(item: WorkItemRow, run: WorkRunRow) {
 	const room = item.room_id ? roomRow(item.room_id) : undefined;
@@ -103,8 +106,10 @@ function execPrompt(item: WorkItemRow, run: WorkRunRow) {
 		run.task && run.task !== workPrompt(item) ? `派活说明：${run.task.slice(0, 2000)}` : "",
 		note && item.revision > 1 ? `最近一次意见：${note.slice(0, 1000)}` : "",
 		deps.length ? `前置任务交给你的东西：\n${deps.map((d) => handoffFrom(d, run.owner_agent_id, item.room_id)).join("\n\n")}` : "",
+		item.room_id ? `群里的同事（需要问人时用 ask_colleague，按名字找）：${port()?.roster(item.room_id, run.owner_agent_id) ?? ""}` : "",
 		`这是第 ${run.revision} 次修订的执行，由你的帮手在你自己的任务会话里进行（用你自己的记忆、权限和电脑），不占群里的发言。群里能看到你在做什么和结果，工具步骤留在详情里。`,
 		"做完用 work_submit 提交结果（产物在哪、怎么检查）；做不下去就用 work_submit 写清真实阻塞；中途有阶段性进展用 work_report。不要自行把任务标成完成，也不要只聊天不干活。",
+		ALIGN_RULE,
 	].filter(Boolean).join("\n");
 }
 

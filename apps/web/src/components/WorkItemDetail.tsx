@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, ArrowLeft, CheckCircle2, Download, FileText, HelpCircle, Loader2, MessageSquare, Send } from "lucide-react";
 import { api, download } from "../api";
-import type { Room } from "../types";
+import type { Room, WorkAsk } from "../types";
+import { WorkAsks } from "./RoomPeer";
 import { Badge, Help, Modal, Select, fmtTime } from "./ui";
 
 /** 任务详情、新建任务与「等你决定」的回答框；看板本体在 WorkItems.tsx。 */
@@ -57,6 +58,8 @@ export interface WorkDetail {
 	item: WorkSummary & { requirement: string; doneCriteria: string; verification: { verdict?: string; note?: string; byName?: string; at?: number } | null; completedAt: number | null; sourceMessageId: string | null };
 	runs: WorkRun[];
 	events: WorkEvent[];
+	/** 和这个任务有关的成员提问；服务端还没给就是缺省。 */
+	asks?: WorkAsk[];
 }
 export const RUN_LABEL: Record<string, string> = { none: "还没执行", queued: "排队中", running: "执行中", submitted: "已提交", finished: "执行结束", failed: "执行失败", cancelled: "执行已取消", interrupted: "执行中断" };
 const STATUS_TONE: Record<string, "zinc" | "green" | "amber" | "red" | "accent"> = { pending: "zinc", active: "accent", blocked: "amber", review: "amber", done: "green", paused: "zinc", cancelled: "zinc" };
@@ -231,6 +234,7 @@ export function WorkDetailPane({ room, id, detail, error, onBack, onChanged, onS
 					</ul>
 				</section>
 			) : null}
+			<WorkAsks asks={detail.asks} />
 			<section className="pa-work-block"><h4>要做成什么</h4><p>{it.requirement || "（没有写）"}</p></section>
 			<section className="pa-work-block"><h4>完成标准</h4><p>{it.doneCriteria || "（没有写）"}</p></section>
 			<section className="pa-work-block"><h4>最近进度</h4><p>{it.latestProgress || "暂无"}</p>{it.blocker ? <p className="pa-work-warn"><AlertTriangle className="pa-ic" />受阻：{it.blocker}</p> : null}</section>

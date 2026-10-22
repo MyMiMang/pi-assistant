@@ -149,3 +149,6 @@ export interface PhaseDto {
 	speed?: number;
 	error?: string;
 }
+
+/** 任务详情里和这个任务有关的成员提问（服务端 GET /api/work-items/:id 的 asks；没有就是缺省）。 */
+export interface WorkAsk { id: string; to: string; toName: string; from: string; fromName: string; kind: "question" | "upstream"; status: "open" | "answered" | "escalated" | "closed"; rounds: number; question: string; updatedAt: number }

@@ -278,6 +278,11 @@ html, body { overflow-x: hidden; max-width: 100%; overscroll-behavior-x: none; }
 .pa-room-name{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;margin-bottom:2px;min-width:0}
 .pa-room-badge{font-size:10px;font-weight:500;padding:1px 6px;border-radius:999px;background:rgba(245,158,11,.14);color:#b45309}
 .pa-room-badge.muted{background:var(--hover);color:var(--mut)}
+/* 成员互问 / 回答：标签 + 「问 @对方」或回指原提问（回指复用 .pa-quoted） */
+.pa-peer-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:-4px}
+.pa-peer-head .pa-quoted{margin:0;flex:1 1 180px;min-width:0}
+.pa-peer-to{font-size:12px;color:var(--mut)}
+.pa-peer{display:flex;flex-direction:column;gap:6px;min-width:0;max-width:100%;padding-left:8px;border-left:2px solid var(--acc-soft)}
 .pa-room-status{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 0;max-width:100%;overflow:hidden}
 .pa-room-st{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 10px;border-radius:999px;background:var(--acc-soft);color:var(--fg);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pa-room-st.muted{background:var(--hover);color:var(--mut)}

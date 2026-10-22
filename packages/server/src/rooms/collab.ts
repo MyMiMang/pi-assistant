@@ -11,12 +11,15 @@ import { notify } from "../push.ts";
 import { getAgent } from "../runtime.ts";
 import { boardDigest, itemsOfProject, setRoomPort, steerToLiveRun } from "../work-items.ts";
 import { boardDigestOrUnchanged, boardSig as projectBoardSig, PROJECT_IDLE_WAKE, idleWakeStep, planPeerTurns } from "./logic.ts";
+import { askIdOf } from "./ask-logic.ts";
+import { answerAsk, checkAskTimeouts } from "./ask-flow.ts";
+import { getAsk } from "./asks.ts";
 import { planText } from "./plan.ts";
 import { activeProjects, checkProjectStall, getProject, hasActiveProject, projectView } from "./projects.ts";
 import { projectProgress, renderProgress } from "./progress.ts";
 import { chatterStep } from "../stuck.ts";
 import { hasQueuedTurns, postUserMessage, queuedFor, scheduleTurns, setTurnHooks } from "./scheduler.ts";
-import { activeIds, getRoom, memberConversation, memberRefs, stoppedFlag, sys } from "./store.ts";
+import { activeIds, getRoom, memberConversation, memberRefs, rosterText, stoppedFlag, sys } from "./store.ts";
 
 const CHATTER = () => Number(process.env.PIA_ROOM_CHATTER) || 6;
 export const CHECK_MS = () => Number(process.env.PIA_WORK_CHECK_MS) || 30 * 60_000;
@@ -53,7 +56,7 @@ export function wakeManager(roomId: string, reason: string, _workItemId?: string
 	const r = getRoom(roomId);
 	if (!r?.manager_id || stoppedFlag(r) || !activeIds(roomId).includes(r.manager_id)) return false;
 	const list = wakeReasons.get(roomId) ?? [];
-	const why = clip(reason, 300);
+	const why = clip(reason, 800);
 	if (why && !list.includes(why)) list.push(why);
 	wakeReasons.set(roomId, list.slice(-12));
 	lastWake.set(roomId, now());
@@ -157,7 +160,11 @@ setTurnHooks({
 	after(roomId, t, res) {
 		const r = getRoom(roomId);
 		if (!r) return;
-		if (t.reason === "peer") {
+		const askId = t.reason === "peer" ? askIdOf(t.task) : null;
+		if (askId) {
+			// 可追踪的提问：被问的人没调 answer_colleague、只在回合里说了话 → 这段话就是回答（已经发在群里，不再重复发），照样送回提问者
+			if (res.text && getAsk(askId)?.status === "open") answerAsk({ roomId, by: t.agentId, askId, text: res.text, post: false });
+		} else if (t.reason === "peer") {
 			notePeerTurn(roomId);
 			if (t.from && res.text) steerToLiveRun(roomId, t.from, `（${nameOf(t.agentId)} 在群里回复你）${res.text.slice(0, 4000)}`);
 		}
@@ -175,6 +182,7 @@ const steeredLive = (roomId: string, agentId: string) => !!db.prepare("SELECT 1 
 
 /** 定时检查：有未完成任务、或有进行中项目的群，太久没有唤醒过管理者就叫它看一眼看板（测试可直接调用）。 */
 export function runRoomChecks(at = now(), every = CHECK_MS()) {
+	checkAskTimeouts(at); // 提问没人回答超时 → 交给管理者（不另起计时器）
 	const rows = db.prepare("SELECT DISTINCT room_id FROM work_items WHERE room_id IS NOT NULL AND status IN ('active','blocked','review') UNION SELECT room_id FROM room_projects WHERE status = 'active'").all() as { room_id: string }[];
 	let n = 0;
 	for (const { room_id } of rows) {
@@ -209,6 +217,7 @@ setRoomPort({
 		const names = p ? projectView(p).plan.stages.map((s) => s.name).filter(Boolean) : [];
 		return names.length ? names : null;
 	},
+	roster: rosterText,
 	managerConversation(roomId) {
 		const r = getRoom(roomId);
 		if (!r?.manager_id || !activeIds(roomId).includes(r.manager_id)) return null;

@@ -19,6 +19,8 @@ export interface RoomPort {
 	activeProjects: (roomId: string) => { id: string; title: string }[];
 	/** 这个项目方案里的阶段名；没有这个项目或方案没写阶段就返回 null（表示不限制阶段名）。 */
 	projectStages: (projectId: string) => string[] | null;
+	/** 群成员名单（任务执行说明里给负责人看，找同事时知道该叫谁） */
+	roster: (roomId: string, agentId: string) => string;
 }
 let roomPort: RoomPort | null = null;
 export const setRoomPort = (p: RoomPort) => void (roomPort = p);

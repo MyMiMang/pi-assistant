@@ -11,7 +11,8 @@ import { db } from "../db.ts";
 import { getSubagent } from "../subagents.ts";
 import { listRoomMessages, updateMessage } from "../messages.ts";
 import { getAgent, setRoomHooks } from "../runtime.ts";
-import { execOf, workExecTools, workItemTools, workPrompt, itemRow, setWorkSourceProvider } from "../work-items.ts";
+import { ALIGN_RULE, execOf, workExecTools, workItemTools, workPrompt, itemRow, setWorkSourceProvider } from "../work-items.ts";
+import { askTools } from "./ask-tools.ts";
 import "./collab.ts";
 import { INTENT_PLAN_RULE, PROJECT_NEXT_STEP } from "./logic.ts";
 import { planText } from "./plan.ts";
@@ -19,7 +20,7 @@ import { projectTools } from "./project-tools.ts";
 import { activeProjects, projectJson, projectsOf, projectView } from "./projects.ts";
 import { proposeRoomExt } from "./proposals.ts";
 import { stateOf, states } from "./scheduler.ts";
-import { capsOf, getRoom, membersOf, roomOfConv, type RoomRow } from "./store.ts";
+import { capsOf, getRoom, membersOf, rosterText, roomOfConv, type RoomRow } from "./store.ts";
 import { roomTools } from "./tools.ts";
 
 export * from "./store.ts";
@@ -43,14 +44,9 @@ export const listRooms = () => (db.prepare("SELECT * FROM rooms ORDER BY updated
 export function roomRules(roomId: string, agentId: string) {
 	const r = getRoom(roomId)!;
 	const projects = activeProjects(roomId);
-	const ms = membersOf(roomId);
 	const isMgr = r.manager_id === agentId;
-	const roster = ms.map((m) => {
-		const a = getAgent(m.agent_id);
-		return `- ${a?.name ?? m.name}${m.agent_id === r.manager_id ? "（管理者）" : ""}${m.agent_id === agentId ? "（你）" : ""}${a?.description ? `：${a.description}` : ""}`;
-	});
 	return [
-		`你现在在群聊「${r.name}」里，群里有用户和这些助理：\n${roster.join("\n")}\n成员的名字一律以这份名单为准；历史消息里出现的其他称呼（比如改名前的旧名字）都不算，称呼时统一用名单里的名字。`,
+		`你现在在群聊「${r.name}」里，群里有用户和${rosterText(roomId, agentId)}`,
 		...(r.purpose.trim() ? [`群说明（所有成员都要遵守）：\n${r.purpose.trim()}`] : []),
 		"群聊规则：每次轮到你时，系统会把你没看过的群消息整理给你，【用户】是用户本人，【某某】是其他助理，【系统】是系统提示。你的回复会直接发到群里，用户也看得到：写给用户的话照「跟用户说话的方式」来；给其他成员的交接写清楚、准确，但别大段复述文件内容。保持简短，别重复别人已经说过的内容。",
 		"群附件：群里的图片/文件会复制到你工作区的 room-files/ 下，消息里写着「文件名 → 路径」，图片（模型支持时）和文档文字摘录会直接附给你；完整内容请用工具读取那个路径。你生成的文件用 deliver_file 发到群里，其他成员被分配时也能拿到。管理者派活时在 room_assign 的 files 里写上要交给成员的附件文件名，系统会把文件放进成员的工作区并把路径写进任务；群里找不到的文件会拒绝派出这一条（先让产出者把文件发到群里）。",
@@ -64,10 +60,8 @@ export function roomRules(roomId: string, agentId: string) {
 			: []),
 		"隐私：不要在群里透露你和用户其他对话里的私密内容，除非用户在群里要求或明显相关且无害。",
 		isMgr
-			? `你是这个群的管理者：用户没 @ 人时只有你会收到消息。理解用户要什么；自己能答就直接答；需要别人做的用 room_assign 分配，按成员的角色分工、谁的职责最对口就派给谁，你负责拆解、协调、核验、整合和对用户沟通，只有没有对口成员、或纯协调类小事才自己做（也可以在回复里 @名字，但工具更可靠）。成员做完后你会再收到一次，负责总结与协调。需要群里没有的角色时，用 room_propose_member 向用户提议加人。\n${INTENT_PLAN_RULE}`
-			: projects.length
-				? "你是群里的成员：被用户、管理者或其他成员 @ 时会轮到你。需要别的成员帮忙时可以 @ 它；卡住了 @ 管理者。"
-				: "你是群里的普通成员：只有被用户或管理者 @ 时才会轮到你。你 @ 其他成员不会叫醒他们，只能作为建议，由管理者决定。",
+			? `你是这个群的管理者：用户没 @ 人时只有你会收到消息。理解用户要什么；自己能答就直接答；需要别人做的用 room_assign 分配，按成员的角色分工、谁的职责最对口就派给谁，你负责拆解、协调、核验、整合和对用户沟通，只有没有对口成员、或纯协调类小事才自己做（也可以在回复里 @名字，但工具更可靠）。成员做完后你会再收到一次，负责总结与协调。需要群里没有的角色时，用 room_propose_member 向用户提议加人。\n${INTENT_PLAN_RULE}\n成员来问你、或提问被交给你时（提问编号在唤醒原因里），影响方案（目标 / 范围 / 交付物）的你拍板（必要时问用户），其余直接用 answer_colleague 回答或安排。`
+			: `${projects.length ? "你是群里的成员：被用户、管理者或其他成员 @ 时会轮到你。需要别的成员帮忙时可以 @ 它；卡住了 @ 管理者。" : "你是群里的普通成员：只有被用户或管理者 @ 时才会轮到你。你 @ 其他成员不会叫醒他们，只能作为建议，由管理者决定。"}\n${ALIGN_RULE}`,
 	];
 }
 
@@ -102,10 +96,10 @@ setRoomHooks({
 	extensions(agentId, conversationId, taskId) {
 		// 帮手没有群发言工具（不直接找成员 / 协调者）；群任务执行的帮手只多 work_submit / work_report
 		const exec = execOf(conversationId);
-		if (taskId) return exec && conversationId && getSubagent(taskId)?.kind === "work" ? [{ name: "pia-work-exec", factory: workExecTools(exec.work_item_id, agentId, conversationId) as never }] : [];
-		if (exec && conversationId) return [{ name: "pia-work-exec", factory: workExecTools(exec.work_item_id, agentId, conversationId) as never }];
+		if (taskId) return exec && conversationId && getSubagent(taskId)?.kind === "work" ? [{ name: "pia-work-exec", factory: workExecTools(exec.work_item_id, agentId, conversationId) as never }, { name: "pia-room-ask", factory: askTools(exec.room_id ?? "", agentId, exec.work_item_id) as never }] : [];
+		if (exec && conversationId) return [{ name: "pia-work-exec", factory: workExecTools(exec.work_item_id, agentId, conversationId) as never }, { name: "pia-room-ask", factory: askTools(exec.room_id ?? "", agentId, exec.work_item_id) as never }];
 		const roomId = roomOfConv(conversationId);
-		if (roomId) return [{ name: "pia-room", factory: roomTools(roomId, agentId) as never }, { name: "pia-work", factory: workItemTools(roomId, agentId) as never }, { name: "pia-room-project", factory: projectTools(roomId, agentId) as never }];
+		if (roomId) return [{ name: "pia-room", factory: roomTools(roomId, agentId) as never }, { name: "pia-work", factory: workItemTools(roomId, agentId) as never }, { name: "pia-room-project", factory: projectTools(roomId, agentId) as never }, { name: "pia-room-ask", factory: askTools(roomId, agentId) as never }];
 		return [{ name: "pia-room-propose", factory: proposeRoomExt(agentId, conversationId) as never }];
 	},
 	busyInRoom(agentId) {
