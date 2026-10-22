@@ -19,7 +19,7 @@ const PLAN_FIELDS = {
 	checkpoints: Type.Optional(Type.Array(Type.String(), { description: "哪几个关键点会请用户看一眼" })),
 	deliverables: Type.String({ description: "最后交给用户什么" }),
 	needs: Type.Optional(Type.String({ description: "需要用户提供什么，没有就不写" })),
-	scale: Type.Optional(Type.String({ description: "规模感：大概多久、工作量 / 花费的量级，不写精确数字" })),
+	scale: Type.Optional(Type.String({ description: "规模感：大概多久、工作量的量级，不写精确数字" })),
 };
 
 export function projectTools(roomId: string, agentId: string) {
