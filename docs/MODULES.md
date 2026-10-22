@@ -93,7 +93,7 @@
 | `local-asr/` | 本地语音识别（可选模块，用户显式安装）：目录、下载、运行、流式 |
 | `voice/` | 语音识别来源与接口 |
 | `memory/` | 记忆：basic（SQLite + FTS）、index（选择后端）、types、`hindsight/`（sidecar 安装启动、provider 账本与同步队列、settings 三模型） |
-| `skills.ts` | 技能库（Pi Agent Skills） |
+| `skills.ts` | 技能库（Pi Agent Skills）；内置技能在 `packages/server/skills/<名字>/SKILL.md`（只读，要在助理上显式启用；`team-onboarding` 是「全能培训师」模板用的组建团队与入职强化） |
 | `skill-assignments.ts` | 每个助理启用哪些技能（唯一事实来源） |
 | `skill-scope.ts` | 技能有效选集（唯一实现） |
 | `skill-import.ts` | 技能导入 |
@@ -232,7 +232,7 @@
 | `Tasks.tsx` | 任务展示共用件 |
 | `Subagents.tsx` | 子代理入口与详情 |
 | `InfoPane.tsx` | 助理设置（经典布局，八分类，单聊/群成员共用） |
-| `AgentEditor.tsx` | 助理资料编辑 |
+| `AgentEditor.tsx` | 助理资料编辑；新建助理的模板 `PRESETS`（模板可带 `skills`，新建时一并启用，如全能培训师 → `builtin/team-onboarding`） |
 | `AgentSkills.tsx` | 助理技能 |
 | `AgentExtensions.tsx` | 助理扩展 |
 | `AgentComputer.tsx` | 助理单独电脑 |

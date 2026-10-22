@@ -154,3 +154,13 @@ test("effective 选集按所属助理 id：后台 / 子代理共用同一份，�
 	// 不在任何已知根目录里的路径：一律不启用（fail closed）
 	assert.equal(skillFilterFor("parent-agent")({ name: "x", filePath: "/tmp/nowhere/SKILL.md" }), false);
 });
+
+test("内置「组建团队与入职强化」技能：在库存里、id 稳定、通用（不带具体用户），提到的工具真实存在", () => {
+	const s = listSkills().find((x) => x.id === "builtin/team-onboarding");
+	assert.ok(s, "全能培训师模板依赖的内置技能在库存里");
+	assert.equal(s.builtin, true);
+	assert.match(s.description, /组建|入职/);
+	assert.doesNotMatch(s.body, /灯灯|大王/, "内置技能不带具体用户的称呼");
+	assert.match(s.body, /propose_room/);
+	assert.match(s.body, /人设里不要重写|不要在人设里重复/, "提醒不要在人设里重写产品已内置的群聊流程");
+});

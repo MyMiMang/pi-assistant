@@ -11,12 +11,20 @@ export const AGENT_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef444
 const EMOJIS = ["🤖", "🦊", "🐼", "🐱", "🦉", "🐙", "🚀", "⚡️", "🌟", "🧠", "🛠️", "📚", "✍️", "🎨", "💼", "🔍"];
 /** 名字建议：通用、能干活的定位 */
 export const NAME_SUGGESTIONS = ["小派", "阿博", "Nova", "Atlas", "Juno", "小助", "Max", "Echo"];
-const PRESETS: { label: string; description: string; persona: string }[] = [
+/** skills：用这个模板新建助理时一并启用的内置技能（canonical id）。 */
+const PRESETS: { label: string; description: string; persona: string; skills?: string[] }[] = [
 	{ label: "全能助理", description: "什么都能做：写代码、处理文件、上网、操作电脑", persona: "" },
 	{ label: "程序员", description: "写代码、调试、搭项目、读文档", persona: "你是资深全栈工程师。先读懂现有代码再修改；改动要小而完整；完成后说明改了什么、怎么验证。" },
 	{ label: "研究员", description: "查资料、读网页和文档、整理成报告", persona: "你擅长检索和整理信息。结论先行，注明来源链接，区分事实和推测，最后给出可行动的建议。" },
 	{ label: "写作助手", description: "写文章、润色、翻译、做 PPT 大纲", persona: "你擅长中文写作与翻译。行文简洁自然，避免空话套话；先给提纲再成文。" },
 	{ label: "办公助手", description: "表格、文档、邮件、日程这些日常事务", persona: "你擅长处理 Excel/Word/PDF 和日常办公事务。产出直接可用的文件，并用一句话说明内容。" },
+	{
+		label: "全能培训师",
+		description: "按目标组建助理团队，给新助理和团队做入职培训",
+		persona:
+			"你是全能培训师，负责两类事：\n1. 按用户的目标设计并组建助理团队（群聊）：配好管理者、成员、各自的专业职责和协作约定。\n2. 给单个助理、新团队或新加入的成员做一次集中的入职强化，让他们在自己的方向上用专业方法稳定交付。\n\n遇到组建团队、建群、配置助理或培训的请求，先读 team-onboarding 技能再做。根据已有信息主动补全方案，只追问会影响结果的关键缺失。\n\n组建团队：先弄清目标、交付物和完成标准，再拆工作、配够用的最小团队，避免职责重复和堆人；每个岗位写清专业方法、输入输出、边界和自查点；用建群工具提交完整配置，分清「待确认」和「已创建」。群聊的出方案、派任务、交接、问同事、关键点确认、交付这些流程产品已经内置，人设里不要重写。\n\n培训：亲自查官方资料和维护良好的成熟开源项目，自己判断是否合理、是否适合这个岗位；不安装外部技能包，把方法提炼成人设、做事步骤、示例和自检清单，保留出处和适用条件。\n\n默认做一次集中强化，用两三个代表任务试运行并修正明显缺口；以实际产物判断效果，分清已设计、已应用、已验证，不夸大能力。汇报重点：配置了什么、怎么协作、验证结果和还缺什么。",
+		skills: ["builtin/team-onboarding"],
+	},
 ];
 
 type Draft = { name: string; avatar: string; color: string; description: string; persona: string; model: string; thinking: string | null };
@@ -94,6 +102,9 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 				...(showModel && (!agent || thinkingDirty) ? { thinking: d.thinking } : {}),
 			};
 			let a = await api<Agent>(agent ? `/api/agents/${agent.id}` : "/api/agents", { method: agent ? "PATCH" : "POST", json: body });
+			// 新建时选了带技能的模板（如全能培训师）：一并启用模板的内置技能
+			const presetSkills = agent ? undefined : PRESETS.find((p) => p.description === d.description)?.skills;
+			if (presetSkills?.length) await api(`/api/agents/${a.id}/skills`, { method: "PUT", json: { ids: presetSkills } });
 			if (file) {
 				const fd = new FormData();
 				fd.append("file", file);
