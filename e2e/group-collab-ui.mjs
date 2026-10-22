@@ -3,14 +3,22 @@
  *
  * 覆盖：
  *  1) 立项：用户说「立项：…」→ 管理者 room_plan 出方案卡（假设区可见、卡片有内边距不溢出、390 不越框），顶部出现项目 chip（待确认）；
- *  2) 点「就这么干」→ 卡片已确认、chip 进行中、群里有 started 告知；打开项目面板看到方案 → 停下项目（确认框）→ chip 消失；
+ *  2) 点「就这么干」→ 卡片已确认、chip 进行中、群里有 started 告知；按方案阶段自动建两个任务，第一个完成后第二个自动开始交接，
+ *     chip 显示「阶段 n/m」；项目面板看到两阶段进度清单；任务详情看到交接说明 / 成果文件、前置任务与阶段；
+ *     打开项目面板看到方案 → 停下项目（确认框）→ chip 消失 → 已结束列表里点「接着做」恢复（chip 和进度清单回来）→ 再停下还原；
  *  3) 另起一个方案点「先不做」→ 卡片先不做；再起一个在群里打字「可以」→ 管理者 room_project_start 确认；面板里能展开已结束的项目；
  *  4) 任务在负责人自己的会话里执行：正常任务提交 → 管理者被唤醒核验完成；成员报卡点 → 「卡住」；
  *     管理者判断需要用户拍板 → 「等你决定」高亮置顶，用户在看板上直接回答，决定发回群里；
  *  5) 看板四组（等你决定 / 卡住 / 进行中 / 已完成·已停止折叠）+ 390px；
- *  6) 停群不停任务：停群后正在执行的任务继续跑，看板「全部暂停」才停。
+ *  6) 停群不停任务：停群后正在执行的任务继续跑，看板「全部暂停」才停；
+ *  7) 看板上用户直接核验「这条路走不通」→ 任务受阻，不自动重做。
  *
  * 全程临时 DATA/WORKSPACE/HOME/TMPDIR + 内存凭据 + loopback Mock，不碰生产库 / 凭据 / 付费模型。
+ *
+ * Mock 行为说明（packages/server/src/pi-adapter/mock-room-provider.ts）：方案确认后按分工阶段自动建任务，
+ * 只有「用户按钮确认」（走 /confirm，带着「把第一批任务派给对口成员」的唤醒原因）才会在同一次唤醒里把两个阶段都建出来；
+ * 群里打字「可以」（管理者自己调 room_project_start）不触发这段唤醒文案，所以不会自动建任务——这是 Mock 的真实行为，
+ * 不是本脚本的假设，已用临时探测脚本跑过确认。两段测试分别用 p1（按钮确认）和 p3（打字确认）覆盖，互不冲突。
  */
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
@@ -95,19 +103,64 @@ try {
 	await wait(async () => (await c1.getAttribute("data-status")) === "confirmed", 10000, "card confirmed");
 	assert.equal((await c1.getByTestId("room-plan-status").textContent()).trim(), "已确认");
 	assert.equal(await c1.getByTestId("room-plan-confirm").count(), 0, "确认后按钮收起");
-	await chip.filter({ hasText: "进行中" }).waitFor();
+	// chip 一旦有进度清单就显示「阶段 n/m」，不再是「进行中」字样；按钮确认这条路自动建任务很快，这里只认 chip 里有这个项目
+	await chip.filter({ hasText: p1.title }).waitFor();
 	assert.equal((await roomNow()).projects.find((p) => p.id === p1.id)?.status, "active");
 	await wait(() => started(p1.id), 10000, "started notice");
 	await page.getByText(/方案已确认，项目「/).first().waitFor();
 	await stableShot(page, c1, join(out, "02-plan-confirmed.png"));
 
-	console.log("[3] 项目面板看方案 → 停下项目（确认框）→ chip 消失");
+	console.log("[2b] 按钮确认后按方案自动建两阶段任务；第一阶段完成后第二阶段自动开始，chip 显示「阶段 n/m」");
+	await chip.filter({ hasText: p1.title }).filter({ hasText: "阶段 2/2" }).waitFor({ timeout: 30000 });
+	const p1Stages = (await allProjects()).find((p) => p.id === p1.id).plan.stages;
+	assert.equal(p1Stages.length, 2, "方案两个阶段");
+
+	console.log("[2c] 任务详情能看到交接说明 / 成果文件（第一阶段）与前置任务 / 阶段（第二阶段）");
+	// 阶段名字本身很短（准备 / 完成），进度摘要里常常也带着这几个字，不能用整行文字模糊匹配；只认任务名字（<b>）精确等于阶段名的那一行。
+	const rowByTitle = (name) => page.locator(`[data-testid="work-item-row"]:has(b:text-is("${name}"))`);
+	await page.getByTestId("room-work-items").click();
+	const closedToggle = page.getByTestId("work-closed");
+	// 两个阶段任务很快就核验通过变成「已完成」，默认折叠在这里面；先等列表真正加载完，再决定要不要展开。
+	await closedToggle.waitFor({ timeout: 10000 }).catch(() => {});
+	if (await closedToggle.count()) await closedToggle.locator("summary").click();
+	const stage1Row = rowByTitle(p1Stages[0].name);
+	await stage1Row.waitFor();
+	await stage1Row.click();
+	await page.getByTestId("work-detail").getByText(`阶段：${p1Stages[0].name}`).waitFor();
+	await page.getByTestId("work-run-files").waitFor();
+	await page.getByTestId("work-run-file").filter({ hasText: "out.txt" }).waitFor();
+	await page.getByText(/交接：/).first().waitFor();
+	await stableShot(page, page.getByTestId("work-detail"), join(out, "02d-handoff-files.png"));
+	await page.getByTestId("work-detail-back").click();
+	// 第二阶段核验可能还没完成（还在「待核验」），不管哪种状态都要能按名字精确找到那一行，重新展开折叠。
+	if (await closedToggle.count()) await closedToggle.locator("summary").click().catch(() => {});
+	const stage2Row = rowByTitle(p1Stages[1].name);
+	await stage2Row.waitFor();
+	await stage2Row.click();
+	await page.getByTestId("work-detail").getByText(`阶段：${p1Stages[1].name}`).waitFor();
+	const depends = page.getByTestId("work-detail-depends");
+	await depends.waitFor();
+	await depends.getByText(p1Stages[0].name).first().waitFor();
+	await stableShot(page, page.getByTestId("work-detail"), join(out, "02e-depends-on.png"));
+	await page.getByTestId("work-detail-back").click();
+	await page.keyboard.press("Escape");
+
+	console.log("[3] 项目面板看方案 + 两阶段进度清单 → 停下项目（确认框）→ chip 消失");
 	await chip.click();
 	const panel = page.getByTestId("room-projects-panel");
 	const item = panel.getByTestId("room-project-item").filter({ hasText: p1.title });
 	await item.getByText(p1.plan.goal).first().waitFor();
 	await item.getByText(p1.plan.doneCriteria).first().waitFor();
+	const progress1 = item.getByTestId("room-project-progress");
+	await progress1.waitFor();
+	await progress1.getByText(p1Stages[0].name).first().waitFor();
+	await progress1.getByText(p1Stages[1].name).first().waitFor();
+	assert.ok((await progress1.getByTestId("room-progress-item").count()) >= 2, "进度清单里两个阶段各有一条任务");
 	await stableShot(page, panel, join(out, "03-projects-panel.png"));
+	await page.setViewportSize({ width: 390, height: 844 });
+	await panel.scrollIntoViewIfNeeded();
+	await stableShot(page, panel, join(out, "03b-projects-panel-390.png"));
+	await page.setViewportSize({ width: 1440, height: 1000 });
 	await item.getByTestId("room-project-stop").click();
 	await stableShot(page, page.getByTestId("confirm-dialog"), join(out, "04-stop-confirm.png"));
 	await page.getByTestId("confirm-ok").click();
@@ -132,12 +185,26 @@ try {
 	await wait(async () => (await c3.getAttribute("data-status")) === "confirmed", 20000, "card confirmed by chat");
 	await wait(async () => (await roomNow()).projects.find((p) => p.id === p3.id)?.status === "active", 10000, "project active by chat");
 	await wait(() => started(p3.id), 10000, "started notice by chat");
-	await chip.filter({ hasText: p3.title }).filter({ hasText: "进行中" }).waitFor();
+	// 「可以」这条确认路径通常不会像按钮确认那样自动建任务，但管理者上下文里已经有过一次按方案建任务的例子时偶尔也会建：
+	// chip 里只要出现这个项目、状态不是「待确认」就算确认成功，不强求具体是「进行中」还是已经带上了「阶段 n/m」。
+	await chip.filter({ hasText: p3.title }).filter({ hasText: /进行中|阶段 \d+\/\d+|已完成 \d+\/\d+/ }).waitFor();
 	await chip.click();
 	await page.getByTestId("room-projects-ended-toggle").click();
 	await panel.getByText(p1.title).first().waitFor();
 	await panel.getByText(p2.title).first().waitFor();
 	await stableShot(page, panel, join(out, "05-projects-ended.png"));
+
+	console.log("[5b] 已结束列表里停下的项目点「接着做」→ 恢复进行中、chip 回来 → 再停下还原");
+	const endedP1 = panel.getByTestId("room-project-ended-item").filter({ hasText: p1.title });
+	await endedP1.getByTestId("room-project-resume").click();
+	await wait(async () => (await allProjects()).find((p) => p.id === p1.id)?.status === "active", 10000, "p1 resumed");
+	// 这时 p1、p3 都在进行中，顶部 chip 显示「项目 2」（不再是单项目的名字 + 阶段）；用项目面板确认 p1 真的恢复了。
+	await chip.waitFor();
+	await item.getByTestId("room-project-progress").waitFor();
+	await stableShot(page, panel, join(out, "05b-project-resumed.png"));
+	await item.getByTestId("room-project-stop").click();
+	await page.getByTestId("confirm-ok").click();
+	await wait(async () => (await allProjects()).find((p) => p.id === p1.id)?.status === "stopped", 10000, "p1 re-stopped");
 	await page.keyboard.press("Escape");
 
 	console.log("[6] 任务在负责人会话里执行：完成 / 卡住 / 等你决定 / 进行中 / 已停止");
@@ -197,8 +264,25 @@ try {
 	await page.getByTestId("confirm-ok").click();
 	await wait(async () => (await detail(long.item.id)).item.status === "paused", 10000, "pause-all paused");
 	await wait(async () => !(await running()), 10000, "bash stopped");
+
+	console.log("[10] 看板上用户直接核验「这条路走不通」→ 任务受阻，不自动重做（群已停，管理者不会抢着核验）");
+	const impossible = await create("待核验探针", worker.id, true);
+	await wait(async () => (await detail(impossible.item.id)).item.status === "review", 30000, "impossible 探针进入待核验");
+	// 上一步「全部暂停」之后任务看板一直开着：它的遮罩盖住了页面上的 chip，不能再点一次打开，直接在已开着的看板里操作。
+	if (!(await page.getByTestId("work-items-overview").isVisible().catch(() => false))) await page.getByTestId("room-work-items").click();
+	await page.getByTestId("work-filter-all").click();
+	// 「待核验」映射到「进行中」组，默认不折叠，不用展开已完成 / 已停止
+	await page.getByTestId("work-item-row").filter({ hasText: impossible.item.title }).click();
+	await page.getByTestId("work-verify-note").fill("试过这个方向，根本拿不到数据源，方法本身走不通");
+	await page.getByTestId("work-verify-impossible").click();
+	await wait(async () => (await detail(impossible.item.id)).item.status === "blocked", 10000, "标为受阻");
+	assert.match((await detail(impossible.item.id)).item.blocker ?? "", /^这条路走不通：/);
+	await page.getByTestId("work-detail").getByText(/受阻：这条路走不通：/).waitFor();
+	await stableShot(page, page.getByTestId("work-detail"), join(out, "10-verify-impossible.png"));
+	await page.getByTestId("work-detail-back").click();
+
 	assert.equal(errors.length, 0, errors.join(" | "));
-	console.log("PASS group-collab: 立项出方案卡、按钮确认 / 先不做 / 群里说「可以」确认、项目 chip 与面板（看方案、停下、已结束）、负责人会话执行+管理者唤醒核验、卡住/等你决定/直接拍板、四组看板+390、停群不停任务+全部暂停");
+	console.log("PASS group-collab: 立项出方案卡、按钮确认 / 先不做 / 群里说「可以」确认、项目 chip 与面板（看方案、停下、恢复、已结束）、两阶段进度清单+自动交接+chip 阶段、负责人会话执行+管理者唤醒核验、卡住/等你决定/直接拍板、四组看板+390、停群不停任务+全部暂停、看板「这条路走不通」");
 } catch (e) {
 	console.error("GROUP COLLAB FAIL", e.message);
 	if (room) console.error("messages", JSON.stringify((await j(`/api/rooms/${room.id}/messages`).catch(() => [])).slice(-10).map((m) => [m.role, m.agent_id, m.meta?.kind ?? m.meta?.toolName, String(m.content ?? "").slice(0, 160)])));

@@ -8,9 +8,11 @@
  */
 import { db, now, uid } from "../db.ts";
 import { getMessage, insertMessage, updateMessage } from "../messages.ts";
-import { pauseWorkItem } from "../work-items.ts";
+import { notify } from "../push.ts";
+import { continueWorkItem, itemsOfProject, pauseWorkItem } from "../work-items.ts";
 import { projectEnded, projectStarted, wakeManager } from "./collab.ts";
 import { clipTitle, goalOnlyPlan, normalizePlan, type ProjectPlan } from "./plan.ts";
+import { projectProgress, projectSig, projectStallStep, type ProjectProgress } from "./progress.ts";
 import { changed, memberConversation, sys } from "./store.ts";
 
 db.exec(`
@@ -20,6 +22,16 @@ CREATE TABLE IF NOT EXISTS room_projects (
   created_at INTEGER NOT NULL, confirmed_at INTEGER, ended_at INTEGER, updated_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS room_projects_room ON room_projects(room_id, status);
 `);
+// 旧库补列：项目级卡住计数、上次检查的进展指纹、已经改计划几次（§6「项目级进度检查」，决策 0019 第 3 步）
+for (const [col, ddl] of [
+	["stalls", "INTEGER NOT NULL DEFAULT 0"],
+	["progress_sig", "TEXT"],
+	["replans", "INTEGER NOT NULL DEFAULT 0"],
+] as const) {
+	if (!(db.prepare("PRAGMA table_info(room_projects)").all() as { name: string }[]).some((c) => c.name === col)) db.exec(`ALTER TABLE room_projects ADD COLUMN ${col} ${ddl}`);
+}
+/** 换过办法仍连续卡住 3 次，不再让管理者自己处理，系统直接向用户报告（和单任务阶梯的「已用尽办法」同一思路）。 */
+const REPLAN_EXHAUSTED = 2;
 
 export type ProjectStatus = "proposed" | "active" | "done" | "stopped" | "dismissed";
 export interface ProjectRow {
@@ -36,6 +48,9 @@ export interface ProjectRow {
 	confirmed_at: number | null;
 	ended_at: number | null;
 	updated_at: number;
+	stalls: number;
+	progress_sig: string | null;
+	replans: number;
 }
 export interface ProjectJson {
 	id: string;
@@ -49,6 +64,7 @@ export interface ProjectJson {
 	createdAt: number;
 	confirmedAt: number | null;
 	endedAt: number | null;
+	progress: ProjectProgress;
 }
 
 /** 给 HTTP 用的错误：status 404 = 项目不存在（message 固定 "not_found"），409 = 状态不对（message 是给用户看的一句话）。 */
@@ -78,7 +94,11 @@ export const hasActiveProject = (roomId: string) => !!db.prepare("SELECT 1 FROM 
 export const projectView = (r: ProjectRow) => ({ id: r.id, title: r.title, plan: parsePlan(r.plan)! });
 
 export function projectJson(r: ProjectRow): ProjectJson {
-	return { id: r.id, roomId: r.room_id, title: r.title, status: r.status, plan: parsePlan(r.plan)!, draft: parsePlan(r.draft), cardMessageId: r.card_message_id, summary: r.summary, createdAt: r.created_at, confirmedAt: r.confirmed_at, endedAt: r.ended_at };
+	return {
+		id: r.id, roomId: r.room_id, title: r.title, status: r.status, plan: parsePlan(r.plan)!, draft: parsePlan(r.draft), cardMessageId: r.card_message_id, summary: r.summary,
+		createdAt: r.created_at, confirmedAt: r.confirmed_at, endedAt: r.ended_at,
+		progress: projectProgress(parsePlan(r.plan)!, itemsOfProject(r.id)),
+	};
 }
 
 function requireProject(roomId: string, projectId: string) {
@@ -97,7 +117,13 @@ export function userRepliedToCard(p: ProjectRow) {
 	if (m?.meta.status !== "pending") return false;
 	return !!db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND role = 'user' AND rowid > (SELECT rowid FROM messages WHERE id = ?) LIMIT 1").get(p.room_id, m.id);
 }
-const notice = (p: ProjectRow, text: string, event: "started" | "revised" | "done" | "stopped" | "dismissed") => sys(p.room_id, text, { kind: "room-project", projectId: p.id, event });
+const notice = (p: ProjectRow, text: string, event: "started" | "revised" | "done" | "stopped" | "dismissed" | "stalled") => sys(p.room_id, text, { kind: "room-project", projectId: p.id, event });
+const clip = (s: unknown, n: number) => String(s ?? "").trim().slice(0, n);
+/** 方案卡还在等用户时才需要检查「用户发话过没有」；项目已经结束太久没有卡片，直接按「没发话过」算。 */
+export function userRepliedAfterStop(p: ProjectRow): boolean {
+	if (!p.ended_at) return false;
+	return !!db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND role = 'user' AND created_at > ? LIMIT 1").get(p.room_id, p.ended_at);
+}
 
 /**
  * 管理者出方案卡（room_plan）：
@@ -180,6 +206,60 @@ export async function stopProject(roomId: string, projectId: string) {
 	const items = db.prepare("SELECT id FROM work_items WHERE project_id = ? AND status IN ('pending','active','blocked','review')").all(p.id) as { id: string }[];
 	for (const it of items) await pauseWorkItem({ workItemId: it.id, actor: { kind: "user" } }).catch(() => {});
 	notice(p, `项目「${p.title}」已停下，进度保留；想继续就在群里跟管理者说。`, "stopped");
+	changed(roomId);
+	return getProject(p.id)!;
+}
+
+/** 停下后接着做（面板「接着做」按钮，或用户在群里说后管理者调 room_project_resume）：stopped → active，恢复暂停的任务。 */
+export async function resumeProject(roomId: string, projectId: string) {
+	const p = requireProject(roomId, projectId);
+	if (p.status !== "stopped") throw new ProjectError(p.status === "active" ? "这个项目正在进行中，不用恢复" : "这个项目不是已停下的状态，不能恢复");
+	const t = now();
+	db.prepare("UPDATE room_projects SET status = 'active', ended_at = NULL, updated_at = ? WHERE id = ?").run(t, p.id);
+	const items = db.prepare("SELECT id FROM work_items WHERE project_id = ? AND status = 'paused'").all(p.id) as { id: string }[];
+	for (const it of items) await continueWorkItem({ workItemId: it.id, actor: { kind: "user" } }).catch(() => {});
+	notice(p, `项目「${p.title}」接着做，从停下的地方继续。`, "started");
+	projectStarted(roomId, false);
+	wakeManager(roomId, `用户要求项目「${p.title}」接着做：对照进度清单，从停下的地方继续推进`);
+	changed(roomId);
+	return getProject(p.id)!;
+}
+
+/**
+ * 项目级进度检查（docs/design/group-team.md §6「项目级进度检查」，管理者被叫醒时对每个 active 项目算一次）：
+ * 卡住到 3 次要求管理者先说清原因再改计划；已经改过 ≥2 次计划后又卡到 3 次，不再让它自己来，系统直接报告用户。
+ * 返回 "ok"（没到阈值）/ "replan"（要求改计划，调用方把要求文字接进唤醒内容）/ "exhausted"（已经报告，不用再提示）。
+ */
+export function checkProjectStall(p: ProjectRow): "ok" | "replan" | "exhausted" {
+	const done = (db.prepare("SELECT COUNT(*) AS n FROM work_items WHERE project_id = ? AND status = 'done'").get(p.id) as { n: number }).n;
+	const submits = (db.prepare("SELECT COUNT(*) AS n FROM work_item_events e JOIN work_items w ON w.id = e.work_item_id WHERE w.project_id = ? AND e.kind = 'submitted'").get(p.id) as { n: number }).n;
+	const sig = projectSig({ done, submits });
+	const impossible = !!db
+		.prepare("SELECT 1 FROM work_item_events e JOIN work_items w ON w.id = e.work_item_id WHERE w.project_id = ? AND e.kind = 'verified.impossible' AND e.created_at > ? LIMIT 1")
+		.get(p.id, p.updated_at);
+	const stalls = projectStallStep({ stalls: p.stalls, lastSig: p.progress_sig, sig, impossible });
+	if (stalls < 3) {
+		db.prepare("UPDATE room_projects SET stalls = ?, progress_sig = ?, updated_at = ? WHERE id = ?").run(stalls, sig, now(), p.id);
+		return "ok";
+	}
+	if (p.replans >= REPLAN_EXHAUSTED) {
+		// 换过办法仍然卡住：不再要求管理者自己想办法，系统直接写清楚并推送用户（和单任务的「已用尽办法」同一思路）。
+		db.prepare("UPDATE room_projects SET stalls = 0, progress_sig = ?, updated_at = ? WHERE id = ?").run(sig, now(), p.id);
+		notice(p, `项目「${p.title}」反复卡住，已经换过 ${p.replans} 次办法仍没有新进展。需要你看一下卡在哪、要不要调整方向。`, "stalled");
+		notify({ title: `${p.title}：需要你看一下`, body: "项目反复卡住，换过办法仍没有进展", tag: `project-stalled-${p.id}`, url: `/?room=${p.room_id}` });
+		return "exhausted";
+	}
+	db.prepare("UPDATE room_projects SET stalls = ?, progress_sig = ?, updated_at = ? WHERE id = ?").run(stalls, sig, now(), p.id);
+	return "replan";
+}
+
+/** 管理者记一次改计划（room_project_replan）：卡住计数清零，改计划次数 +1，群里说明卡在哪、怎么改。 */
+export function replanProject(roomId: string, projectId: string, o: { why: string; change: "retry" | "reassign" | "split" | "approach" | "plan"; detail: string }) {
+	const p = requireProject(roomId, projectId);
+	if (p.status !== "active") throw new ProjectError("这个项目不在进行中，不用改计划");
+	const label = { retry: "带着改进意见重做", reassign: "换更对口的成员", split: "把任务拆小", approach: "换一种做法", plan: "改方案" }[o.change];
+	db.prepare("UPDATE room_projects SET stalls = 0, replans = replans + 1, updated_at = ? WHERE id = ?").run(now(), p.id);
+	notice(p, `项目「${p.title}」卡住了：${clip(o.why, 200)}。改法：${label}——${clip(o.detail, 300)}`, "stalled");
 	changed(roomId);
 	return getProject(p.id)!;
 }

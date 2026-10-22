@@ -4,7 +4,7 @@
  */
 import { Type } from "typebox";
 import { checkPlan, normalizePlan } from "./plan.ts";
-import { confirmProject, finishProject, getProject, proposePlan, userRepliedToCard } from "./projects.ts";
+import { confirmProject, finishProject, getProject, proposePlan, replanProject, resumeProject, userRepliedAfterStop, userRepliedToCard } from "./projects.ts";
 import { getRoom, memberRefs } from "./store.ts";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
@@ -63,6 +63,51 @@ export function projectTools(roomId: string, agentId: string) {
 					return text(e instanceof Error ? e.message : String(e));
 				}
 				return text(wasRevision ? `已确认，项目「${proj.title}」按新方案继续。` : `已确认，项目「${proj.title}」开始了：按方案的分工和阶段把第一批任务派下去。`);
+			},
+		});
+		pi.registerTool({
+			name: "room_project_resume",
+			label: "恢复已停下的项目",
+			description: "（只有管理者可用）用户说「接着做 / 继续」且指的是某个已停下的项目时调用，从停下的地方继续。只有这个项目停下之后群里有用户本人的消息才能调用，不能自己恢复用户停下的项目。",
+			parameters: Type.Object({ projectId: Type.String({ description: "要恢复的项目编号" }) }),
+			async execute(_id: string, p: { projectId: string }) {
+				const r = getRoom(roomId);
+				if (!r || r.manager_id !== agentId) return text("只有管理者能恢复项目。");
+				const proj = getProject(p.projectId);
+				if (!proj || proj.room_id !== roomId) return text("项目不存在。");
+				if (proj.status !== "stopped") return text(proj.status === "active" ? "这个项目正在进行中，不用恢复。" : "这个项目不是已停下的状态，不能恢复。");
+				if (!userRepliedAfterStop(proj)) return text("项目停下之后用户还没有再发话，不能自己恢复；等用户明确说接着做再调用。");
+				try {
+					await resumeProject(roomId, p.projectId);
+				} catch (e) {
+					return text(e instanceof Error ? e.message : String(e));
+				}
+				return text(`已恢复，项目「${proj.title}」接着做，从停下的地方继续。`);
+			},
+		});
+		pi.registerTool({
+			name: "room_project_replan",
+			label: "记录改计划",
+			description: "（只有管理者可用）项目连续几次没有进展、被要求改计划时调用：记下为什么卡住、选了哪种改法。change = plan 时改完还要再用 room_plan 出新方案请用户确认（影响目标 / 范围 / 交付物才需要）；其余几种改法记完就可以照新办法继续推进，不用等用户确认。",
+			parameters: Type.Object({
+				projectId: Type.String(),
+				why: Type.String({ description: "一两句话：为什么卡住" }),
+				change: Type.Union([Type.Literal("retry"), Type.Literal("reassign"), Type.Literal("split"), Type.Literal("approach"), Type.Literal("plan")], {
+					description: "retry=带着改进意见重做；reassign=换更对口的成员；split=把任务拆小；approach=换一种做法；plan=改方案（需要用户重新确认）",
+				}),
+				detail: Type.String({ description: "具体怎么改" }),
+			}),
+			async execute(_id: string, p: { projectId: string; why: string; change: "retry" | "reassign" | "split" | "approach" | "plan"; detail: string }) {
+				const r = getRoom(roomId);
+				if (!r || r.manager_id !== agentId) return text("只有管理者能记录改计划。");
+				const proj = getProject(p.projectId);
+				if (!proj || proj.room_id !== roomId) return text("项目不存在。");
+				try {
+					replanProject(roomId, p.projectId, { why: p.why, change: p.change, detail: p.detail });
+				} catch (e) {
+					return text(e instanceof Error ? e.message : String(e));
+				}
+				return text(`已记录改计划。${p.change === "plan" ? "改方案影响目标 / 范围 / 交付物，接着用 room_plan（带 projectId）出新方案请用户重新确认。" : "按新办法继续推进。"}`);
 			},
 		});
 		pi.registerTool({

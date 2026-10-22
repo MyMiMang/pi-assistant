@@ -39,9 +39,21 @@ export interface ProjectPlan {
 	checkpoints: string[]; deliverables: string; needs: string; scale: string;
 }
 export type ProjectStatus = "proposed" | "active" | "done" | "stopped" | "dismissed";
+/** 进度清单里的一条任务（镜像服务端 rooms/progress.ts 的 ProgressItem）。 */
+export interface ProgressItem { id: string; title: string; ownerName: string; status: string; statusLabel: string; waitingFor: string[] }
+/** 项目进度清单（镜像服务端 rooms/progress.ts 的 ProjectProgress）：项目面板和顶部 chip 共用；方案待确认时没有这个字段。 */
+export interface ProjectProgress {
+	stages: { name: string; output: string; items: ProgressItem[]; state: "todo" | "doing" | "done" }[];
+	other: ProgressItem[];
+	done: number;
+	total: number;
+	currentStage: number | null;
+}
 export interface RoomProject {
 	id: string; roomId: string; title: string; status: ProjectStatus; plan: ProjectPlan; draft: ProjectPlan | null;
 	cardMessageId: string | null; summary: string | null; createdAt: number; confirmedAt: number | null; endedAt: number | null;
+	/** 服务端还没有这个字段时为 undefined：界面按「没有进度清单」处理，不报错。 */
+	progress?: ProjectProgress | null;
 }
 export interface Room {
 	/** 只含待确认 / 进行中的项目（按创建时间升序）；已结束的走 /api/rooms/:rid/projects?all=1 */

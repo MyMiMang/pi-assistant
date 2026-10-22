@@ -11,6 +11,7 @@
  */
 import { bus } from "../bus.ts";
 import { db, now, uid } from "../db.ts";
+import { getFile } from "../files.ts";
 import { insertMessage } from "../messages.ts";
 import { BOARD_GROUPS, BOARD_LABEL, boardGroupOf, type BoardGroup } from "./guard.ts";
 import type { Escalation } from "../stuck.ts";
@@ -63,6 +64,10 @@ export interface WorkItemRow {
 	source_message_id: string | null;
 	/** 属于群里的哪个项目（rooms/projects.ts；没有就是平时的任务） */
 	project_id: string | null;
+	/** 前置任务编号（JSON 数组，空数组用 "[]"）；全部完成才能开始，见 deps.ts */
+	depends_on: string;
+	/** 属于方案里的哪个阶段（和 plan.stages[].name 对应，可空） */
+	stage: string | null;
 	created_at: number;
 	updated_at: number;
 	completed_at: number | null;
@@ -79,6 +84,10 @@ export interface WorkRunRow {
 	result: string | null;
 	blocker: string | null;
 	error: string | null;
+	/** 交接说明：做了什么、东西在哪、接手的人要注意什么、还有什么没做 */
+	handoff: string | null;
+	/** 成果文件的 file id（JSON 数组） */
+	files: string | null;
 	created_at: number;
 	started_at: number | null;
 	finished_at: number | null;
@@ -117,15 +126,24 @@ CREATE TABLE IF NOT EXISTS work_item_events (
   revision INTEGER NOT NULL, detail TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS work_item_events_item ON work_item_events(work_item_id, created_at);
 `);
-// 旧库补列：自动重试计数、等用户决定、防护上报、最后进展时间
+// 旧库补列：自动重试计数、等用户决定、防护上报、最后进展时间、所属项目、前置任务、所属阶段
 for (const [col, ddl] of [
 	["auto_retries", "INTEGER NOT NULL DEFAULT 0"],
 	["needs_user", "TEXT"],
 	["escalation", "TEXT"],
 	["last_progress_at", "INTEGER"],
 	["project_id", "TEXT"],
+	["depends_on", "TEXT NOT NULL DEFAULT '[]'"],
+	["stage", "TEXT"],
 ] as const) {
 	if (!(db.prepare("PRAGMA table_info(work_items)").all() as { name: string }[]).some((c) => c.name === col)) db.exec(`ALTER TABLE work_items ADD COLUMN ${col} ${ddl}`);
+}
+// 旧库补列：交接说明、成果文件
+for (const [col, ddl] of [
+	["handoff", "TEXT"],
+	["files", "TEXT"],
+] as const) {
+	if (!(db.prepare("PRAGMA table_info(work_item_runs)").all() as { name: string }[]).some((c) => c.name === col)) db.exec(`ALTER TABLE work_item_runs ADD COLUMN ${col} ${ddl}`);
 }
 /** 退回后连续自动重做几次仍不通过，就算「反复卡在同一处」，停下来请用户决定（不是费用上限）。 */
 export const MAX_AUTO_RETRIES = 3;
@@ -154,6 +172,18 @@ export const safeJson = (s: string | null | undefined): Record<string, unknown> 
 };
 export const needsUserOf = (row: WorkItemRow) => (row.needs_user ? (safeJson(row.needs_user) as unknown as NeedsUser) : null);
 export const escalationOf = (row: WorkItemRow) => (row.escalation ? (safeJson(row.escalation) as unknown as Escalation) : null);
+
+/** 字符串数组字段的通用解析（前置任务编号 / 成果文件 id），坏数据按空数组算。 */
+export function parseStringArray(s: string | null | undefined): string[] {
+	try {
+		const v = JSON.parse(s ?? "[]");
+		return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x) : [];
+	} catch {
+		return [];
+	}
+}
+export const parseDepends = parseStringArray;
+export const stringifyDepends = (ids: string[]) => JSON.stringify([...new Set(ids)]);
 
 /** 群里的系统提示：关键节点一句话（不是每条工具调用 / 心跳），保证用户不打开看板也知道。 */
 export function roomNotice(roomId: string | null, text: string, workItemId: string) {
@@ -234,6 +264,10 @@ export interface WorkItemSummary {
 	updatedAt: number;
 	createdAt: number;
 	runState: "none" | "queued" | "running" | "submitted" | "finished" | "failed" | "cancelled" | "interrupted";
+	/** 前置任务（依赖自动推进 + 界面显示用） */
+	dependsOn: { id: string; title: string; status: WorkStatus; statusLabel: string }[];
+	/** 属于方案里的哪个阶段（没写或对不上项目方案就是 null） */
+	stage: string | null;
 }
 
 export const latestRun = (itemId: string) => db.prepare("SELECT * FROM work_item_runs WHERE work_item_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(itemId) as WorkRunRow | undefined;
@@ -273,6 +307,11 @@ export function summary(row: WorkItemRow): WorkItemSummary {
 		updatedAt: row.updated_at,
 		createdAt: row.created_at,
 		runState: runStateOf(latestRun(row.id)),
+		dependsOn: parseDepends(row.depends_on)
+			.map((id) => itemRow(id))
+			.filter((d): d is WorkItemRow => !!d)
+			.map((d) => ({ id: d.id, title: d.title, status: d.status, statusLabel: WORK_STATUS_LABEL[d.status] ?? d.status })),
+		stage: row.stage ?? null,
 	};
 }
 
@@ -336,11 +375,21 @@ export function listWorkItems(
 	};
 }
 
+/** 一个项目下的全部任务摘要（不分页；给项目进度清单用，见 rooms/progress.ts）。 */
+export function itemsOfProject(projectId: string): WorkItemSummary[] {
+	return (db.prepare("SELECT * FROM work_items WHERE project_id = ? ORDER BY created_at, id").all(projectId) as unknown as WorkItemRow[]).map(summary);
+}
+
 export function getWorkItemDetail(id: string) {
 	const row = itemRow(id);
 	if (!row) fail("任务不存在", "not_found");
 	const runs = db.prepare("SELECT * FROM work_item_runs WHERE work_item_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 50").all(id) as unknown as WorkRunRow[];
 	const events = db.prepare("SELECT * FROM work_item_events WHERE work_item_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 100").all(id) as unknown as WorkEventRow[];
+	const filesOf = new Map<string, { fileId: string; name: string }>();
+	for (const fid of new Set(runs.flatMap((r) => parseStringArray(r.files)))) {
+		const f = getFile(fid);
+		if (f) filesOf.set(fid, { fileId: f.id, name: f.name });
+	}
 	return {
 		item: {
 			...summary(row),
@@ -362,6 +411,8 @@ export function getWorkItemDetail(id: string) {
 			result: r.result,
 			blocker: r.blocker,
 			error: r.error,
+			handoff: r.handoff,
+			files: parseStringArray(r.files).map((fid) => filesOf.get(fid)).filter((f): f is { fileId: string; name: string } => !!f),
 			createdAt: r.created_at,
 			startedAt: r.started_at,
 			finishedAt: r.finished_at,

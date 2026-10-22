@@ -97,7 +97,41 @@ export function roomReply(u: string, systemPrompt: string, last: Msg, messages: 
 		const pid = planResult && textOf(planResult).match(/项目编号 (pj_[a-z0-9]+)/)?.[1];
 		if (pid) return fauxAssistantMessage([fauxToolCall("room_project_start", { projectId: pid })]);
 	}
-	if (last.toolName === "room_plan" || last.toolName === "room_project_start") return fauxAssistantMessage(`${me}：好的。`);
+	if (last.toolName === "room_plan") return fauxAssistantMessage(`${me}：好的。`);
+	// 项目确认后的那次唤醒（决策 0019 第 3 步）：按方案阶段建任务，一个阶段一个任务，stage 填阶段名，第二个起 after 前一个；
+	// 建完就不再重复（createdIds.length >= stages.length），兼容「可以」确认同一轮直接继续、也兼容用户点按钮确认后另一次唤醒。
+	if (last.toolName === "room_project_start" || /把第一批任务派给对口成员|按新方案调整任务/.test(u)) {
+		const stageLine = systemPrompt.match(/阶段：([^\n]+)/)?.[1] ?? "";
+		const stages = [...stageLine.matchAll(/\d+\.\s*([^→；]+?)(?:\s*→\s*([^；]+))?(?=；|$)/g)].map((m) => ({ name: m[1].trim(), output: (m[2] ?? "").trim() }));
+		if (stages.length) {
+			const rosterBlock = systemPrompt.match(/这些助理：\n([\s\S]*?)\n成员的名字一律以这份名单为准/)?.[1] ?? "";
+			const roster = [...rosterBlock.matchAll(/^- ([^（：\n]+)/gm)].map((x) => x[1].trim());
+			const other = roster.find((n) => n !== me) ?? "成员";
+			const planResult = [...messages].reverse().find((m) => m.role === "toolResult" && m.toolName === "room_plan");
+			const pid = planResult && textOf(planResult).match(/项目编号 (pj_[a-z0-9]+)/)?.[1];
+			const createdIds = since
+				.filter((m) => m.role === "toolResult" && m.toolName === "work_create")
+				.map((m) => textOf(m).match(/编号 (wi_[a-z0-9]+)/i)?.[1])
+				.filter((x): x is string => !!x);
+			if (createdIds.length < stages.length) {
+				const stage = stages[createdIds.length];
+				const prev = createdIds[createdIds.length - 1];
+				return fauxAssistantMessage([
+					fauxToolCall("work_create", {
+						title: stage.name,
+						requirement: stage.output || stage.name,
+						doneCriteria: stage.output ? `完成：${stage.output}` : `完成「${stage.name}」`,
+						owner: other,
+						stage: stage.name,
+						...(prev ? { after: [prev] } : {}),
+						...(pid ? { projectId: pid } : {}),
+					}),
+				]);
+			}
+			return fauxAssistantMessage(`${me}：已经按方案把 ${stages.length} 个阶段的任务都派下去了。`);
+		}
+		if (last.toolName === "room_project_start") return fauxAssistantMessage(`${me}：好的。`);
+	}
 	if (isFollowup && /任务看板有变化/.test(u) && /需拍板/.test(u)) {
 		if (last.toolName === "work_ask_user") return fauxAssistantMessage(`${me}：有一件事需要你拍板，已放进「等你决定」。`);
 		const line = u.split("\n").find((x) => x.includes("需拍板") && /wi_/.test(x) && !x.includes("等你决定"));
@@ -147,7 +181,14 @@ export function roomReply(u: string, systemPrompt: string, last: Msg, messages: 
 		if (last.toolName === "write" && /【长期任务】/.test(u)) return fauxAssistantMessage([fauxToolCall("deliver_file", { path: "out.txt", caption: `${me}：任务交付 out.txt` })]);
 		if (last.toolName === "deliver_file" && /【长期任务】/.test(u)) {
 			const id = u.match(/任务编号：(wi_[a-z0-9]+)/i)?.[1];
-			return fauxAssistantMessage([fauxToolCall("work_submit", { result: "已交付 out.txt（群附件），第 3 行写着检查点；来源链接在文件末尾", ...(id ? { workItemId: id } : {}) })]);
+			return fauxAssistantMessage([
+				fauxToolCall("work_submit", {
+					result: "已交付 out.txt（群附件），第 3 行写着检查点；来源链接在文件末尾",
+					handoff: "产物是 out.txt，第 3 行是检查点；接手的人直接看这份文件就行，没有遗留问题。",
+					files: ["out.txt"],
+					...(id ? { workItemId: id } : {}),
+				}),
+			]);
 		}
 		if (last.toolName === "write") return fauxAssistantMessage([fauxToolCall("deliver_file", { path: "chart.svg", caption: `${me}：图表做好了` })]);
 		if (last.toolName === "deliver_file") return fauxAssistantMessage(`${me}：文件已发到群里。`);

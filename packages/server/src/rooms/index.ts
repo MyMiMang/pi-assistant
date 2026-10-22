@@ -27,7 +27,7 @@ export { bootstrapRooms, cancelQueuedFor, continueRoom, markRead, postUserMessag
 export { createRoom, deleteRoom, onAgentChanged, onAgentDeleted, updateRoom } from "./crud.ts";
 export { availableModels, clampProposalThinking, confirmMemberProposal, confirmProposal, createRoomAgent, normalizeProposal, type ProposalMember, type RoomProposal } from "./proposals.ts";
 export { runRoomChecks, startRoomChecks, wakeManager } from "./collab.ts";
-export { confirmProject, dismissProject, finishProject, getProject, migrateAutonomy, projectJson, projectsOf, ProjectError, startGoalProject, stopProject, type ProjectJson } from "./projects.ts";
+export { confirmProject, dismissProject, finishProject, getProject, migrateAutonomy, projectJson, projectsOf, ProjectError, replanProject, resumeProject, startGoalProject, stopProject, userRepliedAfterStop, type ProjectJson } from "./projects.ts";
 export { checkPlan, normalizePlan, type ProjectPlan } from "./plan.ts";
 
 export function roomJson(r: RoomRow) {
@@ -59,6 +59,9 @@ export function roomRules(roomId: string, agentId: string) {
 		"群聊内容不会自动写进你的长期记忆；确实值得长期记住的（用户的偏好、重要决定），再用 memory_remember 记下来。",
 		"长期任务：看板只是同一份任务数据的视图，群聊仍是分工、进展、阻塞、成员交付和核验结论的主入口。成员派自己的帮手在任务会话里执行（群里能看到帮手在做什么、结果和交付的文件，工具步骤留在详情里），做完用 work_submit 提交；管理者在提交 / 卡住时被叫醒、核验后在群里说明结论。失败或阻塞也要在原群说，不要只改看板状态；也不要每一步工具细节 / 心跳都刷屏。",
 		...(projects.length ? [`进行中的项目：\n${projects.map((p) => planText(projectView(p))).join("\n\n")}\n成员可以 @ 彼此直接协作（被 @ 的成员会醒来回复），只在需要时 @；只聊不干活会被提醒。需要用户拍板的事由管理者用 work_ask_user 问，别的不要打扰用户。${isMgr ? `\n${PROJECT_NEXT_STEP}` : ""}`] : []),
+		...(isMgr && projectsOf(r.id, true).some((p) => p.status === "stopped")
+			? [`已停下的项目（进度保留）：${projectsOf(r.id, true).filter((p) => p.status === "stopped").map((p) => `「${p.title}」（项目编号 ${p.id}）`).join("、")}。用户说「接着做 / 继续」指的是其中一个时，用 room_project_resume 恢复；你不能自己恢复用户停下的项目。`]
+			: []),
 		"隐私：不要在群里透露你和用户其他对话里的私密内容，除非用户在群里要求或明显相关且无害。",
 		isMgr
 			? `你是这个群的管理者：用户没 @ 人时只有你会收到消息。理解用户要什么；自己能答就直接答；需要别人做的用 room_assign 分配，按成员的角色分工、谁的职责最对口就派给谁，你负责拆解、协调、核验、整合和对用户沟通，只有没有对口成员、或纯协调类小事才自己做（也可以在回复里 @名字，但工具更可靠）。成员做完后你会再收到一次，负责总结与协调。需要群里没有的角色时，用 room_propose_member 向用户提议加人。\n${INTENT_PLAN_RULE}`

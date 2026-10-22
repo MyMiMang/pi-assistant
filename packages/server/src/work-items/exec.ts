@@ -9,6 +9,7 @@
  */
 import { createConversation } from "../conversations.ts";
 import { db, now, uid } from "../db.ts";
+import { deliverFromWorkspace, getFile, materializeFor } from "../files.ts";
 import { insertMessage } from "../messages.ts";
 import { bus } from "../bus.ts";
 import { helperScope } from "../helper-scope.ts";
@@ -25,8 +26,11 @@ import {
 	fail,
 	getWorkItemDetail,
 	itemRow,
+	parseDepends,
+	parseStringArray,
 	roomNotice,
 	roomRow,
+	stringifyDepends,
 	submissionApplies,
 	type WorkActor,
 	type WorkItemRow,
@@ -70,16 +74,35 @@ export function workPrompt(item: WorkItemRow) {
 	].filter(Boolean).join("\n");
 }
 
+/** 前置任务交给负责人的东西：标题 / 负责人 / 核验结论、最后一次提交摘要（≤1500 字）、交接说明、文件在它工作区的路径。不给前置任务的聊天记录。 */
+function handoffFrom(upstream: WorkItemRow, newOwnerId: string, roomId: string | null): string {
+	const run = db.prepare("SELECT * FROM work_item_runs WHERE work_item_id = ? AND revision = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(upstream.id, upstream.revision) as WorkRunRow | undefined;
+	const verification = upstream.verification ? (JSON.parse(upstream.verification) as { note?: string }) : null;
+	const paths = (run ? parseStringArray(run.files) : [])
+		.map((fid) => getFile(fid))
+		.filter((f): f is NonNullable<typeof f> => !!f)
+		.map((f) => (roomId ? materializeFor(newOwnerId, f, roomId) : null))
+		.filter((p): p is string => !!p);
+	return [
+		`前置任务「${upstream.title}」（负责人 ${agentName(upstream.owner_agent_id)}）已完成，核验结论：${clip(verification?.note, 300) || "（无）"}`,
+		run?.result ? `最后一次提交：${clip(run.result, 1500)}` : "",
+		run?.handoff ? `交接说明：${clip(run.handoff, 1500)}` : "",
+		paths.length ? `相关文件（已放进你的工作区）：${paths.join("、")}` : "",
+	].filter(Boolean).join("\n");
+}
+
 function execPrompt(item: WorkItemRow, run: WorkRunRow) {
 	const room = item.room_id ? roomRow(item.room_id) : undefined;
 	const lastReturn = db.prepare("SELECT detail FROM work_item_events WHERE work_item_id = ? AND kind IN ('verified.return','decided') ORDER BY created_at DESC, rowid DESC LIMIT 1").get(item.id) as { detail: string } | undefined;
 	const note = lastReturn ? String((JSON.parse(lastReturn.detail) as { note?: string; answer?: string }).note ?? (JSON.parse(lastReturn.detail) as { answer?: string }).answer ?? "") : "";
+	const deps = parseDepends(item.depends_on).map((id) => itemRow(id)).filter((d): d is WorkItemRow => !!d);
 	return [
 		`（群聊「${room?.name ?? ""}」的长期任务 · 你是 ${agentName(run.owner_agent_id)}）`,
 		`管理者 ${agentName(room?.manager_id ?? null) || "管理者"} 给你分配了任务：${item.title}`,
 		workPrompt(item),
 		run.task && run.task !== workPrompt(item) ? `派活说明：${run.task.slice(0, 2000)}` : "",
 		note && item.revision > 1 ? `最近一次意见：${note.slice(0, 1000)}` : "",
+		deps.length ? `前置任务交给你的东西：\n${deps.map((d) => handoffFrom(d, run.owner_agent_id, item.room_id)).join("\n\n")}` : "",
 		`这是第 ${run.revision} 次修订的执行，由你的帮手在你自己的任务会话里进行（用你自己的记忆、权限和电脑），不占群里的发言。群里能看到你在做什么和结果，工具步骤留在详情里。`,
 		"做完用 work_submit 提交结果（产物在哪、怎么检查）；做不下去就用 work_submit 写清真实阻塞；中途有阶段性进展用 work_report。不要自行把任务标成完成，也不要只聊天不干活。",
 	].filter(Boolean).join("\n");
@@ -230,7 +253,7 @@ function liveContext(itemId: string, agentId: string, conversationId: string) {
 }
 
 /** 成员提交：只认自己、只认本任务会话里真实在跑的执行、只认当前修订；晚到的提交只留历史。 */
-export function submitWorkItem(o: { workItemId: string; conversationId: string; actor: WorkActor; result?: string; blocker?: string }) {
+export function submitWorkItem(o: { workItemId: string; conversationId: string; actor: WorkActor; result?: string; blocker?: string; handoff?: string; files?: string[] }) {
 	const actor = o.actor;
 	if (actor.kind === "user") fail("成员提交结果不能由用户代提交", "owner_only");
 	const exec = execOf(o.conversationId);
@@ -241,19 +264,30 @@ export function submitWorkItem(o: { workItemId: string; conversationId: string; 
 	if (!row) fail("没有可提交的任务", "not_found");
 	const result = clip(o.result, 20_000);
 	const blocker = clip(o.blocker, 2000);
+	const handoff = clip(o.handoff, 2000);
 	if (!result && !blocker) fail("提交要写结果或阻塞原因", "empty_submit");
+	// 成果文件：从负责人自己的工作区登记成文件（和 deliver_file 一样），找不到的不让整个提交失败，只在返回里说清楚。
+	const fileIds: string[] = [];
+	const missingFiles: string[] = [];
+	for (const ref of o.files ?? []) {
+		try {
+			fileIds.push(deliverFromWorkspace(actor.agentId, ref).id);
+		} catch {
+			missingFiles.push(ref);
+		}
+	}
 	// 晚到的结果：负责人 / 修订已经变了，或这次执行已被暂停 / 取消 → 只记历史
 	if (row.owner_agent_id !== actor.agentId || run.status !== "running" || !submissionApplies({ itemRevision: row.revision, itemOwner: row.owner_agent_id, itemStatus: row.status, runRevision: run.revision, runOwner: run.owner_agent_id })) {
 		event(row.id, "submit.late", actor, row.revision, { result: result.slice(0, 500), blocker: blocker.slice(0, 500), runId: run.id });
 		emit(row.room_id);
-		return { applied: false as const, item: getWorkItemDetail(row.id) };
+		return { applied: false as const, item: getWorkItemDetail(row.id), missingFiles };
 	}
 	const rep = blocker ? repeatOf(row.id, blocker) : { fp: "", level: null };
 	const t = now();
 	db.prepare("UPDATE work_items SET status = ?, latest_progress = ?, blocker = ?, updated_at = ? WHERE id = ? AND revision = ?").run(
 		blocker ? "blocked" : "review", blocker ? `受阻：${blocker}` : `已提交，等待核验：${result.slice(0, 300)}`, blocker || null, t, row.id, row.revision,
 	);
-	db.prepare("UPDATE work_item_runs SET result = ?, blocker = ?, submitted_at = ? WHERE id = ?").run(result || null, blocker || null, t, run.id);
+	db.prepare("UPDATE work_item_runs SET result = ?, blocker = ?, submitted_at = ?, handoff = ?, files = ? WHERE id = ?").run(result || null, blocker || null, t, handoff || null, stringifyDepends(fileIds), run.id);
 	recordProgress(row);
 	// 群里留一张结果卡：用户可以引用这张卡指出问题，服务端据此可信定位到同一个任务。
 	insertMessage({
@@ -268,7 +302,7 @@ export function submitWorkItem(o: { workItemId: string; conversationId: string; 
 		stuck(row, blocker, rep);
 	} else if (row.room_id) port()?.wakeManager(row.room_id, `${agentName(actor.agentId)} 提交了任务「${row.title}」的结果，等你核验`, row.id);
 	emit(row.room_id);
-	return { applied: true as const, item: getWorkItemDetail(row.id) };
+	return { applied: true as const, item: getWorkItemDetail(row.id), missingFiles };
 }
 
 /** 阶段性进展：只更新最近进度和计时，不改状态；让「卡住没进展」的检测知道它还在干活。 */

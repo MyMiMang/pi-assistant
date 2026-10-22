@@ -9,10 +9,11 @@
 import { db, now } from "../db.ts";
 import { notify } from "../push.ts";
 import { getAgent } from "../runtime.ts";
-import { boardDigest, setRoomPort, steerToLiveRun } from "../work-items.ts";
+import { boardDigest, itemsOfProject, setRoomPort, steerToLiveRun } from "../work-items.ts";
 import { boardDigestOrUnchanged, boardSig as projectBoardSig, PROJECT_IDLE_WAKE, idleWakeStep, planPeerTurns } from "./logic.ts";
 import { planText } from "./plan.ts";
-import { activeProjects, getProject, hasActiveProject, projectView } from "./projects.ts";
+import { activeProjects, checkProjectStall, getProject, hasActiveProject, projectView } from "./projects.ts";
+import { projectProgress, renderProgress } from "./progress.ts";
 import { chatterStep } from "../stuck.ts";
 import { hasQueuedTurns, postUserMessage, queuedFor, scheduleTurns, setTurnHooks } from "./scheduler.ts";
 import { activeIds, getRoom, memberConversation, memberRefs, stoppedFlag, sys } from "./store.ts";
@@ -63,6 +64,10 @@ export function wakeManager(roomId: string, reason: string, _workItemId?: string
 /** 降成本：每个群上次发给管理者的看板摘要（内存即可，重启后第一次照常全量）。 */
 const lastBoardDigest = new Map<string, string>();
 
+/** 项目连续没进展到 3 次要求改计划（§6「项目级进度检查」）；每个 active 项目在每次被叫醒时查一次。 */
+const REPLAN_HINT = "这个项目连续几次没有进展。先用一两句话写清为什么卡住，再选一种改法：带着改进意见重做、换更对口的成员、把任务拆小、换一种做法，或者改方案（影响目标 / 范围 / 交付物时要用 room_plan 改方案请用户重新确认）。用 room_project_replan 记下来。";
+const EXHAUSTED_HINT = "这个项目反复卡住，换过的办法都没能解决，已经向用户报告了。请你在群里直接跟用户说清楚卡在哪、需要用户帮什么。";
+
 function checkContext(roomId: string) {
 	const reasons = wakeReasons.get(roomId) ?? [];
 	wakeReasons.delete(roomId);
@@ -70,8 +75,21 @@ function checkContext(roomId: string) {
 	const digest = boardDigest(roomId, 20, (id) => getProject(id)?.title);
 	const boardLine = boardDigestOrUnchanged(digest, lastBoardDigest.get(roomId) ?? null);
 	lastBoardDigest.set(roomId, digest);
+	const stallHints: string[] = [];
+	const projectsBlock = projects.length
+		? `进行中的项目：\n${projects
+				.map((p) => {
+					const progress = projectProgress(projectView(p).plan, itemsOfProject(p.id));
+					const stall = checkProjectStall(p);
+					if (stall === "replan") stallHints.push(`「${p.title}」：${REPLAN_HINT}`);
+					else if (stall === "exhausted") stallHints.push(`「${p.title}」：${EXHAUSTED_HINT}`);
+					return `${planText(projectView(p))}\n${renderProgress(progress)}`;
+				})
+				.join("\n\n")}\n对照进度清单想清楚：做完了没有、是不是在原地打转、有没有进展、下一步谁做、交代他什么。`
+		: "";
 	return [
-		projects.length ? `进行中的项目：\n${projects.map((p) => planText(projectView(p))).join("\n\n")}` : "",
+		projectsBlock,
+		...(stallHints.length ? [stallHints.join("\n")] : []),
 		reasons.length ? `唤醒原因：\n${reasons.map((x) => `- ${x}`).join("\n")}` : "唤醒原因：定时检查",
 		boardLine,
 	].filter(Boolean).join("\n");
@@ -186,6 +204,11 @@ setRoomPort({
 	noteProgress: resetChatter,
 	peerMentions: (roomId, from, text) => peerMentions(roomId, from, text),
 	activeProjects: (roomId) => activeProjects(roomId).map((p) => ({ id: p.id, title: p.title })),
+	projectStages: (projectId) => {
+		const p = getProject(projectId);
+		const names = p ? projectView(p).plan.stages.map((s) => s.name).filter(Boolean) : [];
+		return names.length ? names : null;
+	},
 	managerConversation(roomId) {
 		const r = getRoom(roomId);
 		if (!r?.manager_id || !activeIds(roomId).includes(r.manager_id)) return null;

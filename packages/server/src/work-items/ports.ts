@@ -17,6 +17,8 @@ export interface RoomPort {
 	managerConversation: (roomId: string) => { agentId: string; conversationId: string } | null;
 	/** 这个群进行中的项目（work_create 挂项目、默认挂到唯一的那个） */
 	activeProjects: (roomId: string) => { id: string; title: string }[];
+	/** 这个项目方案里的阶段名；没有这个项目或方案没写阶段就返回 null（表示不限制阶段名）。 */
+	projectStages: (projectId: string) => string[] | null;
 }
 let roomPort: RoomPort | null = null;
 export const setRoomPort = (p: RoomPort) => void (roomPort = p);

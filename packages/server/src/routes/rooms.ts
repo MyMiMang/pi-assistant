@@ -4,7 +4,7 @@ import { bus } from "../bus.ts";
 import { db } from "../db.ts";
 import { fileInfo, saveRoomUpload } from "../files.ts";
 import { getAgent } from "../runtime.ts";
-import { confirmMemberProposal, confirmProject, confirmProposal, continueRoom, createRoom, deleteRoom, dismissProject, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, postUserMessage, ProjectError, projectJson, projectsOf, roomJson, listRooms, startGoalProject, stop as stopRoom, stopProject, updateRoom, createRoomAgent } from "../rooms/index.ts";
+import { confirmMemberProposal, confirmProject, confirmProposal, continueRoom, createRoom, deleteRoom, dismissProject, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, postUserMessage, ProjectError, projectJson, projectsOf, resumeProject, roomJson, listRooms, startGoalProject, stop as stopRoom, stopProject, updateRoom, createRoomAgent } from "../rooms/index.ts";
 import { BOARD_GROUPS, createWorkItem, listWorkItems, pauseAllWorkItems, type BoardGroup } from "../work-items.ts";
 import { getMessage, updateMessage as patchMessage } from "../messages.ts";
 import { by, roomErr, type Env } from "./common.ts";
@@ -126,6 +126,15 @@ export function mountRoomRoutes(app: Hono<Env>) {
 	app.post("/api/rooms/:rid/projects/:pid/stop", async (c) => {
 		try {
 			await stopProject(c.req.param("rid"), c.req.param("pid"));
+			return c.json({ ok: true, room: roomJson(getRoom(c.req.param("rid"))!) });
+		} catch (e) {
+			return projectErr(c, e);
+		}
+	});
+	/** 停下后接着做（已停下的项目列表里的「接着做」按钮）。 */
+	app.post("/api/rooms/:rid/projects/:pid/resume", async (c) => {
+		try {
+			await resumeProject(c.req.param("rid"), c.req.param("pid"));
 			return c.json({ ok: true, room: roomJson(getRoom(c.req.param("rid"))!) });
 		} catch (e) {
 			return projectErr(c, e);

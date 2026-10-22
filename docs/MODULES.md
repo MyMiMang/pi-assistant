@@ -109,10 +109,10 @@
 | `subagent-resume-info.ts` | 帮手行 + 能否续跑的摘要（subagent_list / 接口用，从 subagents.ts 拆出） |
 | `task-waits.ts` | 任务等待调度 |
 | `work-items.ts` | 长期任务入口（只做 re-export） |
-| `work-items/` | 长期任务：store（表/摘要/看板分组/boardDigest）、guard（看板分组、重复指纹等纯逻辑）、ports（RoomPort：群聊和任务之间唯一接口）、exec（在负责人自己的会话里执行、提交、重复卡点检测）、watch（停滞检测、上报管理者/用户、等你决定）、actions（新建/核验/改派/暂停/全部暂停等动作）、correction（群里纠正任务的上下文）、tools（管理者/成员/执行会话的 work_* 工具） |
+| `work-items/` | 长期任务：store（表/摘要/看板分组/boardDigest）、guard（看板分组、重复指纹等纯逻辑）、deps（任务依赖：解析 after/编号或名字、防环 wouldCycle、哪些下游可以自动开始 readyDependents、取消时标受阻的下游）、ports（RoomPort：群聊和任务之间唯一接口）、exec（在负责人自己的会话里执行、提交、重复卡点检测、交接单+文件拼进下游执行提示）、watch（停滞检测、上报管理者/用户、等你决定）、actions（新建/核验（含 impossible）/编辑（含 after/stage）/改派/暂停/全部暂停等动作、核验通过后自动推进依赖）、correction（群里纠正任务的上下文）、tools（管理者/成员/执行会话的 work_* 工具） |
 | `proactive.ts` | 主动性引擎 |
 | `routines.ts` | 定时与 Webhook 触发 |
-| `rooms/` | 群聊：logic（@ 解析、发言规则、只聊不干活检测，纯逻辑；INTENT_PLAN_RULE / PROJECT_NEXT_STEP / PROJECT_IDLE_WAKE）、plan（ProjectPlan 规范化 / 校验 checkPlan / 渲染 planText，纯逻辑）、projects（表 room_projects：propose / confirm / dismiss / stop / finish，迁移旧 rooms.autonomy）、store（群/成员读写）、scheduler（排队/调度/停止/恢复；有 active 项目时不按每轮发言次数暂停）、collab（唤醒管理者（暂停中也唤醒）、项目兜底唤醒 idleWake、定时巡检、成员互相 @）、crud（建群/改群/删群）、proposals（建群/加成员提议）、tools（room_assign 含附件交给负责人 findRoomFile / handOverFiles、room_propose_member）、project-tools（room_plan / room_project_start / room_project_done）、index（入口、群规则、钩子）、copy、model-pick、permissions |
+| `rooms/` | 群聊：logic（@ 解析、发言规则、只聊不干活检测，纯逻辑；INTENT_PLAN_RULE / PROJECT_NEXT_STEP / PROJECT_IDLE_WAKE）、plan（ProjectPlan 规范化 / 校验 checkPlan / 渲染 planText，纯逻辑）、progress（项目进度清单纯逻辑：projectProgress 按阶段分组 / renderProgress 渲染文字 / projectSig 进展指纹 / projectStallStep 卡住阶梯）、projects（表 room_projects：propose / confirm / dismiss / stop / resume / finish / replan，项目级卡住计数 checkProjectStall，迁移旧 rooms.autonomy）、store（群/成员读写）、scheduler（排队/调度/停止/恢复；有 active 项目时不按每轮发言次数暂停）、collab（唤醒管理者（暂停中也唤醒）、项目兜底唤醒 idleWake、项目级进度检查、定时巡检、成员互相 @）、crud（建群/改群/删群）、proposals（建群/加成员提议）、tools（room_assign 含附件交给负责人 findRoomFile / handOverFiles、room_propose_member）、project-tools（room_plan / room_project_start / room_project_resume / room_project_replan / room_project_done）、index（入口、群规则、钩子）、copy、model-pick、permissions |
 | `channels/` | 渠道：index（入站、镜像、卡片转发）、media、caps、types、飞书/钉钉/企微/ClawBot 各自实现 |
 | `mirror.ts` | 助理主动消息选哪些渠道镜像 |
 | `wechat.ts` | 个人微信（实验） |

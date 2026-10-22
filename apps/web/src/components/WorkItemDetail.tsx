@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, HelpCircle, Loader2, MessageSquare, Send } from "lucide-react";
-import { api } from "../api";
+import { AlertTriangle, ArrowLeft, CheckCircle2, Download, FileText, HelpCircle, Loader2, MessageSquare, Send } from "lucide-react";
+import { api, download } from "../api";
 import type { Room } from "../types";
 import { Badge, Help, Modal, Select, fmtTime } from "./ui";
 
@@ -26,6 +26,10 @@ export interface WorkSummary {
 	needsUser: NeedsUser | null;
 	escalation: Escalation | null;
 	runState: "none" | "queued" | "running" | "submitted" | "finished" | "failed" | "cancelled" | "interrupted";
+	/** 前置任务（没有就是空数组或缺省）；服务端还没有这个字段时界面不显示这一块。 */
+	dependsOn?: { id: string; title: string; status: string; statusLabel: string }[];
+	/** 属于方案里的哪个阶段；没有就是 null。 */
+	stage?: string | null;
 }
 export interface WorkRun {
 	id: string;
@@ -43,6 +47,10 @@ export interface WorkRun {
 	finishedAt: number | null;
 	submittedAt: number | null;
 	stale: boolean;
+	/** 交接说明（做了什么、东西在哪、接手要注意什么）；没写就是 null。 */
+	handoff?: string | null;
+	/** 这次提交登记的成果文件；没有就是空数组。 */
+	files?: { fileId: string; name: string }[];
 }
 export interface WorkEvent { id: string; kind: string; actorName: string; revision: number; detail: Record<string, unknown>; createdAt: number }
 export interface WorkDetail {
@@ -204,12 +212,25 @@ export function WorkDetailPane({ room, id, detail, error, onBack, onChanged, onS
 				<button className="pa-chip sm" onClick={onBack} data-testid="work-detail-back"><ArrowLeft className="pa-ic" />返回</button>
 				<div className="min-w-0 flex-1">
 					<div className="flex flex-wrap items-center gap-2"><b className="min-w-0 break-words" data-testid="work-detail-title">{it.title}</b><StatusPill s={it} /></div>
-					<small>{it.ownerName || "未安排负责人"} · 第 {it.revision} 次修订 · {RUN_LABEL[it.runState]} · {fmtTime(it.updatedAt)}</small>
+					<small>{it.ownerName || "未安排负责人"} · 第 {it.revision} 次修订 · {RUN_LABEL[it.runState]} · {fmtTime(it.updatedAt)}{it.stage ? ` · 阶段：${it.stage}` : ""}</small>
 				</div>
 			</div>
 			{err && !editing ? <p className="pa-work-error" role="alert" data-testid="work-action-error">{err}</p> : null}
 			{it.needsUser ? <section className="pa-work-block"><h4>等你决定</h4><DecisionBox item={it} onDone={onChanged} /></section> : null}
 			{it.escalation && !it.needsUser ? <p className="pa-work-warn" data-testid="work-escalation"><AlertTriangle className="pa-ic" />{it.escalation.note}（{it.escalation.level === "manager" ? "已请管理者处理" : "已向你报告"}）</p> : null}
+			{it.dependsOn && it.dependsOn.length > 0 ? (
+				<section className="pa-work-block" data-testid="work-detail-depends">
+					<h4>前置任务</h4>
+					<ul className="space-y-1">
+						{it.dependsOn.map((d) => (
+							<li key={d.id} className="flex items-center gap-2 text-sm">
+								<span className="min-w-0 flex-1 truncate">{d.title}</span>
+								<Badge tone={STATUS_TONE[d.status] ?? "zinc"}>{d.statusLabel}</Badge>
+							</li>
+						))}
+					</ul>
+				</section>
+			) : null}
 			<section className="pa-work-block"><h4>要做成什么</h4><p>{it.requirement || "（没有写）"}</p></section>
 			<section className="pa-work-block"><h4>完成标准</h4><p>{it.doneCriteria || "（没有写）"}</p></section>
 			<section className="pa-work-block"><h4>最近进度</h4><p>{it.latestProgress || "暂无"}</p>{it.blocker ? <p className="pa-work-warn"><AlertTriangle className="pa-ic" />受阻：{it.blocker}</p> : null}</section>
@@ -228,11 +249,12 @@ export function WorkDetailPane({ room, id, detail, error, onBack, onChanged, onS
 			) : null}
 			{it.status === "review" ? (
 				<section className="pa-work-block pa-work-verify"><h4>核验</h4>
-					<Help>核验必须写检查结论：你实际看到了什么、为什么通过或退回。普通文字回复不算验收；只有这里通过才完成。</Help>
+					<Help>核验必须写检查结论：你实际看到了什么、为什么通过、退回还是走不通。普通文字回复不算验收；只有这里通过才完成。「这条路走不通」用在任务本身做不到（不是做得不够好），不会自动重做。</Help>
 					<textarea className="pa-input min-h-20" value={note} onChange={(e) => setNote(e.target.value)} placeholder="检查结论：看到了哪个产物、哪一处符合 / 不符合完成标准" data-testid="work-verify-note" />
-					<div className="flex gap-2">
+					<div className="flex flex-wrap gap-2">
 						<button className="pa-btn sm primary" disabled={!!busy || !note.trim()} onClick={() => void act("verify", { verdict: "pass", note })} data-testid="work-verify-pass"><CheckCircle2 className="pa-ic" />通过，完成</button>
 						<button className="pa-btn sm" disabled={!!busy || !note.trim()} onClick={() => void act("verify", { verdict: "return", note })} data-testid="work-verify-return">退回修改</button>
+						<button className="pa-btn sm ghost" disabled={!!busy || !note.trim()} onClick={() => void act("verify", { verdict: "impossible", note })} data-testid="work-verify-impossible">这条路走不通</button>
 					</div>
 				</section>
 			) : null}
@@ -262,6 +284,18 @@ export function WorkDetailPane({ room, id, detail, error, onBack, onChanged, onS
 								{r.result ? <p>{r.result.slice(0, 400)}</p> : null}
 								{r.blocker ? <p className="pa-work-warn">受阻：{r.blocker}</p> : null}
 								{r.error ? <p className="pa-work-error">{r.error}</p> : null}
+								{r.handoff ? <p className="text-xs text-mut"><b className="text-mut2">交接：</b>{r.handoff}</p> : null}
+								{r.files && r.files.length > 0 ? (
+									<div className="flex flex-wrap gap-1.5" data-testid="work-run-files">
+										{r.files.map((f) => (
+											<button key={f.fileId} type="button" className="pa-chip sm" onClick={() => void download(`/api/files/${f.fileId}`, f.name)} title={`下载 ${f.name}`} data-testid="work-run-file">
+												<FileText className="pa-ic" />
+												<span className="max-w-[10rem] truncate">{f.name}</span>
+												<Download className="pa-ic" size={12} />
+											</button>
+										))}
+									</div>
+								) : null}
 							</div>
 						))}
 					</div>
