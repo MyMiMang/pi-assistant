@@ -3,6 +3,8 @@ import { SubagentTasks } from "./Subagents";
 import { RoomWorkButtons } from "./RoomWork";
 import { ArrowUp, AtSign, Crown, Loader2, PanelRight, Plus, Settings2, Square, Trash2, Users } from "lucide-react";
 import { RoomCost } from "./Usage";
+import { RoomMembers } from "./MemberStatus";
+import { pendingCardOf } from "../member-status";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, uploadRoom } from "../api";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
@@ -117,7 +119,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	}, [roomId]);
 	if (!room) return <div className="flex h-full items-center justify-center text-sm text-mut">群聊不存在或已删除</div>;
 	const st = room.state;
-	const pendingCard = (agentId: string) => ({ approval: "等待审批", question: "等你回答" })[list.find((m) => m.role === "card" && m.agent_id === agentId && m.meta.status === "pending" && (m.meta.kind === "approval" || m.meta.kind === "question"))?.meta.kind as string] as string | undefined; // 关键点确认、提问是 question 卡，不叫「审批」
+	const pendingCard = (agentId: string) => { const k = pendingCardOf(list, agentId); return k && { approval: "等待审批", question: "等你回答" }[k]; }; // 关键点确认、提问是 question 卡，不叫「审批」
 	const active = room.members.filter((m) => !m.left);
 	const manager = active.find((m) => m.agentId === room.managerId);
 	const lastRow = rows[rows.length - 1];
@@ -184,15 +186,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					)}
 				</div>
 			</header>
-			<div className="pa-room-members scrollbar-thin" data-testid="room-members">
-				{active.map((m) => (
-					<button key={m.agentId} className="pa-room-member" onClick={() => openMember(m.agentId)} title={`${m.name}${m.agentId === room.managerId ? "（管理者）" : ""}${m.scope === "room" ? " · 群专属" : ""}`}>
-						<Avatar agentId={m.deleted ? undefined : m.agentId} text={m.avatar} color={m.color} size={22} running={speaking === m.agentId} />
-						<span className="truncate">{m.name}</span>
-						{m.agentId === room.managerId && <Crown size={11} className="shrink-0 text-amber-500" />}
-					</button>
-				))}
-			</div>
+			<RoomMembers room={room} list={list} onOpen={openMember} />
 			<div
 				ref={scroller}
 				className="pa-scroll"

@@ -3,8 +3,8 @@
 	"size": {
 		"apps/web/src/components/ModelPicker.tsx": 883,
 		"apps/web/src/components/ModelServices.tsx": 670,
-		"apps/web/src/components/RoomChat.tsx": 728,
-		"apps/web/src/components/Settings.tsx": 749,
+		"apps/web/src/components/RoomChat.tsx": 722,
+		"apps/web/src/components/Settings.tsx": 748,
 		"apps/web/src/store.ts": 643,
 		"apps/web/src/voice-input.ts": 991,
 		"apps/web/src/voice-stream.ts": 928,

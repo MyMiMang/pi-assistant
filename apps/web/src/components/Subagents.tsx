@@ -13,6 +13,7 @@ import { fitThinkingLevel } from "../thinking-slider";
 import { LatestWrite, SerialWriteQueue } from "../latest-write";
 import { thinkingLevelsFor } from "@pi-assistant/shared";
 import { TaskInstructions, TaskRow, taskLive, taskStatus, taskTitle } from "./Tasks";
+import type { HelperBrief } from "../member-status";
 
 type Model = { provider: string; id: string; name?: string; providerName?: string; reasoning?: boolean };
 const KIND_LABEL: Record<string, string> = { task: "后台任务", routine: "定时任务", heartbeat: "主动巡检", work: "群任务执行" };
@@ -185,15 +186,36 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 	</section>;
 }
 /** 「执行」入口 + 帮手概览。 */
-export function SubagentTasks({ agentId, conversation, room, current, testid = "subagent-tasks", overviewTestid = "task-overview" }: { agentId?: string; conversation?: string; room?: string; current?: string; testid?: string; overviewTestid?: string }) {
-	const [rows, setRows] = useState<Subagent[]>([]);
-	const [open, setOpen] = useState(false);
+type HelperQuery = { agentId?: string; conversation?: string; room?: string };
+// 同一个查询只开一个 3 秒轮询：「执行」入口和群成员 / 单聊顶部的工作状态共用同一份帮手列表
+const pollers = new Map<string, { rows: Subagent[]; subs: Set<(v: Subagent[]) => void>; timer?: ReturnType<typeof setInterval> }>();
+function useSubagentRows({ agentId, conversation, room }: HelperQuery) {
+	const key = new URLSearchParams({ ...(agentId ? { agent: agentId } : {}), ...(conversation ? { conversation } : {}), ...(room ? { room } : {}) }).toString();
+	const [rows, setRows] = useState<Subagent[]>(() => pollers.get(key)?.rows ?? []);
 	useEffect(() => {
-		let off = false;
-		const q = new URLSearchParams({ ...(agentId ? { agent: agentId } : {}), ...(conversation ? { conversation } : {}), ...(room ? { room } : {}) });
-		const load = () => void api<Subagent[]>(`/api/subagents?${q}`).then((v) => !off && setRows(v)).catch(() => {});
-		load(); const t = setInterval(load, 3000); return () => { off = true; clearInterval(t); };
-	}, [agentId, conversation, room]);
+		const p = pollers.get(key) ?? { rows: [], subs: new Set() };
+		pollers.set(key, p);
+		p.subs.add(setRows);
+		setRows(p.rows);
+		if (!p.timer) {
+			const load = () => void api<Subagent[]>(`/api/subagents?${key}`).then((v) => { p.rows = v; p.subs.forEach((f) => f(v)); }).catch(() => {});
+			load();
+			p.timer = setInterval(load, 3000);
+		}
+		return () => {
+			p.subs.delete(setRows);
+			if (!p.subs.size) (clearInterval(p.timer), pollers.delete(key));
+		};
+	}, [key]);
+	return rows;
+}
+/** 工作状态用的帮手精简信息（member-status.ts）。 */
+export function useHelperBriefs(q: HelperQuery): HelperBrief[] {
+	return useSubagentRows(q).map((r) => ({ agentId: r.agent_id, kind: r.kind, title: taskTitle(r.title ?? r.task), status: r.status, live: taskLive(r.status) }));
+}
+export function SubagentTasks({ agentId, conversation, room, current, testid = "subagent-tasks", overviewTestid = "task-overview" }: HelperQuery & { current?: string; testid?: string; overviewTestid?: string }) {
+	const rows = useSubagentRows({ agentId, conversation, room });
+	const [open, setOpen] = useState(false);
 	if (!rows.length) return null;
 	const running = rows.filter((r) => taskLive(r.status));
 	const finished = rows.filter((r) => !taskLive(r.status));

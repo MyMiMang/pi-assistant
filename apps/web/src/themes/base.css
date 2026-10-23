@@ -275,8 +275,25 @@ html, body { overflow-x: hidden; max-width: 100%; overscroll-behavior-x: none; }
 .pa-stack-i+.pa-stack-i,.pa-stack-i+.pa-stack-more{margin-left:calc(var(--s) * -0.38)}
 .pa-stack-more{display:inline-grid;place-items:center;border-radius:999px;background:var(--hover);color:var(--mut);font-size:10px;box-shadow:0 0 0 2px var(--panel,var(--bg))}
 .pa-room-members{display:flex;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;padding:6px 16px;border-bottom:1px solid var(--line);flex-shrink:0;max-width:100%}
-.pa-room-member{display:inline-flex;align-items:center;gap:5px;max-width:160px;flex-shrink:0;height:30px;padding:0 10px 0 4px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--fg);background:var(--card)}
+.pa-room-member{display:inline-flex;align-items:center;gap:6px;max-width:200px;flex-shrink:0;height:36px;padding:0 10px 0 5px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--fg);background:var(--card)}
 .pa-room-member:hover{background:var(--hover)}
+/* 成员工作状态（member-status.ts）：工作中绿、等你黄、空闲灰；圆点压在头像右下角，名字下一行写在做什么 */
+.pa-room-member.work{border-color:color-mix(in srgb,var(--ok,#22c55e) 45%,var(--line))}
+.pa-room-member.wait{border-color:color-mix(in srgb,var(--warn,#d97706) 55%,var(--line))}
+.pa-room-member-txt{display:flex;flex-direction:column;align-items:flex-start;min-width:0;line-height:1.2;text-align:left}
+.pa-room-member-txt small{font-size:11px;color:var(--mut2);max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pa-room-member.work .pa-room-member-txt small{color:var(--ok,#16a34a)}
+.pa-room-member.wait .pa-room-member-txt small{color:var(--warn,#b45309)}
+.pa-act-dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--mut2)}
+.pa-act-dot.work{background:var(--ok,#22c55e);animation:pa-pulse 2s infinite}
+.pa-act-dot.wait{background:var(--warn,#d97706)}
+.pa-act-dot.on-av{position:absolute;right:-2px;bottom:-2px;width:10px;height:10px;box-shadow:0 0 0 2px var(--card)}
+.pa-room-sum{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;height:36px;padding:0 12px;border-radius:999px;font-size:12px;white-space:nowrap}
+.pa-room-sum.work{background:color-mix(in srgb,var(--ok,#22c55e) 14%,transparent);color:var(--fg)}
+.pa-room-sum.wait{background:color-mix(in srgb,var(--warn,#d97706) 16%,transparent);color:var(--fg)}
+.pa-room-sum.idle{border:1px solid var(--line);color:var(--mut)}
+.pa-room-sum .pa-ic{width:14px;height:14px}
+@media (max-width:639px){.pa-room-member{max-width:150px}.pa-room-member-txt small{max-width:96px}.pa-room-sum{padding:0 10px}}
 .pa-room-name{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;margin-bottom:2px;min-width:0}
 .pa-room-badge{font-size:10px;font-weight:500;padding:1px 6px;border-radius:999px;background:rgba(245,158,11,.14);color:#b45309}
 .pa-room-badge.muted{background:var(--hover);color:var(--mut)}

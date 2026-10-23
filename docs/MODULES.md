@@ -166,6 +166,7 @@
 | `latest-write.ts` | 「最后一次为准」写入守卫（必须复用） |
 | `composer.ts` | 输入栏按钮标签规则 |
 | `slowStep.ts` | 一步跑太久时的提示文字（可能在等系统权限弹窗） |
+| `member-status.ts` | 助理工作状态纯逻辑（群成员条和单聊顶部共用）：`memberActivity` 群成员（等你 > 在群里说话 > 帮手做任务 > 排队 > 空闲）、`agentActivity` 单聊、`roomSummary` 群总状态（几人在干活 / 有人等你 / 都停下了）、`pendingCardOf` 没处理的审批 / 提问卡 |
 | `composerDrafts.ts` | 输入框草稿 |
 | `replyDrafts.ts` | 引用草稿 |
 | `replies.ts` | 引用回复纯逻辑 |
@@ -213,6 +214,7 @@
 | `RoomDelivery.tsx` | 交付卡 `ProjectDeliveryCard`（群消息 meta.kind=project-delivery）：做成了什么 / 交付的文件（复用 `Attachments` 预览下载）/ 怎么用 / 还没做的；长文字超 6 行折叠；不显示花费 |
 | `RoomProjectFilter.tsx` | 群里 ≥2 个进行中项目时的「按项目看」：顶部筛选 `ProjectFilter`（复用 `Select`，按群记在 localStorage）、`useProjectRows` / `filterByProject`（只留该项目消息 + 用户自己的消息）、`ProjectTagged`（气泡上的项目名小标签） |
 | `RoomPeer.tsx` | 成员之间的提问 / 回答（群消息 peer-ask / peer-answer）：`PeerWrap` 加「提问 / 回答 · 第 n 轮」标签、「问 @对方」、回答回指提问（点了跳过去，复用 `.pa-quoted`）；`WorkAsks`：任务详情的「在等同事回答」 |
+| `MemberStatus.tsx` | 工作状态显示：`RoomMembers` 群顶部成员条（最左总状态 + 每个成员状态圆点和在做什么）、`AgentStatusLine` 单聊顶部名字下那行、`ActDot` 状态圆点；规则在 `member-status.ts`，帮手列表用 `Subagents.tsx` 的 `useHelperBriefs`（和「执行」入口共用同一个轮询） |
 | `WorkItems.tsx` | 群任务看板（等你决定/卡住/进行中/已完成·已停止、全部暂停）、任务提交卡 |
 | `RoomWork.tsx` | 群聊顶部干活入口 `RoomWorkButtons`（任务看板 + 项目筛选 + 项目）；项目有 waiting 时 chip 标「等你看一眼」、面板里 `WaitingBlock` 显示关键点；`ProjectsPanel`：待确认 / 进行中项目的 chip + 面板（看方案、停下项目、展开已结束的项目），群聊 `ProjectsButton` 和单聊 `ChatProjectsButton` 共用（solo = 单聊：说话对象是「我」，没有关键点等待 / 任务清单 / 接着做） |
 | `WorkItemDetail.tsx` | 任务详情、新建任务、等你决定回答框 |

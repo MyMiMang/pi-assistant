@@ -1,4 +1,5 @@
 import { SubagentTasks } from "./Subagents";
+import { AgentStatusLine } from "./MemberStatus";
 import { HostControlBar, HostTierButton } from "./HostControl";
 import { ModelPicker } from "./ModelPicker";
 import { ContextRing } from "./ContextRing";
@@ -133,11 +134,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 				<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={30} running={running} />
 				<div className="pa-head-txt min-w-0">
 					<b className="truncate">{agent.name}</b>
-					<small className="truncate">
-						{running && <i className="pa-pulse" />}
-						{running ? `${t("正在工作")} · ` : ""}
-						{agent.model ? agent.model.id : "未配置模型"}
-					</small>
+					<AgentStatusLine agent={agent} conversation={convId ?? undefined} list={list} />
 				</div>
 				<div className="pa-head-actions">
 					{agent.scope === "room" && agent.room_id && (
