@@ -12,6 +12,7 @@
 | 模型 / 思考 / Fast 选择 | `ModelPicker.tsx`（输入框那一套，助理模型页、群成员、子代理、默认模型都复用）、`modelMenu.ts`（分组规则）、`ThinkingSlider.tsx` + `thinking-slider.ts`、`ModelOptions.tsx`（模型显示名） |
 | 保存与草稿 | `latest-write.ts`（「最后一次为准」串行写入）、`composerDrafts.ts`、`replyDrafts.ts`、`DraftModelSettings.tsx` |
 | 自适应标签 / 更多 | `ResponsiveTabs.tsx` |
+| 复制 / 右键菜单 | `clipboard.ts`（copyText：所有「复制」都走它，手机局域网 http 也能复制；selectionBeforeRightClick）、`ContextMenu.tsx`（ContextMenu 小菜单 + 全局右键接管，不用浏览器自带菜单） |
 | 附件与预览 | `Attachments.tsx`（单聊/群聊共用）、`FilePreview.tsx`、`ImageViewer.tsx`；服务端 `files.ts`、`attachments.ts` |
 | 下载进度 | 服务端 `downloads.ts` + 界面 `Downloads.tsx` |
 | 共享常量 / 纯逻辑 | `packages/shared`：thinking-levels、hard-guard、shell-lex、theme-manifest、品牌名 |
@@ -180,6 +181,7 @@
 | `viewport.ts` | 手机可视高度 |
 | `esc-layer.ts` | Esc 关闭顺序 |
 | `externalLinks.ts` | 外链交给系统浏览器 |
+| `clipboard.ts` | 复制文字（带非安全上下文兜底）、右键前的选区 |
 | `macosWindow.ts` | macOS 标题栏 |
 | `desktopChrome.ts` | Windows / Linux 桌面：所有滚动区域统一细滚动条（.pa-classic-sb）、窗口标题栏跟 App 明暗走（set_theme） |
 | `migrate.ts` | 旧存储键迁移 |
@@ -227,7 +229,8 @@
 | `MediaPlayer.tsx` | 视频 / 音频播放器（聊天附件 + 文件预览共用，签名播放链接） |
 | `ImageViewer.tsx` | 图片查看器 |
 | `Markdown.tsx` | Markdown 渲染 |
-| `MessageReply.tsx` | 引用 UI |
+| `MessageReply.tsx` | 引用 / 复制按钮与消息右键菜单 |
+| `ContextMenu.tsx` | 通用右键小菜单 + 应用级右键接管（选了字给复制、链接给复制链接，输入框 / 图片保留系统菜单） |
 | `Cards.tsx` | 审批/提问/任务卡片 |
 | `Tasks.tsx` | 任务展示共用件 |
 | `Subagents.tsx` | 子代理入口与详情 |

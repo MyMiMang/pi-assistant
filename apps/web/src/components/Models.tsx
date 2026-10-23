@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { ModelPickerButton, THINKING_LABEL, useConfiguredModels } from "./ModelPicker";
 import { StrengthTags, type StrengthModel, type StrengthTag } from "./ModelStrengths";
 import { api } from "../api";
+import { copyText } from "../clipboard";
 import { LatestWrite } from "../latest-write";
 import { useStore } from "../store";
 import type { ModelInfo, Provider } from "../types";
@@ -292,7 +293,7 @@ function ProviderModelRow({ provider, m, labels, strength, onPut }: { provider: 
 									<a href={ev.url} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1 rounded-lg bg-accent px-3 text-sm font-medium text-white">
 										<ExternalLink size={14} /> 打开登录页面
 									</a>
-									<Button size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(ev.url)}>
+									<Button size="sm" variant="outline" onClick={() => void copyText(ev.url)}>
 										<Copy size={14} /> 复制链接
 									</Button>
 								</div>

@@ -2,6 +2,7 @@ import { BarChart3, Brain, Cat, Download, Hand, MonitorPlay, Mail, MessagesSquar
 import { Fragment, useEffect, useState } from "react";
 import { stripReferenceImages, type ThemeDraftRequest, type ThemeDraftResult, type ThemeManifestV1 } from "@pi-assistant/shared";
 import { api, upload } from "../api";
+import { copyText } from "../clipboard";
 import { getLang, setLang, t } from "../i18n";
 import { setAppearance, useStore } from "../store";
 import { DEFAULT_THEME, getTheme, type Mode, type ThemeDef, THEMES } from "../themes/registry";
@@ -238,7 +239,7 @@ function RemoteTab() {
 									<div className="text-xs text-zinc-500">配对码（手机主屏 App 里输入，和二维码同时有效、只能用一次）</div>
 									<div className="mt-1 flex items-center gap-2">
 										<span className="select-all font-mono text-2xl font-semibold tracking-[0.2em]" data-testid="pair-short-code">{pair.shortCode}</span>
-										<Button variant="ghost" size="icon" onClick={() => navigator.clipboard.writeText(pair.shortCode)} aria-label="复制配对码">
+										<Button variant="ghost" size="icon" onClick={() => void copyText(pair.shortCode)} aria-label="复制配对码">
 											<Copy size={15} />
 										</Button>
 									</div>
@@ -246,9 +247,7 @@ function RemoteTab() {
 								</div>
 								<div className="flex gap-2">
 									<Input readOnly value={pair.url} />
-									<Button variant="outline" size="icon" onClick={() => navigator.clipboard.writeText(pair.url)} aria-label="复制">
-										<Copy size={15} />
-									</Button>
+									<Button variant="outline" size="icon" onClick={() => void copyText(pair.url)} aria-label="复制"><Copy size={15} /></Button>
 								</div>
 								{!pair.remote && <div className="text-xs text-amber-600">提示：先开启远程访问，手机才能在外网扫码连接。</div>}
 							</div>

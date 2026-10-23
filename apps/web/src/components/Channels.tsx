@@ -1,6 +1,7 @@
 import { CheckCircle2, ChevronDown, Copy, Loader2, MessageSquare, Plus, RefreshCw, Trash2, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { copyText } from "../clipboard";
 import { useStore } from "../store";
 import { Badge, Button, cx, Help, Input, avatarText, useConfirm } from "./ui";
 
@@ -529,7 +530,7 @@ function ChannelCard({ c, publicUrl, agents, onChange }: { c: Channel; publicUrl
 				<div className="flex items-center gap-2 text-sm">
 					<span className="shrink-0 text-mut">回调地址</span>
 					<code className="min-w-0 flex-1 truncate rounded bg-hover px-2 py-1 text-xs" data-testid="wecom-callback">{cb}</code>
-					<button className="pa-icon-btn ghost" aria-label="复制回调地址" onClick={() => navigator.clipboard?.writeText(cb)}>
+					<button className="pa-icon-btn ghost" aria-label="复制回调地址" onClick={() => void copyText(cb)}>
 						<Copy size={14} />
 					</button>
 				</div>

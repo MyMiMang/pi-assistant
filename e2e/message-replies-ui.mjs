@@ -146,7 +146,7 @@ let browser;
 try {
 	browser = await chromium.launch({ executablePath: CHROME, headless: true });
 	const state = { sent: [], roomSent: [], locate: [], failSend: false, conv: "c1" };
-	const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN" });
+	const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN", permissions: ["clipboard-read", "clipboard-write"] });
 	await installRoutes(ctx, state);
 	const page = await ctx.newPage();
 	page.on("pageerror", (e) => console.error("  ⚠️ pageerror", String(e).slice(0, 300)));
@@ -167,10 +167,61 @@ try {
 	check("消息空白处右键弹出引用菜单", await page.locator('[data-testid="reply-menu-quote"]').isVisible());
 	await page.keyboard.press("Escape");
 	check("Esc 关闭右键菜单", (await page.locator('[data-testid="reply-menu"]').count()) === 0);
-	const linkMenuBefore = await page.locator('[data-testid="reply-menu"]').count();
+
+	console.log("\n── 复制（可见按钮 + 程序自己的右键菜单） ──");
+	const clip = () => page.evaluate(() => navigator.clipboard.readText());
+	const resetClip = () => page.evaluate(() => navigator.clipboard.writeText(""));
+	const copyBtns = page.locator('[data-testid="copy-btn"]');
+	check("每条可引用消息都有可见「复制」按钮（5 条）", (await copyBtns.count()) === 5, `实际 ${await copyBtns.count()}`);
+	check("工具步骤没有复制按钮", (await page.locator('[data-testid="steps"] [data-testid="copy-btn"]').count()) === 0);
+	await page.locator('[data-mid="a1m"] [data-testid="copy-btn"]').click();
+	check("点「复制」复制整条消息原文（Markdown 原样）", (await clip()) === A1.content, await clip());
+	check("复制后按钮显示「已复制」", (await page.locator('[data-mid="a1m"] [data-testid="copy-btn"]').textContent())?.includes("已复制"));
+	await resetClip();
+	await page.locator('[data-mid="u1"] .pa-bubble').click({ button: "right" });
+	await page.locator('[data-testid="reply-menu-copy"]').click();
+	check("消息右键「复制」：没选字时复制整条", (await clip()) === U1.content, await clip());
+	// 先选中一段字再右键：复制选中的部分（右键按下前的选区，不受 macOS 右键自动选词影响）
+	const box = await page.evaluate(() => {
+		const el = document.querySelector('[data-mid="a1m"] .pa-bubble');
+		const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+		for (let n = w.nextNode(); n; n = w.nextNode()) {
+			const i = n.data.indexOf("报告我看过了");
+			if (i < 0) continue;
+			const r = document.createRange();
+			r.setStart(n, i);
+			r.setEnd(n, i + 6);
+			getSelection().removeAllRanges();
+			getSelection().addRange(r);
+			const b = r.getBoundingClientRect();
+			return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+		}
+		return null;
+	});
+	await page.mouse.click(box.x, box.y, { button: "right" });
+	await page.locator('[data-testid="reply-menu-copy"]').waitFor({ timeout: 5000 });
+	check("选了字时菜单写「复制选中的文字」", (await page.locator('[data-testid="reply-menu-copy"]').textContent())?.includes("复制选中的文字"));
+	await page.locator('[data-testid="reply-menu-copy"]').click();
+	check("消息右键「复制」：选了字时只复制选中的部分", (await clip()) === "报告我看过了", await clip());
+	await page.evaluate(() => getSelection().removeAllRanges());
 	await page.locator('[data-mid="a1m"] .pa-bubble a').click({ button: "right" });
-	await page.waitForTimeout(200);
-	check("右键链接不被接管（保留原生菜单）", (await page.locator('[data-testid="reply-menu"]').count()) === linkMenuBefore);
+	await page.locator('[data-testid="app-menu"]').waitFor({ timeout: 5000 });
+	check("右键链接：程序菜单给「复制链接」，不弹引用菜单", (await page.locator('[data-testid="app-menu-copy-link"]').isVisible()) && (await page.locator('[data-testid="reply-menu"]').count()) === 0);
+	await page.locator('[data-testid="app-menu-copy-link"]').click();
+	check("「复制链接」复制的是链接地址", (await clip()) === "https://example.com/doc", await clip());
+	// 消息以外、没选字：不弹浏览器自带菜单，也不弹空菜单
+	await page.evaluate(() => {
+		window.__ctxPrevented = null;
+		window.addEventListener("contextmenu", (e) => (window.__ctxPrevented = e.defaultPrevented), { once: true });
+	});
+	await page.locator('.pa-sec-label').first().click({ button: "right" });
+	await page.waitForTimeout(150);
+	check("空白处右键：浏览器菜单被拦下、也不弹空菜单", (await page.evaluate(() => window.__ctxPrevented)) === true && (await page.locator('[data-testid="app-menu"]').count()) === 0);
+	await page.screenshot({ path: join(OUT, "copy-button.png") });
+	await page.locator('[data-mid="u1"] .pa-bubble').click({ button: "right" });
+	await page.locator('[data-testid="reply-menu"]').waitFor({ timeout: 5000 });
+	await page.screenshot({ path: join(OUT, "context-menu.png") });
+	await page.keyboard.press("Escape");
 
 	console.log("\n── 引用条 / Esc / 发送 payload ──");
 	await page.locator('[data-mid="a2m"] [data-testid="quote-btn"]').click();

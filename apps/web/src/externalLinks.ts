@@ -19,6 +19,8 @@
  * 只放行 http/https/mailto；javascript:/data:/file:/blob: 等一律不接管（不放开策略）。
  */
 
+import { copyText } from "./clipboard.ts";
+
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 /** 新版 Tauri（2.x）只暴露 `window.__TAURI_INTERNALS__`，没有 `window.__TAURI__`。 */
@@ -142,10 +144,7 @@ function notifyOpenFailed(url: string): void {
 		"flex:none;padding:4px 10px;border-radius:8px;border:1px solid var(--line,#3a3a40);" +
 		"background:var(--hover,rgba(255,255,255,.08));color:inherit;cursor:pointer;font-size:12px";
 	btn.onclick = () => {
-		void navigator.clipboard?.writeText(url).then(
-			() => (msg.textContent = "已复制链接，可粘贴到浏览器打开"),
-			() => (msg.textContent = "复制失败，请手动选中下面的地址"),
-		);
+		void copyText(url).then((ok) => (msg.textContent = ok ? "已复制链接，可粘贴到浏览器打开" : "复制失败，请手动选中下面的地址"));
 		// 复制后把地址露出来，方便手动选中
 		const code = document.createElement("code");
 		code.style.cssText = "display:block;margin-top:4px;font-size:11.5px;opacity:.75;overflow-wrap:anywhere";

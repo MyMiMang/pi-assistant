@@ -7,6 +7,7 @@
  * - 附件只带 name / mime / size 摘要，**不带 fileId / url**，避免引用时被重新上传或拉取。
  * - 工具步骤、卡片、系统消息（含隐藏）不可作为引用候选，避免把工具结果 / 密钥 / 隐藏 system 曝露到引用。
  */
+import { splitThinking } from "./thinking";
 import type { Message } from "./types";
 
 /** 引用条摘录上限（字符）；UI 再用 CSS 截成 1–2 行。 */
@@ -49,6 +50,11 @@ export function isQuotable(m: Quotable): boolean {
 	if (meta.hidden || meta.visible === false) return false;
 	if (meta.kind === "hidden" || meta.kind === "system") return false;
 	return true;
+}
+
+/** 「复制」按钮 / 右键复制拿到的整条消息原文：去掉思考过程，保留 Markdown 原样。 */
+export function copyTextOf(m: Pick<Message, "content">): string {
+	return splitThinking(m.content).text.trim();
 }
 
 const THINK = /<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi;

@@ -8,6 +8,7 @@ import {
 	agentSendBody,
 	attachmentLabel,
 	buildReplyRef,
+	copyTextOf,
 	excerptOf,
 	isQuotable,
 	liveMentions,
@@ -151,4 +152,10 @@ test("liveMentions：文字里删掉的 @ 不再生效", () => {
 	const names = { a1: "甲", a2: "乙" };
 	assert.deepEqual(liveMentions(["a1", "a2"], "@甲 看一下", (id) => names[id]), ["a1"]);
 	assert.deepEqual(liveMentions(["a1"], "没有 @", (id) => names[id]), []);
+});
+
+test("复制原文：去掉思考过程，Markdown 原样保留", () => {
+	assert.equal(copyTextOf(msg({ content: "<think>先想想</think>\n**结论**：好的 [链接](https://x.y)" })), "**结论**：好的 [链接](https://x.y)");
+	assert.equal(copyTextOf(msg({ role: "user", content: "  请看一下  " })), "请看一下");
+	assert.equal(copyTextOf(msg({ content: "<think>只有思考</think>" })), "");
 });

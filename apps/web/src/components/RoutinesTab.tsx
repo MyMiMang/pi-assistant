@@ -1,6 +1,7 @@
 import { AlarmClock, Copy, Pause, Pencil, Play, Plus, RotateCw, Trash2, Webhook } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { copyText } from "../clipboard";
 import { useStore } from "../store";
 import type { Routine, RoutineRun } from "../types";
 import { parseSchedule, scheduleCron, scheduleError, scheduleLabel, type Schedule } from "../routine-schedule";
@@ -144,7 +145,7 @@ export function RoutinesTab({ agentId }: { agentId: string }) {
 									) : (
 										<span className="flex items-center gap-1">
 											<code className="truncate font-mono">{hookUrl(r).replace(/\/[^/]+$/, "/••••")}</code>
-											<button className="pa-icon-btn ghost !h-6 !w-6" aria-label="复制 Webhook 地址" onClick={() => navigator.clipboard.writeText(hookUrl(r))}>
+											<button className="pa-icon-btn ghost !h-6 !w-6" aria-label="复制 Webhook 地址" onClick={() => void copyText(hookUrl(r))}>
 												<Copy size={12} />
 											</button>
 										</span>

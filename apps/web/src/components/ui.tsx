@@ -2,6 +2,7 @@ import { Check, ChevronDown, CircleHelp, type LucideIcon, X } from "lucide-react
 import { type ButtonHTMLAttributes, type ReactNode, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchBlob } from "../api";
+import { copyText } from "../clipboard";
 import { escLayers } from "../esc-layer";
 
 export function cx(...c: (string | false | null | undefined)[]) {
@@ -383,11 +384,7 @@ export function ErrorBox({ text, className }: { text: string; className?: string
 						{open ? "收起" : "详情"}
 					</button>
 				)}
-				<button
-					type="button"
-					className="shrink-0 text-mut underline-offset-2 hover:underline"
-					onClick={() => void navigator.clipboard?.writeText(full).then(() => (setCopied(true), setTimeout(() => setCopied(false), 1500)))}
-				>
+				<button type="button" className="shrink-0 text-mut underline-offset-2 hover:underline" onClick={() => void copyText(full).then((ok) => ok && (setCopied(true), setTimeout(() => setCopied(false), 1500)))}>
 					{copied ? "已复制" : "复制"}
 				</button>
 			</div>

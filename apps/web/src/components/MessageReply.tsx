@@ -1,17 +1,18 @@
 /**
- * 消息引用的 UI 组件：可见「引用」按钮、右键 / 长按辅助入口、引用条、已发送引用块、跳转高亮。
+ * 消息引用的 UI 组件：可见「复制」「引用」按钮、右键 / 长按辅助入口、引用条、已发送引用块、跳转高亮。
  *
  * 交互约束（见 docs/design/message-replies-ui.md）：
  * - 可见按钮是主入口（桌面 + 手机），右键 / 长按只是辅助；命中链接 / 图片 / 输入框不拦截原生菜单。
  * - 长按移动（滚动 / 选择）自动取消，不阻正常文字选择与复制粘贴。
  * - 引用条 Esc 只取消引用（由调用方在 textarea 处理），不清空已输入文字。
  */
-import { GitBranch, Quote, RotateCcw, X } from "lucide-react";
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { attachmentLabel, isQuotable, type QuotedBlock, type ReplyRef } from "../replies";
+import { Check, Copy, GitBranch, Quote, RotateCcw, X } from "lucide-react";
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { copyText, selectionBeforeRightClick } from "../clipboard";
+import { attachmentLabel, copyTextOf, isQuotable, type QuotedBlock, type ReplyRef } from "../replies";
 import type { LocateResult } from "../replies-api";
 import type { Message } from "../types";
+import { ContextMenu, copyItem, type MenuItem } from "./ContextMenu";
 import { cx } from "./ui";
 
 /** 右键命中这些元素时不接管，保留浏览器原生菜单（链接、图片下载 / 复制不受影响）。 */
@@ -21,13 +22,31 @@ export function shouldUseNativeContextMenu(target: EventTarget | null): boolean 
 	return !!el.closest("a, img, input, textarea, select, video, audio, [contenteditable='true']");
 }
 
-/** 每条可引用 / 可分支消息底部的操作行：「引用」文字常显（不只 hover）；「另开新对话」只出现在用户消息上。 */
+/** 复制整条消息原文；点完短暂显示「已复制」/「复制失败」。 */
+function CopyButton({ text }: { text: string }) {
+	const [done, setDone] = useState<null | boolean>(null);
+	useEffect(() => {
+		if (done === null) return;
+		const t = window.setTimeout(() => setDone(null), 1500);
+		return () => clearTimeout(t);
+	}, [done]);
+	return (
+		<button type="button" className="pa-quote-btn" onClick={() => void copyText(text).then(setDone)} title="复制这条消息" aria-label="复制这条消息" data-testid="copy-btn">
+			{done ? <Check className="pa-ic" /> : <Copy className="pa-ic" />}
+			<span className="pa-quote-btn-txt">{done === null ? "复制" : done ? "已复制" : "复制失败"}</span>
+		</button>
+	);
+}
+
+/** 每条可引用 / 可分支消息底部的操作行：「复制」「引用」文字常显（不只 hover）；「另开新对话」只出现在用户消息上。 */
 export function MessageActions({ m, onQuote, onFork, side = "left" }: { m: Message; onQuote?: (m: Message) => void; onFork?: (m: Message) => void; side?: "left" | "right" }) {
 	const quoteOk = !!onQuote && isQuotable(m);
 	const forkOk = !!onFork && m.role === "user";
-	if (!quoteOk && !forkOk) return null;
+	const text = isQuotable(m) ? copyTextOf(m) : "";
+	if (!quoteOk && !forkOk && !text) return null;
 	return (
 		<div className={cx("pa-msg-actions", side)} data-testid="msg-actions">
+			{text && <CopyButton text={text} />}
 			{quoteOk && (
 				<button type="button" className="pa-quote-btn" onClick={() => onQuote!(m)} title="引用这条消息" aria-label="引用这条消息" data-testid="quote-btn">
 					<Quote className="pa-ic" />
@@ -116,68 +135,6 @@ export function JumpHint({ s, onRetry }: { s: "loading" | "notfound" | "error"; 
 				</button>
 			)}
 		</div>
-	);
-}
-
-/** 桌面右键小菜单（「引用」+「另开新对话」，不替换原生菜单）。 */
-export function ReplyContextMenu({ open, at, canFork, onFork, onQuote, onClose }: { open: boolean; at: { x: number; y: number }; canFork?: boolean; onFork?: () => void; onQuote: () => void; onClose: () => void }) {
-	const ref = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		if (!open) return;
-		const onDoc = (e: Event) => ref.current && !ref.current.contains(e.target as Node) && onClose();
-		// 捕获阶段吃掉 Esc：只关这一层菜单，不把底下的弹窗一起关掉
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
-				e.stopPropagation();
-				onClose();
-			}
-		};
-		document.addEventListener("pointerdown", onDoc, true);
-		document.addEventListener("keydown", onKey, true);
-		window.addEventListener("scroll", onClose, true);
-		window.addEventListener("resize", onClose);
-		return () => {
-			document.removeEventListener("pointerdown", onDoc, true);
-			document.removeEventListener("keydown", onKey, true);
-			window.removeEventListener("scroll", onClose, true);
-			window.removeEventListener("resize", onClose);
-		};
-	}, [open, onClose]);
-	if (!open) return null;
-	const w = 168;
-	const left = Math.max(8, Math.min(at.x, window.innerWidth - w - 8));
-	const h = canFork && onFork ? 92 : 56;
-	const top = Math.max(8, Math.min(at.y, window.innerHeight - h));
-	return createPortal(
-		<div ref={ref} role="menu" className="pa-reply-menu" style={{ left, top, width: w }} data-testid="reply-menu">
-			<button
-				type="button"
-				role="menuitem"
-				className="pa-reply-menu-item"
-				onClick={() => {
-					onQuote();
-					onClose();
-				}}
-				data-testid="reply-menu-quote"
-			>
-				<Quote className="pa-ic" /> 引用
-			</button>
-			{canFork && onFork && (
-				<button
-					type="button"
-					role="menuitem"
-					className="pa-reply-menu-item"
-					onClick={() => {
-						onFork();
-						onClose();
-					}}
-					data-testid="reply-menu-fork"
-				>
-					<GitBranch className="pa-ic" /> 另开新对话
-				</button>
-			)}
-		</div>,
-		document.body,
 	);
 }
 
@@ -309,18 +266,19 @@ export interface MessageInteraction {
  * 返回：interactionOf(m) 给消息元素展开；menuEl 挂到聊天区里。
  */
 export function useReplyContext(onQuote: (m: Message) => void, onFork?: (m: Message) => void, canFork?: (m: Message) => boolean) {
-	const [menu, setMenu] = useState<{ m: Message; x: number; y: number } | null>(null);
+	const [menu, setMenu] = useState<{ m: Message; x: number; y: number; sel: string } | null>(null);
 	const lp = useRef<{ timer?: number; start?: { x: number; y: number } }>({});
 	const cancel = () => {
 		if (lp.current.timer !== undefined) (clearTimeout(lp.current.timer), (lp.current.timer = undefined));
 		lp.current.start = undefined;
 	};
 	useEffect(() => () => cancel(), []);
+	const close = useCallback(() => setMenu(null), []);
 	const interactionOf = (m: Message): MessageInteraction => ({
 		onContextMenu: (e) => {
 			if (shouldUseNativeContextMenu(e.target)) return; // 链接 / 图片 / 输入框走原生菜单
 			e.preventDefault();
-			setMenu({ m, x: e.clientX, y: e.clientY });
+			setMenu({ m, x: e.clientX, y: e.clientY, sel: selectionBeforeRightClick(e.currentTarget as Element) });
 		},
 		onPointerDown: (e) => {
 			if (e.pointerType === "mouse" || e.button !== 0) return;
@@ -331,7 +289,7 @@ export function useReplyContext(onQuote: (m: Message) => void, onFork?: (m: Mess
 				if (!lp.current.start) return;
 				const sel = window.getSelection();
 				if (sel && !sel.isCollapsed) return; // 正在选字：让位给系统选择
-				setMenu({ m, x: e.clientX, y: e.clientY });
+				setMenu({ m, x: e.clientX, y: e.clientY, sel: "" });
 			}, 500);
 		},
 		onPointerMove: (e) => {
@@ -342,16 +300,14 @@ export function useReplyContext(onQuote: (m: Message) => void, onFork?: (m: Mess
 		onPointerCancel: cancel,
 		onPointerLeave: cancel,
 	});
-	const menuEl = (
-		<ReplyContextMenu
-			open={!!menu}
-			at={menu ?? { x: 0, y: 0 }}
-			canFork={!!menu && !!canFork?.(menu.m)}
-			onFork={() => menu && onFork?.(menu.m)}
-			onQuote={() => menu && onQuote(menu.m)}
-			onClose={() => setMenu(null)}
-		/>
-	);
+	const items: (MenuItem | null)[] = !menu
+		? []
+		: [
+				copyItem(menu.sel, isQuotable(menu.m) ? copyTextOf(menu.m) : ""),
+				isQuotable(menu.m) ? { key: "quote", label: "引用", icon: <Quote className="pa-ic" />, run: () => onQuote(menu.m) } : null,
+				onFork && canFork?.(menu.m) ? { key: "fork", label: "另开新对话", icon: <GitBranch className="pa-ic" />, run: () => onFork(menu.m) } : null,
+			];
+	const menuEl = <ContextMenu at={menu} items={items.filter((x): x is MenuItem => !!x)} onClose={close} testId="reply-menu" />;
 	return { interactionOf, menuEl };
 }
 

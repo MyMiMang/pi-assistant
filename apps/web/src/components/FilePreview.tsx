@@ -2,6 +2,7 @@ import { AlertCircle, Copy, Download, FileQuestion, Loader2, RotateCcw, X } from
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { ApiError, download as downloadFile, fetchBlob, fetchBlobLimited } from "../api";
+import { copyText } from "../clipboard";
 import { MAX_CSV_COLS, MAX_CSV_ROWS, MAX_TEXT_BYTES, MAX_TEXT_LINES, isTextKind, looksBinary, parseCsv, previewKind, stripBom, type PreviewKind } from "../preview";
 import { FileKindIcon } from "./Attachments";
 import Markdown from "./Markdown";
@@ -317,13 +318,11 @@ function CodeView({ text }: { text: string }) {
 	const shown = lines.length > MAX_TEXT_LINES ? lines.slice(0, MAX_TEXT_LINES) : lines;
 	const [copied, setCopied] = useState(false);
 	const copy = () => {
-		void navigator.clipboard?.writeText(text).then(
-			() => {
-				setCopied(true);
-				setTimeout(() => setCopied(false), 1500);
-			},
-			() => {},
-		);
+		void copyText(text).then((ok) => {
+			if (!ok) return;
+			setCopied(true);
+			setTimeout(() => setCopied(false), 1500);
+		});
 	};
 	return (
 		<div className="flex h-full min-h-0 flex-col" data-testid="file-preview-code">
