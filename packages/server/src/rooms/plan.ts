@@ -72,7 +72,9 @@ export function checkPlan(plan: ProjectPlan, members: { id: string; name: string
 	const missing = [!plan.goal && "goal（要做成什么）", !plan.doneCriteria && "doneCriteria（怎样算完成）", !plan.deliverables && "deliverables（最后交给用户什么）", !opts.solo && !plan.roles.length && "roles（分工，至少一条）", !plan.stages.length && "stages（阶段，至少一个）"].filter(Boolean);
 	if (missing.length) return { error: `方案还不完整，缺：${missing.join("、")}。补齐后再出方案卡。` };
 	if (opts.solo) return { plan };
-	const find = (name: string) => members.find((m) => m.name === name) ?? members.find((m) => m.name.toLowerCase() === name.toLowerCase());
+	// 模型常照着名单写「张三（管理者）」「@张三」：去掉开头的 @ 和末尾的括号说明再比
+	const norm = (s: string) => s.trim().replace(/^@/, "").replace(/\s*[（(][^（）()]*[）)]$/, "").trim().toLowerCase();
+	const find = (name: string) => members.find((m) => m.name === name) ?? members.find((m) => norm(m.name) === norm(name));
 	const bad = plan.roles.filter((r) => !find(r.member)).map((r) => r.member);
 	if (bad.length) return { error: `分工里这些不是群成员：${bad.join("、")}。分工只能写群里的成员（含你自己）：${members.map((m) => m.name).join("、")}。` };
 	return { plan: { ...plan, roles: plan.roles.map((r) => { const m = find(r.member)!; return { member: m.name, agentId: m.id, does: r.does }; }) } };

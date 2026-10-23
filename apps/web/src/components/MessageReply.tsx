@@ -272,6 +272,7 @@ export function useMessageJump(scroller: RefObject<HTMLElement | null>, locate: 
 
 /**
  * composer 高度变化 → 同步聊天区底部留白（引用条多一行时最后一条消息不被遮）。
+ * 消息内容（.pa-thread-body）自己变高时也跟着：运行中状态条下面冒出「这一步已经 1 分钟了」这类不经整页重画的变化，不会被输入框挡住。
  * 只有用户本来就贴底（stick）时才跟随滚动，未贴底不抢滚动。
  */
 export function useComposerInset(scroller: RefObject<HTMLElement | null>, wrap: RefObject<HTMLElement | null>, stick: RefObject<boolean>) {
@@ -287,6 +288,8 @@ export function useComposerInset(scroller: RefObject<HTMLElement | null>, wrap: 
 		apply();
 		const ro = new ResizeObserver(apply);
 		ro.observe(el);
+		const body = scroller.current?.firstElementChild;
+		if (body) ro.observe(body);
 		return () => ro.disconnect();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);

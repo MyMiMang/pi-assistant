@@ -117,7 +117,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	}, [roomId]);
 	if (!room) return <div className="flex h-full items-center justify-center text-sm text-mut">群聊不存在或已删除</div>;
 	const st = room.state;
-	const pendingCard = (agentId: string) => list.some((m) => m.role === "card" && m.agent_id === agentId && m.meta.status === "pending" && (m.meta.kind === "approval" || m.meta.kind === "question"));
+	const pendingCard = (agentId: string) => ({ approval: "等待审批", question: "等你回答" })[list.find((m) => m.role === "card" && m.agent_id === agentId && m.meta.status === "pending" && (m.meta.kind === "approval" || m.meta.kind === "question"))?.meta.kind as string] as string | undefined; // 关键点确认、提问是 question 卡，不叫「审批」
 	const active = room.members.filter((m) => !m.left);
 	const manager = active.find((m) => m.agentId === room.managerId);
 	const lastRow = rows[rows.length - 1];
@@ -243,7 +243,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					{st.current && (
 						<span className="pa-room-st">
 							<span className="pa-spinner" />
-							{memberOf(room, agents, st.current.agentId).name} {pendingCard(st.current.agentId) ? "等待审批" : STATUS(st.current.reason)}
+							{memberOf(room, agents, st.current.agentId).name} {pendingCard(st.current.agentId) ?? STATUS(st.current.reason)}
 						</span>
 					)}
 					{st.queue.map((id, i) => (

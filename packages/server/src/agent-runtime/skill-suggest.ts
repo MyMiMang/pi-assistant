@@ -8,9 +8,17 @@ import { runtime } from "./agent-runtime.ts";
 /** 对话 → 正在等 diff 审批的“更新技能”建议 */
 export const pendingUpdates = new Map<string, string>();
 
+/** 项目进行中（群里或单聊）：不在推进中途弹「存成技能？」，免得打断管理者；项目交付后照常提议。群 / 单聊项目模块用到时再加载（静态引用会循环初始化）。 */
+export async function projectInProgress(conv: string | null) {
+	if (!conv) return false;
+	const [{ roomOfConv }, { hasActiveProject }, { chatProjectsOf }] = await Promise.all([import("../rooms/store.ts"), import("../rooms/projects.ts"), import("../chat-projects/store.ts")]);
+	const room = roomOfConv(conv);
+	return room ? hasActiveProject(room) : chatProjectsOf(conv).some((p) => p.status === "active");
+}
+
 export async function maybeSuggest(agentId: string, conversationId: string | null, turn: { userText: string; tools: string[]; usedSkills: string[]; reply?: string; ok?: boolean }) {
 	const sg: Suggestion | null = observeTurn({ agentId, conversationId, ...turn });
-	if (!sg) return;
+	if (!sg || (await projectInProgress(conversationId))) return;
 	const rt = runtime(agentId, conversationId);
 	const sourceUserId = latestUserMessage(conversationId)?.id;
 	// 稍等：让这轮的回复先显示出来，再提建议

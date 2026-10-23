@@ -260,6 +260,8 @@ test("idleWakeStep：只有有进行中项目、手上没活、队列空才兜�
 	const base = { projectActive: true, inFlight: false, queued: false, lastSig: null, sig: "a", hinted: false };
 	assert.equal(logic.idleWakeStep(base), "wake");
 	assert.equal(logic.idleWakeStep({ ...base, projectActive: false }), "none");
+	assert.equal(logic.idleWakeStep({ ...base, waitingUser: true }), "none", "在等用户回答关键点 / 提问：不叫醒、也不提示没进展");
+	assert.equal(logic.idleWakeStep({ ...base, waitingUser: true, lastSig: base.sig, hinted: false }), "none");
 	assert.equal(logic.idleWakeStep({ ...base, inFlight: true }), "none");
 	assert.equal(logic.idleWakeStep({ ...base, queued: true }), "none");
 	assert.equal(logic.idleWakeStep({ ...base, lastSig: "b" }), "wake", "有新进展");

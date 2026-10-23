@@ -99,6 +99,8 @@ test("没有start的最终事件也持久可见：quota/空结果/正文/停止�
 	try {
 		listener({ type: "message_end", message: { role: "assistant", content: [], stopReason: "stop" } });
 		assert.equal(messages(conv.id).length, before, "宿主技能用途内部轮明确允许无输出，不冒充服务失败");
+		listener({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "（这一轮先停在这里，等你回复。）" }], stopReason: "stop" } });
+		assert.equal(messages(conv.id).length, before, "技能用途内部轮只该出卡片：模型多说的话不留");
 		listener({ type: "message_end", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "usage_limit_reached" } });
 		assert.equal(messages(conv.id).length, before + 1, "即使允许内部无输出，真实quota错误仍须落库可见");
 		assert.equal(messages(conv.id).at(-1)?.status, "error");

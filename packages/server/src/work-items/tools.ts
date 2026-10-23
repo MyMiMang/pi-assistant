@@ -115,7 +115,7 @@ export function workItemTools(roomId: string, agentId: string) {
 						const exhausted = r.item.blocker?.startsWith(EXHAUSTED_MARK);
 						return text(`已退回：${r.item.title}。${exhausted ? `这个任务${EXHAUSTED_MARK}：请你在群里跟用户说清楚问题是什么、需要用户帮什么或哪个决定你无权拍板。` : `这个任务已反复退回，任务标为受阻，没有再自动重做。${SWITCH_HINT}`}`);
 					}
-					return text(`已${p.verdict === "pass" ? "核验通过，任务完成" : "退回修改，任务保持进行中"}：${r.item.title}`);
+					return text(`已${p.verdict === "pass" ? "核验通过，任务完成" : "退回修改，任务保持进行中"}：${r.item.title}${"stageNote" in r && r.stageNote ? `\n${r.stageNote}` : ""}`);
 				} catch (e) {
 					return errText(e);
 				}

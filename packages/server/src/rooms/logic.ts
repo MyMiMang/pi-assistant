@@ -105,8 +105,9 @@ export function boardDigestOrUnchanged(digest: string, lastDigest: string | null
  * 项目进行中的兜底：管理者一个回合正常结束后，项目没结束、没有进行中 / 待核验的任务、队列里也没有排着的回合 → 再叫醒它一次。
  * 有界：连续两次兜底之间看板没有任何新进展（sig 没变）就不再叫醒，改为提示用户一次（hint）；用户发话会重置（调用方清掉 lastSig / hinted）。
  */
-export function idleWakeStep(o: { projectActive: boolean; inFlight: boolean; queued: boolean; lastSig: string | null; sig: string; hinted: boolean }): "wake" | "hint" | "none" {
-	if (!o.projectActive || o.inFlight || o.queued) return "none";
+export function idleWakeStep(o: { projectActive: boolean; inFlight: boolean; queued: boolean; waitingUser?: boolean; lastSig: string | null; sig: string; hinted: boolean }): "wake" | "hint" | "none" {
+	// 在等用户（关键点 / 提问 / 审批卡还没处理）：叫醒管理者只会把「等你回复」再说一遍，也不提示「没有进展」
+	if (!o.projectActive || o.inFlight || o.queued || o.waitingUser) return "none";
 	if (o.lastSig === null || o.lastSig !== o.sig) return "wake";
 	return o.hinted ? "none" : "hint";
 }

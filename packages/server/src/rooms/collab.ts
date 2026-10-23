@@ -143,6 +143,8 @@ function boardSig(roomId: string, projectActive: boolean) {
 	return projectBoardSig({ items, plainAssignsDone, projectActive });
 }
 const hasInFlight = (roomId: string) => !!db.prepare("SELECT 1 FROM work_items WHERE room_id = ? AND status IN ('active','blocked','review') LIMIT 1").get(roomId);
+/** 群里有用户还没处理的关键点 / 提问 / 审批卡 */
+const waitingUser = (roomId: string) => !!db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND role = 'card' AND json_extract(meta, '$.status') = 'pending' AND json_extract(meta, '$.kind') IN ('question','approval') LIMIT 1").get(roomId);
 
 /** 管理者回合正常结束后：有进行中的项目、手上没有在做的任务、队列也空 → 再叫醒它规划下一步；没有新进展就只提示用户一次。 */
 function idleWake(roomId: string) {
@@ -151,7 +153,7 @@ function idleWake(roomId: string) {
 	const st = idle.get(roomId);
 	const projectActive = hasActiveProject(roomId);
 	const sig = boardSig(roomId, projectActive);
-	const step = idleWakeStep({ projectActive, inFlight: hasInFlight(roomId), queued: hasQueuedTurns(roomId), lastSig: st?.sig ?? null, sig, hinted: !!st?.hinted });
+	const step = idleWakeStep({ projectActive, inFlight: hasInFlight(roomId), queued: hasQueuedTurns(roomId), waitingUser: waitingUser(roomId), lastSig: st?.sig ?? null, sig, hinted: !!st?.hinted });
 	if (step === "wake") {
 		idle.set(roomId, { sig, hinted: false });
 		wakeManager(roomId, PROJECT_IDLE_WAKE);

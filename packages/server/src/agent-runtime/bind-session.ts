@@ -87,8 +87,8 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 				lastAssistantMid = cur.id;
 				if (e.aborted) updateMessage(cur.id, { content: text, status: "interrupted", meta });
 				else if (e.error) updateMessage(cur.id, { content: text, status: "error", meta: { ...meta, error: e.error } });
-				else if (!text.trim() && !thinking && (e.hasToolCalls || allowEmpty?.())) {
-					// 纯工具中间态、宿主明确允许无输出的技能用途内部轮不留空引用；服务错误仍优先显示。
+				else if ((!text.trim() && !thinking && e.hasToolCalls) || allowEmpty?.()) {
+					// 纯工具中间态不留空引用；技能用途内部轮只该出卡片，模型多说的话（如「这一轮先停在这里」）也不留。服务错误仍优先显示。
 					deleteMessage(cur.id);
 					lastAssistantMid = null;
 				} else if (!text.trim() && !thinking) updateMessage(cur.id, { content: "", status: "error", meta: { ...meta, error: "这次未收到回复，服务未提供具体原因" } });

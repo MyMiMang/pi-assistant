@@ -3,7 +3,7 @@
  * 通过后自动推进下游（launch.ts）、转正执行记忆、必要时把新版本交给下游（upstream.ts）。
  */
 import { db, now } from "../db.ts";
-import { createRun, promoteRunMemories, recordProgress, repeatOf, workPrompt } from "./exec.ts";
+import { cancelWorkRuns, createRun, promoteRunMemories, recordProgress, repeatOf, workPrompt } from "./exec.ts";
 import { advanceDependents, launch } from "./launch.ts";
 import { port } from "./ports.ts";
 import { deliverNewVersion, passedBefore } from "./upstream.ts";
@@ -24,6 +24,8 @@ export async function verifyWorkItem(o: { workItemId: string; actor: WorkActor; 
 	const t = now();
 	recordProgress(row);
 	if (o.verdict === "pass") {
+		// 管理者自己直接做完了：停掉还在做同一件事的帮手，免得重复干活、做完又把同样的东西发进群
+		if (selfDone) await cancelWorkRuns(row.id, { abortCurrent: true });
 		const again = passedBefore(row.id); // 之前已经通过过一次：这次是新版本
 		const verification = JSON.stringify({ verdict: "pass", note, by: actorKey(o.actor), byName: actorName(o.actor), at: t, revision: row.revision });
 		db.prepare("UPDATE work_items SET status = 'done', latest_progress = ?, blocker = NULL, verification = ?, completed_at = ?, auto_retries = 0, needs_user = NULL, escalation = NULL, updated_at = ? WHERE id = ? AND revision = ?").run(`已核验完成：${note.slice(0, 300)}`, verification, t, t, row.id, row.revision);
@@ -31,10 +33,10 @@ export async function verifyWorkItem(o: { workItemId: string; actor: WorkActor; 
 		roomNotice(row.room_id, `任务「${row.title}」核验通过：${note.slice(0, 300)}`, row.id);
 		await promoteRunMemories(row.id, row.revision).catch((e) => console.warn(`[work] 执行记忆转正失败：${e instanceof Error ? e.message : e}`));
 		advanceDependents(row);
-		if (row.project_id) port()?.stageMaybeDone(row.project_id);
+		const stageNote = row.project_id ? port()?.stageMaybeDone(row.project_id, o.actor.kind === "agent" ? o.actor.agentId : undefined) || null : null;
 		if (again) deliverNewVersion(itemRow(row.id)!);
 		emit(row.room_id);
-		return getWorkItemDetail(row.id);
+		return { ...getWorkItemDetail(row.id), stageNote };
 	}
 	if (o.verdict === "impossible") {
 		// 不自动重做、不算 auto_retries：这不是「没做好」，是「这条路走不通」，直接交给管理者换做法或改方案（见 room_project_replan）。

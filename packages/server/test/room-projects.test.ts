@@ -97,6 +97,15 @@ test("room_plan：只有管理者能出方案卡；分工里不是群成员的�
 	await rooms.deleteRoom(room.id);
 });
 
+test("checkPlan：分工名字带「（管理者）」后缀或开头 @ 也认得出，不白白拒一次", async () => {
+	const { checkPlan, normalizePlan } = await import("../src/rooms/plan.ts");
+	const members = [{ id: "pm", name: "组长" }, { id: "pa", name: "甲" }];
+	const r = checkPlan(normalizePlan({ ...fullPlan(), roles: [{ member: "组长（管理者）", does: "统筹" }, { member: "@甲", does: "写" }] }), members);
+	assert.equal(r.error, undefined);
+	assert.deepEqual(r.plan!.roles.map((x) => [x.member, x.agentId]), [["组长", "pm"], ["甲", "pa"]]);
+	assert.match(checkPlan(normalizePlan({ ...fullPlan(), roles: [{ member: "路人（管理者）", does: "x" }] }), members).error!, /不是群成员：路人（管理者）/);
+});
+
 test("按钮确认 / 先不做：proposed → active / dismissed；确认后群里有 started 告知并唤醒管理者", async () => {
 	const room = rooms.createRoom({ name: "按钮群", memberIds: ["pm", "pa"], managerId: "pm" });
 	replies.set("pm", () => "收到");
@@ -197,13 +206,20 @@ test("room_project_done：项目下还有没收尾的任务就不让结束；管
 	assert.match(blocked, /没有结束项目：还有任务没收尾[\s\S]*「写方案和文案」（待安排，负责人 /);
 	assert.match(blocked, /work_verify pass/);
 	assert.equal(projects.getProject(pid)!.status, "active");
-	// 自己的任务：核验通过直接收尾
+	// 自己的任务：核验通过直接收尾；建任务时排上的执行（帮手还在做同一件事）一起停掉，不重复干活
+	const { createRun } = await import("../src/work-items/exec.ts");
+	const run = createRun(W.itemRow(mine)!, "pm", { task: "写方案和文案" });
 	await W.verifyWorkItem({ workItemId: mine, actor: { kind: "agent", agentId: "pm", roomId: room.id }, verdict: "pass", note: "方案和文案在 读书会/ 下，读过一遍" });
 	assert.equal(W.itemRow(mine)!.status, "done");
+	assert.equal((db.prepare("SELECT status FROM work_item_runs WHERE id = ?").get(run.id) as { status: string }).status, "cancelled", "还在排队 / 做的执行被停掉");
 	// 别人的、还没提交的任务不能这样收尾
 	await assert.rejects(W.verifyWorkItem({ workItemId: theirs, actor: { kind: "agent", agentId: "pm", roomId: room.id }, verdict: "pass", note: "看起来好了" }), /还不能核验/);
 	await W.cancelWorkItem({ workItemId: theirs, actor: { kind: "user" } });
+	const { projectInProgress } = await import("../src/agent-runtime/skill-suggest.ts");
+	const conv = (db.prepare("SELECT conversation_id FROM room_members WHERE room_id = ? AND agent_id = 'pm'").get(room.id) as { conversation_id: string }).conversation_id;
+	assert.equal(await projectInProgress(conv), true, "项目进行中：不提议存技能");
 	assert.match(await callProj(room.id, "pm", "room_project_done", { projectId: pid, summary: "都做完了" }), /已结束/);
+	assert.equal(await projectInProgress(conv), false, "交付后照常可以提议");
 	replies.clear();
 	await until(() => idle(room.id), "跑完");
 	await rooms.deleteRoom(room.id);

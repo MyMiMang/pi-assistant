@@ -187,6 +187,19 @@ test("阶段完成：核验通过后叫醒管理者一次（含项目编号和�
 	await rooms.deleteRoom(room.id);
 });
 
+test("阶段完成：管理者自己在回合里核验通过、让阶段完成时，提醒随核验结果回给它，不另排一轮叫醒（免得同样的进度说两遍）", async () => {
+	const { room, pid, wi1 } = await setup("自核群");
+	prompts.length = 0;
+	const r = await W.verifyWorkItem({ workItemId: wi1, actor: { kind: "agent", agentId: "nm", roomId: room.id }, verdict: "pass", note: "看过了，符合" });
+	assert.match(String("stageNote" in r ? r.stageNote : ""), new RegExp(`项目编号 ${pid}[\\s\\S]*的阶段「草稿」完成了`), "提醒写进核验结果");
+	await sleep(150);
+	await until(() => idle(room.id), "跑完");
+	assert.ok(!reasonsOf().some((p) => p.includes("的阶段「草稿」完成了")), "没有另排一轮叫醒");
+	assert.deepEqual(JSON.parse(projects.getProject(pid)!.stages_done!), ["草稿"], "照样记为已通知，之后不会再提醒");
+	await projects.finishProject(room.id, pid, "测试结束");
+	await rooms.deleteRoom(room.id);
+});
+
 test("room_checkpoint：出提问卡（带项目、关键点）、设 waiting；用户答复后清掉并把答复发到群里叫醒管理者；同一项目同时只有一个", async () => {
 	const { room, pid, call } = await setup("关键点群");
 	writeFileSync(join(workspaceOf("nm"), "draft.md"), "# 草稿\n");
