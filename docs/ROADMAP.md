@@ -23,7 +23,7 @@
 - [已废弃，被 0019 取代] 目标清楚由导演自己开启推进、模糊先问、干完交付结果，不再要用户手动开或点确认卡（[0018](decisions/0018-manager-starts-autonomy.md)）
 - [已发布(beta.36)] 群聊去掉每轮 token 预算、暂停不挡唤醒、自主推进开关放顶部且真能自己推进、派活附件真的交给负责人（[0017](decisions/0017-room-no-token-budget-autonomy.md)）
 - [已发布(beta.36)] 文件卡片路径超出、「任务提交」卡片贴边并和系统提示叠在一起
-- [计划] 群成员每次调用读入 20–37 万 token：会话历史越攒越长，查清后单独给方案
+- [已合 main，未打包] 群成员读入越攒越多：唤醒消息去重复、交付时用户原话存进记忆、交付后读入超 15 万自动整理群会话（[设计](design/context-growth.md)、[0022](decisions/0022-tidy-after-delivery.md)）
 - [已发布(beta.35)] 群任务卡住 / 反复退回由管理者自己处理，办法用尽才向用户说明需要什么帮助（[0016](decisions/0016-group-stuck-manager-handles.md)）
 - [已发布(beta.37)] 主密钥读不到（钥匙串拒绝 / 锁着、DPAPI 解不开）时服务停下并说明原因，不再另造密钥覆盖（[0015](decisions/0015-master-key-never-overwrite.md)）
 - [已发布(beta.37)，待真机] 桌面 App 里把文件拖到聊天框 = 点「上传」：主窗口关掉 Tauri 自带的拖放拦截，交给网页现有的拖放（e2e `chat-file-drop.mjs`）

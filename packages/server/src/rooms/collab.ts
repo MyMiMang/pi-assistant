@@ -14,8 +14,8 @@ import { boardDigestOrUnchanged, boardSig as projectBoardSig, freshWakeReasons, 
 import { askIdOf } from "./ask-logic.ts";
 import { answerAsk, checkAskTimeouts, dropAnsweredTail } from "./ask-flow.ts";
 import { getAsk } from "./asks.ts";
-import { planText } from "./plan.ts";
-import { activeProjects, checkProjectStall, getProject, hasActiveProject, projectView } from "./projects.ts";
+import { activeProjects, checkProjectStall, getProject, hasActiveProject, projectsOf, projectView } from "./projects.ts";
+import { maybeTidy } from "./after-delivery.ts";
 import { projectProgress, renderProgress } from "./progress.ts";
 import { holdForCheckpoint, releaseAfterManagerTurn } from "./hold.ts";
 import { stageMaybeDone } from "./stages.ts";
@@ -92,7 +92,7 @@ function checkContext(roomId: string) {
 					const stall = checkProjectStall(p);
 					if (stall === "replan") stallHints.push(`「${p.title}」：${REPLAN_HINT}`);
 					else if (stall === "exhausted") stallHints.push(`「${p.title}」：${EXHAUSTED_HINT}`);
-					return `${planText(projectView(p))}\n${renderProgress(progress)}`;
+					return `项目「${p.title}」（项目编号 ${p.id}，方案见群规则）\n${renderProgress(progress)}`;
 				})
 				.join("\n\n")}\n对照进度清单想清楚：做完了没有、是不是在原地打转、有没有进展、下一步谁做、交代他什么。`
 		: "";
@@ -180,7 +180,10 @@ setTurnHooks({
 		if (t.agentId === r.manager_id) idleWake(roomId);
 		if (t.agentId !== r.manager_id && res.text) peerMentions(roomId, t.agentId, res.text, t.reason === "peer" && t.from ? [t.from].filter((id) => steeredLive(roomId, id)) : []);
 	},
-	ended: (roomId, t) => releaseAfterManagerTurn(roomId, t.agentId),
+	ended: (roomId, t) => {
+		releaseAfterManagerTurn(roomId, t.agentId);
+		if (t.agentId === getRoom(roomId)?.manager_id) maybeTidy(roomId, { idle: !hasQueuedTurns(roomId), openProjects: projectsOf(roomId).length });
+	},
 	checkContext,
 	onUserMessage(roomId) {
 		resetChatter(roomId);

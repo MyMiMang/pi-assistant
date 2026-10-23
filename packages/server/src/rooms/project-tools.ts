@@ -4,6 +4,7 @@
  */
 import { Type } from "typebox";
 import { fileInfo } from "../files.ts";
+import { afterDelivery } from "./after-delivery.ts";
 import { askCheckpoint } from "./checkpoint.ts";
 import { MISSING_HINT, resolveFiles } from "./deliver.ts";
 import { checkPlan, normalizePlan } from "./plan.ts";
@@ -130,7 +131,7 @@ export function projectTools(roomId: string, agentId: string) {
 				summary: Type.String({ description: "做成了什么：对照完成标准怎么满足的（简短）" }),
 				deliverables: Type.Optional(Type.Array(Type.String(), { description: "交付文件：群里已有的文件名，或你工作区里的路径" })),
 				howToUse: Type.Optional(Type.String({ description: "怎么用 / 去哪看" })),
-				notDone: Type.Optional(Type.String({ description: "还没做的、建议的下一步（没有就不写）" })),
+				notDone: Type.Optional(Type.String({ description: "还没做的、建议的下一步；答应过用户还没兑现的事也写上（没有就不写）" })),
 			}),
 			async execute(_id: string, p: { projectId: string; summary: string; deliverables?: string[]; howToUse?: string; notDone?: string }) {
 				const r = getRoom(roomId);
@@ -146,7 +147,9 @@ export function projectTools(roomId: string, agentId: string) {
 				const { files, missing } = resolveFiles(roomId, agentId, p.deliverables);
 				if (missing.length) return text(`没有结束项目：${MISSING_HINT(missing)}。`);
 				try {
-					finishProject(roomId, p.projectId, summary, { files: files.map(fileInfo), howToUse: String(p.howToUse ?? "").trim().slice(0, 1000), notDone: String(p.notDone ?? "").trim().slice(0, 1000), managerId: agentId });
+					const notDone = String(p.notDone ?? "").trim().slice(0, 1000);
+					finishProject(roomId, p.projectId, summary, { files: files.map(fileInfo), howToUse: String(p.howToUse ?? "").trim().slice(0, 1000), notDone, managerId: agentId });
+					afterDelivery(roomId, proj, agentId, { summary, files: files.map((f) => f.name), notDone });
 					return text(`项目「${proj.title}」已结束，交付卡已发到群里。`);
 				} catch (e) {
 					return text(e instanceof Error ? e.message : String(e));

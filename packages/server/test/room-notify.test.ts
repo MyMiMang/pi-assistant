@@ -200,6 +200,79 @@ test("阶段完成：管理者自己在回合里核验通过、让阶段完成�
 	await rooms.deleteRoom(room.id);
 });
 
+test("交付之后（决策 0022）：用户本人在项目期间的原话 + 交付摘要用可信来源写进管理者记忆，助理的话不算；群空闲时整理读入多的群会话，整理期间下一轮先等着；还有别的项目就不整理", async () => {
+	const { memory } = await import("../src/memory/index.ts");
+	const { insertMessage } = await import("../src/messages.ts");
+	const { memberConversation } = await import("../src/rooms/store.ts");
+	const AD = await import("../src/rooms/after-delivery.ts");
+	
+	const remembered: { agentId: string; user: string; assistant: string; actor?: string }[] = [];
+	const origRetain = memory.retainTurn;
+	memory.retainTurn = async (agentId: string, _c: string | null, t: { user: string; assistant: string; actor?: string }) => void remembered.push({ agentId, ...t });
+	const compacted: { conv: string; instructions?: string }[] = [];
+	let openTidy!: () => void;
+	const tidyGate = new Promise<void>((r) => (openTidy = r));
+	const origCompact = proto.compact;
+	proto.compact = async function (this: { conversationId: string }, instructions?: string) {
+		compacted.push({ conv: this.conversationId, instructions });
+		await tidyGate;
+		return {};
+	};
+	try {
+		const { room, pid, call, wi1, wi2 } = await setup("交付记忆群");
+		const conv = memberConversation(room.id, "nm");
+		insertMessage({ agentId: "", roomId: room.id, role: "user", content: "口味清淡一点，不要辣" });
+		insertMessage({ agentId: "na", roomId: room.id, role: "assistant", content: "我觉得要多放辣" });
+		insertMessage({ agentId: "nm", conversationId: conv, role: "assistant", content: "好的", meta: { usage: { input: 1000, cacheRead: 160_000, cacheWrite: 0 } } });
+		await pass(wi1);
+		await pass(wi2);
+		await until(() => idle(room.id), "阶段通知跑完");
+		writeFileSync(join(workspaceOf("nm"), "report.md"), "# 报告\n");
+		assert.match(await call("room_project_done", { projectId: pid, summary: "报告写好了", deliverables: ["report.md"], notDone: "图表还没做" }), /已结束/);
+		await until(() => remembered.length === 1, "交付记忆写入");
+		const m = remembered[0];
+		assert.equal(m.agentId, "nm");
+		assert.equal(m.actor, "user", "用户原话是可信来源");
+		assert.match(m.user, /口味清淡一点，不要辣/);
+		assert.ok(!m.user.includes("多放辣"), "其他助理的话不算用户说过");
+		assert.match(m.assistant, /报告写好了[\s\S]*report\.md[\s\S]*图表还没做/);
+		assert.equal(compacted.length, 0, "交付工具本身不整理：等管理者这一轮结束");
+		// 管理者回合结束 → 群空闲、没有别的项目 → 整理读入多的会话（成员的会话太短，跳过）
+		rooms.postUserMessage(room.id, "谢谢");
+		await until(() => compacted.length === 1, "交付后整理");
+		assert.equal(compacted[0].conv, conv);
+		assert.match(compacted[0].instructions!, /不要写成进行中或待确认[\s\S]*「写报告」：已交付[\s\S]*答应过用户但还没做的事/, "整理时交代每个项目的真实状态");
+		assert.match(compacted[0].instructions!, /用户在群里说过的话[\s\S]*- 口味清淡一点，不要辣/, "整理时附上用户原话，偏好不靠模型自己去翻");
+		assert.ok(!compacted[0].instructions!.includes("多放辣"), "其他助理的话不算");
+		assert.match(rooms.roomRules(room.id, "nm").join("\n"), /已交付的项目（以这里为准[^）]*）：「写报告」/, "群规则写明已交付的项目，旧总结过时以这里为准");
+		// 整理期间群里来新消息：下一轮等整理做完再开始
+		const n = prompts.length;
+		rooms.postUserMessage(room.id, "再问一句");
+		await sleep(100);
+		assert.ok(!prompts.slice(n).some((p) => p.includes("再问一句")), "整理没做完，下一轮先等着");
+		openTidy();
+		await until(() => prompts.slice(n).some((p) => p.includes("再问一句")), "整理完再跑下一轮");
+		await until(() => idle(room.id), "跑完");
+		assert.equal(compacted.length, 1, "一次交付只整理一次");
+		// 还有别的进行中 / 待确认项目、或群不空闲：先不整理
+		const r2 = rooms.createRoom({ name: "还有别的项目群", memberIds: ["nm", "na"], managerId: "nm" });
+		const c2 = memberConversation(r2.id, "nm");
+		insertMessage({ agentId: "nm", conversationId: c2, role: "assistant", content: "好的", meta: { usage: { input: 160_000 } } });
+		AD.afterDelivery(r2.id, { id: "pj_x", title: "x" }, "nm", { summary: "s", files: [], notDone: "" });
+		AD.maybeTidy(r2.id, { idle: true, openProjects: 1 });
+		AD.maybeTidy(r2.id, { idle: false, openProjects: 0 });
+		await sleep(50);
+		assert.ok(!compacted.some((c) => c.conv === c2), "有别的项目 / 群不空闲时不整理");
+		AD.maybeTidy(r2.id, { idle: true, openProjects: 0 });
+		await until(() => compacted.some((c) => c.conv === c2), "条件满足后照样整理");
+		await rooms.deleteRoom(r2.id);
+		await rooms.deleteRoom(room.id);
+	} finally {
+		memory.retainTurn = origRetain;
+		proto.compact = origCompact;
+	}
+});
+
 test("room_checkpoint：出提问卡（带项目、关键点）、设 waiting；用户答复后清掉并把答复发到群里叫醒管理者；同一项目同时只有一个", async () => {
 	const { room, pid, call } = await setup("关键点群");
 	writeFileSync(join(workspaceOf("nm"), "draft.md"), "# 草稿\n");

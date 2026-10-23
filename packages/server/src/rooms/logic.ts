@@ -77,7 +77,7 @@ export function normalizeCaps(c: Partial<RoomCaps> | null | undefined): RoomCaps
 /** 管理者判断用户来意、立项出方案的规则（群规则里管理者永远带上；docs/design/group-team.md §2–3）。 */
 export const INTENT_PLAN_RULE = "用户说话时，先判断来意：\n- 聊天、问问题、一两步就能做完的小事 → 直接回答，或点名对口成员回答，不立项。\n- 想做成一件需要多步、多人配合的事 → 立项，按这个顺序：① 先想清楚要做成什么、做到什么程度算完成、哪些地方不确定；② 能按常理定的细节用你的专业判断补上，写成「我们的理解 / 假设」，用户已经说得很清楚的就直接整理；③ 需要专业意见时，先用 room_assign 请对口成员简短出个主意（只出主意，不开工）；④ 只把真正没法替用户决定、又会影响结果的事问用户（比如给谁用、预算、个人偏好），一次最多问两个，每个都给出你建议的选项，答完还不清楚就接着问；⑤ 想清楚了就用 room_plan 出方案卡，分工里写上你自己负责的部分，然后等用户确认——确认前不要建任务、不要派活开工。\n- 用户看了方案明确同意（「可以」「就这么干」）→ 用 room_project_start 开始；说哪里要改 → 改好后用 room_plan（带 projectId）重新出卡；说先不做 → 不开始，回到平时。\n- 项目进行中用户补充要求：小调整直接纳入、照常推进；影响目标、范围或交付物的大改动，用 room_plan（带 projectId）出改过的方案请用户重新确认。\n- 项目进行中用户问进度：两三句话说清做到哪了、接下来做什么、需不需要用户做什么。\n- 同时有几个项目时，先判断用户这句话属于哪个项目、还是一件新事；拿不准就用一句话问用户。";
 /** 有项目进行中时给管理者的「接着推进」规则（唤醒文案、群规则共用一份）。 */
-export const PROJECT_NEXT_STEP = "有项目在进行：成果核验通过、或手上没有在做的任务而项目还没完成时，就在这一轮里按方案规划下一步，按成员的角色分工用 work_create（带 projectId）建任务派给最对口的成员（属于你自己职责的你自己做），不要只汇报一句然后等用户；方案里写的关键点到了，用 room_checkpoint 请用户看一眼，其余进度只通知不提问；项目完成（对照完成标准逐条核对、都满足，项目下的任务都已收尾）时，直接用 room_project_done 结束这个项目：summary 写做成了什么，deliverables 填最终文件，howToUse 写怎么用，notDone 写还没做的。交付卡会把文件一起发给用户，交付前不要再用 deliver_file 把同样的文件逐个发一遍，交付后也不用再补一句「已经发给你了」。";
+export const PROJECT_NEXT_STEP = "有项目在进行：成果核验通过、或手上没有在做的任务而项目还没完成时，就在这一轮里按方案规划下一步，按成员的角色分工用 work_create（带 projectId）建任务派给最对口的成员（属于你自己职责的你自己做），不要只汇报一句然后等用户；方案里写的关键点到了，用 room_checkpoint 请用户看一眼，其余进度只通知不提问；项目完成（对照完成标准逐条核对、都满足，项目下的任务都已收尾）时，直接用 room_project_done 结束这个项目：summary 写做成了什么，deliverables 填最终文件，howToUse 写怎么用，notDone 写还没做的（答应过用户、还没兑现的事也写进去，交付后会整理群里的过程记录，不写就可能被忘）。交付卡会把文件一起发给用户，交付前不要再用 deliver_file 把同样的文件逐个发一遍，交付后也不用再补一句「已经发给你了」。";
 /** 项目进行中的唤醒原因：管理者回合结束后手上没活、项目还没结束（兜底），或定时检查时没有未完成任务 */
 export const PROJECT_IDLE_WAKE = "项目还没完成，手上没有在做的任务：按方案规划下一步并派出去；已经完成就交付并结束项目";
 
@@ -303,3 +303,42 @@ export type WakeReason = { text: string; projectId?: string };
 export function freshWakeReasons(list: WakeReason[], projectActive: (projectId: string) => boolean): string[] {
 	return list.filter((x) => !x.projectId || projectActive(x.projectId)).map((x) => x.text);
 }
+
+/** 管理者被叫醒看看板时的做法（写在管理者的群规则里一次，唤醒消息不再重复） */
+export const MANAGER_WAKE_RULE = "被叫醒看看板时（唤醒原因会写明为什么）：核验已提交的结果（work_verify，先读真实产物）。大部分决定按群目标自己分析、自己推进。卡住或反复退回由你自己处理：看负责人的执行记录找原因，带纠正重派或拆小，改派给别的成员或自己接手（work_update）；只有需要用户才能给的帮助（批准、登录凭据、资源）或超出群目标、你无权拍板的决定才用 work_ask_user；办法用尽时在群里跟用户说清问题是什么、需要用户帮什么。处理完在群里用一两句话说明；没什么要做就简短说一句。";
+
+/**
+ * 项目交付时写进管理者长期记忆的内容（决策 0022 第 2 步）：只用用户本人在这个项目期间的原话（可信来源）+ 交付摘要。
+ * 没有用户原话就不写（交付摘要单独不值得记成「用户说过」）。原话取末尾，最近的话最相关。
+ */
+export function deliveryMemory(o: { room: string; title: string; said: string[]; summary: string; files: string[]; notDone: string }): { user: string; assistant: string } | null {
+	const said = o.said.map((s) => s.trim()).filter(Boolean);
+	if (!said.length) return null;
+	const lines = said.map((s) => `- ${s.replace(/\s+/g, " ").slice(0, 600)}`).join("\n");
+	return {
+		user: `群「${o.room}」里项目「${o.title}」期间，用户说过的话：\n${lines.length > 3500 ? lines.slice(-3500) : lines}`,
+		assistant: `项目「${o.title}」已交付。做成了：${o.summary}${o.files.length ? `；文件：${o.files.join("、")}` : ""}${o.notDone ? `；还没做的：${o.notDone}` : ""}`,
+	};
+}
+
+/**
+ * 交付后整理群会话时给 Pi 整理上下文的要求（决策 0022 第 3 步）：有用的都留下，只去掉已交付项目的过程细节。
+ * Pi 只总结较早的部分、最近一段原文照留，写总结的模型看不到后面的进展，容易把早已交付的项目写成「进行中 / 待确认」：
+ * 所以把数据库里每个项目的真实状态一并交代，以它为准。
+ */
+export function tidyInstructions(projects: { title: string; status: string }[], said: string[] = []): string {
+	const label: Record<string, string> = { done: "已交付", dismissed: "用户没采用", stopped: "用户停下了（进度保留，用户说接着做才继续）", superseded: "被改过的方案取代" };
+	const facts = projects.map((p) => `「${p.title}」：${label[p.status] ?? p.status}`).join("；");
+	return `这是群里的项目交付之后的整理。现在每个项目的真实状态（以这里为准，不要写成进行中或待确认）：${facts || "（没有项目）"}；群里目前没有进行中的项目。总结必须保留：做过哪些项目、每个项目做成了什么、最终文件的名字和路径、关键决定和理由、用户表达过的偏好和要求（忌口、口味、风格、习惯等原样记下）、答应过用户但还没做的事和用户说「以后再说」的事（原样列出）、群里成员的分工习惯。可以省略：读过的文件全文、写文件的全文、命令输出、反复核验和修改的过程。${saidBlock(said)}`;
+}
+/** 用户在群里说过的原话（最近的在后，最多 3000 字）：交给整理，偏好和要求不靠模型自己去翻 */
+function saidBlock(said: string[]) {
+	const lines = said.map((s) => s.trim().replace(/\s+/g, " ").slice(0, 300)).filter(Boolean).map((s) => `- ${s}`).join("\n");
+	return lines ? `\n用户在群里说过的话（里面的偏好、忌口、要求和「以后再说」的事，原样写进总结的偏好和要求部分）：\n${lines.length > 3000 ? lines.slice(-3000) : lines}` : "";
+}
+/**
+ * 会话上一次读入少于这么多 token 就不整理（PIA_TIDY_MIN_TOKENS 供测试调低）。
+ * Pi 整理时最近一段原文照留，按「字数 ÷ 4」估算留 2 万 token，中文实际约 5 万；加上群规则和小结，整理完大约 7 万。
+ * 低于 15 万整理收效不大，还多一次总结出错的机会，所以只在真的变长时整理。
+ */
+export const TIDY_MIN_TOKENS = () => Number(process.env.PIA_TIDY_MIN_TOKENS) || 150_000;

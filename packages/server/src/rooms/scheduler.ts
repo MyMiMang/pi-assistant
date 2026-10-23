@@ -17,6 +17,7 @@ import { requests } from "../requests.ts";
 import { getAgent, listAgents, runtime } from "../runtime.ts";
 import { stopConversationSubagents } from "../subagents.ts";
 import { buildWorkCorrectionContext, execConversationsOfRoom, resolveWorkReferences } from "../work-items.ts";
+import { tidyingOf } from "./after-delivery.ts";
 import { capCheck, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps } from "./logic.ts";
 import { waitingRequestIds } from "./checkpoint.ts";
 import { hasActiveProject } from "./projects.ts";
@@ -222,6 +223,8 @@ async function pump(roomId: string) {
 }
 
 async function runTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
+	const tidy = tidyingOf(roomId);
+	if (tidy) await tidy; // 交付后正在整理成员的群会话：等整理完再开始这一轮，不同时跑
 	const r = getRoom(roomId)!;
 	const conv = memberConversation(roomId, t.agentId);
 	snapshot(roomId, t.agentId);

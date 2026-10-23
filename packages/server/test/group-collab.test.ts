@@ -207,7 +207,9 @@ test("项目兜底：管理者回合结束手上没活 → 再叫醒一次；两
 	await until(() => roomDone(room.id, "check", 1) && idle(room.id) && idleHints(room.id) === 1, "开启时的唤醒后提示用户（没有第二次兜底）");
 	assert.equal(turnsOf(room.id, "check").length, 1, "开启时那次唤醒算第一次兜底");
 	const first = prompts.filter((x) => x.agentId === "cm").pop()!.prompt;
-	assert.match(first, /有项目在进行[\s\S]*work_create[\s\S]*room_project_done/, "唤醒文案要求接着规划下一步 / 完成就结束");
+	assert.match(first, /有项目在进行就按项目推进规则接着做/, "唤醒文案要求按项目推进规则接着做");
+	assert.ok(!first.includes(logic.PROJECT_NEXT_STEP) && !first.includes("目标："), "推进规则和方案全文只在群规则里，唤醒消息不重复（决策 0022）");
+	assert.ok(rooms.roomRules(room.id, "cm").join("\n").includes(logic.MANAGER_WAKE_RULE), "被叫醒时的做法写在管理者群规则里");
 	// 有进展（任务状态变了）：下一次管理者回合结束可以再兜底一次
 	const wi = W.createWorkItem({ roomId: room.id, title: "第一节", requirement: "写", doneCriteria: "有结果", ownerAgentId: "ca", start: false }, { kind: "user" }).item.id;
 	db.prepare("UPDATE work_items SET status = 'done' WHERE id = ?").run(wi);
@@ -254,6 +256,24 @@ test("定时检查：有进行中项目的群没有未完成任务也纳入", as
 	await projects.stopProject(room.id, pid);
 	replies.clear();
 	await rooms.deleteRoom(room.id);
+});
+
+test("deliveryMemory：只用用户原话 + 交付摘要；没有用户原话就不写；原话太长取末尾", () => {
+	assert.equal(logic.deliveryMemory({ room: "群", title: "菜单", said: ["  ", ""], summary: "做好了", files: [], notDone: "" }), null);
+	const m = logic.deliveryMemory({ room: "家", title: "菜单", said: ["口味清淡", "两个大人"], summary: "7 天菜单", files: ["菜单.md", "清单.csv"], notDone: "没做甜点" })!;
+	assert.match(m.user, /群「家」里项目「菜单」期间，用户说过的话：\n- 口味清淡\n- 两个大人/);
+	assert.equal(m.assistant, "项目「菜单」已交付。做成了：7 天菜单；文件：菜单.md、清单.csv；还没做的：没做甜点");
+	const long = logic.deliveryMemory({ room: "家", title: "t", said: Array.from({ length: 30 }, (_, i) => `第${i}句${"很".repeat(200)}`), summary: "s", files: [], notDone: "" })!;
+	assert.ok(long.user.includes("第29句") && !long.user.includes("第0句"), "取末尾");
+});
+
+test("tidyInstructions：交代每个项目的真实状态（以它为准）和必须保留的内容", () => {
+	const t = logic.tidyInstructions([{ title: "菜单", status: "done" }, { title: "旅行", status: "stopped" }, { title: "旧方案", status: "dismissed" }]);
+	assert.match(t, /「菜单」：已交付；「旅行」：用户停下了[^；]*；「旧方案」：用户没采用/);
+	assert.match(t, /以这里为准，不要写成进行中或待确认/);
+	assert.match(t, /用户表达过的偏好[\s\S]*答应过用户但还没做的事和用户说「以后再说」的事/);
+	assert.ok(!t.includes("用户在群里说过的话"), "没有原话就不附这一段");
+	assert.match(logic.tidyInstructions([], ["不吃香菜", "  ", "甜点以后再说"]), /用户在群里说过的话[^\n]*：\n- 不吃香菜\n- 甜点以后再说$/);
 });
 
 test("idleWakeStep：只有有进行中项目、手上没活、队列空才兜底；同一个看板指纹不再叫醒，只提示一次", () => {

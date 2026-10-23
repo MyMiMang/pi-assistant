@@ -168,7 +168,7 @@ test("执行失败：明确受阻并叫管理者；同样的失败反复出现 �
 	assert.equal(row(id).board, "stuck", "第三次同样卡住 → 最后提醒，仍在卡住组");
 	assert.equal(row(id).escalation?.rung, 2);
 	assert.equal(row(id).needsUser, null);
-	assert.ok(checkPrompts().some((p) => p.includes(id) && /最后一次提醒/.test(p) && /改派给别的成员/.test(p)));
+	assert.ok(checkPrompts().some((p) => p.includes(`任务「${row(id).title}」`) && /最后一次提醒/.test(p) && /改派给别的成员/.test(p)), "唤醒原因里带最后提醒和换做法（看板没变时只写「和上次一样」，按任务名找）");
 	await W.cancelWorkItem({ workItemId: id, actor: user });
 });
 
