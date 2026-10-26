@@ -45,6 +45,20 @@ export function enqueue(bank: string, op: "retain" | "delete" | "purge", itemId?
 	insertJob(bank, op, itemId ?? null);
 	void flush();
 }
+/**
+ * 召回结果并上账本关键词命中：Hindsight 语义召回几乎总能凑满条数，只在「不满才补」时，刚写入还没抽取完、
+ * 或语义排序没排上来的原话（比如「车牌」「豆豆」）就永远查不到。所以账本里字面命中、Hindsight 结果里没有的，
+ * 最多留 3 个位置，分数排在 Hindsight 第 1、2 名之间往下（跨库合并按分数排序时也不会被挤掉）。
+ */
+export function mergeLedgerHits(hs: MemoryItem[], ledger: MemoryItem[], limit: number, reserve = 3): MemoryItem[] {
+	const extra = ledger.filter((b) => !hs.some((x) => x.id === b.id)).slice(0, Math.min(reserve, limit));
+	const keep = hs.slice(0, Math.max(limit - extra.length, 0));
+	return [...keep, ...extra.map((b, j) => ({ ...b, score: 1 / (1.5 + j) }))].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
+}
+
+/** 回合原文里原样列出的召回结果（「- [hs_…] (scope/kind, 日期) …」）不再写回记忆：否则每次「回忆」都把旧记忆再存一份，越存越多、还层层嵌套。 */
+export const stripRecallEcho = (text: string) => text.replace(/^[-*]?\s*\[(?:hs|mem)_[\w-]+\]\s*\([^)\n]*\).*$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+
 export const pendingCount = () => (db.prepare("SELECT COUNT(*) AS n FROM memory_sync").get() as { n: number }).n;
 export const lastSyncError = () => (db.prepare("SELECT last_error FROM memory_sync WHERE last_error IS NOT NULL ORDER BY seq LIMIT 1").get() as { last_error: string } | undefined)?.last_error ?? null;
 
@@ -212,9 +226,7 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 			const results = ((res as { results?: unknown[] }).results ?? []) as Parameters<typeof toItem>[1][];
 			const items = results.map((r, i) => toItem(bank, r, 1 / (1 + i))).filter(Boolean) as MemoryItem[];
 			const limit = opts.limit ?? 8;
-			// Hindsight 还没抽取完的新条目：用账本全文检索补上
-			if (items.length < limit) for (const b of await basicMemory.recall(bank, query, { limit })) if (!items.some((x) => x.id === b.id)) items.push({ ...b, score: (b.score ?? 0) * 0.01 });
-			return items.slice(0, limit);
+			return mergeLedgerHits(items, await basicMemory.recall(bank, query, { limit }), limit);
 		} catch {
 			return basicMemory.recall(bank, query, opts);
 		}
@@ -248,7 +260,7 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 		const tags = [`kind:experience`, `scope:${scope}`, `status:${turn.status}`, `actor:${turn.actor}`, ...(turn.taskId ? [`task:${turn.taskId}`] : [])];
 		const createdAt = new Date().toISOString();
 		const metadata: Record<string, string> = { kind: "experience", source: "turn", actor: turn.actor, status: turn.status, assistantId: turn.assistantId, createdAt, ...(turn.taskId ? { taskId: turn.taskId } : {}) };
-		const content = `用户：${turn.user.slice(0, 4000)}\n助理：${turn.assistant.slice(0, 4000)}`;
+		const content = `用户：${turn.user.slice(0, 4000)}\n助理：${stripRecallEcho(turn.assistant).slice(0, 4000)}`;
 		await client()
 			.retain(bank, content, { documentId: `${TURN_DOC}${turn.conversationId ?? "-"}:${Date.now()}`, timestamp: createdAt, context: "对话回合", metadata, tags, async: true } as never)
 			.catch((e: unknown) => recordHealth("model", { ok: false, error: `自动写入对话失败：${e instanceof Error ? e.message : e}` }));

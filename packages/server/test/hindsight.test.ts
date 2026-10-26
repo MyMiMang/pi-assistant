@@ -11,7 +11,7 @@ const { memoryCredentialStore } = await import("./in-memory-credentials.ts");
 const modelsMod = await import("../src/models.ts");
 await modelsMod.initModels(memoryCredentialStore());
 const { sidecar, sidecarEnv, paths } = await import("../src/memory/hindsight/sidecar.ts");
-const { flush, pendingCount, resyncAll } = await import("../src/memory/hindsight/provider.ts");
+const { flush, mergeLedgerHits, stripRecallEcho, pendingCount, resyncAll } = await import("../src/memory/hindsight/provider.ts");
 const settings = await import("../src/memory/hindsight/settings.ts");
 const { memory } = await import("../src/memory/index.ts");
 const { config } = await import("../src/config.ts");
@@ -199,4 +199,23 @@ test("附属进程环境：HOME/缓存/模型都在我们的数据目录；外�
 	for (const k of ["PYTHONPATH", "UV_INDEX_URL", "HINDSIGHT_API_LLM_API_KEY", "VIRTUAL_ENV"]) delete process.env[k];
 	assert.throws(() => settings.saveHindsightSettings({ embedding: { kind: "openai", baseUrl: "", model: "" } }), /向量接口/);
 	setSetting("hindsight", {});
+});
+
+test("召回：Hindsight 凑满条数时，账本里字面命中的原话也要留位置（刚写入还没抽取完、语义没排上来的不丢）", () => {
+	const it = (id: string, score: number) => ({ id, bank: "user", text: id, kind: "fact", scope: "user", status: "verified", createdAt: "", score }) as never;
+	const hs = Array.from({ length: 8 }, (_, i) => it(`hs${i}`, 1 / (1 + i)));
+	const out = mergeLedgerHits(hs, [it("mem_car", 0.01), it("hs0", 0.01)], 8) as { id: string }[];
+	assert.equal(out.length, 8);
+	assert.equal(out[0].id, "hs0");
+	assert.equal(out[1].id, "mem_car", "字面命中排在第 2，跨库按分数合并也不会被挤掉");
+	assert.equal(out.filter((x) => x.id === "hs0").length, 1, "已在 Hindsight 结果里的不重复");
+	assert.deepEqual((mergeLedgerHits(hs.slice(0, 2), [], 8) as { id: string }[]).map((x) => x.id), ["hs0", "hs1"]);
+	const many = mergeLedgerHits(hs, ["a", "b", "c", "d"].map((x) => it(x, 0.01)), 8) as { id: string }[];
+	assert.equal(many.filter((x) => /^[abcd]$/.test(x.id)).length, 3, "最多占 3 个位置");
+});
+
+test("回合写入：原样列出的召回结果不再写回记忆，正常的话保留", () => {
+	const t = "我在记忆里找到了这些：\n\n- [hs_51d4-6408] (agent/experience, 2026-10-26) - [hs_06d4] (agent/experience, 2026-10-26) 助理：好的\n- [mem_mvou57] (user/fact, 2026-10-26) 我的猫叫豆豆\n\n你的猫叫豆豆。";
+	assert.equal(stripRecallEcho(t), "我在记忆里找到了这些：\n\n你的猫叫豆豆。");
+	assert.equal(stripRecallEcho("普通回答，提到 [链接](x) (备注)"), "普通回答，提到 [链接](x) (备注)");
 });
