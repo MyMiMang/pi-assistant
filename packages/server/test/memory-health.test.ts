@@ -12,7 +12,7 @@ const { LlmProxy } = await import("../src/llm-proxy.ts");
 const health = await import("../src/memory/hindsight/health.ts");
 const { bus } = await import("../src/bus.ts");
 const { recallQuery } = await import("../src/memory/index.ts");
-const { finalReply, onlyMemoryLookup } = await import("../../ext-memory/src/index.ts");
+const { finalReply, onlyMemoryLookup, memoryWriteOnly, memoryExtension } = await import("../../ext-memory/src/index.ts");
 type Req = import("../src/pi-adapter/index.ts").ChatRequest;
 type Res = import("../src/pi-adapter/index.ts").ChatResult;
 
@@ -185,4 +185,27 @@ test("只查了记忆的一轮不自动写入；做了别的事（或没调工�
 	assert.equal(onlyMemoryLookup([call("memory_recall"), call("bash"), say] as never), false);
 	assert.equal(onlyMemoryLookup([call("memory_remember"), say] as never), false);
 	assert.equal(onlyMemoryLookup([say] as never), false);
+});
+
+test("记了/删了记忆的一轮只写用户原话（不写助理的「已记下」）；回合结束写入不阻塞 agent_end", async () => {
+	const call = (name: string) => ({ role: "assistant", content: [{ type: "toolCall", name, id: name, arguments: {} }] });
+	const say = { role: "assistant", content: [{ type: "text", text: "记下了：你家猫叫豆豆" }] };
+	assert.equal(memoryWriteOnly([call("memory_remember"), say] as never), true);
+	assert.equal(memoryWriteOnly([call("memory_recall"), call("memory_forget"), say] as never), true);
+	assert.equal(memoryWriteOnly([call("memory_remember"), call("bash"), say] as never), false);
+	assert.equal(memoryWriteOnly([call("memory_recall"), say] as never), false);
+	assert.equal(memoryWriteOnly([say] as never), false);
+	const got: { user: string; assistant: string }[] = [];
+	const handlers: Record<string, (e: unknown) => unknown> = {};
+	const host = { context: async () => "", remember: async () => ({ id: "x" }), recall: async () => [], forget: async () => true, retainTurn: (t: { user: string; assistant: string }) => (got.push(t), new Promise<void>(() => {})) };
+	memoryExtension(host as never)({ on: (n: string, f: (e: unknown) => unknown) => void (handlers[n] = f), registerTool: () => {} } as never);
+	const turn = async (msgs: unknown[]) => {
+		await handlers.before_agent_start({ messageType: "user", prompt: "我家猫叫豆豆", systemPrompt: "" });
+		assert.equal(handlers.agent_end({ messages: msgs }), undefined, "agent_end 必须同步返回，不等写入");
+		await new Promise((r) => setImmediate(r));
+		await new Promise((r) => setImmediate(r));
+	};
+	await turn([call("memory_remember"), say]);
+	await turn([say]);
+	assert.deepEqual(got, [{ user: "我家猫叫豆豆", assistant: "" }, { user: "我家猫叫豆豆", assistant: "记下了：你家猫叫豆豆" }]);
 });

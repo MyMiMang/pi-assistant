@@ -36,7 +36,7 @@ export interface MemoryHost {
 	};
 	onChange?(): void;
 	/** 一轮结束：把这一轮（用户原话 + 助理最后的回复）交给宿主自动写入记忆（后端支持时） */
-	retainTurn?(turn: { user: string; assistant: string }): Promise<void>;
+	retainTurn?(turn: { user: string; assistant: string }): Promise<void>; // assistant 为空 = 只写用户原话
 }
 
 type EndMessage = { role: string; content?: unknown; stopReason?: string; errorMessage?: string };
@@ -55,8 +55,17 @@ export function finalReply(msgs: EndMessage[]): string {
 /** 只查了记忆（召回 / 反思 / 核验列表）、没做别的事的一轮：不自动写入。真实模型实测，「搜了记忆、找到几条」会被抽成新事实，越搜越多。 */
 const LOOKUP_TOOLS = new Set(["memory_recall", "memory_reflect", "memory_review"]);
 export function onlyMemoryLookup(msgs: EndMessage[]): boolean {
-	const names = msgs.flatMap((m) => (m.role === "assistant" && Array.isArray(m.content) ? (m.content as { type: string; name?: string }[]).filter((b) => b.type === "toolCall").map((b) => b.name ?? "") : []));
+	const names = toolNames(msgs);
 	return names.length > 0 && names.every((n) => LOOKUP_TOOLS.has(n));
+}
+/** 这一轮只调了记忆工具且写过/删过记忆：助理的回复只是「已记下」之类的自我确认，不再写入（否则会被抽成「助理确认已把…存入记忆」），只留用户原话 */
+const WRITE_TOOLS = new Set(["memory_remember", "memory_forget"]);
+export function memoryWriteOnly(msgs: EndMessage[]): boolean {
+	const names = toolNames(msgs);
+	return names.some((n) => WRITE_TOOLS.has(n)) && names.every((n) => n.startsWith("memory_"));
+}
+function toolNames(msgs: EndMessage[]) {
+	return msgs.flatMap((m) => (m.role === "assistant" && Array.isArray(m.content) ? (m.content as { type: string; name?: string }[]).filter((b) => b.type === "toolCall").map((b) => b.name ?? "") : []));
 }
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
@@ -69,8 +78,13 @@ export function memoryExtension(host: MemoryHost) {
 			const user = turnPrompt;
 			turnPrompt = "";
 			if (!host.retainTurn || !user.trim() || onlyMemoryLookup(e.messages as unknown as EndMessage[])) return;
-			const assistant = finalReply(e.messages as unknown as EndMessage[]);
-			if (assistant) void host.retainTurn({ user, assistant }).catch((err) => console.warn("[memory] retainTurn failed", err));
+			const msgs = e.messages as unknown as EndMessage[];
+			const reply = finalReply(msgs);
+			if (!reply) return;
+			const assistant = memoryWriteOnly(msgs) ? "" : reply;
+			// 回合结束的写入绝不能拖住这一轮：下一个事件循环再交给宿主，handler 立即返回（宿主慢、卡住或同步抛错都不影响「工作中」结束）
+			const retain = host.retainTurn;
+			setImmediate(() => void Promise.resolve().then(() => retain({ user, assistant })).catch((err) => console.warn("[memory] retainTurn failed", err)));
 		});
 		pi.on("before_agent_start", async (event) => {
 			// 只记用户发起的一轮（后台唤醒 / triggerTurn 没有 prompt）

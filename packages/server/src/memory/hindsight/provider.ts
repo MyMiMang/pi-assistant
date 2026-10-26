@@ -266,7 +266,8 @@ export const hindsightMemory: MemoryProvider & { status: () => unknown } = {
 		const tags = [`kind:experience`, `scope:${scope}`, `status:${turn.status}`, `actor:${turn.actor}`, ...(turn.taskId ? [`task:${turn.taskId}`] : [])];
 		const createdAt = new Date().toISOString();
 		const metadata: Record<string, string> = { kind: "experience", source: "turn", actor: turn.actor, status: turn.status, assistantId: turn.assistantId, createdAt, ...(turn.taskId ? { taskId: turn.taskId } : {}) };
-		const content = `用户：${turn.user.slice(0, 4000)}\n助理：${stripRecallEcho(turn.assistant).slice(0, 4000)}`;
+		const reply = stripRecallEcho(turn.assistant).slice(0, 4000);
+		const content = `用户：${turn.user.slice(0, 4000)}${reply ? `\n助理：${reply}` : ""}`;
 		await client()
 			.retain(bank, content, { documentId: `${TURN_DOC}${turn.conversationId ?? "-"}:${Date.now()}`, timestamp: createdAt, context: "对话回合", metadata, tags, async: true } as never)
 			.catch((e: unknown) => recordHealth("model", { ok: false, error: `自动写入对话失败：${e instanceof Error ? e.message : e}` }));

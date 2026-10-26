@@ -233,7 +233,7 @@ export const memory = {
 		const p = providerFor(agentId);
 		if (!p.retainTurn) return;
 		const user = recallQuery(turn.user, 4000);
-		if (!user || turn.assistant.trim().length < 2 || SECRET_RE.test(user) || SECRET_RE.test(turn.assistant)) return;
+		if (!user || (turn.assistant !== "" && turn.assistant.trim().length < 2) || SECRET_RE.test(user) || SECRET_RE.test(turn.assistant)) return;
 		const actor = turn.actor ?? "main";
 		const bank = agentBank(agentId);
 		await ready(p, bank, agentId);
