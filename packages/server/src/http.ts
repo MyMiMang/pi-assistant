@@ -46,6 +46,7 @@ import { mountChannelRoutes } from "./routes/channels.ts";
 import { mountHostControlRoutes } from "./routes/host-control.ts";
 import { mountMcpRoutes } from "./routes/mcp.ts";
 import { mountSkillRoutes } from "./routes/skills.ts";
+import { mountToolBridgeRoutes } from "./routes/tool-bridge.ts";
 
 const app = new Hono<Env>();
 const PLAY_LINK_TTL = 4 * 3600_000;
@@ -125,6 +126,8 @@ mountWorkItemRoutes(app);
 mountMemoryRoutes(app);
 mountSkillRoutes(app);
 mountMcpRoutes(app);
+// Claude Code 工具桥（本机 MCP，只收 127.0.0.1 + 随机令牌，不走设备登录）
+mountToolBridgeRoutes(app);
 syncMcpDownloads();
 
 mountRoutineRoutes(app);

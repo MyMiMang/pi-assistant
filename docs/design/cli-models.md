@@ -55,9 +55,9 @@ Pi 官方支持自定义模型渠道自带流式实现（`registerProvider` + `s
 ### 4.2 怎么启动 claude（每轮用户消息一次；按 §7 实测结果修订）
 ```
 claude -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose
-       --tools "" --strict-mcp-config --mcp-config <工具桥配置的绝对路径或内联 JSON>
+       --tools "" --strict-mcp-config --mcp-config <私有临时文件的绝对路径>   # 含令牌：目录 0700、文件 0600，运行后删除；不放命令行（ps 看得到）
        --allowedTools "mcp__pia__*"           # 我们的工具不让 claude 再弹它自己的权限确认（审批由 Pi 负责）
-       --system-prompt <Pi 当前的系统提示>  --system-prompt-snapshot off
+       --system-prompt-file <私有临时文件>  --system-prompt-snapshot off   # 系统提示同样走文件（Windows 命令行有长度上限）；兜底时换 --append-system-prompt-file
        --model <opus|sonnet|haiku…>  --effort <思考强度>
        [--resume <claude 会话 id>]
 ```
@@ -66,8 +66,8 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 - **进程环境用白名单**：只带 `HOME`、`PATH`、`USER`、`LANG`、`TMPDIR` 等必要变量，再加下面几个；继承来的 `ANTHROPIC_*` 必须去掉，否则会报 `401 Invalid bearer token`（实测 1）。检测登录（`claude auth status`）也用同一套环境。
 - **工具超时调大**：`MCP_TOOL_TIMEOUT=3600000` 加 `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=0`。默认 60 秒就会掐断工具调用，等审批时一定会超时（实测 3）。
 - `--system-prompt-snapshot off` 必须加：默认会在第一次请求时把系统提示「定格」，之后续用会话时传新的也不生效（实测 4）；而我们的群规则、权限档位每轮都可能变。
-- `--mcp-config` 必须是绝对路径；优先试内联 JSON，免得令牌落盘（未测，做的时候先测）。
-- **系统提示兜底**：订阅登录下能否整个替换系统提示还没验证（实测 2）。实现上每个新会话第一轮检查一次：如果回答明显没按系统提示来（比如问它「你是谁」，答的是 Claude Code 而不是助理名字），这个助理以后改用 `--append-system-prompt`，并记日志。
+- `--mcp-config` 必须是绝对路径。每次运行建一个私有临时目录（0700），里面放 MCP 配置（含令牌）和系统提示两个 0600 文件，运行结束（含 abort、进程没起来）一定删掉。
+- **系统提示兜底**：订阅登录下能否整个替换系统提示还没验证（实测 2）。实现上每个新会话第一轮检查一次：如果回答明显没按系统提示来（比如问它「你是谁」，答的是 Claude Code 而不是助理名字），这个助理以后改用 `--append-system-prompt-file`，并记日志。
 - 工作目录用助理工作区（`workspaceOf`），反正内置工具已关掉，它不会自己读写。
 
 ### 4.3 工具调用怎么交回 Pi（核心机制；按 §7 实测结果修订）

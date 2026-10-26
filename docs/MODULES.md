@@ -18,7 +18,7 @@
 | 共享常量 / 纯逻辑 | `packages/shared`：thinking-levels、hard-guard、shell-lex、theme-manifest、model-limit-error（额度 / 限流 / 冷却报错→带恢复时间的中文）、品牌名 |
 | 服务端通用 | `bus.ts`（推事件）、`requests.ts`（审批与提问唯一入口）、`interject.ts`（插话/停止词）、`model-errors.ts`、`thinking.ts`（拆思考内容）、`native-launch-env.ts`（启动子进程环境）、`config.ts`（环境变量）、`db.ts` |
 | Pi 接入（唯一入口） | `pi-adapter/index.ts`、`custom-providers.ts`、`relay-protocols.ts`、`model-limits.ts`、`fast-mode.ts`、`mock-provider.ts`（e2e 脚本化回复）、`mock-room-provider.ts`（群聊部分的 Mock，从 mock-provider.ts 拆出来控制单文件行数）、`mock-collab-provider.ts`（成员直接协作的 Mock：任务要求含「先问一下」「上游有问题」，或看到提问编号时接管）、`mock-chat-plan-provider.ts`（单聊「大事走方案」的 Mock：用户消息含「做个大事」→ chat_plan 两阶段方案卡；用户说「可以」/ 点按钮确认后依次写文件、chat_stage_done ×2、chat_project_done；带「慢」的方案先 sleep 一下留出进行中的窗口；只在有 chat_plan 工具的单聊里接管） |
-| 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`local-asr-harness.ts`（本地语音假环境 + 来源端口）、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp） |
+| 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`local-asr-harness.ts`（本地语音假环境 + 来源端口）、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp、fake-claude：假 claude，按 FAKE_CLAUDE_SCENARIO 出 stream-json 并调工具桥） |
 | e2e 工具 | `e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
 
 ## 每类逻辑放在哪
@@ -65,7 +65,7 @@
 |---|---|
 | `main.ts` | 启动入口 |
 | `http.ts` | 组装路由、中间件、压缩（具体接口在 `routes/`） |
-| `routes/` | 全部 HTTP 接口：agents、channels、chat-projects（单聊项目：列项目 / 确认 / 先不做 / 停下，写法照 rooms 的项目路由）、common（共用 helper）、desktop、host-control、mcp、memory、models、remote、rooms、routines、skills、system、work-items |
+| `routes/` | 全部 HTTP 接口：agents、channels、chat-projects（单聊项目：列项目 / 确认 / 先不做 / 停下，写法照 rooms 的项目路由）、common（共用 helper）、desktop、host-control、mcp、memory、models、remote、rooms、routines、skills、system、tool-bridge（Claude Code 工具桥的 MCP 入口，不在 /api 下：只收 127.0.0.1 + 随机令牌）、work-items |
 | `bus.ts` | 实时事件总线（WS） |
 | `config.ts` | 环境变量（PIA_ 前缀） |
 | `db.ts` | SQLite 基础表与轻量迁移 |
@@ -80,7 +80,7 @@
 | `thinking.ts` | 拆出正文里的思考内容 |
 | `requests.ts` | 审批与提问（唯一入口） |
 | `guard.ts` | 硬性保护路径上下文 |
-| `pi-adapter/` | Pi SDK 唯一入口：index（会话/模型）、session-tools（续接对话时补新扩展工具、已加载资源）、custom-providers（自定义中转）、relay-protocols（按模型识别协议与路径）、model-limits、fast-mode、mock-provider + mock-room-provider（群聊部分）、compat.json（兼容基线） |
+| `pi-adapter/` | Pi SDK 唯一入口：index（会话/模型）、session-tools（续接对话时补新扩展工具、已加载资源）、custom-providers（自定义中转）、relay-protocols（按模型识别协议与路径）、model-limits、fast-mode、mock-provider + mock-room-provider（群聊部分）、mcp-protocol（pi-mcp 协议类型 / 常量转出，给 cli-agents/tool-bridge 用）、compat.json（兼容基线） |
 | `pi-packages.ts` | Pi 扩展包（npm/git/本地） |
 | `models.ts` | 统一凭据存储接口 |
 | `secrets.ts` | 本地凭据加密存储 |
@@ -133,6 +133,7 @@
 | `sandbox.ts` | 沙箱驱动（工作区 / Docker） |
 | `host-control.ts` | 操作用户电脑（cua-driver） |
 | `action-log.ts` | 电脑操作记录 |
+| `cli-agents/` | 把本机已登录的编程命令行（先做 claude）当模型用的底层，与 Pi 无关（docs/design/cli-models.md）：launch（拼 claude 参数和白名单环境，复用 native-launch-env）、events（stream-json 一行 → 简单事件，用量取法见 §4.3）、tool-bridge（最小 MCP 服务：每次运行一个随机令牌，tools/call 按 toolUseId 挂起、外部回填，取消 / 结束时全部取消）、claude-process（ClaudeRun：起进程、读事件、写 stdin 插话、回填工具结果、abort）、detect（找 claude、版本、`claude auth status`，不读凭证） |
 | `native-launch-env.ts` | 原生子进程启动环境 |
 | `mcp-env-launcher.mjs` | 原生 MCP 启动器 |
 | `mcp.ts` | MCP 服务器配置 |

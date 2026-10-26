@@ -21,12 +21,16 @@ export interface Caller {
 }
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
-export function isLocalRequest(remoteAddr: string | undefined, headers: Headers): boolean {
-	if (!config.trustLoopback) return false; // 服务器模式：本机回环也要登录（见 config.headless）
+/** 本机回环请求（127.0.0.1 / ::1，Host 是本机，没有隧道转发头）。不看 trustLoopback：服务器模式下也成立。 */
+export function isLoopbackRequest(remoteAddr: string | undefined, headers: Headers): boolean {
 	const loop = !!remoteAddr && (remoteAddr === "127.0.0.1" || remoteAddr === "::1" || remoteAddr === "::ffff:127.0.0.1");
 	const host = headers.get("host") ?? "";
 	const forwarded = headers.has("cf-connecting-ip") || headers.has("x-forwarded-for") || headers.has("cf-ray");
 	return loop && LOCAL_HOST.test(host) && !forwarded;
+}
+export function isLocalRequest(remoteAddr: string | undefined, headers: Headers): boolean {
+	if (!config.trustLoopback) return false; // 服务器模式：本机回环也要登录（见 config.headless）
+	return isLoopbackRequest(remoteAddr, headers);
 }
 export const clientIp = (remoteAddr: string | undefined, headers: Headers) => headers.get("cf-connecting-ip") ?? remoteAddr ?? "unknown";
 
