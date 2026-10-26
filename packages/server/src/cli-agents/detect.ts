@@ -1,5 +1,5 @@
 /**
- * 检测本机的 `claude` / `codex`：在哪、什么版本、是否已登录（`claude auth status` / `codex login status`）。
+ * 检测本机的 `claude` / `codex` / `agy`：在哪、什么版本、是否已登录（`claude auth status` / `codex login status` / `agy models` 成功）。
  * 不读任何凭证文件、不碰钥匙串，只问官方命令；环境和真正启动时同一套白名单（`buildClaudeEnv` / `buildCodexEnv`）。
  * 登录交给用户自己在终端里做（`claude auth login` / `codex login`），我们不代为登录。
  */
@@ -7,6 +7,8 @@ import { execFile } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { osAccountHome } from "../native-launch-env.ts";
+import { parseAgyModels, type AgyFamily } from "./agy-models.ts";
+import { buildAgyEnv } from "./agy-launch.ts";
 import { buildCodexEnv } from "./codex-launch.ts";
 import { buildClaudeEnv } from "./launch.ts";
 
@@ -65,6 +67,9 @@ export const findClaudeCommand = (opts: FindOptions = {}): string | null => find
 
 /** 找 `codex` 可执行文件；找不到返回 null。 */
 export const findCodexCommand = (opts: FindOptions = {}): string | null => findCommand("codex", [[".codex", "bin"]], opts);
+
+/** 找 `agy` 可执行文件；找不到返回 null。 */
+export const findAgyCommand = (opts: FindOptions = {}): string | null => findCommand("agy", [], opts);
 
 interface Ran {
 	stdout: string;
@@ -141,4 +146,39 @@ export async function detectCodex(opts: DetectOptions = {}): Promise<CodexStatus
 	if (st.failed) return { installed: true, command, version, loggedIn: false, error: `检测登录状态失败：${st.failed}` };
 	// 只看退出码，不转述输出（API key 登录时输出里可能带密钥片段）
 	return { installed: true, command, version, loggedIn: st.code === 0 };
+}
+
+export interface AgyStatus {
+	installed: boolean;
+	command?: string;
+	version?: string;
+	/** `agy models` 成功并列出了模型 = 已登录（agy 没有 `auth status`；这条命令要联网，但不消耗模型额度） */
+	loggedIn: boolean;
+	error?: string;
+}
+
+/** 问 `agy models`：成功返回模型家族，失败抛带原文的错误。不读任何凭证文件。 */
+export async function listAgyModels(command: string, opts: Omit<DetectOptions, "command"> = {}): Promise<AgyFamily[]> {
+	const r = await run(command, ["models"], buildAgyEnv({ baseEnv: opts.baseEnv, extra: opts.extraEnv }), opts.timeoutMs ?? 30_000);
+	if (r.failed) throw new Error(`运行 agy models 失败：${r.failed}`);
+	if (r.code !== 0) throw new Error((r.stdout + r.stderr).trim().slice(0, 300) || `agy models 退出码 ${r.code}`);
+	const families = parseAgyModels(r.stdout);
+	if (!families.length) throw new Error("agy models 没有列出任何模型");
+	return families;
+}
+
+/** 检测 agy 是否安装、版本、是否已登录。永不抛错。 */
+export async function detectAgy(opts: DetectOptions = {}): Promise<AgyStatus> {
+	const command = opts.command ?? findAgyCommand({ env: opts.baseEnv });
+	if (!command) return { installed: false, loggedIn: false, error: "没有找到 agy 命令" };
+	const env = buildAgyEnv({ baseEnv: opts.baseEnv, extra: opts.extraEnv });
+	const ver = await run(command, ["--version"], env, opts.timeoutMs ?? 15_000);
+	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 agy 失败：${ver.failed}` };
+	const version = /\d+\.\d+\.\d+\S*/.exec(ver.stdout)?.[0];
+	try {
+		await listAgyModels(command, opts);
+		return { installed: true, command, version, loggedIn: true };
+	} catch (e) {
+		return { installed: true, command, version, loggedIn: false, error: e instanceof Error ? e.message : String(e) };
+	}
 }

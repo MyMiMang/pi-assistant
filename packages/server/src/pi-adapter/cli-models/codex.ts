@@ -9,7 +9,6 @@
  * - 跨轮靠对照表 `thread/resume`；工具集 / 系统提示 / 模型变了、对不上就新开线程，把 Pi 上下文渲染成文字送进去。
  * - 没有工具的请求（Pi 整理上下文时的总结等）：`ephemeral` 线程单次跑完，不留痕。
  */
-import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createCodexEventConverter, type CodexEvent } from "../../cli-agents/codex-events.ts";
@@ -17,7 +16,7 @@ import type { CodexExit } from "../../cli-agents/codex-client.ts";
 import { CodexHub } from "../../cli-agents/codex-hub.ts";
 import type { PiModels } from "../index.ts";
 import { createCliChannel, type CliBackend, type CliLive, type LaunchRequest, type Step } from "./channel-core.ts";
-import { blocksToCodexInput, toolResultToCodex, userMessagesToClaude } from "./convert.ts";
+import { blocksToCodexInput, toolResultToCodex, toolsPromptComposite, userMessagesToClaude } from "./convert.ts";
 import { EventQueue } from "./event-queue.ts";
 import { describeCliError, registerCliProvider } from "./provider.ts";
 import { SyncStore } from "./sync-map.ts";
@@ -56,7 +55,6 @@ interface CodexLive extends CliLive {
 export const describeCodexError = (text: string): string => describeCliError({ label: "Codex", loginCommand: "codex login", notLoggedIn: /not logged in|log in|login|unauthorized|401|sign in/i }, text).replace("本机 Codex 未登录，", "本机 Codex 未登录或登录已过期，");
 
 const RESUME_FAILED = /no rollout|not found|no thread|could not find|不存在/i;
-const sha = (s: string): string => createHash("sha1").update(s).digest("hex");
 
 function codexBackend(deps: CodexDeps, hub: CodexHub): CliBackend<CodexLive> {
 	const cwdOf = deps.cwd ?? (() => join(deps.dataDir, "cli-models", "work"));
@@ -71,7 +69,7 @@ function codexBackend(deps: CodexDeps, hub: CodexHub): CliBackend<CodexLive> {
 	return {
 		label: "Codex",
 		// 工具集 / 系统提示 / 模型任何一个变了就不续用旧线程（thread/resume 没有 dynamicTools；提示按定稿也算「变了」）
-		composite: (modelId, tools, systemPrompt) => `${modelId}#${sha(JSON.stringify(tools.map((t) => [t.name, t.description, t.inputSchema])) + "\0" + (systemPrompt ?? ""))}`,
+		composite: toolsPromptComposite,
 		isResumeFailure: (msg) => RESUME_FAILED.test(msg),
 		async launch(req: LaunchRequest) {
 			const cwd = cwdOf();

@@ -9,7 +9,9 @@
  * 取消：claude 自己超时 / 中止时发 `notifications/cancelled`，对应调用标成已取消，之后的回填忽略；
  * 运行结束或 abort 时（`close()`）所有挂起的调用都返回「已取消」。
  *
- * 只收 JSON-RPC 的 `initialize`、`notifications/initialized`、`tools/list`、`tools/call`、`notifications/cancelled`、`ping`。
+ * 配对键可换（`callKey`）：claude 用 `toolUseId`，Antigravity 用 `progressToken` 末段的 `step_index`。
+ * 只收 JSON-RPC 的 `initialize`、`notifications/initialized`、`tools/list`、`tools/call`、`notifications/cancelled`、`ping`；
+ * 别的方法（含 agy 启动时发的非标准 `server/discover`）一律回「方法不存在」。
  * 协议类型和常量复用 `@earendil-works/pi-mcp`（经 `pi-adapter/mcp-protocol.ts` 转出）。HTTP 入口见 `routes/tool-bridge.ts`。
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
@@ -27,6 +29,13 @@ export type { CallToolResult, Tool };
 
 const TOOL_USE_ID_META = "claudecode/toolUseId";
 
+/** `tools/list` 里每个工具都带：Antigravity 默认「用到再发现」，带上它模型才直接拿到工具（其他客户端忽略未知的 `_meta`） */
+const ALWAYS_LOAD_META = { "antigravity/alwaysLoad": true };
+
+/** 从 `tools/call` 的 `params._meta` 取配对键（claude 的 `toolUseId`、agy 的 `step_index`）；取不到返回 undefined，桥用 `rpc-<id>` 兜底 */
+export type CallKeyFn = (meta: Record<string, unknown>) => string | undefined;
+export const claudeCallKey: CallKeyFn = (meta) => (typeof meta[TOOL_USE_ID_META] === "string" && meta[TOOL_USE_ID_META] ? (meta[TOOL_USE_ID_META] as string) : undefined);
+
 export const cancelledResult = (): CallToolResult => ({ content: [{ type: "text", text: "已取消" }], isError: true });
 export const textResult = (text: string, isError = false): CallToolResult => ({ content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) });
 
@@ -38,6 +47,8 @@ export interface BridgeCall {
 
 export interface BridgeRunOptions {
 	tools: Tool[];
+	/** 配对键怎么取（默认 claude 的 toolUseId；agy 取 progressToken 末段的 step_index） */
+	callKey?: CallKeyFn;
 	/** claude 发来 `tools/call`（已登记为挂起）时调用 */
 	onCall?: (call: BridgeCall) => void;
 	/** claude 取消了某个调用（自己超时 / 中止）时调用 */
@@ -142,7 +153,7 @@ export class BridgeRun {
 			case "ping":
 				return rpcOk(id, {});
 			case "tools/list":
-				return rpcOk(id, { tools: this.tools });
+				return rpcOk(id, { tools: this.tools.map((t) => ({ ...t, _meta: ALWAYS_LOAD_META })) });
 			case "tools/call":
 				return this.callTool(id, params);
 			default:
@@ -155,7 +166,7 @@ export class BridgeRun {
 		if (!this.tools.some((t) => t.name === name)) return rpcErr(rpcId, JSON_RPC_ERROR_CODES.invalidParams, `未知工具：${name}`);
 		if (this.closed) return rpcOk(rpcId, cancelledResult());
 		const meta = isObj(params._meta) ? params._meta : {};
-		const toolUseId = typeof meta[TOOL_USE_ID_META] === "string" && meta[TOOL_USE_ID_META] ? (meta[TOOL_USE_ID_META] as string) : `rpc-${rpcId}`;
+		const toolUseId = (this.opts.callKey ?? claudeCallKey)(meta) ?? `rpc-${rpcId}`;
 		const args = isObj(params.arguments) ? params.arguments : {};
 		const e = this.entries.get(toolUseId);
 		if (e?.state === "cancelled") return rpcOk(rpcId, cancelledResult());

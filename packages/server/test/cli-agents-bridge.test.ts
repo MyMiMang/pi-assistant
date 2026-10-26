@@ -30,6 +30,10 @@ test("握手：initialize、notifications/initialized、ping、tools/list", asyn
 	assert.deepEqual(((await run.handleMessage({ jsonrpc: "2.0", id: 3, method: "ping" })) as any).result, {});
 	const list = (await run.handleMessage({ jsonrpc: "2.0", id: 4, method: "tools/list" })) as any;
 	assert.deepEqual(list.result.tools.map((t: Tool) => t.name), ["echo", "wait"]);
+	assert.ok(list.result.tools.every((t: any) => t._meta["antigravity/alwaysLoad"] === true), "每个工具带 alwaysLoad（agy 才会直接给模型）");
+	assert.equal(run.tools[0]._meta, undefined, "不污染原工具清单");
+	const discover = (await run.handleMessage({ jsonrpc: "2.0", id: 9, method: "server/discover" })) as any;
+	assert.equal(discover.error.code, -32601, "agy 启动时发的非标准 server/discover：方法不存在");
 	const bad = (await run.handleMessage({ jsonrpc: "2.0", id: 5, method: "resources/list" })) as any;
 	assert.equal(bad.error.code, -32601);
 	const unknown = (await run.handleMessage(callMsg(6, "nope", "toolu_x"))) as any;
@@ -159,5 +163,20 @@ test("HTTP：不是 JSON 回 400；tools/call 经 HTTP 挂起后可回填", asyn
 	assert.deepEqual(run.pendingIds(), ["toolu_H"]);
 	run.resolveTool("toolu_H", textResult("via-http"));
 	assert.equal(textOf(await (await p).json()), "via-http");
+	run.close();
+});
+
+test("可换配对键：agy 用 progressToken 末段的 step_index，两个并行调用按它配对", async () => {
+	const key = (meta: Record<string, unknown>) => (typeof meta.progressToken === "string" ? meta.progressToken.split(":").pop() : undefined);
+	const seen: BridgeCall[] = [];
+	const run = toolBridge.register({ tools, callKey: key, onCall: (c) => seen.push(c) });
+	const call = (id: number, step: number) => ({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "echo", arguments: { n: step }, _meta: { progressToken: `uuid-1:${step}`, "antigravity.google/conversation_id": "c" } } });
+	const a = run.handleMessage(call(70, 2));
+	const b = run.handleMessage(call(71, 3));
+	assert.deepEqual(seen.map((c) => c.toolUseId), ["2", "3"]);
+	run.resolveTool("3", textResult("R3"));
+	run.resolveTool("2", textResult("R2"));
+	assert.equal(textOf(await a), "R2");
+	assert.equal(textOf(await b), "R3");
 	run.close();
 });

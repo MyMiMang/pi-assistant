@@ -2,6 +2,7 @@
  * Claude Code 渠道的纯逻辑：Pi 的消息内容 ↔ claude 的内容、历史渲染成文字、思考强度映射、
  * 「同一轮续接」的判断。不起进程、不碰文件，方便单测（方案 docs/design/cli-models.md §4.3 / §4.4）。
  */
+import { createHash } from "node:crypto";
 import type { AssistantMessage, ImageContent, Message, TextContent, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { CallToolResult, Tool } from "../../cli-agents/tool-bridge.ts";
 
@@ -160,4 +161,17 @@ export function toolResultToCodex(msg: Pick<ToolResultMessage, "content" | "isEr
 	}
 	if (!contentItems.length) contentItems.push({ type: "inputText", text: msg.isError ? "工具执行失败，没有输出" : "（没有输出）" });
 	return { success: !msg.isError, contentItems };
+}
+
+/**
+ * 续用判断用的指纹「模型 + 工具集 + 系统提示」：codex（`thread/resume` 没有动态工具）和 agy（提示和 MCP 配置在会话开始时定死）共用。
+ * 任何一个变了就不续用旧会话。
+ */
+export const toolsPromptComposite = (modelId: string, tools: readonly Tool[], systemPrompt: string | undefined): string =>
+	`${modelId}#${createHash("sha1").update(`${JSON.stringify(tools.map((t) => [t.name, t.description, t.inputSchema]))}\0${systemPrompt ?? ""}`).digest("hex")}`;
+
+/** 统一内容块 → 纯文字（agy 的 stdin 只验证过文字消息；图片留占位，真正要看图的渠道不走这里） */
+export function blocksToPlainText(input: string | readonly ClaudeBlock[]): string {
+	if (typeof input === "string") return input;
+	return input.map((b) => (b.type === "text" && typeof b.text === "string" ? b.text : b.type === "image" ? "[图片]" : "")).filter(Boolean).join("\n\n");
 }

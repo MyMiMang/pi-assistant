@@ -254,6 +254,8 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 - **风险**：(a) 每次启动约 35 秒、一次续用约 45 秒，慢；(b) 没有思考内容；(c) 插话不能并入当轮；(d) 系统提示定死在会话开始；(e) 自定义代理 / 插件 / `alwaysLoad` 都是 1.4.x 的较新功能，版本升级可能变；(f) 全局规则、`GEMINI.md`、全局 MCP 会不会泄漏进来没法验证；(g) 会话文件留在用户的 Antigravity 历史里；(h) 地区限制，Gemini 模型可能用不了；(i) 残留 `list_resources` / `read_resource` / `manage_task` 三个自带工具（无害但不是 100% 纯）；(j) 并行调用的收齐时间没依据。
 - **真实调用次数**：agy 约 25 次真实模型请求（claude-sonnet-5-5 为主，含两次 200 秒的挂起测试）；其余用假 MCP 服务。
 
+- **实现状态（2026-10-26，未提交，待审查）**：已按上面「审查定稿」实现为「实验性」渠道 `antigravity`：`cli-agents/agy-{launch,models,events,process}.ts`、`pi-adapter/cli-models/antigravity.ts`，复用 `channel-core` / `tool-bridge`（加 `_meta alwaysLoad` 和可换配对键）；假 agy 单测、Pi 会话端到端单测和 `e2e/agy-ui.mjs` 通过。与建议做法的差别：(1) 工具什么时候交给 Pi、参数和名字都取自工具桥收到的 `tools/call`（stdout 的 `tool` 步骤只当旁证，二者靠 `step_index` 对得上；Pi 的 toolCall id 是 `agy-<会话 id 前 8 位>-<step_index>`）；(2) 思考强度变了只换进程、用 `--conversation` 续用同一会话（系统提示 / 工具集 / 模型家族变了才新开会话）；(3) 模型不声明能看图（图片经 stdin 没验证过），输入里的图片退化成「[图片]」占位；(4) `server/discover` 回「方法不存在」、`GET` 回 405 沿用工具桥原有行为。未验证：真实 agy 下的并行收齐窗口、`--conversation` 找不到时的报错文字（现按「conversation … not found」匹配）、`--dangerously-skip-permissions` 是否需要（实测的 MCP 调用没有被权限询问挡住）。
+
 ## 6. 第三期：当帮手（让它用自己的工具干活）
 
 适合写代码、改项目：让 Claude Code / Codex 带着自己的全套工具，在用户指定的文件夹里干一件活，做完把结果交回来。

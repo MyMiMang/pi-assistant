@@ -1,5 +1,5 @@
 /**
- * 设置 › 模型服务里的「本机命令行模型」卡片（Claude Code / Codex 共用；方案 docs/design/cli-models.md §4.5、§5.2）。
+ * 设置 › 模型服务里的「本机命令行模型」卡片（Claude Code / Codex / Antigravity 共用；方案 docs/design/cli-models.md §4.5、§5.2、§5b）。
  * 只显示本机检测结果（装没装、版本、登录没登录）并提供「重新检测」；登录要用户自己在终端里做，我们不代为登录。
  * 检测到可用后服务端就地注册模型渠道（不用重启），模型出现在所有模型选择里。
  * 加新的一家：在 `KINDS` 里加一项文案，服务端接口按渠道名 `/api/models/<kind>` 对应。
@@ -19,9 +19,9 @@ interface CliInfo {
 	globalAgentsMd?: boolean;
 }
 
-export type CliKind = "claude-code" | "codex";
+export type CliKind = "claude-code" | "codex" | "antigravity";
 /** 模型服务页里要显示的本机命令行渠道（也用来把它们从普通服务列表里去掉） */
-export const CLI_KINDS: CliKind[] = ["claude-code", "codex"];
+export const CLI_KINDS: CliKind[] = ["claude-code", "codex", "antigravity"];
 
 /** 每家的文案：命令名、登录命令、一句话说明、「?」说明、已注册后显示的模型 */
 const KINDS: Record<CliKind, { title: string; command: string; login: string; tone: string; summary: string; models: string; help: ReactNode }> = {
@@ -56,6 +56,25 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 				Codex 的对话记录会出现在它自己的历史里。
 				<br />
 				用量只显示 token 数，不显示钱（费用走你的 ChatGPT 订阅或账户）。
+			</>
+		),
+	},
+	antigravity: {
+		title: "Antigravity（本机）",
+		command: "agy",
+		login: "agy",
+		tone: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300",
+		summary: "实验性：用你电脑上已登录的 Antigravity（agy）当模型，工具仍由 Pi 助理执行。",
+		models: "模型：Antigravity · 以 agy 自己的列表为准（Gemini 在部分地区不可用）",
+		help: (
+			<>
+				实验性功能。只当「大脑」用：Antigravity 自带的工具都会被关掉，工具全部由 Pi 助理执行并走审批。
+				<br />
+				启动比较慢（每个对话首次约半分钟），看不到思考过程；你在它干活时插的话，会等它用完下一个工具后才看到。
+				<br />
+				Gemini 模型在部分地区不可用，可选 Claude 或 GPT-OSS。对话记录会出现在 Antigravity 自己的历史里。
+				<br />
+				用量只显示 token 数，不显示钱。
 			</>
 		),
 	},

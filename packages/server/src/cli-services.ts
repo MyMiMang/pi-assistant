@@ -1,12 +1,13 @@
 /**
- * 所有「本机命令行模型渠道」的服务实例（claude / codex；以后加 agy 就在这里加一份适配）。
+ * 所有「本机命令行模型渠道」的服务实例（claude / codex / antigravity；再加一家就在这里加一份适配）。
  * 启动（models.ts）、关闭（main.ts）、接口（routes/models.ts）都遍历 `cliServices`，不各写一份。
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createCliChannelService, type CliChannelService } from "./cli-channel-service.ts";
-import { detectClaude, detectCodex, findClaudeCommand, findCodexCommand } from "./cli-agents/detect.ts";
+import { detectAgy, detectClaude, detectCodex, findAgyCommand, findClaudeCommand, findCodexCommand, listAgyModels } from "./cli-agents/detect.ts";
+import { registerAntigravityModels, registerAntigravityProvider } from "./pi-adapter/cli-models/antigravity.ts";
 import { registerClaudeCodeProvider } from "./pi-adapter/cli-models/claude-code.ts";
 import { registerCodexModels, registerCodexProvider } from "./pi-adapter/cli-models/codex.ts";
 import { config } from "./config.ts";
@@ -39,4 +40,23 @@ const codex = createCliChannelService({
 	extra: () => ({ globalAgentsMd: existsSync(join(codexHome(), "AGENTS.md")) }),
 });
 
-export const cliServices: CliChannelService[] = [claudeCode, codex];
+/** 要用的 agy 命令（注册 / 刷新时问 `agy models`） */
+const agyCommand = (command: () => string | null): string => {
+	const cmd = command();
+	if (!cmd) throw new Error("没有找到 agy 命令");
+	return cmd;
+};
+
+const antigravity = createCliChannelService({
+	id: "antigravity",
+	label: "Antigravity",
+	envName: "AGY_COMMAND",
+	find: () => findAgyCommand(),
+	notFound: "没有找到 agy 命令",
+	detect: (command) => detectAgy({ command }),
+	register: async (models, command) => registerAntigravityProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, families: await listAgyModels(agyCommand(command)) }),
+	refresh: async (models, channel) => void (await registerAntigravityModels(models, channel, await listAgyModels(agyCommand(antigravity.command)))),
+	requireLogin: true, // `agy models` 成功才有模型可选
+});
+
+export const cliServices: CliChannelService[] = [claudeCode, codex, antigravity];
