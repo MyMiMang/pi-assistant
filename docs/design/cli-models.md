@@ -1,4 +1,4 @@
-状态：第一期已实现（2026-10-26，769424a / 3e32e0e / 0399ddf，未打包，[决策 0023](../decisions/0023-cli-agents.md)；§7 已实测，§4 按结果修订；由 Claude 派 Sonnet 子代理实现并审查）
+状态：第一期已实现（2026-10-26，769424a / 3e32e0e / 0399ddf，未打包，[决策 0023](../decisions/0023-cli-agents.md)；§7 已实测，§4 按结果修订；由 Claude 派 Sonnet 子代理实现并审查；§5 Codex、§5b Antigravity 已于 2026-10-26 实测核实，两者都能做纯大脑，未动代码）
 
 # 在 Pi 助理里用 Claude Code、Codex 等编程命令行工具
 
@@ -99,13 +99,156 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 - 不用 Claude Code 自己的内置工具、子代理、斜杠命令、CLAUDE.md、用户的 Claude 插件。
 - 不支持 API key 方式（API key 用户直接用现有的 Anthropic 渠道就行）。
 
-## 5. 第二期：Codex 当模型
+## 5. 第二期：Codex 当模型（已核实，2026-10-26，codex-cli 0.161.0，ChatGPT 登录）
 
-做法和第一期相同：Pi 渠道 `codex` + 工具桥。驱动方式用 Codex 官方的 `codex app-server`（JSON-RPC，Paseo 也用它），工具桥以 MCP 服务的形式配给 Codex。
+**结论：能做到纯大脑（第一档）。** 用官方 `codex app-server`（JSON-RPC over stdio）的「动态工具」（`dynamicTools`）：工具由我们在 `thread/start` 里声明，模型调用时 app-server 反过来向客户端发请求，等我们回结果；Codex 自带的 shell、改文件、网页搜索、子代理、浏览器、图片生成、插件、用户配置里的 MCP 等都能用启动参数关掉。比 Claude 那套更简单：不需要本机 MCP 工具桥，调用 id 也是 Codex 自己给的 `callId`（等于模型的 `call_id`），不用猜。
 
-开工前先核实：能不能关掉 Codex 自带的 shell / 改文件工具，只留我们的工具（或者 app-server 是否支持由客户端提供工具）。
-- 能：和 Claude Code 一样当纯大脑。
-- 不能：退而求其次，Codex 用自己的工具，开在只读沙箱里，它的命令和改文件请求按我们的权限档位转成审批卡（`requests.ts`），我们的工具照样通过 MCP 给它。界面上把它的工具调用显示成步骤（参考 Paseo 的 `codex/tool-call-mapper.ts`）。
+### 5.1 核实结果（实验脚本在 scratchpad 的 `cli-spike2/`，大部分用「假模型服务」离线验证，不花钱）
+
+1. **动态工具怎么声明：已验证。**
+   - `initialize` 的 `capabilities.experimentalApi: true` 打开实验接口；**不需要** `experimentalFeature/enablement/set`。
+   - `codex app-server generate-json-schema --experimental --out <目录>` 能导出更全的协议（不带时 276 个文件，带时 398 个）。
+   - `thread/start` 的 `dynamicTools: [{type:"function", name, description, inputSchema}]`（也有 `type:"namespace"` 的分组写法，没用）。工具名原样出现在模型的工具清单里（不加前缀）。`thread/resume` **没有** `dynamicTools` 参数，续用线程时沿用创建时的那一组（实测续用后请求里仍有 `echo_text`）。**含义：Pi 的工具集变了就得开新线程**（见 5.3）。
+   - 模型调用时，服务端向客户端发请求 `item/tool/call`（协议类型名 `DynamicToolCallParams`，方法名不同）：`{threadId, turnId, callId, namespace:null, tool, arguments}`。客户端回 `{success:boolean, contentItems:[{type:"inputText",text}|{type:"inputImage",imageUrl}|…]}`。
+   - 整体流程：`item/started{type:"dynamicToolCall", id=callId, status:"inProgress"}` → `item/tool/call` → 我们回包 → `item/completed{…status:"completed", success, durationMs}`。
+   - Paseo 没用动态工具（它的 `codex-app-server-agent.ts` 里没有 `dynamicTools`，只用 `developerInstructions`、`turn/steer`、`turn/interrupt`、`thread/resume`），所以这部分不能抄 Paseo，只能照本节写。
+2. **关掉自带工具：已验证（含一项残留）。** 用假模型服务抓 Codex 真正发给模型的请求体，默认有 `exec_command`、`write_stdin`、`apply_patch`、`web_search`、`view_image`、`multi_agent`（5 个子代理工具）、`request_user_input`、目标工具（get/create/update_goal）、`list_mcp_resources` 一组、用户配置里的 MCP（`node_repl`）以及 `codex_apps` / `cua_repl` 等插件工具（十来个命名空间，几十个工具）。加下面这组启动参数后，**只剩 `echo_text`（我们的）和 `request_user_input`**：
+   ```
+   codex app-server
+     --disable shell_tool --disable unified_exec --disable multi_agent --disable multi_agent_v2
+     --disable apps --disable plugins --disable browser_use --disable browser_use_external --disable computer_use
+     --disable image_generation --disable view_image --disable skill_search --disable tool_suggest --disable goals
+     --disable sleep_tool --disable in_app_browser --disable hooks --disable memories
+     --disable default_mode_request_user_input --disable collaboration_modes --disable tool_search --disable personality
+     -c 'web_search="disabled"'  -c 'skills.bundled.enabled=false'  -c 'include_environment_context=false'
+     -c 'project_doc_max_bytes=0'  -c 'mcp_servers.<用户配置里每个 MCP 名>.enabled=false'
+   ```
+   - 注意：`-c mcp_servers={}` **清不掉**用户配置里的 MCP（实测 `node_repl` 还在，是合并不是替换），要逐个按名字 `enabled=false`。名字要从用户配置里取（用 app-server 的 `mcpServerStatus/list` 或 `config/read` 取名字，**这一步没验证**）；在没有该 MCP 的环境里写这个键反而让 app-server 起不来（实测：`initialize` 永远不回），所以只能对「确实存在」的名字写。
+   - `project_doc_max_bytes=0` 能挡住工作目录里的 `AGENTS.md`（已验证）。**用户全局 `~/.codex/AGENTS.md` 挡不住**（试过 `project_doc_max_bytes=0`、`include_user_instructions=false`、`user_instructions=""`、`features.agents_md=false`，都还是会作为一条用户消息注入）。接受为风险：那是用户自己写给 Codex 的话；本机没有这个文件。
+   - 残留 `request_user_input`：模型真调它时，服务端会发 `item/tool/requestUserInput` 请求，**没实测**。建议实现里统一回「不可用」（或映射成 Pi 的提问）。另外会多一条 `<permissions instructions>` 开发者消息（沙箱说明，无害，去不掉）。
+   - 效果（真实模型一轮对比）：默认配置首个请求 `inputTokens` 约 11.8k；纯大脑配置约 3.8k。
+   - `--disable`/`-c` 也可以改放进 `thread/start` 的 `config` 对象，**这一种没验证**；进程启动参数已验证。
+3. **替换系统提示：已验证。** `thread/start` 的 `baseInstructions` 会**整个替换**默认系统提示（请求体的 `instructions` 字段恰好就是我们给的那段，21 字节）；真实模型回答带了我们要求的前缀「PB:」和名字。`thread/resume` 也可以重新传 `baseInstructions`，实测续用后请求里的 `instructions` 换成了新值（每轮换提示生效，但**同一个进程内**换提示：`turn/start` 没有这个字段，只能用 `collaborationMode.settings.developer_instructions`，它会作为一条 `<collaboration_mode>…</collaboration_mode>` 开发者消息**追加进历史**，不是替换）。`thread/resume` 的 `developerInstructions` 实测没有出现在请求里（原因没查，不依赖它）。**建议：每次需要换系统提示就 `thread/resume` 并重传 `baseInstructions`；或者只在新线程开头给。**
+4. **实际跑通一轮：已验证（真实模型 gpt-6-luna + 假模型各一遍）。** 事件序列（去掉个人信息）：
+   ```
+   thread/started → thread/status/changed{active} → turn/started{turn.id}
+   → item/started{userMessage} → item/completed{userMessage}
+   → [思考] item/started{type:"reasoning"} → item/reasoning/summaryPartAdded → item/reasoning/summaryTextDelta{delta,summaryIndex} → item/completed{reasoning,summary:[…]}
+   → [工具] item/started{dynamicToolCall} ⇄ 请求 item/tool/call ⇄ 我们的回包 → item/completed{dynamicToolCall,contentItems,success,durationMs}
+   → thread/tokenUsage/updated{tokenUsage:{total:{…},last:{inputTokens,cachedInputTokens,outputTokens,reasoningOutputTokens,totalTokens},modelContextWindow}}
+   → [正文] item/started{agentMessage,phase:"final_answer"} → item/agentMessage/delta{delta} … → item/completed{agentMessage,text}
+   → thread/status/changed{idle} → turn/completed{turn:{status:"completed"|"interrupted"|…,error}}
+   ```
+   - 用量：`thread/tokenUsage/updated` 每个模型请求后发一次，`total` 是线程累计、`last` 是最近一次请求；我们要按「每次 Pi 请求」的 `last` 记（或自己做差）。有 `cachedInputTokens`、`reasoningOutputTokens`。另有 `account/rateLimits/updated`（5 小时 / 每周额度百分比）可以显示在设置卡片里。
+   - 思考摘要要在 `turn/start` 传 `summary:"auto"`，且模型确实产出思考才有；gpt-6-luna 在 `effort:"low"` 下没有思考项（事件形状用假模型验证）。`effort` 取 `ReasoningEffort`。
+   - **同一轮里 Codex 一次只执行一个动态工具调用：** 假模型一次发两个 `function_call`，Codex 只先发第一个 `item/tool/call`，等我们回了第一个，第二个才发出来（实测：回第一个之前待处理 1 个，回了之后才出现第二个）。含义：**每个 `item/tool/call` 都对应 Pi 的一次「工具调用结束该条消息」**，不像 Claude 那样要攒一批；每个调用单独以 `stopReason:"toolUse"` 结束该条助理消息，Pi 执行完再回来续上。
+   - 模型名：`model/list` 返回 `gpt-6.1-sol`（默认）、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。模型列表要在运行时问 `model/list`，不要写死。
+5. **工具结果迟迟不回、插话、中断：已验证（假模型）。**
+   - 挂起 **200 秒**后再回包：正常继续，没有超时，没有任何心跳要求（Codex 没有 Claude 那种 60 秒默认超时）。更久的没试（超过 5 分钟的单条命令按规定不跑）。
+   - 插话：挂起期间调 `turn/steer{threadId, expectedTurnId, input:[…]}`，成功返回 `{turnId}`，消息排在工具结果之后进入下一次模型请求（实测请求里 `function_call_output` 后面跟了 `user`）。符合 Pi 的 `steer` 语义。`expectedTurnId` 对不上会报错。
+   - 中断：`turn/interrupt{threadId, turnId}` 返回 `{}`，约 2 秒内 `turn/completed{status:"interrupted"}`，不再向模型发请求；中断后再回挂起的工具结果也不报错（被忽略）。
+6. **续用会话与登录检测：已验证。**
+   - 续用：`thread/start`（不加 `ephemeral:true`）→ 退出进程 → 新进程 `initialize` → `thread/resume{threadId, baseInstructions…}` 成功，历史完整（模型请求里带上了前几轮），动态工具保留。线程文件写在 `$CODEX_HOME/sessions`（会出现在用户的 Codex 历史里，和 Claude 的 `--resume` 一样的副作用；要不留痕用 `ephemeral:true`，但那就无法续用）。
+   - 登录检测：`codex login status`：已登录输出 `Logged in using ChatGPT`、退出码 0；未登录输出 `Not logged in`、退出码 1（拿空的临时 `CODEX_HOME` 验证）。不读任何凭证文件。也可以在 app-server 里 `account/read{refreshToken:false}` → `{account:{type:"chatgpt",planType:"plus"…}, requiresOpenaiAuth}`（未登录时 `account:null`）。
+   - **没法用独立 `CODEX_HOME` 做隔离**：新目录没有登录，复制登录文件又违反「不碰凭证」，所以只能用用户的 `CODEX_HOME` 加上 5.1.2 的启动参数。
+
+### 5.2 建议做法
+- 渠道 `codex`（`pi-adapter/cli-models/codex.ts`），进程常驻（每个 Pi 会话一个 `codex app-server`，或全局一个，多线程共用；每个助理一个线程）。`cli-agents/` 下新增 `codex-client.ts`（JSON-RPC 读写）、`codex-events.ts`（事件→Pi 事件，纯逻辑）、`codex-detect.ts`（`codex login status`、版本）。
+- **不需要工具桥**。`streamSimple` 收到 Pi 的工具清单 → 转成 `dynamicTools` 在 `thread/start` 声明；`item/tool/call` 到了 → 转成 Pi 的 toolCall 并结束这条助理消息（`toolUse`）；Pi 执行完再调 `streamSimple` → 把结果当作 `item/tool/call` 的回包。
+- **工具集和系统提示变了就开新线程**（历史渲染成文字送进去，和 4.4 同一套对不上就重开的逻辑）；没变就 `thread/resume`（仍重传 `baseInstructions`）。
+- 插话用 `turn/steer`，停止用 `turn/interrupt`。
+- 整理上下文的单次请求：用 `ephemeral:true` 的线程，不带 `dynamicTools`，跑一轮拿正文。
+- 审批：纯大脑下 Codex 不会发 `*/requestApproval`（没有会触发审批的内置工具）；启动时仍传 `approvalPolicy:"never"`、`sandbox:"read-only"` 兜底。
+- 设置卡片：「Codex（本机）」显示已安装 / 版本 / `codex login status` 结果；模型列表来自 `model/list`。
+- **审查定稿（2026-10-26）**：
+  - 进程：全局一个 `codex app-server`，按需启动、所有线程空闲 10 分钟后退出；崩溃后下次请求重启并 `thread/resume`。模型、思考强度按每轮 `turn/start` 传。
+  - 用户配置里的 MCP：先起 app-server 用 `config/read`（或 `mcpServerStatus/list`）取名字（不调模型），有名字就带上逐个 `enabled=false` 重启再用；实现时在本机真实 codex 上核实这一步（只读配置，不发模型请求）。
+  - `request_user_input`：回「不可用」；`*/requestApproval` 一律拒绝。
+  - 全局 `~/.codex/AGENTS.md`：接受为风险，设置卡片在该文件存在时提示一句。
+  - 模型列表：`model/list` 结果缓存，重新检测时刷新；没有 Codex 或没登录就不注册渠道（同 Claude）。
+
+### 5.3 和 Claude 那套能复用多少
+- **能复用**：`pi-adapter/cli-models/` 里的渠道骨架（`streamSimple` 事件映射到 Pi 的 text / thinking / toolcall、`toolUse` 收尾、abort、用量折算、整理上下文）、会话对照表（4.4）、环境白名单、安装检测的模式、设置卡片。
+- **不能复用**：`tool-bridge.ts`（本机 MCP + 挂起）、`claude-process.ts` 的 stream-json 读写、各种超时环境变量、系统提示文件和 `--resume`。
+- **风险**：(a) 全局 `~/.codex/AGENTS.md` 挡不住；(b) 用户配置里的 MCP 要逐个按名字关，名字获取方式没验证；(c) 动态工具和 `thread/resume` 的关系靠实测，上游升级可能变（协议标着 experimental）；(d) 一次只处理一个工具调用，多工具并行任务会比 Claude 慢；(e) `request_user_input` 残留；(f) 版本固定在 0.161.0 测过，本机提示有 0.164.0。
+- **真实调用次数**：Codex 共 4 次真实模型请求（gpt-6-luna 为主），其余都用本机假模型服务。
+
+## 5b. 第二期之二：Antigravity CLI（`agy`）当模型（已核实，2026-10-26，agy 1.4.7）
+
+**结论：能做到纯大脑（第一档），但比 Codex 难看：** 要靠「工作区里的自定义代理 + 工作区里的插件 MCP」两个**项目级**文件，不碰用户全局配置。缺点也多：整体启动慢（每次进程约 35 秒）、拿不到思考内容、插话只能排队、系统提示在会话开始时定死、本机 Gemini 模型因地区限制用不了（Claude 和 GPT-OSS 能用）。建议排在 Codex 之后做，或者先只做实验性支持。
+
+### 5b.1 核实结果（脚本在 scratchpad 的 `cli-spike2/`：`agy-mcp.mjs` 假 MCP 服务、`agy-stream.mjs` 流式驱动）
+
+7. **`-p` 的输入输出结构：已验证。**
+   - 命令行：`agy --output-format stream-json --model <id> [--agent <名>] -p "<提示>"`。**`-p` 必须带一个参数**，而且要放在最后（写成 `-p --output-format …` 会把 `--output-format` 当成提示）。想保持会话开着、一轮一轮喂消息：`agy --input-format stream-json --output-format stream-json … -p ""`（`-p` 后给空串），之后每行 stdin 写 `{"event":"user","message":{"content":"文字"}}`（试过 `prompt` / `text` / 纯字符串都不对；`event` 取别的值会被静默忽略）。stdin 关闭后进程退出；一条消息一轮，轮与轮之间按顺序执行。
+   - 输出是 NDJSON，三种事件：
+     ```
+     {"event":"init","conversation_id":"<uuid>","init":{"model":"…","cwd":"…","agent":"pia","permission_mode":"request-review","tools":[…]}}   # tools 列出的是默认 59 个，不反映实际可用的（见下）
+     {"event":"step_update","step_update":{"conversation_id","step_index":N,"state":"ACTIVE|DONE|ERROR","step_type":"user_input|agent_response|tool|error_message","text_delta":"…","tool_name":"…","tool_info":{"name","parameters":{…},"output":"…"},"duration_seconds":x,"usage":{"input_tokens","output_tokens","thinking_tokens","cache_read_tokens","total_tokens"}}}
+     {"event":"result","result":{"conversation_id","status":"SUCCESS|ERROR","response":"整轮文字","error":"…","duration_seconds","num_turns","usage":{…}}}
+     ```
+   - 文字：`agent_response` 的 `ACTIVE` 事件带 `text_delta`（**块比较大，不是逐字**，每块几个词到一句话），`DONE` 事件带最后的 `"\n"` 和这一步的 `usage`。每次模型请求（含工具调用后的续写）是一个 `agent_response` 步骤。
+   - 工具：`tool` 步骤先 `ACTIVE`（带 `tool_name`、`tool_info.parameters`），完成后 `DONE`（带 `tool_info.output`、`duration_seconds`），超时是 `ERROR`。顺序：`agent_response DONE → tool ACTIVE …`。
+   - 用量：`input_tokens` **不含**缓存读取（另有 `cache_read_tokens`）；`thinking_tokens` 一直是 0。
+   - **没有思考内容：** 用 `claude-sonnet-5-5-high` + `--effort high` 并要求「仔细想」，也没有任何思考事件（`thinking_tokens: 0`）。界面上这个渠道不显示思考。
+   - 错误：`result.status:"ERROR"`、`error` 是文字；stderr 有一行 `AGY_ERROR: {...}`；进程退出码 3（错误）、1（被中断）。
+   - 模型：**本机 Gemini 全部报 `FAILED_PRECONDITION (code 400): User location is not supported for the API use.`（地区限制）**，Gemini 模型没法验证；`claude-sonnet-5-5-*`、`gpt-oss-120b-medium` 实测可用。
+8. **按次指定 MCP、不改全局配置：已验证（用工作区文件，不是命令行参数）。**
+   - 没有 `--mcp-config` 参数，也没有环境变量；`agy mcp add` **只写用户全局** `~/.gemini/config/mcp_config.json`，所以不用。
+   - **用临时 HOME 隔离不可行：** 换 `HOME` 后 `agy models` 变成「请先登录」（登录凭据在用户 `~/.gemini` 下）。复制或软链凭证违反「不碰凭证」，所以不做。`ANTIGRAVITY_CONFIG_REL_DIR` 能改配置目录名，同样会丢登录，没试。
+   - **可行做法：每次运行建一个私有工作目录（0700），当 agy 的工作目录**，里面放：
+     ```
+     <运行目录>/.agents/agents/pia.md              # 自定义代理（见 9）
+     <运行目录>/.agents/plugins/pia/plugin.json     # {"name":"pia","description":"…","version":"1"}
+     <运行目录>/.agents/plugins/pia/mcp_config.json # {"mcpServers":{"pia":{"url":"http://127.0.0.1:端口/mcp","headers":{"Authorization":"Bearer <随机令牌>"},"timeoutSeconds":3600}}}
+     ```
+     agy 从工作目录向上找 `.agents/`，插件目录放在 `.agents/plugins/` 下自动启用；`url` 型（streamable HTTP）MCP 和自定义 `headers`（Bearer 令牌）都生效（我们这边收到了带令牌的请求）。令牌放在这份 0600 文件里，运行后删，和 Claude 那套一样的处理。
+   - 工具名：模型看到的是 `mcp_pia_pia_<工具名>`（前缀大概是「插件名_服务名_」），**但 MCP 请求里的 `params.name` 是原始名**（`echo_text`），我们按原始名处理，不用管前缀。
+   - **MCP 工具要在 `tools/list` 里给每个工具加 `_meta:{"antigravity/alwaysLoad":true}`**（更新日志里的写法），否则按文档是「用到再发现」，模型不会直接拿到。我们的工具桥当前不带这个字段，要加。
+   - agy 启动时会先发一个非标准请求 `server/discover`，工具桥回标准的「方法不存在」错误就行（实测不影响），还会发两个 `GET`（SSE 通道），回 405 就行；`initialize` 里 `protocolVersion` 是 `2025-11-25`，`clientInfo.name` 是 `antigravity-client`。
+9. **关掉自带工具、换系统提示、续用会话：已验证。**
+   - 自定义代理文件 `.agents/agents/pia.md`：
+     ```
+     ---
+     name: pia
+     description: Pi Assistant 的纯大脑代理
+     mainAgent: true
+     excludeDefaultComponents: true
+     tools: []
+     ---
+     # 系统提示
+     <整段系统提示>
+     ```
+     运行时加 `--agent pia`（名字不存在时，`-p` 会以退出码 1 报错并列出可用的代理）。
+   - 效果：模型自述和行为都只剩 `mcp_pia_pia_echo_text`、`mcp_pia_pia_slow_wait`（我们的）加 `list_resources`、`read_resource`、`manage_task` 三个残留；让它「用 run_command 执行 `echo SHELLOK`」，它回答「没有能运行命令的工具」，没有执行。输入 token 从默认的 5.5k 降到约 1.5k（系统提示几乎全换掉了）。回答带上了我们要求的前缀「PB:」和名字。**这几个前置条件里到底是 `excludeDefaultComponents` 还是 `tools: []` 起的作用没有拆开试**，两个都写。
+   - **系统提示在会话开始时定死：** 续用会话（`--conversation <id>`）时即使把 `pia.md` 里的名字和前缀改了，模型仍按旧提示回答（实测还答 PINEAPPLEBOT / `PB:`）。**所以系统提示变了就要开新会话**（把历史渲染成文字送进第一条消息），和 Claude 的 `--system-prompt-snapshot off` 不同，这里没有绕过办法。
+   - 用户全局的 `~/.gemini/config` 下规则、`GEMINI.md` / `AGENTS.md`、`inheritMcp` 的效果**没法验证**：本机全局 MCP 和插件都是空的，没有可比对的东西；自定义代理的 `inheritMcp: false` 是文档里的字段，建议写上，但没验证。
+   - `--conversation <id>`：已验证，历史完整续上（第二轮能答出前一轮算的数）；续用一次总耗时约 45 秒。会话文件在用户的 `~/.gemini/antigravity-cli/conversations`（会出现在用户的 Antigravity 历史里，这次实测留下了二十多个测试会话，没动别的）。
+   - 插话：**不能并入当前轮。** 工具执行中途（第 9 秒）往 stdin 追加一条消息，它被排队，等第一轮 `result` 之后另起一轮（`num_turns` 变 2）才处理。含义：Pi 的 `steer` 没法直接映射；建议做法是把插话文字**附在下一个工具结果后面**（「[用户插话] …」），或者无工具调用时才作为下一条消息发——这一做法本身没验证。
+   - 中断：`SIGINT` 有效：约 0 秒内 `result{status:"ERROR",error:"interrupted"}`，MCP 服务收到 `notifications/cancelled`，进程退出（退出码 1）。
+10. **登录检测与模型列表：已验证。**
+    - `agy models`：已登录时退出码 0，stdout 每行 `<id>\t<显示名>`；未登录（临时 HOME）退出码 1，输出 `Error: Please sign in to view available models.`。要联网（不消耗模型额度）。没有 `agy auth status` 之类的子命令；`agy models --output-format json` 在 1.4.7 不被接受（更新日志里写的在这个版本没有）。
+    - 本机模型 id：`gemini-4-argon-{low,medium,high}`、`gemini-3.8-flash-{low,medium,high}`、`claude-opus-5-5-{low,medium,high}`、`claude-sonnet-5-5-{low,medium,high}`、`gpt-oss-120b-medium`。**id 末尾的 `low/medium/high` 就是思考强度**，Pi 的「模型 + 思考强度」要拼成这个 id（模型家族 = 去掉末段）；另有 `--effort low|medium|high|xhigh|max` 参数，和 id 后缀的关系没验证。模型列表要运行时问 `agy models`。
+11. **工具挂起超时与配对：已验证。**
+    - **默认 180 秒超时：** `slow_wait(200)` 在 180 秒时被 agy 掐断（`tool` 步骤 `ERROR`，MCP 服务收到 `notifications/cancelled`），模型据此继续回答。
+    - **在 `mcp_config.json` 里给服务写 `"timeoutSeconds": N` 能调：** 写 10 时在 10 秒掐断；写 3600 时 `slow_wait(200)` 正常返回（200.09 秒，成功）。**键名必须是 `timeoutSeconds`**（`timeout_seconds`、`timeout` 都无效，实测）。更久（>5 分钟）没试。
+    - **能精确配对：** `tools/call` 的 `params._meta` 有 `antigravity.google/conversation_id`、`antigravity.google/root_conversation_id`、`antigravity.google/artifacts_dir`、`progressToken`。**`progressToken` 的格式是 `<uuid>:<step_index>`，冒号后面的数字等于 `step_update` 里那个 `tool` 步骤的 `step_index`**（实测两个并行调用分别是 `:2`、`:3`，和 `step_index` 2、3 一致；`tool_info.parameters` 也一致）。所以配对键 = `step_index`。没有 Claude 那样的 `toolUseId`，也没有模型侧的调用 id。
+    - 并行：一个回复里发两个工具调用时，两个 `tools/call` 几乎同时到（间隔 10 毫秒），agy 同时等着两个结果（不像 Codex 串行）。一条助理消息有几个调用事先不知道，建议收到第一个 `tools/call` 后短暂等待（如 300 毫秒）收齐，再一并交给 Pi。**这个等待时间没有依据，需实现时调。**
+
+### 5b.2 建议做法
+- 渠道 `antigravity`（`pi-adapter/cli-models/antigravity.ts`）；`cli-agents/` 新增 `agy-process.ts`（起进程、写 stdin、读 NDJSON）、`agy-events.ts`（事件→Pi 事件）、`agy-detect.ts`（`agy models`）。**工具桥复用**（`tool-bridge.ts`）：只需 (1) `tools/list` 每个工具补 `_meta.antigravity/alwaysLoad`；(2) 配对键从 `claudecode/toolUseId` 改成「`progressToken` 末段的 `step_index`」，再用 `step_update` 里 `tool` 步骤的 `tool_name`、`parameters` 对上；(3) 为 agy 另外处理 `server/discover` 和 `GET`。
+- 每个 Pi 会话一个长驻的 agy 进程（`--input-format stream-json … -p ""`），因为每次启动要 35 秒；系统提示、工具集、模型变了就重开进程和新会话（带历史文字）。
+- 系统提示写进运行目录里的 `pia.md`，令牌写进 `mcp_config.json`；运行结束删目录。运行目录建在助理数据目录下（不是 agy 的全局配置）。
+- 取消用 `SIGINT`；Pi 的 abort 就发 `SIGINT`，再等 `notifications/cancelled`。
+- 不显示思考；用量取每个 `agent_response DONE` 的 `usage`。
+- 设置卡片：「Antigravity（本机）」显示安装、版本、`agy models` 是否成功；提示 Gemini 在部分地区不可用。
+- **审查定稿（2026-10-26）**：做成「实验性」渠道，排在 Codex 之后。插话：有挂起的工具调用时附在下一个工具结果后面（「[用户插话] …」），否则等本轮结束后作为下一条消息；并行调用收齐等待先用 300 毫秒，做成常量。模型列表只取 `agy models` 里每个家族一项，思考强度映射到 id 后缀（low/medium/high，Pi 的更高档位取 high）。
+
+### 5b.3 和 Claude 那套能复用多少 / 风险
+- **能复用**：工具桥（改配对键和 `_meta`）、渠道骨架（`streamSimple` 事件映射、`toolUse` 收尾、用量、abort）、会话对照表、环境白名单、私有临时目录和文件清理、设置卡片。
+- **不能复用**：`claude-process.ts` 的参数拼接和 stream-json 解析（格式完全不同）、`claudecode/toolUseId`、各种超时环境变量。
+- **风险**：(a) 每次启动约 35 秒、一次续用约 45 秒，慢；(b) 没有思考内容；(c) 插话不能并入当轮；(d) 系统提示定死在会话开始；(e) 自定义代理 / 插件 / `alwaysLoad` 都是 1.4.x 的较新功能，版本升级可能变；(f) 全局规则、`GEMINI.md`、全局 MCP 会不会泄漏进来没法验证；(g) 会话文件留在用户的 Antigravity 历史里；(h) 地区限制，Gemini 模型可能用不了；(i) 残留 `list_resources` / `read_resource` / `manage_task` 三个自带工具（无害但不是 100% 纯）；(j) 并行调用的收齐时间没依据。
+- **真实调用次数**：agy 约 25 次真实模型请求（claude-sonnet-5-5 为主，含两次 200 秒的挂起测试）；其余用假 MCP 服务。
 
 ## 6. 第三期：当帮手（让它用自己的工具干活）
 
