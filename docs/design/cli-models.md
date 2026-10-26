@@ -371,5 +371,6 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 ### 9.x Codex / Antigravity 开发实测（2026-10-27，dev:live，新建测试助理）
 - Codex（0.161.0，gpt-6-luna）：说名字 + 用 Pi 工具写文件读文件、跨轮记得、工具执行中插话（等 90 秒命令后回复里带上插话要求）、工具执行中停止、停止后续聊，都正常；思考摘要能显示。停止后下一轮会新开线程（缓存不命中），和 Claude 一致。
 - Antigravity（1.4.7，claude-sonnet-5-5）：首次实测发现代理文件里的 `inheritMcp: false` 会连工具桥一起挡掉，模型看不到 Pi 工具；去掉后新会话的工具调用、跨轮（2 秒回复，复用长驻进程）、停止、停止后续聊（重起进程 `--conversation`）都正常。**工具集在会话创建时就定死**：用旧配置建的会话续用也拿不到工具。网络抖动时会报 `loadCodeAssist: EOF`，重试即好。插话附在工具结果后的做法、并行收齐 300 毫秒未实测。
-- 群聊（同日，实测群）：Codex 当群成员被点名后回话、用 Pi 工具建文件读文件都正常。Antigravity 当群成员连续两次报 `loadCodeAssist: EOF`（连不上 Google 服务，需要专门的网络节点），群里如实显示错误；**群聊未实测通过**，等网络条件具备再测。
+- 群聊（同日，实测群）：Codex 当群成员被点名后回话、用 Pi 工具建文件读文件都正常。Antigravity 当群成员起初连续两次报 `loadCodeAssist: EOF`（连不上 Google 服务）；用户整理网络节点后（2026-10-27）复测通过：被点名后用 Pi 的命令行工具建文件读文件、在群里回话。
+- 网络说明（给用户排查用，与代码无关）：Antigravity 除 `daily-cloudcode-pa` 外还会连 `aicode.googleapis.com`（调模型）、`oauth2.googleapis.com`；这些和其他 Antigravity 域名要走同一个地区受支持、出口 IP 固定的节点，否则 Gemini 报「User location is not supported」、或连接被断（EOF）。实测 hysteria2 端口跳跃节点常被判地区不支持，vless 单端口节点可用。
 
