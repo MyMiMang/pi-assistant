@@ -1,7 +1,7 @@
 /** 前端纯逻辑：助理工作状态（apps/web/src/member-status.ts），群成员条和单聊顶部共用。 */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { agentActivity, memberActivity, pendingCardOf, roomSummary, type HelperBrief } from "../../../apps/web/src/member-status.ts";
+import { agentActivity, memberActivity, nextPendingId, pendingCardIds, pendingCardOf, roomSummary, type HelperBrief } from "../../../apps/web/src/member-status.ts";
 
 const helper = (agentId: string, title: string, status = "running", kind = "work"): HelperBrief => ({ agentId, kind, title, status, live: ["running", "stalled", "queued"].includes(status) });
 const base = { current: null, queue: [] as string[], helpers: [] as HelperBrief[] };
@@ -51,4 +51,15 @@ test("单聊：主会话在跑 / 帮手在做 / 等你 / 空闲", () => {
 	assert.equal(agentActivity({ running: false, helpers: [helper("a", "A", "running", "task"), helper("a", "B", "queued", "task")] }).text, "2 个帮手在做");
 	assert.deepEqual(agentActivity({ running: true, pending: "approval", helpers: [] }), { state: "wait", text: "等你审批" });
 	assert.deepEqual(agentActivity({ running: false, helpers: [helper("a", "A", "failed", "task")] }), { state: "idle", text: "空闲" });
+});
+
+test("「N 人等你」点击：按最早的先，逐张跳，到头回第一张", () => {
+	const card = (id: string, status = "pending", kind = "approval") => ({ id, role: "card", meta: { status, kind } });
+	const ids = pendingCardIds([card("c1"), { id: "m", role: "assistant", meta: {} }, card("c2", "done"), card("c3", "pending", "question")]);
+	assert.deepEqual(ids, ["c1", "c3"]);
+	assert.equal(nextPendingId(ids, null), "c1");
+	assert.equal(nextPendingId(ids, "c1"), "c3");
+	assert.equal(nextPendingId(ids, "c3"), "c1");
+	assert.equal(nextPendingId(ids, "gone"), "c1");
+	assert.equal(nextPendingId([], null), undefined);
 });

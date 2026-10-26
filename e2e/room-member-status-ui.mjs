@@ -94,6 +94,15 @@ try {
 	assert.equal(await stateOf(summary), "wait");
 	assert.match(await summary.innerText(), /1 人等你/);
 	await strip("6-waiting.png");
+	// 点「1 人等你」：先把聊天滚到最上面，点了要滚到审批卡并高亮
+	await page.evaluate(() => document.querySelectorAll(".overflow-y-auto").forEach((el) => (el.scrollTop = 0)));
+	await summary.click();
+	const card = page.locator(".pa-msg-flash");
+	await card.waitFor({ timeout: 5000 });
+	assert.ok(await card.first().evaluate((el) => !!el.querySelector('[data-testid="approval-card"]')), "高亮的是审批卡");
+	await page.waitForTimeout(600);
+	assert.ok(await page.getByTestId("approval-card").last().isVisible(), "审批卡滚到可见");
+	await page.screenshot({ path: join(out, "6b-jump-to-pending.png") });
 	await page.getByTestId("approval-card").last().getByRole("button", { name: "批准" }).click();
 	await wait(async () => (await stateOf(summary)) === "idle", 30000, "批准后都停下");
 

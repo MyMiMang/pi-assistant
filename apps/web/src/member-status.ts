@@ -22,6 +22,17 @@ export function pendingCardOf(list: { role: string; agent_id: string; meta: Reco
 	return undefined;
 }
 
+/** 所有没处理的审批 / 提问卡 id（最早的在前），给「N 人等你」点击逐个跳转用。 */
+export function pendingCardIds(list: { id: string; role: string; meta: Record<string, unknown> }[]): string[] {
+	return list.filter((m) => m.role === "card" && m.meta.status === "pending" && (m.meta.kind === "approval" || m.meta.kind === "question")).map((m) => m.id);
+}
+
+/** 下一张要跳的卡：上次跳的那张之后的一张，到头了回到第一张。 */
+export function nextPendingId(ids: string[], last: string | null): string | undefined {
+	const i = last ? ids.indexOf(last) : -1;
+	return ids[(i + 1) % ids.length];
+}
+
 /** 帮手在做什么：群任务写「做任务「X」」，其他帮手写「帮手在做「X」」；排队的加「排队」。 */
 function helperText(h: HelperBrief) {
 	const title = h.title.replace(/^任务\s*[:：]\s*/, "").trim() || "任务";

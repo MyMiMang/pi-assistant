@@ -291,6 +291,7 @@ html, body { overflow-x: hidden; max-width: 100%; overscroll-behavior-x: none; }
 .pa-room-sum{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;height:36px;padding:0 12px;border-radius:999px;font-size:12px;white-space:nowrap}
 .pa-room-sum.work{background:color-mix(in srgb,var(--ok,#22c55e) 14%,transparent);color:var(--fg)}
 .pa-room-sum.wait{background:color-mix(in srgb,var(--warn,#d97706) 16%,transparent);color:var(--fg)}
+button.pa-room-sum{border:0;cursor:pointer}button.pa-room-sum:hover{background:color-mix(in srgb,var(--warn,#d97706) 26%,transparent)}button.pa-room-sum:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 .pa-room-sum.idle{border:1px solid var(--line);color:var(--mut)}
 .pa-room-sum .pa-ic{width:14px;height:14px}
 @media (max-width:639px){.pa-room-member{max-width:150px}.pa-room-member-txt small{max-width:96px}.pa-room-sum{padding:0 10px}}

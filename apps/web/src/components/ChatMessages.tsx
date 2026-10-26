@@ -189,7 +189,7 @@ export function BotPart({ p, live, busy, toolOnly, renderSubagent, onQuote, onJu
 	if (p.kind === "steps") return <Steps items={p.items} live={live} busy={busy} />;
 	const m = p.m;
 	if (m.role === "card")
-		return m.meta.kind === "subagent" ? renderSubagent?.(m) ?? null : m.meta.kind === "approval" ? <ApprovalCard m={m} /> : m.meta.kind === "question" ? <QuestionCard m={m} /> : m.meta.kind === "work-result" ? <WorkResultCard meta={{ ...m.meta, roomId: (m.meta.roomId as string) ?? undefined }} /> : m.meta.kind === "room-plan" ? <RoomPlanCard m={m} /> : m.meta.kind === "project-delivery" ? <ProjectDeliveryCard m={m} /> : m.meta.kind === "room-goal" ? <RoomGoalCard m={m} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
+		return m.meta.kind === "subagent" ? renderSubagent?.(m) ?? null : m.meta.kind === "approval" || m.meta.kind === "question" ? <div data-mid={m.id} className="pa-card-anchor">{m.meta.kind === "approval" ? <ApprovalCard m={m} /> : <QuestionCard m={m} />}</div> : m.meta.kind === "work-result" ? <WorkResultCard meta={{ ...m.meta, roomId: (m.meta.roomId as string) ?? undefined }} /> : m.meta.kind === "room-plan" ? <RoomPlanCard m={m} /> : m.meta.kind === "project-delivery" ? <ProjectDeliveryCard m={m} /> : m.meta.kind === "room-goal" ? <RoomGoalCard m={m} /> : m.meta.kind === "room-proposal" || m.meta.kind === "member-proposal" ? <ProposalCard m={m} /> : <TaskCard m={m} />;
 	// 思考：原生 reasoning（meta.thinking）+ 正文里的 <think>…</think>（旧消息 / 流式中），折叠显示，不当正文
 	const split = splitThinking(m.content);
 	const thinking = [String(m.meta.thinking ?? "").trim(), split.thinking].filter(Boolean).join("\n\n");

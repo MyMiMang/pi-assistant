@@ -186,7 +186,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					)}
 				</div>
 			</header>
-			<RoomMembers room={room} list={list} onOpen={openMember} />
+			<RoomMembers room={room} list={list} onOpen={openMember} onJump={jump} />
 			<div
 				ref={scroller}
 				className="pa-scroll"

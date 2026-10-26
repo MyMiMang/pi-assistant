@@ -134,7 +134,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 				<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={30} running={running} />
 				<div className="pa-head-txt min-w-0">
 					<b className="truncate">{agent.name}</b>
-					<AgentStatusLine agent={agent} conversation={convId ?? undefined} list={list} />
+					<AgentStatusLine agent={agent} conversation={convId ?? undefined} list={list} onJump={jump} />
 				</div>
 				<div className="pa-head-actions">
 					{agent.scope === "room" && agent.room_id && (
