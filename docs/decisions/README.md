@@ -32,3 +32,4 @@
 | [0020](0020-composer-permission-button.md) | 输入栏「技能」按钮换成「权限」按钮 |
 | [0021](0021-dev-live-testing.md) | 开发实测环境用真实模型渠道，只用测试助理和测试群 |
 | [0022](0022-tidy-after-delivery.md) | 群项目交付后整理上下文，用户原话存进记忆（修订 0019 的「不提前整理」） |
+| [0023](0023-cli-agents.md) | 在 Pi 助理里用本机已登录的 Claude Code、Codex：先当模型（工具仍由 Pi 执行），再当帮手；自己接，参考 Paseo |
