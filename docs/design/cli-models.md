@@ -1,4 +1,4 @@
-状态：已批准，实现中（2026-10-26，[决策 0023](../decisions/0023-cli-agents.md)；§7 已实测，§4 按结果修订；由 Claude 派 Sonnet 子代理实现并审查）
+状态：第一期已实现（2026-10-26，769424a / 3e32e0e / 0399ddf，未打包，[决策 0023](../decisions/0023-cli-agents.md)；§7 已实测，§4 按结果修订；由 Claude 派 Sonnet 子代理实现并审查）
 
 # 在 Pi 助理里用 Claude Code、Codex 等编程命令行工具
 
@@ -199,7 +199,15 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 5. 更新 MODULES、HANDOFF、ROADMAP、THIRD_PARTY_NOTICES。用户说「打包」才发布。
 6. 第二期、第三期各自另开设计小节，先给用户看再做。
 
-### 需要改方案的地方（实测发现，未改 §4，请用户/审查决定）
+### 第 4 步实测结果（2026-10-26，开发实测环境，测试助理「CC实测」，Claude Code · Sonnet，本机 claude 2.1.293 经 CC Switch 代理）
+- 问「你叫什么」答「CC实测」：助理的系统提示生效。
+- 让它新建并读 hello.txt：经工具桥调了 Pi 的 `write`、`read`，界面显示步骤，回答正确。
+- 第二轮问「刚才那个文件叫什么，改成再见」：记得是 hello.txt，调 `write` 改好，磁盘上的文件确实变了。
+- 助理自带的主动巡检（帮手）也用 Claude Code 跑完了。
+- 写长文时停止：回答停在「已中断」，claude 进程随即被结束，不残留；正常结束的轮次也不残留进程。
+- 未实测：群聊里用 Claude Code、真正订阅登录（OAuth）下整个替换系统提示、Windows。
+
+### 需要改方案的地方（实测发现，已按用户决定并入 §4.2 / §4.3，保留作记录）
 
 1. **环境必须干净**（§4.2「进程环境」）：不只是「不传模型密钥」，还要把继承来的 `ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL` 等 `ANTHROPIC_*` 全部去掉，否则 `401 Invalid bearer token`。建议用白名单（`HOME`、`PATH`、`USER`、`LANG` 等）而不是黑名单；同时加 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`（用户的 `~/.claude/CLAUDE.md` 会被加载，`--system-prompt` 整个替换也挡不住，实测 1）。
 2. **`--setting-sources ""` 的取舍**（§4.2）：参数可用，也确实屏蔽用户设置；但有的用户把登录/代理写在 `~/.claude/settings.json` 的 `env` 里（本机就是，cc-switch 代理），带上它会变成 `Not logged in`。纯 OAuth 订阅用户不受影响（未验证）。需要用户定：是否要兼容「登录写在 settings.json 里」的用户（兼容就不能加这个参数，改用环境变量屏蔽 CLAUDE.md，并接受用户的钩子/插件会生效）；`auth status` 判不出这种情况，只能看 `--text` 里的 base URL。

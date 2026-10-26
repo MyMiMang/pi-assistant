@@ -11,6 +11,7 @@
 - [已发布(beta.37)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
+- [已完成(未打包)] Claude Code 当模型（第一期）：模型列表选「Claude Code · Opus / Sonnet / Haiku」，用本机已登录的 claude，工具仍由 Pi 执行（审批、记忆、助理电脑照旧）；模型服务页有检测卡片。第二期 Codex、第三期当帮手待做（[设计](design/cli-models.md)、[0023](decisions/0023-cli-agents.md)）
 - [已发布(beta.37)] 群聊按「AI 团队」重做：先出方案、确认后按分工推进到交付，去掉自主推进开关；6 步全部做完（含单聊走方案），待打包实测（[设计](design/group-team.md)、[0019](decisions/0019-group-as-team.md)）
 - [已发布(beta.38)] beta.37 实测问题修复：群里空名字行、管理者自己的任务停在「待安排」、交付文件发两遍、交付后重复一句话、一步跑太久没提示；加 `npm run dev:live` 用真实渠道开发实测（[0021](decisions/0021-dev-live-testing.md)）
 - [已发布(beta.38)] 群聊第二轮实测打磨：分工名字后缀、「等你回答」状态、项目中不提技能、慢步骤提示不被挡、自己核验不重复叫醒、等用户时不兜底叫醒、自己收尾时停掉在做同一任务的帮手
