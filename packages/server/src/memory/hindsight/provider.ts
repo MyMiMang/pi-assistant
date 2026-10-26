@@ -53,7 +53,13 @@ export function enqueue(bank: string, op: "retain" | "delete" | "purge", itemId?
 export function mergeLedgerHits(hs: MemoryItem[], ledger: MemoryItem[], limit: number, reserve = 3): MemoryItem[] {
 	const extra = ledger.filter((b) => !hs.some((x) => x.id === b.id)).slice(0, Math.min(reserve, limit));
 	const keep = hs.slice(0, Math.max(limit - extra.length, 0));
-	return [...keep, ...extra.map((b, j) => ({ ...b, score: 1 / (1.5 + j) }))].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
+	// 同一句话（账本原文和 Hindsight 抽出的事实一字不差，只差「| Involving: …」后缀）只留分高的那条，免得召回里一条信息出现两遍
+	const seen = new Set<string>();
+	const norm = (t: string) => t.split(" | ")[0].replace(/\s+/g, "").replace(/[。.]$/, "");
+	return [...keep, ...extra.map((b, j) => ({ ...b, score: 1 / (1.5 + j) }))]
+		.sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+		.filter((x) => !seen.has(norm(x.text)) && !!seen.add(norm(x.text)))
+		.slice(0, limit);
 }
 
 /** 回合原文里原样列出的召回结果（「- [hs_…] (scope/kind, 日期) …」）不再写回记忆：否则每次「回忆」都把旧记忆再存一份，越存越多、还层层嵌套。 */

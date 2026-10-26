@@ -219,3 +219,10 @@ test("回合写入：原样列出的召回结果不再写回记忆，正常的�
 	assert.equal(stripRecallEcho(t), "我在记忆里找到了这些：\n\n你的猫叫豆豆。");
 	assert.equal(stripRecallEcho("普通回答，提到 [链接](x) (备注)"), "普通回答，提到 [链接](x) (备注)");
 });
+
+
+test("召回：账本原文和 Hindsight 抽出的同一句话只留一条", () => {
+	const it = (id: string, text: string, score: number) => ({ id, bank: "user", text, kind: "fact", scope: "user", status: "verified", createdAt: "", score }) as never;
+	const out = mergeLedgerHits([it("mem_a", "车牌号是浙A·7Q2K9。 | Involving: 邓小明", 1), it("hs_b", "车牌号是浙A·7Q2K9。", 0.5), it("hs_c", "喝美式", 0.33)], [], 8) as { id: string }[];
+	assert.deepEqual(out.map((x) => x.id), ["mem_a", "hs_c"]);
+});

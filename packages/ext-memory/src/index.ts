@@ -52,6 +52,13 @@ export function finalReply(msgs: EndMessage[]): string {
 	return "";
 }
 
+/** 只查了记忆（召回 / 反思 / 核验列表）、没做别的事的一轮：不自动写入。真实模型实测，「搜了记忆、找到几条」会被抽成新事实，越搜越多。 */
+const LOOKUP_TOOLS = new Set(["memory_recall", "memory_reflect", "memory_review"]);
+export function onlyMemoryLookup(msgs: EndMessage[]): boolean {
+	const names = msgs.flatMap((m) => (m.role === "assistant" && Array.isArray(m.content) ? (m.content as { type: string; name?: string }[]).filter((b) => b.type === "toolCall").map((b) => b.name ?? "") : []));
+	return names.length > 0 && names.every((n) => LOOKUP_TOOLS.has(n));
+}
+
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
 const line = (m: MemoryHit) => `- [${m.id}] (${m.scope}/${m.kind}${m.status === "draft" ? "/草稿待核验" : ""}, ${m.createdAt.slice(0, 10)}) ${m.text}`;
 
@@ -61,7 +68,7 @@ export function memoryExtension(host: MemoryHost) {
 		pi.on("agent_end", (e) => {
 			const user = turnPrompt;
 			turnPrompt = "";
-			if (!host.retainTurn || !user.trim()) return;
+			if (!host.retainTurn || !user.trim() || onlyMemoryLookup(e.messages as unknown as EndMessage[])) return;
 			const assistant = finalReply(e.messages as unknown as EndMessage[]);
 			if (assistant) void host.retainTurn({ user, assistant }).catch((err) => console.warn("[memory] retainTurn failed", err));
 		});

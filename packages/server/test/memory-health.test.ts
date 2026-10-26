@@ -12,7 +12,7 @@ const { LlmProxy } = await import("../src/llm-proxy.ts");
 const health = await import("../src/memory/hindsight/health.ts");
 const { bus } = await import("../src/bus.ts");
 const { recallQuery } = await import("../src/memory/index.ts");
-const { finalReply } = await import("../../ext-memory/src/index.ts");
+const { finalReply, onlyMemoryLookup } = await import("../../ext-memory/src/index.ts");
 type Req = import("../src/pi-adapter/index.ts").ChatRequest;
 type Res = import("../src/pi-adapter/index.ts").ChatResult;
 
@@ -175,4 +175,14 @@ test("测试按钮：高级记忆还没运行时，模型两步照测、召回�
 	} finally {
 		await stopLlmProxy();
 	}
+});
+
+test("只查了记忆的一轮不自动写入；做了别的事（或没调工具）照常写入", () => {
+	const call = (name: string) => ({ role: "assistant", content: [{ type: "toolCall", name, id: name, arguments: {} }] });
+	const say = { role: "assistant", content: [{ type: "text", text: "搜到了 5 条" }] };
+	assert.equal(onlyMemoryLookup([call("memory_recall"), { role: "toolResult", content: [] }, say] as never), true);
+	assert.equal(onlyMemoryLookup([call("memory_reflect"), call("memory_recall"), say] as never), true);
+	assert.equal(onlyMemoryLookup([call("memory_recall"), call("bash"), say] as never), false);
+	assert.equal(onlyMemoryLookup([call("memory_remember"), say] as never), false);
+	assert.equal(onlyMemoryLookup([say] as never), false);
 });
