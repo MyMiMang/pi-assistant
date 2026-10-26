@@ -205,7 +205,8 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 - 第二轮问「刚才那个文件叫什么，改成再见」：记得是 hello.txt，调 `write` 改好，磁盘上的文件确实变了。
 - 助理自带的主动巡检（帮手）也用 Claude Code 跑完了。
 - 写长文时停止：回答停在「已中断」，claude 进程随即被结束，不残留；正常结束的轮次也不残留进程。
-- 未实测：群聊里用 Claude Code、真正订阅登录（OAuth）下整个替换系统提示、Windows。
+- 群聊：把「CC实测」加进测试群并 @ 它，它在群里回话、经 Pi 的 `write` / `read` 建文件并读出、把内容发回群里，都正常。
+- 未实测：真正订阅登录（OAuth）下整个替换系统提示、Windows。
 
 ### 需要改方案的地方（实测发现，已按用户决定并入 §4.2 / §4.3，保留作记录）
 
