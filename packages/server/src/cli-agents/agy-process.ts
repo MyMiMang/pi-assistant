@@ -142,7 +142,7 @@ export class AgyProcess {
 				mkdirSync(dirname(full), { recursive: true, mode: 0o700 });
 				writeFileSync(full, f.content, { mode: f.mode });
 			}
-			child = spawn(o.command, buildAgyArgs({ model: o.model, conversationId: o.conversationId }), { cwd: dir, env: buildAgyEnv({ baseEnv: o.baseEnv, extra: o.extraEnv }), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+			child = spawn(o.command, buildAgyArgs({ model: o.model, conversationId: o.conversationId }), { cwd: dir, env: buildAgyEnv({ baseEnv: o.baseEnv, command: o.command, extra: o.extraEnv }), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
 		} catch (e) {
 			this.cleanup();
 			this.bridgeRun.close();

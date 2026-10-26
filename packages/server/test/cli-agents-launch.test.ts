@@ -1,7 +1,11 @@
 import "./setup.ts";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { bridgeMcpConfig, buildClaudeArgs, buildClaudeEnv, fromClaudeToolName, toClaudeToolName } from "../src/cli-agents/launch.ts";
+import { bridgeMcpConfig, buildClaudeArgs, buildClaudeEnv, buildCliEnv, commonCliDirs, fromClaudeToolName, toClaudeToolName } from "../src/cli-agents/launch.ts";
 
 const dirty: NodeJS.ProcessEnv = {
 	HOME: "/Users/x",
@@ -23,7 +27,7 @@ const dirty: NodeJS.ProcessEnv = {
 test("claude 环境：白名单，去掉 ANTHROPIC_* 和其他密钥，加固定开关", () => {
 	const env = buildClaudeEnv({ baseEnv: dirty, realHome: "/Users/x" });
 	assert.equal(env.HOME, "/Users/x");
-	assert.equal(env.PATH, "/usr/bin:/bin");
+	assert.ok(env.PATH?.startsWith("/usr/bin:/bin"), "原 PATH 保持在最前面");
 	assert.equal(env.USER, "x");
 	assert.equal(env.LANG, "zh_CN.UTF-8");
 	assert.equal(env.TMPDIR, "/var/folders/x/T/");
@@ -87,4 +91,48 @@ test("工具名前缀互相转换，非桥的工具原样", () => {
 	assert.equal(toClaudeToolName("memory_search"), "mcp__pia__memory_search");
 	assert.equal(fromClaudeToolName("mcp__pia__memory_search"), "memory_search");
 	assert.equal(fromClaudeToolName("web_search"), "web_search");
+});
+
+const SHORT_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+
+test("补 PATH：原 PATH 在前，再补命令所在目录和常用目录，不重复", () => {
+	const env = buildCliEnv({ baseEnv: { PATH: SHORT_PATH, HOME: "/Users/x" }, realHome: "/Users/x", command: "/x/y/codex", platform: "darwin" }, [], {});
+	const dirs = (env.PATH ?? "").split(":");
+	assert.deepEqual(dirs.slice(0, 4), ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]);
+	assert.ok(dirs.includes("/x/y"));
+	for (const d of commonCliDirs("/Users/x", "darwin")) assert.ok(dirs.includes(d), d);
+	assert.ok(dirs.includes("/Users/x/.local/bin") && dirs.includes("/opt/homebrew/bin"));
+	assert.equal(new Set(dirs).size, dirs.length);
+	// 命令目录已在 PATH 里时不重复
+	const again = buildCliEnv({ baseEnv: { PATH: "/usr/bin:/x/y" }, realHome: null, command: "/x/y/codex", platform: "darwin" }, [], {});
+	assert.equal(again.PATH?.split(":").filter((d) => d === "/x/y").length, 1);
+});
+
+test("补 PATH：Windows 用分号，键名沿用 Path", () => {
+	const env = buildCliEnv({ baseEnv: { Path: "C:\\Windows" }, realHome: "C:\\Users\\x", command: "C:\\tools\\codex.cmd", platform: "win32" }, [], {});
+	assert.ok(env.Path?.startsWith("C:\\Windows;C:\\tools;"));
+	assert.equal(env.PATH, undefined);
+});
+
+test("模拟 App 短 PATH 启动：补了命令目录才找得到 node", () => {
+	if (process.platform === "win32") return;
+	const dir = mkdtempSync(join(tmpdir(), "pia-path-"));
+	try {
+		const bin = join(dir, "bin");
+		mkdirSync(bin);
+		writeFileSync(join(bin, "node"), "#!/bin/sh\necho fake-node \"$@\"\nexit 0\n");
+		writeFileSync(join(bin, "fakecli"), "#!/usr/bin/env node\nconsole.log('x')\n");
+		chmodSync(join(bin, "node"), 0o755);
+		chmodSync(join(bin, "fakecli"), 0o755);
+		const command = join(bin, "fakecli");
+		const fixed = buildCliEnv({ baseEnv: { PATH: SHORT_PATH }, realHome: null, command }, [], {});
+		const ok = spawnSync(command, ["a"], { env: fixed, encoding: "utf8" });
+		assert.equal(ok.status, 0, ok.stderr);
+		assert.match(ok.stdout, /fake-node/);
+		// 不补 PATH（原样传短 PATH）时，系统 PATH 里没有 node，起不来：证明这条测试确实复现了问题
+		const broken = spawnSync(command, ["a"], { env: { PATH: SHORT_PATH }, encoding: "utf8" });
+		assert.notEqual(broken.status, 0);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });

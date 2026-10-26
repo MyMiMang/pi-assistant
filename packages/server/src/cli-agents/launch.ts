@@ -7,7 +7,7 @@
  * - 不加 `--setting-sources`：用户决定加载他自己的 Claude 设置（登录有可能写在 settings.json 的 env 里）。
  * - 内置工具全关（`--tools ""`），只允许我们的工具桥（MCP 服务名 `pia`，工具名 `mcp__pia__<名字>`）。
  */
-import { isAbsolute } from "node:path";
+import { isAbsolute, posix, win32 } from "node:path";
 import { nativeLaunchEnv, osAccountHome } from "../native-launch-env.ts";
 
 /** 工具桥在 claude 里的 MCP 服务名；claude 看到的工具名是 `mcp__pia__<工具名>`。 */
@@ -46,8 +46,36 @@ export interface ClaudeEnvInput {
 	realHome?: string | null;
 	syntheticRoots?: Array<string | undefined>;
 	platform?: NodeJS.Platform;
+	/** 要启动的命令的绝对路径：它所在目录会补进 PATH（`#!/usr/bin/env node` 的脚本要在同目录找到 node） */
+	command?: string;
 	/** 额外变量（测试用假 claude 选场景等）；不经过白名单，调用方自己负责不放密钥 */
 	extra?: Record<string, string>;
+}
+
+/** 命令行工具常见的安装目录（家目录下的 npm / bun / volta 全局目录，以及 Homebrew 和 /usr/local）。安装检测和启动补 PATH 共用这一份。 */
+export function commonCliDirs(home: string | null, platform: NodeJS.Platform = process.platform): string[] {
+	const dirs: string[] = [];
+	if (home) dirs.push(...[[".local", "bin"], [".npm-global", "bin"], [".bun", "bin"], [".volta", "bin"]].map((d) => (platform === "win32" ? win32 : posix).join(home, ...d)));
+	if (platform !== "win32") dirs.push("/opt/homebrew/bin", "/usr/local/bin");
+	return dirs;
+}
+
+/**
+ * 在原 PATH 后面补「命令所在目录 + 常用目录」并去重。原 PATH 保持在前，终端启动时行为不变。
+ * 原因：从程序坞启动的 App 只有系统 PATH，`#!/usr/bin/env node` 的命令（如 codex）找不到 node。
+ * 命令所在目录不解析软链接（`~/.local/bin/codex` 补的是 `~/.local/bin`，node 通常在同一目录）。
+ */
+function withExtraPath(current: string | undefined, command: string | undefined, home: string | null, platform: NodeJS.Platform): string {
+	const sep = platform === "win32" ? ";" : ":";
+	const out: string[] = [];
+	const add = (d: string | undefined) => {
+		if (d && !out.includes(d)) out.push(d);
+	};
+	for (const d of (current ?? "").split(sep)) add(d);
+	const pathLib = platform === "win32" ? win32 : posix;
+	if (command && pathLib.isAbsolute(command)) add(pathLib.dirname(command));
+	for (const d of commonCliDirs(home, platform)) add(d);
+	return out.join(sep);
 }
 
 /**
@@ -58,9 +86,13 @@ export function buildCliEnv(input: ClaudeEnvInput, keepExtra: readonly string[],
 	const keep = new Set([...KEEP_ENV, ...keepExtra]);
 	const base: NodeJS.ProcessEnv = {};
 	for (const [k, v] of Object.entries(input.baseEnv ?? process.env)) if (typeof v === "string" && keep.has(k.toUpperCase())) base[k] = v;
+	const realHome = input.realHome === undefined ? osAccountHome() : input.realHome;
+	const platform = input.platform ?? process.platform;
+	const pathKey = Object.keys(base).find((k) => k.toUpperCase() === "PATH") ?? (platform === "win32" ? "Path" : "PATH");
+	base[pathKey] = withExtraPath(base[pathKey], input.command, realHome, platform);
 	return nativeLaunchEnv({
 		baseEnv: base,
-		realHome: input.realHome === undefined ? osAccountHome() : input.realHome,
+		realHome,
 		syntheticRoots: input.syntheticRoots,
 		platform: input.platform,
 		extra: { ...fixed, ...input.extra },

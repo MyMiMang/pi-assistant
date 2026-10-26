@@ -79,7 +79,7 @@ export class CodexHub {
 			command,
 			args: buildCodexArgs(mcpNames),
 			cwd: this.opts.cwd(),
-			env: buildCodexEnv({ baseEnv: this.opts.baseEnv, extra: this.opts.extraEnv?.() }),
+			env: buildCodexEnv({ baseEnv: this.opts.baseEnv, command, extra: this.opts.extraEnv?.() }),
 			onNotification: (method, params) => {
 				if (holder.c !== this.client) return;
 				const id = isObj(params) && typeof params.threadId === "string" ? params.threadId : "";

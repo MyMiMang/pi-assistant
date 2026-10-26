@@ -106,7 +106,7 @@ export class ClaudeRun {
 			}
 			const { systemPrompt: _text, ...rest } = o.args ?? {};
 			const args = buildClaudeArgs({ ...rest, mcpConfigPath, systemPromptFile });
-			const env = buildClaudeEnv({ baseEnv: o.baseEnv, extra: o.extraEnv });
+			const env = buildClaudeEnv({ baseEnv: o.baseEnv, command: o.command, extra: o.extraEnv });
 			child = spawn(o.command, args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
 		} catch (e) {
 			this.cleanup();

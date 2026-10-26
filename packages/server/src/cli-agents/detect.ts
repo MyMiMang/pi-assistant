@@ -10,7 +10,7 @@ import { osAccountHome } from "../native-launch-env.ts";
 import { parseAgyModels, type AgyFamily } from "./agy-models.ts";
 import { buildAgyEnv } from "./agy-launch.ts";
 import { buildCodexEnv } from "./codex-launch.ts";
-import { buildClaudeEnv } from "./launch.ts";
+import { buildClaudeEnv, commonCliDirs } from "./launch.ts";
 
 export interface ClaudeStatus {
 	installed: boolean;
@@ -28,8 +28,9 @@ export interface ClaudeStatus {
 /** 从桌面程序启动时 PATH 往往很短，常见安装位置也要找。 */
 function candidateDirs(pathVar: string | undefined, home: string | null, platform: NodeJS.Platform, homeDirs: string[][]): string[] {
 	const dirs = (pathVar ?? "").split(delimiter).filter(Boolean);
-	if (home) dirs.push(...homeDirs.map((d) => join(home, ...d)), join(home, ".local", "bin"), join(home, ".npm-global", "bin"), join(home, ".bun", "bin"), join(home, ".volta", "bin"));
-	if (platform !== "win32") dirs.push("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin");
+	if (home) dirs.push(...homeDirs.map((d) => join(home, ...d)));
+	dirs.push(...commonCliDirs(home, platform));
+	if (platform !== "win32") dirs.push("/usr/bin");
 	return dirs;
 }
 
@@ -103,7 +104,7 @@ export interface DetectOptions {
 export async function detectClaude(opts: DetectOptions = {}): Promise<ClaudeStatus> {
 	const command = opts.command ?? findClaudeCommand({ env: opts.baseEnv });
 	if (!command) return { installed: false, loggedIn: false, error: "没有找到 claude 命令" };
-	const env = buildClaudeEnv({ baseEnv: opts.baseEnv, extra: opts.extraEnv });
+	const env = buildClaudeEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
 	const timeout = opts.timeoutMs ?? 15_000;
 	const ver = await run(command, ["--version"], env, timeout);
 	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 claude 失败：${ver.failed}` };
@@ -137,7 +138,7 @@ export interface CodexStatus {
 export async function detectCodex(opts: DetectOptions = {}): Promise<CodexStatus> {
 	const command = opts.command ?? findCodexCommand({ env: opts.baseEnv });
 	if (!command) return { installed: false, loggedIn: false, error: "没有找到 codex 命令" };
-	const env = buildCodexEnv({ baseEnv: opts.baseEnv, extra: opts.extraEnv });
+	const env = buildCodexEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
 	const timeout = opts.timeoutMs ?? 15_000;
 	const ver = await run(command, ["--version"], env, timeout);
 	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 codex 失败：${ver.failed}` };
@@ -159,7 +160,7 @@ export interface AgyStatus {
 
 /** 问 `agy models`：成功返回模型家族，失败抛带原文的错误。不读任何凭证文件。 */
 export async function listAgyModels(command: string, opts: Omit<DetectOptions, "command"> = {}): Promise<AgyFamily[]> {
-	const r = await run(command, ["models"], buildAgyEnv({ baseEnv: opts.baseEnv, extra: opts.extraEnv }), opts.timeoutMs ?? 30_000);
+	const r = await run(command, ["models"], buildAgyEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv }), opts.timeoutMs ?? 30_000);
 	if (r.failed) throw new Error(`运行 agy models 失败：${r.failed}`);
 	if (r.code !== 0) throw new Error((r.stdout + r.stderr).trim().slice(0, 300) || `agy models 退出码 ${r.code}`);
 	const families = parseAgyModels(r.stdout);
@@ -171,7 +172,7 @@ export async function listAgyModels(command: string, opts: Omit<DetectOptions, "
 export async function detectAgy(opts: DetectOptions = {}): Promise<AgyStatus> {
 	const command = opts.command ?? findAgyCommand({ env: opts.baseEnv });
 	if (!command) return { installed: false, loggedIn: false, error: "没有找到 agy 命令" };
-	const env = buildAgyEnv({ baseEnv: opts.baseEnv, extra: opts.extraEnv });
+	const env = buildAgyEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
 	const ver = await run(command, ["--version"], env, opts.timeoutMs ?? 15_000);
 	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 agy 失败：${ver.failed}` };
 	const version = /\d+\.\d+\.\d+\S*/.exec(ver.stdout)?.[0];

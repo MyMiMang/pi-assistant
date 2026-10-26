@@ -63,7 +63,7 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 ```
 - **加载用户自己的 Claude 设置**（用户 2026-10-26 拍板）：不传 `--setting-sources ""`。有的用户把登录或代理写在 `~/.claude/settings.json` 的 `env` 里（实测本机就是），不加载就变成未登录。代价是用户给 Claude Code 装的钩子、插件也会生效，在设置卡片的「?」里说明。
 - **挡掉用户的 CLAUDE.md**：环境变量 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`（`--system-prompt` 整个替换也挡不住它，实测 1）。
-- **进程环境用白名单**：只带 `HOME`、`PATH`、`USER`、`LANG`、`TMPDIR` 等必要变量，再加下面几个；继承来的 `ANTHROPIC_*` 必须去掉，否则会报 `401 Invalid bearer token`（实测 1）。检测登录（`claude auth status`）也用同一套环境。
+- **进程环境用白名单**：只带 `HOME`、`PATH`、`USER`、`LANG`、`TMPDIR` 等必要变量，再加下面几个；继承来的 `ANTHROPIC_*` 必须去掉，否则会报 `401 Invalid bearer token`（实测 1）。检测登录（`claude auth status`）也用同一套环境。`PATH` 会在原值后面补上命令所在目录（不解析软链接）和常用安装目录（`launch.ts` 的 `commonCliDirs`，检测也用它）：从程序坞启动的 App 只有系统 PATH（`/usr/bin:/bin:/usr/sbin:/sbin`），`#!/usr/bin/env node` 的命令（如 codex）找不到 node 就起不来。
 - **工具超时调大**：`MCP_TOOL_TIMEOUT=3600000` 加 `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=0`。默认 60 秒就会掐断工具调用，等审批时一定会超时（实测 3）。
 - `--system-prompt-snapshot off` 必须加：默认会在第一次请求时把系统提示「定格」，之后续用会话时传新的也不生效（实测 4）；而我们的群规则、权限档位每轮都可能变。
 - `--mcp-config` 必须是绝对路径。每次运行建一个私有临时目录（0700），里面放 MCP 配置（含令牌）和系统提示两个 0600 文件，运行结束（含 abort、进程没起来）一定删掉。
