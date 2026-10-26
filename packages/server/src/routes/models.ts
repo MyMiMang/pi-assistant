@@ -4,7 +4,7 @@ import { registryAsrProviders } from "../voice/index.ts";
 import { Hono } from "hono";
 import { modelLimitText } from "@pi-assistant/shared";
 import { bus } from "../bus.ts";
-import { checkClaudeCode, claudeCodeRegistered } from "../claude-code-service.ts";
+import { cliServices } from "../cli-services.ts";
 import { getSetting, setSetting } from "../db.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "../login-flows.ts";
 import { customProviders, defaultModel, defaultThinking, isThinkingLevel, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "../models.ts";
@@ -38,14 +38,15 @@ const registryJson = () => {
 };
 
 export function mountModelRoutes(app: Hono<Env>) {
-	// Claude Code（本机）：检测 + 重新检测（装好后就地注册渠道，不用重启服务）；只读本机状态，不读凭证
-	app.get("/api/models/claude-code", async (c) => c.json(await checkClaudeCode(models)));
-	app.post("/api/models/claude-code/recheck", async (c) => {
-		const before = claudeCodeRegistered();
-		const info = await checkClaudeCode(models);
-		if (info.registered && !before) bus.emit({ type: "settings.changed" });
-		return c.json(info);
-	});
+	// 本机命令行渠道（Claude Code / Codex）：检测 + 重新检测（装好后就地注册渠道，不用重启服务）；只读本机状态，不读凭证
+	for (const svc of cliServices) {
+		app.get(`/api/models/${svc.id}`, async (c) => c.json(await svc.check(models)));
+		app.post(`/api/models/${svc.id}/recheck`, async (c) => {
+			const info = await svc.check(models, true);
+			if (info.registered) bus.emit({ type: "settings.changed" });
+			return c.json(info);
+		});
+	}
 	// ---------------------------------------------------------------- 模型（完全由 Pi 的 provider 目录驱动）
 	app.get("/api/models/providers", (c) => {
 		const custom = new Map(customProviders.list().map((m) => [m.id, m]));

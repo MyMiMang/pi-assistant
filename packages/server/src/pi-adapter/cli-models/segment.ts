@@ -6,7 +6,11 @@
  * 文字 / 思考 / 工具调用事件成对；结束前自动补上没关的块；cost 一律 0（订阅不显示钱）。
  */
 import { parseStreamingJson, type AssistantMessage, type AssistantMessageEventStream, type Api, type Model, type ToolCall, type Usage } from "@earendil-works/pi-ai";
+import type { CodexEvent } from "../../cli-agents/codex-events.ts";
 import type { ClaudeEvent, TokenUsage } from "../../cli-agents/events.ts";
+
+/** `SegmentBuilder.handle` 认得的事件：claude 和 codex 的文字 / 思考 / 工具调用事件同形 */
+export type SegmentEvent = ClaudeEvent | CodexEvent;
 
 export const emptyUsage = (): Usage => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
 
@@ -57,6 +61,17 @@ export class SegmentBuilder {
 		this.sawUsage = true;
 	}
 
+	/** 用量整个换成这个值（codex：`thread/tokenUsage/updated` 的 last 是「最近一次模型请求」，不是累加；Pi 靠最后一条助理消息的用量估上下文，叠加会虚高） */
+	setUsage(u: TokenUsage): void {
+		const total = this.message.usage;
+		total.input = u.input;
+		total.output = u.output;
+		total.cacheRead = u.cacheRead;
+		total.cacheWrite = u.cacheWrite;
+		total.totalTokens = u.input + u.output + u.cacheRead + u.cacheWrite;
+		this.sawUsage = true;
+	}
+
 	/** 这一段没有任何 `message_end` 用量时（如直接报错），退而用整轮的 `result.usage`。 */
 	useFallbackUsage(u: TokenUsage): void {
 		if (!this.sawUsage) this.addUsage(u);
@@ -77,7 +92,7 @@ export class SegmentBuilder {
 	}
 
 	/** 处理一个 claude 事件（文字 / 思考 / 工具调用 / 用量）；一段何时结束由调用方看 `message_end` 和 `result` 决定。 */
-	handle(ev: ClaudeEvent): void {
+	handle(ev: SegmentEvent): void {
 		if (this.ended) return;
 		this.start();
 		const m = this.message;

@@ -307,8 +307,8 @@ test("临时文件不残留：每次运行的私有目录都删掉了", async ()
 	scenario = "text";
 	const before = readdirSync(tmpdir()).filter((n) => n.startsWith("pia-claude-"));
 	await run(ctx([user("你好")]), { sessionId: "tmp-1" });
-	await sleep(50);
-	const after = readdirSync(tmpdir()).filter((n) => n.startsWith("pia-claude-") && !before.includes(n));
-	assert.deepEqual(after, []);
+	const leftover = () => readdirSync(tmpdir()).filter((n) => n.startsWith("pia-claude-") && !before.includes(n));
+	await until(() => leftover().length === 0, "私有目录被删掉（前面测试里被结束的进程可能还在收尾）", 3000).catch(() => {});
+	assert.deepEqual(leftover(), []);
 	assert.ok(existsSync(join(dataDir, "cli-models", "claude-sessions.json")), "对照表写进了数据目录");
 });

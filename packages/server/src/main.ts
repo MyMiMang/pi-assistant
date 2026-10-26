@@ -8,7 +8,7 @@ import { startHttp } from "./http.ts";
 import { startSetupWatcher } from "./setup-code.ts";
 import { identity } from "./identity.ts";
 import { initModels } from "./models.ts";
-import { disposeClaudeCode } from "./claude-code-service.ts";
+import { cliServices } from "./cli-services.ts";
 import { migrateLegacyImageProviders } from "./image-gen/index.ts";
 import { checkPiCompat } from "./pi-adapter/index.ts";
 import { bootstrap, initHostAccessWatch, listAgents } from "./runtime.ts";
@@ -76,7 +76,7 @@ if (hostSettings().enabled)
 for (const sig of ["SIGINT", "SIGTERM"] as const)
 	process.on(sig, () => {
 		// 助理电脑虚拟机（macOS Lima）/ 发行版（Windows WSL）：交给独立进程关机，不拖慢退出；登录状态在磁盘里不受影响
-		disposeClaudeCode();
+		for (const svc of cliServices) svc.dispose();
 		desktopBackend().stopDetached?.();
 		// Hindsight 守护进程是独立进程：退出前停掉它（最多等 6 秒）
 		void Promise.race([Promise.all([sidecar.stop(), closeAllBrowsers(), stopDaemon(true), stopChannels()]), new Promise((r) => setTimeout(r, 6000))]).finally(() => process.exit(0));

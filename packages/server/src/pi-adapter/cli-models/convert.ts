@@ -3,7 +3,7 @@
  * 「同一轮续接」的判断。不起进程、不碰文件，方便单测（方案 docs/design/cli-models.md §4.3 / §4.4）。
  */
 import type { AssistantMessage, ImageContent, Message, TextContent, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
-import type { CallToolResult } from "../../cli-agents/tool-bridge.ts";
+import type { CallToolResult, Tool } from "../../cli-agents/tool-bridge.ts";
 
 /** Anthropic 内容块（文字 / 图片），原样写进 claude 的 stdin */
 export type ClaudeBlock = Record<string, unknown>;
@@ -127,3 +127,37 @@ export function matchContinuation(messages: readonly Message[], pendingIds: Read
 
 /** 多条用户消息的内容拼成一组 claude 内容块 */
 export const userMessagesToClaude = (msgs: readonly UserMessage[]): ClaudeBlock[] => msgs.flatMap((m) => userContentToClaude(m.content));
+
+/** Pi 的工具定义 → 名字 / 说明 / JSON Schema（claude 的 MCP 工具、codex 的动态工具共用；参数顶层必须是 object）。 */
+export const toolDefOf = (t: { name: string; description: string; parameters: unknown }): Tool => {
+	const schema = JSON.parse(JSON.stringify(t.parameters ?? {})) as Record<string, unknown>;
+	return { name: t.name, description: t.description, inputSchema: { ...schema, type: "object" } as Tool["inputSchema"] };
+};
+
+/** Codex `turn/start` / `turn/steer` 的输入项（文字 / 图片） */
+export type CodexInputItem = { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string };
+
+/** claude 内容块（文字 / base64 图片，`renderFreshInput` 等的统一输出）→ Codex 输入项。 */
+export function blocksToCodexInput(blocks: readonly ClaudeBlock[]): CodexInputItem[] {
+	const out: CodexInputItem[] = [];
+	for (const b of blocks) {
+		if (b.type === "text" && typeof b.text === "string" && b.text) out.push({ type: "text", text: b.text, text_elements: [] });
+		else if (b.type === "image") {
+			const src = b.source as { media_type?: string; data?: string } | undefined;
+			if (src?.data) out.push({ type: "image", url: `data:${src.media_type ?? "image/png"};base64,${src.data}` });
+		}
+	}
+	return out;
+}
+
+/** Pi 的工具结果 → Codex 动态工具的回包（文字 `inputText`、图片 `inputImage`）。 */
+export function toolResultToCodex(msg: Pick<ToolResultMessage, "content" | "isError">): { success: boolean; contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> } {
+	const contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> = [];
+	for (const b of msg.content) {
+		if (b.type === "text") {
+			if (b.text) contentItems.push({ type: "inputText", text: b.text });
+		} else contentItems.push({ type: "inputImage", imageUrl: `data:${b.mimeType};base64,${b.data}` });
+	}
+	if (!contentItems.length) contentItems.push({ type: "inputText", text: msg.isError ? "工具执行失败，没有输出" : "（没有输出）" });
+	return { success: !msg.isError, contentItems };
+}

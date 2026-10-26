@@ -6,6 +6,7 @@
  */
 import { db, uid } from "../db.ts";
 import { models } from "../models.ts";
+import { CLI_PROVIDER_IDS } from "../pi-adapter/cli-models/provider.ts";
 import { computeCost, getFx, getOverrides, type Price, type PriceSource, resolvePriceFrom, type TokenUsage } from "./prices.ts";
 
 db.exec(`
@@ -35,8 +36,8 @@ export const dayOf = (ts: number) => new Date(ts).toLocaleDateString("sv-SE", { 
 
 export function resolvePrice(provider: string, id: string) {
 	const m = models?.getModel(provider, id) as { cost?: never } | undefined;
-	// 本地测试用的 mock 服务不去 models.dev 按名字找（“echo”会撞上别家的同名模型）
-	return resolvePriceFrom({ provider, id, piCost: m?.cost, overrides: getOverrides(), fx: getFx(), ...(provider === "mock" ? { db: [] } : {}) });
+	// 本地测试用的 mock 服务不去 models.dev 按名字找（“echo”会撞上别家的同名模型）；本机命令行渠道同理（见 CLI_PROVIDER_IDS）
+	return resolvePriceFrom({ provider, id, piCost: m?.cost, overrides: getOverrides(), fx: getFx(), ...(provider === "mock" || CLI_PROVIDER_IDS.includes(provider) ? { db: [] } : {}) });
 }
 
 export interface RecordInput extends TokenUsage {

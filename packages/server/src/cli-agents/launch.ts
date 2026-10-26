@@ -17,19 +17,20 @@ export const toClaudeToolName = (name: string): string => `${BRIDGE_PREFIX}${nam
 /** 去掉桥的前缀还原成 Pi 里的工具名；不是桥的工具（如 claude 自带的）原样返回。 */
 export const fromClaudeToolName = (name: string): string => (name.startsWith(BRIDGE_PREFIX) ? name.slice(BRIDGE_PREFIX.length) : name);
 
-/** 允许传给 claude 的环境变量名（按大写比较，Windows 不分大小写；`proxy` 这类小写写法也命中）。 */
+/** 允许传给命令行工具（claude / codex）的环境变量名（按大写比较，Windows 不分大小写；`proxy` 这类小写写法也命中）。 */
 const KEEP_ENV = new Set([
 	"HOME", "USER", "LOGNAME", "PATH", "SHELL", "TERM", "TZ",
 	"LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES",
 	"TMPDIR", "TEMP", "TMP",
 	"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
-	// 用户自己指定的 Claude 配置目录（只是位置，不是密钥）
-	"CLAUDE_CONFIG_DIR",
 	// Windows
 	"SYSTEMROOT", "WINDIR", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "COMSPEC", "PATHEXT",
 	// 网络环境（代理 / 证书）：不是模型密钥，不带的话用代理上网的用户会连不上
 	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
 ]);
+
+/** Claude 额外允许的变量：用户自己指定的配置目录（只是位置，不是密钥） */
+const CLAUDE_KEEP_ENV = ["CLAUDE_CONFIG_DIR"];
 
 /** 固定加的开关：挡掉用户的 CLAUDE.md；工具调用等审批时不被默认 60 秒超时掐断（实测 1、3）。 */
 export const CLAUDE_FIXED_ENV: Record<string, string> = {
@@ -49,18 +50,25 @@ export interface ClaudeEnvInput {
 	extra?: Record<string, string>;
 }
 
-/** 给 `claude` 进程（含 `claude auth status`）用的环境：白名单 + 固定开关。 */
-export function buildClaudeEnv(input: ClaudeEnvInput = {}): NodeJS.ProcessEnv {
+/**
+ * 白名单环境（claude / codex 共用）：只留 `KEEP_ENV` 和 `keepExtra` 里的变量，再加 `fixed` 开关和 `input.extra`。
+ * 家目录 / 临时目录的「OS 账户语义」处理在 `nativeLaunchEnv`。
+ */
+export function buildCliEnv(input: ClaudeEnvInput, keepExtra: readonly string[], fixed: Record<string, string>): NodeJS.ProcessEnv {
+	const keep = new Set([...KEEP_ENV, ...keepExtra]);
 	const base: NodeJS.ProcessEnv = {};
-	for (const [k, v] of Object.entries(input.baseEnv ?? process.env)) if (typeof v === "string" && KEEP_ENV.has(k.toUpperCase())) base[k] = v;
+	for (const [k, v] of Object.entries(input.baseEnv ?? process.env)) if (typeof v === "string" && keep.has(k.toUpperCase())) base[k] = v;
 	return nativeLaunchEnv({
 		baseEnv: base,
 		realHome: input.realHome === undefined ? osAccountHome() : input.realHome,
 		syntheticRoots: input.syntheticRoots,
 		platform: input.platform,
-		extra: { ...CLAUDE_FIXED_ENV, ...input.extra },
+		extra: { ...fixed, ...input.extra },
 	}).env;
 }
+
+/** 给 `claude` 进程（含 `claude auth status`）用的环境：白名单 + 固定开关。 */
+export const buildClaudeEnv = (input: ClaudeEnvInput = {}): NodeJS.ProcessEnv => buildCliEnv(input, CLAUDE_KEEP_ENV, CLAUDE_FIXED_ENV);
 
 export interface ClaudeArgsInput {
 	/** 工具桥 MCP 配置文件的绝对路径（私有临时文件；配置里有令牌，不能放命令行，`ps` 看得到） */

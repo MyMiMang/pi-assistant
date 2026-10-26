@@ -99,7 +99,11 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 - 不用 Claude Code 自己的内置工具、子代理、斜杠命令、CLAUDE.md、用户的 Claude 插件。
 - 不支持 API key 方式（API key 用户直接用现有的 Anthropic 渠道就行）。
 
-## 5. 第二期：Codex 当模型（已核实，2026-10-26，codex-cli 0.161.0，ChatGPT 登录）
+## 5. 第二期：Codex 当模型（已核实，2026-10-26，codex-cli 0.161.0，ChatGPT 登录；已按本节实现，未提交，假 codex 测试通过、真实 codex 未做对话实测）
+
+**用户 MCP 名字取法（本机真实 codex 核实）**：起 `codex app-server` 后 `initialize` → `config/read{includeLayers:false}`，`config.mcp_servers` 的键就是名字（本机 `node_repl`）；`mcpServerStatus/list` 返回同名。实现取前者、失败再退后者；有名字就换成逐个 `enabled=false` 的进程。
+
+**共用骨架**：渠道流程在 `pi-adapter/cli-models/channel-core.ts`（每家只写 `CliBackend`），服务层 `cli-channel-service.ts` + `cli-services.ts`，卡片 `CliAgentCard.tsx`；加 Antigravity 只需新增一份 backend、一份适配、一条卡片文案。
 
 **结论：能做到纯大脑（第一档）。** 用官方 `codex app-server`（JSON-RPC over stdio）的「动态工具」（`dynamicTools`）：工具由我们在 `thread/start` 里声明，模型调用时 app-server 反过来向客户端发请求，等我们回结果；Codex 自带的 shell、改文件、网页搜索、子代理、浏览器、图片生成、插件、用户配置里的 MCP 等都能用启动参数关掉。比 Claude 那套更简单：不需要本机 MCP 工具桥，调用 id 也是 Codex 自己给的 `callId`（等于模型的 `call_id`），不用猜。
 
