@@ -52,7 +52,7 @@ test("设置码横幅：地址、有效期、找回方法", () => {
 
 test("服务器版首次设置：设置码 → 主人设备 → 远程管理 / 批准新设备", { timeout: 120_000 }, async () => {
 	const code = await waitFor(() => codes()[0]);
-	assert.match(out, /服务器模式/);
+	await waitFor(() => /服务器模式/.test(out) || undefined); // 设置码先于「服务已启动」那行打印，别抢读
 	const file = join(data, "setup-code.txt");
 	assert.equal(readFileSync(file, "utf8").trim(), code);
 	assert.equal(statSync(file).mode & 0o777, 0o600, "设置码文件只有服务账号能读");
