@@ -232,6 +232,7 @@
 | `ImageViewer.tsx` | 图片查看器 |
 | `Markdown.tsx` | Markdown 渲染 |
 | `MessageReply.tsx` | 引用 / 复制按钮与消息右键菜单 |
+| `JumpToLatest.tsx` | 单聊 / 群聊「回到最新」圆按钮（翻上去超过一屏出现，带新消息数） |
 | `ContextMenu.tsx` | 通用右键小菜单 + 应用级右键接管（选了字给复制、链接给复制链接，输入框 / 图片保留系统菜单） |
 | `Cards.tsx` | 审批/提问/任务卡片 |
 | `Tasks.tsx` | 任务展示共用件 |

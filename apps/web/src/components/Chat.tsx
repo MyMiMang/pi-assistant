@@ -1,5 +1,6 @@
 import { SubagentTasks } from "./Subagents";
 import { AgentStatusLine } from "./MemberStatus";
+import { JumpToLatest } from "./JumpToLatest";
 import { HostControlBar, HostTierButton } from "./HostControl";
 import { ModelPicker } from "./ModelPicker";
 import { ContextRing } from "./ContextRing";
@@ -232,7 +233,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 				</div>
 			</div>
 			{replyCtx.menuEl}
-			{jumpState && !quote && <JumpHint s={jumpState.s} onRetry={retryJump} />}
+			{jumpState && !quote && <JumpHint s={jumpState.s} onRetry={retryJump} />}<JumpToLatest scroller={scroller} wrap={composerWrap} count={list.length} onLatest={st?.window ? () => { stick.current = true; void useStore.getState().returnToLatest(agentId); } : undefined} />
 			{forkNotice && (
 				<div className={cx("pa-fork-notice", forkNotice.kind === "error" && "error")} role="status" data-testid="fork-notice">
 					<span>{forkNotice.text}</span>

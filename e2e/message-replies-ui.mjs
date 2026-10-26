@@ -132,7 +132,7 @@ async function installRoutes(context, state) {
 		}
 		if (p.endsWith("/conversations/c2b/select")) return json({});
 				if (p.startsWith("/api/subagents")) return json([]);
-		if (p === "/api/rooms/r1/messages" && req.method() === "GET") return json(ROOMMSGS);
+		if (p === "/api/rooms/r1/messages" && req.method() === "GET") return json(state.roomFiller ? [...state.roomFiller, ...ROOMMSGS] : ROOMMSGS);
 		if (p === "/api/rooms/r1/messages" && req.method() === "POST") {
 			state.roomSent.push(JSON.parse(req.postData() ?? "{}"));
 			return json({});
@@ -373,6 +373,38 @@ try {
 	const pad = await p2.evaluate(() => { const s = document.querySelector(".pa-scroll"); return s ? parseInt(getComputedStyle(s).paddingBottom) : 0; });
 	check("390 引用条抬高后底部留白同步（最后一条不被遮）", pad > 100, `padding=${pad}`);
 	await p2.screenshot({ path: join(OUT, "mobile-390-quote.png") });
+
+	console.log("\n── 回到最新圆按钮（群聊长历史） ──");
+	state.roomFiller = Array.from({ length: 40 }, (_, i) => mkMsg({ id: `rf${i}`, agent_id: i % 2 ? "a1" : "", room_id: "r1", role: i % 2 ? "assistant" : "user", content: `第 ${i + 1} 条历史消息，用来把群聊撑长。`, seq: -100 + i, created_at: now - 100000 + i * 100, updated_at: now - 100000 + i * 100 }));
+	for (const [vw, mode, shot] of [[{ width: 1440, height: 900 }, "dark", "jump-latest-dark.png"], [{ width: 390, height: 700 }, "light", "jump-latest-390.png"]]) {
+		const c3 = await browser.newContext({ viewport: vw, locale: "zh-CN" });
+		await installRoutes(c3, state);
+		const p3 = await c3.newPage();
+		await p3.goto(`${base}/?room=r1`);
+		await p3.locator('[data-mid="ra1"]').waitFor({ timeout: 20_000 });
+		await p3.evaluate((m) => (document.documentElement.dataset.mode = m), mode);
+		await p3.waitForTimeout(300);
+		check(`${vw.width} 贴底时不显示「回到最新」`, (await p3.locator('[data-testid="jump-latest"]').count()) === 0);
+		await p3.evaluate(() => { const s = document.querySelector(".pa-scroll"); s.scrollTop = s.scrollHeight - s.clientHeight * 2 - 300; });
+		await p3.locator('[data-testid="jump-latest"]').waitFor({ timeout: 5000 });
+		const geo = await p3.evaluate(() => {
+			const b = document.querySelector('[data-testid="jump-latest"]').getBoundingClientRect();
+			const s = document.querySelector(".pa-scroll").getBoundingClientRect();
+			const comp = document.querySelector("textarea").closest("form, .pa-composer, [class*=composer]")?.getBoundingClientRect() ?? document.querySelector("textarea").getBoundingClientRect();
+			return { cx: b.left + b.width / 2, mid: s.left + s.width / 2, bottom: b.bottom, compTop: comp.top };
+		});
+		check(`${vw.width} 往上翻超过一屏出现，在消息区正中`, Math.abs(geo.cx - geo.mid) < 3, JSON.stringify(geo));
+		check(`${vw.width} 按钮在输入框上方、不压输入框`, geo.bottom <= geo.compTop, JSON.stringify(geo));
+		const ov = await p3.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+		check(`${vw.width} 不横向溢出`, ov <= 1, `overflow=${ov}`);
+		await p3.screenshot({ path: join(OUT, shot) });
+		await p3.locator('[data-testid="jump-latest"]').click();
+		await p3.waitForFunction(() => { const s = document.querySelector(".pa-scroll"); return s.scrollHeight - s.scrollTop - s.clientHeight < 4; }, null, { timeout: 5000 });
+		await p3.waitForTimeout(200);
+		check(`${vw.width} 点了滚到最新，按钮隐藏`, (await p3.locator('[data-testid="jump-latest"]').count()) === 0);
+		await c3.close();
+	}
+	state.roomFiller = null;
 
 	console.log(`\n${failed === 0 ? "全部通过" : `${failed} 项失败`}`);
 	process.exitCode = failed === 0 ? 0 : 1;

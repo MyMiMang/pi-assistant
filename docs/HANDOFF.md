@@ -15,6 +15,7 @@
 - 已随 beta.39 发布：每条消息加「复制」按钮；右键不再弹浏览器自带菜单，改成程序自己的（`ContextMenu.tsx`）；所有复制统一走 `clipboard.ts`（手机局域网 http 也能复制）。message-replies-ui e2e 通过；桌面程序（Tauri）里的右键还没真机看过。
 - 未打包：聊天里每个代码块（提示词黑框）右上角加「复制」，只复制这一块原文，点后显示「已复制」；复用 `MessageReply.tsx` 的 `CopyButton` + `clipboard.ts`，单聊群聊共用 `Markdown.tsx`。message-replies-ui e2e 覆盖。
 - 未打包：群顶部「N 人等你」和单聊顶部「等你审批 / 等你回答」可点：跳到等你处理的卡片并高亮，多张时每点一次跳下一张（最早的先）；复用 `useMessageJump`（没加载的会定位加载）。审批 / 提问卡外层加了 `data-mid`。e2e `room-member-status-ui`。
+- 未打包：单聊 / 群聊往上翻超过一屏时，输入框上方正中出现「回到最新」圆按钮，翻上去期间来的新消息显示条数，在历史窗口里点它等于「回到最新」；`JumpToLatest.tsx` 只读滚动位置、不改 stick。e2e：message-replies-ui（群聊 1440 深色 / 390）、room-member-status-ui（单聊新消息条数）。
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
 - 群聊协作已实现（未打包，[设计](design/group-collaboration.md)）：任务由负责人派的帮手在它自己的任务会话里执行，管理者按事件唤醒，三种卡住检测，等你决定，停群不停任务；work-items / rooms 已拆到 600 行以下。单聊入口还没接（核心与来源无关，单聊只需在入口调 setWorkSourceProvider + workItemTools）。
 - 任务类机制合并（[决策 0014](decisions/0014-task-and-helper.md)，[设计](design/task-architecture-analysis.md) §5.5 / §7，未打包）：6 步全部做完（第 6 步：界面改名 + 旧 `/api/tasks` 下线）。剩余事项见下面「接手说明」。

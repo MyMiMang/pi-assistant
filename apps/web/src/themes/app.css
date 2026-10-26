@@ -496,3 +496,9 @@ button.pa-info-row:hover .pa-info-row-main > strong { color: var(--acc); }
 }
 .pa-info-identity .pa-avatar, .pa-profile-avatar .pa-avatar { border-radius: var(--r-av, var(--r-sm)); }
 .pa-info-details > summary:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; border-radius: 6px; }
+/* 回到最新：消息区底部正中、输入框上方的小圆按钮（JumpToLatest.tsx） */
+.pa-jump-latest { position: absolute; left: 50%; transform: translateX(-50%); z-index: 19; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel, var(--card)); color: var(--fg); box-shadow: var(--shadow); }
+.pa-jump-latest:hover { color: var(--acc); }
+.pa-jump-latest:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.pa-jump-latest .pa-ic { width: 18px; height: 18px; }
+.pa-jump-latest-n { position: absolute; top: -6px; right: -8px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--acc); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }

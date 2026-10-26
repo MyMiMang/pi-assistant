@@ -3,7 +3,7 @@ import { SubagentTasks } from "./Subagents";
 import { RoomWorkButtons } from "./RoomWork";
 import { ArrowUp, AtSign, Crown, Loader2, PanelRight, Plus, Settings2, Square, Trash2, Users } from "lucide-react";
 import { RoomCost } from "./Usage";
-import { RoomMembers } from "./MemberStatus";
+import { RoomMembers } from "./MemberStatus"; import { JumpToLatest } from "./JumpToLatest";
 import { pendingCardOf } from "../member-status";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, uploadRoom } from "../api";
@@ -248,7 +248,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 			<RoomComposer room={room} running={st.running} drag={drag} ref={composer} replyKey={rKey} onJump={jump} jumpState={jumpState} onRetryJump={retryJump} wrapRef={composerWrap} />
 			<RoomSettings room={room} open={settings} onClose={() => setSettings(false)} />
 			{replyCtx.menuEl}
-			{jumpState && !quote && <JumpHint s={jumpState.s} onRetry={retryJump} />}
+			{jumpState && !quote && <JumpHint s={jumpState.s} onRetry={retryJump} />}<JumpToLatest scroller={scroller} wrap={composerWrap} count={list.length} onLatest={roomWindow[roomId] ? () => void returnLatest() : undefined} />
 		</div>
 	);
 }

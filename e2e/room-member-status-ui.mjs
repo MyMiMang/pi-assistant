@@ -123,6 +123,24 @@ try {
 	await wait(async () => (await stateOf(line)) === "idle", 20000, "单聊停下后空闲");
 	await page.locator("header").screenshot({ path: join(out, "8-chat-idle.png") });
 
+	// 7) 单聊「回到最新」：翻上去后来了新消息，圆按钮上显示条数；点了回到底部、按钮消失
+	for (let i = 0; i < 4; i++) {
+		await j(`/api/agents/${a.id}/messages`, "POST", { text: `第 ${i + 1} 段很长的话\n\n${"填充内容 ".repeat(80)}` });
+		await wait(async () => (await stateOf(line)) === "idle", 20000, `第 ${i + 1} 条回完`);
+	}
+	await page.setViewportSize({ width: 1440, height: 520 });
+	await page.waitForTimeout(300);
+	await page.evaluate(() => { const s = document.querySelector(".pa-scroll"); s.scrollTop = 0; });
+	await page.getByTestId("jump-latest").waitFor({ timeout: 5000 });
+	await j(`/api/agents/${a.id}/messages`, "POST", { text: "翻上去时来的新消息" });
+	await wait(async () => (await page.getByTestId("jump-latest-count").count()) > 0, 20000, "新消息条数");
+	assert.ok(Number(await page.getByTestId("jump-latest-count").innerText()) >= 1, "显示新消息条数");
+	const g = await page.evaluate(() => ({ b: document.querySelector('[data-testid="jump-latest"]').getBoundingClientRect().bottom, c: document.querySelector("textarea").closest(".pa-composer, form")?.getBoundingClientRect().top ?? document.querySelector("textarea").getBoundingClientRect().top - 12 }));
+	assert.ok(g.b <= g.c, `按钮不压输入框 ${JSON.stringify(g)}`);
+	await page.screenshot({ path: join(out, "9-jump-latest-count.png") });
+	await page.getByTestId("jump-latest").click();
+	await wait(async () => (await page.getByTestId("jump-latest").count()) === 0, 5000, "回到底部后按钮消失");
+
 	assert.deepEqual(errors, []);
 	console.log("PASS room-member-status: 群成员 / 群总状态 / 单聊状态随实际情况变化，全停下明确显示，390 不溢出");
 } finally {
