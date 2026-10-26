@@ -53,6 +53,8 @@ try {
 	// 备用模型：复用模型下拉，选一个就多出下一个空位
 	await panel.getByLabel("备用模型 1").selectOption("mock/echo-think");
 	await panel.getByLabel("备用模型 2").waitFor();
+	// 备用和主模型同一渠道（这里都是 mock）：提醒额度/限流时会一起失败
+	assert.match(await panel.getByTestId("hs-fallback-same-channel").innerText(), /同一个渠道/);
 	await panel.getByTestId("hs-fallbacks").scrollIntoViewIfNeeded();
 	await page.screenshot({ path: join(SHOTS, "memory-health-test-steps.png"), fullPage: true });
 	await panel.getByRole("button", { name: "保存", exact: true }).click();

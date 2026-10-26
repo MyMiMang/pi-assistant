@@ -80,6 +80,9 @@ export function HindsightSettings() {
 	const h = d.inUse && d.status.state === "ready" ? d.status.health : undefined;
 	const badge = h?.level === "failing" ? { label: "有问题", tone: "red" as const } : h?.level === "slow" ? { label: "变慢", tone: "amber" as const } : st;
 	const fallbacks = s.llmFallbacks ?? [];
+	// 备用模型和主模型走同一个渠道（同一中转站 / 同一个 Key）：额度用完或限流时会一起失败，换了等于没换
+	const primaryProvider = (s.llm ?? d.autoModel)?.provider;
+	const sameChannel = !!primaryProvider && fallbacks.some((f) => f.provider === primaryProvider);
 	const embChanged = JSON.stringify(s.embedding) !== JSON.stringify(d.settings.embedding);
 	const dirty = JSON.stringify(s) !== JSON.stringify(d.settings);
 	const save = async () => {
@@ -229,6 +232,9 @@ export function HindsightSettings() {
 								<ModelOptions models={d.models} />
 							</select>
 						))}
+						{sameChannel && (
+							<p className="text-xs text-amber-600" data-testid="hs-fallback-same-channel">备用模型和主模型在同一个渠道（{primaryProvider}）：额度用完、限流或冷却时会一起失败，起不到备用作用。建议选另一个渠道的模型。</p>
+						)}
 					</div>
 					<p className="text-xs text-mut" data-testid="hs-usage">
 						已用 {d.usage.requests} 次，约 {d.usage.input + d.usage.output} tokens
