@@ -250,10 +250,10 @@ function FastLine({ meta }: { meta: MessageFastMeta }) {
 function UsageLine({ u, model }: { u: MsgUsage; model: string }) {
 	const fx = useFx();
 	const inTok = u.input + u.cacheRead + u.cacheWrite;
-	const detail = `${model}\n输入 ${fmtTok(u.input)} · 读缓存 ${fmtTok(u.cacheRead)} · 写缓存 ${fmtTok(u.cacheWrite)}\n输出 ${fmtTok(u.output)}${u.reasoning ? `（推理 ${fmtTok(u.reasoning)}）` : ""}\n费用 ${fmtMoney(u.cost, fx)}${u.saved ? ` · 缓存省下 ${fmtMoney(u.saved, fx)}` : ""}`;
+	const detail = `${model}\n输入 ${fmtTok(u.input)} · 读缓存 ${fmtTok(u.cacheRead)} · 写缓存 ${fmtTok(u.cacheWrite)}\n输出 ${fmtTok(u.output)}${u.reasoning ? `（推理 ${fmtTok(u.reasoning)}）` : ""}${(u.cost ?? 0) > 0 ? `\n费用 ${fmtMoney(u.cost, fx)}${u.saved ? ` · 缓存省下 ${fmtMoney(u.saved, fx)}` : ""}` : ""}`;
 	return (
 		<div className="pa-usage" title={detail} data-testid="msg-usage">
-			{fmtTok(inTok)} → {fmtTok(u.output)} token{inTok ? ` · 命中 ${Math.round((u.cacheRead / inTok) * 100)}%` : ""} · {fmtMoney(u.cost, fx)}
+			{fmtTok(inTok)} → {fmtTok(u.output)} token{inTok ? ` · 命中 ${Math.round((u.cacheRead / inTok) * 100)}%` : ""}{(u.cost ?? 0) > 0 ? ` · ${fmtMoney(u.cost, fx)}` : ""}
 		</div>
 	);
 }

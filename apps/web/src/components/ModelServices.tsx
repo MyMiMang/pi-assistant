@@ -15,12 +15,12 @@ import { PROVIDER_ICONS } from "./provider-icons";
 import type { CustomProviderMeta, ModelCapability, ModelType, Provider, RegistryModel, RegistryProvider } from "../types";
 import { ImageProviderForm, type ImageModelsData, useImageModels } from "./ImageModels";
 import { CustomProviderForm, deleteImpact, useCustomProviders } from "./CustomProvider";
+import { ClaudeCodeCard } from "./ClaudeCodeCard";
 import { RelayDetail } from "./RelayDetail";
 import { ProviderSetup, useProviders } from "./Models";
 import { StrengthTags, useModelStrengths } from "./ModelStrengths";
 import { Badge, Button, cx, fmtSize, Fold, Help, Input, Modal, Select, useConfirm } from "./ui";
 import { useStore } from "../store";
-
 const CAPS: ModelCapability[] = ["chat", "vision", "image", "classifier"];
 const CAP_LABEL: Record<ModelCapability, string> = { chat: "对话", vision: "识图", image: "生图", classifier: "分类器" };
 const CAP_TONE: Record<ModelCapability, "accent" | "green" | "amber" | "zinc"> = { chat: "accent", vision: "green", image: "amber", classifier: "zinc" };
@@ -585,7 +585,6 @@ export function ModelServicesPanel() {
 	const [q, setQ] = useState("");
 	const [addOpen, setAddOpen] = useState(false);
 	const [expanded, setExpanded] = useState(true);
-	const [, ask] = useConfirm();
 	const [confirmUi, askConfirm] = useConfirm();
 	const loadRegistry = () =>
 		api<{ providers: RegistryProvider[] }>("/api/models/registry")
@@ -614,8 +613,8 @@ export function ModelServicesPanel() {
 		await api(`/api/models/custom/${p.id}`, { method: "DELETE" });
 		reloadAll();
 	};
-	// 本地语音由语音设置里的管理卡展示，registry 里的条目不重复成卡片
-	const services = useMemo(() => registry.filter((s) => s.id !== "local-sensevoice"), [registry]);
+	// 本地语音、Claude Code 由各自的管理卡展示，registry 里的条目不重复成卡片
+	const services = useMemo(() => registry.filter((s) => s.id !== "local-sensevoice" && s.id !== "claude-code"), [registry]);
 	const list = useMemo(() => {
 		const f = services.filter((s) => !q || `${s.name} ${s.id}`.toLowerCase().includes(q.toLowerCase()));
 		return [...f].sort((a, b) => Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name));
@@ -636,6 +635,7 @@ export function ModelServicesPanel() {
 			<div className="space-y-3" data-testid="model-services-panel">
 				{confirmUi}
 				<DefaultImageModel images={images} onReload={reloadAll} />
+				<ClaudeCodeCard onChanged={reloadAll} />
 				<div className="flex flex-wrap items-center gap-2">
 					<div className="relative min-w-40 flex-1">
 						<Search size={15} className="absolute top-2.5 left-2.5 text-zinc-400" />

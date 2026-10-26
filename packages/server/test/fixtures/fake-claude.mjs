@@ -3,7 +3,7 @@
 // 读 --mcp-config（内联 JSON 或文件），按环境变量 FAKE_CLAUDE_SCENARIO 输出 stream-json，
 // 并像真的 claude 一样通过 HTTP 调工具桥的 MCP（tools/call 带 _meta["claudecode/toolUseId"]）。
 // 场景：text | env-dump | not-logged-in | two-tools | cancel | hang | interject
-//       | meta（回报收到的参数和首条消息）| one-tool | tool-interject | stall | resume-missing | image-tool | think
+//       | meta（回报收到的参数和首条消息）| one-tool | bash-approval（调 Pi 的 bash，e2e 走审批卡）| tool-interject | stall | resume-missing | image-tool | think
 // 另外支持 `--version`、`auth status`（FAKE_CLAUDE_LOGGED_IN=0 时模拟未登录，退出码 1）。
 import { readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
@@ -178,18 +178,20 @@ if (scenario === "text") {
 	se({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } });
 	se({ type: "message_stop" });
 	result("想好了");
-} else if (scenario === "one-tool" || scenario === "tool-interject" || scenario === "image-tool") {
+} else if (scenario === "one-tool" || scenario === "tool-interject" || scenario === "image-tool" || scenario === "bash-approval") {
 	// 先说一句话再调一个工具，等 Pi 回填结果后继续（tool-interject：之后还等一条插话；image-tool：只看结果里有没有图）
 	se({ type: "message_start", message: { id: "msg_one", usage: { input_tokens: 100, output_tokens: 0 } } });
 	se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
 	se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "我来查一下。" } });
 	se({ type: "content_block_stop", index: 0 });
-	se({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_1", name: "mcp__pia__echo", input: {} } });
-	se({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"text":"hi"}' } });
+	// bash-approval：调 Pi 的 bash（e2e 里会走审批卡），其余场景调测试里挂的 echo
+	const [toolName, toolArgs] = scenario === "bash-approval" ? ["bash", { command: "rm -f old-notes.txt && echo 已删除 old-notes.txt" }] : ["echo", { text: "hi" }];
+	se({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_1", name: `mcp__pia__${toolName}`, input: {} } });
+	se({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: JSON.stringify(toolArgs) } });
 	se({ type: "content_block_stop", index: 1 });
 	se({ type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 16 } });
 	se({ type: "message_stop" });
-	const r = await callTool("toolu_1", "echo", { text: "hi" });
+	const r = await callTool("toolu_1", toolName, toolArgs);
 	toolResultLine("toolu_1", textOfResult(r));
 	let final = `got:${textOfResult(r)}`;
 	if (scenario === "tool-interject") final += `|extra:${await nextUser()}`;

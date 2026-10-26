@@ -133,6 +133,7 @@
 | `sandbox.ts` | 沙箱驱动（工作区 / Docker） |
 | `host-control.ts` | 操作用户电脑（cua-driver） |
 | `action-log.ts` | 电脑操作记录 |
+| `claude-code-service.ts` + `routes/models.ts` 里的 `/api/models/claude-code` | Claude Code（本机）渠道的启动注册（找得到 claude 才注册；Mock/单测默认关，`PIA_CLAUDE_COMMAND` 指定或置空）、检测与重新检测、关闭时 disposeAll；界面卡片 `apps/web/src/components/ClaudeCodeCard.tsx`（挂在 ModelServices 里）；e2e `e2e/claude-code-ui.mjs`，单测 `test/claude-code-service-http.test.ts` |
 | `cli-agents/` | 把本机已登录的编程命令行（先做 claude）当模型用的底层，与 Pi 无关（docs/design/cli-models.md）：launch（拼 claude 参数和白名单环境，复用 native-launch-env）、events（stream-json 一行 → 简单事件，用量取法见 §4.3）、tool-bridge（最小 MCP 服务：每次运行一个随机令牌，tools/call 按 toolUseId 挂起、外部回填，取消 / 结束时全部取消）、claude-process（ClaudeRun：起进程、读事件、写 stdin 插话、回填工具结果、abort）、detect（找 claude、版本、`claude auth status`，不读凭证）；Pi 渠道在 `pi-adapter/cli-models/` |
 | `native-launch-env.ts` | 原生子进程启动环境 |
 | `mcp-env-launcher.mjs` | 原生 MCP 启动器 |
@@ -253,6 +254,7 @@
 | `ChatSettings.tsx` | 设置 › 聊天与输入 |
 | `Models.tsx` | provider 列表、登录、默认模型 |
 | `ModelServices.tsx` | 统一模型服务 |
+| `ClaudeCodeCard.tsx` | 模型服务页的「Claude Code（本机）」卡片：检测状态、重新检测、登录提示 |
 | `CustomProvider.tsx` | 自定义服务表单 |
 | `RelayDetail.tsx` | 中转服务详情（单列） |
 | `provider-icons.ts` | 自动生成的服务图标（勿手改） |

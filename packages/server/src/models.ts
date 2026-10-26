@@ -3,6 +3,7 @@ import { config } from "./config.ts";
 import { db, getSetting, setSetting } from "./db.ts";
 import { CustomProviders, type CustomProviderMeta } from "./pi-adapter/custom-providers.ts";
 import { PiModels, setLimitsLearner, type CredentialStore } from "./pi-adapter/index.ts";
+import { ensureClaudeCode } from "./claude-code-service.ts";
 import { refreshModelDb } from "./model-db.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, registerMockProvider } from "./pi-adapter/mock-provider.ts";
 import { EncryptedCredentialStore, openJson, sealJson } from "./secrets.ts";
@@ -52,6 +53,7 @@ export async function initModels(credentials?: CredentialStore) {
 	await models.reloadConfig();
 	await customProviders.backfillLimits().catch((e) => console.error("[models] 补齐自定义模型上下文长度失败", e));
 	if (config.mock) await registerMockProvider(models);
+	await ensureClaudeCode(models).catch((e) => console.error("[models] 注册 Claude Code 渠道失败", e));
 	// classifier 只能经扩展注册，reloadConfig/backfill 后按保存的公开元数据重新注册（凭据仍走 Pi 原 provider）。
 	customProviders.reapplyClassifiers();
 	if (config.mock && !getSetting("defaultModel", null)) setSetting("defaultModel", { provider: MOCK_PROVIDER, id: MOCK_MODEL });
