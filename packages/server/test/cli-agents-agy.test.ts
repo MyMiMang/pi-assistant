@@ -54,7 +54,8 @@ test("运行目录文件：代理 / 插件 / MCP 配置的内容，含令牌的�
 	assert.deepEqual(agyRunDirs(files), [".agents/agents", ".agents/plugins/pia"]);
 	const md = files[0].content;
 	assert.match(md, /^---\nname: pia\n/);
-	for (const k of ["mainAgent: true", "excludeDefaultComponents: true", "tools: []", "inheritMcp: false"]) assert.ok(md.includes(k), k);
+	for (const k of ["mainAgent: true", "excludeDefaultComponents: true", "tools: []"]) assert.ok(md.includes(k), k);
+	assert.ok(!md.includes("inheritMcp"), "inheritMcp: false 会挡掉工具桥");
 	assert.ok(md.endsWith("---\n你是 X。\n第二行\n"));
 	assert.deepEqual(JSON.parse(files[1].content), { name: "pia", description: "Pi Assistant 的工具桥", version: "1" });
 	assert.deepEqual(JSON.parse(files[2].content), { mcpServers: { pia: { url: "http://127.0.0.1:1/internal/tool-bridge/r", headers: { Authorization: "Bearer tok" }, timeoutSeconds: 3600 } } });

@@ -1,4 +1,4 @@
-状态：第一期已实现（2026-10-26，769424a / 3e32e0e / 0399ddf，未打包，[决策 0023](../decisions/0023-cli-agents.md)；§7 已实测，§4 按结果修订；由 Claude 派 Sonnet 子代理实现并审查；§5 Codex、§5b Antigravity 已于 2026-10-26 实测核实，两者都能做纯大脑，未动代码）
+状态：第一期已实现（2026-10-26，769424a / 3e32e0e / 0399ddf，未打包，[决策 0023](../decisions/0023-cli-agents.md)；§7 已实测，§4 按结果修订；由 Claude 派 Sonnet 子代理实现并审查；§5 Codex（50005a5）、§5b Antigravity（d6bbeb3，实验性）已实现，2026-10-27 在 dev:live 用真实命令实测见 §9）
 
 # 在 Pi 助理里用 Claude Code、Codex 等编程命令行工具
 
@@ -226,7 +226,7 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
      运行时加 `--agent pia`（名字不存在时，`-p` 会以退出码 1 报错并列出可用的代理）。
    - 效果：模型自述和行为都只剩 `mcp_pia_pia_echo_text`、`mcp_pia_pia_slow_wait`（我们的）加 `list_resources`、`read_resource`、`manage_task` 三个残留；让它「用 run_command 执行 `echo SHELLOK`」，它回答「没有能运行命令的工具」，没有执行。输入 token 从默认的 5.5k 降到约 1.5k（系统提示几乎全换掉了）。回答带上了我们要求的前缀「PB:」和名字。**这几个前置条件里到底是 `excludeDefaultComponents` 还是 `tools: []` 起的作用没有拆开试**，两个都写。
    - **系统提示在会话开始时定死：** 续用会话（`--conversation <id>`）时即使把 `pia.md` 里的名字和前缀改了，模型仍按旧提示回答（实测还答 PINEAPPLEBOT / `PB:`）。**所以系统提示变了就要开新会话**（把历史渲染成文字送进第一条消息），和 Claude 的 `--system-prompt-snapshot off` 不同，这里没有绕过办法。
-   - 用户全局的 `~/.gemini/config` 下规则、`GEMINI.md` / `AGENTS.md`、`inheritMcp` 的效果**没法验证**：本机全局 MCP 和插件都是空的，没有可比对的东西；自定义代理的 `inheritMcp: false` 是文档里的字段，建议写上，但没验证。
+   - 用户全局的 `~/.gemini/config` 下规则、`GEMINI.md` / `AGENTS.md`、`inheritMcp` 的效果**没法验证**：本机全局 MCP 和插件都是空的，没有可比对的东西；自定义代理的 `inheritMcp: false` **不能写**：实测（2026-10-27 开发实测）写了之后连工作区插件里的工具桥也被挡掉，模型只剩 `manage_task`。
    - `--conversation <id>`：已验证，历史完整续上（第二轮能答出前一轮算的数）；续用一次总耗时约 45 秒。会话文件在用户的 `~/.gemini/antigravity-cli/conversations`（会出现在用户的 Antigravity 历史里，这次实测留下了二十多个测试会话，没动别的）。
    - 插话：**不能并入当前轮。** 工具执行中途（第 9 秒）往 stdin 追加一条消息，它被排队，等第一轮 `result` 之后另起一轮（`num_turns` 变 2）才处理。含义：Pi 的 `steer` 没法直接映射；建议做法是把插话文字**附在下一个工具结果后面**（「[用户插话] …」），或者无工具调用时才作为下一条消息发——这一做法本身没验证。
    - 中断：`SIGINT` 有效：约 0 秒内 `result{status:"ERROR",error:"interrupted"}`，MCP 服务收到 `notifications/cancelled`，进程退出（退出码 1）。
@@ -367,4 +367,8 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 6. **用量**：别读 `assistant.message.usage.output_tokens`（永远 0）；输入用量取 `message_start`，输出取 `message_delta.usage.output_tokens`，整轮累计取 `result.usage`。`result.usage.output_tokens_details.thinking_tokens` 不可信。
 7. **订阅通道没验证**：本机没有可用的订阅 OAuth 登录，实测 2（订阅下 `--system-prompt` 能否整个替换）、以及实测 1 里 `--setting-sources ""` 是否同时屏蔽钩子/插件，都要在真正订阅登录的机器上补测，补测前不要把「订阅下可用」写进给用户的说明。
 8. **`--mcp-config` 必须是绝对路径**（相对路径按进程工作目录解析）；方案里「带令牌的配置」若想避免令牌落盘，可尝试传内联 JSON 字符串（`--help` 说支持，**本次未测**）。
+
+### 9.x Codex / Antigravity 开发实测（2026-10-27，dev:live，新建测试助理）
+- Codex（0.161.0，gpt-6-luna）：说名字 + 用 Pi 工具写文件读文件、跨轮记得、工具执行中插话（等 90 秒命令后回复里带上插话要求）、工具执行中停止、停止后续聊，都正常；思考摘要能显示。停止后下一轮会新开线程（缓存不命中），和 Claude 一致。
+- Antigravity（1.4.7，claude-sonnet-5-5）：首次实测发现代理文件里的 `inheritMcp: false` 会连工具桥一起挡掉，模型看不到 Pi 工具；去掉后新会话的工具调用、跨轮（2 秒回复，复用长驻进程）、停止、停止后续聊（重起进程 `--conversation`）都正常。**工具集在会话创建时就定死**：用旧配置建的会话续用也拿不到工具。网络抖动时会报 `loadCodeAssist: EOF`，重试即好。插话附在工具结果后的做法、并行收齐 300 毫秒未实测。
 

@@ -55,7 +55,7 @@ export function agyAgentFile(systemPrompt: string | undefined): string {
 		"mainAgent: true",
 		"excludeDefaultComponents: true",
 		"tools: []",
-		"inheritMcp: false",
+		// 不写 `inheritMcp: false`：实测（agy 1.4.7）它连工作区插件里我们自己的工具桥 MCP 也一起挡掉，模型就看不到 Pi 的工具
 		"---",
 		systemPrompt?.trim() || "你是一个有帮助的助理，只使用提供给你的工具。",
 		"",
