@@ -3,7 +3,7 @@
 只写**当前状态**，保持一屏到两屏。历史进度在 [history/HANDOFF-2026-10-18.md](history/HANDOFF-2026-10-18.md)，不要再往这里追加长段落。
 
 ## 当前版本（2026-10-20）
-- 公开版：**v0.1.0-beta.40**（Latest，2026-10-26 12:01 北京时间）。五平台构建、Mac/Windows 安装冒烟一次通过，13 项资产和 latest.json（Mac 两种芯片、Windows 都有签名）已核对。说明见 [release-notes/v0.1.0-beta.40.md](release-notes/v0.1.0-beta.40.md)；之前 beta.39（10-23 16:39）、beta.38（10-23 10:34）。main 上 beta.40 之后没有未打包的改动。
+- 公开版：**v0.1.0-beta.41**（Latest，2026-10-26 16:48 北京时间）。五平台构建、Mac/Windows 安装冒烟一次通过，13 项资产和 latest.json（Mac 两种芯片、Windows 都有签名）已核对。说明见 [release-notes/v0.1.0-beta.41.md](release-notes/v0.1.0-beta.41.md)；之前 beta.40（10-26 12:01）、beta.39（10-23 16:39）。main 上 beta.41 之后没有未打包的改动。
 - 发布小坑：Intel Mac 那一路偶尔在上传时和别的平台并发撞车（`Not Found - delete-a-release-asset`），构建本身成功；`gh run rerun <id> --failed` 只重跑这一路即可（beta.34 遇到过，beta.35 没遇到）。
 - 已随 beta.37 发布：群聊按「AI 团队」重做第 1 步「项目与方案」（[决策 0019](decisions/0019-group-as-team.md)，取代决策 0018 的「自主推进」开关）：管理者先立项出方案卡（room_plan），用户确认（按钮或群里说「可以」→ room_project_start）后项目才开始，进行中可改方案、完成用 room_project_done、用户可随时停下；服务端 + 界面都已实现。真实模型下方案质量 / 按方案推进得怎样，待真机。第 2 步只做了「看板没变不重复发」。第 3 步已实现：任务依赖（after / stage）、前置核验通过后自动开始并带交接单和文件、项目进度清单（面板 + chip「阶段 n/m」）、验收第三种结果「这条路走不通」、项目级卡住计数（只认提交和完成为进展，到 3 要求 room_project_replan，改过 2 次再卡就报告用户）、停下后 room_project_resume / 「接着做」。第 4 步已实现：任务会话里 ask_colleague 找同事（群里可见，回答直接送回提问者正在跑的执行，没在跑就带着回答重新开始）、answer_colleague、report_upstream + work_rework（只有上游负责人能决定重做，重新通过后新版本自动交给下游）、3 轮 / 20 分钟交给管理者；任务执行说明里带群成员名单；协作工具免审批。第 5 步已实现：阶段完成通知、room_checkpoint 关键点卡片、交付卡、消息带 projectId 与按项目筛选。方案有关键点时，阶段完成后下一阶段任务先暂缓（rooms/hold.ts），管理者回合结束且没有关键点卡片在等用户才放行。group-collab-ui 之前一次中途报错，推测是旧 [G2] 手动 pause 撞上非法状态，已删掉那段，之后连跑三次都通过。第 6 步已实现：单聊遇到多步骤大事也出方案卡 → 确认 → 阶段进度 → 交付卡（`chat-projects/`）；清理了旧自主推进、提问气泡重复的 @X、工具回答后多发的短话、Mock「可以」确认不稳定（断言已改回严格）；临时服务器和单测会去掉继承的模型密钥环境变量。6 步全部做完，待用户说「打包」后真机实测。新建助理加了「全能培训师」模板（启用内置技能 team-onboarding）。单聊输入栏「技能」按钮换成了「权限」按钮（决策 0020）。
 
@@ -16,8 +16,9 @@
 - 已随 beta.40 发布：聊天里每个代码块（提示词黑框）右上角加「复制」，只复制这一块原文，点后显示「已复制」；复用 `MessageReply.tsx` 的 `CopyButton` + `clipboard.ts`，单聊群聊共用 `Markdown.tsx`。message-replies-ui e2e 覆盖。
 - 已随 beta.40 发布：群顶部「N 人等你」和单聊顶部「等你审批 / 等你回答」可点：跳到等你处理的卡片并高亮，多张时每点一次跳下一张（最早的先）；复用 `useMessageJump`（没加载的会定位加载）。审批 / 提问卡外层加了 `data-mid`。e2e `room-member-status-ui`。
 - 已随 beta.40 发布：单聊 / 群聊往上翻超过一屏时，输入框上方正中出现「回到最新」圆按钮，翻上去期间来的新消息显示条数，在历史窗口里点它等于「回到最新」；`JumpToLatest.tsx` 只读滚动位置、不改 stick。e2e：message-replies-ui（群聊 1440 深色 / 390）、room-member-status-ui（单聊新消息条数）。
-- 未打包：beta.40 装在测试机实测高级记忆后修两处：召回时账本里字面命中的原话固定留最多 3 个位置（之前 Hindsight 凑满 8 条就不补，刚写入的「车牌」等查不到）；每轮写入记忆前去掉原样列出的召回结果（之前每次「回忆」都把旧记忆再存一遍、层层嵌套）。单测在 hindsight.test.ts。
-- 未打包：真实模型（中转 deepseek）实测高级记忆后再修两处：只查了记忆（recall / reflect / review）没做别的事的一轮不再自动写入（之前「搜了记忆、找到几条」会被抽成新事实，越搜越多）；召回里账本原文和 Hindsight 抽出的同一句话只留一条。单测在 hindsight.test.ts、memory-health.test.ts。试过在每轮写入的 context 里加「别记检索」说明，没效果且让助理状态多挂 2 分钟，已放弃。
+- 已随 beta.41 发布：beta.40 装在测试机实测高级记忆后修两处：召回时账本里字面命中的原话固定留最多 3 个位置（之前 Hindsight 凑满 8 条就不补，刚写入的「车牌」等查不到）；每轮写入记忆前去掉原样列出的召回结果（之前每次「回忆」都把旧记忆再存一遍、层层嵌套）。单测在 hindsight.test.ts。
+- 已随 beta.41 发布：真实模型（中转 deepseek）实测高级记忆后再修两处：只查了记忆（recall / reflect / review）没做别的事的一轮不再自动写入（之前「搜了记忆、找到几条」会被抽成新事实，越搜越多）；召回里账本原文和 Hindsight 抽出的同一句话只留一条。单测在 hindsight.test.ts、memory-health.test.ts。试过在每轮写入的 context 里加「别记检索」说明，没效果且让助理状态多挂 2 分钟，已放弃。
+- 已随 beta.41 发布：记了 / 删了记忆的一轮只写用户原话（不写助理的「已记下」）；回合结束写入用 setImmediate 交给宿主，agent_end 立即返回（之前「工作中」卡约 2 分钟是试验性的 TURN_CONTEXT 提示行导致，已撤掉，beta.40 和现在都复现不了）；测试连接带一个最小工具；额度 / 限流 / 冷却报错走 `packages/shared` 的 `modelLimitText`，带恢复时间，原文放「?」；备用记忆模型和主模型同渠道时设置里提醒。真实中转实测：记住不再多出「助理确认」条目；群聊里告诉的事记成草稿，单聊能答并提示未核验。
 - 助理设置八页实现（工作树 `agent-settings-redesign`）。高级记忆健康已合入（[设计](design/memory-health.md)），待真机验证。进度看 [ROADMAP.md](ROADMAP.md) 和提交信息。
 - 群聊协作已实现（未打包，[设计](design/group-collaboration.md)）：任务由负责人派的帮手在它自己的任务会话里执行，管理者按事件唤醒，三种卡住检测，等你决定，停群不停任务；work-items / rooms 已拆到 600 行以下。单聊入口还没接（核心与来源无关，单聊只需在入口调 setWorkSourceProvider + workItemTools）。
 - 任务类机制合并（[决策 0014](decisions/0014-task-and-helper.md)，[设计](design/task-architecture-analysis.md) §5.5 / §7，未打包）：6 步全部做完（第 6 步：界面改名 + 旧 `/api/tasks` 下线）。剩余事项见下面「接手说明」。
