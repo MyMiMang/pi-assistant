@@ -330,14 +330,14 @@ export class PiModels {
 		}
 	}
 
-	/** 发一条极短的请求验证凭据与模型可用。 */
+	/** 发一条极短的请求验证凭据与模型可用。带一个最小的工具定义：真实对话都带工具，中转站的限流/冷却/不支持工具常常只对带工具的请求生效，不带工具会误报「连接正常」。 */
 	async test(providerId: string, modelId: string): Promise<{ ok: boolean; message: string }> {
 		const model = this.runtime.getModel(providerId, modelId);
 		if (!model) return { ok: false, message: "找不到该模型" };
 		try {
 			const res = await this.runtime.completeSimple(
 				model,
-				{ messages: [{ role: "user", content: "Reply with: OK", timestamp: Date.now() }] },
+				{ messages: [{ role: "user", content: "Reply with: OK", timestamp: Date.now() }], tools: [{ name: "ping", description: "Connectivity check. Do not call.", parameters: { type: "object", properties: {} } }] } as never,
 				{ maxTokens: 16 },
 			);
 			if (res.stopReason === "error" || res.stopReason === "aborted") return { ok: false, message: res.errorMessage ?? "请求失败" };

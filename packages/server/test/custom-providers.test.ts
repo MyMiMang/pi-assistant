@@ -39,6 +39,8 @@ test("自定义服务：自动获取模型 → 保存到 Pi models.json → 测�
 	const r = await models.test("custom-relay", "relay-chat");
 	assert.ok(r.ok, r.message);
 	assert.match(r.message, /中转站回复/);
+	const sent = JSON.parse(relay.seen.filter((x) => x.url === "/v1/chat/completions").at(-1)!.body);
+	assert.ok(sent.tools?.length >= 1, "测试连接要带工具：限流/冷却常只对带工具的请求生效");
 	// 编辑：留空 Key 与请求头值 = 保持不变，新增一个模型
 	await customProviders.save("custom-relay", { name: "Relay 2", api: "openai-completions", baseUrl: relay.url, headers: [{ name: "x-team" }], models: [{ id: "relay-chat" }, { id: "relay-pro" }] });
 	assert.equal(models.listModels("custom-relay").length, 2);
