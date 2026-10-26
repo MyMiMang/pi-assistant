@@ -75,6 +75,8 @@ export interface ClaudeArgsInput {
 	effort?: string;
 	/** 续用的 claude 会话 id */
 	resumeSessionId?: string;
+	/** 单次请求（如整理上下文的总结）不在 claude 里留会话记录 */
+	noSessionPersistence?: boolean;
 }
 
 /** 工具桥的 MCP 配置（JSON 文本，写进私有临时文件）：streamable HTTP，令牌放在 Authorization 头里。 */
@@ -103,5 +105,6 @@ export function buildClaudeArgs(input: ClaudeArgsInput): string[] {
 	if (input.model) args.push("--model", input.model);
 	if (input.effort) args.push("--effort", input.effort);
 	if (input.resumeSessionId) args.push("--resume", input.resumeSessionId);
+	if (input.noSessionPersistence) args.push("--no-session-persistence");
 	return args;
 }

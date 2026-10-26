@@ -193,6 +193,7 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 1. 先做 §7 的实测核实，结果写回本文档，有和方案冲突的先问用户。
 2. 工具桥 + claude 进程管理 + 事件转换（含单测和假 claude）。
 3. `claude-code` Pi 渠道、会话续接、模型列表、检测与设置卡片（含 e2e）。
+   - 3a 服务端渠道已实现（未提交）：`pi-adapter/cli-models/`（`registerClaudeCodeProvider`、streamSimple、工具交回 Pi、`--resume` 对照表）；尚未接进 `models.ts` 的启动流程；模型列表、设置卡片、e2e 是 3b。
 4. 开发实测环境里用测试助理实测单聊、群聊、帮手，截图放 `artifacts/`。
 5. 更新 MODULES、HANDOFF、ROADMAP、THIRD_PARTY_NOTICES。用户说「打包」才发布。
 6. 第二期、第三期各自另开设计小节，先给用户看再做。
