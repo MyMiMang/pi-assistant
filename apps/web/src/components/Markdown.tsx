@@ -4,6 +4,11 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { openImageViewer } from "./ImageViewer";
+import { CopyButton } from "./MessageReply";
+
+type HNode = { type?: string; value?: string; children?: HNode[] };
+/** 代码块原文（取 hast 节点里的全部文字，去掉末尾换行），给代码块「复制」按钮用。 */
+const nodeText = (n?: HNode): string => (n ? (n.type === "text" ? (n.value ?? "") : (n.children ?? []).map(nodeText).join("")) : "");
 
 /** 单独成段的链接渲染成链接卡片（结果以卡片呈现） */
 function LinkCard({ href }: { href: string }) {
@@ -117,7 +122,12 @@ export default memo(function Markdown({ text, blockRemoteImages }: { text: strin
 							<table {...p} />
 						</HScroll>
 					),
-					pre: ({ node: _n, className, ...p }) => <HScroll as="pre" className={`${className ?? ""} pa-pre-x`} label="代码块，可横向滚动" {...p} />,
+					pre: ({ node, className, ...p }) => (
+						<div className="pa-pre-wrap" data-testid="md-code-block">
+							<HScroll as="pre" className={`${className ?? ""} pa-pre-x`} label="代码块，可横向滚动" {...p} />
+							<CopyButton text={nodeText(node as HNode).replace(/\n$/, "")} title="复制这段" testId="code-copy-btn" className="pa-code-copy" />
+						</div>
+					),
 					img: ({ node: _n, src, alt, ...p }) => <MdImage {...p} src={src} alt={alt} blockRemote={blockRemoteImages} />,
 					p: ({ children, node: _n, ...rest }) => {
 						const kids = Children.toArray(children as ReactNode).filter((c) => !(typeof c === "string" && !c.trim()));

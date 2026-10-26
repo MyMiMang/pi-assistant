@@ -364,3 +364,8 @@ html.pa-pet-root, html.pa-pet-root body, html.pa-pet-root #root { background: tr
 .pa-pet-menu button:hover { background: var(--hover, #f3f4f6); }
 .pa-pet-preview-tip { position: fixed; top: 6px; left: 6px; font-size: 11px; color: #9ca3af; }
 @keyframes pa-pet-pop { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }
+/* 代码块右上角「复制」：深浅主题都用代码块自己的底色衬托，手机上常显 */
+.pa-pre-wrap { position: relative; }
+.pa-pre-wrap > pre { padding-top: 2.1em; }
+.pa-md .pa-code-copy { position: absolute; top: 6px; right: 6px; z-index: 1; color: #cbd5e1; background: color-mix(in srgb, #0f172a 70%, transparent); border-color: color-mix(in srgb, #fff 18%, transparent); }
+.pa-md .pa-code-copy:hover { color: #fff; background: color-mix(in srgb, #0f172a 90%, transparent); }

@@ -64,8 +64,10 @@ const A3 = mkMsg({ id: "a3m", content: "这是引用一条更早消息的回复�
 const A4 = mkMsg({ id: "a4m", content: "这条引用的消息已删除。", replyToId: "m-gone", reply: { messageId: "m-gone", author: { id: "a1", name: "测试助理", role: "assistant" }, source: { kind: "conversation", id: "c1" }, excerpt: "", truncated: false, edited: false, attachments: [], createdAt: now - 70000, unavailable: true }, created_at: now - 1000, updated_at: now - 1000 });
 const MOLD = mkMsg({ id: "m-old", content: "这是更早之前的一条消息。", created_at: now - 60000, updated_at: now - 60000 });
 
+const PROMPT_TEXT = "你是一名资深编剧。请根据下面的大纲写第三场的对白：\n- 场景：深夜的地铁站，只有两个人\n- 人物：林夏（26 岁，刚辞职）和陌生的老人\n- 要求：对白自然、留白多，不超过 400 字，结尾留一个悬念，不要出现旁白和舞台说明，每句台词前写人物名字。";
+const ROOM_PROMPT = "收到，可以直接复制下面的提示词：\n\n```text\n" + PROMPT_TEXT + "\n```\n\n第二段：\n\n```\necho hi\n```";
 const ROOM = { id: "r1", name: "测试群", purpose: "", managerId: "a1", caps: { maxTurns: 6, maxDepth: 2, perAgent: 2, followup: true }, unread: 0, paused: null, members: [{ agentId: "a1", name: "测试助理", avatar: "测", color: "#3b82f6", left: false, deleted: false, scope: "user", status: "idle" }], last: null, created_at: now, updated_at: now, state: { running: false, current: null, queue: [] } };
-const ROOMMSGS = [mkMsg({ id: "ru1", agent_id: "", room_id: "r1", role: "user", content: "大家看下", seq: 1, created_at: now - 1000, updated_at: now - 1000 }), mkMsg({ id: "ra1", room_id: "r1", role: "assistant", content: "收到", seq: 2, created_at: now, updated_at: now })];
+const ROOMMSGS = [mkMsg({ id: "ru1", agent_id: "", room_id: "r1", role: "user", content: "大家看下", seq: 1, created_at: now - 1000, updated_at: now - 1000 }), mkMsg({ id: "ra1", room_id: "r1", role: "assistant", content: ROOM_PROMPT, seq: 2, created_at: now, updated_at: now })];
 
 let failed = 0;
 const check = (name, cond, detail = "") => {
@@ -321,6 +323,25 @@ try {
 	check("群聊引用助理显示「回复给 测试助理」（无 @ 只该助理）", (await page.locator('[data-testid="quote-bar"]').textContent())?.includes("回复给 测试助理"));
 	await page.screenshot({ path: join(OUT, "room-quote.png") });
 	await page.locator('[data-testid="quote-cancel"]').click();
+	console.log("\n── 代码块右上角「复制」（共用 Markdown，单聊群聊同一套） ──");
+	const codeBtns = page.locator('[data-mid="ra1"] [data-testid="code-copy-btn"]');
+	check("每个代码块都有「复制」按钮（2 个）", (await codeBtns.count()) === 2, `实际 ${await codeBtns.count()}`);
+	await resetClip();
+	await codeBtns.first().click();
+	check("代码块「复制」只复制这一块原文", (await clip()) === PROMPT_TEXT, await clip());
+	check("代码块复制后显示「已复制」", (await codeBtns.first().textContent())?.includes("已复制"));
+	await codeBtns.nth(1).click();
+	check("第二个代码块复制自己的原文", (await clip()) === "echo hi", await clip());
+	check("消息级「复制」按钮不受影响（仍复制整条）", await page.locator('[data-mid="ra1"] [data-testid="copy-btn"]').count() === 1);
+	await page.evaluate(() => (document.documentElement.dataset.mode = "dark"));
+	await codeBtns.first().click();
+	await page.screenshot({ path: join(OUT, "room-code-copy-dark.png") });
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.waitForTimeout(200);
+	check("手机宽度代码块「复制」按钮可见", await codeBtns.first().isVisible());
+	await page.screenshot({ path: join(OUT, "room-code-copy-mobile.png") });
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.evaluate(() => (document.documentElement.dataset.mode = "light"));
 	await page.locator('[data-testid="sidebar-agent"]', { hasText: "测试助理" }).first().click();
 	await page.waitForTimeout(200);
 	check("切回单聊不显示群的引用", (await page.locator('[data-testid="quote-bar"]').count()) === 0);

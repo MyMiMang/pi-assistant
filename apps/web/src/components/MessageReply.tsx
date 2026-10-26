@@ -22,8 +22,8 @@ export function shouldUseNativeContextMenu(target: EventTarget | null): boolean 
 	return !!el.closest("a, img, input, textarea, select, video, audio, [contenteditable='true']");
 }
 
-/** 复制整条消息原文；点完短暂显示「已复制」/「复制失败」。 */
-function CopyButton({ text }: { text: string }) {
+/** 复制按钮（整条消息 / 单个代码块共用）；点完短暂显示「已复制」/「复制失败」。 */
+export function CopyButton({ text, title = "复制这条消息", testId = "copy-btn", className }: { text: string; title?: string; testId?: string; className?: string }) {
 	const [done, setDone] = useState<null | boolean>(null);
 	useEffect(() => {
 		if (done === null) return;
@@ -31,7 +31,7 @@ function CopyButton({ text }: { text: string }) {
 		return () => clearTimeout(t);
 	}, [done]);
 	return (
-		<button type="button" className="pa-quote-btn" onClick={() => void copyText(text).then(setDone)} title="复制这条消息" aria-label="复制这条消息" data-testid="copy-btn">
+		<button type="button" className={cx("pa-quote-btn", className)} onClick={() => void copyText(text).then(setDone)} title={title} aria-label={title} data-testid={testId}>
 			{done ? <Check className="pa-ic" /> : <Copy className="pa-ic" />}
 			<span className="pa-quote-btn-txt">{done === null ? "复制" : done ? "已复制" : "复制失败"}</span>
 		</button>
