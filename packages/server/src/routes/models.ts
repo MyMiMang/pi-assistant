@@ -2,6 +2,7 @@
 import { effectiveApi, effectiveBaseUrl, guessFromUrl } from "../pi-adapter/relay-protocols.ts";
 import { registryAsrProviders } from "../voice/index.ts";
 import { Hono } from "hono";
+import { modelLimitText } from "@pi-assistant/shared";
 import { bus } from "../bus.ts";
 import { getSetting, setSetting } from "../db.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "../login-flows.ts";
@@ -131,7 +132,10 @@ export function mountModelRoutes(app: Hono<Env>) {
 	});
 	app.post("/api/models/test", async (c) => {
 		const b = await c.req.json<{ provider: string; model: string }>();
-		return c.json(await models.test(b.provider, b.model));
+		const r = await models.test(b.provider, b.model);
+		// 额度 / 限流 / 冷却：给一句带恢复时间的中文，原文放 detail（界面 ? 提示里看）
+		const friendly = r.ok ? null : modelLimitText(r.message);
+		return c.json(friendly ? { ok: false, message: friendly, detail: r.message } : r);
 	});
 	// 识图模型（legacy，已废弃）：图片现在只跟随当前对话模型，这里仅保留只读兼容旧界面，不再影响路由。
 	app.get("/api/models/vision", async (c) => {

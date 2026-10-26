@@ -145,7 +145,7 @@ function ModelRow({ model, strengths, onSave }: { model: RegistryModel; strength
 function TestConnection({ providerId, models }: { providerId: string; models: RegistryModel[] }) {
 	const options = models.map((m) => ({ value: m.id, label: m.id }));
 	const [model, setModel] = useState(options[0]?.value ?? "");
-	const [state, setState] = useState<"idle" | "running" | { ok: boolean; message: string }>("idle");
+	const [state, setState] = useState<"idle" | "running" | { ok: boolean; message: string; detail?: string }>("idle");
 	useEffect(() => {
 		if (!options.some((o) => o.value === model)) setModel(options[0]?.value ?? "");
 	}, [providerId]);
@@ -153,8 +153,8 @@ function TestConnection({ providerId, models }: { providerId: string; models: Re
 		if (!model) return;
 		setState("running");
 		try {
-			const r = await api<{ ok: boolean; message: string }>("/api/models/test", { method: "POST", json: { provider: providerId, model } });
-			setState({ ok: r.ok, message: r.message });
+			const r = await api<{ ok: boolean; message: string; detail?: string }>("/api/models/test", { method: "POST", json: { provider: providerId, model } });
+			setState({ ok: r.ok, message: r.message, detail: r.detail });
 		} catch (e) {
 			setState({ ok: false, message: e instanceof Error ? e.message : String(e) });
 		}
@@ -176,7 +176,7 @@ function TestConnection({ providerId, models }: { providerId: string; models: Re
 			{state !== "idle" && state !== "running" && (
 				<div className={cx("flex items-start gap-1.5 rounded-lg p-2 text-[11px]", state.ok ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300")} data-testid={`service-test-result-${providerId}`} data-ok={String(state.ok)}>
 					{state.ok ? <CheckCircle2 size={13} className="mt-0.5 shrink-0" /> : <XCircle size={13} className="mt-0.5 shrink-0" />}
-					<span className="break-all">{state.ok ? `连接成功：${state.message}` : state.message}</span>
+					<span className="break-all">{state.ok ? `连接成功：${state.message}` : state.message}{!state.ok && (state.detail ? <Help className="ml-1">服务返回的原文：{state.detail}</Help> : null)}</span>
 				</div>
 			)}
 		</div>

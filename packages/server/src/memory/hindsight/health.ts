@@ -6,6 +6,7 @@
  *  - ok/slow → failing：发一条系统通知（tag memory-health；同一个问题 6 小时内不重复）；不再 failing 时发一条「已恢复」
  * 只在内存里，重启清零（重启本身就是一次重新检查）。
  */
+import { modelLimitText } from "@pi-assistant/shared";
 import { bus } from "../../bus.ts";
 
 export type HealthOp = "recall" | "reflect" | "boot" | "model" | "sidecar";
@@ -108,7 +109,9 @@ export function recordHealth(op: HealthOp, r: { ok: boolean; ms?: number; error?
 		if ((r.ms ?? 0) > SLOW_MS) o.slow++;
 	} else {
 		o.failed++;
-		o.lastError = short(r.error instanceof Error ? r.error.message : String(r.error ?? "失败"));
+		const raw = r.error instanceof Error ? r.error.message : String(r.error ?? "失败");
+		// 额度 / 限流 / 冷却：说人话并带恢复时间（如「模型名：模型服务正在冷却…约 15:04:53 恢复」），其余原样
+		o.lastError = short(raw.replace(/^([^：]*：)?([\s\S]*)$/, (_, head = "", body) => `${head}${modelLimitText(body) ?? body}`));
 		o.lastErrorAt = Date.now();
 	}
 	const l = samples.get(op) ?? [];

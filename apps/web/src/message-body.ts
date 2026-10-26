@@ -13,6 +13,8 @@
  * 工具步骤占位、流式光标、思考折叠、用户停止都不走兜底，避免把正常的中间态说成出错。
  */
 
+import { modelLimitText } from "@pi-assistant/shared";
+
 export type BotBodyInput = {
 	/** 已去掉思考后的正文（splitThinking 之后的 text） */
 	body: string;
@@ -68,7 +70,7 @@ const EMPTY_FALLBACK = "这次未收到回复，服务没提供具体原因（�
 const QUOTA_RE =
 	/usage_limit_reached|insufficient_quota|credit balance|balance (?:is )?(?:exhausted|insufficient|depleted)|out of credits|exceeded your (?:current )?quota|quota (?:exceeded|exhausted|reached)|billing (?:hard )?limit|you have hit your [^.]{0,40}usage limit|hit your (?:chatgpt |codex )?usage limit|额度(?:已)?(?:用完|耗尽|不足)|配额(?:已)?(?:用完|耗尽)|余额不足/i;
 /** 普通限流：重发（等一会）通常有效，和额度耗尽区别对待。 */
-const RATE_RE = /rate.?limit|rate_limit|too many requests|\b429\b|tpm|rpm|限流|请求过多|请求太频繁|频率超限/i;
+const RATE_RE = /cool-?down|冷却|频率限制|rate.?limit|rate_limit|too many requests|\b429\b|tpm|rpm|限流|请求过多|请求太频繁|频率超限/i;
 const AUTH_RE = /unauthor|invalid[\s_-]*api[\s_-]*key|incorrect api key|authentication|forbidden|permission denied|\b401\b|\b403\b|鉴权|密钥无效|无权限/i;
 const CONTEXT_RE = /context[\s_-]*(?:length|window|limit)|too many tokens|maximum context|上下文(?:超出|过长)|token 上限/i;
 const TIMEOUT_RE = /timed?[\s_-]*out|etimedout|esockettimedout|timeout (?:of|after)|\b超时\b/i;
@@ -184,6 +186,7 @@ const KIND_TEXT: Record<Exclude<ErrorKind, "unknown">, string> = {
 export function assistantErrorText(error: unknown): string {
 	const raw = readableError(error);
 	const kind = assistantErrorKind(error);
+	if (kind === "quota" || kind === "rate_limit") return modelLimitText(classifyText(error, raw)) ?? KIND_TEXT[kind];
 	if (kind !== "unknown") return KIND_TEXT[kind];
 	if (!raw) return UNSPECIFIED;
 	return `${clip(raw, MAX_MAIN)}（可以重发或换个模型）`;

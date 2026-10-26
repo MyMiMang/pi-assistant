@@ -25,3 +25,4 @@ export const LEGACY = { dataDirName: "HuHao", linuxDir: "huhao", keychainService
 export * from "./hard-guard.ts";
 export * from "./thinking-levels.ts";
 export * from "./theme-manifest.ts";
+export * from "./model-limit-error.ts";

@@ -194,3 +194,14 @@ test("已知错误翻成人话，未知错误保留原文不吞掉", () => {
 	assert.match(assistantErrorText(""), /具体原因/);
 	assert.ok(assistantErrorText("x".repeat(400)).length < 200, "超长错误要截断，不撑爆界面");
 });
+
+test("中转站频率限制 / 冷却：一句中文，带服务给出的恢复时间；原文留在详情", () => {
+	const raw = '400 {"error":{"message":"频率限制：deepseek-v4.1-flash per-model cooldown，15:04:53 重置","type":"rate_limit"}}';
+	assert.equal(assistantErrorKind(raw), "rate_limit");
+	const text = assistantErrorText(raw);
+	assert.match(text, /冷却/);
+	assert.match(text, /约 15:04:53 恢复/);
+	assert.match(assistantErrorDetail(raw), /per-model cooldown/);
+	assert.match(assistantErrorText("429 Too Many Requests, please retry after 30 seconds"), /^模型服务限流（请求太频繁），约 30 秒后恢复/);
+	assert.match(assistantErrorText("insufficient_quota: quota exceeded, reset at 2026-10-27T00:00:00Z"), /^模型服务的额度已用完，约 \d{1,2}:00:00 恢复/);
+});

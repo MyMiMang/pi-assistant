@@ -15,7 +15,7 @@
 | 复制 / 右键菜单 | `clipboard.ts`（copyText：所有「复制」都走它，手机局域网 http 也能复制；selectionBeforeRightClick）、`ContextMenu.tsx`（ContextMenu 小菜单 + 全局右键接管，不用浏览器自带菜单） |
 | 附件与预览 | `Attachments.tsx`（单聊/群聊共用）、`FilePreview.tsx`、`ImageViewer.tsx`；服务端 `files.ts`、`attachments.ts` |
 | 下载进度 | 服务端 `downloads.ts` + 界面 `Downloads.tsx` |
-| 共享常量 / 纯逻辑 | `packages/shared`：thinking-levels、hard-guard、shell-lex、theme-manifest、品牌名 |
+| 共享常量 / 纯逻辑 | `packages/shared`：thinking-levels、hard-guard、shell-lex、theme-manifest、model-limit-error（额度 / 限流 / 冷却报错→带恢复时间的中文）、品牌名 |
 | 服务端通用 | `bus.ts`（推事件）、`requests.ts`（审批与提问唯一入口）、`interject.ts`（插话/停止词）、`model-errors.ts`、`thinking.ts`（拆思考内容）、`native-launch-env.ts`（启动子进程环境）、`config.ts`（环境变量）、`db.ts` |
 | Pi 接入（唯一入口） | `pi-adapter/index.ts`、`custom-providers.ts`、`relay-protocols.ts`、`model-limits.ts`、`fast-mode.ts`、`mock-provider.ts`（e2e 脚本化回复）、`mock-room-provider.ts`（群聊部分的 Mock，从 mock-provider.ts 拆出来控制单文件行数）、`mock-collab-provider.ts`（成员直接协作的 Mock：任务要求含「先问一下」「上游有问题」，或看到提问编号时接管）、`mock-chat-plan-provider.ts`（单聊「大事走方案」的 Mock：用户消息含「做个大事」→ chat_plan 两阶段方案卡；用户说「可以」/ 点按钮确认后依次写文件、chat_stage_done ×2、chat_project_done；带「慢」的方案先 sleep 一下留出进行中的窗口；只在有 chat_plan 工具的单聊里接管） |
 | 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`local-asr-harness.ts`（本地语音假环境 + 来源端口）、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp） |

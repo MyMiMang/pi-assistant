@@ -162,7 +162,7 @@ export function CustomProviderForm({ initial, apis, classifierProtocols = [], on
 		if (g.api && !apiTouched && apis.some((a) => a.id === g.api)) setApiType(g.api);
 		if (g.name) setName((n) => n || g.name!);
 	};
-	const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null);
+	const [test, setTest] = useState<{ ok: boolean; message: string; detail?: string } | null>(null);
 	useEffect(() => {
 		if (!apiType && apis[0]) setApiType(apis[0].id);
 	}, [apis]);
@@ -377,7 +377,7 @@ export function CustomProviderForm({ initial, apis, classifierProtocols = [], on
 					{test && (
 						<div className={cx("flex items-start gap-2 rounded-lg p-2 text-sm", test.ok ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40" : "bg-red-50 text-red-700 dark:bg-red-950/40")}>
 							{test.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <XCircle size={16} className="mt-0.5 shrink-0" />}
-							<span className="break-all">{test.ok ? `连接成功：${test.message}` : test.message}</span>
+							<span className="break-all">{test.ok ? `连接成功：${test.message}` : test.message}{!test.ok && (test.detail ? <Help className="ml-1">服务返回的原文：{test.detail}</Help> : null)}</span>
 						</div>
 					)}
 				</div>

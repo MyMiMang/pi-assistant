@@ -16,7 +16,7 @@ const CAP_HINT: Record<ModelCapability, string> = { chat: "能聊天、用工具
 const CAP_TONE: Record<ModelCapability, "accent" | "green" | "amber" | "zinc"> = { chat: "accent", vision: "green", image: "amber", classifier: "zinc" };
 const API_SHORT: Record<string, string> = { "openai-completions": "OpenAI 兼容", "anthropic-messages": "Anthropic", "google-generative-ai": "Gemini", auto: "自动（按模型识别）" };
 const RELAY_APIS = ["openai-completions", "anthropic-messages", "google-generative-ai"];
-type TestState = { s: "running" } | { s: "ok"; ms: number } | { s: "fail"; msg: string };
+type TestState = { s: "running" } | { s: "ok"; ms: number } | { s: "fail"; msg: string; detail?: string };
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const body = (meta: CustomProviderMeta, patch: Partial<{ name: string; api: string; baseUrl: string; apiKey: string; noKey: boolean; models: CustomModel[]; headers: { name: string; value?: string }[]; classifiers: { protocol: string; modelId: string }[]; protocolUrls: Record<string, string> }> = {}) => ({
@@ -77,8 +77,8 @@ export function RelayDetail({ provider, meta, apis, classifierProtocols, strengt
 		setTests((t) => ({ ...t, [id]: { s: "running" } }));
 		const t0 = performance.now();
 		try {
-			const r = await api<{ ok: boolean; message: string }>("/api/models/test", { method: "POST", json: { provider: meta.id, model: id } });
-			setTests((t) => ({ ...t, [id]: r.ok ? { s: "ok", ms: Math.round(performance.now() - t0) } : { s: "fail", msg: r.message } }));
+			const r = await api<{ ok: boolean; message: string; detail?: string }>("/api/models/test", { method: "POST", json: { provider: meta.id, model: id } });
+			setTests((t) => ({ ...t, [id]: r.ok ? { s: "ok", ms: Math.round(performance.now() - t0) } : { s: "fail", msg: r.message, detail: r.detail } }));
 			return r;
 		} catch (e) {
 			setTests((t) => ({ ...t, [id]: { s: "fail", msg: errText(e) } }));
@@ -193,7 +193,7 @@ function Connection({ meta, apis, onSave, onTest, test }: { meta: CustomProvider
 			)}
 			{test && test.s !== "running" && (
 				<div className={cx("rounded-lg p-2 text-[11px]", test.s === "ok" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300")} data-testid={`service-test-result-${meta.id}`} data-ok={String(test.s === "ok")}>
-					{test.s === "ok" ? `连接成功 · ${test.ms}ms` : test.msg}
+					{test.s === "ok" ? `连接成功 · ${test.ms}ms` : test.msg}{test.s === "fail" && (test.detail ? <Help className="ml-1">服务返回的原文：{test.detail}</Help> : null)}
 				</div>
 			)}
 		</section>
@@ -205,7 +205,7 @@ function TestBadge({ t, chat }: { t?: TestState; chat: boolean }) {
 	if (!t) return null;
 	if (t.s === "running") return <Loader2 size={12} className="animate-spin text-mut" />;
 	if (t.s === "ok") return <span className="flex items-center gap-0.5 text-[11px] text-emerald-600" data-testid="model-test-ok"><Check size={12} />{t.ms}ms</span>;
-	return <span className="flex items-center gap-0.5 text-[11px] text-red-600" title={t.msg} data-testid="model-test-fail"><X size={12} />失败</span>;
+	return <span className="flex items-center gap-0.5 text-[11px] text-red-600" title={t.detail ? `${t.msg}\n${t.detail}` : t.msg} data-testid="model-test-fail"><X size={12} />失败</span>;
 }
 
 function Models({ meta, reg, auto, tests, testAll, summary, onTestAll, onTest, onSave, onSaveCaps, strengthsSlot }: {

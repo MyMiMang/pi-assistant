@@ -13,7 +13,7 @@ import { copyText } from "../clipboard";
 import { LatestWrite } from "../latest-write";
 import { useStore } from "../store";
 import type { ModelInfo, Provider } from "../types";
-import { Badge, Button, cx, Input } from "./ui";
+import { Badge, Button, cx, Help, Input } from "./ui";
 
 const EMPTY: any[] = [];
 
@@ -397,7 +397,7 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 	const system = useStore((s) => s.system);
 	const d = useConfiguredModels();
 	const [thinking, setThinking] = useState<string | null>(null);
-	const [test, setTest] = useState<{ ok: boolean; message: string } | "running" | null>(null);
+	const [test, setTest] = useState<{ ok: boolean; message: string; detail?: string } | "running" | null>(null);
 	// 「最后一次为准」守卫：A→B 连点时 A 的迟到失败不把 B 的新选择回滚；卸载 / 切走时作废在飞响应。
 	const saves = useRef(new LatestWrite());
 	// 回读服务端真值：只有仍是最新一次才落地（失败回滚也落到它，不用未确认的乐观值当真相）。
@@ -472,7 +472,7 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 			{test && test !== "running" && (
 				<div className={cx("flex items-start gap-2 rounded-lg p-2 text-sm", test.ok ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40" : "bg-red-50 text-red-700 dark:bg-red-950/40")}>
 					{test.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <XCircle size={16} className="mt-0.5 shrink-0" />}
-					<span className="break-all">{test.ok ? `连接成功：${test.message}` : test.message}</span>
+					<span className="break-all">{test.ok ? `连接成功：${test.message}` : test.message}{!test.ok && (test.detail ? <Help className="ml-1">服务返回的原文：{test.detail}</Help> : null)}</span>
 				</div>
 			)}
 		</div>
