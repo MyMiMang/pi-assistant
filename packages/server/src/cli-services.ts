@@ -8,9 +8,10 @@ import { join } from "node:path";
 import { createCliChannelService, type CliChannelService } from "./cli-channel-service.ts";
 import { detectAgy, detectClaude, detectCodex, findAgyCommand, findClaudeCommand, findCodexCommand, listAgyModels } from "./cli-agents/detect.ts";
 import { registerAntigravityModels, registerAntigravityProvider } from "./pi-adapter/cli-models/antigravity.ts";
-import { registerClaudeCodeProvider } from "./pi-adapter/cli-models/claude-code.ts";
+import { registerClaudeCodeModels, registerClaudeCodeProvider } from "./pi-adapter/cli-models/claude-code.ts";
 import { registerCodexModels, registerCodexProvider } from "./pi-adapter/cli-models/codex.ts";
 import { config } from "./config.ts";
+import type { PiModels } from "./pi-adapter/index.ts";
 
 const claudeCode = createCliChannelService({
 	id: "claude-code",
@@ -20,6 +21,7 @@ const claudeCode = createCliChannelService({
 	notFound: "没有找到 claude 命令",
 	detect: (command) => detectClaude({ command }),
 	register: (models, command) => registerClaudeCodeProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command }),
+	refresh: async (models, channel) => void (await registerClaudeCodeModels(models, channel)),
 	requireLogin: false,
 });
 
@@ -60,3 +62,15 @@ const antigravity = createCliChannelService({
 });
 
 export const cliServices: CliChannelService[] = [claudeCode, codex, antigravity];
+
+/** 启动时在后台并行注册三家渠道（各自问模型列表 / 起进程 / 联网，可能要几十秒，不能挡住服务开始监听）；单家失败只记日志。返回的 Promise 在全部完成（含失败）后落定。 */
+export const startCliChannels = (models: PiModels): Promise<void> => Promise.all(cliServices.map((svc) => svc.ensure(models).catch((e) => console.error(`[models] 注册 ${svc.id} 渠道失败`, e)))).then(() => undefined);
+
+/** 某家本机渠道正在后台注册时，等它注册完（最多 `timeoutMs`）；不是本机渠道或没在注册就立刻返回。只等这一家。 */
+export async function cliProviderReady(providerId: string | null | undefined, timeoutMs = 60_000): Promise<void> {
+	const p = cliServices.find((s) => s.id === providerId)?.registering();
+	if (!p) return;
+	let timer: NodeJS.Timeout | undefined;
+	await Promise.race([p.catch(() => {}), new Promise((r) => (timer = setTimeout(r, timeoutMs)))]);
+	clearTimeout(timer);
+}

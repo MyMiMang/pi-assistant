@@ -3,7 +3,7 @@ import { config } from "./config.ts";
 import { db, getSetting, setSetting } from "./db.ts";
 import { CustomProviders, type CustomProviderMeta } from "./pi-adapter/custom-providers.ts";
 import { PiModels, setLimitsLearner, type CredentialStore } from "./pi-adapter/index.ts";
-import { cliServices } from "./cli-services.ts";
+import { startCliChannels } from "./cli-services.ts";
 import { refreshModelDb } from "./model-db.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, registerMockProvider } from "./pi-adapter/mock-provider.ts";
 import { EncryptedCredentialStore, openJson, sealJson } from "./secrets.ts";
@@ -53,10 +53,21 @@ export async function initModels(credentials?: CredentialStore) {
 	await models.reloadConfig();
 	await customProviders.backfillLimits().catch((e) => console.error("[models] 补齐自定义模型上下文长度失败", e));
 	if (config.mock) await registerMockProvider(models);
-	for (const svc of cliServices) await svc.ensure(models).catch((e) => console.error(`[models] 注册 ${svc.id} 渠道失败`, e));
+	cliReady = startCliChannels(models); // 不等：本机命令行渠道在后台并行注册，不挡服务启动；要等的地方 await cliChannelsReady()
 	// classifier 只能经扩展注册，reloadConfig/backfill 后按保存的公开元数据重新注册（凭据仍走 Pi 原 provider）。
 	customProviders.reapplyClassifiers();
 	if (config.mock && !getSetting("defaultModel", null)) setSetting("defaultModel", { provider: MOCK_PROVIDER, id: MOCK_MODEL });
+}
+
+let cliReady: Promise<void> = Promise.resolve();
+/** 本机命令行模型渠道（claude / codex / agy）的启动注册是否完成（含失败）。测试和需要完整模型列表的地方 await 它，不要 sleep。 */
+export const cliChannelsReady = (): Promise<void> => cliReady;
+/** 没有默认模型、又还有本机渠道在后台注册时，最多等 `ms` 毫秒（免得启动瞬间误判「没有模型」）；其他情况立刻返回，不挡界面。 */
+export async function waitCliForDefaultModel(ms = 5000): Promise<void> {
+	if (defaultModel()) return;
+	let timer: NodeJS.Timeout | undefined;
+	await Promise.race([cliReady, new Promise((r) => (timer = setTimeout(r, ms)))]);
+	clearTimeout(timer);
 }
 
 export function defaultModel(): { provider: string; id: string } | null {

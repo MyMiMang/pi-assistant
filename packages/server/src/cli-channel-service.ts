@@ -6,6 +6,7 @@
  * 想在 e2e / 单测里启用就设 `PIA_<NAME>_COMMAND=<假命令的路径>`；设成空字符串表示明确关闭。
  */
 import { existsSync } from "node:fs";
+import { bus } from "./bus.ts";
 import { config, env } from "./config.ts";
 import type { PiModels } from "./pi-adapter/index.ts";
 
@@ -46,16 +47,34 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 		return config.mock ? null : a.find();
 	}
 
+	/** 正在进行的注册（启动时后台注册，界面同时点检测会撞上；合并成一次，别注册两遍） */
+	let pending: { models: PiModels; p: Promise<boolean> } | undefined;
+
 	/** 找得到命令（且按要求已登录）就注册；返回注册后是否可用。 */
-	async function ensure(models: PiModels, known?: S): Promise<boolean> {
-		if (channel && registeredOn === models) return true;
-		const cmd = command();
-		if (!cmd) return false;
-		if (a.requireLogin && !(known ?? (await a.detect(cmd))).loggedIn) return false;
-		channel?.disposeAll();
-		channel = await a.register(models, command);
-		registeredOn = models;
-		return true;
+	function ensure(models: PiModels, known?: S): Promise<boolean> {
+		if (channel && registeredOn === models) return Promise.resolve(true);
+		// 并入正在进行的那次；它没注册成（比如启动时命令还没装好）而现在可能装好了，就再按当前状态试一次
+		if (pending?.models === models) return pending.p.then((ok) => ok || start(models, known));
+		return start(models, known);
+	}
+
+	function start(models: PiModels, known?: S): Promise<boolean> {
+		if (channel && registeredOn === models) return Promise.resolve(true);
+		if (pending?.models === models) return pending.p;
+		const p = (async () => {
+			const cmd = command();
+			if (!cmd) return false;
+			if (a.requireLogin && !(known ?? (await a.detect(cmd))).loggedIn) return false;
+			channel?.disposeAll();
+			channel = await a.register(models, command);
+			registeredOn = models;
+			bus.emit({ type: "models.changed", provider: a.id }); // 这一家注册上了（后台注册 / 装好后重新检测），界面重新拉模型列表
+			return true;
+		})().finally(() => {
+			if (pending?.p === p) pending = undefined;
+		});
+		pending = { models, p };
+		return p;
 	}
 
 	/** 检测并（装好了就）注册，不用重启服务；`recheck` 时顺便刷新模型列表。 */
@@ -66,7 +85,10 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 		if (status.installed) {
 			try {
 				if (await ensure(models, status)) {
-					if (recheck && wasRegistered && channel && a.refresh) await a.refresh(models, channel);
+					if (recheck && wasRegistered && channel && a.refresh) {
+						await a.refresh(models, channel);
+						bus.emit({ type: "models.changed", provider: a.id });
+					}
 				}
 			} catch (e) {
 				console.error(`[${a.id}] 注册模型渠道失败`, e);
@@ -79,6 +101,8 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 		id: a.id,
 		command,
 		registered: () => !!channel,
+		/** 正在注册这一家的 Promise；没在注册返回 undefined */
+		registering: (): Promise<boolean> | undefined => pending?.p,
 		ensure,
 		check,
 		/** 服务关闭：结束还在跑的进程 */

@@ -32,7 +32,7 @@ before(async () => {
 	await new Promise<void>((r) => server.once("listening", () => r()));
 	const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 	models = await PiModels.create({ credentials: memoryCredentialStore(), modelsPath: null, allowNetwork: false });
-	channel = await registerClaudeCodeProvider(models, { dataDir, bridgeBaseUrl: () => baseUrl, command: () => FAKE, extraEnv: () => ({ FAKE_CLAUDE_SCENARIO: scenario }) });
+	channel = await registerClaudeCodeProvider(models, { dataDir, bridgeBaseUrl: () => baseUrl, command: () => FAKE, extraEnv: () => ({ FAKE_CLAUDE_SCENARIO: scenario, FAKE_CLAUDE_MODELS: "none" }) }); // none = 问不到列表，退回三个别名
 });
 after(() => {
 	channel.disposeAll();

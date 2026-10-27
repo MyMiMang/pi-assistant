@@ -11,6 +11,8 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { ClaudeRun, type ClaudeExit } from "../../cli-agents/claude-process.ts";
+import { listClaudeModels } from "../../cli-agents/claude-models.ts";
+import { CLAUDE_FALLBACK_MODELS, type ClaudeModelInfo } from "../../cli-agents/claude-models-parse.ts";
 import { findClaudeCommand } from "../../cli-agents/detect.ts";
 import type { ClaudeEvent } from "../../cli-agents/events.ts";
 import { toolBridge, type Tool, type ToolBridge } from "../../cli-agents/tool-bridge.ts";
@@ -18,19 +20,12 @@ import type { PiModels } from "../index.ts";
 import { createCliChannel, type CliBackend, type CliLive, type LaunchRequest, type Step } from "./channel-core.ts";
 import { toolResultToMcp, userMessagesToClaude } from "./convert.ts";
 import { EventQueue } from "./event-queue.ts";
-import { describeCliError, registerCliProvider } from "./provider.ts";
+import { describeCliError, registerCliProvider, thinkingMapOf } from "./provider.ts";
 import { SyncStore } from "./sync-map.ts";
 
 export const CLAUDE_CODE_PROVIDER = "claude-code";
 /** Pi 的 `api` 字段：自定义流式实现的名字 */
 export const CLAUDE_CODE_API = "claude-code-cli";
-
-/** 渠道模型：id 就是 `claude --model` 的别名。haiku 不支持思考强度。 */
-export const CLAUDE_CODE_MODELS = [
-	{ id: "opus", name: "Claude Code · Opus", reasoning: true },
-	{ id: "sonnet", name: "Claude Code · Sonnet", reasoning: true },
-	{ id: "haiku", name: "Claude Code · Haiku", reasoning: false },
-] as const;
 
 export interface ClaudeCodeDeps {
 	/** 数据目录：对照表放 `<dataDir>/cli-models/claude-sessions.json`，没给 cwd 时工作目录放 `<dataDir>/cli-models/work` */
@@ -130,30 +125,51 @@ function claudeBackend(deps: ClaudeCodeDeps): CliBackend<ClaudeLive> {
 	};
 }
 
-/** 本渠道一个实例 = 一张进行中运行表 + 一张对照表 */
+/** 本渠道一个实例 = 一张进行中运行表 + 一张对照表（带上 deps，重新检测时刷新模型列表要用） */
 export function createClaudeCodeChannel(deps: ClaudeCodeDeps) {
-	return createCliChannel(claudeBackend(deps), deps.store ?? new SyncStore(join(deps.dataDir, "cli-models", "claude-sessions.json")));
+	return { ...createCliChannel(claudeBackend(deps), deps.store ?? new SyncStore(join(deps.dataDir, "cli-models", "claude-sessions.json"))), deps };
 }
 
-/** 把 `claude-code` 渠道注册进 Pi（模型 opus / sonnet / haiku，自带 streamSimple）。 */
-export async function registerClaudeCodeProvider(models: PiModels, deps: ClaudeCodeDeps) {
-	const channel = createClaudeCodeChannel(deps);
+export type ClaudeCodeChannel = ReturnType<typeof createClaudeCodeChannel>;
+
+/** 向 claude 问模型列表；问不到（没登录、超时、回包没有 models）退回内置三个别名，保证已选 opus / sonnet / haiku 的助理照常能用。永不抛错。 */
+async function claudeModelList(deps: ClaudeCodeDeps): Promise<ClaudeModelInfo[]> {
+	const command = (deps.command ?? (() => findClaudeCommand()))();
+	if (!command) return [...CLAUDE_FALLBACK_MODELS];
+	try {
+		return await listClaudeModels(command, { cwd: (deps.cwd ?? (() => join(deps.dataDir, "cli-models", "work")))(), baseEnv: deps.baseEnv, extraEnv: deps.extraEnv?.() });
+	} catch (e) {
+		console.warn(`[claude-code] 没取到模型列表，用内置的 opus / sonnet / haiku：${e instanceof Error ? e.message : String(e)}`);
+		return [...CLAUDE_FALLBACK_MODELS];
+	}
+}
+
+/** 向 claude 问模型列表并（重新）注册 `claude-code` 渠道；重新检测时再调一次就刷新列表。 */
+export async function registerClaudeCodeModels(models: PiModels, channel: ClaudeCodeChannel): Promise<ClaudeModelInfo[]> {
+	const list = await claudeModelList(channel.deps);
 	await registerCliProvider(models, {
 		id: CLAUDE_CODE_PROVIDER,
 		name: "Claude Code（本机）",
 		api: CLAUDE_CODE_API,
 		baseUrl: "claude-code://local",
 		streamSimple: channel.streamSimple as never,
-		models: CLAUDE_CODE_MODELS.map((m) => ({
+		models: list.map((m) => ({
 			id: m.id,
 			name: m.name,
 			reasoning: m.reasoning,
 			// 思考强度对应 claude --effort 的 low…max；minimal 没有对应档位
-			thinkingLevelMap: { minimal: null, xhigh: "xhigh", max: "max" },
+			thinkingLevelMap: thinkingMapOf(m.efforts),
 			image: true,
-			contextWindow: 200_000,
+			contextWindow: m.contextWindow,
 			maxTokens: 64_000,
 		})),
 	});
+	return list;
+}
+
+/** 创建渠道并注册模型（模型列表向 claude 问一次，问不到退回三个别名）。 */
+export async function registerClaudeCodeProvider(models: PiModels, deps: ClaudeCodeDeps): Promise<ClaudeCodeChannel> {
+	const channel = createClaudeCodeChannel(deps);
+	await registerClaudeCodeModels(models, channel);
 	return channel;
 }

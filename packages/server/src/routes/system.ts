@@ -13,7 +13,7 @@ import { bus } from "../bus.ts";
 import { config } from "../config.ts";
 import { db, getSetting, setSetting } from "../db.ts";
 import { identity } from "../identity.ts";
-import { credentialBackend, customProviders, defaultModel, models, withProviderName } from "../models.ts";
+import { credentialBackend, customProviders, defaultModel, models, waitCliForDefaultModel, withProviderName } from "../models.ts";
 import { onboardingState } from "../onboarding.ts";
 import { checkPiCompat } from "../pi-adapter/index.ts";
 import { pushLog, vapidPublicKey } from "../push.ts";
@@ -56,6 +56,7 @@ export function mountSystemRoutes(app: Hono<Env>) {
 	// ---------------------------------------------------------------- 系统
 	app.get("/api/system/public", (c) => c.json({ serverId: identity().serverId, publicKey: identity().publicKey, name: BRAND.name, server: config.headless, setup: config.headless && !hasOwner() }));
 	app.get("/api/system", async (c) => {
+		await waitCliForDefaultModel(); // 默认模型是本机命令行渠道的、还在后台注册时，最多等 5 秒，免得启动瞬间误判「没有模型」弹出向导
 		const ob = onboardingState();
 		return c.json({
 			serverId: identity().serverId,

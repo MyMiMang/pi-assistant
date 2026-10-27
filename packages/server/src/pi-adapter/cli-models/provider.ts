@@ -55,6 +55,12 @@ export async function registerCliProvider(models: PiModels, spec: CliProviderSpe
 	await models.setRuntimeApiKey(spec.id, "local");
 }
 
+/** 命令行工具（codex / claude）的思考强度 → Pi 的 `thinkingLevelMap`（不支持的档位给 null，minimal 没有对应档位） */
+export function thinkingMapOf(efforts: readonly string[]): Record<string, string | null> {
+	const pick = (e: string) => (efforts.includes(e) ? e : null);
+	return { minimal: null, low: pick("low"), medium: pick("medium"), high: pick("high"), xhigh: pick("xhigh"), max: pick("max") };
+}
+
 export interface CliErrorStyle {
 	/** `Claude Code` */
 	label: string;

@@ -69,6 +69,7 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 - `--mcp-config` 必须是绝对路径。每次运行建一个私有临时目录（0700），里面放 MCP 配置（含令牌）和系统提示两个 0600 文件，运行结束（含 abort、进程没起来）一定删掉。
 - **系统提示兜底**：订阅登录下能否整个替换系统提示还没验证（实测 2）。实现上每个新会话第一轮检查一次：如果回答明显没按系统提示来（比如问它「你是谁」，答的是 Claude Code 而不是助理名字），这个助理以后改用 `--append-system-prompt-file`，并记日志。
 - 工作目录用助理工作区（`workspaceOf`），反正内置工具已关掉，它不会自己读写。
+- **模型列表向 claude 问**（与 Codex / Antigravity 一致，不写死）：起 `claude -p --input-format stream-json --output-format stream-json --verbose --tools "" --strict-mcp-config --no-session-persistence`，往 stdin 写一行 `{"type":"control_request","request_id":"init-1","request":{"subtype":"initialize"}}`，读回包 `control_response` 里的 `models`（= claude 里 `/model` 菜单的完整清单；不发用户消息、不耗额度），拿到就关 stdin 结束进程；回包里的 `account` 等字段不读、不记、不存。Pi 模型 id = `value`（原样传给 `--model`，可含 `[1m]`）；显示名 `Claude Code · …`（`default` →「默认」，`Custom X model` 这类被自定义映射的别名 →「Opus（displayName）」，带 `[1m]` 加「· 1M 上下文」，仍重名的补「（value）」）；`supportsEffort` 为真才有思考强度，档位取 `supportedEffortLevels`。问不到（没登录、超时 30 秒、回包没有 models）退回 opus / sonnet / haiku 三个别名，已选这三个的助理照常能用；用户点「重新检测」时重新问。实现：`cli-agents/claude-models.ts`（问）、`claude-models-parse.ts`（纯函数）。
 
 ### 4.3 工具调用怎么交回 Pi（核心机制；按 §7 实测结果修订）
 1. Pi 调 `streamSimple(context)`。渠道从 context 里拿到工具清单（`getCurrentTools`），登记到这次运行的工具桥上，claude 通过 MCP 的 `tools/list` 看到它们，名字是 `mcp__pia__<工具名>`。
@@ -89,6 +90,7 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 - Pi 整理上下文时，会在主循环外单独调一次模型（`direct` 请求）生成总结：这种请求不续用会话、不给工具，单次 `claude -p` 跑完即可。
 
 ### 4.5 界面和设置
+- **注册时机**：服务启动时三家渠道（claude / codex / agy）在后台并行注册，不挡 HTTP 开始监听（问模型列表、起 app-server、联网跑 `agy models` 可能要几秒到几十秒）。`startCliChannels`（`cli-services.ts`）发起，`models.ts` 的 `cliChannelsReady()` 在全部完成（含失败）后落定；同一家的启动注册和界面「检测」同时发生时合并成一次（`cli-channel-service.ts` 的 `ensure`）。**界面接口不等注册**：`/api/models` 直接返回当前列表；`/api/system` 只在没有默认模型、且还有渠道在注册时最多等 5 秒（`waitCliForDefaultModel`），免得启动瞬间误判「没有模型」弹出向导。每一家注册上（或重新检测刷新）就发 `models.changed` 事件，前端 `store.ts` 收到后 `loadSystem()`，`useConfiguredModels`（依赖 system）据此重新拉列表。助理选的是还在注册的本机渠道模型时，`AgentRuntime.ensure` 先 `cliProviderReady(provider)` 等那一家（最多 60 秒）再解析模型，不会先退回默认模型。单测里要等就 `await cliChannelsReady()`，不要 sleep。
 - 「模型服务」里加一张「Claude Code（本机）」卡片（复用现有模型服务页的布局，界面标准照旧）：显示是否已安装、版本、是否已登录（`claude auth status`）。没装或没登录时，用大白话说明去终端里怎么做，并给一个「重新检测」按钮。
 - 模型列表（`ModelPicker`）里出现 `Claude Code · Opus / Sonnet / Haiku`；思考强度映射到 `--effort`；没有 Fast。
 - 支持看图（图片作为用户内容发给 claude）。

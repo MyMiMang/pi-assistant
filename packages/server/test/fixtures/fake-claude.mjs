@@ -23,6 +23,33 @@ if (argv[0] === "auth" && argv[1] === "status") {
 	process.exit(ok ? 0 : 1);
 }
 
+// ---- 问模型列表（没有 --mcp-config、只收 control_request）。FAKE_CLAUDE_MODELS：default | dup（重名 + [1m]）| none（回包里没有 models）| nested（models 在 response 本身）| exit（不回包直接退出）| hang（不回包）
+if (!argv.includes("--mcp-config")) {
+	const mode = process.env.FAKE_CLAUDE_MODELS ?? "default";
+	const eff = ["low", "medium", "high", "xhigh", "max"];
+	const m = (value, displayName, description, efforts = eff) => ({ value, resolvedModel: value, displayName, description, supportsEffort: efforts.length > 0, ...(efforts.length ? { supportedEffortLevels: efforts } : {}) });
+	const lists = {
+		default: [m("default", "Default (recommended)", "Use the default model"), m("opus", "Opus 5", "Opus 5 · most capable"), m("haiku", "Haiku 4.5", "Haiku 4.5 · fastest", [])],
+		dup: [m("default", "Default (recommended)", "Use the default model"), m("opus", "claude-opus-5-5", "Custom Opus model"), m("fable", "claude-sonnet-5-5", "Custom Fable model"), m("claude-fable-5-1[1m]", "Fable", "Fable 5.1"), m("sonnet", "claude-sonnet-5-5", "Custom Sonnet model"), m("haiku", "claude-sonnet-5-5", "Custom Haiku model", []), m("same-a", "Twin", "x"), m("same-b", "Twin", "x")],
+		nested: [m("opus", "Opus 5", "Opus 5")],
+	};
+	createInterface({ input: process.stdin }).on("line", (line) => {
+		let j;
+		try {
+			j = JSON.parse(line);
+		} catch {
+			return;
+		}
+		if (j.type !== "control_request" || j.request?.subtype !== "initialize") return;
+		if (mode === "exit") process.exit(1);
+		if (mode === "hang") return;
+		const body = mode === "none" ? { commands: [], account: { email: "secret@example.com" } } : { models: lists[mode] ?? lists.default, account: { email: "secret@example.com" } };
+		out({ type: "control_response", response: mode === "nested" ? body : { subtype: "success", request_id: j.request_id, response: body } });
+	});
+	process.stdin.on("end", () => process.exit(0));
+	await new Promise(() => {}); // 等 stdin 关闭时退出，不往下走对话流程
+}
+
 const scenario = process.env.FAKE_CLAUDE_SCENARIO ?? "text";
 const resumeId = argv.includes("--resume") ? argv[argv.indexOf("--resume") + 1] : null;
 const sessionId = resumeId ?? `fake-session-${process.pid}`;

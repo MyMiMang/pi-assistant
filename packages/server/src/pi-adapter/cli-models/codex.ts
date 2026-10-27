@@ -18,7 +18,7 @@ import type { PiModels } from "../index.ts";
 import { createCliChannel, type CliBackend, type CliLive, type LaunchRequest, type Step } from "./channel-core.ts";
 import { blocksToCodexInput, toolResultToCodex, toolsPromptComposite, userMessagesToClaude } from "./convert.ts";
 import { EventQueue } from "./event-queue.ts";
-import { describeCliError, registerCliProvider } from "./provider.ts";
+import { describeCliError, registerCliProvider, thinkingMapOf } from "./provider.ts";
 import { SyncStore } from "./sync-map.ts";
 
 export const CODEX_PROVIDER = "codex";
@@ -175,12 +175,6 @@ export function createCodexChannel(deps: CodexDeps) {
 }
 
 export type CodexChannel = ReturnType<typeof createCodexChannel>;
-
-/** Codex 的思考强度 → Pi 的 `thinkingLevelMap`（不支持的档位给 null，minimal 没有对应档位） */
-export function thinkingMapOf(efforts: readonly string[]): Record<string, string | null> {
-	const pick = (e: string) => (efforts.includes(e) ? e : null);
-	return { minimal: null, low: pick("low"), medium: pick("medium"), high: pick("high"), xhigh: pick("xhigh"), max: pick("max") };
-}
 
 /** 向 Codex 问模型列表并（重新）注册 `codex` 渠道；重新检测时再调一次就刷新列表。 */
 export async function registerCodexModels(models: PiModels, channel: CodexChannel, reprobe = false) {

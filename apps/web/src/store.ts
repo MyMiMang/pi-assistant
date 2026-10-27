@@ -524,9 +524,8 @@ export const useStore = create<State>((set, get) => ({
 			case "agent.read":
 				set({ agents: get().agents.map((a) => (a.id === e.agentId ? { ...a, unread: 0 } : a)) });
 				break;
-			case "agents.changed":
-				void get().loadAgents();
-				break;
+			case "agents.changed": void get().loadAgents(); break;
+			case "models.changed": void get().loadSystem(); break; // 本机命令行渠道后台注册完：重拉系统信息，模型选择（useConfiguredModels 依赖 system）跟着重新拉列表
 			case "subagent.updated": {
 				const t = e.subagent as Helper, list = get().tasks[t.agent_id] ?? [];
 				if (backgroundHelper(t)) set({ tasks: { ...get().tasks, [t.agent_id]: list.some((x) => x.id === t.id) ? list.map((x) => (x.id === t.id ? t : x)) : [t, ...list] } });

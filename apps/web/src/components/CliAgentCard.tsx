@@ -31,7 +31,7 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 		login: "claude auth login",
 		tone: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
 		summary: "用你电脑上已登录的 Claude Code 当模型，工具仍由 Pi 助理执行。",
-		models: "模型：Claude Code · Opus / Sonnet / Haiku",
+		models: "模型：和 Claude Code 里 /model 能选的一样",
 		help: (
 			<>
 				会加载你自己的 Claude Code 设置（登录方式、代理、钩子、插件都按你的设置来），但不会读你的 CLAUDE.md。

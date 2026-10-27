@@ -1,7 +1,7 @@
 /**
  * Claude Code（本机）接入 e2e（方案 docs/design/cli-models.md §4.5、§9 第 3b 步）。
  * 临时数据 + Mock + 假 claude（packages/server/test/fixtures/fake-claude.mjs 包一层脚本），绝不调用真实 claude。
- * 覆盖：模型服务页卡片（没装 → 未登录 → 已登录，重新检测不用重启）、模型选择里出现 Claude Code · Opus / Sonnet / Haiku
+ * 覆盖：模型服务页卡片（没装 → 未登录 → 已登录，重新检测不用重启）、模型选择里出现向 claude 问来的 Claude Code 模型
  * （haiku 无思考强度、没有 Fast）、单聊选 Sonnet 发消息看到假 claude 的回答（用量行不显示钱）、
  * 假 claude 调 bash 出现审批卡、批准后回答继续、390 宽不横向溢出。
  */
@@ -29,7 +29,7 @@ const loginFile = join(run.runDir, "login");
 writeFileSync(scenarioFile, "text");
 writeFileSync(loginFile, "1");
 const installFake = () => {
-	writeFileSync(CLAUDE, `#!/bin/sh\nFAKE_CLAUDE_SCENARIO=$(cat "${scenarioFile}") FAKE_CLAUDE_LOGGED_IN=$(cat "${loginFile}") exec "${process.execPath}" "${FAKE}" "$@"\n`);
+	writeFileSync(CLAUDE, `#!/bin/sh\nFAKE_CLAUDE_MODELS=dup FAKE_CLAUDE_SCENARIO=$(cat "${scenarioFile}") FAKE_CLAUDE_LOGGED_IN=$(cat "${loginFile}") exec "${process.execPath}" "${FAKE}" "$@"\n`);
 	chmodSync(CLAUDE, 0o755);
 };
 const server = startTempServer({ root, port, run, extra: { PIA_CLAUDE_COMMAND: CLAUDE } });
@@ -77,9 +77,11 @@ try {
 	assert.equal(await page.locator('[data-testid=service-card][data-service="claude-code"]').count(), 0, "不重复成普通服务卡片");
 	await noOverflow(page, "桌面设置页");
 
-	// ---- 2) 模型列表：三个模型，haiku 没有思考强度，没有 Fast
+	// ---- 2) 模型列表：向 claude 问来的完整清单（假 claude 的 dup 场景：含重名别名和 [1m]），haiku 没有思考强度，没有 Fast
 	const list = (await j("/api/models")).filter((m) => m.provider === "claude-code");
-	assert.deepEqual(list.map((m) => m.id).sort(), ["haiku", "opus", "sonnet"]);
+	assert.deepEqual(list.map((m) => m.id).sort(), ["claude-fable-5-1[1m]", "default", "fable", "haiku", "opus", "same-a", "same-b", "sonnet"]);
+	assert.equal(new Set(list.map((m) => m.name)).size, list.length, "显示名没有重名");
+	assert.ok(list.find((m) => m.id === "claude-fable-5-1[1m]").name.includes("1M 上下文"));
 	assert.deepEqual(list.find((m) => m.id === "haiku").thinking, ["off"]);
 	assert.ok(list.find((m) => m.id === "sonnet").thinking.length > 1, "sonnet 有思考强度");
 	assert.ok(list.every((m) => m.fast.capability === "unsupported"), "没有 Fast");
@@ -89,7 +91,7 @@ try {
 	const menu = await openModelMenu(page);
 	await page.getByTestId("model-search").fill("Claude Code");
 	const names = await menu.getByTestId("model-option").allInnerTexts();
-	assert.ok(["Opus", "Sonnet", "Haiku"].every((n) => names.some((t) => t.includes(`Claude Code · ${n}`))), `模型选择里有三个 Claude Code 模型：${names.join("|")}`);
+	assert.ok(["默认", "Opus", "Sonnet", "Haiku", "Fable · 1M 上下文"].every((n) => names.some((t) => t.includes(`Claude Code · ${n}`))), `模型选择里有向 claude 问来的模型：${names.join("|")}`);
 	await page.screenshot({ path: join(OUT, "04-model-picker.png") });
 	await menu.locator('[data-testid=model-option][data-model="claude-code/sonnet"]').first().click();
 	await wait(async () => (await j("/api/agents")).find((a) => a.id === agent.id)?.model?.id === "sonnet");

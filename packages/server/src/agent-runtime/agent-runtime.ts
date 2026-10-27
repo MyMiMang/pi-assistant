@@ -18,6 +18,7 @@ import { type AttachmentInput, prepareAttachments } from "../attachments.ts";
 import { supportsVision } from "../vision.ts";
 import { isStopCommand } from "../interject.ts";
 import { insertMessage, updateMessage } from "../messages.ts";
+import { cliProviderReady } from "../cli-services.ts";
 import { defaultModel, defaultThinking, models } from "../models.ts";
 import { composeQuotedInput } from "../replies.ts";
 import { abortSession, type AgentSession, type SkillInvocationInput, compactSession, triggerHidden, applyModelSettings, disposeSession, injectContext, isSessionBusy, lastAssistantText, modelErrorMessage, promptSession, skillCommand, sessionFileOf, sessionStats, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
@@ -59,6 +60,8 @@ export class AgentRuntime {
 	async ensure(): Promise<AgentSession | null> {
 		if (this.creating) return this.creating;
 		const a = getAgent(this.id)!;
+		// 助理选的是本机命令行模型、那一家还在后台注册：等它注册完（最多 60 秒）再解析，别立刻退回默认模型
+		if (a.model_provider && !models.getModel(a.model_provider, a.model_id ?? "")) await cliProviderReady(a.model_provider);
 		const model = this.modelFor(a);
 		if (!model) return null;
 		const ds = await desktopStatus(this.id).catch(() => null);
