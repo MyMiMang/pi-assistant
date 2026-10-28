@@ -38,7 +38,7 @@ export async function runSidePanelSection({ browser, base, installRoutes, check,
 	await page.screenshot({ path: join(OUT, "side-panel-noir-dark.png") });
 
 	// 拖动调宽 / 双击恢复默认 / 偏好按设备记住
-	const rz = await box("[role=separator][aria-label=调整文件预览宽度]");
+	const rz = await box("[role=separator][aria-label=调整侧栏宽度]");
 	await page.mouse.move(rz.x + rz.width / 2, 400);
 	await page.mouse.down();
 	await page.mouse.move(rz.x + rz.width / 2 - 60, 400, { steps: 6 });
@@ -46,7 +46,7 @@ export async function runSidePanelSection({ browser, base, installRoutes, check,
 	const wide = await box("[data-testid=file-preview]");
 	check("[侧栏] 拖动手柄调宽生效", wide && near(wide.width, 620, 6), String(wide?.width));
 	check("[侧栏] 宽度偏好存进本机", (await page.evaluate(() => JSON.parse(localStorage.getItem("pia.layout") ?? "{}").previewW)) === Math.round(wide.width));
-	await page.locator("[role=separator][aria-label=调整文件预览宽度]").dblclick();
+	await page.locator("[role=separator][aria-label=调整侧栏宽度]").dblclick();
 	check("[侧栏] 双击手柄恢复默认宽度", near((await box("[data-testid=file-preview]")).width, 560, 3));
 
 	// 换文件：直接换内容

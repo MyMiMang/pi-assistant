@@ -197,7 +197,8 @@ export function BotPart({ p, live, busy, toolOnly, renderSubagent, onQuote, onJu
 	// 失败 / 中断即使没有正文也要有气泡把原因显示出来（否则界面上只剩「引用」，看起来像正文空白）
 	// 工具步骤占位（同一轮只有步骤 / toolCall 占位）不算「空回复」，不插兜底文案
 	const toolPlaceholder = !!(m.meta.toolCallId ?? m.meta.toolName) || (Array.isArray(m.meta.toolCalls) && m.meta.toolCalls.length > 0);
-	const view = botBodyView({ body, thinking: !!thinking, status: m.status, error: m.meta.error, hasAttachments: !!m.meta.attachments?.length, toolOnly: !!toolOnly || m.role === "tool" || toolPlaceholder });
+	const view = botBodyView({ body, thinking: !!thinking, status: m.status, error: m.meta.error, hasAttachments: !!m.meta.attachments?.length, toolOnly: !!toolOnly || m.role === "tool" || toolPlaceholder, retry: m.meta.retry as { attempt?: number; max?: number } | null, retried: !!m.meta.retried, retryFailed: Number(m.meta.retryFailed) || undefined });
+	const softRetry = view.retryState === "retried" || view.retryState === "retrying";
 	const quoted = onJump ? quotedBlock(m) : null;
 	if (toolOnly && !view.showBubble && !thinking && !m.meta.attachments?.length) return null;
 	return (
@@ -206,12 +207,13 @@ export function BotPart({ p, live, busy, toolOnly, renderSubagent, onQuote, onJu
 			<div className="pa-bot-msg" data-mid={m.id} {...(interaction ? interaction(m) : undefined)}>
 				{quoted && <QuotedMessage block={quoted} onJump={onJump!} />}
 				{view.showBubble && (
-					<div className={cx("pa-bubble prose-wrap", (m.status === "error" || view.showError) && "error")}>
+					<div className={cx("pa-bubble prose-wrap", (m.status === "error" || view.showError) && !softRetry && "error")}>
 						{body ? <Markdown text={body} /> : null}
 						{m.status === "streaming" && <span className="caret text-sm" />}
 						{view.showError && (
-							<div className={cx("text-xs text-red-500", body && "mt-1")} data-testid="msg-error" data-kind={view.errorKind}>
-								<div>{view.errorText}</div>
+							<div className={cx("text-xs", softRetry ? "text-mut2" : "text-red-500", body && "mt-1")} data-testid="msg-error" data-kind={view.errorKind} data-retry={view.retryState ?? undefined}>
+								<div>{softRetry ? view.retryNote : view.errorText}</div>
+								{view.retryState === "failed" && <div className="opacity-80" data-testid="msg-retry-note">{view.retryNote}</div>}
 								{/* 服务返回的原始信息放可展开详情：title 在手机上看不到，额度 / 限流的原因要能点开 */}
 								{view.errorDetail && (
 									<details className="mt-1" data-testid="msg-error-detail">

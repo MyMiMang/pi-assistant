@@ -33,7 +33,11 @@ const msgs=[
  // 旧记录空最终回合：必须兜底可见
  {role:'user',content:'再试一次'},
  {role:'assistant',content:'',status:'done',meta:{}},
- {role:'system',content:'后台任务「报告」失败：usage_limit_reached',status:'error',meta:{kind:'task-error',taskTitle:'报告',error:'usage_limit_reached: You have hit your ChatGPT usage limit.'}}
+ {role:'system',content:'后台任务「报告」失败：usage_limit_reached',status:'error',meta:{kind:'task-error',taskTitle:'报告',error:'usage_limit_reached: You have hit your ChatGPT usage limit.'}},
+ // Pi 自动重试：重试中 / 已重试成功（灰字）/ 重试后仍失败（红色 + 次数）
+ {role:'assistant',content:'',status:'error',meta:{error:'Connection error.',retry:{attempt:2,max:5}}},
+ {role:'assistant',content:'',status:'error',meta:{error:'Connection error.',retried:true}},
+ {role:'assistant',content:'',status:'error',meta:{error:'Connection error.',retryFailed:5}}
 ].map((m,i)=>({meta:{},...m,id:`m${i}`,agent_id:agent.id,conversation_id:'c1',task_id:null,created_at:now+i,updated_at:now+i}));
 try{
  browser=await chromium.launch({executablePath:process.env.CHROME??'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true,env:nativeLaunchBrowserEnv()});
@@ -67,7 +71,7 @@ try{
   await page.goto(base+'/?agent=error-test');
   try{await page.getByTestId('msg-error').first().waitFor({timeout:10000});}catch(e){console.log('fixture pageerrors',errors);await page.screenshot({path:join(out,'fixture-failed.png')});throw e;}
   const errs=page.getByTestId('msg-error');
-  assert.equal(await errs.count(),5,'超时/连接/额度/429/未知 各一条错误');
+  assert.equal(await errs.count(),8,'超时/连接/额度/429/未知 + 重试中/已重试/重试失败');
   assert.match(await errs.nth(0).innerText(),/模型服务超时/);
   assert.match(await errs.nth(1).innerText(),/连不上模型服务/);
   const quota=errs.nth(2);
@@ -85,6 +89,19 @@ try{
   assert.equal(await unknown.getAttribute('data-kind'),'unknown');
   assert.match(await unknown.innerText(),/some provider said no/,'未知错误保留服务原文');
   assert.doesNotMatch(await unknown.innerText(),/\[object Object\]/);
+  const retrying=errs.nth(5),retried=errs.nth(6),retryFailed=errs.nth(7);
+  assert.equal(await retrying.getAttribute('data-retry'),'retrying');
+  assert.match(await retrying.innerText(),/网络断了一下，正在第 2 次重试…/);
+  assert.equal(await retried.getAttribute('data-retry'),'retried');
+  assert.match(await retried.innerText(),/网络断了一下，已自动重试/);
+  assert.doesNotMatch(await retried.innerText(),/连不上模型服务/,'已重试的不再显示红色连不上');
+  await retried.getByTestId('msg-error-detail').locator('summary').click();
+  assert.match(await retried.getByTestId('msg-error-detail').innerText(),/Connection error/,'原错误原文可展开');
+  assert.equal(await retryFailed.getAttribute('data-retry'),'failed');
+  assert.match(await retryFailed.innerText(),/连不上模型服务/);
+  assert.match(await retryFailed.innerText(),/已自动重试 5 次仍失败/);
+  const colorOf=l=>l.evaluate(el=>getComputedStyle(el).color);
+  assert.notEqual(await colorOf(retried),await colorOf(retryFailed),'已重试是灰字，最终失败仍是红色');
   await page.getByTestId('msg-interrupted').waitFor();
   // 旧空记录只有 1 条兜底；工具占位回合不能也插一条
   assert.equal(await page.getByTestId('msg-empty').count(),1,'旧空记录兜底可见且只插一次');

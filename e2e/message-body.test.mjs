@@ -205,3 +205,19 @@ test("中转站频率限制 / 冷却：一句中文，带服务给出的恢复�
 	assert.match(assistantErrorText("429 Too Many Requests, please retry after 30 seconds"), /^模型服务限流（请求太频繁），约 30 秒后恢复/);
 	assert.match(assistantErrorText("insufficient_quota: quota exceeded, reset at 2026-10-27T00:00:00Z"), /^模型服务的额度已用完，约 \d{1,2}:00:00 恢复/);
 });
+
+test("Pi 自动重试：重试中 / 已重试成功显示灰色一行，最终失败保持红色并补重试次数", () => {
+	const err = { status: "error", error: "Connection error." };
+	const retrying = view({ ...err, retry: { attempt: 2, max: 5 } });
+	assert.equal(retrying.retryState, "retrying");
+	assert.equal(retrying.retryNote, "网络断了一下，正在第 2 次重试…");
+	const retried = view({ ...err, retried: true });
+	assert.equal(retried.retryState, "retried");
+	assert.equal(retried.retryNote, "网络断了一下，已自动重试");
+	assert.equal(retried.showError, true, "错误原文仍在，可展开");
+	assert.match(retried.errorDetail, /Connection error/);
+	const failed = view({ ...err, retryFailed: 5 });
+	assert.equal(failed.retryState, "failed");
+	assert.equal(failed.retryNote, "已自动重试 5 次仍失败");
+	assert.equal(view(err).retryState, null);
+});

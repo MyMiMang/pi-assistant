@@ -30,7 +30,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--fo
 .pa-app > .pa-drawer, .pa-app > .pa-chat, .pa-app > .pa-pane-wrap, .pa-app > .pa-preview-wrap { position: relative; z-index: 1; }
 .pa-app > .pa-drawer { width: var(--side-w, 264px); flex-shrink: 0; }
 .pa-app > .pa-pane-wrap { width: var(--pane-w, 340px); flex-shrink: 0; }
-/* 文件预览侧栏：聊天区右边一栏（外壳样式同信息面板，用 --panel / --line；内容见 FilePreviewDock.tsx） */
+/* 文件预览侧栏：聊天区右边一栏（外壳样式同信息面板，用 --panel / --line；内容见 SidePanel.tsx） */
 .pa-app > .pa-preview-wrap { width: var(--preview-w, 560px); flex-shrink: 0; display: flex; flex-direction: column; }
 .pa-preview { width: 100%; flex: 1; min-height: 0; overflow: hidden; background: var(--panel); border-left: 1px solid var(--line); }
 .pa-sidebar { overflow: hidden; }

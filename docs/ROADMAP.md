@@ -11,6 +11,7 @@
 - [已发布(beta.37)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
+- [已合 main] 执行概览、任务、项目、提醒也进侧栏（[设计](design/side-panel-views.md)）；断线自动重试成功不再显示红色报错，收尾空回复不再报错
 - [已合 main] HTML / SVG / Office / iWork / zip / Jupyter 文件在应用内直接显示（[HTML 设计](design/html-file-preview.md)、[Office 设计](design/office-file-preview.md)、[0024](decisions/0024-html-preview-sandboxed.md)）
 - [已合 main] 文件预览改成聊天右边的侧栏（窄屏仍是弹窗，可「放大」；[设计](design/file-preview-side-panel.md)）
 - [已发布(beta.42)] 本机编程命令行当模型：模型列表可选 Claude Code、Codex、Antigravity（实验性）的模型，用本机已登录的命令行，工具仍由 Pi 执行（审批、记忆、助理电脑照旧）；模型服务页每家一张检测卡片。第三期当帮手待做（[设计](design/cli-models.md)、[0023](decisions/0023-cli-agents.md)）

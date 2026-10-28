@@ -14,8 +14,8 @@ import { clampPane, clampSide, PANE, resolveLayout, SIDE, useWindowWidth } from 
 import { Resizer } from "./components/Resizer";
 import { BRAND } from "@pi-assistant/shared";
 import { SubagentChat } from "./components/Subagents";
-import { FilePreviewHost, useFilePreviewState } from "./components/FilePreview";
-import { FilePreviewDock } from "./components/FilePreviewDock";
+import { FilePreviewHost } from "./components/FilePreview";
+import { SidePanelDock, useSidePanelShown } from "./components/SidePanel";
 import { AppContextMenuHost } from "./components/ContextMenu";
 import { ImageViewerHost } from "./components/ImageViewer";
 
@@ -23,9 +23,8 @@ export default function App() {
 	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout, room, paneAgent, loadRooms, selectRoom, subagent, subagentTabs, convs } = useStore();
 	const width = useWindowWidth();
 	const L = resolveLayout(width, layout);
-	// 预览侧栏显示时信息面板让位（只隐藏不卸载，关掉后标签页 / 折叠状态原样回来）
-	const pv = useFilePreviewState();
-	const dockShown = !!pv.item && L.previewDocked && !pv.expanded;
+	// 侧栏（文件预览 / 执行概览等）显示时信息面板让位（只隐藏不卸载，关掉后标签页 / 折叠状态原样回来）
+	const dockShown = useSidePanelShown();
 	const [fatal, setFatal] = useState<null | "unpaired" | "offline">(null);
 	/** 模型配置已存在但此刻读不出（凭据 / 目录暂时失败）：提示可恢复错误，不重走首次向导覆盖配置 */
 	const [modelWarnClosed, setModelWarnClosed] = useState(false);
@@ -158,11 +157,11 @@ export default function App() {
 					</div>
 				</>
 			)}
-			<FilePreviewDock docked={L.previewDocked} width={L.previewW} />
+			<SidePanelDock docked={L.previewDocked} width={L.previewW} />
 			<Settings />
 			<DeviceApproval />
 			<ImageViewerHost />
-			<FilePreviewHost docked={L.previewDocked} />
+			<FilePreviewHost />
 			<AppContextMenuHost />
 			{system.onboarded && system.modelReady === false && !modelWarnClosed && !fatal && (
 				<div className="fixed bottom-4 left-1/2 z-40 flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-lg dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200" data-testid="model-unavailable">

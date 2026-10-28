@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { api, getAgentSubagentSettings, setAgentSubagentSettings, type SubagentSettingsResponse } from "../api";
 import type { Message } from "../types";
-import { Button, Help, Modal } from "./ui";
+import { Button, Help } from "./ui";
+import { SidePanel } from "./SidePanel";
 import { ArrowLeft, ArrowUp, Bot, Square } from "lucide-react";
 import { useStore } from "../store";
 import { Avatar } from "./ui";
@@ -223,7 +224,7 @@ export function SubagentTasks({ agentId, conversation, room, current, testid = "
 	const row = (r: Subagent) => <TaskRow key={r.id} testId="subagent-row" id={r.id} active={r.id === current} title={taskTitle(r.title ?? r.task)} status={r.status} meta={`${r.parent_subagent_id ? "下一层帮手" : KIND_LABEL[r.kind ?? ""] ?? "帮手"} · ${r.model_id || "未指定模型"}`} time={r.last_activity_at} onClick={() => openTask(r)} />;
 	return <>
 		<button className="pa-chip" onClick={() => setOpen(true)} data-testid={testid} aria-label="执行概览" title="执行概览：所有帮手的运行情况（含后台、定时、巡检）"><Bot className="pa-ic" /><span className="max-sm:hidden">执行</span><span>{running.length || rows.length}</span></button>
-		<Modal open={open} onClose={() => setOpen(false)} title="任务" testId={overviewTestid}>
+		<SidePanel open={open} onClose={() => setOpen(false)} title="任务" testId={overviewTestid}>
 			<div className="space-y-3 p-4" data-testid="task-list">
 				{running.length > 0 ? <div className="space-y-2">{running.map(row)}</div> : <p className="px-1 text-xs text-mut2">现在没有运行中的任务。</p>}
 				{finished.length > 0 && (
@@ -235,7 +236,7 @@ export function SubagentTasks({ agentId, conversation, room, current, testid = "
 					</details>
 				)}
 			</div>
-		</Modal>
+		</SidePanel>
 	</>;
 }
 /**

@@ -4,7 +4,8 @@ import { api } from "../api";
 import { useStore } from "../store";
 import type { ProjectProgress, ProjectWaiting, Room, RoomProject } from "../types";
 import { PROJECT_STATUS, PlanBody } from "./RoomCards";
-import { Badge, Fold, Help, Modal, cx, fmtTime, useConfirm } from "./ui";
+import { Badge, Fold, Help, cx, fmtTime, useConfirm } from "./ui";
+import { SidePanel } from "./SidePanel";
 import { ProjectFilter } from "./RoomProjectFilter";
 import { WorkItemsButton } from "./WorkItems";
 
@@ -145,7 +146,7 @@ export function ProjectsPanel({ base, projects, refresh, solo }: { base: string;
 				)}
 				{waiting ? <i className="h-2 w-2 shrink-0 rounded-full bg-amber-500 sm:hidden" aria-hidden /> : null}
 			</button>
-			<Modal open={open} onClose={() => setOpen(false)} title="项目" testId="room-projects-panel">
+			<SidePanel open={open} onClose={() => setOpen(false)} title="项目" testId="room-projects-panel">
 				<div className="space-y-3 p-4">
 					<p className="flex items-center gap-1 text-xs text-mut2">
 						{solo ? "我按方案一步步推进，只有需要你看一眼或拍板的事才找你。" : "管理者按方案分工推进，只有需要你看一眼或拍板的事才找你。"}
@@ -191,7 +192,7 @@ export function ProjectsPanel({ base, projects, refresh, solo }: { base: string;
 						)}
 					</Fold>
 				</div>
-			</Modal>
+			</SidePanel>
 			{dlg}
 		</>
 	);

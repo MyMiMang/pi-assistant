@@ -754,15 +754,7 @@ export function lastAssistantText(session: AgentSession): string {
 	return session.getLastAssistantText() ?? "";
 }
 
-/** prompt()正常resolve不代表服务成功；从公开messages检查最终模型结果，不能把失败标成后台任务完成。 */
-export function lastAssistantError(session: AgentSession): string | undefined {
-	const message = [...session.messages].reverse().find((m) => m.role === "assistant");
-	if (!message || message.role !== "assistant") return "这次未收到回复，服务未提供具体原因";
-	if (message.stopReason === "aborted") return undefined;
-	if (message.stopReason === "error" || message.errorMessage) return modelErrorMessage(message.errorMessage);
-	if (!message.content.some((b) => b.type === "toolCall" || (b.type === "text" && b.text.trim()) || (b.type === "thinking" && b.thinking.trim()))) return "这次未收到回复，服务未提供具体原因";
-	return undefined;
-}
+export { lastAssistantError } from "./run-result.ts";
 
 /** 从 Pi 的 AgentMessage 中取纯文本。 */
 export function messageText(message: unknown): string {
@@ -802,6 +794,9 @@ export type AgentEvent =
 	 */
 	| { type: "entry_id"; entryId: string; role: string; toolCallId?: string }
 	| { type: "compaction_start"; reason: string }
+	/** Pi 因网络 / 服务临时错误准备自动重试（上一条 assistant 错误消息就是被重试的那条） */
+	| { type: "retry_start"; attempt: number; max: number }
+	| { type: "retry_end"; success: boolean; attempt: number; finalError?: string }
 	| { type: "compaction_end"; reason: string; ok: boolean; aborted: boolean; error?: string; tokensBefore?: number; summary?: string };
 
 /**
@@ -873,6 +868,8 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 				break;
 			}
 			case "agent_settled": fn({ type: "settled", aborted: !!ev.aborted }); break;
+			case "auto_retry_start": fn({ type: "retry_start", attempt: ev.attempt, max: ev.maxAttempts }); break;
+			case "auto_retry_end": fn({ type: "retry_end", success: !!ev.success, attempt: ev.attempt, finalError: ev.finalError }); break;
 			case "compaction_start": fn({ type: "compaction_start", reason: ev.reason }); break;
 			case "compaction_end":
 				fn({ type: "compaction_end", reason: ev.reason, ok: !!ev.result && !ev.aborted, aborted: !!ev.aborted, error: ev.errorMessage, tokensBefore: ev.result?.tokensBefore, summary: ev.result?.summary });

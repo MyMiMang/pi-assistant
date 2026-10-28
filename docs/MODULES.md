@@ -17,7 +17,7 @@
 | 下载进度 | 服务端 `downloads.ts` + 界面 `Downloads.tsx` |
 | 共享常量 / 纯逻辑 | `packages/shared`：thinking-levels、hard-guard、shell-lex、theme-manifest、model-limit-error（额度 / 限流 / 冷却报错→带恢复时间的中文）、品牌名 |
 | 服务端通用 | `bus.ts`（推事件）、`requests.ts`（审批与提问唯一入口）、`interject.ts`（插话/停止词）、`model-errors.ts`、`thinking.ts`（拆思考内容）、`native-launch-env.ts`（启动子进程环境）、`config.ts`（环境变量）、`db.ts` |
-| Pi 接入（唯一入口） | `pi-adapter/index.ts`、`custom-providers.ts`、`relay-protocols.ts`、`model-limits.ts`、`fast-mode.ts`、`mock-provider.ts`（e2e 脚本化回复）、`mock-room-provider.ts`（群聊部分的 Mock，从 mock-provider.ts 拆出来控制单文件行数）、`mock-collab-provider.ts`（成员直接协作的 Mock：任务要求含「先问一下」「上游有问题」，或看到提问编号时接管）、`mock-chat-plan-provider.ts`（单聊「大事走方案」的 Mock：用户消息含「做个大事」→ chat_plan 两阶段方案卡；用户说「可以」/ 点按钮确认后依次写文件、chat_stage_done ×2、chat_project_done；带「慢」的方案先 sleep 一下留出进行中的窗口；只在有 chat_plan 工具的单聊里接管） |
+| Pi 接入（唯一入口） | `pi-adapter/index.ts`、`custom-providers.ts`、`relay-protocols.ts`、`model-limits.ts`、`fast-mode.ts`、`run-result.ts`（`lastAssistantError`：一轮跑完后判成败，同一轮前面已有可见输出时最后的空回复不算失败）、`mock-provider.ts`（e2e 脚本化回复）、`mock-room-provider.ts`（群聊部分的 Mock，从 mock-provider.ts 拆出来控制单文件行数）、`mock-collab-provider.ts`（成员直接协作的 Mock：任务要求含「先问一下」「上游有问题」，或看到提问编号时接管）、`mock-chat-plan-provider.ts`（单聊「大事走方案」的 Mock：用户消息含「做个大事」→ chat_plan 两阶段方案卡；用户说「可以」/ 点按钮确认后依次写文件、chat_stage_done ×2、chat_project_done；带「慢」的方案先 sleep 一下留出进行中的窗口；只在有 chat_plan 工具的单聊里接管） |
 | 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`local-asr-harness.ts`（本地语音假环境 + 来源端口）、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp、fake-codex：假 codex app-server（JSON-RPC，场景文件 FAKE_CODEX_SCENARIO_FILE 每轮重读；场景含 meta / one-tool / steer / hang / image-tool / server-requests / crash / not-logged-in / e2e-bash；「未登录」用 CODEX_HOME 下的 logged-out 文件表示）、fake-claude：假 claude，按 FAKE_CLAUDE_SCENARIO 出 stream-json 并调工具桥；场景含 meta 回报收到的参数、one-tool / tool-interject / image-tool、stall、resume-missing、think） |
 | e2e 工具 | `e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
 
@@ -230,8 +230,8 @@
 | `ThinkingSlider.tsx` | 思考强度滑块 |
 | `VoiceInput.tsx` | 语音输入按钮 |
 | `Attachments.tsx` | 附件上传与托盘 |
-| `FilePreview.tsx` | 文件预览：状态 store、`PreviewContent`（工具栏 + 内容，弹窗和侧栏共用）、`FilePreviewHost`（弹窗，窄屏 / 放大时用）、取数 + 按类型分发 |
-| `FilePreviewDock.tsx` | 文件预览侧栏外壳（聊天区右边一栏：Resizer 调宽、Esc 关闭、换助理 / 对话自动关；宽度来自 `layout.ts` 的 `previewDocked / previewW`）；设计见 `docs/design/file-preview-side-panel.md` |
+| `FilePreview.tsx` | 文件预览：状态 store、`PreviewContent`（工具栏 + 内容，弹窗和侧栏共用）、`FilePreviewHost`（外壳是 `SidePanel`）、取数 + 按类型分发 |
+| `SidePanel.tsx` | 聊天右边的侧栏：`<SidePanel open onClose title testId>`（用法同 `Modal`）；宽窗口 portal 进槽位、放不下是原来的 Modal、「放大」是 `Modal wide fixed`，同一时间只显示一个；`SidePanelDock` 是槽位外壳（Resizer 调宽、Esc 关闭、换助理 / 对话自动关；宽度来自 `layout.ts` 的 `previewDocked / previewW`）。文件预览、执行概览、任务看板、项目、提醒都用它；设计见 `docs/design/side-panel-views.md`；e2e `e2e/side-panel-views.mjs`（独立脚本：四个面板进侧栏 / 单一面板 / 放大 / 390 仍是弹窗） |
 | `FilePreviewViews.tsx` | 文件预览的各类视图和共用件：`ModeBar`（渲染/源码等模式切换条，Markdown / HTML / SVG 共用）、`loadText`（按上限拉文本）、`CodeView` / `CsvView` / `TableView`（CSV 与 Excel 共用） / `loadBinary`（≤30MB 整份读取） / `MarkdownScroll` / `SvgView` / `HtmlView`（sandbox iframe，无 allow-same-origin） / `Notice`；设计见 `docs/design/html-file-preview.md` |
 | `OfficeViews.tsx` | Word / Excel / iWork / zip / Jupyter 预览视图（整体按需加载，库都用 `import()`）；表格复用 `FilePreviewViews` 的 `TableView` |
 | `OfficeSlides.tsx` | PPT 预览：pptxtojson 解析 + 自己渲染幻灯片（Shadow DOM） |

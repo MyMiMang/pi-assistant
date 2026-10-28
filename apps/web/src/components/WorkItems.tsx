@@ -3,7 +3,8 @@ import { ClipboardList, Loader2, MessageSquare, Pause, Plus } from "lucide-react
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Room } from "../types";
-import { Modal, cx, fmtTime, useConfirm } from "./ui";
+import { cx, fmtTime, useConfirm } from "./ui";
+import { SidePanel } from "./SidePanel";
 import { CreateWorkItem, DecisionBox, RUN_LABEL, StatusPill, WorkDetailPane, type BoardGroup, type WorkDetail, type WorkSummary } from "./WorkItemDetail";
 
 /**
@@ -174,7 +175,7 @@ export function WorkItemsButton({ room }: { room: Room }) {
 				<span className="max-sm:hidden">任务</span>
 				{openCount > 0 && <span>{openCount}</span>}
 			</button>
-			<Modal open={open} onClose={() => setOpen(false)} title={detail ? "任务详情" : "任务"} wide fixed testId="work-items-overview">
+			<SidePanel open={open} onClose={() => setOpen(false)} title={detail ? "任务详情" : "任务"} wide fixed testId="work-items-overview">
 				<div className="pa-work-board scrollbar-thin" data-testid="work-board">
 					{detailId ? (
 						<WorkDetailPane
@@ -224,7 +225,7 @@ export function WorkItemsButton({ room }: { room: Room }) {
 						</>
 					)}
 				</div>
-			</Modal>
+			</SidePanel>
 			{dlg}
 			{creating && <CreateWorkItem room={room} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); setDetailId(id); void refresh(); }} />}
 		</>

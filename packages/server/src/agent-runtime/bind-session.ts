@@ -13,6 +13,11 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 	// app 消息 ↔ Pi entry 的映射：assistant 消息的 id（供紧随 message_end 的 entry_id 事件落 meta.piEntryId）
 	let lastAssistantMid: string | null = null;
 	const tools = new Map<string, string>();
+	// 同一轮（到 settled 为止）里用户是否已经看到过可见内容：有的话，最后那条空回复是正常收尾，不报错
+	let runVisible = false;
+	// Pi 自动重试：被重试过的错误消息（retry_start 时标记）、最近一条错误消息
+	let lastErrorMid: string | null = null;
+	const retriedMids: string[] = [];
 
 	/** 把刚写进 Pi 会话文件的 entry id 落到 app 消息的 meta.piEntryId（不额外广播 message.updated，避免刷屏）。 */
 	const mapEntry = (e: { entryId: string; role: string; toolCallId?: string }) => {
@@ -85,10 +90,16 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 				const thinking = [cur.thinking.trim(), inline].filter(Boolean).join("\n\n");
 				const meta = { model: `${e.provider}/${e.model}`, ...(usage ? { usage } : {}), ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}), ...(fm ? { fast: fm } : {}) };
 				lastAssistantMid = cur.id;
+				if (text.trim() || thinking || (e.hasToolCalls && !e.error)) runVisible = true;
+				if (e.error && !e.aborted) lastErrorMid = cur.id;
 				if (e.aborted) updateMessage(cur.id, { content: text, status: "interrupted", meta });
 				else if (e.error) updateMessage(cur.id, { content: text, status: "error", meta: { ...meta, error: e.error } });
 				else if ((!text.trim() && !thinking && e.hasToolCalls) || allowEmpty?.()) {
 					// 纯工具中间态不留空引用；技能用途内部轮只该出卡片，模型多说的话（如「这一轮先停在这里」）也不留。服务错误仍优先显示。
+					deleteMessage(cur.id);
+					lastAssistantMid = null;
+				} else if (!text.trim() && !thinking && runVisible) {
+					// 收尾空回复：前面已有可见输出（正文 / 工具调用），模型最后一次请求什么都没返回，是正常结束
 					deleteMessage(cur.id);
 					lastAssistantMid = null;
 				} else if (!text.trim() && !thinking) updateMessage(cur.id, { content: "", status: "error", meta: { ...meta, error: "这次未收到回复，服务未提供具体原因" } });
@@ -100,6 +111,7 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 				mapEntry(e);
 				break;
 			case "tool_start": {
+				runVisible = true;
 				const m = insert({ agentId, conversationId, taskId, role: "tool", content: "", status: "running", meta: { toolName: e.name, args: e.args, toolCallId: e.id } });
 				tools.set(e.id, m.id);
 				break;
@@ -110,7 +122,27 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 				// 不从 tools 里删：toolResult 的 entry id 在 message_end 之后才到，那时还要用它落 meta.piEntryId（落完再删）
 				break;
 			}
+			case "retry_start":
+				if (lastErrorMid) {
+					updateMessage(lastErrorMid, { meta: { retry: { attempt: e.attempt, max: e.max } } });
+					if (!retriedMids.includes(lastErrorMid)) retriedMids.push(lastErrorMid);
+				}
+				break;
+			case "retry_end": {
+				// 成功：被重试过的错误消息都标 retried（原错误保留供展开）；失败：最后一条保持红色并记 retryFailed，更早的尝试折叠成已重试
+				for (const id of retriedMids) {
+					if (!e.success && id === lastErrorMid) updateMessage(id, { meta: { retry: null, retryFailed: e.attempt } });
+					else updateMessage(id, { meta: { retry: null, retried: true } });
+				}
+				if (!e.success && lastErrorMid && !retriedMids.includes(lastErrorMid)) updateMessage(lastErrorMid, { meta: { retryFailed: e.attempt } });
+				retriedMids.length = 0;
+				lastErrorMid = null;
+				break;
+			}
 			case "settled":
+				runVisible = false;
+				lastErrorMid = null;
+				retriedMids.length = 0;
 				if (cur) {
 					// 流意外收尾没发message_end也不能永远显示空回复/光标。
 					updateMessage(cur.id, { content: cur.text, status: e.aborted ? "interrupted" : "error", meta: { ...(cur.thinking ? { thinking: cur.thinking.slice(0, 20000) } : {}), ...(!e.aborted ? { error: "回复流意外结束，服务未提供具体原因" } : {}) } });

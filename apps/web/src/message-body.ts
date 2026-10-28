@@ -25,6 +25,10 @@ export type BotBodyInput = {
 	error?: unknown;
 	/** 这一轮是否还有附件等其它可见内容（有内容就不算「空回复」） */
 	hasAttachments?: boolean;
+	/** Pi 正在自动重试这条失败（meta.retry）/ 已重试成功（meta.retried）/ 重试后仍失败（meta.retryFailed = 重试次数） */
+	retry?: { attempt?: number; max?: number } | null;
+	retried?: boolean;
+	retryFailed?: number;
 	/** 这一轮是工具步骤占位（tool 消息 / toolCall 占位 / 同一轮里只有步骤），不兜底成「没收到回复」 */
 	toolOnly?: boolean;
 };
@@ -36,6 +40,9 @@ export type BotBodyView = {
 	/** 是否渲染正文气泡（false 时这一轮只有思考 / 步骤 / 操作按钮） */
 	showBubble: boolean;
 	showError: boolean;
+	/** 自动重试状态：retrying 灰色「正在第 N 次重试」、retried 灰色「已自动重试」、failed 保持红色并补「已自动重试 N 次仍失败」 */
+	retryState: "retrying" | "retried" | "failed" | null;
+	retryNote: string;
 	errorKind: ErrorKind;
 	/** 给人看的一句中文（已知错误翻成人话，未知保留可读原文） */
 	errorText: string;
@@ -197,7 +204,7 @@ export function assistantErrorDetail(error: unknown): string {
 	return clip(readableError(error), MAX_DETAIL);
 }
 
-export function botBodyView({ body, thinking, status, error, hasAttachments, toolOnly }: BotBodyInput): BotBodyView {
+export function botBodyView({ body, thinking, status, error, hasAttachments, toolOnly, retry, retried, retryFailed }: BotBodyInput): BotBodyView {
 	const text = String(body ?? "");
 	const hasText = !!text.trim();
 	const live = LIVE_STATUS.has(status);
@@ -211,7 +218,11 @@ export function botBodyView({ body, thinking, status, error, hasAttachments, too
 	const interruptedText = interrupted ? "（已中断）" : "（已停止）";
 	// 旧记录兜底：真的结束了、确实什么都没有、也不是工具占位 —— 才说「没收到回复」
 	const showEmpty = !showError && !showInterrupted && !hasText && !thinking && !hasAttachments && !toolOnly && EMPTY_TERMINAL.has(status);
+	const retryState = !showError ? null : retried ? "retried" : retryFailed ? "failed" : retry ? "retrying" : null;
+	const retryNote = retryState === "retried" ? "网络断了一下，已自动重试" : retryState === "retrying" ? `网络断了一下，正在第 ${retry?.attempt ?? 1} 次重试…` : retryState === "failed" ? `已自动重试 ${retryFailed} 次仍失败` : "";
 	const view: BotBodyView = {
+		retryState,
+		retryNote,
 		showBubble: hasText || (status === "streaming" && !thinking),
 		showError,
 		errorKind: kind,

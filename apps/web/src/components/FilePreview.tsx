@@ -6,7 +6,8 @@ import { MAX_OFFICE_BYTES, MAX_TEXT_BYTES, isLegacyOffice, isOfficeKind, isTextK
 import { FileKindIcon } from "./Attachments";
 import { MediaPlayer } from "./MediaPlayer";
 import { CodeView, CsvView, HtmlView, MarkdownScroll, Notice, SvgView, loadBinary, loadText, oversizeNotice } from "./FilePreviewViews";
-import { Modal, fmtSize } from "./ui";
+import { SidePanel } from "./SidePanel";
+import { fmtSize } from "./ui";
 
 /**
  * 聊天 / 交付 / 信息面板 / 子代理附件共用的应用内文件预览。
@@ -31,9 +32,8 @@ export type FilePreviewItem = {
 	downloadPath?: string;
 };
 
-type State = { item: FilePreviewItem | null; expanded: boolean; open: (i: FilePreviewItem) => void; expand: () => void; close: () => void };
-const usePreview = create<State>((set) => ({ item: null, expanded: false, open: (item) => set({ item, expanded: false }), expand: () => set({ expanded: true }), close: () => set({ item: null, expanded: false }) }));
-export const expandFilePreview = () => usePreview.getState().expand();
+type State = { item: FilePreviewItem | null; open: (i: FilePreviewItem) => void; close: () => void };
+const usePreview = create<State>((set) => ({ item: null, open: (item) => set({ item }), close: () => set({ item: null }) }));
 
 /** 从任意位置打开应用内文件预览（Portal 到 body，复用共享 Modal 栈）。 */
 export function openFilePreview(item: FilePreviewItem) {
@@ -63,15 +63,7 @@ const KIND_LABEL: Record<PreviewKind, string> = {
 /** Office 类视图（含 office-preview.ts 的逻辑）整体按需加载，不进主包。 */
 const OfficeView = lazy(() => import("./OfficeViews").then((m) => ({ default: m.OfficeView })));
 
-/** 预览状态：item = 当前文件；expanded = 侧栏里点了「放大」，改用大弹窗显示。 */
-export function useFilePreviewState() {
-	const item = usePreview((s) => s.item);
-	const expanded = usePreview((s) => s.expanded);
-	return { item, expanded };
-}
-export const closeFilePreview = () => usePreview.getState().close();
-
-/** 工具栏 + 内容：弹窗和侧栏共用，只是外壳不同。`onExpand` 只有侧栏传（弹窗里没有「放大」）。 */
+/** 工具栏 + 内容：弹窗和侧栏共用，外壳是 SidePanel。`onExpand` 只有侧栏里才有（弹窗里没有「放大」）。 */
 export function PreviewContent({ item, onClose, onExpand }: { item: FilePreviewItem; onClose: () => void; onExpand?: () => void }) {
 	const [nonce, setNonce] = useState(0);
 	const kind = previewKind(item.name, item.mime);
@@ -116,12 +108,11 @@ export function PreviewContent({ item, onClose, onExpand }: { item: FilePreviewI
 }
 
 /**
- * 全局挂载一次（App.tsx）。`docked` = 窗口够宽，预览显示在聊天旁边的侧栏（FilePreviewDock），这里只在「放大」时才弹窗；
- * 放不下（手机 / 窄窗口）时一直是全屏弹窗。关闭后把焦点还给触发它的卡片（键盘用户）。
+ * 全局挂载一次（App.tsx）。外壳是 SidePanel：窗口够宽显示在聊天旁边的侧栏，「放大」或放不下（手机 / 窄窗口）时是弹窗。
+ * 关闭后把焦点还给触发它的卡片（键盘用户）。
  */
-export function FilePreviewHost({ docked }: { docked: boolean }) {
+export function FilePreviewHost() {
 	const item = usePreview((s) => s.item);
-	const expanded = usePreview((s) => s.expanded);
 	const close = usePreview((s) => s.close);
 	const returnFocus = useRef<HTMLElement | null>(null);
 	const wasOpen = useRef(false);
@@ -137,11 +128,10 @@ export function FilePreviewHost({ docked }: { docked: boolean }) {
 		}
 	}, [item]);
 
-	if (!item || (docked && !expanded)) return null;
 	return (
-		<Modal open onClose={close} wide fixed testId="file-preview">
-			<PreviewContent item={item} onClose={close} />
-		</Modal>
+		<SidePanel open={!!item} onClose={close} wide fixed label="文件预览" testId="file-preview">
+			{({ onExpand }) => item && <PreviewContent key={item.url} item={item} onClose={close} onExpand={onExpand} />}
+		</SidePanel>
 	);
 }
 
