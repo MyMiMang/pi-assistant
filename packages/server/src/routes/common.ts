@@ -66,3 +66,23 @@ export function sendFile(c: Context<Env>, path: string, name: string, mime: stri
 	c.header("Content-Length", String(range.end - range.start + 1));
 	return c.body(Readable.toWeb(createReadStream(path, { start: range.start, end: range.end })) as ReadableStream, 206);
 }
+
+/** 判定为 HTML 的文件（扩展名或 MIME）：只有这类文件能被 ?view=1 按页面返回。与前端 preview.ts 的 html 判定一致。 */
+export const isHtmlFile = (name: string, mime: string) => /\.(html?|xhtml)$/i.test(name) || /^(text\/html|application\/xhtml\+xml)$/i.test(mime.split(";")[0].trim());
+
+/**
+ * HTML 网页预览的专用响应（只由签名链接 /hooks/dl/...?view=1 使用，见 docs/design/html-file-preview.md）。
+ * CSP 里的 sandbox 指令让页面始终是不透明来源（哪怕有人直接在新标签打开这条链接）；只放行 https:，连不到本机 App 接口。
+ * 路由自己设了 CSP，http.ts 的全局安全头中间件就不再覆盖，也不加 X-Frame-Options: DENY（要让 App 自己的 iframe 能嵌）。
+ */
+export const HTML_VIEW_CSP =
+	"sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads; default-src https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src https: data: blob:; form-action 'none'; base-uri 'none'; frame-ancestors 'self'";
+export function sendHtmlView(c: Context<Env>, path: string) {
+	c.header("Content-Type", "text/html; charset=utf-8");
+	c.header("Content-Security-Policy", HTML_VIEW_CSP);
+	c.header("Referrer-Policy", "no-referrer");
+	c.header("X-Content-Type-Options", "nosniff");
+	c.header("Cache-Control", "private, no-store");
+	c.header("Content-Length", String(statSync(path).size));
+	return c.body(Readable.toWeb(createReadStream(path)) as ReadableStream);
+}

@@ -130,6 +130,12 @@ export async function mediaUrl(path: string): Promise<string> {
 	return base() + url;
 }
 
+/** HTML 文件的网页预览地址：iframe 带不了 Authorization 头，同样先换一条 10 分钟有效、只针对这个文件的签名链接。 */
+export async function viewUrl(path: string): Promise<string> {
+	const { url } = await api<{ url: string }>(`${path}/view-link`);
+	return base() + url;
+}
+
 export async function download(path: string, name: string) {
 	const blob = await fetchBlob(path);
 	const url = URL.createObjectURL(blob);

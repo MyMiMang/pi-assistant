@@ -12,6 +12,9 @@
  *  - 文本 / 代码：行号 + 复制；CSV：引号内换行的有界表格；不支持的类型、超限文件、
  *    404 各自有明确提示且始终保留下载；404 可重试成功；
  *  - PDF：<object> 内嵌 + fallback 提示 + 下载；
+ *  - HTML：默认「网页」档（sandbox iframe、无 allow-same-origin、签名链接）：内容渲染、脚本能跑、
+ *    fetch App 接口被拦、读不到 localStorage / 外层页面；「源码」档有行号；SVG：「图片」档 <img> 不执行脚本 + 「源码」档；
+ *    （详见 docs/design/html-file-preview.md；iframe 页面由本脚本的静态服务模拟服务端 ?view=1 的 CSP 响应头）
  *  - 390 窄屏工具栏在视口内、Esc 关闭、焦点回到触发卡片；图片附件仍走 ImageViewer（不回归）。
  *
  * 纯前端 fixture：静态托管 apps/web/dist，用 page.route 拦截所有 /api 与文件读取，
@@ -37,8 +40,24 @@ rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json", ".woff2": "font/woff2", ".map": "application/json" };
+// 与 packages/server/src/routes/common.ts 的 HTML_VIEW_CSP 保持一致（html-view-http.test.ts 会核对）
+const HTML_VIEW_CSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads; default-src https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src https: data: blob:; form-action 'none'; base-uri 'none'; frame-ancestors 'self'";
+const HTML_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>报告页</title><style>body{font-family:sans-serif;padding:12px}</style></head><body>
+<h1 id="h">季度报告</h1><p id="js">脚本未运行</p><p id="net">未测试</p><p id="store">未测试</p><p id="parent">未测试</p>
+<script>
+document.getElementById("js").textContent = "脚本已运行";
+fetch("/api/system").then(() => { document.getElementById("net").textContent = "接口可访问"; }, () => { document.getElementById("net").textContent = "接口被拦截"; });
+try { localStorage.getItem("x"); document.getElementById("store").textContent = "能读存储"; } catch (e) { document.getElementById("store").textContent = "存储被隔离"; }
+try { void window.parent.document.title; document.getElementById("parent").textContent = "能读外层"; } catch (e) { document.getElementById("parent").textContent = "外层被隔离"; }
+</script></body></html>`;
 const web = createServer(async (req, res) => {
 	const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
+	// 模拟服务端 /hooks/dl/...?view=1：按网页返回，带专用 CSP，不发 X-Frame-Options
+	if (path.startsWith("/hooks/dl/")) {
+		res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": HTML_VIEW_CSP, "referrer-policy": "no-referrer" });
+		res.end(HTML_PAGE);
+		return;
+	}
 	const file = path === "/" || path === "" ? join(dist, "index.html") : join(dist, path);
 	try {
 		const data = await readFile(file);
@@ -107,6 +126,14 @@ const FILES = {
 	"f-mp3": { name: "voice.mp3", mime: "audio/mpeg", body: Buffer.from([0x49, 0x44, 0x33, 0x03, 0, 0, 0, 0, 0, 0]) },
 };
 
+const SVG_BODY = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"><script>window.__svgRan = 1</script><rect width="120" height="80" fill="#3b82f6"/><circle cx="60" cy="40" r="20" fill="#fff"/></svg>';
+FILES["f-html"] = { name: "report.html", mime: "text/html", body: HTML_PAGE };
+FILES["f-svg"] = { name: "logo.svg", mime: "image/svg+xml", body: SVG_BODY };
+const webAttachments = [
+	{ fileId: "f-html", name: "report.html", mime: "text/html", size: Buffer.byteLength(HTML_PAGE), direction: "out" },
+	{ fileId: "f-svg", name: "logo.svg", mime: "image/svg+xml", size: Buffer.byteLength(SVG_BODY), direction: "out" },
+];
+
 const attachments = [
 	{ fileId: "f-md", name: "voice-input-feasibility.md", mime: "text/markdown", size: Buffer.byteLength(MD_BODY), direction: "out", workspacePath: "research/voice-input-feasibility.md" },
 	{ fileId: "f-csv", name: "data.csv", mime: "text/csv", size: Buffer.byteLength(CSV_BODY), direction: "out" },
@@ -125,6 +152,7 @@ const mediaAttachments = [
 const msgs = [
 	{ id: "m1", agent_id: "a1", task_id: null, role: "assistant", content: "语音输入与双向通话可行性调研，报告已附上。", meta: { attachments }, status: "done", created_at: now - 60_000, updated_at: now - 60_000, conversation_id: "c1" },
 	{ id: "m2", agent_id: "a1", task_id: null, role: "assistant", content: "录屏和语音备忘也发你。", meta: { attachments: mediaAttachments }, status: "done", created_at: now - 30_000, updated_at: now - 30_000, conversation_id: "c1" },
+	{ id: "m3", agent_id: "a1", task_id: null, role: "assistant", content: "网页和图标也做好了。", meta: { attachments: webAttachments }, status: "done", created_at: now - 10_000, updated_at: now - 10_000, conversation_id: "c1" },
 ];
 // 「文件」信息面板用同一批文件（含视频 / 音频），验证预览弹窗里也能播放
 const infoFiles = [...attachments, ...mediaAttachments].filter((f) => f.fileId !== "f-huge" && f.fileId !== "f-missing");
@@ -173,6 +201,11 @@ async function installRoutes(context, state) {
 		// 视频 / 音频播放链接：真实服务端是另起一条短时签名地址（见 packages/server/src/http.ts 的 /play-link +
 		// channels/media.ts 的 signedPath），这里为简化直接换回同一个带 inline=1 的授权地址——测试只关心播放器
 		// 元素挂载、src 非空，不重复验证签名机制（签名链接的单测在 packages/server/test/media-range-http.test.ts）。
+		// HTML 网页预览：真实服务端换一条 10 分钟签名链接（/api/files/:id/view-link → /hooks/dl/...?view=1），这里指向上面 web 服务模拟的页面
+		if (/^\/api\/files\/[^/]+\/view-link$/.test(p)) {
+			state.viewLinks = (state.viewLinks ?? 0) + 1;
+			return json({ url: "/hooks/dl/f-html/9999999999/sig?view=1" });
+		}
 		const pl = /^\/api\/files\/([^/]+)\/play-link$/.exec(p);
 		if (pl) return json({ url: `/api/files/${pl[1]}?inline=1` });
 		const fm = /^\/api\/files\/([^/]+)$/.exec(p);
@@ -374,6 +407,74 @@ try {
 		await ctx.close();
 	}
 
+	// ================================ HTML / SVG ================================
+	console.log("\n── HTML / SVG 预览 ──");
+	{
+		const state = { fileHits: [], remoteHits: [] };
+		const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN", acceptDownloads: true });
+		await installRoutes(ctx, state);
+		const page = await ctx.newPage();
+		const apiHitsFromFrame = [];
+		page.on("request", (r) => {
+			const f = r.frame();
+			if (f && f !== page.mainFrame() && new URL(r.url()).pathname.startsWith("/api/")) apiHitsFromFrame.push(r.url());
+		});
+		await page.goto(`${base}/?agent=a1`);
+		await page.locator('[data-testid="file-attachment"]').first().waitFor({ timeout: 20_000 });
+
+		// ---- HTML：默认网页档 ----
+		await page.locator('[aria-label="预览 report.html"]').click();
+		await page.locator("[data-testid=html-frame]").waitFor({ timeout: 10_000 });
+		check("HTML：工具栏类型是「网页」", (await page.locator("[data-testid=file-preview-toolbar]").textContent())?.includes("网页"));
+		check("HTML：默认网页档，有「网页 / 源码」切换条", (await page.locator("[data-testid=html-mode-page]").isVisible()) && (await page.locator("[data-testid=html-mode-source]").isVisible()));
+		check("HTML：顶部有隔离环境小字", (await page.locator("[data-testid=html-isolated-note]").textContent())?.includes("隔离环境"));
+		const sandbox = await page.locator("[data-testid=html-frame]").getAttribute("sandbox");
+		check("HTML：iframe 有 sandbox 且不含 allow-same-origin", !!sandbox && sandbox.includes("allow-scripts") && !sandbox.includes("allow-same-origin"), String(sandbox));
+		check("HTML：iframe 地址是 view-link 换来的签名链接", /\/hooks\/dl\/.+\?view=1$/.test((await page.locator("[data-testid=html-frame]").getAttribute("src")) ?? ""));
+		const fr = page.frameLocator("[data-testid=html-frame]");
+		await fr.locator("#h").waitFor({ timeout: 10_000 });
+		check("HTML：页面内容渲染出来", (await fr.locator("#h").textContent()) === "季度报告");
+		await fr.locator("#js").getByText("脚本已运行").waitFor({ timeout: 5000 });
+		check("HTML：页面里的脚本能跑", true);
+		await fr.locator("#net").getByText("接口被拦截").waitFor({ timeout: 5000 });
+		check("HTML：页面里 fetch App 接口失败（CSP 只放行 https）", true);
+		check("HTML：页面发不出 /api 请求", apiHitsFromFrame.length === 0, JSON.stringify(apiHitsFromFrame));
+		check("HTML：页面读不到 localStorage（不透明来源）", (await fr.locator("#store").textContent()) === "存储被隔离");
+		check("HTML：页面碰不到外层页面", (await fr.locator("#parent").textContent()) === "外层被隔离");
+		await page.screenshot({ path: join(OUT, "desktop-html-page.png") });
+
+		// 源码档
+		await page.locator("[data-testid=html-mode-source]").click();
+		await page.locator("[data-testid=file-preview-code]").waitFor({ timeout: 10_000 });
+		check("HTML：源码档有行号和源码", (await page.locator("[data-testid=file-preview-code] code > div").count()) >= 5 && (await page.locator("[data-testid=file-preview-code]").textContent())?.includes("季度报告"));
+		check("HTML：源码档不再显示 iframe", (await page.locator("[data-testid=html-frame]").count()) === 0);
+		await page.screenshot({ path: join(OUT, "desktop-html-source.png") });
+		await page.locator("[data-testid=html-mode-page]").click();
+		await page.locator("[data-testid=html-frame]").waitFor({ timeout: 10_000 });
+		check("HTML：可切回网页档", true);
+		await page.keyboard.press("Escape");
+		await page.locator("[data-testid=file-preview]").waitFor({ state: "detached", timeout: 5000 });
+
+		// ---- SVG：图片 / 源码 ----
+		await page.locator('[aria-label="预览 logo.svg"]').click();
+		await page.locator("[data-testid=file-preview-svg] img").waitFor({ timeout: 10_000 });
+		check("SVG：默认图片档，用 <img src=blob:> 显示", ((await page.locator("[data-testid=file-preview-svg] img").getAttribute("src")) ?? "").startsWith("blob:"));
+		check("SVG：图片真的解码出来了", await page.evaluate(() => { const i = document.querySelector("[data-testid=file-preview-svg] img"); return !!i && i.complete && i.naturalWidth === 120; }));
+		check("SVG：里面的脚本没有执行", await page.evaluate(() => window.__svgRan === undefined));
+		check("SVG：工具栏类型是 SVG，有「图片 / 源码」切换条", (await page.locator("[data-testid=file-preview-toolbar]").textContent())?.includes("SVG") && (await page.locator("[data-testid=svg-mode-image]").isVisible()));
+		await page.screenshot({ path: join(OUT, "desktop-svg-image.png") });
+		await page.locator("[data-testid=svg-mode-source]").click();
+		await page.locator("[data-testid=file-preview-code]").waitFor({ timeout: 10_000 });
+		check("SVG：源码档有源码", (await page.locator("[data-testid=file-preview-code]").textContent())?.includes("<svg"));
+		await page.screenshot({ path: join(OUT, "desktop-svg-source.png") });
+		await page.locator("[data-testid=svg-mode-image]").click();
+		await page.locator("[data-testid=file-preview-svg] img").waitFor({ timeout: 10_000 });
+		check("SVG：可切回图片档", true);
+		await page.keyboard.press("Escape");
+		check("HTML / SVG 没有触发外网请求", state.remoteHits.length === 0);
+		await ctx.close();
+	}
+
 	// ================================ 手机 390 ================================
 	console.log("\n── 手机 390x844 ──");
 	{
@@ -385,6 +486,7 @@ try {
 		await page.locator('[data-testid="file-attachment"]').first().waitFor({ timeout: 20_000 });
 		await page.locator('[data-testid="file-preview-open"]').first().tap();
 		await page.locator("[data-testid=file-preview-markdown]").waitFor({ timeout: 10_000 });
+		await page.waitForTimeout(600); // 等弹窗打开动画结束再量宽度（动画中途宽度会差 1~2px）
 		const box = await page.locator("[data-testid=file-preview]").boundingBox();
 		const bar = await page.locator("[data-testid=file-preview-toolbar]").boundingBox();
 		check("[390] 预览铺满可视宽度", box && box.x <= 1 && box.width >= 389, JSON.stringify(box));
@@ -397,6 +499,20 @@ try {
 		await page.locator("[data-testid=file-preview-close]").tap();
 		await page.locator("[data-testid=file-preview]").waitFor({ state: "detached", timeout: 5000 });
 		check("[390] 关闭按钮可点", true);
+
+		// HTML 网页档在窄屏
+		await page.locator('[aria-label="预览 report.html"]').tap();
+		await page.locator("[data-testid=html-frame]").waitFor({ timeout: 10_000 });
+		await page.frameLocator("[data-testid=html-frame]").locator("#h").waitFor({ timeout: 10_000 });
+		await page.waitForTimeout(600); // 等弹窗打开动画结束再量宽度
+		const hbar = await page.locator("[data-testid=html-mode-bar]").boundingBox();
+		const hframe = await page.locator("[data-testid=html-frame]").boundingBox();
+		check("[390] HTML 切换条在视口内", hbar && hbar.x >= 0 && hbar.x + hbar.width <= 390.5, JSON.stringify(hbar));
+		check("[390] HTML 网页铺满宽度", hframe && hframe.x <= 1 && hframe.width >= 389, JSON.stringify(hframe));
+		check("[390] HTML 页面无横向溢出", (await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)) <= 1);
+		await page.screenshot({ path: join(OUT, "mobile-390-html.png") });
+		await page.locator("[data-testid=file-preview-close]").tap();
+		await page.locator("[data-testid=file-preview]").waitFor({ state: "detached", timeout: 5000 });
 		await ctx.close();
 	}
 } finally {

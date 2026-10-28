@@ -3,11 +3,11 @@
  *
  * 设计边界（见 docs/DESIGN.md「聊天附件应用内预览」）：
  * - 类型判定不只看扩展名，也不只看 Content-Type：两者一起判，再对实际字节做嗅探；
- * - 只读、不执行：HTML/SVG/Office 宏一律当二进制，不 inline；
+ * - 只读、不执行：Office 宏 / hta 一律当二进制；HTML 只在隔离 iframe 里显示、SVG 只当 <img> 显示（见 docs/design/html-file-preview.md）；
  * - 文本有上限，超限只提示 + 下载，不把大文件塞进 DOM。
  */
 
-export type PreviewKind = "image" | "video" | "audio" | "pdf" | "markdown" | "csv" | "code" | "text" | "unsupported";
+export type PreviewKind = "image" | "video" | "audio" | "pdf" | "markdown" | "csv" | "code" | "text" | "html" | "svg" | "unsupported";
 
 /** 文本类预览的字节上限（超过只提示 + 下载）。 */
 export const MAX_TEXT_BYTES = 1024 * 1024;
@@ -36,14 +36,15 @@ const extOf = (name: string) => {
 
 /**
  * 判定预览类型。扩展名 + MIME 一起看；两者都没有/都认不出时归 unsupported（只给下载）。
- * 安全相关：SVG、HTML、Office 一律 unsupported，绝不 inline（不执行脚本 / 宏）。
+ * 安全相关：HTML 只进隔离 iframe（html）、SVG 只当图片（svg）；hta、Office 一律 unsupported（不执行宏）。
  */
 export function previewKind(name: string, mime?: string): PreviewKind {
 	const ext = extOf(name);
 	const m = (mime ?? "").toLowerCase().split(";")[0].trim();
-	// 危险 / 可执行内容：只下载
-	if (ext === "svg" || m === "image/svg+xml") return "unsupported";
-	if (["html", "htm", "xhtml", "hta"].includes(ext) || m === "text/html" || m === "application/xhtml+xml") return "unsupported";
+	// SVG 只当图片显示（<img> 里不执行脚本）；HTML 只进隔离 iframe；hta 等可执行内容：只下载
+	if (ext === "svg" || m === "image/svg+xml") return "svg";
+	if (ext === "hta") return "unsupported";
+	if (["html", "htm", "xhtml"].includes(ext) || m === "text/html" || m === "application/xhtml+xml") return "html";
 	if (SHEET_EXT.has(ext) || /spreadsheetml|ms-excel|opendocument\.spreadsheet/.test(m)) return "unsupported";
 	if (["doc", "docx", "odt", "pages", "ppt", "pptx", "odp", "key"].includes(ext)) return "unsupported";
 	if (["zip", "tar", "gz", "7z", "rar", "dmg", "exe", "app", "bin", "iso"].includes(ext)) return "unsupported";

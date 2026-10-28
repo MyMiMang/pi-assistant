@@ -31,7 +31,7 @@ import { wecomCallback } from "./channels/index.ts";
 import { mountImageRoutes } from "./image-gen/routes.ts";
 import { mountPetRoutes } from "./pet/routes.ts";
 import { mountUsageRoutes } from "./usage/routes.ts";
-import { localOnly, sendFile, type Env } from "./routes/common.ts";
+import { isHtmlFile, localOnly, sendFile, sendHtmlView, type Env } from "./routes/common.ts";
 import { mountSystemRoutes } from "./routes/system.ts";
 import { mountRoomRoutes } from "./routes/rooms.ts";
 import { mountChatProjectRoutes } from "./routes/chat-projects.ts";
@@ -50,6 +50,7 @@ import { mountToolBridgeRoutes } from "./routes/tool-bridge.ts";
 
 const app = new Hono<Env>();
 const PLAY_LINK_TTL = 4 * 3600_000;
+const VIEW_LINK_TTL = 10 * 60_000;
 
 // 响应压缩：只压 JSON。
 //  - 作用范围限定在 /api 的 JSON（聊天 / 列表接口），不是全局盲压：文件下载（octet-stream / text 附件）、
@@ -66,6 +67,8 @@ app.use("*", async (c, next) => {
 	await next();
 	c.header("X-Content-Type-Options", "nosniff");
 	c.header("Referrer-Policy", "no-referrer");
+	// 路由自己设了 CSP（目前只有 HTML 网页预览 /hooks/dl/...?view=1）就不覆盖，也不加 DENY；其余页面安全头不变。
+	if (c.res.headers.has("Content-Security-Policy")) return;
 	c.header("X-Frame-Options", "DENY");
 	if (!c.req.path.startsWith("/api/"))
 		c.header(
@@ -81,6 +84,8 @@ app.use("*", async (c, next) => {
 
 app.use("/api/*", async (c, next) => {
 	const origin = c.req.header("origin");
+	// 沙盒页面（HTML 网页预览）发出的请求 Origin 是字符串 "null"。本机请求默认免登录，所以这里直接拒掉，别让隔离页面碰到 App 接口。
+	if (origin === "null") return c.json({ error: "forbidden_origin" }, 403);
 	const allowed = origin && ((!!entryDomain() && origin === `https://${entryDomain()}`) || origin === new URL(c.req.url).origin);
 	if (allowed) {
 		c.header("Access-Control-Allow-Origin", origin!);
@@ -148,6 +153,8 @@ app.get("/hooks/dl/:id/:exp/:sig", (c) => {
 	if (!verifySigned(id, c.req.param("exp"), c.req.param("sig"))) return c.json({ error: "link_expired" }, 403);
 	const f = getFile(id);
 	if (!f || !existsSync(f.stored_path)) return c.json({ error: "not_found" }, 404);
+	// ?view=1 且文件判定为 HTML：按网页返回（给应用内 sandbox iframe 用）；其他文件照旧下载
+	if (c.req.query("view") === "1" && isHtmlFile(f.name, f.mime)) return sendHtmlView(c, f.stored_path);
 	return sendFile(c, f.stored_path, f.name, f.mime);
 });
 /**
@@ -158,6 +165,12 @@ app.get("/api/files/:id/play-link", (c) => {
 	const f = getFile(c.req.param("id"));
 	if (!f || !existsSync(f.stored_path)) return c.json({ error: "not_found" }, 404);
 	return c.json({ url: `${signedPath(f.id, PLAY_LINK_TTL)}?inline=1` });
+});
+/** HTML 网页预览链接：同样的签名，有效期 10 分钟，?view=1 让 /hooks/dl 按网页返回（iframe 带不了 Authorization 头）。 */
+app.get("/api/files/:id/view-link", (c) => {
+	const f = getFile(c.req.param("id"));
+	if (!f || !existsSync(f.stored_path)) return c.json({ error: "not_found" }, 404);
+	return c.json({ url: `${signedPath(f.id, VIEW_LINK_TTL)}?view=1` });
 });
 mountChannelRoutes(app);
 /** 企业微信回调（公网经隧道访问；用 Token + EncodingAESKey 验签解密，不走设备登录） */
