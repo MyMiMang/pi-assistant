@@ -27,9 +27,12 @@ body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--fo
 
 /* 三栏布局：左栏/右栏宽度来自 --side-w / --pane-w（可拖动，按设备保存）；窄屏时变抽屉（由 App 按窗口宽度加类名） */
 .pa-app { position: relative; display: flex; height: 100%; }
-.pa-app > .pa-drawer, .pa-app > .pa-chat, .pa-app > .pa-pane-wrap { position: relative; z-index: 1; }
+.pa-app > .pa-drawer, .pa-app > .pa-chat, .pa-app > .pa-pane-wrap, .pa-app > .pa-preview-wrap { position: relative; z-index: 1; }
 .pa-app > .pa-drawer { width: var(--side-w, 264px); flex-shrink: 0; }
 .pa-app > .pa-pane-wrap { width: var(--pane-w, 340px); flex-shrink: 0; }
+/* 文件预览侧栏：聊天区右边一栏（外壳样式同信息面板，用 --panel / --line；内容见 FilePreviewDock.tsx） */
+.pa-app > .pa-preview-wrap { width: var(--preview-w, 560px); flex-shrink: 0; display: flex; flex-direction: column; }
+.pa-preview { width: 100%; flex: 1; min-height: 0; overflow: hidden; background: var(--panel); border-left: 1px solid var(--line); }
 .pa-sidebar { overflow: hidden; }
 .pa-chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .pa-app.side-drawer > .pa-drawer { position: fixed; z-index: 50; inset: 0 auto 0 0; width: min(300px, 85vw); }
@@ -44,7 +47,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--fo
 .pa-resizer:hover::after, .pa-resizer:focus-visible::after, body.pa-resizing .pa-resizer::after { background: var(--acc); }
 .pa-app.side-drawer .pa-resizer.right { display: none; }
 body.pa-resizing { cursor: col-resize; user-select: none; }
-body.pa-resizing .pa-chat, body.pa-resizing .pa-pane { pointer-events: none; }
+body.pa-resizing .pa-chat, body.pa-resizing .pa-pane, body.pa-resizing .pa-preview { pointer-events: none; }
 .pa-pane-wrap > .pa-pane, .pa-drawer > .pa-sidebar { width: 100%; height: 100%; }
 
 /* 聊天区：消息流 + 悬浮输入框 */

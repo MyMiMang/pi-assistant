@@ -30,6 +30,7 @@ import { artifactDir } from "./fixtures/artifacts.mjs";
 import { expandDetails, infoTab } from "./fixtures/info-pane.mjs";
 import { buildOfficeFiles } from "./fixtures/office-files.mjs";
 import { runOfficeSection } from "./fixtures/office-section.mjs";
+import { runSidePanelSection } from "./fixtures/side-panel-section.mjs";
 
 const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const dist = join(root, "apps/web/dist");
@@ -200,7 +201,7 @@ async function installRoutes(context, state) {
 		if (p === "/api/skill-suggest") return json({ enabled: false });
 		if (p === "/api/settings") return json({});
 		if (p === "/api/agents/a1/messages") return json(msgs);
-		if (p === "/api/agents/a1/conversations" && req.method() === "GET") return json({ current: "c1", items: [{ id: "c1", agent_id: "a1", title: "第一段对话", created_at: now, updated_at: now, message_count: 1, last: "报告" }] });
+		if (p === "/api/agents/a1/conversations" && req.method() === "GET") return json({ current: "c1", items: [{ id: "c1", agent_id: "a1", title: "第一段对话", created_at: now, updated_at: now, message_count: 1, last: "报告" }, { id: "c2", agent_id: "a1", title: "第二段对话", created_at: now - 1000, updated_at: now - 1000, message_count: 1, last: "另一段" }] });
 		if (p === "/api/subagents") return json([]);
 		if (p === "/api/agents/a1/computer") return json({ separate: false, hasData: null, desktop: { enabled: false, state: "off" } });
 		if (p === "/api/agents/a1/files") return json(infoFiles);
@@ -482,6 +483,9 @@ try {
 		check("HTML / SVG 没有触发外网请求", state.remoteHits.length === 0);
 		await ctx.close();
 	}
+
+	// ================================ 侧栏 ================================
+	await runSidePanelSection({ browser, base, installRoutes, check, OUT, join });
 
 	// ================================ Office / iWork / zip / ipynb ================================
 	await runOfficeSection({ browser, base, installRoutes, check, OUT, join });

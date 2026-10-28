@@ -6,7 +6,7 @@
 [data-skin=noir] .pa-app{letter-spacing:-.005em}
 [data-skin=noir][data-mode=dark] .pa-app{background:radial-gradient(1200px 600px at 50% -10%,rgba(139,123,255,.09),transparent 60%),var(--bg)}
 [data-skin=noir][data-mode=light] .pa-app{background:radial-gradient(1200px 600px at 50% -10%,rgba(106,87,255,.07),transparent 60%),var(--bg)}
-[data-skin=noir] .pa-sidebar,[data-skin=noir] .pa-pane{background:color-mix(in srgb,var(--side) 85%,transparent)}
+[data-skin=noir] .pa-sidebar,[data-skin=noir] .pa-pane,[data-skin=noir] .pa-preview{background:color-mix(in srgb,var(--side) 85%,transparent)}
 [data-skin=noir] .pa-logo{filter:drop-shadow(0 0 12px var(--glow))}
 [data-skin=noir] .pa-brand-name{font-weight:600;letter-spacing:-.02em}
 [data-skin=noir] .pa-sec-label{font-family:var(--mono);text-transform:uppercase;font-size:10px;color:var(--mut2)}

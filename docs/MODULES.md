@@ -180,7 +180,7 @@
 | `thinking-slider.ts` | 思考强度滑块纯逻辑 |
 | `fast-mode.ts` | Fast 状态文案 |
 | `selection.ts` | 助理/对话选择持久化 |
-| `layout.ts` | 布局偏好 |
+| `layout.ts` | 布局偏好（含文件预览侧栏 `PREVIEW` 宽度与 `previewDocked` 停靠判定；单测 `packages/server/test/layout.test.ts`） |
 | `viewport.ts` | 手机可视高度 |
 | `esc-layer.ts` | Esc 关闭顺序 |
 | `externalLinks.ts` | 外链交给系统浏览器 |
@@ -230,7 +230,8 @@
 | `ThinkingSlider.tsx` | 思考强度滑块 |
 | `VoiceInput.tsx` | 语音输入按钮 |
 | `Attachments.tsx` | 附件上传与托盘 |
-| `FilePreview.tsx` | 文件预览弹窗（取数 + 按类型分发） |
+| `FilePreview.tsx` | 文件预览：状态 store、`PreviewContent`（工具栏 + 内容，弹窗和侧栏共用）、`FilePreviewHost`（弹窗，窄屏 / 放大时用）、取数 + 按类型分发 |
+| `FilePreviewDock.tsx` | 文件预览侧栏外壳（聊天区右边一栏：Resizer 调宽、Esc 关闭、换助理 / 对话自动关；宽度来自 `layout.ts` 的 `previewDocked / previewW`）；设计见 `docs/design/file-preview-side-panel.md` |
 | `FilePreviewViews.tsx` | 文件预览的各类视图和共用件：`ModeBar`（渲染/源码等模式切换条，Markdown / HTML / SVG 共用）、`loadText`（按上限拉文本）、`CodeView` / `CsvView` / `TableView`（CSV 与 Excel 共用） / `loadBinary`（≤30MB 整份读取） / `MarkdownScroll` / `SvgView` / `HtmlView`（sandbox iframe，无 allow-same-origin） / `Notice`；设计见 `docs/design/html-file-preview.md` |
 | `OfficeViews.tsx` | Word / Excel / iWork / zip / Jupyter 预览视图（整体按需加载，库都用 `import()`）；表格复用 `FilePreviewViews` 的 `TableView` |
 | `OfficeSlides.tsx` | PPT 预览：pptxtojson 解析 + 自己渲染幻灯片（Shadow DOM） |
@@ -306,6 +307,7 @@
 | `info-pane.mjs` | 助理设置面板操作 helper |
 | `office-files.mjs` | Office 预览 e2e 的测试文件（docx / xlsx / pptx / pages / zip / ipynb，运行时用 jszip 现生成） |
 | `office-section.mjs` | `file-preview.mjs` 的 Office 段（桌面 + 390 窄屏断言） |
+| `side-panel-section.mjs` | `file-preview.mjs` 的预览侧栏段（停靠、调宽、换文件、放大、Esc、切换对话、1100 窄窗口退回弹窗；含 noir 深色 / glass 浅色截图） |
 | `seed-subagent.mjs` | 预置子代理数据 |
 | `native-launch-env.mjs` | 原生启动环境测试 helper |
 | `csp-probe.mjs` | CSP 探测 |

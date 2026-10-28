@@ -1,4 +1,4 @@
-import { AlertCircle, Download, FileQuestion, Loader2, RotateCcw, X } from "lucide-react";
+import { AlertCircle, Download, FileQuestion, Loader2, Maximize2, RotateCcw, X } from "lucide-react";
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { ApiError, download as downloadFile, fetchBlob } from "../api";
@@ -31,8 +31,9 @@ export type FilePreviewItem = {
 	downloadPath?: string;
 };
 
-type State = { item: FilePreviewItem | null; open: (i: FilePreviewItem) => void; close: () => void };
-const usePreview = create<State>((set) => ({ item: null, open: (item) => set({ item }), close: () => set({ item: null }) }));
+type State = { item: FilePreviewItem | null; expanded: boolean; open: (i: FilePreviewItem) => void; expand: () => void; close: () => void };
+const usePreview = create<State>((set) => ({ item: null, expanded: false, open: (item) => set({ item, expanded: false }), expand: () => set({ expanded: true }), close: () => set({ item: null, expanded: false }) }));
+export const expandFilePreview = () => usePreview.getState().expand();
 
 /** 从任意位置打开应用内文件预览（Portal 到 body，复用共享 Modal 栈）。 */
 export function openFilePreview(item: FilePreviewItem) {
@@ -62,11 +63,66 @@ const KIND_LABEL: Record<PreviewKind, string> = {
 /** Office 类视图（含 office-preview.ts 的逻辑）整体按需加载，不进主包。 */
 const OfficeView = lazy(() => import("./OfficeViews").then((m) => ({ default: m.OfficeView })));
 
-/** 全局挂载一次（App.tsx）。关闭后把焦点还给触发它的卡片（键盘用户）。 */
-export function FilePreviewHost() {
+/** 预览状态：item = 当前文件；expanded = 侧栏里点了「放大」，改用大弹窗显示。 */
+export function useFilePreviewState() {
 	const item = usePreview((s) => s.item);
-	const close = usePreview((s) => s.close);
+	const expanded = usePreview((s) => s.expanded);
+	return { item, expanded };
+}
+export const closeFilePreview = () => usePreview.getState().close();
+
+/** 工具栏 + 内容：弹窗和侧栏共用，只是外壳不同。`onExpand` 只有侧栏传（弹窗里没有「放大」）。 */
+export function PreviewContent({ item, onClose, onExpand }: { item: FilePreviewItem; onClose: () => void; onExpand?: () => void }) {
 	const [nonce, setNonce] = useState(0);
+	const kind = previewKind(item.name, item.mime);
+	const dl = item.downloadPath ?? item.url;
+	return (
+		<div className="flex h-full min-h-0 flex-col pb-[env(safe-area-inset-bottom)]" data-kind={kind}>
+			<header className="flex items-center gap-2 border-b border-line px-3 py-2" data-testid="file-preview-toolbar">
+				<FileKindIcon name={item.name} size={18} className="shrink-0 text-mut" />
+				<div className="min-w-0 flex-1">
+					<div className="min-w-0 break-words text-[13.5px] font-medium leading-tight" title={item.name} data-testid="file-preview-name">
+						{item.name}
+					</div>
+					<div className="mt-0.5 text-xs text-mut2">
+						{KIND_LABEL[kind]}
+						{item.size != null ? ` · ${fmtSize(item.size)}` : ""}
+					</div>
+				</div>
+				<button
+					type="button"
+					className="pa-icon-btn ghost"
+					title={`下载 ${item.name}`}
+					aria-label={`下载 ${item.name}`}
+					onClick={() => void downloadFile(dl, item.name)}
+					data-testid="file-preview-download"
+				>
+					<Download size={17} />
+				</button>
+				{onExpand && (
+					<button type="button" className="pa-icon-btn ghost" title="放大（用大窗口查看）" aria-label="放大" onClick={onExpand} data-testid="file-preview-expand">
+						<Maximize2 size={16} />
+					</button>
+				)}
+				<button type="button" className="pa-icon-btn ghost" title="关闭（Esc）" aria-label="关闭" onClick={onClose} data-testid="file-preview-close">
+					<X size={18} />
+				</button>
+			</header>
+			<div className="min-h-0 flex-1 overflow-hidden">
+				<Body key={`${item.url}:${nonce}`} item={item} kind={kind} onRetry={() => setNonce((n) => n + 1)} onClose={onClose} />
+			</div>
+		</div>
+	);
+}
+
+/**
+ * 全局挂载一次（App.tsx）。`docked` = 窗口够宽，预览显示在聊天旁边的侧栏（FilePreviewDock），这里只在「放大」时才弹窗；
+ * 放不下（手机 / 窄窗口）时一直是全屏弹窗。关闭后把焦点还给触发它的卡片（键盘用户）。
+ */
+export function FilePreviewHost({ docked }: { docked: boolean }) {
+	const item = usePreview((s) => s.item);
+	const expanded = usePreview((s) => s.expanded);
+	const close = usePreview((s) => s.close);
 	const returnFocus = useRef<HTMLElement | null>(null);
 	const wasOpen = useRef(false);
 
@@ -74,7 +130,6 @@ export function FilePreviewHost() {
 		if (item && !wasOpen.current) {
 			wasOpen.current = true;
 			returnFocus.current = (document.activeElement as HTMLElement) ?? null;
-			setNonce(0);
 		} else if (!item && wasOpen.current) {
 			wasOpen.current = false;
 			returnFocus.current?.focus?.();
@@ -82,41 +137,10 @@ export function FilePreviewHost() {
 		}
 	}, [item]);
 
-	if (!item) return null;
-	const kind = previewKind(item.name, item.mime);
-	const dl = item.downloadPath ?? item.url;
+	if (!item || (docked && !expanded)) return null;
 	return (
 		<Modal open onClose={close} wide fixed testId="file-preview">
-			<div className="flex h-full min-h-0 flex-col pb-[env(safe-area-inset-bottom)]" data-kind={kind}>
-				<header className="flex items-center gap-2 border-b border-line px-3 py-2" data-testid="file-preview-toolbar">
-					<FileKindIcon name={item.name} size={18} className="shrink-0 text-mut" />
-					<div className="min-w-0 flex-1">
-						<div className="min-w-0 break-words text-[13.5px] font-medium leading-tight" title={item.name} data-testid="file-preview-name">
-							{item.name}
-						</div>
-						<div className="mt-0.5 text-xs text-mut2">
-							{KIND_LABEL[kind]}
-							{item.size != null ? ` · ${fmtSize(item.size)}` : ""}
-						</div>
-					</div>
-					<button
-						type="button"
-						className="pa-icon-btn ghost"
-						title={`下载 ${item.name}`}
-						aria-label={`下载 ${item.name}`}
-						onClick={() => void downloadFile(dl, item.name)}
-						data-testid="file-preview-download"
-					>
-						<Download size={17} />
-					</button>
-					<button type="button" className="pa-icon-btn ghost" title="关闭（Esc）" aria-label="关闭" onClick={close} data-testid="file-preview-close">
-						<X size={18} />
-					</button>
-				</header>
-				<div className="min-h-0 flex-1 overflow-hidden">
-					<Body key={`${item.url}:${nonce}`} item={item} kind={kind} onRetry={() => setNonce((n) => n + 1)} onClose={close} />
-				</div>
-			</div>
+			<PreviewContent item={item} onClose={close} />
 		</Modal>
 	);
 }

@@ -7,7 +7,7 @@
 /* 像素点阵底纹（纯 CSS 渐变，不引入图片） */
 [data-skin=pixel] .pa-app{background-image:radial-gradient(color-mix(in srgb,var(--acc) 22%,transparent) 1px,transparent 1.5px);background-size:14px 14px;background-position:0 0}
 [data-skin=pixel][data-mode=dark] .pa-app{background-image:radial-gradient(color-mix(in srgb,var(--acc) 18%,transparent) 1px,transparent 1.5px)}
-[data-skin=pixel] .pa-sidebar,[data-skin=pixel] .pa-pane{background:var(--side);border-color:var(--line)}
+[data-skin=pixel] .pa-sidebar,[data-skin=pixel] .pa-pane,[data-skin=pixel] .pa-preview{background:var(--side);border-color:var(--line)}
 /* 8bit 阶梯边角：只用在装饰性元素，正文容器保持圆角 */
 [data-skin=pixel] .pa-badge,[data-skin=pixel] .pa-send,[data-skin=pixel] .pa-logo{clip-path:polygon(3px 0,calc(100% - 3px) 0,100% 3px,100% calc(100% - 3px),calc(100% - 3px) 100%,3px 100%,0 calc(100% - 3px),0 3px)}
 [data-skin=pixel] .pa-av{clip-path:polygon(3px 0,calc(100% - 3px) 0,100% 3px,100% calc(100% - 3px),calc(100% - 3px) 100%,3px 100%,0 calc(100% - 3px),0 3px);box-shadow:0 0 0 2px var(--card),0 0 0 3px var(--line-strong)}

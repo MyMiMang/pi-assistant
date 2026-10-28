@@ -13,8 +13,9 @@
 [data-skin=glass][data-mode=dark] .pa-b3{background:#00b3a4;opacity:.3}
 @keyframes pa-drift{to{transform:translate(60px,40px) scale(1.1)}}
 [data-skin=glass] .pa-app{gap:14px;padding:14px;background:transparent}
-[data-skin=glass] .pa-glassy,[data-skin=glass] .pa-sidebar,[data-skin=glass] .pa-pane,[data-skin=glass] .pa-chat{backdrop-filter:blur(34px) saturate(170%);-webkit-backdrop-filter:blur(34px) saturate(170%)}
+[data-skin=glass] .pa-glassy,[data-skin=glass] .pa-sidebar,[data-skin=glass] .pa-pane,[data-skin=glass] .pa-preview,[data-skin=glass] .pa-chat{backdrop-filter:blur(34px) saturate(170%);-webkit-backdrop-filter:blur(34px) saturate(170%)}
 [data-skin=glass] .pa-sidebar,[data-skin=glass] .pa-pane{border:1px solid var(--line);border-radius:28px;box-shadow:var(--shadow);padding:18px 14px}
+[data-skin=glass] .pa-preview{border:1px solid var(--line);border-radius:28px;box-shadow:var(--shadow)}
 [data-skin=glass] .pa-chat{border-radius:28px;background:rgba(255,255,255,.28);border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden}
 [data-skin=glass][data-mode=dark] .pa-chat{background:rgba(30,32,48,.28)}
 [data-skin=glass] .pa-card,[data-skin=glass] .pa-steps,[data-skin=glass] .pa-composer,[data-skin=glass] .pa-new-btn,[data-skin=glass] .pa-icon-btn:not(.pa-ghost),[data-skin=glass] .pa-chip,[data-skin=glass] .pa-btn.ghost{backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%)}

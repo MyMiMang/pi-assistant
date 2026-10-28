@@ -14,7 +14,8 @@ html.macos-tauri.macos-fullscreen { --pa-titlebar-h: 0px; }
    这几栏原本的顶部留白来自 .safe-top（刘海屏），这里在它基础上再加一条标题栏高度：
    桌面端 env(safe-area-inset-top) 为 0，实际就是 28px。 */
 html.macos-tauri .pa-app > .pa-drawer > .pa-sidebar,
-html.macos-tauri .pa-app > .pa-chat {
+html.macos-tauri .pa-app > .pa-chat,
+html.macos-tauri .pa-app > .pa-preview-wrap > .pa-preview {
   padding-top: calc(env(safe-area-inset-top) + var(--pa-titlebar-h));
 }
 /* 信息面板在 InfoPane 里写死了 Tailwind 的 !p-0（各块自己管内边距）。Tailwind 的 utilities

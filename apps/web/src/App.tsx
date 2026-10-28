@@ -14,7 +14,8 @@ import { clampPane, clampSide, PANE, resolveLayout, SIDE, useWindowWidth } from 
 import { Resizer } from "./components/Resizer";
 import { BRAND } from "@pi-assistant/shared";
 import { SubagentChat } from "./components/Subagents";
-import { FilePreviewHost } from "./components/FilePreview";
+import { FilePreviewHost, useFilePreviewState } from "./components/FilePreview";
+import { FilePreviewDock } from "./components/FilePreviewDock";
 import { AppContextMenuHost } from "./components/ContextMenu";
 import { ImageViewerHost } from "./components/ImageViewer";
 
@@ -22,6 +23,9 @@ export default function App() {
 	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout, room, paneAgent, loadRooms, selectRoom, subagent, subagentTabs, convs } = useStore();
 	const width = useWindowWidth();
 	const L = resolveLayout(width, layout);
+	// 预览侧栏显示时信息面板让位（只隐藏不卸载，关掉后标签页 / 折叠状态原样回来）
+	const pv = useFilePreviewState();
+	const dockShown = !!pv.item && L.previewDocked && !pv.expanded;
 	const [fatal, setFatal] = useState<null | "unpaired" | "offline">(null);
 	/** 模型配置已存在但此刻读不出（凭据 / 目录暂时失败）：提示可恢复错误，不重走首次向导覆盖配置 */
 	const [modelWarnClosed, setModelWarnClosed] = useState(false);
@@ -147,17 +151,18 @@ export default function App() {
 			</main>
 			{info && paneId && (
 				<>
-					{!L.paneDocked && <div className="fixed inset-0 z-40 bg-black/40" onClick={() => set({ info: false })} />}
-					<div className="pa-pane-wrap">
+					{!L.paneDocked && !dockShown && <div className="fixed inset-0 z-40 bg-black/40" onClick={() => set({ info: false })} />}
+					<div className="pa-pane-wrap" style={dockShown ? { display: "none" } : undefined}>
 						<Resizer side="left" value={layout.paneW} onChange={(v) => setLayout({ paneW: clampPane(v) })} onReset={() => setLayout({ paneW: PANE.def })} onCollapse={() => set({ info: false })} label="调整信息面板宽度" />
 						<InfoPane key={paneId} agentId={paneId} />
 					</div>
 				</>
 			)}
+			<FilePreviewDock docked={L.previewDocked} width={L.previewW} />
 			<Settings />
 			<DeviceApproval />
 			<ImageViewerHost />
-			<FilePreviewHost />
+			<FilePreviewHost docked={L.previewDocked} />
 			<AppContextMenuHost />
 			{system.onboarded && system.modelReady === false && !modelWarnClosed && !fatal && (
 				<div className="fixed bottom-4 left-1/2 z-40 flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-lg dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200" data-testid="model-unavailable">
