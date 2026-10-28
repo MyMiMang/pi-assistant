@@ -189,7 +189,8 @@
 | `desktopChrome.ts` | Windows / Linux 桌面：所有滚动区域统一细滚动条（.pa-classic-sb）、窗口标题栏跟 App 明暗走（set_theme） |
 | `migrate.ts` | 旧存储键迁移 |
 | `appearance-migration.ts` | 外观存储迁移 |
-| `preview.ts` | 文件预览纯逻辑（类型判定含 html / svg、二进制嗅探、CSV） |
+| `preview.ts` | 文件预览纯逻辑（类型判定含 html / svg / docx / xlsx / pptx / iwork / zip / ipynb、老格式提示、二进制嗅探、CSV、上限常量） |
+| `office-preview.ts` | Office 等预览的纯逻辑（单测）：PPT 富文本白名单清洗、幻灯片坐标 / 填充换算、Excel 单元格格式化、zip 条目整理、iWork 预览图挑选、ipynb 解析；设计见 `docs/design/office-file-preview.md` |
 | `routine-schedule.ts` | 定时计划可编辑识别 |
 | `voice-input.ts` | 语音输入纯逻辑 |
 | `voice-stream.ts` | 流式语音纯逻辑 |
@@ -230,7 +231,10 @@
 | `VoiceInput.tsx` | 语音输入按钮 |
 | `Attachments.tsx` | 附件上传与托盘 |
 | `FilePreview.tsx` | 文件预览弹窗（取数 + 按类型分发） |
-| `FilePreviewViews.tsx` | 文件预览的各类视图和共用件：`ModeBar`（渲染/源码等模式切换条，Markdown / HTML / SVG 共用）、`loadText`（按上限拉文本）、`CodeView` / `CsvView` / `MarkdownScroll` / `SvgView` / `HtmlView`（sandbox iframe，无 allow-same-origin） / `Notice`；设计见 `docs/design/html-file-preview.md` |
+| `FilePreviewViews.tsx` | 文件预览的各类视图和共用件：`ModeBar`（渲染/源码等模式切换条，Markdown / HTML / SVG 共用）、`loadText`（按上限拉文本）、`CodeView` / `CsvView` / `TableView`（CSV 与 Excel 共用） / `loadBinary`（≤30MB 整份读取） / `MarkdownScroll` / `SvgView` / `HtmlView`（sandbox iframe，无 allow-same-origin） / `Notice`；设计见 `docs/design/html-file-preview.md` |
+| `OfficeViews.tsx` | Word / Excel / iWork / zip / Jupyter 预览视图（整体按需加载，库都用 `import()`）；表格复用 `FilePreviewViews` 的 `TableView` |
+| `OfficeSlides.tsx` | PPT 预览：pptxtojson 解析 + 自己渲染幻灯片（Shadow DOM） |
+| `OfficeParts.tsx` | Office 预览共用件：`useParsed`（异步解析状态）、`ParseFail`、`ShadowHost`（Shadow DOM 容器 + 链接拦截） |
 | `MediaPlayer.tsx` | 视频 / 音频播放器（聊天附件 + 文件预览共用，签名播放链接） |
 | `ImageViewer.tsx` | 图片查看器 |
 | `Markdown.tsx` | Markdown 渲染 |
@@ -300,6 +304,8 @@
 | `safe-memory-server.mjs` | 安全记忆测试服务 |
 | `mock-mcp.mjs` | 假 MCP 服务 |
 | `info-pane.mjs` | 助理设置面板操作 helper |
+| `office-files.mjs` | Office 预览 e2e 的测试文件（docx / xlsx / pptx / pages / zip / ipynb，运行时用 jszip 现生成） |
+| `office-section.mjs` | `file-preview.mjs` 的 Office 段（桌面 + 390 窄屏断言） |
 | `seed-subagent.mjs` | 预置子代理数据 |
 | `native-launch-env.mjs` | 原生启动环境测试 helper |
 | `csp-probe.mjs` | CSP 探测 |

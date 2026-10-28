@@ -11,7 +11,7 @@
 - [已发布(beta.37)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
-- [已合 main] HTML / SVG 文件在应用内直接显示（像 Claude 一样渲染网页、可切源码；隔离运行）；Office 第二期（[设计](design/html-file-preview.md)、[0024](decisions/0024-html-preview-sandboxed.md)）
+- [已合 main] HTML / SVG / Word / Excel / PPT / iWork / zip / Jupyter 文件在应用内直接显示（像 Claude 一样渲染网页、可切源码；隔离运行；[Office 设计](design/office-file-preview.md)）（[设计](design/html-file-preview.md)、[0024](decisions/0024-html-preview-sandboxed.md)）
 - [已发布(beta.42)] 本机编程命令行当模型：模型列表可选 Claude Code、Codex、Antigravity（实验性）的模型，用本机已登录的命令行，工具仍由 Pi 执行（审批、记忆、助理电脑照旧）；模型服务页每家一张检测卡片。第三期当帮手待做（[设计](design/cli-models.md)、[0023](decisions/0023-cli-agents.md)）
 - [已发布(beta.37)] 群聊按「AI 团队」重做：先出方案、确认后按分工推进到交付，去掉自主推进开关；6 步全部做完（含单聊走方案），待打包实测（[设计](design/group-team.md)、[0019](decisions/0019-group-as-team.md)）
 - [已发布(beta.38)] beta.37 实测问题修复：群里空名字行、管理者自己的任务停在「待安排」、交付文件发两遍、交付后重复一句话、一步跑太久没提示；加 `npm run dev:live` 用真实渠道开发实测（[0021](decisions/0021-dev-live-testing.md)）

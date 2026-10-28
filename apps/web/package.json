@@ -21,14 +21,18 @@
   "dependencies": {
     "@noble/ed25519": "^3.2.0",
     "@novnc/novnc": "^1.7.0",
+    "@pi-assistant/shared": "*",
+    "docx-preview": "0.4.1",
     "highlight.js": "^11.12.0",
+    "jszip": "3.10.2",
     "lucide-react": "^1.55.0",
+    "pptxtojson": "2.2.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",
+    "read-excel-file": "9.3.13",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
-    "zustand": "^5.0.15",
-    "@pi-assistant/shared": "*"
+    "zustand": "^5.0.15"
   }
 }

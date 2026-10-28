@@ -162,14 +162,14 @@ test("isHtmlFile 与前端 previewKind 的 html 判定一致", () => {
 	}
 });
 
-test("previewKind：SVG 单独成 svg；hta / Office / 压缩包仍 unsupported；其余类型不变", () => {
+test("previewKind：SVG 单独成 svg；hta / 老格式 Office / 非 zip 压缩包仍 unsupported；其余类型不变", () => {
 	assert.equal(previewKind("a.svg"), "svg");
 	assert.equal(previewKind("noext", "image/svg+xml"), "svg");
 	assert.equal(previewKind("a.html"), "html");
 	assert.equal(previewKind("a.htm"), "html");
 	assert.equal(previewKind("a.xhtml", "application/xhtml+xml"), "html");
 	assert.equal(previewKind("x", "text/html; charset=utf-8"), "html");
-	for (const n of ["a.hta", "a.docx", "a.xlsx", "a.pptx", "a.zip", "a.exe"]) assert.equal(previewKind(n), "unsupported", n);
+	for (const n of ["a.hta", "a.doc", "a.xls", "a.ppt", "a.7z", "a.exe"]) assert.equal(previewKind(n), "unsupported", n);
 	assert.equal(previewKind("a.md"), "markdown");
 	assert.equal(previewKind("a.png"), "image");
 	assert.equal(previewKind("a.js"), "code");

@@ -7,10 +7,15 @@
  * - 文本有上限，超限只提示 + 下载，不把大文件塞进 DOM。
  */
 
-export type PreviewKind = "image" | "video" | "audio" | "pdf" | "markdown" | "csv" | "code" | "text" | "html" | "svg" | "unsupported";
+export type PreviewKind =
+	| "image" | "video" | "audio" | "pdf" | "markdown" | "csv" | "code" | "text" | "html" | "svg"
+	| "docx" | "xlsx" | "pptx" | "iwork" | "zip" | "ipynb"
+	| "unsupported";
 
 /** 文本类预览的字节上限（超过只提示 + 下载）。 */
 export const MAX_TEXT_BYTES = 1024 * 1024;
+/** Office / iWork / zip / ipynb 读取上限（超过只提示 + 下载，见 docs/design/office-file-preview.md）。 */
+export const MAX_OFFICE_BYTES = 30 * 1024 * 1024;
 /** CSV 表格行列预算，防止 50 万行把页面卡死。 */
 export const MAX_CSV_ROWS = 500;
 export const MAX_CSV_COLS = 50;
@@ -27,7 +32,9 @@ const TEXT_EXT = new Set(["txt", "log", "text", "out", "err", "diff", "patch", "
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "avif"]);
 const VIDEO_EXT = new Set(["mp4", "m4v", "mov", "webm", "ogv"]);
 const AUDIO_EXT = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac", "weba"]);
-const SHEET_EXT = new Set(["xls", "xlsx", "xlsm", "ods", "numbers"]);
+/** 老格式 / OpenDocument：仍不支持，提示另存为新格式。 */
+const LEGACY_OFFICE_EXT = new Set(["doc", "dot", "xls", "xlt", "ppt", "pps", "odt", "ods", "odp"]);
+const LEGACY_OFFICE_MIME = /^application\/(msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.oasis\.opendocument\.(text|spreadsheet|presentation))$/;
 
 const extOf = (name: string) => {
 	const i = name.lastIndexOf(".");
@@ -45,9 +52,15 @@ export function previewKind(name: string, mime?: string): PreviewKind {
 	if (ext === "svg" || m === "image/svg+xml") return "svg";
 	if (ext === "hta") return "unsupported";
 	if (["html", "htm", "xhtml"].includes(ext) || m === "text/html" || m === "application/xhtml+xml") return "html";
-	if (SHEET_EXT.has(ext) || /spreadsheetml|ms-excel|opendocument\.spreadsheet/.test(m)) return "unsupported";
-	if (["doc", "docx", "odt", "pages", "ppt", "pptx", "odp", "key"].includes(ext)) return "unsupported";
-	if (["zip", "tar", "gz", "7z", "rar", "dmg", "exe", "app", "bin", "iso"].includes(ext)) return "unsupported";
+	// Office 新格式 / iWork / zip / ipynb：库按需加载，只读 XML 与文件列表，不执行宏（见 docs/design/office-file-preview.md）
+	if (["docx", "docm", "dotx"].includes(ext) || /wordprocessingml|ms-word\.(document|template)/.test(m)) return "docx";
+	if (["xlsx", "xlsm"].includes(ext) || /spreadsheetml\.sheet|ms-excel\.sheet\.macroenabled/.test(m)) return "xlsx";
+	if (["pptx", "pptm"].includes(ext) || /presentationml\.presentation|ms-powerpoint\.presentation\.macroenabled/.test(m)) return "pptx";
+	if (["pages", "numbers", "key"].includes(ext) || /^application\/(vnd\.apple\.(pages|numbers|keynote)|x-iwork-\w+)/.test(m)) return "iwork";
+	if (ext === "ipynb" || m === "application/x-ipynb+json") return "ipynb";
+	if (ext === "zip" || m === "application/zip" || m === "application/x-zip-compressed") return "zip";
+	if (LEGACY_OFFICE_EXT.has(ext) || LEGACY_OFFICE_MIME.test(m)) return "unsupported";
+	if (["tar", "gz", "7z", "rar", "dmg", "exe", "app", "bin", "iso"].includes(ext)) return "unsupported";
 	// 视频 / 音频（旧记录的 MIME 可能是 octet-stream，所以扩展名也认）
 	if (m.startsWith("video/") || VIDEO_EXT.has(ext)) return "video";
 	if (m.startsWith("audio/") || AUDIO_EXT.has(ext)) return "audio";
@@ -65,6 +78,12 @@ export function previewKind(name: string, mime?: string): PreviewKind {
 	if (TEXT_EXT.has(ext) || m.startsWith("text/") || m === "application/json" || m === "application/xml" || m === "application/x-yaml") return "text";
 	return "unsupported";
 }
+
+/** 老格式 Office / OpenDocument（.doc .xls .ppt .odt .ods .odp）：预览区提示「另存为新格式」。 */
+export const isLegacyOffice = (name: string, mime?: string) => previewKind(name, mime) === "unsupported" && (LEGACY_OFFICE_EXT.has(extOf(name)) || LEGACY_OFFICE_MIME.test((mime ?? "").toLowerCase().split(";")[0].trim()));
+
+/** 按二进制整份读取（≤ MAX_OFFICE_BYTES）后交给对应库解析的类型。 */
+export const isOfficeKind = (k: PreviewKind) => k === "docx" || k === "xlsx" || k === "pptx" || k === "iwork" || k === "zip" || k === "ipynb";
 
 /** 文本类（需要按字节上限读取并解码）的类型。 */
 export const isTextKind = (k: PreviewKind) => k === "markdown" || k === "csv" || k === "code" || k === "text";

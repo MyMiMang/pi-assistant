@@ -67,6 +67,10 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 | [@lobehub/icons-static-svg](https://github.com/lobehub/lobe-icons)（设置 › 模型 里内置服务的品牌图标；只提取 `scripts/gen-provider-icons.mjs` 用到的图标，生成 `apps/web/src/components/provider-icons.ts`） | 1.95.1 | MIT |
 | [@novnc/novnc](https://github.com/novnc/noVNC) | 1.7.0 | MPL-2.0 |
 | [TypeScript](https://github.com/microsoft/TypeScript)（构建） | 5.9 / 7.0 | Apache-2.0 |
+| [docx-preview](https://github.com/VolodymyrBaydalka/docxjs)（文件预览：Word） | 0.4.1 | Apache-2.0 |
+| [read-excel-file](https://gitlab.com/catamphetamine/read-excel-file)（文件预览：Excel） | 9.3.13 | MIT |
+| [pptxtojson](https://github.com/pipipi-pikachu/pptxtojson)（文件预览：PPT 解析） | 2.2.0 | MIT |
+| [JSZip](https://github.com/Stuk/jszip)（文件预览：zip 列表、iWork 预览图；MIT OR GPL-3.0，按 MIT 使用） | 3.10.2 | MIT |
 
 ## 桌面程序（apps/tray）
 

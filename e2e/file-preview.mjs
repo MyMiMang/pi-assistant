@@ -28,6 +28,8 @@ import { extname, join } from "node:path";
 import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 import { expandDetails, infoTab } from "./fixtures/info-pane.mjs";
+import { buildOfficeFiles } from "./fixtures/office-files.mjs";
+import { runOfficeSection } from "./fixtures/office-section.mjs";
 
 const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 const dist = join(root, "apps/web/dist");
@@ -118,7 +120,8 @@ const FILES = {
 	"f-json": { name: "config.json", mime: "application/json", body: '{\n  "a": 1,\n  "b": [true, null]\n}\n' },
 	"f-csv": { name: "data.csv", mime: "text/csv", body: CSV_BODY },
 	"f-pdf": { name: "report.pdf", mime: "application/pdf", body: Buffer.from("%PDF-1.4\n% fixture\n%%EOF\n") },
-	"f-zip": { name: "archive.zip", mime: "application/zip", body: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x01, 0x02, 0x03]) },
+	// zip 现在能预览（见 office 段）；这里换成仍不支持预览的 7z，继续验证「不支持类型」提示
+	"f-zip": { name: "archive.7z", mime: "application/x-7z-compressed", body: Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0x00, 0x04]) },
 	"f-img": { name: "photo.png", mime: "image/png", body: PNG_1PX },
 	// 视频 / 音频：字节不是真正可解码的媒体流（够不上体积限制、不提交大二进制），只用来验证播放器元素
 	// 挂载、src 指向签名播放链接、以及解码失败时的「没法在这里播放」提示（真实 mp4/mp3 由服务端真实单测覆盖）。
@@ -129,6 +132,10 @@ const FILES = {
 const SVG_BODY = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"><script>window.__svgRan = 1</script><rect width="120" height="80" fill="#3b82f6"/><circle cx="60" cy="40" r="20" fill="#fff"/></svg>';
 FILES["f-html"] = { name: "report.html", mime: "text/html", body: HTML_PAGE };
 FILES["f-svg"] = { name: "logo.svg", mime: "image/svg+xml", body: SVG_BODY };
+// Office / iWork / zip / ipynb 测试文件：运行时用 jszip 现生成（不入库二进制），段落在 e2e/fixtures/office-section.mjs
+const officeFiles = await buildOfficeFiles();
+Object.assign(FILES, officeFiles);
+const officeAttachments = Object.entries(officeFiles).map(([fileId, f]) => ({ fileId, name: f.name, mime: f.mime, size: f.declaredSize ?? f.body.length, direction: "out" }));
 const webAttachments = [
 	{ fileId: "f-html", name: "report.html", mime: "text/html", size: Buffer.byteLength(HTML_PAGE), direction: "out" },
 	{ fileId: "f-svg", name: "logo.svg", mime: "image/svg+xml", size: Buffer.byteLength(SVG_BODY), direction: "out" },
@@ -140,7 +147,7 @@ const attachments = [
 	{ fileId: "f-json", name: "config.json", mime: "application/json", size: 30, direction: "out" },
 	{ fileId: "f-txt", name: "notes.txt", mime: "text/plain", size: 30, direction: "out" },
 	{ fileId: "f-pdf", name: "report.pdf", mime: "application/pdf", size: 24, direction: "out" },
-	{ fileId: "f-zip", name: "archive.zip", mime: "application/zip", size: 8, direction: "out" },
+	{ fileId: "f-zip", name: "archive.7z", mime: "application/x-7z-compressed", size: 8, direction: "out" },
 	{ fileId: "f-huge", name: "huge.txt", mime: "text/plain", size: 2 * 1024 * 1024, direction: "out" },
 	{ fileId: "f-missing", name: "missing.txt", mime: "text/plain", size: 10, direction: "out" },
 	{ fileId: "f-img", name: "photo.png", mime: "image/png", size: PNG_1PX.length, direction: "out" },
@@ -153,6 +160,7 @@ const msgs = [
 	{ id: "m1", agent_id: "a1", task_id: null, role: "assistant", content: "语音输入与双向通话可行性调研，报告已附上。", meta: { attachments }, status: "done", created_at: now - 60_000, updated_at: now - 60_000, conversation_id: "c1" },
 	{ id: "m2", agent_id: "a1", task_id: null, role: "assistant", content: "录屏和语音备忘也发你。", meta: { attachments: mediaAttachments }, status: "done", created_at: now - 30_000, updated_at: now - 30_000, conversation_id: "c1" },
 	{ id: "m3", agent_id: "a1", task_id: null, role: "assistant", content: "网页和图标也做好了。", meta: { attachments: webAttachments }, status: "done", created_at: now - 10_000, updated_at: now - 10_000, conversation_id: "c1" },
+	{ id: "m4", agent_id: "a1", task_id: null, role: "assistant", content: "Office 等文档也发你。", meta: { attachments: officeAttachments }, status: "done", created_at: now - 5_000, updated_at: now - 5_000, conversation_id: "c1" },
 ];
 // 「文件」信息面板用同一批文件（含视频 / 音频），验证预览弹窗里也能播放
 const infoFiles = [...attachments, ...mediaAttachments].filter((f) => f.fileId !== "f-huge" && f.fileId !== "f-missing");
@@ -474,6 +482,9 @@ try {
 		check("HTML / SVG 没有触发外网请求", state.remoteHits.length === 0);
 		await ctx.close();
 	}
+
+	// ================================ Office / iWork / zip / ipynb ================================
+	await runOfficeSection({ browser, base, installRoutes, check, OUT, join });
 
 	// ================================ 手机 390 ================================
 	console.log("\n── 手机 390x844 ──");

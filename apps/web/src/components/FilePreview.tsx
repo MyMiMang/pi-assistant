@@ -1,11 +1,11 @@
 import { AlertCircle, Download, FileQuestion, Loader2, RotateCcw, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { ApiError, download as downloadFile, fetchBlob } from "../api";
-import { isTextKind, previewKind, type PreviewKind } from "../preview";
+import { MAX_OFFICE_BYTES, MAX_TEXT_BYTES, isLegacyOffice, isOfficeKind, isTextKind, previewKind, type PreviewKind } from "../preview";
 import { FileKindIcon } from "./Attachments";
 import { MediaPlayer } from "./MediaPlayer";
-import { CodeView, CsvView, HtmlView, MarkdownScroll, Notice, OVERSIZE_NOTICE, SvgView, loadText } from "./FilePreviewViews";
+import { CodeView, CsvView, HtmlView, MarkdownScroll, Notice, SvgView, loadBinary, loadText, oversizeNotice } from "./FilePreviewViews";
 import { Modal, fmtSize } from "./ui";
 
 /**
@@ -14,7 +14,8 @@ import { Modal, fmtSize } from "./ui";
  * 只读、安全：
  * - 只通过授权资源地址（/api/files/:id）带登录凭证拉取，不读本机任意路径 / URL，不绕权限（视频 / 音频改用该文件的短时签名链接流式播放）；
  * - HTML 只在无 allow-same-origin 的 sandbox iframe 里显示（短时签名链接，见 docs/design/html-file-preview.md），SVG 只当 <img> 显示；
- *   Office / 压缩包等不 inline、不执行，只给下载；
+ * - Word / Excel / PPT / iWork / zip / ipynb 读取后交给按需加载的库解析显示（≤30MB，Shadow DOM，不执行宏；见 docs/design/office-file-preview.md），
+ *   老格式 Office 等只给下载；
  * - 文本先做二进制嗅探，乱码不硬解；超过上限只提示 + 下载；
  * - Markdown 复用现有 react-markdown，但外链图片默认不自动加载，链接只放行 http/https/mailto。
  *
@@ -49,8 +50,17 @@ const KIND_LABEL: Record<PreviewKind, string> = {
 	text: "文本",
 	html: "网页",
 	svg: "SVG",
+	docx: "Word",
+	xlsx: "Excel",
+	pptx: "PPT",
+	iwork: "Apple 文档",
+	zip: "压缩包",
+	ipynb: "Jupyter",
 	unsupported: "文件",
 };
+
+/** Office 类视图（含 office-preview.ts 的逻辑）整体按需加载，不进主包。 */
+const OfficeView = lazy(() => import("./OfficeViews").then((m) => ({ default: m.OfficeView })));
 
 /** 全局挂载一次（App.tsx）。关闭后把焦点还给触发它的卡片（键盘用户）。 */
 export function FilePreviewHost() {
@@ -122,6 +132,7 @@ function Body({ item, kind, onRetry, onClose }: { item: FilePreviewItem; kind: P
 	const [state, setState] = useState<BodyState>({ s: "loading" });
 	const [text, setText] = useState("");
 	const [url, setUrl] = useState<string>();
+	const [buf, setBuf] = useState<ArrayBuffer>();
 
 	useEffect(() => {
 		const ac = new AbortController();
@@ -141,6 +152,15 @@ function Body({ item, kind, onRetry, onClose }: { item: FilePreviewItem; kind: P
 						objUrl = URL.createObjectURL(new Blob([r.bytes as BlobPart], { type: "image/svg+xml" }));
 						setUrl(objUrl);
 					}
+					setState({ s: "ready" });
+				} else if (isOfficeKind(kind)) {
+					const r = await loadBinary(item.url, item.size, ac.signal);
+					if (ac.signal.aborted) return;
+					if (r.s !== "ok") {
+						setState({ s: r.s });
+						return;
+					}
+					setBuf(r.buf);
 					setState({ s: "ready" });
 				} else if (kind === "image" || kind === "pdf") {
 					const blob = await fetchBlob(item.url, ac.signal);
@@ -195,10 +215,14 @@ function Body({ item, kind, onRetry, onClose }: { item: FilePreviewItem; kind: P
 		);
 	}
 	if (state.s === "oversize") {
-		return <Notice icon={<FileQuestion size={22} />} title={OVERSIZE_NOTICE.title} body={OVERSIZE_NOTICE.body} testId="file-preview-oversize" />;
+		const n = oversizeNotice(isOfficeKind(kind) ? MAX_OFFICE_BYTES : MAX_TEXT_BYTES);
+		return <Notice icon={<FileQuestion size={22} />} title={n.title} body={n.body} testId="file-preview-oversize" />;
 	}
 	if (state.s === "binary") {
 		return <Notice icon={<FileQuestion size={22} />} title="这是二进制文件" body="不能按文本预览（避免显示乱码）。用右上角「下载」打开。" testId="file-preview-binary" />;
+	}
+	if (kind === "unsupported" && isLegacyOffice(item.name, item.mime)) {
+		return <Notice icon={<FileQuestion size={22} />} title="老格式文件，没法在应用里预览" body="用 Office / WPS 另存为 .docx / .xlsx / .pptx 后就能预览。也可以用右上角「下载」保存后查看。" testId="file-preview-unsupported" />;
 	}
 	if (kind === "unsupported") {
 		return <Notice icon={<FileQuestion size={22} />} title="暂不支持这种文件预览" body="为保证安全（不执行 Office 宏等），这类文件只在应用外打开。用右上角「下载」保存后查看。" testId="file-preview-unsupported" />;
@@ -209,6 +233,13 @@ function Body({ item, kind, onRetry, onClose }: { item: FilePreviewItem; kind: P
 			<div className="flex h-full items-center justify-center overflow-hidden p-3" data-testid={`file-preview-${kind}`}>
 				<MediaPlayer kind={kind} path={item.url} name={item.name} className={kind === "video" ? "max-h-full max-w-full rounded-lg bg-black shadow" : "w-full max-w-md"} />
 			</div>
+		);
+	}
+	if (isOfficeKind(kind) && buf) {
+		return (
+			<Suspense fallback={<div className="flex h-full items-center justify-center text-mut"><Loader2 className="animate-spin" size={22} /></div>}>
+				<OfficeView kind={kind} buf={buf} name={item.name} />
+			</Suspense>
 		);
 	}
 	if (kind === "html") return <HtmlView path={item.url} size={item.size} />;

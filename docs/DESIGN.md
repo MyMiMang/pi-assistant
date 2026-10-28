@@ -1697,6 +1697,7 @@ task_wait({
 - 支持：Markdown（复用现有 `react-markdown`，默认渲染，顶部可切「渲染 / 源码」）、纯文本 / log / json / 代码（行号 + 复制）、CSV / TSV（引号内换行、`""` 转义、有界表格）、PDF（`<object type=application/pdf>` + fallback 提示 + 下载）、图片兜底。
 - **明确暂不支持**（只下载、不 inline、不执行）：xlsx / docx / pptx 等 Office、HTML、SVG、压缩包、其它二进制。不做服务端 exec（LibreOffice）、不上传外部云、不读工作区任意路径。
   - 更新（2026-10）：HTML / SVG 已改为应用内显示——HTML 在无 `allow-same-origin` 的 sandbox iframe 里（短时签名链接 + 专用 CSP），SVG 只当 `<img>`；做法与安全边界见 [docs/design/html-file-preview.md](design/html-file-preview.md)。Office、hta、压缩包仍只下载。
+  - 更新（2026-10-28）：Word / Excel / PPT / iWork 预览图 / zip 列表 / Jupyter 也已应用内预览，见 [design/office-file-preview.md](design/office-file-preview.md)。
 - 类型判定不只看扩展名、也不只看 Content-Type：两者一起判，再对实际字节嗅探（含 NUL / 控制字符比例），像二进制就不当文本解码。
 - 只通过授权资源地址 `/api/files/:id` 带登录凭证（`api.ts` 的 `fetchBlob` / `fetchBlobLimited`）拉取；`fetchBlobLimited` 先看 `content-length`，超限直接不读 body，界面只提示超限 + 保留下载。加载中有「取消」（卸载 abort fetch），失败按 404 / 权限 / 其它区分，可重试。
 - Markdown 预览：`Markdown.tsx` 新增 `blockRemoteImages`，远端图片显示「点击加载」占位、不自动请求（不把来源信息发出去）；链接只放行 `http/https/mailto` 和页内锚点，`javascript:` / `data:` / `file:` / 相对文件引用只显示文字，不渲染成可点链接。

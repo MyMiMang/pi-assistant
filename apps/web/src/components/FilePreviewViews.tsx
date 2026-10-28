@@ -2,7 +2,7 @@ import { AlertCircle, Copy, FileQuestion, Loader2, RotateCcw } from "lucide-reac
 import { useEffect, useState } from "react";
 import { fetchBlobLimited, viewUrl } from "../api";
 import { copyText } from "../clipboard";
-import { MAX_CSV_COLS, MAX_CSV_ROWS, MAX_TEXT_BYTES, MAX_TEXT_LINES, looksBinary, parseCsv, stripBom } from "../preview";
+import { MAX_CSV_COLS, MAX_CSV_ROWS, MAX_OFFICE_BYTES, MAX_TEXT_BYTES, MAX_TEXT_LINES, looksBinary, parseCsv, stripBom } from "../preview";
 import Markdown from "./Markdown";
 import { Help, cx, fmtSize } from "./ui";
 
@@ -21,10 +21,22 @@ export async function loadText(url: string, size: number | undefined, signal: Ab
 	return { s: "ok", bytes, text: stripBom(new TextDecoder("utf-8").decode(bytes)) };
 }
 
-export const OVERSIZE_NOTICE = {
+export type BinaryLoad = { s: "ok"; buf: ArrayBuffer } | { s: "oversize" };
+
+/** 按 MAX_OFFICE_BYTES 整份拉取二进制（Office / iWork / zip / ipynb）：超限返回 oversize，不读完大文件。网络错误直接抛。 */
+export async function loadBinary(url: string, size: number | undefined, signal: AbortSignal): Promise<BinaryLoad> {
+	if (size != null && size > MAX_OFFICE_BYTES) return { s: "oversize" };
+	const { blob, oversized } = await fetchBlobLimited(url, MAX_OFFICE_BYTES, signal);
+	if (oversized) return { s: "oversize" };
+	return { s: "ok", buf: await blob.arrayBuffer() };
+}
+
+/** 「文件太大」提示；limit 是该类预览的上限（文本 1MB、Office 等 30MB）。 */
+export const oversizeNotice = (limit: number) => ({
 	title: "文件太大，没在应用里预览",
-	body: `文本预览上限 ${fmtSize(MAX_TEXT_BYTES)}，这个文件更大。用右上角「下载」看完整内容。`,
-};
+	body: `${limit === MAX_TEXT_BYTES ? "文本" : ""}预览上限 ${fmtSize(limit)}，这个文件更大。用右上角「下载」看完整内容。`,
+});
+export const OVERSIZE_NOTICE = oversizeNotice(MAX_TEXT_BYTES);
 
 /** 顶部「渲染 / 源码」这类模式切换条（Markdown、HTML、SVG 共用）。testId 为 `${prefix}-mode-bar` / `${prefix}-mode-${模式}`。 */
 export function ModeBar({ prefix, label, modes, value, onChange, children }: { prefix: string; label: string; modes: [string, string][]; value: string; onChange: (m: string) => void; children?: React.ReactNode }) {
@@ -73,15 +85,21 @@ export function MarkdownScroll({ text }: { text: string }) {
 
 export function CsvView({ text, tsv }: { text: string; tsv?: boolean }) {
 	const { rows, truncated } = parseCsv(text, { maxRows: MAX_CSV_ROWS, maxCols: MAX_CSV_COLS, delimiter: tsv ? "\t" : "," });
+	return <TableView rows={rows} truncated={truncated} testId="file-preview-csv" />;
+}
+
+/** 表格（CSV 和 Excel 共用）：第一行当表头，行列已按 MAX_CSV_ROWS / MAX_CSV_COLS 截断；bar 放在统计信息右侧（如工作表切换）。 */
+export function TableView({ rows, truncated, testId, bar }: { rows: string[][]; truncated: boolean; testId: string; bar?: React.ReactNode }) {
 	const cols = rows.reduce((m, r) => Math.max(m, r.length), 0);
 	const [head, ...body] = rows;
 	return (
-		<div className="flex h-full min-h-0 flex-col" data-testid="file-preview-csv">
-			<div className="flex items-center gap-3 border-b border-line px-3 py-1.5 text-xs text-mut2">
+		<div className="flex h-full min-h-0 flex-col" data-testid={testId}>
+			<div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-1.5 text-xs text-mut2">
 				<span>
 					{rows.length} 行 × {cols} 列
 				</span>
 				{truncated && <span className="text-amber-600">超过 {MAX_CSV_ROWS} 行 / {MAX_CSV_COLS} 列，已截断，完整内容请下载</span>}
+				{bar}
 			</div>
 			<div className="min-h-0 flex-1 overflow-auto">
 				<table className="w-max min-w-full border-collapse text-[12.5px]">
