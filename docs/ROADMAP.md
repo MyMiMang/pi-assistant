@@ -11,7 +11,7 @@
 - [已发布(beta.37)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
-- [待决定] 通用 ACP 接入更多本机命令行当模型，先接 OpenCode（已实测，Grok 暂缓；[设计](design/acp-cli-models.md)）
+- [待决定] 通用 ACP 接入更多本机命令行当模型，先接 OpenCode（假模型 + Go 套餐真实模型都实测通过，Grok 暂缓；[设计](design/acp-cli-models.md)）
 - [已发布(beta.44)] 执行概览、任务、项目、提醒也进侧栏（[设计](design/side-panel-views.md)）；断线自动重试成功不再显示红色报错，收尾空回复不再报错
 - [已发布(beta.44)] HTML / SVG / Office / iWork / zip / Jupyter 文件在应用内直接显示（[HTML 设计](design/html-file-preview.md)、[Office 设计](design/office-file-preview.md)、[0024](decisions/0024-html-preview-sandboxed.md)）
 - [已发布(beta.44)] 文件预览改成聊天右边的侧栏（窄屏仍是弹窗，可「放大」；[设计](design/file-preview-side-panel.md)）
