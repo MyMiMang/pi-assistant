@@ -264,6 +264,7 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 - 作为一种帮手（subagents 新 kind，比如 `cli`），走现有的帮手、执行、群任务那一套（决策 0014），不另造任务系统。
 - 它的工具调用显示成步骤，权限请求转成我们的审批卡，按 `hostFileAccess` 档位决定是否免审批；文件夹默认在助理工作区，访问用户电脑上的文件夹要按权限档位来。
 - 这一期再接 ACP（`@agentclientprotocol/sdk`），顺带支持 Copilot、OpenCode、Antigravity 等支持 ACP 的工具。
+- 2026-10-29 已实测 OpenCode、Grok 的 ACP 接入，「当模型」也打算改走通用 ACP 后端，见 [acp-cli-models.md](acp-cli-models.md)。
 
 ## 7. 开工前要先实测核实的点
 
