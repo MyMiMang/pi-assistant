@@ -1,4 +1,4 @@
-状态：已实现，未发布
+状态：已实现，随 beta.44 打包
 
 # Office 等常用文件应用内预览（第二期）
 接 [html-file-preview.md](html-file-preview.md)。复用 `FilePreview.tsx` 弹窗、`preview.ts` 判定、`FilePreviewViews.tsx` 的 `ModeBar` / `Notice` / `CodeView` / `loadText` 写法，不另起一套。
