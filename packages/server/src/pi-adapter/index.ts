@@ -38,6 +38,7 @@ import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/
 import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import compat from "./compat.json" with { type: "json" };
 import { refreshResumedTools } from "./session-tools.ts";
+import { isAbortedMessage } from "./run-result.ts";
 export { activateNewExtensionTools, loadedResources } from "./session-tools.ts";
 import { BRAND } from "@pi-assistant/shared";
 
@@ -754,7 +755,7 @@ export function lastAssistantText(session: AgentSession): string {
 	return session.getLastAssistantText() ?? "";
 }
 
-export { lastAssistantError } from "./run-result.ts";
+export { isAbortedMessage, lastAssistantError } from "./run-result.ts";
 
 /** 从 Pi 的 AgentMessage 中取纯文本。 */
 export function messageText(message: unknown): string {
@@ -844,11 +845,12 @@ export function subscribeSession(session: AgentSession, fn: (e: AgentEvent) => v
 				}
 				if (ev.message?.role === "assistant") {
 					const m = ev.message;
+					const aborted = isAbortedMessage(m);
 					fn({
 						type: "assistant_end",
 						text: messageText(m),
-						error: m.stopReason === "aborted" ? undefined : m.stopReason === "error" || m.errorMessage ? modelErrorMessage(m.errorMessage) : undefined,
-						aborted: m.stopReason === "aborted",
+						error: aborted ? undefined : m.stopReason === "error" || m.errorMessage ? modelErrorMessage(m.errorMessage) : undefined,
+						aborted,
 						hasToolCalls: Array.isArray(m.content) && m.content.some((b: { type?: string }) => b.type === "toolCall"),
 						provider: m.provider,
 						model: m.model,

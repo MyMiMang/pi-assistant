@@ -1,12 +1,13 @@
 /**
- * `codex app-server` 的 JSON-RPC 客户端（stdio，一行一条 JSON；方案 docs/design/cli-models.md §5.2）。
- * 只管读写协议：发请求等回包、发通知、收通知、收服务端请求（如 `item/tool/call`）并按 id 回包。
- * 进程的生命周期（按需启动、空闲退出、崩溃重启）在 `codex-hub.ts`，Pi 相关的在 `pi-adapter/cli-models/codex.ts`。
+ * 本机命令行的 JSON-RPC over stdio 客户端（一行一条 JSON）：`codex app-server`（方案 docs/design/cli-models.md §5.2）和
+ * ACP 命令行（OpenCode 等，docs/design/acp-cli-models.md）共用。
+ * 只管读写协议：发请求等回包、发通知、收通知、收服务端请求（如 `item/tool/call`、`session/request_permission`）并按 id 回包。
+ * 进程的生命周期：codex 在 `codex-hub.ts`，ACP 在 `acp-process.ts`；Pi 相关的在 `pi-adapter/cli-models/`。
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 
-export interface CodexExit {
+export interface RpcExit {
 	code: number | null;
 	signal: NodeJS.Signals | null;
 	/** stderr 末尾（最多 8KB），出错时放进错误信息 */
@@ -17,7 +18,9 @@ export interface CodexExit {
 	closedByUs: boolean;
 }
 
-export interface CodexClientOptions {
+export interface RpcClientOptions {
+	/** 界面报错里的名字，如 `codex`、`OpenCode` */
+	label: string;
 	command: string;
 	args: string[];
 	cwd: string;
@@ -25,7 +28,7 @@ export interface CodexClientOptions {
 	onNotification: (method: string, params: unknown) => void;
 	/** 服务端发来的请求（有 id）；调用方稍后用 `respond` / `respondError` 回 */
 	onRequest: (id: number | string, method: string, params: unknown) => void;
-	onExit: (exit: CodexExit) => void;
+	onExit: (exit: RpcExit) => void;
 }
 
 const STDERR_LIMIT = 8 * 1024;
@@ -40,7 +43,7 @@ interface Pending {
 }
 
 /** JSON-RPC 错误（保留 code，方便判断「线程不存在」之类） */
-export class CodexRpcError extends Error {
+export class RpcError extends Error {
 	constructor(
 		message: string,
 		readonly code?: number,
@@ -49,7 +52,7 @@ export class CodexRpcError extends Error {
 	}
 }
 
-export class CodexClient {
+export class RpcClient {
 	private child: ChildProcess | undefined;
 	private nextId = 1;
 	private readonly pending = new Map<number, Pending>();
@@ -60,7 +63,7 @@ export class CodexClient {
 	readonly exitedPromise: Promise<void>;
 	private resolveExited!: () => void;
 
-	constructor(private readonly opts: CodexClientOptions) {
+	constructor(private readonly opts: RpcClientOptions) {
 		this.exitedPromise = new Promise((r) => (this.resolveExited = r));
 	}
 
@@ -75,7 +78,7 @@ export class CodexClient {
 
 	/** 启动进程。只能调一次。 */
 	start(): void {
-		if (this.child) throw new Error("CodexClient 已经启动过");
+		if (this.child) throw new Error("RpcClient 已经启动过");
 		const o = this.opts;
 		const child = spawn(o.command, o.args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
 		this.child = child;
@@ -94,7 +97,7 @@ export class CodexClient {
 			if (this.exited) return;
 			this.exited = true;
 			void (waitReader ? rlClosed : Promise.resolve()).then(() => {
-				const err = new Error(spawnError ? `无法启动 codex：${spawnError}` : `codex 进程已退出（退出码 ${code ?? signal ?? "未知"}）${this.stderr.trim() ? `：${this.stderr.trim()}` : ""}`);
+				const err = new Error(spawnError ? `无法启动 ${o.label}：${spawnError}` : `${o.label} 进程已退出（退出码 ${code ?? signal ?? "未知"}）${this.stderr.trim() ? `：${this.stderr.trim()}` : ""}`);
 				for (const [id, p] of this.pending) {
 					if (p.timer) clearTimeout(p.timer);
 					this.pending.delete(id);
@@ -133,7 +136,7 @@ export class CodexClient {
 				if (!p) return;
 				this.pending.delete(msg.id as number);
 				if (p.timer) clearTimeout(p.timer);
-				if (msg.error) p.reject(new CodexRpcError(`${p.method} 失败：${msg.error.message ?? "未知错误"}`, msg.error.code));
+				if (msg.error) p.reject(new RpcError(`${p.method} 失败：${msg.error.message ?? "未知错误"}`, msg.error.code));
 				else p.resolve(msg.result);
 			} else if (typeof msg.method === "string") this.opts.onNotification(msg.method, msg.params);
 		} catch {
@@ -162,7 +165,7 @@ export class CodexClient {
 			if (!this.write({ id, method, params })) {
 				this.pending.delete(id);
 				if (p.timer) clearTimeout(p.timer);
-				reject(new Error("codex 进程已经不在了"));
+				reject(new Error(`${this.opts.label} 进程已经不在了`));
 			}
 		});
 	}
@@ -179,7 +182,7 @@ export class CodexClient {
 		return this.write({ id, error });
 	}
 
-	/** 关掉进程：先关 stdin（codex 会自己退），3 秒不退就强杀。 */
+	/** 关掉进程：先关 stdin（命令行会自己退），3 秒不退就强杀。 */
 	close(): void {
 		if (!this.child || this.exited) return;
 		this.closedByUs = true;

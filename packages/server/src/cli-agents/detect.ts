@@ -1,15 +1,17 @@
 /**
- * 检测本机的 `claude` / `codex` / `agy`：在哪、什么版本、是否已登录（`claude auth status` / `codex login status` / `agy models` 成功）。
+ * 检测本机的 `claude` / `codex` / `agy` / `opencode`：在哪、什么版本、是否已登录（`claude auth status` / `codex login status` / `agy models` 成功）。
  * 不读任何凭证文件、不碰钥匙串，只问官方命令；环境和真正启动时同一套白名单（`buildClaudeEnv` / `buildCodexEnv`）。
  * 登录交给用户自己在终端里做（`claude auth login` / `codex login`），我们不代为登录。
  */
 import { execFile } from "node:child_process";
-import { accessSync, constants, statSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { osAccountHome } from "../native-launch-env.ts";
 import { parseAgyModels, type AgyFamily } from "./agy-models.ts";
 import { buildAgyEnv } from "./agy-launch.ts";
 import { buildCodexEnv } from "./codex-launch.ts";
+import { buildOpencodeEnv, opencodeAuthPath, opencodeConfigHome } from "./opencode-launch.ts";
+import { parseOpencodeModels, type OpencodeModel } from "./opencode-models.ts";
 import { buildClaudeEnv, commonCliDirs } from "./launch.ts";
 
 export interface ClaudeStatus {
@@ -71,6 +73,9 @@ export const findCodexCommand = (opts: FindOptions = {}): string | null => findC
 
 /** 找 `agy` 可执行文件；找不到返回 null。 */
 export const findAgyCommand = (opts: FindOptions = {}): string | null => findCommand("agy", [], opts);
+
+/** 找 `opencode` 可执行文件（官方安装脚本装在 `~/.opencode/bin`）；找不到返回 null。 */
+export const findOpencodeCommand = (opts: FindOptions = {}): string | null => findCommand("opencode", [[".opencode", "bin"]], opts);
 
 interface Ran {
 	stdout: string;
@@ -182,4 +187,41 @@ export async function detectAgy(opts: DetectOptions = {}): Promise<AgyStatus> {
 	} catch (e) {
 		return { installed: true, command, version, loggedIn: false, error: e instanceof Error ? e.message : String(e) };
 	}
+}
+
+export interface OpencodeStatus {
+	installed: boolean;
+	command?: string;
+	version?: string;
+	/** 登录凭据文件 `auth.json` 在不在（只看文件在不在，不读内容）。没登录也能用免费模型，所以不是「能不能用」 */
+	loggedIn: boolean;
+	error?: string;
+}
+
+export interface OpencodeDetectOptions extends Omit<DetectOptions, "command"> {
+	command?: string;
+	/** 数据目录：隔离的配置目录在它下面（列模型时用） */
+	dataDir: string;
+}
+
+/** 问 `opencode models --verbose`（用和真正运行时同一套隔离环境）：返回支持工具调用的模型；失败或一个都没有就抛带原文的错误。 */
+export async function listOpencodeModels(command: string, opts: OpencodeDetectOptions): Promise<OpencodeModel[]> {
+	mkdirSync(opencodeConfigHome(opts.dataDir), { recursive: true, mode: 0o700 });
+	const r = await run(command, ["models", "--verbose"], buildOpencodeEnv({ baseEnv: opts.baseEnv, command, dataDir: opts.dataDir, extra: opts.extraEnv }), opts.timeoutMs ?? 60_000);
+	if (r.failed) throw new Error(`运行 opencode models 失败：${r.failed}`);
+	if (r.code !== 0) throw new Error((r.stdout + r.stderr).trim().slice(0, 300) || `opencode models 退出码 ${r.code}`);
+	const models = parseOpencodeModels(r.stdout);
+	if (!models.length) throw new Error("opencode models 没有列出任何支持工具调用的模型");
+	return models;
+}
+
+/** 检测 opencode 是否安装、版本、登录凭据在不在。永不抛错，不读任何凭证文件。 */
+export async function detectOpencode(opts: OpencodeDetectOptions): Promise<OpencodeStatus> {
+	const command = opts.command ?? findOpencodeCommand({ env: opts.baseEnv });
+	if (!command) return { installed: false, loggedIn: false, error: "没有找到 opencode 命令" };
+	const ver = await run(command, ["--version"], buildOpencodeEnv({ baseEnv: opts.baseEnv, command, dataDir: opts.dataDir, extra: opts.extraEnv }), opts.timeoutMs ?? 15_000);
+	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 opencode 失败：${ver.failed}` };
+	const version = /\d+\.\d+\.\d+\S*/.exec(ver.stdout)?.[0];
+	const auth = opencodeAuthPath(opts.baseEnv ?? process.env, osAccountHome());
+	return { installed: true, command, version, loggedIn: !!auth && existsSync(auth) };
 }

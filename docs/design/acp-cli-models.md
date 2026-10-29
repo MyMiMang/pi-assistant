@@ -1,4 +1,4 @@
-状态：草稿（假模型 + 真实模型实测完，待用户决定是否开工）
+状态：已实现（通用 ACP 后端 + OpenCode；假命令单测 / e2e + dev:live 真实模型冒烟通过，未发布）
 
 # 用通用 ACP 接入更多本机命令行当模型（OpenCode 等）
 
@@ -55,3 +55,25 @@ Grok 本机未登录，没用真实模型测。
 - 关工具、换提示、超时这些都是各家私有配置，上游升级可能变；每次手动升级命令行后要冒烟复测。
 - OpenCode 配置是进程级的，换系统提示要重启进程再续接。
 - 用户全局 `~/.config/opencode/AGENTS.md` 可能被读到，实现时要验证并关掉。
+
+## 实现要点
+- 分层：`cli-agents/jsonrpc-stdio.ts`（原 `codex-client.ts` 改名，`RpcClient`，codex 与 ACP 共用）→ `acp-events.ts`（纯函数）→ `acp-process.ts`（每个 Pi 会话一个长驻进程）→ `pi-adapter/cli-models/acp.ts`（通用 `CliBackend`，参数是 `AcpChannelConfig`）→ `opencode.ts`（OpenCode 那份配置 + 模型注册）。`process-pool.ts` 抽出 agy 与 ACP 共用的进程池 / 回填 / 收尾。
+- **渠道 id 叫 `opencode-cli`，不叫 `opencode`**：Pi 自带一个同名的渠道（OpenCode Zen 的 API 密钥渠道），重名会把它顶掉，模型服务页的过滤也会把它一起藏起来。环境变量仍是 `PIA_OPENCODE_COMMAND`，接口 `/api/models/opencode-cli`，Pi 模型 id 是 OpenCode 的 `<provider>/<model>`（如 `opencode-go/deepseek-v4.1-flash`）。
+- **工具收齐**：只认工具桥收到的 MCP `tools/call`，配对键 = MCP 请求 id（`callKey` 返回 undefined，桥用 `rpc-<id>`）。收到第一个后，等「桥收到的数量 ≥ ACP `tool_call` 通知里我们的工具数」且安静 50 毫秒（实测 ACP 报告第二个工具比第一个的 MCP 请求还晚几十毫秒，只比数量会过早收齐），最多等 300 毫秒（`ACP_PARALLEL_WAIT_MS`，没有依据，要调就调这里）。
+- **用量**：`usage_update` 一轮只来一次且只是最后一次调用的上下文大小，`session/prompt` 回包的 `usage` 也只是最后一次调用，ACP 没有按次的用量通知，**做不到按次累加，退回最后一次**：被工具打断的中间段没有用量，最后一段有（正好是当前上下文大小）。cost 一律 0。思考 token 算进输出。
+- **配置隔离**：OpenCode 没有单独关全局 `AGENTS.md` 的开关（查过 1.18.35 的环境变量；全局指令文件是 `<配置目录>/AGENTS.md`），所以 `XDG_CONFIG_HOME` 指到 `<dataDir>/cli-models/opencode-config`；登录凭据在 `XDG_DATA_HOME`，不动。另加 `OPENCODE_DISABLE_CLAUDE_CODE` / `_PROJECT_CONFIG` / `_EXTERNAL_SKILLS` / `_AUTOUPDATE`。副作用：用户写在全局配置里的自定义 provider 用不了（`opencode auth login` 登录的可以）。工作目录固定为 `<dataDir>/cli-models/opencode-work`（会话续接要在同一目录），每个进程的配置文件在随机运行目录里（0700 / 0600，结束必删，系统提示不进环境变量和命令行）。
+- **模型 / 思考强度是会话级的**（`session/set_config_option`），换了不重开进程，所以续用指纹不含模型；系统提示 / 工具集变了弃用旧进程。空闲退出或进程没了，下一轮 `session/resume`；找不到会话就改新开。
+- **停止**：`session/cancel`，回包后（或 1.5 秒后）关进程；下一轮用对照表之外的新会话（和 agy 一致，停止后对照表作废，上下文由 Pi 渲染成文字带过去）。
+- **登录检测**：只看 `auth.json`（`$XDG_DATA_HOME/opencode/auth.json`）在不在，不读内容；自带免费模型，所以 `requireLogin: false`——装了且 `opencode models --verbose` 能列出支持工具调用的模型就注册，卡片上没登录显示「未登录（可用免费模型）」。
+- 假命令 `test/fixtures/fake-opencode.mjs` 的 MCP 请求用 `http.request({agent:false})`：Node 自带的 `fetch` 在已有请求挂着时，第二条连接会被拖慢约 250 毫秒，会把「并行调用晚到」的用例搅乱。
+
+## dev:live 真实冒烟（2026-10-29，测试助理「OpenCode实测」，`opencode-go/deepseek-v4.1-flash`）
+- 建文件 → 读出来 → 列目录：3 个工具一次通过，回答正确（所以 `mcpServers` 请求头带令牌在真实 OpenCode 下可用）。
+- 第二轮「刚才建的文件叫什么」：不调工具答对（续用正常）。
+- 运行 `sleep 15` 时插话：显示「等当前这一步做完送达」，命令跑完后送达，回答里带上了插话内容。
+- 运行 `sleep 40` 时点停止：立刻停；界面原来显示红色 `This operation was aborted`——这是 Pi 1.3.0 在停止时把中止记成 error 的毛病，各渠道（中转、Codex）都有，已在适配层（`run-result.ts` 的 `isAbortedMessage`，整句精确匹配，超时不算）按「已中断」处理。
+- 中间段没有用量时不再显示「0 → 0 token」（`ChatMessages.tsx` 的 `UsageLine`）。
+
+## 还没验证
+- 真实并行多个工具时 50 / 300 毫秒收齐窗口（假命令和实测脚本里通过，dev:live 这几轮模型没有并行调用）。
+- 隔离 `XDG_CONFIG_HOME` 后用户自定义 provider 不可用（按设计如此，没用真用户配置试）；Windows / Linux 没测。

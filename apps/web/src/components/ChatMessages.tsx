@@ -252,6 +252,7 @@ function FastLine({ meta }: { meta: MessageFastMeta }) {
 function UsageLine({ u, model }: { u: MsgUsage; model: string }) {
 	const fx = useFx();
 	const inTok = u.input + u.cacheRead + u.cacheWrite;
+	if (!inTok && !u.output) return null; // 没有用量（如 OpenCode 被工具打断的中间段、停止的回合）不显示「0 → 0」
 	const detail = `${model}\n输入 ${fmtTok(u.input)} · 读缓存 ${fmtTok(u.cacheRead)} · 写缓存 ${fmtTok(u.cacheWrite)}\n输出 ${fmtTok(u.output)}${u.reasoning ? `（推理 ${fmtTok(u.reasoning)}）` : ""}${(u.cost ?? 0) > 0 ? `\n费用 ${fmtMoney(u.cost, fx)}${u.saved ? ` · 缓存省下 ${fmtMoney(u.saved, fx)}` : ""}` : ""}`;
 	return (
 		<div className="pa-usage" title={detail} data-testid="msg-usage">

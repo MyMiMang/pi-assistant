@@ -24,9 +24,10 @@ process.env.PIA_WORKSPACE = join(dataDir, "workspace");
 process.env.PIA_OFFLINE = "1";
 // 单测不因为开发机装了 claude 就改变模型列表（空 = 明确关闭 Claude Code 渠道）；要测它的用例自己设假 claude 路径。
 process.env.PIA_CLAUDE_COMMAND = "";
-// codex / agy 同理（非 Mock 的用例启动服务时，不能去跑开发机上真实的 codex / agy，agy models 还要联网、很慢）。
+// codex / agy / opencode 同理（非 Mock 的用例启动服务时，不能去跑开发机上真实的 codex / agy，agy models 还要联网、很慢）。
 process.env.PIA_CODEX_COMMAND = "";
 process.env.PIA_AGY_COMMAND = "";
+process.env.PIA_OPENCODE_COMMAND = "";
 // 不带开发机的模型服务商凭据：Pi 会把设了这些变量的服务商算作「已配置」，测试结果跟着开发机变，也不能有误碰真实付费模型的可能（和 e2e/fixtures/temp-server.mjs 的 withoutCredentials 同一口径）。
 for (const k of Object.keys(process.env)) if (/(_API_KEY|_TOKEN|_SECRET_ACCESS_KEY)$|^(ANTHROPIC|AWS|AZURE|GOOGLE|GCLOUD)_/.test(k)) delete process.env[k];
 // 单测绝不碰真实钥匙串：PATH 最前面放一个假的 security（一律「没有这一项」，写入也失败 → 主密钥落在临时数据目录的 master.key）。

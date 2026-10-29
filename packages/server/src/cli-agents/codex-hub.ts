@@ -6,7 +6,7 @@
  * 名字取一次就记住，之后重启直接带上。通知 / 服务端请求按 `threadId` 分发给各线程登记的 `ThreadSink`；
  * 不认识的服务端请求（审批、提问等）统一拒绝，不让 Codex 卡住。
  */
-import { CodexClient, type CodexExit } from "./codex-client.ts";
+import { RpcClient, type RpcExit } from "./jsonrpc-stdio.ts";
 import { answerServerRequest } from "./codex-events.ts";
 import { buildCodexArgs, buildCodexEnv } from "./codex-launch.ts";
 import { findCodexCommand } from "./detect.ts";
@@ -17,7 +17,7 @@ export interface ThreadSink {
 	/** `item/tool/call` 等需要我们回包的请求；用 `hub.respond(id, …)` 回 */
 	request(id: number | string, method: string, params: unknown): void;
 	/** app-server 进程没了（崩溃 / 被关）；这个线程里进行中的一轮就此中断 */
-	exit(exit: CodexExit): void;
+	exit(exit: RpcExit): void;
 }
 
 export interface CodexModelInfo {
@@ -47,8 +47,8 @@ const DEFAULT_IDLE_MS = 10 * 60 * 1000;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 export class CodexHub {
-	private client: CodexClient | undefined;
-	private starting: Promise<CodexClient> | undefined;
+	private client: RpcClient | undefined;
+	private starting: Promise<RpcClient> | undefined;
 	private mcp: string[] | undefined;
 	private readonly sinks = new Map<string, ThreadSink>();
 	private readonly active = new Set<string>();
@@ -71,11 +71,12 @@ export class CodexHub {
 		return this.client?.pid;
 	}
 
-	private spawnClient(mcpNames: string[]): CodexClient {
+	private spawnClient(mcpNames: string[]): RpcClient {
 		const command = (this.opts.command ?? (() => findCodexCommand()))();
 		if (!command) throw new Error("没有找到 codex 命令。请先按 Codex 官方说明安装，再在终端运行 codex login 登录。");
-		const holder: { c?: CodexClient } = {};
-		const c = new CodexClient({
+		const holder: { c?: RpcClient } = {};
+		const c = new RpcClient({
+			label: "codex",
 			command,
 			args: buildCodexArgs(mcpNames),
 			cwd: this.opts.cwd(),
@@ -108,13 +109,13 @@ export class CodexHub {
 		return c;
 	}
 
-	private async handshake(c: CodexClient): Promise<void> {
+	private async handshake(c: RpcClient): Promise<void> {
 		await c.request("initialize", { clientInfo: { name: "pi-assistant", title: "Pi Assistant", version: "0" }, capabilities: { experimentalApi: true } }, INIT_TIMEOUT_MS);
 		c.notify("initialized", {});
 	}
 
 	/** 用户配置里的 MCP 名字：`config/read` 的 `config.mcp_servers` 的键；读不到再退而问 `mcpServerStatus/list`。 */
-	private async readMcpNames(c: CodexClient): Promise<string[]> {
+	private async readMcpNames(c: RpcClient): Promise<string[]> {
 		try {
 			const r = await c.request<{ config?: { mcp_servers?: unknown } }>("config/read", { includeLayers: false }, INIT_TIMEOUT_MS);
 			const m = r?.config?.mcp_servers;
@@ -125,7 +126,7 @@ export class CodexHub {
 		}
 	}
 
-	private async startProcess(): Promise<CodexClient> {
+	private async startProcess(): Promise<RpcClient> {
 		this.loaded.clear(); // 新进程里没有加载过任何线程
 		if (this.mcp) {
 			const c = this.spawnClient(this.mcp);
@@ -155,7 +156,7 @@ export class CodexHub {
 	}
 
 	/** 确保进程在跑（单飞）。 */
-	async ensure(): Promise<CodexClient> {
+	async ensure(): Promise<RpcClient> {
 		if (this.disposed) throw new Error("Codex 渠道已关闭");
 		if (this.client?.alive && !this.starting) return this.client;
 		this.starting ??= this.startProcess().then(

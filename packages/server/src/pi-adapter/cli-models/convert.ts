@@ -151,6 +151,20 @@ export function blocksToCodexInput(blocks: readonly ClaudeBlock[]): CodexInputIt
 	return out;
 }
 
+/** claude 内容块（文字 / base64 图片）→ ACP `session/prompt` 的内容块（`text` / `image`，要命令行声明了 `promptCapabilities.image`）。 */
+export function blocksToAcpPrompt(input: string | readonly ClaudeBlock[]): Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> {
+	if (typeof input === "string") return [{ type: "text", text: input }];
+	const out: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> = [];
+	for (const b of input) {
+		if (b.type === "text" && typeof b.text === "string" && b.text) out.push({ type: "text", text: b.text });
+		else if (b.type === "image") {
+			const src = b.source as { media_type?: string; data?: string } | undefined;
+			if (src?.data) out.push({ type: "image", data: src.data, mimeType: src.media_type ?? "image/png" });
+		}
+	}
+	return out.length ? out : [{ type: "text", text: "（空）" }];
+}
+
 /** Pi 的工具结果 → Codex 动态工具的回包（文字 `inputText`、图片 `inputImage`）。 */
 export function toolResultToCodex(msg: Pick<ToolResultMessage, "content" | "isError">): { success: boolean; contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> } {
 	const contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> = [];
@@ -164,7 +178,7 @@ export function toolResultToCodex(msg: Pick<ToolResultMessage, "content" | "isEr
 }
 
 /**
- * 续用判断用的指纹「模型 + 工具集 + 系统提示」：codex（`thread/resume` 没有动态工具）和 agy（提示和 MCP 配置在会话开始时定死）共用。
+ * 续用判断用的指纹「模型 + 工具集 + 系统提示」：codex（`thread/resume` 没有动态工具）、agy（提示和 MCP 配置在会话开始时定死）和 ACP 渠道共用。
  * 任何一个变了就不续用旧会话。
  */
 export const toolsPromptComposite = (modelId: string, tools: readonly Tool[], systemPrompt: string | undefined): string =>

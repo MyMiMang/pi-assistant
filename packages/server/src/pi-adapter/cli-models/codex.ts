@@ -12,7 +12,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createCodexEventConverter, type CodexEvent } from "../../cli-agents/codex-events.ts";
-import type { CodexExit } from "../../cli-agents/codex-client.ts";
+import type { RpcExit } from "../../cli-agents/jsonrpc-stdio.ts";
 import { CodexHub } from "../../cli-agents/codex-hub.ts";
 import type { PiModels } from "../index.ts";
 import { createCliChannel, type CliBackend, type CliLive, type LaunchRequest, type Step } from "./channel-core.ts";
@@ -40,7 +40,7 @@ export interface CodexDeps {
 	store?: SyncStore;
 }
 
-type Item = CodexEvent | { type: "exit"; exit: CodexExit };
+type Item = CodexEvent | { type: "exit"; exit: RpcExit };
 
 interface CodexLive extends CliLive {
 	threadId: string;

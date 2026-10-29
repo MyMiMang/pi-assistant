@@ -1,5 +1,5 @@
 /**
- * 设置 › 模型服务里的「本机命令行模型」卡片（Claude Code / Codex / Antigravity 共用；方案 docs/design/cli-models.md §4.5、§5.2、§5b）。
+ * 设置 › 模型服务里的「本机命令行模型」卡片（Claude Code / Codex / Antigravity / OpenCode 共用；方案 docs/design/cli-models.md §4.5、§5.2、§5b，docs/design/acp-cli-models.md）。
  * 只显示本机检测结果（装没装、版本、登录没登录）并提供「重新检测」；登录要用户自己在终端里做，我们不代为登录。
  * 检测到可用后服务端就地注册模型渠道（不用重启），模型出现在所有模型选择里。
  * 加新的一家：在 `KINDS` 里加一项文案，服务端接口按渠道名 `/api/models/<kind>` 对应。
@@ -19,12 +19,13 @@ interface CliInfo {
 	globalAgentsMd?: boolean;
 }
 
-export type CliKind = "claude-code" | "codex" | "antigravity";
+/** `opencode-cli`：不叫 `opencode`，Pi 自带一个同名的 OpenCode Zen 密钥渠道 */
+export type CliKind = "claude-code" | "codex" | "antigravity" | "opencode-cli";
 /** 模型服务页里要显示的本机命令行渠道（也用来把它们从普通服务列表里去掉） */
-export const CLI_KINDS: CliKind[] = ["claude-code", "codex", "antigravity"];
+export const CLI_KINDS: CliKind[] = ["claude-code", "codex", "antigravity", "opencode-cli"];
 
 /** 每家的文案：命令名、登录命令、一句话说明、「?」说明、已注册后显示的模型 */
-const KINDS: Record<CliKind, { title: string; command: string; login: string; tone: string; summary: string; models: string; help: ReactNode }> = {
+const KINDS: Record<CliKind, { title: string; command: string; login: string; tone: string; summary: string; models: string; help: ReactNode; loginOptional?: string }> = {
 	"claude-code": {
 		title: "Claude Code（本机）",
 		command: "claude",
@@ -78,6 +79,26 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 			</>
 		),
 	},
+	"opencode-cli": {
+		title: "OpenCode（本机）",
+		command: "opencode",
+		login: "opencode auth login",
+		tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+		summary: "用你电脑上的 OpenCode 当模型（含它自带的免费模型），工具仍由 Pi 助理执行。",
+		models: "模型：以 OpenCode 自己的列表为准，名字里标明来源",
+		loginOptional: "没登录也能用它的免费模型。想用 OpenCode Go 套餐或你自己的模型服务，打开终端运行",
+		help: (
+			<>
+				只当「大脑」用：OpenCode 自带的读写文件、执行命令、联网等工具都会被关掉，工具全部由 Pi 助理执行并走审批。
+				<br />
+				名字里的「OpenCode Zen 按量」会扣你的 Zen 余额，「OpenCode Go」用你的 Go 套餐，「免费」不花钱；你自己用 opencode auth login 登录的模型服务显示它自己的名字。
+				<br />
+				不会读你全局的 OpenCode 配置和 AGENTS.md（所以写在全局配置里的自定义模型服务用不了）。对话记录会出现在 OpenCode 自己的历史里。
+				<br />
+				你在它干活时插的话，会等它用完下一个工具后才看到。用量只显示 token 数（最后一次调用的），不显示钱。
+			</>
+		),
+	},
 };
 
 export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: () => void }) {
@@ -101,7 +122,7 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 	useEffect(() => {
 		void check(false);
 	}, [check]);
-	const ready = !!info?.installed && info.loggedIn;
+	const ready = !!info?.installed && (info.loggedIn || (!!k.loginOptional && info.registered));
 	return (
 		<div className="space-y-2 rounded-xl border border-line p-3" data-testid={`${kind}-card`} data-installed={String(!!info?.installed)} data-logged-in={String(!!info?.loggedIn)} data-registered={String(!!info?.registered)}>
 			<div className="flex items-center gap-2.5">
@@ -128,7 +149,7 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 				) : (
 					<>
 						<Badge tone="green">已安装{info.version ? ` v${info.version}` : ""}</Badge>
-						<Badge tone={info.loggedIn ? "green" : "amber"}>{info.loggedIn ? "已登录" : "未登录"}</Badge>
+						<Badge tone={info.loggedIn ? "green" : k.loginOptional ? "zinc" : "amber"}>{info.loggedIn ? "已登录" : k.loginOptional ? "未登录（可用免费模型）" : "未登录"}</Badge>
 					</>
 				)}
 				{info?.registered && <span className="text-mut">{k.models}</span>}
@@ -140,7 +161,7 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 			)}
 			{info?.installed && !info.loggedIn && (
 				<div className="text-[11px] text-mut2" data-testid={`${kind}-hint`}>
-					还没登录。打开终端，运行 <code className="rounded bg-hover px-1">{k.login}</code> 登录，然后点「重新检测」。
+					{k.loginOptional ?? "还没登录。打开终端，运行"} <code className="rounded bg-hover px-1">{k.login}</code> 登录，{k.loginOptional ? "再" : "然后"}点「重新检测」。
 				</div>
 			)}
 			{kind === "codex" && info?.globalAgentsMd && (

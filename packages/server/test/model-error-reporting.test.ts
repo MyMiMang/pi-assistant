@@ -35,6 +35,11 @@ test("Codex额度错误没有start也归一化出可见错误；错误对象只�
 test("停止保留aborted而非额度失败；合法tool-only携带标记；errorMessage不被非error stop吞掉", () => {
 	const stopped = adapterEvents({ stopReason: "aborted", errorMessage: "Request was aborted" });
 	assert.equal(stopped.aborted, true); assert.equal(stopped.error, undefined);
+	// Pi 有时把用户停止记成 error + 中止原文：按停止处理；超时不算停止
+	const stoppedAsError = adapterEvents({ stopReason: "error", errorMessage: "This operation was aborted" });
+	assert.equal(stoppedAsError.aborted, true); assert.equal(stoppedAsError.error, undefined);
+	assert.equal(lastAssistantError({ messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "This operation was aborted" }] } as never), undefined);
+	assert.equal(adapterEvents({ stopReason: "error", errorMessage: "The operation was aborted due to timeout" }).aborted, false);
 	assert.equal(adapterEvents({ stopReason: "toolUse", content: [{ type: "toolCall", id: "t", name: "read", arguments: {} }] }).hasToolCalls, true);
 	assert.match(adapterEvents({ stopReason: "stop", errorMessage: "insufficient_quota" }).error!, /insufficient_quota/);
 	assert.equal(lastAssistantError({ messages: [{ role: "assistant", content: [], stopReason: "stop" }] } as never), "这次未收到回复，服务未提供具体原因");

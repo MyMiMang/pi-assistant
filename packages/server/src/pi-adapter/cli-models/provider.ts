@@ -5,7 +5,7 @@
 import type { PiModels } from "../index.ts";
 
 /** 本机命令行渠道的 provider id（新增一家在这里登记）：用量不按名字去价格库里「猜价」（订阅用户看 API 标价会被误导，且 gpt-* 会撞上官方同名模型） */
-export const CLI_PROVIDER_IDS: readonly string[] = ["claude-code", "codex", "antigravity"];
+export const CLI_PROVIDER_IDS: readonly string[] = ["claude-code", "codex", "antigravity", "opencode-cli"];
 
 export interface CliModelSpec {
 	id: string;
