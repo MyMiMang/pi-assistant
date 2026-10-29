@@ -1,4 +1,4 @@
-状态：已实现（通用 ACP 后端 + OpenCode；假命令单测 / e2e + dev:live 真实模型冒烟通过），随 beta.45 打包
+状态：已实现（通用 ACP 后端 + OpenCode；假命令单测 / e2e + dev:live 真实模型冒烟通过），已随 beta.45 发布
 
 # 用通用 ACP 接入更多本机命令行当模型（OpenCode 等）
 
