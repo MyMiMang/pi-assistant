@@ -4,6 +4,7 @@
 新需求立刻记一行；做完改状态，不写长段落（细节写进设计文档，进度看提交信息）。2026-10-18 以前的长记录见 [history/ROADMAP-2026-10-18.md](history/ROADMAP-2026-10-18.md)。
 
 ## 进行中
+- [已合 main] 群里约的跟进到点在群里叫醒成员发言（之前走后台巡检、帮手看不到群也发不回群）
 - [开发中] 助理设置八个页面按效果图改造，模型页复用 ModelPicker（[0008](decisions/0008-agent-details-classic.md)）
 - [已发布(beta.37)，待真机] 高级记忆健康：思考回传 / 关思考、重排序限 50 候选、两库并行召回、健康角标 + 通知、备用记忆模型、三步真实测试、每轮写入（[设计](design/memory-health.md)、[0009](decisions/0009-memory-reliability.md)）
 - [已发布(beta.37)] 设置页按界面标准逐页改造（[界面标准](design/ui-standard.md)）

@@ -14,6 +14,7 @@ import { getAgent, setRoomHooks } from "../runtime.ts";
 import { ALIGN_RULE, execOf, workExecTools, workItemTools, workPrompt, itemRow, setWorkSourceProvider } from "../work-items.ts";
 import { askTools } from "./ask-tools.ts";
 import "./collab.ts";
+import "./followup.ts";
 import { INTENT_PLAN_RULE, MANAGER_WAKE_RULE, PROJECT_NEXT_STEP } from "./logic.ts";
 import { planText } from "./plan.ts";
 import { projectTools } from "./project-tools.ts";

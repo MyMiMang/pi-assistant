@@ -112,8 +112,8 @@ export function idleWakeStep(o: { projectActive: boolean; inFlight: boolean; que
 	return o.hinted ? "none" : "hint";
 }
 
-/** check = 关键事件唤醒管理者看看板；peer = 项目进行中成员 @ 了另一位成员 */
-export type TurnReason = "mention" | "manager" | "assign" | "followup" | "resume" | "check" | "peer";
+/** check = 关键事件唤醒管理者看看板；peer = 项目进行中成员 @ 了另一位成员；timer = 成员在群里约的跟进到点（按普通单人发言计数，不触发管理者收尾） */
+export type TurnReason = "mention" | "manager" | "assign" | "followup" | "resume" | "check" | "peer" | "timer";
 export interface PlannedTurn {
 	agentId: string;
 	reason: TurnReason;

@@ -4,9 +4,8 @@
  *  - 巡检（heartbeat）：按助理的主动等级定时（默认工作日、避开免打扰时段）在后台唤醒助理，给它一份“现在的情况”：
  *    未完成 / 失败的任务、你还没回应的审批和提问、定时任务结果、到点的跟进、你最近说过的事、已连接的邮箱和渠道。
  *    助理自己判断有没有值得说的；有就用 proactive_surface 放进“提醒”收件箱，系统再决定要不要推送。
- *  - 跟进：助理在聊天里说“我 5 点再看看”时用 followup_schedule 约上，到点系统唤醒它（只带那条备注和那段对话）。
+ *  - 跟进：助理在聊天里说“我 5 点再看看”时用 followup_schedule 约上，到点系统唤醒它（只带那条备注和那段对话）；群里约的在群里叫醒（rooms/followup.ts）。
  *  - 每日简报（可选）：每天固定时间一条。
- *
  * 防打扰（全部在系统这边强制，不靠模型自觉）：
  *  - 主动等级 off / low / normal / high：决定巡检频率、每天最多推送几条、多重要才推送（其余只进收件箱）。
  *  - 每日预算、免打扰时段（期间只进收件箱，结束后再推）、去重（同一件事 3 天内不重复；被忽略过的永不再提）、
@@ -704,6 +703,7 @@ export function cancelFollowup(agentId: string, id: string) {
 type Spawner = (agentId: string, title: string, instructions: string, opts: { conversationId: string; kind: "heartbeat" }) => { id: string };
 let spawner: Spawner | null = null;
 export const setProactiveSpawner = (f: Spawner) => (spawner = f);
+let roomFollowup: ((agentId: string, fu: { note: string; conversation_id: string | null }) => unknown) | null = null; export const setRoomFollowupHandler = (f: typeof roomFollowup) => (roomFollowup = f); // 群里约的跟进由 rooms/followup.ts 注册（返回 null = 走后台巡检；避免和 rooms 互相 import）
 
 /** 巡检用对话的标题（专属会话靠它识别，不能拿“任意 hidden”当自己的） */
 export const HEARTBEAT_TITLE = "主动巡检";
@@ -882,7 +882,7 @@ export function tickProactive(t = now()) {
 		const fu = db.prepare("SELECT * FROM proactive_followups WHERE agent_id = ? AND status = 'pending' AND due_at <= ? ORDER BY due_at LIMIT 1").get(a.id, t) as { id: string; note: string; conversation_id: string | null; created_at: number } | undefined;
 		if (fu && !inQuiet(t, e.cfg.quiet)) {
 			db.prepare("UPDATE proactive_followups SET status = 'fired' WHERE id = ?").run(fu.id);
-			if (runHeartbeat(a.id, "followup", { followup: { note: fu.note, conversationId: fu.conversation_id, createdAt: fu.created_at } }, t)) fired.push(`${a.id}:followup`);
+			if (roomFollowup?.(a.id, fu) || runHeartbeat(a.id, "followup", { followup: { note: fu.note, conversationId: fu.conversation_id, createdAt: fu.created_at } }, t)) fired.push(`${a.id}:followup`); // 群里约的在群里叫醒
 			continue;
 		}
 		// 3. 每日简报（用户自己选的时间，不受免打扰限制）
