@@ -12,6 +12,8 @@
 - [已发布(beta.37)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
+- [已合 main] 电脑操控提速：只留最近几张截图（每步不再重读几十张旧屏幕）
+- [待决定] 电脑操控提速：已知路径的上传一步完成；Jev 这类快速模型当执行者（参考 cua jev-use / CUA-JEV）
 - [已发布(beta.46)] 发出去、助理还没看到的消息可以撤回（[设计](design/recall-pending-message.md)）
 - [已发布(beta.46)] 让助理真的主动做事：巡检看得见群并能在群里推进、敢做的规则、可以放心做的事、试运行可选、巡检不白卡（[设计](design/proactive-observe-mode.md)、[0025](decisions/0025-proactive-autonomy.md)）
 - [已发布(beta.46)] 长命令跑满 5 秒自动转后台，插话不用等命令跑完（[设计](design/background-commands.md)）

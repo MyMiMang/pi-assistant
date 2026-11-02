@@ -44,7 +44,7 @@
 | `shared` | 前后端共用常量和纯逻辑 |
 | `ext-approval` | 审批闸门（有后果的工具调用） |
 | `ext-sandbox` | 工作区命令 |
-| `ext-computer` | 电脑操作（cua） |
+| `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑） |
 | `ext-browser` | 浏览器工具 |
 | `ext-connectors` | 邮箱等连接器工具 |
 | `ext-delivery` | 发文件 / 提问 / 后台任务 / 子代理派活 |

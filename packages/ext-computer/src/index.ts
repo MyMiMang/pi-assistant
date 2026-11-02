@@ -17,6 +17,8 @@
 import { isAbsolute, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { pruneOldScreens } from "./screen-window.ts";
+export { pruneOldScreens, PRUNED_NOTE, KEEP_SCREENS, PRUNE_BATCH } from "./screen-window.ts";
 import { guardComputer, type GuardContext, type GuardHit } from "@pi-assistant/shared";
 
 export const MCP_SERVER = "computer";
@@ -295,6 +297,11 @@ export function computerExtension(host: ComputerHost) {
 					: "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；完全权限：所有应用都能看、能操作，像人一样使用，应用层不再弹审批（受保护操作也直接执行））"
 				: "助理自己的 Linux 桌面电脑（浏览器、微信等应用）——不是用户的电脑",
 			timeout: 60_000,
+		});
+		// 旧屏幕截图只留最近几张（幂等；助理电脑和用户电脑两种目标都挂，重复挂载不互相干扰）
+		pi.on("context", (e) => {
+			const m = pruneOldScreens(e.messages as never[], isComputerTool) as unknown as typeof e.messages;
+			return m === e.messages ? undefined : { messages: m };
 		});
 		if (host.history) {
 			const hist = host.history;
