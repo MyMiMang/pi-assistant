@@ -4,7 +4,7 @@
 新需求立刻记一行；做完改状态，不写长段落（细节写进设计文档，进度看提交信息）。2026-10-18 以前的长记录见 [history/ROADMAP-2026-10-18.md](history/ROADMAP-2026-10-18.md)。
 
 ## 进行中
-- [已合 main] 群里约的跟进到点在群里叫醒成员发言（之前走后台巡检、帮手看不到群也发不回群）
+- [已发布(beta.46)] 群里约的跟进到点在群里叫醒成员发言（之前走后台巡检、帮手看不到群也发不回群）
 - [开发中] 助理设置八个页面按效果图改造，模型页复用 ModelPicker（[0008](decisions/0008-agent-details-classic.md)）
 - [已发布(beta.37)，待真机] 高级记忆健康：思考回传 / 关思考、重排序限 50 候选、两库并行召回、健康角标 + 通知、备用记忆模型、三步真实测试、每轮写入（[设计](design/memory-health.md)、[0009](decisions/0009-memory-reliability.md)）
 - [已发布(beta.37)] 设置页按界面标准逐页改造（[界面标准](design/ui-standard.md)）
@@ -12,9 +12,9 @@
 - [已发布(beta.37)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
-- [已合 main] 发出去、助理还没看到的消息可以撤回（[设计](design/recall-pending-message.md)）
-- [已合 main] 让助理真的主动做事：巡检看得见群并能在群里推进、敢做的规则、可以放心做的事、试运行可选、巡检不白卡（[设计](design/proactive-observe-mode.md)、[0025](decisions/0025-proactive-autonomy.md)）
-- [已合 main] 长命令跑满 5 秒自动转后台，插话不用等命令跑完（[设计](design/background-commands.md)）
+- [已发布(beta.46)] 发出去、助理还没看到的消息可以撤回（[设计](design/recall-pending-message.md)）
+- [已发布(beta.46)] 让助理真的主动做事：巡检看得见群并能在群里推进、敢做的规则、可以放心做的事、试运行可选、巡检不白卡（[设计](design/proactive-observe-mode.md)、[0025](decisions/0025-proactive-autonomy.md)）
+- [已发布(beta.46)] 长命令跑满 5 秒自动转后台，插话不用等命令跑完（[设计](design/background-commands.md)）
 - [已发布(beta.45)] 通用 ACP 后端 + OpenCode 当模型（渠道 `opencode-cli`，dev:live 用 Go 套餐真实冒烟通过；Grok 暂缓；[设计](design/acp-cli-models.md)）
 - [已发布(beta.44)] 执行概览、任务、项目、提醒也进侧栏（[设计](design/side-panel-views.md)）；断线自动重试成功不再显示红色报错，收尾空回复不再报错
 - [已发布(beta.44)] HTML / SVG / Office / iWork / zip / Jupyter 文件在应用内直接显示（[HTML 设计](design/html-file-preview.md)、[Office 设计](design/office-file-preview.md)、[0024](decisions/0024-html-preview-sandboxed.md)）
