@@ -3,6 +3,7 @@
  * followup_schedule 在群里登记时，conversation_id 是这个成员在群里的隐藏会话（room_members.conversation_id）。
  * 到点后不走后台巡检（帮手看不到群上下文、也发不回群），而是直接在群里叫醒这个成员发言（reason = "timer"，群里所有人可见）。
  * 群被用户按了「停止」→ 不发言，只在群里插一条用户看得见的说明；成员已离开 / 群没了 → 返回 null，由调用方退回后台巡检。
+ * 群里约的跟进不受免打扰时段顺延（用户在群里明确约的；`inRoom` 给 proactive.ts 判断用）。
  */
 import { db } from "../db.ts";
 import { setRoomFollowupHandler } from "../proactive.ts";
@@ -37,4 +38,4 @@ export function fireRoomFollowup(agentId: string, followup: { note: string; conv
 	return fired ? "fired" : "stopped";
 }
 
-setRoomFollowupHandler(fireRoomFollowup);
+setRoomFollowupHandler({ inRoom: (agentId, conversationId) => !!roomMemberOfConversation(agentId, conversationId), fire: fireRoomFollowup });

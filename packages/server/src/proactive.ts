@@ -703,7 +703,7 @@ export function cancelFollowup(agentId: string, id: string) {
 type Spawner = (agentId: string, title: string, instructions: string, opts: { conversationId: string; kind: "heartbeat" }) => { id: string };
 let spawner: Spawner | null = null;
 export const setProactiveSpawner = (f: Spawner) => (spawner = f);
-let roomFollowup: ((agentId: string, fu: { note: string; conversation_id: string | null }) => unknown) | null = null; export const setRoomFollowupHandler = (f: typeof roomFollowup) => (roomFollowup = f); // 群里约的跟进由 rooms/followup.ts 注册（返回 null = 走后台巡检；避免和 rooms 互相 import）
+let roomFollowup: { inRoom(agentId: string, conversationId: string | null): boolean; fire(agentId: string, fu: { note: string; conversation_id: string | null }): unknown } | null = null; export const setRoomFollowupHandler = (h: typeof roomFollowup) => (roomFollowup = h); // 群里约的跟进由 rooms/followup.ts 注册（fire 返回 null = 走后台巡检；避免和 rooms 互相 import）
 
 /** 巡检用对话的标题（专属会话靠它识别，不能拿“任意 hidden”当自己的） */
 export const HEARTBEAT_TITLE = "主动巡检";
@@ -878,11 +878,11 @@ export function tickProactive(t = now()) {
 	for (const a of agents) {
 		const e = effective(a, t);
 		if (e.level === "off" || running(a.id)) continue;
-		// 2. 到点的跟进（免打扰时段顺延）
-		const fu = db.prepare("SELECT * FROM proactive_followups WHERE agent_id = ? AND status = 'pending' AND due_at <= ? ORDER BY due_at LIMIT 1").get(a.id, t) as { id: string; note: string; conversation_id: string | null; created_at: number } | undefined;
-		if (fu && !inQuiet(t, e.cfg.quiet)) {
+		// 2. 到点的跟进（免打扰时段顺延；群里约的不顺延：用户在群里明确约的，到点就在群里执行）
+		const fu = (db.prepare("SELECT * FROM proactive_followups WHERE agent_id = ? AND status = 'pending' AND due_at <= ? ORDER BY due_at LIMIT 20").all(a.id, t) as { id: string; note: string; conversation_id: string | null; created_at: number }[]).find((f) => !inQuiet(t, e.cfg.quiet) || !!roomFollowup?.inRoom(a.id, f.conversation_id));
+		if (fu) {
 			db.prepare("UPDATE proactive_followups SET status = 'fired' WHERE id = ?").run(fu.id);
-			if (roomFollowup?.(a.id, fu) || runHeartbeat(a.id, "followup", { followup: { note: fu.note, conversationId: fu.conversation_id, createdAt: fu.created_at } }, t)) fired.push(`${a.id}:followup`); // 群里约的在群里叫醒
+			if (roomFollowup?.fire(a.id, fu) || runHeartbeat(a.id, "followup", { followup: { note: fu.note, conversationId: fu.conversation_id, createdAt: fu.created_at } }, t)) fired.push(`${a.id}:followup`); // 群里约的在群里叫醒
 			continue;
 		}
 		// 3. 每日简报（用户自己选的时间，不受免打扰限制）

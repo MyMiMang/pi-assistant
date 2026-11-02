@@ -96,3 +96,16 @@ test("timer 回合：有提示行、占普通单人发言次数、不触发管�
 	assert.ok(capCheck(t, { turns: 0, perAgent: { fa: 1 } }, caps), "和普通发言一样受每人次数限制");
 	assert.deepEqual(planAfter(t, { managerId: "fm", activeIds: ["fm", "fa"], assignments: [], caps, batchDone: true, anyWorkerRan: true }), []);
 });
+
+test("免打扰时段（默认 22:00–08:00）：群里约的照常到点执行，单聊的仍顺延", async () => {
+	reset();
+	const NIGHT = T(12, 23, 30);
+	const room = rooms.createRoom({ name: "夜里跟进群", memberIds: ["fm", "fa"], managerId: "fm" });
+	P.scheduleFollowup("fa", "c-single-night", NIGHT - 2000, "单聊夜里的跟进");
+	P.scheduleFollowup("fa", memberConversation(room.id, "fa"), NIGHT - 1000, "群里夜里的跟进");
+	assert.deepEqual(P.tickProactive(NIGHT), ["fa:followup"]);
+	assert.deepEqual(spawned, [], "单聊的没有在免打扰时段派后台巡检");
+	assert.ok(sysMsgs(room.id).some((c) => /群里夜里的跟进/.test(c)), "群里的跳过了排在前面的单聊跟进，到点执行");
+	assert.equal((db.prepare("SELECT status FROM proactive_followups WHERE note = '单聊夜里的跟进'").get() as { status: string }).status, "pending");
+	await wait(() => idle(room.id));
+});
