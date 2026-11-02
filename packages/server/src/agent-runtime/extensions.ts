@@ -20,7 +20,8 @@ import { deliveryExtension } from "@pi-assistant/ext-delivery";
 import { memoryExtension } from "@pi-assistant/ext-memory";
 import { routinesExtension } from "@pi-assistant/ext-routines";
 import { proactiveExtension } from "@pi-assistant/ext-proactive";
-import { advanceConversation, agentQuiet, cancelFollowup, fmt as fmtTime, hiddenConversation, isHeartbeatTask, listFollowups, parseWhen, runOfTask, scheduleFollowup, surface as proactiveSurface } from "../proactive.ts";
+import { advanceForHeartbeat } from "../proactive-judge.ts";
+import { agentQuiet, cancelFollowup, fmt as fmtTime, hiddenConversation, isHeartbeatTask, listFollowups, parseWhen, runOfTask, scheduleFollowup, surface as proactiveSurface } from "../proactive.ts";
 import { sandboxExtension } from "@pi-assistant/ext-sandbox";
 import { skillsExtension } from "@pi-assistant/ext-skills";
 import { memory, type MemoryActor } from "../memory/index.ts";
@@ -36,7 +37,9 @@ import { config } from "../config.ts";
 import { db, uid } from "../db.ts";
 import { deliverFromWorkspace, fileInfo, insideWorkspace, workspaceOf } from "../files.ts";
 import { insertMessage, roomOfConversation } from "../messages.ts";
-import { localBashOperations, makeBashTool } from "../pi-adapter/index.ts";
+import { localBashOperations } from "../pi-adapter/index.ts";
+import { bgJobsExtension, makeBackgroundBashTool } from "../pi-adapter/bg-shell.ts";
+import { bgOwnerFor } from "./bg-wiring.ts";
 import { notify } from "../push.ts";
 import { requests } from "../requests.ts";
 import { dockerOperations, sandboxMode } from "../sandbox.ts";
@@ -69,8 +72,12 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 	// 本会话自己派的帮手；帮手会话里只认它自己派的下一层
 	const own = (r: Subagent) => r.agent_id === agentId && r.conversation_id === conversationId && (!opts.subagentId || r.parent_subagent_id === opts.subagentId);
 	const mustOwn = (id: string) => { const r = getSubagent(id); if (!r || !own(r)) throw new Error("不是本会话派的帮手"); };
+	// 长命令跑满 5 秒自动转后台：同名 bash 工具 + job_output / job_stop（bg-jobs.ts）。只给用户看得见的对话（单聊 / 群成员）：
+	// 帮手 / 后台任务 / 巡检没人插话，转后台没好处，会话一结束作业还会被一起结束，照旧等命令跑完
+	const bgOn = bgOwnerFor(agentId, conversationId, taskId, opts.subagentId);
 	const exts = [
-		{ name: "pia-sandbox", factory: sandboxExtension({ workspace, mode, readOnlyRoots: skillPaths(), makeBashTool: makeBashTool, dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined, localOperations: mode === "docker" ? localBashOperations() : undefined, hostAccess: () => hostFileAccess(agentId) }) },
+		...(bgOn ? [{ name: "pia-bgjobs", factory: bgJobsExtension(bgOn) }] : []),
+		{ name: "pia-sandbox", factory: sandboxExtension({ workspace, mode, readOnlyRoots: skillPaths(), makeBashTool: (cwd, o) => makeBackgroundBashTool(cwd, o, bgOn), dockerOperations: mode === "docker" ? dockerOperations(agentId, workspace) : undefined, localOperations: mode === "docker" ? localBashOperations() : undefined, hostAccess: () => hostFileAccess(agentId) }) },
 		{
 			name: "pia-approval",
 			factory: approvalExtension({
@@ -238,7 +245,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 				// 巡检任务里才能“告诉用户”；普通聊天里助理直接说就行
 				surface: heartbeat ? (i) => proactiveSurface(agentId, { ...i, sourceRun: taskId ? runOfTask(taskId) : null }) : undefined,
 				// 主动推进：在相关对话的主会话里继续做事（正常权限路径）；心跳本身没有额外权限
-				advance: heartbeat ? (i) => advanceConversation(agentId, i) : undefined,
+				advance: heartbeat ? (i) => advanceForHeartbeat(agentId, i) : undefined,
 				schedule: (i) => scheduleFollowup(agentId, conversationId && conversationId !== hiddenConversation(agentId) ? conversationId : null, i.dueAt, i.note),
 				list: () => listFollowups(agentId),
 				cancel: (id) => cancelFollowup(agentId, id),

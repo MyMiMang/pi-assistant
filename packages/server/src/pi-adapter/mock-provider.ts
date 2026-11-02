@@ -124,6 +124,8 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 	// 否则（上一轮其实已经收尾，只是还在流式结束）当成普通的新请求处理，去掉前缀照常匹配
 	if (u.startsWith("（你工作时用户发来的新消息）") && last.role === "user") {
 		const said = u.replace(/^（你工作时用户发来的新消息）\n?/, "").replace(/^（用户在群里说）/, "");
+		// 撤回 / 后台命令 e2e：插话「插话甲」等按内容直接回应（不管前面是什么任务）
+		if (/插话[甲乙丙丁]|^加一句/.test(said)) return fauxAssistantMessage(`收到插话：${said.slice(0, 40)}`);
 		const prev = [...messages.slice(0, messages.lastIndexOf(lastUser!))].reverse().find((m) => m.role === "user");
 		if (prev && /慢慢数/.test(textOf(prev))) return fauxAssistantMessage(/停|别做/.test(said) ? "收到，我停下了。" : `收到插话：${said.slice(0, 40)}。按新要求调整。`);
 		u = u.replace(/^（你工作时用户发来的新消息）\n?/, "");
@@ -172,6 +174,16 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 			return fauxAssistantMessage([fauxToolCall("subagent_message", { id: rows.find((r: { status: string }) => r.status === "running" || r.status === "stalled").id, text: subSaid })]);
 		}
 		return fauxAssistantMessage([fauxToolCall("subagent_list", {})]);
+	}
+	// 长命令转后台（bg-jobs.ts）：「后台命令测试 [跑N秒] 忙N」= 先跑一条（默认 sleep 1）会超过转后台门槛的命令，之后再做 N 步短命令（让这一轮保持进行中）；
+	// 后台命令结束的通知（系统插话 / 新一轮）回一句「收到后台结果」
+	if (u.startsWith("（后台命令结束）")) return fauxAssistantMessage(`收到后台结果：${u.split("\n")[0].slice(0, 80)}`);
+	if (/后台命令测试/.test(u)) {
+		const busy = Number(u.match(/忙(\d+)/)?.[1] ?? 0);
+		const since = messages.slice(messages.lastIndexOf(lastUser!) + 1).filter((m) => m.role === "toolResult").length;
+		if (since === 0) return fauxAssistantMessage([fauxText("好，我跑一下。"), fauxToolCall("bash", { command: `sleep ${u.match(/跑(\d+)秒/)?.[1] ?? 1}; echo 后台跑完了` })]);
+		if (since <= busy) return fauxAssistantMessage([fauxToolCall("bash", { command: "sleep 0.4; echo 短命令" })]);
+		return fauxAssistantMessage(/已转到后台/.test(textOf(messages.find((m) => m.role === "toolResult") ?? last)) ? "命令在后台跑着，结束后我接着处理。" : "命令很快就跑完了。");
 	}
 	// 慢慢数：多步、每步都慢（测试工作途中插话 / 停止）
 	// 群聊注入里带着整段群聊记录：只看这一轮用户最新说的话（【用户】…），免得之前的“慢慢数”让后面每一轮都去数数
@@ -223,6 +235,9 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 					title: target.what.slice(0, 40),
 					body: `用户之前已经明确交代：“${target.what}”。在原授权内继续做完，并把结果留在对话里。`,
 					importance: 3,
+					explicit: true,
+					evidence: target.what.slice(0, 60),
+					ruleAssessments: [],
 					dedupeKey: `adv:${target.conversationId}:${target.what.slice(0, 30)}`,
 				}),
 			]);
@@ -422,7 +437,8 @@ export async function registerMockProvider(models: PiModels) {
 		if (hs !== null) return typeof hs === "string" ? fauxAssistantMessage(hs) : fauxAssistantMessage([fauxToolCall(hs.tool, hs.args as never)]);
 		return respond(msgs, systemPrompt, tools);
 	};
-	faux.setResponses([step as never]);
+	// 每次调用先补一条再出结果：队列里放几条备用，几个会话同时请求时不会把队列取空（No more faux responses queued）
+	faux.setResponses(Array.from({ length: 8 }, () => step as never));
 	const m = faux.getModel();
 	models.registerProvider(MOCK_PROVIDER, {
 		baseUrl: m.baseUrl,

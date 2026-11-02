@@ -8,6 +8,7 @@ import { api } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, cx, fmtTime, Help, Input, avatarText } from "./ui";
 import { SidePanel } from "./SidePanel";
+import { AutonomySection, type Judgment, type Mode, type Rule } from "./ProactiveAutonomy";
 
 type Level = "off" | "low" | "normal" | "high";
 export const LEVEL_LABEL: Record<Level, string> = { off: "关", low: "低", normal: "中", high: "高" };
@@ -25,6 +26,8 @@ interface Cfg {
 	dailyBrief: string | null;
 	deliver: string;
 	muted: Record<string, number>;
+	autonomy: Mode;
+	rules: Rule[];
 }
 interface PState {
 	level: Level;
@@ -38,6 +41,7 @@ interface PState {
 	nextHeartbeatAt: number | null;
 	lastHeartbeatAt: number | null;
 	followups: { id: string; dueAt: number; note: string }[];
+	judgments: Judgment[];
 }
 export interface Item {
 	id: string;
@@ -47,6 +51,8 @@ export interface Item {
 	body: string;
 	importance: number;
 	status: "new" | "held" | "delivered" | "dismissed" | "done";
+	/** 试运行的「本来会做」卡片：等你点「就这么做」/「这类以后别做」 */
+	trial?: boolean;
 	reason: string | null;
 	via: string | null;
 	deliveredAt: number | null;
@@ -121,6 +127,7 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 					</div>
 				)}
 			</div>
+			{d.level !== "off" && <AutonomySection mode={c.autonomy} rules={c.rules} judgments={d.judgments} onSave={(cfg) => save({ cfg })} />}
 			{d.level !== "off" && (
 				<div className="space-y-3">
 					<label className="flex flex-wrap items-center gap-2">
@@ -210,7 +217,7 @@ export function ProactiveTab({ agentId }: { agentId: string }) {
 
 function ItemCard({ i, compact }: { i: Item; compact?: boolean }) {
 	const agent = useStore((s) => s.agents.find((a) => a.id === i.agentId));
-	const act = (action: "dismiss" | "done" | "snooze", extra: Record<string, unknown> = {}) => api(`/api/proactive/items/${i.id}`, { method: "POST", json: { action, ...extra } });
+	const act = (action: "dismiss" | "done" | "snooze" | "run" | "veto", extra: Record<string, unknown> = {}) => api(`/api/proactive/items/${i.id}`, { method: "POST", json: { action, ...extra } });
 	const st = i.status === "delivered" ? `已推送${i.via?.includes("channel:") ? "，并同步到聊天渠道" : ""}` : i.status === "held" ? (i.reason ?? "等待推送") : (i.reason ?? "在收件箱");
 	return (
 		<div className="space-y-1.5 rounded-xl border border-line p-3" data-testid="inbox-item">
@@ -225,6 +232,16 @@ function ItemCard({ i, compact }: { i: Item; compact?: boolean }) {
 					{!compact && agent ? `${agent.name} · ` : ""}
 					{fmtTime(i.createdAt)} · {st}
 				</span>
+				{i.trial && (
+					<>
+						<Button size="sm" variant="primary" onClick={() => act("run")} data-testid="inbox-trial-run" title="照它说的真做一次">
+							就这么做
+						</Button>
+						<Button size="sm" variant="ghost" onClick={() => act("veto")} data-testid="inbox-trial-veto" title="记住：同类的事以后别做">
+							这类以后别做
+						</Button>
+					</>
+				)}
 				<Button size="sm" variant="ghost" onClick={() => act("done")} data-testid="inbox-done">
 					有用
 				</Button>

@@ -11,7 +11,8 @@ import { approvalExtension } from "@pi-assistant/ext-approval";
 import { deliveryExtension } from "@pi-assistant/ext-delivery";
 import { sandboxExtension } from "@pi-assistant/ext-sandbox";
 import { config } from "../src/config.ts";
-import { checkPiCompat, createPiSession, lastAssistantText, makeBashTool, PiModels, promptSession, subscribeSession, type AgentEvent } from "../src/pi-adapter/index.ts";
+import { makeBackgroundBashTool } from "../src/pi-adapter/bg-shell.ts";
+import { checkPiCompat, createPiSession, lastAssistantText, PiModels, promptSession, subscribeSession, type AgentEvent } from "../src/pi-adapter/index.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, registerMockProvider } from "../src/pi-adapter/mock-provider.ts";
 import { EncryptedCredentialStore } from "../src/secrets.ts";
 
@@ -55,7 +56,7 @@ test("会话：流式事件、扩展工具、审批拦截、文件交付", async
 		model: { provider: MOCK_PROVIDER, id: MOCK_MODEL },
 		systemPromptAppend: ["你是测试助理。"],
 		extensions: [
-			{ name: "sandbox", factory: sandboxExtension({ workspace: ws, mode: "workspace", makeBashTool: makeBashTool as never }) },
+			{ name: "sandbox", factory: sandboxExtension({ workspace: ws, mode: "workspace", makeBashTool: ((cwd: string, o: never) => makeBackgroundBashTool(cwd, o, { key: "conv:t", agentId: "a", conversationId: null })) as never }) },
 			{ name: "approval", factory: approvalExtension({ workspace: ws, request: async (r) => (approvals.push(r.toolName), { approved: false }) }) },
 			{ name: "delivery", factory: deliveryExtension({ deliverFile: async (p) => (delivered.push(p), { fileId: "f1", name: p }), ask: async () => "A" }) },
 		],

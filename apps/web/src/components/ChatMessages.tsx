@@ -17,6 +17,7 @@ import { ProposalCard, RoomGoalCard, RoomPlanCard } from "./RoomCards";
 import { ProjectDeliveryCard } from "./RoomDelivery";
 import { MessageActions, QuotedMessage, type MessageInteraction } from "./MessageReply";
 import { quotedBlock } from "../replies";
+import { canRecall } from "../recall-api";
 import { assistantErrorDetail, assistantErrorKind, assistantErrorText, botBodyView } from "../message-body";
 
 // ------------------------------------------------------------------ 工具 → 文案
@@ -285,7 +286,7 @@ export function BotTurn({ row, agent, live, renderSubagent, onQuote, onJump, int
 	);
 }
 
-export function UserMsg({ m, reaction, onQuote, onFork, onJump, interaction }: { m: Message; reaction?: "eyes" | "done"; onQuote?: (m: Message) => void; onFork?: (m: Message) => void; onJump?: (id: string) => void; interaction?: MessageInteraction }) {
+export function UserMsg({ m, reaction, onQuote, onFork, onJump, onRecall, interaction }: { m: Message; reaction?: "eyes" | "done"; onQuote?: (m: Message) => void; onFork?: (m: Message) => void; onJump?: (id: string) => void; onRecall?: (m: Message) => void; interaction?: MessageInteraction }) {
 	const quoted = onJump ? quotedBlock(m) : null;
 	return (
 		<div className="pa-msg user" data-mid={m.id} {...interaction}>
@@ -298,6 +299,12 @@ export function UserMsg({ m, reaction, onQuote, onFork, onJump, interaction }: {
 			)}
 			{m.meta.attachments?.length ? <Attachments items={m.meta.attachments} mine /> : null}
 			<Delivery state={m.meta.delivery} />
+			{/* 还没送达（助理 / 群成员还没读到）才有撤回；撤回后这条变成灰字提示 */}
+			{onRecall && canRecall(m) && (
+				<button type="button" className="pa-delivery pa-recall-btn" onClick={() => onRecall(m)} title={t("助理还没读到这条，撤回后它永远看不到")} data-testid="recall-btn">
+					{t("撤回")}
+				</button>
+			)}
 			<MessageActions m={m} onQuote={onQuote} onFork={onFork} side="right" />
 		</div>
 	);
@@ -321,7 +328,20 @@ function Delivery({ state }: { state?: string }) {
 	);
 }
 
-export function SystemMsg({ m, canContinue = true }: { m: Message; canContinue?: boolean }) {
+export function SystemMsg({ m, canContinue = true, onReedit }: { m: Message; canContinue?: boolean; onReedit?: (text: string) => void }) {
+	if (m.meta.recalled)
+		return (
+			<div className="flex min-w-0 justify-center py-1" data-mid={m.id} data-testid="recalled">
+				<div className="max-w-md min-w-0 break-words rounded-full px-3 py-1 text-center text-xs text-mut2">
+					{t("你撤回了一条消息")}
+					{onReedit && (
+						<button type="button" className="ml-2 font-medium text-accent" data-testid="recall-reedit" onClick={() => onReedit(String(m.meta.recalledText ?? ""))}>
+							{t("重新编辑")}
+						</button>
+					)}
+				</div>
+			</div>
+		);
 	const modelFailure = m.status === "error" && (m.meta.kind === "task-error" || m.meta.kind === "model-error");
 	const detail = modelFailure ? assistantErrorDetail(m.meta.error) : "";
 	return (

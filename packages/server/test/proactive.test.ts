@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 const { db, now } = await import("../src/db.ts");
 const P = await import("../src/proactive.ts");
+const A = await import("../src/proactive-advance.ts");
 await import("../src/subagents.ts"); // 建 subagents 表（巡检运行 = 帮手）
 const { requests } = await import("../src/requests.ts");
 
@@ -29,7 +30,7 @@ const finishRuns = () => db.prepare("UPDATE proactive_runs SET status = 'done', 
 const items = () => db.prepare("SELECT * FROM proactive_items WHERE agent_id = 'pa' ORDER BY created_at").all() as unknown as import("../src/proactive.ts").ItemRow[];
 const reset = () => {
 	// 清掉内存里的推进队列（cancelAdvances 会同时清持久 pending），再删表
-	for (const r of db.prepare("SELECT DISTINCT conversation_id FROM proactive_advances WHERE agent_id = 'pa'").all() as { conversation_id: string }[]) P.cancelAdvances("pa", r.conversation_id);
+	for (const r of db.prepare("SELECT DISTINCT conversation_id FROM proactive_advances WHERE agent_id = 'pa'").all() as { conversation_id: string }[]) A.cancelAdvances("pa", r.conversation_id);
 	db.prepare("DELETE FROM proactive_advances").run();
 	db.prepare("DELETE FROM proactive_items").run();
 	db.prepare("DELETE FROM proactive_runs").run();
@@ -135,7 +136,8 @@ test("巡检调度：没用过的助理不巡检；工作日按间隔巡检；�
 	assert.deepEqual(P.tickProactive(MON10), ["pa:heartbeat"]);
 	assert.equal(spawned[0].kind, "heartbeat");
 	assert.match(spawned[0].instructions, /季度报告/, "情况里带上用户最近说过的话");
-	assert.match(spawned[0].instructions, /宁缺毋滥/);
+	assert.match(spawned[0].instructions, /做事不算打扰/, "新提示词区分做事和打扰");
+	assert.doesNotMatch(spawned[0].instructions, /宁缺毋滥/);
 	assert.deepEqual(P.tickProactive(MON10 + 60_000), [], "上一次还在运行");
 	finishRuns();
 	assert.deepEqual(P.tickProactive(MON10 + 30 * 60_000), [], "没到兜底间隔");
@@ -323,29 +325,29 @@ test("主动推进：空闲→在相关对话开始；忙时排队（排队不�
 	db.prepare("INSERT OR REPLACE INTO conversations(id, agent_id, title, created_at, updated_at) VALUES('c-adv','pa','推进',?,?)").run(now(), now());
 	let busy = false;
 	const sent: string[] = [];
-	P.setAdvanceHooks({ busy: () => busy, send: async (_a, _c, text) => { sent.push(text); busy = true; return "started"; } });
+	A.setAdvanceHooks({ busy: () => busy, send: async (_a, _c, text) => { sent.push(text); busy = true; return "started"; } });
 	const tick = () => new Promise((r) => setTimeout(r, 0));
 	try {
-		const a = await P.advanceConversation("pa", { conversationId: "c-adv", kind: "followup", title: "跟进报告", body: "帮用户把报告导出发过去", importance: 3, dedupeKey: "adv:1" });
+		const a = await A.advanceConversation("pa", { conversationId: "c-adv", kind: "followup", title: "跟进报告", body: "帮用户把报告导出发过去", importance: 3, dedupeKey: "adv:1" });
 		assert.equal(a.status, "started");
 		assert.equal(sent.length, 1);
 		assert.match(sent[0], /（主动推进）/);
 		assert.match(sent[0], /不要只发一条提醒/);
 		assert.match(sent[0], /不要自行扩大目标/);
 		assert.match(sent[0], /用户说过停止/);
-		const row = P.listAdvances({ agentId: "pa", conversationId: "c-adv" })[0];
+		const row = A.listAdvances({ agentId: "pa", conversationId: "c-adv" })[0];
 		assert.equal(row.status, "started");
 		const item = db.prepare("SELECT status, delivered_via FROM proactive_items WHERE id = ?").get(a.id!) as { status: string; delivered_via: string };
 		assert.equal(item.status, "delivered");
 		assert.equal(item.delivered_via, "advance-started");
 		assert.equal(P.deliveredToday("pa", MON10), 0, "推进不是一条推送，不占今天通知预算");
 		// 同一件事在窗口内去重：不会重复推进
-		const dup = await P.advanceConversation("pa", { conversationId: "c-adv", kind: "followup", title: "跟进报告", body: "x", importance: 3, dedupeKey: "adv:1" });
+		const dup = await A.advanceConversation("pa", { conversationId: "c-adv", kind: "followup", title: "跟进报告", body: "x", importance: 3, dedupeKey: "adv:1" });
 		assert.equal(dup.status, "rejected");
 		assert.equal(sent.length, 1, "同一件事不重复插回合");
 		// 忙：不同的事排队；排队不算已送达
 		busy = true;
-		const q = await P.advanceConversation("pa", { conversationId: "c-adv", kind: "reminder", title: "第二件", body: "b2", importance: 3, dedupeKey: "adv:2" });
+		const q = await A.advanceConversation("pa", { conversationId: "c-adv", kind: "reminder", title: "第二件", body: "b2", importance: 3, dedupeKey: "adv:2" });
 		assert.equal(q.status, "queued");
 		assert.equal(sent.length, 1, "忙时不直接插回合");
 		const qItem = db.prepare("SELECT status, delivered_via, delivered_at, reason FROM proactive_items WHERE id = ?").get(q.id!) as { status: string; delivered_via: string | null; delivered_at: number | null; reason: string };
@@ -353,33 +355,33 @@ test("主动推进：空闲→在相关对话开始；忙时排队（排队不�
 		assert.equal(qItem.delivered_via, null);
 		assert.equal(qItem.delivered_at, null);
 		assert.match(qItem.reason, /排队/);
-		assert.equal(P.listAdvances({ agentId: "pa", status: "queued" }).length, 1, "排队有持久记录");
+		assert.equal(A.listAdvances({ agentId: "pa", status: "queued" }).length, 1, "排队有持久记录");
 		// 队满：再塞 3 件，只放得下 2 件（上限 3），多余的回收件箱
 		const results = [];
-		for (let i = 3; i <= 5; i++) results.push((await P.advanceConversation("pa", { conversationId: "c-adv", kind: "other", title: `第${i}件`, body: "b", importance: 3, dedupeKey: `adv:${i}` })).status);
+		for (let i = 3; i <= 5; i++) results.push((await A.advanceConversation("pa", { conversationId: "c-adv", kind: "other", title: `第${i}件`, body: "b", importance: 3, dedupeKey: `adv:${i}` })).status);
 		assert.deepEqual(results, ["queued", "queued", "inbox"], "排队上限 3，超出放进收件箱");
 		// 空闲后 drain 逐个送出（排队项送出去后才算送达）
 		busy = false;
-		P.drainAdvances("pa", "c-adv");
+		A.drainAdvances("pa", "c-adv");
 		await tick();
 		assert.equal(sent.length, 2);
-		assert.equal(P.listAdvances({ agentId: "pa", conversationId: "c-adv", status: "queued" }).length, 2);
+		assert.equal(A.listAdvances({ agentId: "pa", conversationId: "c-adv", status: "queued" }).length, 2);
 		busy = false;
-		P.drainAdvances("pa", "c-adv");
+		A.drainAdvances("pa", "c-adv");
 		await tick();
 		assert.equal(sent.length, 3);
 		busy = false;
-		P.drainAdvances("pa", "c-adv");
+		A.drainAdvances("pa", "c-adv");
 		await tick();
 		assert.equal(sent.length, 4);
 		busy = false;
-		P.drainAdvances("pa", "c-adv"); // 空闲且队列空：只把上一轮记 done，不再发
+		A.drainAdvances("pa", "c-adv"); // 空闲且队列空：只把上一轮记 done，不再发
 		await tick();
 		assert.equal(sent.length, 4);
-		assert.equal(P.listAdvances({ agentId: "pa", status: "started" }).length, 0, "每条都收尾为 done，没有悬着的 started");
-		assert.equal(P.listAdvances({ agentId: "pa", status: "done" }).length, 4);
+		assert.equal(A.listAdvances({ agentId: "pa", status: "started" }).length, 0, "每条都收尾为 done，没有悬着的 started");
+		assert.equal(A.listAdvances({ agentId: "pa", status: "done" }).length, 4);
 	} finally {
-		P.setAdvanceHooks(null);
+		A.setAdvanceHooks(null);
 	}
 });
 
@@ -390,16 +392,16 @@ test("停止：cancelAdvances 清内存队列 + 持久 pending；迟到的 send 
 	let busy = true;
 	let calls = 0;
 	const sent: string[] = [];
-	P.setAdvanceHooks({ busy: () => busy, send: async () => { calls++; return "started"; } });
+	A.setAdvanceHooks({ busy: () => busy, send: async () => { calls++; return "started"; } });
 	const tick = () => new Promise((r) => setTimeout(r, 0));
 	try {
-		const q = await P.advanceConversation("pa", { conversationId: "c-stop", kind: "reminder", title: "排队的事", body: "b", importance: 3, dedupeKey: "stop:1" });
+		const q = await A.advanceConversation("pa", { conversationId: "c-stop", kind: "reminder", title: "排队的事", body: "b", importance: 3, dedupeKey: "stop:1" });
 		assert.equal(q.status, "queued");
-		assert.equal(P.cancelAdvances("pa", "c-stop"), 1);
-		assert.equal(P.listAdvances({ agentId: "pa", status: "queued" }).length, 0, "持久 pending 清空");
-		assert.equal(P.listAdvances({ agentId: "pa", status: "cancelled" }).length, 1);
+		assert.equal(A.cancelAdvances("pa", "c-stop"), 1);
+		assert.equal(A.listAdvances({ agentId: "pa", status: "queued" }).length, 0, "持久 pending 清空");
+		assert.equal(A.listAdvances({ agentId: "pa", status: "cancelled" }).length, 1);
 		busy = false;
-		P.drainAdvances("pa", "c-stop");
+		A.drainAdvances("pa", "c-stop");
 		await tick();
 		assert.equal(calls, 0, "停止后不再派发");
 		assert.equal(sent.length, 0);
@@ -412,20 +414,20 @@ test("停止：cancelAdvances 清内存队列 + 持久 pending；迟到的 send 
 		insertMessage({ agentId: "pa", conversationId: "c-stop", role: "user", content: "继续整理这份清单" });
 		// 迟到回调：send 还挂着时用户停止 → 回调回来后不能写回成功
 		let release!: (v: "started") => void;
-		P.setAdvanceHooks({ busy: () => false, send: () => new Promise<"started">((res) => { release = res; calls++; }) });
-		const inflight = P.advanceConversation("pa", { conversationId: "c-stop", kind: "reminder", title: "正在送的事", body: "b", importance: 3, dedupeKey: "stop:2" });
+		A.setAdvanceHooks({ busy: () => false, send: () => new Promise<"started">((res) => { release = res; calls++; }) });
+		const inflight = A.advanceConversation("pa", { conversationId: "c-stop", kind: "reminder", title: "正在送的事", body: "b", importance: 3, dedupeKey: "stop:2" });
 		await tick();
 		assert.equal(calls, 1, "send 已发出");
-		assert.equal(P.listAdvances({ agentId: "pa", status: "started" }).length, 1);
-		assert.equal(P.cancelAdvances("pa", "c-stop"), 1);
+		assert.equal(A.listAdvances({ agentId: "pa", status: "started" }).length, 1);
+		assert.equal(A.cancelAdvances("pa", "c-stop"), 1);
 		release("started");
 		const r = await inflight;
 		assert.equal(r.status, "cancelled");
-		assert.equal(P.listAdvances({ agentId: "pa", status: "started" }).length, 0, "迟到的结果不写回 success");
-		const row = P.listAdvances({ agentId: "pa" }).find((x) => x.dedupe_key.endsWith(":stop:2"))!;
+		assert.equal(A.listAdvances({ agentId: "pa", status: "started" }).length, 0, "迟到的结果不写回 success");
+		const row = A.listAdvances({ agentId: "pa" }).find((x) => x.dedupe_key.endsWith(":stop:2"))!;
 		assert.equal(row.status, "cancelled");
 	} finally {
-		P.setAdvanceHooks(null);
+		A.setAdvanceHooks(null);
 	}
 });
 
@@ -435,18 +437,18 @@ test("停止后关 off 不再派发；send 返回 none / 抛异常时原因可�
 	db.prepare("INSERT OR REPLACE INTO conversations(id, agent_id, title, created_at, updated_at) VALUES('c-off','pa','关闭',?,?)").run(now(), now());
 	let busy = true;
 	let calls = 0;
-	P.setAdvanceHooks({ busy: () => busy, send: async () => { calls++; return "started"; } });
+	A.setAdvanceHooks({ busy: () => busy, send: async () => { calls++; return "started"; } });
 	const tick = () => new Promise((r) => setTimeout(r, 0));
 	try {
 		// 先排队，再关掉主动等级：系统准入挡住（不看模型自报的授权）
-		const q = await P.advanceConversation("pa", { conversationId: "c-off", kind: "reminder", title: "关掉后的事", body: "b", importance: 3, dedupeKey: "off:1" });
+		const q = await A.advanceConversation("pa", { conversationId: "c-off", kind: "reminder", title: "关掉后的事", body: "b", importance: 3, dedupeKey: "off:1" });
 		assert.equal(q.status, "queued");
 		P.saveProactive("pa", { level: "off" });
 		busy = false;
-		P.drainAdvances("pa", "c-off");
+		A.drainAdvances("pa", "c-off");
 		await tick();
 		assert.equal(calls, 0, "off 之后不派发");
-		const failed = P.listAdvances({ agentId: "pa" }).find((x) => x.dedupe_key.endsWith(":off:1"))!;
+		const failed = A.listAdvances({ agentId: "pa" }).find((x) => x.dedupe_key.endsWith(":off:1"))!;
 		assert.equal(failed.status, "failed");
 		assert.match(failed.reason!, /关闭/);
 		const it = db.prepare("SELECT status, reason FROM proactive_items WHERE id = ?").get(q.id!) as { status: string; reason: string };
@@ -455,23 +457,23 @@ test("停止后关 off 不再派发；send 返回 none / 抛异常时原因可�
 
 		// 主动等级打开后：send 返回 none → inbox + 原因；抛异常 → 同样可见
 		P.saveProactive("pa", { level: "high" });
-		P.setAdvanceHooks({ busy: () => false, send: async () => "none" });
-		const none = await P.advanceConversation("pa", { conversationId: "c-off", kind: "reminder", title: "送不出去", body: "b", importance: 3, dedupeKey: "none:1" });
+		A.setAdvanceHooks({ busy: () => false, send: async () => "none" });
+		const none = await A.advanceConversation("pa", { conversationId: "c-off", kind: "reminder", title: "送不出去", body: "b", importance: 3, dedupeKey: "none:1" });
 		assert.equal(none.status, "inbox");
 		assert.match(none.reason!, /没能开始推进/);
-		const noneRow = P.listAdvances({ agentId: "pa" }).find((x) => x.dedupe_key.endsWith(":none:1"))!;
+		const noneRow = A.listAdvances({ agentId: "pa" }).find((x) => x.dedupe_key.endsWith(":none:1"))!;
 		assert.equal(noneRow.status, "failed");
 		const noneItem = db.prepare("SELECT status, reason FROM proactive_items WHERE id = ?").get(none.id!) as { status: string; reason: string };
 		assert.equal(noneItem.status, "new", "推进失败不假装成功，提醒仍可见");
 		assert.match(noneItem.reason, /没能开始推进/);
 
-		P.setAdvanceHooks({ busy: () => false, send: async () => { throw new Error("运行时炸了"); } });
-		const err = await P.advanceConversation("pa", { conversationId: "c-off", kind: "reminder", title: "抛异常", body: "b", importance: 3, dedupeKey: "err:1" });
+		A.setAdvanceHooks({ busy: () => false, send: async () => { throw new Error("运行时炸了"); } });
+		const err = await A.advanceConversation("pa", { conversationId: "c-off", kind: "reminder", title: "抛异常", body: "b", importance: 3, dedupeKey: "err:1" });
 		assert.equal(err.status, "inbox");
 		assert.match(err.reason!, /运行时炸了/);
-		assert.equal(P.listAdvances({ agentId: "pa" }).find((x) => x.dedupe_key.endsWith(":err:1"))!.status, "failed");
+		assert.equal(A.listAdvances({ agentId: "pa" }).find((x) => x.dedupe_key.endsWith(":err:1"))!.status, "failed");
 	} finally {
-		P.setAdvanceHooks(null);
+		A.setAdvanceHooks(null);
 	}
 });
 
@@ -480,16 +482,16 @@ test("推进与提醒/不同对话独立去重；通知额度不冒充执行额�
 	P.saveProactive("pa", { level: "normal", cfg: { quiet: null, budget: 0 } });
 	for (const id of ["c-separate-a", "c-separate-b"]) db.prepare("INSERT INTO conversations(id, agent_id, title, created_at, updated_at) VALUES(?,?,?,?,?)").run(id, "pa", id, now(), now());
 	let calls = 0;
-	P.setAdvanceHooks({ busy: () => false, send: async () => { calls++; return "started"; } });
+	A.setAdvanceHooks({ busy: () => false, send: async () => { calls++; return "started"; } });
 	try {
 		P.surface("pa", { conversationId: "c-separate-a", kind: "followup", title: "原任务", body: "提醒", importance: 1, dedupeKey: "same-topic" });
 		for (const conversationId of ["c-separate-a", "c-separate-b"]) {
-			const r = await P.advanceConversation("pa", { conversationId, kind: "followup", title: "原任务", body: "原授权内核对清单", importance: 1, dedupeKey: "same-topic" });
+			const r = await A.advanceConversation("pa", { conversationId, kind: "followup", title: "原任务", body: "原授权内核对清单", importance: 1, dedupeKey: "same-topic" });
 			assert.equal(r.status, "started", "同名提醒或另一对话不能吞掉实际推进");
 		}
 		assert.equal(calls, 2);
 		assert.equal(P.deliveredToday("pa"), 0, "只限制提醒的条数不与执行混淆");
-	} finally { P.setAdvanceHooks(null); }
+	} finally { A.setAdvanceHooks(null); }
 });
 
 test("派发初始化仍显示空闲时也串行；快速settle不被迟到确认改回started", async () => {
@@ -499,22 +501,22 @@ test("派发初始化仍显示空闲时也串行；快速settle不被迟到确�
 	db.prepare("INSERT INTO conversations(id, agent_id, title, created_at, updated_at) VALUES(?,?,?,?,?)").run(conv, "pa", "初始化竞态", now(), now());
 	let release!: (r: "started") => void;
 	let calls = 0;
-	P.setAdvanceHooks({ busy: () => false, send: async () => { calls++; if (calls === 1) return await new Promise<"started">((r) => { release = r; }); return "started"; } });
+	A.setAdvanceHooks({ busy: () => false, send: async () => { calls++; if (calls === 1) return await new Promise<"started">((r) => { release = r; }); return "started"; } });
 	const input = (key: string) => ({ conversationId: conv, kind: "followup", title: key, body: "明确的检查任务", importance: 3, dedupeKey: key });
 	try {
-		const first = P.advanceConversation("pa", input("race:1"));
+		const first = A.advanceConversation("pa", input("race:1"));
 		await Promise.resolve();
-		const second = await P.advanceConversation("pa", input("race:2"));
+		const second = await A.advanceConversation("pa", input("race:2"));
 		assert.equal(second.status, "queued");
-		P.drainAdvances("pa", conv);
+		A.drainAdvances("pa", conv);
 		assert.equal(calls, 1, "ensure/send未完成时不派第二条");
 		release("started");
 		await first;
 		await new Promise((r) => setTimeout(r, 0));
 		assert.equal(calls, 2);
-		assert.equal(P.listAdvances({ conversationId: conv, status: "started" }).length, 0);
-		assert.equal(P.listAdvances({ conversationId: conv, status: "done" }).length, 2, "结束的是执行轮次，不伪造业务目标已完成");
-	} finally { P.setAdvanceHooks(null); }
+		assert.equal(A.listAdvances({ conversationId: conv, status: "started" }).length, 0);
+		assert.equal(A.listAdvances({ conversationId: conv, status: "done" }).length, 2, "结束的是执行轮次，不伪造业务目标已完成");
+	} finally { A.setAdvanceHooks(null); }
 });
 
 test("停止跨重启/新巡检仍有效；异步恢复不复活，别的助理也不能取消本对话", async () => {
@@ -523,19 +525,19 @@ test("停止跨重启/新巡检仍有效；异步恢复不复活，别的助理�
 	const conv = "c-stop-persistent";
 	db.prepare("INSERT INTO conversations(id, agent_id, title, created_at, updated_at) VALUES(?,?,?,?,?)").run(conv, "pa", "保持停止", now(), now());
 	let calls = 0;
-	P.setAdvanceHooks({ busy: () => true, send: async () => { calls++; return "started"; } });
+	A.setAdvanceHooks({ busy: () => true, send: async () => { calls++; return "started"; } });
 	try {
-		await P.advanceConversation("pa", { conversationId: conv, kind: "followup", title: "排队任务", body: "核对清单", importance: 3, dedupeKey: "persistent:1" });
-		assert.equal(P.cancelAdvances("not-the-owner", conv), 0);
-		assert.equal(P.listAdvances({ conversationId: conv, status: "queued" }).length, 1);
-		P.cancelAdvances("pa", conv);
-		P.resumeAdvances("pa", { dispatch: true });
-		P.setAdvanceHooks({ busy: () => false, send: async () => { calls++; return "started"; } });
-		const r = await P.advanceConversation("pa", { conversationId: conv, kind: "followup", title: "又发现原任务", body: "核对清单", importance: 3, dedupeKey: "persistent:2" });
+		await A.advanceConversation("pa", { conversationId: conv, kind: "followup", title: "排队任务", body: "核对清单", importance: 3, dedupeKey: "persistent:1" });
+		assert.equal(A.cancelAdvances("not-the-owner", conv), 0);
+		assert.equal(A.listAdvances({ conversationId: conv, status: "queued" }).length, 1);
+		A.cancelAdvances("pa", conv);
+		A.resumeAdvances("pa", { dispatch: true });
+		A.setAdvanceHooks({ busy: () => false, send: async () => { calls++; return "started"; } });
+		const r = await A.advanceConversation("pa", { conversationId: conv, kind: "followup", title: "又发现原任务", body: "核对清单", importance: 3, dedupeKey: "persistent:2" });
 		assert.equal(r.status, "inbox");
 		assert.match(r.reason!, /用户已停止/);
 		assert.equal(calls, 0, "新的巡检摘要不是恢复授权");
-	} finally { P.setAdvanceHooks(null); }
+	} finally { A.setAdvanceHooks(null); }
 });
 
 test("自发执行有独立每日上限；不会因推进不占通知预算而无限新增", async () => {
@@ -543,15 +545,15 @@ test("自发执行有独立每日上限；不会因推进不占通知预算而�
 	P.saveProactive("pa", { level: "high" });
 	const conv = "c-advance-cap";
 	db.prepare("INSERT INTO conversations(id, agent_id, title, created_at, updated_at) VALUES(?,?,?,?,?)").run(conv, "pa", "推进上限", now(), now());
-	for (let i = 0; i < P.MAX_ADVANCES_PER_DAY; i++) db.prepare("INSERT INTO proactive_advances(id,agent_id,conversation_id,dedupe_key,text,status,created_at,updated_at) VALUES(?,?,?,?,?,'done',?,?)").run(`cap-${i}`, "pa", conv, `cap:${i}`, "已处理", now(), now());
+	for (let i = 0; i < A.MAX_ADVANCES_PER_DAY; i++) db.prepare("INSERT INTO proactive_advances(id,agent_id,conversation_id,dedupe_key,text,status,created_at,updated_at) VALUES(?,?,?,?,?,'done',?,?)").run(`cap-${i}`, "pa", conv, `cap:${i}`, "已处理", now(), now());
 	let calls = 0;
-	P.setAdvanceHooks({ busy: () => false, send: async () => { calls++; return "started"; } });
+	A.setAdvanceHooks({ busy: () => false, send: async () => { calls++; return "started"; } });
 	try {
-		const r = await P.advanceConversation("pa", { conversationId: conv, kind: "followup", title: "超出上限", body: "不要无限新增", importance: 3, dedupeKey: "cap:extra" });
+		const r = await A.advanceConversation("pa", { conversationId: conv, kind: "followup", title: "超出上限", body: "不要无限新增", importance: 3, dedupeKey: "cap:extra" });
 		assert.equal(r.status, "inbox");
 		assert.match(r.reason!, /上限/);
 		assert.equal(calls, 0);
-	} finally { P.setAdvanceHooks(null); }
+	} finally { A.setAdvanceHooks(null); }
 });
 
 test("启动恢复：只恢复未真正发出的 queued；已 started 但结果不明记 failed 不重放；默认不立刻造新回合", async () => {
@@ -565,25 +567,25 @@ test("启动恢复：只恢复未真正发出的 queued；已 started 但结果�
 	db.prepare("INSERT INTO proactive_advances(id, agent_id, conversation_id, item_id, dedupe_key, text, status, reason, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run("pa-q", "pa", "c-resume", "it-q", "resume:1", "（主动推进）排队没发出去", "queued", "对话正忙", MON10, MON10);
 	db.prepare("INSERT INTO proactive_advances(id, agent_id, conversation_id, item_id, dedupe_key, text, status, reason, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run("pa-s", "pa", "c-resume", "it-s", "resume:2", "（主动推进）已经发出去", "started", "已送入对话", MON10, MON10);
 	const sent: string[] = [];
-	P.setAdvanceHooks({ busy: () => false, send: async (_a, _c, text) => { sent.push(text); return "started"; } });
+	A.setAdvanceHooks({ busy: () => false, send: async (_a, _c, text) => { sent.push(text); return "started"; } });
 	const tick = () => new Promise((r) => setTimeout(r, 0));
 	try {
-		const res = P.resumeAdvances("pa");
+		const res = A.resumeAdvances("pa");
 		assert.equal(res.queued, 1);
 		assert.equal(res.uncertain, 1);
 		assert.equal(sent.length, 0, "恢复默认不立即替每条排队造新回合");
-		const started = P.listAdvances({ agentId: "pa" }).find((x) => x.id === "pa-s")!;
+		const started = A.listAdvances({ agentId: "pa" }).find((x) => x.id === "pa-s")!;
 		assert.equal(started.status, "failed");
 		assert.match(started.reason!, /结果不明/);
 		const sItem = db.prepare("SELECT status, reason FROM proactive_items WHERE id = 'it-s'").get() as { status: string; reason: string };
 		assert.equal(sItem.status, "new", "结果不明的提醒仍可见，不丢");
 		assert.match(sItem.reason, /结果不明/);
 		// 对话 settle 时 drain 才把真正没发出去的那条送出去
-		P.drainAdvances("pa", "c-resume");
+		A.drainAdvances("pa", "c-resume");
 		await tick();
 		assert.equal(sent.length, 1);
-		assert.equal(P.listAdvances({ agentId: "pa", status: "done" }).length + P.listAdvances({ agentId: "pa", status: "started" }).length, 1);
+		assert.equal(A.listAdvances({ agentId: "pa", status: "done" }).length + A.listAdvances({ agentId: "pa", status: "started" }).length, 1);
 	} finally {
-		P.setAdvanceHooks(null);
+		A.setAdvanceHooks(null);
 	}
 });

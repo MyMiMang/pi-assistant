@@ -10,7 +10,6 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	createAgentSession,
-	createBashTool,
 	createLocalBashOperations,
 	createCodemodeExtension,
 	createMcpExtension,
@@ -39,6 +38,7 @@ import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import compat from "./compat.json" with { type: "json" };
 import { refreshResumedTools } from "./session-tools.ts";
 import { isAbortedMessage } from "./run-result.ts";
+export { recallQueuedSteer } from "./queue-recall.ts";
 export { activateNewExtensionTools, loadedResources } from "./session-tools.ts";
 import { BRAND } from "@pi-assistant/shared";
 
@@ -660,14 +660,6 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 	await session.bindExtensions({ onError: (e) => console.warn("[ext]", (e as { error?: unknown }).error ?? e) });
 	if (o.sessionFile) refreshResumedTools(session, o.tools);
 	return session;
-}
-
-/** 供沙箱扩展覆盖内置 bash 工具（参考 Pi 官方 gondolin 示例）。 */
-export function makeBashTool(
-	cwd: string,
-	opts: { operations?: BashOperations; spawnHook?: (c: { command: string; cwd: string; env: NodeJS.ProcessEnv }) => { command: string; cwd: string; env: NodeJS.ProcessEnv } },
-) {
-	return createBashTool(cwd, { operations: opts.operations, spawnHook: opts.spawnHook, exposeSessionEnvironment: false });
 }
 
 export function sessionFileOf(session: AgentSession): string | undefined {

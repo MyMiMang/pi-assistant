@@ -21,6 +21,7 @@ import { tidyingOf } from "./after-delivery.ts";
 import { capCheck, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps } from "./logic.ts";
 import { waitingRequestIds } from "./checkpoint.ts";
 import { hasActiveProject } from "./projects.ts";
+import { markTurnRead, syncRecallable } from "./recall.ts";
 import { cancelQueue, emitState, enqueue, fresh, states, type QuoteInfo, type RoomState, type Turn } from "./queue.ts";
 import { activeIds, capsOf, changed, getRoom, memberConversation, memberRefs, memberRow, membersOf, snapshot, sys } from "./store.ts";
 import { REASON_LINE, roomFiles, transcriptFor } from "./turn-prompt.ts";
@@ -154,6 +155,7 @@ export function routeUserMessage(roomId: string, messageId: string, opts: { retr
 		emitState(roomId);
 	} else if (plan.turns.length) startRound(roomId, plan.turns, quote, msg.id, workCtx);
 	else if (!plan.notice && !parsed.ids.length) sys(roomId, "群里还没有可以回答的助理，请在群设置里添加。", { action: "room-settings" });
+	syncRecallable(roomId, msg.id); // 还没被成员读到：消息上标「可撤回」
 	changed(roomId);
 }
 
@@ -259,6 +261,7 @@ async function runTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
 		s.counters.perAgent[t.agentId] = (s.counters.perAgent[t.agentId] ?? 0) + 1;
 	}
 	db.prepare("UPDATE room_turns SET status = 'running', started_at = ? WHERE id = ?").run(now(), t.turnId);
+	markTurnRead(roomId, t.turnId); // 来源用户消息被读到了：不再能撤回
 	emitState(roomId);
 	let res: Awaited<ReturnType<ReturnType<typeof runtime>["turn"]>>;
 	try {

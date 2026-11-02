@@ -6,7 +6,8 @@
  * - 长按移动（滚动 / 选择）自动取消，不阻正常文字选择与复制粘贴。
  * - 引用条 Esc 只取消引用（由调用方在 textarea 处理），不清空已输入文字。
  */
-import { Check, Copy, GitBranch, Quote, RotateCcw, X } from "lucide-react";
+import { Check, Copy, GitBranch, Quote, RotateCcw, Undo2, X } from "lucide-react";
+import { canRecall } from "../recall-api";
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { copyText, selectionBeforeRightClick } from "../clipboard";
 import { attachmentLabel, copyTextOf, isQuotable, type QuotedBlock, type ReplyRef } from "../replies";
@@ -265,7 +266,7 @@ export interface MessageInteraction {
  * 一个聊天区共用一个右键菜单 + 长按控制器（避免每条消息一个 hook）。
  * 返回：interactionOf(m) 给消息元素展开；menuEl 挂到聊天区里。
  */
-export function useReplyContext(onQuote: (m: Message) => void, onFork?: (m: Message) => void, canFork?: (m: Message) => boolean) {
+export function useReplyContext(onQuote: (m: Message) => void, onFork?: (m: Message) => void, canFork?: (m: Message) => boolean, onRecall?: (m: Message) => void) {
 	const [menu, setMenu] = useState<{ m: Message; x: number; y: number; sel: string } | null>(null);
 	const lp = useRef<{ timer?: number; start?: { x: number; y: number } }>({});
 	const cancel = () => {
@@ -305,6 +306,7 @@ export function useReplyContext(onQuote: (m: Message) => void, onFork?: (m: Mess
 		: [
 				copyItem(menu.sel, isQuotable(menu.m) ? copyTextOf(menu.m) : ""),
 				isQuotable(menu.m) ? { key: "quote", label: "引用", icon: <Quote className="pa-ic" />, run: () => onQuote(menu.m) } : null,
+				onRecall && canRecall(menu.m) ? { key: "recall", label: "撤回", icon: <Undo2 className="pa-ic" />, run: () => onRecall(menu.m) } : null,
 				onFork && canFork?.(menu.m) ? { key: "fork", label: "另开新对话", icon: <GitBranch className="pa-ic" />, run: () => onFork(menu.m) } : null,
 			];
 	const menuEl = <ContextMenu at={menu} items={items.filter((x): x is MenuItem => !!x)} onClose={close} testId="reply-menu" />;

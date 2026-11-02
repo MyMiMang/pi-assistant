@@ -19,7 +19,7 @@ import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
 import { locateRoomMessage, type LocateResult } from "../replies-api";
 import { peerAskDisplay, PeerWrap } from "./RoomPeer";
 import { ProjectTagged, useProjectRows } from "./RoomProjectFilter";
-import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
+import { recallActions } from "../recall-api"; import { ReplyBar, useComposerInset, useMessageJump, useReplyContext, JumpHint } from "./MessageReply";
 
 // ------------------------------------------------------------------ 显示用的成员信息（助理已删除时用群里存的快照）
 export function memberOf(room: Room | undefined, agents: Agent[], agentId: string): { id: string; name: string; avatar: string; color: string; deleted: boolean } {
@@ -104,7 +104,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 		stick.current = true; // 用户主动回最新：跟随到底
 		await useStore.getState().returnRoomToLatest(roomId);
 	};
-	const replyCtx = useReplyContext(onQuote);
+	const { onRecall, onReedit } = recallActions(rKey); const replyCtx = useReplyContext(onQuote, undefined, undefined, onRecall);
 	useComposerInset(scroller, composerWrap, stick);
 	useLayoutEffect(() => {
 		const el = scroller.current;
@@ -207,9 +207,9 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 						r.kind === "day" ? (
 							<div key={r.id} className="pa-day">{r.label}</div>
 						) : r.kind === "user" ? (
-							<UserMsg key={r.m.id} m={r.m} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf(r.m)} />
+							<UserMsg key={r.m.id} m={r.m} onQuote={onQuote} onJump={jump} onRecall={onRecall} interaction={replyCtx.interactionOf(r.m)} />
 						) : r.kind === "system" ? (
-							<ProjectTagged key={r.m.id} m={r.m} room={room} center><SystemMsg m={r.m} canContinue={r.m.id === lastPause} /></ProjectTagged>
+							<ProjectTagged key={r.m.id} m={r.m} room={room} center><SystemMsg m={r.m} canContinue={r.m.id === lastPause} onReedit={onReedit} /></ProjectTagged>
 						) : (
 							<RoomBotTurn key={r.id} row={r} room={room} agents={agents} list={list} live={speaking === r.agentId && r === lastRow} onAvatar={openMember} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf} />
 						),

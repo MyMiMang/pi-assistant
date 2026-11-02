@@ -19,6 +19,7 @@ import { COMPOSER_LABEL, useComposerKeys } from "../composer";
 import { VoiceInput } from "./VoiceInput";
 
 import { group, BotTurn as SharedBotTurn, BotPart as SharedBotPart, UserMsg, SystemMsg, type Part, type Row } from "./ChatMessages";
+import { recallActions } from "../recall-api";
 import { agentSendBody, buildReplyRef, draftSignature, newClientId, resolveAgentReplyTarget, replyDraftKey, type ReplyRef } from "../replies";
 import { useReplyDrafts, setReplyDraft, clearReplyDraft } from "../replyDrafts";
 import { canFork, forkErrorMessage, forkFromMessage, newForkClientId } from "../fork-api";
@@ -79,7 +80,8 @@ export default function Chat({ agentId }: { agentId: string }) {
 			setForkNotice({ kind: "error", text: forkErrorMessage(e) });
 		}
 	};
-	const replyCtx = useReplyContext(onQuote, onFork, canFork);
+	const { onRecall, onReedit } = recallActions(rKey); // 撤回还没送达的消息 / 重新编辑
+	const replyCtx = useReplyContext(onQuote, onFork, canFork, onRecall);
 	useComposerInset(scroller, composerWrap, stick);
 	useLayoutEffect(() => {
 		const el = scroller.current;
@@ -207,9 +209,9 @@ export default function Chat({ agentId }: { agentId: string }) {
 								{r.label}
 							</div>
 						) : r.kind === "user" ? (
-							<UserMsg key={r.m.id} m={r.m} reaction={reactions.get(r.m.id)} onQuote={onQuote} onFork={onFork} onJump={jump} interaction={replyCtx.interactionOf(r.m)} />
+							<UserMsg key={r.m.id} m={r.m} reaction={reactions.get(r.m.id)} onQuote={onQuote} onFork={onFork} onJump={jump} onRecall={onRecall} interaction={replyCtx.interactionOf(r.m)} />
 						) : r.kind === "system" ? (
-							<SystemMsg key={r.m.id} m={r.m} />
+							<SystemMsg key={r.m.id} m={r.m} onReedit={onReedit} />
 						) : (
 							<BotTurn key={r.id} row={r} agent={agent} live={running && r === lastRow} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf} />
 						),

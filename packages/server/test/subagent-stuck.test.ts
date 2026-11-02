@@ -32,7 +32,7 @@ s.setSubagentDriver({ run: (_r, connect, input) => { inputs.push(input?.text); r
 s.saveSubagentSettings({ maxMinutes: 600, maxConcurrent: 10 });
 const questions = () => (db.prepare("SELECT COUNT(*) n FROM requests WHERE agent_id = 'stuck-test' AND kind = 'question'").get() as { n: number }).n;
 const STALL = 180_000;
-const spawn = async (task: string, kind?: "task") => { const r = s.spawnSubagent("stuck-test", conv, { provider: "mock", id: "echo" }, { task, kind }); await tick(); return r; };
+const spawn = async (task: string, kind?: "task" | "heartbeat") => { const r = s.spawnSubagent("stuck-test", conv, { provider: "mock", id: "echo" }, { task, kind }); await tick(); return r; };
 const events = (id: string, kind: string) => woken.filter((e) => e.subagent_id === id && e.kind === kind);
 
 test("慢但在动不算卡住：工具在预计时长内、工作区文件还在变，都不打断也不报", async () => {
@@ -101,6 +101,21 @@ test("后台任务的帮手（没有主会话回合负责）：系统自己重�
 	await s.checkSubagents(t0 + 2 * STALL + 2);
 	assert.equal(s.getSubagent(r.id)!.status, "failed");
 	assert.match(s.getSubagent(r.id)!.error_reason ?? "", /已用尽办法：从最近检查点重启过一次/);
+});
+
+test("后台巡检（heartbeat）卡住：直接结束并写明原因，不从检查点重启再卡一遍；工作区文件在变也不算它在动", async () => {
+	const r = await spawn("主动巡检", "heartbeat");
+	const t0 = s.getSubagent(r.id)!.last_activity_at;
+	const before = inputs.length;
+	const f = join(workspaceOf("stuck-test"), "other-work.log");
+	writeFileSync(f, "别的任务在写");
+	utimesSync(f, new Date(t0 + 1000), new Date(t0 + 1000));
+	await s.checkSubagents(t0 + STALL + 1);
+	await tick(); await tick();
+	rmSync(f);
+	assert.equal(s.getSubagent(r.id)!.status, "failed", "第一次卡住就结束");
+	assert.match(s.getSubagent(r.id)!.error_reason ?? "", /巡检没有动静.*本次已结束，下次巡检再来/);
+	assert.equal(inputs.length, before, "没有重启（没有再送一轮输入）");
 });
 
 test("反复卡在同一处：第 2 次提示换方法，第 3 次起拒绝原样续跑、必须换策略；不同原因不算", async () => {

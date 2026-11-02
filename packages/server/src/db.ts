@@ -135,6 +135,10 @@ CREATE INDEX IF NOT EXISTS room_turns_r ON room_turns(room_id, created_at);
 CREATE TABLE IF NOT EXISTS work_exec_conversations (
   conversation_id TEXT PRIMARY KEY, work_item_id TEXT NOT NULL, agent_id TEXT NOT NULL, room_id TEXT, created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS work_exec_item ON work_exec_conversations(work_item_id, agent_id);
+-- 转到后台的长命令（bg-jobs.ts）：只记状态，不记输出；服务重启时「在跑」的标成「中断」，下一轮告诉助理
+CREATE TABLE IF NOT EXISTS bg_jobs (
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, command TEXT NOT NULL, status TEXT NOT NULL,
+  started_at INTEGER NOT NULL, ended_at INTEGER, exit_code INTEGER, told INTEGER NOT NULL DEFAULT 1);
 `);
 
 export function getSetting<T>(key: string, fallback: T): T {

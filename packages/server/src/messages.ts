@@ -245,3 +245,17 @@ export function listMessages(agentId: string, opts: { taskId?: string | null; co
 		.all(agentId, conv, ...params, limit) as unknown as (MessageRow & { seq: number })[];
 	return rows.reverse().map((r) => ({ ...toMessage(r), seq: r.seq }));
 }
+
+/**
+ * 用户撤回了一条还没送达的消息：原地变成一条灰色系统提示（role=system，meta.recalled），原文放进 meta.recalledText 供「重新编辑」。
+ * 变成 system 后，群转录 / 最近用户消息 / 预览这些按 role='user' 读消息的地方自然不再看到它。
+ */
+export function markRecalled(id: string) {
+	const cur = getMessage(id);
+	if (!cur) return;
+	const meta = { recalled: true, kind: "recalled", recalledText: cur.content, from: cur.meta.from };
+	db.prepare("UPDATE messages SET role = 'system', content = ?, meta = ?, status = 'done', updated_at = ? WHERE id = ?").run("用户撤回了一条消息", JSON.stringify(meta), now(), id);
+	const next = getMessage(id)!;
+	bus.emit({ type: "message.updated", message: next });
+	return next;
+}

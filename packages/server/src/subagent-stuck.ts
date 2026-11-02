@@ -18,6 +18,9 @@ import type { Subagent } from "./subagents.ts";
 
 /** 多久没有任何动静才去诊断（毫秒）；e2e 可用环境变量调短。 */
 export const SUBAGENT_STALL_MS = () => Number(process.env.PIA_SUBAGENT_STALL_MS) || 180_000;
+/** 后台巡检（heartbeat）没动静的上限：不超过 3 分钟（中转网络卡住时别让一次巡检白占十几分钟）；e2e 可用环境变量调短。 */
+export const HEARTBEAT_STALL_MS = () => Number(process.env.PIA_HEARTBEAT_STALL_MS) || Math.min(180_000, SUBAGENT_STALL_MS());
+const stallMs = (r: Subagent) => (r.kind === "heartbeat" ? HEARTBEAT_STALL_MS() : SUBAGENT_STALL_MS());
 /** 工具没写超时时，按多久算「预计时长」（毫秒）；超过预计时长只要还在输出也不算卡住。 */
 export const toolExpectMs = (args: Record<string, unknown>) => {
 	const t = Number(args.timeoutMs ?? 0) || Number(args.timeout ?? 0) * 1000;
@@ -75,7 +78,7 @@ export function workspaceTouchedSince(dir: string, since: number): boolean {
 export function diagnoseStall(r: Subagent, ts: number, toolUntil: number): string | null {
 	if (ts <= toolUntil) return null; // 工具还在预计时长内
 	if (db.prepare("SELECT 1 FROM subagents WHERE parent_subagent_id = ? AND status IN ('queued','running','stalled') LIMIT 1").get(r.id)) return null; // 在等自己派的下一层帮手
-	if (workspaceTouchedSince(workspaceOf(r.agent_id), r.last_activity_at)) return null; // 文件 / 日志还在变
+	if (r.kind !== "heartbeat" && workspaceTouchedSince(workspaceOf(r.agent_id), r.last_activity_at)) return null; // 文件 / 日志还在变（巡检不看：工作区是别人在改，不代表巡检在动）
 	const mins = Math.max(1, Math.round((ts - r.last_activity_at) / 60_000));
 	const tool = lastTool(r.id);
 	const where = tool?.status === "running" ? `工具「${tool.toolName}」超过预计时长且 ${mins} 分钟没有新输出` : `${mins} 分钟没有任何输出（模型请求或工具都没有动静）`;
@@ -86,7 +89,7 @@ export function diagnoseStall(r: Subagent, ts: number, toolUntil: number): strin
 export async function superviseStall(r: Subagent, ts: number, toolUntil: number, h: StuckHooks) {
 	if (ts <= toolUntil || !["running", "stalled"].includes(r.status) || waitingForUser(r.id)) return; // 工具在预计时长内 / 在等用户批准或回答：不算卡住
 	const l = ladderOf(r);
-	if (ts - Math.max(r.last_activity_at, l?.at ?? 0) < SUBAGENT_STALL_MS()) return;
+	if (ts - Math.max(r.last_activity_at, l?.at ?? 0) < stallMs(r)) return;
 	const where = diagnoseStall(r, ts, toolUntil);
 	if (!where) {
 		db.prepare("UPDATE subagents SET last_activity_at = ? WHERE id = ?").run(ts, r.id); // 慢但在动：重新计时
@@ -95,6 +98,8 @@ export async function superviseStall(r: Subagent, ts: number, toolUntil: number,
 	const rung = (l?.rung ?? 0) + 1, tried = l?.tried ?? [];
 	const next = (step: string): Ladder => ({ kind: "stall", rung, at: ts, tried: [...tried, step] });
 	const exhausted = () => h.fail(r.id, `一直卡住（${where}），${EXHAUSTED_MARK}：${[...tried].join("；") || "无"}`);
+	// 后台巡检：卡住就结束这次（记失败原因），下次巡检再来；不从检查点重启再卡一遍
+	if (r.kind === "heartbeat") return h.fail(r.id, `巡检没有动静（${where}），本次已结束，下次巡检再来`);
 	if (r.kind || r.parent_subagent_id) {
 		// 没有主会话回合负责的帮手（后台 / 定时 / 巡检 / 群任务执行；下一层帮手的上一层在等它，结果由上一层收）：系统自己重启一次，仍卡住就失败并写明
 		if (rung > 1) return exhausted();

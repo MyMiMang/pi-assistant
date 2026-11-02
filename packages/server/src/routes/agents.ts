@@ -1,4 +1,5 @@
 /** 从 http.ts 拆出的路由（行为不变）。 */
+import { recallUserMessage } from "../recall.ts";
 import { deleteAgentSubagentLimits } from "../subagents.ts";
 import { isStopCommand } from "../interject.ts";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -202,6 +203,11 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		const conv = c.req.query("conversation");
 		await runtime(c.req.param("id"), conv || undefined).abort();
 		return c.json({ ok: true });
+	});
+	/** 撤回一条还没送达的消息（单聊插话 / 群消息）；已被助理读到返回 409 */
+	app.post("/api/messages/:mid/recall", (c) => {
+		const r = recallUserMessage(c.req.param("mid"));
+		return r.ok ? c.json({ ok: true, text: r.text }) : c.json({ error: r.error }, r.status);
 	});
 	/** 单条消息（引用跳转用）；带 roomId / conversationId 时校验容器，不一致 fail closed 不泄露。 */
 	app.get("/api/messages/:mid", (c) => {

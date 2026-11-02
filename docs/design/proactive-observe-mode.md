@@ -1,4 +1,4 @@
-状态：已批准（[决策 0025](../decisions/0025-proactive-autonomy.md)）
+状态：已实现（待提交）
 
 # 让助理真的主动做事
 

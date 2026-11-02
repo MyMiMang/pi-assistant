@@ -16,6 +16,7 @@ import { workspaceOf } from "./files.ts";
 import { startTunnel } from "./tunnel.ts";
 import { startScheduler } from "./routines.ts";
 import { startProactive } from "./proactive.ts";
+import { initBackgroundJobs } from "./agent-runtime/bg-wiring.ts";
 import { hindsightInUse } from "./memory/index.ts";
 import { setChatDefault, sidecar } from "./memory/hindsight/sidecar.ts";
 import { defaultModel } from "./models.ts";
@@ -41,6 +42,7 @@ releaseAllHeld(); // 关键点前暂缓的任务：没有在等用户的关键�
 startWorkWatch();
 (await import("./rooms/index.ts")).startRoomChecks();
 await bootstrap();
+initBackgroundJobs(); // 转到后台的长命令：持久化 / 结果通知；上次没跑完的标成中断
 startScheduler();
 startProactive();
 if (getSetting("remoteEnabled", false)) startTunnel();

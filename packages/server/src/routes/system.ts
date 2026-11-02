@@ -21,6 +21,8 @@ import { runtime } from "../runtime.ts";
 import { dockerAvailable, sandboxMode } from "../sandbox.ts";
 import { entryDomain, startTunnel, stopTunnel, tunnelStatus } from "../tunnel.ts";
 import { BRAND } from "@pi-assistant/shared";
+import { confirmTrial, vetoTrial } from "../proactive-judge.ts";
+import { trialItemIds } from "../proactive-log.ts";
 import { actOnItem, defaultLevel, type ItemRow, type Level, listItems, setDefaultLevel, unseenCount } from "../proactive.ts";
 import { cancelDownload, listDownloads, startDownload } from "../downloads.ts";
 import { isAdmin, localOnly, type Env } from "./common.ts";
@@ -50,7 +52,7 @@ function appVersion() {
  */
 const asrProvidersJson = () => ({ protocols: ASR_PROTOCOLS, providers: getSetting<AsrDeclaration[]>("asrProviders", []) });
 
-const itemJson = (i: ItemRow) => ({ id: i.id, agentId: i.agent_id, kind: i.kind, title: i.title, body: i.body, importance: i.importance, status: i.status, reason: i.reason, via: i.delivered_via, deliveredAt: i.delivered_at, deliverAfter: i.deliver_after, createdAt: i.created_at });
+const itemJson = (i: ItemRow, trial = new Set<string>()) => ({ trial: trial.has(i.id), id: i.id, agentId: i.agent_id, kind: i.kind, title: i.title, body: i.body, importance: i.importance, status: i.status, reason: i.reason, via: i.delivered_via, deliveredAt: i.delivered_at, deliverAfter: i.deliver_after, createdAt: i.created_at });
 
 export function mountSystemRoutes(app: Hono<Env>) {
 	// ---------------------------------------------------------------- 系统
@@ -136,11 +138,15 @@ export function mountSystemRoutes(app: Hono<Env>) {
 	// ---------------------------------------------------------------- 主动提醒
 	app.get("/api/proactive/inbox", (c) => {
 		const agentId = c.req.query("agentId") || undefined;
-		return c.json({ items: listItems({ agentId, all: c.req.query("all") === "1" }).map(itemJson), count: unseenCount(), defaultLevel: defaultLevel() });
+		const trial = trialItemIds(agentId);
+		return c.json({ items: listItems({ agentId, all: c.req.query("all") === "1" }).map((i) => itemJson(i, trial)), count: unseenCount(), defaultLevel: defaultLevel() });
 	});
 	app.post("/api/proactive/items/:id", async (c) => {
 		try {
-			const b = await c.req.json<{ action: "dismiss" | "done" | "snooze"; mute?: boolean; until?: number }>();
+			const b = await c.req.json<{ action: "dismiss" | "done" | "snooze" | "run" | "veto"; mute?: boolean; until?: number }>();
+			// 试运行卡片：run = 就这么做（真推进一次）；veto = 这类以后别做
+			if (b.action === "run") return c.json({ ok: true, result: await confirmTrial(c.req.param("id")!) });
+			if (b.action === "veto") return vetoTrial(c.req.param("id")!), c.json({ ok: true });
 			if (!["dismiss", "done", "snooze"].includes(b.action)) return c.json({ error: "bad_action" }, 400);
 			actOnItem(c.req.param("id")!, b.action, { mute: !!b.mute, until: b.until });
 			return c.json({ ok: true });

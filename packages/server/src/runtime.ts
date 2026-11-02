@@ -5,7 +5,8 @@
  */
 import { setSubagentDriver, recoverSubagents, startSubagentWatcher, migrateSubagentModelSettings } from "./subagents.ts";
 import { setWaitWaker, setWaitNoteInjector, startWaitScheduler } from "./task-waits.ts";
-import { resumeAdvances, setAdvanceHooks, setProactiveSpawner } from "./proactive.ts";
+import { resumeAdvances, setAdvanceHooks } from "./proactive-advance.ts";
+import { setProactiveSpawner } from "./proactive.ts";
 import { currentConversation } from "./conversations.ts";
 import { setRoutineSpawner } from "./routines.ts";
 import { expireStaleSuggestions } from "./skill-intel.ts";

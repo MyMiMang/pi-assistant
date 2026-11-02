@@ -313,7 +313,7 @@ export function Fold({ icon: Icon, title, count, hint, desc, open, onToggle, tes
 				<button type="button" className="flex min-w-0 items-center gap-2 text-left" aria-expanded={open} onClick={onToggle} data-testid={testId ? `${testId}-toggle` : undefined}>
 					<ChevronDown size={14} className={cx("shrink-0 text-mut transition-transform", !open && "-rotate-90")} />
 					{Icon && <Icon size={16} className="shrink-0 text-mut" />}
-					<span className="min-w-0 truncate font-semibold">{title}</span>
+					<span className="min-w-0 max-w-full shrink-0 truncate font-semibold">{title}</span>
 					{count !== undefined && <span className="shrink-0 rounded-full bg-zinc-100 px-1.5 py-0.5 text-[11px] font-normal text-mut dark:bg-zinc-800">{count}</span>}
 					{hint && <span className="min-w-0 truncate text-xs font-normal text-mut">{hint}</span>}
 				</button>

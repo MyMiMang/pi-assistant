@@ -6,7 +6,8 @@ import { imageKey } from "../image-gen/index.ts";
 import { tierOf, hostAllowedFor, hostPaused, hostSettings, hostStatus } from "../host-control.ts";
 import { wechatAllowed } from "../wechat.ts";
 import { accountsFor } from "../email.ts";
-import { cancelAdvances, drainAdvances, hiddenConversation, listAdvances } from "../proactive.ts";
+import { cancelAdvances, drainAdvances, listAdvances } from "../proactive-advance.ts";
+import { hiddenConversation } from "../proactive.ts";
 import { NUDGE_TYPE } from "@pi-assistant/ext-skills";
 import { conversationForkParent, currentConversation, getConversation, setConversationSession } from "../conversations.ts";
 import { skillsVersion } from "../skills.ts";
@@ -21,7 +22,7 @@ import { insertMessage, updateMessage } from "../messages.ts";
 import { cliProviderReady } from "../cli-services.ts";
 import { defaultModel, defaultThinking, models } from "../models.ts";
 import { composeQuotedInput } from "../replies.ts";
-import { abortSession, type AgentSession, type SkillInvocationInput, compactSession, triggerHidden, applyModelSettings, disposeSession, injectContext, isSessionBusy, lastAssistantText, modelErrorMessage, promptSession, skillCommand, sessionFileOf, sessionStats, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
+import { abortSession, type AgentSession, type SkillInvocationInput, compactSession, triggerHidden, applyModelSettings, disposeSession, injectContext, isSessionBusy, recallQueuedSteer, lastAssistantText, modelErrorMessage, promptSession, skillCommand, sessionFileOf, sessionStats, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
 import { attachFastMode } from "../pi-adapter/fast-mode.ts";
 import { requests } from "../requests.ts";
 import { computerFor, desktopStatus } from "../desktop.ts";
@@ -29,6 +30,8 @@ import { type AgentRow, getAgent, setAgentStatus } from "./rows.ts";
 import { roomHooks } from "./room-hooks.ts";
 import { bindSession } from "./bind-session.ts";
 import { chatPlanRules } from "../chat-projects/rules.ts";
+import { BG_NOTE_TYPE, killConversationJobs, takeInterruptedNote } from "./bg-wiring.ts";
+import { sendBgResult } from "../pi-adapter/bg-shell.ts";
 
 /** 会话缓存键里的“本机操作”部分：开关、清单、档位、暂停、守护进程状态变化都会重建会话（权限本身仍每次调用动态求值） */
 const hostKey = (agentId: string) =>
@@ -57,7 +60,27 @@ export class AgentRuntime {
 		return defaultModel();
 	}
 
+	/** 取（必要时重建）会话；服务重启中断的后台命令在助理下次开口前告诉它一次 */
 	async ensure(): Promise<AgentSession | null> {
+		const s = await this.ensureSession();
+		const note = s ? takeInterruptedNote(this.conversationId) : null;
+		if (s && note) await injectContext(s, BG_NOTE_TYPE, note).catch(() => {});
+		return s;
+	}
+
+	/** 后台命令结束了：这一轮还在跑 → 插话（steer）；已空闲 → 开新一轮接着处理（Pi sendCustomMessage 公开接口） */
+	async deliverBgResult(text: string) {
+		const s = await this.ensure();
+		if (!s) return;
+		setAgentStatus(this.id, "running");
+		try {
+			await sendBgResult(s, text);
+		} catch {
+			if (!isSessionBusy(s)) settleAgent(this.id);
+		}
+	}
+
+	private async ensureSession(): Promise<AgentSession | null> {
 		if (this.creating) return this.creating;
 		const a = getAgent(this.id)!;
 		// 助理选的是本机命令行模型、那一家还在后台注册：等它注册完（最多 60 秒）再解析，别立刻退回默认模型
@@ -100,7 +123,7 @@ export class AgentRuntime {
 				if (e.type === "user_start") this.allowEmptyNudge = false;
 				if (e.type !== "user_start" || !e.text.startsWith(INTERJECTION_PREFIX) || /（(?:子代理|帮手)事件 /.test(e.text)) return;
 				const mid = this.steering.shift();
-				if (mid) updateMessage(mid, { meta: { delivery: "delivered", deliveredAt: Date.now() } });
+				if (mid) (this.steerInputs.delete(mid), updateMessage(mid, { meta: { delivery: "delivered", deliveredAt: Date.now() } }));
 			});
 			const unBind = bindSession(session, this.id, this.conversationId, null, (aborted) => {
 				if (isSessionBusy(session)) return;
@@ -133,10 +156,13 @@ export class AgentRuntime {
 
 	/** 已经发出、还没送进模型上下文的插话（用户消息 id，按顺序） */
 	private steering: string[] = [];
+	/** 还在排队的插话送进 Pi 的文字（撤回时按它在队列里找） */
+	private steerInputs = new Map<string, string>();
 	/** 已交给 Pi、还没落 meta.piEntryId 的 user 消息 id（按发送顺序）；与 entry_id(user) 事件 FIFO 配对 */
 	private pendingUserEntries: string[] = [];
 	private dropSteering(state: "stopped" | "delivered") {
 		const ids = this.steering.splice(0);
+		this.steerInputs.clear();
 		// 没送达的插话也从待映射队列里去掉，免得后面一条 user 消息误配到它
 		if (ids.length) this.pendingUserEntries = this.pendingUserEntries.filter((x) => !ids.includes(x));
 		for (const mid of ids) updateMessage(mid, { meta: { delivery: state } });
@@ -182,6 +208,7 @@ export class AgentRuntime {
 		const input = await this.withAttachments(s, fullText, files).catch(() => ({ text: fullText, images: undefined }));
 		if (steer && opts.messageId) {
 			this.steering.push(opts.messageId);
+			this.steerInputs.set(opts.messageId, input.text);
 			updateMessage(opts.messageId, { meta: { delivery: "queued" } });
 		}
 		// 记入待映射队列：Pi 落盘时按同一顺序回填 meta.piEntryId（插话要等到工具边界才落盘）
@@ -189,6 +216,7 @@ export class AgentRuntime {
 		promptSession(s, input.text, input.images, skillCmd).catch((e: unknown) => {
 			if (opts.messageId) {
 				this.steering = this.steering.filter((x) => x !== opts.messageId);
+				this.steerInputs.delete(opts.messageId);
 				this.pendingUserEntries = this.pendingUserEntries.filter((x) => x !== opts.messageId);
 			}
 			const error = modelErrorMessage(e);
@@ -196,6 +224,21 @@ export class AgentRuntime {
 			if (!isSessionBusy(s)) settleAgent(this.id);
 		});
 		return steer ? "steered" : "started";
+	}
+
+	/**
+	 * 撤回一条还没送达的插话（单聊 / 群里成员的对话共用）：还在 Pi 的排队里就拿掉（其余的原样排回），
+	 * 助理永远看不到它；已经读到了（或这一轮已结束）返回 false。
+	 */
+	recallSteering(mid: string): boolean {
+		const s = this.session;
+		const mine = this.steerInputs.get(mid);
+		if (!s || !mine || !this.steering.includes(mid)) return false;
+		if (!recallQueuedSteer(s, mine)) return false;
+		this.steering = this.steering.filter((x) => x !== mid);
+		this.pendingUserEntries = this.pendingUserEntries.filter((x) => x !== mid);
+		this.steerInputs.delete(mid);
+		return true;
 	}
 
 	private hasPendingCards() {
@@ -252,6 +295,7 @@ export class AgentRuntime {
 		if (opts.scope === "conversation") await stopConversationSubagents(this.id, this.conversationId);
 		else await stopAgentSubagents(this.id);
 		this.cancelPending("用户停止了任务");
+		killConversationJobs(this.conversationId); // 这个对话里转到后台的命令一起结束
 		if (this.session) await abortSession(this.session);
 		this.dropSteering("stopped");
 		settleAgent(this.id);

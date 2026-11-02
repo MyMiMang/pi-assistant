@@ -21,7 +21,21 @@ export interface ProactiveHost {
 	/** 只有主动巡检任务里才有 */
 	surface?(i: SurfaceInput): { status: "delivered" | "inbox" | "held" | "rejected"; reason?: string };
 	/** 主动推进：在相关对话的主会话里继续做事（走正常权限，心跳本身没有额外权限）。只有主动巡检里才有。 */
-	advance?(i: { kind: SurfaceKind; title: string; body: string; importance: 1 | 2 | 3; dedupeKey?: string; conversationId: string }): Promise<{ status: "started" | "steered" | "queued" | "inbox" | "held" | "rejected" | "cancelled"; reason?: string }>;
+	advance?(i: {
+		kind: SurfaceKind;
+		title: string;
+		body: string;
+		importance: 1 | 2 | 3;
+		dedupeKey?: string;
+		/** 单聊里推进 / 群里推进（二选一） */
+		conversationId?: string;
+		roomId?: string;
+		/** 用户明确交代过的事 + 依据原话；其余要靠命中「可以放心做的事」规则才放行 */
+		explicit?: boolean;
+		helpful?: boolean;
+		evidence?: string;
+		ruleAssessments?: { ruleId: string; matched: boolean; reason: string }[];
+	}): Promise<{ status: "started" | "steered" | "queued" | "inbox" | "held" | "rejected" | "cancelled"; reason?: string }>;
 	schedule(i: { dueAt: number; note: string }): { id: string; dueAt: number };
 	list(): { id: string; dueAt: number; note: string }[];
 	cancel(id: string): boolean;
@@ -102,9 +116,14 @@ export function proactiveExtension(host: ProactiveHost) {
 			name: "proactive_advance",
 			label: "在对话里推进",
 			description:
-				"需要主动推进一件用户已经明确交代、属于原授权范围的事时用它：在指定的相关对话里让主会话继续把事做完（不要只发提醒、也不要再问「要不要我做」）。会走用户平时的权限规则（完全权限免审批，其他档位审批），心跳任务本身没有额外权限；对话正忙时同一件事合并、不同的事排队，不把巡检摘要当用户插话。需求含糊、涉及新的对外承诺/支出/破坏性改动/权限变更时先问用户，不要猜；用户停止/取消或预算受限时不要继续。主动开关、去重/静音、停止和原有巡检调度仍有效；推进与推送条数分开，每助理每天最多12次自主推进、每对话最多3条排队。排队不等于已执行，执行一轮结束也不证明目标完成。",
+				"主动去做事时用它（做事不算打扰）：用户已经明确交代、属于原授权范围的事（explicit=true + evidence 写原话），用户已经开始的事情里看得出能帮上的一步（卡住的任务、快到期的事、明显的下一步，helpful=true + evidence 写事实），或对上了巡检提示里用户写的「可以放心做的事」规则的事（ruleAssessments 对每条规则写 matched + reason）。单聊用 conversationId，让主会话继续把事做完；群里的事用 roomId，在群里叫醒你自己发言（不要只发提醒、也不要再问「要不要我做」）。用户没提过的全新的事、又没对上规则的，系统会自动转成提醒；试运行模式下只记成「本来会做」的卡片。会走用户平时的权限规则（完全权限免审批，其他档位审批），心跳任务本身没有额外权限；对话正忙时同一件事合并、不同的事排队，不把巡检摘要当用户插话。需求含糊、涉及新的对外承诺/支出/破坏性改动/权限变更时先问用户，不要猜；用户停止/取消或预算受限时不要继续。主动开关、去重/静音、停止和原有巡检调度仍有效；推进与推送条数分开，每助理每天最多12次自主推进、每对话最多3条排队。排队不等于已执行，执行一轮结束也不证明目标完成。",
 			parameters: Type.Object({
-				conversationId: Type.String({ description: "在哪个对话里推进（必须是这个助理自己的非隐藏对话 id）" }),
+				conversationId: Type.Optional(Type.String({ description: "在哪个单聊里推进（这个助理自己的非隐藏对话 id）；群里的事不填，填 roomId" })),
+				roomId: Type.Optional(Type.String({ description: "在哪个群里推进（你在的群的 id，见「你在的群」）；填了会在群里叫醒你发言，群已停止则只记一条" })),
+				explicit: Type.Optional(Type.Boolean({ description: "这件事是用户明确交代过的（目标清楚、在原授权内）。不是的话不要填 true" })),
+				helpful: Type.Optional(Type.Boolean({ description: "用户已经开始的事情里看得出能帮上的一步（卡住的任务、快到期的事、明显的下一步）。全新的事不要填 true" })),
+				evidence: Type.Optional(Type.String({ description: "依据的原话：用户说过的话，或规则对上的事实（explicit / helpful=true 或命中规则时必填）" })),
+				ruleAssessments: Type.Optional(Type.Array(Type.Object({ ruleId: Type.String({ description: "规则编号（巡检提示里 [rule:xxx] 的 xxx）" }), matched: Type.Boolean(), reason: Type.String({ description: "为什么对上 / 没对上" }) }), { description: "对每条启用的规则写一条研判（没有规则时传空数组）；编号必须真实存在、不能重复" })),
 				kind: Type.Union(["followup", "reminder", "email", "suggest_routine", "suggest_skill", "brief", "other"].map((k) => Type.Literal(k)) as never, { description: "同 proactive_surface" }),
 				title: Type.String({ description: "一句话标题（≤40 字）" }),
 				body: Type.String({ description: "要推进什么、为什么（≤300 字，写清楚上下文）" }),
@@ -114,7 +133,7 @@ export function proactiveExtension(host: ProactiveHost) {
 			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 			async execute(_id, p) {
 				const r = await advance(p as never);
-				const msg = { started: "已在相关对话里开始推进。", steered: "同一件事正在推进，已合并。", queued: "对话正忙，已排队。", inbox: "已放进收件箱（没有推进）。", held: "已放进收件箱，免打扰结束后再推送。", rejected: "没有推进。", cancelled: "已取消，没有再推进。" }[r.status];
+				const msg = { started: "已开始推进。", steered: "同一件事正在推进，已合并。", queued: "对话正忙，已排队。", inbox: "已放进收件箱（没有推进）。", held: "已放进收件箱，免打扰结束后再推送。", rejected: "没有推进。", cancelled: "已取消，没有再推进。" }[r.status];
 				return text(`${msg}${r.reason ? `（${r.reason}）` : ""}`);
 			},
 		});
