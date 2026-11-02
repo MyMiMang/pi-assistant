@@ -34,3 +34,4 @@
 | [0022](0022-tidy-after-delivery.md) | 群项目交付后整理上下文，用户原话存进记忆（修订 0019 的「不提前整理」） |
 | [0023](0023-cli-agents.md) | 在 Pi 助理里用本机已登录的 Claude Code、Codex：先当模型（工具仍由 Pi 执行），再当帮手；自己接，参考 Paseo |
 | [0024](0024-html-preview-sandboxed.md) | HTML / SVG 文件在应用内隔离显示（页面脚本可运行，读不到 App 数据） |
+| [0025](0025-proactive-autonomy.md) | 助理默认自动、敢做事：巡检看得见群、在群里推进，规则扩大授权，试运行只是可选 |

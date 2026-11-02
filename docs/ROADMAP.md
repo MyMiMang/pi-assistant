@@ -12,8 +12,9 @@
 - [已发布(beta.37)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
-- [草稿] 主动做事先试运行（只记录「本来会做」）+ 用户写「可以主动做的事」规则（[设计](design/proactive-observe-mode.md)）
-- [草稿] 长命令跑满 5 秒自动转后台，插话不用等命令跑完（[设计](design/background-commands.md)）
+- [进行中] 发出去、助理还没看到的消息可以撤回（[设计](design/recall-pending-message.md)）
+- [进行中] 让助理真的主动做事：巡检看得见群并能在群里推进、敢做的规则、可以放心做的事、试运行可选、巡检不白卡（[设计](design/proactive-observe-mode.md)、[0025](decisions/0025-proactive-autonomy.md)）
+- [进行中] 长命令跑满 5 秒自动转后台，插话不用等命令跑完（[设计](design/background-commands.md)）
 - [已发布(beta.45)] 通用 ACP 后端 + OpenCode 当模型（渠道 `opencode-cli`，dev:live 用 Go 套餐真实冒烟通过；Grok 暂缓；[设计](design/acp-cli-models.md)）
 - [已发布(beta.44)] 执行概览、任务、项目、提醒也进侧栏（[设计](design/side-panel-views.md)）；断线自动重试成功不再显示红色报错，收尾空回复不再报错
 - [已发布(beta.44)] HTML / SVG / Office / iWork / zip / Jupyter 文件在应用内直接显示（[HTML 设计](design/html-file-preview.md)、[Office 设计](design/office-file-preview.md)、[0024](decisions/0024-html-preview-sandboxed.md)）
