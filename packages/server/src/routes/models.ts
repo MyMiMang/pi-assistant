@@ -4,6 +4,7 @@ import { registryAsrProviders } from "../voice/index.ts";
 import { Hono } from "hono";
 import { modelLimitText } from "@pi-assistant/shared";
 import { bus } from "../bus.ts";
+import { addClaudeCustomModel, claudeCustomModels, removeClaudeCustomModel } from "../claude-custom-models.ts";
 import { cliServices } from "../cli-services.ts";
 import { getSetting, setSetting } from "../db.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "../login-flows.ts";
@@ -47,6 +48,22 @@ export function mountModelRoutes(app: Hono<Env>) {
 			return c.json(info);
 		});
 	}
+	// Claude Code 自定义模型 ID：存服务端设置，改了立刻重新注册模型列表
+	const claudeSvc = cliServices.find((s) => s.id === "claude-code");
+	const refreshClaude = async (list: string[]) => {
+		await claudeSvc?.check(models, true);
+		bus.emit({ type: "settings.changed" });
+		return { models: list };
+	};
+	app.get("/api/models/claude-code/custom-models", (c) => c.json({ models: claudeCustomModels() }));
+	app.post("/api/models/claude-code/custom-models", async (c) => {
+		try {
+			return c.json(await refreshClaude(addClaudeCustomModel((await c.req.json<{ id?: string }>()).id)));
+		} catch (e) {
+			return errJson(c, e);
+		}
+	});
+	app.delete("/api/models/claude-code/custom-models", async (c) => c.json(await refreshClaude(removeClaudeCustomModel(c.req.query("id") ?? ""))));
 	// ---------------------------------------------------------------- 模型（完全由 Pi 的 provider 目录驱动）
 	app.get("/api/models/providers", (c) => {
 		const custom = new Map(customProviders.list().map((m) => [m.id, m]));

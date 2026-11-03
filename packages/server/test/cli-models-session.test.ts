@@ -45,8 +45,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test("渠道注册后：三个模型出现在 Pi 的模型目录，能看图，思考强度档位正确", () => {
 	const list = models.listModels(CLAUDE_CODE_PROVIDER);
-	assert.deepEqual(list.map((m) => m.id), ["opus", "sonnet", "haiku"]);
-	assert.deepEqual(list.map((m) => m.name), ["Claude Code · Opus", "Claude Code · Sonnet", "Claude Code · Haiku"]);
+	assert.deepEqual(list.map((m) => m.id).slice(0, 3), ["opus", "sonnet", "haiku"]); // 之后是内置「更多模型」清单
+	assert.deepEqual(list.map((m) => m.name).slice(0, 3), ["Claude Code · Opus", "Claude Code · Sonnet", "Claude Code · Haiku"]);
 	assert.ok(list.every((m) => m.input.includes("image")));
 	const opus = list.find((m) => m.id === "opus")!;
 	assert.deepEqual(opus.thinking, ["off", "low", "medium", "high", "xhigh", "max"]);

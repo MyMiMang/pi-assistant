@@ -12,7 +12,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { ClaudeRun, type ClaudeExit } from "../../cli-agents/claude-process.ts";
 import { listClaudeModels } from "../../cli-agents/claude-models.ts";
-import { CLAUDE_FALLBACK_MODELS, type ClaudeModelInfo } from "../../cli-agents/claude-models-parse.ts";
+import { CLAUDE_FALLBACK_MODELS, mergeClaudeModels, type ClaudeModelInfo } from "../../cli-agents/claude-models-parse.ts";
 import { findClaudeCommand } from "../../cli-agents/detect.ts";
 import type { ClaudeEvent } from "../../cli-agents/events.ts";
 import { toolBridge, type Tool, type ToolBridge } from "../../cli-agents/tool-bridge.ts";
@@ -39,6 +39,8 @@ export interface ClaudeCodeDeps {
 	baseEnv?: NodeJS.ProcessEnv;
 	/** 额外环境变量（测试选假 claude 场景用） */
 	extraEnv?: () => Record<string, string>;
+	/** 用户自定义的模型 ID（并进模型列表）；不给就没有 */
+	customModels?: () => string[];
 	/** 测试可换成独立的工具桥登记表 */
 	bridge?: ToolBridge;
 	/** 对照表（默认放数据目录的小 JSON） */
@@ -132,8 +134,12 @@ export function createClaudeCodeChannel(deps: ClaudeCodeDeps) {
 
 export type ClaudeCodeChannel = ReturnType<typeof createClaudeCodeChannel>;
 
-/** 向 claude 问模型列表；问不到（没登录、超时、回包没有 models）退回内置三个别名，保证已选 opus / sonnet / haiku 的助理照常能用。永不抛错。 */
+/** 向 claude 问模型列表；问不到（没登录、超时、回包没有 models）退回内置三个别名；再并入内置「更多模型」清单和用户自定义 ID，保证已选 opus / sonnet / haiku 的助理照常能用。永不抛错。 */
 async function claudeModelList(deps: ClaudeCodeDeps): Promise<ClaudeModelInfo[]> {
+	return mergeClaudeModels(await claudeAliasList(deps), deps.customModels?.() ?? []);
+}
+
+async function claudeAliasList(deps: ClaudeCodeDeps): Promise<ClaudeModelInfo[]> {
 	const command = (deps.command ?? (() => findClaudeCommand()))();
 	if (!command) return [...CLAUDE_FALLBACK_MODELS];
 	try {

@@ -79,12 +79,31 @@ try {
 
 	// ---- 2) 模型列表：向 claude 问来的完整清单（假 claude 的 dup 场景：含重名别名和 [1m]），haiku 没有思考强度，没有 Fast
 	const list = (await j("/api/models")).filter((m) => m.provider === "claude-code");
-	assert.deepEqual(list.map((m) => m.id).sort(), ["claude-fable-5-1[1m]", "default", "fable", "haiku", "opus", "same-a", "same-b", "sonnet"]);
+	const aliases = ["claude-fable-5-1[1m]", "default", "fable", "haiku", "opus", "same-a", "same-b", "sonnet"];
+	assert.deepEqual(list.slice(0, aliases.length).map((m) => m.id).sort(), aliases, "claude 问来的别名在前");
+	assert.ok(["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"].every((id) => list.some((m) => m.id === id)), "后面并入内置「更多模型」清单");
+	assert.deepEqual(list.find((m) => m.id === "claude-haiku-4-5").thinking, ["off"], "haiku 4.5 没有思考强度");
 	assert.equal(new Set(list.map((m) => m.name)).size, list.length, "显示名没有重名");
 	assert.ok(list.find((m) => m.id === "claude-fable-5-1[1m]").name.includes("1M 上下文"));
 	assert.deepEqual(list.find((m) => m.id === "haiku").thinking, ["off"]);
 	assert.ok(list.find((m) => m.id === "sonnet").thinking.length > 1, "sonnet 有思考强度");
 	assert.ok(list.every((m) => m.fast.capability === "unsupported"), "没有 Fast");
+
+	// ---- 2b) 自定义模型：默认收起；展开后加一个 ID → 立刻出现在模型列表 → 删掉就没了；非法 ID 给中文提示
+	await page.goto(`${base}/?settings=models`);
+	await page.getByTestId("claude-custom-fold-toggle").waitFor();
+	assert.equal(await page.getByTestId("claude-custom-input").count(), 0, "专业设置默认收起");
+	await page.getByTestId("claude-custom-fold-toggle").click();
+	await page.getByTestId("claude-custom-input").fill("bad id");
+	await page.getByTestId("claude-custom-add").click();
+	await page.getByTestId("claude-custom-models").getByText("模型 ID 不能含空格").waitFor();
+	await page.getByTestId("claude-custom-input").fill("claude-test-custom-9");
+	await page.getByTestId("claude-custom-add").click();
+	await page.getByTestId("claude-custom-list").getByText("claude-test-custom-9").waitFor();
+	await wait(async () => (await j("/api/models")).some((m) => m.provider === "claude-code" && m.id === "claude-test-custom-9"));
+	await page.getByTestId("claude-custom-models").screenshot({ path: join(OUT, "03b-custom-models.png") });
+	await page.getByRole("button", { name: "删除 claude-test-custom-9" }).click();
+	await wait(async () => !(await j("/api/models")).some((m) => m.provider === "claude-code" && m.id === "claude-test-custom-9"));
 
 	// ---- 3) 单聊：选 Claude Code · Sonnet，发消息
 	await page.goto(`${base}/?agent=${agent.id}`);

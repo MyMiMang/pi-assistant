@@ -4,10 +4,10 @@
  * 检测到可用后服务端就地注册模型渠道（不用重启），模型出现在所有模型选择里。
  * 加新的一家：在 `KINDS` 里加一项文案，服务端接口按渠道名 `/api/models/<kind>` 对应。
  */
-import { CheckCircle2, RefreshCw, Terminal } from "lucide-react";
+import { CheckCircle2, Plus, RefreshCw, Terminal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
-import { Badge, Button, Help } from "./ui";
+import { Badge, Button, Fold, Help, Input } from "./ui";
 
 interface CliInfo {
 	installed: boolean;
@@ -32,7 +32,7 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 		login: "claude auth login",
 		tone: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
 		summary: "用你电脑上已登录的 Claude Code 当模型，工具仍由 Pi 助理执行。",
-		models: "模型：和 Claude Code 里 /model 能选的一样",
+		models: "模型：/model 里的别名 + 内置的更多版本（Opus 4.8、Sonnet 5.5 等）+ 你自定义的",
 		help: (
 			<>
 				会加载你自己的 Claude Code 设置（登录方式、代理、钩子、插件都按你的设置来），但不会读你的 CLAUDE.md。
@@ -169,7 +169,69 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 					你的全局 AGENTS.md（~/.codex/AGENTS.md）会一并发给 Codex。
 				</div>
 			)}
+			{kind === "claude-code" && <ClaudeCustomModels onChanged={onChanged} />}
 			{info?.error && info.installed && info.loggedIn === false && <div className="break-all text-[11px] text-mut2">{info.error}</div>}
+		</div>
+	);
+}
+
+/** Claude Code 的「自定义模型」：填 `claude --model` 能接受的模型 ID，存服务端设置，改了立刻重新注册模型列表 */
+function ClaudeCustomModels({ onChanged }: { onChanged?: () => void }) {
+	const [list, setList] = useState<string[]>([]);
+	const [id, setId] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	const [open, setOpen] = useState(false);
+	const url = "/api/models/claude-code/custom-models";
+	useEffect(() => {
+		api<{ models: string[] }>(url).then((r) => setList(r.models), () => {});
+	}, []);
+	const run = async (path: string, init: RequestInit, done?: () => void) => {
+		setBusy(true);
+		try {
+			setList((await api<{ models: string[] }>(path, init)).models);
+			setErr("");
+			done?.();
+			onChanged?.();
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<div className="border-t border-line pt-2 text-xs" data-testid="claude-custom-models">
+			{/* 专业设置：默认收起（界面标准），标题旁显示已加几个 */}
+			<Fold title="自定义模型" count={list.length} hint="选不到的版本可以加在这里" open={open} onToggle={() => setOpen(!open)} testId="claude-custom-fold">
+				<div className="mt-1.5 space-y-1.5">
+					<div className="text-[11px] text-mut">填 claude --model 能接受的模型 ID（比如 claude-opus-4-8）。填错的 ID 要到发消息时才会报错。</div>
+					<form
+						className="flex gap-1.5"
+						onSubmit={(e) => {
+							e.preventDefault();
+							void run(url, { method: "POST", body: JSON.stringify({ id: id.trim() }) }, () => setId(""));
+						}}
+					>
+						<Input value={id} onChange={(e) => setId(e.target.value)} placeholder="例如 claude-opus-4-8" maxLength={100} data-testid="claude-custom-input" />
+						<Button size="sm" type="submit" disabled={busy || !id.trim()} data-testid="claude-custom-add">
+							<Plus size={13} /> 添加
+						</Button>
+					</form>
+					{err && <div className="text-[11px] text-red-500">{err}</div>}
+					{list.length > 0 && (
+						<ul className="max-h-32 space-y-1 overflow-y-auto" data-testid="claude-custom-list">
+							{list.map((m) => (
+								<li key={m} className="flex items-center gap-1.5 text-xs">
+									<code className="min-w-0 flex-1 truncate rounded bg-hover px-1">{m}</code>
+									<Button size="icon" variant="ghost" aria-label={`删除 ${m}`} disabled={busy} onClick={() => void run(`${url}?id=${encodeURIComponent(m)}`, { method: "DELETE" })}>
+										<X size={13} />
+									</Button>
+								</li>
+							))}
+						</ul>
+					)}
+				</div>
+			</Fold>
 		</div>
 	);
 }

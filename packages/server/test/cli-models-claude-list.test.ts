@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { extractModels, parseClaudeModels } from "../src/cli-agents/claude-models-parse.ts";
+import { CLAUDE_EXTRA_MODELS, CLAUDE_FALLBACK_MODELS, extractModels, mergeClaudeModels, parseClaudeModels, validateClaudeModelId } from "../src/cli-agents/claude-models-parse.ts";
 import { listClaudeModels } from "../src/cli-agents/claude-models.ts";
 import { createClaudeCodeChannel, registerClaudeCodeModels, registerClaudeCodeProvider, CLAUDE_CODE_PROVIDER } from "../src/pi-adapter/cli-models/claude-code.ts";
 import { PiModels } from "../src/pi-adapter/index.ts";
@@ -77,9 +77,53 @@ test("问不到时退回 opus / sonnet / haiku；重新检测后换成真实列�
 	const models = await newModels();
 	const channel = createClaudeCodeChannel(deps);
 	await registerClaudeCodeModels(models, channel);
-	assert.deepEqual(models.listModels(CLAUDE_CODE_PROVIDER).map((m) => m.id), ["opus", "sonnet", "haiku"]);
+	const extra = CLAUDE_EXTRA_MODELS.map((m) => m.id);
+	assert.deepEqual(models.listModels(CLAUDE_CODE_PROVIDER).map((m) => m.id), ["opus", "sonnet", "haiku", ...extra]);
 	mode = "default";
 	await registerClaudeCodeModels(models, channel);
-	assert.deepEqual(models.listModels(CLAUDE_CODE_PROVIDER).map((m) => m.id), ["default", "opus", "haiku"]);
+	assert.deepEqual(models.listModels(CLAUDE_CODE_PROVIDER).map((m) => m.id), ["default", "opus", "haiku", ...extra]);
+	channel.disposeAll();
+});
+
+test("合并：别名在前、清单在后、按 id 去重；问不到时别名 + 清单都在", () => {
+	const eff = ["low", "high"];
+	const aliases = [
+		{ id: "opus", name: "Claude Code · Opus", reasoning: true, efforts: eff, contextWindow: 200_000 },
+		{ id: "claude-opus-4-8", name: "Claude Code · 别名里已有的 4.8", reasoning: true, efforts: eff, contextWindow: 200_000 },
+	];
+	const list = mergeClaudeModels(aliases);
+	assert.deepEqual(list.slice(0, 2).map((m) => m.id), ["opus", "claude-opus-4-8"]);
+	assert.equal(list.length, 1 + CLAUDE_EXTRA_MODELS.length, "已有的 id 不重复");
+	assert.equal(list[1].name, "Claude Code · 别名里已有的 4.8");
+	assert.equal(list.find((m) => m.id === "claude-opus-5-5")!.name, "Claude Code · Opus 5.5");
+	assert.deepEqual(list.find((m) => m.id === "claude-opus-5-5")!.efforts, eff, "沿用同家族别名的档位");
+	assert.deepEqual(list.find((m) => m.id === "claude-sonnet-5-5")!.efforts, ["low", "medium", "high", "xhigh", "max"], "没有同家族别名给全档");
+	assert.deepEqual(list.find((m) => m.id === "claude-haiku-4-5")!.efforts, []);
+	assert.equal(list.find((m) => m.id === "claude-haiku-4-5")!.reasoning, false);
+	assert.ok(list.every((m) => m.contextWindow === 200_000));
+	const fallback = mergeClaudeModels(CLAUDE_FALLBACK_MODELS);
+	assert.deepEqual(fallback.map((m) => m.id), ["opus", "sonnet", "haiku", ...CLAUDE_EXTRA_MODELS.map((m) => m.id)]);
+});
+
+test("自定义 ID：校验规则、并入列表、思考强度按 haiku 判断、与清单重复不重复加", () => {
+	assert.equal(validateClaudeModelId("claude-opus-4-8"), null);
+	assert.equal(validateClaudeModelId("anthropic.claude-x:1/v2[1m]"), null);
+	for (const bad of ["", "   ", "a b", "a\tb", "中文", "a;b", "a".repeat(101), 5, undefined]) assert.ok(validateClaudeModelId(bad), String(bad));
+	assert.equal(validateClaudeModelId("a".repeat(100)), null);
+	const list = mergeClaudeModels([], ["my-model-x", "my-haiku-9", "claude-opus-4-8", "bad id"]);
+	const mine = list.find((m) => m.id === "my-model-x")!;
+	assert.equal(mine.name, "Claude Code · my-model-x");
+	assert.deepEqual(mine.efforts, ["low", "medium", "high", "xhigh", "max"]);
+	assert.deepEqual(list.find((m) => m.id === "my-haiku-9")!.efforts, []);
+	assert.equal(list.filter((m) => m.id === "claude-opus-4-8").length, 1);
+	assert.ok(!list.some((m) => m.id === "bad id"));
+});
+
+test("注册进 Pi：自定义 ID 出现在模型列表里", async () => {
+	mode = "default";
+	const models = await newModels();
+	const channel = createClaudeCodeChannel({ ...deps, customModels: () => ["my-model-x"] });
+	await registerClaudeCodeModels(models, channel);
+	assert.ok(models.listModels(CLAUDE_CODE_PROVIDER).some((m) => m.id === "my-model-x" && m.name === "Claude Code · my-model-x"));
 	channel.disposeAll();
 });

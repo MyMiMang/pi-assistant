@@ -40,7 +40,7 @@ test("claude 问模型列表卡住时：initModels 很快返回；有默认模�
 	await cliProviderReady("claude-code", 300); // 最多等指定时间
 	assert.equal(m.models.listModels("claude-code").length, 0, "300 毫秒内还没注册上，不会一直等");
 	await cliProviderReady("claude-code"); // 等到注册完（卡住的 claude 超时后退回三个别名）
-	assert.deepEqual(m.models.listModels("claude-code").map((x) => x.id), ["opus", "sonnet", "haiku"]);
+	assert.deepEqual(m.models.listModels("claude-code").map((x) => x.id).slice(0, 3), ["opus", "sonnet", "haiku"]); // 之后是内置「更多模型」清单
 	await m.cliChannelsReady();
 	assert.deepEqual(changed, ["claude-code"], "注册上的那一刻发了一次事件");
 });

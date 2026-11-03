@@ -11,6 +11,7 @@ import { registerAntigravityModels, registerAntigravityProvider } from "./pi-ada
 import { registerClaudeCodeModels, registerClaudeCodeProvider } from "./pi-adapter/cli-models/claude-code.ts";
 import { registerCodexModels, registerCodexProvider } from "./pi-adapter/cli-models/codex.ts";
 import { registerOpencodeModels, registerOpencodeProvider } from "./pi-adapter/cli-models/opencode.ts";
+import { claudeCustomModels } from "./claude-custom-models.ts";
 import { config } from "./config.ts";
 import type { PiModels } from "./pi-adapter/index.ts";
 
@@ -21,7 +22,7 @@ const claudeCode = createCliChannelService({
 	find: () => findClaudeCommand(),
 	notFound: "没有找到 claude 命令",
 	detect: (command) => detectClaude({ command }),
-	register: (models, command) => registerClaudeCodeProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command }),
+	register: (models, command) => registerClaudeCodeProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, customModels: claudeCustomModels }),
 	refresh: async (models, channel) => void (await registerClaudeCodeModels(models, channel)),
 	requireLogin: false,
 });

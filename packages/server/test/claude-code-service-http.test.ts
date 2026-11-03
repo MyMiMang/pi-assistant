@@ -67,7 +67,10 @@ test("还没装 → 装好后重新检测就地注册；未登录如实返回", 
 	assert.equal(info.authMethod, "claude.ai");
 	assert.match(String(info.version), /^\d+\.\d+\.\d+/);
 	assert.equal(info.registered, true);
-	assert.deepEqual(await claudeModels(api), ["default", "haiku", "opus"]); // 假 claude 默认回包的三项
+	{
+		const ids = await claudeModels(api);
+		assert.ok(["default", "haiku", "opus", "claude-opus-4-8"].every((id) => ids.includes(id))); // 假 claude 默认回包的三项 + 内置清单
+	}
 });
 
 test("启动时 claude 已装好就直接注册；未登录时 loggedIn=false 但仍可见", async () => {
@@ -75,7 +78,10 @@ test("启动时 claude 已装好就直接注册；未登录时 loggedIn=false �
 	const info = await api("/api/models/claude-code");
 	assert.equal(info.installed, true);
 	assert.equal(info.registered, true);
-	assert.deepEqual(await claudeModels(api), ["default", "haiku", "opus"]); // 假 claude 默认回包的三项
+	{
+		const ids = await claudeModels(api);
+		assert.ok(["default", "haiku", "opus", "claude-opus-4-8"].every((id) => ids.includes(id))); // 假 claude 默认回包的三项 + 内置清单
+	}
 });
 
 test("重新检测会重新问模型列表：先问不到（退回三个别名），之后问得到就换成真实列表", async () => {
@@ -87,7 +93,8 @@ test("重新检测会重新问模型列表：先问不到（退回三个别名�
 	chmodSync(cmd, 0o755);
 	const { api } = await start({ PIA_CLAUDE_COMMAND: cmd });
 	await api("/api/models/claude-code"); // 启动注册在后台，这个检测会并入同一次注册，等它完成
-	assert.deepEqual(await claudeModels(api), ["haiku", "opus", "sonnet"]);
+	const ids0 = await claudeModels(api);
+	assert.ok(["haiku", "opus", "sonnet", "claude-opus-4-8"].every((id) => ids0.includes(id)));
 	writeFileSync(modeFile, "dup");
 	await api("/api/models/claude-code/recheck", { method: "POST" });
 	const ids = await claudeModels(api);
@@ -106,4 +113,17 @@ test("claude 问模型列表卡住时：服务照常监听，/api/system 和 /ap
 	assert.ok(Date.now() - t0 < 4000, `两个接口用了 ${Date.now() - t0}ms`);
 	assert.ok(sys.defaultModel, "Mock 默认模型在");
 	assert.equal(list.filter((m) => m.provider === "claude-code").length, 0, "还在后台注册");
+});
+
+test("自定义模型 ID：校验、添加后立刻进模型列表、删除后消失", async () => {
+	const { api } = await start({ PIA_CLAUDE_COMMAND: FAKE });
+	await api("/api/models/claude-code"); // 等启动注册完
+	const post = (id: string) => api("/api/models/claude-code/custom-models", { method: "POST", body: JSON.stringify({ id }) });
+	assert.match(String((await post("a b")).error), /空格/);
+	assert.match(String((await post("")).error), /不能为空/);
+	assert.deepEqual((await post("my-model/x:1")).models, ["my-model/x:1"]);
+	assert.ok((await claudeModels(api)).includes("my-model/x:1"));
+	assert.deepEqual((await api("/api/models/claude-code/custom-models")).models, ["my-model/x:1"]);
+	assert.deepEqual((await api(`/api/models/claude-code/custom-models?id=${encodeURIComponent("my-model/x:1")}`, { method: "DELETE" })).models, []);
+	assert.ok(!(await claudeModels(api)).includes("my-model/x:1"));
 });
