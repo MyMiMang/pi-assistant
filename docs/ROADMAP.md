@@ -12,7 +12,7 @@
 - [已发布(beta.37)] 项目规范化：AGENTS.md 唯一入口、MODULES.md、决策记录、`npm run check` 护栏（[0011](decisions/0011-project-standards.md)）
 
 ## 计划
-- [已合 main] 电脑操控提速：只留最近几张截图；cua 升到 0.38.0，照官方用法重写操作说明，读窗口默认不截图
+- [已发布(beta.47)] 电脑操控提速：只留最近几张截图；cua 升到 0.38.0，照官方用法重写操作说明，读窗口默认不截图
 - [待做] 助理电脑镜像里的 cua 升到 0.38.0（要重建镜像）
 - [待决定] 电脑操控提速：Jev 这类快速模型当执行者（参考 cua jev-use / CUA-JEV）
 - [已发布(beta.46)] 发出去、助理还没看到的消息可以撤回（[设计](design/recall-pending-message.md)）
