@@ -43,32 +43,37 @@ export const HIDDEN_TOOLS = [
 	// 另外在 MCP 服务 env 里设 CUA_DRIVER_DISABLE_RUN_SCRIPT=1，让 driver 自己也不列入 tools/list（双保险）。
 	"run_script",
 	"run_actions",
+	// 0.38 文档里的 history_status / history_query：读 Cua 过去的活动元数据，我们有自己的操作记录（computer_action_history），不再开第二份
+	"history_status",
+	"history_query",
 ];
+/** “限定”档位的 cua 守护进程按能力清单只放行 ALLOWED_TOOLS（host-control.ts），清单里没有的 get_guide（0.37 起的官方使用说明，只读）在这个档位调了也会被拒，不给模型 */
+export const BOUNDED_HIDDEN = ["get_guide"];
 /** cua 的 CDP 浏览器工具（DESIGN §14.8）。助理电脑上浏览器走 ext-browser（Playwright），这些隐藏，避免两套同名能力 */
-export const CUA_BROWSER_TOOLS = ["get_browser_state", "browser_prepare", "browser_navigate", "browser_click", "browser_type", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog"];
-/** 本机（hostpc）浏览器操作指引：注入系统提示。fileAccess = 完全权限（文件路径可用用户主机上的绝对路径） */
+export const CUA_BROWSER_TOOLS = ["get_browser_state", "browser_prepare", "browser_navigate", "browser_click", "browser_type", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog", "browser_select"];
+/** 本机（hostpc）浏览器操作指引（按 cua 0.38 官方 BROWSER.md）：注入系统提示。fileAccess = 完全权限（文件路径可用用户主机上的绝对路径） */
 export const hostBrowserPrompt = (fileAccess: boolean) => `<user-computer-browser>
-在用户自己的电脑上操作网页（Chrome / Edge）时，按这个顺序用 hostpc 的 CDP 浏览器工具，不要用截图 + 快捷键 + type_text：
-1. list_windows 找到浏览器的 pid 和 window_id。
-2. get_browser_state {pid, window_id, session} 绑定窗口。
-3. 只有返回 browser_requires_setup 或 browser_consent_required 时，才调用 browser_prepare {pid, window_id, session, strategy:{kind:"existing_profile"}}（保留登录状态、不重启浏览器；macOS 上 Chrome 可能自己弹“允许远程调试”并来到前台）。之后重新 list_windows + get_browser_state 绑定。
-4. 绑定结果必须是 binding_quality=exact 且 mutation_allowed=true 才能操作；否则只读，不要换个窗口硬来。
-5. get_browser_state {target_id, tab_id, session, snapshot_format:"semantic_v2"} 读页面，拿 refs（p<快照>:<序号>）。
-6. browser_navigate 打开网址；browser_click {ref}（macOS / Linux 返回 browser_input_trust_unavailable 时改用 input_route:"dom_event"）；browser_type {ref, text, replace}；browser_pointer 滚动 / 悬停。
-7. 每次操作后重新 get_browser_state 读状态，绝不复用旧 ref（导航、新快照都会让旧 ref 失效）。要看结果画面时加 include_screenshot:true，用眼睛核对结果后再交付给用户。
-8. 整个任务用同一个 session 标签（如 "web"）。不要用 cmd+t / cmd+l / ctrl+l 等地址栏快捷键当浏览器接口；只有标签栏、权限弹窗、原生文件选择框，或 CDP 工具不可用（Safari / Firefox、用户拒绝）时，才退回 get_window_state + click / hotkey。
-9. 上传用 browser_set_input_files、下载用 browser_download，路径${fileAccess ? "可以是用户电脑上的绝对路径（你在这个助理上是完全权限，工作区只是默认目录）" : "只能在你的工作区里"}。
+在用户自己的电脑上操作网页（Chrome / Edge）：用 hostpc 的 CDP 浏览器工具，按 get_browser_state 返回的 refs 操作；不要用截图 + 快捷键 + type_text 当浏览器接口。
+1. list_windows 找到浏览器的 pid 和 window_id；get_browser_state {pid, window_id, session} 绑定窗口。
+2. 只有返回 browser_requires_setup 或 browser_consent_required 时，才调用 browser_prepare {pid, window_id, session, strategy:{kind:"existing_profile"}}（保留登录状态、不重启浏览器；macOS 上 Chrome 可能自己弹“允许远程调试”）；之后重新 list_windows + get_browser_state 绑定。任务不需要用户的登录状态时，改用独立资料：browser_prepare {session, allow_launch:true, profile:{mode:"isolated_new"}}。
+3. 绑定结果必须是 binding_quality=exact 且 mutation_allowed=true 才能操作；否则只读，不要换个窗口硬来。
+4. get_browser_state {target_id, tab_id, session, snapshot_format:"semantic_v2"} 读页面拿 refs（p<快照>:<序号>），默认不带截图。操作：browser_navigate 打开网址；browser_click {ref}（macOS / Linux 返回 browser_input_trust_unavailable 时加 input_route:"dom_event"）；browser_type {ref, text, replace}；browser_select 选原生下拉；browser_pointer 滚动 / 悬停。导航或新快照后旧 ref 失效，用新读到的。
+5. 想好的几步连着做，只在检查点（一段操作完成、交付前）重新 get_browser_state 核对，不用每步都读；要看画面效果才加 include_screenshot:true。整个任务用同一个 session 标签。
+6. 上传用 browser_set_input_files {ref, files}：ref 要是 actions 里有 upload 的元素，一步完成，不要去点系统文件选择窗口；下载用 browser_download，路径${fileAccess ? "可以是用户电脑上的绝对路径（你在这个助理上是完全权限，工作区只是默认目录）" : "只能在你的工作区里"}。
+7. browser_prepare 被拒或返回 background_unavailable：先读返回的 hint / next_call。Chrome 在用户当前桌面空间且用户正在用别的应用时，不要硬连——让 Chrome 在另一个桌面空间，或先告诉用户、得到同意后才加 delivery_mode:"foreground"（浏览器会来到前台）；不需要登录状态就用上面的独立资料；实在不连，用 get_window_state（query 定向读）+ set_value / click 按结构操作。不要自己去点看起来相似的弹窗，也不要退回“全屏截图 + cmd+shift+g / cmd+l 快捷键”（macOS 上它们会抢前台，而且一步一截图很慢）。
+8. 只有标签栏、权限弹窗、原生文件选择框，或 CDP 不可用（Safari / Firefox、用户拒绝）时，才走 get_window_state + 原生动作。
 </user-computer-browser>`;
-/** 本机桌面应用的操作方式（按 cua 0.35 官方 SKILL / WORKFLOW），注入系统提示 */
+/** 本机桌面应用的操作方式（按 cua 0.38 官方 SKILL / WORKFLOW），注入系统提示 */
 export const hostDesktopPrompt = (p: Approvals) => `<user-computer-desktop>
-你可以像人一样操作用户的电脑${p === "all" ? "（“限定”档位：只能操作用户勾选的应用，每个动作都要用户批准）" : p === "none" ? "（用户给了完全权限：所有应用都能操作，应用层不再弹审批——包括关机、强制退出、系统设置这类受保护操作也会直接执行；只有凭据文件、用户暂停或调低档位、系统权限弹窗和网站验证码仍拦得住）" : "（“信任”档位：所有应用都能操作；发送、付款、删除、提交类动作会先问用户）"}。按官方流程：
+你可以像人一样操作用户的电脑${p === "all" ? "（“限定”档位：只能操作用户勾选的应用，每个动作都要用户批准）" : p === "none" ? "（用户给了完全权限：所有应用都能操作，应用层不再弹审批——包括关机、强制退出、系统设置这类受保护操作也会直接执行；只有凭据文件、用户暂停或调低档位、系统权限弹窗和网站验证码仍拦得住）" : "（“信任”档位：所有应用都能操作；发送、付款、删除、提交类动作会先问用户）"}。官方做法是先读结构、少截图、成批做、只在检查点核对：
 1. 找目标：list_apps / list_windows 找到应用的 pid 和 window_id（不要用记住的旧 pid，也不要随手拿第一个窗口）；没开就 launch_app，之后有限次地 list_windows 等窗口出现，不要反复启动。
-2. 先看再动：get_window_state {pid, window_id, tree_format:"elements"}，用 structuredContent.elements 里的 element_token（每次快照都会换新，不要自己编、不要复用旧的）。driver 0.35 起默认只回精简的 tree_markdown（没有 elements），要 token 就传 tree_format:"elements"（或 full_output:true）；重复读同一个窗口用 since:"latest" 只取变化。
-3. 动作：click / double_click / right_click / type_text / set_value / press_key / hotkey / scroll / drag，带上精确的 {pid, window_id} 和最新的 element_token；控件够不到时才用同一次截图上的 x,y 像素坐标。菜单用 invoke_menu，调整窗口大小位置用 set_window_frame。连续几步已经想好的动作（填表 → 点按钮）可以用 run_steps {steps:[{tool,args}], observe:{}} 一次做完并顺带观察（最多 64 步，遇错即停、不自动回滚）；批量里每一步都会按你的权限档位单独检查。脚本工具 run_script 已关闭，不要用它。
+2. 先读结构，不先截图：get_window_state {pid, window_id, query:"要找的控件字样"} 只回相关行（约 2K 字符，整窗约 42K）；整窗太大时加 max_elements / max_depth，找不到再放宽。行 [N] 的 element_token 是 <snapshot_id>:N（每次快照都换新，不要自己编、不要复用旧的）；要结构化的 elements 数组传 tree_format:"elements"。再读同一窗口传 since:"latest" 只取变化。这里默认不带截图；只有树是空的、和画面对不上、要用 x,y 坐标、或要亲眼看效果（画布 / 图片类）时才传 include_screenshot:true。
+3. 动作用 run_steps {steps:[{tool,args}], observe:{}}，哪怕只有一步：做完顺带返回变化（默认只取变化、不截图），不用再单独读一次。最多 64 步，遇错即停、不自动回滚，批量里每一步都会按你的权限档位单独检查。工具：click / double_click / right_click / type_text / set_value / press_key / hotkey / scroll / drag，带精确的 {pid, window_id} 和最新的 element_token；控件够不到才用同一次截图上的 x,y。菜单用 invoke_menu，窗口大小位置用 set_window_frame。脚本 run_script 已关闭，不要用。
 4. 默认后台送达（不抢用户的前台、不动用户的鼠标）。只有返回 background_unavailable 或动作明显没生效时，才对这一个动作用 delivery_mode:"foreground"（会把窗口提到前台，用户能看见）。
-${p === "all" ? "" : '5. 窗口截图拿不到、或必须操作整个桌面时，用 get_desktop_state 看全屏，再用 target:{kind:"desktop",display_id:"primary"} 操作，操作后再 get_desktop_state 核对。\n'}6. 每个动作后都要重新观察并核对结果（verify_state 或新的 get_window_state / 截图）。"成功"返回不等于任务完成；effect 为 unverifiable / suspected_noop 时先看清楚再决定，不要盲目重复。
+${p === "all" ? "" : '5. 窗口读不到、或必须操作整个桌面时，才用 get_desktop_state 看全屏（最后手段，又大又慢），再用 target:{kind:"desktop",display_id:"primary"} 操作。\n'}6. 只在检查点核对（一段有意义的状态变化之后、交付之前），不要每个动作后都核对：一次 verify_state 或一次带 query 的 get_window_state 通常够了。"成功"返回不等于任务完成；effect 为 unverifiable / suspected_noop 或动作被拒时，先读返回里的 hint 和 next_call 再决定，不要盲目重复。
 7. 系统权限弹窗（辅助功能、屏幕录制、钥匙串等）由用户自己点，不要替用户点，也不要改安全设置。
-8. 整个任务用同一个 session 标签；结束后 end_session。网页内容优先用 CDP 浏览器工具（见 user-computer-browser）。
+8. 上传文件、下载文件优先用浏览器的 browser_set_input_files / browser_download（见 user-computer-browser），不要去操作系统文件选择窗口；遇到非浏览器的原生文件框才用 get_window_state + 原生动作，别用 cmd+shift+g（会抢前台，后台不要用）。
+9. 整个任务用同一个 session 标签；结束后 end_session。网页内容优先用 CDP 浏览器工具。${p === "all" ? "" : "不确定某个工具怎么用时，先调 get_guide 看官方使用说明。"}
 </user-computer-desktop>`;
 
 /** “限定”档位：没有 CDP 浏览器工具时的说明 */
@@ -77,13 +82,15 @@ export const HOST_BROWSER_BOUNDED_NOTE = `<user-computer-browser>
 </user-computer-browser>`;
 const READ_ONLY = /^(get_|list_|zoom$|check_permissions$|health_report$|verify_state$|screenshot$)/;
 /** 会改变电脑状态的 Cua 工具（“只看”档位隐藏） */
-export const INPUT_TOOLS = ["click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag", "move_cursor", "invoke_menu", "launch_app", "kill_app", "bring_to_front", "browser_prepare", "browser_click", "browser_type", "browser_navigate", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog", "clipboard_write", "set_window_frame", "start_recording", "stop_recording", "set_agent_cursor_enabled", "set_agent_cursor_motion", "set_agent_cursor_theme", "run_steps"];
+export const INPUT_TOOLS = ["click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag", "move_cursor", "invoke_menu", "launch_app", "kill_app", "bring_to_front", "browser_prepare", "browser_click", "browser_type", "browser_navigate", "browser_pointer", "browser_download", "browser_set_input_files", "browser_dialog", "browser_select", "clipboard_write", "set_window_frame", "start_recording", "stop_recording", "set_agent_cursor_enabled", "set_agent_cursor_motion", "set_agent_cursor_theme", "run_steps"];
 /** 只读判定：observation 工具，以及 0.35 批量动作里“读窗口 / 纯检查”不算改状态 */
 const isObserveTool = (t: string) => READ_ONLY.test(t) || t === "start_session" || t === "end_session" || t === STEP_CHECK;
 /** 批量里“只有检查、没有动作”的步骤（只读） */
 export const STEP_CHECK = "__check__";
 /** 认不出的批量步骤：不能证明安全，整批拦下 */
 export const STEP_UNKNOWN = "__unknown__";
+/** 批量里可以直接当 tool 写的键名（官方写法）：回车、换行、方向键、功能键等 */
+const STEP_KEY_NAMES = /^(return|enter|tab|escape|esc|space|backspace|delete|up|down|left|right|home|end|pageup|pagedown|f([1-9]|1[0-2]))$/i;
 /** 批量步骤里允许当作“动作”的工具名（含批量自身，用于识别简写 `{click:{…}}`） */
 const BATCH_TOOLS = new Set([...INPUT_TOOLS, "run_steps", "run_script", "run_actions"]);
 /** 纯检查步骤允许的字段（0.35 run_steps 的 check） */
@@ -103,6 +110,15 @@ export function expandComputerSteps(tool: string, input: Record<string, unknown>
 		const s = (raw ?? {}) as Record<string, unknown>;
 		let name = String(s.tool ?? "");
 		let args = (s.args ?? {}) as Record<string, unknown>;
+		// 官方允许的别名：press / type、triple_click（count:3 的 click）、直接拿键名当 tool（等于 press_key）。不归一会让回车 / 换行绕过敏感动作判断。
+		// 只认已知键名：别的认不出的名字不能被当成普通按键放过（下面按认不出的步骤整批拦下）
+		if (name === "press") name = "press_key";
+		else if (name === "type") name = "type_text";
+		else if (name === "triple_click") name = "click";
+		else if (STEP_KEY_NAMES.test(name)) {
+			args = { ...args, key: name };
+			name = "press_key";
+		}
 		if (!name) {
 			const keys = Object.keys(s);
 			const toolKeys = keys.filter((k) => BATCH_TOOLS.has(k));
@@ -116,6 +132,11 @@ export function expandComputerSteps(tool: string, input: Record<string, unknown>
 				out.push({ tool: STEP_UNKNOWN, input: s });
 				continue;
 			}
+		}
+		// 认不出的工具名（不在已知动作 / 只读工具里）：不能确认安全，标成 STEP_UNKNOWN 整批拦下
+		if (!BATCH_TOOLS.has(name) && !isObserveTool(name) && !HIDDEN_TOOLS.includes(name)) {
+			out.push({ tool: STEP_UNKNOWN, input: s });
+			continue;
 		}
 		out.push(...expandComputerSteps(name, args));
 	}
@@ -252,7 +273,7 @@ export const SHARED_COMPUTER_PROMPT = `<assistant-computer>
 - 主屏幕有别的助理在操作时，你的桌面操作会自动换到你自己的屏幕（computer_screen own 也可以主动开）；要长时间操作桌面应用时先开自己的屏幕。用完 computer_screen main 关掉。
 - 需要用另一个账号登录、或不想带上共用的登录状态时，用 browser_context isolated 开一个单独的浏览器环境，并告诉用户。
 - 只有必须长期和其他助理分开账号 / 数据时才用 computer_screen separate_on 开单独的电脑，并告诉用户原因。
-- cua-driver 已是 0.35：get_window_state 默认只回精简的 tree_markdown（没有 elements），要拿 element_token 就传 tree_format:"elements"（或 full_output:true）；重复读同一个窗口用 since:"latest" 只取变化。想一次做多步用 run_steps（最多 64 步，遇错即停、不自动回滚），批量里每一步都会按你的权限档位单独检查；脚本 run_script 已关闭，不要用它。
+- 桌面应用先读结构、少截图：get_window_state 用 query 定向读（约 2K 字符，整窗约 42K），再读同一窗口用 since:"latest" 只取变化；这里默认不带截图，只有树是空的、和画面对不上、要用 x,y 坐标、或要看画面效果时才传 include_screenshot:true。多步用 run_steps {steps:[{tool,args}], observe:{}}（最多 64 步，遇错即停、不自动回滚，批量里每一步都会按你的权限档位单独检查），只在检查点核对，不用每个动作后都核对；脚本 run_script 已关闭，不要用它。要 element_token 时传 tree_format:"elements"。
 </assistant-computer>`;
 
 export const isComputerTool = (name: string) => name.startsWith(MCP_PREFIX) || name.startsWith(HOST_MCP_PREFIX) || name === "computer_screenshot" || name === "request_handoff" || name === "computer_screen";
@@ -286,7 +307,7 @@ export function computerExtension(host: ComputerHost) {
 			env: { CUA_DRIVER_TELEMETRY: "0", CUA_DRIVER_DISABLE_RUN_SCRIPT: "1", ...(host.mcp.env ?? {}) },
 			exposure: "direct",
 			// “只看”档位：输入类工具直接不给模型（调用时也会被拦下）
-			toolExposure: Object.fromEntries([...HIDDEN_TOOLS, ...(host_ && browserOn ? [] : CUA_BROWSER_TOOLS), ...(policy() === "observe" ? INPUT_TOOLS : [])].map((t) => [t, "hidden" as const])),
+			toolExposure: Object.fromEntries([...HIDDEN_TOOLS, ...(host_ && browserOn ? [] : CUA_BROWSER_TOOLS), ...(policy() === "observe" ? INPUT_TOOLS : []), ...(host_ && policy() === "all" ? BOUNDED_HIDDEN : [])].map((t) => [t, "hidden" as const])),
 			description: host_
 				? policy() === "observe"
 					? "用户本人的电脑（用户说“我的电脑 / 我电脑上的浏览器”时用这组工具；只看：可以截图、读取窗口内容，不能点击或输入）"
@@ -395,6 +416,8 @@ export function computerExtension(host: ComputerHost) {
 				return { block: true, reason: "用户已暂停“操作电脑”。停止所有电脑操作，告诉用户你停在了哪一步。" };
 			}
 			if (!own) return;
+			// 读窗口默认不带截图（官方文档：先读结构，截图只在树空 / 对不上 / 要看画面时）；模型显式传了就照它的。run_steps 的 observe 官方默认就不截图，不动
+			if (tool === "get_window_state" && event.input && typeof event.input === "object" && (event.input as Record<string, unknown>).include_screenshot === undefined) (event.input as Record<string, unknown>).include_screenshot = false;
 			let approval: ActionLogEntry["approval"] = "auto";
 			// 0.35 批量动作：展开成每一步，逐层过同一套权限检查（否则嵌套的动作会绕过 guard / 敏感动作 / 文件限制）
 			const steps = expandComputerSteps(tool, input);

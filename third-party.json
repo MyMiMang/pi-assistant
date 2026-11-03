@@ -58,29 +58,29 @@
       "kind": "github-release",
       "repo": "trycua/cua",
       "tagPrefix": "cua-driver-rs-v",
-      "version": "0.35.4",
+      "version": "0.38.0",
       "license": "MIT",
       "assets": {
         "linux-x64": {
           "file": "cua-driver-rs-{v}-linux-x86_64-binary.tar.gz",
-          "sha256": "0c79ce80d9a9522c3afc93c481d72f7370678d7fb610189358457a17686914fe"
+          "sha256": "31ab9709dd91ce73677e49b9f3e75c6f0d3e4d9625c286c9e58262bfbea698dd"
         },
         "linux-arm64": {
           "file": "cua-driver-rs-{v}-linux-arm64-binary.tar.gz",
-          "sha256": "6e405e4b539446e9aae57527336978dc1550fdf3f23f9a507e80deecfa94929f"
+          "sha256": "80c9ae66bc7322052dd426c6133c96086b33894bf06c972bca8215384400b33d"
         },
         "darwin": {
           "file": "cua-driver-rs-{v}-darwin-universal.tar.gz",
-          "sha256": "97d5ea2fd446331947c717c433d4cf5aae063f4824e1ba24303c4696184ec52e",
+          "sha256": "121cf20cafd2cfa69dd720e8967350c6406b22e558be6889de7a1ae3343b6d4b",
           "$comment": "含已签名的 CuaDriver.app（macOS 的辅助功能/屏幕录制授权归属于它）"
         },
         "win-x64": {
           "file": "cua-driver-rs-{v}-windows-x86_64-binary.zip",
-          "sha256": "8960e8144f9dedaad21680a908f2a1f53d874a14470629e26303cbd1a26f5499"
+          "sha256": "5edaa74d0afa1b55a9668dbc4f32736507bd2bd4d75b18ca1dc8881bb12402b5"
         },
         "win-arm64": {
           "file": "cua-driver-rs-{v}-windows-arm64-binary.zip",
-          "sha256": "f6fd988ad404d6dc0dc61e7e962c72cc85d84dca066347fc4a92d3edeeb86e69"
+          "sha256": "d25c8ebfffb34e4c095ea170baf47b87c35dc0d1116f42e46b39df2bcbff8700"
         }
       },
       "checksums": "SHA256SUMS",
@@ -92,7 +92,7 @@
         "cua-spaces",
         "cua-agent[omni]"
       ],
-      "$comment": "助理电脑镜像里内置 linux-x64；“操作这台电脑”在用户开启时下载到 数据目录/bin 并按这里固定的 SHA256 校验（同时与官方 SHA256SUMS 对照）。升级时由每周自动升级工作流更新版本与哈希。"
+      "$comment": "助理电脑镜像里内置 linux-x64；“操作这台电脑”在用户开启时下载到 数据目录/bin 并按这里固定的 SHA256 校验（同时与官方 SHA256SUMS 对照）。升级靠开发时手动：改 version 与各 sha256（取官方 SHA256SUMS 并与实际下载文件核对），再跑测试；不做自动升级。"
     },
     {
       "name": "cloudflared",

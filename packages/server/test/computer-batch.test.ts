@@ -110,3 +110,54 @@ test("批量动作里的危险点击 / 敏感动作同样按档位处理；只�
 	assert.equal(await d.call("run_steps", { steps: [{ tool: "hotkey", args: { keys: ["cmd", "shift", "q"] } }] }), undefined);
 	assert.equal(d.asks.length, 0);
 });
+
+test("CUA 0.38：get_window_state 默认不带截图（显式传了照传），run_steps 的 observe 不动，get_desktop_state 不动", async () => {
+	const { call } = harness({ policy: () => "none" });
+	const d: Record<string, unknown> = { pid: 1, window_id: 2 };
+	await call("get_window_state", d);
+	assert.equal(d.include_screenshot, false);
+	const t: Record<string, unknown> = { pid: 1, window_id: 2, include_screenshot: true };
+	await call("get_window_state", t);
+	assert.equal(t.include_screenshot, true, "模型显式要截图就给它");
+	const r: Record<string, unknown> = { steps: [{ tool: "click", args: { x: 1 } }], observe: {} };
+	await call("run_steps", r);
+	assert.deepEqual(r.observe, {}, "官方 observe 默认就不截图，不加字段");
+	const g: Record<string, unknown> = {};
+	await call("get_desktop_state", g);
+	assert.equal(g.include_screenshot, undefined);
+});
+
+test("CUA 0.38：browser_select 属于浏览器工具（限定 / 信任按档位拦或审批）、get_guide 只读放行、history_* 隐藏、限定档位不给 get_guide", async () => {
+	assert.ok(CUA_BROWSER_TOOLS.includes("browser_select"));
+	assert.ok(HIDDEN_TOOLS.includes("history_status") && HIDDEN_TOOLS.includes("history_query"));
+	const a = harness({ policy: () => "sensitive", browserTools: true, answer: () => ({ approved: false }) });
+	assert.equal(await a.call("get_guide", { topic: "browser" }), undefined, "get_guide 只读，不弹审批");
+	assert.equal(a.asks.length, 0);
+	assert.equal(a.cfg.toolExposure.get_guide, undefined);
+	assert.equal(a.cfg.toolExposure.browser_select, undefined);
+	const b = harness({ policy: () => "sensitive", browserTools: false });
+	assert.equal((await b.call("browser_select", { ref: "p1:2", value: "x" }))?.block, true, "没开浏览器工具时拦");
+	const c = harness({ policy: () => "observe" });
+	assert.equal(c.cfg.toolExposure.browser_select, "hidden", "只看档位不给输入类的 browser_select");
+	const d = harness({ policy: () => "all", browserTools: false });
+	assert.equal(d.cfg.toolExposure.get_guide, "hidden", "限定档位清单里没有 get_guide");
+});
+
+test("批量里的官方别名（press / type / triple_click / 键名当 tool）也归一后过敏感动作判断", async () => {
+	assert.deepEqual(expandComputerSteps("run_steps", { steps: [{ tool: "press", args: { key: "return" } }, { tool: "type", args: { text: "a" } }, { tool: "triple_click", args: { x: 1 } }, { tool: "return", args: {} }] }), [
+		{ tool: "press_key", input: { key: "return" } },
+		{ tool: "type_text", input: { text: "a" } },
+		{ tool: "click", input: { x: 1 } },
+		{ tool: "press_key", input: { key: "return" } },
+	]);
+	// 认不出的名字不能被当成普通按键，也不能放行：标成认不出的步骤
+	assert.equal(expandComputerSteps("run_steps", { steps: [{ tool: "kill_everything", args: {} }] })[0].tool, STEP_UNKNOWN);
+	{
+		const h = harness({ policy: () => "sensitive", answer: () => ({ approved: false }) });
+		const r = await h.call("run_steps", { steps: [{ tool: "kill_everything", args: {} }] });
+		assert.ok(r?.block || h.asks.length > 0, "认不出的工具名不能直接放行");
+	}
+	const { call, asks } = harness({ policy: () => "sensitive", answer: () => ({ approved: false }) });
+	assert.equal((await call("run_steps", { steps: [{ tool: "type", args: { text: "hi\n" } }] }))?.block, true, "type 带换行 = 回车发送，要批准");
+	assert.equal(asks.length, 1);
+});
