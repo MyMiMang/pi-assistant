@@ -18,6 +18,8 @@ import { isAbsolute, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { pruneOldScreens } from "./screen-window.ts";
+import { structuredNote } from "./structured.ts";
+export { structuredNote, unwrapStructured, STRUCTURED_MAX_CHARS } from "./structured.ts";
 export { pruneOldScreens, PRUNED_NOTE, KEEP_SCREENS, PRUNE_BATCH } from "./screen-window.ts";
 import { guardComputer, type GuardContext, type GuardHit } from "@pi-assistant/shared";
 
@@ -494,7 +496,7 @@ export function computerExtension(host: ComputerHost) {
 			log({ callId, tool, input, summary: fullSummary, phase: "start", approval });
 		});
 		pi.on("tool_result", async (event) => {
-			const e = event as { toolCallId: string; toolName: string; content: { type: string; text?: string }[]; isError: boolean };
+			const e = event as { toolCallId: string; toolName: string; content: { type: string; text?: string }[]; isError: boolean; structuredContent?: unknown };
 			if (!e.toolName.startsWith(prefix)) return;
 			const text = (e.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
 			const tool = e.toolName.slice(prefix.length);
@@ -505,6 +507,9 @@ export function computerExtension(host: ComputerHost) {
 			const p = pending.get(e.toolCallId);
 			pending.delete(e.toolCallId);
 			if (p) log({ callId: e.toolCallId, tool: p.tool, input: p.input, summary: p.summary, phase: e.isError ? "error" : "done", detail: text.slice(0, 500), approval: p.approval });
+			// cua 的 tab_id / refs / elements / next_call 在 structuredContent 里，Pi 不发给模型：压成一个 text 块追加（截图块不动）
+			const note = structuredNote(e.structuredContent, text);
+			if (note) return { content: [...(e.content ?? []), { type: "text" as const, text: note }] } as never;
 		});
 	};
 }

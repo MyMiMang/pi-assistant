@@ -57,6 +57,19 @@ const RISKY_BASH: [RegExp, string, "medium" | "high"][] = [
 ];
 const SECRET_PATHS = [/\.ssh\b/, /\.aws\b/, /\.gnupg\b/, /\.pi\/agent/, /auth\.json$/, /Cookies$/, /Login Data$/, /keychain/i];
 
+/**
+ * 直接调 cua：运行 driver 的子命令（mcp / call / serve / daemon，含 ['cua-driver','mcp'] 这类脚本写法）、CuaDriver.app、cua 套接字（数据目录 host-control 下的 .sock）。
+ * 只提到 cua-driver 这个词（搜索、写笔记、开发相关代码）不算。执行命令的工具和写文件的工具都查，写脚本再运行也拦在写入这一步。
+ */
+const CUA_DIRECT = /cua-?driver[^\n]{0,40}?\b(?:mcp|call|serve|daemon)\b|CuaDriver\.app\b|host-control[\\/][^\s"']*\.sock|\bcua-[\w.-]*\.sock/i;
+export const CUA_DIRECT_REASON = "操作电脑只能用电脑工具（mcp__hostpc__* / mcp__computer__*），不能用命令或脚本直接调 cua";
+export function usesCuaDirectly(toolName: string, input: Record<string, unknown>): boolean {
+	if (toolName.startsWith("mcp__")) return false;
+	if (toolName === "write") return CUA_DIRECT.test(String(input.content ?? ""));
+	if (toolName === "edit") return CUA_DIRECT.test(JSON.stringify([input.newText, input.new_string, input.newString, input.edits, input.content]));
+	return typeof input.command === "string" && CUA_DIRECT.test(input.command);
+}
+
 function outside(workspace: string, p: string): boolean {
 	const abs = isAbsolute(p) ? p : resolve(workspace, p);
 	const rel = relative(workspace, abs);
@@ -71,6 +84,7 @@ export function evaluate(
 	hostAccess = false,
 ): Decision {
 	const path = typeof input.path === "string" ? input.path : undefined;
+	if (usesCuaDirectly(toolName, input)) return { kind: "deny", reason: CUA_DIRECT_REASON };
 	if (path && SECRET_PATHS.some((r) => r.test(path))) return { kind: "deny", reason: "不允许访问凭据/密钥文件" };
 	if (toolName === "bash") {
 		const cmd = String(input.command ?? "");

@@ -42,9 +42,9 @@
 |---|---|
 | `server` | 本机服务（Node 22 + Hono），见下节 |
 | `shared` | 前后端共用常量和纯逻辑 |
-| `ext-approval` | 审批闸门（有后果的工具调用） |
+| `ext-approval` | 审批闸门（有后果的工具调用）；含「不能用命令 / 写脚本直接调 cua」的 deny（`usesCuaDirectly`，所有档位） |
 | `ext-sandbox` | 工作区命令 |
-| `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑） |
+| `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑）；`structured.ts`：把 cua 的 structuredContent（tab_id / refs / elements / next_call）压成紧凑 JSON 追加给模型（上限 12K，纯逻辑） |
 | `ext-browser` | 浏览器工具 |
 | `ext-connectors` | 邮箱等连接器工具 |
 | `ext-delivery` | 发文件 / 提问 / 后台任务 / 子代理派活 |
