@@ -17,12 +17,12 @@ import { requests } from "../requests.ts";
 import { getAgent, listAgents, runtime } from "../runtime.ts";
 import { stopConversationSubagents } from "../subagents.ts";
 import { buildWorkCorrectionContext, execConversationsOfRoom, resolveWorkReferences } from "../work-items.ts";
-import { tidyingOf } from "./after-delivery.ts";
-import { capCheck, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps } from "./logic.ts";
+import { maybeTidyMember, tidyingOf } from "./after-delivery.ts";
+import { capCheck, DETACH_MS, interjectsCurrent, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, shouldDetach } from "./logic.ts";
 import { waitingRequestIds } from "./checkpoint.ts";
 import { hasActiveProject } from "./projects.ts";
 import { markTurnRead, syncRecallable } from "./recall.ts";
-import { cancelQueue, emitState, enqueue, fresh, states, type QuoteInfo, type RoomState, type Turn } from "./queue.ts";
+import { bgOf, cancelQueue, clearBg, emitState, enqueue, fresh, setBg, states, type QuoteInfo, type RoomState, type Turn } from "./queue.ts";
 import { activeIds, capsOf, changed, getRoom, memberConversation, memberRefs, memberRow, membersOf, snapshot, sys } from "./store.ts";
 import { REASON_LINE, roomFiles, transcriptFor } from "./turn-prompt.ts";
 
@@ -62,7 +62,7 @@ export function scheduleTurns(roomId: string, turns: PlannedTurn[]) {
 	if (s?.stopped) return false;
 	if (!s || (!s.current && !s.queue.length && !s.running)) {
 		s = fresh();
-		states.set(roomId, s);
+		adopt(roomId, s);
 	}
 	enqueue(roomId, s, turns, s.sourceMessageId);
 	emitState(roomId);
@@ -142,7 +142,8 @@ export function routeUserMessage(roomId: string, messageId: string, opts: { retr
 		const cur = s.current;
 		const directedIds = plan.directed ? plan.turns.map((t) => t.agentId) : null;
 		// 任务纠正需要完整上下文：不塞进正在跑的回合里当插话，等这一轮结束后单独给管理者一次协调回合。
-		const forCurrent = workCtx ? false : plan.notice ? false : directedIds ? directedIds.includes(cur.agentId) : parsed.ids.length ? parsed.ids.includes(cur.agentId) : true;
+		// 没 @ 人只给管理者：正在发言的不是管理者就不塞给它（决策 0026），下面让它让出发言位、马上排管理者
+		const forCurrent = workCtx ? false : plan.notice ? false : interjectsCurrent({ mentionedIds: parsed.ids, directedIds, currentId: cur.agentId, managerId: r.manager_id });
 		const rt = runtime(cur.agentId, cur.conversationId);
 		const quoteText = quote && forCurrent ? formatQuotedContext(quote.snapshot) : undefined;
 		if (forCurrent && rt.busy) void rt.send(`（用户在群里说）${body}${files.length ? `\n（附带 ${files.length} 个附件，见群聊记录）` : ""}`, undefined, { messageId: msg.id, quote: quoteText });
@@ -152,6 +153,7 @@ export function routeUserMessage(roomId: string, messageId: string, opts: { retr
 		const others = plan.directed ? plan.turns.map((t) => t.agentId).filter((x) => x !== cur.agentId) : parsed.ids.filter((x) => x !== cur.agentId);
 		const handled = !workCtx && !plan.notice && forCurrent && rt.busy && (plan.directed ? others.length === 0 : parsed.ids.length ? !others.length : cur.agentId === r.manager_id);
 		s.replan = workCtx ? { mentions: [], quote, sourceMessageId: msg.id, workCtx } : handled || !plan.turns.length ? null : { mentions: parsed.ids, quote, sourceMessageId: msg.id, workCtx };
+		if (s.replan && !forCurrent) cur.detach?.(); // 这条消息要别人接：当前发言的让出位置（回合在后台接着做），不等它说完
 		emitState(roomId);
 	} else if (plan.turns.length) startRound(roomId, plan.turns, quote, msg.id, workCtx);
 	else if (!plan.notice && !parsed.ids.length) sys(roomId, "群里还没有可以回答的助理，请在群设置里添加。", { action: "room-settings" });
@@ -172,8 +174,15 @@ function startRound(roomId: string, plan: PlannedTurn[], quote: QuoteInfo | null
 		s.queue.push(...prev.queue.filter((x) => x.reason === "check"));
 		prev.queue = prev.queue.filter((x) => x.reason !== "check");
 	}
-	states.set(roomId, s);
+	adopt(roomId, s);
 	void pump(roomId);
+}
+
+/** 换新的 RoomState：管理者还在后台时，它这一轮收集到的派活要带过去（结束时才分配） */
+function adopt(roomId: string, s: RoomState) {
+	const prev = states.get(roomId);
+	if (prev && prev !== s && bgOf(roomId).size) s.assignments = prev.assignments;
+	states.set(roomId, s);
 }
 
 
@@ -213,7 +222,10 @@ async function pump(roomId: string) {
 			}
 			s.queue.shift();
 			if (!activeIds(roomId).includes(next.agentId)) continue;
-			await runTurn(roomId, s, next, caps);
+			// 这位成员的上一个回合还在后台干活：这一轮当插话送进去，不并发开第二轮
+			const bg = bgOf(roomId).get(next.agentId);
+			if (bg && runtime(next.agentId, bg.conversationId).busy) await steerBackground(roomId, s, next, caps, bg.conversationId);
+			else await runTurn(roomId, s, next, caps);
 		}
 	} finally {
 		s.running = false;
@@ -224,9 +236,11 @@ async function pump(roomId: string) {
 	}
 }
 
-async function runTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
-	const tidy = tidyingOf(roomId);
-	if (tidy) await tidy; // 交付后正在整理成员的群会话：等整理完再开始这一轮，不同时跑
+type TurnRes = { ok: boolean; aborted: boolean; error?: string; text: string; tokens: number };
+const failed = (e: unknown): TurnRes => ({ ok: false, aborted: false, error: e instanceof Error ? e.message : String(e), text: "", tokens: 0 });
+
+/** 这一回合给模型的提示和附件，顺带推进成员的已读位置；看板检查的原因都过时了返回 null（回合记为取消） */
+function buildTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
 	const r = getRoom(roomId)!;
 	const conv = memberConversation(roomId, t.agentId);
 	snapshot(roomId, t.agentId);
@@ -250,11 +264,34 @@ async function runTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
 	const directedLine = t.directed && t.agentId === r.manager_id ? "用户引用了你的消息，只回应用户引用的这条；除非用户明确要求你分工，否则不要 room_assign、不要 @ 其他成员。" : "";
 	const taskCtx = s.workCtx && t.agentId === r.manager_id && t.reason !== "check" ? s.workCtx : "";
 	const checkCtx = t.reason === "check" && hooks.checkContext ? hooks.checkContext(roomId) : "";
-	if (checkCtx === null) return void db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE id = ?").run(now(), t.turnId);
+	if (checkCtx === null) return null;
 	const prompt = [`（群聊「${r.name}」里的新消息 · 你是 ${selfName}${t.agentId === r.manager_id ? "（管理者）" : ""}）`, ...(quoteBlock ? [quoteBlock, "——"] : []), tr.text || "（没有新消息）", "——", REASON_LINE(t, managerName, caps.maxDepth - t.depth - 1, hasActiveProject(r.id)), ...(directedLine ? [directedLine] : []), ...(taskCtx ? ["——", taskCtx] : []), ...(checkCtx ? ["——", checkCtx] : [])].join("\n");
 	db.prepare("UPDATE room_members SET cursor = ? WHERE room_id = ? AND agent_id = ?").run(tr.lastSeq || memberRow(roomId, t.agentId)?.cursor || 0, roomId, t.agentId);
-	s.current = { agentId: t.agentId, turnId: t.turnId, conversationId: conv, reason: t.reason };
-	s.assignments = [];
+	return { conv, prompt, inputs };
+}
+
+/** 排到的成员正在后台干活：这一轮的内容当插话送进它正在跑的会话（steer），回合记为完成，不另开一轮（决策 0026） */
+async function steerBackground(roomId: string, s: RoomState, t: Turn, caps: RoomCaps, conversationId: string) {
+	const b = buildTurn(roomId, s, t, caps);
+	if (!b) return void db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE id = ?").run(now(), t.turnId);
+	db.prepare("UPDATE room_turns SET status = 'done', started_at = ?, finished_at = ? WHERE id = ?").run(now(), now(), t.turnId);
+	markTurnRead(roomId, t.turnId);
+	await runtime(t.agentId, conversationId).send(b.prompt, b.inputs).catch(() => {});
+}
+
+async function runTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
+	const tidy = tidyingOf(roomId, t.agentId);
+	if (tidy) await tidy; // 正在整理成员的群会话（交付后整理全群、或这位成员按大小整理）：等整理完再开始这一轮，不同时跑
+	const b = buildTurn(roomId, s, t, caps);
+	if (!b) return void db.prepare("UPDATE room_turns SET status = 'cancelled', finished_at = ? WHERE id = ?").run(now(), t.turnId);
+	const { conv, prompt, inputs } = b;
+	// 动手就让出发言位：做完几个工具步骤 / 跑满一段时间 / 被要求让位，就不再占着发言位，回合在后台跑完（决策 0026）
+	let release = () => {};
+	const released = new Promise<null>((res) => (release = () => res(null)));
+	const startedAt = Date.now();
+	const timer = setTimeout(release, DETACH_MS());
+	s.current = { agentId: t.agentId, turnId: t.turnId, conversationId: conv, reason: t.reason, detach: release };
+	s.assignments = t.agentId === getRoom(roomId)?.manager_id ? [] : s.assignments; // 管理者可能还在后台收集派活，别的成员的回合不清它
 	// 看板检查 / 成员互相 @ 不占这一轮的计数（不和用户这一轮抢上限）
 	if (t.reason !== "check" && t.reason !== "peer") {
 		s.counters.turns++;
@@ -263,18 +300,41 @@ async function runTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
 	db.prepare("UPDATE room_turns SET status = 'running', started_at = ? WHERE id = ?").run(now(), t.turnId);
 	markTurnRead(roomId, t.turnId); // 来源用户消息被读到了：不再能撤回
 	emitState(roomId);
-	let res: Awaited<ReturnType<ReturnType<typeof runtime>["turn"]>>;
-	try {
-		res = await runtime(t.agentId, conv).turn(prompt, inputs);
-	} catch (e) {
-		res = { ok: false, aborted: false, error: e instanceof Error ? e.message : String(e), text: "", tokens: 0 };
-	}
+	const turnP: Promise<TurnRes> = runtime(t.agentId, conv)
+		.turn(prompt, inputs, { onToolStep: (n) => shouldDetach({ toolSteps: n, elapsedMs: Date.now() - startedAt }) && release() })
+		.catch(failed);
+	const first = await Promise.race([turnP, released]);
+	clearTimeout(timer);
+	if (first) return finishTurn(roomId, t, conv, first, s);
+	// 让出发言位：群调度接着安排下一位，这个回合在后台跑完再收尾
+	if (s.current?.turnId === t.turnId) s.current = null;
+	setBg(roomId, { turnId: t.turnId, agentId: t.agentId, conversationId: conv, reason: t.reason });
+	emitState(roomId);
+	void turnP
+		.then(async (res) => {
+			clearBg(roomId, t.agentId, t.turnId);
+			await finishTurn(roomId, t, conv, res);
+		})
+		.catch((e) => console.warn(`[room] 后台回合收尾失败：${e instanceof Error ? e.message : e}`))
+		.finally(() => {
+			const cur = states.get(roomId);
+			if (cur && !cur.stopped) void pump(roomId); // 收尾可能排了新回合（管理者 followup 等）
+			emitState(roomId);
+			changed(roomId);
+		});
+}
+
+/** 回合结束后的收尾：记状态和报错、按大小整理、管理者文字里的 @ 派活、批次清点、followup、协作钩子。前台回合在 pump 里直接调，后台回合结束时调。 */
+async function finishTurn(roomId: string, t: Turn, conv: string, res: TurnRes, s0?: RoomState) {
 	db.prepare("UPDATE room_turns SET status = ?, error = ?, tokens = ?, finished_at = ? WHERE id = ?").run(res.aborted ? "cancelled" : res.error ? "error" : "done", res.error ?? null, res.tokens, now(), t.turnId);
 	const name = getAgent(t.agentId)?.name ?? "助理";
 	if (res.error && !res.aborted) sys(roomId, `${name} 出错了，已跳过：${res.error.slice(0, 200)}`, {}, "error");
-	s.current = null;
-	if (s.stopped || res.aborted) return;
-	hooks.ended?.(roomId, t);
+	// 后台回合结束时群里可能已经换了新一轮的状态：以现在的为准
+	const s = states.get(roomId) ?? s0;
+	if (s?.current?.turnId === t.turnId) s.current = null;
+	if (!s || s.stopped || res.aborted) return;
+	hooks.ended?.(roomId, t); // 管理者回合结束：交付后整理全群（已开始整理时下面不再重复整理）
+	maybeTidyMember(roomId, t.agentId, conv); // 会话变长了就单独整理这一位（空闲时）
 	const rr = getRoom(roomId);
 	if (!rr) return;
 	const isMgr = t.agentId === rr.manager_id;
@@ -294,7 +354,7 @@ async function runTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
 		}
 		enqueue(roomId, s, follow, s.sourceMessageId);
 	}
-	s.assignments = [];
+	if (isMgr) s.assignments = [];
 	if (!res.error) hooks.after?.(roomId, t, { text: res.text ?? "" });
 }
 
@@ -304,14 +364,15 @@ async function abortConversationTurn(agentId: string, conversationId: string) {
 }
 
 /**
- * 停止：中止正在说话的，取消排队的，拒绝群里等待处理的请求。只停这个群的发言：
+ * 停止：中止正在说话的和转到后台干活的，取消排队的，拒绝群里等待处理的请求。只停这个群的发言：
  * 长期任务的执行在负责人自己的任务会话里，不跟着停（它们的审批和「等你决定」也保留）；要停任务用看板的暂停 / 全部暂停。
  */
 export async function stop(roomId: string, note = true) {
 	const s = states.get(roomId);
 	const cur = s?.current ?? null;
 	const openTurns = db.prepare("SELECT id FROM room_turns WHERE room_id = ? AND status IN ('queued','running')").all(roomId) as { id: string }[];
-	const had = !!s || openTurns.length > 0;
+	const bgs = [...bgOf(roomId).values()]; // 已让出发言位、还在后台干活的成员回合：一起中止
+	const had = !!s || openTurns.length > 0 || bgs.length > 0;
 	if (s) {
 		s.stopped = true;
 		s.replan = null;
@@ -326,8 +387,12 @@ export async function stop(roomId: string, note = true) {
 		s!.current = null;
 		await abortConversationTurn(cur.agentId, cur.conversationId);
 	}
+	for (const b of bgs) {
+		clearBg(roomId, b.agentId, b.turnId);
+		await abortConversationTurn(b.agentId, b.conversationId);
+	}
 	if (s && states.get(roomId) === s) states.delete(roomId);
-	if (note && cur) sys(roomId, "已停止");
+	if (note && (cur || bgs.length)) sys(roomId, "已停止");
 	emitState(roomId);
 	changed(roomId);
 	return had;

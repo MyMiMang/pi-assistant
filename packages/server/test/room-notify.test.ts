@@ -223,10 +223,11 @@ test("交付之后（决策 0022）：用户本人在项目期间的原话 + 交
 		const conv = memberConversation(room.id, "nm");
 		insertMessage({ agentId: "", roomId: room.id, role: "user", content: "口味清淡一点，不要辣" });
 		insertMessage({ agentId: "na", roomId: room.id, role: "assistant", content: "我觉得要多放辣" });
-		insertMessage({ agentId: "nm", conversationId: conv, role: "assistant", content: "好的", meta: { usage: { input: 1000, cacheRead: 160_000, cacheWrite: 0 } } });
 		await pass(wi1);
 		await pass(wi2);
 		await until(() => idle(room.id), "阶段通知跑完");
+		// 会话变长是在这之后才有的：成员回合结束就按大小整理（决策 0026），所以放在前面的回合都跑完以后
+		insertMessage({ agentId: "nm", conversationId: conv, role: "assistant", content: "好的", meta: { usage: { input: 1000, cacheRead: 160_000, cacheWrite: 0 } } });
 		writeFileSync(join(workspaceOf("nm"), "report.md"), "# 报告\n");
 		assert.match(await call("room_project_done", { projectId: pid, summary: "报告写好了", deliverables: ["report.md"], notDone: "图表还没做" }), /已结束/);
 		await until(() => remembered.length === 1, "交付记忆写入");
@@ -250,6 +251,7 @@ test("交付之后（决策 0022）：用户本人在项目期间的原话 + 交
 		rooms.postUserMessage(room.id, "再问一句");
 		await sleep(100);
 		assert.ok(!prompts.slice(n).some((p) => p.includes("再问一句")), "整理没做完，下一轮先等着");
+		insertMessage({ agentId: "nm", conversationId: conv, role: "assistant", content: "好的", meta: { usage: { input: 20_000 } } }); // 整理完之后读入变少了（按大小整理看最近一次读入）
 		openTidy();
 		await until(() => prompts.slice(n).some((p) => p.includes("再问一句")), "整理完再跑下一轮");
 		await until(() => idle(room.id), "跑完");

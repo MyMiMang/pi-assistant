@@ -191,6 +191,7 @@ test("卡住没进展三级：叫管理者 → 最后提醒 → 已用尽办法�
 	assert.equal(row(id).latestProgress, "数据拉完了，开始写");
 	const t1 = now();
 	await W.checkStalls(t1 + 61_000, 60_000);
+	await settle(); // 上一次唤醒的回合先收尾，下一次唤醒才是新的一轮（不被合并）
 	assert.equal(row(id).escalation?.rung, 1, "进展之后重新从第 1 级开始");
 	const w1 = wakes(room.id);
 	await W.checkStalls(t1 + 122_000, 60_000);

@@ -163,7 +163,8 @@ try {
 	assert.ok((await progress1.getByTestId("room-progress-item").count()) >= 2, "进度清单里两个阶段各有一条任务");
 	await stableShot(page, panel, join(out, "03-projects-panel.png"));
 	await page.setViewportSize({ width: 390, height: 844 });
-	await panel.scrollIntoViewIfNeeded();
+	// 换成手机宽度时面板会重新挂载：等新的那个出来再滚，旧元素已脱离页面时重试
+	await wait(async () => (await panel.scrollIntoViewIfNeeded({ timeout: 1000 }).then(() => true, () => false)), 8000, "手机宽度下项目面板重新出现");
 	await stableShot(page, panel, join(out, "03b-projects-panel-390.png"));
 	await page.setViewportSize({ width: 1440, height: 1000 });
 	await item.getByTestId("room-project-stop").click();
@@ -339,6 +340,7 @@ try {
 	await waiting.getByText("已交给管理者").waitFor();
 	await stableShot(page, page.getByTestId("work-detail"), join(out, "12-work-asks.png"));
 	await page.setViewportSize({ width: 390, height: 844 });
+	await waiting.waitFor(); // 窄屏重排后元素要重新挂上，等它出现再量
 	const wb = await waiting.boundingBox();
 	assert.ok(wb.x >= -1 && wb.x + wb.width <= 391, "「在等同事回答」390 不越框");
 	await stableShot(page, waiting, join(out, "12b-work-asks-390.png"));

@@ -14,7 +14,7 @@ export type Turn = PlannedTurn & { turnId: string };
 export interface RoomState {
 	roundId: string;
 	queue: Turn[];
-	current: { agentId: string; turnId: string; conversationId: string; reason: string } | null;
+	current: { agentId: string; turnId: string; conversationId: string; reason: string; /** 让出发言位（回合继续在后台跑）；只有 runTurn 设置 */ detach?: () => void } | null;
 	counters: RoundCounters;
 	/** 管理者这一轮派活：派出去还没做完的成员 */
 	batch: Set<string>;
@@ -33,12 +33,26 @@ export interface RoomState {
 	running: boolean;
 }
 export const states = new Map<string, RoomState>();
+/** 已让出发言位、在自己的群会话里继续干活的回合（决策 0026）。按群放，不跟 RoomState 走：新一轮用户消息换了 RoomState，它们照常在跑。 */
+export interface BgTurn { turnId: string; agentId: string; conversationId: string; reason: string }
+const bgTurns = new Map<string, Map<string, BgTurn>>();
+export const bgOf = (roomId: string) => bgTurns.get(roomId) ?? new Map<string, BgTurn>();
+export function setBg(roomId: string, b: BgTurn) {
+	if (!bgTurns.has(roomId)) bgTurns.set(roomId, new Map());
+	bgTurns.get(roomId)!.set(b.agentId, b);
+}
+/** 回合结束时移除（turnId 对得上才删：同一个成员后面又转后台的新回合不被老回合误删） */
+export function clearBg(roomId: string, agentId: string, turnId: string) {
+	const m = bgTurns.get(roomId);
+	if (m?.get(agentId)?.turnId === turnId) m.delete(agentId);
+}
 export const fresh = (): RoomState => ({ roundId: uid("rd"), queue: [], current: null, counters: { turns: 0, perAgent: {} }, batch: new Set(), batchRan: false, assignments: [], replan: null, quote: null, sourceMessageId: null, workCtx: null, stopped: false, running: false });
 
 export function stateOf(roomId: string) {
 	const s = states.get(roomId);
-	if (!s || (!s.current && !s.queue.length)) return { running: false, current: null, queue: [] as string[] };
-	return { running: true, current: s.current ? { agentId: s.current.agentId, reason: s.current.reason } : null, queue: s.queue.map((q) => q.agentId) };
+	const background = [...bgOf(roomId).keys()];
+	if (!s || (!s.current && !s.queue.length)) return { running: background.length > 0, current: null, queue: [] as string[], background };
+	return { running: true, current: s.current ? { agentId: s.current.agentId, reason: s.current.reason } : null, queue: s.queue.map((q) => q.agentId), background };
 }
 export const emitState = (roomId: string) => bus.emit({ type: "room.state", roomId, state: stateOf(roomId) });
 
@@ -89,10 +103,10 @@ export function cancelQueuedFor(roomId: string, agentId: string) {
 	emitState(roomId);
 }
 
-/** 群里有没有排着的回合（含正在跑的） */
+/** 群里有没有排着的回合（含正在跑的、转到后台还在干的） */
 export const hasQueuedTurns = (roomId: string) => {
 	const s = states.get(roomId);
-	return !!s && (!!s.current || s.queue.length > 0);
+	return (!!s && (!!s.current || s.queue.length > 0)) || bgOf(roomId).size > 0;
 };
 /** 群里排着的回合（reason 为 null = 不限原因）。 */
 export const queuedFor = (roomId: string, reason: PlannedTurn["reason"] | null, agentId?: string) => !!states.get(roomId)?.queue.some((q) => (!reason || q.reason === reason) && (!agentId || q.agentId === agentId));

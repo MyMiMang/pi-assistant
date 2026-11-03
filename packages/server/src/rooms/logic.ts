@@ -326,9 +326,12 @@ export function deliveryMemory(o: { room: string; title: string; said: string[];
  * Pi 只总结较早的部分、最近一段原文照留，写总结的模型看不到后面的进展，容易把早已交付的项目写成「进行中 / 待确认」：
  * 所以把数据库里每个项目的真实状态一并交代，以它为准。
  */
-export function tidyInstructions(projects: { title: string; status: string }[], said: string[] = []): string {
-	const label: Record<string, string> = { done: "已交付", dismissed: "用户没采用", stopped: "用户停下了（进度保留，用户说接着做才继续）", superseded: "被改过的方案取代" };
+export function tidyInstructions(projects: { title: string; status: string }[], said: string[] = [], mode: "delivered" | "size" = "delivered"): string {
+	const label: Record<string, string> = { done: "已交付", dismissed: "用户没采用", stopped: "用户停下了（进度保留，用户说接着做才继续）", superseded: "被改过的方案取代", active: "进行中", proposed: "方案等用户确认" };
 	const facts = projects.map((p) => `「${p.title}」：${label[p.status] ?? p.status}`).join("；");
+	// 按大小整理（决策 0026）：项目和任务可能正在进行，进行中的事一件都不能丢
+	if (mode === "size")
+		return `这是群会话变长之后的整理，群里的项目和任务可能还在进行。现在每个项目的真实状态（以这里为准）：${facts || "（没有项目）"}。总结必须保留：进行中的任务和项目做到哪一步、下一步是什么、答应过用户或同事但还没做的事和用户说「以后再说」的事（原样列出）、文件的名字和路径、关键决定和理由、用户表达过的偏好和要求（原样记下）、群里成员的分工。可以省略：读过的文件全文、写文件的全文、命令输出、反复核验和修改的过程。${saidBlock(said)}`;
 	return `这是群里的项目交付之后的整理。现在每个项目的真实状态（以这里为准，不要写成进行中或待确认）：${facts || "（没有项目）"}；群里目前没有进行中的项目。总结必须保留：做过哪些项目、每个项目做成了什么、最终文件的名字和路径、关键决定和理由、用户表达过的偏好和要求（忌口、口味、风格、习惯等原样记下）、答应过用户但还没做的事和用户说「以后再说」的事（原样列出）、群里成员的分工习惯。可以省略：读过的文件全文、写文件的全文、命令输出、反复核验和修改的过程。${saidBlock(said)}`;
 }
 /** 用户在群里说过的原话（最近的在后，最多 3000 字）：交给整理，偏好和要求不靠模型自己去翻 */
@@ -342,3 +345,17 @@ function saidBlock(said: string[]) {
  * 低于 15 万整理收效不大，还多一次总结出错的机会，所以只在真的变长时整理。
  */
 export const TIDY_MIN_TOKENS = () => Number(process.env.PIA_TIDY_MIN_TOKENS) || 150_000;
+
+// ---------------------------------------------------------------- 动手就让出发言位（决策 0026）
+
+/** 成员的群回合做完这么多个工具步骤就让出发言位（PIA_DETACH_TOOL_STEPS 供测试调低） */
+export const DETACH_TOOL_STEPS = () => Number(process.env.PIA_DETACH_TOOL_STEPS) || 3;
+/** 成员的群回合跑满这么久（毫秒）就让出发言位（PIA_DETACH_MS 供测试调低） */
+export const DETACH_MS = () => Number(process.env.PIA_DETACH_MS) || 60_000;
+/** 这个回合该不该让出发言位：工具步骤够多、或跑得够久、或被要求让位（用户有话要交给管理者） */
+export function shouldDetach(o: { toolSteps: number; elapsedMs: number; yieldRequested?: boolean }): boolean {
+	return !!o.yieldRequested || o.toolSteps >= DETACH_TOOL_STEPS() || o.elapsedMs >= DETACH_MS();
+}
+/** 用户没 @ 人时这条消息该不该塞给正在发言的人：只有管理者接，其他成员不接（交给管理者） */
+export const interjectsCurrent = (o: { mentionedIds: string[]; directedIds: string[] | null; currentId: string; managerId: string | null }): boolean =>
+	o.directedIds ? o.directedIds.includes(o.currentId) : o.mentionedIds.length ? o.mentionedIds.includes(o.currentId) : o.currentId === o.managerId;

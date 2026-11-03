@@ -117,6 +117,7 @@ test("追问：同一段对话；来回到上限后再追问不再递给对方�
 			assert.equal(msgs("peer-ask").filter((m) => m.meta.askId === ask).pop()!.meta.rounds, n + 1);
 		}
 	}
+	await new Promise((r) => setTimeout(r, 30)); // 让前面几轮的回答回合彻底收尾（回合收尾比以前多几步异步，决策 0026）
 	const asksBefore = msgs("peer-ask").length;
 	const w0 = calls.filter((c) => /任务看板有变化/.test(c.prompt)).length;
 	const peerTurnsToB = () => calls.filter((c) => c.agentId === "wb" && new RegExp(`提问编号 ${ask}`).test(c.prompt)).length;

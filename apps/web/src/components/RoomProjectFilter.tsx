@@ -46,7 +46,7 @@ function useActiveFilter(roomId: string): string {
 /** RoomChat 用：按筛选过滤后分组（group 是 RoomChat 自己的分组函数）。 */
 export function useProjectRows<T>(roomId: string, list: Message[], group: (l: Message[]) => T): T {
 	const f = useActiveFilter(roomId);
-	return useMemo(() => group(filterByProject(list, f)), [list, f]);
+	return useMemo(() => group(filterByProject(list, f)), [list, f, group]);
 }
 
 /** 群顶部的筛选：「全部」+ 每个进行中的项目；少于 2 个进行中项目时不显示。 */

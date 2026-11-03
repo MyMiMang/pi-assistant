@@ -63,3 +63,9 @@ test("「N 人等你」点击：按最早的先，逐张跳，到头回第一张
 	assert.equal(nextPendingId(ids, "gone"), "c1");
 	assert.equal(nextPendingId([], null), undefined);
 });
+
+test("群成员：已让出发言位在后台干活的成员显示「在后台干活」；当前发言和等你处理优先", () => {
+	assert.deepEqual(memberActivity({ ...base, agentId: "a", current: { agentId: "b", reason: "mention" }, background: ["a"] }), { state: "work", text: "在后台干活" });
+	assert.equal(memberActivity({ ...base, agentId: "a", background: ["a"], pending: "approval" }).text, "等你审批");
+	assert.equal(memberActivity({ ...base, agentId: "c", background: ["a"] }).state, "idle");
+});

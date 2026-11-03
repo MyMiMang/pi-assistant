@@ -30,7 +30,8 @@ export interface Agent {
 }
 export interface RoomMember { agentId: string; name: string; avatar: string; color: string; left: boolean; deleted: boolean; scope: string; status: string }
 export interface RoomCaps { maxTurns: number; maxDepth: number; perAgent: number; followup: boolean }
-export interface RoomState { running: boolean; current: { agentId: string; reason: string } | null; queue: string[] }
+/** background = 已让出发言位、还在自己会话里干活的成员（服务端 rooms/queue.ts） */
+export interface RoomState { running: boolean; current: { agentId: string; reason: string } | null; queue: string[]; background?: string[] }
 /** 项目方案（镜像服务端 rooms/plan.ts 的 ProjectPlan）：方案卡和项目面板共用。 */
 export interface ProjectPlan {
 	goal: string; doneCriteria: string; assumptions: string[];

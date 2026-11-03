@@ -255,7 +255,7 @@ export class AgentRuntime {
 	 * 群聊回合：发一条（模型可见的）消息，等这一轮彻底结束。
 	 * 返回是否被中止、出错信息、本轮最后的回复文字、用掉的 token。
 	 */
-	async turn(text: string, files?: AttachmentInput[]): Promise<{ ok: boolean; aborted: boolean; error?: string; text: string; tokens: number }> {
+	async turn(text: string, files?: AttachmentInput[], opts: { onToolStep?: (done: number) => void } = {}): Promise<{ ok: boolean; aborted: boolean; error?: string; text: string; tokens: number }> {
 		const s = await this.ensure();
 		if (!s) {
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: "还没有可用的模型。请先在「设置 → 模型」里登录一个模型服务并选择默认模型。", meta: { action: "open-models" } });
@@ -264,6 +264,9 @@ export class AgentRuntime {
 		const before = sessionStats(s).session?.tokens.total ?? 0;
 		const startedAt = Date.now();
 		setAgentStatus(this.id, "running");
+		// 进度回调：每完成一个工具步骤告诉调用方做完了几个（群调度据此让出发言位，决策 0026）；只用 Pi 公开事件
+		let toolSteps = 0;
+		const unStep = opts.onToolStep ? subscribeSession(s, (e) => e.type === "tool_end" && opts.onToolStep!(++toolSteps)) : undefined;
 		let abortedFlag = false;
 		const w = (a: boolean) => void (abortedFlag = abortedFlag || a);
 		this.waiters.add(w);
@@ -278,6 +281,7 @@ export class AgentRuntime {
 		});
 		// prompt 正常返回时这一轮已结束；仍在跑（排在后面）就等 settled
 		if (isSessionBusy(s)) await done;
+		unStep?.();
 		this.waiters.clear();
 		const aborted = abortedFlag;
 		if (!isSessionBusy(s)) settleAgent(this.id);

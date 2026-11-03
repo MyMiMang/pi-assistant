@@ -5,12 +5,13 @@ import { ArrowUp, AtSign, Crown, Loader2, PanelRight, Plus, Settings2, Square, T
 import { RoomCost } from "./Usage";
 import { RoomMembers } from "./MemberStatus"; import { JumpToLatest } from "./JumpToLatest";
 import { pendingCardOf } from "../member-status";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { groupRoom, type RRow } from "../room-group";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, uploadRoom } from "../api";
 import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attachments";
 import { useStore, ROOM_PAGE } from "../store";
 import type { Agent, Message, Room, RoomMember } from "../types";
-import { Activity, BotPart, type Part, SideToggle, SystemMsg, UserMsg } from "./Chat";
+import { Activity, BotPart, SideToggle, SystemMsg, UserMsg } from "./Chat";
 import { Avatar, Button, Help, Modal, cx } from "./ui";
 import { useComposerKeys, COMPOSER_LABEL } from "../composer";
 import { VoiceInput } from "./VoiceInput";
@@ -42,44 +43,14 @@ export function StackedAvatars({ room, size = 22, max = 3 }: { room: Room; size?
 	);
 }
 
-// ------------------------------------------------------------------ 分组：同一个助理连续的消息合成一段
-type RRow = { kind: "user"; m: Message } | { kind: "system"; m: Message } | { kind: "bot"; id: string; agentId: string; parts: Part[] } | { kind: "day"; label: string; id: string };
-function groupRoom(list: Message[]): RRow[] {
-	const rows: RRow[] = [];
-	let lastTs = 0;
-	for (const m of list) {
-		if (m.created_at - lastTs > 30 * 60_000) {
-			const d = new Date(m.created_at);
-			const same = d.toDateString() === new Date().toDateString();
-			rows.push({ kind: "day", id: `d${m.id}`, label: `${same ? "今天" : `${d.getMonth() + 1}月${d.getDate()}日`} ${d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` });
-		}
-		lastTs = m.created_at;
-		if (m.role === "user" || (m.role === "system" && !m.agent_id)) {
-			rows.push({ kind: m.role === "user" ? "user" : "system", m } as RRow);
-			continue;
-		}
-		if (m.role === "system") {
-			rows.push({ kind: "system", m });
-			continue;
-		}
-		let bot = rows[rows.length - 1];
-		if (bot?.kind !== "bot" || bot.agentId !== m.agent_id) rows.push((bot = { kind: "bot", id: m.id, agentId: m.agent_id, parts: [] }));
-		if (m.role === "tool") {
-			const last = bot.parts[bot.parts.length - 1];
-			if (last?.kind === "steps") last.items.push(m);
-			else bot.parts.push({ kind: "steps", items: [m] });
-		} else bot.parts.push({ kind: "msg", m });
-	}
-	return rows;
-}
-
 const STATUS = (reason: string) => (reason === "followup" ? "总结中" : "思考中");
 
 export default function RoomChat({ roomId }: { roomId: string }) {
 	const { rooms, agents, roomMsgs, roomWindow, info, set } = useStore();
 	const room = rooms.find((r) => r.id === roomId);
 	const list = roomMsgs[roomId] ?? [];
-	const rows = useProjectRows(roomId, list, groupRoom);
+	const liveAgent = rooms.find((r) => r.id === roomId)?.state.current?.agentId ?? null;
+	const rows = useProjectRows(roomId, list, useCallback((l: Message[]) => groupRoom(l, liveAgent), [liveAgent]));
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const [settings, setSettings] = useState(false);
