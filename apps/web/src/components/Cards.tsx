@@ -5,6 +5,7 @@ import { t } from "../i18n";
 import type { Message } from "../types";
 import Markdown from "./Markdown";
 import { taskStatus } from "./Tasks";
+import { useStore } from "../store";
 import { cx } from "./ui";
 
 /** 结果卡片：审批 / 选项提问 / 后台任务（样式来自主题的 .pa-card 系列） */
@@ -105,6 +106,10 @@ export function TaskCard({ m }: { m: Message }) {
 				{icon}
 				<b className="truncate">后台任务：{meta.title}</b>
 				<span className="pa-tag">{label}</span>
+				{/* 后台任务就是一个帮手：点开看它的完整过程（复用帮手执行页 SubagentChat） */}
+				<button className="pa-btn sm ghost" data-testid="task-open" onClick={() => useStore.getState().openSubagent({ id: String(meta.taskId), task: String(meta.title ?? ""), agent_id: m.agent_id, conversation_id: m.conversation_id ?? "" })}>
+					{t("查看过程")}
+				</button>
 				{(meta.status === "running" || meta.status === "queued") && (
 					<button className="pa-btn sm ghost" onClick={() => api(`/api/subagents/${meta.taskId}/stop`, { method: "POST" }).catch(() => {})}>
 						{t("取消")}
