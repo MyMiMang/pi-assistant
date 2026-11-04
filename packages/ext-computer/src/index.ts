@@ -515,7 +515,8 @@ export function computerExtension(host: ComputerHost) {
 			if (p) log({ callId: e.toolCallId, tool: p.tool, input: p.input, summary: p.summary, phase: e.isError ? "error" : "done", detail: text.slice(0, 500), approval: p.approval });
 			// cua 的 tab_id / refs / elements / next_call 在 structuredContent 里，Pi 不发给模型：压成一个 text 块追加（截图块不动）
 			const note = structuredNote(e.structuredContent, text);
-			if (note) return { content: [...(e.content ?? []), { type: "text" as const, text: note }] } as never;
+			// structuredContent 要原样带回：Pi 换了 content 而没给 structuredContent 时会把它删掉，快速执行者（ctx.executeTool）就拿不到 refs / elements 了
+			if (note) return { content: [...(e.content ?? []), { type: "text" as const, text: note }], structuredContent: e.structuredContent } as never;
 		});
 	};
 }

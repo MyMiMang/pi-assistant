@@ -44,6 +44,7 @@ test("tool_result 钩子：本机 / 助理电脑两种前缀都追加；截图�
 		assert.equal(r?.content?.length, 3);
 		assert.deepEqual(r?.content?.[1], shot);
 		assert.ok(r?.content?.[2].text?.includes("t-1"));
+		assert.deepEqual((r as { structuredContent?: unknown })?.structuredContent, wrap({ tab_id: "t-1" }), "结构化结果要原样带回，否则 Pi 会删掉，快速执行者拿不到 refs");
 		assert.equal(await h.tool_result({ toolName: `${prefix}click`, toolCallId: "c2", input: {}, content: [{ type: "text", text: "ok" }], isError: false }), undefined);
 		assert.equal(await h.tool_result({ toolName: "bash", toolCallId: "c3", input: {}, content: [], isError: false, structuredContent: wrap({ tab_id: "t-1" }) }), undefined);
 	}
