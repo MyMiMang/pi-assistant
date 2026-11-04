@@ -31,6 +31,8 @@ export interface Observation {
 	candidates: Candidate[];
 	title?: string;
 	url?: string;
+	/** 页面内容摘要（网页取 outline，窗口取 elements）；可以是空串，不进 fingerprint */
+	summary: string;
 	fingerprint: string;
 	screenshot?: { data: string; mimeType: string };
 }
@@ -57,7 +59,7 @@ export const MAX_STEPS = 20;
 export const MAX_CANDIDATES = 24;
 export const MIN_PROBABILITY = 0.6;
 
-const asObj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+export const asObj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 const asStr = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
 const asList = (v: unknown): string[] | undefined => {
 	if (Array.isArray(v)) return v.map(asStr).filter(Boolean);
@@ -145,6 +147,27 @@ export function fingerprintOf(url: string, title: string, list: Candidate[]): st
 	return (h >>> 0).toString(16);
 }
 
+/** 页面内容摘要：网页用 outline（没有再退回 content_refs），窗口用 elements；截到 2500 字 */
+function summaryOf(target: QuickTarget, s: Record<string, unknown> | null): string {
+	const rows = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.map(asObj).filter((x): x is Record<string, unknown> => !!x) : []);
+	const text =
+		target.kind === "window"
+			? rows(s?.elements)
+					.map((e) => {
+						const label = asStr(e.label) || asStr(e.title);
+						const value = asStr(e.value);
+						return label || value ? `${asStr(e.role)}「${label}」${value ? `=${value}` : ""}` : "";
+					})
+					.filter(Boolean)
+					.join("\n")
+			: typeof s?.outline === "string" && s.outline.trim()
+				? s.outline
+				: rows(s?.content_refs)
+						.map((e) => `${asStr(e.role)}「${asStr(e.name) || asStr(e.label) || asStr(e.text)}」`)
+						.join("\n");
+	return text.length > 2500 ? `${text.slice(0, 2500)}…（共 ${text.length} 字）` : text;
+}
+
 /** 读工具的结果 → 候选（宽松解析，字段名对不上就退回文本；有单测） */
 export function parseObservation(target: QuickTarget, structured: unknown, text: string, content: { type: string; data?: string; mimeType?: string }[]): Observation {
 	const s = asObj(structured);
@@ -157,13 +180,14 @@ export function parseObservation(target: QuickTarget, structured: unknown, text:
 		candidates: list,
 		...(title ? { title } : {}),
 		...(url ? { url } : {}),
+		summary: summaryOf(target, s),
 		fingerprint: fingerprintOf(url, title, list),
 		...(shot ? { screenshot: { data: shot.data!, mimeType: shot.mimeType! } } : {}),
 	};
 }
 
 /** 读不到页面时用的空观察（停下时要给大模型一个当前状态） */
-export const emptyObservation = (): Observation => ({ candidates: [], fingerprint: fingerprintOf("", "", []) });
+export const emptyObservation = (): Observation => ({ candidates: [], summary: "", fingerprint: fingerprintOf("", "", []) });
 
 /** 按动作种类过滤候选；过滤后为空就返回原列表，让决策模型自己判断（它可以选「拿不准」） */
 export function filterByKind(kind: StepKind, list: Candidate[]): Candidate[] {
@@ -179,12 +203,12 @@ export function filterByKind(kind: StepKind, list: Candidate[]): Candidate[] {
 }
 
 /** macOS 的 role 可能是 `AXButton`：先小写、去掉 ax 前缀再比 */
-const roleKey = (role: string) => {
+export const roleKey = (role: string) => {
 	const r = role.trim().toLowerCase();
 	return r.startsWith("ax") && r.length > 2 ? r.slice(2) : r;
 };
 
-const KIND_ROLES: Record<Exclude<StepKind, "press" | "upload">, string[]> = {
+export const KIND_ROLES: Record<Exclude<StepKind, "press" | "upload">, string[]> = {
 	type: ["textbox", "searchbox", "textarea", "textfield", "text field", "combobox", "spinbutton", "input"],
 	select: ["combobox", "listbox", "popupbutton", "popup button", "select", "menuitem"],
 	check: ["checkbox", "radio", "radiobutton", "switch", "toggle"],
@@ -202,7 +226,7 @@ function tokens(s: string): string[] {
 }
 
 /** 相似度 = 二元组（multiset）的 Dice 系数 */
-function similarity(a: string, b: string): number {
+export function similarity(a: string, b: string): number {
 	const x = tokens(a);
 	const y = tokens(b);
 	if (!x.length || !y.length) return 0;
@@ -229,7 +253,7 @@ export function rankCandidates(what: string, list: Candidate[], limit = MAX_CAND
 }
 
 /** 去空白、去标点、小写 */
-const normalize = (s: string) => s.toLowerCase().replace(/[\s\p{P}]+/gu, "");
+export const normalize = (s: string) => s.toLowerCase().replace(/[\s\p{P}]+/gu, "");
 
 /** 名字完全对上的**恰好只有一个** → 直接用，省一次决策模型请求 */
 export function exactMatch(what: string, list: Candidate[]): Candidate | null {
@@ -349,8 +373,8 @@ export function verifyStep(step: QuickStep, picked: Candidate | null, before: Ob
 	return { ok: false, reason: "点了但页面没有变化" };
 }
 
-/** 返回给大模型的说明：每步一行；停下时附上原因和当前页面能操作的元素 */
-export function summarize(results: StepResult[], stopped?: StopInfo): string {
+/** 返回给大模型的说明：每步一行；停下 / 做完都附上最后的页面内容 */
+export function summarize(results: StepResult[], stopped?: StopInfo, lastObs?: Observation): string {
 	const lines = results.map((r) => {
 		const p = r.exact ? `${r.probability.toFixed(2)}（名字完全对上，没问决策模型）` : r.probability.toFixed(2);
 		const what = r.picked ? `选了 ${describeCandidate(r.picked)}（${r.picked.handle}），概率 ${p}` : "直接执行";
@@ -359,9 +383,12 @@ export function summarize(results: StepResult[], stopped?: StopInfo): string {
 	if (stopped) {
 		const els = stopped.obs.candidates.slice(0, 30).map((c) => `${c.handle} ${c.role}「${c.name}」`);
 		lines.push(`第 ${stopped.index + 1} 步停下：${stopped.reason}。后面的步骤没做。当前页面可操作的元素（前 30 个）：${els.length ? `\n${els.join("\n")}` : "（没读到元素）"}`);
+		const summary = stopped.obs.summary || lastObs?.summary;
+		if (summary) lines.push(`最后的页面内容（不用再读一遍）：\n${summary}`);
 		return lines.join("\n");
 	}
 	const total = results.reduce((n, r) => n + r.ms, 0);
 	lines.push(`全部 ${results.length} 步做完，共 ${total} 毫秒。`);
+	if (lastObs?.summary) lines.push(`最后的页面内容（不用再读一遍）：\n${lastObs.summary}`);
 	return lines.join("\n");
 }

@@ -68,7 +68,7 @@ function formWorld(o: { apply?: boolean } = {}) {
 			];
 			return {
 				isError: false,
-				result: { content: [{ type: "text", text: "页面" }, ...(args.include_screenshot ? [{ type: "image", data: "AAA", mimeType: "image/png" }] : [])], structuredContent: { structuredContent: { refs, title: "表单", url: "https://example.com/f" } } },
+				result: { content: [{ type: "text", text: "页面" }, ...(args.include_screenshot ? [{ type: "image", data: "AAA", mimeType: "image/png" }] : [])], structuredContent: { structuredContent: { refs, outline: '- textbox "名称"', title: "表单", url: "https://example.com/f" } } },
 			};
 		}
 		if (o.apply !== false) {
@@ -108,6 +108,8 @@ test("三步表单全部成功：调用顺序对、要填的值只来自 step、
 	assert.equal(asked.length, 2, "「名称输入框」「分辨率下拉」名字不完全一致，要问决策模型；「提交」完全一致，不问");
 	const text = textOf(r);
 	assert.match(text, /全部 3 步做完/);
+	assert.match(text, /最后的页面内容（不用再读一遍）：/);
+	assert.match(text, /textbox "名称"/, "返回里带上最后一次读到的页面内容，大模型不用再读一遍");
 	assert.match(text, /名字完全对上，没问决策模型/);
 });
 

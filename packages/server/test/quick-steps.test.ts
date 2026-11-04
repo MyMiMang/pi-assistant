@@ -6,7 +6,7 @@ await import("./setup.ts");
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const { buildCall, buildClassifierContext, decide, exactMatch, filterByKind, parseObservation, rankCandidates, verifyStep } = await import("@pi-assistant/ext-computer");
+const { buildCall, buildClassifierContext, decide, emptyObservation, exactMatch, filterByKind, parseObservation, rankCandidates, summarize, verifyStep } = await import("@pi-assistant/ext-computer");
 type Candidate = import("@pi-assistant/ext-computer").Candidate;
 type Observation = import("@pi-assistant/ext-computer").Observation;
 
@@ -192,4 +192,33 @@ test("verifyStep：值对上 ok、值不对 fail、找不到 ok、点击有变�
 	const still = verifyStep({ do: "click", what: "提交" }, null, before, before);
 	assert.equal(still.ok, false);
 	assert.match(still.ok === false ? still.reason : "", /没有变化/);
+});
+
+test("summary：网页用 outline，没有就退回 content_refs；窗口用 elements；超过 2500 字截断", () => {
+	const outline = parseObservation(BROWSER, { outline: '- heading "生成任务"\n  - textbox "名称"', refs: [{ ref: "p1:1", role: "textbox", name: "名称" }] }, "", []);
+	assert.equal(outline.summary, '- heading "生成任务"\n  - textbox "名称"', "有 outline 就用它");
+	const refsOnly = parseObservation(BROWSER, { content_refs: [{ role: "heading", name: "生成任务" }, { role: "text", name: "说明文字" }] }, "", []);
+	assert.equal(refsOnly.summary, 'heading「生成任务」\ntext「说明文字」', "没有 outline 时用 content_refs");
+	const win = parseObservation(WIN, { elements: [{ element_token: "s1:1", role: "textfield", label: "名称", value: "苏" }, { element_token: "s1:2", role: "button", label: "提交" }, { element_token: "s1:3", role: "button", title: "", value: "" }] }, "", []);
+	assert.equal(win.summary, 'textfield「名称」=苏\nbutton「提交」', "窗口用 elements，label 和 value 都空的跳过");
+	const long = "字".repeat(2600);
+	const cut = parseObservation(BROWSER, { outline: long }, "", []).summary;
+	assert.ok(cut.startsWith("字".repeat(2500)));
+	assert.match(cut, /…（共 2600 字）$/);
+	assert.equal(emptyObservation().summary, "");
+});
+
+test("summarize：做完 / 停下都带最后的页面内容", () => {
+	const obs = obsOf([{ element_token: "s1:1", role: "textfield", label: "名称", value: "苏" }]);
+	const results = [
+		{ index: 0, step: { do: "type" as const, what: "名称", value: "苏" }, picked: obs.candidates[0]!, probability: 1, exact: true, note: "值已是「苏」", ms: 12 },
+	];
+	const done = summarize(results, undefined, obs);
+	assert.match(done, /全部 1 步做完/);
+	assert.match(done, /最后的页面内容（不用再读一遍）：/);
+	assert.match(done, /textfield「名称」/);
+	const stopped = summarize([], { index: 0, reason: "页面上没有可操作的元素", obs }, obs);
+	assert.match(stopped, /第 1 步停下/);
+	assert.match(stopped, /最后的页面内容（不用再读一遍）：/);
+	assert.match(stopped, /textfield「名称」/);
 });

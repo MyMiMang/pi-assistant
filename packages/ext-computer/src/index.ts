@@ -19,9 +19,9 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { pruneOldScreens } from "./screen-window.ts";
 import { structuredNote } from "./structured.ts";
+import { SENSITIVE_WORDS } from "./words.ts";
 import { registerQuickSteps, type QuickStepsConfig } from "./quick-steps-tool.ts";
-export { registerQuickSteps, QUICK_STEPS_PROMPT, quickStepsPrompt, type QuickStepsConfig } from "./quick-steps-tool.ts";
-export * from "./quick-steps.ts";
+export * from "./quick-steps-tool.ts"; // 快速执行者的全部对外接口由它汇总导出
 export { structuredNote, unwrapStructured, STRUCTURED_MAX_CHARS } from "./structured.ts";
 export { pruneOldScreens, PRUNED_NOTE, KEEP_SCREENS, PRUNE_BATCH } from "./screen-window.ts";
 import { guardComputer, type GuardContext, type GuardHit } from "@pi-assistant/shared";
@@ -208,8 +208,8 @@ export interface ActionLogEntry {
 	approval?: "approved" | "task" | "auto" | "guarded";
 }
 
-/** 发送 / 付款 / 删除类的字样（中英文） */
-export const SENSITIVE_WORDS = /发送|发出|提交|付款|支付|转账|红包|购买|下单|结算|确认订单|删除|移除|清空|卸载|注销|退出登录|send|submit|pay|purchase|checkout|buy|transfer|delete|remove|erase|uninstall|empty trash/i;
+/** 发送 / 付款 / 删除类的字样（中英文）；定义在 words.ts，和目标模式守门共用 */
+export { SENSITIVE_WORDS, GOAL_GUARD_WORDS, guardedOut } from "./words.ts";
 const SENSITIVE_KEYS = /^(enter|return|kp_enter|delete|del|backspace)$/i;
 /**
  * 是否“敏感动作”（sensitive 审批策略下仍需批准）：结束应用；回车/删除键（常用于发送、删除）；
