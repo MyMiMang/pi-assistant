@@ -5,7 +5,7 @@
 
 ## 进行中
 - [已发布(beta.46)] 群里约的跟进到点在群里叫醒成员发言（之前走后台巡检、帮手看不到群也发不回群）
-- [已合 main] 后台任务并进帮手：模型只留 spawn_subagent，帮手结束一律叫醒派它的会话，单聊主会话派的帮手聊天里有「帮手：xxx」卡片（查看过程 / 取消 / 继续）（[0027](decisions/0027-one-helper-tool.md)）
+- [已发布(beta.48)] 后台任务并进帮手：模型只留 spawn_subagent，帮手结束一律叫醒派它的会话，单聊主会话派的帮手聊天里有「帮手：xxx」卡片（查看过程 / 取消 / 继续）（[0027](decisions/0027-one-helper-tool.md)）
 - [开发中] 助理设置八个页面按效果图改造，模型页复用 ModelPicker（[0008](decisions/0008-agent-details-classic.md)）
 - [已发布(beta.37)，待真机] 高级记忆健康：思考回传 / 关思考、重排序限 50 候选、两库并行召回、健康角标 + 通知、备用记忆模型、三步真实测试、每轮写入（[设计](design/memory-health.md)、[0009](decisions/0009-memory-reliability.md)）
 - [已发布(beta.37)] 设置页按界面标准逐页改造（[界面标准](design/ui-standard.md)）
@@ -16,11 +16,11 @@
 - [已发布(beta.47)] 电脑操控提速：只留最近几张截图；cua 升到 0.38.0，照官方用法重写操作说明，读窗口默认不截图
 - [待做] 助理电脑镜像里的 cua 升到 0.38.0（要重建镜像）
 - [待决定] 电脑操控提速：Jev 这类快速模型当执行者（参考 cua jev-use / CUA-JEV）
-- [已合 main] 群里只沟通、干活转后台：动手就让出发言位、没 @ 人交给管理者、群里只显示说的话、群会话按大小整理（[设计](design/group-floor.md)、[0026](decisions/0026-group-floor.md)）
+- [已发布(beta.48)] 群里只沟通、干活转后台：动手就让出发言位、没 @ 人交给管理者、群里只显示说的话、群会话按大小整理（[设计](design/group-floor.md)、[0026](decisions/0026-group-floor.md)）
 - [已发布(beta.46)] 发出去、助理还没看到的消息可以撤回（[设计](design/recall-pending-message.md)）
 - [已发布(beta.46)] 让助理真的主动做事：巡检看得见群并能在群里推进、敢做的规则、可以放心做的事、试运行可选、巡检不白卡（[设计](design/proactive-observe-mode.md)、[0025](decisions/0025-proactive-autonomy.md)）
 - [已发布(beta.46)] 长命令跑满 5 秒自动转后台，插话不用等命令跑完（[设计](design/background-commands.md)）
-- [已合 main] Claude Code 模型列表补内置「更多模型」清单（Opus 4.8、Sonnet 5.5 等具体版本）+ 设置卡可自定义模型 ID（[设计 §4.2](design/cli-models.md)）
+- [已发布(beta.48)] Claude Code 模型列表补内置「更多模型」清单（Opus 4.8、Sonnet 5.5 等具体版本）+ 设置卡可自定义模型 ID（[设计 §4.2](design/cli-models.md)）
 - [已发布(beta.45)] 通用 ACP 后端 + OpenCode 当模型（渠道 `opencode-cli`，dev:live 用 Go 套餐真实冒烟通过；Grok 暂缓；[设计](design/acp-cli-models.md)）
 - [已发布(beta.44)] 执行概览、任务、项目、提醒也进侧栏（[设计](design/side-panel-views.md)）；断线自动重试成功不再显示红色报错，收尾空回复不再报错
 - [已发布(beta.44)] HTML / SVG / Office / iWork / zip / Jupyter 文件在应用内直接显示（[HTML 设计](design/html-file-preview.md)、[Office 设计](design/office-file-preview.md)、[0024](decisions/0024-html-preview-sandboxed.md)）
