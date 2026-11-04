@@ -49,3 +49,13 @@ test("行的 id 不随「正在发言」变：说完时过程消息隐藏，整�
 	assert.equal(during.length, 1);
 	assert.equal(during[0].id, after[0].id);
 });
+
+test("单聊：只有思考的一步不单独显示（出错、还在生成、带附件的照常显示）", async () => {
+	const { quietThinking } = await import("../../../apps/web/src/room-group.ts");
+	assert.equal(quietThinking(mk("assistant", "a", "")), true);
+	assert.equal(quietThinking(mk("assistant", "a", "说了话")), false);
+	assert.equal(quietThinking(mk("assistant", "a", "", { status: "streaming" })), false, "正在想的那一步要看得到");
+	assert.equal(quietThinking(mk("assistant", "a", "", { status: "error" })), false, "出错要让用户看到");
+	assert.equal(quietThinking(mk("assistant", "a", "", { meta: { attachments: [{ fileId: "f" }] } })), false, "带附件的要显示");
+	assert.equal(quietThinking(mk("tool", "a", "")), false);
+});

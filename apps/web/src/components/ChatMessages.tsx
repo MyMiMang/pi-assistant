@@ -8,6 +8,7 @@ import Attachments from "./Attachments";
 import { ApprovalCard, QuestionCard, TaskCard } from "./Cards";
 import { WorkResultCard } from "./WorkItems";
 import Markdown from "./Markdown";
+import { quietThinking } from "../room-group";
 import { splitThinking } from "../thinking";
 import { slowStepHint } from "../slowStep";
 import { fmtMoney, fmtTok, type MsgUsage, useFx } from "./usage-fmt";
@@ -68,7 +69,8 @@ function dayLabel(ts: number) {
 	return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
 }
 
-export function group(list: Message[]): Row[] {
+/** quiet：单聊主界面不单独显示只有思考的一步；帮手详情（查看过程）传 false 看完整过程 */
+export function group(list: Message[], quiet = true): Row[] {
 	const rows: Row[] = [];
 	let lastTs = 0;
 	for (const m of list) {
@@ -78,6 +80,7 @@ export function group(list: Message[]): Row[] {
 			rows.push({ kind: m.role, m } as Row);
 			continue;
 		}
+		if (quiet && quietThinking(m)) continue; // 只有思考没有文字的一步：不单独占一块，前后步骤连成一组
 		let bot = rows[rows.length - 1];
 		if (bot?.kind !== "bot") rows.push((bot = { kind: "bot", id: m.id, parts: [] }));
 		const parts = bot.parts;

@@ -142,7 +142,7 @@ export function SubagentChat({ id, visible, room }: { id: string; visible: boole
 				onFollow: () => void setFast(null),
 			}
 		: undefined;
-	const rows = group(d?.messages ?? []);
+	const rows = group(d?.messages ?? [], false); // 这里就是「查看过程」：思考和每一步都完整显示
 	// 按键统一走 composer.ts（发送快捷键偏好 + 输入法防误发），与单聊 / 群聊一致
 	const keys = useComposerKeys(send, undefined, id);
 	const running = !!d && active(d.subagent);

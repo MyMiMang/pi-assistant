@@ -176,7 +176,7 @@
 | `latest-write.ts` | 「最后一次为准」写入守卫（必须复用） |
 | `composer.ts` | 输入栏按钮标签规则 |
 | `slowStep.ts` | 一步跑太久时的提示文字（可能在等系统权限弹窗） |
-| `room-group.ts` | 群聊消息分组纯逻辑 `groupRoom`（决策 0026：只有思考 / 工具步骤、没有文字的助理消息不单独显示，步骤并进同一成员下一条有文字的消息的折叠「N 个步骤」；正在发言的那位照旧显示过程）；`RoomChat.tsx` 使用，单聊仍用 `ChatMessages.tsx` 的 `group` |
+| `room-group.ts` | 群聊消息分组纯逻辑 `groupRoom`；`quietThinking`（单聊主界面不单独显示只有思考的一步，ChatMessages 的 `group(list, quiet)` 用；帮手详情传 false 看完整过程）（决策 0026：只有思考 / 工具步骤、没有文字的助理消息不单独显示，步骤并进同一成员下一条有文字的消息的折叠「N 个步骤」；正在发言的那位照旧显示过程）；`RoomChat.tsx` 使用，单聊仍用 `ChatMessages.tsx` 的 `group` |
 | `member-status.ts` | 助理工作状态纯逻辑（群成员条和单聊顶部共用）：`memberActivity` 群成员（等你 > 在群里说话 > 在后台干活 > 帮手做任务 > 排队 > 空闲）、`agentActivity` 单聊、`roomSummary` 群总状态（几人在干活 / 有人等你 / 都停下了）、`pendingCardOf` 没处理的审批 / 提问卡 |
 | `composerDrafts.ts` | 输入框草稿 |
 | `replyDrafts.ts` | 引用草稿 |

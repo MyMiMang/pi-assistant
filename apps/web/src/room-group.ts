@@ -10,6 +10,12 @@ export type Part = { kind: "msg"; m: Message } | { kind: "steps"; items: Message
 export type RRow = { kind: "user"; m: Message } | { kind: "system"; m: Message } | { kind: "bot"; id: string; agentId: string; parts: Part[] } | { kind: "day"; label: string; id: string };
 
 /** 只有过程、没有文字的消息：工具步骤、只有思考的助理消息、帮手执行卡（失败的空消息要让用户看到，不算） */
+/**
+ * 单聊用：只有思考、没有文字的一步（不是出错、不是还在生成、没带附件）不单独占一块（决策 0026 同一条规则用到单聊）。
+ * 跳过它之后，前后的工具步骤自然连成一组「N 个步骤」；正在进行的那一步照旧显示「思考中…」。
+ */
+export const quietThinking = (m: Message) => m.role === "assistant" && !m.content.trim() && m.status === "done" && !(m.meta.attachments?.length);
+
 export const isProcess = (m: Message) => m.role === "tool" || (m.role === "assistant" && !m.content.trim() && m.status !== "error") || (m.role === "card" && m.meta.kind === "subagent");
 
 const dayLabel = (ts: number) => {
