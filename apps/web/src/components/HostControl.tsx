@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, cx, ErrorBox, Input, avatarText, Help, useConfirm } from "./ui";
+import { FastExecutorSetting } from "./FastExecutorSetting";
 
 /** 启用“完全权限”前的确认框（不再要求输入确认语） */
 const FULL_ASK = { title: "启用完全权限？", body: "助理几乎能做你在这台电脑上能做的任何事，包括使用已登录的账号和文件。这个档位下应用层不再弹审批：关机、删除、改系统设置这类受保护操作也会直接执行，随时可以一键暂停。仍然拦得住的只有凭据/密钥文件（直接拒绝）、暂停或调低档位、系统自己的权限弹窗和网站上的登录/验证码。", ok: "确定启用", danger: true };
@@ -263,6 +264,8 @@ export function HostControlSettings() {
 					</div>
 				)}
 			</section>
+
+			<FastExecutorSetting />
 
 			{mac && (
 				<section className="rounded-xl bg-hover p-3 text-sm" data-testid="host-mac-perms">

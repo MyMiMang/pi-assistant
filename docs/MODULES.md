@@ -44,7 +44,7 @@
 | `shared` | 前后端共用常量和纯逻辑 |
 | `ext-approval` | 审批闸门（有后果的工具调用）；含「不能用命令 / 写脚本直接调 cua」的 deny（`usesCuaDirectly`，所有档位） |
 | `ext-sandbox` | 工作区命令 |
-| `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑）；`structured.ts`：把 cua 的 structuredContent（tab_id / refs / elements / next_call）压成紧凑 JSON 追加给模型（上限 12K，纯逻辑） |
+| `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑）；`structured.ts`：把 cua 的 structuredContent（tab_id / refs / elements / next_call）压成紧凑 JSON 追加给模型（上限 12K，纯逻辑）；`quick-steps.ts`：快速执行者的纯逻辑（候选解析 / 过滤排序 / 问题构造 / 判断 / 拼调用 / 核对）；`quick-steps-tool.ts`：`computer_quick_steps` / `hostpc_quick_steps` 工具和执行循环（问 classifier、走 `ctx.executeTool` 照常过审批） |
 | `ext-browser` | 浏览器工具 |
 | `ext-connectors` | 邮箱等连接器工具 |
 | `ext-delivery` | 发文件 / 提问 / 派帮手（spawn_subagent 等；后台任务工具已并进帮手，决策 0027） |
@@ -65,7 +65,7 @@
 |---|---|
 | `main.ts` | 启动入口 |
 | `http.ts` | 组装路由、中间件、压缩（具体接口在 `routes/`） |
-| `routes/` | 全部 HTTP 接口：agents、channels、chat-projects（单聊项目：列项目 / 确认 / 先不做 / 停下，写法照 rooms 的项目路由）、common（共用 helper）、desktop、host-control、mcp、memory、models、remote、rooms、routines、skills、system、tool-bridge（Claude Code 工具桥的 MCP 入口，不在 /api 下：只收 127.0.0.1 + 随机令牌）、work-items |
+| `routes/` | 全部 HTTP 接口：agents、channels、chat-projects（单聊项目：列项目 / 确认 / 先不做 / 停下，写法照 rooms 的项目路由）、common（共用 helper）、desktop、fast-executor（快速执行设置）、host-control、mcp、memory、models、remote、rooms、routines、skills、system、tool-bridge（Claude Code 工具桥的 MCP 入口，不在 /api 下：只收 127.0.0.1 + 随机令牌）、work-items |
 | `bus.ts` | 实时事件总线（WS） |
 | `config.ts` | 环境变量（PIA_ 前缀） |
 | `db.ts` | SQLite 基础表与轻量迁移 |
@@ -139,6 +139,7 @@
 | `desktop/` | backend（后端选择）、computers（谁用哪台，纯逻辑）、lima、wsl、names（容器名保护）、image、image-download、idle、resources、settings |
 | `sandbox.ts` | 沙箱驱动（工作区 / Docker） |
 | `host-control.ts` | 操作用户电脑（cua-driver） |
+| `fast-executor.ts` | 快速执行（computer_quick_steps）的设置：开关、用哪个决策模型（复用 Pi 的 classifier 目录，只取已配置的）、实际生效的那个 |
 | `action-log.ts` | 电脑操作记录 |
 | `cli-channel-service.ts` + `cli-services.ts` + `routes/models.ts` 里的 `/api/models/<渠道名>`（`/recheck`） | 本机命令行模型渠道（claude-code / codex / antigravity / opencode-cli）的**通用服务**：`createCliChannelService(adapter)` 管启动注册（找得到命令才注册，codex / antigravity 还要已登录；Mock/单测默认关，`PIA_CLAUDE_COMMAND` / `PIA_CODEX_COMMAND` / `PIA_AGY_COMMAND` / `PIA_OPENCODE_COMMAND` 指定或置空）、检测与重新检测（装好后就地注册、已注册则刷新模型列表）、关闭时 disposeAll；`cli-services.ts` 是适配表（每家一份 `CliChannelAdapter`：find / detect / register / refresh / requireLogin / extra），models.ts、main.ts、路由都遍历 `cliServices`（启动注册走 `startCliChannels`：后台并行不阻塞，`models.ts` 的 `cliChannelsReady()` / `waitCliForDefaultModel()` 可等；`cliProviderReady(provider)` 只等某一家，助理运行时用；注册上就发 `models.changed`，前端 store 收到后 `loadSystem()` 触发模型列表重拉；同一家并发的 `ensure` 合并成一次）；加新的一家 = 在适配表加一项。界面卡片 `apps/web/src/components/CliAgentCard.tsx`（四家共用，`KINDS` 放每家文案，挂在 ModelServices 里；`loginOptional` = 没登录也能用的 OpenCode）；e2e `e2e/claude-code-ui.mjs`、`e2e/codex-ui.mjs`、`e2e/agy-ui.mjs`、`e2e/opencode-ui.mjs`（独立脚本，`node e2e/<名>.mjs`，不在 run.mjs 的步骤里），单测 `test/claude-code-service-http.test.ts`、`test/cli-models-claude-list.test.ts`、`test/cli-channels-startup.test.ts`、`test/codex-service-http.test.ts`、`test/agy-service-http.test.ts`、`test/opencode-service-http.test.ts` |
 | `cli-agents/` | 把本机已登录的编程命令行（claude、codex、agy、opencode）当模型用的底层，与 Pi 无关（docs/design/cli-models.md）：launch（拼 claude 参数和白名单环境，复用 native-launch-env）、events（stream-json 一行 → 简单事件，用量取法见 §4.3）、tool-bridge（最小 MCP 服务：每次运行一个随机令牌，tools/call 按配对键挂起、外部回填，取消 / 结束时全部取消；配对键可换 `callKey`：claude 用 toolUseId、agy 用 progressToken 末段的 step_index；tools/list 每个工具带 `_meta antigravity/alwaysLoad`）、claude-models（`listClaudeModels`：向 claude 发 `initialize` 控制请求取 `/model` 完整清单，超时 30 秒）、claude-models-parse（回包 → 模型信息的纯函数：命名 / 重名 / 1M / 思考档位 + 退回的三个别名 + 内置「更多模型」清单 `CLAUDE_EXTRA_MODELS` + `mergeClaudeModels`（别名在前、清单、自定义，按 id 去重）+ `validateClaudeModelId`）；`claude-custom-models.ts`（用户自定义模型 ID 的设置存取，接口 `/api/models/claude-code/custom-models`，界面在 CliAgentCard 的「自定义模型」）、claude-process（ClaudeRun：起进程、读事件、写 stdin 插话、回填工具结果、abort）、detect（找 claude / codex / agy、版本、`claude auth status` / `codex login status` 只看退出码、agy 看 `agy models` 是否成功，不读凭证）、launch 里的 `buildCliEnv`（白名单环境，claude / codex 共用）；codex：codex-launch（`codex app-server` 的 `--disable` / `-c` 参数 + MCP 逐个按名字关 + 环境）、codex-events（通知 / 服务端请求 → 事件，和 claude 同形；审批一律拒绝、提问回不可用）、jsonrpc-stdio（通用 JSON-RPC over stdio 客户端 `RpcClient`：codex app-server 和 ACP 命令行共用，`label` 用在报错里）、codex-hub（全局唯一 app-server：按需起、空闲 10 分钟退、崩溃下次重启、起前用 `config/read` 取用户 MCP 名字、`model/list`）；agy（Antigravity，实验性，方案 §5b）：agy-launch（参数 / 白名单环境 / 运行目录里的代理文件 pia.md + 插件 + 带令牌的 mcp_config.json / 配对键 / 工具名前缀，纯函数）、agy-models（`agy models` 解析成模型家族、思考强度映射 id 后缀，纯函数）、agy-events（stream-json 一行 → 事件，文字和用量与 claude 同形）、agy-process（AgyProcess：长驻进程，每轮一行 stdin，0700 运行目录结束必删，并行工具调用等 300 毫秒收齐，SIGINT 中止，空闲 10 分钟退）；**ACP（OpenCode 等，方案 docs/design/acp-cli-models.md）**：acp-events（`session/update` 通知 → 文字 / 思考增量、「模型报告了我们的工具」计数信号；`session/prompt` 回包用量；思考强度挑选 `pickEffort`；权限选项，纯函数）、acp-process（`AcpProcess`：长驻进程，`initialize` → `session/new` / `session/resume`（带 http 类型 `mcpServers` 指向工具桥，令牌放 Authorization 头）→ `session/set_config_option` 设模型 / 思考强度 → `session/prompt`；`session/request_permission` 一律回「允许一次」；`session/cancel` 中止；**工具调用只认工具桥收到的 MCP `tools/call`，配对键 = MCP 请求 id**，并行收齐 = 桥收到的数量 ≥ ACP 报告的我们的工具数且安静 50 毫秒，最多等 300 毫秒；空闲 10 分钟退；运行目录 0700 / 配置文件 0600 结束必删；`AcpProfile` = 每家命令行的启动方式）、opencode-launch（`opencode acp --cwd <固定工作目录>`、白名单环境 + `OPENCODE_DISABLE_*` 开关 + `XDG_CONFIG_HOME` 指到 `<dataDir>/cli-models/opencode-config` 隔离用户全局配置和 AGENTS.md、`OPENCODE_CONFIG` 指向运行目录里的配置文件：`permission` 全 deny 只放行 `pia_*`、`agent.build.prompt` 放系统提示、关标题请求、`mcp_timeout` 写大；`opencodeProfile`；`opencodeAuthPath` 只判断 auth.json 在不在）、opencode-models（`opencode models --verbose` 解析：只留支持工具调用的，名字标明来源，思考强度取自 `variants`）、detect 里的 `findOpencodeCommand` / `detectOpencode` / `listOpencodeModels`；测试用假 opencode `test/fixtures/fake-opencode.mjs`，单测 `test/cli-agents-acp.test.ts`（纯函数）、`test/cli-models-opencode-channel.test.ts`、`test/cli-models-opencode-session.test.ts`；测试用假 agy `test/fixtures/fake-agy.mjs`，单测 `test/cli-agents-agy.test.ts`、`test/cli-models-agy-channel.test.ts`、`test/cli-models-agy-session.test.ts`；Pi 渠道在 `pi-adapter/cli-models/` |
@@ -284,7 +285,8 @@
 | `DefaultVoicePrep.tsx` | 本地语音识别可选模块卡（安装 / 进度 / 取消 / 设为来源） |
 | `DesktopSettings.tsx` | 设置 › 助理电脑 |
 | `DesktopView.tsx` | 「电脑」标签画面 |
-| `HostControl.tsx` | 操作这台电脑（设置 + 档位）；输入栏「权限」按钮 `HostTierButton`（复用助理档位那块内容） |
+| `HostControl.tsx` | 操作这台电脑（设置 + 档位）；输入栏「权限」按钮 `HostTierButton`（复用助理档位那块内容）；里面放 `FastExecutorSetting` |
+| `FastExecutorSetting.tsx` | 设置 › 操作这台电脑 › 快速执行：开关、决策模型（自动 / 指定）、带不带截图 |
 | `HostFloatBar.tsx` | 托盘悬浮条 |
 | `Channels.tsx` | 渠道设置 |
 | `Email.tsx` | 邮箱设置 |

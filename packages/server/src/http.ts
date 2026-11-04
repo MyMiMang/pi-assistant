@@ -44,6 +44,7 @@ import { mountRoutineRoutes } from "./routes/routines.ts";
 import { mountRemoteRoutes } from "./routes/remote.ts";
 import { mountChannelRoutes } from "./routes/channels.ts";
 import { mountHostControlRoutes } from "./routes/host-control.ts";
+import { mountFastExecutorRoutes } from "./routes/fast-executor.ts";
 import { mountMcpRoutes } from "./routes/mcp.ts";
 import { mountSkillRoutes } from "./routes/skills.ts";
 import { mountToolBridgeRoutes } from "./routes/tool-bridge.ts";
@@ -182,6 +183,7 @@ app.get("/hooks/channels/wecom/:id", wecomHook);
 app.post("/hooks/channels/wecom/:id", wecomHook);
 
 mountHostControlRoutes(app);
+mountFastExecutorRoutes(app);
 mountDesktopRoutes(app);
 startIdleWatcher({ busy: agentBusy, changed: deskChanged });
 startHousekeeping();

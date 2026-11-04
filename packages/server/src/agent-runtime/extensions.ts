@@ -11,6 +11,7 @@ import { computerExtension, computerLauncherExtension, isHostTool, trustedComput
 import { actionHistoryText, recordAction } from "../action-log.ts";
 import { guardContext } from "../guard.ts";
 import { describeHostAction, cuaInstalled, macPermissionState, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostFileAccess, hostMcpCommand, hostPaused, hostStatus } from "../host-control.ts";
+import { fastExecutorFor } from "../fast-executor.ts";
 import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
 import { emailExtension, isEmailTool, wechatExtension } from "@pi-assistant/ext-connectors";
 import { openWechat, WECHAT_PROMPT, wechatAllowed } from "../wechat.ts";
@@ -381,6 +382,8 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 		guard: guardContext("sandbox"),
 		log: (e) => (touchAgent(agentId), recordAction(agentId, taskId, e, () => screenshotDesktop(agentId))),
 		history: (o) => actionHistoryText(agentId, { target: "sandbox", ...o }),
+		// 快速执行者（computer_quick_steps）：决策模型随设置变，每次调用求值；没配模型就不提供
+		quickSteps: () => fastExecutorFor(),
 		// 共用电脑：主屏幕正被别的助理操作时自动给这个助理开自己的屏幕（不抢鼠标键盘）
 		before: () => beforeComputerAction(agentId, agentBusy),
 		screens: screenTools(agentId),
@@ -413,6 +416,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 				guard: guardContext("host"),
 				log: (e) => recordAction(agentId, taskId, e),
 				history: (o) => actionHistoryText(agentId, { target: "host", limit: o.limit }),
+				quickSteps: () => fastExecutorFor(),
 				// 守护进程没就绪：说清楚是什么问题、要不要用户动手，不让任务在同一个动作上反复重试或无声卡住
 				before: async () => {
 					const st = hostStatus();

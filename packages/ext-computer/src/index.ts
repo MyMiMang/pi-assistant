@@ -19,6 +19,9 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { pruneOldScreens } from "./screen-window.ts";
 import { structuredNote } from "./structured.ts";
+import { registerQuickSteps, type QuickStepsConfig } from "./quick-steps-tool.ts";
+export { registerQuickSteps, QUICK_STEPS_PROMPT, quickStepsPrompt, type QuickStepsConfig } from "./quick-steps-tool.ts";
+export * from "./quick-steps.ts";
 export { structuredNote, unwrapStructured, STRUCTURED_MAX_CHARS } from "./structured.ts";
 export { pruneOldScreens, PRUNED_NOTE, KEEP_SCREENS, PRUNE_BATCH } from "./screen-window.ts";
 import { guardComputer, type GuardContext, type GuardHit } from "@pi-assistant/shared";
@@ -178,6 +181,8 @@ export interface ComputerHost {
 	hostFileAccess?: () => boolean;
 	/** sandbox 目标：屏幕 / 电脑管理（computer_screen 工具） */
 	screens?: ScreenHost;
+	/** 快速执行者（computer_quick_steps）的决策模型；返回 null = 不提供。每次调用求值 */
+	quickSteps?: () => QuickStepsConfig | null;
 }
 
 /** 同一台助理电脑里的多块屏幕（DESIGN §15.4） */
@@ -406,6 +411,7 @@ export function computerExtension(host: ComputerHost) {
 				},
 			});
 		}
+		if (host.quickSteps && policy() !== "observe") registerQuickSteps(pi, { prefix, target: host.target, browser: host_ && browserOn, config: host.quickSteps });
 		pi.on("tool_call", async (event) => {
 			if (!isComputerTool(event.toolName)) return;
 			const own = event.toolName.startsWith(prefix);
