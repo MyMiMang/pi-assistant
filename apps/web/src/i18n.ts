@@ -4,7 +4,7 @@ const en: Record<string, string> = {
 	"给 {name} 发消息…": "Message {name}…", "可以随时补充或改要求，说「停」就停下": "Add details anytime, or say “stop”", "等当前这一步做完送达…": "Delivering after this step…", 已送达正在进行的任务: "Delivered to running task", 已停止: "Stopped", "任务已停止，未送达": "Task stopped before delivery", 查看过程: "View progress", 概览: "Overview", 更多: "More", 定时任务: "Routines", 文件: "Files", 电脑: "Computer",
 	批准: "Approve", 拒绝: "Reject", 正在工作: "Working", 空闲: "Idle", 本机: "This computer", 远程: "Remote",
 	模型: "Models", 远程访问与设备: "Remote & devices", 入口域名: "Entry domain", 外观: "Appearance", 关于: "About",
-	后台任务: "Background tasks", 需要你的批准: "Needs your approval", 已批准: "Approved", 已拒绝: "Rejected", 已过期: "Expired",
+	后台任务: "Background tasks", 帮手: "Helpers", 需要你的批准: "Needs your approval", 已批准: "Approved", 已拒绝: "Rejected", 已过期: "Expired",
 	给助理安装电脑: "Install a computer for assistants", 助理电脑: "Assistant computer", 运行方式: "Runtime", 空闲自动关机: "Auto shutdown when idle", 镜像下载地址: "Image download source",
 	已安装: "Installed", 未安装: "Not installed", 未下载: "Not downloaded", 下载中: "Downloading", 关机: "Shut down", 从不: "Never", 重试: "Retry", "{m} 分钟": "{m} min",
 	"自带运行时（推荐）": "Built-in runtime (recommended)", "使用已安装的 Docker": "Use installed Docker", 启动中: "Starting", 运行中: "Running", 已关机: "Off",

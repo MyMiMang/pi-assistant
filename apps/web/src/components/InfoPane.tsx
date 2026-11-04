@@ -359,9 +359,10 @@ function AgentTasks({ agentId, legacyTab }: { agentId: string; legacyTab: string
 		{tab === "routines" && <RoutinesTab agentId={agentId} />}
 		{tab === "proactive" && <ProactiveTab agentId={agentId} />}
 		{tab === "background" && <section className="space-y-2" data-testid="agent-background-tasks">
-			<h2 className="pa-info-h2">后台任务</h2>
-			{!list.length && <p className="text-sm text-mut">还没有后台任务。</p>}
-			{list.slice(0, 20).map((x) => <TaskRow key={x.id} title={x.title || taskTitle(x.task)} status={x.status} />)}
+			<h2 className="pa-info-h2">帮手</h2>
+			{!list.length && <p className="text-sm text-mut">还没有帮手干过活。</p>}
+			{/* 每一行都能点开看完整过程（复用帮手执行页；决策 0027：后台任务就是帮手，不再有只读的黑盒列表） */}
+			{list.slice(0, 20).map((x) => <TaskRow key={x.id} testId="info-helper-row" id={x.id} title={x.title || taskTitle(x.task)} status={x.status} time={x.finished_at ?? x.created_at} onClick={x.conversation_id ? () => useStore.getState().openSubagent({ id: x.id, task: x.title || x.task, agent_id: x.agent_id, conversation_id: x.conversation_id! }) : undefined} />)}
 			{!!list.length && <p className="text-xs text-mut2">显示“完成”只代表这次跑完了，事情办没办成记得看一眼结果。</p>}
 		</section>}
 	</div>;

@@ -32,7 +32,9 @@ export default function Sidebar() {
 		return () => (window.removeEventListener("pointerdown", close), window.removeEventListener("resize", close), window.removeEventListener("keydown", key));
 	}, [menu]);
 	const openMenu = (id: string, x: number, y: number) => setMenu({ id, x: Math.max(8, Math.min(x, window.innerWidth - 180)), y: Math.max(8, Math.min(y, window.innerHeight - 100)) });
-	const running = Object.values(tasks).flat().filter((x) => x.status === "running" || x.status === "queued").length;
+	// 每个助理有几个帮手在干活：侧栏点一下打开它的执行记录（每行都能看过程），不再只是一行看不进去的数字
+	const working = agents.map((a) => ({ a, n: (tasks[a.id] ?? []).filter((x) => x.status === "running" || x.status === "queued").length })).filter((x) => x.n > 0);
+	const openWork = (id: string) => void useStore.getState().selectAgent(id).then(() => useStore.getState().set({ info: true, infoTab: "tasks", infoTaskTab: "background" }));
 	const list = agents.filter((a) => !q || a.name.includes(q) || a.description?.includes(q));
 	const dark = document.documentElement.dataset.mode === "dark";
 	return (
@@ -120,10 +122,14 @@ export default function Sidebar() {
 						把几个助理拉进一个群，一起干活
 					</button>
 				)}
-				{running > 0 && (
+				{working.length > 0 && (
 					<>
-						<div className="pa-sec-label">{t("后台任务")}</div>
-						<div className="px-2.5 text-xs text-mut">{running} 个任务进行中</div>
+						<div className="pa-sec-label">{t("帮手")}</div>
+						{working.map(({ a, n }) => (
+							<button key={a.id} className="mx-1 block w-[calc(100%-0.5rem)] truncate rounded-md px-2 py-1 text-left text-xs text-mut hover:bg-hover hover:text-fg" data-testid="side-helpers" onClick={() => openWork(a.id)}>
+								{a.name} · {n} 个在干活
+							</button>
+						))}
 					</>
 				)}
 			</nav>

@@ -6,7 +6,7 @@ import { loadSelection, mergeMessages, resolveInitialAgent, saveSelection, selec
 import type { Agent, Conversation, Device, Helper, Message, Room, SystemInfo } from "./types";
 
 type Theme = "light" | "dark" | "system";
-const backgroundHelper = (r: Helper) => r.kind === "task" || r.kind === "routine"; // tasks 只放后台 / 定时任务的帮手（信息面板、侧栏运行数用）
+const backgroundHelper = (r: Helper) => r.kind !== "heartbeat" && !r.parent_subagent_id; // tasks = 用户看得见的帮手（含旧后台任务、定时任务；巡检安静、下一层归上一层），信息面板执行记录和侧栏运行数用（决策 0027）
 export interface SubagentTab { id: string; task: string; agent_id: string; conversation_id: string; roomId: string | null }
 interface State {
 	conn: "connecting" | "open" | "closed" | "unauthorized";

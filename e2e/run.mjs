@@ -1448,10 +1448,10 @@ await step("思考过程：App 里折叠显示「思考」（默认收起，点�
 	const sw = await page.evaluate(() => document.documentElement.scrollWidth);
 	if (sw > 392) throw new Error(`手机宽度横向溢出：${sw}`);
 	// 手机宽度下右侧面板是浮层：先关掉再看聊天
-	for (let i = 0; i < 3 && (await page.locator("aside").last().getByText("后台任务").isVisible().catch(() => false)); i++) {
+	for (let i = 0; i < 3 && (await page.locator("aside").last().getByTestId("agent-background-tasks").isVisible().catch(() => false)); i++) {
 		await page.keyboard.press("Escape");
 		await page.waitForTimeout(200);
-		if (await page.locator("aside").last().getByText("后台任务").isVisible().catch(() => false)) await page.locator("aside").last().locator("button").first().click().catch(() => {});
+		if (await page.locator("aside").last().getByTestId("agent-background-tasks").isVisible().catch(() => false)) await page.locator("aside").last().locator("button").first().click().catch(() => {});
 		await page.waitForTimeout(300);
 	}
 	await page.getByText("这是回答：思考过程收在上面的「思考」里。").last().scrollIntoViewIfNeeded();
