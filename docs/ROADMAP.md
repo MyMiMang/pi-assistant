@@ -17,7 +17,8 @@
 ## 计划
 - [已发布(beta.47)] 电脑操控提速：只留最近几张截图；cua 升到 0.38.0，照官方用法重写操作说明，读窗口默认不截图
 - [待做] 助理电脑镜像里的 cua 升到 0.38.0（要重建镜像）
-- [待决定] 电脑操控提速：Jev 这类快速模型当执行者（参考 cua jev-use / CUA-JEV）
+- [设计中] 电脑操控提速：Jev 当「快速执行者」，大模型一次写好几步、Jev 逐步从候选里挑元素，可带截图（[设计](design/fast-executor.md)）
+- [已合 main] Pi 升到 1.5.0（Jev 分类器能传图；codemode 并发改排队）
 - [已发布(beta.48)] 群里只沟通、干活转后台：动手就让出发言位、没 @ 人交给管理者、群里只显示说的话、群会话按大小整理（[设计](design/group-floor.md)、[0026](decisions/0026-group-floor.md)）
 - [已发布(beta.46)] 发出去、助理还没看到的消息可以撤回（[设计](design/recall-pending-message.md)）
 - [已发布(beta.46)] 让助理真的主动做事：巡检看得见群并能在群里推进、敢做的规则、可以放心做的事、试运行可选、巡检不白卡（[设计](design/proactive-observe-mode.md)、[0025](decisions/0025-proactive-autonomy.md)）
