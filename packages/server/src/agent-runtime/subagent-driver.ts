@@ -39,7 +39,7 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 					sessionDir: join("subagents", r.id),
 					sessionFile: r.session_file,
 					model: { provider: candidates[i].provider, id: candidates[i].id }, thinking: agentThinking(candidates[i]),
-					rules: [`你是后台帮手，执行分配的任务。${nest ? "可以再派最多一层帮手（spawn_subagent），只用于可并行或耗时的大块；你派的帮手不能再派。派了就由系统等它们结束、把结果交给你整合。" : "不能再派帮手；没有 spawn_subagent/spawn_task 工具。"}用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报：最后用几句话给出结果摘要（做了什么、产出在哪、还有什么没做），不要复述过程。你用 memory_remember 记下的是 task 草稿（默认不会写进共享的「关于用户」事实库），由主会话核验后才会晋升为长期事实；属于群任务的，任务通过核验后自动转正。`, ...(r.scope ? [r.scope] : [])],
+					rules: [`你是后台帮手，执行分配的任务。${nest ? "可以再派最多一层帮手（spawn_subagent），只用于可并行或耗时的大块；你派的帮手不能再派。派了就由系统等它们结束、把结果交给你整合。" : "不能再派帮手；没有 spawn_subagent 工具。"}用户可以进入你的会话直接补充要求或继续聊，请在此会话回应。每轮完成后结果和文件也会交给主会话核验汇报：最后用几句话给出结果摘要（做了什么、产出在哪、还有什么没做），不要复述过程。你用 memory_remember 记下的是 task 草稿（默认不会写进共享的「关于用户」事实库），由主会话核验后才会晋升为长期事实；属于群任务的，任务通过核验后自动转正。`, ...(r.scope ? [r.scope] : [])],
 					conversationId: r.conversation_id, taskId: r.id, ext: { allowSpawn: nest, subagentId: r.id, actor: "subagent" },
 				});
 				current = candidates[i];

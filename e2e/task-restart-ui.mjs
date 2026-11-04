@@ -36,7 +36,7 @@ try {
 		await box.press("Enter");
 		await waitFor(() => said("后台慢任务"), 3000).catch(() => {});
 	}
-	const task = async () => (await j(`/api/subagents?agent=${a.id}`)).find((r) => r.kind === "task");
+	const task = async () => (await j(`/api/subagents?agent=${a.id}`)).find((r) => !r.kind && !r.parent_subagent_id);
 	await waitFor(async () => (await task())?.status === "running");
 	const id = (await task()).id;
 	// 命令已经派发（工具步骤落了消息）再重启：结果未知
@@ -47,12 +47,14 @@ try {
 	assert.match((await task()).error_reason ?? "", /服务重启.*bash/, "原因里要说清哪个操作结果未知");
 	console.log("✅ 重启时命令结果未知 → 标中断待核验，不自动重放");
 	await page.reload();
-	await page.getByText(/后台任务「慢慢核对工作区」中断待核验/).last().waitFor();
+	// 决策 0027：慢任务是主会话派的帮手，聊天里是一张帮手卡片，中断后带「继续」
+	await page.getByText("帮手：慢慢核对工作区").last().waitFor();
+	await page.getByTestId("task-resume").last().waitFor();
 	await page.getByTestId("subagent-tasks").click();
 	await page.getByTestId("task-overview").waitFor();
 	const row = page.locator(`[data-testid=subagent-row][data-id="${id}"]`);
 	if (!(await row.isVisible().catch(() => false))) await page.getByTestId("task-finished").locator("summary").click();
-	await row.getByText("后台任务", { exact: false }).first().waitFor();
+	await row.getByText("帮手", { exact: false }).first().waitFor();
 	await page.waitForTimeout(1000); // 等进场动画结束再截图
 	await page.screenshot({ path: join(SHOTS, "task-restart-lost.png") });
 	await row.click();

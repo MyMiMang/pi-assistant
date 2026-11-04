@@ -51,7 +51,7 @@ import { chatProjectTools } from "../chat-projects/tools.ts";
 import { roomHooks } from "./room-hooks.ts";
 import { pendingUpdates, maybeSuggest } from "./skill-suggest.ts";
 import { runtime } from "./agent-runtime.ts";
-import { agentBusy, tasks } from "./background-tasks.ts";
+import { agentBusy, announceHelper } from "./background-tasks.ts";
 
 export function latestUserMessage(conversationId: string | null) {
 	return db.prepare("SELECT id FROM messages WHERE role = 'user' AND (conversation_id = ? OR (room_id IS NOT NULL AND room_id = ?)) ORDER BY rowid DESC LIMIT 1").get(conversationId, roomOfConversation(conversationId)) as { id: string } | undefined;
@@ -103,7 +103,6 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 					return { fileId: f.id, name: f.name };
 				},
 				ask: async (question, options, allowFreeText) => (await requests.question(agentId, taskId, question, options, allowFreeText, conversationId)).answer ?? "",
-				spawnTask: opts.allowSpawn && !opts.subagentId ? async (title, instructions) => ({ taskId: tasks.spawn(agentId, title, instructions, { conversationId }).id }) : undefined,
 				subagents: opts.allowSpawn ? {
 					spawn: async (input) => {
 						const a = getAgent(agentId)!;
@@ -114,7 +113,9 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 						if (opts.subagentId && !hasSubagentCapacity(agentId)) throw new Error("帮手名额已满：这一块自己做，不要再派");
 						const scope = opts.subagentId ? getSubagent(opts.subagentId)?.scope ?? null : helperScope(agentId, conversationId);
 						const { done_criteria, ...rest } = input;
-						return spawnSubagent(agentId, conversationId!, fallback, { ...rest, context: scopedContext(scope, done_criteria, input.context), parentMessageId: parent?.id, parentSubagentId: opts.subagentId, scope });
+						const h = spawnSubagent(agentId, conversationId!, fallback, { ...rest, context: scopedContext(scope, done_criteria, input.context), parentMessageId: parent?.id, parentSubagentId: opts.subagentId, scope });
+						announceHelper(h); // 单聊主会话派的帮手：聊天里留一张帮手卡片（决策 0027）
+						return h;
 					},
 					// 自己派的：完整记录 + 最近的工具步骤；群里别的成员派的：列表只给概况，点名查给完整过程（helper-scope.ts）
 					list: () => {
@@ -140,7 +141,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 					? {
 						register: (i) => {
 							const checkIntervalMs = i.checkMinutes !== undefined ? Math.max(1, i.checkMinutes) * 60_000 : WAIT_DEFAULT_INTERVAL_MS;
-							const w = registerWait(agentId, conversationId, { taskId: i.taskId, subagentId: i.subagentId, githubRun: i.githubRun, dueAt: i.due ? parseDue(i.due) : undefined, checkIntervalMs, reason: i.reason });
+							const w = registerWait(agentId, conversationId, { subagentId: i.subagentId, githubRun: i.githubRun, dueAt: i.due ? parseDue(i.due) : undefined, checkIntervalMs, reason: i.reason });
 							return { id: w.id, kind: w.target_kind, dueAt: w.due_at, intervalMs: w.check_interval_ms };
 						},
 						list: () =>

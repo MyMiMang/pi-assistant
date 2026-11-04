@@ -47,7 +47,7 @@
 | `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑）；`structured.ts`：把 cua 的 structuredContent（tab_id / refs / elements / next_call）压成紧凑 JSON 追加给模型（上限 12K，纯逻辑） |
 | `ext-browser` | 浏览器工具 |
 | `ext-connectors` | 邮箱等连接器工具 |
-| `ext-delivery` | 发文件 / 提问 / 后台任务 / 子代理派活 |
+| `ext-delivery` | 发文件 / 提问 / 派帮手（spawn_subagent 等；后台任务工具已并进帮手，决策 0027） |
 | `ext-memory` | 记忆工具 |
 | `ext-skills` | 技能工具 |
 | `ext-routines` | 定时任务工具 |

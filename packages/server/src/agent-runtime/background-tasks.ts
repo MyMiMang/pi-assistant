@@ -10,7 +10,7 @@ import { bus } from "../bus.ts";
 import { db } from "../db.ts";
 import { defaultModel } from "../models.ts";
 import { notify } from "../push.ts";
-import { insertMessage } from "../messages.ts";
+import { insertMessage, roomOfConversation } from "../messages.ts";
 import { type TaskRow, getAgent, listAgents, syncTaskCard } from "./rows.ts";
 import { runtimes, runtime } from "./agent-runtime.ts";
 
@@ -59,8 +59,18 @@ export function taskView(r: Subagent): TaskRow {
 	};
 }
 
+/**
+ * 主会话派的帮手在聊天里留一张卡片（决策 0027，复用旧后台任务卡片 kind=task + helper 标记；状态由下面的 syncTaskCard 跟着更新）。
+ * 只给用户看得见的单聊主会话：群会话、帮手派的下一层、带来源的（定时 / 巡检 / 群任务）不插。
+ */
+export function announceHelper(h: Subagent) {
+	if (h.kind || h.parent_subagent_id || roomOfConversation(h.conversation_id)) return;
+	const title = (h.title ?? h.task).replace(/\s+/g, " ").trim().slice(0, 40);
+	insertMessage({ agentId: h.agent_id, conversationId: h.conversation_id, role: "card", meta: { kind: "task", helper: true, taskId: h.id, title, status: taskView(h).status } });
+}
+
 export const tasks = {
-	/** 开一个后台帮手（spawn_task 工具 / 定时任务 / 主动巡检）。没有可用模型时直接报错，由触发方记失败。 */
+	/** 开一个带来源的后台帮手（定时任务 / 主动巡检；模型的 spawn_task 工具已并进 spawn_subagent，决策 0027）。没有可用模型时直接报错，由触发方记失败。 */
 	spawn(agentId: string, title: string, instructions: string, opts: { conversationId?: string | null; routineRunId?: string; kind?: HelperKind } = {}) {
 		const a = getAgent(agentId);
 		const model = a ? runtime(a.id).modelFor(a) : null;
@@ -75,16 +85,17 @@ export const tasks = {
 };
 
 /**
- * 后台任务的帮手结束（和以前一样不额外唤醒主会话、不为解释失败再花一次模型请求）：
+ * 旧 kind=task 的帮手结束（历史数据；新的后台活都走 spawn_subagent，结束会叫醒派它的会话；这里和以前一样不额外唤醒主会话、不为解释失败再花一次模型请求）：
  * 完成 → 推送 + 结果作为主会话下一轮的上下文；失败 / 超时 / 中断待核验 → 推送 + 对话里直接可见的报错。
  * 定时任务由 routines.ts 发消息与推送（遵守免打扰）；巡检静默，只记录。旧聊天卡片同步状态。
  */
 const reported = new Set<string>();
 bus.on((e) => {
 	const r = (e as { type: string; subagent?: Subagent }).type === "subagent.updated" ? (e as { subagent?: Subagent }).subagent : undefined;
-	if (!r?.kind) return;
+	if (!r || (!r.kind && r.parent_subagent_id)) return;
 	const t = taskView(r);
-	syncTaskCard(t);
+	syncTaskCard(t); // 普通帮手（kind 为空）的卡片也跟着更新；下一层帮手没有卡片
+	if (!r.kind) return; // 普通帮手结束由帮手事件叫醒派它的会话（subagent-supervision），这里只管旧后台任务的推送
 	if (r.kind !== "task" || !["done", "failed", "timeout", "lost"].includes(r.status) || reported.has(`${r.id}:${r.finished_at}`)) return;
 	reported.add(`${r.id}:${r.finished_at}`);
 	if (r.status === "done") {

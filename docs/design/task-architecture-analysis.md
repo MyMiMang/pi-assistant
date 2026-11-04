@@ -58,7 +58,7 @@ flowchart LR
 
 | 方面 | 现状 |
 |---|---|
-| 触发 | 主会话工具 `spawn_task`（delivery 扩展，extensions.ts:92，仅 `allowSpawn` 时提供）；例行任务 spawner（routines.ts:67-69/248）；主动巡检 `runHeartbeat`（proactive.ts:831-837，`kind: "heartbeat"`，会话是 `hiddenConversation(agentId)`）。 |
+| 触发 | （已按决策 0027 去掉）主会话工具 `spawn_task`；现在主会话只用 `spawn_subagent`，派出后聊天里由 `announceHelper` 插一张帮手卡片；例行任务 spawner（routines.ts:67-69/248）；主动巡检 `runHeartbeat`（proactive.ts:831-837，`kind: "heartbeat"`，会话是 `hiddenConversation(agentId)`）。 |
 | 持久化 | `tasks`（status / session_file / kind / routine_run_id / conversation_id 等）。巡检另有 `proactive_runs`，例行另有 `routine_runs` 关联。 |
 | 执行 | `run` background-tasks.ts:84-157：`createPiSession`，sessionDir `agents/<id>/tasks`；身份=该助理；模型=助理默认模型（无模型池回退）；工作区=助理工作区；`extensionsFor(agentId, conv, taskId, { allowSpawn: false })`，记忆 actor=`background`（extensions.ts:57）；电脑/浏览器同主会话权限；巡检任务额外拿到 `proactive_surface` / `advance`（extensions.ts:64/228/230），审批被自动拒绝（requests.ts:34）。 |
 | 并发 | 全局 `MAX_CONCURRENT = 3`（:57），`pump`（:77）排队；`agentBusy`（:62）只数 tasks，不数群执行。 |
@@ -170,7 +170,7 @@ flowchart LR
 ### 5.2 代码上
 
 1. **一个执行器**：以子代理（subagent-driver + subagents 表）为唯一执行容器，加 `kind`（task | routine | heartbeat | work | subagent）和 `work_run_id` / `routine_run_id` 字段。好处直接继承：重启安全判定、模型池、stalled/timeout、详情界面、插话、停止。
-2. **后台任务退役**：`tasks.spawn` 变成薄适配层调 `spawnSubagent(kind="task")`；`spawn_task` 工具保留名字一段时间做兼容；`tasks` 表只读保留历史。
+2. **后台任务退役**：`tasks.spawn` 变成薄适配层调 `spawnSubagent(kind="task")`；`spawn_task` 工具已在决策 0027 去掉（并进 `spawn_subagent`）；`tasks` 表只读保留历史。
 3. **群任务执行改用子代理**：`dispatchRun` 不再 `runtime(owner, execConv).turn`，而是 `spawnSubagent(kind="work", owner, prompt)`；`work_item_runs` 只记 run ↔ subagent 映射；重启由 `recoverSubagents` 统一处理（安全则续，不安全则 lost → 群里提示“待核验”）。work_items 的完成标准/核验/升级逻辑保留在 work-items/。
 4. **共用监督模块**（例如 `supervision/`）：输入“执行或任务的活动时间、最近文本、事件”，输出等级（提醒执行者 → 叫醒负责会话/管理者 → 问用户）；子代理 180s/maxMinutes、群任务 20min、重复卡点 fingerprint、空聊检测都成为它的规则；单聊的子代理也因此获得“重复卡点”和“问用户”升级。
 5. **一条回报通道**：执行结束统一产生事件 → 来源会话（单聊 = 主会话 notify；群 = 管理者回合 + roomNotice）→ 必要时推送通知。`task_wait` 只认这一种事件。

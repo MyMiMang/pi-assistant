@@ -49,8 +49,13 @@ export function setAgentStatus(id: string, status: string) {
 	db.prepare("UPDATE agents SET status = ? WHERE id = ?").run(status, id);
 	bus.emit({ type: "agent.status", agentId: id, status });
 }
-/** 后台任务（帮手）状态变了：同步聊天里 kind=task 卡片上的状态（界面列表直接听 subagent.updated）。 */
+/** 帮手状态变了：同步聊天里 kind=task 卡片（旧后台任务 / 主会话派的帮手卡片）上的状态（界面列表直接听 subagent.updated）。 */
+const lastCardSync = new Map<string, string>();
 export function syncTaskCard(t: TaskRow) {
+	// 帮手每次有动静都会发 subagent.updated：状态 / 结果 / 错误没变就不去消息表里找卡片（json_extract 查询没有索引）
+	const sig = `${t.status}\u0000${t.result ?? ""}\u0000${t.error ?? ""}`;
+	if (lastCardSync.get(t.id) === sig) return;
+	lastCardSync.set(t.id, sig);
 	const card = db.prepare("SELECT id FROM messages WHERE role = 'card' AND json_extract(meta, '$.taskId') = ? AND json_extract(meta, '$.kind') = 'task'").get(t.id) as { id: string } | undefined;
 	if (card) updateMessage(card.id, { meta: { status: t.status, result: t.result, error: t.error } });
 }

@@ -23,7 +23,7 @@ import { assistantErrorDetail, assistantErrorKind, assistantErrorText, botBodyVi
 // ------------------------------------------------------------------ 工具 → 文案
 const TOOL_LABEL: Record<string, string> = {
 	bash: "运行命令", read: "读取文件", write: "写入文件", edit: "修改文件", ls: "查看目录", find: "查找文件", grep: "搜索内容",
-	deliver_file: "发送文件", ask_user: "询问你", spawn_task: "创建后台任务", spawn_subagent: "派帮手", subagent_message: "补充帮手要求", subagent_stop: "停止帮手", computer_screenshot: "查看屏幕", request_handoff: "请你接手",
+	deliver_file: "发送文件", ask_user: "询问你", spawn_task: "创建后台任务" /* 旧历史记录里的工具名，决策 0027 起已不再提供 */, spawn_subagent: "派帮手", subagent_message: "补充帮手要求", subagent_stop: "停止帮手", computer_screenshot: "查看屏幕", request_handoff: "请你接手",
 	web_fetch: "打开网页", web_search: "搜索网页", browser: "操作浏览器",
 	chat_plan: "出方案卡", chat_project_start: "开始项目", chat_stage_done: "标记阶段完成", chat_project_done: "交付项目",
 };
@@ -37,7 +37,7 @@ export function activityOf(name: string | undefined, args: Record<string, any> =
 	if (n === "ls" || n === "find" || n === "grep") return { text: "正在查找文件…", icon: <FolderSearch className="pa-ic" />, detail: args.pattern ?? args.path };
 	if (n === "bash") return { text: "正在运行命令…", icon: <Terminal className="pa-ic" />, detail: String(args.command ?? "").slice(0, 48) };
 	if (n === "deliver_file") return { text: "正在整理文件发给你…", icon: <Send className="pa-ic" />, detail: args.path };
-	if (n === "spawn_task") return { text: "正在安排后台任务…", icon: <Sparkles className="pa-ic" />, detail: args.title };
+	if (n === "spawn_subagent") return { text: "正在安排帮手…", icon: <Sparkles className="pa-ic" />, detail: String(args.task ?? "").slice(0, 48) };
 	if (n === "ask_user") return { text: "等你回复…", icon: <Hand className="pa-ic" /> };
 	if (n === "memory_remember") return { text: "正在记下来…", icon: <Brain className="pa-ic" />, detail: String(args.content ?? "").slice(0, 48) };
 	if (n === "memory_recall" || n === "memory_reflect") return { text: "正在回忆…", icon: <Brain className="pa-ic" />, detail: args.query };

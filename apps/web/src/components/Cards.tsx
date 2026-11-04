@@ -104,7 +104,7 @@ export function TaskCard({ m }: { m: Message }) {
 		<div className="pa-card pa-question w-full max-w-[560px]">
 			<div className="pa-card-top !mb-0">
 				{icon}
-				<b className="truncate">后台任务：{meta.title}</b>
+				<b className="truncate">{meta.helper ? "帮手" : "后台任务"}：{meta.title}</b>
 				<span className="pa-tag">{label}</span>
 				{/* 后台任务就是一个帮手：点开看它的完整过程（复用帮手执行页 SubagentChat） */}
 				<button className="pa-btn sm ghost" data-testid="task-open" onClick={() => useStore.getState().openSubagent({ id: String(meta.taskId), task: String(meta.title ?? ""), agent_id: m.agent_id, conversation_id: m.conversation_id ?? "" })}>
@@ -115,7 +115,7 @@ export function TaskCard({ m }: { m: Message }) {
 						{t("取消")}
 					</button>
 				)}
-				{(meta.status === "lost" || meta.status === "failed") && (
+				{(meta.status === "lost" || meta.status === "failed" || meta.status === "timeout") && (
 					<button className="pa-btn sm ghost" data-testid="task-resume" title="先核验已做到哪一步，再从断点继续，不重做" onClick={() => api(`/api/subagents/${meta.taskId}/resume`, { method: "POST" }).catch(() => {})}>
 						{t("继续")}
 					</button>

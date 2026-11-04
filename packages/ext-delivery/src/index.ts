@@ -2,7 +2,7 @@
  * @pi-assistant/ext-delivery —— 交付与协作工具（Pi 扩展）：
  *  deliver_file：把工作区文件作为附件发回聊天
  *  ask_user：在聊天里弹出带选项按钮的问题卡片，等待用户回答
- *  spawn_task：把耗时工作放到后台任务里执行
+ *  spawn_subagent 等：把耗时工作交给帮手（决策 0027：不再有单独的后台任务工具）
  */
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -10,7 +10,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export interface DeliveryHost {
 	deliverFile(path: string, caption?: string): Promise<{ fileId: string; name: string }>;
 	ask(question: string, options: string[], allowFreeText: boolean): Promise<string>;
-	spawnTask?(title: string, instructions: string): Promise<{ taskId: string }>;
 	subagents?: {
 		spawn(input: { task: string; context?: string; done_criteria?: string; needs?: string[]; model?: { provider: string; id: string }; thinking?: string }): Promise<{ id: string; status?: string; queuedAhead?: number }>;
 		list(): unknown[];
@@ -22,7 +21,7 @@ export interface DeliveryHost {
 		stop(id: string): Promise<boolean>;
 	};
 	waits?: {
-		register(input: { reason: string; taskId?: string; subagentId?: string; githubRun?: { repo: string; runId?: number; branch?: string }; due?: string; checkMinutes?: number }): { id: string; kind: string; dueAt: number | null; intervalMs: number };
+		register(input: { reason: string; subagentId?: string; githubRun?: { repo: string; runId?: number; branch?: string }; due?: string; checkMinutes?: number }): { id: string; kind: string; dueAt: number | null; intervalMs: number };
 		list(): { id: string; kind: string; ref: string | null; status: string; reason: string; dueAt: number | null; lastCheckedAt: number | null; checkCount: number; firedReason: string | null; outcome: string | null }[];
 		refresh(id: string): Promise<{ status: string; detail: string; fired: boolean }>;
 		cancel(id: string): boolean;
@@ -84,11 +83,10 @@ export function deliveryExtension(host: DeliveryHost) {
 				name: "task_wait",
 				label: "登记任务等待",
 				description:
-					"登记一次持久等待，然后结束这一轮、别再用 sleep / 反复轮询去盯任务：内部后台任务完成/失败、帮手结束、GitHub Actions run 结束、或到点时间，系统都会自动唤醒你（只在你登记的那件事有结果时调用一次模型）。等待期间不会消耗 token。登记后请在回复里告诉用户你在等什么、大概什么时候有结果，然后停止输出，不要再调用任何工具。",
-				promptSnippet: "task_wait: 登记等待（任务/帮手/GitHub run/到点），之后系统会唤醒你，不要 sleep 轮询",
+					"登记一次持久等待，然后结束这一轮、别再用 sleep / 反复轮询去盯任务：帮手结束、GitHub Actions run 结束、或到点时间，系统都会自动唤醒你（只在你登记的那件事有结果时调用一次模型）。等待期间不会消耗 token。登记后请在回复里告诉用户你在等什么、大概什么时候有结果，然后停止输出，不要再调用任何工具。",
+				promptSnippet: "task_wait: 登记等待（帮手/GitHub run/到点），之后系统会唤醒你，不要 sleep 轮询",
 				parameters: Type.Object({
 					reason: Type.String({ description: "在等什么、唤醒后要做什么（到点时你看不到当前对话，写清楚上下文）" }),
-					task_id: Type.Optional(Type.String({ description: "等待这个后台任务（spawn_task 返回的 id）完成" })),
 					subagent_id: Type.Optional(Type.String({ description: "等待这个帮手完成" })),
 					repo: Type.Optional(Type.String({ description: "等 GitHub Actions：仓库 owner/repo" })),
 					run_id: Type.Optional(Type.Number({ description: "等 GitHub Actions：run id（不填就等该分支最新一次 run）" })),
@@ -98,7 +96,7 @@ export function deliveryExtension(host: DeliveryHost) {
 				}),
 				annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 				async execute(_id, p) {
-					const r = w.register({ reason: p.reason, taskId: p.task_id, subagentId: p.subagent_id, githubRun: p.repo ? { repo: p.repo, runId: p.run_id, branch: p.branch } : undefined, due: p.due, checkMinutes: p.check_minutes });
+					const r = w.register({ reason: p.reason, subagentId: p.subagent_id, githubRun: p.repo ? { repo: p.repo, runId: p.run_id, branch: p.branch } : undefined, due: p.due, checkMinutes: p.check_minutes });
 					const when = r.dueAt ? `最晚 ${new Date(r.dueAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}` : "有结果时";
 					return text(`已登记等待（${r.id}，等 ${r.kind}），${when}唤醒你。现在结束这一轮：简短告诉用户在等什么，不要再轮询或等待。`);
 				},
@@ -133,24 +131,6 @@ export function deliveryExtension(host: DeliveryHost) {
 				annotations: { readOnlyHint: false, destructiveHint: false },
 				async execute(_id, p) {
 					return text(w.cancel(p.id) ? "已取消。" : `没有找到可取消的等待 ${p.id}`);
-				},
-			});
-		}
-		if (host.spawnTask) {
-			const spawn = host.spawnTask;
-			pi.registerTool({
-				name: "spawn_task",
-				label: "后台任务",
-				description: "把耗时较长的工作（超过一两分钟）放到后台执行，用户可以继续聊别的；完成后会通知用户并把结果告诉你。",
-				promptSnippet: "spawn_task: 把耗时工作放到后台执行",
-				parameters: Type.Object({
-					title: Type.String({ description: "简短的任务标题" }),
-					instructions: Type.String({ description: "完整、自包含的执行说明" }),
-				}),
-				annotations: { readOnlyHint: true },
-				async execute(_id, p) {
-					const r = await spawn(p.title, p.instructions);
-					return text(`后台任务已创建（${r.taskId}）：${p.title}。完成后系统会通知。现在先简短告诉用户任务已经在后台进行。`);
 				},
 			});
 		}

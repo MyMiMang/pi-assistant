@@ -232,7 +232,7 @@ await step("上传文件给助理", async () => {
 
 await step("后台任务", async () => {
 	await send("把统计工作放到后台做");
-	await page.locator("main").getByText("后台任务：统计工作区文件").last().waitFor({ timeout: 15_000 });
+	await page.locator("main").getByText("帮手：统计工作区文件").last().waitFor({ timeout: 15_000 });
 	await page.locator("main").getByText("已完成").first().waitFor({ timeout: 30_000 });
 	await page.screenshot({ path: join(SHOTS, "06-desktop-chat.png") });
 });
@@ -396,7 +396,7 @@ await step("手机视口截图（单栏 + 抽屉）", async () => {
 	const m = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-CN" });
 	const mp = await m.newPage();
 	await mp.goto(BASE);
-	await mp.getByText("后台任务：统计工作区文件").waitFor();
+	await mp.getByText("帮手：统计工作区文件").waitFor();
 	await mp.waitForTimeout(500);
 	await mp.screenshot({ path: join(SHOTS, "11-mobile-chat.png") });
 	await mp.getByLabel("打开助理列表").click();
@@ -404,7 +404,7 @@ await step("手机视口截图（单栏 + 抽屉）", async () => {
 	await mp.screenshot({ path: join(SHOTS, "12-mobile-drawer.png") });
 	await mp.goto(`${BASE}/`);
 	// 等对话和草稿恢复完再输入，否则草稿恢复会把刚填的字清掉、发送键一直不可用
-	await mp.getByText("后台任务：统计工作区文件").first().waitFor();
+	await mp.getByText("帮手：统计工作区文件").first().waitFor();
 	await mp.waitForTimeout(300);
 	await mp.locator("main textarea").fill("帮我删除旧笔记");
 	await mp.getByLabel("发送").click();
@@ -600,7 +600,7 @@ await step("深色模式截图", async () => {
 	const d = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark", locale: "zh-CN" });
 	const dp = await d.newPage();
 	await dp.goto(BASE);
-	await dp.getByText("后台任务：统计工作区文件").waitFor();
+	await dp.getByText("帮手：统计工作区文件").waitFor();
 	await dp.waitForTimeout(500);
 	await dp.screenshot({ path: join(SHOTS, "14-desktop-dark.png") });
 	await d.close();

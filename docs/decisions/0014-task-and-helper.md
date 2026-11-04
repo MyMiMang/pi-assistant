@@ -23,3 +23,4 @@
 - 原因：后台任务 / 子代理 / 群任务执行三套容器重复实现了会话、重启、卡住检测、回报和界面，安全性不一致（后台任务重启不判定直接续跑）。用户批准了合并方案。
 - 不做什么：不在单聊另建一套群任务执行；帮手不能无限嵌套派生；未核验的执行记忆不自动转正；卡住时不把「要不要等 / 停」丢给用户。
 - 影响：agent-runtime/background-tasks.ts、subagents.ts、helper-scope.ts、subagent-driver.ts、subagent-resume.ts、work-items/*、routines.ts、proactive.ts、requests.ts、Tasks.tsx / Subagents.tsx / WorkItems.tsx；设计 design/task-architecture-analysis.md。
+- 后续：后台任务工具已按 [0027](0027-one-helper-tool.md) 并进帮手（模型只用 spawn_subagent，结束一律叫醒派它的会话）。
