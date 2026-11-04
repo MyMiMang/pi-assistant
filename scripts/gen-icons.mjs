@@ -4,9 +4,10 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const BRAND = join(ROOT, "assets/brand");
 const WEB = join(ROOT, "apps/web/public");
 const TAURI = join(ROOT, "apps/tray/src-tauri/icons");

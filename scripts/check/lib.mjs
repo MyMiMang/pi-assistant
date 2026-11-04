@@ -2,8 +2,9 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-export const ROOT = new URL("../../", import.meta.url).pathname;
+export const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 export const read = (p) => readFileSync(join(ROOT, p), "utf8");
 export const exists = (p) => existsSync(join(ROOT, p));
 const git = (...a) => execFileSync("git", a, { cwd: ROOT, encoding: "utf8", maxBuffer: 64 << 20 });
