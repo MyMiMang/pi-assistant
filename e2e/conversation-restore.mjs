@@ -96,6 +96,7 @@ async function makePage(browser, viewport, { stored } = {}) {
 			return json(AGENTS);
 		}
 		if (path === '/api/rooms') return json([]);
+		if (path === '/api/subagents') return json([]);
 		if (path === '/api/downloads') return json({ items: [] });
 		if (path === '/api/models') return json([]);
 		if (path === '/api/models/providers') return json([]);
