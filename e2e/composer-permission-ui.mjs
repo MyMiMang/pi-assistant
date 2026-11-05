@@ -32,7 +32,7 @@ mkdirSync(OUT, { recursive: true });
 let server, browser;
 const waitFor = async (fn, ms = 25_000) => { const end = Date.now() + ms; while (Date.now() < end) { try { if (await fn()) return; } catch {} await new Promise((r) => setTimeout(r, 100)); } throw new Error("timeout"); };
 const j = async (path, method = "GET", body) => { const r = await fetch(BASE + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); const data = await r.json(); if (!r.ok) throw new Error(`${path} ${JSON.stringify(data)}`); return data; };
-const start = async () => { server = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], { cwd: REPO, env: { ...withoutCredentials(process.env), PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] }); server.stdout.on("data", (d) => process.stdout.write(d)); server.stderr.on("data", (d) => process.stderr.write(d)); await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
+const start = async () => { server = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], { cwd: REPO, env: { ...withoutCredentials(process.env), PIA_DATA_DIR: DATA, PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_HOST_CONTROL_DRY_RUN: "1", PIA_PORT: String(PORT) }, stdio: ["ignore", "pipe", "pipe"] }); server.stdout.on("data", (d) => process.stdout.write(d)); server.stderr.on("data", (d) => process.stderr.write(d)); await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
 const stop = async () => { if (!server || server.exitCode !== null) return; const done = new Promise((r) => server.once("exit", r)); server.kill("SIGTERM"); await done; };
 
 let failed = 0;
@@ -78,7 +78,7 @@ try {
 	await btn.click();
 	const menu = page.getByTestId("host-tier-menu");
 	await menu.waitFor();
-	check("弹层说明去哪开启", ((await menu.textContent()) ?? "").includes("在 设置 › 操作这台电脑 开启"));
+	check("弹层说明选档位就会开启", ((await menu.textContent()) ?? "").includes("还没开启：选一个档位就会开启"));
 	await page.screenshot({ path: join(OUT, "01-permission-off.png") });
 	await page.getByTestId("host-tier-open-settings").click();
 	await waitFor(async () => (await menu.count()) === 0);
@@ -88,13 +88,26 @@ try {
 	await page.goto(`${BASE}/?agent=${a.id}`);
 	await composer.waitFor();
 
+	// 没开启时在菜单里选「完全权限」：确认后同时开启，不用去设置页
+	await btn.click();
+	await menu.waitFor();
+	await menu.getByTestId("tier-full").click();
+	const dlg0 = page.getByTestId("confirm-dialog");
+	await dlg0.waitFor();
+	await dlg0.getByRole("button", { name: "确定启用", exact: true }).click();
+	await waitFor(async () => (await btn.getAttribute("data-tier")) === "full");
+	check("菜单里选完全权限确认后就开启", ((await btn.textContent()) ?? "").includes("权限·完全权限"));
+	check("没有跳到设置页", (await page.getByTestId("settings-dialog").count()) === 0);
+	await page.keyboard.press("Escape");
+	await waitFor(async () => (await menu.count()) === 0);
+
 	// ---------------- 2) 开启后切档位
 	console.log("\n[2] 开启后：按钮显示档位，点开就地切换");
 	hostOn = true;
 	await page.reload();
 	await composer.waitFor();
-	await waitFor(async () => (await btn.getAttribute("data-tier")) === "bounded");
-	check("默认档位「限定」", ((await btn.textContent()) ?? "").includes("权限·限定"));
+	await waitFor(async () => (await btn.getAttribute("data-tier")) === "full");
+	check("开启后按钮显示档位", ((await btn.textContent()) ?? "").includes("权限·完全权限"));
 	await btn.click();
 	await menu.waitFor();
 	await menu.getByTestId("tier-observe").click();

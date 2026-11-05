@@ -123,6 +123,7 @@ async function newPage(browser, state, { width = 1440, height = 900 } = {}) {
 			if (g) return g;
 			return json({ settings: { enabled: false, kind: "systemone", provider: "", id: "", baseUrl: "", model: "", threshold: 0.5, timeoutMs: 3000 }, classifierModels: [] });
 		}
+		if (p === "/api/fast-executor") return json({ settings: { enabled: false, provider: "", id: "", images: true }, models: [], effective: null });
 		if (p === "/api/fast-computer/benchmark") return json({ availability: { available: false, reason: "未启用" }, runs: [] });
 		if (p === "/api/host-control" && req.method() === "PUT") {
 			const body = JSON.parse(req.postData() ?? "{}");
@@ -315,6 +316,8 @@ try {
 		const { ctx, page } = await newPage(browser, state);
 		await open(page, "host");
 		await page.getByTestId("host-settings").waitFor();
+		check("有限定档没选应用的助理时，开启按钮不是灰的", await page.getByTestId("host-review").isEnabled());
+		check("显示“限定”没选应用的提示", await page.getByTestId("host-bounded-hint").isVisible());
 		await page.getByTestId("default-tier-trusted").click();
 		await page.getByTestId("host-autosave").waitFor();
 		check("关闭态自动保存文案为草稿", (await page.getByTestId("host-autosave").innerText()).includes("已保存草稿（未开启）"));
@@ -402,8 +405,7 @@ try {
 		const bb = await bar.boundingBox();
 		check(`[${tag}] 操作条不覆盖下方提示（macOS 权限）`, !(hb && bb && intersects(bb, hb)), `bar=${JSON.stringify(bb)} hint=${JSON.stringify(hb)}`);
 
-		// 3) 保留 review → ack → 确认开启交互；开启后提示不被操作条遮挡
-		// （初始 defaultTier=bounded 且未选应用时按钮按设计禁用，先切「信任」档解除，同 D 段）
+		// 3) 保留 review → ack → 确认开启交互（先切「信任」档，验证开启后的提示不被操作条遮挡）
 		await page.getByTestId("default-tier-trusted").click();
 		await page.getByTestId("host-autosave").waitFor();
 		await bar.click();

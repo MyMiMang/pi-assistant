@@ -350,9 +350,10 @@ export function HostControlSettings() {
 
 			{!preview ? (
 				<div className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-card px-3 py-2">
-					<Button variant="primary" disabled={busy || (anyBounded && !apps.length)} onClick={review} data-testid="host-review">
+					<Button variant="primary" disabled={busy} onClick={review} data-testid="host-review">
 						{busy && <Loader2 size={14} className="animate-spin" />} {on ? (dirty ? "保存更改并重新确认…" : "查看权限清单…") : "查看权限清单并开启…"}
 					</Button>
+					{anyBounded && !apps.length && <span className="text-xs text-mut" data-testid="host-bounded-hint">「限定」档的助理还没选应用，开启后它们暂时不能操作</span>}
 					{on && dirty && <span className="text-xs text-amber-600" data-testid="host-dirty">有未保存的更改</span>}
 					{!on && saveState === "saving" && <span className="flex items-center gap-1 text-xs text-mut"><Loader2 size={12} className="animate-spin" /> 正在保存草稿…</span>}
 					{!on && saveState === "ok" && <span className="text-xs text-green-600" data-testid="host-autosave">已保存草稿（未开启）</span>}
@@ -380,11 +381,12 @@ export function HostControlSettings() {
 	);
 }
 
-/** 切换某个助理的档位：调低直接生效；调高弹确认框（完全权限是红色的“确定启用”） */
-function TierPicker({ agentId, d, load }: { agentId: string; d: HostInfo; load: () => void }) {
+/** 切换某个助理的档位：没开启时选档位 = 同时开启；开启后调低直接生效、调高弹确认框（完全权限是红色的“确定启用”） */
+function TierPicker({ agentId, d, load, on }: { agentId: string; d: HostInfo; load: () => void; on: boolean }) {
 	const [err, setErr] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [saved, setSaved] = useState(false);
+	const [note, setNote] = useState("");
 	const [dlg, ask] = useConfirm();
 	const cur: Tier = d.tiers?.[agentId] ?? d.settings.defaultTier ?? "bounded";
 	const rank = (t: Tier) => TIER_ORDER.indexOf(t);
@@ -392,10 +394,12 @@ function TierPicker({ agentId, d, load }: { agentId: string; d: HostInfo; load: 
 		setErr("");
 		setSaving(true);
 		setSaved(false);
+		setNote("");
 		try {
 			const r = await api(`/api/host-control/tier/${agentId}`, { method: "PUT", json: { tier: t, acknowledged: raise, confirmFull: t === "full" } });
 			if (r.ok === false) return setErr(r.error);
 			setSaved(true);
+			setNote(r.note ?? "");
 			load();
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
@@ -404,23 +408,30 @@ function TierPicker({ agentId, d, load }: { agentId: string; d: HostInfo; load: 
 		}
 	};
 	const pick = async (t: Tier) => {
-		if (t === cur) return;
-		if (rank(t) < rank(cur)) return apply(t, false);
-		const ok = await ask(t === "full" ? FULL_ASK : { title: `调到「${TIER_INFO[t].label}」？`, body: `${TIER_INFO[t].desc}。受保护的操作仍会先问你。`, ok: "确定" });
+		if (on) {
+			if (t === cur) return;
+			if (rank(t) < rank(cur)) return apply(t, false);
+			const ok = await ask(t === "full" ? FULL_ASK : { title: `调到「${TIER_INFO[t].label}」？`, body: `${TIER_INFO[t].desc}。受保护的操作仍会先问你。`, ok: "确定" });
+			if (ok) await apply(t, true);
+			return;
+		}
+		// 还没开启：选任何一个档位都先确认风险，确认后同时开启「操作这台电脑」并把这个助理加进名单
+		const ok = await ask(t === "full" ? FULL_ASK : { title: `开启并设为「${TIER_INFO[t].label}」？`, body: `${TIER_INFO[t].desc}。这会同时开启「操作这台电脑」，随时可以一键暂停。受保护的操作仍会先问你。`, ok: "开启" });
 		if (ok) await apply(t, true);
 	};
 	return (
 		<div className="space-y-2" data-testid="tier-picker">
 			<div className="flex flex-wrap gap-1">
 				{TIER_ORDER.map((t) => (
-					<button key={t} title={TIER_INFO[t].desc} aria-pressed={cur === t} className={cx("pa-chip", cur === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => pick(t)} data-testid={`tier-${t}`}>
+					<button key={t} title={TIER_INFO[t].desc} aria-pressed={on && cur === t} className={cx("pa-chip", on && cur === t && (t === "full" ? "!bg-red-500/15 !text-red-600" : "!bg-accent-soft !text-accent"))} onClick={() => pick(t)} data-testid={`tier-${t}`}>
 						{TIER_INFO[t].label}
 					</button>
 				))}
 			</div>
-			<div className="text-xs text-mut">{TIER_INFO[cur].desc}</div>
+			{/* 没开启时一个档位都没选中，不显示当前档位的说明（否则像是已经选了「限定」）；每个档位的说明在鼠标悬停里 */}
+			{on && <div className="text-xs text-mut">{TIER_INFO[cur].desc}</div>}
 			{saving && <div className="flex items-center gap-1 text-xs text-mut"><Loader2 size={12} className="animate-spin" /> 正在保存…</div>}
-			{saved && !saving && <div className="text-xs text-green-600">已保存</div>}
+			{saved && !saving && (note ? <div className="text-xs text-amber-600">{note}</div> : <div className="text-xs text-green-600">已保存</div>)}
 			{err && <div className="text-xs text-red-600">{err}</div>}
 			{dlg}
 		</div>
@@ -480,6 +491,7 @@ function AgentHostTierView({ agentId, host }: { agentId: string; host: ReturnTyp
 	const { d, load, err, loading } = host;
 	const allowed = !!d && (d.settings.agents === "all" || d.settings.agents.includes(agentId));
 	const paused = !!d?.status.enabled && d.status.paused;
+	const boundedNoApps = !!d?.status.enabled && allowed && (d.tiers?.[agentId] ?? d.settings.defaultTier ?? "bounded") === "bounded" && !d.settings.apps.length;
 	return (
 		<section className="min-w-0 space-y-2" data-testid="agent-host-tier">
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold">
@@ -487,8 +499,9 @@ function AgentHostTierView({ agentId, host }: { agentId: string; host: ReturnTyp
 					<Hand size={14} className="shrink-0" /> 操作你的电脑
 				</span>
 				{loading && !d && <span className="text-xs font-normal text-mut">正在读取…</span>}
-				{d && !d.status.enabled && <span className="min-w-0 text-xs font-normal break-words text-mut">（未开启，在 设置 › 操作这台电脑 开启）</span>}
-				{d?.status.enabled && !allowed && <span className="min-w-0 text-xs font-normal break-words text-mut">（这个助理不在允许名单里）</span>}
+				{d && !d.status.enabled && <span className="min-w-0 text-xs font-normal break-words text-mut">（还没开启：选一个档位就会开启）</span>}
+				{d?.status.enabled && !allowed && <span className="min-w-0 text-xs font-normal break-words text-mut">（这个助理还没开：选一个档位就会开启）</span>}
+				{boundedNoApps && <span className="min-w-0 text-xs font-normal break-words text-mut">（「限定」还没选应用，暂时不能操作）</span>}
 				{paused && <Badge tone="amber">已暂停</Badge>}
 			</div>
 			{err && (
@@ -501,7 +514,7 @@ function AgentHostTierView({ agentId, host }: { agentId: string; host: ReturnTyp
 			)}
 			{d && (
 				<>
-					<TierPicker agentId={agentId} d={d} load={load} />
+					<TierPicker agentId={agentId} d={d} load={load} on={tierFor(d, agentId) !== null} />
 				</>
 			)}
 		</section>

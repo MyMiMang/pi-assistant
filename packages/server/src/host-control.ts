@@ -64,6 +64,8 @@ const DEFAULTS: HostControlSettings = { enabled: false, agents: "all", apps: [],
 /** 把某个助理设为“完全权限”时必须一字不差输入的确认语 */
 export const FULL_CONFIRM = "我了解风险，允许完全控制这台电脑";
 export const tierOf = (agentId: string, s = hostSettings()): HostTier => s.tiers[agentId] ?? s.defaultTier;
+/** 「限定」档还没选任何应用：这个助理暂时不能操作（不挂电脑工具、不为它起限定守护进程）。不要把它当「只看」——那会放大权限 */
+export const boundedWithoutApps = (agentId: string, s = hostSettings()) => tierOf(agentId, s) === "bounded" && !s.apps.length;
 /** 本机操作的审批策略（按助理） */
 export const hostApprovals = (agentId: string): "observe" | "all" | "sensitive" | "none" => ({ observe: "observe", bounded: "all", trusted: "sensitive", full: "none" } as const)[tierOf(agentId)];
 /** 档位用哪个 Cua 守护进程：bounded 用清单限定的那个，其余用 unrestricted 的那个（由我们这层把关） */
@@ -75,7 +77,7 @@ let env: { workspaceOf: (id: string) => string; agentIds: () => string[] } = { w
 export const setHostEnv = (e: typeof env) => (env = e);
 const allowedAgents = (s = hostSettings()) => (s.agents === "all" ? env.agentIds() : s.agents.filter((a) => env.agentIds().includes(a)));
 /** 当前设置需要哪些守护进程 */
-export const neededDaemons = (s = hostSettings()): DaemonKind[] => [...new Set(allowedAgents(s).map((a) => daemonKindOf(tierOf(a, s))))].sort();
+export const neededDaemons = (s = hostSettings()): DaemonKind[] => [...new Set(allowedAgents(s).filter((a) => !boundedWithoutApps(a, s)).map((a) => daemonKindOf(tierOf(a, s))))].sort();
 
 /** 助理自己的电脑（Docker 桌面）的审批策略：默认 none（它自己的电脑，完全权限） */
 export interface SandboxComputerSettings {
@@ -272,7 +274,7 @@ export function hostActive(last: { outcome: string; started_at: number; finished
 
 export function hostAllowedFor(agentId: string) {
 	const s = hostSettings();
-	return s.enabled && !!s.approvedHash && (s.agents === "all" || s.agents.includes(agentId));
+	return s.enabled && !!s.approvedHash && (s.agents === "all" || s.agents.includes(agentId)) && !boundedWithoutApps(agentId, s);
 }
 
 /**
@@ -309,10 +311,10 @@ export function draftHostSettings(
 export function hostPlan(s = hostSettings()) {
 	const ids = allowedAgents(s);
 	const lines = ["# 各助理的权限档位（非“完全权限”档位：硬性保护清单里的动作都要你明确批准；“完全权限”档位应用层不再弹审批，包括受保护动作；任何档位：一键暂停有效、操作全部记录）", `# 新助理默认：${TIER_LABEL[s.defaultTier]}`];
-	for (const id of ids) lines.push(`# - ${id}: ${TIER_LABEL[tierOf(id, s)]}`);
+	for (const id of ids) lines.push(`# - ${id}: ${boundedWithoutApps(id, s) ? "限定（还没选应用，暂时不能操作）" : TIER_LABEL[tierOf(id, s)]}`);
 	if (!ids.length) lines.push("# （没有允许的助理）");
 	if (ids.some((a) => tierOf(a, s) !== "bounded")) lines.push("# 只看 / 信任 / 完全权限 的助理连接 Cua unrestricted 守护进程（所有应用），由 Pi Assistant 这一层把关：只看拦下所有输入，信任问发送/付款/删除类动作，完全权限不再弹审批。");
-	if (ids.some((a) => tierOf(a, s) === "bounded")) lines.push("", boundedManifest(s));
+	if (ids.some((a) => tierOf(a, s) === "bounded") && s.apps.length > 0) lines.push("", boundedManifest(s));
 	return `${lines.join("\n")}\n`;
 }
 /**

@@ -4,7 +4,7 @@ import { bus } from "../bus.ts";
 import { workspaceOf } from "../files.ts";
 import { getAgent, listAgents } from "../runtime.ts";
 import { listActions } from "../action-log.ts";
-import { draftHostSettings, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "../host-control.ts";
+import { boundedWithoutApps, draftHostSettings, FULL_CONFIRM, TIERS, tierOf, type HostTier, hostPlan, setHostEnv, hostSettings, hostStatus, hostActive, macGrantPermissions, macPermissions, manifestHash, saveHostSettings, setHostPaused, startDaemon, stopDaemon, suggestApps, type HostApp } from "../host-control.ts";
 import { localOnly, type Env } from "./common.ts";
 
 // ---------------------------------------------------------------- 操作这台电脑（Cua bounded）
@@ -54,7 +54,6 @@ export function mountHostControlRoutes(app: Hono<Env>) {
 			const fullNow = ids.filter((a) => tierOf(a, next) === "full");
 			const needFull = fullNow.some((a) => !cur.fullAck[a] || tierOf(a, cur) !== "full" || !cur.enabled) || (next.defaultTier === "full" && (cur.defaultTier !== "full" || !cur.enabled));
 			if (needFull && !fullConfirmed(b)) return c.json({ error: "涉及“完全权限”，需要先确认启用" }, 400);
-			if (ids.some((a) => tierOf(a, next) === "bounded") && !next.apps.length) return c.json({ error: "“限定”档位至少要选择一个允许操作的应用" }, 400);
 			const fullAck = Object.fromEntries(fullNow.map((a) => [a, cur.fullAck[a] && tierOf(a, cur) === "full" ? cur.fullAck[a] : Date.now()]));
 			saveHostSettings({ ...next, enabled: true, approvedHash: manifestHash(yaml), enabledAt: Date.now(), fullAck });
 			try {
@@ -78,15 +77,21 @@ export function mountHostControlRoutes(app: Hono<Env>) {
 		if (!TIERS.includes(b.tier)) return c.json({ error: "权限档位不对" }, 400);
 		const cur = hostSettings();
 		const from = tierOf(agentId, cur);
-		if (RANK[b.tier] > RANK[from] && !b.acknowledged) return c.json({ error: "调高权限需要先确认风险提示" }, 400);
-		if (b.tier === "full" && from !== "full" && !fullConfirmed(b)) return c.json({ error: "设为“完全权限”需要先确认启用" }, 400);
-		if (b.tier === "bounded" && !cur.apps.length && cur.enabled) return c.json({ error: "“限定”档位需要先在 设置 › 操作这台电脑 里选择允许的应用" }, 400);
+		/** 总开关没开，或这个助理不在名单里 = 这次是在「开启」 */
+		const enabling = !cur.enabled || !(cur.agents === "all" || cur.agents.includes(agentId));
+		if ((enabling || RANK[b.tier] > RANK[from]) && !b.acknowledged) return c.json({ error: enabling ? "开启前需要先确认风险提示" : "调高权限需要先确认风险提示" }, 400);
+		if (b.tier === "full" && (from !== "full" || enabling) && !fullConfirmed(b)) return c.json({ error: "设为“完全权限”需要先确认启用" }, 400);
 		const fullAck = { ...cur.fullAck };
 		if (b.tier === "full") fullAck[agentId] = from === "full" ? (fullAck[agentId] ?? Date.now()) : Date.now();
 		else delete fullAck[agentId];
-		saveHostSettings({ tiers: { ...cur.tiers, [agentId]: b.tier }, fullAck });
+		saveHostSettings({
+			tiers: { ...cur.tiers, [agentId]: b.tier },
+			fullAck,
+			// 从关着开启：只开这一个助理（用户只确认了它；别的助理存着的档位不能跟着生效）；已开着只是不在名单里：把它加进去
+			...(enabling ? { enabled: true, enabledAt: Date.now(), agents: !cur.enabled ? [agentId] : cur.agents === "all" ? ("all" as const) : [...new Set([...cur.agents, agentId])] } : {}),
+		});
 		const yaml = hostManifest();
-		if (cur.enabled) {
+		if (cur.enabled || enabling) {
 			saveHostSettings({ approvedHash: manifestHash(yaml) });
 			try {
 				await startDaemon(yaml);
@@ -95,7 +100,8 @@ export function mountHostControlRoutes(app: Hono<Env>) {
 			}
 		}
 		bus.emit({ type: "host.changed", status: hostStatus() });
-		return c.json({ ok: true, tier: b.tier, status: hostStatus() });
+		const note = boundedWithoutApps(agentId) ? "“限定”档位还没选应用，这个助理暂时不能操作：到 设置 › 操作这台电脑 里选应用" : undefined;
+		return c.json({ ok: true, tier: b.tier, enabled: hostSettings().enabled, ...(note ? { note } : {}), status: hostStatus() });
 	});
 	app.post("/api/host-control/bar/dismiss", localOnly, (c) => {
 		const st = hostStatus();

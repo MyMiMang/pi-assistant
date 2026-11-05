@@ -5,6 +5,7 @@
 await import("./setup.ts");
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { Env } from "../src/routes/common.ts";
 const { computerExtension, HOST_MCP_PREFIX, HOST_MCP_SERVER, isHostTool } = await import("@pi-assistant/ext-computer");
 const hc = await import("../src/host-control.ts");
 
@@ -31,7 +32,7 @@ test("开启：默认关闭；清单哈希与用户确认的不一致就拒绝�
 	assert.equal(hc.hostSettings().enabled, false);
 	assert.equal(hc.hostAllowedFor("a1"), false);
 	const yaml = hc.buildManifest({ apps: [{ name: "x", id: "/usr/bin/x" }], workspaceFiles: true }, ["/w"]);
-	hc.saveHostSettings({ enabled: true, approvedHash: "different", agents: ["a1"] });
+	hc.saveHostSettings({ enabled: true, approvedHash: "different", agents: ["a1"], apps: [{ name: "x", id: "/usr/bin/x" }] });
 	await assert.rejects(hc.startDaemon(yaml), /权限设置已变化/);
 	assert.equal(hc.hostAllowedFor("a1"), true);
 	assert.equal(hc.hostAllowedFor("a2"), false, "只允许选中的助理");
@@ -494,5 +495,90 @@ test("原生驱动环境：MCP 命令用自有启动器全量替换，HOME 是 O
 			if (v === undefined) delete process.env[k];
 			else process.env[k] = v;
 		}
+	}
+});
+
+test("限定档没选应用：neededDaemons 不含 bounded、hostAllowedFor 为 false、计划里写“暂时不能操作”；选了应用后恢复", () => {
+	hc.setHostEnv({ workspaceOf: (id) => `/ws/${id}`, agentIds: () => ["a1", "a2"] });
+	hc.saveHostSettings({ enabled: true, approvedHash: "h", agents: "all", apps: [], tiers: { a1: "bounded", a2: "full" }, defaultTier: "bounded", fullAck: {} });
+	assert.equal(hc.boundedWithoutApps("a1"), true);
+	assert.equal(hc.boundedWithoutApps("a2"), false, "非限定档不受影响");
+	assert.deepEqual(hc.neededDaemons(), ["open"], "限定没选应用不为它起 bounded 守护进程");
+	assert.equal(hc.hostAllowedFor("a1"), false, "暂时不能操作");
+	assert.equal(hc.hostAllowedFor("a2"), true);
+	const plan = hc.hostPlan();
+	assert.match(plan, /a1: 限定（还没选应用，暂时不能操作）/);
+	assert.doesNotMatch(plan, /version: 3/, "没有可用应用时计划里不追加空清单");
+	hc.saveHostSettings({ apps: [{ name: "TextEdit", id: "/usr/bin/textedit" }] });
+	assert.deepEqual(hc.neededDaemons(), ["bounded", "open"], "选了应用后恢复");
+	assert.equal(hc.hostAllowedFor("a1"), true);
+	assert.match(hc.hostPlan(), /version: 3/);
+	hc.saveHostSettings({ enabled: false, approvedHash: undefined, agents: "all", apps: [], tiers: {}, defaultTier: "bounded", fullAck: {} });
+});
+
+/** 起一个只含 host-control 路由的 Hono app；caller 当作本机 */
+async function hostRouteApp() {
+	const { Hono } = await import("hono");
+	const { mountHostControlRoutes } = await import("../src/routes/host-control.ts");
+	const app = new Hono<Env>();
+	app.use("*", async (c, next) => {
+		c.set("caller", { local: true } as never);
+		await next();
+	});
+	mountHostControlRoutes(app);
+	return app;
+}
+
+test("路由：允许名单里有「限定」没选应用的助理时，PUT /api/host-control 仍能开启", async () => {
+	const { db, now } = await import("../src/db.ts");
+	for (const [id, name] of [["ra", "路由助理A"], ["rb", "路由助理B"]] as const) db.prepare("INSERT OR REPLACE INTO agents(id, name, avatar, color, created_at) VALUES(?,?,?,?,?)").run(id, name, "R", "#000", now());
+	const app = await hostRouteApp();
+	const saved = process.env.PIA_HOST_CONTROL_DRY_RUN;
+	process.env.PIA_HOST_CONTROL_DRY_RUN = "1";
+	try {
+		hc.saveHostSettings({ enabled: false, approvedHash: undefined, agents: ["ra", "rb"], apps: [], tiers: { ra: "bounded", rb: "full" }, defaultTier: "bounded", fullAck: {} });
+		const g = (await (await app.request("/api/host-control")).json()) as { manifestHash: string };
+		const res = await app.request("/api/host-control", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: true, agents: ["ra", "rb"], apps: [], acknowledged: true, manifestHash: g.manifestHash, confirmFull: true }) });
+		const putBody = (await res.json()) as { ok: boolean };
+		assert.equal(res.status, 200, JSON.stringify(putBody));
+		assert.equal(putBody.ok, true);
+		assert.equal(hc.hostSettings().enabled, true);
+		assert.deepEqual(hc.neededDaemons(), ["open"], "限定没选应用被跳过，完全权限照常启动开放守护进程");
+	} finally {
+		await hc.stopDaemon(true);
+		if (saved === undefined) delete process.env.PIA_HOST_CONTROL_DRY_RUN;
+		else process.env.PIA_HOST_CONTROL_DRY_RUN = saved;
+		hc.saveHostSettings({ enabled: false, approvedHash: undefined, agents: "all", apps: [], tiers: {}, defaultTier: "bounded", fullAck: {} });
+	}
+});
+
+test("路由：总开关没开时 PUT tier/:id 同时开启并加进名单；不带 acknowledged 拒绝", async () => {
+	const app = await hostRouteApp();
+	const saved = process.env.PIA_HOST_CONTROL_DRY_RUN;
+	process.env.PIA_HOST_CONTROL_DRY_RUN = "1";
+	const put = (body: unknown) => app.request("/api/host-control/tier/ra", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+	try {
+		// 关着、名单是「所有助理」、另一个助理存着「完全权限」：开启 ra 不能让 rb 跟着生效
+		hc.saveHostSettings({ enabled: false, approvedHash: undefined, agents: "all", apps: [], tiers: { rb: "full" }, defaultTier: "bounded", fullAck: { rb: 1 } });
+		const denied = await put({ tier: "full", confirmFull: true });
+		assert.equal(denied.status, 400, "开启前必须先确认风险");
+		assert.equal(((await denied.json()) as { error: string }).error, "开启前需要先确认风险提示");
+		assert.equal(hc.hostSettings().enabled, false, "拒绝时什么都没开启");
+		const res = await put({ tier: "full", acknowledged: true, confirmFull: true });
+		const body = (await res.json()) as { enabled: boolean; error?: string };
+		assert.equal(res.status, 200, JSON.stringify(body));
+		assert.equal(body.enabled, true);
+		assert.equal(hc.hostSettings().enabled, true, "同一次保存里开启总开关");
+		assert.deepEqual(hc.hostSettings().agents, ["ra"], "从关着开启只开这一个助理");
+		assert.equal(hc.hostAllowedFor("rb"), false, "别的助理存着的档位不跟着生效");
+		// 已开着、rb 不在名单里：给 rb 选档位就把它加进来
+		const r2 = await app.request("/api/host-control/tier/rb", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ tier: "trusted", acknowledged: true }) });
+		assert.equal(r2.status, 200);
+		assert.deepEqual(hc.hostSettings().agents, ["ra", "rb"]);
+	} finally {
+		await hc.stopDaemon(true);
+		if (saved === undefined) delete process.env.PIA_HOST_CONTROL_DRY_RUN;
+		else process.env.PIA_HOST_CONTROL_DRY_RUN = saved;
+		hc.saveHostSettings({ enabled: false, approvedHash: undefined, agents: "all", apps: [], tiers: {}, defaultTier: "bounded", fullAck: {} });
 	}
 });

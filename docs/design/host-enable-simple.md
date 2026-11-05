@@ -1,4 +1,4 @@
-状态：已批准（2026-11-05，决策 [0028](../decisions/0028-tier-enables-host-control.md)）
+状态：已实现（2026-11-05，决策 [0028](../decisions/0028-tier-enables-host-control.md)；未在装好的 App 里试过）
 
 # 给助理设档位就能用：「操作这台电脑」开启流程简化
 
@@ -40,7 +40,7 @@ export const neededDaemons = (s = hostSettings()): DaemonKind[] => [...new Set(a
 - 风险确认：原来是 `RANK[b.tier] > RANK[from] && !b.acknowledged` 才拒；改成 `(enabling || RANK[b.tier] > RANK[from]) && !b.acknowledged` 就拒，错误文案「开启前需要先确认风险提示」/ 原文案。
 - 完全权限：原来是 `b.tier === "full" && from !== "full" && !fullConfirmed(b)`；改成 `b.tier === "full" && (from !== "full" || enabling) && !fullConfirmed(b)`。
 - 删掉这一行：`if (b.tier === "bounded" && !cur.apps.length && cur.enabled) return c.json({ error: ... }, 400);`（限定没选应用现在是允许的，只是暂时不能操作）
-- fullAck 逻辑不变。保存档位时：如果 `enabling`，同一次 `saveHostSettings` 里还要写 `enabled: true`、`enabledAt: Date.now()`、`agents: cur.agents === "all" ? "all" : [...new Set([...cur.agents, agentId])]`。
+- fullAck 逻辑不变。保存档位时：如果 `enabling`，同一次 `saveHostSettings` 里还要写 `enabled: true`、`enabledAt: Date.now()`和 `agents`：**从关着开启时只写 `[agentId]`**（用户只确认了这一个，别的助理存着的档位不能跟着生效——审查时补的）；已开着只是不在名单里，就把它加进名单（名单是 `"all"` 不用动）。
 - 然后算 `yaml = hostManifest()`；**只要现在是开启状态**（原来已开启，或这次 `enabling` 开启了），就 `saveHostSettings({ approvedHash: manifestHash(yaml) })` 再 `startDaemon(yaml)`（沿用现有的 try/catch 和返回值）。
 - 返回值加一个字段 `enabled: true/false`（开启后的状态）和 `note`：如果 `boundedWithoutApps(agentId)` 为真，`note` 是「“限定”档位还没选应用，这个助理暂时不能操作：到 设置 › 操作这台电脑 里选应用」，否则不带。
 4.3 两处 import 补上 `boundedWithoutApps`。
