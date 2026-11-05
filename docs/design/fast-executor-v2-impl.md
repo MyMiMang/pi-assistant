@@ -1,4 +1,4 @@
-状态：已批准（第二版实现方案，2026-11-05；第一版见 [fast-executor-impl.md](fast-executor-impl.md)，总设计见 [fast-executor.md](fast-executor.md)）
+状态：已实现(75f2c03)（第二版实现方案，2026-11-05；真机测速见 fast-executor.md 末尾；第一版见 [fast-executor-impl.md](fast-executor-impl.md)，总设计见 [fast-executor.md](fast-executor.md)）
 
 # 快速执行者第二版：少问大模型（打开 + 带回结果 + 目标模式）
 
