@@ -394,6 +394,7 @@ function respond(messages: Msg[], systemPrompt = "", tools: MockTool[] = []) {
 	if (/后台慢任务/.test(u)) return fauxAssistantMessage([fauxToolCall("spawn_subagent", { task: "慢慢核对工作区：逐个检查文件，做完给出总结。" })]);
 	if (/后台/.test(u) && !/统计工作区/.test(u))
 		return fauxAssistantMessage([fauxToolCall("spawn_subagent", { task: "统计工作区文件：列出工作区所有文件并统计数量，给出简短总结。" })]);
+	if (/统计工作区/.test(u)) return fauxAssistantMessage([fauxText("好，我先统计一下工作区。"), fauxToolCall("bash", { command: "sleep 2; echo 文件数: $(find . -type f | wc -l); ls -la" })]);
 	if (/删除|审批/.test(u)) return fauxAssistantMessage([fauxToolCall("bash", { command: "rm -f old-notes.txt && echo 已删除 old-notes.txt" })]);
 	if (/报告|文件/.test(u) && !/附件|上传/.test(u))
 		return fauxAssistantMessage([
