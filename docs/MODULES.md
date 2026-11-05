@@ -44,7 +44,7 @@
 | `shared` | 前后端共用常量和纯逻辑 |
 | `ext-approval` | 审批闸门（有后果的工具调用）；含「不能用命令 / 写脚本直接调 cua」的 deny（`usesCuaDirectly`，所有档位） |
 | `ext-sandbox` | 工作区命令 |
-| `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑）；`structured.ts`：把 cua 的 structuredContent（tab_id / refs / elements / next_call）压成紧凑 JSON 追加给模型（上限 12K，纯逻辑）；`quick-steps.ts`：快速执行者的纯逻辑（候选解析 / 过滤排序 / 问题构造 / 判断 / 拼调用 / 核对）；`quick-steps-tool.ts`：`computer_quick_steps` / `hostpc_quick_steps` 工具和执行循环（问 classifier、走 `ctx.executeTool` 照常过审批）；`words.ts`：敏感 / 危险动作的字样（审批与目标模式守门共用）；`quick-io.ts`：快速执行 / 快速打开共用的 textOf / observe / pageSummary；`quick-open.ts`：`computer_quick_open` / `hostpc_quick_open` 工具（开浏览器 / 应用、找窗口、绑定、打开网址、读页面）；`quick-goal.ts`：目标模式的纯逻辑（候选动作生成 / 剪枝 / 危险按钮守门 / 问题构造 / 动作转步骤）；`quick-goal-run.ts`：目标模式执行循环（问 classifier、执行、核对） |
+| `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑）；`structured.ts`：把 cua 的 structuredContent（tab_id / refs / elements / next_call）压成紧凑 JSON 追加给模型（上限 12K，纯逻辑）；`quick-steps.ts`：快速执行者的纯逻辑（候选解析 / 过滤排序 / 问题构造 / 判断 / 拼调用 / 核对 / 窗口只读文字摘要 windowTextRows / 变化行 changedText）；`quick-steps-tool.ts`：`computer_quick_steps` / `hostpc_quick_steps` 工具和共用执行函数 runQuickAction（问 classifier、走 `ctx.executeTool` 照常过审批；target 可省略用最近一次目标）；`words.ts`：敏感 / 危险动作的字样（审批与目标模式守门共用）；`quick-io.ts`：快速执行 / 快速打开共用的 textOf / observe / pageSummary；`quick-open.ts`：`computer_quick_open` / `hostpc_quick_open` 工具（开浏览器 / 应用、按窗口优先级找并绑定、打开网址、读页面；可同时传 steps / goal 直接执行）；`quick-goal.ts`：目标模式的纯逻辑（候选动作生成 / 剪枝 / 危险按钮守门 / 问题构造 / 动作转步骤）；`quick-goal-run.ts`：目标模式执行循环（问 classifier、执行、核对） |
 | `ext-browser` | 浏览器工具 |
 | `ext-connectors` | 邮箱等连接器工具 |
 | `ext-delivery` | 发文件 / 提问 / 派帮手（spawn_subagent 等；后台任务工具已并进帮手，决策 0027） |

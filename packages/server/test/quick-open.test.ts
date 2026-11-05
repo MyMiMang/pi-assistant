@@ -5,7 +5,7 @@ await import("./setup.ts");
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const { registerQuickOpen } = await import("@pi-assistant/ext-computer");
+const { registerQuickOpen, registerQuickSteps } = await import("@pi-assistant/ext-computer");
 type QuickStepsConfig = import("@pi-assistant/ext-computer").QuickStepsConfig;
 
 const CFG: QuickStepsConfig = { provider: "typesafe", id: "jev-latest", images: false };
@@ -38,15 +38,17 @@ const short = (tool: string) => tool.replace(HOST, "");
 function webWorld(o: { binding?: Record<string, unknown> } = {}) {
 	const calls: { tool: string; args: Record<string, unknown> }[] = [];
 	let snapshots = 0;
+	let clicked = 0;
 	const exec: Exec = async (tool, args) => {
 		calls.push({ tool, args });
 		const n = short(tool);
 		if (n === "browser_prepare") return out({ prepared_pid: 42 });
 		if (n === "list_windows") return out({ windows: [{ window_id: 7, pid: 42, z_index: 3, app_name: "Chrome", title: "Chrome", is_on_screen: true }] });
+		if (n === "browser_click") clicked++;
 		if (n === "get_browser_state") {
 			if (args.snapshot_format === "semantic_v2") {
 				snapshots++;
-				return out({ refs: [{ ref: `p${snapshots}:1`, role: "textbox", name: "名称" }], content_refs: [], outline: '- textbox "名称"', title: "表单", url: "https://example.com/f" });
+				return out({ refs: [{ ref: `p${snapshots}:1`, role: "textbox", name: "名称" }], content_refs: [], outline: `- textbox "名称"${clicked ? `\n- heading "已点击"` : ""}`, title: "表单", url: "https://example.com/f" });
 			}
 			return out(o.binding ?? { target_id: "g1", tabs: [{ tab_id: "t1", active: true, url: "about:blank", title: "" }], binding_quality: "exact", mutation_allowed: true });
 		}
@@ -79,6 +81,46 @@ test("网页 user：先找 Chrome 窗口再按现有资料绑定", async () => {
 	assert.equal(short(world.calls[0]!.tool), "list_windows");
 	assert.equal(world.calls[0]!.args.app, "Chrome");
 	assert.deepEqual(world.calls[1]!.args.strategy, { kind: "existing_profile" });
+});
+
+test("窗口排序：第一个绑定是 heuristic、第二个 exact → 用第二个", async () => {
+	const tools = register();
+	const calls: { tool: string; args: Record<string, unknown> }[] = [];
+	let snapshots = 0;
+	const exec: Exec = async (tool, args) => {
+		calls.push({ tool, args });
+		const n = short(tool);
+		if (n === "browser_prepare") return out({ prepared_pid: 42 });
+		if (n === "list_windows") return out({ windows: [{ window_id: 7, pid: 42, z_index: 9, is_on_screen: true, title: "辅助窗口", layer: 1 }, { window_id: 8, pid: 42, z_index: 1, is_on_screen: true, title: "Chrome", layer: 0 }] });
+		if (n === "get_browser_state") {
+			if (args.snapshot_format === "semantic_v2") return out({ refs: [{ ref: `p${++snapshots}:1`, role: "button", name: "确定" }], outline: "", title: "页", url: "https://e" });
+			return args.window_id === 8 ? out({ target_id: "g1", tabs: [{ tab_id: "t1", active: true, url: "about:blank" }], binding_quality: "exact", mutation_allowed: true }) : out({ target_id: "g1", tabs: [], binding_quality: "heuristic", mutation_allowed: false });
+		}
+		return ok();
+	};
+	await tools.get("hostpc_quick_open")!.execute("id", { url: "https://example.com" }, undefined, undefined, ctxOf(exec));
+	assert.deepEqual(calls.filter((c) => short(c.tool) === "get_browser_state" && c.args.snapshot_format !== "semantic_v2").map((c) => c.args.window_id), [8], "排序把 layer 0 / 有标题的窗口放前面，只试了第二个");
+});
+
+test("所有窗口都绑定不了，但有 next_call 建议窗口 → 再试一次", async () => {
+	const tools = register();
+	const calls: { tool: string; args: Record<string, unknown> }[] = [];
+	const exec: Exec = async (tool, args) => {
+		calls.push({ tool, args });
+		const n = short(tool);
+		if (n === "browser_prepare") return out({ prepared_pid: 42 });
+		if (n === "list_windows") return out({ windows: [{ window_id: 7, pid: 42, z_index: 3, title: "Chrome", layer: 0 }] });
+		if (n === "get_browser_state") {
+			if (args.snapshot_format === "semantic_v2") return out({ refs: [], outline: "", title: "页", url: "https://e" });
+			return args.window_id === 9
+				? out({ target_id: "g1", tabs: [{ tab_id: "t9", active: true, url: "about:blank" }], binding_quality: "exact", mutation_allowed: true })
+				: out({ binding_quality: "heuristic", mutation_allowed: false, next_call: { arguments: { window_id: 9 } } });
+		}
+		return ok();
+	};
+	const r = await tools.get("hostpc_quick_open")!.execute("id", { url: "https://example.com" }, undefined, undefined, ctxOf(exec));
+	assert.deepEqual(calls.filter((c) => short(c.tool) === "get_browser_state" && c.args.snapshot_format !== "semantic_v2").map((c) => c.args.window_id), [7, 9]);
+	assert.match(textOf(r), /"tab_id":"t9"/);
 });
 
 test("绑定不是 exact → 报错并带上 hint", async () => {
@@ -141,6 +183,25 @@ test("url 和 app 都给 / 都不给 → 报错；sandbox 的参数里没有 url
 	const tool = sandbox.get("computer_quick_open")!;
 	assert.equal(tool.parameters.properties.url, undefined, "sandbox 的参数里没有 url");
 	assert.equal(tool.parameters.properties.browser, undefined);
+});
+
+test("带 steps：同一次调用里执行并记住 target，下一步 quick_steps 可以不传 target", async () => {
+	const tools = new Map<string, Tool>();
+	const pi = { registerTool: (t: Tool) => tools.set(t.name, t), on: () => {}, registerMcpServer: () => {} };
+	registerQuickSteps(pi as never, { prefix: HOST, target: "host", browser: true, config: () => CFG });
+	const world = webWorld();
+	const ctx = {
+		executeTool: (name: string, args: unknown) => world.exec(name, args as Record<string, unknown>),
+		modelRegistry: { findOfType: () => ({ provider: CFG.provider, id: CFG.id, input: ["text"] }), classify: async () => ({ stopReason: "error", answers: {} }) },
+	};
+	const r = await tools.get("hostpc_quick_open")!.execute("id", { url: "https://example.com", steps: [{ do: "click", what: "名称" }] }, undefined, undefined, ctx);
+	assert.equal(world.calls.filter((c) => short(c.tool) === "browser_click").length, 1, "打开后同一次调用里执行了步骤");
+	assert.match(textOf(r), /全部 1 步做完/);
+	assert.ok((r as unknown as { details: { action: { steps: unknown[] } } }).details.action.steps.length === 1);
+	await tools.get("hostpc_quick_steps")!.execute("id", { steps: [{ do: "click", what: "名称" }] }, undefined, undefined, ctx);
+	const clicks = world.calls.filter((c) => short(c.tool) === "browser_click");
+	assert.equal(clicks.length, 2, "省略 target 也能接着在同一个标签页做");
+	assert.equal(clicks[1]!.args.tab_id, "t1");
 });
 
 test("config() 为 null 时不注册", () => {

@@ -6,7 +6,7 @@ await import("./setup.ts");
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const { buildCall, buildClassifierContext, decide, emptyObservation, exactMatch, filterByKind, parseObservation, rankCandidates, summarize, verifyStep } = await import("@pi-assistant/ext-computer");
+const { buildCall, buildClassifierContext, changedText, decide, emptyObservation, exactMatch, filterByKind, parseObservation, rankCandidates, summarize, verifyStep, windowTextRows } = await import("@pi-assistant/ext-computer");
 type Candidate = import("@pi-assistant/ext-computer").Candidate;
 type Observation = import("@pi-assistant/ext-computer").Observation;
 
@@ -206,6 +206,45 @@ test("summary：网页用 outline，没有就退回 content_refs；窗口用 ele
 	assert.ok(cut.startsWith("字".repeat(2500)));
 	assert.match(cut, /…（共 2600 字）$/);
 	assert.equal(emptyObservation().summary, "");
+});
+
+test("windowTextRows：取出没有编号的只读文字、去掉方向控制字符、跳过带 [N] 的行", () => {
+	const tree = [
+		"    - [1] AXButton \"1\"",
+		"    - [2] AXButton \"=\"",
+		'    - AXStaticText = "\u200e1,234\u200e×\u200e5,678"',
+		"    - AXHeading (标题)",
+		"    - AXGroup",
+		"      - AXButton [3] 里的按钮",
+	].join("\n");
+	assert.deepEqual(windowTextRows(tree), ["AXStaticText=1,234×5,678", "AXHeading「标题」"]);
+	assert.deepEqual(windowTextRows("没有列表的行\n- [9] 编号\n- AXStaticText"), []);
+	assert.equal(windowTextRows(Array.from({ length: 80 }, (_, i) => `- AXStaticText = "${i}"`).join("\n")).length, 60, "最多 60 行");
+});
+
+test("窗口 summary 以显示屏那行开头；只改显示文字 fingerprint 也会变", () => {
+	const elements = [{ element_token: "s1:1", role: "button", label: "1" }];
+	const before = parseObservation(WIN, { elements }, '- [1] AXButton "1"\n- AXStaticText = "1,234×5,678"', []);
+	const after = parseObservation(WIN, { elements }, '- [1] AXButton "1"\n- AXStaticText = "1,234×5,679"', []);
+	assert.equal(before.summary.split("\n")[0], "AXStaticText=1,234×5,678");
+	assert.equal(before.summary.split("\n")[1], 'button「1」');
+	assert.notEqual(before.fingerprint, after.fingerprint, "只改显示文字，指纹也要变");
+});
+
+test("changedText：只返回 after 里新增的行，去重，最多 max 字", () => {
+	assert.equal(changedText("a\nb", "a\nb\nc\nc\nd"), "c\nd");
+	assert.equal(changedText(" ⚠️ 同样的行 ", "⚠️ 同样的行\n新的一行"), "新的一行", "首尾空白不算不同");
+	assert.equal(changedText("a", "a"), "");
+	assert.equal(changedText("", "abcdef\nghijkl", 8), "abcdef\ng", "截到上限");
+});
+
+test("summarize：第一次观察后的变化放在最后的页面内容前面", () => {
+	const before = parseObservation(WIN, { elements: [{ element_token: "s1:1", role: "button", label: "提交" }] }, 'button「提交」', []);
+	const after = parseObservation(WIN, { elements: [{ element_token: "s2:1", role: "button", label: "提交" }] }, '- [1] AXButton "提交"\n- AXStaticText = "已提交"', []);
+	const results = [{ index: 0, step: { do: "click" as const, what: "提交" }, picked: before.candidates[0]!, probability: 1, exact: true, note: "页面有变化", ms: 5 }];
+	const done = summarize(results, undefined, after, before);
+	assert.match(done, /页面上新出现 \/ 变了的内容：\nAXStaticText=已提交\n最后的页面内容/);
+	assert.equal(summarize(results, undefined, after).includes("页面上新出现"), false, "没传第一次观察就不加");
 });
 
 test("summarize：做完 / 停下都带最后的页面内容", () => {

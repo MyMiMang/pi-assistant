@@ -109,6 +109,7 @@ test("表单目标模式：依次填名称 → 选分辨率 → 上传 → 点�
 	const text = textOf(r);
 	assert.match(text, /成功：决策模型认为目标已完成/);
 	assert.match(text, /最后的页面内容（不用再读一遍）：/);
+	assert.match(text, /页面上新出现 \/ 变了的内容：\n.*heading "已提交"/);
 	assert.match(text, /已提交/);
 	assert.equal((r as unknown as { details: { mode: string; pending: number[] } }).details.mode, "goal");
 	assert.deepEqual((r as unknown as { details: { pending: number[] } }).details.pending, []);

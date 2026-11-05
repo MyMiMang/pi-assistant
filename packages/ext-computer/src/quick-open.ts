@@ -10,7 +10,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { unwrapStructured } from "./structured.ts";
 import { observe as observePage, pageSummary, sleep, textOf, type ExecContext, type Outcome } from "./quick-io.ts";
 import { asObj, type QuickTarget } from "./quick-steps.ts";
-import type { QuickStepsConfig } from "./quick-steps-tool.ts";
+import { QUICK_ACTION_PARAMS, runQuickAction, type QuickActionContext, type QuickActionParams, type QuickStepsConfig } from "./quick-steps-tool.ts";
 
 export interface QuickOpenOptions {
 	/** cua 工具名前缀（`mcp__computer__` / `mcp__hostpc__`） */
@@ -18,13 +18,21 @@ export interface QuickOpenOptions {
 	target: "sandbox" | "host";
 	/** 是否支持网页（助理电脑的网页走 ext-browser；“限定”档位没有浏览器工具） */
 	browser: boolean;
+	/** 打开成功后记住这个目标（下次 quick_steps 可以省略 target） */
+	remember?: (t: QuickTarget) => void;
 }
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-/** 取 z_index 最大的窗口 */
-const frontWindow = (s: Record<string, unknown> | null) => {
+/** 窗口排序：layer 0 / 没有的在前；在当前屏幕的在前；有标题的在前；z_index 大的在前 */
+const windowsInOrder = (s: Record<string, unknown> | null): Record<string, unknown>[] => {
 	const list = Array.isArray(s?.windows) ? s.windows.map(asObj).filter((x): x is Record<string, unknown> => !!x) : [];
-	return list.sort((a, b) => (num(b.z_index) ?? -Infinity) - (num(a.z_index) ?? -Infinity))[0];
+	const rank = (w: Record<string, unknown>) => [num(w.layer) === 0 || num(w.layer) === undefined ? 0 : 1, w.is_on_screen === false ? 1 : 0, typeof w.title === "string" && w.title.trim() ? 0 : 1];
+	return list.sort((a, b) => {
+		const ra = rank(a);
+		const rb = rank(b);
+		for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return ra[i]! - rb[i]!;
+		return (num(b.z_index) ?? -Infinity) - (num(a.z_index) ?? -Infinity);
+	});
 };
 
 export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { config: () => QuickStepsConfig | null }): void {
@@ -38,8 +46,8 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 			"一次打开网页或应用并准备好操作：开浏览器 / 开应用 → 找窗口 → 绑定 → 打开网址 → 读页面结构，返回可以直接传给 " +
 			`${stepsName} 的 target 和页面内容，省掉好几种准备步骤。\n` +
 			"给 url 打开网页（默认另开一个独立 Chrome，不带用户的登录状态；要用户的登录状态才用 browser:\"user\"），给 app 打开应用（名字或 bundle id）。url 和 app 只能给一个。\n" +
-			`打开之后用 ${stepsName} 的 steps 或 goal + inputs 接着做。`,
-		promptSnippet: `${name}: 打开网页 / 应用并返回 target 和页面内容（先用它，再用快速执行）`,
+			`已经知道要做什么，就把 steps（或 goal + inputs）一起传给它，打开和做事一次完成；之后再在同一个页面上接着做时，${stepsName} 的 target 可以省略。`,
+		promptSnippet: `${name}: 打开网页 / 应用并返回 target 和页面内容（可同时执行 steps / goal）`,
 		annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 		parameters: Type.Object({
 			...(o.browser
@@ -50,10 +58,11 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 				: {}),
 			app: Type.Optional(Type.String({ description: "要打开的应用：名字或 bundle id，例如「计算器」「com.apple.calculator」" })),
 			session: Type.Optional(Type.String({ description: "会话标签，默认自动生成；后续工具用同一个" })),
+			...QUICK_ACTION_PARAMS,
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			if (!o.config()) throw new Error("快速执行已关闭：在 设置 › 操作这台电脑 › 快速执行 里打开并选择决策模型。");
-			const p = params as { url?: string; browser?: "isolated" | "user"; app?: string; session?: string };
+			const p = params as { url?: string; browser?: "isolated" | "user"; app?: string; session?: string } & QuickActionParams;
 			const url = p.url?.trim();
 			const app = p.app?.trim();
 			if (url && !o.browser) throw new Error("这个目标不支持打开网页：助理电脑上的网页请用浏览器工具");
@@ -75,14 +84,14 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 				return out;
 			};
 			const structured = (out: Outcome) => unwrapStructured(out.result.structuredContent);
-			/** list_windows 最多试 10 次、每次间隔 300 毫秒，取 z_index 最大的窗口 */
-			const waitWindow = async (pid: number) => {
+			/** list_windows 最多试 10 次、每次间隔 300 毫秒，返回按优先级排好的窗口列表 */
+			const waitWindows = async (pid: number) => {
 				for (let i = 0; i < 10; i++) {
-					const w = frontWindow(structured(await exec("list_windows", { pid, session })));
-					if (w && num(w.window_id) !== undefined) return w;
+					const list = windowsInOrder(structured(await exec("list_windows", { pid, session }))).filter((w) => num(w.window_id) !== undefined);
+					if (list.length) return list;
 					if (i < 9) await sleep(300);
 				}
-				return null;
+				return [];
 			};
 
 			let target: QuickTarget;
@@ -90,7 +99,7 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 			if (url) {
 				let pid: number | undefined;
 				if ((p.browser ?? "isolated") === "user") {
-					const chrome = frontWindow(structured(await exec("list_windows", { app: "Chrome", session })));
+					const chrome = windowsInOrder(structured(await exec("list_windows", { app: "Chrome", session })))[0];
 					if (!chrome || num(chrome.pid) === undefined || num(chrome.window_id) === undefined) throw new Error("没找到正在运行的 Chrome");
 					pid = num(chrome.pid)!;
 					await exec("browser_prepare", { pid, window_id: num(chrome.window_id), session, strategy: { kind: "existing_profile" } });
@@ -98,13 +107,33 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 					pid = num(structured(await exec("browser_prepare", { allow_launch: true, profile: { mode: "isolated_new" }, session }))?.prepared_pid);
 					if (pid === undefined) throw new Error("browser_prepare 没有返回 prepared_pid");
 				}
-				const win = await waitWindow(pid);
-				if (!win) throw new Error("浏览器窗口一直没有出现");
-				const state = structured(await exec("get_browser_state", { pid, window_id: num(win.window_id), session }));
-				if (state?.binding_quality !== "exact" || state?.mutation_allowed !== true) {
+				const wins = (await waitWindows(pid)).slice(0, 5);
+				if (!wins.length) throw new Error("浏览器窗口一直没有出现");
+				// cua 可能先列出一个辅助 / 不可操作的窗口：按优先级逐个试，取第一个能精确绑定的
+				let state: Record<string, unknown> | null = null;
+				let bound: Record<string, unknown> | null = null;
+				for (const w of wins) {
+					const s = structured(await exec("get_browser_state", { pid, window_id: num(w.window_id)!, session }));
+					if (s) state = s;
+					if (s?.binding_quality === "exact" && s?.mutation_allowed === true) {
+						bound = s;
+						break;
+					}
+				}
+				if (!bound) {
+					const hint = asObj(state?.next_call) ?? asObj(asObj(state?.detail)?.next_call);
+					const suggested = num(asObj(hint?.arguments)?.window_id);
+					if (suggested !== undefined) {
+						const s = structured(await exec("get_browser_state", { pid, window_id: suggested, session }));
+						if (s) state = s;
+						if (s?.binding_quality === "exact" && s?.mutation_allowed === true) bound = s;
+					}
+				}
+				if (!bound) {
 					const extra = [state?.hint, state?.next_call && JSON.stringify(state.next_call)].filter(Boolean).join("；");
 					throw new Error(`浏览器绑定不可用（${String(state?.binding_quality ?? "unknown")}）${extra ? `：${extra}` : ""}`);
 				}
+				state = bound;
 				const targetId = typeof state.target_id === "string" ? state.target_id : "";
 				const tabs = Array.isArray(state.tabs) ? state.tabs.map(asObj).filter((x): x is Record<string, unknown> => !!x) : [];
 				// 独立 Chrome 用当前标签页；用户自己的 Chrome 只用空白标签页，不把用户正在看的页面换掉（cua 不能新开标签页）
@@ -121,9 +150,9 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 				const useBundle = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+){2,}$/.test(app!) && !/\.app$/i.test(app!);
 				const launched = structured(await exec("launch_app", { [useBundle ? "bundle_id" : "name"]: app, session }));
 				let pid = num(launched?.pid) ?? num(launched?.process_id) ?? num(asObj(launched?.app)?.pid);
-				if (pid === undefined) pid = num(frontWindow(structured(await exec("list_windows", { app, session })))?.pid);
+				if (pid === undefined) pid = num(windowsInOrder(structured(await exec("list_windows", { app, session })))[0]?.pid);
 				if (pid === undefined) throw new Error(`打开「${app}」后没找到它的窗口`);
-				const win = await waitWindow(pid);
+				const win = (await waitWindows(pid))[0];
 				if (!win) throw new Error(`打开「${app}」后一直没等到窗口`);
 				target = { kind: "window", pid, window_id: num(win.window_id)! };
 				label = app!;
@@ -135,14 +164,31 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 				obs = await observePage(ctx as unknown as ExecContext, target, o.prefix, signal, false);
 			}
 			if (typeof obs === "string") throw new Error(`读取页面失败：${obs}`);
+			o.remember?.(target);
 			const els = obs.candidates.slice(0, 40).map((c) => `${c.handle} ${c.role}「${c.name}」`);
-			const text = [
+			const openText = [
 				`已打开：${label}。`,
 				`target（传给 ${stepsName}）：${JSON.stringify(target)}`,
 				`可操作的元素（前 40 个）：${els.length ? `\n${els.join("\n")}` : "（没读到可操作的元素）"}`,
 				`页面内容：${pageSummary(obs) || "（空）"}`,
 			].join("\n");
-			return { content: [{ type: "text" as const, text }], details: { target, session } };
+			// 给了 steps 或 goal：同一次调用里直接做，不用再多一轮
+			const wantsAction = (Array.isArray(p.steps) && p.steps.length > 0) || (typeof p.goal === "string" && p.goal.trim() !== "");
+			// 步骤参数有错时不要把已经打开的结果丢掉：打开照常返回，附上没开始执行的原因
+			let action: Awaited<ReturnType<typeof runQuickAction>> | null = null;
+			let actionText = "";
+			if (wantsAction) {
+				try {
+					action = await runQuickAction(ctx as unknown as QuickActionContext, o, target, p, signal);
+					actionText = action.content.map((c) => c.text ?? "").join("\n");
+				} catch (e) {
+					actionText = `已经打开，但步骤没有开始执行：${e instanceof Error ? e.message : String(e)}`;
+				}
+			}
+			return {
+				content: [{ type: "text" as const, text: actionText ? `${openText}\n\n${actionText}` : openText }],
+				details: { target, session, action: action?.details ?? null },
+			};
 		},
 	});
 }

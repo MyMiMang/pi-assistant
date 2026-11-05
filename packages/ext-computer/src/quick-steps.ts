@@ -137,8 +137,8 @@ function textCandidates(text: string): Candidate[] {
 }
 
 /** 32 位 FNV-1a（不引依赖）；**不放 handle**：每次快照 ref 都会变 */
-export function fingerprintOf(url: string, title: string, list: Candidate[]): string {
-	const s = `${url}|${title}|${list.map((c) => c.role + c.name + (c.value ?? "")).join("\u0001")}`;
+export function fingerprintOf(url: string, title: string, list: Candidate[], extra: string): string {
+	const s = `${url}|${title}|${list.map((c) => c.role + c.name + (c.value ?? "")).join("\u0001")}|${extra}`;
 	let h = 0x811c9dc5;
 	for (let i = 0; i < s.length; i++) {
 		h ^= s.charCodeAt(i);
@@ -147,17 +147,41 @@ export function fingerprintOf(url: string, title: string, list: Candidate[]): st
 	return (h >>> 0).toString(16);
 }
 
-/** 页面内容摘要：网页用 outline（没有再退回 content_refs），窗口用 elements；截到 2500 字 */
-function summaryOf(target: QuickTarget, s: Record<string, unknown> | null): string {
+/** 去掉方向控制字符（计算器之类的显示文本里常见 U+200E / U+200F） */
+const clean = (s: string) => s.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
+
+/**
+ * 从 `get_window_state` 的文字树里取出**没有 `[N]` 编号**的行（只用来显示、不能操作的文字元素）。
+ * 例：`    - AXStaticText = "‎1,234‎×‎5,678"` → `AXStaticText=1,234×5,678`；
+ * `    - AXHeading (标题)` → `AXHeading「标题」`。名字和值都为空的行丢掉，最多 60 行。
+ */
+export function windowTextRows(text: string): string[] {
+	const out: string[] = [];
+	for (const raw of (text ?? "").split("\n")) {
+		const line = raw.trim();
+		if (!line.startsWith("- ")) continue;
+		const body = line.slice(2).trim();
+		if (!body || body.startsWith("[")) continue;
+		const role = body.split(/\s+/)[0] ?? "";
+		const name = clean(/\(([^)]*)\)/.exec(body)?.[1] ?? "");
+		const value = clean(/=\s*"([^"]*)"/.exec(body)?.[1] ?? "");
+		if (!name && !value) continue;
+		out.push(`${role}${name ? `「${name}」` : ""}${value ? `=${value}` : ""}`);
+		if (out.length >= 60) break;
+	}
+	return out;
+}
+
+/** 页面内容摘要：网页用 outline（没有再退回 content_refs），窗口用文字树里不可操作的行 + elements；截到 2500 字 */
+function summaryOf(target: QuickTarget, s: Record<string, unknown> | null, text: string): string {
 	const rows = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.map(asObj).filter((x): x is Record<string, unknown> => !!x) : []);
-	const text =
+	const text2 =
 		target.kind === "window"
-			? rows(s?.elements)
-					.map((e) => {
-						const label = asStr(e.label) || asStr(e.title);
-						const value = asStr(e.value);
-						return label || value ? `${asStr(e.role)}「${label}」${value ? `=${value}` : ""}` : "";
-					})
+			? [...windowTextRows(text), ...rows(s?.elements).map((e) => {
+					const label = asStr(e.label) || asStr(e.title);
+					const value = asStr(e.value);
+					return label || value ? `${asStr(e.role)}「${label}」${value ? `=${value}` : ""}` : "";
+				})]
 					.filter(Boolean)
 					.join("\n")
 			: typeof s?.outline === "string" && s.outline.trim()
@@ -165,7 +189,7 @@ function summaryOf(target: QuickTarget, s: Record<string, unknown> | null): stri
 				: rows(s?.content_refs)
 						.map((e) => `${asStr(e.role)}「${asStr(e.name) || asStr(e.label) || asStr(e.text)}」`)
 						.join("\n");
-	return text.length > 2500 ? `${text.slice(0, 2500)}…（共 ${text.length} 字）` : text;
+	return text2.length > 2500 ? `${text2.slice(0, 2500)}…（共 ${text2.length} 字）` : text2;
 }
 
 /** 读工具的结果 → 候选（宽松解析，字段名对不上就退回文本；有单测） */
@@ -176,18 +200,19 @@ export function parseObservation(target: QuickTarget, structured: unknown, text:
 	const title = asStr(s?.title) || asStr(page?.title);
 	const url = asStr(s?.url) || asStr(page?.url);
 	const shot = (content ?? []).find((c) => c.type === "image" && c.data && c.mimeType);
+	const summary = summaryOf(target, s, text);
 	return {
 		candidates: list,
 		...(title ? { title } : {}),
 		...(url ? { url } : {}),
-		summary: summaryOf(target, s),
-		fingerprint: fingerprintOf(url, title, list),
+		summary,
+		fingerprint: fingerprintOf(url, title, list, summary),
 		...(shot ? { screenshot: { data: shot.data!, mimeType: shot.mimeType! } } : {}),
 	};
 }
 
 /** 读不到页面时用的空观察（停下时要给大模型一个当前状态） */
-export const emptyObservation = (): Observation => ({ candidates: [], summary: "", fingerprint: fingerprintOf("", "", []) });
+export const emptyObservation = (): Observation => ({ candidates: [], summary: "", fingerprint: fingerprintOf("", "", [], "") });
 
 /** 按动作种类过滤候选；过滤后为空就返回原列表，让决策模型自己判断（它可以选「拿不准」） */
 export function filterByKind(kind: StepKind, list: Candidate[]): Candidate[] {
@@ -376,23 +401,57 @@ export function verifyStep(step: QuickStep, picked: Candidate | null, before: Ob
 /** 结果末尾那段「最后的页面内容」（快速执行和目标模式共用；没有内容返回空串） */
 export const lastPageText = (summary?: string) => (summary ? `最后的页面内容（不用再读一遍）：\n${summary}` : "");
 
-/** 返回给大模型的说明：每步一行；停下 / 做完都附上最后的页面内容 */
-export function summarize(results: StepResult[], stopped?: StopInfo, lastObs?: Observation): string {
+/** 把两段 summary 按行拆开，返回在 after 里、不在 before 里的行（去重，最多 max 字） */
+export function changedText(before: string, after: string, max = 600): string {
+	const old = new Set((before ?? "").split("\n").map((s) => s.trim()).filter(Boolean));
+	const seen = new Set<string>();
+	const parts: string[] = [];
+	let total = 0;
+	for (const raw of (after ?? "").split("\n")) {
+		const line = raw.trim();
+		if (!line || old.has(line) || seen.has(line)) continue;
+		seen.add(line);
+		const sep = parts.length ? 1 : 0;
+		const room = max - total - sep;
+		if (room <= 0) break;
+		const piece = line.length > room ? line.slice(0, room) : line;
+		parts.push(piece);
+		total += piece.length + sep;
+		if (piece.length < line.length) break;
+	}
+	return parts.join("\n");
+}
+
+/** 「页面上新出现 / 变了的内容」那一行（快速执行和目标模式共用；没有变化返回空串） */
+export function changedNote(before: string | undefined, after: string): string {
+	const changed = before === undefined ? "" : changedText(before, after);
+	return changed ? `页面上新出现 / 变了的内容：\n${changed}` : "";
+}
+
+/** 返回给大模型的说明：每步一行；停下 / 做完都附上「新出现 / 变了的内容」和最后的页面内容 */
+export function summarize(results: StepResult[], stopped?: StopInfo, lastObs?: Observation, firstObs?: Observation): string {
 	const lines = results.map((r) => {
 		const p = r.exact ? `${r.probability.toFixed(2)}（名字完全对上，没问决策模型）` : r.probability.toFixed(2);
 		const what = r.picked ? `选了 ${describeCandidate(r.picked)}（${r.picked.handle}），概率 ${p}` : "直接执行";
 		return `${r.index + 1}. ${describeStep(r.step)} → ${what}，${r.note}，${r.ms} 毫秒`;
 	});
+	const changedLine = (after: string) => changedNote(firstObs?.summary, after);
 	if (stopped) {
 		const els = stopped.obs.candidates.slice(0, 30).map((c) => `${c.handle} ${c.role}「${c.name}」`);
 		lines.push(`第 ${stopped.index + 1} 步停下：${stopped.reason}。后面的步骤没做。当前页面可操作的元素（前 30 个）：${els.length ? `\n${els.join("\n")}` : "（没读到元素）"}`);
-		const tail = lastPageText(stopped.obs.summary || lastObs?.summary);
+		const summary = stopped.obs.summary || lastObs?.summary || "";
+		const changed = changedLine(summary);
+		if (changed) lines.push(changed);
+		const tail = lastPageText(summary);
 		if (tail) lines.push(tail);
 		return lines.join("\n");
 	}
 	const total = results.reduce((n, r) => n + r.ms, 0);
 	lines.push(`全部 ${results.length} 步做完，共 ${total} 毫秒。`);
-	const tail = lastPageText(lastObs?.summary);
+	const summary = lastObs?.summary || "";
+	const changed = changedLine(summary);
+	if (changed) lines.push(changed);
+	const tail = lastPageText(summary);
 	if (tail) lines.push(tail);
 	return lines.join("\n");
 }

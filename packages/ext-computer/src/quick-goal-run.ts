@@ -3,7 +3,7 @@
  * 读页面 → 列候选动作 → 问决策模型挑下一步 → cua 执行 → 核对，直到完成 / 停下 / 步数用完。
  * 纯逻辑（候选、剪枝、问题、动作转步骤）在 quick-goal.ts；设计见 docs/design/fast-executor-v2-impl.md §5.6。
  */
-import { buildCall, lastPageText, MIN_PROBABILITY, verifyStep, type Observation, type QuickTarget } from "./quick-steps.ts";
+import { buildCall, changedNote, lastPageText, MIN_PROBABILITY, verifyStep, type Observation, type QuickTarget } from "./quick-steps.ts";
 import { DEFAULT_GOAL_STEPS, MAX_GOAL_STEPS, actionToStep, buildGoalContext, goalActions, toggleKey, type GoalInput } from "./quick-goal.ts";
 import { observe as observePage, sleep, textOf, type ExecContext } from "./quick-io.ts";
 import type { QuickStepsOptions } from "./quick-steps-tool.ts";
@@ -37,6 +37,7 @@ export async function runGoal(ctx: GoalContext, o: QuickStepsOptions, target: Qu
 	const lines: string[] = [];
 	const read = (shot: boolean) => observePage(ctx, target, o.prefix, signal, shot);
 	let obs: Observation | null = null;
+	let firstObs: Observation | null = null;
 	let stopped: string | undefined;
 	let finished = false;
 	let reobserveStreak = 0;
@@ -55,6 +56,7 @@ export async function runGoal(ctx: GoalContext, o: QuickStepsOptions, target: Qu
 			}
 			obs = r;
 		}
+		if (!firstObs) firstObs = obs;
 		const n = (seen.get(obs.fingerprint) ?? 0) + 1;
 		seen.set(obs.fingerprint, n);
 		if (n > 3) {
@@ -188,6 +190,8 @@ export async function runGoal(ctx: GoalContext, o: QuickStepsOptions, target: Qu
 
 	lines.push(finished ? "成功：决策模型认为目标已完成，请你核对下面的页面内容。" : `停下：${stopped}。`);
 	if (pending.size) lines.push(`还没用上的值：${[...pending].map((i) => inputs[i]!.name).join("、")}`);
+	const changed = obs ? changedNote(firstObs?.summary, obs.summary) : "";
+	if (changed) lines.push(changed);
 	const tail = lastPageText(obs?.summary);
 	if (tail) lines.push(tail);
 	return {

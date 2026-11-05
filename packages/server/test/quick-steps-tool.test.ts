@@ -68,7 +68,7 @@ function formWorld(o: { apply?: boolean } = {}) {
 			];
 			return {
 				isError: false,
-				result: { content: [{ type: "text", text: "页面" }, ...(args.include_screenshot ? [{ type: "image", data: "AAA", mimeType: "image/png" }] : [])], structuredContent: { structuredContent: { refs, outline: '- textbox "名称"', title: "表单", url: "https://example.com/f" } } },
+				result: { content: [{ type: "text", text: "页面" }, ...(args.include_screenshot ? [{ type: "image", data: "AAA", mimeType: "image/png" }] : [])], structuredContent: { structuredContent: { refs, outline: `- textbox "名称"${form.clicked ? `\n- heading "已提交"` : ""}`, title: "表单", url: "https://example.com/f" } } },
 			};
 		}
 		if (o.apply !== false) {
@@ -108,6 +108,7 @@ test("三步表单全部成功：调用顺序对、要填的值只来自 step、
 	assert.equal(asked.length, 2, "「名称输入框」「分辨率下拉」名字不完全一致，要问决策模型；「提交」完全一致，不问");
 	const text = textOf(r);
 	assert.match(text, /全部 3 步做完/);
+	assert.match(text, /页面上新出现 \/ 变了的内容：\n- heading "已提交"/);
 	assert.match(text, /最后的页面内容（不用再读一遍）：/);
 	assert.match(text, /textbox "名称"/, "返回里带上最后一次读到的页面内容，大模型不用再读一遍");
 	assert.match(text, /名字完全对上，没问决策模型/);
@@ -178,6 +179,18 @@ test("signal 已中止 → 直接停下，什么都不做", async () => {
 	const r = await tools.get("hostpc_quick_steps")!.execute("id", { target: { kind: "browser", tab_id: "t1" }, steps: THREE_STEPS }, ac.signal, undefined, fakeCtx(world.exec, pick("c1")));
 	assert.match(textOf(r), /已中断/);
 	assert.deepEqual(world.calls, []);
+});
+
+test("不传 target：沿用上一次的目标；第一次就不传时报错文案对", async () => {
+	const { tools } = register();
+	const tool = tools.get("hostpc_quick_steps")!;
+	const world = formWorld();
+	await assert.rejects(tool.execute("id", { steps: [{ do: "click", what: "提交" }] }, undefined, undefined, fakeCtx(world.exec, pick("c3"))), /没有当前目标：先用 hostpc_quick_open 打开，或传 target/);
+	await tool.execute("id", { target: { kind: "browser", tab_id: "t1" }, steps: [{ do: "click", what: "提交" }] }, undefined, undefined, fakeCtx(world.exec, pick("c3")));
+	await tool.execute("id", { steps: [{ do: "click", what: "提交" }] }, undefined, undefined, fakeCtx(world.exec, pick("c3")));
+	const clicks = world.calls.filter((c) => c.tool === `${HOST}browser_click`);
+	assert.equal(clicks.length, 2);
+	assert.equal(clicks[1]!.args.tab_id, "t1", "第二次省略 target，用的是上一次的");
 });
 
 test("工具声明自己不直接碰外部（openWorldHint:false），通用审批不会为它多弹一张卡；里面的动作照常单独审批", () => {
