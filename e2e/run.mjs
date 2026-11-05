@@ -11,7 +11,7 @@ import { startMockOpenAI } from "./mock-openai.mjs";
 import { cspProblems, probeCsp } from "./fixtures/csp-probe.mjs";
 import { startMockImages } from "./mock-images.mjs";
 import { openModelMenu, openCompact, closeModelPanel } from "./model-menu-flow.mjs";
-import { menuOverflowProblems, roomHelpers } from "./fixtures/page-checks.mjs";
+import { menuOverflowProblems, roomHelpers, roomProgressNoPause } from "./fixtures/page-checks.mjs";
 import { infoTab as selectInfoTab, taskTab as selectTaskTab, agentProfileSave, expandDetails, expandAgentModelSection } from "./fixtures/info-pane.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 
@@ -1888,19 +1888,19 @@ await step("群聊：新建群（A/B/C，管理者 A）→ @A 只有 A 回答 �
 	await box.fill("");
 	await page.screenshot({ path: join(SHOTS, "80-room-manager.png") });
 });
-await step("群聊：上限暂停（本轮已暂停，回复继续）→ 点继续接着跑", async () => {
+await step("群聊：上限暂停（没有进展，本轮已暂停，回复继续）→ 点继续接着跑；成员每次都交文件（有进展）到上限不暂停", async () => {
 	await roomSay("循环 派给B");
 	await page.locator("main").getByText(/本轮已暂停/).last().waitFor({ timeout: 60_000 });
 	await roomIdle();
 	const before = await page.locator("[data-testid=room-bot]").count();
-	// 回复“继续”：接着跑暂停时没说完的（点“继续”按钮效果相同）
 	if (!(await page.getByTestId("room-continue").count())) throw new Error("暂停提示上应有继续按钮");
-	await roomSay("继续");
+	await roomSay("继续"); // 回复“继续”：接着跑暂停时没说完的（点“继续”按钮效果相同）
 	await page.waitForFunction((n) => document.querySelectorAll("[data-testid=room-bot]").length > n || document.querySelectorAll("[data-testid=room-continue]").length > 1, before, { timeout: 40_000 });
 	await roomIdle();
 	const msgs = await (await fetch(`${BASE}/api/rooms/${ROOM}/messages`)).json();
 	const turns = msgs.filter((m) => m.role === "assistant" && m.content).length;
 	if (turns < 6) throw new Error(`发言太少：${turns}`);
+	await roomProgressNoPause({ roomSay, base: BASE, room: ROOM, waitFor }); // 决策 0029：有进展到上限不暂停
 });
 await step("群聊：审批卡片显示在群里（带助理名）→ 批准；停止按钮中止所有人", async () => {
 	await roomSay("@B 审批一下删除");

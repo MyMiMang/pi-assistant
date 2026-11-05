@@ -4,7 +4,7 @@
  *  2. 用户没 @ 人：只有管理者回答——它理解需求，自己答或用 room_assign / @名字 派活
  *  3. 普通成员只有被用户或管理者 @ 才会说话；项目进行中成员可以 @ 彼此（collab.ts）
  *  4. 派出去的成员都做完后管理者再总结一次（可关），还可以继续派（有深度上限）
- * 每轮上限：发言次数、派活深度、每人次数；到上限写“本轮已暂停”，用户点继续。
+ * 每轮上限：发言次数、派活深度、每人次数；到了发言次数上限时这一轮有新进展（群里新发了文件、看板有变化）就清零接着推进，没有才写“本轮已暂停”，用户点继续（决策 0029）。
  * 长期任务的执行不在这里：它们在负责人自己的任务会话里跑（work-items/exec.ts），不占群的回合和上限。
  */
 import { bus } from "../bus.ts";
@@ -18,13 +18,13 @@ import { getAgent, listAgents, runtime } from "../runtime.ts";
 import { stopConversationSubagents } from "../subagents.ts";
 import { buildWorkCorrectionContext, execConversationsOfRoom, resolveWorkReferences } from "../work-items.ts";
 import { maybeTidyMember, tidyingOf } from "./after-delivery.ts";
-import { capCheck, DETACH_MS, interjectsCurrent, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, shouldDetach } from "./logic.ts";
+import { capCheck, capOrProgress, DETACH_MS, interjectsCurrent, parseMentions, planAfter, planForUser, planForUserWithQuote, type PlannedTurn, type QuoteTarget, type RoomCaps, shouldDetach } from "./logic.ts";
 import { waitingRequestIds } from "./checkpoint.ts";
 import { hasActiveProject } from "./projects.ts";
 import { markTurnRead, syncRecallable } from "./recall.ts";
 import { bgOf, cancelQueue, clearBg, emitState, enqueue, fresh, setBg, states, type QuoteInfo, type RoomState, type Turn } from "./queue.ts";
 import { activeIds, capsOf, changed, getRoom, memberConversation, memberRefs, memberRow, membersOf, snapshot, sys } from "./store.ts";
-import { REASON_LINE, roomFiles, transcriptFor } from "./turn-prompt.ts";
+import { REASON_LINE, roomFiles, roomProgressSig, transcriptFor } from "./turn-prompt.ts";
 
 // 队列状态和 roomFiles 拆到了 queue.ts / turn-prompt.ts；外面照旧从这里取。
 export { cancelQueuedFor, hasQueuedTurns, queuedFor, stateOf, states, type RoomState } from "./queue.ts";
@@ -195,7 +195,7 @@ async function pump(roomId: string) {
 			if (!s.queue.length && s.replan) {
 				const re = s.replan;
 				s.replan = null;
-				Object.assign(s, { roundId: uid("rd"), counters: { turns: 0, perAgent: {} }, batch: new Set(), batchRan: false });
+				Object.assign(s, { roundId: uid("rd"), counters: { turns: 0, perAgent: {} }, progressSig: null, batch: new Set(), batchRan: false });
 				const r = getRoom(roomId);
 				if (!r) break;
 				s.quote = re.quote?.snapshot ?? null;
@@ -210,8 +210,20 @@ async function pump(roomId: string) {
 			const r = getRoom(roomId);
 			if (!r) break;
 			const caps = capsOf(r);
+			// 这一轮的起点指纹：到上限时拿来比有没有新进展
+			s.progressSig ??= roomProgressSig(roomId);
 			// 项目进行中不按「每轮发言次数」暂停（那是平时防刷屏的；项目进行中靠卡住 / 空聊检测）。
-			const why = hasActiveProject(roomId) ? null : capCheck(next, s.counters, caps);
+			let why = hasActiveProject(roomId) ? null : capCheck(next, s.counters, caps);
+			if (why) {
+				// 到上限但这一轮有新进展（决策 0029）：计数清零、记下新指纹，接着推进
+				const sig = roomProgressSig(roomId);
+				if (capOrProgress(why, s.progressSig, sig) === "continue") {
+					console.log(`[room] ${roomId} 到上限（${why}）但有新进展，计数清零接着推进`);
+					s.counters = { turns: 0, perAgent: {} };
+					s.progressSig = sig;
+					why = null;
+				}
+			}
 			if (why) {
 				// 到上限：把还没说的存起来，等用户点“继续”
 				const pending = s.queue.map(({ agentId, reason, task, depth, directed, turnId, from }) => ({ agentId, reason, task, depth, directed, turnId, from }));

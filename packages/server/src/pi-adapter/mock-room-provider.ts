@@ -1,6 +1,6 @@
 /**
  * 群聊里的 Mock 行为（e2e 用，从 mock-provider.ts 拆出来控制单文件行数）：
- * 管理者“派给X”就分配，“循环”时每次总结都再派一次；成员完成后回报；立项 / 确认方案见 room_plan / room_project_start。
+ * 管理者“派给X”就分配，“循环”时每次总结都再派一次（被兜底叫醒时只总结）；成员完成后回报；立项 / 确认方案见 room_plan / room_project_start。
  */
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import type { Msg } from "./mock-provider.ts";
@@ -45,9 +45,9 @@ export function roomReply(u: string, systemPrompt: string, last: Msg, messages: 
 	const said = users[users.length - 1] ?? "";
 	const target = said.match(/派给([^\s，,。]+)/)?.[1];
 	const isFollowup = /成员都已|任务看板有变化/.test(u);
-	// 管理者跟进普通派活（没有待核验的长期任务）：「循环」再派一次，否则总结
+	// 管理者跟进普通派活（没有待核验的长期任务）：「循环」再派一次，否则总结；被系统兜底叫醒（决策 0029 的 WORK_IDLE_WAKE）时只总结，不再派
 	const plainFollowup = () =>
-		/循环/.test(said) && target ? fauxAssistantMessage([fauxToolCall("room_assign", { assignments: [{ agent: target, task: "再做一遍" }] })]) : fauxAssistantMessage(`${me} 总结：大家都完成了。`);
+		/循环/.test(said) && target && !u.includes("群里这件事还没做完") ? fauxAssistantMessage([fauxToolCall("room_assign", { assignments: [{ agent: target, task: "再做一遍" }] })]) : fauxAssistantMessage(`${me} 总结：大家都完成了。`);
 	const lastUserIdx = messages.lastIndexOf(lastUserMsg ?? last);
 	const since = messages.slice(lastUserIdx + 1);
 	const tools = since.filter((m) => m.role === "toolResult").map((m) => String(m.toolName ?? ""));

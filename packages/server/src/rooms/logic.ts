@@ -81,16 +81,25 @@ export const PROJECT_NEXT_STEP = "有项目在进行：成果核验通过、或�
 /** 项目进行中的唤醒原因：管理者回合结束后手上没活、项目还没结束（兜底），或定时检查时没有未完成任务 */
 export const PROJECT_IDLE_WAKE = "项目还没完成，手上没有在做的任务：按方案规划下一步并派出去；已经完成就交付并结束项目";
 
+/** 没有项目、但从用户上次发话以来成员已交回成果时的唤醒原因（决策 0029） */
+export const WORK_IDLE_WAKE = "群里这件事还没做完：成员已交回成果，接着安排下一步并派出去；已经全部做完就在群里说清做成了什么、不要再派活；需要用户决定的直接问用户";
+
 /**
- * 看板指纹（给 idleWakeStep 判断「两次兜底之间有没有新进展」用）：项目进行中只认 work_items 的状态变化算进展——
- * 管理者反复用 room_assign 派同样的活（没建 work_item）不能让它一直觉得「有进展」而无限叫醒自己（boardSig 若把这类
- * 普通派活的完成次数也算进去，每叫醒一次管理者再派一次活，指纹就又变了，兜底永远判定有进展 → 无限循环）。
- * 没有项目进行中时 idleWakeStep 根本不会走到这一步（见上），这里仍把 plainAssignsDone 算进去只是让这个纯函数在
- * 两种输入下都有确定、可测的行为。
+ * 群里的进展指纹（决策 0029）：只看实打实的产出——任务看板上每个任务的 id:status，加上群里出现过的文件数
+ * （成员 deliver_file 发进群的、交付卡带的、用户上传的）。给「到上限时有没有新进展」（scheduler）和兜底叫醒（idleWakeStep）共用。
+ * 不把派活回合数算进去：管理者反复用 room_assign 派同样的活不能让指纹一直在变，否则到上限永远判定有进展、兜底无限叫醒。
  */
-export function boardSig(o: { items: { id: string; status: string }[]; plainAssignsDone: number; projectActive: boolean }): string {
-	const itemsPart = o.items.map((x) => `${x.id}:${x.status}`).join(",");
-	return o.projectActive ? itemsPart : `${itemsPart}|${o.plainAssignsDone}`;
+export function progressSig(o: { items: { id: string; status: string }[]; files: number }): string {
+	return `${o.items.map((x) => `${x.id}:${x.status}`).join(",")}|files=${o.files}`;
+}
+
+/**
+ * 到上限时停不停（决策 0029）：没到上限照常（ok）；到了上限，这一轮记下的进展指纹变了 = 有新进展，计数清零接着推进（continue）；
+ * 没变就暂停等用户（pause）。prevSig 为 null（这一轮还没记下起点）按没有进展处理。
+ */
+export function capOrProgress(why: string | null, prevSig: string | null, sig: string): "ok" | "continue" | "pause" {
+	if (!why) return "ok";
+	return prevSig !== null && prevSig !== sig ? "continue" : "pause";
 }
 
 /**
@@ -102,12 +111,13 @@ export function boardDigestOrUnchanged(digest: string, lastDigest: string | null
 }
 
 /**
- * 项目进行中的兜底：管理者一个回合正常结束后，项目没结束、没有进行中 / 待核验的任务、队列里也没有排着的回合 → 再叫醒它一次。
- * 有界：连续两次兜底之间看板没有任何新进展（sig 没变）就不再叫醒，改为提示用户一次（hint）；用户发话会重置（调用方清掉 lastSig / hinted）。
+ * 兜底叫醒：管理者一个回合正常结束后，有进行中的项目、或者没有项目但从用户上次发话以来成员交回过活（workSinceUser，决策 0029），
+ * 并且没有进行中 / 待核验的任务、队列里也没有排着的回合 → 再叫醒它一次。
+ * 有界：连续两次兜底之间进展指纹没变（progressSig）就不再叫醒，改为提示用户一次（hint）；用户发话会重置（调用方清掉 lastSig / hinted）。
  */
-export function idleWakeStep(o: { projectActive: boolean; inFlight: boolean; queued: boolean; waitingUser?: boolean; lastSig: string | null; sig: string; hinted: boolean }): "wake" | "hint" | "none" {
+export function idleWakeStep(o: { projectActive: boolean; workSinceUser?: boolean; inFlight: boolean; queued: boolean; waitingUser?: boolean; lastSig: string | null; sig: string; hinted: boolean }): "wake" | "hint" | "none" {
 	// 在等用户（关键点 / 提问 / 审批卡还没处理）：叫醒管理者只会把「等你回复」再说一遍，也不提示「没有进展」
-	if (!o.projectActive || o.inFlight || o.queued || o.waitingUser) return "none";
+	if (!(o.projectActive || o.workSinceUser) || o.inFlight || o.queued || o.waitingUser) return "none";
 	if (o.lastSig === null || o.lastSig !== o.sig) return "wake";
 	return o.hinted ? "none" : "hint";
 }

@@ -276,10 +276,11 @@ test("tidyInstructions：交代每个项目的真实状态（以它为准）和�
 	assert.match(logic.tidyInstructions([], ["不吃香菜", "  ", "甜点以后再说"]), /用户在群里说过的话[^\n]*：\n- 不吃香菜\n- 甜点以后再说$/);
 });
 
-test("idleWakeStep：只有有进行中项目、手上没活、队列空才兜底；同一个看板指纹不再叫醒，只提示一次", () => {
+test("idleWakeStep：有进行中项目（或用户上次发话以来成员交回过活）、手上没活、队列空才兜底；同一个进展指纹不再叫醒，只提示一次", () => {
 	const base = { projectActive: true, inFlight: false, queued: false, lastSig: null, sig: "a", hinted: false };
 	assert.equal(logic.idleWakeStep(base), "wake");
 	assert.equal(logic.idleWakeStep({ ...base, projectActive: false }), "none");
+	assert.equal(logic.idleWakeStep({ ...base, projectActive: false, workSinceUser: true }), "wake", "没有项目但成员交回过活（决策 0029）");
 	assert.equal(logic.idleWakeStep({ ...base, waitingUser: true }), "none", "在等用户回答关键点 / 提问：不叫醒、也不提示没进展");
 	assert.equal(logic.idleWakeStep({ ...base, waitingUser: true, lastSig: base.sig, hinted: false }), "none");
 	assert.equal(logic.idleWakeStep({ ...base, inFlight: true }), "none");

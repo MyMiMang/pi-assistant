@@ -50,3 +50,19 @@ export async function localAsrInstallButton(page) {
 	const chooser = page.getByTestId("default-voice-prep-install");
 	return (await chooser.isVisible()) ? chooser : page.getByTestId("local-asr-install-use");
 }
+
+/**
+ * 决策 0029（Mock 群「三人组」，A 管理者、B 成员）：B 每次都把图表发进群（有进展），到每人次数上限也不暂停，一直跑到派活层数上限；
+ * 之后管理者被兜底叫醒收尾，没有新进展只提示一次（room-idle）。`waitFor` 是 run.mjs 的轮询函数。
+ */
+export async function roomProgressNoPause({ roomSay, base, room, waitFor }) {
+	const list = async () => await (await fetch(`${base}/api/rooms/${room}/messages`)).json();
+	const seen = new Set((await list()).map((m) => m.id));
+	await roomSay("循环 派给B 做个图表");
+	const fresh = async () => (await list()).filter((m) => !seen.has(m.id));
+	await waitFor(async () => (await fresh()).some((m) => m.meta?.kind === "room-idle"), 120_000);
+	const after = await fresh();
+	const paused = after.some((m) => m.meta?.kind === "room-paused");
+	const charts = after.filter((m) => m.meta?.attachments?.some((a) => a.name === "chart.svg")).length;
+	if (paused || charts < 3) throw new Error(`有进展时不该暂停、B 应交了 3 次以上图表：暂停 ${paused}，图表 ${charts}`);
+}

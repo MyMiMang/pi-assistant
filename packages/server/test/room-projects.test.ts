@@ -70,13 +70,12 @@ const fullPlan = (o: Record<string, unknown> = {}) => ({
 	...o,
 });
 
-test("看板指纹（纯逻辑）：项目进行中只认 work_items 状态变化算进展，普通派活（plainAssignsDone）完成多少次都不改变指纹", () => {
+test("进展指纹（纯逻辑）：项目进行中只认 work_items 状态变化（和群里新文件）算进展，普通派活完成多少次都不改变指纹", () => {
 	const items = [{ id: "wi_1", status: "active" }];
-	const a = logic.boardSig({ items, plainAssignsDone: 1, projectActive: true });
-	const b = logic.boardSig({ items, plainAssignsDone: 7, projectActive: true });
-	assert.equal(a, b, "项目进行中：plainAssignsDone 从 1 涨到 7 不算进展，指纹不变");
-	assert.notEqual(logic.boardSig({ items: [{ id: "wi_1", status: "done" }], plainAssignsDone: 1, projectActive: true }), a, "work_item 状态真的变了才算进展");
-	assert.notEqual(logic.boardSig({ items, plainAssignsDone: 1, projectActive: false }), logic.boardSig({ items, plainAssignsDone: 2, projectActive: false }), "非项目场景沿用旧逻辑：plainAssignsDone 也算一部分指纹");
+	const a = logic.progressSig({ items, files: 0 });
+	assert.equal(a, logic.progressSig({ items, files: 0 }), "派活回合数不进指纹：管理者反复派同样的活不算进展");
+	assert.notEqual(logic.progressSig({ items: [{ id: "wi_1", status: "done" }], files: 0 }), a, "work_item 状态真的变了才算进展");
+	assert.notEqual(logic.progressSig({ items, files: 1 }), a, "群里新发了文件也算进展（决策 0029）");
 });
 
 test("room_plan：只有管理者能出方案卡；分工里不是群成员的名字被拒；通过后发卡、按名字解析补上 agentId", async () => {

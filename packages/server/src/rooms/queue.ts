@@ -16,6 +16,8 @@ export interface RoomState {
 	queue: Turn[];
 	current: { agentId: string; turnId: string; conversationId: string; reason: string; /** 让出发言位（回合继续在后台跑）；只有 runTurn 设置 */ detach?: () => void } | null;
 	counters: RoundCounters;
+	/** 这一轮（或上次因为有进展清零计数时）记下的进展指纹，到上限时拿来比（决策 0029）；null = 这一轮还没开始跑 */
+	progressSig: string | null;
 	/** 管理者这一轮派活：派出去还没做完的成员 */
 	batch: Set<string>;
 	batchRan: boolean;
@@ -46,7 +48,7 @@ export function clearBg(roomId: string, agentId: string, turnId: string) {
 	const m = bgTurns.get(roomId);
 	if (m?.get(agentId)?.turnId === turnId) m.delete(agentId);
 }
-export const fresh = (): RoomState => ({ roundId: uid("rd"), queue: [], current: null, counters: { turns: 0, perAgent: {} }, batch: new Set(), batchRan: false, assignments: [], replan: null, quote: null, sourceMessageId: null, workCtx: null, stopped: false, running: false });
+export const fresh = (): RoomState => ({ roundId: uid("rd"), queue: [], current: null, counters: { turns: 0, perAgent: {} }, progressSig: null, batch: new Set(), batchRan: false, assignments: [], replan: null, quote: null, sourceMessageId: null, workCtx: null, stopped: false, running: false });
 
 export function stateOf(roomId: string) {
 	const s = states.get(roomId);

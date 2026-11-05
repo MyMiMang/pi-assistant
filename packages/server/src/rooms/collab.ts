@@ -2,7 +2,7 @@
  * 群聊协作（docs/design/group-collaboration.md）：
  *  - 项目进行中（群里有用户确认过方案的 active 项目，见 projects.ts、docs/design/group-team.md）：成员可以 @ 彼此（被 @ 的成员醒来回复，回复会送进提问者正在跑的任务会话）。
  *  - 管理者只在关键事件被唤醒（任务提交 / 卡住 / 用户消息或 @ / 定时检查 / 卡住检测），醒来只读看板摘要 + 少量新消息。
- *  - 项目进行中管理者回合结束后手上没活、项目没结束 → 兜底再叫醒它一次（idleWake；两次之间没有新进展就不再叫，提示用户）。
+ *  - 管理者回合结束后手上没活、项目没结束（或没有项目但用户上次发话以来成员交回过活，决策 0029）→ 兜底再叫醒它一次（idleWake；两次之间没有新进展就不再叫，提示用户）。
  *  - 防护只做检测：只聊不干活 → 先管理者、再用户；卡住与反复卡住在 work-items/watch.ts。不设固定次数 / 费用上限。
  * 任务 → 群的接口（RoomPort）在这里注册。
  */
@@ -10,7 +10,7 @@ import { db, now } from "../db.ts";
 import { notify } from "../push.ts";
 import { getAgent } from "../runtime.ts";
 import { boardDigest, itemsOfProject, setRoomPort, steerToLiveRun } from "../work-items.ts";
-import { boardDigestOrUnchanged, boardSig as projectBoardSig, freshWakeReasons, PROJECT_IDLE_WAKE, idleWakeStep, planPeerTurns, type WakeReason } from "./logic.ts";
+import { boardDigestOrUnchanged, freshWakeReasons, PROJECT_IDLE_WAKE, idleWakeStep, planPeerTurns, WORK_IDLE_WAKE, type WakeReason } from "./logic.ts";
 import { askIdOf } from "./ask-logic.ts";
 import { answerAsk, checkAskTimeouts, dropAnsweredTail } from "./ask-flow.ts";
 import { getAsk } from "./asks.ts";
@@ -22,6 +22,7 @@ import { stageMaybeDone } from "./stages.ts";
 import { chatterStep } from "../stuck.ts";
 import { hasQueuedTurns, postUserMessage, queuedFor, scheduleTurns, setTurnHooks } from "./scheduler.ts";
 import { activeIds, getRoom, memberConversation, memberRefs, rosterText, stoppedFlag, sys } from "./store.ts";
+import { roomProgressSig } from "./turn-prompt.ts";
 
 const CHATTER = () => Number(process.env.PIA_ROOM_CHATTER) || 6;
 export const CHECK_MS = () => Number(process.env.PIA_WORK_CHECK_MS) || 30 * 60_000;
@@ -29,7 +30,7 @@ export const CHECK_MS = () => Number(process.env.PIA_WORK_CHECK_MS) || 30 * 60_0
 const wakeReasons = new Map<string, WakeReason[]>();
 const lastWake = new Map<string, number>();
 const chatter = new Map<string, { streak: number; blocked: boolean }>();
-/** 项目进行中的兜底唤醒：上一次兜底时的看板指纹；同指纹再来就不再叫醒（提示过用户后 hinted） */
+/** 兜底唤醒：上一次兜底时的进展指纹；同指纹再来就不再叫醒（提示过用户后 hinted） */
 const idle = new Map<string, { sig: string; hinted: boolean }>();
 const nameOf = (id: string | null | undefined) => getAgent(id ?? "")?.name ?? "成员";
 const clip = (s: unknown, n: number) => String(s ?? "").trim().slice(0, n);
@@ -41,7 +42,7 @@ const clip = (s: unknown, n: number) => String(s ?? "").trim().slice(0, n);
 export function projectStarted(roomId: string, byManager: boolean) {
 	chatter.delete(roomId);
 	if (byManager) idle.delete(roomId);
-	else idle.set(roomId, { sig: boardSig(roomId, true), hinted: false }); // 这一刻项目刚确认 active
+	else idle.set(roomId, { sig: roomProgressSig(roomId), hinted: false }); // 这一刻项目刚确认 active
 }
 /** 项目结束（完成 / 停下）：群里没有进行中的项目了就清掉兜底和空聊状态。 */
 export function projectEnded(roomId: string) {
@@ -133,34 +134,34 @@ function notePeerTurn(roomId: string) {
 const resetChatter = (roomId: string) => void chatter.set(roomId, { streak: 0, blocked: false });
 
 /**
- * 看板指纹：每个任务的状态，项目进行中不再把「已完成的普通派活次数」算进去（纯逻辑见 logic.ts 的 boardSig：
- * 管理者反复用 room_assign 派同样的活不建 work_item 时，不能让指纹一直在变、兜底永远觉得有进展而无限叫醒）。
- * 两次兜底之间指纹没变 = 没有新进展。
+ * 从用户上次在群里发话以来，有没有成员做完过派给它的活（assign 回合 done）：没有项目时兜底叫醒的前提（决策 0029）。
+ * 直接查库而不是在 onUserMessage 里记时间：服务重启后照样对，也不用另外维护一份状态；回合都在用户消息落库之后才入队，所以用 >=。
  */
-function boardSig(roomId: string, projectActive: boolean) {
-	const items = db.prepare("SELECT id, status FROM work_items WHERE room_id = ? ORDER BY id").all(roomId) as { id: string; status: string }[];
-	const plainAssignsDone = (db.prepare("SELECT COUNT(*) AS n FROM room_turns WHERE room_id = ? AND reason = 'assign' AND status = 'done'").get(roomId) as { n: number }).n;
-	return projectBoardSig({ items, plainAssignsDone, projectActive });
-}
+const workSinceUser = (roomId: string) =>
+	!!db.prepare("SELECT 1 FROM room_turns WHERE room_id = ? AND reason = 'assign' AND status = 'done' AND created_at >= COALESCE((SELECT MAX(created_at) FROM messages WHERE room_id = ? AND role = 'user' AND agent_id = ''), 0) LIMIT 1").get(roomId, roomId);
 const hasInFlight = (roomId: string) => !!db.prepare("SELECT 1 FROM work_items WHERE room_id = ? AND status IN ('active','blocked','review') LIMIT 1").get(roomId);
 /** 群里有用户还没处理的关键点 / 提问 / 审批卡 */
 const waitingUser = (roomId: string) => !!db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND role = 'card' AND json_extract(meta, '$.status') = 'pending' AND json_extract(meta, '$.kind') IN ('question','approval') LIMIT 1").get(roomId);
 
-/** 管理者回合正常结束后：有进行中的项目、手上没有在做的任务、队列也空 → 再叫醒它规划下一步；没有新进展就只提示用户一次。 */
+/**
+ * 管理者回合正常结束后：有进行中的项目（或没有项目但用户上次发话以来成员交回过活）、手上没有在做的任务、队列也空 → 再叫醒它安排下一步；
+ * 没有新进展就只提示用户一次。没有项目时「本轮已暂停」也算在等用户（等用户回复继续，不再自己叫醒）。
+ */
 function idleWake(roomId: string) {
 	const r = getRoom(roomId);
 	if (!r?.manager_id || stoppedFlag(r)) return;
 	const st = idle.get(roomId);
 	const projectActive = hasActiveProject(roomId);
-	const sig = boardSig(roomId, projectActive);
-	const step = idleWakeStep({ projectActive, inFlight: hasInFlight(roomId), queued: hasQueuedTurns(roomId), waitingUser: waitingUser(roomId), lastSig: st?.sig ?? null, sig, hinted: !!st?.hinted });
+	const work = !projectActive && workSinceUser(roomId);
+	const sig = roomProgressSig(roomId);
+	const step = idleWakeStep({ projectActive, workSinceUser: work, inFlight: hasInFlight(roomId), queued: hasQueuedTurns(roomId), waitingUser: waitingUser(roomId) || (!projectActive && !!r.paused), lastSig: st?.sig ?? null, sig, hinted: !!st?.hinted });
 	if (step === "wake") {
 		idle.set(roomId, { sig, hinted: false });
-		wakeManager(roomId, PROJECT_IDLE_WAKE);
+		wakeManager(roomId, projectActive ? PROJECT_IDLE_WAKE : WORK_IDLE_WAKE);
 	} else if (step === "hint") {
 		idle.set(roomId, { sig, hinted: true });
-		sys(roomId, "管理者被叫醒后，看板上还是没有新任务或新进展，已先停止自动叫醒。请看一下项目是不是已经完成，或告诉管理者下一步怎么做。", { kind: "room-idle" });
-		notify({ title: `${r.name}：需要你看一下`, body: "项目进行中管理者没有新的安排，看板没有进展", tag: `idle-${roomId}`, url: `/?room=${roomId}` });
+		sys(roomId, projectActive ? "管理者被叫醒后，看板上还是没有新任务或新进展，已先停止自动叫醒。请看一下项目是不是已经完成，或告诉管理者下一步怎么做。" : "管理者被叫醒后，群里还是没有新的成果（新文件或任务进展），已先停止自动叫醒。请看一下这件事是不是已经做完，或告诉管理者下一步怎么做。", { kind: "room-idle" });
+		notify({ title: `${r.name}：需要你看一下`, body: projectActive ? "项目进行中管理者没有新的安排，看板没有进展" : "管理者没有新的安排，群里没有新的成果", tag: `idle-${roomId}`, url: `/?room=${roomId}` });
 	}
 }
 
@@ -204,7 +205,7 @@ export function runRoomChecks(at = now(), every = CHECK_MS()) {
 		const idleAuto = projectActive && !hasInFlight(room_id);
 		// 兜底已经停了、在等用户看一下，且看板此后没动过：定时检查也不叫醒空转（用户发话或看板有变化后恢复）
 		const st = idle.get(room_id);
-		if (idleAuto && st?.hinted && st.sig === boardSig(room_id, projectActive)) continue;
+		if (idleAuto && st?.hinted && st.sig === roomProgressSig(room_id)) continue;
 		if (wakeManager(room_id, idleAuto ? `定时检查：${PROJECT_IDLE_WAKE}` : "定时检查：看看任务进展")) n++;
 	}
 	return n;

@@ -5,7 +5,7 @@ import { db } from "../db.ts";
 import { type FileRow, getFile, materializeFor } from "../files.ts";
 import { getAgent } from "../runtime.ts";
 import { askIdOf } from "./ask-logic.ts";
-import { buildTranscript, type PlannedTurn, type TranscriptItem } from "./logic.ts";
+import { buildTranscript, type PlannedTurn, progressSig, type TranscriptItem } from "./logic.ts";
 import { memberRow, membersOf } from "./store.ts";
 
 /** 每轮附带的那一行说明：只写这次为什么轮到你；怎么做的规则（立项、被叫醒、项目推进）在群规则里只写一次（决策 0022 第 1 步）。 */
@@ -31,6 +31,12 @@ export function roomFiles(roomId: string): FileRow[] {
 	for (const m of db.prepare("SELECT meta FROM messages WHERE room_id = ? AND meta LIKE '%fileId%'").all(roomId) as { meta: string }[])
 		for (const f of (JSON.parse(m.meta).attachments as { fileId?: string }[] | undefined) ?? []) if (f.fileId) ids.add(f.fileId);
 	return [...ids].map(getFile).filter((f): f is FileRow => !!f);
+}
+
+/** 群里此刻的进展指纹（决策 0029，纯逻辑见 logic.ts 的 progressSig）：任务看板状态 + 群里出现过的文件数。上限（scheduler）和兜底叫醒（collab）共用。 */
+export function roomProgressSig(roomId: string) {
+	const items = db.prepare("SELECT id, status FROM work_items WHERE room_id = ? ORDER BY id").all(roomId) as { id: string; status: string }[];
+	return progressSig({ items, files: roomFiles(roomId).length });
 }
 
 export function transcriptFor(roomId: string, agentId: string, budget = 16_000) {
