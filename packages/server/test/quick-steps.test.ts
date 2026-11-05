@@ -261,3 +261,14 @@ test("summarize：做完 / 停下都带最后的页面内容", () => {
 	assert.match(stopped, /最后的页面内容（不用再读一遍）：/);
 	assert.match(stopped, /textfield「名称」/);
 });
+
+test("窗口：显示文字在结构化的 tree_markdown 里（tree_format both）也能读到，只改显示时指纹会变", () => {
+	const w = { kind: "window" as const, pid: 1, window_id: 2 };
+	const elements = [{ element_token: "s1:1", role: "AXButton", label: "等于", actions: ["press"] }];
+	const md = (v: string) => `- [0] AXWindow "计算器" [id=main]\n    - AXStaticText = "‎${v}"\n    - [1] AXButton (等于) [actions=[press]]`;
+	const a = parseObservation(w, { elements, tree_markdown: md("1,234×5,678") }, "window_id=2 pid=1 elements=2", []);
+	const b = parseObservation(w, { elements, tree_markdown: md("7,006,652") }, "window_id=2 pid=1 elements=2", []);
+	assert.match(a.summary, /^AXStaticText=1,234×5,678/);
+	assert.notEqual(a.fingerprint, b.fingerprint, "按钮没变、显示变了也算有变化");
+	assert.equal(changedText(a.summary, b.summary), "AXStaticText=7,006,652");
+});

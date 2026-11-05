@@ -177,7 +177,7 @@ function summaryOf(target: QuickTarget, s: Record<string, unknown> | null, text:
 	const rows = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.map(asObj).filter((x): x is Record<string, unknown> => !!x) : []);
 	const text2 =
 		target.kind === "window"
-			? [...windowTextRows(text), ...rows(s?.elements).map((e) => {
+			? [...windowTextRows(`${text}\n${asStr(s?.tree_markdown)}`), ...rows(s?.elements).map((e) => {
 					const label = asStr(e.label) || asStr(e.title);
 					const value = asStr(e.value);
 					return label || value ? `${asStr(e.role)}「${label}」${value ? `=${value}` : ""}` : "";

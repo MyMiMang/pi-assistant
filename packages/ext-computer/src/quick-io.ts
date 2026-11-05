@@ -24,7 +24,7 @@ export async function observe(ctx: ExecContext, target: QuickTarget, prefix: str
 	const call =
 		target.kind === "browser"
 			? { tool: "get_browser_state", args: { tab_id: target.tab_id, ...(target.target_id ? { target_id: target.target_id } : {}), ...(target.session ? { session: target.session } : {}), snapshot_format: "semantic_v2", include_screenshot: shot } }
-			: { tool: "get_window_state", args: { pid: target.pid, window_id: target.window_id, tree_format: "elements", include_screenshot: shot } };
+			: { tool: "get_window_state", args: { pid: target.pid, window_id: target.window_id, tree_format: "both", include_screenshot: shot } };
 	const out = await ctx.executeTool(`${prefix}${call.tool}`, call.args, { signal });
 	const text = textOf(out);
 	if (out.isError) return text.slice(0, 300) || "读取页面失败";
