@@ -5,6 +5,8 @@
 // 场景：text | env-dump | not-logged-in | two-tools | cancel | hang | interject
 //       | meta（回报收到的参数和首条消息）| one-tool | bash-approval（调 Pi 的 bash，e2e 走审批卡）| tool-interject | stall | resume-missing | image-tool | think
 // 另外支持 `--version`、`auth status`（FAKE_CLAUDE_LOGGED_IN=0 时模拟未登录，退出码 1）。
+// 退出一律用 exitAfterFlush：stdout 是管道时 Node 异步写，直接 process.exit 会丢掉还没写出去的输出
+// （读的一方慢时 CI 上第二轮回答被截断、result 行丢失，报 Unterminated string in JSON）。
 import { readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
@@ -12,15 +14,17 @@ import { createInterface } from "node:readline";
 const argv = process.argv.slice(2);
 const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// 等 stdout 写完再退出；返回永不 resolve 的 Promise，`await` 后不再往下走，语义同 process.exit
+const exitAfterFlush = (code) => new Promise(() => process.stdout.write("", () => process.exit(code)));
 
 if (argv[0] === "--version") {
 	console.log("2.1.293 (Claude Code)");
-	process.exit(0);
+	await exitAfterFlush(0);
 }
 if (argv[0] === "auth" && argv[1] === "status") {
 	const ok = process.env.FAKE_CLAUDE_LOGGED_IN !== "0";
 	console.log(JSON.stringify({ loggedIn: ok, authMethod: ok ? "claude.ai" : "none", apiProvider: "firstParty" }));
-	process.exit(ok ? 0 : 1);
+	await exitAfterFlush(ok ? 0 : 1);
 }
 
 // ---- 问模型列表（没有 --mcp-config、只收 control_request）。FAKE_CLAUDE_MODELS：default | dup（重名 + [1m]）| none（回包里没有 models）| nested（models 在 response 本身）| exit（不回包直接退出）| hang（不回包）
@@ -46,7 +50,7 @@ if (!argv.includes("--mcp-config")) {
 		const body = mode === "none" ? { commands: [], account: { email: "secret@example.com" } } : { models: lists[mode] ?? lists.default, account: { email: "secret@example.com" } };
 		out({ type: "control_response", response: mode === "nested" ? body : { subtype: "success", request_id: j.request_id, response: body } });
 	});
-	process.stdin.on("end", () => process.exit(0));
+	process.stdin.on("end", () => exitAfterFlush(0));
 	await new Promise(() => {}); // 等 stdin 关闭时退出，不往下走对话流程
 }
 
@@ -130,7 +134,7 @@ const first = await nextUser();
 
 if (scenario === "not-logged-in") {
 	out({ type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", session_id: sessionId, terminal_reason: "api_error", usage });
-	process.exit(1);
+	await exitAfterFlush(1);
 }
 if (scenario === "env-dump") {
 	init([]);
@@ -148,7 +152,7 @@ if (scenario === "env-dump") {
 		systemPromptText: sp ? readFileSync(sp, "utf8") : null,
 	};
 	result(JSON.stringify({ env: process.env, argv, cwd: process.cwd(), files }));
-	process.exit(0);
+	await exitAfterFlush(0);
 }
 
 const tools = await handshake();
@@ -239,4 +243,4 @@ if (scenario === "text") {
 } else {
 	result(`unknown scenario ${scenario}`, true);
 }
-process.exit(0);
+await exitAfterFlush(0);
