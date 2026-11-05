@@ -3,7 +3,7 @@ import { createAgentSession } from "./agent-session.ts";
 import { listSubagents, stopAgentSubagents, stopConversationSubagents, isLiveSubagent, agentFast } from "../subagents.ts";
 import { cancelWaitsForConversation } from "../task-waits.ts";
 import { imageKey } from "../image-gen/index.ts";
-import { tierOf, hostAllowedFor, hostPaused, hostSettings, hostStatus } from "../host-control.ts";
+import { tierOf, hostAllowedFor, hostNeedsApps, hostPaused, hostSettings, hostStatus } from "../host-control.ts";
 import { wechatAllowed } from "../wechat.ts";
 import { accountsFor } from "../email.ts";
 import { cancelAdvances, drainAdvances, listAdvances } from "../proactive-advance.ts";
@@ -35,7 +35,7 @@ import { sendBgResult } from "../pi-adapter/bg-shell.ts";
 
 /** 会话缓存键里的“本机操作”部分：开关、清单、档位、暂停、守护进程状态变化都会重建会话（权限本身仍每次调用动态求值） */
 const hostKey = (agentId: string) =>
-	hostAllowedFor(agentId) ? `${hostSettings().approvedHash}:${tierOf(agentId)}:${hostPaused() ? "paused" : hostStatus().daemon.state === "off" || hostStatus().daemon.state === "error" ? "down" : "up"}` : "off";
+	hostAllowedFor(agentId) ? `${hostSettings().approvedHash}:${tierOf(agentId)}:${hostPaused() ? "paused" : hostStatus().daemon.state === "off" || hostStatus().daemon.state === "error" ? "down" : "up"}` : hostNeedsApps(agentId) ? "needs-apps" : "off";
 
 export class AgentRuntime {
 	session: AgentSession | null = null;

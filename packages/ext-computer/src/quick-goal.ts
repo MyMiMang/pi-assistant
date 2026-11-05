@@ -57,7 +57,10 @@ interface RawAction {
  * 从当前页面和还没用上的值里列候选动作：每个元素按角色归类，再用相似度剪枝
  * （每个元素最多 2 个 input、总共前 28 个），最后固定加 scroll / finish / reobserve / abstain。
  */
-export function goalActions(obs: Observation, inputs: GoalInput[], pending: Set<number>, goal: string): GoalAction[] {
+/** 已经切换过的勾选框（role + 名字）：不再列入，免得决策模型把刚勾上的又取消掉 */
+export const toggleKey = (c: Candidate) => `${roleKey(c.role)}|${c.name}`;
+
+export function goalActions(obs: Observation, inputs: GoalInput[], pending: Set<number>, goal: string, toggled: Set<string> = new Set()): GoalAction[] {
 	const raw: RawAction[] = [];
 	const name = (c: Candidate) => c.name;
 	for (let ci = 0; ci < obs.candidates.length; ci++) {
@@ -77,7 +80,7 @@ export function goalActions(obs: Observation, inputs: GoalInput[], pending: Set<
 		else if (isType(c)) driven("fill", (x) => !!x.value);
 		else if (isUpload(c)) driven("upload", (x) => !!x.files?.length);
 		else if (isCheck(c)) {
-			if (!guardedOut(c.name, goal)) raw.push({ kind: "check", candidate: c, ci, score: base });
+			if (!guardedOut(c.name, goal) && !toggled.has(toggleKey(c))) raw.push({ kind: "check", candidate: c, ci, score: base });
 		} else if (isClick(c)) {
 			if (!guardedOut(c.name, goal)) raw.push({ kind: "click", candidate: c, ci, score: base });
 		}

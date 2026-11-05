@@ -3,8 +3,8 @@
  * 读页面 → 列候选动作 → 问决策模型挑下一步 → cua 执行 → 核对，直到完成 / 停下 / 步数用完。
  * 纯逻辑（候选、剪枝、问题、动作转步骤）在 quick-goal.ts；设计见 docs/design/fast-executor-v2-impl.md §5.6。
  */
-import { buildCall, MIN_PROBABILITY, verifyStep, type Observation, type QuickTarget } from "./quick-steps.ts";
-import { DEFAULT_GOAL_STEPS, MAX_GOAL_STEPS, actionToStep, buildGoalContext, goalActions, type GoalInput } from "./quick-goal.ts";
+import { buildCall, lastPageText, MIN_PROBABILITY, verifyStep, type Observation, type QuickTarget } from "./quick-steps.ts";
+import { DEFAULT_GOAL_STEPS, MAX_GOAL_STEPS, actionToStep, buildGoalContext, goalActions, toggleKey, type GoalInput } from "./quick-goal.ts";
 import { observe as observePage, sleep, textOf, type ExecContext } from "./quick-io.ts";
 import type { QuickStepsOptions } from "./quick-steps-tool.ts";
 
@@ -32,6 +32,7 @@ export async function runGoal(ctx: GoalContext, o: QuickStepsOptions, target: Qu
 	const pending = new Set(inputs.map((_, i) => i));
 	const done: string[] = [];
 	const seen = new Map<string, number>();
+	const toggled = new Set<string>();
 	const rows: { step: number; kind: string; desc: string; probability: number; note: string; ms: number }[] = [];
 	const lines: string[] = [];
 	const read = (shot: boolean) => observePage(ctx, target, o.prefix, signal, shot);
@@ -60,7 +61,7 @@ export async function runGoal(ctx: GoalContext, o: QuickStepsOptions, target: Qu
 			stopped = "页面一直没变化，可能卡住了";
 			break;
 		}
-		const actions = goalActions(obs, inputs, pending, params.goal);
+		const actions = goalActions(obs, inputs, pending, params.goal, toggled);
 		const withImage = imageOk && !!obs.screenshot;
 		let res = await ctx.modelRegistry.classify(model, buildGoalContext(params.goal, inputs, pending, done, obs, actions, withImage) as never, { signal });
 		// 带图出错 → 去掉图再问一次
@@ -154,7 +155,8 @@ export async function runGoal(ctx: GoalContext, o: QuickStepsOptions, target: Qu
 			stopped = `${textOf(out).slice(0, 300) || "执行失败"}（不要换方式重试被拒绝的动作）`;
 			break;
 		}
-		const first = await read(false);
+		// 核对这次就按需带图读：下一轮直接用，不用再为截图整页重读一次
+		const first = await read(imageOk);
 		if (typeof first === "string") {
 			stopped = `读取页面失败：${first}`;
 			break;
@@ -164,7 +166,7 @@ export async function runGoal(ctx: GoalContext, o: QuickStepsOptions, target: Qu
 		// 点击 / 勾选可能只是慢：多等一次再判
 		if (!v.ok && (a.kind === "click" || a.kind === "check")) {
 			await sleep(600);
-			const second = await read(false);
+			const second = await read(imageOk);
 			if (typeof second !== "string") {
 				after = second;
 				v = verifyStep(one, a.candidate ?? null, obs, after);
@@ -175,6 +177,7 @@ export async function runGoal(ctx: GoalContext, o: QuickStepsOptions, target: Qu
 			break;
 		}
 		if (a.kind === "fill" || a.kind === "select" || a.kind === "upload") pending.delete(a.input!);
+		if (a.kind === "check" && a.candidate) toggled.add(toggleKey(a.candidate));
 		done.push(a.desc);
 		const ms = Date.now() - started;
 		lines.push(`第 ${step} 步：${a.desc}，概率 ${p.toFixed(2)}，${v.note}，${ms} 毫秒`);
@@ -185,7 +188,8 @@ export async function runGoal(ctx: GoalContext, o: QuickStepsOptions, target: Qu
 
 	lines.push(finished ? "成功：决策模型认为目标已完成，请你核对下面的页面内容。" : `停下：${stopped}。`);
 	if (pending.size) lines.push(`还没用上的值：${[...pending].map((i) => inputs[i]!.name).join("、")}`);
-	if (obs?.summary) lines.push(`最后的页面内容（不用再读一遍）：\n${obs.summary}`);
+	const tail = lastPageText(obs?.summary);
+	if (tail) lines.push(tail);
 	return {
 		content: [{ type: "text" as const, text: lines.join("\n") }],
 		details: { mode: "goal", steps: rows, stopped: finished ? null : (stopped ?? null), pending: [...pending] },

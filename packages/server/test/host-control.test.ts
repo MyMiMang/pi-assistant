@@ -505,6 +505,8 @@ test("限定档没选应用：neededDaemons 不含 bounded、hostAllowedFor 为 
 	assert.equal(hc.boundedWithoutApps("a2"), false, "非限定档不受影响");
 	assert.deepEqual(hc.neededDaemons(), ["open"], "限定没选应用不为它起 bounded 守护进程");
 	assert.equal(hc.hostAllowedFor("a1"), false, "暂时不能操作");
+	assert.equal(hc.hostNeedsApps("a1"), true, "改为给助理说明原因");
+	assert.equal(hc.hostNeedsApps("a2"), false);
 	assert.equal(hc.hostAllowedFor("a2"), true);
 	const plan = hc.hostPlan();
 	assert.match(plan, /a1: 限定（还没选应用，暂时不能操作）/);
@@ -513,6 +515,7 @@ test("限定档没选应用：neededDaemons 不含 bounded、hostAllowedFor 为 
 	assert.deepEqual(hc.neededDaemons(), ["bounded", "open"], "选了应用后恢复");
 	assert.equal(hc.hostAllowedFor("a1"), true);
 	assert.match(hc.hostPlan(), /version: 3/);
+	assert.equal(hc.hostNeedsApps("a1"), false);
 	hc.saveHostSettings({ enabled: false, approvedHash: undefined, agents: "all", apps: [], tiers: {}, defaultTier: "bounded", fullAck: {} });
 });
 

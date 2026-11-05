@@ -100,7 +100,11 @@ export function mountHostControlRoutes(app: Hono<Env>) {
 			}
 		}
 		bus.emit({ type: "host.changed", status: hostStatus() });
-		const note = boundedWithoutApps(agentId) ? "“限定”档位还没选应用，这个助理暂时不能操作：到 设置 › 操作这台电脑 里选应用" : undefined;
+		const note = boundedWithoutApps(agentId)
+			? "“限定”档位还没选应用，这个助理暂时不能操作：到 设置 › 操作这台电脑 里选应用"
+			: !cur.enabled
+				? "已开启「操作这台电脑」，只对这个助理生效；别的助理要用，在它那里也选一个档位"
+				: undefined;
 		return c.json({ ok: true, tier: b.tier, enabled: hostSettings().enabled, ...(note ? { note } : {}), status: hostStatus() });
 	});
 	app.post("/api/host-control/bar/dismiss", localOnly, (c) => {

@@ -373,6 +373,9 @@ export function verifyStep(step: QuickStep, picked: Candidate | null, before: Ob
 	return { ok: false, reason: "点了但页面没有变化" };
 }
 
+/** 结果末尾那段「最后的页面内容」（快速执行和目标模式共用；没有内容返回空串） */
+export const lastPageText = (summary?: string) => (summary ? `最后的页面内容（不用再读一遍）：\n${summary}` : "");
+
 /** 返回给大模型的说明：每步一行；停下 / 做完都附上最后的页面内容 */
 export function summarize(results: StepResult[], stopped?: StopInfo, lastObs?: Observation): string {
 	const lines = results.map((r) => {
@@ -383,12 +386,13 @@ export function summarize(results: StepResult[], stopped?: StopInfo, lastObs?: O
 	if (stopped) {
 		const els = stopped.obs.candidates.slice(0, 30).map((c) => `${c.handle} ${c.role}「${c.name}」`);
 		lines.push(`第 ${stopped.index + 1} 步停下：${stopped.reason}。后面的步骤没做。当前页面可操作的元素（前 30 个）：${els.length ? `\n${els.join("\n")}` : "（没读到元素）"}`);
-		const summary = stopped.obs.summary || lastObs?.summary;
-		if (summary) lines.push(`最后的页面内容（不用再读一遍）：\n${summary}`);
+		const tail = lastPageText(stopped.obs.summary || lastObs?.summary);
+		if (tail) lines.push(tail);
 		return lines.join("\n");
 	}
 	const total = results.reduce((n, r) => n + r.ms, 0);
 	lines.push(`全部 ${results.length} 步做完，共 ${total} 毫秒。`);
-	if (lastObs?.summary) lines.push(`最后的页面内容（不用再读一遍）：\n${lastObs.summary}`);
+	const tail = lastPageText(lastObs?.summary);
+	if (tail) lines.push(tail);
 	return lines.join("\n");
 }

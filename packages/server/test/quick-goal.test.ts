@@ -6,7 +6,7 @@ await import("./setup.ts");
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const { actionToStep, buildGoalContext, goalActions, guardedOut, parseObservation } = await import("@pi-assistant/ext-computer");
+const { actionToStep, buildGoalContext, goalActions, guardedOut, parseObservation, toggleKey } = await import("@pi-assistant/ext-computer");
 type Candidate = import("@pi-assistant/ext-computer").Candidate;
 type GoalAction = import("@pi-assistant/ext-computer").GoalAction;
 type GoalInput = import("@pi-assistant/ext-computer").GoalInput;
@@ -105,4 +105,13 @@ test("guardedOut：目标里写到的危险词不拦，没写的拦", () => {
 	assert.equal(guardedOut("删除文件", "整理文件"), true);
 	assert.equal(guardedOut("提交表单", "填好并提交"), false);
 	assert.equal(guardedOut("取消", "填好并提交"), true);
+});
+
+test("已经切换过的勾选框不再列入候选", () => {
+	const obs = parseObservation({ kind: "browser", tab_id: "t" }, { refs: [{ ref: "p1:1", role: "checkbox", name: "高清修复" }, { ref: "p1:2", role: "button", name: "生成" }] }, "", []);
+	const all = goalActions(obs, [], new Set(), "勾选高清修复并生成");
+	assert.ok(all.some((a) => a.kind === "check"));
+	const after = goalActions(obs, [], new Set(), "勾选高清修复并生成", new Set([toggleKey(obs.candidates[0]!)]));
+	assert.ok(!after.some((a) => a.kind === "check"), "切换过一次就不再给");
+	assert.ok(after.some((a) => a.kind === "click"));
 });

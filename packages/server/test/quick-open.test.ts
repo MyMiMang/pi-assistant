@@ -122,7 +122,7 @@ test("应用：launch_app 没返回进程号时用 list_windows {app} 找", asyn
 		if (n === "launch_app") return out({});
 		if (n === "list_windows" && args.app) return out({ windows: [{ window_id: 7, pid: 55, z_index: 0 }] });
 		if (n === "list_windows") return out({ windows: [{ window_id: 7, pid: 55, z_index: 1 }] });
-		if (n === "get_window_state") return out({ elements: [] });
+		if (n === "get_window_state") return out({ elements: [{ element_token: "s1:1", role: "button", label: "1" }] });
 		return ok();
 	};
 	await tools.get("hostpc_quick_open")!.execute("id", { app: "计算器" }, undefined, undefined, ctxOf(exec));
@@ -146,4 +146,34 @@ test("url 和 app 都给 / 都不给 → 报错；sandbox 的参数里没有 url
 test("config() 为 null 时不注册", () => {
 	const tools = register({ config: null });
 	assert.equal(tools.size, 0);
+});
+
+test("网页 user：不替换用户正在看的标签页，没有空白标签页就报错；有空白页就用它", async () => {
+	const tools = register();
+	const busy = webWorld({ binding: { target_id: "g1", tabs: [{ tab_id: "t1", active: true, url: "https://mail.example.com/draft", title: "写信" }], binding_quality: "exact", mutation_allowed: true } });
+	await assert.rejects(tools.get("hostpc_quick_open")!.execute("id", { url: "https://example.com", browser: "user" }, undefined, undefined, ctxOf(busy.exec)), /没有空白标签页/);
+	assert.ok(!busy.calls.some((c) => short(c.tool) === "browser_navigate"), "不导航用户的标签页");
+	const free = webWorld({ binding: { target_id: "g1", tabs: [{ tab_id: "t1", active: true, url: "https://mail.example.com/draft" }, { tab_id: "t2", active: false, url: "chrome://newtab/" }], binding_quality: "exact", mutation_allowed: true } });
+	await tools.get("hostpc_quick_open")!.execute("id", { url: "https://example.com", browser: "user" }, undefined, undefined, ctxOf(free.exec));
+	assert.equal(free.calls.find((c) => short(c.tool) === "browser_navigate")!.args.tab_id, "t2");
+});
+
+test("刚打开读到空页面：等一下再读，读到元素就停；file: 网址和带点的应用名按规则处理", async () => {
+	const tools = register();
+	let reads = 0;
+	const calls: { tool: string; args: Record<string, unknown> }[] = [];
+	const exec: Exec = async (tool, args) => {
+		calls.push({ tool, args });
+		const n = short(tool);
+		if (n === "launch_app") return out({ pid: 9 });
+		if (n === "list_windows") return out({ windows: [{ window_id: 3, pid: 9, z_index: 1 }] });
+		if (n === "get_window_state") return out({ elements: ++reads < 3 ? [] : [{ element_token: "s1:1", role: "button", label: "保存" }] });
+		return ok();
+	};
+	await tools.get("hostpc_quick_open")!.execute("id", { app: "/Applications/TextEdit.app" }, undefined, undefined, ctxOf(exec));
+	assert.equal(reads, 3, "空页面重读到有元素为止");
+	assert.equal(calls[0]!.args.name, "/Applications/TextEdit.app", ".app 路径按 name 传");
+	await tools.get("hostpc_quick_open")!.execute("id", { app: "com.apple.TextEdit" }, undefined, undefined, ctxOf(exec));
+	assert.equal(calls.filter((c) => short(c.tool) === "launch_app")[1]!.args.bundle_id, "com.apple.TextEdit");
+	await assert.rejects(tools.get("hostpc_quick_open")!.execute("id", { url: "file:///tmp/a.html" }, undefined, undefined, ctxOf(exec)), /只支持 http/);
 });

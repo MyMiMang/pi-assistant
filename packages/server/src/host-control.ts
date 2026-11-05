@@ -272,10 +272,19 @@ export function hostActive(last: { outcome: string; started_at: number; finished
 	return now - (last.finished_at ?? last.started_at) < HOST_ACTIVE_MS;
 }
 
+/** 用户已开启并允许这个助理（不管档位能不能用） */
+const hostAuthorized = (agentId: string, s: HostControlSettings) => s.enabled && !!s.approvedHash && (s.agents === "all" || s.agents.includes(agentId));
 export function hostAllowedFor(agentId: string) {
 	const s = hostSettings();
-	return s.enabled && !!s.approvedHash && (s.agents === "all" || s.agents.includes(agentId)) && !boundedWithoutApps(agentId, s);
+	return hostAuthorized(agentId, s) && !boundedWithoutApps(agentId, s);
 }
+/** 已允许，但「限定」档还没选应用：不挂电脑工具，改为告诉助理原因（不能让它以为没开、去绕路） */
+export function hostNeedsApps(agentId: string) {
+	const s = hostSettings();
+	return hostAuthorized(agentId, s) && boundedWithoutApps(agentId, s);
+}
+/** 给助理的说明：为什么这次没有电脑工具、用户要做什么 */
+export const HOST_NEEDS_APPS_PROMPT = "<host-computer>用户允许你操作这台电脑，但你的档位是「限定」，而用户还没选允许操作的应用，所以这次没有电脑操作工具。需要操作电脑时，直接告诉用户：到 设置 › 操作这台电脑 里选允许的应用，或者把你的档位调到「信任」以上。不要用命令、脚本或别的方式绕过去。</host-computer>";
 
 /**
  * “完全权限”对用户主机的统一文件 / 命令访问：档位为 full、已开启并允许该助理、且未暂停。

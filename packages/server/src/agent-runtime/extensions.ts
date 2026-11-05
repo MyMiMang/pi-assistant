@@ -10,7 +10,7 @@ import { visionExtension } from "../vision-ext.ts";
 import { computerExtension, computerLauncherExtension, isHostTool, trustedComputerTool, type ComputerHost } from "@pi-assistant/ext-computer";
 import { actionHistoryText, recordAction } from "../action-log.ts";
 import { guardContext } from "../guard.ts";
-import { describeHostAction, cuaInstalled, macPermissionState, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostFileAccess, hostMcpCommand, hostPaused, hostStatus } from "../host-control.ts";
+import { describeHostAction, cuaInstalled, macPermissionState, tierOf, hostApprovals, sandboxComputerSettings, hostAllowedFor, hostNeedsApps, HOST_NEEDS_APPS_PROMPT, hostFileAccess, hostMcpCommand, hostPaused, hostStatus } from "../host-control.ts";
 import { fastExecutorFor } from "../fast-executor.ts";
 import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
 import { emailExtension, isEmailTool, wechatExtension } from "@pi-assistant/ext-connectors";
@@ -446,6 +446,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 				},
 			}),
 		});
+	else if (hostNeedsApps(agentId)) exts.push({ name: "pia-hostpc-needs-apps", factory: ((pi: { on: (e: string, h: (ev: { systemPrompt: string }) => Promise<{ systemPrompt: string }>) => void }) => pi.on("before_agent_start", async (e) => ({ systemPrompt: `${e.systemPrompt}\n\n${HOST_NEEDS_APPS_PROMPT}` }))) as never });
 	// 配置了图片模型 → 挂 generate_image（image-gen/extension.ts）
 	exts.push(...imageExtensions(agentId, conversationId, taskId));
 	return exts;

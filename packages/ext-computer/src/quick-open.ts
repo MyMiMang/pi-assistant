@@ -44,7 +44,7 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 		parameters: Type.Object({
 			...(o.browser
 				? {
-						url: Type.Optional(Type.String({ description: "要打开的网址（http / https / file）" })),
+						url: Type.Optional(Type.String({ description: "要打开的网址（http / https）" })),
 						browser: Type.Optional(Type.Union([Type.Literal("isolated"), Type.Literal("user")], { description: "isolated（默认）= 独立的新 Chrome；user = 连用户正在用的 Chrome（要登录状态时）" })),
 					}
 				: {}),
@@ -65,7 +65,8 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 				} catch {
 					throw new Error(`网址格式不对：${url}`);
 				}
-				if (!["http:", "https:", "file:"].includes(scheme)) throw new Error(`只支持 http / https / file 网址，不支持 ${scheme}`);
+				// cua 的 browser_navigate 只接受 http / https / about
+				if (!["http:", "https:"].includes(scheme)) throw new Error(`只支持 http / https 网址，不支持 ${scheme}`);
 			}
 			const session = p.session?.trim() || `quick-${Math.random().toString(36).slice(2, 8).padEnd(6, "0")}`;
 			const exec = async (tool: string, args: Record<string, unknown>): Promise<Outcome> => {
@@ -106,14 +107,18 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 				}
 				const targetId = typeof state.target_id === "string" ? state.target_id : "";
 				const tabs = Array.isArray(state.tabs) ? state.tabs.map(asObj).filter((x): x is Record<string, unknown> => !!x) : [];
-				const tab = tabs.find((x) => x.active === true) ?? tabs[0];
+				// 独立 Chrome 用当前标签页；用户自己的 Chrome 只用空白标签页，不把用户正在看的页面换掉（cua 不能新开标签页）
+				const blank = (x: Record<string, unknown>) => typeof x.url === "string" && /^(about:blank|chrome:\/\/new-?tab)/i.test(x.url);
+				const tab = (p.browser ?? "isolated") === "user" ? (tabs.find((x) => x.active === true && blank(x)) ?? tabs.find(blank)) : (tabs.find((x) => x.active === true) ?? tabs[0]);
+				if (!tab) throw new Error("你的 Chrome 里没有空白标签页，不替换你正在看的页面：请先新开一个空白标签页再试，或者不传 browser（默认另开一个独立 Chrome）");
 				const tabId = typeof tab?.tab_id === "string" ? tab.tab_id : "";
 				if (!targetId || !tabId) throw new Error("浏览器绑定成功，但没拿到 target_id / tab_id");
 				await exec("browser_navigate", { target_id: targetId, tab_id: tabId, session, url });
 				target = { kind: "browser", tab_id: tabId, target_id: targetId, session };
 				label = url;
 			} else {
-				const useBundle = app!.includes(".") && !/\s/.test(app!);
+				// 形如 com.apple.calculator 才当 bundle id；名字、「TextEdit.app」、/Applications/… 路径都按 name 传（launch_app 的 name 支持 .app 路径）
+				const useBundle = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+){2,}$/.test(app!) && !/\.app$/i.test(app!);
 				const launched = structured(await exec("launch_app", { [useBundle ? "bundle_id" : "name"]: app, session }));
 				let pid = num(launched?.pid) ?? num(launched?.process_id) ?? num(asObj(launched?.app)?.pid);
 				if (pid === undefined) pid = num(frontWindow(structured(await exec("list_windows", { app, session })))?.pid);
@@ -123,7 +128,12 @@ export function registerQuickOpen(pi: ExtensionAPI, o: QuickOpenOptions & { conf
 				target = { kind: "window", pid, window_id: num(win.window_id)! };
 				label = app!;
 			}
-			const obs = await observePage(ctx as unknown as ExecContext, target, o.prefix, signal, false);
+			// 刚打开 / 刚导航时页面可能还没渲染出元素：读到空就等一下再读（最多 3 次），不让大模型为此再多一轮
+			let obs = await observePage(ctx as unknown as ExecContext, target, o.prefix, signal, false);
+			for (let i = 0; i < 3 && typeof obs !== "string" && !obs.candidates.length; i++) {
+				await sleep(600);
+				obs = await observePage(ctx as unknown as ExecContext, target, o.prefix, signal, false);
+			}
 			if (typeof obs === "string") throw new Error(`读取页面失败：${obs}`);
 			const els = obs.candidates.slice(0, 40).map((c) => `${c.handle} ${c.role}「${c.name}」`);
 			const text = [
