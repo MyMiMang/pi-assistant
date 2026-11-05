@@ -88,7 +88,8 @@ export async function runGoal(ctx: GoalContext, o: QuickStepsOptions, target: Qu
 			stopped = "决策模型拿不准";
 			break;
 		}
-		if (p < MIN_PROBABILITY) {
+		// reobserve 只读不改、没有后果，不受把握门槛限制（连续次数上限照旧）
+		if (p < MIN_PROBABILITY && a.kind !== "reobserve") {
 			const probs = ans?.probabilities ?? {};
 			const top = actions
 				.map((x) => ({ x, p: typeof probs[x.id] === "number" ? probs[x.id]! : 0 }))

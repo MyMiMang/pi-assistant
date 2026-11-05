@@ -205,6 +205,30 @@ test("连续两次 reobserve → 停下", async () => {
 	assert.match(textOf(r), /页面一直没准备好/);
 });
 
+test("reobserve 概率低于门槛也照常等待重读，之后 finish → 做完", async () => {
+	const world = formWorld();
+	const plan: [string, number][] = [["等一下再看", 0.5], ["目标已经完成", 0.95]];
+	let i = 0;
+	const classify: Classify = async (context) => {
+		const [key, p] = plan[Math.min(i++, plan.length - 1)]!;
+		const criteria = context.questions.next.criteria;
+		const id = Object.keys(criteria).find((k) => criteria[k]!.includes(key))!;
+		return { stopReason: "stop", answers: { next: { type: "choice", choice: id, probabilities: { [id]: p }, confidence: p } } };
+	};
+	const r = await register().get("hostpc_quick_steps")!.execute(
+		"id",
+		{ target: { kind: "browser", tab_id: "t1" }, goal: "等结果出来", inputs: [] },
+		undefined,
+		undefined,
+		fakeCtx(world.exec, classify),
+	);
+	const text = textOf(r);
+	assert.doesNotMatch(text, /把握不够/);
+	assert.match(text, /成功：决策模型认为目标已完成/);
+	assert.equal(i, 2);
+	assert.ok(world.calls.filter((c) => c.tool === `${HOST}get_browser_state`).length >= 2, "reobserve 重读了页面");
+});
+
 test("scroll：网页调 browser_pointer，窗口调 scroll", async () => {
 	const web = formWorld();
 	await register().get("hostpc_quick_steps")!.execute("id", { target: { kind: "browser", tab_id: "t1" }, goal: "看更多", inputs: [], max_steps: 1 }, undefined, undefined, fakeCtx(web.exec, chooser(["往下滚动"])));
