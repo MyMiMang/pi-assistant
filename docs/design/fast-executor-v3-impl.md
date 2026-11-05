@@ -1,4 +1,4 @@
-状态：已批准（第三版实现方案，2026-11-05；第二版见 [fast-executor-v2-impl.md](fast-executor-v2-impl.md)，总设计见 [fast-executor.md](fast-executor.md)）
+状态：已实现(fedd3e4、ef3d1e3)（第三版实现方案，2026-11-05；真机测速见 fast-executor.md 末尾；第二版见 [fast-executor-v2-impl.md](fast-executor-v2-impl.md)，总设计见 [fast-executor.md](fast-executor.md)）
 
 # 快速执行者第三版：通用地少走轮次
 
