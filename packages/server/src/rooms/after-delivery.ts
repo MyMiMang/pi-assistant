@@ -16,6 +16,14 @@ const pending = new Set<string>();
 const tidying = new Map<string, Promise<void>>();
 /** 按大小整理中的单个成员群会话（key = 群 id + 成员 id） */
 const memberTidying = new Map<string, Promise<void>>();
+/** 失败后，读入量比该次尝试增加 2 万 token 才再次尝试；两个整理入口共用。 */
+const failedTokens = new Map<string, number>();
+const TIDY_RETRY_GROWTH = 20_000;
+
+function canTidy(key: string, tokens: number) {
+	const failed = failedTokens.get(key);
+	return tokens >= TIDY_MIN_TOKENS() && (failed === undefined || tokens >= failed + TIDY_RETRY_GROWTH);
+}
 
 /** 交付成功后调：写记忆（不阻塞交付），并记下这个群待整理 */
 export function afterDelivery(roomId: string, p: { id: string; title: string }, managerId: string, card: { summary: string; files: string[]; notDone: string }) {
@@ -55,14 +63,20 @@ function instructionsFor(roomId: string, mode: "delivered" | "size") {
  */
 export function maybeTidyMember(roomId: string, agentId: string, conversationId: string) {
 	const key = `${roomId}:${agentId}`;
-	if (memberTidying.has(key) || tidying.has(roomId) || lastContextTokens(conversationId) < TIDY_MIN_TOKENS()) return;
+	if (memberTidying.has(key) || tidying.has(roomId) || !canTidy(key, lastContextTokens(conversationId))) return;
 	const job = new Promise<void>((r) => setTimeout(r, 0))
 		.then(async () => {
 			const rt = runtime(agentId, conversationId);
 			if (rt.busy) return;
+			const tokens = lastContextTokens(conversationId);
+			if (!canTidy(key, tokens)) return;
 			setTidying(roomId, agentId, true);
 			try {
-				await rt.compact(instructionsFor(roomId, "size")).catch((e) => console.warn(`[room] 按大小整理 ${agentId} 的群会话失败：${e instanceof Error ? e.message : e}`));
+				await rt.compact(instructionsFor(roomId, "size"));
+				failedTokens.delete(key);
+			} catch (e) {
+				failedTokens.set(key, tokens);
+				console.warn(`[room] 按大小整理 ${agentId} 的群会话失败：${e instanceof Error ? e.message : e}`);
 			} finally {
 				setTidying(roomId, agentId, false);
 			}
@@ -74,13 +88,20 @@ export function maybeTidyMember(roomId: string, agentId: string, conversationId:
 async function tidyRoom(roomId: string) {
 	const instructions = instructionsFor(roomId, "delivered");
 	for (const m of membersOf(roomId)) {
-		if (!m.conversation_id || lastContextTokens(m.conversation_id) < TIDY_MIN_TOKENS()) continue;
-		if (memberTidying.has(`${roomId}:${m.agent_id}`)) continue; // 这位已经在按大小整理了
+		if (!m.conversation_id) continue;
+		const key = `${roomId}:${m.agent_id}`;
+		const tokens = lastContextTokens(m.conversation_id);
+		if (!canTidy(key, tokens)) continue;
+		if (memberTidying.has(key)) continue; // 这位已经在按大小整理了
 		const rt = runtime(m.agent_id, m.conversation_id);
 		if (rt.busy) continue;
 		setTidying(roomId, m.agent_id, true);
 		try {
-			await rt.compact(instructions).catch((e) => console.warn(`[room] 交付后整理 ${m.agent_id} 的群会话失败：${e instanceof Error ? e.message : e}`));
+			await rt.compact(instructions);
+			failedTokens.delete(key);
+		} catch (e) {
+			failedTokens.set(key, tokens);
+			console.warn(`[room] 交付后整理 ${m.agent_id} 的群会话失败：${e instanceof Error ? e.message : e}`);
 		} finally {
 			setTidying(roomId, m.agent_id, false);
 		}

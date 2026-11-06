@@ -896,10 +896,7 @@ export function clearQueued(s: AgentSession) {
 }
 export const isSessionBusy = (s: AgentSession) => s.isStreaming;
 /** 手动“整理上下文”：让 Pi 把较早的对话压缩成摘要（Pi 原生 compaction）。 */
-export async function compactSession(s: AgentSession, instructions?: string) {
-	const r = await s.compact(instructions);
-	return { tokensBefore: (r as { tokensBefore?: number }).tokensBefore, summary: (r as { summary?: string }).summary };
-}
+export { compactSessionWithFallback as compactSession } from "./compaction-fallback.ts";
 
 /** 本次要用的技能（canonical id + 库存里解析出的名字 / SKILL.md 路径）。服务端已按分配表校验。 */
 export interface SkillInvocationInput {

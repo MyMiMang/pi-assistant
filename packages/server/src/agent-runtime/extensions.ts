@@ -39,6 +39,7 @@ import { db, uid } from "../db.ts";
 import { deliverFromWorkspace, fileInfo, insideWorkspace, workspaceOf } from "../files.ts";
 import { insertMessage, roomOfConversation } from "../messages.ts";
 import { localBashOperations } from "../pi-adapter/index.ts";
+import { compactionFallbackExtension } from "../pi-adapter/compaction-fallback.ts";
 import { bgJobsExtension, makeBackgroundBashTool } from "../pi-adapter/bg-shell.ts";
 import { bgOwnerFor } from "./bg-wiring.ts";
 import { notify } from "../push.ts";
@@ -274,6 +275,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 			}),
 		},
 	];
+	exts.push({ name: "pia-compaction-fallback", factory: compactionFallbackExtension });
 	if (roomHooks) exts.push(...(roomHooks.extensions(agentId, conversationId, taskId) as never[]));
 	// 单聊的「大事走方案」工具：只给用户可见单聊的主会话（群会话 / 帮手 / 后台任务不挂，工具内部再按对话判断一次）
 	if (!taskId && !opts.subagentId && opts.actor !== "group") exts.push({ name: "pia-chat-project", factory: chatProjectTools(agentId, conversationId) as never });

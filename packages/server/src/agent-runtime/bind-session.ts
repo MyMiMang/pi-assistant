@@ -5,6 +5,7 @@ import { splitThinking } from "../thinking.ts";
 import { deleteMessage, insertMessage, updateMessage } from "../messages.ts";
 import { type AgentSession, subscribeSession } from "../pi-adapter/index.ts";
 import { fastMetaOf, type FastTracker } from "../pi-adapter/fast-mode.ts";
+import { refusalWillRetry } from "../pi-adapter/compaction-fallback.ts";
 
 /** 把一个 Pi 会话的事件落盘并广播。 */
 export function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void, subagentId?: string, pendingUserEntries?: string[], fastTracker?: FastTracker, allowEmpty?: () => boolean) {
@@ -160,7 +161,7 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 						content: `${e.reason === "manual" ? "已整理上下文" : "对话较长，已自动整理前文"}：较早的内容压缩成了摘要（约 ${Math.round((e.tokensBefore ?? 0) / 1000)}k tokens → 摘要），最近的消息保持原样。`,
 						meta: { kind: "compaction", summary: e.summary?.slice(0, 4000) },
 					});
-				else if (!e.aborted && e.error) insert({ agentId, conversationId, role: "system", content: `整理上下文失败：${e.error}`, status: "error" });
+				else if (!e.aborted && e.error && !/Nothing to compact|Already compacted/.test(e.error) && !refusalWillRetry(session.sessionId, e.error)) insert({ agentId, conversationId, role: "system", content: `整理上下文失败：${e.error}`, status: "error" });
 				break;
 		}
 	});

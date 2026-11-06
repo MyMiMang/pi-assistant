@@ -328,7 +328,7 @@ export class AgentRuntime {
 		if (!s) throw new Error("还没有可用的模型");
 		if (isSessionBusy(s)) throw new Error("助理正在工作，等这一轮结束再整理");
 		const focus = typeof instructions === "string" ? instructions.trim() : "";
-		return compactSession(s, focus || undefined);
+		return compactSession(s, focus || undefined, defaultModel() ?? undefined);
 	}
 
 	/** 让助理在后台接着做一轮（指令对模型可见，聊天里不显示）。返回 false 表示这一轮没能触发（无会话/模型或 Pi 报错）——
