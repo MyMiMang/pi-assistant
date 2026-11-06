@@ -9,7 +9,7 @@
 
 | `scope` | 含义 | Mac 矩阵 | Windows | Linux | latest.json 必须含 |
 | --- | --- | --- | --- | --- | --- |
-| `mac-arm64` | 只发 Apple 芯片 Mac | `macos-14` / aarch64 | 否 | 否 | `darwin-aarch64*` |
+| `mac-arm64` | 只发 Apple 芯片 Mac | `macos-15` / aarch64 | 否 | 否 | `darwin-aarch64*` |
 | `all` | Mac arm64 + Windows + Linux | arm64 | ✅ `windows-latest` | ✅ x64 + arm64 | 加 `windows-x86_64*`；Linux 独立 tar.gz + sha256 |
 | `all-intel` | 上面的全部 **再加 Intel Mac** | arm64 + `macos-15-intel` / x86_64 | ✅ | ✅ | 加 `darwin-x86_64` |
 

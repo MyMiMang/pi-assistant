@@ -9,7 +9,7 @@ export function releasePlan(scope, intel = false) {
   if (!['mac-arm64', 'all'].includes(base)) throw new Error(`未知发布范围：${scope}`);
   const macOnly = base === 'mac-arm64';
   const withIntel = !macOnly && (wantIntel || intel);
-  const matrix = [{ os: 'macos-14', target: 'aarch64-apple-darwin', label: 'macOS-arm64' }];
+  const matrix = [{ os: 'macos-15', target: 'aarch64-apple-darwin', label: 'macOS-arm64' }];
   if (withIntel) matrix.push({ os: 'macos-15-intel', target: 'x86_64-apple-darwin', label: 'macOS-x64' });
   if (!macOnly) matrix.push({ os: 'windows-latest', target: 'x86_64-pc-windows-msvc', label: 'Windows-x64' });
   return { scope: base, matrix, linux: !macOnly, windows: !macOnly, intel: withIntel };
