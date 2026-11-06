@@ -1,6 +1,7 @@
 import "./setup.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { fresh, setTidying, stateOf, states } from "../src/rooms/queue.ts";
 
 /** 群调度：用户插话 / 停止 / 继续 / 上限暂停。真实 rooms 调度 + Mock 模型，只用临时数据目录。 */
 const { db, now } = await import("../src/db.ts");
@@ -26,6 +27,25 @@ const paused = (roomId: string) => {
 	return p ? (JSON.parse(p) as { reason?: string; stopped?: boolean; pending?: unknown[] }) : null;
 };
 const idle = (roomId: string) => !rooms.stateOf(roomId).running && !turns(roomId).some((t) => t.status === "queued" || t.status === "running");
+
+test("群状态：整理成员加入与移除，两种状态返回都带整理名单", () => {
+	const roomId = "scheduler-tidying";
+	try {
+		setTidying(roomId, "sa", true);
+		assert.deepEqual(stateOf(roomId).tidying, ["sa"]);
+		const s = fresh();
+		s.queue.push({ agentId: "sb", turnId: "tidying-turn", reason: "mention", depth: 0 });
+		states.set(roomId, s);
+		assert.deepEqual(stateOf(roomId).tidying, ["sa"]);
+		setTidying(roomId, "sa", false);
+		assert.deepEqual(stateOf(roomId).tidying, []);
+		states.delete(roomId);
+		assert.deepEqual(stateOf(roomId).tidying, []);
+	} finally {
+		setTidying(roomId, "sa", false);
+		states.delete(roomId);
+	}
+});
 
 test("说话中用户发“停”：整个群停下，回合取消，持久停止", async () => {
 	const room = rooms.createRoom({ name: "停止群", memberIds: ["sm", "sa"], managerId: "sm" });

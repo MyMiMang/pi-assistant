@@ -9,6 +9,7 @@ import { memory } from "../memory/index.ts";
 import { runtime } from "../runtime.ts";
 import { deliveryMemory, TIDY_MIN_TOKENS, tidyInstructions } from "./logic.ts";
 import { projectsOf } from "./projects.ts";
+import { setTidying } from "./queue.ts";
 import { getRoom, memberConversation, membersOf } from "./store.ts";
 
 const pending = new Set<string>();
@@ -59,7 +60,12 @@ export function maybeTidyMember(roomId: string, agentId: string, conversationId:
 		.then(async () => {
 			const rt = runtime(agentId, conversationId);
 			if (rt.busy) return;
-			await rt.compact(instructionsFor(roomId, "size")).catch((e) => console.warn(`[room] 按大小整理 ${agentId} 的群会话失败：${e instanceof Error ? e.message : e}`));
+			setTidying(roomId, agentId, true);
+			try {
+				await rt.compact(instructionsFor(roomId, "size")).catch((e) => console.warn(`[room] 按大小整理 ${agentId} 的群会话失败：${e instanceof Error ? e.message : e}`));
+			} finally {
+				setTidying(roomId, agentId, false);
+			}
 		})
 		.finally(() => memberTidying.delete(key));
 	memberTidying.set(key, job);
@@ -72,7 +78,12 @@ async function tidyRoom(roomId: string) {
 		if (memberTidying.has(`${roomId}:${m.agent_id}`)) continue; // 这位已经在按大小整理了
 		const rt = runtime(m.agent_id, m.conversation_id);
 		if (rt.busy) continue;
-		await rt.compact(instructions).catch((e) => console.warn(`[room] 交付后整理 ${m.agent_id} 的群会话失败：${e instanceof Error ? e.message : e}`));
+		setTidying(roomId, m.agent_id, true);
+		try {
+			await rt.compact(instructions).catch((e) => console.warn(`[room] 交付后整理 ${m.agent_id} 的群会话失败：${e instanceof Error ? e.message : e}`));
+		} finally {
+			setTidying(roomId, m.agent_id, false);
+		}
 	}
 }
 

@@ -41,8 +41,9 @@ function helperText(h: HelperBrief) {
 }
 
 /** 一个群成员现在的状态。 */
-export function memberActivity(o: { agentId: string; current: { agentId: string; reason: string } | null; queue: string[]; background?: string[]; pending?: PendingKind; helpers: HelperBrief[] }): Activity {
+export function memberActivity(o: { agentId: string; current: { agentId: string; reason: string } | null; queue: string[]; background?: string[]; tidying?: string[]; pending?: PendingKind; helpers: HelperBrief[] }): Activity {
 	if (o.pending) return { state: "wait", text: PENDING_TEXT[o.pending] };
+	if (o.tidying?.includes(o.agentId)) return { state: "work", text: "整理上下文中" };
 	if (o.current?.agentId === o.agentId) return { state: "work", text: REASON_TEXT[o.current.reason] ?? "在群里回复" };
 	if (o.background?.includes(o.agentId)) return { state: "work", text: "在后台干活" }; // 已让出发言位、在自己会话里接着做（决策 0026）
 	const mine = o.helpers.filter((h) => h.live && h.agentId === o.agentId);

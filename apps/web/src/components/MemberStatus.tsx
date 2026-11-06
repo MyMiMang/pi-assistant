@@ -32,7 +32,7 @@ export function RoomMembers({ room, list, onOpen, onJump }: { room: Room; list: 
 	const helpers = useHelperBriefs({ room: room.id });
 	const active = room.members.filter((m) => !m.left);
 	const st = room.state;
-	const acts = active.map((m) => memberActivity({ agentId: m.agentId, current: st.current, queue: st.queue, background: st.background, pending: pendingCardOf(list, m.agentId), helpers }));
+	const acts = active.map((m) => memberActivity({ agentId: m.agentId, current: st.current, queue: st.queue, background: st.background, tidying: st.tidying, pending: pendingCardOf(list, m.agentId), helpers }));
 	const last = list[list.length - 1];
 	const idle = acts.every((a) => a.state === "idle");
 	// 全停下时「N 分钟前」要跟着走：只在空闲时每 30 秒重画一次

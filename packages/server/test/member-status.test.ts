@@ -14,6 +14,14 @@ test("群成员：说话中按回合原因写在做什么，排队、空闲分�
 	assert.deepEqual(memberActivity({ ...base, agentId: "c", current: { agentId: "a", reason: "mention" }, queue: ["b"] }), { state: "idle", text: "空闲" });
 });
 
+test("群成员：整理上下文算工作中，等你处理的卡片仍然优先", () => {
+	const o = { ...base, agentId: "a", tidying: ["a"] };
+	assert.deepEqual(memberActivity(o), { state: "work", text: "整理上下文中" });
+	assert.deepEqual(memberActivity({ ...o, current: { agentId: "a", reason: "mention" } }), { state: "work", text: "整理上下文中" });
+	assert.deepEqual(memberActivity({ ...o, pending: "approval" }), { state: "wait", text: "等你审批" });
+	assert.deepEqual(memberActivity({ ...o, pending: "question" }), { state: "wait", text: "等你回答" });
+});
+
 test("群成员：帮手在做群任务时写任务名（去掉「任务：」前缀），结束的帮手不算", () => {
 	assert.deepEqual(memberActivity({ ...base, agentId: "a", helpers: [helper("a", "任务：写分镜脚本")] }), { state: "work", text: "做任务「写分镜脚本」" });
 	assert.equal(memberActivity({ ...base, agentId: "a", helpers: [helper("a", "查资料", "running", "subagent")] }).text, "帮手在做「查资料」");

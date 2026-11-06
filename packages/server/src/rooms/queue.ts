@@ -48,13 +48,27 @@ export function clearBg(roomId: string, agentId: string, turnId: string) {
 	const m = bgTurns.get(roomId);
 	if (m?.get(agentId)?.turnId === turnId) m.delete(agentId);
 }
+const tidyingMembers = new Map<string, Set<string>>();
+export function setTidying(roomId: string, agentId: string, on: boolean) {
+	if (on) {
+		if (!tidyingMembers.has(roomId)) tidyingMembers.set(roomId, new Set());
+		tidyingMembers.get(roomId)!.add(agentId);
+	} else {
+		const members = tidyingMembers.get(roomId);
+		members?.delete(agentId);
+		if (!members?.size) tidyingMembers.delete(roomId);
+	}
+	emitState(roomId);
+}
+
 export const fresh = (): RoomState => ({ roundId: uid("rd"), queue: [], current: null, counters: { turns: 0, perAgent: {} }, progressSig: null, batch: new Set(), batchRan: false, assignments: [], replan: null, quote: null, sourceMessageId: null, workCtx: null, stopped: false, running: false });
 
 export function stateOf(roomId: string) {
 	const s = states.get(roomId);
 	const background = [...bgOf(roomId).keys()];
-	if (!s || (!s.current && !s.queue.length)) return { running: background.length > 0, current: null, queue: [] as string[], background };
-	return { running: true, current: s.current ? { agentId: s.current.agentId, reason: s.current.reason } : null, queue: s.queue.map((q) => q.agentId), background };
+	const tidying = [...(tidyingMembers.get(roomId) ?? [])];
+	if (!s || (!s.current && !s.queue.length)) return { running: background.length > 0, current: null, queue: [] as string[], background, tidying };
+	return { running: true, current: s.current ? { agentId: s.current.agentId, reason: s.current.reason } : null, queue: s.queue.map((q) => q.agentId), background, tidying };
 }
 export const emitState = (roomId: string) => bus.emit({ type: "room.state", roomId, state: stateOf(roomId) });
 
