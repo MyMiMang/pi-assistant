@@ -192,6 +192,12 @@ export class AgentRuntime {
 			return "none";
 		}
 		const steer = isSessionBusy(s);
+		const question = steer && !files?.length ? this.pendingFreeTextQuestion() : undefined;
+		if (question) {
+			requests.resolve(question.id, { answer: text }, "user");
+			if (opts.messageId) updateMessage(opts.messageId, { meta: { delivery: "delivered", deliveredAt: Date.now() } });
+			return "steered";
+		}
 		// 引用作为带 role wrapper 的上下文拼在用户新消息之前（不改 Pi 消息格式）
 		const fullText = composeQuotedInput(text, opts.quote);
 		// 本次点选的技能 → Pi 原生 `/skill:name`（Pi 自己读全文并拼进本轮输入）；只接受会话已加载的技能，失败不发送
@@ -239,6 +245,13 @@ export class AgentRuntime {
 		this.pendingUserEntries = this.pendingUserEntries.filter((x) => x !== mid);
 		this.steerInputs.delete(mid);
 		return true;
+	}
+
+	private pendingFreeTextQuestion() {
+		return db.prepare(`SELECT id FROM requests
+			WHERE conversation_id = ? AND kind = 'question' AND status = 'pending'
+			AND task_id IS NULL AND json_extract(payload, '$.allowFreeText') = 1
+			ORDER BY rowid DESC LIMIT 1`).get(this.conversationId) as { id: string } | undefined;
 	}
 
 	private hasPendingCards() {
