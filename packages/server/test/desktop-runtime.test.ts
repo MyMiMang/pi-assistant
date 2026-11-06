@@ -8,6 +8,7 @@ import { pickBackend } from "../src/desktop/backend.ts";
 import { checkDiskGrowOnly, mergeInstanceResources, resolveResources, resourceBounds, suggestResources, validateResourceChoice } from "../src/desktop/resources.ts";
 import { normalizeMirror, pullRef, updateDesktopSettings, desktopSettings } from "../src/desktop/settings.ts";
 import { parsePullLine } from "../src/desktop/image.ts";
+import { idleLabel } from "../../../apps/web/src/routine-schedule.ts";
 
 const REPOS = ["ghcr.io/mymimang/pi-assistant-desktop", "ghcr.nju.edu.cn/mymimang/pi-assistant-desktop"];
 const G = 1024 ** 3;
@@ -91,14 +92,29 @@ test("镜像地址：按 digest 固定，加速地址只换注册表主机", () 
 	assert.throws(() => normalizeMirror("evil.com; rm -rf /"));
 });
 
-test("设置：默认关闭（不下载），空闲时间只能 5/10/30/从不", () => {
-	assert.deepEqual(desktopSettings(), { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "", separate: [], legacyMigrated: false, resources: {} });
-	assert.equal(updateDesktopSettings({ idleMinutes: 30 }).idleMinutes, 30);
-	assert.equal(updateDesktopSettings({ idleMinutes: 0 }).idleMinutes, 0);
-	assert.throws(() => updateDesktopSettings({ idleMinutes: 7 }));
+test("设置：默认关闭（不下载），空闲默认 60 分钟，支持 1–1440 分钟或从不", () => {
+	assert.deepEqual(desktopSettings(), { enabled: false, backend: "auto", idleMinutes: 60, mirror: "", fileMirror: "", separate: [], legacyMigrated: false, resources: {} });
+	assert.equal(updateDesktopSettings({}).idleMinutes, 60);
+	for (const idleMinutes of [60, 45, 0, 1, 1440, 5, 10, 30]) {
+		assert.equal(updateDesktopSettings({ idleMinutes }).idleMinutes, idleMinutes);
+		assert.equal(desktopSettings().idleMinutes, idleMinutes);
+	}
+	for (const idleMinutes of [1441, -1, 2.5, "abc", "60", null, NaN, Infinity]) {
+		assert.throws(() => updateDesktopSettings({ idleMinutes: idleMinutes as never }), {
+			message: "空闲关机时间要填 1 到 1440 分钟之间的整数，或选从不",
+		});
+		assert.equal(desktopSettings().idleMinutes, 30, "非法输入不修改已保存的值");
+	}
+	assert.equal(updateDesktopSettings({ enabled: false }).idleMinutes, 30, "不迁移已保存的时间");
 	assert.throws(() => updateDesktopSettings({ backend: "lima" as never }));
 	assert.equal(updateDesktopSettings({ backend: "docker", enabled: true }).backend, "docker");
 	updateDesktopSettings({ enabled: false, backend: "auto", idleMinutes: 10 });
+});
+
+test("前端空闲时间文案：从不、整小时和分钟", () => {
+	for (const [minutes, label] of [[0, "从不"], [60, "1 小时"], [120, "2 小时"], [240, "4 小时"], [1440, "24 小时"], [5, "5 分钟"], [45, "45 分钟"], [61, "61 分钟"]] as const) {
+		assert.equal(idleLabel(minutes), label);
+	}
 });
 
 test("虚拟机资源：用户选择按范围校验，非法值直接拒", () => {

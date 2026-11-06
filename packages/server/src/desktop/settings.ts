@@ -5,7 +5,6 @@ import { config } from "../config.ts";
 import { getSetting, setSetting } from "../db.ts";
 import { validateResourceChoice, type VmResourceChoice } from "./resources.ts";
 
-export const IDLE_CHOICES = [5, 10, 30, 0] as const; // 0 = 从不
 export interface DesktopSettings {
 	/** 「给助理安装电脑」开关；关着时什么都不下载 */
 	enabled: boolean;
@@ -27,7 +26,7 @@ export interface DesktopSettings {
 	/** 用户自定义的虚拟机资源（CPU / 内存 / 磁盘）；没设的字段按建议值 / 现有虚拟机值。只在虚拟机后端（macOS Lima）生效，关机后应用 */
 	resources: VmResourceChoice;
 }
-const DEFAULTS: DesktopSettings = { enabled: false, backend: "auto", idleMinutes: 10, mirror: "", fileMirror: "", separate: [], legacyMigrated: false, resources: {} };
+const DEFAULTS: DesktopSettings = { enabled: false, backend: "auto", idleMinutes: 60, mirror: "", fileMirror: "", separate: [], legacyMigrated: false, resources: {} };
 export const desktopSettings = (): DesktopSettings => ({ ...DEFAULTS, ...getSetting<Partial<DesktopSettings>>("desktop", {}) });
 
 export function updateDesktopSettings(b: Partial<DesktopSettings>, existingResources: VmResourceChoice | null = null) {
@@ -38,8 +37,8 @@ export function updateDesktopSettings(b: Partial<DesktopSettings>, existingResou
 		cur.backend = b.backend;
 	}
 	if (b.idleMinutes !== undefined) {
-		if (!(IDLE_CHOICES as readonly number[]).includes(Number(b.idleMinutes))) throw new Error("空闲关机时间只能选 5 / 10 / 30 分钟或从不");
-		cur.idleMinutes = Number(b.idleMinutes);
+		if (!Number.isInteger(b.idleMinutes) || b.idleMinutes < 0 || b.idleMinutes > 1440) throw new Error("空闲关机时间要填 1 到 1440 分钟之间的整数，或选从不");
+		cur.idleMinutes = b.idleMinutes;
 	}
 	if (b.mirror !== undefined) cur.mirror = normalizeMirror(b.mirror);
 	if (b.fileMirror !== undefined) cur.fileMirror = normalizeFileMirror(b.fileMirror);

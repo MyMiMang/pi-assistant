@@ -201,7 +201,7 @@
 | `appearance-migration.ts` | 外观存储迁移 |
 | `preview.ts` | 文件预览纯逻辑（类型判定含 html / svg / docx / xlsx / pptx / iwork / zip / ipynb、老格式提示、二进制嗅探、CSV、上限常量） |
 | `office-preview.ts` | Office 等预览的纯逻辑（单测）：PPT 富文本白名单清洗、幻灯片坐标 / 填充换算、Excel 单元格格式化、zip 条目整理、iWork 预览图挑选、ipynb 解析；设计见 `docs/design/office-file-preview.md` |
-| `routine-schedule.ts` | 定时计划可编辑识别 |
+| `routine-schedule.ts` | 定时计划可编辑识别；`idleLabel` 空闲关机时间文案（设置下拉和电脑页共用） |
 | `voice-input.ts` | 语音输入纯逻辑 |
 | `voice-stream.ts` | 流式语音纯逻辑 |
 | `voice-pref.ts` | 本地语音模块状态归一化 |

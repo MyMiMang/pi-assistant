@@ -38,6 +38,12 @@ export function scheduleCron(s: Schedule): string | null {
 	return `${m} ${h} * * ${s.kind === "daily" ? "*" : s.kind === "weekdays" ? "1-5" : s.weekday}`;
 }
 
+/** 空闲关机时间：整小时用小时，其余保留分钟。 */
+export function idleLabel(m: number): string {
+	if (m === 0) return "从不";
+	return m % 60 === 0 ? `${m / 60} 小时` : `${m} 分钟`;
+}
+
 export function scheduleLabel(cron: string): string {
 	const s = parseSchedule(cron);
 	if (s.kind === "advanced") return `高级计划：${cron}`;

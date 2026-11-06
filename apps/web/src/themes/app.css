@@ -76,6 +76,7 @@ body.pa-resizing .pa-chat, body.pa-resizing .pa-pane, body.pa-resizing .pa-previ
 /* 通用控件 */
 .pa-input { height: 38px; width: 100%; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--card); color: var(--fg); padding: 0 12px; font-size: 14px; outline: none; transition: border-color .15s, box-shadow .15s; }
 .pa-input:focus { border-color: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); }
+.pa-input[aria-invalid="true"] { border-color: #ef4444; }
 .pa-modal { background: var(--card); color: var(--fg); border-radius: calc(var(--r) + 6px); box-shadow: var(--comp-shadow, 0 20px 60px rgba(0,0,0,.25)); }
 /* 弹窗：温和进入（透明度 + 轻微上移/缩小）。关闭 / 取消不做延迟动画，状态与关闭都是立即的。 */
 .pa-modal { animation: pa-modal-in var(--pa-dur, .18s) var(--pa-ease-out, cubic-bezier(.2,.8,.2,1)) both; }

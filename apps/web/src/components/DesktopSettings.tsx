@@ -7,6 +7,7 @@ import { Loader2, Power, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
+import { idleLabel } from "../routine-schedule";
 import { useStore } from "../store";
 import { AgentComputer } from "./AgentComputer";
 import { Avatar, avatarText, Badge, Button, Help, Input, Select, useConfirm } from "./ui";
@@ -85,6 +86,8 @@ export function DesktopCost({ image }: { image?: DesktopGlobal["image"] }) {
 export function DesktopSettings() {
 	const { g, setG, load, loadErr, loading } = useDesktopGlobal();
 	const [err, setErr] = useState("");
+	const [idleCustom, setIdleCustom] = useState(false);
+	const [idleDraft, setIdleDraft] = useState("");
 	const [busy, setBusy] = useState("");
 	const [mirror, setMirror] = useState<string | null>(null);
 	const [fileMirror, setFileMirror] = useState<string | null>(null);
@@ -135,6 +138,14 @@ export function DesktopSettings() {
 			setErr(e instanceof Error ? e.message : String(e));
 		}
 	};
+	const idleDraftOk = /^\d+$/.test(idleDraft.trim()) && Number(idleDraft) >= 1 && Number(idleDraft) <= 1440;
+	const saveIdle = () => {
+		if (!idleDraftOk) return;
+		void put({ idleMinutes: Number(idleDraft) }).then((r) => {
+			if (r) setIdleCustom(false);
+		});
+	};
+	const idleOptions = [...new Set([10, 30, 60, 120, 240, ...(s.idleMinutes ? [s.idleMinutes] : [])])].sort((a, b) => a - b);
 	const post = async (path: string, label: string) => {
 		setBusy(label);
 		setErr("");
@@ -235,14 +246,45 @@ export function DesktopSettings() {
 			<section className="space-y-2">
 				<div className="font-semibold">{t("空闲自动关机")}</div>
 				<div className="text-sm text-zinc-500">{t("闲置多久后关机，登录状态不丢。")} <Help>{t("没有工具调用、没人在看画面、没有任务占用超过这个时间，就自动关机释放内存；登录状态不会丢，下次用到时自动开机。")}</Help></div>
-				<Select
-					value={s.idleMinutes}
-					ariaLabel={t("空闲自动关机")}
-					testId="desktop-idle"
-					className="w-36"
-					onChange={(v) => void put({ idleMinutes: Number(v) })}
-					options={[5, 10, 30, 0].map((m) => ({ value: m, label: m ? t("{m} 分钟", { m }) : t("从不") }))}
-				/>
+				<div className="flex flex-wrap items-center gap-2">
+					<Select
+						value={idleCustom ? "custom" : s.idleMinutes}
+						ariaLabel={t("空闲自动关机")}
+						testId="desktop-idle"
+						className="w-36"
+						onChange={(v) => {
+							setIdleCustom(v === "custom");
+							if (v === "custom") setIdleDraft(String(s.idleMinutes || 60));
+							else void put({ idleMinutes: Number(v) });
+						}}
+						options={[
+							...idleOptions.map((m) => ({ value: m, label: idleLabel(m) })),
+							{ value: 0, label: idleLabel(0) },
+							{ value: "custom", label: t("自定义…") },
+						]}
+					/>
+					{idleCustom && (
+						<label className="flex items-center gap-2 whitespace-nowrap text-sm">
+							<Input
+								type="number"
+								min={1}
+								max={1440}
+								step={1}
+								className="w-24"
+								aria-invalid={!idleDraftOk}
+								aria-label={t("自定义空闲关机时间（分钟）")}
+								data-testid="desktop-idle-custom"
+								value={idleDraft}
+								onChange={(e) => setIdleDraft(e.target.value)}
+								onBlur={saveIdle}
+								onKeyDown={(e) => {
+									if (e.key === "Enter") e.currentTarget.blur();
+								}}
+							/>
+							{t("分钟（1–1440）")}
+						</label>
+					)}
+				</div>
 			</section>
 
 			<details className="rounded-xl border border-line" open={advOpen} onToggle={(e) => setAdvOpen(e.currentTarget.open)} data-testid="desktop-advanced">

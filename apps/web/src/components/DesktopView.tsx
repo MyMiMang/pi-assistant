@@ -4,6 +4,7 @@
  */
 import { Hand, Loader2, Maximize2, MonitorPlay, Pause, Play, Power, Settings2, Users } from "lucide-react";
 import { t } from "../i18n";
+import { idleLabel } from "../routine-schedule";
 import { useEffect, useRef, useState } from "react";
 import { api, base } from "../api";
 import { useStore } from "../store";
@@ -240,7 +241,7 @@ export function DesktopView({ agentId }: { agentId: string }) {
 						<Button size="sm" variant="ghost" onClick={() => box.current?.requestFullscreen?.()}>
 							<Maximize2 size={14} />
 						</Button>
-						<span className="ml-auto self-center text-xs text-zinc-400">{st.idleMinutes ? t("空闲 {m} 分钟自动关机", { m: st.idleMinutes }) : ""}</span>
+						<span className="ml-auto self-center text-xs text-zinc-400">{st.idleMinutes ? t("空闲 {duration}自动关机", { duration: idleLabel(st.idleMinutes) }) : ""}</span>
 						<Button size="sm" variant="ghost" disabled={busy} onClick={stop} data-testid="desktop-stop">
 							<Power size={14} /> {t("关机")}
 						</Button>
