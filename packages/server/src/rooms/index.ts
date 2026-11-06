@@ -36,7 +36,7 @@ export { checkPlan, normalizePlan, type ProjectPlan } from "./plan.ts";
 export function roomJson(r: RoomRow) {
 	const members = membersOf(r.id, true).map((m) => {
 		const a = getAgent(m.agent_id);
-		return { agentId: m.agent_id, name: a?.name ?? m.name, avatar: a?.avatar ?? m.avatar, color: a?.color ?? m.color, left: !!m.left_at, deleted: !!m.deleted || !a, scope: (a as { scope?: string } | undefined)?.scope ?? "user", status: a?.status ?? "idle" };
+		return { agentId: m.agent_id, conversationId: m.conversation_id ?? null, name: a?.name ?? m.name, avatar: a?.avatar ?? m.avatar, color: a?.color ?? m.color, left: !!m.left_at, deleted: !!m.deleted || !a, scope: (a as { scope?: string } | undefined)?.scope ?? "user", status: a?.status ?? "idle" };
 	});
 	const last = db.prepare("SELECT content, role, agent_id, created_at FROM messages WHERE room_id = ? AND role IN ('user','assistant') AND content != '' ORDER BY rowid DESC LIMIT 1").get(r.id);
 	return { id: r.id, name: r.name, purpose: r.purpose, managerId: r.manager_id, caps: capsOf(r), unread: r.unread, paused: r.paused ? JSON.parse(r.paused) : null, projects: projectsOf(r.id).map(projectJson), members, last, created_at: r.created_at, updated_at: r.updated_at, state: stateOf(r.id) };

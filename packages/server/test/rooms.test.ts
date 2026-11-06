@@ -104,6 +104,9 @@ test("建群：默认第一个是管理者；成员对话消息自动进群且�
 	const conv = (await import("../src/conversations.ts")).createConversation("rb", "群聊", { makeCurrent: false }).id;
 	db.prepare("UPDATE conversations SET hidden = 1 WHERE id = ?").run(conv);
 	db.prepare("UPDATE room_members SET conversation_id = ? WHERE room_id = ? AND agent_id = ?").run(conv, r.id, "rb");
+	const serialized = rooms.roomJson(rooms.getRoom(r.id)!).members;
+	assert.equal(serialized.find((m) => m.agentId === "rb")!.conversationId, conv);
+	assert.equal(serialized.find((m) => m.agentId === "rc")!.conversationId, null);
 	const before = (db.prepare("SELECT unread FROM agents WHERE id = 'rb'").get() as { unread: number }).unread;
 	const m = insertMessage({ agentId: "rb", conversationId: conv, role: "assistant", content: "乙说话了" });
 	assert.equal(m.room_id, r.id);

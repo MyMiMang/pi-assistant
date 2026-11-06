@@ -24,7 +24,6 @@ export function ContextRing({ agentId, running }: { agentId: string; running: bo
 	const [c, setC] = useState<Ctx | null>(null);
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
-	const [compactNode, openCompact] = useCompactDialog(cid);
 	const load = () => (cid ? api<Ctx>(`/api/conversations/${cid}/context`).then(setC).catch(() => setC(null)) : setC(null));
 	useEffect(() => {
 		void load();
@@ -32,7 +31,10 @@ export function ContextRing({ agentId, running }: { agentId: string; running: bo
 	useEffect(() => {
 		if (!open) return;
 		void load();
-		const h = (e: Event) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+		const h = (e: Event) => {
+			if (document.querySelector('[data-testid="compact-dialog"]')?.contains(e.target as Node)) return;
+			if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+		};
 		document.addEventListener("pointerdown", h);
 		return () => document.removeEventListener("pointerdown", h);
 	}, [open]);
@@ -51,8 +53,28 @@ export function ContextRing({ agentId, running }: { agentId: string; running: bo
 			</button>
 			{open && (
 				<div className="pa-pop absolute bottom-full right-0 z-30 mb-2 w-72 space-y-3 rounded-xl border border-line bg-card p-3 text-sm shadow-lg" data-testid="context-pop">
+					<ContextDetails conversationId={cid} running={running} onUpdated={() => void load()} />
+				</div>
+			)}
+		</div>
+	);
+}
+
+export function ContextDetails({ conversationId: cid, running, onUpdated }: { conversationId: string | null; running: boolean; onUpdated?: () => void }) {
+	const [c, setC] = useState<Ctx | null>(null);
+	const [compactNode, openCompact] = useCompactDialog(cid);
+	useEffect(() => {
+		let active = true;
+		setC(null);
+		if (cid) void api<Ctx>(`/api/conversations/${cid}/context`).then((data) => { if (active) setC(data); }).catch(() => { if (active) setC(null); });
+		return () => { active = false; };
+	}, [cid, running]);
+	const load = () => cid && api<Ctx>(`/api/conversations/${cid}/context`).then(setC).catch(() => setC(null));
+	const pct = c?.percent ?? 0;
+	const tone = pct >= 85 ? "#ef4444" : pct >= 60 ? "#f59e0b" : "var(--acc)";
+	return <div className="space-y-3 text-sm">
 					<div>
-						<div className="flex items-baseline justify-between">
+						<div className="flex items-baseline justify-between gap-2">
 							<b>上下文</b>
 							<span className="text-xs text-mut">{c?.model ? modelLabel(c.model) : ""}</span>
 						</div>
@@ -91,15 +113,12 @@ export function ContextRing({ agentId, running }: { agentId: string; running: bo
 							</span>
 						</div>
 					)}
-					{!c?.session && <div className="text-xs text-mut">发送消息后显示用量。</div>}
+					{!c?.session && <div className="text-xs text-mut">{c?.tokens ? "本次对话累计用量将在会话加载后显示。" : "发送消息后显示用量。"}</div>}
 					<div className={cx("flex justify-end", !cid && "hidden")}>
-						<Button size="sm" variant="outline" disabled={running || !c?.tokens} onClick={() => openCompact(() => void load())} title={running ? "助理正在工作，等这一轮结束再整理" : "把较早的对话压缩成摘要，腾出上下文"} data-testid="context-compact">
+						<Button size="sm" variant="outline" disabled={running || !c?.tokens} onClick={() => openCompact(() => { void load(); onUpdated?.(); })} title={running ? "助理正在工作，等这一轮结束再整理" : "把较早的对话压缩成摘要，腾出上下文"} data-testid="context-compact">
 							整理上下文
 						</Button>
 					</div>
-				</div>
-			)}
 			{compactNode}
-		</div>
-	);
+		</div>;
 }

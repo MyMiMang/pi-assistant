@@ -17,6 +17,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { after, before, test } from "node:test";
 
 const serverDir = join(import.meta.dirname, "..");
@@ -104,6 +105,29 @@ before(async () => {
 
 after(() => {
 	srv?.kill("SIGKILL");
+});
+
+test("未加载会话：最近助理用量包含缓存，按当前模型计算比例，累计留空", async () => {
+	const a = await mkAgent("unloaded-context");
+	const cid = a.conversation_id as string;
+	const empty = (await req(`/api/conversations/${cid}/context`)).body;
+	assert.equal(empty.tokens, 0);
+	assert.ok(empty.contextWindow > 0);
+	assert.equal(empty.session, null);
+	const db = new DatabaseSync(join(dataDir, "data.db"));
+	try {
+		const put = db.prepare("INSERT INTO messages(id, agent_id, conversation_id, role, content, meta, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)");
+		for (const [id, role, usage] of [["old", "assistant", { input: 1 }], ["latest", "assistant", { input: 1234, cacheRead: 2345, cacheWrite: 3456, output: 999 }], ["user", "user", { input: 999999 }], ["no-usage", "assistant", null]] as const) {
+			put.run(`${a.id}-${id}`, a.id, cid, role, "测试", JSON.stringify(usage ? { usage } : {}), "done", Date.now(), Date.now());
+		}
+		const ctx = await req(`/api/conversations/${cid}/context`);
+		assert.equal(ctx.status, 200);
+		assert.equal(ctx.body.tokens, 7035);
+		assert.equal(ctx.body.contextWindow, empty.contextWindow);
+		assert.equal(ctx.body.percent, Math.min(100, Math.round(7035 / empty.contextWindow * 1000) / 10));
+		assert.equal(ctx.body.session, null);
+		assert.equal(ctx.body.model.id, empty.model.id);
+	} finally { db.close(); }
 });
 
 test("整理上下文：instructions 类型 / 长度 / 缺省", async () => {

@@ -9,7 +9,7 @@ import { bus } from "../bus.ts";
 import { config } from "../config.ts";
 import { db, now } from "../db.ts";
 import { attachmentInputFor, fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, saveUpload } from "../files.ts";
-import { getMessageByClientId, insertMessage, listMessages, toMessage, type MessageRow } from "../messages.ts";
+import { getMessageByClientId, lastContextTokens, insertMessage, listMessages, toMessage, type MessageRow } from "../messages.ts";
 import { defaultModel, defaultThinking, isThinkingLevel, models, withProviderName } from "../models.ts";
 import { sessionStats } from "../pi-adapter/index.ts";
 import { requests } from "../requests.ts";
@@ -282,16 +282,23 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		await disposeConversationRuntime(c.req.param("cid"));
 		return c.json({ ok: !!deleteConversation(c.req.param("cid")) });
 	});
-	/** 上下文用量（输入框旁的圆环）：会话还没在内存里时只返回模型的上下文窗口 */
+	/** 上下文用量（圆环 / 模型页）：未加载会话时复用最近助理消息的读入量与当前模型窗口。 */
 	app.get("/api/conversations/:cid/context", async (c) => {
 		const conv = getConversation(c.req.param("cid"));
 		if (!conv) return c.json({ error: "not_found" }, 404);
-		const s = runtime(conv.agent_id, conv.id).session;
+		const rt = runtime(conv.agent_id, conv.id);
+		const s = rt.session;
 		if (s) {
 			const st = sessionStats(s);
 			return c.json({ ...st, model: st.model ? withProviderName(st.model) : st.model });
 		}
-		return c.json({ tokens: null, contextWindow: null, percent: null, model: null, session: null });
+		const a = getAgent(conv.agent_id);
+		const pick = a ? rt.modelFor(a) : null;
+		const model = pick ? models.getModel(pick.provider, pick.id) : null;
+		const tokens = lastContextTokens(conv.id);
+		const contextWindow = model?.contextWindow ?? null;
+		const percent = contextWindow ? Math.min(100, Math.round((tokens / contextWindow) * 1000) / 10) : null;
+		return c.json({ tokens, contextWindow, percent, model: model ? withProviderName({ provider: model.provider, id: model.id, name: model.name }) : null, session: null });
 	});
 	/** 手动整理上下文（Pi compaction）。可选 body { instructions }：只影响摘要请求（希望保留什么），
 	 *  不进主会话 system prompt、不改变权限 / 安全策略；缺省 / 空串 = 原行为。 */

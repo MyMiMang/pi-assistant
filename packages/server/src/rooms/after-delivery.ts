@@ -5,6 +5,7 @@
  *    整理期间群里的下一轮先等它做完（scheduler 调 tidyingOf），不和整理同时跑。
  */
 import { db } from "../db.ts";
+import { lastContextTokens } from "../messages.ts";
 import { memory } from "../memory/index.ts";
 import { runtime } from "../runtime.ts";
 import { deliveryMemory, TIDY_MIN_TOKENS, tidyInstructions } from "./logic.ts";
@@ -32,14 +33,6 @@ export function afterDelivery(roomId: string, p: { id: string; title: string }, 
 	const said = (db.prepare("SELECT content FROM messages WHERE room_id = ? AND role = 'user' AND created_at > ? ORDER BY rowid").all(roomId, since) as { content: string }[]).map((r) => r.content);
 	const m = deliveryMemory({ room: getRoom(roomId)?.name ?? "群聊", title: p.title, said, ...card });
 	if (m) void memory.retainTurn(managerId, memberConversation(roomId, managerId), { ...m, actor: "user" }).catch((e) => console.warn(`[room] 交付记忆写入失败：${e instanceof Error ? e.message : e}`));
-}
-
-/** 会话上一次调用读入了多少 token（取最近一条带用量的助理消息） */
-function lastContextTokens(conversationId: string) {
-	const u = (db.prepare("SELECT json_extract(meta, '$.usage') AS u FROM messages WHERE conversation_id = ? AND role = 'assistant' AND json_extract(meta, '$.usage') IS NOT NULL ORDER BY rowid DESC LIMIT 1").get(conversationId) as { u: string | null } | undefined)?.u;
-	if (!u) return 0;
-	const x = JSON.parse(u) as { input?: number; cacheRead?: number; cacheWrite?: number };
-	return (x.input ?? 0) + (x.cacheRead ?? 0) + (x.cacheWrite ?? 0);
 }
 
 /** 管理者回合结束后调：有待整理的交付、群里没有排队的回合、没有别的进行中 / 待确认项目 → 开始整理 */

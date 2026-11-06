@@ -72,7 +72,7 @@
 | `cli.ts` | 服务器版命令行 |
 | `runtime.ts` | 运行时门面：对外导出（调用方只 import 它）、启动接线、启动恢复（bootstrap） |
 | `agent-runtime/` | 运行时实现：`rows` 助理/任务表读写，`system-rules` 系统提示，`room-hooks` 群聊挂钩，`bind-session` Pi 事件写成消息，`extensions` 每个会话挂的扩展/工具与 MCP，`skill-suggest` 技能建议，`agent-runtime` 每个对话的会话（发消息/插话/停止/整理），`background-tasks` 后台 / 定时 / 巡检的帮手入口、旧 tasks 表迁移与降权即停，`subagent-driver` 子代理会话，`agent-session` 建助理会话（主会话 / 后台任务 / 子代理共用 `createAgentSession`），`bg-wiring` 长命令转后台的接线（只给用户看得见的对话：作业落 bg_jobs 表、结束通知、服务重启标「中断」） |
-| `messages.ts` | 消息落库与引用快照 |
+| `messages.ts` | 消息落库与引用快照；lastContextTokens 共用最近助理消息读入量（上下文接口与群自动整理） |
 | `conversations.ts` | 一个助理多个对话 |
 | `fork.ts` | 从消息另开会话分支 |
 | `replies.ts` | 引用回复解析与快照 |
@@ -235,7 +235,7 @@
 | `Sidebar.tsx` | 侧边栏 |
 | `Conversations.tsx` | 对话菜单 |
 | `CompactDialog.tsx` | 整理上下文弹窗 |
-| `ContextRing.tsx` | 上下文圆环 |
+| `ContextRing.tsx` | 上下文圆环；ContextDetails 共用用量详情与整理入口（圆环、助理模型页）；e2e `member-context-ui.mjs` 覆盖群 / 单聊模型页 |
 | `ModelPicker.tsx` | 模型 + 思考 + Fast 选择（全应用唯一一套） |
 | `ModelOptions.tsx` | 模型显示名 |
 | `ThinkingSlider.tsx` | 思考强度滑块 |

@@ -23,6 +23,14 @@ export interface ReplySnapshot {
 	unavailable?: boolean;
 }
 
+/** 会话上一次调用读入了多少 token（取最近一条带用量的助理消息）。 */
+export function lastContextTokens(conversationId: string) {
+	const u = (db.prepare("SELECT json_extract(meta, '$.usage') AS u FROM messages WHERE conversation_id = ? AND role = 'assistant' AND json_extract(meta, '$.usage') IS NOT NULL ORDER BY rowid DESC LIMIT 1").get(conversationId) as { u: string | null } | undefined)?.u;
+	if (!u) return 0;
+	const x = JSON.parse(u) as { input?: number; cacheRead?: number; cacheWrite?: number };
+	return (x.input ?? 0) + (x.cacheRead ?? 0) + (x.cacheWrite ?? 0);
+}
+
 export interface MessageRow {
 	id: string;
 	agent_id: string;

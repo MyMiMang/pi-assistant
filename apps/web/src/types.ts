@@ -28,7 +28,7 @@ export interface Agent {
 	/** user = 我的助理；room = 群专属助理（不在侧边栏） */
 	scope?: "user" | "room"; room_id?: string | null;
 }
-export interface RoomMember { agentId: string; name: string; avatar: string; color: string; left: boolean; deleted: boolean; scope: string; status: string }
+export interface RoomMember { agentId: string; conversationId: string | null; name: string; avatar: string; color: string; left: boolean; deleted: boolean; scope: string; status: string }
 export interface RoomCaps { maxTurns: number; maxDepth: number; perAgent: number; followup: boolean }
 /** background = 已让出发言位、还在自己会话里干活的成员（服务端 rooms/queue.ts） */
 export interface RoomState { running: boolean; current: { agentId: string; reason: string } | null; queue: string[]; background?: string[]; tidying?: string[] }
