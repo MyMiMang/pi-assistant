@@ -37,8 +37,8 @@
 ### 行为
 
 - `AgentRuntime.compact(instructions?)`：会话忙（`isSessionBusy`）时**拒绝**并提示「助理正在工作，等这一轮结束再整理」，不自动停任务；否则调用 `compactSession(session, instructions)`。
-- `compactSession` 直接把 `instructions` 交给 Pi 的 `session.compact(instructions)`，Pi 只把它用在摘要请求里。
-- 成功 / 失败的消息卡沿用现有 `compaction_end` 处理：成功显示「已整理上下文」卡片（原 UI 不变），失败保留现有历史不重置。
+- `compactSession` 把 `instructions` 原样交给 Pi 的 `session.compact(instructions)`，Pi 只把它用在摘要请求里。手动摘要返回 4xx（429 除外）且默认模型与会话模型不同时，经 `pi-adapter/compaction-fallback.ts` 的公开扩展钩子改用默认模型再试一次；不改会话模型，失败直接抛出，临时映射在 finally 清除。不处理 Pi 自动 threshold / overflow 整理。认证请求头按用户确认的 Pi 同类行为过滤值为 null 的删除标记，其余原样传入。
+- 成功 / 失败的消息卡沿用现有 `compaction_end` 处理：成功显示「已整理上下文」卡片（原 UI 不变），失败保留现有历史不重置；`Nothing to compact` / `Already compacted` 不插失败消息。群按大小整理及交付后整理共享失败记录，任何失败后读入量较该次尝试增加 20,000 token 才重试，成功清除记录；十五万门槛不变。
 - 取消（关弹窗）不发任何请求、不触发模型调用。
 
 ### UI
