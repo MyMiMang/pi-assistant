@@ -19,10 +19,10 @@ import { pickBackend } from "../src/desktop/backend.ts";
 
 process.env.PIA_TEST_FAST = "1";
 
-test("清单：Lima 2.2.1 / nerdctl-full 2.4.1 / Debian 12 都固定了摘要和大小", () => {
+test("清单：Lima 2.3.0 / nerdctl-full 2.4.2 / Debian 12 都固定了摘要和大小", () => {
 	const m = L.vmManifest();
-	assert.equal(m.lima.version, "2.2.1");
-	assert.equal(m.nerdctl.version, "2.4.1");
+	assert.equal(m.lima.version, "2.3.0");
+	assert.equal(m.nerdctl.version, "2.4.2");
 	for (const k of ["darwin-arm64", "darwin-x64"]) assert.match(m.lima.assets[k].sha256!, /^[a-f0-9]{64}$/);
 	for (const k of ["linux-arm64", "linux-x64"]) {
 		assert.match(m.nerdctl.assets[k].sha256!, /^[a-f0-9]{64}$/);
@@ -35,7 +35,7 @@ test("清单：Lima 2.2.1 / nerdctl-full 2.4.1 / Debian 12 都固定了摘要和
 		assert.ok(f.every((x) => x.urls.every((u) => u.startsWith("https://"))));
 		assert.ok(f.every((x) => x.dest.startsWith(L.vmDir())));
 	}
-	assert.match(L.vmFiles("arm64", "")[0].urls[0], /lima-vm\/lima\/releases\/download\/v2\.2\.1\/lima-2\.2\.1-Darwin-arm64\.tar\.gz$/);
+	assert.match(L.vmFiles("arm64", "")[0].urls[0], /lima-vm\/lima\/releases\/download\/v2\.3\.0\/lima-2\.3\.0-Darwin-arm64\.tar\.gz$/);
 	assert.match(L.vmFiles("x64", "")[2].urls[0], /debian-12-genericcloud-amd64-\d{8}-\d+\.qcow2$/);
 	assert.throws(() => L.archKeys("ia32"));
 });

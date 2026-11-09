@@ -20,6 +20,8 @@ setChatDefault(modelsMod.defaultModel);
 const t0 = Date.now();
 const log = (m: string) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${m}`);
 const homeBefore = new Set(readdirSync(homedir()));
+const homeState = () => [".hindsight", ".pg0"].map((name) => existsSync(join(homedir(), name)));
+const hindsightHomeBefore = homeState();
 
 const agentId = "smoke";
 db.prepare("INSERT OR IGNORE INTO agents(id, name, avatar, color, persona, created_at, memory_provider) VALUES(?,?,?,?,?,?,?)").run(agentId, "冒烟", "🧪", "#888", "", Date.now(), "hindsight");
@@ -92,7 +94,7 @@ log("重启后检索 OK");
 // 隔离：HOME 下没有新东西；数据都在我们的目录
 assert.deepEqual(new Set(readdirSync(homedir())), homeBefore);
 assert.ok(existsSync(join(paths().home, ".pg0")) && existsSync(join(paths().home, ".hindsight")));
-assert.ok(!existsSync(join(homedir(), ".hindsight")) && !existsSync(join(homedir(), ".pg0")));
+assert.deepEqual(homeState(), hindsightHomeBefore, "不应在真实 HOME 新建 Hindsight / pg0 目录");
 await sidecar.stop();
 log(`完成，数据目录 ${config.dataDir}`);
 process.exit(0);

@@ -29,25 +29,43 @@ const textOfSystem = (m: Msg) => textOf(m) || Object.values(m.sections ?? {}).jo
 const getSkillDesc = (_u: string) => "按月汇总表格数据（先按周分组）。用户说“月度汇总/按月统计”时使用。";
 
 /** 模拟 Hindsight 需要的几类模型调用；不是 Hindsight 的请求返回 null */
-type MockTool = { name: string; parameters?: { properties?: Record<string, { type?: string }>; required?: string[] } };
+type MockTool = { name: string; parameters?: { properties?: Record<string, { type?: string | string[] }>; required?: string[] } };
 /** 按 JSON Schema 填一份最小参数 */
 function fillArgs(t: MockTool, text: string) {
 	const out: Record<string, unknown> = {};
 	const props = t.parameters?.properties ?? {};
 	for (const k of t.parameters?.required ?? []) {
-		const ty = props[k]?.type;
-		out[k] = ty === "array" ? [] : ty === "integer" || ty === "number" ? 0 : ty === "boolean" ? false : ty === "object" ? {} : text;
+		const declared = props[k]?.type;
+		const ty = Array.isArray(declared) ? declared.find((t) => t !== "null") : declared;
+		out[k] = ty === "array" ? [] : ty === "integer" || ty === "number" ? (k === "max_results" ? 5 : 1024) : ty === "boolean" ? false : ty === "object" ? {} : text;
 	}
 	return out;
 }
 export function hindsightReply(messages: Msg[], systemPrompt: string, tools: MockTool[] = []): string | { tool: string; args: Record<string, unknown> } | null {
 	const last = messages[messages.length - 1];
+	// 1.2 的 OpenAI 路径通过 response_format 请求工具参数，不再发送 tools / toolResult。
+	const schemaMarker = "只输出一个符合下面 JSON Schema 的 JSON 对象，不要任何解释、不要 Markdown 代码块：\n";
+	if (/You MUST ONLY use information from retrieved tool results/.test(systemPrompt) && systemPrompt.includes(schemaMarker)) {
+		const schema = JSON.parse(systemPrompt.split(schemaMarker).at(-1)!) as MockTool["parameters"] & {
+			properties?: { call?: { anyOf?: { properties: { name: { enum: string[] }; arguments: MockTool["parameters"] } }[] } };
+		};
+		const answer = "根据记忆：用户喜欢简洁的回答。";
+		const choices = schema.properties?.call?.anyOf;
+		if (choices) {
+			const pick = choices.find((c) => c.properties.name.enum.includes("answer_ready")) ?? choices[0];
+			const name = pick.properties.name.enum[0];
+			return JSON.stringify({ call: { name, arguments: fillArgs({ name, parameters: pick.properties.arguments }, answer) } });
+		}
+		const args = fillArgs({ name: "schema", parameters: schema }, answer);
+		if ("answer" in args) args.answer_found = true;
+		return JSON.stringify(args);
+	}
 	// 反思（reflect）是带工具的多轮：先按要求调检索工具，拿到结果后调 done 给出回答
 	if (/You MUST ONLY use information from retrieved tool results/.test(systemPrompt) && tools.length) {
 		const q = textOf([...messages].reverse().find((m) => m.role === "user") ?? { role: "user", content: "" }).slice(0, 200);
 		const done = tools.find((t) => t.name === "done");
 		const searched = messages.filter((m) => m.role === "toolResult").length;
-		if (done && searched >= 1) return { tool: "done", args: { ...fillArgs(done, "根据记忆：用户喜欢简洁的回答。"), answer: "根据记忆：用户喜欢简洁的回答。" } };
+		if (done && searched >= 1) return { tool: "done", args: { ...fillArgs(done, "根据记忆：用户喜欢简洁的回答。"), answer: "根据记忆：用户喜欢简洁的回答。", answer_found: true } };
 		const pick = tools.find((t) => t.name !== "done") ?? tools[0];
 		return { tool: pick.name, args: { ...fillArgs(pick, q), query: q } };
 	}

@@ -5,12 +5,12 @@ name = "pia-hindsight"
 version = "0.0.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-  "hindsight-embed==0.10.3",
-  "hindsight-api-slim[local-onnx,embedded-db]==0.10.3",
+  "hindsight-embed==1.2.0",
+  "hindsight-api-slim[local-onnx,embedded-db]==1.2.0",
   "flashrank==0.2.10",
 ]
 
 [tool.uv]
 package = false
 # 解析结果只取这个时间点之前发布的版本：换镜像（清华 / 阿里）也能得到同一套依赖
-exclude-newer = "2026-10-11T00:00:00Z"
+exclude-newer = "2026-11-09T00:00:00Z"

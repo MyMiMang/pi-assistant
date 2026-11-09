@@ -4,34 +4,34 @@
     {
       "name": "node",
       "kind": "runtime",
-      "version": "22.23.3",
+      "version": "22.23.4",
       "license": "MIT",
       "$comment": "安装包内置的 Node 运行时（Tauri sidecar），官方发布包 + 固定 SHA256",
       "base": "https://nodejs.org/dist/v{v}/",
       "assets": {
         "aarch64-apple-darwin": {
           "file": "node-v{v}-darwin-arm64.tar.gz",
-          "sha256": "23b25245dcfb9af7262f8ff142e9e2e0af025368117329e7a7458a51e5922f53"
+          "sha256": "c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428"
         },
         "x86_64-apple-darwin": {
           "file": "node-v{v}-darwin-x64.tar.gz",
-          "sha256": "8a677b0219178efd6eb0e475457c4afb452b521a92f6e67845a73bd85727f2a8"
+          "sha256": "efcc2b0db6f94bf53eddb038fe2b370277a042bd29e4f19b8f8e23598795b819"
         },
         "x86_64-pc-windows-msvc": {
           "file": "node-v{v}-win-x64.zip",
-          "sha256": "2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71"
+          "sha256": "cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20"
         },
         "aarch64-pc-windows-msvc": {
           "file": "node-v{v}-win-arm64.zip",
-          "sha256": "33dad22e4cef5ee8f9fbb1b0d037fdacd0e56d12a4580f0d63f68b894deab535"
+          "sha256": "a8b8cd79cbbb3062435f449591d98dd63730bbbf30ce2d7cc3a6376c236cb111"
         },
         "x86_64-unknown-linux-gnu": {
           "file": "node-v{v}-linux-x64.tar.xz",
-          "sha256": "df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de"
+          "sha256": "1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce"
         },
         "aarch64-unknown-linux-gnu": {
           "file": "node-v{v}-linux-arm64.tar.xz",
-          "sha256": "a44aeb94849a299b22df10b9e622ec2f605c2183501bc40590705131de7c740f"
+          "sha256": "6287aa46b6c375d816e63ae66d024fbbfd70404825aabdfdf898a970871d2f4b"
         }
       },
       "adapter": "apps/tray/scripts/build-sidecar.mjs",
@@ -98,29 +98,29 @@
       "name": "cloudflared",
       "kind": "github-release",
       "repo": "cloudflare/cloudflared",
-      "version": "2026.10.0",
+      "version": "2026.10.7",
       "license": "Apache-2.0",
       "$comment": "首次开启远程访问时由服务按此清单下载到 数据目录/bin 并校验 SHA256（GitHub 发布资产摘要）。升级：改 version 与各 sha256。",
       "assets": {
         "darwin-arm64": {
           "file": "cloudflared-darwin-arm64.tgz",
-          "sha256": "a2f79ff7b9420aa537d74af239f376da170bbabeb529aec416002adac6a72e70"
+          "sha256": "3586ccf397e98e5f437e60e7c307ca6ac463e110580503af8bb8e6f9ebf831bd"
         },
         "darwin-x64": {
           "file": "cloudflared-darwin-amd64.tgz",
-          "sha256": "903845b81828c8cb3c5d13d816a2de71c06a3da5785469df8eb0e1b736d92f9f"
+          "sha256": "02f3edfd87684dd5b705607688e4eb4b323f6e777b81e7b3a85af556aa356848"
         },
         "linux-x64": {
           "file": "cloudflared-linux-amd64",
-          "sha256": "d33ff2d14475178d2012c2c56beba87389ac5ded27649519f198a7d3134a99db"
+          "sha256": "1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872"
         },
         "linux-arm64": {
           "file": "cloudflared-linux-arm64",
-          "sha256": "e6422b9d4f72d3194bc5a38676f13667c06666523217b842a877d72a80b5ac08"
+          "sha256": "3df43aedc9ff291d1735b5cb576cb97e0b157488796db2e32b28aecabb445775"
         },
         "win32-x64": {
           "file": "cloudflared-windows-amd64.exe",
-          "sha256": "86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c"
+          "sha256": "2493dbc168923bb3e59e5e7716f71deced92992eea9acd6e9d74f84ac7751343"
         }
       },
       "adapter": "packages/server/src/cloudflared-bin.ts + tunnel.ts",
@@ -130,19 +130,19 @@
       "name": "lima",
       "kind": "github-release",
       "repo": "lima-vm/lima",
-      "version": "2.2.1",
+      "version": "2.3.0",
       "license": "Apache-2.0",
       "$comment": "macOS 助理电脑虚拟机（vmType vz）。开启助理电脑时下载到 数据目录/vm/dist 并校验 SHA256；只用这里的 limactl，从不调用 PATH 里的。升级：改 version + sha256，并跑 macOS CI 的 limactl validate。",
       "assets": {
         "darwin-arm64": {
           "file": "lima-{v}-Darwin-arm64.tar.gz",
-          "sha256": "9e9eacce88f37e185c346bad73aa6136f738d8cdf8c3bb23cd42b071824bc66e",
-          "size": 38328082
+          "sha256": "b7af444bd8f91d3c307477e562f2cf3bd7595d62b9429185e4fa841563578cfc",
+          "size": 50317981
         },
         "darwin-x64": {
           "file": "lima-{v}-Darwin-x86_64.tar.gz",
-          "sha256": "6b776e4bc41f358e6ee01fefcc78e2eb26f11635a0fcff632234af77a566c6c4",
-          "size": 24958659
+          "sha256": "d58bc7d6b8158d638720d8c8fdb17eb58527dfead6a29a5b60f48a35ee4a65a6",
+          "size": 37793345
         }
       },
       "adapter": "packages/server/src/desktop/lima.ts",
@@ -152,19 +152,19 @@
       "name": "nerdctl-full",
       "kind": "github-release",
       "repo": "containerd/nerdctl",
-      "version": "2.4.1",
+      "version": "2.4.2",
       "license": "Apache-2.0",
-      "$comment": "Lima 虚拟机里的容器引擎（containerd + nerdctl + CNI + BuildKit，rootful）。与 Lima 2.2.1 内置默认版本一致（Lima 2.x 要求 ≥2.1.6 端口转发才正常）。由我们下载校验后以本地路径交给 Lima。",
+      "$comment": "Lima 虚拟机里的容器引擎（containerd + nerdctl + CNI + BuildKit，rootful）。与 Lima 2.3.0 搭配（Lima 2.x 要求 ≥2.1.6 端口转发才正常）。由我们下载校验后以本地路径交给 Lima。",
       "assets": {
         "linux-arm64": {
           "file": "nerdctl-full-{v}-linux-arm64.tar.gz",
-          "sha256": "2deffe14625f93866f90a8f265d0f59d6fa476c7dc54b98adb327b1b4613efd4",
-          "size": 266787249
+          "sha256": "fe0ef0e9840ee8932640e6058f84b7fa98050f9726e44af44883a5b804ae830e",
+          "size": 270513423
         },
         "linux-x64": {
           "file": "nerdctl-full-{v}-linux-amd64.tar.gz",
-          "sha256": "ff018f11ac2f1354bf7b3aaaca6e0b52d81139c746a89134744d0b7be3a0e62f",
-          "size": 293278396
+          "sha256": "1f12c1a5840744fdf7029483c55a69813d44aa2ec1ef879d52d81ff6a3049ecd",
+          "size": 297720400
         }
       },
       "adapter": "packages/server/src/desktop/lima.ts"
@@ -234,39 +234,39 @@
       "name": "uv",
       "kind": "github-release",
       "repo": "astral-sh/uv",
-      "version": "0.13.0",
+      "version": "0.13.7",
       "license": "MIT OR Apache-2.0",
       "$comment": "高级记忆（Hindsight）用的 Python 包管理器。首次开启时下载到 数据目录/bin 并校验 SHA256；GitHub 不通时改从 PyPI（或国内镜像）下载同版本 wheel，同样校验固定的 SHA256。",
       "assets": {
         "darwin-arm64": {
           "file": "uv-aarch64-apple-darwin.tar.gz",
-          "sha256": "a9c1b29002cf3c83f07fa9cd8a887a3be0107d90e23189721221e7257db8e3d6",
-          "wheel": "uv-0.13.0-py3-none-macosx_11_0_arm64.whl",
-          "wheelSha256": "a5f93ae362b751737cecef0bbc0294624be68a843ff9b32d86e6862a26101630"
+          "sha256": "81b811b57e4624df7ed3aac148e0359100d9962f3d9dce00aec533dc2e086731",
+          "wheel": "uv-0.13.7-py3-none-macosx_11_0_arm64.whl",
+          "wheelSha256": "f91a229093163eefca89ea1b220a221d64c3beade05d03519a6584d1797a5a5f"
         },
         "darwin-x64": {
           "file": "uv-x86_64-apple-darwin.tar.gz",
-          "sha256": "5f44dcbde809b632f47c36fadb241cb4d6f9af71d0c8f172b5d2026d3dde742c",
-          "wheel": "uv-0.13.0-py3-none-macosx_10_12_x86_64.whl",
-          "wheelSha256": "93265932cb2efd1486d4d182211281b3f0b31637e2fc160c4c8d7b15294188d1"
+          "sha256": "20c47e4c1f630b8abaff8c291fa9b9aa300fef92c4fbff95adf198b55287cda7",
+          "wheel": "uv-0.13.7-py3-none-macosx_10_12_x86_64.whl",
+          "wheelSha256": "fd04bf01ba5f2829f4f94ca8f0c24a743f21e73d75045613ed6fc2fd66fc7bda"
         },
         "linux-x64": {
           "file": "uv-x86_64-unknown-linux-gnu.tar.gz",
-          "sha256": "1468ebd5a5541121837c5a2817b9972ba6090fa6caa3d142620850a47fb75154",
-          "wheel": "uv-0.13.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
-          "wheelSha256": "52c7da0fd9056d9551124777ec77de53f0df7017daf8f98a19e947b7837416ed"
+          "sha256": "c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83",
+          "wheel": "uv-0.13.7-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "wheelSha256": "2c9bdc4a872b60a93c5f26c0791089ea11585a4f9d3b3c017d78eb8487505e25"
         },
         "linux-arm64": {
           "file": "uv-aarch64-unknown-linux-gnu.tar.gz",
-          "sha256": "3ccfb6af6e242433eb552f7d9676abd5412c6595c497e990d9c8cb7b5bd4d2c3",
-          "wheel": "uv-0.13.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl",
-          "wheelSha256": "5163a516b9a488bccb4001f727720b775719dfb6dcb144a9bc0ef23e5cfdd269"
+          "sha256": "71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc",
+          "wheel": "uv-0.13.7-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl",
+          "wheelSha256": "a90f5d95716ab83091f0f73a8e7ec64e557abf2a28537fcd719b2ac88e6f725a"
         },
         "win32-x64": {
           "file": "uv-x86_64-pc-windows-msvc.zip",
-          "sha256": "088962f9e7b7bd9ea740c04c650b2a21c8928c345bd99ac24350dc924dba656c",
-          "wheel": "uv-0.13.0-py3-none-win_amd64.whl",
-          "wheelSha256": "0367b4e0ae4dcef32da4aa2ad2f3853b6ad81d50c187abe50d343d892b8fea21"
+          "sha256": "0cdc5b38fe5a8168ed6a25814f5ba43c21d313dd3187314fccb37b7cec46e021",
+          "wheel": "uv-0.13.7-py3-none-win_amd64.whl",
+          "wheelSha256": "2835e2ab397d0db86323b9975dce75ecd76aa9cfa0d6a2aea84734aae7f8c9b3"
         }
       },
       "adapter": "packages/server/src/memory/hindsight/uv-bin.ts"
@@ -275,11 +275,11 @@
       "name": "hindsight",
       "kind": "pypi",
       "packages": {
-        "hindsight-embed": "0.10.3",
-        "hindsight-api-slim[local-onnx,embedded-db]": "0.10.3",
+        "hindsight-embed": "1.2.0",
+        "hindsight-api-slim[local-onnx,embedded-db]": "1.2.0",
         "flashrank": "0.2.10"
       },
-      "excludeNewer": "2026-10-11T00:00:00Z",
+      "excludeNewer": "2026-11-09T00:00:00Z",
       "license": "MIT",
       "project": "packages/server/hindsight/pyproject.toml",
       "adapter": "packages/server/src/memory/hindsight",
@@ -288,14 +288,14 @@
     {
       "name": "@vectorize-io/hindsight-all",
       "kind": "npm",
-      "version": "0.10.3",
+      "version": "1.2.0",
       "license": "MIT",
       "adapter": "packages/server/src/memory/hindsight/sidecar.ts"
     },
     {
       "name": "@vectorize-io/hindsight-client",
       "kind": "npm",
-      "version": "0.10.3",
+      "version": "1.2.0",
       "license": "MIT",
       "adapter": "packages/server/src/memory/hindsight/provider.ts"
     },

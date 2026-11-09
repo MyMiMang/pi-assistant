@@ -44,8 +44,8 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 
 | 组件 | 版本 | 许可证 |
 |---|---|---|
-| [Hindsight](https://github.com/vectorize-io/hindsight)（hindsight-embed、hindsight-api-slim，PyPI） | 0.10.3 | MIT |
-| [@vectorize-io/hindsight-all](https://www.npmjs.com/package/@vectorize-io/hindsight-all) / [hindsight-client](https://www.npmjs.com/package/@vectorize-io/hindsight-client) | 0.10.3 | MIT |
+| [Hindsight](https://github.com/vectorize-io/hindsight)（hindsight-embed、hindsight-api-slim，PyPI） | 1.2.0 | MIT |
+| [@vectorize-io/hindsight-all](https://www.npmjs.com/package/@vectorize-io/hindsight-all) / [hindsight-client](https://www.npmjs.com/package/@vectorize-io/hindsight-client) | 1.2.0 | MIT |
 | [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank) | 0.2.10 | Apache-2.0 |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime)（Hindsight 的依赖） | 1.x | MIT |
 | [uv](https://github.com/astral-sh/uv) | 0.13.0 | MIT OR Apache-2.0 |

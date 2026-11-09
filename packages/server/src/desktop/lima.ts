@@ -1,6 +1,6 @@
 /**
- * macOS 自带运行时（DESIGN §15.2 第 2 步）：Lima 2.2.1 + vmType vz（Apple Virtualization.framework，macOS 13+，Apple 芯片 / Intel）。
- * - 一台共用虚拟机 `pia-desktop`（Debian 12 genericcloud），里面是 rootful containerd + nerdctl（nerdctl-full 2.4.1），
+ * macOS 自带运行时（DESIGN §15.2 第 2 步）：Lima 2.3.0 + vmType vz（Apple Virtualization.framework，macOS 13+，Apple 芯片 / Intel）。
+ * - 一台共用虚拟机 `pia-desktop`（Debian 12 genericcloud），里面是 rootful containerd + nerdctl（nerdctl-full 2.4.2），
  *   每个助理一个桌面容器；容器端口发布在虚拟机里，Lima 自动转发到 Mac 的 127.0.0.1。
  * - limactl / 系统盘 / nerdctl-full 都由我们下载（断点续传 + 固定摘要校验 + 可选 GitHub 加速前缀），以本地路径交给 Lima；
  *   LIMA_HOME 是我们自己的目录，`mounts: []` 不挂载任何 Mac 文件夹。
