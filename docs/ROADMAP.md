@@ -4,8 +4,8 @@
 新需求立刻记一行；做完改状态，不写长段落（细节写进设计文档，进度看提交信息）。2026-10-18 以前的长记录见 [history/ROADMAP-2026-10-18.md](history/ROADMAP-2026-10-18.md)。
 
 ## 进行中
-- [已完成(已合 main，未打包)] 原生 ACP 第一段：Gemini CLI / CodeBuddy 共用 native 执行、审批、步骤展示、load；Cursor 暂缓（[批准实施方案](design/native-acp-agents-impl.md)）
-- [已完成(未提交/未打包)] 原生 ACP 第二段：App npm、私有安装、Agent Auth、手动更新、模型发现和卡片；check 与新旧五项模型服务 e2e 通过，真实工具和跨平台产物未验证（[实施方案](design/native-acp-agents-impl.md)）
+- [已发布(beta.56)] 原生 ACP 第一段：Gemini CLI / CodeBuddy 共用 native 执行、审批、步骤展示、load；Cursor 暂缓（[批准实施方案](design/native-acp-agents-impl.md)）
+- [已发布(beta.56)] 原生 ACP 第二段：App npm、私有安装、Agent Auth、手动更新、模型发现和卡片；check 与新旧模型服务 e2e、五平台构建与 Mac/Windows 安装检查通过；真实工具安装/登录待用户用发布版实测（[实施方案](design/native-acp-agents-impl.md)）
 - [搁置] iOS 原生 App：TestFlight 需付费开发者账号（688 元/年），用户暂不弄；免费路线只有 AltStore 自签（7 天续签）、安卓安装包、改进主屏幕 PWA
 - [已完成(未打包)] 下载组件遇到服务器临时出错自动重试两次（打包和 App 内首次安装组件共用），用户取消立即停
 - [已发布(beta.55)] 扩展工具统一停止 / 十分钟卡死保护（等待用户不计时）；项目反复卡住同一轮只提醒一次
