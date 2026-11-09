@@ -62,6 +62,17 @@ test("历史渲染成文字：新开会话的第一条消息 = 前文 + 这次�
 	assert.match(renderTranscript([result("t", "炸了", true)]), /出错/);
 });
 
+test("换模型历史直接带原生操作的一行结果标题，不创建Pi工具调用或摘要", () => {
+	const native = { ...asst([{ type: "text", text: "文件处理完毕" }]), nativeToolTitles: ["成功：读取 a.txt", "失败：写入 b.txt", "未确认：执行命令\n仍需检查"] };
+	const rendered = renderTranscript([user("处理文件"), native]);
+	assert.equal(rendered, "用户：处理文件\n\n助理：文件处理完毕\n成功：读取 a.txt\n失败：写入 b.txt\n未确认：执行命令 仍需检查");
+	assert.doesNotMatch(rendered, /调用工具|工具 .* 的结果|摘要/);
+	const fresh = String(renderFreshInput([user("处理文件"), native, user("换个模型继续")])[0].text);
+	assert.match(fresh, /成功：读取 a.txt/);
+	assert.match(fresh, /失败：写入 b.txt/);
+	assert.equal(native.content.filter((b) => b.type === "toolCall").length, 0);
+});
+
 test("同一轮续接的判断：toolCall 和等待中的 id 一致、都有结果；多出的用户消息是插话", () => {
 	const pending = new Set(["a", "b"]);
 	const base: Message[] = [system, user("干活"), asst([call("a"), call("b")])];

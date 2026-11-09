@@ -3,6 +3,8 @@
  * 启动（models.ts）、关闭（main.ts）、接口（routes/models.ts）都遍历 `cliServices`，不各写一份。
  */
 import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
+import { registerNativeProvider, type NativeProviderId } from "./pi-adapter/cli-models/native.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createCliChannelService, type CliChannelService } from "./cli-channel-service.ts";
@@ -82,7 +84,27 @@ const opencode = createCliChannelService({
 	requireLogin: false, // 自带免费模型，没登录也能用；有没有模型可选看 `opencode models` 能不能列出来
 });
 
-export const cliServices: CliChannelService[] = [claudeCode, codex, antigravity, opencode];
+function nativeService(id: NativeProviderId, name: string, envName: string) {
+	return createCliChannelService({
+		id,
+		label: name,
+		envName,
+		find: () => null,
+		notFound: `尚未配置 ${name} 的 Pi 专用可执行文件`,
+		detect: async (command): Promise<{ installed: boolean; loggedIn: boolean; loginUnverified?: boolean }> => ({ installed: isAbsolute(command) && existsSync(command), loggedIn: false, loginUnverified: true }),
+		requireLogin: false,
+		register: (models, command) => registerNativeProvider(models, id, {
+			dataDir: config.dataDir,
+			bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`,
+			command,
+		}),
+	});
+}
+
+const gemini = nativeService("gemini-cli", "Gemini CLI", "GEMINI_COMMAND");
+const codebuddy = nativeService("codebuddy-cli", "CodeBuddy", "CODEBUDDY_COMMAND");
+
+export const cliServices: CliChannelService[] = [claudeCode, codex, antigravity, opencode, gemini, codebuddy];
 
 /** 启动时在后台并行注册各家渠道（各自问模型列表 / 起进程 / 联网，可能要几十秒，不能挡住服务开始监听）；单家失败只记日志。返回的 Promise 在全部完成（含失败）后落定。 */
 export const startCliChannels = (models: PiModels): Promise<void> => Promise.all(cliServices.map((svc) => svc.ensure(models).catch((e) => console.error(`[models] 注册 ${svc.id} 渠道失败`, e)))).then(() => undefined);

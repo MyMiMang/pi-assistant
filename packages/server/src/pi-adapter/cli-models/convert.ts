@@ -62,6 +62,9 @@ function assistantText(m: AssistantMessage): string {
 		if (b.type === "text" && b.text) parts.push(b.text);
 		else if (b.type === "toolCall") parts.push(`[调用工具 ${b.name}(${JSON.stringify(b.arguments)})]`);
 	}
+	// 原生操作已经由工具方执行；只带持久化的一行结果标题，不伪造 toolCall / toolResult。
+	const titles = (m as AssistantMessage & { nativeToolTitles?: string[] }).nativeToolTitles;
+	if (Array.isArray(titles)) for (const title of titles) if (typeof title === "string" && title.trim()) parts.push(title.replace(/[\r\n]+/g, " ").slice(0, 500));
 	return parts.join("\n");
 }
 

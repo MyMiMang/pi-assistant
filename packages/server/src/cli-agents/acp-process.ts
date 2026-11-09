@@ -3,7 +3,7 @@
  *
  * 流程：起进程 → `initialize` → `session/new`（或 `session/resume` 续接）带 http 类型 `mcpServers` 指向工具桥（随机令牌放 Authorization 头）
  * → `session/set_config_option` 设模型 / 思考强度 → `session/prompt`（回包才算一轮结束）。JSON-RPC 读写复用 `jsonrpc-stdio.ts`。
- * 命令行自己的 `session/request_permission` 一律回「允许一次」：审批已经在 Pi 那边做过（它的权限规则也只放行我们的工具）。
+ * brain 的 `session/request_permission` 沿用「允许一次」；native 经宿主异步回调，只认本请求提供的一次性选项。
  * 停止 = `session/cancel`（实测约 0.3 秒），再过一会儿关进程；空闲 10 分钟退出；运行目录（里面是带系统提示的配置文件，0700 / 0600）结束一定删，令牌和系统提示都不进命令行。
  *
  * **工具调用只认工具桥收到的 MCP `tools/call`**（工具名 + 参数）：ACP 的 `tool_call` 通知没有能和 MCP 请求配对的 id，并行时两边顺序也不一致（实测）。
@@ -12,8 +12,9 @@
  * 本类不碰 Pi；Pi 渠道（`pi-adapter/cli-models/acp.ts`）拿它的条目去拼 Pi 的流。
  */
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { acpUsageOf, configValues, convertAcpUpdate, pickAllowOption, pickEffort, type AcpEvent } from "./acp-events.ts";
+import { dirname, isAbsolute, join } from "node:path";
+import { AcpInactivity, type AcpClock } from "./acp-inactivity.ts";
+import { acpUsageOf, configValues, convertAcpUpdate, pickAllowOption, pickEffort, pickOnceOption, type AcpEvent, type NativeAcpToolEvent } from "./acp-events.ts";
 import type { TokenUsage } from "./events.ts";
 import { RpcClient, type RpcExit } from "./jsonrpc-stdio.ts";
 import { toolBridge, type BridgeCall, type BridgeRun, type CallToolResult, type Tool, type ToolBridge } from "./tool-bridge.ts";
@@ -39,6 +40,12 @@ export interface AcpRunFile {
 
 /** 每家命令行的启动方式（纯数据 / 纯函数，实例见 `opencode-launch.ts`） */
 export interface AcpProfile {
+	/** 缺省保持既有 brain 行为；native 保留工具方原生执行。 */
+	mode?: "brain" | "native";
+	/** 进程启动前准备专用 home / 工作区配置。 */
+	prepare?(input: { workDir: string; dataDir: string; runDir: string }): void;
+	/** 有已证实的抑制回放扩展时，由薄 profile 提供。 */
+	loadParams?: Record<string, unknown>;
 	/** 报错里的名字，如 `OpenCode` */
 	label: string;
 	/** 我们的工具在 ACP `tool_call` 标题里的前缀，如 `pia_` */
@@ -55,6 +62,7 @@ export interface AcpProfile {
 
 /** 交给上层的条目：文字 / 思考增量、工具桥收到的调用、「调用收齐了」、一轮的结果 */
 export type AcpItem =
+	| (NativeAcpToolEvent & { runId: string; sessionId: string })
 	| Extract<AcpEvent, { type: "text_delta" | "thinking_delta" }>
 	/** `id` 是交给 Pi 的 toolCall id（带进程随机前缀，跨进程不重复）；`key` 是工具桥配对键 */
 	| { type: "tool_call"; id: string; key: string; name: string; args: Record<string, unknown> }
@@ -82,7 +90,7 @@ export interface AcpProcessOptions {
 	bridgeBaseUrl: string;
 	tools: Tool[];
 	systemPrompt?: string;
-	/** 续用的会话 id（`session/resume`） */
+	/** 续用的会话 id（brain: session/resume；native: 协商 loadSession 后 session/load） */
 	sessionId?: string;
 	collectMs?: number;
 	settleMs?: number;
@@ -91,6 +99,13 @@ export interface AcpProcessOptions {
 	extraEnv?: Record<string, string>;
 	/** 测试可换成独立的工具桥登记表 */
 	bridge?: ToolBridge;
+	/** native：宿主异步审批，返回原样 optionId；只接受 allow_once / reject_once。 */
+	requestPermission?: (params: unknown, signal: AbortSignal) => Promise<string | undefined>;
+	isPaused?: () => boolean;
+	/** 等待 MCP 宿主审批时也暂停无事件保护。 */
+	isWaitingForApproval?: () => boolean;
+	inactivityMs?: number;
+	clock?: AcpClock;
 }
 
 /** 当前这一轮的接收方：每个条目 + 进程退出 */
@@ -126,9 +141,22 @@ export class AcpProcess {
 	private cur: { model?: string; effort?: string; efforts: string[] } = { efforts: [] };
 	/** 这一轮：模型报告的我们的工具数 / 桥收到的调用数；这一批并行调用是否正在收齐 */
 	private turn = { acpIds: new Set<string>(), acp: 0, bridge: 0, collecting: false };
+	/** 原样 initialize 回包，供上层读取能力和认证方法，不做登录探测。 */
+	initializeResult: unknown;
+	private acceptingUpdates = false;
+	/** 能力不支持 load 而新建，必须使用上层提供的完整历史输入。 */
+	private freshFallback = false;
+	private readonly replayTools = new Set<string>();
+	private readonly permissions = new Map<number | string, AbortController>();
+	private readonly inactivity: AcpInactivity;
+	private nativeOptions: Array<{ id: string; category?: unknown; values: string[] }> = [];
 
 	constructor(private readonly opts: AcpProcessOptions) {
 		this.sessionId = opts.sessionId;
+		this.inactivity = new AcpInactivity(opts.inactivityMs ?? ACP_IDLE_MS, () => this.permissions.size > 0 || !!opts.isWaitingForApproval?.(), () => {
+			this.abort();
+			this.deliverResult(true, "原生工具长时间没有 ACP 事件，已停止", "inactivity");
+		}, opts.clock);
 		this.bridgeRun = (opts.bridge ?? toolBridge).register({ tools: opts.tools, callKey: () => undefined, onCall: (c) => this.onBridgeCall(c) });
 		this.done = new Promise((resolve) => {
 			this.resolveDone = resolve;
@@ -164,11 +192,13 @@ export class AcpProcess {
 		if (this.client) throw new Error("AcpProcess 已经启动过");
 		const o = this.opts;
 		try {
+			if (o.profile.mode === "native" && !isAbsolute(o.command)) throw new Error("原生 ACP command 必须是绝对路径");
 			mkdirSync(o.runsRoot, { recursive: true, mode: 0o700 });
 			mkdirSync(o.workDir, { recursive: true, mode: 0o700 });
 			const dir = mkdtempSync(join(o.runsRoot, "run-"));
 			this.dir = dir;
 			chmodSync(dir, 0o700);
+			o.profile.prepare?.({ workDir: o.workDir, dataDir: o.dataDir, runDir: dir });
 			for (const f of o.profile.runFiles({ systemPrompt: o.systemPrompt })) {
 				const full = join(dir, f.path);
 				mkdirSync(dirname(full), { recursive: true, mode: 0o700 });
@@ -198,10 +228,17 @@ export class AcpProcess {
 
 	private async handshake(): Promise<void> {
 		const c = this.client!;
-		await c.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, HANDSHAKE_TIMEOUT_MS);
+		this.initializeResult = await c.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, HANDSHAKE_TIMEOUT_MS);
 		const mcpServers = this.opts.profile.mcpServers(`${this.opts.bridgeBaseUrl.replace(/\/+$/, "")}/internal/tool-bridge/${this.bridgeRun.id}`, this.bridgeRun.token);
 		const params = { cwd: this.opts.workDir, mcpServers };
-		const res = this.sessionId ? await c.request<unknown>("session/resume", { sessionId: this.sessionId, ...params }, HANDSHAKE_TIMEOUT_MS) : await c.request<unknown>("session/new", params, HANDSHAKE_TIMEOUT_MS);
+		const native = this.opts.profile.mode === "native";
+		const caps = isObj(this.initializeResult) && isObj(this.initializeResult.agentCapabilities) ? this.initializeResult.agentCapabilities : {};
+		if (native && mcpServers.length && (!isObj(caps.mcpCapabilities) || caps.mcpCapabilities.http !== true)) throw new Error("原生 ACP 未声明 HTTP MCP 能力");
+		if (native && this.sessionId && caps.loadSession !== true) {
+			this.freshFallback = true;
+			this.sessionId = undefined;
+		}
+		const res = this.sessionId ? await c.request<unknown>(native ? "session/load" : "session/resume", { sessionId: this.sessionId, ...params, ...(native ? this.opts.profile.loadParams : {}) }, HANDSHAKE_TIMEOUT_MS) : await c.request<unknown>("session/new", params, HANDSHAKE_TIMEOUT_MS);
 		if (!this.sessionId) this.sessionId = isObj(res) && typeof res.sessionId === "string" ? res.sessionId : undefined;
 		if (!this.sessionId) throw new Error("session/new 没有返回会话 id");
 		this.learnOptions(isObj(res) ? res.configOptions : undefined);
@@ -209,6 +246,9 @@ export class AcpProcess {
 
 	/** 记下命令行当前的模型和这个模型能选的思考强度 */
 	private learnOptions(configOptions: unknown): void {
+		if (this.opts.profile.mode === "native") {
+			this.nativeOptions = Array.isArray(configOptions) ? configOptions.filter(isObj).filter((o) => typeof o.id === "string").map((o) => ({ id: o.id as string, category: o.category, values: configValues(configOptions, o.id as string)?.values ?? [] })) : [];
+		}
 		const model = configValues(configOptions, "model");
 		if (model) this.cur.model = model.current;
 		const effort = configValues(configOptions, "effort");
@@ -218,6 +258,15 @@ export class AcpProcess {
 	/** 把模型 / 思考强度切到想要的（和当前一样就不发）；模型切不过去是错误，思考强度切不过去不影响对话 */
 	private async configure(model: string, effort: string | undefined): Promise<void> {
 		const c = this.client!;
+		if (this.opts.profile.mode === "native") {
+			for (const category of ["model", "thought_level"]) {
+				const o = this.nativeOptions.find((v) => v.category === category);
+				const want = category === "model" ? model : pickEffort(o?.values ?? [], effort);
+				if (!o || !want || !o.values.includes(want)) continue;
+				await c.request("session/set_config_option", { sessionId: this.sessionId, configId: o.id, value: want }, HANDSHAKE_TIMEOUT_MS);
+			}
+			return;
+		}
 		const set = (configId: string, value: string) => c.request<unknown>("session/set_config_option", { sessionId: this.sessionId, configId, value }, HANDSHAKE_TIMEOUT_MS);
 		if (this.cur.model !== model) {
 			const res = await set("model", model);
@@ -246,15 +295,18 @@ export class AcpProcess {
 
 	private deliverResult(isError: boolean, text: string, stopReason: string, usage: TokenUsage = emptyUsage()): void {
 		this.promptRunning = false;
+		this.acceptingUpdates = false;
+		this.inactivity.stop();
+		this.cancelPermissions();
 		this.clearCollect();
 		this.deliver({ type: "result", stopReason, isError, text, usage, sessionId: this.sessionId ?? "" });
-		if (this.aborted) this.client?.close();
+		if (this.aborted) { if (stopReason !== "inactivity") this.client?.close(); }
 		else this.armIdle();
 	}
 
 	/** 往命令行发一轮用户输入（ACP 内容块）。进程已结束返回 false。 */
-	sendPrompt(prompt: unknown[], model: string, effort: string | undefined): boolean {
-		if (this.dead || !this.client) return false;
+	sendPrompt(prompt: unknown[], model: string, effort: string | undefined, freshPrompt?: unknown[]): boolean {
+		if (this.dead || !this.client || (this.opts.profile.mode === "native" && (this.promptRunning || this.opts.isPaused?.()))) return false;
 		clearTimeout(this.idleTimer);
 		this.turn = { acpIds: new Set(), acp: 0, bridge: 0, collecting: false };
 		this.promptRunning = true;
@@ -263,7 +315,15 @@ export class AcpProcess {
 			.then(async () => {
 				if (this.startFailed || this.aborted || !this.sessionId) return;
 				await this.configure(model, effort);
-				const res = await c.request<unknown>("session/prompt", { sessionId: this.sessionId, prompt }, 0);
+				if (this.aborted || this.opts.isPaused?.()) { this.abort(); return; }
+				if (this.freshFallback && !freshPrompt) throw new Error("原生 ACP 不支持 load，需上层提供完整历史和首条人设以新建会话");
+				// load 期间的回放不展示；没有通用 replay-end，已见历史工具 ID 继续去重。
+				const pending = c.request<unknown>("session/prompt", { sessionId: this.sessionId, prompt: this.freshFallback ? freshPrompt : prompt }, 0);
+				this.freshFallback = false;
+				this.acceptingUpdates = true;
+				if (this.opts.profile.mode === "native") this.inactivity.start();
+				const res = await pending;
+				if (!this.promptRunning) return;
 				const r = isObj(res) ? res : {};
 				this.deliverResult(false, "", typeof r.stopReason === "string" ? r.stopReason : "end_turn", acpUsageOf(r.usage));
 			})
@@ -275,26 +335,70 @@ export class AcpProcess {
 	}
 
 	private onNotification(method: string, params: unknown): void {
+		if (this.opts.profile.mode === "native") {
+			if (isObj(params) && params.sessionId !== undefined && params.sessionId !== this.sessionId) return;
+			this.inactivity.activity();
+			const update = isObj(params) && isObj(params.update) ? params.update : undefined;
+			if (!this.acceptingUpdates && update && typeof update.toolCallId === "string") this.replayTools.add(update.toolCallId);
+			if (!this.acceptingUpdates || this.aborted || (update && typeof update.toolCallId === "string" && this.replayTools.has(update.toolCallId))) return;
+		}
 		if (method !== "session/update" || (isObj(params) && this.sessionId && params.sessionId !== this.sessionId)) return;
-		for (const ev of convertAcpUpdate(params, this.opts.profile.toolPrefix)) {
+		for (const ev of convertAcpUpdate(params, this.opts.profile.toolPrefix, this.opts.profile.mode)) {
 			if (ev.type === "our_tool_call") {
 				if (!this.turn.acpIds.has(ev.id)) {
 					this.turn.acpIds.add(ev.id);
 					this.turn.acp++;
 					this.recheckCollect();
 				}
-			} else if (ev.type !== "context") this.deliver(ev); // 上下文占用只是最后一次调用的，不用
+			} else if (ev.type === "native_tool") this.deliver({ ...ev, runId: this.bridgeRun.id, sessionId: this.sessionId ?? "" });
+			else if (ev.type !== "context") this.deliver(ev); // 上下文占用只是最后一次调用的，不用
 		}
 	}
 
-	/** 命令行向我们发的请求：权限一律「允许一次」，别的（读写文件等，我们没声明能力）回「不支持」 */
+	/** 权限经模式分别处理；读写文件等未声明的客户端能力统一回「不支持」。 */
 	private onServerRequest(id: number | string, method: string, params: unknown): void {
 		const c = this.client;
 		if (!c) return;
-		if (method === "session/request_permission") {
+		if (this.opts.profile.mode === "native") this.inactivity.activity();
+		if (method === "session/request_permission" && this.opts.profile.mode === "native") {
+			void this.nativePermission(id, params);
+		} else if (method === "session/request_permission") {
 			const optionId = pickAllowOption(isObj(params) ? params.options : undefined);
 			c.respond(id, { outcome: optionId ? { outcome: "selected", optionId } : { outcome: "cancelled" } });
 		} else c.respondError(id, { code: -32601, message: `不支持的方法：${method}` });
+	}
+
+	private async nativePermission(id: number | string, params: unknown): Promise<void> {
+		const c = this.client!;
+		const options = isObj(params) ? params.options : undefined;
+		const reject = pickOnceOption(options, "reject_once");
+		const respond = (optionId?: string) => c.respond(id, { outcome: optionId ? { outcome: "selected", optionId } : { outcome: "cancelled" } });
+		if (this.permissions.has(id)) return;
+		if (this.dead || !this.acceptingUpdates || !isObj(params) || params.sessionId !== this.sessionId || !isObj(params.toolCall) || typeof params.toolCall.toolCallId !== "string" || this.opts.isPaused?.() || !pickOnceOption(options, "allow_once")) {
+			respond(reject);
+			return;
+		}
+		const controller = new AbortController();
+		this.permissions.set(id, controller);
+		try {
+			const picked = await this.opts.requestPermission?.(params, controller.signal);
+			if (!this.permissions.has(id)) return;
+			const allow = pickOnceOption(options, "allow_once");
+			respond(!this.dead && !controller.signal.aborted && !this.opts.isPaused?.() && picked === allow ? allow : reject);
+		} catch {
+			if (this.permissions.has(id)) respond(reject);
+		} finally {
+			this.permissions.delete(id);
+			this.inactivity.activity();
+		}
+	}
+
+	private cancelPermissions(): void {
+		for (const [id, controller] of this.permissions) {
+			controller.abort();
+			this.client?.respond(id, { outcome: { outcome: "cancelled" } });
+		}
+		this.permissions.clear();
 	}
 
 	/** 工具桥收到 `tools/call`：交给上层，并开始（或沿用）收齐窗口 */
@@ -357,6 +461,8 @@ export class AcpProcess {
 
 	/** 正常收摊：关 stdin 让命令行做完手上的就退出（`RpcClient.close` 3 秒不退就强杀）。 */
 	shutdown(): void {
+		this.inactivity.stop();
+		this.cancelPermissions();
 		this.client?.close();
 	}
 
@@ -364,6 +470,9 @@ export class AcpProcess {
 	abort(): void {
 		if (this.aborted) return;
 		this.aborted = true;
+		this.acceptingUpdates = false;
+		this.inactivity.stop();
+		this.cancelPermissions();
 		this.clearCollect();
 		clearTimeout(this.idleTimer);
 		this.bridgeRun.cancelAll();
@@ -383,6 +492,9 @@ export class AcpProcess {
 
 	private onExit(exit: RpcExit): void {
 		this.exited = true;
+		this.acceptingUpdates = false;
+		this.inactivity.stop();
+		this.cancelPermissions();
 		this.clearCollect();
 		clearTimeout(this.idleTimer);
 		this.bridgeRun.close(); // 还挂着的工具调用统统返回「已取消」

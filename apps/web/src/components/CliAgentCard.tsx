@@ -15,17 +15,28 @@ interface CliInfo {
 	loggedIn: boolean;
 	error?: string;
 	registered: boolean;
+	loginUnverified?: boolean;
 	/** Codex：`~/.codex/AGENTS.md` 存在（只检查文件在不在） */
 	globalAgentsMd?: boolean;
 }
 
 /** `opencode-cli`：不叫 `opencode`，Pi 自带一个同名的 OpenCode Zen 密钥渠道 */
-export type CliKind = "claude-code" | "codex" | "antigravity" | "opencode-cli";
+export type CliKind = "claude-code" | "codex" | "antigravity" | "opencode-cli" | "gemini-cli" | "codebuddy-cli";
 /** 模型服务页里要显示的本机命令行渠道（也用来把它们从普通服务列表里去掉） */
-export const CLI_KINDS: CliKind[] = ["claude-code", "codex", "antigravity", "opencode-cli"];
+export const CLI_KINDS: CliKind[] = ["claude-code", "codex", "antigravity", "opencode-cli", "gemini-cli", "codebuddy-cli"];
 
 /** 每家的文案：命令名、登录命令、一句话说明、「?」说明、已注册后显示的模型 */
+const NATIVE_HELP = <>工具会在助理工作文件夹内使用自己的能力。部分读取不会请求 Pi 批准；收到的批准请求仍按你的权限档位处理。配置目录独立，但系统钥匙串中的登录可能共用。纯原生执行期间的插话会在这轮结束后送达。安装和登录入口将在下一段接入。</>;
+
 const KINDS: Record<CliKind, { title: string; command: string; login: string; tone: string; summary: string; models: string; help: ReactNode; loginOptional?: string }> = {
+	"gemini-cli": {
+		title: "Gemini CLI（原生）", command: "Pi 专用 Gemini CLI", login: "", tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
+		summary: "使用工具自身的读写和命令能力，同时可调用 Pi 工具。", models: "模型：工具默认模型", help: NATIVE_HELP,
+	},
+	"codebuddy-cli": {
+		title: "CodeBuddy（原生）", command: "Pi 专用 CodeBuddy", login: "", tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+		summary: "使用工具自身的读写和命令能力，同时可调用 Pi 工具。", models: "模型：工具默认模型", help: NATIVE_HELP,
+	},
 	"claude-code": {
 		title: "Claude Code（本机）",
 		command: "claude",
@@ -149,17 +160,17 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 				) : (
 					<>
 						<Badge tone="green">已安装{info.version ? ` v${info.version}` : ""}</Badge>
-						<Badge tone={info.loggedIn ? "green" : k.loginOptional ? "zinc" : "amber"}>{info.loggedIn ? "已登录" : k.loginOptional ? "未登录（可用免费模型）" : "未登录"}</Badge>
+						<Badge tone={info.loggedIn ? "green" : k.loginOptional ? "zinc" : "amber"}>{info.loginUnverified ? "登录待验证" : info.loggedIn ? "已登录" : k.loginOptional ? "未登录（可用免费模型）" : "未登录"}</Badge>
 					</>
 				)}
 				{info?.registered && <span className="text-mut">{k.models}</span>}
 			</div>
 			{info && !info.installed && (
 				<div className="text-[11px] text-mut2" data-testid={`${kind}-hint`}>
-					这台电脑上没有找到 {k.command} 命令。先按 {k.title.replace("（本机）", "")} 官方说明安装，装好后点「重新检测」，不用重启。
+					{kind === "gemini-cli" || kind === "codebuddy-cli" ? "尚未配置 Pi 专用可执行文件路径；安装和登录入口将在下一段接入。" : <>这台电脑上没有找到 {k.command} 命令。先按 {k.title.replace("（本机）", "")} 官方说明安装，装好后点「重新检测」，不用重启。</>}
 				</div>
 			)}
-			{info?.installed && !info.loggedIn && (
+			{info?.installed && !info.loggedIn && !info.loginUnverified && (
 				<div className="text-[11px] text-mut2" data-testid={`${kind}-hint`}>
 					{k.loginOptional ?? "还没登录。打开终端，运行"} <code className="rounded bg-hover px-1">{k.login}</code> 登录，{k.loginOptional ? "再" : "然后"}点「重新检测」。
 				</div>

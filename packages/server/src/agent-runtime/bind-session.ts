@@ -6,11 +6,18 @@ import { deleteMessage, insertMessage, updateMessage } from "../messages.ts";
 import { type AgentSession, subscribeSession } from "../pi-adapter/index.ts";
 import { fastMetaOf, type FastTracker } from "../pi-adapter/fast-mode.ts";
 import { refusalWillRetry } from "../pi-adapter/compaction-fallback.ts";
+import { nativeAcpMessages } from "./native-acp-messages.ts";
 
 /** 把一个 Pi 会话的事件落盘并广播。 */
 export function bindSession(session: AgentSession, agentId: string, conversationId: string | null, taskId: string | null, onSettled: (aborted: boolean) => void, subagentId?: string, pendingUserEntries?: string[], fastTracker?: FastTracker, allowEmpty?: () => boolean) {
 	const insert = (m: Parameters<typeof insertMessage>[0]) => insertMessage({ ...m, subagentId });
-	let cur: { id: string; text: string; thinking: string; flushAt: number } | null = null;
+	let cur: { id: string; text: string; thinking: string; flushAt: number; sealed?: boolean } | null = null;
+	let nativeMode = false;
+	const native = nativeAcpMessages((m) => insert({ ...m, agentId, conversationId, taskId }));
+	const startFragment = () => {
+		const m = insert({ agentId, conversationId, taskId, role: "assistant", content: "", status: "streaming" });
+		cur = { id: m.id, text: "", thinking: "", flushAt: Date.now() };
+	};
 	// app 消息 ↔ Pi entry 的映射：assistant 消息的 id（供紧随 message_end 的 entry_id 事件落 meta.piEntryId）
 	let lastAssistantMid: string | null = null;
 	const tools = new Map<string, string>();
@@ -43,15 +50,16 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 			return;
 		}
 	};
-	return subscribeSession(session, (e) => {
+	const unsubscribe = subscribeSession(session, (e) => {
 		switch (e.type) {
 			case "assistant_start": {
 				// 先写库再显示：先插入空的“流式中”消息
-				const m = insert({ agentId, conversationId, taskId, role: "assistant", content: "", status: "streaming" });
-				cur = { id: m.id, text: "", thinking: "", flushAt: Date.now() };
+				nativeMode = false;
+				startFragment();
 				break;
 			}
 			case "text_delta":
+				if (nativeMode && (!cur || cur.sealed)) startFragment();
 				if (!cur) break;
 				cur.text += e.delta;
 				bus.emit({ type: "message.delta", id: cur.id, agentId, taskId, subagentId, delta: e.delta });
@@ -62,6 +70,7 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 				break;
 			case "thinking_delta":
 				// 原生思考：App 里实时显示在可折叠的「思考」里（不进正文、不发到外部渠道）
+				if (nativeMode && (!cur || cur.sealed)) startFragment();
 				if (!cur) break;
 				cur.thinking += e.delta;
 				bus.emit({ type: "message.delta", id: cur.id, agentId, taskId, subagentId, delta: e.delta, thinking: true });
@@ -70,6 +79,23 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 					cur.flushAt = Date.now();
 				}
 				break;
+			case "native_tool": {
+				nativeMode = true;
+				runVisible = true;
+				// 只在新步骤出现时封存正文；同一步更新不切片，不造额外分组 / 偏移。
+				if (!native.has(e.id) && cur && !cur.sealed) {
+					if (cur.text.trim() || cur.thinking.trim()) {
+						const { text, thinking } = splitThinking(cur.text);
+						updateMessage(cur.id, { content: text, status: "done", meta: { thinking: [cur.thinking.trim(), thinking].filter(Boolean).join("\n\n").slice(0, 20000) } });
+						cur.sealed = true;
+					} else {
+						deleteMessage(cur.id);
+						cur = null;
+					}
+				}
+				native.update(e);
+				break;
+			}
 			case "assistant_end": {
 				// 服务可能直接结束而没有start；正文、失败或空最终结果也必须照常落库。
 				if (!cur) {
@@ -87,7 +113,7 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 				}
 				const fm = fastMetaOf(fastTracker?.snapshot());
 				// 失败时也保留已经收到的部分正文/思考；错误由程序显示，不再请求模型解释额度。
-				const { text, thinking: inline } = splitThinking(e.text);
+				const { text, thinking: inline } = splitThinking(nativeMode ? cur.text : e.text);
 				const thinking = [cur.thinking.trim(), inline].filter(Boolean).join("\n\n");
 				const meta = { model: `${e.provider}/${e.model}`, ...(usage ? { usage } : {}), ...(thinking ? { thinking: thinking.slice(0, 20000) } : {}), ...(fm ? { fast: fm } : {}) };
 				lastAssistantMid = cur.id;
@@ -141,6 +167,8 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 				break;
 			}
 			case "settled":
+				native.finish(e.aborted);
+				nativeMode = false;
 				runVisible = false;
 				lastErrorMid = null;
 				retriedMids.length = 0;
@@ -165,4 +193,5 @@ export function bindSession(session: AgentSession, agentId: string, conversation
 				break;
 		}
 	});
+	return () => { unsubscribe(); native.finish(true); };
 }

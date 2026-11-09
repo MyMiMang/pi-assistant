@@ -8,6 +8,8 @@ import { config } from "../config.ts";
 import { db } from "../db.ts";
 import { workspaceOf } from "../files.ts";
 import { hostFileAccess } from "../host-control.ts";
+import { createNativePermissionContext } from "./native-acp-permission.ts";
+import { attachNativeTools, registerNativeSessionContext, addNativeSessionCleanup } from "../pi-adapter/cli-models/session-context.ts";
 import { models } from "../models.ts";
 import { createPiSession } from "../pi-adapter/index.ts";
 import { skillFilterFor } from "../skill-scope.ts";
@@ -32,7 +34,7 @@ export async function createAgentSession(a: AgentRow, o: {
 	ext: Parameters<typeof extensionsFor>[3];
 }) {
 	const workspace = workspaceOf(a.id);
-	return await createPiSession({
+	const session = await createPiSession({
 		models,
 		cwd: workspace,
 		agentDir: join(config.agentsDir, a.id),
@@ -48,4 +50,9 @@ export async function createAgentSession(a: AgentRow, o: {
 		skillFilter: skillFilterFor(a.id),
 		...integrationsFor(a.id, o.conversationId),
 	});
+	const native = createNativePermissionContext({ agentId: a.id, conversationId: o.conversationId, taskId: o.taskId, workspace });
+	const unregister = registerNativeSessionContext(session.sessionId, native.context);
+	const detach = attachNativeTools(session);
+	addNativeSessionCleanup(session.sessionId, () => { detach(); unregister(); native.dispose(); });
+	return session;
 }

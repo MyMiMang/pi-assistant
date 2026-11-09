@@ -26,6 +26,8 @@ export interface LaunchRequest {
 	/** 续用的会话 / 线程 id；没有 = 新开 */
 	resumeSessionId?: string;
 	input: CliInput;
+	/** native 协商后无法 load 时的新会话完整输入；不用于任意错误重试。 */
+	freshInput: CliInput;
 	tools: Tool[];
 	oneShot: boolean;
 	/** 这一轮开始时「模型 + 工具集 + 系统提示」的指纹，结束时写对照表用 */
@@ -65,8 +67,10 @@ export type Step =
 export interface CliBackend<L extends CliLive> {
 	/** 界面 / 错误里的名字，如 `Claude Code` */
 	label: string;
+	/** 原生渠道同轮工具回填前也核对工作区等指纹；既有渠道保持原行为。 */
+	checkContinuationComposite?: boolean;
 	/** 续用判断用的指纹：不一样就不续用旧会话（至少含模型；codex 还含工具集和系统提示） */
-	composite(modelId: string, tools: Tool[], systemPrompt: string | undefined): string;
+	composite(modelId: string, tools: Tool[], systemPrompt: string | undefined, key?: string): string;
 	/** 启动 / 续用并发出首条输入；失败抛错（message 就是给用户看的中文说明） */
 	launch(req: LaunchRequest): Promise<L>;
 	/** Pi 执行完工具回来：先交插话，再把结果回给挂着的那几个调用（`ids` = 之前挂着的 toolCall id） */
@@ -174,10 +178,15 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 		const key = oneShot ? undefined : (options?.sessionId ?? `h:${messages[0] ? messageHash(messages[0]) : "empty"}`);
 		if (options?.signal?.aborted) return b.fail("aborted", "已停止");
 
-		// 同一轮续接：把 Pi 执行完的工具结果回填给还挂着的运行
+		const effort = thinkingToEffort(options?.reasoning);
+		const tools = piTools.map(toolDefOf);
+		const systemPrompt = getCurrentSystemPrompt(context.messages) || undefined;
+		const composite = backend.composite(model.id, tools, systemPrompt, key);
+
+		// 同一轮续接也先核对宿主上下文与指纹，避免把结果交给已换工作目录的进程。
 		const existing = key ? live.get(key) : undefined;
 		if (key && existing) {
-			const cont = existing.dead ? null : matchContinuation(messages, existing.pendingIds);
+			const cont = existing.dead || (backend.checkContinuationComposite && existing.composite !== composite) ? null : matchContinuation(messages, existing.pendingIds);
 			if (cont) {
 				b.start();
 				watch(existing, options?.signal);
@@ -190,10 +199,6 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 			kill(key); // 对不上（Pi 重试 / 分支 / 进程已死）：丢掉旧的，当新的一轮
 		}
 
-		const effort = thinkingToEffort(options?.reasoning);
-		const tools = piTools.map(toolDefOf);
-		const systemPrompt = getCurrentSystemPrompt(context.messages) || undefined;
-		const composite = backend.composite(model.id, tools, systemPrompt);
 		let plan: TurnPlan = oneShot ? { mode: "fresh", reason: "单次请求", input: renderFreshInput(messages) } : planTurn(key ? store.get(key) : undefined, composite, messages);
 		let started = false;
 		for (let attempt = 0; attempt < 2; attempt++) {
@@ -201,7 +206,7 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 			const payload = applyPayload(base, await options?.onPayload?.(base, model));
 			let l: L;
 			try {
-				l = await backend.launch({ key, model: payload.model, effort: payload.effort, systemPrompt: payload.systemPrompt, resumeSessionId: payload.resumeSessionId, input: payload.input, tools, oneShot, composite, forget: (x) => finish(x as L) });
+				l = await backend.launch({ key, model: payload.model, effort: payload.effort, systemPrompt: payload.systemPrompt, resumeSessionId: payload.resumeSessionId, input: payload.input, freshInput: renderFreshInput(messages), tools, oneShot, composite, forget: (x) => finish(x as L) });
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);
 				if (plan.mode === "resume" && attempt === 0 && backend.isResumeFailure(msg)) {

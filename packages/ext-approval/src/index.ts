@@ -76,6 +76,12 @@ function outside(workspace: string, p: string): boolean {
 	return rel.startsWith("..") || isAbsolute(rel);
 }
 
+/** Pi 与原生 ACP 共用的凭据路径判断；不扩大为另一套保护规则。 */
+export function credentialAccessDenied(input: { paths?: string[]; command?: string }): boolean {
+	return (input.paths ?? []).some((path) => SECRET_PATHS.some((rule) => rule.test(path))) ||
+		(typeof input.command === "string" && SECRET_PATHS.some((rule) => rule.test(input.command!)));
+}
+
 export function evaluate(
 	toolName: string,
 	input: Record<string, unknown>,
@@ -85,10 +91,10 @@ export function evaluate(
 ): Decision {
 	const path = typeof input.path === "string" ? input.path : undefined;
 	if (usesCuaDirectly(toolName, input)) return { kind: "deny", reason: CUA_DIRECT_REASON };
-	if (path && SECRET_PATHS.some((r) => r.test(path))) return { kind: "deny", reason: "不允许访问凭据/密钥文件" };
+	if (path && credentialAccessDenied({ paths: [path] })) return { kind: "deny", reason: "不允许访问凭据/密钥文件" };
 	if (toolName === "bash") {
 		const cmd = String(input.command ?? "");
-		if (SECRET_PATHS.some((r) => r.test(cmd))) return { kind: "deny", reason: "命令涉及凭据/密钥文件，已拒绝" };
+		if (credentialAccessDenied({ command: cmd })) return { kind: "deny", reason: "命令涉及凭据/密钥文件，已拒绝" };
 		// 完全权限：普通命令不再逐条审批（受保护操作仍由 hardGuard 每次明确批准）
 		if (!hostAccess) for (const [re, label, risk] of RISKY_BASH) if (re.test(cmd)) return { kind: "ask", summary: `${label}：${cmd}`, risk };
 		return { kind: "allow" };

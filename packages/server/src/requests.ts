@@ -28,7 +28,7 @@ export interface RequestRow {
 	resolved_at: number | null;
 }
 
-function create(kind: "approval" | "question", agentId: string, taskId: string | null, toolName: string | null, payload: Record<string, unknown>, title: string, conversationId?: string | null) {
+function create(kind: "approval" | "question", agentId: string, taskId: string | null, toolName: string | null, payload: Record<string, unknown>, title: string, conversationId?: string | null, signal?: AbortSignal) {
 	// 主动巡检（后台、没人在聊）：不给心跳额外权限。需要批准的操作不在巡检任务里直接执行，也不弹卡片、不打扰用户提问；
 	// 要推进就用 proactive_advance 到相关对话的主会话里做（那里走用户平时的权限规则）。
 	if (taskId && (db.prepare("SELECT kind FROM subagents WHERE id = ?").get(taskId) as { kind: string | null } | undefined)?.kind === "heartbeat")
@@ -54,13 +54,18 @@ function create(kind: "approval" | "question", agentId: string, taskId: string |
 	const msg = insertMessage({ agentId, conversationId, role: "card", meta: { kind, requestId: id, taskId, toolName, ...payload, status: "pending" } });
 	const agentName = roomId ? ((db.prepare("SELECT name FROM agents WHERE id = ?").get(agentId) as { name: string } | undefined)?.name ?? "") : "";
 	notify({ title: roomId ? `${agentName}（群聊）：${title}` : title, body: String(payload.summary ?? payload.question ?? ""), tag: id, url: roomId ? `/?room=${roomId}` : `/?agent=${agentId}` });
-	return new Promise<{ approved?: boolean; answer?: string; note?: string; scope?: "task" }>((resolve) => pending.set(id, { resolve, messageId: msg.id }));
+	const result = new Promise<{ approved?: boolean; answer?: string; note?: string; scope?: "task" }>((resolve) => pending.set(id, { resolve, messageId: msg.id }));
+	if (!signal) return result;
+	const cancel = () => requests.resolve(id, { approved: false, note: "操作已取消" }, "system");
+	if (signal.aborted) cancel();
+	else signal.addEventListener("abort", cancel, { once: true });
+	return result.finally(() => signal.removeEventListener("abort", cancel));
 }
 
 export const requests = {
 	/** allowTask：卡片上多一个“本任务内都允许”（同一任务里同类动作不再逐个询问） */
-	approval(agentId: string, taskId: string | null, toolName: string, input: Record<string, unknown>, summary: string, risk: string, conversationId?: string | null, opts: { allowTask?: boolean } = {}) {
-		return create("approval", agentId, taskId, toolName, { input, summary, risk, ...(opts.allowTask ? { allowTask: true } : {}) }, "需要你批准一个操作", conversationId);
+	approval(agentId: string, taskId: string | null, toolName: string, input: Record<string, unknown>, summary: string, risk: string, conversationId?: string | null, opts: { allowTask?: boolean; signal?: AbortSignal } = {}) {
+		return create("approval", agentId, taskId, toolName, { input, summary, risk, ...(opts.allowTask ? { allowTask: true } : {}) }, "需要你批准一个操作", conversationId, opts.signal);
 	},
 	/** extra：卡片上多带的字段（比如群里项目的 projectId，界面按项目筛选用） */
 	question(agentId: string, taskId: string | null, question: string, options: string[], allowFreeText: boolean, conversationId?: string | null, extra: Record<string, unknown> = {}) {

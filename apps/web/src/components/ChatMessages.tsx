@@ -52,6 +52,7 @@ export function activityOf(name: string | undefined, args: Record<string, any> =
 	return { text: `正在${TOOL_LABEL[n] ?? "处理"}…`, icon: <Sparkles className="pa-ic" /> };
 }
 const brief = (args: Record<string, any> = {}) => String(args.command ?? args.path ?? args.url ?? args.title ?? args.question ?? args.pattern ?? "").slice(0, 80);
+const stepTitle = (m: Message) => m.meta.executionSource === "native-acp" ? String(m.meta.title ?? "原生工具") : TOOL_LABEL[m.meta.toolName as string] ?? String(m.meta.toolName ?? "");
 const secs = (ms: number) => (ms < 1000 ? "<1 秒" : ms < 60_000 ? `${(ms / 1000).toFixed(1)} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`);
 
 // ------------------------------------------------------------------ 消息分组
@@ -111,16 +112,19 @@ function Steps({ items, live, busy }: { items: Message[]; live: boolean; busy?: 
 		setOpen((v) => !v);
 	};
 	const errors = items.filter((m) => m.status === "error").length;
+	const interrupted = items.filter((m) => m.status === "interrupted").length;
+	const running = items.some((m) => m.status === "running");
+	const active = live && running;
 	const failed = items.filter((m) => m.status === "error").slice(-1)[0];
 	const took = Math.max(0, (items[items.length - 1].updated_at ?? 0) - items[0].created_at);
 	// 单个步骤失败 ≠ 整个任务停：汇总里写清成功/失败个数，并把失败的那一步点名
-	const head = live ? `正在进行 · 第 ${items.length} 步` : errors ? `${items.length} 个步骤 · ${items.length - errors} 成功 · ${errors} 失败` : `${items.length} 个步骤 · 全部成功`;
+	const head = active ? `正在进行 · 第 ${items.length} 步` : errors || interrupted || running ? `${items.length} 个步骤 · ${items.filter((m) => m.status === "done").length} 成功${errors ? ` · ${errors} 失败` : ""}${interrupted ? ` · ${interrupted} 已中断` : ""}${running ? " · 结果待确认" : ""}` : `${items.length} 个步骤 · 全部成功`;
 	return (
 		<div className={cx("pa-steps", open && "open")} data-testid="steps">
 			<button className="pa-steps-head" onClick={toggle} aria-expanded={open}>
-				{live ? <span className="pa-spinner" /> : errors ? <X className="pa-ic text-red-500" /> : <Check className="pa-ic ok" />}
+				{active ? <span className="pa-spinner" /> : errors || interrupted || running ? <X className="pa-ic text-red-500" /> : <Check className="pa-ic ok" />}
 				<span>{head}</span>
-				{!live && failed && <small className="text-red-500" data-testid="steps-failed">· {TOOL_LABEL[failed.meta.toolName as string] ?? String(failed.meta.toolName ?? "")}失败{busy ? "（这一步失败，任务继续）" : ""}</small>}
+				{!live && failed && <small className="text-red-500" data-testid="steps-failed">· {stepTitle(failed)}失败{busy ? "（这一步失败，任务继续）" : ""}</small>}
 				{!live && <small>用时 {secs(took)}</small>}
 				<ChevronRight className="pa-ic pa-chev" />
 			</button>
@@ -128,18 +132,21 @@ function Steps({ items, live, busy }: { items: Message[]; live: boolean; busy?: 
 			<div className="pa-steps-list" data-testid="steps-list">
 				<ol>
 				{items.map((m) => {
-					const name = m.meta.toolName as string;
+					const native = m.meta.executionSource === "native-acp";
 					const running = m.status === "running";
+					const stopped = m.status === "interrupted";
 					return (
 						<li key={m.id} className="flex-wrap" onClick={() => setDetail(detail === m.id ? null : m.id)} style={{ cursor: "pointer" }}>
-							<i className={cx("pa-st-dot", m.status === "error" && "err")}>{running ? <Loader2 className="pa-ic animate-spin" /> : m.status === "error" ? <X className="pa-ic" /> : <Check className="pa-ic" />}</i>
-							<span className="pa-step-txt">{TOOL_LABEL[name] ?? name}</span>
-							<code>{brief(m.meta.args)}</code>
-							<small>{running ? "…" : secs(Math.max(0, m.updated_at - m.created_at))}</small>
+							<i className={cx("pa-st-dot", (m.status === "error" || stopped) && "err")}>{running ? <Loader2 className="pa-ic animate-spin" /> : m.status === "error" || stopped ? <X className="pa-ic" /> : <Check className="pa-ic" />}</i>
+							<span className="pa-step-txt">{stepTitle(m)}</span>
+							<code>{native ? "原生工具执行" : brief(m.meta.args)}</code>
+							<small>{running ? "…" : stopped ? "已中断" : secs(Math.max(0, m.updated_at - m.created_at))}</small>
 							{detail === m.id && (
 								<pre className="pa-pre w-full" onClick={(e) => e.stopPropagation()}>
 									{JSON.stringify(m.meta.args ?? {}, null, 2)}
 									{m.meta.result ? `\n\n—— 结果 ——\n${m.meta.result}` : ""}
+									{native && m.meta.nativeContent ? `\n\n—— 过程 ——\n${m.meta.nativeContent}` : ""}
+									{native && m.meta.locations ? `\n\n—— 位置 ——\n${m.meta.locations}` : ""}
 								</pre>
 							)}
 						</li>
@@ -152,7 +159,7 @@ function Steps({ items, live, busy }: { items: Message[]; live: boolean; busy?: 
 }
 
 export function Activity({ tool }: { tool?: Message }) {
-	const a = activityOf(tool?.meta.toolName, tool?.meta.args);
+	const a = tool?.meta.executionSource === "native-acp" ? { text: stepTitle(tool), icon: <Terminal className="pa-ic" />, detail: "原生工具执行" } : activityOf(tool?.meta.toolName, tool?.meta.args);
 	const [now, setNow] = useState(() => Date.now());
 	const startedAt = tool?.status === "running" ? tool.created_at : undefined;
 	useEffect(() => {

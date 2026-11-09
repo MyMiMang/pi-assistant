@@ -11,7 +11,21 @@
  */
 import type { ClaudeEvent, TokenUsage } from "./events.ts";
 
+export interface NativeAcpToolEvent {
+	type: "native_tool";
+	id: string;
+	update: "start" | "update";
+	title?: string;
+	kind?: string;
+	status?: "pending" | "in_progress" | "completed" | "failed";
+	content?: unknown[];
+	locations?: Array<{ path: string; line?: number }>;
+	rawInput?: unknown;
+	rawOutput?: unknown;
+}
+
 export type AcpEvent =
+	| NativeAcpToolEvent
 	| Extract<ClaudeEvent, { type: "text_delta" | "thinking_delta" }>
 	/** 模型报告它开始调我们的一个工具（只用来数数，`id` 是模型侧的 id） */
 	| { type: "our_tool_call"; id: string }
@@ -24,7 +38,7 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 /** `session/update` 通知的 params → 0 到多个事件。`toolPrefix` 是我们工具在 ACP 里的标题前缀（`pia_`）。 */
-export function convertAcpUpdate(params: unknown, toolPrefix: string): AcpEvent[] {
+export function convertAcpUpdate(params: unknown, toolPrefix: string, mode: "brain" | "native" = "brain"): AcpEvent[] {
 	const update = isObj(params) && isObj(params.update) ? params.update : undefined;
 	if (!update) return [];
 	switch (update.sessionUpdate) {
@@ -35,12 +49,68 @@ export function convertAcpUpdate(params: unknown, toolPrefix: string): AcpEvent[
 			return text ? [{ type: update.sessionUpdate === "agent_message_chunk" ? "text_delta" : "thinking_delta", text }] : [];
 		}
 		case "tool_call":
-			return str(update.title).startsWith(toolPrefix) ? [{ type: "our_tool_call", id: str(update.toolCallId) }] : [];
+		case "tool_call_update": {
+			if (mode === "brain") return update.sessionUpdate === "tool_call" && str(update.title).startsWith(toolPrefix) ? [{ type: "our_tool_call", id: str(update.toolCallId) }] : [];
+			if (!str(update.toolCallId)) return [];
+			const ev: NativeAcpToolEvent = { type: "native_tool", id: str(update.toolCallId), update: update.sessionUpdate === "tool_call" ? "start" : "update" };
+			for (const key of ["title", "kind"] as const) {
+				if (typeof update[key] === "string") ev[key] = update[key].slice(0, 4096);
+			}
+			if (["pending", "in_progress", "completed", "failed"].includes(str(update.status))) {
+				ev.status = update.status as NativeAcpToolEvent["status"];
+			}
+			if (Array.isArray(update.content)) {
+				ev.content = boundedDisplayValue(update.content) as unknown[];
+			}
+			if (Array.isArray(update.locations)) {
+				ev.locations = update.locations.filter(isObj).filter((l) => typeof l.path === "string").slice(0, 100).map((l) => ({
+					path: str(l.path).slice(0, 4096),
+					...(typeof l.line === "number" ? { line: l.line } : {}),
+				}));
+			}
+			for (const key of ["rawInput", "rawOutput"] as const) {
+				if (Object.hasOwn(update, key)) ev[key] = boundedDisplayValue(update[key]);
+			}
+			return [ev];
+		}
 		case "usage_update":
 			return [{ type: "context", used: num(update.used), size: num(update.size) }];
 		default:
 			return [];
 	}
+}
+
+/** 限制旁路展示数据大小及深度；不解释 / 执行任何通知内容。 */
+function boundedDisplayValue(value: unknown): unknown {
+	const budget = { chars: 16_384, nodes: 300 };
+	const visit = (v: unknown, depth: number): unknown => {
+		if (budget.chars <= 0 || --budget.nodes < 0 || depth >= 6) return "[已截断]";
+		if (typeof v === "string") {
+			const text = v.slice(0, budget.chars);
+			budget.chars -= text.length;
+			return text;
+		}
+		if (Array.isArray(v)) {
+			return v.slice(0, 100).map((item) => visit(item, depth + 1));
+		}
+		if (isObj(v)) {
+			const entries = Object.entries(v).slice(0, 100).map(([k, item]) => {
+				const key = k.slice(0, Math.min(256, budget.chars));
+				budget.chars -= key.length;
+				return [key, visit(item, depth + 1)];
+			});
+			return Object.fromEntries(entries);
+		}
+		return v;
+	};
+	return visit(value, 0);
+}
+
+/** 仅选 agent 实际提供的一次性选项。native 禁止退到永久授权。 */
+export function pickOnceOption(options: unknown, kind: "allow_once" | "reject_once"): string | undefined {
+	if (!Array.isArray(options)) return undefined;
+	const option = options.find((o) => isObj(o) && o.kind === kind && typeof o.optionId === "string" && o.optionId.length > 0);
+	return isObj(option) ? str(option.optionId) : undefined;
 }
 
 /** `session/prompt` 回包里的用量 → 统一用量（ACP 的 inputTokens 不含缓存读取，实测；思考 token 算进输出，总数才对得上） */
