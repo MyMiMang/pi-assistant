@@ -21,6 +21,24 @@
 | 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`local-asr-harness.ts`（本地语音假环境 + 来源端口）、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp、fake-codex：假 codex app-server（JSON-RPC，场景文件 FAKE_CODEX_SCENARIO_FILE 每轮重读；场景含 meta / one-tool / steer / hang / image-tool / server-requests / crash / not-logged-in / e2e-bash；「未登录」用 CODEX_HOME 下的 logged-out 文件表示）、fake-claude：假 claude，按 FAKE_CLAUDE_SCENARIO 出 stream-json 并调工具桥；场景含 meta 回报收到的参数、one-tool / tool-interject / image-tool、stall、resume-missing、think） |
 | e2e 工具 | `e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
 
+## 原生 ACP 第一段（Gemini CLI / CodeBuddy）
+
+复用现有 ACP 渠道、进程池、HTTP 工具桥及 requests；不包含安装 / 登录 / 更新管理。
+
+| 路径（packages/server/ 下） | 职责 |
+|---|---|
+| `src/cli-agents/acp-inactivity.ts` | 原生轮次十分钟无事件保护；等待审批时不取消，可注入时钟 |
+| `src/cli-agents/native-env.ts` | 原生工具独立 home、白名单环境与 HTTP MCP 定义 |
+| `src/cli-agents/profiles/gemini.ts`、`codebuddy.ts` | 每工具薄启动配置；Gemini 空 `.gemini/.env` 和父规则边界、CodeBuddy 设置来源与权限参数 |
+| `src/pi-adapter/cli-models/native.ts` | 原生 ACP 通用渠道注册，显式配置命令路径 |
+| `src/pi-adapter/cli-models/session-context.ts` | 会话宿主、原生过程公开 hook、标题历史与清理 |
+| `src/pi-adapter/session-events.ts` | 从 index 拆出的会话归一化事件与 entry 映射；组合原生展示事件 |
+| `src/agent-runtime/native-acp-permission.ts` | 复用凭据判断和 requests，按一次性选项审批，暂停取消 |
+| `src/agent-runtime/native-acp-messages.ts` | 原生工具步骤落库与停止收尾；不进入 Pi 工具执行 |
+| `test/fixtures/fake-native-acp.mjs` | 原生 ACP 假进程，权限、步骤、HTTP MCP、load 和取消场景 |
+
+相关单测使用 `native-acp-*` / `cli-models-native-*` 命名，全部只用临时数据和假程序。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
+
 ## 每类逻辑放在哪
 - HTTP 接口：`packages/server/src/routes/*`（`http.ts` 只做组装和中间件）。
 - 调 Pi：只在 `pi-adapter/`；工具（给模型用的）在 `packages/ext-*`，用 Pi 的公开扩展 API。
