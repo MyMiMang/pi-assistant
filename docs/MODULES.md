@@ -23,12 +23,14 @@
 
 ## 原生 ACP 第一段（Gemini CLI / CodeBuddy）
 
-复用现有 ACP 渠道、进程池、HTTP 工具桥及 requests；不包含安装 / 登录 / 更新管理。
+复用现有 ACP 渠道、进程池、HTTP 工具桥及 requests；第二段补充私有安装、Agent Auth 与手动更新管理。
 
 | 路径（packages/server/ 下） | 职责 |
 |---|---|
 | `src/cli-agents/acp-inactivity.ts` | 原生轮次十分钟无事件保护；等待审批时不取消，可注入时钟 |
 | `src/cli-agents/native-env.ts` | 原生工具独立 home、白名单环境与 HTTP MCP 定义 |
+| `src/cli-agents/native-install.ts` | App npm 私有安装、完整性校验、版本指针与下次启动清旧版；复用 downloads |
+| `src/cli-agents/native-auth.ts` | initialize / session/new 登录检测与模型目录，Agent Auth 登录和取消；不读凭据 |
 | `src/cli-agents/profiles/gemini.ts`、`codebuddy.ts` | 每工具薄启动配置；Gemini 空 `.gemini/.env` 和父规则边界、CodeBuddy 设置来源与权限参数 |
 | `src/pi-adapter/cli-models/native.ts` | 原生 ACP 通用渠道注册，显式配置命令路径 |
 | `src/pi-adapter/cli-models/session-context.ts` | 会话宿主、原生过程公开 hook、标题历史与清理 |
@@ -37,7 +39,7 @@
 | `src/agent-runtime/native-acp-messages.ts` | 原生工具步骤落库与停止收尾；不进入 Pi 工具执行 |
 | `test/fixtures/fake-native-acp.mjs` | 原生 ACP 假进程，权限、步骤、HTTP MCP、load 和取消场景 |
 
-相关单测使用 `native-acp-*` / `cli-models-native-*` 命名，全部只用临时数据和假程序。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
+相关单测使用 `native-acp-*` / `cli-models-native-*` 以及 `native-install.test.ts`、`native-auth.test.ts` 命名，全部只用临时数据和假程序。`e2e/native-acp-ui.mjs` 覆盖安装、登录取消、更新、模型选择、原生步骤与批准。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
 
 ## 每类逻辑放在哪
 - HTTP 接口：`packages/server/src/routes/*`（`http.ts` 只做组装和中间件）。
@@ -59,7 +61,7 @@
 | 路径 | 负责 |
 |---|---|
 | `server` | 本机服务（Node 22 + Hono），见下节 |
-| `shared` | 前后端共用常量和纯逻辑 |
+| `shared` | 前后端共用常量和纯逻辑；`src/native-cli.ts`：原生 ACP 卡片公开状态和操作结果（不含认证秘密） |
 | `ext-approval` | 审批闸门（有后果的工具调用）；含「不能用命令 / 写脚本直接调 cua」的 deny（`usesCuaDirectly`，所有档位） |
 | `ext-sandbox` | 工作区命令 |
 | `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑）；`structured.ts`：把 cua 的 structuredContent（tab_id / refs / elements / next_call）压成紧凑 JSON 追加给模型（上限 12K，纯逻辑）；`quick-steps.ts`：快速执行者的纯逻辑（候选解析 / 过滤排序 / 问题构造 / 判断 / 拼调用 / 核对 / 窗口只读文字摘要 windowTextRows / 变化行 changedText）；`quick-steps-tool.ts`：`computer_quick_steps` / `hostpc_quick_steps` 工具和共用执行函数 runQuickAction（问 classifier、走 `ctx.executeTool` 照常过审批；target 可省略用最近一次目标）；`words.ts`：敏感 / 危险动作的字样（审批与目标模式守门共用）；`quick-io.ts`：快速执行 / 快速打开共用的 textOf / observe / pageSummary；`quick-open.ts`：`computer_quick_open` / `hostpc_quick_open` 工具（开浏览器 / 应用、按窗口优先级找并绑定、打开网址、读页面；可同时传 steps / goal 直接执行）；`quick-goal.ts`：目标模式的纯逻辑（候选动作生成 / 剪枝 / 危险按钮守门 / 问题构造 / 动作转步骤）；`quick-goal-run.ts`：目标模式执行循环（问 classifier、执行、核对） |
@@ -167,6 +169,7 @@
 | `mcp-env-launcher.mjs` | 原生 MCP 启动器 |
 | `mcp.ts` | MCP 服务器配置 |
 | `mcp-install.ts` | MCP 包预装 |
+| `app-node-npm.ts` | App 自带 Node/npm 绝对路径与共享 npm bin 定位，MCP 与原生安装共用 |
 | `downloads.ts` | 统一下载（断点续传、校验） |
 | `cloudflared-bin.ts` | cloudflared 下载与校验 |
 | `tunnel.ts` | 远程访问隧道 |
@@ -342,6 +345,7 @@
 | `side-panel-section.mjs` | `file-preview.mjs` 的预览侧栏段（停靠、调宽、换文件、放大、Esc、切换对话、1100 窄窗口退回弹窗；含 noir 深色 / glass 浅色截图） |
 | `seed-subagent.mjs` | 预置子代理数据 |
 | `native-launch-env.mjs` | 原生启动环境测试 helper |
+| `native-acp-package.mjs` | 离线原生 ACP e2e 本地假 npm 包、认证与一次性审批程序 |
 | `csp-probe.mjs` | CSP 探测 |
 | `demo-pi-package` | 示例 Pi 扩展包 |
 | `chat-generated-image.png` | 图片查看器测试用的示例图 |
