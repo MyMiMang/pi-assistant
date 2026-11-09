@@ -76,7 +76,7 @@ export function attachNativeTools(session: {
 		if (patch?.type !== "native_tool" || typeof patch.id !== "string") return;
 		const id = patch.runId ? `${patch.runId}:${patch.id}` : patch.id;
 		const previousCall = calls.get(id);
-		const event: NativeToolEvent = { title: "原生工具", status: "pending", ...previousCall, ...patch, id, type: "native_tool" };
+		const event: NativeToolEvent = { title: "工具操作", status: "pending", ...previousCall, ...patch, id, type: "native_tool" };
 		if (previousCall?.status === "completed" || previousCall?.status === "failed") event.status = previousCall.status;
 		calls.set(id, event);
 		if (event.status === "completed" || event.status === "failed") titles.set(id, `${event.status === "completed" ? "成功" : "失败"}：${event.title}`);

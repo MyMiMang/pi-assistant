@@ -15,7 +15,7 @@ export interface NativeAcpSpec {
 	sessionPolicy: string;
 }
 
-export type NativeAcpDeps = AcpDeps & { command: () => string | null };
+export type NativeAcpDeps = AcpDeps & { command: () => string | null; commandArgs?: () => string[]; nativeModels?: () => CliModelSpec[] };
 export type NativeAcpChannel = ReturnType<typeof createAcpChannel>;
 export type NativeProviderId = "gemini-cli" | "codebuddy-cli";
 
@@ -31,15 +31,15 @@ const defaultModel = (spec: NativeAcpSpec): CliModelSpec => ({
 	contextWindow: 32_000, maxTokens: 8_000,
 });
 
-export const registerNativeModels = (models: PiModels, channel: NativeAcpChannel, id: NativeProviderId): Promise<void> => registerNativeAcpModels(models, channel, specs[id], [defaultModel(specs[id])]);
+export const registerNativeModels = (models: PiModels, channel: NativeAcpChannel, id: NativeProviderId, list: CliModelSpec[] = []): Promise<void> => registerNativeAcpModels(models, channel, specs[id], list.length ? list : [defaultModel(specs[id])]);
 
 /** 宿主仅提供 PIA_*_COMMAND 指定的命令；不安装、不检测、不启动工具。 */
-export const registerNativeProvider = (models: PiModels, id: NativeProviderId, deps: NativeAcpDeps): Promise<NativeAcpChannel> => registerNativeAcpProvider(models, specs[id], { ...deps, models: [defaultModel(specs[id])] });
+export const registerNativeProvider = (models: PiModels, id: NativeProviderId, deps: NativeAcpDeps): Promise<NativeAcpChannel> => registerNativeAcpProvider(models, specs[id], { ...deps, models: deps.nativeModels?.().length ? deps.nativeModels() : [defaultModel(specs[id])] });
 
 export function createNativeAcpChannel(spec: NativeAcpSpec, deps: NativeAcpDeps): NativeAcpChannel {
 	const cfg: AcpChannelConfig = {
 		mode: "native",
-		profile: spec.profile,
+		profile: deps.commandArgs ? { ...spec.profile, args: (dir) => [...deps.commandArgs!(), ...spec.profile.args(dir)] } : spec.profile,
 		name: spec.provider,
 		sessionPolicy: spec.sessionPolicy,
 		findCommand: () => null,

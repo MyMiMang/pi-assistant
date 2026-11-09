@@ -1,20 +1,38 @@
-/** MCP 包预装：识别 npx / uvx，装进我们的目录（统一下载进度），会话改用装好的可执行文件；真实安装 + 连接 */
+/** 本地假安装器验证 npm/uv 预装，不联网、不读用户缓存。 */
 await import("./setup.ts");
 import assert from "node:assert/strict";
+import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
+import type { InstallRunnerDeps } from "../src/mcp-install.ts";
 const { parseRunner, pickNpmBin, npmName, resolveMcpCommand, syncMcpDownloads, ensureMcpPackage, mcpDownloadId } = await import("../src/mcp-install.ts");
-const { saveMcp, testMcp, deleteMcp } = await import("../src/mcp.ts");
-const mcpMod = await import("../src/mcp.ts");
-const mcpServersFor = (a: string) => mcpMod.mcpServersFor(a) as unknown as { name: string; config: { command: string; args: string[] } }[];
-const { downloadInfo, trackDownload } = await import("../src/downloads.ts");
+const { saveMcp, testMcp, deleteMcp, mcpServersFor } = await import("../src/mcp.ts");
+const { downloadInfo } = await import("../src/downloads.ts");
+const fakeInstall: InstallRunnerDeps = {
+	npm: () => ({ node: process.execPath, npm: "/fake/npm-cli.js" }),
+	uv: async () => "/fake/uv",
+	run: async (command, args, env, cwd) => {
+		if (args.some((a) => a.includes("nonexistent"))) throw new Error("fake package not found");
+		if (command === "/fake/uv") {
+			mkdirSync(env.UV_TOOL_BIN_DIR, { recursive: true });
+			writeFileSync(join(env.UV_TOOL_BIN_DIR, process.platform === "win32" ? "mcp-server-time.exe" : "mcp-server-time"), "fake uv executable");
+		} else {
+			const pkg = join(cwd!, "node_modules/@modelcontextprotocol/server-memory");
+			mkdirSync(pkg, { recursive: true });
+			writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@modelcontextprotocol/server-memory", bin: "entry.mjs" }));
+			copyFileSync(join(import.meta.dirname, "fixtures/fake-mcp-1.2.mjs"), join(pkg, "entry.mjs"));
+			chmodSync(join(pkg, "entry.mjs"), 0o755);
+		}
+		await delay(1150);
+	},
+};
 
-test("识别 npx / uvx 写法；其他命令不碰", () => {
-	assert.deepEqual(parseRunner({ type: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-memory"] }), { kind: "npm", spec: "@modelcontextprotocol/server-memory", rest: [] });
-	assert.deepEqual(parseRunner({ type: "stdio", command: "C:\\nodejs\\npx.cmd", args: ["--yes", "pkg@1.2", "--port", "1"] }), { kind: "npm", spec: "pkg@1.2", rest: ["--port", "1"] });
-	assert.deepEqual(parseRunner({ type: "stdio", command: "npx", args: ["-p", "@a/b", "b-cli", "x"] }), { kind: "npm", spec: "@a/b", bin: "b-cli", rest: ["x"] });
-	assert.deepEqual(parseRunner({ type: "stdio", command: "uvx", args: ["mcp-server-time", "--local-timezone=Asia/Shanghai"] }), { kind: "uv", spec: "mcp-server-time", bin: "mcp-server-time", rest: ["--local-timezone=Asia/Shanghai"] });
-	assert.deepEqual(parseRunner({ type: "stdio", command: "uvx", args: ["--from", "git+https://x/y", "tool"] }), { kind: "uv", spec: "git+https://x/y", bin: "tool", rest: [] });
-	assert.deepEqual(parseRunner({ type: "stdio", command: "uv", args: ["tool", "run", "mcp-server-fetch==1.0"] })?.bin, "mcp-server-fetch");
+test("识别 npx / uvx 写法及共享npm bin选择", () => {
+	assert.deepEqual(parseRunner({ type: "stdio", command: "npx", args: ["-y", "pkg@1.2", "x"] }), { kind: "npm", spec: "pkg@1.2", rest: ["x"] });
+	assert.deepEqual(parseRunner({ type: "stdio", command: "C:\\nodejs\\npx.cmd", args: ["-p", "@a/b", "b-cli"] }), { kind: "npm", spec: "@a/b", bin: "b-cli", rest: [] });
+	assert.equal(parseRunner({ type: "stdio", command: "uvx", args: ["--from", "git+https://x/y", "tool"] })?.bin, "tool");
+	assert.equal(parseRunner({ type: "stdio", command: "uv", args: ["tool", "run", "mcp-server-fetch==1.0"] })?.bin, "mcp-server-fetch");
 	assert.equal(parseRunner({ type: "stdio", command: "node", args: ["server.js"] }), null);
 	assert.equal(parseRunner({ type: "stdio", command: "npx", args: ["--registry", "x", "pkg"] }), null);
 	assert.equal(parseRunner({ type: "http" }), null);
@@ -24,50 +42,49 @@ test("识别 npx / uvx 写法；其他命令不碰", () => {
 	assert.equal(pickNpmBin({ name: "foo", bin: { only: "1" } }), "only");
 });
 
-test("真实 npx 型 MCP：登记下载 → 安装（字节进度）→ 已下载 → 会话和测试连接都用装好的可执行文件", { timeout: 240_000 }, async () => {
-	const row = saveMcp({ name: "memtest", config: { type: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-memory"] } });
-	syncMcpDownloads();
-	const id = mcpDownloadId(row.id);
-	assert.equal(downloadInfo(id)?.state, "missing");
-	assert.equal(downloadInfo(id)?.group, "MCP 服务");
-	let sawBytes = 0;
-	const t = setInterval(() => (sawBytes = Math.max(sawBytes, downloadInfo(id)?.received ?? 0)), 100);
-	await ensureMcpPackage(row.id);
-	clearInterval(t);
-	assert.equal(downloadInfo(id)?.state, "ready", JSON.stringify(downloadInfo(id)));
-	assert.ok(sawBytes > 0, "下载中要有字节进度");
-	const cmd = resolveMcpCommand({ type: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-memory"] });
-	assert.match(cmd.command, /mcp-packages.*node_modules[\\/]\.bin/);
-	assert.equal(mcpServersFor("any")[0].config.command, cmd.command);
-	const r = await testMcp(row.id, { timeoutMs: 30_000 });
-	assert.ok(r.ok, JSON.stringify(r));
-	assert.ok(r.tools!.some((x) => x.name === "create_entities"));
-	deleteMcp(row.id);
-	syncMcpDownloads();
-	assert.equal(downloadInfo(id), null);
+test("假npm安装：统一字节进度、命令解析与实际假MCP连接", async () => {
+	const config = { type: "stdio" as const, command: "npx", args: ["-y", "@modelcontextprotocol/server-memory"] };
+	const row = saveMcp({ name: "memtest", config });
+	try {
+		syncMcpDownloads();
+		const id = mcpDownloadId(row.id);
+		assert.equal(downloadInfo(id)?.state, "missing");
+		let sawBytes = 0;
+		const timer = setInterval(() => { sawBytes = Math.max(sawBytes, downloadInfo(id)?.received ?? 0); }, 50);
+		try { await ensureMcpPackage(row.id, fakeInstall); } finally { clearInterval(timer); }
+		assert.equal(downloadInfo(id)?.state, "ready", JSON.stringify(downloadInfo(id)));
+		assert.ok(sawBytes > 0);
+		const cmd = resolveMcpCommand(config);
+		assert.equal(cmd.command, process.execPath);
+		assert.match(cmd.args[0], /mcp-packages.*node_modules/);
+		const saved = mcpServersFor("any").find((s) => s.name === "memtest")!.config;
+		assert.equal(saved.type, "stdio");
+		assert.equal(saved.type === "stdio" && saved.command, cmd.command);
+		const result = await testMcp(row.id, { timeoutMs: 10_000 });
+		assert.ok(result.ok, JSON.stringify(result));
+		assert.ok(result.tools!.some((x) => x.name === "multi_text"));
+	} finally { deleteMcp(row.id); syncMcpDownloads(); }
 });
 
-test("装不上（包不存在）→ 出错可重试，仍按原命令运行", { timeout: 120_000 }, async () => {
-	const row = saveMcp({ name: "nopkg", config: { type: "stdio", command: "npx", args: ["-y", "@pia-nonexistent/zzz-not-a-pkg"] } });
-	await ensureMcpPackage(row.id);
-	const d = downloadInfo(mcpDownloadId(row.id))!;
-	assert.equal(d.state, "error");
-	assert.ok(d.canStart);
-	assert.equal(mcpServersFor("any").find((s) => s.name === "nopkg")!.config.command, "npx");
-	deleteMcp(row.id);
-	void trackDownload;
+test("假npm安装失败：可重试并保留原命令", async () => {
+	const row = saveMcp({ name: "nopkg", config: { type: "stdio", command: "npx", args: ["-y", "@pia-nonexistent/zzz"] } });
+	try {
+		await ensureMcpPackage(row.id, fakeInstall);
+		assert.equal(downloadInfo(mcpDownloadId(row.id))?.state, "error");
+		assert.equal(downloadInfo(mcpDownloadId(row.id))?.canStart, true);
+		const saved = mcpServersFor("any").find((s) => s.name === "nopkg")!.config;
+		assert.equal(saved.type, "stdio");
+		assert.equal(saved.type === "stdio" && saved.command, "npx");
+	} finally { deleteMcp(row.id); syncMcpDownloads(); }
 });
 
-test("真实 uvx 型 MCP：uv tool install 到我们的目录，连接成功", { timeout: 300_000 }, async () => {
+test("假uv安装：私有工具与缓存目录、保留启动参数", async () => {
 	const row = saveMcp({ name: "timetest", config: { type: "stdio", command: "uvx", args: ["mcp-server-time", "--local-timezone=Asia/Shanghai"] } });
-	await ensureMcpPackage(row.id);
-	const d = downloadInfo(mcpDownloadId(row.id))!;
-	assert.equal(d.state, "ready", JSON.stringify(d));
-	const s = mcpServersFor("any").find((x) => x.name === "timetest")!;
-	assert.match(s.config.command, /mcp-packages.*bin/);
-	assert.deepEqual(s.config.args, ["--local-timezone=Asia/Shanghai"]);
-	const r = await testMcp(row.id, { timeoutMs: 60_000 });
-	assert.ok(r.ok, JSON.stringify(r));
-	assert.ok(r.tools!.some((x) => x.name === "get_current_time"));
-	deleteMcp(row.id);
+	try {
+		await ensureMcpPackage(row.id, fakeInstall);
+		assert.equal(downloadInfo(mcpDownloadId(row.id))?.state, "ready");
+		const command = resolveMcpCommand({ type: "stdio", command: "uvx", args: ["mcp-server-time", "--local-timezone=Asia/Shanghai"] });
+		assert.match(command.command, /mcp-packages.*bin/);
+		assert.deepEqual(command.args, ["--local-timezone=Asia/Shanghai"]);
+	} finally { deleteMcp(row.id); syncMcpDownloads(); }
 });

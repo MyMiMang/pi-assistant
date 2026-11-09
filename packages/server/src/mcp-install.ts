@@ -12,6 +12,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "./config.ts";
+import { appNodeNpmPaths, npmBinPath } from "./app-node-npm.ts";
+export { pickNpmBin } from "./app-node-npm.ts";
 import { downloadInfo, registerDownload, trackDownload, unregisterDownload, watchDir } from "./downloads.ts";
 import { configOf, listMcp, type McpConfig } from "./mcp.ts";
 import { ensureUv, findUv } from "./memory/hindsight/uv-bin.ts";
@@ -88,7 +90,7 @@ export function installedBin(r: Runner): string | null {
 function run(cmd: string, args: string[], env: Record<string, string>, cwd?: string) {
 	return new Promise<void>((res, rej) => {
 		let tail = "";
-		const p = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], shell: WIN });
+		const p = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], shell: WIN && /\.(cmd|bat)$/i.test(cmd) });
 		const on = (b: Buffer) => (tail = (tail + String(b)).slice(-1500));
 		p.stdout.on("data", on);
 		p.stderr.on("data", on);
@@ -97,18 +99,13 @@ function run(cmd: string, args: string[], env: Record<string, string>, cwd?: str
 	});
 }
 
-/** npm 包的可执行文件：bin 是字符串 → 包名；对象只有一个 → 它；否则找和包名（去 scope）同名的 */
-export function pickNpmBin(pkg: { name: string; bin?: string | Record<string, string> }, want?: string) {
-	if (want) return want;
-	if (!pkg.bin) return null;
-	if (typeof pkg.bin === "string") return pkg.name.split("/").pop()!;
-	const keys = Object.keys(pkg.bin);
-	if (keys.length === 1) return keys[0];
-	return keys.find((k) => k === pkg.name.split("/").pop()) ?? keys[0] ?? null;
-}
-
 const inflight = new Map<string, Promise<string>>();
-export function installRunner(r: Runner, id: string): Promise<string> {
+export interface InstallRunnerDeps {
+	run?: typeof run;
+	npm?: () => { node: string; npm: string };
+	uv?: () => Promise<string>;
+}
+export function installRunner(r: Runner, id: string, deps: InstallRunnerDeps = {}): Promise<string> {
 	const key = slug(r);
 	const cur = inflight.get(key);
 	if (cur) return cur;
@@ -121,17 +118,14 @@ export function installRunner(r: Runner, id: string): Promise<string> {
 			if (r.kind === "npm") {
 				p.detail(`npm 安装 ${r.spec}`);
 				writeFileSync(join(dir, "package.json"), '{"private":true}');
-				await run(WIN ? "npm.cmd" : "npm", ["install", "--no-audit", "--no-fund", "--omit=dev", "--prefix", dir, r.spec], {}, dir);
-				const name = npmName(r.spec);
-				const pkgJson = JSON.parse(readFileSync(join(dir, "node_modules", name, "package.json"), "utf8"));
-				const b = pickNpmBin(pkgJson, r.bin);
-				if (!b) throw new Error(`${name} 没有可执行文件`);
-				bin = join(dir, "node_modules", ".bin", WIN ? `${b}.cmd` : b);
+				const runtime = (deps.npm ?? appNodeNpmPaths)();
+				await (deps.run ?? run)(runtime.node, [runtime.npm, "install", "--no-audit", "--no-fund", "--omit=dev", "--prefix", dir, r.spec], {}, dir);
+				bin = npmBinPath(dir, npmName(r.spec), r.bin);
 			} else {
 				p.detail(`uv 安装 ${r.spec}`);
-				const uv = findUv() ?? (await ensureUv());
+				const uv = deps.uv ? await deps.uv() : findUv() ?? (await ensureUv());
 				const env = { UV_TOOL_DIR: join(dir, "tools"), UV_TOOL_BIN_DIR: join(dir, "bin"), UV_CACHE_DIR: join(dir, "cache") };
-				await run(uv, ["tool", "install", "--force", r.spec], env);
+				await (deps.run ?? run)(uv, ["tool", "install", "--force", r.spec], env);
 				rmSync(join(dir, "cache"), { recursive: true, force: true });
 				bin = join(dir, "bin", WIN ? `${r.bin}.exe` : r.bin!);
 			}
@@ -148,7 +142,7 @@ export function installRunner(r: Runner, id: string): Promise<string> {
 export function resolveMcpCommand(c: McpConfig): { command: string; args: string[] } {
 	const r = parseRunner(c);
 	const bin = r && installedBin(r);
-	return bin ? { command: bin, args: r!.rest } : { command: c.command!, args: c.args ?? [] };
+	return bin ? r!.kind === "npm" ? { command: process.execPath, args: [bin, ...r!.rest] } : { command: bin, args: r!.rest } : { command: c.command!, args: c.args ?? [] };
 }
 
 export const mcpDownloadId = (serverId: string) => `mcp:${serverId}`;
@@ -168,11 +162,11 @@ export function syncMcpDownloads() {
 }
 
 /** 保存后：没装过就装（失败不影响用原命令连接） */
-export async function ensureMcpPackage(serverId: string) {
+export async function ensureMcpPackage(serverId: string, deps: InstallRunnerDeps = {}) {
 	syncMcpDownloads();
 	const row = listMcp().find((r) => r.id === serverId);
 	const r = row && parseRunner(configOf(row));
 	if (!r || installedBin(r)) return;
 	if (downloadInfo(mcpDownloadId(serverId))?.state === "downloading") return;
-	await installRunner(r, mcpDownloadId(serverId)).catch(() => {});
+	await installRunner(r, mcpDownloadId(serverId), deps).catch(() => {});
 }

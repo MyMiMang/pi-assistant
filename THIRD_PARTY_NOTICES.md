@@ -40,6 +40,15 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 | [fflate](https://github.com/101arrowz/fflate)（附件：解压 DOCX / XLSX / PPTX 提取文字） | 0.8.3 | MIT |
 | [@silvia-odwyer/photon-node](https://github.com/silvia-odwyer/photon)（附件：图片缩放，经 Pi 的 resizeImage 使用） | 0.3.4 | Apache-2.0 |
 
+## 原生编程工具（用户点击后单独安装）
+
+| 组件 | 首发固定版本 | 许可证 | 来源 |
+|---|---|---|---|
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli)（`@google/gemini-cli`） | 0.67.0 | Apache-2.0 | 官方 npm 发布包，完整性固定在 third-party.json |
+| [CodeBuddy Code](https://cnb.cool/codebuddy/codebuddy-code)（`@tencent-ai/codebuddy-code`） | 2.181.0 | MIT（Copyright 2023 Tencent Cloud） | 以该版本发布包 [LICENSE.txt](https://unpkg.com/@tencent-ai/codebuddy-code@2.181.0/LICENSE.txt) 为准；npm 元数据写作 SEE LICENSE IN README.md |
+
+App 随官方 Node 发布包保留其自带 npm 完整目录（Artistic-2.0，及 npm 目录内各依赖许可证），不单独选择或下载另一个 npm 版本。工具手动更新后的实际版本记录在私有安装目录；不代表已经经过 Pi 的真实工具验收。
+
 ## 记忆
 
 | 组件 | 版本 | 许可证 |

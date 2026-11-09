@@ -60,7 +60,7 @@ export function createNativePermissionContext(input: {
 				const controller = new AbortController();
 				pending.add(controller);
 				try {
-					const answer = await requests.approval(input.agentId, input.taskId, "native_acp", { paths, ...(command ? { command } : {}) }, String(call.title ?? "原生工具操作").slice(0, 400), "medium", input.conversationId, { signal: controller.signal });
+					const answer = await requests.approval(input.agentId, input.taskId, "native_acp", { paths, ...(command ? { command } : {}) }, String(call.title ?? "工具操作").slice(0, 400), "medium", input.conversationId, { signal: controller.signal });
 					return answer.approved && !hostPaused() && !controller.signal.aborted ? allow : reject;
 				} finally {
 					pending.delete(controller);

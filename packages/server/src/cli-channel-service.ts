@@ -20,6 +20,12 @@ export interface CliChannelAdapter<S extends { installed: boolean; loggedIn: boo
 	envName: string;
 	/** 在本机自己找命令 */
 	find(): string | null;
+	/** 受管私有目录不涉及用户安装，Mock 测试也可查找。 */
+	managed?: boolean;
+	/** 受管渠道在生产环境禁止命令覆盖。 */
+	allowCommandOverride?: () => boolean;
+	invalidate?(): void;
+	actions?: Record<string, () => Promise<unknown> | unknown>;
 	/** 没找到命令时的说明 */
 	notFound: string;
 	detect(command: string): Promise<S>;
@@ -42,9 +48,9 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 
 	/** 要用的命令路径：环境变量显式指定优先（空 = 关闭）；Mock 模式默认不找；否则在本机找。 */
 	function command(): string | null {
-		const forced = env(a.envName);
+		const forced = a.allowCommandOverride?.() === false ? undefined : env(a.envName);
 		if (forced !== undefined) return forced.trim() && existsSync(forced.trim()) ? forced.trim() : null; // 路径还不存在 = 还没装
-		return config.mock ? null : a.find();
+		return config.mock && !a.managed ? null : a.find();
 	}
 
 	/** 正在进行的注册（启动时后台注册，界面同时点检测会撞上；合并成一次，别注册两遍） */
@@ -79,8 +85,16 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 
 	/** 检测并（装好了就）注册，不用重启服务；`recheck` 时顺便刷新模型列表。 */
 	async function check(models: PiModels, recheck = false): Promise<CliChannelInfo<S>> {
+		if (recheck) a.invalidate?.();
 		const cmd = command();
 		const status = cmd ? await a.detect(cmd) : ({ installed: false, loggedIn: false, error: a.notFound } as unknown as S);
+		if (a.requireLogin && !status.loggedIn && channel) {
+			channel.disposeAll();
+			channel = undefined;
+			registeredOn = undefined;
+			models.unregisterProvider(a.id);
+			bus.emit({ type: "models.changed", provider: a.id });
+		}
 		const wasRegistered = !!channel && registeredOn === models;
 		if (status.installed) {
 			try {
@@ -99,11 +113,12 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 
 	return {
 		id: a.id,
+		actions: a.actions,
 		command,
 		registered: () => !!channel,
 		/** 正在注册这一家的 Promise；没在注册返回 undefined */
 		registering: (): Promise<boolean> | undefined => pending?.p,
-		ensure,
+		ensure: (models: PiModels) => ensure(models),
 		check,
 		/** 服务关闭：结束还在跑的进程 */
 		dispose: () => channel?.disposeAll(),

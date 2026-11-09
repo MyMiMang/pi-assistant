@@ -29,7 +29,7 @@ export function ApprovalCard({ m }: { m: Message }) {
 			<div className="pa-card-top">
 				<ShieldAlert className="pa-ic warn" />
 				<b>{t("需要你的批准")}</b>
-				<span className="pa-tag">{meta.risk === "high" ? "高风险 · " : ""}{meta.toolName ?? action}</span>
+				<span className="pa-tag">{meta.risk === "high" ? "高风险 · " : ""}{meta.toolName === "native_acp" ? "编程工具" : meta.toolName ?? action}</span>
 			</div>
 			<div className="pa-kv">
 				<span>操作</span>

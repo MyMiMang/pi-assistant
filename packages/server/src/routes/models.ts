@@ -41,6 +41,11 @@ const registryJson = () => {
 export function mountModelRoutes(app: Hono<Env>) {
 	// 本机命令行渠道（Claude Code / Codex）：检测 + 重新检测（装好后就地注册渠道，不用重启服务）；只读本机状态，不读凭证
 	for (const svc of cliServices) {
+		for (const [action, run] of Object.entries(svc.actions ?? {})) {
+			app.post(`/api/models/${svc.id}/${action}`, async (c) => {
+				try { return c.json(await run()); } catch (e) { return errJson(c, e); }
+			});
+		}
 		app.get(`/api/models/${svc.id}`, async (c) => c.json(await svc.check(models)));
 		app.post(`/api/models/${svc.id}/recheck`, async (c) => {
 			const info = await svc.check(models, true);

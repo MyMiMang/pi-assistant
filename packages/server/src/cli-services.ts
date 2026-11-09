@@ -2,9 +2,11 @@
  * 所有「本机命令行模型渠道」的服务实例（claude / codex / antigravity；再加一家就在这里加一份适配）。
  * 启动（models.ts）、关闭（main.ts）、接口（routes/models.ts）都遍历 `cliServices`，不各写一份。
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { NativeInstaller, type NativeRelease } from "./cli-agents/native-install.ts";
+import { authenticateNative, detectNative, type NativeDetection, type NativeId } from "./cli-agents/native-auth.ts";
 import { isAbsolute } from "node:path";
-import { registerNativeProvider, type NativeProviderId } from "./pi-adapter/cli-models/native.ts";
+import { registerNativeModels, registerNativeProvider, type NativeProviderId } from "./pi-adapter/cli-models/native.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createCliChannelService, type CliChannelService } from "./cli-channel-service.ts";
@@ -84,21 +86,71 @@ const opencode = createCliChannelService({
 	requireLogin: false, // 自带免费模型，没登录也能用；有没有模型可选看 `opencode models` 能不能列出来
 });
 
+const nativeComponents = JSON.parse(readFileSync(join(import.meta.dirname, "../../../third-party.json"), "utf8")).components as Array<NativeRelease & { name: string }>;
+const releaseFor = (name: string): NativeRelease => {
+	const c = nativeComponents.find((c) => c.name === name);
+	if (!c) throw new Error(`缺少 ${name} 安装清单`);
+	return { ...c, packageName: c.name };
+};
+export const nativeInstaller = new NativeInstaller({ dataDir: config.dataDir, releases: { gemini: releaseFor("@google/gemini-cli"), codebuddy: releaseFor("@tencent-ai/codebuddy-code") } });
+nativeInstaller.cleanupOnStartup();
+nativeInstaller.registerDownloads();
+
 function nativeService(id: NativeProviderId, name: string, envName: string) {
-	return createCliChannelService({
-		id,
-		label: name,
-		envName,
-		find: () => null,
-		notFound: `尚未配置 ${name} 的 Pi 专用可执行文件`,
-		detect: async (command): Promise<{ installed: boolean; loggedIn: boolean; loginUnverified?: boolean }> => ({ installed: isAbsolute(command) && existsSync(command), loggedIn: false, loginUnverified: true }),
-		requireLogin: false,
-		register: (models, command) => registerNativeProvider(models, id, {
-			dataDir: config.dataDir,
-			bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`,
-			command,
-		}),
+	const tool: NativeId = id === "gemini-cli" ? "gemini" : "codebuddy";
+	let cache: { command: string; value: NativeDetection } | undefined;
+	let controller: AbortController | undefined;
+	let operation: "login" | "install" | "update" | undefined;
+	let actionError: string | undefined;
+	let latest: NativeRelease | undefined;
+	const allowOverride = () => process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1");
+	const args = () => allowOverride() && process.env[`PIA_${envName}`] !== undefined ? [] : nativeInstaller.installed(tool)?.args ?? [];
+	const input = (command: string) => ({ id: tool, command, args: args(), dataDir: config.dataDir });
+	const specs = () => (cache?.value.models ?? []).map((m) => ({ ...m, reasoning: false, contextWindow: 32_000, maxTokens: 8_000 }));
+	const start = (kind: typeof operation) => {
+		if (operation) return { started: false };
+		if (kind === "update" && !latest) throw new Error("请先检查更新");
+		operation = kind;
+		actionError = undefined;
+		controller = new AbortController();
+		void (async () => {
+			if (kind === "login") {
+				const command = service.command();
+				if (!command) throw new Error("请先安装工具");
+				await authenticateNative({ ...input(command), signal: controller!.signal });
+			} else await nativeInstaller.install(tool, kind === "update" ? latest : undefined);
+			cache = undefined;
+			const { models } = await import("./models.ts");
+			await service.check(models, true);
+		})().catch((e) => { actionError = controller?.signal.aborted ? undefined : e instanceof Error ? e.message : String(e); }).finally(() => { operation = undefined; controller = undefined; });
+		return { started: true };
+	};
+	const service = createCliChannelService({
+		id, label: name, envName, managed: true, allowCommandOverride: allowOverride,
+		find: () => nativeInstaller.installed(tool)?.command ?? null,
+		notFound: `尚未安装 ${name}`,
+		invalidate: () => { cache = undefined; },
+		detect: async (command): Promise<NativeDetection> => {
+			if (cache?.command === command) return cache.value;
+			const value = await detectNative(input(command)).catch((e) => ({ installed: isAbsolute(command) && existsSync(command), loggedIn: false, loginUnverified: true, error: e instanceof Error ? e.message : String(e), authMethods: [], models: [] }));
+			cache = { command, value };
+			return value;
+		},
+		requireLogin: true,
+		extra: () => ({ version: nativeInstaller.installed(tool)?.version, verified: nativeInstaller.installed(tool)?.verified, latestVersion: latest?.version, updateAvailable: !!latest && latest.version !== nativeInstaller.installed(tool)?.version, untestedVersion: !!nativeInstaller.installed(tool) && nativeInstaller.installed(tool)?.version !== releaseFor(tool === "gemini" ? "@google/gemini-cli" : "@tencent-ai/codebuddy-code").version, operation, ...(actionError ? { error: actionError } : {}) }),
+		actions: {
+			login: () => start("login"), install: () => start("install"), update: () => start("update"),
+			"check-update": async () => {
+				if (operation) throw new Error("请等当前操作完成");
+				latest = await nativeInstaller.checkUpdate(tool);
+				return { ok: true };
+			},
+			cancel: () => { controller?.abort(); nativeInstaller.cancel(tool); return { ok: true }; },
+		},
+		register: (models, command) => registerNativeProvider(models, id, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, commandArgs: args, nativeModels: specs }),
+		refresh: (models, channel) => registerNativeModels(models, channel, id, specs()),
 	});
+	return service;
 }
 
 const gemini = nativeService("gemini-cli", "Gemini CLI", "GEMINI_COMMAND");

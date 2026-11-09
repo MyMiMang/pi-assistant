@@ -8,7 +8,7 @@
 // 用法：node scripts/package-linux.mjs [--no-bins]（先 npm run build）
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 if (process.platform !== "linux") throw new Error("只在 Linux 上打 Linux 包");
@@ -26,6 +26,7 @@ execFileSync(process.execPath, [join(root, "apps/tray/scripts/build-sidecar.mjs"
 copyFileSync(join(root, "apps/tray/src-tauri/binaries", `node-${triple}`), join(pkg, "node"));
 chmodSync(join(pkg, "node"), 0o755);
 renameSync(join(root, "dist-app"), join(pkg, "app"));
+if (!existsSync(join(pkg, "app", "npm", "bin", "npm-cli.js"))) throw new Error("Linux 包缺少官方 npm 运行环境");
 for (const f of ["pi-assistant", "install.sh"]) {
 	cpSync(join(root, "deploy/linux", f), join(pkg, f));
 	chmodSync(join(pkg, f), 0o755);

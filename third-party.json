@@ -286,6 +286,25 @@
       "smoke": "packages/server/test/hindsight.smoke.ts"
     },
     {
+      "name": "@google/gemini-cli",
+      "kind": "npm",
+      "version": "0.67.0",
+      "integrity": "sha512-lDJfCcYem6/6QZdwZFiGfOu1ZxJJ+j4wsr4HlmcYBfqUHTDXLKDv1MPUXYL2Ok1ygdfMve0F5KrW/ORNZRSHIg==",
+      "bin": "gemini",
+      "license": "Apache-2.0",
+      "adapter": "packages/server/src/cli-agents/native-install.ts"
+    },
+    {
+      "name": "@tencent-ai/codebuddy-code",
+      "kind": "npm",
+      "version": "2.181.0",
+      "integrity": "sha512-7PTMUsVcbP4ouTe9EsrqhFu4FS95GKo7VM18+d4gy2OsJokMzkx9Vwf3OVLBlZJ90NwQxrL2YFuJ8g68/lOe4g==",
+      "bin": "codebuddy",
+      "license": "MIT",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "$comment": "许可证以该固定发布包 LICENSE.txt 的 MIT 全文为准；npm license 字段指向 README.md"
+    },
+    {
       "name": "@vectorize-io/hindsight-all",
       "kind": "npm",
       "version": "1.2.0",

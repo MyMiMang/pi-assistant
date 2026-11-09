@@ -26,9 +26,14 @@ async function handle(m) {
 	const p = m.params ?? {};
 	log({ method: m.method, params: p });
 	switch (m.method) {
-		case "initialize": return reply(m.id, { protocolVersion: 1, agentCapabilities: { loadSession: scenario !== "no-load", mcpCapabilities: { http: scenario !== "no-http" }, promptCapabilities: { image: true } }, authMethods: [{ id: "oauth", name: "Official browser login" }] });
+		case "initialize": return reply(m.id, { protocolVersion: 1, agentCapabilities: { loadSession: scenario !== "no-load", mcpCapabilities: { http: scenario !== "no-http" }, promptCapabilities: { image: true } }, authMethods: [{ id: "gemini-api-key", name: "API key" }, { id: "oauth-personal", name: "Google browser login" }] });
+		case "authenticate":
+			if (scenario === "auth-hang") return;
+			return reply(m.id, {});
 		case "session/new":
 		case "session/load": {
+			if (scenario === "server-error") return send({ id: m.id, error: { code: -32000, message: "MCP startup failed" } });
+			if (scenario === "auth-required") return send({ id: m.id, error: { code: -32000, message: "Authentication required" } });
 			sessionId = p.sessionId ?? sessionId;
 			mcp = p.mcpServers;
 			if (m.method === "session/load") {

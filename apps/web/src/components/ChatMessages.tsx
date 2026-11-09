@@ -52,7 +52,7 @@ export function activityOf(name: string | undefined, args: Record<string, any> =
 	return { text: `正在${TOOL_LABEL[n] ?? "处理"}…`, icon: <Sparkles className="pa-ic" /> };
 }
 const brief = (args: Record<string, any> = {}) => String(args.command ?? args.path ?? args.url ?? args.title ?? args.question ?? args.pattern ?? "").slice(0, 80);
-const stepTitle = (m: Message) => m.meta.executionSource === "native-acp" ? String(m.meta.title ?? "原生工具") : TOOL_LABEL[m.meta.toolName as string] ?? String(m.meta.toolName ?? "");
+const stepTitle = (m: Message) => m.meta.executionSource === "native-acp" ? String(m.meta.title ?? "工具操作") : TOOL_LABEL[m.meta.toolName as string] ?? String(m.meta.toolName ?? "");
 const secs = (ms: number) => (ms < 1000 ? "<1 秒" : ms < 60_000 ? `${(ms / 1000).toFixed(1)} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`);
 
 // ------------------------------------------------------------------ 消息分组
@@ -139,7 +139,7 @@ function Steps({ items, live, busy }: { items: Message[]; live: boolean; busy?: 
 						<li key={m.id} className="flex-wrap" onClick={() => setDetail(detail === m.id ? null : m.id)} style={{ cursor: "pointer" }}>
 							<i className={cx("pa-st-dot", (m.status === "error" || stopped) && "err")}>{running ? <Loader2 className="pa-ic animate-spin" /> : m.status === "error" || stopped ? <X className="pa-ic" /> : <Check className="pa-ic" />}</i>
 							<span className="pa-step-txt">{stepTitle(m)}</span>
-							<code>{native ? "原生工具执行" : brief(m.meta.args)}</code>
+							<code>{native ? "工具自带操作" : brief(m.meta.args)}</code>
 							<small>{running ? "…" : stopped ? "已中断" : secs(Math.max(0, m.updated_at - m.created_at))}</small>
 							{detail === m.id && (
 								<pre className="pa-pre w-full" onClick={(e) => e.stopPropagation()}>
@@ -159,7 +159,7 @@ function Steps({ items, live, busy }: { items: Message[]; live: boolean; busy?: 
 }
 
 export function Activity({ tool }: { tool?: Message }) {
-	const a = tool?.meta.executionSource === "native-acp" ? { text: stepTitle(tool), icon: <Terminal className="pa-ic" />, detail: "原生工具执行" } : activityOf(tool?.meta.toolName, tool?.meta.args);
+	const a = tool?.meta.executionSource === "native-acp" ? { text: stepTitle(tool), icon: <Terminal className="pa-ic" />, detail: "工具自带操作" } : activityOf(tool?.meta.toolName, tool?.meta.args);
 	const [now, setNow] = useState(() => Date.now());
 	const startedAt = tool?.status === "running" ? tool.created_at : undefined;
 	useEffect(() => {

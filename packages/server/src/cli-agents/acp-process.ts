@@ -155,7 +155,7 @@ export class AcpProcess {
 		this.sessionId = opts.sessionId;
 		this.inactivity = new AcpInactivity(opts.inactivityMs ?? ACP_IDLE_MS, () => this.permissions.size > 0 || !!opts.isWaitingForApproval?.(), () => {
 			this.abort();
-			this.deliverResult(true, "原生工具长时间没有 ACP 事件，已停止", "inactivity");
+			this.deliverResult(true, "编程工具长时间没有任何动静，已停止这一轮", "inactivity");
 		}, opts.clock);
 		this.bridgeRun = (opts.bridge ?? toolBridge).register({ tools: opts.tools, callKey: () => undefined, onCall: (c) => this.onBridgeCall(c) });
 		this.done = new Promise((resolve) => {

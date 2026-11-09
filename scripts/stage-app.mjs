@@ -63,6 +63,10 @@ const derefCopy = (src, dst) => {
 	if (process.platform !== "win32") chmodSync(dst, st.mode & 0o777);
 };
 derefCopy(tmp, out);
+// 完整保留已校验的官方 Node 分发里的 npm（包括其私有 node_modules）。
+const npmSource = process.env.PIA_STAGE_NPM;
+if (!npmSource || !existsSync(join(npmSource, "bin", "npm-cli.js"))) throw new Error("缺少已校验 Node 分发中的 npm，请通过 build-sidecar 打包");
+derefCopy(npmSource, join(out, "npm"));
 rmSync(tmp, { recursive: true, force: true });
 if (existsSync(join(seed, "bin"))) cpSync(join(seed, "bin"), join(out, "bin-seed"), { recursive: true, verbatimSymlinks: true });
 rmSync(seed, { recursive: true, force: true });

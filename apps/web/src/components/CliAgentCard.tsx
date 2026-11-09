@@ -1,21 +1,16 @@
 /**
  * 设置 › 模型服务里的「本机命令行模型」卡片（Claude Code / Codex / Antigravity / OpenCode 共用；方案 docs/design/cli-models.md §4.5、§5.2、§5b，docs/design/acp-cli-models.md）。
- * 只显示本机检测结果（装没装、版本、登录没登录）并提供「重新检测」；登录要用户自己在终端里做，我们不代为登录。
+ * 旧渠道只检测本机；原生 ACP 渠道使用 Pi 私有安装，提供安装、官方登录、取消和手动更新。
  * 检测到可用后服务端就地注册模型渠道（不用重启），模型出现在所有模型选择里。
  * 加新的一家：在 `KINDS` 里加一项文案，服务端接口按渠道名 `/api/models/<kind>` 对应。
  */
+import type { NativeCliStatus } from "@pi-assistant/shared";
 import { CheckCircle2, Plus, RefreshCw, Terminal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { Badge, Button, Fold, Help, Input } from "./ui";
 
-interface CliInfo {
-	installed: boolean;
-	version?: string;
-	loggedIn: boolean;
-	error?: string;
-	registered: boolean;
-	loginUnverified?: boolean;
+interface CliInfo extends NativeCliStatus {
 	/** Codex：`~/.codex/AGENTS.md` 存在（只检查文件在不在） */
 	globalAgentsMd?: boolean;
 }
@@ -26,16 +21,16 @@ export type CliKind = "claude-code" | "codex" | "antigravity" | "opencode-cli" |
 export const CLI_KINDS: CliKind[] = ["claude-code", "codex", "antigravity", "opencode-cli", "gemini-cli", "codebuddy-cli"];
 
 /** 每家的文案：命令名、登录命令、一句话说明、「?」说明、已注册后显示的模型 */
-const NATIVE_HELP = <>工具会在助理工作文件夹内使用自己的能力。部分读取不会请求 Pi 批准；收到的批准请求仍按你的权限档位处理。配置目录独立，但系统钥匙串中的登录可能共用。纯原生执行期间的插话会在这轮结束后送达。安装和登录入口将在下一段接入。</>;
+const NATIVE_HELP = <>工具会在助理工作文件夹内使用自己的读写文件和执行命令能力，也能调用 Pi 工具。部分读取不会逐项请求批准；工具实际发来的批准请求按助理的权限档位处理，完全权限直接允许一次，其他档位由你逐项批准。配置目录独立，但 Mac 钥匙串中的登录可能共用。工具使用自身能力执行时，你的插话会在这轮结束后送达。</>;
 
 const KINDS: Record<CliKind, { title: string; command: string; login: string; tone: string; summary: string; models: string; help: ReactNode; loginOptional?: string }> = {
 	"gemini-cli": {
-		title: "Gemini CLI（原生）", command: "Pi 专用 Gemini CLI", login: "", tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
-		summary: "使用工具自身的读写和命令能力，同时可调用 Pi 工具。", models: "模型：工具默认模型", help: NATIVE_HELP,
+		title: "Gemini CLI", command: "Pi 专用 Gemini CLI", login: "", tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
+		summary: "用它自己的读写和命令能力在助理的工作文件夹里干活，也能用 Pi 的工具；Pi 单独装一份，和你电脑上的设置、登录完全分开。", models: "模型：工具默认模型", help: NATIVE_HELP,
 	},
 	"codebuddy-cli": {
-		title: "CodeBuddy（原生）", command: "Pi 专用 CodeBuddy", login: "", tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
-		summary: "使用工具自身的读写和命令能力，同时可调用 Pi 工具。", models: "模型：工具默认模型", help: NATIVE_HELP,
+		title: "CodeBuddy", command: "Pi 专用 CodeBuddy", login: "", tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+		summary: "用它自己的读写和命令能力在助理的工作文件夹里干活，也能用 Pi 的工具；Pi 单独装一份，和你电脑上的设置、登录完全分开。", models: "模型：工具默认模型", help: NATIVE_HELP,
 	},
 	"claude-code": {
 		title: "Claude Code（本机）",
@@ -114,6 +109,7 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 
 export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: () => void }) {
 	const k = KINDS[kind];
+	const native = kind === "gemini-cli" || kind === "codebuddy-cli";
 	const [info, setInfo] = useState<CliInfo | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
@@ -123,7 +119,7 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 		setBusy(true);
 		try {
 			const r = await api<CliInfo>(`/api/models/${kind}` + (recheck ? "/recheck" : ""), recheck ? { method: "POST" } : {});
-			setInfo((prev) => (setErr(""), recheck && r.registered && !prev?.registered && changed.current?.(), r));
+			setInfo((prev) => (setErr(""), r.registered && !prev?.registered && changed.current?.(), r));
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
 		} finally {
@@ -133,6 +129,22 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 	useEffect(() => {
 		void check(false);
 	}, [check]);
+	useEffect(() => {
+		if (!native || !info?.operation) return;
+		const timer = window.setInterval(() => void check(false), 1000);
+		return () => window.clearInterval(timer);
+	}, [native, info?.operation, check]);
+	const action = async (name: string) => {
+		setBusy(true);
+		setErr("");
+		try {
+			await api(`/api/models/${kind}/${name}`, { method: "POST", body: JSON.stringify({ methodId: info?.authMethods?.[0]?.id }) });
+			await check(false);
+			changed.current?.();
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : String(e));
+		} finally { setBusy(false); }
+	};
 	const ready = !!info?.installed && (info.loggedIn || (!!k.loginOptional && info.registered));
 	return (
 		<div className="space-y-2 rounded-xl border border-line p-3" data-testid={`${kind}-card`} data-installed={String(!!info?.installed)} data-logged-in={String(!!info?.loggedIn)} data-registered={String(!!info?.registered)}>
@@ -148,7 +160,7 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 					</div>
 					<div className="text-[11px] text-mut">{k.summary}</div>
 				</div>
-				<Button size="sm" variant="outline" disabled={busy} onClick={() => void check(true)} data-testid={`${kind}-recheck`}>
+				<Button size="sm" variant="outline" disabled={busy || !!info?.operation} onClick={() => void check(true)} data-testid={`${kind}-recheck`}>
 					<RefreshCw size={13} className={busy ? "animate-spin" : undefined} /> 重新检测
 				</Button>
 			</div>
@@ -165,12 +177,27 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 				)}
 				{info?.registered && <span className="text-mut">{k.models}</span>}
 			</div>
-			{info && !info.installed && (
-				<div className="text-[11px] text-mut2" data-testid={`${kind}-hint`}>
-					{kind === "gemini-cli" || kind === "codebuddy-cli" ? "尚未配置 Pi 专用可执行文件路径；安装和登录入口将在下一段接入。" : <>这台电脑上没有找到 {k.command} 命令。先按 {k.title.replace("（本机）", "")} 官方说明安装，装好后点「重新检测」，不用重启。</>}
+			{native && info && (
+				<div className="flex flex-wrap items-center gap-2 text-xs" data-testid={`${kind}-actions`}>
+					{info.operation ? <>
+						<span role="status">{info.operation === "login" ? "正在登录，请在浏览器里完成" : info.operation === "install" ? "正在安装…" : "正在更新…"}</span>
+						<Button size="sm" variant="outline" disabled={busy} onClick={() => void action("cancel")}>取消</Button>
+					</> : <>
+						{!info.installed ? <Button size="sm" disabled={busy} onClick={() => void action("install")}>安装</Button>
+							: !info.loggedIn ? <Button size="sm" disabled={busy} onClick={() => void action("login")}>登录</Button> : null}
+						{info.installed && <Button size="sm" variant="outline" disabled={busy} onClick={() => void action("check-update")}>检查更新</Button>}
+						{info.updateAvailable && <><span>有更新 v{info.latestVersion}</span><Button size="sm" disabled={busy} onClick={() => void action("update")}>更新{info.latestVersion ? `至 ${info.latestVersion}` : ""}</Button></>}
+					</>}
+					{info.untestedVersion && <span className="text-mut">这个版本还没测过</span>}
 				</div>
 			)}
-			{info?.installed && !info.loggedIn && !info.loginUnverified && (
+			{err && info && <div role="alert" className="break-words text-xs text-red-500">{err}</div>}
+			{info && !info.installed && !native && (
+				<div className="text-[11px] text-mut2" data-testid={`${kind}-hint`}>
+					这台电脑上没有找到 {k.command} 命令。先按 {k.title.replace("（本机）", "")} 官方说明安装，装好后点「重新检测」，不用重启。
+				</div>
+			)}
+			{!native && info?.installed && !info.loggedIn && !info.loginUnverified && (
 				<div className="text-[11px] text-mut2" data-testid={`${kind}-hint`}>
 					{k.loginOptional ?? "还没登录。打开终端，运行"} <code className="rounded bg-hover px-1">{k.login}</code> 登录，{k.loginOptional ? "再" : "然后"}点「重新检测」。
 				</div>
@@ -181,7 +208,7 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 				</div>
 			)}
 			{kind === "claude-code" && <ClaudeCustomModels onChanged={onChanged} />}
-			{info?.error && info.installed && info.loggedIn === false && <div className="break-all text-[11px] text-mut2">{info.error}</div>}
+			{info?.error && (native || (info.installed && info.loggedIn === false)) && <div className="break-all text-[11px] text-mut2">{info.error}</div>}
 		</div>
 	);
 }

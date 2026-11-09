@@ -1,3 +1,5 @@
+export type { NativeCliStatus, NativeCliActionResult } from "./native-cli.ts";
+
 /**
  * 产品品牌：唯一的定义处。正式名字确定前使用中性占位名 “Pi Assistant”。
  * 改名只需要改这里（以及安装包元数据 apps/tray/src-tauri/tauri.conf.json 的 productName/identifier）。

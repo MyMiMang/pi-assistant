@@ -33,7 +33,8 @@ mkdirSync(binDir, { recursive: true });
 const dst = join(binDir, `node-${triple}${win ? ".exe" : ""}`);
 copyFileSync(src, dst);
 if (!win) chmodSync(dst, 0o755);
-rmSync(work, { recursive: true, force: true });
+const npmSource = win ? join(work, dirName, "node_modules", "npm") : join(work, dirName, "lib", "node_modules", "npm");
 console.log(`[sidecar] node ${node.version} → ${dst}（sha256 ok）`);
 
-execFileSync(process.execPath, [join(root, "scripts", "stage-app.mjs"), join(root, "dist-app"), ...process.argv.filter((a) => a === "--no-bins")], { cwd: root, stdio: "inherit" });
+execFileSync(process.execPath, [join(root, "scripts", "stage-app.mjs"), join(root, "dist-app"), ...process.argv.filter((a) => a === "--no-bins")], { cwd: root, stdio: "inherit", env: { ...process.env, PIA_STAGE_NPM: npmSource } });
+rmSync(work, { recursive: true, force: true });

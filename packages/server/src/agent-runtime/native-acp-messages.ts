@@ -25,7 +25,7 @@ export function nativeAcpMessages(insert: (m: Omit<Parameters<typeof insertMessa
 			if (event.locations !== undefined) meta.locations = displayText(event.locations);
 			if (old) updateMessage(old.mid, { status, meta });
 			else {
-				const m = insert({ role: "tool", content: "", status, meta: { toolName: "原生工具", title: "原生工具", ...meta } });
+				const m = insert({ role: "tool", content: "", status, meta: { toolName: "工具操作", title: "工具操作", ...meta } });
 				calls.set(event.id, { mid: m.id, status });
 			}
 			if (old) old.status = status;
