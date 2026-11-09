@@ -70,7 +70,7 @@
 - [已发布(beta.37)] 群任务不受人数上限影响、群停止不暂停任务
 - [已发布(beta.37)] 本地语音识别改为可选模块：默认不装、启动不自动下载，设置 › 语音 里安装（[设计](design/local-voice-optional.md)、[0013](decisions/0013-local-voice-optional.md)）
 - [已发布(beta.37)] Pi / Hindsight 不自动升级：删除自动升级工作流与 Renovate 规则，开发时手动跑升级脚本（[0012](decisions/0012-no-auto-upstream-updates.md)）
-- [待用户决定] Hindsight 0.10.3 → 1.0.0（PyPI 已有，需开发时手动升级并测试）
+- [已完成(未打包)] 上游升级：Hindsight 1.2.0、lima 2.3.0（安全修复）、cloudflared / nerdctl / uv / Node 小版本；cua-driver 等稳定后再升
 - [待用户决定] 中文关键词搜索是否换能切分中文的方案
 
 - [已发布(beta.37)] 新建助理加「全能培训师」模板：自动填人设，建好后启用内置技能「组建团队与入职强化」（team-onboarding），用来组建团队、培训其他助理
