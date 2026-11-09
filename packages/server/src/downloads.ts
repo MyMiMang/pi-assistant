@@ -11,6 +11,7 @@
  */
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { bus } from "./bus.ts";
 
 export type DownloadState = "missing" | "downloading" | "ready" | "error";
@@ -224,20 +225,58 @@ export function followStatus(id: string, read: () => StatusSnapshot, intervalMs 
 		.finally(() => follows.delete(id));
 }
 
+const DOWNLOAD_RETRY_DELAYS_MS = [2000, 5000] as const;
+
+/** status 缺省表示 fetch / 响应体读取抛错；调用方取消优先于 HTTP 和单次超时。 */
+export function shouldRetryDownload(failure: { status?: number; callerAborted?: boolean; timedOut?: boolean }): boolean {
+	if (failure.callerAborted) return false;
+	if (failure.status !== undefined) return failure.status === 429 || (failure.status >= 500 && failure.status < 600);
+	return true;
+}
+
 /** fetch 并按字节报告进度，返回完整内容（适合几百 MB 以内、需要校验 SHA256 的文件） */
-export async function fetchWithProgress(url: string, p: Progress | undefined, init: RequestInit & { timeoutMs?: number } = {}): Promise<Buffer> {
-	const res = await fetch(url, { redirect: "follow", ...init, signal: init.signal ?? AbortSignal.timeout(init.timeoutMs ?? 30 * 60_000) });
-	if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-	const total = Number(res.headers.get("content-length")) || null;
-	const chunks: Buffer[] = [];
-	let got = 0;
-	p?.bytes(0, total);
-	for await (const c of res.body as unknown as AsyncIterable<Uint8Array>) {
-		chunks.push(Buffer.from(c));
-		got += c.byteLength;
-		p?.bytes(got, total);
+export async function fetchWithProgress(
+	url: string,
+	p: Progress | undefined,
+	init: RequestInit & { timeoutMs?: number } = {},
+	/** 仅供测试缩短等待；仍固定最多尝试三次。 */
+	retryDelaysMs: readonly [number, number] = DOWNLOAD_RETRY_DELAYS_MS,
+): Promise<Buffer> {
+	const { timeoutMs, signal: callerSignal, ...requestInit } = init;
+	for (let attempt = 0; ; attempt++) {
+		callerSignal?.throwIfAborted();
+		const timeoutSignal = AbortSignal.timeout(timeoutMs ?? 30 * 60_000);
+		const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
+		let status: number | undefined;
+		try {
+			const res = await fetch(url, { redirect: "follow", ...requestInit, signal });
+			const total = Number(res.headers.get("content-length")) || null;
+			p?.bytes(0, total);
+			if (!res.ok || !res.body) {
+				status = res.status;
+				try {
+					await res.body?.cancel();
+				} catch {
+					// 释放失败不覆盖 HTTP 状态，保持调用方现有错误提示。
+				}
+				throw new Error(`HTTP ${res.status}`);
+			}
+			const chunks: Buffer[] = [];
+			let got = 0;
+			for await (const c of res.body as unknown as AsyncIterable<Uint8Array>) {
+				chunks.push(Buffer.from(c));
+				got += c.byteLength;
+				p?.bytes(got, total);
+			}
+			callerSignal?.throwIfAborted();
+			return Buffer.concat(chunks);
+		} catch (error) {
+			callerSignal?.throwIfAborted();
+			if (attempt >= 2 || !shouldRetryDownload({ status, timedOut: timeoutSignal.aborted })) throw error;
+			console.warn(`下载重试：第 ${attempt + 2}/3 次，${error instanceof Error ? error.message : String(error)}，${url}`);
+			await delay(retryDelaysMs[attempt], undefined, { signal: callerSignal ?? undefined });
+		}
 	}
-	return Buffer.concat(chunks);
 }
 
 /** 把 Web ReadableStream 包一层进度计数（流式写盘时用） */

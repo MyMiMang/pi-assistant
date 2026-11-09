@@ -66,6 +66,119 @@ test("fetchWithProgress：按 content-length 报告进度，返回完整内容",
 	assert.ok(seen.length >= 2);
 });
 
+test("fetchWithProgress：两次 504 后成功，每次从零报告进度", async (t) => {
+	let requests = 0;
+	t.mock.method(globalThis, "fetch", async () => new Response(++requests < 3 ? "busy" : "content", {
+		status: requests < 3 ? 504 : 200,
+		headers: { "content-length": requests < 3 ? "4" : "7" },
+	}));
+	const seen: [number, number | null][] = [];
+	const result = await dl.fetchWithProgress("https://download.test/file", {
+		bytes: (a, b) => seen.push([a, b]), detail: () => {},
+	}, {}, [1, 1]);
+	assert.equal(result.toString(), "content");
+	assert.equal(requests, 3);
+	assert.deepEqual(seen, [[0, 4], [0, 4], [0, 7], [7, 7]]);
+});
+
+for (const [status, expectedRequests] of [[503, 3], [404, 1]] as const) {
+	test(`fetchWithProgress：HTTP ${status} 请求 ${expectedRequests} 次后保留原错误`, async (t) => {
+		let requests = 0;
+		t.mock.method(globalThis, "fetch", async () => {
+			requests++;
+			return new Response("error", { status });
+		});
+		await assert.rejects(dl.fetchWithProgress("https://download.test/file", undefined, {}, [1, 1]), {
+			message: `HTTP ${status}`,
+		});
+		assert.equal(requests, expectedRequests);
+	});
+}
+
+test("fetchWithProgress：等待重试期间取消立即停止，不再请求", async (t) => {
+	const controller = new AbortController();
+	let requests = 0;
+	let notifyRetry!: () => void;
+	const retryStarted = new Promise<void>((resolve) => { notifyRetry = resolve; });
+	t.mock.method(console, "warn", () => notifyRetry());
+	t.mock.method(globalThis, "fetch", async () => {
+		requests++;
+		return new Response("busy", { status: 504 });
+	});
+	const pending = dl.fetchWithProgress("https://download.test/file", undefined, { signal: controller.signal });
+	const rejected = assert.rejects(pending, { name: "AbortError" });
+	await retryStarted;
+	controller.abort();
+	await rejected;
+	assert.equal(requests, 1);
+});
+
+test("shouldRetryDownload：只重试临时错误，调用方取消优先", () => {
+	for (const status of [500, 503, 504, 599, 429]) assert.equal(dl.shouldRetryDownload({ status }), true);
+	for (const status of [400, 401, 404, 499, 600, 200]) assert.equal(dl.shouldRetryDownload({ status }), false);
+	assert.equal(dl.shouldRetryDownload({}), true, "网络错误");
+	assert.equal(dl.shouldRetryDownload({ timedOut: true }), true, "单次超时");
+	assert.equal(dl.shouldRetryDownload({ callerAborted: true }), false);
+	assert.equal(dl.shouldRetryDownload({ callerAborted: true, timedOut: true, status: 503 }), false);
+});
+
+test("fetchWithProgress：响应体断开后丢弃部分内容，从零重新下载", async (t) => {
+	let requests = 0;
+	t.mock.method(globalThis, "fetch", async () => {
+		if (++requests > 1) return new Response("complete");
+		let reads = 0;
+		return new Response(new ReadableStream({
+			pull(controller) {
+				if (reads++ === 0) controller.enqueue(new TextEncoder().encode("partial"));
+				else controller.error(new TypeError("terminated"));
+			},
+		}));
+	});
+	const seen: number[] = [];
+	const result = await dl.fetchWithProgress("https://download.test/file", {
+		bytes: (received) => seen.push(received), detail: () => {},
+	}, {}, [1, 1]);
+	assert.equal(result.toString(), "complete");
+	assert.equal(requests, 2);
+	assert.deepEqual(seen, [0, 7, 0, 8]);
+});
+
+test("fetchWithProgress：每次单独超时，有调用方 signal 也会重试", async (t) => {
+	const signals: AbortSignal[] = [];
+	t.mock.method(globalThis, "fetch", async (_url: string, init: RequestInit) => {
+		const signal = init.signal!;
+		signals.push(signal);
+		if (signals.length === 3) return new Response("ok");
+		return new Promise<Response>((_resolve, reject) => {
+			signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+		});
+	});
+	// timeout signal 自身不保持事件循环存活，用独立计时器保证假 fetch 等得到超时。
+	const keepAlive = setInterval(() => {}, 1000);
+	t.after(() => clearInterval(keepAlive));
+	const caller = new AbortController();
+	const result = await dl.fetchWithProgress("https://download.test/file", undefined, {
+		signal: caller.signal, timeoutMs: 10,
+	}, [1, 1]);
+	assert.equal(result.toString(), "ok");
+	assert.equal(signals.length, 3);
+	assert.notEqual(signals[0], signals[1]);
+	assert.equal(caller.signal.aborted, false);
+});
+
+test("fetchWithProgress：fetch 网络错误重试；已取消的调用方不发请求", async (t) => {
+	let requests = 0;
+	t.mock.method(globalThis, "fetch", async () => {
+		if (++requests < 3) throw new TypeError("fetch failed");
+		return new Response("ok");
+	});
+	assert.equal((await dl.fetchWithProgress("https://download.test/file", undefined, {}, [1, 1])).toString(), "ok");
+	const caller = new AbortController();
+	caller.abort();
+	await assert.rejects(dl.fetchWithProgress("https://download.test/file", undefined, { signal: caller.signal }), { name: "AbortError" });
+	assert.equal(requests, 3);
+});
+
 test("watchDir：别的进程往目录里写时，用目录大小当进度", async () => {
 	const dir = join(tmpdir(), `pia-dl-${Date.now()}`);
 	mkdirSync(dir, { recursive: true });
