@@ -5,7 +5,7 @@
  * 加新的一家：在 `KINDS` 里加一项文案，服务端接口按渠道名 `/api/models/<kind>` 对应。
  */
 import type { NativeCliStatus } from "@pi-assistant/shared";
-import { CheckCircle2, Plus, RefreshCw, Terminal, X } from "lucide-react";
+import { CheckCircle2, Download, LogIn, Plus, RefreshCw, Terminal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { Badge, Button, Fold, Help, Input } from "./ui";
@@ -160,9 +160,22 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 					</div>
 					<div className="text-[11px] text-mut">{k.summary}</div>
 				</div>
-				<Button size="sm" variant="outline" disabled={busy || !!info?.operation} onClick={() => void check(true)} data-testid={`${kind}-recheck`}>
-					<RefreshCw size={13} className={busy ? "animate-spin" : undefined} /> 重新检测
-				</Button>
+				<div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5" data-testid={`${kind}-actions`}>
+					{native && info && (info.operation ? (
+						<Button size="sm" variant="outline" disabled={busy} onClick={() => void action("cancel")}>取消</Button>
+					) : !info.installed ? (
+						<Button size="sm" disabled={busy} onClick={() => void action("install")}><Download size={13} /> 安装</Button>
+					) : !info.loggedIn ? (
+						<Button size="sm" disabled={busy} onClick={() => void action("login")}><LogIn size={13} /> 登录</Button>
+					) : info.updateAvailable ? (
+						<Button size="sm" disabled={busy} onClick={() => void action("update")}>更新到 v{info.latestVersion}</Button>
+					) : (
+						<Button size="sm" variant="outline" disabled={busy} onClick={() => void action("check-update")}>检查更新</Button>
+					))}
+					<Button size="sm" variant="outline" disabled={busy || !!info?.operation} onClick={() => void check(true)} data-testid={`${kind}-recheck`}>
+						<RefreshCw size={13} className={busy ? "animate-spin" : undefined} /> 重新检测
+					</Button>
+				</div>
 			</div>
 			<div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid={`${kind}-status`}>
 				{!info ? (
@@ -176,21 +189,10 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 					</>
 				)}
 				{info?.registered && <span className="text-mut">{k.models}</span>}
+				{info?.operation && <span role="status" className="text-mut">{info.operation === "login" ? "正在登录，请在浏览器里完成" : info.operation === "install" ? "正在安装…" : "正在更新…"}</span>}
+				{!info?.operation && info?.updateAvailable && <span className="text-mut">有新版本 v{info.latestVersion}</span>}
+				{info?.untestedVersion && <span className="text-mut">这个版本还没测过</span>}
 			</div>
-			{native && info && (
-				<div className="flex flex-wrap items-center gap-2 text-xs" data-testid={`${kind}-actions`}>
-					{info.operation ? <>
-						<span role="status">{info.operation === "login" ? "正在登录，请在浏览器里完成" : info.operation === "install" ? "正在安装…" : "正在更新…"}</span>
-						<Button size="sm" variant="outline" disabled={busy} onClick={() => void action("cancel")}>取消</Button>
-					</> : <>
-						{!info.installed ? <Button size="sm" disabled={busy} onClick={() => void action("install")}>安装</Button>
-							: !info.loggedIn ? <Button size="sm" disabled={busy} onClick={() => void action("login")}>登录</Button> : null}
-						{info.installed && <Button size="sm" variant="outline" disabled={busy} onClick={() => void action("check-update")}>检查更新</Button>}
-						{info.updateAvailable && <><span>有更新 v{info.latestVersion}</span><Button size="sm" disabled={busy} onClick={() => void action("update")}>更新{info.latestVersion ? `至 ${info.latestVersion}` : ""}</Button></>}
-					</>}
-					{info.untestedVersion && <span className="text-mut">这个版本还没测过</span>}
-				</div>
-			)}
 			{err && info && <div role="alert" className="break-words text-xs text-red-500">{err}</div>}
 			{info && !info.installed && !native && (
 				<div className="text-[11px] text-mut2" data-testid={`${kind}-hint`}>
@@ -208,7 +210,7 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 				</div>
 			)}
 			{kind === "claude-code" && <ClaudeCustomModels onChanged={onChanged} />}
-			{info?.error && (native || (info.installed && info.loggedIn === false)) && <div className="break-all text-[11px] text-mut2">{info.error}</div>}
+			{info?.error && ((native && info.installed) || (info.installed && info.loggedIn === false)) && <div className="break-all text-[11px] text-mut2">{info.error}</div>}
 		</div>
 	);
 }
@@ -274,11 +276,16 @@ function ClaudeCustomModels({ onChanged }: { onChanged?: () => void }) {
 	);
 }
 
-/** 模型服务页里的全部本机命令行卡片 */
-export const CliAgentCards = ({ onChanged }: { onChanged?: () => void }) => (
-	<>
-		{CLI_KINDS.map((k) => (
-			<CliAgentCard key={k} kind={k} onChanged={onChanged} />
-		))}
-	</>
-);
+/** 模型服务页里的全部编程工具卡片：会越来越多，默认折叠、显示数量，展开后限高内部滚动 */
+export function CliAgentCards({ onChanged }: { onChanged?: () => void }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<Fold testId="cli-agents" icon={Terminal} title="编程工具" count={CLI_KINDS.length} hint="Claude Code、Codex、Gemini CLI 等，装好登录后可当助理的模型用" open={open} onToggle={() => setOpen((v) => !v)}>
+			<div className="max-h-[60dvh] space-y-2 overflow-y-auto pr-1" data-testid="cli-agents-list">
+				{CLI_KINDS.map((k) => (
+					<CliAgentCard key={k} kind={k} onChanged={onChanged} />
+				))}
+			</div>
+		</Fold>
+	);
+}

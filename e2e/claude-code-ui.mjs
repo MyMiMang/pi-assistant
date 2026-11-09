@@ -49,6 +49,7 @@ try {
 
 	// ---- 1) 模型服务页卡片：没装 → 未登录 → 已登录
 	await page.goto(`${base}/?settings=models`);
+	await page.getByTestId("cli-agents-toggle").click(); // 编程工具默认折叠
 	const card = page.getByTestId("claude-code-card");
 	await card.waitFor();
 	await page.getByTestId("claude-code-status").getByText("没装").waitFor();
@@ -91,6 +92,7 @@ try {
 
 	// ---- 2b) 自定义模型：默认收起；展开后加一个 ID → 立刻出现在模型列表 → 删掉就没了；非法 ID 给中文提示
 	await page.goto(`${base}/?settings=models`);
+	await page.getByTestId("cli-agents-toggle").click(); // 编程工具默认折叠
 	await page.getByTestId("claude-custom-fold-toggle").waitFor();
 	assert.equal(await page.getByTestId("claude-custom-input").count(), 0, "专业设置默认收起");
 	await page.getByTestId("claude-custom-fold-toggle").click();
@@ -142,6 +144,7 @@ try {
 	// ---- 5) 390 宽
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(`${base}/?settings=models`);
+	await page.getByTestId("cli-agents-toggle").click(); // 编程工具默认折叠
 	await page.getByTestId("claude-code-card").waitFor();
 	await page.getByTestId("claude-code-status").getByText("已登录").waitFor();
 	await noOverflow(page, "390 设置页");

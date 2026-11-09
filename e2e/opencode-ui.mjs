@@ -49,6 +49,7 @@ try {
 
 	// ---- 1) 模型服务页卡片：没装 → 装好没登录（照样可用）→ 登录凭据在
 	await page.goto(`${base}/?settings=models`);
+	await page.getByTestId("cli-agents-toggle").click(); // 编程工具默认折叠
 	const card = page.getByTestId("opencode-cli-card");
 	await card.waitFor();
 	await page.getByTestId("opencode-cli-status").getByText("没装").waitFor();
@@ -122,6 +123,7 @@ try {
 	// ---- 5) 390 宽
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(`${base}/?settings=models`);
+	await page.getByTestId("cli-agents-toggle").click(); // 编程工具默认折叠
 	await page.getByTestId("opencode-cli-card").waitFor();
 	await page.getByTestId("opencode-cli-status").getByText("已登录").waitFor();
 	await noOverflow(page, "390 设置页");

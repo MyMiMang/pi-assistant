@@ -32,6 +32,7 @@ try {
  const errors = [];
  page.on("pageerror", e => errors.push(e.message));
  await page.goto(`${base}/?settings=models`);
+ await page.getByTestId("cli-agents-toggle").click(); // 编程工具默认折叠
  for (const kind of ["gemini-cli", "codebuddy-cli"]) {
   const card = page.getByTestId(`${kind}-card`);
   await card.getByText("没装", { exact: true }).waitFor();
@@ -55,8 +56,8 @@ try {
   await wait(async () => await card.getAttribute("data-registered") === "true");
   await card.screenshot({ path: join(OUT, `${kind}-04-ready.png`) });
   await card.getByRole("button", { name: "检查更新", exact: true }).click();
-  await card.getByRole("button", { name: /更新至 2\.0\.0/ }).waitFor();
-  await card.getByRole("button", { name: /更新至 2\.0\.0/ }).click();
+  await card.getByRole("button", { name: /更新到 v2\.0\.0/ }).waitFor();
+  await card.getByRole("button", { name: /更新到 v2\.0\.0/ }).click();
   await wait(async () => /已安装 v2\.0\.0/.test(await card.innerText()));
   await card.getByText("这个版本还没测过", { exact: true }).waitFor();
   assert.equal(await card.getAttribute("data-logged-in"), "true", "更新保留独立 home 的登录");
@@ -90,6 +91,7 @@ try {
  assert.match(await page.locator("main").innerText(), /写入测试笔记/);
  await page.setViewportSize({ width: 390, height: 844 });
  await page.goto(`${base}/?settings=models`);
+ await page.getByTestId("cli-agents-toggle").click(); // 编程工具默认折叠
  await page.getByTestId("gemini-cli-card").getByText("已登录", { exact: true }).waitFor();
  await page.getByTestId("gemini-cli-card").scrollIntoViewIfNeeded();
  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, "手机卡片不横向溢出");
