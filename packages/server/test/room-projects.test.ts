@@ -290,6 +290,32 @@ test("idleWake 不会被管理者反复重派同一份活（没建 work_item）�
 	await rooms.deleteRoom(room.id);
 });
 
+test("项目反复卡住只提醒一次，有进展回退后再次到阈值才提醒", async () => {
+	const room = rooms.createRoom({ name: "提醒去重群", memberIds: ["pm", "pa"], managerId: "pm" });
+	await callProj(room.id, "pm", "room_plan", fullPlan());
+	const pid = projects.projectsOf(room.id)[0].id;
+	db.prepare("UPDATE room_projects SET status = 'active', replans = 2 WHERE id = ?").run(pid);
+	const step = () => projects.checkProjectStall(projects.getProject(pid)!);
+	const notices = () => noticesOf(room.id).filter((n) => n.content.includes("反复卡住")).length;
+	assert.equal(step(), "ok"); // 建立指纹
+	assert.equal(step(), "ok");
+	assert.equal(step(), "ok");
+	assert.equal(step(), "exhausted");
+	assert.equal(notices(), 1);
+	for (let i = 0; i < 8; i++) assert.equal(step(), "ok");
+	assert.equal(notices(), 1);
+	assert.equal(projects.getProject(pid)!.stalls, 3);
+	const wi = W.createWorkItem({ roomId: room.id, title: "进展", requirement: "写", doneCriteria: "有结果", ownerAgentId: "pa", start: false, projectId: pid }, { kind: "user" }).item.id;
+	db.prepare("UPDATE work_items SET status = 'done' WHERE id = ?").run(wi);
+	assert.equal(step(), "ok");
+	assert.equal(projects.getProject(pid)!.stalls, 2);
+	assert.equal(step(), "exhausted");
+	assert.equal(notices(), 2);
+	assert.equal(step(), "ok");
+	await until(() => idle(room.id), "跑完");
+	await rooms.deleteRoom(room.id);
+});
+
 test("迁移：旧的 rooms.autonomy 转成一个 active 项目，进行中的任务挂上 project_id，autonomy 清空；跑两次幂等", async () => {
 	const room = rooms.createRoom({ name: "待迁移群", memberIds: ["pm", "pa"], managerId: "pm" });
 	const startedAt = now() - 10_000;

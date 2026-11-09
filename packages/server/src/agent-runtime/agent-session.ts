@@ -5,6 +5,7 @@
  */
 import { join } from "node:path";
 import { config } from "../config.ts";
+import { db } from "../db.ts";
 import { workspaceOf } from "../files.ts";
 import { hostFileAccess } from "../host-control.ts";
 import { models } from "../models.ts";
@@ -42,6 +43,7 @@ export async function createAgentSession(a: AgentRow, o: {
 		thinking: o.thinking,
 		systemPromptAppend: [...SYSTEM_RULES(a.name, workspace, a.persona, hostFileAccess(a.id)), ...(o.rules ?? [])],
 		extensions: await extensionsFor(a.id, o.conversationId, o.taskId, o.ext),
+		waitingForUser: () => !!o.conversationId && !!db.prepare("SELECT 1 FROM requests WHERE conversation_id = ? AND status = 'pending' LIMIT 1").get(o.conversationId),
 		skillPaths: skillPaths(),
 		skillFilter: skillFilterFor(a.id),
 		...integrationsFor(a.id, o.conversationId),

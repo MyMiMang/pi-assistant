@@ -250,7 +250,8 @@ export function checkProjectStall(p: ProjectRow): "ok" | "replan" | "exhausted" 
 	}
 	if (p.replans >= REPLAN_EXHAUSTED) {
 		// 换过办法仍然卡住：不再要求管理者自己想办法，系统直接写清楚并推送用户（和单任务的「已用尽办法」同一思路）。
-		db.prepare("UPDATE room_projects SET stalls = 0, progress_sig = ?, updated_at = ? WHERE id = ?").run(sig, now(), p.id);
+		db.prepare("UPDATE room_projects SET stalls = 3, progress_sig = ?, updated_at = ? WHERE id = ?").run(sig, now(), p.id);
+		if (p.stalls >= 3 && p.progress_sig === sig) return "ok";
 		notice(p, `项目「${p.title}」反复卡住，已经换过 ${p.replans} 次办法仍没有新进展。需要你看一下卡在哪、要不要调整方向。`, "stalled");
 		notify({ title: `${p.title}：需要你看一下`, body: "项目反复卡住，换过办法仍没有进展", tag: `project-stalled-${p.id}`, url: `/?room=${p.room_id}` });
 		return "exhausted";

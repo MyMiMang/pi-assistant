@@ -37,6 +37,7 @@ import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/
 import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import compat from "./compat.json" with { type: "json" };
 import { refreshResumedTools } from "./session-tools.ts";
+import { guardTools } from "./tool-guard.ts";
 import { isAbortedMessage } from "./run-result.ts";
 export { recallQueuedSteer } from "./queue-recall.ts";
 export { activateNewExtensionTools, loadedResources } from "./session-tools.ts";
@@ -513,6 +514,7 @@ export interface CreateSessionOptions {
 	thinking?: string;
 	systemPromptAppend: string[];
 	extensions: { name: string; factory: ExtensionFactory }[];
+	waitingForUser?: () => boolean;
 	skillPaths?: string[];
 	/**
 	 * 技能选集：只保留返回 true 的技能（在路径白名单之后再次过滤）。
@@ -612,8 +614,6 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		additionalSkillPaths: o.skillPaths,
 		additionalExtensionPaths: o.packagePaths,
 		appendSystemPrompt: [o.systemPromptAppend.join("\n\n")],
-		// Pi 自带的 MCP 扩展（SDK 会话默认不加载）：ext-computer 等通过 pi.registerMcpServer 注册服务器
-		// 配置来源只有我们自己（loadConfig），不读 ~/.pi/agent/mcp.json 或项目 .pi/mcp.json；/mcp 的修改不落盘。
 		extensionFactories: [
 			...(o.minimalExtensions
 				? []
@@ -631,8 +631,8 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 						{ name: "pi-codemode", factory: createCodemodeExtension({ models: false }) },
 						{ name: "pi-tool-search", factory: createToolSearchExtension() },
 					]),
-			...o.extensions.map((e) => ({ name: e.name, factory: e.factory })),
-		],
+			...o.extensions,
+		].map((e) => ({ name: e.name, factory: guardTools(e.factory, o) })),
 	});
 	await resourceLoader.reload();
 	const sessionManager = o.inMemorySession

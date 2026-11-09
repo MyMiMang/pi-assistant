@@ -152,9 +152,14 @@ test("checkProjectStall：连续没进展到 3 次返回 replan；改过计划 �
 	const n0 = pushLog.length;
 	for (let i = 0; i < 2; i++) assert.equal(projects.checkProjectStall(p()), "ok");
 	assert.equal(projects.checkProjectStall(p()), "exhausted", "改过 2 次计划后又卡到 3 次：不再要求管理者自己改");
-	assert.equal(projects.getProject(pid)!.stalls, 0, "报告后清零，避免每次都重复报告");
+	assert.equal(projects.getProject(pid)!.stalls, 3, "报告后保持阈值，同一轮卡住不再重复报告");
 	assert.match(noticesOf(room.id).pop()!.content, /反复卡住，已经换过 2 次办法仍没有新进展/);
 	assert.ok(pushLog.length > n0 && pushLog.slice(n0).some((x) => /需要你看一下/.test(x.title)));
+	const pushes = pushLog.length;
+	const notices = noticesOf(room.id).length;
+	for (let i = 0; i < 8; i++) assert.equal(projects.checkProjectStall(p()), "ok");
+	assert.equal(pushLog.length, pushes, "同一轮卡住不重复推送");
+	assert.equal(noticesOf(room.id).length, notices, "同一轮卡住不重复插通知");
 
 	await rooms.deleteRoom(room.id);
 });
