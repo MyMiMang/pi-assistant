@@ -6,7 +6,7 @@
 
 用户批准 Claude Code / Codex / OpenCode / Antigravity 仅迁移安装来源和配置目录，保留 brain 接法。三家 npm 清单已核对：@anthropic-ai/claude-code 2.1.322、@openai/codex 0.167.0、opencode-ai 1.19.5；官方元数据见各包 registry.npmjs.org 的固定版本端点。Claude / OpenCode 当前 bin 为原生二进制，依赖 postinstall 放置，Codex 为 JS 启动器；共用 NativeInstaller 增加入口种类。三家 CLI 环境复用 native-env 覆盖 HOME / Windows / XDG，CLAUDE_CONFIG_DIR与 CODEX_HOME 指私有 home，OpenCode 全部 XDG 指私有 home。
 
-Antigravity 1.5.4-5037094733742080 的 Homebrew / winget 官方存储 URL 与校验值已只读核对，但官方站点连接失败，关闭自动更新的方法未查实；遵照用户要求，当前不迁移该工具。三家继续实施。三家假包安装→假登录→选模型→对话 e2e 已通过；agy-ui / native-acp-ui 回归已通过。官方命令登录取消、假终端进程组取消和三平台窗口命令拼装单测通过。Terminal Auth：macOS 用 Terminal + osascript，Windows 用 cmd start，Linux 用 x-terminal-emulator；环境由私有 Node 启动器全量替换，POSIX 取消进程组、Windows taskkill /T。真实终端/账号和三平台实机未验证。完整 check 通过：1558 tests、1547 pass、11 skipped、0 fail（artifacts/cli-private-check-final.log）；随后改动定向回归62项全过（cli-private-regression-final.log）、最终静态检查通过。五个 e2e 日志为 artifacts/cli-private-{claude,codex,opencode,agy,native}-e2e.log，截图在对应 *-ui 目录。Claude/Codex 最终截图已等登录操作收尾并目视核对。Antigravity 未迁移，因此四家整体目标尚未完成；没有运行真实安装脚本、登录、模型或用户已安装CLI，没有 commit/push/tag/重启8787。
+当时 Antigravity 暂停；2026-11-10 用户补充官方关闭自更新开关后继续实施，当前状态以 §10 为准。此前 Homebrew / winget 官方存储 URL 与校验值已只读核对。三家继续实施。三家假包安装→假登录→选模型→对话 e2e 已通过；agy-ui / native-acp-ui 回归已通过。官方命令登录取消、假终端进程组取消和三平台窗口命令拼装单测通过。Terminal Auth：macOS 用 Terminal + osascript，Windows 用 cmd start，Linux 用 x-terminal-emulator；环境由私有 Node 启动器全量替换，POSIX 取消进程组、Windows taskkill /T。真实终端/账号和三平台实机未验证。完整 check 通过：1558 tests、1547 pass、11 skipped、0 fail（artifacts/cli-private-check-final.log）；随后改动定向回归62项全过（cli-private-regression-final.log）、最终静态检查通过。五个 e2e 日志为 artifacts/cli-private-{claude,codex,opencode,agy,native}-e2e.log，截图在对应 *-ui 目录。Claude/Codex 最终截图已等登录操作收尾并目视核对。该段为三家合并时的历史结果，Antigravity 后续候选见 §10；没有运行真实安装脚本、登录、模型或用户已安装CLI，没有 commit/push/tag/重启8787。
 
 
 承接 [原生 ACP 设计](native-acp-agents.md) 和 [决策 0030](../decisions/0030-native-acp-agents.md)。本文 §7 记录用户本次批准的具体取舍；此前设计与本文不一致的本批实施范围，以 §7 为准。批准方案不代表功能已经实现或真实工具验收通过。
@@ -176,3 +176,15 @@ Pi MCP 工具继续走现有 ext-approval 与 tool-guard，既有凭据拒绝、
 - `native-acp-ui` 通过：两家安装、取消登录、登录、检查更新/更新、保留登录；选模型、消息、原生步骤、审批/批准、临时文件、刷新历史、390 窄屏。截图 `artifacts/native-acp-ui/`，审批与完成截图已等稳定并目视核对。
 - 旧模型服务 e2e：`claude-code-ui`、`codex-ui`、`agy-ui`、`opencode-ui` 全部通过，全部临时数据与假程序。原联网 MCP 安装单测已改本地假 npm/uv，自动化无联网安装。
 - 未验证：真实两工具安装 / 登录 / 模型调用、真实取消效果、session/new 真实无费用表现、Mac 钥匙串隔离、Gemini 真实 load 回放时序，以及 macOS / Windows / Linux 发布产物和执行。静态包元数据核验不代表实装可运行。
+
+## 10. Antigravity 私有安装候选（2026-11-10）
+
+- 分支 dev/agy-private-install，基于 origin/main d91c5c96；三家已合 main b1dc632d。仅迁移安装、配置与登录，保留 brain 后端及 provider antigravity。未 commit / push / tag，未改旧副本、依赖版本或上游，未重启8787。
+- 复用 NativeInstaller 的 downloads 下载进度 / 校验与取消、staging、原子 current、启动清旧版；新增官方 binary 来源，固定六平台版本 1.5.4-5037094733742080、URL、SHA256。tar 仅读取普通文件 antigravity；专有许可、用户点击从 Google 下载，不随 App 分发。
+- 所有检测、模型枚举、登录与对话复用 managed-env，HOME / Windows / XDG 覆盖为 cli-agents/antigravity/home，官方 AGY_CLI_DISABLE_AUTO_UPDATE=true 固定且不能被 extra 覆盖。配置与会话在 HOME/.gemini/antigravity-cli；不搜索用户 PATH，不读写用户 .gemini，不读取凭据。系统钥匙串是否共用未验证。
+- 登录证据：[Google 官方仓库 README](https://github.com/google-antigravity/antigravity-cli/blob/main/README.md) 说明浏览器 / SSH 登录和系统钥匙串；[官方 CHANGELOG 1.5.0](https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md) 明确 agy acp --login。本次下载官方 darwin-arm 归档仅做 SHA256 与静态字符串检查，匹配 196e6777…65834、入口 antigravity，内含“Log in with Google interactively, then exit (ACP terminal auth)”和 AGY_CLI_DISABLE_AUTO_UPDATE。没有执行真实二进制。证据保存在 artifacts/agy-official-* 与 agy-inspect/。
+- 关闭自更新证据来自用户查实的 [Google troubleshooting](https://antigravity.google/docs/cli/troubleshooting)；本次 Google 文档与官方更新清单直连 SSL 失败，不能声称实网清单验收。静态二进制可佐证开关存在，不能代替真实运行验证。
+- 手动检查固定官方 manifests/{darwin|linux|windows}_{arm64|amd64}.json，解析 version / url / sha256；URL 必须为同版本、同平台 Google storage 路径。有 SHA256 才允许安装；无 SHA256 只显示新版并等待 App 固定清单。字段以官方二进制静态标签和假清单验证，实际回包未取得。
+- 卡片复用 CliAgentCard / Help，提供安装 / 登录 / 取消 / 手动更新，去掉本机 / 实验性 / 旧终端提示；边界放 Help。旧会话找不到时沿用 channel-core 的 renderFreshInput 自动退回。
+- 测试：本地假 binary 覆盖下载 SHA / tar / current / 取消更新 / 缺或有 SHA；假程序捕获检测、终端登录、对话的私有环境；登录取消与三平台终端拼装、旧续接失败退回。agy-ui 从未安装→安装假 binary→取消与完成假登录→更新保留登录→选模型→对话 / 工具审批，另四个 UI 串行回归。最终 npm run check：1564 tests、1553 pass、11 skipped、0 fail（artifacts/agy-check-final.log）；网页 build 通过（agy-web-build-final.log）。五个 e2e 串行通过：agy-e2e-final.log、agy-regression-{claude,codex,opencode,native}-final.log。截图 artifacts/agy-ui/ 的八张及三家 ready / native approved 已目视核对；批准后结果截图复用 stableShot 等有限动画完成，正文清晰可见。
+- 未验证：真实安装、真实账号登录 / 模型、真实终端与取消效果、Windows / Linux 执行和发布产物、钥匙串隔离、实际更新清单回包与实际新版。

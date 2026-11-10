@@ -29,12 +29,12 @@
 |---|---|
 | `src/cli-agents/acp-inactivity.ts` | 原生轮次十分钟无事件保护；等待审批时不取消，可注入时钟 |
 | `src/cli-agents/native-env.ts` | 受管工具独立 home、白名单环境与 HTTP MCP 定义 |
-| `src/cli-agents/managed-env.ts` | 既有只借脑子渠道的私有环境，复用 native-env 强制覆盖 HOME / XDG 与工具配置目录 |
+| `src/cli-agents/managed-env.ts` | 四家只借脑子渠道的私有环境，复用 native-env 强制覆盖 HOME / XDG；Antigravity 固定 AGY_CLI_DISABLE_AUTO_UPDATE=true |
 | `src/cli-agents/managed-install.ts` | 全部受管 CLI 共用安装器实例与固定清单，区分开发测试命令覆盖和安装入口参数 |
 | `src/cli-agents/managed-auth.ts` | 官方登录命令与取消，不读取或记录凭据 |
 | `src/cli-agents/terminal-auth.ts` | 官方终端登录的跨平台窗口命令与私有脚本 |
 | `src/cli-agents/managed-actions.ts` | 三家共用安装、登录、取消和手动更新操作状态 |
-| `src/cli-agents/native-install.ts` | App npm 私有安装、完整性校验、版本指针与下次启动清旧版；复用 downloads |
+| `src/cli-agents/native-install.ts` | npm / 官方 binary 共用私有安装、SHA 校验、原子 current、取消与下次启动清旧版；binary 仅提取固定入口，更新无 SHA256 仅提示；复用 downloads |
 | `src/cli-agents/native-auth.ts` | initialize / session/new 登录检测与模型目录，Agent Auth 登录和取消；不读凭据 |
 | `src/cli-agents/profiles/gemini.ts`、`codebuddy.ts` | 每工具薄启动配置；Gemini 空 `.gemini/.env` 和父规则边界、CodeBuddy 设置来源与权限参数 |
 | `src/pi-adapter/cli-models/native.ts` | 原生 ACP 通用渠道注册，显式配置命令路径 |
@@ -44,7 +44,7 @@
 | `src/agent-runtime/native-acp-messages.ts` | 原生工具步骤落库与停止收尾；不进入 Pi 工具执行 |
 | `test/fixtures/fake-native-acp.mjs` | 原生 ACP 假进程，权限、步骤、HTTP MCP、load 和取消场景 |
 
-`test/managed-cli-env.test.ts` 验证既有三家私有环境与二次白名单不恢复用户 HOME；`test/managed-auth.test.ts` 验证假登录取消与跨平台终端命令拼装。相关单测使用 `native-acp-*` / `cli-models-native-*` 以及 `native-install.test.ts`、`native-auth.test.ts` 命名，全部只用临时数据和假程序。`e2e/native-acp-ui.mjs` 覆盖安装、登录取消、更新、模型选择、原生步骤与批准。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
+`test/native-install-binary.test.ts` 验证官方 binary 假下载、SHA、tar 单入口、current、取消保旧及更新缺 / 有 SHA256；`test/managed-cli-env.test.ts` 验证既有四家私有环境与二次白名单不恢复用户 HOME；`test/managed-auth.test.ts` 验证假登录取消与跨平台终端命令拼装。相关单测使用 `native-acp-*` / `cli-models-native-*` 以及 `native-install.test.ts`、`native-auth.test.ts` 命名，全部只用临时数据和假程序。`e2e/native-acp-ui.mjs` 覆盖安装、登录取消、更新、模型选择、原生步骤与批准。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
 
 ## 每类逻辑放在哪
 - HTTP 接口：`packages/server/src/routes/*`（`http.ts` 只做组装和中间件）。
@@ -337,6 +337,7 @@
 | 文件 | 负责 |
 |---|---|
 | `managed-cli-package.mjs` | 三家受管 CLI 的本地假包安装、官方登录命令形状和假终端，不联网 |
+| `managed-agy-binary.mjs` | Antigravity 本地假 binary 压缩包、SHA 下载、终端登录与更新清单；捕获检测 / 登录 / 对话隔离环境，禁止外网 |
 | `temp-server.mjs` | 临时数据 + Mock 的测试服务（makeTempRun / startTempServer / browserEnv / cleanupTempRun；服务进程不继承 *_API_KEY / *_TOKEN / ANTHROPIC_* 等真实服务商凭据环境变量） |
 | `stable-shot.mjs` | 稳定截图 |
 | `artifacts.mjs` | 截图与日志写 artifacts/ |
