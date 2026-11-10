@@ -2,6 +2,13 @@
 
 # 原生 ACP 编程工具：第一批实施方案
 
+## 2026-11-10 既有四家私有安装补充（开发中，未交付）
+
+用户批准 Claude Code / Codex / OpenCode / Antigravity 仅迁移安装来源和配置目录，保留 brain 接法。三家 npm 清单已核对：@anthropic-ai/claude-code 2.1.322、@openai/codex 0.167.0、opencode-ai 1.19.5；官方元数据见各包 registry.npmjs.org 的固定版本端点。Claude / OpenCode 当前 bin 为原生二进制，依赖 postinstall 放置，Codex 为 JS 启动器；共用 NativeInstaller 增加入口种类。三家 CLI 环境复用 native-env 覆盖 HOME / Windows / XDG，CLAUDE_CONFIG_DIR与 CODEX_HOME 指私有 home，OpenCode 全部 XDG 指私有 home。
+
+Antigravity 1.5.4-5037094733742080 的 Homebrew / winget 官方存储 URL 与校验值已只读核对，但官方站点连接失败，关闭自动更新的方法未查实；遵照用户要求，当前不迁移该工具。三家继续实施。三家假包安装→假登录→选模型→对话 e2e 已通过；agy-ui / native-acp-ui 回归已通过。官方命令登录取消、假终端进程组取消和三平台窗口命令拼装单测通过。Terminal Auth：macOS 用 Terminal + osascript，Windows 用 cmd start，Linux 用 x-terminal-emulator；环境由私有 Node 启动器全量替换，POSIX 取消进程组、Windows taskkill /T。真实终端/账号和三平台实机未验证。完整 check 通过：1558 tests、1547 pass、11 skipped、0 fail（artifacts/cli-private-check-final.log）；随后改动定向回归62项全过（cli-private-regression-final.log）、最终静态检查通过。五个 e2e 日志为 artifacts/cli-private-{claude,codex,opencode,agy,native}-e2e.log，截图在对应 *-ui 目录。Claude/Codex 最终截图已等登录操作收尾并目视核对。Antigravity 未迁移，因此四家整体目标尚未完成；没有运行真实安装脚本、登录、模型或用户已安装CLI，没有 commit/push/tag/重启8787。
+
+
 承接 [原生 ACP 设计](native-acp-agents.md) 和 [决策 0030](../decisions/0030-native-acp-agents.md)。本文 §7 记录用户本次批准的具体取舍；此前设计与本文不一致的本批实施范围，以 §7 为准。批准方案不代表功能已经实现或真实工具验收通过。
 
 ## 1. 范围与分段

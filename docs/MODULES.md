@@ -19,7 +19,7 @@
 | 服务端通用 | `bus.ts`（推事件）、`requests.ts`（审批与提问唯一入口）、`interject.ts`（插话/停止词）、`rooms/followup.ts` 的 `wakeInRoom`（在群里叫醒某个成员发言）、`model-errors.ts`、`thinking.ts`（拆思考内容）、`native-launch-env.ts`（启动子进程环境）、`config.ts`（环境变量）、`db.ts` |
 | Pi 接入（唯一入口） | `pi-adapter/index.ts`、`custom-providers.ts`、`relay-protocols.ts`、`model-limits.ts`、`fast-mode.ts`、`run-result.ts`（`lastAssistantError`：一轮跑完后判成败，同一轮前面已有可见输出时最后的空回复不算失败）、`mock-provider.ts`（e2e 脚本化回复）、`mock-room-provider.ts`（群聊部分的 Mock，从 mock-provider.ts 拆出来控制单文件行数）、`mock-collab-provider.ts`（成员直接协作的 Mock：任务要求含「先问一下」「上游有问题」，或看到提问编号时接管）、`mock-chat-plan-provider.ts`（单聊「大事走方案」的 Mock：用户消息含「做个大事」→ chat_plan 两阶段方案卡；用户说「可以」/ 点按钮确认后依次写文件、chat_stage_done ×2、chat_project_done；带「慢」的方案先 sleep 一下留出进行中的窗口；只在有 chat_plan 工具的单聊里接管） |
 | 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`local-asr-harness.ts`（本地语音假环境 + 来源端口）、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp、fake-codex：假 codex app-server（JSON-RPC，场景文件 FAKE_CODEX_SCENARIO_FILE 每轮重读；场景含 meta / one-tool / steer / hang / image-tool / server-requests / crash / not-logged-in / e2e-bash；「未登录」用 CODEX_HOME 下的 logged-out 文件表示）、fake-claude：假 claude，按 FAKE_CLAUDE_SCENARIO 出 stream-json 并调工具桥；场景含 meta 回报收到的参数、one-tool / tool-interject / image-tool、stall、resume-missing、think） |
-| e2e 工具 | `e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
+| e2e 工具 | `e2e/fixtures/managed-cli-package.mjs`（三家受管 CLI 的本地假 npm 包、假登录与假终端，不联网）；`e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
 
 ## 原生 ACP 第一段（Gemini CLI / CodeBuddy）
 
@@ -28,7 +28,12 @@
 | 路径（packages/server/ 下） | 职责 |
 |---|---|
 | `src/cli-agents/acp-inactivity.ts` | 原生轮次十分钟无事件保护；等待审批时不取消，可注入时钟 |
-| `src/cli-agents/native-env.ts` | 原生工具独立 home、白名单环境与 HTTP MCP 定义 |
+| `src/cli-agents/native-env.ts` | 受管工具独立 home、白名单环境与 HTTP MCP 定义 |
+| `src/cli-agents/managed-env.ts` | 既有只借脑子渠道的私有环境，复用 native-env 强制覆盖 HOME / XDG 与工具配置目录 |
+| `src/cli-agents/managed-install.ts` | 全部受管 CLI 共用安装器实例与固定清单，区分开发测试命令覆盖和安装入口参数 |
+| `src/cli-agents/managed-auth.ts` | 官方登录命令与取消，不读取或记录凭据 |
+| `src/cli-agents/terminal-auth.ts` | 官方终端登录的跨平台窗口命令与私有脚本 |
+| `src/cli-agents/managed-actions.ts` | 三家共用安装、登录、取消和手动更新操作状态 |
 | `src/cli-agents/native-install.ts` | App npm 私有安装、完整性校验、版本指针与下次启动清旧版；复用 downloads |
 | `src/cli-agents/native-auth.ts` | initialize / session/new 登录检测与模型目录，Agent Auth 登录和取消；不读凭据 |
 | `src/cli-agents/profiles/gemini.ts`、`codebuddy.ts` | 每工具薄启动配置；Gemini 空 `.gemini/.env` 和父规则边界、CodeBuddy 设置来源与权限参数 |
@@ -39,7 +44,7 @@
 | `src/agent-runtime/native-acp-messages.ts` | 原生工具步骤落库与停止收尾；不进入 Pi 工具执行 |
 | `test/fixtures/fake-native-acp.mjs` | 原生 ACP 假进程，权限、步骤、HTTP MCP、load 和取消场景 |
 
-相关单测使用 `native-acp-*` / `cli-models-native-*` 以及 `native-install.test.ts`、`native-auth.test.ts` 命名，全部只用临时数据和假程序。`e2e/native-acp-ui.mjs` 覆盖安装、登录取消、更新、模型选择、原生步骤与批准。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
+`test/managed-cli-env.test.ts` 验证既有三家私有环境与二次白名单不恢复用户 HOME；`test/managed-auth.test.ts` 验证假登录取消与跨平台终端命令拼装。相关单测使用 `native-acp-*` / `cli-models-native-*` 以及 `native-install.test.ts`、`native-auth.test.ts` 命名，全部只用临时数据和假程序。`e2e/native-acp-ui.mjs` 覆盖安装、登录取消、更新、模型选择、原生步骤与批准。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
 
 ## 每类逻辑放在哪
 - HTTP 接口：`packages/server/src/routes/*`（`http.ts` 只做组装和中间件）。
@@ -331,6 +336,7 @@
 
 | 文件 | 负责 |
 |---|---|
+| `managed-cli-package.mjs` | 三家受管 CLI 的本地假包安装、官方登录命令形状和假终端，不联网 |
 | `temp-server.mjs` | 临时数据 + Mock 的测试服务（makeTempRun / startTempServer / browserEnv / cleanupTempRun；服务进程不继承 *_API_KEY / *_TOKEN / ANTHROPIC_* 等真实服务商凭据环境变量） |
 | `stable-shot.mjs` | 稳定截图 |
 | `artifacts.mjs` | 截图与日志写 artifacts/ |
