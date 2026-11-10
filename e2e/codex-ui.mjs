@@ -14,6 +14,7 @@ import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 import { openModelMenu } from "./model-menu-flow.mjs";
+import { makeManagedInstallPreload } from "./fixtures/managed-cli-package.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const FAKE = join(root, "packages/server/test/fixtures/fake-codex.mjs");
@@ -25,7 +26,7 @@ const binDir = join(run.runDir, "bin");
 mkdirSync(binDir, { recursive: true });
 const CODEX = join(binDir, "codex"); // 一开始还不存在 = 「没装」
 const scenarioFile = join(run.runDir, "scenario");
-const codexHome = join(run.runDir, "codex-home"); // 假 codex 用「目录下有 logged-out 文件」表示未登录（环境白名单挡掉自定义变量）
+const codexHome = join(run.data, "cli-agents", "codex", "home"); // 假 codex 用「目录下有 logged-out 文件」表示未登录（环境白名单挡掉自定义变量）
 mkdirSync(codexHome, { recursive: true });
 const loggedOut = join(codexHome, "logged-out");
 writeFileSync(scenarioFile, "text");
@@ -33,7 +34,8 @@ const installFake = () => {
 	writeFileSync(CODEX, `#!/bin/sh\nFAKE_CODEX_SCENARIO_FILE="${scenarioFile}" exec "${process.execPath}" "${FAKE}" "$@"\n`);
 	chmodSync(CODEX, 0o755);
 };
-const server = startTempServer({ root, port, run, extra: { PIA_CODEX_COMMAND: CODEX, CODEX_HOME: codexHome } });
+const preload = makeManagedInstallPreload(root, join(run.runDir, "managed-packages"), "codex");
+const server = startTempServer({ root, port, run, extra: { NODE_OPTIONS: `--import tsx --import ${JSON.stringify(preload)}` } });
 const j = async (path, method = "GET", body) => { const r = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); assert.ok(r.ok, `${method} ${path} ${r.status}`); return r.json(); };
 const wait = async (fn, ms = 30000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return; await new Promise((r) => setTimeout(r, 100)); } throw new Error("condition timed out"); };
 const noOverflow = async (page, label) => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, `${label}：页面不横向溢出`);
@@ -55,28 +57,25 @@ try {
 	await card.waitFor();
 	await page.getByTestId("codex-status").getByText("没装").waitFor();
 	assert.match(await page.getByTestId("codex-status").innerText(), /没装/);
-	assert.match(await page.getByTestId("codex-hint").innerText(), /重新检测/);
+	await card.getByRole("button", { name: "安装", exact: true }).waitFor();
 	await card.scrollIntoViewIfNeeded();
 	await card.screenshot({ path: join(OUT, "01-card-not-installed.png") });
 	assert.equal((await j("/api/models")).some((m) => m.provider === "codex"), false, "没装时模型列表里没有 Codex");
 
-	writeFileSync(loggedOut, "");
-	writeFileSync(join(codexHome, "AGENTS.md"), "这份内容不会被读取");
-	installFake();
-	await page.getByTestId("codex-recheck").click();
+	await card.getByRole("button", { name: "安装", exact: true }).click();
 	await wait(async () => (await card.getAttribute("data-installed")) === "true");
 	assert.equal(await card.getAttribute("data-logged-in"), "false");
-	assert.match(await page.getByTestId("codex-status").innerText(), /已安装 v0\.161\.0.*未登录/s);
-	assert.match(await page.getByTestId("codex-hint").innerText(), /codex login/);
+	assert.match(await page.getByTestId("codex-status").innerText(), /已安装 v1\.0\.0.*未登录/s);
+	await card.getByRole("button", { name: "登录", exact: true }).waitFor();
 	await card.screenshot({ path: join(OUT, "02-card-not-logged-in.png") });
 
-	assert.match(await page.getByTestId("codex-agents-md").innerText(), /全局 AGENTS\.md/);
-	rmSync(loggedOut);
-	await page.getByTestId("codex-recheck").click();
+	assert.equal(await page.getByTestId("codex-agents-md").count(), 0);
+	await card.getByRole("button", { name: "登录", exact: true }).click();
 	await wait(async () => (await card.getAttribute("data-logged-in")) === "true");
 	assert.equal(await card.getAttribute("data-registered"), "true");
 	assert.match(await page.getByTestId("codex-status").innerText(), /已登录/);
 	assert.equal(await page.getByTestId("codex-hint").count(), 0);
+	await card.getByRole("button", { name: "检查更新", exact: true }).waitFor();
 	await card.screenshot({ path: join(OUT, "03-card-ready.png") });
 	assert.equal(await page.locator('[data-testid=service-card][data-service="codex"]').count(), 0, "不重复成普通服务卡片");
 	await noOverflow(page, "桌面设置页");

@@ -286,6 +286,35 @@
       "smoke": "packages/server/test/hindsight.smoke.ts"
     },
     {
+      "name": "@anthropic-ai/claude-code",
+      "kind": "npm",
+      "version": "2.1.322",
+      "integrity": "sha512-oP7oW4vM5DREWfL1jn4JSGlmLcrJ5QmppgADrVNJBUPiC1mQ5YvRrke0on+YZ/3QhKIaCJtdr6jPvehcAQIHLQ==",
+      "bin": "claude",
+      "executable": "binary",
+      "license": "Proprietary",
+      "adapter": "packages/server/src/cli-agents/native-install.ts"
+    },
+    {
+      "name": "@openai/codex",
+      "kind": "npm",
+      "version": "0.167.0",
+      "integrity": "sha512-1FSQgbTIKAdTub5Ln6z36NT4eXDmBRkinfigzycbgn9yLZdJ3UdkQZqr0N7jnl8/D1xxT/Pz3Fl2l7S2dmRaFA==",
+      "bin": "codex",
+      "license": "Apache-2.0",
+      "adapter": "packages/server/src/cli-agents/native-install.ts"
+    },
+    {
+      "name": "opencode-ai",
+      "kind": "npm",
+      "version": "1.19.5",
+      "integrity": "sha512-tEqMvQahfhdDj8vceYpXtoIrvjPXm5XRfetWnPN5YISueU7adNx9JcUA3zZ+2GKuDVgDpGdQe1ZLtCZDjqodvA==",
+      "bin": "opencode",
+      "executable": "binary",
+      "license": "MIT",
+      "adapter": "packages/server/src/cli-agents/native-install.ts"
+    },
+    {
       "name": "@google/gemini-cli",
       "kind": "npm",
       "version": "0.67.0",

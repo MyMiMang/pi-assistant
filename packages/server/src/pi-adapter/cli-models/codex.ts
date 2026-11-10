@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { createCodexEventConverter, type CodexEvent } from "../../cli-agents/codex-events.ts";
 import type { RpcExit } from "../../cli-agents/jsonrpc-stdio.ts";
 import { CodexHub } from "../../cli-agents/codex-hub.ts";
+import { managedCliEnv } from "../../cli-agents/managed-env.ts";
 import type { PiModels } from "../index.ts";
 import { createCliChannel, type CliBackend, type CliLive, type LaunchRequest, type Step } from "./channel-core.ts";
 import { blocksToCodexInput, toolResultToCodex, toolsPromptComposite, userMessagesToClaude } from "./convert.ts";
@@ -28,6 +29,7 @@ export const CODEX_API = "codex-app-server";
 export interface CodexDeps {
 	/** 数据目录：对照表放 `<dataDir>/cli-models/codex-threads.json`，工作目录放 `<dataDir>/cli-models/work` */
 	dataDir: string;
+	commandArgs?: () => string[];
 	/** codex 可执行文件；不给就自己找。测试用它换成假 codex */
 	command?: () => string | null;
 	cwd?: () => string;
@@ -170,7 +172,7 @@ function codexBackend(deps: CodexDeps, hub: CodexHub): CliBackend<CodexLive> {
 /** 本渠道一个实例 = 一个 hub + 一张进行中表 + 一张对照表 */
 export function createCodexChannel(deps: CodexDeps) {
 	const cwdOf = deps.cwd ?? (() => join(deps.dataDir, "cli-models", "work"));
-	const hub = deps.hub ?? new CodexHub({ command: deps.command, cwd: () => (mkdirSync(cwdOf(), { recursive: true }), cwdOf()), baseEnv: deps.baseEnv, extraEnv: deps.extraEnv, idleMs: deps.idleMs });
+	const hub = deps.hub ?? new CodexHub({ command: deps.command, commandArgs: deps.commandArgs, cwd: () => (mkdirSync(cwdOf(), { recursive: true }), cwdOf()), baseEnv: managedCliEnv(deps.dataDir, "codex", { baseEnv: deps.baseEnv }), extraEnv: deps.extraEnv, idleMs: deps.idleMs });
 	return { ...createCliChannel(codexBackend(deps, hub), deps.store ?? new SyncStore(join(deps.dataDir, "cli-models", "codex-threads.json"))), hub };
 }
 

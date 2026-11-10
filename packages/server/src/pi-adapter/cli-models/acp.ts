@@ -49,6 +49,7 @@ export interface AcpDeps {
 	bridgeBaseUrl: () => string;
 	/** 命令行可执行文件；不给就自己找。测试用它换成假命令 */
 	command?: () => string | null;
+	commandArgs?: () => string[];
 	baseEnv?: NodeJS.ProcessEnv;
 	/** 额外环境变量（测试选假命令场景用） */
 	extraEnv?: () => Record<string, string>;
@@ -106,7 +107,7 @@ function acpBackend(cfg: AcpChannelConfig, deps: AcpDeps): CliBackend<AcpLive> {
 			if (!proc) {
 				const dir = join(deps.dataDir, "cli-models");
 				const fresh = new AcpProcess({
-					profile: native ? { ...cfg.profile, mode: "native" } : cfg.profile,
+					profile: { ...cfg.profile, ...(native ? { mode: "native" as const } : {}), args: dir => [...(deps.commandArgs?.() ?? []), ...cfg.profile.args(dir)] },
 					requestPermission: context ? (params) => context.requestPermission(params) : undefined,
 					isPaused: context ? () => context.isPaused() : undefined,
 					isWaitingForApproval: context ? () => context.isWaitingForApproval?.() ?? false : undefined,

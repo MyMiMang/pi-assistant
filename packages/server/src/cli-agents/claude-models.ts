@@ -11,19 +11,20 @@ import { buildClaudeEnv } from "./launch.ts";
 
 export interface ListClaudeModelsOptions {
 	cwd: string;
+	commandArgs?: string[];
 	baseEnv?: NodeJS.ProcessEnv;
 	/** 额外环境变量（测试用假 claude 选场景） */
 	extraEnv?: Record<string, string>;
 	timeoutMs?: number;
 }
 
-const ARGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--tools", "", "--strict-mcp-config", "--no-session-persistence"];
+const ARGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--no-session-persistence"];
 
 /** 问 `claude` 的模型列表；超时 / 没登录 / 回包里没有 models 都抛带原因的错误（调用方退回内置三个别名）。 */
 export function listClaudeModels(command: string, opts: ListClaudeModelsOptions): Promise<ClaudeModelInfo[]> {
 	mkdirSync(opts.cwd, { recursive: true });
 	return new Promise((resolve, reject) => {
-		const child = spawn(command, ARGS, { cwd: opts.cwd, env: buildClaudeEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv }), stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+		const child = spawn(command, [...(opts.commandArgs ?? []), ...ARGS], { cwd: opts.cwd, env: buildClaudeEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv }), stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
 		let done = false;
 		const finish = (err: Error | null, value?: ClaudeModelInfo[]) => {
 			if (done) return;

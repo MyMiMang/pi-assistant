@@ -66,16 +66,16 @@ function findCommand(name: string, homeDirs: string[][], opts: FindOptions): str
 }
 
 /** 找 `claude` 可执行文件；找不到返回 null。 */
-export const findClaudeCommand = (opts: FindOptions = {}): string | null => findCommand("claude", [[".claude", "local"]], opts);
+export const findClaudeCommand = (_opts: FindOptions = {}): string | null => null;
 
 /** 找 `codex` 可执行文件；找不到返回 null。 */
-export const findCodexCommand = (opts: FindOptions = {}): string | null => findCommand("codex", [[".codex", "bin"]], opts);
+export const findCodexCommand = (_opts: FindOptions = {}): string | null => null;
 
 /** 找 `agy` 可执行文件；找不到返回 null。 */
 export const findAgyCommand = (opts: FindOptions = {}): string | null => findCommand("agy", [], opts);
 
 /** 找 `opencode` 可执行文件（官方安装脚本装在 `~/.opencode/bin`）；找不到返回 null。 */
-export const findOpencodeCommand = (opts: FindOptions = {}): string | null => findCommand("opencode", [[".opencode", "bin"]], opts);
+export const findOpencodeCommand = (_opts: FindOptions = {}): string | null => null;
 
 interface Ran {
 	stdout: string;
@@ -102,6 +102,7 @@ export interface DetectOptions {
 	baseEnv?: NodeJS.ProcessEnv;
 	/** 额外环境变量（测试用假 claude） */
 	extraEnv?: Record<string, string>;
+	commandArgs?: string[];
 	timeoutMs?: number;
 }
 
@@ -111,10 +112,10 @@ export async function detectClaude(opts: DetectOptions = {}): Promise<ClaudeStat
 	if (!command) return { installed: false, loggedIn: false, error: "没有找到 claude 命令" };
 	const env = buildClaudeEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
 	const timeout = opts.timeoutMs ?? 15_000;
-	const ver = await run(command, ["--version"], env, timeout);
+	const ver = await run(command, [...(opts.commandArgs ?? []), "--version"], env, timeout);
 	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 claude 失败：${ver.failed}` };
 	const version = /\d+\.\d+\.\d+\S*/.exec(ver.stdout)?.[0];
-	const st = await run(command, ["auth", "status"], env, timeout);
+	const st = await run(command, [...(opts.commandArgs ?? []), "auth", "status"], env, timeout);
 	if (st.failed) return { installed: true, command, version, loggedIn: false, error: `检测登录状态失败：${st.failed}` };
 	try {
 		const j = JSON.parse(st.stdout) as { loggedIn?: unknown; authMethod?: unknown; apiProvider?: unknown };
@@ -145,10 +146,10 @@ export async function detectCodex(opts: DetectOptions = {}): Promise<CodexStatus
 	if (!command) return { installed: false, loggedIn: false, error: "没有找到 codex 命令" };
 	const env = buildCodexEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
 	const timeout = opts.timeoutMs ?? 15_000;
-	const ver = await run(command, ["--version"], env, timeout);
+	const ver = await run(command, [...(opts.commandArgs ?? []), "--version"], env, timeout);
 	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 codex 失败：${ver.failed}` };
 	const version = /\d+\.\d+\.\d+\S*/.exec(ver.stdout)?.[0];
-	const st = await run(command, ["login", "status"], env, timeout);
+	const st = await run(command, [...(opts.commandArgs ?? []), "login", "status"], env, timeout);
 	if (st.failed) return { installed: true, command, version, loggedIn: false, error: `检测登录状态失败：${st.failed}` };
 	// 只看退出码，不转述输出（API key 登录时输出里可能带密钥片段）
 	return { installed: true, command, version, loggedIn: st.code === 0 };
@@ -207,7 +208,7 @@ export interface OpencodeDetectOptions extends Omit<DetectOptions, "command"> {
 /** 问 `opencode models --verbose`（用和真正运行时同一套隔离环境）：返回支持工具调用的模型；失败或一个都没有就抛带原文的错误。 */
 export async function listOpencodeModels(command: string, opts: OpencodeDetectOptions): Promise<OpencodeModel[]> {
 	mkdirSync(opencodeConfigHome(opts.dataDir), { recursive: true, mode: 0o700 });
-	const r = await run(command, ["models", "--verbose"], buildOpencodeEnv({ baseEnv: opts.baseEnv, command, dataDir: opts.dataDir, extra: opts.extraEnv }), opts.timeoutMs ?? 60_000);
+	const r = await run(command, [...(opts.commandArgs ?? []), "models", "--verbose"], buildOpencodeEnv({ baseEnv: opts.baseEnv, command, dataDir: opts.dataDir, extra: opts.extraEnv }), opts.timeoutMs ?? 60_000);
 	if (r.failed) throw new Error(`运行 opencode models 失败：${r.failed}`);
 	if (r.code !== 0) throw new Error((r.stdout + r.stderr).trim().slice(0, 300) || `opencode models 退出码 ${r.code}`);
 	const models = parseOpencodeModels(r.stdout);
@@ -219,9 +220,9 @@ export async function listOpencodeModels(command: string, opts: OpencodeDetectOp
 export async function detectOpencode(opts: OpencodeDetectOptions): Promise<OpencodeStatus> {
 	const command = opts.command ?? findOpencodeCommand({ env: opts.baseEnv });
 	if (!command) return { installed: false, loggedIn: false, error: "没有找到 opencode 命令" };
-	const ver = await run(command, ["--version"], buildOpencodeEnv({ baseEnv: opts.baseEnv, command, dataDir: opts.dataDir, extra: opts.extraEnv }), opts.timeoutMs ?? 15_000);
+	const ver = await run(command, [...(opts.commandArgs ?? []), "--version"], buildOpencodeEnv({ baseEnv: opts.baseEnv, command, dataDir: opts.dataDir, extra: opts.extraEnv }), opts.timeoutMs ?? 15_000);
 	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 opencode 失败：${ver.failed}` };
 	const version = /\d+\.\d+\.\d+\S*/.exec(ver.stdout)?.[0];
-	const auth = opencodeAuthPath(opts.baseEnv ?? process.env, osAccountHome());
+	const auth = opencodeAuthPath(buildOpencodeEnv({ baseEnv: opts.baseEnv, dataDir: opts.dataDir }), null);
 	return { installed: true, command, version, loggedIn: !!auth && existsSync(auth) };
 }

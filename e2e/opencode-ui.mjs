@@ -14,6 +14,7 @@ import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 import { openModelMenu } from "./model-menu-flow.mjs";
+import { makeManagedInstallPreload } from "./fixtures/managed-cli-package.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const FAKE = join(root, "packages/server/test/fixtures/fake-opencode.mjs");
@@ -25,14 +26,15 @@ const binDir = join(run.runDir, "bin");
 mkdirSync(binDir, { recursive: true });
 const OC = join(binDir, "opencode"); // 一开始还不存在 = 「没装」
 const scenarioFile = join(run.runDir, "scenario");
-const xdgData = join(run.runDir, "xdg-data"); // 登录凭据 auth.json 的位置（XDG_DATA_HOME），只看在不在
+const xdgData = join(run.data, "cli-agents", "opencode", "home", ".local", "share"); // 登录凭据 auth.json 的位置（XDG_DATA_HOME），只看在不在
 const authFile = join(xdgData, "opencode", "auth.json");
 writeFileSync(scenarioFile, "text");
 const installFake = () => {
 	writeFileSync(OC, `#!/bin/sh\nFAKE_OPENCODE_SCENARIO_FILE="${scenarioFile}" exec "${process.execPath}" "${FAKE}" "$@"\n`);
 	chmodSync(OC, 0o755);
 };
-const server = startTempServer({ root, port, run, extra: { PIA_OPENCODE_COMMAND: OC, XDG_DATA_HOME: xdgData } });
+const preload = makeManagedInstallPreload(root, join(run.runDir, "managed-packages"), "opencode");
+const server = startTempServer({ root, port, run, extra: { NODE_OPTIONS: `--import tsx --import ${JSON.stringify(preload)}` } });
 const j = async (path, method = "GET", body) => { const r = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); assert.ok(r.ok, `${method} ${path} ${r.status}`); return r.json(); };
 const wait = async (fn, ms = 30000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return; await new Promise((r) => setTimeout(r, 100)); } throw new Error("condition timed out"); };
 const noOverflow = async (page, label) => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, `${label}：页面不横向溢出`);
@@ -53,23 +55,20 @@ try {
 	const card = page.getByTestId("opencode-cli-card");
 	await card.waitFor();
 	await page.getByTestId("opencode-cli-status").getByText("没装").waitFor();
-	assert.match(await page.getByTestId("opencode-cli-hint").innerText(), /重新检测/);
+	await card.getByRole("button", { name: "安装", exact: true }).waitFor();
 	await card.scrollIntoViewIfNeeded();
 	await card.screenshot({ path: join(OUT, "01-card-not-installed.png") });
 	assert.equal((await j("/api/models")).some((m) => m.provider === "opencode-cli"), false, "没装时模型列表里没有 OpenCode（本机）");
 
-	installFake();
-	await page.getByTestId("opencode-cli-recheck").click();
+	await card.getByRole("button", { name: "安装", exact: true }).click();
 	await wait(async () => (await card.getAttribute("data-installed")) === "true");
 	await wait(async () => (await card.getAttribute("data-registered")) === "true");
 	assert.equal(await card.getAttribute("data-logged-in"), "false");
-	assert.match(await page.getByTestId("opencode-cli-status").innerText(), /已安装 v1\.18\.35.*未登录（可用免费模型）/s);
-	assert.match(await page.getByTestId("opencode-cli-hint").innerText(), /opencode auth login/);
+	assert.match(await page.getByTestId("opencode-cli-status").innerText(), /已安装 v1\.0\.0.*未登录（可用免费模型）/s);
+	await card.getByRole("button", { name: "登录", exact: true }).waitFor();
 	await card.screenshot({ path: join(OUT, "02-card-free-only.png") });
 
-	mkdirSync(join(xdgData, "opencode"), { recursive: true });
-	writeFileSync(authFile, "{}");
-	await page.getByTestId("opencode-cli-recheck").click();
+	await card.getByRole("button", { name: "登录", exact: true }).click();
 	await wait(async () => (await card.getAttribute("data-logged-in")) === "true");
 	assert.equal(await card.getAttribute("data-registered"), "true");
 	assert.match(await page.getByTestId("opencode-cli-status").innerText(), /已登录/);

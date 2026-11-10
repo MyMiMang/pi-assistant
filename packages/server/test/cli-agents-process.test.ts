@@ -217,12 +217,12 @@ test("检测：已登录 / 未登录 / 没装", async () => {
 	assert.ok(none.error);
 });
 
-test("找 claude：PATH 里有就用，没有返回 null", () => {
+test("不再从用户PATH寻找claude",  () => {
 	const dir = mkdtempSync(join(tmpdir(), "pia-claude-bin-"));
 	assert.notEqual(findClaudeCommand({ env: { PATH: dir }, home: null, platform: "linux" })?.startsWith(dir), true, "空目录里找不到（别处找到的真实 claude 只返回路径，不会被运行）");
 	const bin = join(dir, "claude");
 	writeFileSync(bin, "#!/bin/sh\n");
 	chmodSync(bin, 0o755);
-	assert.equal(findClaudeCommand({ env: { PATH: dir }, home: null, platform: "linux" }), bin);
+	assert.equal(findClaudeCommand({ env: { PATH: dir }, home: null, platform: "linux" }), null);
 	rmSync(dir, { recursive: true, force: true });
 });

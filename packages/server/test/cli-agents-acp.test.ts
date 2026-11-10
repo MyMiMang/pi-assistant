@@ -78,7 +78,7 @@ test("OpenCode 环境：白名单（不带密钥）、固定开关、隔离的�
 	assert.equal(env.OPENAI_API_KEY, undefined);
 	assert.equal(env.OPENCODE_API_KEY, undefined, "白名单：不带任何密钥");
 	assert.equal(env.XDG_CONFIG_HOME, opencodeConfigHome("/d"), "配置目录被隔离，不读用户全局 AGENTS.md / 配置");
-	assert.equal(env.XDG_DATA_HOME, "/data", "数据目录不动：登录凭据在这里");
+	assert.equal(env.XDG_DATA_HOME, "/d/cli-agents/opencode/home/.local/share", "登录目录与用户完全分开");
 	assert.equal(env.OPENCODE_CONFIG, "/d/run/opencode.json");
 	assert.deepEqual([env.OPENCODE_DISABLE_CLAUDE_CODE, env.OPENCODE_DISABLE_PROJECT_CONFIG, env.OPENCODE_DISABLE_EXTERNAL_SKILLS, env.OPENCODE_DISABLE_AUTOUPDATE], ["1", "1", "1", "1"]);
 	assert.ok(env.PATH?.split(":").includes("/opt/bin"), "命令所在目录补进 PATH");

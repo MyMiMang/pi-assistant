@@ -14,6 +14,7 @@ import { ClaudeRun, type ClaudeExit } from "../../cli-agents/claude-process.ts";
 import { listClaudeModels } from "../../cli-agents/claude-models.ts";
 import { CLAUDE_FALLBACK_MODELS, mergeClaudeModels, type ClaudeModelInfo } from "../../cli-agents/claude-models-parse.ts";
 import { findClaudeCommand } from "../../cli-agents/detect.ts";
+import { managedCliEnv } from "../../cli-agents/managed-env.ts";
 import type { ClaudeEvent } from "../../cli-agents/events.ts";
 import { toolBridge, type Tool, type ToolBridge } from "../../cli-agents/tool-bridge.ts";
 import type { PiModels } from "../index.ts";
@@ -30,6 +31,7 @@ export const CLAUDE_CODE_API = "claude-code-cli";
 export interface ClaudeCodeDeps {
 	/** 数据目录：对照表放 `<dataDir>/cli-models/claude-sessions.json`，没给 cwd 时工作目录放 `<dataDir>/cli-models/work` */
 	dataDir: string;
+	commandArgs?: () => string[];
 	/** 工具桥地址的前缀，生产里是 `http://127.0.0.1:${config.port}` */
 	bridgeBaseUrl: () => string;
 	/** claude 可执行文件；不给就自己找。测试用它换成假 claude */
@@ -72,12 +74,13 @@ function claudeBackend(deps: ClaudeCodeDeps): CliBackend<ClaudeLive> {
 			mkdirSync(cwd, { recursive: true }); // 目录不存在时 spawn 会报 ENOENT
 			const run = new ClaudeRun({
 				command,
+				commandArgs: deps.commandArgs?.(),
 				cwd,
 				bridgeBaseUrl: deps.bridgeBaseUrl(),
 				tools: req.tools as Tool[],
 				args: { model: req.model, effort: req.effort, resumeSessionId: req.resumeSessionId, systemPrompt: req.systemPrompt, noSessionPersistence: req.oneShot || undefined },
 				onEvent: (e) => queue.push(e),
-				baseEnv: deps.baseEnv,
+				baseEnv: managedCliEnv(deps.dataDir, "claude-code", { baseEnv: deps.baseEnv }),
 				extraEnv: deps.extraEnv?.(),
 				bridge: deps.bridge ?? toolBridge,
 			});
@@ -143,7 +146,7 @@ async function claudeAliasList(deps: ClaudeCodeDeps): Promise<ClaudeModelInfo[]>
 	const command = (deps.command ?? (() => findClaudeCommand()))();
 	if (!command) return [...CLAUDE_FALLBACK_MODELS];
 	try {
-		return await listClaudeModels(command, { cwd: (deps.cwd ?? (() => join(deps.dataDir, "cli-models", "work")))(), baseEnv: deps.baseEnv, extraEnv: deps.extraEnv?.() });
+		return await listClaudeModels(command, { commandArgs: deps.commandArgs?.(), cwd: (deps.cwd ?? (() => join(deps.dataDir, "cli-models", "work")))(), baseEnv: managedCliEnv(deps.dataDir, "claude-code", { baseEnv: deps.baseEnv }), extraEnv: deps.extraEnv?.() });
 	} catch (e) {
 		console.warn(`[claude-code] 没取到模型列表，用内置的 opus / sonnet / haiku：${e instanceof Error ? e.message : String(e)}`);
 		return [...CLAUDE_FALLBACK_MODELS];

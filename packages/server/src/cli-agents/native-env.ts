@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { buildCliEnv, type ClaudeEnvInput } from "./launch.ts";
 
 export type NativeAcpId = "gemini" | "codebuddy";
-export const nativeAcpHome = (dataDir: string, id: NativeAcpId): string => join(dataDir, "cli-agents", id, "home");
+export type ManagedCliId = NativeAcpId | "claude-code" | "codex" | "opencode" | "antigravity";
+export const nativeAcpHome = (dataDir: string, id: ManagedCliId): string => join(dataDir, "cli-agents", id, "home");
 
 export interface NativeEnvInput extends ClaudeEnvInput {
 	dataDir: string;
-	id: NativeAcpId;
+	id: ManagedCliId;
 }
 
 /** 最后覆盖包括 Windows 大小写别名的环境键；extra 仅供宿主测试等用途，不能突破隔离目录。 */
@@ -31,7 +32,7 @@ export function buildNativeAcpEnv(input: NativeEnvInput, fixed: Record<string, s
 	return { ...env, ...isolated };
 }
 
-export function prepareNativeAcpHome(dataDir: string, id: NativeAcpId): string {
+export function prepareNativeAcpHome(dataDir: string, id: ManagedCliId): string {
 	const home = nativeAcpHome(dataDir, id);
 	for (const path of [home, "AppData/Roaming", "AppData/Local", ".config", ".local/share", ".cache", ".local/state"].map((p, i) => (i ? join(home, p) : p))) mkdirSync(path, { recursive: true, mode: 0o700 });
 	return home;

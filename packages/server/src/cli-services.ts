@@ -2,13 +2,15 @@
  * 所有「本机命令行模型渠道」的服务实例（claude / codex / antigravity；再加一家就在这里加一份适配）。
  * 启动（models.ts）、关闭（main.ts）、接口（routes/models.ts）都遍历 `cliServices`，不各写一份。
  */
-import { existsSync, readFileSync } from "node:fs";
-import { NativeInstaller, type NativeRelease } from "./cli-agents/native-install.ts";
+import { existsSync } from "node:fs";
+import { managedCliEnv } from "./cli-agents/managed-env.ts";
+import { managedActions } from "./cli-agents/managed-actions.ts";
+import type { NativeRelease } from "./cli-agents/native-install.ts";
+import { nativeInstaller, releaseFor, managedArgs } from "./cli-agents/managed-install.ts";
+export { nativeInstaller } from "./cli-agents/managed-install.ts";
 import { authenticateNative, detectNative, type NativeDetection, type NativeId } from "./cli-agents/native-auth.ts";
 import { isAbsolute } from "node:path";
 import { registerNativeModels, registerNativeProvider, type NativeProviderId } from "./pi-adapter/cli-models/native.ts";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { createCliChannelService, type CliChannelService } from "./cli-channel-service.ts";
 import { detectAgy, detectClaude, detectCodex, detectOpencode, findAgyCommand, findClaudeCommand, findCodexCommand, findOpencodeCommand, listAgyModels, listOpencodeModels } from "./cli-agents/detect.ts";
 import { registerAntigravityModels, registerAntigravityProvider } from "./pi-adapter/cli-models/antigravity.ts";
@@ -19,33 +21,40 @@ import { claudeCustomModels } from "./claude-custom-models.ts";
 import { config } from "./config.ts";
 import type { PiModels } from "./pi-adapter/index.ts";
 
+const refreshManaged = async (service: CliChannelService) => {
+ const { models } = await import("./models.ts");
+ await service.check(models, true);
+};
+const claudeManaged = managedActions("claude-code", "CLAUDE_COMMAND", () => claudeCode.command(), () => refreshManaged(claudeCode));
 const claudeCode = createCliChannelService({
+ ...claudeManaged,
 	id: "claude-code",
 	label: "Claude Code",
 	envName: "CLAUDE_COMMAND",
-	find: () => findClaudeCommand(),
+	managed: true,
+	allowCommandOverride: () => process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1"),
+	find: () => nativeInstaller.installed("claude-code")?.command ?? null,
 	notFound: "没有找到 claude 命令",
-	detect: (command) => detectClaude({ command }),
-	register: (models, command) => registerClaudeCodeProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, customModels: claudeCustomModels }),
+	detect: (command) => detectClaude({ command, commandArgs: managedArgs("claude-code", "CLAUDE_COMMAND"), baseEnv: managedCliEnv(config.dataDir, "claude-code") }),
+	register: (models, command) => registerClaudeCodeProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, commandArgs: () => managedArgs("claude-code", "CLAUDE_COMMAND"), customModels: claudeCustomModels }),
 	refresh: async (models, channel) => void (await registerClaudeCodeModels(models, channel)),
 	requireLogin: false,
 });
 
-/** Codex 的家目录（只用来判断有没有全局 AGENTS.md） */
-const codexHome = (): string => process.env.CODEX_HOME || join(homedir(), ".codex");
-
+const codexManaged = managedActions("codex", "CODEX_COMMAND", () => codex.command(), () => refreshManaged(codex));
 const codex = createCliChannelService({
+ ...codexManaged,
 	id: "codex",
 	label: "Codex",
 	envName: "CODEX_COMMAND",
-	find: () => findCodexCommand(),
+	managed: true,
+	allowCommandOverride: () => process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1"),
+	find: () => nativeInstaller.installed("codex")?.command ?? null,
 	notFound: "没有找到 codex 命令",
-	detect: (command) => detectCodex({ command }),
-	register: (models, command) => registerCodexProvider(models, { dataDir: config.dataDir, command }),
+	detect: (command) => detectCodex({ command, commandArgs: managedArgs("codex", "CODEX_COMMAND"), baseEnv: managedCliEnv(config.dataDir, "codex") }),
+	register: (models, command) => registerCodexProvider(models, { dataDir: config.dataDir, command, commandArgs: () => managedArgs("codex", "CODEX_COMMAND") }),
 	refresh: async (models, channel) => void (await registerCodexModels(models, channel, true)),
 	requireLogin: true, // 先要能问到模型列表才有模型可选
-	// 只检查文件在不在，不读内容：`~/.codex/AGENTS.md` 挡不住，会一并发给 Codex
-	extra: () => ({ globalAgentsMd: existsSync(join(codexHome(), "AGENTS.md")) }),
 });
 
 /** 要用的 agy 命令（注册 / 刷新时问 `agy models`） */
@@ -74,25 +83,23 @@ const opencodeCommand = (command: () => string | null): string => {
 	return cmd;
 };
 
+const opencodeManaged = managedActions("opencode", "OPENCODE_COMMAND", () => opencode.command(), () => refreshManaged(opencode));
 const opencode = createCliChannelService({
+ ...opencodeManaged,
 	id: "opencode-cli",
 	label: "OpenCode",
 	envName: "OPENCODE_COMMAND",
-	find: () => findOpencodeCommand(),
+	managed: true,
+	allowCommandOverride: () => process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1"),
+	find: () => nativeInstaller.installed("opencode")?.command ?? null,
 	notFound: "没有找到 opencode 命令",
-	detect: (command) => detectOpencode({ command, dataDir: config.dataDir }),
-	register: async (models, command) => registerOpencodeProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, models: await listOpencodeModels(opencodeCommand(command), { dataDir: config.dataDir }) }),
-	refresh: async (models, channel) => void (await registerOpencodeModels(models, channel, await listOpencodeModels(opencodeCommand(opencode.command), { dataDir: config.dataDir }))),
+	detect: (command) => detectOpencode({ command, commandArgs: managedArgs("opencode", "OPENCODE_COMMAND"), dataDir: config.dataDir }),
+	register: async (models, command) => registerOpencodeProvider(models, { dataDir: config.dataDir, commandArgs: () => managedArgs("opencode", "OPENCODE_COMMAND"), bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, models: await listOpencodeModels(opencodeCommand(command), { commandArgs: managedArgs("opencode", "OPENCODE_COMMAND"), dataDir: config.dataDir }) }),
+	refresh: async (models, channel) => void (await registerOpencodeModels(models, channel, await listOpencodeModels(opencodeCommand(opencode.command), { commandArgs: managedArgs("opencode", "OPENCODE_COMMAND"), dataDir: config.dataDir }))),
 	requireLogin: false, // 自带免费模型，没登录也能用；有没有模型可选看 `opencode models` 能不能列出来
 });
 
-const nativeComponents = JSON.parse(readFileSync(join(import.meta.dirname, "../../../third-party.json"), "utf8")).components as Array<NativeRelease & { name: string }>;
-const releaseFor = (name: string): NativeRelease => {
-	const c = nativeComponents.find((c) => c.name === name);
-	if (!c) throw new Error(`缺少 ${name} 安装清单`);
-	return { ...c, packageName: c.name };
-};
-export const nativeInstaller = new NativeInstaller({ dataDir: config.dataDir, releases: { gemini: releaseFor("@google/gemini-cli"), codebuddy: releaseFor("@tencent-ai/codebuddy-code") } });
+
 nativeInstaller.cleanupOnStartup();
 nativeInstaller.registerDownloads();
 

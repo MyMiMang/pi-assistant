@@ -4,7 +4,7 @@
  * - 环境用**白名单**：只带登录用户家目录、PATH、语言、临时目录、代理这类必要变量，再加几个固定开关。
  *   继承来的 `ANTHROPIC_*`、各家模型密钥一个都不带（带了会报 `401 Invalid bearer token`，也不该把密钥交给子进程）。
  *   家目录 / 临时目录的「OS 账户语义」处理复用 `native-launch-env.ts`。
- * - 不加 `--setting-sources`：用户决定加载他自己的 Claude 设置（登录有可能写在 settings.json 的 env 里）。
+ * - `--setting-sources user` 只加载 Pi 独立配置目录，避免发现项目祖先设置。
  * - 内置工具全关（`--tools ""`），只允许我们的工具桥（MCP 服务名 `pia`，工具名 `mcp__pia__<名字>`）。
  */
 import { isAbsolute, posix, win32 } from "node:path";
@@ -30,7 +30,7 @@ const KEEP_ENV = new Set([
 ]);
 
 /** Claude 额外允许的变量：用户自己指定的配置目录（只是位置，不是密钥） */
-const CLAUDE_KEEP_ENV = ["CLAUDE_CONFIG_DIR"];
+const CLAUDE_KEEP_ENV = ["CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER"];
 
 /** 固定加的开关：挡掉用户的 CLAUDE.md；工具调用等审批时不被默认 60 秒超时掐断（实测 1、3）。 */
 export const CLAUDE_FIXED_ENV: Record<string, string> = {
@@ -100,7 +100,7 @@ export function buildCliEnv(input: ClaudeEnvInput, keepExtra: readonly string[],
 }
 
 /** 给 `claude` 进程（含 `claude auth status`）用的环境：白名单 + 固定开关。 */
-export const buildClaudeEnv = (input: ClaudeEnvInput = {}): NodeJS.ProcessEnv => buildCliEnv(input, CLAUDE_KEEP_ENV, CLAUDE_FIXED_ENV);
+export const buildClaudeEnv = (input: ClaudeEnvInput = {}): NodeJS.ProcessEnv => buildCliEnv({ ...input, realHome: input.realHome ?? (input.baseEnv?.CLAUDE_CONFIG_DIR ? input.baseEnv.HOME : undefined) }, CLAUDE_KEEP_ENV, CLAUDE_FIXED_ENV);
 
 export interface ClaudeArgsInput {
 	/** 工具桥 MCP 配置文件的绝对路径（私有临时文件；配置里有令牌，不能放命令行，`ps` 看得到） */
@@ -135,6 +135,7 @@ export function buildClaudeArgs(input: ClaudeArgsInput): string[] {
 		"--include-partial-messages",
 		"--verbose",
 		"--tools", "",
+		"--setting-sources", "user",
 		"--strict-mcp-config",
 		"--mcp-config", input.mcpConfigPath,
 		"--allowedTools", `${BRIDGE_PREFIX}*`,

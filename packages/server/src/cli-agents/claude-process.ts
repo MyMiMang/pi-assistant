@@ -32,6 +32,7 @@ export interface ClaudeExit {
 export interface ClaudeRunOptions {
 	/** `claude` 可执行文件（`detect.ts` 的 `findClaudeCommand`） */
 	command: string;
+	commandArgs?: string[];
 	/** 工作目录（助理工作区） */
 	cwd: string;
 	/** 工具桥地址的前缀，如 `http://127.0.0.1:8787`（本机服务的端口） */
@@ -107,7 +108,7 @@ export class ClaudeRun {
 			const { systemPrompt: _text, ...rest } = o.args ?? {};
 			const args = buildClaudeArgs({ ...rest, mcpConfigPath, systemPromptFile });
 			const env = buildClaudeEnv({ baseEnv: o.baseEnv, command: o.command, extra: o.extraEnv });
-			child = spawn(o.command, args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+			child = spawn(o.command, [...(o.commandArgs ?? []), ...args], { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
 		} catch (e) {
 			this.cleanup();
 			this.bridgeRun.close();

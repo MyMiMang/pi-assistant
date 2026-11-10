@@ -12,7 +12,7 @@ import { buildCliEnv, type ClaudeEnvInput } from "./launch.ts";
 const CODEX_KEEP_ENV = ["CODEX_HOME"];
 
 /** 给 `codex` 进程（含 `codex login status`）用的环境：白名单。 */
-export const buildCodexEnv = (input: ClaudeEnvInput = {}): NodeJS.ProcessEnv => buildCliEnv(input, CODEX_KEEP_ENV, {});
+export const buildCodexEnv = (input: ClaudeEnvInput = {}): NodeJS.ProcessEnv => buildCliEnv({ ...input, realHome: input.realHome ?? (input.baseEnv?.CODEX_HOME ? input.baseEnv.HOME : undefined) }, CODEX_KEEP_ENV, {});
 
 /** `--disable` 掉的功能（实测只剩我们的工具和 request_user_input）。 */
 export const CODEX_DISABLED_FEATURES = [

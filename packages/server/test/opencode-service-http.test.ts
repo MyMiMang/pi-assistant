@@ -21,7 +21,7 @@ async function start(extra: Record<string, string | undefined>) {
 	const dataDir = mkdtempSync(join(tmpdir(), "pia-oc-http-"));
 	const port = 34000 + Math.floor(Math.random() * 3000);
 	// 登录凭据放在 XDG_DATA_HOME 下：用临时目录，不看开发机上真实的 opencode 登录状态
-	const xdgData = join(dataDir, "xdg-data");
+	const xdgData = join(dataDir, "cli-agents", "opencode", "home", ".local", "share");
 	const env: Record<string, string | undefined> = { ...process.env, PIA_DATA_DIR: dataDir, PIA_WORKSPACE: join(dataDir, "workspace"), PIA_PORT: String(port), PIA_HOST: "127.0.0.1", PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_SETUP_CHECK_MS: "9999999", XDG_DATA_HOME: xdgData, ...extra };
 	for (const k of Object.keys(env)) if (env[k] === undefined) delete env[k];
 	const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "--import", "tsx", "test/launch-memory.ts"], { cwd: serverDir, env: env as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });

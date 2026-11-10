@@ -14,6 +14,7 @@ import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 import { openModelMenu } from "./model-menu-flow.mjs";
+import { makeManagedInstallPreload } from "./fixtures/managed-cli-package.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const FAKE = join(root, "packages/server/test/fixtures/fake-claude.mjs");
@@ -32,7 +33,8 @@ const installFake = () => {
 	writeFileSync(CLAUDE, `#!/bin/sh\nFAKE_CLAUDE_MODELS=dup FAKE_CLAUDE_SCENARIO=$(cat "${scenarioFile}") FAKE_CLAUDE_LOGGED_IN=$(cat "${loginFile}") exec "${process.execPath}" "${FAKE}" "$@"\n`);
 	chmodSync(CLAUDE, 0o755);
 };
-const server = startTempServer({ root, port, run, extra: { PIA_CLAUDE_COMMAND: CLAUDE } });
+const preload = makeManagedInstallPreload(root, join(run.runDir, "managed-packages"), "claude-code");
+const server = startTempServer({ root, port, run, extra: { NODE_OPTIONS: `--import tsx --import ${JSON.stringify(preload)}` } });
 const j = async (path, method = "GET", body) => { const r = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); assert.ok(r.ok, `${method} ${path} ${r.status}`); return r.json(); };
 const wait = async (fn, ms = 30000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return; await new Promise((r) => setTimeout(r, 100)); } throw new Error("condition timed out"); };
 const noOverflow = async (page, label) => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, `${label}：页面不横向溢出`);
@@ -54,26 +56,24 @@ try {
 	await card.waitFor();
 	await page.getByTestId("claude-code-status").getByText("没装").waitFor();
 	assert.match(await page.getByTestId("claude-code-status").innerText(), /没装/);
-	assert.match(await page.getByTestId("claude-code-hint").innerText(), /重新检测/);
+	await card.getByRole("button", { name: "安装", exact: true }).waitFor();
 	await card.scrollIntoViewIfNeeded();
 	await card.screenshot({ path: join(OUT, "01-card-not-installed.png") });
 	assert.equal((await j("/api/models")).some((m) => m.provider === "claude-code"), false, "没装时模型列表里没有 Claude Code");
 
-	writeFileSync(loginFile, "0");
-	installFake();
-	await page.getByTestId("claude-code-recheck").click();
+	await card.getByRole("button", { name: "安装", exact: true }).click();
 	await wait(async () => (await card.getAttribute("data-installed")) === "true");
 	assert.equal(await card.getAttribute("data-logged-in"), "false");
-	assert.match(await page.getByTestId("claude-code-status").innerText(), /已安装 v2\.1\.293.*未登录/s);
-	assert.match(await page.getByTestId("claude-code-hint").innerText(), /claude auth login/);
+	assert.match(await page.getByTestId("claude-code-status").innerText(), /已安装 v1\.0\.0.*未登录/s);
+	await card.getByRole("button", { name: "登录", exact: true }).waitFor();
 	await card.screenshot({ path: join(OUT, "02-card-not-logged-in.png") });
 
-	writeFileSync(loginFile, "1");
-	await page.getByTestId("claude-code-recheck").click();
+	await card.getByRole("button", { name: "登录", exact: true }).click();
 	await wait(async () => (await card.getAttribute("data-logged-in")) === "true");
 	assert.equal(await card.getAttribute("data-registered"), "true");
 	assert.match(await page.getByTestId("claude-code-status").innerText(), /已登录/);
 	assert.equal(await page.getByTestId("claude-code-hint").count(), 0);
+	await card.getByRole("button", { name: "检查更新", exact: true }).waitFor();
 	await card.screenshot({ path: join(OUT, "03-card-ready.png") });
 	assert.equal(await page.locator('[data-testid=service-card][data-service="claude-code"]').count(), 0, "不重复成普通服务卡片");
 	await noOverflow(page, "桌面设置页");

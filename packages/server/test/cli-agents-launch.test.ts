@@ -51,7 +51,7 @@ test("claude 环境：额外变量最后加上；不改传入的环境对象", (
 	assert.deepEqual(base, dirty);
 });
 
-test("claude 参数：内置工具全关、只许工具桥、配置和系统提示走文件、不加 --setting-sources", () => {
+test("claude 参数：内置工具全关、只许工具桥、配置和系统提示走文件、只加载隔离user设置", () => {
 	const args = buildClaudeArgs({ mcpConfigPath: "/tmp/p/mcp.json", systemPromptFile: "/tmp/p/sp.txt", model: "sonnet", effort: "high", resumeSessionId: "sess-1" });
 	const at = (flag: string) => args[args.indexOf(flag) + 1];
 	assert.equal(args[0], "-p");
@@ -68,7 +68,7 @@ test("claude 参数：内置工具全关、只许工具桥、配置和系统提�
 	assert.equal(at("--model"), "sonnet");
 	assert.equal(at("--effort"), "high");
 	assert.equal(at("--resume"), "sess-1");
-	assert.ok(!args.includes("--setting-sources"));
+	assert.equal(args[args.indexOf("--setting-sources") + 1], "user");
 	assert.ok(!args.includes("--bare"));
 });
 

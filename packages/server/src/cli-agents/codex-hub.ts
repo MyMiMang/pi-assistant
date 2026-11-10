@@ -32,6 +32,7 @@ export interface CodexModelInfo {
 export interface CodexHubOptions {
 	/** codex 可执行文件；不给就自己找。测试用它换成假 codex */
 	command?: () => string | null;
+	commandArgs?: () => string[];
 	/** 进程工作目录（动态工具的纯大脑用不到，给个固定的空目录） */
 	cwd: () => string;
 	baseEnv?: NodeJS.ProcessEnv;
@@ -78,7 +79,7 @@ export class CodexHub {
 		const c = new RpcClient({
 			label: "codex",
 			command,
-			args: buildCodexArgs(mcpNames),
+			args: [...(this.opts.commandArgs?.() ?? []), ...buildCodexArgs(mcpNames)],
 			cwd: this.opts.cwd(),
 			env: buildCodexEnv({ baseEnv: this.opts.baseEnv, command, extra: this.opts.extraEnv?.() }),
 			onNotification: (method, params) => {

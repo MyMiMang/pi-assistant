@@ -324,7 +324,7 @@ test("运行目录和环境：配置文件 0600 在 0700 目录、系统提示�
 	const cfg = JSON.parse(d.configText);
 	assert.equal(cfg.agent.build.prompt, "绝密提示-xyz");
 	assert.deepEqual(cfg.permission, { "*": "deny", "pia_*": "allow" });
-	assert.equal(d.xdgConfig, join(dataDir, "cli-models", "opencode-config"));
+	assert.equal(d.xdgConfig, join(dataDir, "cli-agents", "opencode", "home", ".config"));
 	assert.equal(d.flags.OPENCODE_DISABLE_CLAUDE_CODE, "1");
 	assert.equal(d.flags.OPENCODE_CONFIG, d.configPath);
 	assert.ok(!JSON.stringify([d.argv, d.envKeys]).includes("绝密提示"), "系统提示不在命令行 / 环境变量里");

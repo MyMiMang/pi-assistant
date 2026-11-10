@@ -33,34 +33,34 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 		summary: "用它自己的读写和命令能力在助理的工作文件夹里干活，也能用 Pi 的工具；Pi 单独装一份，和你电脑上的设置、登录完全分开。", models: "模型：工具默认模型", help: NATIVE_HELP,
 	},
 	"claude-code": {
-		title: "Claude Code（本机）",
+		title: "Claude Code",
 		command: "claude",
 		login: "claude auth login",
 		tone: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
-		summary: "用你电脑上已登录的 Claude Code 当模型，工具仍由 Pi 助理执行。",
+		summary: "用 Claude Code 当模型，工具由 Pi 执行；Pi 单独装一份，和你电脑上的设置、登录完全分开。",
 		models: "模型：/model 里的别名 + 内置的更多版本（Opus 4.8、Sonnet 5.5 等）+ 你自定义的",
 		help: (
 			<>
-				会加载你自己的 Claude Code 设置（登录方式、代理、钩子、插件都按你的设置来），但不会读你的 CLAUDE.md。
+				设置、规则与历史存放在 Pi 专用目录，不读取你自己的 Claude Code 配置。Mac 钥匙串是否共用尚未实测；公司强制设置不在隔离范围内。
 				<br />
-				Claude Code 的会话记录会出现在它自己的历史里。
+				Claude Code 的会话记录保存在 Pi 专用目录。
 				<br />
 				用量只显示 token 数，不显示钱（费用走你的 Claude 订阅或账户）。
 			</>
 		),
 	},
 	codex: {
-		title: "Codex（本机）",
+		title: "Codex",
 		command: "codex",
 		login: "codex login",
 		tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
-		summary: "用你电脑上已登录的 Codex（ChatGPT 账号）当模型，工具仍由 Pi 助理执行。",
+		summary: "用 Codex（ChatGPT 账号）当模型，工具由 Pi 执行；Pi 单独装一份，和你电脑上的设置、登录完全分开。",
 		models: "模型：Codex · GPT 系列（以 Codex 自己的列表为准）",
 		help: (
 			<>
 				只当「大脑」用：Codex 自带的执行命令、改文件、联网搜索、插件和你配置的 MCP 都会被关掉，工具全部由 Pi 助理执行并走审批。
 				<br />
-				Codex 的对话记录会出现在它自己的历史里。
+				Codex 的配置、规则、登录与历史使用 Pi 专用目录；Mac 钥匙串是否共用尚未实测，公司强制设置不在隔离范围内。
 				<br />
 				用量只显示 token 数，不显示钱（费用走你的 ChatGPT 订阅或账户）。
 			</>
@@ -86,20 +86,20 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 		),
 	},
 	"opencode-cli": {
-		title: "OpenCode（本机）",
+		title: "OpenCode",
 		command: "opencode",
 		login: "opencode auth login",
 		tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
-		summary: "用你电脑上的 OpenCode 当模型（含它自带的免费模型），工具仍由 Pi 助理执行。",
+		summary: "用 OpenCode 当模型，带免费模型，工具由 Pi 执行；Pi 单独装一份，和你电脑上的设置、登录完全分开。",
 		models: "模型：以 OpenCode 自己的列表为准，名字里标明来源",
-		loginOptional: "没登录也能用它的免费模型。想用 OpenCode Go 套餐或你自己的模型服务，打开终端运行",
+		loginOptional: "没登录也能用它的免费模型。",
 		help: (
 			<>
 				只当「大脑」用：OpenCode 自带的读写文件、执行命令、联网等工具都会被关掉，工具全部由 Pi 助理执行并走审批。
 				<br />
 				名字里的「OpenCode Zen 按量」会扣你的 Zen 余额，「OpenCode Go」用你的 Go 套餐，「免费」不花钱；你自己用 opencode auth login 登录的模型服务显示它自己的名字。
 				<br />
-				不会读你全局的 OpenCode 配置和 AGENTS.md（所以写在全局配置里的自定义模型服务用不了）。对话记录会出现在 OpenCode 自己的历史里。
+				配置、规则、登录和对话历史使用 Pi 专用目录。Mac 钥匙串是否共用尚未实测，公司强制设置不在隔离范围内。
 				<br />
 				你在它干活时插的话，会等它用完下一个工具后才看到。用量只显示 token 数（最后一次调用的），不显示钱。
 			</>
@@ -109,7 +109,7 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 
 export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: () => void }) {
 	const k = KINDS[kind];
-	const native = kind === "gemini-cli" || kind === "codebuddy-cli";
+	const native = kind !== "antigravity";
 	const [info, setInfo] = useState<CliInfo | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
@@ -186,12 +186,12 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 					<>
 						<Badge tone="green">已安装{info.version ? ` v${info.version}` : ""}</Badge>
 						<Badge tone={info.loggedIn ? "green" : k.loginOptional ? "zinc" : "amber"}>{info.loginUnverified ? "登录待验证" : info.loggedIn ? "已登录" : k.loginOptional ? "未登录（可用免费模型）" : "未登录"}</Badge>
+						{info.untestedVersion && <Badge tone="zinc">这个版本还没测过</Badge>}
 					</>
 				)}
-				{info?.registered && <span className="text-mut">{k.models}</span>}
-				{info?.operation && <span role="status" className="text-mut">{info.operation === "login" ? "正在登录，请在浏览器里完成" : info.operation === "install" ? "正在安装…" : "正在更新…"}</span>}
+				{info?.operation && <span role="status" className="text-mut">{info.operation === "login" ? (kind === "opencode-cli" ? "正在登录，请在打开的终端里完成" : "正在登录，请在浏览器里完成") : info.operation === "install" ? "正在安装…" : "正在更新…"}</span>}
 				{!info?.operation && info?.updateAvailable && <span className="text-mut">有新版本 v{info.latestVersion}</span>}
-				{info?.untestedVersion && <span className="text-mut">这个版本还没测过</span>}
+				{info?.registered && <span className="text-mut">{k.models}</span>}
 			</div>
 			{err && info && <div role="alert" className="break-words text-xs text-red-500">{err}</div>}
 			{info && !info.installed && !native && (
@@ -202,11 +202,6 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 			{!native && info?.installed && !info.loggedIn && !info.loginUnverified && (
 				<div className="text-[11px] text-mut2" data-testid={`${kind}-hint`}>
 					{k.loginOptional ?? "还没登录。打开终端，运行"} <code className="rounded bg-hover px-1">{k.login}</code> 登录，{k.loginOptional ? "再" : "然后"}点「重新检测」。
-				</div>
-			)}
-			{kind === "codex" && info?.globalAgentsMd && (
-				<div className="text-[11px] text-mut2" data-testid={`${kind}-agents-md`}>
-					你的全局 AGENTS.md（~/.codex/AGENTS.md）会一并发给 Codex。
 				</div>
 			)}
 			{kind === "claude-code" && <ClaudeCustomModels onChanged={onChanged} />}

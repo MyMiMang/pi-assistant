@@ -6,6 +6,18 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 
 设计研究另参考 [Rovai AI v0.4.12](https://github.com/murray17/rovai-ai/tree/80d11450bd042224a2b7de1405501925a27d7bbf)（MIT，Copyright (c) 2026 rovai-ai contributors）。仅只读评估交互与源码契约，未复制代码、未引入或分发其运行时；[评估与永久链接](docs/research/rovai-ai-group-design-review.md)。
 
+## 用户按需安装的编程工具（候选，2026-11-10）
+
+以下版本已核对官方 npm 元数据，私有安装接线开发中；不随 App 分发，不代表真实安装验证通过。
+
+| 组件 | 固定版本 | 许可证 / 来源 |
+|---|---|---|
+| [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code) | 2.1.322 | 专有软件，使用条款以官方包 README / LICENSE 为准 |
+| [Codex](https://www.npmjs.com/package/@openai/codex) | 0.167.0 | Apache-2.0 |
+| [OpenCode](https://www.npmjs.com/package/opencode-ai) | 1.19.5 | MIT |
+
+三家通过平台可选依赖供应二进制；Claude Code 的 install.cjs 与 OpenCode 的 postinstall.mjs 负责放置原生入口，Codex 由 bin/codex.js 启动平台二进制。安装保留 optional dependencies 与官方安装脚本；不会运行这些脚本进行本轮调研或自动化测试。
+
 ## 助理核心
 
 | 组件 | 版本 | 许可证 | 用途 |

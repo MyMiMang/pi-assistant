@@ -8,7 +8,7 @@
 import "./setup.ts";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, copyFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -59,7 +59,7 @@ test("还没装 → 装好后重新检测就地注册；模型来自 model/list�
 	let info = await api("/api/models/codex");
 	assert.equal(info.installed, false);
 	assert.equal(info.registered, false);
-	assert.equal(info.globalAgentsMd, false);
+	assert.equal(info.globalAgentsMd, undefined);
 
 	copyFileSync(FAKE, cmd);
 	chmodSync(cmd, 0o755);
@@ -69,7 +69,7 @@ test("还没装 → 装好后重新检测就地注册；模型来自 model/list�
 	assert.equal(info.loggedIn, true);
 	assert.match(String(info.version), /^\d+\.\d+\.\d+/);
 	assert.equal(info.registered, true);
-	assert.equal(info.globalAgentsMd, true);
+	assert.equal(info.globalAgentsMd, undefined);
 	assert.deepEqual(await codexModels(api), ["gpt-6-luna", "gpt-6.1-sol"]);
 	const list = ((await api("/api/models")) as unknown as Json[]).filter((m) => m.provider === "codex");
 	assert.ok(list.find((m) => m.id === "gpt-6.1-sol")!.thinking.includes("max"));
@@ -80,8 +80,11 @@ test("还没装 → 装好后重新检测就地注册；模型来自 model/list�
 test("未登录：如实返回、不注册", async () => {
 	const home = mkdtempSync(join(tmpdir(), "pia-cx-home2-"));
 	writeFileSync(join(home, "logged-out"), "");
-	const { api } = await start({ PIA_CODEX_COMMAND: FAKE, CODEX_HOME: home });
-	const info = await api("/api/models/codex");
+	const { api, dataDir } = await start({ PIA_CODEX_COMMAND: FAKE, CODEX_HOME: home });
+	const privateHome = join(dataDir, "cli-agents", "codex", "home");
+	mkdirSync(privateHome, { recursive: true });
+	writeFileSync(join(privateHome, "logged-out"), "");
+	const info = await api("/api/models/codex/recheck", { method: "POST" });
 	assert.equal(info.installed, true);
 	assert.equal(info.loggedIn, false);
 	assert.equal(info.registered, false);

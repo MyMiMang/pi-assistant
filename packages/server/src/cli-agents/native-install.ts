@@ -5,14 +5,14 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSy
 import { delimiter, dirname, join } from "node:path";
 import { appNodeNpmPaths, npmBinPath } from "../app-node-npm.ts";
 import { registerDownload, trackDownload, watchDir } from "../downloads.ts";
-import type { NativeAcpId } from "./native-env.ts";
+import type { ManagedCliId as NativeAcpId } from "./native-env.ts";
 
-export interface NativeRelease { packageName: string; version: string; integrity: string; bin: string }
+export interface NativeRelease { packageName: string; version: string; integrity: string; bin: string; executable?: "node" | "binary" }
 export interface NativeInstallation { version: string; command: string; args: string[]; integrity: string; verified: boolean }
 export interface NpmRequest { args: string[]; cwd: string; env: NodeJS.ProcessEnv; signal: AbortSignal }
 export type NpmRun = (request: NpmRequest) => Promise<string>;
 const versionOk = (v: string) => /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(v);
-const ids: NativeAcpId[] = ["gemini", "codebuddy"];
+const supportedIds: NativeAcpId[] = ["gemini", "codebuddy", "claude-code", "codex", "opencode", "antigravity"];
 
 export async function runPrivateNpm(request: NpmRequest): Promise<string> {
 	const runtime = appNodeNpmPaths();
@@ -30,9 +30,15 @@ export async function runPrivateNpm(request: NpmRequest): Promise<string> {
 export class NativeInstaller {
 	private jobs = new Map<NativeAcpId, { controller: AbortController; promise: Promise<NativeInstallation> }>();
 	private run: NpmRun;
-	constructor(private options: { dataDir: string; releases: Record<NativeAcpId, NativeRelease>; run?: NpmRun }) { this.run = options.run ?? runPrivateNpm; }
+	constructor(private options: { dataDir: string; releases: Partial<Record<NativeAcpId, NativeRelease>>; run?: NpmRun }) { this.run = options.run ?? runPrivateNpm; }
+	private get ids(): NativeAcpId[] { return supportedIds.filter((id) => this.options.releases[id]); }
+	private release(id: NativeAcpId): NativeRelease {
+		const release = this.options.releases[id];
+		if (!release) throw new Error("缺少工具安装清单");
+		return release;
+	}
 	private root(id: NativeAcpId) {
-		if (!ids.includes(id)) throw new Error("未知原生工具");
+		if (!this.ids.includes(id)) throw new Error("未知原生工具");
 		const parent = join(this.options.dataDir, "cli-agents");
 		mkdirSync(parent, { recursive: true, mode: 0o700 });
 		if (lstatSync(parent).isSymbolicLink()) throw new Error("工具安装父目录不能是符号链接");
@@ -64,25 +70,26 @@ export class NativeInstaller {
 			const current = JSON.parse(readFileSync(join(root, "current.json"), "utf8"));
 			if (!versionOk(current.version) || lstatSync(join(root, current.version)).isSymbolicLink()) return null;
 			const release = JSON.parse(readFileSync(join(root, current.version, ".pia-installed.json"), "utf8")) as NativeRelease & { verified: boolean };
-			if (release.version !== current.version || release.packageName !== this.options.releases[id].packageName) return null;
-			return { version: release.version, command: process.execPath, args: [npmBinPath(join(root, current.version), release.packageName, release.bin)], integrity: release.integrity, verified: release.verified };
+			if (release.version !== current.version || release.packageName !== this.release(id).packageName) return null;
+			const entry = npmBinPath(join(root, current.version), release.packageName, release.bin);
+			return { version: release.version, command: release.executable === "binary" ? entry : process.execPath, args: release.executable === "binary" ? [] : [entry], integrity: release.integrity, verified: release.verified };
 		} catch { return null; }
 	}
 	cancel(id: NativeAcpId): void { this.jobs.get(id)?.controller.abort(); }
 	async checkUpdate(id: NativeAcpId): Promise<NativeRelease> {
-		const known = this.options.releases[id];
+		const known = this.release(id);
 		const raw = await this.run({ args: ["view", `${known.packageName}@latest`, "--json"], cwd: this.root(id), env: this.environment(id), signal: AbortSignal.timeout(60_000) });
 		const meta = JSON.parse(raw);
 		if (meta.name !== known.packageName || !versionOk(meta.version) || !/^sha512-[A-Za-z0-9+/]+=*$/.test(meta.dist?.integrity ?? "")) throw new Error("官方 npm 版本信息无效");
-		return { packageName: meta.name, version: meta.version, integrity: meta.dist.integrity, bin: known.bin };
+		return { packageName: meta.name, version: meta.version, integrity: meta.dist.integrity, bin: known.bin, executable: known.executable };
 	}
-	install(id: NativeAcpId, release = this.options.releases[id]): Promise<NativeInstallation> {
+	install(id: NativeAcpId, release = this.release(id)): Promise<NativeInstallation> {
 		const existing = this.jobs.get(id);
 		if (existing) return existing.promise;
 		const controller = new AbortController();
 		const promise = trackDownload(`native:${id}`, async (progress) => {
 			const root = this.root(id);
-			if (!versionOk(release.version) || release.packageName !== this.options.releases[id].packageName || !/^sha512-[A-Za-z0-9+/]+=*$/.test(release.integrity)) throw new Error("无效安装版本");
+			if (!versionOk(release.version) || release.packageName !== this.release(id).packageName || !/^sha512-[A-Za-z0-9+/]+=*$/.test(release.integrity)) throw new Error("无效安装版本");
 			const staging = join(root, `.staging-${randomUUID()}`);
 			const target = join(root, release.version);
 			mkdirSync(staging, { mode: 0o700 });
@@ -124,7 +131,7 @@ export class NativeInstaller {
 		return promise;
 	}
 	cleanupOnStartup(): void {
-		for (const id of ids) {
+		for (const id of this.ids) {
 			const root = this.root(id);
 			const current = this.installed(id);
 			if (!current) continue;
@@ -134,12 +141,12 @@ export class NativeInstaller {
 				// 仅清理由本安装器产生、包身份一致的版本；home/cache/未知目录永不删除。
 				try {
 					const marker = JSON.parse(readFileSync(join(dir, ".pia-installed.json"), "utf8"));
-					if (marker.version === entry.name && marker.packageName === this.options.releases[id].packageName) rmSync(dir, { recursive: true, force: true });
+					if (marker.version === entry.name && marker.packageName === this.release(id).packageName) rmSync(dir, { recursive: true, force: true });
 				} catch { /* 不认识的内容保留 */ }
 			}
 		}
 	}
 	registerDownloads(): void {
-		for (const id of ids) registerDownload({ id: `native:${id}`, name: id === "gemini" ? "Gemini CLI" : "CodeBuddy Code", group: "编程工具", installed: () => !this.jobs.has(id) && !!this.installed(id), start: () => this.install(id), cancel: () => this.cancel(id) });
+		for (const id of this.ids) registerDownload({ id: `native:${id}`, name: id === "gemini" ? "Gemini CLI" : "CodeBuddy Code", group: "编程工具", installed: () => !this.jobs.has(id) && !!this.installed(id), start: () => this.install(id), cancel: () => this.cancel(id) });
 	}
 }
