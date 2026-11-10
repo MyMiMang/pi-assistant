@@ -30,7 +30,7 @@ export interface ClaudeExit {
 }
 
 export interface ClaudeRunOptions {
-	/** `claude` 可执行文件（`detect.ts` 的 `findClaudeCommand`） */
+	/** `claude` 可执行文件（Pi 私有安装的路径） */
 	command: string;
 	commandArgs?: string[];
 	/** 工作目录（助理工作区） */

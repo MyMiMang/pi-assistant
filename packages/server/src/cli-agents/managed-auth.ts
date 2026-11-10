@@ -7,7 +7,7 @@ import { managedCliEnv } from "./managed-env.ts";
 import { buildOpencodeEnv } from "./opencode-launch.ts";
 
 export interface ManagedAuthInput {
- id: Extract<ManagedCliId, "claude-code" | "codex" | "opencode">;
+ id: Extract<ManagedCliId, "claude-code" | "codex" | "opencode" | "antigravity">;
  command: string;
  args?: string[];
  dataDir: string;
@@ -17,8 +17,9 @@ export interface ManagedAuthInput {
 }
 export function runManagedLogin(input: ManagedAuthInput): Promise<void> {
  const env = input.id === "opencode" ? buildOpencodeEnv(input) : managedCliEnv(input.dataDir, input.id, input);
- const args = input.id === "codex" ? ["login"] : ["auth", "login"];
- if (input.id === "opencode") return terminalAuth({ command: input.command, args: [...(input.args ?? []), ...args], env, root: join(input.dataDir, "cli-agents", input.id, "auth-runs"), signal: input.signal, launch: input.terminalLaunch });
+ // Google 官方 CHANGELOG 1.5.0：acp --login 为 Terminal Auth，交互登录后退出。
+ const args = input.id === "antigravity" ? ["acp", "--login"] : input.id === "codex" ? ["login"] : ["auth", "login"];
+ if (input.id === "opencode" || input.id === "antigravity") return terminalAuth({ command: input.command, args: [...(input.args ?? []), ...args], env, root: join(input.dataDir, "cli-agents", input.id, "auth-runs"), signal: input.signal, launch: input.terminalLaunch });
  return new Promise((resolve, reject) => {
   input.signal.throwIfAborted();
   const child = spawn(input.command, [...(input.args ?? []), ...args], { env, windowsHide: true, stdio: "ignore" });

@@ -9,7 +9,6 @@
 import { RpcClient, type RpcExit } from "./jsonrpc-stdio.ts";
 import { answerServerRequest } from "./codex-events.ts";
 import { buildCodexArgs, buildCodexEnv } from "./codex-launch.ts";
-import { findCodexCommand } from "./detect.ts";
 
 /** 某个线程的接收方：只会收到属于自己 threadId 的消息 */
 export interface ThreadSink {
@@ -73,8 +72,8 @@ export class CodexHub {
 	}
 
 	private spawnClient(mcpNames: string[]): RpcClient {
-		const command = (this.opts.command ?? (() => findCodexCommand()))();
-		if (!command) throw new Error("没有找到 codex 命令。请先按 Codex 官方说明安装，再在终端运行 codex login 登录。");
+		const command = this.opts.command?.() ?? null;
+		if (!command) throw new Error("还没在 Pi 里安装 Codex：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。");
 		const holder: { c?: RpcClient } = {};
 		const c = new RpcClient({
 			label: "codex",

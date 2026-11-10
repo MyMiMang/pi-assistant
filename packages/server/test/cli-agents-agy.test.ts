@@ -16,7 +16,7 @@ import { convertAgyLine, type AgyEvent } from "../src/cli-agents/agy-events.ts";
 import { agyAgentFile, agyCallKey, agyMcpConfig, agyRunDirs, agyRunFiles, buildAgyArgs, buildAgyEnv, fromAgyToolName } from "../src/cli-agents/agy-launch.ts";
 import { effortsOf, agyThinkingMap, parseAgyModels, resolveAgyModel } from "../src/cli-agents/agy-models.ts";
 import { AgyProcess, type AgyExit, type AgyItem, type AgyProcessOptions } from "../src/cli-agents/agy-process.ts";
-import { detectAgy, findAgyCommand, listAgyModels } from "../src/cli-agents/detect.ts";
+import { detectAgy, listAgyModels } from "../src/cli-agents/detect.ts";
 import { textResult, toolBridge, type Tool } from "../src/cli-agents/tool-bridge.ts";
 import type { Env } from "../src/routes/common.ts";
 import { mountToolBridgeRoutes } from "../src/routes/tool-bridge.ts";
@@ -41,8 +41,9 @@ test("启动参数：-p 空串在最后；续用带 --conversation；环境只�
 	assert.deepEqual(buildAgyArgs({ model: "claude-sonnet-5-5-high" }), ["--input-format", "stream-json", "--output-format", "stream-json", "--model", "claude-sonnet-5-5-high", "--agent", "pia", "-p", ""]);
 	const resumed = buildAgyArgs({ model: "m", conversationId: "c-1" });
 	assert.deepEqual(resumed.slice(-4), ["--conversation", "c-1", "-p", ""]);
-	const env = buildAgyEnv({ baseEnv: { HOME: "/Users/x", PATH: "/bin", GEMINI_API_KEY: "secret", GOOGLE_API_KEY: "k", ANTHROPIC_API_KEY: "a", HTTPS_PROXY: "http://p" }, realHome: "/Users/x" });
-	assert.equal(env.HOME, "/Users/x");
+	const env = buildAgyEnv({ dataDir: "/private-pia", baseEnv: { HOME: "/Users/x", PATH: "/bin", GEMINI_API_KEY: "secret", GOOGLE_API_KEY: "k", ANTHROPIC_API_KEY: "a", HTTPS_PROXY: "http://p" }, realHome: "/Users/x" });
+	assert.equal(env.HOME, "/private-pia/cli-agents/antigravity/home");
+	assert.equal(env.AGY_CLI_DISABLE_AUTO_UPDATE, "true");
 	assert.equal(env.HTTPS_PROXY, "http://p");
 	for (const k of Object.keys(env)) assert.doesNotMatch(k, /KEY|SECRET|TOKEN/, k);
 });
@@ -121,7 +122,6 @@ test("检测：假 agy 已登录 / 未登录 / 没装；模型列表从 agy mode
 	assert.match(out.error ?? "", /sign in/);
 	assert.deepEqual((await listAgyModels(FAKE)).map((f) => f.id), ["claude-sonnet-5-5", "gemini-4-argon", "gpt-oss-120b"]);
 	await assert.rejects(listAgyModels(FAKE, { extraEnv: { FAKE_AGY_LOGGED_IN: "0" } }), /sign in/);
-	assert.equal(findAgyCommand({ env: { PATH: "/nonexistent" }, home: null, platform: "linux" }), null, "PATH 里没有 = 找不到（不走本机真实目录）");
 	const missing = await detectAgy({ command: join(tmpdir(), "no-such-agy") });
 	assert.equal(missing.installed, false);
 });

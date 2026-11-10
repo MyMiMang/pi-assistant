@@ -42,8 +42,7 @@ export function createNativeAcpChannel(spec: NativeAcpSpec, deps: NativeAcpDeps)
 		profile: deps.commandArgs ? { ...spec.profile, args: (dir) => [...deps.commandArgs!(), ...spec.profile.args(dir)] } : spec.profile,
 		name: spec.provider,
 		sessionPolicy: spec.sessionPolicy,
-		findCommand: () => null,
-		notFound: `${spec.name} 的 Pi 专用命令不存在，请检查该工具的安装状态`,
+		notFound: `还没在 Pi 里安装 ${spec.name}：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。`,
 		errorStyle: { label: spec.name, loginCommand: "", notLoggedIn: /$^/ },
 		resumeFailed: /$^/,
 	};

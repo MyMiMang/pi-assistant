@@ -3,7 +3,6 @@
  * 启动方式（参数 / 白名单环境 / 配置文件）在 `cli-agents/opencode-launch.ts`，模型列表来自 `opencode models --verbose`（`cli-agents/opencode-models.ts`）。
  * Pi 里的模型 id = OpenCode 的 `<provider>/<model>`（如 `opencode-go/deepseek-v4.1-flash`），名字带来源：Zen 免费 / Zen 按量 / Go 套餐 / 用户自己登录的 provider。
  */
-import { findOpencodeCommand } from "../../cli-agents/detect.ts";
 import { opencodeProfile } from "../../cli-agents/opencode-launch.ts";
 import { opencodeThinkingMap, type OpencodeModel } from "../../cli-agents/opencode-models.ts";
 import type { PiModels } from "../index.ts";
@@ -18,8 +17,7 @@ export const OPENCODE_API = "opencode-acp";
 export const opencodeChannelConfig: AcpChannelConfig = {
 	profile: opencodeProfile,
 	name: "opencode",
-	findCommand: () => findOpencodeCommand(),
-	notFound: "没有找到 opencode 命令。请先按 OpenCode 官方说明安装（opencode.ai），免费模型不用登录；想用 Go 套餐或自己的模型服务，在终端运行 opencode auth login。",
+	notFound: "还没在 Pi 里安装 OpenCode：到 设置 › 模型服务 › 编程工具 里点「安装」（免费模型不用登录）。",
 	errorStyle: { label: "OpenCode", loginCommand: "opencode auth login", notLoggedIn: /not logged in|log ?in|unauthorized|authenticat|credentials|api key|401/i },
 	resumeFailed: /session[^\n]*(not found|does not exist|unknown|invalid)|(not found|no such|unknown)[^\n]*session/i,
 };

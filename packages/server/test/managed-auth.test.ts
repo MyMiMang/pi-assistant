@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -27,6 +27,24 @@ test("假终端执行官方命令并可取消登录进程组", async () => {
   setTimeout(() => controller.abort(), 300);
   await assert.rejects(pending, /取消/);
  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test("Antigravity 官方终端登录参数和隔离环境一致，取消不触碰用户配置", async () => {
+ const dataDir = mkdtempSync(join(tmpdir(), "pia-agy-login-"));
+ try {
+  const fake = join(dataDir, "fake.cjs"), capture = join(dataDir, "capture.json");
+  writeFileSync(fake, `require('node:fs').writeFileSync(${JSON.stringify(capture)},JSON.stringify({args:process.argv.slice(2),env:process.env}));setInterval(()=>{},1000);`);
+  const controller = new AbortController();
+  const pending = runManagedLogin({ id: "antigravity", command: process.execPath, args: [fake], dataDir, signal: controller.signal, baseEnv: { HOME: "/user", AGY_CLI_DISABLE_AUTO_UPDATE: "false", GOOGLE_API_KEY: "forbidden" }, terminalLaunch: script => ({ command: "/bin/sh", args: [script] }) });
+  const deadline = Date.now() + 5000;
+  let saved;
+  while (Date.now() < deadline && !saved) { try { saved = JSON.parse(readFileSync(capture, "utf8")); } catch { await new Promise(r => setTimeout(r, 20)); } }
+  controller.abort();
+  await assert.rejects(pending, /取消/);
+  assert.deepEqual(saved.args, ["acp", "--login"]);
+  assert.equal(saved.env.HOME, join(dataDir, "cli-agents", "antigravity", "home"));
+  assert.equal(saved.env.AGY_CLI_DISABLE_AUTO_UPDATE, "true");
+  assert.equal(saved.env.GOOGLE_API_KEY, undefined);
+ } finally { rmSync(dataDir, { recursive: true, force: true }); }
 });
 test("三平台终端登录命令保留带空格的私有脚本路径", () => {
  const script = "/private path/login.sh";

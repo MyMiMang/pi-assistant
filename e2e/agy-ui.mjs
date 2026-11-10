@@ -6,7 +6,7 @@
  * 假 agy 调 bash 出现审批卡、批准后回答继续、390 宽不横向溢出。
  */
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,24 +14,18 @@ import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 import { openModelMenu } from "./model-menu-flow.mjs";
+import { makeManagedAgyPreload } from "./fixtures/managed-agy-binary.mjs";
+import { stableShot } from "./fixtures/stable-shot.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const FAKE = join(root, "packages/server/test/fixtures/fake-agy.mjs");
 const OUT = artifactDir("agy-ui");
 const run = makeTempRun("pia-agy-ui-");
 const port = await new Promise((resolve) => { const s = createServer().listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 const base = `http://127.0.0.1:${port}`;
-const binDir = join(run.runDir, "bin");
-mkdirSync(binDir, { recursive: true });
-const AGY = join(binDir, "agy"); // 一开始还不存在 = 「没装」
 const scenarioFile = join(run.runDir, "scenario");
-const loggedOut = join(run.runDir, "logged-out"); // 存在 = 假 agy 的 models 报「请先登录」
 writeFileSync(scenarioFile, "text");
-const installFake = () => {
-	writeFileSync(AGY, `#!/bin/sh\nif [ -f "${loggedOut}" ]; then export FAKE_AGY_LOGGED_IN=0; fi\nFAKE_AGY_SCENARIO_FILE="${scenarioFile}" exec "${process.execPath}" "${FAKE}" "$@"\n`);
-	chmodSync(AGY, 0o755);
-};
-const server = startTempServer({ root, port, run, extra: { PIA_AGY_COMMAND: AGY } });
+const fixture = makeManagedAgyPreload(root, join(run.runDir, "managed-agy"), scenarioFile);
+const server = startTempServer({ root, port, run, extra: { NODE_OPTIONS: `--import tsx --import ${JSON.stringify(fixture.preload)}` } });
 const j = async (path, method = "GET", body) => { const r = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); assert.ok(r.ok, `${method} ${path} ${r.status}`); return r.json(); };
 const wait = async (fn, ms = 30000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return; await new Promise((r) => setTimeout(r, 100)); } throw new Error("condition timed out"); };
 const noOverflow = async (page, label) => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, `${label}：页面不横向溢出`);
@@ -52,28 +46,37 @@ try {
 	const card = page.getByTestId("antigravity-card");
 	await card.waitFor();
 	await page.getByTestId("antigravity-status").getByText("没装").waitFor();
-	assert.match(await page.getByTestId("antigravity-hint").innerText(), /重新检测/);
-	assert.match(await card.innerText(), /实验性/);
+	assert.doesNotMatch(await card.innerText(), /实验性|本机|打开终端/);
 	await card.scrollIntoViewIfNeeded();
 	await card.screenshot({ path: join(OUT, "01-card-not-installed.png") });
 	assert.equal((await j("/api/models")).some((m) => m.provider === "antigravity"), false, "没装时模型列表里没有 Antigravity");
 
-	writeFileSync(loggedOut, "");
-	installFake();
-	await page.getByTestId("antigravity-recheck").click();
+	await card.getByRole("button", { name: "安装", exact: true }).click();
 	await wait(async () => (await card.getAttribute("data-installed")) === "true");
 	assert.equal(await card.getAttribute("data-logged-in"), "false");
-	assert.match(await page.getByTestId("antigravity-status").innerText(), /已安装 v1\.4\.7.*未登录/s);
-	assert.match(await page.getByTestId("antigravity-hint").innerText(), /agy/);
+	assert.match(await page.getByTestId("antigravity-status").innerText(), /已安装 v1\.0\.0.*未登录/s);
+	await card.getByRole("button", { name: "登录", exact: true }).waitFor();
 	await card.screenshot({ path: join(OUT, "02-card-not-logged-in.png") });
 
-	rmSync(loggedOut);
-	await page.getByTestId("antigravity-recheck").click();
+	await card.getByRole("button", { name: "登录", exact: true }).click();
+	await card.getByRole("button", { name: "取消", exact: true }).click();
+	await card.getByRole("button", { name: "登录", exact: true }).waitFor();
+	await card.getByRole("button", { name: "登录", exact: true }).click();
 	await wait(async () => (await card.getAttribute("data-logged-in")) === "true");
 	assert.equal(await card.getAttribute("data-registered"), "true");
 	assert.match(await page.getByTestId("antigravity-status").innerText(), /已登录/);
 	assert.equal(await page.getByTestId("antigravity-hint").count(), 0);
+	await card.getByRole("button", { name: "检查更新", exact: true }).waitFor();
 	await card.screenshot({ path: join(OUT, "03-card-ready.png") });
+	await card.getByRole("button", { name: "检查更新", exact: true }).click();
+	await card.getByText(/官方尚未提供 SHA256/).waitFor();
+	assert.equal(await card.getByRole("button", { name: /更新到/ }).count(), 0);
+	writeFileSync(fixture.update, "sha-available");
+	await card.getByRole("button", { name: "检查更新", exact: true }).click();
+	await card.getByRole("button", { name: "更新到 v1.0.1", exact: true }).click();
+	await card.getByText("已安装 v1.0.1", { exact: true }).waitFor();
+	await card.getByRole("button", { name: "检查更新", exact: true }).waitFor();
+	assert.equal(await card.getAttribute("data-logged-in"), "true", "更新保留私有登录");
 	assert.equal(await page.locator('[data-testid=service-card][data-service="antigravity"]').count(), 0, "不重复成普通服务卡片");
 	await noOverflow(page, "桌面设置页");
 
@@ -116,7 +119,9 @@ try {
 	await page.getByRole("button", { name: "批准", exact: true }).click();
 	await page.locator("main").getByText("got:", { exact: false }).last().waitFor({ timeout: 30_000 });
 	assert.match(await page.locator("main").innerText(), /已删除 old-notes\.txt/);
-	await page.screenshot({ path: join(OUT, "07-approved-reply.png") });
+	const finalReply = page.locator("main").getByText("got:", { exact: false }).last();
+	await finalReply.scrollIntoViewIfNeeded();
+	await stableShot(page, finalReply, join(OUT, "07-approved-reply.png"));
 
 	// ---- 5) 390 宽
 	await page.setViewportSize({ width: 390, height: 844 });
@@ -130,6 +135,11 @@ try {
 	await page.goto(`${base}/?agent=${agent.id}`);
 	await page.locator("main textarea").first().waitFor();
 	await noOverflow(page, "390 聊天页");
+	const captures = readFileSync(fixture.capture, "utf8").trim().split("\n").map(line => JSON.parse(line));
+	assert.ok(captures.some(c => c.args.join(" ") === "acp --login"));
+	assert.ok(captures.some(c => c.args[0] === "models"));
+	assert.ok(captures.some(c => c.args.includes("--input-format")));
+	assert.ok(captures.every(c => c.autoUpdate === "true" && c.home.includes("/cli-agents/antigravity/home")));
 	assert.deepEqual(errors, [], `页面不应有报错：${errors.join("|")}`);
 	console.log(`✅ agy-ui 通过，截图：${OUT}`);
 } finally {

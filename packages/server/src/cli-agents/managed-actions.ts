@@ -8,7 +8,7 @@ import { config } from "../config.ts";
 export const managedAuthRunner = { login: runManagedLogin };
 import type { NativeRelease } from "./native-install.ts";
 
-export function managedActions(id: "claude-code" | "codex" | "opencode", envName: string, command: () => string | null, recheck: () => Promise<unknown>) {
+export function managedActions(id: "claude-code" | "codex" | "opencode" | "antigravity", envName: string, command: () => string | null, recheck: () => Promise<unknown>) {
  let operation: "install" | "update" | "login" | undefined;
  let controller: AbortController | undefined;
  let error: string | undefined;
@@ -16,6 +16,7 @@ export function managedActions(id: "claude-code" | "codex" | "opencode", envName
  function start(kind: typeof operation) {
   if (operation) return { started: false };
   if (kind === "update" && !latest) throw new Error("请先检查更新");
+  if (kind === "update" && latest?.updateBlocked) throw new Error(latest.updateBlocked);
   operation = kind; error = undefined;
   const current = controller = new AbortController();
   void (async () => {
@@ -31,7 +32,7 @@ export function managedActions(id: "claude-code" | "codex" | "opencode", envName
   return { started: true };
  }
  return {
-  extra: () => ({ ...(nativeInstaller.installed(id)?.version ? { version: nativeInstaller.installed(id)!.version } : {}), operation, ...(error ? { error } : {}), latestVersion: latest?.version, updateAvailable: !!latest && latest.version !== nativeInstaller.installed(id)?.version, untestedVersion: !!nativeInstaller.installed(id) && nativeInstaller.installed(id)?.version !== releaseFor(id === "claude-code" ? "@anthropic-ai/claude-code" : id === "codex" ? "@openai/codex" : "opencode-ai").version }),
+  extra: () => ({ ...(nativeInstaller.installed(id)?.version ? { version: nativeInstaller.installed(id)!.version } : {}), operation, ...(error ? { error } : {}), latestVersion: latest?.version, updateBlocked: latest?.updateBlocked, updateAvailable: !!latest && !latest.updateBlocked && latest.version !== nativeInstaller.installed(id)?.version, untestedVersion: !!nativeInstaller.installed(id) && nativeInstaller.installed(id)?.version !== releaseFor(id === "claude-code" ? "@anthropic-ai/claude-code" : id === "codex" ? "@openai/codex" : id === "antigravity" ? "antigravity-cli" : "opencode-ai").version }),
   actions: {
    install: () => start("install"), login: () => start("login"), update: () => start("update"),
    "check-update": async () => { if (operation) throw new Error("请等当前操作完成"); latest = await nativeInstaller.checkUpdate(id); return { ok: true }; },

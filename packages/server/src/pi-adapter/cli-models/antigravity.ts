@@ -14,7 +14,6 @@
 import { join } from "node:path";
 import { AgyProcess, type AgyExit, type AgyItem } from "../../cli-agents/agy-process.ts";
 import { agyThinkingMap, effortsOf, resolveAgyModel, type AgyFamily } from "../../cli-agents/agy-models.ts";
-import { findAgyCommand } from "../../cli-agents/detect.ts";
 import { toolBridge, type Tool, type ToolBridge } from "../../cli-agents/tool-bridge.ts";
 import type { PiModels } from "../index.ts";
 import { createCliChannel, type CliBackend, type CliLive, type LaunchRequest, type Step } from "./channel-core.ts";
@@ -35,6 +34,7 @@ export interface AntigravityDeps {
 	bridgeBaseUrl: () => string;
 	/** agy 可执行文件；不给就自己找。测试用它换成假 agy */
 	command?: () => string | null;
+	commandArgs?: () => string[];
 	baseEnv?: NodeJS.ProcessEnv;
 	/** 额外环境变量（测试选假 agy 场景用） */
 	extraEnv?: () => Record<string, string>;
@@ -60,7 +60,7 @@ interface AgyLive extends CliLive {
 
 /** agy 报错 → 中文说明，带上原文；地区限制单独提示 */
 export function describeAgyError(text: string): string {
-	const base = describeCliError({ label: "Antigravity", loginCommand: "agy", notLoggedIn: /sign in|log in|login|not authenticated|unauthenticated|401/i }, text);
+	const base = describeCliError({ label: "Antigravity", loginCommand: "agy acp --login", loginHint: "请在模型服务中点击登录", notLoggedIn: /sign in|log in|login|not authenticated|unauthenticated|401/i }, text);
 	return /location is not supported/i.test(text) ? `${base}（Gemini 模型在部分地区不可用，可以换 Claude 或 GPT-OSS 模型）` : base;
 }
 
@@ -72,15 +72,17 @@ function antigravityBackend(deps: AntigravityDeps, state: { families: AgyFamily[
 	return {
 		label: "Antigravity",
 		composite: toolsPromptComposite,
-		isResumeFailure: () => false,
+		isResumeFailure: (message) => RESUME_FAILED.test(message),
 		async launch(req: LaunchRequest) {
-			const command = (deps.command ?? (() => findAgyCommand()))();
-			if (!command) throw new Error("没有找到 agy 命令。请先按 Antigravity 官方说明安装，再在终端运行 agy 登录。");
+			const command = deps.command?.() ?? null;
+			if (!command) throw new Error("尚未安装 Antigravity，请在模型服务中安装并登录。");
 			const model = resolveAgyModel(state.families, req.model, req.effort);
 			let proc = await pool.take(req.key, req.composite, (p) => !!req.resumeSessionId && p.conversationId === req.resumeSessionId && p.model === model);
 			if (!proc) {
 				const fresh = new AgyProcess({
 					command,
+					commandArgs: deps.commandArgs?.(),
+					dataDir: deps.dataDir,
 					runsRoot: join(deps.dataDir, "cli-models", "agy-runs"),
 					bridgeBaseUrl: deps.bridgeBaseUrl(),
 					tools: req.tools as Tool[],
@@ -163,7 +165,7 @@ export async function registerAntigravityModels(models: PiModels, channel: Antig
 	channel.setFamilies(families);
 	await registerCliProvider(models, {
 		id: ANTIGRAVITY_PROVIDER,
-		name: "Antigravity（本机）",
+		name: "Antigravity",
 		api: ANTIGRAVITY_API,
 		baseUrl: "antigravity://local",
 		streamSimple: channel.streamSimple as never,

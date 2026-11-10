@@ -307,7 +307,7 @@ test("进程崩溃：以 error 结束，带 stderr；找不到命令：中文错
 	try {
 		const r = await run(ctx([user("你好")]), { sessionId: "nocmd-1" });
 		assert.equal(r.message.stopReason, "error");
-		assert.match(r.message.errorMessage ?? "", /没有找到 opencode 命令/);
+		assert.match(r.message.errorMessage ?? "", /还没在 Pi 里安装 OpenCode/);
 		assert.equal(r.events.filter((e) => e.type === "error").length, 1);
 	} finally {
 		fakeCommand = FAKE;

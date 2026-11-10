@@ -5,10 +5,12 @@
  *   <运行目录>/.agents/agents/pia.md               自定义代理：只剩我们的系统提示，自带工具全关
  *   <运行目录>/.agents/plugins/pia/plugin.json     插件清单
  *   <运行目录>/.agents/plugins/pia/mcp_config.json 工具桥的 MCP 配置（带令牌，0600）
- * 环境同样用白名单（复用 `buildCliEnv`）：不带任何模型密钥；登录凭据在用户家目录下，由 agy 自己读，我们不碰。
+ * 环境复用 managed-env：不带模型密钥，HOME 指向 Pi 私有目录；配置和会话在其下 .gemini/antigravity-cli。
  */
 import { posix } from "node:path";
-import { buildCliEnv, type ClaudeEnvInput } from "./launch.ts";
+import type { ClaudeEnvInput } from "./launch.ts";
+import { managedCliEnv } from "./managed-env.ts";
+import { config } from "../config.ts";
 import type { CallKeyFn } from "./tool-bridge.ts";
 
 /** 自定义代理名（`--agent pia`）、插件名、MCP 服务名 */
@@ -18,8 +20,8 @@ const AGY_TOOL_PREFIX = "mcp_pia_pia_";
 /** 去掉前缀还原成 Pi 里的工具名；不是桥的工具（agy 残留的 list_resources 等）`mine` 为 false。 */
 export const fromAgyToolName = (name: string): { name: string; mine: boolean } => (name.startsWith(AGY_TOOL_PREFIX) ? { name: name.slice(AGY_TOOL_PREFIX.length), mine: true } : { name, mine: false });
 
-/** agy 的环境：白名单 + 没有固定开关 */
-export const buildAgyEnv = (input: ClaudeEnvInput = {}): NodeJS.ProcessEnv => buildCliEnv(input, [], {});
+/** 检测、登录和运行共享私有 HOME；官方开关始终关闭 CLI 自更新。 */
+export const buildAgyEnv = (input: ClaudeEnvInput & { dataDir?: string } = {}): NodeJS.ProcessEnv => managedCliEnv(input.dataDir ?? config.dataDir, "antigravity", input);
 
 /** `tools/call` 的配对键 = `progressToken` 末段的 `step_index`（格式 `<uuid>:<step_index>`，和 stdout 里 tool 步骤的 `step_index` 一致，实测） */
 export const agyCallKey: CallKeyFn = (meta) => {

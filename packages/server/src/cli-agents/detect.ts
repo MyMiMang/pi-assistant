@@ -4,15 +4,13 @@
  * 登录交给用户自己在终端里做（`claude auth login` / `codex login`），我们不代为登录。
  */
 import { execFile } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync, statSync } from "node:fs";
-import { delimiter, join } from "node:path";
-import { osAccountHome } from "../native-launch-env.ts";
+import { existsSync, mkdirSync } from "node:fs";
 import { parseAgyModels, type AgyFamily } from "./agy-models.ts";
 import { buildAgyEnv } from "./agy-launch.ts";
 import { buildCodexEnv } from "./codex-launch.ts";
 import { buildOpencodeEnv, opencodeAuthPath, opencodeConfigHome } from "./opencode-launch.ts";
 import { parseOpencodeModels, type OpencodeModel } from "./opencode-models.ts";
-import { buildClaudeEnv, commonCliDirs } from "./launch.ts";
+import { buildClaudeEnv } from "./launch.ts";
 
 export interface ClaudeStatus {
 	installed: boolean;
@@ -26,56 +24,6 @@ export interface ClaudeStatus {
 	/** 检测本身失败时的原因（没装、超时、输出看不懂） */
 	error?: string;
 }
-
-/** 从桌面程序启动时 PATH 往往很短，常见安装位置也要找。 */
-function candidateDirs(pathVar: string | undefined, home: string | null, platform: NodeJS.Platform, homeDirs: string[][]): string[] {
-	const dirs = (pathVar ?? "").split(delimiter).filter(Boolean);
-	if (home) dirs.push(...homeDirs.map((d) => join(home, ...d)));
-	dirs.push(...commonCliDirs(home, platform));
-	if (platform !== "win32") dirs.push("/usr/bin");
-	return dirs;
-}
-
-const isExecutable = (p: string, platform: NodeJS.Platform): boolean => {
-	try {
-		if (!statSync(p).isFile()) return false;
-		if (platform !== "win32") accessSync(p, constants.X_OK);
-		return true;
-	} catch {
-		return false;
-	}
-};
-
-interface FindOptions {
-	env?: NodeJS.ProcessEnv;
-	home?: string | null;
-	platform?: NodeJS.Platform;
-}
-
-/** 在 PATH 和常见安装位置里找命令行工具；找不到返回 null。`homeDirs`：这个工具自己的家目录下安装位置。 */
-function findCommand(name: string, homeDirs: string[][], opts: FindOptions): string | null {
-	const platform = opts.platform ?? process.platform;
-	const env = opts.env ?? process.env;
-	const names = platform === "win32" ? [`${name}.exe`, `${name}.cmd`] : [name];
-	for (const dir of candidateDirs(env.PATH ?? env.Path, opts.home === undefined ? osAccountHome() : opts.home, platform, homeDirs))
-		for (const n of names) {
-			const p = join(dir, n);
-			if (isExecutable(p, platform)) return p;
-		}
-	return null;
-}
-
-/** 找 `claude` 可执行文件；找不到返回 null。 */
-export const findClaudeCommand = (_opts: FindOptions = {}): string | null => null;
-
-/** 找 `codex` 可执行文件；找不到返回 null。 */
-export const findCodexCommand = (_opts: FindOptions = {}): string | null => null;
-
-/** 找 `agy` 可执行文件；找不到返回 null。 */
-export const findAgyCommand = (opts: FindOptions = {}): string | null => findCommand("agy", [], opts);
-
-/** 找 `opencode` 可执行文件（官方安装脚本装在 `~/.opencode/bin`）；找不到返回 null。 */
-export const findOpencodeCommand = (_opts: FindOptions = {}): string | null => null;
 
 interface Ran {
 	stdout: string;
@@ -103,13 +51,14 @@ export interface DetectOptions {
 	/** 额外环境变量（测试用假 claude） */
 	extraEnv?: Record<string, string>;
 	commandArgs?: string[];
+	dataDir?: string;
 	timeoutMs?: number;
 }
 
 /** 检测是否安装、版本、是否已登录。永不抛错。 */
 export async function detectClaude(opts: DetectOptions = {}): Promise<ClaudeStatus> {
-	const command = opts.command ?? findClaudeCommand({ env: opts.baseEnv });
-	if (!command) return { installed: false, loggedIn: false, error: "没有找到 claude 命令" };
+	const command = opts.command;
+	if (!command) return { installed: false, loggedIn: false, error: "还没在 Pi 里安装 Claude Code：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。" };
 	const env = buildClaudeEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
 	const timeout = opts.timeoutMs ?? 15_000;
 	const ver = await run(command, [...(opts.commandArgs ?? []), "--version"], env, timeout);
@@ -142,8 +91,8 @@ export interface CodexStatus {
 
 /** 检测 codex 是否安装、版本、是否已登录（`codex login status` 退出码 0 = 已登录）。永不抛错，不读任何凭证文件。 */
 export async function detectCodex(opts: DetectOptions = {}): Promise<CodexStatus> {
-	const command = opts.command ?? findCodexCommand({ env: opts.baseEnv });
-	if (!command) return { installed: false, loggedIn: false, error: "没有找到 codex 命令" };
+	const command = opts.command;
+	if (!command) return { installed: false, loggedIn: false, error: "还没在 Pi 里安装 Codex：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。" };
 	const env = buildCodexEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
 	const timeout = opts.timeoutMs ?? 15_000;
 	const ver = await run(command, [...(opts.commandArgs ?? []), "--version"], env, timeout);
@@ -166,7 +115,7 @@ export interface AgyStatus {
 
 /** 问 `agy models`：成功返回模型家族，失败抛带原文的错误。不读任何凭证文件。 */
 export async function listAgyModels(command: string, opts: Omit<DetectOptions, "command"> = {}): Promise<AgyFamily[]> {
-	const r = await run(command, ["models"], buildAgyEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv }), opts.timeoutMs ?? 30_000);
+	const r = await run(command, [...(opts.commandArgs ?? []), "models"], buildAgyEnv({ dataDir: opts.dataDir, baseEnv: opts.baseEnv, command, extra: opts.extraEnv }), opts.timeoutMs ?? 30_000);
 	if (r.failed) throw new Error(`运行 agy models 失败：${r.failed}`);
 	if (r.code !== 0) throw new Error((r.stdout + r.stderr).trim().slice(0, 300) || `agy models 退出码 ${r.code}`);
 	const families = parseAgyModels(r.stdout);
@@ -176,10 +125,10 @@ export async function listAgyModels(command: string, opts: Omit<DetectOptions, "
 
 /** 检测 agy 是否安装、版本、是否已登录。永不抛错。 */
 export async function detectAgy(opts: DetectOptions = {}): Promise<AgyStatus> {
-	const command = opts.command ?? findAgyCommand({ env: opts.baseEnv });
-	if (!command) return { installed: false, loggedIn: false, error: "没有找到 agy 命令" };
-	const env = buildAgyEnv({ baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
-	const ver = await run(command, ["--version"], env, opts.timeoutMs ?? 15_000);
+	const command = opts.command;
+	if (!command) return { installed: false, loggedIn: false, error: "还没在 Pi 里安装 Antigravity：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。" };
+	const env = buildAgyEnv({ dataDir: opts.dataDir, baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
+	const ver = await run(command, [...(opts.commandArgs ?? []), "--version"], env, opts.timeoutMs ?? 15_000);
 	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 agy 失败：${ver.failed}` };
 	const version = /\d+\.\d+\.\d+\S*/.exec(ver.stdout)?.[0];
 	try {
@@ -218,8 +167,8 @@ export async function listOpencodeModels(command: string, opts: OpencodeDetectOp
 
 /** 检测 opencode 是否安装、版本、登录凭据在不在。永不抛错，不读任何凭证文件。 */
 export async function detectOpencode(opts: OpencodeDetectOptions): Promise<OpencodeStatus> {
-	const command = opts.command ?? findOpencodeCommand({ env: opts.baseEnv });
-	if (!command) return { installed: false, loggedIn: false, error: "没有找到 opencode 命令" };
+	const command = opts.command;
+	if (!command) return { installed: false, loggedIn: false, error: "还没在 Pi 里安装 OpenCode：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。" };
 	const ver = await run(command, [...(opts.commandArgs ?? []), "--version"], buildOpencodeEnv({ baseEnv: opts.baseEnv, command, dataDir: opts.dataDir, extra: opts.extraEnv }), opts.timeoutMs ?? 15_000);
 	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 opencode 失败：${ver.failed}` };
 	const version = /\d+\.\d+\.\d+\S*/.exec(ver.stdout)?.[0];

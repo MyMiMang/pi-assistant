@@ -8,7 +8,7 @@ import { after, before, test } from "node:test";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { ClaudeRun, type ClaudeRunOptions } from "../src/cli-agents/claude-process.ts";
-import { detectClaude, findClaudeCommand } from "../src/cli-agents/detect.ts";
+import { detectClaude } from "../src/cli-agents/detect.ts";
 import type { ClaudeEvent } from "../src/cli-agents/events.ts";
 import { textResult, toolBridge, type Tool } from "../src/cli-agents/tool-bridge.ts";
 import type { Env } from "../src/routes/common.ts";
@@ -217,12 +217,3 @@ test("检测：已登录 / 未登录 / 没装", async () => {
 	assert.ok(none.error);
 });
 
-test("不再从用户PATH寻找claude",  () => {
-	const dir = mkdtempSync(join(tmpdir(), "pia-claude-bin-"));
-	assert.notEqual(findClaudeCommand({ env: { PATH: dir }, home: null, platform: "linux" })?.startsWith(dir), true, "空目录里找不到（别处找到的真实 claude 只返回路径，不会被运行）");
-	const bin = join(dir, "claude");
-	writeFileSync(bin, "#!/bin/sh\n");
-	chmodSync(bin, 0o755);
-	assert.equal(findClaudeCommand({ env: { PATH: dir }, home: null, platform: "linux" }), null);
-	rmSync(dir, { recursive: true, force: true });
-});

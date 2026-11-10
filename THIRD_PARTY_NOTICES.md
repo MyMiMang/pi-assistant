@@ -15,6 +15,9 @@ Pi Assistant 使用了下列第三方项目。版本取自 `package-lock.json`�
 | [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code) | 2.1.322 | 专有软件，使用条款以官方包 README / LICENSE 为准 |
 | [Codex](https://www.npmjs.com/package/@openai/codex) | 0.167.0 | Apache-2.0 |
 | [OpenCode](https://www.npmjs.com/package/opencode-ai) | 1.19.5 | MIT |
+| [Antigravity CLI](https://antigravity.google/) | 1.5.4-5037094733742080 | Google 专有软件；用户点击后从 Google 官方存储下载，不随 App 分发 |
+
+Antigravity CLI 的六平台官方资产及 SHA256 固定在 third-party.json；使用须遵守 Google 官方许可与服务条款。手动检查更新仅访问官方更新清单，未提供 SHA256 的新版只提示等待 App 更新固定清单，不直接安装。真实工具与账号未验证。
 
 三家通过平台可选依赖供应二进制；Claude Code 的 install.cjs 与 OpenCode 的 postinstall.mjs 负责放置原生入口，Codex 由 bin/codex.js 启动平台二进制。安装保留 optional dependencies 与官方安装脚本；不会运行这些脚本进行本轮调研或自动化测试。
 

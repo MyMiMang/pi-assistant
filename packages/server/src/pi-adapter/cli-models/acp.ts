@@ -33,8 +33,6 @@ export interface AcpChannelConfig {
 	sessionPolicy?: string;
 	/** 数据目录下的子目录前缀，如 `opencode`：对照表 `<前缀>-sessions.json`、运行目录 `<前缀>-runs`、工作目录 `<前缀>-work` */
 	name: string;
-	/** 在本机自己找命令（`deps.command` 没给时用） */
-	findCommand(): string | null;
 	/** 找不到命令时的说明 */
 	notFound: string;
 	errorStyle: CliErrorStyle;
@@ -96,7 +94,7 @@ function acpBackend(cfg: AcpChannelConfig, deps: AcpDeps): CliBackend<AcpLive> {
 		isResumeFailure: (msg) => !native && cfg.resumeFailed.test(msg),
 		async launch(req: LaunchRequest) {
 			if (native && !deps.command) throw new Error(`${label} 缺少 Pi 配置的绝对命令路径`);
-			const command = (deps.command ?? cfg.findCommand)();
+			const command = deps.command?.() ?? null;
 			if (!command) throw new Error(cfg.notFound);
 			if (native && !isAbsolute(command)) throw new Error(`${label} 必须使用 Pi 配置的绝对命令路径`);
 			const context = native ? nativeContext(req.key) : undefined;

@@ -12,9 +12,9 @@ export function releaseFor(name: string): NativeRelease {
 }
 export const nativeInstaller = new NativeInstaller({ dataDir: config.dataDir, releases: {
  gemini: releaseFor("@google/gemini-cli"), codebuddy: releaseFor("@tencent-ai/codebuddy-code"),
- "claude-code": releaseFor("@anthropic-ai/claude-code"), codex: releaseFor("@openai/codex"), opencode: releaseFor("opencode-ai"),
+ "claude-code": releaseFor("@anthropic-ai/claude-code"), codex: releaseFor("@openai/codex"), opencode: releaseFor("opencode-ai"), antigravity: releaseFor("antigravity-cli"),
 } });
-export function managedArgs(id: "claude-code" | "codex" | "opencode", envName: string): string[] {
+export function managedArgs(id: "claude-code" | "codex" | "opencode" | "antigravity", envName: string): string[] {
  const override = process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1") && process.env[`PIA_${envName}`] !== undefined;
  return override ? [] : nativeInstaller.installed(id)?.args ?? [];
 }

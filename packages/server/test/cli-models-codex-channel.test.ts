@@ -276,7 +276,7 @@ test("找不到 codex：中文错误，只有一个 error 事件", async () => {
 	try {
 		const r = await run(ctx([user("你好")]), { sessionId: "nocmd-1" });
 		assert.equal(r.message.stopReason, "error");
-		assert.match(r.message.errorMessage ?? "", /没有找到 codex 命令/);
+		assert.match(r.message.errorMessage ?? "", /还没在 Pi 里安装 Codex/);
 		assert.equal(r.events.filter((e) => e.type === "error").length, 1);
 	} finally {
 		fakeCommand = FAKE;

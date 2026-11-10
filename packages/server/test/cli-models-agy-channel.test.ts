@@ -278,7 +278,7 @@ test("agy 报错：中文说明带原文；登录问题提示 agy；地区限制
 	setScenario("not-logged-in");
 	const login = await run(ctx([user("你好")]), { sessionId: "err-2" });
 	assert.equal(login.message.stopReason, "error");
-	assert.match(login.message.errorMessage ?? "", /本机 Antigravity 未登录，请在终端运行 agy/);
+	assert.match(login.message.errorMessage ?? "", /Antigravity 未登录，请在模型服务中点击登录/);
 	assert.match(login.message.errorMessage ?? "", /sign in/);
 	assert.match(describeAgyError("FAILED_PRECONDITION: User location is not supported for the API use."), /Gemini 模型在部分地区不可用/);
 	noLeftovers();
@@ -293,7 +293,7 @@ test("进程崩溃：以 error 结束，带 stderr；找不到 agy：中文错�
 	try {
 		const r = await run(ctx([user("你好")]), { sessionId: "nocmd-1" });
 		assert.equal(r.message.stopReason, "error");
-		assert.match(r.message.errorMessage ?? "", /没有找到 agy 命令/);
+		assert.match(r.message.errorMessage ?? "", /尚未安装 Antigravity/);
 		assert.equal(r.events.filter((e) => e.type === "error").length, 1);
 	} finally {
 		fakeCommand = FAKE;

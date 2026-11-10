@@ -13,7 +13,6 @@ import { join } from "node:path";
 import { ClaudeRun, type ClaudeExit } from "../../cli-agents/claude-process.ts";
 import { listClaudeModels } from "../../cli-agents/claude-models.ts";
 import { CLAUDE_FALLBACK_MODELS, mergeClaudeModels, type ClaudeModelInfo } from "../../cli-agents/claude-models-parse.ts";
-import { findClaudeCommand } from "../../cli-agents/detect.ts";
 import { managedCliEnv } from "../../cli-agents/managed-env.ts";
 import type { ClaudeEvent } from "../../cli-agents/events.ts";
 import { toolBridge, type Tool, type ToolBridge } from "../../cli-agents/tool-bridge.ts";
@@ -67,8 +66,8 @@ function claudeBackend(deps: ClaudeCodeDeps): CliBackend<ClaudeLive> {
 		label: "Claude Code",
 		composite: (modelId) => modelId,
 		async launch(req: LaunchRequest) {
-			const command = (deps.command ?? (() => findClaudeCommand()))();
-			if (!command) throw new Error("没有找到 claude 命令。请先按 Claude Code 官方说明安装，再在终端运行 claude auth login 登录。");
+			const command = deps.command?.() ?? null;
+			if (!command) throw new Error("还没在 Pi 里安装 Claude Code：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。");
 			const queue = new EventQueue<Item | { type: "aborted" }>();
 			const cwd = (deps.cwd ?? (() => join(deps.dataDir, "cli-models", "work")))();
 			mkdirSync(cwd, { recursive: true }); // 目录不存在时 spawn 会报 ENOENT
@@ -143,7 +142,7 @@ async function claudeModelList(deps: ClaudeCodeDeps): Promise<ClaudeModelInfo[]>
 }
 
 async function claudeAliasList(deps: ClaudeCodeDeps): Promise<ClaudeModelInfo[]> {
-	const command = (deps.command ?? (() => findClaudeCommand()))();
+	const command = deps.command?.() ?? null;
 	if (!command) return [...CLAUDE_FALLBACK_MODELS];
 	try {
 		return await listClaudeModels(command, { commandArgs: deps.commandArgs?.(), cwd: (deps.cwd ?? (() => join(deps.dataDir, "cli-models", "work")))(), baseEnv: managedCliEnv(deps.dataDir, "claude-code", { baseEnv: deps.baseEnv }), extraEnv: deps.extraEnv?.() });

@@ -8,7 +8,7 @@ export function managedCliEnv(dataDir: string, id: ManagedCliId, input: ClaudeEn
   CLAUDE_CONFIG_DIR: home,
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
   DISABLE_AUTOUPDATER: "1",
- } : id === "codex" ? { CODEX_HOME: home } : {};
+ } : id === "codex" ? { CODEX_HOME: home } : id === "antigravity" ? { AGY_CLI_DISABLE_AUTO_UPDATE: "true" } : {};
  return buildNativeAcpEnv({ ...input, dataDir, id }, fixed);
 }
 export { nativeAcpHome as managedCliHome };

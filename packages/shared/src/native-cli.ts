@@ -7,6 +7,7 @@ export interface NativeCliStatus {
  version?: string;
  latestVersion?: string;
  updateAvailable?: boolean;
+ updateBlocked?: string;
  verified?: boolean;
  untestedVersion?: boolean;
  error?: string;

@@ -1,6 +1,6 @@
 /**
  * 设置 › 模型服务里的「本机命令行模型」卡片（Claude Code / Codex / Antigravity / OpenCode 共用；方案 docs/design/cli-models.md §4.5、§5.2、§5b，docs/design/acp-cli-models.md）。
- * 旧渠道只检测本机；原生 ACP 渠道使用 Pi 私有安装，提供安装、官方登录、取消和手动更新。
+ * 全部渠道使用 Pi 私有安装，提供安装、官方登录、取消和手动更新。
  * 检测到可用后服务端就地注册模型渠道（不用重启），模型出现在所有模型选择里。
  * 加新的一家：在 `KINDS` 里加一项文案，服务端接口按渠道名 `/api/models/<kind>` 对应。
  */
@@ -67,19 +67,19 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 		),
 	},
 	antigravity: {
-		title: "Antigravity（本机）",
+		title: "Antigravity",
 		command: "agy",
 		login: "agy",
 		tone: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300",
-		summary: "实验性：用你电脑上已登录的 Antigravity（agy）当模型，工具仍由 Pi 助理执行。",
+		summary: "用 Antigravity 当模型，工具由 Pi 助理执行；Pi 单独装一份，配置、登录和历史使用专用目录。",
 		models: "模型：Antigravity · 以 agy 自己的列表为准（Gemini 在部分地区不可用）",
 		help: (
 			<>
-				实验性功能。只当「大脑」用：Antigravity 自带的工具都会被关掉，工具全部由 Pi 助理执行并走审批。
+				只当「大脑」用：Antigravity 自带的工具都会被关掉，工具全部由 Pi 助理执行并走审批。安装时从 Google 下载专有软件，不随 App 分发；由你手动更新。
 				<br />
 				启动比较慢（每个对话首次约半分钟），看不到思考过程；你在它干活时插的话，会等它用完下一个工具后才看到。
 				<br />
-				Gemini 模型在部分地区不可用，可选 Claude 或 GPT-OSS。对话记录会出现在 Antigravity 自己的历史里。
+				Gemini 模型在部分地区不可用，可选 Claude 或 GPT-OSS。配置和会话在 Pi 专用 HOME 下；系统钥匙串可能共用，尚未实测。Pi 不读取或转发凭据。
 				<br />
 				用量只显示 token 数，不显示钱。
 			</>
@@ -109,7 +109,6 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 
 export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: () => void }) {
 	const k = KINDS[kind];
-	const native = kind !== "antigravity";
 	const [info, setInfo] = useState<CliInfo | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
@@ -130,10 +129,10 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 		void check(false);
 	}, [check]);
 	useEffect(() => {
-		if (!native || !info?.operation) return;
+		if (!info?.operation) return;
 		const timer = window.setInterval(() => void check(false), 1000);
 		return () => window.clearInterval(timer);
-	}, [native, info?.operation, check]);
+	}, [info?.operation, check]);
 	const action = async (name: string) => {
 		setBusy(true);
 		setErr("");
@@ -161,7 +160,7 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 					<div className="text-[11px] text-mut">{k.summary}</div>
 				</div>
 				<div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5" data-testid={`${kind}-actions`}>
-					{native && info && (info.operation ? (
+					{info && (info.operation ? (
 						<Button size="sm" variant="outline" disabled={busy} onClick={() => void action("cancel")}>取消</Button>
 					) : !info.installed ? (
 						<Button size="sm" disabled={busy} onClick={() => void action("install")}><Download size={13} /> 安装</Button>
@@ -189,23 +188,14 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 						{info.untestedVersion && <Badge tone="zinc">这个版本还没测过</Badge>}
 					</>
 				)}
-				{info?.operation && <span role="status" className="text-mut">{info.operation === "login" ? (kind === "opencode-cli" ? "正在登录，请在打开的终端里完成" : "正在登录，请在浏览器里完成") : info.operation === "install" ? "正在安装…" : "正在更新…"}</span>}
+				{info?.operation && <span role="status" className="text-mut">{info.operation === "login" ? (kind === "opencode-cli" || kind === "antigravity" ? "正在登录，请在打开的终端里完成" : "正在登录，请在浏览器里完成") : info.operation === "install" ? "正在安装…" : "正在更新…"}</span>}
 				{!info?.operation && info?.updateAvailable && <span className="text-mut">有新版本 v{info.latestVersion}</span>}
+				{!info?.operation && info?.updateBlocked && <span className="text-mut">有新版本 v{info.latestVersion}，{info.updateBlocked}</span>}
 				{info?.registered && <span className="text-mut">{k.models}</span>}
 			</div>
 			{err && info && <div role="alert" className="break-words text-xs text-red-500">{err}</div>}
-			{info && !info.installed && !native && (
-				<div className="text-[11px] text-mut2" data-testid={`${kind}-hint`}>
-					这台电脑上没有找到 {k.command} 命令。先按 {k.title.replace("（本机）", "")} 官方说明安装，装好后点「重新检测」，不用重启。
-				</div>
-			)}
-			{!native && info?.installed && !info.loggedIn && !info.loginUnverified && (
-				<div className="text-[11px] text-mut2" data-testid={`${kind}-hint`}>
-					{k.loginOptional ?? "还没登录。打开终端，运行"} <code className="rounded bg-hover px-1">{k.login}</code> 登录，{k.loginOptional ? "再" : "然后"}点「重新检测」。
-				</div>
-			)}
 			{kind === "claude-code" && <ClaudeCustomModels onChanged={onChanged} />}
-			{info?.error && ((native && info.installed) || (info.installed && info.loggedIn === false)) && <div className="break-all text-[11px] text-mut2">{info.error}</div>}
+			{info?.error && info.installed && <div className="break-all text-[11px] text-mut2">{info.error}</div>}
 		</div>
 	);
 }

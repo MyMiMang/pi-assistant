@@ -11,7 +11,7 @@ import { test } from "node:test";
 import { answerServerRequest, codexUsage, createCodexEventConverter } from "../src/cli-agents/codex-events.ts";
 import { CodexHub } from "../src/cli-agents/codex-hub.ts";
 import { buildCodexArgs, buildCodexEnv, CODEX_DISABLED_FEATURES, tomlKey } from "../src/cli-agents/codex-launch.ts";
-import { detectCodex, findCodexCommand } from "../src/cli-agents/detect.ts";
+import { detectCodex } from "../src/cli-agents/detect.ts";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-codex.mjs");
 const T = "thr_1";
@@ -97,7 +97,6 @@ test("检测：已登录 / 未登录（只看退出码）/ 没装", async () => 
 	assert.equal(JSON.stringify(out).includes("Not logged"), false, "不转述命令输出");
 	const none = await detectCodex({ command: join(home, "no-such-codex") });
 	assert.equal(none.installed, false);
-	assert.equal((findCodexCommand({ env: { PATH: home }, home: null, platform: "linux" }) ?? "").startsWith(home), false);
 });
 
 test("hub：模型列表（隐藏的不要、思考档位、能否看图）；用完即关；空闲超时退出；退出后能再起", async () => {
@@ -133,7 +132,7 @@ test("hub：模型列表（隐藏的不要、思考档位、能否看图）；�
 test("hub：没有 codex 命令时给中文说明；dispose 之后不再启动", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "pia-cx-hub2-"));
 	const none = new CodexHub({ command: () => null, cwd: () => dir });
-	await assert.rejects(() => none.listModels(), /没有找到 codex 命令/);
+	await assert.rejects(() => none.listModels(), /还没在 Pi 里安装 Codex/);
 	const hub = new CodexHub({ command: () => FAKE, cwd: () => dir });
 	hub.dispose();
 	await assert.rejects(() => hub.listModels(), /已关闭/);

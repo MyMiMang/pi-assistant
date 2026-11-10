@@ -66,6 +66,7 @@ export interface CliErrorStyle {
 	label: string;
 	/** 用户该在终端里运行的登录命令，如 `claude auth login` */
 	loginCommand: string;
+	loginHint?: string;
 	/** 匹配「没登录」的原文 */
 	notLoggedIn: RegExp;
 	/** 匹配「认证失败 / 登录过期」的原文（可选） */
@@ -75,7 +76,7 @@ export interface CliErrorStyle {
 /** 命令行工具报错 → 中文说明，带上原文 */
 export function describeCliError(style: CliErrorStyle, text: string): string {
 	const raw = text.trim() || "（没有错误内容）";
-	if (style.notLoggedIn.test(raw)) return `本机 ${style.label} 未登录，请在终端运行 ${style.loginCommand}。原文：${raw}`;
+	if (style.notLoggedIn.test(raw)) return style.loginHint ? `${style.label} 未登录，${style.loginHint}。原文：${raw}` : `本机 ${style.label} 未登录，请在终端运行 ${style.loginCommand}。原文：${raw}`;
 	if (style.authFailed?.test(raw)) return `${style.label} 认证失败，请在终端运行 ${style.loginCommand} 重新登录。原文：${raw}`;
 	return `${style.label} 出错：${raw}`;
 }

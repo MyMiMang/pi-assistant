@@ -12,7 +12,7 @@ import { authenticateNative, detectNative, type NativeDetection, type NativeId }
 import { isAbsolute } from "node:path";
 import { registerNativeModels, registerNativeProvider, type NativeProviderId } from "./pi-adapter/cli-models/native.ts";
 import { createCliChannelService, type CliChannelService } from "./cli-channel-service.ts";
-import { detectAgy, detectClaude, detectCodex, detectOpencode, findAgyCommand, findClaudeCommand, findCodexCommand, findOpencodeCommand, listAgyModels, listOpencodeModels } from "./cli-agents/detect.ts";
+import { detectAgy, detectClaude, detectCodex, detectOpencode, listAgyModels, listOpencodeModels } from "./cli-agents/detect.ts";
 import { registerAntigravityModels, registerAntigravityProvider } from "./pi-adapter/cli-models/antigravity.ts";
 import { registerClaudeCodeModels, registerClaudeCodeProvider } from "./pi-adapter/cli-models/claude-code.ts";
 import { registerCodexModels, registerCodexProvider } from "./pi-adapter/cli-models/codex.ts";
@@ -34,7 +34,7 @@ const claudeCode = createCliChannelService({
 	managed: true,
 	allowCommandOverride: () => process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1"),
 	find: () => nativeInstaller.installed("claude-code")?.command ?? null,
-	notFound: "没有找到 claude 命令",
+	notFound: "还没在 Pi 里安装 Claude Code：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。",
 	detect: (command) => detectClaude({ command, commandArgs: managedArgs("claude-code", "CLAUDE_COMMAND"), baseEnv: managedCliEnv(config.dataDir, "claude-code") }),
 	register: (models, command) => registerClaudeCodeProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, commandArgs: () => managedArgs("claude-code", "CLAUDE_COMMAND"), customModels: claudeCustomModels }),
 	refresh: async (models, channel) => void (await registerClaudeCodeModels(models, channel)),
@@ -50,7 +50,7 @@ const codex = createCliChannelService({
 	managed: true,
 	allowCommandOverride: () => process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1"),
 	find: () => nativeInstaller.installed("codex")?.command ?? null,
-	notFound: "没有找到 codex 命令",
+	notFound: "还没在 Pi 里安装 Codex：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。",
 	detect: (command) => detectCodex({ command, commandArgs: managedArgs("codex", "CODEX_COMMAND"), baseEnv: managedCliEnv(config.dataDir, "codex") }),
 	register: (models, command) => registerCodexProvider(models, { dataDir: config.dataDir, command, commandArgs: () => managedArgs("codex", "CODEX_COMMAND") }),
 	refresh: async (models, channel) => void (await registerCodexModels(models, channel, true)),
@@ -60,26 +60,31 @@ const codex = createCliChannelService({
 /** 要用的 agy 命令（注册 / 刷新时问 `agy models`） */
 const agyCommand = (command: () => string | null): string => {
 	const cmd = command();
-	if (!cmd) throw new Error("没有找到 agy 命令");
+	if (!cmd) throw new Error("还没在 Pi 里安装 Antigravity：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。");
 	return cmd;
 };
 
+const agyManaged = managedActions("antigravity", "AGY_COMMAND", () => antigravity.command(), () => refreshManaged(antigravity));
+const agyOptions = () => ({ dataDir: config.dataDir, commandArgs: managedArgs("antigravity", "AGY_COMMAND") });
 const antigravity = createCliChannelService({
+ ...agyManaged,
 	id: "antigravity",
 	label: "Antigravity",
 	envName: "AGY_COMMAND",
-	find: () => findAgyCommand(),
-	notFound: "没有找到 agy 命令",
-	detect: (command) => detectAgy({ command }),
-	register: async (models, command) => registerAntigravityProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, families: await listAgyModels(agyCommand(command)) }),
-	refresh: async (models, channel) => void (await registerAntigravityModels(models, channel, await listAgyModels(agyCommand(antigravity.command)))),
+	managed: true,
+	allowCommandOverride: () => process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1"),
+	find: () => nativeInstaller.installed("antigravity")?.command ?? null,
+	notFound: "还没在 Pi 里安装 Antigravity：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。",
+	detect: (command) => detectAgy({ command, ...agyOptions() }),
+	register: async (models, command) => registerAntigravityProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, commandArgs: () => agyOptions().commandArgs, families: await listAgyModels(agyCommand(command), agyOptions()) }),
+	refresh: async (models, channel) => void (await registerAntigravityModels(models, channel, await listAgyModels(agyCommand(antigravity.command), agyOptions()))),
 	requireLogin: true, // `agy models` 成功才有模型可选
 });
 
 /** 要用的 opencode 命令（注册 / 刷新时问 `opencode models --verbose`） */
 const opencodeCommand = (command: () => string | null): string => {
 	const cmd = command();
-	if (!cmd) throw new Error("没有找到 opencode 命令");
+	if (!cmd) throw new Error("还没在 Pi 里安装 OpenCode：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。");
 	return cmd;
 };
 
@@ -92,7 +97,7 @@ const opencode = createCliChannelService({
 	managed: true,
 	allowCommandOverride: () => process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1"),
 	find: () => nativeInstaller.installed("opencode")?.command ?? null,
-	notFound: "没有找到 opencode 命令",
+	notFound: "还没在 Pi 里安装 OpenCode：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。",
 	detect: (command) => detectOpencode({ command, commandArgs: managedArgs("opencode", "OPENCODE_COMMAND"), dataDir: config.dataDir }),
 	register: async (models, command) => registerOpencodeProvider(models, { dataDir: config.dataDir, commandArgs: () => managedArgs("opencode", "OPENCODE_COMMAND"), bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, models: await listOpencodeModels(opencodeCommand(command), { commandArgs: managedArgs("opencode", "OPENCODE_COMMAND"), dataDir: config.dataDir }) }),
 	refresh: async (models, channel) => void (await registerOpencodeModels(models, channel, await listOpencodeModels(opencodeCommand(opencode.command), { commandArgs: managedArgs("opencode", "OPENCODE_COMMAND"), dataDir: config.dataDir }))),

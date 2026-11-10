@@ -46,8 +46,10 @@ export interface AgyExit {
 }
 
 export interface AgyProcessOptions {
-	/** `agy` 可执行文件（`detect.ts` 的 `findAgyCommand`） */
+	/** `agy` 可执行文件（Pi 私有安装的路径） */
 	command: string;
+	commandArgs?: string[];
+	dataDir?: string;
 	/** 运行目录的父目录（`<dataDir>/cli-models/agy-runs`），不存在会建 */
 	runsRoot: string;
 	/** 工具桥地址的前缀，如 `http://127.0.0.1:8787` */
@@ -142,7 +144,7 @@ export class AgyProcess {
 				mkdirSync(dirname(full), { recursive: true, mode: 0o700 });
 				writeFileSync(full, f.content, { mode: f.mode });
 			}
-			child = spawn(o.command, buildAgyArgs({ model: o.model, conversationId: o.conversationId }), { cwd: dir, env: buildAgyEnv({ baseEnv: o.baseEnv, command: o.command, extra: o.extraEnv }), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+			child = spawn(o.command, [...(o.commandArgs ?? []), ...buildAgyArgs({ model: o.model, conversationId: o.conversationId })], { cwd: dir, env: buildAgyEnv({ dataDir: o.dataDir, baseEnv: o.baseEnv, command: o.command, extra: o.extraEnv }), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
 		} catch (e) {
 			this.cleanup();
 			this.bridgeRun.close();
