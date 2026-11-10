@@ -4,6 +4,7 @@
 新需求立刻记一行；做完改状态，不写长段落（细节写进设计文档，进度看提交信息）。2026-10-18 以前的长记录见 [history/ROADMAP-2026-10-18.md](history/ROADMAP-2026-10-18.md)。
 
 ## 进行中
+- [已发布(beta.57)] 模型服务页编程工具默认折叠（显示数量、限高滚动），安装 / 登录 / 更新按钮挪到「重新检测」旁
 - [已发布(beta.56)] 原生 ACP 第一段：Gemini CLI / CodeBuddy 共用 native 执行、审批、步骤展示、load；Cursor 暂缓（[批准实施方案](design/native-acp-agents-impl.md)）
 - [已发布(beta.56)] 原生 ACP 第二段：App npm、私有安装、Agent Auth、手动更新、模型发现和卡片；check 与新旧模型服务 e2e、五平台构建与 Mac/Windows 安装检查通过；真实工具安装/登录待用户用发布版实测（[实施方案](design/native-acp-agents-impl.md)）
 - [搁置] iOS 原生 App：TestFlight 需付费开发者账号（688 元/年），用户暂不弄；免费路线只有 AltStore 自签（7 天续签）、安卓安装包、改进主屏幕 PWA
