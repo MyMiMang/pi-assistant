@@ -9,6 +9,7 @@
  */
 import { isAbsolute, posix, win32 } from "node:path";
 import { nativeLaunchEnv, osAccountHome } from "../native-launch-env.ts";
+import { preserveManagedRuntimeEnv } from "./managed-runtime-env.ts";
 
 /** 工具桥在 claude 里的 MCP 服务名；claude 看到的工具名是 `mcp__pia__<工具名>`。 */
 export const BRIDGE_SERVER_NAME = "pia";
@@ -90,13 +91,13 @@ export function buildCliEnv(input: ClaudeEnvInput, keepExtra: readonly string[],
 	const platform = input.platform ?? process.platform;
 	const pathKey = Object.keys(base).find((k) => k.toUpperCase() === "PATH") ?? (platform === "win32" ? "Path" : "PATH");
 	base[pathKey] = withExtraPath(base[pathKey], input.command, realHome, platform);
-	return nativeLaunchEnv({
+	return preserveManagedRuntimeEnv(input.baseEnv, nativeLaunchEnv({
 		baseEnv: base,
 		realHome,
 		syntheticRoots: input.syntheticRoots,
 		platform: input.platform,
 		extra: { ...fixed, ...input.extra },
-	}).env;
+	}).env);
 }
 
 /** 给 `claude` 进程（含 `claude auth status`）用的环境：白名单 + 固定开关。 */

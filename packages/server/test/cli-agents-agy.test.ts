@@ -37,12 +37,14 @@ async function until(cond: () => boolean, what: string, ms = 8000) {
 }
 
 // ---------------------------------------------------------------- 纯函数
-test("启动参数：-p 空串在最后；续用带 --conversation；环境只留白名单", () => {
+test("启动参数：-p 空串在最后；续用带 --conversation；环境只留白名单", (t) => {
+	const dataDir = mkdtempSync(join(tmpdir(), "agy-env-"));
+	t.after(() => rmSync(dataDir, { recursive: true, force: true }));
 	assert.deepEqual(buildAgyArgs({ model: "claude-sonnet-5-5-high" }), ["--input-format", "stream-json", "--output-format", "stream-json", "--model", "claude-sonnet-5-5-high", "--agent", "pia", "-p", ""]);
 	const resumed = buildAgyArgs({ model: "m", conversationId: "c-1" });
 	assert.deepEqual(resumed.slice(-4), ["--conversation", "c-1", "-p", ""]);
-	const env = buildAgyEnv({ dataDir: "/private-pia", baseEnv: { HOME: "/Users/x", PATH: "/bin", GEMINI_API_KEY: "secret", GOOGLE_API_KEY: "k", ANTHROPIC_API_KEY: "a", HTTPS_PROXY: "http://p" }, realHome: "/Users/x" });
-	assert.equal(env.HOME, "/private-pia/cli-agents/antigravity/home");
+	const env = buildAgyEnv({ dataDir, baseEnv: { HOME: "/Users/x", PATH: "/bin", GEMINI_API_KEY: "secret", GOOGLE_API_KEY: "k", ANTHROPIC_API_KEY: "a", HTTPS_PROXY: "http://p" }, realHome: "/Users/x" });
+	assert.equal(env.HOME, join(dataDir, "cli-agents/antigravity/home"));
 	assert.equal(env.AGY_CLI_DISABLE_AUTO_UPDATE, "true");
 	assert.equal(env.HTTPS_PROXY, "http://p");
 	for (const k of Object.keys(env)) assert.doesNotMatch(k, /KEY|SECRET|TOKEN/, k);

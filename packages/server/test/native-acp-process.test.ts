@@ -60,11 +60,13 @@ test("native正式availableModels目录使用session/set_model，不虚构config
  assert.ok(!result.log.some(entry => entry.method === "session/set_config_option"));
 });
 
-test("隔离环境覆盖Windows大小写键和extra中的目录；模型密钥 / 父级配置不继承", () => {
-	const e = buildNativeAcpEnv({ id: "codebuddy", dataDir: "/private", realHome: "/real", platform: "win32", baseEnv: { Home: "/real", UserProfile: "/real", AppData: "/user", XDG_RUNTIME_DIR: "/user/runtime", CODEBUDDY_IS_SANDBOX: "1", OPENAI_API_KEY: "secret", GEMINI_API_KEY: "secret" }, extra: { HOME: "/escape" } });
-	assert.equal(e.HOME, "/private/cli-agents/codebuddy/home");
+test("隔离环境覆盖Windows大小写键和extra中的目录；模型密钥 / 父级配置不继承", (t) => {
+	const dataDir = mkdtempSync(join(tmpdir(), "native-env-"));
+	t.after(() => rmSync(dataDir, { recursive: true, force: true }));
+	const e = buildNativeAcpEnv({ id: "codebuddy", dataDir, realHome: "/real", platform: "win32", baseEnv: { Home: "/real", UserProfile: "/real", AppData: "/user", XDG_RUNTIME_DIR: "/user/runtime", CODEBUDDY_IS_SANDBOX: "1", OPENAI_API_KEY: "secret", GEMINI_API_KEY: "secret" }, extra: { HOME: "/escape" } });
+	assert.equal(e.HOME, join(dataDir, "cli-agents/codebuddy/home"));
 	for (const k of ["Home", "UserProfile", "AppData", "XDG_RUNTIME_DIR", "CODEBUDDY_IS_SANDBOX", "OPENAI_API_KEY", "GEMINI_API_KEY"]) assert.equal(e[k], undefined);
-	const cb = codebuddyProfile.env({ dataDir: "/private", command: "/bin/codebuddy", runDir: "/private/run" });
+	const cb = codebuddyProfile.env({ dataDir, command: "/bin/codebuddy", runDir: join(dataDir, "run") });
 	assert.equal(cb.CODEBUDDY_DISABLE_PARENT_MEMORY, "1");
 	assert.equal(cb.CODEBUDDY_DISABLE_AUTO_MEMORY, "1");
 	assert.deepEqual(codebuddyProfile.args("/w"), ["--acp", "--setting-sources", "user", "--strict-mcp-config", "--permission-mode", "default", "--subagent-permission-mode", "default"]);

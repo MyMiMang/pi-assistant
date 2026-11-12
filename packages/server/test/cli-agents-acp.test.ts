@@ -5,6 +5,9 @@
 import "./setup.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { acpUsageOf, configValues, convertAcpUpdate, pickAllowOption, pickEffort } from "../src/cli-agents/acp-events.ts";
 import { buildOpencodeArgs, buildOpencodeEnv, opencodeAuthPath, opencodeConfig, opencodeConfigHome, opencodeMcpServers, opencodeProfile } from "../src/cli-agents/opencode-launch.ts";
 import { opencodeThinkingMap, parseOpencodeModels } from "../src/cli-agents/opencode-models.ts";
@@ -66,25 +69,27 @@ test("OpenCode 配置文件：权限全 deny 只放行我们的工具、整个�
 	assert.match(JSON.parse(opencodeConfig(undefined)).agent.build.prompt, /只使用提供给你的工具/);
 });
 
-test("OpenCode 环境：白名单（不带密钥）、固定开关、隔离的配置目录、配置文件路径；系统提示不进环境变量和命令行", () => {
+test("OpenCode 环境：白名单（不带密钥）、固定开关、隔离的配置目录、配置文件路径；系统提示不进环境变量和命令行", (t) => {
+	const dataDir = mkdtempSync(join(tmpdir(), "opencode-env-"));
+	t.after(() => rmSync(dataDir, { recursive: true, force: true }));
 	const env = buildOpencodeEnv({
 		baseEnv: { PATH: "/usr/bin", HOME: "/h", XDG_CONFIG_HOME: "/用户自己的", XDG_DATA_HOME: "/data", ANTHROPIC_API_KEY: "secret", OPENAI_API_KEY: "secret", OPENCODE_API_KEY: "secret" },
 		realHome: "/h",
-		dataDir: "/d",
+		dataDir,
 		configPath: "/d/run/opencode.json",
 		command: "/opt/bin/opencode",
 	});
 	assert.equal(env.ANTHROPIC_API_KEY, undefined);
 	assert.equal(env.OPENAI_API_KEY, undefined);
 	assert.equal(env.OPENCODE_API_KEY, undefined, "白名单：不带任何密钥");
-	assert.equal(env.XDG_CONFIG_HOME, opencodeConfigHome("/d"), "配置目录被隔离，不读用户全局 AGENTS.md / 配置");
-	assert.equal(env.XDG_DATA_HOME, "/d/cli-agents/opencode/home/.local/share", "登录目录与用户完全分开");
+	assert.equal(env.XDG_CONFIG_HOME, opencodeConfigHome(dataDir), "配置目录被隔离，不读用户全局 AGENTS.md / 配置");
+	assert.equal(env.XDG_DATA_HOME, join(dataDir, "cli-agents/opencode/home/.local/share"), "登录目录与用户完全分开");
 	assert.equal(env.OPENCODE_CONFIG, "/d/run/opencode.json");
 	assert.deepEqual([env.OPENCODE_DISABLE_CLAUDE_CODE, env.OPENCODE_DISABLE_PROJECT_CONFIG, env.OPENCODE_DISABLE_EXTERNAL_SKILLS, env.OPENCODE_DISABLE_AUTOUPDATE], ["1", "1", "1", "1"]);
-	assert.ok(env.PATH?.split(":").includes("/opt/bin"), "命令所在目录补进 PATH");
-	assert.equal(buildOpencodeEnv({ baseEnv: {}, realHome: "/h", dataDir: "/d" }).OPENCODE_CONFIG, undefined, "列模型 / 查版本不带配置文件");
+	assert.ok(!env.PATH?.split(":").includes("/opt/bin"), "私有环境不暴露外部命令目录");
+	assert.equal(buildOpencodeEnv({ baseEnv: {}, realHome: "/h", dataDir }).OPENCODE_CONFIG, undefined, "列模型 / 查版本不带配置文件");
 	const prompt = "绝密系统提示-xyz";
-	const full = opencodeProfile.env({ baseEnv: {}, command: "/x/opencode", dataDir: "/d", runDir: "/d/run" });
+	const full = opencodeProfile.env({ baseEnv: {}, command: "/x/opencode", dataDir, runDir: "/d/run" });
 	assert.ok(![...Object.values(full), ...buildOpencodeArgs("/d/work")].some((v) => String(v).includes(prompt)));
 	assert.deepEqual(buildOpencodeArgs("/d/work"), ["acp", "--cwd", "/d/work"]);
 	assert.ok(opencodeProfile.runFiles({ systemPrompt: prompt })[0].content.includes(prompt), "系统提示只在配置文件里");

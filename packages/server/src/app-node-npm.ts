@@ -1,5 +1,5 @@
 /** App 自带 Node/npm 的统一绝对路径；npm 不经用户 PATH 查找。 */
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export function appNodeNpmPaths(appRoot = resolve(import.meta.dirname, "../../..")) {
@@ -10,6 +10,29 @@ export function appNodeNpmPaths(appRoot = resolve(import.meta.dirname, "../../..
 	const npm = candidates.find(existsSync);
 	if (!npm) throw new Error("App 的 npm 运行环境缺失，请重新安装 App");
 	return { node, npm: resolve(npm) };
+}
+
+/** 给 env-node 脚本一个私有入口；开发 Node 即使来自 Homebrew，也不把其目录放入 PATH。 */
+export function prepareAppNodeBin(root: string): string {
+	const runtime = join(root, "node-runtime");
+	mkdirSync(runtime, { recursive: true, mode: 0o700 });
+	if (lstatSync(runtime).isSymbolicLink()) throw new Error("App Node 私有目录不能是符号链接");
+	const bin = join(runtime, `${process.version}-${process.arch}`);
+	mkdirSync(bin, { recursive: true, mode: 0o700 });
+	if (lstatSync(bin).isSymbolicLink()) throw new Error("App Node 私有目录不能是符号链接");
+	const alias = join(bin, process.platform === "win32" ? "node.exe" : "node");
+	let stat;
+	try { stat = lstatSync(alias); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+	if (process.platform === "win32") {
+		if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error("App Node 入口必须为普通文件");
+		if (!stat) copyFileSync(process.execPath, alias);
+	} else {
+		if (stat && !stat.isSymbolicLink()) throw new Error("App Node 入口必须为符号链接");
+		// App 移动或替换后旧链接可能失效；只替换链接本身，不跟随或执行其目标。
+		if (stat && (!existsSync(alias) || realpathSync(alias) !== realpathSync(process.execPath))) { unlinkSync(alias); stat = undefined; }
+		if (!stat) symlinkSync(process.execPath, alias);
+	}
+	return bin;
 }
 
 export function pickNpmBin(pkg: { name: string; bin?: string | Record<string, string> }, want?: string): string | null {

@@ -2,6 +2,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { buildCliEnv, type ClaudeEnvInput } from "./launch.ts";
+import { fixManagedRuntimeEnv, managedRuntimeEnv } from "./managed-runtime-env.ts";
 
 import type { NativeAcpId } from "@pi-assistant/shared";
 export type { NativeAcpId } from "@pi-assistant/shared";
@@ -17,6 +18,8 @@ export interface NativeEnvInput extends ClaudeEnvInput {
 export function buildNativeAcpEnv(input: NativeEnvInput, fixed: Record<string, string> = {}): NodeJS.ProcessEnv {
 	const home = nativeAcpHome(input.dataDir, input.id);
 	const env = buildCliEnv(input, [], {});
+	// PATH 在白名单中；从原始输入取值，不能把 buildCliEnv 补的 commonCliDirs 当成用户 PATH。
+	const originalPath = Object.entries(input.baseEnv ?? process.env).find(([key, value]) => key.toUpperCase() === "PATH" && typeof value === "string")?.[1] ?? "";
 	const isolated = {
 		HOME: home,
 		USERPROFILE: home,
@@ -27,10 +30,9 @@ export function buildNativeAcpEnv(input: NativeEnvInput, fixed: Record<string, s
 		XDG_CACHE_HOME: join(home, ".cache"),
 		XDG_STATE_HOME: join(home, ".local", "state"),
 		...fixed,
+		...managedRuntimeEnv({ home, command: input.command, platform: input.platform, originalPath }),
 	};
-	const keys = new Set(Object.keys(isolated).map((k) => k.toUpperCase()));
-	for (const k of Object.keys(env)) if (keys.has(k.toUpperCase()) || k.toUpperCase() === "XDG_RUNTIME_DIR") delete env[k];
-	return { ...env, ...isolated };
+	return fixManagedRuntimeEnv(env, isolated);
 }
 
 export function prepareNativeAcpHome(dataDir: string, id: ManagedCliId): string {

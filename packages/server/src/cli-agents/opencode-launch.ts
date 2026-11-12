@@ -22,6 +22,7 @@ import { join } from "node:path";
 import type { AcpProfile } from "./acp-process.ts";
 import type { ClaudeEnvInput } from "./launch.ts";
 import { managedCliEnv, managedCliHome } from "./managed-env.ts";
+import { preserveManagedRuntimeEnv } from "./managed-runtime-env.ts";
 
 /** 工具桥在 OpenCode 里的 MCP 服务名；模型看到的工具名是 `pia_<工具名>`（ACP 的 tool_call 标题也是这个） */
 export const OPENCODE_SERVER_NAME = "pia";
@@ -49,7 +50,8 @@ export interface OpencodeEnvInput extends ClaudeEnvInput {
 /** OpenCode 的环境：白名单 + 固定开关 + 隔离的配置目录（+ 配置文件） */
 export function buildOpencodeEnv(input: OpencodeEnvInput): NodeJS.ProcessEnv {
 	const { dataDir, configPath, extra, ...rest } = input;
-	return { ...managedCliEnv(dataDir, "opencode", { ...rest, extra }), ...OPENCODE_FIXED_ENV, ...(configPath ? { OPENCODE_CONFIG: configPath } : {}) };
+	const env = managedCliEnv(dataDir, "opencode", { ...rest, extra });
+	return preserveManagedRuntimeEnv(env, { ...env, ...OPENCODE_FIXED_ENV, ...(configPath ? { OPENCODE_CONFIG: configPath } : {}) });
 }
 
 /** 登录凭据文件的位置（`$XDG_DATA_HOME/opencode/auth.json`，默认 `~/.local/share/opencode/auth.json`，各平台都一样）。**只用来判断文件在不在，绝不读内容。** */

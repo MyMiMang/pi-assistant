@@ -1,12 +1,13 @@
 /** 原生 ACP npm / 官方 binary 私有安装；仅用户操作触发网络，旧版只在下次启动清理。 */
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { appNodeNpmPaths, npmBinPath } from "../app-node-npm.ts";
 import { fetchWithProgress, registerDownload, trackDownload, watchDir } from "../downloads.ts";
 import { NATIVE_ACP_AGENTS, type NativeAcpDefinition } from "@pi-assistant/shared";
 import { nativeAcpHome, prepareNativeAcpHome, type ManagedCliId as NativeAcpId } from "./native-env.ts";
+import { managedRuntimeEnv } from "./managed-runtime-env.ts";
 
 import { binaryAsset, binaryAssetIdentity, binaryLaunch, extractBinary, npmLaunch, validateAntigravityAsset, versionOk } from "./native-binary.ts";
 
@@ -69,27 +70,15 @@ export class NativeInstaller {
 		const root = this.root(id);
 		const home = join(root, "npm-home");
 		mkdirSync(home, { recursive: true, mode: 0o700 });
-		const runtimeBin = join(root, "npm-runtime");
-		mkdirSync(runtimeBin, { recursive: true, mode: 0o700 });
-		const nodeAlias = join(runtimeBin, process.platform === "win32" ? "node.exe" : "node");
-		if (!existsSync(nodeAlias)) {
-			if (process.platform === "win32") copyFileSync(process.execPath, nodeAlias);
-			else symlinkSync(process.execPath, nodeAlias);
-		}
-		const rc = join(root, "npmrc");
-		writeFileSync(rc, "registry=https://registry.npmjs.org/\n", { mode: 0o600 });
 		const runtimeHome = nativeAcpHome(this.options.dataDir, id);
 		if (existsSync(runtimeHome) && lstatSync(runtimeHome).isSymbolicLink()) throw new Error("工具私有 home 不能是符号链接");
 		if (id === "grok-build") prepareNativeAcpHome(this.options.dataDir, id);
 		const definition: NativeAcpDefinition | undefined = NATIVE_ACP_AGENTS.find((agent) => agent.id === id);
 		const toolEnv = Object.fromEntries(Object.entries(definition?.environment ?? {}).map(([key, value]) => [key, value.replaceAll("{home}", runtimeHome)]));
 		if (id === "grok-build" && !toolEnv.GROK_HOME) toolEnv.GROK_HOME = runtimeHome;
-		// 全局配置必须是另一个文件：两项指向同一文件时 npm 直接拒绝运行（double-loading config），装不上
-		const globalRc = join(root, "npmrc-global");
-		writeFileSync(globalRc, "", { mode: 0o600 });
 		const env: NodeJS.ProcessEnv = {};
 		for (const key of ["SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy"]) if (process.env[key]) env[key] = process.env[key];
-		return { ...env, ...toolEnv, HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home, PATH: runtimeBin + delimiter + dirname(process.execPath) + delimiter + (process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32") : "/usr/bin:/bin"), npm_config_userconfig: rc, npm_config_globalconfig: globalRc, npm_config_cache: join(root, "npm-cache"), npm_config_update_notifier: "false", npm_config_registry: "https://registry.npmjs.org/" };
+		return { ...env, ...toolEnv, HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home, ...managedRuntimeEnv({ home }) };
 	}
 	installed(id: NativeAcpId): NativeInstallation | null {
 		try {
@@ -193,7 +182,7 @@ export class NativeInstaller {
 					return this.activate(id, installedRelease, staging, target, controller.signal);
 				}
 				const env = this.npmEnvironment(id);
-				return await watchDir([staging, join(root, "npm-cache")], progress, null, async () => {
+				return await watchDir([staging, env.npm_config_cache!], progress, null, async () => {
 					progress.detail(`下载并校验 ${release.packageName}@${release.version}`);
 					const request = (args: string[]) => this.run({ args, cwd: staging, env, signal: controller.signal });
 					const pack = JSON.parse(await request(["pack", `${release.packageName}@${release.version}`, "--ignore-scripts", "--json", "--pack-destination", staging]));

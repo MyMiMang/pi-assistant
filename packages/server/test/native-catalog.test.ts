@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, normalize, resolve } from "node:path";
 import { test } from "node:test";
 import { NATIVE_ACP_AGENTS, nativeAcpDefinition } from "@pi-assistant/shared";
 import { NativeInstaller, type NativeRelease } from "../src/cli-agents/native-install.ts";
@@ -75,7 +75,7 @@ for (const agent of NATIVE_ACP_AGENTS) {
 test("私有更新配置保留用户其他字段，重复准备不累加TOML设置", () => {
  const dir = mkdtempSync(join(tmpdir(), "native-settings-"));
  try {
-  for (const id of ["devin", "mistral-vibe", "qwen-code", "amp-acp"] as const) {
+  for (const id of ["gemini", "kiro", "devin", "mistral-vibe", "qwen-code", "amp-acp"] as const) {
    const profile = nativeProfile(id); const workDir = join(dir, "work"); mkdirSync(workDir, { recursive: true });
    const input = { workDir, dataDir: dir, runDir: workDir }; profile.prepare!(input); profile.prepare!(input);
    const settings = nativeAcpDefinition(id).settings!;
@@ -87,6 +87,67 @@ test("私有更新配置保留用户其他字段，重复准备不累加TOML设�
     assert.equal(JSON.parse(readFileSync(file, "utf8")).keep, true);
    }
   }
+ } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+test("六家禁更按固定证据设置，Goose 与 Kiro 不猜环境变量", () => {
+ const dir = mkdtempSync(join(tmpdir(), "native-no-update-"));
+ try {
+  for (const [id, args, fixed] of [
+   ["gemini", ["--acp", "--approval-mode", "default"], { GEMINI_CLI_SYSTEM_SETTINGS_PATH: `${join(dir, "cli-agents/gemini/home")}/.gemini/system-settings.json` }],
+   ["codebuddy", [...nativeAcpDefinition("codebuddy").args], { DISABLE_AUTOUPDATER: "1" }],
+   ["cursor", ["--disable-auto-update", "acp"], {}],
+   ["goose", ["acp"], {}],
+   ["kimi-code", ["acp"], { KIMI_CODE_NO_AUTO_UPDATE: "1" }],
+   ["kiro", ["acp", "--agent-engine=v3"], {}],
+  ] as const) {
+   const profile = nativeProfile(id);
+   const env = profile.env({ dataDir: dir, command: process.execPath, runDir: join(dir, "run"), baseEnv: { HOME: "/real" }, extra: { DISABLE_AUTOUPDATER: "0", KIMI_CODE_NO_AUTO_UPDATE: "0", GEMINI_CLI_SYSTEM_SETTINGS_PATH: "/project/settings.json" } });
+   assert.deepEqual(profile.args("/work"), args, id);
+   for (const [key, value] of Object.entries(fixed)) assert.equal(env[key], value, `${id}: ${key}`);
+  }
+  assert.deepEqual(nativeAcpDefinition("goose").environment, { GOOSE_PATH_ROOT: "{home}", GOOSE_DISABLE_KEYRING: "1" });
+  assert.deepEqual(nativeAcpDefinition("kiro").environment, {});
+  assert.match(nativeAcpDefinition("kiro").limitations.join(" "), /控制流.*未查实/);
+ } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+test("Gemini 私有最高层设置关闭两项更新，保留项目与用户配置且不能被 extra 改路径", () => {
+ const dir = mkdtempSync(join(tmpdir(), "gemini-system-settings-"));
+ const workDir = join(dir, "work");
+ const userDir = join(dir, "cli-agents/gemini/home/.gemini");
+ const enabled = { general: { enableAutoUpdate: true, enableAutoUpdateNotification: true } };
+ mkdirSync(join(workDir, ".gemini"), { recursive: true }); mkdirSync(userDir, { recursive: true });
+ writeFileSync(join(workDir, ".gemini/settings.json"), JSON.stringify(enabled));
+ writeFileSync(join(userDir, "settings.json"), JSON.stringify({ ...enabled, keep: "user" }));
+ try {
+  const profile = nativeProfile("gemini");
+  const input = { dataDir: dir, workDir, runDir: join(dir, "run") };
+  profile.prepare!(input);
+  const env = profile.env({ ...input, command: process.execPath, extra: { GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(workDir, ".gemini/settings.json") } });
+  assert.equal(normalize(env.GEMINI_CLI_SYSTEM_SETTINGS_PATH!), join(userDir, "system-settings.json"));
+  const file = env.GEMINI_CLI_SYSTEM_SETTINGS_PATH!;
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { general: { enableAutoUpdate: false, enableAutoUpdateNotification: false } });
+  assert.deepEqual(JSON.parse(readFileSync(join(workDir, ".gemini/settings.json"), "utf8")), enabled);
+  const user = JSON.parse(readFileSync(join(userDir, "settings.json"), "utf8"));
+  assert.equal(user.keep, "user"); assert.deepEqual(user.general, enabled.general);
+  writeFileSync(file, JSON.stringify({ ...enabled, keep: "system", general: { ...enabled.general, keep: true } }));
+  profile.prepare!(input);
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { keep: "system", general: { keep: true, enableAutoUpdate: false, enableAutoUpdateNotification: false } });
+  if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
+ } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+test("Kiro 官方禁更设置只写私有普通文件，拒绝配置符号链接", { skip: process.platform === "win32" }, () => {
+ const dir = mkdtempSync(join(tmpdir(), "kiro-no-update-"));
+ const workDir = join(dir, "work"); mkdirSync(workDir);
+ const profile = nativeProfile("kiro"); const input = { dataDir: dir, workDir, runDir: workDir };
+ const file = join(dir, "cli-agents/kiro/home/.kiro/settings/cli.json");
+ try {
+  profile.prepare!(input);
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { "app.disableAutoupdates": true });
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  const external = join(dir, "external.json"); writeFileSync(external, "{}");
+  rmSync(file); symlinkSync(external, file);
+  assert.throws(() => profile.prepare!(input), /工具配置必须为普通文件/);
+  assert.equal(readFileSync(external, "utf8"), "{}");
  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test("Terminal Auth广告和API-key仅配置提示；官方终端接到同一个私有环境", { skip: process.platform === "win32" }, async () => {
