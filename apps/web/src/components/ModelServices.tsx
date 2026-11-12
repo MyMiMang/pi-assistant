@@ -8,7 +8,7 @@
  * 一个服务 = 一份 baseUrl + 一份凭据，可同时含 chat / vision / image / classifier；生图与分类器不再单独配凭据。
  * 能力只按可靠来源；猜出来的标「未确认」。接口未就绪时显示加载 / 失败（不渲染 demo 数据）。
  */
-import { Activity, AlertTriangle, Check, CheckCircle2, ChevronDown, Download, Gauge, Loader2, Monitor, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Square, Trash2, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, Check, CheckCircle2, ChevronDown, Download, Gauge, Loader2, Monitor, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, Server, ShieldCheck, Square, Trash2, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { PROVIDER_ICONS } from "./provider-icons";
@@ -508,7 +508,7 @@ function AddServiceDialog({ open, onClose, official, custom, images, onReload }:
 					<div className="space-y-2">
 						<div className="relative">
 							<Search size={15} className="absolute top-2.5 left-2.5 text-zinc-400" />
-							<Input placeholder={`搜索 ${official.filter((p) => !p.custom).length} 个官方服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" data-testid="add-service-official-search" />
+							<Input placeholder={`搜索 ${official.filter((p) => !p.custom).length} 个官方服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="!pl-8" data-testid="add-service-official-search" />
 						</div>
 						<div className="grid max-h-[46dvh] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2" data-testid="add-service-official-grid">
 							{builtins.map((p) => (
@@ -585,6 +585,7 @@ export function ModelServicesPanel() {
 	const [q, setQ] = useState("");
 	const [addOpen, setAddOpen] = useState(false);
 	const [expanded, setExpanded] = useState(true);
+	const [listOpen, setListOpen] = useState(false);
 	const [confirmUi, askConfirm] = useConfirm();
 	const loadRegistry = () =>
 		api<{ providers: RegistryProvider[] }>("/api/models/registry")
@@ -636,32 +637,27 @@ export function ModelServicesPanel() {
 				{confirmUi}
 				<DefaultImageModel images={images} onReload={reloadAll} />
 				<CliAgentCards onChanged={reloadAll} />
-				<div className="flex flex-wrap items-center gap-2">
-					<div className="relative min-w-40 flex-1">
+				<div className="relative">
+					<Button variant="primary" size="sm" className="absolute -top-1.5 right-0" onClick={() => (setAddOpen(true), setListOpen(true))} data-testid="add-service-open"><Plus size={15} /> 添加服务</Button>
+					<Fold testId="service-list" icon={Server} title="模型渠道" count={services.length} hint={configured ? `已配置 ${configured}` : "还没有配置"} open={listOpen} onToggle={() => setListOpen((v) => !v)}>
+					<div className="relative mb-2">
 						<Search size={15} className="absolute top-2.5 left-2.5 text-zinc-400" />
-						<Input placeholder={`搜索 ${services.length} 个模型服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" data-testid="service-search" />
+						<Input placeholder={`搜索 ${services.length} 个模型服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="!pl-8" data-testid="service-search" />
 					</div>
-					<Button variant="primary" onClick={() => setAddOpen(true)} data-testid="add-service-open">
-						<Plus size={15} /> 添加服务
-					</Button>
-				</div>
-				{!list.length && <div className="rounded-xl border border-dashed border-line p-4 text-center text-xs text-mut">还没有其它模型服务。点「添加服务」选官方 / 自定义。</div>}
-				<div className={cx("grid grid-cols-1 gap-2 sm:grid-cols-2", !open.length && "max-h-[60dvh] overflow-y-auto pr-1")} data-testid="service-grid">
-					{list.map((s) => (
-						<ServiceCard
-							key={s.id}
-							provider={s}
-							official={official.find((o) => o.id === s.id)}
-							custom={custom}
-							images={images}
-							strengths={strengths}
-							open={open.includes(s.id)}
-							onToggle={() => setOpen((l) => (l.includes(s.id) ? l.filter((x) => x !== s.id) : [...l, s.id]))}
-							onSaveCaps={(m, c) => saveCaps(s.id, m, c)}
-							onReload={reloadAll}
-							onDelete={() => deleteCustom(s)}
-						/>
-					))}
+					{!list.length && <div className="rounded-xl border border-dashed border-line p-4 text-center text-xs text-mut">还没有其它模型服务。点「添加服务」选官方 / 自定义。</div>}
+					<div className={cx("grid grid-cols-1 gap-2 sm:grid-cols-2", !open.length && "max-h-[60dvh] overflow-y-auto pr-1")} data-testid="service-grid">
+						{list.map((s) => (
+							<ServiceCard
+								key={s.id} provider={s} official={official.find((o) => o.id === s.id)} custom={custom} images={images} strengths={strengths}
+								open={open.includes(s.id)}
+								onToggle={() => setOpen((l) => (l.includes(s.id) ? l.filter((x) => x !== s.id) : [...l, s.id]))}
+								onSaveCaps={(m, c) => saveCaps(s.id, m, c)}
+								onReload={reloadAll}
+								onDelete={() => deleteCustom(s)}
+							/>
+						))}
+					</div>
+					</Fold>
 				</div>
 			</div>
 			<AddServiceDialog open={addOpen} onClose={() => setAddOpen(false)} official={official} custom={custom} images={images} onReload={reloadAll} />

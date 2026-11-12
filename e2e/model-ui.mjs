@@ -231,6 +231,10 @@ try {
 	assert.equal(await page.getByTestId("default-model-picker").count(), 1, "默认使用应是一个按钮");
 	assert.equal(await page.getByTestId("vision-model-picker").count(), 0, "不再有独立识图模型选择器");
 	assert.equal(await page.getByTestId("default-model-select").count(), 0, "默认模型不再是下拉框");
+	// 渠道列表默认折叠（和编程工具一样），点开才渲染服务卡片
+	assert.equal(await page.getByTestId("service-list-toggle").getAttribute("aria-expanded"), "false", "渠道列表默认折叠");
+	assert.equal(await page.getByTestId("service-grid").count(), 0, "折叠时不渲染服务网格");
+	await page.getByTestId("service-list-toggle").click();
 	// 服务卡片网格：每张卡都有可区分图标
 	const grid = page.getByTestId("service-grid");
 	await grid.waitFor();

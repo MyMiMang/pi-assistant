@@ -77,6 +77,8 @@ try {
 	await card.getByText("已安装 v1.0.1", { exact: true }).waitFor();
 	await card.getByRole("button", { name: "检查更新", exact: true }).waitFor();
 	assert.equal(await card.getAttribute("data-logged-in"), "true", "更新保留私有登录");
+	await page.getByTestId("service-list-toggle").click();
+	await page.getByTestId("service-grid").waitFor();
 	assert.equal(await page.locator('[data-testid=service-card][data-service="antigravity"]').count(), 0, "不重复成普通服务卡片");
 	await noOverflow(page, "桌面设置页");
 

@@ -293,6 +293,8 @@ try {
 		const { ctx, page } = await newPage(browser, {});
 		await open(page, "models");
 		await page.getByTestId("model-services").waitFor();
+		await page.getByTestId("service-list-toggle").click();
+		await page.getByTestId("service-grid").waitFor();
 		const cards = await page.locator('[data-testid="service-card"]').count();
 		const badge = (await page.getByTestId("model-services-toggle").locator("span.rounded-full").innerText()).trim();
 		check(`折叠计数 = 实际卡片数（${badge} / ${cards}）`, badge === String(cards), `badge=${badge} cards=${cards}`);

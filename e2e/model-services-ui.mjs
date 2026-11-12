@@ -241,6 +241,7 @@ try {
 	await page.getByTestId('settings-dialog').waitFor();
 	const panel = page.getByTestId('model-services-panel');
 	await panel.waitFor();
+	await page.getByTestId('service-list-toggle').click();
 	const cards = () => page.locator('[data-testid=service-card]');
 	assert.equal(await cards().count(), 2, 'registry 里 2 个服务卡片（openai + custom-relay）');
 	const SHOT = process.env.SHOT_DIR;

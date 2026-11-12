@@ -123,6 +123,7 @@ try {
 	await page.goto(`${base}/?settings=models`);
 	await page.getByTestId('settings-dialog').waitFor();
 	await page.getByTestId('model-services-panel').waitFor();
+	await page.getByTestId('service-list-toggle').click();
 	// 明确标注：这是静态 mock 示例数据（角标要放进弹窗内部，否则元素截图会把它裁掉）
 	const labelInside = (testId, text, fontSize = 12) => page.evaluate(({ testId, text, fontSize }) => {
 		const host = document.querySelector(`[data-testid=${testId}]`);
@@ -169,6 +170,7 @@ try {
 	await page.reload();
 	await page.getByTestId('settings-dialog').waitFor();
 	await page.getByTestId('model-services-panel').waitFor();
+	await page.getByTestId('service-list-toggle').click();
 	await labelInside('settings-dialog', '测试示例数据（静态 fixture）', 11);
 	await page.waitForTimeout(200);
 	await shot('04-settings-models-390-top.png', page.getByTestId('settings-dialog'));

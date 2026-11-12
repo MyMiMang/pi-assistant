@@ -36,7 +36,7 @@ export function ProviderList({ providers, onPick, selected }: { providers: Provi
 		<div className="space-y-3">
 			<div className="relative">
 				<Search size={15} className="absolute top-2.5 left-2.5 text-zinc-400" />
-				<Input placeholder={`搜索 ${providers.length} 个模型服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" />
+				<Input placeholder={`搜索 ${providers.length} 个模型服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="!pl-8" />
 			</div>
 			<div className="grid max-h-[46dvh] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
 				{list.map((p) => (
@@ -137,7 +137,7 @@ export function ProviderAccordion({ providers, onEditCustom, onConfigured, stren
 		<div className="space-y-3" data-testid="provider-accordion">
 			<div className="relative">
 				<Search size={15} className="absolute top-2.5 left-2.5 text-zinc-400" />
-				<Input placeholder={`搜索 ${providers.length} 个模型服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" />
+				<Input placeholder={`搜索 ${providers.length} 个模型服务…`} value={q} onChange={(e) => setQ(e.target.value)} className="!pl-8" />
 			</div>
 			{groups.map((g) =>
 				g.items.length ? (

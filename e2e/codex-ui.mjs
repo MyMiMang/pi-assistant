@@ -77,6 +77,8 @@ try {
 	assert.equal(await page.getByTestId("codex-hint").count(), 0);
 	await card.getByRole("button", { name: "检查更新", exact: true }).waitFor();
 	await card.screenshot({ path: join(OUT, "03-card-ready.png") });
+	await page.getByTestId("service-list-toggle").click();
+	await page.getByTestId("service-grid").waitFor();
 	assert.equal(await page.locator('[data-testid=service-card][data-service="codex"]').count(), 0, "不重复成普通服务卡片");
 	await noOverflow(page, "桌面设置页");
 

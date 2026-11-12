@@ -74,6 +74,8 @@ try {
 	assert.match(await page.getByTestId("opencode-cli-status").innerText(), /已登录/);
 	assert.equal(await page.getByTestId("opencode-cli-hint").count(), 0);
 	await card.screenshot({ path: join(OUT, "03-card-ready.png") });
+	await page.getByTestId("service-list-toggle").click();
+	await page.getByTestId("service-grid").waitFor();
 	assert.equal(await page.locator('[data-testid=service-card][data-service="opencode-cli"]').count(), 0, "不重复成普通服务卡片");
 	await noOverflow(page, "桌面设置页");
 

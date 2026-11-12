@@ -2161,12 +2161,12 @@ await step("组队选模型 + 用量：提议卡片按角色挑模型并给理�
 	await page.getByTestId("usage-by-agent").click();
 	await page.getByTestId("usage-by-model").click();
 	await page.getByTestId("settings-dialog").screenshot({ path: join(SHOTS, "92-settings-usage.png") });
-	// 美元显示
 	await page.getByTestId("usage-currency").selectOption("USD");
 	await page.waitForFunction(() => /\$/.test(document.querySelector("[data-testid=usage-cost]")?.textContent ?? ""), null, { timeout: 10_000 });
 	await page.getByTestId("usage-currency").selectOption("CNY");
 	// 模型能力（擅长）：在统一面板的服务卡片展开后的模型行里编辑，点标签开关、恢复默认
 	await page.goto(`${BASE}/?agent=${AGENT}&settings=models`);
+	await page.getByTestId("service-list-toggle").click();
 	await page.getByTestId("service-toggle-mock").click();
 	const pmRow = page.getByTestId("service-models-mock").getByTestId("service-model").first();
 	await pmRow.waitFor();
