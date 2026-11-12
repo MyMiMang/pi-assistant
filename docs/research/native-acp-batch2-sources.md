@@ -10,17 +10,17 @@
 |---|---|---|---|
 | github-copilot-cli | `@github/copilot@1.0.107`；官方 npm SHA512；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/github-copilot-cli/agent.json) | verified-current-docs | verified-current-docs |
 | grok-build | `@xai-official/grok@1.0.79`；官方 npm SHA512；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/grok-build/agent.json) | verified-current-docs | verified-current-docs |
-| cursor | `cursor@2026.11.05`；官方地址下载实算 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/cursor/agent.json) | unknown | unknown |
+| cursor | `cursor@2026.11.05`（build 86047df）；官方地址下载实算 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/cursor/agent.json) | unknown | verified-fixed-package-static |
 | amp-acp | `amp-acp@0.12.0`；注册表 SHA256；独立官方 runtime `0.0.1794441653-gbe68d4`，五平台官方 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/amp-acp/agent.json) | verified-fixed-adapter / fixed-runtime-static | verified-current-docs / fixed-runtime-static |
 | devin | `devin@3000.12.32`；官方地址下载实算 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/devin/agent.json) | partially-verified | verified-current-docs |
-| goose | `goose@1.57.0`；注册表 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/goose/agent.json) | verified-fixed-source | unknown |
+| goose | `goose@1.57.0`；注册表 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/goose/agent.json) | verified-fixed-source | verified-fixed-source-acp-chain |
 | auggie | `@augmentcode/auggie@0.37.0`；官方 npm SHA512；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/auggie/agent.json) | partially-verified | verified-fixed-registry |
 | autohand | `autohand@0.9.10`；注册表 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/autohand/agent.json) | verified-fixed-source | verified-fixed-source |
 | cline | `cline@3.0.74`；官方 npm SHA512；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/cline/agent.json) | verified-matching-version-main | verified-matching-version-main |
 | factory-droid | `droid@1.6.0`；官方 npm SHA512；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/factory-droid/agent.json) | unknown | verified-fixed-registry |
 | kilo | `kilo@7.8.27`；注册表 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/kilo/agent.json) | verified-fixed-source | verified-fixed-source |
-| kimi-code | `@moonshot-ai/kimi-code@2.5.2`；官方 npm SHA512；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/kimi-code/agent.json) | verified-fixed-package | verified-newer-matching-main |
-| kiro | `kiro@3.0.0`；注册表 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/kiro/agent.json) | unknown | unknown |
+| kimi-code | `@moonshot-ai/kimi-code@2.5.2`；官方 npm SHA512；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/kimi-code/agent.json) | verified-fixed-package | verified-fixed-package |
+| kiro | `kiro@3.0.0`；注册表 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/kiro/agent.json) | current-docs / fixed-setting-string | current-docs / fixed-setting-string; flow unknown |
 | mistral-vibe | `mistral-vibe@3.1.0`；注册表 SHA256；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/mistral-vibe/agent.json) | verified-fixed-source | verified-newer-source |
 | qwen-code | `@qwen-code/qwen-code@0.27.0`；官方 npm SHA512；[注册表](https://github.com/agentclientprotocol/registry/blob/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/qwen-code/agent.json) | verified-fixed-source | verified-fixed-source |
 
@@ -49,7 +49,7 @@
 ### cursor
 
 - 配置：`未核实`；unknown。[来源1](https://cursor.com/docs/cli/reference/configuration)。No tool-specific config override proven; generic HOME/XDG is the baseline only.
-- 更新：`未核实`；unknown。[来源1](https://cursor.com/docs/cli/reference/environment-variables)。Official docs fetch TLS failures; no disable-update variable guessed.
+- 更新：`["--disable-auto-update","acp"]`；verified-fixed-package-static。[固定 macOS arm64 包](https://downloads.cursor.com/lab/2026.11.05-86047df/darwin/arm64/agent-cli-package.tar.gz) 的 index 声明隐藏全局参数；1706.index.js 在 disableAutoUpdate 为真时跳过交互更新定时器；9673.index.js 的 ACP 为独立启动/服务分支。六平台 index 都有该参数，完整控制链深查 macOS arm64。保留包内 Node/index 布局，将参数放 acp 前；不禁用显式 update/install，host-switch 协调仍有独立文件副作用。真实运行未验证。
 - 认证：`未核实`；unknown。[来源1](https://cursor.com/docs/cli/acp)。Agent Auth vs terminal auth and API-key contract not verified for fixed release.
 - 工具桥：`未核实`；unknown。[来源1](https://cursor.com/docs/cli/acp)。No fixed-version HTTP MCP capability obtained.
 - 边界：Keychain/OS identity stores and project Cursor settings may remain shared; unverified.
@@ -80,7 +80,7 @@
 ### goose
 
 - 配置：`{"GOOSE_PATH_ROOT":"<private-absolute-root>","GOOSE_DISABLE_KEYRING":"1"}`；verified-fixed-source。[来源1](https://github.com/block/goose/blob/v1.57.0/crates/goose/src/config/paths.rs)；[来源2](https://github.com/block/goose/blob/v1.57.0/crates/goose/src/config/base.rs)。Fixed 1.57.0 paths.rs confirms absolute GOOSE_PATH_ROOT mapping; base.rs confirms presence-based GOOSE_DISABLE_KEYRING check.
-- 更新：`未核实`；unknown。[来源1](https://github.com/block/goose/tree/v1.57.0/crates/goose-cli)。No specific automatic self-update disable switch established; do not invent GOOSE_NO_UPDATE.
+- 更新：继续固定绝对 binary `acp`；verified-fixed-source-acp-chain。[main.rs](https://github.com/block/goose/blob/v1.57.0/crates/goose-cli/src/main.rs)、[cli.rs](https://github.com/block/goose/blob/v1.57.0/crates/goose-cli/src/cli.rs)、[update.rs](https://github.com/block/goose/blob/v1.57.0/crates/goose-cli/src/commands/update.rs)：启动进入 cli，ACP 与显式 Update 为互斥分派，已审计启动/ACP 链未安排 CLI 自更新。disable-update 是编译 feature，不是环境变量；桌面 autoUpdater 不属于此 CLI 链。发行 binary 与源码一致性及实际运行未验证。旧 artifacts/acp-batch2-research/sources/goose 完整目录实际是 1.59.0，本次以重新核对的 v1.57.0 为准。
 - 认证：`{"acpType":"agent","id":"goose-provider","manualCommand":["goose","configure"]}`；verified-fixed-source。[来源1](https://github.com/block/goose/blob/v1.57.0/crates/goose/src/acp/server.rs)。Fixed 1.57.0 initialize advertises Agent goose-provider with description run goose configure; browser auth completion remains unverified.
 - 工具桥：`true`；verified-fixed-source。[来源1](https://github.com/block/goose/blob/v1.57.0/crates/goose/src/acp/server.rs)。Fixed 1.57.0 initialize explicitly declares McpCapabilities::new().http(true).
 - 边界：Default OS keyring is shared across private directory roots unless disabled; disabling changes backend to private file storage.
@@ -134,16 +134,16 @@
 ### kimi-code
 
 - 配置：`{"KIMI_CODE_HOME":"<private-home>/.kimi-code"}`；verified-fixed-package。[来源1](https://unpkg.com/@moonshot-ai/kimi-code@2.5.2/dist/main.mjs)。Fixed 2.5.2 published bundle contains KIMI_CODE_HOME resolution; os home fallback .kimi-code. No main-to-fixed inference used for this claim.
-- 更新：`{"env":{"KIMI_CODE_NO_AUTO_UPDATE":"1"}}`；verified-newer-matching-main。[来源1](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/src/cli/update/preflight.ts)。KIMI_CODE_NO_AUTO_UPDATE is confirmed only in newer 2.5.3 main preflight source; not found in inspected 2.5.2 published bundle portion. Fixed support remains UNKNOWN; do not promote this env to fixed 2.5.2 profile automatically.
+- 更新：`{"env":{"KIMI_CODE_NO_AUTO_UPDATE":"1"}}`；verified-fixed-package。[固定完整发布包](https://unpkg.com/@moonshot-ai/kimi-code@2.5.2/dist/main.mjs) 的 isAutoUpdateDisabledByEnv 接受 1/true/yes/on，runUpdatePreflight 在查询、提示和后台安装之前返回；maybeRelaunchWithStagedNativeUpdate 同样拦被动 staged 替换，staged.manual=true 的手动更新例外。旧报告仅查局部包而断言“新版 2.5.3 才支持”有误，现已纠正；TOML upgrade.auto_install=false 只拦安装，不能代替此变量。真实运行未验证。
 - 认证：`{"acpType":"terminal","id":"login","args":["--login"],"env":"top-level string map; same private root","legacy":{"command":"configured absolute binary","args":["login"]}}`；verified-fixed-package。[来源1](https://unpkg.com/@moonshot-ai/kimi-code@2.5.2/dist/main.mjs)。Fixed bundle buildTerminalAuthMethod sets first-class args [--login]; append to managed base invocation -> kimi acp --login. Legacy args [login] replace ACP subcommand, producing kimi login. acp command explicitly defines --login flag.
 - 工具桥：`true`；verified-fixed-package。[来源1](https://unpkg.com/@moonshot-ai/kimi-code@2.5.2/dist/main.mjs)。Fixed 2.5.2 published bundle agent initialize explicitly declares http:true,sse:true; SDK defaults elsewhere were not used as evidence.
-- 边界：Fixed 2.5.2 package evidence now confirms isolation/auth/HTTP; update disable remains newer-main-only.
+- 边界：固定 2.5.2 完整发布包已静态确认隔离/auth/HTTP/禁更；静态控制流证据不等于真实运行验收。
 - 边界：Project config/plugins/helper imports remain; directory controls do not isolate remote account.
 
 ### kiro
 
 - 配置：`未核实`；unknown。[来源1](https://kiro.dev/docs/cli/acp/)。No KIRO_CONFIG_DIR or KIRO_HOME proven for CLI 3.0.0; generic HOME/XDG cannot guarantee OS-home API confinement.
-- 更新：`未核实`；unknown。[来源1](https://kiro.dev/docs/cli/)。No CLI 3.0.0 disable-auto-update contract verified; do not infer IDE auto-update setting.
+- 更新：私有 `~/.kiro/settings/cli.json` 顶层 `{"app.disableAutoupdates":true}`；current-docs / fixed-setting-string。[官方 CLI settings](https://kiro.dev/docs/reference/settings.md) 明确文件路径与 Disable background auto-updates；[固定 3.0.0 Linux arm64 包](https://prod.download.cli.kiro.dev/stable/3.0.0/kirocli-aarch64-linux.tar.gz) SHA256 ee719fcf8d1166a44eb543e9acada6e2766cf13765787612336d0a43f3903766 与清单一致，含同名设置和 Disable automatic update checks on startup 说明。字符串不证明控制流，固定版 ACP/退出 staged 安装仍未知。[安装文档](https://kiro.dev/docs/getting-started/installation.md) 提到 KIRO_NO_AUTO_UPDATE 任意值，[企业文档](https://kiro.dev/docs/enterprise/managed-updates.md) 对该句有限定 On Windows；本实现只写官方 setting，不把 env 冒充固定实现，且固定清单无 Windows 包。
 - 认证：`{"acpType":"terminal","manualCommand":["kiro-cli","login"],"reconnectAfterLogin":true}`；verified-current-docs。[来源1](https://kiro.dev/docs/cli/acp/)。Official page says accepts clientCapabilities.auth.terminal and legacy _meta terminal-auth; page also contains legacy CLI v2 material, exact 3.0.0 packet not captured.
 - 工具桥：`未核实`；unknown。[来源1](https://kiro.dev/docs/cli/acp/)。Page says MCP can be passed to sessions but does not prove HTTP initialize declaration for v3.
 - 边界：No Windows binary in fixed registry.
@@ -167,13 +167,19 @@
 - 边界：System settings, workspace .qwen settings and upward .env discovery remain.
 - 边界：Provider keys and Qwen auth choices differ by versions; fixed auth schema must be read before promotion.
 
+## Gemini / CodeBuddy 固定版禁更补充
+
+- Gemini `@google/gemini-cli@0.67.0`：[固定配置文档](https://unpkg.com/@google/gemini-cli@0.67.0/bundle/docs/reference/configuration.md) 明确 system 设置优先于 user/project；[固定配置实现](https://unpkg.com/@google/gemini-cli@0.67.0/bundle/chunk-BW65QRZA.js) 读取 GEMINI_CLI_SYSTEM_SETTINGS_PATH。Pi 强制该变量指向私有 `<home>/.gemini/system-settings.json`，写 `general.enableAutoUpdate=false` 和 `general.enableAutoUpdateNotification=false`。前者在自动安装前返回，后者在 latestVersion 查询前返回；分别见 [更新实现](https://unpkg.com/@google/gemini-cli@0.67.0/bundle/chunk-MQNW2IRI.js) 与 [查询实现](https://unpkg.com/@google/gemini-cli@0.67.0/bundle/interactiveCli-QJZZISQQ.js)。只写 user 会被项目覆盖，因此不采用；项目与 user 文件原有字段保留。真实运行未验证。
+- CodeBuddy `@tencent-ai/codebuddy-code@2.181.0`：[固定 dist/codebuddy.js](https://unpkg.com/@tencent-ai/codebuddy-code@2.181.0/dist/codebuddy.js) 的 loadConfig 在 user autoUpdates 后以 DISABLE_AUTOUPDATER 真值强制 autoUpdateEnabled=false，配置读失败也检查；initializeAsync 在查询/定时器前返回。Pi 强制 `DISABLE_AUTOUPDATER=1`。插件市场有独立更新设置，不能据此声称所有插件禁更；真实运行未验证。
+- 本次静态复核原样摘录与完整包在 `artifacts/no-self-update/`（RESULT.md、npm-excerpts.txt、cursor/exact-evidence.txt、kimi/final-exact-excerpts.txt、kiro/update-string-excerpts.txt）。三 npm SHA512、Kiro SHA256 与固定清单吻合；没有执行下载产物。
+
 ## 当前实现取舍与阻塞
 
 - Amp 官方 runtime 已固定五平台供应与官方 SHA，复用 NativeInstaller 先 runtime 后 adapter；缺任一产物不就绪，取消保留旧 current。供应 missing 限制已解除，钥匙串隔离及固定组合实际运行仍未验证。定向离线测试见 artifacts/amp-runtime-tests.log（82/82）；真实安装、登录与付费请求均未执行。
 - Cline / Mistral Vibe 的所查初始化源码没有 HTTP MCP 声明；Vibe 固定版本声明仍未知。现按真实握手协商：声明 HTTP 则直连，否则使用 ACP 标准 stdio 定义，由 App Node 转发到原有 HTTP 工具桥。执行、审批和取消仍复用原流程；离线定向测试通过，真实工具未运行。
 - Kilo 固定旧式 terminal metadata 错指 opencode。认证仍使用受管 Kilo，采用同一固定源码说明的 kilo auth login；不会执行用户 opencode。
 - Qwen 固定认证为 API key / 厂商自定义 meta；不把非标准元数据冒充浏览器登录，提示在工具里配置。
-- Kimi 固定 2.5.2 已验证 KIMI_CODE_HOME 与 terminal --login；新版 KIMI_CODE_NO_AUTO_UPDATE 未编入固定配置，固定版全面禁用自更新仍未知。
+- 六家禁更补齐（2026-11-12）：Gemini/CodeBuddy/Kimi/Cursor 采用固定发布包静态证据支持的开关；Goose 保留已审计的固定 ACP 链；Kiro 写官方私有 setting 并保留固定控制流未知。复用现有 nativeProfile 的配置写入与强制环境覆盖，无新启动器。离线回归不代表真实工具禁更已验。
 - Copilot / Grok 变量及更新开关依据当前官方文档；Cline 依据 main 自报同版本；Vibe 更新设置依据新版本源码，均不冒充固定包运行验证。
 
 ## 许可与参考

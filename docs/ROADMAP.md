@@ -7,6 +7,8 @@
 - [已发布(beta.59)] 修 beta.58 编程工具点「安装」装不上（npm 配置冲突）；卡片显示失败原因；临时目录真实安装 Claude Code / Codex / OpenCode 通过
 - [待查] beta.57 连续运行约 25 小时内存涨到 4GB 崩溃一次（自动重启），需查内存增长来源
 - [进行中] 第二批：orca 能对话（ACP）的 15 个编程工具接入（Pi 开发助理在做）
+- [已实现(未提交)] 六家禁更补齐：Gemini 高优先级双设置、CodeBuddy/Kimi 固定变量、Cursor 参数；Goose 源码 ACP 链无自动更新安排，Kiro 官方私有 setting 但固定控制流未知；完整check及六个UI通过，真实工具未验（实施方案「六家禁更补齐」）
+- [已实现(未提交)] no-self-update：17 原生 + 四家 brain 强制私有 npm，运行 PATH 改为私有 Node + 受管目录 + 原始用户 PATH 去重，安装器精简 PATH 不变；本轮check 1731通过/11跳过、六UI通过，真实与跨平台执行未验
 - [已发布(beta.58)] 已接四家私有安装（0030 补充）：四家都已合 main；Antigravity 复用受管 binary 安装、隔离 HOME、官方终端登录与关闭自更新，缺 SHA 新版只提示；假安装 / 登录 / 模型 / 对话及五个 UI 回归通过，真实账号 / 终端 / 跨平台未验证（实施方案 §10）
 - [已完成(未打包)] ACP 第二批十五家统一配置表、私有供应、Amp runtime 与通用 stdio 桥；check及六个假包 UI 通过，真实工具未验（[实施方案 §11](design/native-acp-agents-impl.md)、[来源表](research/native-acp-batch2-sources.md)）
 - [已发布(beta.57)] 模型服务页编程工具默认折叠（显示数量、限高滚动），安装 / 登录 / 更新按钮挪到「重新检测」旁

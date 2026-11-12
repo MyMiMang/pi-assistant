@@ -2,6 +2,22 @@
 
 # 原生 ACP 编程工具：实施与验证
 
+## no-self-update 通用 npm 兜底（候选未提交）
+
+17 原生和 Claude Code / Codex / OpenCode / Antigravity 共用 managed-runtime-env：运行 home 下 `.npm-private` 固定 prefix、cache、两个不同的空 npmrc，剥除所有大小写 npm_config 别名后写入固定值，extra 不得覆盖。安装环境同样复用，安装阶段仍由 App Node + npm-cli.js 绝对路径执行。按本次用户修正，运行 PATH 为私有 App Node bin → 工具根内的受管命令目录 → 白名单输入中的用户原始 PATH，按顺序去重（Windows 目录不分大小写），原始目录写法保留；不把 buildCliEnv 额外补的 commonCliDirs 当作原 PATH，原 PATH 缺失或为空时也不额外补目录。原 PATH 中的 Homebrew / 用户 npm / 其他工具目录正常保留；App Node 的 POSIX 私有链接和 Windows 私有复制仍排第一。安装器 native-install 未改，npm PATH 仍只含私有 App Node bin 和原有系统目录，不继承原 PATH。
+
+Claude/Codex 再经 buildCliEnv 白名单时通过进程内 WeakMap 保存并恢复受管环境边界，不根据用户可伪造的环境字符串判断；当前调用链直接传同一环境对象，OpenCode 组装返回值时显式传递边界。未来新增环境对象克隆调用点时必须显式复用 preserveManagedRuntimeEnv，不能简单展开后再交给二次白名单。普通非受管 CLI 的现有 PATH / extra 行为不变。此次只修正运行 PATH，六家禁更配置、npm_config 大小写清理 / 强制私有值、extra 不可覆盖与二次环境保护均保留。
+
+验证：定向20文件串行289项全过，npm run typecheck、check:static通过；日志 `artifacts/no-self-update-env-final-tests.log`、`no-self-update-typecheck.log`、`no-self-update-static.log`。首次并行合跑 Codex 预中止计数有一次23/22时序失败，串行完整重跑通过；后续主会话完整 check 1731项、1720通过、11跳过、0失败，网页构建及六个UI串行通过（artifacts/no-self-update-final-*）；未执行真实工具安装/登录/付费请求或Windows/Linux实机。通用npm环境兜底不等于每家更新实现都被完全阻断，独立binary/网络更新仍需逐家已证实开关；本任务不改配置表与来源表。
+
+本轮运行 PATH 修正验证：定向4文件112/112；完整 `npm run check` 1742项（1731通过、11跳过、0失败），网页 build 仅一次；claude-code / codex / agy / opencode / native-acp / native-acp-binary 六个 UI 串行6/6通过。日志 `artifacts/runtime-path-targeted.log`、`runtime-path-check.log`、`runtime-path-web-build.log`、`runtime-path-*-e2e.log`，汇总 `runtime-path-verify.log`。覆盖三平台 PATH / Path / pAtH、保留原目录写法、优先级与去重、原 PATH 缺失/空值、不补 common dirs、npm 不可覆盖及二次白名单；安装器 npm PATH 逐工具仍精简，native-install 文件与开工前差异摘要完全一致。初轮 check 仅 ROADMAP 超长被静态检查挡下，缩短文字后完整通过；未新增构建次数或运行真实工具。
+
+## 六家禁更补齐（2026-11-12，候选未提交）
+
+复核 `artifacts/no-self-update/RESULT.md` 与固定包精确摘录后，复用 native-acp-catalog 的 settings/environment/args 及 native-profile 普通文件写入：Gemini 0.67.0 强制 GEMINI_CLI_SYSTEM_SETTINGS_PATH 指向私有 `.gemini/system-settings.json`，写 general.enableAutoUpdate=false / enableAutoUpdateNotification=false，system 优先级高于项目；CodeBuddy 2.181.0 强制 DISABLE_AUTOUPDATER=1；Cursor 固定包使用 `--disable-auto-update acp`，保留包内 Node/index；Kimi 2.5.2 强制 KIMI_CODE_NO_AUTO_UPDATE=1，纠正旧报告“新版才支持”。Goose v1.57.0 固定启动/ACP 源码链无自动更新安排，保留 acp、不造变量；Kiro 3.0.0 按官方 CLI 文档写私有 `.kiro/settings/cli.json` 的 app.disableAutoupdates=true，固定包同名设置字符串仅作佐证，控制流/ACP/退出 staged 安装仍未知，不加入未证实 env。六家 Help 与[正式来源表](../research/native-acp-batch2-sources.md)同步区分证据和限制。
+
+离线 native-catalog 57/57 与 npm run typecheck 通过；日志 `artifacts/no-self-update-six-catalog-tests.log`、`no-self-update-six-typecheck.log`。新增测试覆盖六家参数/强制变量、Gemini 最高层文件与项目/用户字段保留、重复准备恢复禁更值，以及 Kiro 普通文件与符号链接拒绝。相关七文件定向回归 111/111 通过（`artifacts/no-self-update-six-regression.log`），check:static 与 git diff --check 通过（`no-self-update-six-static.log`）；后续完整 check 1731项（1720通过/11跳过/0失败）、网页构建与六个编程工具 UI 串行通过，日志 artifacts/no-self-update-final-*；真实安装/登录/工具、Windows/Linux 执行未验证。不改依赖版本、未执行真实产物、无 commit/push/tag/重启。
+
 ## 11. 第二批统一配置表（2026-11-12，候选未提交）
 
 用户授权在 dev/acp-batch2 直接实施十五家：github-copilot-cli、grok-build、cursor、amp-acp、devin、goose、auggie、autohand、cline、factory-droid、kilo、kimi-code、kiro、mistral-vibe、qwen-code；不接 pi-acp。该授权覆盖旧文档“Cursor 暂缓 / 第二批十三家 / 实验性”范围，不改变四家 brain 接法。

@@ -29,6 +29,7 @@
 |---|---|
 | `src/cli-agents/acp-inactivity.ts` | 原生轮次十分钟无事件保护；等待审批时不取消，可注入时钟 |
 | `src/cli-agents/native-env.ts` | 受管工具独立 home、白名单环境与 HTTP MCP 定义 |
+| `src/cli-agents/managed-runtime-env.ts` | 全部受管 CLI 共用私有 npm prefix / 空配置 / cache；运行 PATH 按私有 Node、受管命令目录、原始用户 PATH 排序去重，安装 npm 保持精简 PATH；二次白名单保留最终边界 |
 | `src/cli-agents/managed-env.ts` | 四家只借脑子渠道的私有环境，复用 native-env 强制覆盖 HOME / XDG；Antigravity 固定 AGY_CLI_DISABLE_AUTO_UPDATE=true |
 | `src/cli-agents/managed-install.ts` | 全部受管 CLI 共用安装器实例与固定清单，区分开发测试命令覆盖和安装入口参数 |
 | `src/cli-agents/native-amp.ts` | Amp 官方 runtime 的薄接线；复用 NativeInstaller 独立产物与固定清单，启动只取私有绝对路径，不扫描宿主 |
@@ -47,7 +48,7 @@
 | `src/agent-runtime/native-acp-messages.ts` | 原生工具步骤落库与停止收尾；不进入 Pi 工具执行 |
 | `test/fixtures/fake-native-acp.mjs` | 原生 ACP 假进程，权限、步骤、HTTP MCP、load 和取消场景 |
 
-`test/native-amp.test.ts` 与 `test/fixtures/fake-amp-runtime.ts` 离线验证 Amp 双产物顺序、缺失、取消保旧及强制私有路径/禁更设置，不执行真实产物。`test/native-install-binary.test.ts` 验证官方 binary 假下载、SHA、tar 单入口、current、取消保旧及更新缺 / 有 SHA256；`test/managed-cli-env.test.ts` 验证既有四家私有环境与二次白名单不恢复用户 HOME；`test/managed-auth.test.ts` 验证假登录取消与跨平台终端命令拼装。相关单测使用 `native-acp-*` / `cli-models-native-*` 以及 `native-install.test.ts`、`native-auth.test.ts` 命名，全部只用临时数据和假程序。`test/native-catalog.test.ts` 逐家离线验证固定安装请求、启动参数、环境隔离及无 prompt 模型发现；`test/native-install-batch2.test.ts` 验证多格式归档、伴随文件和启动方式。`e2e/native-acp-ui.mjs` 覆盖 npm 安装、登录取消、更新、模型选择、原生步骤与批准；`e2e/native-acp-binary-ui.mjs` 为 Goose 假 binary 的独立流程，复用前者导出函数。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
+`test/managed-runtime-env.test.ts` 逐工具模拟 macOS / Windows / Linux、恶意 extra / 大小写别名与二次白名单，并离线执行 App Node / npm；`test/native-amp.test.ts` 与 `test/fixtures/fake-amp-runtime.ts` 离线验证 Amp 双产物顺序、缺失、取消保旧及强制私有路径/禁更设置，不执行真实产物。`test/native-install-binary.test.ts` 验证官方 binary 假下载、SHA、tar 单入口、current、取消保旧及更新缺 / 有 SHA256；`test/managed-cli-env.test.ts` 验证既有四家私有环境与二次白名单不恢复用户 HOME；`test/managed-auth.test.ts` 验证假登录取消与跨平台终端命令拼装。相关单测使用 `native-acp-*` / `cli-models-native-*` 以及 `native-install.test.ts`、`native-auth.test.ts` 命名，全部只用临时数据和假程序。`test/native-catalog.test.ts` 逐家离线验证固定安装请求、启动参数、环境隔离及无 prompt 模型发现；`test/native-install-batch2.test.ts` 验证多格式归档、伴随文件和启动方式。`e2e/native-acp-ui.mjs` 覆盖 npm 安装、登录取消、更新、模型选择、原生步骤与批准；`e2e/native-acp-binary-ui.mjs` 为 Goose 假 binary 的独立流程，复用前者导出函数。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
 
 ## 每类逻辑放在哪
 - HTTP 接口：`packages/server/src/routes/*`（`http.ts` 只做组装和中间件）。
