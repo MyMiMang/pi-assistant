@@ -87,7 +87,7 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 	async function check(models: PiModels, recheck = false): Promise<CliChannelInfo<S>> {
 		if (recheck) a.invalidate?.();
 		const cmd = command();
-		const status = cmd ? await a.detect(cmd) : ({ installed: false, loggedIn: false, error: a.notFound } as unknown as S);
+		const status = cmd ? await a.detect(cmd) : ({ installed: false, loggedIn: false, ...(a.managed ? {} : { error: a.notFound }) } as unknown as S);
 		if (a.requireLogin && !status.loggedIn && channel) {
 			channel.disposeAll();
 			channel = undefined;

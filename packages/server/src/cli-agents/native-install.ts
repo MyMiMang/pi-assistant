@@ -69,7 +69,8 @@ export class NativeInstaller {
 		if (lstatSync(root).isSymbolicLink()) throw new Error("工具安装目录不能是符号链接");
 		return root;
 	}
-	private environment(id: NativeAcpId): NodeJS.ProcessEnv {
+	/** 跑私有 npm 用的环境（单测会用真 npm 验证它能加载配置） */
+	npmEnvironment(id: NativeAcpId): NodeJS.ProcessEnv {
 		const root = this.root(id);
 		const home = join(root, "npm-home");
 		mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -82,9 +83,12 @@ export class NativeInstaller {
 		}
 		const rc = join(root, "npmrc");
 		writeFileSync(rc, "registry=https://registry.npmjs.org/\n", { mode: 0o600 });
+		// 全局配置必须是另一个文件：两项指向同一文件时 npm 直接拒绝运行（double-loading config），装不上
+		const globalRc = join(root, "npmrc-global");
+		writeFileSync(globalRc, "", { mode: 0o600 });
 		const env: NodeJS.ProcessEnv = {};
 		for (const key of ["SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy"]) if (process.env[key]) env[key] = process.env[key];
-		return { ...env, HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home, PATH: runtimeBin + delimiter + dirname(process.execPath) + delimiter + (process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32") : "/usr/bin:/bin"), npm_config_userconfig: rc, npm_config_globalconfig: rc, npm_config_cache: join(root, "npm-cache"), npm_config_update_notifier: "false", npm_config_registry: "https://registry.npmjs.org/" };
+		return { ...env, HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home, PATH: runtimeBin + delimiter + dirname(process.execPath) + delimiter + (process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32") : "/usr/bin:/bin"), npm_config_userconfig: rc, npm_config_globalconfig: globalRc, npm_config_cache: join(root, "npm-cache"), npm_config_update_notifier: "false", npm_config_registry: "https://registry.npmjs.org/" };
 	}
 	installed(id: NativeAcpId): NativeInstallation | null {
 		try {
@@ -138,7 +142,7 @@ export class NativeInstaller {
 			else binaryAsset(next);
 			return next;
 		}
-		const raw = await this.run({ args: ["view", `${known.packageName}@latest`, "--json"], cwd: this.root(id), env: this.environment(id), signal: AbortSignal.timeout(60_000) });
+		const raw = await this.run({ args: ["view", `${known.packageName}@latest`, "--json"], cwd: this.root(id), env: this.npmEnvironment(id), signal: AbortSignal.timeout(60_000) });
 		const meta = JSON.parse(raw);
 		if (meta.name !== known.packageName || !versionOk(meta.version) || !/^sha512-[A-Za-z0-9+/]+=*$/.test(meta.dist?.integrity ?? "")) throw new Error("官方 npm 版本信息无效");
 		return { packageName: meta.name, version: meta.version, integrity: meta.dist.integrity, bin: known.bin, executable: known.executable };
@@ -177,7 +181,7 @@ export class NativeInstaller {
 					writeFileSync(join(staging, ".pia-installed.json"), JSON.stringify({ ...installedRelease, verified: false }));
 					return this.activate(id, installedRelease, staging, target, controller.signal);
 				}
-				const env = this.environment(id);
+				const env = this.npmEnvironment(id);
 				return await watchDir([staging, join(root, "npm-cache")], progress, null, async () => {
 					progress.detail(`下载并校验 ${release.packageName}@${release.version}`);
 					const request = (args: string[]) => this.run({ args, cwd: staging, env, signal: controller.signal });

@@ -195,7 +195,7 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 			</div>
 			{err && info && <div role="alert" className="break-words text-xs text-red-500">{err}</div>}
 			{kind === "claude-code" && <ClaudeCustomModels onChanged={onChanged} />}
-			{info?.error && info.installed && <div className="break-all text-[11px] text-mut2">{info.error}</div>}
+			{info?.error && <div className="break-all text-[11px] text-red-500" role="alert" data-testid={`${kind}-error`}>{info.installed ? info.error : `安装失败：${info.error}`}</div>}
 		</div>
 	);
 }
