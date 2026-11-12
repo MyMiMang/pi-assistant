@@ -1,7 +1,7 @@
 /** 原生 ACP 工具共用的薄注册入口。命令路径与实际模型目录由宿主提供，不查用户 PATH。 */
 import type { AcpProfile } from "../../cli-agents/acp-process.ts";
-import { geminiProfile } from "../../cli-agents/profiles/gemini.ts";
-import { codebuddyProfile } from "../../cli-agents/profiles/codebuddy.ts";
+import { NATIVE_ACP_AGENTS, type NativeProviderId } from "@pi-assistant/shared";
+import { nativeProfile } from "../../cli-agents/native-profile.ts";
 import type { PiModels } from "../index.ts";
 import { createAcpChannel, type AcpChannelConfig, type AcpDeps } from "./acp.ts";
 import { registerCliProvider, type CliModelSpec } from "./provider.ts";
@@ -17,12 +17,11 @@ export interface NativeAcpSpec {
 
 export type NativeAcpDeps = AcpDeps & { command: () => string | null; commandArgs?: () => string[]; nativeModels?: () => CliModelSpec[] };
 export type NativeAcpChannel = ReturnType<typeof createAcpChannel>;
-export type NativeProviderId = "gemini-cli" | "codebuddy-cli";
+export type { NativeProviderId } from "@pi-assistant/shared";
 
-const specs: Record<NativeProviderId, NativeAcpSpec> = {
-	"gemini-cli": { provider: "gemini-cli", name: "Gemini CLI", profile: geminiProfile, sessionPolicy: "native-first-input-v1:gemini-private-home-v1" },
-	"codebuddy-cli": { provider: "codebuddy-cli", name: "CodeBuddy", profile: codebuddyProfile, sessionPolicy: "native-first-input-v1:codebuddy-private-home-v1" },
-};
+const specs = Object.fromEntries(NATIVE_ACP_AGENTS.map(a => [a.provider, {
+ provider: a.provider, name: a.name, profile: nativeProfile(a.id), sessionPolicy: `native-first-input-v1:${a.id}-private-home-v2`,
+}])) as Record<NativeProviderId, NativeAcpSpec>;
 
 /** default 表示让工具自行选择模型，并非虚构该工具支持的模型目录。能力待实际协商后再开放。 */
 const defaultModel = (spec: NativeAcpSpec): CliModelSpec => ({

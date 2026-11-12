@@ -62,6 +62,29 @@ Antigravity CLI 的六平台官方资产及 SHA256 固定在 third-party.json；
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli)（`@google/gemini-cli`） | 0.67.0 | Apache-2.0 | 官方 npm 发布包，完整性固定在 third-party.json |
 | [CodeBuddy Code](https://cnb.cool/codebuddy/codebuddy-code)（`@tencent-ai/codebuddy-code`） | 2.181.0 | MIT（Copyright 2023 Tencent Cloud） | 以该版本发布包 [LICENSE.txt](https://unpkg.com/@tencent-ai/codebuddy-code@2.181.0/LICENSE.txt) 为准；npm 元数据写作 SEE LICENSE IN README.md |
 
+第二批固定注册表快照为 `4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7`；完整版本、平台与配置证据见 [第二批来源表](docs/research/native-acp-batch2-sources.md)。以下均由用户按需下载，不随 App 再分发，不代表真实运行已验。
+
+| 组件 / 包 | 固定版本 | 许可依据 |
+|---|---|---|
+| GitHub Copilot / @github/copilot | 1.0.107 | 专有；官方包 LICENSE.md |
+| Grok / @xai-official/grok | 1.0.79 | 注册表 proprietary；npm 引导包元数据 Apache-2.0，不能推及原生运行程序 |
+| Cursor | 2026.11.05 | 专有；Cursor 服务条款 |
+| Amp ACP / tao12345666333/amp-acp | 0.12.0 | Apache-2.0，仅社区适配器 |
+| Amp 官方 CLI runtime / amp-cli-runtime | 0.0.1794441653-gbe68d4 | © Sourcegraph Inc. All rights reserved；[Amp 条款](https://ampcode.com/terms)；用户按需从 static.ampcode.com 下载，不随 App 再分发 |
+| Devin | 3000.12.32 | 专有；Devin 服务条款 |
+| Goose / block/goose | 1.57.0 | Apache-2.0 |
+| Auggie / @augmentcode/auggie | 0.37.0 | 专有；官方包 LICENSE.md |
+| Autohand Code / autohandai/code-cli | 0.9.10 | Apache-2.0 |
+| Cline / cline | 3.0.74 | Apache-2.0 |
+| Factory Droid / droid | 1.6.0 | 专有；npm 元数据 UNLICENSED |
+| Kilo Code / Kilo-Org/kilocode | 7.8.27 | MIT |
+| Kimi Code / @moonshot-ai/kimi-code | 2.5.2 | MIT |
+| Kiro | 3.0.0 | 专有；Amazon/Kiro 条款 |
+| Mistral Vibe | 3.1.0 | Apache-2.0 |
+| Qwen Code / @qwen-code/qwen-code | 0.27.0 | Apache-2.0（固定注册表；npm 元数据未列 license） |
+
+Cursor / Devin 的 SHA256 为开发时从固定官方地址下载后计算，未声称为厂商独立发布的摘要；Amp runtime 五平台摘要来自官方固定版本的 `<platform>-amp.sha256`（未压缩 binary）；其余 binary 摘要来自固定 ACP 注册表，npm 使用 registry.npmjs.org 官方 integrity。没有执行真实安装脚本或二进制。只读参考了 Orca 的启动注册表（源码链接见来源表），未复制代码或引入其依赖。
+
 App 随官方 Node 发布包保留其自带 npm 完整目录（Artistic-2.0，及 npm 目录内各依赖许可证），不单独选择或下载另一个 npm 版本。工具手动更新后的实际版本记录在私有安装目录；不代表已经经过 Pi 的真实工具验收。
 
 ## 记忆

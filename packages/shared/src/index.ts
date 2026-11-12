@@ -1,4 +1,5 @@
 export type { NativeCliStatus, NativeCliActionResult } from "./native-cli.ts";
+export * from "./native-acp-catalog.ts";
 
 /**
  * 产品品牌：唯一的定义处。正式名字确定前使用中性占位名 “Pi Assistant”。

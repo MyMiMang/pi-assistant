@@ -1,8 +1,7 @@
 /** Gemini CLI 薄 profile：保留原生工具 / 系统提示，persona 由上层首条消息追加。 */
 import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AcpProfile } from "../acp-process.ts";
-import { buildNativeAcpEnv, nativeAcpHome, nativeAcpMcpServers, prepareNativeAcpHome } from "../native-env.ts";
+import { prepareNativeAcpHome } from "../native-env.ts";
 
 export function prepareGeminiWorkspace(workDir: string, dataDir: string): void {
 	const home = prepareNativeAcpHome(dataDir, "gemini");
@@ -29,14 +28,3 @@ export function prepareGeminiWorkspace(workDir: string, dataDir: string): void {
 		if (!stat.isFile() || stat.isSymbolicLink() || readFileSync(envFile, "utf8") !== "") throw new Error("Gemini 工作区 .gemini/.env 必须为空文件；现有内容未覆盖");
 	}
 }
-
-export const geminiProfile: AcpProfile = {
-	label: "Gemini CLI",
-	mode: "native",
-	toolPrefix: "pia_",
-	args: () => ["--acp", "--approval-mode", "default"],
-	env: (i) => buildNativeAcpEnv({ ...i, id: "gemini" }, { GEMINI_CLI_HOME: nativeAcpHome(i.dataDir, "gemini") }),
-	prepare: ({ workDir, dataDir }) => prepareGeminiWorkspace(workDir, dataDir),
-	runFiles: () => [],
-	mcpServers: nativeAcpMcpServers,
-};

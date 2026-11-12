@@ -1,7 +1,8 @@
 /** 真正经过 Pi session / 公共 stream hook / HTTP 工具桥的 native 渠道测试；只运行假 ACP。 */
 import "./setup.ts";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,10 +13,12 @@ import { normalizeContext, type AssistantMessage, type Model } from "@earendil-w
 import { createPiSession, defineTool, disposeSession, lastAssistantText, PiModels, promptSession, Type } from "../src/pi-adapter/index.ts";
 import { createNativeAcpChannel, registerNativeAcpProvider, registerNativeProvider, type NativeAcpSpec } from "../src/pi-adapter/cli-models/native.ts";
 import { registerNativeSessionContext, releaseNativeSessionContext } from "../src/pi-adapter/cli-models/session-context.ts";
-import { codebuddyProfile } from "../src/cli-agents/profiles/codebuddy.ts";
+import { codebuddyProfile } from "../src/cli-agents/native-profile.ts";
 import { mountToolBridgeRoutes } from "../src/routes/tool-bridge.ts";
 import type { Env } from "../src/routes/common.ts";
 import { memoryCredentialStore } from "./in-memory-credentials.ts";
+import { approvalExtension } from "@pi-assistant/ext-approval";
+import { nativeService } from "../src/native-cli-service.ts";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-native-acp.mjs");
 const spec: NativeAcpSpec = { provider: "test-native", name: "Fake Native", profile: { ...codebuddyProfile, prepare: undefined }, sessionPolicy: "test-v1" };
@@ -57,9 +60,9 @@ async function fixture(t: TestContext, scenario = "meta") {
 		onPause: (cb: () => void) => { pauses.add(cb); return () => { pauses.delete(cb); }; },
 	};
 	const bind = (key: string) => { const off = registerNativeSessionContext(key, context); offs.push(off, () => releaseNativeSessionContext(key)); };
-	const session = async (ran: string[] = [], provider = spec.provider) => {
+	const session = async (ran: string[] = [], provider = spec.provider, request?: () => Promise<{ approved: boolean }>) => {
 		const echo = defineTool({ name: "echo", label: "回显", description: "回显", parameters: Type.Object({ text: Type.String() }), execute: async (_id, p) => { ran.push(p.text); return { content: [{ type: "text", text: `ECHO:${p.text}` }], details: {} }; } });
-		const s = await createPiSession({ models, cwd: workspace, agentDir: join(dir, "agent"), sessionDir: join(dir, "sessions"), model: { provider, id: "default" }, thinking: "off", systemPromptAppend: ["人设唯一标记：我是测试助理"], extensions: [], tools: ["echo"], customTools: [echo] as never, minimalExtensions: true, inMemorySession: true });
+		const s = await createPiSession({ models, cwd: workspace, agentDir: join(dir, "agent"), sessionDir: join(dir, "sessions"), model: { provider, id: "default" }, thinking: "off", systemPromptAppend: ["人设唯一标记：我是测试助理"], extensions: request ? [{ name: "approval", factory: approvalExtension({ workspace, guard: { target: "host" }, hostAccess: () => false, request }) }] : [], tools: ["echo"], customTools: [echo] as never, minimalExtensions: true, inMemorySession: true });
 		sessions.push(s);
 		bind(s.sessionId);
 		return s;
@@ -119,6 +122,72 @@ test("真实 Pi 会话：原生步骤只透传，Pi MCP工具仅执行一次且�
 	assert.equal(calls[0].name, "echo");
 	assert.equal(msgs.filter((m) => m.role === "toolResult").length, 1);
 	assert.equal(f.logs().filter((l) => l.method === "session/prompt").length, 1);
+});
+
+test("无HTTP声明的ACP使用stdio：真实Pi工具经既有HTTP桥和审批后执行，拒绝不执行", async (t) => {
+ for (const approved of [true, false]) {
+  const f = await fixture(t, "stdio-mixed");
+  const ran: string[] = [];
+  let release!: (result: { approved: boolean }) => void;
+  let asks = 0;
+  const s = await f.session(ran, spec.provider, () => { asks++; return new Promise(resolve => { release = resolve; }); });
+  const running = promptSession(s, "调用Pi工具");
+  await until(() => asks === 1);
+  assert.deepEqual(ran, [], "批准之前不执行");
+  const descriptor = f.logs().find(l => l.method === "session/new").params.mcpServers[0];
+  assert.equal(descriptor.type, undefined);
+  assert.equal(descriptor.command, process.execPath);
+  assert.equal(descriptor.env.length, 0);
+  assert.equal(f.logs().find(l => l.stdioTools).stdioTools.tools[0].name, "echo");
+  release({ approved });
+  await running;
+  assert.deepEqual(ran, approved ? ["bridge"] : []);
+  assert.match(lastAssistantText(s), approved ? /ECHO:bridge/ : /isError.*true/);
+  assert.equal(asks, 1);
+  assert.equal(f.logs().filter(l => l.method === "session/prompt").length, 1);
+ }
+});
+
+test("stdio桥等待审批时暂停：原生进程取消，工具不执行",  async (t) => {
+ const f = await fixture(t, "stdio-mixed");
+ const ran: string[] = [];
+ let release!: (result: { approved: boolean }) => void;
+ const s = await f.session(ran, spec.provider, () => new Promise(resolve => { release = resolve; }));
+ const running = promptSession(s, "调用Pi工具");
+ await until(() => !!release);
+ f.setPaused();
+ release({ approved: false });
+ await running;
+ await until(() => f.pauses.size === 0);
+ assert.deepEqual(ran, []);
+ assert.ok(f.cancelled() > 0);
+ assert.equal(f.channel.liveCount(), 0);
+});
+
+for (const [tool, envName] of [["cline", "PIA_CLINE_COMMAND"], ["mistral-vibe", "PIA_VIBE_COMMAND"]] as const) test(`${tool}无HTTP声明仍通过服务检测和注册，运行时协商stdio`, async () => {
+ const oldCommand = process.env[envName];
+ const oldNodeEnv = process.env.NODE_ENV;
+ process.env.NODE_ENV = "test";
+ const dir = mkdtempSync(join(tmpdir(), "native-stdio-service-"));
+ const wrapper = join(dir, "fake.mjs");
+ writeFileSync(wrapper, `#!/usr/bin/env node\nprocess.env.FAKE_NATIVE_SCENARIO = 'stdio-mixed';\nawait import(${JSON.stringify(pathToFileURL(FAKE).href)});\n`);
+ chmodSync(wrapper, 0o755);
+ process.env[envName] = wrapper;
+ const service = nativeService(tool);
+ const models = await PiModels.create({ credentials: memoryCredentialStore(), modelsPath: null, allowNetwork: false });
+ try {
+  const status = await service.check(models, true);
+  assert.equal(status.loggedIn, true, status.error ?? "应当检测为已登录");
+  assert.equal(status.bridgeTransport, "stdio");
+  assert.equal(status.registered, true);
+  assert.equal(status.error, undefined);
+  assert.ok(models.listModels(tool).length > 0);
+ } finally {
+  service.dispose();
+  if (oldNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = oldNodeEnv;
+  if (oldCommand === undefined) delete process.env[envName]; else process.env[envName] = oldCommand;
+  rmSync(dir, { recursive: true, force: true });
+ }
 });
 
 test("原生权限请求交给当前Pi会话宿主，不走旧渠道默认允许", async (t) => {

@@ -3,7 +3,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { buildCliEnv, type ClaudeEnvInput } from "./launch.ts";
 
-export type NativeAcpId = "gemini" | "codebuddy";
+import type { NativeAcpId } from "@pi-assistant/shared";
+export type { NativeAcpId } from "@pi-assistant/shared";
 export type ManagedCliId = NativeAcpId | "claude-code" | "codex" | "opencode" | "antigravity";
 export const nativeAcpHome = (dataDir: string, id: ManagedCliId): string => join(dataDir, "cli-agents", id, "home");
 

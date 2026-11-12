@@ -471,6 +471,625 @@
       "shim": "packages/openclaw-shim",
       "smoke": "packages/server/test/clawbot.test.ts",
       "note": "腾讯官方微信 ClawBot 插件：只复用协议层（api/cdn/media/send），OpenClaw SDK 由最小垫片提供"
+    },
+    {
+      "name": "@github/copilot",
+      "kind": "npm",
+      "version": "1.0.107",
+      "license": "proprietary",
+      "bin": "copilot",
+      "executable": "node",
+      "integrity": "sha512-/ZNZTjIblK+8UznLp+wCu27DwhFgIveF5QvPNi0YmRIVaIx1UMzXmApZNuVcOsbdthCAHCVRnPz+J1Hq3wYotw==",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "github-copilot-cli",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/github-copilot-cli/agent.json",
+      "npmMetadata": "https://registry.npmjs.org/%40github%2Fcopilot/1.0.107"
+    },
+    {
+      "name": "@xai-official/grok",
+      "kind": "npm",
+      "version": "1.0.79",
+      "license": "proprietary",
+      "bin": "grok",
+      "executable": "auto",
+      "integrity": "sha512-gG9I5uMdDSkRvvDuXVj4V5FG/eAEOctLztAYU6ni4ycoucQwsGSWziuxaU8whGpYnRhqCwc+smbnvWB+3XIhrA==",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "grok-build",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/grok-build/agent.json",
+      "npmMetadata": "https://registry.npmjs.org/%40xai-official%2Fgrok/1.0.79",
+      "$comment": "Published entry is a Node shim; postinstall may replace it with native/symlink/hardlink. Installer must validate actual installed entry and choose native vs Node execution; no install or runtime validation in this research."
+    },
+    {
+      "name": "cursor",
+      "kind": "binary",
+      "source": "binary",
+      "version": "2026.11.05",
+      "license": "proprietary",
+      "bin": "cursor-agent",
+      "executable": "binary",
+      "integrity": "",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "cursor",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/cursor/agent.json",
+      "assets": {
+        "darwin-arm64": {
+          "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/darwin/arm64/agent-cli-package.tar.gz",
+          "sha256": "67847e47e3ebd32b64c3fb4e6f36d475f1971b76e033b0ed6c9e01a3c1b440d7",
+          "archive": "tar.gz",
+          "entry": "dist-package/node",
+          "size": 174484846,
+          "args": [
+            "dist-package/index.js"
+          ],
+          "executable": "binary"
+        },
+        "darwin-x64": {
+          "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/darwin/x64/agent-cli-package.tar.gz",
+          "sha256": "75f345ce7638ff136e5cd09c45c3b2de4e73e5f590b50655e01e826c02bd7cfa",
+          "archive": "tar.gz",
+          "entry": "dist-package/node",
+          "size": 182110953,
+          "args": [
+            "dist-package/index.js"
+          ],
+          "executable": "binary"
+        },
+        "linux-arm64": {
+          "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/linux/arm64/agent-cli-package.tar.gz",
+          "sha256": "131554bfdbf683d8ebfef83a2bb46ac4e5d060f198711040b07ed063c2471871",
+          "archive": "tar.gz",
+          "entry": "dist-package/node",
+          "size": 174742182,
+          "args": [
+            "dist-package/index.js"
+          ],
+          "executable": "binary"
+        },
+        "linux-x64": {
+          "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/linux/x64/agent-cli-package.tar.gz",
+          "sha256": "170b77786cbf4c93064d64fff12b71a178b968730561c64afc2e8e752535442e",
+          "archive": "tar.gz",
+          "entry": "dist-package/node",
+          "size": 176081904,
+          "args": [
+            "dist-package/index.js"
+          ],
+          "executable": "binary"
+        },
+        "win32-arm64": {
+          "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/windows/arm64/agent-cli-package.zip",
+          "sha256": "5f3672f3b855a7d8112fa330d05dcefee79f19d775da18973b7fe705c93fc64a",
+          "archive": "zip",
+          "entry": "dist-package/node.exe",
+          "size": 76694513,
+          "args": [
+            "dist-package/index.js"
+          ],
+          "executable": "binary"
+        },
+        "win32-x64": {
+          "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/windows/x64/agent-cli-package.zip",
+          "sha256": "c886cf57681e596163318814d1ec559b10ce81ca2d050aab7a6ad12592840184",
+          "archive": "zip",
+          "entry": "dist-package/node.exe",
+          "size": 79418789,
+          "args": [
+            "dist-package/index.js"
+          ],
+          "executable": "binary"
+        }
+      },
+      "$comment": "SHA256 calculated from static official archive download; not an independently published vendor checksum. Keep required archive files and relative layout; entry alone is insufficient. No execution/install/auth/runtime validation."
+    },
+    {
+      "name": "amp-cli-runtime",
+      "kind": "binary",
+      "source": "binary",
+      "version": "0.0.1794441653-gbe68d4",
+      "license": "Proprietary; https://ampcode.com/terms",
+      "bin": "amp",
+      "executable": "binary",
+      "integrity": "",
+      "adapter": "packages/server/src/cli-agents/native-amp.ts",
+      "assets": {
+        "darwin-arm64": {
+          "url": "https://static.ampcode.com/cli/0.0.1794441653-gbe68d4/amp-darwin-arm64",
+          "sha256": "91a07721f4639743dd751a2390c0cfb8690a297700226d170a94f497f089595e",
+          "archive": "raw",
+          "entry": "amp"
+        },
+        "darwin-x64": {
+          "url": "https://static.ampcode.com/cli/0.0.1794441653-gbe68d4/amp-darwin-x64",
+          "sha256": "a37de99f81eca3a6f655db0d4170c53c14d14d95df8b45b8e34c07a603c6415e",
+          "archive": "raw",
+          "entry": "amp"
+        },
+        "linux-arm64": {
+          "url": "https://static.ampcode.com/cli/0.0.1794441653-gbe68d4/amp-linux-arm64",
+          "sha256": "d0f7458cac430916f8733d4866111d86ec5e772f4162093abe6034de8ffd12e9",
+          "archive": "raw",
+          "entry": "amp"
+        },
+        "linux-x64": {
+          "url": "https://static.ampcode.com/cli/0.0.1794441653-gbe68d4/amp-linux-x64",
+          "sha256": "54997a3965dee8dbf3164939950d6dc2860a33c1cccdec45eebeb1f50573d2e1",
+          "archive": "raw",
+          "entry": "amp"
+        },
+        "win32-x64": {
+          "url": "https://static.ampcode.com/cli/0.0.1794441653-gbe68d4/amp-windows-x64.exe",
+          "sha256": "8cac565d411619f8c0d1274365d3c036bb9cde50c44587245868e4b65782aaa4",
+          "archive": "raw",
+          "entry": "amp.exe"
+        }
+      },
+      "unsupportedPlatforms": {
+        "win32-arm64": "Official Amp runtime has no native Windows ARM64 distribution"
+      },
+      "$comment": "Official install.sh/install.ps1 fixed-version raw URLs; SHA256 is the official <platform>-amp.sha256 for the uncompressed binary. On-demand official download only; runtime and adapter compatibility/keyring isolation not verified."
+    },
+    {
+      "name": "amp-acp",
+      "kind": "binary",
+      "source": "binary",
+      "version": "0.12.0",
+      "license": "Apache-2.0",
+      "bin": "amp-acp",
+      "executable": "binary",
+      "integrity": "",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "amp-acp",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/amp-acp/agent.json",
+      "assets": {
+        "darwin-arm64": {
+          "url": "https://github.com/tao12345666333/amp-acp/releases/download/v0.12.0/amp-acp-darwin-aarch64.tar.gz",
+          "sha256": "1c5f08f44f3711710769585855cefcdbaed53e4133c2263d59a368b5a1597151",
+          "archive": "tar.gz",
+          "entry": "amp-acp"
+        },
+        "darwin-x64": {
+          "url": "https://github.com/tao12345666333/amp-acp/releases/download/v0.12.0/amp-acp-darwin-x86_64.tar.gz",
+          "sha256": "4245776441b18c05621dd66376064e66aebba90806a0d787592ea558207c5a68",
+          "archive": "tar.gz",
+          "entry": "amp-acp"
+        },
+        "linux-arm64": {
+          "url": "https://github.com/tao12345666333/amp-acp/releases/download/v0.12.0/amp-acp-linux-aarch64.tar.gz",
+          "sha256": "f75b1f4a2adc1c243601952070eb24bbcfecf328692f799815b59efeb9791528",
+          "archive": "tar.gz",
+          "entry": "amp-acp"
+        },
+        "linux-x64": {
+          "url": "https://github.com/tao12345666333/amp-acp/releases/download/v0.12.0/amp-acp-linux-x86_64.tar.gz",
+          "sha256": "c25e3635159ee12f8a77bd775dd8a8fc21cc4d25a3a23483ffafec73ccb910fe",
+          "archive": "tar.gz",
+          "entry": "amp-acp"
+        },
+        "win32-x64": {
+          "url": "https://github.com/tao12345666333/amp-acp/releases/download/v0.12.0/amp-acp-windows-x86_64.zip",
+          "sha256": "7377158ddac570d50f1eb98e0ce39ca6ecf18990bf917c1930bf628509ae12b4",
+          "archive": "zip",
+          "entry": "amp-acp.exe"
+        }
+      },
+      "unsupportedPlatforms": {
+        "win32-arm64": "No binary distribution in fixed official registry snapshot"
+      },
+      "$comment": "Community Amp ACP wrapper by tao12345666333, listed in the official ACP registry; not a first-party Amp release."
+    },
+    {
+      "name": "devin",
+      "kind": "binary",
+      "source": "binary",
+      "version": "3000.12.32",
+      "license": "proprietary",
+      "bin": "devin",
+      "executable": "binary",
+      "integrity": "",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "devin",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/devin/agent.json",
+      "assets": {
+        "darwin-arm64": {
+          "url": "https://static.devin.ai/cli/3000.12.32/devin-3000.12.32-aarch64-apple-darwin.tar.gz",
+          "sha256": "97d2c8779795661cdf56326985373ae9776d3121bd3616b3817fd57f6e539342",
+          "archive": "tar.gz",
+          "entry": "bin/devin",
+          "size": 65913256
+        },
+        "darwin-x64": {
+          "url": "https://static.devin.ai/cli/3000.12.32/devin-3000.12.32-x86_64-apple-darwin.tar.gz",
+          "sha256": "82a81d1a37261b9cd8af4a1bfc2ef1ee4858ad7fcb3e88d8905694338b752d2d",
+          "archive": "tar.gz",
+          "entry": "bin/devin",
+          "size": 70377190
+        },
+        "linux-arm64": {
+          "url": "https://static.devin.ai/cli/3000.12.32/devin-3000.12.32-aarch64-unknown-linux.tar.gz",
+          "sha256": "73a7cb329d9dc6a1da9712c8ebf20c67d5ae60ef5fac7cbe86e46a7e8ff85a68",
+          "archive": "tar.gz",
+          "entry": "bin/devin",
+          "size": 67823615
+        },
+        "linux-x64": {
+          "url": "https://static.devin.ai/cli/3000.12.32/devin-3000.12.32-x86_64-unknown-linux.tar.gz",
+          "sha256": "c4f5a4e277f67190daed2f032515219b1fbfcb2320f46140cf0ce70019d41c58",
+          "archive": "tar.gz",
+          "entry": "bin/devin",
+          "size": 71467369
+        },
+        "win32-arm64": {
+          "url": "https://static.devin.ai/cli/3000.12.32/devin-3000.12.32-aarch64-pc-windows.zip",
+          "sha256": "68bd8639bda9df69ed6ba55d89e5e9a8d45450ae6e0300a243f43a2c97e2de63",
+          "archive": "zip",
+          "entry": "bin/devin.exe",
+          "size": 64546916
+        },
+        "win32-x64": {
+          "url": "https://static.devin.ai/cli/3000.12.32/devin-3000.12.32-x86_64-pc-windows.zip",
+          "sha256": "071528ffe2822cc93d04931e9be384cb61a8910c33027c128b5e3992fdab99a0",
+          "archive": "zip",
+          "entry": "bin/devin.exe",
+          "size": 70413379
+        }
+      },
+      "$comment": "SHA256 calculated from static official archive download; not an independently published vendor checksum. Keep required archive files and relative layout; entry alone is insufficient. No execution/install/auth/runtime validation."
+    },
+    {
+      "name": "goose",
+      "kind": "binary",
+      "source": "binary",
+      "version": "1.57.0",
+      "license": "Apache-2.0",
+      "bin": "goose",
+      "executable": "binary",
+      "integrity": "",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "goose",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/goose/agent.json",
+      "assets": {
+        "darwin-arm64": {
+          "url": "https://github.com/block/goose/releases/download/v1.57.0/goose-aarch64-apple-darwin.tar.bz2",
+          "sha256": "2fbafa227ab28654c47065f1c9ebcd12f527f017e30c08e618bc6fcf363d7935",
+          "archive": "tar.bz2",
+          "entry": "goose"
+        },
+        "darwin-x64": {
+          "url": "https://github.com/block/goose/releases/download/v1.57.0/goose-x86_64-apple-darwin.tar.bz2",
+          "sha256": "e48fe024891a4c272a89c74b9ae843d76a73229643c917b785b0680fef9c647a",
+          "archive": "tar.bz2",
+          "entry": "goose"
+        },
+        "linux-arm64": {
+          "url": "https://github.com/block/goose/releases/download/v1.57.0/goose-aarch64-unknown-linux-gnu.tar.bz2",
+          "sha256": "17c6b090db6acc5605da904bbe19cc2765bc7a6786019d85a6d0a361de06dbf7",
+          "archive": "tar.bz2",
+          "entry": "goose"
+        },
+        "linux-x64": {
+          "url": "https://github.com/block/goose/releases/download/v1.57.0/goose-x86_64-unknown-linux-gnu.tar.bz2",
+          "sha256": "e54036f3b7f95d3b0d7854c09465af5ef52a28c7fa03d2497d0ea68a6382282d",
+          "archive": "tar.bz2",
+          "entry": "goose"
+        },
+        "linux-arm64-musl": {
+          "url": "https://github.com/block/goose/releases/download/v1.57.0/goose-aarch64-unknown-linux-musl.tar.bz2",
+          "sha256": "26dc9be443e92760c4b74c85a0c9be327ac8b48f74cca0985398e8dfdbb7e0d4",
+          "archive": "tar.bz2",
+          "entry": "goose"
+        },
+        "linux-x64-musl": {
+          "url": "https://github.com/block/goose/releases/download/v1.57.0/goose-x86_64-unknown-linux-musl.tar.bz2",
+          "sha256": "90ac71084236e1a896098e26a4cb9c3e090de6eba30782886d64de839924a966",
+          "archive": "tar.bz2",
+          "entry": "goose"
+        },
+        "win32-x64": {
+          "url": "https://github.com/block/goose/releases/download/v1.57.0/goose-x86_64-pc-windows-msvc.zip",
+          "sha256": "1ab2117ceec37f95be4d3ad0cdb921d3e97fd8b0fa244046631ecf4b7619d502",
+          "archive": "zip",
+          "entry": "goose-package/goose.exe"
+        }
+      },
+      "unsupportedPlatforms": {
+        "win32-arm64": "No binary distribution in fixed official registry snapshot"
+      }
+    },
+    {
+      "name": "@augmentcode/auggie",
+      "kind": "npm",
+      "version": "0.37.0",
+      "license": "proprietary",
+      "bin": "auggie",
+      "executable": "node",
+      "integrity": "sha512-TFDyF4dphA41woTw0LPkfYqGnXhWrjvbogec9uJYWDJdhIfOmGGwMXOKJf3ZtCjgjXVWcy5owOPEkyJoYejwGw==",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "auggie",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/auggie/agent.json",
+      "npmMetadata": "https://registry.npmjs.org/%40augmentcode%2Fauggie/0.37.0",
+      "env": {
+        "AUGMENT_DISABLE_AUTO_UPDATE": "1"
+      }
+    },
+    {
+      "name": "autohand",
+      "kind": "binary",
+      "source": "binary",
+      "version": "0.9.10",
+      "license": "Apache-2.0",
+      "bin": "autohand",
+      "executable": "binary",
+      "integrity": "",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "autohand",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/autohand/agent.json",
+      "assets": {
+        "darwin-arm64": {
+          "url": "https://github.com/autohandai/code-cli/releases/download/v0.9.10/autohand-macos-arm64.tar.gz",
+          "sha256": "bd3aa36d0e0c5bc1105ffafa5d4f4e1723a98255b6e7d9c7b5c8705fa87eddc0",
+          "archive": "tar.gz",
+          "entry": "autohand"
+        },
+        "darwin-x64": {
+          "url": "https://github.com/autohandai/code-cli/releases/download/v0.9.10/autohand-macos-x64.tar.gz",
+          "sha256": "2d91db448f4b5623e78610d7e743137a81c3a83fc9a70da31a7dab1f9760d05d",
+          "archive": "tar.gz",
+          "entry": "autohand"
+        },
+        "linux-arm64": {
+          "url": "https://github.com/autohandai/code-cli/releases/download/v0.9.10/autohand-linux-arm64.tar.gz",
+          "sha256": "174db918844cf0a7c78ad8bbfaf33093f28a38f4951182a893075e75b819fac5",
+          "archive": "tar.gz",
+          "entry": "autohand"
+        },
+        "linux-x64": {
+          "url": "https://github.com/autohandai/code-cli/releases/download/v0.9.10/autohand-linux-x64.tar.gz",
+          "sha256": "dcec59cf889db661c7f6678efa554616ce80758fda7ab4d5c03f18e0645a5e8a",
+          "archive": "tar.gz",
+          "entry": "autohand"
+        },
+        "linux-arm64-musl": {
+          "url": "https://github.com/autohandai/code-cli/releases/download/v0.9.10/autohand-linux-arm64-musl.tar.gz",
+          "sha256": "de3ef40020ceed8a19e5478b0e38220d1aadcd76490997b7eb6c068709f4ed57",
+          "archive": "tar.gz",
+          "entry": "autohand"
+        },
+        "linux-x64-musl": {
+          "url": "https://github.com/autohandai/code-cli/releases/download/v0.9.10/autohand-linux-x64-musl.tar.gz",
+          "sha256": "1d799472884281f8767e08a3634980412651a578d42f4d84feedcb0931d69828",
+          "archive": "tar.gz",
+          "entry": "autohand"
+        },
+        "win32-x64": {
+          "url": "https://github.com/autohandai/code-cli/releases/download/v0.9.10/autohand-windows-x64.zip",
+          "sha256": "4dbce386c61d860c323bbfbbdb851e15b35dfbb2aa4bb32b13b4d53e54a04419",
+          "archive": "zip",
+          "entry": "autohand.exe"
+        }
+      },
+      "unsupportedPlatforms": {
+        "win32-arm64": "No binary distribution in fixed official registry snapshot"
+      }
+    },
+    {
+      "name": "cline",
+      "kind": "npm",
+      "version": "3.0.74",
+      "license": "Apache-2.0",
+      "bin": "cline",
+      "executable": "node",
+      "integrity": "sha512-pCaRaJ6Jx50Urej+BYjpGkpZnFbPDCPsibKEbIjEuVxETXbZ/A1SMij8Thy8FobercevXX6hV7joAzU7OG5lzA==",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "cline",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/cline/agent.json",
+      "npmMetadata": "https://registry.npmjs.org/cline/3.0.74"
+    },
+    {
+      "name": "droid",
+      "kind": "npm",
+      "version": "1.6.0",
+      "license": "proprietary",
+      "bin": "droid",
+      "executable": "auto",
+      "integrity": "sha512-rW6sXYFnj1VXt7WQuS/gP7hooFTkajledVa3NR5YenCDpu6pjtqeLjFn6hpaSg7zhyTfN9BCsMmxKZL+wvMuMg==",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "factory-droid",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/factory-droid/agent.json",
+      "npmMetadata": "https://registry.npmjs.org/droid/1.6.0",
+      "env": {
+        "DROID_DISABLE_AUTO_UPDATE": "true",
+        "FACTORY_DROID_AUTO_UPDATE_ENABLED": "false"
+      },
+      "$comment": "Published entry is a Node shim; postinstall may replace it with native/symlink/hardlink. Installer must validate actual installed entry and choose native vs Node execution; no install or runtime validation in this research."
+    },
+    {
+      "name": "kilo",
+      "kind": "binary",
+      "source": "binary",
+      "version": "7.8.27",
+      "license": "MIT",
+      "bin": "kilo",
+      "executable": "binary",
+      "integrity": "",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "kilo",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/kilo/agent.json",
+      "assets": {
+        "darwin-arm64": {
+          "url": "https://github.com/Kilo-Org/kilocode/releases/download/v7.8.27/kilo-darwin-arm64.zip",
+          "sha256": "768c8358783c34b7309c212af86c546df472d6df7d6f3254d72efe6010a8ffc7",
+          "archive": "zip",
+          "entry": "kilo"
+        },
+        "darwin-x64": {
+          "url": "https://github.com/Kilo-Org/kilocode/releases/download/v7.8.27/kilo-darwin-x64.zip",
+          "sha256": "54fee6c1e309b795df2bb4c554208d7031c7a1f2a46cfcd21195736a9bcd2300",
+          "archive": "zip",
+          "entry": "kilo"
+        },
+        "linux-arm64": {
+          "url": "https://github.com/Kilo-Org/kilocode/releases/download/v7.8.27/kilo-linux-arm64.tar.gz",
+          "sha256": "65491b899f62b07beafb3ce89b88b987a03197c88563afbf976d38fb78df5ff6",
+          "archive": "tar.gz",
+          "entry": "kilo"
+        },
+        "linux-x64": {
+          "url": "https://github.com/Kilo-Org/kilocode/releases/download/v7.8.27/kilo-linux-x64.tar.gz",
+          "sha256": "4c08aa46dd87453a329f48b0f00d34d0fa7b8f0ac910fe8937814d4e8582de08",
+          "archive": "tar.gz",
+          "entry": "kilo"
+        },
+        "linux-arm64-musl": {
+          "url": "https://github.com/Kilo-Org/kilocode/releases/download/v7.8.27/kilo-linux-arm64-musl.tar.gz",
+          "sha256": "b527c57bc4226ca36f314d61d31cb3ace6a06188fbead1d9c7ddf56a9a63e6d8",
+          "archive": "tar.gz",
+          "entry": "kilo"
+        },
+        "linux-x64-musl": {
+          "url": "https://github.com/Kilo-Org/kilocode/releases/download/v7.8.27/kilo-linux-x64-musl.tar.gz",
+          "sha256": "ef06e63c72e0ed9874eabe094359b1d112fb778c6013ceffd3aaa537e6fc8101",
+          "archive": "tar.gz",
+          "entry": "kilo"
+        },
+        "win32-x64": {
+          "url": "https://github.com/Kilo-Org/kilocode/releases/download/v7.8.27/kilo-windows-x64.zip",
+          "sha256": "5d8fe8a8fcbff260ab50612f69721ef8544960c9317c97ce556698269b90d035",
+          "archive": "zip",
+          "entry": "kilo.exe"
+        }
+      },
+      "unsupportedPlatforms": {
+        "win32-arm64": "No binary distribution in fixed official registry snapshot"
+      }
+    },
+    {
+      "name": "@moonshot-ai/kimi-code",
+      "kind": "npm",
+      "version": "2.5.2",
+      "license": "MIT",
+      "bin": "kimi",
+      "executable": "node",
+      "integrity": "sha512-a7UuugqQuPBHB2ZMiu8ezAFIwJ0dn6xanuRnTqa2pXXu12ng7kvigAlXy47TxNKpnyj8vgaNStedTv4kbqSCuA==",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "kimi-code",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/kimi-code/agent.json",
+      "npmMetadata": "https://registry.npmjs.org/%40moonshot-ai%2Fkimi-code/2.5.2"
+    },
+    {
+      "name": "kiro",
+      "kind": "binary",
+      "source": "binary",
+      "version": "3.0.0",
+      "license": "proprietary",
+      "bin": "kiro-cli",
+      "executable": "binary",
+      "integrity": "",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "kiro",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/kiro/agent.json",
+      "assets": {
+        "darwin-arm64": {
+          "url": "https://prod.download.cli.kiro.dev/stable/3.0.0/kirocli-universal-darwin.tar.gz",
+          "sha256": "fa32d8f2054d79642922db696683630114b2cea99a2c7f655becd923afe33ccf",
+          "archive": "tar.gz",
+          "entry": "kirocli/bin/kiro-cli"
+        },
+        "darwin-x64": {
+          "url": "https://prod.download.cli.kiro.dev/stable/3.0.0/kirocli-universal-darwin.tar.gz",
+          "sha256": "fa32d8f2054d79642922db696683630114b2cea99a2c7f655becd923afe33ccf",
+          "archive": "tar.gz",
+          "entry": "kirocli/bin/kiro-cli"
+        },
+        "linux-arm64": {
+          "url": "https://prod.download.cli.kiro.dev/stable/3.0.0/kirocli-aarch64-linux.tar.gz",
+          "sha256": "ee719fcf8d1166a44eb543e9acada6e2766cf13765787612336d0a43f3903766",
+          "archive": "tar.gz",
+          "entry": "kirocli/bin/kiro-cli"
+        },
+        "linux-x64": {
+          "url": "https://prod.download.cli.kiro.dev/stable/3.0.0/kirocli-x86_64-linux.tar.gz",
+          "sha256": "2ebb8688b84765e4baf46d6e28b3e79780e7724e198591c22d0528d03a88a282",
+          "archive": "tar.gz",
+          "entry": "kirocli/bin/kiro-cli"
+        },
+        "linux-arm64-musl": {
+          "url": "https://prod.download.cli.kiro.dev/stable/3.0.0/kirocli-aarch64-linux-musl.zip",
+          "sha256": "374cdf12c03ccd1c7d04a2e911a0f0b89277a3750c52b6cf10f44236fabb6fd9",
+          "archive": "zip",
+          "entry": "kirocli/bin/kiro-cli"
+        },
+        "linux-x64-musl": {
+          "url": "https://prod.download.cli.kiro.dev/stable/3.0.0/kirocli-x86_64-linux-musl.zip",
+          "sha256": "f11185c3edb2a9b80aa3b3f407e3fd6f003175c07ea9d83804d74f298d24eba3",
+          "archive": "zip",
+          "entry": "kirocli/bin/kiro-cli"
+        }
+      },
+      "unsupportedPlatforms": {
+        "win32-arm64": "No binary distribution in fixed official registry snapshot",
+        "win32-x64": "No binary distribution in fixed official registry snapshot"
+      }
+    },
+    {
+      "name": "mistral-vibe",
+      "kind": "binary",
+      "source": "binary",
+      "version": "3.1.0",
+      "license": "Apache-2.0",
+      "bin": "vibe-acp",
+      "executable": "binary",
+      "integrity": "",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "mistral-vibe",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/mistral-vibe/agent.json",
+      "assets": {
+        "darwin-arm64": {
+          "url": "https://github.com/mistralai/mistral-vibe/releases/download/v3.1.0/vibe-acp-darwin-aarch64-3.1.0.tar.gz",
+          "sha256": "c56ec63bd6bcd60591bee441cf31f3fe555da493275a1756b2f5152039f65ec4",
+          "archive": "tar.gz",
+          "entry": "vibe-acp"
+        },
+        "darwin-x64": {
+          "url": "https://github.com/mistralai/mistral-vibe/releases/download/v3.1.0/vibe-acp-darwin-x86_64-3.1.0.tar.gz",
+          "sha256": "6a7e3399f344e43ad38851b56cbff522cde5af714fca1139c5d04d778ba2dea9",
+          "archive": "tar.gz",
+          "entry": "vibe-acp"
+        },
+        "linux-arm64": {
+          "url": "https://github.com/mistralai/mistral-vibe/releases/download/v3.1.0/vibe-acp-linux-aarch64-3.1.0.tar.gz",
+          "sha256": "96276b6d7cc49473e48a79f95c397a05dc7f8b1d5c459893562e0dd533112074",
+          "archive": "tar.gz",
+          "entry": "vibe-acp"
+        },
+        "linux-x64": {
+          "url": "https://github.com/mistralai/mistral-vibe/releases/download/v3.1.0/vibe-acp-linux-x86_64-3.1.0.tar.gz",
+          "sha256": "31e03174516ddc1b8dc2a229a3085ba59a50f4b380753a510ebb204730da4def",
+          "archive": "tar.gz",
+          "entry": "vibe-acp"
+        },
+        "win32-x64": {
+          "url": "https://github.com/mistralai/mistral-vibe/releases/download/v3.1.0/vibe-acp-windows-x86_64-3.1.0.zip",
+          "sha256": "2b65e70d0dc5cc0a5edba0ae836b225edf2068b6aebd321f047ccfae32275416",
+          "archive": "zip",
+          "entry": "vibe-acp.exe"
+        }
+      },
+      "unsupportedPlatforms": {
+        "win32-arm64": "No binary distribution in fixed official registry snapshot"
+      }
+    },
+    {
+      "name": "@qwen-code/qwen-code",
+      "kind": "npm",
+      "version": "0.27.0",
+      "license": "Apache-2.0",
+      "bin": "qwen",
+      "executable": "node",
+      "integrity": "sha512-efZt0LUm/raGUjR/SNN6pp8cpuNHnmE0hQvcvXzWHtVX9oVtDDgukq2IZNwYDErFYqHRj1xq2NQ5Jjt2SHUr/Q==",
+      "adapter": "packages/server/src/cli-agents/native-install.ts",
+      "registryId": "qwen-code",
+      "registrySource": "https://raw.githubusercontent.com/agentclientprotocol/registry/4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7/qwen-code/agent.json",
+      "npmMetadata": "https://registry.npmjs.org/%40qwen-code%2Fqwen-code/0.27.0"
     }
   ],
   "licenseAllow": [

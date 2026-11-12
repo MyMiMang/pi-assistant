@@ -2,9 +2,9 @@
  * 设置 › 模型服务里的「本机命令行模型」卡片（Claude Code / Codex / Antigravity / OpenCode 共用；方案 docs/design/cli-models.md §4.5、§5.2、§5b，docs/design/acp-cli-models.md）。
  * 全部渠道使用 Pi 私有安装，提供安装、官方登录、取消和手动更新。
  * 检测到可用后服务端就地注册模型渠道（不用重启），模型出现在所有模型选择里。
- * 加新的一家：在 `KINDS` 里加一项文案，服务端接口按渠道名 `/api/models/<kind>` 对应。
+ * 原生工具从 shared 的 NATIVE_ACP_AGENTS 生成卡片，服务端接口按渠道名对应。
  */
-import type { NativeCliStatus } from "@pi-assistant/shared";
+import { NATIVE_ACP_AGENTS, type NativeCliStatus, type NativeProviderId } from "@pi-assistant/shared";
 import { CheckCircle2, Download, LogIn, Plus, RefreshCw, Terminal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
@@ -16,22 +16,17 @@ interface CliInfo extends NativeCliStatus {
 }
 
 /** `opencode-cli`：不叫 `opencode`，Pi 自带一个同名的 OpenCode Zen 密钥渠道 */
-export type CliKind = "claude-code" | "codex" | "antigravity" | "opencode-cli" | "gemini-cli" | "codebuddy-cli";
-/** 模型服务页里要显示的本机命令行渠道（也用来把它们从普通服务列表里去掉） */
-export const CLI_KINDS: CliKind[] = ["claude-code", "codex", "antigravity", "opencode-cli", "gemini-cli", "codebuddy-cli"];
+type BrainKind = "claude-code" | "codex" | "antigravity" | "opencode-cli";
+export type CliKind = BrainKind | NativeProviderId;
+/** 模型服务页里要显示的编程工具渠道，也从普通服务列表里去掉。 */
+const BRAIN_KINDS: BrainKind[] = ["claude-code", "codex", "antigravity", "opencode-cli"];
+export const CLI_KINDS: CliKind[] = [...BRAIN_KINDS, ...NATIVE_ACP_AGENTS.map((agent) => agent.provider)];
 
 /** 每家的文案：命令名、登录命令、一句话说明、「?」说明、已注册后显示的模型 */
 const NATIVE_HELP = <>工具会在助理工作文件夹内使用自己的读写文件和执行命令能力，也能调用 Pi 工具。部分读取不会逐项请求批准；工具实际发来的批准请求按助理的权限档位处理，完全权限直接允许一次，其他档位由你逐项批准。配置目录独立，但 Mac 钥匙串中的登录可能共用。工具使用自身能力执行时，你的插话会在这轮结束后送达。</>;
 
-const KINDS: Record<CliKind, { title: string; command: string; login: string; tone: string; summary: string; models: string; help: ReactNode; loginOptional?: string }> = {
-	"gemini-cli": {
-		title: "Gemini CLI", command: "Pi 专用 Gemini CLI", login: "", tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
-		summary: "用它自己的读写和命令能力在助理的工作文件夹里干活，也能用 Pi 的工具；Pi 单独装一份，和你电脑上的设置、登录完全分开。", models: "模型：工具默认模型", help: NATIVE_HELP,
-	},
-	"codebuddy-cli": {
-		title: "CodeBuddy", command: "Pi 专用 CodeBuddy", login: "", tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
-		summary: "用它自己的读写和命令能力在助理的工作文件夹里干活，也能用 Pi 的工具；Pi 单独装一份，和你电脑上的设置、登录完全分开。", models: "模型：工具默认模型", help: NATIVE_HELP,
-	},
+interface CardCopy { title: string; command: string; login: string; tone: string; summary: string; models: string; help: ReactNode; loginOptional?: string }
+const BRAIN_CARDS: Record<BrainKind, CardCopy> = {
 	"claude-code": {
 		title: "Claude Code",
 		command: "claude",
@@ -107,18 +102,34 @@ const KINDS: Record<CliKind, { title: string; command: string; login: string; to
 	},
 };
 
-export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: () => void }) {
+const KINDS = {
+	...BRAIN_CARDS,
+	...Object.fromEntries(NATIVE_ACP_AGENTS.map((agent) => [agent.provider, {
+		title: agent.name, command: "", login: "", tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
+		summary: `${agent.summary.replace(/[。；;\s]+$/, "")}；Pi 单独装一份，和你电脑上的设置、登录完全分开。`,
+		models: "模型：以工具自己提供的列表为准",
+		help: <>{NATIVE_HELP}{agent.limitations.map((limitation) => <p key={limitation} className="mt-1.5">{limitation}</p>)}</>,
+	}])),
+} as Record<CliKind, CardCopy>;
+type StatusReport = (kind: CliKind, info: CliInfo) => void;
+
+export function CliAgentCard({ kind, onChanged, onStatus }: { kind: CliKind; onChanged?: () => void; onStatus?: StatusReport }) {
 	const k = KINDS[kind];
 	const [info, setInfo] = useState<CliInfo | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
 	const changed = useRef(onChanged);
+	const previous = useRef<CliInfo | null>(null);
 	changed.current = onChanged;
+	useEffect(() => { if (info) onStatus?.(kind, info); }, [info, kind, onStatus]);
 	const check = useCallback(async (recheck: boolean) => {
 		setBusy(true);
 		try {
 			const r = await api<CliInfo>(`/api/models/${kind}` + (recheck ? "/recheck" : ""), recheck ? { method: "POST" } : {});
-			setInfo((prev) => (setErr(""), r.registered && !prev?.registered && changed.current?.(), r));
+			setErr("");
+			if (r.registered && !previous.current?.registered) changed.current?.();
+			previous.current = r;
+			setInfo(r);
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
 		} finally {
@@ -144,14 +155,16 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 			setErr(e instanceof Error ? e.message : String(e));
 		} finally { setBusy(false); }
 	};
-	const ready = !!info?.installed && (info.loggedIn || (!!k.loginOptional && info.registered));
+	const supported = info?.platformSupported !== false;
+	const apiKey = info?.authType === "api-key";
+	const ready = supported && !!info?.installed && !!info.registered && (info.loggedIn || !!k.loginOptional);
 	return (
-		<div className="space-y-2 rounded-xl border border-line p-3" data-testid={`${kind}-card`} data-installed={String(!!info?.installed)} data-logged-in={String(!!info?.loggedIn)} data-registered={String(!!info?.registered)}>
-			<div className="flex items-center gap-2.5">
+		<div className="space-y-2 rounded-xl border border-line p-3" data-testid={`${kind}-card`} data-installed={String(!!info?.installed)} data-logged-in={String(!!info?.loggedIn)} data-registered={String(!!info?.registered)} data-platform-supported={String(supported)}>
+			<div className="flex flex-wrap items-center gap-2.5">
 				<span aria-hidden className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${k.tone}`}>
 					<Terminal size={18} />
 				</span>
-				<div className="min-w-0 flex-1">
+				<div className="min-w-0 flex-1 break-words">
 					<div className="flex flex-wrap items-center gap-1.5">
 						<span className="text-sm font-medium">{k.title}</span>
 						{ready && <CheckCircle2 size={14} className="shrink-0 text-emerald-500" aria-label="可用" />}
@@ -159,12 +172,14 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 					</div>
 					<div className="text-[11px] text-mut">{k.summary}</div>
 				</div>
-				<div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5" data-testid={`${kind}-actions`}>
-					{info && (info.operation ? (
+				<div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 sm:w-auto" data-testid={`${kind}-actions`}>
+					{info && (!supported ? (
+						<Button size="sm" disabled><Download size={13} /> 安装</Button>
+					) : info.operation ? (
 						<Button size="sm" variant="outline" disabled={busy} onClick={() => void action("cancel")}>取消</Button>
 					) : !info.installed ? (
 						<Button size="sm" disabled={busy} onClick={() => void action("install")}><Download size={13} /> 安装</Button>
-					) : !info.loggedIn ? (
+					) : !info.loggedIn && !apiKey ? (
 						<Button size="sm" disabled={busy} onClick={() => void action("login")}><LogIn size={13} /> 登录</Button>
 					) : info.updateAvailable ? (
 						<Button size="sm" disabled={busy} onClick={() => void action("update")}>更新到 v{info.latestVersion}</Button>
@@ -179,23 +194,27 @@ export function CliAgentCard({ kind, onChanged }: { kind: CliKind; onChanged?: (
 			<div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid={`${kind}-status`}>
 				{!info ? (
 					<span className="text-mut">{err ? `检测失败：${err}` : "正在检测…"}</span>
+				) : !supported ? (
+					<Badge tone="zinc">这个平台暂不支持</Badge>
 				) : !info.installed ? (
 					<Badge tone="amber">没装</Badge>
 				) : (
 					<>
 						<Badge tone="green">已安装{info.version ? ` v${info.version}` : ""}</Badge>
-						<Badge tone={info.loggedIn ? "green" : k.loginOptional ? "zinc" : "amber"}>{info.loginUnverified ? "登录待验证" : info.loggedIn ? "已登录" : k.loginOptional ? "未登录（可用免费模型）" : "未登录"}</Badge>
+						<Badge tone={info.loggedIn ? "green" : k.loginOptional ? "zinc" : "amber"}>{apiKey ? (info.loggedIn ? "已配置" : "需要在工具里配置") : info.loginUnverified ? "登录待验证" : info.loggedIn ? "已登录" : k.loginOptional ? "未登录（可用免费模型）" : "未登录"}</Badge>
 						{info.untestedVersion && <Badge tone="zinc">这个版本还没测过</Badge>}
 					</>
 				)}
-				{info?.operation && <span role="status" className="text-mut">{info.operation === "login" ? (kind === "opencode-cli" || kind === "antigravity" ? "正在登录，请在打开的终端里完成" : "正在登录，请在浏览器里完成") : info.operation === "install" ? "正在安装…" : "正在更新…"}</span>}
+				{info?.operation && <span role="status" className="text-mut">{info.operation === "login" ? (info.authType === "terminal" || kind === "opencode-cli" || kind === "antigravity" ? "正在登录，请在打开的终端里完成" : "正在登录，请在浏览器里完成") : info.operation === "install" ? "正在安装…" : "正在更新…"}</span>}
+				{supported && apiKey && <span className="text-mut">需要在工具里配置自己的模型服务，配好后点「重新检测」。</span>}
 				{!info?.operation && info?.updateAvailable && <span className="text-mut">有新版本 v{info.latestVersion}</span>}
 				{!info?.operation && info?.updateBlocked && <span className="text-mut">有新版本 v{info.latestVersion}，{info.updateBlocked}</span>}
 				{info?.registered && <span className="text-mut">{k.models}</span>}
 			</div>
 			{err && info && <div role="alert" className="break-words text-xs text-red-500">{err}</div>}
 			{kind === "claude-code" && <ClaudeCustomModels onChanged={onChanged} />}
-			{info?.error && <div className="break-all text-[11px] text-red-500" role="alert" data-testid={`${kind}-error`}>{info.installed ? info.error : `安装失败：${info.error}`}</div>}
+			{/* 装好但没登录时检测报的「需要登录」不显示：「未登录」标签已经说明了；只显示安装失败和真正的检测异常 */}
+			{info?.error && (!info.installed || info.loggedIn || info.loginUnverified) && <div className="break-all text-[11px] text-red-500" role="alert" data-testid={`${kind}-error`}>{info.installed ? info.error : `安装失败：${info.error}`}</div>}
 		</div>
 	);
 }
@@ -264,11 +283,24 @@ function ClaudeCustomModels({ onChanged }: { onChanged?: () => void }) {
 /** 模型服务页里的全部编程工具卡片：会越来越多，默认折叠、显示数量，展开后限高内部滚动 */
 export function CliAgentCards({ onChanged }: { onChanged?: () => void }) {
 	const [open, setOpen] = useState(false);
+	const [statuses, setStatuses] = useState<Partial<Record<CliKind, CliInfo>>>({});
+	const reportStatus = useCallback<StatusReport>((kind, info) => {
+		setStatuses((prev) => {
+			const old = prev[kind];
+			if (old?.installed === info.installed && old?.registered === info.registered && old?.platformSupported === info.platformSupported) return prev;
+			return { ...prev, [kind]: info };
+		});
+	}, []);
+	const rank = (kind: CliKind) => {
+		const info = statuses[kind];
+		return info?.platformSupported === false ? 3 : info?.registered ? 0 : info?.installed ? 1 : 2;
+	};
+	const sorted = [...CLI_KINDS].sort((a, b) => rank(a) - rank(b));
 	return (
 		<Fold testId="cli-agents" icon={Terminal} title="编程工具" count={CLI_KINDS.length} hint="Claude Code、Codex、Gemini CLI 等，装好登录后可当助理的模型用" open={open} onToggle={() => setOpen((v) => !v)}>
 			<div className="max-h-[60dvh] space-y-2 overflow-y-auto pr-1" data-testid="cli-agents-list">
-				{CLI_KINDS.map((k) => (
-					<CliAgentCard key={k} kind={k} onChanged={onChanged} />
+				{sorted.map((k) => (
+					<CliAgentCard key={k} kind={k} onChanged={onChanged} onStatus={reportStatus} />
 				))}
 			</div>
 		</Fold>

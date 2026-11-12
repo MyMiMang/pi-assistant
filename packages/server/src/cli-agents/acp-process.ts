@@ -1,7 +1,7 @@
 /**
  * 一个长驻的 ACP 命令行进程（OpenCode 等；每个 Pi 会话一个，方案 docs/design/acp-cli-models.md）。
  *
- * 流程：起进程 → `initialize` → `session/new`（或 `session/resume` 续接）带 http 类型 `mcpServers` 指向工具桥（随机令牌放 Authorization 头）
+ * 流程：起进程 → `initialize` → `session/new`（或 `session/resume` 续接）带协商传输的 `mcpServers` 指向工具桥（随机令牌放 Authorization 头）
  * → `session/set_config_option` 设模型 / 思考强度 → `session/prompt`（回包才算一轮结束）。JSON-RPC 读写复用 `jsonrpc-stdio.ts`。
  * brain 的 `session/request_permission` 沿用「允许一次」；native 经宿主异步回调，只认本请求提供的一次性选项。
  * 停止 = `session/cancel`（实测约 0.3 秒），再过一会儿关进程；空闲 10 分钟退出；运行目录（里面是带系统提示的配置文件，0700 / 0600）结束一定删，令牌和系统提示都不进命令行。
@@ -14,6 +14,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { AcpInactivity, type AcpClock } from "./acp-inactivity.ts";
+import { nativeMcpServers } from "./native-mcp.ts";
 import { acpUsageOf, configValues, convertAcpUpdate, pickAllowOption, pickEffort, pickOnceOption, type AcpEvent, type NativeAcpToolEvent } from "./acp-events.ts";
 import type { TokenUsage } from "./events.ts";
 import { RpcClient, type RpcExit } from "./jsonrpc-stdio.ts";
@@ -150,6 +151,7 @@ export class AcpProcess {
 	private readonly permissions = new Map<number | string, AbortController>();
 	private readonly inactivity: AcpInactivity;
 	private nativeOptions: Array<{ id: string; category?: unknown; values: string[] }> = [];
+ private legacyModels: string[] = [];
 
 	constructor(private readonly opts: AcpProcessOptions) {
 		this.sessionId = opts.sessionId;
@@ -229,11 +231,11 @@ export class AcpProcess {
 	private async handshake(): Promise<void> {
 		const c = this.client!;
 		this.initializeResult = await c.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, HANDSHAKE_TIMEOUT_MS);
-		const mcpServers = this.opts.profile.mcpServers(`${this.opts.bridgeBaseUrl.replace(/\/+$/, "")}/internal/tool-bridge/${this.bridgeRun.id}`, this.bridgeRun.token);
-		const params = { cwd: this.opts.workDir, mcpServers };
 		const native = this.opts.profile.mode === "native";
+		const url = `${this.opts.bridgeBaseUrl.replace(/\/+$/, "")}/internal/tool-bridge/${this.bridgeRun.id}`;
+		const mcpServers = native ? nativeMcpServers(url, this.bridgeRun.token, this.initializeResult, this.dir!) : this.opts.profile.mcpServers(url, this.bridgeRun.token);
+		const params = { cwd: this.opts.workDir, mcpServers };
 		const caps = isObj(this.initializeResult) && isObj(this.initializeResult.agentCapabilities) ? this.initializeResult.agentCapabilities : {};
-		if (native && mcpServers.length && (!isObj(caps.mcpCapabilities) || caps.mcpCapabilities.http !== true)) throw new Error("原生 ACP 未声明 HTTP MCP 能力");
 		if (native && this.sessionId && caps.loadSession !== true) {
 			this.freshFallback = true;
 			this.sessionId = undefined;
@@ -242,6 +244,11 @@ export class AcpProcess {
 		if (!this.sessionId) this.sessionId = isObj(res) && typeof res.sessionId === "string" ? res.sessionId : undefined;
 		if (!this.sessionId) throw new Error("session/new 没有返回会话 id");
 		this.learnOptions(isObj(res) ? res.configOptions : undefined);
+  if (native && isObj(res) && isObj(res.models)) {
+   const list = res.models.availableModels;
+   this.legacyModels = Array.isArray(list) ? list.filter(isObj).flatMap(m => typeof m.modelId === "string" ? [m.modelId] : []) : [];
+   if (typeof res.models.currentModelId === "string") this.cur.model = res.models.currentModelId;
+  }
 	}
 
 	/** 记下命令行当前的模型和这个模型能选的思考强度 */
@@ -259,6 +266,10 @@ export class AcpProcess {
 	private async configure(model: string, effort: string | undefined): Promise<void> {
 		const c = this.client!;
 		if (this.opts.profile.mode === "native") {
+   if (!this.nativeOptions.some(o => o.category === "model") && this.legacyModels.includes(model) && this.cur.model !== model) {
+    await c.request("session/set_model", { sessionId: this.sessionId, modelId: model }, HANDSHAKE_TIMEOUT_MS);
+    this.cur.model = model;
+   }
 			for (const category of ["model", "thought_level"]) {
 				const o = this.nativeOptions.find((v) => v.category === category);
 				const want = category === "model" ? model : pickEffort(o?.values ?? [], effort);

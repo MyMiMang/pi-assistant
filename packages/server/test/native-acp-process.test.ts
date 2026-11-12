@@ -1,6 +1,6 @@
 import "./setup.ts";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -11,8 +11,8 @@ import { AcpProcess, type AcpItem, type AcpProcessOptions, type AcpProfile } fro
 import { AcpInactivity, type AcpClock } from "../src/cli-agents/acp-inactivity.ts";
 import { convertAcpUpdate, pickOnceOption } from "../src/cli-agents/acp-events.ts";
 import { buildNativeAcpEnv, nativeAcpHome } from "../src/cli-agents/native-env.ts";
-import { geminiProfile, prepareGeminiWorkspace } from "../src/cli-agents/profiles/gemini.ts";
-import { codebuddyProfile } from "../src/cli-agents/profiles/codebuddy.ts";
+import { prepareGeminiWorkspace } from "../src/cli-agents/profiles/gemini.ts";
+import { geminiProfile, codebuddyProfile } from "../src/cli-agents/native-profile.ts";
 
 const fake = join(import.meta.dirname, "fixtures/fake-native-acp.mjs");
 const waitFor = async (condition: () => boolean) => {
@@ -52,6 +52,12 @@ test("native profile：独立 HOME / env、Gemini空env和边界配置在启动�
 	});
 	assert.equal((result.initialize as { agentCapabilities: { loadSession: boolean } }).agentCapabilities.loadSession, true);
 	assert.equal(result.log.find((x) => x.method === "session/set_config_option").params.configId, "chosen-model");
+});
+
+test("native正式availableModels目录使用session/set_model，不虚构config option", async () => {
+ const result = await run("legacy-models");
+ assert.equal(result.log.find(entry => entry.method === "session/set_model")?.params.modelId, "model-b");
+ assert.ok(!result.log.some(entry => entry.method === "session/set_config_option"));
 });
 
 test("隔离环境覆盖Windows大小写键和extra中的目录；模型密钥 / 父级配置不继承", () => {
@@ -167,7 +173,7 @@ test("原生步骤与真实HTTP桥调用混合：原生0次Pi调用，桥仅执�
 	} finally { server.closeAllConnections(); await new Promise<void>((r) => server.close(() => r())); }
 });
 
-test("load期间回放抑制和历史工具去重；无load新建且用完整输入；无http明确失败", async () => {
+test("load期间回放抑制和历史工具去重；无load新建且用完整输入；无http协商stdio",  async () => {
 	const r = await run("meta", { sessionId: "restored" });
 	assert.equal(text(r.items).includes("OLD"), false);
 	assert.equal(r.items.some((i) => i.type === "native_tool"), false);
@@ -177,9 +183,19 @@ test("load期间回放抑制和历史工具去重；无load新建且用完整输
 	assert.equal(fresh.log.some((x) => x.method === "session/new"), true);
 	assert.equal(fresh.log.some((x) => x.method === "session/load" || x.method === "session/resume"), false);
 	assert.equal(JSON.parse(text(fresh.items)).prompt[0].text, "fresh history plus persona");
-	const failed = await run("no-http", { sessionId: "restored" });
-	assert.equal(failed.items.some((i) => i.type === "result" && i.isError), true);
-	assert.equal(failed.log.some((x) => x.method === "session/prompt"), false);
+	const stdio = await run("no-http", { sessionId: "restored" }, async (p, items) => {
+  await waitFor(() => items.some(i => i.type === "result"));
+  const file = join(p.runDir!, "tool-bridge.json");
+  if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).token, p.bridgeRun.token);
+ });
+	assert.equal(stdio.items.some((i) => i.type === "result" && i.isError), false);
+	const definition = stdio.log.find(x => x.method === "session/load").params.mcpServers[0];
+	assert.equal(definition.type, undefined);
+	assert.equal(definition.command, process.execPath);
+	assert.equal(definition.args.length, 2);
+	assert.equal(definition.args.some((arg: string) => arg.includes("Bearer")), false);
+	assert.equal(existsSync(definition.args[1]), false, "运行结束删除含令牌文件");
 	assert.equal((await run("no-config")).log.some((x) => x.method === "session/set_config_option"), false);
 });
 
