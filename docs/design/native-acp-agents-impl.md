@@ -1,6 +1,22 @@
-状态：已批准；第一段已合 main，第二段候选已实现，假程序验收通过，真实工具与跨平台产物未验证（2026-11-09）
+状态：已批准；第一批已发布，第二批候选开发和离线验证中，真实工具与跨平台运行未验证（2026-11-12）
 
-# 原生 ACP 编程工具：第一批实施方案
+# 原生 ACP 编程工具：实施与验证
+
+## 11. 第二批统一配置表（2026-11-12，候选未提交）
+
+用户授权在 dev/acp-batch2 直接实施十五家：github-copilot-cli、grok-build、cursor、amp-acp、devin、goose、auggie、autohand、cline、factory-droid、kilo、kimi-code、kiro、mistral-vibe、qwen-code；不接 pi-acp。该授权覆盖旧文档“Cursor 暂缓 / 第二批十三家 / 实验性”范围，不改变四家 brain 接法。
+
+- 共享 native-acp-catalog.ts 是 17 家唯一配置表，迁入 Gemini/CodeBuddy。安装源关联 third-party.json，启动参数、隔离变量、auth、设置文件与限制均共用；Gemini 工作区准备和已证实的 CodeBuddy load 扩展为必要特例。删除独立 CodeBuddy profile，Gemini 文件只保留工作区准备。
+- native-profile / native-cli-service / NativeInstaller / native-auth 共用安装、登录、模型发现、注册和卡片；不搜索本机 CLI。终端认证声明 first-class capability，接受 type:terminal 与旧 terminal-auth 元数据，运行同一受管命令并强制私有环境；API-key-only 显示配置提示，无密钥框。兼容协议正式 availableModels 列表与 session/set_model，优先实际 configOptions。
+- binary 安装支持 raw、tar.gz / xz / bz2、zip，完整保留普通目录和伴随文件；拒绝越界、链接、重复条目与错误 SHA。Cursor 从包内 node + index.js 启动，避免平台 shell 包装器和更新入口；Grok/Droid 安装后静态判型 Node / 原生入口。失败保留旧版，用户手动更新；其他 binary 当前只检查固定清单，等待 App 更新，不虚构最新版本。
+- 官方注册表固定快照 4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7；十五家版本、7 npm integrity、49 binary SHA 以及逐家变量/auth/自更新/许可证据见 [来源表](../research/native-acp-batch2-sources.md)。Cursor/Devin 十二包全部下载后计算 SHA；属于开发时官方地址实算，未执行。其余 37 项为注册表原摘要，不冒充独立实算。
+- 编程工具默认折叠、数量、内部限高滚动，已可用/已安装排前；标题仅名字，特点与私有安装说明；平台缺包显示“这个平台暂不支持”。Help 说明系统钥匙串、企业设置、祖先规则、自更新证据及已知限制，不加实验性标签。
+- 后续缺口已接线：Amp 独立官方 runtime `0.0.1794441653-gbe68d4` 固定五平台 URL/官方 SHA，NativeInstaller 先 runtime 后 adapter，两者就绪才启动；强制私有绝对 AMP_CLI_PATH、AMP_SETTINGS_FILE、AMP_SKIP_UPDATE_CHECK=1，settings 关闭更新检查与 runner 自动更新。供应 missing 限制解除，Windows ARM64 无原生包不支持；钥匙串隔离及固定组合真实兼容仍未验证。定向离线安装/配置回归 82/82 通过（artifacts/amp-runtime-tests.log），类型检查通过；后续全 check 由主会话统一执行。Cline/Vibe 现按实际握手选择 HTTP 或基础 stdio，由 App Node 转发既有工具桥；真实发行包未运行。Kilo 旧认证元数据错误引用 opencode，使用固定源码说明的私有 Kilo auth login，不调用用户工具。
+- 未验证：任何真实安装、安装脚本、账号、付费模型、真实终端与取消效果、系统钥匙串、Windows/Linux 执行与发布产物。没有改依赖/node_modules、commit/push/tag、重启8787。
+- Amp runtime / stdio 补齐后最终 `npm run check` 通过：1642 tests、1631 pass、11 skipped、0 fail，日志 artifacts/acp-batch2-final-check.log。首轮唯一新测试期望旧 Grok home，已修正；相关定向87项通过后，完整重跑通过。静态 / 类型检查与网页 build 通过。逐家离线验证固定安装请求、参数、环境、无 prompt 模型发现，新增 legacy 模型切换、私有更新设置及多格式归档安全测试。
+- 六个独立 UI 脚本串行通过：claude-code-ui、codex-ui、agy-ui、opencode-ui、native-acp-ui、native-acp-binary-ui。现有项目确为五个；新增 Goose 假 binary 脚本复用 native-acp-ui 流程，不重复 npm 样本。补齐后六个脚本再次串行通过，最终日志 artifacts/acp-batch2-final-{claude-code,codex,agy,opencode,native-acp,native-acp-binary}-e2e.log。两原生首跑按错误临时目录查文件，已改为实际服务返回工作区后通过；真实文件及审批前后状态均断言。
+- 截图 artifacts/native-acp-ui/、native-acp-binary-ui/ 及四家既有目录；已目视核对 Gemini/Goose 批准后的正文和步骤、390 宽 Gemini/Grok 卡片，正文可见且无卡片越界。未运行真实工具或模型。
+
 
 ## 2026-11-10 既有四家私有安装补充（开发中，未交付）
 

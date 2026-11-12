@@ -21,7 +21,7 @@
 | 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`local-asr-harness.ts`（本地语音假环境 + 来源端口）、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp、fake-codex：假 codex app-server（JSON-RPC，场景文件 FAKE_CODEX_SCENARIO_FILE 每轮重读；场景含 meta / one-tool / steer / hang / image-tool / server-requests / crash / not-logged-in / e2e-bash；「未登录」用 CODEX_HOME 下的 logged-out 文件表示）、fake-claude：假 claude，按 FAKE_CLAUDE_SCENARIO 出 stream-json 并调工具桥；场景含 meta 回报收到的参数、one-tool / tool-interject / image-tool、stall、resume-missing、think） |
 | e2e 工具 | `e2e/fixtures/managed-cli-package.mjs`（三家受管 CLI 的本地假 npm 包、假登录与假终端，不联网）；`e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
 
-## 原生 ACP 第一段（Gemini CLI / CodeBuddy）
+## 原生 ACP（统一配置表驱动的 17 家工具）
 
 复用现有 ACP 渠道、进程池、HTTP 工具桥及 requests；第二段补充私有安装、Agent Auth 与手动更新管理。
 
@@ -31,12 +31,15 @@
 | `src/cli-agents/native-env.ts` | 受管工具独立 home、白名单环境与 HTTP MCP 定义 |
 | `src/cli-agents/managed-env.ts` | 四家只借脑子渠道的私有环境，复用 native-env 强制覆盖 HOME / XDG；Antigravity 固定 AGY_CLI_DISABLE_AUTO_UPDATE=true |
 | `src/cli-agents/managed-install.ts` | 全部受管 CLI 共用安装器实例与固定清单，区分开发测试命令覆盖和安装入口参数 |
+| `src/cli-agents/native-amp.ts` | Amp 官方 runtime 的薄接线；复用 NativeInstaller 独立产物与固定清单，启动只取私有绝对路径，不扫描宿主 |
 | `src/cli-agents/managed-auth.ts` | 官方登录命令与取消，不读取或记录凭据 |
 | `src/cli-agents/terminal-auth.ts` | 官方终端登录的跨平台窗口命令与私有脚本 |
 | `src/cli-agents/managed-actions.ts` | 三家共用安装、登录、取消和手动更新操作状态 |
 | `src/cli-agents/native-install.ts` | npm / 官方 binary 共用私有安装、SHA 校验、原子 current、取消与下次启动清旧版；binary 仅提取固定入口，更新无 SHA256 仅提示；复用 downloads |
 | `src/cli-agents/native-auth.ts` | initialize / session/new 登录检测与模型目录，Agent Auth 登录和取消；不读凭据 |
-| `src/cli-agents/profiles/gemini.ts`、`codebuddy.ts` | 每工具薄启动配置；Gemini 空 `.gemini/.env` 和父规则边界、CodeBuddy 设置来源与权限参数 |
+| `src/cli-agents/native-mcp.ts`、`tool-bridge-stdio.mjs` | 原生 ACP 按 initialize 协商 HTTP / 基础 stdio；stdio 用 App Node 转发既有 HTTP 工具桥，令牌在 0600 运行文件，不执行工具或决定审批 |
+| `src/cli-agents/native-profile.ts`、`profiles/gemini.ts` | 配置表生成共用启动 profile、隔离环境与 CodeBuddy 回放参数；Gemini 空 `.gemini/.env` 和父规则边界是必要特例 |
+| `src/cli-agents/native-binary.ts` | 固定 binary 地址、普通文件归档解压与静态启动方式识别；保留配套资源，拒绝路径越界和链接 |
 | `src/pi-adapter/cli-models/native.ts` | 原生 ACP 通用渠道注册，显式配置命令路径 |
 | `src/pi-adapter/cli-models/session-context.ts` | 会话宿主、原生过程公开 hook、标题历史与清理 |
 | `src/pi-adapter/session-events.ts` | 从 index 拆出的会话归一化事件与 entry 映射；组合原生展示事件 |
@@ -44,7 +47,7 @@
 | `src/agent-runtime/native-acp-messages.ts` | 原生工具步骤落库与停止收尾；不进入 Pi 工具执行 |
 | `test/fixtures/fake-native-acp.mjs` | 原生 ACP 假进程，权限、步骤、HTTP MCP、load 和取消场景 |
 
-`test/native-install-binary.test.ts` 验证官方 binary 假下载、SHA、tar 单入口、current、取消保旧及更新缺 / 有 SHA256；`test/managed-cli-env.test.ts` 验证既有四家私有环境与二次白名单不恢复用户 HOME；`test/managed-auth.test.ts` 验证假登录取消与跨平台终端命令拼装。相关单测使用 `native-acp-*` / `cli-models-native-*` 以及 `native-install.test.ts`、`native-auth.test.ts` 命名，全部只用临时数据和假程序。`e2e/native-acp-ui.mjs` 覆盖安装、登录取消、更新、模型选择、原生步骤与批准。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
+`test/native-amp.test.ts` 与 `test/fixtures/fake-amp-runtime.ts` 离线验证 Amp 双产物顺序、缺失、取消保旧及强制私有路径/禁更设置，不执行真实产物。`test/native-install-binary.test.ts` 验证官方 binary 假下载、SHA、tar 单入口、current、取消保旧及更新缺 / 有 SHA256；`test/managed-cli-env.test.ts` 验证既有四家私有环境与二次白名单不恢复用户 HOME；`test/managed-auth.test.ts` 验证假登录取消与跨平台终端命令拼装。相关单测使用 `native-acp-*` / `cli-models-native-*` 以及 `native-install.test.ts`、`native-auth.test.ts` 命名，全部只用临时数据和假程序。`test/native-catalog.test.ts` 逐家离线验证固定安装请求、启动参数、环境隔离及无 prompt 模型发现；`test/native-install-batch2.test.ts` 验证多格式归档、伴随文件和启动方式。`e2e/native-acp-ui.mjs` 覆盖 npm 安装、登录取消、更新、模型选择、原生步骤与批准；`e2e/native-acp-binary-ui.mjs` 为 Goose 假 binary 的独立流程，复用前者导出函数。源码详情见 [实施方案](design/native-acp-agents-impl.md)。
 
 ## 每类逻辑放在哪
 - HTTP 接口：`packages/server/src/routes/*`（`http.ts` 只做组装和中间件）。
@@ -66,7 +69,7 @@
 | 路径 | 负责 |
 |---|---|
 | `server` | 本机服务（Node 22 + Hono），见下节 |
-| `shared` | 前后端共用常量和纯逻辑；`src/native-cli.ts`：原生 ACP 卡片公开状态和操作结果（不含认证秘密） |
+| `shared` | 前后端共用常量和纯逻辑；`src/native-cli.ts`：原生 ACP 卡片公开状态；`src/native-acp-catalog.ts`：17 家原生工具唯一配置表（安装源、参数、隔离变量、认证与限制，不含认证秘密） |
 | `ext-approval` | 审批闸门（有后果的工具调用）；含「不能用命令 / 写脚本直接调 cua」的 deny（`usesCuaDirectly`，所有档位） |
 | `ext-sandbox` | 工作区命令 |
 | `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑）；`structured.ts`：把 cua 的 structuredContent（tab_id / refs / elements / next_call）压成紧凑 JSON 追加给模型（上限 12K，纯逻辑）；`quick-steps.ts`：快速执行者的纯逻辑（候选解析 / 过滤排序 / 问题构造 / 判断 / 拼调用 / 核对 / 窗口只读文字摘要 windowTextRows / 变化行 changedText）；`quick-steps-tool.ts`：`computer_quick_steps` / `hostpc_quick_steps` 工具和共用执行函数 runQuickAction（问 classifier、走 `ctx.executeTool` 照常过审批；target 可省略用最近一次目标）；`words.ts`：敏感 / 危险动作的字样（审批与目标模式守门共用）；`quick-io.ts`：快速执行 / 快速打开共用的 textOf / observe / pageSummary；`quick-open.ts`：`computer_quick_open` / `hostpc_quick_open` 工具（开浏览器 / 应用、按窗口优先级找并绑定、打开网址、读页面；可同时传 steps / goal 直接执行）；`quick-goal.ts`：目标模式的纯逻辑（候选动作生成 / 剪枝 / 危险按钮守门 / 问题构造 / 动作转步骤）；`quick-goal-run.ts`：目标模式执行循环（问 classifier、执行、核对） |
@@ -170,6 +173,7 @@
 | `action-log.ts` | 电脑操作记录 |
 | `cli-channel-service.ts` + `cli-services.ts` + `routes/models.ts` 里的 `/api/models/<渠道名>`（`/recheck`） | 本机命令行模型渠道（claude-code / codex / antigravity / opencode-cli）的**通用服务**：`createCliChannelService(adapter)` 管启动注册（找得到命令才注册，codex / antigravity 还要已登录；Mock/单测默认关，`PIA_CLAUDE_COMMAND` / `PIA_CODEX_COMMAND` / `PIA_AGY_COMMAND` / `PIA_OPENCODE_COMMAND` 指定或置空）、检测与重新检测（装好后就地注册、已注册则刷新模型列表）、关闭时 disposeAll；`cli-services.ts` 是适配表（每家一份 `CliChannelAdapter`：find / detect / register / refresh / requireLogin / extra），models.ts、main.ts、路由都遍历 `cliServices`（启动注册走 `startCliChannels`：后台并行不阻塞，`models.ts` 的 `cliChannelsReady()` / `waitCliForDefaultModel()` 可等；`cliProviderReady(provider)` 只等某一家，助理运行时用；注册上就发 `models.changed`，前端 store 收到后 `loadSystem()` 触发模型列表重拉；同一家并发的 `ensure` 合并成一次）；加新的一家 = 在适配表加一项。界面卡片 `apps/web/src/components/CliAgentCard.tsx`（四家共用，`KINDS` 放每家文案，挂在 ModelServices 里；`loginOptional` = 没登录也能用的 OpenCode）；e2e `e2e/claude-code-ui.mjs`、`e2e/codex-ui.mjs`、`e2e/agy-ui.mjs`、`e2e/opencode-ui.mjs`（独立脚本，`node e2e/<名>.mjs`，不在 run.mjs 的步骤里），单测 `test/claude-code-service-http.test.ts`、`test/cli-models-claude-list.test.ts`、`test/cli-channels-startup.test.ts`、`test/codex-service-http.test.ts`、`test/agy-service-http.test.ts`、`test/opencode-service-http.test.ts` |
 | `cli-agents/` | 把本机已登录的编程命令行（claude、codex、agy、opencode）当模型用的底层，与 Pi 无关（docs/design/cli-models.md）：launch（拼 claude 参数和白名单环境，复用 native-launch-env）、events（stream-json 一行 → 简单事件，用量取法见 §4.3）、tool-bridge（最小 MCP 服务：每次运行一个随机令牌，tools/call 按配对键挂起、外部回填，取消 / 结束时全部取消；配对键可换 `callKey`：claude 用 toolUseId、agy 用 progressToken 末段的 step_index；tools/list 每个工具带 `_meta antigravity/alwaysLoad`）、claude-models（`listClaudeModels`：向 claude 发 `initialize` 控制请求取 `/model` 完整清单，超时 30 秒）、claude-models-parse（回包 → 模型信息的纯函数：命名 / 重名 / 1M / 思考档位 + 退回的三个别名 + 内置「更多模型」清单 `CLAUDE_EXTRA_MODELS` + `mergeClaudeModels`（别名在前、清单、自定义，按 id 去重）+ `validateClaudeModelId`）；`claude-custom-models.ts`（用户自定义模型 ID 的设置存取，接口 `/api/models/claude-code/custom-models`，界面在 CliAgentCard 的「自定义模型」）、claude-process（ClaudeRun：起进程、读事件、写 stdin 插话、回填工具结果、abort）、detect（找 claude / codex / agy、版本、`claude auth status` / `codex login status` 只看退出码、agy 看 `agy models` 是否成功，不读凭证）、launch 里的 `buildCliEnv`（白名单环境，claude / codex 共用）；codex：codex-launch（`codex app-server` 的 `--disable` / `-c` 参数 + MCP 逐个按名字关 + 环境）、codex-events（通知 / 服务端请求 → 事件，和 claude 同形；审批一律拒绝、提问回不可用）、jsonrpc-stdio（通用 JSON-RPC over stdio 客户端 `RpcClient`：codex app-server 和 ACP 命令行共用，`label` 用在报错里）、codex-hub（全局唯一 app-server：按需起、空闲 10 分钟退、崩溃下次重启、起前用 `config/read` 取用户 MCP 名字、`model/list`）；agy（Antigravity，实验性，方案 §5b）：agy-launch（参数 / 白名单环境 / 运行目录里的代理文件 pia.md + 插件 + 带令牌的 mcp_config.json / 配对键 / 工具名前缀，纯函数）、agy-models（`agy models` 解析成模型家族、思考强度映射 id 后缀，纯函数）、agy-events（stream-json 一行 → 事件，文字和用量与 claude 同形）、agy-process（AgyProcess：长驻进程，每轮一行 stdin，0700 运行目录结束必删，并行工具调用等 300 毫秒收齐，SIGINT 中止，空闲 10 分钟退）；**ACP（OpenCode 等，方案 docs/design/acp-cli-models.md）**：acp-events（`session/update` 通知 → 文字 / 思考增量、「模型报告了我们的工具」计数信号；`session/prompt` 回包用量；思考强度挑选 `pickEffort`；权限选项，纯函数）、acp-process（`AcpProcess`：长驻进程，`initialize` → `session/new` / `session/resume`（带 http 类型 `mcpServers` 指向工具桥，令牌放 Authorization 头）→ `session/set_config_option` 设模型 / 思考强度 → `session/prompt`；`session/request_permission` 一律回「允许一次」；`session/cancel` 中止；**工具调用只认工具桥收到的 MCP `tools/call`，配对键 = MCP 请求 id**，并行收齐 = 桥收到的数量 ≥ ACP 报告的我们的工具数且安静 50 毫秒，最多等 300 毫秒；空闲 10 分钟退；运行目录 0700 / 配置文件 0600 结束必删；`AcpProfile` = 每家命令行的启动方式）、opencode-launch（`opencode acp --cwd <固定工作目录>`、白名单环境 + `OPENCODE_DISABLE_*` 开关 + `XDG_CONFIG_HOME` 指到 `<dataDir>/cli-models/opencode-config` 隔离用户全局配置和 AGENTS.md、`OPENCODE_CONFIG` 指向运行目录里的配置文件：`permission` 全 deny 只放行 `pia_*`、`agent.build.prompt` 放系统提示、关标题请求、`mcp_timeout` 写大；`opencodeProfile`；`opencodeAuthPath` 只判断 auth.json 在不在）、opencode-models（`opencode models --verbose` 解析：只留支持工具调用的，名字标明来源，思考强度取自 `variants`）、detect 里的 `findOpencodeCommand` / `detectOpencode` / `listOpencodeModels`；测试用假 opencode `test/fixtures/fake-opencode.mjs`，单测 `test/cli-agents-acp.test.ts`（纯函数）、`test/cli-models-opencode-channel.test.ts`、`test/cli-models-opencode-session.test.ts`；测试用假 agy `test/fixtures/fake-agy.mjs`，单测 `test/cli-agents-agy.test.ts`、`test/cli-models-agy-channel.test.ts`、`test/cli-models-agy-session.test.ts`；Pi 渠道在 `pi-adapter/cli-models/` |
+| `native-cli-service.ts` | 配置表驱动的原生 ACP 安装、认证、平台状态、模型发现与服务注册；复用通用渠道服务与 NativeInstaller |
 | `native-launch-env.ts` | 原生子进程启动环境 |
 | `mcp-env-launcher.mjs` | 原生 MCP 启动器 |
 | `mcp.ts` | MCP 服务器配置 |
@@ -352,7 +356,7 @@
 | `side-panel-section.mjs` | `file-preview.mjs` 的预览侧栏段（停靠、调宽、换文件、放大、Esc、切换对话、1100 窄窗口退回弹窗；含 noir 深色 / glass 浅色截图） |
 | `seed-subagent.mjs` | 预置子代理数据 |
 | `native-launch-env.mjs` | 原生启动环境测试 helper |
-| `native-acp-package.mjs` | 离线原生 ACP e2e 本地假 npm 包、认证与一次性审批程序 |
+| `native-acp-package.mjs` | 离线原生 ACP e2e 本地假 npm / binary 包、认证与一次性审批程序；native-acp-ui / native-acp-binary-ui 共用 |
 | `csp-probe.mjs` | CSP 探测 |
 | `demo-pi-package` | 示例 Pi 扩展包 |
 | `chat-generated-image.png` | 图片查看器测试用的示例图 |
