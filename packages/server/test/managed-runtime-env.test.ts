@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
 import { test } from "node:test";
 import { NATIVE_ACP_AGENTS } from "@pi-assistant/shared";
-import { buildNativeAcpEnv, type ManagedCliId } from "../src/cli-agents/native-env.ts";
+import { buildNativeAcpEnv, linkMacKeychains, nativeAcpHome, type ManagedCliId } from "../src/cli-agents/native-env.ts";
 import { nativeProfile } from "../src/cli-agents/native-profile.ts";
 import { managedCliEnv } from "../src/cli-agents/managed-env.ts";
 import { buildClaudeEnv, buildCliEnv } from "../src/cli-agents/launch.ts";
@@ -115,4 +115,27 @@ test("普通非受管CLI仍保留原PATH和额外变量语义", () => {
  const env = buildCliEnv({ baseEnv: dirty, realHome: "/user", platform: "darwin", extra: { npm_config_prefix: "/explicit" } }, [], {});
  assert.ok(env.PATH!.startsWith(dirty.PATH)); assert.ok(env.PATH!.includes("/opt/homebrew/bin"));
  assert.equal(env.npm_config_prefix, "/explicit");
+});
+
+test("Mac 私有 HOME 链到真实钥匙串目录，所有托管工具都有；已有的不覆盖，其他平台不建", () => {
+	const root = mkdtempSync(join(tmpdir(), "pia-keychain-"));
+	try {
+		const realHome = join(root, "real");
+		for (const id of ids) {
+			buildNativeAcpEnv({ dataDir: join(root, "data"), id, realHome, baseEnv: {} });
+			const link = join(nativeAcpHome(join(root, "data"), id), "Library", "Keychains");
+			if (process.platform === "darwin") assert.equal(readlinkSync(link), join(realHome, "Library", "Keychains"), id);
+			else assert.equal(existsSync(link), false, id);
+		}
+		const own = join(root, "own");
+		mkdirSync(join(own, "Library", "Keychains"), { recursive: true });
+		linkMacKeychains(own, realHome, "darwin");
+		assert.equal(lstatSync(join(own, "Library", "Keychains")).isSymbolicLink(), false, "已有目录不动");
+		linkMacKeychains(join(root, "linux"), realHome, "linux");
+		assert.equal(existsSync(join(root, "linux", "Library")), false, "非 Mac 不建");
+		linkMacKeychains(join(root, "nohome"), null, "darwin");
+		assert.equal(existsSync(join(root, "nohome", "Library")), false, "不改写 HOME 时不建");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
