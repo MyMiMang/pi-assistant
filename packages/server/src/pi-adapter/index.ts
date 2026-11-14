@@ -39,6 +39,7 @@ import compat from "./compat.json" with { type: "json" };
 import { refreshResumedTools } from "./session-tools.ts";
 import { guardTools } from "./tool-guard.ts";
 import { releaseNativeSessionContext } from "./cli-models/session-context.ts";
+import { isCliQuotaError } from "./cli-models/provider.ts";
 export { subscribeSession, type AgentEvent, type NativeToolEvent } from "./session-events.ts";
 export { recallQueuedSteer } from "./queue-recall.ts";
 export { activateNewExtensionTools, loadedResources } from "./session-tools.ts";
@@ -579,6 +580,7 @@ export function installLimitLearning(session: AgentSession) {
 				if (l.retry) r = true;
 			}
 		}
+		if (msg?.stopReason === "error" && isCliQuotaError(msg.errorMessage)) r = false;
 		r ??= orig(msg);
 		if (msg) seen.set(msg, r);
 		return r;

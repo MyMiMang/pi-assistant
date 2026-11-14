@@ -102,3 +102,17 @@ test("会话自动重试：max_tokens 太大被拒 → 调小会话里的模型�
 	assert.equal(isR("401 bad key"), false);
 	setLimitsLearner(null);
 });
+
+test("编程工具报额度用完：给中文说明，Pi 不再整轮重试；普通限流仍按 Pi 原判断", async () => {
+	const { installLimitLearning } = await import("../src/pi-adapter/index.ts");
+	const { describeCliError } = await import("../src/pi-adapter/cli-models/provider.ts");
+	const style = { label: "Antigravity", loginCommand: "agy acp --login", notLoggedIn: /not logged in/i };
+	const quota = describeCliError(style, "RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).");
+	assert.match(quota, /^Antigravity 的额度用完了.*换个模型.*原文：RESOURCE_EXHAUSTED/);
+	assert.equal(describeCliError(style, "connection reset"), "Antigravity 出错：connection reset");
+	const s = { model: { provider: "antigravity", id: "g" }, _isRetryableError: () => true } as never as Parameters<typeof installLimitLearning>[0];
+	installLimitLearning(s);
+	const isR = (errorMessage: string) => (s as unknown as { _isRetryableError: (m: unknown) => boolean })._isRetryableError({ stopReason: "error", errorMessage, provider: "antigravity", model: "g" });
+	assert.equal(isR(quota), false, "额度用完不重试");
+	assert.equal(isR("429 Too Many Requests"), true, "其他错误照旧交给 Pi");
+});

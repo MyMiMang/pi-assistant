@@ -74,10 +74,16 @@ export interface CliErrorStyle {
 	authFailed?: RegExp;
 }
 
+/** 工具自己已经按退避重试过还报额度不足：Pi 不再整轮重试（每轮要等工具重试一两分钟），直接告诉用户。 */
+const QUOTA = /RESOURCE_EXHAUSTED|insufficient[\s_-]*quota|check quota|quota (?:exceeded|exhausted)|usage limit|额度(?:不足|用完|已用尽)/i;
+export const CLI_QUOTA_HINT = "额度用完了";
+export const isCliQuotaError = (message?: string): boolean => !!message?.includes(CLI_QUOTA_HINT);
+
 /** 命令行工具报错 → 中文说明，带上原文 */
 export function describeCliError(style: CliErrorStyle, text: string): string {
 	const raw = text.trim() || "（没有错误内容）";
 	if (style.notLoggedIn.test(raw)) return style.loginHint ? `${style.label} 未登录，${style.loginHint}。原文：${raw}` : `本机 ${style.label} 未登录，请在终端运行 ${style.loginCommand}。原文：${raw}`;
 	if (style.authFailed?.test(raw)) return `${style.label} 认证失败，请在终端运行 ${style.loginCommand} 重新登录。原文：${raw}`;
+	if (QUOTA.test(raw)) return `${style.label} 的${CLI_QUOTA_HINT}（服务方返回额度不足），可以换个模型，或等额度恢复后再试。原文：${raw}`;
 	return `${style.label} 出错：${raw}`;
 }
