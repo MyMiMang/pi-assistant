@@ -229,7 +229,7 @@ test("进程崩溃：进行中的一轮以 error 结束；下次请求重启并 
 	const crashed = await run(ctx([user("一"), first.message, user("二")]), { sessionId: "crash-1" });
 	assert.equal(crashed.message.stopReason, "error");
 	assert.match(crashed.message.errorMessage ?? "", /意外退出/);
-	assert.equal(channel.store.get("crash-1"), undefined);
+	assert.ok(channel.store.get("crash-1"), "一个字没产出就失败：保留续用记录，下次接着用");
 	// 线程是存在状态文件里的，换成另一个会话用它：先造一个能续用的对照项
 	setScenario("meta");
 	const again = await run(ctx([user("一"), first.message, user("三")]), { sessionId: "crash-1" });

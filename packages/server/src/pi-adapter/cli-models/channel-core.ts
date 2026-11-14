@@ -7,6 +7,7 @@
  * 加新的一家 = 写一个 `CliBackend`（见 docs/MODULES.md），不要复制这里的流程。
  */
 import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools, type Api, type AssistantMessageEventStream, type Message, type Model, type SimpleStreamOptions, type TranscriptContext } from "@earendil-works/pi-ai";
+import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import type { TokenUsage } from "../../cli-agents/events.ts";
 import type { Tool } from "../../cli-agents/tool-bridge.ts";
 import { conversationOf, matchContinuation, renderFreshInput, thinkingToEffort, toolDefOf, type ClaudeBlock, type Continuation } from "./convert.ts";
@@ -89,6 +90,11 @@ export interface CliBackend<L extends CliLive> {
 	dispose?(): void;
 }
 
+/** 从 Pi 公开转换 API 取得摘要包装，不依赖上游私有常量或固定英文。 */
+const summaryProbe = convertToLlm([{ role: "compactionSummary", summary: "pia-compaction-probe", tokensBefore: 0, timestamp: 0 }])[0];
+const summaryPrefix = summaryProbe?.role === "user" && Array.isArray(summaryProbe.content) && summaryProbe.content[0]?.type === "text"
+	? summaryProbe.content[0].text.split("pia-compaction-probe")[0] : "";
+
 export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, store: SyncStore) {
 	const live = new Map<string, L>();
 
@@ -162,7 +168,7 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 						return;
 					case "fail":
 						finish(l);
-						if (l.key) store.delete(l.key);
+						if (l.key && (b.message.content.length || s.resumeFailed || s.reason === "aborted")) store.delete(l.key);
 						if (s.resumeFailed && ctx.canRetryFresh && !b.message.content.length) return "retry-fresh";
 						if (s.fallbackUsage) b.useFallbackUsage(s.fallbackUsage);
 						b.fail(s.reason, s.message);
@@ -204,6 +210,12 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 		let plan: TurnPlan = oneShot ? { mode: "fresh", reason: "单次请求", input: renderFreshInput(messages, backend.freshInputMaxChars) } : planTurn(key ? store.get(key) : undefined, composite, messages, backend.freshInputMaxChars);
 		let started = false;
 		for (let attempt = 0; attempt < 2; attempt++) {
+			if (!oneShot && plan.mode === "fresh" && backend.freshInputMaxChars !== undefined) {
+				const hasSummary = summaryPrefix && messages.some((m) => m.role === "user" && (typeof m.content === "string"
+					? m.content.startsWith(summaryPrefix) : m.content.some((c) => c.type === "text" && c.text.startsWith(summaryPrefix))));
+				const chars = renderFreshInput(messages).reduce((n, c) => n + (c.type === "text" ? String(c.text).length : "[图片]".length), 0);
+				if (!hasSummary && chars > backend.freshInputMaxChars) return b.fail("error", `重开会话的历史超过 ${backend.freshInputMaxChars} 字，先整理上下文再继续（context window exceeded）`);
+			}
 			const base: Payload = { model: model.id, effort, systemPrompt, resumeSessionId: plan.mode === "resume" ? plan.claudeSessionId : undefined, input: plan.input, tools: tools.map((t) => t.name) };
 			const payload = applyPayload(base, await options?.onPayload?.(base, model));
 			let l: L;
