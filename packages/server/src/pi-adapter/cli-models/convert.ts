@@ -68,13 +68,20 @@ function assistantText(m: AssistantMessage): string {
 	return parts.join("\n");
 }
 
-/** 历史渲染成文字，给「新开 claude 会话」当第一条消息的前文。图片只留占位（真正要看的图在最新那条用户消息里）。 */
+/** 重开会话的历史工具结果保留头尾；实时工具回填不走这里。 */
+function compactToolResult(text: string): string {
+	if (text.length <= 2000) return text;
+	const omitted = text.length - 1900;
+	return `${text.slice(0, 1600)}（中间省略 ${omitted} 字，需要时重新调用工具查看）${text.slice(-300)}`;
+}
+
+/** 历史渲染成文字，给新开 CLI 会话当前输入之前的前文。 */
 export function renderTranscript(messages: readonly Message[]): string {
 	const lines: string[] = [];
 	for (const m of messages) {
-		if (m.role === "user") lines.push(`用户：${textOf(m.content)}`);
+		if (m.role === "user") lines.push(`用户：${textOf(m.content).replace(/(<skill\b[^>]*>)[\s\S]*?<\/skill>/g, "$1（技能正文已省略，需要时读 location 里的文件）</skill>")}`);
 		else if (m.role === "assistant") lines.push(`助理：${assistantText(m)}`);
-		else if (m.role === "toolResult") lines.push(`[工具 ${m.toolName} 的结果${m.isError ? "（出错）" : ""}：${textOf(m.content)}]`);
+		else if (m.role === "toolResult") lines.push(`[工具 ${m.toolName} 的结果${m.isError ? "（出错）" : ""}：${compactToolResult(textOf(m.content))}]`);
 	}
 	return lines.join("\n\n");
 }
@@ -83,7 +90,7 @@ export function renderTranscript(messages: readonly Message[]): string {
  * 新开会话时送给 claude 的第一条消息：最后一个助理 / 工具结果之后的用户消息是「这次的输入」（保留文字和图片原样），
  * 在它前面的全部历史渲染成文字。上下文以工具结果结尾（没有活着的进程可以续接）时，补一句让它接着做。
  */
-export function renderFreshInput(messages: readonly Message[]): ClaudeBlock[] {
+export function renderFreshInput(messages: readonly Message[], maxChars?: number): ClaudeBlock[] {
 	const conv = conversationOf(messages);
 	let tail = conv.length;
 	while (tail > 0 && conv[tail - 1].role === "user") tail--;
@@ -92,7 +99,16 @@ export function renderFreshInput(messages: readonly Message[]): ClaudeBlock[] {
 	const blocks = current.flatMap((m) => userContentToClaude(m.content));
 	if (!history.length) return blocks.length ? blocks : [{ type: "text", text: "（空）" }];
 	const resume = current.length ? "以下是用户的新消息：" : "（上面的工具已经执行完，请根据结果接着完成任务。）";
-	return [{ type: "text", text: `以下是你和用户之前的对话记录，请接着这段对话回答，不要复述：\n\n${renderTranscript(history)}\n\n${resume}` }, ...blocks];
+	const lines = history.map((m) => renderTranscript([m]));
+	const currentChars = blocks.reduce((n, b) => n + (b.type === "text" ? String(b.text).length : "[图片]".length), 0);
+	let omitted = 0;
+	let remainingChars = lines.reduce((n, line) => n + line.length, 0);
+	const prefix = "以下是你和用户之前的对话记录，请接着这段对话回答，不要复述：";
+	const notice = () => omitted ? `（更早的 ${omitted} 条对话已省略）\n\n` : "";
+	const size = () => prefix.length + 4 + notice().length + remainingChars + Math.max(0, lines.length - omitted - 1) * 2 + resume.length + currentChars + blocks.length * 2;
+	while (maxChars !== undefined && omitted < lines.length && size() > maxChars) remainingChars -= lines[omitted++].length;
+	// 当前输入自身超过预算时也完整保留；预算只淘汰最早的历史。
+	return [{ type: "text", text: `${prefix}\n\n${notice()}${lines.slice(omitted).join("\n\n")}\n\n${resume}` }, ...blocks];
 }
 
 export interface Continuation {

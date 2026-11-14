@@ -62,6 +62,60 @@ test("历史渲染成文字：新开会话的第一条消息 = 前文 + 这次�
 	assert.match(renderTranscript([result("t", "炸了", true)]), /出错/);
 });
 
+test("重开历史工具结果只留头尾，短结果与实时回填保持原文", () => {
+	const text = "头".repeat(1600) + "中".repeat(7000) + "尾".repeat(300);
+	const rendered = renderTranscript([result("t", text)]);
+	assert.ok(rendered.length < 2100);
+	assert.ok(rendered.includes("头".repeat(1600)));
+	assert.ok(rendered.includes("尾".repeat(300)));
+	assert.match(rendered, /中间省略 7000 字，需要时重新调用工具查看/);
+	assert.equal(renderTranscript([result("t", "短结果")]), "[工具 echo 的结果：短结果]");
+	assert.deepEqual(toolResultToMcp(result("t", text)).content, [{ type: "text", text }]);
+});
+
+test("仅省略历史用户技能正文，保留多个技能头、周围原话及当前完整技能", () => {
+	const skill = '<skill name="示例" location="/tmp/SKILL.md">技能正文\n' + "规则".repeat(10000) + "</skill>";
+	const old = `原话开始${skill}中间原话${skill}原话结束`;
+	const latest = `请使用${skill}`;
+	const messages = [user(old), asst([{ type: "text", text: "助理原话" }]), user(latest)];
+	const input = renderFreshInput(messages);
+	const head = String(input[0].text);
+	assert.equal(head.match(/技能正文已省略/g)?.length, 2);
+	assert.equal(head.match(/<skill name="示例" location="\/tmp\/SKILL.md">/g)?.length, 2);
+	assert.ok(head.includes("原话开始") && head.includes("中间原话") && head.includes("原话结束"));
+	assert.ok(head.includes("助理原话"));
+	assert.ok(!head.includes("规则"));
+	assert.deepEqual(input.at(-1), { type: "text", text: latest });
+	assert.equal(messages[0].content, old);
+});
+
+test("输入超预算从最早历史丢弃，最近历史及当前输入完整在最后", () => {
+	const latest = "当前消息".repeat(50);
+	const messages = [user("最早历史".repeat(1000)), asst([{ type: "text", text: "最近回答" }]), user(latest), user("最后一句")];
+	const input = renderFreshInput(messages, 500);
+	const text = input.map((b) => b.text).join("\n\n");
+	assert.ok(text.length <= 500);
+	assert.match(String(input[0].text), /更早的 1 条对话已省略/);
+	assert.ok(!text.includes("最早历史"));
+	assert.ok(text.includes("最近回答"));
+	assert.deepEqual(input.slice(-2), [{ type: "text", text: latest }, { type: "text", text: "最后一句" }]);
+	const huge = "当前输入".repeat(20000);
+	assert.deepEqual(renderFreshInput([...messages.slice(0, 2), user(huge)], 500).at(-1), { type: "text", text: huge });
+	assert.deepEqual(renderFreshInput([user(huge)], 500), [{ type: "text", text: huge }]);
+	const planned = planTurn(undefined, "model", messages, 500);
+	assert.deepEqual(planned.input, input);
+});
+
+test("未超预算时与无上限输入完全相同，续用路径不压缩新增技能", () => {
+	const messages = [user("原始问题"), asst([{ type: "text", text: "原始回答" }]), user("新问题")];
+	assert.deepEqual(renderFreshInput(messages, 60000), renderFreshInput(messages));
+	const entry = makeSyncEntry("S", "model", [messages[0]], messages[1]);
+	const latest = '<skill name="x" location="/tmp/x">完整正文</skill>';
+	const plan = planTurn(entry, "model", [...messages.slice(0, 2), user(latest)], 1);
+	assert.equal(plan.mode, "resume");
+	assert.deepEqual(plan.input, [{ type: "text", text: latest }]);
+});
+
 test("换模型历史直接带原生操作的一行结果标题，不创建Pi工具调用或摘要", () => {
 	const native = { ...asst([{ type: "text", text: "文件处理完毕" }]), nativeToolTitles: ["成功：读取 a.txt", "失败：写入 b.txt", "未确认：执行命令\n仍需检查"] };
 	const rendered = renderTranscript([user("处理文件"), native]);

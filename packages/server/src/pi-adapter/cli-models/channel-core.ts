@@ -67,6 +67,8 @@ export type Step =
 export interface CliBackend<L extends CliLive> {
 	/** 界面 / 错误里的名字，如 `Claude Code` */
 	label: string;
+	/** 重开会话的输入字符预算；当前用户输入始终完整保留。 */
+	freshInputMaxChars?: number;
 	/** 原生渠道同轮工具回填前也核对工作区等指纹；既有渠道保持原行为。 */
 	checkContinuationComposite?: boolean;
 	/** 续用判断用的指纹：不一样就不续用旧会话（至少含模型；codex 还含工具集和系统提示） */
@@ -199,19 +201,19 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 			kill(key); // 对不上（Pi 重试 / 分支 / 进程已死）：丢掉旧的，当新的一轮
 		}
 
-		let plan: TurnPlan = oneShot ? { mode: "fresh", reason: "单次请求", input: renderFreshInput(messages) } : planTurn(key ? store.get(key) : undefined, composite, messages);
+		let plan: TurnPlan = oneShot ? { mode: "fresh", reason: "单次请求", input: renderFreshInput(messages, backend.freshInputMaxChars) } : planTurn(key ? store.get(key) : undefined, composite, messages, backend.freshInputMaxChars);
 		let started = false;
 		for (let attempt = 0; attempt < 2; attempt++) {
 			const base: Payload = { model: model.id, effort, systemPrompt, resumeSessionId: plan.mode === "resume" ? plan.claudeSessionId : undefined, input: plan.input, tools: tools.map((t) => t.name) };
 			const payload = applyPayload(base, await options?.onPayload?.(base, model));
 			let l: L;
 			try {
-				l = await backend.launch({ key, model: payload.model, effort: payload.effort, systemPrompt: payload.systemPrompt, resumeSessionId: payload.resumeSessionId, input: payload.input, freshInput: renderFreshInput(messages), tools, oneShot, composite, forget: (x) => finish(x as L) });
+				l = await backend.launch({ key, model: payload.model, effort: payload.effort, systemPrompt: payload.systemPrompt, resumeSessionId: payload.resumeSessionId, input: payload.input, freshInput: renderFreshInput(messages, backend.freshInputMaxChars), tools, oneShot, composite, forget: (x) => finish(x as L) });
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);
 				if (plan.mode === "resume" && attempt === 0 && backend.isResumeFailure(msg)) {
 					if (key) store.delete(key);
-					plan = { mode: "fresh", reason: `${backend.label} 找不到要续用的会话`, input: renderFreshInput(messages) };
+					plan = { mode: "fresh", reason: `${backend.label} 找不到要续用的会话`, input: renderFreshInput(messages, backend.freshInputMaxChars) };
 					continue;
 				}
 				return b.fail("error", msg);
@@ -224,7 +226,7 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 			watch(l, options?.signal);
 			const out = await pump(l, b, model, options, { messages, canRetryFresh: plan.mode === "resume" && attempt === 0 });
 			if (out !== "retry-fresh") return;
-			plan = { mode: "fresh", reason: `${backend.label} 找不到要续用的会话`, input: renderFreshInput(messages) };
+			plan = { mode: "fresh", reason: `${backend.label} 找不到要续用的会话`, input: renderFreshInput(messages, backend.freshInputMaxChars) };
 		}
 	}
 

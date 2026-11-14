@@ -58,8 +58,8 @@ export type TurnPlan =
 	| { mode: "fresh"; reason: string; input: ClaudeBlock[] };
 
 /** 决定这一轮是续用 claude 会话，还是新开会话（纯函数）。 */
-export function planTurn(entry: SyncEntry | undefined, model: string, messages: readonly Message[]): TurnPlan {
-	const fresh = (reason: string): TurnPlan => ({ mode: "fresh", reason, input: renderFreshInput(messages) });
+export function planTurn(entry: SyncEntry | undefined, model: string, messages: readonly Message[], freshInputMaxChars?: number): TurnPlan {
+	const fresh = (reason: string): TurnPlan => ({ mode: "fresh", reason, input: renderFreshInput(messages, freshInputMaxChars) });
 	if (!entry) return fresh("没有对照表");
 	if (entry.model !== model) return fresh("换过模型");
 	const conv = conversationOf(messages);

@@ -71,6 +71,8 @@ function antigravityBackend(deps: AntigravityDeps, state: { families: AgyFamily[
 
 	return {
 		label: "Antigravity",
+		// agy 1.5.4 实测约 7.5 万字符截断；留余量，升级 agy 后复核。
+		freshInputMaxChars: 60_000,
 		composite: toolsPromptComposite,
 		isResumeFailure: (message) => RESUME_FAILED.test(message),
 		async launch(req: LaunchRequest) {
