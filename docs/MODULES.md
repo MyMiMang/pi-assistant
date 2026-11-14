@@ -42,6 +42,7 @@
 | `src/cli-agents/native-profile.ts`、`profiles/gemini.ts` | 配置表生成共用启动 profile、隔离环境与 CodeBuddy 回放参数；Gemini 空 `.gemini/.env` 和父规则边界是必要特例 |
 | `src/cli-agents/native-binary.ts` | 固定 binary 地址、普通文件归档解压与静态启动方式识别；保留配套资源，拒绝路径越界和链接 |
 | `src/pi-adapter/cli-models/native.ts` | 原生 ACP 通用渠道注册，显式配置命令路径 |
+| `test/cli-models-core.test.ts` | 共用渠道离线回归：fresh 超限交 Pi 整理（公开 convertToLlm 识别摘要）、整理后裁剪、空输出错误保留续用及失效清理 |
 | `src/pi-adapter/cli-models/session-context.ts` | 会话宿主、原生过程公开 hook、标题历史与清理 |
 | `src/pi-adapter/session-events.ts` | 从 index 拆出的会话归一化事件与 entry 映射；组合原生展示事件 |
 | `src/agent-runtime/native-acp-permission.ts` | 复用凭据判断和 requests，按一次性选项审批，暂停取消 |
