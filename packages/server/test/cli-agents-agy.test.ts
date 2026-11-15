@@ -63,6 +63,8 @@ test("运行目录文件：代理 / 插件 / MCP 配置的内容，含令牌的�
 	assert.deepEqual(JSON.parse(files[1].content), { name: "pia", description: "Pi Assistant 的工具桥", version: "1" });
 	assert.deepEqual(JSON.parse(files[2].content), { mcpServers: { pia: { url: "http://127.0.0.1:1/internal/tool-bridge/r", headers: { Authorization: "Bearer tok" }, timeoutSeconds: 3600 } } });
 	assert.match(agyAgentFile(undefined), /只使用提供给你的工具/, "没有系统提示时给一句兜底");
+	const pi = agyAgentFile("You are a coding assistant running inside pi, a coding agent harness. Help users inspect files.\nRead pi docs when asked.");
+	assert.ok(pi.endsWith("---\nYou are a coding assistant. Help users inspect files.\nRead pi docs when asked.\n"), "去掉会被 Antigravity 拒绝的「running inside pi」，其余不动");
 });
 
 test("工具名前缀和配对键：progressToken 末段的 step_index", () => {
