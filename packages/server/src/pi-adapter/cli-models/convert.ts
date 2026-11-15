@@ -204,7 +204,7 @@ export const toolsPromptComposite = (modelId: string, tools: readonly Tool[], sy
 	`${modelId}#${createHash("sha1").update(`${JSON.stringify(tools.map((t) => [t.name, t.description, t.inputSchema]))}\0${systemPrompt ?? ""}`).digest("hex")}`;
 
 /** 统一内容块 → 纯文字（agy 的 stdin 只验证过文字消息；图片留占位，真正要看图的渠道不走这里） */
-export function blocksToPlainText(input: string | readonly ClaudeBlock[]): string {
+export function blocksToPlainText(input: string | readonly ClaudeBlock[], imageText = "[图片]"): string {
 	if (typeof input === "string") return input;
-	return input.map((b) => (b.type === "text" && typeof b.text === "string" ? b.text : b.type === "image" ? "[图片]" : "")).filter(Boolean).join("\n\n");
+	return input.map((b) => (b.type === "text" && typeof b.text === "string" ? b.text : b.type === "image" ? imageText : "")).filter(Boolean).join("\n\n");
 }

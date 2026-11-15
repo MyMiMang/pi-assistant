@@ -14,7 +14,7 @@ import { Hono } from "hono";
 import { normalizeContext, type AssistantMessage, type AssistantMessageEvent, type Message, type Model, type SimpleStreamOptions, type ToolResultMessage, type UserMessage } from "@earendil-works/pi-ai";
 import { parseAgyModels } from "../src/cli-agents/agy-models.ts";
 import { Type } from "../src/pi-adapter/index.ts";
-import { ANTIGRAVITY_API, ANTIGRAVITY_PROVIDER, createAntigravityChannel, describeAgyError } from "../src/pi-adapter/cli-models/antigravity.ts";
+import { AGY_IMAGE_HINT, ANTIGRAVITY_API, ANTIGRAVITY_PROVIDER, createAntigravityChannel, describeAgyError } from "../src/pi-adapter/cli-models/antigravity.ts";
 import type { Env } from "../src/routes/common.ts";
 import { mountToolBridgeRoutes } from "../src/routes/tool-bridge.ts";
 
@@ -91,6 +91,15 @@ test("纯文字一轮：start 在前、文字事件成对、恰好一个 done；
 	assert.deepEqual({ input: r.message.usage.input, output: r.message.usage.output, cacheRead: r.message.usage.cacheRead, total: r.message.usage.totalTokens }, { input: 100, output: 20, cacheRead: 30, total: 150 });
 	assert.equal(r.message.usage.cost.total, 0);
 	assert.ok(channel.store.get("text-1")?.claudeSessionId.startsWith("fake-conv-"), "对照表记下 agy 的会话 id");
+	noLeftovers();
+});
+
+test("带图片：stdin 只收文字，图片换成让模型用 look_at_image 看附件的提示，文字原样在前", async () => {
+	setScenario("text");
+	const r = await run(ctx([user([{ type: "text", text: "[附件: uploads/red.png] 这是什么颜色" }, { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }])]), { sessionId: "image-1" });
+	assert.equal(r.message.stopReason, "stop", r.message.errorMessage ?? "");
+	assert.equal(textOf(r.message), `你好，收到：[附件: uploads/red.png] 这是什么颜色\n\n${AGY_IMAGE_HINT}`);
+	assert.match(AGY_IMAGE_HINT, /look_at_image/);
 	noLeftovers();
 });
 

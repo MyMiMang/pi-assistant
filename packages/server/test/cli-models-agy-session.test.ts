@@ -46,11 +46,11 @@ after(() => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-test("渠道注册后：每个家族一项，思考档位按 agy 的档位，没有选择的家族不给思考强度，不声明能看图", () => {
+test("渠道注册后：每个家族一项，思考档位按 agy 的档位，没有选择的家族不给思考强度，声明能看图（经 look_at_image 工具看）", () => {
 	const list = models.listModels(ANTIGRAVITY_PROVIDER);
 	assert.deepEqual(list.map((m) => m.id), ["claude-sonnet-5-5", "gemini-4-argon", "gpt-oss-120b"]);
 	assert.deepEqual(list.map((m) => m.name), ["Antigravity · Claude Sonnet 5.5", "Antigravity · Gemini 4 Argon", "Antigravity · GPT-OSS 120B"]);
-	assert.ok(list.every((m) => !m.input.includes("image")));
+	assert.ok(list.every((m) => m.input.includes("image")), "图片换成提示后经 look_at_image 工具看");
 	assert.deepEqual(list[0].thinking, ["off", "low", "medium", "high", "xhigh", "max"]);
 	assert.deepEqual(list[1].thinking, ["off", "low", "high", "xhigh", "max"], "假 agy 的 gemini 只有 low / high");
 	assert.deepEqual(list[2].thinking, ["off"], "只有一个档位：没有思考强度");

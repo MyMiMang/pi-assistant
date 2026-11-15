@@ -112,7 +112,7 @@ function antigravityBackend(deps: AntigravityDeps, state: { families: AgyFamily[
 					},
 				}),
 			);
-			proc.sendUserMessage(blocksToPlainText(req.input));
+			proc.sendUserMessage(blocksToPlainText(req.input, AGY_IMAGE_HINT));
 			return l;
 		},
 		resume: async (l, cont, ids) => resolveToolResults(l.keyOf, cont, ids, (key, result) => void l.proc.resolveTool(key, result)),
@@ -162,6 +162,9 @@ export function createAntigravityChannel(deps: AntigravityDeps) {
 export type AntigravityChannel = ReturnType<typeof createAntigravityChannel>;
 
 /** 用 `agy models` 的结果（重新）注册 `antigravity` 渠道；重新检测时再调一次就刷新列表。 */
+/** agy 1.5.4 的 stream-json 输入只收文字块（传图片报「only "text"」，实测）：图片换成这句提示，附件路径在同一条消息的「[附件: …]」里 */
+export const AGY_IMAGE_HINT = "[图片：你在这里看不到原图，需要看时用 look_at_image 工具读取上面附件路径里的图片]";
+
 export async function registerAntigravityModels(models: PiModels, channel: AntigravityChannel, families: AgyFamily[]): Promise<void> {
 	if (!families.length) throw new Error("Antigravity 没有返回任何模型");
 	channel.setFamilies(families);
@@ -176,7 +179,7 @@ export async function registerAntigravityModels(models: PiModels, channel: Antig
 			name: `Antigravity · ${f.name}`,
 			reasoning: effortsOf(f).length > 1,
 			thinkingLevelMap: agyThinkingMap(f),
-			image: false, // 图片经 stdin 没验证过，先不声明能看图
+			image: true, // 原图走不了 stdin（只收文字），靠 AGY_IMAGE_HINT 让模型用 look_at_image / read 工具看，工具结果里的图片 agy 会交给模型（实测）
 			contextWindow: 200_000,
 			maxTokens: 64_000,
 		})),
