@@ -19,7 +19,7 @@ import { type AttachmentInput, prepareAttachments } from "../attachments.ts";
 import { supportsVision } from "../vision.ts";
 import { isStopCommand } from "../interject.ts";
 import { insertMessage, updateMessage } from "../messages.ts";
-import { cliProviderReady } from "../cli-services.ts";
+import { cliServiceFor, cliModelError, resolveCliModel } from "../cli-services.ts";
 import { defaultModel, defaultThinking, models } from "../models.ts";
 import { composeQuotedInput } from "../replies.ts";
 import { abortSession, type AgentSession, type SkillInvocationInput, compactSession, triggerHidden, applyModelSettings, disposeSession, injectContext, isSessionBusy, recallQueuedSteer, lastAssistantText, modelErrorMessage, promptSession, skillCommand, sessionFileOf, sessionStats, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
@@ -56,8 +56,18 @@ export class AgentRuntime {
 	}
 
 	modelFor(a: AgentRow) {
-		if (a.model_provider && a.model_id && models.getModel(a.model_provider, a.model_id)) return { provider: a.model_provider, id: a.model_id };
+		if (a.model_provider && a.model_id && (cliServiceFor(a.model_provider) || models.getModel(a.model_provider, a.model_id))) return { provider: a.model_provider, id: a.model_id };
 		return defaultModel();
+	}
+
+	async resolveModel(a: AgentRow) {
+		const pick = this.modelFor(a);
+		if (pick) await resolveCliModel(models, pick);
+		return pick;
+	}
+
+	private unavailableModel() {
+		return cliModelError(getAgent(this.id)?.model_provider) ?? "还没有可用的模型。请先在「设置 → 模型」里登录一个模型服务并选择默认模型。";
 	}
 
 	/** 取（必要时重建）会话；服务重启中断的后台命令在助理下次开口前告诉它一次 */
@@ -83,9 +93,10 @@ export class AgentRuntime {
 	private async ensureSession(): Promise<AgentSession | null> {
 		if (this.creating) return this.creating;
 		const a = getAgent(this.id)!;
-		// 助理选的是本机命令行模型、那一家还在后台注册：等它注册完（最多 60 秒）再解析，别立刻退回默认模型
-		if (a.model_provider && !models.getModel(a.model_provider, a.model_id ?? "")) await cliProviderReady(a.model_provider);
-		const model = this.modelFor(a);
+		const model = await this.resolveModel(a).catch(e => {
+			if (cliServiceFor(a.model_provider)) return null;
+			throw e;
+		});
 		if (!model) return null;
 		const ds = await desktopStatus(this.id).catch(() => null);
 		const desk = ds?.state === "running" ? "on" : ds?.available ? "off" : "none";
@@ -188,7 +199,7 @@ export class AgentRuntime {
 		}
 		const s = await this.ensure();
 		if (!s) {
-			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: "还没有可用的模型。请先在「设置 → 模型」里登录一个模型服务并选择默认模型。", meta: { action: "open-models" } });
+			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: this.unavailableModel(), status: "error", meta: { action: "open-models" } });
 			return "none";
 		}
 		const steer = isSessionBusy(s);
@@ -271,8 +282,8 @@ export class AgentRuntime {
 	async turn(text: string, files?: AttachmentInput[], opts: { onToolStep?: (done: number) => void } = {}): Promise<{ ok: boolean; aborted: boolean; error?: string; text: string; tokens: number }> {
 		const s = await this.ensure();
 		if (!s) {
-			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: "还没有可用的模型。请先在「设置 → 模型」里登录一个模型服务并选择默认模型。", meta: { action: "open-models" } });
-			return { ok: false, aborted: false, error: "没有可用的模型", text: "", tokens: 0 };
+			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: this.unavailableModel(), status: "error", meta: { action: "open-models" } });
+			return { ok: false, aborted: false, error: this.unavailableModel(), text: "", tokens: 0 };
 		}
 		const before = sessionStats(s).session?.tokens.total ?? 0;
 		const startedAt = Date.now();

@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { bus } from "./bus.ts";
 import { config, env } from "./config.ts";
-import type { PiModels } from "./pi-adapter/index.ts";
+import { modelErrorMessage, type PiModels } from "./pi-adapter/index.ts";
 
 /** 每家要给的适配：怎么找命令、怎么检测、怎么注册 */
 export interface CliChannelAdapter<S extends { installed: boolean; loggedIn: boolean }, C extends { disposeAll(): void }> {
@@ -41,10 +41,25 @@ export interface CliChannelAdapter<S extends { installed: boolean; loggedIn: boo
 
 export type CliChannelInfo<S> = S & { registered: boolean } & Record<string, unknown>;
 
-export function createCliChannelService<S extends { installed: boolean; loggedIn: boolean }, C extends { disposeAll(): void }>(a: CliChannelAdapter<S, C>) {
+export function createCliChannelService<S extends { installed: boolean; loggedIn: boolean }, C extends { disposeAll(): void }>(a: CliChannelAdapter<S, C>, retryDelaysMs: readonly number[] = [30_000, 60_000, 120_000, 300_000]) {
 	let channel: C | undefined;
 	/** 渠道注册在哪个模型目录上（initModels 可能被调用多次，每次换一个新目录，要重新注册） */
 	let registeredOn: PiModels | undefined;
+	let stopped = false;
+	let lastError = "";
+	let failures = 0;
+	let generation = 0;
+	let retryTimer: NodeJS.Timeout | undefined;
+	const cancelRetry = () => { clearTimeout(retryTimer); retryTimer = undefined; };
+	function retry(models: PiModels) {
+		if (stopped || retryTimer) return;
+		const ms = retryDelaysMs[Math.min(failures++, retryDelaysMs.length - 1)];
+		retryTimer = setTimeout(() => {
+			retryTimer = undefined;
+			void start(models).catch(() => {});
+		}, ms);
+		retryTimer.unref();
+	}
 
 	/** 要用的命令路径：环境变量显式指定优先（空 = 关闭）；Mock 模式默认不找；否则在本机找。 */
 	function command(): string | null {
@@ -59,7 +74,7 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 	/** 找得到命令（且按要求已登录）就注册；返回注册后是否可用。 */
 	function ensure(models: PiModels, known?: S): Promise<boolean> {
 		if (channel && registeredOn === models) return Promise.resolve(true);
-		// 并入正在进行的那次；它没注册成（比如启动时命令还没装好）而现在可能装好了，就再按当前状态试一次
+		// 并入正在进行的那次；没注册成时按当前检测状态立即再试一次
 		if (pending?.models === models) return pending.p.then((ok) => ok || start(models, known));
 		return start(models, known);
 	}
@@ -67,16 +82,34 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 	function start(models: PiModels, known?: S): Promise<boolean> {
 		if (channel && registeredOn === models) return Promise.resolve(true);
 		if (pending?.models === models) return pending.p;
+		if (stopped) return Promise.resolve(false);
+		cancelRetry();
+		const attempt = generation;
 		const p = (async () => {
 			const cmd = command();
-			if (!cmd) return false;
-			if (a.requireLogin && !(known ?? (await a.detect(cmd))).loggedIn) return false;
+			if (!cmd) { lastError = a.notFound; return false; }
+			const status = known ?? (a.requireLogin ? await a.detect(cmd) : undefined);
+			if (status && (!status.installed || (a.requireLogin && !status.loggedIn))) {
+				lastError = String((status as S & { error?: string }).error || "尚未登录，请先到设置里登录");
+				// Antigravity 用列模型探测登录；网络超时不能当成明确退出登录。
+				if (status.installed && /timed?\s*out|timeout|超时|network|fetch failed|ECONN|网络/i.test(lastError)) retry(models);
+				return false;
+			}
 			channel?.disposeAll();
-			channel = await a.register(models, command);
+			const registered = await a.register(models, command);
+			if (stopped || attempt !== generation) { registered.disposeAll(); models.unregisterProvider(a.id); return false; }
+			channel = registered;
 			registeredOn = models;
+			lastError = "";
+			failures = 0;
+			cancelRetry();
 			bus.emit({ type: "models.changed", provider: a.id }); // 这一家注册上了（后台注册 / 装好后重新检测），界面重新拉模型列表
 			return true;
-		})().finally(() => {
+		})().catch((e) => {
+			lastError = modelErrorMessage(e);
+			if (attempt === generation) retry(models);
+			throw e;
+		}).finally(() => {
 			if (pending?.p === p) pending = undefined;
 		});
 		pending = { models, p };
@@ -88,7 +121,8 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 		if (recheck) a.invalidate?.();
 		const cmd = command();
 		const status = cmd ? await a.detect(cmd) : ({ installed: false, loggedIn: false, ...(a.managed ? {} : { error: a.notFound }) } as unknown as S);
-		if (a.requireLogin && !status.loggedIn && channel) {
+		if (!status.installed || (a.requireLogin && !status.loggedIn)) { generation++; cancelRetry(); }
+		if ((!status.installed || (a.requireLogin && !status.loggedIn)) && channel) {
 			channel.disposeAll();
 			channel = undefined;
 			registeredOn = undefined;
@@ -113,6 +147,8 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 
 	return {
 		id: a.id,
+		label: a.label,
+		error: () => lastError,
 		actions: a.actions,
 		command,
 		registered: () => !!channel,
@@ -121,7 +157,7 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 		ensure: (models: PiModels) => ensure(models),
 		check,
 		/** 服务关闭：结束还在跑的进程 */
-		dispose: () => channel?.disposeAll(),
+		dispose: () => { stopped = true; generation++; cancelRetry(); channel?.disposeAll(); channel = undefined; registeredOn = undefined; },
 	};
 }
 

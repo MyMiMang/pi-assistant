@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { db } from "../db.ts";
 import { updateMessage } from "../messages.ts";
 import { defaultThinking, models } from "../models.ts";
+import { resolveCliModel } from "../cli-services.ts";
 import { abortSession, type AgentSession, applyModelSettings, disposeSession, lastAssistantText, promptSession, sessionFileOf, branchMessagesOf, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
 import { attachFastMode } from "../pi-adapter/fast-mode.ts";
 import { getAgent, setAgentStatus } from "./rows.ts";
@@ -27,6 +28,7 @@ export const subagentDriver: Parameters<typeof setSubagentDriver>[0] = {
 		})();
 		// 帮手最多再派一层：第一层能派（巡检除外，保持安静便宜），第二层不能
 		const nest = !r.parent_subagent_id && r.kind !== "heartbeat";
+		await resolveCliModel(models, { provider: r.model_provider, id: r.model_id });
 		const candidates = livePool([{ provider: r.model_provider, id: r.model_id }, ...stored.filter((m) => modelKey(m) !== `${r.model_provider}/${r.model_id}`)]);
 		if (!candidates.length) throw new Error("帮手模型已不可用，候选池里也没有其他可用模型");
 		let current = candidates[0];

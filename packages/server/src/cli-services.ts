@@ -110,11 +110,35 @@ export const cliServices: CliChannelService[] = [claudeCode, codex, antigravity,
 /** 启动时在后台并行注册各家渠道（各自问模型列表 / 起进程 / 联网，可能要几十秒，不能挡住服务开始监听）；单家失败只记日志。返回的 Promise 在全部完成（含失败）后落定。 */
 export const startCliChannels = (models: PiModels): Promise<void> => Promise.all(cliServices.map((svc) => svc.ensure(models).catch((e) => console.error(`[models] 注册 ${svc.id} 渠道失败`, e)))).then(() => undefined);
 
+/** 本机渠道的唯一识别入口，包含配置表生成的原生 ACP。 */
+export const cliServiceFor = (provider: string | null | undefined) => cliServices.find(s => s.id === provider);
+
+export function cliModelError(provider: string | null | undefined): string | null {
+	const svc = cliServiceFor(provider);
+	if (!svc) return null;
+	const reason = (svc.error() || (svc.registering() ? "模型列表仍在加载，请稍后再试" : "所选模型尚未注册或已不在模型列表中")).replace(/\s+/g, " ").slice(0, 300);
+	return `${svc.label} 暂时没连上（${reason}），这一轮没有改用其他模型。稍后再发一次，或到 设置 › 模型服务 里点「重新检测」。`;
+}
+
+/** 只为缺失的本机渠道模型触发注册；等待上限与启动等待共用。 */
+export async function resolveCliModel(models: PiModels, pick: { provider: string; id: string }, timeoutMs = 60_000): Promise<void> {
+	const svc = cliServiceFor(pick.provider);
+	if (!svc || models.getModel(pick.provider, pick.id)) return;
+	const p = svc.registering() ?? svc.ensure(models);
+	await waitRegistration(p, timeoutMs);
+	if (!models.getModel(pick.provider, pick.id)) throw new Error(cliModelError(pick.provider)!);
+}
+
+async function waitRegistration(p: Promise<boolean>, timeoutMs: number) {
+	let timer: NodeJS.Timeout | undefined;
+	try {
+		await Promise.race([p.catch(() => {}), new Promise<void>(r => { timer = setTimeout(r, timeoutMs); timer.unref(); })]);
+	} finally { clearTimeout(timer); }
+}
+
 /** 某家本机渠道正在后台注册时，等它注册完（最多 `timeoutMs`）；不是本机渠道或没在注册就立刻返回。只等这一家。 */
 export async function cliProviderReady(providerId: string | null | undefined, timeoutMs = 60_000): Promise<void> {
 	const p = cliServices.find((s) => s.id === providerId)?.registering();
 	if (!p) return;
-	let timer: NodeJS.Timeout | undefined;
-	await Promise.race([p.catch(() => {}), new Promise((r) => (timer = setTimeout(r, timeoutMs)))]);
-	clearTimeout(timer);
+	await waitRegistration(p, timeoutMs);
 }

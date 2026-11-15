@@ -14,11 +14,12 @@ const SYSTEM: WorkActor = { kind: "user" };
 
 /** 立刻在负责人的任务会话里开跑；派发本身失败就明确标受阻。 */
 export function launch(item: WorkItemRow, run: WorkRunRow, rethrow = false) {
+	const failed = (e: unknown) => { failRun(item, run, e); emit(item.room_id); };
 	try {
-		dispatchRun(item, run);
+		const pending = dispatchRun(item, run);
+		if (pending) void pending.catch(failed);
 	} catch (e) {
-		failRun(item, run, e);
-		emit(item.room_id);
+		failed(e);
 		if (rethrow) throw e instanceof WorkItemError ? e : new WorkItemError(e instanceof Error ? e.message : String(e), "dispatch_failed");
 	}
 }

@@ -108,7 +108,7 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 				subagents: opts.allowSpawn ? {
 					spawn: async (input) => {
 						const a = getAgent(agentId)!;
-						const fallback = runtime(agentId, conversationId).modelFor(a);
+						const fallback = await runtime(agentId, conversationId).resolveModel(a);
 						if (!fallback) throw new Error("没有可用的模型");
 						const parent = latestUserMessage(conversationId);
 						// 帮手派下一层：继承上一层的角色范围（spawnSubagent 里继承），名额满了就自己做（上一层在等它，排队会互相卡住）

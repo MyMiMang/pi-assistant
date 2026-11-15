@@ -87,6 +87,19 @@ test("未登录（agy models 失败）：如实返回、不注册", async () => 
 	assert.deepEqual(await agyModels(api), []);
 });
 
+test("渠道未注册时新建和修改都保留本机模型选择，API 模型的原有校验不变", async () => {
+	const { api } = await start({ PIA_AGY_COMMAND: "" });
+	const model = { provider: "antigravity", id: "gemini-4-argon" };
+	const a = await api("/api/agents", { method: "POST", body: JSON.stringify({ name: "离线渠道测试", model }) });
+	assert.deepEqual(a.model, model);
+	assert.equal(a.model_provider, model.provider);
+	const changed = { provider: "gemini-cli", id: "pending-gemini" };
+	const updated = await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ model: changed }) });
+	assert.deepEqual(updated.model, changed);
+	const bad = await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ model: { provider: "unknown-api", id: "missing" } }) });
+	assert.equal(bad.error, "模型不存在");
+});
+
 test("启动时 agy 已装好且已登录就直接注册", async () => {
 	const { api } = await start({ PIA_AGY_COMMAND: FAKE });
 	const info = await api("/api/models/antigravity");

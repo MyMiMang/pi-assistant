@@ -3,6 +3,7 @@ import { db, getSetting, setSetting } from "./db.ts";
 import { configuredModels } from "./rooms/model-pick.ts";
 import { isRecoverableModelError } from "./model-errors.ts";
 import { isThinkingLevel, models } from "./models.ts";
+import { cliServiceFor } from "./cli-services.ts";
 import type { AgentSubagentChoice, AgentSubagentPool, ModelRef, SubagentThinking } from "./subagents.ts";
 
 export const modelKey = (m: ModelRef) => `${m.provider}/${m.id}`;
@@ -28,15 +29,15 @@ export function normalizeAgentPool(v: unknown): ModelRef[] {
 	return [];
 }
 export const agentSubagentPool = (id: string): ModelRef[] => normalizeAgentPool(getSetting<unknown>(`subagentModel:${id}`, null));
-export function requireModel(m: ModelRef | undefined) {
-	if (!m || !configuredModels().some((x) => x.provider === m.provider && x.id === m.id)) throw new Error("模型尚未配置");
+export function requireModel(m: ModelRef | undefined, allowPending = false) {
+	if (!m || (!(allowPending && cliServiceFor(m.provider)) && !configuredModels().some((x) => x.provider === m.provider && x.id === m.id))) throw new Error("模型尚未配置");
 	return { provider: m.provider, id: m.id };
 }
 /** 只保留当前仍然配置着的模型（服务被删 / 模型下线后，池里的悬空项不参与挑选与 fallback）。 */
 export const livePool = (pool: ModelRef[]): ModelRef[] => pool.filter((m) => configuredModels().some((x) => x.provider === m.provider && x.id === m.id)).map((m) => ({ provider: m.provider, id: m.id }));
 /** 保存助理的候选池；空池 = 跟随主会话当前模型。 */
 export function saveAgentSubagentPool(id: string, input: { pool?: ModelRef[] }): AgentSubagentPool {
-	const pool = (input?.pool ?? []).map(requireModel);
+	const pool = (input?.pool ?? []).map(m => requireModel(m));
 	const c: AgentSubagentPool = { pool };
 	setSetting(`subagentModel:${id}`, c);
 	return c;

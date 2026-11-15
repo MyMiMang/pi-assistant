@@ -101,15 +101,17 @@ export function mountSubagentRoutes(app: Hono<any>) {
 			return c.json(await sendSubagentMessage(r.id, text));
 		} catch (e) { return c.json({ error: String(e) }, 400); }
 	});
-	app.post("/api/subagents/:id/retry", (c) => {
+	app.post("/api/subagents/:id/retry", async (c) => {
 		const r = getSubagent(c.req.param("id"));
 		if (!r) return c.json({ error: "not_found" }, 404);
 		if (isLiveSubagent(r.status)) return c.json({ error: r.status === "queued" ? "帮手正在排队，请先等它开始或停止" : "帮手仍在运行" }, 400);
 		const a = getAgent(r.agent_id), conv = getConversation(r.conversation_id);
 		if (!a || !conv) return c.json({ error: "会话已删除" }, 404);
-		const fallback = runtime(a.id, conv.id).modelFor(a);
-		if (!fallback) return c.json({ error: "没有可用模型" }, 400);
-		try { return c.json(spawnSubagent(a.id, conv.id, fallback, { task: r.task, context: r.context, thinking: r.thinking ?? undefined })); }
+		try {
+			const fallback = await runtime(a.id, conv.id).resolveModel(a);
+			if (!fallback) return c.json({ error: "没有可用模型" }, 400);
+			return c.json(spawnSubagent(a.id, conv.id, fallback, { task: r.task, context: r.context, thinking: r.thinking ?? undefined }));
+		}
 		catch (e) { return c.json({ error: String(e) }, 400); }
 	});
 }

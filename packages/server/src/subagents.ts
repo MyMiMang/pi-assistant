@@ -5,7 +5,8 @@ import { insertMessage, updateMessage } from "./messages.ts";
 import { isStopCommand } from "./interject.ts";
 import { modelProfiles } from "./rooms/model-pick.ts";
 import { inferNeeds, pickModel } from "./model-profile.ts";
-import { isThinkingLevel } from "./models.ts";
+import { isThinkingLevel, models } from "./models.ts";
+import { cliServiceFor } from "./cli-services.ts";
 import { requests } from "./requests.ts";
 import { classifyResume, RESTART_RESUME_PROMPT, sessionResumeSafety, verifyResumePrompt } from "./subagent-resume.ts";
 import { repeatBlocked, stuckRestartPrompt, SUBAGENT_STALL_MS, superviseFinish, superviseStall, type StuckHooks } from "./subagent-stuck.ts";
@@ -195,8 +196,8 @@ export async function applyLiveSubagentThinking(id: string, level: string): Prom
  * - 空池 / 池内没有可用模型 → 明确报错，绝不偷偷用池外模型。
  */
 export function chooseSubagentModel(agentId: string, fallback: ModelRef, task: string, needs: string[] = [], explicit?: ModelRef): { model: ModelRef; reason: string; pool: ModelRef[] } {
-	const pool = livePool(agentSubagentPool(agentId));
-	const follow = requireModel(fallback);
+	const pool = livePool(agentSubagentPool(agentId)), follow = requireModel(fallback, true);
+	if (cliServiceFor(follow.provider) && !models.getModel(follow.provider, follow.id)) return { model: follow, reason: "等待本机渠道注册", pool: [follow] };
 	if (!pool.length) {
 		if (explicit && modelKey(explicit) !== modelKey(follow)) throw new Error("这个助理没有设置候选池，帮手只能跟随主会话模型");
 		return { model: follow, reason: "跟随主会话模型", pool: [follow] };
@@ -342,8 +343,7 @@ export function spawnSubagent(agentId: string, conv: string, fallback: ModelRef,
 	const picked = chooseSubagentModel(agentId, fallback, input.task, input.needs, input.model);
 	const id = uid("sa"), ts = Date.now();
 	// 先把已有的排队任务补上空位，保证 FIFO；再决定新任务是否立即跑
-	pumpSubagents(agentId);
-	const status: SubagentStatus = hasSubagentCapacity(agentId) ? "running" : "queued";
+	pumpSubagents(agentId); const status: SubagentStatus = hasSubagentCapacity(agentId) ? "running" : "queued";
 	db.prepare("INSERT INTO subagents(id, agent_id, conversation_id, parent_message_id, task, context, model_provider, model_id, model_reason, thinking, status, last_activity_at, created_at, model_pool, kind, title, routine_run_id, parent_subagent_id, scope, work_run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, agentId, conv, input.parentMessageId ?? null, input.task, input.context ?? "", picked.model.provider, picked.model.id, picked.reason, input.thinking ?? null, status, ts, ts, JSON.stringify(picked.pool), input.kind ?? null, input.title ?? null, input.routineRunId ?? null, parent?.id ?? null, input.scope ?? parent?.scope ?? null, input.workRunId ?? null);
 	insertMessage({ agentId, conversationId: conv, role: "card", meta: { kind: "subagent", subagentId: id, subagent: getSubagent(id) } });
 	insertMessage({ agentId, conversationId: conv, subagentId: id, role: "user", content: input.task });

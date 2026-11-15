@@ -11,6 +11,7 @@ import { db, now } from "../db.ts";
 import { attachmentInputFor, fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, saveUpload } from "../files.ts";
 import { getMessageByClientId, lastContextTokens, insertMessage, listMessages, toMessage, type MessageRow } from "../messages.ts";
 import { defaultModel, defaultThinking, isThinkingLevel, models, withProviderName } from "../models.ts";
+import { cliServiceFor } from "../cli-services.ts";
 import { sessionStats } from "../pi-adapter/index.ts";
 import { requests } from "../requests.ts";
 import { disposeConversationRuntime, disposeRuntime, getAgent, listAgents, runtime } from "../runtime.ts";
@@ -84,7 +85,7 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		const name = (b.name ?? "").trim().slice(0, 40);
 		if (!name) return c.json({ error: "请给助理起个名字" }, 400);
 		const id = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
-		const model = b.model && models.getModel(b.model.provider, b.model.id) ? b.model : defaultModel();
+		const model = b.model && (cliServiceFor(b.model.provider) || models.getModel(b.model.provider, b.model.id)) ? b.model : defaultModel();
 		db.prepare("INSERT INTO agents(id, name, avatar, color, persona, description, model_provider, model_id, sort, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(
 			id, name, cleanAvatar(b.avatar, name), b.color || "#6366f1", (b.persona ?? "").slice(0, 8000), (b.description ?? "").slice(0, 200), model?.provider ?? null, model?.id ?? null, listAgents().length, now(),
 		);
@@ -98,7 +99,7 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		const a = getAgent(c.req.param("id"));
 		if (!a) return c.json({ error: "not_found" }, 404);
 		const b = await c.req.json<AgentInput>();
-		if (b.model !== undefined && b.model && !models.getModel(b.model.provider, b.model.id)) return c.json({ error: "模型不存在" }, 400);
+		if (b.model !== undefined && b.model && !cliServiceFor(b.model.provider) && !models.getModel(b.model.provider, b.model.id)) return c.json({ error: "模型不存在" }, 400);
 		// 先校验整份输入，再写任何字段：失败时不能已经悄悄更改模型/资料。
 		if (b.thinking !== undefined && b.thinking !== null && !isThinkingLevel(b.thinking)) return c.json({ error: "思考强度不对" }, 400);
 		if (b.fast !== undefined && b.fast !== null && typeof b.fast !== "boolean") return c.json({ error: "Fast 开关不对" }, 400);

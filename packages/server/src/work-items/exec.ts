@@ -12,6 +12,8 @@ import { db, now, uid } from "../db.ts";
 import { deliverFromWorkspace, getFile, materializeFor } from "../files.ts";
 import { insertMessage } from "../messages.ts";
 import { bus } from "../bus.ts";
+import { cliServiceFor } from "../cli-services.ts";
+import { models } from "../models.ts";
 import { helperScope } from "../helper-scope.ts";
 import { memory } from "../memory/index.ts";
 import { getAgent, runtime } from "../runtime.ts";
@@ -126,11 +128,15 @@ export function recordProgress(item: Pick<WorkItemRow, "id" | "room_id">) {
 }
 
 /** 派出一次执行：立刻派负责人的帮手开始（不排进群队列，帮手名额满了就排队），结束后回到 finishRun。 */
-export function dispatchRun(item: WorkItemRow, run: WorkRunRow) {
+export function dispatchRun(item: WorkItemRow, run: WorkRunRow): void | Promise<void> {
 	const conv = execConversation(item, run.owner_agent_id);
 	const a = getAgent(run.owner_agent_id);
 	const model = a ? runtime(run.owner_agent_id, conv).modelFor(a) : null;
+	if (a && model && cliServiceFor(model.provider) && !models.getModel(model.provider, model.id)) {
+		return runtime(a.id, conv).resolveModel(a).then(() => { if (runRow(run.id)?.status === "queued") return dispatchRun(item, run); });
+	}
 	if (!model) throw new Error("负责人没有可用的模型");
+
 	live.set(run.id, { itemId: item.id, agentId: run.owner_agent_id, conversationId: conv });
 	let h: Subagent;
 	try {
