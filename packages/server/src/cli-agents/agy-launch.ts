@@ -49,10 +49,12 @@ export function buildAgyArgs(input: AgyArgsInput): string[] {
 }
 
 /**
- * Pi 默认提示开头「running inside pi, a coding agent harness」会让 Antigravity 服务对整个请求返回 429 额度不足
- * （2026-11-15 agy 1.5.4 实测：只删这半句就正常，其余内容不变）；只在交给 agy 前去掉，Pi 本身不动。
+ * Pi 默认提示里两处会让 Antigravity 服务对整个请求返回 429 额度不足（2026-11-15 agy 1.5.4 逐句二分实测，删掉即正常）：
+ * 开头「running inside pi, a coding agent harness」，和 `<docs>Pi documentation…</docs>` 段（其中介绍 codemode 的那句）。
+ * 只在交给 agy 前去掉，Pi 本身不动；这段只讲 Pi 自己的文档，借脑子用不到。
  */
-export const stripPiHarnessClaim = (prompt: string): string => prompt.replace(/ running inside pi\b(?:, a coding agent harness)?/gi, "");
+export const stripPiHarnessText = (prompt: string): string =>
+	prompt.replace(/ running inside pi\b(?:, a coding agent harness)?/gi, "").replace(/\n*<docs>\s*Pi documentation[\s\S]*?<\/docs>\n*/g, "\n\n");
 
 /** 代理文件 `pia.md`：整段系统提示在会话开始时定死（续用会话改了也不生效，所以系统提示变了要新开会话） */
 export function agyAgentFile(systemPrompt: string | undefined): string {
@@ -65,7 +67,7 @@ export function agyAgentFile(systemPrompt: string | undefined): string {
 		"tools: []",
 		// 不写 `inheritMcp: false`：实测（agy 1.4.7）它连工作区插件里我们自己的工具桥 MCP 也一起挡掉，模型就看不到 Pi 的工具
 		"---",
-		stripPiHarnessClaim(systemPrompt?.trim() ?? "") || "你是一个有帮助的助理，只使用提供给你的工具。",
+		stripPiHarnessText(systemPrompt?.trim() ?? "") || "你是一个有帮助的助理，只使用提供给你的工具。",
 		"",
 	].join("\n");
 }
