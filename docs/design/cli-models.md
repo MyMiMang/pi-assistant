@@ -91,6 +91,7 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 - Pi 整理上下文时，会在主循环外单独调一次模型（`direct` 请求）生成总结：这种请求不续用会话、不给工具，单次 `claude -p` 跑完即可。
 
 ### 4.5 界面和设置
+- **注册失败恢复**：四家及原生 ACP 共用服务；失败后 30 秒、1 分钟、2 分钟、之后每 5 分钟后台重试，成功、明确卸载/退出登录、关闭时停止，计时器 unref。Antigravity 用列模型检测登录，超时仍允许重试。运行时所选本机模型缺失则等待已有注册或立即 ensure，最多 60 秒；仍不可用插中文系统消息及 open-models 动作，本轮失败，不改用默认模型。帮手、后台、工作项、重试路由共用解析；新建与修改均保存用户选择（模型列表暂时缺失不应覆盖用户设置）。API 渠道行为保持。自动化验证记录见 HANDOFF；真实工具未验证。
 - **注册时机**：服务启动时三家渠道（claude / codex / agy）在后台并行注册，不挡 HTTP 开始监听（问模型列表、起 app-server、联网跑 `agy models` 可能要几秒到几十秒）。`startCliChannels`（`cli-services.ts`）发起，`models.ts` 的 `cliChannelsReady()` 在全部完成（含失败）后落定；同一家的启动注册和界面「检测」同时发生时合并成一次（`cli-channel-service.ts` 的 `ensure`）。**界面接口不等注册**：`/api/models` 直接返回当前列表；`/api/system` 只在没有默认模型、且还有渠道在注册时最多等 5 秒（`waitCliForDefaultModel`），免得启动瞬间误判「没有模型」弹出向导。每一家注册上（或重新检测刷新）就发 `models.changed` 事件，前端 `store.ts` 收到后 `loadSystem()`，`useConfiguredModels`（依赖 system）据此重新拉列表。助理选的是还在注册的本机渠道模型时，`AgentRuntime.ensure` 先 `cliProviderReady(provider)` 等那一家（最多 60 秒）再解析模型，不会先退回默认模型。单测里要等就 `await cliChannelsReady()`，不要 sleep。
 - 「模型服务」里加一张「Claude Code（本机）」卡片（复用现有模型服务页的布局，界面标准照旧）：显示是否已安装、版本、是否已登录（`claude auth status`）。没装或没登录时，用大白话说明去终端里怎么做，并给一个「重新检测」按钮。
 - 模型列表（`ModelPicker`）里出现 `Claude Code · Opus / Sonnet / Haiku`；思考强度映射到 `--effort`；没有 Fast。
