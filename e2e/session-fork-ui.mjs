@@ -153,6 +153,7 @@ try {
 	});
 
 	await step("390 宽：两个按钮都在、不换行不超宽、右键菜单可触发分支", async () => {
+		await page.screenshot({ path: "artifacts/msg-time-desktop.png" });
 		await page.setViewportSize({ width: 390, height: 844 });
 		const u = userMsgs().last();
 		await u.scrollIntoViewIfNeeded();
@@ -161,6 +162,10 @@ try {
 		const fb = await u.locator("[data-testid=fork-btn]").boundingBox();
 		if (!qb || !fb) throw new Error("390 下按钮不可见");
 		if (Math.abs(qb.y + qb.height / 2 - (fb.y + fb.height / 2)) > 6) throw new Error("两个按钮不在同一行");
+		const tb = await u.locator("[data-testid=msg-time]").boundingBox();
+		if (!tb || Math.abs(tb.y + tb.height / 2 - (qb.y + qb.height / 2)) > 6) throw new Error("发送时间没和按钮在同一行");
+		if (!/^\d{2}:\d{2}$/.test((await u.locator("[data-testid=msg-time]").innerText()).trim())) throw new Error("今天的消息时间应只显示时分");
+		await page.screenshot({ path: "artifacts/msg-time-390.png" });
 		const aw = await act.boundingBox();
 		if (!aw || aw.x + aw.width > 392) throw new Error("操作行超出屏幕");
 		// 右键：命中气泡 → 出现菜单，含引用 + 分支两项

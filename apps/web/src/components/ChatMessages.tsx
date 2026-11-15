@@ -17,6 +17,7 @@ import { Avatar, cx } from "./ui";
 import { ProposalCard, RoomGoalCard, RoomPlanCard } from "./RoomCards";
 import { ProjectDeliveryCard } from "./RoomDelivery";
 import { MessageActions, QuotedMessage, type MessageInteraction } from "./MessageReply";
+import { fmtClock } from "../clock";
 import { quotedBlock } from "../replies";
 import { canRecall } from "../recall-api";
 import { assistantErrorDetail, assistantErrorKind, assistantErrorText, botBodyView } from "../message-body";
@@ -59,23 +60,12 @@ const secs = (ms: number) => (ms < 1000 ? "<1 秒" : ms < 60_000 ? `${(ms / 1000
 export type Part = { kind: "msg"; m: Message } | { kind: "steps"; items: Message[] };
 export type Row = { kind: "user"; m: Message } | { kind: "system"; m: Message } | { kind: "bot"; id: string; parts: Part[] } | { kind: "day"; label: string; id: string };
 
-function dayLabel(ts: number) {
-	const d = new Date(ts);
-	const today = new Date();
-	const y = new Date(today);
-	y.setDate(today.getDate() - 1);
-	const hm = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-	if (d.toDateString() === today.toDateString()) return `今天 ${hm}`;
-	if (d.toDateString() === y.toDateString()) return `昨天 ${hm}`;
-	return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
-}
-
 /** quiet：单聊主界面不单独显示只有思考的一步；帮手详情（查看过程）传 false 看完整过程 */
 export function group(list: Message[], quiet = true): Row[] {
 	const rows: Row[] = [];
 	let lastTs = 0;
 	for (const m of list) {
-		if (m.created_at - lastTs > 30 * 60_000) rows.push({ kind: "day", label: dayLabel(m.created_at), id: `d${m.id}` });
+		if (m.created_at - lastTs > 30 * 60_000) rows.push({ kind: "day", label: fmtClock(m.created_at, "今天 "), id: `d${m.id}` });
 		lastTs = m.created_at;
 		if (m.role === "user" || m.role === "system") {
 			rows.push({ kind: m.role, m } as Row);

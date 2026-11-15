@@ -4,6 +4,7 @@
  * 正在发言的那位（liveAgent）照旧显示过程，这样它在干活时能看到进度。单聊用 ChatMessages 的 group，不受影响。
  */
 import type { Message } from "./types.ts";
+import { fmtClock } from "./clock.ts";
 
 /** 和 ChatMessages.tsx 的 Part 同形（这里不 import 它：它是 tsx，服务端单测的类型检查不认） */
 export type Part = { kind: "msg"; m: Message } | { kind: "steps"; items: Message[] };
@@ -18,12 +19,6 @@ export const quietThinking = (m: Message) => m.role === "assistant" && !m.conten
 
 export const isProcess = (m: Message) => m.role === "tool" || (m.role === "assistant" && !m.content.trim() && m.status !== "error") || (m.role === "card" && m.meta.kind === "subagent");
 
-const dayLabel = (ts: number) => {
-	const d = new Date(ts);
-	const same = d.toDateString() === new Date().toDateString();
-	return `${same ? "今天" : `${d.getMonth() + 1}月${d.getDate()}日`} ${d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
-};
-
 export function groupRoom(list: Message[], liveAgent: string | null = null): RRow[] {
 	const rows: RRow[] = [];
 	const held = new Map<string, Message[]>(); // 每位成员还没说话时攒下的工具步骤
@@ -35,7 +30,7 @@ export function groupRoom(list: Message[], liveAgent: string | null = null): RRo
 			if (m.role === "tool") held.set(m.agent_id, [...(held.get(m.agent_id) ?? []), m]);
 			continue;
 		}
-		if (m.created_at - lastTs > 30 * 60_000) rows.push({ kind: "day", id: `d${m.id}`, label: dayLabel(m.created_at) });
+		if (m.created_at - lastTs > 30 * 60_000) rows.push({ kind: "day", id: `d${m.id}`, label: fmtClock(m.created_at, "今天 ") });
 		lastTs = m.created_at;
 		if (m.role === "user" || (m.role === "system" && !m.agent_id)) {
 			rows.push({ kind: m.role === "user" ? "user" : "system", m } as RRow);

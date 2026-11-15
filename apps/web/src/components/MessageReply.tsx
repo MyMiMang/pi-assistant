@@ -10,6 +10,7 @@ import { Check, Copy, GitBranch, Quote, RotateCcw, Undo2, X } from "lucide-react
 import { canRecall } from "../recall-api";
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { copyText, selectionBeforeRightClick } from "../clipboard";
+import { fmtClock, fmtFullTime } from "../clock";
 import { attachmentLabel, copyTextOf, isQuotable, type QuotedBlock, type ReplyRef } from "../replies";
 import type { LocateResult } from "../replies-api";
 import type { Message } from "../types";
@@ -39,14 +40,15 @@ export function CopyButton({ text, title = "复制这条消息", testId = "copy-
 	);
 }
 
-/** 每条可引用 / 可分支消息底部的操作行：「复制」「引用」文字常显（不只 hover）；「另开新对话」只出现在用户消息上。 */
+/** 每条消息底部的一行：发送时间（每条都有）+「复制」「引用」文字常显（不只 hover）；「另开新对话」只出现在用户消息上。 */
 export function MessageActions({ m, onQuote, onFork, side = "left" }: { m: Message; onQuote?: (m: Message) => void; onFork?: (m: Message) => void; side?: "left" | "right" }) {
 	const quoteOk = !!onQuote && isQuotable(m);
 	const forkOk = !!onFork && m.role === "user";
 	const text = isQuotable(m) ? copyTextOf(m) : "";
-	if (!quoteOk && !forkOk && !text) return null;
+	if (!quoteOk && !forkOk && !text && !m.created_at) return null;
 	return (
 		<div className={cx("pa-msg-actions", side)} data-testid="msg-actions">
+			{Number.isFinite(m.created_at) && m.created_at > 0 && <time className="pa-msg-time" title={fmtFullTime(m.created_at)} data-testid="msg-time">{fmtClock(m.created_at)}</time>}
 			{text && <CopyButton text={text} />}
 			{quoteOk && (
 				<button type="button" className="pa-quote-btn" onClick={() => onQuote!(m)} title="引用这条消息" aria-label="引用这条消息" data-testid="quote-btn">
