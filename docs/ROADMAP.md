@@ -20,6 +20,8 @@
 - [已发布(beta.66)] Antigravity 经 Pi 一律报「额度不足」：Pi 默认提示里的「running inside pi」会让 Google 服务直接返回 429，交给 agy 前去掉这半句（Antigravity 自己的 App 和不带这句的请求都正常）
 - [已发布(beta.67)] Antigravity 聊一阵又报额度不足：带 Pi 特征的请求被 Google 单独限流，Pi 提示里的 Pi 文档段（codemode 那句）也会被认出，交给 agy 前一起去掉；开发实测环境带真实工具连聊 30 轮（130 次请求）无 429
 - [已发布(beta.68)] 每条消息下方显示发送时间（几点几分；昨天、更早的带日期；悬停看完整时间），单聊群聊都有
+- [已合 main] Antigravity 看图：agy 输入只收文字，图片换成提示、模型用 look_at_image 看附件（开发实测环境实测通过）
+- [待做] 编程工具渠道启动时注册失败（如 agy 取模型列表超时）会让选了它的助理悄悄改用默认模型；改成自动重试注册、注册不上时明确提示而不是换模型
 - [已发布(beta.56)] 原生 ACP 第一段：Gemini CLI / CodeBuddy 共用 native 执行、审批、步骤展示、load；Cursor 暂缓（[批准实施方案](design/native-acp-agents-impl.md)）
 - [已发布(beta.56)] 原生 ACP 第二段：App npm、私有安装、Agent Auth、手动更新、模型发现和卡片；check 与新旧模型服务 e2e、五平台构建与 Mac/Windows 安装检查通过；真实工具安装/登录待用户用发布版实测（[实施方案](design/native-acp-agents-impl.md)）
 - [搁置] iOS 原生 App：TestFlight 需付费开发者账号（688 元/年），用户暂不弄；免费路线只有 AltStore 自签（7 天续签）、安卓安装包、改进主屏幕 PWA
