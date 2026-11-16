@@ -11,7 +11,7 @@
  */
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { createCodexEventConverter, type CodexEvent } from "../../cli-agents/codex-events.ts";
+import { createCodexEventConverter, toCodexToolName, type CodexEvent } from "../../cli-agents/codex-events.ts";
 import type { RpcExit } from "../../cli-agents/jsonrpc-stdio.ts";
 import { CodexHub } from "../../cli-agents/codex-hub.ts";
 import { managedCliEnv } from "../../cli-agents/managed-env.ts";
@@ -82,7 +82,7 @@ function codexBackend(deps: CodexDeps, hub: CodexHub): CliBackend<CodexLive> {
 				if (threadId) {
 					if (!hub.isLoaded(threadId)) await hub.request("thread/resume", { threadId, ...common });
 				} else {
-					const dynamicTools = req.tools.map((t) => ({ type: "function", name: t.name, description: t.description, inputSchema: t.inputSchema }));
+					const dynamicTools = req.tools.map((t) => ({ type: "function", name: toCodexToolName(t.name), description: t.description, inputSchema: t.inputSchema }));
 					const r = await hub.request<{ thread: { id: string } }>("thread/start", { ...common, ephemeral: req.oneShot, ...(dynamicTools.length ? { dynamicTools } : {}) });
 					threadId = r.thread.id;
 				}

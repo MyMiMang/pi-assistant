@@ -44,6 +44,10 @@ export interface CodexEventConverter {
 	serverRequest(id: number | string, method: string, params: unknown): CodexEvent[] | null;
 }
 
+/** Codex（0.167 实测）把 `mcp__` 开头的动态工具名当保留名、整个 thread/start 失败；传过去时加 `pi_` 前缀，调用回来再去掉 */
+export const toCodexToolName = (name: string): string => (name.startsWith("mcp__") ? `pi_${name}` : name);
+export const fromCodexToolName = (name: string): string => (name.startsWith("pi_mcp__") ? name.slice(3) : name);
+
 export function createCodexEventConverter(threadId: string): CodexEventConverter {
 	/** 进行中的正文 / 思考块：itemId → 是否已开块、已写了几段摘要 */
 	const text = new Map<string, { opened: boolean }>();
@@ -128,7 +132,7 @@ export function createCodexEventConverter(threadId: string): CodexEventConverter
 		const p = isObj(params) ? params : {};
 		if (str(p.threadId) !== threadId) return [];
 		const callId = str(p.callId);
-		const name = str(p.tool);
+		const name = fromCodexToolName(str(p.tool));
 		const args = isObj(p.arguments) ? p.arguments : {};
 		return [{ type: "tool_call_start", id: callId, name }, { type: "tool_call_end", id: callId, name, args }, { type: "tool_request", rpcId: id, callId, name, args }];
 	}

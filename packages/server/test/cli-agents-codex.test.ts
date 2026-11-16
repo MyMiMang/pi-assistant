@@ -8,7 +8,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { answerServerRequest, codexUsage, createCodexEventConverter } from "../src/cli-agents/codex-events.ts";
+import { answerServerRequest, codexUsage, createCodexEventConverter, fromCodexToolName, toCodexToolName } from "../src/cli-agents/codex-events.ts";
 import { CodexHub } from "../src/cli-agents/codex-hub.ts";
 import { buildCodexArgs, buildCodexEnv, CODEX_DISABLED_FEATURES, tomlKey } from "../src/cli-agents/codex-launch.ts";
 import { detectCodex } from "../src/cli-agents/detect.ts";
@@ -136,4 +136,14 @@ test("hub：没有 codex 命令时给中文说明；dispose 之后不再启动",
 	const hub = new CodexHub({ command: () => FAKE, cwd: () => dir });
 	hub.dispose();
 	await assert.rejects(() => hub.listModels(), /已关闭/);
+});
+
+test("工具名：mcp__ 开头的是 Codex 保留名，传过去加 pi_ 前缀，调用回来还原成 Pi 的原名；其他名字不动", () => {
+	assert.equal(toCodexToolName("mcp__hostpc__list_apps"), "pi_mcp__hostpc__list_apps");
+	assert.equal(toCodexToolName("read"), "read");
+	assert.equal(fromCodexToolName("pi_mcp__hostpc__list_apps"), "mcp__hostpc__list_apps");
+	assert.equal(fromCodexToolName("read"), "read");
+	const conv = createCodexEventConverter("t1");
+	const ev = conv.serverRequest(7, "item/tool/call", { threadId: "t1", callId: "c1", tool: "pi_mcp__hostpc__list_apps", arguments: {} });
+	assert.deepEqual(ev?.map((e) => ("name" in e ? e.name : null)), ["mcp__hostpc__list_apps", "mcp__hostpc__list_apps", "mcp__hostpc__list_apps"]);
 });
