@@ -1,5 +1,5 @@
 import { Check, ChevronDown, CircleHelp, type LucideIcon, X } from "lucide-react";
-import { type ButtonHTMLAttributes, type ReactNode, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
+import { type ButtonHTMLAttributes, type ReactNode, type RefObject, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchBlob } from "../api";
 import { copyText } from "../clipboard";
@@ -514,6 +514,8 @@ export function Select({
 			window.removeEventListener("resize", close);
 		};
 	}, [open, options, value, onChange, disabled, active]);
+	// 菜单宽度跟内容走（不窄于触发器、最宽 480 和视口），长选项不被截断；右边出界就往左挪
+	useLayoutEffect(() => void (pop.current && (pop.current.style.left = `${Math.max(8, Math.min(rect?.left ?? 8, window.innerWidth - 8 - pop.current.offsetWidth))}px`)), [rect]);
 	// 键盘移动高亮时，把当前项滚进可视区（只动菜单自身滚动，不滚祖先/页面），并把焦点交给 listbox 以播报高亮项
 	useEffect(() => {
 		if (!open) return;
@@ -560,7 +562,7 @@ export function Select({
 						aria-activedescendant={options.length ? optId(active) : undefined}
 						data-testid={testId ? `${testId}-menu` : undefined}
 						className="pa-menu-in fixed z-[60] max-h-[280px] max-w-[calc(100vw-16px)] overflow-auto rounded-xl border border-line bg-card p-1 shadow-xl"
-						style={{ left: rect.left, top: rect.top, width: rect.width, maxHeight: rect.maxH, transform: rect.up ? "translateY(-100%)" : undefined }}
+						style={{ left: rect.left, top: rect.top, minWidth: rect.width, width: "max-content", maxWidth: `min(${Math.max(rect.width, 480)}px, calc(100vw - 16px))`, maxHeight: rect.maxH, transform: rect.up ? "translateY(-100%)" : undefined }}
 					>
 						{options.map((o, i) => {
 							const sel = String(o.value) === String(value);
@@ -584,7 +586,7 @@ export function Select({
 									className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover", (sel || hi) && "bg-hover", sel && "font-medium")}
 								>
 									<Check size={14} className={cx("shrink-0", sel ? "opacity-100" : "opacity-0")} />
-									<span className="min-w-0 flex-1"><span className="block truncate">{o.label}</span>{o.desc && <span className="block truncate text-[11px] font-normal text-mut">{o.desc}</span>}</span>
+									<span className="min-w-0 flex-1"><span className="block truncate" title={o.label}>{o.label}</span>{o.desc && <span className="block truncate text-[11px] font-normal text-mut">{o.desc}</span>}</span>
 									{o.hint && <span className="shrink-0 text-[11px] text-mut">{o.hint}</span>}
 								</button>
 							);
