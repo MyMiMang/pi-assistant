@@ -163,6 +163,7 @@
 | `push.ts` | Web Push |
 | `files.ts` | 工作区路径与上传 |
 | `attachments.ts` | 附件 → 模型输入 |
+| `persona-review.ts` | 人设整理纯逻辑：最近单聊消息裁剪（80 条 / 3 万字）、提示词、JSON 容错与结构校验；`routes/persona-review.ts` 复用运行时模型解析与单次补全，只返回不写库；单测 `test/persona-review.test.ts`，页面闭环 `e2e/persona-review-ui.mjs` |
 | `vision.ts` | 识图能力判定与调用 |
 | `vision-ext.ts` | 识图 Pi 扩展 |
 | `image-gen/` | 图片生成（providers / routes / extension） |
