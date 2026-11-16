@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Agent } from "../types";
-import { Avatar, Button, cx, Help, Input } from "./ui";
+import { Avatar, Button, cx, Fold, Help, Input } from "./ui";
 
 export const AGENT_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#8b5cf6", "#64748b"];
 const EMOJIS = ["🤖", "🦊", "🐼", "🐱", "🦉", "🐙", "🚀", "⚡️", "🌟", "🧠", "🛠️", "📚", "✍️", "🎨", "💼", "🔍"];
@@ -53,6 +53,14 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 	const [dirty, setDirty] = useState(false);
 	const [picker, setPicker] = useState(false);
 	const [confirmDel, setConfirmDel] = useState(false);
+	const [review, setReview] = useState<{ loading: boolean; result: { persona: string; changes: string[] } | null; error: string; open: boolean }>({ loading: false, result: null, error: "", open: false });
+	const reviewRequest = useRef<AbortController | null>(null);
+	const reviewAgent = useRef(agent?.id);
+	reviewAgent.current = agent?.id;
+	useEffect(() => {
+		setReview({ loading: false, result: null, error: "", open: false });
+		return () => { reviewRequest.current?.abort(); reviewRequest.current = null; };
+	}, [agent?.id]);
 	const fileRef = useRef<HTMLInputElement>(null);
 	const editVersion = useRef(0);
 	const avatarVersion = useRef(0);
@@ -132,6 +140,20 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 			if (alive.current) setError((e as Error).message);
 		} finally {
 			if (alive.current) setBusy(false);
+		}
+	};
+	const reviewPersona = async () => {
+		if (!agent || review.loading) return;
+		const id = agent.id;
+		const request = new AbortController();
+		reviewRequest.current?.abort();
+		reviewRequest.current = request;
+		setReview({ loading: true, result: null, error: "", open: false });
+		try {
+			const result = await api<{ persona: string; changes: string[] }>(`/api/agents/${id}/persona-review`, { method: "POST", signal: request.signal });
+			if (!request.signal.aborted && reviewRequest.current === request && reviewAgent.current === id) setReview({ loading: false, result, error: "", open: false });
+		} catch (e) {
+			if (!request.signal.aborted && reviewRequest.current === request && reviewAgent.current === id) setReview({ loading: false, result: null, error: `整理失败：${(e as Error).message}`, open: false });
 		}
 	};
 	const remove = async () => {
@@ -267,7 +289,13 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 			</div>
 			{profile ? (
 				<section data-testid="agent-persona-details">
-					<h2 className="pa-info-h2 flex items-center">人设<Help>每次对话都会带上这段话。写清楚它该怎么做事、怎么称呼你、有什么习惯；套用模板只替换这里的人设，不改上面的简介。</Help></h2>
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<h2 className="pa-info-h2 flex items-center">人设<Help>每次对话都会带上这段话。写清楚它该怎么做事、怎么称呼你、有什么习惯；套用模板只替换这里的人设，不改上面的简介。</Help></h2>
+						{agent && <div className="flex items-center" data-testid="persona-review-entry">
+							<Button size="sm" variant="outline" disabled={review.loading || busy} onClick={reviewPersona} data-testid="persona-review-start">{review.loading ? "正在整理…" : "让它整理"}</Button>
+							<Help>读最近和你的对话，把你反复提到的要求整理进人设，不会直接改，采用后点保存才生效。</Help>
+						</div>}
+					</div>
 					<p className="pa-info-lead">告诉它怎么做事、怎么称呼你</p>
 					<div className="pa-info-details-body">
 						<div className="flex flex-wrap items-center gap-1.5">
@@ -290,6 +318,21 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 							className="h-44 w-full resize-y rounded-xl border border-line bg-card px-3 py-2 text-sm outline-none transition focus:border-accent"
 							placeholder="例如：回答要简洁；称呼我 deng；改代码前先说明计划"
 						/>
+						{review.error && <p className="text-sm text-red-600 dark:text-red-400" role="alert" data-testid="persona-review-error">{review.error}</p>}
+						{review.result && <div className="min-w-0 space-y-3 rounded-xl border border-line bg-card p-3 text-sm" data-testid="persona-review-result" aria-live="polite">
+							{review.result.changes.length ? <>
+								<p className="font-medium">整理了这些要求</p>
+								<ul className="max-h-40 list-disc space-y-1 overflow-y-auto break-words pl-5 [overflow-wrap:anywhere]">{review.result.changes.map((change, i) => <li key={i}>{change}</li>)}</ul>
+							</> : <p>没发现需要补充的</p>}
+							<Fold title="人设全文" open={review.open} onToggle={() => setReview((r) => ({ ...r, open: !r.open }))} testId="persona-review-full">
+								<p className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere]" data-testid="persona-review-text">{review.result.persona}</p>
+							</Fold>
+							{review.result.changes.length > 0 && <p className="text-xs text-mut">采用后可继续修改，点「保存资料」才生效。</p>}
+							<div className="flex flex-wrap gap-2">
+								{review.result.changes.length > 0 && <Button size="sm" variant="outline" onClick={() => { set({ persona: review.result!.persona }); setReview({ loading: false, result: null, error: "", open: false }); }} data-testid="persona-review-adopt">采用</Button>}
+								<Button size="sm" variant="ghost" onClick={() => setReview({ loading: false, result: null, error: "", open: false })} data-testid="persona-review-dismiss">放弃</Button>
+							</div>
+						</div>}
 					</div>
 				</section>
 			) : (

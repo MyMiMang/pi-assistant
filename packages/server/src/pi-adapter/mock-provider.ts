@@ -453,6 +453,12 @@ export async function registerMockProvider(models: PiModels) {
 		const lastMsg = msgs[msgs.length - 1];
 		if (lastMsg?.role === "user" && /^（后台帮手任务）[\s\S]*卡住测试/.test(textOf(lastMsg)))
 			return new Promise((resolve) => { const done = () => resolve(fauxAssistantMessage("（停下了）")); if (opts?.signal?.aborted) return done(); opts?.signal?.addEventListener("abort", done, { once: true }); setTimeout(done, 600_000).unref?.(); });
+		if (systemPrompt.includes("（persona-self-review）")) {
+			const input = JSON.parse(lastUser ? textOf(lastUser) : "{}") as { persona: string; messages?: { role: string; content: string }[] };
+			const addition = "回答先说结论，再简洁说明。";
+			const changed = !input.persona.includes(addition) && input.messages?.some((m) => m.role === "user" && /简洁|先说结论/.test(m.content));
+			return fauxAssistantMessage(JSON.stringify({ persona: changed ? [input.persona, addition].filter(Boolean).join("\n") : input.persona, changes: changed ? ["补充了先说结论、简洁说明的要求"] : [] }));
+		}
 		const hs = hindsightReply(msgs, systemPrompt, tools);
 		if (hs !== null) return typeof hs === "string" ? fauxAssistantMessage(hs) : fauxAssistantMessage([fauxToolCall(hs.tool, hs.args as never)]);
 		return respond(msgs, systemPrompt, tools);
