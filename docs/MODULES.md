@@ -19,7 +19,7 @@
 | 服务端通用 | `bus.ts`（推事件）、`requests.ts`（审批与提问唯一入口）、`interject.ts`（插话/停止词）、`rooms/followup.ts` 的 `wakeInRoom`（在群里叫醒某个成员发言）、`model-errors.ts`、`thinking.ts`（拆思考内容）、`native-launch-env.ts`（启动子进程环境）、`config.ts`（环境变量）、`db.ts` |
 | Pi 接入（唯一入口） | `pi-adapter/index.ts`、`custom-providers.ts`、`relay-protocols.ts`、`model-limits.ts`、`fast-mode.ts`、`run-result.ts`（`lastAssistantError`：一轮跑完后判成败，同一轮前面已有可见输出时最后的空回复不算失败）、`mock-provider.ts`（e2e 脚本化回复）、`mock-room-provider.ts`（群聊部分的 Mock，从 mock-provider.ts 拆出来控制单文件行数）、`mock-collab-provider.ts`（成员直接协作的 Mock：任务要求含「先问一下」「上游有问题」，或看到提问编号时接管）、`mock-chat-plan-provider.ts`（单聊「大事走方案」的 Mock：用户消息含「做个大事」→ chat_plan 两阶段方案卡；用户说「可以」/ 点按钮确认后依次写文件、chat_stage_done ×2、chat_project_done；带「慢」的方案先 sleep 一下留出进行中的窗口；只在有 chat_plan 工具的单聊里接管） |
 | 单测工具 | `packages/server/test/setup.ts`、`in-memory-credentials.ts`、`local-asr-harness.ts`（本地语音假环境 + 来源端口）、`channel-credentials.ts`、`test/fixtures/*`（fake-limactl、fake-wsl、mock-mcp、fake-codex：假 codex app-server（JSON-RPC，场景文件 FAKE_CODEX_SCENARIO_FILE 每轮重读；场景含 meta / one-tool / steer / hang / image-tool / server-requests / crash / not-logged-in / e2e-bash；「未登录」用 CODEX_HOME 下的 logged-out 文件表示）、fake-claude：假 claude，按 FAKE_CLAUDE_SCENARIO 出 stream-json 并调工具桥；场景含 meta 回报收到的参数、one-tool / tool-interject / image-tool、stall、resume-missing、think） |
-| e2e 工具 | `e2e/fixtures/managed-cli-package.mjs`（三家受管 CLI 的本地假 npm 包、假登录与假终端，不联网）；`e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
+| e2e 工具 | `e2e/fixtures/managed-cli-package.mjs`（三家受管 CLI 的本地假 npm 包、假登录与假终端，不联网）；`e2e/fixtures/temp-server.mjs`（makeTempRun / startTempServer / browserEnv / cleanupTempRun）、`upload.mjs`（顺序分块上传；`e2e/upload-chunks.mjs` 验证真实前端多块、进度、字节与清理）、`stable-shot.mjs`、`artifacts.mjs`、`fake-hindsight.mjs`、`mock-mcp.mjs`、`info-pane.mjs`、`page-checks.mjs`；`e2e/mock-openai.mjs`、`e2e/mock-images.mjs` |
 
 ## 原生 ACP（统一配置表驱动的 17 家工具）
 
@@ -71,7 +71,7 @@
 | 路径 | 负责 |
 |---|---|
 | `server` | 本机服务（Node 22 + Hono），见下节 |
-| `shared` | 前后端共用常量和纯逻辑；`src/native-cli.ts`：原生 ACP 卡片公开状态；`src/native-acp-catalog.ts`：17 家原生工具唯一配置表（安装源、参数、隔离变量、认证与限制，不含认证秘密） |
+| `shared` | 前后端共用常量和纯逻辑（含 index.ts 的附件 2GB 上限、32MB 分块大小）；`src/native-cli.ts`：原生 ACP 卡片公开状态；`src/native-acp-catalog.ts`：17 家原生工具唯一配置表（安装源、参数、隔离变量、认证与限制，不含认证秘密） |
 | `ext-approval` | 审批闸门（有后果的工具调用）；含「不能用命令 / 写脚本直接调 cua」的 deny（`usesCuaDirectly`，所有档位） |
 | `ext-sandbox` | 工作区命令 |
 | `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑）；`structured.ts`：把 cua 的 structuredContent（tab_id / refs / elements / next_call）压成紧凑 JSON 追加给模型（上限 12K，纯逻辑）；`quick-steps.ts`：快速执行者的纯逻辑（候选解析 / 过滤排序 / 问题构造 / 判断 / 拼调用 / 核对 / 窗口只读文字摘要 windowTextRows / 变化行 changedText）；`quick-steps-tool.ts`：`computer_quick_steps` / `hostpc_quick_steps` 工具和共用执行函数 runQuickAction（问 classifier、走 `ctx.executeTool` 照常过审批；target 可省略用最近一次目标）；`words.ts`：敏感 / 危险动作的字样（审批与目标模式守门共用）；`quick-io.ts`：快速执行 / 快速打开共用的 textOf / observe / pageSummary；`quick-open.ts`：`computer_quick_open` / `hostpc_quick_open` 工具（开浏览器 / 应用、按窗口优先级找并绑定、打开网址、读页面；可同时传 steps / goal 直接执行）；`quick-goal.ts`：目标模式的纯逻辑（候选动作生成 / 剪枝 / 危险按钮守门 / 问题构造 / 动作转步骤）；`quick-goal-run.ts`：目标模式执行循环（问 classifier、执行、核对） |
@@ -161,7 +161,9 @@
 | `email.ts` | 邮箱连接器 |
 | `email-oauth.ts` | Gmail OAuth |
 | `push.ts` | Web Push |
-| `files.ts` | 工作区路径与上传 |
+| `files.ts` | 工作区路径与上传；Buffer 入站与分块收尾共用安全命名、重名和登记 |
+| `uploads.ts` | 单聊/群聊共用顺序分块上传、流式追加、失败/取消与一天过期清理；`test/uploads.test.ts` 覆盖多块、边界、错误与清理；`test/upload-helper.ts` 供 HTTP 回归共用新协议 |
+| `routes/uploads.ts` | 两种对话共用上传创建/分块/取消接口 |
 | `attachments.ts` | 附件 → 模型输入 |
 | `persona-review.ts` | 人设整理纯逻辑：最近单聊消息裁剪（80 条 / 3 万字）、提示词、JSON 容错与结构校验；`routes/persona-review.ts` 复用运行时模型解析与单次补全，只返回不写库；单测 `test/persona-review.test.ts`，页面闭环 `e2e/persona-review-ui.mjs` |
 | `vision.ts` | 识图能力判定与调用 |
@@ -205,6 +207,7 @@
 | `main.tsx` | 入口 |
 | `App.tsx` | 应用外壳 |
 | `api.ts` | 接口调用与连接管理 |
+| `upload.ts` | 单聊/群聊共用 32MB 顺序分块、已确认字节进度与失败/取消清理 |
 | `recall-api.ts` | 撤回的前端适配：canRecall、recallActions（气泡按钮 / 右键菜单共用） |
 | `store.ts` | 全局状态（zustand） |
 | `types.ts` | 前端类型 |
@@ -348,6 +351,7 @@
 | `managed-agy-binary.mjs` | Antigravity 本地假 binary 压缩包、SHA 下载、终端登录与更新清单；捕获检测 / 登录 / 对话隔离环境，禁止外网 |
 | `temp-server.mjs` | 临时数据 + Mock 的测试服务（makeTempRun / startTempServer / browserEnv / cleanupTempRun；服务进程不继承 *_API_KEY / *_TOKEN / ANTHROPIC_* 等真实服务商凭据环境变量） |
 | `stable-shot.mjs` | 稳定截图 |
+| `upload.mjs` | 共用新上传协议的创建、顺序分块及失败清理 |
 | `artifacts.mjs` | 截图与日志写 artifacts/ |
 | `fake-hindsight.mjs` | 假 Hindsight |
 | `page-checks.mjs` | 弹出菜单溢出检查、群聊发言 / 等空闲 / 按成员取消息、等本地语音模型区（openLocalAsrModels）、选本地模型 / 取安装按钮（先选再装与装后两种界面通用：pickLocalAsrModel / localAsrInstallButton） |
