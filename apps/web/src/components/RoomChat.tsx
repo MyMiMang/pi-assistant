@@ -216,7 +216,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					))}
 				</div>
 			)}
-			<RoomComposer key={rKey} room={room} running={st.running} drag={drag} ref={composer} replyKey={rKey} onJump={jump} jumpState={jumpState} onRetryJump={retryJump} wrapRef={composerWrap} />
+			<RoomComposer room={room} running={st.running} drag={drag} ref={composer} replyKey={rKey} onJump={jump} jumpState={jumpState} onRetryJump={retryJump} wrapRef={composerWrap} />
 			<RoomSettings room={room} open={settings} onClose={() => setSettings(false)} />
 			{replyCtx.menuEl}
 			{jumpState && !quote && <JumpHint s={jumpState.s} onRetry={retryJump} />}<JumpToLatest scroller={scroller} wrap={composerWrap} count={list.length} onLatest={roomWindow[roomId] ? () => void returnLatest() : undefined} />
@@ -263,6 +263,8 @@ function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, o
 	const clientRef = useRef<{ sig: string; id: string } | null>(null);
 	const quote = useReplyDrafts((s) => s.drafts[replyKey] ?? null);
 	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f, progress, signal) => uploadRoom(room.id, f, progress, signal));
+	// 切对话：取消上传中的附件、清掉没发出的（不用 key 重建输入框——外层量的是这个节点的高度，重建后量的还是旧节点，最后一条消息会被输入框盖住）
+	useEffect(() => clear, [replyKey]); // eslint-disable-line react-hooks/exhaustive-deps
 	if (ref && typeof ref === "object") (ref as React.RefObject<{ addFiles: typeof addFiles } | null>).current = { addFiles };
 	const [picked, setPicked] = useState<string[]>([]);
 	const [q, setQ] = useState<{ at: number; query: string } | null>(null);

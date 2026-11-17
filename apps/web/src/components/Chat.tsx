@@ -244,7 +244,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 					</button>
 				</div>
 			)}
-			<Composer key={rKey} ref={composer} agentId={agentId} name={agent.name} model={agent.model?.id} running={running} drag={drag} replyKey={rKey} replyLabel={replyLabel} onJump={jump} jumpState={jumpState} onRetryJump={retryJump} wrapRef={composerWrap} />
+			<Composer ref={composer} agentId={agentId} name={agent.name} model={agent.model?.id} running={running} drag={drag} replyKey={rKey} replyLabel={replyLabel} onJump={jump} jumpState={jumpState} onRetryJump={retryJump} wrapRef={composerWrap} />
 		</div>
 	);
 }
@@ -272,6 +272,8 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 	// 幂等：同一份草稿（文字 + 附件 + 引用）重试复用同一 clientId；草稿一变就换新的，避免重复唤醒
 	const clientRef = useRef<{ sig: string; id: string } | null>(null);
 	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f, progress, signal) => upload(agentId, f, progress, signal));
+	// 切对话：取消上传中的附件、清掉没发出的（不用 key 重建输入框——外层量的是这个节点的高度，重建后量的还是旧节点，最后一条消息会被输入框盖住）
+	useEffect(() => clear, [replyKey]); // eslint-disable-line react-hooks/exhaustive-deps
 	const quote = useReplyDrafts((s) => s.drafts[replyKey] ?? null);
 	const ta = useRef<HTMLTextAreaElement>(null);
 	useLayoutEffect(() => {
