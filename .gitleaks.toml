@@ -1,8 +1,17 @@
 title = "pi-assistant gitleaks config"
 [extend]
 useDefault = true
-[allowlist]
+[[allowlists]]
 description = "测试用假 Key"
 regexes = ['''sk-(relay-test|unit|wrong)''', '''sk-(test-key|relay-key|relay-[ab]|auto|scope)-[a-z]{0,4}-?0123456789abcdef''']
 # evidence/ 下的测试结果 JSON 记录的是源码文件 sha256 指纹（已移出跟踪，仅历史中存在）
 paths = ['''package-lock\.json''', '''^evidence/.*-results\.json$''']
+
+# 公开 ACP 注册表快照：仅此规则、此值及两份来源文档同时匹配时豁免。
+[[allowlists]]
+description = "Public ACP registry snapshot, verified against upstream commit"
+targetRules = ["sourcegraph-access-token"]
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^4e23bad29bbbcc0d4bf8ee4fa358b5f952b637c7$''']
+paths = ['''^(THIRD_PARTY_NOTICES\.md|docs/research/native-acp-batch2-sources\.md)$''']

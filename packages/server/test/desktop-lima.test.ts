@@ -263,7 +263,7 @@ test("macOS：真实 limactl 校验生成的配置", { skip: process.platform !=
 	execFileSync("/usr/bin/tar", ["xzf", lima.dest, "-C", out]);
 	const limactl = join(out, "bin", "limactl");
 	const ver = execFileSync(limactl, ["--version"], { encoding: "utf8" });
-	assert.match(ver, /2\.2\.1/);
+	assert.equal(ver.trim(), `limactl version ${L.vmManifest().lima.version}`);
 	const { mkdirSync } = await import("node:fs");
 	mkdirSync(L.vmDir(), { recursive: true });
 	// validate 会检查 images/archives 的本地路径格式，不要求文件存在

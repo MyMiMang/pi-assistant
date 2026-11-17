@@ -1141,7 +1141,7 @@ await step("助理电脑开箱即用：向导没开启时什么都不下载；�
 	const ds = page.getByTestId("desktop-settings");
 	await ds.waitFor();
 	if (!(await page.getByTestId("settings-nav").locator("button[data-tab=computer]").getAttribute("aria-current"))) throw new Error("没有跳到「助理电脑」标签");
-	await ds.getByTestId("desktop-cost").getByText(/≈1\.5 GB.*≈5 GB.*3–4 GB/).waitFor();
+	await ds.getByTestId("desktop-cost").getByText(`预计下载 ≈${(g0.image.downloadBytes / 1e9).toFixed(g0.image.downloadBytes >= 1e10 ? 0 : 1).replace(/\.0$/, "")} GB，磁盘占用 ≈${(g0.image.diskBytes / 1e9).toFixed(g0.image.diskBytes >= 1e10 ? 0 : 1).replace(/\.0$/, "")} GB，运行时内存 3–4 GB。开启前什么都不会下载。`, { exact: true }).waitFor();
 	if (await ds.getByTestId("desktop-enabled").isChecked()) throw new Error("开关应为关闭");
 	await ds.getByTestId("desktop-idle").click();
 	await page.getByTestId("desktop-idle-option-30").click();
@@ -1149,17 +1149,17 @@ await step("助理电脑开箱即用：向导没开启时什么都不下载；�
 	await ds.getByTestId("desktop-advanced").evaluate((d) => (d.open = true));
 	await ds.getByTestId("desktop-download-source").evaluate((d) => (d.open = true));
 	await ds.getByTestId("desktop-mirror").fill("https://ghcr.nju.edu.cn/");
-	await ds.getByRole("button", { name: "保存" }).click();
+	await ds.locator("section").filter({ has: page.getByTestId("desktop-mirror") }).getByRole("button", { name: "保存", exact: true }).click();
 	await ds.getByText("ghcr.nju.edu.cn/mymimang/pi-assistant-desktop", { exact: false }).waitFor();
 	await ds.getByTestId("desktop-backend-docker").click();
 	await page.waitForFunction(async (b) => (await (await fetch(`${b}/api/desktop`)).json()).settings.backend === "docker", BASE);
 	await page.screenshot({ path: join(SHOTS, "59-settings-desktop.png") });
-	const bad = await fetch(`${BASE}/api/desktop`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ idleMinutes: 7 }) });
+	const bad = await fetch(`${BASE}/api/desktop`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ idleMinutes: 1441 }) });
 	if (bad.status !== 400) throw new Error("非法空闲时间应被拒绝");
+	if (!(await fetch(`${BASE}/api/desktop`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ idleMinutes: 7 }) })).ok) throw new Error("合法的自定义空闲时间应保存");
 	const g1 = await (await fetch(`${BASE}/api/desktop`)).json();
-	if (g1.settings.enabled || g1.install.phase !== "idle") throw new Error("改设置不应触发下载");
-	// 恢复默认，避免影响后面的步骤
-	await fetch(`${BASE}/api/desktop`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ backend: "auto", idleMinutes: 10, mirror: "" }) });
+	if (g1.settings.idleMinutes !== 7 || g1.settings.enabled || g1.install.phase !== "idle") throw new Error("自定义时间应读回7，改设置不应触发下载");
+	if (!(await fetch(`${BASE}/api/desktop`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(g0.settings) })).ok || JSON.stringify((await (await fetch(`${BASE}/api/desktop`)).json()).settings) !== JSON.stringify(g0.settings)) throw new Error("恢复助理电脑原设置失败");
 	await page.keyboard.press("Escape");
 });
 const openPane = async (tab) => {

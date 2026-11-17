@@ -2,20 +2,22 @@
 
 只写**当前状态**，保持一屏到两屏。历史进度在 [history/HANDOFF-2026-10-18.md](history/HANDOFF-2026-10-18.md)，不要再往这里追加长段落。
 
-## 当前版本（2026-10-20）
-- 公开版：**v0.1.0-beta.70**（Latest，2026-11-16）。五平台构建、Mac / Windows 安装启动检查、发布门禁全部通过。
+## 当前版本（2026-11-17）
+- 公开版：**v0.1.0-beta.71**（Latest，2026-11-17，main `727a7afb`）。发布已成功；独立 secrets `44042654334` / ci `44042641543` 未绿，原因是公开快照误报及 Lima / 空闲时间旧测试断言。本轮必要收尾已获总管本地验收通过，远端CI待验证；完整check、定向e2e、ARM64 Lima与全历史扫描通过，Intel Lima未验；不得把发布成功等同 CI 全过。
+- 开发分工：**pi助理开发总管**接替 Claude 负责规划、代码审查与验收；**Pi 开发助理**按批准方案实施代码，模块化、复用和可维护性同为验收要求。
 - 2026-11-04 Pi 1.3.0 → 1.5.0（未打包）：适配层不用改；唯一变化是 codemode 第 3 个并发脚本从「报上限错误」变成排队，测试改名 `pi-codemode-worker-queue.test.ts`。Jev 分类器从此能传图，快速执行者设计已按此更新（草稿，待实现）。
 - 2026-11-05 快速执行者第二、三版 + 开启流程简化（决策 0028）+ 复核修复已合 main，随 beta.51 发布：通用三项真机测速见 `design/fast-executor.md` 末尾（计算器 246.5→54.4 秒）；目标模式改用 OpenRouter 的 Jev 真机走通（商店任务 125.7→62.5 秒）；不做「快模型」；设置页测试 C 段过时待重写。beta.50 打了 tag 后取消（GitHub 留一个未公开草稿），跳号。
 - 2026-11-05 群聊按进展推进（决策 0029，已随 beta.53 发布；beta.52 因 GitHub 停用 macos-14 构建机没发出来，构建机已换 macos-15）：用户「苏折竹ai短剧」群在做活但登记的项目已结束，每轮做完就停、8 次上限连两波派活都容不下；改成到上限看进展（看板 + 群文件数，派活次数不算）、没项目时成员交回活也兜底叫醒管理者。单测 + 群聊 e2e 过，真机未验证。
-- 2026-11-04 快速执行者已合 main：`computer_quick_steps` / `hostpc_quick_steps`，设置在 设置 › 操作这台电脑 › 快速执行。开发方式：用户 App 里的「Pi 开发助理」（DeepSeek）照方案写代码、Claude 审；它的代码副本在它工作区的 `pi-assistant`（git worktree，`node_modules` 外部依赖链到主仓库、`@pi-assistant/*` 指向副本自己）。DeepSeek 偶尔把工具调用写进思考里导致无声停下，关掉思考后好了。
+- 2026-11-04 快速执行者已合 main：`computer_quick_steps` / `hostpc_quick_steps`，设置在 设置 › 操作这台电脑 › 快速执行。当前开发分工见上；本轮在主仓库 main 收尾，助理旧工作树保留，禁止覆盖其未提交成果。
 - 发布小坑：Intel Mac 那一路偶尔在上传时和别的平台并发撞车（`Not Found - delete-a-release-asset`），构建本身成功；`gh run rerun <id> --failed` 只重跑这一路即可（beta.34 遇到过，beta.35 没遇到）。
 - 已随 beta.37 发布：群聊按「AI 团队」重做第 1 步「项目与方案」（[决策 0019](decisions/0019-group-as-team.md)，取代决策 0018 的「自主推进」开关）：管理者先立项出方案卡（room_plan），用户确认（按钮或群里说「可以」→ room_project_start）后项目才开始，进行中可改方案、完成用 room_project_done、用户可随时停下；服务端 + 界面都已实现。真实模型下方案质量 / 按方案推进得怎样，待真机。第 2 步只做了「看板没变不重复发」。第 3 步已实现：任务依赖（after / stage）、前置核验通过后自动开始并带交接单和文件、项目进度清单（面板 + chip「阶段 n/m」）、验收第三种结果「这条路走不通」、项目级卡住计数（只认提交和完成为进展，到 3 要求 room_project_replan，改过 2 次再卡就报告用户）、停下后 room_project_resume / 「接着做」。第 4 步已实现：任务会话里 ask_colleague 找同事（群里可见，回答直接送回提问者正在跑的执行，没在跑就带着回答重新开始）、answer_colleague、report_upstream + work_rework（只有上游负责人能决定重做，重新通过后新版本自动交给下游）、3 轮 / 20 分钟交给管理者；任务执行说明里带群成员名单；协作工具免审批。第 5 步已实现：阶段完成通知、room_checkpoint 关键点卡片、交付卡、消息带 projectId 与按项目筛选。方案有关键点时，阶段完成后下一阶段任务先暂缓（rooms/hold.ts），管理者回合结束且没有关键点卡片在等用户才放行。group-collab-ui 之前一次中途报错，推测是旧 [G2] 手动 pause 撞上非法状态，已删掉那段，之后连跑三次都通过。第 6 步已实现：单聊遇到多步骤大事也出方案卡 → 确认 → 阶段进度 → 交付卡（`chat-projects/`）；清理了旧自主推进、提问气泡重复的 @X、工具回答后多发的短话、Mock「可以」确认不稳定（断言已改回严格）；临时服务器和单测会去掉继承的模型密钥环境变量。6 步全部做完，待用户说「打包」后真机实测。新建助理加了「全能培训师」模板（启用内置技能 team-onboarding）。单聊输入栏「技能」按钮换成了「权限」按钮（决策 0020）。
 
 ## 正在做
-- 六家禁更补齐（候选未提交）：Gemini 私有 system 双开关、CodeBuddy/Kimi 固定变量、Cursor 全局参数已接入；Goose 保留已审计 ACP 链，Kiro 写官方私有 setting 并明说固定控制流未知。native-catalog 57/57、相关七文件111/111、typecheck/check:static 通过；来源表/Help 已纠错；最终 check 1731项（1720通过/11跳过/0失败）、六个编程工具 UI 均通过，真实工具未验（实施方案「六家禁更补齐」）。
-- no-self-update 通用兜底（dev/no-self-update，未提交）：17 原生 + 四家 brain 的运行 / 安装环境强制私有 npm prefix、空 user/global npmrc、cache；本次单点修正运行 PATH 为私有 App Node bin + 受管命令目录 + 白名单输入中的用户原始 PATH，顺序去重（Windows 不分大小写），不混入 buildCliEnv 补的 common dirs；安装器 npm 仍用原精简 PATH，Claude/Codex 二次白名单保持固定值。本轮定向112/112、完整 check 1742项（1731通过/11跳过/0失败）、网页构建一次通过；六个 UI 串行6/6通过（实施方案与 artifacts/runtime-path-*）；旧轮次结果留 no-self-update-*。真实工具、Windows/Linux 实机未验证。
-- ACP 第二批：已合 main（b2cfe939），15 家新增 + Gemini/CodeBuddy 共用配置表、安装/登录/模型发现/卡片；Cursor/Devin 十二平台官方文件已静态下载实算 SHA。Amp 已补官方五平台私有 runtime，Cline/Vibe 共用标准 stdio 转发现有工具桥；真实工具未验；最终 check 1642项（1631通过/11跳过/0失败）、六个假包 UI 脚本通过。检查记录见 [实施方案 §11](design/native-acp-agents-impl.md)，逐家版本/隔离/auth/自更新/许可见[来源表](research/native-acp-batch2-sources.md)。未提交推送发布、重启8787或真实安装登录。
-- 四家 CLI 私有安装迁移：三家已合 main b1dc632d；Antigravity 候选在 dev/agy-private-install（基线 d91c5c96，未提交）。复用 NativeInstaller 官方 binary 来源、独立 HOME、官方 acp --login 终端流程与 AGY_CLI_DISABLE_AUTO_UPDATE=true；假包安装→登录 / 取消→选模型→对话、缺 / 有 SHA 更新及五家 UI 回归已通过。最终检查结果见实施方案 §10 与 artifacts/agy-* 日志；真实安装登录 / 终端 / 跨平台未验证，未重启8787。
+- 编程工具上下文归属：已合 `6afab502`，随 beta.71 发布（决策0032）。假 agy / Mock 增量切换已验；dev:live 的 Claude Sonnet 来回切换、缓存增长及无自动整理已验，Gemini hydrogen / argon 当时受地区限制未验（见设计实测节）。
+- 六家禁更补齐（已合 `3ca03381`）：Gemini 私有 system 双开关、CodeBuddy/Kimi 固定变量、Cursor 全局参数已接入；Goose 保留已审计 ACP 链，Kiro 写官方私有 setting 并明说固定控制流未知。native-catalog 57/57、相关七文件111/111、typecheck/check:static 通过；来源表/Help 已纠错；最终 check 1731项（1720通过/11跳过/0失败）、六个编程工具 UI 均通过，真实工具未验（实施方案「六家禁更补齐」）。
+- no-self-update 通用兜底（已合 `3ca03381`）：17 原生 + 四家 brain 的运行 / 安装环境强制私有 npm prefix、空 user/global npmrc、cache；本次单点修正运行 PATH 为私有 App Node bin + 受管命令目录 + 白名单输入中的用户原始 PATH，顺序去重（Windows 不分大小写），不混入 buildCliEnv 补的 common dirs；安装器 npm 仍用原精简 PATH，Claude/Codex 二次白名单保持固定值。本轮定向112/112、完整 check 1742项（1731通过/11跳过/0失败）、网页构建一次通过；六个 UI 串行6/6通过（实施方案与 artifacts/runtime-path-*）；旧轮次结果留 no-self-update-*。真实工具、Windows/Linux 实机未验证。
+- ACP 第二批：已合 main（b2cfe939），15 家新增 + Gemini/CodeBuddy 共用配置表、安装/登录/模型发现/卡片；Cursor/Devin 十二平台官方文件已静态下载实算 SHA。Amp 已补官方五平台私有 runtime，Cline/Vibe 共用标准 stdio 转发现有工具桥；真实工具未验；最终 check 1642项（1631通过/11跳过/0失败）、六个假包 UI 脚本通过。检查记录见 [实施方案 §11](design/native-acp-agents-impl.md)，逐家版本/隔离/auth/自更新/许可见[来源表](research/native-acp-batch2-sources.md)。已合入，真实安装登录未验证；历史检查结果不等同当前 CI 状态。
+- 四家 CLI 私有安装迁移：三家已合 main b1dc632d；Antigravity 已合 `7598bdea`。复用 NativeInstaller 官方 binary 来源、独立 HOME、官方 acp --login 终端流程与 AGY_CLI_DISABLE_AUTO_UPDATE=true；假包安装→登录 / 取消→选模型→对话、缺 / 有 SHA 更新及五家 UI 回归已通过。最终检查结果见实施方案 §10 与 artifacts/agy-* 日志；真实安装登录 / 终端 / 跨平台未验证，未重启8787。
 - 原生 ACP（已随 beta.56 发布）：Gemini CLI / CodeBuddy 原生干活 + App 自带 npm 私有安装 + 浏览器官方登录 + 手动更新（c43a40e4、496f0594）。真实工具安装 / 登录 / 干活未验证，用户之后用发布版实测；第二批十五家（含 Cursor/Grok）的最新候选与限制见上一条；本条保留第一批发布状态。
 - 上游升级（未打包）：Hindsight 0.10.3 → 1.2.0（反思改用 JSON Schema 请求，网关原本就会把格式要求写进提示词，Mock 已适配；真机冒烟全过；真实模型回想效果未验证；记忆用量统计把回想算进「抽取」，小问题未改）；lima 2.3.0（含两个安全修复）、cloudflared 2026.10.7、nerdctl 2.4.2、uv 0.13.7、Node 22.23.4。lima 真机启动未在本机验证。
 - 工具卡死保护（已随 beta.55 发布）：全部内联扩展统一停止 / 十分钟卡死保护，agent-runtime 按当前对话 pending requests 暂停计时；项目同一轮卡住只报告一次，有进展回退后可再次报告。check、插话 / 停止 / 群聊 e2e 通过。
@@ -63,8 +65,6 @@
 - `7350689` 第 5 步：群任务执行跑在负责人的帮手上（kind=work）；帮手最多再派一层（上一层等下一层并整合）；群角色范围自动写进帮手规则（`helper-scope.ts`）；可见性设置 `groupHelperDetail`（默认 owner = 派它的助理 + 用户能看完整步骤，群里只看概况和结果）；核验通过后执行记忆草稿自动转正。顺带恢复了后台任务的聊天卡片（第 4 步后丢了）。
 - 第 6 步（两个提交）：① 界面上「子代理」改叫「帮手」（帮手详情、执行概览、帮手模型 / 候选池 / 任务上限、工具步骤名、记忆来源、删除服务提示），`taskTitle` 去前缀两个词都认，e2e 选择器同步。② 旧兼容层下线：删 `GET /api/agents/:id/tasks`、`/api/tasks/:id/{messages,cancel,resume}`、`tasks.list/cancel/resume`、`getTask` 和 `task.updated` 事件；前端「后台任务」列表改读 `/api/subagents?agent=` 并听 `subagent.updated`（只取 kind=task/routine），聊天里后台任务卡片的取消 / 继续改调 `/api/subagents/:id/stop|resume`（旧任务迁移时 id 没变，老卡片照样能用）。
 
-**CI**：`7350689` 的 ci 只有 Intel Mac 的 Lima 测试下载失败（`fetch failed`，网络偶发）；紧接着的 `420fe5b`（只改文档）ci 全绿，含 `e2e/run.mjs` 后台任务那步。
-
 **还要做**
 1. 模型对用户也说「帮手」已按用户决定做完（决策 0014 补充）：给模型看的文字全改，事件标记新旧都认；Mock 的假台词和触发词（「派个子代理」「子代理回报」）没改，e2e 依赖它们。
 2. 测试不再碰 Mac 钥匙串：直接启动 `src/main.ts` 的 13 个 e2e、`server-setup.test.ts` 和 3 个 smoke 改走 `test/launch-memory.ts`（之前在 Mac 上会用真实 App 的钥匙串主密钥，曾差点用 `-U` 覆盖，已拦下，条目未改）。待做：规范检查加一条「测试禁止直接启动 src/main.ts」；主密钥读不到时停下、不覆盖已按用户决定做完（[0015](decisions/0015-master-key-never-overwrite.md)；单测 + 假 `security` 实启 `main.ts` 演练过，真机 Mac / Windows 未验证）；单测 `setup.ts` 在 PATH 上放假的 `security`。
@@ -104,7 +104,7 @@
 - 端口被占改用 8788… 时，网页的本地偏好（布局、语言，存在浏览器 localStorage，按端口区分）会回到默认；本机访问不需要登录，所以不会掉登录。端口记在配置目录 `port.txt`，之后一直用同一个。
 - 安装包**没有签名**：macOS 第一次打开要右键选「打开」，Windows 会有 SmartScreen 提示（§5.2）。
 - 群聊：复制群专属助理时不会复制它工作区里的文件。管理者派活做得好不好，取决于用的是什么模型。
-- 附件：单个文件上限 100MB；文档摘录最多约 2 万 token；扫描版 PDF 不做 OCR。
+- 附件：单个文件上限 2GiB，共用 32MiB 顺序分块上传（隧道单请求限制不等于文件总上限）；文档摘录最多约 2 万 token；扫描版 PDF 不做 OCR。
 - cua-driver：用户电脑侧 2026-11-03 升到 0.38.0（`third-party.json`，0.36–0.38 无破坏性改动；开放 get_guide、browser_select，隐藏 history_status / history_query）；助理电脑镜像仍是 0.35.4（助理电脑镜像 `0.1.4`，digest `sha256:6cc5c119…d54a42`）。0.35.0 是 breaking change，适配点见本文 2026-10-22「CUA 0.34.1 → 0.35.4 适配」一条。以后再升级要重新核对 BROWSER.md、WORKFLOW.md 和工具参数格式。
 - macOS 系统沙箱档没做。MCP 服务器经 npx 第一次下载时没有字节进度。
 - Hindsight 运行环境 / 向量模型的下载百分比是估算的。远程 Hindsight 换不同维度的向量模型时，要对方实例自己迁移。
