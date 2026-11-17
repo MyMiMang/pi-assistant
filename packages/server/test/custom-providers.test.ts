@@ -216,3 +216,12 @@ test("接口格式「自动」：每个模型按名字写自己的协议和地�
 	assert.ok(t.ok, `OpenAI 协议的模型照常可测：${t.message}`);
 	await customProviders.remove(p.id);
 });
+
+test("识图：参数库（models.dev）还没收录的新模型，按 Pi 内置目录判断（目录里能看图就标看图）；用户手动设过的不动", async () => {
+	const { registerCliProvider } = await import("../src/pi-adapter/cli-models/provider.ts");
+	const id = "pia-catalog-only-vision-9";
+	await registerCliProvider(models, { id: "catalog-test", name: "目录测试", api: "catalog-test", baseUrl: "test://local", streamSimple: (() => undefined) as never, models: [{ id, name: id, reasoning: false, image: true, contextWindow: 100_000, maxTokens: 8000 }] });
+	assert.deepEqual(customProviders.withLimits({ id }).input, ["text", "image"]);
+	assert.deepEqual(customProviders.withLimits({ id, input: ["text"] }).input, ["text"]);
+	assert.equal(customProviders.withLimits({ id: "pia-unknown-model-9" }).input, undefined);
+});

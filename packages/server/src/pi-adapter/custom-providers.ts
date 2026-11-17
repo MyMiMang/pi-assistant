@@ -446,17 +446,18 @@ export class CustomProviders {
 	withLimits(m: CustomModel, detected?: { contextWindow?: number; maxTokens?: number }, baseUrl?: string, api?: string): CustomModel {
 		// Pi 内置目录 + models.dev 模型参数库；排除自定义服务自己（否则会拿自己存过的旧值当“已知模型”）
 		const own = new Set(this.store.loadMeta().map((x) => x.id));
-		const builtin = [...this.models.listModels().filter((x) => !own.has(x.provider)), ...modelDb()];
+		const piCatalog = this.models.listModels().filter((x) => !own.has(x.provider));
+		const builtin = [...piCatalog, ...modelDb()];
 		const l = resolveLimits(m, detected, builtin, providerHint(baseUrl));
 		const out: CustomModel = { ...m, contextWindow: l.contextWindow, maxTokens: l.maxTokens, limitsSource: l.source };
-		// 是否识图：用户没指定 input 时按 models.dev 判断（支持图片的模型 Pi 才会把图片发过去）
+		// 是否识图：用户没指定 input 时按 models.dev 判断，参数库还没收录的新模型再看 Pi 内置目录（支持图片的模型 Pi 才会把图片发过去）
 		if (!m.input || m.inputAuto) {
-			const v = knownVision(m.id, modelDb());
+			const v = knownVision(m.id, modelDb()) ?? knownVision(m.id, piCatalog.map((x) => ({ ...x, vision: x.input.includes("image") })));
 			if (v) Object.assign(out, { input: ["text", "image"], inputAuto: true });
 			else (delete out.input, delete out.inputAuto);
 		}
 		if (m.reasoning === undefined || m.reasoningAuto) {
-			const reasoning = knownReasoning(m.id, modelDb()) ?? knownReasoning(m.id, this.models.listModels().filter((x) => !own.has(x.provider)));
+			const reasoning = knownReasoning(m.id, modelDb()) ?? knownReasoning(m.id, piCatalog);
 			if (reasoning !== undefined) Object.assign(out, { reasoning, reasoningAuto: true });
 		}
 		// 思考档位：照搬 Pi 内置目录里同一个模型的 thinkingLevelMap（含 xhigh / max），让界面、切换与请求参数一致；
