@@ -40,7 +40,9 @@ import { refreshResumedTools } from "./session-tools.ts";
 import { guardTools } from "./tool-guard.ts";
 import { releaseNativeSessionContext } from "./cli-models/session-context.ts";
 import { isCliQuotaError } from "./cli-models/provider.ts";
-export { subscribeSession, type AgentEvent, type NativeToolEvent } from "./session-events.ts";
+import { cancelContextRecovery, cliOwnsContext, contextOwnershipExtension, runWithContextRecovery, syncContextOwnership } from "./context-ownership.ts";
+export { subscribeContextSession as subscribeSession, contextUsage, sessionStats, setContextRecoveryFallback } from "./context-ownership.ts";
+export type { AgentEvent, NativeToolEvent } from "./session-events.ts";
 export { recallQueuedSteer } from "./queue-recall.ts";
 export { activateNewExtensionTools, loadedResources } from "./session-tools.ts";
 import { BRAND } from "@pi-assistant/shared";
@@ -598,6 +600,7 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		return !rel.startsWith("..") && !isAbsolute(rel);
 	});
 	const skillFilter = o.skillFilter;
+	const settingsManager = SettingsManager.inMemory({ compaction: { enabled: !cliOwnsContext(model) }, retry: { enabled: true, maxRetries: 5 } });
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: o.cwd,
 		agentDir: o.agentDir,
@@ -635,6 +638,7 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 						{ name: "pi-tool-search", factory: createToolSearchExtension() },
 					]),
 			...o.extensions,
+			{ name: "pia-context-ownership", factory: contextOwnershipExtension(settingsManager) },
 		].map((e) => ({ name: e.name, factory: guardTools(e.factory, o) })),
 	});
 	await resourceLoader.reload();
@@ -653,7 +657,7 @@ export async function createPiSession(o: CreateSessionOptions): Promise<AgentSes
 		thinkingLevel: (o.thinking ?? "off") as ModelThinkingLevel,
 		resourceLoader,
 		sessionManager,
-		settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 5 } }),
+		settingsManager,
 		tools: o.tools ?? ["+grep", "+find", "+ls"],
 		...(o.excludeTools?.length ? { excludeTools: o.excludeTools } : {}),
 		...(o.customTools?.length ? { customTools: o.customTools } : {}),
@@ -774,7 +778,7 @@ export function promptSession(session: AgentSession, text: string, images?: { ty
 	// leading 放在最前面（如 Pi 原生 `/skill:name`），保证 Pi 的 skill 命令展开能命中；插话前缀随后
 	const cmd = leading ? `${leading} ` : "";
 	if (session.isStreaming) return session.prompt(`${cmd}${INTERJECTION_PREFIX}\n${text}`, { streamingBehavior: "steer", ...img });
-	return session.prompt(`${cmd}${text}`, img);
+	return runWithContextRecovery(session, () => session.prompt(`${cmd}${text}`, img));
 }
 /** 停止时清掉还没送达的插话 / 排队消息，免得停下后又被它们重新启动 */
 export function clearQueued(s: AgentSession) {
@@ -811,25 +815,10 @@ export function skillCommand(session: AgentSession, skills: SkillInvocationInput
 	if (!s) throw new Error(`技能未加载：${want.name}`);
 	return `/skill:${s.name}`;
 }
-/** 当前上下文用量（用于界面提示“对话较长”） */
-export function contextUsage(s: AgentSession): { tokens: number | null; contextWindow: number | null } {
-	const u = (s as unknown as { getContextUsage?: () => { tokens?: number | null; contextWindow?: number } | undefined }).getContextUsage?.();
-	return { tokens: u?.tokens ?? null, contextWindow: u?.contextWindow ?? s.model?.contextWindow ?? null };
-}
-/** 输入框旁的上下文圆环：当前上下文占用 + 本会话累计 token / 费用（Pi getSessionStats） */
-export function sessionStats(s: AgentSession) {
-	const ctx = contextUsage(s);
-	const st = (s as unknown as { getSessionStats?: () => { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; cost: number; userMessages: number; assistantMessages: number; toolCalls: number } }).getSessionStats?.();
-	return {
-		...ctx,
-		percent: ctx.tokens != null && ctx.contextWindow ? Math.min(100, Math.round((ctx.tokens / ctx.contextWindow) * 1000) / 10) : null,
-		model: s.model ? { provider: s.model.provider, id: s.model.id, name: s.model.name } : null,
-		session: st ? { tokens: st.tokens, cost: st.cost, userMessages: st.userMessages, assistantMessages: st.assistantMessages, toolCalls: st.toolCalls } : null,
-	};
-}
-export const abortSession = (s: AgentSession) => (clearQueued(s), s.abort());
+export const abortSession = (s: AgentSession) => (cancelContextRecovery(s), clearQueued(s), s.abort());
 /** 结束会话：先发 session_shutdown（让 MCP 等扩展关闭子进程/连接），再释放 */
 export async function disposeSession(s: AgentSession) {
+	cancelContextRecovery(s);
 	try {
 		const runner = s.extensionRunner;
 		if (runner?.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
@@ -841,7 +830,7 @@ export async function disposeSession(s: AgentSession) {
 /** 往上下文注入一条不显示给用户的信息（例如后台任务结果），在下一轮对话时生效。 */
 /** 发一条模型可见、聊天里不显示的消息并立刻开始一轮（忙时排在当前轮之后） */
 export function triggerHidden(session: AgentSession, customType: string, text: string) {
-	return session.sendCustomMessage({ customType, content: text, display: false }, { triggerTurn: true, deliverAs: session.isStreaming ? "followUp" : undefined });
+	return runWithContextRecovery(session, () => session.sendCustomMessage({ customType, content: text, display: false }, { triggerTurn: true, deliverAs: session.isStreaming ? "followUp" : undefined }));
 }
 
 export function injectContext(session: AgentSession, customType: string, text: string) {
@@ -858,6 +847,7 @@ export async function applyModelSettings(session: AgentSession, models: PiModels
 		await session.setModel(m);
 		changed = true;
 	}
+	syncContextOwnership(session);
 	const level = models.clampThinking(model.provider, model.id, thinking);
 	if (session.thinkingLevel !== level) {
 		session.setThinkingLevel(level as ModelThinkingLevel);

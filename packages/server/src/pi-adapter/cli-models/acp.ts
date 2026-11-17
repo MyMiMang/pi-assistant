@@ -89,7 +89,7 @@ function acpBackend(cfg: AcpChannelConfig, deps: AcpDeps): CliBackend<AcpLive> {
 		label,
 		checkContinuationComposite: native,
 		// 不含模型：会话级配置；native 另含工作区、命令路径（安装版本）及隔离策略。
-		composite: (_model, tools, systemPrompt, key) => toolsPromptComposite(native ? JSON.stringify(["native", nativeContext(key).workspace, deps.command?.(), cfg.sessionPolicy ?? ""]) : "", tools, systemPrompt),
+		composite: (model, tools, systemPrompt, key) => toolsPromptComposite(native ? JSON.stringify([model, "native", nativeContext(key).workspace, deps.command?.(), cfg.sessionPolicy ?? ""]) : model, tools, systemPrompt),
 		// 原生过程可能已有副作用，不因一条报错自动重新发送整轮。
 		isResumeFailure: (msg) => !native && cfg.resumeFailed.test(msg),
 		async launch(req: LaunchRequest) {

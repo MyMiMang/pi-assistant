@@ -224,14 +224,14 @@ test("第二轮续用会话：只发新增的用户内容，带 --resume；model
 	assert.deepEqual(info1.tools, ["mcp__pia__echo", "mcp__pia__wait"]);
 	const sid = channel.store.get("res-1")?.claudeSessionId;
 	assert.ok(sid, "记下了 claude 会话 id");
-	const second = await run(ctx([user("第一句"), first.message, user("第二句")], undefined, "系统提示二"), { sessionId: "res-1", reasoning: "high" });
+	const second = await run(ctx([user("第一句"), first.message, user("第二句")], undefined, "系统提示一"), { sessionId: "res-1", reasoning: "high" });
 	const info2 = JSON.parse(textOf(second.message));
 	assert.equal(info2.resume, sid);
 	assert.equal(info2.first, "第二句", "只发新增的用户内容，不重发历史");
 	assert.equal(info2.effort, "high");
-	assert.equal(info2.systemPrompt, "系统提示二", "每轮的系统提示都是新的");
+	assert.equal(info2.systemPrompt, "系统提示一");
 	// 第三轮继续续用同一个会话
-	const third = await run(ctx([user("第一句"), first.message, user("第二句"), second.message, user("第三句")]), { sessionId: "res-1" });
+	const third = await run(ctx([user("第一句"), first.message, user("第二句"), second.message, user("第三句")], undefined, "系统提示一"), { sessionId: "res-1" });
 	assert.equal(JSON.parse(textOf(third.message)).resume, sid);
 	assert.equal(JSON.parse(textOf(third.message)).first, "第三句");
 });

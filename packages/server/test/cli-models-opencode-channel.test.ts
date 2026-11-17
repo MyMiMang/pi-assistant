@@ -192,7 +192,7 @@ test("signal 一开始就是中止的：直接 aborted，不起进程", async ()
 	assert.equal(launches().length, n);
 });
 
-test("第二轮复用同一个长驻进程：只发新增内容；模型和思考强度会话级切换（不重开）；图片作为 image 块", async () => {
+test("第二轮只发增量复用进程；换模型开新会话并保留图片", async () => {
 	setScenario("meta");
 	const n = launches().length;
 	const first = await run(ctx([user("第一句")]), { sessionId: "res-1", reasoning: "high" }, model("opencode-go/deepseek-v4.1-flash"));
@@ -207,15 +207,16 @@ test("第二轮复用同一个长驻进程：只发新增内容；模型和思�
 	assert.equal(i2.seq, 2, "同一个进程里的第二轮");
 	assert.equal(i2.sessionId, i1.sessionId);
 	assert.equal(launches().length, n + 1, "没有再起进程");
-	// 换模型 + 不指定思考强度（回到 default）+ 带图片：还是同一个进程同一个会话
+	// 换模型重开，历史转录保留，当前图片仍为 image。
 	const img = user([{ type: "text", text: "看图" }, { type: "image", data: "AAAA", mimeType: "image/png" }]);
 	const third = await run(ctx([user("第一句"), first.message, user("第二句"), second.message, img]), { sessionId: "res-1" }, model("opencode/claude-fable-5"));
 	const i3 = JSON.parse(textOf(third.message));
 	assert.equal(i3.model, "opencode/claude-fable-5");
 	assert.equal(i3.effort, "default");
-	assert.equal(i3.sessionId, i1.sessionId, "同一个会话");
-	assert.deepEqual(i3.blocks, ["text", "image"]);
-	assert.equal(launches().length, n + 1);
+	assert.notEqual(i3.sessionId, i1.sessionId, "换模型必须新开会话");
+	assert.match(i3.first, /第一句/);
+	assert.deepEqual(i3.blocks, ["text", "text", "image"]);
+	assert.equal(launches().length, n + 2);
 	noLeftovers();
 });
 

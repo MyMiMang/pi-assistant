@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { isContextOverflow, normalizeContext, type Message, type Model, type Api } from "@earendil-works/pi-ai";
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { createCliChannel, type CliBackend, type CliLive, type LaunchRequest, type Step } from "../src/pi-adapter/cli-models/channel-core.ts";
+import { toolsPromptComposite } from "../src/pi-adapter/cli-models/convert.ts";
 import { EventQueue } from "../src/pi-adapter/cli-models/event-queue.ts";
 import { makeSyncEntry, SyncStore } from "../src/pi-adapter/cli-models/sync-map.ts";
 
@@ -16,7 +17,7 @@ function fixture(max?: number) {
  let launchError = false;
  let resumes = 0;
  const backend: CliBackend<CliLive> = {
-  label: "fake", freshInputMaxChars: max, composite: () => "same",
+  label: "fake", freshInputMaxChars: max, composite: (model, tools, prompt) => prompt ? toolsPromptComposite(model, tools, prompt) : "same",
   async launch(req) {
    requests.push(req);
    if (launchError && req.resumeSessionId) throw new Error("missing");
@@ -27,8 +28,8 @@ function fixture(max?: number) {
   async resume(l) { resumes++; l.queue.push({ type: "event" }); }, abort() {}, step: () => steps, isResumeFailure: (m) => m === "missing",
  };
  const channel = createCliChannel(backend, store);
- async function run(messages: Message[], tools = true) {
-  const stream = channel.streamSimple(model, normalizeContext({ messages, tools: tools ? [{ name: "echo", description: "echo", parameters: { type: "object", properties: {} } }] : [] }), { sessionId: "key" });
+ async function run(messages: Message[], tools = true, systemPrompt?: string) {
+  const stream = channel.streamSimple(model, normalizeContext({ messages, systemPrompt, tools: tools ? [{ name: "echo", description: "echo", parameters: { type: "object", properties: {} } }] : [] }), { sessionId: "key" });
   for await (const _ of stream) { /* drain */ }
   return stream.result();
  }
@@ -54,6 +55,19 @@ test("fresh 超限先交 Pi 整理；公开转换的摘要允许淘汰历史；�
  const one = fixture(200);
  await one.run([user("长".repeat(500))], false);
  assert.equal(one.requests.length, 1);
+});
+
+test("两轮系统提示对比：记忆变化不重开，稳定规则变化才重开", async () => {
+ const f = fixture();
+ const first = await f.run([user("第一轮")], true, "固定人设\n\n<memory>记忆一</memory>");
+ await f.run([user("第一轮"), first, user("第二轮")], true, "固定人设\n\n<memory>记忆二</memory>");
+ assert.equal(f.requests[1].resumeSessionId, "saved");
+ assert.equal(f.requests[0].systemPrompt, f.requests[1].systemPrompt);
+ assert.equal(f.requests[1].systemPrompt, "固定人设");
+ assert.match(JSON.stringify(f.requests[1].input), /本轮相关记忆.*记忆二/s);
+ assert.doesNotMatch(JSON.stringify(f.requests[1].input), /第一轮|记忆一/);
+ await f.run([user("第三轮")], true, "新人设\n\n<memory>记忆三</memory>");
+ assert.equal(f.requests[2].resumeSessionId, undefined);
 });
 
 test("空内容 fail 保留对照记录，下次仍 resume 且只发新增消息", async () => {
@@ -95,7 +109,7 @@ test("续用启动失败后的 fresh 同样先整理且不启动第二次", asyn
  assert.equal(event.requests.length, 1);
 });
 
-test("工具循环中途 Pi 整理过前文：不再续接旧进程（它还带着全部旧上下文），改用整理后的历史重开；没整理过照常续接", async () => {
+test("挂起工具期间显式整理：重建执行避免旧工具错配；摘要未变照常回填", async () => {
  const toolUse: Step[] = [{ type: "content", ev: { type: "tool_call_start", id: "t1", name: "echo" } }, { type: "content", ev: { type: "tool_call_end", id: "t1", name: "echo", args: {} } }, { type: "tool_use" }];
  const result: Message = { role: "toolResult", toolCallId: "t1", toolName: "echo", content: [{ type: "text", text: "ok" }], isError: false, timestamp: 2 };
  const summary = convertToLlm([{ role: "compactionSummary", summary: "前面做过的事", tokensBefore: 300_000, timestamp: 0 }])[0];

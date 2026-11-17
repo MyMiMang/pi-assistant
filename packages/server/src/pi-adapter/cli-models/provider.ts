@@ -3,6 +3,8 @@
  * 渠道不需要密钥：给个占位让 Pi 把渠道算作可用，登录状态由设置卡片的检测负责；用量 cost 一律 0（订阅不显示钱）。
  */
 import type { PiModels } from "../index.ts";
+import { modelDb } from "../../model-db.ts";
+import { matchingModels, resolveLimits, type DbEntry } from "../model-limits.ts";
 
 /** 本机命令行渠道的 provider id（新增一家在这里登记）：用量不按名字去价格库里「猜价」（订阅用户看 API 标价会被误导，且 gpt-* 会撞上官方同名模型） */
 import { NATIVE_ACP_AGENTS } from "@pi-assistant/shared";
@@ -32,9 +34,19 @@ export interface CliProviderSpec {
 	models: CliModelSpec[];
 }
 
+/** 仅用目录中同一个模型的元数据；未知模型保留渠道预算，不采用 API 模型的默认值或家族猜测。 */
+export function cliModelLimits(model: CliModelSpec, catalog: DbEntry[]): Pick<CliModelSpec, "contextWindow" | "maxTokens"> {
+	const hits = matchingModels(model.id, catalog.filter((m) => m.contextWindow && m.contextWindow > 0));
+	if (!hits.length) return { contextWindow: model.contextWindow, maxTokens: model.maxTokens };
+	const { contextWindow, maxTokens } = resolveLimits({ id: model.id }, undefined, hits);
+	return { contextWindow, maxTokens };
+}
+
 /** 把一个本机命令行渠道（含它的 streamSimple 和模型）注册进 Pi；再调一次就是刷新模型列表。 */
 export async function registerCliProvider(models: PiModels, spec: CliProviderSpec): Promise<void> {
 	const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+	// 刷新 / 多渠道注册时不把 CLI 的旧预算当成目录事实，Pi 内置目录在 models.dev 前面。
+	const catalog = [...models.listModels().filter((m) => m.provider !== spec.id && !CLI_PROVIDER_IDS.includes(m.provider)), ...modelDb()];
 	models.registerProvider(spec.id, {
 		name: spec.name,
 		baseUrl: spec.baseUrl,
@@ -49,8 +61,7 @@ export async function registerCliProvider(models: PiModels, spec: CliProviderSpe
 			...(m.reasoning && m.thinkingLevelMap ? { thinkingLevelMap: m.thinkingLevelMap } : {}),
 			input: m.image ? ["text", "image"] : ["text"],
 			cost,
-			contextWindow: m.contextWindow,
-			maxTokens: m.maxTokens,
+			...cliModelLimits(m, catalog),
 		})),
 	});
 	await models.setRuntimeApiKey(spec.id, "local");

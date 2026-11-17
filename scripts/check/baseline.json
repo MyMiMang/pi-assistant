@@ -14,7 +14,7 @@
 		"packages/server/src/desktop.ts": 924,
 		"packages/server/src/local-asr/manager.ts": 708,
 		"packages/server/src/memory/hindsight/sidecar.ts": 602,
-		"packages/server/src/pi-adapter/index.ts": 984,
+		"packages/server/src/pi-adapter/index.ts": 861,
 		"packages/server/src/proactive.ts": 685,
 		"packages/server/src/task-waits.ts": 618,
 		"packages/server/test/subagents.test.ts": 927,

@@ -1,23 +1,20 @@
 /**
  * 跨轮续用 claude 会话（方案 §4.4）：按 Pi 会话记一张对照表，
- * 每项 = claude 会话 id + 已同步到 Pi 的哪一条（条数）+ 这段前缀的指纹 + 当时的模型。
- *
- * 新一轮来时，Pi 给的历史前缀对得上（条数够、指纹一致、模型没换）、且之后只多了用户消息，就 `--resume` 并只发新增内容；
- * 对不上（整理过上下文、从某条分支、换过模型、对照表丢了、上一轮被中止）就新开会话，把 Pi 当前上下文渲染成文字送进去。
+ * 每项 = 工具会话 id + 最后看到的消息标识 + 当时的模型/工具/系统规则。
+ * 再切回来只补发锚点之后的对话；锚点已被整理时补发期间摘要。
  * 对照表放内存，同时写一份小 JSON 到数据目录（服务重启后还能续上）。
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import { conversationOf, renderFreshInput, userMessagesToClaude, type ClaudeBlock } from "./convert.ts";
+import { conversationOf, renderFreshInput, type ClaudeBlock } from "./convert.ts";
+import { inputChars, renderDelta, summaryOf } from "./context-input.ts";
 
 export interface SyncEntry {
 	claudeSessionId: string;
-	/** 已同步的消息条数（不含 system 消息；包含这一轮 claude 回答的最后那条助理消息） */
-	count: number;
-	/** 前 `count` 条消息的链式指纹 */
-	fingerprint: string;
+	/** 时间戳与内容指纹共同标识工具最后看到的消息。 */
+	lastSeen: string;
 	/** 当时用的 claude 模型（`opus` 等）；换了就不续用 */
 	model: string;
 	updatedAt: number;
@@ -31,7 +28,7 @@ export function messageHash(m: Message): string {
 		case "user":
 			return sha(`u|${typeof m.content === "string" ? m.content : m.content.map((b) => (b.type === "text" ? `t:${b.text}` : `i:${sha(b.data)}`)).join("|")}`);
 		case "assistant":
-			return sha(`a|${m.content.map((b) => (b.type === "text" ? `t:${b.text}` : b.type === "toolCall" ? `c:${b.id}:${b.name}` : "")).filter(Boolean).join("|")}`);
+			return sha(`a|${m.content.map((b) => (b.type === "text" ? `t:${b.text}` : b.type === "toolCall" ? `c:${b.id}:${b.name}:${JSON.stringify(b.arguments)}` : "")).filter(Boolean).join("|")}`);
 		case "toolResult":
 			return sha(`r|${m.toolCallId}|${m.isError ? 1 : 0}|${m.content.map((b) => (b.type === "text" ? `t:${b.text}` : `i:${sha(b.data)}`)).join("|")}`);
 		default:
@@ -39,17 +36,11 @@ export function messageHash(m: Message): string {
 	}
 }
 
-/** 前 `count` 条对话消息（不含 system）的链式指纹 */
-export function prefixFingerprint(messages: readonly Message[], count: number): string {
-	let h = "";
-	for (const m of conversationOf(messages).slice(0, count)) h = sha(h + messageHash(m));
-	return h;
-}
+export const messageAnchor = (m: Message): string => `${m.timestamp}:${messageHash(m)}`;
 
 /** 这一轮正常结束（`result`）后记下的对照项：`messages` 是这次请求时 Pi 给的上下文，`reply` 是我们刚回答的那条助理消息。 */
 export function makeSyncEntry(claudeSessionId: string, model: string, messages: readonly Message[], reply: Message, now = Date.now()): SyncEntry {
-	const all = [...conversationOf(messages), reply];
-	return { claudeSessionId, count: all.length, fingerprint: prefixFingerprint(all, all.length), model, updatedAt: now };
+	return { claudeSessionId, lastSeen: messageAnchor(reply), model, updatedAt: now };
 }
 
 export type TurnPlan =
@@ -63,12 +54,12 @@ export function planTurn(entry: SyncEntry | undefined, model: string, messages: 
 	if (!entry) return fresh("没有对照表");
 	if (entry.model !== model) return fresh("换过模型");
 	const conv = conversationOf(messages);
-	if (conv.length <= entry.count) return fresh("没有新消息（上下文变短或被整理过）");
-	if (prefixFingerprint(conv, entry.count) !== entry.fingerprint) return fresh("历史前缀对不上（整理过上下文或从某条分支）");
-	const delta = conv.slice(entry.count);
-	if (!delta.every((m) => m.role === "user")) return fresh("新增部分里有助理 / 工具消息");
-	const input = userMessagesToClaude(delta as never);
-	if (!input.length) return fresh("新增的用户消息是空的");
+	const anchor = conv.findLastIndex((m) => messageAnchor(m) === entry.lastSeen);
+	const summarized = anchor < 0 && !!summaryOf(conv);
+	if (anchor < 0 && !summarized) return fresh("最后看到的消息已不在上下文且没有摘要");
+	const input = renderDelta(anchor < 0 ? conv : conv.slice(anchor + 1), summarized);
+	if (!input.length) return fresh("没有新消息");
+	if (freshInputMaxChars !== undefined && inputChars(input) > freshInputMaxChars) return fresh("补发内容超过渠道上限");
 	return { mode: "resume", claudeSessionId: entry.claudeSessionId, input };
 }
 
@@ -88,7 +79,7 @@ export class SyncStore {
 		if (!this.file || !existsSync(this.file)) return;
 		try {
 			const raw = JSON.parse(readFileSync(this.file, "utf8")) as Record<string, SyncEntry>;
-			for (const [k, v] of Object.entries(raw)) if (v && typeof v.claudeSessionId === "string" && typeof v.count === "number") this.map.set(k, v);
+			for (const [k, v] of Object.entries(raw)) if (v && typeof v.claudeSessionId === "string" && typeof v.lastSeen === "string") this.map.set(k, v);
 		} catch {
 			// 坏文件：忽略
 		}

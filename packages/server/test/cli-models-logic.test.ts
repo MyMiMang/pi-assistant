@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import { matchContinuation, renderFreshInput, renderTranscript, thinkingToEffort, toolResultToMcp, userContentToClaude, userMessagesToClaude } from "../src/pi-adapter/cli-models/convert.ts";
-import { makeSyncEntry, planTurn, prefixFingerprint, SyncStore } from "../src/pi-adapter/cli-models/sync-map.ts";
+import { makeSyncEntry, planTurn, SyncStore } from "../src/pi-adapter/cli-models/sync-map.ts";
 
 const user = (content: UserMessage["content"]): UserMessage => ({ role: "user", content, timestamp: 1 });
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -111,7 +111,7 @@ test("未超预算时与无上限输入完全相同，续用路径不压缩新�
 	assert.deepEqual(renderFreshInput(messages, 60000), renderFreshInput(messages));
 	const entry = makeSyncEntry("S", "model", [messages[0]], messages[1]);
 	const latest = '<skill name="x" location="/tmp/x">完整正文</skill>';
-	const plan = planTurn(entry, "model", [...messages.slice(0, 2), user(latest)], 1);
+	const plan = planTurn(entry, "model", [...messages.slice(0, 2), user(latest)], 60000);
 	assert.equal(plan.mode, "resume");
 	assert.deepEqual(plan.input, [{ type: "text", text: latest }]);
 });
@@ -148,7 +148,7 @@ const reply1 = asst([{ type: "text", text: "你好呀" }]);
 
 test("对照表：前缀对得上且只多了用户消息 → 续用，只发新增内容", () => {
 	const entry = makeSyncEntry("S1", "sonnet", chat1, reply1);
-	assert.equal(entry.count, 2);
+	assert.ok(entry.lastSeen);
 	const next: Message[] = [system, user("你好"), reply1, user("第二句"), user([{ type: "image", data: "QUJD", mimeType: "image/png" }])];
 	const plan = planTurn(entry, "sonnet", next);
 	assert.equal(plan.mode, "resume");
@@ -159,7 +159,7 @@ test("对照表：前缀对得上且只多了用户消息 → 续用，只发新
 	}
 });
 
-test("对照表：对不上就新开（没有表项、换过模型、整理过上下文、分支、新增里有助理消息、上下文变短）", () => {
+test("对照表：无表、换模型、无摘要的分支重开；其他模型回答可以补发", () => {
 	const entry = makeSyncEntry("S1", "sonnet", chat1, reply1);
 	const next: Message[] = [system, user("你好"), reply1, user("第二句")];
 	const fresh = (e: typeof entry | undefined, model: string, msgs: Message[]) => {
@@ -169,11 +169,10 @@ test("对照表：对不上就新开（没有表项、换过模型、整理过�
 	};
 	assert.match(fresh(undefined, "sonnet", next), /对照表/);
 	assert.match(fresh(entry, "opus", next), /模型/);
-	assert.match(fresh(entry, "sonnet", [system, user("[摘要] 前面聊了你好"), user("第二句")]), /前缀|变短/);
-	assert.match(fresh(entry, "sonnet", [system, user("你好"), asst([{ type: "text", text: "别的回答" }]), user("第二句")]), /前缀/);
-	assert.match(fresh(entry, "sonnet", [system, user("你好"), reply1, asst([{ type: "text", text: "多出来" }]), user("再来")]), /助理/);
-	assert.match(fresh(entry, "sonnet", chat1), /没有新消息/);
-	assert.notEqual(prefixFingerprint(next, 2), prefixFingerprint([system, user("你好"), asst([{ type: "text", text: "别的回答" }])], 2));
+	assert.match(fresh(entry, "sonnet", [system, user("[摘要] 前面聊了你好"), user("第二句")]), /最后看到/);
+	assert.match(fresh(entry, "sonnet", [system, user("你好"), asst([{ type: "text", text: "别的回答" }]), user("第二句")]), /最后看到/);
+	assert.equal(planTurn(entry, "sonnet", [system, user("你好"), reply1, asst([{ type: "text", text: "多出来" }]), user("再来")]).mode, "resume");
+	assert.match(fresh(entry, "sonnet", chat1), /最后看到/);
 	// 新开会话时送的是整个前文
 	const p = planTurn(entry, "opus", next);
 	assert.match(String(p.input[0].text), /用户：你好/);

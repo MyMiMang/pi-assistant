@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { config } from "./config.ts";
 import { db, getSetting, setSetting } from "./db.ts";
 import { CustomProviders, type CustomProviderMeta } from "./pi-adapter/custom-providers.ts";
-import { PiModels, setLimitsLearner, type CredentialStore } from "./pi-adapter/index.ts";
+import { PiModels, setContextRecoveryFallback, setLimitsLearner, type CredentialStore } from "./pi-adapter/index.ts";
 import { startCliChannels } from "./cli-services.ts";
 import { refreshModelDb } from "./model-db.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, registerMockProvider } from "./pi-adapter/mock-provider.ts";
@@ -48,6 +48,7 @@ export async function initModels(credentials?: CredentialStore) {
 	});
 	customProviders.applyEnv();
 	setLimitsLearner((p, m, l) => customProviders.learnLimits(p, m, l));
+	setContextRecoveryFallback(defaultModel);
 	// 每周刷新一次 models.dev 模型参数库（离线就用安装包里的快照）；刷新后按新数据重算“已知 / 默认”
 	if (config.allowModelNetwork && !config.mock) void refreshModelDb().then(() => customProviders.backfillLimits()).catch(() => {});
 	await models.reloadConfig();

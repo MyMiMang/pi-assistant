@@ -18,7 +18,7 @@ import type { ClaudeEvent } from "../../cli-agents/events.ts";
 import { toolBridge, type Tool, type ToolBridge } from "../../cli-agents/tool-bridge.ts";
 import type { PiModels } from "../index.ts";
 import { createCliChannel, type CliBackend, type CliLive, type LaunchRequest, type Step } from "./channel-core.ts";
-import { toolResultToMcp, userMessagesToClaude } from "./convert.ts";
+import { toolResultToMcp, userMessagesToClaude, toolsPromptComposite } from "./convert.ts";
 import { EventQueue } from "./event-queue.ts";
 import { describeCliError, registerCliProvider, thinkingMapOf } from "./provider.ts";
 import { SyncStore } from "./sync-map.ts";
@@ -64,7 +64,7 @@ const RESUME_FAILED = /no conversation found|session id|could not resume/i;
 function claudeBackend(deps: ClaudeCodeDeps): CliBackend<ClaudeLive> {
 	return {
 		label: "Claude Code",
-		composite: (modelId) => modelId,
+		composite: toolsPromptComposite,
 		async launch(req: LaunchRequest) {
 			const command = deps.command?.() ?? null;
 			if (!command) throw new Error("还没在 Pi 里安装 Claude Code：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。");

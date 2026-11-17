@@ -7,6 +7,7 @@
 //   text | one-tool | two-tools | bash-approval（调 Pi 的 bash，e2e 走审批卡）| meta（回报收到的参数和首条消息）| env-dump（回报运行目录文件）
 //   | hang（调工具后一直等，SIGINT 才结束）| tool-timeout（agy 自己掐断工具）| error（result 报错）| not-logged-in | resume-missing | crash
 // 另外支持 `--version`、`models`（FAKE_AGY_LOGGED_IN=0 或脚本旁有 agy-logged-out 文件时模拟未登录，退出码 1）。FAKE_AGY_LOG=<文件> 时每次启动追加一行 JSON。
+// FAKE_AGY_TRACE=<文件>：独立 JSONL 观测（launch / turn，含实际 conversationId、pid、seq、完整输入）；不改变旧启动日志与回复。
 import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -50,6 +51,10 @@ const scenarioOf = () => {
 	return process.env.FAKE_AGY_SCENARIO ?? "text";
 };
 if (process.env.FAKE_AGY_LOG) appendFileSync(process.env.FAKE_AGY_LOG, `${JSON.stringify({ pid: process.pid, argv, conversation: conversationArg, model: flag("--model") })}\n`);
+const trace = (event, fields = {}) => {
+	if (process.env.FAKE_AGY_TRACE) appendFileSync(process.env.FAKE_AGY_TRACE, `${JSON.stringify({ event, pid: process.pid, conversationId, ...fields })}\n`);
+};
+trace("launch", { argv, conversation: conversationArg, model: flag("--model") });
 
 const cfgPath = join(process.cwd(), ".agents", "plugins", "pia", "mcp_config.json");
 const cfg = JSON.parse(readFileSync(cfgPath, "utf8")); // 真的 agy 也是读文件：令牌不放命令行
@@ -102,6 +107,7 @@ process.on("SIGINT", () => {
 let tools = [];
 async function turn(text, seq) {
 	const scenario = scenarioOf();
+	trace("turn", { seq, text });
 	stepUpdate({ step_index: step++, state: "DONE", step_type: "user_input" });
 	if (scenario === "not-logged-in") {
 		resultErr("Error: Please sign in to continue.");

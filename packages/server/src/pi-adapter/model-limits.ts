@@ -87,6 +87,13 @@ export const normId = (id: string) =>
 /** 再去掉日期 / 快照后缀（-0731、-2025-01-01、-latest），只用于同一个模型不同快照之间匹配 */
 export const baseId = (n: string) => n.replace(/(-(\d{4}(-\d{2}){0,2}|\d{6,8}|latest|preview|v\d+(:\d+)?))+$/, "");
 
+/** 同名优先，其次只忽略日期 / 快照后缀；不匹配不同版本或变体。 */
+export function matchingModels<T extends { id: string }>(id: string, catalog: T[]): T[] {
+	const n = normId(id);
+	const exact = catalog.filter((m) => normId(m.id) === n);
+	return exact.length ? exact : catalog.filter((m) => baseId(normId(m.id)) === baseId(n));
+}
+
 /** 模型厂商自己的服务优先（同一模型在不同托管商的上限不一样，以官方为准） */
 const OFFICIAL = ["deepseek", "zai", "zhipu", "moonshotai", "moonshot", "kimi-coding", "alibaba", "qwen", "minimax", "openai", "anthropic", "google", "xai", "mistral"];
 
@@ -115,9 +122,7 @@ export function knownImageOutput(id: string, db: DbEntry[]): boolean | undefined
 	return knownCapability(id, db, "imageOutput");
 }
 function knownCapability(id: string, db: DbEntry[], key: "vision" | "reasoning" | "imageOutput") {
-	const n = normId(id);
-	let hits = db.filter((m) => normId(m.id) === n);
-	if (!hits.length) hits = db.filter((m) => baseId(normId(m.id)) === baseId(n));
+	const hits = matchingModels(id, db);
 	if (!hits.length) return undefined;
 	const off = hits.filter((m) => m.provider && OFFICIAL.includes(m.provider));
 	const base = off.length ? off : hits;
@@ -139,9 +144,7 @@ export interface KnownThinkingLevelMap {
 }
 export function knownThinkingLevelMap(id: string, builtin: Builtin[], api?: string): KnownThinkingLevelMap | undefined {
 	const withMap = builtin.filter((m) => m.thinkingLevelMap && Object.keys(m.thinkingLevelMap).length);
-	const n = normId(id);
-	let hits = withMap.filter((m) => normId(m.id) === n);
-	if (!hits.length) hits = withMap.filter((m) => baseId(normId(m.id)) === baseId(n));
+	const hits = matchingModels(id, withMap);
 	if (!hits.length) return undefined;
 	const official = (list: Builtin[]) => list.filter((m) => m.provider && OFFICIAL.includes(m.provider));
 	// 候选池按可信度收敛：同协议里的官方 → 同协议 → 官方 → 全部
@@ -191,9 +194,7 @@ export function providerHint(baseUrl?: string): string[] {
  */
 export function knownLimits(id: string, builtin: Builtin[], prefer: string[] = []): { contextWindow: number; maxTokens: number } | null {
 	const n = normId(id);
-	const ok = builtin.filter((m) => m.contextWindow);
-	let hits = ok.filter((m) => normId(m.id) === n);
-	if (!hits.length) hits = ok.filter((m) => baseId(normId(m.id)) === baseId(n));
+	const hits = matchingModels(id, builtin.filter((m) => m.contextWindow));
 	if (hits.length) {
 		const outOk = (m: Builtin) => (m.maxTokens && m.maxTokens < m.contextWindow! ? m.maxTokens : undefined);
 		const off = [...prefer, ...OFFICIAL].map((p) => hits.find((m) => m.provider === p && m.contextWindow)).find(Boolean);

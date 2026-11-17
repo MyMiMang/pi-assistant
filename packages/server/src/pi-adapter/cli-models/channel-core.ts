@@ -7,7 +7,7 @@
  * 加新的一家 = 写一个 `CliBackend`（见 docs/MODULES.md），不要复制这里的流程。
  */
 import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools, type Api, type AssistantMessageEventStream, type Message, type Model, type SimpleStreamOptions, type TranscriptContext } from "@earendil-works/pi-ai";
-import { convertToLlm } from "@earendil-works/pi-coding-agent";
+import { inputChars, splitTurnMemory, summaryOf, withTurnMemory } from "./context-input.ts";
 import type { TokenUsage } from "../../cli-agents/events.ts";
 import type { Tool } from "../../cli-agents/tool-bridge.ts";
 import { conversationOf, matchContinuation, renderFreshInput, thinkingToEffort, toolDefOf, type ClaudeBlock, type Continuation } from "./convert.ts";
@@ -48,7 +48,7 @@ export interface CliLive {
 	/** 已交给 Pi、等 Pi 执行完工具回来的 toolCall id */
 	pendingIds: Set<string>;
 	composite: string;
-	/** 启动时历史里的整理摘要（没有为空）：之后 Pi 又整理过前文就不能再续接，否则命令行那边仍带着全部旧上下文、Pi 每一步都会重复整理 */
+	/** 挂起工具时的摘要；显式整理后重建该执行，避免把旧挂起工具结果交错回填。 */
 	summary?: string;
 }
 
@@ -90,22 +90,6 @@ export interface CliBackend<L extends CliLive> {
 	release?(live: L, oneShot: boolean): void;
 	/** 服务关闭 */
 	dispose?(): void;
-}
-
-/** 从 Pi 公开转换 API 取得摘要包装，不依赖上游私有常量或固定英文。 */
-const summaryProbe = convertToLlm([{ role: "compactionSummary", summary: "pia-compaction-probe", tokensBefore: 0, timestamp: 0 }])[0];
-const summaryPrefix = summaryProbe?.role === "user" && Array.isArray(summaryProbe.content) && summaryProbe.content[0]?.type === "text"
-	? summaryProbe.content[0].text.split("pia-compaction-probe")[0] : "";
-
-/** 历史里 Pi 整理前文留下的摘要正文（没有为空） */
-function summaryOf(messages: readonly Message[]): string {
-	if (!summaryPrefix) return "";
-	for (const m of messages) {
-		if (m.role !== "user") continue;
-		const text = typeof m.content === "string" ? m.content : m.content.find((c) => c.type === "text")?.text ?? "";
-		if (text.startsWith(summaryPrefix)) return text;
-	}
-	return "";
 }
 
 export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, store: SyncStore) {
@@ -201,13 +185,14 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 
 		const effort = thinkingToEffort(options?.reasoning);
 		const tools = piTools.map(toolDefOf);
-		const systemPrompt = getCurrentSystemPrompt(context.messages) || undefined;
+		const { systemPrompt, memory } = splitTurnMemory(getCurrentSystemPrompt(context.messages) || undefined);
+		const freshInput = () => withTurnMemory(renderFreshInput(messages, backend.freshInputMaxChars === undefined ? undefined : Math.max(0, backend.freshInputMaxChars - memory.length)), memory);
 		const composite = backend.composite(model.id, tools, systemPrompt, key);
 
 		// 同一轮续接也先核对宿主上下文与指纹，避免把结果交给已换工作目录的进程。
 		const existing = key ? live.get(key) : undefined;
 		if (key && existing) {
-			const cont = existing.dead || (backend.checkContinuationComposite && existing.composite !== composite) || (existing.summary ?? "") !== summaryOf(messages) ? null : matchContinuation(messages, existing.pendingIds);
+			const cont = existing.dead || existing.composite !== composite || (existing.summary ?? "") !== summaryOf(messages) ? null : matchContinuation(messages, existing.pendingIds);
 			if (cont) {
 				b.start();
 				watch(existing, options?.signal);
@@ -221,18 +206,21 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 		}
 
 		let plan: TurnPlan = oneShot ? { mode: "fresh", reason: "单次请求", input: renderFreshInput(messages, backend.freshInputMaxChars) } : planTurn(key ? store.get(key) : undefined, composite, messages, backend.freshInputMaxChars);
+		if (plan.mode === "resume" && backend.freshInputMaxChars !== undefined && inputChars(withTurnMemory(plan.input, memory)) > backend.freshInputMaxChars) {
+			plan = { mode: "fresh", reason: "本轮记忆和补发内容超过渠道上限", input: freshInput() };
+		}
 		let started = false;
 		for (let attempt = 0; attempt < 2; attempt++) {
 			if (!oneShot && plan.mode === "fresh" && backend.freshInputMaxChars !== undefined) {
 				const hasSummary = !!summaryOf(messages);
-				const chars = renderFreshInput(messages).reduce((n, c) => n + (c.type === "text" ? String(c.text).length : "[图片]".length), 0);
+				const chars = inputChars(renderFreshInput(messages)) + memory.length;
 				if (!hasSummary && chars > backend.freshInputMaxChars) return b.fail("error", `重开会话的历史超过 ${backend.freshInputMaxChars} 字，先整理上下文再继续（context window exceeded）`);
 			}
-			const base: Payload = { model: model.id, effort, systemPrompt, resumeSessionId: plan.mode === "resume" ? plan.claudeSessionId : undefined, input: plan.input, tools: tools.map((t) => t.name) };
+			const base: Payload = { model: model.id, effort, systemPrompt, resumeSessionId: plan.mode === "resume" ? plan.claudeSessionId : undefined, input: plan.mode === "fresh" ? freshInput() : withTurnMemory(plan.input, memory), tools: tools.map((t) => t.name) };
 			const payload = applyPayload(base, await options?.onPayload?.(base, model));
 			let l: L;
 			try {
-				l = await backend.launch({ key, model: payload.model, effort: payload.effort, systemPrompt: payload.systemPrompt, resumeSessionId: payload.resumeSessionId, input: payload.input, freshInput: renderFreshInput(messages, backend.freshInputMaxChars), tools, oneShot, composite, forget: (x) => finish(x as L) });
+				l = await backend.launch({ key, model: payload.model, effort: payload.effort, systemPrompt: payload.systemPrompt, resumeSessionId: payload.resumeSessionId, input: payload.input, freshInput: freshInput(), tools, oneShot, composite, forget: (x) => finish(x as L) });
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);
 				if (plan.mode === "resume" && attempt === 0 && backend.isResumeFailure(msg)) {
