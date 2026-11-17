@@ -14,6 +14,7 @@ function fixture(max?: number) {
  const store = new SyncStore(null);
  let steps: Step[] = [{ type: "finish", reason: "stop", sessionId: "saved" }];
  let launchError = false;
+ let resumes = 0;
  const backend: CliBackend<CliLive> = {
   label: "fake", freshInputMaxChars: max, composite: () => "same",
   async launch(req) {
@@ -23,7 +24,7 @@ function fixture(max?: number) {
    queue.push({ type: "event" });
    return { key: req.key, queue, dead: false, offs: [], pendingIds: new Set(), composite: req.composite };
   },
-  async resume() {}, abort() {}, step: () => steps, isResumeFailure: (m) => m === "missing",
+  async resume(l) { resumes++; l.queue.push({ type: "event" }); }, abort() {}, step: () => steps, isResumeFailure: (m) => m === "missing",
  };
  const channel = createCliChannel(backend, store);
  async function run(messages: Message[], tools = true) {
@@ -31,7 +32,7 @@ function fixture(max?: number) {
   for await (const _ of stream) { /* drain */ }
   return stream.result();
  }
- return { requests, store, run, setSteps: (s: Step[]) => { steps = s; }, missing: () => { launchError = true; } };
+ return { requests, store, run, setSteps: (s: Step[]) => { steps = s; }, missing: () => { launchError = true; }, resumes: () => resumes };
 }
 
 test("fresh 超限先交 Pi 整理；公开转换的摘要允许淘汰历史；未超与 oneShot 正常", async () => {
@@ -92,4 +93,20 @@ test("续用启动失败后的 fresh 同样先整理且不启动第二次", asyn
  event.setSteps([{ type: "fail", reason: "error", message: "missing", resumeFailed: true }]);
  assert.equal(isContextOverflow(await event.run(messages)), true);
  assert.equal(event.requests.length, 1);
+});
+
+test("工具循环中途 Pi 整理过前文：不再续接旧进程（它还带着全部旧上下文），改用整理后的历史重开；没整理过照常续接", async () => {
+ const toolUse: Step[] = [{ type: "content", ev: { type: "tool_call_start", id: "t1", name: "echo" } }, { type: "content", ev: { type: "tool_call_end", id: "t1", name: "echo", args: {} } }, { type: "tool_use" }];
+ const result: Message = { role: "toolResult", toolCallId: "t1", toolName: "echo", content: [{ type: "text", text: "ok" }], isError: false, timestamp: 2 };
+ const summary = convertToLlm([{ role: "compactionSummary", summary: "前面做过的事", tokensBefore: 300_000, timestamp: 0 }])[0];
+ for (const compacted of [false, true]) {
+  const f = fixture();
+  f.setSteps(toolUse);
+  const first = await f.run([user("长任务")]);
+  f.setSteps([{ type: "finish", reason: "stop", sessionId: "s2" }]);
+  await f.run(compacted ? [summary, first, result] : [user("长任务"), first, result]);
+  assert.equal(f.resumes(), compacted ? 0 : 1);
+  assert.equal(f.requests.length, compacted ? 2 : 1);
+  if (compacted) assert.match(JSON.stringify(f.requests[1].input), /前面做过的事/);
+ }
 });

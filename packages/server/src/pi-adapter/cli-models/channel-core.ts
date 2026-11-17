@@ -48,6 +48,8 @@ export interface CliLive {
 	/** 已交给 Pi、等 Pi 执行完工具回来的 toolCall id */
 	pendingIds: Set<string>;
 	composite: string;
+	/** 启动时历史里的整理摘要（没有为空）：之后 Pi 又整理过前文就不能再续接，否则命令行那边仍带着全部旧上下文、Pi 每一步都会重复整理 */
+	summary?: string;
 }
 
 /** 原生事件翻译出来的「步骤」：骨架按它推进 SegmentBuilder */
@@ -94,6 +96,17 @@ export interface CliBackend<L extends CliLive> {
 const summaryProbe = convertToLlm([{ role: "compactionSummary", summary: "pia-compaction-probe", tokensBefore: 0, timestamp: 0 }])[0];
 const summaryPrefix = summaryProbe?.role === "user" && Array.isArray(summaryProbe.content) && summaryProbe.content[0]?.type === "text"
 	? summaryProbe.content[0].text.split("pia-compaction-probe")[0] : "";
+
+/** 历史里 Pi 整理前文留下的摘要正文（没有为空） */
+function summaryOf(messages: readonly Message[]): string {
+	if (!summaryPrefix) return "";
+	for (const m of messages) {
+		if (m.role !== "user") continue;
+		const text = typeof m.content === "string" ? m.content : m.content.find((c) => c.type === "text")?.text ?? "";
+		if (text.startsWith(summaryPrefix)) return text;
+	}
+	return "";
+}
 
 export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, store: SyncStore) {
 	const live = new Map<string, L>();
@@ -194,7 +207,7 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 		// 同一轮续接也先核对宿主上下文与指纹，避免把结果交给已换工作目录的进程。
 		const existing = key ? live.get(key) : undefined;
 		if (key && existing) {
-			const cont = existing.dead || (backend.checkContinuationComposite && existing.composite !== composite) ? null : matchContinuation(messages, existing.pendingIds);
+			const cont = existing.dead || (backend.checkContinuationComposite && existing.composite !== composite) || (existing.summary ?? "") !== summaryOf(messages) ? null : matchContinuation(messages, existing.pendingIds);
 			if (cont) {
 				b.start();
 				watch(existing, options?.signal);
@@ -211,8 +224,7 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 		let started = false;
 		for (let attempt = 0; attempt < 2; attempt++) {
 			if (!oneShot && plan.mode === "fresh" && backend.freshInputMaxChars !== undefined) {
-				const hasSummary = summaryPrefix && messages.some((m) => m.role === "user" && (typeof m.content === "string"
-					? m.content.startsWith(summaryPrefix) : m.content.some((c) => c.type === "text" && c.text.startsWith(summaryPrefix))));
+				const hasSummary = !!summaryOf(messages);
 				const chars = renderFreshInput(messages).reduce((n, c) => n + (c.type === "text" ? String(c.text).length : "[图片]".length), 0);
 				if (!hasSummary && chars > backend.freshInputMaxChars) return b.fail("error", `重开会话的历史超过 ${backend.freshInputMaxChars} 字，先整理上下文再继续（context window exceeded）`);
 			}
@@ -234,6 +246,7 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 				started = true;
 				b.start();
 			}
+			l.summary = summaryOf(messages);
 			if (key) live.set(key, l);
 			watch(l, options?.signal);
 			const out = await pump(l, b, model, options, { messages, canRetryFresh: plan.mode === "resume" && attempt === 0 });
