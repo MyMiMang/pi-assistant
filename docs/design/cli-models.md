@@ -41,7 +41,7 @@ Pi 官方支持自定义模型渠道自带流式实现（`registerProvider` + `s
 ```
 
 **Claude Code 只当「大脑」，不用它自己的 Bash、Edit 这些内置工具**（`--tools ""`）。它能用的工具就是这个助理在 Pi 里本来就有的工具：命令行（走助理电脑或按权限档位）、读写文件、记忆、发文件、电脑操作、浏览器、群聊工具、技能等。好处是：
-- 审批（ext-approval 的 `tool_call` 钩子）、权限档位、助理电脑隔离、记忆的自动想起和写入（`before_agent_start` / `agent_end`）、工具步骤显示、会话文件、整理上下文、插话、停止……全部照旧，因为工具仍然由 Pi 执行。
+- 审批（ext-approval 的 `tool_call` 钩子）、权限档位、助理电脑隔离、记忆的自动想起和写入（`before_agent_start` / `agent_end`）、工具步骤显示、会话文件、插话、停止……全部照旧（整理上下文改由工具自己管，见 [cli-context-ownership.md](cli-context-ownership.md)、决策 0032），因为工具仍然由 Pi 执行。
 - 群聊、单聊、帮手、后台任务、定时任务都不用改：它们只认「模型」，选了 `claude-code` 就行。
 
 ## 4. 第一期：Claude Code 当模型
@@ -87,7 +87,7 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
 ### 4.4 会话续接
 - Pi 每次都给完整历史，claude 自己也有一份。渠道按 Pi 会话记一张对照表：`claude 会话 id + 已同步到 Pi 的哪一条`（存在助理目录下，随会话文件走）。
 - 新的一轮只把新增的用户内容（文字、图片、插话）发给 claude，用 `--resume` 续用。
-- 发现历史对不上（整理过上下文、从某条消息分支、换过模型、对照表丢了），就开一个新的 claude 会话，把 Pi 当前上下文渲染成文字作为第一条消息送进去。
+- 发现历史对不上（整理过上下文、从某条消息分支、换过模型、对照表丢了），就开一个新的 claude 会话，把 Pi 当前上下文渲染成文字作为第一条消息送进去。（2026-11-17 起改为先尝试增量补发，见 [cli-context-ownership.md](cli-context-ownership.md)）
 - Pi 整理上下文时，会在主循环外单独调一次模型（`direct` 请求）生成总结：这种请求不续用会话、不给工具，单次 `claude -p` 跑完即可。
 
 ### 4.5 界面和设置
