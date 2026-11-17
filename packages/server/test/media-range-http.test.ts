@@ -12,6 +12,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import { uploadFile } from "./upload-helper.ts";
 const { parseRange } = await import("../src/routes/common.ts");
 const { mimeOf } = await import("../src/files.ts");
 
@@ -76,14 +77,11 @@ before(async () => {
 		await new Promise((r) => setTimeout(r, 120));
 	}
 	const a = await (await fetch(`${base}/api/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "媒体测试" }) })).json();
-	const fd = new FormData();
-	fd.append("file", new File([BODY], "clip.mp4"));
-	const up = await (await fetch(`${base}/api/agents/${a.id}/upload`, { method: "POST", body: fd })).json();
+	const endpoint = `${base}/api/agents/${a.id}/upload`;
+	const up = await uploadFile(endpoint, "clip.mp4", BODY);
 	assert.equal(up.mime, "video/mp4");
 	fileId = up.fileId;
-	const fd2 = new FormData();
-	fd2.append("file", new File([BODY], "a.zip"));
-	zipId = ((await (await fetch(`${base}/api/agents/${a.id}/upload`, { method: "POST", body: fd2 })).json()) as { fileId: string }).fileId;
+	zipId = (await uploadFile(endpoint, "a.zip", BODY)).fileId;
 });
 after(() => srv?.kill("SIGKILL"));
 

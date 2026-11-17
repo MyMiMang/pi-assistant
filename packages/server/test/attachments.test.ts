@@ -1,6 +1,6 @@
 import "./setup.ts";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -85,6 +85,26 @@ test("prepareAttachments：看图模型收到图片；不看图的给说明；�
 	assert.match(sc.text, /没有文字层/);
 	assert.match((await prepareAttachments([{ ...img, absPath: join(dir, "nope.png") }], { vision: true })).text, /不存在/);
 });
+
+for (const vision of [true, false]) {
+	test(`prepareAttachments：超过 30MB 图片在${vision ? "直接看图" : "转交识图"}分支均只提供说明`, async () => {
+		let describes = 0;
+		const inputs = ["oversize.png", "oversize.heic"].map((name) => {
+			const input = put(name, "");
+			truncateSync(input.absPath, 30 * 1024 * 1024 + 1);
+			return input;
+		});
+		const result = await prepareAttachments(inputs, { vision, describe: async () => {
+			describes++;
+			return { ok: true, text: "不应执行识图" };
+		} });
+		assert.deepEqual(result.images, []);
+		assert.equal(describes, 0, "超大图片不得交给识图模型");
+		for (const input of inputs) assert.ok(result.text.includes(`[附件: ${input.displayPath}]`));
+		assert.equal(result.text.match(/图片超过 30MB，未读取图片内容/g)?.length, 2);
+		assert.doesNotMatch(result.text, /已作为第|不支持看图|识图模型的描述/);
+	});
+}
 
 test("群附件：每群存一份，复制进成员工作区，删群一起清理；注入时写出路径", () => {
 	const f = saveRoomUpload("room_t1", "报告.pdf", Buffer.from("x"));

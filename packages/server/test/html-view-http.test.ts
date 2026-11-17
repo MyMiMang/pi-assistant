@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { previewKind } from "../../../apps/web/src/preview.ts";
+import { uploadFile } from "./upload-helper.ts";
 const { isHtmlFile, HTML_VIEW_CSP } = await import("../src/routes/common.ts");
 
 const serverDir = join(import.meta.dirname, "..");
@@ -47,11 +48,7 @@ before(async () => {
 		await new Promise((r) => setTimeout(r, 120));
 	}
 	const a = await (await fetch(`${base}/api/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "媒体测试" }) })).json();
-	const up = async (name: string, body: string) => {
-		const fd = new FormData();
-		fd.append("file", new File([body], name));
-		return ((await (await fetch(`${base}/api/agents/${a.id}/upload`, { method: "POST", body: fd })).json()) as { fileId: string }).fileId;
-	};
+	const up = async (name: string, body: string) => (await uploadFile(`${base}/api/agents/${a.id}/upload`, name, body)).fileId;
 	htmlId = await up("report.html", HTML);
 	svgId = await up("pic.svg", SVG);
 	txtId = await up("notes.txt", "hello");

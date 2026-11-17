@@ -224,7 +224,7 @@ await step("上传文件给助理", async () => {
 	await page.locator("main [data-testid=attach-input]").setInputFiles([join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"), f]);
 	await page.getByTestId("attach-chip").nth(1).waitFor();
 	const tip = await page.getByTestId("attach-btn").first().getAttribute("title");
-	if (!/100MB/.test(tip) || !/看图/.test(tip)) throw new Error(`附件按钮说明不完整：${tip}`);
+	if (!/2GB/.test(tip) || !/看图/.test(tip)) throw new Error(`附件按钮说明不完整：${tip}`);
 	await send("请看看这个附件");
 	await page.locator("main").getByText(/看到 1 张图片，已看到文档文字/).last().waitFor({ timeout: 15_000 });
 	await page.locator("main img[alt='icon-192.png']").last().waitFor();

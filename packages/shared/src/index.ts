@@ -1,6 +1,10 @@
 export type { NativeCliStatus, NativeCliActionResult } from "./native-cli.ts";
 export * from "./native-acp-catalog.ts";
 
+/** 用户附件单文件上限与分块大小；分块低于固定地址隧道的请求体上限。 */
+export const MAX_UPLOAD_SIZE = 2 * 1024 ** 3;
+export const UPLOAD_CHUNK_SIZE = 32 * 1024 ** 2;
+
 /**
  * 产品品牌：唯一的定义处。正式名字确定前使用中性占位名 “Pi Assistant”。
  * 改名只需要改这里（以及安装包元数据 apps/tray/src-tauri/tauri.conf.json 的 productName/identifier）。

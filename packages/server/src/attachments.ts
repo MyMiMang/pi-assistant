@@ -182,6 +182,10 @@ export async function prepareAttachments(files: AttachmentInput[], opts: Prepare
 		}
 		const head = `[附件: ${f.displayPath}]（${f.name}，${fmtSize(size)}）`;
 		if (IMAGE_EXT.has(ext) || HEIC_EXT.has(ext)) {
+			if (size > 30 * 1024 * 1024) {
+				lines.push(`${head} 图片超过 30MB，未读取图片内容，需要时用工具读取完整文件。`);
+				continue;
+			}
 			if (!opts.vision) {
 				let desc = "";
 				if (opts.describe) {

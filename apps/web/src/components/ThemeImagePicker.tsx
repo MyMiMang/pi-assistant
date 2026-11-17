@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ThemeImageRef } from "@pi-assistant/shared";
-import type { Attachment } from "../types";
+import type { UploadFn } from "../upload";
 import { AttachButton, AttachTray, useAttachUploader } from "./Attachments";
 import { Help } from "./ui";
 
@@ -9,7 +9,7 @@ const THEME_IMAGE_MIME = /^image\/(png|jpe?g|gif|webp|bmp|heic|heif|avif)$/i;
 
 export interface ThemeImagePickerProps {
 	/** 复用已有附件上传（例如 `(f) => upload(agentId, f)`）；不传时禁用上传并给出提示。 */
-	uploadFn?: (f: File) => Promise<Attachment>;
+	uploadFn?: UploadFn;
 	/** 受控值：只带附件 id + 元数据，绝不带 base64 / 本地路径。 */
 	value: ThemeImageRef[];
 	onChange: (refs: ThemeImageRef[]) => void;

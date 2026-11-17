@@ -5,10 +5,11 @@ import { isStopCommand } from "../interject.ts";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
+import { mountUploadRoutes } from "./uploads.ts";
 import { bus } from "../bus.ts";
 import { config } from "../config.ts";
 import { db, now } from "../db.ts";
-import { attachmentInputFor, fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf, saveUpload } from "../files.ts";
+import { attachmentInputFor, fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf } from "../files.ts";
 import { getMessageByClientId, lastContextTokens, insertMessage, listMessages, toMessage, type MessageRow } from "../messages.ts";
 import { defaultModel, defaultThinking, isThinkingLevel, models, withProviderName } from "../models.ts";
 import { cliServiceFor } from "../cli-services.ts";
@@ -426,16 +427,7 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		bus.emit({ type: "agent.read", agentId: c.req.param("id") });
 		return c.json({ ok: true });
 	});
-	app.post("/api/agents/:id/upload", async (c) => {
-		const id = c.req.param("id");
-		if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
-		const body = await c.req.parseBody();
-		const f = body.file;
-		if (!(f instanceof File)) return c.json({ error: "no_file" }, 400);
-		if (f.size > 100 * 1024 * 1024) return c.json({ error: "文件超过 100MB" }, 413);
-		const row = saveUpload(id, f.name, Buffer.from(await f.arrayBuffer()));
-		return c.json(fileInfo(row));
-	});
+	mountUploadRoutes(app, "/api/agents/:id/upload", (id) => getAgent(id) ? { agentId: id } : null, "id");
 	app.get("/api/agents/:id/files", (c) => c.json(listFiles(c.req.param("id"))));
 	app.get("/api/agents/:id/workspace", (c) => {
 		try {

@@ -1,7 +1,7 @@
 import { BarChart3, Brain, Cat, Download, Hand, MonitorPlay, Mail, MessagesSquare, Plug, Puzzle, Bell, Check, CheckCircle2, Copy, Globe, Info, Loader2, Mic, Monitor, Moon, Palette, QrCode, Smartphone, Sparkles, Sun, Trash2, Wifi, XCircle } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 import { stripReferenceImages, type ThemeDraftRequest, type ThemeDraftResult, type ThemeManifestV1 } from "@pi-assistant/shared";
-import { api, upload } from "../api";
+import { api, upload, type UploadFn } from "../api";
 import { copyText } from "../clipboard";
 import { getLang, setLang, t } from "../i18n";
 import { setAppearance, useStore } from "../store";
@@ -566,7 +566,7 @@ function AppearanceTab() {
 	const agentId = useStore((s) => s.current ?? s.agents[0]?.id);
 	const [confirmNode, confirm] = useConfirm();
 	const refresh = () => setCustoms(loadCustomThemes());
-	const uploadFn = agentId ? (f: File) => upload(agentId, f) : undefined;
+	const uploadFn: UploadFn | undefined = agentId ? (f, progress, signal) => upload(agentId, f, progress, signal) : undefined;
 	// 真实 AI 创作：走后端 /api/themes/draft（当前助理的模型 + 临时专用会话）；支持取消（abort）。
 	const onThemeDraft = agentId
 		? (req: ThemeDraftRequest, opts?: { signal?: AbortSignal }) => api<ThemeDraftResult>("/api/themes/draft", { method: "POST", json: { ...req, agentId }, signal: opts?.signal })

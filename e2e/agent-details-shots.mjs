@@ -11,6 +11,7 @@ import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixt
 import { waitStable } from "./fixtures/stable-shot.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 import { infoTab, INFO_TABS } from "./fixtures/info-pane.mjs";
+import { uploadFixture } from "./fixtures/upload.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const out = artifactDir("agent-details");
@@ -23,12 +24,7 @@ const json = async (path, method = "GET", body) => {
 	if (!r.ok) throw new Error(`${method} ${path} → ${r.status} ${await r.text()}`);
 	return r.json();
 };
-const upload = async (agentId, name, bytes, type) => {
-	const fd = new FormData();
-	fd.append("file", new Blob([bytes], { type }), name);
-	const r = await fetch(`${base}/api/agents/${agentId}/upload`, { method: "POST", body: fd });
-	if (!r.ok) throw new Error(`上传 ${name} → ${r.status}`);
-};
+const upload = (agentId, name, bytes) => uploadFixture(base, `/api/agents/${agentId}/upload`, name, bytes);
 let browser;
 try {
 	for (let i = 0; ; i++) {

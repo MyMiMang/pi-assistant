@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { uploadFixture } from "./fixtures/upload.mjs";
 
 const { fileURLToPath } = await import("node:url");
 const REPO = fileURLToPath(new URL("..", import.meta.url));
@@ -65,9 +66,7 @@ const jpost = (p, body) => fetch(BASE + p, { method: "POST", headers: { "content
 
 // ---- 准备：一个助理 + 一张上传的大图 + 一条带图片附件的用户消息
 const agent = await jpost("/api/agents", { name: "图片测试" });
-const fd = new FormData();
-fd.append("file", new Blob([readFileSync(TEST_IMG)], { type: "image/png" }), "测试大图.png");
-const up = await fetch(`${BASE}/api/agents/${agent.id}/upload`, { method: "POST", body: fd }).then((r) => r.json());
+const up = await uploadFixture(BASE, `/api/agents/${agent.id}/upload`, "测试大图.png", readFileSync(TEST_IMG));
 if (!up.fileId) throw new Error("上传失败：" + JSON.stringify(up));
 log("已上传测试图片", up.fileId, up.size, up.mime);
 await jpost(`/api/agents/${agent.id}/messages`, { text: "看这张图", attachments: [up.fileId] });

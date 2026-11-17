@@ -146,17 +146,7 @@ export async function download(path: string, name: string) {
 	setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export async function uploadRoom(roomId: string, file: File) {
-	const fd = new FormData();
-	fd.append("file", file);
-	return api(`/api/rooms/${roomId}/upload`, { method: "POST", body: fd });
-}
-
-export async function upload(agentId: string, file: File) {
-	const fd = new FormData();
-	fd.append("file", file);
-	return api(`/api/agents/${agentId}/upload`, { method: "POST", body: fd });
-}
+export { upload, uploadRoom, type UploadFn } from "./upload.ts";
 
 /** 语音输入：上传 16 kHz PCM16 WAV 到自有 Pi Server 转写（音频只在内存，不落附件/消息）。 */
 export interface TranscribeInput {

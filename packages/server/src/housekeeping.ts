@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { pruneActions } from "./action-log.ts";
 import { rollupUsage } from "./usage/index.ts";
 import { config } from "./config.ts";
+import { cleanupUploads } from "./uploads.ts";
 
 export const LOG_MAX = 20 * 1024 * 1024;
 export const LOG_KEEP = 5 * 1024 * 1024;
@@ -67,7 +68,7 @@ function walk(dir: string, depth: number, visit: (f: string, st: Stats) => void)
 export function housekeeping(o: { dataDir?: string; extraLogDirs?: string[]; now?: number } = {}) {
 	const dataDir = o.dataDir ?? config.dataDir;
 	const t = o.now ?? Date.now();
-	const out = { capped: [] as string[], removed: [] as string[] };
+	const out = { capped: [] as string[], removed: cleanupUploads(t, o.dataDir ? join(dataDir, "workspace") : config.workspaceRoot, o.dataDir ? join(dataDir, "files") : config.filesDir) };
 	walk(dataDir, 5, (f, st) => {
 		if (/\.log$/.test(f) && capLog(f)) out.capped.push(f);
 		else if (/\.part$/.test(f) && t - st.mtimeMs > 7 * DAY) (rmSync(f, { force: true }), out.removed.push(f));

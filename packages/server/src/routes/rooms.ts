@@ -2,7 +2,7 @@
 import { Hono } from "hono";
 import { bus } from "../bus.ts";
 import { db } from "../db.ts";
-import { fileInfo, saveRoomUpload } from "../files.ts";
+import { mountUploadRoutes } from "./uploads.ts";
 import { getAgent } from "../runtime.ts";
 import { confirmMemberProposal, confirmProject, confirmProposal, continueRoom, createRoom, deleteRoom, dismissProject, getRoom, listRoomMessages, markRead as markRoomRead, membersOf, normalizeProposal, postUserMessage, ProjectError, projectJson, projectsOf, resumeProject, roomJson, listRooms, stop as stopRoom, stopProject, updateRoom, createRoomAgent } from "../rooms/index.ts";
 import { BOARD_GROUPS, createWorkItem, listWorkItems, pauseAllWorkItems, type BoardGroup } from "../work-items.ts";
@@ -49,14 +49,7 @@ export function mountRoomRoutes(app: Hono<Env>) {
 		const after = c.req.query("after");
 		return c.json(listRoomMessages(c.req.param("rid"), { before: before ? Number(before) : undefined, after: after ? Number(after) : undefined, limit: Number(c.req.query("limit") ?? 200) }));
 	});
-	app.post("/api/rooms/:rid/upload", async (c) => {
-		const rid = c.req.param("rid");
-		if (!getRoom(rid)) return c.json({ error: "not_found" }, 404);
-		const f = (await c.req.parseBody()).file;
-		if (!(f instanceof File)) return c.json({ error: "no_file" }, 400);
-		if (f.size > 100 * 1024 * 1024) return c.json({ error: "文件超过 100MB" }, 413);
-		return c.json(fileInfo(saveRoomUpload(rid, f.name, Buffer.from(await f.arrayBuffer()))));
-	});
+	mountUploadRoutes(app, "/api/rooms/:rid/upload", (id) => getRoom(id) ? { roomId: id } : null, "rid");
 	app.post("/api/rooms/:rid/messages", async (c) => {
 		const b = await c.req.json<{ text: string; mentions?: string[]; attachments?: string[]; replyToId?: string; clientId?: string; skills?: unknown }>();
 		// 本次选用技能第一版只支持单聊：群聊多接收人需按目标逐个过滤，这里明确拒绝而不是静默丢掉

@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { bus } from "./bus.ts";
 import { config } from "./config.ts";
@@ -61,15 +61,35 @@ export function deliverFromWorkspace(agentId: string, p: string, hostAccess = fa
 
 /** 用户上传：保存到工作区 uploads/ 并登记。 */
 export function saveUpload(agentId: string, name: string, data: Buffer): FileRow {
-	const safe = basename(name).replace(/[\\/:*?"<>|]/g, "_") || "upload.bin";
-	const dir = join(workspaceOf(agentId), "uploads");
-	mkdirSync(dir, { recursive: true });
-	let target = join(dir, safe);
-	for (let i = 1; statSafe(target); i++) target = join(dir, `${basename(safe, extname(safe))}-${i}${extname(safe)}`);
-	writeFileSync(target, data);
-	return record(agentId, basename(target), target, relative(workspaceOf(agentId), target), "in");
+	return finishUpload({ agentId }, name, data);
 }
 const statSafe = (p: string) => { try { return statSync(p); } catch { return null; } };
+
+export type UploadOwner = { agentId: string; roomId?: never } | { roomId: string; agentId?: never };
+export const uploadDir = (owner: UploadOwner) => owner.roomId !== undefined ? roomFilesDir(owner.roomId) : join(workspaceOf(owner.agentId), "uploads");
+
+/** Buffer 入站与分块临时文件共用安全命名、重名处理、落库；路径输入只移动，不读进内存。 */
+export function finishUpload(owner: UploadOwner, name: string, src: Buffer | string): FileRow {
+	const safe = basename(name).replace(/[\\/:*?"<>|\x00-\x1f]/g, "_");
+	const filename = !safe || safe === "." || safe === ".." ? "upload.bin" : safe.startsWith(".pia-upload-") ? `_${safe}` : safe;
+	const dir = uploadDir(owner);
+	mkdirSync(dir, { recursive: true });
+	let target = join(dir, filename);
+	for (let i = 1; statSafe(target); i++) target = join(dir, `${basename(filename, extname(filename))}-${i}${extname(filename)}`);
+	if (typeof src === "string") renameSync(src, target);
+	else writeFileSync(target, src);
+	try {
+		if (owner.roomId === undefined) return record(owner.agentId, basename(target), target, relative(workspaceOf(owner.agentId), target), "in");
+		const row: FileRow = { id: uid("f"), agent_id: "", room_id: owner.roomId, name: basename(target), mime: mimeOf(target), size: statSync(target).size, stored_path: target, workspace_path: null, direction: "in", created_at: now() };
+		db.prepare("INSERT INTO files(id, agent_id, name, mime, size, stored_path, workspace_path, direction, created_at, room_id) VALUES(?,?,?,?,?,?,?,?,?,?)").run(
+			row.id, row.agent_id, row.name, row.mime, row.size, row.stored_path, null, row.direction, row.created_at, row.room_id ?? null,
+		);
+		return row;
+	} catch (e) {
+		rmSync(target, { force: true });
+		throw e;
+	}
+}
 
 export function getFile(id: string) {
 	return db.prepare("SELECT * FROM files WHERE id = ?").get(id) as FileRow | undefined;
@@ -92,17 +112,7 @@ export function listWorkspace(agentId: string, p: string) {
 // ---------------------------------------------------------------- 群聊附件
 /** 群里用户上传的附件：每个群存一份（files 表 agent_id='' + room_id），轮到哪个助理就复制到它的工作区 */
 export function saveRoomUpload(roomId: string, name: string, data: Buffer): FileRow {
-	const safe = basename(name).replace(/[\\/:*?"<>|]/g, "_") || "upload.bin";
-	const id = uid("f");
-	const dir = roomFilesDir(roomId);
-	mkdirSync(dir, { recursive: true });
-	const stored = join(dir, `${id}${extname(safe)}`);
-	writeFileSync(stored, data);
-	const row: FileRow = { id, agent_id: "", room_id: roomId, name: safe, mime: mimeOf(safe), size: data.length, stored_path: stored, workspace_path: null, direction: "in", created_at: now() };
-	db.prepare("INSERT INTO files(id, agent_id, name, mime, size, stored_path, workspace_path, direction, created_at, room_id) VALUES(?,?,?,?,?,?,?,?,?,?)").run(
-		row.id, row.agent_id, row.name, row.mime, row.size, row.stored_path, null, row.direction, row.created_at, roomId,
-	);
-	return row;
+	return finishUpload({ roomId }, name, data);
 }
 export const roomFilesDir = (roomId: string) => join(config.filesDir, "rooms", roomId.replace(/[^a-zA-Z0-9_-]/g, ""));
 /** 删除群的全部附件（用户上传的；助理发的文件属于助理，跟助理一起清理） */

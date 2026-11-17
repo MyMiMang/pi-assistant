@@ -327,7 +327,7 @@ test("唤醒管理者：看板摘要和上次一样只提示没变化，不整�
 
 // ---------------------------------------------------------------- room_assign 的附件真的交给负责人
 
-test("room_assign 附件：按文件名（也接受路径、同名取最新）找到并放进负责人工作区，任务文字带路径；找不到就不派出", async () => {
+test("room_assign 附件：按明确文件名（也接受路径）找到并放进负责人工作区，任务文字带路径；找不到就不派出", async () => {
 	const { saveRoomUpload, workspaceOf } = await import("../src/files.ts");
 	const { insertMessage } = await import("../src/messages.ts");
 	const { findRoomFile } = await import("../src/rooms/tools.ts");
@@ -343,9 +343,11 @@ test("room_assign 附件：按文件名（也接受路径、同名取最新）�
 	const fresh = put("脚本.md", "新版");
 	put("分镜.md", "分镜内容");
 	const files = rooms.roomFiles(room.id);
-	assert.equal(findRoomFile(files, "脚本.md")?.id, fresh.id, "同名取最新");
+	assert.equal(fresh.name, "脚本-1.md", "重复上传改名，旧文件仍可按原名查找");
+	assert.equal(findRoomFile(files, "脚本.md")?.id, old.id);
+	assert.equal(findRoomFile(files, fresh.name)?.id, fresh.id);
 	assert.equal(findRoomFile(files, "deliverables/分镜.md")?.name, "分镜.md", "只给了路径：取最后一段");
-	assert.equal(findRoomFile(files, `room-files/x/${fresh.id.slice(-6)}-脚本.md`)?.id, fresh.id, "工作区里的带前缀名也认");
+	assert.equal(findRoomFile(files, `room-files/x/${fresh.id.slice(-6)}-${fresh.name}`)?.id, fresh.id, "工作区里的带前缀名也认");
 	assert.equal(findRoomFile(files, "不存在.md"), undefined);
 
 	const toolsOf = (agentId: string) => {
@@ -359,7 +361,7 @@ test("room_assign 附件：按文件名（也接受路径、同名取最新）�
 	replies.set("cm", () => {
 		result = toolsOf("cm").get("room_assign")!.execute("t", {
 			assignments: [
-				{ agent: "小甲", task: "改脚本", files: ["脚本.md"] },
+				{ agent: "小甲", task: "改脚本", files: [fresh.name] },
 				{ agent: "小乙", task: "写分镜", files: ["分镜.md"], workItemId: wi },
 				{ agent: "小乙", task: "再写一份", files: ["分镜.md", "漏掉的.md"], workItemId: wi },
 			],
@@ -373,9 +375,9 @@ test("room_assign 附件：按文件名（也接受路径、同名取最新）�
 	assert.match(text, /已分配给：小甲、小乙/);
 	await until(() => turnsOf(room.id, "assign").some((t) => t.agent_id === "ca" && t.status === "done") && idle(room.id), "小甲的普通派活跑完");
 	const assignPrompt = prompts.filter((x) => x.agentId === "ca").pop()!.prompt;
-	const rel = assignPrompt.match(/相关附件（已放进你的工作区）：(room-files\/\S+?-脚本\.md)/)?.[1];
+	const rel = assignPrompt.match(/相关附件（已放进你的工作区）：(room-files\/\S+?-脚本-1\.md)/)?.[1];
 	assert.ok(rel, "任务文字里写了工作区路径");
-	assert.equal(readFileSync(join(workspaceOf("ca"), rel!), "utf8"), "新版", "放进去的是最新的同名文件");
+	assert.equal(readFileSync(join(workspaceOf("ca"), rel!), "utf8"), "新版", "放进去的是明确选择的新版文件");
 	// 长期任务：派出的那一条文件已在负责人工作区，没派出的（找不到附件）那条没有建新 run
 	const runs = db.prepare("SELECT task FROM work_item_runs WHERE work_item_id = ?").all(wi) as { task: string }[];
 	assert.ok(runs.length >= 1 && runs.every((r) => !r.task.includes("再写一份")), "找不到附件的那条没有派出");

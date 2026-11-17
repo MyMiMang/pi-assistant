@@ -7,7 +7,7 @@
  *  1. 真实临时服务（内存凭据 + Mock 模型）里建普通助理、群 + 群专属助理（真实 API），
  *     数据都带长名字 / 长简介 / 长文件名，用来验证换行与不横溢；
  *  2. 记忆、定时任务走**真实 HTTP**（同库编辑保留 id；跨作用域按后端迁移 id 且不产生重复；作用域标签；
- *     「待核验」筛选在只有已核验条目时为空）；文件上传走真实 multipart，助理交付方向的
+ *     「待核验」筛选在只有已核验条目时为空）；文件上传走真实分块协议，助理交付方向的
  *     分组用**精确 route 的只读 fixture**（服务端没有 HTTP 交付接口），预览/下载仍打真实 `/api/files/:id`；
  *  3. 后台任务只有列表 GET、没有创建接口，用精确 route 的无执行 fixture 展示 运行中/已完成/失败，
  *     **不启动任何模型任务**；电脑权限 / 暂停 / 全局设置走 host-control fixture，点暂停只记录并保存
@@ -30,6 +30,7 @@ import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { waitStable, stableShot } from "./fixtures/stable-shot.mjs";
 import { agentProfileSave, openAgentModelPop } from "./fixtures/info-pane.mjs";
+import { uploadFixture } from "./fixtures/upload.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-agent-details-classic-");
@@ -57,14 +58,7 @@ const waitFor = async (fn, ms = 30000, label = "条件") => {
 	}
 	throw new Error(`${label} 超时（${ms}ms）`);
 };
-/** 真实 multipart 上传（和界面上的 upload() 同一个接口）。 */
-const upload = async (agentId, name, bytes, type) => {
-	const fd = new FormData();
-	fd.append("file", new Blob([bytes], { type }), name);
-	const r = await fetch(`${base}/api/agents/${agentId}/upload`, { method: "POST", body: fd });
-	assert.ok(r.ok, `上传 ${name} → ${r.status}`);
-	return r.json();
-};
+const upload = (agentId, name, bytes) => uploadFixture(base, `/api/agents/${agentId}/upload`, name, bytes);
 
 // 八个分类与各自的根节点（和 InfoPane 的 TABS 一一对应）。
 const TABS = [

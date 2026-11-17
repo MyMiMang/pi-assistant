@@ -1,7 +1,7 @@
 import { Loader2, Sparkles, Undo2, Upload, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { stripReferenceImages, validateThemeManifest, type ThemeDraftRequest, type ThemeDraftResult, type ThemeImageRef, type ThemeManifestV1, type ThemeModelRef, type ThemeMotion } from "@pi-assistant/shared";
-import type { Attachment } from "../types";
+import type { UploadFn } from "../upload";
 import { applyTheme, setAppearance, useStore } from "../store";
 import { customSkinId } from "../themes/manifest";
 import { buildThemeModelChoice, refVisionStatus, themeModelButtonText, themeModelLabel } from "../themes/model-choice";
@@ -86,7 +86,7 @@ export interface ThemeDesignerProps {
 	/** 后端接线（主会话接真实当前 agent 模型）。未传 = 未联通，面板如实标注，不做假生成。 */
 	onThemeDraft?: (req: ThemeDraftRequest, opts?: { signal?: AbortSignal }) => Promise<ThemeDraftResult>;
 	/** 复用附件上传。 */
-	uploadFn?: (f: File) => Promise<Attachment>;
+	uploadFn?: UploadFn;
 	/** 当前助理 id（后端按它选模型；不传则请求会缺少 agentId 被拒绝）。 */
 	agentId?: string;
 	/** 「没有可用模型」时跳到现有「设置 › 模型服务」页（不额外弹配置框）。 */

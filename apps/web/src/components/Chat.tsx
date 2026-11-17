@@ -244,7 +244,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 					</button>
 				</div>
 			)}
-			<Composer ref={composer} agentId={agentId} name={agent.name} model={agent.model?.id} running={running} drag={drag} replyKey={rKey} replyLabel={replyLabel} onJump={jump} jumpState={jumpState} onRetryJump={retryJump} wrapRef={composerWrap} />
+			<Composer key={rKey} ref={composer} agentId={agentId} name={agent.name} model={agent.model?.id} running={running} drag={drag} replyKey={rKey} replyLabel={replyLabel} onJump={jump} jumpState={jumpState} onRetryJump={retryJump} wrapRef={composerWrap} />
 		</div>
 	);
 }
@@ -271,7 +271,7 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 	const setText = (v: string) => setComposerDraft(draftKey, v);
 	// 幂等：同一份草稿（文字 + 附件 + 引用）重试复用同一 clientId；草稿一变就换新的，避免重复唤醒
 	const clientRef = useRef<{ sig: string; id: string } | null>(null);
-	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f) => upload(agentId, f));
+	const { files, setFiles, pending, uploading, error: upErr, addFiles, removePending, clear } = useAttachUploader((f, progress, signal) => upload(agentId, f, progress, signal));
 	const quote = useReplyDrafts((s) => s.drafts[replyKey] ?? null);
 	const ta = useRef<HTMLTextAreaElement>(null);
 	useLayoutEffect(() => {
