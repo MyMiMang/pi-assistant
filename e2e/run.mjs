@@ -10,7 +10,7 @@ import { chromium } from "playwright-core";
 import { startMockOpenAI } from "./mock-openai.mjs";
 import { cspProblems, probeCsp } from "./fixtures/csp-probe.mjs";
 import { startMockImages } from "./mock-images.mjs";
-import { openModelMenu, openCompact, closeModelPanel } from "./model-menu-flow.mjs";
+import { openModelMenu, openCompact, closeModelPanel, prepareModelPickerLayout, setHighWithDockedRail } from "./model-menu-flow.mjs";
 import { menuOverflowProblems, roomHelpers, roomProgressNoPause } from "./fixtures/page-checks.mjs";
 import { infoPane, openInfoPane, infoTab as selectInfoTab, taskTab as selectTaskTab, agentProfileSave, expandDetails, expandAgentModelSection } from "./fixtures/info-pane.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
@@ -1362,8 +1362,8 @@ await step("权限档位：助理设置 › 电脑 里切换本助理档位（�
 });
 
 await step("输入框工具栏：一个模型按钮里选模型 + 设思考强度（可搜索，思考强度只在支持推理的模型上出现）", async () => {
-	// 两层弹层（紧凑层调档、目录层只选模型）：复用 model-menu-flow.mjs 的公共操作
-	const mp = page.locator("[data-testid=model-picker]");
+	const mp = page.getByTestId("model-picker");
+	const { workspace, collapse, reopen, wasDocked, logWidths } = await prepareModelPickerLayout(page, log);
 	await mp.waitFor();
 	const noReason = await openCompact(page);
 	await noReason.getByTestId("thinking-fixed").waitFor({ timeout: 10_000 });
@@ -1377,22 +1377,17 @@ await step("输入框工具栏：一个模型按钮里选模型 + 设思考强�
 	await page.waitForTimeout(200);
 	await page.screenshot({ path: join(SHOTS, "46-composer-model-picker.png") });
 	await opt.first().click();
-	await mp.getByText(/Mock 推理模型/).waitFor();
-	// 同一个按钮的紧凑层里设思考强度（按钮上直接显示模型 + 档位）
+	await mp.getByText(/Mock 推理模型.*· 中/).waitFor();
+	await logWidths("宽栏");
 	await closeModelPanel(page);
-	const compact = await openCompact(page);
-	await compact.getByTestId("thinking-high").click();
-	await mp.getByText(/· 高/).waitFor();
-	await closeModelPanel(page);
-	await openCompact(page);
-	await page.waitForTimeout(200);
-	await page.screenshot({ path: join(SHOTS, "47-composer-thinking.png") });
-	await closeModelPanel(page);
+	await setHighWithDockedRail(page, { collapse, reopen, log: logWidths, screenshot: join(SHOTS, "47-composer-thinking.png") });
+	await workspace.waitFor({ state: "hidden" });
+	await mp.getByText(/Mock 推理模型.*· 高/).waitFor();
 	// 换模型后照常聊天（服务端原地切换 Pi 会话的模型 / 思考强度）
+	const before = await bubbleCount();
 	await send("你好");
 	await page.locator("main").getByText(/你好/).last().waitFor();
-	const before = await bubbleCount();
-	await page.waitForFunction((n) => document.querySelectorAll("main .prose").length > n, before - 1, { timeout: 20_000 });
+	await page.waitForFunction((n) => document.querySelectorAll("main .prose").length > n, before, { timeout: 20_000 });
 	// 换回不支持推理的模型：紧凑层只说明「只有一档」，不画滑块
 	const back = await openModelMenu(page);
 	await back.getByTestId("model-search").fill("Mock 模型");
@@ -1402,6 +1397,7 @@ await step("输入框工具栏：一个模型按钮里选模型 + 设思考强�
 	await again.getByTestId("thinking-fixed").waitFor({ timeout: 10_000 });
 	if (await again.getByTestId("thinking-body").locator('[role="slider"]').count()) throw new Error("换回不支持推理的模型后不应显示思考强度滑块");
 	await closeModelPanel(page);
+	if (wasDocked) await reopen.click();
 });
 
 await step("Phase 3 渠道：飞书 / 钉钉 / 企业微信 添加表单 + 分步指引；个人微信需确认风险后开启", async () => {

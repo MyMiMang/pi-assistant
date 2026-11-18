@@ -14,6 +14,45 @@
  */
 export const COMPACT_TESTID = (testid) => `${testid}-compact`;
 
+/** 隔离上个场景的右栏状态，记录同一视口下的聊天栏与输入区宽度。 */
+export async function prepareModelPickerLayout(page, log) {
+	const workspace = page.getByTestId("right-workspace");
+	const collapse = workspace.getByTestId("workspace-collapse");
+	const reopen = page.getByTestId("workspace-reopen");
+	const wasDocked = await collapse.isVisible();
+	if (wasDocked) await collapse.click();
+	await workspace.waitFor({ state: "hidden" });
+	const logWidths = async (state) => log("模型选择布局", state, page.viewportSize(), {
+		chat: (await page.locator("main").boundingBox())?.width,
+		composer: (await page.locator(".pa-composer").boundingBox())?.width,
+		rail: (await workspace.boundingBox())?.width ?? 0,
+	});
+	return { workspace, collapse, reopen, wasDocked, logWidths };
+}
+
+/** 聊天工具栏回归：保持桌面视口，打开右栏让输入区进入紧凑布局。 */
+export async function setHighWithDockedRail(page, { collapse, reopen, log, screenshot }) {
+	await reopen.click();
+	await collapse.waitFor();
+	await page.waitForFunction(() => {
+		const composer = document.querySelector(".pa-composer");
+		return composer && composer.clientWidth <= 660;
+	});
+	await log("右栏打开");
+	const compact = await openCompact(page);
+	await compact.getByTestId("thinking-model").getByText(/Mock 推理模型/).waitFor();
+	const level = compact.getByTestId("thinking-current");
+	await level.getByText("中", { exact: true }).waitFor();
+	await compact.getByTestId("thinking-high").click();
+	// 选档后按设计关闭紧凑层；重新打开验证已选档位。
+	await compact.waitFor({ state: "hidden" });
+	await openCompact(page);
+	await level.getByText("高", { exact: true }).waitFor();
+	await page.screenshot({ path: screenshot });
+	await closeModelPanel(page);
+	await collapse.click();
+}
+
 /** 打开聊天输入栏的完整模型目录（先紧凑层，再点模型名）；返回 model-menu 的 locator */
 export async function openModelMenu(page, { testid = "model-picker", menu = "model-menu" } = {}) {
 	const compact = page.getByTestId(COMPACT_TESTID(testid));
