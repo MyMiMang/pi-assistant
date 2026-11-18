@@ -132,6 +132,7 @@ export function useAttachUploader(uploadFn: UploadFn) {
 	const fn = useRef(uploadFn);
 	fn.current = uploadFn;
 	const seq = useRef(0);
+	const selectionOrder = useRef(new WeakMap<Attachment, number>());
 	const mounted = useRef(true);
 	const controllers = useRef(new Map<string, AbortController>());
 	// 本地预览仅供托盘使用，移除不会打断已打开的服务端图片查看器。
@@ -160,30 +161,33 @@ export function useAttachUploader(uploadFn: UploadFn) {
 	const addFiles = async (list: FileList | File[]) => {
 		setError("");
 		// 先登记整批，排队中的附件也可以立即取消，卸载后不会再开始下一份。
-		const queue: { f: File; key: string; controller: AbortController }[] = [];
+		const queue: { f: File; key: string; order: number; controller: AbortController }[] = [];
 		for (const raw of Array.from(list)) {
 			const f = raw.name && raw.name !== "image.png" ? raw : new File([raw], `粘贴的图片-${Date.now()}.${raw.type.split("/")[1] || "png"}`, { type: raw.type });
 			if (f.size > MAX_UPLOAD) {
 				setError(`「${f.name}」超过 2GB，发不了。可以压缩或拆分后再发。`);
 				continue;
 			}
-			const key = `u${++seq.current}`;
+			const order = ++seq.current;
+			const key = `u${order}`;
 			const controller = new AbortController();
 			controllers.current.set(key, controller);
 			const preview = f.type.startsWith("image/") && f.type !== "image/svg+xml" ? URL.createObjectURL(f) : undefined;
 			if (preview) previews.current.set(key, preview);
 			setPending((p) => [...p, { key, name: f.name, size: f.size, preview, confirmed: 0 }]);
-			queue.push({ f, key, controller });
+			queue.push({ f, key, order, controller });
 		}
 		setUploading(controllers.current.size);
-		for (const { f, key, controller } of queue) {
+		for (const { f, key, order, controller } of queue) {
 			if (controller.signal.aborted) continue;
 			try {
 				const info = await fn.current(f, (confirmed) => {
 					if (!controller.signal.aborted && mounted.current) setPending((p) => p.map((x) => x.key === key ? { ...x, confirmed } : x));
 				}, controller.signal);
 				if (controller.signal.aborted || !mounted.current) continue;
-				setFiles((x) => [...x, info]);
+				// 独立批次可能先后返回颠倒，已完成列表仍按用户选择顺序排列。
+				selectionOrder.current.set(info, order);
+				setFiles((x) => [...x, info].sort((a, b) => (selectionOrder.current.get(a) ?? 0) - (selectionOrder.current.get(b) ?? 0)));
 				dropPreview(key);
 				setPending((p) => p.filter((x) => x.key !== key));
 			} catch (e) {

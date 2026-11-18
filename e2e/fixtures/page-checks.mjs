@@ -1,6 +1,8 @@
 /**
  * run.mjs 的页面辅助：弹出菜单溢出检查、群聊输入 / 等待空闲 / 按成员取消息。
  */
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 /** 在浏览器里跑：菜单是否超出屏幕、内容是否超出菜单或溢出（返回最多 5 条问题） */
 export const menuOverflowProblems = (el) => {
@@ -30,6 +32,84 @@ export function roomHelpers(page) {
 	const roomIdle = () => page.waitForFunction(() => !document.querySelector("[data-testid=room-status]"), null, { timeout: 60_000 });
 	const botsOf = (name) => page.locator(`[data-testid=room-bot][data-agent="${name}"]`);
 	return { roomSay, roomIdle, botsOf };
+}
+
+/** 真浏览器：延迟图片回包，验证回车不会提前发；跨选择批次再让文本先完成。 */
+export async function checkRoomAttachmentSend(page, { base, room, image, plan, reverse = false }) {
+	const { roomIdle, botsOf } = roomHelpers(page);
+	await roomIdle();
+	const [agent] = (await (await fetch(`${base}/api/agents`)).json()).filter((a) => a.name === "A");
+	assert.ok(agent?.id);
+	const roomUrl = `${base}/api/rooms/${room}`;
+	const uploadUrl = `${roomUrl}/upload/**`;
+	const box = page.getByTestId("room-input");
+	const input = page.getByTestId("room-chat").getByTestId("attach-input");
+	const progress = page.getByTestId("room-chat").getByTestId("attach-progress");
+	const imageName = reverse ? "reverse-icon-192.png" : "icon-192.png";
+	const planName = reverse ? "reverse-plan.txt" : "plan.txt";
+	const send = page.getByTestId("room-send");
+	const counts = await Promise.all(["A", "B", "C"].map((n) => botsOf(n).count()));
+	const completed = [];
+	const posts = [];
+	const observe = (req) => { if (req.url() === `${roomUrl}/messages` && req.method() === "POST") posts.push(req.postDataJSON()); };
+	page.on("request", observe);
+	let release;
+	const held = new Promise((r) => { release = r; });
+	const intercept = async (route) => {
+		if (route.request().method() !== "PUT") return route.continue();
+		const response = await route.fetch();
+		const { file } = await response.json();
+		if (file?.name === imageName) await held;
+		if (file) completed.push(file);
+		await route.fulfill({ response });
+	};
+	await page.route(uploadUrl, intercept);
+	try {
+		if (reverse) {
+			await input.setInputFiles({ name: imageName, mimeType: "image/png", buffer: readFileSync(image) });
+			await input.setInputFiles({ name: planName, mimeType: "text/plain", buffer: readFileSync(plan) });
+		} else await input.setInputFiles([image, plan]);
+		await page.getByRole("progressbar", { name: `上传 ${imageName}` }).waitFor();
+		if (reverse) {
+			await page.getByRole("progressbar", { name: `上传 ${planName}` }).waitFor({ state: "hidden" });
+			assert.deepEqual(completed.map((f) => f.name), [planName], "释放图片之前，文本已先完成");
+		}
+		await box.fill("");
+		await box.pressSequentially("@");
+		await page.getByTestId("mention-opt").filter({ hasText: /^A/ }).click();
+		const text = reverse ? "@A 看看附件（反序回包）" : "@A 看看附件";
+		await box.fill(text);
+		assert.equal(await send.isDisabled(), true);
+		await box.press("Enter");
+		assert.equal(await box.inputValue(), text, "上传未完成时不能清空草稿或发送");
+		assert.equal(posts.length, 0);
+		release();
+		await progress.first().waitFor({ state: "hidden" });
+		assert.equal(await send.isEnabled(), true);
+		assert.deepEqual(completed.map((f) => f.name), reverse ? [planName, imageName] : [imageName, planName]);
+		const files = [imageName, planName].map((name) => completed.find((f) => f.name === name));
+		for (const [i, f] of files.entries()) {
+			const res = await fetch(`${base}/api/files/${f.fileId}`);
+			assert.equal(res.ok, true);
+			assert.deepEqual(Buffer.from(await res.arrayBuffer()), readFileSync(i === 0 ? image : plan));
+		}
+		const posted = page.waitForResponse((r) => r.url() === `${roomUrl}/messages` && r.request().method() === "POST");
+		await box.press("Enter");
+		assert.equal((await posted).ok(), true);
+		assert.equal(posts.length, 1);
+		assert.deepEqual(posts[0].mentions, [agent.id]);
+		assert.deepEqual(posts[0].attachments, files.map((f) => f.fileId));
+		const answer = botsOf("A").nth(counts[0]);
+		const receipt = reverse ? /看到附件：room-files\/\S+reverse-icon-192\.png、room-files\/\S+reverse-plan\.txt；图片 1 张/ : /看到附件：room-files\/\S+icon-192\.png、room-files\/\S+plan\.txt；图片 1 张/;
+		await answer.getByText(receipt).waitFor({ timeout: 30_000 });
+		await roomIdle();
+		assert.deepEqual(await Promise.all(["B", "C"].map((n) => botsOf(n).count())), counts.slice(1), "旁观者不能被唤醒");
+		console.log("room attachment evidence", JSON.stringify({ reverse, completed: completed.map(({ name, fileId, size }) => ({ name, fileId, size })), post: posts[0], answer: await answer.innerText() }));
+	} finally {
+		release();
+		await page.unroute(uploadUrl, intercept);
+		page.off("request", observe);
+	}
 }
 
 /** 设置 › 语音 › 本地：等本地模型区出现（先选再装后不再折叠；没装时选择器在上方模块卡里）。 */

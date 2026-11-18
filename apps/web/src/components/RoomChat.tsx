@@ -318,7 +318,7 @@ function RoomComposer({ room, running, drag, ref, replyKey, onJump, jumpState, o
 		});
 	};
 	const send = async () => {
-		if (sending || (!text.trim() && !files.length)) return;
+		if (sending || uploading > 0 || (!text.trim() && !files.length)) return;
 		setSending(true);
 		const sentFiles = files;
 		// 只保留文字里还在的 @（删掉的不算）
