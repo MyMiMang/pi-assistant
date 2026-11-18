@@ -79,20 +79,20 @@ test("自定义服务：一个 baseUrl + 一份凭据下多类模型", () => {
 	assert.equal(relay.baseUrl, "https://relay.example.com/v1");
 	assert.deepEqual(
 		relay.models.map((m) => `${m.type}:${m.id}:${m.capabilities.join("+")}`).sort(),
-		["chat:relay-chat:chat", "chat:relay-guess:chat+vision", "chat:relay-vl:chat+vision", "classifier:jev-latest:classifier"],
+		["chat:relay-chat:chat", "chat:relay-guess:chat", "chat:relay-vl:chat+vision", "classifier:jev-latest:classifier"],
 	);
 	// classifier 协议来自声明，不按名字猜
 	assert.equal(findRegistryModel(reg, "custom-relay", "jev-latest", "classifier")!.protocol, "typesafe-system-one");
 });
 
-test("猜出来的能力标未确认，显式元数据标已确认", () => {
+test("跨渠道猜出的识图不进入能力列表，显式元数据标已确认",  () => {
 	const reg = buildRegistry(base());
 	const explicit = findRegistryModel(reg, "custom-relay", "relay-vl", "chat")!;
 	assert.equal(explicit.confirmed, true);
 	assert.deepEqual(explicit.inferred, []);
 	const guessed = findRegistryModel(reg, "custom-relay", "relay-guess", "chat")!;
-	assert.equal(guessed.confirmed, false);
-	assert.deepEqual(guessed.inferred, ["vision"]);
+	assert.deepEqual(guessed.capabilities, ["chat"]);
+	assert.deepEqual(guessed.inferred, []);
 });
 
 test("生图服务合并进来，带改图与价格（未知不填 0）", () => {
@@ -172,7 +172,7 @@ test("按能力筛选 + 同 id 同 type 去重（自定义覆盖内置）", () =
 	assert.equal(chats[0].source, "custom");
 	// 能力筛选跨服务
 	const vision = modelsWithCapability(reg, "vision").map((m) => m.id).sort();
-	assert.deepEqual(vision, ["gpt-4o", "relay-guess", "relay-vl"]);
+	assert.deepEqual(vision, ["gpt-4o", "relay-vl"]);
 	const images = modelsWithCapability(reg, "image").map((m) => m.id);
 	assert.deepEqual(images, ["gpt-image-1"]);
 });

@@ -166,7 +166,7 @@ try {
 	await composer.waitFor();
 	await page.waitForTimeout(600);
 	// 390 下信息面板是覆盖层，先关掉以免挡住输入栏
-	const paneClose = page.locator('.pa-pane-wrap button[aria-label="关闭"]');
+	const paneClose = page.getByTestId("workspace-back-chat");
 	if (await paneClose.count()) { await paneClose.first().click(); await page.waitForTimeout(300); }
 	check("390：按钮文字收起只剩图标", !(await btn.getByText("权限·").isVisible()));
 	await btn.click();

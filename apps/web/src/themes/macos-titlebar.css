@@ -17,14 +17,6 @@ html.macos-tauri .pa-app > .pa-drawer > .pa-sidebar,
 html.macos-tauri .pa-app > .pa-chat {
   padding-top: calc(env(safe-area-inset-top) + var(--pa-titlebar-h));
 }
-/* 信息面板在 InfoPane 里写死了 Tailwind 的 !p-0（各块自己管内边距）。Tailwind 的 utilities
-   在 @layer 里，按 CSS 规则「层内的 !important 优先于层外的 !important」，所以这条必须放进
-   同一个 utilities 层，再用更高的选择器优先级盖住它。 */
-@layer utilities {
-  html.macos-tauri .pa-app > .pa-pane-wrap > .pa-pane {
-    padding-top: calc(env(safe-area-inset-top) + var(--pa-titlebar-h)) !important;
-  }
-}
 
 /* 拖动区：透明、盖住顶部安全高度那一条。z-index 高于各栏内容（.pa-app 的栏是 1），
    低于弹层 / 抽屉遮罩（z-40 / z-50），所以弹层仍然可以正常点击。里面没有任何可点元素，

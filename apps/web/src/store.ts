@@ -29,7 +29,6 @@ interface State {
 	/** 群聊历史窗口（引用跳远）：非空 = 当前群列表是围绕目标的连续窗口，不是实时末尾 */
 	roomWindow: Record<string, HistoryWindow | null>;
 	/** 群里点了成员头像：右侧面板显示这个助理 */
-	paneAgent: string | null;
 	loadRooms: () => Promise<void>;
 	selectRoom: (id: string) => Promise<void>;
 	/** 引用跳远：用服务端有界上下文窗口替换当前列表（目标一定在窗口里，窗口内连续无洞；窗口外不预加载） */
@@ -69,12 +68,9 @@ interface State {
 	pendingDevices: Device[];
 	loginEvents: Record<string, any[]>;
 	drawer: boolean;
-	info: boolean;
 	layout: LayoutPrefs;
 	setLayout: (p: Partial<LayoutPrefs>) => void;
 	/** 右侧信息面板当前页 */
-	infoTab: string;
-	infoTaskTab: "background" | "routines" | "proactive";
 	settings: string | null;
 	/** 明暗：浅色 / 深色 / 跟随系统 */
 	theme: Theme;
@@ -181,7 +177,6 @@ export const useStore = create<State>((set, get) => ({
 	room: new URLSearchParams(location.search).get("room"),
 	roomMsgs: {},
 	roomWindow: {},
-	paneAgent: null,
 	messages: {},
 	convs: {},
 	msgState: {},
@@ -205,24 +200,13 @@ export const useStore = create<State>((set, get) => ({
 	tunnelSteps: [],
 	desktopVersion: 0,
 	drawer: false,
-	info: loadLayout().info,
 	layout: loadLayout(),
-	infoTab: "overview",
-	infoTaskTab: "routines",
 	settings: new URLSearchParams(location.search).get("settings"),
 	theme: (localStorage.getItem("pia.theme") as Theme) || (getTheme(localStorage.getItem("pia.skin")).defaultMode ?? "system"),
 	skin: getTheme(localStorage.getItem("pia.skin")).id,
 	accent: localStorage.getItem("pia.accent") ?? "",
 	fileVersion: 0,
-	set: (p) => {
-		set(p);
-		// 右侧面板开关按设备记住（只在宽屏常驻时有意义；窄屏打开的抽屉不记）
-		if (p.info !== undefined && window.innerWidth >= 1200) {
-			const layout = { ...get().layout, info: p.info };
-			set({ layout });
-			saveLayout(layout);
-		}
-	},
+	set: (p) => set(p),
 	setLayout: (p) => {
 		const layout = { ...get().layout, ...p };
 		set({ layout });
@@ -248,7 +232,7 @@ export const useStore = create<State>((set, get) => ({
 		set({ rooms, room: get().room && !rooms.some((r) => r.id === get().room) ? null : get().room });
 	},
 	async selectRoom(id) {
-		set({ room: id, drawer: false, paneAgent: null, ...(get().room !== id ? { subagent: null } : {}) });
+		set({ room: id, drawer: false, ...(get().room !== id ? { subagent: null } : {}) });
 		// 首屏只拉最近一批：群历史可能很长，一次性 200 条 + 大 meta 在手机网络上很慢。更早的消息由「更早的消息」按需加载。
 		const msgs = await api<Message[]>(`/api/rooms/${id}/messages?limit=${ROOM_PAGE}`);
 		set((s) => ({ roomMsgs: { ...s.roomMsgs, [id]: msgs }, rooms: s.rooms.map((r) => (r.id === id ? { ...r, unread: 0 } : r)) }));

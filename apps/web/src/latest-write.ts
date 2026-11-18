@@ -33,7 +33,7 @@ export class LatestWrite {
 	}
 
 	/** 记住服务端确认过的值；返回是否仍是最新一次。 */
-	confirm(id: number, value: string): boolean {
+	confirm(id: number, value: string | null): boolean {
 		if (id !== this.seq) return false;
 		this.confirmed = value;
 		return true;

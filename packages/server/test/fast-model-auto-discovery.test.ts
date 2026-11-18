@@ -153,7 +153,7 @@ test("编辑：去掉模型后自动识别结果同步移除，悬空快速操�
 
 test("能力纠正：标为 classifier 但协议无法确定 → 不注册（fail-closed）；显式声明协议后才注册", async () => {
 	const p = await customProviders.save(null, { name: "Unknown", api: "openai-completions", baseUrl: baseB, apiKey: KEY_B, models: [{ id: "mystery-model" }] });
-	const afterCap = customProviders.setModelCapabilities(p.id, "mystery-model", ["classifier"]);
+	const afterCap = await customProviders.setModelCapabilities(p.id, "mystery-model", ["classifier"]);
 	assert.ok(!afterCap.discoveredClassifiers?.length, "只有能力标签、协议未知 → 不产出 classifier");
 	assert.deepEqual(models.listClassifierModels(p.id), [], "协议未知不注册（不伪造可调用）");
 	// 用户在高级里显式声明协议 + 模型 id → 注册；仍复用同一份凭据。

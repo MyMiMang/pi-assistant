@@ -349,7 +349,7 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 			{showModel && (
 				<div className="space-y-1.5">
 					<div className="text-xs font-medium text-mut">模型与思考强度</div>
-					<AgentModelDraft model={d.model} thinking={d.thinking} disabled={busy} onModel={(model) => { set({ model }); setModelDirty(true); }} onThinking={(thinking) => { set({ thinking }); setThinkingDirty(true); }} />
+					<AgentModelDraft model={d.model} thinking={d.thinking} legacyThinking={!thinkingDirty && agent?.thinkingSource === "legacy"} disabled={busy} onModel={(model) => { set({ model }); setModelDirty(true); }} onThinking={(thinking) => { set({ thinking }); setThinkingDirty(true); }} />
 				</div>
 			)}
 			{!profile && error && <div className="rounded-xl bg-red-50 px-3 py-2 text-red-600 dark:bg-red-950/40 dark:text-red-400">{error}</div>}
@@ -422,9 +422,9 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 	);
 }
 
-function AgentModelDraft({ model, thinking, disabled, onModel, onThinking }: { model: string; thinking: string | null; disabled: boolean; onModel: (model: string) => void; onThinking: (level: string | null) => void }) {
+function AgentModelDraft({ model, thinking, legacyThinking, disabled, onModel, onThinking }: { model: string; thinking: string | null; legacyThinking: boolean; disabled: boolean; onModel: (model: string) => void; onThinking: (level: string | null) => void }) {
 	const catalog = useConfiguredModels();
 	const defaults = useModelDefaults();
 	const [provider, ...rest] = model.split("/");
-	return <DraftModelSettings id="agent-draft" models={catalog.models} providers={catalog.providers} value={model ? { provider, id: rest.join("/") } : null} thinking={thinking} defaults={defaults} loading={catalog.loading} error={catalog.error} disabled={disabled} reload={catalog.reload} onModel={(m) => onModel(m ? `${m.provider}/${m.id}` : "")} onThinking={onThinking} />;
+	return <DraftModelSettings id="agent-draft" models={catalog.models} providers={catalog.providers} value={model ? { provider, id: rest.join("/") } : null} thinking={thinking} legacyThinking={legacyThinking} defaults={defaults} loading={catalog.loading} error={catalog.error} disabled={disabled} reload={catalog.reload} onModel={(m) => onModel(m ? `${m.provider}/${m.id}` : "")} onThinking={onThinking} />;
 }

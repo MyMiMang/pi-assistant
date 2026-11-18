@@ -24,7 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { expandAgentModelSection, openInfoPane } from "./fixtures/info-pane.mjs";
 import { nativeLaunchBrowserEnv } from "./fixtures/native-launch-env.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -112,10 +112,8 @@ const openTab = async (page, name) => {
 };
 const openAgentSettings = async (page, agentId) => {
 	await page.goto(`${BASE}/?agent=${agentId}`);
-	await page.waitForSelector(".pa-pane-wrap, button[aria-label='信息面板']");
+	await openInfoPane(page);
 	await page.waitForTimeout(500);
-	if (!(await page.locator(".pa-pane-wrap").isVisible().catch(() => false))) await page.getByRole("button", { name: "信息面板" }).click();
-	await page.locator(".pa-pane-wrap").waitFor({ state: "visible" });
 	await openTab(page, "模型");
 	await expandAgentModelSection(page, "subagents");
 	await page.getByTestId("agent-subagent-model").waitFor();

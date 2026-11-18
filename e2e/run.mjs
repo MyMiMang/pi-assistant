@@ -12,7 +12,7 @@ import { cspProblems, probeCsp } from "./fixtures/csp-probe.mjs";
 import { startMockImages } from "./mock-images.mjs";
 import { openModelMenu, openCompact, closeModelPanel } from "./model-menu-flow.mjs";
 import { menuOverflowProblems, roomHelpers, roomProgressNoPause } from "./fixtures/page-checks.mjs";
-import { infoPane, infoTab as selectInfoTab, taskTab as selectTaskTab, agentProfileSave, expandDetails, expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { infoPane, openInfoPane, infoTab as selectInfoTab, taskTab as selectTaskTab, agentProfileSave, expandDetails, expandAgentModelSection } from "./fixtures/info-pane.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 
 // fileURLToPath 而不是 URL.pathname：路径含空格/中文时 pathname 会保留 %20，导致子进程 cwd 与文件读取都找不到。
@@ -51,7 +51,7 @@ async function waitFor(fn, ms = 15_000) {
 	throw new Error("timeout");
 }
 // 下面的步骤都作用在本轮的 page 上：保留 `infoTab("资料")` / `taskTab("routines")` 这种短写法。
-const infoTab = (name) => selectInfoTab(page, name);
+const infoTab = async (name) => { await openInfoPane(page); await selectInfoTab(page, name); };
 const taskTab = (name) => selectTaskTab(page, name);
 const results = [];
 let AGENT = "";
@@ -137,14 +137,14 @@ await step("首次运行向导（选择 provider → 登录 → 默认模型 →
 	AGENT = agents[0].id;
 });
 
-await step("布局：右栏默认收起 → 打开 → 拖动调整两侧宽度 → 刷新后保持 → 窄屏变覆盖抽屉 → 收起左栏", async () => {
-	if (await page.locator(".pa-pane-wrap").count()) throw new Error("右侧信息面板默认应收起");
-	await page.waitForTimeout(200);
+await step("布局：右栏默认收起 → 打开 → 拖动调整两侧宽度 → 刷新后保持 → 窄屏单内容页 → 收起左栏", async () => {
+	const workspace = page.getByTestId("right-workspace");
+	await page.getByTestId("agent-detail-open").waitFor();
+	if (await workspace.isVisible() || await page.getByTestId("workspace-agent-details").count()) throw new Error("默认不应打开工作区");
 	await page.screenshot({ path: join(SHOTS, "35-layout-default.png") });
-	await page.getByRole("button", { name: "信息面板" }).click();
-	await page.locator(".pa-pane-wrap").waitFor();
+	await openInfoPane(page);
 	const listResizer = page.getByRole("separator", { name: "调整助理列表宽度", exact: true });
-	const paneResizer = page.getByRole("separator", { name: "调整信息面板宽度", exact: true });
+	const paneResizer = page.getByRole("separator", { name: "调整侧栏宽度", exact: true });
 	const drag = async (resizer, dx) => {
 		const b = await resizer.boundingBox();
 		await page.mouse.move(b.x + b.width / 2, b.y + 200);
@@ -153,22 +153,22 @@ await step("布局：右栏默认收起 → 打开 → 拖动调整两侧宽度 
 		await page.mouse.up();
 	};
 	await drag(listResizer, 60);
-	await drag(paneResizer, -80);
+	await drag(paneResizer, -32);
 	const lay = await page.evaluate(() => JSON.parse(localStorage.getItem("pia.layout")));
-	if (Math.abs(lay.sideW - 324) > 4 || Math.abs(lay.paneW - 420) > 4 || !lay.info) throw new Error(`布局未保存：${JSON.stringify(lay)}`);
+	if (Math.abs(lay.sideW - 324) > 4 || Math.abs(lay.previewW - 592) > 4) throw new Error(`布局未保存：${JSON.stringify(lay)}`);
 	await page.reload();
-	await page.locator(".pa-pane-wrap").waitFor();
+	await page.getByTestId("agent-detail-open").waitFor();
+	if (await workspace.isVisible() || await page.getByTestId("workspace-agent-details").count()) throw new Error("刷新不应自动恢复工作区内容");
+	await openInfoPane(page);
 	const w = await page.locator(".pa-app > .pa-drawer").evaluate((el) => el.getBoundingClientRect().width);
-	if (Math.abs(w - 324) > 4) throw new Error(`刷新后左栏宽度应保持：${w}`);
+	const previewW = (await workspace.boundingBox()).width;
+	if (Math.abs(w - 324) > 4 || Math.abs(previewW - lay.previewW) > 4) throw new Error(`刷新后两侧宽度应保持：${w} / ${previewW}`);
 	await page.screenshot({ path: join(SHOTS, "36-layout-resized.png") });
-	// 1100px：右栏变覆盖抽屉，不挤压聊天区
 	await page.setViewportSize({ width: 1100, height: 800 });
-	await page.waitForTimeout(200);
-	const pos = await page.locator(".pa-pane-wrap").evaluate((el) => getComputedStyle(el).position);
-	if (pos !== "fixed") throw new Error("窄屏时右栏应为覆盖式抽屉");
-	const chatW = await page.locator("main.pa-chat").evaluate((el) => el.getBoundingClientRect().width);
-	if (chatW < 700) throw new Error(`聊天区被挤压：${chatW}`);
+	await workspace.getByTestId("workspace-back-chat").waitFor();
+	if (await workspace.getAttribute("data-mode") !== "mobile" || (await workspace.boundingBox()).width < 1098) throw new Error("窄屏应显示单内容页");
 	await page.screenshot({ path: join(SHOTS, "37-layout-overlay.png") });
+	await workspace.getByTestId("workspace-back-chat").click();
 	await page.setViewportSize({ width: 1440, height: 900 });
 	// 收起左栏 → 头部出现展开按钮
 	await page.getByRole("button", { name: "收起助理列表" }).click();
@@ -176,6 +176,7 @@ await step("布局：右栏默认收起 → 打开 → 拖动调整两侧宽度 
 	await page.locator(".pa-app.side-docked").waitFor();
 	// 恢复默认宽度，后面的截图保持一致
 	await listResizer.dblclick();
+	await page.getByTestId("workspace-reopen").click();
 	await paneResizer.dblclick();
 });
 
@@ -250,9 +251,10 @@ await step("右侧信息面板：文件 / 电脑", async () => {
 });
 
 await step("右侧信息面板标签栏自适应：240/320/420/600 宽下每个标签都可达（可见或在「更多」里），不被裁切", async () => {
+	const pane = await openInfoPane(page);
 	const want = ["overview", "models", "profile", "capabilities", "tasks", "memory", "files", "computer"];
 	for (const w of [240, 320, 420, 600]) {
-		await page.evaluate((w) => { const el = document.querySelector(".pa-pane-wrap"); el.style.width = `${w}px`; el.style.flex = `0 0 ${w}px`; }, w);
+		await pane.evaluate((el, w) => { el.style.width = `${w}px`; }, w);
 		await page.waitForTimeout(250);
 		const r = await page.evaluate(() => {
 			const bar = document.querySelector("[data-testid=info-tabs]");
@@ -282,7 +284,7 @@ await step("右侧信息面板标签栏自适应：240/320/420/600 宽下每个�
 		}
 		log(`[${w}] 可见`, r.vis.join(","), "更多", inMenu.join(","));
 	}
-	await page.evaluate(() => { const el = document.querySelector(".pa-pane-wrap"); el.style.width = ""; el.style.flex = ""; });
+	await pane.evaluate((el) => { el.style.width = ""; });
 });
 
 let pairUrl = "";
@@ -621,7 +623,7 @@ await step("多个助理：新建第二个助理 → 侧边栏列出 → 上传�
 	await fetch(`${BASE}/api/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "写作助手", avatar: "✍️", color: "#ec4899", description: "写文章、润色、翻译" }) });
 	// 编辑第二个助理：上传图片头像 + 改名（资料页显式保存；限定在可见的资料面板里，避免选到隐藏草稿）
 	await infoTab("profile");
-	const profilePane = page.locator(".pa-pane-wrap");
+	const profilePane = infoPane(page);
 	await profilePane.getByTestId("agent-profile").waitFor();
 	await profilePane.locator("[data-testid=avatar-file]").setInputFiles(join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"));
 	await profilePane.getByPlaceholder("给助理起个名字").fill("研究员 R");
@@ -1131,8 +1133,6 @@ await step("助理电脑开箱即用：向导没开启时什么都不下载；�
 	if (g0.settings.enabled || g0.install.phase !== "idle") throw new Error(`向导没勾选却开启/下载了：${JSON.stringify(g0)}`);
 	await page.goto(BASE);
 	await page.locator("main textarea").waitFor();
-	await page.waitForTimeout(500); // 等信息面板按记住的布局渲染完再判断开没开
-	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
 	await infoTab("电脑");
 	const ni = page.getByTestId("desktop-not-installed");
 	await ni.getByText("未安装，去设置安装").waitFor();
@@ -1162,10 +1162,7 @@ await step("助理电脑开箱即用：向导没开启时什么都不下载；�
 	if (!(await fetch(`${BASE}/api/desktop`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(g0.settings) })).ok || JSON.stringify((await (await fetch(`${BASE}/api/desktop`)).json()).settings) !== JSON.stringify(g0.settings)) throw new Error("恢复助理电脑原设置失败");
 	await page.keyboard.press("Escape");
 });
-const openPane = async (tab) => {
-	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
-	await infoTab(tab);
-};
+const openPane = infoTab;
 const SHOP = `data:text/html;charset=utf-8,${encodeURIComponent(`<title>测试商店</title><body style="font-family:sans-serif;padding:40px"><h1>测试商店 · 结算</h1><p>无线耳机 × 1　¥199</p><form onsubmit="document.body.innerHTML='<h1>下单成功</h1>';return false"><label>收货人 <input name="n" value="邓邓"></label><br><br><button type="submit">提交订单</button></form></body>`)}`;
 await step("Phase 3 浏览器：助理打开网页（有 Docker 时在「电脑」实时画面里）→ 点「提交订单」需审批 → 拒绝不提交 → 本任务内都允许", async () => {
 	if (process.env.E2E_DESKTOP) {
@@ -1234,7 +1231,6 @@ await step("共用电脑：两个助理同一台电脑（界面显示共用）�
 		if (!s1.computer?.shared || s1.computer.id !== s2.computer?.id || s1.port !== s2.port) throw new Error(`两个助理应该在同一台共用电脑上：${JSON.stringify([s1.computer, s2.computer])}`);
 		await page.goto(BASE);
 		await page.locator("main textarea").waitFor();
-		await page.waitForTimeout(800); // 等信息面板按记住的布局渲染完
 		await openPane("电脑");
 		const dv = page.getByTestId("desktop-view");
 		await dv.locator('[data-testid=desktop-computer][title*="共用电脑"]').waitFor({ timeout: 30_000 });
@@ -1335,7 +1331,6 @@ await step("权限档位：助理设置 › 电脑 里切换本助理档位（�
 	});
 	if (!r.ok) throw new Error(JSON.stringify(r));
 	if (await page.locator("[data-testid=host-tier-pill]").count()) throw new Error("输入框下不应再有权限按钮");
-	if (!(await page.locator(".pa-pane-wrap [data-testid=info-tabs]").isVisible().catch(() => false))) await page.locator('.pa-head-actions button[aria-label="信息面板"]').click();
 	await infoTab("电脑");
 	const picker = page.locator("[data-testid=agent-host-tier] [data-testid=tier-picker]");
 	const on = (t) => picker.locator(`[data-testid=tier-${t}][aria-pressed=true]`).waitFor({ timeout: 10_000 });
@@ -1510,7 +1505,7 @@ await step("微信 ClawBot（模拟 iLink）：扫码连接 → 二维码 → �
 
 await step("主动性：助理设置 › 任务 › 主动跟进 切换等级 → 聊天里约好跟进 → 现在看看 → 提醒收件箱 → 标记有用", async () => {
 	if (await page.locator("[data-testid=proactive-picker]").count()) throw new Error("输入框下不应再有主动程度按钮");
-	if (!(await page.locator(".pa-pane-wrap [data-testid=info-tabs]").isVisible().catch(() => false))) await page.locator('.pa-head-actions button[aria-label="信息面板"]').click();
+	await openInfoPane(page);
 	await taskTab("proactive");
 	await page.locator("[data-testid=proactive-level-normal]").click();
 	await page.locator("[data-testid=proactive-level-normal][aria-pressed=true]").waitFor();
@@ -1603,10 +1598,9 @@ await step("左侧助理列表：右键 → 编辑 / 删除助理（确认框）
 	await item("临时助理甲").click({ button: "right" });
 	await page.locator("[data-testid=agent-menu]").getByText("编辑").click();
 	// 侧边栏「编辑」直达该助理的资料页（资料面板可见，不是只切了个隐藏 tab）
-	await page.locator(".pa-pane-wrap").waitFor();
-	await page.getByTestId("agent-profile").waitFor();
+	await infoPane(page).getByTestId("agent-profile").waitFor();
 	// 资料页把危险操作收进折叠区：真的点开再找「删除助理」，不假定默认展开。
-	await expandDetails(page.locator(".pa-pane-wrap"), "agent-danger-details");
+	await expandDetails(infoPane(page), "agent-danger-details");
 	await page.getByText("删除助理").last().waitFor();
 	await item("临时助理甲").click({ button: "right" });
 	await page.waitForTimeout(200);
@@ -2243,7 +2237,6 @@ await step("图片生成：设置里添加图片服务（自动获取识别图�
 		await send("画一张 违规内容");
 		await page.locator("main").getByText(/没画成.*安全策略/).last().waitFor({ timeout: 30_000 });
 		// 模型页：图片模型选择（跟随默认 / 指定 / 不画图）
-		if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
 		await infoTab("models");
 		await expandAgentModelSection(page, "image");
 		await page.getByTestId("agent-image-select").selectOption("off");

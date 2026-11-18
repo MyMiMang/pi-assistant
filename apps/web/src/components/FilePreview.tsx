@@ -70,14 +70,9 @@ export function PreviewContent({ item, onClose }: { item: FilePreviewItem; onClo
 		<div className="flex h-full min-h-0 flex-col pb-[env(safe-area-inset-bottom)]" data-kind={kind}>
 			<header className="flex items-center gap-2 border-b border-line px-3 py-2" data-testid="file-preview-toolbar">
 				<FileKindIcon name={item.name} size={18} className="shrink-0 text-mut" />
-				<div className="min-w-0 flex-1">
-					<div className="min-w-0 break-words text-[13.5px] font-medium leading-tight" title={item.name} data-testid="file-preview-name">
-						{item.name}
-					</div>
-					<div className="mt-0.5 text-xs text-mut2">
-						{KIND_LABEL[kind]}
-						{item.size != null ? ` · ${fmtSize(item.size)}` : ""}
-					</div>
+				<div className="min-w-0 flex-1 text-xs text-mut2">
+					{KIND_LABEL[kind]}
+					{item.size != null ? ` · ${fmtSize(item.size)}` : ""}
 				</div>
 				<button
 					type="button"

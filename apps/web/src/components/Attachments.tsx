@@ -27,11 +27,11 @@ export default function Attachments({ items, mine }: { items: Attachment[]; mine
 		<div className={cx("flex flex-col gap-2", mine ? "mt-1.5 items-end" : "items-start")}>
 			{items.map((f) =>
 				f.mime.startsWith("image/") && f.mime !== "image/svg+xml" ? (
-					<div key={f.fileId} className="group relative max-w-full" data-testid="image-attachment">
+					<div key={f.fileId} className="group relative max-w-[min(300px,100%)]" data-testid="image-attachment">
 						<AuthImage
 							path={`/api/files/${f.fileId}?inline=1`}
 							alt={f.name}
-							className="max-h-64 max-w-[min(300px,100%)] cursor-zoom-in rounded-xl border border-line object-cover shadow-sm"
+							className="max-h-64 max-w-full cursor-zoom-in rounded-xl border border-line object-cover shadow-sm"
 							onClick={() => openImageViewer({ authPath: `/api/files/${f.fileId}?inline=1`, alt: f.name, name: f.name, downloadPath: `/api/files/${f.fileId}` })}
 						/>
 						<button

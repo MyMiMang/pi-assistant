@@ -34,7 +34,7 @@ try {
 	appPage = page;
 	page.setDefaultTimeout(12000);
 	const errors = []; page.on("pageerror", e => errors.push(e.message));
-	await page.goto(`${base}/?agent=${agent.id}`); await wait(async () => /:conversation:.+/.test(await page.getByTestId("right-workspace").getAttribute("data-scope"))); await page.getByTestId("workspace-browser-open").click(); await page.getByTestId("workspace-browser-empty").waitFor();
+	await page.goto(`${base}/?agent=${agent.id}`); await wait(async () => /:conversation:.+/.test(await page.getByTestId("right-workspace").getAttribute("data-scope"))); await page.getByTestId("workspace-reopen").click(); await page.getByTestId("workspace-browser-open").click(); await page.getByTestId("workspace-browser-empty").waitFor();
 	await page.screenshot({ path: join(out, "browser-empty.png") });
 	const nav = await call(agent.id, "browser_navigate", { url: siteUrl });
 	assert.match(nav, /页面：同页整合测试/);
@@ -75,7 +75,7 @@ try {
 	// 查看关闭不关闭 Page，重新打开还可见同样内容。
 	await page.getByTestId("workspace-close-tab").click();
 	assert.match(await call(agent.id, "browser_snapshot", { screenshot: false }), /交还后工具恢复/);
-	await page.getByTestId("workspace-browser-open").click(); await page.getByTestId("browser-takeover").waitFor();
+	await page.getByTestId("workspace-reopen").click(); await page.getByTestId("workspace-browser-open").click(); await page.getByTestId("browser-takeover").waitFor();
 	const state = await json(`/api/agents/${agent.id}/browser/state`);
 	// 两个真实查看连接：旧控制代际不能交还或影响后来一轮接管。
 	const viewers = [];

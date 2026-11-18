@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { openCompact } from "./model-menu-flow.mjs";
-import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { expandAgentModelSection, openInfoPane } from "./fixtures/info-pane.mjs";
 import { nativeLaunchBrowserEnv } from "./fixtures/native-launch-env.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 
@@ -127,10 +127,8 @@ try {
 	/** 真实入口：信息面板 › 模型页 › 子代理默认的「思考强度」按钮 */
 	const openThinking = async () => {
 		await page.goto(`${BASE}/?agent=${agent.id}`);
-		await page.waitForSelector("button[aria-label='信息面板']");
+		await openInfoPane(page);
 		await page.waitForTimeout(400);
-		if (!(await page.locator(".pa-pane-wrap").isVisible().catch(() => false))) await page.getByRole("button", { name: "信息面板" }).click();
-		await page.locator(".pa-pane-wrap").waitFor({ state: "visible" });
 		const bar = page.getByTestId("info-tabs");
 		const tab = bar.getByRole("tab", { name: "模型", exact: true });
 		if (await tab.count()) await tab.click();

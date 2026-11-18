@@ -45,7 +45,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { expandAgentModelSection, infoTab } from "./fixtures/info-pane.mjs";
+import { expandAgentModelSection, infoPane, infoTab } from "./fixtures/info-pane.mjs";
 import { stableShot } from "./fixtures/stable-shot.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 
@@ -249,7 +249,7 @@ try {
 		return route.continue().catch(() => {});
 	});
 
-	const pane = page.locator(".pa-pane-wrap");
+	const pane = infoPane(page);
 	const img = () => pane.getByTestId("agent-image-details");
 	const sub = () => pane.getByTestId("agent-subagent-details");
 	const summaryText = (details) => details.locator(":scope > summary").innerText();

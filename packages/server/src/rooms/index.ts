@@ -27,7 +27,7 @@ import { roomTools } from "./tools.ts";
 export * from "./store.ts";
 export { bootstrapRooms, cancelQueuedFor, continueRoom, markRead, postUserMessage, roomFiles, routeUserMessage, stateOf, stop } from "./scheduler.ts";
 export { createRoom, deleteRoom, onAgentChanged, onAgentDeleted, updateRoom } from "./crud.ts";
-export { availableModels, clampProposalThinking, confirmMemberProposal, confirmProposal, createRoomAgent, normalizeProposal, type ProposalMember, type RoomProposal } from "./proposals.ts";
+export { availableModels, confirmMemberProposal, confirmProposal, createRoomAgent, normalizeProposal, type ProposalMember, type RoomProposal } from "./proposals.ts";
 export { releaseAllHeld } from "./hold.ts";
 export { runRoomChecks, startRoomChecks, wakeManager } from "./collab.ts";
 export { confirmProject, dismissProject, finishProject, getProject, migrateAutonomy, projectJson, projectsOf, ProjectError, replanProject, resumeProject, stopProject, userRepliedAfterStop, type ProjectJson } from "./projects.ts";

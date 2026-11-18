@@ -24,7 +24,7 @@ export interface Agent {
 	id: string; name: string; avatar: string; color: string; persona: string; description: string; status: string; unread: number;
 	model: { provider: string; id: string } | null; model_provider: string | null; model_id: string | null; workspace: string;
 	last?: { content: string; role: string; created_at: number } | null;
-	conversation_id?: string; memory_provider?: string | null; thinking?: string; thinkingSetting?: string | null; /** 请求级 Fast（OpenAI service_tier=priority）：独立于 thinking / 模型 */ fast?: boolean;
+	conversation_id?: string; memory_provider?: string | null; thinking?: string; thinkingSetting?: string | null; thinkingSource?: "explicit" | "default" | "legacy" | "unset"; thinkingDefault?: string | null; /** 请求级 Fast（OpenAI service_tier=priority）：独立于 thinking / 模型 */ fast?: boolean;
 	/** user = 我的助理；room = 群专属助理（不在侧边栏） */
 	scope?: "user" | "room"; room_id?: string | null;
 }
@@ -97,10 +97,12 @@ export interface SystemInfo {
 	memoryHealth?: { level: "ok" | "slow" | "failing"; summary: string } | null;
 }
 export interface Device { id: string; name: string; platform: string; status: string; created_at: number; last_seen_at: number | null; last_ip: string | null; owner?: number }
-export interface CustomModel { id: string; api?: string; apiEffective?: string; baseUrlEffective?: string; name?: string; reasoning?: boolean; reasoningAuto?: boolean; thinkingLevelMap?: Record<string, string | null>; thinkingLevelSource?: string; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number; limitsSource?: "detected" | "known" | "default" | "user" | "learned"; detectedType?: "classifier"; classifierProtocol?: string }
+export interface RelayCapabilityFacts { vision?: boolean; reasoning?: boolean; levels?: Record<string, string | null> }
+export interface RelayCapabilityScope { api: string; baseUrl: string; source: string; appliesTo: "all-chat" | string[]; defaults: RelayCapabilityFacts; exceptions?: Record<string, RelayCapabilityFacts> }
+export interface CustomModel { visionOverride?: boolean | null; listEvidence?: RelayCapabilityFacts & { provider?: string; model: string; api: string; baseUrl: string }; effectiveCapability?: RelayCapabilityFacts & { visionSource?: string; reasoningSource?: string; levelsSource?: string; off: "unknown" | "omit" | "value"; source?: string }; id: string; api?: string; apiEffective?: string; baseUrlEffective?: string; name?: string; reasoning?: boolean; reasoningAuto?: boolean; thinkingLevelMap?: Record<string, string | null>; thinkingLevelSource?: string; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number; limitsSource?: "detected" | "known" | "default" | "user" | "learned"; detectedType?: "classifier"; classifierProtocol?: string }
 /** 声明的 classifier（协议 + 对端模型 id）；保存后由服务端在启动/reload 时重新注册。 */
 export interface CustomClassifier { protocol: string; modelId: string; name?: string; contextWindow?: number }
-export interface CustomProviderMeta { id: string; name: string; api: string; baseUrl: string; headerNames: string[]; noKey: boolean; models: CustomModel[]; classifiers?: CustomClassifier[]; discoveredClassifiers?: CustomClassifier[]; protocolUrls?: Record<string, string>; configured: boolean; references?: ProviderReferences }
+export interface CustomProviderMeta { capabilityScope?: RelayCapabilityScope; id: string; name: string; api: string; baseUrl: string; headerNames: string[]; noKey: boolean; models: CustomModel[]; classifiers?: CustomClassifier[]; discoveredClassifiers?: CustomClassifier[]; protocolUrls?: Record<string, string>; configured: boolean; references?: ProviderReferences }
 export interface ProviderReferences { defaultModel: boolean; visionModel: boolean; agents: string[]; subagents: boolean; subagentAgents: string[]; imageProviders?: string[] }
 
 // ---- 统一模型服务（对齐 registry agent 契约：packages/server/src/model-registry.ts）----

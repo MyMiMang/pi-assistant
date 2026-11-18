@@ -6,10 +6,11 @@
 import { Activity, Check, ChevronDown, Download, Loader2, Pencil, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { api } from "../api";
-import type { CustomModel, CustomProviderMeta, ModelCapability, RegistryModel, RegistryProvider } from "../types";
+import type { CustomModel, CustomProviderMeta, ModelCapability, RegistryModel, RegistryProvider, RelayCapabilityScope } from "../types";
 import { CTX_PRESETS, fmtTokens, LimitField, OUT_PRESETS, SOURCE } from "./CustomProvider";
 import { Badge, Button, cx, Help, Input, Select } from "./ui";
 import { ModelReasoning } from "./ModelReasoning";
+import { RelayCapabilityScopeFields, scopeDraft, scopePayload } from "./RelayCapabilityScope";
 
 const CAPS: ModelCapability[] = ["chat", "vision", "image", "classifier"];
 const CAP_LABEL: Record<ModelCapability, string> = { chat: "对话", vision: "识图", image: "生图", classifier: "分类器" };
@@ -20,13 +21,13 @@ const RELAY_APIS = ["openai-completions", "anthropic-messages", "google-generati
 type TestState = { s: "running" } | { s: "ok"; ms: number } | { s: "fail"; msg: string; detail?: string };
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const body = (meta: CustomProviderMeta, patch: Partial<{ name: string; api: string; baseUrl: string; apiKey: string; noKey: boolean; models: CustomModel[]; headers: { name: string; value?: string }[]; classifiers: { protocol: string; modelId: string }[]; protocolUrls: Record<string, string> }> = {}) => ({
+const body = (meta: CustomProviderMeta, patch: Partial<{ name: string; api: string; baseUrl: string; apiKey: string; noKey: boolean; models: CustomModel[]; headers: { name: string; value?: string }[]; classifiers: { protocol: string; modelId: string }[]; protocolUrls: Record<string, string>; capabilityScope: RelayCapabilityScope | null }> = {}) => ({
 	name: meta.name,
 	api: meta.api,
 	baseUrl: meta.baseUrl,
 	noKey: meta.noKey,
 	headers: meta.headerNames.map((name) => ({ name })),
-	models: meta.models.map(({ apiEffective: _a, baseUrlEffective: _b, ...m }) => m),
+	models: meta.models.map(({ apiEffective: _a, baseUrlEffective: _b, effectiveCapability: _c, ...m }) => m),
 	classifiers: meta.classifiers?.map((c) => ({ protocol: c.protocol, modelId: c.modelId })) ?? [],
 	...(meta.protocolUrls ? { protocolUrls: meta.protocolUrls } : {}),
 	...patch,
@@ -245,10 +246,14 @@ function Models({ meta, reg, auto, tests, testAll, summary, onTestAll, onTest, o
 	const [fetchErr, setFetchErr] = useState("");
 	const alertErr = (e: unknown) => setFetchErr(`获取失败：${errText(e)}`);
 	const addModels = async (ms: CustomModel[]) => {
-		const fresh = ms.filter((m) => !meta.models.some((x) => x.id === m.id));
-		if (!fresh.length) return;
+		const incoming = new Map(ms.map((m) => [m.id, m]));
+		const saved = body(meta).models.map((m) => {
+			const found = incoming.get(m.id);
+			incoming.delete(m.id);
+			return found?.listEvidence ? { ...m, listEvidence: found.listEvidence } : m;
+		});
 		setBusy("add");
-		await onSave({ models: [...body(meta).models, ...fresh] });
+		if (await onSave({ models: [...saved, ...incoming.values()] })) setFetched(null);
 		setBusy("");
 	};
 	const chips: [ModelCapability | "all", string, number][] = [["all", "全部", meta.models.length], ...CAPS.map((c) => [c, CAP_LABEL[c], meta.models.filter((m) => capsOf(m.id).includes(c)).length] as [ModelCapability, string, number]).filter(([, , n]) => n > 0)];
@@ -291,7 +296,7 @@ function Models({ meta, reg, auto, tests, testAll, summary, onTestAll, onTest, o
 					<div className="mb-1.5 flex items-center justify-between text-xs text-mut">
 						获取到 {fetched.length} 个模型，点击添加
 						<span className="flex gap-3">
-							<button className="text-accent" onClick={() => void addModels(fetched)}>全部添加</button>
+							<button className="text-accent" onClick={() => void addModels(fetched)}>添加新模型并更新已有能力</button>
 							<button onClick={() => setFetched(null)}>收起</button>
 						</span>
 					</div>
@@ -331,9 +336,9 @@ function ModelLine({ m, meta, r, auto, t, open, onToggle, onTest, onSave, onSave
 	onSaveCaps: (modelId: string, caps: ModelCapability[]) => void;
 	strengthsSlot: (m: RegistryModel) => ReactNode;
 }) {
-	const caps = r?.capabilities ?? ["chat"];
+	const caps: ModelCapability[] = r?.capabilities ?? ["chat"];
 	const chat = (r?.type ?? "chat") === "chat";
-	const draft = () => ({ caps, ctx: m.contextWindow, out: m.maxTokens, src: m.limitsSource, api: m.api ?? "", reasoning: m.reasoning, reasoningAuto: m.reasoningAuto, thinkingLevelMap: m.thinkingLevelMap, thinkingLevelSource: m.thinkingLevelSource });
+	const draft = () => ({ visionOverride: m.visionOverride, caps, ctx: m.contextWindow, out: m.maxTokens, src: m.limitsSource, api: m.api ?? "", reasoning: m.reasoning, reasoningAuto: m.reasoningAuto, thinkingLevelMap: m.thinkingLevelMap, thinkingLevelSource: m.thinkingLevelSource });
 	const [d, setD] = useState(draft);
 	const [more, setMore] = useState(false);
 	const [busy, setBusy] = useState(false);
@@ -342,9 +347,9 @@ function ModelLine({ m, meta, r, auto, t, open, onToggle, onTest, onSave, onSave
 		setBusy(true);
 		const capsChanged = String(d.caps) !== String(caps);
 		// 一次保存：能力也写进同一个 PUT，避免旧能力把刚改的覆盖回去
-		const models = body(meta).models.map((x) => (x.id !== m.id ? x : { ...x, reasoning: d.reasoning, reasoningAuto: d.reasoningAuto, thinkingLevelMap: d.thinkingLevelMap, thinkingLevelSource: d.thinkingLevelSource, contextWindow: d.ctx, maxTokens: d.out, limitsSource: d.src, ...(capsChanged ? { capabilities: d.caps } : {}), ...(auto ? { api: d.api || undefined } : {}) }));
+		const models = body(meta).models.map((x) => (x.id !== m.id ? x : { ...x, visionOverride: d.visionOverride, reasoning: d.reasoning, reasoningAuto: d.reasoningAuto, thinkingLevelMap: d.thinkingLevelMap, thinkingLevelSource: d.thinkingLevelSource, contextWindow: d.ctx, maxTokens: d.out, limitsSource: d.src, ...(capsChanged ? { capabilities: d.caps } : {}), ...(auto ? { api: d.api || undefined } : {}) }));
 		const ok = await onSave({ models });
-		if (ok && capsChanged) onSaveCaps(m.id, d.caps);
+		if (ok && capsChanged && !m.effectiveCapability) onSaveCaps(m.id, d.caps);
 		setBusy(false);
 		if (ok) onToggle();
 	};
@@ -371,14 +376,14 @@ function ModelLine({ m, meta, r, auto, t, open, onToggle, onTest, onSave, onSave
 					<div className="space-y-1.5">
 						<div className="text-xs font-medium">能做什么</div>
 						<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-							{CAPS.map((c) => (
+							{CAPS.filter((c) => c !== "vision" || !m.effectiveCapability).map((c) => (
 								<label key={c} className={cx("flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-xs", d.caps.includes(c) ? "border-accent bg-accent-soft" : "border-line")}>
 									<input type="checkbox" className="mt-0.5" checked={d.caps.includes(c)} onChange={(e) => setD({ ...d, caps: e.target.checked ? [...d.caps, c] : d.caps.filter((x) => x !== c) })} data-testid={`relay-cap-${c}`} />
 									<span><span className="block font-medium">{CAP_LABEL[c]}</span><span className="text-mut">{CAP_HINT[c]}</span></span>
 								</label>
 							))}
 						</div>
-						<div className="text-[11px] text-mut2">按已知模型自动勾选；不确定可以不改</div>
+						{m.effectiveCapability ? <Select value={m.effectiveCapability.visionSource === "手动" && d.visionOverride === undefined ? String(m.effectiveCapability.vision) : String(d.visionOverride ?? "auto")} ariaLabel="识图支持" options={[{ value: "auto", label: "识图：自动" }, { value: "true", label: "识图：支持" }, { value: "false", label: "识图：不支持" }]} onChange={(v) => setD({ ...d, visionOverride: v === "auto" ? null : v === "true" })} /> : <div className="text-[11px] text-mut2">按已知模型自动勾选；不确定可以不改</div>}
 					</div>
 					{chat && (
 						<div className="grid gap-3 sm:grid-cols-2">
@@ -407,8 +412,8 @@ function ModelLine({ m, meta, r, auto, t, open, onToggle, onTest, onSave, onSave
 							<div className="space-y-3 px-3 pb-3 text-xs">
 								{r && strengthsSlot(r)}
 								<div className="grid grid-cols-3 gap-2 text-[11px]" data-testid="relay-model-auto">
-									<div><div className="text-mut">思考支持</div>{m.reasoning === undefined ? "未识别" : m.reasoning ? "支持" : "不支持"}</div>
-									<div><div className="text-mut">能看图</div>{m.input?.includes("image") ? "能" : "不能"}</div>
+									<div><div className="text-mut">思考支持</div>{(m.effectiveCapability ? m.effectiveCapability.reasoning : m.reasoning) === undefined ? "未知" : (m.effectiveCapability ? m.effectiveCapability.reasoning : m.reasoning) ? "支持" : "不支持"} {m.effectiveCapability?.reasoningSource}</div>
+									<div><div className="text-mut">能看图</div>{m.effectiveCapability ? m.effectiveCapability.vision === undefined ? "未知" : m.effectiveCapability.vision ? "支持" : "不支持" : m.input?.includes("image") ? "支持" : "未知"} {m.effectiveCapability?.visionSource}</div>
 									<div><div className="text-mut">请求地址</div><span className="break-all font-mono">{m.baseUrlEffective ?? meta.baseUrl}</span></div>
 								</div>
 							</div>
@@ -437,22 +442,30 @@ function ModelLine({ m, meta, r, auto, t, open, onToggle, onTest, onSave, onSave
 /** 高级：生图 / 语音 / 分类器 / 请求头 /（自动模式）各协议地址；默认收起 */
 function Advanced({ meta, auto, classifierProtocols, onSave, imageSection, asrSection }: { meta: CustomProviderMeta; auto: boolean; classifierProtocols: string[]; onSave: (p: Parameters<typeof body>[1]) => Promise<boolean>; imageSection: ReactNode; asrSection: ReactNode }) {
 	const init = () => ({
+		scope: scopeDraft(meta.capabilityScope),
 		headers: meta.headerNames.map((name) => ({ name, value: "", saved: true })),
 		classifiers: meta.classifiers?.map((c) => ({ protocol: c.protocol, modelId: c.modelId })) ?? [],
 		urls: Object.fromEntries(RELAY_APIS.map((a) => [a, meta.protocolUrls?.[a] ?? ""])) as Record<string, string>,
 	});
 	const [s, setS] = useState(init);
 	const [busy, setBusy] = useState(false);
-	const dirty = JSON.stringify(s) !== JSON.stringify(init());
+	const [scopeError, setScopeError] = useState("");
+	const initial = init();
+	const dirty = JSON.stringify(s) !== JSON.stringify(initial);
 	const save = async () => {
+		setScopeError("");
+		let capabilityScope: RelayCapabilityScope | null | undefined;
+		try { if (JSON.stringify(s.scope) !== JSON.stringify(initial.scope)) capabilityScope = s.scope ? scopePayload(s.scope) : null; }
+		catch (e) { setScopeError(errText(e)); return; }
 		setBusy(true);
 		const ok = await onSave({
+			...(capabilityScope === undefined ? {} : { capabilityScope }),
 			headers: s.headers.filter((h) => h.name.trim()).map((h) => ({ name: h.name.trim(), value: h.saved && !h.value ? undefined : h.value })),
 			classifiers: s.classifiers.filter((c) => c.modelId.trim()).map((c) => ({ protocol: c.protocol, modelId: c.modelId.trim() })),
 			...(auto ? { protocolUrls: Object.fromEntries(Object.entries(s.urls).filter(([, v]) => v.trim())) } : {}),
 		});
 		setBusy(false);
-		if (ok) setS(init());
+		if (ok) setS((old) => ({ ...old, scope: capabilityScope === undefined ? old.scope : scopeDraft(capabilityScope ?? undefined), headers: s.headers.filter((h) => h.name.trim()).map((h) => ({ name: h.name.trim(), value: "", saved: true })) }));
 	};
 	const row = (title: string, hint: string, help: ReactNode, action: ReactNode, content: ReactNode, testid: string) => (
 		<div className="space-y-1.5 border-t border-line px-3 py-3 first:border-t-0" data-testid={testid}>
@@ -464,12 +477,11 @@ function Advanced({ meta, auto, classifierProtocols, onSave, imageSection, asrSe
 	const protos = classifierProtocols.length ? classifierProtocols : ["typesafe-system-one"];
 	return (
 		<details className="rounded-xl border border-line" data-testid="relay-advanced">
-			<summary className="cursor-pointer px-3 py-2.5 text-sm font-semibold">
-				高级 <span className="ml-1 text-xs font-normal text-mut">生图、语音识别、分类器、请求头{auto ? "、各协议地址" : ""}；一般不用改</span>
-			</summary>
+			<summary className="cursor-pointer px-3 py-2.5 text-sm font-semibold">高级 <span className="ml-1 text-xs font-normal text-mut">生图、语音识别、渠道能力、分类器、请求头{auto ? "、各协议地址" : ""}；一般不用改</span></summary>
 			<div className="border-t border-line">
 				<div className="border-b border-line px-3 py-3 empty:hidden">{imageSection}</div>
 				<div className="border-b border-line px-3 py-3 empty:hidden">{asrSection}</div>
+				{(auto || meta.api === "openai-completions" || meta.api === "openai-responses" || meta.capabilityScope) && <RelayCapabilityScopeFields draft={s.scope} meta={meta} endpoint={s.urls["openai-completions"]} error={scopeError} onChange={(scope) => { setScopeError(""); setS({ ...s, scope }); }} />}
 				{auto && row("各协议地址", "默认都从上面的地址自动推出来，只有某个协议在别的地址时才填", "OpenAI 兼容 → 地址/v1，Anthropic → 地址根，Gemini → 地址/v1beta。这里填了就用这里的。", null, (
 					<div className="space-y-1.5">
 						{RELAY_APIS.map((a) => (
@@ -501,7 +513,7 @@ function Advanced({ meta, auto, classifierProtocols, onSave, imageSection, asrSe
 				{dirty && (
 					<div className="flex gap-2 border-t border-line px-3 py-2.5">
 						<Button size="sm" variant="primary" disabled={busy} onClick={() => void save()} data-testid="relay-advanced-save">{busy && <Loader2 size={13} className="animate-spin" />} 保存</Button>
-						<Button size="sm" variant="ghost" onClick={() => setS(init())}>还原</Button>
+						<Button size="sm" variant="ghost" onClick={() => { setScopeError(""); setS(init()); }}>还原</Button>
 					</div>
 				)}
 			</div>

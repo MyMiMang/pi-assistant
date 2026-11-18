@@ -7,35 +7,49 @@
 import "./setup.ts";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { test, type TestContext } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 type Json = Record<string, any>;
 const serverDir = join(import.meta.dirname, "..");
 const FAKE = join(import.meta.dirname, "fixtures", "fake-opencode.mjs");
-const procs: ReturnType<typeof spawn>[] = [];
-
-async function start(extra: Record<string, string | undefined>) {
+async function start(t: TestContext, extra: Record<string, string | undefined>, requestedPort = 0) {
 	const dataDir = mkdtempSync(join(tmpdir(), "pia-oc-http-"));
-	const port = 34000 + Math.floor(Math.random() * 3000);
+	const startupFile = join(dataDir, "startup.json");
 	// 登录凭据放在 XDG_DATA_HOME 下：用临时目录，不看开发机上真实的 opencode 登录状态
 	const xdgData = join(dataDir, "cli-agents", "opencode", "home", ".local", "share");
-	const env: Record<string, string | undefined> = { ...process.env, PIA_DATA_DIR: dataDir, PIA_WORKSPACE: join(dataDir, "workspace"), PIA_PORT: String(port), PIA_HOST: "127.0.0.1", PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_SETUP_CHECK_MS: "9999999", XDG_DATA_HOME: xdgData, ...extra };
+	const env: Record<string, string | undefined> = { ...process.env, PIA_DATA_DIR: dataDir, PIA_WORKSPACE: join(dataDir, "workspace"), PIA_PORT: String(requestedPort), PIA_TEST_STARTUP_FILE: startupFile, PIA_HOST: "127.0.0.1", PIA_MOCK: "1", PIA_OFFLINE: "1", PIA_SETUP_CHECK_MS: "9999999", XDG_DATA_HOME: xdgData, ...extra };
 	for (const k of Object.keys(env)) if (env[k] === undefined) delete env[k];
 	const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "--import", "tsx", "test/launch-memory.ts"], { cwd: serverDir, env: env as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
-	procs.push(child);
-	let out = "";
+	let out = "", spawnError: Error | undefined;
 	child.stdout?.on("data", (b) => (out += b));
 	child.stderr?.on("data", (b) => (out += b));
-	const base = `http://127.0.0.1:${port}`;
+	child.on("error", (error) => { spawnError = error; });
+	const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+	t.after(async () => {
+		if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+		await closed;
+	});
 	const end = Date.now() + 60_000;
-	for (;;) {
-		if (await fetch(`${base}/api/system/public`).then((r) => r.status === 200).catch(() => false)) break;
+	while (!existsSync(startupFile)) {
+		if (spawnError || child.exitCode !== null || child.signalCode !== null) {
+			await closed;
+			throw new Error(`测试服务提前退出：${spawnError ?? child.exitCode ?? child.signalCode}\n${out.slice(-2000)}`);
+		}
 		if (Date.now() > end) throw new Error(`等待服务启动超时：\n${out.slice(-2000)}`);
-		await new Promise((r) => setTimeout(r, 120));
+		await Promise.race([closed, delay(120)]);
 	}
+	const { port, serverId } = JSON.parse(readFileSync(startupFile, "utf8"));
+	assert.ok(Number.isInteger(port) && port > 0 && (requestedPort === 0 || requestedPort === port));
+	assert.ok(typeof serverId === "string" && serverId.length > 0);
+	const base = `http://127.0.0.1:${port}`;
+	const publicInfo = await fetch(`${base}/api/system/public`, { signal: AbortSignal.timeout(3000) });
+	assert.equal(publicInfo.status, 200);
+	assert.equal((await publicInfo.json()).serverId, serverId, "健康响应必须属于本次启动的子服务");
 	const api = async (path: string, init?: RequestInit): Promise<Json> => (await fetch(`${base}${path}`, { headers: { "content-type": "application/json" }, ...init })).json() as Promise<Json>;
 	const login = () => {
 		mkdirSync(join(xdgData, "opencode"), { recursive: true });
@@ -43,23 +57,34 @@ async function start(extra: Record<string, string | undefined>) {
 	};
 	return { api, dataDir, login };
 }
-after(() => {
-	for (const p of procs) p.kill("SIGKILL");
+test("端口被健康假服务占用时，不误认就绪；新实例由系统绑定独立端口", async (t) => {
+	let hits = 0;
+	const blocker = createServer((_req, res) => {
+		hits++;
+		res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ serverId: "unrelated-instance" }));
+	});
+	t.after(() => new Promise<void>((resolve) => { blocker.close(() => resolve()); }));
+	await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+	const occupied = blocker.address() as { port: number };
+	await assert.rejects(start(t, { PIA_OPENCODE_COMMAND: FAKE }, occupied.port), /测试服务提前退出：[\s\S]*EADDRINUSE/);
+	const { api } = await start(t, { PIA_OPENCODE_COMMAND: FAKE });
+	assert.equal((await api("/api/models/opencode-cli")).registered, true);
+	assert.equal(hits, 0);
 });
 
 const ocModels = async (api: (p: string) => Promise<Json>) => ((await api("/api/models")) as unknown as Json[]).filter((m) => m.provider === "opencode-cli");
 
-test("Mock 模式没设 PIA_OPENCODE_COMMAND：默认不注册（不因为开发机装了真的 opencode 就改变模型列表）", async () => {
-	const { api } = await start({ PIA_OPENCODE_COMMAND: undefined });
+test("Mock 模式没设 PIA_OPENCODE_COMMAND：默认不注册（不因为开发机装了真的 opencode 就改变模型列表）", async (t) => {
+	const { api } = await start(t, { PIA_OPENCODE_COMMAND: undefined });
 	const info = await api("/api/models/opencode-cli");
 	assert.equal(info.registered, false);
 	assert.deepEqual(await ocModels(api), []);
 });
 
-test("还没装 → 装好后重新检测就地注册；没登录也注册；不支持工具调用的模型去掉，名字带来源，思考档位按模型", async () => {
+test("还没装 → 装好后重新检测就地注册；没登录也注册；不支持工具调用的模型去掉，名字带来源，思考档位按模型", async (t) => {
 	const dir = mkdtempSync(join(tmpdir(), "pia-oc-bin-"));
 	const cmd = join(dir, "opencode");
-	const { api } = await start({ PIA_OPENCODE_COMMAND: cmd });
+	const { api } = await start(t, { PIA_OPENCODE_COMMAND: cmd });
 	let info = await api("/api/models/opencode-cli");
 	assert.equal(info.installed, false);
 	assert.equal(info.registered, false);
@@ -79,8 +104,8 @@ test("还没装 → 装好后重新检测就地注册；没登录也注册；不
 	assert.ok(list.every((m) => m.fast.capability === "unsupported"));
 });
 
-test("登录凭据在（auth.json 存在）：loggedIn 为真；只看文件在不在", async () => {
-	const { api, login } = await start({ PIA_OPENCODE_COMMAND: FAKE });
+test("登录凭据在（auth.json 存在）：loggedIn 为真；只看文件在不在", async (t) => {
+	const { api, login } = await start(t, { PIA_OPENCODE_COMMAND: FAKE });
 	let info = await api("/api/models/opencode-cli");
 	assert.equal(info.loggedIn, false);
 	login();
@@ -89,8 +114,8 @@ test("登录凭据在（auth.json 存在）：loggedIn 为真；只看文件在�
 	assert.equal(info.registered, true);
 });
 
-test("启动时 opencode 已装好就直接注册", async () => {
-	const { api } = await start({ PIA_OPENCODE_COMMAND: FAKE });
+test("启动时 opencode 已装好就直接注册", async (t) => {
+	const { api } = await start(t, { PIA_OPENCODE_COMMAND: FAKE });
 	const info = await api("/api/models/opencode-cli");
 	assert.equal(info.registered, true);
 	assert.equal((await ocModels(api)).length, 4);

@@ -104,8 +104,8 @@ try {
 	await page.keyboard.press("Escape");
 
 	// 助理 › 能力（打开右侧信息面板的「能力」页）
-	await page.addInitScript(() => localStorage.setItem("pia.layout", JSON.stringify({ sideW: 264, paneW: 340, sideCollapsed: false, info: true })));
 	await page.goto(`${BASE}/?agent=${a}`);
+	await page.getByTestId("agent-detail-open").click();
 	await page.getByTestId("info-tabs").waitFor();
 	let settingTab = page.getByTestId("info-tabs").locator('[data-itab="capabilities"]');
 	if ((await settingTab.count()) === 0) {

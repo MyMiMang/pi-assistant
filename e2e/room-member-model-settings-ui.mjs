@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { stableShot } from "./fixtures/stable-shot.mjs";
-import { infoTab, expandAgentModelSection, agentProfileSave, agentModelButton, openAgentModelPop } from "./fixtures/info-pane.mjs";
+import { infoPane, infoTab, expandAgentModelSection, agentProfileSave, agentModelButton, openAgentModelPop } from "./fixtures/info-pane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-room-model-settings-");
@@ -71,7 +71,7 @@ try {
  console.log("PASS proposal: themed components, grouped services, seven/subset levels, saved clamp, existing agent unchanged");
  // 点击成员默认概览只做摘要；模型/强度在「模型」页即时保存。
  await page.getByTestId("room-members").locator(`button[title^="${manager.name}"]`).click();
- const pane = page.locator(".pa-pane-wrap");
+ const pane = infoPane(page);
  /** 等模型目录真的给出档位再按滑块，避免把“加载中”为空当成不支持。 */
  const setThinking = async (key) => {
    const slider = (await openAgentModelPop(page)).getByRole("slider");
@@ -217,7 +217,7 @@ try {
  const directErrors = []; isolated.on("pageerror", (e) => directErrors.push(e.message));
  await isolated.goto(`${base}/?room=${room.id}`);
  await isolated.getByTestId("room-members").locator('button[title^="统筹"]').click();
- const directPane = isolated.locator(".pa-pane-wrap");
+ const directPane = infoPane(isolated);
  const models = async () => { await infoTab(isolated, "models"); await directPane.getByTestId("agent-model-settings").waitFor(); };
  const chooseLive = async (id) => {
    await (await openAgentModelPop(isolated)).getByTestId("thinking-model").click();

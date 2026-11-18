@@ -17,8 +17,8 @@ export async function copyAgentToUser(srcId: string, opts: { name?: string; memo
 	let name = (opts.name ?? "").trim().slice(0, 40) || a.name;
 	for (let i = 2; taken.has(name) && i < 50; i++) name = `${a.name} ${i}`;
 	db.prepare(
-		"INSERT INTO agents(id, name, avatar, color, persona, description, model_provider, model_id, thinking, proactivity, proactive_cfg, memory_provider, sort, created_at, scope, room_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'user', NULL)",
-	).run(id, name, a.avatar, a.color, a.persona, a.description, a.model_provider, a.model_id, a.thinking, a.proactivity ?? null, a.proactive_cfg ?? null, a.memory_provider, listAgents().length, now());
+		"INSERT INTO agents(id, name, avatar, color, persona, description, model_provider, model_id, thinking, thinking_explicit, proactivity, proactive_cfg, memory_provider, sort, created_at, scope, room_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'user', NULL)",
+	).run(id, name, a.avatar, a.color, a.persona, a.description, a.model_provider, a.model_id, a.thinking, a.thinking_explicit ?? 0, a.proactivity ?? null, a.proactive_cfg ?? null, a.memory_provider, listAgents().length, now());
 	// 头像图片
 	const av = join(config.dataDir, "avatars", srcId);
 	if (a.avatar.startsWith("img:") && existsSync(av)) cpSync(av, join(config.dataDir, "avatars", id), { recursive: true });

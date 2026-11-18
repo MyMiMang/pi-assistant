@@ -27,7 +27,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { extname, join } from "node:path";
 import { chromium } from "playwright-core";
 import { artifactDir } from "./fixtures/artifacts.mjs";
-import { expandDetails, infoTab } from "./fixtures/info-pane.mjs";
+import { expandDetails, infoTab, openInfoPane } from "./fixtures/info-pane.mjs";
 import { buildOfficeFiles } from "./fixtures/office-files.mjs";
 import { runOfficeSection } from "./fixtures/office-section.mjs";
 import { runSidePanelSection } from "./fixtures/side-panel-section.mjs";
@@ -292,7 +292,7 @@ try {
 		await page.locator("[data-testid=file-preview]").waitFor({ timeout: 10_000 });
 		await page.locator("[data-testid=file-preview-markdown]").waitFor({ timeout: 10_000 });
 		check("点卡片主体打开应用内预览", await page.locator("[data-testid=file-preview]").isVisible());
-		check("工具栏显示文件名与类型/大小", (await page.locator("[data-testid=file-preview-name]").textContent())?.includes("voice-input-feasibility.md") && (await page.locator("[data-testid=file-preview-toolbar]").textContent())?.includes("Markdown"));
+		check("标签显示文件名，工具栏显示类型/大小", (await page.getByTestId("workspace-tabs").getByRole("tab", { selected: true }).textContent())?.includes("voice-input-feasibility.md") && (await page.locator("[data-testid=file-preview-toolbar]").textContent())?.includes("Markdown"));
 		check("Markdown 长内容已渲染（表格 + 代码块）", (await page.locator("[data-testid=file-preview-markdown] table").count()) >= 1 && (await page.locator("[data-testid=file-preview-markdown] pre code").count()) >= 1);
 		await page.screenshot({ path: join(OUT, "desktop-markdown-preview.png") });
 		// 渲染 / 源码切换
@@ -395,9 +395,7 @@ try {
 		await page.screenshot({ path: join(OUT, "desktop-media-attachments.png") });
 
 		// ---- 视频 / 音频：文件预览弹窗（信息面板「文件」） ----
-		// 面板开关是切换式的，可能已经开着：没开才点（同 agent-details-functional-ui）
-		if (!(await page.getByTestId("info-tabs").isVisible())) await page.getByRole("button", { name: "信息面板", exact: true }).click();
-		await page.getByTestId("info-tabs").waitFor({ timeout: 10_000 });
+		await openInfoPane(page);
 		await infoTab(page, "files");
 		await page.locator("[data-testid=agent-files]").waitFor({ timeout: 10_000 });
 		// 助理交付的文件超过默认露出的几个，视频 / 音频在「全部 N 个」折叠里
@@ -410,7 +408,7 @@ try {
 		await page.locator("[data-testid=file-preview-audio] audio[data-testid=media-audio]").waitFor({ timeout: 10_000 });
 		check("预览弹窗：音频用同一个播放器组件（<audio data-testid=media-audio>）", (await page.locator("[data-testid=file-preview-audio] audio[data-testid=media-audio]").count()) === 1);
 		await page.getByTestId("file-preview-close").click();
-		if (await page.getByTestId("info-tabs").isVisible()) await page.getByRole("button", { name: "信息面板", exact: true }).click();
+		await page.getByTestId("workspace-close-tab").click();
 
 		check("桌面无控制台报错", errors.length === 0, errors.slice(0, 3).join(" | "));
 		await ctx.close();
@@ -506,7 +504,7 @@ try {
 		const bar = await page.locator("[data-testid=file-preview-toolbar]").boundingBox();
 		check("[390] 预览铺满可视宽度", box && box.x <= 1 && box.width >= 389, JSON.stringify(box));
 		check("[390] 工具栏在视口内", bar && bar.x >= 0 && bar.x + bar.width <= 390.5 && bar.y >= 0, JSON.stringify(bar));
-		check("[390] 文件名与下载/关闭都可见", (await page.locator("[data-testid=file-preview-name]").isVisible()) && (await page.locator("[data-testid=file-preview-download]").isVisible()) && (await page.locator("[data-testid=file-preview-close]").isVisible()));
+		check("[390] 文件名与下载/关闭都可见", (await page.getByTestId("workspace-tabs").getByRole("tab", { selected: true }).isVisible()) && (await page.locator("[data-testid=file-preview-download]").isVisible()) && (await page.locator("[data-testid=file-preview-close]").isVisible()));
 		const docW = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 		check("[390] 页面无横向溢出", docW <= 1, String(docW));
 		check("[390] 长内容可纵向滚动", await page.evaluate(() => { const el = document.querySelector("[data-testid=file-preview-markdown]"); return el ? el.scrollHeight > el.clientHeight : false; }));

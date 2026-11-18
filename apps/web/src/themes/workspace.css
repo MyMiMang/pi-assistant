@@ -2,9 +2,8 @@
 .pa-app > .pa-workspace { position: relative; z-index: 2; display: flex; flex: 0 0 var(--workspace-w, 560px); width: var(--workspace-w, 560px); min-width: 0; min-height: 0; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line); color: var(--fg); outline: none; }
 .pa-app > .pa-workspace[hidden], .pa-workspace-instance[hidden] { display: none; }
 .pa-workspace-header { display: flex; align-items: center; flex-shrink: 0; gap: 2px; padding: 8px; border-bottom: 1px solid var(--line); }
-.pa-workspace-header [role=tab] { max-width: 180px; overflow: hidden; text-overflow: ellipsis; display: block; }
-.pa-workspace-current { display: flex; flex-shrink: 0; align-items: center; gap: 6px; padding: 4px 10px; border-bottom: 1px solid var(--line); color: var(--mut); font-size: 12px; }
-.pa-workspace-current > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pa-workspace-header [role=tab], .pa-workspace-header [data-measure] { max-width: 150px; overflow: hidden; text-overflow: ellipsis; display: block; }
+.pa-workspace-header > button { flex-shrink: 0; }
 .pa-workspace-content { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
 .pa-workspace-instance { width: 100%; height: 100%; min-height: 0; min-width: 0; }
 .pa-workspace-instance.scroll-content { overflow-y: auto; }
@@ -12,7 +11,15 @@
 .pa-workspace-instance > .pa-work-board { height: 100%; overflow-y: auto; }
 .pa-app > .pa-workspace[data-mode=expanded], .pa-app > .pa-workspace[data-mode=mobile] { position: fixed; z-index: 45; inset: 0; width: 100%; height: var(--pa-vvh); padding-bottom: env(safe-area-inset-bottom); border: 0; }
 .pa-app.side-drawer:has(> .pa-workspace[data-mode=mobile]:not([hidden])) > .pa-drawer { visibility: hidden; }
-.pa-workspace-launch { display: flex; flex-shrink: 0; justify-content: flex-end; padding: 3px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.pa-workspace-start { display: grid; gap: 12px; max-width: 620px; margin: clamp(32px, 15vh, 150px) auto 0; padding: 0 16px 24px; }
+.pa-workspace-shortcuts { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); }
+.pa-workspace-shortcuts button { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 12px; text-align: left; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+.pa-workspace-shortcuts button:hover { background: var(--hover); }
+.pa-workspace-shortcuts svg { flex-shrink: 0; margin-top: 2px; }
+.pa-workspace-shortcuts button > span { min-width: 0; }
+.pa-workspace-shortcuts b, .pa-workspace-shortcuts small { display: block; overflow-wrap: anywhere; }
+.pa-workspace-shortcuts small { color: var(--mut); }
+.pa-chat-agent-name { color: inherit; }
 body.pa-resizing .pa-workspace { pointer-events: none; }
 html.macos-tauri .pa-app > .pa-workspace { padding-top: calc(env(safe-area-inset-top) + var(--pa-titlebar-h)); }
-@media (max-width: 640px) { .pa-workspace-header { padding: 6px; } .pa-workspace-header [role=tab] { max-width: 130px; } }
+@media (max-width: 640px) { .pa-workspace-header { padding: 6px; } .pa-workspace-header [role=tab], .pa-workspace-header [data-measure] { max-width: 112px; } }

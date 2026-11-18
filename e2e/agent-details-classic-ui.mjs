@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { waitStable, stableShot } from "./fixtures/stable-shot.mjs";
-import { agentProfileSave, openAgentModelPop } from "./fixtures/info-pane.mjs";
+import { agentProfileSave, openAgentModelPop, infoPane, openInfoPane } from "./fixtures/info-pane.mjs";
 import { uploadFixture } from "./fixtures/upload.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -160,7 +160,7 @@ try {
 	const errors = [];
 	page.on("pageerror", (e) => errors.push(e.message));
 
-	const pane = page.locator(".pa-pane-wrap");
+	const pane = infoPane(page);
 	const selectTab = async (key, barId = "info-tabs") => {
 		const bar = page.getByTestId(barId);
 		await bar.waitFor();
@@ -182,7 +182,7 @@ try {
 		assert.ok(box && box.width > 100 && box.height > 100, `${label}：信息面板没有真实尺寸 ${JSON.stringify(box)}`);
 		assert.ok(box.x >= -1 && box.x + box.width <= vp.width + 1, `${label}：信息面板越出视口 ${JSON.stringify(box)}`);
 		const offenders = await pane.locator("button:visible,input:visible,select:visible,textarea:visible,h2:visible").evaluateAll((els) => {
-			const wrap = document.querySelector(".pa-pane-wrap").getBoundingClientRect();
+			const wrap = document.querySelector('[data-testid="workspace-agent-details"]:not([hidden])').getBoundingClientRect();
 			return els
 				.filter((el) => {
 					const r = el.getBoundingClientRect();
@@ -199,7 +199,7 @@ try {
 		await el.waitFor({ state: "visible" });
 		const info = await el.evaluate((node) => {
 			const r = node.getBoundingClientRect();
-			const wrap = document.querySelector(".pa-pane-wrap").getBoundingClientRect();
+			const wrap = node.closest(".pa-info").getBoundingClientRect();
 			return { w: r.width, h: r.height, visibleH: Math.min(r.bottom, wrap.bottom) - Math.max(r.top, wrap.top), text: (node.innerText ?? "").trim().length };
 		});
 		assert.ok(info.w > 40 && info.h > 8, `${label}：内容区没有真实尺寸 ${JSON.stringify(info)}`);
@@ -216,14 +216,14 @@ try {
 			for (const [k, val] of Object.entries(v)) localStorage.setItem(k, val);
 		}, prefs);
 	};
-	const prefsFor = (skin, mode, paneW) => ({
+	const prefsFor = (skin, mode, previewW) => ({
 		"pia.skin": skin,
 		"pia.theme": mode,
-		"pia.layout": JSON.stringify({ sideW: 264, sideCollapsed: true, info: true, paneW }),
+		"pia.layout": JSON.stringify({ sideW: 264, sideCollapsed: true, previewW }),
 	});
 	const gotoAgent = async (id = agent.id) => {
 		await page.goto(`${base}/?agent=${id}`);
-		await pane.waitFor({ state: "visible" });
+		await openInfoPane(page);
 		await page.getByTestId("info-tabs").waitFor();
 		await page.getByTestId("thread-empty").waitFor();
 	};
@@ -240,7 +240,7 @@ try {
 	const withinPane = (loc) =>
 		loc.evaluate((el) => {
 			const r = el.getBoundingClientRect();
-			const p = document.querySelector(".pa-pane-wrap").getBoundingClientRect();
+			const p = el.closest(".pa-info").getBoundingClientRect();
 			return r.width > 0 && r.height > 0 && r.top >= p.top - 1 && r.bottom <= p.bottom + 1;
 		});
 
@@ -414,7 +414,7 @@ try {
 	assert.ok(wrapInfo.h > 20, `长文件名应换行成多行：${JSON.stringify(wrapInfo)}`);
 	await waitFor(async () => filesTab.locator("img").evaluateAll((imgs) => imgs.some((i) => i.complete && i.naturalWidth > 0)), 10000, "上传图片真实加载");
 	await filesTab.getByTestId("info-file-open").first().click();
-	const previewName = page.getByTestId("file-preview-name");
+	const previewName = page.getByTestId("workspace-tabs").getByRole("tab", { selected: true }).filter({ hasText: "核对清单" });
 	await previewName.waitFor();
 	assert.match(await previewName.innerText(), /核对清单/);
 	await page.getByTestId("file-preview-close").click();
@@ -499,26 +499,21 @@ try {
 	await pane.getByTestId("room-agent-actions").waitFor();
 	const headScroll = await pane.locator(".pa-info-head").evaluate((el) => { el.scrollTop = el.scrollHeight; return el.scrollHeight - el.clientHeight; });
 	assert.ok(headScroll > 0, "长群简介确实让页头可以滚动");
-	const close = pane.getByRole("button", { name: "关闭", exact: true });
+	const close = page.getByTestId("workspace-close-tab");
 	assert.equal(await close.evaluate((el) => { const r = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)); }), true, "页头滚动后关闭键仍可直接点击");
 	await close.click();
 	await pane.waitFor({ state: "hidden" });
 	console.log("PASS 群专属助理：同一套分类结构 + 群信息框；长简介页头滚动仍可关闭（真实接口创建）");
 
-	// ---- 8. 340 / 280 面板宽：存 localStorage 后 reload，280 逐页严格检查 --------------------
+	// 工作区最小宽 360，刷新后需从标题重新打开。
 	await page.setViewportSize({ width: 1440, height: 960 });
-	await setPrefs(prefsFor("glass", "light", 340));
-	await gotoAgent();
-	let box = await pane.boundingBox();
-	assert.ok(box && Math.abs(box.width - 340) <= 1, `reload 后面板宽应为 340：${box?.width}`);
-	await contentCheck("340/overview", "agent-overview");
-	await layoutCheck("340/overview");
-	await setPrefs(prefsFor("glass", "light", 280));
-	await gotoAgent();
-	box = await pane.boundingBox();
-	assert.ok(box && Math.abs(box.width - 280) <= 1, `reload 后面板宽应为 280：${box?.width}`);
-	await allTabs("280", { shot: (key) => (key === "overview" ? "06-narrow-280-overview-pane.png" : null) });
-	console.log("PASS 340/280：面板宽来自存储并 reload 生效；280 下八页控件不横溢、整页无横向滚动");
+	for (const width of [420, 360]) {
+		await setPrefs(prefsFor("glass", "light", width));
+		await gotoAgent();
+		const box = await pane.boundingBox();
+		assert.ok(box && Math.abs(box.width - width) <= 2, `reload 后工作区应恢复 ${width}：${box?.width}`);
+		await allTabs(String(width));
+	}
 
 	// 键盘：Home / End 在单行分类里移动焦点；「更多」Enter/↓ 开菜单、Esc 关闭并回到「更多」。
 	const bar = page.getByTestId("info-tabs");
@@ -552,10 +547,10 @@ try {
 	await page.setViewportSize({ width: 1440, height: 960 });
 
 	// ---- 10. 四主题 × 明暗 × 460/280：八页逐个检查（截图只留精选） -------------------------
-	const themeShots = new Set(["glass:dark:460", "warm:light:460", "noir:dark:280", "pixel:light:280"]);
+	const themeShots = new Set(["glass:dark:460", "warm:light:460", "noir:dark:360", "pixel:light:360"]);
 	for (const skin of ["glass", "warm", "noir", "pixel"]) {
 		for (const mode of ["light", "dark"]) {
-			for (const width of [460, 280]) {
+			for (const width of [460, 360]) {
 				await setPrefs(prefsFor(skin, mode, width));
 				await gotoAgent();
 				const applied = await page.evaluate(() => [document.documentElement.dataset.skin, document.documentElement.dataset.mode]);

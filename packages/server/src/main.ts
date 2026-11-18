@@ -29,7 +29,7 @@ await initModels();
 migrateLegacyImageProviders();
 // 升级 / 旧数据：已配置但向导标志丢失时恢复，避免误弹首次向导覆盖原配置
 recoverOnboardingFlag();
-startHttp();
+export const httpServer = startHttp();
 startSetupWatcher(Number(process.env.PIA_SETUP_CHECK_MS) || 60_000);
 console.log(`[pi-assistant] 服务已启动：http://${config.host}:${config.port}${config.headless ? "  [服务器模式]" : ""}  数据目录：${config.dataDir}  serverId=${identity().serverId}${config.mock ? "  [Mock 模型已启用]" : ""}`);
 const { bootstrapRooms, migrateAutonomy, releaseAllHeld } = await import("./rooms/index.ts");

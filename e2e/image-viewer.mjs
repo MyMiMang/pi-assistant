@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { uploadFixture } from "./fixtures/upload.mjs";
+import { infoTab, openInfoPane } from "./fixtures/info-pane.mjs";
 
 const { fileURLToPath } = await import("node:url");
 const REPO = fileURLToPath(new URL("..", import.meta.url));
@@ -205,8 +206,7 @@ async function desktop() {
 	check("点图片外空白关闭", true);
 
 	// 信息面板「文件」里的图片也能打开（统一入口）
-	const infoBtn = page.getByRole("button", { name: "信息面板" });
-	if (await infoBtn.count()) await infoBtn.click();
+	const pane = await openInfoPane(page);
 	// 默认是「概览」标签，先切到「文件」（窄面板时可能收进「更多」菜单）
 	const fileTab = page.locator("[data-testid=info-tabs] [data-itab=files]");
 	if (await fileTab.count()) await fileTab.click();
@@ -214,7 +214,7 @@ async function desktop() {
 		await page.getByTestId("info-tabs-more").click();
 		await page.locator("[data-testid=info-tabs-menu] [data-itab=files]").click();
 	}
-	const grid = page.locator(".pa-pane-wrap img").first();
+	const grid = pane.getByTestId("agent-files").locator("img").first();
 	try {
 		await grid.waitFor({ timeout: 15_000 });
 		await grid.click();

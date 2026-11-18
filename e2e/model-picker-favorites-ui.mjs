@@ -21,7 +21,7 @@ import { chromium } from "playwright-core";
 import { closeModelPanel, openModelMenu } from "./model-menu-flow.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
-import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { expandAgentModelSection, openInfoPane } from "./fixtures/info-pane.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 // 本次运行独占的临时目录（DATA / WORKSPACE / HOME / TMPDIR）；finally 只删它自己
@@ -215,8 +215,7 @@ try {
 	// ================================================== 7) 子代理候选池同一套规则
 	console.log("\n[7] 子代理候选池（多选菜单）与主菜单同一套规则");
 	await page.goto(`${BASE}/?agent=${agent.id}`);
-	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
-	await page.locator(".pa-pane-wrap").waitFor();
+	await openInfoPane(page);
 	{
 		const bar = page.getByTestId("info-tabs");
 		const tab = bar.getByRole("tab", { name: "模型", exact: true });

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CHAT_MIN, PREVIEW, SIDE, clampPreview, resolveLayout, type LayoutPrefs } from "../../../apps/web/src/layout.ts";
 
-const prefs = (p: Partial<LayoutPrefs> = {}): LayoutPrefs => ({ sideW: SIDE.def, paneW: 340, previewW: PREVIEW.def, sideCollapsed: false, info: false, ...p });
+const prefs = (p: Partial<LayoutPrefs> = {}): LayoutPrefs => ({ sideW: SIDE.def, previewW: PREVIEW.def, sideCollapsed: false, ...p });
 
 test("宽窗口：预览侧栏停靠，宽度 = 偏好宽度", () => {
 	const L = resolveLayout(1920, prefs());
@@ -41,10 +41,6 @@ test("边界：左栏收起（不占宽）时更窄的窗口也能停靠", () =>
 	assert.equal(resolveLayout(edge - 1, prefs({ sideCollapsed: true })).previewDocked, false);
 	// 同样宽度、左栏常驻（宽度够做左栏）则放不下
 	assert.equal(resolveLayout(1100, prefs()).previewDocked, false);
-});
-
-test("信息面板宽度不影响预览停靠（侧栏打开时信息面板让位）", () => {
-	assert.equal(resolveLayout(1440, prefs({ paneW: 560 })).previewW, PREVIEW.def);
 });
 
 test("clampPreview 夹在 [min, max]", () => {

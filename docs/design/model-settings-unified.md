@@ -116,7 +116,7 @@ migrateLegacyImageProviders(input: { imageProviders: ImageProvider[]; customProv
   warnings: string[];
 }
 ```
-- **legacy vision 移除**：`visionModel` 不再作为独立选择入口；图片跟当前 chat，不支持时**明确报错**。旧 `GET/PUT /api/models/vision` 保留为 deprecated 兼容（移动端），迁移不删 model / credentials。
+- **legacy vision 移除**：`visionModel` 不再作为独立选择入口；图片给实际聊天接收者。已声明视觉的既有适配用 SDK 原生图块，在同一活会话、同一接收者下允许历史追问；不能确认归属的旧图不自动附上。未知能力只在已验证的协议对本次主动附件一次试送，明确不支持或坏图时整条不送。选定模型失效时，图片和手选思考不能回落给默认模型，普通文本保留原回落。旧 `GET/PUT /api/models/vision` 保留为 deprecated 兼容（移动端），迁移不删 model / credentials。
 
 ## 6.5 实际操作测试（benchmark agent 已落地，UI 直接渲染）
 

@@ -11,12 +11,26 @@
  * 用于显示「实际会运行的档位」，绝不代替服务端收敛。
  */
 import { THINKING_LEVEL_ORDER, type ThinkingLevel } from "@pi-assistant/shared";
+import type { Agent } from "./types";
 
 /** 档位中文名（与原来的下拉列表一致；界面 / 测试 / 服务端说明共用一套文案）。 */
 export const THINKING_LABEL: Record<string, string> = { off: "关闭", minimal: "极简", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最大" };
 
 /** 档位的一句话说明（只用于 title / 帮助，不写「最快 / 更贵」这类绝对说法）。 */
 export const THINKING_DESC: Record<string, string> = { off: "不思考，回答最快", minimal: "几乎不思考", low: "简单推理", medium: "平衡（默认）", high: "深入推理，更慢更贵", xhigh: "非常深入", max: "最大推理预算" };
+
+/** 中转按声明的精确档位发送；旧值不能当作手选，未知不能用最低档填充。 */
+export function relayThinkingChoice(levels: readonly string[], explicit?: string | null, savedDefault?: string | null) {
+	const inherited = !explicit && savedDefault && levels.includes(savedDefault) ? savedDefault : undefined;
+	const invalidSetting = explicit && !levels.includes(explicit) ? explicit : undefined;
+	const effective = inherited ?? (explicit && !invalidSetting ? explicit : undefined);
+	return { invalidSetting, effective, serviceDefault: !effective && !invalidSetting, label: invalidSetting ? "原档位不可用" : effective ? `${inherited ? "默认·" : ""}${THINKING_LABEL[effective] ?? effective}` : "服务默认" };
+}
+
+export function agentRelayThinkingChoice(agent: Agent, levels: readonly string[]) {
+	// 只有真正未设置的助理可继承已保存默认档；来源不明的旧记录走服务默认。
+	return relayThinkingChoice(levels, agent.thinkingSource === "explicit" ? agent.thinkingSetting : null, agent.thinkingSource === "default" ? agent.thinkingDefault : null);
+}
 
 /** 每档的星点数量：密度随档位递进，off 完全静态（0 点）。 */
 export const THINKING_STAR_COUNT: Record<string, number> = { off: 0, minimal: 1, low: 3, medium: 5, high: 8, xhigh: 12, max: 16 };

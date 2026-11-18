@@ -10,7 +10,7 @@ import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { waitStable } from "./fixtures/stable-shot.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
-import { infoTab, INFO_TABS } from "./fixtures/info-pane.mjs";
+import { openInfoPane, infoTab, INFO_TABS } from "./fixtures/info-pane.mjs";
 import { uploadFixture } from "./fixtures/upload.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -42,9 +42,9 @@ try {
 	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/usr/bin/google-chrome", headless: true, env: browserEnv(run) });
 	const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "zh-CN", colorScheme: "dark" });
 	const page = await ctx.newPage();
-	await page.addInitScript(() => { localStorage.setItem("pia.theme", "dark"); localStorage.setItem("pia.layout", JSON.stringify({ sideW: 264, sideCollapsed: true, info: true, paneW: 420 })); });
+	await page.addInitScript(() => { localStorage.setItem("pia.theme", "dark"); localStorage.setItem("pia.layout", JSON.stringify({ sideW: 264, sideCollapsed: true, previewW: 420 })); });
 	await page.goto(`${base}/?agent=${agent.id}`);
-	const pane = page.locator(".pa-pane-wrap");
+	const pane = await openInfoPane(page);
 	await page.getByTestId("info-tabs").waitFor();
 	for (const key of Object.keys(INFO_TABS)) {
 		await infoTab(page, key);

@@ -773,12 +773,12 @@ export const INTERJECTION_PREFIX = "（你工作时用户发来的新消息）";
  * 会话正在运行：用 Pi 的 steer 插话——在当前这批工具调用结束、下一次请求模型之前送达，
  * 模型能马上读到（而不是等整轮做完才看到，followUp 的旧行为）。
  */
-export function promptSession(session: AgentSession, text: string, images?: { type: "image"; data: string; mimeType: string }[], leading?: string): Promise<void> {
+export function promptSession(session: AgentSession, text: string, images?: { type: "image"; data: string; mimeType: string }[], leading?: string, once = false): Promise<void> {
 	const img = images?.length ? { images } : {};
 	// leading 放在最前面（如 Pi 原生 `/skill:name`），保证 Pi 的 skill 命令展开能命中；插话前缀随后
 	const cmd = leading ? `${leading} ` : "";
 	if (session.isStreaming) return session.prompt(`${cmd}${INTERJECTION_PREFIX}\n${text}`, { streamingBehavior: "steer", ...img });
-	return runWithContextRecovery(session, () => session.prompt(`${cmd}${text}`, img));
+	return once ? session.prompt(`${cmd}${text}`, img) : runWithContextRecovery(session, () => session.prompt(`${cmd}${text}`, img));
 }
 /** 停止时清掉还没送达的插话 / 排队消息，免得停下后又被它们重新启动 */
 export function clearQueued(s: AgentSession) {
@@ -840,10 +840,10 @@ export function injectContext(session: AgentSession, customType: string, text: s
 /** 在已有会话上切换模型 / 思考强度（不重建会话，历史保留）。返回是否有变化 */
 export async function applyModelSettings(session: AgentSession, models: PiModels, model: { provider: string; id: string }, thinking: string): Promise<boolean> {
 	let changed = false;
-	const cur = session.model as { provider?: string; id?: string } | undefined;
-	if (cur?.provider !== model.provider || cur?.id !== model.id) {
-		const m = models.getModel(model.provider, model.id);
-		if (!m) throw new Error(`模型不存在：${model.provider}/${model.id}`);
+	const cur = session.model;
+	const m = models.getModel(model.provider, model.id);
+	if (!m) throw new Error(`模型不存在：${model.provider}/${model.id}`);
+	if (cur?.provider !== m.provider || cur.id !== m.id || cur.api !== m.api || cur.baseUrl !== m.baseUrl || cur.input.includes("image") !== m.input.includes("image")) {
 		await session.setModel(m);
 		changed = true;
 	}

@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { closeModelPanel, openCompact, openModelMenu } from "./model-menu-flow.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
-import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { expandAgentModelSection, openInfoPane } from "./fixtures/info-pane.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname);
@@ -385,8 +385,7 @@ try {
 	await page.screenshot({ path: join(OUT, "08-model-services-slim.png") });
 	// 助理设置 › 子代理模型：候选池多选，勾选不关菜单（不是原生单选下拉）
 	await page.goto(`${BASE}/?agent=${agent.id}`);
-	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
-	await page.locator(".pa-pane-wrap").waitFor();
+	await openInfoPane(page);
 	{
 		const bar = page.getByTestId("info-tabs");
 		const tab = bar.getByRole("tab", { name: "模型", exact: true });

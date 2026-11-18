@@ -1,3 +1,4 @@
+import { effectiveRelayModel } from "../pi-adapter/relay-capabilities.ts";
 /** 从 http.ts 拆出的路由（行为不变）。 */
 import { effectiveApi, effectiveBaseUrl, guessFromUrl } from "../pi-adapter/relay-protocols.ts";
 import { registryAsrProviders } from "../voice/index.ts";
@@ -8,7 +9,7 @@ import { addClaudeCustomModel, claudeCustomModels, removeClaudeCustomModel } fro
 import { cliServices } from "../cli-services.ts";
 import { getSetting, setSetting } from "../db.ts";
 import { answerLogin, cancelLogin, loginLog, startLogin } from "../login-flows.ts";
-import { customProviders, defaultModel, defaultThinking, isThinkingLevel, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "../models.ts";
+import { customProviders, defaultModel, defaultModelSetting, defaultThinking, defaultThinkingSetting, isThinkingLevel, models, providerNames, providerReferences, clearProviderReferences, withProviderName } from "../models.ts";
 import { fastCapability } from "../pi-adapter/fast-mode.ts";
 import { getModelPicks, recordModelPick } from "../model-picks.ts";
 import { buildRegistry, type RegistryImageProvider, type RegistryProviderHint } from "../model-registry.ts";
@@ -76,7 +77,7 @@ export function mountModelRoutes(app: Hono<Env>) {
 	});
 	// 自定义模型服务（中转站 / 第三方 / 本地），写入 Pi 的 models.json
 	// 每个模型附上实际协议 / 地址（自动模式按模型识别），界面直接显示，不在前端再猜一遍
-	app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list().map((p) => ({ ...p, models: p.models.map((m) => ({ ...m, apiEffective: effectiveApi(p, m), baseUrlEffective: effectiveBaseUrl(p, m) })), references: providerReferences(p.id) })), apis: supportedApis(), classifierProtocols: classifierProtocols() }));
+	app.get("/api/models/custom", (c) => c.json({ providers: customProviders.list().map((p) => ({ ...p, models: p.models.map((m) => ({ ...m, effectiveCapability: effectiveRelayModel(p, m).effectiveCapability, apiEffective: effectiveApi(p, m), baseUrlEffective: effectiveBaseUrl(p, m) })), references: providerReferences(p.id) })), apis: supportedApis(), classifierProtocols: classifierProtocols() }));
 	// 新建时从地址猜接口格式和名称（只是预填）
 	app.get("/api/models/custom/guess", (c) => c.json(guessFromUrl(c.req.query("url") ?? "")));
 	app.post("/api/models/custom", async (c) => {
@@ -118,16 +119,17 @@ export function mountModelRoutes(app: Hono<Env>) {
 	});
 	app.get("/api/models", (c) => {
 		const names = providerNames();
-		const custom = new Map(customProviders.list().flatMap((p) => p.models.map((m) => [`${p.id}/${m.id}`, m] as const)));
+		const custom = new Map(customProviders.list().flatMap((p) => p.models.map((m) => [JSON.stringify([p.id, m.id]), effectiveRelayModel(p, m)] as const)));
 		return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => {
-			const meta = custom.get(`${m.provider}/${m.id}`);
-			return { ...withProviderName(m, names), ...(meta ? { reasoning: meta.reasoning, thinkingLevelSource: meta.thinkingLevelSource } : {}), fast: fastCapability(m.api, m.provider) };
+			const meta = custom.get(JSON.stringify([m.provider, m.id]));
+			const capability = meta?.effectiveCapability;
+			return { ...withProviderName(m, names), ...(meta ? { reasoning: meta.reasoning, thinkingLevelSource: capability ? capability.levelsSource : meta.thinkingLevelSource } : {}), ...(capability ? { effectiveCapability: capability, thinking: m.thinking.filter((level) => capability.reasoning === true && typeof capability.levels?.[level] === "string") } : {}), fast: fastCapability(m.api, m.provider) };
 		}));
 	});
 	app.get("/api/models/registry", (c) => c.json(registryJson()));
 	/**
 	 * 手动设置自定义模型的能力（统一注册表「手动设能力」的落点）。
-	 * 只改我们的元数据（不写 Pi 的 models.json）；内置 / 生图 / 本地模型的能力由事实来源决定，不能手改。
+	 * 标签存元数据；受支持协议的识图有效结果同步到 Pi。内置 / 生图 / 本地模型不能手改。
 	 * 返回最新注册表，UI 可直接刷新。
 	 */
 	app.put("/api/models/registry/:provider/models/:model/capabilities", async (c) => {
@@ -136,7 +138,7 @@ export function mountModelRoutes(app: Hono<Env>) {
 		const bad = caps.find((x) => !(MODEL_CAPABILITIES as readonly string[]).includes(x));
 		if (bad) return c.json({ error: `不支持的能力：${bad}` }, 400);
 		try {
-			customProviders.setModelCapabilities(c.req.param("provider"), c.req.param("model"), caps as ModelCapability[]);
+			await customProviders.setModelCapabilities(c.req.param("provider"), c.req.param("model"), caps as ModelCapability[]);
 		} catch (e) {
 			return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
 		}
@@ -199,7 +201,7 @@ export function mountModelRoutes(app: Hono<Env>) {
 		} else setSetting("visionModel", null);
 		return c.json({ ok: true, deprecated: true });
 	});
-	app.get("/api/models/defaults", (c) => c.json({ model: defaultModel(), thinking: defaultThinking() }));
+	app.get("/api/models/defaults", (c) => c.json({ model: defaultModel(), modelSetting: defaultModelSetting(), thinking: defaultThinking(), thinkingSetting: defaultThinkingSetting() }));
 	app.put("/api/models/default", async (c) => {
 		const b = await c.req.json<{ provider?: string; model?: string; thinking?: string }>();
 		if (b.thinking !== undefined) {

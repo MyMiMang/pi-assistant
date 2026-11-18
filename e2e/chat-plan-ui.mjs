@@ -129,7 +129,7 @@ try {
 	await d1.getByTestId("delivery-summary").waitFor();
 	await stableShot(page, d1, join(out, "02-delivery-card.png"));
 	await d1.getByTestId("file-preview-open").first().click();
-	await page.getByTestId("file-preview-name").filter({ hasText: "chat-plan-result.md" }).waitFor();
+	await page.getByTestId("workspace-tabs").getByRole("tab", { selected: true, name: "chat-plan-result.md" }).waitFor();
 	await page.getByTestId("file-preview-close").click();
 	await wait(async () => (await chip.count()) === 0, 10000, "项目结束后 chip 消失");
 	await page.setViewportSize({ width: 390, height: 844 });

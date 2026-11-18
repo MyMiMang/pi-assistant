@@ -4,6 +4,7 @@
 新需求立刻记一行；做完改状态，不写长段落（细节写进设计文档，进度看提交信息）。2026-10-18 以前的长记录见 [history/ROADMAP-2026-10-18.md](history/ROADMAP-2026-10-18.md)。
 
 ## 进行中
+- [仅本地整合，待总管核准] 跨版本渠道按声明识图与确认档位发送、附件缩略图对齐；自动化测试强制文件后端。正式运行期间的可选迁移弹窗不在本轮修复范围。
 - [已完成(未打包)，待新 main CI] beta.72 后旧 e2e 收尾：六个独立症状均验证为测试定位契约过时；信息面板共用 scope、拖动条按名称取、假 MCP 路径补引号，原脚本定向九项通过；beta.72/576dd7f7 及原 ci 44216533493 失败记录保留，不重发布
 - [总管已验收，beta.72 发布整合] 模型推理最小共用修复：未知显示未识别，现有高级编辑三态与渠道文档子集/协议值，手工映射持久化及共用 SDK spec；定向 Mock 验证，真实中转未验证
 - [已合 main，远端CI通过] beta.71 后收尾 `3eaf530e`：精确快照误报豁免及 Lima / 空闲时间旧测试修复获总管验收，ci 44080875180 / secrets 44080875024 成功；本地check/定向e2e/ARM64 Lima/全历史扫描通过，Intel Lima未验
@@ -73,6 +74,7 @@
 - [已发布(beta.46)] 长命令跑满 5 秒自动转后台，插话不用等命令跑完（[设计](design/background-commands.md)）
 - [已发布(beta.48)] Claude Code 模型列表补内置「更多模型」清单（Opus 4.8、Sonnet 5.5 等具体版本）+ 设置卡可自定义模型 ID（[设计 §4.2](design/cli-models.md)）
 - [已发布(beta.45)] 通用 ACP 后端 + OpenCode 当模型（渠道 `opencode-cli`，dev:live 用 Go 套餐真实冒烟通过；Grok 暂缓；[设计](design/acp-cli-models.md)）
+- [阶段三已实施，待总管独立核验] 统一右栏入口、起始页本地筛选四入口、助理详情（[决策 0033](decisions/0033-unified-right-rail.md)）。
 - [总管已验收，beta.72 发布整合] 统一右工作区阶段二/三：文件/任务/模型与真实同Page网页；registry/输入权/单流ACK/接管超时锁定，临时Chromium定向通过；sandbox/跨平台未验（[设计](design/side-panel-views.md)）
 - [已发布(beta.44)] 执行概览、任务、项目、提醒也进侧栏（[设计](design/side-panel-views.md)）；断线自动重试成功不再显示红色报错，收尾空回复不再报错
 - [已发布(beta.44)] HTML / SVG / Office / iWork / zip / Jupyter 文件在应用内直接显示（[HTML 设计](design/html-file-preview.md)、[Office 设计](design/office-file-preview.md)、[0024](decisions/0024-html-preview-sandboxed.md)）

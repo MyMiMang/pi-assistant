@@ -9,7 +9,7 @@ import type { PlannedTurn, QuoteTarget, RoundCounters } from "./logic.ts";
 
 /** 已解析的引用：快照（给模型/UI）+ 纯逻辑路由目标 */
 export type QuoteInfo = { snapshot: ReplySnapshot; target: QuoteTarget };
-export type Turn = PlannedTurn & { turnId: string };
+export type Turn = PlannedTurn & { turnId: string; userAttachmentSource?: string };
 
 export interface RoomState {
 	roundId: string;
@@ -24,7 +24,7 @@ export interface RoomState {
 	/** 正在进行的管理者回合里收集到的派活（长期任务的派活不在这里：直接进负责人的任务会话） */
 	assignments: { agentId: string; task?: string }[];
 	/** 运行中用户又发了消息：当前发言结束后重新安排 */
-	replan: { mentions: string[]; quote: QuoteInfo | null; sourceMessageId: string; workCtx: string | null } | null;
+	replan: { mentions: string[]; quote: QuoteInfo | null; sourceMessageId: string; workCtx: string | null; alreadySteered?: string } | null;
 	/** 本轮用户消息带来的引用快照（模型上下文），无引用为 null */
 	quote: ReplySnapshot | null;
 	/** 触发这一轮的用户消息 id（可信持久化来源；幂等键，见 routeUserMessage） */
@@ -90,7 +90,7 @@ export function enqueue(roomId: string, s: RoomState, turns: PlannedTurn[], sour
 		} else {
 			db.prepare("INSERT INTO room_turns(id, room_id, round_id, agent_id, reason, task, depth, status, created_at, source_message_id) VALUES(?,?,?,?,?,?,?,?,?,?)").run(turnId, roomId, s.roundId, t.agentId, t.reason, t.task ?? null, t.depth, "queued", now(), sourceMessageId);
 		}
-		s.queue.push({ ...t, turnId });
+		s.queue.push({ ...t, turnId, ...(dedup && sourceMessageId ? { userAttachmentSource: sourceMessageId } : {}) });
 	};
 	// 去重批次整体事务化：@所有人 等多收件人组要么全认领、要么全不认领。
 	if (dedup && sourceMessageId && turns.length > 1) {

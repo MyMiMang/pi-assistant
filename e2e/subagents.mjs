@@ -5,7 +5,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { expandAgentModelSection, openInfoPane } from "./fixtures/info-pane.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -191,8 +191,7 @@ try {
 	await page.locator(`[data-testid="subagent-detail"]:visible`).getByLabel("返回主会话").click();
 	console.log("✅ 服务重启后子代理续聊仍保留原上下文");
 	// 助理设置 › 子代理模型：候选池多选（可搜索、按服务分组、勾选不关菜单），窄屏不横向溢出
-	if (!(await page.locator(".pa-pane-wrap").count())) await page.getByRole("button", { name: "信息面板" }).click();
-	await page.locator(".pa-pane-wrap").waitFor();
+	await openInfoPane(page);
 	await page.getByTestId("info-tabs").waitFor();
 	await infoTab("模型");
 	await expandAgentModelSection(page, "subagents");

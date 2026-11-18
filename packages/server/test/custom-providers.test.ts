@@ -22,8 +22,7 @@ test("API 类型来自 pi-ai 注册表", () => {
 test("自定义服务：自动获取模型 → 保存到 Pi models.json → 测试连接 → 编辑 → 删除", async () => {
 	const fetched = await customProviders.fetchModels({ api: "openai-completions", baseUrl: relay.url, apiKey: "sk-unit", headers: [{ name: "x-team", value: "t1" }] });
 	assert.deepEqual(fetched.map((m) => m.id), ["relay-chat", "relay-pro"]);
-	assert.deepEqual(fetched[0], { id: "relay-chat", contextWindow: 65536, maxTokens: 4096, limitsSource: "detected" });
-	assert.deepEqual(fetched[1], { id: "relay-pro", contextWindow: 262_144, maxTokens: 131_072, limitsSource: "default" });
+	assert.deepEqual(fetched.map(({ contextWindow, maxTokens, limitsSource }) => [contextWindow, maxTokens, limitsSource]), [[65536, 4096, "detected"], [262_144, 131_072, "default"]]);
 	const meta = await customProviders.save(null, {
 		name: "Relay",
 		api: "openai-completions",
@@ -56,18 +55,18 @@ test("错误的 Key 会在测试连接时如实报错", async () => {
 	await customProviders.remove("custom-bad");
 });
 
-test("中转模型自动补推理能力，旧配置补齐后聊天可选思考强度；显式关闭保留", async () => {
+test("OpenAI 兼容中转不从其他渠道同名模型补推理能力", async () => {
 	const p = await customProviders.save(null, { name: "推理能力", api: "openai-completions", baseUrl: relay.url, noKey: true, models: [{ id: "deepseek-r1" }] });
-	assert.equal(p.models[0].reasoning, true);
-	assert.ok(models.listModels(p.id)[0].thinking.length > 1);
+	assert.equal(p.models[0].reasoning, undefined);
+	assert.equal(models.getModel(p.id, "deepseek-r1")?.reasoning, false);
 	const { getSetting, setSetting } = await import("../src/db.ts");
 	const metas = getSetting<{ id: string; models: Record<string, unknown>[] }[]>("customProviders", []);
 	const old = metas.find((m) => m.id === p.id)!.models[0];
 	delete old.reasoning;
 	delete old.reasoningAuto;
 	setSetting("customProviders", metas);
-	assert.ok(await customProviders.backfillLimits() > 0);
-	assert.ok(models.listModels(p.id)[0].thinking.length > 1);
+	await customProviders.backfillLimits();
+	assert.equal(models.getModel(p.id, "deepseek-r1")?.reasoning, false);
 	assert.equal(customProviders.withLimits({ id: "deepseek-r1", reasoning: false }).reasoning, false);
 	await customProviders.remove(p.id);
 });
@@ -132,7 +131,7 @@ test("旧数据没有上下文长度：启动时补齐并写回", async () => {
 	await customProviders.remove(m.id);
 });
 
-test("删除自定义服务：引用它的默认/识图/子代理设置和助理模型都回落，不留悬空引用", async () => {
+test("删除自定义服务：清理其它引用，但保留助理原选以拦住敏感请求的模型回落", async () => {
 	const m = await customProviders.save(null, { name: "引用清理", api: "openai-completions", baseUrl: relay.url, noKey: true, models: [{ id: "relay-chat" }] });
 	const { db, getSetting, setSetting } = await import("../src/db.ts");
 	const { clearProviderReferences, providerReferences } = await import("../src/models.ts");
@@ -152,27 +151,29 @@ test("删除自定义服务：引用它的默认/识图/子代理设置和助理
 	const cleared = clearProviderReferences(m.id);
 	assert.equal(cleared.agents.length, 1);
 	assert.deepEqual(cleared.imageProviders, ["生图引用"]);
-	assert.equal(getSetting("defaultModel", null), null);
+	assert.deepEqual(getSetting("defaultModel", null), ref);
 	assert.equal(getSetting("visionModel", null), null);
 	const s = getSetting<{ maxMinutes: number }>("subagentModels", { maxMinutes: 0 });
 	assert.equal(s.maxMinutes, 30, "其它设置保持不变");
 	assert.deepEqual(getSetting<{ pool: unknown[] }>(`subagentModel:${agentId}`, { pool: [1] }).pool, [], "候选池里被删的服务一并去掉");
-	assert.equal((db.prepare("SELECT model_provider FROM agents WHERE id = ?").get(agentId) as { model_provider: string | null }).model_provider, null, "助理模型回落默认");
+	assert.deepEqual({ ...db.prepare("SELECT model_provider, model_id FROM agents WHERE id = ?").get(agentId) }, { model_provider: m.id, model_id: "relay-chat" });
 	assert.equal(getSetting<{ keyFrom: string | null }[]>("imageProviders", [])[0].keyFrom, null, "生图服务的 keyFrom 清掉，不删生图服务");
-	// 删除只清引用，不删助理、不动用量历史
+	// 删除不删助理、不动用量历史
 	assert.ok(db.prepare("SELECT 1 FROM agents WHERE id = ?").get(agentId));
+	setSetting("defaultModel", null);
 	setSetting("imageProviders", []);
 	db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
 });
 
-test("手动设置自定义模型能力（只改元数据，不写 models.json）", async () => {
+test("手动识图设置同步 Pi 运行模型，能力标签只存元数据",  async () => {
 	const m = await customProviders.save(null, { name: "能力设置", api: "openai-completions", baseUrl: relay.url, noKey: true, models: [{ id: "cap-chat" }] });
-	const next = customProviders.setModelCapabilities(m.id, "cap-chat", ["chat", "vision"]);
+	const next = await customProviders.setModelCapabilities(m.id, "cap-chat", ["chat", "vision"]);
 	assert.deepEqual(next.models.find((x) => x.id === "cap-chat")!.capabilities, ["chat", "vision"]);
 	const file = readFileSync(join(config.dataDir, "models.json"), "utf8");
 	assert.ok(!file.includes("capabilities"), "能力只存我们的元数据，不写进 models.json");
-	assert.throws(() => customProviders.setModelCapabilities(m.id, "nope", ["chat"]), /模型不存在/);
-	assert.throws(() => customProviders.setModelCapabilities("nope", "cap-chat", ["chat"]), /自定义服务不存在/);
+	assert.deepEqual(models.getModel(m.id, "cap-chat")?.input, ["text", "image"]);
+	await assert.rejects(() => customProviders.setModelCapabilities(m.id, "nope", ["chat"]), /模型不存在/);
+	await assert.rejects(() => customProviders.setModelCapabilities("nope", "cap-chat", ["chat"]), /自定义服务不存在/);
 	await customProviders.remove(m.id);
 });
 

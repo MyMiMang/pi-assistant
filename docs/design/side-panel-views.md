@@ -2,9 +2,9 @@
 
 # 统一右工作区
 
-沿用SidePanel全部调用方：执行概览、群任务看板/详情、群与单聊项目、提醒；文件直接登记统一注册表，复用PreviewContent及全部原格式视图。旧单文件store和portal槽位已删除。
+沿用SidePanel全部调用方：执行概览、群任务看板/详情、群与单聊项目、提醒；文件直接登记统一注册表，复用PreviewContent及全部原格式视图。旧单文件store和portal槽位已删除。入口收束见[决策 0033](../decisions/0033-unified-right-rail.md)：收起时聊天标题栏保留单一工作区入口，展开时使用单排标签及控制，不另显示当前标题。
 
-职责：workspace-state.ts只管标签转换和scope；workspace.ts持有当前scope有限内容注册，校验owner和scope；SidePanel.tsx登记内容并由固定SidePanelDock宿主显示。固定section节点仅切hidden/CSS，不因标签切换、收起、放大或手机布局而重挂。ResponsiveTabs复用更多菜单，标题完整tooltip；关闭当前标签后选相邻，收起/返回聊天只隐藏。
+职责：workspace-state.ts只管标签转换和scope；workspace.ts持有当前scope有限内容注册，校验owner和scope；SidePanel.tsx登记内容并由固定SidePanelDock宿主显示。固定section节点仅切hidden/CSS，不因标签切换、收起、放大或手机布局而重挂。ResponsiveTabs复用更多菜单，标题完整tooltip；关闭当前标签后选相邻，收起/返回聊天只隐藏并解除放大。新标签起始页是临时占位，激活真实内容时替换该占位。筛选只匹配可用的文件、网页、助理详情、模型设置入口，不查询文件、会话或网页内容。文件预览的文件名只显示在标签；文件工具栏保留类型、大小、下载和关闭。
 
 每个scope最多12项，第13项明确拒绝并显示workspace-limit-notice，用户手动关闭后才能新增。没有跨重启/多会话隐藏缓存；助理/群/对话变化主动清空全部当前内容。旧scope迟到update/unregister无效，dispose回调期间禁止重新注册，owner替换后旧cleanup不能删除新owner。
 
@@ -14,7 +14,7 @@
 
 ## 业务内容扩展示例与主题
 
-新增内容只在业务模块调用registerWorkspace，传稳定key/title/语义kind/content与必要owner/onClose；宿主不新增业务分支。ModelSettingsPanel按settings:model:<agentId>登记，ModelSettingsContent由详情模型页和工作区共用，唯一ModelPicker、ContextDetails、图片与帮手模型设置及即时写队列均复用。原八分类保留，模型页提供“在工作区查看模型设置”；保存目标固定agentId，群成员复用同一助理模型保存逻辑、上下文仍取群成员conversationId。全局设置不迁移，不混入当前助理作用域。
+新增内容只在业务模块调用registerWorkspace，传稳定key/title/语义kind/content与必要owner/onClose；宿主不新增业务分支。InfoPane 按 `settings:agent:<agentId>` 登记一份助理详情，八分类保留。助理名/群成员进入概览，大脑、输入框快速模型菜单里的「完整设置」与起始页「模型设置」进入同一详情的模型分类；顶部控制就地放大。唯一 ModelSettingsContent、ModelPicker、ContextDetails、图片与帮手模型设置及即时写队列均复用。保存目标固定 agentId，群成员上下文仍取群成员 conversationId。全局设置不迁移，不混入当前助理作用域。
 
 主题不新增变量或独立配色：panel/line/fg/mut/bg/card/hover等语义变量与现有按钮/ResponsiveTabs/Resizer共用。四内置主题与DIY通过现有manifest→注册→setAppearance链路生效；CSS布局不以skin作key，不因主题切换重挂。使用正式copy-pixel另存的临时DIY实例测试，既有减少动态效果链路保留。静态token接线不等同所有主题视觉全矩阵通过，实际截图和测试以报告为准。
 
@@ -30,6 +30,6 @@ browser-frames每Page单CDP流扇出，查看者仅一帧待确认加最新pendi
 
 ## 验收接口
 
-right-workspace的data-mode=docked/expanded/mobile，data-collapsed=0/1、data-scope；内容data-workspace-key，标签data-itab。workspace-tabs及-more/-menu、workspace-content、workspace-expand/restore/collapse/reopen/close-tab/back-chat、workspace-browser-open/disconnected、workspace-limit-notice；原业务testid保留。
+right-workspace的data-mode=docked/expanded/mobile，data-collapsed=0/1、data-scope；内容data-workspace-key，标签data-itab。workspace-tabs及-more/-menu、workspace-content、workspace-new-tab/start、workspace-expand/restore/collapse/reopen/close-tab/back-chat、workspace-browser-open/disconnected、workspace-files-open/agent-open/model-open、workspace-limit-notice；原业务testid保留。
 
 纯状态单测workspace-state.test.ts；真实内容/DOM测试side-panel-views.mjs与file-preview.mjs的side-panel-section；React owner/scope竞态测试在忽略目录artifacts/right-workspace-react。候选交付时以实际日志为准，不把脚本存在当通过。

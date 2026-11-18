@@ -66,7 +66,7 @@ const activeProvider = () => (agentProvider === 'hindsight' ? HINDSIGHT : BASIC)
 
 const browser = await chromium.launch({ executablePath: process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', locale: 'zh-CN' });
-await context.addInitScript(() => localStorage.setItem('pia.layout', JSON.stringify({ sideW: 264, paneW: 340, sideCollapsed: false, info: true })));
+
 const page = await context.newPage();
 page.setDefaultTimeout(15_000);
 await page.route('**/api/**', async (route) => {
@@ -116,6 +116,7 @@ const assertInsideViewport = (box, vp, label) => {
 	assert.ok(box.x >= -1 && box.y >= -1 && box.x + box.width <= vp.width + 1 && box.y + box.height <= vp.height + 1, `${label} 溢出视口: ${JSON.stringify({ box, vp })}`);
 };
 const openMemory = async () => {
+	await page.getByTestId('agent-detail-open').click();
 	await page.getByTestId('info-tabs').waitFor();
 	const tab = page.locator('[data-testid=info-tabs] [data-itab=memory]');
 	if (await tab.count()) await tab.click();

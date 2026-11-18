@@ -18,25 +18,23 @@ const relay = await startMockOpenAI({ port: 0, key: "sk-unit" });
 after(() => relay.close());
 await initModels((await import("./in-memory-credentials.ts")).memoryCredentialStore());
 
-test("自定义服务：档位来自 Pi 内置目录（gpt-6.1-sol 有 xhigh / max），认不出的模型不凭空补", async () => {
+test("自定义服务：同名不猜档位，只按渠道明确声明的高档注册", async () => {
 	const p = await customProviders.save(null, {
 		name: "档位测试",
 		api: "openai-completions",
 		baseUrl: relay.url,
 		apiKey: "sk-unit",
 		models: [{ id: "gpt-6.1-sol", reasoning: true }, { id: "my-private-model", reasoning: true }],
+		capabilityScope: { api: "openai-completions", baseUrl: relay.url, source: "临时渠道契约", appliesTo: ["my-private-model"], defaults: { levels: { high: "high", xhigh: "documented-xhigh" } } },
 	});
 	try {
 		const by = Object.fromEntries(models.listModels(p.id).map((m) => [m.id, m]));
-		assert.deepEqual(by["gpt-6.1-sol"].thinking, ["low", "medium", "high", "xhigh", "max"]);
-		assert.deepEqual(by["my-private-model"].thinking, ["off", "minimal", "low", "medium", "high"], "目录里没有的模型保持 Pi 默认档位，不凭空补");
-		// 切换模型时按真实支持的档位收敛：xhigh 保留，超出范围的仍回落到 high
-		assert.equal(models.clampThinking(p.id, "gpt-6.1-sol", "xhigh"), "xhigh");
-		assert.equal(models.clampThinking(p.id, "gpt-6.1-sol", "max"), "max");
-		assert.equal(models.clampThinking(p.id, "my-private-model", "xhigh"), "high");
-		// 写进 Pi 的 models.json，Pi 自己按它算档位与请求参数
+		assert.equal(by["gpt-6.1-sol"].thinkingLevelMap, undefined, "别的渠道同名不是证据");
+		assert.ok(!by["gpt-6.1-sol"].thinking.includes("xhigh") && !by["gpt-6.1-sol"].thinking.includes("max"));
+		assert.deepEqual(by["my-private-model"].thinking, ["high", "xhigh"]);
+		assert.equal(models.clampThinking(p.id, "my-private-model", "xhigh"), "xhigh");
 		const cfg = JSON.parse(readFileSync(join(config.dataDir, "models.json"), "utf8"));
-		assert.deepEqual(cfg.providers[p.id].models.find((m: { id: string }) => m.id === "gpt-6.1-sol").thinkingLevelMap, { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" });
+		assert.deepEqual(cfg.providers[p.id].models.find((m: { id: string }) => m.id === "my-private-model").thinkingLevelMap, { off: null, minimal: null, low: null, medium: null, high: "high", xhigh: "documented-xhigh", max: null });
 	} finally {
 		await customProviders.remove(p.id);
 	}
@@ -92,13 +90,14 @@ test("手工映射优先同名目录，空白/非法协议值和无思考子集�
 	assert.match(customProviders.validate({ ...input, models: [{ ...input.models[0], thinkingLevelMap: { invalid: "high" } }] })!, /无效/);
 });
 
-test("旧配置启动补齐：没有档位映射的自定义模型，backfill 后拿到 xhigh / max", async () => {
+test("旧自动目录映射启动后不再算渠道证据，原记录不改写", async () => {
 	const p = await customProviders.save(null, { name: "旧档位", api: "openai-completions", baseUrl: relay.url, noKey: true, models: [{ id: "gpt-6.1-sol", reasoning: true }] });
 	try {
-		// 模拟旧版本：元数据和 models.json 都没有 thinkingLevelMap
+		// 旧版已保存的同名目录映射，不是用户选择或当前渠道契约。
 		const { getSetting, setSetting } = await import("../src/db.ts");
 		const metas = getSetting<{ id: string; models: Record<string, unknown>[] }[]>("customProviders", []);
-		setSetting("customProviders", metas.map((x) => (x.id === p.id ? { ...x, models: [{ id: "gpt-6.1-sol", reasoning: true }] } : x)));
+		const previous = { id: "gpt-6.1-sol", reasoning: true, reasoningAuto: true, thinkingLevelSource: "old-catalog", thinkingLevelMap: { xhigh: "xhigh", max: "max" } };
+		setSetting("customProviders", metas.map((x) => (x.id === p.id ? { ...x, models: [previous] } : x)));
 		const cfgPath = join(config.dataDir, "models.json");
 		const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
 		cfg.providers[p.id].models = [{ id: "gpt-6.1-sol", reasoning: true }];
@@ -107,7 +106,23 @@ test("旧配置启动补齐：没有档位映射的自定义模型，backfill �
 		assert.deepEqual(models.listModels(p.id).find((m) => m.id === "gpt-6.1-sol")!.thinking, ["off", "minimal", "low", "medium", "high"], "补齐前是 Pi 默认档位");
 		assert.ok((await customProviders.backfillLimits()) >= 1);
 		const live = models.listModels(p.id).find((m) => m.id === "gpt-6.1-sol")!;
-		assert.ok(live.thinking.includes("xhigh") && live.thinking.includes("max"), `补齐后有 xhigh / max：${live.thinking}`);
+		assert.deepEqual(live.thinking, ["off"]);
+		assert.equal(live.thinkingLevelMap, undefined);
+		const retained = customProviders.list().find((x) => x.id === p.id)!.models[0];
+		assert.deepEqual(retained.thinkingLevelMap, previous.thinkingLevelMap);
+		assert.equal(retained.thinkingLevelSource, previous.thinkingLevelSource);
+		const { db } = await import("../src/db.ts");
+		const { AgentRuntime } = await import("../src/agent-runtime/agent-runtime.ts");
+		const agentId = "old-catalog-fixture-agent";
+		db.prepare("INSERT INTO agents(id,name,avatar,color,model_provider,model_id,thinking,thinking_explicit,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(agentId, "目录旧档", "测", "blue", p.id, previous.id, "xhigh", 1, Date.now());
+		try {
+			const runtime = new AgentRuntime(agentId, "isolated-catalog-fixture");
+			const result = await runtime.turn("不可降档的旧选择");
+			assert.equal(result.ok, false);
+			assert.match(result.error ?? "", /xhigh.*旧目录.*未发送/);
+			assert.equal(runtime.session, null, "没有启动 SDK 请求");
+			assert.equal((db.prepare("SELECT thinking FROM agents WHERE id=?").get(agentId) as { thinking: string }).thinking, "xhigh");
+		} finally { db.prepare("DELETE FROM agents WHERE id=?").run(agentId); }
 	} finally {
 		await customProviders.remove(p.id);
 	}
@@ -166,7 +181,7 @@ test("请求参数：选 xhigh 时真的发 reasoning_effort=xhigh，不被 clam
 		api: "openai-completions",
 		baseUrl: relay.url,
 		apiKey: "sk-unit",
-		models: [{ id: "gpt-6.1-sol", reasoning: true }],
+		models: [{ id: "gpt-6.1-sol", reasoning: true, thinkingLevelSource: "user", thinkingLevelMap: { high: "high", xhigh: "xhigh" } }],
 	});
 	try {
 		const ws = join(config.workspaceRoot, "think-levels");

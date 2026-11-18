@@ -1,10 +1,10 @@
 import { ModelSettingsContent } from "./ModelSettingsContent";
-import { openModelSettings } from "./ModelSettingsPanel";
+import { registerWorkspace, updateWorkspace, useWorkspace, workspaceAction } from "../workspace";
 import { TaskRow, taskTitle } from "./Tasks";
 import { DesktopView } from "./DesktopView";
 import { fmtMoney, useFx } from "./usage-fmt";
-import { ChevronLeft, ChevronRight, Download, File, Folder, HardDrive, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, Download, File, Folder, HardDrive } from "lucide-react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { api, download } from "../api";
 import { t } from "../i18n";
 import { useStore } from "../store";
@@ -14,6 +14,7 @@ import { openFilePreview } from "./FilePreview";
 import { openImageViewer } from "./ImageViewer";
 import { AgentEditor } from "./AgentEditor";
 import { THINKING_LABEL, useConfiguredModels } from "./ModelPicker";
+import { agentRelayThinkingChoice } from "../thinking-slider";
 import { AgentComputer } from "./AgentComputer";
 import { MemoryTab } from "./MemoryTab";
 import { AgentExtensions } from "./AgentExtensions";
@@ -36,29 +37,40 @@ const TABS = [
 	["computer", "电脑"],
 ] as const;
 const TASK_TABS = [["routines", "定时任务"], ["background", "执行记录"], ["proactive", "主动跟进"]] as const;
+type DetailTab = typeof TABS[number][0];
+type TaskTab = typeof TASK_TABS[number][0];
+
+/** 同一聊天域内，每位助理只有一个详情实例；外部入口只切其分类。 */
+export function openAgentDetails(agentId: string, tab: DetailTab = "overview", taskTab?: TaskTab) {
+	const agent = useStore.getState().agents.find((a) => a.id === agentId);
+	if (!agent) return;
+	const key = `settings:agent:${agentId}`;
+	const entry = { key, kind: "settings" as const, title: `${agent.name} · 助理详情`, testId: "workspace-agent-details", fixed: true,
+		content: <InfoPane agentId={agentId} request={{ tab, taskTab }} /> };
+	if (registerWorkspace(entry)) updateWorkspace(entry, useWorkspace.getState().scope);
+}
 
 /**
  * 助理设置（classic）：居中 64px 头像 + 单行文字分类；单聊与群成员共用同一套结构。
  * 群专属信息 / 私聊 / 复制入口沿用原组件（普通助理不显示群信息框）。
  * 资料页保留独立草稿与固定底部「保存资料」；其余分类都是即时保存的真实设置。
  */
-export default function InfoPane({ agentId }: { agentId: string }) {
-	const rawTab = useStore((s) => s.infoTab);
-	// 兼容旧内部跳转，不让曾经打开的标签变成空页。
-	const tab = rawTab === "settings" ? "profile" : rawTab === "routines" || rawTab === "proactive" ? "tasks" : TABS.some(([k]) => k === rawTab) ? rawTab : "overview";
-	const setTab = (k: string) => useStore.getState().set({ infoTab: k });
-	const { agents, loadTasks } = useStore();
-	// 首次打开资料才建草稿，之后切分类保留；不提前捕获尚未编辑的旧资料。
-	const [profileFor, setProfileFor] = useState<string | null>(null);
-	useEffect(() => { if (tab === "profile") setProfileFor(agentId); }, [tab, agentId]);
+function InfoPane({ agentId, request }: { agentId: string; request: { tab: DetailTab; taskTab?: TaskTab } }) {
+	const [tab, setTab] = useState<DetailTab>(request.tab);
+	const [taskTab, setTaskTab] = useState<TaskTab>(request.taskTab ?? "routines");
+	const agent = useStore((s) => s.agents.find((a) => a.id === agentId));
+	const loadTasks = useStore((s) => s.loadTasks);
+	// 首次打开才挂载编辑区域；切分类也保留资料草稿和模型设置的本地状态。
+	const [visited, setVisited] = useState<DetailTab[]>([request.tab]);
+	const go = (next: DetailTab) => {
+		setTab(next);
+		setVisited((old) => old.includes(next) ? old : [...old, next]);
+	};
+	useLayoutEffect(() => { go(request.tab); if (request.taskTab) setTaskTab(request.taskTab); }, [request]);
 	useEffect(() => { void loadTasks(agentId).catch(() => {}); }, [agentId, loadTasks]);
-	const agent = agents.find((a) => a.id === agentId);
 	if (!agent) return null;
 	return (
-		<aside className="pa-pane pa-info flex h-full flex-col !gap-0 !p-0">
-			<button className="pa-icon-btn ghost pa-info-close" onClick={() => useStore.getState().set({ info: false })} aria-label="关闭">
-				<X className="pa-ic" />
-			</button>
+		<div className="pa-info flex h-full flex-col" data-agent-id={agentId}>
 			<header className="pa-info-head">
 				<div className="pa-info-identity" data-testid="agent-info-heading">
 					<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={64} running={agent.status === "running"} testId="agent-info-avatar" />
@@ -69,28 +81,23 @@ export default function InfoPane({ agentId }: { agentId: string }) {
 				</div>
 				<RoomAgentActions key={agent.id} agentId={agent.id} variant="pane" />
 			</header>
-			<ResponsiveTabs tabs={TABS} value={tab} onChange={setTab} variant="plain" className="pa-info-tabs" testId="info-tabs" />
-			<div className={tab === "profile" ? "hidden" : "pa-info-body scrollbar-thin min-h-0 flex-1 overflow-y-auto"} hidden={tab === "profile"} data-testid="agent-info-content" key={`${agentId}:${tab}`}>
-				{tab === "overview" && <Overview agentId={agentId} />}
-				{tab === "models" && <><button type="button" className="pa-chip mb-3" data-testid="model-settings-workspace-open" onClick={() => openModelSettings(agentId)}>在工作区查看模型设置</button><ModelSettingsContent agentId={agentId} /></>}
+			<ResponsiveTabs tabs={TABS} value={tab} onChange={(k) => go(k as DetailTab)} variant="plain" className="pa-info-tabs" testId="info-tabs" />
+			{tab !== "profile" && tab !== "models" && <div className="pa-info-body scrollbar-thin min-h-0 flex-1 overflow-y-auto" data-testid="agent-info-content" key={tab}>
+				{tab === "overview" && <Overview agentId={agentId} go={go} />}
 				{tab === "capabilities" && <Capabilities agentId={agentId} />}
-				{tab === "tasks" && <AgentTasks key={agentId} agentId={agentId} legacyTab={rawTab} />}
+				{tab === "tasks" && <AgentTasks agentId={agentId} tab={taskTab} onChange={setTaskTab} />}
 				{tab === "memory" && <MemoryTab agentId={agentId} />}
 				{tab === "files" && <Files agentId={agentId} />}
-				{tab === "computer" && <Computer key={agentId} agentId={agentId} />}
-			</div>
-			{/* 同一助理切分类保持资料草稿；换助理或关闭面板才结束当前编辑。 */}
-			{(tab === "profile" || profileFor === agentId) && (
-				<div key={agentId} className={tab === "profile" ? "flex min-h-0 flex-1 flex-col" : "hidden"} hidden={tab !== "profile"} data-testid="agent-info-profile">
-					<AgentEditor agent={agent} showModel={false} layout="profile" />
-				</div>
-			)}
-		</aside>
+				{tab === "computer" && <Computer agentId={agentId} />}
+			</div>}
+			{visited.includes("models") && <div className="pa-info-body scrollbar-thin min-h-0 flex-1 overflow-y-auto" hidden={tab !== "models"} data-testid={tab === "models" ? "agent-info-content" : undefined}><ModelSettingsContent agentId={agentId} /></div>}
+			{visited.includes("profile") && <div className={tab === "profile" ? "flex min-h-0 flex-1 flex-col" : "hidden"} hidden={tab !== "profile"} data-testid="agent-info-profile"><AgentEditor agent={agent} showModel={false} layout="profile" /></div>}
+		</div>
 	);
 }
 
 /** 概览：先看真实执行统计，再看三行配置摘要（大脑 / 操作你的电脑 / 任务），点哪行去哪个分类；不在这里再放一套编辑器。 */
-function Overview({ agentId }: { agentId: string }) {
+function Overview({ agentId, go }: { agentId: string; go: (tab: DetailTab) => void }) {
 	const { agents, tasks } = useStore();
 	const routinesVersion = useStore((s) => s.routinesVersion);
 	const agent = agents.find((a) => a.id === agentId)!;
@@ -102,6 +109,7 @@ function Overview({ agentId }: { agentId: string }) {
 	const effective = agent.thinking ? THINKING_LABEL[agent.thinking] ?? agent.thinking : "待确认";
 	const thinking = !model
 		? catalog.loading ? "正在加载档位…" : catalog.error ? "档位加载失败" : "请重新选择模型"
+		: model.effectiveCapability ? `思考 ${agentRelayThinkingChoice(agent, model.thinking ?? []).label}`
 		: !model.thinking?.length ? "无思考档位"
 		: agent.thinkingSetting == null ? `思考 跟随默认 · ${effective}`
 		: agent.thinkingSetting !== agent.thinking ? `思考 ${THINKING_LABEL[agent.thinkingSetting] ?? agent.thinkingSetting} → ${effective}` : `思考 ${effective}`;
@@ -122,7 +130,6 @@ function Overview({ agentId }: { agentId: string }) {
 	useEffect(() => {
 		api<{ totals: typeof u }>(`/api/usage/summary?range=all&agent=${encodeURIComponent(agentId)}`).then((r) => setU(r.totals)).catch(() => {});
 	}, [agentId]);
-	const go = (next: string) => useStore.getState().set({ infoTab: next });
 	const brain = [model?.name ?? agent.model?.id ?? "未选择模型", thinking, model?.providerName].filter(Boolean).join(" · ");
 	const taskText = [`${running} 个运行中`, `共 ${list.length} 个`, routines != null ? `${routines} 个定时` : null].filter(Boolean).join(" · ");
 	return (
@@ -332,12 +339,10 @@ function Capabilities({ agentId }: { agentId: string }) {
 	);
 }
 
-function AgentTasks({ agentId, legacyTab }: { agentId: string; legacyTab: string }) {
-	const selected = useStore((s) => s.infoTaskTab);
-	const tab = legacyTab === "routines" || legacyTab === "proactive" ? legacyTab : selected;
+function AgentTasks({ agentId, tab, onChange }: { agentId: string; tab: TaskTab; onChange: (tab: TaskTab) => void }) {
 	const list = useStore((s) => s.tasks[agentId]) ?? [];
 	return <div className="text-sm" data-testid="agent-tasks-tab">
-		<ResponsiveTabs tabs={TASK_TABS} value={tab} variant="tabs" className="pa-info-subtabs" testId="agent-task-tabs" onChange={(k) => useStore.getState().set({ infoTab: "tasks", infoTaskTab: k as typeof selected })} />
+		<ResponsiveTabs tabs={TASK_TABS} value={tab} variant="tabs" className="pa-info-subtabs" testId="agent-task-tabs" onChange={(k) => onChange(k as TaskTab)} />
 		{tab !== "background" && <QuietHours agentId={agentId} />}
 		{tab === "routines" && <RoutinesTab agentId={agentId} />}
 		{tab === "proactive" && <ProactiveTab agentId={agentId} />}
@@ -345,7 +350,7 @@ function AgentTasks({ agentId, legacyTab }: { agentId: string; legacyTab: string
 			<h2 className="pa-info-h2">帮手</h2>
 			{!list.length && <p className="text-sm text-mut">还没有帮手干过活。</p>}
 			{/* 每一行都能点开看完整过程（复用帮手执行页；决策 0027：后台任务就是帮手，不再有只读的黑盒列表） */}
-			{list.slice(0, 20).map((x) => <TaskRow key={x.id} testId="info-helper-row" id={x.id} title={x.title || taskTitle(x.task)} status={x.status} time={x.finished_at ?? x.created_at} onClick={x.conversation_id ? () => useStore.getState().openSubagent({ id: x.id, task: x.title || x.task, agent_id: x.agent_id, conversation_id: x.conversation_id! }) : undefined} />)}
+			{list.slice(0, 20).map((x) => <TaskRow key={x.id} testId="info-helper-row" id={x.id} title={x.title || taskTitle(x.task)} status={x.status} time={x.finished_at ?? x.created_at} onClick={x.conversation_id ? () => { workspaceAction({ type: "collapse" }); useStore.getState().openSubagent({ id: x.id, task: x.title || x.task, agent_id: x.agent_id, conversation_id: x.conversation_id! }); } : undefined} />)}
 			{!!list.length && <p className="text-xs text-mut2">显示“完成”只代表这次跑完了，事情办没办成记得看一眼结果。</p>}
 		</section>}
 	</div>;

@@ -19,7 +19,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { expandAgentModelSection, openInfoPane } from "./fixtures/info-pane.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -48,10 +48,8 @@ const openTab = async (page, name) => {
 /** 第一次打开「助理 › 模型」页的子代理模型区块（真实信息面板） */
 const openAgentSettings = async (page, agentId) => {
 	await page.goto(`${BASE}/?agent=${agentId}`);
-	await page.waitForSelector(".pa-pane-wrap, button[aria-label='信息面板']");
+	await openInfoPane(page);
 	await page.waitForTimeout(500); // 等 store 从 localStorage 恢复，避免和自动打开抢状态
-	if (!(await page.locator(".pa-pane-wrap").isVisible().catch(() => false))) await page.getByRole("button", { name: "信息面板" }).click();
-	await page.locator(".pa-pane-wrap").waitFor({ state: "visible" });
 	await openTab(page, "模型");
 	await expandAgentModelSection(page, "subagents");
 	await page.getByTestId("agent-subagent-model").waitFor();

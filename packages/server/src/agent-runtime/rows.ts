@@ -13,6 +13,7 @@ export interface AgentRow {
 	model_provider: string | null;
 	model_id: string | null;
 	thinking: string | null;
+	thinking_explicit?: number;
 	/** 请求级 Fast（0/1）：主会话 / 群成员 / 后台 / 定时都用它，与 thinking 独立 */
 	fast: number | null;
 	status: string;

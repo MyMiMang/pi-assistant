@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { stableShot } from "./fixtures/stable-shot.mjs";
-import { infoTab, openAgentModelPop } from "./fixtures/info-pane.mjs";
+import { infoTab, openAgentModelPop, openInfoPane } from "./fixtures/info-pane.mjs";
 import { openCompact } from "./model-menu-flow.mjs";
 import { startMockOpenAI } from "./mock-openai.mjs";
 
@@ -74,7 +74,7 @@ try {
 	await wait(async () => relay.seen.some((r) => r.url === "/v1/chat/completions"));
 	assert.equal(JSON.parse(relay.seen.filter((r) => r.url === "/v1/chat/completions").at(-1).body).reasoning_effort, "documented-high");
 	// 单聊详情、群成员详情沿用同一个 ModelPicker。
-	if (!await page.getByTestId("info-tabs").isVisible()) await page.getByRole("button", { name: "信息面板", exact: true }).click();
+	await openInfoPane(page);
 	await infoTab(page, "models");
 	let pop = await openAgentModelPop(page);
 	await pop.getByRole("slider").waitFor();

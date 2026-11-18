@@ -71,8 +71,10 @@ export async function waitCliForDefaultModel(ms = 5000): Promise<void> {
 	clearTimeout(timer);
 }
 
+export const defaultModelSetting = () => getSetting<{ provider: string; id: string } | null>("defaultModel", null);
+
 export function defaultModel(): { provider: string; id: string } | null {
-	const m = getSetting<{ provider: string; id: string } | null>("defaultModel", null);
+	const m = defaultModelSetting();
 	if (m && models.getModel(m.provider, m.id)) return m;
 	return null;
 }
@@ -81,7 +83,8 @@ export function defaultModel(): { provider: string; id: string } | null {
 export { THINKING_LEVEL_ORDER as THINKING_LEVELS, isThinkingLevel } from "@pi-assistant/shared";
 
 /** 新助理的默认思考强度（每个模型实际用的会按它支持的档位收敛） */
-export const defaultThinking = (): string => getSetting<string>("defaultThinking", "medium");
+export const defaultThinkingSetting = () => getSetting<string | null>("defaultThinking", null);
+export const defaultThinking = (): string => defaultThinkingSetting() ?? "medium";
 
 /** 界面显示的服务名：自定义服务用用户起的名字（内部 id 如 custom-xxxx 不给用户看） */
 export function providerNames() {
@@ -91,7 +94,7 @@ export function providerNames() {
 }
 export const withProviderName = <T extends { provider: string }>(x: T, names = providerNames()) => ({ ...x, providerName: names.get(x.provider) ?? x.provider });
 
-/** 某个模型服务被哪些设置 / 助理引用（删除前告诉用户影响，删除后据此清理） */
+/** 某个模型服务被哪些设置 / 助理引用（删除前告诉用户影响，删除后只清独立工具引用）。 */
 export interface ProviderReferences {
 	defaultModel: boolean;
 	visionModel: boolean;
@@ -150,10 +153,9 @@ export function providerReferences(id: string): ProviderReferences {
 	};
 }
 
-/** 删除模型服务后清掉引用它的设置与助理模型：能回到默认 / 自动的回落，不留悬空引用。用量历史不动。 */
+/** 清理已删服务的独立工具设置；默认聊天模型及助理原选保留，以区分失效和未选择。 */
 export function clearProviderReferences(id: string): ProviderReferences {
 	const refs = providerReferences(id);
-	if (refs.defaultModel) setSetting("defaultModel", null);
 	if (refs.visionModel) setSetting("visionModel", null);
 	// 子代理候选池：把被删的服务从池里去掉（保存时会按现有模型校验，留着会报“模型尚未配置”）
 	for (const agentId of refs.subagentAgents) {
@@ -165,6 +167,5 @@ export function clearProviderReferences(id: string): ProviderReferences {
 	if (fast && fast.provider === id) setSetting("fastComputer", { ...fast, provider: "", id: "" });
 	// 生图服务复用被删服务的 Key → 清掉 keyFrom，让其提示重新配 Key（不删生图服务本身）
 	if (refs.imageProviders.length) clearImageKeyFrom(id);
-	if (refs.agents.length) db.prepare("UPDATE agents SET model_provider = NULL, model_id = NULL WHERE model_provider = ?").run(id);
 	return refs;
 }

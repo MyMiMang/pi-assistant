@@ -43,25 +43,26 @@ test("子代理思考档位：跟随主会话与主会话一致；多候选池�
 		baseUrl: relay.url,
 		apiKey: "sk-unit",
 		models: [
-			{ id: "gpt-6.1-sol", reasoning: true },
+			{ id: "fixture-wide-thinking", reasoning: true },
 			{ id: "my-private-model", reasoning: true },
 		],
+		capabilityScope: { api: "openai-completions", baseUrl: relay.url, source: "合成渠道档位声明", appliesTo: ["fixture-wide-thinking", "my-private-model"], defaults: { levels: { off: "none", high: "high" } }, exceptions: { "fixture-wide-thinking": { levels: { off: "none", high: "high", xhigh: "xhigh", max: "max" } } } },
 	});
 	try {
 		const catalog = models.listModels(p.id);
-		const sol = catalog.find((m) => m.id === "gpt-6.1-sol")!;
+		const sol = catalog.find((m) => m.id === "fixture-wide-thinking")!;
 		const priv = catalog.find((m) => m.id === "my-private-model")!;
 		// 能力来源是同一份 Pi 元数据：主会话列表 / 服务端 supportedThinking / 子代理 helper 都必须一致
-		assert.deepEqual(sol.thinking, models.supportedThinking(p.id, "gpt-6.1-sol"));
+		assert.deepEqual(sol.thinking, models.supportedThinking(p.id, "fixture-wide-thinking"));
 		assert.deepEqual(priv.thinking, models.supportedThinking(p.id, "my-private-model"));
 		assert.ok(sol.thinking.includes("xhigh") && sol.thinking.includes("max"), `有 xhigh/max 的模型：${sol.thinking}`);
 		assert.ok(!priv.thinking.includes("xhigh") && !priv.thinking.includes("max"), `目录里没有的模型不凭空补档位：${priv.thinking}`);
 
 		// 1) 空候选池 = 跟随主会话：子代理档位必须和主会话当前模型完全一致（不能比主会话少）
-		assert.deepEqual(thinkingLevelsFor(catalog, [{ provider: p.id, id: "gpt-6.1-sol" }]), sol.thinking);
+		assert.deepEqual(thinkingLevelsFor(catalog, [{ provider: p.id, id: "fixture-wide-thinking" }]), sol.thinking);
 		// 2) 多候选池：并集保留任何候选支持的 xhigh/max
 		const union = thinkingLevelsFor(catalog, [
-			{ provider: p.id, id: "gpt-6.1-sol" },
+			{ provider: p.id, id: "fixture-wide-thinking" },
 			{ provider: p.id, id: "my-private-model" },
 		]);
 		assert.ok(union.includes("xhigh") && union.includes("max"), `并集保留 xhigh/max：${union}`);
@@ -71,7 +72,7 @@ test("子代理思考档位：跟随主会话与主会话一致；多候选池�
 		assert.ok(union.length > oldIntersection.length, "并集比交集多（修复生效）");
 		// 4) 合法降级：并集里选了 xhigh，落到不支持它的模型时 clamp 到 high，不报错
 		assert.equal(models.clampThinking(p.id, "my-private-model", "xhigh"), "high");
-		assert.equal(models.clampThinking(p.id, "gpt-6.1-sol", "xhigh"), "xhigh");
+		assert.equal(models.clampThinking(p.id, "fixture-wide-thinking", "xhigh"), "xhigh");
 	} finally {
 		await customProviders.remove(p.id);
 	}

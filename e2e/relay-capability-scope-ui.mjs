@@ -1,0 +1,158 @@
+/** Browser → real temporary app API → local /models only. No conversation sends. */
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright-core";
+import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
+import { openCompact } from "./model-menu-flow.mjs";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const out = join(root, "artifacts/image-input-review");
+await mkdir(out, { recursive: true });
+const listen = (s) => new Promise((resolve, reject) => s.once("error", reject).listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${s.address().port}`)));
+const portProbe = createServer();
+const base = await listen(portProbe);
+await new Promise((resolve) => portProbe.close(resolve));
+const ids = ["scope-fixture-r61", "scope-fixture-r62", "scope-fixture-exception"];
+const seen = [];
+let refreshed = false;
+const upstream = createServer((req, res) => {
+	seen.push(`${req.method} ${req.url}`);
+	if (req.method !== "GET" || !["/a/v1/models", "/override/models", "/b/models"].includes(req.url)) return res.writeHead(404).end();
+	const rows = ids.map((id, i) => ({ id, ...(req.url === "/override/models" && refreshed && i === 1 ? { input: ["text"], reasoning: false } : {}) }));
+	res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: rows }));
+});
+const url = await listen(upstream);
+const run = makeTempRun("pia-relay-scope-");
+const server = startTempServer({ root, port: Number(new URL(base).port), run });
+const json = async (path, method = "GET", value) => {
+	const res = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
+	assert.ok(res.ok, `${method} ${path}: ${res.status} ${!res.ok ? await res.text() : ""}`);
+	return res.json();
+};
+const snapshot = async (id) => (await json("/api/models/custom")).providers.find((p) => p.id === id);
+const picker = async (id) => (await json("/api/models")).filter((m) => m.provider === id);
+let browser;
+try {
+	for (let i = 0; !(await fetch(`${base}/api/system`).then((r) => r.ok, () => false)); i++) {
+		assert.ok(i < 200, "temporary app failed to boot");
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	await json("/api/settings", "PUT", { onboarded: true });
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, env: browserEnv(run) });
+	const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+	page.setDefaultTimeout(10000);
+	const errors = [];
+	const agentWrites = [];
+	page.on("pageerror", (e) => errors.push(e.message));
+	page.on("request", (req) => { if (/\/api\/agents\/[^/]+$/.test(req.url()) && req.method() !== "GET") agentWrites.push(req.method()); });
+	const response = (method, path, action) => Promise.all([page.waitForResponse((r) => r.request().method() === method && new URL(r.url()).pathname === path), action()]).then(async ([r]) => {
+		assert.ok(r.ok(), `${method} ${path}: ${r.status()} ${!r.ok() ? await r.text() : ""}`);
+		return r.json();
+	});
+	const settings = async () => {
+		await page.goto(`${base}/?settings=models`);
+		const toggle = page.getByTestId("service-list-toggle");
+		await toggle.waitFor();
+		if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+	};
+	const add = async (name, path, api) => {
+		await page.getByTestId("add-service-open").click();
+		await page.getByTestId("add-service-kind").click();
+		await page.getByRole("option", { name: /自定义/ }).click();
+		const form = page.getByTestId("custom-provider-form");
+		await form.getByPlaceholder("例如：我的中转站").fill(name);
+		await form.getByTestId("custom-base-url").fill(url + path);
+		await form.getByRole("combobox", { name: "API 类型" }).selectOption(api);
+		await form.getByRole("checkbox", { name: /无需 Key/ }).check();
+		await form.getByRole("button", { name: "自动获取" }).click();
+		for (const id of ids) await page.getByRole("button", { name: id, exact: true }).click();
+		const saved = await response("POST", "/api/models/custom", () => form.getByRole("button", { name: "保存", exact: true }).click());
+		assert.ok(saved.id);
+		return saved.id;
+	};
+	const open = async (id) => {
+		const detail = page.getByTestId(`relay-detail-${id}`);
+		if (!(await detail.isVisible())) await page.getByTestId(`service-toggle-${id}`).click();
+		const advanced = detail.getByTestId("relay-advanced");
+		if (await advanced.getAttribute("open") === null) await advanced.locator("summary").first().click();
+		return detail;
+	};
+	const choose = async (box, label, option) => {
+		await box.getByRole("button", { name: label, exact: true }).click();
+		await page.getByRole("option", { name: option, exact: true }).click();
+	};
+	await settings();
+	const a = await add("范围测试渠道甲", "/a", "auto");
+	const b = await add("范围测试渠道乙", "/b", "openai-responses");
+	const beforeB = [await snapshot(b), await picker(b)];
+	console.log("PASS new channels created in browser with the same three model IDs");
+	let detail = await open(a);
+	let scope = detail.getByTestId("relay-capability-scope");
+	await detail.getByTestId("relay-url-openai-completions").fill(`${url}/override`);
+	await scope.getByRole("button", { name: "添加范围" }).click();
+	assert.equal(await scope.getByRole("textbox", { name: "范围绑定地址" }).inputValue(), `${url}/override`);
+	await scope.getByRole("textbox", { name: "渠道文档来源" }).fill("本地测试文档");
+	await choose(scope, "适用模型", "全部对话模型（渠道文档保证）");
+	const defaults = scope.getByTestId("relay-scope-defaults");
+	await choose(defaults, "识图", "支持");
+	await choose(defaults, "思考", "支持");
+	await defaults.getByText("思考档位协议值", { exact: true }).click();
+	await defaults.getByRole("textbox", { name: "高档协议值", exact: true }).fill("documented-high");
+	await choose(defaults, "关闭语义", "关闭：仅省略参数");
+	await scope.getByText("模型例外（0）", { exact: true }).click();
+	await scope.getByRole("button", { name: "添加例外" }).click();
+	const exact = scope.getByTestId("relay-scope-exception");
+	await exact.getByRole("textbox", { name: "例外模型 ID" }).fill(ids[2]);
+	await choose(exact, "识图", "不支持");
+	await response("PUT", `/api/models/custom/${a}`, () => detail.getByTestId("relay-advanced-save").click());
+	const saved = await snapshot(a);
+	assert.deepEqual(saved.capabilityScope, { api: "openai-completions", baseUrl: `${url}/override`, source: "本地测试文档", appliesTo: "all-chat", defaults: { vision: true, reasoning: true, levels: { high: "documented-high", off: null } }, exceptions: { [ids[2]]: { vision: false } } });
+	assert.deepEqual(ids.map((id) => saved.models.find((m) => m.id === id).effectiveCapability.vision), [true, true, false]);
+	const agent = await json("/api/agents", "POST", { name: "原档位测试", model: { provider: a, id: ids[1] }, thinking: "high" });
+	assert.equal(agent.thinkingSetting, "high");
+	await settings();
+	detail = await open(a);
+	scope = detail.getByTestId("relay-capability-scope");
+	assert.equal(await scope.getByRole("textbox", { name: "渠道文档来源" }).inputValue(), "本地测试文档");
+	assert.match(await scope.getByRole("button", { name: "适用模型" }).innerText(), /全部对话模型/);
+	await scope.getByTestId("relay-scope-defaults").getByText(/^思考档位协议值/).click();
+	assert.equal(await scope.getByRole("textbox", { name: "高档协议值", exact: true }).inputValue(), "documented-high");
+	await scope.getByText("模型例外（1）", { exact: true }).click();
+	assert.equal(await scope.getByRole("textbox", { name: "例外模型 ID" }).inputValue(), ids[2]);
+	await scope.screenshot({ path: join(out, "stage1-relay-scope.png") });
+	console.log("PASS scope save, API readback and browser reload preserved source, defaults and exact exception");
+	refreshed = true;
+	await detail.getByTestId("relay-fetch").click();
+	await response("PUT", `/api/models/custom/${a}`, () => detail.getByRole("button", { name: "添加新模型并更新已有能力" }).click());
+	assert.equal(seen.filter((s) => s === "GET /override/models").length, 1);
+	const updated = await snapshot(a);
+	assert.deepEqual(updated.capabilityScope, saved.capabilityScope);
+	const changed = updated.models.find((m) => m.id === ids[1]).effectiveCapability;
+	assert.equal(changed.vision, false);
+	assert.equal(changed.visionSource, "/models");
+	assert.equal(changed.reasoning, false);
+	assert.deepEqual([await snapshot(b), await picker(b)], beforeB);
+	console.log("PASS list refresh used saved override URL; incoming evidence updated A, B remained identical");
+	await page.goto(`${base}/?agent=${agent.id}`);
+	const selector = page.getByTestId("model-picker");
+	await selector.getByText(/原档位不可用/).waitFor();
+	const compact = await openCompact(page);
+	await compact.getByText(/已保存的「高」.*设置未修改/).waitFor();
+	assert.equal(await compact.getByRole("slider").count(), 0);
+	assert.doesNotMatch(await compact.innerText(), /降档|降级|将按/);
+	assert.deepEqual(agentWrites, []);
+	assert.equal((await json("/api/agents")).find((x) => x.id === agent.id).thinkingSetting, "high");
+	await compact.screenshot({ path: join(out, "stage1-relay-invalid-thinking.png") });
+	assert.deepEqual(errors, []);
+	assert.ok(seen.every((s) => s.startsWith("GET ") && s.endsWith("/models")), JSON.stringify(seen));
+	console.log("PASS saved invalid thinking shown in agent picker; no selected fallback, no agent write, no inference requests");
+} finally {
+	await browser?.close();
+	await server.stop();
+	await new Promise((resolve) => upstream.close(resolve));
+	await writeFile(join(out, "stage1-relay-browser-server.log"), server.logs());
+	cleanupTempRun(run);
+}

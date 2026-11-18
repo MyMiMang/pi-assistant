@@ -15,12 +15,14 @@ import { assignmentsVersion } from "../skill-assignments.ts";
 import { mcpVersion } from "../mcp.ts";
 import { packagesVersion } from "../pi-packages.ts";
 import { db } from "../db.ts";
-import { type AttachmentInput, prepareAttachments } from "../attachments.ts";
-import { supportsVision } from "../vision.ts";
+import { type AttachmentInput, isImageAttachment, prepareAttachments } from "../attachments.ts";
+import { attachSendIntent, sendIntentOf, type ThinkingIntent } from "../pi-adapter/send-intent.ts";
+import { cleanEndpoint, effectiveRelayModel, scopedProtocol } from "../pi-adapter/relay-capabilities.ts";
+import { effectiveApi, effectiveBaseUrl } from "../pi-adapter/relay-protocols.ts";
 import { isStopCommand } from "../interject.ts";
 import { insertMessage, updateMessage } from "../messages.ts";
 import { cliServiceFor, cliModelError, resolveCliModel } from "../cli-services.ts";
-import { defaultModel, defaultThinking, models } from "../models.ts";
+import { customProviders, defaultModel, defaultModelSetting, defaultThinking, defaultThinkingSetting, models } from "../models.ts";
 import { composeQuotedInput } from "../replies.ts";
 import { abortSession, type AgentSession, type SkillInvocationInput, compactSession, triggerHidden, applyModelSettings, disposeSession, injectContext, isSessionBusy, recallQueuedSteer, lastAssistantText, modelErrorMessage, promptSession, skillCommand, sessionFileOf, sessionStats, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
 import { attachFastMode } from "../pi-adapter/fast-mode.ts";
@@ -55,9 +57,47 @@ export class AgentRuntime {
 		return m ? models.clampThinking(m.provider, m.id, a.thinking ?? defaultThinking()) : "off";
 	}
 
+	/** 旧目录猜出的档位不再有效时拦住本次发送；保留原选择，不替用户换档。 */
+	private outdatedThinkingError() {
+		const a = getAgent(this.id);
+		if (!a?.thinking_explicit || !a.thinking) return;
+		const pick = this.modelFor(a);
+		if (!pick) return;
+		const provider = customProviders?.list().find((p) => p.id === pick.provider);
+		const model = provider?.models.find((m) => m.id === pick.id);
+		const selected = a.thinking;
+		if (!model?.thinkingLevelSource || model.thinkingLevelSource === "user" || typeof model.thinkingLevelMap?.[selected] !== "string" || models.supportedThinking(pick.provider, pick.id).includes(selected)) return;
+		return `原选的「${selected}」思考档仅来自旧目录推导，当前渠道未确认。请重新选择思考档位；本次未发送。`;
+	}
+
+	private setSendThinking(s: AgentSession, a: AgentRow) {
+		const manual = a.thinking && a.thinking_explicit;
+		const inherited = defaultThinkingSetting();
+		const intent: ThinkingIntent = manual && a.thinking ? { kind: a.thinking === "off" ? "off" : "manual", level: a.thinking }
+			: !a.thinking && inherited ? { kind: "default", level: inherited } : { kind: "unset" };
+		sendIntentOf(s)?.setThinking(intent);
+	}
+
+	private configuredModelFor(a: AgentRow) {
+		return a.model_provider && a.model_id ? { provider: a.model_provider, id: a.model_id } : null;
+	}
+
 	modelFor(a: AgentRow) {
-		if (a.model_provider && a.model_id && (cliServiceFor(a.model_provider) || models.getModel(a.model_provider, a.model_id))) return { provider: a.model_provider, id: a.model_id };
-		return defaultModel();
+		const pick = this.configuredModelFor(a);
+		return pick && (cliServiceFor(pick.provider) || models.getModel(pick.provider, pick.id)) ? pick : defaultModel();
+	}
+
+	/** 原选失效时，只有普通文本可以使用原有的默认模型回落。 */
+	private selectionGuard(files?: AttachmentInput[]) {
+		const active = files?.some(isImageAttachment);
+		const retained = () => !!(this.session && sendIntentOf(this.session)?.hasRetainedImages());
+		const hadRetained = retained();
+		return () => {
+			const a = getAgent(this.id);
+			if (!a || !(active || hadRetained || retained() || (a.thinking && a.thinking_explicit))) return;
+			const pick = this.configuredModelFor(a) ?? defaultModelSetting();
+			if (pick && !cliServiceFor(pick.provider) && !models.getModel(pick.provider, pick.id)) return "原选模型已停用或移除，请重新选择模型；本次未发送。";
+		};
 	}
 
 	async resolveModel(a: AgentRow) {
@@ -107,7 +147,11 @@ export class AgentRuntime {
 		const chat = room ? null : chatPlanRules(this.conversationId);
 		const key = `${a.name}|${a.persona}|room:${room?.key ?? "-"}|plan:${chat?.key ?? "-"}|desk:${desk}|pc:${computerFor(this.id)}|skills:${skillsVersion()}|assign:${assignmentsVersion()}|mcp:${mcpVersion()}|pkg:${packagesVersion()}|host:${hostKey(this.id)}|mail:${accountsFor(this.id).map((a) => a.id).join(",")}|wx:${wechatAllowed(this.id)}|img:${imageKey(this.id)}`;
 		if (this.session && this.modelKey === key) {
-			if (!isSessionBusy(this.session)) await applyModelSettings(this.session, models, model, thinking).catch((e) => console.warn(`[model] ${e instanceof Error ? e.message : e}`));
+			if (!isSessionBusy(this.session)) {
+				const s = this.session;
+				await applyModelSettings(s, models, model, thinking).catch((e) => console.warn(`[model] ${e instanceof Error ? e.message : e}`));
+				if (!isSessionBusy(s)) this.setSendThinking(s, a);
+			}
 			return this.session;
 		}
 		if (this.session && isSessionBusy(this.session)) return this.session; // 运行中先不切换
@@ -128,6 +172,16 @@ export class AgentRuntime {
 			});
 			// 请求级 Fast：每次请求重新读这个助理的开关（公开 hook，不重建会话；与 thinking / 模型无关）
 			const fast = attachFastMode(session, () => agentFast(this.id));
+			const intent = attachSendIntent(session, (m) => {
+				const p = scopedProtocol(m.api) && customProviders?.list().find((p) => p.id === m.provider);
+				if (!p) return;
+				const row = p.models.find((x) => x.id === m.id && effectiveApi(p, x) === m.api && cleanEndpoint(effectiveBaseUrl(p, x)) === cleanEndpoint(m.baseUrl));
+				return row ? effectiveRelayModel(p, row).effectiveCapability ?? {} : {};
+			}, (m) => {
+				const current = models.getModel(m.provider, m.id);
+				return !!current && current.api === m.api && cleanEndpoint(current.baseUrl) === cleanEndpoint(m.baseUrl);
+			});
+			this.setSendThinking(session, a);
 			const file = sessionFileOf(session);
 			if (file && file !== getConversation(this.conversationId)?.session_file) setConversationSession(this.conversationId, file);
 			const unUser = subscribeSession(session, (e) => {
@@ -138,6 +192,7 @@ export class AgentRuntime {
 			});
 			const unBind = bindSession(session, this.id, this.conversationId, null, (aborted) => {
 				if (isSessionBusy(session)) return;
+				intent.settled();
 				this.dropSteering(aborted ? "stopped" : "delivered");
 				settleAgent(this.id);
 				if (aborted) cancelAdvances(this.id, this.conversationId);
@@ -157,12 +212,22 @@ export class AgentRuntime {
 	}
 
 	/** 把附件整理成模型输入（看图模型收到图片本身；文档附上文字摘录） */
-	private async withAttachments(s: NonNullable<Awaited<ReturnType<typeof this.ensure>>>, text: string, files?: AttachmentInput[]) {
-		if (!files?.length) return { text, images: undefined };
-		// 图片只跟随当前对话模型：能看图就把图片发给它；不能看图就明确提示换模型，不静默改用别的模型。
-		const vision = supportsVision(this.modelFor(getAgent(this.id)!));
-		const p = await prepareAttachments(files, { vision });
-		return { text: [text, p.text].filter((x) => x.trim()).join("\n\n"), images: p.images };
+	private async withAttachments(s: AgentSession, text: string, files?: AttachmentInput[], onUnsent?: () => void) {
+		const model = s.model;
+		const intent = sendIntentOf(s);
+		intent?.validate(model);
+		const once = intent?.strict(model) ?? false;
+		if (!files?.length) return { text, images: undefined, once };
+		const active = files.some(isImageAttachment);
+		const capability = model && intent?.capability(model);
+		const unknown = !!model && scopedProtocol(model.api) && !!capability && capability.vision === undefined;
+		const vision = !!model && (intent?.knownVision(model) || unknown);
+		if (active && !vision) throw new Error(capability?.vision === false ? "当前会话模型不支持图片输入；本次未送达。" : "当前会话模型未声明可用的图片输入；本次未送达。");
+		const p = await prepareAttachments(files, { vision, requireImages: active });
+		if (active && (s !== this.session || model !== s.model)) throw new Error("会话模型已变化；本次图片未送达，请重新发送。");
+		const body = [text, p.text].filter((x) => x.trim()).join("\n\n");
+		const staged = active && model ? intent?.stage(body, { images: p.images, model, unknown, onUnsent }) : undefined;
+		return { text: staged?.text ?? body, images: unknown ? undefined : p.images, once: once || (active && unknown), cancel: staged?.cancel };
 	}
 
 	/** 已经发出、还没送进模型上下文的插话（用户消息 id，按顺序） */
@@ -197,9 +262,13 @@ export class AgentRuntime {
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "assistant", content: "好的，已经停下了。", status: "done", meta: { system: "stopped" } });
 			return "stopped";
 		}
-		const s = await this.ensure();
-		if (!s) {
-			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: this.unavailableModel(), status: "error", meta: { action: "open-models" } });
+		const selectionError = this.selectionGuard(files);
+		const blocked = selectionError() ?? (this.busy ? undefined : this.outdatedThinkingError());
+		const s = blocked ? null : await this.ensure();
+		const error = blocked ?? selectionError();
+		if (!s || error) {
+			if (error && opts.messageId) updateMessage(opts.messageId, { meta: { delivery: "failed" } });
+			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: error ?? this.unavailableModel(), status: "error", meta: { action: "open-models" } });
 			return "none";
 		}
 		const steer = isSessionBusy(s);
@@ -221,16 +290,35 @@ export class AgentRuntime {
 				return "none";
 			}
 		}
+		const unsent = (reason: string) => {
+			if (opts.messageId) {
+				this.steering = this.steering.filter((x) => x !== opts.messageId);
+				this.steerInputs.delete(opts.messageId);
+				this.pendingUserEntries = this.pendingUserEntries.filter((x) => x !== opts.messageId);
+				updateMessage(opts.messageId, { meta: { delivery: "failed" } });
+			}
+			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `本次未送达：${reason}`, status: "error" });
+		};
+		const input = await this.withAttachments(s, fullText, files, () => unsent("会话结束前未能送出图片。请重新发送。")).catch((e: unknown) => { unsent(modelErrorMessage(e)); });
+		if (!input) return "none";
+		const changed = selectionError();
+		if (changed) {
+			if ("cancel" in input) input.cancel?.();
+			unsent(changed);
+			return "none";
+		}
 		setAgentStatus(this.id, "running");
-		const input = await this.withAttachments(s, fullText, files).catch(() => ({ text: fullText, images: undefined }));
-		if (steer && opts.messageId) {
+		const queued = isSessionBusy(s);
+		if (queued && opts.messageId) {
 			this.steering.push(opts.messageId);
 			this.steerInputs.set(opts.messageId, input.text);
 			updateMessage(opts.messageId, { meta: { delivery: "queued" } });
 		}
 		// 记入待映射队列：Pi 落盘时按同一顺序回填 meta.piEntryId（插话要等到工具边界才落盘）
 		if (opts.messageId) this.pendingUserEntries.push(opts.messageId);
-		promptSession(s, input.text, input.images, skillCmd).catch((e: unknown) => {
+		promptSession(s, input.text, input.images, skillCmd, input.once).catch((e: unknown) => {
+			if ("cancel" in input) input.cancel?.();
+			if (opts.messageId) updateMessage(opts.messageId, { meta: { delivery: "failed" } });
 			if (opts.messageId) {
 				this.steering = this.steering.filter((x) => x !== opts.messageId);
 				this.steerInputs.delete(opts.messageId);
@@ -240,7 +328,7 @@ export class AgentRuntime {
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: `出错了：${error}`, status: "error", meta: { kind: "model-error", error } });
 			if (!isSessionBusy(s)) settleAgent(this.id);
 		});
-		return steer ? "steered" : "started";
+		return queued ? "steered" : "started";
 	}
 
 	/**
@@ -252,6 +340,7 @@ export class AgentRuntime {
 		const mine = this.steerInputs.get(mid);
 		if (!s || !mine || !this.steering.includes(mid)) return false;
 		if (!recallQueuedSteer(s, mine)) return false;
+		sendIntentOf(s)?.unstage(mine);
 		this.steering = this.steering.filter((x) => x !== mid);
 		this.pendingUserEntries = this.pendingUserEntries.filter((x) => x !== mid);
 		this.steerInputs.delete(mid);
@@ -280,10 +369,22 @@ export class AgentRuntime {
 	 * 返回是否被中止、出错信息、本轮最后的回复文字、用掉的 token。
 	 */
 	async turn(text: string, files?: AttachmentInput[], opts: { onToolStep?: (done: number) => void } = {}): Promise<{ ok: boolean; aborted: boolean; error?: string; text: string; tokens: number }> {
-		const s = await this.ensure();
-		if (!s) {
-			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: this.unavailableModel(), status: "error", meta: { action: "open-models" } });
-			return { ok: false, aborted: false, error: this.unavailableModel(), text: "", tokens: 0 };
+		const selectionError = this.selectionGuard(files);
+		const blocked = selectionError() ?? this.outdatedThinkingError();
+		const s = blocked ? null : await this.ensure();
+		const errorBeforeSend = blocked ?? selectionError();
+		if (!s || errorBeforeSend) {
+			const error = errorBeforeSend ?? this.unavailableModel();
+			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: error, status: "error", meta: { action: "open-models" } });
+			return { ok: false, aborted: false, error, text: "", tokens: 0 };
+		}
+		let unsent = false;
+		const input = await this.withAttachments(s, text, files, () => { unsent = true; }).catch((e: unknown) => modelErrorMessage(e));
+		if (typeof input === "string") return { ok: false, aborted: false, error: `本次未送达：${input}`, text: "", tokens: 0 };
+		const changed = selectionError();
+		if (changed) {
+			if ("cancel" in input) input.cancel?.();
+			return { ok: false, aborted: false, error: changed, text: "", tokens: 0 };
 		}
 		const before = sessionStats(s).session?.tokens.total ?? 0;
 		const startedAt = Date.now();
@@ -292,25 +393,26 @@ export class AgentRuntime {
 		let toolSteps = 0;
 		const unStep = opts.onToolStep ? subscribeSession(s, (e) => e.type === "tool_end" && opts.onToolStep!(++toolSteps)) : undefined;
 		let abortedFlag = false;
-		const w = (a: boolean) => void (abortedFlag = abortedFlag || a);
+		let resolveDone!: () => void;
+		const done = new Promise<void>((resolve) => { resolveDone = resolve; });
+		const w = (a: boolean) => { abortedFlag ||= a; resolveDone(); };
 		this.waiters.add(w);
-		const done = new Promise<void>((resolve) => {
-			const v = () => (this.waiters.delete(v), resolve());
-			this.waiters.add(v);
-		});
 		let thrown: string | undefined;
-		const input = await this.withAttachments(s, text, files).catch(() => ({ text, images: undefined }));
-		await promptSession(s, input.text, input.images).catch((e: unknown) => {
-			thrown = e instanceof Error ? e.message : String(e);
-		});
-		// prompt 正常返回时这一轮已结束；仍在跑（排在后面）就等 settled
-		if (isSessionBusy(s)) await done;
-		unStep?.();
-		this.waiters.clear();
+		try {
+			await promptSession(s, input.text, input.images, undefined, input.once).catch((e: unknown) => {
+				if ("cancel" in input) input.cancel?.();
+				thrown = e instanceof Error ? e.message : String(e);
+			});
+			// prompt 正常返回时这一轮已结束；仍在跑（排在后面）就等 settled
+			if (isSessionBusy(s)) await done;
+		} finally {
+			unStep?.();
+			this.waiters.delete(w);
+		}
 		const aborted = abortedFlag;
 		if (!isSessionBusy(s)) settleAgent(this.id);
 		const err = db.prepare("SELECT meta FROM messages WHERE conversation_id = ? AND role = 'assistant' AND status = 'error' AND created_at >= ? ORDER BY rowid DESC LIMIT 1").get(this.conversationId, startedAt) as { meta: string } | undefined;
-		const error = thrown ?? (err ? String(JSON.parse(err.meta).error ?? "模型请求失败") : undefined);
+		const error = thrown ?? (unsent ? "会话结束前未能送出图片；请重新发送。" : undefined) ?? (err ? String(JSON.parse(err.meta).error ?? "模型请求失败") : undefined);
 		return { ok: !error && !aborted, aborted, error, text: lastAssistantText(s), tokens: Math.max(0, (sessionStats(s).session?.tokens.total ?? 0) - before) };
 	}
 

@@ -17,6 +17,7 @@
  */
 
 import type { ClassifierModelInfo, ModelInfo } from "./pi-adapter/index.ts";
+import { effectiveRelayModel } from "./pi-adapter/relay-capabilities.ts";
 import type { CustomProviderMeta } from "./pi-adapter/custom-providers.ts";
 
 /** 一个模型能做的事；`vision` 属于 chat 能力（不是独立服务）。`asr` = 语音转文字（语音输入），与 chat / vision 互不蕴含。 */
@@ -266,10 +267,12 @@ export function buildRegistry(input: RegistryInput): RegistryProvider[] {
 		p.baseUrl ??= c.baseUrl;
 		// 真正注册进 Pi 的 classifier（显式声明 + 自动识别）；用户只标了能力但没注册的要标「未确认」。
 		const registeredClassifiers = new Set([...(c.classifiers ?? []), ...(c.discoveredClassifiers ?? [])].map((x) => x.modelId));
-		for (const m of c.models) {
+		for (const raw of c.models) {
+			const m = effectiveRelayModel(c, raw);
 			// 显式声明能力优先；否则按 input 元数据推导。inputAuto 表示是从 models.dev 猜的 → 未确认。
-			const inferred: ModelCapability[] = m.inputAuto && m.input?.includes("image") ? ["vision"] : [];
-			const capabilities = m.capabilities?.length ? dedupe(m.capabilities) : chatCapabilities(m.input);
+			const inferred: ModelCapability[] = !m.effectiveCapability && m.inputAuto && m.input?.includes("image") ? ["vision"] : [];
+			const declared = m.capabilities?.length ? dedupe(m.capabilities) : chatCapabilities(m.input);
+			const capabilities = m.effectiveCapability ? dedupe([...declared.filter((cap) => cap !== "vision"), ...(m.effectiveCapability.vision ? ["vision" as const] : [])]) : declared;
 			// 标了 classifier 但没真正注册进 Pi（协议无法确定 / 被用户改回 chat）→ 标未确认，不假装可调用。
 			if (capabilities.includes("classifier") && !registeredClassifiers.has(m.id)) inferred.push("classifier");
 			put(p, {

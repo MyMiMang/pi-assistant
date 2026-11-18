@@ -16,7 +16,7 @@ import { createPortal } from "react-dom";
 import { api } from "../api";
 import { COMPOSER_LABEL } from "../composer";
 import { dedupeGroup, frequentModels, groupModelsByProvider, pickerPanelNext, pickKey, rankPicks, searchModels, type MenuPick, type MenuPicks, type PickerPanelEvent } from "../modelMenu";
-import { THINKING_DESC, THINKING_LABEL } from "../thinking-slider";
+import { agentRelayThinkingChoice, THINKING_DESC, THINKING_LABEL } from "../thinking-slider";
 import { useStore } from "../store";
 import type { Provider } from "../types";
 import { LatestWrite, SerialWriteQueue } from "../latest-write";
@@ -36,14 +36,11 @@ export interface ModelEntry {
 	name: string;
 	reasoning?: boolean;
 	thinking?: string[];
+	effectiveCapability?: unknown;
 	providerName?: string;
-	/** Pi 模型元数据里的输入模态（`input`）；含 `image` 才算能看图（主题设计等按它判视觉）。 */
 	input?: string[];
-	/** 菜单里模型名下面的一行说明（组队选模型的理由等） */
 	note?: string;
-	/** 模型名右侧的小标签（价格档等） */
 	badge?: string;
-	/** 推荐（组队排序里的 ★） */
 	star?: boolean;
 	/** 这个模型的 Fast 能力（服务端按实际协议算；不按模型名猜） */
 	fast?: { capability: "supported" | "requestable-unverified" | "unsupported"; reason?: string };
@@ -226,7 +223,7 @@ async function patchAgent(agentId: string, body: Record<string, unknown>) {
 		const a = await api<Record<string, unknown>>(`/api/agents/${agentId}`, { method: "PATCH", json: body });
 		// 响应的 model/thinking 是有效值，model_provider/id 和 thinkingSetting 是存储值。
 		// 这些字段必须一起同步，但不能用整份响应覆盖并发修改的 Fast 等无关字段。
-		const fields = "model" in body ? ["model", "model_provider", "model_id", "thinking", "thinkingSetting"] : ["thinking", "thinkingSetting"];
+		const fields = "model" in body ? ["model", "model_provider", "model_id", "thinking", "thinkingSetting", "thinkingSource", "thinkingDefault"] : ["thinking", "thinkingSetting", "thinkingSource", "thinkingDefault"];
 		const changed = Object.fromEntries(fields.map((k) => [k, a[k]]));
 		useStore.setState((s) => ({ agents: s.agents.map((x) => (x.id === agentId ? { ...x, ...changed } : x)) }));
 	});
@@ -293,12 +290,11 @@ async function patchAgentFast(agentId: string, next: boolean) {
 	});
 }
 
-// ------------------------------------------------------------------ 共用的下拉菜单
 export interface ThinkingChoice {
 	levels: string[];
 	current: string | null;
 	effective?: string | null;
-	followLabel?: string;
+	followLabel?: string; invalidSetting?: string; serviceDefault?: boolean;
 	onPick: (level: string | null) => void;
 }
 
@@ -308,7 +304,7 @@ export interface ThinkingChoice {
  * 弹层内容是离散滑块（`ThinkingSlider`），保留原 `testid` 与 `onPick(level | null)` 口径。
  * effective：跟随 / 降级时实际会运行的档位（子代理传 resolvedThinking）；modelName：弹层右上角短模型名。
  */
-export function ThinkingButton({ testid, levels, current, effective, followLabel, onPick, text, title, ariaLabel, buttonClass, placement = "down", modelName, loading, error, onRetry, fast, disabled }: { testid: string; levels: string[]; current: string | null; effective?: string | null; followLabel?: string; onPick: (level: string | null) => void; text?: string; title?: string; ariaLabel?: string; buttonClass?: string; placement?: "up" | "down"; modelName?: string; disabled?: boolean; /** 模型目录正在加载（还没拿到目录时不要画「不支持」和假档位） */ loading?: boolean; /** 模型目录这一次加载失败（给一句短说明和重试，不冒充「不支持」） */ error?: boolean; /** 重试加载模型目录（复用 useConfiguredModels 的 reload） */ onRetry?: () => void; /** 左上角闪电（请求级 Fast）；不传 = 这个上下文不能设（显示不可用原因） */ fast?: FastControl }) {
+export function ThinkingButton({ testid, levels, current, effective, invalidSetting, serviceDefault, followLabel, onPick, text, title, ariaLabel, buttonClass, placement = "down", modelName, loading, error, onRetry, fast, disabled }: { testid: string; levels: string[]; current: string | null; effective?: string | null; invalidSetting?: string; serviceDefault?: boolean; followLabel?: string; onPick: (level: string | null) => void; text?: string; title?: string; ariaLabel?: string; buttonClass?: string; placement?: "up" | "down"; modelName?: string; disabled?: boolean; /** 模型目录正在加载（还没拿到目录时不要画「不支持」和假档位） */ loading?: boolean; /** 模型目录这一次加载失败（给一句短说明和重试，不冒充「不支持」） */ error?: boolean; /** 重试加载模型目录（复用 useConfiguredModels 的 reload） */ onRetry?: () => void; /** 左上角闪电（请求级 Fast）；不传 = 这个上下文不能设（显示不可用原因） */ fast?: FastControl }) {
 	const btnRef = useRef<HTMLButtonElement>(null);
 	const openedByKeyboard = useRef(false);
 	// Esc 关闭后焦点回到芯片；点外部关闭不抢焦点
@@ -345,7 +341,7 @@ export function ThinkingButton({ testid, levels, current, effective, followLabel
 									<p className="pa-think-note">加载完会显示这个模型支持的档位。</p>
 								</div>
 							) : (
-								<ThinkingSlider testid={testid} levels={levels} current={current} effective={effective} followLabel={followLabel} modelName={modelName} autoFocus={openedByKeyboard.current} fast={fast} onPick={(l) => { setOpen(false); onPick(l); }} />
+								<ThinkingSlider testid={testid} levels={levels} current={current} effective={effective} invalidSetting={invalidSetting} serviceDefault={serviceDefault} followLabel={followLabel} modelName={modelName} autoFocus={openedByKeyboard.current} fast={fast} onPick={(l) => { setOpen(false); onPick(l); }} />
 							)}
 						</div>
 					</div>,
@@ -441,10 +437,10 @@ export function ModelMenu({ id, models, providers, value, thinking, fast, picks,
 				<input ref={searchRef} autoFocus={!inline} className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索模型或服务…" value={q} onChange={(e) => setQ(e.target.value)} data-testid={`${id}-search`} />
 			</label>
 			{header}
-			{thinking && (thinking.levels.length > 1 || !!fast) && (
+			{thinking && (thinking.levels.length > 0 || thinking.serviceDefault || thinking.invalidSetting || !!fast) && (
 				<div className="mb-1 rounded-lg border border-line px-2.5 py-1.5" data-testid={`${id}-thinking`}>
 					{/* 与输入栏 / 子代理同一个离散滑块；头部由滑块自己画（当前档 + 实际模型名），外面不再重复一行「思考强度」 */}
-					<ThinkingSlider testid="thinking" levels={thinking.levels} current={thinking.current} effective={thinking.effective} followLabel={thinking.followLabel} modelName={pickedName} fast={fast} onPick={thinking.onPick} />
+					<ThinkingSlider testid="thinking" levels={thinking.levels} current={thinking.current} effective={thinking.effective} invalidSetting={thinking.invalidSetting} serviceDefault={thinking.serviceDefault} followLabel={thinking.followLabel} modelName={pickedName} fast={fast} onPick={thinking.onPick} />
 				</div>
 			)}
 			<div className={cx("min-h-0 flex-1 overflow-y-auto", inline && "max-h-72 overscroll-contain")} data-testid={inline ? `${id}-scroll` : undefined}>
@@ -566,7 +562,7 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 				testid="thinking"
 				levels={thinking.levels}
 				current={thinking.current}
-				effective={thinking.effective}
+				effective={thinking.effective} invalidSetting={thinking.invalidSetting} serviceDefault={thinking.serviceDefault}
 				followLabel={thinking.followLabel}
 				modelName={modelName}
 				// 弹层：进完整目录；就地面板：目录就在下面，直接把焦点放到搜索框
@@ -604,7 +600,7 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 			groupByProvider={groupByProvider}
 			panelRef={menuRef}
 			panelStyle={style}
-			header={header?.(() => setOpen(false))}
+			header={!twoLevel ? header?.(() => applyPanel("close")) : undefined}
 			loading={loading}
 			error={error}
 			onRetry={onRetry}
@@ -643,7 +639,7 @@ export function ModelPickerButton({ testid, id = testid, models, providers, valu
 				createPortal(
 					twoLevel && layer === "compact" ? (
 						<div ref={menuRef} style={style} className="pa-pop pa-compact-pop rounded-xl border border-line bg-card shadow-lg" data-testid={`${testid}-compact`}>
-							{slider(false)}
+							{slider(false)}{header && <div className="flex justify-end px-3 pb-3">{header(() => applyPanel("close"))}</div>}
 						</div>
 					) : (
 						list
@@ -790,7 +786,7 @@ function useRoomy(ref: RefObject<HTMLElement | null>, enabled: boolean) {
 
 // ------------------------------------------------------------------ 单聊输入栏：一个按钮同时管模型和思考强度
 /** layout="auto"（助理设置 › 模型）：地方够就把弹层内容直接铺开，窄 / 矮时自动退回输入框同款按钮 */
-export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, allowThinkingFollow = false, placement, layout = "button" }: { agentId: string; hideTextInNarrow?: boolean; buttonClass?: string; allowThinkingFollow?: boolean; placement?: "up" | "down"; layout?: "button" | "auto" }) {
+export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, allowThinkingFollow = false, placement, layout = "button", menuHeader }: { agentId: string; menuHeader?: ModelPickerButtonProps["header"]; hideTextInNarrow?: boolean; buttonClass?: string; allowThinkingFollow?: boolean; placement?: "up" | "down"; layout?: "button" | "auto" }) {
 	const agent = useStore((s) => s.agents.find((a) => a.id === agentId));
 	const boxRef = useRef<HTMLDivElement>(null);
 	const roomy = useRoomy(boxRef, layout === "auto" && !!agent);
@@ -823,13 +819,16 @@ export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, all
 		}).finally(() => { if (modelScope.current === gen) setModelPending(false); });
 	};
 	if (!agent) return null;
-	const cur = agent.model;
-	const entry = d?.models.find((m) => m.provider === cur?.provider && m.id === cur?.id);
+	const original = agent.model_provider && agent.model_id ? { provider: agent.model_provider, id: agent.model_id } : null;
+	const cur = original ?? agent.model;
+	const entry = d.models.find((m) => m.provider === cur?.provider && m.id === cur?.id);
+	const unavailable = original && !entry && d.status === "ready" ? `${original.id} 已不可用，请重新选择` : undefined;
 	const levels = entry?.thinking ?? [];
+	const scoped = !!entry?.effectiveCapability;
+	const relay = scoped ? agentRelayThinkingChoice(agent, levels) : undefined;
 	const curThinking = agent.thinking && levels.includes(agent.thinking) ? agent.thinking : levels[0];
-	const reasoning = levels.length > 1;
-	const text = `${entry?.name ?? cur?.id ?? "选择模型"}${reasoning ? ` · ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}`;
-	// 请求级 Fast：按这个助理的开关 + 当前实际模型的协议能力；保存中禁重复、失败回滚并给原因
+	const thinkingLabel = relay?.label ?? (curThinking && levels.length > 1 ? THINKING_LABEL[curThinking] ?? curThinking : "");
+	const text = unavailable ? `已不可用 · ${original?.id}` : `${entry?.name ?? cur?.id ?? "选择模型"}${thinkingLabel ? ` · ${thinkingLabel}` : ""}`;
 	const fastCap = entry?.fast ?? { capability: "unsupported" as const, reason: "当前接口暂未接入 Fast" };
 	const fast: FastControl = {
 		on: agent.fast === true,
@@ -849,7 +848,7 @@ export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, all
 				.finally(() => { if (scope.current === s) setFastPending(false); });
 		},
 	};
-	const thinking: ThinkingChoice = { levels, current: allowThinkingFollow ? agent.thinkingSetting ?? null : curThinking ?? "", effective: curThinking, followLabel: allowThinkingFollow ? "跟随默认" : undefined, onPick: (l) => saveModel({ thinking: l }) };
+	const thinking: ThinkingChoice = { levels, current: scoped ? agent.thinkingSource === "explicit" ? agent.thinkingSetting ?? null : null : allowThinkingFollow ? agent.thinkingSetting ?? null : curThinking ?? "", effective: scoped ? relay?.effective : curThinking, invalidSetting: relay?.invalidSetting, serviceDefault: relay?.serviceDefault, followLabel: scoped || allowThinkingFollow ? "跟随默认" : undefined, onPick: (l) => saveModel({ thinking: l }) };
 	return (
 		<div ref={boxRef} className="min-w-0 space-y-2" data-testid="agent-model-settings" data-layout={roomy ? "inline" : "button"} aria-busy={modelPending || undefined}>
 		<ModelPickerButton
@@ -859,22 +858,22 @@ export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, all
 			models={d?.models ?? []}
 			providers={d?.providers ?? []}
 			value={cur ?? null}
-			thinking={thinking}
-			fast={fast}
+			thinking={unavailable ? undefined : thinking}
+			fast={unavailable ? undefined : fast}
 			compact
 			picks={picks}
 			onPick={(m) => saveModel({ model: { provider: m.provider, id: m.id } }, m)}
 			text={text}
-			hideTextInNarrow={hideTextInNarrow}
+			hideTextInNarrow={!unavailable && hideTextInNarrow}
 			loading={d.loading}
 			error={d.error}
 			onRetry={d.reload}
 			onOpen={d.reload}
 			buttonClass={buttonClass ?? "max-w-[220px] max-sm:max-w-[120px]"}
-			placement={placement}
+			placement={placement} header={menuHeader}
 			disabled={modelPending}
-			title="选择这个助理用的模型和思考强度"
-			ariaLabel={`模型：${entry?.name ?? cur?.id ?? "未选择"}${reasoning ? `，思考强度 ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}`}
+			title={unavailable ?? "选择这个助理用的模型和思考强度"}
+			ariaLabel={`模型：${unavailable ?? `${entry?.name ?? cur?.id ?? "未选择"}${thinkingLabel ? `，思考强度 ${thinkingLabel}` : ""}`}`}
 		/>
 		{modelPending && <span className="block text-xs text-mut" role="status">保存中…</span>}
 		{modelError && <p className="mt-1 max-w-[340px] whitespace-normal break-words text-xs text-red-600 dark:text-red-400" role="alert" data-testid="model-save-error">{modelError}</p>}

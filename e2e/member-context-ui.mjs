@@ -8,7 +8,7 @@ import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 import { stableShot } from "./fixtures/stable-shot.mjs";
-import { infoTab } from "./fixtures/info-pane.mjs";
+import { infoTab, openInfoPane } from "./fixtures/info-pane.mjs";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-member-context-");
 const port = await new Promise((resolve) => { const s = createServer().listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => resolve(p)); }); });
@@ -58,7 +58,7 @@ try {
 	await page.goto(`${base}/?agent=${a.id}`);
 	await page.getByTestId("context-ring").waitFor();
 	// 详情开关会持久化；只在未展开时打开。
-	if (!await page.getByTestId("info-tabs").isVisible()) await page.getByRole("button", { name: "信息面板", exact: true }).click();
+	await openInfoPane(page);
 	await page.getByTestId("info-tabs").waitFor();
 	await infoTab(page, "models");
 	await section.getByText("上下文", { exact: true }).first().waitFor();

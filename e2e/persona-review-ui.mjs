@@ -9,7 +9,7 @@ import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 import { stableShot } from "./fixtures/stable-shot.mjs";
-import { infoTab, agentProfileSave, PERSONA_PLACEHOLDER } from "./fixtures/info-pane.mjs";
+import { infoPane, openInfoPane, infoTab, agentProfileSave, PERSONA_PLACEHOLDER } from "./fixtures/info-pane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-persona-review-");
@@ -51,7 +51,7 @@ try {
 	page.setDefaultTimeout(10000);
 	const errors = [];
 	page.on("pageerror", (e) => errors.push(e.message));
-	const pane = page.locator(".pa-pane-wrap");
+	const pane = infoPane(page);
 	const profile = page.getByTestId("agent-profile");
 	const persona = profile.getByPlaceholder(PERSONA_PLACEHOLDER);
 	const start = profile.getByTestId("persona-review-start");
@@ -60,8 +60,7 @@ try {
 	const fulfill = (route, data, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
 	const openProfile = async (id) => {
 		await page.goto(`${base}/?agent=${id}`);
-		await page.getByRole("button", { name: "信息面板", exact: true }).waitFor();
-		if (!await page.getByTestId("info-tabs").isVisible()) await page.getByRole("button", { name: "信息面板", exact: true }).click();
+		await openInfoPane(page);
 		await infoTab(page, "profile");
 		await persona.waitFor();
 	};

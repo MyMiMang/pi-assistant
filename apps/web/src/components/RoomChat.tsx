@@ -1,7 +1,9 @@
 import { setComposerDraft, useComposerDrafts } from "../composerDrafts";
 import { SubagentTasks } from "./Subagents";
 import { RoomWorkButtons } from "./RoomWork";
-import { ArrowUp, AtSign, Crown, Loader2, PanelRight, Plus, Settings2, Square, Trash2, Users } from "lucide-react";
+import { openAgentDetails } from "./InfoPane";
+import { WorkspaceButton } from "./WorkspaceStart";
+import { ArrowUp, AtSign, Crown, Loader2, Plus, Settings2, Square, Trash2, Users } from "lucide-react";
 import { RoomCost } from "./Usage";
 import { RoomMembers } from "./MemberStatus"; import { JumpToLatest } from "./JumpToLatest";
 import { pendingCardOf } from "../member-status";
@@ -46,7 +48,7 @@ export function StackedAvatars({ room, size = 22, max = 3 }: { room: Room; size?
 const STATUS = (reason: string) => (reason === "followup" ? "总结中" : "思考中");
 
 export default function RoomChat({ roomId }: { roomId: string }) {
-	const { rooms, agents, roomMsgs, roomWindow, info, set } = useStore();
+	const { rooms, agents, roomMsgs, roomWindow } = useStore();
 	const room = rooms.find((r) => r.id === roomId);
 	const list = roomMsgs[roomId] ?? [];
 	const liveAgent = rooms.find((r) => r.id === roomId)?.state.current?.agentId ?? null;
@@ -114,10 +116,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 			setOlder("error");
 		}
 	};
-	const openMember = (agentId: string) => {
-		if (!agents.some((a) => a.id === agentId)) return;
-		set({ paneAgent: agentId, info: true, infoTab: "overview" });
-	};
+	const openMember = (id: string) => openAgentDetails(id);
 	return (
 		<div
 			className="relative flex h-full min-h-0 flex-col"
@@ -150,12 +149,8 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 						<Settings2 className="pa-ic" />
 						<span className="max-sm:hidden">群设置</span>
 					</button>
-					{useStore.getState().paneAgent && (
-						<button className={cx("pa-icon-btn ghost", info && "!bg-hover")} onClick={() => set({ info: !info })} aria-label="信息面板" title="成员信息">
-							<PanelRight className="pa-ic" />
-						</button>
-					)}
 				</div>
+				<WorkspaceButton />
 			</header>
 			<RoomMembers room={room} list={list} onOpen={openMember} onJump={jump} />
 			<div
@@ -659,7 +654,7 @@ function DeleteRoom({ room, open, onClose, onDone }: { room: Room; open: boolean
 			await api(`/api/rooms/${room.id}`, { method: "DELETE", json: { keepAgents: keep } });
 			const s = useStore.getState();
 			await Promise.all([s.loadRooms(), s.loadAgents()]);
-			s.set({ room: null, paneAgent: null });
+			s.set({ room: null });
 			const first = useStore.getState().agents.find((a) => a.scope !== "room");
 			if (first) void s.selectAgent(first.id);
 			onClose();

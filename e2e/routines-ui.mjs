@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
-import { taskTab } from './fixtures/info-pane.mjs';
+import { taskTab, openInfoPane } from './fixtures/info-pane.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const data = mkdtempSync(join(tmpdir(), 'pia-routines-'));
 const out = process.env.E2E_OUT ?? join(root, '../evidence/routines-ui'); mkdirSync(out, {recursive:true});
@@ -25,7 +25,7 @@ try {
  const page=await browser.newPage({viewport:{width:1280,height:900},locale:'zh-CN'});
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
  await page.goto(`${base}/?agent=${agent.id}`);
- await page.getByRole('button',{name:'信息面板',exact:true}).click();
+ await openInfoPane(page);
  const tab=page.getByTestId('routines-tab');
  await taskTab(page,'routines');
  await tab.getByText('特殊旧计划', {exact:true}).waitFor();

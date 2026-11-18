@@ -8,6 +8,7 @@
  * 长期任务的执行不在这里：它们在负责人自己的任务会话里跑（work-items/exec.ts），不占群的回合和上限。
  */
 import { bus } from "../bus.ts";
+import { isImageAttachment } from "../attachments.ts";
 import { db, now, uid } from "../db.ts";
 import { attachmentInputFor, type FileRow, fileInfo, getFile } from "../files.ts";
 import { isStopCommand } from "../interject.ts";
@@ -80,6 +81,7 @@ export function postUserMessage(roomId: string, text: string, opts: { mentions?:
 	}
 	const body = text.slice(0, 100_000);
 	const files = (opts.attachments ?? []).map(getFile).filter((f): f is FileRow => !!f && f.room_id === roomId && f.agent_id === "");
+	if (files.length !== (opts.attachments?.length ?? 0)) throw new Error("部分附件已不可用；本次未送达。");
 	// 看板反馈入口：任务必须真的属于这个群，关联由服务端写入（前端不能自己伪造 workItemId）。
 	const workItemId = opts.workItemId && db.prepare("SELECT 1 FROM work_items WHERE id = ? AND room_id = ?").get(opts.workItemId, roomId) ? opts.workItemId : undefined;
 	if (!body.trim() && !files.length) throw new Error("empty");
@@ -108,7 +110,9 @@ export function routeUserMessage(roomId: string, messageId: string, opts: { retr
 	hooks.onUserMessage?.(roomId);
 	const meta = msg.meta ?? {};
 	const body = msg.content;
-	const files = ((meta.attachments as { fileId?: string }[] | undefined) ?? []).map((a) => (a.fileId ? getFile(a.fileId) : undefined)).filter((f): f is FileRow => !!f && f.room_id === roomId && f.agent_id === "");
+	let files: FileRow[];
+	try { files = userFiles(roomId, msg); }
+	catch (e) { sys(roomId, String(e), {}, "error"); return; }
 	let quote: QuoteInfo | null = null;
 	if (msg.replyToId) {
 		const target = resolveReplyTarget({ scope: { kind: "room", id: roomId }, messageId: msg.replyToId });
@@ -125,7 +129,7 @@ export function routeUserMessage(roomId: string, messageId: string, opts: { retr
 	}
 	if (plan.notice && !workCtx) sys(roomId, plan.notice, { kind: "reply-unroutable" });
 	// 暂停后回复“继续”：接着跑没说完的
-	if (r.paused && !states.get(roomId)?.current && !parsed.ids.length && !quote && /^\s*(继续|接着来|continue)\s*[。.!！]?\s*$/i.test(body)) {
+	if (r.paused && !files.length && !states.get(roomId)?.current && !parsed.ids.length && !quote && /^\s*(继续|接着来|continue)\s*[。.!！]?\s*$/i.test(body)) {
 		continueRoom(roomId);
 		changed(roomId);
 		return;
@@ -146,13 +150,16 @@ export function routeUserMessage(roomId: string, messageId: string, opts: { retr
 		const forCurrent = workCtx ? false : plan.notice ? false : interjectsCurrent({ mentionedIds: parsed.ids, directedIds, currentId: cur.agentId, managerId: r.manager_id });
 		const rt = runtime(cur.agentId, cur.conversationId);
 		const quoteText = quote && forCurrent ? formatQuotedContext(quote.snapshot) : undefined;
-		if (forCurrent && rt.busy) void rt.send(`（用户在群里说）${body}${files.length ? `\n（附带 ${files.length} 个附件，见群聊记录）` : ""}`, undefined, { messageId: msg.id, quote: quoteText });
+		const steered = forCurrent && rt.busy;
+		if (steered) void Promise.resolve().then(() => rt.send(`（用户在群里说）${body}`, files.map((f) => attachmentInputFor(cur.agentId, f, roomId)), { messageId: msg.id, quote: quoteText }))
+			.then((result) => { if (result === "none") sys(roomId, "本次群消息未送达当前成员，详见成员会话。", {}, "error"); })
+			.catch(() => sys(roomId, "附件无法读取；本次群消息未送达当前成员。", {}, "error"));
 		// 取消排队的（管理者的看板检查保留），等它说完按新消息重新安排
 		cancelQueue(s, { keep: (q) => q.reason === "check" });
 		s.batch.clear();
 		const others = plan.directed ? plan.turns.map((t) => t.agentId).filter((x) => x !== cur.agentId) : parsed.ids.filter((x) => x !== cur.agentId);
 		const handled = !workCtx && !plan.notice && forCurrent && rt.busy && (plan.directed ? others.length === 0 : parsed.ids.length ? !others.length : cur.agentId === r.manager_id);
-		s.replan = workCtx ? { mentions: [], quote, sourceMessageId: msg.id, workCtx } : handled || !plan.turns.length ? null : { mentions: parsed.ids, quote, sourceMessageId: msg.id, workCtx };
+		s.replan = workCtx ? { mentions: [], quote, sourceMessageId: msg.id, workCtx } : handled || !plan.turns.length ? null : { mentions: parsed.ids, quote, sourceMessageId: msg.id, workCtx, alreadySteered: steered && files.length ? cur.agentId : undefined };
 		if (s.replan && !forCurrent) cur.detach?.(); // 这条消息要别人接：当前发言的让出位置（回合在后台接着做），不等它说完
 		emitState(roomId);
 	} else if (plan.turns.length) startRound(roomId, plan.turns, quote, msg.id, workCtx);
@@ -203,7 +210,7 @@ async function pump(roomId: string) {
 				s.workCtx = re.workCtx;
 				const replan = planForUserWithQuote({ mentioned: re.mentions, managerId: r.manager_id, activeIds: activeIds(roomId), quote: re.quote?.target ?? null });
 				if (replan.notice) sys(roomId, replan.notice, { kind: "reply-unroutable" });
-				enqueue(roomId, s, replan.turns, re.sourceMessageId, true);
+				enqueue(roomId, s, replan.turns.filter((turn) => turn.agentId !== re.alreadySteered), re.sourceMessageId, true);
 			}
 			const next = s.queue[0];
 			if (!next) break;
@@ -226,7 +233,7 @@ async function pump(roomId: string) {
 			}
 			if (why) {
 				// 到上限：把还没说的存起来，等用户点“继续”
-				const pending = s.queue.map(({ agentId, reason, task, depth, directed, turnId, from }) => ({ agentId, reason, task, depth, directed, turnId, from }));
+				const pending = s.queue.map(({ agentId, reason, task, depth, directed, turnId, from, userAttachmentSource }) => ({ agentId, reason, task, depth, directed, turnId, from, userAttachmentSource }));
 				cancelQueue(s);
 				db.prepare("UPDATE rooms SET paused = ? WHERE id = ?").run(JSON.stringify({ pending, reason: why }), roomId);
 				sys(roomId, `本轮已暂停（${why}），回复继续`, { kind: "room-paused", action: "room-continue" });
@@ -236,8 +243,13 @@ async function pump(roomId: string) {
 			if (!activeIds(roomId).includes(next.agentId)) continue;
 			// 这位成员的上一个回合还在后台干活：这一轮当插话送进去，不并发开第二轮
 			const bg = bgOf(roomId).get(next.agentId);
-			if (bg && runtime(next.agentId, bg.conversationId).busy) await steerBackground(roomId, s, next, caps, bg.conversationId);
-			else await runTurn(roomId, s, next, caps);
+			try {
+				if (bg && runtime(next.agentId, bg.conversationId).busy) await steerBackground(roomId, s, next, caps, bg.conversationId);
+				else await runTurn(roomId, s, next, caps);
+			} catch (e) {
+				db.prepare("UPDATE room_turns SET status = 'error', error = ?, finished_at = ? WHERE id = ?").run(String(e), now(), next.turnId);
+				sys(roomId, `本次群消息未送达：${String(e)}`, {}, "error");
+			}
 		}
 	} finally {
 		s.running = false;
@@ -246,6 +258,15 @@ async function pump(roomId: string) {
 		emitState(roomId);
 		changed(roomId);
 	}
+}
+
+function userFiles(roomId: string, msg: Message): FileRow[] {
+	if (msg.role !== "user" || msg.room_id !== roomId) return [];
+	return ((msg.meta.attachments as { fileId?: string }[] | undefined) ?? []).map(({ fileId }) => {
+		const f = fileId && getFile(fileId);
+		if (!f || f.room_id !== roomId || f.agent_id !== "") throw new Error("附件已不可用；本次群消息未送达。");
+		return f;
+	});
 }
 
 type TurnRes = { ok: boolean; aborted: boolean; error?: string; text: string; tokens: number };
@@ -262,9 +283,9 @@ function buildTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
 	const want = new Map<string, FileRow>();
 	for (const tf of tr.files) {
 		const f = getFile(tf.fileId);
-		if (f && f.agent_id !== t.agentId) want.set(f.id, f);
+		if (f && f.agent_id !== t.agentId && !isImageAttachment(f)) want.set(f.id, f);
 	}
-	if (t.task) for (const f of roomFiles(roomId)) if (f.agent_id !== t.agentId && t.task.includes(f.name)) want.set(f.id, f);
+	if (t.task) for (const f of roomFiles(roomId)) if (f.agent_id !== t.agentId && !isImageAttachment(f) && t.task.includes(f.name)) want.set(f.id, f);
 	const inputs = [...want.values()].flatMap((f) => {
 		try {
 			return [attachmentInputFor(t.agentId, f, roomId)];
@@ -272,6 +293,8 @@ function buildTurn(roomId: string, s: RoomState, t: Turn, caps: RoomCaps) {
 			return [];
 		}
 	});
+	const source = t.userAttachmentSource && getMessage(t.userAttachmentSource);
+	if (source) for (const f of userFiles(roomId, source)) if (isImageAttachment(f)) inputs.push(attachmentInputFor(t.agentId, f, roomId));
 	const quoteBlock = s.quote && t.reason !== "check" && t.reason !== "peer" ? formatQuotedContext(s.quote) : "";
 	const directedLine = t.directed && t.agentId === r.manager_id ? "用户引用了你的消息，只回应用户引用的这条；除非用户明确要求你分工，否则不要 room_assign、不要 @ 其他成员。" : "";
 	const taskCtx = s.workCtx && t.agentId === r.manager_id && t.reason !== "check" ? s.workCtx : "";
@@ -346,7 +369,7 @@ async function finishTurn(roomId: string, t: Turn, conv: string, res: TurnRes, s
 	if (s?.current?.turnId === t.turnId) s.current = null;
 	if (!s || s.stopped || res.aborted) return;
 	hooks.ended?.(roomId, t); // 管理者回合结束：交付后整理全群（已开始整理时下面不再重复整理）
-	maybeTidyMember(roomId, t.agentId, conv); // 会话变长了就单独整理这一位（空闲时）
+	if (!res.error) maybeTidyMember(roomId, t.agentId, conv); // 未送达的回合不另外启动模型整理
 	const rr = getRoom(roomId);
 	if (!rr) return;
 	const isMgr = t.agentId === rr.manager_id;
@@ -421,17 +444,17 @@ export function continueRoom(roomId: string) {
 	const r = getRoom(roomId);
 	if (!r) throw new Error("群不存在");
 	if (states.get(roomId)?.current || !r.paused) return false;
-	const p = JSON.parse(r.paused) as { pending?: (PlannedTurn & { workItemId?: string })[] };
+	const p = JSON.parse(r.paused) as { pending?: (PlannedTurn & { workItemId?: string; userAttachmentSource?: string })[] };
 	db.prepare("UPDATE rooms SET paused = NULL WHERE id = ?").run(roomId);
 	const s = fresh();
 	states.set(roomId, s);
 	const act = activeIds(roomId);
 	const mgr = r.manager_id && act.includes(r.manager_id) ? r.manager_id : act[0];
-	const turns: PlannedTurn[] = [];
+	const turns: (PlannedTurn & { userAttachmentSource?: string })[] = [];
 	let legacy = 0;
 	for (const x of (p?.pending ?? []).filter((x) => act.includes(x.agentId))) {
 		if (x.workItemId) legacy++;
-		else turns.push({ agentId: x.agentId, reason: x.reason, task: x.task, depth: 0, directed: x.directed, from: x.from });
+		else turns.push({ agentId: x.agentId, reason: x.reason, task: x.task, depth: 0, directed: x.directed, from: x.from, userAttachmentSource: x.userAttachmentSource });
 	}
 	if (legacy) sys(roomId, "长期任务现在在负责人自己的任务会话里执行，不从群里重放；需要时在任务看板上点继续。", { kind: "work-not-resumed" });
 	if (turns.length) {

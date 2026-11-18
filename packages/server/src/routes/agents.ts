@@ -11,7 +11,7 @@ import { config } from "../config.ts";
 import { db, now } from "../db.ts";
 import { attachmentInputFor, fileInfo, getFile, insideWorkspace, listFiles, listWorkspace, mimeOf } from "../files.ts";
 import { getMessageByClientId, lastContextTokens, insertMessage, listMessages, toMessage, type MessageRow } from "../messages.ts";
-import { defaultModel, defaultThinking, isThinkingLevel, models, withProviderName } from "../models.ts";
+import { defaultModel, defaultThinkingSetting, isThinkingLevel, models, withProviderName } from "../models.ts";
 import { cliServiceFor } from "../cli-services.ts";
 import { sessionStats } from "../pi-adapter/index.ts";
 import { requests } from "../requests.ts";
@@ -41,7 +41,9 @@ import { routineJson } from "./routines.ts";
 // ---------------------------------------------------------------- 助理与聊天
 export const agentJson = (a: NonNullable<ReturnType<typeof getAgent>>) => {
 	const last = db.prepare("SELECT content, role, created_at FROM messages WHERE agent_id = ? AND task_id IS NULL AND subagent_id IS NULL AND room_id IS NULL AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1").get(a.id);
-	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), thinking: runtime(a.id).thinkingFor(a), thinkingSetting: a.thinking, fast: a.fast === 1, workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
+	const thinkingDefault = defaultThinkingSetting();
+	const thinkingSource = a.thinking ? a.thinking_explicit ? "explicit" : "legacy" : thinkingDefault ? "default" : "unset";
+	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), thinking: runtime(a.id).thinkingFor(a), thinkingSetting: a.thinking, thinkingSource, thinkingDefault, fast: a.fast === 1, workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
 };
 
 type AgentInput = { name?: string; avatar?: string; color?: string; persona?: string; description?: string; model?: { provider: string; id: string } | null; thinking?: string | null; /** 请求级 Fast：只动 agents.fast，不碰 thinking / 模型 */ fast?: boolean | null };
@@ -86,12 +88,13 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		const name = (b.name ?? "").trim().slice(0, 40);
 		if (!name) return c.json({ error: "请给助理起个名字" }, 400);
 		const id = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
-		const model = b.model && (cliServiceFor(b.model.provider) || models.getModel(b.model.provider, b.model.id)) ? b.model : defaultModel();
+		if (b.model && !cliServiceFor(b.model.provider) && !models.getModel(b.model.provider, b.model.id)) return c.json({ error: "模型不存在" }, 400);
+		const model = b.model ?? defaultModel();
 		db.prepare("INSERT INTO agents(id, name, avatar, color, persona, description, model_provider, model_id, sort, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(
 			id, name, cleanAvatar(b.avatar, name), b.color || "#6366f1", (b.persona ?? "").slice(0, 8000), (b.description ?? "").slice(0, 200), model?.provider ?? null, model?.id ?? null, listAgents().length, now(),
 		);
 		void hostAgentsChanged();
-		db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(isThinkingLevel(b.thinking) ? b.thinking : defaultThinking(), id);
+		db.prepare("UPDATE agents SET thinking = ?, thinking_explicit = ? WHERE id = ?").run(isThinkingLevel(b.thinking) ? b.thinking : null, isThinkingLevel(b.thinking) ? 1 : 0, id);
 		insertMessage({ agentId: id, role: "assistant", content: `你好，我是${name} 👋\n\n我有自己的电脑，可以写代码、处理文件、上网查资料、操作网页和桌面应用，也能把耗时的活放到后台去做。想让我做点什么？` });
 		bus.emit({ type: "agents.changed" });
 		return c.json(agentJson(getAgent(id)!));
@@ -112,7 +115,7 @@ export function mountAgentRoutes(app: Hono<Env>) {
 			name, avatar, b.color ?? a.color, b.persona ?? a.persona, b.description ?? a.description,
 			b.model === undefined ? a.model_provider : (b.model?.provider ?? null), b.model === undefined ? a.model_id : (b.model?.id ?? null), a.id,
 		);
-		if (b.thinking !== undefined) db.prepare("UPDATE agents SET thinking = ? WHERE id = ?").run(b.thinking, a.id);
+		if (b.thinking !== undefined) db.prepare("UPDATE agents SET thinking = ?, thinking_explicit = ? WHERE id = ?").run(b.thinking, b.thinking === null ? 0 : 1, a.id);
 		// Fast 与思考强度是两个独立字段：这里只改 fast，不动 thinking / 模型选择
 		if (b.fast !== undefined) db.prepare("UPDATE agents SET fast = ? WHERE id = ?").run(b.fast ? 1 : 0, a.id);
 		onAgentChanged(a.id);
@@ -192,6 +195,7 @@ export function mountAgentRoutes(app: Hono<Env>) {
 			}
 		}
 		const files = (b.attachments ?? []).map(getFile).filter((f) => f && f.agent_id === id) as NonNullable<ReturnType<typeof getFile>>[];
+		if (files.length !== (b.attachments?.length ?? 0)) return c.json({ error: "部分附件已不可用；本次未送达。" }, 400);
 		const text = (b.text ?? "").slice(0, 100_000);
 		if (!text.trim() && !files.length) return c.json({ error: "empty" }, 400);
 		const msg = insertMessage({ agentId: id, conversationId: conv, role: "user", content: text, replyToId: b.replyToId ?? null, replySnapshot: snapshot, clientId: b.clientId ?? null, meta: { attachments: files.map(fileInfo), from: by(c), ...(b.replyToId ? { replyTo: b.replyToId } : {}) } });

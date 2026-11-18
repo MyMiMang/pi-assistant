@@ -93,7 +93,7 @@ export interface FastControl {
 	onFollow?: () => void;
 }
 
-export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, autoFocus = false, fast, onModelClick, autoFocusModel = false, loading = false, error = false, onRetry }: ThinkingSliderProps & { fast?: FastControl }) {
+export function ThinkingSlider({ testid, levels, current, effective, followLabel, onPick, modelName, autoFocus = false, fast, onModelClick, autoFocusModel = false, loading = false, error = false, onRetry, invalidSetting, serviceDefault }: ThinkingSliderProps & { fast?: FastControl; invalidSetting?: string; serviceDefault?: boolean }) {
 	const view = thinkingSliderView({ levels, current, followLabel, effective });
 	const reduced = useReducedMotion();
 	const [idx, setIdx] = useState(view.index);
@@ -218,6 +218,18 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 		commit(next);
 	};
 
+	if (invalidSetting || serviceDefault) return (
+		<div className="pa-think" ref={rootRef} data-testid={`${testid}-body`}>
+			<Head testid={testid} current={invalidSetting ? "原档位不可用" : "服务默认"} modelName={modelName} fast={fast} onModelClick={onModelClick} modelBtnRef={modelBtnRef} />
+			<FastFollowNote fast={fast} />
+			<p className="pa-think-empty" role="status">{invalidSetting ? `已保存的「${label(invalidSetting)}」不在当前模型的可选档位中，设置未修改。` : "未指定思考档位，由服务决定。"}</p>
+			<div className="flex flex-wrap gap-1 px-2 pb-2">
+				{view.levels.map((level) => <button key={level} type="button" className="rounded-md border border-line px-2 py-1 text-xs" data-testid={`${testid}-${level}`} onClick={() => onPick(level)}>选择{label(level)}</button>)}
+				{invalidSetting && followLabel && <button type="button" className="rounded-md border border-line px-2 py-1 text-xs" onClick={() => onPick(null)}>{followLabel}</button>}
+			</div>
+		</div>
+	);
+
 	if (view.kind === "unsupported") {
 		return (
 			<div className="pa-think" ref={rootRef} data-pa-mo-style={moStyle ?? undefined} data-testid={`${testid}-body`}>
@@ -248,7 +260,7 @@ export function ThinkingSlider({ testid, levels, current, effective, followLabel
 				<Head testid={testid} current={label(view.level)} modelName={modelName} followLabel={followLabel} following={view.following} effective={view.effective} onPick={onPick} fast={fast} onModelClick={onModelClick} modelBtnRef={modelBtnRef} />
 				<FastFollowNote fast={fast} />
 				<p className="pa-think-empty" data-testid={`${testid}-fixed`}>
-					这个模型只有一档 <b>{label(view.level)}</b>，不需要调整。
+					这个模型只有一档 <b>{label(view.level)}</b>。{view.following && effective && <button type="button" className="pa-think-mini ml-2" onClick={() => onPick(effective)}>选择{label(effective)}</button>}
 				</p>
 			</div>
 		);

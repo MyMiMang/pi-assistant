@@ -121,6 +121,8 @@
 | `models.ts` | 统一凭据存储接口 |
 | `secrets.ts` | 本地凭据加密存储 |
 | `model-registry.ts` | 统一模型服务注册表（只读视图） |
+| `pi-adapter/relay-capabilities.ts` | OpenAI 兼容中转渠道能力范围、证据校验及 UI / Pi 共用有效规格 |
+| `pi-adapter/send-intent.ts` | 已知视觉走 SDK 原生图块并按活会话/接收者保留；未知仅在已验证编码协议一次试送。公开流函数过滤历史、组合适用中转的思考合同与 Fast 钩子 |
 | `model-db.ts` | models.dev 模型参数库 |
 | `model-errors.ts` | 判断模型请求失败类型 |
 | `model-picks.ts` | 常用模型排序 |
@@ -290,7 +292,8 @@
 | `VoiceInput.tsx` | 语音输入按钮 |
 | `Attachments.tsx` | 附件上传与托盘 |
 | `FilePreview.tsx` | 多文件按授权地址登记统一工作区；`PreviewContent` 复用工具栏和各格式视图、取数与卸载清理 |
-| `SidePanel.tsx` | 唯一右工作区：SidePanel注册现有业务内容、SidePanelDock固定宿主按CSS切换并排/放大/手机；ResponsiveTabs与Resizer复用，WorkspaceButton恢复/真实网页查看入口。主题布局在 `themes/workspace.css`；设计见 `design/side-panel-views.md`，e2e `side-panel-views.mjs` 和文件预览fixture |
+| `SidePanel.tsx` | 唯一右工作区：SidePanel注册现有业务内容、SidePanelDock固定宿主按CSS切换并排/放大/手机；ResponsiveTabs与Resizer复用，右栏单排标签及控制。主题布局在 `themes/workspace.css`；设计见 `design/side-panel-views.md`，e2e `side-panel-views.mjs` 和文件预览fixture |
+| `WorkspaceStart.tsx` | 标题栏唯一工作区入口与新标签起始页（共用 Input 本地筛选四入口）；复用助理详情栏目和显式打开的网页查看器；`e2e/workspace-entries-ui.mjs` 定向入口回归 |
 | `BrowserWorkspace.tsx` | 真实同Page工作区：现有页/群成员选择、导航、接管交还/锁定恢复、中文输入；主题语义色复用 |
 | `FilePreviewViews.tsx` | 文件预览的各类视图和共用件：`ModeBar`（渲染/源码等模式切换条，Markdown / HTML / SVG 共用）、`loadText`（按上限拉文本）、`CodeView` / `CsvView` / `TableView`（CSV 与 Excel 共用） / `loadBinary`（≤30MB 整份读取） / `MarkdownScroll` / `SvgView` / `HtmlView`（sandbox iframe，无 allow-same-origin） / `Notice`；设计见 `docs/design/html-file-preview.md` |
 | `OfficeViews.tsx` | Word / Excel / iWork / zip / Jupyter 预览视图（整体按需加载，库都用 `import()`）；表格复用 `FilePreviewViews` 的 `TableView` |
@@ -305,7 +308,7 @@
 | `Cards.tsx` | 审批/提问/任务卡片 |
 | `Tasks.tsx` | 任务展示共用件 |
 | `Subagents.tsx` | 子代理入口与详情 |
-| `InfoPane.tsx` | 助理设置（经典布局，八分类，单聊/群成员共用） |
+| `InfoPane.tsx` | 单聊/群成员共用的助理详情标签和入口：每位助理一个实例，经典八分类，资料和模型状态保留 |
 | `AgentEditor.tsx` | 助理资料编辑；新建助理的模板 `PRESETS`（模板可带 `skills`，新建时一并启用，如全能培训师 → `builtin/team-onboarding`） |
 | `AgentSkills.tsx` | 助理技能 |
 | `AgentExtensions.tsx` | 助理扩展 |
@@ -315,7 +318,7 @@
 | `Proactive.tsx` | 主动跟进（试运行卡片的「就这么做 / 这类以后别做」） |
 | `ProactiveAutonomy.tsx` | 主动做事：模式下拉、「可以放心做的事」规则清单、判断记录 |
 | `DraftModelSettings.tsx` | 创建/编辑表单的模型草稿 |
-| `ModelSettingsContent.tsx`、`ModelSettingsPanel.tsx` | 详情八分类模型页与工作区共用内容（ModelPicker/ContextDetails/画图/帮手），明确助理身份注册settings面板，原即时保存队列不复制；e2e `workspace-model-theme-ui.mjs` |
+| `ModelSettingsContent.tsx` | 助理详情模型分类（ModelPicker/ContextDetails/画图/帮手），使用明确的助理身份及原即时保存队列；e2e `workspace-model-theme-ui.mjs` |
 | `ResponsiveTabs.tsx` | 自适应标签 + 更多 |
 | `Resizer.tsx` | 拖动调栏宽 |
 | `Settings.tsx` | 设置导航与各页组装 |
@@ -326,6 +329,7 @@
 | `ClaudeCodeCard.tsx` | 模型服务页的「Claude Code（本机）」卡片：检测状态、重新检测、登录提示 |
 | `CustomProvider.tsx` | 自定义服务表单 |
 | `RelayDetail.tsx` | 中转服务详情（单列） |
+| `RelayCapabilityScope.tsx` | 渠道高级设置的能力范围、默认值及精确例外表单 |
 | `ModelReasoning.tsx` | 自定义模型编辑共用的三态推理支持及按渠道文档声明档位/协议值；复用 Select、Fold 与 ThinkingLevel 常量 |
 | `provider-icons.ts` | 自动生成的服务图标（勿手改） |
 | `ModelStrengths.tsx` | 模型擅长标签 |
@@ -357,6 +361,8 @@
 | `DeviceApproval.tsx` | 确认新设备配对 |
 
 ## `e2e/fixtures`
+
+`packages/server/test/launch-memory.ts` 在加载产品模块前强制使用临时文件密钥后端；`e2e/test-startup-isolation.mjs` 核对高级记忆设置与扩展保存回读均不访问系统后端。`e2e/attachment-alignment-ui.mjs` 核对桌面和窄屏附件缩略图的右对齐。
 
 | 文件 | 负责 |
 |---|---|

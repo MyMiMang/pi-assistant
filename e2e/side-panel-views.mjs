@@ -43,6 +43,7 @@ try {
 
 	await page.goto(`${base}/?agent=${agent.id}`);
 	await page.getByTestId("subagent-tasks").waitFor();
+	await page.locator('[data-testid="right-workspace"][data-scope*="conversation:"]:not([data-scope$="conversation:"])').waitFor({ state: "attached" });
 	await openAndCheck("subagent-tasks", "task-overview");
 	assert.equal(await page.getByTestId("task-overview").getByTestId("subagent-row").count(), 1);
 	await page.getByTestId("workspace-expand").click();
@@ -72,7 +73,9 @@ try {
 	await page.getByTestId("work-detail").waitFor();
 	assert.match(await page.getByTestId("work-detail-title").innerText(), /统一工作区测试任务/);
 	const attachment = await uploadFixture(base, `/api/rooms/${room.id}/upload`, "工作区任务说明与文件切换保留验证.md", Buffer.from("# 文件切换证据\n\n" + "这是临时测试的真实预览内容。\n\n".repeat(120)));
-	await j(`/api/rooms/${room.id}/messages`, "POST", { text: "工作区文件验证", mentions: [], attachments: [attachment.fileId] });
+	const extraFiles = [];
+	for (let i = 1; i <= 4; i++) extraFiles.push(await uploadFixture(base, `/api/rooms/${room.id}/upload`, `第${i}份同一行长名称文件预览验证.md`, Buffer.from(`# 文件 ${i}`)));
+	await j(`/api/rooms/${room.id}/messages`, "POST", { text: "工作区文件验证", mentions: [], attachments: [attachment, ...extraFiles].map(f => f.fileId) });
 	// Exercise the real room attachment entry, not a debug opening API.
 	await page.getByTestId("work-detail-back").click();
 	await page.getByTestId("workspace-collapse").click();
@@ -93,6 +96,33 @@ try {
 	assert.equal(await page.getByTestId("work-detail").isVisible(), true);
 	await page.getByTestId("workspace-close-tab").click();
 
+	for (const file of [attachment, ...extraFiles]) {
+		await page.getByRole("button", { name: `预览 ${file.name}`, exact: true }).click();
+		await ws.getByRole("tabpanel", {name: file.name, exact: true}).getByTestId("file-preview-markdown").waitFor();
+	}
+	const activeFile = extraFiles.at(-1);
+	const more = ws.getByTestId("workspace-tabs-more");
+	const verifyHeader = async (vpWidth) => {
+		await more.waitFor();
+		const header = ws.locator(".pa-workspace-header");
+		const box = await header.boundingBox();
+		assert.ok(box.x >= 0 && box.x + box.width <= vpWidth && box.height < 60, "右栏始终是窗口内的一行");
+		assert.equal(await ws.getByText(activeFile.name, { exact: true }).filter({ visible: true }).count(), 1, "当前文件只显示一次标题");
+		const controls = await header.locator(":scope > button, [role=tab]:visible, [data-testid=workspace-tabs-more]").evaluateAll(els => els.map(el => { const r = el.getBoundingClientRect(); return [r.left, r.right, (r.top+r.bottom)/2]; }));
+		assert.ok(controls.every(([l,r,y]) => l >= box.x && r <= box.x+box.width && Math.abs(y-(box.y+box.height/2)) <= 3), JSON.stringify({box,controls}));
+	};
+	await verifyHeader(1440);
+	await page.screenshot({ path: join(out, "crowded-desktop.png") });
+	await page.setViewportSize({ width: 390, height: 844 });
+	await wait(async () => (await mode()) === "mobile");
+	await verifyHeader(390);
+	await more.click();
+	await ws.getByRole("menuitem", {name: attachment.name, exact: true}).click();
+	assert.match(await ws.getByRole("tabpanel", {name: attachment.name, exact: true}).getByTestId("file-preview-markdown").innerText(), /文件切换证据/);
+	for (let i = 0; i < 5; i++) await page.getByTestId("workspace-close-tab").click();
+	await page.setViewportSize({ width: 1440, height: 1000 });
+
+	await page.getByTestId("workspace-reopen").click();
 	await page.getByTestId("workspace-browser-open").click();
 	await page.getByTestId("workspace-browser-empty").waitFor();
 	assert.match(await page.getByTestId("workspace-browser-empty").innerText(), /还没有打开网页/);
@@ -101,7 +131,7 @@ try {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.getByTestId("workspace-reopen").click();
 	assert.equal(await mode(), "mobile");
-	await page.getByTestId("workspace-back-chat").click();
+	await ws.getByTestId("workspace-back-chat").click();
 	assert.equal(await ws.getAttribute("data-collapsed"), "1");
 	assert.deepEqual(errors, []);
 	console.log("right-workspace-ui 全部通过");

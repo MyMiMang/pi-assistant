@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
-import { expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { expandAgentModelSection, openInfoPane } from "./fixtures/info-pane.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 // 本次运行独占的临时目录（临时 DATA / WORKSPACE / HOME）；不再用固定 /tmp 路径，也不 rm 任何预存路径。
@@ -51,16 +51,7 @@ const check = (name, cond, detail = "") => { if (cond) console.log(`  ✅ ${name
 const start = async () => { server = startTempServer({ root: ROOT, port: PORT, run, log: (d) => process.stdout.write(String(d)) }); await waitFor(async () => (await fetch(BASE + "/api/system")).ok); };
 const stop = async () => { await server?.stop(); };
 
-/** 打开信息面板（`info` 会按设备持久化，reload 后可能自动开，所以按可见性收敛而不是盲点）。 */
-const openPane = async (page) => {
-	for (let i = 0; i < 3; i++) {
-		if (await page.locator(".pa-pane-wrap").isVisible().catch(() => false)) return;
-		const btn = page.getByRole("button", { name: "信息面板" });
-		if (await btn.count()) await btn.click({ timeout: 3000 }).catch(() => {});
-		await page.waitForTimeout(250);
-	}
-	await page.locator(".pa-pane-wrap").waitFor();
-};
+const openPane = openInfoPane;
 /** 打开「助理 › 模型」页（信息面板），返回子代理任务上限区块 */
 const openLimits = async (page, agentId, testid = "agent-subagent-limits") => {
 	await page.goto(`${BASE}/?agent=${agentId}`);

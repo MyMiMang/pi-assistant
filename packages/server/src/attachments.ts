@@ -144,7 +144,7 @@ async function heicToJpeg(abs: string): Promise<Buffer | null> {
 const MIME_OF: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" };
 
 /** 缩小到 provider 能接受的尺寸（Pi 自带的 Photon 缩放）；失败时原图小于 4MB 就原样发 */
-export async function toImagePart(bytes: Buffer, mimeType: string): Promise<ImagePart | null> {
+export async function toImagePart(bytes: Buffer, mimeType: string, requireDecode = false): Promise<ImagePart | null> {
 	try {
 		const { resizeImage } = await import("@earendil-works/pi-coding-agent");
 		const r = await resizeImage(new Uint8Array(bytes), mimeType, { maxWidth: 2000, maxHeight: 2000 } as never);
@@ -152,11 +152,18 @@ export async function toImagePart(bytes: Buffer, mimeType: string): Promise<Imag
 	} catch {
 		/* 缩放失败：下面兜底 */
 	}
-	return bytes.length <= 4 * 1024 * 1024 ? { type: "image", data: bytes.toString("base64"), mimeType } : null;
+	return !requireDecode && bytes.length <= 4 * 1024 * 1024 ? { type: "image", data: bytes.toString("base64"), mimeType } : null;
 }
+
+export const isImageAttachment = (file: Pick<AttachmentInput, "name" | "mime">) => {
+	const ext = extname(file.name).toLowerCase();
+	return IMAGE_EXT.has(ext) || HEIC_EXT.has(ext) || file.mime.startsWith("image/");
+};
 
 export interface PrepareOptions {
 	vision: boolean;
+	/** 用户主动附图不可退化为路径说明；不改变其他调用方行为。 */
+	requireImages?: boolean;
 	/** 所有文档摘录合计的 token 上限 */
 	docTokens?: number;
 	/** 最多发给模型的图片张数 */
@@ -210,7 +217,7 @@ export async function prepareAttachments(files: AttachmentInput[], opts: Prepare
 				continue;
 			}
 			const bytes = HEIC_EXT.has(ext) ? await heicToJpeg(f.absPath) : readFileSync(f.absPath);
-			const part = bytes ? await toImagePart(bytes, HEIC_EXT.has(ext) ? "image/jpeg" : (MIME_OF[ext] ?? f.mime)) : null;
+			const part = bytes?.length ? await toImagePart(bytes, HEIC_EXT.has(ext) ? "image/jpeg" : (MIME_OF[ext] ?? f.mime), opts.requireImages) : null;
 			if (part) {
 				images.push(part);
 				lines.push(`${head} 图片，已作为第 ${images.length} 张图片附在这条消息里。`);
@@ -244,6 +251,7 @@ export async function prepareAttachments(files: AttachmentInput[], opts: Prepare
 			`${head}${doc.note ? `（${doc.note}）` : ""} 文字内容${c.clipped ? "（摘录，已截断；完整内容请读取上面的文件）" : ""}：\n<<<文件内容 ${f.name}\n${c.text}\n文件内容>>>`,
 		);
 	}
+	if (opts.requireImages && images.length !== files.filter(isImageAttachment).length) throw new Error("图片读取或转换失败、格式不支持或超过本条限制；本次未送达。");
 	return { text: lines.join("\n"), images };
 }
 

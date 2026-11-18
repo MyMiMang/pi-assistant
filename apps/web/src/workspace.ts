@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 import { create } from "zustand";
 import { useStore } from "./store";
-import { WORKSPACE_LIMIT, emptyWorkspace, workspaceScope, workspaceStep, type WorkspaceAction, type WorkspaceState } from "./workspace-state";
+import { WORKSPACE_LIMIT, WORKSPACE_START, emptyWorkspace, workspaceScope, workspaceStep, type WorkspaceAction, type WorkspaceState } from "./workspace-state";
 
 export type WorkspaceEntry = {
 	key: string;
 	title: string;
-	kind: "file" | "tasks" | "projects" | "reminders" | "browser" | "settings";
+	kind: "start" | "file" | "tasks" | "projects" | "reminders" | "browser" | "settings";
 	testId?: string;
 	fixed?: boolean;
 	content: ReactNode;
@@ -45,7 +45,7 @@ export function registerWorkspace(entry: WorkspaceEntry, scope = workspaceScope(
 	const before = useWorkspace.getState();
 	if (scope !== before.scope) return false;
 	const previous = before.entries[entry.key];
-	if (!previous && before.keys.length >= WORKSPACE_LIMIT) {
+	if (!previous && before.keys.length >= WORKSPACE_LIMIT && before.active !== WORKSPACE_START) {
 		useWorkspace.setState({ collapsed: false, notice: `工作区已打开 ${WORKSPACE_LIMIT} 项，请先关闭一个标签再打开新内容。` });
 		return false;
 	}

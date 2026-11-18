@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { api } from "../api";
 import { t } from "../i18n";
 import { setAppearance, useStore } from "../store";
+import { openAgentDetails } from "./InfoPane";
 import { AgentEditor } from "./AgentEditor";
 import { NewRoom, StackedAvatars } from "./RoomChat";
 import { Avatar, Button, cx, fmtTime, Modal } from "./ui";
@@ -34,7 +35,11 @@ export default function Sidebar() {
 	const openMenu = (id: string, x: number, y: number) => setMenu({ id, x: Math.max(8, Math.min(x, window.innerWidth - 180)), y: Math.max(8, Math.min(y, window.innerHeight - 100)) });
 	// 每个助理有几个帮手在干活：侧栏点一下打开它的执行记录（每行都能看过程），不再只是一行看不进去的数字
 	const working = agents.map((a) => ({ a, n: (tasks[a.id] ?? []).filter((x) => x.status === "running" || x.status === "queued").length })).filter((x) => x.n > 0);
-	const openWork = (id: string) => void useStore.getState().selectAgent(id).then(() => useStore.getState().set({ info: true, infoTab: "tasks", infoTaskTab: "background" }));
+	const openDetails = (id: string, tab: "profile" | "tasks") => void useStore.getState().selectAgent(id).then(() => {
+		const { current, room } = useStore.getState();
+		if (current === id && !room) openAgentDetails(id, tab, tab === "tasks" ? "background" : undefined);
+	});
+	const openWork = (id: string) => openDetails(id, "tasks");
 	const list = agents.filter((a) => !q || a.name.includes(q) || a.description?.includes(q));
 	const dark = document.documentElement.dataset.mode === "dark";
 	return (
@@ -160,8 +165,7 @@ export default function Sidebar() {
 					onPointerDown={(e) => e.stopPropagation()}
 				>
 					<button role="menuitem" className="flex w-full items-center gap-2 rounded px-3 py-2 text-left hover:bg-hover" onClick={() => {
-						void useStore.getState().selectAgent(menu.id);
-						set({ info: true, infoTab: "profile", drawer: false });
+						openDetails(menu.id, "profile");
 						setMenu(null);
 					}}>
 						<Pencil size={14} /> 编辑

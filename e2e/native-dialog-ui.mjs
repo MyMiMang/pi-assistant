@@ -95,8 +95,7 @@ let browser;
 try {
 	browser = await chromium.launch({ executablePath: process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
 	const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: 'block' });
-	// 右侧信息面板默认打开（记忆删除在信息面板里）
-	await context.addInitScript(() => localStorage.setItem('pia.layout', JSON.stringify({ sideW: 264, paneW: 340, sideCollapsed: false, info: true })));
+
 	const page = await context.newPage();
 	let nativeDialogs = 0;
 	page.on('dialog', (d) => { nativeDialogs++; void d.dismiss(); });
@@ -329,6 +328,7 @@ try {
 	// ---------------------------------------------------------------- 8) 信息面板 › 记忆
 	console.log('\n[8] 信息面板 › 记忆：删除记忆走应用内确认框');
 	await page.goto(`${base}/?agent=a1`);
+	await page.getByTestId('agent-detail-open').click();
 	await page.getByTestId('info-tabs').waitFor();
 	const memTab = page.locator('[data-testid=info-tabs] [data-itab=memory]');
 	if (await memTab.count()) await memTab.click();

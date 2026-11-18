@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
 import { stableShot, waitStable } from "./fixtures/stable-shot.mjs";
-import { expandAgentModelSection, ensureDetailVisible, agentProfileSave, PERSONA_PLACEHOLDER, BIO_PLACEHOLDER, agentModelButton, openAgentModelPop } from "./fixtures/info-pane.mjs";
+import { infoPane, openInfoPane, expandAgentModelSection, ensureDetailVisible, agentProfileSave, PERSONA_PLACEHOLDER, BIO_PLACEHOLDER, agentModelButton, openAgentModelPop } from "./fixtures/info-pane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-agent-details-");
@@ -37,7 +37,7 @@ try {
  await page.route("**/api/agents/*/computer", (r) => fulfill(r, { separate: false, hasData: false, desktop: { enabled: false, state: "none" } }));
  await page.route("**/api/mcp", (r) => failExtensions ? fulfill(r, { error: "扩展目录读取失败" }, 503) : r.continue());
  await page.route("**/api/skills", (r) => failSkills ? fulfill(r, { error: "技能目录读取失败" }, 503) : r.continue());
- const pane = page.locator(".pa-pane-wrap");
+ const pane = infoPane(page);
  const select = async (key, barId = "info-tabs") => {
   await page.getByTestId(barId).waitFor();
   const direct = page.getByTestId(barId).locator(`[role=tab][data-itab="${key}"]`);
@@ -52,7 +52,7 @@ try {
   if (before && before.x + before.width > viewport.width + 1) console.log(`LAYOUT settled: ${JSON.stringify({ before, bounds, viewport })}`);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, "页面无横向溢出");
   assert.ok(bounds && bounds.width > 240 && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width + 1, `稳定后的面板在视口内：${JSON.stringify({ before, bounds, viewport })}`);
-  const outside = await pane.locator('button:visible,input:visible,textarea:visible,select:visible,h2:visible').evaluateAll((els) => els.filter((el) => { const r = el.getBoundingClientRect(), p = el.closest('.pa-pane-wrap').getBoundingClientRect(); return r.width > 0 && (r.left < p.left - 2 || r.right > p.right + 2); }).map((e) => e.getAttribute('data-testid') || e.textContent));
+  const outside = await pane.locator('button:visible,input:visible,textarea:visible,select:visible,h2:visible').evaluateAll((els) => els.filter((el) => { const r = el.getBoundingClientRect(), p = el.closest('.pa-info').getBoundingClientRect(); return r.width > 0 && (r.left < p.left - 2 || r.right > p.right + 2); }).map((e) => e.getAttribute('data-testid') || e.textContent));
   assert.deepEqual(outside, [], "可见控件都在面板内");
  };
  await page.goto(`${base}/?room=${room.id}`);
@@ -166,7 +166,7 @@ try {
  console.log("PASS classification: models/profile/capabilities/tasks/memory/files/computer all reachable, old functions retained");
  // 折叠 / 布局 / 入口：默认收起、真实 summary 展开、Fast 在面板内、头像与长文不重叠、标签单行、资料固定 footer。
  /** 元素是否整个落在信息面板可视区内（固定 footer 必须做到，仅 isVisible 不够）。 */
- const withinPane = (loc) => loc.evaluate((el) => { const r = el.getBoundingClientRect(); const p = el.closest(".pa-pane-wrap")?.getBoundingClientRect() ?? { top: 0, bottom: innerHeight, left: 0, right: innerWidth }; return r.width > 0 && r.height > 0 && r.top >= p.top - 1 && r.bottom <= p.bottom + 1 && r.left >= p.left - 1 && r.right <= p.right + 1; });
+ const withinPane = (loc) => loc.evaluate((el) => { const r = el.getBoundingClientRect(); const p = el.closest(".pa-info")?.getBoundingClientRect() ?? { top: 0, bottom: innerHeight, left: 0, right: innerWidth }; return r.width > 0 && r.height > 0 && r.top >= p.top - 1 && r.bottom <= p.bottom + 1 && r.left >= p.left - 1 && r.right <= p.right + 1; });
  await select("models");
  await pane.getByTestId("agent-models-tab").waitFor();
  const imgDetails = pane.getByTestId("agent-image-details"); const subDetails = pane.getByTestId("agent-subagent-details");
@@ -249,21 +249,19 @@ try {
  console.log("PASS empty/loading/error: skill/extension/host errors recover on retry; failed skill save rolls back while error remains visible");
  // 同样面板走单聊，技能/主动快捷跳转仍直接到对应分类。
  await page.goto(`${base}/?agent=${a.id}`);
- const infoButton = page.getByRole("button", { name: "信息面板", exact: true });
- await infoButton.waitFor(); // 系统/助理快照先就绪，才判断持久化的面板是否已开。
- if (!await pane.isVisible()) await infoButton.click();
+ await openInfoPane(page);
  await select("models"); await agentModelButton(page).waitFor();
  await wait(async () => /最大/.test(await agentModelButton(page).innerText()));
  await (await openAgentModelPop(page)).getByRole("slider").press("Home");
  await wait(async () => (await current()).thinkingSetting === "off");
  await pane.getByTestId("agent-info-heading").click();
- await pane.getByRole("button", { name: "关闭", exact: true }).first().click();
+ await page.getByTestId("workspace-close-tab").click();
  assert.equal(await page.getByTestId("skill-picker").count(), 0, "输入栏不再有技能按钮（换成了权限按钮）"); await page.getByTestId("host-tier-button").waitFor();
  assert.equal(await page.getByTestId("proactive-picker").count(), 0, "输入框下不再有主动程度按钮");
  console.log("PASS direct chat: same persisted member setting; skill shortcut reaches its functional category");
  for (const [skin, mode, width] of [["noir", "dark", 390], ["noir", "light", 390], ["pixel", "dark", 390], ["pixel", "light", 1440]]) {
   await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-  await page.evaluate(({ skin, mode }) => { localStorage.setItem('pia.skin', skin); localStorage.setItem('pia.theme', mode); localStorage.setItem('pia.layout', JSON.stringify({ sideCollapsed: true, info: false, paneW: 340 })); }, { skin, mode });
+  await page.evaluate(({ skin, mode }) => { localStorage.setItem('pia.skin', skin); localStorage.setItem('pia.theme', mode); localStorage.setItem('pia.layout', JSON.stringify({ sideCollapsed: true, previewW: 424 })); }, { skin, mode });
   await page.goto(`${base}/?room=${room.id}`); await page.getByTestId("room-members").locator(`button[title^="${a.name}"]`).click();
   await pane.getByTestId('overview-model-settings').click();
   await wait(async () => /关闭/.test(await agentModelButton(page).innerText()));
@@ -272,11 +270,11 @@ try {
   await select('profile'); await layout();
   for (const key of expectKeys) { await select(key); await layout(); }
   if (width === 1440) {
-   await page.getByRole('separator', { name: '调整信息面板宽度' }).focus();
+   await page.getByRole('separator', { name: '调整侧栏宽度' }).focus();
    for (let step = 0; step < 4; step++) await page.keyboard.press('ArrowRight');
-   await wait(async () => Math.abs((await pane.boundingBox()).width - 280) <= 1);
+   await wait(async () => Math.abs((await pane.boundingBox()).width - 360) <= 1);
    for (const key of expectKeys) { await select(key); await layout(); }
-   await stableShot(page, pane, join(out, '06-narrow-pane-280.png'));
+   await stableShot(page, pane, join(out, '06-narrow-pane-360.png'));
   }
   const bar = page.getByTestId('info-tabs'); await bar.locator('[role=tab]').first().focus(); await page.keyboard.press('End');
   assert.equal(await bar.locator(':focus').count(), 1, '标签键盘End可达');

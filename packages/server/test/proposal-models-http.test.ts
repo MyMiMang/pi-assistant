@@ -111,9 +111,7 @@ test("群成员经公共 PATCH 改思考强度：thinkingSetting 存原值，运
 	const memberId = mgr.body.id as string;
 	assert.equal(mgr.body.scope, "room", "管家是群专属成员");
 	assert.equal(mgr.body.room_id, room.body.id);
-	// 缺省成员没有被提议字段覆盖：仍然是原来的默认档
-	const def = (await api("/api/models/defaults")).body;
-	assert.equal(mgr.body.thinkingSetting, def.thinking, "没选档位的新成员保持 defaultThinking");
+	assert.equal(mgr.body.thinkingSetting, null, "未选档的成员不把默认值固化成个人选择");
 
 	// 2) 公共 PATCH：换成推理模型 + max（原值落库、生效值 clamp）
 	const patched = await api(`/api/agents/${memberId}`, { method: "PATCH", body: JSON.stringify({ model: { provider: "mock", id: "echo-think" }, thinking: "max" }) });

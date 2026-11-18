@@ -404,10 +404,10 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 	const readThinking = useCallback(async () => {
 		const id = saves.current.begin();
 		try {
-			const x = await api<{ thinking: string }>("/api/models/defaults");
+			const x = await api<{ thinkingSetting: string | null }>("/api/models/defaults");
 			if (!saves.current.isCurrent(id)) return;
-			saves.current.confirm(id, x.thinking);
-			setThinking(x.thinking);
+			saves.current.confirm(id, x.thinkingSetting ?? null);
+			setThinking(x.thinkingSetting ?? null);
 		} catch {
 			// 读不到就维持现状（不改动界面），下次保存 / 进来再对齐
 		}
@@ -421,7 +421,9 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 	const models = (d?.models ?? []).filter((m) => !providerId || m.provider === providerId);
 	const entry = models.find((m) => m.provider === cur?.provider && m.id === cur?.id);
 	const levels = entry?.thinking ?? [];
-	const curThinking = thinking && levels.includes(thinking) ? thinking : levels[0];
+	const scoped = !!entry?.effectiveCapability;
+	const curThinking = thinking && levels.includes(thinking) ? thinking : scoped ? undefined : levels[0];
+	const strength = curThinking && (scoped || levels.length > 1) ? THINKING_LABEL[curThinking] ?? curThinking : scoped ? "服务默认" : "";
 	const saveModel = async (m: { provider: string; id: string }) => {
 		await api("/api/models/default", { method: "PUT", json: { provider: m.provider, model: m.id } });
 		await useStore.getState().loadSystem();
@@ -434,6 +436,7 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 		try {
 			await api("/api/models/default", { method: "PUT", json: { thinking: l } });
 			saves.current.confirm(id, l);
+			await useStore.getState().loadAgents();
 		} catch {
 			// 迟到的失败：用户已经又选了别的，不回滚、不覆盖新选择（旧 success 也不会盖新失败）
 			const r = saves.current.fail(id);
@@ -443,7 +446,7 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 			await readThinking();
 		}
 	};
-	const text = `${entry ? modelLabel(entry) : cur ? `${cur.provider} / ${cur.id}` : "选择默认模型"}${levels.length > 1 ? ` · ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}`;
+	const text = `${entry ? modelLabel(entry) : cur ? `${cur.provider} / ${cur.id}` : "选择默认模型"}${strength ? ` · ${strength}` : ""}`;
 	return (
 		<div className="space-y-2" data-testid="default-model">
 			<div className="flex flex-wrap items-center gap-2">
@@ -453,7 +456,7 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 					models={models}
 					providers={d?.providers ?? []}
 					value={cur}
-					thinking={levels.length > 1 ? { levels, current: curThinking, onPick: (l) => { if (l) void saveThinking(l); } } : null}
+					thinking={scoped || levels.length > 1 ? { levels, current: curThinking ?? null, serviceDefault: scoped && !curThinking, onPick: (l) => { if (l) void saveThinking(l); } } : null}
 					onPick={(m) => void saveModel(m)}
 					text={text}
 					placement="down"
@@ -467,8 +470,8 @@ export function DefaultModelPicker({ providerId, onSaved, compact }: { providerI
 					{test === "running" ? <Loader2 size={14} className="animate-spin" /> : null} 测试连接
 				</Button>
 			</div>
-			{!compact && <div className="text-xs text-mut">{cur ? `当前：${modelLabel(cur)}${levels.length > 1 ? ` · 思考 ${THINKING_LABEL[curThinking] ?? curThinking}` : ""}` : "还没有设置默认模型"}</div>}
-			{!compact && <div className="text-xs text-mut">模型不支持的思考档位会自动就近调整；每个助理可以在输入框下方单独切换。</div>}
+			{!compact && <div className="text-xs text-mut">{cur ? `当前：${modelLabel(cur)}${strength ? ` · 思考 ${strength}` : ""}` : "还没有设置默认模型"}</div>}
+			{!compact && <div className="text-xs text-mut">{scoped ? "只有当前模型确认的默认档位才会发送；每个助理可以单独选择。" : "模型不支持的思考档位会自动就近调整；每个助理可以在输入框下方单独切换。"}</div>}
 			{test && test !== "running" && (
 				<div className={cx("flex items-start gap-2 rounded-lg p-2 text-sm", test.ok ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40" : "bg-red-50 text-red-700 dark:bg-red-950/40")}>
 					{test.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <XCircle size={16} className="mt-0.5 shrink-0" />}

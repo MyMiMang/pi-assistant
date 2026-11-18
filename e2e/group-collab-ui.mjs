@@ -440,7 +440,7 @@ try {
 	await deliv.getByTestId("delivery-notdone").waitFor();
 	await stableShot(page, deliv, join(out, "22-delivery-card.png"));
 	await deliv.getByTestId("file-preview-open").first().click();
-	await page.getByTestId("file-preview-name").filter({ hasText: "out.txt" }).waitFor();
+	await page.getByTestId("workspace-tabs").getByRole("tab", { selected: true, name: "out.txt" }).waitFor();
 	await page.getByTestId("file-preview-close").click();
 	await page.setViewportSize({ width: 390, height: 844 });
 	await deliv.scrollIntoViewIfNeeded();

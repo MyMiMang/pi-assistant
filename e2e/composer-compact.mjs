@@ -13,6 +13,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { openCompact } from "./model-menu-flow.mjs";
+import { infoPane, infoTab as openInfoTab, openInfoPane } from "./fixtures/info-pane.mjs";
 import { browserEnv, cleanupTempRun, makeTempRun, startTempServer } from "./fixtures/temp-server.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 
@@ -71,17 +72,10 @@ const assertClean = (tag, m) => {
 	check(`${tag}：输入栏不再有权限 / 主动按钮（在助理设置里改）`, m.removedPills === 0);
 };
 
-const openInfoTab = async (page, key) => {
-	const direct = page.locator(`[data-testid=info-tabs] [role=tab][data-itab=${key}]`);
-	if (await direct.count()) return direct.click();
-	await page.getByTestId("info-tabs-more").click();
-	await page.getByTestId("info-tabs-menu").locator(`[data-itab=${key}]`).click();
-};
-
 /** 关掉右侧信息面板（390 下是覆盖层，不关会挡住截图） */
 const closePane = async (page) => {
-	const x = page.locator('.pa-pane-wrap button[aria-label="关闭"]');
-	if (await x.count()) { await x.first().click(); await page.waitForTimeout(300); }
+	const x = page.getByTestId(/^workspace-(back-chat|collapse)$/);
+	if (await x.isVisible()) { await x.click(); await page.getByTestId("right-workspace").waitFor({ state: "hidden" }); }
 };
 
 try {
@@ -110,10 +104,9 @@ try {
 
 	// ---------------- 2) 1440 打开信息面板 → 点「电脑」tab（保留的入口）
 	console.log("\n[2] 右侧信息面板「电脑」tab 入口仍在");
-	await page.locator('.pa-head-actions button[aria-label="信息面板"]').click();
-	await page.locator(".pa-pane-wrap").waitFor();
+	const pane = await openInfoPane(page);
 	await openInfoTab(page, "computer");
-	await page.locator(".pa-pane-wrap [data-testid=agent-computer-tab]").waitFor();
+	await pane.getByTestId("agent-computer-tab").waitFor();
 	check("信息面板「电脑」tab 可打开", true);
 	await page.screenshot({ path: join(OUT, "02-infopane-computer-tab.png") });
 
@@ -134,7 +127,7 @@ try {
 
 	// ---------------- 4) 390 手机：容器更窄，仍只留图标、无溢出
 	console.log("\n[4] 单聊 · 390 手机");
-	await page.locator('.pa-head-actions button[aria-label="信息面板"]').click(); // 关掉信息面板覆盖层
+	await closePane(page);
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.waitForTimeout(500);
 	m = await probe(composer);
@@ -152,7 +145,7 @@ try {
 	await page.waitForTimeout(700);
 	// 打开信息面板（点成员），让左右栏把聊天区挤到 ≈676，验证“大屏被挤压也 compact”
 	await page.locator("[data-testid=room-members] button").first().click();
-	await page.locator(".pa-pane-wrap").waitFor();
+	await infoPane(page).waitFor();
 	await page.waitForTimeout(500);
 	let rm = await roomComposer.evaluate((el) => {
 		const tools = el.querySelector(".pa-composer-tools");

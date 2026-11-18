@@ -3,27 +3,25 @@ import { ApiError, connectWs, getConn, refreshFromRendezvous, saveConn } from ".
 import Chat from "./components/Chat";
 import RoomChat from "./components/RoomChat";
 import DeviceApproval from "./components/DeviceApproval";
-import InfoPane from "./components/InfoPane";
 import Onboarding from "./components/Onboarding";
 import { isStandalone, PairCodeForm } from "./components/PairPage";
 import Settings from "./components/Settings";
 import Sidebar from "./components/Sidebar";
 import { Button } from "./components/ui";
 import { useStore } from "./store";
-import { clampPane, clampSide, PANE, resolveLayout, SIDE, useWindowWidth } from "./layout";
+import { clampSide, resolveLayout, SIDE, useWindowWidth } from "./layout";
 import { Resizer } from "./components/Resizer";
 import { BRAND } from "@pi-assistant/shared";
 import { SubagentChat } from "./components/Subagents";
-import { SidePanelDock, useSidePanelShown, WorkspaceButton } from "./components/SidePanel";
+import { SidePanelDock, useSidePanelShown } from "./components/SidePanel";
 import { AppContextMenuHost } from "./components/ContextMenu";
 import { ImageViewerHost } from "./components/ImageViewer";
 import { useWorkspace } from "./workspace";
 
 export default function App() {
-	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout, room, paneAgent, loadRooms, selectRoom, subagent, subagentTabs, convs } = useStore();
+	const { system, current, drawer, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout, room, loadRooms, selectRoom, subagent, subagentTabs, convs } = useStore();
 	const width = useWindowWidth();
 	const L = resolveLayout(width, layout);
-	// 侧栏（文件预览 / 执行概览等）显示时信息面板让位（只隐藏不卸载，关掉后标签页 / 折叠状态原样回来）
 	const dockShown = useSidePanelShown();
 	const workspaceExpanded = useWorkspace((s) => s.expanded);
 	const workspaceCoversChat = dockShown && (!L.previewDocked || workspaceExpanded);
@@ -94,7 +92,6 @@ export default function App() {
 	useEffect(() => {
 		if (room) void selectRoom(room);
 	}, [room]);
-	const paneId = room ? paneAgent : current;
 	const tabs = subagentTabs.filter((t) => room ? t.roomId === room : !t.roomId && t.agent_id === current && t.conversation_id === convs[current ?? ""]?.current);
 
 	if (fatal)
@@ -130,8 +127,8 @@ export default function App() {
 
 	return (
 		<div
-			className={`pa-app ${L.sideDocked ? "side-docked" : "side-hidden"} ${L.sideDrawer ? "side-drawer" : ""} ${L.paneDocked ? "pane-docked" : "pane-overlay"}`}
-			style={{ ["--side-w" as string]: `${layout.sideW}px`, ["--pane-w" as string]: `${layout.paneW}px` }}
+			className={`pa-app ${L.sideDocked ? "side-docked" : "side-hidden"} ${L.sideDrawer ? "side-drawer" : ""}`}
+			style={{ ["--side-w" as string]: `${layout.sideW}px` }}
 		>
 			<div className="pa-bg-layer" aria-hidden="true">
 				<i className="pa-b1" />
@@ -147,19 +144,9 @@ export default function App() {
 				</div>
 			)}
 			<main className="pa-chat" inert={workspaceCoversChat}>
-				<div className="pa-workspace-launch"><WorkspaceButton /></div>
 				<div className="pa-chat" style={{ display: subagent ? "none" : undefined }} data-testid="main-conversation">{room ? <RoomChat roomId={room} /> : current ? <Chat agentId={current} /> : null}</div>
 				{tabs.map((tab) => <div key={tab.id} className="pa-chat" style={{ display: subagent === tab.id ? undefined : "none" }}><SubagentChat id={tab.id} visible={subagent === tab.id} room={tab.roomId ?? undefined} /></div>)}
 			</main>
-			{info && paneId && (
-				<>
-					{!L.paneDocked && !dockShown && <div className="fixed inset-0 z-40 bg-black/40" onClick={() => set({ info: false })} />}
-					<div className="pa-pane-wrap" style={dockShown ? { display: "none" } : undefined}>
-						<Resizer side="left" value={layout.paneW} onChange={(v) => setLayout({ paneW: clampPane(v) })} onReset={() => setLayout({ paneW: PANE.def })} onCollapse={() => set({ info: false })} label="调整信息面板宽度" />
-						<InfoPane key={paneId} agentId={paneId} />
-					</div>
-				</>
-			)}
 			<SidePanelDock docked={L.previewDocked} width={L.previewW} />
 			<Settings />
 			<DeviceApproval />

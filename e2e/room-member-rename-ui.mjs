@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
-import { infoTab, agentProfileSave } from "./fixtures/info-pane.mjs";
+import { infoPane, infoTab, agentProfileSave } from "./fixtures/info-pane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = makeTempRun("pia-room-rename-");
@@ -28,7 +28,7 @@ try {
  await page.getByText("管理者 林导").first().waitFor();
  // 通过成员资料页改名（真实保存路径），不刷新页面
  await members.locator('button[title^="林导"]').click();
- const pane = page.locator(".pa-pane-wrap");
+ const pane = infoPane(page);
  await infoTab(page, "profile");
  const name = pane.getByPlaceholder("给助理起个名字"); await name.waitFor();
  await name.fill("导演");

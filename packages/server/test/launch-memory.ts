@@ -2,9 +2,8 @@
  * 仅测试：用公开 `CredentialStore` 注入点启动**真实服务**，全程不构造走 OS 钥匙串的安全后端。
  * 用法：PIA_DATA_DIR=<临时目录> node --import tsx test/launch-memory.ts
  *
- * 与 `src/main.ts` 的唯一差别：先经公开注入点 `initModels(memoryCredentialStore())` 注入内存后端，
- * 再动态加载 `src/main.ts`；main.ts 内部的无参 `initModels()` 会复用已注入的后端（见 models.ts），
- * 因此不会 `new EncryptedCredentialStore()`、不会调用 `security`。
+ * 模型凭据经 `initModels(memoryCredentialStore())` 注入，main.ts 内的初始化复用该后端。
+ * 扩展等配置另走密钥封装，不经过模型凭据注入；启动前强制用临时数据目录中的文件密钥。
  *
  * 隔离底线（在最前面、任何动态 import（config / models / 内存凭据）之前执行）：
  *  - `PIA_DATA_DIR` 必须是可信临时目录（`os.tmpdir()`、`/tmp`、`/private/tmp`）；缺失或不可信时
@@ -12,15 +11,18 @@
  *  - `PIA_WORKSPACE` 必须落在该临时数据目录内，否则强制覆盖为 `<DATA>/workspace`，绝不写用户真实工作区。
  *
  * 证据：用一个计数代理包住注入的内存后端，启动完成后把「内存后端被调用次数」写进
- * `PIA_TEST_STARTUP_FILE` 指定的 JSON。次数 > 0 说明启动期的凭据访问确实走了内存后端。
+ * `PIA_TEST_STARTUP_FILE` 指定的 JSON，同时记录实际绑定端口和实例 ID。次数 > 0 说明凭据访问走了内存后端。
  * 是否调用 `security` 由测试方用 PATH 上的假 `security` 探测。
  * 只在测试里使用；生产仍走 `src/main.ts`，不读取本文件。
  */
-import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 
+// 在任何产品模块加载前覆盖继承值，扩展配置也不得触及系统钥匙串。
+process.env.PIA_SECRETS = "file";
 const statusFile = process.env.PIA_TEST_STARTUP_FILE;
 
 /** 规范化到真实路径（跟随 macOS `/tmp` → `/private/tmp` 这类符号链接）；不存在时用最近的存在祖先。 */
@@ -75,11 +77,16 @@ const countingStore = new Proxy(base, {
 const { initModels } = await import("../src/models.ts");
 await initModels(countingStore);
 // 动态导入 main.ts：它内部的无参 initModels() 复用上面注入的内存后端，不碰 OS 钥匙串。
-await import("../src/main.ts");
+const { httpServer } = await import("../src/main.ts");
 
 if (statusFile) {
+	if (!httpServer.listening) await once(httpServer, "listening");
+	const address = httpServer.address();
+	const { identity } = await import("../src/identity.ts");
 	try {
-		writeFileSync(statusFile, JSON.stringify({ storeCalls }));
+		const pending = `${statusFile}.${process.pid}.tmp`;
+		writeFileSync(pending, JSON.stringify({ storeCalls, port: typeof address === "object" ? address?.port : undefined, serverId: identity().serverId }));
+		renameSync(pending, statusFile);
 	} catch {
 		/* 状态文件只是证据，写不进去不影响服务 */
 	}

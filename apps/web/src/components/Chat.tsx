@@ -3,8 +3,10 @@ import { AgentStatusLine } from "./MemberStatus";
 import { JumpToLatest } from "./JumpToLatest";
 import { HostControlBar, HostTierButton } from "./HostControl";
 import { ModelPicker } from "./ModelPicker";
+import { openAgentDetails } from "./InfoPane";
+import { WorkspaceButton } from "./WorkspaceStart";
 import { ContextRing } from "./ContextRing";
-import { ArrowUp, Menu, PanelRight, Square, Users } from "lucide-react";
+import { ArrowUp, Menu, Square, Users } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, upload } from "../api";
 import { t } from "../i18n";
@@ -37,7 +39,7 @@ function BotTurn(props: { row: Extract<Row, { kind: "bot" }> | null; agent: Agen
 
 // ------------------------------------------------------------------ 主体
 export default function Chat({ agentId }: { agentId: string }) {
-	const { agents, messages, msgState, set, info, convs } = useStore();
+	const { agents, messages, msgState, convs } = useStore();
 	const agent = agents.find((a) => a.id === agentId);
 	const list = messages[agentId] ?? [];
 	const st = msgState[agentId];
@@ -136,7 +138,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 				<SideToggle />
 				<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={30} running={running} />
 				<div className="pa-head-txt min-w-0">
-					<b className="truncate">{agent.name}</b>
+					<button type="button" className="pa-chat-agent-name truncate text-left hover:underline" title="打开助理详情" data-testid="agent-detail-open" onClick={() => openAgentDetails(agentId)}><b>{agent.name}</b></button>
 					<AgentStatusLine agent={agent} conversation={convId ?? undefined} list={list} onJump={jump} />
 				</div>
 				<div className="pa-head-actions">
@@ -149,11 +151,8 @@ export default function Chat({ agentId }: { agentId: string }) {
 					<ChatProjectsButton conversationId={convId} version={`${list.length}:${list[list.length - 1]?.id ?? ""}:${list[list.length - 1]?.updated_at ?? 0}`} />
 					<SubagentTasks agentId={agent.id} conversation={useStore.getState().convs[agent.id]?.current} />
 					<ConversationMenu agentId={agent.id} />
-					{/* 「电脑」入口在右侧信息面板的电脑 tab 里，这里不再重复放一个 */}
-					<button className={cx("pa-icon-btn ghost", info && "!bg-hover")} onClick={() => set({ info: !info })} aria-label="信息面板" title={info ? "收起信息面板" : "打开信息面板"}>
-						<PanelRight className="pa-ic" />
-					</button>
 				</div>
+				<WorkspaceButton />
 			</header>
 			<HostControlBar />
 			<div
@@ -339,7 +338,7 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 					<HostTierButton agentId={agentId} labelClass={COMPOSER_LABEL} />
 					<span className="flex-1" />
 					<ContextRing agentId={agentId} running={!!running} />
-					<ModelPicker agentId={agentId} />
+					<ModelPicker agentId={agentId} menuHeader={(close) => <button type="button" className="pa-chip" data-testid="composer-model-settings" onClick={() => { close(); openAgentDetails(agentId, "models"); }}>完整设置</button>} />
 					</div>
 					{/* 麦克风固定贴在发送键左侧（同一行、不换行）；提示 / 「去设置」由组件渲染到独立 status 行，不挤右组 */}
 					<VoiceInput

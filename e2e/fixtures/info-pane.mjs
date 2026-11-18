@@ -5,8 +5,16 @@
  * 「任务」里再分执行记录/定时任务/主动跟进。标签放不下时收进「更多」菜单，
  * 这些测试都通过同一个 helper 走真实界面（key 或中文名都行），避免各文件各写一套。
  */
-/** 信息面板有独立语义类；固定工作区同样是 aside，不能按 DOM 顺序取最后一个。 */
-export const infoPane = (page) => page.locator("aside.pa-info");
+/** 只取当前详情；其它成员的标签和已访问分类保留在 DOM，但不参与本次操作。 */
+export const infoPane = (page) => page.getByTestId("right-workspace").locator('[data-workspace-key^="settings:agent:"]:visible .pa-info');
+
+/** 单聊详情从聊天标题进入；若当前已经是详情则保留所选分类。 */
+export async function openInfoPane(page) {
+	const pane = infoPane(page);
+	if (!(await pane.isVisible())) await page.getByTestId("agent-detail-open").click();
+	await pane.getByTestId("info-tabs").waitFor();
+	return pane;
+}
 
 export const INFO_TABS = {
 	overview: "概览",
@@ -125,14 +133,14 @@ export function agentProfileSave(scope) {
  * 「模型」页当前值：地方够时是就地面板里的读屏摘要（model-picker-summary，文字与按钮同一份），
  * 窄 / 矮时是输入框同款按钮（model-picker）。读 innerText 判断当前模型 / 档位两种形态都适用。
  */
-export const agentModelButton = (page) => page.getByTestId("agent-models-tab").getByTestId(/^model-picker(-summary)?$/);
+export const agentModelButton = (page) => infoPane(page).getByTestId("agent-models-tab").getByTestId(/^model-picker(-summary)?$/);
 
 /**
  * 拿到「模型」页的思考 / Fast / 模型目录（thinking-*、thinking-fast、thinking-follow、model-menu）：
  * 就地面板直接返回它；按钮形态就打开紧凑层（已开直接返回）。
  */
 export async function openAgentModelPop(page) {
-	const tab = page.getByTestId("agent-models-tab");
+	const tab = infoPane(page).getByTestId("agent-models-tab");
 	await tab.getByTestId("agent-model-settings").waitFor();
 	const inline = tab.getByTestId("model-picker-inline");
 	if (await inline.count()) return inline;
