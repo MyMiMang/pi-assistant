@@ -372,7 +372,7 @@
 | `default-voice-backend.mjs` | default-voice-flow 的可控语音后端（来源视图、本地语音模块状态、窄接口安装 / 取消、目录补丁、流式会话脚本） |
 | `safe-memory-server.mjs` | 安全记忆测试服务 |
 | `mock-mcp.mjs` | 假 MCP 服务 |
-| `info-pane.mjs` | 助理设置面板操作 helper |
+| `info-pane.mjs` | 助理设置面板操作 helper；infoPane 按 aside.pa-info 明确作用域，一级/任务标签复用该定位，菜单沿用 portal |
 | `office-files.mjs` | Office 预览 e2e 的测试文件（docx / xlsx / pptx / pages / zip / ipynb，运行时用 jszip 现生成） |
 | `office-section.mjs` | `file-preview.mjs` 的 Office 段（桌面 + 390 窄屏断言） |
 | `side-panel-section.mjs` | `file-preview.mjs` 的预览侧栏段（停靠、调宽、换文件、放大、Esc、切换对话、1100 窄窗口退回弹窗；含 noir 深色 / glass 浅色截图） |

@@ -5,6 +5,9 @@
  * 「任务」里再分执行记录/定时任务/主动跟进。标签放不下时收进「更多」菜单，
  * 这些测试都通过同一个 helper 走真实界面（key 或中文名都行），避免各文件各写一套。
  */
+/** 信息面板有独立语义类；固定工作区同样是 aside，不能按 DOM 顺序取最后一个。 */
+export const infoPane = (page) => page.locator("aside.pa-info");
+
 export const INFO_TABS = {
 	overview: "概览",
 	models: "模型",
@@ -37,12 +40,13 @@ function resolveKey(map, keyOrName, aliases = {}) {
 
 async function clickTab(page, testId, keyOrName, map, aliases) {
 	const key = resolveKey(map, keyOrName, aliases);
-	const direct = page.getByTestId(testId).locator(`[role=tab][data-itab="${key}"]`);
+	const pane = infoPane(page);
+	const direct = pane.getByTestId(testId).locator(`[role=tab][data-itab="${key}"]`);
 	if (await direct.count()) {
 		await direct.first().click();
 		return;
 	}
-	await page.getByTestId(`${testId}-more`).click();
+	await pane.getByTestId(`${testId}-more`).click();
 	await page.getByTestId(`${testId}-menu`).locator(`[data-itab="${key}"]`).first().click();
 }
 
@@ -53,7 +57,7 @@ export async function infoTab(page, keyOrName) {
 
 /** 切「任务」内的二级标签；会自动先进入一级「任务」页。 */
 export async function taskTab(page, keyOrName) {
-	if (!(await page.getByTestId("agent-task-tabs").count())) await infoTab(page, "tasks");
+	if (!(await infoPane(page).getByTestId("agent-task-tabs").count())) await infoTab(page, "tasks");
 	await clickTab(page, "agent-task-tabs", keyOrName, TASK_TABS, TASK_TAB_ALIASES);
 }
 

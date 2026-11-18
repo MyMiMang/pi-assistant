@@ -12,7 +12,7 @@ import { cspProblems, probeCsp } from "./fixtures/csp-probe.mjs";
 import { startMockImages } from "./mock-images.mjs";
 import { openModelMenu, openCompact, closeModelPanel } from "./model-menu-flow.mjs";
 import { menuOverflowProblems, roomHelpers, roomProgressNoPause } from "./fixtures/page-checks.mjs";
-import { infoTab as selectInfoTab, taskTab as selectTaskTab, agentProfileSave, expandDetails, expandAgentModelSection } from "./fixtures/info-pane.mjs";
+import { infoPane, infoTab as selectInfoTab, taskTab as selectTaskTab, agentProfileSave, expandDetails, expandAgentModelSection } from "./fixtures/info-pane.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 
 // fileURLToPath 而不是 URL.pathname：路径含空格/中文时 pathname 会保留 %20，导致子进程 cwd 与文件读取都找不到。
@@ -143,15 +143,17 @@ await step("布局：右栏默认收起 → 打开 → 拖动调整两侧宽度 
 	await page.screenshot({ path: join(SHOTS, "35-layout-default.png") });
 	await page.getByRole("button", { name: "信息面板" }).click();
 	await page.locator(".pa-pane-wrap").waitFor();
-	const drag = async (sel, dx) => {
-		const b = await page.locator(sel).boundingBox();
+	const listResizer = page.getByRole("separator", { name: "调整助理列表宽度", exact: true });
+	const paneResizer = page.getByRole("separator", { name: "调整信息面板宽度", exact: true });
+	const drag = async (resizer, dx) => {
+		const b = await resizer.boundingBox();
 		await page.mouse.move(b.x + b.width / 2, b.y + 200);
 		await page.mouse.down();
 		await page.mouse.move(b.x + b.width / 2 + dx, b.y + 200, { steps: 8 });
 		await page.mouse.up();
 	};
-	await drag(".pa-resizer.right", 60);
-	await drag(".pa-resizer.left", -80);
+	await drag(listResizer, 60);
+	await drag(paneResizer, -80);
 	const lay = await page.evaluate(() => JSON.parse(localStorage.getItem("pia.layout")));
 	if (Math.abs(lay.sideW - 324) > 4 || Math.abs(lay.paneW - 420) > 4 || !lay.info) throw new Error(`布局未保存：${JSON.stringify(lay)}`);
 	await page.reload();
@@ -173,8 +175,8 @@ await step("布局：右栏默认收起 → 打开 → 拖动调整两侧宽度 
 	await page.getByRole("button", { name: "展开助理列表" }).click();
 	await page.locator(".pa-app.side-docked").waitFor();
 	// 恢复默认宽度，后面的截图保持一致
-	await page.locator(".pa-resizer.right").dblclick();
-	await page.locator(".pa-resizer.left").dblclick();
+	await listResizer.dblclick();
+	await paneResizer.dblclick();
 });
 
 await step("发送消息并看到流式回复", async () => {
@@ -240,15 +242,14 @@ await step("后台任务", async () => {
 await step("右侧信息面板：文件 / 电脑", async () => {
 	// 工作区文件在「文件」标签；「电脑」标签只管助理电脑 / 操作你的电脑
 	await infoTab("文件");
-	await page.locator("aside").last().getByText("report.md").first().waitFor();
+	await infoPane(page).getByText("report.md").first().waitFor();
 	await page.waitForTimeout(400);
 	await page.screenshot({ path: join(SHOTS, "07-info-files.png") });
 	await infoTab("电脑");
-	await page.locator("aside").last().getByText("操作你的电脑").first().waitFor();
+	await infoPane(page).getByText("操作你的电脑").first().waitFor();
 });
 
 await step("右侧信息面板标签栏自适应：240/320/420/600 宽下每个标签都可达（可见或在「更多」里），不被裁切", async () => {
-	const aside = page.locator(".pa-pane-wrap");
 	const want = ["overview", "models", "profile", "capabilities", "tasks", "memory", "files", "computer"];
 	for (const w of [240, 320, 420, 600]) {
 		await page.evaluate((w) => { const el = document.querySelector(".pa-pane-wrap"); el.style.width = `${w}px`; el.style.flex = `0 0 ${w}px`; }, w);
@@ -282,7 +283,6 @@ await step("右侧信息面板标签栏自适应：240/320/420/600 宽下每个�
 		log(`[${w}] 可见`, r.vis.join(","), "更多", inMenu.join(","));
 	}
 	await page.evaluate(() => { const el = document.querySelector(".pa-pane-wrap"); el.style.width = ""; el.style.flex = ""; });
-	void aside;
 });
 
 let pairUrl = "";
@@ -705,7 +705,7 @@ await step("工作途中插话：消息立即显示、在下一个工具边界�
 await step("Phase 2：记忆（聊天里记住 → 记忆页可见/编辑）", async () => {
 	await send("记住：我喜欢简洁的回答");
 	await page.locator("main").getByText("好的，我记住了").last().waitFor({ timeout: 15_000 });
-	const pane = page.locator("aside").last();
+	const pane = infoPane(page);
 	await infoTab("记忆");
 	await pane.getByText("我喜欢简洁的回答").waitFor();
 	await pane.getByRole("button", { name: "添加记忆" }).click();
@@ -719,7 +719,7 @@ await step("Phase 2：记忆（聊天里记住 → 记忆页可见/编辑）", a
 await step("高级记忆（Hindsight）：设置三个模型 → 连接（假的远程 Hindsight）→ 助理单独切换后端 → 旧记忆补写 → 问问记忆 → 导入", async () => {
 	const hs = fakeHindsight("hs-e2e-key");
 	const port = await hs.start();
-	const pane = page.locator("aside").last();
+	const pane = infoPane(page);
 	try {
 		const c = await browser.newContext({ viewport: { width: 1440, height: 1100 }, colorScheme: "light", locale: "zh-CN" });
 		const p = await c.newPage();
@@ -773,7 +773,7 @@ await step("Phase 2：定时任务（助理创建需审批 → 定时任务页 �
 	await page.locator("main").getByText("需要你的批准").last().waitFor({ timeout: 15_000 });
 	await page.getByRole("button", { name: "批准", exact: true }).last().click();
 	await page.locator("main").getByText("定时任务设好了").last().waitFor({ timeout: 15_000 });
-	const pane = page.locator("aside").last();
+	const pane = infoPane(page);
 	await taskTab("routines");
 	const item = pane.locator("[data-testid=routine-item]").first();
 	await item.getByText("每日简报").waitFor();
@@ -854,7 +854,7 @@ await step("扩展：添加 MCP 服务（本机命令）→ 测试连接/工具�
 	const form = tab.locator("[data-testid=mcp-form]");
 	await form.getByPlaceholder("github", { exact: true }).fill("demo");
 	await form.getByPlaceholder("npx", { exact: true }).fill(process.execPath);
-	await form.getByPlaceholder("-y @modelcontextprotocol/server-github", { exact: true }).fill(join(ROOT, "e2e/fixtures/mock-mcp.mjs"));
+	await form.getByPlaceholder("-y @modelcontextprotocol/server-github", { exact: true }).fill(`"${join(ROOT, "e2e/fixtures/mock-mcp.mjs")}"`);
 	await form.getByPlaceholder("查询和管理 GitHub 仓库、Issue、PR").fill("测试用天气与便签服务");
 	await form.getByRole("button", { name: "保存并测试连接" }).click();
 	const item = tab.locator("[data-testid=mcp-item]").first();
@@ -896,7 +896,7 @@ await step("扩展：添加 MCP 服务（本机命令）→ 测试连接/工具�
 	await page.locator("main").getByText("没有获得批准，便签没有发送").last().waitFor({ timeout: 15_000 });
 
 	// 能力页里按助理启用
-	const pane = page.locator("aside").last();
+	const pane = infoPane(page);
 	await infoTab("capabilities");
 	await expandDetails(pane, "agent-extensions-details");
 	await pane.locator("[data-testid=agent-extensions]").getByText("demo", { exact: true }).waitFor();
