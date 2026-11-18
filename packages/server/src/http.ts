@@ -49,6 +49,7 @@ import { mountFastExecutorRoutes } from "./routes/fast-executor.ts";
 import { mountMcpRoutes } from "./routes/mcp.ts";
 import { mountSkillRoutes } from "./routes/skills.ts";
 import { mountToolBridgeRoutes } from "./routes/tool-bridge.ts";
+import { mountBrowserRoutes, upgradeBrowserViewer } from "./routes/browser.ts";
 
 const app = new Hono<Env>();
 const PLAY_LINK_TTL = 4 * 3600_000;
@@ -187,6 +188,7 @@ app.post("/hooks/channels/wecom/:id", wecomHook);
 mountHostControlRoutes(app);
 mountFastExecutorRoutes(app);
 mountDesktopRoutes(app);
+mountBrowserRoutes(app);
 startIdleWatcher({ busy: agentBusy, changed: deskChanged });
 startHousekeeping();
 mountRemoteRoutes(app);
@@ -252,6 +254,7 @@ export function startHttp() {
 	const clients = new Map<WebSocket, { deviceId: string | null; authed: boolean }>();
 	server.on("upgrade", (req, socket, head) => {
 		const url = new URL(req.url ?? "/", "http://x");
+		if (url.pathname === "/browser/ws") return upgradeBrowserViewer(req, socket, head, url);
 		if (url.pathname === "/desktop/ws") return void proxyDesktop(req, socket, head, url);
 		if (url.pathname !== "/ws") return socket.destroy();
 		const headers = new Headers(Object.entries(req.headers).flatMap(([k, v]) => (v === undefined ? [] : [[k, Array.isArray(v) ? v.join(",") : v] as [string, string]])));

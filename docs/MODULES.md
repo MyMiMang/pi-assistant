@@ -78,7 +78,7 @@
 | `ext-approval` | 审批闸门（有后果的工具调用）；含「不能用命令 / 写脚本直接调 cua」的 deny（`usesCuaDirectly`，所有档位） |
 | `ext-sandbox` | 工作区命令 |
 | `ext-computer` | 电脑操作（cua）；`screen-window.ts`：context 钩子里只留最近 3 张电脑截图（每 5 张一批清旧的，纯逻辑）；`structured.ts`：把 cua 的 structuredContent（tab_id / refs / elements / next_call）压成紧凑 JSON 追加给模型（上限 12K，纯逻辑）；`quick-steps.ts`：快速执行者的纯逻辑（候选解析 / 过滤排序 / 问题构造 / 判断 / 拼调用 / 核对 / 窗口只读文字摘要 windowTextRows / 变化行 changedText）；`quick-steps-tool.ts`：`computer_quick_steps` / `hostpc_quick_steps` 工具和共用执行函数 runQuickAction（问 classifier、走 `ctx.executeTool` 照常过审批；target 可省略用最近一次目标）；`words.ts`：敏感 / 危险动作的字样（审批与目标模式守门共用）；`quick-io.ts`：快速执行 / 快速打开共用的 textOf / observe / pageSummary；`quick-open.ts`：`computer_quick_open` / `hostpc_quick_open` 工具（开浏览器 / 应用、按窗口优先级找并绑定、打开网址、读页面；可同时传 steps / goal 直接执行）；`quick-goal.ts`：目标模式的纯逻辑（候选动作生成 / 剪枝 / 危险按钮守门 / 问题构造 / 动作转步骤）；`quick-goal-run.ts`：目标模式执行循环（问 classifier、执行、核对） |
-| `ext-browser` | 浏览器工具 |
+| `ext-browser` | 浏览器工具；`session.ts` 为宿主页身份/输入执行端口，移除扩展内部current/owned状态；导航/表单/上传复用宿主执行器和requests |
 | `ext-connectors` | 邮箱等连接器工具 |
 | `ext-delivery` | 发文件 / 提问 / 派帮手（spawn_subagent 等；后台任务工具已并进帮手，决策 0027） |
 | `ext-memory` | 记忆工具 |
@@ -98,7 +98,7 @@
 |---|---|
 | `main.ts` | 启动入口 |
 | `http.ts` | 组装路由、中间件、压缩（具体接口在 `routes/`） |
-| `routes/` | 全部 HTTP 接口：agents、channels、chat-projects（单聊项目：列项目 / 确认 / 先不做 / 停下，写法照 rooms 的项目路由）、common（共用 helper）、desktop、fast-executor（快速执行设置）、host-control、mcp、memory、models、remote、rooms、routines、skills、system、tool-bridge（Claude Code 工具桥的 MCP 入口，不在 /api 下：只收 127.0.0.1 + 随机令牌）、work-items |
+| `routes/` | 全部 HTTP 接口：agents、channels、chat-projects（单聊项目：列项目 / 确认 / 先不做 / 停下，写法照 rooms 的项目路由）、common（共用 helper）、desktop、fast-executor（快速执行设置）、host-control、browser（同Page查看票据/WS/输入鉴权）、mcp、memory、models、remote、rooms、routines、skills、system、tool-bridge（Claude Code 工具桥的 MCP 入口，不在 /api 下：只收 127.0.0.1 + 随机令牌）、work-items |
 | `bus.ts` | 实时事件总线（WS） |
 | `config.ts` | 环境变量（PIA_ 前缀） |
 | `db.ts` | SQLite 基础表与轻量迁移 |
@@ -173,7 +173,10 @@
 | `vision.ts` | 识图能力判定与调用 |
 | `vision-ext.ts` | 识图 Pi 扩展 |
 | `image-gen/` | 图片生成（providers / routes / extension） |
-| `browser.ts` | 助理浏览器上下文 |
+| `browser.ts` | 助理浏览器会话与固定运行环境；browserPagesFor 为工具/UI 共用 registry 唯一入口，查看不启动浏览器 |
+| `browser-pages.ts` | 服务端 runtime/context/page 明确身份、owned/popup/isolated/current；共用输入租约与上下文切换屏障 |
+| `browser-control.ts` | 页级串行输入与接管有界 drain，超时锁定、显式重读恢复/交还 |
+| `browser-frames.ts` | 每Page单CDP流扇出、最新帧背压、绘制ACK、尺寸/文档代际失效；退订不关业务页 |
 | `desktop.ts` | 助理电脑开关机、端口、截图 |
 | `desktop/` | backend（后端选择）、computers（谁用哪台，纯逻辑）、lima、wsl、names（容器名保护）、image、image-download、idle、resources、settings |
 | `sandbox.ts` | 沙箱驱动（工作区 / Docker） |
@@ -233,6 +236,9 @@
 | `thinking-slider.ts` | 思考强度滑块纯逻辑 |
 | `fast-mode.ts` | Fast 状态文案 |
 | `selection.ts` | 助理/对话选择持久化 |
+| `workspace-state.ts` | 右工作区纯状态转换、会话scope、12项容量拒绝；`test/workspace-state.test.ts` 覆盖去重/关闭/收起/清理 |
+| `workspace.ts` | 当前会话唯一内容注册表：稳定对象键、owner/scope校验、容量提示与注销清理；无浏览器业务页状态 |
+| `browser-view.ts` | 网页查看连接/画布解码绘制回执，沿用api鉴权换一次票据，断线不交还或重放输入 |
 | `layout.ts` | 布局偏好（含文件预览侧栏 `PREVIEW` 宽度与 `previewDocked` 停靠判定；单测 `packages/server/test/layout.test.ts`） |
 | `viewport.ts` | 手机可视高度 |
 | `esc-layer.ts` | Esc 关闭顺序 |
@@ -261,7 +267,7 @@
 
 | 文件 | 负责 |
 |---|---|
-| `ui.tsx` | 通用基础组件（见共用工具清单） |
+| `ui.tsx` | 通用基础组件（见共用工具清单）；Help焦点转入portal链接不失焦关闭，外移关闭、Tab/独立Esc回归见e2e/help-links-ui.mjs |
 | `Chat.tsx` | 单聊页与输入框工具栏 |
 | `ChatMessages.tsx` | 共用消息展示 |
 | `RoomChat.tsx` | 群聊页 |
@@ -283,8 +289,9 @@
 | `ThinkingSlider.tsx` | 思考强度滑块 |
 | `VoiceInput.tsx` | 语音输入按钮 |
 | `Attachments.tsx` | 附件上传与托盘 |
-| `FilePreview.tsx` | 文件预览：状态 store、`PreviewContent`（工具栏 + 内容，弹窗和侧栏共用）、`FilePreviewHost`（外壳是 `SidePanel`）、取数 + 按类型分发 |
-| `SidePanel.tsx` | 聊天右边的侧栏：`<SidePanel open onClose title testId>`（用法同 `Modal`）；宽窗口 portal 进槽位、放不下是原来的 Modal、「放大」是 `Modal wide fixed`，同一时间只显示一个；`SidePanelDock` 是槽位外壳（Resizer 调宽、Esc 关闭、换助理 / 对话自动关；宽度来自 `layout.ts` 的 `previewDocked / previewW`）。文件预览、执行概览、任务看板、项目、提醒都用它；设计见 `docs/design/side-panel-views.md`；e2e `e2e/side-panel-views.mjs`（独立脚本：四个面板进侧栏 / 单一面板 / 放大 / 390 仍是弹窗） |
+| `FilePreview.tsx` | 多文件按授权地址登记统一工作区；`PreviewContent` 复用工具栏和各格式视图、取数与卸载清理 |
+| `SidePanel.tsx` | 唯一右工作区：SidePanel注册现有业务内容、SidePanelDock固定宿主按CSS切换并排/放大/手机；ResponsiveTabs与Resizer复用，WorkspaceButton恢复/真实网页查看入口。主题布局在 `themes/workspace.css`；设计见 `design/side-panel-views.md`，e2e `side-panel-views.mjs` 和文件预览fixture |
+| `BrowserWorkspace.tsx` | 真实同Page工作区：现有页/群成员选择、导航、接管交还/锁定恢复、中文输入；主题语义色复用 |
 | `FilePreviewViews.tsx` | 文件预览的各类视图和共用件：`ModeBar`（渲染/源码等模式切换条，Markdown / HTML / SVG 共用）、`loadText`（按上限拉文本）、`CodeView` / `CsvView` / `TableView`（CSV 与 Excel 共用） / `loadBinary`（≤30MB 整份读取） / `MarkdownScroll` / `SvgView` / `HtmlView`（sandbox iframe，无 allow-same-origin） / `Notice`；设计见 `docs/design/html-file-preview.md` |
 | `OfficeViews.tsx` | Word / Excel / iWork / zip / Jupyter 预览视图（整体按需加载，库都用 `import()`）；表格复用 `FilePreviewViews` 的 `TableView` |
 | `OfficeSlides.tsx` | PPT 预览：pptxtojson 解析 + 自己渲染幻灯片（Shadow DOM） |
@@ -308,6 +315,7 @@
 | `Proactive.tsx` | 主动跟进（试运行卡片的「就这么做 / 这类以后别做」） |
 | `ProactiveAutonomy.tsx` | 主动做事：模式下拉、「可以放心做的事」规则清单、判断记录 |
 | `DraftModelSettings.tsx` | 创建/编辑表单的模型草稿 |
+| `ModelSettingsContent.tsx`、`ModelSettingsPanel.tsx` | 详情八分类模型页与工作区共用内容（ModelPicker/ContextDetails/画图/帮手），明确助理身份注册settings面板，原即时保存队列不复制；e2e `workspace-model-theme-ui.mjs` |
 | `ResponsiveTabs.tsx` | 自适应标签 + 更多 |
 | `Resizer.tsx` | 拖动调栏宽 |
 | `Settings.tsx` | 设置导航与各页组装 |
@@ -318,6 +326,7 @@
 | `ClaudeCodeCard.tsx` | 模型服务页的「Claude Code（本机）」卡片：检测状态、重新检测、登录提示 |
 | `CustomProvider.tsx` | 自定义服务表单 |
 | `RelayDetail.tsx` | 中转服务详情（单列） |
+| `ModelReasoning.tsx` | 自定义模型编辑共用的三态推理支持及按渠道文档声明档位/协议值；复用 Select、Fold 与 ThinkingLevel 常量 |
 | `provider-icons.ts` | 自动生成的服务图标（勿手改） |
 | `ModelStrengths.tsx` | 模型擅长标签 |
 | `ImageModels.tsx` | 图片生成模型 |
@@ -353,6 +362,7 @@
 |---|---|
 | `managed-cli-package.mjs` | 三家受管 CLI 的本地假包安装、官方登录命令形状和假终端，不联网 |
 | `managed-agy-binary.mjs` | Antigravity 本地假 binary 压缩包、SHA 下载、终端登录与更新清单；捕获检测 / 登录 / 对话隔离环境，禁止外网 |
+| `browser-workspace.mjs` | 临时服务真实浏览器e2e夹具；本次临时目录指令驱动公开extension/requests/registry，无产品调试路由 |
 | `temp-server.mjs` | 临时数据 + Mock 的测试服务（makeTempRun / startTempServer / browserEnv / cleanupTempRun；服务进程不继承 *_API_KEY / *_TOKEN / ANTHROPIC_* 等真实服务商凭据环境变量） |
 | `stable-shot.mjs` | 稳定截图 |
 | `upload.mjs` | 共用新上传协议的创建、顺序分块及失败清理 |

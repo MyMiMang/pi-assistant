@@ -25,7 +25,7 @@ export async function runOfficeSection({ browser, base, installRoutes, check, OU
 		await page.locator(`[data-testid=${testId}]`).waitFor({ timeout: 15_000 });
 	};
 	const close = async () => {
-		await page.keyboard.press("Escape");
+		await page.getByTestId("workspace-close-tab").click();
 		await page.locator("[data-testid=file-preview]").waitFor({ state: "detached", timeout: 5000 });
 	};
 	const shadowText = (host) => page.evaluate((h) => document.querySelector(`[data-testid=${h}]`)?.shadowRoot?.textContent ?? "", host);

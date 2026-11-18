@@ -16,7 +16,7 @@ import { browserExtension, isBrowserTool } from "@pi-assistant/ext-browser";
 import { emailExtension, isEmailTool, wechatExtension } from "@pi-assistant/ext-connectors";
 import { openWechat, WECHAT_PROMPT, wechatAllowed } from "../wechat.ts";
 import { accountsFor, getAccount, getDraft, listMail, readMail, saveDraft, sendDraft, fileReader } from "../email.ts";
-import { browserFor, browserShared, isolatedContext, setHeaded } from "../browser.ts";
+import { browserPagesFor, browserRuntimeMode } from "../browser.ts";
 import { deliveryExtension } from "@pi-assistant/ext-delivery";
 import { memoryExtension } from "@pi-assistant/ext-memory";
 import { routinesExtension } from "@pi-assistant/ext-routines";
@@ -349,29 +349,14 @@ export async function extensionsFor(agentId: string, conversationId: string | nu
 		name: "pia-browser",
 		factory: browserExtension({
 			workspace,
-			context: async () => (await browserFor(agentId)).ctx,
-			get shared() {
-				return browserShared(agentId);
-			},
-			isolated: () => isolatedContext(agentId),
-			mode: () => (computerOn ? "sandbox" : "host"),
+			session: browserPagesFor(agentId),
+			mode: () => browserRuntimeMode(agentId) ?? "host",
 			isPaused: () => desktopPause.isPaused(agentId),
 			request: async (r) => {
 				const res = await requests.approval(agentId, taskId, r.toolName, r.input, r.summary, r.risk, conversationId, { allowTask: r.allowTask });
 				return { approved: !!res.approved, note: res.note, scope: res.scope };
 			},
-			handoff: async (reason, png, url) => {
-				const s = await browserFor(agentId);
-				if (s.mode === "sandbox") return handoff(reason, png, "可以在右侧「电脑」标签里直接操作，或用手机扫描下面画面中的二维码。");
-				// 本机无头浏览器：临时打开有界面的窗口让你在这台电脑上操作；不在电脑旁时可直接扫截图里的二维码
-				await setHeaded(agentId, true, url);
-				try {
-					return await handoff(reason, png, "已在这台电脑上打开浏览器窗口，请在窗口里完成；不在电脑旁时，可以直接用手机扫描下面截图里的二维码。");
-				} finally {
-					const page = (await browserFor(agentId)).ctx.pages()[0];
-					await setHeaded(agentId, false, page?.url());
-				}
-			},
+			handoff: async (reason, png) => handoff(reason, png, "请打开聊天上方的「网页工作区」操作同一网页。网页已交给你；网站已经提交的请求可能继续，接管不能撤销既有操作。完成后交还，或在卡片点「已完成」。"),
 		}),
 	});
 	// 助理电脑运行中 → 挂上 cua-driver（MCP）与看屏幕/接管工具

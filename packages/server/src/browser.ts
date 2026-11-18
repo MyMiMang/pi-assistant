@@ -3,10 +3,13 @@
  *  - 助理电脑在运行：连接容器里有界面的 Chromium（CDP，经 127.0.0.1 端口映射），「电脑」实时画面里可见，
  *    用户可以随时接管（扫码 / 验证码 / 登录）；
  *  - 否则：本机无头 Chrome / Edge / Chromium，每个助理独立的持久化用户目录（数据目录/agents/<id>/browser-profile），
- *    与用户自己的浏览器完全隔离。接管时临时换成有界面的窗口（在这台电脑上操作），手机上收到截图。
+ *    与用户自己的浏览器完全隔离。工作区画面和接管始终复用同一个 Page，不重开实例。
  * Playwright 只用公开 API（playwright-core：connectOverCDP / launchPersistentContext）。
  */
 import { existsSync, mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { BrowserPages } from "./browser-pages.ts";
+import { desktopPause } from "./desktop.ts";
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import { config } from "./config.ts";
@@ -28,19 +31,19 @@ export function findChrome(): string | null {
 }
 
 interface Session {
+	runtimeId: string;
 	mode: "sandbox" | "host";
 	/** sandbox：连的是哪台电脑（换了电脑要重连） */
 	computer?: string;
 	ctx: BrowserContext;
 	browser?: Browser;
-	headed?: boolean;
 }
 const sessions = new Map<string, Session>();
 const starting = new Map<string, Promise<Session>>();
 
 export const profileDir = (agentId: string) => join(config.agentsDir, agentId.replace(/[^a-zA-Z0-9_-]/g, ""), "browser-profile");
 
-async function open(agentId: string, opts: { headed?: boolean } = {}): Promise<Session> {
+async function open(agentId: string): Promise<Session> {
 	const desk = await desktopStatus(agentId).catch(() => null);
 	if (desk?.state === "running" && desk.cdpPort) {
 		const base = await ensureDesktopBrowser(agentId);
@@ -49,8 +52,8 @@ async function open(agentId: string, opts: { headed?: boolean } = {}): Promise<S
 		const ws = v.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, base.replace(/^http/, "ws"));
 		const browser = await chromium.connectOverCDP(ws, { timeout: 20_000 });
 		const ctx = browser.contexts()[0] ?? (await browser.newContext());
-		const s: Session = { mode: "sandbox", ctx, browser, computer: computerFor(agentId) };
-		browser.on("disconnected", () => sessions.get(agentId) === s && sessions.delete(agentId));
+		const s: Session = { runtimeId: randomUUID(), mode: "sandbox", ctx, browser, computer: computerFor(agentId) };
+		browser.on("disconnected", () => { if (sessions.get(agentId) === s) { sessions.delete(agentId); registries.get(agentId)?.invalidate(); } });
 		return s;
 	}
 	const exe = findChrome();
@@ -59,8 +62,8 @@ async function open(agentId: string, opts: { headed?: boolean } = {}): Promise<S
 	mkdirSync(dir, { recursive: true });
 	const ctx = await chromium.launchPersistentContext(dir, {
 		executablePath: exe,
-		headless: !opts.headed,
-		viewport: opts.headed ? null : { width: 1280, height: 860 },
+		headless: true,
+		viewport: { width: 1280, height: 860 },
 		locale: "zh-CN",
 		timezoneId: "Asia/Shanghai",
 		acceptDownloads: true,
@@ -68,22 +71,17 @@ async function open(agentId: string, opts: { headed?: boolean } = {}): Promise<S
 		env: envStrings(nativeLaunchEnvForChild(undefined, { syntheticRoots: [config.dataDir] }).env),
 		args: ["--no-first-run", "--no-default-browser-check", ...(process.platform === "linux" && process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
 	});
-	const s: Session = { mode: "host", ctx, headed: !!opts.headed };
-	ctx.on("close", () => sessions.get(agentId) === s && sessions.delete(agentId));
+	const s: Session = { runtimeId: randomUUID(), mode: "host", ctx };
+	ctx.on("close", () => { if (sessions.get(agentId) === s) { sessions.delete(agentId); registries.get(agentId)?.invalidate(); } });
 	return s;
 }
 
 export async function browserFor(agentId: string): Promise<Session> {
 	const cur = sessions.get(agentId);
 	if (cur) {
-		// 助理电脑后来启动了 → 改用它的浏览器（用户能看见）
-		// 换了电脑（开 / 关了单独的电脑）→ 重连
-		if (cur.mode === "sandbox" && cur.computer !== computerFor(agentId)) await closeBrowser(agentId);
-		else {
-			const desk = cur.mode === "host" ? await desktopStatus(agentId).catch(() => null) : null;
-			if (!(desk?.state === "running" && desk.cdpPort)) return cur;
-			await closeBrowser(agentId);
-		}
+		// 页运行期间固定环境。电脑变更不能静默销毁 DOM / Cookie / 在途动作。
+		if (cur.mode === "sandbox" && cur.computer !== computerFor(agentId)) throw new Error("助理电脑已变化，原网页仍留在原环境。请明确结束原浏览器后再打开新环境。");
+		return cur;
 	}
 	const p = starting.get(agentId) ?? open(agentId).finally(() => starting.delete(agentId));
 	starting.set(agentId, p);
@@ -109,19 +107,24 @@ export async function isolatedContext(agentId: string): Promise<BrowserContext> 
 	return ctx;
 }
 
-/** 本机模式接管：换成有界面的窗口（同一个用户目录），把当前网址带过去；结束后再换回无头 */
-export async function setHeaded(agentId: string, headed: boolean, url?: string) {
-	const cur = sessions.get(agentId);
-	if (!cur || cur.mode !== "host" || !!cur.headed === headed) return;
-	await closeBrowser(agentId);
-	const s = await open(agentId, { headed });
-	sessions.set(agentId, s);
-	if (url && url !== "about:blank") await (s.ctx.pages()[0] ?? (await s.ctx.newPage())).goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
+const registries = new Map<string, BrowserPages>();
+/** 查看读取不调用 browserFor，不会为了查看启动浏览器或 VM。 */
+export const existingBrowserPages = (agentId: string) => registries.get(agentId);
+export const browserRuntimeMode = (agentId: string) => sessions.get(agentId)?.mode ?? null;
+export function browserPagesFor(agentId: string) {
+	let pages = registries.get(agentId);
+	if (!pages) {
+		pages = new BrowserPages(agentId, { context: () => browserFor(agentId), isolated: () => isolatedContext(agentId), paused: () => desktopPause.isPaused(agentId), pauseVersion: () => desktopPause.version(agentId) });
+		registries.set(agentId, pages);
+	}
+	return pages;
 }
 
 export async function closeBrowser(agentId: string) {
 	const s = sessions.get(agentId);
 	sessions.delete(agentId);
+	await registries.get(agentId)?.dispose();
+	registries.delete(agentId);
 	if (!s) return;
 	// 助理电脑里的浏览器只断开连接、不关闭（登录态和窗口留给用户）
 	if (s.mode === "sandbox") await s.browser?.close().catch(() => {});

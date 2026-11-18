@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { test } from "node:test";
 const { browserExtension } = await import("@pi-assistant/ext-browser");
-const { browserFor, closeAllBrowsers, findChrome } = await import("../src/browser.ts");
+const { browserPagesFor, closeAllBrowsers, findChrome } = await import("../src/browser.ts");
 const { config } = await import("../src/config.ts");
 
 const chrome = findChrome();
@@ -38,7 +38,7 @@ mkdirSync(ws, { recursive: true });
 
 test("ext-browser：遮罩下点击兜底 + 保存图片", { skip: !chrome && "没有 Chrome" }, async () => {
 	const tools = new Map<string, { execute: (id: string, p: Record<string, unknown>) => Promise<{ content: { type: string; text?: string }[] }> }>();
-	browserExtension({ workspace: ws, context: async () => (await browserFor("bit")).ctx, mode: () => "host", isPaused: () => false, request: async () => ({ approved: true }), handoff: async () => "" })({ registerTool: (t: { name: string }) => tools.set(t.name, t as never), on() {} } as never);
+	browserExtension({ workspace: ws, session: browserPagesFor("bit"), mode: () => "host", isPaused: () => false, request: async () => ({ approved: true }), handoff: async () => "" })({ registerTool: (t: { name: string }) => tools.set(t.name, t as never), on() {} } as never);
 	const call = async (n: string, p: Record<string, unknown> = {}) => (await tools.get(n)!.execute("id", p)).content.map((c) => c.text ?? `[${c.type}]`).join("\n");
 	const ref = (label: RegExp, s: string) => (s.split("\n").find((l) => label.test(l))?.match(/\[ref=(\w+)\]/) ?? [])[1];
 	const nav = await call("browser_navigate", { url: `${BASE}/images` });

@@ -4,7 +4,8 @@
 新需求立刻记一行；做完改状态，不写长段落（细节写进设计文档，进度看提交信息）。2026-10-18 以前的长记录见 [history/ROADMAP-2026-10-18.md](history/ROADMAP-2026-10-18.md)。
 
 ## 进行中
-- [本地验收通过，远端CI待验证] beta.71 已公开，独立 secrets / CI 历史运行未绿；精确快照误报豁免及 Lima / 空闲时间旧测试收尾已获 pi助理开发总管审查通过，Pi 开发助理实施；本地check/定向e2e/ARM64 Lima/全历史扫描通过，Intel Lima未验
+- [总管已验收，beta.72 发布整合] 模型推理最小共用修复：未知显示未识别，现有高级编辑三态与渠道文档子集/协议值，手工映射持久化及共用 SDK spec；定向 Mock 验证，真实中转未验证
+- [已合 main，远端CI通过] beta.71 后收尾 `3eaf530e`：精确快照误报豁免及 Lima / 空闲时间旧测试修复获总管验收，ci 44080875180 / secrets 44080875024 成功；本地check/定向e2e/ARM64 Lima/全历史扫描通过，Intel Lima未验
 - [已发布(beta.71)] 单聊/群聊单文件 2GB：32MB 顺序分块、流式写盘、进度和过期清理；图片超过 30MB 只给路径
 - [已合 main] 编程工具渠道工具循环中途 Pi 整理过前文后不再续接旧进程（否则 agy 仍带全部上下文，每一步重复整理、额度耗得快；苏折竹一天整理 58 次）
 - [已发布(beta.71)，6afab502；Sonnet切换实测通过，Gemini地区受限未验] 编程工具渠道上下文由工具自己管：记忆不进系统提示（避免每轮重开重发全文）、Pi 不按阈值自动整理、切换回来增量补发、真实上下文大小（Hydrogen 1M）（[设计](design/cli-context-ownership.md)、决策 0032）
@@ -71,6 +72,7 @@
 - [已发布(beta.46)] 长命令跑满 5 秒自动转后台，插话不用等命令跑完（[设计](design/background-commands.md)）
 - [已发布(beta.48)] Claude Code 模型列表补内置「更多模型」清单（Opus 4.8、Sonnet 5.5 等具体版本）+ 设置卡可自定义模型 ID（[设计 §4.2](design/cli-models.md)）
 - [已发布(beta.45)] 通用 ACP 后端 + OpenCode 当模型（渠道 `opencode-cli`，dev:live 用 Go 套餐真实冒烟通过；Grok 暂缓；[设计](design/acp-cli-models.md)）
+- [总管已验收，beta.72 发布整合] 统一右工作区阶段二/三：文件/任务/模型与真实同Page网页；registry/输入权/单流ACK/接管超时锁定，临时Chromium定向通过；sandbox/跨平台未验（[设计](design/side-panel-views.md)）
 - [已发布(beta.44)] 执行概览、任务、项目、提醒也进侧栏（[设计](design/side-panel-views.md)）；断线自动重试成功不再显示红色报错，收尾空回复不再报错
 - [已发布(beta.44)] HTML / SVG / Office / iWork / zip / Jupyter 文件在应用内直接显示（[HTML 设计](design/html-file-preview.md)、[Office 设计](design/office-file-preview.md)、[0024](decisions/0024-html-preview-sandboxed.md)）
 - [已发布(beta.44)] 文件预览改成聊天右边的侧栏（窄屏仍是弹窗，可「放大」；[设计](design/file-preview-side-panel.md)）

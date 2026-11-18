@@ -16,7 +16,7 @@ import { knownThinkingLevelMap } from "../src/pi-adapter/model-limits.ts";
 
 const relay = await startMockOpenAI({ port: 0, key: "sk-unit" });
 after(() => relay.close());
-await initModels();
+await initModels((await import("./in-memory-credentials.ts")).memoryCredentialStore());
 
 test("自定义服务：档位来自 Pi 内置目录（gpt-6.1-sol 有 xhigh / max），认不出的模型不凭空补", async () => {
 	const p = await customProviders.save(null, {
@@ -40,6 +40,56 @@ test("自定义服务：档位来自 Pi 内置目录（gpt-6.1-sol 有 xhigh / m
 	} finally {
 		await customProviders.remove(p.id);
 	}
+});
+
+test("未知/显式覆盖：用户子集保存、刷新及扩展重注册不丢，恢复自动清除手工 map", async () => {
+	const id = "unknown-future-model";
+	const base = { name: "用户档位", api: "openai-completions", baseUrl: relay.url, apiKey: "sk-unit" };
+	let p = await customProviders.save(null, { ...base, models: [{ id }] });
+	try {
+		assert.equal(p.models[0].reasoning, undefined);
+		assert.deepEqual(models.supportedThinking(p.id, id), ["off"]);
+		assert.equal(customProviders.withLimits({ id, reasoning: true, reasoningAuto: true }).reasoning, undefined, "自动旧结果无证据时回到未知");
+		const partial = { high: "documented-high" };
+		p = await customProviders.save(p.id, { ...base, models: [{ id, reasoning: true, thinkingLevelSource: "user", thinkingLevelMap: partial }], classifiers: [{ protocol: "typesafe-system-one", modelId: "test-classifier" }] });
+		assert.deepEqual(models.supportedThinking(p.id, id), ["high"]);
+		assert.equal(models.clampThinking(p.id, id, "max"), "high");
+		assert.equal(models.clampThinking(p.id, id, "low"), "high");
+		assert.equal(models.clampThinking(p.id, id, "off"), "high", "未声明关闭时 SDK 收敛到唯一支持档");
+		await customProviders.backfillLimits();
+		await models.reloadConfig();
+		customProviders.reapplyClassifiers();
+		assert.deepEqual(models.supportedThinking(p.id, id), ["high"]);
+		assert.equal(customProviders.list().find((m) => m.id === p.id)!.models[0].thinkingLevelSource, "user");
+		assert.equal(customProviders.list().find((m) => m.id === p.id)!.models[0].thinkingLevelMap!.high, "documented-high");
+		p = await customProviders.save(p.id, { ...base, models: [{ id, reasoning: true, thinkingLevelSource: "user", thinkingLevelMap: { high: "high", max: "documented-max" } }] });
+		assert.deepEqual(models.supportedThinking(p.id, id), ["high", "max"]);
+		p = await customProviders.save(p.id, { ...base, models: [{ ...p.models[0], reasoning: false }] });
+		assert.deepEqual(models.supportedThinking(p.id, id), ["off"]);
+		assert.equal(p.models[0].thinkingLevelMap, undefined);
+		p = await customProviders.save(p.id, { ...base, models: [{ id, reasoning: true }] });
+		assert.equal(p.models[0].reasoningAuto, undefined);
+		assert.equal(p.models[0].thinkingLevelMap, undefined);
+		assert.deepEqual(models.supportedThinking(p.id, id), ["off", "minimal", "low", "medium", "high"]);
+		p = await customProviders.save(p.id, { ...base, models: [{ id }] });
+		assert.equal(p.models[0].reasoning, undefined);
+		assert.equal(p.models[0].thinkingLevelSource, undefined);
+		const cfg = JSON.parse(readFileSync(join(config.dataDir, "models.json"), "utf8"));
+		assert.equal(cfg.providers[p.id].models[0].thinkingLevelMap, undefined);
+	} finally {
+		await customProviders.remove(p.id);
+	}
+});
+
+test("手工映射优先同名目录，空白/非法协议值和无思考子集拒绝保存", () => {
+	const m = customProviders.withLimits({ id: "gpt-6.1-sol", reasoning: true, thinkingLevelSource: "user", thinkingLevelMap: { low: "custom-low" } });
+	assert.equal(m.thinkingLevelSource, "user");
+	assert.equal(m.thinkingLevelMap!.low, "custom-low");
+	assert.equal(m.thinkingLevelMap!.max, null);
+	const input = { name: "校验", api: "openai-completions", baseUrl: relay.url, models: [{ id: "unknown-future-model", reasoning: true, thinkingLevelSource: "user", thinkingLevelMap: { high: "" } }] };
+	assert.match(customProviders.validate(input)!, /协议值/);
+	assert.match(customProviders.validate({ ...input, models: [{ ...input.models[0], thinkingLevelMap: { off: "none" } }] })!, /至少选择一个/);
+	assert.match(customProviders.validate({ ...input, models: [{ ...input.models[0], thinkingLevelMap: { invalid: "high" } }] })!, /无效/);
 });
 
 test("旧配置启动补齐：没有档位映射的自定义模型，backfill 后拿到 xhigh / max", async () => {
@@ -78,6 +128,36 @@ test("多托管商映射不一致：候选有歧义就不补；一致时记录 P
 	assert.equal(r?.source, "openai:m@openai-completions", "记录 SDK 元数据来源（provider:id@api）");
 	assert.equal(r?.map.xhigh, "xhigh");
 	assert.equal(knownThinkingLevelMap("unheard-of", consistent, "openai-completions"), undefined, "目录里没有的模型不补");
+});
+
+test("两种 OpenAI 协议真实请求：用户映射、关闭、false 与未知均按同一 spec 发出", async () => {
+	for (const api of ["openai-completions", "openai-responses"]) {
+		const base = { name: `真实请求-${api}`, api, baseUrl: relay.url, apiKey: "sk-unit" };
+		const cases = [
+			{ id: "unknown-future-supported", reasoning: true, thinkingLevelSource: "user", thinkingLevelMap: { off: "none", high: "documented-high" }, wanted: "high", effort: "documented-high" },
+			{ id: "unknown-future-off", reasoning: true, thinkingLevelSource: "user", thinkingLevelMap: { off: "none", high: "high" }, wanted: "off", effort: "none" },
+			{ id: "unknown-future-off-default", reasoning: true, wanted: "off", effort: api === "openai-responses" ? "none" : undefined },
+			{ id: "unknown-future-disabled", reasoning: false, wanted: "high", effort: undefined },
+			{ id: "unknown-future-unrecognized", wanted: "max", effort: undefined },
+		];
+		const p = await customProviders.save(null, { ...base, models: cases });
+		try {
+			for (const c of cases) {
+				const dir = join(config.workspaceRoot, `${api}-${c.id}`);
+				mkdirSync(dir, { recursive: true });
+				const level = models.clampThinking(p.id, c.id, c.wanted);
+				const session = await createPiSession({ models, cwd: dir, agentDir: dir, sessionDir: join(dir, "sessions"), model: { provider: p.id, id: c.id }, thinking: level, systemPromptAppend: [], extensions: [] });
+				try {
+					await promptSession(session, "验证本地请求");
+					assert.ok(lastAssistantText(session), `${api}/${c.id} 应成功回复`);
+				} finally { session.dispose(); }
+				const path = api === "openai-responses" ? "/v1/responses" : "/v1/chat/completions";
+				const sent = JSON.parse(relay.seen.filter((r) => r.url === path).at(-1)!.body);
+				assert.equal(sent.model, c.id);
+				assert.equal(api === "openai-responses" ? sent.reasoning?.effort : sent.reasoning_effort, c.effort, `${api}/${c.id}`);
+			}
+		} finally { await customProviders.remove(p.id); }
+	}
 });
 
 test("请求参数：选 xhigh 时真的发 reasoning_effort=xhigh，不被 clamp 回 high", async () => {

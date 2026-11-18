@@ -143,9 +143,11 @@ test("共用浏览器：两个助理连同一个浏览器，各自只看到自�
 		const base = browser.contexts()[0];
 		const base2 = browser2.contexts()[0];
 		await base.addCookies([{ name: "sid", value: "login-ok", url: "https://example.test/" }]);
+		const { BrowserPages } = await import("../src/browser-pages.ts");
 		const mk = (ctx: typeof base) => {
 			const pi = fakePi();
-			browserExtension({ context: async () => ctx, mode: () => "sandbox", workspace: tmpdir(), isPaused: () => false, request: async () => ({ approved: true }), handoff: async () => "", shared: true, isolated: () => browser.newContext() })(pi as never);
+			const session = new BrowserPages(`test-${Math.random()}`, { context: async () => ({ ctx, runtimeId: "shared-test" }), isolated: () => browser.newContext(), paused: () => false });
+			browserExtension({ session, mode: () => "sandbox", workspace: tmpdir(), isPaused: () => false, request: async () => ({ approved: true }), handoff: async () => "", shared: true })(pi as never);
 			return pi;
 		};
 		const a = mk(base), b = mk(base2);

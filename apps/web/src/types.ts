@@ -80,7 +80,7 @@ export interface Routine {
 /** 后台帮手（后台任务 / 定时任务的每次运行，决策 0014）：/api/subagents 一行里界面用到的字段 */
 export interface Helper { id: string; agent_id: string; conversation_id?: string; parent_subagent_id?: string | null; kind?: string | null; title?: string | null; task: string; status: string; result_summary: string | null; error_reason: string | null; created_at: number; finished_at: number | null }
 export interface Provider { id: string; name: string; apiKey?: { name: string }; oauth?: { name: string; isSubscription: boolean; loginLabel?: string }; modelCount: number; configured: boolean; source?: string; custom?: boolean }
-export interface ModelInfo { provider: string; id: string; name: string; reasoning: boolean; input: string[]; contextWindow?: number }
+export interface ModelInfo { provider: string; id: string; name: string; reasoning?: boolean; input: string[]; contextWindow?: number }
 export interface PermCheck { ok: boolean; zoneRead: boolean; tunnelRead: boolean; dnsRead: boolean; tunnelEdit: boolean | null; missing: string[]; hint?: string }
 export interface TunnelStatus {
 	enabled: boolean; state: "off" | "downloading" | "starting" | "online" | "error" | "cooldown" | "missing"; mode: "quick" | "named"; url: string | null; error?: string;
@@ -97,7 +97,7 @@ export interface SystemInfo {
 	memoryHealth?: { level: "ok" | "slow" | "failing"; summary: string } | null;
 }
 export interface Device { id: string; name: string; platform: string; status: string; created_at: number; last_seen_at: number | null; last_ip: string | null; owner?: number }
-export interface CustomModel { id: string; api?: string; apiEffective?: string; baseUrlEffective?: string; name?: string; reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number; limitsSource?: "detected" | "known" | "default" | "user" | "learned"; detectedType?: "classifier"; classifierProtocol?: string }
+export interface CustomModel { id: string; api?: string; apiEffective?: string; baseUrlEffective?: string; name?: string; reasoning?: boolean; reasoningAuto?: boolean; thinkingLevelMap?: Record<string, string | null>; thinkingLevelSource?: string; input?: ("text" | "image")[]; contextWindow?: number; maxTokens?: number; limitsSource?: "detected" | "known" | "default" | "user" | "learned"; detectedType?: "classifier"; classifierProtocol?: string }
 /** 声明的 classifier（协议 + 对端模型 id）；保存后由服务端在启动/reload 时重新注册。 */
 export interface CustomClassifier { protocol: string; modelId: string; name?: string; contextWindow?: number }
 export interface CustomProviderMeta { id: string; name: string; api: string; baseUrl: string; headerNames: string[]; noKey: boolean; models: CustomModel[]; classifiers?: CustomClassifier[]; discoveredClassifiers?: CustomClassifier[]; protocolUrls?: Record<string, string>; configured: boolean; references?: ProviderReferences }

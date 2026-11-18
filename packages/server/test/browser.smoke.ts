@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { browserExtension } from "@pi-assistant/ext-browser";
-import { browserFor, closeAllBrowsers } from "../src/browser.ts";
+import { browserFor, browserPagesFor, closeAllBrowsers } from "../src/browser.ts";
 import { config } from "../src/config.ts";
 import { containerOf, screenshotDesktop, startDesktop, stopDesktop } from "../src/desktop.ts";
 
@@ -19,7 +19,7 @@ const log = (m: string) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)
 await startDesktop(AGENT);
 log("助理电脑已启动");
 const tools = new Map<string, { execute: (id: string, p: Record<string, unknown>) => Promise<{ content: { type: string; text?: string }[] }> }>();
-browserExtension({ workspace: config.workspaceRoot, context: async () => (await browserFor(AGENT)).ctx, mode: () => "sandbox", isPaused: () => false, request: async () => ({ approved: false }), handoff: async () => "已完成" })({ registerTool: (t: { name: string }) => tools.set(t.name, t as never), on() {} } as never);
+browserExtension({ workspace: config.workspaceRoot, session: browserPagesFor(AGENT), mode: () => "sandbox", isPaused: () => false, request: async () => ({ approved: false }), handoff: async () => "已完成" })({ registerTool: (t: { name: string }) => tools.set(t.name, t as never), on() {} } as never);
 const call = async (n: string, p: Record<string, unknown> = {}) => (await tools.get(n)!.execute("id", p)).content.map((c) => c.text ?? `[${c.type}]`).join("\n");
 try {
 	const html = encodeURIComponent(`<title>助理的浏览器</title><h1 style="font:48px sans-serif">你好，我是助理的浏览器</h1><input placeholder="搜索" style="font-size:24px">`);

@@ -314,10 +314,10 @@ try {
 		});
 		check("http 外链带 target=_blank + rel", extLink?.target === "_blank" && /noreferrer/.test(extLink?.rel ?? ""), JSON.stringify(extLink));
 
-		// Esc 关闭 + 焦点回到触发卡片
-		await page.keyboard.press("Escape");
+		// 显式关闭释放文件 + 焦点回到触发卡片；Esc收起在工作区段验证
+		await page.getByTestId("file-preview-close").click();
 		await page.locator("[data-testid=file-preview]").waitFor({ state: "detached", timeout: 5000 });
-		check("Esc 关闭预览", true);
+		check("显式关闭预览", true);
 		check("关闭后焦点回到触发卡片", await page.evaluate(() => document.activeElement?.getAttribute("data-testid") === "file-preview-open"));
 		await page.screenshot({ path: join(OUT, "desktop-chat.png") });
 
@@ -326,7 +326,7 @@ try {
 		await page.keyboard.press("Enter");
 		await page.locator("[data-testid=file-preview-markdown]").waitFor({ timeout: 10_000 });
 		check("键盘 Enter 也能打开预览", true);
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 
 		// CSV：引号内换行 + 有界表格
 		await page.locator('[data-testid="file-preview-open"]').nth(1).click();
@@ -335,21 +335,21 @@ try {
 		check("CSV 解析引号内换行 / 转义引号", csvCells.some((c) => c?.includes("第一行\n第二行")) && csvCells.some((c) => c?.includes('他说"你好"')), JSON.stringify(csvCells.slice(0, 6)));
 		check("CSV 表头存在", (await page.locator("[data-testid=file-preview-csv] th").count()) === 3);
 		await page.screenshot({ path: join(OUT, "desktop-csv-preview.png") });
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 
 		// 代码 / 文本：行号 + 复制
 		await page.locator('[data-testid="file-preview-open"]').nth(2).click();
 		await page.locator("[data-testid=file-preview-code]").waitFor({ timeout: 10_000 });
 		check("代码预览有行号", (await page.locator("[data-testid=file-preview-code] code > div").count()) >= 3);
 		check("代码预览有复制按钮", await page.locator("[data-testid=file-preview-copy]").isVisible());
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 
 		// 不支持的类型：提示 + 下载
 		await page.locator('[data-testid="file-preview-open"]').nth(5).click();
 		await page.locator("[data-testid=file-preview-unsupported]").waitFor({ timeout: 10_000 });
 		check("压缩包等不支持类型：明确提示", await page.locator("[data-testid=file-preview-unsupported]").isVisible());
 		check("不支持类型仍保留下载", await page.locator("[data-testid=file-preview-download]").isVisible());
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 
 		// 超限：不下载大文件，直接提示 + 下载
 		const hitsBeforeHuge = state.fileHits.length;
@@ -357,7 +357,7 @@ try {
 		await page.locator("[data-testid=file-preview-oversize]").waitFor({ timeout: 10_000 });
 		check("超大文本：提示超限", await page.locator("[data-testid=file-preview-oversize]").isVisible());
 		check("超大文本：没有去下载整份文件", !state.fileHits.slice(hitsBeforeHuge).includes("f-huge"), JSON.stringify(state.fileHits.slice(hitsBeforeHuge)));
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 
 		// 404：错误提示 + 重试（第二次路由改成 200）
 		await page.locator('[data-testid="file-preview-open"]').nth(7).click();
@@ -369,7 +369,7 @@ try {
 		await page.locator("[data-testid=file-preview-retry]").click();
 		await page.locator("[data-testid=file-preview-code]").waitFor({ timeout: 10_000 });
 		check("重试后成功显示内容", (await page.locator("[data-testid=file-preview-code]").textContent())?.includes("重试之后有了内容"));
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 
 		// PDF：object 内嵌 + fallback 提示 + 下载
 		await page.locator('[data-testid="file-preview-open"]').nth(4).click();
@@ -380,7 +380,7 @@ try {
 		});
 		check("PDF 用 object 内嵌且来自本会话 blob（不外源）", pdfInfo?.type === "application/pdf" && pdfInfo.data.startsWith("blob:"), JSON.stringify(pdfInfo));
 		check("PDF 保留 fallback 提示与下载", (await page.locator("[data-testid=file-preview-pdf-fallback]").count()) >= 1 && (await page.locator("[data-testid=file-preview-download]").isVisible()));
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 
 		// 图片附件仍走 ImageViewer（不回归）
 		await page.locator("[data-testid=image-attachment] img").first().click();
@@ -403,13 +403,13 @@ try {
 		// 助理交付的文件超过默认露出的几个，视频 / 音频在「全部 N 个」折叠里
 		await expandDetails(page, "agent-files-out-more", { timeout: 10_000 });
 		await page.locator('[data-testid=info-file-open]').filter({ hasText: "clip.mp4" }).first().click();
-		await page.locator("[data-testid=file-preview-video]").waitFor({ timeout: 10_000 });
+		await page.locator("[data-testid=file-preview-video] video[data-testid=media-video]").waitFor({ timeout: 10_000 });
 		check("预览弹窗：视频用同一个播放器组件（<video data-testid=media-video>）", (await page.locator("[data-testid=file-preview-video] video[data-testid=media-video]").count()) === 1);
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 		await page.locator('[data-testid=info-file-open]').filter({ hasText: "voice.mp3" }).first().click();
-		await page.locator("[data-testid=file-preview-audio]").waitFor({ timeout: 10_000 });
+		await page.locator("[data-testid=file-preview-audio] audio[data-testid=media-audio]").waitFor({ timeout: 10_000 });
 		check("预览弹窗：音频用同一个播放器组件（<audio data-testid=media-audio>）", (await page.locator("[data-testid=file-preview-audio] audio[data-testid=media-audio]").count()) === 1);
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 		if (await page.getByTestId("info-tabs").isVisible()) await page.getByRole("button", { name: "信息面板", exact: true }).click();
 
 		check("桌面无控制台报错", errors.length === 0, errors.slice(0, 3).join(" | "));
@@ -461,7 +461,7 @@ try {
 		await page.locator("[data-testid=html-mode-page]").click();
 		await page.locator("[data-testid=html-frame]").waitFor({ timeout: 10_000 });
 		check("HTML：可切回网页档", true);
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 		await page.locator("[data-testid=file-preview]").waitFor({ state: "detached", timeout: 5000 });
 
 		// ---- SVG：图片 / 源码 ----
@@ -479,7 +479,7 @@ try {
 		await page.locator("[data-testid=svg-mode-image]").click();
 		await page.locator("[data-testid=file-preview-svg] img").waitFor({ timeout: 10_000 });
 		check("SVG：可切回图片档", true);
-		await page.keyboard.press("Escape");
+		await page.getByTestId("file-preview-close").click();
 		check("HTML / SVG 没有触发外网请求", state.remoteHits.length === 0);
 		await ctx.close();
 	}

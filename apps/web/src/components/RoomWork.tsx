@@ -5,7 +5,7 @@ import { useStore } from "../store";
 import type { ProjectProgress, ProjectWaiting, Room, RoomProject } from "../types";
 import { PROJECT_STATUS, PlanBody } from "./RoomCards";
 import { Badge, Fold, Help, cx, fmtTime, useConfirm } from "./ui";
-import { SidePanel } from "./SidePanel";
+import { SidePanel, activateWorkspace } from "./SidePanel";
 import { ProjectFilter } from "./RoomProjectFilter";
 import { WorkItemsButton } from "./WorkItems";
 
@@ -75,6 +75,8 @@ export type PanelProject = Omit<RoomProject, "roomId">;
  */
 export function ProjectsPanel({ base, projects, refresh, solo }: { base: string; projects: PanelProject[]; refresh: () => Promise<unknown> | void; solo?: boolean }) {
 	const [open, setOpen] = useState(false);
+	const panelKey = `projects:${base}`;
+	const show = () => { if (!activateWorkspace(panelKey)) setOpen(true); };
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
 	const [ended, setEnded] = useState<PanelProject[] | null>(null);
@@ -134,7 +136,7 @@ export function ProjectsPanel({ base, projects, refresh, solo }: { base: string;
 	};
 	return (
 		<>
-			<button className={cx("pa-chip", active && "pa-chip-on", waiting && "!border-amber-500/60 !bg-amber-500/10 !text-amber-700 dark:!text-amber-400")} data-waiting={waiting ? "1" : undefined} onClick={() => setOpen(true)} data-testid="room-projects-chip" aria-label="项目" title={projects.map((p) => `${p.title}（${PROJECT_STATUS[p.status]}）`).join("\n")}>
+			<button className={cx("pa-chip", active && "pa-chip-on", waiting && "!border-amber-500/60 !bg-amber-500/10 !text-amber-700 dark:!text-amber-400")} data-waiting={waiting ? "1" : undefined} onClick={show} data-testid="room-projects-chip" aria-label="项目" title={projects.map((p) => `${p.title}（${PROJECT_STATUS[p.status]}）`).join("\n")}>
 				<Flag className="pa-ic" />
 				{one ? (
 					<span className="flex min-w-0 items-center gap-1 max-sm:hidden">
@@ -146,7 +148,7 @@ export function ProjectsPanel({ base, projects, refresh, solo }: { base: string;
 				)}
 				{waiting ? <i className="h-2 w-2 shrink-0 rounded-full bg-amber-500 sm:hidden" aria-hidden /> : null}
 			</button>
-			<SidePanel open={open} onClose={() => setOpen(false)} title="项目" testId="room-projects-panel">
+			<SidePanel panelKey={panelKey} kind="projects" open={open} onClose={() => setOpen(false)} title="项目" testId="room-projects-panel">
 				<div className="space-y-3 p-4">
 					<p className="flex items-center gap-1 text-xs text-mut2">
 						{solo ? "我按方案一步步推进，只有需要你看一眼或拍板的事才找你。" : "管理者按方案分工推进，只有需要你看一眼或拍板的事才找你。"}

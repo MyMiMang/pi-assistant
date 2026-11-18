@@ -14,10 +14,10 @@ import { clampPane, clampSide, PANE, resolveLayout, SIDE, useWindowWidth } from 
 import { Resizer } from "./components/Resizer";
 import { BRAND } from "@pi-assistant/shared";
 import { SubagentChat } from "./components/Subagents";
-import { FilePreviewHost } from "./components/FilePreview";
-import { SidePanelDock, useSidePanelShown } from "./components/SidePanel";
+import { SidePanelDock, useSidePanelShown, WorkspaceButton } from "./components/SidePanel";
 import { AppContextMenuHost } from "./components/ContextMenu";
 import { ImageViewerHost } from "./components/ImageViewer";
+import { useWorkspace } from "./workspace";
 
 export default function App() {
 	const { system, current, drawer, info, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout, room, paneAgent, loadRooms, selectRoom, subagent, subagentTabs, convs } = useStore();
@@ -25,6 +25,8 @@ export default function App() {
 	const L = resolveLayout(width, layout);
 	// 侧栏（文件预览 / 执行概览等）显示时信息面板让位（只隐藏不卸载，关掉后标签页 / 折叠状态原样回来）
 	const dockShown = useSidePanelShown();
+	const workspaceExpanded = useWorkspace((s) => s.expanded);
+	const workspaceCoversChat = dockShown && (!L.previewDocked || workspaceExpanded);
 	const [fatal, setFatal] = useState<null | "unpaired" | "offline">(null);
 	/** 模型配置已存在但此刻读不出（凭据 / 目录暂时失败）：提示可恢复错误，不重走首次向导覆盖配置 */
 	const [modelWarnClosed, setModelWarnClosed] = useState(false);
@@ -137,14 +139,15 @@ export default function App() {
 				<i className="pa-b3" />
 			</div>
 			{/* 左侧：助理列表（手机上为抽屉） */}
-			{L.sideDrawer && <div className={`fixed inset-0 z-40 bg-black/40 transition-opacity ${drawer ? "opacity-100" : "pointer-events-none opacity-0"}`} onClick={() => set({ drawer: false })} />}
+			{L.sideDrawer && !workspaceCoversChat && <div className={`fixed inset-0 z-40 bg-black/40 transition-opacity ${drawer ? "opacity-100" : "pointer-events-none opacity-0"}`} onClick={() => set({ drawer: false })} />}
 			{(L.sideDocked || L.sideDrawer) && (
-				<div className={`pa-drawer transition-transform ${L.sideDrawer ? (drawer ? "translate-x-0" : "-translate-x-[110%]") : ""}`}>
+				<div inert={workspaceCoversChat} className={`pa-drawer transition-transform ${L.sideDrawer ? (drawer ? "translate-x-0" : "-translate-x-[110%]") : ""}`}>
 					<Sidebar />
 					{L.sideDocked && <Resizer side="right" value={layout.sideW} onChange={(v) => setLayout({ sideW: clampSide(v) })} onReset={() => setLayout({ sideW: SIDE.def })} onCollapse={() => setLayout({ sideCollapsed: true })} label="调整助理列表宽度" />}
 				</div>
 			)}
-			<main className="pa-chat">
+			<main className="pa-chat" inert={workspaceCoversChat}>
+				<div className="pa-workspace-launch"><WorkspaceButton /></div>
 				<div className="pa-chat" style={{ display: subagent ? "none" : undefined }} data-testid="main-conversation">{room ? <RoomChat roomId={room} /> : current ? <Chat agentId={current} /> : null}</div>
 				{tabs.map((tab) => <div key={tab.id} className="pa-chat" style={{ display: subagent === tab.id ? undefined : "none" }}><SubagentChat id={tab.id} visible={subagent === tab.id} room={tab.roomId ?? undefined} /></div>)}
 			</main>
@@ -161,7 +164,6 @@ export default function App() {
 			<Settings />
 			<DeviceApproval />
 			<ImageViewerHost />
-			<FilePreviewHost />
 			<AppContextMenuHost />
 			{system.onboarded && system.modelReady === false && !modelWarnClosed && !fatal && (
 				<div className="fixed bottom-4 left-1/2 z-40 flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-lg dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200" data-testid="model-unavailable">

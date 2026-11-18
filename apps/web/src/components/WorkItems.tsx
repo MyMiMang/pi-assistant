@@ -4,7 +4,7 @@ import { api } from "../api";
 import { useStore } from "../store";
 import type { Room } from "../types";
 import { cx, fmtTime, useConfirm } from "./ui";
-import { SidePanel } from "./SidePanel";
+import { SidePanel, activateWorkspace } from "./SidePanel";
 import { CreateWorkItem, DecisionBox, RUN_LABEL, StatusPill, WorkDetailPane, type BoardGroup, type WorkDetail, type WorkSummary } from "./WorkItemDetail";
 
 /**
@@ -48,6 +48,8 @@ export function WorkResultCard({ meta }: { meta: Record<string, any> }) {
 export function WorkItemsButton({ room }: { room: Room }) {
 	const version = useStore((s) => (s as unknown as { workVersion?: number }).workVersion ?? 0);
 	const [open, setOpen] = useState(false);
+	const panelKey = `work-items:${room.id}`;
+	const show = () => { if (!activateWorkspace(panelKey)) setOpen(true); };
 	const [items, setItems] = useState<WorkSummary[]>([]);
 	const [groups, setGroups] = useState<Partial<Record<BoardGroup, number>>>({});
 	const [loading, setLoading] = useState(false);
@@ -123,12 +125,12 @@ export function WorkItemsButton({ room }: { room: Room }) {
 		const onOpen = (e: Event) => {
 			const d = (e as CustomEvent).detail as { roomId?: string; itemId?: string };
 			if (d?.itemId && (!d.roomId || d.roomId === room.id)) {
-				setOpen(true);
+				show();
 				setDetailId(d.itemId);
 			}
 		};
 		window.addEventListener("pia:work-item", onOpen);
-		const reset = (e: Event) => (e as CustomEvent).detail === room.id && (setDetailId(null), setOpen(true));
+		const reset = (e: Event) => (e as CustomEvent).detail === room.id && (setDetailId(null), show());
 		window.addEventListener("pia:room-work-items", reset);
 		return () => {
 			window.removeEventListener("pia:work-item", onOpen);
@@ -170,12 +172,12 @@ export function WorkItemsButton({ room }: { room: Room }) {
 	);
 	return (
 		<>
-			<button className={cx("pa-chip", (groups.decision ?? 0) > 0 && "pa-work-chip-alert")} onClick={() => setOpen(true)} data-testid="room-work-items" aria-label="长期任务看板" title="任务：长期责任、核验与执行历史">
+			<button className={cx("pa-chip", (groups.decision ?? 0) > 0 && "pa-work-chip-alert")} onClick={show} data-testid="room-work-items" aria-label="长期任务看板" title="任务：长期责任、核验与执行历史">
 				<ClipboardList className="pa-ic" />
 				<span className="max-sm:hidden">任务</span>
 				{openCount > 0 && <span>{openCount}</span>}
 			</button>
-			<SidePanel open={open} onClose={() => setOpen(false)} title={detail ? "任务详情" : "任务"} wide fixed testId="work-items-overview">
+			<SidePanel panelKey={panelKey} open={open} onClose={() => setOpen(false)} title={detail ? "任务详情" : "任务"} wide fixed testId="work-items-overview">
 				<div className="pa-work-board scrollbar-thin" data-testid="work-board">
 					{detailId ? (
 						<WorkDetailPane

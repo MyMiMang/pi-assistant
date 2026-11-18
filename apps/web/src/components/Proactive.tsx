@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import { Badge, Button, cx, fmtTime, Help, Input, avatarText } from "./ui";
-import { SidePanel } from "./SidePanel";
+import { SidePanel, activateWorkspace } from "./SidePanel";
 import { AutonomySection, type Judgment, type Mode, type Rule } from "./ProactiveAutonomy";
 
 type Level = "off" | "low" | "normal" | "high";
@@ -273,11 +273,11 @@ export function InboxButton() {
 	const close = () => useStore.getState().set({ inbox: false });
 	return (
 		<>
-			<button className="pa-icon-btn ghost relative" title="提醒" aria-label="提醒" onClick={() => useStore.getState().set({ inbox: true })} data-testid="inbox-button">
+			<button className="pa-icon-btn ghost relative" title="提醒" aria-label="提醒" onClick={() => { if (!activateWorkspace("reminders")) useStore.getState().set({ inbox: true }); }} data-testid="inbox-button">
 				<Bell className="pa-ic" />
 				{!!d?.count && <span className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-accent px-1 text-center text-[10px] leading-4 text-white">{d.count > 99 ? "99+" : d.count}</span>}
 			</button>
-			<SidePanel open={open} onClose={close} title="提醒" wide>
+			<SidePanel panelKey="reminders" kind="reminders" open={open} onClose={close} title="提醒" wide>
 				<div className="space-y-3 p-5" data-testid="inbox">
 					<p className="text-sm text-mut">助理们最近 7 天主动提出的事。 <Help>“忽略”的事不会再提；经常被忽略的助理会自动变得更克制。</Help></p>
 					{d && !d.items.length && <div className="py-8 text-center text-sm text-mut">暂时没有提醒 🌿</div>}

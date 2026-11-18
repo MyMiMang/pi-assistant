@@ -24,6 +24,14 @@ export function startMockOpenAI({ port = 0, key = "sk-relay-test", requiredHeade
 			res.writeHead(200, { "content-type": "application/json" });
 			return res.end(JSON.stringify({ answers: { pick: { type: "choice", choice, probabilities: Object.fromEntries(ids.map((id, i) => [id, i === 0 ? 0.9 : 0.1])), confidence: ids.length ? 0.9 : 0 } }, usage: { input_tokens: 5, output_tokens: 1 } }));
 		}
+		if (req.method === "POST" && req.url === "/v1/responses") {
+			const j = JSON.parse(body || "{}");
+			res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+			const response = { id: "r1", model: j.model, status: "completed", output: [{ type: "message", id: "msg1", role: "assistant", status: "completed", content: [{ type: "output_text", text: "本地 Responses 回复", annotations: [] }] }], usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } };
+			const events = [{ type: "response.created", response: { id: "r1" } }, { type: "response.output_item.added", output_index: 0, item: response.output[0] }, { type: "response.output_text.delta", output_index: 0, delta: "本地 Responses 回复" }, { type: "response.output_item.done", output_index: 0, item: response.output[0] }, { type: "response.completed", response }];
+			res.end(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""));
+			return;
+		}
 		if (req.method === "POST" && req.url === "/v1/chat/completions") {
 			const j = JSON.parse(body || "{}");
 			const last = [...(j.messages ?? [])].reverse().find((m) => m.role === "user");

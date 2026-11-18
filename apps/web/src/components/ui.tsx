@@ -158,11 +158,7 @@ function Bubble({ id, pos, testid, passive, children }: { id: string; pos: Bubbl
 		document.body,
 	);
 }
-/** 打开期间：点外部 / 滚动 / Escape 关闭。Escape 在捕获阶段只关这一层（不误关底层菜单 / 设置弹窗）。 */
-/**
- * 叠加层的 Esc 归属：后打开的那一层（例如菜单里悬停出的 Fast 说明气泡）先处理这一下 Esc，
- * 它关掉后这一下不再往下传 —— 所以「关说明」不会顺手把菜单一起关掉。见 `../esc-layer.ts`。
- */
+/** Esc 只交给最上层（见 ../esc-layer.ts），关说明不会顺手关掉底层菜单 / 弹窗。 */
 export function useEscLayer(open: boolean, act: () => void) {
 	const fn = useRef(act);
 	fn.current = act;
@@ -263,7 +259,6 @@ export function useHoverTip(delayMs = 450) {
  *  可访问性：Tab 聚焦即打开、Escape 关闭、点外部关闭；Escape 只关这一层（不会连底层设置弹窗一起关），
  *  关掉后焦点仍留在按钮上但不立刻重开（等下一次真正的聚焦 / 点击）。 */
 export function Help({ children, className }: { children: ReactNode; className?: string }) {
-	// "hover"：鼠标悬停打开（含布局变动把「?」挪到静止的鼠标下）→ 气泡只看不挡点击；点开 / 聚焦打开为 true，可点里面的链接
 	const [open, setOpen] = useState<false | "hover" | true>(false);
 	const [pos, setPos] = useState<BubblePos>({ x: 0, y: 0, up: false });
 	const ref = useRef<HTMLButtonElement>(null);
@@ -272,12 +267,14 @@ export function Help({ children, className }: { children: ReactNode; className?:
 	const suppressFocus = useRef(false);
 	const show = (how: "hover" | true = true) => (setPos(bubblePos(ref.current)), setOpen(how));
 	const close = () => setOpen(false);
-	// 捕获阶段拦下 Escape：只关气泡，不把底层设置弹窗一起关掉；关掉后焦点留在按钮上但不立刻重开。
 	useDismissBubble(!!open, ref, popId, close, () => {
 		suppressFocus.current = true;
 	});
 	return (
-		<span className={cx("pa-help", className)}>
+		<span className={cx("pa-help", className)} onBlur={(e) => {
+			suppressFocus.current = false;
+			if (!e.currentTarget.contains(e.relatedTarget) && !document.getElementById(popId)?.contains(e.relatedTarget)) close();
+		}}>
 			<button
 				type="button"
 				ref={ref}
@@ -292,8 +289,11 @@ export function Help({ children, className }: { children: ReactNode; className?:
 				onFocus={() => {
 					if (!suppressFocus.current) show();
 				}}
-				onBlur={() => {
-					suppressFocus.current = false;
+				onKeyDown={(e) => {
+					if (e.key !== "Tab" || e.shiftKey || !open) return;
+					// Portal 在 body 末尾，显式把正向 Tab 交给气泡里的第一个链接 / 控件。
+					const first = document.getElementById(popId)?.querySelector<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]');
+					if (first) { e.preventDefault(); first.focus(); }
 				}}
 				onClick={(e) => (e.preventDefault(), e.stopPropagation(), open ? close() : show())}
 			>

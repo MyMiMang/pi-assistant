@@ -113,7 +113,7 @@ export function ResponsiveTabs({ tabs, value, onChange, className, testId, varia
 				{visible.map((i) => {
 					const [k, label] = tabs[i];
 					return (
-						<button key={k} role="tab" data-itab={k} aria-selected={value === k} tabIndex={value === k ? 0 : -1} onClick={() => onChange(k)} className={chip(k)}>
+						<button key={k} role="tab" title={label} data-itab={k} aria-selected={value === k} tabIndex={value === k ? 0 : -1} onClick={() => onChange(k)} className={chip(k)}>
 							{t(label)}
 						</button>
 					);
@@ -131,7 +131,7 @@ export function ResponsiveTabs({ tabs, value, onChange, className, testId, varia
 					{overflow.map((i) => {
 						const [k, label] = tabs[i];
 						return (
-							<button key={k} role="menuitem" data-itab={k} tabIndex={-1} onClick={() => { onChange(k); setOpen(false); moreBtn.current?.focus(); }} className="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover focus:bg-hover focus:outline-none">
+							<button key={k} role="menuitem" title={label} data-itab={k} tabIndex={-1} onClick={() => { onChange(k); setOpen(false); moreBtn.current?.focus(); }} className="flex w-full items-center break-all rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-hover focus:bg-hover focus:outline-none">
 								{t(label)}
 							</button>
 						);

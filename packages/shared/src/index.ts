@@ -1,5 +1,6 @@
 export type { NativeCliStatus, NativeCliActionResult } from "./native-cli.ts";
 export * from "./native-acp-catalog.ts";
+export * from "./browser.ts";
 
 /** 用户附件单文件上限与分块大小；分块低于固定地址隧道的请求体上限。 */
 export const MAX_UPLOAD_SIZE = 2 * 1024 ** 3;

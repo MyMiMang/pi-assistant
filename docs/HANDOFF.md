@@ -3,7 +3,7 @@
 只写**当前状态**，保持一屏到两屏。历史进度在 [history/HANDOFF-2026-10-18.md](history/HANDOFF-2026-10-18.md)，不要再往这里追加长段落。
 
 ## 当前版本（2026-11-17）
-- 公开版：**v0.1.0-beta.71**（Latest，2026-11-17，main `727a7afb`）。发布已成功；独立 secrets `44042654334` / ci `44042641543` 未绿，原因是公开快照误报及 Lima / 空闲时间旧测试断言。本轮必要收尾已获总管本地验收通过，远端CI待验证；完整check、定向e2e、ARM64 Lima与全历史扫描通过，Intel Lima未验；不得把发布成功等同 CI 全过。
+- 公开版：**v0.1.0-beta.71**（Latest，2026-11-17，main `727a7afb`）。发布已成功；旧 secrets `44042654334` / ci `44042641543` 失败已由主线 `3eaf530e` 收尾修复，其 ci `44080875180` 与 secrets `44080875024` 均成功；本轮发布整合仍须单独跟踪新运行。完整check、定向e2e、ARM64 Lima与全历史扫描通过，Intel Lima未验；不得把发布成功等同新提交 CI 全过。
 - 开发分工：**pi助理开发总管**接替 Claude 负责规划、代码审查与验收；**Pi 开发助理**按批准方案实施代码，模块化、复用和可维护性同为验收要求。
 - 2026-11-04 Pi 1.3.0 → 1.5.0（未打包）：适配层不用改；唯一变化是 codemode 第 3 个并发脚本从「报上限错误」变成排队，测试改名 `pi-codemode-worker-queue.test.ts`。Jev 分类器从此能传图，快速执行者设计已按此更新（草稿，待实现）。
 - 2026-11-05 快速执行者第二、三版 + 开启流程简化（决策 0028）+ 复核修复已合 main，随 beta.51 发布：通用三项真机测速见 `design/fast-executor.md` 末尾（计算器 246.5→54.4 秒）；目标模式改用 OpenRouter 的 Jev 真机走通（商店任务 125.7→62.5 秒）；不做「快模型」；设置页测试 C 段过时待重写。beta.50 打了 tag 后取消（GitHub 留一个未公开草稿），跳号。
@@ -13,6 +13,8 @@
 - 已随 beta.37 发布：群聊按「AI 团队」重做第 1 步「项目与方案」（[决策 0019](decisions/0019-group-as-team.md)，取代决策 0018 的「自主推进」开关）：管理者先立项出方案卡（room_plan），用户确认（按钮或群里说「可以」→ room_project_start）后项目才开始，进行中可改方案、完成用 room_project_done、用户可随时停下；服务端 + 界面都已实现。真实模型下方案质量 / 按方案推进得怎样，待真机。第 2 步只做了「看板没变不重复发」。第 3 步已实现：任务依赖（after / stage）、前置核验通过后自动开始并带交接单和文件、项目进度清单（面板 + chip「阶段 n/m」）、验收第三种结果「这条路走不通」、项目级卡住计数（只认提交和完成为进展，到 3 要求 room_project_replan，改过 2 次再卡就报告用户）、停下后 room_project_resume / 「接着做」。第 4 步已实现：任务会话里 ask_colleague 找同事（群里可见，回答直接送回提问者正在跑的执行，没在跑就带着回答重新开始）、answer_colleague、report_upstream + work_rework（只有上游负责人能决定重做，重新通过后新版本自动交给下游）、3 轮 / 20 分钟交给管理者；任务执行说明里带群成员名单；协作工具免审批。第 5 步已实现：阶段完成通知、room_checkpoint 关键点卡片、交付卡、消息带 projectId 与按项目筛选。方案有关键点时，阶段完成后下一阶段任务先暂缓（rooms/hold.ts），管理者回合结束且没有关键点卡片在等用户才放行。group-collab-ui 之前一次中途报错，推测是旧 [G2] 手动 pause 撞上非法状态，已删掉那段，之后连跑三次都通过。第 6 步已实现：单聊遇到多步骤大事也出方案卡 → 确认 → 阶段进度 → 交付卡（`chat-projects/`）；清理了旧自主推进、提问气泡重复的 @X、工具回答后多发的短话、Mock「可以」确认不稳定（断言已改回严格）；临时服务器和单测会去掉继承的模型密钥环境变量。6 步全部做完，待用户说「打包」后真机实测。新建助理加了「全能培训师」模板（启用内置技能 team-onboarding）。单聊输入栏「技能」按钮换成了「权限」按钮（决策 0020）。
 
 ## 正在做
+- beta.72 发布整合：统一右工作区阶段二/三及模型推理共用修复已获总管验收，发布状态以 GitHub release run 为准；复用固定 SidePanel 宿主、模型设置内容、主题/DIY及原 Playwright Page，保留最终 WS 控制代际守卫。Mac 临时 Chromium 同页/接管/断线保状态/主题窄屏已验，真实 sandbox、Windows/Linux/Tauri/PWA 交互未验（[设计](design/side-panel-views.md)）。
+- 模型推理保留未知/false/true；现有模型编辑共用三态与用户档位映射，用户来源优先，恢复自动清除覆盖。临时 Mock 实际请求已验；生产中转 6.2-astra/sol 的接受档位与支持承诺未验证，不自动改写生产配置（[设计](design/model-settings-unified.md)）。
 - 编程工具上下文归属：已合 `6afab502`，随 beta.71 发布（决策0032）。假 agy / Mock 增量切换已验；dev:live 的 Claude Sonnet 来回切换、缓存增长及无自动整理已验，Gemini hydrogen / argon 当时受地区限制未验（见设计实测节）。
 - 六家禁更补齐（已合 `3ca03381`）：Gemini 私有 system 双开关、CodeBuddy/Kimi 固定变量、Cursor 全局参数已接入；Goose 保留已审计 ACP 链，Kiro 写官方私有 setting 并明说固定控制流未知。native-catalog 57/57、相关七文件111/111、typecheck/check:static 通过；来源表/Help 已纠错；最终 check 1731项（1720通过/11跳过/0失败）、六个编程工具 UI 均通过，真实工具未验（实施方案「六家禁更补齐」）。
 - no-self-update 通用兜底（已合 `3ca03381`）：17 原生 + 四家 brain 的运行 / 安装环境强制私有 npm prefix、空 user/global npmrc、cache；本次单点修正运行 PATH 为私有 App Node bin + 受管命令目录 + 白名单输入中的用户原始 PATH，顺序去重（Windows 不分大小写），不混入 buildCliEnv 补的 common dirs；安装器 npm 仍用原精简 PATH，Claude/Codex 二次白名单保持固定值。本轮定向112/112、完整 check 1742项（1731通过/11跳过/0失败）、网页构建一次通过；六个 UI 串行6/6通过（实施方案与 artifacts/runtime-path-*）；旧轮次结果留 no-self-update-*。真实工具、Windows/Linux 实机未验证。
@@ -109,7 +111,6 @@
 - macOS 系统沙箱档没做。MCP 服务器经 npx 第一次下载时没有字节进度。
 - Hindsight 运行环境 / 向量模型的下载百分比是估算的。远程 Hindsight 换不同维度的向量模型时，要对方实例自己迁移。
 - 共用中转远程访问（Paseo 式）用户决定暂缓（§15.1）。
-
 
 ## 代码地图
 见 [MODULES.md](MODULES.md)（每个文件负责什么 + 必须复用的共用工具清单）。

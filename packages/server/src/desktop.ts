@@ -914,11 +914,11 @@ export const viewerOpen = (agentId: string) => idle.viewerOpen(computerFor(agent
 export const viewerClose = (agentId: string) => idle.viewerClose(computerFor(agentId));
 
 // ---------------------------------------------------------------- 一键暂停（按助理）
-const paused = new Set<string>();
+const paused = new Set<string>(), pauseGeneration = new Map<string, number>();
 export const desktopPause = {
-	isPaused: (agentId: string) => paused.has(agentId),
+	isPaused: (agentId: string) => paused.has(agentId), version: (agentId: string) => pauseGeneration.get(agentId) ?? 0,
 	set(agentId: string, v: boolean) {
-		if (v) paused.add(agentId);
+		if (v) { paused.add(agentId); pauseGeneration.set(agentId, (pauseGeneration.get(agentId) ?? 0) + 1); }
 		else paused.delete(agentId);
 	},
 };

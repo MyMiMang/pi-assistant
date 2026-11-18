@@ -1,12 +1,11 @@
-import { AlertCircle, Download, FileQuestion, Loader2, Maximize2, RotateCcw, X } from "lucide-react";
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import { create } from "zustand";
+import { AlertCircle, Download, FileQuestion, Loader2, RotateCcw, X } from "lucide-react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { ApiError, download as downloadFile, fetchBlob } from "../api";
 import { MAX_OFFICE_BYTES, MAX_TEXT_BYTES, isLegacyOffice, isOfficeKind, isTextKind, previewKind, type PreviewKind } from "../preview";
 import { FileKindIcon } from "./Attachments";
 import { MediaPlayer } from "./MediaPlayer";
 import { CodeView, CsvView, HtmlView, MarkdownScroll, Notice, SvgView, loadBinary, loadText, oversizeNotice } from "./FilePreviewViews";
-import { SidePanel } from "./SidePanel";
+import { registerWorkspace, workspaceAction } from "../workspace";
 import { fmtSize } from "./ui";
 
 /**
@@ -32,12 +31,11 @@ export type FilePreviewItem = {
 	downloadPath?: string;
 };
 
-type State = { item: FilePreviewItem | null; open: (i: FilePreviewItem) => void; close: () => void };
-const usePreview = create<State>((set) => ({ item: null, open: (item) => set({ item }), close: () => set({ item: null }) }));
-
-/** 从任意位置打开应用内文件预览（Portal 到 body，复用共享 Modal 栈）。 */
+/** 授权文件地址是稳定身份；重复打开只激活原实例，保留模式与滚动。 */
 export function openFilePreview(item: FilePreviewItem) {
-	usePreview.getState().open(item);
+	const key = `file:${item.url}`;
+	registerWorkspace({ key, title: item.name, kind: "file", testId: "file-preview", fixed: true,
+		content: <PreviewContent item={item} onClose={() => workspaceAction({ type: "close", key })} /> });
 }
 
 const KIND_LABEL: Record<PreviewKind, string> = {
@@ -63,8 +61,8 @@ const KIND_LABEL: Record<PreviewKind, string> = {
 /** Office 类视图（含 office-preview.ts 的逻辑）整体按需加载，不进主包。 */
 const OfficeView = lazy(() => import("./OfficeViews").then((m) => ({ default: m.OfficeView })));
 
-/** 工具栏 + 内容：弹窗和侧栏共用，外壳是 SidePanel。`onExpand` 只有侧栏里才有（弹窗里没有「放大」）。 */
-export function PreviewContent({ item, onClose, onExpand }: { item: FilePreviewItem; onClose: () => void; onExpand?: () => void }) {
+/** 各文件实例共用工具栏和格式视图；工作区统一负责放大与收起。 */
+export function PreviewContent({ item, onClose }: { item: FilePreviewItem; onClose: () => void }) {
 	const [nonce, setNonce] = useState(0);
 	const kind = previewKind(item.name, item.mime);
 	const dl = item.downloadPath ?? item.url;
@@ -91,12 +89,7 @@ export function PreviewContent({ item, onClose, onExpand }: { item: FilePreviewI
 				>
 					<Download size={17} />
 				</button>
-				{onExpand && (
-					<button type="button" className="pa-icon-btn ghost" title="放大（用大窗口查看）" aria-label="放大" onClick={onExpand} data-testid="file-preview-expand">
-						<Maximize2 size={16} />
-					</button>
-				)}
-				<button type="button" className="pa-icon-btn ghost" title="关闭（Esc）" aria-label="关闭" onClick={onClose} data-testid="file-preview-close">
+				<button type="button" className="pa-icon-btn ghost" title="关闭这个文件" aria-label="关闭这个文件" onClick={onClose} data-testid="file-preview-close">
 					<X size={18} />
 				</button>
 			</header>
@@ -104,34 +97,6 @@ export function PreviewContent({ item, onClose, onExpand }: { item: FilePreviewI
 				<Body key={`${item.url}:${nonce}`} item={item} kind={kind} onRetry={() => setNonce((n) => n + 1)} onClose={onClose} />
 			</div>
 		</div>
-	);
-}
-
-/**
- * 全局挂载一次（App.tsx）。外壳是 SidePanel：窗口够宽显示在聊天旁边的侧栏，「放大」或放不下（手机 / 窄窗口）时是弹窗。
- * 关闭后把焦点还给触发它的卡片（键盘用户）。
- */
-export function FilePreviewHost() {
-	const item = usePreview((s) => s.item);
-	const close = usePreview((s) => s.close);
-	const returnFocus = useRef<HTMLElement | null>(null);
-	const wasOpen = useRef(false);
-
-	useEffect(() => {
-		if (item && !wasOpen.current) {
-			wasOpen.current = true;
-			returnFocus.current = (document.activeElement as HTMLElement) ?? null;
-		} else if (!item && wasOpen.current) {
-			wasOpen.current = false;
-			returnFocus.current?.focus?.();
-			returnFocus.current = null;
-		}
-	}, [item]);
-
-	return (
-		<SidePanel open={!!item} onClose={close} wide fixed label="文件预览" testId="file-preview">
-			{({ onExpand }) => item && <PreviewContent key={item.url} item={item} onClose={close} onExpand={onExpand} />}
-		</SidePanel>
 	);
 }
 

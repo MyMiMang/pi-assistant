@@ -7,6 +7,7 @@
  * 支持的 API 类型来自 pi-ai 的 API 注册表，Pi 新增协议后自动可选。
  */
 import { createHash } from "node:crypto";
+import { THINKING_LEVEL_ORDER, isThinkingLevel } from "@pi-assistant/shared";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getApiProviders } from "@earendil-works/pi-ai/compat";
 import type { ClassifierChatModel, ClassifierDeclaration, PiModels } from "./index.ts";
@@ -25,9 +26,9 @@ export interface CustomModel {
 	reasoning?: boolean;
 	/** 自动识别的推理能力，刷新参数库时可以重算。 */
 	reasoningAuto?: boolean;
-	/** 思考档位映射：按模型名照搬 Pi 内置目录里同一个模型的元数据（含 xhigh / max），认不出来就不写 */
+	/** SDK 思考档位映射：用户按渠道文档声明，或同名目录补全；null 表示禁用该档。 */
 	thinkingLevelMap?: Record<string, string | null>;
-	/** 上面映射的来源（`provider:id@api`，Pi 内置目录条目）；只作记录，不写进 Pi 的 models.json */
+	/** 映射来源：user 优先于目录 `provider:id@api`；不写进 Pi 的 models.json。 */
 	thinkingLevelSource?: string;
 	input?: ("text" | "image")[];
 	contextWindow?: number;
@@ -46,7 +47,7 @@ export interface CustomModel {
 	/** 该模型作为 classifier 的协议：来自对端元数据（api / protocol 字段）或 Pi 官方目录同 id 匹配。 */
 	classifierProtocol?: string;
 }
-export interface FetchedModel {
+export interface FetchedModel extends Pick<CustomModel, "reasoningAuto" | "thinkingLevelMap" | "thinkingLevelSource"> {
 	id: string;
 	reasoning?: boolean;
 	contextWindow: number;
@@ -309,6 +310,14 @@ export class CustomProviders {
 		if (new Set(ids).size !== ids.length) return "模型 ID 重复";
 		for (const h of input.headers ?? []) if (!/^[A-Za-z0-9-]+$/.test(h.name)) return `请求头名称不合法：${h.name}`;
 		for (const m of input.models) for (const cap of m.capabilities ?? []) if (!MODEL_CAPABILITIES.includes(cap)) return `不支持的模型能力：${cap}`;
+		for (const m of input.models) {
+			if (m.reasoning !== undefined && typeof m.reasoning !== "boolean") return "思考支持必须为自动、支持或不支持";
+			if (m.thinkingLevelSource !== "user") continue;
+			const map = m.thinkingLevelMap;
+			if (!map || typeof map !== "object" || Array.isArray(map)) return "请按渠道文档选择支持的思考档位";
+			for (const [level, value] of Object.entries(map)) if (!isThinkingLevel(level) || (value !== null && (typeof value !== "string" || !value.trim()))) return "思考档位或对应的协议值无效";
+			if (m.reasoning !== false && !Object.entries(map).some(([level, value]) => level !== "off" && typeof value === "string")) return "至少选择一个思考档位并填写渠道文档中的协议值";
+		}
 		for (const c of input.classifiers ?? []) {
 			if (!isClassifierProtocol(c.protocol)) return `不支持的 classifier 协议：${c.protocol}`;
 			if (!c.modelId?.trim()) return "classifier 模型 ID 不能为空";
@@ -459,13 +468,16 @@ export class CustomProviders {
 		if (m.reasoning === undefined || m.reasoningAuto) {
 			const reasoning = knownReasoning(m.id, modelDb()) ?? knownReasoning(m.id, piCatalog);
 			if (reasoning !== undefined) Object.assign(out, { reasoning, reasoningAuto: true });
+			else (delete out.reasoning, delete out.reasoningAuto);
 		}
-		// 思考档位：照搬 Pi 内置目录里同一个模型的 thinkingLevelMap（含 xhigh / max），让界面、切换与请求参数一致；
-		// 认不出来（模型名不标准 / 目录里没有）或候选映射有歧义就不写，保持 Pi 的默认档位，不凭空补；
-		// 同时记录来源，如实标明这是 Pi 目录元数据、不是对中转站真实支持的断言。
-		const known = out.reasoning ? knownThinkingLevelMap(m.id, builtin, api) : undefined;
-		if (known) Object.assign(out, { thinkingLevelMap: known.map, thinkingLevelSource: known.source });
-		else (delete out.thinkingLevelMap, delete out.thinkingLevelSource);
+		// 显式用户映射优先；未声明的档位全部禁用，避免 SDK 默认候选意外扩展子集。
+		if (out.reasoning && m.thinkingLevelSource === "user" && m.thinkingLevelMap) {
+			out.thinkingLevelMap = Object.fromEntries(THINKING_LEVEL_ORDER.map((level) => [level, m.thinkingLevelMap![level]?.trim() || null]));
+		} else {
+			const known = out.reasoning ? knownThinkingLevelMap(m.id, builtin, api) : undefined;
+			if (known) Object.assign(out, { thinkingLevelMap: known.map, thinkingLevelSource: known.source });
+			else (delete out.thinkingLevelMap, delete out.thinkingLevelSource);
+		}
 		return out;
 	}
 
@@ -551,7 +563,7 @@ export class CustomProviders {
 				base,
 				o.api,
 			);
-			seen.set(id, { id, ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}), contextWindow: m.contextWindow!, maxTokens: m.maxTokens!, limitsSource: m.limitsSource!, ...(m.detectedType ? { detectedType: m.detectedType } : {}), ...(m.classifierProtocol ? { classifierProtocol: m.classifierProtocol } : {}) });
+			seen.set(id, { id, ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}), ...(m.reasoningAuto ? { reasoningAuto: true } : {}), ...(m.thinkingLevelMap ? { thinkingLevelMap: m.thinkingLevelMap, thinkingLevelSource: m.thinkingLevelSource } : {}), contextWindow: m.contextWindow!, maxTokens: m.maxTokens!, limitsSource: m.limitsSource!, ...(m.detectedType ? { detectedType: m.detectedType } : {}), ...(m.classifierProtocol ? { classifierProtocol: m.classifierProtocol } : {}) });
 		}
 		if (!seen.size) throw new Error("没有获取到模型，请手动填写");
 		return [...seen.values()].sort((a, b) => a.id.localeCompare(b.id));
@@ -560,7 +572,7 @@ export class CustomProviders {
 
 /** 把持久化元数据里的 chat 模型映射成注册 classifier 时要一并重建的模型。 */
 function chatModelFromMeta(meta: CustomProviderMeta, m: CustomModel): ClassifierChatModel {
-	return { id: m.id, name: m.name, api: effectiveApi(meta, m), baseUrl: effectiveBaseUrl(meta, m), input: m.input, reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, thinkingLevelMap: m.thinkingLevelMap };
+	return { id: m.id, name: m.name, api: effectiveApi(meta, m), baseUrl: effectiveBaseUrl(meta, m), input: m.input, reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, thinkingLevelMap: m.reasoning ? m.thinkingLevelMap : undefined };
 }
 
 /** 写进 Pi models.json 的模型列表：自动模式下每个模型带上自己的协议和地址（Pi 支持按模型覆盖 api / baseUrl） */
@@ -571,5 +583,6 @@ function piModels(meta: CustomProviderMeta) {
 /** 写进 Pi models.json 的模型条目：去掉我们自己的字段和空值 */
 function piModel(m: CustomModel) {
 	const { api: _api, limitsSource: _s, inputAuto: _a, reasoningAuto: _r, thinkingLevelSource: _t, capabilities: _c, detectedType: _d, classifierProtocol: _p, ...rest } = m;
+	if (!m.reasoning) delete rest.thinkingLevelMap;
 	return Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== ""));
 }

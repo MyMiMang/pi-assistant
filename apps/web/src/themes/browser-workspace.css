@@ -1,0 +1,10 @@
+/** 浏览器只使用既有主题语义色；画布保留网站自身颜色。 */
+.pa-browser-workspace { display:flex; flex-direction:column; min-height:0; height:100%; background:var(--panel); color:var(--fg); }
+.pa-browser-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:8px; border-bottom:1px solid var(--line); }
+.pa-browser-toolbar > * { max-width:100%; }
+.pa-browser-screen { flex:1; min-height:120px; overflow:auto; display:flex; align-items:flex-start; justify-content:center; background:var(--bg); }
+.pa-browser-screen[hidden] { display:none; }
+.pa-browser-screen canvas { display:block; width:100%; height:auto; flex-shrink:0; outline-offset:-2px; }
+.pa-browser-screen canvas[aria-disabled="true"] { cursor:default; }
+.pa-browser-screen canvas[aria-disabled="false"] { cursor:crosshair; }
+@media (max-width:600px) { .pa-browser-toolbar { gap:4px; padding:6px; } }

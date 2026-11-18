@@ -1,137 +1,117 @@
-import { Maximize2, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { create } from "zustand";
+import { ArrowLeft, Globe, Maximize2, Minimize2, PanelRightClose, PanelsTopLeft, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { PREVIEW, clampPreview } from "../layout";
 import { useStore } from "../store";
+import { workspaceScope } from "../workspace-state";
+import { registerWorkspace, unregisterWorkspace, updateWorkspace, useWorkspace, workspaceAction, type WorkspaceEntry } from "../workspace";
 import { Resizer } from "./Resizer";
-import { Modal } from "./ui";
+import { ResponsiveTabs } from "./ResponsiveTabs";
+import { BrowserWorkspace } from "./BrowserWorkspace";
 
-/**
- * 聊天右边的侧栏（设计见 docs/design/side-panel-views.md、file-preview-side-panel.md）。
- *
- * `<SidePanel open onClose title testId>` 用法和 `Modal` 一样：
- * - 窗口够宽（App 用 layout.ts 的 resolveLayout 算出 docked）：内容 portal 进聊天右边的槽位（SidePanelDock），同一时间只有一个，
- *   新的打开时调用旧的 onClose；工具栏有「放大」和 ×；
- * - 放不下（手机 / 窄窗口）：就是原来的 Modal，行为不变（不抢占别的面板）；
- * - 「放大」：同一份内容改渲染进 `Modal wide fixed`，关掉就整个关闭。
- * 不传 title = 内容自带工具栏（文件预览）：children 可以是函数，拿到 onExpand（只有侧栏里才有）。
- */
-type Active = { id: symbol; onClose: () => void };
-type PanelState = { active: Active | null; expanded: boolean; docked: boolean; slot: HTMLElement | null };
-const usePanel = create<PanelState>(() => ({ active: null, expanded: false, docked: false, slot: null }));
-const setSlot = (el: HTMLElement | null) => usePanel.setState({ slot: el });
-const expand = () => usePanel.setState({ expanded: true });
-
-/** 侧栏正显示在聊天旁边（App 据此让信息面板让位） */
-export const useSidePanelShown = () => usePanel((s) => !!s.active && s.docked && !s.expanded);
-
-export function SidePanel({ open, onClose, title, label, testId, wide, fixed, children }: {
-	open: boolean;
-	onClose: () => void;
-	title?: ReactNode;
-	/** 无标题（内容自带工具栏）时的无障碍名称 */
-	label?: string;
-	testId?: string;
-	/** 以下两项只影响窄屏弹窗，和 Modal 同名同义 */
-	wide?: boolean;
-	fixed?: boolean;
-	children: ReactNode | ((p: { onExpand?: () => void }) => ReactNode);
+export function activateWorkspace(key: string) {
+	if (!useWorkspace.getState().entries[key]) return false;
+	workspaceAction({ type: "open", key });
+	return true;
+}
+/** 唯一注册外壳：调用方内容进入固定宿主，切换布局不移动 portal 或重挂内容。 */
+export function SidePanel({ open, onClose, title, panelKey, kind = "tasks", testId, fixed, children }: {
+	open: boolean; onClose: () => void; title: string; panelKey: string; kind?: WorkspaceEntry["kind"];
+	testId?: string; wide?: boolean; fixed?: boolean; children: ReactNode;
 }) {
-	const idRef = useRef(Symbol());
-	const id = idRef.current;
-	const closeRef = useRef(onClose);
-	closeRef.current = onClose;
-	const docked = usePanel((s) => s.docked);
-	const isActive = usePanel((s) => s.active?.id === id);
-	const expanded = usePanel((s) => s.expanded && s.active?.id === id);
-	const slot = usePanel((s) => s.slot);
+	const owner = useRef(Symbol()).current;
+	const latest = useRef<WorkspaceEntry>(null!);
+	latest.current = { key: panelKey, title, kind, testId, fixed, content: children, onClose, owner };
+	const registeredScope = useRef<string | null>(null);
+	useLayoutEffect(() => {
+		if (!open) return;
+		const scope = workspaceScope(useStore.getState());
+		if (!registerWorkspace(latest.current, scope)) { latest.current.onClose?.(); return; }
+		registeredScope.current = scope;
+		return () => { registeredScope.current = null; unregisterWorkspace(panelKey, owner, scope); };
+	}, [open, panelKey, owner]);
+	useLayoutEffect(() => { if (open && registeredScope.current) updateWorkspace(latest.current, registeredScope.current); });
+	return null;
+}
 
+/** 工作区占空间时让信息面板让位。 */
+export const useSidePanelShown = () => useWorkspace((s) => !!s.active && !s.collapsed);
+
+export function SidePanelDock({ docked, width }: { docked: boolean; width: number }) {
+	const state = useWorkspace();
+	const { active, entries, keys, collapsed, expanded } = state;
+	const setLayout = useStore((s) => s.setLayout);
+	const visible = !!active && !collapsed;
+	const full = expanded || !docked;
+	const mode = full ? (docked ? "expanded" : "mobile") : "docked";
+	const tabs = useMemo(() => keys.map((key) => [key, entries[key].title] as const), [keys, entries]);
+	const root = useRef<HTMLElement>(null);
+	const returnFocus = useRef<HTMLElement | null>(null);
 	useEffect(() => {
-		if (!open || !docked) return;
-		const prev = usePanel.getState().active;
-		usePanel.setState({ active: { id, onClose: () => closeRef.current() }, expanded: false });
-		if (prev && prev.id !== id) prev.onClose();
-		return () => {
-			if (usePanel.getState().active?.id === id) usePanel.setState({ active: null, expanded: false });
+		if (!visible || !full) return;
+		returnFocus.current = document.activeElement as HTMLElement;
+		root.current?.focus();
+		return () => { if (returnFocus.current?.isConnected) returnFocus.current.focus(); };
+	}, [visible, full]);
+	// 内层 useEscLayer 在 document capture 消费，宿主只在 window bubble 处理剩余 Esc。
+	useEffect(() => {
+		if (!visible) return;
+		const dismiss = (event: KeyboardEvent) => {
+			if (event.key !== "Escape" || event.defaultPrevented || document.querySelector('.pa-modal, [data-testid=image-viewer], [role="menu"]')) return;
+			const target = document.activeElement as HTMLElement | null;
+			if (target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName ?? "")) return;
+			workspaceAction({ type: "collapse" });
 		};
-	}, [open, docked, id]);
-
-	if (!open) return null;
-	const inDock = docked && !expanded;
-	const content = typeof children === "function" ? children({ onExpand: inDock ? expand : undefined }) : children;
-	if (!inDock) {
-		const big = docked && expanded;
-		return (
-			<Modal open onClose={onClose} title={title} wide={big || wide} fixed={big || fixed} testId={testId}>
-				{big && !fixed ? <div className="h-full overflow-y-auto">{content}</div> : content}
-			</Modal>
-		);
-	}
-	if (!slot || !isActive) return null;
-	return createPortal(
-		<aside className="pa-preview flex flex-col" aria-label={label ?? (typeof title === "string" ? title : undefined)} data-testid={testId} data-docked="1">
-			{title !== undefined && (
-				<header className="flex items-center gap-1 border-b border-line px-3 py-2">
-					<div className="min-w-0 flex-1 truncate font-semibold">{title}</div>
-					<button type="button" className="pa-icon-btn ghost" title="放大（用大窗口查看）" aria-label="放大" onClick={expand} data-testid="side-panel-expand">
-						<Maximize2 size={16} />
-					</button>
-					<button type="button" className="pa-icon-btn ghost" title="关闭（Esc）" aria-label="关闭" onClick={onClose} data-testid="side-panel-close">
-						<X size={18} />
-					</button>
-				</header>
-			)}
-			<div className={fixed || title === undefined ? "min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-y-auto"}>{content}</div>
-		</aside>,
-		slot,
+		window.addEventListener("keydown", dismiss);
+		return () => window.removeEventListener("keydown", dismiss);
+	}, [visible]);
+	useEffect(() => {
+		if (!visible || !full) return;
+		const trap = (event: KeyboardEvent) => {
+			if (event.key !== "Tab" || event.defaultPrevented || document.querySelector(".pa-modal, [data-testid=image-viewer]")) return;
+			if ((event.target as HTMLElement)?.closest('.pa-help-pop')) return;
+			const items = [...(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex="0"]') ?? [])].filter(el => el.getClientRects().length > 0 && el.tabIndex >= 0);
+			const index = items.indexOf(document.activeElement as HTMLElement);
+			event.preventDefault();
+			if (!items.length) root.current?.focus();
+			else items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus();
+		};
+		document.addEventListener("keydown", trap);
+		return () => document.removeEventListener("keydown", trap);
+	}, [visible, full]);
+	return (
+		<aside ref={root} tabIndex={-1} className="pa-workspace" data-testid="right-workspace" data-mode={mode} data-collapsed={collapsed ? "1" : "0"} data-scope={state.scope}
+			aria-label="工作区" hidden={!visible} role={full ? "dialog" : "complementary"} aria-modal={full || undefined} style={{ ["--workspace-w" as string]: `${width}px` }}>
+			{docked && !expanded && <Resizer side="left" value={width} onChange={(v) => setLayout({ previewW: clampPreview(v) })} onReset={() => setLayout({ previewW: PREVIEW.def })} onCollapse={() => workspaceAction({ type: "collapse" })} label="调整侧栏宽度" />}
+			<header className="pa-workspace-header">
+				{!docked && <button className="pa-icon-btn ghost" title="返回聊天（保留内容）" aria-label="返回聊天" data-testid="workspace-back-chat" onClick={() => workspaceAction({ type: "collapse" })}><ArrowLeft size={17} /></button>}
+				<div className="min-w-0 flex-1"><ResponsiveTabs tabs={tabs} value={active ?? ""} onChange={(key) => workspaceAction({ type: "open", key })} testId="workspace-tabs" /></div>
+				<button className="pa-icon-btn ghost" title={expanded ? "恢复并排" : "放大工作区"} aria-label={expanded ? "恢复并排" : "放大工作区"} data-testid={expanded ? "workspace-restore" : "workspace-expand"} onClick={() => workspaceAction({ type: expanded ? "restore" : "expand" })}>{expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+				<button className="pa-icon-btn ghost" title="收起工作区（保留内容）" aria-label="收起工作区" data-testid="workspace-collapse" onClick={() => workspaceAction({ type: "collapse" })}><PanelRightClose size={17} /></button>
+			</header>
+			<div className="pa-workspace-current">
+				<span title={active ? entries[active]?.title : ""}>{active ? entries[active]?.title : "工作区"}</span>
+				<button className="pa-icon-btn ghost" title="关闭当前标签并释放内容" aria-label="关闭当前标签" data-testid="workspace-close-tab" onClick={() => active && workspaceAction({ type: "close", key: active })}><X size={16} /></button>
+			</div>
+			{state.notice && <p className="border-b border-line px-3 py-2 text-sm text-mut" role="alert" data-testid="workspace-limit-notice">{state.notice}</p>}
+			<div className="pa-workspace-content" data-testid="workspace-content">
+				{keys.map((key) => {
+					const entry = entries[key];
+					return <section key={key} hidden={active !== key} className={`pa-workspace-instance ${entry.fixed ? "fixed-content" : "scroll-content"}`} data-workspace-key={key} data-testid={entry.testId} data-docked={!full ? "1" : undefined} role="tabpanel" aria-label={entry.title}>{entry.content}</section>;
+				})}
+			</div>
+		</aside>
 	);
 }
 
-/**
- * 侧栏槽位（App 挂一次）：聊天区右边一栏——Resizer 调宽、Esc 关闭、换助理 / 对话自动关；
- * `docked` / `width` 由 App 用 layout.ts 的 resolveLayout 算好传进来。
- */
-export function SidePanelDock({ docked, width }: { docked: boolean; width: number }) {
-	const active = usePanel((s) => s.active);
-	const expanded = usePanel((s) => s.expanded);
-	const previewW = useStore((s) => s.layout.previewW);
-	const setLayout = useStore((s) => s.setLayout);
-	useLayoutEffect(() => usePanel.setState({ docked }), [docked]);
-	const show = !!active && docked && !expanded;
-	const showRef = useRef(show);
-	showRef.current = show;
-	const close = () => usePanel.getState().active?.onClose();
-
-	// 当前助理 / 群 / 对话变了：侧栏开着就自动关（刚进来、对话 id 还没加载好时补上 id 不算切换）
-	const who = useStore((s) => `${s.room ?? ""}|${s.current ?? ""}`);
-	const conv = useStore((s) => s.convs[s.current ?? ""]?.current ?? "");
-	const last = useRef({ who, conv });
-	useEffect(() => {
-		const p = last.current;
-		last.current = { who, conv };
-		if (p.who === who && (!p.conv || p.conv === conv)) return;
-		if (showRef.current) close();
-	}, [who, conv]);
-
-	// Esc 关闭：在输入框 / 可编辑区域里打字时不关；已有弹层（设置、图片查看等）开着时让它们先处理
-	useEffect(() => {
-		if (!show) return;
-		const k = (e: KeyboardEvent) => {
-			if (e.key !== "Escape" || e.defaultPrevented) return;
-			const t = e.target as HTMLElement | null;
-			if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-			if (document.querySelector(".pa-modal, [data-testid=image-viewer]")) return;
-			close();
-		};
-		addEventListener("keydown", k);
-		return () => removeEventListener("keydown", k);
-	}, [show]);
-
-	if (!show) return null;
-	return (
-		<div className="pa-preview-wrap" ref={setSlot} style={{ ["--preview-w" as string]: `${width}px` }}>
-			<Resizer side="left" value={width} onChange={(v) => setLayout({ previewW: clampPreview(v) })} onReset={() => setLayout({ previewW: PREVIEW.def })} onCollapse={close} label="调整侧栏宽度" />
-		</div>
-	);
+/** 固定聊天入口；只订阅服务端实际页面，不启动或迁移业务浏览器。 */
+export function WorkspaceButton() {
+	const count = useWorkspace((s) => s.keys.length);
+	const current = useStore(s => s.current), roomId = useStore(s => s.room);
+	const members = useStore(s => s.rooms.find(r => r.id === roomId)?.members);
+	const agentIds = roomId ? (members ?? []).filter(m => !m.left && !m.deleted).map(m => m.agentId) : current ? [current] : [];
+	const key = `browser:${roomId ? `room:${roomId}` : current ?? "none"}`;
+	return <div className="flex items-center gap-1" data-testid="workspace-entry">
+		<button className="pa-chip" data-testid="workspace-reopen" title="恢复工作区里已打开的内容" disabled={!count} onClick={() => workspaceAction({ type: "reopen" })}><PanelsTopLeft size={15} /><span className="max-sm:hidden">工作区</span>{count || ""}</button>
+		<button className="pa-icon-btn ghost" title="查看和接管助理正在使用的网页" aria-label="网页工作区" data-testid="workspace-browser-open" disabled={!agentIds.length} onClick={() => registerWorkspace({ key, kind: "browser", title: "网页", testId: "workspace-browser", fixed: true, content: <BrowserWorkspace agentIds={agentIds} workspaceKey={key} /> })}><Globe size={16} /></button>
+	</div>;
 }

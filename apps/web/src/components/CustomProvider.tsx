@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { CustomModel, CustomProviderMeta, ProviderReferences } from "../types";
 import { Badge, Button, cx, Input, Help, Select, useConfirm } from "./ui";
+import { ModelReasoning } from "./ModelReasoning";
 
 const PLACEHOLDER: Record<string, string> = {
 	"openai-completions": "https://api.example.com/v1",
@@ -124,6 +125,7 @@ function ModelRow({ m, onChange, onRemove }: { m: CustomModel; onChange: (p: Par
 						<LimitField label="上下文长度" testid="ctx-input" value={m.contextWindow} presets={CTX_PRESETS} onChange={(v) => onChange({ contextWindow: v, limitsSource: "user" })} />
 						<LimitField label="最大输出" testid="out-input" value={m.maxTokens} presets={OUT_PRESETS} onChange={(v) => onChange({ maxTokens: v, limitsSource: "user" })} />
 					</div>
+					<ModelReasoning model={m} onChange={onChange} />
 					<div className="mt-2 flex flex-wrap items-center justify-between gap-2">
 						<button type="button" className="flex items-center gap-1 text-[11px] text-mut hover:text-fg" onClick={() => (onChange({ contextWindow: undefined, maxTokens: undefined, limitsSource: undefined }), setEdit(false))}>
 							<RotateCcw size={11} /> 恢复自动

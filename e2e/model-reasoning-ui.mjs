@@ -1,0 +1,117 @@
+/** 一条推理编辑→共用选择器→本地真实请求流程，临时服务/内存凭据，无付费调用。 */
+import assert from "node:assert/strict";
+import { createServer } from "node:net";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright-core";
+import { makeTempRun, startTempServer, browserEnv, cleanupTempRun } from "./fixtures/temp-server.mjs";
+import { stableShot } from "./fixtures/stable-shot.mjs";
+import { infoTab, openAgentModelPop } from "./fixtures/info-pane.mjs";
+import { openCompact } from "./model-menu-flow.mjs";
+import { startMockOpenAI } from "./mock-openai.mjs";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const run = makeTempRun("pia-model-reasoning-");
+const port = await new Promise((resolve) => { const s = createServer().listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => resolve(p)); }); });
+const base = `http://127.0.0.1:${port}`;
+const server = startTempServer({ root, port, run });
+const relay = await startMockOpenAI({ key: "sk-local-reasoning" });
+const out = join(root, "artifacts/screenshots/model-reasoning"); mkdirSync(out, { recursive: true });
+const j = async (path, method = "GET", body) => { const r = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); assert.ok(r.ok, `${method} ${path} ${r.status}`); return r.json(); };
+const wait = async (fn) => { const end = Date.now() + 20000; while (Date.now() < end) { if (await fn()) return; await new Promise((r) => setTimeout(r, 80)); } throw new Error("condition timed out"); };
+let browser;
+try {
+	await wait(async () => { try { return (await fetch(base + "/api/system")).ok; } catch { return false; } });
+	await j("/api/settings", "PUT", { onboarded: true });
+	const modelId = "unknown-future-model";
+	const provider = await j("/api/models/custom", "POST", { name: "推理编辑测试", api: "openai-completions", baseUrl: relay.url, apiKey: "sk-local-reasoning", models: [{ id: modelId }, { id: "other-unknown-model" }] });
+	const agent = await j("/api/agents", "POST", { name: "推理测试助理", model: { provider: provider.id, id: modelId }, thinking: "off" });
+	const room = await j("/api/rooms", "POST", { name: "推理测试群", memberIds: [agent.id], managerId: agent.id });
+	browser = await chromium.launch({ executablePath: process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true, env: browserEnv(run) });
+	const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.setDefaultTimeout(8000);
+	const errors = []; page.on("pageerror", (e) => errors.push(e.message));
+	await page.goto(`${base}/?settings=models`);
+	await page.getByTestId("service-list-toggle").click();
+	await page.getByTestId(`service-toggle-${provider.id}`).click();
+	const row = page.locator(`[data-testid=service-model][data-model="${modelId}"]`);
+	await row.getByTestId("relay-model-toggle").click();
+	assert.match(await row.getByTestId("model-reasoning").innerText(), /未识别/);
+	await row.getByTestId("model-reasoning").scrollIntoViewIfNeeded();
+	await stableShot(page, row.getByTestId("model-reasoning"), join(out, "01-unknown.png"));
+	await row.getByTestId("model-reasoning").getByRole("button").first().click();
+	const select = async (testid, name) => { await row.getByTestId(testid).click(); await page.getByRole("option", { name, exact: true }).click(); };
+	await select("reasoning-mode", "支持");
+	assert.match(await row.getByTestId("reasoning-source-hint").innerText(), /SDK 默认候选.*尚未验证/);
+	await select("reasoning-level-source", "按渠道文档指定");
+	for (const [level, value] of [["low", "documented-low"], ["high", "documented-high"]]) {
+		await row.getByTestId(`reasoning-enabled-${level}`).check();
+		await row.getByTestId(`reasoning-value-${level}`).fill(value);
+	}
+	// 一次模拟保存失败：保留目标行和草稿，然后重试走真实服务。
+	await page.route(`**/api/models/custom/${provider.id}`, async (route) => { await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "测试保存失败" }) }); await page.unroute(`**/api/models/custom/${provider.id}`); }, { times: 1 });
+	await row.getByTestId("relay-model-save").click();
+	await page.getByTestId("relay-error").waitFor();
+	assert.equal(await row.getByTestId("reasoning-value-high").inputValue(), "documented-high");
+	await row.getByTestId("model-reasoning").scrollIntoViewIfNeeded();
+	await stableShot(page, row.getByTestId("model-reasoning"), join(out, "02-user-subset.png"));
+	await row.getByTestId("relay-model-save").click();
+	await wait(async () => !(await row.getByTestId("relay-model-editor").count()));
+	const saved = (await j("/api/models/custom")).providers.find((p) => p.id === provider.id);
+	const meta = saved.models.find((m) => m.id === modelId);
+	assert.equal(meta.reasoning, true); assert.equal(meta.thinkingLevelSource, "user"); assert.equal(meta.thinkingLevelMap.high, "documented-high"); assert.equal(meta.thinkingLevelMap.max, null);
+	assert.equal(saved.models.find((m) => m.id === "other-unknown-model").reasoning, undefined);
+	const listed = (await j("/api/models")).find((m) => m.provider === provider.id && m.id === modelId);
+	assert.deepEqual(listed.thinking, ["low", "high"]);
+	assert.equal((await j("/api/models")).find((m) => m.provider === provider.id && m.id === "other-unknown-model").reasoning, undefined);
+	await page.goto(`${base}/?agent=${agent.id}`);
+	const compact = await openCompact(page);
+	assert.equal(await compact.locator(".pa-think-step").count(), 2);
+	await compact.getByRole("slider").press("End");
+	await wait(async () => (await j("/api/agents")).find((a) => a.id === agent.id).thinking === "high");
+	await page.keyboard.press("Escape");
+	await j(`/api/agents/${agent.id}/messages`, "POST", { text: "本地推理参数验证" });
+	await wait(async () => relay.seen.some((r) => r.url === "/v1/chat/completions"));
+	assert.equal(JSON.parse(relay.seen.filter((r) => r.url === "/v1/chat/completions").at(-1).body).reasoning_effort, "documented-high");
+	// 单聊详情、群成员详情沿用同一个 ModelPicker。
+	if (!await page.getByTestId("info-tabs").isVisible()) await page.getByRole("button", { name: "信息面板", exact: true }).click();
+	await infoTab(page, "models");
+	let pop = await openAgentModelPop(page);
+	await pop.getByRole("slider").waitFor();
+	assert.equal(await pop.locator(".pa-think-step").count(), 2);
+	await stableShot(page, page.getByTestId("agent-models-tab"), join(out, "03-agent-picker.png"));
+	await page.goto(`${base}/?room=${room.id}`);
+	await page.getByTestId("room-members").locator(`button[title^="${agent.name}"]`).click();
+	await infoTab(page, "models");
+	pop = await openAgentModelPop(page);
+	await pop.getByRole("slider").waitFor();
+	assert.equal(await pop.locator(".pa-think-step").count(), 2);
+	// 同一编辑流程收尾核验 false 和恢复自动；窄屏浅色检查新增编辑区。
+	await page.evaluate(() => localStorage.setItem("pia.theme", "light"));
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto(`${base}/?settings=models`);
+	if (!(await page.getByTestId(`service-toggle-${provider.id}`).isVisible())) await page.getByTestId("service-list-toggle").click();
+	await page.getByTestId(`service-toggle-${provider.id}`).click();
+	await row.getByTestId("relay-model-toggle").click();
+	await row.getByTestId("model-reasoning").getByRole("button").first().click();
+	await row.getByTestId("model-reasoning-editor").scrollIntoViewIfNeeded();
+	await stableShot(page, row.getByTestId("model-reasoning-editor"), join(out, "04-editor-light-390.png"));
+	assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= 390));
+	await select("reasoning-mode", "不支持");
+	await row.getByTestId("relay-model-save").click();
+	await wait(async () => !(await row.getByTestId("relay-model-editor").count()));
+	let disabled = (await j("/api/models")).find((m) => m.provider === provider.id && m.id === modelId);
+	assert.equal(disabled.reasoning, false); assert.deepEqual(disabled.thinking, ["off"]); assert.equal(disabled.thinkingLevelMap, undefined);
+	await row.getByTestId("relay-model-toggle").click();
+	await row.getByTestId("model-reasoning").getByRole("button").first().click();
+	await select("reasoning-mode", "自动识别");
+	await row.getByTestId("relay-model-save").click();
+	await wait(async () => !(await row.getByTestId("relay-model-editor").count()));
+	const automatic = (await j("/api/models/custom")).providers.find((p) => p.id === provider.id).models.find((m) => m.id === modelId);
+	assert.equal(automatic.reasoning, undefined); assert.equal(automatic.thinkingLevelMap, undefined); assert.equal(automatic.thinkingLevelSource, undefined);
+	assert.deepEqual(errors, []);
+	console.log("PASS unknown→manual subset→failed save retained→saved metadata→composer/agent/room shared picker→actual Mock request→false/auto reset; dark desktop/light 390");
+} finally {
+	writeFileSync(join(root, "artifacts/model-reasoning-server.log"), server.logs());
+	await browser?.close(); relay.close(); await server.stop(); cleanupTempRun(run);
+}

@@ -6,6 +6,14 @@
 > - registry agent：`packages/server/src/model-registry.ts` + `GET /api/models/registry`（`unified-model-registry` 树，`98415a8`+`54b1ef1`）
 > - benchmark agent：`packages/server/src/fast-computer/benchmark.ts` + `GET/POST /api/fast-computer/benchmark`（`fast-model-benchmark` 树，`12fa47d`）
 
+## 2026-11-18 已批准并验收：模型推理最小共用修复（beta.72 发布整合）
+
+- 自定义模型 `reasoning` 缺省＝未识别，false＝明确不支持，true＝支持；自动目录结果沿用 `reasoningAuto`，无证据时回到未知。运行模型对未知仍只开放 off，不隐式探测。
+- 两处现有模型编辑复用 `ModelReasoning`、Select/Fold 与共享 ThinkingLevel 常量。三态选择清除旧覆盖；恢复自动清除用户 map。高级档位按渠道文档勾选子集并填写协议值，无 JSON 编辑器。
+- `thinkingLevelSource=user` 优先同名目录，未声明档位转 null；false 清除 map。自动映射继续记录目录来源；无映射但显式支持时提示 SDK 五个默认候选尚未验证，不猜 xhigh/max。
+- `models.json` 与 classifier 扩展重注册使用同一有效元数据，UI 选项/clamp/实际请求继续由 Pi SDK 计算。`/api/models` 补回自定义未知语义及来源，不改 SDK 或协议构造。
+- 验证范围：定向元数据/SDK/request-body 单测、一个临时服务编辑选择器 e2e、typecheck/check:static；真实中转接受值与非 OpenAI 协议未实测。
+
 ## 1. 目标与范围
 
 - 一个 **模型服务** = 一份 baseURL + 一份凭据，可同时含 **chat / vision（识图）/ image（生图）/ classifier（分类器）**；生图与快速操作模型**不再单独配凭据**。

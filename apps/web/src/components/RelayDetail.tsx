@@ -9,6 +9,7 @@ import { api } from "../api";
 import type { CustomModel, CustomProviderMeta, ModelCapability, RegistryModel, RegistryProvider } from "../types";
 import { CTX_PRESETS, fmtTokens, LimitField, OUT_PRESETS, SOURCE } from "./CustomProvider";
 import { Badge, Button, cx, Help, Input, Select } from "./ui";
+import { ModelReasoning } from "./ModelReasoning";
 
 const CAPS: ModelCapability[] = ["chat", "vision", "image", "classifier"];
 const CAP_LABEL: Record<ModelCapability, string> = { chat: "对话", vision: "识图", image: "生图", classifier: "分类器" };
@@ -332,15 +333,16 @@ function ModelLine({ m, meta, r, auto, t, open, onToggle, onTest, onSave, onSave
 }) {
 	const caps = r?.capabilities ?? ["chat"];
 	const chat = (r?.type ?? "chat") === "chat";
-	const [d, setD] = useState({ caps, ctx: m.contextWindow, out: m.maxTokens, src: m.limitsSource, api: m.api ?? "" });
+	const draft = () => ({ caps, ctx: m.contextWindow, out: m.maxTokens, src: m.limitsSource, api: m.api ?? "", reasoning: m.reasoning, reasoningAuto: m.reasoningAuto, thinkingLevelMap: m.thinkingLevelMap, thinkingLevelSource: m.thinkingLevelSource });
+	const [d, setD] = useState(draft);
 	const [more, setMore] = useState(false);
 	const [busy, setBusy] = useState(false);
-	const reset = () => setD({ caps, ctx: m.contextWindow, out: m.maxTokens, src: m.limitsSource, api: m.api ?? "" });
+	const reset = () => setD(draft());
 	const save = async () => {
 		setBusy(true);
 		const capsChanged = String(d.caps) !== String(caps);
 		// 一次保存：能力也写进同一个 PUT，避免旧能力把刚改的覆盖回去
-		const models = body(meta).models.map((x) => (x.id !== m.id ? x : { ...x, contextWindow: d.ctx, maxTokens: d.out, limitsSource: d.src, ...(capsChanged ? { capabilities: d.caps } : {}), ...(auto ? { api: d.api || undefined } : {}) }));
+		const models = body(meta).models.map((x) => (x.id !== m.id ? x : { ...x, reasoning: d.reasoning, reasoningAuto: d.reasoningAuto, thinkingLevelMap: d.thinkingLevelMap, thinkingLevelSource: d.thinkingLevelSource, contextWindow: d.ctx, maxTokens: d.out, limitsSource: d.src, ...(capsChanged ? { capabilities: d.caps } : {}), ...(auto ? { api: d.api || undefined } : {}) }));
 		const ok = await onSave({ models });
 		if (ok && capsChanged) onSaveCaps(m.id, d.caps);
 		setBusy(false);
@@ -395,6 +397,7 @@ function ModelLine({ m, meta, r, auto, t, open, onToggle, onTest, onSave, onSave
 							<Select value={d.api} ariaLabel="模型接口格式" testId="relay-model-api" options={[{ value: "", label: "自动识别" }, ...RELAY_APIS.map((a) => ({ value: a, label: API_SHORT[a] }))]} onChange={(v) => setD({ ...d, api: v })} />
 						</label>
 					)}
+					{chat && <ModelReasoning model={{ ...m, ...d }} onChange={(patch) => setD({ ...d, ...patch, api: d.api })} />}
 					<div className="rounded-lg bg-hover">
 						<button className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs" onClick={() => setMore((v) => !v)} aria-expanded={more}>
 							<span className="font-medium">更多</span><span className="text-mut">擅长标签 · 自动识别的信息</span>
@@ -404,7 +407,7 @@ function ModelLine({ m, meta, r, auto, t, open, onToggle, onTest, onSave, onSave
 							<div className="space-y-3 px-3 pb-3 text-xs">
 								{r && strengthsSlot(r)}
 								<div className="grid grid-cols-3 gap-2 text-[11px]" data-testid="relay-model-auto">
-									<div><div className="text-mut">思考支持</div>{m.reasoning ? "支持" : "不支持"}</div>
+									<div><div className="text-mut">思考支持</div>{m.reasoning === undefined ? "未识别" : m.reasoning ? "支持" : "不支持"}</div>
 									<div><div className="text-mut">能看图</div>{m.input?.includes("image") ? "能" : "不能"}</div>
 									<div><div className="text-mut">请求地址</div><span className="break-all font-mono">{m.baseUrlEffective ?? meta.baseUrl}</span></div>
 								</div>

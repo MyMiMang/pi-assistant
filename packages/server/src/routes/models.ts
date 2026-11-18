@@ -118,7 +118,11 @@ export function mountModelRoutes(app: Hono<Env>) {
 	});
 	app.get("/api/models", (c) => {
 		const names = providerNames();
-		return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => ({ ...withProviderName(m, names), fast: fastCapability(m.api, m.provider) })));
+		const custom = new Map(customProviders.list().flatMap((p) => p.models.map((m) => [`${p.id}/${m.id}`, m] as const)));
+		return c.json(models.listModels(c.req.query("provider") || undefined).map((m) => {
+			const meta = custom.get(`${m.provider}/${m.id}`);
+			return { ...withProviderName(m, names), ...(meta ? { reasoning: meta.reasoning, thinkingLevelSource: meta.thinkingLevelSource } : {}), fast: fastCapability(m.api, m.provider) };
+		}));
 	});
 	app.get("/api/models/registry", (c) => c.json(registryJson()));
 	/**

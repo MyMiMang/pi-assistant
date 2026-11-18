@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { test } from "node:test";
 const { browserExtension } = await import("@pi-assistant/ext-browser");
-const { browserFor, closeAllBrowsers, findChrome, profileDir } = await import("../src/browser.ts");
+const { browserPagesFor, closeAllBrowsers, findChrome, profileDir } = await import("../src/browser.ts");
 const { config } = await import("../src/config.ts");
 
 const chrome = findChrome();
@@ -51,7 +51,7 @@ test("ext-browser：本机无头浏览器全流程", { skip: !chrome && "没有 
 	let paused = false;
 	browserExtension({
 		workspace: ws,
-		context: async () => (await browserFor("bt")).ctx,
+		session: browserPagesFor("bt"),
 		mode: () => "host",
 		isPaused: () => paused,
 		request: async (r) => (asks.push(r), answer),
