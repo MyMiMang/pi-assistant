@@ -206,28 +206,43 @@ export interface JumpState {
  * 不再插入一个和当前列表之间还留着空洞的孤立窗口，也不为跳一条而把沿途上千条加载进 DOM：
  * 上下文窗口本身连续无洞，窗口外可前后按需分页（UI 提供「加载较新消息 / 回到最新」）。
  */
-export function useMessageJump(scroller: RefObject<HTMLElement | null>, locate: (mid: string) => Promise<LocateResult>, onWindow: (r: LocateResult) => void) {
+export type JumpOutcome = "ok" | "notfound" | "error" | "cancelled";
+
+export function useMessageJump(scroller: RefObject<HTMLElement | null>, locate: (mid: string) => Promise<LocateResult>, onWindow: (r: LocateResult) => void, scope: string, stick: RefObject<boolean>) {
 	const [jumpState, setJumpState] = useState<JumpState | null>(null);
-	const run = async (mid: string) => {
-		if (flash(scroller.current, mid)) {
-			setJumpState(null);
-			return;
-		}
-		setJumpState({ mid, s: "loading" });
-		// 先确认目标是否存在 / 在同一容器：删除或跨容器立即给明确结果，不盲翻到底。
+	const generation = useRef(0);
+	const readingHistory = useRef(false);
+	useLayoutEffect(() => {
+		readingHistory.current = false;
+		setJumpState(null);
+		return () => { generation.current++; };
+	}, [scope]);
+	const run = async (mid: string, search = false): Promise<JumpOutcome> => {
+		const gen = ++generation.current;
+		setJumpState(null);
+		if (!search && flash(scroller.current, mid)) return "ok";
+		if (!search) setJumpState({ mid, s: "loading" });
 		const r = await locate(mid);
+		if (gen !== generation.current) return "cancelled";
 		if (!r.message) {
-			setJumpState({ mid, s: r.retryable ? "error" : "notfound" });
-			return;
+			const s = r.retryable ? "error" : "notfound";
+			if (!search) setJumpState({ mid, s });
+			return s;
 		}
-		// 不在当前列表：用有界上下文窗口替换列表（目标一定在窗口里），再滚到目标。
-		onWindow(r);
-		requestAnimationFrame(() => requestAnimationFrame(() => (setJumpState(null), flash(scroller.current, mid))));
+		if (search) readingHistory.current = true;
+		stick.current = false;
+		if (!findMid(scroller.current, mid)) onWindow(r);
+		await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+		if (gen !== generation.current) return "cancelled";
+		const ok = flash(scroller.current, mid);
+		if (!search) setJumpState(ok ? null : { mid, s: "notfound" });
+		return ok ? "ok" : "notfound";
 	};
 	const jump = (mid: string) => void run(mid);
 	const retry = () => jumpState && void run(jumpState.mid);
-	const clear = () => setJumpState(null);
-	return { jump, retry, jumpState, clear };
+	const clear = useCallback(() => { generation.current++; setJumpState(null); }, []);
+	const latest = () => { clear(); readingHistory.current = false; stick.current = true; };
+	return { jump, retry, jumpState, clear, latest, readingHistory, searchJump: (mid: string) => run(mid, true) };
 }
 
 /**

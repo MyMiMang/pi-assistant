@@ -42,11 +42,11 @@ export function channelContext(kind: ChannelKind, extra?: { group?: boolean }): 
 }
 
 /** Markdown → 纯文本（微信等）：去掉强调符号、标题井号、代码围栏，链接写成「文字 网址」，表格转成行 */
-export function markdownToPlain(md: string): string {
+export function markdownToPlain(md: string, { visibleLabelsOnly = false } = {}): string {
 	return md
 		.replace(/```[^\n]*\n([\s\S]*?)```/g, (_, code: string) => code.trimEnd())
-		.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_, alt: string, url: string) => `${alt || "图片"} ${url}`)
-		.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (_, t: string, url: string) => (t === url ? url : `${t} ${url}`))
+		.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_, alt: string, url: string) => visibleLabelsOnly ? alt : `${alt || "图片"} ${url}`)
+		.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (_, t: string, url: string) => (visibleLabelsOnly || t === url ? t : `${t} ${url}`))
 		.replace(/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/gm, "")
 		.replace(/^\s*\|(.+)\|\s*$/gm, (_, row: string) => row.split("|").map((x) => x.trim()).join("  "))
 		.replace(/^#{1,6}\s+/gm, "")

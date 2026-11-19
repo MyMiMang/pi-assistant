@@ -24,6 +24,13 @@ jobs:
         run: |
           npx playwright-core install chromium
           CHROME=$(node -e "console.log(require('playwright-core').chromium.executablePath())") node e2e/run.mjs
+      - name: 聊天记录搜索浏览器专项
+        run: |
+          CHROME=$(node -p "require('playwright-core').chromium.executablePath()")
+          export CHROME
+          node e2e/chat-history-search-ui.mjs
+          node e2e/chat-history-search-jump-ui.mjs
+          node e2e/chat-history-search-typing-ui.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: e2e-screenshots, path: artifacts }

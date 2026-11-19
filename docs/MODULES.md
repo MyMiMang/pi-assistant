@@ -106,6 +106,7 @@
 | `runtime.ts` | 运行时门面：对外导出（调用方只 import 它）、启动接线、启动恢复（bootstrap） |
 | `agent-runtime/` | 运行时实现：`rows` 助理/任务表读写，`system-rules` 系统提示，`room-hooks` 群聊挂钩，`bind-session` Pi 事件写成消息，`extensions` 每个会话挂的扩展/工具与 MCP，`skill-suggest` 技能建议，`agent-runtime` 每个对话的会话（发消息/插话/停止/整理），`background-tasks` 后台 / 定时 / 巡检的帮手入口、旧 tasks 表迁移与降权即停，`subagent-driver` 子代理会话，`agent-session` 建助理会话（主会话 / 后台任务 / 子代理共用 `createAgentSession`），`bg-wiring` 长命令转后台的接线（只给用户看得见的对话：作业落 bg_jobs 表、结束通知、服务重启标「中断」） |
 | `messages.ts` | 消息落库与引用快照；lastContextTokens 共用最近助理消息读入量（上下文接口与群自动整理） |
+| `message-search.ts`、`routes/message-search.ts` | 当前会话/群正文搜索、范围校验和稳定游标；不读取模型上下文或附件内容 |
 | `conversations.ts` | 一个助理多个对话 |
 | `fork.ts` | 从消息另开会话分支 |
 | `replies.ts` | 引用回复解析与快照 |
@@ -273,6 +274,7 @@
 | `Chat.tsx` | 单聊页与输入框工具栏 |
 | `ChatMessages.tsx` | 共用消息展示 |
 | `RoomChat.tsx` | 群聊页 |
+| `ChatHistorySearch.tsx` | 单聊与群聊共用的历史搜索入口、结果面板和原文往返 |
 | `RoomCards.tsx` | 群提议卡片、方案卡 `RoomPlanCard`（room-plan：就这么干 / 先不做；带 conversationId 的是单聊方案卡，按钮走单聊接口）、方案正文 `PlanBody`（方案卡和项目面板共用）、项目状态文字 `PROJECT_STATUS`、旧版群目标确认卡（room-goal，新的不再产生，历史卡片只读显示目标和完成标准，没有输入框和按钮） |
 | `ChatProjects.tsx` | 单聊顶部的项目入口 `ChatProjectsButton`：取 /api/conversations/:cid/projects，复用 `RoomWork` 的 `ProjectsPanel`（solo）；消息一变就重新取（只认最后一次请求），不另开推送事件 |
 | `RoomDelivery.tsx` | 交付卡 `ProjectDeliveryCard`（群消息 meta.kind=project-delivery）：做成了什么 / 交付的文件（复用 `Attachments` 预览下载）/ 怎么用 / 还没做的；长文字超 6 行折叠；不显示花费 |
@@ -374,6 +376,7 @@
 | `upload.mjs` | 共用新上传协议的创建、顺序分块及失败清理 |
 | `artifacts.mjs` | 截图与日志写 artifacts/ |
 | `fake-hindsight.mjs` | 假 Hindsight |
+| `chat-history-search.mjs` | `e2e/chat-history-search-ui.mjs`（搜索）与 `e2e/chat-history-search-jump-ui.mjs`（原文定位与往返）共用的临时 Mock 数据和浏览器操作 |
 | `page-checks.mjs` | 弹出菜单溢出检查、群聊发言 / 等空闲 / 按成员取消息、等本地语音模型区（openLocalAsrModels）、选本地模型 / 取安装按钮（先选再装与装后两种界面通用：pickLocalAsrModel / localAsrInstallButton） |
 | `default-voice-backend.mjs` | default-voice-flow 的可控语音后端（来源视图、本地语音模块状态、窄接口安装 / 取消、目录补丁、流式会话脚本） |
 | `safe-memory-server.mjs` | 安全记忆测试服务 |

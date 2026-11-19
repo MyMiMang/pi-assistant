@@ -3,6 +3,7 @@ import { SubagentTasks } from "./Subagents";
 import { RoomWorkButtons } from "./RoomWork";
 import { openAgentDetails } from "./InfoPane";
 import { WorkspaceButton } from "./WorkspaceStart";
+import { ChatHistorySearch } from "./ChatHistorySearch";
 import { ArrowUp, AtSign, Crown, Loader2, Plus, Settings2, Square, Trash2, Users } from "lucide-react";
 import { RoomCost } from "./Usage";
 import { RoomMembers } from "./MemberStatus"; import { JumpToLatest } from "./JumpToLatest";
@@ -51,8 +52,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 	const { rooms, agents, roomMsgs, roomWindow } = useStore();
 	const room = rooms.find((r) => r.id === roomId);
 	const list = roomMsgs[roomId] ?? [];
-	const liveAgent = rooms.find((r) => r.id === roomId)?.state.current?.agentId ?? null;
-	const rows = useProjectRows(roomId, list, useCallback((l: Message[]) => groupRoom(l, liveAgent), [liveAgent]));
+	const rows = useProjectRows(roomId, list, useCallback((l: Message[]) => groupRoom(l, room?.state.current?.agentId ?? null), [room?.state.current?.agentId]));
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const [settings, setSettings] = useState(false);
@@ -70,11 +70,11 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 		useStore.getState().openRoomHistoryWindow(roomId, { messages: r.context, hasOlder: r.hasOlder, hasNewer: r.hasNewer });
 		setOlder(r.hasOlder === false ? "end" : "idle");
 	};
-	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateRoomMessage(roomId, mid), ensureLoaded);
+	const { jump, retry: retryJump, jumpState, searchJump, clear, latest, readingHistory } = useMessageJump(scroller, (mid) => locateRoomMessage(roomId, mid), ensureLoaded, rKey, stick);
 	// 从历史窗口回到最新：重新拉最近一页、清空窗口状态（不改数据、不删消息）
 	const returnLatest = async () => {
 		setOlder("idle");
-		stick.current = true; // 用户主动回最新：跟随到底
+		latest(); // 用户主动回最新：取消未完成定位并跟随到底
 		await useStore.getState().returnRoomToLatest(roomId);
 	};
 	const { onRecall, onReedit } = recallActions(rKey); const replyCtx = useReplyContext(onQuote, undefined, undefined, onRecall);
@@ -116,7 +116,6 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 			setOlder("error");
 		}
 	};
-	const openMember = (id: string) => openAgentDetails(id);
 	return (
 		<div
 			className="relative flex h-full min-h-0 flex-col"
@@ -131,7 +130,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 				if (e.dataTransfer.files.length) composer.current?.addFiles(e.dataTransfer.files);
 			}}
 		>
-			<header className="pa-chat-head safe-top">
+			<header className="pa-chat-head safe-top relative z-30">
 				<SideToggle />
 				<StackedAvatars room={room} size={26} />
 				<div className="pa-head-txt min-w-0">
@@ -143,6 +142,7 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 					</small>
 				</div>
 				<div className="pa-head-actions">
+					<ChatHistorySearch scope={{ roomId }} onJump={searchJump} onLatest={() => void returnLatest()} onCancel={clear} />
 					<RoomWorkButtons key={room.id} room={room} />
 					<SubagentTasks room={room.id} />
 					<button className="pa-chip" onClick={() => setSettings(true)} data-testid="room-settings-btn" title="群设置">
@@ -152,13 +152,13 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 				</div>
 				<WorkspaceButton />
 			</header>
-			<RoomMembers room={room} list={list} onOpen={openMember} onJump={jump} />
+			<RoomMembers room={room} list={list} onOpen={openAgentDetails} onJump={jump} />
 			<div
 				ref={scroller}
 				className="pa-scroll"
 				onScroll={(e) => {
 					const el = e.currentTarget;
-					stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+					stick.current = !readingHistory.current && el.scrollHeight - el.scrollTop - el.clientHeight < 120;
 				}}
 			>
 				<div className="pa-thread-body">
@@ -177,10 +177,10 @@ export default function RoomChat({ roomId }: { roomId: string }) {
 						) : r.kind === "system" ? (
 							<ProjectTagged key={r.m.id} m={r.m} room={room} center><SystemMsg m={r.m} canContinue={r.m.id === lastPause} onReedit={onReedit} /></ProjectTagged>
 						) : (
-							<RoomBotTurn key={r.id} row={r} room={room} agents={agents} list={list} live={speaking === r.agentId && r === lastRow} onAvatar={openMember} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf} />
+							<RoomBotTurn key={r.id} row={r} room={room} agents={agents} list={list} live={speaking === r.agentId && r === lastRow} onAvatar={openAgentDetails} onQuote={onQuote} onJump={jump} interaction={replyCtx.interactionOf} />
 						),
 					)}
-					{speaking && (lastRow?.kind !== "bot" || lastRow.agentId !== speaking) && <RoomBotTurn row={{ kind: "bot", id: "pending", agentId: speaking, parts: [] }} room={room} agents={agents} list={list} live onAvatar={openMember} />}
+					{speaking && (lastRow?.kind !== "bot" || lastRow.agentId !== speaking) && <RoomBotTurn row={{ kind: "bot", id: "pending", agentId: speaking, parts: [] }} room={room} agents={agents} list={list} live onAvatar={openAgentDetails} />}
 					{roomWindow[roomId] && (
 						<div className="pa-history-window" data-testid="history-window">
 							<span className="pa-history-note">{roomWindow[roomId]!.newCount > 0 ? `有 ${roomWindow[roomId]!.newCount} 条新消息` : "正在查看历史消息"}</span>

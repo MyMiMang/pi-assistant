@@ -17,6 +17,7 @@ import { AttachButton, AttachTray, pasteFiles, useAttachUploader } from "./Attac
 import { Avatar, Button, cx, fmtSize } from "./ui";
 import { ConversationMenu } from "./Conversations";
 import { ChatProjectsButton } from "./ChatProjects";
+import { ChatHistorySearch } from "./ChatHistorySearch";
 import { COMPOSER_LABEL, useComposerKeys } from "../composer";
 import { VoiceInput } from "./VoiceInput";
 
@@ -65,7 +66,8 @@ export default function Chat({ agentId }: { agentId: string }) {
 		stick.current = false;
 		useStore.getState().openHistoryWindow(agentId, convId, { messages: r.context, hasOlder: r.hasOlder, hasNewer: r.hasNewer });
 	};
-	const { jump, retry: retryJump, jumpState } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), openWindow);
+	const { jump, retry: retryJump, jumpState, searchJump, clear, latest, readingHistory } = useMessageJump(scroller, (mid) => locateAgentMessage(convId, mid), openWindow, rKey, stick);
+	const returnLatest = () => { latest(); void useStore.getState().returnToLatest(agentId); };
 	const [forkNotice, setForkNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 	// 「从这条消息另开新对话」：用 Pi 公开 fork 在服务端建分支对话；切到新对话并把正文放回输入框（不自动发）。
 	const onFork = async (m: Message) => {
@@ -134,7 +136,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 				if (e.dataTransfer.files.length) composer.current?.addFiles(e.dataTransfer.files);
 			}}
 		>
-			<header className="pa-chat-head safe-top">
+			<header className="pa-chat-head safe-top relative z-30">
 				<SideToggle />
 				<button type="button" className="flex shrink-0 rounded-full" aria-label={`打开${agent.name}的助理详情`} onClick={() => openAgentDetails(agentId)}>
 					<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={30} running={running} />
@@ -144,6 +146,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 					<AgentStatusLine agent={agent} conversation={convId ?? undefined} list={list} onJump={jump} />
 				</div>
 				<div className="pa-head-actions">
+					<ChatHistorySearch scope={{ agentId, conversationId: convId }} onJump={searchJump} onLatest={returnLatest} onCancel={clear} />
 					{agent.scope === "room" && agent.room_id && (
 						<button className="pa-chip" data-testid="back-to-room" onClick={() => void useStore.getState().selectRoom(agent.room_id!)} title="这是群专属助理，返回它所在的群">
 							<Users className="pa-ic" />
@@ -162,7 +165,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 				className="pa-scroll"
 				onScroll={(e) => {
 					const el = e.currentTarget;
-					stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+					stick.current = !readingHistory.current && el.scrollHeight - el.scrollTop - el.clientHeight < 120;
 					// 滑到接近顶部自动加载更早。
 					// 关键：同一次「停在顶部」只加载一页。内容插入上方后，浏览器滚动锚定会再次派发 scroll（位置几乎没变），
 					// 没有位置判断的话，用户停在顶部就会被一页页把整段历史自动拉完（几十万条的会话直接打爆手机内存 / DOM）。
@@ -227,7 +230,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 										{st.loading ? "加载中…" : "加载较新消息"}
 									</button>
 								)}
-								<button className="pa-chip sm" onClick={() => { stick.current = true; void useStore.getState().returnToLatest(agentId); }} data-testid="history-return-latest">
+								<button className="pa-chip sm" onClick={returnLatest} data-testid="history-return-latest">
 									回到最新
 								</button>
 							</div>
@@ -236,7 +239,7 @@ export default function Chat({ agentId }: { agentId: string }) {
 				</div>
 			</div>
 			{replyCtx.menuEl}
-			{jumpState && !quote && <JumpHint s={jumpState.s} onRetry={retryJump} />}<JumpToLatest scroller={scroller} wrap={composerWrap} count={list.length} onLatest={st?.window ? () => { stick.current = true; void useStore.getState().returnToLatest(agentId); } : undefined} />
+			{jumpState && !quote && <JumpHint s={jumpState.s} onRetry={retryJump} />}<JumpToLatest scroller={scroller} wrap={composerWrap} count={list.length} onLatest={st?.window ? returnLatest : undefined} />
 			{forkNotice && (
 				<div className={cx("pa-fork-notice", forkNotice.kind === "error" && "error")} role="status" data-testid="fork-notice">
 					<span>{forkNotice.text}</span>

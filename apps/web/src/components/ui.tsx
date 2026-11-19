@@ -63,7 +63,7 @@ export function Avatar({ text, color, size = 36, running, agentId, src, testId }
 const modalStack: symbol[] = [];
 
 /** fixed：固定尺寸（不随内容变高/变宽、位置不跳），内部自己负责滚动——设置窗口用，切换标签时左侧/顶部标签栏不动。 */
-export function Modal({ open, onClose, title, children, wide, fixed, testId }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; wide?: boolean; fixed?: boolean; testId?: string }) {
+export function Modal({ open, onClose, title, children, wide, fixed, testId, ariaLabel, keepMounted }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; wide?: boolean; fixed?: boolean; testId?: string; ariaLabel?: string; keepMounted?: boolean }) {
 	const idRef = useRef<symbol | undefined>(undefined);
 	if (!idRef.current) idRef.current = Symbol();
 	useEffect(() => {
@@ -78,9 +78,9 @@ export function Modal({ open, onClose, title, children, wide, fixed, testId }: {
 			if (i >= 0) modalStack.splice(i, 1);
 		};
 	}, [open, onClose]);
-	if (!open) return null;
+	if (!open && !keepMounted) return null;
 	return createPortal(
-		<div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
+		<div className={cx("fixed inset-0 z-50 items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center sm:p-4", open ? "flex" : "hidden")} onClick={onClose}>
 			<div
 				className={cx(
 					"pa-modal flex w-full flex-col overflow-hidden max-sm:rounded-b-none",
@@ -88,6 +88,7 @@ export function Modal({ open, onClose, title, children, wide, fixed, testId }: {
 					wide ? (fixed ? "sm:w-[min(56rem,100%)]" : "sm:max-w-4xl") : "sm:max-w-md",
 				)}
 				data-testid={testId}
+				role={ariaLabel ? "dialog" : undefined} aria-label={ariaLabel}
 				onClick={(e) => e.stopPropagation()}
 			>
 				{title !== undefined && (
@@ -122,7 +123,7 @@ export function Badge({ children, tone = "zinc" }: { children: ReactNode; tone?:
 	);
 }
 
-export const Input = (p: React.InputHTMLAttributes<HTMLInputElement>) => (
+export const Input = (p: React.ComponentPropsWithRef<"input">) => (
 	<input {...p} className={cx("pa-input", p.className)} />
 );
 
