@@ -136,7 +136,9 @@ export default function Chat({ agentId }: { agentId: string }) {
 		>
 			<header className="pa-chat-head safe-top">
 				<SideToggle />
-				<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={30} running={running} />
+				<button type="button" className="flex shrink-0 rounded-full" aria-label={`打开${agent.name}的助理详情`} onClick={() => openAgentDetails(agentId)}>
+					<Avatar agentId={agent.id} text={agent.avatar} color={agent.color} size={30} running={running} />
+				</button>
 				<div className="pa-head-txt min-w-0">
 					<button type="button" className="pa-chat-agent-name truncate text-left hover:underline" title="打开助理详情" data-testid="agent-detail-open" onClick={() => openAgentDetails(agentId)}><b>{agent.name}</b></button>
 					<AgentStatusLine agent={agent} conversation={convId ?? undefined} list={list} onJump={jump} />
