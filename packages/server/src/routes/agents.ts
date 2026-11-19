@@ -37,13 +37,14 @@ import { by, localOnly, roomErr, sendFile, type Env } from "./common.ts";
 import { deskChanged } from "./desktop.ts";
 import { syncSidecarWanted } from "./memory.ts";
 import { routineJson } from "./routines.ts";
+import { folderExists, isNonemptyId } from "./agent-folders.ts";
 
 // ---------------------------------------------------------------- 助理与聊天
 export const agentJson = (a: NonNullable<ReturnType<typeof getAgent>>) => {
 	const last = db.prepare("SELECT content, role, created_at FROM messages WHERE agent_id = ? AND task_id IS NULL AND subagent_id IS NULL AND room_id IS NULL AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1").get(a.id);
 	const thinkingDefault = defaultThinkingSetting();
 	const thinkingSource = a.thinking ? a.thinking_explicit ? "explicit" : "legacy" : thinkingDefault ? "default" : "unset";
-	return { ...a, session_file: undefined, model: runtime(a.id).modelFor(a), thinking: runtime(a.id).thinkingFor(a), thinkingSetting: a.thinking, thinkingSource, thinkingDefault, fast: a.fast === 1, workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
+	return { ...a, folder_id: undefined, folderId: a.folder_id, session_file: undefined, model: runtime(a.id).modelFor(a), thinking: runtime(a.id).thinkingFor(a), thinkingSetting: a.thinking, thinkingSource, thinkingDefault, fast: a.fast === 1, workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
 };
 
 type AgentInput = { name?: string; avatar?: string; color?: string; persona?: string; description?: string; model?: { provider: string; id: string } | null; thinking?: string | null; /** 请求级 Fast：只动 agents.fast，不碰 thinking / 模型 */ fast?: boolean | null };
@@ -84,17 +85,21 @@ const deskJson = async (id: string) => ({ ...(await desktopStatus(id)), paused: 
 export function mountAgentRoutes(app: Hono<Env>) {
 	app.get("/api/agents", (c) => c.json(listAgents().map(agentJson)));
 	app.post("/api/agents", async (c) => {
-		const b = await c.req.json<AgentInput>();
-		const name = (b.name ?? "").trim().slice(0, 40);
-		if (!name) return c.json({ error: "请给助理起个名字" }, 400);
-		const id = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+		const b = await c.req.json<AgentInput & { folderId?: unknown }>().catch(() => null);
+		const name = typeof b?.name === "string" ? b.name.trim().slice(0, 40) : "";
+		if (!b || !name) return c.json({ error: "请给助理起个名字" }, 400);
+		const folderId = b.folderId ?? null;
+		if (folderId !== null && !isNonemptyId(folderId)) return c.json({ error: "invalid_folder_id" }, 400);
+		if (folderId !== null && !folderExists(folderId)) return c.json({ error: "folder_not_found" }, 404);
 		if (b.model && !cliServiceFor(b.model.provider) && !models.getModel(b.model.provider, b.model.id)) return c.json({ error: "模型不存在" }, 400);
+		const id = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 		const model = b.model ?? defaultModel();
-		db.prepare("INSERT INTO agents(id, name, avatar, color, persona, description, model_provider, model_id, sort, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(
-			id, name, cleanAvatar(b.avatar, name), b.color || "#6366f1", (b.persona ?? "").slice(0, 8000), (b.description ?? "").slice(0, 200), model?.provider ?? null, model?.id ?? null, listAgents().length, now(),
+		const thinking = isThinkingLevel(b.thinking) ? b.thinking : null;
+		// 助理与归类一条 INSERT 落库，不会先建成未分类再移动。
+		db.prepare("INSERT INTO agents(id, name, avatar, color, persona, description, model_provider, model_id, sort, created_at, thinking, thinking_explicit, folder_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(
+			id, name, cleanAvatar(b.avatar, name), b.color || "#6366f1", (b.persona ?? "").slice(0, 8000), (b.description ?? "").slice(0, 200), model?.provider ?? null, model?.id ?? null, listAgents().length, now(), thinking, thinking ? 1 : 0, folderId,
 		);
 		void hostAgentsChanged();
-		db.prepare("UPDATE agents SET thinking = ?, thinking_explicit = ? WHERE id = ?").run(isThinkingLevel(b.thinking) ? b.thinking : null, isThinkingLevel(b.thinking) ? 1 : 0, id);
 		insertMessage({ agentId: id, role: "assistant", content: `你好，我是${name} 👋\n\n我有自己的电脑，可以写代码、处理文件、上网查资料、操作网页和桌面应用，也能把耗时的活放到后台去做。想让我做点什么？` });
 		bus.emit({ type: "agents.changed" });
 		return c.json(agentJson(getAgent(id)!));

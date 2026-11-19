@@ -32,7 +32,7 @@ type Draft = { name: string; avatar: string; color: string; description: string;
 /** 创建 / 编辑助理（首次向导、侧边栏“新建助理”、右侧“资料”页共用）。
  *  layout="profile"：助理设置里的资料页——正文独立滚动 + 固定底部「保存资料」，只 PATCH 资料字段（不碰 model / thinking / fast）。
  */
-export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = true, layout = "default" }: { agent?: Agent; onDone?: (a: Agent) => void; onCancel?: () => void; submitLabel?: string; showModel?: boolean; layout?: "default" | "profile" }) {
+export function AgentEditor({ agent, folderId, onDone, onCancel, submitLabel, showModel = true, layout = "default" }: { agent?: Agent; folderId?: string; onDone?: (a: Agent) => void; onCancel?: () => void; submitLabel?: string; showModel?: boolean; layout?: "default" | "profile" }) {
 	const init = (a?: Agent): Draft => ({
 		name: a?.name ?? "",
 		avatar: a?.avatar ?? EMOJIS[0],
@@ -108,6 +108,7 @@ export function AgentEditor({ agent, onDone, onCancel, submitLabel, showModel = 
 				persona: d.persona,
 				...(showModel && (!agent || modelDirty) ? { model: d.model ? { provider, id: rest.join("/") } : null } : {}),
 				...(showModel && (!agent || thinkingDirty) ? { thinking: d.thinking } : {}),
+				...(!agent && folderId ? { folderId } : {}),
 			};
 			let a = await api<Agent>(agent ? `/api/agents/${agent.id}` : "/api/agents", { method: agent ? "PATCH" : "POST", json: body });
 			// 新建时选了带技能的模板（如全能培训师）：一并启用模板的内置技能

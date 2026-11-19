@@ -26,8 +26,9 @@ export interface Agent {
 	last?: { content: string; role: string; created_at: number } | null;
 	conversation_id?: string; memory_provider?: string | null; thinking?: string; thinkingSetting?: string | null; thinkingSource?: "explicit" | "default" | "legacy" | "unset"; thinkingDefault?: string | null; /** 请求级 Fast（OpenAI service_tier=priority）：独立于 thinking / 模型 */ fast?: boolean;
 	/** user = 我的助理；room = 群专属助理（不在侧边栏） */
-	scope?: "user" | "room"; room_id?: string | null;
+	scope?: "user" | "room"; room_id?: string | null; folderId?: string | null;
 }
+export interface AgentFolder { id: string; name: string }
 export interface RoomMember { agentId: string; conversationId: string | null; name: string; avatar: string; color: string; left: boolean; deleted: boolean; scope: string; status: string }
 export interface RoomCaps { maxTurns: number; maxDepth: number; perAgent: number; followup: boolean }
 /** background = 已让出发言位、还在自己会话里干活的成员（服务端 rooms/queue.ts） */

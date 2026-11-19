@@ -23,6 +23,7 @@ export interface AgentRow {
 	created_at: number;
 	conversation_id: string | null;
 	memory_provider: string | null;
+	folder_id: string | null;
 }
 export interface TaskRow {
 	id: string;

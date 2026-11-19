@@ -7,6 +7,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_folders (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT NOT NULL, color TEXT NOT NULL,
   persona TEXT NOT NULL DEFAULT '', model_provider TEXT, model_id TEXT,
@@ -186,6 +187,7 @@ for (const [table, col, ddl] of [
 	["requests", "room_id", "TEXT"],
 	["agents", "scope", "TEXT NOT NULL DEFAULT 'user'"],
 	["agents", "room_id", "TEXT"],
+	["agents", "folder_id", "TEXT REFERENCES agent_folders(id) ON DELETE SET NULL CHECK (folder_id IS NULL OR scope = 'user')"],
 	["files", "room_id", "TEXT"],
 	// 旧版「自主推进」留下的列：只给启动时的 migrateAutonomy 读（老库升级成进行中的项目），新数据不再写
 	["rooms", "autonomy", "TEXT"],

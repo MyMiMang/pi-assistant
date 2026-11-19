@@ -1,5 +1,5 @@
 import { InboxButton } from "./Proactive";
-import { Laptop, Moon, Pencil, Trash2, PanelLeftClose, Plus, Search, Settings as Cog, Smartphone, Sun, WifiOff } from "lucide-react";
+import { CheckSquare, Ellipsis, FolderInput, Laptop, Moon, Pencil, Trash2, PanelLeftClose, Plus, Search, Settings as Cog, Smartphone, Square, Sun, WifiOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
@@ -11,6 +11,8 @@ import { NewRoom, StackedAvatars } from "./RoomChat";
 import { Avatar, Button, cx, fmtTime, Modal } from "./ui";
 import { BRAND } from "@pi-assistant/shared";
 import { MemoryHealthDot } from "./MemoryHealthDot";
+import { SidebarPersonalFolders } from "./SidebarPersonalFolders";
+import { SidebarRoomSection } from "./SidebarRoomSection";
 
 
 export default function Sidebar() {
@@ -19,7 +21,8 @@ export default function Sidebar() {
 	const agents = allAgents.filter((a) => a.scope !== "room");
 	const [newRoom, setNewRoom] = useState(false);
 	const [q, setQ] = useState("");
-	const [creating, setCreating] = useState(false);
+	const [creating, setCreating] = useState<{ folderId?: string } | null>(null);
+	const [moveId, setMoveId] = useState<string | null>(null);
 	const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 	const [del, setDel] = useState<string | null>(null);
 	const press = useRef<{ t: number; fired: boolean } | null>(null);
@@ -40,7 +43,6 @@ export default function Sidebar() {
 		if (current === id && !room) openAgentDetails(id, tab, tab === "tasks" ? "background" : undefined);
 	});
 	const openWork = (id: string) => openDetails(id, "tasks");
-	const list = agents.filter((a) => !q || a.name.includes(q) || a.description?.includes(q));
 	const dark = document.documentElement.dataset.mode === "dark";
 	return (
 		<aside className="pa-sidebar safe-top h-full">
@@ -54,7 +56,7 @@ export default function Sidebar() {
 					<PanelLeftClose className="pa-ic" />
 				</button>
 			</div>
-			<button className="pa-new-btn" title={t("新建助理")} onClick={() => setCreating(true)}>
+			<button className="pa-new-btn" title={t("新建助理")} onClick={() => setCreating({})}>
 				<Plus className="pa-ic" />
 				<span>{t("新建助理")}</span>
 			</button>
@@ -62,24 +64,27 @@ export default function Sidebar() {
 				<Search className="pa-ic" />
 				<input className="min-w-0 flex-1 bg-transparent text-fg outline-none placeholder:text-mut2" placeholder={t("搜索")} value={q} onChange={(e) => setQ(e.target.value)} />
 			</label>
-			<div className="pa-sec-label">我的助理</div>
 			<nav className="pa-agents scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-				{list.map((a) => (
+				<SidebarPersonalFolders agents={agents} current={room ? null : current} query={q} moveId={moveId} onCloseMove={() => setMoveId(null)} onCreateAgent={(folderId) => setCreating({ folderId })} renderAgent={(a, selection) => (
+					<div key={a.id} className="flex min-w-0 items-center">
 					<button
-						key={a.id}
+						role={selection ? "checkbox" : undefined}
+						aria-checked={selection?.checked}
+						aria-label={selection ? `选择 ${a.name}` : undefined}
 						data-testid="sidebar-agent"
 						data-name={a.name}
 						onClick={() => {
 							if (press.current?.fired) return void (press.current = null);
+							if (selection) return selection.toggle();
 							void useStore.getState().selectAgent(a.id);
 						}}
 						onContextMenu={(e) => {
 							e.preventDefault();
-							if (press.current?.fired) return;
+							if (selection || press.current?.fired) return;
 							openMenu(a.id, e.clientX, e.clientY);
 						}}
 						onPointerDown={(e) => {
-							if (e.pointerType === "mouse") return;
+							if (selection || e.pointerType === "mouse") return;
 							const { clientX, clientY } = e;
 							const st = { t: 0, fired: false };
 							st.t = window.setTimeout(() => {
@@ -93,8 +98,9 @@ export default function Sidebar() {
 						onPointerUp={() => press.current && !press.current.fired && (clearTimeout(press.current.t), (press.current = null))}
 						onPointerCancel={() => press.current && (clearTimeout(press.current.t), (press.current = null))}
 						style={{ WebkitTouchCallout: "none", userSelect: "none" }}
-						className={cx("pa-agent", a.id === current && !room && "active")}
+						className={cx("pa-agent min-w-0 flex-1", (selection ? selection.checked : a.id === current && !room) && "active")}
 					>
+						{selection && (selection.checked ? <CheckSquare size={16} className="shrink-0" /> : <Square size={16} className="shrink-0" />)}
 						<Avatar agentId={a.id} text={a.avatar} color={a.color} size={32} running={a.status === "running"} />
 						<span className="pa-agent-txt">
 							<b className="truncate">{a.name}</b>
@@ -102,13 +108,13 @@ export default function Sidebar() {
 						</span>
 						{a.unread > 0 && (a.id !== current || room) ? <span className="pa-badge">{a.unread > 99 ? "99+" : a.unread}</span> : <span className="shrink-0 text-[11px] text-mut2">{a.last ? fmtTime(a.last.created_at) : ""}</span>}
 					</button>
-				))}
-				<div className="pa-sec-label flex items-center">
-					<span className="flex-1">群聊</span>
-					<button className="pa-icon-btn ghost !h-6 !w-6" title="新建群聊" aria-label="新建群聊" onClick={() => setNewRoom(true)} data-testid="new-room-btn">
-						<Plus size={14} />
-					</button>
-				</div>
+						{!selection && <button type="button" className="pa-icon-btn ghost shrink-0 !h-10 !w-10" title={`${a.name}更多操作`} aria-label={`${a.name}更多操作`} aria-haspopup="menu" onClick={(e) => {
+							const { right, bottom } = e.currentTarget.getBoundingClientRect();
+							openMenu(a.id, right - 170, bottom);
+						}}><Ellipsis size={17} /></button>}
+					</div>
+				)} />
+				<SidebarRoomSection onCreate={() => setNewRoom(true)}>
 				{rooms.filter((r) => !q || r.name.includes(q)).map((r) => {
 					const who = r.last?.role === "user" ? "我" : r.members.find((m) => m.agentId === r.last?.agent_id)?.name;
 					return (
@@ -127,6 +133,7 @@ export default function Sidebar() {
 						把几个助理拉进一个群，一起干活
 					</button>
 				)}
+				</SidebarRoomSection>
 				{working.length > 0 && (
 					<>
 						<div className="pa-sec-label">{t("帮手")}</div>
@@ -154,7 +161,7 @@ export default function Sidebar() {
 					<MemoryHealthDot className="absolute top-1 right-1" />
 				</button>
 			</div>
-			<NewAgent open={creating} onClose={() => setCreating(false)} />
+			<NewAgent open={!!creating} folderId={creating?.folderId} onClose={() => setCreating(null)} />
 			<NewRoom open={newRoom} onClose={() => setNewRoom(false)} />
 			{menu && createPortal(
 				<div
@@ -170,6 +177,9 @@ export default function Sidebar() {
 					}}>
 						<Pencil size={14} /> 编辑
 					</button>
+					<button role="menuitem" className="flex w-full items-center gap-2 rounded px-3 py-2 text-left hover:bg-hover" onClick={() => (setMoveId(menu.id), setMenu(null))}>
+						<FolderInput size={14} /> 移动到文件夹
+					</button>
 					<button role="menuitem" className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-red-600 hover:bg-hover" onClick={() => (setDel(menu.id), setMenu(null))}>
 						<Trash2 size={14} /> 删除助理
 					</button>
@@ -181,12 +191,13 @@ export default function Sidebar() {
 	);
 }
 
-function NewAgent({ open, onClose }: { open: boolean; onClose: () => void }) {
+function NewAgent({ open, folderId, onClose }: { open: boolean; folderId?: string; onClose: () => void }) {
 	return (
-		<Modal open={open} onClose={onClose} title={t("新建助理")}>
+		<Modal open={open} onClose={onClose} title={t("新建助理")} ariaLabel={t("新建助理")}>
 			<div className="p-5">
 				{open && (
 					<AgentEditor
+						folderId={folderId}
 						onCancel={onClose}
 						onDone={(a) => {
 							void useStore.getState().selectAgent(a.id);

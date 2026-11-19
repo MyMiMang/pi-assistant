@@ -3,7 +3,7 @@ import { getTheme } from "./themes/registry";
 import { api } from "./api";
 import { loadLayout, type LayoutPrefs, saveLayout } from "./layout";
 import { loadSelection, mergeMessages, resolveInitialAgent, saveSelection, selectionKey, storedConversation, type Selection } from "./selection";
-import type { Agent, Conversation, Device, Helper, Message, Room, SystemInfo } from "./types";
+import type { Agent, AgentFolder, Conversation, Device, Helper, Message, Room, SystemInfo } from "./types";
 
 type Theme = "light" | "dark" | "system";
 const backgroundHelper = (r: Helper) => r.kind !== "heartbeat" && !r.parent_subagent_id; // tasks = 用户看得见的帮手（含旧后台任务、定时任务；巡检安静、下一层归上一层），信息面板执行记录和侧栏运行数用（决策 0027）
@@ -12,6 +12,8 @@ interface State {
 	conn: "connecting" | "open" | "closed" | "unauthorized";
 	system: SystemInfo | null;
 	agents: Agent[];
+	agentFolders: AgentFolder[] | null;
+	agentFoldersError: boolean;
 	desktopVersion: number;
 	cloudflareSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
 	tunnelSteps: { step: string; state: "running" | "ok" | "error"; detail?: string }[];
@@ -168,6 +170,8 @@ export const useStore = create<State>((set, get) => ({
 	conn: "connecting",
 	system: null,
 	agents: [],
+	agentFolders: null,
+	agentFoldersError: false,
 	current: null,
 	subagent: null,
 	subagentTabs: [],
@@ -218,12 +222,15 @@ export const useStore = create<State>((set, get) => ({
 		set({ system, selKey: selectionKey(system.serverId, system.deviceId) });
 	},
 	async loadAgents() {
-		const agents = await api<Agent[]>("/api/agents");
+		const [agents, folders] = await Promise.all([
+			api<Agent[]>("/api/agents"),
+			api<AgentFolder[]>("/api/agent-folders").catch(() => null),
+		]);
 		const st = get();
 		const stored = loadSelection(st.selKey).agentId;
 		const requested = new URLSearchParams(location.search).get("agent");
 		const r = resolveInitialAgent({ agents, current: st.current, requested, stored });
-		set({ agents, current: r.agentId });
+		set({ agents, agentFolders: folders ?? st.agentFolders, agentFoldersError: folders === null, current: r.agentId });
 		// 首次打开 / 上次的助理已删除 → 只回退一次并记下；有效选择不覆盖
 		if (r.persist) persistSelection(st.selKey, { agentId: r.agentId });
 	},

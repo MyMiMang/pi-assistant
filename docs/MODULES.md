@@ -106,6 +106,7 @@
 | `runtime.ts` | 运行时门面：对外导出（调用方只 import 它）、启动接线、启动恢复（bootstrap） |
 | `agent-runtime/` | 运行时实现：`rows` 助理/任务表读写，`system-rules` 系统提示，`room-hooks` 群聊挂钩，`bind-session` Pi 事件写成消息，`extensions` 每个会话挂的扩展/工具与 MCP，`skill-suggest` 技能建议，`agent-runtime` 每个对话的会话（发消息/插话/停止/整理），`background-tasks` 后台 / 定时 / 巡检的帮手入口、旧 tasks 表迁移与降权即停，`subagent-driver` 子代理会话，`agent-session` 建助理会话（主会话 / 后台任务 / 子代理共用 `createAgentSession`），`bg-wiring` 长命令转后台的接线（只给用户看得见的对话：作业落 bg_jobs 表、结束通知、服务重启标「中断」） |
 | `messages.ts` | 消息落库与引用快照；lastContextTokens 共用最近助理消息读入量（上下文接口与群自动整理） |
+| `routes/agent-folders.ts` | 个人助理文件夹管理及原子批量移动；解散仅清除归类 |
 | `message-search.ts`、`routes/message-search.ts` | 当前会话/群正文搜索、范围校验和稳定游标；不读取模型上下文或附件内容 |
 | `conversations.ts` | 一个助理多个对话 |
 | `fork.ts` | 从消息另开会话分支 |
@@ -284,7 +285,9 @@
 | `WorkItems.tsx` | 群任务看板（等你决定/卡住/进行中/已完成·已停止、全部暂停）、任务提交卡 |
 | `RoomWork.tsx` | 群聊顶部干活入口 `RoomWorkButtons`（任务看板 + 项目筛选 + 项目）；项目有 waiting 时 chip 标「等你看一眼」、面板里 `WaitingBlock` 显示关键点；`ProjectsPanel`：待确认 / 进行中项目的 chip + 面板（看方案、停下项目、展开已结束的项目），群聊 `ProjectsButton` 和单聊 `ChatProjectsButton` 共用（solo = 单聊：说话对象是「我」，没有关键点等待 / 任务清单 / 接着做） |
 | `WorkItemDetail.tsx` | 任务详情、新建任务、等你决定回答框 |
-| `Sidebar.tsx` | 侧边栏 |
+| `Sidebar.tsx` | 侧边栏，复用个人助理行、更多菜单和新建助理入口 |
+| `SidebarPersonalFolders.tsx` | 个人助理文件夹展示、设备内折叠、批量整理与文件夹操作 |
+| `SidebarRoomSection.tsx` | 群聊列表的独立展开状态与新建按钮；折叠不切换会话 |
 | `Conversations.tsx` | 对话菜单 |
 | `CompactDialog.tsx` | 整理上下文弹窗 |
 | `ContextRing.tsx` | 上下文圆环；ContextDetails 共用用量详情与整理入口（圆环、助理模型页）；e2e `member-context-ui.mjs` 覆盖群 / 单聊模型页 |
