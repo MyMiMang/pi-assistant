@@ -42,9 +42,10 @@ import { folderExists, isNonemptyId } from "./agent-folders.ts";
 // ---------------------------------------------------------------- 助理与聊天
 export const agentJson = (a: NonNullable<ReturnType<typeof getAgent>>) => {
 	const last = db.prepare("SELECT content, role, created_at FROM messages WHERE agent_id = ? AND task_id IS NULL AND subagent_id IS NULL AND room_id IS NULL AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1").get(a.id);
-	const thinkingDefault = defaultThinkingSetting();
+	const rt = runtime(a.id);
+	const thinkingDefault = (!a.model_provider && !a.model_id ? rt.legacyAgyFor(a)?.effort : undefined) ?? defaultThinkingSetting();
 	const thinkingSource = a.thinking ? a.thinking_explicit ? "explicit" : "legacy" : thinkingDefault ? "default" : "unset";
-	return { ...a, folder_id: undefined, folderId: a.folder_id, session_file: undefined, model: runtime(a.id).modelFor(a), thinking: runtime(a.id).thinkingFor(a), thinkingSetting: a.thinking, thinkingSource, thinkingDefault, fast: a.fast === 1, workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
+	return { ...a, folder_id: undefined, folderId: a.folder_id, session_file: undefined, model: rt.modelFor(a), thinking: rt.thinkingFor(a), thinkingSetting: a.thinking, thinkingSource, thinkingDefault, fast: a.fast === 1, workspace: join(config.workspaceRoot, a.id), last, conversation_id: currentConversation(a.id) };
 };
 
 type AgentInput = { name?: string; avatar?: string; color?: string; persona?: string; description?: string; model?: { provider: string; id: string } | null; thinking?: string | null; /** 请求级 Fast：只动 agents.fast，不碰 thinking / 模型 */ fast?: boolean | null };

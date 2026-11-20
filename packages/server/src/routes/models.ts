@@ -14,6 +14,7 @@ import { fastCapability } from "../pi-adapter/fast-mode.ts";
 import { getModelPicks, recordModelPick } from "../model-picks.ts";
 import { buildRegistry, type RegistryImageProvider, type RegistryProviderHint } from "../model-registry.ts";
 import { localModelHints } from "../local-models.ts";
+import { legacyAgySelection } from "../pi-adapter/cli-models/antigravity.ts";
 import { hasKey as hasImageKey, listProviders as listImageProviders } from "../image-gen/index.ts";
 import { costNote, supportsEdit } from "../image-gen/providers.ts";
 import { supportedApis, MODEL_CAPABILITIES, type CustomProviderInput } from "../pi-adapter/custom-providers.ts";
@@ -201,7 +202,11 @@ export function mountModelRoutes(app: Hono<Env>) {
 		} else setSetting("visionModel", null);
 		return c.json({ ok: true, deprecated: true });
 	});
-	app.get("/api/models/defaults", (c) => c.json({ model: defaultModel(), modelSetting: defaultModelSetting(), thinking: defaultThinking(), thinkingSetting: defaultThinkingSetting() }));
+	app.get("/api/models/defaults", (c) => {
+		const modelSetting = defaultModelSetting();
+		const legacy = modelSetting?.provider === "antigravity" ? legacyAgySelection(models, modelSetting.id) : undefined;
+		return c.json({ model: legacy ? { provider: "antigravity", id: legacy.familyId } : defaultModel(), modelSetting, thinking: legacy?.effort ?? defaultThinking(), thinkingSetting: defaultThinkingSetting() });
+	});
 	app.put("/api/models/default", async (c) => {
 		const b = await c.req.json<{ provider?: string; model?: string; thinking?: string }>();
 		if (b.thinking !== undefined) {

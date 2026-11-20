@@ -41,6 +41,7 @@ jobs:
         run: |
           CHROME=$(node -p "require('playwright-core').chromium.executablePath()")
           export CHROME
+          node --test e2e/agy-legacy-default-http.mjs
           node e2e/agy-exact-effort-ui.mjs
       - uses: actions/upload-artifact@v4
         if: always()

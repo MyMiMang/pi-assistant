@@ -55,7 +55,7 @@ export class AgentRuntime {
 	/** 这个助理的思考强度（已按当前模型收敛到支持的档位） */
 	thinkingFor(a: AgentRow) {
 		const m = this.modelFor(a);
-		const legacy = a.model_provider === "antigravity" && a.model_id ? legacyAgySelection(models, a.model_id) : undefined;
+		const legacy = this.legacyAgyFor(a);
 		return legacy?.effort ?? (m ? models.clampThinking(m.provider, m.id, a.thinking ?? defaultThinking()) : "off");
 	}
 
@@ -73,7 +73,7 @@ export class AgentRuntime {
 	}
 
 	private setSendThinking(s: AgentSession, a: AgentRow) {
-		const legacy = a.model_provider === "antigravity" && a.model_id ? legacyAgySelection(models, a.model_id) : undefined;
+		const legacy = this.legacyAgyFor(a);
 		if (legacy) { sendIntentOf(s)?.setThinking({ kind: "manual", level: legacy.effort! }); return; }
 		const manual = a.thinking && (a.thinking_explicit || s.model?.provider === "antigravity");
 		const inherited = defaultThinkingSetting();
@@ -86,9 +86,16 @@ export class AgentRuntime {
 		return a.model_provider && a.model_id ? { provider: a.model_provider, id: a.model_id } : null;
 	}
 
+	legacyAgyFor(a: AgentRow) {
+		const pick = this.configuredModelFor(a) ?? defaultModelSetting();
+		return pick?.provider === "antigravity" ? legacyAgySelection(models, pick.id) : undefined;
+	}
+
 	modelFor(a: AgentRow) {
-		const pick = this.configuredModelFor(a);
-		const legacy = pick?.provider === "antigravity" ? legacyAgySelection(models, pick.id) : undefined;
+		const configured = this.configuredModelFor(a);
+		const inherited = configured ? null : defaultModelSetting();
+		const pick = configured ?? (inherited?.provider === "antigravity" ? inherited : null);
+		const legacy = this.legacyAgyFor(a);
 		if (legacy && (!a.thinking || a.thinking === legacy.effort)) return { provider: "antigravity", id: legacy.familyId };
 		return pick && (cliServiceFor(pick.provider) || models.getModel(pick.provider, pick.id)) ? pick : defaultModel();
 	}
