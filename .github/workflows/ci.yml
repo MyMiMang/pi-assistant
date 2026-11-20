@@ -24,6 +24,11 @@ jobs:
         run: |
           npx playwright-core install chromium
           CHROME=$(node -e "console.log(require('playwright-core').chromium.executablePath())") node e2e/run.mjs
+      - name: 技能 ZIP 导出浏览器专项
+        run: |
+          CHROME=$(node -p "require('playwright-core').chromium.executablePath()")
+          export CHROME
+          node e2e/skill-zip-export-ui.mjs
       - name: 聊天记录搜索浏览器专项
         run: |
           CHROME=$(node -p "require('playwright-core').chromium.executablePath()")
@@ -84,6 +89,10 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci --ignore-scripts
+      - name: Windows 本地技能目录导入再导出
+        working-directory: packages/server
+        env: { PIA_SECRETS: file }
+        run: node --import tsx --test --test-name-pattern="本地目录导入再导出" test/skill-export.test.ts
       - name: WSL 单测 + Windows 实测
         working-directory: packages/server
         env: { PIA_WSL_REAL_DOWNLOAD: "1", PIA_WSL_TRY_IMPORT: "1" }

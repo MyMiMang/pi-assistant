@@ -39,7 +39,7 @@ export class ApiError extends Error {
 	}
 }
 
-export async function api<T = any>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+async function apiResponse(path: string, init: RequestInit & { json?: unknown } = {}): Promise<Response> {
 	const headers = new Headers(init.headers);
 	if (conn?.token) headers.set("authorization", `Bearer ${conn.token}`);
 	let body = init.body;
@@ -61,16 +61,17 @@ export async function api<T = any>(path: string, init: RequestInit & { json?: un
 		}
 		throw new ApiError(res.status, msg, data);
 	}
+	return res;
+}
+
+export async function api<T = any>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+	const res = await apiResponse(path, init);
 	const ct = res.headers.get("content-type") ?? "";
 	return (ct.includes("json") ? res.json() : res.text()) as Promise<T>;
 }
 
 export async function fetchBlob(path: string, signal?: AbortSignal): Promise<Blob> {
-	const headers = new Headers();
-	if (conn?.token) headers.set("authorization", `Bearer ${conn.token}`);
-	const res = await fetch(base() + path, { headers, signal });
-	if (!res.ok) throw new ApiError(res.status, res.statusText);
-	return res.blob();
+	return (await apiResponse(path, { signal })).blob();
 }
 
 /**
@@ -136,9 +137,19 @@ export async function viewUrl(path: string): Promise<string> {
 	return base() + url;
 }
 
-export async function download(path: string, name: string) {
-	const blob = await fetchBlob(path);
-	const url = URL.createObjectURL(blob);
+export async function download(path: string, name: string, expectedType?: string) {
+	const res = await apiResponse(path);
+	if (expectedType && res.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== expectedType) {
+		throw new Error("服务器未返回预期的下载文件");
+	}
+	if (expectedType) {
+		// 读取服务端 fileDisposition 的 UTF-8 文件名；跨域响应可能不暴露此头。
+		const encoded = res.headers.get("content-disposition")?.match(/;\s*filename\*=UTF-8''([^;]+)/i)?.[1].trim();
+		try {
+			if (encoded) name = decodeURIComponent(encoded);
+		} catch { /* 无法解码，沿用调用方给出的名字。 */ }
+	}
+	const url = URL.createObjectURL(await res.blob());
 	const a = document.createElement("a");
 	a.href = url;
 	a.download = name;

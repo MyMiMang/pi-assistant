@@ -8,10 +8,12 @@
  *  - 导入落 `dataDir/skills-external/<name>/`，与用户自建（`skills/`）分开；同一份库存只放一处。
  */
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { externalSkillsDir, listSkills, NAME_RE, notifySkillsChanged, parseSkill } from "./skills.ts";
 
-export const IMPORT_LIMITS = { maxEntries: 500, maxFileBytes: 2 * 1024 * 1024, maxTotalBytes: 20 * 1024 * 1024, maxFiles: 200 };
+import { IMPORT_LIMITS, readSkillTree, safeRel } from "./skill-files.ts";
+
+export { IMPORT_LIMITS } from "./skill-files.ts";
 
 export interface ImportedSkill {
 	name: string;
@@ -36,15 +38,6 @@ export interface ImportOptions {
 	/** conflict（默认，报冲突）/ update（覆盖同名 external）/ rename（用 newName 存新技能） */
 	mode?: "conflict" | "update" | "rename";
 	newName?: string;
-}
-
-/** zip / 目录里的相对路径是否安全（拒绝绝对路径、盘符、反斜杠、.. 段）。 */
-function safeRel(p: string): string | null {
-	const norm = p.replace(/\\/g, "/");
-	if (norm.startsWith("/") || /^[a-zA-Z]:/.test(norm)) return null;
-	const parts = norm.split("/").filter((s) => s.length > 0);
-	if (!parts.length || parts.some((s) => s === ".." || s === ".")) return null;
-	return parts.join("/");
 }
 
 function checkName(name: string) {
@@ -80,9 +73,16 @@ function commit(files: Record<string, string>, opts: ImportOptions): ImportedSki
 	const name = checkName(opts.mode === "rename" && opts.newName ? opts.newName : parsed.name ?? dirName);
 	if (!parsed.description?.trim()) throw new Error("SKILL.md 缺少 description（Pi 用描述判断何时加载技能）");
 
+	const skillMdPath = `${root}SKILL.md`;
+	const underRoot = Object.entries(files).filter(([p]) => !root || p.startsWith(root));
+	const stored = (p: string, text: string) => p === skillMdPath && parsed.name !== name ? withName(text, name) : text;
 	const existing = listSkills().find((s) => s.name === name);
 	if (existing) {
-		const same = existing.description.trim() === (parsed.description ?? "").trim() && existing.body.trim() === parsed.body.trim();
+		let same = false;
+		try {
+			const tree = readSkillTree(dirname(existing.path));
+			same = tree.size === underRoot.length && underRoot.every(([p, text]) => tree.get(p.slice(root.length))?.equals(Buffer.from(stored(p, text))));
+		} catch { /* 不能完整比对时视作冲突，不宣称复用。 */ }
 		if (same) return { name: existing.name, description: existing.description, id: existing.id, path: existing.path, files: 0, reused: true };
 		// 内置 / 用户自建不能静默覆盖：只能换名
 		if (existing.source !== "external" || opts.mode !== "update") throw new ImportConflict({ id: existing.id, name: existing.name, description: existing.description }, { name, description: parsed.description });
@@ -90,8 +90,6 @@ function commit(files: Record<string, string>, opts: ImportOptions): ImportedSki
 
 	const target = join(externalSkillsDir(), name);
 	if (existing?.source === "external" && opts.mode === "update") rmSync(target, { recursive: true, force: true });
-	const skillMdPath = root ? `${root}SKILL.md` : "SKILL.md";
-	const underRoot = Object.entries(files).filter(([p]) => (root ? p.startsWith(root) : true));
 	let written = 0;
 	for (const [p, text] of underRoot) {
 		const rel = safeRel(root ? p.slice(root.length) : p);
@@ -101,7 +99,7 @@ function commit(files: Record<string, string>, opts: ImportOptions): ImportedSki
 		const r = relative(target, dest);
 		if (!r || r.startsWith("..") || isAbsolute(r)) continue;
 		mkdirSync(join(dest, ".."), { recursive: true });
-		writeFileSync(dest, p === skillMdPath ? withName(text, name) : text);
+		writeFileSync(dest, stored(p, text));
 		written++;
 	}
 	if (written) notifySkillsChanged();
@@ -122,13 +120,16 @@ export function importSkillFromPath(inputPath: string, opts: ImportOptions = {})
 	}
 	const base = abs;
 	let total = 0;
-	const walk = (dir: string) => {
+	const walk = (dir: string, prefix = "") => {
 		for (const n of readdirSync(dir)) {
 			const p = join(dir, n);
 			const s = lstatSync(p);
 			if (s.isSymbolicLink()) continue; // 不跟随链接
+			// 原生路径只用于读盘；用目录条目拼接跨平台归档键，不猜 basename。
+			const key = prefix + n;
+			if (safeRel(key) !== key || n.startsWith("..")) throw new Error("技能目录含不安全的文件名");
 			if (s.isDirectory()) {
-				walk(p);
+				walk(p, `${key}/`);
 				continue;
 			}
 			if (!s.isFile()) continue;
@@ -136,7 +137,7 @@ export function importSkillFromPath(inputPath: string, opts: ImportOptions = {})
 			if (s.size > IMPORT_LIMITS.maxFileBytes) throw new Error(`文件太大：${n}`);
 			total += s.size;
 			if (total > IMPORT_LIMITS.maxTotalBytes) throw new Error("内容总量超过上限");
-			files[safeRel(relative(base, p)) ?? n] = readFileSync(p, "utf8");
+			files[key] = readFileSync(p, "utf8");
 		}
 	};
 	walk(base);

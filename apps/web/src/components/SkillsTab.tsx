@@ -1,7 +1,7 @@
 import { HindsightSettings } from "./HindsightSettings";
-import { ChevronLeft, History, Lock, Plus, Puzzle, RotateCcw, Trash2, Upload, UserCog } from "lucide-react";
+import { ChevronLeft, Download, History, Lock, Plus, Puzzle, RotateCcw, Trash2, Upload, UserCog } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError } from "../api";
+import { api, ApiError, download } from "../api";
 import { useStore } from "../store";
 import type { SkillMeta } from "../types";
 import { Badge, Button, Help, Input, Modal, Select, useConfirm } from "./ui";
@@ -28,6 +28,8 @@ export function SkillsTab() {
 	const [suggest, setSuggest] = useState<{ enabled: boolean } | null>(null);
 	const [confirmDlg, askConfirm] = useConfirm();
 	const [delBusy, setDelBusy] = useState("");
+	const [exporting, setExporting] = useState(false);
+	const [exportError, setExportError] = useState<{ id: string; message: string } | null>(null);
 	const delRef = useRef(false);
 	const load = () => api<SkillMeta[]>("/api/skills").then(setList);
 	useEffect(() => {
@@ -54,6 +56,18 @@ export function SkillsTab() {
 			await view(s.name);
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
+		}
+	};
+	const exportZip = async () => {
+		if (!open || edit || exporting) return;
+		setExporting(true);
+		setExportError(null);
+		try {
+			await download(`/api/skills/export.zip?id=${encodeURIComponent(open.id)}`, `${open.name}.zip`, "application/zip");
+		} catch (e) {
+			setExportError({ id: open.id, message: e instanceof Error ? e.message : String(e) });
+		} finally {
+			setExporting(false);
 		}
 	};
 	const del = async () => {
@@ -131,13 +145,18 @@ export function SkillsTab() {
 		return (
 			<div className="space-y-3">
 				{confirmDlg}
-				<button className="flex items-center gap-1 text-sm text-mut hover:text-fg" onClick={() => setOpen(null)}>
+				<button className="flex items-center gap-1 text-sm text-mut hover:text-fg" onClick={() => { setOpen(null); setExportError(null); }}>
 					<ChevronLeft size={15} /> 全部技能
 				</button>
-				<div className="flex items-center gap-2">
-					<h3 className="font-mono text-base font-semibold">{open.name}</h3>
-					{open.builtin && <Badge>内置</Badge>}
-					<span className="ml-auto flex gap-1">
+				<div className="flex flex-wrap items-center gap-2">
+					<div className="flex min-w-0 items-center gap-2">
+						<h3 className="min-w-0 font-mono text-base font-semibold [overflow-wrap:anywhere]">{open.name}</h3>
+						{open.builtin && <Badge>内置</Badge>}
+					</div>
+					<span className="ml-auto flex flex-wrap items-center justify-end gap-1">
+						<Button size="sm" variant="outline" disabled={exporting} onClick={() => void exportZip()}>
+							<Download size={14} /> {exporting ? "正在导出…" : "导出 ZIP"}
+						</Button>
 						{open.builtin ? (
 							<Button size="sm" variant="outline" onClick={() => setEdit({ name: `${open.name}-copy`, description: open.description, body: open.body })}>
 								复制为我的技能
@@ -163,6 +182,7 @@ export function SkillsTab() {
 				</div>
 				<p className="text-sm text-mut">{open.description}</p>
 				{err && <div className="text-sm text-red-500" data-testid="skill-error">{err}</div>}
+				{exportError?.id === open.id && <div role="alert" className="text-sm text-red-500">导出失败：{exportError.message}</div>}
 				<div className="rounded-xl border border-line p-3 text-sm">
 					<Markdown text={open.body} />
 				</div>

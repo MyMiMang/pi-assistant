@@ -138,7 +138,9 @@
 | `skills.ts` | 技能库（Pi Agent Skills）；内置技能在 `packages/server/skills/<名字>/SKILL.md`（只读，要在助理上显式启用；`team-onboarding` 是「全能培训师」模板用的组建团队与入职强化） |
 | `skill-assignments.ts` | 每个助理启用哪些技能（唯一事实来源） |
 | `skill-scope.ts` | 技能有效选集（唯一实现） |
-| `skill-import.ts` | 技能导入 |
+| `skill-import.ts` | 技能导入；同名仅在完整文件集和字节一致时复用 |
+| `skill-export.ts` | 按库存来源和名称导出单个已保存技能，不能经现有导入器无损还原时拒绝 |
+| `skill-files.ts` | 技能文件导入限制、相对路径与不跟随链接的文件树读取 |
 | `skill-intel.ts` | 技能提议等智能逻辑 |
 | `subagents.ts` | 子代理状态与通知 |
 | `subagent-routes.ts` | 子代理接口 |

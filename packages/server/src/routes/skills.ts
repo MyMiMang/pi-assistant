@@ -5,7 +5,8 @@ import { deleteSkill, getSkill, listSkills } from "../skills.ts";
 import { agentsUsingSkill, assignedSkillIds, enableSkillForAgents, setAssignedSkillIds, unassignSkillEverywhere } from "../skill-assignments.ts";
 import { ImportConflict, importSkillFromPath, importSkillFromZip } from "../skill-import.ts";
 import { listVersions, rollbackSkill, saveSkillVersioned, searchSkills, setSuggestSettings, skillDiff, suggestSettings } from "../skill-intel.ts";
-import { type Env } from "./common.ts";
+import { exportSkillZip } from "../skill-export.ts";
+import { fileDisposition, type Env } from "./common.ts";
 
 // ---------------------------------------------------------------- 技能库（Pi 原生 Agent Skills）
 // 库存带 canonical id / 来源 / 启用了它的助理列表，供界面显示「启用数」与按 agent 配置。
@@ -13,6 +14,16 @@ const skillJson = (s: ReturnType<typeof listSkills>[number]) => ({ id: s.id, nam
 
 export function mountSkillRoutes(app: Hono<Env>) {
 	app.get("/api/skills", (c) => c.json(listSkills().map(skillJson)));
+	app.get("/api/skills/export.zip", (c) => {
+		try {
+			const zip = exportSkillZip(c.req.query("id") ?? "");
+			if (!zip) return c.json({ error: "未找到指定的已保存技能，请刷新技能库" }, 404);
+			return c.body(new Uint8Array(zip.bytes), 200, { "Content-Type": "application/zip", "Content-Disposition": fileDisposition(zip.name), "Cache-Control": "no-store" });
+		} catch (error) {
+			const message = error instanceof Error && !("code" in error) ? error.message : "无法安全读取已保存的技能，请刷新后重试";
+			return c.json({ error: message }, 400);
+		}
+	});
 	app.get("/api/skills/:name", (c) => {
 		const s = getSkill(c.req.param("name"));
 		return s ? c.json({ ...skillJson(s), body: s.body }) : c.json({ error: "not_found" }, 404);

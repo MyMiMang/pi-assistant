@@ -45,12 +45,14 @@ export function parseRange(header: string | undefined, size: number): { start: n
 	return start >= size ? "invalid" : { start, end };
 }
 
+export const fileDisposition = (name: string, inline = false) => `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(name)}`;
+
 export function sendFile(c: Context<Env>, path: string, name: string, mime: string) {
 	if (mime === "application/octet-stream") mime = mimeOf(name); // 旧记录（早于视频 / 音频类型表）存的是 octet-stream
 	const inline = c.req.query("inline") === "1" && INLINE_OK.test(mime);
 	const size = statSync(path).size;
 	c.header("Content-Type", inline ? mime : mime.startsWith("text/") ? `${mime}; charset=utf-8` : mime);
-	c.header("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(name)}`);
+	c.header("Content-Disposition", fileDisposition(name, inline));
 	c.header("Cache-Control", "private, max-age=3600");
 	c.header("Accept-Ranges", "bytes");
 	const range = parseRange(c.req.header("range"), size);
