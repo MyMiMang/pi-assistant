@@ -25,7 +25,7 @@ const logFile = join(dataDir, "log.jsonl");
 const scenarioFile = join(dataDir, "scenario");
 const setScenario = (s: string) => writeFileSync(scenarioFile, s);
 setScenario("text");
-const families = parseAgyModels(["claude-sonnet-5-5-low\tClaude Sonnet 5.5 (Low)", "claude-sonnet-5-5-medium\tClaude Sonnet 5.5 (Medium)", "claude-sonnet-5-5-high\tClaude Sonnet 5.5 (High)"].join("\n"));
+const families = parseAgyModels(["claude-sonnet-5-5-low\tClaude Sonnet 5.5 (Low)", "claude-sonnet-5-5-medium\tClaude Sonnet 5.5 (Medium)", "claude-sonnet-5-5-high\tClaude Sonnet 5.5 (High)", "claude-sonnet-5-5-xhigh\tClaude Sonnet 5.5 (XHigh)", "gpt-oss-120b\tGPT-OSS 120B"].join("\n"));
 let fakeCommand: string | null = FAKE;
 let baseUrl = "";
 let server: ReturnType<typeof serve>;
@@ -198,10 +198,10 @@ test("第二轮复用同一个长驻进程：只发新增内容；模型家族 +
 	assert.equal(i2.first, "第二句", "只发新增的用户内容");
 	assert.equal(i2.seq, 2, "同一个进程里的第二轮");
 	assert.equal(launches().length, n + 1, "没有再起进程");
-	// xhigh → high：模型 id 变了，换进程，但用 --conversation 续用同一个会话
+	// 精确 xhigh：模型 id 变了，换进程，但用 --conversation 续用同一个会话
 	const third = await run(ctx([user("第一句"), first.message, user("第二句"), second.message, user("第三句")]), { sessionId: "res-1", reasoning: "xhigh" });
 	const i3 = JSON.parse(textOf(third.message));
-	assert.equal(i3.model, "claude-sonnet-5-5-high");
+	assert.equal(i3.model, "claude-sonnet-5-5-xhigh");
 	assert.equal(i3.conversation, conv, "续用同一个会话");
 	assert.equal(i3.first, "第三句");
 	assert.equal(launches().length, n + 2);
@@ -234,7 +234,7 @@ test("整理过上下文 / 换过模型：新开会话", async () => {
 	const a = await run(ctx([user("你好")]), { sessionId: "fresh-2" });
 	const sw = await run(ctx([user("你好"), a.message, user("换模型")]), { sessionId: "fresh-2" }, model("gpt-oss-120b"));
 	const s = JSON.parse(textOf(sw.message));
-	assert.equal(s.model, "gpt-oss-120b", "不认识的家族原样当完整 id");
+	assert.equal(s.model, "gpt-oss-120b", "目录中的固定模型保留完整 ID");
 	assert.equal(s.conversation, null);
 	assert.ok(first);
 });

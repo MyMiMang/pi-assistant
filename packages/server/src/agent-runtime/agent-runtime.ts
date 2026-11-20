@@ -22,6 +22,7 @@ import { effectiveApi, effectiveBaseUrl } from "../pi-adapter/relay-protocols.ts
 import { isStopCommand } from "../interject.ts";
 import { insertMessage, updateMessage } from "../messages.ts";
 import { cliServiceFor, cliModelError, resolveCliModel } from "../cli-services.ts";
+import { agySelectionError, legacyAgySelection } from "../pi-adapter/cli-models/antigravity.ts";
 import { customProviders, defaultModel, defaultModelSetting, defaultThinking, defaultThinkingSetting, models } from "../models.ts";
 import { composeQuotedInput } from "../replies.ts";
 import { abortSession, type AgentSession, type SkillInvocationInput, compactSession, triggerHidden, applyModelSettings, disposeSession, injectContext, isSessionBusy, recallQueuedSteer, lastAssistantText, modelErrorMessage, promptSession, skillCommand, sessionFileOf, sessionStats, subscribeSession, INTERJECTION_PREFIX } from "../pi-adapter/index.ts";
@@ -54,7 +55,8 @@ export class AgentRuntime {
 	/** 这个助理的思考强度（已按当前模型收敛到支持的档位） */
 	thinkingFor(a: AgentRow) {
 		const m = this.modelFor(a);
-		return m ? models.clampThinking(m.provider, m.id, a.thinking ?? defaultThinking()) : "off";
+		const legacy = a.model_provider === "antigravity" && a.model_id ? legacyAgySelection(models, a.model_id) : undefined;
+		return legacy?.effort ?? (m ? models.clampThinking(m.provider, m.id, a.thinking ?? defaultThinking()) : "off");
 	}
 
 	/** 旧目录猜出的档位不再有效时拦住本次发送；保留原选择，不替用户换档。 */
@@ -71,7 +73,9 @@ export class AgentRuntime {
 	}
 
 	private setSendThinking(s: AgentSession, a: AgentRow) {
-		const manual = a.thinking && a.thinking_explicit;
+		const legacy = a.model_provider === "antigravity" && a.model_id ? legacyAgySelection(models, a.model_id) : undefined;
+		if (legacy) { sendIntentOf(s)?.setThinking({ kind: "manual", level: legacy.effort! }); return; }
+		const manual = a.thinking && (a.thinking_explicit || s.model?.provider === "antigravity");
 		const inherited = defaultThinkingSetting();
 		const intent: ThinkingIntent = manual && a.thinking ? { kind: a.thinking === "off" ? "off" : "manual", level: a.thinking }
 			: !a.thinking && inherited ? { kind: "default", level: inherited } : { kind: "unset" };
@@ -84,7 +88,17 @@ export class AgentRuntime {
 
 	modelFor(a: AgentRow) {
 		const pick = this.configuredModelFor(a);
+		const legacy = pick?.provider === "antigravity" ? legacyAgySelection(models, pick.id) : undefined;
+		if (legacy && (!a.thinking || a.thinking === legacy.effort)) return { provider: "antigravity", id: legacy.familyId };
 		return pick && (cliServiceFor(pick.provider) || models.getModel(pick.provider, pick.id)) ? pick : defaultModel();
+	}
+
+	private exactAgyError() {
+		const a = getAgent(this.id);
+		const pick = a && (this.configuredModelFor(a) ?? defaultModelSetting());
+		if (pick?.provider !== "antigravity") return;
+		const legacy = legacyAgySelection(models, pick.id);
+		return agySelectionError(models, pick.id, a?.thinking ?? (legacy ? undefined : defaultThinkingSetting() ?? undefined));
 	}
 
 	/** 原选失效时，只有普通文本可以使用原有的默认模型回落。 */
@@ -102,8 +116,10 @@ export class AgentRuntime {
 
 	async resolveModel(a: AgentRow) {
 		const pick = this.modelFor(a);
-		if (pick) await resolveCliModel(models, pick);
-		return pick;
+		if (pick) await resolveCliModel(models, pick).catch((error) => {
+			if (this.modelFor(a)?.id === pick.id) throw error;
+		});
+		return this.modelFor(a);
 	}
 
 	private unavailableModel() {
@@ -263,9 +279,9 @@ export class AgentRuntime {
 			return "stopped";
 		}
 		const selectionError = this.selectionGuard(files);
-		const blocked = selectionError() ?? (this.busy ? undefined : this.outdatedThinkingError());
+		const blocked = this.exactAgyError() ?? selectionError() ?? (this.busy ? undefined : this.outdatedThinkingError());
 		const s = blocked ? null : await this.ensure();
-		const error = blocked ?? selectionError();
+		const error = blocked ?? this.exactAgyError() ?? selectionError();
 		if (!s || error) {
 			if (error && opts.messageId) updateMessage(opts.messageId, { meta: { delivery: "failed" } });
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: error ?? this.unavailableModel(), status: "error", meta: { action: "open-models" } });
@@ -370,9 +386,9 @@ export class AgentRuntime {
 	 */
 	async turn(text: string, files?: AttachmentInput[], opts: { onToolStep?: (done: number) => void } = {}): Promise<{ ok: boolean; aborted: boolean; error?: string; text: string; tokens: number }> {
 		const selectionError = this.selectionGuard(files);
-		const blocked = selectionError() ?? this.outdatedThinkingError();
+		const blocked = this.exactAgyError() ?? selectionError() ?? this.outdatedThinkingError();
 		const s = blocked ? null : await this.ensure();
-		const errorBeforeSend = blocked ?? selectionError();
+		const errorBeforeSend = blocked ?? this.exactAgyError() ?? selectionError();
 		if (!s || errorBeforeSend) {
 			const error = errorBeforeSend ?? this.unavailableModel();
 			insertMessage({ agentId: this.id, conversationId: this.conversationId, role: "system", content: error, status: "error", meta: { action: "open-models" } });

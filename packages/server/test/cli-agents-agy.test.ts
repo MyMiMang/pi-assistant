@@ -76,7 +76,7 @@ test("工具名前缀和配对键：progressToken 末段的 step_index", () => {
 	assert.equal(agyCallKey({}), undefined);
 });
 
-test("agy models 解析：按家族去重、档位映射、没有档位后缀的原样保留", () => {
+test("agy models 解析：按家族去重，只接受目录证实的档位", () => {
 	const fams = parseAgyModels(MODELS_TEXT);
 	assert.deepEqual(fams.map((f) => [f.id, f.name, effortsOf(f)]), [
 		["gemini-4-argon", "Gemini 4 Argon", ["low", "medium", "high"]],
@@ -85,15 +85,16 @@ test("agy models 解析：按家族去重、档位映射、没有档位后缀的
 	]);
 	assert.equal(resolveAgyModel(fams, "gemini-4-argon", "low"), "gemini-4-argon-low");
 	assert.equal(resolveAgyModel(fams, "gemini-4-argon", undefined), "gemini-4-argon-medium", "没指定取 medium");
-	assert.equal(resolveAgyModel(fams, "gemini-4-argon", "minimal"), "gemini-4-argon-medium", "minimal 在 Pi 里没有对应档位，当没指定");
-	assert.equal(resolveAgyModel(fams, "gemini-4-argon", "xhigh"), "gemini-4-argon-high", "比 high 更高的档位取 high");
-	assert.equal(resolveAgyModel(fams, "gemini-4-argon", "max"), "gemini-4-argon-high");
-	assert.equal(resolveAgyModel(fams, "claude-sonnet-5-5", "medium"), "claude-sonnet-5-5-high", "想要的档位没有就取最近的");
-	assert.equal(resolveAgyModel(fams, "gpt-oss-120b", "high"), "gpt-oss-120b-medium");
-	assert.equal(resolveAgyModel(fams, "unknown-model", "low"), "unknown-model", "不认识的原样返回");
-	assert.equal(resolveAgyModel(parseAgyModels("plain-model\t纯模型 (x)\n"), "plain-model", "high"), "plain-model");
-	assert.equal(agyThinkingMap(fams[2]), undefined, "只有一个档位：没有思考强度选项");
-	assert.deepEqual(agyThinkingMap(fams[0]), { minimal: null, low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" });
+	for (const effort of ["minimal", "xhigh", "max", "off"]) {
+		assert.throws(() => resolveAgyModel(fams, "gemini-4-argon", effort), /不支持思考档位/);
+	}
+	assert.throws(() => resolveAgyModel(fams, "claude-sonnet-5-5", "medium"), /不支持思考档位/);
+	assert.equal(resolveAgyModel(fams, "claude-sonnet-5-5", undefined), "claude-sonnet-5-5-high", "只有自动选择才可用确定的默认变体");
+	assert.equal(resolveAgyModel(fams, "gpt-oss-120b", "medium"), "gpt-oss-120b-medium");
+	assert.throws(() => resolveAgyModel(fams, "gpt-oss-120b", "high"), /不支持思考档位/);
+	assert.throws(() => resolveAgyModel(fams, "unknown-model", "low"), /找不到模型/);
+	assert.deepEqual(agyThinkingMap(fams[2]), { off: null, minimal: null, low: null, medium: "medium", high: null, xhigh: null, max: null });
+	assert.deepEqual(agyThinkingMap(fams[0]), { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: null, max: null });
 	assert.deepEqual(parseAgyModels("Error: Please sign in\n"), []);
 });
 
@@ -205,12 +206,14 @@ test("运行目录：0700 / 0600、内容、环境里没有密钥，agy 的 cwd 
 });
 
 test("命令行参数：--model / --agent / 续用的 --conversation；token 不在命令行", async () => {
-	const { proc, items } = start("meta", { conversationId: "conv-77" }, "第一句");
+	const families = parseAgyModels("unit-neon-hydrogen-high\tNeon Hydrogen (High)\nunit-neon-hydrogen-max\tNeon Hydrogen (Max)");
+	const model = resolveAgyModel(families, "unit-neon-hydrogen", "max");
+	const { proc, items } = start("meta", { model, conversationId: "conv-77" }, "第一句");
 	await until(() => resultsOf(items).length === 1, "meta result");
 	const info = JSON.parse(textOf(items)) as { conversation: string; first: string; model: string; agent: string; argv: string[]; tools: string[]; alwaysLoad: boolean };
 	assert.equal(info.conversation, "conv-77");
 	assert.equal(info.first, "第一句");
-	assert.equal(info.model, "claude-sonnet-5-5-high");
+	assert.equal(info.model, "unit-neon-hydrogen-max");
 	assert.equal(info.agent, "pia");
 	assert.deepEqual(info.tools, ["echo"]);
 	assert.equal(info.alwaysLoad, true, "tools/list 带 alwaysLoad");

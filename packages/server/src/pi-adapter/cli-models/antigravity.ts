@@ -13,7 +13,7 @@
  */
 import { join } from "node:path";
 import { AgyProcess, type AgyExit, type AgyItem } from "../../cli-agents/agy-process.ts";
-import { agyThinkingMap, effortsOf, resolveAgyModel, type AgyFamily } from "../../cli-agents/agy-models.ts";
+import { agyThinkingMap, effortsOf, resolveAgyModel, resolveAgySelection, type AgyFamily } from "../../cli-agents/agy-models.ts";
 import { toolBridge, type Tool, type ToolBridge } from "../../cli-agents/tool-bridge.ts";
 import type { PiModels } from "../index.ts";
 import { createCliChannel, type CliBackend, type CliLive, type LaunchRequest, type Step } from "./channel-core.ts";
@@ -26,6 +26,19 @@ import { SyncStore } from "./sync-map.ts";
 export const ANTIGRAVITY_PROVIDER = "antigravity";
 /** Pi 的 `api` 字段：自定义流式实现的名字 */
 export const ANTIGRAVITY_API = "antigravity-cli";
+const catalogs = new WeakMap<PiModels, AgyFamily[]>();
+export function agySelectionError(models: PiModels, id: string, effort?: string) {
+	const families = catalogs.get(models);
+	if (!families) return undefined; // 注册中的渠道由现有等待流程处理。
+	try { resolveAgySelection(families, id, effort); } catch (error) { return (error as Error).message; }
+}
+
+export function legacyAgySelection(models: PiModels, id: string) {
+	try {
+		const selection = resolveAgySelection(catalogs.get(models) ?? [], id);
+		return selection.source === "legacy-id" ? selection : undefined;
+	} catch { return undefined; }
+}
 
 export interface AntigravityDeps {
 	/** 数据目录：对照表放 `<dataDir>/cli-models/agy-conversations.json`，运行目录放 `<dataDir>/cli-models/agy-runs/<随机>` */
@@ -177,13 +190,14 @@ export async function registerAntigravityModels(models: PiModels, channel: Antig
 		models: families.map((f) => ({
 			id: f.id,
 			name: `Antigravity · ${f.name}`,
-			reasoning: effortsOf(f).length > 1,
+			reasoning: effortsOf(f).length > 0,
 			thinkingLevelMap: agyThinkingMap(f),
 			image: true, // 原图走不了 stdin（只收文字），靠 AGY_IMAGE_HINT 让模型用 look_at_image / read 工具看，工具结果里的图片 agy 会交给模型（实测）
 			contextWindow: 200_000,
 			maxTokens: 64_000,
 		})),
 	});
+	catalogs.set(models, families);
 }
 
 /** 创建渠道并注册模型（模型家族由调用方先问 `agy models` 得到）。 */

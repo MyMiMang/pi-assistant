@@ -1,62 +1,112 @@
-/**
- * `agy models` 的输出 → 模型家族（纯函数）。方案：docs/design/cli-models.md §5b.1 第 10 条、§5b.2 审查定稿。
- *
- * 输出每行 `<id>\t<显示名>`，id 末段 `low / medium / high` 就是思考强度（如 `claude-sonnet-5-5-high`）。
- * Pi 里每个「家族」（去掉末段）一项，思考强度映射回 id 后缀；只有一个档位的家族不给思考强度选项。
- */
-
-export const AGY_EFFORTS = ["low", "medium", "high"] as const;
+/** `agy models` 的 TSV 目录 → 模型家族和实际发送给 agy 的完整 ID（纯函数）。 */
+export const AGY_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type AgyEffort = (typeof AGY_EFFORTS)[number];
 
 export interface AgyFamily {
-	/** 家族 id（去掉档位后缀），如 `claude-sonnet-5-5`；没有档位后缀的模型就是它自己的 id */
+	/** 家族 ID；对固定模型即目录中的完整 ID。 */
 	id: string;
-	/** 显示名（去掉括号里的档位），如 `Claude Sonnet 5.5` */
 	name: string;
-	/** 档位 → agy 里的完整 id；没有档位后缀的家族为空 */
+	/** 目录确实列出了不带本家族档位的行时，才有基础 ID。 */
+	baseId?: string;
+	/** 仅收录有目录证据的档位 → agy 完整 ID。 */
 	variants: Partial<Record<AgyEffort, string>>;
 }
 
-const SUFFIX = /^(.+)-(low|medium|high)$/;
-const NAME_SUFFIX = /\s*\((?:low|medium|high)\)\s*$/i;
+const SUFFIX = new RegExp(`^(.+)-(${AGY_EFFORTS.join("|")})$`);
+const NAME_SUFFIX = new RegExp(`\\s*\\((${AGY_EFFORTS.join("|")})\\)$`, "i");
+const DEFAULT_ORDER: readonly AgyEffort[] = ["medium", "high", "low", "xhigh", "max"];
 
-/** 解析 `agy models` 的 stdout；没有制表符的行（如 `Fetching available models...`）忽略。 */
+/** 先读取完整目录，避免把固定模型名末尾的 low / high / max 等误当成档位。 */
 export function parseAgyModels(stdout: string): AgyFamily[] {
-	const families = new Map<string, AgyFamily>();
+	const rows = new Map<string, string>();
 	for (const line of stdout.split(/\r?\n/)) {
 		const [rawId, rawName] = line.split("\t");
 		const id = rawId?.trim();
-		if (!id || rawName === undefined || /\s/.test(id)) continue;
-		const m = SUFFIX.exec(id);
-		const familyId = m ? m[1] : id;
-		const name = rawName.trim().replace(NAME_SUFFIX, "") || familyId;
-		const fam = families.get(familyId) ?? { id: familyId, name, variants: {} };
-		if (m) fam.variants[m[2] as AgyEffort] = id;
-		families.set(familyId, fam);
+		if (!id || rawName === undefined || /\s/.test(id) || rows.has(id)) continue;
+		rows.set(id, rawName.trim());
+	}
+
+	const variants = new Map<string, { familyId: string; name: string; effort: AgyEffort }>();
+	const names = new Map<string, string>();
+	const ambiguous = new Set<string>();
+	// 短 ID 先判定，已经被确认为档位的行不能再当另一个家族的基础行。
+	for (const [id, name] of [...rows].sort(([a], [b]) => a.length - b.length)) {
+		const suffix = SUFFIX.exec(id);
+		if (!suffix || !name) continue;
+		const [, familyId, rawEffort] = suffix;
+		const effort = rawEffort as AgyEffort;
+		const label = NAME_SUFFIX.exec(name);
+		if (label && label[1].toLowerCase() !== effort) continue;
+		const familyName = label ? name.slice(0, label.index) : name;
+		const baseName = rows.get(familyId);
+		if (!familyName || (!label && baseName !== familyName)) continue;
+		// 同 ID 的基础行若另有其名（或已经是档位），不要覆盖或混入它。
+		if (baseName !== undefined && (baseName !== familyName || variants.has(familyId))) continue;
+		if (names.has(familyId) && names.get(familyId) !== familyName) ambiguous.add(familyId);
+		names.set(familyId, familyName);
+		variants.set(id, { familyId, name: familyName, effort });
+	}
+
+	const families = new Map<string, AgyFamily>();
+	for (const [id, name] of rows) {
+		const candidate = variants.get(id);
+		const variant = candidate && !ambiguous.has(candidate.familyId) ? candidate : undefined;
+		const familyId = variant?.familyId ?? id;
+		const family = families.get(familyId) ?? { id: familyId, name: (variant?.name ?? name) || id, variants: {} };
+		if (variant) family.variants[variant.effort] = id;
+		else family.baseId = id;
+		families.set(familyId, family);
 	}
 	return [...families.values()];
 }
 
-/** 家族能选的档位（按低到高）；少于两档就没有选择 */
+/** 目录确实有的档位（按低到高），包括只有一档的家族。 */
 export const effortsOf = (f: AgyFamily): AgyEffort[] => AGY_EFFORTS.filter((e) => f.variants[e]);
 
-/**
- * Pi 的思考强度 → agy 完整模型 id。Pi 比 high 更高的档位（xhigh / max）取 high；没指定取 medium；
- * 想要的档位这个家族没有就取最近的。不认识的家族原样返回（当作已经是完整 id）。
- */
-export function resolveAgyModel(families: readonly AgyFamily[], familyId: string, effort: string | undefined): string {
-	const fam = families.find((f) => f.id === familyId);
-	if (!fam) return familyId;
-	if (!effortsOf(fam).length) return fam.id;
-	const want: AgyEffort = effort === "low" || effort === "medium" || effort === "high" ? effort : effort === "xhigh" || effort === "max" ? "high" : "medium";
-	const order: AgyEffort[] = want === "low" ? ["low", "medium", "high"] : want === "high" ? ["high", "medium", "low"] : ["medium", "high", "low"];
-	return fam.variants[order.find((e) => fam.variants[e]) as AgyEffort]!;
+export type AgySelection = { modelId: string; familyId: string } & (
+	| { source: "default-base"; effort?: never }
+	| { source: "explicit" | "legacy-id" | "default-variant"; effort: AgyEffort }
+);
+
+/** 只有未指定档位才允许取目录默认；完整旧 ID 已锁定档位，不换成兄弟档。 */
+export function resolveAgySelection(families: readonly AgyFamily[], modelId: string, effort?: string): AgySelection {
+	const family = families.find((f) => f.id === modelId);
+	if (!family) {
+		for (const f of families) {
+			const exact = AGY_EFFORTS.find((e) => f.variants[e] === modelId);
+			if (exact === undefined) continue;
+			if (effort === undefined || effort === exact) {
+				return { modelId, familyId: f.id, effort: exact, source: effort === undefined ? "legacy-id" : "explicit" };
+			}
+			throw new Error(`Antigravity 模型「${modelId}」固定为 ${exact}，不支持思考档位「${effort}」。请重新选择模型或档位。`);
+		}
+		throw new Error(`Antigravity 目录找不到模型「${modelId}」。请重新检测并选择模型。`);
+	}
+
+	const familyId = family.id;
+	if (effort !== undefined) {
+		const exact = AGY_EFFORTS.find((e) => e === effort);
+		if (exact !== undefined) {
+			const id = family.variants[exact];
+			if (id) return { modelId: id, familyId, effort: exact, source: "explicit" };
+		}
+		throw new Error(`Antigravity 模型「${modelId}」不支持思考档位「${effort}」。请重新选择档位。`);
+	}
+	if (family.baseId) return { modelId: family.baseId, familyId, source: "default-base" };
+	for (const fallback of DEFAULT_ORDER) {
+		const id = family.variants[fallback];
+		if (id) return { modelId: id, familyId, effort: fallback, source: "default-variant" };
+	}
+	throw new Error(`Antigravity 目录没有模型「${modelId}」可发送的完整 ID。请重新检测并选择模型。`);
 }
 
-/** Pi 的 `thinkingLevelMap`：minimal 没有对应档位；xhigh / max 取 high。家族不足两档（没得选）返回 undefined。 */
+export function resolveAgyModel(families: readonly AgyFamily[], familyId: string, effort: string | undefined): string {
+	return resolveAgySelection(families, familyId, effort).modelId;
+}
+
+/** Pi 的 `thinkingLevelMap`：只映射目录证实的同名档位；固定模型不提供映射。 */
 export function agyThinkingMap(f: AgyFamily): Record<string, string | null> | undefined {
 	const efforts = effortsOf(f);
-	if (efforts.length < 2) return undefined;
-	const pick = (e: AgyEffort) => (efforts.includes(e) ? e : null);
-	return { minimal: null, low: pick("low"), medium: pick("medium"), high: pick("high"), xhigh: pick("high"), max: pick("high") };
+	if (!efforts.length) return undefined;
+	return { off: null, minimal: null, ...Object.fromEntries(AGY_EFFORTS.map((e) => [e, efforts.includes(e) ? e : null])) };
 }

@@ -68,7 +68,7 @@ test("还没装 → 装好后重新检测就地注册；模型按家族去重，
 	const list = await agyModels(api);
 	assert.deepEqual(list.map((m) => m.id).sort(), ["claude-sonnet-5-5", "gemini-4-argon", "gpt-oss-120b"]);
 	assert.ok(list.find((m) => m.id === "claude-sonnet-5-5")!.thinking.includes("high"));
-	assert.deepEqual(list.find((m) => m.id === "gpt-oss-120b")!.thinking, ["off"]);
+	assert.deepEqual(list.find((m) => m.id === "gpt-oss-120b")!.thinking, ["medium"]);
 	assert.ok(list.every((m) => m.fast.capability === "unsupported"));
 });
 

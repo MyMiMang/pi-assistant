@@ -59,6 +59,11 @@ export function attachSendIntent(session: AgentSession, lookup: (model: Model<Ap
 	};
 	agent.streamFunction = (model, context, options) => {
 		const { capability, effort } = setting(model);
+		// agy 以目录中的完整模型 ID 选档，不能使用 SDK 收敛后的 reasoning。
+		if (model.provider === "antigravity" && model.api === "antigravity-cli") {
+			const agyEffort = thinking.kind === "unset" ? undefined : thinking.level;
+			options = { ...options, agyEffort } as typeof options;
+		}
 		const outbound: ImageIntent[] = [];
 		const recipient = identity(model);
 		const known = knownVision(model, capability);

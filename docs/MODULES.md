@@ -367,6 +367,8 @@
 
 ## `e2e/fixtures`
 
+`e2e/agy-exact-effort-ui.mjs` 用临时 Mock、真实浏览器和假 agy 验证精确档位、旧选择、同会话续用和拒绝时不发推理请求；构建 Web 后用 `node e2e/agy-exact-effort-ui.mjs` 单独运行。
+
 `packages/server/test/launch-memory.ts` 在加载产品模块前强制使用临时文件密钥后端；`e2e/test-startup-isolation.mjs` 核对高级记忆设置与扩展保存回读均不访问系统后端。`e2e/attachment-alignment-ui.mjs` 核对桌面和窄屏附件缩略图的右对齐。
 
 | 文件 | 负责 |

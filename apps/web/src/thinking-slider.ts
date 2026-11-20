@@ -29,6 +29,10 @@ export function relayThinkingChoice(levels: readonly string[], explicit?: string
 
 export function agentRelayThinkingChoice(agent: Agent, levels: readonly string[]) {
 	// 只有真正未设置的助理可继承已保存默认档；来源不明的旧记录走服务默认。
+	if ((agent.model_provider ?? agent.model?.provider) === "antigravity") {
+		const equivalent = agent.model?.provider === "antigravity" && agent.model_id && agent.model_id !== agent.model.id;
+		return relayThinkingChoice(levels, equivalent ? agent.thinking : agent.thinkingSetting ?? agent.thinkingDefault, null);
+	}
 	return relayThinkingChoice(levels, agent.thinkingSource === "explicit" ? agent.thinkingSetting : null, agent.thinkingSource === "default" ? agent.thinkingDefault : null);
 }
 

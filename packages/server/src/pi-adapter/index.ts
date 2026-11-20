@@ -68,7 +68,7 @@ export const classifierProtocols = (): string[] => Object.keys(CLASSIFIER_PROTOC
 export const isClassifierProtocol = (v: unknown): v is string => typeof v === "string" && Object.prototype.hasOwnProperty.call(CLASSIFIER_PROTOCOLS, v);
 
 /** Pi 元数据里某个模型支持的思考档位（唯一能力来源：模型目录、界面下拉、clamp 都用这一份）。 */
-const supportedThinkingLevels = (m: Model<Api>): string[] => getSupportedThinkingLevels(m);
+const supportedThinkingLevels = (m: Model<Api>): string[] => m.api === "antigravity-cli" && m.provider === "antigravity" ? getSupportedThinkingLevels(m).filter((level) => typeof m.thinkingLevelMap?.[level] === "string") : getSupportedThinkingLevels(m);
 
 /** 一个自定义服务声明的 classifier：协议 + 对端模型 id（只含公开元数据，不含 baseUrl / 凭据）。 */
 export interface ClassifierDeclaration {

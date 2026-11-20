@@ -183,7 +183,7 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 		const key = oneShot ? undefined : (options?.sessionId ?? `h:${messages[0] ? messageHash(messages[0]) : "empty"}`);
 		if (options?.signal?.aborted) return b.fail("aborted", "已停止");
 
-		const effort = thinkingToEffort(options?.reasoning);
+		const effort = model.api === "antigravity-cli" ? options && "agyEffort" in options ? (options as SimpleStreamOptions & { agyEffort?: string }).agyEffort : options?.reasoning : thinkingToEffort(options?.reasoning);
 		const tools = piTools.map(toolDefOf);
 		const { systemPrompt, memory } = splitTurnMemory(getCurrentSystemPrompt(context.messages) || undefined);
 		const freshInput = () => withTurnMemory(renderFreshInput(messages, backend.freshInputMaxChars === undefined ? undefined : Math.max(0, backend.freshInputMaxChars - memory.length)), memory);

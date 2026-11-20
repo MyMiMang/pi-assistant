@@ -236,7 +236,7 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
    - 中断：`SIGINT` 有效：约 0 秒内 `result{status:"ERROR",error:"interrupted"}`，MCP 服务收到 `notifications/cancelled`，进程退出（退出码 1）。
 10. **登录检测与模型列表：已验证。**
     - `agy models`：已登录时退出码 0，stdout 每行 `<id>\t<显示名>`；未登录（临时 HOME）退出码 1，输出 `Error: Please sign in to view available models.`。要联网（不消耗模型额度）。没有 `agy auth status` 之类的子命令；`agy models --output-format json` 在 1.4.7 不被接受（更新日志里写的在这个版本没有）。
-    - 本机模型 id：`gemini-4-argon-{low,medium,high}`、`gemini-3.8-flash-{low,medium,high}`、`claude-opus-5-5-{low,medium,high}`、`claude-sonnet-5-5-{low,medium,high}`、`gpt-oss-120b-medium`。**id 末尾的 `low/medium/high` 就是思考强度**，Pi 的「模型 + 思考强度」要拼成这个 id（模型家族 = 去掉末段）；另有 `--effort low|medium|high|xhigh|max` 参数，和 id 后缀的关系没验证。模型列表要运行时问 `agy models`。
+    - 本机模型 id：`gemini-4-argon-{low,medium,high}`、`gemini-3.8-flash-{low,medium,high}`、`claude-opus-5-5-{low,medium,high}`、`claude-sonnet-5-5-{low,medium,high}`、`gpt-oss-120b-medium`。这是旧目录观测；原先仅按末段归组并把 `xhigh`/`max` 降为 `high` 的策略已替代。现在以 `agy models` 的完整 ID 和显示名作为家族与档位证据：显示名冲突不合并，按已确认的 `low/medium/high/xhigh/max` 对应完整 `--model` ID，不降档、不推测 `--effort`。未选走该目录的默认选择，不等于显式关闭。目录缺失或显式档位无效时拒绝发送，提示重选。
 11. **工具挂起超时与配对：已验证。**
     - **默认 180 秒超时：** `slow_wait(200)` 在 180 秒时被 agy 掐断（`tool` 步骤 `ERROR`，MCP 服务收到 `notifications/cancelled`），模型据此继续回答。
     - **在 `mcp_config.json` 里给服务写 `"timeoutSeconds": N` 能调：** 写 10 时在 10 秒掐断；写 3600 时 `slow_wait(200)` 正常返回（200.09 秒，成功）。**键名必须是 `timeoutSeconds`**（`timeout_seconds`、`timeout` 都无效，实测）。更久（>5 分钟）没试。

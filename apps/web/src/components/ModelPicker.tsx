@@ -820,11 +820,11 @@ export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, all
 	};
 	if (!agent) return null;
 	const original = agent.model_provider && agent.model_id ? { provider: agent.model_provider, id: agent.model_id } : null;
-	const cur = original ?? agent.model;
+	const cur = original?.provider === "antigravity" && agent.model?.provider === "antigravity" ? agent.model : original ?? agent.model;
 	const entry = d.models.find((m) => m.provider === cur?.provider && m.id === cur?.id);
 	const unavailable = original && !entry && d.status === "ready" ? `${original.id} 已不可用，请重新选择` : undefined;
 	const levels = entry?.thinking ?? [];
-	const scoped = !!entry?.effectiveCapability;
+	const scoped = !!entry?.effectiveCapability || entry?.provider === "antigravity";
 	const relay = scoped ? agentRelayThinkingChoice(agent, levels) : undefined;
 	const curThinking = agent.thinking && levels.includes(agent.thinking) ? agent.thinking : levels[0];
 	const thinkingLabel = relay?.label ?? (curThinking && levels.length > 1 ? THINKING_LABEL[curThinking] ?? curThinking : "");
@@ -848,7 +848,7 @@ export function ModelPicker({ agentId, hideTextInNarrow = true, buttonClass, all
 				.finally(() => { if (scope.current === s) setFastPending(false); });
 		},
 	};
-	const thinking: ThinkingChoice = { levels, current: scoped ? agent.thinkingSource === "explicit" ? agent.thinkingSetting ?? null : null : allowThinkingFollow ? agent.thinkingSetting ?? null : curThinking ?? "", effective: scoped ? relay?.effective : curThinking, invalidSetting: relay?.invalidSetting, serviceDefault: relay?.serviceDefault, followLabel: scoped || allowThinkingFollow ? "跟随默认" : undefined, onPick: (l) => saveModel({ thinking: l }) };
+	const thinking: ThinkingChoice = { levels, current: scoped ? entry?.provider === "antigravity" && original?.id !== cur?.id ? agent.thinking ?? null : entry?.provider === "antigravity" || agent.thinkingSource === "explicit" ? agent.thinkingSetting ?? null : null : allowThinkingFollow ? agent.thinkingSetting ?? null : curThinking ?? "", effective: scoped ? relay?.effective : curThinking, invalidSetting: relay?.invalidSetting, serviceDefault: relay?.serviceDefault, followLabel: scoped || allowThinkingFollow ? "跟随默认" : undefined, onPick: (l) => saveModel({ thinking: l }) };
 	return (
 		<div ref={boxRef} className="min-w-0 space-y-2" data-testid="agent-model-settings" data-layout={roomy ? "inline" : "button"} aria-busy={modelPending || undefined}>
 		<ModelPickerButton

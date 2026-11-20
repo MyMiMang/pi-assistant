@@ -86,7 +86,7 @@ try {
 	const list = (await j("/api/models")).filter((m) => m.provider === "antigravity");
 	assert.deepEqual(list.map((m) => m.id).sort(), ["claude-sonnet-5-5", "gemini-4-argon", "gpt-oss-120b"]);
 	assert.ok(list.find((m) => m.id === "claude-sonnet-5-5").thinking.includes("high"));
-	assert.deepEqual(list.find((m) => m.id === "gpt-oss-120b").thinking, ["off"]);
+	assert.deepEqual(list.find((m) => m.id === "gpt-oss-120b").thinking, ["medium"]);
 	assert.ok(list.every((m) => m.fast.capability === "unsupported"), "没有 Fast");
 
 	// ---- 3) 单聊：选 Antigravity · Claude Sonnet 5.5，发消息

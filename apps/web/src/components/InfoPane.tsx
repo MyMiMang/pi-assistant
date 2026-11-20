@@ -109,7 +109,7 @@ function Overview({ agentId, go }: { agentId: string; go: (tab: DetailTab) => vo
 	const effective = agent.thinking ? THINKING_LABEL[agent.thinking] ?? agent.thinking : "待确认";
 	const thinking = !model
 		? catalog.loading ? "正在加载档位…" : catalog.error ? "档位加载失败" : "请重新选择模型"
-		: model.effectiveCapability ? `思考 ${agentRelayThinkingChoice(agent, model.thinking ?? []).label}`
+		: (model.effectiveCapability || model.provider === "antigravity") ? `思考 ${agentRelayThinkingChoice(agent, model.thinking ?? []).label}`
 		: !model.thinking?.length ? "无思考档位"
 		: agent.thinkingSetting == null ? `思考 跟随默认 · ${effective}`
 		: agent.thinkingSetting !== agent.thinking ? `思考 ${THINKING_LABEL[agent.thinkingSetting] ?? agent.thinkingSetting} → ${effective}` : `思考 ${effective}`;
