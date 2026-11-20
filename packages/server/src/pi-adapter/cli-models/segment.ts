@@ -51,7 +51,7 @@ export class SegmentBuilder {
 		this.stream.push({ type: "start", partial: this.message });
 	}
 
-	private addUsage(u: TokenUsage): void {
+	addUsage(u: TokenUsage): void {
 		const total = this.message.usage;
 		total.input += u.input;
 		total.output += u.output;

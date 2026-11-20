@@ -6,6 +6,7 @@
 // 场景取自 FAKE_AGY_SCENARIO_FILE（每轮重读，e2e 里中途切换）或 FAKE_AGY_SCENARIO：
 //   text | one-tool | two-tools | bash-approval（调 Pi 的 bash，e2e 走审批卡）| meta（回报收到的参数和首条消息）| env-dump（回报运行目录文件）
 //   | hang（调工具后一直等，SIGINT 才结束）| tool-timeout（agy 自己掐断工具）| error（result 报错）| not-logged-in | resume-missing | crash
+//   | usage-{steps,missing,no-done,error,result-only}（合成对话累计用量）
 // 另外支持 `--version`、`models`（FAKE_AGY_LOGGED_IN=0 或脚本旁有 agy-logged-out 文件时模拟未登录，退出码 1）。FAKE_AGY_LOG=<文件> 时每次启动追加一行 JSON。
 // FAKE_AGY_TRACE=<文件>：独立 JSONL 观测（launch / turn，含实际 conversationId、pid、seq、完整输入）；不改变旧启动日志与回复。
 import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -80,10 +81,10 @@ async function handshake() {
 let step = 0;
 const stepUpdate = (s) => out({ event: "step_update", step_update: { conversation_id: conversationId, ...s } });
 const usage = { input_tokens: 100, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 30, total_tokens: 120 };
-function respond(text) {
+function respond(text, stepUsage = usage, done = true) {
 	const idx = step++;
 	for (const part of text.match(/.{1,8}/gs) ?? [""]) stepUpdate({ step_index: idx, state: "ACTIVE", step_type: "agent_response", text_delta: part });
-	stepUpdate({ step_index: idx, state: "DONE", step_type: "agent_response", text_delta: "\n", duration_seconds: 0.1, usage });
+	if (done) stepUpdate({ step_index: idx, state: "DONE", step_type: "agent_response", text_delta: "\n", duration_seconds: 0.1, usage: stepUsage ?? undefined });
 }
 const resultOk = (text, turns = 1) => out({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: `${text}\n`, duration_seconds: 0.5, num_turns: turns, usage: { input_tokens: 200, output_tokens: 40, thinking_tokens: 0, cache_read_tokens: 60, total_tokens: 240 } } });
 const resultErr = (error) => out({ event: "result", result: { conversation_id: conversationId, status: "ERROR", error, duration_seconds: 0.1, num_turns: 1, usage: {} } });
@@ -105,6 +106,8 @@ process.on("SIGINT", () => {
 });
 
 let tools = [];
+// 恢复进程的服务端历史用量可超过 Pi 已见用量；本进程不能从首包知道其起点。
+let usageSteps = conversationArg ? 10 : 0;
 async function turn(text, seq) {
 	const scenario = scenarioOf();
 	trace("turn", { seq, text });
@@ -140,6 +143,45 @@ async function turn(text, seq) {
 			}),
 		);
 		return resultOk("env");
+	}
+	if (["usage-partial-step", "usage-replay-step", "usage-no-step-id"].includes(scenario)) {
+		const partial = scenario === "usage-partial-step";
+		const unidentified = scenario === "usage-no-step-id";
+		const stepUsage = partial ? { input_tokens: 100 } : usage;
+		const done = (idx, text) => ({ step_index: idx, state: "DONE", step_type: "agent_response", text_delta: text, usage: stepUsage });
+		const first = done(unidentified ? undefined : 1, `first:${seq}`);
+		stepUpdate(first);
+		if (!partial) {
+			if (!unidentified) stepUpdate(first); // 原样重放，并且下一轮也使用索引 1
+			const tool = startTool("echo", { text: `turn-${seq}` });
+			finishTool(tool, await tool.promise);
+			stepUpdate(done(unidentified ? undefined : 2, `last:${seq}`));
+		}
+		usageSteps += partial ? 1 : 2;
+		out({ event: "result", result: { conversation_id: conversationId, num_turns: seq, status: "SUCCESS", usage: { input_tokens: 100 * usageSteps, output_tokens: 20 * usageSteps, cache_read_tokens: 30 * usageSteps } } });
+		return;
+	}
+	if (["usage-steps", "usage-missing", "usage-no-done", "usage-error", "usage-result-only", "usage-result-repeat"].includes(scenario)) {
+		// 对话级累计；每个数值相同的已知步骤仍是独立调用。
+		const resultOnly = scenario === "usage-result-only" || scenario === "usage-result-repeat";
+		const failed = scenario === "usage-error";
+		const missing = scenario === "usage-missing";
+		const cumulative = (turns) => Object.fromEntries(Object.entries(usage).map(([key, value]) => [key, value * turns]));
+		let final = `result-only:${conversationArg ? "resumed" : "fresh"}:${seq}`;
+		if (!resultOnly) {
+			respond(`before-tool:${seq}`);
+			const tool = startTool("echo", { text: `turn-${seq}` });
+			const result = await tool.promise;
+			finishTool(tool, result);
+			final = `after-tool:${textOfResult(result)}`;
+		}
+		respond(final, missing ? null : usage, !resultOnly && !failed && scenario !== "usage-no-done");
+		// 失败轮只消耗工具前的已知一步，后继错误不凭空产生新用量。
+		usageSteps += resultOnly || failed ? 1 : 2;
+		const receipt = { event: "result", result: { conversation_id: conversationId, num_turns: seq, status: failed ? "ERROR" : "SUCCESS", error: failed ? "synthetic model error" : undefined, response: `${final}\n`, usage: cumulative(usageSteps) } };
+		out(receipt);
+		if (scenario === "usage-result-repeat") out(receipt); // 仅在该用例的最后一轮重放最终回执
+		return;
 	}
 	if (scenario === "one-tool" || scenario === "bash-approval") {
 		respond("我来查一下。");

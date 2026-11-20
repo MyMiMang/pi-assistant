@@ -17,6 +17,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { convertAgyLine, type AgyEvent } from "./agy-events.ts";
+import { AgyUsageLedger } from "./agy-usage.ts";
 import { agyCallKey, agyRunFiles, buildAgyArgs, buildAgyEnv } from "./agy-launch.ts";
 import { toolBridge, type BridgeCall, type BridgeRun, type CallToolResult, type Tool, type ToolBridge } from "./tool-bridge.ts";
 
@@ -93,11 +94,13 @@ export class AgyProcess {
 	private collectTimer: NodeJS.Timeout | undefined;
 	private idleTimer: NodeJS.Timeout | undefined;
 	private exited = false;
+	private readonly usage: AgyUsageLedger;
 	private resolveDone!: (e: AgyExit) => void;
 
 	constructor(private readonly opts: AgyProcessOptions) {
 		this.model = opts.model;
 		this.conversationId = opts.conversationId;
+		this.usage = new AgyUsageLedger(opts.conversationId);
 		this.bridgeRun = (opts.bridge ?? toolBridge).register({ tools: opts.tools, callKey: agyCallKey, onCall: (c) => this.onBridgeCall(c) });
 		this.done = new Promise((resolve) => {
 			this.resolveDone = resolve;
@@ -162,7 +165,11 @@ export class AgyProcess {
 			const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
 			rlClosed = new Promise((resolve) => rl.once("close", () => resolve()));
 			rl.on("line", (line) => {
-				for (const ev of convertAgyLine(line)) this.onEvent(ev);
+				const events = convertAgyLine(line);
+				const done = events.find(ev => ev.type === "message_end");
+				// DONE 可能带正文尾块；重放时整帧忽略，不回放文字或影响工具桥。
+				if (done && !this.usage.acceptDone(done.stepIdentity)) return;
+				for (const ev of events) this.onEvent(ev);
 			});
 		}
 		let finished = false;
@@ -207,7 +214,12 @@ export class AgyProcess {
 	}
 
 	private onEvent(ev: AgyEvent): void {
-		if (ev.type === "init" && ev.sessionId) this.conversationId = ev.sessionId;
+		if (ev.type === "init" && ev.sessionId) {
+			this.conversationId = ev.sessionId;
+			this.usage.observeSession(ev.sessionId);
+		}
+		if (ev.type === "message_end" && ev.hasUsage) this.usage.observeStep(ev.usage);
+		if (ev.type === "result") ev.remainderUsage = this.usage.finish(ev.sessionId, ev.turn, ev.cumulative);
 		this.deliver(ev);
 		if (ev.type === "result") {
 			if (ev.sessionId) this.conversationId = ev.sessionId;
@@ -252,6 +264,7 @@ export class AgyProcess {
 	sendUserMessage(text: string): boolean {
 		const stdin = this.child?.stdin;
 		if (!stdin || stdin.destroyed || stdin.writableEnded) return false;
+		this.usage.startTurn();
 		stdin.write(`${JSON.stringify({ event: "user", message: { content: text } })}\n`);
 		return true;
 	}

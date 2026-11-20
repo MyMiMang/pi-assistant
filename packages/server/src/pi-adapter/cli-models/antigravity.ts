@@ -14,6 +14,7 @@
 import { join } from "node:path";
 import { AgyProcess, type AgyExit, type AgyItem } from "../../cli-agents/agy-process.ts";
 import { agyThinkingMap, effortsOf, resolveAgyModel, resolveAgySelection, type AgyFamily } from "../../cli-agents/agy-models.ts";
+import { missingAgyUsage, type AgyUsage } from "../../cli-agents/agy-usage.ts";
 import { toolBridge, type Tool, type ToolBridge } from "../../cli-agents/tool-bridge.ts";
 import type { PiModels } from "../index.ts";
 import { createCliChannel, type CliBackend, type CliLive, type LaunchRequest, type Step } from "./channel-core.ts";
@@ -63,6 +64,7 @@ export interface AntigravityDeps {
 type Item = AgyItem | { type: "exit"; exit: AgyExit };
 
 interface AgyLive extends CliLive {
+	reported: AgyUsage;
 	proc: AgyProcess;
 	/** 交给 Pi 的 toolCall id → 工具桥的配对键（step_index） */
 	keyOf: Map<string, string>;
@@ -115,7 +117,7 @@ function antigravityBackend(deps: AntigravityDeps, state: { families: AgyFamily[
 				proc = fresh;
 			}
 			const queue = new EventQueue<Item | { type: "aborted" }>();
-			const l: AgyLive = { key: req.key, proc, queue, pendingIds: new Set(), dead: false, offs: [], composite: req.composite, keyOf: new Map(), responded: false, cleanEnd: false };
+			const l: AgyLive = { key: req.key, proc, queue, pendingIds: new Set(), dead: false, offs: [], composite: req.composite, keyOf: new Map(), responded: false, cleanEnd: false, reported: {} };
 			l.offs.push(
 				proc.attach({
 					onItem: (i) => queue.push(i),
@@ -147,17 +149,23 @@ function antigravityBackend(deps: AntigravityDeps, state: { families: AgyFamily[
 				case "init":
 					return first;
 				case "text_delta":
-				case "message_end":
 					return [...first, { type: "content", ev: item }];
+				case "message_end":
+					for (const key of ["input", "output", "cacheRead"] as const) if (item.reported[key] !== undefined) l.reported[key] = item.reported[key];
+					return [...first, { type: "content", ev: item.hasUsage ? item : { type: "text_end" } }];
 				case "tool_call":
 					l.keyOf.set(item.id, item.key);
 					return [...first, { type: "content", ev: { type: "tool_call_start", id: item.id, name: item.name } }, { type: "content", ev: { type: "tool_call_end", id: item.id, name: item.name, args: item.args } }];
 				case "tools_ready":
-					return b.toolCallIds.length ? [...first, { type: "tool_use" }] : first;
-				case "result":
-					if (item.isError) return [{ type: "fail", reason: "error", message: describeAgyError(item.text), resumeFailed: RESUME_FAILED.test(item.text), fallbackUsage: item.usage }];
+					if (!b.toolCallIds.length) return first;
+					l.reported = {};
+					return [...first, { type: "tool_use" }];
+				case "result": {
+					const remainderUsage = missingAgyUsage(item.remainderUsage, l.reported);
+					if (item.isError) return [{ type: "fail", reason: "error", message: describeAgyError(item.text), resumeFailed: RESUME_FAILED.test(item.text), remainderUsage }];
 					l.cleanEnd = true;
-					return [...first, { type: "finish", reason: "stop", sessionId: item.sessionId || l.proc.conversationId, fallbackUsage: item.usage }];
+					return [...first, { type: "finish", reason: "stop", sessionId: item.sessionId || l.proc.conversationId, remainderUsage }];
+				}
 				default:
 					return first; // tool_step / step_error / unparsed：只是旁证
 			}

@@ -65,7 +65,7 @@ export default function Sidebar() {
 				<input className="min-w-0 flex-1 bg-transparent text-fg outline-none placeholder:text-mut2" placeholder={t("搜索")} value={q} onChange={(e) => setQ(e.target.value)} />
 			</label>
 			<nav className="pa-agents scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-				<SidebarPersonalFolders agents={agents} current={room ? null : current} query={q} moveId={moveId} onCloseMove={() => setMoveId(null)} onCreateAgent={(folderId) => setCreating({ folderId })} renderAgent={(a, selection) => (
+				<SidebarPersonalFolders agents={agents} current={room ? null : current} query={q} moveId={moveId} onCloseMove={() => setMoveId(null)} onCreateAgent={(folderId) => setCreating({ folderId })} renderAgent={(a, selection, drag) => (
 					<div key={a.id} className="flex min-w-0 items-center">
 					<button
 						role={selection ? "checkbox" : undefined}
@@ -84,6 +84,7 @@ export default function Sidebar() {
 							openMenu(a.id, e.clientX, e.clientY);
 						}}
 						onPointerDown={(e) => {
+							drag?.start(e);
 							if (selection || e.pointerType === "mouse") return;
 							const { clientX, clientY } = e;
 							const st = { t: 0, fired: false };
@@ -97,7 +98,7 @@ export default function Sidebar() {
 						onPointerMove={(e) => e.pointerType !== "mouse" && press.current && !press.current.fired && (clearTimeout(press.current.t), (press.current = null))}
 						onPointerUp={() => press.current && !press.current.fired && (clearTimeout(press.current.t), (press.current = null))}
 						onPointerCancel={() => press.current && (clearTimeout(press.current.t), (press.current = null))}
-						style={{ WebkitTouchCallout: "none", userSelect: "none" }}
+						style={{ WebkitTouchCallout: "none", userSelect: "none", touchAction: drag ? "pan-y" : undefined }}
 						className={cx("pa-agent min-w-0 flex-1", (selection ? selection.checked : a.id === current && !room) && "active")}
 					>
 						{selection && (selection.checked ? <CheckSquare size={16} className="shrink-0" /> : <Square size={16} className="shrink-0" />)}
@@ -108,6 +109,9 @@ export default function Sidebar() {
 						</span>
 						{a.unread > 0 && (a.id !== current || room) ? <span className="pa-badge">{a.unread > 99 ? "99+" : a.unread}</span> : <span className="shrink-0 text-[11px] text-mut2">{a.last ? fmtTime(a.last.created_at) : ""}</span>}
 					</button>
+						{drag && <button type="button" className="pa-icon-btn ghost shrink-0 pa-folder-drag-handle" data-testid="sidebar-agent-drag-handle" title="拖动或移动到文件夹" aria-label={`拖动 ${a.name} 或移动到文件夹`} onPointerDown={(e) => drag.start(e, true)} onClick={() => setMoveId(a.id)}>
+							<svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">{[6, 12, 18].map(y => <g key={y}><circle cx="9" cy={y} r="1.5" /><circle cx="15" cy={y} r="1.5" /></g>)}</svg>
+						</button>}
 						{!selection && <button type="button" className="pa-icon-btn ghost shrink-0 !h-10 !w-10" title={`${a.name}更多操作`} aria-label={`${a.name}更多操作`} aria-haspopup="menu" onClick={(e) => {
 							const { right, bottom } = e.currentTarget.getBoundingClientRect();
 							openMenu(a.id, right - 170, bottom);

@@ -197,7 +197,7 @@ claude -p --input-format stream-json --output-format stream-json --include-parti
      ```
    - 文字：`agent_response` 的 `ACTIVE` 事件带 `text_delta`（**块比较大，不是逐字**，每块几个词到一句话），`DONE` 事件带最后的 `"\n"` 和这一步的 `usage`。每次模型请求（含工具调用后的续写）是一个 `agent_response` 步骤。
    - 工具：`tool` 步骤先 `ACTIVE`（带 `tool_name`、`tool_info.parameters`），完成后 `DONE`（带 `tool_info.output`、`duration_seconds`），超时是 `ERROR`。顺序：`agent_response DONE → tool ACTIVE …`。
-   - 用量：`input_tokens` **不含**缓存读取（另有 `cache_read_tokens`）；`thinking_tokens` 一直是 0。
+   - 用量：`input_tokens` **不含**缓存读取（另有 `cache_read_tokens`）；`thinking_tokens` 一直是 0。单步用量按调用独立记；`result.usage` 不是该段的调用用量。同会话、同轮、显式步骤编号相同的 DONE 重放忽略整帧，无可靠身份则不猜。相邻累计回执之差扣除本轮已知单步后，按列把可信余额补到尾段，已有单步用量不挡住缺失列（新会话首轮以零为基线）。恢复进程或缺失／矛盾字段先建立可信基线，不把旧累计倒灌。仅影响新账，不回算既有记录，不等同服务商扣费。
    - **没有思考内容：** 用 `claude-sonnet-5-5-high` + `--effort high` 并要求「仔细想」，也没有任何思考事件（`thinking_tokens: 0`）。界面上这个渠道不显示思考。
    - 错误：`result.status:"ERROR"`、`error` 是文字；stderr 有一行 `AGY_ERROR: {...}`；进程退出码 3（错误）、1（被中断）。
    - 模型：**本机 Gemini 全部报 `FAILED_PRECONDITION (code 400): User location is not supported for the API use.`（地区限制）**，Gemini 模型没法验证；`claude-sonnet-5-5-*`、`gpt-oss-120b-medium` 实测可用。

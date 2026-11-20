@@ -36,6 +36,7 @@ jobs:
           CHROME=$(node -p "require('playwright-core').chromium.executablePath()")
           export CHROME
           node e2e/sidebar-agent-folders-ui.mjs
+          node e2e/sidebar-agent-folders-ui.mjs --drag
           node e2e/sidebar-room-collapse-ui.mjs
       - name: Antigravity 精确思考档验证
         run: |

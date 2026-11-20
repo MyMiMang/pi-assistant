@@ -206,6 +206,7 @@
 | `login-flows.ts` | Pi 登录交互桥接到网页 |
 | `onboarding.ts` | 首次向导状态 |
 | `housekeeping.ts` | 日志与记录定期清理 |
+| `cli-agents/agy-usage.ts` | Antigravity 按会话累计快照和本轮单步来源计算尾段兜底用量，由 `AgyProcess` 持有；单测 `test/agy-usage.test.ts`，假 CLI 落账回归见 `test/cli-models-agy-session.test.ts` |
 | `usage/` | 用量、价格、费用 |
 | `themes/` | 主题与 AI 设计主题 |
 | `pet/` | 桌宠状态、宠物包、孵化 |
@@ -286,7 +287,8 @@
 | `RoomWork.tsx` | 群聊顶部干活入口 `RoomWorkButtons`（任务看板 + 项目筛选 + 项目）；项目有 waiting 时 chip 标「等你看一眼」、面板里 `WaitingBlock` 显示关键点；`ProjectsPanel`：待确认 / 进行中项目的 chip + 面板（看方案、停下项目、展开已结束的项目），群聊 `ProjectsButton` 和单聊 `ChatProjectsButton` 共用（solo = 单聊：说话对象是「我」，没有关键点等待 / 任务清单 / 接着做） |
 | `WorkItemDetail.tsx` | 任务详情、新建任务、等你决定回答框 |
 | `Sidebar.tsx` | 侧边栏，复用个人助理行、更多菜单和新建助理入口 |
-| `SidebarPersonalFolders.tsx` | 个人助理文件夹展示、设备内折叠、批量整理与文件夹操作 |
+| `SidebarPersonalFolders.tsx` | 个人助理文件夹展示、设备内折叠、批量整理与文件夹操作；拖放复用现有移动接口 |
+| `useAgentFolderDrag.ts` | 个人助理拖放手势、高亮、边缘滚动及取消，不负责保存 |
 | `SidebarRoomSection.tsx` | 群聊列表的独立展开状态与新建按钮；折叠不切换会话 |
 | `Conversations.tsx` | 对话菜单 |
 | `CompactDialog.tsx` | 整理上下文弹窗 |

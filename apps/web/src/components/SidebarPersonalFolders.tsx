@@ -1,16 +1,21 @@
 import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderPlus, Pencil, Plus, Trash2 } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Agent, AgentFolder } from "../types";
 import { ContextMenu } from "./ContextMenu";
 import { Button, ErrorBox, Input, Modal } from "./ui";
+import { useAgentFolderDrag } from "./useAgentFolderDrag";
 
 const FOLDERS_URL = "/api/agent-folders";
 const UNCATEGORIZED = "未分类";
 type Dialog = { kind: "new" | "move" } | { kind: "rename" | "dissolve"; folder: AgentFolder };
 const expansionKey = (scope: string, id: string) => `pia.sidebar.folder:${scope}:${id}`;
 type Selection = { checked: boolean; toggle: () => void };
+
+interface DragEntry {
+	start: (e: PointerEvent<HTMLButtonElement>, handle?: boolean) => void;
+}
 
 interface Props {
 	agents: Agent[];
@@ -19,7 +24,7 @@ interface Props {
 	moveId: string | null;
 	onCloseMove: () => void;
 	onCreateAgent: (id: string) => void;
-	renderAgent: (agent: Agent, selection?: Selection) => ReactNode;
+	renderAgent: (agent: Agent, selection?: Selection, drag?: DragEntry) => ReactNode;
 }
 
 export function SidebarPersonalFolders({ agents, current, query, moveId, onCloseMove, onCreateAgent, renderAgent }: Props) {
@@ -32,6 +37,7 @@ export function SidebarPersonalFolders({ agents, current, query, moveId, onClose
 	const [dialog, setDialog] = useState<Dialog | null>(null);
 	const [name, setName] = useState("");
 	const [busy, setBusy] = useState(false);
+	const inFlight = useRef(false);
 	const [error, setError] = useState("");
 	const [notice, setNotice] = useState("");
 	const baseId = useId();
@@ -59,8 +65,9 @@ export function SidebarPersonalFolders({ agents, current, query, moveId, onClose
 		onCloseMove();
 		changeDialog(null);
 	};
-	const apply = async (write: () => Promise<unknown>, done: () => void) => {
-		if (busy) return;
+	const apply = async (write: () => Promise<unknown>, done: () => void, fail = setError) => {
+		if (inFlight.current) return;
+		inFlight.current = true;
 		setBusy(true);
 		setError("");
 		try {
@@ -68,8 +75,9 @@ export function SidebarPersonalFolders({ agents, current, query, moveId, onClose
 			await useStore.getState().loadAgents().catch(() => setNotice("操作已保存，但列表刷新失败，请刷新页面重试。"));
 			done();
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "操作失败，请重试");
+			fail(e instanceof Error ? e.message : "操作失败，请重试");
 		} finally {
+			inFlight.current = false;
 			setBusy(false);
 		}
 	};
@@ -79,6 +87,14 @@ export function SidebarPersonalFolders({ agents, current, query, moveId, onClose
 		try { localStorage.setItem(key, open ? "1" : "0"); } catch { /* 仅本次保留 */ }
 	};
 	const expand = (id: string) => setOpen(id, true);
+	const move = (ids: string[], folderId: string) => api(`${FOLDERS_URL}/move`, { method: "POST", json: { agentIds: ids, folderId: folderId || null } });
+	const canDrag = available && !!folders?.length && !selected && !activeDialog && !busy && !searching;
+	const drag = useAgentFolderDrag(canDrag, (id, folderId) => {
+		const a = agents.find((item) => item.id === id);
+		if (!canDrag || !a || (a.folderId ?? "") === folderId || (folderId && !folderIds.has(folderId))) return;
+		setNotice("");
+		void apply(() => move([id], folderId), () => {}, (detail) => setNotice(`移动失败：${detail}`));
+	});
 	const row = (a: Agent) => renderAgent(a, selected ? {
 		checked: selected.has(a.id), toggle: () => setSelected((old) => {
 			if (!old) return old;
@@ -86,7 +102,7 @@ export function SidebarPersonalFolders({ agents, current, query, moveId, onClose
 			if (!next.delete(a.id)) next.add(a.id);
 			return next;
 		}),
-	} : undefined);
+	} : undefined, canDrag ? { start: (e, handle) => drag.start(e, a.id, a.name, handle) } : undefined);
 	const folderRow = (id: string, label: string) => {
 		const items = byFolder.get(id) ?? [];
 		const shown = items.filter(matches);
@@ -102,7 +118,7 @@ export function SidebarPersonalFolders({ agents, current, query, moveId, onClose
 		return (
 			<section key={id} data-testid={folder ? "sidebar-agent-folder" : "sidebar-uncategorized"}>
 				<div className="flex min-w-0 items-center">
-					<button type="button" aria-expanded={open} aria-controls={region} disabled={searching} onClick={() => setOpen(id, !open)} className="flex min-h-10 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm text-fg enabled:hover:bg-hover">
+					<button type="button" aria-expanded={open} aria-controls={region} data-folder-drop={canDrag ? id : undefined} disabled={searching} onClick={() => setOpen(id, !open)} className="flex min-h-10 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm text-fg enabled:hover:bg-hover">
 						{open ? <ChevronDown size={14} className="shrink-0 text-mut" /> : <ChevronRight size={14} className="shrink-0 text-mut" />}
 						<Folder size={16} className="shrink-0 text-mut" />
 						<span className="truncate" title={label}>{label}</span><span className="text-xs text-mut2">{count}</span>
@@ -138,7 +154,12 @@ export function SidebarPersonalFolders({ agents, current, query, moveId, onClose
 					<Button size="sm" variant="ghost" onClick={() => setSelected(null)}>取消</Button>
 				</div>}
 				{notice && <p role="status" className="px-2 text-xs text-mut">{notice}</p>}
-				{folders?.length ? <>{folders.map((f) => folderRow(f.id, f.name))}{folderRow("", UNCATEGORIZED)}</> : agents.filter(matches).map(row)}
+				{folders?.length ? (
+				<div ref={drag.zone} onClickCapture={drag.guardClick} onPointerDownCapture={drag.resetClick}>
+					{folders.map((f) => folderRow(f.id, f.name))}{folderRow("", UNCATEGORIZED)}
+				</div>
+			) : agents.filter(matches).map(row)}
+			{drag.dragging && <div aria-hidden="true" className="pa-folder-drag-preview truncate" style={{ left: Math.max(4, Math.min(window.innerWidth - 164, drag.dragging.x + 12)), top: Math.max(4, Math.min(window.innerHeight - 38, drag.dragging.y + 12)) }}>{drag.dragging.name}</div>}
 				{editing && <Modal open onClose={close} title={editing.kind === "rename" ? "文件夹改名" : "新建文件夹"} ariaLabel={editing.kind === "rename" ? "文件夹改名" : "新建文件夹"}>
 					<form className="space-y-3 p-5" onSubmit={(e) => {
 						e.preventDefault();
@@ -170,7 +191,7 @@ export function SidebarPersonalFolders({ agents, current, query, moveId, onClose
 						{!available && <p className="text-mut">文件夹列表暂不可用，请重试。</p>}
 						<ErrorBox text={error} />
 						{destinations.map((f) => <Button key={f.id} variant="outline" className="w-full !justify-start" disabled={busy || !available || moving.every((a) => (a.folderId ?? "") === f.id)} onClick={() => {
-							void apply(() => api(`${FOLDERS_URL}/move`, { method: "POST", json: { agentIds: moving.map((a) => a.id), folderId: f.id || null } }), () => {
+							void apply(() => move(moving.map((a) => a.id), f.id), () => {
 								expand(f.id); setSelected(null); onCloseMove(); changeDialog(null);
 							});
 						}}><span className="truncate">{f.name}</span></Button>)}

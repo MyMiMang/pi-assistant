@@ -62,9 +62,9 @@ export type Step =
 	/** 这一段以 toolUse 结束，运行保持挂着；`ids` 默认取这一段里交给 Pi 的 toolCall */
 	| { type: "tool_use"; ids?: string[] }
 	/** 这一轮正常结束；`sessionId` 用来写对照表 */
-	| { type: "finish"; reason: "stop" | "length"; sessionId?: string; fallbackUsage?: TokenUsage }
+	| { type: "finish"; reason: "stop" | "length"; sessionId?: string; fallbackUsage?: TokenUsage; remainderUsage?: TokenUsage }
 	/** 出错 / 被中止；`resumeFailed`：是「续用的会话找不到」，骨架会改成新开重来一次 */
-	| { type: "fail"; reason: "error" | "aborted"; message: string; resumeFailed?: boolean; fallbackUsage?: TokenUsage };
+	| { type: "fail"; reason: "error" | "aborted"; message: string; resumeFailed?: boolean; fallbackUsage?: TokenUsage; remainderUsage?: TokenUsage };
 
 /** 每家要实现的协议适配 */
 export interface CliBackend<L extends CliLive> {
@@ -160,6 +160,7 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 					case "finish":
 						finish(l);
 						if (s.fallbackUsage) b.useFallbackUsage(s.fallbackUsage);
+						if (s.remainderUsage) b.addUsage(s.remainderUsage);
 						b.finish(s.reason);
 						if (l.key && s.sessionId) store.set(l.key, makeSyncEntry(s.sessionId, l.composite, ctx.messages, b.message));
 						return;
@@ -168,6 +169,7 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 						if (l.key && (b.message.content.length || s.resumeFailed || s.reason === "aborted")) store.delete(l.key);
 						if (s.resumeFailed && ctx.canRetryFresh && !b.message.content.length) return "retry-fresh";
 						if (s.fallbackUsage) b.useFallbackUsage(s.fallbackUsage);
+						if (s.remainderUsage) b.addUsage(s.remainderUsage);
 						b.fail(s.reason, s.message);
 						return;
 				}
