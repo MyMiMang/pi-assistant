@@ -125,8 +125,9 @@ try {
 	await scope.screenshot({ path: join(out, "stage1-relay-scope.png") });
 	console.log("PASS scope save, API readback and browser reload preserved source, defaults and exact exception");
 	refreshed = true;
-	await detail.getByTestId("relay-fetch").click();
-	await response("PUT", `/api/models/custom/${a}`, () => detail.getByRole("button", { name: "添加新模型并更新已有能力" }).click());
+	await detail.getByTestId("relay-add-open").click();
+	await detail.getByTestId("relay-add-refresh-options").click();
+	await response("PUT", `/api/models/custom/${a}`, () => detail.getByTestId("relay-add-refresh-existing").click());
 	assert.equal(seen.filter((s) => s === "GET /override/models").length, 1);
 	const updated = await snapshot(a);
 	assert.deepEqual(updated.capabilityScope, saved.capabilityScope);

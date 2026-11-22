@@ -995,10 +995,10 @@ await step("自定义模型服务（中转站）：自动获取模型 → 保存
 		await card.getByTestId(`service-test-result-${cid}`).getByText(/连接成功/).waitFor();
 		// 很长的模型 ID 在各种宽度下：模型名一定看得见（截断而不是被挤没），整行不溢出
 		const longIds = ["deepseek-ai/DeepSeek-V4.1-Flash-Vision-Experimental-2026-10-01-extra-long-suffix", "accounts/fireworks/models/qwen3p8-2p4t-a95b-instruct-preview"];
-		await det.getByTestId("relay-add-open").click();
 		for (const id of longIds) {
+			await det.getByTestId("relay-add-open").click(); await det.getByTestId("relay-add-manual").click();
 			await det.getByTestId("relay-add-input").fill(id);
-			await det.getByTestId("relay-add-input").press("Enter");
+			await det.getByTestId("relay-add-save").click();
 			await row(id).waitFor();
 		}
 		for (const w of [1440, 1024, 760, 390]) {

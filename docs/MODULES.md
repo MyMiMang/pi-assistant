@@ -124,6 +124,8 @@
 | `secrets.ts` | 本地凭据加密存储 |
 | `model-registry.ts` | 统一模型服务注册表（只读视图） |
 | `pi-adapter/relay-capabilities.ts` | OpenAI 兼容中转渠道能力范围、证据校验及 UI / Pi 共用有效规格 |
+| `pi-adapter/relay-directory-effort.ts` | 已确认网关 Chat Completions 公开目录的逐型号档位枚举，严格按端点、协议和值校验 |
+| `pi-adapter/relay-add-preview.ts` | 已有渠道新增前的只读候选视图，复用有效能力投影，不保存展示字段 |
 | `pi-adapter/send-intent.ts` | 已知视觉走 SDK 原生图块并按活会话/接收者保留；未知仅在已验证编码协议一次试送。公开流函数过滤历史、组合适用中转的思考合同与 Fast 钩子 |
 | `model-db.ts` | models.dev 模型参数库 |
 | `model-errors.ts` | 判断模型请求失败类型 |
@@ -338,6 +340,7 @@
 | `ClaudeCodeCard.tsx` | 模型服务页的「Claude Code（本机）」卡片：检测状态、重新检测、登录提示 |
 | `CustomProvider.tsx` | 自定义服务表单 |
 | `RelayDetail.tsx` | 中转服务详情（单列） |
+| `RelayModelAdd.tsx` | 已配置渠道的型号预览、目录多选与显式添加 |
 | `RelayCapabilityScope.tsx` | 渠道高级设置的能力范围、默认值及精确例外表单 |
 | `ModelReasoning.tsx` | 自定义模型编辑共用的三态推理支持及按渠道文档声明档位/协议值；复用 Select、Fold 与 ThinkingLevel 常量 |
 | `provider-icons.ts` | 自动生成的服务图标（勿手改） |
@@ -370,6 +373,8 @@
 | `DeviceApproval.tsx` | 确认新设备配对 |
 
 ## `e2e/fixtures`
+
+`channel-model-add.mjs`：已有渠道新增模型的临时服务、合成目录与回环测试夹具。`channel-model-add-directory-fetch.mjs`：仅测试使用，将指定网关请求限定到临时回环服务。
 
 `e2e/agy-exact-effort-ui.mjs` 用临时 Mock、真实浏览器和假 agy 验证精确档位、旧选择、同会话续用和拒绝时不发推理请求；构建 Web 后用 `node e2e/agy-exact-effort-ui.mjs` 单独运行。
 

@@ -1,6 +1,7 @@
 import { isThinkingLevel, THINKING_LEVEL_ORDER } from "@pi-assistant/shared";
 import type { CustomModel, CustomProviderMeta } from "./custom-providers.ts";
 import { effectiveApi, effectiveBaseUrl } from "./relay-protocols.ts";
+import { validDirectoryLevels } from "./relay-directory-effort.ts";
 
 export interface CapabilityFacts {
  vision?: boolean;
@@ -40,7 +41,9 @@ export function validScope(v: unknown): v is CapabilityScope {
 export function matchingEvidence(meta: Pick<CustomProviderMeta, "id" | "api" | "baseUrl" | "protocolUrls">, m: CustomModel, allowUnbound = false) {
  const e = m.listEvidence;
  if (!e || (e.provider !== meta.id && !(allowUnbound && e.provider === undefined)) || e.model !== m.id || !scopedProtocol(e.api) || e.api !== effectiveApi(meta, m) || e.baseUrl !== cleanEndpoint(effectiveBaseUrl(meta, m))) return undefined;
- return validFacts({ ...(e.vision !== undefined ? { vision: e.vision } : {}), ...(e.reasoning !== undefined ? { reasoning: e.reasoning } : {}) }, false) ? e : undefined;
+ if (!validFacts({ ...(e.vision !== undefined ? { vision: e.vision } : {}), ...(e.reasoning !== undefined ? { reasoning: e.reasoning } : {}) }, false)) return undefined;
+ const { levels, ...evidence } = e;
+ return { ...evidence, ...(e.reasoning === true && validDirectoryLevels(e.api, e.baseUrl, levels) ? { levels } : {}) };
 }
 
 /** Single effective projection for UI, metadata registry and Pi registration; never written back as manual settings. */

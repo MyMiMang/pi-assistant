@@ -1,4 +1,5 @@
-import { effectiveRelayModel } from "../pi-adapter/relay-capabilities.ts";
+import { cleanEndpoint, effectiveRelayModel } from "../pi-adapter/relay-capabilities.ts";
+import { previewRelayAddition } from "../pi-adapter/relay-add-preview.ts";
 /** 从 http.ts 拆出的路由（行为不变）。 */
 import { effectiveApi, effectiveBaseUrl, guessFromUrl } from "../pi-adapter/relay-protocols.ts";
 import { registryAsrProviders } from "../voice/index.ts";
@@ -111,9 +112,21 @@ export function mountModelRoutes(app: Hono<Env>) {
 			return errJson(c, e);
 		}
 	});
+	app.post("/api/models/custom/:id/add-preview", async (c) => {
+		const meta = customProviders.list().find((p) => p.id === c.req.param("id"));
+		if (!meta) return c.json({ error: "渠道已不存在，请刷新模型服务" }, 404);
+		const { modelId } = await c.req.json<{ modelId?: unknown }>().catch(() => ({ modelId: undefined }));
+		if (typeof modelId !== "string" || !modelId.trim() || modelId.trim().length > 512 || /[\u0000-\u001f\u007f]/.test(modelId)) return c.json({ error: "请填写有效的模型 ID" }, 400);
+		return c.json({ model: previewRelayAddition(meta, { id: modelId.trim() }) });
+	});
 	app.post("/api/models/custom/fetch-models", async (c) => {
 		try {
-			return c.json({ models: await customProviders.fetchModels(await c.req.json()) });
+			const input = await c.req.json<Parameters<typeof customProviders.fetchModels>[0]>();
+			const before = customProviders.list().find((p) => p.id === input.id && p.api === input.api && cleanEndpoint(p.baseUrl) === cleanEndpoint(input.baseUrl));
+			const found = await customProviders.fetchModels(input);
+			const after = before && customProviders.list().find((p) => p.id === before.id);
+			if (before && JSON.stringify(before) !== JSON.stringify(after)) return c.json({ error: "渠道已更新，请重新获取模型列表" }, 409);
+			return c.json({ models: after ? found.map((m) => previewRelayAddition(after, m)) : found });
 		} catch (e) {
 			return errJson(c, e);
 		}

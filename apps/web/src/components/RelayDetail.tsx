@@ -3,14 +3,15 @@
  * 每个模型展开一次保存「能做什么 / 上下文 / 最大输出 / 接口格式」）→ 高级（生图 / 语音 / 分类器 / 请求头 / 各协议地址，默认收起）→ 删除。
  * 只做呈现：保存仍走 `PUT /api/models/custom/:id`、能力走 registry capabilities、测试走 `/api/models/test`、删除复用面板的删除确认。
  */
-import { Activity, Check, ChevronDown, Download, Loader2, Pencil, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { Activity, Check, ChevronDown, Loader2, Pencil, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { CustomModel, CustomProviderMeta, ModelCapability, RegistryModel, RegistryProvider, RelayCapabilityScope } from "../types";
 import { CTX_PRESETS, fmtTokens, LimitField, OUT_PRESETS, SOURCE } from "./CustomProvider";
 import { Badge, Button, cx, Help, Input, Select } from "./ui";
 import { ModelReasoning } from "./ModelReasoning";
 import { RelayCapabilityScopeFields, scopeDraft, scopePayload } from "./RelayCapabilityScope";
+import { RelayModelAdd } from "./RelayModelAdd";
 
 const CAPS: ModelCapability[] = ["chat", "vision", "image", "classifier"];
 const CAP_LABEL: Record<ModelCapability, string> = { chat: "对话", vision: "识图", image: "生图", classifier: "分类器" };
@@ -21,16 +22,17 @@ const RELAY_APIS = ["openai-completions", "anthropic-messages", "google-generati
 type TestState = { s: "running" } | { s: "ok"; ms: number } | { s: "fail"; msg: string; detail?: string };
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const writableModels = (models: CustomModel[]) => models.map(({ apiEffective: _a, baseUrlEffective: _b, effectiveCapability: _c, ...m }) => m);
 const body = (meta: CustomProviderMeta, patch: Partial<{ name: string; api: string; baseUrl: string; apiKey: string; noKey: boolean; models: CustomModel[]; headers: { name: string; value?: string }[]; classifiers: { protocol: string; modelId: string }[]; protocolUrls: Record<string, string>; capabilityScope: RelayCapabilityScope | null }> = {}) => ({
 	name: meta.name,
 	api: meta.api,
 	baseUrl: meta.baseUrl,
 	noKey: meta.noKey,
 	headers: meta.headerNames.map((name) => ({ name })),
-	models: meta.models.map(({ apiEffective: _a, baseUrlEffective: _b, effectiveCapability: _c, ...m }) => m),
 	classifiers: meta.classifiers?.map((c) => ({ protocol: c.protocol, modelId: c.modelId })) ?? [],
 	...(meta.protocolUrls ? { protocolUrls: meta.protocolUrls } : {}),
 	...patch,
+	models: writableModels(patch.models ?? meta.models),
 });
 
 /** 详情页的一个小节标题：名字 + 一句话 + 右侧操作 */
@@ -61,17 +63,30 @@ export function RelayDetail({ provider, meta, apis, classifierProtocols, strengt
 	const [tests, setTests] = useState<Record<string, TestState>>({});
 	const [testAll, setTestAll] = useState(false);
 	const [deleting, setDeleting] = useState(false);
+	const writing = useRef(false);
+	const lastWrittenSnapshot = useRef<CustomProviderMeta | null>(null);
+	const [writeRevision, setWriteRevision] = useState(0);
 	const reg = useMemo(() => new Map(provider.models.map((m) => [m.id, m])), [provider.models]);
 	const auto = meta.api === "auto";
-	const put = async (patch: Parameters<typeof body>[1]) => {
+	const put = async (patch: Parameters<typeof body>[1], adding = false) => {
+		// PUT replaces the whole model list. Don't reuse the same snapshot after a successful write.
+		if (writing.current || lastWrittenSnapshot.current === meta || deleting) {
+			setErr("渠道设置正在更新，请刷新后再保存。");
+			return false;
+		}
+		writing.current = true;
 		setErr("");
 		try {
 			await api(`/api/models/custom/${meta.id}`, { method: "PUT", json: body(meta, patch) });
+			lastWrittenSnapshot.current = meta;
+			if (!adding) setWriteRevision((n) => n + 1);
 			onReload();
 			return true;
 		} catch (e) {
 			setErr(errText(e));
 			return false;
+		} finally {
+			writing.current = false;
 		}
 	};
 	const isChat = (id: string) => (reg.get(id)?.type ?? "chat") === "chat";
@@ -110,7 +125,7 @@ export function RelayDetail({ provider, meta, apis, classifierProtocols, strengt
 				{meta.models.length} 个模型{counts.length ? ` · ${counts.map(([c, n]) => `${CAP_LABEL[c]} ${n}`).join(" · ")}` : ""}
 			</div>
 			<Connection meta={meta} apis={apis} onSave={put} onTest={() => runTest(meta.models.find((m) => isChat(m.id))?.id ?? meta.models[0]?.id ?? "")} test={tests[meta.models.find((m) => isChat(m.id))?.id ?? ""]} />
-			<Models meta={meta} reg={reg} auto={auto} tests={tests} testAll={testAll} summary={done.length ? `测试完成 · ${okN} 通过 ${done.length - okN} 失败` : ""} onTestAll={runAll} onTest={runTest} onSave={put} onSaveCaps={onSaveCaps} strengthsSlot={strengthsSlot} />
+			<Models meta={meta} reg={reg} auto={auto} tests={tests} testAll={testAll} summary={done.length ? `测试完成 · ${okN} 通过 ${done.length - okN} 失败` : ""} onTestAll={runAll} onTest={runTest} onSave={put} writeRevision={writeRevision} onSaveCaps={onSaveCaps} strengthsSlot={strengthsSlot} />
 			<Advanced meta={meta} auto={auto} classifierProtocols={classifierProtocols} onSave={put} imageSection={imageSection} asrSection={asrSection} />
 			{err && <div className="rounded-lg bg-red-50 p-2 text-xs text-red-600 dark:bg-red-950/40" data-testid="relay-error">{err}</div>}
 			<div className="flex items-center gap-3 border-t border-line pt-4">
@@ -210,7 +225,7 @@ function TestBadge({ t, chat }: { t?: TestState; chat: boolean }) {
 	return <span className="flex items-center gap-0.5 text-[11px] text-red-600" title={t.detail ? `${t.msg}\n${t.detail}` : t.msg} data-testid="model-test-fail"><X size={12} />失败</span>;
 }
 
-function Models({ meta, reg, auto, tests, testAll, summary, onTestAll, onTest, onSave, onSaveCaps, strengthsSlot }: {
+function Models({ meta, reg, auto, tests, testAll, summary, onTestAll, onTest, onSave, writeRevision, onSaveCaps, strengthsSlot }: {
 	meta: CustomProviderMeta;
 	reg: Map<string, RegistryModel>;
 	auto: boolean;
@@ -219,42 +234,27 @@ function Models({ meta, reg, auto, tests, testAll, summary, onTestAll, onTest, o
 	summary: string;
 	onTestAll: () => void;
 	onTest: (id: string) => void;
-	onSave: (p: Parameters<typeof body>[1]) => Promise<boolean>;
+	onSave: (p: Parameters<typeof body>[1], adding?: boolean) => Promise<boolean>;
+	writeRevision: number;
 	onSaveCaps: (modelId: string, caps: ModelCapability[]) => void;
 	strengthsSlot: (m: RegistryModel) => ReactNode;
 }) {
 	const [q, setQ] = useState("");
 	const [cap, setCap] = useState<ModelCapability | "all">("all");
 	const [open, setOpen] = useState<string | null>(null);
-	const [fetched, setFetched] = useState<CustomModel[] | null>(null);
 	const [adding, setAdding] = useState(false);
-	const [newId, setNewId] = useState("");
-	const [busy, setBusy] = useState("");
 	const capsOf = (id: string) => reg.get(id)?.capabilities ?? ["chat"];
 	const list = meta.models.filter((m) => (!q || m.id.toLowerCase().includes(q.toLowerCase())) && (cap === "all" || capsOf(m.id).includes(cap)));
-	const fetchList = async () => {
-		setBusy("fetch");
-		try {
-			setFetched((await api<{ models: CustomModel[] }>("/api/models/custom/fetch-models", { method: "POST", json: { id: meta.id, api: meta.api, baseUrl: meta.baseUrl, headers: meta.headerNames.map((name) => ({ name })) } })).models);
-		} catch (e) {
-			setFetched([]);
-			alertErr(e);
-		} finally {
-			setBusy("");
-		}
-	};
-	const [fetchErr, setFetchErr] = useState("");
-	const alertErr = (e: unknown) => setFetchErr(`获取失败：${errText(e)}`);
-	const addModels = async (ms: CustomModel[]) => {
+	const addModels = (ms: CustomModel[], refreshExisting: boolean) => {
+		const existingIds = new Set(meta.models.map((m) => m.id));
+		if (!refreshExisting && ms.some((m) => existingIds.has(m.id))) return Promise.resolve(false);
 		const incoming = new Map(ms.map((m) => [m.id, m]));
-		const saved = body(meta).models.map((m) => {
+		const saved = meta.models.map((m) => {
 			const found = incoming.get(m.id);
 			incoming.delete(m.id);
-			return found?.listEvidence ? { ...m, listEvidence: found.listEvidence } : m;
+			return refreshExisting && found?.listEvidence ? { ...m, listEvidence: found.listEvidence } : m;
 		});
-		setBusy("add");
-		if (await onSave({ models: [...saved, ...incoming.values()] })) setFetched(null);
-		setBusy("");
+		return onSave({ models: [...saved, ...incoming.values()] }, true);
 	};
 	const chips: [ModelCapability | "all", string, number][] = [["all", "全部", meta.models.length], ...CAPS.map((c) => [c, CAP_LABEL[c], meta.models.filter((m) => capsOf(m.id).includes(c)).length] as [ModelCapability, string, number]).filter(([, , n]) => n > 0)];
 	return (
@@ -263,12 +263,9 @@ function Models({ meta, reg, auto, tests, testAll, summary, onTestAll, onTest, o
 				<Button size="sm" variant="outline" disabled={testAll || !meta.models.length} onClick={onTestAll} data-testid="relay-test-all">
 					{testAll ? <Loader2 size={13} className="animate-spin" /> : <Activity size={13} />} 测试全部模型
 				</Button>
-				<Button size="sm" variant="outline" disabled={busy === "fetch"} onClick={() => void fetchList()} data-testid="relay-fetch">
-					{busy === "fetch" ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} 获取模型列表
-				</Button>
-				<Button size="sm" variant="ghost" onClick={() => setAdding((v) => !v)} data-testid="relay-add-open">
-					<Plus size={13} /> 手动添加
-				</Button>
+				{!adding && <Button size="sm" variant="outline" onClick={() => setAdding(true)} data-testid="relay-add-open">
+					<Plus size={13} /> 添加模型
+				</Button>}
 			</Head>
 			<div className="flex flex-wrap items-center gap-2">
 				<div className="relative min-w-36 flex-1">
@@ -284,36 +281,9 @@ function Models({ meta, reg, auto, tests, testAll, summary, onTestAll, onTest, o
 				</div>
 				{summary && <span className="text-[11px] text-mut" data-testid="relay-test-summary">{summary}</span>}
 			</div>
-			{adding && (
-				<form className="flex gap-2" onSubmit={(e) => (e.preventDefault(), newId.trim() && void addModels([{ id: newId.trim() }]).then(() => setNewId("")))}>
-					<Input placeholder="模型 ID，回车添加" value={newId} onChange={(e) => setNewId(e.target.value)} data-testid="relay-add-input" />
-					<Button type="submit" size="sm" variant="outline" disabled={busy === "add"}>添加</Button>
-				</form>
-			)}
-			{fetchErr && <div className="text-xs text-red-600">{fetchErr}</div>}
-			{fetched && fetched.length > 0 && (
-				<div className="rounded-lg border border-line p-2" data-testid="relay-fetched">
-					<div className="mb-1.5 flex items-center justify-between text-xs text-mut">
-						获取到 {fetched.length} 个模型，点击添加
-						<span className="flex gap-3">
-							<button className="text-accent" onClick={() => void addModels(fetched)}>添加新模型并更新已有能力</button>
-							<button onClick={() => setFetched(null)}>收起</button>
-						</span>
-					</div>
-					<div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
-						{fetched.map((f) => {
-							const has = meta.models.some((m) => m.id === f.id);
-							return (
-								<button key={f.id} disabled={has} onClick={() => void addModels([f])} className={cx("rounded-full border px-2.5 py-1 text-xs", has ? "border-accent text-accent" : "border-line")}>
-									{f.id}
-								</button>
-							);
-						})}
-					</div>
-				</div>
-			)}
+			{adding && <RelayModelAdd key={JSON.stringify([writeRevision, meta])} meta={meta} onAdd={addModels} onClose={() => setAdding(false)} />}
 			<div className="max-h-[28rem] divide-y divide-line overflow-y-auto rounded-xl border border-line" data-testid={`service-models-${meta.id}`}>
-				{!list.length && <div className="p-3 text-xs text-mut">{meta.models.length ? "没有匹配的模型" : "还没有模型：点「获取模型列表」或「手动添加」"}</div>}
+				{!list.length && <div className="p-3 text-xs text-mut">{meta.models.length ? "没有匹配的模型" : "还没有模型：点「添加模型」从目录选或手动输入"}</div>}
 				{list.map((m) => (
 					<ModelLine key={m.id} m={m} meta={meta} r={reg.get(m.id)} auto={auto} t={tests[m.id]} open={open === m.id} onToggle={() => setOpen(open === m.id ? null : m.id)} onTest={() => onTest(m.id)} onSave={onSave} onSaveCaps={onSaveCaps} strengthsSlot={strengthsSlot} />
 				))}

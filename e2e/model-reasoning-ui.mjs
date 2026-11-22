@@ -66,8 +66,9 @@ try {
 	assert.equal((await j("/api/models")).find((m) => m.provider === provider.id && m.id === "other-unknown-model").reasoning, undefined);
 	await page.goto(`${base}/?agent=${agent.id}`);
 	const compact = await openCompact(page);
-	assert.equal(await compact.locator(".pa-think-step").count(), 2);
-	await compact.getByRole("slider").press("End");
+	await compact.getByText(/已保存的「关闭」.*设置未修改/).waitFor();
+	assert.equal(await compact.getByRole("slider").count(), 0);
+	await compact.getByRole("button", { name: "选择高", exact: true }).click();
 	await wait(async () => (await j("/api/agents")).find((a) => a.id === agent.id).thinking === "high");
 	await page.keyboard.press("Escape");
 	await j(`/api/agents/${agent.id}/messages`, "POST", { text: "本地推理参数验证" });
@@ -101,7 +102,7 @@ try {
 	await row.getByTestId("relay-model-save").click();
 	await wait(async () => !(await row.getByTestId("relay-model-editor").count()));
 	let disabled = (await j("/api/models")).find((m) => m.provider === provider.id && m.id === modelId);
-	assert.equal(disabled.reasoning, false); assert.deepEqual(disabled.thinking, ["off"]); assert.equal(disabled.thinkingLevelMap, undefined);
+	assert.equal(disabled.reasoning, false); assert.deepEqual(disabled.thinking, []); assert.equal(disabled.thinkingLevelMap, undefined);
 	await row.getByTestId("relay-model-toggle").click();
 	await row.getByTestId("model-reasoning").getByRole("button").first().click();
 	await select("reasoning-mode", "自动识别");

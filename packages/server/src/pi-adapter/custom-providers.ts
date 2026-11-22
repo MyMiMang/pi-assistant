@@ -18,6 +18,7 @@ import { modelDb } from "../model-db.ts";
 import { AUTO_API, effectiveApi, effectiveBaseUrl, protocolBaseUrl, RELAY_APIS } from "./relay-protocols.ts";
 import { detectLimits, knownReasoning, knownThinkingLevelMap, knownVision, type LimitsSource, providerHint, resolveLimits } from "./model-limits.ts";
 import { cleanEndpoint, effectiveRelayModel, matchingEvidence, scopedProtocol, validScope, type CapabilityScope, type ModelListEvidence } from "./relay-capabilities.ts";
+import { directoryEffort } from "./relay-directory-effort.ts";
 
 export interface CustomModel {
 	listEvidence?: ModelListEvidence;
@@ -563,12 +564,11 @@ export class CustomProviders {
 		}
 		const seen = new Map<string, FetchedModel>();
 		for (const raw of j.data ?? j.models ?? []) {
-			const id = String(raw.id ?? raw.name ?? "").replace(/^models\//, "");
-			if (!id || seen.has(id)) continue;
+			const id = String(raw.id ?? raw.name ?? "").replace(/^models\//, ""); if (!id || seen.has(id)) continue;
 			const input = detectInput(raw);
 			const cls = detectClassifierMetadata(raw);
 			const m = this.withLimits(
-				{ id, ...(scopedProtocol(o.api) ? { listEvidence: { provider: o.id, model: id, api: o.api, baseUrl: base, vision: input?.includes("image"), reasoning: typeof raw.reasoning === "boolean" ? raw.reasoning : undefined } } : { reasoning: typeof raw.reasoning === "boolean" ? raw.reasoning : undefined, input }), ...cls },
+				{ id, ...(scopedProtocol(o.api) ? { listEvidence: { provider: o.id, model: id, api: o.api, baseUrl: base, vision: input?.includes("image"), reasoning: typeof raw.reasoning === "boolean" ? raw.reasoning : undefined, ...(!res.redirected && raw.id === id && !cls.detectedType ? directoryEffort(o.api, base, raw) : {}) } } : { reasoning: typeof raw.reasoning === "boolean" ? raw.reasoning : undefined, input }), ...cls },
 				detectLimits(raw),
 				base,
 				o.api,

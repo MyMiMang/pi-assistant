@@ -10,6 +10,24 @@ import { memoryCredentialStore } from "./in-memory-credentials.ts";
 await initModels(memoryCredentialStore());
 const app = new Hono<Parameters<typeof mountModelRoutes>[0] extends Hono<infer E> ? E : never>();
 mountModelRoutes(app);
+test("添加前预览按当前保存的渠道投影，不写库存、不探测、不猜同名", async () => {
+ const api = "openai-completions", baseUrl = "http://127.0.0.1:1/v1";
+ const input = { name: "预览 fixture", api, baseUrl, noKey: true, models: [{ id: "fixture-existing" }] };
+ const a = await customProviders.save(null, { ...input, capabilityScope: { api, baseUrl, source: "合成声明", appliesTo: "all-chat", defaults: { vision: true, reasoning: true, levels: { xhigh: "fixture_extreme", max: "fixture_limit" } }, exceptions: { "fixture-limited": { vision: false, reasoning: false } } } });
+ const b = await customProviders.save(null, { ...input, name: "另一渠道" });
+ const preview = async (id: string, modelId: string) => {
+  const r = await app.request(`/api/models/custom/${id}/add-preview`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modelId }) });
+  assert.equal(r.status, 200);
+  return (await r.json()).model.effectiveCapability;
+ };
+ try {
+  assert.deepEqual((await preview(a.id, "fixture-unlisted-new")).levels, { xhigh: "fixture_extreme", max: "fixture_limit" });
+  assert.equal((await preview(a.id, "fixture-limited")).vision, false);
+  assert.equal((await preview(b.id, "fixture-unlisted-new")).vision, undefined);
+  assert.deepEqual(customProviders.list().find(p => p.id === a.id)?.models.map(m => m.id), ["fixture-existing"]);
+ } finally { await customProviders.remove(a.id); await customProviders.remove(b.id); }
+});
+
 test("自动协议只向已保存的实际列表地址刷新，证据不能带到切换后的端点", async () => {
  const hits: string[] = [];
  const upstream = createServer((req, res) => {
