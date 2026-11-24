@@ -22,7 +22,7 @@ test("17项只有一张配置表，固定供应链来源完整且不包含pi-acp
   const release = manifest.find(r => r.name === agent.packageName)!;
   assert.ok(release, agent.id);
   if (release.source === "binary") for (const asset of Object.values(release.assets ?? {})) {
-   assert.match(asset.sha256, /^[a-f0-9]{64}$/i, agent.id); assert.ok(asset.url.startsWith("https://"));
+   assert.match(asset.sha256 ?? "", /^[a-f0-9]{64}$/i, agent.id); assert.ok(asset.url.startsWith("https://"));
   } else assert.match(release.integrity, /^sha512-/);
  }
 });

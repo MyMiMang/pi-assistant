@@ -9,10 +9,12 @@ import { NATIVE_ACP_AGENTS, type NativeAcpDefinition } from "@pi-assistant/share
 import { nativeAcpHome, prepareNativeAcpHome, type ManagedCliId as NativeAcpId } from "./native-env.ts";
 import { managedRuntimeEnv } from "./managed-runtime-env.ts";
 
-import { binaryAsset, binaryAssetIdentity, binaryLaunch, extractBinary, npmLaunch, validateAntigravityAsset, versionOk } from "./native-binary.ts";
+import { binaryAsset, binaryAssetIdentity, binaryLaunch, extractBinary, npmLaunch, validateAntigravityAsset, verifyBinaryBytes, versionOk } from "./native-binary.ts";
+
+import { agyManifestVersion, compareAgyVersions } from "./agy-update-version.ts";
 
 export interface NativeBinaryAsset {
-	url: string; sha256: string; archive?: "tar.gz" | "tar.xz" | "tar.bz2" | "zip" | "raw" | "binary"; entry: string; unsupported?: string;
+	url: string; sha256?: string; sha512?: string; archive?: "tar.gz" | "tar.xz" | "tar.bz2" | "zip" | "raw" | "binary"; entry: string; unsupported?: string;
 	/** 文件参数相对版本根展开；{entry} 可显式引用入口。协议参数由 catalog 提供。 */
 	args?: string[]; executable?: "node" | "binary";
 }
@@ -91,6 +93,7 @@ export class NativeInstaller {
 			if (release.source !== this.release(id).source) return null;
 			const dir = join(root, current.version);
 			const entry = release.source === "binary" ? undefined : npmBinPath(dir, release.packageName, release.bin);
+			if (id === "antigravity" && release.source === "binary") validateAntigravityAsset(release);
 			const launch = release.source === "binary" ? binaryLaunch(dir, release) : npmLaunch(entry!, release.executable);
 			return { version: release.version, ...launch, integrity: release.integrity, verified: release.verified };
 		} catch { return null; }
@@ -127,16 +130,17 @@ export class NativeInstaller {
 			if (url !== expected) throw new Error("非官方更新清单地址");
 			const raw = await fetchWithProgress(url, undefined, { redirect: "error", signal: AbortSignal.timeout(60_000) });
 			const meta = JSON.parse(raw.toString());
-			if (typeof meta.url !== "string") throw new Error("官方 binary 版本信息无效");
+			if (!meta || typeof meta.url !== "string") throw new Error("官方 binary 版本信息无效");
 			const urlVersion = meta.url.startsWith(binaryBase) ? meta.url.slice(binaryBase.length).split("/")[0] : "";
-			if (!versionOk(urlVersion) || (meta.version !== undefined && meta.version !== urlVersion)) throw new Error("官方 binary 版本信息无效");
-			meta.version = urlVersion;
-			const asset: NativeBinaryAsset = { url: meta.url, sha256: meta.sha256 ?? "", entry: "antigravity", archive: os === "windows" ? "binary" : "tar.gz" };
-			const next: NativeRelease = { ...known, version: meta.version, integrity: asset.sha256, assets: { [`${process.platform}-${process.arch}`]: asset } };
-			// 即使官方尚未发布摘要，也先验证 URL；无摘要只向界面报告版本。
-			validateAntigravityAsset({ ...next, assets: { [`${process.platform}-${process.arch}`]: { ...asset, sha256: "0".repeat(64) } } });
-			if (!asset.sha256) next.updateBlocked = "官方尚未提供 SHA256，暂不能更新，请等待 App 更新固定清单";
-			else validateAntigravityAsset(next);
+			if (!agyManifestVersion(urlVersion, meta.version)) throw new Error("官方 binary 版本信息无效");
+			const asset: NativeBinaryAsset = { url: meta.url, sha256: meta.sha256, sha512: meta.sha512, entry: "antigravity", archive: os === "windows" ? "binary" : "tar.gz" };
+			const platform = `${process.platform}-${process.arch}`;
+			const next: NativeRelease = { ...known, version: urlVersion, integrity: "", assets: { [platform]: asset } };
+			if (asset.sha256 === undefined && asset.sha512 === undefined) {
+				// 仅验证地址，不把占位摘要返回给安装流程。
+				validateAntigravityAsset({ ...next, assets: { [platform]: { ...asset, sha256: "0".repeat(64) } } });
+				next.updateBlocked = "官方尚未提供 SHA256 / SHA512，暂不能更新";
+			} else validateAntigravityAsset(next);
 			return next;
 		}
 		const raw = await this.run({ args: ["view", `${known.packageName}@latest`, "--json"], cwd: this.root(id), env: this.npmEnvironment(id), signal: AbortSignal.timeout(60_000) });
@@ -155,6 +159,8 @@ export class NativeInstaller {
 			if (!versionOk(release.version) || (release.source !== "binary" && !npmVersionOk(release.version)) || release.packageName !== known.packageName || release.source !== known.source || release.updateBlocked || (release.source !== "binary" && !/^sha512-[A-Za-z0-9+/]+=*$/.test(release.integrity))) throw new Error(release.updateBlocked || "无效安装版本");
 			if (release.source === "binary") {
 				const asset = id === "antigravity" ? validateAntigravityAsset(release) : binaryAsset(release);
+				const installed = id === "antigravity" ? this.installed(id) : null;
+				if (installed && (compareAgyVersions(release.version, installed.version) ?? -1) < 0) throw new Error("拒绝降级 Antigravity");
 				if (id !== "antigravity") {
 					const fixed = binaryAsset(known);
 					if (release.version !== known.version || binaryAssetIdentity(asset) !== binaryAssetIdentity(fixed) || release.executable !== known.executable) throw new Error("binary 安装清单与固定版本或当前平台不符");
@@ -174,10 +180,10 @@ export class NativeInstaller {
 					const asset = binaryAsset(release);
 					progress.detail(`下载并校验 ${id}@${release.version}`);
 					const bytes = await fetchWithProgress(asset.url, progress, { signal: controller.signal, redirect: id === "antigravity" ? "error" : "follow" });
-					if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256.toLowerCase()) throw new Error("binary SHA256 校验失败");
+					const integrity = verifyBinaryBytes(bytes, asset);
 					controller.signal.throwIfAborted();
 					extractBinary(bytes, staging, release, id === "antigravity");
-					const installedRelease = { ...release, integrity: asset.sha256.toLowerCase() };
+					const installedRelease = { ...release, integrity };
 					writeFileSync(join(staging, ".pia-installed.json"), JSON.stringify({ ...installedRelease, verified: false }));
 					return this.activate(id, installedRelease, staging, target, controller.signal);
 				}

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { agyManifestVersion, compareAgyVersions } from "../src/cli-agents/agy-update-version.ts";
 import { NativeInstaller, type NativeRelease } from "../src/cli-agents/native-install.ts";
 const base = "https://storage.googleapis.com/antigravity-public/antigravity-cli/";
 const manifest = "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/{platform}_{arch}.json";
@@ -64,6 +65,36 @@ test("官方manifest有SHA可安装，无SHA返回阻塞原因，拒绝外部URL
 		await assert.rejects(installer.checkUpdate("antigravity"), /下载地址|版本信息/);
 	}
 }));
+test("1.5.16 数字构建 URL 的 SHA512 清单应可更新，检查不下载包", async () => fixture(async ({ installer, setFetch }) => {
+	// 合成构建号与摘要，HTTP 响应不访问真实上游。
+	const version = "1.5.16-5037094733742081";
+	const bytes = Buffer.from("fake 1.5.16 package bytes");
+	const url = release(bytes, version).assets![key].url;
+	let manifestRequests = 0;
+	let packageRequests = 0;
+	let declaredVersion: string | undefined;
+	setFetch(async (input) => {
+		if (String(input) === url) { packageRequests++; return new Response(bytes); }
+		assert.match(String(input), /^https:\/\/antigravity-cli-auto-updater-974169037036\.us-central1\.run\.app\/manifests\//);
+		manifestRequests++;
+		return Response.json({ url, version: declaredVersion, sha512: createHash("sha512").update(bytes).digest("hex") });
+	});
+	for (declaredVersion of [undefined, "1.5.16", version]) {
+		const next = await installer.checkUpdate("antigravity");
+		assert.equal(packageRequests, 0);
+		assert.equal(next.version, version);
+		assert.equal(next.assets![key].url, url);
+		assert.equal(next.updateBlocked, undefined);
+	}
+	assert.equal(manifestRequests, 3);
+}));
+test("Antigravity 版本严格匹配，构建号及版本按数值排序", () => {
+	assert.equal(agyManifestVersion("1.5.16-5250855658717184", "1.5.16"), true);
+	for (const v of ["1.5.160-5250855658717184", "1.5.16-alpha", "1.5.16-4-extra", "1.5.16-4\n"]) assert.equal(agyManifestVersion(v, "1.5.16"), false);
+	assert.equal(agyManifestVersion("1.5.16-12", "1.5.16-11"), false);
+	assert.equal(compareAgyVersions("1.5.16-9007199254740993", "1.5.16-9007199254740992"), 1);
+	assert.equal(compareAgyVersions("1.5.9-99", "1.5.16-1"), -1);
+});
 test("binary拒绝无摘要、越界入口与不支持平台，且不联网", async () => fixture(async ({ installer, setFetch }) => {
 	setFetch(async () => { throw new Error("unexpected network"); });
 	const r = release(Buffer.from("fake"));

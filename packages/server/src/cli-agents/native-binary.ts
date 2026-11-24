@@ -1,4 +1,5 @@
 /** 官方 binary 的路径、归档与启动参数校验；只调用系统解压器，绝不执行下载内容。 */
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, readSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -13,6 +14,25 @@ export const versionOk = (v: unknown): v is string => typeof v === "string" && /
 export function safeBinaryPath(value: unknown): value is string {
 	return typeof value === "string" && value.length > 0 && value.length <= 1024 && !/[\\\x00-\x1f\x7f:<>"|?*\[\]]/.test(value) && value.split("/").every((s) => !!s && s !== "." && s !== ".." && !/[. ]$/.test(s) && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(s));
 }
+const digestFields = [["sha256", 64], ["sha512", 128]] as const;
+function binaryDigests(asset: NativeBinaryAsset) {
+	const out: ["sha256" | "sha512", string][] = [];
+	for (const [algorithm, length] of digestFields) {
+		const value = asset[algorithm];
+		if (value === undefined) continue;
+		if (typeof value !== "string" || value.length !== length || /[^a-f0-9]/i.test(value)) throw new Error(`binary ${algorithm.toUpperCase()} 摘要无效`);
+		out.push([algorithm, value.toLowerCase()]);
+	}
+	if (!out.length) throw new Error("binary 缺少 SHA256 / SHA512 摘要");
+	return out;
+}
+export function verifyBinaryBytes(bytes: Buffer, asset: NativeBinaryAsset): string {
+	const digests = binaryDigests(asset);
+	for (const [algorithm, expected] of digests) {
+		if (createHash(algorithm).update(bytes).digest("hex") !== expected) throw new Error(`binary ${algorithm.toUpperCase()} 校验失败`);
+	}
+	return digests.map(([algorithm, digest]) => algorithm === "sha256" ? digest : `sha512:${digest}`).join(";");
+}
 export function binaryAsset(release: NativeRelease): NativeBinaryAsset {
 	const asset = release.assets?.[binaryPlatform()];
 	if (!asset) throw new Error("没有适用于当前平台的安装包");
@@ -20,13 +40,14 @@ export function binaryAsset(release: NativeRelease): NativeBinaryAsset {
 	const url = new URL(asset.url);
 	if (url.protocol !== "https:" || url.href !== asset.url || url.username || url.password || url.search || url.hash) throw new Error("无效 binary 下载地址");
 	if (!safeBinaryPath(asset.entry) || asset.entry.split("/").some((s) => s.startsWith(".pia-"))) throw new Error("binary 入口无效");
-	if (!/^[a-fA-F0-9]{64}$/.test(asset.sha256) || ![undefined, "tar.gz", "tar.xz", "tar.bz2", "zip", "raw", "binary"].includes(asset.archive)) throw new Error("binary SHA256 或归档格式无效");
+	binaryDigests(asset);
+	if (![undefined, "tar.gz", "tar.xz", "tar.bz2", "zip", "raw", "binary"].includes(asset.archive)) throw new Error("binary 归档格式无效");
 	if (asset.executable !== undefined && !["node", "binary"].includes(asset.executable)) throw new Error("binary 启动方式无效");
 	if (asset.args !== undefined && (!Array.isArray(asset.args) || asset.args.some((a) => typeof a !== "string" || a.includes("\0") || (a.includes("{entry}") && a !== "{entry}")))) throw new Error("binary 启动参数无效");
 	return asset;
 }
 export function binaryAssetIdentity(asset: NativeBinaryAsset): string {
-	return JSON.stringify([asset.url, asset.sha256.toLowerCase(), asset.archive, asset.entry, asset.args ?? [], asset.executable, asset.unsupported]);
+	return JSON.stringify([asset.url, binaryDigests(asset), asset.archive, asset.entry, asset.args ?? [], asset.executable, asset.unsupported]);
 }
 export function validateAntigravityAsset(release: NativeRelease): NativeBinaryAsset {
 	const asset = binaryAsset(release);

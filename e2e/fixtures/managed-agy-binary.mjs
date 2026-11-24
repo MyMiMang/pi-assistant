@@ -27,19 +27,29 @@ else {const child=spawn(process.execPath,[${JSON.stringify(join(root,"packages/s
 import {NativeInstaller} from ${url("packages/server/src/cli-agents/native-install.ts")};
 import {managedAuthRunner} from ${url("packages/server/src/cli-agents/managed-actions.ts")};
 import {runManagedLogin} from ${url("packages/server/src/cli-agents/managed-auth.ts")};
-import {readFileSync,existsSync} from 'node:fs';
+import {readFileSync,existsSync,appendFileSync} from 'node:fs';
 if(process.env.PIA_MOCK!=='1'||!process.env.PIA_DATA_DIR?.startsWith(${JSON.stringify(join(dir,".."))}))throw new Error('requires temporary Mock');
 delete process.env.PIA_AGY_COMMAND;
 managedAuthRunner.login=i=>runManagedLogin({...i,terminalLaunch:script=>({command:'/bin/sh',args:[script]})});
 const original=NativeInstaller.prototype.install;
 NativeInstaller.prototype.install=function(id,selected){if(id!=='antigravity')throw new Error('unexpected install');this.options.releases[id]=${JSON.stringify(release("1.0.0"))};return original.call(this,id,selected??this.options.releases[id]);};
 const originalFetch=globalThis.fetch;
+const manifestOverride=${JSON.stringify(join(dir, "manifest.json"))};
+const requests=${JSON.stringify(join(dir, "requests.jsonl"))};
 globalThis.fetch=async(input,init)=>{const address=String(input);
+ if(existsSync(manifestOverride)&&!address.startsWith('http://127.0.0.1:')){
+  const meta=JSON.parse(readFileSync(manifestOverride,'utf8'));
+  const manifestUrl=${JSON.stringify(release("1.0.0").updateManifest.replace("{platform}", process.platform).replace("{arch}", process.arch === "x64" ? "amd64" : process.arch))};
+  appendFileSync(requests,JSON.stringify(address)+'\\n');
+  if(address===manifestUrl)return Response.json(meta);
+  if(address===meta.url||address===${JSON.stringify(release("1.0.0").assets[`${process.platform}-${process.arch}`].url)})return new Response(readFileSync(${JSON.stringify(archive)}));
+  throw new Error('unexpected external request: '+address);
+ }
  if(address.startsWith('https://storage.googleapis.com/antigravity-public/antigravity-cli/'))return new Response(readFileSync(${JSON.stringify(archive)}));
  if(address.startsWith('https://antigravity-cli-auto-updater-'))return Response.json({version:'1.0.1',url:${JSON.stringify(release("1.0.1").assets[`${process.platform}-${process.arch}`].url)},...(existsSync(${JSON.stringify(update)})?{sha256:${JSON.stringify(sha)}}:{})});
  if(!address.startsWith('http://127.0.0.1:'))throw new Error('unexpected external network');
  return originalFetch(input,init);
 };
 `);
- return { preload, capture, update };
+ return { preload, capture, update, archive, manifestOverride: join(dir, "manifest.json"), requests: join(dir, "requests.jsonl") };
 }

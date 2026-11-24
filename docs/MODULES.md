@@ -210,6 +210,7 @@
 | `login-flows.ts` | Pi 登录交互桥接到网页 |
 | `onboarding.ts` | 首次向导状态 |
 | `housekeeping.ts` | 日志与记录定期清理 |
+| `cli-agents/agy-update-version.ts` | Antigravity 官方显示版本与完整数字构建身份校验、比较，阻止重复提示和降级 |
 | `cli-agents/agy-usage.ts` | Antigravity 按会话累计快照和本轮单步来源计算尾段兜底用量，由 `AgyProcess` 持有；单测 `test/agy-usage.test.ts`，假 CLI 落账回归见 `test/cli-models-agy-session.test.ts` |
 | `usage/` | 用量、价格、费用 |
 | `themes/` | 主题与 AI 设计主题 |
