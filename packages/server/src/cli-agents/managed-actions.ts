@@ -3,6 +3,8 @@ import { nativeInstaller, managedArgs, releaseFor } from "./managed-install.ts";
 import { runManagedLogin } from "./managed-auth.ts";
 import { prepareNativeAcpHome } from "./native-env.ts";
 import { config } from "../config.ts";
+import { agyAccountGate } from "./agy-account-gate.ts";
+import { accountJournal, blockUnverifiedAccount, setActiveAgyRtAccount } from "./agy-account-journal.ts";
 
 /** 测试通过模块 preload 注入假终端，生产入口不接受外部命令。 */
 export const managedAuthRunner = { login: runManagedLogin };
@@ -27,12 +29,22 @@ export function managedActions(id: "claude-code" | "codex" | "opencode" | "antig
   operation = kind; error = undefined;
   const current = controller = new AbortController();
   void (async () => {
+   const release = id === "antigravity" ? await agyAccountGate.manage() : undefined;
+   if (id === "antigravity" && !release) throw new Error("Antigravity 仍有任务或账号操作，暂不能继续。");
+   try {
+   if (current.signal.aborted) return;
+   if (id === "antigravity" && kind !== "login" && accountJournal()) {
+    blockUnverifiedAccount();
+   }
    prepareNativeAcpHome(config.dataDir, id);
    if (kind === "login") {
     const executable = command();
     if (!executable) throw new Error("请先安装工具");
     await managedAuthRunner.login({ id, command: executable, args: managedArgs(id, envName), dataDir: config.dataDir, signal: current.signal });
+    // 原 Google 登录完成后自动切回原登录环境，保留已导入的 RT 账号列表
+    if (id === "antigravity") setActiveAgyRtAccount(null);
    } else await nativeInstaller.install(id, kind === "update" ? latest : undefined);
+   } finally { release?.(); }
    await recheck();
   })().catch(e => { if (!current.signal.aborted) error = e instanceof Error ? e.message : String(e); })
    .finally(() => { operation = undefined; controller = undefined; });

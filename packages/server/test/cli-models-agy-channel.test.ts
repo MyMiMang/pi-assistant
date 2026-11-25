@@ -12,6 +12,7 @@ import { after, before, test } from "node:test";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { normalizeContext, type AssistantMessage, type AssistantMessageEvent, type Message, type Model, type SimpleStreamOptions, type ToolResultMessage, type UserMessage } from "@earendil-works/pi-ai";
+import { agyAccountGate } from "../src/cli-agents/agy-account-gate.ts";
 import { parseAgyModels } from "../src/cli-agents/agy-models.ts";
 import { Type } from "../src/pi-adapter/index.ts";
 import { AGY_IMAGE_HINT, ANTIGRAVITY_API, ANTIGRAVITY_PROVIDER, createAntigravityChannel, describeAgyError } from "../src/pi-adapter/cli-models/antigravity.ts";
@@ -76,6 +77,21 @@ async function until(cond: () => boolean, what: string, ms = 8000) {
 /** 每次启动 agy 记一行 */
 const launches = () => (existsSync(logFile) ? readFileSync(logFile, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { pid: number; argv: string[]; conversation: string | null; model: string }) : []);
 const noLeftovers = () => assert.equal(channel.liveCount(), 0);
+
+test("账号切换期间真实渠道拒绝启动；已存在的假 agy 不被切换打断", async () => {
+	const release = agyAccountGate.switchAccount();
+	assert.ok(release);
+	const before = launches().length;
+	try {
+		const blocked = await run(ctx([user("不能启动")]), { sessionId: "account-blocked" });
+		assert.match(blocked.message.errorMessage ?? "", /账号正在切换/);
+		assert.equal(launches().length, before);
+	} finally { release(); }
+	const existing = await run(ctx([user("仍在原账号")]), { sessionId: "account-old" });
+	assert.equal(existing.message.stopReason, "stop");
+	assert.equal(launches().length, before + 1);
+	assert.equal(agyAccountGate.switchAccount(), null);
+});
 
 test("纯文字一轮：start 在前、文字事件成对、恰好一个 done；用量按 agent_response 步骤、cost 为 0", async () => {
 	setScenario("text");

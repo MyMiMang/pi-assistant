@@ -30,6 +30,10 @@
 | `src/cli-agents/acp-inactivity.ts` | 原生轮次十分钟无事件保护；等待审批时不取消，可注入时钟 |
 | `src/cli-agents/native-env.ts` | 受管工具独立 home、白名单环境与 HTTP MCP 定义 |
 | `src/cli-agents/managed-runtime-env.ts` | 全部受管 CLI 共用私有 npm prefix / 空配置 / cache；运行 PATH 按私有 Node、受管命令目录、原始用户 PATH 排序去重，安装 npm 保持精简 PATH；二次白名单保留最终边界 |
+| `src/cli-agents/agy-account-gate.ts` | 受管 agy 进程与账号切换共用的进程内互斥，回滚核对失败后禁止启动 |
+| `src/cli-agents/agy-account-vault.ts` | 生产 Antigravity 多账号 RT 加密存储、受管 CLI 暂存验证与独立目录原子切换（支持切回原 Google 登录） |
+| `src/cli-agents/agy-oauth-identity.ts` | Antigravity 私有凭据文件原子读写、JWT / Google UserInfo 身份读取与可选 OAuth 刷新校验 |
+| `src/cli-agents/agy-rt-import.ts`、`src/routes/agy-rt-import.ts` | Antigravity 本机账号管理：验证身份、添加与切换分离、暂存 CLI 验证和原子启用；没有受信适配器时不可用 |
 | `src/cli-agents/managed-env.ts` | 四家只借脑子渠道的私有环境，复用 native-env 强制覆盖 HOME / XDG；Antigravity 固定 AGY_CLI_DISABLE_AUTO_UPDATE=true |
 | `src/cli-agents/managed-install.ts` | 全部受管 CLI 共用安装器实例与固定清单，区分开发测试命令覆盖和安装入口参数 |
 | `src/cli-agents/native-amp.ts` | Amp 官方 runtime 的薄接线；复用 NativeInstaller 独立产物与固定清单，启动只取私有绝对路径，不扫描宿主 |

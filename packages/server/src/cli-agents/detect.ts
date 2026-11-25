@@ -33,13 +33,13 @@ interface Ran {
 	failed?: string;
 }
 
-function run(command: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<Ran> {
+function run(command: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal): Promise<Ran> {
 	return new Promise((resolve) => {
-		execFile(command, args, { env, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+		execFile(command, args, { env, timeout: timeoutMs, signal, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
 			if (!err) return resolve({ stdout, stderr, code: 0 });
 			const e = err as NodeJS.ErrnoException & { killed?: boolean };
 			if (typeof e.code === "number") return resolve({ stdout, stderr, code: e.code }); // 正常退出但码非 0（未登录时 auth status 退出 1）
-			resolve({ stdout, stderr, code: null, failed: e.killed ? `超时（${Math.round(timeoutMs / 1000)} 秒）` : String(e.code ?? e.message) });
+			resolve({ stdout, stderr, code: null, failed: signal?.aborted ? "已取消" : e.killed ? `超时（${Math.round(timeoutMs / 1000)} 秒）` : String(e.code ?? e.message) });
 		});
 	});
 }
@@ -52,6 +52,9 @@ export interface DetectOptions {
 	extraEnv?: Record<string, string>;
 	commandArgs?: string[];
 	dataDir?: string;
+	/** 仅 agy 校验候选账号时使用：覆盖本次探测的隔离 HOME */
+	homeOverride?: string;
+	signal?: AbortSignal;
 	timeoutMs?: number;
 }
 
@@ -115,7 +118,7 @@ export interface AgyStatus {
 
 /** 问 `agy models`：成功返回模型家族，失败抛带原文的错误。不读任何凭证文件。 */
 export async function listAgyModels(command: string, opts: Omit<DetectOptions, "command"> = {}): Promise<AgyFamily[]> {
-	const r = await run(command, [...(opts.commandArgs ?? []), "models"], buildAgyEnv({ dataDir: opts.dataDir, baseEnv: opts.baseEnv, command, extra: opts.extraEnv }), opts.timeoutMs ?? 30_000);
+	const r = await run(command, [...(opts.commandArgs ?? []), "models"], buildAgyEnv({ dataDir: opts.dataDir, homeOverride: opts.homeOverride, baseEnv: opts.baseEnv, command, extra: opts.extraEnv }), opts.timeoutMs ?? 30_000, opts.signal);
 	if (r.failed) throw new Error(`运行 agy models 失败：${r.failed}`);
 	if (r.code !== 0) throw new Error((r.stdout + r.stderr).trim().slice(0, 300) || `agy models 退出码 ${r.code}`);
 	const families = parseAgyModels(r.stdout);
@@ -127,8 +130,8 @@ export async function listAgyModels(command: string, opts: Omit<DetectOptions, "
 export async function detectAgy(opts: DetectOptions = {}): Promise<AgyStatus> {
 	const command = opts.command;
 	if (!command) return { installed: false, loggedIn: false, error: "还没在 Pi 里安装 Antigravity：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。" };
-	const env = buildAgyEnv({ dataDir: opts.dataDir, baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
-	const ver = await run(command, [...(opts.commandArgs ?? []), "--version"], env, opts.timeoutMs ?? 15_000);
+	const env = buildAgyEnv({ dataDir: opts.dataDir, homeOverride: opts.homeOverride, baseEnv: opts.baseEnv, command, extra: opts.extraEnv });
+	const ver = await run(command, [...(opts.commandArgs ?? []), "--version"], env, opts.timeoutMs ?? 15_000, opts.signal);
 	if (ver.failed) return { installed: false, command, loggedIn: false, error: `运行 agy 失败：${ver.failed}` };
 	const version = /\d+\.\d+\.\d+\S*/.exec(ver.stdout)?.[0];
 	try {

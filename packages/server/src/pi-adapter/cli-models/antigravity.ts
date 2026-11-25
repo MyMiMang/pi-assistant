@@ -12,6 +12,8 @@
  * - 没有工具的请求（Pi 整理上下文时的总结等）：单次跑完就关进程，不进对照表。
  */
 import { join } from "node:path";
+import { accountScope } from "../../cli-agents/agy-account-journal.ts";
+import { agyAccountGate } from "../../cli-agents/agy-account-gate.ts";
 import { AgyProcess, type AgyExit, type AgyItem } from "../../cli-agents/agy-process.ts";
 import { agyThinkingMap, effortsOf, resolveAgyModel, resolveAgySelection, type AgyFamily } from "../../cli-agents/agy-models.ts";
 import { missingAgyUsage, type AgyUsage } from "../../cli-agents/agy-usage.ts";
@@ -89,8 +91,13 @@ function antigravityBackend(deps: AntigravityDeps, state: { families: AgyFamily[
 		// agy 1.5.4 实测约 7.5 万字符截断；留余量，升级 agy 后复核。
 		freshInputMaxChars: 60_000,
 		composite: toolsPromptComposite,
+		accountScope,
 		isResumeFailure: (message) => RESUME_FAILED.test(message),
 		async launch(req: LaunchRequest) {
+			const release = agyAccountGate.start();
+			if (!release) throw new Error("Antigravity 账号正在切换或尚未核对，暂不能启动任务。");
+			let retained = false;
+			try {
 			const command = deps.command?.() ?? null;
 			if (!command) throw new Error("尚未安装 Antigravity，请在模型服务中安装并登录。");
 			const model = resolveAgyModel(state.families, req.model, req.effort);
@@ -113,6 +120,9 @@ function antigravityBackend(deps: AntigravityDeps, state: { families: AgyFamily[
 					bridge: deps.bridge ?? toolBridge,
 				});
 				fresh.start();
+				retained = true;
+				void fresh.done.then(release);
+				release.canRetire(() => !fresh.busy, () => { fresh.shutdown(); return fresh.done; });
 				pool.add(req.key, fresh, req.composite);
 				proc = fresh;
 			}
@@ -129,6 +139,7 @@ function antigravityBackend(deps: AntigravityDeps, state: { families: AgyFamily[
 			);
 			proc.sendUserMessage(blocksToPlainText(req.input, AGY_IMAGE_HINT));
 			return l;
+			} finally { if (!retained) release(); }
 		},
 		resume: async (l, cont, ids) => resolveToolResults(l.keyOf, cont, ids, (key, result) => void l.proc.resolveTool(key, result)),
 		abort: (l) => l.proc.abort(),

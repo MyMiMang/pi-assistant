@@ -124,6 +124,8 @@ export class EncryptedCredentialStore implements CredentialStore {
 		writeFileSync(tmp, Buffer.concat([iv, c.getAuthTag(), data]), { mode: 0o600 });
 		renameSync(tmp, this.file);
 	}
+	sealPrivateJson(value: unknown) { return sealWithKey(value, this.key); }
+	openPrivateJson<T>(value: string) { return openWithKey<T>(value, this.key); }
 	async read(providerId: string) {
 		return this.load()[providerId];
 	}
@@ -151,15 +153,17 @@ export class EncryptedCredentialStore implements CredentialStore {
 // ---------------------------------------------------------------- 通用小块加密（例如自定义服务的请求头值）
 let boxKey: Buffer | null = null;
 const key = () => (boxKey ??= loadMasterKey().key);
-export function sealJson(v: unknown): string {
+export const sealJson = (v: unknown) => sealWithKey(v, key());
+export const openJson = <T>(s: string): T => openWithKey<T>(s, key());
+function sealWithKey(v: unknown, master: Buffer): string {
 	const iv = randomBytes(12);
-	const c = createCipheriv("aes-256-gcm", key(), iv);
+	const c = createCipheriv("aes-256-gcm", master, iv);
 	const data = Buffer.concat([c.update(JSON.stringify(v), "utf8"), c.final()]);
 	return Buffer.concat([iv, c.getAuthTag(), data]).toString("base64");
 }
-export function openJson<T>(s: string): T {
+function openWithKey<T>(s: string, master: Buffer): T {
 	const buf = Buffer.from(s, "base64");
-	const d = createDecipheriv("aes-256-gcm", key(), buf.subarray(0, 12));
+	const d = createDecipheriv("aes-256-gcm", master, buf.subarray(0, 12));
 	d.setAuthTag(buf.subarray(12, 28));
 	return JSON.parse(Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString("utf8"));
 }

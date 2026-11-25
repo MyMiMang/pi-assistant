@@ -72,6 +72,7 @@ export interface CliBackend<L extends CliLive> {
 	label: string;
 	/** 重开会话的输入字符预算；当前用户输入始终完整保留。 */
 	freshInputMaxChars?: number;
+	accountScope?(): string | null;
 	/** 原生渠道同轮工具回填前也核对工作区等指纹；既有渠道保持原行为。 */
 	checkContinuationComposite?: boolean;
 	/** 续用判断用的指纹：不一样就不续用旧会话（至少含模型；codex 还含工具集和系统提示） */
@@ -180,6 +181,8 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 	async function drive(model: Model<Api>, context: TranscriptContext, options: SimpleStreamOptions | undefined, stream: AssistantMessageEventStream): Promise<void> {
 		const piTools = getCurrentTools(context.messages);
 		const b = new SegmentBuilder(model, stream, new Set(piTools.map((t) => t.name)));
+		const account = backend.accountScope?.();
+		if (account === null) return b.fail("error", "Antigravity 当前账号尚未核对，暂不能启动任务。");
 		const messages = conversationOf(context.messages);
 		const oneShot = piTools.length === 0;
 		const key = oneShot ? undefined : (options?.sessionId ?? `h:${messages[0] ? messageHash(messages[0]) : "empty"}`);
@@ -189,7 +192,9 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 		const tools = piTools.map(toolDefOf);
 		const { systemPrompt, memory } = splitTurnMemory(getCurrentSystemPrompt(context.messages) || undefined);
 		const freshInput = () => withTurnMemory(renderFreshInput(messages, backend.freshInputMaxChars === undefined ? undefined : Math.max(0, backend.freshInputMaxChars - memory.length)), memory);
-		const composite = backend.composite(model.id, tools, systemPrompt, key);
+		const baseComposite = backend.composite(model.id, tools, systemPrompt, key);
+		// 切换账号后把账号作用域放进指纹，自动新开会话，不复用旧账号的 conversationId；系统提示、记忆和对话历史照常保留。
+		const composite = account && account !== "legacy" ? JSON.stringify([account, baseComposite]) : baseComposite;
 
 		// 同一轮续接也先核对宿主上下文与指纹，避免把结果交给已换工作目录的进程。
 		const existing = key ? live.get(key) : undefined;
@@ -222,6 +227,7 @@ export function createCliChannel<L extends CliLive>(backend: CliBackend<L>, stor
 			const payload = applyPayload(base, await options?.onPayload?.(base, model));
 			let l: L;
 			try {
+				if (account !== backend.accountScope?.()) return b.fail("error", "Antigravity 账号已变化，请重新发送。");
 				l = await backend.launch({ key, model: payload.model, effort: payload.effort, systemPrompt: payload.systemPrompt, resumeSessionId: payload.resumeSessionId, input: payload.input, freshInput: freshInput(), tools, oneShot, composite, forget: (x) => finish(x as L) });
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);

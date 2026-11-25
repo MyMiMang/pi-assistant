@@ -7,9 +7,12 @@
  *   <运行目录>/.agents/plugins/pia/mcp_config.json 工具桥的 MCP 配置（带令牌，0600）
  * 环境复用 managed-env：不带模型密钥，HOME 指向 Pi 私有目录；配置和会话在其下 .gemini/antigravity-cli。
  */
+import { mkdirSync } from "node:fs";
 import { posix } from "node:path";
 import type { ClaudeEnvInput } from "./launch.ts";
+import { activeAgyRtHome } from "./agy-account-journal.ts";
 import { managedCliEnv } from "./managed-env.ts";
+import { buildNativeAcpEnv } from "./native-env.ts";
 import { config } from "../config.ts";
 import type { CallKeyFn } from "./tool-bridge.ts";
 
@@ -20,8 +23,21 @@ const AGY_TOOL_PREFIX = "mcp_pia_pia_";
 /** 去掉前缀还原成 Pi 里的工具名；不是桥的工具（agy 残留的 list_resources 等）`mine` 为 false。 */
 export const fromAgyToolName = (name: string): { name: string; mine: boolean } => (name.startsWith(AGY_TOOL_PREFIX) ? { name: name.slice(AGY_TOOL_PREFIX.length), mine: true } : { name, mine: false });
 
-/** 检测、登录和运行共享私有 HOME；官方开关始终关闭 CLI 自更新。 */
-export const buildAgyEnv = (input: ClaudeEnvInput & { dataDir?: string } = {}): NodeJS.ProcessEnv => managedCliEnv(input.dataDir ?? config.dataDir, "antigravity", input);
+/** 检测、登录和运行共享私有 HOME；启用 RT 账号时切到该账号独立目录且不链接宿主钥匙串。 */
+export function buildAgyEnv(input: ClaudeEnvInput & { dataDir?: string; homeOverride?: string } = {}): NodeJS.ProcessEnv {
+	const dataDir = input.dataDir ?? config.dataDir;
+	const rtHome = input.homeOverride ?? activeAgyRtHome(dataDir);
+	if (!rtHome) return managedCliEnv(dataDir, "antigravity", input);
+	try { mkdirSync(rtHome, { recursive: true, mode: 0o700 }); } catch {}
+	const fixed: Record<string, string> = {
+		AGY_CLI_DISABLE_AUTO_UPDATE: "true",
+		// macOS 上 agy 1.5.x 在无钥匙串链接 + SSH 环境下直接读写 $HOME/.gemini/antigravity-cli/antigravity-oauth-token，不碰系统钥匙串
+		...((input.platform ?? process.platform) === "darwin" ? { SSH_CONNECTION: "127.0.0.1 1 127.0.0.1 22" } : {}),
+	};
+	const env = buildNativeAcpEnv({ ...input, dataDir, id: "antigravity", homeOverride: rtHome, realHome: null }, fixed);
+	delete env.DBUS_SESSION_BUS_ADDRESS;
+	return env;
+}
 
 /** `tools/call` 的配对键 = `progressToken` 末段的 `step_index`（格式 `<uuid>:<step_index>`，和 stdout 里 tool 步骤的 `step_index` 一致，实测） */
 export const agyCallKey: CallKeyFn = (meta) => {

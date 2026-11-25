@@ -10,6 +10,8 @@ import { nativeInstaller, managedArgs } from "./cli-agents/managed-install.ts";
 export { nativeInstaller } from "./cli-agents/managed-install.ts";
 import { createCliChannelService, type CliChannelService } from "./cli-channel-service.ts";
 import { detectAgy, detectClaude, detectCodex, detectOpencode, listAgyModels, listOpencodeModels } from "./cli-agents/detect.ts";
+import { agyAccountGate } from "./cli-agents/agy-account-gate.ts";
+import { accountScope } from "./cli-agents/agy-account-journal.ts";
 import { registerAntigravityModels, registerAntigravityProvider } from "./pi-adapter/cli-models/antigravity.ts";
 import { registerClaudeCodeModels, registerClaudeCodeProvider } from "./pi-adapter/cli-models/claude-code.ts";
 import { registerCodexModels, registerCodexProvider } from "./pi-adapter/cli-models/codex.ts";
@@ -62,6 +64,12 @@ const agyCommand = (command: () => string | null): string => {
 };
 
 const agyManaged = managedActions("antigravity", "AGY_COMMAND", () => antigravity.command(), () => refreshManaged(antigravity));
+async function probeManagedAgy<T>(probe: () => Promise<T>): Promise<T> {
+	if (!accountScope()) throw new Error("Antigravity 当前账号尚未核对");
+	const release = agyAccountGate.start();
+	if (!release) throw new Error("Antigravity 账号正在切换或尚未核对");
+	try { return await probe(); } finally { release(); }
+}
 const agyOptions = () => ({ dataDir: config.dataDir, commandArgs: managedArgs("antigravity", "AGY_COMMAND") });
 const antigravity = createCliChannelService({
  ...agyManaged,
@@ -72,9 +80,9 @@ const antigravity = createCliChannelService({
 	allowCommandOverride: () => process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1"),
 	find: () => nativeInstaller.installed("antigravity")?.command ?? null,
 	notFound: "还没在 Pi 里安装 Antigravity：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。",
-	detect: (command) => detectAgy({ command, ...agyOptions() }),
-	register: async (models, command) => registerAntigravityProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, commandArgs: () => agyOptions().commandArgs, families: await listAgyModels(agyCommand(command), agyOptions()) }),
-	refresh: async (models, channel) => void (await registerAntigravityModels(models, channel, await listAgyModels(agyCommand(antigravity.command), agyOptions()))),
+	detect: (command) => probeManagedAgy(() => detectAgy({ command, ...agyOptions() })),
+	register: async (models, command) => registerAntigravityProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, commandArgs: () => agyOptions().commandArgs, families: await probeManagedAgy(() => listAgyModels(agyCommand(command), agyOptions())) }),
+	refresh: async (models, channel) => void (await registerAntigravityModels(models, channel, await probeManagedAgy(() => listAgyModels(agyCommand(antigravity.command), agyOptions())))),
 	requireLogin: true, // `agy models` 成功才有模型可选
 });
 
@@ -104,6 +112,12 @@ const opencode = createCliChannelService({
 
 nativeInstaller.cleanupOnStartup();
 nativeInstaller.registerDownloads();
+
+export const antigravityRtRuntime = () => ({
+	command: () => antigravity.command(),
+	commandArgs: () => managedArgs("antigravity", "AGY_COMMAND"),
+	refresh: () => refreshManaged(antigravity),
+});
 
 export const cliServices: CliChannelService[] = [claudeCode, codex, antigravity, opencode, ...NATIVE_ACP_AGENTS.map(a => nativeService(a.id))];
 

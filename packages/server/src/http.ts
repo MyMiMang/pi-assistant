@@ -40,6 +40,10 @@ import { mountAgentRoutes } from "./routes/agents.ts";
 import { mountAgentFolderRoutes } from "./routes/agent-folders.ts";
 import { mountPersonaReviewRoutes } from "./routes/persona-review.ts";
 import { mountModelRoutes } from "./routes/models.ts";
+import { credentialStore } from "./models.ts";
+import { antigravityRtRuntime } from "./cli-services.ts";
+import { createAgyAccountVault } from "./cli-agents/agy-account-vault.ts";
+import { mountAgyRtImport } from "./routes/agy-rt-import.ts";
 import { mountWorkItemRoutes } from "./routes/work-items.ts";
 import { mountDesktopRoutes, deskChanged } from "./routes/desktop.ts";
 import { mountMemoryRoutes } from "./routes/memory.ts";
@@ -114,6 +118,18 @@ app.use("/api/*", async (c, next) => {
 
 mountSystemRoutes(app);
 mountModelRoutes(app);
+const agyRt = antigravityRtRuntime();
+mountAgyRtImport(app, undefined, createAgyAccountVault({
+	storage: () => credentialStore,
+	dataDir: () => config.dataDir,
+	command: agyRt.command,
+	commandArgs: agyRt.commandArgs,
+	onAccountChanged: agyRt.refresh,
+	environment: {
+		PIA_AGY_OAUTH_CLIENT_ID: process.env.PIA_AGY_OAUTH_CLIENT_ID,
+		PIA_AGY_OAUTH_CLIENT_SECRET: process.env.PIA_AGY_OAUTH_CLIENT_SECRET,
+	},
+}));
 // 图片生成模型（image-gen/routes.ts）
 mountImageRoutes(app, localOnly);
 mountPetRoutes(app, localOnly);

@@ -13,11 +13,13 @@ export const nativeAcpHome = (dataDir: string, id: ManagedCliId): string => join
 export interface NativeEnvInput extends ClaudeEnvInput {
 	dataDir: string;
 	id: ManagedCliId;
+	/** 显式覆盖隔离 HOME（如 Antigravity 的 RT 账号专用目录） */
+	homeOverride?: string;
 }
 
 /** 最后覆盖包括 Windows 大小写别名的环境键；extra 仅供宿主测试等用途，不能突破隔离目录。 */
 export function buildNativeAcpEnv(input: NativeEnvInput, fixed: Record<string, string> = {}): NodeJS.ProcessEnv {
-	const home = nativeAcpHome(input.dataDir, input.id);
+	const home = input.homeOverride ?? nativeAcpHome(input.dataDir, input.id);
 	linkMacKeychains(home, input.realHome);
 	const env = buildCliEnv(input, [], {});
 	// PATH 在白名单中；从原始输入取值，不能把 buildCliEnv 补的 commonCliDirs 当成用户 PATH。

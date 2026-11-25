@@ -7,8 +7,8 @@
 import { NATIVE_ACP_AGENTS, type NativeCliStatus, type NativeProviderId } from "@pi-assistant/shared";
 import { CheckCircle2, Download, LogIn, Plus, RefreshCw, Terminal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { api } from "../api";
-import { Badge, Button, Fold, Help, Input } from "./ui";
+import { ApiError, api, base } from "../api";
+import { Badge, Button, Fold, Help, Input, Modal, useConfirm } from "./ui";
 
 interface CliInfo extends NativeCliStatus {
 	/** Codex：`~/.codex/AGENTS.md` 存在（只检查文件在不在） */
@@ -74,7 +74,7 @@ const BRAIN_CARDS: Record<BrainKind, CardCopy> = {
 				<br />
 				启动比较慢（每个对话首次约半分钟），看不到思考过程；你在它干活时插的话，会等它用完下一个工具后才看到。
 				<br />
-				Gemini 模型在部分地区不可用，可选 Claude 或 GPT-OSS。配置和会话在 Pi 专用 HOME 下；系统钥匙串可能共用，尚未实测。Pi 不读取或转发凭据。
+				Gemini 模型在部分地区不可用，可选 Claude 或 GPT-OSS。配置和会话在 Pi 专用 HOME 下；系统钥匙串可能共用，尚未实测。常规登录由 Antigravity 完成。
 				<br />
 				用量只显示 token 数，不显示钱。
 			</>
@@ -186,6 +186,10 @@ export function CliAgentCard({ kind, onChanged, onStatus }: { kind: CliKind; onC
 					) : (
 						<Button size="sm" variant="outline" disabled={busy} onClick={() => void action("check-update")}>检查更新</Button>
 					))}
+					{kind === "antigravity" && isLocalAgyPage() && (
+						<AgyAccounts canImportBesideLogin={!!info?.installed && !info.loggedIn && supported && !apiKey && !info.operation}
+							disabled={busy || !!info?.operation} loggedIn={info?.loggedIn} onChanged={() => void check(false)} />
+					)}
 					<Button size="sm" variant="outline" disabled={busy || !!info?.operation} onClick={() => void check(true)} data-testid={`${kind}-recheck`}>
 						<RefreshCw size={13} className={busy ? "animate-spin" : undefined} /> 重新检测
 					</Button>
@@ -216,6 +220,182 @@ export function CliAgentCard({ kind, onChanged, onStatus }: { kind: CliKind; onC
 			{/* 装好但没登录时检测报的「需要登录」不显示：「未登录」标签已经说明了；只显示安装失败和真正的检测异常 */}
 			{info?.error && (!info.installed || info.loggedIn || info.loginUnverified) && <div className="break-all text-[11px] text-red-500" role="alert" data-testid={`${kind}-error`}>{info.installed ? info.error : `安装失败：${info.error}`}</div>}
 		</div>
+	);
+}
+
+const AGY_ACCOUNTS_URL = "/api/agy-rt-import";
+const AGY_IMPORT_UNAVAILABLE = "此版本暂不支持 RT 账号管理，请使用原来的登录方式。";
+const AGY_IMPORT_LABEL = "用 RT 导入账号";
+const AGY_ACCOUNTS_LABEL = "管理账号";
+const AGY_ACCOUNT_STATES = { ready: "可用", invalid: "凭据失效", unknown: "状态未知" } as const;
+type AgyIdentity = { subject: string; email: string };
+type AgyAccountStatus = {
+	available: boolean;
+	canAdd?: boolean;
+	canSwitch?: boolean;
+	addReason?: string | null;
+	current: AgyIdentity | null;
+	accounts: (AgyIdentity & { state: keyof typeof AGY_ACCOUNT_STATES })[];
+};
+
+function isLocalAgyPage() {
+	return !base() && ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+}
+
+function agyAccountsApi<T>(suffix = "", json?: object, signal?: AbortSignal) {
+	// 不向配对服务器或重定向目标发送凭据；服务端仍须独立验证请求来自本机。
+	if (!isLocalAgyPage()) throw new ApiError(403, "local_only");
+	return api<T>(AGY_ACCOUNTS_URL + suffix, { method: json ? "POST" : "GET", json, signal, redirect: "error", cache: "no-store" });
+}
+
+function agyAccountError(error: unknown, operation: "add" | "switch" | "switch-google" | "remove") {
+	// 只显示固定文案，不回显接口错误、凭据或 CLI 输出。
+	if (error instanceof ApiError) {
+		if ([403, 404, 501, 503].includes(error.status)) return AGY_IMPORT_UNAVAILABLE;
+		if (error.status === 409) return "账号正在使用或处理，请稍后再试。";
+	}
+	if (operation === "switch") return "未能确认账号已切换，请核对当前账号。";
+	if (operation === "switch-google") return "未能切回原 Google 登录，请稍后重试。";
+	if (operation === "remove") return "未能确认账号已移除，请核对列表。";
+	return "未能验证并添加账号，请核对 RT 是否有效、网络是否正常。";
+}
+
+function AgyAccounts({ canImportBesideLogin, disabled, loggedIn, onChanged }: {
+	canImportBesideLogin: boolean; disabled: boolean; loggedIn?: boolean; onChanged: () => void;
+}) {
+	const [status, setStatus] = useState<AgyAccountStatus | null>();
+	const [open, setOpen] = useState(false);
+	const [adding, setAdding] = useState(false);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState("");
+	const [confirmDialog, confirm] = useConfirm();
+	const tokenInput = useRef<HTMLInputElement>(null);
+	const pending = useRef(false);
+	const statusRequest = useRef(0);
+
+	const refresh = useCallback(async (signal?: AbortSignal) => {
+		const request = ++statusRequest.current;
+		let next: AgyAccountStatus | null = null;
+		try {
+			const result = await agyAccountsApi<AgyAccountStatus>("", undefined, signal);
+			// 老接口只返回 available，不能把旧的「导入并激活」端点当成「只添加」。
+			if (typeof result?.available === "boolean" && result.current !== undefined && Array.isArray(result.accounts)) next = result;
+		} catch { /* 不显示原始响应 */ }
+		if (!signal?.aborted && request === statusRequest.current) setStatus(next);
+		return next;
+	}, []);
+	useEffect(() => {
+		const controller = new AbortController();
+		if (!pending.current) void refresh(controller.signal);
+		return () => controller.abort();
+	}, [loggedIn, refresh]);
+
+	const mutate = async (...[operation, payload]: ["add", { refreshToken: string }] | ["switch" | "remove", { subject: string }] | ["switch-google", Record<string, never>]) => {
+		if (pending.current || disabled || status?.available !== true || (operation === "add" && status.canAdd === false) || (operation === "switch" && status.canSwitch === false)) return;
+		pending.current = true;
+		setBusy(true);
+		setError("");
+		let changed = false;
+		try {
+			if (operation === "add") {
+				const result = await agyAccountsApi<{ email: string }>("", payload);
+				if (typeof result?.email !== "string" || !result.email) throw new Error();
+				setAdding(false);
+			} else {
+				await agyAccountsApi(`/${operation}`, payload);
+			}
+			changed = true;
+		} catch (e) {
+			setError(agyAccountError(e, operation));
+		} finally {
+			const refreshed = await refresh();
+			if (changed && !refreshed) setError("未能刷新账号列表，请重新打开查看。");
+			else if (changed && operation === "switch" && refreshed?.current?.subject !== payload.subject) setError(agyAccountError(null, operation));
+			pending.current = false;
+			setBusy(false);
+			if (operation !== "add") onChanged();
+		}
+	};
+	const show = (add: boolean) => {
+		setError("");
+		setAdding(add);
+		setOpen(true);
+		setStatus(undefined);
+		void refresh();
+	};
+	const close = () => {
+		if (!pending.current) {
+			setOpen(false);
+			setAdding(false);
+		}
+	};
+	const currentText = status?.current?.email ?? (status?.available ? (loggedIn ? "Google 账号登录" : "未登录") : "未知");
+	return (
+		<>
+			{canImportBesideLogin && status?.available === true && status.canAdd !== false && (
+				<Button size="sm" variant="outline" disabled={disabled || busy} aria-haspopup="dialog" onClick={() => show(true)}>{AGY_IMPORT_LABEL}</Button>
+			)}
+			<span className="min-w-0 break-all text-xs text-mut">当前账号：{currentText}</span>
+			<Button size="sm" variant="outline" disabled={disabled || busy} aria-haspopup="dialog" onClick={() => show(false)}>{AGY_ACCOUNTS_LABEL}</Button>
+			<Modal open={open} onClose={close} title={AGY_ACCOUNTS_LABEL} ariaLabel={AGY_ACCOUNTS_LABEL}>
+				<div className="space-y-3 p-5 text-sm" aria-busy={busy}>
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<p className="min-w-0 break-all">当前账号：{currentText}</p>
+						{status?.available === true && status.current && (
+							<Button size="sm" variant="ghost" disabled={disabled || busy} onClick={() => void mutate("switch-google", {})}>切回 Google 登录</Button>
+						)}
+					</div>
+					{status === undefined ? <p role="status" className="text-mut">正在读取账号…</p> : status?.available !== true ? (
+						<p className="text-mut">{status?.addReason === "protected_storage_unavailable" ? "安全存储不可用，暂不能管理导入账号。原登录不受影响。" : AGY_IMPORT_UNAVAILABLE}</p>
+					) : (
+						<>
+							<p className="text-xs text-mut">支持导入多个 RT 账号并随时切换；只影响 Pi 里的反重力，不动你电脑上单独打开的反重力。添加后不会自动切换，当前使用中的账号不能移除。</p>
+							{status.canAdd === false && <p className="text-xs text-mut">{status.addReason === "cli_not_installed" ? "请先安装 Antigravity，再导入或切换 RT 账号。" : "当前环境暂不支持导入账号。"}</p>}
+							{status.accounts.length > 0 ? (
+								<ul className="max-h-56 space-y-2 overflow-y-auto" aria-label="已导入账号">
+									{status.accounts.map((account) => {
+										const current = status.current?.subject === account.subject;
+										return (
+											<li key={account.subject} className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-2">
+												<div className="min-w-0 flex-1 break-all">
+													<div>{account.email}</div>
+													<div className="text-xs text-mut">{current ? "当前使用 · " : ""}{AGY_ACCOUNT_STATES[account.state] ?? "状态未知"}</div>
+												</div>
+												{!current && status.canSwitch !== false && <Button size="sm" variant="outline" disabled={disabled || busy || account.state === "invalid"} onClick={() => void mutate("switch", { subject: account.subject })}>切换到此账号</Button>}
+												<Button size="sm" variant="ghost" disabled={disabled || busy || current} onClick={async () => {
+													if (await confirm({ title: "移除账号？", body: <span className="break-all">确定移除 {account.email}？</span>, ok: "移除", danger: true })) {
+														await mutate("remove", { subject: account.subject });
+													}
+												}}>移除</Button>
+											</li>
+										);
+									})}
+								</ul>
+							) : <p className="text-mut">还没有导入的账号。</p>}
+							{status.canAdd === false ? null : adding ? (
+								<form autoComplete="off" className="space-y-2 border-t border-line pt-3" onSubmit={(e) => {
+									e.preventDefault();
+									if (!tokenInput.current) return;
+									const refreshToken = tokenInput.current.value.trim();
+									e.currentTarget.reset();
+									if (refreshToken) void mutate("add", { refreshToken });
+									else setError("请填写 RT。");
+								}}>
+									<label className="block space-y-1">刷新令牌（RT）<Input ref={tokenInput} className="w-full" type="password" required autoComplete="new-password" spellCheck={false} maxLength={4096} disabled={disabled || busy} /></label>
+									<div className="flex justify-end gap-2">
+										<Button size="sm" type="button" variant="ghost" disabled={busy} onClick={() => { setAdding(false); setError(""); }}>取消添加</Button>
+										<Button size="sm" type="submit" variant="primary" disabled={disabled || busy}>添加账号</Button>
+									</div>
+								</form>
+							) : <Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => { setAdding(true); setError(""); }}>{AGY_IMPORT_LABEL}</Button>}
+						</>
+					)}
+					{busy && <p role="status" className="text-mut">正在处理…</p>}
+					{error && <p role="alert" className="text-red-500">{error}</p>}
+				</div>
+			</Modal>
+			{confirmDialog}
+		</>
 	);
 }
 
