@@ -17,16 +17,18 @@ export function mountAgyRtImport(app: Hono<Env>, backend?: AgyRtBackend, account
 		try { return c.json(await apply.status(AbortSignal.timeout(10_000))); }
 		catch { return c.json({ error: "cli_unverified" }, 502); }
 	});
-	const ops = ["add", "switch", "switch-google", "remove"] as const;
+	const ops = ["add", "switch", "switch-google", "remove", "google-login/start", "google-login/cancel"] as const;
 	for (const op of ops) app.post(op === "add" ? path : `${path}/${op}`, guard, bodyLimit({ maxSize: 8192 }), async c => {
 		if (!apply) return c.json({ error: "import_unavailable" }, 503);
 		if (c.req.header("origin") !== new URL(c.req.url).origin || !/^application\/json(?:;|$)/i.test(c.req.header("content-type") ?? "")) return c.json({ error: "invalid_input" }, 403);
-		if (op === "switch-google" && !accountVault) return c.json({ error: "import_unavailable" }, 503);
+		if ((op === "switch-google" || op === "google-login/start" || op === "google-login/cancel") && !accountVault) return c.json({ error: "import_unavailable" }, 503);
 		const controller = new AbortController();
 		const socket = c.env.incoming.socket;
 		const close = () => controller.abort();
 		socket.once("close", close);
 		try {
+			if (op === "google-login/start") return c.json(accountVault!.startGoogleLogin());
+			if (op === "google-login/cancel") return c.json(accountVault!.cancelGoogleLogin());
 			const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(45_000)]);
 			const payload = await c.req.json().catch(() => null);
 			if (accountVault) return c.json(await accountVault.mutate(op, payload, signal));

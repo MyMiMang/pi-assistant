@@ -316,8 +316,9 @@ try {
 	get = response(disabledBase);
 	await button(card, "管理账号").click();
 	const gated = await checkHttp(get, 200, unavailable);
-	await text(dialog, "此版本暂不支持 RT 账号管理，请使用原来的登录方式。");
+	await text(dialog, "此版本暂不支持多账号管理，请使用原来的登录方式。");
 	assert.equal(await button(page, "用 RT 导入账号").count(), 0);
+	assert.equal(await button(page, "用 Google 登录添加").count(), 0);
 	await button(card, "登录").waitFor({ state: "attached" });
 	assert.deepEqual(errors, []);
 	assert.deepEqual(escapedRequests, []);

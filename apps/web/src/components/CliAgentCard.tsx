@@ -224,18 +224,26 @@ export function CliAgentCard({ kind, onChanged, onStatus }: { kind: CliKind; onC
 }
 
 const AGY_ACCOUNTS_URL = "/api/agy-rt-import";
-const AGY_IMPORT_UNAVAILABLE = "此版本暂不支持 RT 账号管理，请使用原来的登录方式。";
+const AGY_IMPORT_UNAVAILABLE = "此版本暂不支持多账号管理，请使用原来的登录方式。";
 const AGY_IMPORT_LABEL = "用 RT 导入账号";
+const AGY_GOOGLE_ADD_LABEL = "用 Google 登录添加";
 const AGY_ACCOUNTS_LABEL = "管理账号";
 const AGY_ACCOUNT_STATES = { ready: "可用", invalid: "凭据失效", unknown: "状态未知" } as const;
 type AgyIdentity = { subject: string; email: string };
+type AgyGoogleLoginStatus =
+	| { state: "running" }
+	| { state: "succeeded"; email?: string }
+	| { state: "failed"; code?: string }
+	| { state: "cancelled" };
 type AgyAccountStatus = {
 	available: boolean;
 	canAdd?: boolean;
 	canSwitch?: boolean;
+	canGoogleLogin?: boolean;
+	googleLogin?: AgyGoogleLoginStatus | null;
 	addReason?: string | null;
 	current: AgyIdentity | null;
-	accounts: (AgyIdentity & { state: keyof typeof AGY_ACCOUNT_STATES })[];
+	accounts: (AgyIdentity & { state: keyof typeof AGY_ACCOUNT_STATES; source?: "google" | "rt" })[];
 };
 
 function isLocalAgyPage() {
@@ -248,7 +256,7 @@ function agyAccountsApi<T>(suffix = "", json?: object, signal?: AbortSignal) {
 	return api<T>(AGY_ACCOUNTS_URL + suffix, { method: json ? "POST" : "GET", json, signal, redirect: "error", cache: "no-store" });
 }
 
-function agyAccountError(error: unknown, operation: "add" | "switch" | "switch-google" | "remove") {
+function agyAccountError(error: unknown, operation: "add" | "switch" | "switch-google" | "remove" | "google-login/start" | "google-login/cancel") {
 	// 只显示固定文案，不回显接口错误、凭据或 CLI 输出。
 	if (error instanceof ApiError) {
 		if ([403, 404, 501, 503].includes(error.status)) return AGY_IMPORT_UNAVAILABLE;
@@ -257,7 +265,15 @@ function agyAccountError(error: unknown, operation: "add" | "switch" | "switch-g
 	if (operation === "switch") return "未能确认账号已切换，请核对当前账号。";
 	if (operation === "switch-google") return "未能切回原 Google 登录，请稍后重试。";
 	if (operation === "remove") return "未能确认账号已移除，请核对列表。";
+	if (operation === "google-login/start") return "未能启动 Google 登录，请稍后重试。";
+	if (operation === "google-login/cancel") return "未能取消 Google 登录，请关闭终端窗口后重试。";
 	return "未能验证并添加账号，请核对 RT 是否有效、网络是否正常。";
+}
+
+function agyGoogleLoginError(code?: string) {
+	if (code === "invalid_account") return "Google 登录未通过账号验证，请重新登录。";
+	if (code === "import_unavailable") return AGY_IMPORT_UNAVAILABLE;
+	return "未能完成 Google 登录添加，请确认已在打开的终端里完成授权并重试。";
 }
 
 function AgyAccounts({ canImportBesideLogin, disabled, loggedIn, onChanged }: {
@@ -272,6 +288,7 @@ function AgyAccounts({ canImportBesideLogin, disabled, loggedIn, onChanged }: {
 	const tokenInput = useRef<HTMLInputElement>(null);
 	const pending = useRef(false);
 	const statusRequest = useRef(0);
+	const googleRunning = status?.googleLogin?.state === "running";
 
 	const refresh = useCallback(async (signal?: AbortSignal) => {
 		const request = ++statusRequest.current;
@@ -289,9 +306,16 @@ function AgyAccounts({ canImportBesideLogin, disabled, loggedIn, onChanged }: {
 		if (!pending.current) void refresh(controller.signal);
 		return () => controller.abort();
 	}, [loggedIn, refresh]);
+	useEffect(() => {
+		if (!googleRunning) return;
+		const timer = window.setInterval(() => {
+			if (!pending.current) void refresh();
+		}, 1200);
+		return () => window.clearInterval(timer);
+	}, [googleRunning, refresh]);
 
-	const mutate = async (...[operation, payload]: ["add", { refreshToken: string }] | ["switch" | "remove", { subject: string }] | ["switch-google", Record<string, never>]) => {
-		if (pending.current || disabled || status?.available !== true || (operation === "add" && status.canAdd === false) || (operation === "switch" && status.canSwitch === false)) return;
+	const mutate = async (...[operation, payload]: ["add", { refreshToken: string }] | ["switch" | "remove", { subject: string }] | ["switch-google" | "google-login/start" | "google-login/cancel", Record<string, never>]) => {
+		if (pending.current || disabled || status?.available !== true || (operation === "add" && status.canAdd === false) || (operation === "switch" && status.canSwitch === false) || (operation === "google-login/start" && !status.canGoogleLogin)) return;
 		pending.current = true;
 		setBusy(true);
 		setError("");
@@ -303,6 +327,7 @@ function AgyAccounts({ canImportBesideLogin, disabled, loggedIn, onChanged }: {
 				setAdding(false);
 			} else {
 				await agyAccountsApi(`/${operation}`, payload);
+				if (operation === "google-login/start") setAdding(false);
 			}
 			changed = true;
 		} catch (e) {
@@ -313,7 +338,7 @@ function AgyAccounts({ canImportBesideLogin, disabled, loggedIn, onChanged }: {
 			else if (changed && operation === "switch" && refreshed?.current?.subject !== payload.subject) setError(agyAccountError(null, operation));
 			pending.current = false;
 			setBusy(false);
-			if (operation !== "add") onChanged();
+			if (operation === "switch" || operation === "switch-google" || operation === "remove") onChanged();
 		}
 	};
 	const show = (add: boolean) => {
@@ -333,36 +358,37 @@ function AgyAccounts({ canImportBesideLogin, disabled, loggedIn, onChanged }: {
 	return (
 		<>
 			{canImportBesideLogin && status?.available === true && status.canAdd !== false && (
-				<Button size="sm" variant="outline" disabled={disabled || busy} aria-haspopup="dialog" onClick={() => show(true)}>{AGY_IMPORT_LABEL}</Button>
+				<Button size="sm" variant="outline" disabled={disabled || busy || googleRunning} aria-haspopup="dialog" onClick={() => show(true)}>{AGY_IMPORT_LABEL}</Button>
 			)}
-			<span className="min-w-0 break-all text-xs text-mut">当前账号：{currentText}</span>
+			<span className="min-w-0 break-all text-xs text-mut">当前账号：{currentText}{googleRunning ? "（正在 Google 登录…）" : ""}</span>
 			<Button size="sm" variant="outline" disabled={disabled || busy} aria-haspopup="dialog" onClick={() => show(false)}>{AGY_ACCOUNTS_LABEL}</Button>
 			<Modal open={open} onClose={close} title={AGY_ACCOUNTS_LABEL} ariaLabel={AGY_ACCOUNTS_LABEL}>
 				<div className="space-y-3 p-5 text-sm" aria-busy={busy}>
 					<div className="flex flex-wrap items-center justify-between gap-2">
 						<p className="min-w-0 break-all">当前账号：{currentText}</p>
 						{status?.available === true && status.current && (
-							<Button size="sm" variant="ghost" disabled={disabled || busy} onClick={() => void mutate("switch-google", {})}>切回 Google 登录</Button>
+							<Button size="sm" variant="ghost" disabled={disabled || busy || googleRunning} onClick={() => void mutate("switch-google", {})}>切回原 Google 登录</Button>
 						)}
 					</div>
 					{status === undefined ? <p role="status" className="text-mut">正在读取账号…</p> : status?.available !== true ? (
-						<p className="text-mut">{status?.addReason === "protected_storage_unavailable" ? "安全存储不可用，暂不能管理导入账号。原登录不受影响。" : AGY_IMPORT_UNAVAILABLE}</p>
+						<p className="text-mut">{status?.addReason === "protected_storage_unavailable" ? "安全存储不可用，暂不能管理多账号。原登录不受影响。" : AGY_IMPORT_UNAVAILABLE}</p>
 					) : (
 						<>
-							<p className="text-xs text-mut">支持导入多个 RT 账号并随时切换；只影响 Pi 里的反重力，不动你电脑上单独打开的反重力。添加后不会自动切换，当前使用中的账号不能移除。</p>
-							{status.canAdd === false && <p className="text-xs text-mut">{status.addReason === "cli_not_installed" ? "请先安装 Antigravity，再导入或切换 RT 账号。" : "当前环境暂不支持导入账号。"}</p>}
+							<p className="text-xs text-mut">支持用 Google 登录或 RT 添加多个账号并随时切换；只影响 Pi 里的反重力，不动你电脑上单独打开的反重力。添加后不会自动切换，当前使用中的账号不能移除。</p>
+							{status.canAdd === false && <p className="text-xs text-mut">{status.addReason === "cli_not_installed" ? "请先安装 Antigravity，再添加或切换账号。" : "当前环境暂不支持添加账号。"}</p>}
 							{status.accounts.length > 0 ? (
 								<ul className="max-h-56 space-y-2 overflow-y-auto" aria-label="已导入账号">
 									{status.accounts.map((account) => {
 										const current = status.current?.subject === account.subject;
+										const sourceLabel = account.source === "google" ? "Google 登录 · " : account.source === "rt" ? "RT · " : "";
 										return (
 											<li key={account.subject} className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-2">
 												<div className="min-w-0 flex-1 break-all">
 													<div>{account.email}</div>
-													<div className="text-xs text-mut">{current ? "当前使用 · " : ""}{AGY_ACCOUNT_STATES[account.state] ?? "状态未知"}</div>
+													<div className="text-xs text-mut">{current ? "当前使用 · " : ""}{sourceLabel}{AGY_ACCOUNT_STATES[account.state] ?? "状态未知"}</div>
 												</div>
-												{!current && status.canSwitch !== false && <Button size="sm" variant="outline" disabled={disabled || busy || account.state === "invalid"} onClick={() => void mutate("switch", { subject: account.subject })}>切换到此账号</Button>}
-												<Button size="sm" variant="ghost" disabled={disabled || busy || current} onClick={async () => {
+												{!current && status.canSwitch !== false && <Button size="sm" variant="outline" disabled={disabled || busy || googleRunning || account.state === "invalid"} onClick={() => void mutate("switch", { subject: account.subject })}>切换到此账号</Button>}
+												<Button size="sm" variant="ghost" disabled={disabled || busy || googleRunning || current} onClick={async () => {
 													if (await confirm({ title: "移除账号？", body: <span className="break-all">确定移除 {account.email}？</span>, ok: "移除", danger: true })) {
 														await mutate("remove", { subject: account.subject });
 													}
@@ -371,8 +397,22 @@ function AgyAccounts({ canImportBesideLogin, disabled, loggedIn, onChanged }: {
 										);
 									})}
 								</ul>
-							) : <p className="text-mut">还没有导入的账号。</p>}
-							{status.canAdd === false ? null : adding ? (
+							) : <p className="text-mut">还没有添加的账号。</p>}
+							{status.googleLogin?.state === "succeeded" && status.googleLogin.email && (
+								<p role="status" className="text-xs text-emerald-600 dark:text-emerald-400">已添加账号 {status.googleLogin.email}，点击上方「切换到此账号」即可启用。</p>
+							)}
+							{status.googleLogin?.state === "cancelled" && !error && (
+								<p role="status" className="text-xs text-mut">已取消 Google 登录。</p>
+							)}
+							{status.googleLogin?.state === "failed" && !error && (
+								<p role="alert" className="text-xs text-red-500">{agyGoogleLoginError(status.googleLogin.code)}</p>
+							)}
+							{status.canAdd === false ? null : googleRunning ? (
+								<div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-hover/40 p-2.5 text-xs">
+									<span role="status" className="text-mut">正在用 Google 登录添加账号，请在打开的终端里完成授权…</span>
+									<Button size="sm" variant="outline" disabled={busy} onClick={() => void mutate("google-login/cancel", {})}>取消登录</Button>
+								</div>
+							) : adding ? (
 								<form autoComplete="off" className="space-y-2 border-t border-line pt-3" onSubmit={(e) => {
 									e.preventDefault();
 									if (!tokenInput.current) return;
@@ -387,7 +427,14 @@ function AgyAccounts({ canImportBesideLogin, disabled, loggedIn, onChanged }: {
 										<Button size="sm" type="submit" variant="primary" disabled={disabled || busy}>添加账号</Button>
 									</div>
 								</form>
-							) : <Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => { setAdding(true); setError(""); }}>{AGY_IMPORT_LABEL}</Button>}
+							) : (
+								<div className="flex flex-wrap gap-2">
+									{status.canGoogleLogin && (
+										<Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => void mutate("google-login/start", {})}><LogIn size={13} /> {AGY_GOOGLE_ADD_LABEL}</Button>
+									)}
+									<Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => { setAdding(true); setError(""); }}>{AGY_IMPORT_LABEL}</Button>
+								</div>
+							)}
 						</>
 					)}
 					{busy && <p role="status" className="text-mut">正在处理…</p>}
