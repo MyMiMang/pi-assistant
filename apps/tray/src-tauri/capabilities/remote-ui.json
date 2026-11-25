@@ -32,6 +32,7 @@
   "permissions": [
     "opener:allow-open-url",
     "opener:allow-default-urls",
+    "allow-desktop-peer",
     "allow-app-update-status",
     "allow-app-update-check",
     "allow-app-update-install",

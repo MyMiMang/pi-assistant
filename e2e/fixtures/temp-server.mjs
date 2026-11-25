@@ -42,9 +42,9 @@ const CREDENTIAL_ENV = /(_API_KEY|_TOKEN|_SECRET_ACCESS_KEY)$|^(ANTHROPIC|AWS|AZ
 export const withoutCredentials = (env) => Object.fromEntries(Object.entries(env).filter(([k]) => !CREDENTIAL_ENV.test(k)));
 
 /** 给**服务进程**的 env：临时 HOME / TMPDIR / DATA / WORKSPACE（浏览器不要用这份）。 */
-export function serverEnv(run, extra = {}) {
+export function serverEnv(run, extra = {}, baseEnv = process.env) {
 	return {
-		...withoutCredentials(process.env),
+		...withoutCredentials(baseEnv),
 		HOME: run.home,
 		TMPDIR: run.runDir,
 		PIA_DATA_DIR: run.data,
@@ -87,11 +87,11 @@ for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]]) {
  * 启动真实服务（`test/launch-memory.ts`，内存凭据 + Mock + 临时目录）。
  * @returns {{ child: import("node:child_process").ChildProcess, logs: () => string, stop: () => Promise<void> }}
  */
-export function startTempServer({ root, port, run, extra = {}, log } = {}) {
-	const child = spawn(process.execPath, ["--import", "tsx", "packages/server/test/launch-memory.ts"], {
+export function startTempServer({ root, port, run, extra = {}, log, baseEnv, entry = "packages/server/test/launch-memory.ts", ipc = false } = {}) {
+	const child = spawn(process.execPath, ["--import", "tsx", entry], {
 		cwd: root,
-		env: serverEnv(run, { PIA_PORT: String(port), ...extra }),
-		stdio: ["ignore", "pipe", "pipe"],
+		env: serverEnv(run, { PIA_PORT: String(port), ...extra }, baseEnv),
+		stdio: ipc ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
 		detached: true, // 独立进程组：收尾时整组收，超时 / 异常都不留孤儿
 	});
 	let logs = "";

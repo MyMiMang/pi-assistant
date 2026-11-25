@@ -32,6 +32,7 @@ import { hostAgentsChanged } from "../host-control.ts";
 import { onAgentChanged, onAgentDeleted } from "../rooms/index.ts";
 import { copyAgentToUser } from "../rooms/copy.ts";
 import { getMessage } from "../messages.ts";
+import { isRestrictedDesktopText } from "./desktop-pair.ts";
 import { buildReplySnapshot, formatQuotedContext, ReplyError, resolveReplyTarget } from "../replies.ts";
 import { by, localOnly, roomErr, sendFile, type Env } from "./common.ts";
 import { deskChanged } from "./desktop.ts";
@@ -152,6 +153,10 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		return c.body(readFileSync(join(dir, f)), 200, { "content-type": `image/${f.split(".").pop() === "jpeg" ? "jpeg" : f.split(".").pop()}`, "cache-control": "private, max-age=31536000, immutable" });
 	});
 	app.get("/api/agents/:id/messages", (c) => {
+		if (isRestrictedDesktopText(c.req.raw)) {
+			const query = [...new URL(c.req.url).searchParams.entries()];
+			if (query.length !== 1 || query[0][0] !== "conversation" || getConversation(query[0][1])?.agent_id !== c.req.param("id")) return c.json({ error: "desktop_conversation_required" }, 400);
+		}
 		const before = c.req.query("before");
 		const beforeSeq = c.req.query("beforeSeq");
 		const after = c.req.query("after");
@@ -173,6 +178,7 @@ export function mountAgentRoutes(app: Hono<Env>) {
 		const id = c.req.param("id");
 		if (!getAgent(id)) return c.json({ error: "not_found" }, 404);
 		const b = await c.req.json<{ text: string; attachments?: string[]; conversationId?: string; replyToId?: string; clientId?: string; skills?: unknown }>();
+		if (isRestrictedDesktopText(c.req.raw) && (!b || typeof b.text !== "string" || typeof b.clientId !== "string" || !b.clientId || b.clientId.length > 128 || typeof b.conversationId !== "string" || getConversation(b.conversationId)?.agent_id !== id || Object.keys(b).some(k => !["text", "clientId", "conversationId"].includes(k)))) return c.json({ error: "desktop_text_and_conversation_required" }, 400);
 		const conv = b.conversationId && getConversation(b.conversationId)?.agent_id === id ? b.conversationId : currentConversation(id);
 		// 幂等：同 clientId 重复投递直接返回已存在的那条，不再唤醒（也不再校验技能，重试幂等优先）
 		if (b.clientId) {

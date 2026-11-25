@@ -23,7 +23,7 @@ import { desktopStatus, startIdleWatcher, useTicket, viewerClose, viewerOpen, vi
 import "./desktop/image-download.ts";
 import { syncMcpDownloads } from "./mcp-install.ts";
 import { agentBusy } from "./runtime.ts";
-import { entryDomain } from "./tunnel.ts";
+import { entryDomain, tunnelStatus } from "./tunnel.ts";
 import { runRoutine, verifyWebhook } from "./routines.ts";
 import { signedPath, verifySigned } from "./channels/media.ts";
 import { startHousekeeping } from "./housekeeping.ts";
@@ -45,6 +45,11 @@ import { mountDesktopRoutes, deskChanged } from "./routes/desktop.ts";
 import { mountMemoryRoutes } from "./routes/memory.ts";
 import { mountRoutineRoutes } from "./routes/routines.ts";
 import { mountRemoteRoutes } from "./routes/remote.ts";
+import { bodyLimit } from "hono/body-limit";
+import { desktopPeerOrigin, startDesktopPeerTls } from "./desktop-peer-tls.ts";
+import { desktopPairStore } from "./desktop-pair.ts";
+import { db as pairingDb } from "./db.ts";
+import { desktopTextRequest, isDesktopPairPublic, isDesktopEdgePairPublic, mountDesktopPairRoutes, restrictDesktopText } from "./routes/desktop-pair.ts";
 import { mountChannelRoutes } from "./routes/channels.ts";
 import { mountHostControlRoutes } from "./routes/host-control.ts";
 import { mountFastExecutorRoutes } from "./routes/fast-executor.ts";
@@ -99,14 +104,22 @@ app.use("/api/*", async (c, next) => {
 		c.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
 	}
 	if (c.req.method === "OPTIONS") return c.body(null, 204);
-	const local = isLocalRequest(remoteOf(c), c.req.raw.headers);
+	const peerOrigin = desktopPeerOrigin(c.req.raw);
+	const local = !peerOrigin && isLocalRequest(remoteOf(c), c.req.raw.headers);
 	const ip = clientIp(remoteOf(c), c.req.raw.headers);
 	const auth = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
 	const deviceId = local ? null : deviceForToken(auth);
 	if (!local && !rateLimit(`ip:${ip}:${deviceId ? "auth" : "anon"}`, deviceId ? 600 : 30)) return c.json({ error: "rate_limited" }, 429);
-	c.set("caller", { local, deviceId, ip, owner: isOwnerDevice(deviceId) });
+	const edgeDevice = !!deviceId && edgePairs.owns(deviceId);
+	c.set("caller", { local, deviceId, ip, owner: !peerOrigin && !edgeDevice && isOwnerDevice(deviceId) });
 	const pub = ["/api/pair/claim", "/api/pair/status/", "/api/system/public", "/hooks/"].some((p) => c.req.path.startsWith(p));
-	if (!local && !deviceId && !pub) return c.json({ error: "unauthorized" }, 401);
+	if (!local && !deviceId && !pub && !isDesktopPairPublic(c.req.method, c.req.path) && !isDesktopEdgePairPublic(c.req.method, c.req.path)) return c.json({ error: "unauthorized" }, 401);
+	if (edgeDevice && deviceId) {
+		const origin = desktopEdgeOrigin();
+		if (!origin || !edgePairs.bound(deviceId, { ...identity(), origin }) || !desktopTextRequest(c.req.raw)) return c.json({ error: "desktop_operation_unavailable" }, 403);
+		restrictDesktopText(c.req.raw);
+	}
+	if (peerOrigin && !pub && !isDesktopPairPublic(c.req.method, c.req.path) && (!deviceId || !peerPairs.bound(deviceId, { ...identity(), origin: peerOrigin }))) return c.json({ error: "desktop_pair_unavailable" }, 403);
 	if (deviceId) touchDevice(deviceId, ip);
 	return next();
 });
@@ -129,6 +142,8 @@ setAsrStreamSelectionVersion(readVoiceSourceVersion);
 setAsrStreamSourceReader(readVoiceSource);
 mountLocalAsrRoutes(app, localOnly, undefined, { service: localAsrService });
 mountAsrRoutes(app);
+const peerBodyLimit = bodyLimit({ maxSize: 128_000 });
+app.use("/api/*", (c, next) => (desktopPeerOrigin(c.req.raw) || isDesktopEdgePairPublic(c.req.method, c.req.path) || (c.get("caller")?.deviceId && edgePairs.owns(c.get("caller").deviceId!))) ? peerBodyLimit(c, next) : next());
 mountAgentRoutes(app);
 mountAgentFolderRoutes(app);
 mountPersonaReviewRoutes(app);
@@ -196,6 +211,30 @@ mountBrowserRoutes(app);
 startIdleWatcher({ busy: agentBusy, changed: deskChanged });
 startHousekeeping();
 mountRemoteRoutes(app);
+const peerPairs = desktopPairStore(pairingDb);
+const edgePairs = desktopPairStore(pairingDb, Date.now, "edge");
+let desktopEdgeOrigin = () => {
+	const status = tunnelStatus();
+	return status.mode === "named" && status.state === "online" && status.named.hostname && status.url === `https://${status.named.hostname}` ? status.url : null;
+};
+mountDesktopPairRoutes(app, edgePairs, identity, () => desktopEdgeOrigin(), desktopPeerOrigin, true);
+let directPeerOrigin: string | null = null;
+mountDesktopPairRoutes(app, peerPairs, identity, () => directPeerOrigin);
+
+/** Explicit direct endpoint; not enabled by the ordinary HTTP listener or tunnel. */
+export function startDirectDesktopPeer(options: Omit<Parameters<typeof startDesktopPeerTls>[0], "handle">) {
+	if (directPeerOrigin) throw new Error("Desktop TLS listener already configured");
+	const server = startDesktopPeerTls({ ...options, async handle(request, _origin, incoming) {
+		const url = new URL(request.url);
+		const fixedGet = request.method === "GET" && /^(?:\/api\/system\/public|\/api\/agents(?:\/[a-zA-Z0-9_-]+\/conversations)?)$/.test(url.pathname);
+		const textChat = /^(?:GET|POST)$/.test(request.method) && /^\/api\/agents\/[a-zA-Z0-9_-]+\/messages$/.test(url.pathname);
+		if (!(fixedGet || textChat || isDesktopPairPublic(request.method, url.pathname)) || (url.search && !(textChat && request.method === "GET"))) return new Response(null, { status: 404 });
+		return app.fetch(request, { incoming });
+	} });
+	server.once("listening", () => { directPeerOrigin = options.origin; });
+	server.once("close", () => { directPeerOrigin = null; });
+	return server;
+}
 // ---------------------------------------------------------------- PWA 静态文件
 if (existsSync(config.webDist)) {
 	/** 与构建期预压缩一致的文本类型；只有这些会有 .gz 旁路 / 需要按 Accept-Encoding 区分。 */
@@ -251,7 +290,8 @@ async function proxyDesktop(req: IncomingMessage, socket: import("node:stream").
 }
 
 // ---------------------------------------------------------------- 启动 HTTP + WebSocket
-export function startHttp() {
+export function startHttp(options?: { desktopEdgeOrigin?: () => string | null }) {
+	if (options?.desktopEdgeOrigin) desktopEdgeOrigin = options.desktopEdgeOrigin;
 	const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host });
 	// 本地语音识别是可选模块（决策 0013）：启动时不自动下载，用户在 设置 › 语音 显式安装。
 	const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
@@ -280,6 +320,7 @@ export function startHttp() {
 				}
 				if (m.type === "auth" && !st.authed) {
 					const d = deviceForToken(m.token);
+					if (d && edgePairs.owns(d)) { ws.close(1008); return; }
 					if (!d) return ws.close(4401, "unauthorized");
 					st.authed = true;
 					st.deviceId = d;

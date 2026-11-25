@@ -18,13 +18,16 @@ import { AppContextMenuHost } from "./components/ContextMenu";
 import { ImageViewerHost } from "./components/ImageViewer";
 import { useWorkspace } from "./workspace";
 
-export default function App() {
+import type { DesktopPeerPort } from "./desktop-peer-port";
+
+export default function App({ desktopPeers }: { desktopPeers?: DesktopPeerPort } = {}) {
 	const { system, current, drawer, set, loadSystem, loadAgents, selectAgent, handle, layout, setLayout, room, loadRooms, selectRoom, subagent, subagentTabs, convs } = useStore();
 	const width = useWindowWidth();
 	const L = resolveLayout(width, layout);
 	const dockShown = useSidePanelShown();
 	const workspaceExpanded = useWorkspace((s) => s.expanded);
 	const workspaceCoversChat = dockShown && (!L.previewDocked || workspaceExpanded);
+	const [peerOpen, setPeerOpen] = useState(false);
 	const [fatal, setFatal] = useState<null | "unpaired" | "offline">(null);
 	/** 模型配置已存在但此刻读不出（凭据 / 目录暂时失败）：提示可恢复错误，不重走首次向导覆盖配置 */
 	const [modelWarnClosed, setModelWarnClosed] = useState(false);
@@ -129,6 +132,7 @@ export default function App() {
 		<div
 			className={`pa-app ${L.sideDocked ? "side-docked" : "side-hidden"} ${L.sideDrawer ? "side-drawer" : ""}`}
 			style={{ ["--side-w" as string]: `${layout.sideW}px` }}
+			inert={peerOpen}
 		>
 			<div className="pa-bg-layer" aria-hidden="true">
 				<i className="pa-b1" />
@@ -139,7 +143,7 @@ export default function App() {
 			{L.sideDrawer && !workspaceCoversChat && <div className={`fixed inset-0 z-40 bg-black/40 transition-opacity ${drawer ? "opacity-100" : "pointer-events-none opacity-0"}`} onClick={() => set({ drawer: false })} />}
 			{(L.sideDocked || L.sideDrawer) && (
 				<div inert={workspaceCoversChat} className={`pa-drawer transition-transform ${L.sideDrawer ? (drawer ? "translate-x-0" : "-translate-x-[110%]") : ""}`}>
-					<Sidebar />
+					<Sidebar desktopPeers={desktopPeers} onPeerOpen={setPeerOpen} />
 					{L.sideDocked && <Resizer side="right" value={layout.sideW} onChange={(v) => setLayout({ sideW: clampSide(v) })} onReset={() => setLayout({ sideW: SIDE.def })} onCollapse={() => setLayout({ sideCollapsed: true })} label="调整助理列表宽度" />}
 				</div>
 			)}

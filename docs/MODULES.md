@@ -206,6 +206,9 @@
 | `cloudflare.ts` | 一键部署 Rendezvous |
 | `identity.ts` | 服务身份密钥 |
 | `auth.ts` | 访问控制与配对 |
+| `desktop-pair.ts`、`routes/desktop-pair.ts` | 独立桌面邀请、主人批准、一次性领取和确认激活；不使用手机配对结果接口 |
+| `desktop-peer-client.mjs` | 随包 Node 适配器：核对邀请身份并执行固定的桌面配对和文本操作 |
+| `desktop-peer-tls.ts` | 独立直连 TLS 入口与进程内来源上下文，不信任转发头；`http.ts` 仅开放已配对设备的具名入口 |
 | `setup-code.ts` | 服务器版首次设置码 |
 | `login-flows.ts` | Pi 登录交互桥接到网页 |
 | `onboarding.ts` | 首次向导状态 |
@@ -236,6 +239,7 @@
 | `room-group.ts` | 群聊消息分组纯逻辑 `groupRoom`；`quietThinking`（单聊主界面不单独显示只有思考的一步，ChatMessages 的 `group(list, quiet)` 用；帮手详情传 false 看完整过程）（决策 0026：只有思考 / 工具步骤、没有文字的助理消息不单独显示，步骤并进同一成员下一条有文字的消息的折叠「N 个步骤」；正在发言的那位照旧显示过程）；`RoomChat.tsx` 使用，单聊仍用 `ChatMessages.tsx` 的 `group` |
 | `member-status.ts` | 助理工作状态纯逻辑（群成员条和单聊顶部共用）：`memberActivity` 群成员（等你 > 在群里说话 > 在后台干活 > 帮手做任务 > 排队 > 空闲）、`agentActivity` 单聊、`roomSummary` 群总状态（几人在干活 / 有人等你 / 都停下了）、`pendingCardOf` 没处理的审批 / 提问卡 |
 | `composerDrafts.ts` | 输入框草稿 |
+| `desktop-peer-session.ts`、`desktop-peer-port.ts` | 桌面远端文本会话状态，按设备与会话隔离草稿和迟到响应；具名端口不含地址或凭据 |
 | `replyDrafts.ts` | 引用草稿 |
 | `replies.ts` | 引用回复纯逻辑 |
 | `replies-api.ts` | 引用回复接口 |
@@ -334,6 +338,9 @@
 | `ResponsiveTabs.tsx` | 自适应标签 + 更多 |
 | `Resizer.tsx` | 拖动调栏宽 |
 | `Settings.tsx` | 设置导航与各页组装 |
+| `DesktopPeerInvitation.tsx` | 发起端粘贴邀请、核对身份和领取批准 |
+| `DesktopPeerSwitch.tsx`、`DesktopPairApprovals.tsx` | 左上切换、独立远端聊天和设备状态；目标机本机处理配对申请 |
+| `DesktopPairApprovals.tsx` | 目标电脑本机查看桌面配对、核对编号与批准或取消 |
 | `ChatSettings.tsx` | 设置 › 聊天与输入 |
 | `Models.tsx` | provider 列表、登录、默认模型 |
 | `ModelServices.tsx` | 统一模型服务 |
@@ -387,6 +394,9 @@
 | `managed-agy-binary.mjs` | Antigravity 本地假 binary 压缩包、SHA 下载、终端登录与更新清单；捕获检测 / 登录 / 对话隔离环境，禁止外网 |
 | `browser-workspace.mjs` | 临时服务真实浏览器e2e夹具；本次临时目录指令驱动公开extension/requests/registry，无产品调试路由 |
 | `temp-server.mjs` | 临时数据 + Mock 的测试服务（makeTempRun / startTempServer / browserEnv / cleanupTempRun；服务进程不继承 *_API_KEY / *_TOKEN / ANTHROPIC_* 等真实服务商凭据环境变量） |
+| `desktop-peer-loopback.sb` | macOS 仅回环网络沙盒；`e2e/desktop-peer-text.mjs` 通过 `test/launch-desktop-peer.ts` 启两个真实 Node 服务，验证直连文本、配对和撤销 |
+| `desktop-peer-app.tsx`、`desktop-peer-browser-loopback.sb` | 只在浏览器验收显式注入设备端口与限制回环；不加入正式产物 |
+| `e2e/desktop-peer-phone-route.mjs` | 用本地 HTTPS 边缘和临时 HTTP 服务验证普通设备访问与独立桌面领取的区别 |
 | `stable-shot.mjs` | 稳定截图 |
 | `upload.mjs` | 共用新上传协议的创建、顺序分块及失败清理 |
 | `artifacts.mjs` | 截图与日志写 artifacts/ |

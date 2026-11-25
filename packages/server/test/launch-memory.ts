@@ -78,6 +78,7 @@ const { initModels } = await import("../src/models.ts");
 await initModels(countingStore);
 // 动态导入 main.ts：它内部的无参 initModels() 复用上面注入的内存后端，不碰 OS 钥匙串。
 const { httpServer } = await import("../src/main.ts");
+export { httpServer };
 
 if (statusFile) {
 	if (!httpServer.listening) await once(httpServer, "listening");
@@ -91,5 +92,4 @@ if (statusFile) {
 		/* 状态文件只是证据，写不进去不影响服务 */
 	}
 }
-// 服务已经在跑，保活；被 SIGKILL 时不需要清理。
-await new Promise(() => {});
+// HTTP 监听器保活；允许其他测试入口在启动完成后复用同一个服务进程。

@@ -1,5 +1,5 @@
 import "./migrate"; // 必须最先执行：store/api 在模块加载时读取 localStorage
-import { StrictMode } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import HostFloatBar from "./components/HostFloatBar";
@@ -12,6 +12,7 @@ import { installDesktopChrome } from "./desktopChrome";
 import { installMacWindowChrome } from "./macosWindow";
 import { applyTheme, useStore } from "./store";
 import { installViewportHeight } from "./viewport";
+import { openNativeDesktopPeerPort, type DesktopPeerPort } from "./desktop-peer-port";
 
 // macOS 桌面窗口：透明覆盖式标题栏的顶部留白 + 拖动区（其他环境是空操作）
 installMacWindowChrome();
@@ -34,4 +35,15 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "127.0.0.1" || location.hostname === "localhost"))
 	navigator.serviceWorker.register("/sw.js").catch(() => {});
 
-createRoot(document.getElementById("root")!).render(<StrictMode>{location.pathname === "/pair" ? <PairPage /> : location.pathname === "/hostbar" ? <HostFloatBar /> : location.pathname === "/pet" ? <PetWindow /> : <App />}</StrictMode>);
+const nativePeers = location.pathname === "/" ? openNativeDesktopPeerPort() : undefined;
+function MainApp() {
+	const [desktopPeers, setDesktopPeers] = useState<DesktopPeerPort>();
+	useEffect(() => {
+		let live = true;
+		void nativePeers?.then(port => { if (live) setDesktopPeers(port); });
+		return () => { live = false; };
+	}, []);
+	return <App desktopPeers={desktopPeers} />;
+}
+
+createRoot(document.getElementById("root")!).render(<StrictMode>{location.pathname === "/pair" ? <PairPage /> : location.pathname === "/hostbar" ? <HostFloatBar /> : location.pathname === "/pet" ? <PetWindow /> : <MainApp />}</StrictMode>);

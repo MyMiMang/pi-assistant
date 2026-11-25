@@ -13,9 +13,10 @@ import { BRAND } from "@pi-assistant/shared";
 import { MemoryHealthDot } from "./MemoryHealthDot";
 import { SidebarPersonalFolders } from "./SidebarPersonalFolders";
 import { SidebarRoomSection } from "./SidebarRoomSection";
+import { DesktopPeerSwitch } from "./DesktopPeerSwitch";
+import type { DesktopPeerPort } from "../desktop-peer-port";
 
-
-export default function Sidebar() {
+export default function Sidebar({ desktopPeers, onPeerOpen }: { desktopPeers?: DesktopPeerPort; onPeerOpen?: (open: boolean) => void }) {
 	const { agents: allAgents, current, set, system, conn, tasks, theme, rooms, room } = useStore();
 	// 群专属助理不在侧边栏（在群成员里）
 	const agents = allAgents.filter((a) => a.scope !== "room");
@@ -49,6 +50,7 @@ export default function Sidebar() {
 			<div className="pa-brand">
 				<img className="pa-logo" src="/icon.svg" alt="" />
 				<span className="pa-brand-name">{BRAND.name}</span>
+				{desktopPeers && system?.local && <DesktopPeerSwitch port={desktopPeers} onOpen={onPeerOpen} />}
 				<button className="pa-icon-btn ghost pa-theme-toggle" title="切换浅色 / 深色" onClick={() => setAppearance({ theme: dark ? "light" : "dark" })} data-mode-now={theme}>
 					{dark ? <Moon className="pa-ic" /> : <Sun className="pa-ic" />}
 				</button>

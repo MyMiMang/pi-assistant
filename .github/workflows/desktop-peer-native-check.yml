@@ -1,0 +1,48 @@
+name: Desktop peer native check (isolated)
+on:
+  push:
+    branches: [desktop-peer-native-acceptance]
+permissions:
+  contents: read
+jobs:
+  check:
+    if: github.ref == 'refs/heads/desktop-peer-native-acceptance'
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.3'
+      - name: Verify native host toolchain
+        shell: bash
+        env:
+          EXPECTED_HOST: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          rustc -vV
+          rustc -vV | grep -Fx "host: $EXPECTED_HOST"
+          cargo --version
+      - name: Prepare existing build resources
+        shell: bash
+        env:
+          NATIVE_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run build
+          node apps/tray/scripts/build-sidecar.mjs "$NATIVE_TARGET" --no-bins
+      - name: Compile and run exact native tests
+        run: node scripts/desktop-peer-native-check.mjs

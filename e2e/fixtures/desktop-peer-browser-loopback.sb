@@ -1,0 +1,8 @@
+(version 1)
+(allow default)
+(deny network*)
+(allow network-bind (local ip "localhost:*"))
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+;; Headless Chrome's fresh profile needs its own local Unix singleton socket.
+(allow network-bind (local unix-socket (regex #"/com[.]google[.]Chrome[.][^/]+/SingletonSocket$")))

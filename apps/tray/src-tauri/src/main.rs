@@ -21,6 +21,8 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+mod desktop_peer;
+mod peer_store;
 mod pet;
 mod startup;
 mod updater;
@@ -415,7 +417,8 @@ fn main() {
             update_item: Mutex::new(None),
         })
         .manage(pet::PetState::default())
-        .invoke_handler(tauri::generate_handler![updater::app_update_status, updater::app_update_check, updater::app_update_install, updater::app_update_set_auto, pet::pet_hitbox, pet::pet_drag, pet::pet_open_main, startup::startup_retry, startup::startup_open_logs])
+        .manage(desktop_peer::State::default())
+        .invoke_handler(tauri::generate_handler![desktop_peer::desktop_peer, updater::app_update_status, updater::app_update_check, updater::app_update_install, updater::app_update_set_auto, pet::pet_hitbox, pet::pet_drag, pet::pet_open_main, startup::startup_retry, startup::startup_open_logs])
         .setup(move |app| {
             startup::init_log(app.handle());
             let u = updater::Updates::new(app.handle());

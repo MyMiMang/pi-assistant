@@ -21,13 +21,13 @@ import type { Device, PermCheck, Provider } from "../types";
 import { DefaultModelPicker } from "./Models";
 import { ModelServicesPanel } from "./ModelServices";
 import { Badge, Button, cx, fmtTime, Help, Input, Modal, useConfirm } from "./ui";
+import { DesktopPairApprovals } from "./DesktopPairApprovals";
 import { Downloads } from "./Downloads";
 import { AppUpdate } from "./AppUpdate";
 import { PetSettings } from "./PetSettings";
 import { UsageTab } from "./Usage";
 import { VoiceSettings } from "./VoiceSettings";
 import { ChatSettings } from "./ChatSettings";
-
 /** 设置导航：17 项分 5 组（只加分组标题，仍是一层点击，不变二级树）。旧 key / 深链全部保留。 */
 const GROUPS: { title: string; items: readonly (readonly [string, string, typeof Monitor])[] }[] = [
 	{ title: "模型与语音", items: [["models", "模型服务", Monitor], ["voice", "语音配置", Mic]] },
@@ -142,7 +142,6 @@ function ModelsTab() {
 		</div>
 	);
 }
-
 function RemoteTab() {
 	const system = useStore((s) => s.system)!;
 	const [pair, setPair] = useState<{ url: string; directUrl: string; shortCode: string; qr: string; expiresAt: number; viaEntry: boolean; remote: boolean; preApproved?: boolean } | null>(null);
@@ -268,6 +267,7 @@ function RemoteTab() {
 					)}
 				</section>
 			)}
+			{system.local && !system.deviceId && <DesktopPairApprovals />}
 			<section>
 				<H desc="已配对的设备可以随时访问助理。丢失设备时请立即移除。">已配对设备</H>
 				<div className="space-y-1.5">
