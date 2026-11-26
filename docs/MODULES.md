@@ -30,7 +30,8 @@
 | `src/cli-agents/acp-inactivity.ts` | 原生轮次十分钟无事件保护；等待审批时不取消，可注入时钟 |
 | `src/cli-agents/native-env.ts` | 受管工具独立 home、白名单环境与 HTTP MCP 定义 |
 | `src/cli-agents/managed-runtime-env.ts` | 全部受管 CLI 共用私有 npm prefix / 空配置 / cache；运行 PATH 按私有 Node、受管命令目录、原始用户 PATH 排序去重，安装 npm 保持精简 PATH；二次白名单保留最终边界 |
-| `src/cli-agents/agy-account-gate.ts` | 受管 agy 进程与账号切换共用的进程内互斥，回滚核对失败后禁止启动 |
+| `src/cli-agents/agy-account-gate.ts` | 受管 agy 进程与账号切换共用的进程内互斥；忙碌状态只读核对独占代际，不获取租约；回滚核对失败后禁止启动 |
+| `e2e/agy-busy-status.mjs` | 真实回环 HTTP、合成登录验证 AGY 忙碌状态查询不探测，成功/失败/取消后恢复检测 |
 | `src/cli-agents/agy-account-vault.ts` | 生产 Antigravity 多账号 RT 加密存储、受管 CLI 暂存验证与独立目录原子切换（支持切回原 Google 登录） |
 | `src/cli-agents/agy-oauth-identity.ts` | Antigravity 私有凭据文件原子读写、JWT / Google UserInfo 身份读取与可选 OAuth 刷新校验 |
 | `src/cli-agents/agy-rt-import.ts`、`src/routes/agy-rt-import.ts` | Antigravity 本机账号管理：验证身份、添加与切换分离、暂存 CLI 验证和原子启用；没有受信适配器时不可用 |

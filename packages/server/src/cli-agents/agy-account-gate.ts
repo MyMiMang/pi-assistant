@@ -24,6 +24,7 @@ export function createAgyAccountGate() {
 		},
 		quarantine() { uncertain = true; },
 		readRevision() { return switching || uncertain ? null : revision; },
+		readExclusiveRevision() { return switching && !uncertain ? revision : null; },
 	};
 }
 

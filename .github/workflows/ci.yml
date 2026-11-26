@@ -56,6 +56,7 @@ jobs:
         run: |
           CHROME=$(node -p "require('playwright-core').chromium.executablePath()")
           export CHROME
+          PIA_SECRETS=file node --test e2e/agy-busy-status.mjs
           PIA_SECRETS=file node --test e2e/agy-updater-manifest.mjs
           node --test e2e/agy-legacy-default-http.mjs
           node e2e/agy-exact-effort-ui.mjs

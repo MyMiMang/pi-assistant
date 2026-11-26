@@ -71,6 +71,7 @@ async function probeManagedAgy<T>(probe: () => Promise<T>): Promise<T> {
 	try { return await probe(); } finally { release(); }
 }
 const agyOptions = () => ({ dataDir: config.dataDir, commandArgs: managedArgs("antigravity", "AGY_COMMAND") });
+let lastAgyLogin: { revision: number; loggedIn: boolean } | undefined;
 const antigravity = createCliChannelService({
  ...agyManaged,
 	id: "antigravity",
@@ -80,7 +81,19 @@ const antigravity = createCliChannelService({
 	allowCommandOverride: () => process.env.NODE_ENV !== "production" && (config.mock || process.env.NODE_ENV === "test" || process.env.PIA_DEV === "1"),
 	find: () => nativeInstaller.installed("antigravity")?.command ?? null,
 	notFound: "还没在 Pi 里安装 Antigravity：到 设置 › 模型服务 › 编程工具 里点「安装」，装好后点「登录」。",
-	detect: (command) => probeManagedAgy(() => detectAgy({ command, ...agyOptions() })),
+	busyStatus: (command) => {
+		const revision = agyManaged.busyRevision();
+		if (revision === undefined) return undefined;
+		return { installed: !!command(), loggedIn: false, statusPending: true,
+			previousLoggedIn: lastAgyLogin && lastAgyLogin.revision === revision - 1 ? lastAgyLogin.loggedIn : undefined };
+	},
+	detect: (command) => probeManagedAgy(async () => {
+		const revision = agyAccountGate.readRevision();
+		const status = await detectAgy({ command, ...agyOptions() });
+		if (revision !== null) lastAgyLogin = !status.error || (status.installed && /authentication required|not (?:logged|signed) in|login required/i.test(status.error))
+			? { revision, loggedIn: status.loggedIn } : undefined;
+		return status;
+	}),
 	register: async (models, command) => registerAntigravityProvider(models, { dataDir: config.dataDir, bridgeBaseUrl: () => `http://127.0.0.1:${config.port}`, command, commandArgs: () => agyOptions().commandArgs, families: await probeManagedAgy(() => listAgyModels(agyCommand(command), agyOptions())) }),
 	refresh: async (models, channel) => void (await registerAntigravityModels(models, channel, await probeManagedAgy(() => listAgyModels(agyCommand(antigravity.command), agyOptions())))),
 	requireLogin: true, // `agy models` 成功才有模型可选

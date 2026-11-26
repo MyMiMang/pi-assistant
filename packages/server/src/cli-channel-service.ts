@@ -37,6 +37,8 @@ export interface CliChannelAdapter<S extends { installed: boolean; loggedIn: boo
 	requireLogin: boolean;
 	/** 检测结果里附带的额外信息（只读本机状态，不读凭证） */
 	extra?(): Record<string, unknown>;
+	/** A verified exclusive operation can supply read-only status without probing. */
+	busyStatus?(command: () => string | null): S | undefined;
 }
 
 export type CliChannelInfo<S> = S & { registered: boolean } & Record<string, unknown>;
@@ -118,6 +120,8 @@ export function createCliChannelService<S extends { installed: boolean; loggedIn
 
 	/** 检测并（装好了就）注册，不用重启服务；`recheck` 时顺便刷新模型列表。 */
 	async function check(models: PiModels, recheck = false): Promise<CliChannelInfo<S>> {
+		const busy = a.busyStatus?.(command);
+		if (busy) return { ...busy, ...a.extra?.(), registered: !!channel && registeredOn === models };
 		if (recheck) a.invalidate?.();
 		const cmd = command();
 		const status = cmd ? await a.detect(cmd) : ({ installed: false, loggedIn: false, ...(a.managed ? {} : { error: a.notFound }) } as unknown as S);

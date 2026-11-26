@@ -11,6 +11,8 @@ import { ApiError, api, base } from "../api";
 import { Badge, Button, Fold, Help, Input, Modal, useConfirm } from "./ui";
 
 interface CliInfo extends NativeCliStatus {
+	statusPending?: boolean;
+	previousLoggedIn?: boolean;
 	/** Codex：`~/.codex/AGENTS.md` 存在（只检查文件在不在） */
 	globalAgentsMd?: boolean;
 }
@@ -157,7 +159,7 @@ export function CliAgentCard({ kind, onChanged, onStatus }: { kind: CliKind; onC
 	};
 	const supported = info?.platformSupported !== false;
 	const apiKey = info?.authType === "api-key";
-	const ready = supported && !!info?.installed && !!info.registered && (info.loggedIn || !!k.loginOptional);
+	const ready = supported && !info?.statusPending && !!info?.installed && !!info.registered && (info.loggedIn || !!k.loginOptional);
 	return (
 		<div className="space-y-2 rounded-xl border border-line p-3" data-testid={`${kind}-card`} data-installed={String(!!info?.installed)} data-logged-in={String(!!info?.loggedIn)} data-registered={String(!!info?.registered)} data-platform-supported={String(supported)}>
 			<div className="flex flex-wrap items-center gap-2.5">
@@ -200,6 +202,8 @@ export function CliAgentCard({ kind, onChanged, onStatus }: { kind: CliKind; onC
 					<span className="text-mut">{err ? `检测失败：${err}` : "正在检测…"}</span>
 				) : !supported ? (
 					<Badge tone="zinc">这个平台暂不支持</Badge>
+				) : info.statusPending ? (
+					<Badge tone="zinc">{info.previousLoggedIn === undefined ? "登录状态待确认" : info.previousLoggedIn ? "此前已登录，当前待确认" : "此前未登录，当前待确认"}</Badge>
 				) : !info.installed ? (
 					<Badge tone="amber">没装</Badge>
 				) : (
@@ -213,7 +217,7 @@ export function CliAgentCard({ kind, onChanged, onStatus }: { kind: CliKind; onC
 				{supported && apiKey && <span className="text-mut">需要在工具里配置自己的模型服务，配好后点「重新检测」。</span>}
 				{!info?.operation && info?.updateAvailable && <span className="text-mut">有新版本 v{info.latestVersion}</span>}
 				{!info?.operation && info?.updateBlocked && <span className="text-mut">有新版本 v{info.latestVersion}，{info.updateBlocked}</span>}
-				{info?.registered && <span className="text-mut">{k.models}</span>}
+				{info?.registered && !info.statusPending && <span className="text-mut">{k.models}</span>}
 			</div>
 			{err && info && <div role="alert" className="break-words text-xs text-red-500">{err}</div>}
 			{kind === "claude-code" && <ClaudeCustomModels onChanged={onChanged} />}

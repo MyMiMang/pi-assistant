@@ -14,6 +14,7 @@ import type { NativeRelease } from "./native-install.ts";
 export function managedActions(id: "claude-code" | "codex" | "opencode" | "antigravity", envName: string, command: () => string | null, recheck: () => Promise<unknown>) {
  let operation: "install" | "update" | "login" | undefined;
  let controller: AbortController | undefined;
+ let exclusiveRevision: number | undefined;
  let error: string | undefined;
  let latest: NativeRelease | undefined;
  function updateAvailable() {
@@ -29,7 +30,11 @@ export function managedActions(id: "claude-code" | "codex" | "opencode" | "antig
   operation = kind; error = undefined;
   const current = controller = new AbortController();
   void (async () => {
-   const release = id === "antigravity" ? await agyAccountGate.manage() : undefined;
+   const before = id === "antigravity" ? agyAccountGate.readRevision() : null;
+   const acquiring = id === "antigravity" ? agyAccountGate.manage() : undefined;
+   // manage marks the exclusive revision synchronously, including while retiring idle processes.
+   if (before !== null && agyAccountGate.readExclusiveRevision() === before + 1) exclusiveRevision = before + 1;
+   const release = await acquiring;
    if (id === "antigravity" && !release) throw new Error("Antigravity 仍有任务或账号操作，暂不能继续。");
    try {
    if (current.signal.aborted) return;
@@ -44,13 +49,14 @@ export function managedActions(id: "claude-code" | "codex" | "opencode" | "antig
     // 原 Google 登录完成后自动切回原登录环境，保留已导入的 RT 账号列表
     if (id === "antigravity") setActiveAgyRtAccount(null);
    } else await nativeInstaller.install(id, kind === "update" ? latest : undefined);
-   } finally { release?.(); }
+   } finally { exclusiveRevision = undefined; release?.(); }
    await recheck();
   })().catch(e => { if (!current.signal.aborted) error = e instanceof Error ? e.message : String(e); })
-   .finally(() => { operation = undefined; controller = undefined; });
+   .finally(() => { operation = undefined; controller = undefined; exclusiveRevision = undefined; });
   return { started: true };
  }
  return {
+  busyRevision: () => exclusiveRevision !== undefined && agyAccountGate.readExclusiveRevision() === exclusiveRevision ? exclusiveRevision : undefined,
   extra: () => ({ ...(nativeInstaller.installed(id)?.version ? { version: nativeInstaller.installed(id)!.version } : {}), operation, ...(error ? { error } : {}), latestVersion: latest?.version, updateBlocked: latest?.updateBlocked, updateAvailable: updateAvailable(), untestedVersion: !!nativeInstaller.installed(id) && nativeInstaller.installed(id)?.version !== releaseFor(id === "claude-code" ? "@anthropic-ai/claude-code" : id === "codex" ? "@openai/codex" : id === "antigravity" ? "antigravity-cli" : "opencode-ai").version }),
   actions: {
    install: () => start("install"), login: () => start("login"), update: () => start("update"),
