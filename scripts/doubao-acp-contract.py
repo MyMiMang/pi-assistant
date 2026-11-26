@@ -21,7 +21,7 @@ def emit(**fields):
     print(json.dumps(fields, ensure_ascii=True), flush=True)
 
 
-def probe(argv, payload=None):
+def probe(argv, requests=()):
     env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': str(HOME),
            'DOUBAO_CLI_NO_UPDATE_CHECK': '1'}
     for key, path in {'XDG_DATA_HOME': DATA, 'XDG_CONFIG_HOME': HOME / 'config',
@@ -30,15 +30,19 @@ def probe(argv, payload=None):
         path.mkdir(mode=0o700, exist_ok=True)
         env[key] = str(path)
     output = {'stdout': bytearray(), 'stderr': bytearray()}
-    handshake = None
+    responses = []
+    parsed = 0
     reason = 'exit'
     with subprocess.Popen([str(CURRENT / 'doubao'), *argv], cwd=CWD, env=env,
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           start_new_session=True) as child, selectors.DefaultSelector() as sel:
         try:
-            if payload is not None:
-                child.stdin.write(json.dumps(payload).encode() + b'\n')
+            def send(request):
+                child.stdin.write(json.dumps(request).encode() + b'\n')
                 child.stdin.flush()
+
+            if requests:
+                send(requests[0])
             else:
                 child.stdin.close()
             for key in output:
@@ -59,17 +63,28 @@ def probe(argv, payload=None):
                     if len(buf) >= LIMIT:
                         reason = 'output_limit'
                         break
-                    if payload is not None and event.data == 'stdout':
-                        for line in buf.split(b'\n')[:-1]:
+                    if requests and event.data == 'stdout':
+                        while (end := buf.find(b'\n', parsed)) >= 0:
+                            line = buf[parsed:end]
+                            parsed = end + 1
                             try:
                                 reply = json.loads(line)
                             except (ValueError, UnicodeError):
                                 continue
-                            if isinstance(reply, dict) and reply.get('jsonrpc') == '2.0' and type(reply.get('id')) is int and reply['id'] == 1:
-                                handshake = reply
-                                reason = 'initialize_response'
+                            expected = requests[len(responses)]
+                            if not (isinstance(reply, dict) and reply.get('jsonrpc') == '2.0'
+                                    and type(reply.get('id')) is int and reply['id'] == expected['id']
+                                    and (('result' in reply) != ('error' in reply))):
+                                continue
+                            responses.append(reply)
+                            if len(responses) == len(requests) or not initialized(reply):
+                                reason = expected['method'] + '_response'
                                 break
-                    if handshake is not None:
+                            send(requests[len(responses)])
+                            # Bytes already buffered before the second request cannot answer it.
+                            parsed = len(buf)
+                            break
+                    if reason != 'exit':
                         break
                 if reason != 'exit':
                     break
@@ -88,7 +103,13 @@ def probe(argv, payload=None):
                 reason += '_forced_stop'
         emit(event='command', argv=argv, exit=child.returncode, stop=reason,
              **{key: value.decode('utf-8', 'replace') for key, value in output.items()})
-        return handshake, child.returncode
+        return responses, child.returncode, reason
+
+
+def initialized(response):
+    result = response.get('result') if response else None
+    return (isinstance(result, dict) and type(result.get('protocolVersion')) is int
+            and result['protocolVersion'] == 1 and 'error' not in response)
 
 
 def logs():
@@ -148,21 +169,23 @@ def main():
     if not check_dependencies():
         emit(recorded=True, handshake=False, stage='dependencies')
         return 1
-    _, version_exit = probe(['--version'])
-    if version_exit != 0:
-        emit(recorded=True, handshake=False, stage='version', version_exit=version_exit)
-        return 1
-    _, help_exit = probe(['acp', '--help'])
-    response, _ = probe(['acp', 'serve'], {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
-                        'params': {'protocolVersion': 1, 'clientCapabilities': {},
-                                   'clientInfo': {'name': 'pi-contract-probe', 'version': '1'}}})
+    responses, acp_exit, acp_stop = probe(['acp', 'serve'], (
+        {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
+         'params': {'protocolVersion': 1, 'clientCapabilities': {},
+                    'clientInfo': {'name': 'pi-contract-probe', 'version': '1'}}},
+        {'jsonrpc': '2.0', 'id': 2, 'method': 'session/new',
+         'params': {'cwd': str(CWD), 'mcpServers': []}},
+    ))
+    _, auth_exit, auth_stop = probe(['auth', 'status'])
+    _, models_exit, models_stop = probe(['model', 'list', '--json'])
     logs()
-    result = response.get('result') if response else None
-    ok = (isinstance(result, dict) and type(result.get('protocolVersion')) is int
-          and result['protocolVersion'] == 1 and 'error' not in response)
-    emit(recorded=True, handshake=ok, stage='initialize', response=response,
-         version_exit=version_exit, help_exit=help_exit)
-    return 0 if ok and version_exit == 0 and help_exit == 0 else 1
+    init = responses[0] if responses else None
+    session = responses[1] if len(responses) == 2 else None
+    ok = initialized(init)
+    emit(recorded=True, handshake=ok, stage='no_account_contract', initialize=init, session_new=session,
+         acp_exit=acp_exit, acp_stop=acp_stop, auth_status_exit=auth_exit, auth_status_stop=auth_stop,
+         model_list_exit=models_exit, model_list_stop=models_stop)
+    return 0 if ok and session is not None and acp_exit == 0 and auth_stop == models_stop == 'exit' else 1
 
 
 def prepare_archive():
