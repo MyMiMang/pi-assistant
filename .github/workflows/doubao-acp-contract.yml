@@ -1,0 +1,18 @@
+name: Doubao ACP contract (no account)
+on:
+  push:
+    branches: [doubao-acp-contract-probe]
+permissions:
+  contents: read
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/doubao-acp-contract-probe'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify native host, fetch pinned public inputs, and probe offline
+        shell: bash
+        run: bash scripts/doubao-acp-contract.sh
