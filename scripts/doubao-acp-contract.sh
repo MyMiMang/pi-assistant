@@ -17,8 +17,11 @@ curl -q --fail --silent --show-error --proto '=https' --max-time 120 \
   'https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/doubao_cli/2.38.2/doubao-cli-2.38.2-linux-x64-signed.tar.gz' -o "$work/cli.tgz"
 printf '%s  %s\n' "$sha" "$work/cli.tgz" | sha256sum --check
 docker pull --platform linux/amd64 "$image"
+docker build --pull=false --platform linux/amd64 --iidfile "$work/image-id" - < scripts/doubao-acp-contract.Dockerfile
+runtime_image=$(< "$work/image-id")
+printf 'Resolved runtime image: %s\n' "$runtime_image"
 docker run --rm -i --cidfile "$work/cid" --pull=never --platform linux/amd64 \
   --network=none --read-only --tmpfs /tmp:rw,exec,nosuid,nodev,size=950m,mode=1777 \
   --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges \
-  --entrypoint /usr/bin/env "$image" -i PATH=/usr/local/bin:/usr/bin:/bin \
+  --entrypoint /usr/bin/env "$runtime_image" -i PATH=/usr/local/bin:/usr/bin:/bin \
   /usr/local/bin/python3 -I -B -c "$(< scripts/doubao-acp-contract.py)" < "$work/cli.tgz"

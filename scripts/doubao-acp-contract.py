@@ -107,6 +107,32 @@ def logs():
                                                   'Started detached process', 'stage=discovery.failed'))][-30:])
 
 
+def check_dependencies():
+    packages = Path('/doubao-ci-packages.tsv').read_text()
+    emit(event='runtime_packages', packages=packages.splitlines())
+    checked, failed = [], []
+    for file in sorted(CURRENT.rglob('*')):
+        if not file.is_file():
+            continue
+        with file.open('rb') as stream:
+            if stream.read(4) != b'\x7fELF':
+                continue
+        relative = str(file.relative_to(CURRENT))
+        env = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}
+        # libaha_net is a loadable module with a sibling libsscronet. Audit
+        # module dependencies in the package context, never change CLI launch env.
+        if relative == 'libaha_net.so':
+            env['LD_LIBRARY_PATH'] = str(CURRENT)
+        loaded = subprocess.run(['/usr/bin/ldd', str(file)], env=env, cwd=CWD,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=8)
+        checked.append(relative)
+        output = loaded.stdout + loaded.stderr
+        if loaded.returncode != 0 or 'not found' in output or 'undefined symbol' in output:
+            failed.append({'file': relative, 'exit': loaded.returncode, 'diagnostic': output[:4096]})
+    emit(event='dependencies', checked=checked, missing=failed)
+    return 'doubao' in checked and not failed
+
+
 def main():
     os.umask(0o077)
     if os.uname().machine != 'x86_64' or sys.platform != 'linux' or os.geteuid() == 0:
@@ -118,6 +144,28 @@ def main():
         emit(recorded=True, handshake=False, stage='pidfd_open', errno=getattr(error, 'errno', None))
         return 1
     emit(event='preflight', architecture=os.uname().machine, pidfd_open=True)
+    prepare_archive()
+    if not check_dependencies():
+        emit(recorded=True, handshake=False, stage='dependencies')
+        return 1
+    _, version_exit = probe(['--version'])
+    if version_exit != 0:
+        emit(recorded=True, handshake=False, stage='version', version_exit=version_exit)
+        return 1
+    _, help_exit = probe(['acp', '--help'])
+    response, _ = probe(['acp', 'serve'], {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
+                        'params': {'protocolVersion': 1, 'clientCapabilities': {},
+                                   'clientInfo': {'name': 'pi-contract-probe', 'version': '1'}}})
+    logs()
+    result = response.get('result') if response else None
+    ok = (isinstance(result, dict) and type(result.get('protocolVersion')) is int
+          and result['protocolVersion'] == 1 and 'error' not in response)
+    emit(recorded=True, handshake=ok, stage='initialize', response=response,
+         version_exit=version_exit, help_exit=help_exit)
+    return 0 if ok and version_exit == 0 and help_exit == 0 else 1
+
+
+def prepare_archive():
     HOME.mkdir(parents=True)
     CWD.mkdir()
     staging = ROOT / 'archive'
@@ -132,18 +180,6 @@ def main():
     manifest = json.loads((CURRENT / 'manifest.json').read_text())
     if (manifest['version'], manifest['target'], manifest['entrypoint']) != ('2.38.2', 'linux-x64', 'doubao'):
         raise ValueError('unexpected release manifest')
-    _, version_exit = probe(['--version'])
-    _, help_exit = probe(['acp', '--help'])
-    response, _ = probe(['acp', 'serve'], {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
-                        'params': {'protocolVersion': 1, 'clientCapabilities': {},
-                                   'clientInfo': {'name': 'pi-contract-probe', 'version': '1'}}})
-    logs()
-    result = response.get('result') if response else None
-    ok = (isinstance(result, dict) and type(result.get('protocolVersion')) is int
-          and result['protocolVersion'] == 1 and 'error' not in response)
-    emit(recorded=True, handshake=ok, stage='initialize', response=response,
-         version_exit=version_exit, help_exit=help_exit)
-    return 0 if ok and version_exit == 0 and help_exit == 0 else 1
 
 
 if __name__ == '__main__':
