@@ -2,7 +2,7 @@
 
 状态：已实现
 
-> 事实来源：`.github/release-scope.json`（范围取值）+ `scripts/release-scope.mjs`（推导矩阵、发布前校验）+ `.github/workflows/release.yml`（组装 matrix、冒烟、publish）。
+> 事实来源：`.github/release-scope.json`（范围取值）+ `scripts/release-scope.mjs`（推导矩阵、发布前校验）+ `.github/workflows/release.yml`（组装 matrix、冒烟、草稿校验）。
 > **当前范围：`all-intel` = Mac arm64 + Intel Mac x64 + Windows x64 + Linux x64/arm64**（2026-10-17 用户明确「全部平台，含 Intel Mac」）。
 
 ## 1. 三个取值
@@ -31,7 +31,8 @@
 3. `linux` job：`if: build_linux == 'true'`，两个 arch 各出一个 tar.gz + sha256。
 4. `windows-smoke` job：`if: build_windows == 'true'`（复用 `.github/workflows/windows-smoke.yml`）。
 5. `mac-smoke` job：arm64 解压 `.app` 查 `/api`；**当 `build_intel == 'true'` 时**额外下载 `pi-assistant-macOS-x64`、解压并用 `file ... | grep x86_64` 核对确实是 Intel 二进制。
-6. `publish` job：`node scripts/release-scope.mjs validate` —— 校验草稿资产与 `latest.json` 的平台/签名是否与推导出的 plan 一致（`all-intel` 时必须存在 `x64.dmg` 与 `darwin-x86_64` 更新项），**不全就拒绝公开**。
+6. `publish` job：`node scripts/release-scope.mjs validate` 校验草稿资产、更新清单平台和签名（`all-intel` 必须包含 `x64.dmg` 与 `darwin-x86_64` 更新项），校验通过后重传修正的 `latest.json`，在运行摘要记录版本、提交和运行。**所有 tag 默认保持草稿；工作流不自动公开。**
+7. 总管确认同一提交的 CI、Secrets、构建及安装冒烟均通过，独立核对草稿资产与 `latest.json` 后，手动执行 `gh release edit <tag> --draft=false --prerelease=false --latest`。有失败、缺项或提交不一致时不公开。
 
 ## 4. 改范围怎么做
 

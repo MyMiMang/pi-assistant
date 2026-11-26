@@ -1,4 +1,4 @@
-# 打 v* tag 时构建安装包并发布到 GitHub Releases：
+# 打 v* tag 时构建安装包并上传到 GitHub Releases 草稿：
 # tag / release-dryrun 的范围取 .github/release-scope.json（本轮 `all-intel`：Mac arm64 + Intel Mac x64 + Windows x64 + Linux x64/arm64）。
 #   scope 取值：`mac-arm64` 仅 Apple 芯片 Mac；`all` Mac arm64 + Windows + Linux；`all-intel` 在 `all` 基础上加 Intel Mac x64。
 #   **Intel 是否进矩阵只由 scope 决定**（`all-intel` 就是进，tag 触发同样生效）；仓库变量 BUILD_INTEL / 手动输入 build_intel 只是旧的补充开关，不再必需。
@@ -7,9 +7,9 @@
 # 安装包内容：Tauri 托盘程序 + 内置 Node 运行时（sidecar）+ app 目录（服务端 + Pi + 生产依赖 + 网页 + cloudflared/uv/cua-driver），
 # 不含本地语音识别的运行环境和权重：它是可选模块，用户在 设置 › 语音 安装（决策 0013；stage-app.mjs 会检查）。
 # Linux 服务器版 x64 / arm64 → pi-assistant-<版本>-linux-<arch>.tar.gz（+ .sha256），deploy/linux/install.sh 安装。
-# 版本与 SHA256 全部以 third-party.json 为准。所有 v* tag（包括 v0.2.0-beta.1 这类测试版）都发布为正式的 latest 版本：Tauri 自动更新读 releases/latest/download/latest.json，pre-release 不算 latest，会导致更新失效。
-# 先发草稿、验证通过才公开：prepare 建草稿 → build / linux 把安装包和 latest.json 传进草稿 → windows-smoke（静默安装刚构建的 setup.exe 到中文路径，启动托盘查 /api）
-# 和 mac-smoke（挂载 dmg 启动 .app 查 /api）→ 都通过才 publish（取消草稿、标 Latest）。草稿里的 latest.json 对自动更新不可见，任一步失败 Release 留在草稿，用户收不到。
+# 版本与 SHA256 全部以 third-party.json 为准。总管核验后手动公开并标 Latest（包括 beta tag）；Tauri 自动更新读取 releases/latest/download/latest.json，草稿和 pre-release 都不会作为 Latest 提供更新。
+# prepare 建草稿 → build / linux 上传安装包与 latest.json → Windows/macOS 安装冒烟 → publish 校验资产并刷新草稿里的 latest.json。
+# 所有 tag 默认留在草稿，工作流不会公开；总管须核验同一提交的 CI、Secrets、构建、安装冒烟、资产及更新清单，再手动公开。
 # 演练：推送到 release-dryrun 分支（或手动运行）会用 v0.0.0-dryrun.<run> 走完整流程，但不公开，最后自动删掉草稿。
 # Intel Mac（x86_64）：用 `.github/release-scope.json` 的 `all-intel` 显式开启（tag 也生效，可审计）。
 #   旧的两条补充开关仍然有效，用于临时覆盖：1) 手动运行本 workflow 时勾选 build_intel；2) 仓库变量 BUILD_INTEL=true（Settings › Secrets and variables › Actions › Variables）。
@@ -259,7 +259,7 @@ jobs:
       BUILD_INTEL: ${{ needs.prepare.outputs.build_intel }}
     steps:
       - uses: actions/checkout@v4
-      - name: 全部通过 → 公开并标为 Latest（latest.json 这时才对自动更新可见）
+      - name: 校验发布资产和更新清单，保留草稿待人工核验
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", GH_REPO: "${{ github.repository }}" }
         run: |
           gh release view "$REL_TAG" --json assets -q '.assets[].name' | tee assets.txt
@@ -268,7 +268,12 @@ jobs:
           node scripts/release-scope.mjs validate
           grep -o '"url": *"[^"]*"' latest.json
           gh release upload "$REL_TAG" latest.json --clobber
-          gh release edit "$REL_TAG" --draft=false --prerelease=false --latest
+          {
+            printf '## 发布草稿待总管核验\n\n'
+            printf -- '- 版本：`%s`\n- 提交：`%s`\n' "$REL_TAG" "$GITHUB_SHA"
+            printf -- '- 运行：[本次发布检查](%s/%s/actions/runs/%s)（第 %s 次尝试）\n\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf '资产与更新清单校验通过，Release 仍为草稿。请核验同一提交的 CI、Secrets、构建和安装冒烟，并独立核对资产与更新清单后手动公开。\n'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   cleanup-dry-run:
     needs: [prepare, build, linux, windows-smoke, mac-smoke]

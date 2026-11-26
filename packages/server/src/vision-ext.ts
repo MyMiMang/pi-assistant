@@ -9,6 +9,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { Type } from "typebox";
+import { AGY_IMAGE_PROVIDER, cropAgyImage, type ImageRegion } from "./agy-tool-images.ts";
 import { loadImage, supportsVision, visionUnsupportedMessage, type ModelRef } from "./vision.ts";
 
 type ImageBlock = { type: "image"; data: string; mimeType: string };
@@ -39,12 +40,18 @@ export function visionExtension(o: { workspace: string; model: () => ModelRef | 
 				question: Type.Optional(Type.String({ description: "想确认什么，例如“是不是 2008 年穿越火线的游戏截图”" })),
 			}),
 			annotations: { readOnlyHint: true },
-			async execute(_id: string, params: { paths: string[]; question?: string }) {
+			async execute(_id: string, params: { paths: string[]; question?: string; region?: ImageRegion }) {
 				try {
-					const imgs = params.paths.slice(0, 8).map((p) => ({ ...loadImage(inWs(p)), label: p }));
 					const model = o.model();
+					if (model?.provider === AGY_IMAGE_PROVIDER && params.paths.length !== 1) throw new Error("反重力每次只读取一张图片；请分别读取多张图片");
+					const imgs = params.paths.slice(0, 8).map((p) => ({ ...loadImage(inWs(p)), label: p }));
 					if (!supportsVision(model))
 						return { content: [{ type: "text", text: visionUnsupportedMessage(model) }], details: undefined, isError: true };
+					if (params.region && model?.provider === AGY_IMAGE_PROVIDER) {
+						if (imgs.length !== 1) throw new Error("读取局部时请只指定一张图");
+						const { x, y, width, height } = params.region;
+						return { content: [{ type: "text", text: `图片局部 ${imgs[0].label}：原图左上角 (${x}, ${y})，区域 ${width}×${height}。${params.question ?? ""}` }, cropAgyImage(imgs[0], params.region)], details: undefined };
+					}
 					return { content: [{ type: "text", text: `以下是 ${imgs.length} 张图片（按顺序：${params.paths.join("、")}）。${params.question ? `请据此判断：${params.question}` : ""}` }, ...imgs.map(({ data, mimeType }) => ({ type: "image", data, mimeType }))], details: undefined };
 				} catch (e) {
 					return { content: [{ type: "text", text: `失败：${e instanceof Error ? e.message : String(e)}` }], details: undefined, isError: true };

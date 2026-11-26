@@ -19,6 +19,7 @@ import { createInterface } from "node:readline";
 import { convertAgyLine, type AgyEvent } from "./agy-events.ts";
 import { AgyUsageLedger } from "./agy-usage.ts";
 import { agyCallKey, agyRunFiles, buildAgyArgs, buildAgyEnv } from "./agy-launch.ts";
+import { adaptAgyToolImages, agyImageToolSchema } from "../agy-tool-images.ts";
 import { toolBridge, type BridgeCall, type BridgeRun, type CallToolResult, type Tool, type ToolBridge } from "./tool-bridge.ts";
 
 /** 收到第一个 `tools/call` 后等多久收齐并行调用 */
@@ -101,7 +102,7 @@ export class AgyProcess {
 		this.model = opts.model;
 		this.conversationId = opts.conversationId;
 		this.usage = new AgyUsageLedger(opts.conversationId);
-		this.bridgeRun = (opts.bridge ?? toolBridge).register({ tools: opts.tools, callKey: agyCallKey, onCall: (c) => this.onBridgeCall(c) });
+		this.bridgeRun = (opts.bridge ?? toolBridge).register({ tools: opts.tools.map(agyImageToolSchema), callKey: agyCallKey, onCall: (c) => this.onBridgeCall(c) });
 		this.done = new Promise((resolve) => {
 			this.resolveDone = resolve;
 		});
@@ -271,7 +272,8 @@ export class AgyProcess {
 
 	/** Pi 执行完工具后回填结果（`key` = 配对键）；false = 这个调用已取消 / 已回过。 */
 	resolveTool(key: string, result: CallToolResult): boolean {
-		return this.bridgeRun.resolveTool(key, result);
+		const tool = this.bridgeRun.waitingTool(key);
+		return tool !== undefined && this.bridgeRun.resolveTool(key, adaptAgyToolImages(result, tool));
 	}
 
 	/** 正常收摊：关 stdin 让 agy 做完手上的就退出，3 秒不退就强杀。 */

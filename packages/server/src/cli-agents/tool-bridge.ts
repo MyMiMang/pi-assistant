@@ -59,6 +59,7 @@ export interface BridgeRunOptions {
 interface Entry {
 	state: "waiting" | "early" | "done" | "cancelled";
 	resolve?: (r: CallToolResult) => void;
+	toolName?: string;
 	result?: CallToolResult;
 }
 
@@ -111,6 +112,12 @@ export class BridgeRun {
 		}
 		this.entries.set(toolUseId, e);
 		return true;
+	}
+
+	/** 只读：仅返回仍在等待回填的工具。 */
+	waitingTool(key: string): string | undefined {
+		const entry = this.entries.get(key);
+		return !this.closed && entry?.state === "waiting" ? entry.toolName : undefined;
 	}
 
 	/** 取消所有还没回的调用（挂起的返回「已取消」，没配上对的先到结果也作废） */
@@ -178,7 +185,7 @@ export class BridgeRun {
 		}
 		if (e?.state === "done") return rpcOk(rpcId, cancelledResult()); // 重复调用同一个 id：不再执行第二次
 		if (e?.state === "waiting") e.resolve?.(cancelledResult()); // 同 id 重发：旧请求作废
-		const entry: Entry = { state: "waiting" };
+		const entry: Entry = { state: "waiting", toolName: name };
 		const pending = new Promise<CallToolResult>((resolve) => {
 			entry.resolve = resolve;
 		});

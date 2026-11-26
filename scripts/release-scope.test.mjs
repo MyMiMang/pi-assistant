@@ -48,7 +48,7 @@ test('发布前验证实际平台与资产，不能把 arm 更新误送其他平
   assert.throws(() => validateRelease(p, assets.filter(a => !a.endsWith('.sig')), latest(), tag));
   assert.throws(() => validateRelease(p, [...assets, 'setup.exe'], latest(), tag));
 });
-test('工作流跳过的 Windows/Linux 不阻塞发布，但构建或 Mac 安装冒烟失败必阻塞', () => {
+test('仅计划外的 Windows/Linux 可跳过，构建或 Mac 安装冒烟失败必阻塞草稿校验', () => {
   const w = parse(readFileSync('.github/workflows/release.yml', 'utf8'));
   assert.match(w.jobs.linux.if, /build_linux/);
   assert.match(w.jobs['windows-smoke'].if, /build_windows/);
@@ -58,4 +58,15 @@ test('工作流跳过的 Windows/Linux 不阻塞发布，但构建或 Mac 安装
   assert.match(w.jobs.publish.if, /needs.mac-smoke.result == 'success'/);
   assert.match(w.jobs.publish.if, /build_linux == 'false'.*needs.linux.result == 'skipped'/);
   assert.match(w.jobs.publish.if, /build_windows == 'false'.*needs.windows-smoke.result == 'skipped'/);
+});
+
+test('tag 工作流校验并更新草稿，不自动公开', () => {
+  const w = parse(readFileSync('.github/workflows/release.yml', 'utf8'));
+  const commands = job => (job.steps ?? []).map(step => step.run ?? '').join('\n');
+  const all = Object.values(w.jobs).map(commands).join('\n');
+  assert.match(commands(w.jobs.prepare), /gh release create[^\n]*--draft\b/);
+  assert.doesNotMatch(all, /gh\s+release\s+edit\b|--draft(?:=|\s+)false\b/);
+  const verify = commands(w.jobs.publish);
+  assert.match(verify, /node scripts\/release-scope\.mjs validate[\s\S]*gh release upload "\$REL_TAG" latest\.json --clobber[\s\S]*GITHUB_STEP_SUMMARY/);
+  for (const field of ['REL_TAG', 'GITHUB_SHA', 'GITHUB_RUN_ID']) assert.ok(verify.includes(`$${field}`));
 });

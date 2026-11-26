@@ -184,6 +184,7 @@
 | `persona-review.ts` | 人设整理纯逻辑：最近单聊消息裁剪（80 条 / 3 万字）、提示词、JSON 容错与结构校验；`routes/persona-review.ts` 复用运行时模型解析与单次补全，只返回不写库；单测 `test/persona-review.test.ts`，页面闭环 `e2e/persona-review-ui.mjs` |
 | `vision.ts` | 识图能力判定与调用 |
 | `vision-ext.ts` | 识图 Pi 扩展 |
+| `agy-tool-images.ts` | 只适配反重力实时工具回包：逐张总览、坐标换算和原图局部；复用 SDK 锁定图像库 |
 | `image-gen/` | 图片生成（providers / routes / extension） |
 | `browser.ts` | 助理浏览器会话与固定运行环境；browserPagesFor 为工具/UI 共用 registry 唯一入口，查看不启动浏览器 |
 | `browser-pages.ts` | 服务端 runtime/context/page 明确身份、owned/popup/isolated/current；共用输入租约与上下文切换屏障 |
