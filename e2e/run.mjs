@@ -12,6 +12,7 @@ import { cspProblems, probeCsp } from "./fixtures/csp-probe.mjs";
 import { startMockImages } from "./mock-images.mjs";
 import { openModelMenu, openCompact, closeModelPanel, prepareModelPickerLayout, setHighWithDockedRail } from "./model-menu-flow.mjs";
 import { menuOverflowProblems, roomHelpers, roomProgressNoPause, checkRoomAttachmentSend } from "./fixtures/page-checks.mjs";
+import { checkAgentAttachmentSend } from "./fixtures/agent-attachment-send.mjs";
 import { infoPane, openInfoPane, infoTab as selectInfoTab, taskTab as selectTaskTab, agentProfileSave, expandDetails, expandAgentModelSection } from "./fixtures/info-pane.mjs";
 import { artifactDir } from "./fixtures/artifacts.mjs";
 
@@ -220,17 +221,13 @@ await step("上传文件给助理", async () => {
 	const f = join(DATA, "notes.txt");
 	writeFileSync(f, "这是一份上传测试文件：明天上午十点开会。");
 	await page.locator("main input[type=file]").setInputFiles(f);
-	await page.getByText("notes.txt").first().waitFor();
+	await page.getByTestId("attach-tray").getByText("notes.txt", { exact: true }).waitFor();
+	await page.getByTestId("attach-tray").getByTestId("attach-progress").first().waitFor({ state: "hidden" });
 	await send("请看看这个附件");
 	await page.locator("main").getByText("我读完了这个文件").last().waitFor({ timeout: 15_000 });
-	// 图片：看图模型直接收到图片；文档：附上文字摘录
-	await page.locator("main [data-testid=attach-input]").setInputFiles([join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"), f]);
-	await page.getByTestId("attach-chip").nth(1).waitFor();
 	const tip = await page.getByTestId("attach-btn").first().getAttribute("title");
 	if (!/2GB/.test(tip) || !/看图/.test(tip)) throw new Error(`附件按钮说明不完整：${tip}`);
-	await send("请看看这个附件");
-	await page.locator("main").getByText(/看到 1 张图片，已看到文档文字/).last().waitFor({ timeout: 15_000 });
-	await page.locator("main img[alt='icon-192.png']").last().waitFor();
+	await checkAgentAttachmentSend(page, { base: BASE, agentId: AGENT, image: join(import.meta.dirname, "..", "apps", "web", "public", "icon-192.png"), sendText: send });
 });
 
 await step("后台任务", async () => {

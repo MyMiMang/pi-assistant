@@ -286,8 +286,9 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 		el.style.height = "auto";
 		el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
 	}, [text]);
+	const cannotSend = sending || uploading > 0 || (!text.trim() && !files.length);
 	const send = async () => {
-		if (sending || (!text.trim() && !files.length)) return;
+		if (cannotSend) return;
 		setSending(true);
 		setSendErr("");
 		// 幂等：同一份草稿（文字 + 附件 + 引用）重试复用同一 clientId，避免重复唤醒；草稿一变就换新的
@@ -368,7 +369,7 @@ function Composer({ agentId, name, model, running, drag, ref, replyKey, replyLab
 							<Square size={13} fill="currentColor" />
 						</button>
 					) : (
-						<button className="pa-send" disabled={sending || (!text.trim() && !files.length)} onClick={send} aria-label={t("发送")} title={keys.hint} aria-keyshortcuts={keys.keyshortcuts}>
+						<button className="pa-send" disabled={cannotSend} onClick={send} aria-label={t("发送")} title={keys.hint} aria-keyshortcuts={keys.keyshortcuts}>
 							<ArrowUp className="pa-ic" />
 						</button>
 					)}

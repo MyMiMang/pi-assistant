@@ -395,6 +395,7 @@
 | `temp-server.mjs` | 临时数据 + Mock 的测试服务（makeTempRun / startTempServer / browserEnv / cleanupTempRun；服务进程不继承 *_API_KEY / *_TOKEN / ANTHROPIC_* 等真实服务商凭据环境变量） |
 | `stable-shot.mjs` | 稳定截图 |
 | `upload.mjs` | 共用新上传协议的创建、顺序分块及失败清理 |
+| `agent-attachment-send.mjs` | 主 E2E 延迟文档上传，核对单聊按钮、回车、取消、失败和双附件原序发送 |
 | `artifacts.mjs` | 截图与日志写 artifacts/ |
 | `fake-hindsight.mjs` | 假 Hindsight |
 | `chat-history-search.mjs` | `e2e/chat-history-search-ui.mjs`（搜索）与 `e2e/chat-history-search-jump-ui.mjs`（原文定位与往返）共用的临时 Mock 数据和浏览器操作 |
